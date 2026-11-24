@@ -319,6 +319,7 @@ static const char *kind_name(uint32_t code) {
     case R_NO_PROC:          return "noproc";
     case R_DIV_ZERO:         return "divzero";
     case R_BAD_CODE:         return "badcode";
+    case R_BAD_SHIFT:        return "badshift";
     default:                 return NULL;
     }
 }

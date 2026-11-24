@@ -708,6 +708,8 @@ func (f *fn) localOf(e ast.Expr) uint8 {
 var assignOps = map[token.Token]uint8{
 	token.ADD_ASSIGN: OpAdd, token.SUB_ASSIGN: OpSub, token.MUL_ASSIGN: OpMul,
 	token.QUO_ASSIGN: OpDiv, token.REM_ASSIGN: OpRem,
+	token.AND_ASSIGN: OpAnd, token.OR_ASSIGN: OpOr, token.XOR_ASSIGN: OpXor,
+	token.AND_NOT_ASSIGN: OpAndnot, token.SHL_ASSIGN: OpShl, token.SHR_ASSIGN: OpShr,
 }
 
 func (f *fn) assign(s *ast.AssignStmt) {
@@ -726,7 +728,7 @@ func (f *fn) assign(s *ast.AssignStmt) {
 		x := f.localOf(s.Lhs[0])
 		mark := f.next
 		f.asm.Emit(f.typedOp(op, s.Lhs[0]), x, x, f.operand(s.Rhs[0]))
-		f.truncByte(s.Lhs[0], x)
+		f.truncByteOp(s.Lhs[0], x, op)
 		f.next = mark
 		return
 	}
@@ -962,6 +964,8 @@ func (f *fn) valueInto(e ast.Expr, target types.Type, dst uint8) {
 // int64Ops maps each generic arithmetic/compare op to its int64 twin.
 var int64Ops = map[uint8]uint8{
 	OpAdd: OpAdd64, OpSub: OpSub64, OpMul: OpMul64, OpDiv: OpDiv64, OpRem: OpRem64,
+	OpAnd: OpAnd64, OpOr: OpOr64, OpXor: OpXor64, OpAndnot: OpAndnot64,
+	OpShl: OpShl64, OpShr: OpShr64,
 	OpNeg: OpNeg64, OpEq: OpEq64, OpNe: OpNe64, OpLt: OpLt64, OpLe: OpLe64,
 }
 
@@ -977,6 +981,8 @@ func (f *fn) typedOp(op uint8, x ast.Expr) uint8 {
 var binaryOps = map[token.Token]uint8{
 	token.ADD: OpAdd, token.SUB: OpSub, token.MUL: OpMul, token.QUO: OpDiv, token.REM: OpRem,
 	token.EQL: OpEq, token.NEQ: OpNe, token.LSS: OpLt, token.LEQ: OpLe,
+	token.AND: OpAnd, token.OR: OpOr, token.XOR: OpXor, token.AND_NOT: OpAndnot,
+	token.SHL: OpShl, token.SHR: OpShr,
 }
 
 // exprInto compiles e so that its value ends up in dst. Temporaries it
@@ -1005,6 +1011,18 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 			f.asm.Emit(OpMove, dst, r, 0)
 		}
 	case *ast.UnaryExpr:
+		if e.Op == token.XOR { // ^x == x XOR -1
+			x := f.operand(e.X)
+			m := f.allocScalar(e)
+			if isInt64(f.g.p.Info.TypeOf(e.X)) {
+				f.int64Into(-1, m)
+			} else {
+				f.asm.EmitExt(OpLoadi32, m, 0, 0, uint32(0xffffffff))
+			}
+			f.asm.Emit(f.typedOp(OpXor, e.X), dst, x, m)
+			f.truncByte(e, dst)
+			return
+		}
 		op := f.typedOp(OpNeg, e.X)
 		if e.Op == token.NOT {
 			op = OpNot
@@ -1070,8 +1088,18 @@ func (f *fn) binaryInto(e *ast.BinaryExpr, dst uint8) {
 		}
 		x, y := f.operand(e.X), f.operand(e.Y)
 		f.asm.Emit(f.typedOp(op, e.X), dst, x, y)
-		f.truncByte(e, dst)
+		f.truncByteOp(e, dst, op)
 	}
+}
+
+// truncByteOp is truncByte for a result of op: &, |, ^, &^ and >> of two
+// bytes (0..255) cannot leave 0..255, so they need no CONV.
+func (f *fn) truncByteOp(e ast.Expr, r uint8, op uint8) {
+	switch op {
+	case OpAnd, OpOr, OpXor, OpAndnot, OpShr:
+		return
+	}
+	f.truncByte(e, r)
 }
 
 // truncByte truncates register r, just computed by arithmetic on e (an

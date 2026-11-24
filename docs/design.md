@@ -63,6 +63,7 @@
 
 支持：
 - 类型：`bool`、`int`（固定 32 位；编译器以 `types.StdSizes{WordSize:4, MaxAlign:4}` 做类型检查，常量越界在编译期报错；运行时溢出按二进制补码回绕，和 Go 语义一致）、`int64`、`uint8/byte`、`uint32`、`string`（不可变字节串）、数组、切片、`map`（键限 int/string）、结构体、指针（仅在本 actor 内有意义）、`any`、函数值和函数字面量（闭包）、结构体方法（静态分派）。
+- 位运算：`&`、`|`、`^`、`&^`、`<<`、`>>`、一元 `^`，及对应的复合赋值（`&=` `|=` `^=` `&^=` `<<=` `>>=`），作用于 `int`、`int64`、`byte`；移位语义同 Go：计数可以是任何整数类型，计数 ≥ 位宽时 `<<` 得 0、`>>` 按符号得 0 或 -1，负计数使 actor 以 `badshift` 退出；`>>` 是算术右移（没有无符号类型，`byte` 除外），`byte` 结果在每次运算后截断。
 - 控制流：`if`、`for`（含 `range`）、`switch`、类型 switch 与类型断言、`break/continue/return`、`const`/`iota`。
 - 包：多文件、多包；`const` 不限。包级 `var` 的初始值必须是编译期可求值的常量数据（字面量、复合字面量），编进镜像放在 flash 中，**只读**。VM 的每条写内存指令都检查目标是否在当前 actor 自己的堆里，所以经由别名写入（`s := tbl; s[0] = 1`）在运行时报错退出，不需要编译器做别名分析。
 - `panic(v)`：使当前 actor 以原因 `v` 退出。
@@ -108,7 +109,7 @@ type DownMsg struct{ Ref Ref; From PID; Reason Reason }
 type Request struct{ From PID; Ref Ref; Body any }
 ```
 
-原因码常量：`Normal`、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`，用户码从 100 起。`error` 类型的退出原因留到语言里程碑（见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7）。
+原因码常量：`Normal`、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`、`BadShift`，用户码从 100 起。`error` 类型的退出原因留到语言里程碑（见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7）。
 
 接收侧用类型 switch 代替 Erlang 的模式匹配：
 
@@ -343,9 +344,9 @@ FORWARD  （GC 时临时写入）                            转发标记
 ### 5.8 错误与崩溃
 
 - 运行时错误（越界、nil map 写入、除零、类型断言失败、写只读内存、超出内存上限、`panic`）都只让当前 actor 退出。
-- 退出原因（M2 实现）：`actor.Reason{Code int; Func string}`。`Code` 是 `actor.Normal`（从入口函数返回）、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown` 或用户码（≥ 100，`actor.Exit(code)` / `actor.Kill(p, code)`）；`Func` 是运行时错误所在函数名，否则为空串。原设想的 `error` 类型原因（`RuntimeError{Kind, Msg, Func, Line}`、`panic(v)`）留到语言里程碑，见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7。
+- 退出原因（M2 实现）：`actor.Reason{Code int; Func string}`。`Code` 是 `actor.Normal`（从入口函数返回）、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`、`BadShift` 或用户码（≥ 100，`actor.Exit(code)` / `actor.Kill(p, code)`）；`Func` 是运行时错误所在函数名，否则为空串。原设想的 `error` 类型原因（`RuntimeError{Kind, Msg, Func, Line}`、`panic(v)`）留到语言里程碑，见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7。
 - 退出时向链接的 actor 发 exit 信号（开启 `TrapExit` 则收到 `ExitMsg`，否则原因不是 `Normal` 时级联退出），向监视者发 `DownMsg`。这两种通知的消息块在建立 link/monitor 时就预留好，退出时不分配内存，送达有保证；预留的内存计入建立者自己的内存上限。`Kill(p, Killed)` 不可捕获。
-- 崩溃报告打印到 stderr：`gogo: actor <pid N> crashed: <kind>[ in <func>]`，`<kind>` 为 `killed`、`oom`、`mailbox_overflow`、`noproc`、`divzero`、`badcode` 或 `exit(<code>)`；`Normal`、`Shutdown` 不报告。行号留到以后。
+- 崩溃报告打印到 stderr：`gogo: actor <pid N> crashed: <kind>[ in <func>]`，`<kind>` 为 `killed`、`oom`、`mailbox_overflow`、`noproc`、`divzero`、`badcode`、`badshift` 或 `exit(<code>)`；`Normal`、`Shutdown` 不报告。行号留到以后。
 - 监督树由标准库 `gogo/supervisor` 包用 Go 子集实现：M2 是单子进程版（重启策略 Permanent/Transient、最大重启强度），多子进程 one_for_one 留到以后。
 
 ### 5.9 工具链与工作流

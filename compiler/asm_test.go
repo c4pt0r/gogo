@@ -67,7 +67,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpCallv)+1 || len(builtinNames) != int(BConfigGet)+1 {
+	if len(opNames) != int(OpShr64)+1 || len(builtinNames) != int(BConfigGet)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -106,8 +106,8 @@ func TestReasonCodesMatchC(t *testing.T) {
 			goCodes[upperSnake(name)] = v
 		}
 	}
-	if len(goCodes) != 8 {
-		t.Errorf("gogo/actor has %d constants, want the 8 reason codes", len(goCodes))
+	if len(goCodes) != 9 {
+		t.Errorf("gogo/actor has %d constants, want the 9 reason codes", len(goCodes))
 	}
 	for n, v := range goCodes {
 		if cv, ok := cCodes[n]; !ok || cv != v {
@@ -227,8 +227,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 4 {
-		t.Errorf("imageVersion %d, want 4", imageVersion)
+	if imageVersion != 5 {
+		t.Errorf("imageVersion %d, want 5", imageVersion)
 	}
 }
 

@@ -140,6 +140,8 @@ func Disassemble(img []byte) (string, error) {
 			case OpLoadi32:
 				args = fmt.Sprintf("r%d, %d", a, int32(ext))
 			case OpAdd, OpSub, OpMul, OpDiv, OpRem, OpEq, OpNe, OpLt, OpLe,
+				OpAnd, OpOr, OpXor, OpAndnot, OpShl, OpShr,
+				OpAnd64, OpOr64, OpXor64, OpAndnot64, OpShl64, OpShr64,
 				OpAdd64, OpSub64, OpMul64, OpDiv64, OpRem64, OpEq64, OpNe64, OpLt64, OpLe64:
 				args = fmt.Sprintf("r%d, r%d, r%d", a, b, c)
 			case OpJmp:

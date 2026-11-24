@@ -168,7 +168,7 @@ func (f *fn) indexOpAssign(ix *ast.IndexExpr, op uint8, rhs ast.Expr) {
 	default:
 		f.asm.Emit(f.typedOp(op, ix), v, v, f.operand(rhs))
 	}
-	f.truncByte(ix, v)
+	f.truncByteOp(ix, v, op)
 	f.asm.EmitExt(OpBuiltin, blk, blk, 3, BSetindex)
 	f.next = mark
 }

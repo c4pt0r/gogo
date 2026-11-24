@@ -69,6 +69,7 @@ TEST(exit_report_kinds) {
         { R_NO_PROC, "gogo: actor <pid 0> crashed: noproc\n" },
         { R_DIV_ZERO, "gogo: actor <pid 0> crashed: divzero\n" },
         { R_BAD_CODE, "gogo: actor <pid 0> crashed: badcode\n" },
+        { R_BAD_SHIFT, "gogo: actor <pid 0> crashed: badshift\n" },
         { 150, "gogo: actor <pid 0> crashed: exit(150)\n" },
         { (uint32_t)-3, "gogo: actor <pid 0> crashed: exit(-3)\n" },
     };

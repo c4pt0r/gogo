@@ -58,10 +58,26 @@ enum Op {
     OP_RETN      = 38,  /* return ra .. ra+b-1 into the caller's registers
                          * dst .. dst+b-1, dst = the CALL's or CALLV's ra
                          * (RET returns one) */
-    OP_CALLV     = 39   /* call the closure in rb with args rb+1..rb+c -> ra:
+    OP_CALLV     = 39,  /* call the closure in rb with args rb+1..rb+c -> ra:
                          * its captures, then the args, are the callee's
                          * parameters; anything but a closure whose function
                          * takes captures+c parameters (nil) is badcode */
+    /* Bitwise ops, Go semantics, int then int64 (as ADD / ADD64). SHL / SHR
+     * take any integer count (either representation): a count >= the width
+     * gives 0 (SHR: 0 or -1 by sign), a negative count crashes with
+     * R_BAD_SHIFT. SHR is arithmetic. */
+    OP_AND       = 40,
+    OP_OR        = 41,
+    OP_XOR       = 42,
+    OP_ANDNOT    = 43,  /* ra = rb &^ rc */
+    OP_SHL       = 44,
+    OP_SHR       = 45,
+    OP_AND64     = 46,
+    OP_OR64      = 47,
+    OP_XOR64     = 48,
+    OP_ANDNOT64  = 49,
+    OP_SHL64     = 50,
+    OP_SHR64     = 51
 };
 
 enum Builtin {
@@ -186,7 +202,8 @@ enum Reason {
     R_NO_PROC          = 4,
     R_DIV_ZERO         = 5,
     R_BAD_CODE         = 6,
-    R_SHUTDOWN         = 7
+    R_SHUTDOWN         = 7,
+    R_BAD_SHIFT        = 8
 };
 
 /* Instruction decoders. */

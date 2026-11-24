@@ -114,6 +114,46 @@ func TestAcceptsM1(t *testing.T) {
 	}
 }
 
+// TestAcceptsBitops: every bitwise operator, unary ^ and compound
+// assignment on int, int64, byte and named types of them.
+func TestAcceptsBitops(t *testing.T) {
+	src := `package main
+
+type D int64
+
+func main() {
+	a, b := 6, 3
+	var x, y int64 = 6, 3
+	var p, q byte = 6, 3
+	var d D = 5
+	s := []byte{1, 2}
+	println(a&b, a|b, a^b, a&^b, a<<b, a>>b, ^a)
+	println(x&y, x|y, x^y, x&^y, x<<y, x>>y, ^x, x<<p, a<<x)
+	println(p&q, p|q, p^q, p&^q, p<<q, p>>q, ^p, d&d, d<<1, ^d)
+	a &= b
+	a |= b
+	a ^= b
+	a &^= b
+	a <<= b
+	a >>= b
+	x &= y
+	x <<= p
+	p >>= 9
+	d ^= d
+	s[0] <<= 3
+	s[1] &^= 1
+	println(a, x, p, d, s[0], 1<<a)
+}
+`
+	prog, err := Load(writeProg(t, src))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if errs := Check(prog); len(errs) != 0 {
+		t.Fatalf("Check: %v", errs)
+	}
+}
+
 // Each source marks the offending line with "// ERR".
 func TestRejects(t *testing.T) {
 	tests := []struct {
@@ -166,7 +206,11 @@ func TestRejects(t *testing.T) {
 		{"int32-conv", "package main\nfunc main() {\n\tx := 1\n\ty := int32(x) // ERR\n\t_ = y\n}\n", []string{"int32"}},
 		{"switch", "package main\nfunc main() {\n\tswitch 1 { // ERR\n\tcase 1:\n\t}\n}\n", []string{"switch"}},
 		{"error", "package main\nfunc f() error { return nil } // ERR\nfunc main() { f() }\n", []string{"error"}},
-		{"shift", "package main\nfunc main() {\n\tx := 1\n\ty := x << 2 // ERR\n\t_ = y\n}\n", []string{"operator <<"}},
+		{"bit-string", "package main\nfunc main() {\n\ts := \"a\"\n\tprintln(s & s) // ERR\n}\n", []string{"operator &"}},
+		{"bit-bool", "package main\nfunc main() {\n\tb := true\n\tprintln(b | b) // ERR\n}\n", []string{"operator |"}},
+		{"shift-string", "package main\nfunc main() {\n\ts := \"a\"\n\tprintln(s << 1) // ERR\n}\n", []string{"shift"}},
+		{"xor-string", "package main\nfunc main() {\n\ts := \"a\"\n\tprintln(^s) // ERR\n}\n", []string{"operator ^"}},
+		{"andnot-assign-string", "package main\nfunc main() {\n\ts := \"a\"\n\ts &^= s // ERR\n}\n", []string{"operator &^"}},
 		{"init", "package main\nfunc init() {} // ERR\nfunc main() {}\n", []string{"func init not supported"}},
 		{"intcast", "package main\nfunc main() {\n\tvar x int32 = 1 // ERR\n\t_ = x\n}\n", []string{"int32"}},
 		{"namedbasic-any", "package main\ntype C int\nfunc main() {\n\tvar x any = C(1) // ERR\n\t_ = x\n}\n", []string{"named basic type in interface not supported"}},

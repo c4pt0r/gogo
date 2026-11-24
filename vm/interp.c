@@ -153,37 +153,74 @@ static bool ref_serial(const Vm *vm, const Actor *a, term t, uint64_t *out) {
 static int32_t wrap(uint32_t u) { return (int32_t)u; }
 static int64_t wrap64(uint64_t u) { return (int64_t)u; }
 
+/* A shift count (any integer, either representation) clamped to [-1, 64]:
+ * every count >= the width acts alike, and -1 stands for any negative one. */
+static bool count_val(const Vm *vm, const Actor *a, term t, int32_t *out) {
+    int32_t v;
+    int64_t n;
+    if (int_val(vm, a, t, &v)) n = v;
+    else if (!int64_val(vm, a, t, &n)) return false;
+    *out = n < 0 ? -1 : n > 64 ? 64 : (int32_t)n;
+    return true;
+}
+
 /* x op y for the binary arithmetic ops with Go semantics (wrapping; MinInt
- * / -1 == MinInt; x % -1 == 0). False on division by zero. */
-static bool arith32(uint32_t op, int32_t x, int32_t y, int32_t *r) {
+ * / -1 == MinInt; x % -1 == 0; shifts take a count from count_val, >> is
+ * arithmetic). Returns 0 or the crash reason (division by zero, negative
+ * shift count). */
+static uint32_t arith32(uint32_t op, int32_t x, int32_t y, int32_t *r) {
     switch (op) {
-    case OP_ADD: *r = wrap((uint32_t)x + (uint32_t)y); return true;
-    case OP_SUB: *r = wrap((uint32_t)x - (uint32_t)y); return true;
-    case OP_MUL: *r = wrap((uint32_t)x * (uint32_t)y); return true;
+    case OP_ADD: *r = wrap((uint32_t)x + (uint32_t)y); return 0;
+    case OP_SUB: *r = wrap((uint32_t)x - (uint32_t)y); return 0;
+    case OP_MUL: *r = wrap((uint32_t)x * (uint32_t)y); return 0;
+    case OP_AND: *r = x & y; return 0;
+    case OP_OR:  *r = x | y; return 0;
+    case OP_XOR: *r = x ^ y; return 0;
+    case OP_ANDNOT: *r = x & ~y; return 0;
+    case OP_SHL:
+        if (y < 0) return R_BAD_SHIFT;
+        *r = y > 31 ? 0 : wrap((uint32_t)x << y);
+        return 0;
+    case OP_SHR:
+        if (y < 0) return R_BAD_SHIFT;
+        *r = x >> (y > 31 ? 31 : y);
+        return 0;
     case OP_DIV:
-        if (y == 0) return false;
+        if (y == 0) return R_DIV_ZERO;
         *r = (x == INT32_MIN && y == -1) ? INT32_MIN : x / y;
-        return true;
+        return 0;
     default: /* OP_REM */
-        if (y == 0) return false;
+        if (y == 0) return R_DIV_ZERO;
         *r = (y == -1) ? 0 : x % y;     /* avoids INT32_MIN % -1 UB */
-        return true;
+        return 0;
     }
 }
 
-static bool arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
+static uint32_t arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
     switch (op) {
-    case OP_ADD64: *r = wrap64((uint64_t)x + (uint64_t)y); return true;
-    case OP_SUB64: *r = wrap64((uint64_t)x - (uint64_t)y); return true;
-    case OP_MUL64: *r = wrap64((uint64_t)x * (uint64_t)y); return true;
+    case OP_ADD64: *r = wrap64((uint64_t)x + (uint64_t)y); return 0;
+    case OP_SUB64: *r = wrap64((uint64_t)x - (uint64_t)y); return 0;
+    case OP_MUL64: *r = wrap64((uint64_t)x * (uint64_t)y); return 0;
+    case OP_AND64: *r = x & y; return 0;
+    case OP_OR64:  *r = x | y; return 0;
+    case OP_XOR64: *r = x ^ y; return 0;
+    case OP_ANDNOT64: *r = x & ~y; return 0;
+    case OP_SHL64:
+        if (y < 0) return R_BAD_SHIFT;
+        *r = y > 63 ? 0 : wrap64((uint64_t)x << y);
+        return 0;
+    case OP_SHR64:
+        if (y < 0) return R_BAD_SHIFT;
+        *r = x >> (y > 63 ? 63 : y);
+        return 0;
     case OP_DIV64:
-        if (y == 0) return false;
+        if (y == 0) return R_DIV_ZERO;
         *r = (x == INT64_MIN && y == -1) ? INT64_MIN : x / y;
-        return true;
+        return 0;
     default: /* OP_REM64 */
-        if (y == 0) return false;
+        if (y == 0) return R_DIV_ZERO;
         *r = (y == -1) ? 0 : x % y;     /* avoids INT64_MIN % -1 UB */
-        return true;
+        return 0;
     }
 }
 
@@ -435,13 +472,18 @@ int interp_run(Vm *vm, Actor *a) {
             break;
         }
 
-        case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REM: {
-            /* ints only (an int64 box is badcode; see the *64 ops). */
+        case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REM:
+        case OP_AND: case OP_OR: case OP_XOR: case OP_ANDNOT: case OP_SHL: case OP_SHR: {
+            /* ints only (an int64 box is badcode; see the *64 ops), except
+             * a shift count, which may be any integer. */
             REG(ra); REG(rb); REG(rc);
             int32_t x, y, r;
+            uint32_t why;
             term t;
-            CHECK(int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y));
-            if (!arith32(op, x, y, &r)) CRASH(R_DIV_ZERO);
+            CHECK(int_val(vm, a, R[rb], &x));
+            CHECK((op == OP_SHL || op == OP_SHR) ? count_val(vm, a, R[rc], &y)
+                                                 : int_val(vm, a, R[rc], &y));
+            if ((why = arith32(op, x, y, &r)) != 0) CRASH(why);
             if (!make_int(vm, a, r, &t)) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
@@ -459,12 +501,22 @@ int interp_run(Vm *vm, Actor *a) {
             break;
         }
 
-        case OP_ADD64: case OP_SUB64: case OP_MUL64: case OP_DIV64: case OP_REM64: {
+        case OP_ADD64: case OP_SUB64: case OP_MUL64: case OP_DIV64: case OP_REM64:
+        case OP_AND64: case OP_OR64: case OP_XOR64: case OP_ANDNOT64:
+        case OP_SHL64: case OP_SHR64: {
             REG(ra); REG(rb); REG(rc);
             int64_t x, y, r;
+            int32_t n;
+            uint32_t why;
             term t;
-            CHECK(int64_val(vm, a, R[rb], &x) && int64_val(vm, a, R[rc], &y));
-            if (!arith64(op, x, y, &r)) CRASH(R_DIV_ZERO);
+            CHECK(int64_val(vm, a, R[rb], &x));
+            if (op == OP_SHL64 || op == OP_SHR64) {     /* the count may be an int */
+                CHECK(count_val(vm, a, R[rc], &n));
+                y = n;
+            } else {
+                CHECK(int64_val(vm, a, R[rc], &y));
+            }
+            if ((why = arith64(op, x, y, &r)) != 0) CRASH(why);
             if (!make_int64(vm, a, r, &t)) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;

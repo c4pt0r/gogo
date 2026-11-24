@@ -656,7 +656,8 @@ func (c *checker) lhs(e ast.Expr) {
 
 func (c *checker) assign(s *ast.AssignStmt) {
 	switch s.Tok {
-	case token.ASSIGN, token.DEFINE, token.ADD_ASSIGN, token.SUB_ASSIGN, token.MUL_ASSIGN, token.QUO_ASSIGN, token.REM_ASSIGN:
+	case token.ASSIGN, token.DEFINE, token.ADD_ASSIGN, token.SUB_ASSIGN, token.MUL_ASSIGN, token.QUO_ASSIGN, token.REM_ASSIGN,
+		token.AND_ASSIGN, token.OR_ASSIGN, token.XOR_ASSIGN, token.AND_NOT_ASSIGN, token.SHL_ASSIGN, token.SHR_ASSIGN:
 	default:
 		c.unsupported(s, "operator "+s.Tok.String())
 		return
@@ -1009,7 +1010,7 @@ func (c *checker) expr(e ast.Expr) {
 	case *ast.CallExpr:
 		c.call(e, false)
 	case *ast.UnaryExpr:
-		if e.Op != token.SUB && e.Op != token.NOT {
+		if e.Op != token.SUB && e.Op != token.NOT && e.Op != token.XOR {
 			c.unsupported(e, "operator "+e.Op.String())
 			return
 		}
@@ -1081,6 +1082,7 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 	isConst := c.p.Info.Types[e].Value != nil // constant expressions are folded
 	switch e.Op {
 	case token.ADD, token.SUB, token.MUL, token.QUO, token.REM,
+		token.AND, token.OR, token.XOR, token.AND_NOT, token.SHL, token.SHR,
 		token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ,
 		token.LAND, token.LOR:
 	default:

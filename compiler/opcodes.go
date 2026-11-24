@@ -48,6 +48,19 @@ const (
 	OpClear uint8 = 37 // ra .. ra+b-1 = nil (dead registers stop being GC roots)
 	OpRetn  uint8 = 38 // return ra .. ra+b-1 into the CALL's (or CALLV's) dst .. dst+b-1
 	OpCallv uint8 = 39 // call the closure in rb with args rb+1..rb+c -> ra (captures, then args)
+
+	OpAnd      uint8 = 40
+	OpOr       uint8 = 41
+	OpXor      uint8 = 42
+	OpAndnot   uint8 = 43 // ra = rb &^ rc
+	OpShl      uint8 = 44 // count: any integer; >= width gives 0, negative is badshift
+	OpShr      uint8 = 45 // arithmetic
+	OpAnd64    uint8 = 46
+	OpOr64     uint8 = 47
+	OpXor64    uint8 = 48
+	OpAndnot64 uint8 = 49
+	OpShl64    uint8 = 50
+	OpShr64    uint8 = 51
 )
 
 // OP_CONV c operands.
@@ -244,7 +257,9 @@ var opNames = [...]string{"NOP", "MOVE", "LOADK", "LOADI32", "ADD", "SUB", "MUL"
 	"DIV", "REM", "NEG", "EQ", "NE", "LT", "LE", "NOT", "JMP", "JMPF", "JMPT",
 	"CALL", "RET", "NEWSTRUCT", "GETFIELD", "MKCLOSURE", "TYPEIS", "BUILTIN",
 	"CONV", "ADD64", "SUB64", "MUL64", "DIV64", "REM64", "NEG64", "EQ64", "NE64",
-	"LT64", "LE64", "BOX64", "CLEAR", "RETN", "CALLV"}
+	"LT64", "LE64", "BOX64", "CLEAR", "RETN", "CALLV",
+	"AND", "OR", "XOR", "ANDNOT", "SHL", "SHR", "AND64", "OR64", "XOR64", "ANDNOT64",
+	"SHL64", "SHR64"}
 
 var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "MEMORY",
 	"SPAWN_LINK", "SPAWN_OPT", "LINK", "UNLINK", "TRAP_EXIT", "EXIT", "KILL",
@@ -271,6 +286,10 @@ var goConstants = map[string]uint32{
 	"OpEq64": uint32(OpEq64), "OpNe64": uint32(OpNe64), "OpLt64": uint32(OpLt64),
 	"OpLe64": uint32(OpLe64), "OpBox64": uint32(OpBox64), "OpClear": uint32(OpClear),
 	"OpRetn": uint32(OpRetn), "OpCallv": uint32(OpCallv),
+	"OpAnd": uint32(OpAnd), "OpOr": uint32(OpOr), "OpXor": uint32(OpXor),
+	"OpAndnot": uint32(OpAndnot), "OpShl": uint32(OpShl), "OpShr": uint32(OpShr),
+	"OpAnd64": uint32(OpAnd64), "OpOr64": uint32(OpOr64), "OpXor64": uint32(OpXor64),
+	"OpAndnot64": uint32(OpAndnot64), "OpShl64": uint32(OpShl64), "OpShr64": uint32(OpShr64),
 	"BPrintln": BPrintln, "BSpawn": BSpawn, "BSelf": BSelf, "BSend": BSend,
 	"BReceive": BReceive, "BMemory": BMemory,
 	"BSpawnLink": BSpawnLink, "BSpawnOpt": BSpawnOpt, "BLink": BLink,

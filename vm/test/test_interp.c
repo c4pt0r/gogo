@@ -698,3 +698,126 @@ TEST(callv_nil_or_wrong_arity_is_badcode) {
     CHECK(a == NULL);
     CHECK_EQ(vm.live, 0);
 }
+
+/* ---- bitwise ops ---- */
+
+/* Operand kinds for run_bit: an int32 loaded with LOADI32 (boxed as K_INT
+ * outside 31 bits), a K_INT64 const, or a string (not an integer). */
+enum { BI32 = 0, B64 = 1, BSTR = 2 };
+typedef struct { int64_t v; int kind; } BOp;
+
+/* main (0 params, 3 regs): load x, load y, <op> r2, r0, r1; RECEIVE. Same
+ * layout as build_int64_op. Returns the crash text ("" if none); the result
+ * of a K_INT/K_INT64 box or immediate lands in *val, its term in *out. */
+static const char *run_bit(uint32_t op, BOp x, BOp y, term *out, int64_t *val) {
+    static uint32_t w[I64_WORDS]; static Image img; static Vm vm;
+    va_reset();
+    memset(w, 0, sizeof w);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
+    w[4] = 9; w[5] = 7; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 0 | (3u << 16); w[10] = 0;
+    w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
+    w[14] = hdr_make(3, K_INT64); w[15] = (uint32_t)(uint64_t)x.v; w[16] = (uint32_t)((uint64_t)x.v >> 32);
+    w[17] = hdr_make(3, K_INT64); w[18] = (uint32_t)(uint64_t)y.v; w[19] = (uint32_t)((uint64_t)y.v >> 32);
+    const BOp *o[2] = { &x, &y };
+    for (int i = 0; i < 2; i++) {
+        if (o[i]->kind == BI32) {
+            w[20 + 2 * i] = OP_MAKE(OP_LOADI32, (uint32_t)i, 0, 0); w[21 + 2 * i] = (uint32_t)(int32_t)o[i]->v;
+        } else {
+            w[20 + 2 * i] = OP_MAKE(OP_LOADK, (uint32_t)i, 0, 0);
+            w[21 + 2 * i] = term_from_const(o[i]->kind == BSTR ? 0 : (i ? 6 : 3));
+        }
+    }
+    w[24] = OP_MAKE(op, 2, 0, 1);
+    w[25] = OP_MAKE(OP_BUILTIN, 0, 0, 0);
+    w[26] = B_RECEIVE;
+    CHECK_EQ(image_load(&img, w, I64_WORDS), IMG_OK);
+    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    Actor *a = actor_new(&vm, 32);
+    CHECK(a != NULL);
+    CHECK(heap_push_frame(&vm, a, 3, -1));
+    a->pc = img.code;
+    err_len = 0; err_buf[0] = 0;
+    platform_unix_err_hook = capture_err;
+    int rc = interp_run(&vm, a);
+    platform_unix_err_hook = NULL;
+    *out = T_NIL;
+    *val = 0;
+    if (rc == RUN_EXIT) return err_buf;
+    CHECK_EQ(rc, RUN_WAIT);
+    *out = a->mem[a->fp + 2];
+    if (term_is_int(*out)) *val = term_to_int(*out);
+    if (term_is_ref(*out)) {
+        const uint32_t *p = a->mem + term_ref_off(*out);
+        if (p[0] == hdr_make(2, K_INT)) *val = (int32_t)p[1];
+        if (p[0] == hdr_make(3, K_INT64)) *val = (int64_t)((uint64_t)p[1] | ((uint64_t)p[2] << 32));
+    }
+    actor_free(&vm, a);
+    return err_buf;
+}
+
+#define I(n)  ((BOp){ (n), BI32 })
+#define L(n)  ((BOp){ (n), B64 })
+#define BITOK(op, x, y, want) do { \
+        term t_; int64_t v_; \
+        CHECK_EQ(run_bit((op), (x), (y), &t_, &v_)[0], 0); \
+        CHECK(v_ == (int64_t)(want)); } while (0)
+
+TEST(bitops_int) {
+    term t; int64_t v;
+    BITOK(OP_AND, I(0x0F0F), I(0x00FF), 0x000F);
+    BITOK(OP_OR, I(0x0F0F), I(0x00FF), 0x0FFF);
+    BITOK(OP_XOR, I(0x0F0F), I(0x00FF), 0x0FF0);
+    BITOK(OP_ANDNOT, I(0x0F0F), I(0x00FF), 0x0F00);
+    BITOK(OP_AND, I(-1), I(INT32_MIN), INT32_MIN);          /* boxed operand and result */
+    BITOK(OP_XOR, I(INT32_MAX), I(-1), INT32_MIN);
+    BITOK(OP_SHL, I(1), I(30), 1073741824);
+    CHECK_EQ(run_bit(OP_SHL, I(1), I(30), &t, &v)[0], 0); CHECK(term_is_ref(t));
+    BITOK(OP_SHL, I(1), I(31), INT32_MIN);
+    BITOK(OP_SHL, I(1), I(32), 0);
+    BITOK(OP_SHL, I(3), I(0), 3);
+    BITOK(OP_SHL, I(1), L(1LL << 40), 0);                   /* count as a K_INT64 box */
+    BITOK(OP_SHR, I(-8), I(1), -4);
+    BITOK(OP_SHR, I(-1), I(40), -1);
+    BITOK(OP_SHR, I(5), I(32), 0);
+    BITOK(OP_SHR, I(INT32_MIN), I(31), -1);
+    BITOK(OP_SHR, I(-5), I(0), -5);
+    BITOK(OP_SHR, I(-5), L(1LL << 40), -1);
+    BITOK(OP_SHR, I(5), L(1LL << 40), 0);
+    CHECK(strstr(run_bit(OP_SHL, I(1), I(-1), &t, &v), "crashed: badshift") != NULL);
+    CHECK(strstr(run_bit(OP_SHR, I(1), L(-(1LL << 40)), &t, &v), "crashed: badshift") != NULL);
+    CHECK(strstr(run_bit(OP_AND, (BOp){0, BSTR}, I(1), &t, &v), "crashed: badcode") != NULL);
+    CHECK(strstr(run_bit(OP_SHL, I(1), (BOp){0, BSTR}, &t, &v), "crashed: badcode") != NULL);
+    /* int ops reject an int64 box operand, like OP_ADD. */
+    CHECK(strstr(run_bit(OP_OR, L(5), I(1), &t, &v), "crashed: badcode") != NULL);
+}
+
+TEST(bitops_int64) {
+    term t; int64_t v;
+    const int64_t min = INT64_MIN;
+    BITOK(OP_AND64, L(0xFF00FF00FFLL), L(0x0F0F0F0F0FLL), 0x0F000F000FLL);
+    BITOK(OP_OR64, L(1LL << 40), I(5), (1LL << 40) | 5);    /* mixed immediate / box */
+    BITOK(OP_XOR64, I(5), L(1LL << 40), (1LL << 40) ^ 5);
+    BITOK(OP_ANDNOT64, L((1LL << 40) | 7), I(2), (1LL << 40) | 5);
+    BITOK(OP_XOR64, L(min), I(-1), INT64_MAX);
+    CHECK_EQ(run_bit(OP_AND64, L(0xFF00000000LL | 3), I(3), &t, &v)[0], 0);
+    CHECK(term_is_int(t) && v == 3);                        /* result fits: immediate */
+    BITOK(OP_SHL64, I(1), I(62), 1LL << 62);
+    CHECK_EQ(run_bit(OP_SHL64, I(1), I(62), &t, &v)[0], 0); CHECK(term_is_ref(t));
+    BITOK(OP_SHL64, I(1), I(63), min);
+    BITOK(OP_SHL64, I(1), I(64), 0);
+    BITOK(OP_SHL64, I(1), L(1LL << 40), 0);
+    BITOK(OP_SHL64, L(1LL << 40), I(0), 1LL << 40);
+    BITOK(OP_SHL64, I(3), I(31), 3LL << 31);
+    BITOK(OP_SHR64, L(min), I(63), -1);
+    BITOK(OP_SHR64, L(min), I(64), -1);
+    BITOK(OP_SHR64, L(1LL << 62), I(64), 0);
+    BITOK(OP_SHR64, L(1LL << 62), I(100), 0);
+    BITOK(OP_SHR64, L(1LL << 40), I(10), 1LL << 30);
+    BITOK(OP_SHR64, I(-8), L(1), -4);
+    BITOK(OP_SHR64, I(-8), L(1LL << 40), -1);
+    CHECK(strstr(run_bit(OP_SHL64, I(1), I(-1), &t, &v), "crashed: badshift") != NULL);
+    CHECK(strstr(run_bit(OP_SHR64, L(1LL << 40), L(min), &t, &v), "crashed: badshift") != NULL);
+    CHECK(strstr(run_bit(OP_XOR64, (BOp){0, BSTR}, I(1), &t, &v), "crashed: badcode") != NULL);
+    CHECK(strstr(run_bit(OP_SHR64, I(1), (BOp){0, BSTR}, &t, &v), "crashed: badcode") != NULL);
+}

@@ -57,6 +57,7 @@ const (
 	DivZero         = 5
 	BadCode         = 6
 	Shutdown        = 7
+	BadShift        = 8
 )
 
 // Spawn starts a new actor running f and returns its PID.

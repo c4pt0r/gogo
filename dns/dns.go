@@ -148,7 +148,7 @@ func resolver() {
 			case query:
 				name, deadline = q.Name, q.Deadline
 			}
-			id = (id + 1) % 65536
+			id = (id + 1) & 0xFFFF
 			tries = 0
 			ip, ok := cached(names, ips, expires, name)
 			if !ok {
@@ -210,7 +210,7 @@ func put(names []string, ips []int, expires []int64, name string, ip, ttl int) {
 // trailing dot: Lookup drops it).
 func encode(name string, id int) (bytes.Bytes, bool) {
 	b := bytes.NewBuffer(len(name) + 18)
-	b.Write([]byte{byte(id / 256), byte(id % 256), 1, 0, 0, 1, 0, 0, 0, 0, 0, 0}) // RD; one question
+	b.Write([]byte{byte(id >> 8), byte(id), 1, 0, 0, 1, 0, 0, 0, 0, 0, 0}) // RD; one question
 	start := 0
 	for i := 0; i <= len(name); i++ {
 		if i == len(name) || name[i] == '.' {
@@ -240,7 +240,7 @@ func parse(d bytes.Bytes, id int, name string) (int, int) {
 	if i < 0 || i+4 > n || q != name || get16(d, i) != 1 || get16(d, i+2) != 1 {
 		return 0, -1
 	}
-	if d.At(3)%16 != 0 {
+	if d.At(3)&15 != 0 {
 		return 0, -2
 	}
 	i += 4
@@ -256,11 +256,11 @@ func parse(d bytes.Bytes, id int, name string) (int, int) {
 		}
 		if owner == name && get16(d, j+2) == 1 {
 			if typ == 1 && l == 4 {
-				ttl := get16(d, j+4)*65536 + get16(d, j+6)
+				ttl := get16(d, j+4)<<16 | get16(d, j+6)
 				if ttl < 0 {
 					ttl = 0
 				}
-				return get16(d, j+10)*65536 + get16(d, j+12), ttl
+				return get16(d, j+10)<<16 | get16(d, j+12), ttl
 			}
 			if typ == 5 { // CNAME: look for the target's record next
 				name, j = readName(d, j+10)
@@ -294,7 +294,7 @@ func readName(d bytes.Bytes, i int) (string, int) {
 			if end < 0 {
 				end = i + 2
 			}
-			i = (l-192)*256 + int(d.At(i+1))
+			i = (l&63)<<8 | int(d.At(i+1))
 			jumps++
 		} else if l >= 64 || i+1+l > d.Len() {
 			return "", -1
@@ -310,7 +310,7 @@ func readName(d bytes.Bytes, i int) (string, int) {
 }
 
 func get16(d bytes.Bytes, i int) int {
-	return int(d.At(i))*256 + int(d.At(i+1))
+	return int(d.At(i))<<8 | int(d.At(i+1))
 }
 
 // parseIP parses a dotted IPv4 address a.b.c.d.
@@ -321,7 +321,7 @@ func parseIP(s string) (int, bool) {
 			if digits == 0 || part > 255 {
 				return 0, false
 			}
-			ip = ip*256 + part
+			ip = ip<<8 | part
 			part, digits = 0, 0
 			if i < len(s) {
 				dots++

@@ -58,14 +58,16 @@ TEST(image_bad_magic) {
 
 TEST(image_bad_version) {
     uint32_t w[IMG_WORDS]; Image img;
-    CHECK_EQ(IMAGE_VERSION, 4u);
+    CHECK_EQ(IMAGE_VERSION, 5u);
     build(w); w[1] = 1;        /* M1/M2 images: opcode semantics changed in M3 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w); w[1] = 2;        /* M3 images: RETN, CONV c=2 and builtins added in M4 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w); w[1] = 3;        /* M4 images: CALLV added in M5 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 5;
+    build(w); w[1] = 4;        /* M5 images: bitwise ops added in v5 */
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    build(w); w[1] = 6;
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w);
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);

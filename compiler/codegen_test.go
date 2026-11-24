@@ -1876,3 +1876,58 @@ func main() {
 		}
 	}
 }
+
+// TestCompileBitopsTyped: the int vs int64 twin follows the left operand
+// (for shifts, never the count), unary ^ is XOR with -1, and a byte result
+// is truncated after every new op, compound assignment and s[i] op= e
+// included.
+func TestCompileBitopsTyped(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+func ints(a, b int) int {
+	return a&b | a ^ b&^a
+}
+
+func shifts(a int, x int64, n int, m int64, k byte) int64 {
+	r := a << m  // SHL (left is int, count int64)
+	r2 := a >> k // SHR
+	x <<= k      // SHL64 (left int64, count byte)
+	x = x >> n   // SHR64
+	println(r, r2)
+	return x
+}
+
+func untyped(n int) int { return 1 << n }
+
+func main() {}
+
+func neg(a int, x int64, b byte) {
+	println(^a, ^x, ^b)
+}
+
+func bytes(b, m byte, s []byte) {
+	println(b<<1, ^b, b&^m)
+	b >>= 9
+	b <<= 1
+	s[0] |= m
+	s[1] <<= 4
+	println(b)
+}
+`)
+	has := func(fn string, want map[string]int) {
+		t.Helper()
+		_, body := funcDis(t, dis, fn)
+		code := parseIns(t, body)
+		for op, n := range want {
+			if got := countOp(code, op, ""); got != n {
+				t.Errorf("%s: %d %s, want %d:\n%s", fn, got, op, n, dis)
+			}
+		}
+	}
+	has("ints", map[string]int{"AND": 1, "OR": 1, "XOR": 1, "ANDNOT": 1, "AND64": 0})
+	has("shifts", map[string]int{"SHL": 1, "SHR": 1, "SHL64": 1, "SHR64": 1})
+	has("untyped", map[string]int{"SHL": 1, "SHL64": 0})
+	has("neg", map[string]int{"XOR": 2, "XOR64": 1, "CONV": 1})
+	// Only b<<1, ^b, b<<=1, s[1]<<=4 end in CONV; b&^m, b>>=9, s[0]|=m cannot exceed 255.
+	has("bytes", map[string]int{"SHL": 3, "SHR": 1, "XOR": 1, "ANDNOT": 1, "OR": 1, "CONV": 4})
+}

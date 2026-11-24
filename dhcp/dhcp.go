@@ -203,7 +203,7 @@ func parseIP(s string) (int, bool) {
 			if digits == 0 || part > 255 {
 				return 0, false
 			}
-			ip = ip*256 + part
+			ip = ip<<8 | part
 			part, digits = 0, 0
 			if i < len(s) {
 				dots++
@@ -393,15 +393,11 @@ func setAddr(n actor.PID, ip, mask, gw, dns int) {
 
 // put32 stores v big-endian at b[i:i+4].
 func put32(b []byte, i, v int) {
-	x := int64(v)
-	if x < 0 {
-		x += 4294967296
-	}
-	b[i], b[i+1], b[i+2], b[i+3] = byte(x/16777216), byte(x/65536%256), byte(x/256%256), byte(x%256)
+	b[i], b[i+1], b[i+2], b[i+3] = byte(v>>24), byte(v>>16), byte(v>>8), byte(v)
 }
 
 // get32 reads the big-endian int at d[i:i+4] (wrapping to negative from
 // 0x80000000 up, like an IPv4 address as an int).
 func get32(d bytes.Bytes, i int) int {
-	return int(d.At(i))*16777216 + int(d.At(i+1))*65536 + int(d.At(i+2))*256 + int(d.At(i+3))
+	return int(d.At(i))<<24 | int(d.At(i+1))<<16 | int(d.At(i+2))<<8 | int(d.At(i+3))
 }
