@@ -137,16 +137,17 @@ func TestRejects(t *testing.T) {
 		{"nil-any", "package main\nfunc main() {\n\tvar x any = nil // ERR\n\t_ = x\n}\n", []string{"nil"}},
 		{"slice-byte-any", "package main\nfunc main() {\n\tb := []byte(\"a\")\n\tvar x []any\n\tx = append(x, b[0]) // ERR\n\t_ = x\n}\n", []string{"byte in interface"}},
 		{"string-index-assign", "package main\nfunc main() {\n\ts := \"ab\"\n\ts[0] = 1 // ERR\n}\n", []string{"cannot assign"}},
-		{"call-funcvalue", "package main\nfunc main() {\n\tf := func() {}\n\tf() // ERR\n}\n", []string{"calling a func value not supported"}},
-		{"call-funcfield", "package main\ntype J struct{ R func() }\nfunc main() {\n\tj := J{}\n\tj.R() // ERR\n}\n", []string{"calling a func value not supported"}},
-		{"call-funclit", "package main\nfunc main() {\n\tfunc() {}() // ERR\n}\n", []string{"calling a func value not supported"}},
-		{"funclit-params", "package main\nfunc main() {\n\tf := func(x int) {} // ERR\n\t_ = f\n}\n", []string{"func type func(x int) not supported"}},
-		{"funcparam-sig", "package main\nfunc run(f func() int) {} // ERR\nfunc main() {}\n", []string{"func type func() int not supported"}},
 		{"funcvalue-any", "package main\nfunc f() {}\nfunc main() {\n\tvar x any = f // ERR\n\t_ = x\n}\n", []string{"func value in interface not supported"}},
 		{"funcvalue-send", "package main\nimport \"gogo/actor\"\nfunc f() {}\nfunc main() {\n\tactor.Send(actor.Self(), f) // ERR\n}\n", []string{"func value in interface not supported"}},
 		{"funcvalue-println", "package main\nfunc f() {}\nfunc main() {\n\tprintln(f) // ERR\n}\n", []string{"func value in interface not supported"}},
 		{"funcvalue-compare", "package main\nfunc f() {}\nfunc main() {\n\tg := f\n\tprintln(g == f) // ERR\n}\n", []string{"compared to nil"}},
-		{"funcvalue-actor", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tg := actor.Self // ERR\n\t_ = g\n}\n", []string{"func type func() actor.PID not supported"}},
+		{"funcvalue-actor", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tg := actor.Self // ERR\n\t_ = g\n}\n", []string{"selector other than a field read"}},
+		{"funcvalue-variadic", "package main\nfunc run(f func(xs ...int)) {} // ERR\nfunc main() {}\n", []string{"func type func(xs ...int) not supported"}},
+		{"funcvalue-badparam", "package main\nfunc run(f func(m map[int]int) int) {} // ERR\nfunc main() {}\n", []string{"func type func(m map[int]int) int not supported"}},
+		{"funcvalue-badresult", "package main\nfunc main() {\n\tf := func() float64 { return 1 } // ERR\n\t_ = f\n}\n", []string{"func type func() float64 not supported"}},
+		{"funcvalue-args-any", "package main\nfunc main() {\n\tvar x any = func(n int) int { return n } // ERR\n\t_ = x\n}\n", []string{"func value in interface not supported"}},
+		{"funcvalue-result-any", "package main\nfunc id(n int) int { return n }\nfunc pair() (func(int) int, int) { return id, 1 }\nfunc main() {\n\tvar a any\n\tvar b int\n\ta, b = pair() // ERR\n\t_, _ = a, b\n}\n", []string{"func value in interface not supported"}},
+		{"funcvalue-nil", "package main\nfunc main() {\n\tvar f func(int)\n\tprintln(f == nil) // ERR\n}\n", []string{"comparison of func(int)"}},
 		{"import", "package main\nimport \"fmt\" // ERR\nfunc main() { fmt.Println() }\n", []string{`import "fmt"`}},
 		{"fieldassign", "package main\ntype P struct{ X int }\nfunc main() {\n\tp := P{}\n\tp.X = 1 // ERR\n}\n", []string{"field assignment"}},
 		{"pointer", "package main\nfunc main() {\n\tx := 1\n\tp := &x // ERR\n\t_ = p\n}\n", []string{"pointer"}},
@@ -163,7 +164,6 @@ func TestRejects(t *testing.T) {
 		{"int64-mix", "package main\nfunc main() {\n\tvar a int64 = 1\n\tb := 2\n\tprintln(a + b) // ERR\n}\n", []string{"mismatched types int64 and int"}},
 		{"int64-mix-assign", "package main\nfunc main() {\n\tvar a int64\n\tb := 2\n\ta = b // ERR\n\t_ = a\n}\n", []string{"cannot use b"}},
 		{"int32-conv", "package main\nfunc main() {\n\tx := 1\n\ty := int32(x) // ERR\n\t_ = y\n}\n", []string{"int32"}},
-		{"funcvalue-sig", "package main\nfunc f(x int) {}\nfunc main() {\n\tg := f // ERR\n\t_ = g\n}\n", []string{"func type func(x int) not supported"}},
 		{"switch", "package main\nfunc main() {\n\tswitch 1 { // ERR\n\tcase 1:\n\t}\n}\n", []string{"switch"}},
 		{"error", "package main\nfunc f() error { return nil } // ERR\nfunc main() { f() }\n", []string{"error"}},
 		{"shift", "package main\nfunc main() {\n\tx := 1\n\ty := x << 2 // ERR\n\t_ = y\n}\n", []string{"operator <<"}},
@@ -202,7 +202,6 @@ func TestRejects(t *testing.T) {
 		{"captured-reassign-redeclare", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tx := 1\n\tactor.Spawn(func() { println(x) })\n\tx, y := 2, 3 // ERR\n\t_ = y\n}\n", []string{"captured variable must not be reassigned"}},
 		{"funcvalue-return-any", "package main\nfunc f() {}\nfunc g() any {\n\treturn f // ERR\n}\nfunc main() { _ = g() }\n", []string{"func value in interface not supported"}},
 		{"funcvalue-anyfield", "package main\ntype B struct{ V any }\nfunc f() {}\nfunc main() {\n\tb := B{V: f} // ERR\n\t_ = b\n}\n", []string{"func value in interface not supported"}},
-		{"call-funcresult", "package main\nfunc f() {}\nfunc g() func() { return f }\nfunc main() {\n\tg()() // ERR\n}\n", []string{"calling a func value not supported"}},
 		{"captured-assign-nested", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tx := 1\n\tactor.Spawn(func() {\n\t\tf := func() {\n\t\t\tx = 2 // ERR\n\t\t}\n\t\tactor.Spawn(f)\n\t})\n\tprintln(x)\n}\n", []string{"captured variable"}},
 		{"captured-opassign-before", "package main\nfunc main() {\n\tx := 1\n\tx += 1 // ERR\n\tf := func() { println(x) }\n\t_ = f\n}\n", []string{"captured variable must not be reassigned"}},
 		{"import-unknown-lib", "package main\nimport \"gogo/nosuch\" // ERR\nfunc main() { nosuch.X() }\n", []string{`import "gogo/nosuch" not supported`}},
@@ -544,7 +543,25 @@ func main() {
 	actor.SpawnOpt(work, actor.Options{})
 	supervisor.Supervise(func() { println(me) }, supervisor.Spec{Restart: supervisor.Transient, MaxRestarts: 1, PeriodMs: 100})
 	actor.Send(me, j)
+
+	// Calling func values of any signature.
+	f()
+	j.Run()
+	func() {}()
+	pass(f)()
+	add := func(a, b int) int { return a + b }
+	println(add(1, 2))
+	hs := []func(int) (int, string){func(n int) (int, string) { return n, "x" }}
+	n, s := hs[0](3)
+	println(n, s)
+	hs[0](4)
+	r := Rec{}
+	println(r.F(r, 1) == 0)
+	var bf func(byte, rune, int64, []byte, any) byte
+	_ = bf
 }
+
+type Rec struct{ F func(Rec, int) int }
 `
 
 func TestAcceptsFuncValues(t *testing.T) {
@@ -593,14 +610,15 @@ func TestLibraries(t *testing.T) {
 	const useLib = "package main\nimport \"gogo/lib\"\nfunc main() { lib.F() }\n"
 	tests := []struct{ name, lib, want string }{
 		{"lib-imports-fmt", "package lib\nimport \"fmt\"\nfunc F() { fmt.Println() }\n", `lib/lib.go:2:8: gogo: import "fmt" not supported`},
-		{"lib-imports-lib", "package lib\nimport \"gogo/lib\"\nfunc F() { lib.F() }\n", `import "gogo/lib" not supported`},
+		{"lib-imports-itself", "package lib\nimport \"gogo/lib\"\nfunc F() { lib.F() }\n", `import cycle gogo/lib -> gogo/lib`},
+		{"lib-imports-missing", "package lib\nimport \"gogo/nolib\"\nfunc F() {}\n", `import "gogo/nolib" not supported`},
 		{"lib-renamed-actor", "package lib\nimport a \"gogo/actor\"\nfunc F() { a.Self() }\n", `import a "gogo/actor" not supported`},
 		{"lib-wrong-package", "package other\nfunc F() {}\n", "package other"},
 		{"lib-global", "package lib\nvar g int\nfunc F() { println(g) }\n", "lib/lib.go:2:1: gogo: global variable not supported"},
 		{"lib-subset", "package lib\nfunc F() {\n\tm := map[int]int{}\n\t_ = m\n}\n", "lib/lib.go:3:7: gogo: map not supported"},
 		{"lib-type-error", "package lib\nfunc F() { undefined() }\n", "undefined"},
 		{"lib-captured-reassign", "package lib\nimport \"gogo/actor\"\nfunc F() {\n\tx := 1\n\tx = 2\n\tactor.Spawn(func() { println(x) })\n}\n", "lib/lib.go:5:2: gogo: captured variable must not be reassigned"},
-		{"lib-imports-port", "package lib\nimport (\n\t\"gogo/actor\"\n\t\"gogo/port\"\n)\nfunc F(p actor.PID) { port.Close(p) }\n", `import "gogo/port" not supported`},
+		{"lib-imports-port", "package lib\nimport (\n\t\"gogo/actor\"\n\t\"gogo/port\"\n)\nfunc F() { port.Close(actor.Self()) }\n", ""},
 		{"lib-ok", "package lib\nimport \"gogo/actor\"\nfunc F() { actor.Spawn(func() { println(1) }) }\n", ""},
 		{"lib-bytes-ok", "package lib\nimport \"gogo/bytes\"\nfunc F() {\n\tb := bytes.NewBuffer(4)\n\tb.WriteString(\"x\")\n\tprintln(b.Freeze().Len())\n}\n", ""},
 	}
@@ -673,6 +691,38 @@ func main() {
 	}
 	if _, err := Compile(prog); err != nil {
 		t.Fatalf("Compile: %v", err)
+	}
+}
+
+// Libraries may import other libraries (acyclically); they load in
+// dependency order, each once.
+func TestLibraryImportsLibrary(t *testing.T) {
+	libs := fakeLibs(t, map[string]string{
+		"a/a.go": "package a\nimport \"gogo/b\"\nfunc F() int { return b.G() + 1 }\n",
+		"b/b.go": "package b\nimport \"gogo/c\"\nfunc G() int { return c.H() + 1 }\n",
+		"c/c.go": "package c\nfunc H() int { return 1 }\n",
+	})
+	prog, err := LoadWith(writeProg(t, "package main\nimport (\n\t\"gogo/a\"\n\t\"gogo/c\"\n)\nfunc main() { println(a.F(), c.H()) }\n"), libs)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	var got []string
+	for _, l := range prog.Libs {
+		got = append(got, l.Pkg.Path())
+	}
+	if strings.Join(got, " ") != "gogo/c gogo/b gogo/a" {
+		t.Fatalf("Libs = %v, want dependency order c b a", got)
+	}
+	if errs := Check(prog); len(errs) != 0 {
+		t.Fatalf("Check: %v", errs)
+	}
+	cyc := fakeLibs(t, map[string]string{
+		"a/a.go": "package a\nimport \"gogo/b\"\nfunc F() { b.G() }\n",
+		"b/b.go": "package b\nimport \"gogo/a\"\nfunc G() { a.F() }\n",
+	})
+	err = loadErr(t, "package main\nimport \"gogo/a\"\nfunc main() { a.F() }\n", cyc)
+	if err == nil || !strings.Contains(err.Error(), "import cycle gogo/a -> gogo/b -> gogo/a") {
+		t.Fatalf("want an import cycle error, got %v", err)
 	}
 }
 

@@ -262,17 +262,17 @@ bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out) {
     return true;
 }
 
-bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
-    uint32_t fw = msg_charge_words(m);
+/* True if `to` can queue m (charged fw words): its mailbox counter can
+ * hold it and, with quota, its limit too. */
+static bool fits(const Actor *to, const Msg *m, uint32_t fw, bool quota) {
     /* Receiving the first handle makes the holder list, charged to `to`:
      * count it now (not queued: mbox_words stays fw). */
     uint32_t list = (m->flags & MSG_HANDLES) ? bytes_list_words(to) : 0u;
-    if (fw > 65535u - to->mbox_words ||
-        (quota && (uint32_t)to->mem_words + actor_charged_words(to) + fw + list > actor_max_words(to))) {
-        msg_free(m);
-        actor_mark_exit(vm, to, R_MAILBOX_OVERFLOW, T_EMPTYSTR);
-        return false;
-    }
+    return fw <= 65535u - to->mbox_words &&
+           (!quota || (uint32_t)to->mem_words + actor_charged_words(to) + fw + list <= actor_max_words(to));
+}
+
+static void queue(Vm *vm, Actor *to, Msg *m, uint32_t fw) {
     m->next = NULL;
     if (to->mbox_tail) to->mbox_tail->next = m;
     else to->mbox_head = m;
@@ -283,6 +283,24 @@ bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
         to->state = A_RUNNABLE;
         runq_push(vm, to);
     }
+}
+
+bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
+    uint32_t fw = msg_charge_words(m);
+    if (!fits(to, m, fw, quota)) {
+        msg_free(m);
+        actor_mark_exit(vm, to, R_MAILBOX_OVERFLOW, T_EMPTYSTR);
+        return false;
+    }
+    queue(vm, to, m, fw);
+    return true;
+}
+
+bool msg_try_enqueue(Vm *vm, Actor *to, Msg *m) {
+    if (to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) return false;
+    uint32_t fw = msg_charge_words(m);
+    if (!fits(to, m, fw, true)) return false;
+    queue(vm, to, m, fw);
     return true;
 }
 

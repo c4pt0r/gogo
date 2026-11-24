@@ -4,6 +4,8 @@
 #include "alloc.h"
 #include "term.h"
 #include "config.h"
+#include "bytes.h"
+#include "signals.h"
 
 /* Writes a K_STRUCT of n fields at off: [hdr][type_id][fields...]. */
 static void put_struct(Actor *a, uint32_t off, uint32_t type_id,
@@ -418,5 +420,49 @@ TEST(saturated_limit_blocks_growth) {
     CHECK(!heap_push_frame(&vm, a, (uint16_t)free_words, 0));
     CHECK(a->mem_words <= 24);
     a->mbox_words = 0;
+    actor_free(&vm, a);
+}
+
+/* A waiting actor's slack is collected for a refused non-fatal delivery
+ * (heap_reclaim_waiting): its block shrinks to the live data, the data
+ * intact; a runnable actor is left alone. */
+TEST(reclaim_waiting_drops_slack) {
+    Vm vm;
+    Actor *a = setup(&vm, 400);
+    CHECK(heap_push_frame(&vm, a, 1, -1));
+    uint32_t o = heap_alloc(&vm, a, 150, NULL, 0);    /* live: 150 + 3 of 400 */
+    a->mem[o] = hdr_make(150, K_STRING);
+    a->mem[o + 1] = 0;
+    a->mem[a->fp] = term_from_ref(o);
+    CHECK(!heap_reclaim_waiting(&vm, a));             /* runnable */
+    CHECK_EQ(a->mem_words, 400);
+    a->state = A_WAITING;
+    CHECK(heap_reclaim_waiting(&vm, a));
+    CHECK_EQ(a->mem_words, 153);
+    CHECK_EQ(a->mem[term_ref_off(a->mem[a->fp])], hdr_make(150, K_STRING));
+    CHECK(!heap_reclaim_waiting(&vm, a));             /* nothing more to drop */
+    a->state = A_RUNNABLE;
+    actor_free(&vm, a);
+}
+
+/* The sweep alone can free room: a waiting actor at the smallest block
+ * (no slack to drop) holding a Bytes handle it no longer reaches gets it
+ * released, and that counts as reclaimed (spec M5 final review). */
+TEST(reclaim_waiting_counts_released_bytes) {
+    Vm vm;
+    Actor *a = setup(&vm, 24);
+    bytes_reset();
+    CHECK(heap_push_frame(&vm, a, 1, -1));
+    uint8_t *d;
+    term h = bytes_make(&vm, a, 1000, &d);   /* unpinned: the sweep may drop it */
+    CHECK(h != T_NIL);
+    uint32_t charged = actor_charged_words(a);
+    CHECK(charged >= 250u);
+    a->state = A_WAITING;                             /* h is in no register */
+    CHECK(heap_reclaim_waiting(&vm, a));
+    CHECK_EQ(a->mem_words, 24);                       /* the block did not shrink */
+    CHECK(actor_charged_words(a) < charged);
+    CHECK(!heap_reclaim_waiting(&vm, a));
+    a->state = A_RUNNABLE;
     actor_free(&vm, a);
 }

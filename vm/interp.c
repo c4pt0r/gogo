@@ -611,6 +611,35 @@ int interp_run(Vm *vm, Actor *a) {
             break;
         }
 
+        case OP_CALLV: {
+            /* Closure in rb, args rb+1..rb+c. The callee's parameters are
+             * the closure's captures followed by the args. A nil (or any
+             * non-closure) value is badcode. */
+            REG(rb); REGS(rb + 1u, rc);
+            const uint32_t *obj = obj_of(vm, a, R[rb]);
+            CHECK(obj && term_is_ref(R[rb]) && hdr_kind(obj[0]) == K_CLOSURE);
+            uint32_t f = obj[1];
+            uint32_t ncaps = hdr_words(obj[0]) - 2u;
+            CHECK(f < img->n_funcs);
+            uint32_t callee_regs = image_func_nregs(img, f);
+            CHECK(image_func_nparams(img, f) == ncaps + rc && ncaps + rc <= callee_regs);
+            REG(ra);
+            /* As for CALL; the closure is re-read through its register,
+             * a GC root, after the push. */
+            uint32_t caller_top = (uint32_t)a->mem_words - a->fp;
+            if (!heap_push_frame(vm, a, (uint16_t)callee_regs, (int32_t)pc)) CRASH(R_OUT_OF_MEMORY);
+            const term *args = a->mem + (a->mem_words - caller_top) + rb;
+            const uint32_t *caps = a->mem + term_ref_off(args[0]) + 2u;
+            for (uint32_t i = 0; i < ncaps; i++) a->mem[a->fp + i] = caps[i];
+            for (uint32_t i = 0; i < rc; i++) a->mem[a->fp + ncaps + i] = args[1u + i];
+            fn = f;
+            nregs = callee_regs;
+            next = image_func_code_off(img, fn);
+            RELOAD();
+            budget--;
+            break;
+        }
+
         case OP_RET: case OP_RETN: {
             /* RET returns ra into the CALL's destination register; RETN
              * returns ra..ra+b-1 into dst..dst+b-1. The callee frame is
@@ -632,7 +661,7 @@ int interp_run(Vm *vm, Actor *a) {
             CHECK(saved > 0 && (uint32_t)saved <= a->mem_words &&
                   a->mem_words - (uint32_t)saved == a->sp);
             CHECK(ret >= 0 && (uint32_t)ret + 1u < img->code_words &&
-                  OP_OP(code[ret]) == OP_CALL);
+                  (OP_OP(code[ret]) == OP_CALL || OP_OP(code[ret]) == OP_CALLV));
             uint32_t caller = func_of_pc(img, (uint32_t)ret);
             uint32_t caller_regs = image_func_nregs(img, caller);
             uint32_t caller_fp = a->sp;
@@ -644,7 +673,7 @@ int interp_run(Vm *vm, Actor *a) {
             nregs = caller_regs;
             RELOAD();
             for (uint32_t i = 0; i < n; i++) R[dst + i] = a->mem[fp + ra + i];
-            next = (uint32_t)ret + 2u;
+            next = (uint32_t)ret + (op_has_ext(OP_OP(code[ret])) ? 2u : 1u);
             break;
         }
 
@@ -981,10 +1010,25 @@ int interp_run(Vm *vm, Actor *a) {
                                            * (e.g. from a failed Open): nothing */
                 R[ra] = T_NIL;
                 break;
+            case B_PORT_HANDOFF:
+                CHECK(rc == 2);
+                R[ra] = term_from_bool(port_handoff(vm, a, R[rb], R[rb + 1]));   /* no GC */
+                break;
+            case B_NET_SUBSCRIBE:
+                CHECK(rc == 0);
+                R[ra] = term_from_bool(port_subscribe(vm, a));   /* no GC */
+                break;
             case B_STR_CONCAT: case B_LEN: case B_INDEX: case B_SETINDEX: case B_SLICE:
             case B_MAKE_SLICE: case B_APPEND: case B_COPY: case B_CAP: case B_STR_FROM:
             case B_BYTESLICE_FROM: case B_STR_CMP: case B_BUF_NEW: case B_BUF_WRITE:
             case B_BUF_FREEZE: case B_BYTES_FROM: case B_BYTES_EQUAL: case B_BYTES_COPYTO: {
+                uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
+                RELOAD();
+                if (err != R_NORMAL) CRASH(err);
+                break;
+            }
+            case B_CONFIG_GET: {
+                REGS(ra, 2);   /* two results: value, ok */
                 uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
                 RELOAD();
                 if (err != R_NORMAL) CRASH(err);
@@ -1032,9 +1076,10 @@ crash:
 
 /* Scheduler hooks into the port layer.
  *  sched_drain:         delivers the event ring and any due trailing
- *                       debounce values; run at the top of every scheduler
- *                       pass. Reads the clock only when there is something
- *                       to do (an event queued, or a debounce value pending).
+ *                       debounce values and drains the extra source (net
+ *                       RX/link slots, port_set_source); run at the top of
+ *                       every scheduler pass. Reads the clock only when
+ *                       there is something to do (port_work_pending).
  *  sched_any_live:      true while some open port could still produce
  *                       events; the VM does not exit while it holds.
  *  sched_next_deadline: earliest pending debounce deadline, if any, as an
@@ -1042,7 +1087,7 @@ crash:
  *                       wait timeout. A deadline already due is serviced by
  *                       the next sched_drain. */
 static void sched_drain(Vm *vm) {
-    if (vm->ports_pending || !evq_empty()) port_drain(vm, platform_now_ms());
+    if (port_work_pending(vm)) port_drain(vm, platform_now_ms());
 }
 static bool sched_any_live(Vm *vm) { return port_any_live(vm); }
 static bool sched_next_deadline(Vm *vm, uint64_t *when) { return port_next_deadline(vm, when); }

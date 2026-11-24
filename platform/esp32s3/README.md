@@ -52,7 +52,7 @@ time.
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v3, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
+(format v4, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
 image version changes, reflash the firmware too: an older firmware refuses
 a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
 one). At boot the firmware checks the magic, the length (multiple of 4,
@@ -107,6 +107,78 @@ in `cmd/gogo/flash.go`.
     64 KB data, 64-byte lines), because the VM (CPU1) and the render task
     (CPU0) share them and rendering from flash evicted the VM's code.
 
+- `wifi.c`: Wi-Fi station and `net/netif.h` (M5). The driver's raw frames go
+  straight to gogo's own stack (`net/`, compiled into the firmware) through
+  the driver's internal interface, pinned to ESP-IDF v6.1.1:
+  `esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_cb)` (the callback runs in the
+  Wi-Fi task on CPU0, offers the frame to the stack's single RX slot with
+  `net_rx_offer`, which copies or drops it, and frees the driver buffer at
+  once), `esp_wifi_internal_tx` (copies; called from the VM task) and
+  `esp_wifi_get_mac`. `esp_netif` and lwIP are never initialised and none of
+  their code is linked. The station connects with `wifi.ssid` /
+  `wifi.password` from the config store (WPA2 at least when a password is
+  set, strongest AP of that name, no modem sleep), reconnects after every
+  disconnect (or refused connect call) with backoff 1 s doubling to 32 s
+  (logged on serial: `gogo: wifi retry in <ms> ms`), and reconnects at
+  once when `gogo config` changes a `wifi.` key. All station state (backoff,
+  retry timer) is changed only on the default event-loop task: the retry
+  timer, `gogo config` and the scan post gogo's own events to it. Link changes go to `net_link_event`.
+  Screen lines: `gogo: wifi not configured (gogo config set wifi.ssid ...)`,
+  `gogo: wifi connected (<ssid>, ch <n>, <rssi> dBm)`, `gogo: wifi lost
+  (<why>, reason <n>), reconnecting`, `gogo: wifi: <why> (reason <n>),
+  retrying` (first failure only), `gogo: ip <a.b.c.d> (gateway <g>)` when
+  the stack goes up (`platform_net_report`) and `gogo: network down`.
+- `config_esp.c`: the config store (NVS namespace `gogo`, one blob per key;
+  `config.Get` reads it, `wifi.` keys hidden) and the `gogo config` command
+  handler: a task (CPU0) reads the USB-Serial/JTAG input (driver installed,
+  stdio switched to it) and answers frames
+  `\x02gogo-config <op> [<key> [<value>]]\n` with `\x02kv <text>` lines and
+  then `\x02ok[ <text>]` or `\x02err <reason>`; ops `set get rm list`
+  plus `scan` (nearby networks) and `stats` (net counters, `heap_free`,
+  `heap_min`, `arena_used`). The password is never sent back (`(set)`).
+  Program output never carries `\x02` on serial (written as `?`), so a
+  program cannot fake a reply; buffers that held a frame are zeroed after
+  each command, and `get wifi.password` reads only the value's length.
+  Serial output does not block the VM when no host reads the port: IDF's
+  driver-mode stdio tries a full TX ring once for 50 ms and then drops
+  (checked: netdemo kept fetching with the port closed).
+  The NVS partition is not written by `idf.py flash` or `gogo flash`, so
+  settings survive reflashing.
+
+Wi-Fi setup (once per board; `gogo config` talks to the board when exactly
+one is connected and `$GOGO_CONFIG` is unset, or with `-port`):
+
+    build/gogo config scan                      # which networks the board sees (2.4 GHz only)
+    build/gogo config set wifi.ssid MyNetwork
+    build/gogo config set wifi.password -       # reads the password from stdin
+    build/gogo config list
+
+Wi-Fi memory (measured on the M5StickS3), internal RAM. The buffer
+settings in `sdkconfig.defaults` are the smallest *tested* working ones,
+not proven minima: 2 static RX (the Kconfig minimum) + 2 dynamic RX
+buffers, 2 dynamic TX buffers, 1 RX management buffer (minimum), 6
+management short buffers (minimum), no AMPDU, no SoftAP/enterprise,
+driver NVS off, IRAM speed options off. With them DHCP, DNS, HTTP GET, 20
+sequential and 3 x 4 parallel page loads and 20 pings all pass; 0 dynamic
+RX would mean "unlimited" in IDF, so 1 was not tried below 2.
+
+| what | bytes |
+|---|---|
+| static (.data/.bss/IRAM) added by Wi-Fi, PHY, supplicant, NVS, USB driver | about 31.5 K |
+| heap: `esp_wifi_init` (incl. default event loop) | 25.1 K (25.7 K with 4/4/2 buffers) |
+| heap: `esp_wifi_start` | 1.8 K |
+| heap: associated (WPA2), steady state | about 2.4 K |
+| heap: dynamic RX/TX buffers under traffic (at most 2 + 2 frames) | up to about 6.5 K, transient |
+| gogo net stack fixed state (`net_s`) | 3640 |
+| config handler (scratch, line buffer; task stack 4 K) | about 2.1 K + 4 K |
+| free internal heap at the boot line (before the VM; was 275 K without Wi-Fi) | 197 K |
+| free internal heap running `examples/netdemo` (`gogo config stats`) | about 173 K (arena 22 K in use) |
+
+The boot logs the driver's heap use on serial (`gogo: wifi heap: ...`).
+
+The receive path drops frames while the single RX slot is full
+(`rx_busy`); TCP's one-segment windows keep that rare.
+
 Console build switches (`idf.py -D...`, kept in each build directory's
 CMake cache, so use a separate `-B` directory per variant):
 
@@ -125,3 +197,19 @@ Examples:
   crash (red on screen).
 - `examples/printbench`: 1000 `println` lines, then the elapsed ms.
 - `examples/memfill`: actors grow by recursion until one hits oom; the exit line shows the arena really filled.
+- `examples/netdemo` (repo root): DHCP, a Chinese/English page on port 80
+  (KEY1/KEY2 counts, last fetch, uptime) and an `http.Get` of `demo.url`
+  every 10 s.
+
+netdemo usage (after the Wi-Fi setup above; the password is never written
+to a file or the command line, only typed to `gogo config set wifi.password -`):
+
+    build/gogo config set demo.url http://example.com/   # optional fetch target
+    build/gogo build examples/netdemo -o netdemo.gogo
+    build/gogo flash netdemo.gogo
+
+The screen shows `gogo: wifi connected ...`, then `gogo: ip <addr> (gateway
+<g>)` and the page URL; open `http://<addr>/` in a browser on the same LAN.
+The page (Chinese/English) shows the KEY1/KEY2 counts, fetches ok/total and
+uptime, and refreshes every 5 s; the device also prints an `http.Get` result
+every 10 s. There is no HTTPS (TLS is deferred, see `docs/m5-followups.md`).

@@ -1,0 +1,50 @@
+// Listens on 8080; an accepted connection stays paused for 100 ms, then is
+// handed to a new actor that echoes one segment, shuts down and exits.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/net"
+	"gogo/port"
+)
+
+func handler(conn actor.PID, main actor.PID) {
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Data:
+			println("got", m.Data.String())
+			actor.Send(conn, net.Write{Data: m.Data})
+			actor.Send(conn, net.Shutdown{})
+		case net.Written:
+			println("written")
+		case net.Closed:
+			println("closed", m.Reason)
+			actor.Send(main, 1)
+			return
+		}
+	}
+}
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	l, ok := port.Open("tcp_listen", net.Listen{Port: 8080})
+	println("listen", ok)
+	_, ok = port.Open("tcp_listen", net.Listen{Port: 8080})
+	println("again", ok)
+	me := actor.Self()
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Accepted:
+			println("accepted")
+			actor.Sleep(100)
+			conn := m.Conn
+			h := actor.Spawn(func() { handler(conn, me) })
+			println("handoff", port.Handoff(conn, h))
+		case int:
+			println("handler done")
+			port.Close(l)
+			return
+		}
+	}
+}

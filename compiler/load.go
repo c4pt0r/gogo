@@ -24,15 +24,35 @@ import (
 const ActorPath = "gogo/actor"
 
 // PortPath is the import path of the port (peripheral) API, a stub package
-// like gogo/actor. Only package main may import it.
+// like gogo/actor.
 const PortPath = "gogo/port"
 
 // BytesPath is the import path of the byte data API (bytes.Bytes,
 // bytes.Buffer), a stub package like gogo/actor.
 const BytesPath = "gogo/bytes"
 
+// NetPath is the import path of the network API (port configs, commands,
+// events, Subscribe), a stub package like gogo/port. Its source is in
+// netapi/ (stubDir): net/ holds the C stack, and a Go package directory
+// cannot hold C files without cgo.
+const NetPath = "gogo/net"
+
+// ConfigPath is the import path of the configuration store API
+// (config.Get), a stub package like gogo/actor.
+const ConfigPath = "gogo/config"
+
 // isStub reports whether path is one of the stub packages.
-func isStub(path string) bool { return path == ActorPath || path == PortPath || path == BytesPath }
+func isStub(path string) bool {
+	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath
+}
+
+// stubDir is the directory of the library set holding stub package path.
+func stubDir(path string) string {
+	if path == NetPath {
+		return "netapi"
+	}
+	return strings.TrimPrefix(path, libPrefix)
+}
 
 // libPrefix starts the import path of every gogo library package.
 const libPrefix = "gogo/"
@@ -83,8 +103,8 @@ func sizes() types.Sizes { return &types.StdSizes{WordSize: 4, MaxAlign: 4} }
 // loader parses and type-checks library packages from libs, a file system
 // with one directory per package: gogo/<name> lives in <name>/*.go. It is
 // also the importer of every package it checks; it serves only packages it
-// has already loaded, and the stub packages gogo/actor, gogo/port and
-// gogo/bytes.
+// has already loaded, and the stub packages gogo/actor, gogo/port,
+// gogo/bytes, gogo/net and gogo/config.
 type loader struct {
 	fset  *token.FileSet
 	libs  fs.FS
@@ -100,14 +120,14 @@ func (l *loader) Import(path string) (*types.Package, error) {
 	if !isStub(path) {
 		return nil, fmt.Errorf("import %q not supported", path)
 	}
-	files, err := l.parseDir(strings.TrimPrefix(path, libPrefix))
+	files, err := l.parseDir(stubDir(path))
 	if err != nil {
 		return nil, err
 	}
-	// gogo/port imports gogo/actor through l, so both see the same
-	// actor.PID.
+	// gogo/port and gogo/net import gogo/actor and gogo/bytes through l,
+	// so every package sees the same actor.PID and bytes.Bytes.
 	var imp types.Importer = importer.Default()
-	if path == PortPath {
+	if path == PortPath || path == NetPath {
 		imp = l
 	}
 	conf := types.Config{Sizes: sizes(), Importer: imp}
@@ -174,24 +194,41 @@ func (l *loader) checkImports(f *ast.File, allowed func(string) bool, why string
 	return nil
 }
 
-// loadLib parses and type-checks library path, which may import only
-// gogo/actor and gogo/bytes (so libraries never depend on each other).
-func (l *loader) loadLib(path string) error {
+// loadLib parses and type-checks library path, first loading the libraries
+// it imports (depth first, so l.order is a dependency order). A library may
+// import the stub packages and other libraries, without cycles; stack is
+// the chain of libraries being loaded, for the cycle error.
+func (l *loader) loadLib(path string, stack []string) error {
 	if l.pkgs[path] != nil {
 		return nil
 	}
+	for i, p := range stack {
+		if p == path {
+			return fmt.Errorf("gogo: import cycle %s", strings.Join(append(stack[i:], path), " -> "))
+		}
+	}
+	stack = append(stack, path)
 	name := strings.TrimPrefix(path, libPrefix)
 	files, err := l.parseDir(name)
 	if err != nil {
 		return err
 	}
+	allowed := func(p string) bool { return isStub(p) || l.isLib(p) }
 	for _, f := range files {
 		if f.Name.Name != name {
 			return fmt.Errorf("%s: gogo: package %s in library %s (want package %s)", l.fset.Position(f.Name.Pos()), f.Name.Name, path, name)
 		}
-		libImport := func(p string) bool { return p == ActorPath || p == BytesPath }
-		if err := l.checkImports(f, libImport, " (a library may import only "+ActorPath+" and "+BytesPath+")"); err != nil {
+		if err := l.checkImports(f, allowed, ""); err != nil {
 			return err
+		}
+	}
+	for _, f := range files {
+		for _, imp := range f.Imports {
+			if p, _ := strconv.Unquote(imp.Path.Value); !isStub(p) {
+				if err := l.loadLib(p, stack); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	pkg, err := l.check(path, files)
@@ -274,7 +311,7 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 	}
 	sort.Strings(libPaths)
 	for _, p := range libPaths {
-		if err := l.loadLib(p); err != nil {
+		if err := l.loadLib(p, nil); err != nil {
 			return nil, err
 		}
 	}

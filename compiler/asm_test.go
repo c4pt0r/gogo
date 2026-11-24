@@ -52,7 +52,7 @@ func TestOpcodesMatchC(t *testing.T) {
 	if len(cConsts) < 30 {
 		t.Fatalf("parsed only %d C constants", len(cConsts))
 	}
-	for _, n := range []string{"BPortOpen", "BPortClose", "TypeGpio", "TypeWrite", "TypeEdge", "OpClear", "OpRetn", "BBytesCopyto", "TyBytes"} {
+	for _, n := range []string{"BPortOpen", "BPortClose", "TypeGpio", "TypeWrite", "TypeEdge", "OpClear", "OpRetn", "OpCallv", "BBytesCopyto", "BPortHandoff", "BNetSubscribe", "BConfigGet", "TypeNetDatagram", "TyBytes"} {
 		if _, ok := cConsts[n]; !ok {
 			t.Errorf("%s not parsed from vm/opcodes.h", n)
 		}
@@ -67,7 +67,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpRetn)+1 || len(builtinNames) != int(BBytesCopyto)+1 {
+	if len(opNames) != int(OpCallv)+1 || len(builtinNames) != int(BConfigGet)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -139,19 +139,20 @@ func upperSnake(s string) string {
 func TestReservedTypesMatchStubs(t *testing.T) {
 	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath} {
+	for _, path := range []string{ActorPath, PortPath, NetPath} {
 		pkg, err := l.Import(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		pkgs[path] = pkg
 	}
-	seenPort := false
+	order := map[string]int{ActorPath: 0, PortPath: 1, NetPath: 2}
+	last := 0
 	for i, rt := range reservedTypes {
-		if rt.pkg == PortPath {
-			seenPort = true
-		} else if seenPort || rt.pkg != ActorPath {
+		if o, ok := order[rt.pkg]; !ok || o < last {
 			t.Errorf("reserved type %s: package %s out of order", rt.name, rt.pkg)
+		} else {
+			last = o
 		}
 		obj, ok := pkgs[rt.pkg].Scope().Lookup(rt.name).(*types.TypeName)
 		if !ok {
@@ -166,12 +167,16 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 		if strings.Join(names, " ") != strings.Join(rt.fields, " ") {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
-		if g, ok := goConstants["Type"+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
+		prefix := "Type"
+		if rt.pkg == NetPath {
+			prefix = "TypeNet"
+		}
+		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
 			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
 		}
 	}
-	if len(reservedTypes) != 9 {
-		t.Errorf("%d reserved types, want 9", len(reservedTypes))
+	if len(reservedTypes) != 27 {
+		t.Errorf("%d reserved types, want 27", len(reservedTypes))
 	}
 }
 
@@ -222,8 +227,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 3 {
-		t.Errorf("imageVersion %d, want 3", imageVersion)
+	if imageVersion != 4 {
+		t.Errorf("imageVersion %d, want 4", imageVersion)
 	}
 }
 
@@ -321,7 +326,7 @@ func TestImageLayout(t *testing.T) {
 	}
 	w := words(raw)
 	// "main": 2 hdr words + 1 payload = 3; "P": 3.
-	want := []uint32{0x4F474F47, 3, 1, 1, 6, 1, 0, 0}
+	want := []uint32{0x4F474F47, imageVersion, 1, 1, 6, 1, 0, 0}
 	for i, v := range want {
 		if w[i] != v {
 			t.Fatalf("header word %d = %#x, want %#x", i, w[i], v)

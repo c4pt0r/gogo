@@ -1,0 +1,42 @@
+// Closes connections actively so they end in TIME_WAIT: first one (whose
+// TIME_WAIT the peer probes), then four at once; a fifth dial reclaims the
+// oldest TIME_WAIT slot.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/net"
+	"gogo/port"
+)
+
+const gw = 10<<24 | 1
+
+// closed waits for c's Closed and closes the port.
+func closed(c actor.PID) {
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Connected:
+			actor.Send(c, net.Shutdown{})
+		case net.Closed:
+			println("closed", m.Reason)
+			port.Close(c)
+			return
+		}
+	}
+}
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: gw})
+	actor.Sleep(100)
+	c, _ := port.Open("tcp", net.Dial{IP: gw, Port: 100})
+	closed(c)
+	actor.Sleep(3000)
+	for p := 101; p <= 104; p++ {
+		c, _ = port.Open("tcp", net.Dial{IP: gw, Port: p})
+		closed(c)
+	}
+	c, ok := port.Open("tcp", net.Dial{IP: gw, Port: 105})
+	println("dial", ok)
+	actor.Sleep(100)
+}

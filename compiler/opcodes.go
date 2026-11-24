@@ -46,7 +46,8 @@ const (
 	OpBox64 uint8 = 36 // ra = rb as a K_INT64 box (every int64 inside any)
 
 	OpClear uint8 = 37 // ra .. ra+b-1 = nil (dead registers stop being GC roots)
-	OpRetn  uint8 = 38 // return ra .. ra+b-1 into the CALL's dst .. dst+b-1
+	OpRetn  uint8 = 38 // return ra .. ra+b-1 into the CALL's (or CALLV's) dst .. dst+b-1
+	OpCallv uint8 = 39 // call the closure in rb with args rb+1..rb+c -> ra (captures, then args)
 )
 
 // OP_CONV c operands.
@@ -110,6 +111,10 @@ const (
 	BBytesFrom   uint32 = 43 // string | []byte -> Bytes (a copy)
 	BBytesEqual  uint32 = 44 // Bytes, Bytes -> bool
 	BBytesCopyto uint32 = 45 // Bytes, []byte -> n
+
+	BPortHandoff  uint32 = 46 // port pid, to pid -> bool
+	BNetSubscribe uint32 = 47 // -> bool
+	BConfigGet    uint32 = 48 // key string -> value string, ok bool
 )
 
 // Off-heap Bytes limits: twins of vm/config.h's defaults (checked by
@@ -152,6 +157,25 @@ const (
 	TypeGpio     uint32 = 6
 	TypeWrite    uint32 = 7
 	TypeEdge     uint32 = 8
+	// gogo/net
+	TypeNetIfconfig  uint32 = 9
+	TypeNetSetaddr   uint32 = 10
+	TypeNetUp        uint32 = 11
+	TypeNetDown      uint32 = 12
+	TypeNetAddr      uint32 = 13
+	TypeNetUdp       uint32 = 14
+	TypeNetSendto    uint32 = 15
+	TypeNetDatagram  uint32 = 16
+	TypeNetDial      uint32 = 17
+	TypeNetListen    uint32 = 18
+	TypeNetWrite     uint32 = 19
+	TypeNetShutdown  uint32 = 20
+	TypeNetResume    uint32 = 21
+	TypeNetConnected uint32 = 22
+	TypeNetData      uint32 = 23
+	TypeNetWritten   uint32 = 24
+	TypeNetClosed    uint32 = 25
+	TypeNetAccepted  uint32 = 26
 )
 
 // Heap object kinds.
@@ -220,7 +244,7 @@ var opNames = [...]string{"NOP", "MOVE", "LOADK", "LOADI32", "ADD", "SUB", "MUL"
 	"DIV", "REM", "NEG", "EQ", "NE", "LT", "LE", "NOT", "JMP", "JMPF", "JMPT",
 	"CALL", "RET", "NEWSTRUCT", "GETFIELD", "MKCLOSURE", "TYPEIS", "BUILTIN",
 	"CONV", "ADD64", "SUB64", "MUL64", "DIV64", "REM64", "NEG64", "EQ64", "NE64",
-	"LT64", "LE64", "BOX64", "CLEAR", "RETN"}
+	"LT64", "LE64", "BOX64", "CLEAR", "RETN", "CALLV"}
 
 var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "MEMORY",
 	"SPAWN_LINK", "SPAWN_OPT", "LINK", "UNLINK", "TRAP_EXIT", "EXIT", "KILL",
@@ -229,7 +253,7 @@ var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "M
 	"UNREGISTER", "PORT_OPEN", "PORT_CLOSE", "STR_CONCAT", "LEN", "INDEX", "SETINDEX",
 	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
 	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
-	"BYTES_COPYTO"}
+	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -246,7 +270,7 @@ var goConstants = map[string]uint32{
 	"OpDiv64": uint32(OpDiv64), "OpRem64": uint32(OpRem64), "OpNeg64": uint32(OpNeg64),
 	"OpEq64": uint32(OpEq64), "OpNe64": uint32(OpNe64), "OpLt64": uint32(OpLt64),
 	"OpLe64": uint32(OpLe64), "OpBox64": uint32(OpBox64), "OpClear": uint32(OpClear),
-	"OpRetn":   uint32(OpRetn),
+	"OpRetn": uint32(OpRetn), "OpCallv": uint32(OpCallv),
 	"BPrintln": BPrintln, "BSpawn": BSpawn, "BSelf": BSelf, "BSend": BSend,
 	"BReceive": BReceive, "BMemory": BMemory,
 	"BSpawnLink": BSpawnLink, "BSpawnOpt": BSpawnOpt, "BLink": BLink,
@@ -261,10 +285,15 @@ var goConstants = map[string]uint32{
 	"BAppend": BAppend, "BCopy": BCopy, "BCap": BCap, "BStrFrom": BStrFrom,
 	"BBytesliceFrom": BBytesliceFrom, "BBufNew": BBufNew, "BBufWrite": BBufWrite,
 	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
-	"BBytesCopyto": BBytesCopyto,
-	"TyInt":        TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
+	"BBytesCopyto": BBytesCopyto, "BPortHandoff": BPortHandoff, "BNetSubscribe": BNetSubscribe,
+	"BConfigGet": BConfigGet,
+	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
 	"TypeDownmsg": TypeDownmsg, "TypeRequest": TypeRequest, "TypeOptions": TypeOptions,
 	"TypeGpio": TypeGpio, "TypeWrite": TypeWrite, "TypeEdge": TypeEdge,
+	"TypeNetIfconfig": TypeNetIfconfig, "TypeNetSetaddr": TypeNetSetaddr, "TypeNetUp": TypeNetUp,
+	"TypeNetDown": TypeNetDown, "TypeNetAddr": TypeNetAddr, "TypeNetUdp": TypeNetUdp,
+	"TypeNetSendto": TypeNetSendto, "TypeNetDatagram": TypeNetDatagram,
+	"TypeNetDial": TypeNetDial, "TypeNetListen": TypeNetListen, "TypeNetWrite": TypeNetWrite, "TypeNetShutdown": TypeNetShutdown, "TypeNetResume": TypeNetResume, "TypeNetConnected": TypeNetConnected, "TypeNetData": TypeNetData, "TypeNetWritten": TypeNetWritten, "TypeNetClosed": TypeNetClosed, "TypeNetAccepted": TypeNetAccepted,
 }

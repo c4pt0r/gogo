@@ -37,6 +37,7 @@
 #include "opcodes.h"
 #include "bytes.h"
 #include "config.h"
+#include "platform.h"
 #include <string.h>
 
 /* Number of heap words of a string with len bytes. */
@@ -586,6 +587,30 @@ static uint32_t bytes_copyto(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb
     return R_NORMAL;
 }
 
+/* CONFIG_GET key: config.Get. "wifi." keys are never looked up. The value
+ * is copied straight into a new heap string: one lookup for its length,
+ * one into the string; a value whose length changed in between (the store
+ * written meanwhile) reads as unset. */
+static uint32_t config_get(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
+    const uint8_t *k;
+    uint32_t kl;
+    if (!str_view(vm, a, R[rb], &k, &kl)) return R_BAD_CODE;
+    int32_t n = -1;
+    if (kl < 5u || memcmp(k, "wifi.", 5) != 0) n = platform_config_get(k, kl, NULL, 0);
+    term v = T_EMPTYSTR;
+    if (n > 0) {
+        uint32_t off;
+        if (!str_alloc(vm, a, (uint32_t)n, &off)) return R_OUT_OF_MEMORY;
+        R = (term *)a->mem + a->fp;
+        str_view(vm, a, R[rb], &k, &kl);
+        if (platform_config_get(k, kl, (uint8_t *)(a->mem + off + 2), (uint32_t)n) == n) v = term_from_ref(off);
+        else n = -1;
+    }
+    R[ra] = v;
+    R[ra + 1] = term_from_bool(n >= 0);
+    return R_NORMAL;
+}
+
 uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc) {
     term *R = (term *)a->mem + a->fp;
     const uint8_t *p, *q;
@@ -681,6 +706,9 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
     case B_BYTES_COPYTO:
         if (rc != 2u) return R_BAD_CODE;
         return bytes_copyto(vm, a, R, ra, rb);
+    case B_CONFIG_GET:
+        if (rc != 1u) return R_BAD_CODE;
+        return config_get(vm, a, R, ra, rb);
     default:
         return R_BAD_CODE;
     }

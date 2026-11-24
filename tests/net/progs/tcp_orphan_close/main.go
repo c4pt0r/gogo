@@ -1,0 +1,43 @@
+// A handler writes its response, shuts down and exits at once: the
+// connection, now an orphan, still delivers the response and finishes the
+// close. main (which holds the address: closing netif would end every
+// connection) returns 3 s later.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/net"
+	"gogo/port"
+)
+
+func handler(conn actor.PID) {
+	switch actor.Receive().(type) {
+	case net.Data:
+		actor.Send(conn, net.Write{Data: bytes.FromString("response")})
+		actor.Send(conn, net.Shutdown{})
+	}
+}
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	_, ok := port.Open("tcp_listen", net.Listen{Port: 8080})
+	if !ok {
+		println("listen failed")
+	}
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Accepted:
+			println("accepted")
+			conn := m.Conn
+			h := actor.Spawn(func() { handler(conn) })
+			actor.Monitor(h)
+			port.Handoff(conn, h)
+		case actor.DownMsg:
+			println("handler exit", m.Reason.Code)
+			actor.Sleep(3000)
+			return
+		}
+	}
+}

@@ -140,10 +140,19 @@ func (c *checker) typeProblem(t types.Type) string {
 	case *types.Chan:
 		return "channel"
 	case *types.Signature:
-		if isFunc(t) {
-			return ""
+		// Any signature: its parameter and result types must be of the
+		// subset (a named struct referring back to itself is fine).
+		if t.Variadic() || t.TypeParams() != nil || t.Recv() != nil {
+			return "func type " + types.TypeString(t, pkgName)
 		}
-		return "func type " + types.TypeString(t, pkgName)
+		for _, tup := range []*types.Tuple{t.Params(), t.Results()} {
+			for i := 0; i < tup.Len(); i++ {
+				if c.typeProblem(tup.At(i).Type()) != "" {
+					return "func type " + types.TypeString(t, pkgName)
+				}
+			}
+		}
+		return ""
 	case *types.Interface:
 		if t.Empty() {
 			return "" // any
@@ -247,13 +256,30 @@ func (c *checker) typeSpec(s *ast.TypeSpec) {
 // pkgName qualifies type names in messages by package name.
 func pkgName(p *types.Package) string { return p.Name() }
 
-// isFunc reports whether t is func(), the only func type of the subset.
+// isFunc reports whether t is a func type (of any signature).
 func isFunc(t types.Type) bool {
-	if t == nil {
+	_, ok := underlying(t).(*types.Signature)
+	return ok
+}
+
+// funcValueCall reports whether call calls a func value: a variable or
+// parameter, a struct field, an element, a call result or a literal of
+// func type (compiled to CALLV), rather than a declared function, a
+// builtin, a stub function, a gogo/bytes method or a conversion.
+func funcValueCall(info *types.Info, call *ast.CallExpr) bool {
+	fun := ast.Unparen(call.Fun)
+	if tv, ok := info.Types[fun]; ok && tv.IsType() {
 		return false
 	}
-	sig, ok := t.Underlying().(*types.Signature)
-	return ok && sig.Params().Len() == 0 && sig.Results().Len() == 0 && !sig.Variadic() && sig.TypeParams() == nil
+	switch fun := fun.(type) {
+	case *ast.Ident:
+		_, ok := info.Uses[fun].(*types.Var)
+		return ok
+	case *ast.SelectorExpr:
+		sel := info.Selections[fun]
+		return sel != nil && sel.Kind() == types.FieldVal
+	}
+	return isFunc(info.TypeOf(fun))
 }
 
 // underlying is t.Underlying(), or nil for a nil t.
@@ -344,7 +370,7 @@ func (c *checker) convertType(target, src types.Type, pos token.Pos) {
 }
 
 // multiCall returns e as a call of a compiled (main or library) function
-// with two or more results, else nil. Such a call may stand where its
+// or of a func value with two or more results, else nil. Such a call may stand where its
 // results are taken apart: `a, b := f()`, `return f()`, `g(f())` or a
 // call statement.
 func (c *checker) multiCall(e ast.Expr) *ast.CallExpr {
@@ -354,6 +380,9 @@ func (c *checker) multiCall(e ast.Expr) *ast.CallExpr {
 	}
 	if tup, ok := c.p.Info.TypeOf(call).(*types.Tuple); !ok || tup.Len() < 2 {
 		return nil
+	}
+	if funcValueCall(c.p.Info, call) {
+		return call
 	}
 	var id *ast.Ident
 	switch fun := ast.Unparen(call.Fun).(type) {
@@ -401,7 +430,7 @@ func (c *checker) typeExpr(e ast.Expr) {
 		return
 	}
 	switch e := e.(type) {
-	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType: // FuncType: func(), checked above
+	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType: // FuncType: its signature was checked above
 	case *ast.ArrayType:
 		if e.Len != nil {
 			c.unsupported(e, "array")
@@ -667,7 +696,7 @@ func (c *checker) assign(s *ast.AssignStmt) {
 }
 
 // twoResult lists the stub functions that return two values (by stubName).
-var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true}
+var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true, "config.Get": true}
 
 // twoResultCall returns the call of `a, b := actor.X(...)` or
 // `a, b = actor.X(...)` when X is a two-result builtin, else nil.
@@ -765,6 +794,10 @@ func stubName(fn *types.Func) string {
 		return "port." + fn.Name()
 	case BytesPath:
 		return "bytes." + fn.Name()
+	case NetPath:
+		return "net." + fn.Name()
+	case ConfigPath:
+		return "config." + fn.Name()
 	}
 	return ""
 }
@@ -823,6 +856,11 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 		c.unsupported(call, "variadic call")
 		return
 	}
+	if funcValueCall(c.p.Info, call) { // f(x), s.F(x), hs[i](x), mk()(x)
+		c.expr(call.Fun)
+		c.args(call, 0)
+		return
+	}
 	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
 		switch obj := c.p.Info.Uses[fun].(type) {
@@ -857,7 +895,7 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 				return
 			}
 		default:
-			c.fail(call.Pos(), "calling a func value not supported")
+			c.unsupported(call, "call of "+fun.Name)
 			return
 		}
 	case *ast.SelectorExpr:
@@ -867,15 +905,11 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 			return
 		}
 		if c.actorFunc(call) == "" && !c.libFunc(fun) {
-			if sel := c.p.Info.Selections[fun]; sel != nil && sel.Kind() == types.FieldVal {
-				c.fail(call.Pos(), "calling a func value not supported")
-			} else {
-				c.unsupported(call, "method call")
-			}
+			c.unsupported(call, "method call") // field calls: funcValueCall
 			return
 		}
 	default:
-		c.fail(call.Pos(), "calling a func value not supported")
+		c.unsupported(call, "call") // func values: funcValueCall
 		return
 	}
 	c.args(call, 0)
@@ -891,7 +925,7 @@ func (c *checker) libFunc(sel *ast.SelectorExpr) bool {
 // args checks the arguments of a call of a declared function from index
 // first on, including their conversion to the parameter types.
 func (c *checker) args(call *ast.CallExpr, first int) {
-	sig, _ := c.p.Info.TypeOf(call.Fun).(*types.Signature)
+	sig, _ := underlying(c.p.Info.TypeOf(call.Fun)).(*types.Signature)
 	if first == 0 && len(call.Args) == 1 && sig != nil && !sig.Variadic() {
 		if inner := c.multiCall(call.Args[0]); inner != nil { // f(g())
 			c.multiConvert(inner, tupleTypes(sig.Params()))
@@ -935,7 +969,7 @@ func (c *checker) expr(e ast.Expr) {
 			if !c.okNil[e] {
 				c.unsupported(e, "nil")
 			}
-		case *types.Func: // a top-level function as a func() value
+		case *types.Func: // a top-level function as a func value
 			if msg := c.typeProblem(obj.Type()); msg != "" {
 				c.unsupported(e, msg)
 			}
@@ -952,9 +986,9 @@ func (c *checker) expr(e ast.Expr) {
 		}
 	case *ast.ParenExpr:
 		c.expr(e.X)
-	case *ast.FuncLit: // its type, func(), was checked above
+	case *ast.FuncLit: // its type was checked above
 		saved := c.results
-		c.results = nil
+		c.results = c.p.Info.TypeOf(e).(*types.Signature).Results()
 		c.block(e.Body)
 		c.results = saved
 	case *ast.CompositeLit:
@@ -964,7 +998,7 @@ func (c *checker) expr(e ast.Expr) {
 			return // actor.Normal, port.Output etc.
 		}
 		if c.libFunc(e) {
-			return // lib.F as a func() value; its type was checked above
+			return // lib.F as a func value; its type was checked above
 		}
 		sel := c.p.Info.Selections[e]
 		if sel == nil || sel.Kind() != types.FieldVal {

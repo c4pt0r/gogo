@@ -19,6 +19,8 @@ size_t platform_esp_arena_cap(void);
 void platform_esp_report_refusal(void);
 /* Prints a line on the console (stderr). */
 void platform_esp_say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/* Prints a line on the serial console only (not the screen). */
+void platform_esp_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 /* Never returns. */
 void platform_esp_idle(void) __attribute__((noreturn));
 
@@ -56,5 +58,24 @@ int lcd_write_rows(int y, int h, const uint16_t *px);
 
 struct PortDriver;
 extern const struct PortDriver gpio_esp_driver;
+
+/* Config store (config_esp.c): NVS namespace "gogo". config_esp_init
+ * opens it (0 on success); config_esp_get reads key into buf (at most cap
+ * bytes) and returns the value's full length or -1 if unset;
+ * config_esp_start_serial starts the `gogo config` command handler task
+ * on the USB-Serial/JTAG console input. */
+int config_esp_init(void);
+int32_t config_esp_get(const char *key, uint8_t *buf, uint32_t cap);
+void config_esp_start_serial(void);
+
+/* Wi-Fi station (wifi.c): wifi_esp_start initialises and starts the driver
+ * (no esp_netif/lwIP) and connects with the stored wifi.ssid/password;
+ * wifi_esp_reconfigure reconnects with the current settings; wifi_esp_scan
+ * writes one "kv" line per nearby network through out (-1 if busy);
+ * wifi_esp_report_heap logs the measured driver memory on serial. */
+void wifi_esp_start(void);
+void wifi_esp_reconfigure(void);
+int wifi_esp_scan(char *line, size_t cap, void (*out)(const char *tag, const char *text, size_t n));
+void wifi_esp_report_heap(void);
 
 #endif

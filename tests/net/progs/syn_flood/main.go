@@ -1,0 +1,41 @@
+// Listens on 80 while the peer floods SYNs (inbound connections leave one
+// slot free): once one connection is accepted, dials out twice (the free
+// slot, then a half-open connection's), waits for both dials to time out,
+// then accepts one more connection.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/net"
+	"gogo/port"
+)
+
+func accepted() {
+	for {
+		switch actor.Receive().(type) {
+		case net.Accepted:
+			println("accepted")
+			return
+		}
+	}
+}
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	_, ok := port.Open("tcp_listen", net.Listen{Port: 80})
+	println("listen", ok)
+	accepted()
+	_, ok = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 90})
+	println("dial", ok)
+	_, ok = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 91})
+	println("dial", ok)
+	for done := 0; done < 2; {
+		switch m := actor.Receive().(type) {
+		case net.Closed:
+			println("closed", m.Reason)
+			done++
+		}
+	}
+	accepted()
+}

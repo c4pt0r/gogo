@@ -1,0 +1,42 @@
+// DHCP, then one TCP connection to 10.0.0.1:80, redialled after every Up;
+// on Down, an http.Get (which must fail at once: no link or no address).
+// Prints every event with the time it arrives.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/dhcp"
+	"gogo/http"
+	"gogo/net"
+	"gogo/port"
+)
+
+func main() {
+	println("subscribe", net.Subscribe())
+	println("start", dhcp.Start(dhcp.Config{TimeoutMs: 30000}), actor.Now())
+	var c actor.PID
+	have := false
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Up:
+			println("up", actor.Now())
+			if !have {
+				actor.Sleep(100)
+				c, have = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+				println("dial", have)
+			}
+		case net.Down:
+			println("down", actor.Now())
+			_, ok := http.Get("http://10.0.0.1/", 5000)
+			println("get", ok, actor.Now())
+		case net.Connected:
+			println("connected", actor.Now())
+		case net.Data:
+			println("data", m.Data.String())
+		case net.Closed:
+			println("closed", m.Reason, actor.Now())
+			port.Close(c)
+			have = false
+		}
+	}
+}

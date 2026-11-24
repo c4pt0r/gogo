@@ -1,0 +1,63 @@
+// Runs the requests in the store's test.script, space separated, in
+// order: "GET:url" and "POST:url" (body test.body, text/plain) through
+// http.Do; "max:n" sets the body limit of the next requests (0: the
+// default); "sleep:ms" sleeps. test.timeout is the timeout (default
+// 3000). Each result prints as "METHOD url ok status len truncated time",
+// then its headers and its body (a byte sum if over 64 bytes).
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/config"
+	"gogo/dhcp"
+	"gogo/http"
+	"gogo/strconv"
+	"gogo/strings"
+)
+
+func atoi(key string, def int) int {
+	if s, ok := config.Get(key); ok {
+		n, _ := strconv.Atoi(s)
+		return n
+	}
+	return def
+}
+
+func main() {
+	println("start", dhcp.Start(dhcp.Config{}))
+	script, _ := config.Get("test.script")
+	text, _ := config.Get("test.body")
+	timeout := atoi("test.timeout", 3000)
+	max := 0
+	for _, step := range strings.Split(script, " ") {
+		op, arg, _ := strings.Cut(step, ":")
+		n, _ := strconv.Atoi(arg)
+		if op == "sleep" {
+			actor.Sleep(n)
+		} else if op == "max" {
+			max = n
+		} else {
+			var body bytes.Bytes
+			ctype := ""
+			if op == "POST" {
+				body, ctype = bytes.FromString(text), "text/plain"
+			}
+			r, ok := http.Do(op, arg, ctype, body, max, timeout)
+			println(op, arg, ok, r.Status, r.Body.Len(), r.Truncated, actor.Now())
+			for _, h := range r.Headers {
+				println("  " + h.Name + ": " + h.Value)
+			}
+			if r.Body.Len() <= 64 {
+				println("  body [" + r.Body.String() + "]")
+			} else {
+				sum := 0
+				for i := 0; i < r.Body.Len(); i++ {
+					sum += int(r.Body.At(i))
+				}
+				println("  sum", sum)
+			}
+		}
+	}
+	println("done")
+}

@@ -2,24 +2,30 @@ CC      ?= cc
 CFLAGS  = -std=c99 -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS)
 BUILD   = build
 
-TEST_SRCS = vm/test/test_main.c vm/test/test_term.c vm/test/test_alloc.c vm/test/test_image.c vm/test/test_heap.c vm/test/test_msg.c vm/test/test_interp.c vm/test/test_signals.c vm/test/test_timer.c vm/test/test_call.c vm/test/test_names.c vm/test/test_out.c vm/test/test_evq.c vm/test/test_port.c vm/test/test_strs.c vm/test/test_slices.c vm/test/test_bytes.c
-# VM core + unix platform, without the unix main (shared with the C tests).
-VM_SRCS   = $(wildcard vm/*.c) platform/unix/platform_unix.c platform/unix/gpio_unix.c
+TEST_SRCS = vm/test/test_main.c vm/test/test_term.c vm/test/test_alloc.c vm/test/test_image.c vm/test/test_heap.c vm/test/test_msg.c vm/test/test_interp.c vm/test/test_signals.c vm/test/test_timer.c vm/test/test_call.c vm/test/test_names.c vm/test/test_out.c vm/test/test_evq.c vm/test/test_port.c vm/test/test_strs.c vm/test/test_slices.c vm/test/test_bytes.c vm/test/test_netlink.c
+# The net stack (pure C99, chip-independent; spec M5): linked as objects
+# into every unix build, so its net_rx_offer / net_link_event replace the
+# platform's weak defaults.
+NET_SRCS  = $(wildcard net/*.c)
+NET_TEST_SRCS = vm/test/test_main.c $(wildcard net/test/*.c)
+# VM core + unix platform + net stack, without the unix main (shared with the C tests).
+VM_SRCS   = $(wildcard vm/*.c) platform/unix/platform_unix.c platform/unix/gpio_unix.c $(NET_SRCS)
 VM_SRCS  := $(filter-out vm/check32.c,$(VM_SRCS))
 VM_CORE_SRCS = $(filter-out vm/check32.c,$(wildcard vm/*.c))
 MAIN_SRCS = platform/unix/main.c
+PLAT_HDRS = $(wildcard platform/unix/*.h) $(wildcard net/*.h)
 
-.PHONY: vmsize all vm test test-c test-c-mcu test-console test-go check32 console-ppm clean
+.PHONY: vmsize netsize all vm test test-c test-c-mcu test-net-c test-net-mcu test-console test-go check32 console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-console check32 test-go vmsize
+test: test-c test-c-mcu test-net-c test-console check32 test-go test-net-mcu vmsize netsize
 
 vm: $(BUILD)/gogovm
 
-$(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard vm/*.h)
+$(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard vm/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Ivm -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) -Ivm -Inet -o $@ $(VM_SRCS) $(MAIN_SRCS)
 
 test-c: $(BUILD)/test_c
 	$(BUILD)/test_c
@@ -30,9 +36,22 @@ MCU_FLAGS = -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_B
 test-c-mcu: $(BUILD)/test_c_mcu
 	$(BUILD)/test_c_mcu
 
-$(BUILD)/test_c_mcu: $(TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/test/*.h)
+$(BUILD)/test_c_mcu: $(TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Ivm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Inet -Ivm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
+
+# Net stack C tests (parsers, malformed frames, ports), host and MCU config.
+test-net-c: $(BUILD)/test_net $(BUILD)/test_net_mcu
+	$(BUILD)/test_net
+	$(BUILD)/test_net_mcu
+
+$(BUILD)/test_net: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/test/*.h) $(PLAT_HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Ivm -Inet -Ivm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
+
+$(BUILD)/test_net_mcu: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/test/*.h) $(PLAT_HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Inet -Ivm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
 
 # Console text grid + font lookup (platform/common), host build.
 CONSOLE_SRCS = platform/common/console.c platform/common/font.c
@@ -59,15 +78,27 @@ console-ppm: $(BUILD)/console_ppm
 test-go: vm
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm go test ./...
 
-# Test code is host-only: it may use stdio and GCC/Clang constructors.
-$(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/test/*.h)
+# The network scenarios (dhcp, dns, ...) on a VM with the MCU actor memory
+# limit (16 KB per actor): the library actors must fit.
+$(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard vm/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Ivm -Ivm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Inet -o $@ $(VM_SRCS) $(MAIN_SRCS)
+
+test-net-mcu: $(BUILD)/gogovm_mcu
+	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/
+
+# Test code is host-only: it may use stdio and GCC/Clang constructors.
+$(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/test/*.h) $(PLAT_HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Ivm -Inet -Ivm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
 
 # Compile-check the core headers for a 32-bit target (no linking).
 check32:
 	for f in vm/check32.c $(VM_CORE_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Ivm -Ivm/test/stub $$f || exit 1; \
+	done
+	for f in $(NET_SRCS); do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Ivm -Inet -Ivm/test/stub $$f || exit 1; \
 	done
 	for f in $(CONSOLE_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iplatform/common -Ivm/test/stub $$f || exit 1; \
@@ -79,3 +110,7 @@ clean:
 # VM core size on the ESP32-S3 (-Os); fails above 64 KB, skips without the toolchain.
 vmsize:
 	tools/vmsize.sh
+
+# net/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
+netsize:
+	tools/vmsize.sh --net

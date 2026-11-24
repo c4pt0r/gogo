@@ -1,0 +1,50 @@
+// A reader with a 4 KB limit dials, then sleeps 3 s while the peer sends
+// 10000 bytes: segments over its quota are not acknowledged (the peer
+// resends them), it is never killed, and it gets every byte once, in order.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/net"
+	"gogo/port"
+)
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	me := actor.Self()
+	r := actor.SpawnOpt(func() {
+		actor.Sleep(100)
+		c, ok := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+		println("dial", ok)
+		switch actor.Receive().(type) {
+		case net.Connected:
+			println("connected")
+		}
+		actor.Sleep(3000)
+		next, bad := 0, 0
+		for {
+			switch m := actor.Receive().(type) {
+			case net.Data:
+				for i := 0; i < m.Data.Len(); i++ {
+					if int(m.Data.At(i)) != next%251 {
+						bad++
+					}
+					next++
+				}
+			case net.Closed:
+				println("got", next, "bad", bad, "closed", m.Reason)
+				port.Close(c)
+				actor.Send(me, 1)
+				return
+			}
+		}
+	}, actor.Options{MaxMemory: 4096})
+	actor.Monitor(r)
+	switch m := actor.Receive().(type) {
+	case actor.DownMsg:
+		println("reader died", m.Reason.Code)
+	default:
+		println("done")
+	}
+}

@@ -38,6 +38,12 @@ void platform_notify(void);
  * interrupt and scheduler context. */
 void platform_barrier(void);
 
+/* Configuration store (config.Get, spec M5 §5.4): copies the value of the
+ * klen-byte key into buf, at most cap bytes (buf may be NULL when cap is
+ * 0), and returns the value's full length, or -1 if the key is not set.
+ * The VM never asks for "wifi." keys. */
+int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uint32_t cap);
+
 /* The port drivers this platform provides (port.h), NULL-terminated. */
 struct PortDriver;
 const struct PortDriver *const *platform_port_drivers(void);

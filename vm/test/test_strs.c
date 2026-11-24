@@ -1,4 +1,5 @@
 /* String builtins, called directly on an actor with a 8-register frame. */
+#define _POSIX_C_SOURCE 200112L   /* setenv, mkstemp */
 #include "test.h"
 #include "actor.h"
 #include "heap.h"
@@ -8,6 +9,9 @@
 #include "opcodes.h"
 #include "term.h"
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #define IMG_WORDS 17
 
@@ -211,4 +215,52 @@ TEST(strs_concat_gc_and_oom) {
     CHECK_EQ(err, R_OUT_OF_MEMORY);
     CHECK(len >= 160 && len <= 640);
     actor_free(&f.vm, f.a);
+}
+
+/* config.Get through the unix store: a temp $GOGO_CONFIG of key=value
+ * lines; "wifi." keys hidden; missing keys and files; the empty value; a
+ * value bigger than the heap. */
+TEST(strs_config_get) {
+    char path[] = "/tmp/gogo-config-test-XXXXXX";
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    FILE *fp = fdopen(fd, "w");
+    CHECK(fp != NULL);
+    fputs("# comment\nnet.ip=10.0.0.9\r\nempty=\nwifi.ssid=home\nnet.ipx=no\nk=a=b\nnet.ip=second\nbig=", fp);
+    for (int i = 0; i < 600; i++) fputc('x', fp);
+    fputs("\nlast=end", fp);   /* no final newline */
+    fclose(fp);
+    const char *old = getenv("GOGO_CONFIG");
+    char *saved = old ? strdup(old) : NULL;
+    setenv("GOGO_CONFIG", path, 1);
+
+    Fx f; fx_init(&f, 128);
+    struct { const char *key, *val; bool ok; } cases[] = {
+        {"net.ip", "10.0.0.9", true}, {"empty", "", true}, {"k", "a=b", true}, {"last", "end", true},
+        {"wifi.ssid", "", false}, {"net", "", false}, {"missing", "", false}, {"", "", false},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        if (cases[i].key[0]) set_str(&f, 0, cases[i].key);
+        else REGS(&f)[0] = T_EMPTYSTR;
+        REGS(&f)[2] = T_NIL;
+        CHECK_EQ(call(&f, B_CONFIG_GET, 1, 0, 1), R_NORMAL);
+        CHECK(str_is(&f, 1, cases[i].val));
+        CHECK_EQ(REGS(&f)[2], term_from_bool(cases[i].ok));
+    }
+    set_str(&f, 0, "big");
+    CHECK_EQ(call(&f, B_CONFIG_GET, 1, 0, 1), R_NORMAL);
+    const uint32_t *o = obj_of(&f.vm, f.a, REGS(&f)[1]);
+    CHECK(o && o[1] == 600 && REGS(&f)[2] == T_TRUE);
+    f.a->max_words = 96;   /* 600 bytes do not fit */
+    CHECK_EQ(call(&f, B_CONFIG_GET, 3, 0, 1), R_OUT_OF_MEMORY);
+    f.a->max_words = 0xFFFF;
+    REGS(&f)[0] = term_from_int(1);   /* not a string */
+    CHECK_EQ(call(&f, B_CONFIG_GET, 1, 0, 1), R_BAD_CODE);
+    remove(path);
+    set_str(&f, 0, "net.ip");   /* no file */
+    CHECK_EQ(call(&f, B_CONFIG_GET, 1, 0, 1), R_NORMAL);
+    CHECK(REGS(&f)[1] == T_EMPTYSTR && REGS(&f)[2] == T_FALSE);
+    actor_free(&f.vm, f.a);
+    if (saved) { setenv("GOGO_CONFIG", saved, 1); free(saved); }
+    else unsetenv("GOGO_CONFIG");
 }

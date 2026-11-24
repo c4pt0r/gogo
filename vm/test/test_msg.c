@@ -376,3 +376,49 @@ TEST(msg_size_cycle) {
     if (m) { CHECK_EQ(m->words, 8); msg_free(m); }
     CHECK_EQ(a->mem[term_ref_off(x)], hdr_make(4, K_STRUCT));
 }
+
+/* Non-fatal delivery (M5 §9.1): a message that would take the receiver
+ * past its quota is refused and left to the caller; the receiver is not
+ * marked and keeps running. One that fits is queued like msg_enqueue. */
+TEST(try_enqueue_never_kills) {
+    Vm vm; va_reset();
+    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    Actor *a = mk(&vm, 80), *b = mk(&vm, 24);
+    b->max_words = 80;
+    b->state = A_WAITING;
+    term f[58];
+    for (int i = 0; i < 58; i++) f[i] = term_from_int(i);
+    term s = mk_struct(a, 3, f, 58);            /* 60 words: 24 + 60+ > 80 */
+    Msg *m = msg_build(a, s);
+    CHECK(m != NULL);
+    if (!m) return;
+    CHECK(!msg_try_enqueue(&vm, b, m));
+    CHECK(!(b->flags & AF_EXIT_PENDING));
+    CHECK(b->mbox_head == NULL);
+    CHECK_EQ(b->mbox_words, 0);
+    CHECK_EQ(b->state, A_WAITING);
+    CHECK_EQ(m->words, 60);                     /* still the caller's */
+    msg_free(m);
+
+    /* A small one fits, is queued and wakes b. */
+    m = msg_build(a, term_from_int(5));
+    CHECK(m != NULL);
+    if (!m) return;
+    CHECK(msg_try_enqueue(&vm, b, m));
+    CHECK(b->mbox_head == m);
+    CHECK_EQ(b->state, A_RUNNABLE);
+    CHECK(runq_pop(&vm) == b);
+    term r = T_NIL;
+    CHECK(msg_receive(&vm, b, &r));
+    CHECK_EQ(r, term_from_int(5));
+
+    /* A receiver marked for exit takes nothing. */
+    m = msg_build(a, term_from_int(6));
+    CHECK(m != NULL);
+    if (!m) return;
+    b->flags |= AF_EXIT_PENDING;
+    CHECK(!msg_try_enqueue(&vm, b, m));
+    CHECK(b->mbox_head == NULL);
+    b->flags &= (uint8_t)~AF_EXIT_PENDING;
+    msg_free(m);
+}

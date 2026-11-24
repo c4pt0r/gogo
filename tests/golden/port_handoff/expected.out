@@ -1,0 +1,7 @@
+open true
+child steals false
+to zero pid false
+to child true
+again false
+reopen while child owns false
+reopen after child exit true

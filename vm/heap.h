@@ -29,6 +29,25 @@ term heap_new_ref(Vm *vm, Actor *a);
  * heap.c). At most two blocks of this actor exist at any time during it. */
 void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots);
 
+/* Like heap_gc, but sizes the block to exactly the live data plus
+ * need_words (at least MIN_BLOCK_WORDS words), with no growth slack: for a
+ * retry after a request failed against the limit, which counts the whole
+ * block (off-heap Bytes, an allocation that the slack of an earlier growth
+ * crowds out). The limit is read after the collection, so Bytes it
+ * released count as free. With need_words > 0 it leaves the (compacted)
+ * block as it is when even that cannot fit under the limit; with 0 it
+ * always resizes to the live data, which may itself exceed the limit (the
+ * block never drops below what is live). */
+void heap_gc_tight(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots);
+
+/* For a non-fatal delivery (net data) refused because the receiver's
+ * block, grown with slack, leaves no room under its limit: if a is waiting
+ * in Receive (parked, every live term in its block, as gc_holders in
+ * bytes.c relies on), collects it with heap_gc_tight. True if that freed
+ * anything against its limit: the block shrank, or the sweep released
+ * held Bytes (fewer charged words). Never called on the running actor. */
+bool heap_reclaim_waiting(Vm *vm, Actor *a);
+
 /* Pushes a frame of n_regs registers (all T_NIL) plus the saved caller fp
  * and ret_pc (-1 for an entry frame). May GC. False if out of memory or
  * over the limit (as for heap_alloc). */

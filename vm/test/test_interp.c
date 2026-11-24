@@ -630,3 +630,71 @@ TEST(conv_to_byte) {
     CHECK(!a && strstr(err_buf, "crashed: badcode") != NULL);
     CHECK_EQ(vm.live, 0);
 }
+
+/* Two functions (calling a closure):
+ *   main (0 params, 5 regs): LOADK r1, 7; MKCLOSURE r2, r1, 1, callee
+ *                            (or LOADK r2, nil); LOADK r3, 5;
+ *                            CALLV r0, r2, <nargs>; BUILTIN r4, r0, 0, RECEIVE
+ *   callee (2 params, 3 regs): ADD r2, r0, r1; RET r2
+ * The capture 7 is the callee's r0, the argument 5 its r1.
+ * Layout: 8 header + 6 func + 3 consts + 11 code = 28 words. */
+#define CALLV_WORDS 28
+static uint32_t callv_img[CALLV_WORDS];
+
+static const char *run_callv(bool nil, uint32_t nargs, Vm *vm, Image *img, Actor **out) {
+    uint32_t *w = callv_img;
+    memset(w, 0, sizeof callv_img);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 2; w[3] = 0;
+    w[4] = 3; w[5] = 11; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 0 | (5u << 16); w[10] = 0;
+    w[11] = 9; w[12] = 2 | (3u << 16); w[13] = 0;
+    w[14] = hdr_make(3, K_STRING); w[15] = 4; memcpy(&w[16], "main", 4);
+    w[17] = OP_MAKE(OP_LOADK, 1, 0, 0); w[18] = term_from_int(7);
+    if (nil) { w[19] = OP_MAKE(OP_LOADK, 2, 0, 0); w[20] = T_NIL; }
+    else     { w[19] = OP_MAKE(OP_MKCLOSURE, 2, 1, 1); w[20] = 1; }
+    w[21] = OP_MAKE(OP_LOADK, 3, 0, 0); w[22] = term_from_int(5);
+    w[23] = OP_MAKE(OP_CALLV, 0, 2, nargs);
+    w[24] = OP_MAKE(OP_BUILTIN, 4, 0, 0); w[25] = B_RECEIVE;
+    w[26] = OP_MAKE(OP_ADD, 2, 0, 1);
+    w[27] = OP_MAKE(OP_RET, 2, 0, 0);
+    va_reset();
+    CHECK_EQ(image_load(img, w, CALLV_WORDS), IMG_OK);
+    CHECK_EQ(vm_init(vm, img, 4), 0);
+    Actor *a = actor_new(vm, 64);
+    CHECK(a != NULL);
+    CHECK(heap_push_frame(vm, a, 5, -1));
+    a->pc = img->code;
+    err_len = 0; err_buf[0] = 0;
+    platform_unix_err_hook = capture_err;
+    int rc = interp_run(vm, a);
+    platform_unix_err_hook = NULL;
+    *out = rc == RUN_EXIT ? NULL : a;
+    return err_buf;
+}
+
+/* CALLV passes the captures, then the args; the result lands in ra and
+ * execution resumes right after the (ext-less) CALLV. */
+TEST(callv_captures_then_args) {
+    Vm vm; Image img; Actor *a;
+    CHECK_EQ(run_callv(false, 1, &vm, &img, &a)[0], 0);
+    CHECK(a != NULL);
+    term *R = a->mem + a->fp;
+    CHECK_EQ(a->fp + 5u + 2u, (uint32_t)a->mem_words);   /* back in the entry frame */
+    CHECK_EQ(R[0], term_from_int(12));
+    CHECK(a->pc == img.code + 7);                        /* blocked on RECEIVE */
+    actor_free(&vm, a);
+    CHECK_EQ(vm.live, 0);
+}
+
+TEST(callv_nil_or_wrong_arity_is_badcode) {
+    Vm vm; Image img; Actor *a;
+    CHECK(strstr(run_callv(true, 1, &vm, &img, &a), "crashed: badcode") != NULL);
+    CHECK(a == NULL);
+    /* 1 capture + 0 args != 2 params */
+    CHECK(strstr(run_callv(false, 0, &vm, &img, &a), "crashed: badcode") != NULL);
+    CHECK(a == NULL);
+    /* args past the caller's registers: r3..r4 + r5 */
+    CHECK(strstr(run_callv(false, 3, &vm, &img, &a), "crashed: badcode") != NULL);
+    CHECK(a == NULL);
+    CHECK_EQ(vm.live, 0);
+}

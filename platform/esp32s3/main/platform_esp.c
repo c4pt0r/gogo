@@ -4,10 +4,12 @@
 #include "port.h"
 #include "platform_esp.h"
 #include "console.h"
+#include "net.h"
 
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,16 +29,31 @@ uint64_t platform_esp_ms(void) {
     return (uint64_t)((esp_timer_get_time() - t0_us) / 1000);
 }
 
+/* Program output never carries \x02 on serial: it starts `gogo config`
+ * reply lines (config_esp.c), so a program cannot fake one. Each \x02 is
+ * written as '?'. */
+static void write_serial(FILE *f, const char *s, size_t n) {
+    const char *p;
+    while (n > 0 && (p = memchr(s, '\x02', n)) != NULL) {
+        size_t k = (size_t)(p - s);
+        fwrite(s, 1, k, f);
+        fputc('?', f);
+        s += k + 1u;
+        n -= k + 1u;
+    }
+    fwrite(s, 1, n, f);
+}
+
 /* Program output and diagnostics both go to the serial console (stdout is
  * flushed first so they interleave in order) and to the on-screen console:
  * stdout white, stderr (crash reports) red. */
 void platform_write(const char *s, size_t n) {
-    fwrite(s, 1, n, stdout);
+    write_serial(stdout, s, n);
     console_esp_write(s, n, CON_WHITE);
 }
 void platform_write_err(const char *s, size_t n) {
     fflush(stdout);
-    fwrite(s, 1, n, stderr);
+    write_serial(stderr, s, n);
     console_esp_write(s, n, CON_RED);
 }
 
@@ -51,8 +68,19 @@ void platform_esp_say(const char *fmt, ...) {
     if ((size_t)n > sizeof b - 2) n = (int)sizeof b - 2;
     b[n++] = '\n';
     fflush(stdout);
-    fwrite(b, 1, (size_t)n, stderr);
+    write_serial(stderr, b, (size_t)n);
     console_esp_write(b, (size_t)n, CON_WHITE);
+}
+
+void platform_esp_log(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    flockfile(stderr);
+    fflush(stdout);
+    vfprintf(stderr, fmt, ap);
+    fputc('\n', stderr);
+    funlockfile(stderr);
+    va_end(ap);
 }
 
 void platform_esp_idle(void) {
@@ -144,6 +172,8 @@ void platform_notify(void) {
 void platform_barrier(void) { __sync_synchronize(); }
 
 const struct PortDriver *const *platform_port_drivers(void) {
-    static const struct PortDriver *const list[] = { &gpio_esp_driver, NULL };
+    static const struct PortDriver *const list[] = {
+        &gpio_esp_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver, NULL
+    };
     return list;
 }

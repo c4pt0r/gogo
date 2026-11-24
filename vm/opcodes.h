@@ -55,8 +55,13 @@ enum Op {
                          * an int64 inside `any` is always boxed */
     OP_CLEAR     = 37,  /* ra .. ra+b-1 = nil: dead registers stop being GC
                          * roots (b is the count, 0 = nothing) */
-    OP_RETN      = 38   /* return ra .. ra+b-1 into the caller's registers
-                         * dst .. dst+b-1, dst = the CALL's ra (RET returns one) */
+    OP_RETN      = 38,  /* return ra .. ra+b-1 into the caller's registers
+                         * dst .. dst+b-1, dst = the CALL's or CALLV's ra
+                         * (RET returns one) */
+    OP_CALLV     = 39   /* call the closure in rb with args rb+1..rb+c -> ra:
+                         * its captures, then the args, are the callee's
+                         * parameters; anything but a closure whose function
+                         * takes captures+c parameters (nil) is badcode */
 };
 
 enum Builtin {
@@ -122,7 +127,11 @@ enum Builtin {
                               * is emptied and stays usable */
     B_BYTES_FROM      = 43,  /* string | []byte -> Bytes (a heap copy, any size) */
     B_BYTES_EQUAL     = 44,  /* Bytes, Bytes -> bool (same contents) */
-    B_BYTES_COPYTO    = 45   /* Bytes, []byte -> n copied */
+    B_BYTES_COPYTO    = 45,  /* Bytes, []byte -> n copied */
+    B_PORT_HANDOFF    = 46,  /* port pid, to pid -> bool (port.h port_handoff) */
+    B_NET_SUBSCRIBE   = 47,  /* -> bool: net.Subscribe (port.h port_subscribe) */
+    B_CONFIG_GET      = 48   /* key string -> value string, ok bool: config.Get
+                              * (platform_config_get; "wifi." keys hidden) */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -147,6 +156,26 @@ enum Builtin {
 #define TYPE_GPIO     6   /* Pin, Mode, Edge, DebounceMs int */
 #define TYPE_WRITE    7   /* Value int */
 #define TYPE_EDGE     8   /* Pin int, Value int */
+/* Then the gogo/net struct types (fields as in netapi/net.go), always
+ * emitted too. IPv4 addresses are ints (a.b.c.d = a<<24|b<<16|c<<8|d). */
+#define TYPE_NET_IFCONFIG  9   /* (no fields): cfg of the "netif" port */
+#define TYPE_NET_SETADDR  10   /* IP, Mask, Gateway, DNS int */
+#define TYPE_NET_UP       11   /* IP, Gateway, DNS int */
+#define TYPE_NET_DOWN     12   /* (no fields) */
+#define TYPE_NET_ADDR     13   /* IP, Port int */
+#define TYPE_NET_UDP      14   /* Port int: cfg of the "udp" port */
+#define TYPE_NET_SENDTO   15   /* Addr Addr, Data bytes.Bytes */
+#define TYPE_NET_DATAGRAM 16   /* From Addr, Data bytes.Bytes */
+#define TYPE_NET_DIAL      17   /* IP, Port, TimeoutMs int: cfg of the "tcp" port */
+#define TYPE_NET_LISTEN    18   /* Port int: cfg of the "tcp_listen" port */
+#define TYPE_NET_WRITE     19   /* Data bytes.Bytes: tcp command */
+#define TYPE_NET_SHUTDOWN  20   /* (no fields): tcp command, send FIN */
+#define TYPE_NET_RESUME    21   /* (no fields): tcp command, unpause an accepted connection */
+#define TYPE_NET_CONNECTED 22   /* (no fields): tcp event */
+#define TYPE_NET_DATA      23   /* Data bytes.Bytes: tcp event */
+#define TYPE_NET_WRITTEN   24   /* (no fields): tcp event, a Write was acknowledged */
+#define TYPE_NET_CLOSED    25   /* Reason int: tcp event */
+#define TYPE_NET_ACCEPTED  26   /* Conn PID: tcp_listen event */
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

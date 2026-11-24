@@ -1,0 +1,8 @@
+net.ip = [10.0.0.9] true
+greeting = [hello world] true
+empty = [] true
+missing = [] false
+wifi.ssid = [] false
+wifi.password = [] false
+net = [] false
+child hello world true

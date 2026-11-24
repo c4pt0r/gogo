@@ -433,13 +433,53 @@ TEST(bytes_limit_on_create) {
     Actor *a = spawn(&f, 128);
     make_buf(&f, a, 1000);
     heap_gc(&f.vm, a, 0, NULL, 0);
-    a->max_words = (uint16_t)(a->mem_words + 200u);           /* 800 bytes to spare */
+    uint32_t live = (uint32_t)a->hp + (a->mem_words - a->sp);
+    a->max_words = (uint16_t)(live + 200u);                   /* 800 bytes beside the live data */
     CHECK_EQ(call(&f, a, B_BUF_FREEZE, 0, 13, 1), R_OUT_OF_MEMORY);
     CHECK_EQ(bytes_table_used(), 0);
-    a->max_words = (uint16_t)(a->mem_words + 260u + LIST_W); /* 1040 bytes + list */
+    a->max_words = (uint16_t)(live + 260u + LIST_W);          /* 1040 bytes + list */
     CHECK_EQ(freeze(&f, a, 0), R_NORMAL);
     CHECK(alpha_is(&f, a, 0, 1000));
     CHECK_EQ(bytes_held_bytes(a), 1000);
+    actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(bytes_table_used(), 0);
+}
+
+/* The retry after a Freeze fails against the limit collects without
+ * growth slack: a block the GC grew to twice its live data (the buffer's
+ * old arrays now garbage) shrinks to the live data, so a Bytes that fits
+ * beside it is made. */
+TEST(bytes_make_retry_drops_slack) {
+    Fx f; fx_init(&f);
+    Actor *a = spawn(&f, 128);
+    make_buf(&f, a, 1000);                     /* grows: 16, 32, ... 1024-byte arrays */
+    heap_gc(&f.vm, a, 0, NULL, 0);             /* the policy keeps room: block >> live */
+    uint32_t live = (uint32_t)a->hp + (a->mem_words - a->sp);
+    CHECK(a->mem_words > live + 100u);
+    /* Room for live + the 1000-byte Bytes + the list, not for the block's slack. */
+    a->max_words = (uint16_t)(live + 250u + LIST_W + 4u);
+    CHECK((uint32_t)a->mem_words + 250u > a->max_words);
+    CHECK_EQ(freeze(&f, a, 0), R_NORMAL);
+    CHECK(alpha_is(&f, a, 0, 1000));
+    CHECK((uint32_t)a->mem_words + actor_charged_words(a) <= a->max_words);
+    actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(bytes_table_used(), 0);
+}
+
+/* A heap allocation that fails because garbage Bytes still count against
+ * the limit succeeds on the tight retry, which reads the limit after the
+ * collection released them. */
+TEST(heap_alloc_retry_after_bytes_sweep) {
+    Fx f; fx_init(&f);
+    Actor *a = spawn(&f, 64);
+    CHECK_EQ(make_bytes(&f, a, 0, 2000), R_NORMAL);           /* 500 words held */
+    heap_gc(&f.vm, a, 0, NULL, 0);
+    a->max_words = (uint16_t)(a->mem_words + 500u + LIST_W + 20u);
+    R(a)[0] = T_NIL;                                          /* now garbage, still charged */
+    uint32_t off = heap_alloc(&f.vm, a, 300, NULL, 0);
+    CHECK(off != UINT32_MAX);
+    CHECK_EQ(bytes_held_bytes(a), 0);
+    CHECK((uint32_t)a->mem_words + actor_charged_words(a) <= a->max_words);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(bytes_table_used(), 0);
 }

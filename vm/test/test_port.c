@@ -18,6 +18,7 @@
 #include <string.h>
 #include <pthread.h>
 #include "gpio_unix.h"
+#include "bytes.h"
 
 extern void (*platform_unix_err_hook)(const char *, size_t);
 static void drop_err(const char *s, size_t n) { (void)s; (void)n; }
@@ -28,7 +29,8 @@ static void drop_err(const char *s, size_t n) { (void)s; (void)n; }
 #define EVT_TYPE 1u
 
 static struct {
-    int opens, closes, cmds, refuse;
+    int opens, closes, cmds, refuse, handoffs;
+    uint16_t charge;       /* charge_words the driver sets in open */
     uint16_t debounce;     /* debounce_ms the driver sets in open */
     bool live;             /* can_event result */
     uint16_t index;        /* last open */
@@ -50,6 +52,7 @@ static int fk_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     fk.n = n;
     for (uint32_t i = 0; i < n && i < 8u; i++) fk.cfg[i] = cfg[i];
     p->debounce_ms = fk.debounce;
+    p->charge_words = fk.charge;
     fk.last = p;
     return 0;
 }
@@ -66,9 +69,10 @@ static void fk_close(Port *p) {
     if (fk.watch) fk.watch_mbox = mbox_len(fk.watch);
 }
 static bool fk_can_event(const Port *p) { (void)p; return fk.live; }
+static void fk_handoff(Vm *vm, Port *p) { (void)vm; (void)p; fk.handoffs++; }
 
 static const PortDriver fake = {
-    "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event
+    "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event, fk_handoff, NULL
 };
 static const PortDriver *const fake_list[] = { &fake, NULL };
 
@@ -599,4 +603,280 @@ TEST(gpio_unix_edge_none_not_live) {
     CHECK_EQ(gpio_unix_driver.open(&p, 0, out, 4), 0);
     CHECK(!gpio_unix_driver.can_event(&p));
     gpio_unix_driver.close(&p);
+}
+
+/* ---- Handoff, port-held Bytes, extra sources (M5) ---- */
+
+/* Handoff moves the port, its driver-state charge and the Bytes it pins
+ * from the owner to another actor; only the owner may hand off. */
+TEST(handoff_moves_charge) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm), *b = waiting_actor(&vm), *c = waiting_actor(&vm);
+    fk.charge = 16;
+    term p = open_fake(&vm, a, 1);
+    CHECK(p != T_NIL);
+    Port *pt = fk.last;
+    CHECK_EQ(actor_extra_charged(a), 16u);
+    uint8_t *d = NULL;
+    term h = port_bytes_new(&vm, pt, 200, &d);
+    CHECK(h != T_NIL && d != NULL);
+    CHECK_EQ(bytes_held_bytes(a), 200u);
+    CHECK_EQ(bytes_held_count(a), 1u);
+
+    CHECK(!port_handoff(&vm, b, p, c->id));    /* not the owner */
+    CHECK(!port_handoff(&vm, a, p, p));         /* to a port */
+    CHECK(!port_handoff(&vm, a, a->id, b->id));       /* not a port pid */
+    CHECK_EQ(fk.handoffs, 0);
+    CHECK(pt->owner == a->id);
+
+    uint32_t list = bytes_list_words(b);       /* b's new holder list */
+    CHECK(list > 0u);
+    CHECK(port_handoff(&vm, a, p, b->id));
+    CHECK_EQ(fk.handoffs, 1);
+    CHECK(pt->owner == b->id);
+    CHECK_EQ(actor_extra_charged(a), 0u);
+    CHECK_EQ(bytes_held_bytes(a), 0u);
+    CHECK_EQ(bytes_held_count(a), 0u);
+    CHECK(!actor_port_owns(a));
+    CHECK_EQ(actor_extra_charged(b), 16u + list);
+    CHECK_EQ(bytes_held_bytes(b), 200u);
+    CHECK(actor_port_owns(b));
+    CHECK(bytes_valid(h));
+
+    /* Events now go to b. */
+    uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE);
+    push(idx, term_pid_gen(p), 3, 4, 0);
+    port_drain(&vm, 1);
+    CHECK_EQ(mbox_len(a), 0);
+    CHECK_EQ(mbox_len(b), 1);
+
+    /* a exiting no longer closes it; b exiting does, releasing all. */
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(fk.closes, 0);
+    actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(fk.closes, 1);
+    CHECK(!bytes_valid(h));
+    CHECK_EQ(bytes_table_used(), 0u);
+    actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+/* Handoff to a dead actor, or to one that cannot take the charge within
+ * its limit, fails and changes nothing. */
+TEST(handoff_refused) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm), *b = waiting_actor(&vm), *dead = waiting_actor(&vm);
+    term gone = dead->id;
+    actor_exit(&vm, dead, R_NORMAL, T_EMPTYSTR);
+    fk.charge = 8;
+    term p = open_fake(&vm, a, 1);
+    Port *pt = fk.last;
+    uint32_t alist = bytes_list_words(a);
+    uint8_t *d;
+    term h = port_bytes_new(&vm, pt, 1000, &d);
+    CHECK(h != T_NIL);
+    CHECK(!port_handoff(&vm, a, p, gone));
+    b->max_words = (uint16_t)(b->mem_words + 100u);   /* 1000 bytes do not fit */
+    CHECK(!port_handoff(&vm, a, p, b->id));
+    CHECK(pt->owner == a->id);
+    CHECK_EQ(actor_extra_charged(a), 8u + alist);
+    CHECK_EQ(bytes_held_bytes(a), 1000u);
+    CHECK_EQ(bytes_held_count(b), 0u);
+    CHECK_EQ(actor_extra_charged(b), 0u);
+    CHECK_EQ(fk.handoffs, 0);
+    CHECK(port_handoff(&vm, a, p, a->id));      /* to itself: ok, no move */
+    CHECK_EQ(fk.handoffs, 1);
+    CHECK(pt->owner == a->id);
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+/* A port's driver-state charge must fit its owner's limit at open. */
+TEST(port_open_charge_limit) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm);
+    a->max_words = (uint16_t)(a->mem_words + 10u);
+    fk.charge = 11;
+    CHECK(open_fake(&vm, a, 1) == T_NIL);
+    CHECK_EQ(fk.opens, 1);
+    CHECK_EQ(fk.closes, 1);                     /* the driver undid its open */
+    CHECK(!actor_port_owns(a));
+    CHECK_EQ(actor_extra_charged(a), 0u);
+    fk.charge = 10;
+    term p = open_fake(&vm, a, 1);
+    CHECK(p != T_NIL);
+    CHECK_EQ(actor_extra_charged(a), 10u);
+    port_close(&vm, p);
+    CHECK_EQ(actor_extra_charged(a), 0u);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+/* Closing a port releases the Bytes it pinned for its owner (M4 carry);
+ * retain/release track them, and a port holds at most PORT_MAX_HELD. */
+TEST(port_close_releases_held) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm), *b = waiting_actor(&vm);
+    term p = open_fake(&vm, a, 1);
+    Port *pt = fk.last;
+    uint8_t *d;
+    term h1 = port_bytes_new(&vm, pt, 100, &d);
+    CHECK(h1 != T_NIL);
+    /* b's handle, pinned by a's port on a's behalf (a Write's data). */
+    term hb = bytes_new(&vm, b, 300, &d);
+    CHECK(hb != T_NIL);
+    for (uint32_t i = 1; i < PORT_MAX_HELD; i++) CHECK(port_bytes_retain(&vm, pt, hb));
+    CHECK(!port_bytes_retain(&vm, pt, hb));     /* full */
+    CHECK(port_bytes_new(&vm, pt, 4, &d) == T_NIL);
+    CHECK_EQ(bytes_held_bytes(a), 400u);
+    port_bytes_release(&vm, pt, h1);
+    CHECK(!bytes_valid(h1));
+    CHECK_EQ(bytes_held_bytes(a), 300u);
+    port_bytes_release(&vm, pt, h1);            /* not held: ignored */
+    CHECK_EQ(bytes_held_bytes(a), 300u);
+    term h2 = port_bytes_new(&vm, pt, 40, &d);  /* the slot is free again */
+    CHECK(h2 != T_NIL);
+    port_close(&vm, p);
+    CHECK_EQ(bytes_held_bytes(a), 0u);
+    CHECK_EQ(bytes_held_count(a), 0u);
+    CHECK(!bytes_valid(h2));
+    CHECK(bytes_valid(hb));                     /* still b's */
+    bytes_release(&vm, b, hb);
+    CHECK_EQ(bytes_table_used(), 0u);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+/* An extra event source (the net stack's RX / link slots) is drained,
+ * keeps the VM alive and contributes deadlines through the port layer. */
+static struct { bool pending, live, have_dl; uint64_t dl; int drains; uint64_t now; } src;
+static bool src_pending(void) { return src.pending; }
+static void src_drain(Vm *vm, uint64_t now) { (void)vm; src.drains++; src.now = now; src.pending = false; }
+static bool src_live(const Vm *vm) { (void)vm; return src.live; }
+static bool src_deadline(const Vm *vm, uint64_t *d) { (void)vm; if (src.have_dl) *d = src.dl; return src.have_dl; }
+static const PortSource test_src = { src_pending, src_drain, src_live, src_deadline, NULL };
+
+TEST(port_source_hook) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    memset(&src, 0, sizeof src);
+    CHECK(!port_work_pending(&vm));
+    port_set_source(&test_src);
+    CHECK(!port_work_pending(&vm));
+    CHECK(!port_any_live(&vm));
+    uint64_t dl = 0;
+    CHECK(!port_next_deadline(&vm, &dl));
+    src.pending = true;
+    CHECK(port_work_pending(&vm));
+    port_drain(&vm, 42);
+    CHECK_EQ(src.drains, 1);
+    CHECK_EQ(src.now, 42u);
+    CHECK(!port_work_pending(&vm));
+    src.live = true;
+    CHECK(port_any_live(&vm));
+    src.have_dl = true;
+    src.dl = 500;
+    CHECK(port_next_deadline(&vm, &dl));
+    CHECK_EQ(dl, 500u);
+    /* A nearer debounce deadline wins. */
+    fk.debounce = 50;
+    Actor *a = waiting_actor(&vm);
+    term p = open_fake(&vm, a, 1);
+    uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE);
+    push(idx, term_pid_gen(p), 1, 1, 100);
+    push(idx, term_pid_gen(p), 1, 0, 110);
+    port_drain(&vm, 110);
+    CHECK(port_next_deadline(&vm, &dl));
+    CHECK_EQ(dl, 150u);
+    port_set_source(NULL);
+    CHECK(!port_any_live(&vm));
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+/* A driver with command_term gets every command raw (nested structs,
+ * non-int fields), with the sender; Subscribe goes to the source's hook. */
+static struct { int raw; const Actor *from; term msg; int subs; } rawk;
+static void rk_command_term(Vm *vm, const Actor *from, Port *p, term msg) {
+    (void)vm; (void)p;
+    rawk.raw++;
+    rawk.from = from;
+    rawk.msg = msg;
+}
+static bool rk_subscribe(Vm *vm, Actor *a) { (void)vm; (void)a; rawk.subs++; return true; }
+static const PortSource sub_src = { src_pending, src_drain, src_live, NULL, rk_subscribe };
+
+TEST(port_command_term_and_subscribe) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    memset(&rawk, 0, sizeof rawk);
+    static const PortDriver raw = {
+        "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event, NULL, rk_command_term
+    };
+    static const PortDriver *const raw_list[] = { &raw, NULL };
+    port_set_drivers(raw_list);
+    Actor *a = waiting_actor(&vm);
+    term p = open_fake(&vm, a, 3);
+    CHECK(port_is(p));
+    term msg = heap_str(&vm, a, "not a struct");
+    port_command(&vm, a, p, msg);
+    CHECK_EQ(rawk.raw, 1);
+    CHECK_EQ(fk.cmds, 0);                     /* not decoded */
+    CHECK(rawk.from == a && rawk.msg == msg);
+    CHECK(!port_subscribe(&vm, a));           /* no source */
+    port_set_source(&test_src);
+    CHECK(!port_subscribe(&vm, a));           /* no hook */
+    port_set_source(&sub_src);
+    CHECK(port_subscribe(&vm, a));
+    CHECK_EQ(rawk.subs, 1);
+    port_set_source(NULL);
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+/* Handoff's limit check counts what the new owner would really be
+ * charged: a pinned slice charges its root's full length, and a first
+ * handle makes the holder list. */
+TEST(handoff_slice_of_large_root) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm), *c = waiting_actor(&vm);
+    term p = open_fake(&vm, a, 1);
+    Port *pt = fk.last;
+    uint8_t *d;
+    term root = bytes_new(&vm, a, 1000, &d);
+    CHECK(root != T_NIL);
+    term sl = bytes_sub(&vm, a, root, 0, 8);
+    CHECK(sl != T_NIL);
+    CHECK(port_bytes_retain(&vm, pt, sl));
+    bytes_release(&vm, a, root);              /* a's own pin; the slice keeps the root */
+    uint32_t need = 250u + bytes_list_words(c);
+    CHECK_EQ(bytes_extra_words(c, pt->held, PORT_MAX_HELD), need);
+    c->max_words = (uint16_t)(c->mem_words + need - 1u);
+    CHECK(!port_handoff(&vm, a, p, c->id));
+    CHECK(pt->owner == a->id);
+    CHECK_EQ(bytes_held_count(c), 0u);
+    c->max_words = (uint16_t)(c->mem_words + need);
+    CHECK(port_handoff(&vm, a, p, c->id));
+    CHECK((uint32_t)c->mem_words + actor_charged_words(c) <= actor_max_words(c));
+    CHECK_EQ(bytes_held_bytes(c), 1000u);
+    /* An owner marked to exit gets no new pins. */
+    c->flags |= AF_EXIT_PENDING;
+    CHECK(port_bytes_new(&vm, pt, 4, &d) == T_NIL);
+    c->flags &= (uint8_t)~AF_EXIT_PENDING;
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(bytes_table_used(), 0u);
+    teardown();
 }

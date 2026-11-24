@@ -5,6 +5,7 @@
 #include "interp.h"
 #include "config.h"
 #include "platform_esp.h"
+#include "net.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -23,8 +24,14 @@ static void vm_task(void *arg) {
     (void)arg;
     platform_esp_init();
     console_esp_start(); /* M5PM1 LCD rail, ST7789, render task */
+    /* `gogo config` works even without (or with a bad) image. */
+    (void)config_esp_init();
+    config_esp_start_serial();
     const uint32_t *words;
     uint32_t nwords;
+    /* Wi-Fi (driver only, no esp_netif/lwIP) and gogo's net stack. */
+    wifi_esp_start();
+    net_attach();
     if (image_part_map(&words, &nwords) != 0) platform_esp_idle();
 
     Image img;
@@ -34,7 +41,8 @@ static void vm_task(void *arg) {
         platform_esp_say("gogo: bad image (%s)", (rc <= 0 && rc >= -4) ? msgs[-rc] : "invalid image");
         platform_esp_idle();
     }
-    /* Internal RAM left for the arena once the console (font tables) is up. */
+    /* Internal RAM left for the arena once the console (font tables) and
+     * the Wi-Fi driver are up. */
     platform_esp_say("gogo %s: image %lu bytes, arena %lu bytes, free RAM %lu (largest %lu)", GOGO_VERSION,
                      (unsigned long)nwords * 4u, (unsigned long)platform_esp_arena_cap(),
                      (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
@@ -43,6 +51,8 @@ static void vm_task(void *arg) {
         platform_esp_say("gogo: out of memory");
         platform_esp_idle();
     }
+    wifi_esp_report_heap();
+    platform_esp_log("gogo: net stack fixed state %lu bytes", (unsigned long)net_fixed_bytes());
     rc = vm_run(&vm);
     console_esp_report();
     platform_esp_report_refusal();

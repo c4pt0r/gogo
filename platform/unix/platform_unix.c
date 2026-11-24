@@ -2,6 +2,9 @@
 #include "platform.h"
 #include "config.h"
 #include "gpio_unix.h"
+#include "netif.h"
+#include "net_unix.h"
+#include "net.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +13,7 @@
 #include <poll.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <string.h>
 
 void platform_write(const char *s, size_t n) { fwrite(s, 1, n, stdout); }
 /* Flush program output first so diagnostics interleave in order. */
@@ -56,8 +60,15 @@ void platform_unix_set_clock(uint64_t (*fn)(void)) { clock_hook = fn; }
 static uint64_t time_start;
 static int time_started;
 
+/* Simulated clock (--sim-clock, spec M5 §9.7): time moves only in
+ * platform_wait, toward the target the peer simulator set with
+ * advance_clock messages on the net link. */
+static bool sim_clock;
+static uint64_t sim_now, sim_target;
+
 uint64_t platform_now_ms(void) {
     if (clock_hook) return clock_hook();
+    if (sim_clock) return sim_now;
     uint64_t now = mono_ms();
     if (!time_started) {
         time_start = now;
@@ -72,6 +83,162 @@ void platform_time_reset(void) {
 }
 
 void platform_barrier(void) { __sync_synchronize(); }
+
+/* ---- net link (--net-fd, spec M5 §6, §9.7) ----
+ *
+ * One stream fd (a socketpair end in tests) carries messages
+ * [u16 len, big-endian][u8 type][len bytes]: NET_MSG_FRAME (a raw Ethernet
+ * frame, both ways), NET_MSG_ADVANCE (simulator -> VM: u32 ms, big-endian,
+ * move the simulated clock forward) and NET_MSG_ACK (VM -> simulator, no
+ * payload). With --sim-clock the clock moves only toward the target the
+ * advances set, in steps: platform_wait(t) with the target at least t
+ * ahead moves time by t and returns at once, so timers fire at their own
+ * times however large the advance. When the VM has reached the target and
+ * goes idle it sends one ACK for the advances received, then blocks on the
+ * link (and the wake pipe and tty) without a timeout. So "advance n, wait
+ * for the ACK" runs everything due by now + n and returns once the VM is
+ * idle, after all the frames it sent meanwhile; advance 0 is a sync.
+ * Without --sim-clock, advances are acknowledged at once. Frames are read
+ * one per platform_wait, so the stack's single RX slot is drained between
+ * them. At EOF the link is down (net_link_event(false)); with --sim-clock
+ * time can no longer move, so the process exits 0 (the simulator is done). */
+static int net_fd = -1;
+static bool link_down;        /* set by NET_MSG_LINK: sends fail while down */
+static bool ack_owed;
+static uint32_t net_rx_count;
+
+/* Frames go to net_rx_offer unless a test diverts them. */
+static void (*rx_sink)(const uint8_t *, uint32_t);
+
+/* Defaults for a build without the net stack: frames are dropped. The
+ * net stack's strong definitions override them at link time; it must be
+ * linked as object files, not from an archive (a linker does not pull an
+ * archive member to replace a weak definition it already has). Other
+ * platforms (ESP) define these strongly and have no weak default. */
+__attribute__((weak)) void net_rx_offer(const uint8_t *frame, uint32_t len) { (void)frame; (void)len; }
+__attribute__((weak)) void net_link_event(bool up) { (void)up; }
+
+void platform_unix_net_open(int fd, bool sim) {
+    net_fd = fd;
+    link_down = false;
+    sim_clock = sim;
+    sim_now = sim_target = 0;
+    ack_owed = false;
+}
+
+void platform_unix_net_close(void) {      /* test-only */
+    net_fd = -1;
+    sim_clock = false;
+    ack_owed = false;
+}
+
+void platform_unix_net_set_sink(void (*fn)(const uint8_t *, uint32_t)) { rx_sink = fn; }
+uint32_t platform_unix_net_rx_count(void) { return net_rx_count; }
+
+static bool write_all(int fd, const uint8_t *p, size_t n) {
+    while (n) {
+        ssize_t w = write(fd, p, n);
+        if (w < 0 && errno == EINTR) continue;
+        if (w <= 0) return false;
+        p += w;
+        n -= (size_t)w;
+    }
+    return true;
+}
+
+static bool read_all(int fd, uint8_t *p, size_t n) {
+    while (n) {
+        ssize_t r = read(fd, p, n);
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0) return false;
+        p += r;
+        n -= (size_t)r;
+    }
+    return true;
+}
+
+static bool net_put(uint8_t type, const uint8_t *payload, uint32_t len) {
+    if (net_fd < 0 || len > 0xFFFFu) return false;
+    uint8_t h[3] = { (uint8_t)(len >> 8), (uint8_t)len, type };
+    return write_all(net_fd, h, 3) && write_all(net_fd, payload, len);
+}
+
+/* Test-only: frames the stack sends go to fn instead of the link (NULL =
+ * the link); with fn set the platform has a MAC even without a link. */
+static int (*tx_hook)(const uint8_t *, uint32_t);
+void platform_unix_net_set_tx(int (*fn)(const uint8_t *, uint32_t)) { tx_hook = fn; }
+
+bool platform_net_mac(uint8_t mac[6]) {
+    static const uint8_t m[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };   /* locally administered */
+    if (net_fd < 0 && !tx_hook) return false;
+    memcpy(mac, m, 6);
+    return true;
+}
+
+int platform_net_send(const uint8_t *frame, uint32_t len) {
+    if (link_down) return -1;
+    if (tx_hook) return tx_hook(frame, len);
+    return net_put(NET_MSG_FRAME, frame, len) ? 0 : -1;
+}
+
+bool platform_net_link_up(void) { return !link_down && (net_fd >= 0 || tx_hook); }
+
+/* No status line on unix: programs print what they need (golden output). */
+void platform_net_report(bool up, uint32_t ip, uint32_t gw, uint32_t dns) {
+    (void)up; (void)ip; (void)gw; (void)dns;
+}
+
+static void net_eof(void) {
+    net_fd = -1;
+    net_link_event(false);
+    if (sim_clock) {
+        fflush(stdout);
+        exit(0);
+    }
+}
+
+/* Reads and handles one link message (the fd is readable). The rest of
+ * the message is read with blocking reads after poll: acceptable for this
+ * host test link, whose peer always writes whole messages at once. */
+static void net_read(void) {
+    static uint8_t buf[2048];
+    uint8_t h[3];
+    if (!read_all(net_fd, h, 3)) { net_eof(); return; }
+    uint32_t len = ((uint32_t)h[0] << 8) | h[1];
+    uint32_t keep = len < sizeof buf ? len : (uint32_t)sizeof buf;
+    if (!read_all(net_fd, buf, keep)) { net_eof(); return; }
+    for (uint32_t rest = len - keep; rest; ) {          /* oversized: skip the tail */
+        uint8_t junk[256];
+        uint32_t n = rest < sizeof junk ? rest : (uint32_t)sizeof junk;
+        if (!read_all(net_fd, junk, n)) { net_eof(); return; }
+        rest -= n;
+    }
+    switch (h[2]) {
+    case NET_MSG_FRAME:
+        if (len > keep) break;                          /* too long for any frame */
+        net_rx_count++;
+        if (rx_sink) rx_sink(buf, len);
+        else net_rx_offer(buf, len);
+        break;
+    case NET_MSG_ADVANCE:
+        if (len != 4) break;
+        if (sim_clock) {
+            sim_target += ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
+                          ((uint32_t)buf[2] << 8) | buf[3];
+            ack_owed = true;
+        } else {
+            net_put(NET_MSG_ACK, NULL, 0);
+        }
+        break;
+    case NET_MSG_LINK:
+        if (len != 1) break;
+        link_down = buf[0] == 0;
+        net_link_event(buf[0] != 0);
+        break;
+    default:                                            /* unknown: ignored */
+        break;
+    }
+}
 
 /* Wakeup latch: a self-pipe. platform_notify writes a byte (async-signal-
  * safe, so usable from a signal handler or another thread); platform_wait
@@ -99,11 +266,17 @@ void platform_notify(void) {
     errno = saved;
 }
 
+static void net_wait(uint32_t ms);
+
 /* Returns after the timeout or once notified; consumes the latch. */
 void platform_wait(uint32_t ms) {
     if (gpio_unix_wait(ms)) {             /* an input line was consumed: rescan */
         char buf[64];
         while (read(wake_fd[0], buf, sizeof buf) > 0) {}
+        return;
+    }
+    if (net_fd >= 0 || sim_clock) {
+        net_wait(ms);
         return;
     }
     struct pollfd p[2];
@@ -117,7 +290,85 @@ void platform_wait(uint32_t ms) {
     while (read(wake_fd[0], buf, sizeof buf) > 0) {}   /* clear the latch */
 }
 
+/* Polls the wake pipe, the link and the tty for up to timeout ms (-1 =
+ * forever); handles one link message and any tty input; clears the latch.
+ * True if anything was ready. */
+static bool net_poll(int timeout) {
+    struct pollfd p[3];
+    int n = 0, li = -1, ti = -1;
+    p[n].fd = wake_fd[0]; p[n].events = POLLIN; p[n].revents = 0; n++;
+    if (net_fd >= 0) { li = n; p[n].fd = net_fd; p[n].events = POLLIN; p[n].revents = 0; n++; }
+    int sfd = gpio_unix_poll_fd();
+    if (sfd >= 0) { ti = n; p[n].fd = sfd; p[n].events = POLLIN; p[n].revents = 0; n++; }
+    int rc = poll(p, (nfds_t)n, timeout);
+    if (rc > 0 && ti >= 0 && p[ti].revents) gpio_unix_read_tty();
+    if (rc > 0 && li >= 0 && p[li].revents) net_read();
+    char buf[64];
+    while (read(wake_fd[0], buf, sizeof buf) > 0) {}
+    return rc > 0;
+}
+
+static void net_wait(uint32_t ms) {
+    if (!sim_clock) {
+        net_poll(ms == UINT32_MAX ? -1 : (ms > 2000000000u ? 2000000000 : (int)ms));
+        return;
+    }
+    if (net_poll(0)) return;                            /* input first */
+    if (ms != UINT32_MAX && sim_target - sim_now >= ms) {
+        sim_now += ms;                                  /* sleep in simulated time */
+        return;
+    }
+    sim_now = sim_target;                               /* idle at the target */
+    if (ack_owed) {
+        ack_owed = false;
+        net_put(NET_MSG_ACK, NULL, 0);
+    }
+    net_poll(-1);
+}
+
 const struct PortDriver *const *platform_port_drivers(void) {
-    static const struct PortDriver *const list[] = { &gpio_unix_driver, NULL };
+    static const struct PortDriver *const list[] = {
+        &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver,
+        &net_tcp_listen_driver, NULL
+    };
     return list;
+}
+
+/* config.Get (spec M5 §5.4): the file $GOGO_CONFIG, else ~/.gogo/config,
+ * of key=value lines, which `gogo config set|get|list|rm` edits. Read on
+ * every call; the first line for the key wins; lines that are too long
+ * (UNIX_CONFIG_LINE) are skipped. */
+#define UNIX_CONFIG_LINE 1024
+int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uint32_t cap) {
+    if (klen == 0 || memchr(key, '=', klen) || memchr(key, '\n', klen)) return -1;
+    char path[UNIX_CONFIG_LINE];
+    const char *p = getenv("GOGO_CONFIG");
+    if (!p || !*p) {
+        const char *home = getenv("HOME");
+        if (!home) return -1;
+        int n = snprintf(path, sizeof path, "%s/.gogo/config", home);
+        if (n < 0 || (size_t)n >= sizeof path) return -1;
+        p = path;
+    }
+    FILE *f = fopen(p, "r");
+    if (!f) return -1;
+    static char line[UNIX_CONFIG_LINE];
+    int32_t found = -1;
+    bool skip = false;   /* the rest of an over-long line */
+    while (found < 0 && fgets(line, sizeof line, f)) {
+        size_t n = strlen(line);
+        bool whole = n > 0 && line[n - 1] == '\n';
+        bool was_skip = skip;
+        skip = !whole && !feof(f);
+        if (was_skip || skip) continue;
+        if (whole) line[--n] = 0;
+        if (n > 0 && line[n - 1] == '\r') line[--n] = 0;
+        if (n > klen && line[klen] == '=' && memcmp(line, key, klen) == 0) {
+            uint32_t vl = (uint32_t)(n - klen - 1u);
+            if (buf) memcpy(buf, line + klen + 1, vl < cap ? vl : cap);
+            found = (int32_t)vl;
+        }
+    }
+    fclose(f);
+    return found;
 }

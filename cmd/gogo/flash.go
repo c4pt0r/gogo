@@ -5,7 +5,7 @@ package main
 // The partition (platform/esp32s3/partitions.csv: `gogo`, data subtype 0x40
 // at 0x210000, 1 MB) holds a 16-byte little-endian header
 // {magic "GGIM" = 0x4D494747, image_bytes, crc32_ieee(image), 0} followed by
-// the image (format v2, the compiler's current version); the firmware (platform/esp32s3/main/image_part.c)
+// the image (the compiler's current format version); the firmware (platform/esp32s3/main/image_part.c)
 // checks all three before using the image, so a half-written partition is
 // refused. The write itself is delegated to an external esptool.
 

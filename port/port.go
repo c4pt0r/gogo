@@ -11,7 +11,8 @@
 // actor holding the PID may. Events (port.Edge) go to the owner, the actor
 // that opened the port, as ordinary messages under its mailbox quota. The
 // owner's exit closes its ports; actor.Kill on a port PID closes it. Ports
-// cannot be linked or monitored.
+// cannot be linked or monitored. The owner may give a port to another actor
+// with Handoff.
 package port
 
 import "gogo/actor"
@@ -53,3 +54,12 @@ func Open(driver string, cfg any) (p actor.PID, ok bool) { panic("gogo only") }
 
 // Close closes the port p. A stale or unknown p is ignored.
 func Close(p actor.PID) { panic("gogo only") }
+
+// Handoff makes the actor to the owner of port p: its later events go to
+// to, to's exit closes it, and the memory charged for it (driver state,
+// buffers the port holds) moves to to. Only p's owner may hand it off. ok
+// is false (nothing changes) if the caller does not own p, p is not an open
+// port, to is not a live actor, or to cannot take the charge within its
+// memory limit. Handoff to the caller itself only resumes a paused port
+// (e.g. an accepted net connection).
+func Handoff(p actor.PID, to actor.PID) (ok bool) { panic("gogo only") }

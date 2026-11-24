@@ -20,7 +20,8 @@ import (
 // by $GOGO_VM (30s timeout) and requires exit status 0 and stdout equal
 // byte-for-byte to expected.out; if expected.err exists, each of its
 // non-empty lines must be a substring of stderr, and no non-empty line of
-// forbidden.err may be. An `input` file is fed to stdin. `make test-go`
+// forbidden.err may be. An `input` file is fed to stdin; a `config` file
+// is the config store ($GOGO_CONFIG). `make test-go`
 // builds the VM and sets GOGO_VM.
 func TestGolden(t *testing.T) {
 	vm := os.Getenv("GOGO_VM")
@@ -69,6 +70,13 @@ func TestGolden(t *testing.T) {
 			cmd := exec.CommandContext(ctx, vm, imgPath)
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
+			// The config store (config.Get) is the optional `config`
+			// file, else a file that does not exist: never ~/.gogo/config.
+			cfg := filepath.Join(t.TempDir(), "no-config")
+			if _, err := os.Stat(filepath.Join(dir, "config")); err == nil {
+				cfg, _ = filepath.Abs(filepath.Join(dir, "config"))
+			}
+			cmd.Env = append(os.Environ(), "GOGO_CONFIG="+cfg)
 			// An optional `input` file is stdin (simulated gpio events);
 			// otherwise stdin is /dev/null.
 			if in, err := os.Open(filepath.Join(dir, "input")); err == nil {

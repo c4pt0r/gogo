@@ -1,0 +1,62 @@
+// Ten readers in turn, with limits 4096 + 4*i bytes (so the room left
+// after the peer fills a mailbox varies by a word at a time): each writes a
+// 100-byte request it keeps holding, sleeps 3 s while the peer fills its
+// mailbox to the last byte, acknowledges the request and resets. Each gets
+// its Data, Written and Closed{Reset}, and none is killed.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/net"
+	"gogo/port"
+)
+
+func reader(me actor.PID) {
+	b := bytes.NewBuffer(100)
+	for i := 0; i < 100; i++ {
+		b.WriteByte('r')
+	}
+	req := b.Freeze()
+	actor.Sleep(100)
+	c, _ := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+	switch actor.Receive().(type) {
+	case net.Connected:
+		actor.Send(c, net.Write{Data: req})
+	}
+	actor.Sleep(3000)
+	got, written := 0, 0
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Data:
+			got += m.Data.Len()
+		case net.Written:
+			written++
+		case net.Closed:
+			println("got", got, "written", written, "closed", m.Reason, "req", req.Len())
+			port.Close(c)
+			actor.Send(me, 1)
+			return
+		}
+	}
+}
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	me := actor.Self()
+	for i := 0; i < 10; i++ {
+		r := actor.SpawnOpt(func() { reader(me) }, actor.Options{MaxMemory: 4096 + 4*i})
+		actor.Monitor(r)
+		for done := false; !done; {
+			switch m := actor.Receive().(type) {
+			case actor.DownMsg:
+				if m.Reason.Code != 0 {
+					println("reader died", m.Reason.Code)
+				}
+				done = true
+			}
+		}
+	}
+	println("done")
+}

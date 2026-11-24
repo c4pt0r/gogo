@@ -1,0 +1,98 @@
+// A survivor connection stays up while seven owners crash (Exit 9), each
+// with a connection in another state; then the survivor still works and
+// the freed slots take three new connections.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/net"
+	"gogo/port"
+)
+
+const gw = 10<<24 | 1
+
+// wait takes the next connection event.
+func wait() {
+	for {
+		switch actor.Receive().(type) {
+		case net.Connected:
+			return
+		case net.Closed:
+			return
+		case net.Accepted:
+			return
+		case net.Written:
+			return
+		}
+	}
+}
+
+func dial(p int) actor.PID {
+	c, _ := port.Open("tcp", net.Dial{IP: gw, Port: p})
+	return c
+}
+
+func owner(kind int) {
+	if kind == 1 { // SYN_SENT
+		dial(1001)
+	} else if kind == 2 { // ESTABLISHED
+		dial(1002)
+		wait()
+	} else if kind == 3 { // CLOSE_WAIT
+		dial(1003)
+		wait()
+		wait()
+	} else if kind == 4 { // accepted, paused
+		_, ok := port.Open("tcp_listen", net.Listen{Port: 1004})
+		println("listen", ok)
+		wait()
+	} else if kind == 5 { // FIN_WAIT_1 after Shutdown, data unacknowledged
+		c := dial(1005)
+		wait()
+		actor.Send(c, net.Write{Data: bytes.FromString("bye")})
+		actor.Send(c, net.Shutdown{})
+	} else if kind == 6 { // FIN_WAIT_2 after Shutdown
+		c := dial(1006)
+		wait()
+		actor.Send(c, net.Shutdown{})
+	} else { // LAST_ACK
+		c := dial(1007)
+		wait()
+		wait()
+		actor.Send(c, net.Shutdown{})
+	}
+	actor.Sleep(500)
+	actor.Exit(9)
+}
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: gw})
+	actor.Sleep(100)
+	sv := dial(2000)
+	wait()
+	println("survivor up")
+	for k := 1; k <= 7; k++ {
+		kind := k
+		o := actor.Spawn(func() { owner(kind) })
+		actor.Monitor(o)
+		for done := false; !done; {
+			switch m := actor.Receive().(type) {
+			case actor.DownMsg:
+				println("owner", kind, "exit", m.Reason.Code)
+				done = true
+			}
+		}
+	}
+	actor.Sleep(5000)
+	actor.Send(sv, net.Write{Data: bytes.FromString("alive")})
+	wait()
+	println("survivor written")
+	for p := 3001; p <= 3003; p++ {
+		_, ok := port.Open("tcp", net.Dial{IP: gw, Port: p})
+		println("dial", ok)
+	}
+	actor.Sleep(10)
+	port.Close(sv)
+}

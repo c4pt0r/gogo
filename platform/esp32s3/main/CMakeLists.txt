@@ -4,6 +4,9 @@ get_filename_component(GOGO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 
 file(GLOB GOGO_VM_SRCS "${GOGO_ROOT}/vm/*.c")
 list(FILTER GOGO_VM_SRCS EXCLUDE REGEX "/check32\\.c$")
+# The net stack (pure C99, chip-independent; spec M5): its net_rx_offer /
+# net_link_event are what wifi.c feeds.
+file(GLOB GOGO_NET_SRCS "${GOGO_ROOT}/net/*.c")
 
 # platform/common: the console grid and the font (shared with the host
 # tests), plus the font blob embedded as _binary_gogo12_font_{start,end}.
@@ -20,12 +23,13 @@ endif()
 
 idf_component_register(
     SRCS main.c platform_esp.c gpio_esp.c image_part.c console_task.c pm1.c lcd_st7789.c
-         ${GOGO_VM_SRCS} ${GOGO_COMMON_SRCS}
-    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/vm" "${GOGO_ROOT}/platform/common"
+         wifi.c config_esp.c
+         ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_COMMON_SRCS}
+    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/vm" "${GOGO_ROOT}/net" "${GOGO_ROOT}/platform/common"
     EMBED_FILES "${GOGO_ROOT}/platform/common/font/gogo12.font"
     LDFRAGMENTS linker.lf
     PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c
-                  esp_rom freertos heap)
+                  esp_rom freertos heap esp_wifi esp_event nvs_flash esp_driver_usb_serial_jtag)
 
 # Firmware version for the boot line: `git describe` of the repo at
 # configure time.
@@ -58,4 +62,4 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Os -Wall -Wextra -Werror
     -Werror=extra -Wunused-parameter -Wsign-compare -Werror=unused-function
     -Werror=unused-variable -Werror=unused-but-set-variable)
 # The VM core is portable C99.
-set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")
+set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")

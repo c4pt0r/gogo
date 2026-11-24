@@ -7,6 +7,7 @@
 #include "evq.h"
 #include "platform.h"
 #include "config.h"
+#include "bytes.h"
 #include <string.h>
 
 #if (GOGO_MAX_PORTS) < 1u || (GOGO_MAX_PORTS) > 16u
@@ -16,8 +17,14 @@
 #define GEN_MASK 0xFFFu
 
 static const PortDriver *const *override;
+static const PortSource *source;
 
 void port_set_drivers(const PortDriver *const *list) { override = list; }
+void port_set_source(const PortSource *s) { source = s; }
+
+bool port_subscribe(Vm *vm, Actor *a) {
+    return source && source->subscribe && source->subscribe(vm, a);
+}
 
 static const PortDriver *const *drivers(void) {
     return override ? override : platform_port_drivers();
@@ -69,6 +76,10 @@ term port_open(Vm *vm, Actor *owner, term name, term cfg) {
     uint32_t type, n;
     int32_t f[PORT_MAX_FIELDS];
     if (!int_struct(vm, owner, cfg, &type, f, &n) || type != drv->cfg_type) return T_NIL;
+    return port_open_with(vm, owner, drv, f, n);
+}
+
+term port_open_with(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *f, uint32_t n) {
     uint16_t i = 0;
     while (i < GOGO_MAX_PORTS && vm->ports[i].drv) i++;
     if (i == GOGO_MAX_PORTS) return T_NIL;
@@ -81,7 +92,14 @@ term port_open(Vm *vm, Actor *owner, term name, term cfg) {
     p->owner = owner->id;
     p->gen = gen;
     p->id = term_make_pid((uint16_t)(PORT_SLOT_BASE + i), gen);
-    if (drv->open(p, i, f, n) != 0) {
+    bool ok = drv->open(p, i, f, n) == 0;
+    if (ok && p->charge_words) {
+        /* The driver's state for the port is the owner's. */
+        ok = (uint32_t)owner->mem_words + actor_charged_words(owner) + p->charge_words <=
+                 actor_max_words(owner) && actor_charge(owner, p->charge_words);
+        if (!ok && drv->close) drv->close(p);
+    }
+    if (!ok) {
         /* Refused. Bump the generation anyway: anything the driver pushed
          * under it is stale. */
         p->drv = NULL;
@@ -94,7 +112,12 @@ term port_open(Vm *vm, Actor *owner, term name, term cfg) {
 
 void port_command(Vm *vm, const Actor *from, term pid, term msg) {
     Port *p = port_of(vm, pid);
-    if (!p || !p->drv->command) return;
+    if (!p) return;
+    if (p->drv->command_term) {
+        p->drv->command_term(vm, from, p, msg);
+        return;
+    }
+    if (!p->drv->command) return;
     uint32_t type, n;
     int32_t f[PORT_MAX_FIELDS];
     if (!int_struct(vm, from, msg, &type, f, &n)) return;
@@ -106,7 +129,16 @@ void port_close(Vm *vm, term pid) {
     if (!p) return;
     if (p->drv->close) p->drv->close(p);
     Actor *o = actor_lookup(vm, p->owner);
-    if (o) actor_port_disown(o);
+    if (o) {
+        /* Release what the port pinned for o (o is alive here: an owner's
+         * exit closes its ports before its handles go, signals.c). */
+        for (uint32_t k = 0; k < PORT_MAX_HELD; k++) {
+            if (p->held[k]) bytes_release(vm, o, p->held[k]);
+        }
+        actor_uncharge(o, p->charge_words);
+        actor_port_disown(o);
+    }
+    memset(p->held, 0, sizeof p->held);
     if (p->flags & PORT_PENDING) vm->ports_pending--;
     p->flags = 0;
     p->drv = NULL;
@@ -130,6 +162,7 @@ void port_close_all(Vm *vm) {
 }
 
 bool port_any_live(const Vm *vm) {
+    if (source && source->any_live(vm)) return true;
     for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
         const Port *p = &vm->ports[i];
         if (p->drv && p->drv->can_event && p->drv->can_event(p)) return true;
@@ -137,9 +170,13 @@ bool port_any_live(const Vm *vm) {
     return false;
 }
 
+bool port_work_pending(const Vm *vm) {
+    return vm->ports_pending || !evq_empty() || (source && source->pending());
+}
+
 bool port_next_deadline(const Vm *vm, uint64_t *deadline) {
-    if (!vm->ports_pending) return false;
-    bool have = false;
+    bool have = source && source->next_deadline && source->next_deadline(vm, deadline);
+    if (!vm->ports_pending) return have;
     for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
         const Port *p = &vm->ports[i];
         if (!(p->flags & PORT_PENDING)) continue;
@@ -240,4 +277,83 @@ void port_drain(Vm *vm, uint64_t now) {
     if (vm->ports_pending) {
         for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) flush_due(vm, &vm->ports[i], now);
     }
+    if (source && source->pending()) source->drain(vm, now);
+}
+
+/* ---- ownership (M5) ---- */
+
+Actor *port_owner(Vm *vm, const Port *p) {
+    Actor *o = actor_lookup(vm, p->owner);
+    return o && o->state != A_EXITED && !(o->flags & AF_EXIT_PENDING) ? o : NULL;
+}
+
+bool port_handoff(Vm *vm, Actor *from, term pid, term to) {
+    Port *p = port_of(vm, pid);
+    if (!p || p->owner != from->id) return false;
+    Actor *t = port_is(to) ? NULL : actor_lookup(vm, to);
+    if (!t || t->state == A_EXITED || (t->flags & AF_EXIT_PENDING)) return false;
+    if (t != from) {
+        /* t must fit the charge plus what holding the pinned Bytes adds
+         * (each root t does not hold yet, at its full length, and t's
+         * holder list if it has none). */
+        uint32_t k;
+        uint64_t need = (uint64_t)p->charge_words + bytes_extra_words(t, p->held, PORT_MAX_HELD);
+        if ((uint64_t)t->mem_words + actor_charged_words(t) + need > actor_max_words(t)) return false;
+        if (!actor_port_own(t)) return false;
+        if (p->charge_words && !actor_charge(t, p->charge_words)) {
+            actor_port_disown(t);
+            return false;
+        }
+        for (k = 0; k < PORT_MAX_HELD; k++) {
+            if (p->held[k] && !bytes_retain(vm, t, p->held[k])) break;
+        }
+        if (k < PORT_MAX_HELD) {         /* undo */
+            while (k--) if (p->held[k]) bytes_release(vm, t, p->held[k]);
+            actor_uncharge(t, p->charge_words);
+            actor_port_disown(t);
+            return false;
+        }
+        for (k = 0; k < PORT_MAX_HELD; k++) {
+            if (p->held[k]) bytes_release(vm, from, p->held[k]);
+        }
+        actor_uncharge(from, p->charge_words);
+        actor_port_disown(from);
+        p->owner = t->id;
+    }
+    if (p->drv->handoff) p->drv->handoff(vm, p);
+    return true;
+}
+
+/* ---- port-held Bytes (M5) ---- */
+
+static term *held_slot(Port *p, term h) {
+    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) {
+        if (p->held[k] == h) return &p->held[k];
+    }
+    return NULL;
+}
+
+term port_bytes_new(Vm *vm, Port *p, uint32_t len, uint8_t **data) {
+    term *s = held_slot(p, 0);
+    Actor *o = port_owner(vm, p);
+    if (!s || !o) return T_NIL;
+    term h = bytes_new(vm, o, len, data);
+    if (h != T_NIL) *s = h;
+    return h;
+}
+
+bool port_bytes_retain(Vm *vm, Port *p, term h) {
+    term *s = held_slot(p, 0);
+    Actor *o = port_owner(vm, p);
+    if (!s || !o || !h || !bytes_retain(vm, o, h)) return false;
+    *s = h;
+    return true;
+}
+
+void port_bytes_release(Vm *vm, Port *p, term h) {
+    term *s = h ? held_slot(p, h) : NULL;
+    if (!s) return;
+    *s = 0;
+    Actor *o = actor_lookup(vm, p->owner);
+    if (o) bytes_release(vm, o, h);
 }

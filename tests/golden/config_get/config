@@ -1,0 +1,5 @@
+net.ip=10.0.0.9
+wifi.ssid=home
+wifi.password=secret
+greeting=hello world
+empty=

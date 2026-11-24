@@ -142,6 +142,12 @@ void bytes_gc_sweep(Actor *a, HeldBytes **slot);
  * rather than OutOfMemory after the receive). */
 uint32_t bytes_list_words(const Actor *a);
 
+/* Words a's charge would grow by if it held every handle in hs[0..n) (0
+ * entries and dead handles are skipped): the full length of each root it
+ * does not hold yet (a slice counts its root), plus its holder list if it
+ * has none. Used by port_handoff to check the new owner's limit. */
+uint32_t bytes_extra_words(const Actor *a, const term *hs, uint32_t n);
+
 /* Message references (msg.c): one per occurrence. */
 void bytes_msg_ref(term h);
 void bytes_msg_unref(term h);

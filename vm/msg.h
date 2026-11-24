@@ -78,6 +78,13 @@ int msg_send(Vm *vm, Actor *from, term to_pid, term msg);
  * `to` must be alive and not marked for exit. Never allocates. */
 bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota);
 
+/* Non-fatal delivery (spec M5 §9.1, network data only): queues m on `to`
+ * like msg_enqueue with quota and returns true; but if `to` is exited or
+ * marked to exit, or m would take it past its limit or its mailbox
+ * counter, returns false and leaves m unqueued and still the caller's (to
+ * free or retry). The receiver is never marked. Never allocates. */
+bool msg_try_enqueue(Vm *vm, Actor *to, Msg *m);
+
 /* Dequeues the oldest message into a's heap and stores it in *out. Reply
  * blocks (MSG_REPLY) at the head are freed unseen. False
  * if the mailbox is empty, or if the heap cannot hold the message (it then

@@ -187,6 +187,26 @@ static bool room_for(const Actor *a, uint32_t r, uint32_t root_len) {
     return words <= actor_max_words(a);
 }
 
+uint32_t bytes_extra_words(const Actor *a, const term *hs, uint32_t n) {
+    const HeldBytes *hb = list_of(a);
+    uint32_t held = hb ? hb->bytes : 0u;
+    uint64_t total = held;
+    BytesSet s;
+    bytes_set_init(&s);
+    for (uint32_t k = 0; hb && k < hb->n; k++) bytes_set_add(&s, term_from_handle(hb->e[k].idx));
+    bool any = false;
+    for (uint32_t j = 0; j < n; j++) {
+        if (!hs[j] || !bytes_valid(hs[j])) continue;
+        any = true;
+        uint32_t before = s.bytes;
+        bytes_set_add(&s, hs[j]);
+        total += s.bytes - before;        /* a root not seen yet: its full length */
+    }
+    if (!any) return 0u;
+    uint64_t w = (total + 3u) / 4u - bytes_words(held) + (hb ? 0u : LIST_WORDS);
+    return w > UINT32_MAX ? UINT32_MAX : (uint32_t)w;
+}
+
 uint32_t bytes_held_bytes(const Actor *a) {
     const HeldBytes *hb = list_of(a);
     return hb ? hb->bytes : 0u;
@@ -267,7 +287,7 @@ static bool tab_full(void) { return tab && tab_used >= GOGO_BYTES_HANDLES; }
 term bytes_make(Vm *vm, Actor *a, uint32_t len, uint8_t **data) {
     term h = try_new(a, len, false, data);
     if (h == T_NIL) {
-        heap_gc(vm, a, 0, NULL, 0);       /* drops what a no longer reaches */
+        heap_gc_tight(vm, a, 0, NULL, 0); /* drops what a no longer reaches, and the slack */
         h = try_new(a, len, false, data);
     }
     if (h == T_NIL && tab_full()) {
@@ -281,7 +301,7 @@ term bytes_sub(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len) {
     if (!bytes_valid(h)) return T_NIL;
     term s = try_sub(a, h, lo, len);
     if (s == T_NIL) {
-        heap_gc(vm, a, 0, NULL, 0);       /* h is in a register: it stays */
+        heap_gc_tight(vm, a, 0, NULL, 0); /* h is in a register: it stays */
         if (!bytes_valid(h)) return T_NIL;
         s = try_sub(a, h, lo, len);
     }

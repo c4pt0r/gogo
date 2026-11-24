@@ -1,0 +1,44 @@
+// port.Handoff moves a port to another actor: only the owner may hand it
+// off, and afterwards the new owner's exit closes it, so the pin can be
+// opened again.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+)
+
+type Take struct{ P actor.PID }
+
+type Quit struct{}
+
+func holder(boss actor.PID) {
+	m := actor.Receive()
+	switch t := m.(type) {
+	case Take:
+		println("child steals", port.Handoff(t.P, actor.Self()))
+	}
+	actor.Send(boss, Quit{})
+	actor.Receive()
+}
+
+func main() {
+	p, ok := port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	println("open", ok)
+	me := actor.Self()
+	c := actor.Spawn(func() { holder(me) })
+	actor.Send(c, Take{p})
+	actor.Receive()
+	var zero actor.PID
+	println("to zero pid", port.Handoff(p, zero))
+	println("to child", port.Handoff(p, c))
+	println("again", port.Handoff(p, c))
+	_, ok = port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	println("reopen while child owns", ok)
+	ref := actor.Monitor(c)
+	actor.Send(c, Quit{})
+	actor.Receive()
+	_ = ref
+	_, ok = port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	println("reopen after child exit", ok)
+}

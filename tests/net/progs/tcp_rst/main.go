@@ -1,0 +1,36 @@
+// Three connections the peer resets: mid-transfer, refused, and after an
+// out-of-window RST that must be ignored.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/net"
+	"gogo/port"
+)
+
+func run(rport int, w string) {
+	c, _ := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: rport})
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Connected:
+			println("connected")
+			actor.Send(c, net.Write{Data: bytes.FromString(w)})
+		case net.Written:
+			println("written")
+		case net.Closed:
+			println("closed", m.Reason)
+			port.Close(c)
+			return
+		}
+	}
+}
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	actor.Sleep(100)
+	run(80, "x")
+	run(81, "")
+	run(82, "y")
+}

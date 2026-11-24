@@ -55,7 +55,11 @@ func Compile(p *Program) ([]byte, error) {
 	for len(g.pending) > 0 {
 		c := g.pending[0]
 		g.pending = g.pending[1:]
-		if err := g.compileFunc(c.info, c.captures, nil, c.lit.Body); err != nil { // func(): no result
+		// The captures are the leading parameters, the literal's own
+		// parameters follow (CALLV passes them in that order).
+		params := append(append([]*types.Var{}, c.captures...), g.declParams(c.lit.Type)...)
+		sig := p.Info.TypeOf(c.lit).(*types.Signature)
+		if err := g.compileFunc(c.info, params, sig.Results(), c.lit.Body); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -140,7 +144,7 @@ func isBytes(t types.Type) bool { return isBytesType(t, "Bytes") }
 
 func isBuffer(t types.Type) bool { return isBytesType(t, "Buffer") }
 
-// reservedTypes are the gogo/actor and gogo/port struct types. Every image
+// reservedTypes are the gogo/actor, gogo/port and gogo/net struct types. Every image
 // starts its type table with them, in this order, so the VM can build and
 // recognize these structs by fixed index (TYPE_* in vm/opcodes.h).
 var reservedTypes = []struct {
@@ -157,6 +161,24 @@ var reservedTypes = []struct {
 	{PortPath, "GPIO", []string{"Pin", "Mode", "Edge", "DebounceMs"}},
 	{PortPath, "Write", []string{"Value"}},
 	{PortPath, "Edge", []string{"Pin", "Value"}},
+	{NetPath, "IfConfig", nil},
+	{NetPath, "SetAddr", []string{"IP", "Mask", "Gateway", "DNS"}},
+	{NetPath, "Up", []string{"IP", "Gateway", "DNS"}},
+	{NetPath, "Down", nil},
+	{NetPath, "Addr", []string{"IP", "Port"}},
+	{NetPath, "UDP", []string{"Port"}},
+	{NetPath, "SendTo", []string{"Addr", "Data"}},
+	{NetPath, "Datagram", []string{"From", "Data"}},
+	{NetPath, "Dial", []string{"IP", "Port", "TimeoutMs"}},
+	{NetPath, "Listen", []string{"Port"}},
+	{NetPath, "Write", []string{"Data"}},
+	{NetPath, "Shutdown", nil},
+	{NetPath, "Resume", nil},
+	{NetPath, "Connected", nil},
+	{NetPath, "Data", []string{"Data"}},
+	{NetPath, "Written", nil},
+	{NetPath, "Closed", []string{"Reason"}},
+	{NetPath, "Accepted", []string{"Conn"}},
 }
 
 // collectTypes emits the reserved types first (whether used or not), then
@@ -174,8 +196,11 @@ func (g *gen) collectTypes() error {
 	}
 	for _, rt := range reservedTypes {
 		name := rt.name
-		if rt.pkg == PortPath {
+		switch rt.pkg {
+		case PortPath:
 			name = "port." + rt.name // actor types keep their bare names
+		case NetPath:
+			name = "net." + rt.name
 		}
 		idx := g.b.AddType(name, uint32(len(rt.fields)))
 		stub := stubs[rt.pkg]
@@ -1288,6 +1313,10 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 		f.conversion(call, dst)
 		return
 	}
+	if funcValueCall(f.g.p.Info, call) {
+		f.callValue(call, dst)
+		return
+	}
 	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
 		switch obj := f.g.p.Info.Uses[fun].(type) {
@@ -1324,4 +1353,19 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 		}
 	}
 	f.fail(call, "internal error: unexpected call")
+}
+
+// callValue compiles a call of a func value into dst: the closure goes into
+// a fresh register and the arguments right above it, then CALLV (whose
+// results land in dst.., as CALL's do). A nil func value is badcode.
+func (f *fn) callValue(call *ast.CallExpr, dst uint8) {
+	mark := f.next
+	clo := f.alloc(call.Fun)
+	f.exprInto(call.Fun, clo)
+	base, n := f.args(call)
+	if n > 0 && base != clo+1 {
+		f.fail(call, "internal error: call arguments not above the func value")
+	}
+	f.asm.Emit(OpCallv, dst, clo, n)
+	f.next = mark
 }

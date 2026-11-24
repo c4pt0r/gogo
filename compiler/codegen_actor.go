@@ -35,7 +35,7 @@ func (g *gen) nameLits(decls []*ast.FuncDecl) {
 // actorBuiltins maps each stub function (by stubName: gogo/actor and
 // gogo/port) to its BUILTIN id. The arguments go into consecutive
 // registers; the two-result builtins (ReceiveTimeout, Call, Whereis,
-// port.Open) write dst and dst+1, so they are only compiled by assign,
+// port.Open, config.Get) write dst and dst+1, so they are only compiled by assign,
 // which passes two fresh temporaries.
 var actorBuiltins = map[string]uint32{
 	"Spawn": BSpawn, "SpawnLink": BSpawnLink, "SpawnOpt": BSpawnOpt,
@@ -46,7 +46,8 @@ var actorBuiltins = map[string]uint32{
 	"SendAfter": BSendAfter, "CancelTimer": BCancelTimer, "Sleep": BSleep,
 	"Now": BNow, "Call": BCall, "Reply": BReply, "Register": BRegister,
 	"Whereis": BWhereis, "Unregister": BUnregister,
-	"port.Open": BPortOpen, "port.Close": BPortClose,
+	"port.Open": BPortOpen, "port.Close": BPortClose, "port.Handoff": BPortHandoff,
+	"net.Subscribe":   BNetSubscribe, "config.Get": BConfigGet,
 	"bytes.NewBuffer": BBufNew, "bytes.FromString": BBytesFrom, "bytes.FromSlice": BBytesFrom,
 }
 
@@ -125,10 +126,11 @@ func (f *fn) twoResultCall(call *ast.CallExpr, dst uint8) {
 
 // closureInto compiles func literal lit into dst: the captured variables
 // go into consecutive registers and MKCLOSURE packs them with the hidden
-// function, whose parameters they become.
+// function, whose leading parameters they become (its own parameters
+// follow; see OP_CALLV).
 func (f *fn) closureInto(lit *ast.FuncLit, dst uint8) {
 	caps := litCaptures(f.g.p.Info, lit)
-	if len(caps) > maxRegs {
+	if len(caps)+len(f.g.declParams(lit.Type)) > maxRegs {
 		f.fail(lit, "closure captures too many variables")
 	}
 	info := &funcInfo{name: f.g.litNames[lit]}
@@ -149,8 +151,8 @@ func (f *fn) closureInto(lit *ast.FuncLit, dst uint8) {
 	f.next = mark
 }
 
-// funcValueInto compiles the top-level function fn (of type func()) used as
-// a value into dst: a closure without captures.
+// funcValueInto compiles the top-level function fn (of any signature) used
+// as a value into dst: a closure without captures.
 func (f *fn) funcValueInto(n ast.Node, fn *types.Func, dst uint8) {
 	idx, ok := f.g.funcIdx[fn]
 	if !ok {

@@ -154,7 +154,7 @@ func Disassemble(img []byte) (string, error) {
 				args = fmt.Sprintf("r%d, r%d, %d, %s", a, b, c, typeName(ext))
 			case OpClear, OpRetn:
 				args = fmt.Sprintf("r%d, %d", a, b)
-			case OpGetfield, OpConv:
+			case OpGetfield, OpConv, OpCallv:
 				args = fmt.Sprintf("r%d, r%d, %d", a, b, c)
 			case OpMkclosure:
 				args = fmt.Sprintf("r%d, r%d, %d, %s", a, b, c, funcName(ext))

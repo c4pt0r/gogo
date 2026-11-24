@@ -12,9 +12,11 @@
 /* Runs sequence builtin `id` (B_STR_CONCAT, B_LEN, B_INDEX, B_SETINDEX,
  * B_SLICE, B_MAKE_SLICE, B_APPEND, B_COPY, B_CAP, B_STR_FROM,
  * B_BYTESLICE_FROM, B_STR_CMP, B_BUF_NEW, B_BUF_WRITE, B_BUF_FREEZE,
- * B_BYTES_FROM, B_BYTES_EQUAL, B_BYTES_COPYTO) for BUILTIN ra, rb, rc: arguments in registers rb..rb+rc-1 of
- * a's top frame, result into register ra. The caller has checked that ra
- * and rb..rb+rc-1 are registers of the frame. Returns R_NORMAL, R_BAD_CODE
+ * B_BYTES_FROM, B_BYTES_EQUAL, B_BYTES_COPYTO, B_CONFIG_GET) for BUILTIN
+ * ra, rb, rc: arguments in registers rb..rb+rc-1 of a's top frame, result
+ * into register ra (B_CONFIG_GET: value and ok into ra and ra+1). The
+ * caller has checked that ra (ra+1 for B_CONFIG_GET) and rb..rb+rc-1 are
+ * registers of the frame. Returns R_NORMAL, R_BAD_CODE
  * (wrong argument count or kind, index or slice bounds out of range) or
  * R_OUT_OF_MEMORY. May GC, so the caller reloads its register pointer
  * after every call. Writes ra only on success, after reading every

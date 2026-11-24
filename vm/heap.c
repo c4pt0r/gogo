@@ -192,11 +192,38 @@ void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots) {
     if (new_words != old_words) resize_block(a, new_words);
 }
 
+void heap_gc_tight(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots) {
+    (void)vm;
+    uint32_t old_words = a->mem_words;
+    if (!copy_into(a, old_words, roots, n_roots)) return;  /* no memory to collect with */
+    uint32_t live = (uint32_t)a->hp + (old_words - a->sp);
+    uint32_t cap = block_cap(a);                 /* after the sweep released Bytes */
+    uint32_t want = live + need_words;           /* <= 2 * 65535, no overflow */
+    if (need_words && want > cap) return;        /* cannot fit: keep the compacted block */
+    if (want < MIN_BLOCK_WORDS && MIN_BLOCK_WORDS <= old_words) want = MIN_BLOCK_WORDS;
+    if (want != old_words) resize_block(a, want);
+}
+
+bool heap_reclaim_waiting(Vm *vm, Actor *a) {
+    if (a->state != A_WAITING) return false;
+    uint32_t before = (uint32_t)a->mem_words + actor_charged_words(a);
+    heap_gc_tight(vm, a, 0, NULL, 0);
+    return (uint32_t)a->mem_words + actor_charged_words(a) < before;
+}
+
+/* Room for `words` free words: a normal GC (sized with growth slack), and
+ * if that fails against the limit, a tight one (spec M5 task 6: a request
+ * near the limit fits once the slack is gone). */
+static bool make_room(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots) {
+    if ((uint32_t)(a->sp - a->hp) >= words) return true;
+    heap_gc(vm, a, words, roots, n_roots);
+    if ((uint32_t)(a->sp - a->hp) >= words) return true;
+    heap_gc_tight(vm, a, words, roots, n_roots);
+    return (uint32_t)(a->sp - a->hp) >= words;
+}
+
 uint32_t heap_alloc(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots) {
-    if ((uint32_t)(a->sp - a->hp) < words) {
-        heap_gc(vm, a, words, roots, n_roots);
-        if ((uint32_t)(a->sp - a->hp) < words) return UINT32_MAX;
-    }
+    if (!make_room(vm, a, words, roots, n_roots)) return UINT32_MAX;
     uint32_t off = a->hp;
     a->hp = (uint16_t)(off + words);
     return off;
@@ -204,10 +231,7 @@ uint32_t heap_alloc(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots) 
 
 bool heap_push_frame(Vm *vm, Actor *a, uint16_t n_regs, int32_t ret_pc) {
     uint32_t size = (uint32_t)n_regs + 2u;
-    if ((uint32_t)(a->sp - a->hp) < size) {
-        heap_gc(vm, a, size, NULL, 0);
-        if ((uint32_t)(a->sp - a->hp) < size) return false;
-    }
+    if (!make_room(vm, a, size, NULL, 0)) return false;
     /* Top-relative caller fp; 0 means "no caller" (entry frame). */
     int32_t saved_fp = a->sp == a->mem_words ? 0 : (int32_t)(a->mem_words - a->fp);
     uint32_t fp = a->sp - size;

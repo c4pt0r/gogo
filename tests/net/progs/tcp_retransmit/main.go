@@ -1,0 +1,39 @@
+// Dials, writes "abc" then "def" (the peer never acknowledges it), then
+// dials with a 2.5 s connect timeout nobody answers.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/net"
+	"gogo/port"
+)
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	actor.Sleep(100)
+	c, ok := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+	println("dial", ok)
+	done := false
+	for !done {
+		switch m := actor.Receive().(type) {
+		case net.Connected:
+			println("connected")
+			actor.Send(c, net.Write{Data: bytes.FromString("abc")})
+		case net.Written:
+			println("written")
+			actor.Send(c, net.Write{Data: bytes.FromString("def")})
+		case net.Closed:
+			println("closed", m.Reason, actor.Now())
+			port.Close(c)
+			done = true
+		}
+	}
+	c, ok = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 81, TimeoutMs: 2500})
+	println("dial2", ok)
+	switch m := actor.Receive().(type) {
+	case net.Closed:
+		println("closed", m.Reason, actor.Now())
+	}
+}

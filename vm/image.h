@@ -7,7 +7,8 @@
  *   v1  M1/M2.
  *   v2  M3: generic arithmetic is int-only, *64 ops and BOX64, OP_CLEAR,
  *       typed zero PID/Ref (T_ZEROPID, T_ZEROREF), port builtins/types.
- *   v3  M4: OP_RETN (multi-result return), OP_CONV c=2 (byte). */
+ *   v3  M4: OP_RETN (multi-result return), OP_CONV c=2 (byte).
+ *   v4  M5: OP_CALLV (calling a func value). */
 #ifndef GOGO_IMAGE_H
 #define GOGO_IMAGE_H
 
@@ -15,7 +16,7 @@
 #include <stddef.h>
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 3u
+#define IMAGE_VERSION 4u
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {
