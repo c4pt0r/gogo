@@ -1,6 +1,8 @@
 #include "actor.h"
 #include "alloc.h"
 #include "msg.h"
+#include "config.h"
+#include "signals.h"
 #include <string.h>
 
 #define GEN_MASK 0xFFFu
@@ -12,6 +14,7 @@ static uint16_t slot_gen(uintptr_t w) { return (uint16_t)((w >> 1) & GEN_MASK); 
 int vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
     memset(vm, 0, sizeof *vm);
     vm->img = img;
+    vm->next_ref = 1;
     vm->table = va_alloc((size_t)table_cap * sizeof(uintptr_t));
     if (!vm->table) return -1;
     vm->table_cap = table_cap;
@@ -37,9 +40,15 @@ Actor *actor_new(Vm *vm, uint16_t initial_words) {
     a->sp = a->fp = initial_words;          /* empty stack */
     a->id = term_make_pid(slot, slot_gen(vm->table[slot]));
     a->state = A_RUNNABLE;
+    a->max_words = 0;                        /* default limit */
     vm->table[slot] = (uintptr_t)a;
     vm->live++;
     return a;
+}
+
+uint32_t actor_max_words(const Actor *a) {
+    if (a->max_words) return a->max_words;
+    return GOGO_DEFAULT_MAX_WORDS > 65535u ? 65535u : GOGO_DEFAULT_MAX_WORDS;
 }
 
 void actor_free(Vm *vm, Actor *a) {
@@ -48,6 +57,7 @@ void actor_free(Vm *vm, Actor *a) {
         a->mbox_head = m->next;
         msg_free(m);
     }
+    actor_extra_free(vm, a);
     uint16_t slot = term_pid_slot(a->id);
     vm->table[slot] = free_slot((uint16_t)(term_pid_gen(a->id) + 1u));  /* wraps at 12 bits */
     va_free(a->mem, (size_t)a->mem_words * 4u);

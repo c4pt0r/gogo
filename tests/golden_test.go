@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +17,8 @@ import (
 
 // TestGolden compiles every tests/golden/*/ program, runs it on the VM named
 // by $GOGO_VM (30s timeout) and requires exit status 0 and stdout equal
-// byte-for-byte to expected.out; stderr is not compared. `make test-go`
+// byte-for-byte to expected.out; if expected.err exists, each of its
+// non-empty lines must be a substring of stderr. `make test-go`
 // builds the VM and sets GOGO_VM.
 func TestGolden(t *testing.T) {
 	vm := os.Getenv("GOGO_VM")
@@ -68,6 +70,17 @@ func TestGolden(t *testing.T) {
 			if !bytes.Equal(stdout.Bytes(), want) {
 				t.Errorf("stdout mismatch\n--- got ---\n%s\n--- want ---\n%s\n--- stderr ---\n%s",
 					stdout.Bytes(), want, stderr.Bytes())
+			}
+			// Optional expected.err: each non-empty line must appear
+			// somewhere in stderr.
+			wantErr, err := os.ReadFile(filepath.Join(dir, "expected.err"))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			for _, line := range strings.Split(string(wantErr), "\n") {
+				if line != "" && !strings.Contains(stderr.String(), line) {
+					t.Errorf("stderr lacks %q\n--- stderr ---\n%s", line, stderr.Bytes())
+				}
 			}
 		})
 	}

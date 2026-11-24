@@ -10,6 +10,8 @@ void *va_alloc(size_t bytes);              /* NULL on failure or over limit */
 void va_free(void *p, size_t bytes);
 size_t va_used_bytes(void);                /* handed out, rounded to class size */
 void va_set_limit(size_t bytes);           /* 0 = unlimited (for OOM tests) */
+size_t va_peak_bytes(void);                /* highest va_used_bytes since reset */
+void va_reset_peak(void);                  /* peak = current use */
 void va_reset(void);                       /* tests only: forget all state */
 
 #endif

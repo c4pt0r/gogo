@@ -59,6 +59,10 @@ func Disassemble(img []byte) (string, error) {
 			return "TyString"
 		case TyPid:
 			return "TyPid"
+		case TyRef:
+			return "TyRef"
+		case TyInt64:
+			return "TyInt64"
 		}
 		if int(id) < nt {
 			if s, err := str(types[id*2+1]); err == nil {
@@ -77,9 +81,14 @@ func Disassemble(img []byte) (string, error) {
 			return "true"
 		case t == TermFalse:
 			return "false"
+		case t == TermEmptyStr:
+			return "emptystr"
 		case t&0xF == 0xA:
 			if s, err := str(t >> 4); err == nil {
 				return fmt.Sprintf("%q", s)
+			}
+			if off := int(t >> 4); off+3 <= len(consts) && consts[off] == HdrMake(3, KInt64) {
+				return fmt.Sprintf("int64(%d)", int64(uint64(consts[off+1])|uint64(consts[off+2])<<32))
 			}
 		}
 		return fmt.Sprintf("0x%08x", t)
@@ -132,7 +141,7 @@ func Disassemble(img []byte) (string, error) {
 				args = fmt.Sprintf("r%d", a)
 			case OpNewstruct:
 				args = fmt.Sprintf("r%d, r%d, %d, %s", a, b, c, typeName(ext))
-			case OpGetfield:
+			case OpGetfield, OpConv:
 				args = fmt.Sprintf("r%d, r%d, %d", a, b, c)
 			case OpMkclosure:
 				args = fmt.Sprintf("r%d, r%d, %d, %s", a, b, c, funcName(ext))

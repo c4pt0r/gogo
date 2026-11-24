@@ -14,10 +14,34 @@
  * Safety on malformed images: register indices are checked against the
  * current function's n_regs, the pc against the code area, LOADK operands
  * against the term kinds an image may contain, and RET checks that the
- * frame chain is consistent. Violations crash the actor with `badcode`. */
+ * frame chain is consistent. Violations crash the actor with `badcode`.
+ *
+ * Every way out of an actor (return from the entry frame, EXIT, a runtime
+ * error, a pending exit mark) goes through actor_exit (signals.c), which
+ * reports and frees it; interp_run then returns RUN_EXIT.
+ *
+ * Timed waits (ReceiveTimeout, Sleep) block like RECEIVE: the pc stays on
+ * the BUILTIN, which runs again when the actor is woken. The first run arms
+ * a wakeup timer (AF_WAKEUP_ARMED); when it fires it sets AF_TIMED_OUT and
+ * the re-run returns. A message wakes a ReceiveTimeout as for RECEIVE, and
+ * taking it cancels the wakeup. Sleep ignores messages: woken by one, it
+ * finds its wakeup still armed and blocks again.
+ *
+ * Call blocks the same way but must send its request only once. The first
+ * run sends it, leaves the Ref in the result register ra (a GC-visible
+ * stack word, so the serial survives yields and collections), arms the
+ * wakeup and sets AF_CALL_PENDING. Re-runs see the flag, do not read the
+ * arguments (ra may overlap them), look for the reply with that serial
+ * (msg_take_reply; other messages stay queued) and block again unless it
+ * came or the wakeup fired. The flag is cleared on reply and on timeout;
+ * an actor that dies takes it along. */
 #include "interp.h"
 #include "heap.h"
 #include "msg.h"
+#include "signals.h"
+#include "timer.h"
+#include "names.h"
+#include "out.h"
 #include "opcodes.h"
 #include "platform.h"
 #include <string.h>
@@ -63,6 +87,21 @@ static const uint32_t *obj_of(const Vm *vm, const Actor *a, term t) {
     return base + off;
 }
 
+/* The bytes of a name argument: a string constant, a heap string or the
+ * empty string. False for anything else. */
+static bool name_bytes(const Vm *vm, const Actor *a, term t, const uint8_t **p, uint32_t *len) {
+    if (t == T_EMPTYSTR) {
+        *p = NULL;
+        *len = 0;
+        return true;
+    }
+    const uint32_t *o = obj_of(vm, a, t);
+    if (!o || hdr_kind(o[0]) != K_STRING || o[1] > (hdr_words(o[0]) - 2u) * 4u) return false;
+    *p = (const uint8_t *)(o + 2);
+    *len = o[1];
+    return true;
+}
+
 /* ---- ints ---- */
 
 /* Value of a small int or boxed K_INT; false for anything else. */
@@ -94,56 +133,86 @@ static bool make_int(Vm *vm, Actor *a, int32_t v, term *out) {
     return true;
 }
 
+/* Value of a K_INT64 object (heap or const area); false for anything else. */
+static bool int64_val(const Vm *vm, const Actor *a, term t, int64_t *out) {
+    const uint32_t *o = obj_of(vm, a, t);
+    if (!o || hdr_kind(o[0]) != K_INT64 || hdr_words(o[0]) != 3u) return false;
+    *out = (int64_t)((uint64_t)o[1] | ((uint64_t)o[2] << 32));
+    return true;
+}
+
+/* A new K_INT64 holding v. int64 values are always boxed, so `any` can tell
+ * them from ints. May GC (the caller reloads register pointers). False on
+ * OOM. */
+static bool make_int64(Vm *vm, Actor *a, int64_t v, term *out) {
+    uint32_t off = heap_alloc(vm, a, 3, NULL, 0);
+    if (off == UINT32_MAX) return false;
+    a->mem[off] = hdr_make(3, K_INT64);
+    a->mem[off + 1] = (uint32_t)(uint64_t)v;
+    a->mem[off + 2] = (uint32_t)((uint64_t)v >> 32);
+    *out = term_from_ref(off);
+    return true;
+}
+
+/* Serial of a K_REF object; false for anything else. */
+static bool ref_serial(const Vm *vm, const Actor *a, term t, uint64_t *out) {
+    const uint32_t *o = obj_of(vm, a, t);
+    if (!o || hdr_kind(o[0]) != K_REF || hdr_words(o[0]) != 3u) return false;
+    *out = (uint64_t)o[1] | ((uint64_t)o[2] << 32);
+    return true;
+}
+
 /* Wrapping int32 arithmetic without signed-overflow UB. The conversion of
  * an out-of-range uint32 back to int32 is implementation-defined in C99;
  * every compiler we target defines it as two's complement. */
 static int32_t wrap(uint32_t u) { return (int32_t)u; }
+static int64_t wrap64(uint64_t u) { return (int64_t)u; }
+
+/* x op y for the binary arithmetic ops with Go semantics (wrapping; MinInt
+ * / -1 == MinInt; x % -1 == 0). False on division by zero. */
+static bool arith32(uint32_t op, int32_t x, int32_t y, int32_t *r) {
+    switch (op) {
+    case OP_ADD: *r = wrap((uint32_t)x + (uint32_t)y); return true;
+    case OP_SUB: *r = wrap((uint32_t)x - (uint32_t)y); return true;
+    case OP_MUL: *r = wrap((uint32_t)x * (uint32_t)y); return true;
+    case OP_DIV:
+        if (y == 0) return false;
+        *r = (x == INT32_MIN && y == -1) ? INT32_MIN : x / y;
+        return true;
+    default: /* OP_REM */
+        if (y == 0) return false;
+        *r = (y == -1) ? 0 : x % y;     /* avoids INT32_MIN % -1 UB */
+        return true;
+    }
+}
+
+static bool arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
+    switch (op) {
+    case OP_ADD: *r = wrap64((uint64_t)x + (uint64_t)y); return true;
+    case OP_SUB: *r = wrap64((uint64_t)x - (uint64_t)y); return true;
+    case OP_MUL: *r = wrap64((uint64_t)x * (uint64_t)y); return true;
+    case OP_DIV:
+        if (y == 0) return false;
+        *r = (x == INT64_MIN && y == -1) ? INT64_MIN : x / y;
+        return true;
+    default: /* OP_REM */
+        if (y == 0) return false;
+        *r = (y == -1) ? 0 : x % y;     /* avoids INT64_MIN % -1 UB */
+        return true;
+    }
+}
 
 /* ---- println ---- */
 
-typedef struct Out {
-    char buf[256];
-    size_t n;
-    void (*write)(const char *s, size_t n);   /* platform_write or _err */
-} Out;
-
-static void out_flush(Out *o) {
-    if (o->n) o->write(o->buf, o->n);
-    o->n = 0;
-}
-
-static void out_bytes(Out *o, const char *s, size_t n) {
-    if (n > sizeof o->buf - o->n) {
-        out_flush(o);
-        if (n > sizeof o->buf) {           /* too big to buffer: write through */
-            o->write(s, n);
-            return;
-        }
-    }
-    memcpy(o->buf + o->n, s, n);
-    o->n += n;
-}
-
-static void out_str(Out *o, const char *s) { out_bytes(o, s, strlen(s)); }
-
-static void out_int(Out *o, int32_t v) {
-    char tmp[12];
-    int i = (int)sizeof tmp;
-    uint32_t u = v < 0 ? 0u - (uint32_t)v : (uint32_t)v;
-    do {
-        tmp[--i] = (char)('0' + u % 10u);
-        u /= 10u;
-    } while (u);
-    if (v < 0) tmp[--i] = '-';
-    out_bytes(o, tmp + i, sizeof tmp - (size_t)i);
-}
-
 static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
     int32_t v;
+    int64_t v64;
     if (int_val(vm, a, t, &v)) { out_int(o, v); return; }
+    if (int64_val(vm, a, t, &v64)) { out_int64(o, v64); return; }
     if (t == T_TRUE) { out_str(o, "true"); return; }
     if (t == T_FALSE) { out_str(o, "false"); return; }
     if (t == T_NIL) { out_str(o, "nil"); return; }
+    if (t == T_EMPTYSTR) return;
     if (term_is_pid(t)) {
         out_str(o, "<pid ");
         out_int(o, term_pid_slot(t));
@@ -164,6 +233,10 @@ static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
         out_str(o, "}");
     } else if (kind == K_CLOSURE) {
         out_str(o, "<func>");
+    } else if (kind == K_REF && hdr_words(obj[0]) == 3u) {
+        out_str(o, "<ref ");
+        out_dec(o, obj[1], false);
+        out_str(o, ">");
     } else {
         out_str(o, "?");
     }
@@ -171,8 +244,7 @@ static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
 
 static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n) {
     Out o;
-    o.n = 0;
-    o.write = platform_write;
+    out_init(&o, platform_write);
     for (uint32_t i = 0; i < n; i++) {
         if (i) out_str(&o, " ");
         out_term(&o, vm, a, args[i], 0);
@@ -181,42 +253,30 @@ static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t 
     out_flush(&o);
 }
 
-/* ---- crash ---- */
-
-static void report_crash(const Vm *vm, const Actor *a, uint32_t fn, const char *kind) {
-    Out o;
-    o.n = 0;
-    o.write = platform_write_err;
-    uint32_t len;
-    const char *name = image_func_name(vm->img, fn, &len);
-    out_str(&o, "gogo: actor <pid ");
-    out_int(&o, term_pid_slot(a->id));
-    out_str(&o, "> crashed: ");
-    out_str(&o, kind);
-    out_str(&o, " in ");
-    out_bytes(&o, name, len);
-    out_str(&o, "\n");
-    out_flush(&o);
-}
-
 /* ---- actors ---- */
 
 /* Spawns an actor running closure clo: its captures are copied into the new
- * actor like a message and become r0.. of the entry frame. On success sets
- * *pid and returns NULL; otherwise returns the crash kind for the caller.
- * Allocates only in the new actor, so the caller's heap does not move. */
-static const char *do_spawn(Vm *vm, const Actor *a, term clo, term *pid) {
+ * actor like a message and become r0.. of the entry frame. max_words is the
+ * child's memory limit in words, 0 for the default; a limit below the
+ * child's initial block is raised to the block size, so the spawn succeeds
+ * (the child then has no room to grow). With `link`, the child is linked to
+ * a before it is queued (SpawnLink); if that fails the child is freed
+ * unrun. On success sets *pid and returns
+ * R_NORMAL; otherwise returns the crash reason for the caller.
+ * Allocates only in the new actor, so the caller's heap does not move
+ * (msg_build marks it while copying and restores it byte for byte). */
+static uint32_t do_spawn(Vm *vm, Actor *a, term clo, uint16_t max_words, bool link, term *pid) {
     const Image *img = vm->img;
     const uint32_t *obj = obj_of(vm, a, clo);
-    if (!obj || !term_is_ref(clo) || hdr_kind(obj[0]) != K_CLOSURE) return "badcode";
+    if (!obj || !term_is_ref(clo) || hdr_kind(obj[0]) != K_CLOSURE) return R_BAD_CODE;
     uint32_t f = obj[1];
     uint32_t ncaps = hdr_words(obj[0]) - 2u;
-    if (f >= img->n_funcs || image_func_nparams(img, f) != ncaps) return "badcode";
+    if (f >= img->n_funcs || image_func_nparams(img, f) != ncaps) return R_BAD_CODE;
     uint32_t nregs = image_func_nregs(img, f);
-    if (ncaps > nregs) return "badcode";
+    if (ncaps > nregs) return R_BAD_CODE;
 
     Msg *m = msg_build(a, clo);
-    if (!m) return "oom";
+    if (!m) return R_OUT_OF_MEMORY;
     uint32_t words = nregs + 2u + m->words + 8u;
     Actor *n = words <= HEAP_MAX_WORDS ? actor_new(vm, (uint16_t)words) : NULL;
     /* The block is sized for the frame and the copy, so neither GCs; the
@@ -224,16 +284,53 @@ static const char *do_spawn(Vm *vm, const Actor *a, term clo, term *pid) {
     term copy;
     if (!n || !heap_push_frame(vm, n, (uint16_t)nregs, -1) || !msg_unpack(vm, n, m, &copy)) {
         msg_free(m);
-        if (n) actor_free(vm, n);
-        return "oom";
+        if (n) actor_free(vm, n);      /* never ran, never visible: not an exit */
+        return R_OUT_OF_MEMORY;
     }
     msg_free(m);
+    if (max_words) n->max_words = max_words < words ? (uint16_t)words : max_words;
     const uint32_t *caps = n->mem + term_ref_off(copy) + 2u;
     for (uint32_t i = 0; i < ncaps; i++) n->mem[n->fp + i] = caps[i];
     n->pc = img->code + image_func_code_off(img, f);
+    if (link && !sig_link(vm, a, n->id)) {
+        actor_free(vm, n);             /* never ran: not an exit */
+        return R_OUT_OF_MEMORY;
+    }
     runq_push(vm, n);
     *pid = n->id;
-    return NULL;
+    return R_NORMAL;
+}
+
+/* The child limit SpawnOpt asks for: Options{MaxMemory} in bytes, as words
+ * (0 or less: the default; rounded down but at least 1; at most
+ * HEAP_MAX_WORDS). False if opts is not an Options struct. */
+static bool spawn_opt_words(const Vm *vm, const Actor *a, term opts, uint16_t *out) {
+    const uint32_t *obj = obj_of(vm, a, opts);
+    int32_t bytes;
+    if (!obj || hdr_kind(obj[0]) != K_STRUCT || obj[1] != TYPE_OPTIONS ||
+        hdr_words(obj[0]) != 3u || !int_val(vm, a, obj[2], &bytes)) return false;
+    uint32_t words = bytes > 0 ? (uint32_t)bytes / 4u : 0u;
+    if (bytes > 0 && words == 0) words = 1;
+    if (words > HEAP_MAX_WORDS) words = HEAP_MAX_WORDS;
+    *out = (uint16_t)words;
+    return true;
+}
+
+/* ---- timed waits ---- */
+
+enum { WAIT_DONE, WAIT_BLOCK, WAIT_OOM };
+
+/* The timer half of ReceiveTimeout(ms) and Sleep(ms), run each time the
+ * BUILTIN executes: WAIT_BLOCK while the wait is on (arming the wakeup on
+ * the first run), WAIT_DONE once it has timed out or for ms <= 0 (and
+ * AF_TIMED_OUT is consumed), WAIT_OOM if the wakeup cannot be allocated. */
+static int timed_wait(Vm *vm, Actor *a, int32_t ms) {
+    if (ms <= 0 || (a->flags & AF_TIMED_OUT)) {
+        a->flags &= (uint8_t)~AF_TIMED_OUT;
+        return WAIT_DONE;
+    }
+    if (!timer_add_wakeup(vm, a, platform_now_ms() + (uint32_t)ms)) return WAIT_OOM;
+    return WAIT_BLOCK;
 }
 
 /* ---- interpreter ---- */
@@ -245,16 +342,22 @@ int interp_run(Vm *vm, Actor *a) {
     uint32_t fn = func_of_pc(img, pc);
     uint32_t nregs = image_func_nregs(img, fn);
     uint32_t budget = REDUCTIONS;
-    const char *kind = "badcode";
+    uint32_t reason = R_BAD_CODE;
+    term reason_func;
     term *R;
 
 #define RELOAD() (R = (term *)a->mem + a->fp)
-#define CRASH(k) do { kind = (k); goto crash; } while (0)
-#define CHECK(cond) do { if (!(cond)) CRASH("badcode"); } while (0)
-#define REG(r) do { if ((uint32_t)(r) >= nregs) CRASH("badcode"); } while (0)
+#define CRASH(r) do { reason = (r); goto crash; } while (0)
+#define CHECK(cond) do { if (!(cond)) CRASH(R_BAD_CODE); } while (0)
+#define REG(r) do { if ((uint32_t)(r) >= nregs) CRASH(R_BAD_CODE); } while (0)
 /* Registers r..r+n-1 all exist (n may be 0). */
-#define REGS(r, n) do { if ((uint32_t)(r) + (uint32_t)(n) > nregs) CRASH("badcode"); } while (0)
+#define REGS(r, n) do { if ((uint32_t)(r) + (uint32_t)(n) > nregs) CRASH(R_BAD_CODE); } while (0)
 
+    /* Marked for exit while it was not running: exit before any instruction. */
+    if (actor_exit_pending(a, &reason, &reason_func)) {
+        actor_exit(vm, a, reason, reason_func);
+        return RUN_EXIT;
+    }
     RELOAD();
     /* The frame on top must be one of fn's: after a yield, fn is re-derived
      * from pc, which a malformed image could have moved into another
@@ -292,38 +395,36 @@ int interp_run(Vm *vm, Actor *a) {
             /* An image may hold small ints, specials and in-range const
              * refs; never heap refs (they would point into a random heap). */
             CHECK(term_is_int(ext) || ext == T_NIL || ext == T_TRUE || ext == T_FALSE ||
-                  (term_is_const(ext) && obj_of(vm, a, ext) != NULL));
+                  ext == T_EMPTYSTR || (term_is_const(ext) && obj_of(vm, a, ext) != NULL));
             R[ra] = ext;
             break;
 
         case OP_LOADI32: {
             REG(ra);
             term t;
-            if (!make_int(vm, a, (int32_t)ext, &t)) CRASH("oom");
+            if (!make_int(vm, a, (int32_t)ext, &t)) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
             break;
         }
 
         case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REM: {
+            /* Both ints: 32-bit; both int64s: 64-bit; mixed: badcode. */
             REG(ra); REG(rb); REG(rc);
             int32_t x, y, r;
-            CHECK(int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y));
-            switch (op) {
-            case OP_ADD: r = wrap((uint32_t)x + (uint32_t)y); break;
-            case OP_SUB: r = wrap((uint32_t)x - (uint32_t)y); break;
-            case OP_MUL: r = wrap((uint32_t)x * (uint32_t)y); break;
-            case OP_DIV:
-                if (y == 0) CRASH("divzero");
-                r = (x == INT32_MIN && y == -1) ? INT32_MIN : x / y;  /* Go: wraps */
-                break;
-            default: /* OP_REM */
-                if (y == 0) CRASH("divzero");
-                r = (y == -1) ? 0 : x % y;     /* avoids INT32_MIN % -1 UB */
-                break;
-            }
+            int64_t x64, y64, r64;
             term t;
-            if (!make_int(vm, a, r, &t)) CRASH("oom");
+            bool ok;
+            if (int_val(vm, a, R[rb], &x)) {
+                CHECK(int_val(vm, a, R[rc], &y));
+                if (!arith32(op, x, y, &r)) CRASH(R_DIV_ZERO);
+                ok = make_int(vm, a, r, &t);
+            } else {
+                CHECK(int64_val(vm, a, R[rb], &x64) && int64_val(vm, a, R[rc], &y64));
+                if (!arith64(op, x64, y64, &r64)) CRASH(R_DIV_ZERO);
+                ok = make_int64(vm, a, r64, &t);
+            }
+            if (!ok) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
             break;
@@ -332,9 +433,41 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_NEG: {
             REG(ra); REG(rb);
             int32_t x;
-            CHECK(int_val(vm, a, R[rb], &x));
+            int64_t x64;
             term t;
-            if (!make_int(vm, a, wrap(0u - (uint32_t)x), &t)) CRASH("oom");
+            bool ok;
+            if (int_val(vm, a, R[rb], &x)) {
+                ok = make_int(vm, a, wrap(0u - (uint32_t)x), &t);
+            } else {
+                CHECK(int64_val(vm, a, R[rb], &x64));
+                ok = make_int64(vm, a, wrap64(0u - (uint64_t)x64), &t);
+            }
+            if (!ok) CRASH(R_OUT_OF_MEMORY);
+            RELOAD();
+            R[ra] = t;
+            break;
+        }
+
+        case OP_CONV: {
+            /* c=0: int(rb), truncating an int64 to its low 32 bits;
+             * c=1: int64(rb), sign-extending an int. A value already of
+             * the target type is kept as is. */
+            REG(ra); REG(rb);
+            CHECK(rc <= 1u);
+            int32_t x;
+            int64_t x64;
+            term t;
+            bool ok;
+            if (rc == 0u) {
+                if (int_val(vm, a, R[rb], &x)) { R[ra] = R[rb]; break; }
+                CHECK(int64_val(vm, a, R[rb], &x64));
+                ok = make_int(vm, a, wrap((uint32_t)(uint64_t)x64), &t);
+            } else {
+                if (int64_val(vm, a, R[rb], &x64)) { R[ra] = R[rb]; break; }
+                CHECK(int_val(vm, a, R[rb], &x));
+                ok = make_int64(vm, a, x, &t);
+            }
+            if (!ok) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
             break;
@@ -343,9 +476,13 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_EQ: case OP_NE: {
             REG(ra); REG(rb); REG(rc);
             int32_t x, y;
+            int64_t x64, y64;
             bool eq;
+            uint64_t sx, sy;
             if (int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y)) eq = x == y;
-            else eq = R[rb] == R[rc];
+            else if (int64_val(vm, a, R[rb], &x64)) eq = int64_val(vm, a, R[rc], &y64) && x64 == y64;
+            else if (ref_serial(vm, a, R[rb], &sx)) eq = ref_serial(vm, a, R[rc], &sy) && sx == sy;
+            else eq = R[rb] == R[rc];   /* a ref never equals a non-ref term */
             R[ra] = term_from_bool(op == OP_EQ ? eq : !eq);
             break;
         }
@@ -353,8 +490,14 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_LT: case OP_LE: {
             REG(ra); REG(rb); REG(rc);
             int32_t x, y;
-            CHECK(int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y));
-            R[ra] = term_from_bool(op == OP_LT ? x < y : x <= y);
+            int64_t x64, y64;
+            if (int_val(vm, a, R[rb], &x)) {
+                CHECK(int_val(vm, a, R[rc], &y));
+                R[ra] = term_from_bool(op == OP_LT ? x < y : x <= y);
+            } else {
+                CHECK(int64_val(vm, a, R[rb], &x64) && int64_val(vm, a, R[rc], &y64));
+                R[ra] = term_from_bool(op == OP_LT ? x64 < y64 : x64 <= y64);
+            }
             break;
         }
 
@@ -387,7 +530,7 @@ int interp_run(Vm *vm, Actor *a) {
             /* The caller's frame moves if the push GCs; remember it
              * top-relative, like the saved fp in the frame. */
             uint32_t caller_top = (uint32_t)a->mem_words - a->fp;
-            if (!heap_push_frame(vm, a, (uint16_t)callee_regs, (int32_t)pc)) CRASH("oom");
+            if (!heap_push_frame(vm, a, (uint16_t)callee_regs, (int32_t)pc)) CRASH(R_OUT_OF_MEMORY);
             const term *args = a->mem + (a->mem_words - caller_top) + rb;
             for (uint32_t i = 0; i < rc; i++) a->mem[a->fp + i] = args[i];
             fn = ext;
@@ -407,7 +550,7 @@ int interp_run(Vm *vm, Actor *a) {
             int32_t ret = term_to_int(R[nregs + 1]);
             a->sp = (uint16_t)(fp + nregs + 2u);      /* pop the frame */
             if (ret == -1) {                           /* entry frame */
-                a->pc = code + pc;
+                actor_exit(vm, a, R_NORMAL, T_EMPTYSTR);
                 return RUN_EXIT;
             }
             /* The caller's frame sits directly above ours. */
@@ -436,7 +579,7 @@ int interp_run(Vm *vm, Actor *a) {
             else CHECK(ext < img->n_funcs);
             uint32_t words = 2u + rc;
             uint32_t off = heap_alloc(vm, a, words, NULL, 0);
-            if (off == UINT32_MAX) CRASH("oom");
+            if (off == UINT32_MAX) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             uint32_t *obj = a->mem + off;
             obj[0] = hdr_make(words, op == OP_NEWSTRUCT ? K_STRUCT : K_CLOSURE);
@@ -461,11 +604,15 @@ int interp_run(Vm *vm, Actor *a) {
             int32_t dummy;
             if (int_val(vm, a, t, &dummy)) ty = TY_INT;
             else if (t == T_TRUE || t == T_FALSE) ty = TY_BOOL;
+            else if (t == T_EMPTYSTR) ty = TY_STRING;
             else if (term_is_pid(t)) ty = TY_PID;
             else {
                 const uint32_t *obj = obj_of(vm, a, t);
-                if (obj && hdr_kind(obj[0]) == K_STRING) ty = TY_STRING;
-                else if (obj && hdr_kind(obj[0]) == K_STRUCT) ty = obj[1];
+                uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
+                if (kind == K_STRING) ty = TY_STRING;
+                else if (kind == K_STRUCT) ty = obj[1];
+                else if (kind == K_REF) ty = TY_REF;
+                else if (kind == K_INT64) ty = TY_INT64;
             }
             R[ra] = term_from_bool(ty == ext);
             break;
@@ -478,11 +625,13 @@ int interp_run(Vm *vm, Actor *a) {
                 do_println(vm, a, R + rb, rc);
                 R[ra] = T_NIL;
                 break;
-            case B_SPAWN: {
-                CHECK(rc == 1);
+            case B_SPAWN: case B_SPAWN_LINK: case B_SPAWN_OPT: {
+                CHECK(rc == (ext == B_SPAWN_OPT ? 2u : 1u));
+                uint16_t max_words = 0;
+                if (ext == B_SPAWN_OPT) CHECK(spawn_opt_words(vm, a, R[rb + 1], &max_words));
                 term pid;
-                const char *err = do_spawn(vm, a, R[rb], &pid);
-                if (err) CRASH(err);
+                uint32_t err = do_spawn(vm, a, R[rb], max_words, ext == B_SPAWN_LINK, &pid);
+                if (err != R_NORMAL) CRASH(err);
                 R[ra] = pid;
                 break;
             }
@@ -492,22 +641,147 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             case B_SEND:
                 CHECK(rc == 2);
-                /* 1 (receiver dead or stale) is not an error. */
-                {
-                    int sr = msg_send(vm, a, R[rb], R[rb + 1]);
-                    if (sr == -2) CRASH("mailbox_full");
-                    if (sr < 0) CRASH("oom");
-                }
+                /* Only -1 (out of memory copying the message) concerns
+                 * the sender; a dropped message does not. */
+                if (msg_send(vm, a, R[rb], R[rb + 1]) < 0) CRASH(R_OUT_OF_MEMORY);
                 R[ra] = T_NIL;
                 break;
             case B_RECEIVE: {
                 CHECK(rc == 0);
                 term t;
                 if (!msg_receive(vm, a, &t)) {
-                    if (a->mbox_head) CRASH("oom");   /* message does not fit */
+                    if (a->mbox_head) CRASH(R_OUT_OF_MEMORY);   /* message does not fit */
                     a->pc = code + pc;    /* retry this BUILTIN when woken */
                     return RUN_WAIT;
                 }
+                RELOAD();
+                R[ra] = t;
+                break;
+            }
+            case B_RECEIVE_TIMEOUT: {
+                CHECK(rc == 1);
+                REGS(ra, 2);
+                int32_t ms;
+                CHECK(int_val(vm, a, R[rb], &ms));
+                term t;
+                if (msg_receive(vm, a, &t)) {
+                    timer_cancel_wakeup(vm, a);
+                    RELOAD();
+                    R[ra] = t;
+                    R[ra + 1] = T_TRUE;
+                    break;
+                }
+                if (a->mbox_head) CRASH(R_OUT_OF_MEMORY);   /* message does not fit */
+                switch (timed_wait(vm, a, ms)) {
+                case WAIT_OOM: CRASH(R_OUT_OF_MEMORY);
+                case WAIT_BLOCK: a->pc = code + pc; return RUN_WAIT;   /* retry when woken */
+                default: break;                                        /* timed out, or ms <= 0 */
+                }
+                R[ra] = T_NIL;
+                R[ra + 1] = T_FALSE;
+                break;
+            }
+            case B_SLEEP: {
+                CHECK(rc == 1);
+                int32_t ms;
+                CHECK(int_val(vm, a, R[rb], &ms));
+                switch (timed_wait(vm, a, ms)) {
+                case WAIT_OOM: CRASH(R_OUT_OF_MEMORY);
+                case WAIT_BLOCK: a->pc = code + pc; return RUN_WAIT;   /* also after a message */
+                default: break;
+                }
+                R[ra] = T_NIL;
+                break;
+            }
+            case B_CALL: {
+                CHECK(rc == 3);
+                REGS(ra, 2);
+                uint64_t serial;
+                if (!(a->flags & AF_CALL_PENDING)) {
+                    int32_t ms;
+                    CHECK(int_val(vm, a, R[rb + 2], &ms));
+                    term pid = R[rb];
+                    const Actor *to = actor_lookup(vm, pid);
+                    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) {
+                        R[ra] = T_NIL;
+                        R[ra + 1] = T_FALSE;
+                        break;
+                    }
+                    /* Request{From: self, Ref: new ref, Body: req}. The
+                     * ref is a root across the second allocation. */
+                    term roots[1];
+                    roots[0] = heap_new_ref(vm, a);
+                    if (roots[0] == T_NIL) CRASH(R_OUT_OF_MEMORY);
+                    RELOAD();
+                    uint32_t off = heap_alloc(vm, a, 5, roots, 1);
+                    if (off == UINT32_MAX) CRASH(R_OUT_OF_MEMORY);
+                    RELOAD();
+                    uint32_t *obj = a->mem + off;
+                    obj[0] = hdr_make(5, K_STRUCT);
+                    obj[1] = TYPE_REQUEST;
+                    obj[2] = a->id;
+                    obj[3] = roots[0];
+                    obj[4] = R[rb + 1];
+                    if (msg_send(vm, a, pid, term_from_ref(off)) < 0) CRASH(R_OUT_OF_MEMORY);
+                    R[ra] = roots[0];
+                    CHECK(ref_serial(vm, a, R[ra], &serial));
+                    if (ms > 0) {
+                        if (!timer_add_wakeup(vm, a, platform_now_ms() + (uint32_t)ms))
+                            CRASH(R_OUT_OF_MEMORY);
+                        a->flags |= AF_CALL_PENDING;
+                    }
+                } else {
+                    CHECK(ref_serial(vm, a, R[ra], &serial));
+                }
+                term t = T_NIL;
+                int got = msg_take_reply(vm, a, serial, &t);
+                if (got < 0) CRASH(R_OUT_OF_MEMORY);   /* reply does not fit */
+                bool pending = (a->flags & AF_CALL_PENDING) != 0;
+                if (got == 0 && pending && !(a->flags & (AF_TIMED_OUT | AF_EXIT_PENDING))) {
+                    a->pc = code + pc;    /* block; the request is not re-sent */
+                    return RUN_WAIT;
+                }
+                /* Replied, timed out, ms <= 0 with no reply yet, or the
+                 * caller is already marked to exit (its own request went
+                 * over its quota): do not block; the exit check below runs. */
+                timer_cancel_wakeup(vm, a);
+                a->flags &= (uint8_t)~AF_CALL_PENDING;
+                RELOAD();
+                R[ra] = got ? t : T_NIL;
+                R[ra + 1] = term_from_bool(got != 0);
+                break;
+            }
+            case B_REPLY: {
+                CHECK(rc == 2);
+                const uint32_t *req = obj_of(vm, a, R[rb]);
+                CHECK(req && hdr_kind(req[0]) == K_STRUCT && req[1] == TYPE_REQUEST &&
+                      hdr_words(req[0]) == 5u);
+                /* A dead sender, or a Request not made by Call, drops it. */
+                if (msg_send_reply(vm, a, req[2], req[3], R[rb + 1]) < 0) CRASH(R_OUT_OF_MEMORY);
+                R[ra] = T_NIL;
+                break;
+            }
+            case B_SEND_AFTER: {
+                CHECK(rc == 3);   /* like Send, a non-PID target just drops it */
+                int32_t ms;
+                CHECK(int_val(vm, a, R[rb], &ms));
+                uint64_t deadline = platform_now_ms() + (ms > 0 ? (uint32_t)ms : 0u);
+                term ref = timer_add_send(vm, a, deadline, R[rb + 1], R[rb + 2]);
+                if (ref == T_NIL) CRASH(R_OUT_OF_MEMORY);
+                RELOAD();
+                R[ra] = ref;
+                break;
+            }
+            case B_CANCEL_TIMER: {
+                uint64_t serial;
+                CHECK(rc == 1 && ref_serial(vm, a, R[rb], &serial));
+                R[ra] = term_from_bool(timer_cancel(vm, serial));
+                break;
+            }
+            case B_NOW: {
+                CHECK(rc == 0);
+                term t;
+                if (!make_int64(vm, a, (int64_t)platform_now_ms(), &t)) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
                 R[ra] = t;
                 break;
@@ -518,18 +792,110 @@ int interp_run(Vm *vm, Actor *a) {
                 const Actor *p = actor_lookup(vm, R[rb]);
                 size_t bytes = p ? actor_memory_bytes(p) : 0u;
                 term t;
-                if (!make_int(vm, a, (int32_t)bytes, &t)) CRASH("oom");
+                if (!make_int(vm, a, (int32_t)bytes, &t)) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
                 R[ra] = t;
                 break;
             }
+            case B_MAKE_REF: {
+                CHECK(rc == 0);
+                term ref = heap_new_ref(vm, a);
+                if (ref == T_NIL) CRASH(R_OUT_OF_MEMORY);
+                RELOAD();
+                R[ra] = ref;
+                break;
+            }
+            case B_MONITOR: {
+                CHECK(rc == 1 && term_is_pid(R[rb]));
+                term ref = sig_monitor(vm, a, R[rb]);
+                if (ref == T_NIL) CRASH(R_OUT_OF_MEMORY);
+                RELOAD();
+                R[ra] = ref;
+                break;
+            }
+            case B_DEMONITOR: {
+                uint64_t serial;
+                CHECK(rc == 1 && ref_serial(vm, a, R[rb], &serial));
+                sig_demonitor(vm, a, serial);
+                R[ra] = T_NIL;
+                break;
+            }
+            case B_LINK:
+                CHECK(rc == 1 && term_is_pid(R[rb]));
+                if (!sig_link(vm, a, R[rb])) CRASH(R_OUT_OF_MEMORY);
+                R[ra] = T_NIL;
+                break;
+            case B_UNLINK:
+                CHECK(rc == 1 && term_is_pid(R[rb]));
+                sig_unlink(vm, a, R[rb]);
+                R[ra] = T_NIL;
+                break;
+            case B_TRAP_EXIT:
+                CHECK(rc == 1 && (R[rb] == T_TRUE || R[rb] == T_FALSE));
+                sig_set_trap(a, R[rb] == T_TRUE);
+                R[ra] = T_NIL;
+                break;
+            case B_KILL: {
+                CHECK(rc == 2 && term_is_pid(R[rb]));
+                int32_t c;
+                CHECK(int_val(vm, a, R[rb + 1], &c));
+                if (!sig_kill(vm, a, R[rb], (uint32_t)c)) CRASH(R_OUT_OF_MEMORY);
+                R[ra] = T_NIL;
+                break;
+            }
+            case B_EXIT: {
+                CHECK(rc == 1);
+                int32_t c;
+                CHECK(int_val(vm, a, R[rb], &c));
+                actor_exit(vm, a, (uint32_t)c, T_EMPTYSTR);
+                return RUN_EXIT;
+            }
+            case B_REGISTER: {
+                CHECK(rc == 2 && term_is_pid(R[rb + 1]));
+                const uint8_t *name;
+                uint32_t len;
+                CHECK(name_bytes(vm, a, R[rb], &name, &len));
+                int r = names_register(vm, name, len, R[rb + 1]);
+                if (r < 0) CRASH(R_OUT_OF_MEMORY);
+                R[ra] = term_from_bool(r > 0);
+                break;
+            }
+            case B_WHEREIS: {
+                CHECK(rc == 1);
+                REGS(ra, 2);
+                const uint8_t *name;
+                uint32_t len;
+                CHECK(name_bytes(vm, a, R[rb], &name, &len));
+                term pid;
+                bool found = names_whereis(vm, name, len, &pid);
+                R[ra] = found ? pid : T_NIL;
+                R[ra + 1] = term_from_bool(found);
+                break;
+            }
+            case B_UNREGISTER: {
+                CHECK(rc == 1);
+                const uint8_t *name;
+                uint32_t len;
+                CHECK(name_bytes(vm, a, R[rb], &name, &len));
+                names_unregister(vm, name, len);
+                R[ra] = T_NIL;
+                break;
+            }
             default:
-                CRASH("badbuiltin");
+                /* Unknown builtin id. */
+                CRASH(R_BAD_CODE);
+            }
+            /* A builtin may have marked the running actor itself (a send
+             * to itself over its quota, Kill of itself, Link of a dead pid):
+             * exit now, not when next scheduled. */
+            if (actor_exit_pending(a, &reason, &reason_func)) {
+                actor_exit(vm, a, reason, reason_func);
+                return RUN_EXIT;
             }
             break;
 
         default:
-            CRASH("badcode");
+            CRASH(R_BAD_CODE);
         }
 
         pc = next;
@@ -541,8 +907,7 @@ int interp_run(Vm *vm, Actor *a) {
     }
 
 crash:
-    report_crash(vm, a, fn, kind);
-    a->pc = code + pc;
+    actor_exit(vm, a, reason, term_from_const(image_func_name_off(img, fn)));
     return RUN_EXIT;
 
 #undef RELOAD
@@ -564,33 +929,54 @@ int vm_run(Vm *vm) {
         write_err_lit("gogo: entry function has too many registers\n");
         return 2;
     }
+    if (!vm_reserve_init()) {
+        write_err_lit("gogo: cannot reserve emergency memory\n");
+        return 1;
+    }
     Actor *a = actor_new(vm, (uint16_t)(nregs + 2u + 8u));
     if (!a) {
+        vm_reserve_release();
         write_err_lit("gogo: cannot start main actor\n");
         return 1;
     }
     if (!heap_push_frame(vm, a, nregs, -1)) {
         write_err_lit("gogo: cannot start main actor\n");
-        actor_free(vm, a);
+        actor_free(vm, a);             /* never ran: not an exit */
+        vm_reserve_release();
         return 1;
     }
     a->pc = img->code + image_func_code_off(img, entry);
     runq_push(vm, a);
+    (void)platform_now_ms();         /* time 0 for Now() and timers */
 
-    while ((a = runq_pop(vm)) != NULL) {
+    for (;;) {
+        /* Due timers fire between time slices too, so a busy actor cannot
+         * hold them back. */
+        if (vm->timers) timer_fire_due(vm, platform_now_ms());
+        a = runq_pop(vm);
+        if (!a) {
+            /* Nothing runnable: sleep until the next timer, or stop if
+             * there is none (every actor exited or blocked forever). */
+            uint64_t next, now;
+            if (!timer_next(vm, &next)) break;
+            now = platform_now_ms();
+            if (next > now) platform_sleep_ms(next - now > UINT32_MAX ? UINT32_MAX : (uint32_t)(next - now));
+            continue;
+        }
         switch (interp_run(vm, a)) {
         case RUN_YIELD:
             runq_push(vm, a);
             break;
         case RUN_WAIT:
-            /* Not requeued: msg_send pushes it back exactly once. */
+            /* Not requeued: a message, a timer or an exit mark pushes it
+             * back exactly once (only a waiting actor is pushed). */
             a->state = A_WAITING;
             break;
         default:
-            a->state = A_EXITED;
-            actor_free(vm, a);
+            /* RUN_EXIT: actor_exit has already freed it. */
             break;
         }
     }
+    vm_reserve_release();
     return 0;
 }

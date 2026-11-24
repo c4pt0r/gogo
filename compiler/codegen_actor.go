@@ -6,64 +6,50 @@ import (
 	"go/types"
 )
 
-// closure is a Spawn func literal compiled as a hidden function whose
-// parameters are the variables it captures.
+// closure is a func literal compiled as a hidden function whose parameters
+// are the variables it captures.
 type closure struct {
 	info     *funcInfo
 	lit      *ast.FuncLit
 	captures []*types.Var
 }
 
-// nameLits names every func literal main.<enclosing>.func<N>, N counting
-// from 1 in source order within each top-level function (nested literals
-// included).
+// nameLits names every func literal <pkg>.<enclosing>.func<N> (main
+// included: main.main.func1), N counting from 1 in source order within
+// each top-level function (nested literals included).
 func (g *gen) nameLits(decls []*ast.FuncDecl) {
 	g.litNames = map[*ast.FuncLit]string{}
 	for _, fd := range decls {
+		pkg := g.p.Info.Defs[fd.Name].Pkg().Name()
 		n := 0
 		ast.Inspect(fd.Body, func(node ast.Node) bool {
 			if lit, ok := node.(*ast.FuncLit); ok {
 				n++
-				g.litNames[lit] = fmt.Sprintf("main.%s.func%d", fd.Name.Name, n)
+				g.litNames[lit] = fmt.Sprintf("%s.%s.func%d", pkg, fd.Name.Name, n)
 			}
 			return true
 		})
 	}
 }
 
-// captures lists the variables lit uses but does not declare, in order of
-// first reference. They are copied by value into the spawned actor.
-func (g *gen) captures(lit *ast.FuncLit) []*types.Var {
-	var vars []*types.Var
-	seen := map[*types.Var]bool{}
-	ast.Inspect(lit.Body, func(node ast.Node) bool {
-		id, ok := node.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		v, ok := g.p.Info.Uses[id].(*types.Var)
-		if !ok || v.IsField() || seen[v] || (v.Pos() >= lit.Pos() && v.Pos() < lit.End()) {
-			return true
-		}
-		seen[v] = true
-		vars = append(vars, v)
-		return true
-	})
-	return vars
+// actorBuiltins maps each gogo/actor function to its BUILTIN id. The
+// arguments go into consecutive registers; the two-result builtins
+// (ReceiveTimeout, Call, Whereis) write dst and dst+1, so they are only
+// compiled by assign, which passes two fresh temporaries.
+var actorBuiltins = map[string]uint32{
+	"Spawn": BSpawn, "SpawnLink": BSpawnLink, "SpawnOpt": BSpawnOpt,
+	"Self": BSelf, "Send": BSend, "Receive": BReceive,
+	"Link": BLink, "Unlink": BUnlink, "TrapExit": BTrapExit, "Exit": BExit,
+	"Kill": BKill, "Monitor": BMonitor, "Demonitor": BDemonitor,
+	"MakeRef": BMakeRef, "ReceiveTimeout": BReceiveTimeout,
+	"SendAfter": BSendAfter, "CancelTimer": BCancelTimer, "Sleep": BSleep,
+	"Now": BNow, "Call": BCall, "Reply": BReply, "Register": BRegister,
+	"Whereis": BWhereis, "Unregister": BUnregister,
 }
 
 // actorCall compiles a call of gogo/actor function name into dst.
 func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 	switch name {
-	case "Spawn":
-		f.spawn(call, dst)
-	case "Self":
-		f.asm.EmitExt(OpBuiltin, dst, 0, 0, BSelf)
-	case "Send":
-		base, n := f.args(call)
-		f.asm.EmitExt(OpBuiltin, dst, base, n, BSend)
-	case "Receive":
-		f.asm.EmitExt(OpBuiltin, dst, 0, 0, BReceive)
 	case "Info": // ProcInfo{Memory: MEMORY(p)}
 		st := structType(f.g.p.Info.TypeOf(call))
 		if st == nil {
@@ -77,19 +63,42 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 		f.asm.EmitExt(OpBuiltin, base, base, n, BMemory)
 		f.asm.EmitExt(OpNewstruct, dst, base, 1, idx)
 	default:
-		f.fail(call, "internal error: unexpected actor.%s", name)
+		id, ok := actorBuiltins[name]
+		if !ok {
+			f.fail(call, "internal error: unexpected actor.%s", name)
+		}
+		if twoResult[name] {
+			f.fail(call, "internal error: actor.%s outside a two-value assignment", name)
+		}
+		base, n := f.args(call)
+		f.asm.EmitExt(OpBuiltin, dst, base, n, id)
 	}
 }
 
-// spawn compiles actor.Spawn(func(){...}): the captured variables go into
-// consecutive registers, MKCLOSURE packs them with the hidden function, and
-// BUILTIN SPAWN starts it.
-func (f *fn) spawn(call *ast.CallExpr, dst uint8) {
-	lit, ok := ast.Unparen(call.Args[0]).(*ast.FuncLit)
-	if !ok {
-		f.fail(call, "internal error: actor.Spawn of something other than a func literal")
+// twoResultCall compiles a two-result builtin call (ReceiveTimeout, Call,
+// Whereis) whose results go to dst and dst+1, two fresh temporaries.
+func (f *fn) twoResultCall(call *ast.CallExpr, dst uint8) {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	var name string
+	if ok {
+		if obj, ok := f.g.p.Info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == ActorPath {
+			name = obj.Name()
+		}
 	}
-	caps := f.g.captures(lit)
+	if !twoResult[name] {
+		f.fail(call, "internal error: two-value assignment from something other than a two-result builtin")
+	}
+	mark := f.next
+	base, n := f.args(call)
+	f.asm.EmitExt(OpBuiltin, dst, base, n, actorBuiltins[name])
+	f.next = mark
+}
+
+// closureInto compiles func literal lit into dst: the captured variables
+// go into consecutive registers and MKCLOSURE packs them with the hidden
+// function, whose parameters they become.
+func (f *fn) closureInto(lit *ast.FuncLit, dst uint8) {
+	caps := litCaptures(f.g.p.Info, lit)
 	if len(caps) > maxRegs {
 		f.fail(lit, "closure captures too many variables")
 	}
@@ -98,6 +107,7 @@ func (f *fn) spawn(call *ast.CallExpr, dst uint8) {
 	f.g.funcs = append(f.g.funcs, info)
 	f.g.pending = append(f.g.pending, closure{info, lit, caps})
 
+	mark := f.next
 	base := f.allocN(lit, len(caps))
 	for i, v := range caps {
 		r, ok := f.locals[v]
@@ -107,12 +117,23 @@ func (f *fn) spawn(call *ast.CallExpr, dst uint8) {
 		f.asm.Emit(OpMove, base+uint8(i), r, 0)
 	}
 	f.asm.EmitExt(OpMkclosure, dst, base, uint8(len(caps)), idx)
-	f.asm.EmitExt(OpBuiltin, dst, dst, 1, BSpawn)
+	f.next = mark
 }
 
-// typeSwitch compiles `switch m := actor.Receive().(type)`: the value goes
-// into one register, which m names in every clause; each case is a
-// TYPEIS/JMPF test, and default runs when no case matched.
+// funcValueInto compiles the top-level function fn (of type func()) used as
+// a value into dst: a closure without captures.
+func (f *fn) funcValueInto(n ast.Node, fn *types.Func, dst uint8) {
+	idx, ok := f.g.funcIdx[fn]
+	if !ok {
+		f.fail(n, "internal error: unknown function %s", fn.Name())
+	}
+	f.asm.EmitExt(OpMkclosure, dst, 0, 0, idx)
+}
+
+// typeSwitch compiles `switch m := x.(type)` for any expression x of type
+// any: x is evaluated once into one register, which m names in every
+// clause; each case is a TYPEIS/JMPF test, and default runs when no case
+// matched.
 func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 	var x ast.Expr
 	switch a := s.Assign.(type) {
@@ -173,6 +194,21 @@ func (f *fn) typeID(te ast.Expr) uint32 {
 	t := f.g.p.Info.TypeOf(te)
 	if isPID(t) {
 		return TyPid
+	}
+	if isRef(t) {
+		return TyRef
+	}
+	if b, ok := types.Unalias(t).(*types.Basic); ok {
+		switch b.Kind() {
+		case types.Int:
+			return TyInt
+		case types.Int64:
+			return TyInt64
+		case types.Bool:
+			return TyBool
+		case types.String:
+			return TyString
+		}
 	}
 	if st := structType(t); st != nil {
 		if idx, ok := f.g.typeIdx[st.Obj()]; ok {

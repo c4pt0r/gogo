@@ -1,5 +1,6 @@
 #include "image.h"
 #include "term.h"
+#include "heap.h"
 
 /* True if consts[off] starts a well-formed K_STRING lying wholly in consts. */
 static int string_ok(const Image *img, uint32_t off) {
@@ -10,6 +11,46 @@ static int string_ok(const Image *img, uint32_t off) {
     if (words > img->consts_words - off) return 0;
     /* byte_len must fit in the payload words (compare in 64 bits). */
     return (uint64_t)img->consts[off + 1] <= (uint64_t)(words - 2) * 4u;
+}
+
+/* Walks the const area (objects contiguous from offset 0) checking every
+ * object's header, extent and term-bearing words. */
+static int consts_ok(const Image *img) {
+    uint32_t off = 0;
+    while (off < img->consts_words) {
+        const uint32_t *obj = img->consts + off;
+        uint32_t h = obj[0];
+        uint32_t words = hdr_words(h);
+        uint32_t kind = hdr_kind(h);
+        if (words == 0 || words > img->consts_words - off) return 0;
+        switch (kind) {
+        case K_STRING:
+            if (!string_ok(img, off)) return 0;
+            break;
+        case K_INT:
+            if (words != 2) return 0;
+            break;
+        case K_INT64:
+            if (words != 3) return 0;
+            break;
+        case K_STRUCT:
+        case K_CLOSURE: {
+            if (words < 2) return 0;
+            uint32_t first, end;
+            heap_obj_terms(obj, &first, &end);
+            for (uint32_t i = first; i < end; i++) {
+                term t = obj[i];
+                if (term_is_ref(t)) return 0;
+                if (term_is_const(t) && term_const_off(t) >= img->consts_words) return 0;
+            }
+            break;
+        }
+        default:
+            return 0;
+        }
+        off += words;
+    }
+    return 1;
 }
 
 int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
@@ -43,6 +84,7 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     for (uint32_t i = 0; i < img->n_types; i++) {
         if (!string_ok(img, img->types[(size_t)i * 2u + 1u])) return IMG_ERR_BOUNDS;
     }
+    if (!consts_ok(img)) return IMG_ERR_BOUNDS;
     return IMG_OK;
 }
 
@@ -55,5 +97,7 @@ const char *image_func_name(const Image *img, uint32_t f, uint32_t *len) {
     *len = img->consts[off + 1u];
     return (const char *)&img->consts[off + 2u];
 }
+
+uint32_t image_func_name_off(const Image *img, uint32_t f) { return img->funcs[f * 3u + 2u]; }
 
 uint32_t image_type_nfields(const Image *img, uint32_t t) { return img->types[t * 2u]; }

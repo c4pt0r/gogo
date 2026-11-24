@@ -34,7 +34,8 @@ enum Op {
     OP_GETFIELD  = 21,  /* ra = rb.fields[c] */
     OP_MKCLOSURE = 22,  /* ra = closure func ext, captures rb.. +ext */
     OP_TYPEIS    = 23,  /* ra = (dynamic type of rb == ext)    +ext */
-    OP_BUILTIN   = 24   /* ra = builtin ext(rb..rb+c-1)        +ext */
+    OP_BUILTIN   = 24,  /* ra = builtin ext(rb..rb+c-1)        +ext */
+    OP_CONV      = 25   /* c=0: ra = int(rb) (low 32 bits); c=1: ra = int64(rb) */
 };
 
 enum Builtin {
@@ -43,7 +44,28 @@ enum Builtin {
     B_SELF    = 2,
     B_SEND    = 3,
     B_RECEIVE = 4,
-    B_MEMORY  = 5
+    B_MEMORY  = 5,
+    /* Two-result builtins write ra and ra+1. */
+    B_SPAWN_LINK      = 6,   /* closure -> pid */
+    B_SPAWN_OPT       = 7,   /* closure, Options struct -> pid */
+    B_LINK            = 8,   /* pid -> nil */
+    B_UNLINK          = 9,   /* pid -> nil */
+    B_TRAP_EXIT       = 10,  /* bool -> nil */
+    B_EXIT            = 11,  /* code (does not return) */
+    B_KILL            = 12,  /* pid, code -> nil */
+    B_MONITOR         = 13,  /* pid -> ref */
+    B_DEMONITOR       = 14,  /* ref -> nil */
+    B_MAKE_REF        = 15,  /* -> ref */
+    B_RECEIVE_TIMEOUT = 16,  /* ms -> msg, ok */
+    B_SEND_AFTER      = 17,  /* ms, pid, msg -> ref */
+    B_CANCEL_TIMER    = 18,  /* ref -> bool */
+    B_SLEEP           = 19,  /* ms -> nil */
+    B_NOW             = 20,  /* -> int64 */
+    B_CALL            = 21,  /* pid, req, ms -> reply, ok */
+    B_REPLY           = 22,  /* Request struct, reply -> nil */
+    B_REGISTER        = 23,  /* name, pid -> bool */
+    B_WHEREIS         = 24,  /* name -> pid, ok */
+    B_UNREGISTER      = 25   /* name -> nil */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -51,6 +73,29 @@ enum Builtin {
 #define TY_BOOL   0x10001u
 #define TY_STRING 0x10002u
 #define TY_PID    0x10003u
+#define TY_REF    0x10004u
+#define TY_INT64  0x10005u
+
+/* Reserved type-table indices: the compiler always emits the gogo/actor
+ * struct types first, in this order (fields as in actor/actor.go). */
+#define TYPE_PROCINFO 0   /* Memory int */
+#define TYPE_REASON   1   /* Code int, Func string */
+#define TYPE_EXITMSG  2   /* From PID, Reason Reason */
+#define TYPE_DOWNMSG  3   /* Ref Ref, From PID, Reason Reason */
+#define TYPE_REQUEST  4   /* From PID, Ref Ref, Body any */
+#define TYPE_OPTIONS  5   /* MaxMemory int */
+
+/* Exit reason codes (actor.Normal ...); user codes are >= 100. */
+enum Reason {
+    R_NORMAL           = 0,
+    R_KILLED           = 1,
+    R_OUT_OF_MEMORY    = 2,
+    R_MAILBOX_OVERFLOW = 3,
+    R_NO_PROC          = 4,
+    R_DIV_ZERO         = 5,
+    R_BAD_CODE         = 6,
+    R_SHUTDOWN         = 7
+};
 
 /* Instruction decoders. */
 #define OP_OP(w) ((uint32_t)(w) & 0xFFu)

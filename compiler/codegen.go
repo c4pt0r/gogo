@@ -12,7 +12,7 @@ import (
 // maxRegs is the register limit of one function: register numbers are 8 bits.
 const maxRegs = 255
 
-// Compile checks p against the M1 subset and compiles it to an Image v1.
+// Compile checks p against the gogo subset and compiles it to an Image v1.
 func Compile(p *Program) ([]byte, error) {
 	if errs := Check(p); len(errs) > 0 {
 		return nil, errors.Join(errs...)
@@ -23,17 +23,22 @@ func Compile(p *Program) ([]byte, error) {
 		funcIdx: map[*types.Func]uint32{},
 		typeIdx: map[*types.TypeName]uint32{},
 	}
-	g.collectTypes()
+	if err := g.collectTypes(); err != nil {
+		return nil, err
+	}
 
-	// Index every top-level function first so calls to later ones resolve.
+	// Index every top-level function of every package first so calls to
+	// later ones resolve.
 	var decls []*ast.FuncDecl
-	for _, f := range p.Files {
-		for _, d := range f.Decls {
-			if fd, ok := d.(*ast.FuncDecl); ok {
-				fn := p.Info.Defs[fd.Name].(*types.Func)
-				g.funcIdx[fn] = uint32(len(g.funcs))
-				g.funcs = append(g.funcs, &funcInfo{name: fd.Name.Name})
-				decls = append(decls, fd)
+	for _, pkg := range p.packages() {
+		for _, f := range pkg.Files {
+			for _, d := range f.Decls {
+				if fd, ok := d.(*ast.FuncDecl); ok {
+					fn := p.Info.Defs[fd.Name].(*types.Func)
+					g.funcIdx[fn] = uint32(len(g.funcs))
+					g.funcs = append(g.funcs, &funcInfo{name: g.qualified(fn.Pkg(), fd.Name.Name)})
+					decls = append(decls, fd)
+				}
 			}
 		}
 	}
@@ -45,8 +50,8 @@ func Compile(p *Program) ([]byte, error) {
 			errs = append(errs, err)
 		}
 	}
-	// Spawn closures, queued as their call sites are compiled; compiling one
-	// may queue more (nested Spawns).
+	// Func literals, queued as they are compiled; compiling one may queue
+	// more (nested literals).
 	for len(g.pending) > 0 {
 		c := g.pending[0]
 		g.pending = g.pending[1:]
@@ -85,12 +90,22 @@ type gen struct {
 	funcIdx map[*types.Func]uint32
 	typeIdx map[*types.TypeName]uint32
 
-	litNames map[*ast.FuncLit]string // hidden function name of each Spawn closure
+	litNames map[*ast.FuncLit]string // hidden function name of each func literal
 	pending  []closure               // closures still to compile
 }
 
-// structType returns the named struct type behind t, or nil. actor.PID is a
-// struct in the stubs but a tagged term in the VM, so it is not one.
+// qualified names a function or type of package pkg in the image: plain
+// for package main, pkg.Name otherwise.
+func (g *gen) qualified(pkg *types.Package, name string) string {
+	if pkg == g.p.Pkg {
+		return name
+	}
+	return pkg.Name() + "." + name
+}
+
+// structType returns the named struct type behind t, or nil. actor.PID and
+// actor.Ref are structs in the stubs but a tagged term and an opaque heap
+// object in the VM, so they are not.
 func structType(t types.Type) *types.Named {
 	n, ok := types.Unalias(t).(*types.Named)
 	if !ok {
@@ -99,44 +114,92 @@ func structType(t types.Type) *types.Named {
 	if _, ok := n.Underlying().(*types.Struct); !ok {
 		return nil
 	}
-	if isPID(n) {
+	if isPID(n) || isRef(n) {
 		return nil
 	}
 	return n
 }
 
-func isPID(t types.Type) bool {
+// isActorType reports whether t is the gogo/actor type called name.
+func isActorType(t types.Type, name string) bool {
 	n, ok := types.Unalias(t).(*types.Named)
-	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == ActorPath && n.Obj().Name() == "PID"
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == ActorPath && n.Obj().Name() == name
 }
 
-// collectTypes gives struct types image type indices in order of first
-// appearance in the package source (declarations and uses alike).
-func (g *gen) collectTypes() {
+func isPID(t types.Type) bool { return isActorType(t, "PID") }
+
+func isRef(t types.Type) bool { return isActorType(t, "Ref") }
+
+// reservedTypes are the gogo/actor struct types. Every image starts its
+// type table with them, in this order, so the VM can build these structs by
+// fixed index (TYPE_* in vm/opcodes.h).
+var reservedTypes = []struct {
+	name   string
+	fields []string
+}{
+	{"ProcInfo", []string{"Memory"}},
+	{"Reason", []string{"Code", "Func"}},
+	{"ExitMsg", []string{"From", "Reason"}},
+	{"DownMsg", []string{"Ref", "From", "Reason"}},
+	{"Request", []string{"From", "Ref", "Body"}},
+	{"Options", []string{"MaxMemory"}},
+}
+
+// collectTypes emits the reserved actor types first (whether used or not),
+// then gives the other struct types image type indices in order of first
+// appearance in the package sources (libraries, then main; declarations
+// and uses alike).
+func (g *gen) collectTypes() error {
+	var actorPkg *types.Package // whichever package imports it
+	for _, pkg := range g.p.packages() {
+		for _, imp := range pkg.Pkg.Imports() {
+			if imp.Path() == ActorPath {
+				actorPkg = imp
+			}
+		}
+	}
+	for _, rt := range reservedTypes {
+		idx := g.b.AddType(rt.name, uint32(len(rt.fields)))
+		if actorPkg == nil {
+			continue
+		}
+		tn, ok := actorPkg.Scope().Lookup(rt.name).(*types.TypeName)
+		if !ok {
+			return fmt.Errorf("gogo: internal error: actor.%s missing", rt.name)
+		}
+		if st, ok := tn.Type().Underlying().(*types.Struct); !ok || st.NumFields() != len(rt.fields) {
+			return fmt.Errorf("gogo: internal error: actor.%s does not match the reserved layout", rt.name)
+		}
+		g.typeIdx[tn] = idx
+	}
 	add := func(t types.Type) {
 		n := structType(t)
 		if n == nil {
 			return
 		}
 		if _, ok := g.typeIdx[n.Obj()]; !ok {
-			g.typeIdx[n.Obj()] = g.b.AddType(n.Obj().Name(), uint32(n.Underlying().(*types.Struct).NumFields()))
+			name := g.qualified(n.Obj().Pkg(), n.Obj().Name())
+			g.typeIdx[n.Obj()] = g.b.AddType(name, uint32(n.Underlying().(*types.Struct).NumFields()))
 		}
 	}
-	for _, f := range g.p.Files {
-		ast.Inspect(f, func(node ast.Node) bool {
-			if id, ok := node.(*ast.Ident); ok {
-				if tn, ok := g.p.Info.ObjectOf(id).(*types.TypeName); ok {
-					add(tn.Type())
+	for _, pkg := range g.p.packages() {
+		for _, f := range pkg.Files {
+			ast.Inspect(f, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok {
+					if tn, ok := g.p.Info.ObjectOf(id).(*types.TypeName); ok {
+						add(tn.Type())
+					}
 				}
-			}
-			if e, ok := node.(ast.Expr); ok {
-				if tv, ok := g.p.Info.Types[e]; ok {
-					add(tv.Type)
+				if e, ok := node.(ast.Expr); ok {
+					if tv, ok := g.p.Info.Types[e]; ok {
+						add(tv.Type)
+					}
 				}
-			}
-			return true
-		})
+				return true
+			})
+		}
 	}
+	return nil
 }
 
 // genError aborts the compilation of one function; compileFunc recovers it.
@@ -284,7 +347,11 @@ func (f *fn) stmt(s ast.Stmt) {
 		x := f.localOf(s.X)
 		mark := f.next
 		one := f.alloc(s)
-		f.asm.EmitExt(OpLoadk, one, 0, 0, TermInt(1))
+		if isInt64(f.g.p.Info.TypeOf(s.X)) {
+			f.int64Into(1, one)
+		} else {
+			f.asm.EmitExt(OpLoadk, one, 0, 0, TermInt(1))
+		}
 		f.asm.Emit(op, x, x, one)
 		f.next = mark
 	case *ast.DeclStmt:
@@ -366,7 +433,21 @@ func (f *fn) assign(s *ast.AssignStmt) {
 		}
 	}
 	mark := f.next
-	if len(s.Lhs) == 1 && len(newVars) == 1 {
+	if len(s.Lhs) == 2 && len(s.Rhs) == 1 {
+		// a, b := actor.X(...): the builtin writes two fresh temporaries,
+		// above every live local, which then move to the targets.
+		call, ok := ast.Unparen(s.Rhs[0]).(*ast.CallExpr)
+		if !ok {
+			f.fail(s, "internal error: two-value assignment from a non-call")
+		}
+		base := f.allocN(s, 2)
+		f.twoResultCall(call, base)
+		for i, t := range targets {
+			if t >= 0 {
+				f.asm.Emit(OpMove, uint8(t), base+uint8(i), 0)
+			}
+		}
+	} else if len(s.Lhs) == 1 && len(newVars) == 1 {
 		// A fresh variable cannot be read by its own initializer.
 		f.exprInto(s.Rhs[0], uint8(targets[0]))
 	} else {
@@ -501,6 +582,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 	case *ast.ParenExpr:
 		f.exprInto(e.X, dst)
 	case *ast.Ident:
+		if fn, ok := f.g.p.Info.Uses[e].(*types.Func); ok {
+			f.funcValueInto(e, fn, dst)
+			return
+		}
 		if r := f.localOf(e); r != dst {
 			f.asm.Emit(OpMove, dst, r, 0)
 		}
@@ -513,6 +598,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 	case *ast.BinaryExpr:
 		f.binaryInto(e, dst)
 	case *ast.SelectorExpr:
+		if fn, ok := f.g.p.Info.Uses[e.Sel].(*types.Func); ok {
+			f.funcValueInto(e, fn, dst) // lib.F
+			return
+		}
 		sel := f.g.p.Info.Selections[e]
 		if sel == nil || sel.Kind() != types.FieldVal || len(sel.Index()) != 1 {
 			f.fail(e, "internal error: unexpected selector")
@@ -520,6 +609,8 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 		f.asm.Emit(OpGetfield, dst, f.operand(e.X), uint8(sel.Index()[0]))
 	case *ast.CompositeLit:
 		f.structLit(e, dst)
+	case *ast.FuncLit:
+		f.closureInto(e, dst)
 	case *ast.CallExpr:
 		f.call(e, dst)
 	default:
@@ -568,6 +659,13 @@ func (f *fn) constInto(e ast.Expr, v constant.Value, dst uint8) {
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddString(constant.StringVal(v))))
 	case constant.Int:
 		n, exact := constant.Int64Val(v)
+		if isInt64(f.g.p.Info.TypeOf(e)) {
+			if !exact {
+				f.fail(e, "constant %s overflows int64", v)
+			}
+			f.int64Into(n, dst)
+			return
+		}
 		if !exact || n < -1<<31 || n >= 1<<31 {
 			f.fail(e, "constant %s overflows int", v)
 		}
@@ -585,24 +683,57 @@ func (f *fn) intInto(n int32, dst uint8) {
 	}
 }
 
+// int64Into loads the int64 n into dst: int64 values are always boxed, so
+// it is a const-area K_INT64 object.
+func (f *fn) int64Into(n int64, dst uint8) {
+	f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddInt64(n)))
+}
+
+// isInt64 reports whether t's underlying type is int64.
+func isInt64(t types.Type) bool {
+	b, ok := underlying(t).(*types.Basic)
+	return ok && b.Kind() == types.Int64
+}
+
+// conversion compiles int(x) or int64(x) (the only conversions the checker
+// allows) into dst; converting to x's own type is a plain copy.
+func (f *fn) conversion(call *ast.CallExpr, dst uint8) {
+	to, from := f.g.p.Info.TypeOf(call.Fun), f.g.p.Info.TypeOf(call.Args[0])
+	if isInt64(to) == isInt64(from) {
+		f.exprInto(call.Args[0], dst)
+		return
+	}
+	c := uint8(0)
+	if isInt64(to) {
+		c = 1
+	}
+	mark := f.next
+	f.asm.Emit(OpConv, dst, f.operand(call.Args[0]), c)
+	f.next = mark
+}
+
 // zeroInto loads the zero value of t into dst.
 func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 	if st := structType(t); st != nil {
 		f.newStruct(n, st, nil, dst)
 		return
 	}
-	if isPID(t) {
-		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNil) // no actor has the zero PID
+	if isPID(t) || isRef(t) || isAny(t) || isFunc(t) {
+		// No actor has the zero PID and no ref has serial 0; a nil any; a
+		// nil func, which Spawn rejects (the spawner crashes with badcode).
+		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNil)
 		return
 	}
 	b, ok := t.Underlying().(*types.Basic)
 	switch {
+	case ok && b.Kind() == types.Int64:
+		f.int64Into(0, dst)
 	case ok && b.Info()&types.IsInteger != 0:
 		f.intInto(0, dst)
 	case ok && b.Info()&types.IsBoolean != 0:
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermFalse)
 	case ok && b.Info()&types.IsString != 0:
-		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddString("")))
+		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermEmptyStr)
 	default:
 		f.fail(n, "zero value of %s not supported", t)
 	}
@@ -678,6 +809,10 @@ func (f *fn) args(call *ast.CallExpr) (base uint8, n uint8) {
 }
 
 func (f *fn) call(call *ast.CallExpr, dst uint8) {
+	if tv := f.g.p.Info.Types[call.Fun]; tv.IsType() {
+		f.conversion(call, dst)
+		return
+	}
 	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
 		switch obj := f.g.p.Info.Uses[fun].(type) {
@@ -695,8 +830,14 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			return
 		}
 	case *ast.SelectorExpr:
-		if obj, ok := f.g.p.Info.Uses[fun.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == ActorPath {
+		obj, ok := f.g.p.Info.Uses[fun.Sel].(*types.Func)
+		if ok && obj.Pkg() != nil && obj.Pkg().Path() == ActorPath {
 			f.actorCall(call, obj.Name(), dst)
+			return
+		}
+		if idx, found := f.g.funcIdx[obj]; ok && found { // lib.F(...)
+			base, n := f.args(call)
+			f.asm.EmitExt(OpCall, dst, base, n, idx)
 			return
 		}
 	}

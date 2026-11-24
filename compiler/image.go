@@ -26,6 +26,7 @@ type imgType struct {
 type ImageBuilder struct {
 	consts  []uint32
 	strings map[string]uint32
+	int64s  map[int64]uint32
 	funcs   []imgFunc
 	types   []imgType
 	entry   uint32
@@ -33,7 +34,7 @@ type ImageBuilder struct {
 
 // NewImageBuilder returns an empty builder.
 func NewImageBuilder() *ImageBuilder {
-	return &ImageBuilder{strings: map[string]uint32{}}
+	return &ImageBuilder{strings: map[string]uint32{}, int64s: map[int64]uint32{}}
 }
 
 // AddString adds a K_STRING constant (deduplicated) and returns its word offset.
@@ -50,6 +51,17 @@ func (b *ImageBuilder) AddString(s string) uint32 {
 		b.consts = append(b.consts, binary.LittleEndian.Uint32(buf[i*4:]))
 	}
 	b.strings[s] = off
+	return off
+}
+
+// AddInt64 adds a K_INT64 constant (deduplicated) and returns its word offset.
+func (b *ImageBuilder) AddInt64(v int64) uint32 {
+	if off, ok := b.int64s[v]; ok {
+		return off
+	}
+	off := uint32(len(b.consts))
+	b.consts = append(b.consts, HdrMake(3, KInt64), uint32(uint64(v)), uint32(uint64(v)>>32))
+	b.int64s[v] = off
 	return off
 }
 

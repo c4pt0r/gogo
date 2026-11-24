@@ -10,7 +10,7 @@ typedef struct FreeBlock { struct FreeBlock *next; } FreeBlock;
 
 static FreeBlock *free_list[VA_CLASSES + 1];  /* indexed by size / VA_GRAIN */
 static char *chunk_cur, *chunk_end;           /* unused tail of newest chunk */
-static size_t used, limit;
+static size_t used, limit, peak;
 
 static size_t round_up(size_t n) {
     if (n == 0) n = 1;
@@ -42,6 +42,7 @@ void *va_alloc(size_t bytes) {
         }
     }
     if (p) used += size;
+    if (used > peak) peak = used;
     return p;
 }
 
@@ -61,6 +62,8 @@ void va_free(void *p, size_t bytes) {
 
 size_t va_used_bytes(void) { return used; }
 void va_set_limit(size_t bytes) { limit = bytes; }
+size_t va_peak_bytes(void) { return peak; }
+void va_reset_peak(void) { peak = used; }
 
 void va_reset(void) {
     /* Chunks are intentionally not returned: blocks may still be live. */
@@ -68,4 +71,5 @@ void va_reset(void) {
     chunk_cur = chunk_end = NULL;
     used = 0;
     limit = 0;
+    peak = 0;
 }

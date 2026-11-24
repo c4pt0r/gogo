@@ -1,0 +1,12 @@
+struct 1 2
+int 42
+string hi
+bool true
+pid true
+int 1073741824
+string 
+other nil
+eval
+int or string
+{1 2} 42 {hi} true
+struct 1 2

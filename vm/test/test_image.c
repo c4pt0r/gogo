@@ -142,3 +142,88 @@ TEST(image_funcs_same_offset) {
     build2(w, 1, 1);
     CHECK_EQ(image_load(&img, w, IMG2_WORDS), IMG_ERR_BOUNDS);
 }
+
+/* Image with a "main" name string at const 0 followed by `extra` const words. */
+/* header 8 + func 3 + name string 3 + extra consts (up to 9) + code 1 */
+static uint32_t cimg[8 + 3 + 3 + 9 + 1];
+static int build_consts(Image *img, const uint32_t *extra, uint32_t n) {
+    uint32_t *w = cimg;
+    memset(w, 0, sizeof cimg);
+    w[0] = 0x4F474F47; w[1] = 1; w[2] = 1; w[3] = 0;
+    w[4] = 3 + n; w[5] = 1; w[6] = 0; w[7] = 0;
+    w[9] = 2 | (5u << 16);
+    w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
+    for (uint32_t i = 0; i < n; i++) w[14 + i] = extra[i];
+    w[14 + n] = OP_NOP;
+    return image_load(img, w, 15 + n);
+}
+
+TEST(const_walk_ok) {
+    Image img;
+    uint32_t e[] = { hdr_make(3, K_STRUCT), 0, term_from_int(7),
+                     hdr_make(2, K_INT), 5,
+                     hdr_make(4, K_CLOSURE), 0, term_from_const(0), T_NIL };
+    CHECK_EQ(build_consts(&img, e, 9), IMG_OK);
+}
+
+TEST(const_struct_with_heap_ref_rejected) {
+    Image img;
+    uint32_t e[] = { hdr_make(3, K_STRUCT), 0, term_from_ref(0) };
+    CHECK_EQ(build_consts(&img, e, 3), IMG_ERR_BOUNDS);
+}
+
+TEST(const_closure_with_heap_ref_rejected) {
+    Image img;
+    uint32_t e[] = { hdr_make(3, K_CLOSURE), 0, term_from_ref(0) };
+    CHECK_EQ(build_consts(&img, e, 3), IMG_ERR_BOUNDS);
+}
+
+TEST(const_ref_out_of_range_rejected) {
+    Image img;
+    uint32_t e[] = { hdr_make(3, K_STRUCT), 0, term_from_const(99) };
+    CHECK_EQ(build_consts(&img, e, 3), IMG_ERR_BOUNDS);
+}
+
+TEST(const_unknown_kind_rejected) {
+    Image img;
+    uint32_t e[] = { hdr_make(2, 9), 0 };
+    CHECK_EQ(build_consts(&img, e, 2), IMG_ERR_BOUNDS);
+}
+
+TEST(const_zero_header_rejected) {
+    Image img;
+    uint32_t e[] = { 0, 0 };
+    CHECK_EQ(build_consts(&img, e, 2), IMG_ERR_BOUNDS);
+    uint32_t f[] = { hdr_make(0, K_INT), 0 };
+    CHECK_EQ(build_consts(&img, f, 2), IMG_ERR_BOUNDS);
+}
+
+TEST(const_object_overruns_rejected) {
+    Image img;
+    uint32_t e[] = { hdr_make(5, K_STRUCT), 0, T_NIL };
+    CHECK_EQ(build_consts(&img, e, 3), IMG_ERR_BOUNDS);
+}
+
+TEST(const_string_bad_len_rejected) {
+    Image img;
+    uint32_t e[] = { hdr_make(3, K_STRING), 100, 0 };
+    CHECK_EQ(build_consts(&img, e, 3), IMG_ERR_BOUNDS);
+}
+
+TEST(const_short_int_or_struct_rejected) {
+    Image img;
+    uint32_t e[] = { hdr_make(1, K_INT) };
+    CHECK_EQ(build_consts(&img, e, 1), IMG_ERR_BOUNDS);
+    uint32_t f[] = { hdr_make(1, K_STRUCT) };
+    CHECK_EQ(build_consts(&img, f, 1), IMG_ERR_BOUNDS);
+}
+
+TEST(const_int64_is_three_words) {
+    Image img;
+    uint32_t e[] = { hdr_make(3, K_INT64), 0xFFFFFFFFu, 0x7FFFFFFFu };
+    CHECK_EQ(build_consts(&img, e, 3), IMG_OK);
+    uint32_t f[] = { hdr_make(2, K_INT64), 5 };
+    CHECK_EQ(build_consts(&img, f, 2), IMG_ERR_BOUNDS);
+    uint32_t g[] = { hdr_make(4, K_INT64), 5, 0, 0 };
+    CHECK_EQ(build_consts(&img, g, 4), IMG_ERR_BOUNDS);
+}

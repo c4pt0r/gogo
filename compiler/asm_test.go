@@ -2,14 +2,29 @@ package compiler
 
 import (
 	"encoding/binary"
+	"go/constant"
+	"go/token"
+	"go/types"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode"
+
+	"gogo"
 )
 
+// goName maps a C constant to its Go twin: OP_LOADK -> OpLoadk,
+// B_MAKE_REF -> BMakeRef.
 func goName(prefix, suffix string) string {
-	return prefix + strings.ToUpper(suffix[:1]) + strings.ToLower(strings.ReplaceAll(suffix, "_", ""))[1:]
+	name := prefix
+	for _, part := range strings.Split(suffix, "_") {
+		if part != "" {
+			name += part[:1] + strings.ToLower(part[1:])
+		}
+	}
+	return name
 }
 
 func TestOpcodesMatchC(t *testing.T) {
@@ -33,6 +48,7 @@ func TestOpcodesMatchC(t *testing.T) {
 	add(`\bOP_(\w+)\s*=\s*(\d+)`, "Op", 10)
 	add(`\bB_(\w+)\s*=\s*(\d+)`, "B", 10)
 	add(`#define\s+TY_(\w+)\s+0x([0-9a-fA-F]+)`, "Ty", 16)
+	add(`#define\s+TYPE_(\w+)\s+(\d+)`, "Type", 10)
 	if len(cConsts) < 30 {
 		t.Fatalf("parsed only %d C constants", len(cConsts))
 	}
@@ -46,7 +62,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpBuiltin)+1 || len(builtinNames) != int(BMemory)+1 {
+	if len(opNames) != int(OpConv)+1 || len(builtinNames) != int(BUnregister)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -58,6 +74,83 @@ func TestOpcodesMatchC(t *testing.T) {
 	for n, v := range goConstants {
 		if strings.HasPrefix(n, "Op") && OpHasExt(uint8(v)) != cExt[n] {
 			t.Errorf("OpHasExt(%s)=%v, C says %v", n, OpHasExt(uint8(v)), cExt[n])
+		}
+	}
+}
+
+// TestReasonCodesMatchC cross-checks the gogo/actor reason constants with
+// the C R_* enum: actor.OutOfMemory <-> R_OUT_OF_MEMORY.
+func TestReasonCodesMatchC(t *testing.T) {
+	src, err := os.ReadFile("../vm/opcodes.h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cCodes := map[string]int64{}
+	for _, m := range regexp.MustCompile(`\bR_(\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
+		v, _ := strconv.ParseInt(m[2], 10, 64)
+		cCodes[m[1]] = v
+	}
+	pkg, err := (&loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}).Import(ActorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goCodes := map[string]int64{}
+	for _, name := range pkg.Scope().Names() {
+		if c, ok := pkg.Scope().Lookup(name).(*types.Const); ok {
+			v, _ := constant.Int64Val(c.Val())
+			goCodes[upperSnake(name)] = v
+		}
+	}
+	if len(goCodes) != 8 {
+		t.Errorf("gogo/actor has %d constants, want the 8 reason codes", len(goCodes))
+	}
+	for n, v := range goCodes {
+		if cv, ok := cCodes[n]; !ok || cv != v {
+			t.Errorf("R_%s: Go=%d C=%d (present=%v)", n, v, cv, ok)
+		}
+	}
+	for n := range cCodes {
+		if _, ok := goCodes[n]; !ok {
+			t.Errorf("R_%s has no Go twin", n)
+		}
+	}
+}
+
+// upperSnake turns OutOfMemory into OUT_OF_MEMORY.
+func upperSnake(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && unicode.IsUpper(r) {
+			b.WriteByte('_')
+		}
+		b.WriteRune(unicode.ToUpper(r))
+	}
+	return b.String()
+}
+
+// TestReservedTypesMatchStubs checks the reserved type table against the
+// gogo/actor stubs (names, field names in order) and the TYPE_* indices.
+func TestReservedTypesMatchStubs(t *testing.T) {
+	pkg, err := (&loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}).Import(ActorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, rt := range reservedTypes {
+		obj, ok := pkg.Scope().Lookup(rt.name).(*types.TypeName)
+		if !ok {
+			t.Errorf("actor.%s missing from the stubs", rt.name)
+			continue
+		}
+		st := obj.Type().Underlying().(*types.Struct)
+		var names []string
+		for j := 0; j < st.NumFields(); j++ {
+			names = append(names, st.Field(j).Name())
+		}
+		if strings.Join(names, " ") != strings.Join(rt.fields, " ") {
+			t.Errorf("actor.%s fields %v, want %v", rt.name, names, rt.fields)
+		}
+		if g, ok := goConstants["Type"+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
+			t.Errorf("actor.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.name, i, g, ok)
 		}
 	}
 }

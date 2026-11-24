@@ -1,0 +1,10 @@
+run 1: normal exit
+started 1
+sup exit 0
+run 2: crash, then normal exit
+started 1
+started 2
+sup exit 0
+run 3: shutdown exit
+started 1
+sup exit 0

@@ -2,7 +2,7 @@
  *
  *   ...1  small int (31-bit signed)   (v << 1) | 1
  *   ..00  heap ref                    word_offset << 2
- *   0010  special                     T_NIL, T_FALSE, T_TRUE
+ *   0010  special                     T_NIL, T_FALSE, T_TRUE, T_EMPTYSTR
  *   0110  PID                         (gen << 20) | (slot << 4) | 0x6
  *   1010  const ref                   const_word_offset << 4 | 0xA
  *   1110  off-heap handle             reserved (M2)
@@ -19,6 +19,8 @@ typedef uint32_t term;
 #define T_NIL   ((term)0x02)
 #define T_FALSE ((term)0x12)
 #define T_TRUE  ((term)0x22)
+/* The empty string: zero value of string-typed vars and fields. */
+#define T_EMPTYSTR ((term)0x32)
 
 /* Heap object kinds. */
 enum {
@@ -26,6 +28,8 @@ enum {
     K_STRING  = 2,
     K_INT     = 3,
     K_CLOSURE = 4,
+    K_REF     = 5,   /* [hdr][serial_lo][serial_hi] */
+    K_INT64   = 6,   /* [hdr][lo][hi]; every int64 value, even small ones */
     K_FORWARD = 63
 };
 

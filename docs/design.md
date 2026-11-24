@@ -72,31 +72,43 @@
 
 ### 5.3 actor API（`actor` 包）
 
+M2 实际实现的 API（权威定义见 `actor/actor.go`）：
+
 ```go
 type PID struct{ /* opaque */ }
-type Ref struct{ /* opaque */ }
+type Ref struct{ /* opaque，可 == / != 比较 */ }
+type Reason struct{ Code int; Func string }   // 退出原因，见 §5.8
+type Options struct{ MaxMemory int }          // 字节；0 = 平台默认
 
 func Spawn(f func()) PID
-func SpawnLink(f func()) PID
+func SpawnLink(f func()) PID                    // 创建并原子地链接
+func SpawnOpt(f func(), opts Options) PID       // 带内存上限
 func Self() PID
 func Send(to PID, msg any)
 func Receive() any                              // FIFO 取下一条
-func ReceiveTimeout(ms int) (msg any, ok bool)
+func ReceiveTimeout(ms int) (msg any, ok bool)  // ms == 0 只查看不等待
 func Call(to PID, req any, timeoutMs int) (reply any, ok bool) // 带 Ref 的请求-应答
 func Reply(req Request, reply any)              // Call 的服务端
 func Link(p PID); func Unlink(p PID)
-func Monitor(p PID) Ref
+func Monitor(p PID) Ref; func Demonitor(r Ref)
 func TrapExit(on bool)
-func Exit(reason any)
-func Register(name string, p PID); func Whereis(name string) (PID, bool)
-func SendAfter(ms int, to PID, msg any) Ref
-func Sleep(ms int); func Now() int64           // 毫秒
+func Exit(code int)                             // 以原因码退出
+func Kill(p PID, code int)                      // 向别的 actor 发 exit 信号
+func MakeRef() Ref
+func Register(name string, p PID) bool          // 名字被占用或 p 已退出时 false
+func Whereis(name string) (PID, bool)
+func Unregister(name string)
+func SendAfter(ms int, to PID, msg any) Ref; func CancelTimer(r Ref) bool
+func Sleep(ms int); func Now() int64            // VM 启动以来的毫秒数
+func Info(p PID) ProcInfo
 
 // 系统消息
-type ExitMsg struct{ From PID; Reason any }
-type DownMsg struct{ Ref Ref; From PID; Reason any }
-type Request struct{ /* From + Ref + Body any */ }
+type ExitMsg struct{ From PID; Reason Reason }
+type DownMsg struct{ Ref Ref; From PID; Reason Reason }
+type Request struct{ From PID; Ref Ref; Body any }
 ```
+
+原因码常量：`Normal`、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`，用户码从 100 起。`error` 类型的退出原因留到语言里程碑（见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7）。
 
 接收侧用类型 switch 代替 Erlang 的模式匹配：
 
@@ -148,7 +160,6 @@ unix 平台的模拟外设：`gpio` 输入映射到键盘按键，输出打印�
 - **大块数据零拷贝只走一种类型**：`gogo/bytes.Buffer`（可写、属于当前 actor）调用 `Freeze()` 后变成不可变的 `bytes.Bytes`，所有权转移，原 Buffer 失效，不复制内容。`Bytes` 超过 64 字节时放在堆外、引用计数，发送时只传引用。帧缓冲就这样构建后发给 `display` 端口。普通 `[]byte` 和 `string` 发送时照常拷贝（小字符串常量在 flash 中不拷贝）。
 - **消息**：发送时深拷贝到单独申请的消息块并挂到接收方邮箱；`Receive` 时再并入接收方的堆。VM 单线程，无需原子操作。
 - **内存记账**：排队中的消息计入 **接收方** 的内存配额（堆 + 邮箱）。接收方超出上限时以 `MailboxOverflow` 退出（由监督者决定是否重启），发送方不受影响。
-  - **M1 偏差**：M1 中每个 actor 的邮箱上限为 65535 字（`mbox_words` 为 uint16）；发送会使其溢出时，**发送方** 以 `mailbox_full` 崩溃（规格目标：接收方以 `MailboxOverflow` 退出，发送方不受影响），留待 M2 修复。
 - **整机内存耗尽**：分配失败时，杀死正在尝试分配的那个 actor（原因 `OutOfMemory`）。VM 预留一小块应急内存，保证在这种情况下仍能完成退出处理、发出 exit/down 消息，VM 自身不崩。
 - 镜像中的常量（字符串、常量表）直接引用 flash，不拷贝。
 
@@ -203,7 +214,7 @@ iiiiiiii iiiiiiii iiiiiiii iiii1110   堆外大数据句柄：全局引用计数
 38    2    reductions   本时间片剩余配额
 40    2    mbox_words   排队消息总大小（计入配额）
 42    2    max_words    内存配额（0 = 默认）
-44    4    deadline     ReceiveTimeout 截止时间（毫秒，回绕计数）
+44    4    reserved     未用（定时器在 Vm.timers 里）；保持 32 位上 48 字节
 ```
 
 另有全局 actor 表：每个槽 4 字节（指向控制块），PID 的槽号索引它，代数防止旧 PID 误投。
@@ -265,9 +276,7 @@ FORWARD  （GC 时临时写入）                            转发标记
 
 **附加信息**（只有用到时才分配）
 
-```
-ActorExtra { Link *links; Monitor *monitors; uint16 name; Timer *timers; term exit_reason; }
-```
+以 `vm/signals.c` 中的 `struct ActorExtra` 为准：待处理退出的原因码与函数名、links、monitors（监视本 actor 的）、watching（本 actor 监视的）、`charged_words`（本 actor 创建的待触发 SendAfter、它的 monitor（两端条目 + 预留 DownMsg）、它那一侧 link（条目 + 预留 ExitMsg）占的字数，与 `mbox_words` 一起经 `actor_charged_words` 计入内存上限）。注册名在 `vm/names.c` 的全局表里，定时器在 `Vm.timers` 里。
 
 **空闲 actor 的账（典型 `for { switch m := actor.Receive().(type) { ... } }` 循环）**
 
@@ -294,10 +303,10 @@ ActorExtra { Link *links; Monitor *monitors; uint16 name; Timer *timers; term ex
 ### 5.8 错误与崩溃
 
 - 运行时错误（越界、nil map 写入、除零、类型断言失败、写只读内存、超出内存上限、`panic`）都只让当前 actor 退出。
-- 退出原因的类型（`gogo/actor` 包中定义）：`actor.Normal`（正常结束）、`actor.Killed`、`actor.MailboxOverflow`、`actor.OutOfMemory`、`actor.RuntimeError{Kind string, Msg string, Func string, Line int}`（越界等，`Kind` 如 `"index"`、`"nilmap"`、`"divzero"`、`"assert"`、`"readonly"`）；`panic(v)` 的原因就是 `v` 本身。它们都实现 `error`。
-- 退出时向链接的 actor 发 exit 信号（未开启 `TrapExit` 则级联退出），向监视者发 `DownMsg`。
-- 崩溃报告（actor 名、原因、函数名、行号）打印到控制台。
-- 监督树由标准库 `supervisor` 包用 Go 子集实现：v1 支持 one_for_one、最大重启强度。
+- 退出原因（M2 实现）：`actor.Reason{Code int; Func string}`。`Code` 是 `actor.Normal`（从入口函数返回）、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown` 或用户码（≥ 100，`actor.Exit(code)` / `actor.Kill(p, code)`）；`Func` 是运行时错误所在函数名，否则为空串。原设想的 `error` 类型原因（`RuntimeError{Kind, Msg, Func, Line}`、`panic(v)`）留到语言里程碑，见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7。
+- 退出时向链接的 actor 发 exit 信号（开启 `TrapExit` 则收到 `ExitMsg`，否则原因不是 `Normal` 时级联退出），向监视者发 `DownMsg`。这两种通知的消息块在建立 link/monitor 时就预留好，退出时不分配内存，送达有保证；预留的内存计入建立者自己的内存上限。`Kill(p, Killed)` 不可捕获。
+- 崩溃报告打印到 stderr：`gogo: actor <pid N> crashed: <kind>[ in <func>]`，`<kind>` 为 `killed`、`oom`、`mailbox_overflow`、`noproc`、`divzero`、`badcode` 或 `exit(<code>)`；`Normal`、`Shutdown` 不报告。行号留到以后。
+- 监督树由标准库 `gogo/supervisor` 包用 Go 子集实现：M2 是单子进程版（重启策略 Permanent/Transient、最大重启强度），多子进程 one_for_one 留到以后。
 
 ### 5.9 工具链与工作流
 
@@ -318,7 +327,8 @@ gogo flash app.gogo                    # 生成 UF2 并刷入 Pico（VM 与镜�
 ### 5.11 里程碑
 
 1. **M1 宿主可跑**：编译器 + VM，跑通 fib 和两个 actor 的 ping-pong；内存占用测试从 M1 起就纳入。
-2. **M2 actor 语义完整**：link/monitor/定时器/Call/监督树，黄金输出测试通过。
+2. **M2 actor 语义完整**（已完成）：link/monitor/定时器/Call/监督树，黄金输出测试通过。
+   - 交付：link/monitor/`Kill`/`TrapExit`、退出原因与崩溃报告、定时器与 `ReceiveTimeout`、`Call`/`Reply`、注册名、`int64`、函数值与多包构建、每 actor 内存上限与邮箱配额，以及用 Go 子集写的单子进程 `gogo/supervisor`（两层监督树黄金测试）。详见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md)，遗留事项见 [m2-followups.md](m2-followups.md)。
 3. **M3 Pico**：按键 + LED + 串口日志，在真机上演示"崩溃后被监督者重启"。
 4. **M4 小屏**：Linux 平台真实外设，在 Pi + Whisplay 上用 actor 驱动屏幕和按键。
 

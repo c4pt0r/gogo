@@ -31,6 +31,8 @@ uint16_t image_func_nparams(const Image *img, uint32_t f);
 uint16_t image_func_nregs(const Image *img, uint32_t f);
 /* Name bytes (not NUL-terminated) and length. */
 const char *image_func_name(const Image *img, uint32_t f, uint32_t *len);
+/* Const-area word offset of the function's name (a K_STRING). */
+uint32_t image_func_name_off(const Image *img, uint32_t f);
 uint32_t image_type_nfields(const Image *img, uint32_t t);
 
 #endif

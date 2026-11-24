@@ -4,6 +4,7 @@
 #include "msg.h"
 #include "alloc.h"
 #include "term.h"
+#include <string.h>
 
 static Actor *mk(Vm *vm, uint16_t words) {
     Actor *a = actor_new(vm, words);
@@ -185,11 +186,140 @@ TEST(receive_triggers_gc) {
     CHECK_EQ(fld(b, r, 1), term_from_int(9));
 }
 
-TEST(mbox_overflow_is_mailbox_full) {
+TEST(send_shared_object_copied_once) {
     Vm vm; va_reset();
     CHECK_EQ(vm_init(&vm, NULL, 4), 0);
-    Actor *a = mk(&vm, 32), *b = mk(&vm, 24);
-    b->mbox_words = 65535;
-    CHECK_EQ(msg_send(&vm, a, b->id, term_from_int(1)), -2);
-    CHECK(b->mbox_head == NULL);
+    Actor *a = mk(&vm, 40), *b = mk(&vm, 40);
+    term pf[2] = { term_from_int(1), term_from_int(2) };
+    term p = mk_struct(a, 7, pf, 2);
+    term qf[2] = { p, p };
+    term q = mk_struct(a, 8, qf, 2);
+    CHECK_EQ(msg_copy_words(a, q), 4 + 4);
+    Msg *m = msg_build(a, q);
+    CHECK(m != NULL);
+    if (!m) return;
+    CHECK_EQ(m->words, 4 /*Q*/ + 4 /*P*/);
+    (void)mk_struct(b, 1, NULL, 0);             /* shift receiver offsets */
+    term r = T_NIL;
+    CHECK(msg_unpack(&vm, b, m, &r));
+    msg_free(m);
+    CHECK_EQ(b->mem[term_ref_off(r) + 1], 8);
+    term r0 = fld(b, r, 0), r1 = fld(b, r, 1);
+    CHECK(term_is_ref(r0));
+    CHECK_EQ(r0, r1);
+    CHECK_EQ(b->mem[term_ref_off(r0) + 1], 7);
+    CHECK_EQ(fld(b, r0, 0), term_from_int(1));
+    CHECK_EQ(fld(b, r0, 1), term_from_int(2));
+}
+
+/* 20 levels, each a struct whose two fields both reference the previous
+ * level: a tree copy would need 2^20 objects. */
+static term mk_dag(Actor *a, int levels) {
+    term f[2] = { term_from_int(0), term_from_int(0) };
+    term prev = mk_struct(a, 1, f, 2);
+    for (int i = 1; i < levels; i++) {
+        f[0] = prev; f[1] = prev;
+        prev = mk_struct(a, 1, f, 2);
+    }
+    return prev;
+}
+
+TEST(send_dag_no_blowup) {
+    Vm vm; va_reset();
+    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    Actor *a = mk(&vm, 120), *b = mk(&vm, 120);
+    term top = mk_dag(a, 20);
+    Msg *m = msg_build(a, top);
+    CHECK(m != NULL);
+    if (!m) return;
+    CHECK_EQ(m->words, 20 * 4);
+    term r = T_NIL;
+    CHECK(msg_unpack(&vm, b, m, &r));
+    msg_free(m);
+    /* walk down the received chain: both fields share one copy per level */
+    for (int i = 1; i < 20; i++) {
+        CHECK_EQ(fld(b, r, 0), fld(b, r, 1));
+        r = fld(b, r, 0);
+        CHECK(term_is_ref(r));
+    }
+    CHECK_EQ(fld(b, r, 0), term_from_int(0));
+}
+
+TEST(send_restores_source) {
+    Vm vm; va_reset();
+    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    Actor *a = mk(&vm, 120);
+    term top = mk_dag(a, 20);
+    uint32_t before[120];
+    CHECK_EQ(a->mem_words, 120);
+    memcpy(before, a->mem, sizeof before);
+    Msg *m = msg_build(a, top);
+    CHECK(m != NULL);
+    if (!m) return;
+    CHECK_EQ(memcmp(before, a->mem, sizeof before), 0);
+    msg_free(m);
+}
+
+TEST(send_restores_source_on_alloc_failure) {
+    Vm vm; va_reset();
+    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    Actor *a = mk(&vm, 120);
+    term top = mk_dag(a, 20);                   /* 80 words: buffer must grow */
+    uint32_t before[120];
+    memcpy(before, a->mem, sizeof before);
+    size_t used = va_used_bytes();
+    va_set_limit(used + 100);                   /* 16-word buffer fits, growth fails */
+    CHECK(msg_build(a, top) == NULL);
+    CHECK_EQ(memcmp(before, a->mem, sizeof before), 0);
+    CHECK_EQ(va_used_bytes(), used);
+    va_set_limit(0);
+}
+
+/* p -> q -> p: the copy terminates, keeps the cycle, restores the sender. */
+TEST(send_cycle) {
+    Vm vm; va_reset();
+    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    Actor *a = mk(&vm, 40), *b = mk(&vm, 40);
+    term pf[1] = { term_from_int(0) };
+    term p = mk_struct(a, 1, pf, 1);
+    term qf[1] = { p };
+    term q = mk_struct(a, 2, qf, 1);
+    a->mem[term_ref_off(p) + 2] = q;            /* close the cycle */
+    uint32_t before[40];
+    memcpy(before, a->mem, sizeof before);
+    Msg *m = msg_build(a, p);
+    CHECK(m != NULL);
+    if (!m) return;
+    CHECK_EQ(m->words, 3 + 3);
+    CHECK_EQ(memcmp(before, a->mem, sizeof before), 0);
+    (void)mk_struct(b, 9, NULL, 0);             /* shift receiver offsets */
+    term r = T_NIL;
+    CHECK(msg_unpack(&vm, b, m, &r));
+    msg_free(m);
+    term rq = fld(b, r, 0);
+    CHECK(term_is_ref(rq));
+    CHECK_EQ(b->mem[term_ref_off(rq) + 1], 2);
+    CHECK_EQ(fld(b, rq, 0), r);
+}
+
+/* A queued message that fits the limit once it leaves the mailbox is
+ * received without oom: it is not counted in both mailbox and heap. */
+TEST(receive_near_limit) {
+    Vm vm; va_reset();
+    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    Actor *a = mk(&vm, 80), *b = mk(&vm, 24);
+    b->max_words = 100;
+    CHECK(heap_push_frame(&vm, b, 1, -1));
+    term f[58];
+    for (int i = 0; i < 58; i++) f[i] = term_from_int(i);
+    term s = mk_struct(a, 3, f, 58);            /* 60 words */
+    CHECK_EQ(msg_send(&vm, a, b->id, s), 0);
+    CHECK(b->mbox_words >= 60);
+    term r = T_NIL;
+    bool ok = msg_receive(&vm, b, &r);
+    CHECK(ok);
+    if (!ok) return;
+    CHECK_EQ(b->mbox_words, 0);
+    CHECK(b->mem_words <= 100);
+    CHECK_EQ(fld(b, r, 57), term_from_int(57));
 }

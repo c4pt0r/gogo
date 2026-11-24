@@ -3,6 +3,7 @@
 #include "heap.h"
 #include "alloc.h"
 #include "term.h"
+#include "config.h"
 
 /* Writes a K_STRUCT of n fields at off: [hdr][type_id][fields...]. */
 static void put_struct(Actor *a, uint32_t off, uint32_t type_id,
@@ -305,4 +306,113 @@ TEST(idle_footprint) {
     size_t bytes = actor_memory_bytes(a);
     CHECK_EQ(bytes, sizeof(Actor) + sizeof(uintptr_t) + 24 * 4);
     CHECK(bytes <= 160 + (sizeof(Actor) - 48));
+}
+
+/* Fills a rooted chain of 20-word structs until allocation fails. */
+TEST(limit_enforced) {
+    Vm vm;
+    Actor *a = setup(&vm, 24);
+    a->max_words = 256;
+    CHECK(heap_push_frame(&vm, a, 1, -1));
+    term roots[1] = { T_NIL };
+    int n = 0;
+    uint32_t off = 0;
+    for (; n < 1000; n++) {
+        off = heap_alloc(&vm, a, 20, roots, 1);
+        if (off == UINT32_MAX) break;
+        a->mem[off] = hdr_make(20, K_STRUCT);
+        a->mem[off + 1] = 0;
+        a->mem[off + 2] = roots[0];
+        for (uint32_t i = 3; i < 20; i++) a->mem[off + i] = term_from_int((int32_t)i);
+        roots[0] = term_from_ref(off);
+    }
+    CHECK(off == UINT32_MAX);
+    CHECK(n >= 10);                              /* 10 * 20 + 3 stack words fit */
+    CHECK((uint32_t)a->mem_words + a->mbox_words <= 256);
+    int len = 0;
+    for (term t = roots[0]; t != T_NIL; t = field(a, t, 0)) len++;
+    CHECK_EQ(len, n);
+}
+
+TEST(limit_counts_mailbox) {
+    Vm vm;
+    Actor *a = setup(&vm, 24);
+    a->max_words = 128;
+    a->mbox_words = 100;                         /* as if 100 words were queued */
+    CHECK(heap_push_frame(&vm, a, 1, -1));
+    CHECK_EQ(heap_alloc(&vm, a, 40, NULL, 0), UINT32_MAX);
+    CHECK((uint32_t)a->mem_words + a->mbox_words <= 128);
+    a->mbox_words = 0;
+    CHECK(heap_alloc(&vm, a, 40, NULL, 0) != UINT32_MAX);
+}
+
+TEST(actor_max_words_default) {
+    Vm vm;
+    Actor *a = setup(&vm, 24);
+    CHECK_EQ(a->max_words, 0);
+    CHECK_EQ(actor_max_words(a), GOGO_DEFAULT_MAX_WORDS);
+    a->max_words = 300;
+    CHECK_EQ(actor_max_words(a), 300);
+}
+
+/* Peak va use during one heap_alloc/heap_gc must stay within
+ * (everything outside this actor's block) + old block + new block. */
+static void check_peak(size_t before, uint32_t old_words, const Actor *a) {
+    size_t outside = before - (size_t)old_words * 4u;
+    CHECK(va_peak_bytes() <= outside + (size_t)old_words * 4u + (size_t)a->mem_words * 4u);
+}
+
+TEST(gc_peak_growing) {
+    for (int certain = 0; certain < 2; certain++) {
+        Vm vm;
+        Actor *a = setup(&vm, 200);
+        CHECK(heap_push_frame(&vm, a, 1, -1));
+        uint32_t o = heap_alloc(&vm, a, 100, NULL, 0);
+        a->mem[o] = hdr_make(100, K_STRING);
+        a->mem[o + 1] = 0;
+        a->mem[a->fp] = term_from_ref(o);        /* live: the GC must grow */
+        uint32_t need = certain ? 250 : 150;     /* 250 cannot fit in 200 at all */
+        size_t before = va_used_bytes();
+        uint32_t old_words = a->mem_words;
+        va_reset_peak();
+        CHECK(heap_alloc(&vm, a, need, NULL, 0) != UINT32_MAX);
+        CHECK(a->mem_words > old_words);
+        check_peak(before, old_words, a);
+        CHECK_EQ(a->mem[term_ref_off(a->mem[a->fp])], hdr_make(100, K_STRING));
+    }
+}
+
+TEST(gc_peak_shrinking) {
+    Vm vm;
+    Actor *a = setup(&vm, 400);
+    CHECK(heap_push_frame(&vm, a, 1, -1));
+    uint32_t o = heap_alloc(&vm, a, 10, NULL, 0);   /* 13 words used of 400 */
+    a->mem[o] = hdr_make(10, K_STRING);
+    a->mem[o + 1] = 0;
+    a->mem[a->fp] = term_from_ref(o);
+    size_t before = va_used_bytes();
+    va_reset_peak();
+    heap_gc(&vm, a, 0, NULL, 0);
+    CHECK(a->mem_words < 400);
+    check_peak(before, 400, a);
+    CHECK_EQ(a->hp, 10);
+    CHECK_EQ(a->mem[term_ref_off(a->mem[a->fp])], hdr_make(10, K_STRING));
+    CHECK_EQ(a->mem[a->mem_words - 1], term_from_int(-1));
+}
+
+/* Queued messages over the limit leave no room at all: the block may not
+ * grow, so allocation and frame pushes fail. */
+TEST(saturated_limit_blocks_growth) {
+    Vm vm;
+    Actor *a = setup(&vm, 24);
+    a->max_words = 64;
+    a->mbox_words = 100;
+    CHECK(heap_push_frame(&vm, a, 2, -1));          /* fits the block */
+    uint32_t free_words = (uint32_t)(a->sp - a->hp);
+    CHECK_EQ(heap_alloc(&vm, a, free_words + 1, NULL, 0), UINT32_MAX);
+    CHECK(a->mem_words <= 24);
+    CHECK(!heap_push_frame(&vm, a, (uint16_t)free_words, 0));
+    CHECK(a->mem_words <= 24);
+    a->mbox_words = 0;
+    actor_free(&vm, a);
 }

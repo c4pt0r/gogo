@@ -29,6 +29,7 @@ const (
 	OpMkclosure uint8 = 22
 	OpTypeis    uint8 = 23
 	OpBuiltin   uint8 = 24
+	OpConv      uint8 = 25 // c=0: int(rb), c=1: int64(rb)
 )
 
 // Builtin ids.
@@ -39,6 +40,28 @@ const (
 	BSend    uint32 = 3
 	BReceive uint32 = 4
 	BMemory  uint32 = 5
+
+	// Two-result builtins write ra and ra+1.
+	BSpawnLink      uint32 = 6
+	BSpawnOpt       uint32 = 7
+	BLink           uint32 = 8
+	BUnlink         uint32 = 9
+	BTrapExit       uint32 = 10
+	BExit           uint32 = 11
+	BKill           uint32 = 12
+	BMonitor        uint32 = 13
+	BDemonitor      uint32 = 14
+	BMakeRef        uint32 = 15
+	BReceiveTimeout uint32 = 16
+	BSendAfter      uint32 = 17
+	BCancelTimer    uint32 = 18
+	BSleep          uint32 = 19
+	BNow            uint32 = 20
+	BCall           uint32 = 21
+	BReply          uint32 = 22
+	BRegister       uint32 = 23
+	BWhereis        uint32 = 24
+	BUnregister     uint32 = 25
 )
 
 // Builtin type ids for TYPEIS; struct types use their type-table index.
@@ -47,6 +70,19 @@ const (
 	TyBool   uint32 = 0x10001
 	TyString uint32 = 0x10002
 	TyPid    uint32 = 0x10003
+	TyRef    uint32 = 0x10004
+	TyInt64  uint32 = 0x10005
+)
+
+// Reserved type-table indices of the gogo/actor struct types (see
+// reservedTypes).
+const (
+	TypeProcinfo uint32 = 0
+	TypeReason   uint32 = 1
+	TypeExitmsg  uint32 = 2
+	TypeDownmsg  uint32 = 3
+	TypeRequest  uint32 = 4
+	TypeOptions  uint32 = 5
 )
 
 // Heap object kinds.
@@ -55,6 +91,8 @@ const (
 	KString  uint32 = 2
 	KInt     uint32 = 3
 	KClosure uint32 = 4
+	KRef     uint32 = 5
+	KInt64   uint32 = 6 // [hdr][lo][hi]; every int64 value is boxed
 	KForward uint32 = 63
 )
 
@@ -63,6 +101,8 @@ const (
 	TermNil   uint32 = 0x02
 	TermFalse uint32 = 0x12
 	TermTrue  uint32 = 0x22
+	// TermEmptyStr is the empty string, the zero value of strings.
+	TermEmptyStr uint32 = 0x32
 )
 
 // Int31Fits reports whether v is representable as a small int.
@@ -94,9 +134,14 @@ func OpHasExt(op uint8) bool {
 
 var opNames = [...]string{"NOP", "MOVE", "LOADK", "LOADI32", "ADD", "SUB", "MUL",
 	"DIV", "REM", "NEG", "EQ", "NE", "LT", "LE", "NOT", "JMP", "JMPF", "JMPT",
-	"CALL", "RET", "NEWSTRUCT", "GETFIELD", "MKCLOSURE", "TYPEIS", "BUILTIN"}
+	"CALL", "RET", "NEWSTRUCT", "GETFIELD", "MKCLOSURE", "TYPEIS", "BUILTIN",
+	"CONV"}
 
-var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "MEMORY"}
+var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "MEMORY",
+	"SPAWN_LINK", "SPAWN_OPT", "LINK", "UNLINK", "TRAP_EXIT", "EXIT", "KILL",
+	"MONITOR", "DEMONITOR", "MAKE_REF", "RECEIVE_TIMEOUT", "SEND_AFTER",
+	"CANCEL_TIMER", "SLEEP", "NOW", "CALL", "REPLY", "REGISTER", "WHEREIS",
+	"UNREGISTER"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -108,8 +153,18 @@ var goConstants = map[string]uint32{
 	"OpJmp": uint32(OpJmp), "OpJmpf": uint32(OpJmpf), "OpJmpt": uint32(OpJmpt),
 	"OpCall": uint32(OpCall), "OpRet": uint32(OpRet), "OpNewstruct": uint32(OpNewstruct),
 	"OpGetfield": uint32(OpGetfield), "OpMkclosure": uint32(OpMkclosure),
-	"OpTypeis": uint32(OpTypeis), "OpBuiltin": uint32(OpBuiltin),
+	"OpTypeis": uint32(OpTypeis), "OpBuiltin": uint32(OpBuiltin), "OpConv": uint32(OpConv),
 	"BPrintln": BPrintln, "BSpawn": BSpawn, "BSelf": BSelf, "BSend": BSend,
 	"BReceive": BReceive, "BMemory": BMemory,
-	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
+	"BSpawnLink": BSpawnLink, "BSpawnOpt": BSpawnOpt, "BLink": BLink,
+	"BUnlink": BUnlink, "BTrapExit": BTrapExit, "BExit": BExit, "BKill": BKill,
+	"BMonitor": BMonitor, "BDemonitor": BDemonitor, "BMakeRef": BMakeRef,
+	"BReceiveTimeout": BReceiveTimeout, "BSendAfter": BSendAfter,
+	"BCancelTimer": BCancelTimer, "BSleep": BSleep, "BNow": BNow, "BCall": BCall,
+	"BReply": BReply, "BRegister": BRegister, "BWhereis": BWhereis,
+	"BUnregister": BUnregister,
+	"TyInt":       TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
+	"TyRef": TyRef, "TyInt64": TyInt64,
+	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
+	"TypeDownmsg": TypeDownmsg, "TypeRequest": TypeRequest, "TypeOptions": TypeOptions,
 }
