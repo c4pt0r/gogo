@@ -117,7 +117,7 @@ func (c *checker) typeProblem(t types.Type) string {
 		if obj.Pkg() == nil {
 			return obj.Name() // error, comparable
 		}
-		if c.p.compiled(obj.Pkg()) || obj.Pkg().Path() == ActorPath {
+		if c.p.compiled(obj.Pkg()) || isStub(obj.Pkg().Path()) {
 			return ""
 		}
 		return obj.Name()
@@ -535,8 +535,8 @@ func (c *checker) assign(s *ast.AssignStmt) {
 	}
 }
 
-// twoResult lists the gogo/actor functions that return two values.
-var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true}
+// twoResult lists the stub functions that return two values (by stubName).
+var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true}
 
 // twoResultCall returns the call of `a, b := actor.X(...)` or
 // `a, b = actor.X(...)` when X is a two-result builtin, else nil.
@@ -603,14 +603,28 @@ func (c *checker) caseType(t ast.Expr) bool {
 	return false
 }
 
-// actorFunc returns the name of the gogo/actor function a call invokes, or "".
+// actorFunc returns the stubName of the stub function (gogo/actor or
+// gogo/port) a call invokes, or "".
 func (c *checker) actorFunc(call *ast.CallExpr) string {
 	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	if !ok || c.p.Info.Selections[sel] != nil {
 		return ""
 	}
-	if fn, ok := c.p.Info.Uses[sel.Sel].(*types.Func); ok && fn.Pkg() != nil && fn.Pkg().Path() == ActorPath {
+	fn, _ := c.p.Info.Uses[sel.Sel].(*types.Func)
+	return stubName(fn)
+}
+
+// stubName names a stub function: "Spawn" for actor.Spawn, "port.Open" for
+// port.Open; "" for any other function.
+func stubName(fn *types.Func) string {
+	if fn == nil || fn.Pkg() == nil {
+		return ""
+	}
+	switch fn.Pkg().Path() {
+	case ActorPath:
 		return fn.Name()
+	case PortPath:
+		return "port." + fn.Name()
 	}
 	return ""
 }
@@ -742,8 +756,8 @@ func (c *checker) expr(e ast.Expr) {
 	case *ast.CompositeLit:
 		c.compositeLit(e)
 	case *ast.SelectorExpr:
-		if obj, ok := c.p.Info.Uses[e.Sel].(*types.Const); ok && obj.Pkg() != nil && (obj.Pkg().Path() == ActorPath || c.p.isLib(obj.Pkg())) {
-			return // actor.Normal etc.
+		if obj, ok := c.p.Info.Uses[e.Sel].(*types.Const); ok && obj.Pkg() != nil && (isStub(obj.Pkg().Path()) || c.p.isLib(obj.Pkg())) {
+			return // actor.Normal, port.Output etc.
 		}
 		if c.libFunc(e) {
 			return // lib.F as a func() value; its type was checked above

@@ -1,0 +1,10 @@
+gogo vm 启动 (v0.3) 内存上限 160KB
+worker #1 心跳 1
+worker #1 心跳 2: Hello, 世界！
+中文标点测试：“引号”，句号。顿号、问号
+The quick brown fox jumps over 12345
+一二三四五六七八九十一二三四五六七八九十
+!gogo: actor <pid 3> crashed: divzero in main.worker
+!崩溃报告：除零错误 (main.worker)
+未知字符 😀 和非法字节 ？
+拼音 nǐ hǎo ā é αβγ Привет

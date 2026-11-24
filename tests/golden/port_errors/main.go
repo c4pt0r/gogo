@@ -1,0 +1,45 @@
+// Open failures, and a stale port PID after Close.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+)
+
+// Same fields as port.GPIO but not the GPIO type.
+type NotGPIO struct{ Pin, Mode, Edge, DebounceMs int }
+
+func main() {
+	_, ok := port.Open("nosuch", port.GPIO{Pin: 11, Mode: port.Input})
+	println("unknown driver", ok)
+	_, ok = port.Open("gpio", port.GPIO{Pin: 64, Mode: port.Input})
+	println("pin 64", ok)
+	_, ok = port.Open("gpio", port.GPIO{Pin: -1, Mode: port.Input})
+	println("pin -1", ok)
+	_, ok = port.Open("gpio", NotGPIO{11, port.Input, port.None, 0})
+	println("wrong cfg", ok)
+	_, ok = port.Open("gpio", 7)
+	println("int cfg", ok)
+
+	p1, ok := port.Open("gpio", port.GPIO{Pin: 11, Mode: port.Input})
+	println("open 11", ok)
+	_, ok = port.Open("gpio", port.GPIO{Pin: 11, Mode: port.Input})
+	println("open 11 again", ok)
+	port.Close(p1)
+	p2, ok := port.Open("gpio", port.GPIO{Pin: 11, Mode: port.Input})
+	println("reopen 11", ok)
+	port.Close(p2)
+
+	// The stale PID of a closed output port must not drive the pin that was
+	// reopened under a new PID.
+	o1, _ := port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	port.Close(o1)
+	o2, ok := port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	println("reopen 5", ok)
+	actor.Send(o1, port.Write{Value: 1})
+	actor.Send(o2, port.Write{Value: 0})
+	port.Close(o1) // stale: must not close o2
+	actor.Send(o2, port.Write{Value: 0})
+	port.Close(o2)
+	println("done")
+}

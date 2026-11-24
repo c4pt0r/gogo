@@ -14,7 +14,7 @@
 static void setup(uint32_t *w, Image *img, Vm *vm) {
     va_reset();
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
-    w[0] = 0x4F474F47; w[1] = 1; w[2] = 1; w[3] = 0;
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = 3; w[5] = 1; w[6] = 0; w[7] = 0;
     w[9] = 0 | (2u << 16);
     w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);

@@ -4,8 +4,9 @@ package gogo
 import "embed"
 
 // StubFS holds the Go source of the gogo libraries, one directory per
-// package: actor/ (gogo/actor, API stubs the compiler replaces with VM
-// instructions) and supervisor/ (gogo/supervisor, compiled into the image).
+// package: actor/ and port/ (gogo/actor and gogo/port, API stubs the
+// compiler replaces with VM instructions) and supervisor/ (gogo/supervisor,
+// compiled into the image).
 //
-//go:embed actor/*.go supervisor/*.go
+//go:embed actor/*.go port/*.go supervisor/*.go
 var StubFS embed.FS

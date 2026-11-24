@@ -549,23 +549,24 @@ func compileImage(t *testing.T, src string) []byte {
 }
 
 func TestCompileReservedTypes(t *testing.T) {
-	want := []string{"ProcInfo/1", "Reason/2", "ExitMsg/2", "DownMsg/3", "Request/3", "Options/1"}
-	// Emitted even when the program does not import gogo/actor.
+	want := []string{"ProcInfo/1", "Reason/2", "ExitMsg/2", "DownMsg/3", "Request/3", "Options/1",
+		"port.GPIO/4", "port.Write/1", "port.Edge/2"}
+	// Emitted even when the program imports neither gogo/actor nor gogo/port.
 	img := compileImage(t, "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tvar a any = P{1, 2}\n\tswitch a.(type) {\n\tcase P:\n\t\tprintln(1)\n\t}\n}\n")
 	got := imageTypes(t, img)
 	if strings.Join(got, " ") != strings.Join(append(want, "P/2"), " ") {
 		t.Fatalf("types %v, want %v then P/2", got, want)
 	}
-	// TYPEIS P names index 6.
+	// TYPEIS P names index 9, the first after the reserved ones.
 	code := words(img)
 	found := false
 	for i := 0; i+1 < len(code); i++ {
-		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == 6 {
+		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == 9 {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("no TYPEIS with type id 6")
+		t.Error("no TYPEIS with type id 9")
 	}
 	// Using the actor types keeps them at their reserved indices.
 	img = compileImage(t, "package main\nimport \"gogo/actor\"\ntype U struct{ A int }\nfunc main() {\n\tu := U{1}\n\tvar o actor.Options\n\tvar r actor.Reason\n\tprintln(u, o, r, actor.Info(actor.Self()).Memory)\n}\n")
@@ -765,7 +766,7 @@ func TestCodegenGuardsTwoResultBuiltins(t *testing.T) {
 		}
 	}
 	g.nameLits([]*ast.FuncDecl{fd})
-	err = g.compileFunc(&funcInfo{name: "main"}, nil, fd.Body)
+	err = g.compileFunc(&funcInfo{name: "main"}, nil, nil, fd.Body)
 	if err == nil || !strings.Contains(err.Error(), "internal error") || !strings.Contains(err.Error(), "ReceiveTimeout") {
 		t.Fatalf("want an internal error naming ReceiveTimeout, got %v", err)
 	}
@@ -818,7 +819,9 @@ func main() {
 	println(a, b, c)
 }
 `)
-	want := map[int64]bool{1 << 40: false, -5: false, 0: false, 1: false}
+	// Only values outside 31 bits are const-area boxes; small ones are
+	// LOADI32 immediates.
+	want := map[int64]bool{1 << 40: false}
 	for _, o := range loadkConsts(t, img) {
 		if o[0]&63 != KInt64 {
 			continue
@@ -842,6 +845,118 @@ func main() {
 	}
 	if !strings.Contains(dis, "int64(1099511627776)") {
 		t.Errorf("disassembly does not render the int64 const:\n%s", dis)
+	}
+	_, body := funcDis(t, dis, "main")
+	code := parseIns(t, body)
+	for _, v := range []string{"-5", "0", "1"} {
+		if countOp(code, "LOADI32", ", "+v) == 0 {
+			t.Errorf("no LOADI32 of the small int64 %s:\n%s", v, dis)
+		}
+	}
+	if countOp(code, "ADD64", "") != 1 {
+		t.Errorf("c++ on an int64 should be ADD64:\n%s", dis)
+	}
+}
+
+func TestCompileInt64TypedOps(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+type D int64
+
+func sub(a, b int64) int64 { return a - b }
+
+func main() {
+	a, b := int64(3), int64(4)
+	c := a + b
+	println(c*a, c/a, c%a, -c, sub(a, b))
+	println(a == b, a != b, a < b, a <= b, a > b, a >= b)
+	x, y := 3, 4
+	println(x+y, x < y, -x)
+	var d D = 5
+	d += 2
+	println(d+d, d < 9)
+	a -= 1
+	a++
+}
+`)
+	_, body := funcDis(t, dis, "main")
+	code := parseIns(t, body)
+	for _, op := range []string{"ADD64", "MUL64", "DIV64", "REM64", "NEG64", "EQ64", "NE64", "LT64", "LE64"} {
+		if countOp(code, op, "") == 0 {
+			t.Errorf("main lacks %s:\n%s", op, dis)
+		}
+	}
+	// a+b, d+=, d+d, a++; GT/GE swap to LT64/LE64.
+	if n := countOp(code, "ADD64", ""); n != 4 {
+		t.Errorf("%d ADD64, want 4:\n%s", n, dis)
+	}
+	if countOp(code, "LT64", "") != 3 || countOp(code, "LE64", "") != 2 {
+		t.Errorf("want 3 LT64 (<, >, d<9) and 2 LE64 (<=, >=):\n%s", dis)
+	}
+	if countOp(code, "SUB64", "") != 1 {
+		t.Errorf("a -= 1 should be SUB64:\n%s", dis)
+	}
+	// The int ops stay generic.
+	if countOp(code, "ADD", "") != 1 || countOp(code, "LT", "") != 1 || countOp(code, "NEG", "") != 1 {
+		t.Errorf("int ops should stay ADD/LT/NEG:\n%s", dis)
+	}
+	_, body = funcDis(t, dis, "sub")
+	if countOp(parseIns(t, body), "SUB64", "") != 1 {
+		t.Errorf("sub lacks SUB64:\n%s", dis)
+	}
+	if strings.Contains(dis, "BOX64") {
+		t.Errorf("no int64 flows into an interface here:\n%s", dis)
+	}
+}
+
+func TestCompileInt64BoxIntoAny(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+import "gogo/actor"
+
+type S struct {
+	V any
+	N int64
+}
+
+func take(v any)       {}
+func give(x int64) any { return x }
+func keep(x int64) int64 { return x }
+
+func main() {
+	i64 := int64(5)
+	var x any = i64
+	x = i64
+	take(i64)
+	s := S{i64, i64}
+	s = S{V: i64}
+	actor.Send(actor.Self(), i64)
+	actor.SendAfter(1, actor.Self(), i64)
+	r, _ := actor.Call(actor.Self(), i64, 0)
+	println(x, s.N, r, i64, keep(i64))
+	var c any = int64(7)
+	take(c)
+}
+`)
+	_, body := funcDis(t, dis, "main")
+	code := parseIns(t, body)
+	// var x, x =, take, S{i64, ...}, S{V: ...}, Send, SendAfter, Call;
+	// not println, the int64 field N, keep's argument or closures.
+	if n := countOp(code, "BOX64", ""); n != 8 {
+		t.Errorf("%d BOX64 in main, want 8:\n%s", n, dis)
+	}
+	_, body = funcDis(t, dis, "give")
+	gc := parseIns(t, body)
+	if countOp(gc, "BOX64", "") != 1 || gc[len(gc)-1].op != "RET" {
+		t.Errorf("give should BOX64 its result before RET:\n%s", dis)
+	}
+	_, body = funcDis(t, dis, "keep")
+	if countOp(parseIns(t, body), "BOX64", "") != 0 {
+		t.Errorf("keep returns an int64, not an interface:\n%s", dis)
+	}
+	// A constant int64 into any is a const-area box: no BOX64, no LOADI32.
+	if !strings.Contains(dis, "LOADK r") || !strings.Contains(dis, "int64(7)") {
+		t.Errorf("var c any = int64(7) should LOADK a const box:\n%s", dis)
 	}
 }
 
@@ -938,7 +1053,7 @@ func Idle() {}
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1"
+	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1 port.GPIO/4 port.Write/1 port.Edge/2"
 	if got := strings.Join(imageTypes(t, img), " "); !strings.HasPrefix(got, want+" ") || !strings.Contains(got, "lib.Spec/1") || !strings.Contains(got, "P/1") {
 		t.Fatalf("types %s, want %s then P/1 and lib.Spec/1", got, want)
 	}
@@ -962,5 +1077,400 @@ func Idle() {}
 	}
 	if !regexp.MustCompile(`NEWSTRUCT r\d+, r\d+, 1, Options\n`).MatchString(dis) {
 		t.Errorf("no NEWSTRUCT Options:\n%s", dis)
+	}
+}
+
+func TestCompilePort(t *testing.T) {
+	src := `package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+)
+
+func main() {
+	p, ok := port.Open("gpio", port.GPIO{Pin: 25, Mode: port.Output, Edge: port.None, DebounceMs: 20})
+	if !ok {
+		return
+	}
+	var q actor.PID
+	q, ok = port.Open("gpio", port.GPIO{Pin: 0, Mode: port.InputPullUp, Edge: port.Both})
+	actor.Send(p, port.Write{Value: 1})
+	switch m := actor.Receive().(type) {
+	case port.Edge:
+		println(m.Pin, m.Value, ok)
+	}
+	port.Close(p)
+	actor.Kill(q, actor.Killed)
+}
+`
+	img := compileImage(t, src)
+	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1 port.GPIO/4 port.Write/1 port.Edge/2"
+	if got := strings.Join(imageTypes(t, img), " "); got != want {
+		t.Fatalf("types %s, want %s", got, want)
+	}
+	dis, err := Disassemble(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, re := range []string{
+		`NEWSTRUCT r\d+, r\d+, 4, port\.GPIO\n`,
+		`BUILTIN r\d+, r\d+, 2, PORT_OPEN\n`,
+		`NEWSTRUCT r\d+, r\d+, 1, port\.Write\n`,
+		`TYPEIS r\d+, r\d+, port\.Edge\n`,
+		`BUILTIN r\d+, r\d+, 1, PORT_CLOSE\n`,
+	} {
+		if !regexp.MustCompile(re).MatchString(dis) {
+			t.Errorf("no match for %s:\n%s", re, dis)
+		}
+	}
+	if strings.Count(dis, "PORT_OPEN") != 2 {
+		t.Errorf("want two PORT_OPEN:\n%s", dis)
+	}
+	// The literal is NEWSTRUCT with type id 6 (TYPE_GPIO).
+	code := words(img)
+	found := false
+	for i := 0; i+1 < len(code); i++ {
+		if code[i]&0xFF == uint32(OpNewstruct) && code[i]>>24 == 4 && code[i+1] == TypeGpio {
+			found = true
+		}
+	}
+	if !found || TypeGpio != 6 {
+		t.Error("no NEWSTRUCT with type id 6")
+	}
+}
+
+// clearCovers reports whether some CLEAR at index > from (and before index
+// to, if to >= 0) covers register r.
+func clearCovers(t *testing.T, code []ins, from, to, r int) bool {
+	t.Helper()
+	for i := from + 1; i < len(code) && (to < 0 || i < to); i++ {
+		if code[i].op != "CLEAR" {
+			continue
+		}
+		m := regexp.MustCompile(`^r(\d+), (\d+)$`).FindStringSubmatch(code[i].args)
+		if m == nil {
+			t.Fatalf("bad CLEAR operands %q", code[i].args)
+		}
+		a, _ := strconv.Atoi(m[1])
+		n, _ := strconv.Atoi(m[2])
+		if a <= r && r < a+n {
+			return true
+		}
+	}
+	return false
+}
+
+// callDst returns the index of the first CALL of fn at or after start and
+// its destination register.
+func callDst(t *testing.T, code []ins, start int, fn string) (int, int) {
+	t.Helper()
+	for i := start; i < len(code); i++ {
+		if code[i].op == "CALL" && strings.HasSuffix(code[i].args, ", "+fn) {
+			r, _ := strconv.Atoi(regexp.MustCompile(`^r(\d+),`).FindStringSubmatch(code[i].args)[1])
+			return i, r
+		}
+	}
+	t.Fatalf("no CALL %s", fn)
+	return 0, 0
+}
+
+// TestCompileClearsDeadRegisters: registers that held values and become
+// dead are cleared (CLEAR) so they stop being GC roots.
+func TestCompileClearsDeadRegisters(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+func g() any {
+	var x any
+	return x
+}
+
+func exprStmt() {
+	g()
+	println("x")
+}
+
+func blank() {
+	_ = g()
+	println("x")
+}
+
+func block() {
+	{
+		a := g()
+		b := g()
+		_, _ = a, b
+	}
+	println("x")
+}
+
+func loop() {
+	for i := 0; i < 3; i++ {
+		c := g()
+		_ = c
+	}
+}
+
+func main() {
+	exprStmt()
+	blank()
+	block()
+	loop()
+}
+`)
+	for _, fn := range []string{"exprStmt", "blank"} {
+		_, body := funcDis(t, dis, fn)
+		code := parseIns(t, body)
+		i, r := callDst(t, code, 0, "g")
+		if i+1 >= len(code) || code[i+1].op != "CLEAR" || !clearCovers(t, code, i, i+2, r) {
+			t.Errorf("%s: discarded call result r%d not cleared right after the CALL:\n%s", fn, r, dis)
+		}
+	}
+
+	_, body := funcDis(t, dis, "block")
+	code := parseIns(t, body)
+	ia, ra := callDst(t, code, 0, "g")
+	ib, rb := callDst(t, code, ia+1, "g")
+	pr := -1
+	for i, in := range code {
+		if in.op == "BUILTIN" && strings.HasSuffix(in.args, "PRINTLN") {
+			pr = i
+		}
+	}
+	for _, r := range []int{ra, rb} {
+		if !clearCovers(t, code, ib, pr, r) {
+			t.Errorf("block: local r%d not cleared at the end of its block:\n%s", r, dis)
+		}
+	}
+
+	_, body = funcDis(t, dis, "loop")
+	code = parseIns(t, body)
+	ic, rc := callDst(t, code, 0, "g")
+	back := -1
+	for i := ic; i < len(code); i++ {
+		if code[i].op == "JMP" && jumpTarget(t, code[i]) < code[i].pc {
+			back = i
+			break
+		}
+	}
+	if back < 0 || !clearCovers(t, code, ic, back, rc) {
+		t.Errorf("loop: body local r%d not cleared before the back edge:\n%s", rc, dis)
+	}
+}
+
+// TestCompileClearKeepsLiveValues: clearing never kills a value that is
+// still needed: loop-carried locals, locals of enclosing blocks, captured
+// variables and two-result builtin targets survive.
+func TestCompileClearKeepsLiveValues(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+import "gogo/actor"
+
+func g() any {
+	var x any
+	return x
+}
+
+func main() {
+	x := g()
+	for i := 0; i < 3; i++ {
+		y := g()
+		x = y
+	}
+	m, ok := actor.ReceiveTimeout(0)
+	k := g()
+	actor.Spawn(func() { println(k, m, ok) })
+	println(x, m, ok, k)
+}
+`)
+	_, body := funcDis(t, dis, "main")
+	code := parseIns(t, body)
+	// Locals: x=r0, i=r1 (loop), y=r2 (body), m=r1, ok=r2, k=r3. Before
+	// the last println, x (r0) is never cleared, and m, ok, k (captured)
+	// are not cleared after the two-result assignment.
+	last := -1
+	for i, in := range code {
+		if in.op == "BUILTIN" && strings.HasSuffix(in.args, "PRINTLN") {
+			last = i
+		}
+	}
+	if clearCovers(t, code, -1, last, 0) {
+		t.Errorf("x (r0) cleared while live:\n%s", dis)
+	}
+	recv := -1
+	for i, in := range code {
+		if in.op == "BUILTIN" && strings.HasSuffix(in.args, "RECEIVE_TIMEOUT") {
+			recv = i
+		}
+	}
+	for r := 1; r <= 2; r++ {
+		if clearCovers(t, code, recv+2, last, r) {
+			t.Errorf("r%d cleared after the two-result assignment while live:\n%s", r, dis)
+		}
+	}
+	if ik, rk := callDst(t, code, recv, "g"); rk != 3 || clearCovers(t, code, ik, last, 3) {
+		t.Errorf("captured k (r%d, want r3) cleared while live:\n%s", rk, dis)
+	}
+}
+
+// TestCompileZeroPIDRef: zero PIDs and Refs are typed specials, not nil.
+func TestCompileZeroPIDRef(t *testing.T) {
+	dis := compileSrc(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar p actor.PID\n\tvar r actor.Ref\n\tvar d actor.DownMsg\n\tprintln(p, r, d)\n}\n")
+	for _, want := range []string{"LOADK r0, zeropid", "LOADK r1, zeroref"} {
+		if !strings.Contains(dis, want) {
+			t.Errorf("missing %q:\n%s", want, dis)
+		}
+	}
+	if n := strings.Count(dis, "zeropid"); n != 2 { // p and DownMsg.From
+		t.Errorf("%d zeropid loads, want 2:\n%s", n, dis)
+	}
+}
+
+// TestCompileClearPeepholesKeepJumpTargets: moving and merging CLEARs
+// around labels never leaves a jump target off an instruction boundary,
+// and a CLEAR right before a label is not widened for the label's jumpers.
+func TestCompileClearPeepholesKeepJumpTargets(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+import "gogo/actor"
+
+func g() any {
+	var x any
+	return x
+}
+
+func spin() {
+	for g(); ; {
+	}
+}
+
+func nested(a, b bool) {
+	if a {
+		if b {
+			x := g()
+			_ = x
+		}
+	}
+}
+
+func loops(n int) {
+	for i := 0; i < n; i++ {
+		x := g()
+		if i == 1 {
+			continue
+		}
+		for j := 0; j < n; j++ {
+			y := g()
+			if j == 2 {
+				_ = y
+				break
+			}
+		}
+		_ = x
+	}
+}
+
+func sw() {
+	for {
+		switch m := actor.Receive().(type) {
+		case int:
+			if m == 0 {
+				break
+			}
+			_ = g()
+		case string:
+			return
+		default:
+			_ = g()
+		}
+	}
+}
+
+func main() {
+	nested(true, false)
+	loops(3)
+	actor.Spawn(spin)
+	actor.Spawn(sw)
+}
+`)
+	for _, fn := range []string{"spin", "nested", "loops", "sw"} {
+		_, body := funcDis(t, dis, fn)
+		code := parseIns(t, body)
+		starts := map[int]bool{}
+		for _, in := range code {
+			starts[in.pc] = true
+		}
+		for _, in := range code {
+			if in.op == "JMP" || in.op == "JMPF" || in.op == "JMPT" {
+				if tgt := jumpTarget(t, in); !starts[tgt] {
+					t.Errorf("%s: jump at %d targets %d, not an instruction:\n%s", fn, in.pc, tgt, dis)
+				}
+			}
+		}
+	}
+}
+
+// TestClearPeepholesRespectLabels: a CLEAR with a label bound right after
+// it is skipped by that label's jumpers, so it is neither dropped (before
+// a return, or moved past a statement end) nor widened.
+func TestClearPeepholesRespectLabels(t *testing.T) {
+	newFn := func() *fn {
+		return &fn{info: &funcInfo{name: "t"}, labelDirty: map[Label]int{}, boundAt: -1, lastClear: -1}
+	}
+	ops := func(f *fn) []uint8 {
+		code, err := f.asm.Finish()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []uint8
+		for pc := 0; pc < len(code); pc++ {
+			out = append(out, uint8(code[pc]))
+			if OpHasExt(uint8(code[pc])) {
+				pc++
+			}
+		}
+		return out
+	}
+	// CLEAR; label; return: the CLEAR stays and the label stays on LOADK.
+	f := newFn()
+	f.alloc(nil)
+	f.next = 0
+	f.clearDead()
+	l := f.asm.NewLabel()
+	f.jump(OpJmp, 0, l) // a jumper, so the label is used
+	f.bind(l)
+	f.retNil()
+	if got := ops(f); len(got) != 4 || got[0] != OpClear || got[2] != OpLoadk {
+		t.Errorf("CLEAR; JMP; label; LOADK; RET expected, got ops %v", got)
+	}
+	// CLEAR; label (bind); bindEnd: not moved past the first label.
+	f = newFn()
+	f.alloc(nil)
+	f.next = 0
+	f.clearDead()
+	l1, l2 := f.asm.NewLabel(), f.asm.NewLabel()
+	f.bind(l1)
+	f.bindEnd(l2)
+	f.clearDead()
+	f.retNil()
+	if got := ops(f); len(got) != 3 || got[0] != OpClear {
+		t.Errorf("CLEAR; LOADK; RET expected, got ops %v", got)
+	}
+	// Without a label in between, CLEARs merge and one before a plain
+	// return is dropped.
+	f = newFn()
+	f.alloc(nil)
+	f.alloc(nil)
+	f.next = 1
+	f.clearDead()
+	f.next = 0
+	f.clearDead()
+	code := append([]uint32(nil), f.asm.code...)
+	if len(code) != 1 || code[0] != makeWord(OpClear, 0, 2, 0) {
+		t.Errorf("CLEAR r1,1 + CLEAR r0,1 not merged into CLEAR r0,2: %#x", code)
+	}
+	f.retNil()
+	if got := ops(f); len(got) != 2 || got[0] != OpLoadk {
+		t.Errorf("CLEAR before a bare return not dropped: %v", got)
 	}
 }

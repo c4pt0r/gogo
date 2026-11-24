@@ -3,12 +3,18 @@
 //	gogo build <dir> [-o out.gogo]
 //	gogo run <dir|file.gogo>
 //	gogo dis <file.gogo>
+//	gogo flash [-port P] [-esptool path] app.gogo
+//	gogo monitor [-port P] [-t seconds] [-until text] [-reset]
 //
 // `gogo run` builds a directory to a temporary image first, then runs the VM
 // and exits with its status. The VM is $GOGO_VM if set, else
 // <repo>/build/gogovm (built by `make vm`), where <repo> is the first
 // directory containing a go.mod declaring `module gogo`, searched upwards
 // from the gogo executable and then from the current directory.
+//
+// `gogo flash` writes an image to the ESP32-S3 image partition with an
+// external esptool (see flash.go); `gogo monitor` captures the board's
+// serial console (see monitor.go).
 package main
 
 import (
@@ -23,7 +29,7 @@ import (
 	"gogo/compiler"
 )
 
-const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run <dir|file.gogo>\n       gogo dis <file.gogo>"
+const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -155,6 +161,10 @@ func run(args []string) error {
 		}
 		fmt.Print(text)
 		return nil
+	case "flash":
+		return defaultFlasher().flash(args[1:])
+	case "monitor":
+		return monitorCmd(args[1:])
 	}
 	return errors.New(usage)
 }

@@ -1,0 +1,7 @@
+# gogo partition table (8 MB flash). The `gogo` data partition holds the
+# program image behind a 16-byte header written by `gogo flash`; its offset
+# 0x210000 is a constant in cmd/gogo/flash.go (partOffset) - keep them in sync.
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x6000
+factory,  app,  factory, 0x10000,  0x200000
+gogo,     data, 0x40,    0x210000, 0x100000

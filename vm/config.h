@@ -15,4 +15,24 @@
 #define GOGO_RESERVE_BYTES 1024u
 #endif
 
+/* Actor table capacity: the most live actors at once. The unix `chain`
+ * golden needs 10002. */
+#ifndef GOGO_TABLE_CAP
+#define GOGO_TABLE_CAP 16384u
+#endif
+
+/* Port table size and event queue capacity (used by the port layer). */
+#ifndef GOGO_MAX_PORTS
+#define GOGO_MAX_PORTS 16u
+#endif
+#ifndef GOGO_EVQ_CAP
+#define GOGO_EVQ_CAP 64u
+#endif
+
+/* Cap on bytes the unix platform may take from the system for VM memory
+ * (simulates a small MCU); 0 means no cap. */
+#ifndef GOGO_ARENA_BYTES
+#define GOGO_ARENA_BYTES 0u
+#endif
+
 #endif

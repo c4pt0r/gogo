@@ -323,3 +323,56 @@ TEST(receive_near_limit) {
     CHECK(b->mem_words <= 100);
     CHECK_EQ(fld(b, r, 57), term_from_int(57));
 }
+
+/* A 600-node list (2400+ words, within the MCU limit too) where every node also points at one shared leaf, plus a
+ * shared tail pair: the copy is sized first and allocated once, so the
+ * allocator's peak during msg_build exceeds its start by no more than the
+ * message itself (+256 slack). */
+TEST(msg_build_peak) {
+    Vm vm; va_reset();
+    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    Actor *a = mk(&vm, 3000);
+    if (!a) return;
+    term leaf_f[1] = { term_from_int(7) };
+    term leaf = mk_struct(a, 3, leaf_f, 1);
+    term head = T_NIL;
+    for (int i = 0; i < 600; i++) {
+        term f[2] = { leaf, head };            /* shared leaf, list link */
+        head = mk_struct(a, 4, f, 2);
+    }
+    uint32_t words = msg_copy_words(a, head);
+    CHECK_EQ(words, 600 * 4 + 3);
+    size_t before = va_used_bytes();
+    va_reset_peak();
+    Msg *m = msg_build(a, head);
+    CHECK(m != NULL);
+    if (!m) return;
+    CHECK_EQ(m->words, words);
+    CHECK(va_peak_bytes() <= before + msg_alloc_bytes(m->words) + 256u);
+    CHECK_EQ(va_used_bytes(), before + msg_alloc_bytes(m->words));
+    /* The leaf is copied once, and the sender's heap is intact. */
+    CHECK_EQ(fld(a, head, 0), leaf);
+    CHECK_EQ(a->mem[term_ref_off(leaf)], hdr_make(3, K_STRUCT));
+    msg_free(m);
+}
+
+/* Cycles and shared substructure, including deep chains in both address
+ * directions, size and copy exactly (pointer reversal must restore). */
+TEST(msg_size_cycle) {
+    Vm vm; va_reset();
+    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    Actor *a = mk(&vm, 64);
+    term f[2] = { term_from_int(1), T_NIL };
+    term x = mk_struct(a, 5, f, 2);
+    term g[2] = { x, x };
+    term y = mk_struct(a, 6, g, 2);
+    a->mem[term_ref_off(x) + 3] = y;             /* x.1 -> y -> x */
+    CHECK_EQ(msg_copy_words(a, y), 8);
+    CHECK_EQ(fld(a, x, 1), y);
+    CHECK_EQ(fld(a, y, 0), x);
+    CHECK_EQ(fld(a, y, 1), x);
+    Msg *m = msg_build(a, y);
+    CHECK(m != NULL);
+    if (m) { CHECK_EQ(m->words, 8); msg_free(m); }
+    CHECK_EQ(a->mem[term_ref_off(x)], hdr_make(4, K_STRUCT));
+}

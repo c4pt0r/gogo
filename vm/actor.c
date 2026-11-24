@@ -11,14 +11,23 @@ static uintptr_t free_slot(uint16_t gen) { return ((uintptr_t)(gen & GEN_MASK) <
 static bool slot_is_free(uintptr_t w) { return (w & 1u) != 0; }
 static uint16_t slot_gen(uintptr_t w) { return (uint16_t)((w >> 1) & GEN_MASK); }
 
+/* Generation for the next actor of slot `slot` after generation gen: slot 0
+ * never gets generation 0, so no actor's PID is T_ZEROPID (term.h). */
+static uint16_t next_gen(uint16_t slot, uint16_t gen) {
+    uint16_t g = (uint16_t)((gen + 1u) & GEN_MASK);    /* wraps at 12 bits */
+    return (slot == 0 && g == 0) ? 1u : g;
+}
+
 int vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
     memset(vm, 0, sizeof *vm);
+    if (table_cap > PORT_SLOT_BASE) return -1;
     vm->img = img;
     vm->next_ref = 1;
     vm->table = va_alloc((size_t)table_cap * sizeof(uintptr_t));
     if (!vm->table) return -1;
     vm->table_cap = table_cap;
     for (uint16_t i = 0; i < table_cap; i++) vm->table[i] = free_slot(0);
+    if (table_cap) vm->table[0] = free_slot(1);      /* see next_gen */
     return 0;
 }
 
@@ -59,7 +68,7 @@ void actor_free(Vm *vm, Actor *a) {
     }
     actor_extra_free(vm, a);
     uint16_t slot = term_pid_slot(a->id);
-    vm->table[slot] = free_slot((uint16_t)(term_pid_gen(a->id) + 1u));  /* wraps at 12 bits */
+    vm->table[slot] = free_slot(next_gen(slot, term_pid_gen(a->id)));
     va_free(a->mem, (size_t)a->mem_words * 4u);
     va_free(a, sizeof(Actor));
     vm->live--;

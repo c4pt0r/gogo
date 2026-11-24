@@ -1,6 +1,6 @@
 /* gogovm: runs a gogo image file.
  *
- *   gogovm <file.gogo>     exit 0 when the run queue empties, 2 on load error
+ *   gogovm [--key c=pin]... <file.gogo>   exit 0 when the run queue empties, 2 on load error
  *   gogovm --sizeof-actor  prints sizeof(Actor)
  */
 #include <stdio.h>
@@ -10,8 +10,9 @@
 #include "image.h"
 #include "actor.h"
 #include "interp.h"
+#include "config.h"
+#include "gpio_unix.h"
 
-#define TABLE_CAP 16384u   /* fixed in M1; the `chain` golden needs 10002 live actors */
 
 static int load_error(const char *path, const char *what) {
     fprintf(stderr, "gogovm: %s: %s\n", path, what);
@@ -23,8 +24,20 @@ int main(int argc, char **argv) {
         printf("%zu\n", sizeof(Actor));
         return 0;
     }
+    /* --key <c>=<pin> (tty mode): map a key to a simulated gpio pin. */
+    while (argc >= 3 && strcmp(argv[1], "--key") == 0) {
+        char c;
+        int pin;
+        char tail;
+        if (sscanf(argv[2], "%c=%d%c", &c, &pin, &tail) != 2 || !gpio_unix_add_key(c, pin)) {
+            fprintf(stderr, "gogovm: bad --key %s (want <char>=<pin>, pin 0..63)\n", argv[2]);
+            return 2;
+        }
+        argv += 2;
+        argc -= 2;
+    }
     if (argc != 2) {
-        fprintf(stderr, "usage: gogovm <file.gogo>\n       gogovm --sizeof-actor\n");
+        fprintf(stderr, "usage: gogovm [--key <c>=<pin>]... <file.gogo>\n       gogovm --sizeof-actor\n");
         return 2;
     }
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -51,7 +64,7 @@ int main(int argc, char **argv) {
         return load_error(path, m);
     }
     Vm vm;
-    if (vm_init(&vm, &img, (uint16_t)TABLE_CAP) != 0) {
+    if (vm_init(&vm, &img, (uint16_t)GOGO_TABLE_CAP) != 0) {
         free(words);
         fprintf(stderr, "gogovm: out of memory\n");
         return 1;

@@ -44,6 +44,8 @@
 #include "out.h"
 #include "opcodes.h"
 #include "platform.h"
+#include "evq.h"
+#include "port.h"
 #include <string.h>
 
 #define REDUCTIONS     1000u
@@ -64,59 +66,9 @@ static uint32_t func_of_pc(const Image *img, uint32_t pc) {
     return lo;
 }
 
-/* Pointer to the object a heap or const ref names, or NULL if t is neither
- * or points outside the heap / const area. */
-static const uint32_t *obj_of(const Vm *vm, const Actor *a, term t) {
-    const uint32_t *base;
-    uint32_t off, limit;
-    if (term_is_ref(t)) {
-        base = a->mem;
-        off = term_ref_off(t);
-        limit = a->hp;
-    } else if (term_is_const(t)) {
-        base = vm->img->consts;
-        off = term_const_off(t);
-        limit = vm->img->consts_words;
-    } else {
-        return NULL;
-    }
-    /* Every object has at least two words and lies wholly inside its area. */
-    if (off >= limit || limit - off < 2u) return NULL;
-    uint32_t words = hdr_words(base[off]);
-    if (words < 2u || words > limit - off) return NULL;
-    return base + off;
-}
-
-/* The bytes of a name argument: a string constant, a heap string or the
- * empty string. False for anything else. */
-static bool name_bytes(const Vm *vm, const Actor *a, term t, const uint8_t **p, uint32_t *len) {
-    if (t == T_EMPTYSTR) {
-        *p = NULL;
-        *len = 0;
-        return true;
-    }
-    const uint32_t *o = obj_of(vm, a, t);
-    if (!o || hdr_kind(o[0]) != K_STRING || o[1] > (hdr_words(o[0]) - 2u) * 4u) return false;
-    *p = (const uint8_t *)(o + 2);
-    *len = o[1];
-    return true;
-}
+/* obj_of, name_bytes and int_val are in heap.h (shared with port.c). */
 
 /* ---- ints ---- */
-
-/* Value of a small int or boxed K_INT; false for anything else. */
-static bool int_val(const Vm *vm, const Actor *a, term t, int32_t *out) {
-    if (term_is_int(t)) {
-        *out = term_to_int(t);
-        return true;
-    }
-    const uint32_t *o = obj_of(vm, a, t);
-    if (o && hdr_kind(o[0]) == K_INT) {
-        *out = (int32_t)o[1];
-        return true;
-    }
-    return false;
-}
 
 /* Term for v, boxing it into a K_INT on the heap when it does not fit in 31
  * bits. May GC (the caller reloads register pointers). False on OOM. */
@@ -133,18 +85,37 @@ static bool make_int(Vm *vm, Actor *a, int32_t v, term *out) {
     return true;
 }
 
-/* Value of a K_INT64 object (heap or const area); false for anything else. */
-static bool int64_val(const Vm *vm, const Actor *a, term t, int64_t *out) {
+/* int64 values have two representations: a small-int immediate when the
+ * value fits in 31 bits, or a K_INT64 box (heap or const area). The VM
+ * cannot tell an int64 immediate from an int, so the compiler picks the
+ * typed *64 ops from static types and boxes (BOX64) every int64 that goes
+ * into an interface: inside `any` an int64 is always a box, which is how
+ * TYPEIS tells it from an int. */
+
+/* The K_INT64 object t names (heap or const area), or NULL. */
+static const uint32_t *int64_box(const Vm *vm, const Actor *a, term t) {
     const uint32_t *o = obj_of(vm, a, t);
-    if (!o || hdr_kind(o[0]) != K_INT64 || hdr_words(o[0]) != 3u) return false;
+    return (o && hdr_kind(o[0]) == K_INT64 && hdr_words(o[0]) == 3u) ? o : NULL;
+}
+
+/* Value of an int64 in either representation; false for anything else
+ * (a K_INT box is an int, never an int64). */
+static bool int64_val(const Vm *vm, const Actor *a, term t, int64_t *out) {
+    if (term_is_int(t)) {
+        *out = term_to_int(t);
+        return true;
+    }
+    const uint32_t *o = int64_box(vm, a, t);
+    if (!o) return false;
     *out = (int64_t)((uint64_t)o[1] | ((uint64_t)o[2] << 32));
     return true;
 }
 
-/* A new K_INT64 holding v. int64 values are always boxed, so `any` can tell
- * them from ints. May GC (the caller reloads register pointers). False on
- * OOM. */
-static bool make_int64(Vm *vm, Actor *a, int64_t v, term *out) {
+static bool int64_fits(int64_t v) { return v >= TERM_INT_MIN && v <= TERM_INT_MAX; }
+
+/* A new heap K_INT64 holding v. May GC (the caller reloads register
+ * pointers). False on OOM. */
+static bool box_int64(Vm *vm, Actor *a, int64_t v, term *out) {
     uint32_t off = heap_alloc(vm, a, 3, NULL, 0);
     if (off == UINT32_MAX) return false;
     a->mem[off] = hdr_make(3, K_INT64);
@@ -154,8 +125,20 @@ static bool make_int64(Vm *vm, Actor *a, int64_t v, term *out) {
     return true;
 }
 
-/* Serial of a K_REF object; false for anything else. */
+/* Term for the int64 v: an immediate when it fits in 31 bits (no
+ * allocation), else a new box. May GC; false on OOM. */
+static bool make_int64(Vm *vm, Actor *a, int64_t v, term *out) {
+    if (int64_fits(v)) {
+        *out = term_from_int((int32_t)v);
+        return true;
+    }
+    return box_int64(vm, a, v, out);
+}
+
+/* Serial of a Ref: a K_REF object, or 0 for the zero Ref (T_ZEROREF);
+ * false for anything else. */
 static bool ref_serial(const Vm *vm, const Actor *a, term t, uint64_t *out) {
+    if (t == T_ZEROREF) { *out = 0; return true; }
     const uint32_t *o = obj_of(vm, a, t);
     if (!o || hdr_kind(o[0]) != K_REF || hdr_words(o[0]) != 3u) return false;
     *out = (uint64_t)o[1] | ((uint64_t)o[2] << 32);
@@ -188,14 +171,14 @@ static bool arith32(uint32_t op, int32_t x, int32_t y, int32_t *r) {
 
 static bool arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
     switch (op) {
-    case OP_ADD: *r = wrap64((uint64_t)x + (uint64_t)y); return true;
-    case OP_SUB: *r = wrap64((uint64_t)x - (uint64_t)y); return true;
-    case OP_MUL: *r = wrap64((uint64_t)x * (uint64_t)y); return true;
-    case OP_DIV:
+    case OP_ADD64: *r = wrap64((uint64_t)x + (uint64_t)y); return true;
+    case OP_SUB64: *r = wrap64((uint64_t)x - (uint64_t)y); return true;
+    case OP_MUL64: *r = wrap64((uint64_t)x * (uint64_t)y); return true;
+    case OP_DIV64:
         if (y == 0) return false;
         *r = (x == INT64_MIN && y == -1) ? INT64_MIN : x / y;
         return true;
-    default: /* OP_REM */
+    default: /* OP_REM64 */
         if (y == 0) return false;
         *r = (y == -1) ? 0 : x % y;     /* avoids INT64_MIN % -1 UB */
         return true;
@@ -213,6 +196,7 @@ static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
     if (t == T_FALSE) { out_str(o, "false"); return; }
     if (t == T_NIL) { out_str(o, "nil"); return; }
     if (t == T_EMPTYSTR) return;
+    if (t == T_ZEROREF) { out_str(o, "<ref 0>"); return; }
     if (term_is_pid(t)) {
         out_str(o, "<pid ");
         out_int(o, term_pid_slot(t));
@@ -395,7 +379,8 @@ int interp_run(Vm *vm, Actor *a) {
             /* An image may hold small ints, specials and in-range const
              * refs; never heap refs (they would point into a random heap). */
             CHECK(term_is_int(ext) || ext == T_NIL || ext == T_TRUE || ext == T_FALSE ||
-                  ext == T_EMPTYSTR || (term_is_const(ext) && obj_of(vm, a, ext) != NULL));
+                  ext == T_EMPTYSTR || ext == T_ZEROPID || ext == T_ZEROREF ||
+                  (term_is_const(ext) && obj_of(vm, a, ext) != NULL));
             R[ra] = ext;
             break;
 
@@ -409,22 +394,13 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REM: {
-            /* Both ints: 32-bit; both int64s: 64-bit; mixed: badcode. */
+            /* ints only (an int64 box is badcode; see the *64 ops). */
             REG(ra); REG(rb); REG(rc);
             int32_t x, y, r;
-            int64_t x64, y64, r64;
             term t;
-            bool ok;
-            if (int_val(vm, a, R[rb], &x)) {
-                CHECK(int_val(vm, a, R[rc], &y));
-                if (!arith32(op, x, y, &r)) CRASH(R_DIV_ZERO);
-                ok = make_int(vm, a, r, &t);
-            } else {
-                CHECK(int64_val(vm, a, R[rb], &x64) && int64_val(vm, a, R[rc], &y64));
-                if (!arith64(op, x64, y64, &r64)) CRASH(R_DIV_ZERO);
-                ok = make_int64(vm, a, r64, &t);
-            }
-            if (!ok) CRASH(R_OUT_OF_MEMORY);
+            CHECK(int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y));
+            if (!arith32(op, x, y, &r)) CRASH(R_DIV_ZERO);
+            if (!make_int(vm, a, r, &t)) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
             break;
@@ -433,25 +409,69 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_NEG: {
             REG(ra); REG(rb);
             int32_t x;
-            int64_t x64;
             term t;
-            bool ok;
-            if (int_val(vm, a, R[rb], &x)) {
-                ok = make_int(vm, a, wrap(0u - (uint32_t)x), &t);
-            } else {
-                CHECK(int64_val(vm, a, R[rb], &x64));
-                ok = make_int64(vm, a, wrap64(0u - (uint64_t)x64), &t);
+            CHECK(int_val(vm, a, R[rb], &x));
+            if (!make_int(vm, a, wrap(0u - (uint32_t)x), &t)) CRASH(R_OUT_OF_MEMORY);
+            RELOAD();
+            R[ra] = t;
+            break;
+        }
+
+        case OP_ADD64: case OP_SUB64: case OP_MUL64: case OP_DIV64: case OP_REM64: {
+            REG(ra); REG(rb); REG(rc);
+            int64_t x, y, r;
+            term t;
+            CHECK(int64_val(vm, a, R[rb], &x) && int64_val(vm, a, R[rc], &y));
+            if (!arith64(op, x, y, &r)) CRASH(R_DIV_ZERO);
+            if (!make_int64(vm, a, r, &t)) CRASH(R_OUT_OF_MEMORY);
+            RELOAD();
+            R[ra] = t;
+            break;
+        }
+
+        case OP_NEG64: {
+            REG(ra); REG(rb);
+            int64_t x;
+            term t;
+            CHECK(int64_val(vm, a, R[rb], &x));
+            if (!make_int64(vm, a, wrap64(0u - (uint64_t)x), &t)) CRASH(R_OUT_OF_MEMORY);
+            RELOAD();
+            R[ra] = t;
+            break;
+        }
+
+        case OP_EQ64: case OP_NE64: case OP_LT64: case OP_LE64: {
+            /* By value, whatever the representations. */
+            REG(ra); REG(rb); REG(rc);
+            int64_t x, y;
+            bool r;
+            CHECK(int64_val(vm, a, R[rb], &x) && int64_val(vm, a, R[rc], &y));
+            switch (op) {
+            case OP_EQ64: r = x == y; break;
+            case OP_NE64: r = x != y; break;
+            case OP_LT64: r = x < y; break;
+            default:      r = x <= y; break;
             }
-            if (!ok) CRASH(R_OUT_OF_MEMORY);
+            R[ra] = term_from_bool(r);
+            break;
+        }
+
+        case OP_BOX64: {
+            REG(ra); REG(rb);
+            int64_t x;
+            term t;
+            CHECK(int64_val(vm, a, R[rb], &x));
+            if (!term_is_int(R[rb])) { R[ra] = R[rb]; break; }   /* already a box */
+            if (!box_int64(vm, a, x, &t)) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
             break;
         }
 
         case OP_CONV: {
-            /* c=0: int(rb), truncating an int64 to its low 32 bits;
-             * c=1: int64(rb), sign-extending an int. A value already of
-             * the target type is kept as is. */
+            /* c=0: int(rb) of an int64, truncating to the low 32 bits;
+             * c=1: int64(rb) of an int, sign-extending. An immediate is
+             * the same term in both types (its value fits either way). */
             REG(ra); REG(rb);
             CHECK(rc <= 1u);
             int32_t x;
@@ -459,12 +479,12 @@ int interp_run(Vm *vm, Actor *a) {
             term t;
             bool ok;
             if (rc == 0u) {
-                if (int_val(vm, a, R[rb], &x)) { R[ra] = R[rb]; break; }
                 CHECK(int64_val(vm, a, R[rb], &x64));
+                if (term_is_int(R[rb])) { R[ra] = R[rb]; break; }
                 ok = make_int(vm, a, wrap((uint32_t)(uint64_t)x64), &t);
             } else {
-                if (int64_val(vm, a, R[rb], &x64)) { R[ra] = R[rb]; break; }
                 CHECK(int_val(vm, a, R[rb], &x));
+                if (term_is_int(R[rb])) { R[ra] = R[rb]; break; }
                 ok = make_int64(vm, a, x, &t);
             }
             if (!ok) CRASH(R_OUT_OF_MEMORY);
@@ -475,12 +495,12 @@ int interp_run(Vm *vm, Actor *a) {
 
         case OP_EQ: case OP_NE: {
             REG(ra); REG(rb); REG(rc);
+            /* ints, bools, PIDs, Refs; an int64 box is badcode (EQ64). */
             int32_t x, y;
-            int64_t x64, y64;
             bool eq;
             uint64_t sx, sy;
             if (int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y)) eq = x == y;
-            else if (int64_val(vm, a, R[rb], &x64)) eq = int64_val(vm, a, R[rc], &y64) && x64 == y64;
+            else if (int64_box(vm, a, R[rb]) || int64_box(vm, a, R[rc])) CRASH(R_BAD_CODE);
             else if (ref_serial(vm, a, R[rb], &sx)) eq = ref_serial(vm, a, R[rc], &sy) && sx == sy;
             else eq = R[rb] == R[rc];   /* a ref never equals a non-ref term */
             R[ra] = term_from_bool(op == OP_EQ ? eq : !eq);
@@ -490,16 +510,15 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_LT: case OP_LE: {
             REG(ra); REG(rb); REG(rc);
             int32_t x, y;
-            int64_t x64, y64;
-            if (int_val(vm, a, R[rb], &x)) {
-                CHECK(int_val(vm, a, R[rc], &y));
-                R[ra] = term_from_bool(op == OP_LT ? x < y : x <= y);
-            } else {
-                CHECK(int64_val(vm, a, R[rb], &x64) && int64_val(vm, a, R[rc], &y64));
-                R[ra] = term_from_bool(op == OP_LT ? x64 < y64 : x64 <= y64);
-            }
+            CHECK(int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y));
+            R[ra] = term_from_bool(op == OP_LT ? x < y : x <= y);
             break;
         }
+
+        case OP_CLEAR:
+            REGS(ra, rb);
+            for (uint32_t i = 0; i < rb; i++) R[ra + i] = T_NIL;
+            break;
 
         case OP_NOT:
             REG(ra); REG(rb);
@@ -606,6 +625,7 @@ int interp_run(Vm *vm, Actor *a) {
             else if (t == T_TRUE || t == T_FALSE) ty = TY_BOOL;
             else if (t == T_EMPTYSTR) ty = TY_STRING;
             else if (term_is_pid(t)) ty = TY_PID;
+            else if (t == T_ZEROREF) ty = TY_REF;
             else {
                 const uint32_t *obj = obj_of(vm, a, t);
                 uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
@@ -641,6 +661,12 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             case B_SEND:
                 CHECK(rc == 2);
+                if (port_is(R[rb])) {
+                    /* A command: handed to the driver in place, for any sender. */
+                    port_command(vm, a, R[rb], R[rb + 1]);
+                    R[ra] = T_NIL;
+                    break;
+                }
                 /* Only -1 (out of memory copying the message) concerns
                  * the sender; a dropped message does not. */
                 if (msg_send(vm, a, R[rb], R[rb + 1]) < 0) CRASH(R_OUT_OF_MEMORY);
@@ -775,11 +801,12 @@ int interp_run(Vm *vm, Actor *a) {
             case B_CANCEL_TIMER: {
                 uint64_t serial;
                 CHECK(rc == 1 && ref_serial(vm, a, R[rb], &serial));
-                R[ra] = term_from_bool(timer_cancel(vm, serial));
+                R[ra] = term_from_bool(serial != 0 && timer_cancel(vm, serial));   /* zero Ref: false */
                 break;
             }
             case B_NOW: {
                 CHECK(rc == 0);
+                /* An immediate (no allocation) for the first ~12 days. */
                 term t;
                 if (!make_int64(vm, a, (int64_t)platform_now_ms(), &t)) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
@@ -816,7 +843,7 @@ int interp_run(Vm *vm, Actor *a) {
             case B_DEMONITOR: {
                 uint64_t serial;
                 CHECK(rc == 1 && ref_serial(vm, a, R[rb], &serial));
-                sig_demonitor(vm, a, serial);
+                if (serial != 0) sig_demonitor(vm, a, serial);   /* zero Ref: nothing */
                 R[ra] = T_NIL;
                 break;
             }
@@ -839,7 +866,8 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 2 && term_is_pid(R[rb]));
                 int32_t c;
                 CHECK(int_val(vm, a, R[rb + 1], &c));
-                if (!sig_kill(vm, a, R[rb], (uint32_t)c)) CRASH(R_OUT_OF_MEMORY);
+                if (port_is(R[rb])) port_close(vm, R[rb]);   /* any caller, any code */
+                else if (!sig_kill(vm, a, R[rb], (uint32_t)c)) CRASH(R_OUT_OF_MEMORY);
                 R[ra] = T_NIL;
                 break;
             }
@@ -868,7 +896,7 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
                 term pid;
                 bool found = names_whereis(vm, name, len, &pid);
-                R[ra] = found ? pid : T_NIL;
+                R[ra] = found ? pid : T_ZEROPID;
                 R[ra + 1] = term_from_bool(found);
                 break;
             }
@@ -881,6 +909,20 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = T_NIL;
                 break;
             }
+            case B_PORT_OPEN: {
+                CHECK(rc == 2);
+                REGS(ra, 2);
+                term pid = port_open(vm, a, R[rb], R[rb + 1]);   /* no GC */
+                R[ra] = pid != T_NIL ? pid : T_ZEROPID;   /* failed: the zero PID */
+                R[ra + 1] = term_from_bool(pid != T_NIL);
+                break;
+            }
+            case B_PORT_CLOSE:
+                CHECK(rc == 1);
+                port_close(vm, R[rb]);    /* anything but an open port's PID
+                                           * (e.g. from a failed Open): nothing */
+                R[ra] = T_NIL;
+                break;
             default:
                 /* Unknown builtin id. */
                 CRASH(R_BAD_CODE);
@@ -921,6 +963,23 @@ crash:
 
 #define write_err_lit(s) platform_write_err((s), sizeof(s) - 1u)
 
+/* Scheduler hooks into the port layer.
+ *  sched_drain:         delivers the event ring and any due trailing
+ *                       debounce values; run at the top of every scheduler
+ *                       pass. Reads the clock only when there is something
+ *                       to do (an event queued, or a debounce value pending).
+ *  sched_any_live:      true while some open port could still produce
+ *                       events; the VM does not exit while it holds.
+ *  sched_next_deadline: earliest pending debounce deadline, if any, as an
+ *                       absolute platform_now_ms value; folded into the idle
+ *                       wait timeout. A deadline already due is serviced by
+ *                       the next sched_drain. */
+static void sched_drain(Vm *vm) {
+    if (vm->ports_pending || !evq_empty()) port_drain(vm, platform_now_ms());
+}
+static bool sched_any_live(Vm *vm) { return port_any_live(vm); }
+static bool sched_next_deadline(Vm *vm, uint64_t *when) { return port_next_deadline(vm, when); }
+
 int vm_run(Vm *vm) {
     const Image *img = vm->img;
     uint32_t entry = img->entry;
@@ -948,19 +1007,33 @@ int vm_run(Vm *vm) {
     a->pc = img->code + image_func_code_off(img, entry);
     runq_push(vm, a);
     (void)platform_now_ms();         /* time 0 for Now() and timers */
+    evq_reset();
 
     for (;;) {
+        sched_drain(vm);
         /* Due timers fire between time slices too, so a busy actor cannot
-         * hold them back. */
-        if (vm->timers) timer_fire_due(vm, platform_now_ms());
+         * hold them back. The clock is read only when a timer is pending
+         * (here) or when the loop is about to wait (below). */
+        if (vm->ntimers) timer_fire_due(vm, platform_now_ms());
         a = runq_pop(vm);
         if (!a) {
-            /* Nothing runnable: sleep until the next timer, or stop if
-             * there is none (every actor exited or blocked forever). */
-            uint64_t next, now;
-            if (!timer_next(vm, &next)) break;
-            now = platform_now_ms();
-            if (next > now) platform_sleep_ms(next - now > UINT32_MAX ? UINT32_MAX : (uint32_t)(next - now));
+            /* Nothing runnable: wait for the next timer or port event. Stop
+             * only when no timer is pending and no input source is live
+             * (every actor exited or blocked forever). */
+            uint64_t next, pn, now;
+            bool have = timer_next(vm, &next);
+            if (sched_next_deadline(vm, &pn) && (!have || pn < next)) { next = pn; have = true; }
+            if (!have && !sched_any_live(vm)) break;
+            /* Gap between sched_drain (top of pass) and platform_wait: an
+             * event pushed here is not lost, because producers call
+             * platform_notify after evq_push and platform_wait returns
+             * immediately for any notify latched since its last return. */
+            if (!have) {
+                platform_wait(UINT32_MAX);
+            } else {
+                now = platform_now_ms();
+                if (next > now) platform_wait(next - now > UINT32_MAX - 1u ? UINT32_MAX - 1u : (uint32_t)(next - now));
+            }
             continue;
         }
         switch (interp_run(vm, a)) {
@@ -977,6 +1050,7 @@ int vm_run(Vm *vm) {
             break;
         }
     }
+    port_close_all(vm);              /* output drivers always get close */
     vm_reserve_release();
     return 0;
 }

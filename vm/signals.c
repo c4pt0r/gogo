@@ -42,6 +42,9 @@ struct ActorExtra {
      * preallocated ExitMsg). Read through actor_charged_words. Registered
      * names live in names.c, timers in Vm.timers. */
     uint32_t charged_words;
+    uint32_t timers_in;       /* SendAfter timers pending for this actor (timer.c) */
+    uint32_t timers_out;      /* pending SendAfter timers charged to this actor (timer.c) */
+    uint32_t ports;           /* open ports this actor owns (port.c) */
 };
 
 /* Words a resource takes, rounded up as the allocator would count them. */
@@ -98,6 +101,57 @@ static ActorExtra *extra_get(Actor *a, bool from_reserve) {
 uint32_t actor_charged_words(const Actor *a) {
     const ActorExtra *x = a->extra;
     return (uint32_t)a->mbox_words + (x ? x->charged_words : 0u);
+}
+
+bool actor_timer_ref(Actor *a) {
+    ActorExtra *x = extra_get(a, false);
+    if (!x) return false;
+    x->timers_in++;
+    return true;
+}
+
+void actor_timer_unref(Actor *a) {
+    ActorExtra *x = a->extra;
+    if (x && x->timers_in) x->timers_in--;
+}
+
+bool actor_timer_own(Actor *a) {
+    ActorExtra *x = extra_get(a, false);
+    if (!x) return false;
+    x->timers_out++;
+    return true;
+}
+
+void actor_timer_disown(Actor *a) {
+    ActorExtra *x = a->extra;
+    if (x && x->timers_out) x->timers_out--;
+}
+
+bool actor_timer_owns(const Actor *a) {
+    const ActorExtra *x = a->extra;
+    return x && x->timers_out;
+}
+
+bool actor_port_own(Actor *a) {
+    ActorExtra *x = extra_get(a, false);
+    if (!x) return false;
+    x->ports++;
+    return true;
+}
+
+void actor_port_disown(Actor *a) {
+    ActorExtra *x = a->extra;
+    if (x && x->ports) x->ports--;
+}
+
+bool actor_port_owns(const Actor *a) {
+    const ActorExtra *x = a->extra;
+    return x && x->ports;
+}
+
+bool actor_timer_has(const Actor *a) {
+    const ActorExtra *x = a->extra;
+    return x && x->timers_in;
 }
 
 uint32_t actor_extra_charged(const Actor *a) {
@@ -569,6 +623,7 @@ static void signal_links(Vm *vm, Actor *a, uint32_t code, term func_name) {
 void actor_exit(Vm *vm, Actor *a, uint32_t code, term func_name) {
     if (code != R_NORMAL && code != R_SHUTDOWN) report_crash(vm, a, code, func_name);
     a->state = A_EXITED;
+    port_close_owned(vm, a->id);       /* before any notification goes out */
     signal_links(vm, a, code, func_name);
     signal_monitors(vm, a, code, func_name);
     drop_watching(vm, a);

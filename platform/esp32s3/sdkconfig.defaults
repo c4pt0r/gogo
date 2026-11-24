@@ -1,0 +1,14 @@
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+# Console (and stdout/stderr) on the built-in USB-Serial/JTAG port.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# 1 ms ticks so platform_wait timeouts have millisecond resolution.
+CONFIG_FREERTOS_HZ=1000
+# Keep the serial console to gogo's own output.
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+# The VM task runs on CPU1 and may keep it busy for long stretches.
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n

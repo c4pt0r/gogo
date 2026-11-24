@@ -34,6 +34,21 @@ func (a *Asm) EmitExt(op, ra, rb, rc uint8, ext uint32) {
 	a.code = append(a.code, makeWord(op, ra, rb, rc), ext)
 }
 
+// Last returns the last word emitted (ok false if none).
+func (a *Asm) Last() (w uint32, ok bool) {
+	if len(a.code) == 0 {
+		return 0, false
+	}
+	return a.code[len(a.code)-1], true
+}
+
+// SetLast replaces the last word emitted.
+func (a *Asm) SetLast(w uint32) { a.code[len(a.code)-1] = w }
+
+// DropLast removes the last word emitted, which must be a whole
+// instruction without an ext word or fixup (the peepholes use it on CLEAR).
+func (a *Asm) DropLast() { a.code = a.code[:len(a.code)-1] }
+
 // NewLabel creates an unbound label.
 func (a *Asm) NewLabel() Label {
 	a.labels = append(a.labels, -1)

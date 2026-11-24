@@ -1,0 +1,27 @@
+// On-device check of the ESP gpio driver (M5StickS3): KEY1 (G11) reports
+// both edges, KEY2 (G12) only presses (falling edges); opening a pin the
+// platform reserves (G21, LCD reset) fails. Stops after 10 events.
+//
+//	gogo build platform/esp32s3/examples/keys -o keys.gogo && gogo flash keys.gogo
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+)
+
+func main() {
+	k1, ok1 := port.Open("gpio", port.GPIO{Pin: 11, Mode: port.InputPullUp, Edge: port.Both})
+	k2, ok2 := port.Open("gpio", port.GPIO{Pin: 12, Mode: port.InputPullUp, Edge: port.Falling})
+	_, okr := port.Open("gpio", port.GPIO{Pin: 21, Mode: port.Output})
+	println("keys:", ok1, ok2, "reserved:", okr)
+	for n := 0; n < 10; n++ {
+		switch e := actor.Receive().(type) {
+		case port.Edge:
+			println("edge", e.Pin, e.Value)
+		}
+	}
+	port.Close(k1)
+	port.Close(k2)
+	println("done")
+}

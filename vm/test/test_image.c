@@ -10,7 +10,7 @@
 
 static void build(uint32_t *w) {
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
-    w[0] = 0x4F474F47; w[1] = 1; w[2] = 1; w[3] = 0;
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = 3; w[5] = 1; w[6] = 0; w[7] = 0;
     w[8] = 0;            /* code_off */
     w[9] = 2 | (5u << 16);
@@ -42,7 +42,7 @@ TEST(image_type_nfields) {
     Image img;
     uint32_t v[17];
     memset(v, 0, sizeof v);
-    v[0] = 0x4F474F47; v[1] = 1; v[2] = 1; v[3] = 1; v[4] = 3; v[5] = 1;
+    v[0] = IMAGE_MAGIC; v[1] = IMAGE_VERSION; v[2] = 1; v[3] = 1; v[4] = 3; v[5] = 1;
     v[11] = 3; v[12] = 0;                 /* type: 3 fields, name at 0 */
     v[13] = hdr_make(3, K_STRING); v[14] = 4; memcpy(&v[15], "main", 4);
     v[16] = OP_NOP;
@@ -58,8 +58,13 @@ TEST(image_bad_magic) {
 
 TEST(image_bad_version) {
     uint32_t w[IMG_WORDS]; Image img;
-    build(w); w[1] = 2;
+    CHECK_EQ(IMAGE_VERSION, 2u);
+    build(w); w[1] = 1;        /* M1/M2 images: opcode semantics changed in M3 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    build(w); w[1] = 3;
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    build(w);
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
 }
 
 TEST(image_truncated) {
@@ -114,7 +119,7 @@ TEST(image_huge_sizes_no_overflow) {
 
 static void build2(uint32_t *w, uint32_t off0, uint32_t off1) {
     memset(w, 0, IMG2_WORDS * sizeof(uint32_t));
-    w[0] = 0x4F474F47; w[1] = 1; w[2] = 2; w[3] = 0;
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 2; w[3] = 0;
     w[4] = 3; w[5] = 2; w[6] = 0; w[7] = 0;
     w[8] = off0;  w[9] = 1u << 16;  w[10] = 0;
     w[11] = off1; w[12] = 1u << 16; w[13] = 0;
@@ -149,7 +154,7 @@ static uint32_t cimg[8 + 3 + 3 + 9 + 1];
 static int build_consts(Image *img, const uint32_t *extra, uint32_t n) {
     uint32_t *w = cimg;
     memset(w, 0, sizeof cimg);
-    w[0] = 0x4F474F47; w[1] = 1; w[2] = 1; w[3] = 0;
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = 3 + n; w[5] = 1; w[6] = 0; w[7] = 0;
     w[9] = 2 | (5u << 16);
     w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);

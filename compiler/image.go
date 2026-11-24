@@ -6,8 +6,11 @@ import (
 )
 
 const (
-	imageMagic   = 0x4F474F47
-	imageVersion = 1
+	imageMagic = 0x4F474F47
+	// imageVersion moves in lockstep with IMAGE_VERSION in vm/image.h: any
+	// change to opcode numbers or semantics, builtin numbers, reserved
+	// types or the term encoding bumps it (v2: M3).
+	imageVersion = 2
 )
 
 type imgFunc struct {
@@ -22,7 +25,7 @@ type imgType struct {
 	nFields uint32
 }
 
-// ImageBuilder assembles an Image v1 byte slice.
+// ImageBuilder assembles an image byte slice.
 type ImageBuilder struct {
 	consts  []uint32
 	strings map[string]uint32

@@ -215,7 +215,11 @@ TEST(heap_oom) {
         roots[0] = term_from_ref(off);
     }
     CHECK(off == UINT32_MAX);
+    /* Skipped under a small-platform config: it needs the unix 65535-word
+     * default limit for 60 live 1000-word objects. */
+#if GOGO_DEFAULT_MAX_WORDS >= 65535u
     CHECK(n >= 60);
+#endif
     CHECK(a->mem_words <= HEAP_MAX_WORDS);
     /* The chain survived every GC. */
     int len = 0;

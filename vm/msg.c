@@ -7,33 +7,71 @@
 
 #define MSG_MAX_WORDS 65535u
 
-/* Growable word buffer the copy is built in. */
+/* Fixed-size word buffer the copy is built in (the message's data). */
 typedef struct Buf {
     uint32_t *w;
     uint32_t cap, len;
 } Buf;
 
-static bool buf_reserve(Buf *b, uint32_t extra) {
-    if (extra > MSG_MAX_WORDS - b->len) return false;
-    uint32_t need = b->len + extra;
-    if (need <= b->cap) return true;
-    uint32_t cap = b->cap ? b->cap : 16u;
-    while (cap < need) cap *= 2u;
-    if (cap > MSG_MAX_WORDS) cap = MSG_MAX_WORDS;
-    uint32_t *w = va_alloc((size_t)cap * 4u);
-    if (!w) return false;
-    if (b->w) {
-        memcpy(w, b->w, (size_t)b->len * 4u);
-        va_free(b->w, (size_t)b->cap * 4u);
+/* Size pass. The copy's size is found by walking the reachable objects with
+ * a visited bit (WALK_MARK, in the kind field: real kinds are below 32) and
+ * no side storage: a depth-first walk by pointer reversal. While the walk is
+ * inside an object, the field it descended through holds the way back
+ * ((parent offset << 16) | parent field index) and is put back on return;
+ * this relies on heap offsets and object sizes fitting 16 bits and on no
+ * object at offset 65535, which an object of 2+ words in a 65535-word heap
+ * cannot be. Like the copy, it mutates the sender's heap only while it
+ * runs and restores it. */
+#define WALK_MARK 0x20u
+#define WALK_TOP  UINT32_MAX
+
+/* With set, marks the unmarked objects reachable from root and returns their
+ * total words; without, unmarks the marked ones (returns 0). */
+static uint32_t walk(uint32_t *mem, term root, bool set) {
+    uint32_t total = 0;
+    if (!term_is_ref(root)) return 0;
+    uint32_t cur = term_ref_off(root), up = WALK_TOP, i, end;
+    uint32_t *o;
+    if (((mem[cur] & WALK_MARK) != 0) == set) return 0;
+    goto enter;
+    for (;;) {
+        while (i < end) {
+            term t = o[i];
+            if (term_is_ref(t) && ((mem[term_ref_off(t)] & WALK_MARK) != 0) != set) {
+                o[i] = up;
+                up = (cur << 16) | i;
+                cur = term_ref_off(t);
+            enter:
+                o = mem + cur;
+                if (set) {
+                    heap_obj_terms(o, &i, &end);
+                    total += hdr_words(o[0]);
+                    o[0] |= WALK_MARK;
+                } else {
+                    o[0] &= ~WALK_MARK;
+                    heap_obj_terms(o, &i, &end);
+                }
+                continue;
+            }
+            i++;
+        }
+        if (up == WALK_TOP) return total;
+        uint32_t child = cur;
+        cur = up >> 16;
+        i = up & 0xFFFFu;
+        o = mem + cur;
+        up = o[i];
+        o[i] = term_from_ref(child);
+        i++;
+        end = hdr_words(o[0]);
     }
-    b->w = w;
-    b->cap = cap;
-    return true;
 }
 
-static void buf_free(Buf *b) {
-    if (b->w) va_free(b->w, (size_t)b->cap * 4u);
-    b->w = NULL;
+/* Words a copy of t takes (UINT32_MAX when more than 65535). */
+static uint32_t msg_size(uint32_t *src_mem, term t) {
+    uint32_t n = walk(src_mem, t, true);
+    walk(src_mem, t, false);
+    return n > MSG_MAX_WORDS ? UINT32_MAX : n;
 }
 
 /* Sharing-preserving copy (spec M2 §5.1.7). While copying, each source
@@ -55,7 +93,7 @@ static uint32_t copy_obj(Buf *b, uint32_t *src_mem, term t) {
     uint32_t *obj = src_mem + src;
     if (hdr_kind(obj[0]) == K_FORWARD) return term_from_ref(hdr_words(obj[0]));
     uint32_t words = hdr_words(obj[0]);
-    if (!buf_reserve(b, words)) return UINT32_MAX;
+    if (words > b->cap - b->len) return UINT32_MAX;   /* cannot happen: sized by walk */
     uint32_t off = b->len;
     memcpy(b->w + off, obj, (size_t)words * 4u);
     b->len += words;
@@ -102,40 +140,32 @@ static bool copy_dag(Buf *b, uint32_t *src_mem, term t, term *root, uint32_t ski
 }
 
 uint32_t msg_copy_words(Actor *src, term t) {
-    Buf b = { NULL, 0, 0 };
-    term root;
-    bool ok = copy_dag(&b, src->mem, t, &root, 0);
-    uint32_t n = b.len;
-    buf_free(&b);
-    return ok ? n : UINT32_MAX;
+    return msg_size(src->mem, t);
 }
 
 uint32_t msg_footprint_words(uint16_t words) {
     return (uint32_t)((msg_alloc_bytes(words) + 3u) / 4u);
 }
 
-/* msg_build with `skip` reserved words (zeroed) before the objects. */
+/* msg_build with `skip` reserved words (zeroed) before the objects: sizes
+ * the copy first, allocates the message once, then copies into it. */
 static Msg *build_skip(Actor *src, term t, uint32_t skip) {
-    Buf b = { NULL, 0, 0 };
+    uint32_t n = msg_size(src->mem, t);
+    if (n == UINT32_MAX || n > MSG_MAX_WORDS - skip) return NULL;
+    uint32_t words = skip + n;
+    Msg *m = va_alloc(msg_alloc_bytes((uint16_t)words));
+    if (!m) return NULL;
+    memset(m->data, 0, (size_t)skip * 4u);
+    Buf b = { m->data, words, skip };
     term root;
-    if (skip) {
-        if (!buf_reserve(&b, skip)) return NULL;
-        memset(b.w, 0, (size_t)skip * 4u);
-        b.len = skip;
-    }
-    if (!copy_dag(&b, src->mem, t, &root, skip)) {
-        buf_free(&b);
+    if (!copy_dag(&b, src->mem, t, &root, skip)) {   /* cannot happen: sized by walk */
+        va_free(m, msg_alloc_bytes((uint16_t)words));
         return NULL;
     }
-    Msg *m = va_alloc(msg_alloc_bytes((uint16_t)b.len));
-    if (m) {
-        m->next = NULL;
-        m->words = (uint16_t)b.len;
-        m->flags = 0;
-        m->root = root;
-        if (b.len) memcpy(m->data, b.w, (size_t)b.len * 4u);
-    }
-    buf_free(&b);
+    m->next = NULL;
+    m->words = (uint16_t)words;
+    m->flags = 0;
+    m->root = root;
     return m;
 }
 

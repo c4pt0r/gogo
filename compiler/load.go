@@ -23,6 +23,13 @@ import (
 // the compiler replaces its calls with VM instructions.
 const ActorPath = "gogo/actor"
 
+// PortPath is the import path of the port (peripheral) API, a stub package
+// like gogo/actor. Only package main may import it.
+const PortPath = "gogo/port"
+
+// isStub reports whether path is one of the stub packages.
+func isStub(path string) bool { return path == ActorPath || path == PortPath }
+
 // libPrefix starts the import path of every gogo library package.
 const libPrefix = "gogo/"
 
@@ -48,7 +55,7 @@ func (p *Program) packages() []*Package {
 }
 
 // compiled reports whether pkg is compiled into the image (main or a
-// library), as opposed to the gogo/actor stubs or the standard library.
+// library), as opposed to the stub packages or the standard library.
 func (p *Program) compiled(pkg *types.Package) bool {
 	if pkg == p.Pkg {
 		return true
@@ -72,7 +79,7 @@ func sizes() types.Sizes { return &types.StdSizes{WordSize: 4, MaxAlign: 4} }
 // loader parses and type-checks library packages from libs, a file system
 // with one directory per package: gogo/<name> lives in <name>/*.go. It is
 // also the importer of every package it checks; it serves only packages it
-// has already loaded, and gogo/actor.
+// has already loaded, and the stub packages gogo/actor and gogo/port.
 type loader struct {
 	fset  *token.FileSet
 	libs  fs.FS
@@ -85,15 +92,21 @@ func (l *loader) Import(path string) (*types.Package, error) {
 	if pkg := l.pkgs[path]; pkg != nil {
 		return pkg, nil
 	}
-	if path != ActorPath {
+	if !isStub(path) {
 		return nil, fmt.Errorf("import %q not supported", path)
 	}
-	files, err := l.parseDir("actor")
+	files, err := l.parseDir(strings.TrimPrefix(path, libPrefix))
 	if err != nil {
 		return nil, err
 	}
-	conf := types.Config{Sizes: sizes(), Importer: importer.Default()}
-	pkg, err := conf.Check(ActorPath, l.fset, files, nil)
+	// gogo/port imports gogo/actor through l, so both see the same
+	// actor.PID.
+	var imp types.Importer = importer.Default()
+	if path == PortPath {
+		imp = l
+	}
+	conf := types.Config{Sizes: sizes(), Importer: imp}
+	pkg, err := conf.Check(path, l.fset, files, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -130,10 +143,10 @@ func (l *loader) parseDir(dir string) ([]*ast.File, error) {
 }
 
 // isLib reports whether path names a compiled library package: gogo/<name>
-// with Go files in <name>/, other than the gogo/actor stubs.
+// with Go files in <name>/, other than the stub packages.
 func (l *loader) isLib(path string) bool {
 	name, ok := strings.CutPrefix(path, libPrefix)
-	if !ok || path == ActorPath || name == "" || name == "main" || strings.ContainsAny(name, "/.*?[\\") {
+	if !ok || isStub(path) || name == "" || name == "main" || strings.ContainsAny(name, "/.*?[\\") {
 		return false
 	}
 	names, err := fs.Glob(l.libs, name+"/*.go")
@@ -242,14 +255,14 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 		},
 		pkgs: map[string]*types.Package{},
 	}
-	allowed := func(p string) bool { return p == ActorPath || l.isLib(p) }
+	allowed := func(p string) bool { return isStub(p) || l.isLib(p) }
 	var libPaths []string
 	for _, f := range files {
 		if err := l.checkImports(f, allowed, ""); err != nil {
 			return nil, err
 		}
 		for _, imp := range f.Imports {
-			if p, _ := strconv.Unquote(imp.Path.Value); p != ActorPath {
+			if p, _ := strconv.Unquote(imp.Path.Value); !isStub(p) {
 				libPaths = append(libPaths, p)
 			}
 		}

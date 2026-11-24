@@ -1,4 +1,12 @@
-/* Image v1 loader. The image is used in place and never copied. */
+/* Image loader. The image is used in place and never copied.
+ *
+ * Versioning rule: any change to opcode numbers or semantics, builtin
+ * numbers, reserved types or the term encoding bumps IMAGE_VERSION (here
+ * and imageVersion in compiler/image.go); the compiler and the VM move in
+ * lockstep and the loader rejects every other version (IMG_ERR_VERSION).
+ *   v1  M1/M2.
+ *   v2  M3: generic arithmetic is int-only, *64 ops and BOX64, OP_CLEAR,
+ *       typed zero PID/Ref (T_ZEROPID, T_ZEROREF), port builtins/types. */
 #ifndef GOGO_IMAGE_H
 #define GOGO_IMAGE_H
 
@@ -6,7 +14,7 @@
 #include <stddef.h>
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 1u
+#define IMAGE_VERSION 2u
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {

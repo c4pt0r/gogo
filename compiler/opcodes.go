@@ -30,6 +30,22 @@ const (
 	OpTypeis    uint8 = 23
 	OpBuiltin   uint8 = 24
 	OpConv      uint8 = 25 // c=0: int(rb), c=1: int64(rb)
+
+	// int64 ops: operands are immediates or K_INT64 boxes; the generic
+	// ADD..LE / NEG are int-only.
+	OpAdd64 uint8 = 26
+	OpSub64 uint8 = 27
+	OpMul64 uint8 = 28
+	OpDiv64 uint8 = 29
+	OpRem64 uint8 = 30
+	OpNeg64 uint8 = 31
+	OpEq64  uint8 = 32
+	OpNe64  uint8 = 33
+	OpLt64  uint8 = 34
+	OpLe64  uint8 = 35
+	OpBox64 uint8 = 36 // ra = rb as a K_INT64 box (every int64 inside any)
+
+	OpClear uint8 = 37 // ra .. ra+b-1 = nil (dead registers stop being GC roots)
 )
 
 // Builtin ids.
@@ -62,6 +78,8 @@ const (
 	BRegister       uint32 = 23
 	BWhereis        uint32 = 24
 	BUnregister     uint32 = 25
+	BPortOpen       uint32 = 26 // driver string, cfg any -> pid, ok
+	BPortClose      uint32 = 27 // pid -> nil
 )
 
 // Builtin type ids for TYPEIS; struct types use their type-table index.
@@ -74,8 +92,8 @@ const (
 	TyInt64  uint32 = 0x10005
 )
 
-// Reserved type-table indices of the gogo/actor struct types (see
-// reservedTypes).
+// Reserved type-table indices of the gogo/actor and gogo/port struct types
+// (see reservedTypes).
 const (
 	TypeProcinfo uint32 = 0
 	TypeReason   uint32 = 1
@@ -83,6 +101,9 @@ const (
 	TypeDownmsg  uint32 = 3
 	TypeRequest  uint32 = 4
 	TypeOptions  uint32 = 5
+	TypeGpio     uint32 = 6
+	TypeWrite    uint32 = 7
+	TypeEdge     uint32 = 8
 )
 
 // Heap object kinds.
@@ -92,7 +113,7 @@ const (
 	KInt     uint32 = 3
 	KClosure uint32 = 4
 	KRef     uint32 = 5
-	KInt64   uint32 = 6 // [hdr][lo][hi]; every int64 value is boxed
+	KInt64   uint32 = 6 // [hdr][lo][hi]; int64s outside 31 bits and every int64 in any
 	KForward uint32 = 63
 )
 
@@ -103,6 +124,12 @@ const (
 	TermTrue  uint32 = 0x22
 	// TermEmptyStr is the empty string, the zero value of strings.
 	TermEmptyStr uint32 = 0x32
+	// TermZeroRef is the zero actor.Ref: a special TYPEIS sees as a Ref,
+	// with serial 0, which no live ref has.
+	TermZeroRef uint32 = 0x42
+	// TermZeroPid is the zero actor.PID: the PID term of slot 0,
+	// generation 0, which no actor or port ever gets.
+	TermZeroPid uint32 = 0x06
 )
 
 // Int31Fits reports whether v is representable as a small int.
@@ -135,13 +162,14 @@ func OpHasExt(op uint8) bool {
 var opNames = [...]string{"NOP", "MOVE", "LOADK", "LOADI32", "ADD", "SUB", "MUL",
 	"DIV", "REM", "NEG", "EQ", "NE", "LT", "LE", "NOT", "JMP", "JMPF", "JMPT",
 	"CALL", "RET", "NEWSTRUCT", "GETFIELD", "MKCLOSURE", "TYPEIS", "BUILTIN",
-	"CONV"}
+	"CONV", "ADD64", "SUB64", "MUL64", "DIV64", "REM64", "NEG64", "EQ64", "NE64",
+	"LT64", "LE64", "BOX64", "CLEAR"}
 
 var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "MEMORY",
 	"SPAWN_LINK", "SPAWN_OPT", "LINK", "UNLINK", "TRAP_EXIT", "EXIT", "KILL",
 	"MONITOR", "DEMONITOR", "MAKE_REF", "RECEIVE_TIMEOUT", "SEND_AFTER",
 	"CANCEL_TIMER", "SLEEP", "NOW", "CALL", "REPLY", "REGISTER", "WHEREIS",
-	"UNREGISTER"}
+	"UNREGISTER", "PORT_OPEN", "PORT_CLOSE"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -154,6 +182,10 @@ var goConstants = map[string]uint32{
 	"OpCall": uint32(OpCall), "OpRet": uint32(OpRet), "OpNewstruct": uint32(OpNewstruct),
 	"OpGetfield": uint32(OpGetfield), "OpMkclosure": uint32(OpMkclosure),
 	"OpTypeis": uint32(OpTypeis), "OpBuiltin": uint32(OpBuiltin), "OpConv": uint32(OpConv),
+	"OpAdd64": uint32(OpAdd64), "OpSub64": uint32(OpSub64), "OpMul64": uint32(OpMul64),
+	"OpDiv64": uint32(OpDiv64), "OpRem64": uint32(OpRem64), "OpNeg64": uint32(OpNeg64),
+	"OpEq64": uint32(OpEq64), "OpNe64": uint32(OpNe64), "OpLt64": uint32(OpLt64),
+	"OpLe64": uint32(OpLe64), "OpBox64": uint32(OpBox64), "OpClear": uint32(OpClear),
 	"BPrintln": BPrintln, "BSpawn": BSpawn, "BSelf": BSelf, "BSend": BSend,
 	"BReceive": BReceive, "BMemory": BMemory,
 	"BSpawnLink": BSpawnLink, "BSpawnOpt": BSpawnOpt, "BLink": BLink,
@@ -162,9 +194,10 @@ var goConstants = map[string]uint32{
 	"BReceiveTimeout": BReceiveTimeout, "BSendAfter": BSendAfter,
 	"BCancelTimer": BCancelTimer, "BSleep": BSleep, "BNow": BNow, "BCall": BCall,
 	"BReply": BReply, "BRegister": BRegister, "BWhereis": BWhereis,
-	"BUnregister": BUnregister,
-	"TyInt":       TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
+	"BUnregister": BUnregister, "BPortOpen": BPortOpen, "BPortClose": BPortClose,
+	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
 	"TypeDownmsg": TypeDownmsg, "TypeRequest": TypeRequest, "TypeOptions": TypeOptions,
+	"TypeGpio": TypeGpio, "TypeWrite": TypeWrite, "TypeEdge": TypeEdge,
 }

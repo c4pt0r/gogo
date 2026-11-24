@@ -10,6 +10,8 @@
 #include <stddef.h>
 #include "term.h"
 #include "image.h"
+#include "config.h"
+#include "port.h"
 
 typedef struct Msg Msg;   /* defined with the mailbox (Task 5) */
 typedef struct Timer Timer;   /* defined in timer.h */
@@ -29,7 +31,7 @@ typedef struct Actor {
     uint8_t state, flags;
     uint16_t reductions;
     uint16_t mbox_words, max_words;
-    uint32_t reserved;        /* unused (timers live in Vm.timers); keeps 48 B on 32-bit */
+    uint32_t reserved;        /* unused (timers live in the Vm timer heap); keeps 48 B on 32-bit */
 } Actor;
 
 enum { A_RUNNABLE = 1, A_WAITING = 2, A_EXITED = 3 };
@@ -53,11 +55,18 @@ typedef struct Vm {
     Actor *runq_head, *runq_tail;
     uint32_t live;            /* actors currently allocated */
     uint64_t next_ref;        /* serial of the next Ref, from 1 */
-    Timer *timers;            /* pending timers, sorted by deadline (timer.h) */
+    Timer **timers;           /* min-heap of pending timers, by (deadline, seq) (timer.h) */
+    uint32_t ntimers;         /* entries in use */
+    uint32_t timers_cap;      /* entries allocated; the array is freed when empty */
+    uint64_t timer_seq;       /* next insertion sequence number (tie-break) */
+    uint32_t timer_scanned;   /* heap entries timer_cancel_actor has visited (tests) */
     Name *names;              /* registered names (names.h) */
+    Port ports[GOGO_MAX_PORTS];   /* port table (port.h) */
+    uint8_t ports_pending;    /* ports holding a trailing debounce value */
 } Vm;
 
-/* Returns 0, or -1 if the table cannot be allocated. */
+/* Returns 0, or -1 if the table cannot be allocated or table_cap exceeds
+ * PORT_SLOT_BASE (the slots above it name ports). */
 int vm_init(Vm *vm, const Image *img, uint16_t table_cap);
 
 /* Slot + PID assigned, block allocated, empty stack, state A_RUNNABLE,

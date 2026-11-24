@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Disassemble renders an Image v1 as text.
+// Disassemble renders an image as text.
 func Disassemble(img []byte) (string, error) {
 	if len(img)%4 != 0 || len(img) < 32 {
 		return "", fmt.Errorf("dis: bad image size %d", len(img))
@@ -83,6 +83,10 @@ func Disassemble(img []byte) (string, error) {
 			return "false"
 		case t == TermEmptyStr:
 			return "emptystr"
+		case t == TermZeroRef:
+			return "zeroref"
+		case t == TermZeroPid:
+			return "zeropid"
 		case t&0xF == 0xA:
 			if s, err := str(t >> 4); err == nil {
 				return fmt.Sprintf("%q", s)
@@ -123,13 +127,14 @@ func Disassemble(img []byte) (string, error) {
 			var args string
 			switch op {
 			case OpNop:
-			case OpMove, OpNeg, OpNot:
+			case OpMove, OpNeg, OpNot, OpNeg64, OpBox64:
 				args = fmt.Sprintf("r%d, r%d", a, b)
 			case OpLoadk:
 				args = fmt.Sprintf("r%d, %s", a, term(ext))
 			case OpLoadi32:
 				args = fmt.Sprintf("r%d, %d", a, int32(ext))
-			case OpAdd, OpSub, OpMul, OpDiv, OpRem, OpEq, OpNe, OpLt, OpLe:
+			case OpAdd, OpSub, OpMul, OpDiv, OpRem, OpEq, OpNe, OpLt, OpLe,
+				OpAdd64, OpSub64, OpMul64, OpDiv64, OpRem64, OpEq64, OpNe64, OpLt64, OpLe64:
 				args = fmt.Sprintf("r%d, r%d, r%d", a, b, c)
 			case OpJmp:
 				args = fmt.Sprintf("@%04d", ext)
@@ -141,6 +146,8 @@ func Disassemble(img []byte) (string, error) {
 				args = fmt.Sprintf("r%d", a)
 			case OpNewstruct:
 				args = fmt.Sprintf("r%d, r%d, %d, %s", a, b, c, typeName(ext))
+			case OpClear:
+				args = fmt.Sprintf("r%d, %d", a, b)
 			case OpGetfield, OpConv:
 				args = fmt.Sprintf("r%d, r%d, %d", a, b, c)
 			case OpMkclosure:

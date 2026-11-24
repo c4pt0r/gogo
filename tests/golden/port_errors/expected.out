@@ -1,0 +1,10 @@
+unknown driver false
+pin 64 false
+pin -1 false
+wrong cfg false
+int cfg false
+open 11 true
+open 11 again false
+reopen 11 true
+reopen 5 true
+done

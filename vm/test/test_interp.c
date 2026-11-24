@@ -25,7 +25,7 @@ static void capture_err(const char *s, size_t n) {
 
 static void build_receiver(uint32_t *w) {
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
-    w[0] = 0x4F474F47; w[1] = 1; w[2] = 1; w[3] = 0;
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = 3; w[5] = 3; w[6] = 0; w[7] = 0;
     w[8] = 0;                       /* code_off */
     w[9] = 0 | (2u << 16);          /* 0 params, 2 regs */
@@ -163,7 +163,7 @@ TEST(unimplemented_builtin_is_badcode) {
 
 static void build_int64_op(uint32_t *w, uint32_t op, int64_t x, int64_t y, int32_t x_small) {
     memset(w, 0, I64_WORDS * sizeof(uint32_t));
-    w[0] = 0x4F474F47; w[1] = 1; w[2] = 1; w[3] = 0;
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = 9; w[5] = 7; w[6] = 0; w[7] = 0;
     w[8] = 0; w[9] = 0 | (3u << 16); w[10] = 0;
     w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
@@ -171,7 +171,7 @@ static void build_int64_op(uint32_t *w, uint32_t op, int64_t x, int64_t y, int32
     w[17] = hdr_make(3, K_INT64); w[18] = (uint32_t)(uint64_t)y; w[19] = (uint32_t)((uint64_t)y >> 32);
     w[20] = OP_MAKE(OP_LOADK, 0, 0, 0); w[21] = x_small ? term_from_int(x_small) : term_from_const(3);
     w[22] = OP_MAKE(OP_LOADK, 1, 0, 0); w[23] = term_from_const(6);
-    w[24] = OP_MAKE(op, 2, 0, op == OP_NEG ? 0 : 1);
+    w[24] = OP_MAKE(op, 2, 0, (op == OP_NEG || op == OP_NEG64 || op == OP_BOX64) ? 0 : 1);
     w[25] = OP_MAKE(OP_BUILTIN, 0, 0, 0);
     w[26] = B_RECEIVE;
 }
@@ -196,6 +196,7 @@ static const char *run_int64_op(uint32_t op, int64_t x, int64_t y, int32_t x_sma
     if (rc == RUN_EXIT) return err_buf;         /* crashed; a is gone */
     CHECK_EQ(rc, RUN_WAIT);
     *out = a->mem[a->fp + 2];
+    if (term_is_int(*out)) *val = term_to_int(*out);
     if (term_is_ref(*out)) {
         const uint32_t *o = a->mem + term_ref_off(*out);
         if (o[0] == hdr_make(3, K_INT64)) *val = (int64_t)((uint64_t)o[1] | ((uint64_t)o[2] << 32));
@@ -207,57 +208,319 @@ static const char *run_int64_op(uint32_t op, int64_t x, int64_t y, int32_t x_sma
 TEST(int64_edge_cases) {
     term t; int64_t v;
     const int64_t min = INT64_MIN, max = INT64_MAX;
-    CHECK_EQ(run_int64_op(OP_DIV, min, -1, 0, &t, &v)[0], 0); CHECK(v == min);
-    CHECK_EQ(run_int64_op(OP_REM, min, -1, 0, &t, &v)[0], 0); CHECK(v == 0 && term_is_ref(t));
-    CHECK_EQ(run_int64_op(OP_NEG, min, 0, 0, &t, &v)[0], 0); CHECK(v == min);
-    CHECK_EQ(run_int64_op(OP_ADD, max, 1, 0, &t, &v)[0], 0); CHECK(v == min);
-    CHECK_EQ(run_int64_op(OP_SUB, min, 1, 0, &t, &v)[0], 0); CHECK(v == max);
-    CHECK_EQ(run_int64_op(OP_MUL, max, max, 0, &t, &v)[0], 0); CHECK(v == 1);
-    CHECK_EQ(run_int64_op(OP_REM, -7, 2, 0, &t, &v)[0], 0); CHECK(v == -1);
-    CHECK_EQ(run_int64_op(OP_LT, -1, 0, 0, &t, &v)[0], 0); CHECK(t == T_TRUE);
-    CHECK_EQ(run_int64_op(OP_LE, 1LL << 40, 1, 0, &t, &v)[0], 0); CHECK(t == T_FALSE);
-    CHECK_EQ(run_int64_op(OP_EQ, 1LL << 40, 1LL << 40, 0, &t, &v)[0], 0); CHECK(t == T_TRUE);
-    CHECK_EQ(run_int64_op(OP_NE, 1LL << 40, (1LL << 40) + 1, 0, &t, &v)[0], 0); CHECK(t == T_TRUE);
-    CHECK(strstr(run_int64_op(OP_DIV, 5, 0, 0, &t, &v), "crashed: divzero") != NULL);
-    CHECK(strstr(run_int64_op(OP_REM, 5, 0, 0, &t, &v), "crashed: divzero") != NULL);
-    /* Mixed int / int64 operands are malformed code. */
+    CHECK_EQ(run_int64_op(OP_DIV64, min, -1, 0, &t, &v)[0], 0); CHECK(v == min);
+    CHECK_EQ(run_int64_op(OP_REM64, min, -1, 0, &t, &v)[0], 0); CHECK(v == 0 && term_is_int(t));
+    CHECK_EQ(run_int64_op(OP_NEG64, min, 0, 0, &t, &v)[0], 0); CHECK(v == min);
+    CHECK_EQ(run_int64_op(OP_ADD64, max, 1, 0, &t, &v)[0], 0); CHECK(v == min);
+    CHECK_EQ(run_int64_op(OP_SUB64, min, 1, 0, &t, &v)[0], 0); CHECK(v == max);
+    CHECK_EQ(run_int64_op(OP_MUL64, max, max, 0, &t, &v)[0], 0); CHECK(v == 1 && term_is_int(t));
+    CHECK_EQ(run_int64_op(OP_REM64, -7, 2, 0, &t, &v)[0], 0); CHECK(v == -1);
+    CHECK_EQ(run_int64_op(OP_LT64, -1, 0, 0, &t, &v)[0], 0); CHECK(t == T_TRUE);
+    CHECK_EQ(run_int64_op(OP_LE64, 1LL << 40, 1, 0, &t, &v)[0], 0); CHECK(t == T_FALSE);
+    CHECK_EQ(run_int64_op(OP_EQ64, 1LL << 40, 1LL << 40, 0, &t, &v)[0], 0); CHECK(t == T_TRUE);
+    CHECK_EQ(run_int64_op(OP_NE64, 1LL << 40, (1LL << 40) + 1, 0, &t, &v)[0], 0); CHECK(t == T_TRUE);
+    CHECK(strstr(run_int64_op(OP_DIV64, 5, 0, 0, &t, &v), "crashed: divzero") != NULL);
+    CHECK(strstr(run_int64_op(OP_REM64, 5, 0, 0, &t, &v), "crashed: divzero") != NULL);
+    /* The generic ops are int-only: an int64 box operand is malformed code. */
+    CHECK(strstr(run_int64_op(OP_ADD, 1, 5, 0, &t, &v), "crashed: badcode") != NULL);
     CHECK(strstr(run_int64_op(OP_ADD, 0, 5, 3, &t, &v), "crashed: badcode") != NULL);
+    CHECK(strstr(run_int64_op(OP_NEG, 1, 0, 0, &t, &v), "crashed: badcode") != NULL);
     CHECK(strstr(run_int64_op(OP_LT, 0, 5, 3, &t, &v), "crashed: badcode") != NULL);
+    CHECK(strstr(run_int64_op(OP_EQ, 0, 5, 3, &t, &v), "crashed: badcode") != NULL);
+    CHECK(strstr(run_int64_op(OP_NE, 5, 5, 0, &t, &v), "crashed: badcode") != NULL);
+}
+
+/* The *64 ops take either representation and box only results outside 31
+ * bits. */
+TEST(int64_immediates) {
+    term t; int64_t v;
+    /* immediate 3 + box 5 = immediate 8 */
+    CHECK_EQ(run_int64_op(OP_ADD64, 0, 5, 3, &t, &v)[0], 0); CHECK(term_is_int(t) && v == 8);
+    /* box 2^40 - box (2^40 - 5) = immediate 5 */
+    CHECK_EQ(run_int64_op(OP_SUB64, 1LL << 40, (1LL << 40) - 5, 0, &t, &v)[0], 0);
+    CHECK(term_is_int(t) && v == 5);
+    /* immediate TERM_INT_MAX + box 1 crosses into a box, and the min side */
+    CHECK_EQ(run_int64_op(OP_ADD64, 0, 1, TERM_INT_MAX, &t, &v)[0], 0);
+    CHECK(term_is_ref(t) && v == (int64_t)TERM_INT_MAX + 1);
+    CHECK_EQ(run_int64_op(OP_SUB64, 0, 1, TERM_INT_MIN, &t, &v)[0], 0);
+    CHECK(term_is_ref(t) && v == (int64_t)TERM_INT_MIN - 1);
+    CHECK_EQ(run_int64_op(OP_SUB64, 0, 0, TERM_INT_MIN, &t, &v)[0], 0);
+    CHECK(term_is_int(t) && v == TERM_INT_MIN);
+    /* NEG64 of the immediate TERM_INT_MIN must box (2^30 does not fit). */
+    CHECK_EQ(run_int64_op(OP_NEG64, 0, 0, TERM_INT_MIN, &t, &v)[0], 0);
+    CHECK(term_is_ref(t) && v == -(int64_t)TERM_INT_MIN);
+    /* Mixed representations compare by value. */
+    CHECK_EQ(run_int64_op(OP_EQ64, 0, 7, 7, &t, &v)[0], 0); CHECK(t == T_TRUE);
+    CHECK_EQ(run_int64_op(OP_NE64, 0, 7, 7, &t, &v)[0], 0); CHECK(t == T_FALSE);
+    CHECK_EQ(run_int64_op(OP_LT64, 0, 7, 6, &t, &v)[0], 0); CHECK(t == T_TRUE);
+    CHECK_EQ(run_int64_op(OP_LE64, 0, 7, 8, &t, &v)[0], 0); CHECK(t == T_FALSE);
+    CHECK_EQ(run_int64_op(OP_DIV64, 0, 2, 9, &t, &v)[0], 0); CHECK(term_is_int(t) && v == 4);
+    CHECK_EQ(run_int64_op(OP_MUL64, 0, 1LL << 40, 1, &t, &v)[0], 0); CHECK(term_is_ref(t) && v == 1LL << 40);
+    /* BOX64 r2, r0: an immediate becomes a heap K_INT64; a box stays. */
+    CHECK_EQ(run_int64_op(OP_BOX64, 0, 0, -9, &t, &v)[0], 0); CHECK(term_is_ref(t) && v == -9);
+    CHECK_EQ(run_int64_op(OP_BOX64, 1LL << 40, 0, 0, &t, &v)[0], 0);
+    CHECK(t == term_from_const(3) && v == 0);
+    /* Anything else is malformed. */
+    static uint32_t w[I64_WORDS]; Image img; Vm vm;
+    const uint32_t ops[] = { OP_ADD64, OP_LT64, OP_EQ64, OP_NEG64, OP_BOX64 };
+    for (int kind = 0; kind < 2; kind++) {
+        for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++) {
+            va_reset();
+            build_int64_op(w, ops[i], 0, 1, 0);
+            if (kind == 0) w[21] = T_TRUE;               /* a bool */
+            else {                                       /* a K_INT box */
+                w[20] = OP_MAKE(OP_LOADI32, 0, 0, 0);
+                w[21] = (uint32_t)INT32_MIN;
+            }
+            CHECK_EQ(image_load(&img, w, I64_WORDS), IMG_OK);
+            CHECK_EQ(vm_init(&vm, &img, 4), 0);
+            Actor *a = actor_new(&vm, 32);
+            CHECK(heap_push_frame(&vm, a, 3, -1));
+            a->pc = img.code;
+            err_len = 0; err_buf[0] = 0;
+            platform_unix_err_hook = capture_err;
+            CHECK_EQ(interp_run(&vm, a), RUN_EXIT);
+            platform_unix_err_hook = NULL;
+            CHECK(strstr(err_buf, "crashed: badcode") != NULL);
+            CHECK_EQ(vm.live, 0);
+        }
+    }
+}
+
+/* Runs CONV r2, r<src>, c after LOADK r0, <r0> (patched in by the caller
+ * through w[20..21]) and LOADK r1, <y box>; returns the result register. */
+static term run_conv(uint32_t *w, Image *img, Vm *vm, Actor **ap, uint32_t src, uint32_t c) {
+    w[24] = OP_MAKE(OP_CONV, 2, src, c);
+    CHECK_EQ(image_load(img, w, I64_WORDS), IMG_OK);
+    CHECK_EQ(vm_init(vm, img, 4), 0);
+    Actor *a = actor_new(vm, 32);
+    CHECK(heap_push_frame(vm, a, 3, -1));
+    a->pc = img->code;
+    *ap = a;
+    err_len = 0; err_buf[0] = 0;
+    platform_unix_err_hook = capture_err;
+    int rc = interp_run(vm, a);
+    platform_unix_err_hook = NULL;
+    if (rc == RUN_EXIT) { *ap = NULL; return T_NIL; }
+    CHECK_EQ(rc, RUN_WAIT);
+    return a->mem[a->fp + 2];
 }
 
 TEST(int64_conv) {
-    term t; int64_t v;
-    /* CONV r2, r0, 1: int -> int64 sign-extends (r0 small int -3). */
-    CHECK_EQ(run_int64_op(OP_CONV, 0, 0, -3, &t, &v)[0], 0); CHECK(v == -3 && term_is_ref(t));
-    /* CONV r2, r1, 0 is built by patching: int64 -> int truncates. */
-    static uint32_t w[I64_WORDS]; Image img; Vm vm;
+    static uint32_t w[I64_WORDS]; Image img; Vm vm; Actor *a;
+    term r;
+    /* int -> int64: a small int stays the same immediate. */
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 0, -3);
+    r = run_conv(w, &img, &vm, &a, 0, 1);
+    CHECK(a && r == term_from_int(-3));
+    actor_free(&vm, a);
+    /* int -> int64: a K_INT box becomes a K_INT64 box. */
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 0, 0);
+    w[20] = OP_MAKE(OP_LOADI32, 0, 0, 0); w[21] = (uint32_t)INT32_MIN;
+    r = run_conv(w, &img, &vm, &a, 0, 1);
+    CHECK(a && term_is_ref(r));
+    CHECK_EQ(a->mem[term_ref_off(r)], hdr_make(3, K_INT64));
+    CHECK_EQ(a->mem[term_ref_off(r) + 1], 0x80000000u);
+    CHECK_EQ(a->mem[term_ref_off(r) + 2], 0xFFFFFFFFu);
+    actor_free(&vm, a);
+    /* int64 -> int: a box truncates to its low 32 bits. */
     va_reset();
     build_int64_op(w, OP_CONV, 0, -0x180000000LL, 0);
-    w[24] = OP_MAKE(OP_CONV, 2, 1, 0);
-    CHECK_EQ(image_load(&img, w, I64_WORDS), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
-    Actor *a = actor_new(&vm, 32);
-    CHECK(heap_push_frame(&vm, a, 3, -1));
-    a->pc = img.code;
-    CHECK_EQ(interp_run(&vm, a), RUN_WAIT);
-    term r = a->mem[a->fp + 2];
-    CHECK(term_is_ref(r));
+    r = run_conv(w, &img, &vm, &a, 1, 0);
+    CHECK(a && term_is_ref(r));
     CHECK_EQ(a->mem[term_ref_off(r)], hdr_make(2, K_INT));
     CHECK_EQ((int32_t)a->mem[term_ref_off(r) + 1], INT32_MIN);
     actor_free(&vm, a);
-    /* CONV of a non-int is badcode. */
+    /* int64 -> int: a box of a small value becomes an immediate. */
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, (1LL << 32) + 5, 0);
+    r = run_conv(w, &img, &vm, &a, 1, 0);
+    CHECK(a && r == term_from_int(5));
+    actor_free(&vm, a);
+    /* int64 -> int: an immediate stays. */
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 0, -7);
+    r = run_conv(w, &img, &vm, &a, 0, 0);
+    CHECK(a && r == term_from_int(-7));
+    actor_free(&vm, a);
+    /* Wrong representations are badcode: a bool, a K_INT box where an
+     * int64 is expected, a K_INT64 box where an int is expected. */
     va_reset();
     build_int64_op(w, OP_CONV, 0, 0, 0);
     w[21] = T_TRUE;
-    CHECK_EQ(image_load(&img, w, I64_WORDS), IMG_OK);
+    r = run_conv(w, &img, &vm, &a, 0, 1);
+    CHECK(!a && strstr(err_buf, "crashed: badcode") != NULL);
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 0, 0);
+    w[20] = OP_MAKE(OP_LOADI32, 0, 0, 0); w[21] = (uint32_t)INT32_MIN;
+    r = run_conv(w, &img, &vm, &a, 0, 0);
+    CHECK(!a && strstr(err_buf, "crashed: badcode") != NULL);
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 1LL << 40, 0);
+    r = run_conv(w, &img, &vm, &a, 1, 1);
+    CHECK(!a && strstr(err_buf, "crashed: badcode") != NULL);
+    CHECK_EQ(vm.live, 0);
+}
+
+/* One function "main" (0 params, 5 regs) calling NOW 10000 times:
+ *   LOADK r0, 10000; LOADK r2, 1; LOADK r4, 0
+ *   6: BUILTIN r1, r0, 0, NOW; SUB r0, r0, r2; LT r3, r4, r0; JMPT r3, @6
+ *   BUILTIN r0, r0, 0, RECEIVE */
+#define NOW_WORDS 28
+
+TEST(now_no_alloc) {
+    static uint32_t w[NOW_WORDS]; Image img; Vm vm;
+    va_reset();
+    memset(w, 0, sizeof w);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
+    w[4] = 3; w[5] = 14; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 0 | (5u << 16); w[10] = 0;
+    w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
+    w[14] = OP_MAKE(OP_LOADK, 0, 0, 0); w[15] = term_from_int(10000);
+    w[16] = OP_MAKE(OP_LOADK, 2, 0, 0); w[17] = term_from_int(1);
+    w[18] = OP_MAKE(OP_LOADK, 4, 0, 0); w[19] = term_from_int(0);
+    w[20] = OP_MAKE(OP_BUILTIN, 1, 0, 0); w[21] = B_NOW;
+    w[22] = OP_MAKE(OP_SUB, 0, 0, 2);
+    w[23] = OP_MAKE(OP_LT, 3, 4, 0);
+    w[24] = OP_MAKE(OP_JMPT, 3, 0, 0); w[25] = 6;
+    w[26] = OP_MAKE(OP_BUILTIN, 0, 0, 0); w[27] = B_RECEIVE;
+    CHECK_EQ(image_load(&img, w, NOW_WORDS), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 4), 0);
-    a = actor_new(&vm, 32);
-    CHECK(heap_push_frame(&vm, a, 3, -1));
+    Actor *a = actor_new(&vm, 32);
+    CHECK(a != NULL);
+    CHECK(heap_push_frame(&vm, a, 5, -1));
     a->pc = img.code;
+    const uint32_t *mem = a->mem;
+    uint16_t hp = a->hp, words = a->mem_words;
+    size_t used = va_used_bytes();
+    va_reset_peak();                      /* a GC would allocate a new block */
+    int rc, slices = 0;
+    while ((rc = interp_run(&vm, a)) == RUN_YIELD) slices++;
+    CHECK_EQ(rc, RUN_WAIT);
+    CHECK_EQ(slices, 9);                  /* 9999 backward jumps, 1000 per slice */
+    CHECK_EQ(term_to_int(a->mem[a->fp]), 0);
+    CHECK(term_is_int(a->mem[a->fp + 1]));
+    /* No allocation and no GC: same block, same size, same heap top. */
+    CHECK(a->mem == mem);
+    CHECK_EQ(a->mem_words, words);
+    CHECK_EQ(a->hp, hp);
+    CHECK_EQ(va_used_bytes(), used);
+    CHECK_EQ(va_peak_bytes(), used);
+    actor_free(&vm, a);
+    CHECK_EQ(vm.live, 0);
+}
+
+/* One function "main" (0 params, n_regs regs) running `code` (n words);
+ * the code should end by blocking in RECEIVE so registers can be read.
+ * Layout: 8 header + 3 func + 3 consts + code. */
+#define CODE_MAX 40
+static uint32_t code_img[14 + CODE_MAX];
+
+static const char *run_code(const uint32_t *code, uint32_t n, uint16_t n_regs,
+                            Vm *vm, Image *img, Actor **out) {
+    uint32_t *w = code_img;
+    CHECK(n <= CODE_MAX);
+    memset(w, 0, sizeof code_img);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
+    w[4] = 3; w[5] = n; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 0 | ((uint32_t)n_regs << 16); w[10] = 0;
+    w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
+    memcpy(&w[14], code, n * 4u);
+    va_reset();
+    CHECK_EQ(image_load(img, w, 14 + n), IMG_OK);
+    CHECK_EQ(vm_init(vm, img, 4), 0);
+    Actor *a = actor_new(vm, 64);
+    CHECK(a != NULL);
+    CHECK(heap_push_frame(vm, a, n_regs, -1));
+    a->pc = img->code;
     err_len = 0; err_buf[0] = 0;
     platform_unix_err_hook = capture_err;
-    CHECK_EQ(interp_run(&vm, a), RUN_EXIT);
+    int rc = interp_run(vm, a);
     platform_unix_err_hook = NULL;
-    CHECK(strstr(err_buf, "crashed: badcode") != NULL);
-    CHECK_EQ(vm.live, 0);
+    *out = rc == RUN_EXIT ? NULL : a;
+    return err_buf;
+}
+
+TEST(clear_sets_nil) {
+    Vm vm; Image img; Actor *a;
+    const uint32_t code[] = {
+        OP_MAKE(OP_BUILTIN, 0, 0, 0), B_MAKE_REF,
+        OP_MAKE(OP_BUILTIN, 1, 0, 0), B_MAKE_REF,
+        OP_MAKE(OP_BUILTIN, 2, 0, 0), B_MAKE_REF,
+        OP_MAKE(OP_CLEAR, 0, 2, 0),
+        OP_MAKE(OP_CLEAR, 3, 0, 0),             /* empty range: nothing */
+        OP_MAKE(OP_BUILTIN, 3, 0, 0), B_RECEIVE,
+    };
+    CHECK_EQ(run_code(code, 10, 4, &vm, &img, &a)[0], 0);
+    CHECK(a != NULL);
+    CHECK_EQ(a->mem[a->fp + 0], T_NIL);
+    CHECK_EQ(a->mem[a->fp + 1], T_NIL);
+    CHECK(term_is_ref(a->mem[a->fp + 2]));      /* outside the range: kept */
+    actor_free(&vm, a);
+}
+
+TEST(clear_out_of_range_is_badcode) {
+    Vm vm; Image img; Actor *a;
+    const uint32_t code[] = {
+        OP_MAKE(OP_CLEAR, 2, 3, 0),             /* r2..r4 of 4 registers */
+        OP_MAKE(OP_BUILTIN, 0, 0, 0), B_RECEIVE,
+    };
+    CHECK(strstr(run_code(code, 3, 4, &vm, &img, &a), "crashed: badcode") != NULL);
+    CHECK(a == NULL);
+}
+
+/* Zero PID and zero Ref: typed, equal to themselves only, harmless as
+ * builtin arguments, printed as <pid 0> / <ref 0>. */
+TEST(zero_pid_and_ref) {
+    Vm vm; Image img; Actor *a;
+    const uint32_t code[] = {
+        OP_MAKE(OP_LOADK, 0, 0, 0), T_ZEROPID,
+        OP_MAKE(OP_LOADK, 1, 0, 0), T_ZEROREF,
+        OP_MAKE(OP_TYPEIS, 2, 0, 0), TY_PID,
+        OP_MAKE(OP_TYPEIS, 3, 1, 0), TY_REF,
+        OP_MAKE(OP_BUILTIN, 4, 1, 1), B_CANCEL_TIMER,
+        OP_MAKE(OP_BUILTIN, 5, 1, 1), B_DEMONITOR,
+        OP_MAKE(OP_EQ, 6, 1, 1),
+        OP_MAKE(OP_BUILTIN, 7, 0, 2), B_SEND,   /* dropped */
+        OP_MAKE(OP_BUILTIN, 8, 0, 0), B_MAKE_REF,
+        OP_MAKE(OP_EQ, 9, 1, 8),
+        OP_MAKE(OP_BUILTIN, 7, 0, 0), B_SELF,
+        OP_MAKE(OP_EQ, 10, 0, 7),
+        OP_MAKE(OP_TYPEIS, 11, 1, 0), TY_PID,
+        OP_MAKE(OP_BUILTIN, 7, 0, 0), B_RECEIVE,
+    };
+    CHECK_EQ(run_code(code, 25, 12, &vm, &img, &a)[0], 0);
+    CHECK(a != NULL);
+    term *R = a->mem + a->fp;
+    CHECK(a->id != T_ZEROPID);
+    CHECK(term_is_pid(T_ZEROPID));
+    CHECK(actor_lookup(&vm, T_ZEROPID) == NULL);
+    CHECK_EQ(R[2], T_TRUE);
+    CHECK_EQ(R[3], T_TRUE);
+    CHECK_EQ(R[4], T_FALSE);
+    CHECK_EQ(R[5], T_NIL);
+    CHECK_EQ(R[6], T_TRUE);
+    CHECK_EQ(R[9], T_FALSE);
+    CHECK_EQ(R[10], T_FALSE);
+    CHECK_EQ(R[11], T_FALSE);
+    actor_free(&vm, a);
+}
+
+/* Slot 0 never carries generation 0, so no actor ever has the zero PID,
+ * also after the 12-bit generation wraps. */
+TEST(no_actor_has_zero_pid) {
+    uint32_t w[IMG_WORDS]; Image img; Vm vm;
+    va_reset();
+    build_receiver(w);
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    for (uint32_t i = 0; i < 4097u + 3u; i++) {
+        Actor *a = actor_new(&vm, 32);
+        CHECK(a != NULL);
+        CHECK_EQ(term_pid_slot(a->id), 0);
+        CHECK(a->id != T_ZEROPID);
+        actor_free(&vm, a);
+    }
 }

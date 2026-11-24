@@ -12,7 +12,7 @@ import (
 // maxRegs is the register limit of one function: register numbers are 8 bits.
 const maxRegs = 255
 
-// Compile checks p against the gogo subset and compiles it to an Image v1.
+// Compile checks p against the gogo subset and compiles it to an image.
 func Compile(p *Program) ([]byte, error) {
 	if errs := Check(p); len(errs) > 0 {
 		return nil, errors.Join(errs...)
@@ -46,7 +46,7 @@ func Compile(p *Program) ([]byte, error) {
 	var errs []error
 	for _, fd := range decls {
 		fn := p.Info.Defs[fd.Name].(*types.Func)
-		if err := g.compileFunc(g.funcs[g.funcIdx[fn]], g.declParams(fd.Type), fd.Body); err != nil {
+		if err := g.compileFunc(g.funcs[g.funcIdx[fn]], g.declParams(fd.Type), resultType(fn.Type()), fd.Body); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -55,7 +55,7 @@ func Compile(p *Program) ([]byte, error) {
 	for len(g.pending) > 0 {
 		c := g.pending[0]
 		g.pending = g.pending[1:]
-		if err := g.compileFunc(c.info, c.captures, c.lit.Body); err != nil {
+		if err := g.compileFunc(c.info, c.captures, nil, c.lit.Body); err != nil { // func(): no result
 			errs = append(errs, err)
 		}
 	}
@@ -130,45 +130,54 @@ func isPID(t types.Type) bool { return isActorType(t, "PID") }
 
 func isRef(t types.Type) bool { return isActorType(t, "Ref") }
 
-// reservedTypes are the gogo/actor struct types. Every image starts its
-// type table with them, in this order, so the VM can build these structs by
-// fixed index (TYPE_* in vm/opcodes.h).
+// reservedTypes are the gogo/actor and gogo/port struct types. Every image
+// starts its type table with them, in this order, so the VM can build and
+// recognize these structs by fixed index (TYPE_* in vm/opcodes.h).
 var reservedTypes = []struct {
+	pkg    string
 	name   string
 	fields []string
 }{
-	{"ProcInfo", []string{"Memory"}},
-	{"Reason", []string{"Code", "Func"}},
-	{"ExitMsg", []string{"From", "Reason"}},
-	{"DownMsg", []string{"Ref", "From", "Reason"}},
-	{"Request", []string{"From", "Ref", "Body"}},
-	{"Options", []string{"MaxMemory"}},
+	{ActorPath, "ProcInfo", []string{"Memory"}},
+	{ActorPath, "Reason", []string{"Code", "Func"}},
+	{ActorPath, "ExitMsg", []string{"From", "Reason"}},
+	{ActorPath, "DownMsg", []string{"Ref", "From", "Reason"}},
+	{ActorPath, "Request", []string{"From", "Ref", "Body"}},
+	{ActorPath, "Options", []string{"MaxMemory"}},
+	{PortPath, "GPIO", []string{"Pin", "Mode", "Edge", "DebounceMs"}},
+	{PortPath, "Write", []string{"Value"}},
+	{PortPath, "Edge", []string{"Pin", "Value"}},
 }
 
-// collectTypes emits the reserved actor types first (whether used or not),
-// then gives the other struct types image type indices in order of first
+// collectTypes emits the reserved types first (whether used or not), then
+// gives the other struct types image type indices in order of first
 // appearance in the package sources (libraries, then main; declarations
 // and uses alike).
 func (g *gen) collectTypes() error {
-	var actorPkg *types.Package // whichever package imports it
+	stubs := map[string]*types.Package{} // whichever package imports them
 	for _, pkg := range g.p.packages() {
 		for _, imp := range pkg.Pkg.Imports() {
-			if imp.Path() == ActorPath {
-				actorPkg = imp
+			if isStub(imp.Path()) {
+				stubs[imp.Path()] = imp
 			}
 		}
 	}
 	for _, rt := range reservedTypes {
-		idx := g.b.AddType(rt.name, uint32(len(rt.fields)))
-		if actorPkg == nil {
+		name := rt.name
+		if rt.pkg == PortPath {
+			name = "port." + rt.name // actor types keep their bare names
+		}
+		idx := g.b.AddType(name, uint32(len(rt.fields)))
+		stub := stubs[rt.pkg]
+		if stub == nil {
 			continue
 		}
-		tn, ok := actorPkg.Scope().Lookup(rt.name).(*types.TypeName)
+		tn, ok := stub.Scope().Lookup(rt.name).(*types.TypeName)
 		if !ok {
-			return fmt.Errorf("gogo: internal error: actor.%s missing", rt.name)
+			return fmt.Errorf("gogo: internal error: %s missing", name)
 		}
 		if st, ok := tn.Type().Underlying().(*types.Struct); !ok || st.NumFields() != len(rt.fields) {
-			return fmt.Errorf("gogo: internal error: actor.%s does not match the reserved layout", rt.name)
+			return fmt.Errorf("gogo: internal error: %s does not match the reserved layout", name)
 		}
 		g.typeIdx[tn] = idx
 	}
@@ -211,6 +220,21 @@ type genError struct{ err error }
 // its declaration and keeps it until its block ends; expression temporaries
 // are allocated above the locals and released as soon as the expression that
 // needed them has been emitted. nRegs is the high-water mark.
+//
+// Dead registers: a register at or above next is dead, but the VM's GC
+// scans every register of a frame, so a dead register still holding a heap
+// value would keep it alive. dirty is a high-water mark: registers in
+// [next, dirty) may hold such stale values. alloc raises it (allocScalar,
+// for values that are never heap objects, does not); clear points emit
+// CLEAR next, dirty-next and lower it to next. The clear points are the
+// end of every statement (which covers the temporaries it released, a
+// discarded call result and, after a block or a loop, its locals) and
+// every backward jump (so a loop body's locals die before the next
+// iteration). Jumps carry dirty to their label (labelDirty) and binding a
+// label merges it in, so locals and temporaries live where a break,
+// continue or a conditional jump left are cleared at the next clear point
+// on every path. Registers below next are never cleared: they are the
+// locals of the enclosing scopes, live by construction.
 type fn struct {
 	g      *gen
 	info   *funcInfo
@@ -218,9 +242,15 @@ type fn struct {
 	locals map[*types.Var]uint8
 	next   int // next free register
 	nRegs  int
+	result types.Type // the result type, nil if none
 
 	breakTo    []Label // innermost last
 	continueTo []Label
+
+	dirty      int           // see the type comment
+	labelDirty map[Label]int // dirty at the jumps to each label, merged
+	boundAt    int           // code position of the last label bound (-1: none)
+	lastClear  int           // code position of the last CLEAR emitted (-1: none)
 }
 
 // declParams lists the parameters of a declared function; unnamed ones are
@@ -240,9 +270,19 @@ func (g *gen) declParams(ft *ast.FuncType) []*types.Var {
 	return params
 }
 
-// compileFunc compiles body into info; params get r0..r(n-1).
-func (g *gen) compileFunc(info *funcInfo, params []*types.Var, body *ast.BlockStmt) (err error) {
-	f := &fn{g: g, info: info, locals: map[*types.Var]uint8{}}
+// resultType is the single result type of signature t, or nil.
+func resultType(t types.Type) types.Type {
+	if sig, ok := t.(*types.Signature); ok && sig.Results().Len() == 1 {
+		return sig.Results().At(0).Type()
+	}
+	return nil
+}
+
+// compileFunc compiles body into info; params get r0..r(n-1); result is
+// the function's result type (nil if none).
+func (g *gen) compileFunc(info *funcInfo, params []*types.Var, result types.Type, body *ast.BlockStmt) (err error) {
+	f := &fn{g: g, info: info, locals: map[*types.Var]uint8{}, result: result,
+		labelDirty: map[Label]int{}, boundAt: -1, lastClear: -1}
 	defer func() {
 		if r := recover(); r != nil {
 			ge, ok := r.(genError)
@@ -286,7 +326,17 @@ func (f *fn) fail(n ast.Node, format string, args ...any) {
 func (f *fn) notYet(n ast.Node, what string) { f.fail(n, "not yet implemented: %s", what) }
 
 // alloc reserves the next register; n is the node blamed if none is left.
+// The register may come to hold a heap value: it is cleared once dead.
 func (f *fn) alloc(n ast.Node) uint8 {
+	r := f.allocScalar(n)
+	f.dirty = max(f.dirty, f.next)
+	return r
+}
+
+// allocScalar reserves the next register for a value that is never a heap
+// object (see scalar). It is not marked dirty: if it held a heap value
+// earlier in the statement, dirty already covers it.
+func (f *fn) allocScalar(n ast.Node) uint8 {
 	if f.next >= maxRegs {
 		f.fail(n, "function %s needs more than %d registers", f.info.name, maxRegs)
 	}
@@ -294,6 +344,107 @@ func (f *fn) alloc(n ast.Node) uint8 {
 	f.next++
 	f.nRegs = max(f.nRegs, f.next)
 	return r
+}
+
+// scalar reports whether e's value is never a heap object: a bool, a PID
+// (immediates), no value (a call without result yields nil), or a constant
+// that is an immediate or lives in the const area (not an int outside 31
+// bits, which LOADI32 boxes on the heap).
+func (f *fn) scalar(e ast.Expr) bool {
+	tv := f.g.p.Info.Types[e]
+	if tv.Value != nil {
+		if tv.Value.Kind() == constant.Int && !isInt64(tv.Type) {
+			n, exact := constant.Int64Val(tv.Value)
+			return exact && n >= -(1<<30) && n < 1<<30
+		}
+		return true
+	}
+	if tup, ok := tv.Type.(*types.Tuple); ok && tup.Len() == 0 {
+		return true
+	}
+	if b, ok := underlying(tv.Type).(*types.Basic); ok && b.Info()&types.IsBoolean != 0 {
+		return true
+	}
+	return isPID(tv.Type)
+}
+
+// allocFor reserves a register for e's value: scalar when e is.
+func (f *fn) allocFor(e ast.Expr) uint8 {
+	if f.scalar(e) {
+		return f.allocScalar(e)
+	}
+	return f.alloc(e)
+}
+
+// clearDead is a clear point: CLEAR the registers in [next, dirty). A
+// CLEAR right after the previous one (no label in between) is merged into
+// it when the ranges touch.
+func (f *fn) clearDead() {
+	if f.dirty <= f.next {
+		f.dirty = f.next
+		return
+	}
+	a, n := f.next, f.dirty-f.next
+	f.dirty = f.next
+	if pa, pn, ok := f.trailingClear(); ok && a <= pa+pn && pa <= a+n {
+		lo, hi := min(a, pa), max(a+n, pa+pn)
+		f.asm.SetLast(makeWord(OpClear, uint8(lo), uint8(hi-lo), 0))
+		return
+	}
+	f.asm.Emit(OpClear, uint8(a), uint8(n), 0)
+	f.lastClear = f.asm.Len() - 1
+}
+
+// trailingClear returns the range of the CLEAR that is the last
+// instruction emitted, if it is one and no label is bound after it (the
+// label's jumpers skip it, so it must not be widened or moved; a label
+// bound before it is fine).
+func (f *fn) trailingClear() (a, n int, ok bool) {
+	w, ok := f.asm.Last()
+	if !ok || f.lastClear != f.asm.Len()-1 || f.boundAt == f.asm.Len() {
+		return 0, 0, false
+	}
+	return int(w >> 8 & 0xFF), int(w >> 16 & 0xFF), true
+}
+
+// dropTrailingClear removes a CLEAR that is the last instruction emitted.
+func (f *fn) dropTrailingClear() (a, n int, ok bool) {
+	if a, n, ok = f.trailingClear(); ok {
+		f.asm.DropLast()
+		f.lastClear = -1
+	}
+	return a, n, ok
+}
+
+// jump emits a jump to l, carrying dirty to it. After an unconditional
+// jump the code is unreachable until a label: nothing is stale there.
+func (f *fn) jump(op uint8, ra uint8, l Label) {
+	f.labelDirty[l] = max(f.labelDirty[l], f.dirty)
+	f.asm.EmitJump(op, ra, l)
+	if op == OpJmp {
+		f.dirty = 0
+	}
+}
+
+// bind binds l here, merging the dirty marks of the jumps to it.
+func (f *fn) bind(l Label) {
+	f.asm.Bind(l)
+	f.boundAt = f.asm.Len()
+	f.dirty = max(f.dirty, f.labelDirty[l])
+}
+
+// bindEnd is bind for a label that a clear point follows with no code in
+// between (the end of an if, for or type switch statement). A CLEAR just
+// before the label is moved after it (into dirty), so it merges with the
+// clear the label's jumpers need instead of being emitted twice.
+func (f *fn) bindEnd(l Label) {
+	if a, _, ok := f.trailingClear(); ok && a >= f.next {
+		_, n, _ := f.dropTrailingClear()
+		f.dirty = max(f.dirty, a+n)
+	}
+	f.asm.Bind(l)
+	f.boundAt = f.asm.Len()
+	f.dirty = max(f.dirty, f.labelDirty[l])
 }
 
 // allocN reserves n consecutive registers and returns the first.
@@ -305,7 +456,10 @@ func (f *fn) allocN(node ast.Node, n int) uint8 {
 	return base
 }
 
+// retNil returns nil. A CLEAR just before it is dropped: returning frees
+// the frame, and LOADK nil allocates nothing.
 func (f *fn) retNil() {
+	f.dropTrailingClear()
 	mark := f.next
 	r := f.alloc(nil)
 	f.asm.EmitExt(OpLoadk, r, 0, 0, TermNil)
@@ -328,14 +482,25 @@ func (f *fn) block(list []ast.Stmt) {
 	f.next = mark
 }
 
+// stmt compiles s followed by a clear point (see fn). After a return the
+// code is unreachable until a label, so nothing is cleared.
 func (f *fn) stmt(s ast.Stmt) {
+	f.stmtCode(s)
+	if _, ok := s.(*ast.ReturnStmt); ok {
+		f.dirty = 0 // unreachable until a label
+		return
+	}
+	f.clearDead()
+}
+
+func (f *fn) stmtCode(s ast.Stmt) {
 	switch s := s.(type) {
 	case *ast.BlockStmt:
 		f.block(s.List)
 	case *ast.EmptyStmt:
 	case *ast.ExprStmt:
 		mark := f.next
-		f.exprInto(s.X, f.alloc(s))
+		f.exprInto(s.X, f.allocFor(s.X))
 		f.next = mark
 	case *ast.AssignStmt:
 		f.assign(s)
@@ -346,13 +511,13 @@ func (f *fn) stmt(s ast.Stmt) {
 		}
 		x := f.localOf(s.X)
 		mark := f.next
-		one := f.alloc(s)
+		one := f.allocScalar(s) // the constant 1: an immediate
 		if isInt64(f.g.p.Info.TypeOf(s.X)) {
 			f.int64Into(1, one)
 		} else {
 			f.asm.EmitExt(OpLoadk, one, 0, 0, TermInt(1))
 		}
-		f.asm.Emit(op, x, x, one)
+		f.asm.Emit(f.typedOp(op, s.X), x, x, one)
 		f.next = mark
 	case *ast.DeclStmt:
 		f.declStmt(s.Decl.(*ast.GenDecl))
@@ -362,7 +527,14 @@ func (f *fn) stmt(s ast.Stmt) {
 			return
 		}
 		mark := f.next
-		f.asm.Emit(OpRet, f.operand(s.Results[0]), 0, 0)
+		res := s.Results[0]
+		if f.boxes(res, f.result) {
+			r := f.alloc(res)
+			f.valueInto(res, f.result, r)
+			f.asm.Emit(OpRet, r, 0, 0)
+		} else {
+			f.asm.Emit(OpRet, f.operand(res), 0, 0)
+		}
 		f.next = mark
 	case *ast.IfStmt:
 		f.ifStmt(s)
@@ -376,7 +548,7 @@ func (f *fn) stmt(s ast.Stmt) {
 		if len(targets) == 0 {
 			f.fail(s, "%s outside a loop", s.Tok)
 		}
-		f.asm.EmitJump(OpJmp, 0, targets[len(targets)-1])
+		f.jump(OpJmp, 0, targets[len(targets)-1])
 	case *ast.TypeSwitchStmt:
 		f.typeSwitch(s)
 	default:
@@ -407,7 +579,7 @@ func (f *fn) assign(s *ast.AssignStmt) {
 	if op, ok := assignOps[s.Tok]; ok { // x op= e
 		x := f.localOf(s.Lhs[0])
 		mark := f.next
-		f.asm.Emit(op, x, x, f.operand(s.Rhs[0]))
+		f.asm.Emit(f.typedOp(op, s.Lhs[0]), x, x, f.operand(s.Rhs[0]))
 		f.next = mark
 		return
 	}
@@ -449,12 +621,12 @@ func (f *fn) assign(s *ast.AssignStmt) {
 		}
 	} else if len(s.Lhs) == 1 && len(newVars) == 1 {
 		// A fresh variable cannot be read by its own initializer.
-		f.exprInto(s.Rhs[0], uint8(targets[0]))
+		f.valueInto(s.Rhs[0], f.g.p.Info.TypeOf(s.Lhs[0]), uint8(targets[0]))
 	} else {
 		// Evaluate every right-hand side before assigning any (a, b = b, a).
 		base := f.allocN(s, len(s.Rhs))
 		for i, r := range s.Rhs {
-			f.exprInto(r, base+uint8(i))
+			f.valueInto(r, f.g.p.Info.TypeOf(s.Lhs[i]), base+uint8(i))
 		}
 		for i, t := range targets {
 			if t >= 0 {
@@ -484,7 +656,11 @@ func (f *fn) declStmt(d *ast.GenDecl) {
 		mark := f.next
 		for i, name := range vs.Names {
 			if len(vs.Values) > 0 {
-				f.exprInto(vs.Values[i], regs[i])
+				var t types.Type
+				if vars[i] != nil {
+					t = vars[i].Type()
+				}
+				f.valueInto(vs.Values[i], t, regs[i])
 			} else {
 				f.zeroInto(name, vars[i].Type(), regs[i])
 			}
@@ -505,17 +681,17 @@ func (f *fn) ifStmt(s *ast.IfStmt) {
 	}
 	elseL := f.asm.NewLabel()
 	mark := f.next
-	f.asm.EmitJump(OpJmpf, f.operand(s.Cond), elseL)
+	f.jump(OpJmpf, f.operand(s.Cond), elseL)
 	f.next = mark
 	f.block(s.Body.List)
 	if s.Else == nil {
-		f.asm.Bind(elseL)
+		f.bindEnd(elseL)
 	} else {
 		endL := f.asm.NewLabel()
-		f.asm.EmitJump(OpJmp, 0, endL)
-		f.asm.Bind(elseL)
+		f.jump(OpJmp, 0, endL)
+		f.bind(elseL)
 		f.stmt(s.Else)
-		f.asm.Bind(endL)
+		f.bindEnd(endL)
 	}
 	f.next = scope
 }
@@ -526,10 +702,10 @@ func (f *fn) forStmt(s *ast.ForStmt) {
 		f.stmt(s.Init)
 	}
 	topL, contL, endL := f.asm.NewLabel(), f.asm.NewLabel(), f.asm.NewLabel()
-	f.asm.Bind(topL)
+	f.bind(topL)
 	if s.Cond != nil {
 		mark := f.next
-		f.asm.EmitJump(OpJmpf, f.operand(s.Cond), endL)
+		f.jump(OpJmpf, f.operand(s.Cond), endL)
 		f.next = mark
 	}
 	f.breakTo = append(f.breakTo, endL)
@@ -537,12 +713,15 @@ func (f *fn) forStmt(s *ast.ForStmt) {
 	f.block(s.Body.List)
 	f.breakTo = f.breakTo[:len(f.breakTo)-1]
 	f.continueTo = f.continueTo[:len(f.continueTo)-1]
-	f.asm.Bind(contL)
 	if s.Post != nil {
+		f.bind(contL)
 		f.stmt(s.Post)
+	} else {
+		f.bindEnd(contL)
 	}
-	f.asm.EmitJump(OpJmp, 0, topL)
-	f.asm.Bind(endL)
+	f.clearDead() // the body's locals die before the next iteration
+	f.jump(OpJmp, 0, topL)
+	f.bindEnd(endL)
 	f.next = scope
 }
 
@@ -551,16 +730,73 @@ func (f *fn) forStmt(s *ast.ForStmt) {
 // operand returns a register holding e's value: a local's own register, or
 // a fresh temporary that the caller releases.
 func (f *fn) operand(e ast.Expr) uint8 {
+	if r, ok := f.localReg(e); ok {
+		return r
+	}
+	r := f.allocFor(e)
+	f.exprInto(e, r)
+	return r
+}
+
+// localReg returns the register of the local variable e names, if it is one.
+func (f *fn) localReg(e ast.Expr) (uint8, bool) {
 	if id, ok := ast.Unparen(e).(*ast.Ident); ok {
 		if v, ok := f.g.p.Info.Uses[id].(*types.Var); ok {
 			if r, ok := f.locals[v]; ok {
-				return r
+				return r, true
 			}
 		}
 	}
-	r := f.alloc(e)
-	f.exprInto(e, r)
-	return r
+	return 0, false
+}
+
+// boxes reports whether e, going into a destination of type target, is an
+// int64 converted to an interface. Small int64 values are immediates that
+// the VM cannot tell from ints, so every such conversion boxes the value
+// (BOX64): inside `any` an int64 is always a K_INT64 box. Named int64 types
+// cannot go into an interface (the checker rejects them).
+func (f *fn) boxes(e ast.Expr, target types.Type) bool {
+	return isAny(target) && isInt64(f.g.p.Info.TypeOf(e))
+}
+
+// valueInto compiles e into dst as a value of type target (the type of the
+// variable, parameter, result or field it is assigned to; nil if unknown,
+// e.g. the blank identifier), boxing an int64 that goes into an interface.
+// A constant is boxed at compile time, in the const area.
+func (f *fn) valueInto(e ast.Expr, target types.Type, dst uint8) {
+	if !f.boxes(e, target) {
+		f.exprInto(e, dst)
+		return
+	}
+	if tv := f.g.p.Info.Types[e]; tv.Value != nil {
+		n, exact := constant.Int64Val(tv.Value)
+		if !exact {
+			f.fail(e, "constant %s overflows int64", tv.Value)
+		}
+		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddInt64(n)))
+		return
+	}
+	if r, ok := f.localReg(e); ok {
+		f.asm.Emit(OpBox64, dst, r, 0)
+		return
+	}
+	f.exprInto(e, dst)
+	f.asm.Emit(OpBox64, dst, dst, 0)
+}
+
+// int64Ops maps each generic arithmetic/compare op to its int64 twin.
+var int64Ops = map[uint8]uint8{
+	OpAdd: OpAdd64, OpSub: OpSub64, OpMul: OpMul64, OpDiv: OpDiv64, OpRem: OpRem64,
+	OpNeg: OpNeg64, OpEq: OpEq64, OpNe: OpNe64, OpLt: OpLt64, OpLe: OpLe64,
+}
+
+// typedOp returns op, or its int64 twin when operand x has static type
+// int64 (or a named type of it): the generic ops are int-only.
+func (f *fn) typedOp(op uint8, x ast.Expr) uint8 {
+	if op64, ok := int64Ops[op]; ok && isInt64(f.g.p.Info.TypeOf(x)) {
+		return op64
+	}
+	return op
 }
 
 var binaryOps = map[token.Token]uint8{
@@ -590,7 +826,7 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 			f.asm.Emit(OpMove, dst, r, 0)
 		}
 	case *ast.UnaryExpr:
-		op := OpNeg
+		op := f.typedOp(OpNeg, e.X)
 		if e.Op == token.NOT {
 			op = OpNot
 		}
@@ -627,22 +863,22 @@ func (f *fn) binaryInto(e *ast.BinaryExpr, dst uint8) {
 		}
 		endL := f.asm.NewLabel()
 		f.exprInto(e.X, dst)
-		f.asm.EmitJump(jump, dst, endL)
+		f.jump(jump, dst, endL)
 		f.exprInto(e.Y, dst)
-		f.asm.Bind(endL)
+		f.bind(endL)
 	case token.GTR: // x > y  ==  y < x
 		x, y := f.operand(e.X), f.operand(e.Y)
-		f.asm.Emit(OpLt, dst, y, x)
+		f.asm.Emit(f.typedOp(OpLt, e.X), dst, y, x)
 	case token.GEQ: // x >= y  ==  y <= x
 		x, y := f.operand(e.X), f.operand(e.Y)
-		f.asm.Emit(OpLe, dst, y, x)
+		f.asm.Emit(f.typedOp(OpLe, e.X), dst, y, x)
 	default:
 		op, ok := binaryOps[e.Op]
 		if !ok {
 			f.fail(e, "internal error: unexpected operator %s", e.Op)
 		}
 		x, y := f.operand(e.X), f.operand(e.Y)
-		f.asm.Emit(op, dst, x, y)
+		f.asm.Emit(f.typedOp(op, e.X), dst, x, y)
 	}
 }
 
@@ -683,9 +919,13 @@ func (f *fn) intInto(n int32, dst uint8) {
 	}
 }
 
-// int64Into loads the int64 n into dst: int64 values are always boxed, so
-// it is a const-area K_INT64 object.
+// int64Into loads the int64 n into dst: an immediate (LOADI32, no
+// allocation) when it fits in 31 bits, else a const-area K_INT64 box.
 func (f *fn) int64Into(n int64, dst uint8) {
+	if n >= -(1<<30) && n < 1<<30 {
+		f.asm.EmitExt(OpLoadi32, dst, 0, 0, uint32(int32(n)))
+		return
+	}
 	f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddInt64(n)))
 }
 
@@ -718,9 +958,16 @@ func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 		f.newStruct(n, st, nil, dst)
 		return
 	}
-	if isPID(t) || isRef(t) || isAny(t) || isFunc(t) {
-		// No actor has the zero PID and no ref has serial 0; a nil any; a
-		// nil func, which Spawn rejects (the spawner crashes with badcode).
+	switch {
+	case isPID(t): // typed: no actor or port has it (vm/term.h)
+		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermZeroPid)
+		return
+	case isRef(t): // typed: no live ref has serial 0 (vm/term.h)
+		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermZeroRef)
+		return
+	case isAny(t) || isFunc(t):
+		// A nil any; a nil func, which Spawn rejects (the spawner crashes
+		// with badcode).
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNil)
 		return
 	}
@@ -784,7 +1031,7 @@ func (f *fn) newStruct(n ast.Node, st *types.Named, vals []fieldVal, dst uint8) 
 	base := f.allocN(n, nf)
 	set := make([]bool, nf)
 	for _, v := range vals {
-		f.exprInto(v.val, base+uint8(v.field))
+		f.valueInto(v.val, fields.Field(v.field).Type(), base+uint8(v.field))
 		set[v.field] = true
 	}
 	for i := 0; i < nf; i++ {
@@ -796,14 +1043,34 @@ func (f *fn) newStruct(n ast.Node, st *types.Named, vals []fieldVal, dst uint8) 
 	f.next = mark
 }
 
-// args evaluates call arguments into consecutive fresh registers.
+// args evaluates call arguments into consecutive fresh registers, as
+// values of the callee's parameter types (an int64 passed as `any` is
+// boxed): user and library functions and the gogo/actor builtins alike.
 func (f *fn) args(call *ast.CallExpr) (base uint8, n uint8) {
+	var params *types.Tuple
+	if sig, ok := f.g.p.Info.TypeOf(call.Fun).(*types.Signature); ok && !sig.Variadic() {
+		params = sig.Params()
+	}
+	return f.argsAs(call, params)
+}
+
+// argsAs is args with the parameter types given (nil: no conversions).
+func (f *fn) argsAs(call *ast.CallExpr, params *types.Tuple) (base uint8, n uint8) {
 	if len(call.Args) > maxRegs {
 		f.fail(call, "too many arguments")
 	}
-	base = f.allocN(call, len(call.Args))
+	// One register per argument, consecutive; scalar ones (constants,
+	// bools, PIDs) are not marked dirty.
+	base = uint8(f.next)
+	for _, a := range call.Args {
+		f.allocFor(a)
+	}
 	for i, a := range call.Args {
-		f.exprInto(a, base+uint8(i))
+		var t types.Type
+		if params != nil && i < params.Len() {
+			t = params.At(i).Type()
+		}
+		f.valueInto(a, t, base+uint8(i))
 	}
 	return base, uint8(len(call.Args))
 }
@@ -817,7 +1084,7 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 	case *ast.Ident:
 		switch obj := f.g.p.Info.Uses[fun].(type) {
 		case *types.Builtin: // println, the only builtin the checker allows
-			base, n := f.args(call)
+			base, n := f.argsAs(call, nil) // prints an int64 in either representation
 			f.asm.EmitExt(OpBuiltin, dst, base, n, BPrintln)
 			return
 		case *types.Func:
@@ -831,8 +1098,8 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 		}
 	case *ast.SelectorExpr:
 		obj, ok := f.g.p.Info.Uses[fun.Sel].(*types.Func)
-		if ok && obj.Pkg() != nil && obj.Pkg().Path() == ActorPath {
-			f.actorCall(call, obj.Name(), dst)
+		if name := stubName(obj); ok && name != "" {
+			f.actorCall(call, name, dst)
 			return
 		}
 		if idx, found := f.g.funcIdx[obj]; ok && found { // lib.F(...)

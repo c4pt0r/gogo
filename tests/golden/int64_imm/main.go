@@ -1,0 +1,111 @@
+package main
+
+import "gogo/actor"
+
+// Small int64 values are immediates; inside `any` they are always boxed, so
+// a type switch still tells them from ints.
+
+type Box struct {
+	V any
+	N int64
+}
+
+// show reports which kind of value v holds.
+func show(v any) {
+	switch x := v.(type) {
+	case int64:
+		println("int64", x)
+	case int:
+		println("int", x)
+	default:
+		println("other")
+	}
+}
+
+func id(v any) any { return v }
+
+func wrap(x int64) any { return x }
+
+func twice(x int64) int64 { return x + x }
+
+func main() {
+	// Crossing the immediate boundary both ways, and back.
+	a := int64(1073741823)
+	b := a + 1
+	println(b, b-1)
+	c := int64(-1073741824)
+	d := c - 1
+	println(d, d+1)
+	println(b == a+1, b-1 == a, d < c, b > a, d+1 == c, -d, -c)
+	println(a*2, a*2/2, twice(a), twice(c), d%2, b/2)
+	m := a
+	m++
+	m--
+	println(m == a, m != b)
+
+	// int64 into any: var decl, assignment, argument, return, struct field.
+	var s int64 = 7
+	show(s)
+	var v any = s
+	show(v)
+	show(5)
+	var w any
+	w = s + 1
+	show(w)
+	show(id(s))
+	show(wrap(3))
+	show(int64(9))
+	bx := Box{s, s}
+	show(bx.V)
+	show(bx.N)
+	bx = Box{V: int64(-2)}
+	show(bx.V)
+
+	// A boxed int64 (type switch binder) and an immediate compare equal.
+	switch x := v.(type) {
+	case int64:
+		y := Box{x, x}
+		println(y.N == s, x == s, x+0 == s, x < s+1, x*1000000000000 > s)
+	}
+
+	// Conversions both ways with both representations.
+	n := int(s)
+	show(n)
+	show(int64(n))
+	big := s * 1000000000000
+	println(int(big), int64(int(big)), int(b), int64(int(d)))
+
+	// Through messages.
+	actor.Send(actor.Self(), s)
+	show(actor.Receive())
+	actor.Send(actor.Self(), Box{s, s - 8})
+	switch x := actor.Receive().(type) {
+	case Box:
+		show(x.V)
+		println(x.N, x.N == -1)
+	}
+	actor.SendAfter(1, actor.Self(), d)
+	show(actor.Receive())
+	srv := actor.Spawn(func() {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			switch x := r.Body.(type) {
+			case int64:
+				actor.Reply(r, x+1)
+			}
+		}
+	})
+	reply, ok := actor.Call(srv, a, 1000)
+	show(reply)
+	println(ok)
+
+	// Now() is an immediate; the clock moves.
+	t0 := actor.Now()
+	actor.Sleep(20)
+	println(actor.Now()-t0 >= 20)
+	var now any = actor.Now()
+	switch now.(type) {
+	case int64:
+		println("now int64")
+	}
+}

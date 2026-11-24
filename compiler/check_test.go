@@ -186,6 +186,10 @@ func TestRejects(t *testing.T) {
 		{"captured-assign-nested", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tx := 1\n\tactor.Spawn(func() {\n\t\tf := func() {\n\t\t\tx = 2 // ERR\n\t\t}\n\t\tactor.Spawn(f)\n\t})\n\tprintln(x)\n}\n", []string{"captured variable"}},
 		{"captured-opassign-before", "package main\nfunc main() {\n\tx := 1\n\tx += 1 // ERR\n\tf := func() { println(x) }\n\t_ = f\n}\n", []string{"captured variable must not be reassigned"}},
 		{"import-unknown-lib", "package main\nimport \"gogo/nosuch\" // ERR\nfunc main() { nosuch.X() }\n", []string{`import "gogo/nosuch" not supported`}},
+		{"port-open-stmt", "package main\nimport \"gogo/port\"\nfunc main() {\n\tport.Open(\"gpio\", port.GPIO{}) // ERR\n}\n", []string{"multiple values not supported"}},
+		{"port-open-var", "package main\nimport \"gogo/port\"\nfunc main() {\n\tvar p, ok = port.Open(\"gpio\", port.GPIO{}) // ERR\n\tprintln(p, ok)\n}\n", []string{"multiple values not supported"}},
+		{"port-open-arg", "package main\nimport \"gogo/port\"\nfunc f(p any, ok bool) {}\nfunc main() {\n\tf(port.Open(\"gpio\", port.GPIO{})) // ERR\n}\n", []string{"multiple values not supported"}},
+		{"port-renamed", "package main\nimport p \"gogo/port\" // ERR\nfunc main() { p.Close(p.Edge{}) }\n", []string{`import p "gogo/port" not supported`}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -460,7 +464,11 @@ func fakeLibs(t *testing.T, extra map[string]string) fstest.MapFS {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fsys := fstest.MapFS{"actor/actor.go": {Data: src}}
+	psrc, err := gogo.StubFS.ReadFile("port/port.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys := fstest.MapFS{"actor/actor.go": {Data: src}, "port/port.go": {Data: psrc}}
 	for name, s := range extra {
 		fsys[name] = &fstest.MapFile{Data: []byte(s)}
 	}
@@ -491,6 +499,7 @@ func TestLibraries(t *testing.T) {
 		{"lib-subset", "package lib\nfunc F() {\n\tm := map[int]int{}\n\t_ = m\n}\n", "lib/lib.go:3:7: gogo: map not supported"},
 		{"lib-type-error", "package lib\nfunc F() { undefined() }\n", "undefined"},
 		{"lib-captured-reassign", "package lib\nimport \"gogo/actor\"\nfunc F() {\n\tx := 1\n\tx = 2\n\tactor.Spawn(func() { println(x) })\n}\n", "lib/lib.go:5:2: gogo: captured variable must not be reassigned"},
+		{"lib-imports-port", "package lib\nimport (\n\t\"gogo/actor\"\n\t\"gogo/port\"\n)\nfunc F(p actor.PID) { port.Close(p) }\n", `import "gogo/port" not supported`},
 		{"lib-ok", "package lib\nimport \"gogo/actor\"\nfunc F() { actor.Spawn(func() { println(1) }) }\n", ""},
 	}
 	for _, tc := range tests {

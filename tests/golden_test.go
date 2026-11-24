@@ -18,7 +18,8 @@ import (
 // TestGolden compiles every tests/golden/*/ program, runs it on the VM named
 // by $GOGO_VM (30s timeout) and requires exit status 0 and stdout equal
 // byte-for-byte to expected.out; if expected.err exists, each of its
-// non-empty lines must be a substring of stderr. `make test-go`
+// non-empty lines must be a substring of stderr, and no non-empty line of
+// forbidden.err may be. An `input` file is fed to stdin. `make test-go`
 // builds the VM and sets GOGO_VM.
 func TestGolden(t *testing.T) {
 	vm := os.Getenv("GOGO_VM")
@@ -59,6 +60,14 @@ func TestGolden(t *testing.T) {
 			cmd := exec.CommandContext(ctx, vm, imgPath)
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
+			// An optional `input` file is stdin (simulated gpio events);
+			// otherwise stdin is /dev/null.
+			if in, err := os.Open(filepath.Join(dir, "input")); err == nil {
+				defer in.Close()
+				cmd.Stdin = in
+			} else if !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
 			cmd.WaitDelay = time.Second // don't wait on pipes held by orphans
 			runErr := cmd.Run()
 			if ctx.Err() != nil {
@@ -80,6 +89,16 @@ func TestGolden(t *testing.T) {
 			for _, line := range strings.Split(string(wantErr), "\n") {
 				if line != "" && !strings.Contains(stderr.String(), line) {
 					t.Errorf("stderr lacks %q\n--- stderr ---\n%s", line, stderr.Bytes())
+				}
+			}
+			// Optional forbidden.err: no non-empty line may appear in stderr.
+			noErr, err := os.ReadFile(filepath.Join(dir, "forbidden.err"))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			for _, line := range strings.Split(string(noErr), "\n") {
+				if line != "" && strings.Contains(stderr.String(), line) {
+					t.Errorf("stderr has forbidden %q\n--- stderr ---\n%s", line, stderr.Bytes())
 				}
 			}
 		})

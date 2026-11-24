@@ -2,8 +2,8 @@
  *
  *   ...1  small int (31-bit signed)   (v << 1) | 1
  *   ..00  heap ref                    word_offset << 2
- *   0010  special                     T_NIL, T_FALSE, T_TRUE, T_EMPTYSTR
- *   0110  PID                         (gen << 20) | (slot << 4) | 0x6
+ *   0010  special                     T_NIL, T_FALSE, T_TRUE, T_EMPTYSTR, T_ZEROREF
+ *   0110  PID                         (gen << 20) | (slot << 4) | 0x6; T_ZEROPID
  *   1010  const ref                   const_word_offset << 4 | 0xA
  *   1110  off-heap handle             reserved (M2)
  */
@@ -21,6 +21,17 @@ typedef uint32_t term;
 #define T_TRUE  ((term)0x22)
 /* The empty string: zero value of string-typed vars and fields. */
 #define T_EMPTYSTR ((term)0x32)
+/* The zero actor.Ref: a special, so it is an immediate (never scanned by
+ * the GC, copied verbatim into messages) that TYPEIS reports as TY_REF and
+ * whose serial counts as 0. Live refs are K_REF heap objects with serials
+ * from 1 up (Vm.next_ref starts at 1), so it equals no live ref.
+ * CancelTimer and Demonitor on it do nothing. Prints as <ref 0>. */
+#define T_ZEROREF ((term)0x42)
+/* The zero actor.PID: the PID term of slot 0, generation 0. actor.c never
+ * gives slot 0 generation 0 (it starts at 1 and skips 0 on wrap) and port
+ * PIDs use slots >= PORT_SLOT_BASE, so no live actor or port has it: Send
+ * drops, Link/Monitor see a dead PID (NoProc). Prints as <pid 0>. */
+#define T_ZEROPID ((term)0x06)
 
 /* Heap object kinds. */
 enum {
@@ -29,7 +40,7 @@ enum {
     K_INT     = 3,
     K_CLOSURE = 4,
     K_REF     = 5,   /* [hdr][serial_lo][serial_hi] */
-    K_INT64   = 6,   /* [hdr][lo][hi]; every int64 value, even small ones */
+    K_INT64   = 6,   /* [hdr][lo][hi]; int64 values outside 31 bits, and every int64 inside `any` */
     K_FORWARD = 63
 };
 

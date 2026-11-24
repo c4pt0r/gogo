@@ -32,10 +32,11 @@ func (g *gen) nameLits(decls []*ast.FuncDecl) {
 	}
 }
 
-// actorBuiltins maps each gogo/actor function to its BUILTIN id. The
-// arguments go into consecutive registers; the two-result builtins
-// (ReceiveTimeout, Call, Whereis) write dst and dst+1, so they are only
-// compiled by assign, which passes two fresh temporaries.
+// actorBuiltins maps each stub function (by stubName: gogo/actor and
+// gogo/port) to its BUILTIN id. The arguments go into consecutive
+// registers; the two-result builtins (ReceiveTimeout, Call, Whereis,
+// port.Open) write dst and dst+1, so they are only compiled by assign,
+// which passes two fresh temporaries.
 var actorBuiltins = map[string]uint32{
 	"Spawn": BSpawn, "SpawnLink": BSpawnLink, "SpawnOpt": BSpawnOpt,
 	"Self": BSelf, "Send": BSend, "Receive": BReceive,
@@ -45,9 +46,11 @@ var actorBuiltins = map[string]uint32{
 	"SendAfter": BSendAfter, "CancelTimer": BCancelTimer, "Sleep": BSleep,
 	"Now": BNow, "Call": BCall, "Reply": BReply, "Register": BRegister,
 	"Whereis": BWhereis, "Unregister": BUnregister,
+	"port.Open": BPortOpen, "port.Close": BPortClose,
 }
 
-// actorCall compiles a call of gogo/actor function name into dst.
+// actorCall compiles a call of the stub function called name (stubName)
+// into dst.
 func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 	switch name {
 	case "Info": // ProcInfo{Memory: MEMORY(p)}
@@ -65,10 +68,10 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 	default:
 		id, ok := actorBuiltins[name]
 		if !ok {
-			f.fail(call, "internal error: unexpected actor.%s", name)
+			f.fail(call, "internal error: unexpected stub function %s", name)
 		}
 		if twoResult[name] {
-			f.fail(call, "internal error: actor.%s outside a two-value assignment", name)
+			f.fail(call, "internal error: %s outside a two-value assignment", name)
 		}
 		base, n := f.args(call)
 		f.asm.EmitExt(OpBuiltin, dst, base, n, id)
@@ -76,14 +79,14 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 }
 
 // twoResultCall compiles a two-result builtin call (ReceiveTimeout, Call,
-// Whereis) whose results go to dst and dst+1, two fresh temporaries.
+// Whereis, port.Open) whose results go to dst and dst+1, two fresh
+// temporaries.
 func (f *fn) twoResultCall(call *ast.CallExpr, dst uint8) {
 	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	var name string
 	if ok {
-		if obj, ok := f.g.p.Info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == ActorPath {
-			name = obj.Name()
-		}
+		obj, _ := f.g.p.Info.Uses[sel.Sel].(*types.Func)
+		name = stubName(obj)
 	}
 	if !twoResult[name] {
 		f.fail(call, "internal error: two-value assignment from something other than a two-result builtin")
@@ -156,25 +159,25 @@ func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 		}
 		bodyL, nextL := f.asm.NewLabel(), f.asm.NewLabel()
 		mark := f.next
-		t := f.alloc(cc)
+		t := f.allocScalar(cc) // TYPEIS results are bools
 		for i, te := range cc.List {
 			f.asm.EmitExt(OpTypeis, t, m, 0, f.typeID(te))
 			if i == len(cc.List)-1 {
-				f.asm.EmitJump(OpJmpf, t, nextL)
+				f.jump(OpJmpf, t, nextL)
 			} else {
-				f.asm.EmitJump(OpJmpt, t, bodyL)
+				f.jump(OpJmpt, t, bodyL)
 			}
 		}
 		f.next = mark
-		f.asm.Bind(bodyL)
+		f.bind(bodyL)
 		f.caseBody(cc, m, endL)
-		f.asm.EmitJump(OpJmp, 0, endL)
-		f.asm.Bind(nextL)
+		f.jump(OpJmp, 0, endL)
+		f.bind(nextL)
 	}
 	if def != nil {
 		f.caseBody(def, m, endL)
 	}
-	f.asm.Bind(endL)
+	f.bindEnd(endL)
 	f.next = scope
 }
 

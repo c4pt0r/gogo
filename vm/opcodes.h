@@ -35,7 +35,25 @@ enum Op {
     OP_MKCLOSURE = 22,  /* ra = closure func ext, captures rb.. +ext */
     OP_TYPEIS    = 23,  /* ra = (dynamic type of rb == ext)    +ext */
     OP_BUILTIN   = 24,  /* ra = builtin ext(rb..rb+c-1)        +ext */
-    OP_CONV      = 25   /* c=0: ra = int(rb) (low 32 bits); c=1: ra = int64(rb) */
+    OP_CONV      = 25,  /* c=0: ra = int(rb) (low 32 bits); c=1: ra = int64(rb) */
+    /* int64 ops. Operands are int64 values in either representation: a
+     * small-int immediate or a K_INT64 box (heap or const area); results
+     * are immediates when they fit in 31 bits, else boxed. The generic
+     * ADD..LE / NEG above are int-only. */
+    OP_ADD64     = 26,
+    OP_SUB64     = 27,
+    OP_MUL64     = 28,
+    OP_DIV64     = 29,
+    OP_REM64     = 30,
+    OP_NEG64     = 31,  /* ra = -rb */
+    OP_EQ64      = 32,
+    OP_NE64      = 33,
+    OP_LT64      = 34,
+    OP_LE64      = 35,
+    OP_BOX64     = 36,  /* ra = rb as a K_INT64 box (no-op if already boxed);
+                         * an int64 inside `any` is always boxed */
+    OP_CLEAR     = 37   /* ra .. ra+b-1 = nil: dead registers stop being GC
+                         * roots (b is the count, 0 = nothing) */
 };
 
 enum Builtin {
@@ -65,7 +83,9 @@ enum Builtin {
     B_REPLY           = 22,  /* Request struct, reply -> nil */
     B_REGISTER        = 23,  /* name, pid -> bool */
     B_WHEREIS         = 24,  /* name -> pid, ok */
-    B_UNREGISTER      = 25   /* name -> nil */
+    B_UNREGISTER      = 25,  /* name -> nil */
+    B_PORT_OPEN       = 26,  /* driver string, cfg any -> pid, ok */
+    B_PORT_CLOSE      = 27   /* pid -> nil */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -84,6 +104,11 @@ enum Builtin {
 #define TYPE_DOWNMSG  3   /* Ref Ref, From PID, Reason Reason */
 #define TYPE_REQUEST  4   /* From PID, Ref Ref, Body any */
 #define TYPE_OPTIONS  5   /* MaxMemory int */
+/* Then the gogo/port struct types (fields as in port/port.go), always
+ * emitted too, whether the program imports gogo/port or not. */
+#define TYPE_GPIO     6   /* Pin, Mode, Edge, DebounceMs int */
+#define TYPE_WRITE    7   /* Value int */
+#define TYPE_EDGE     8   /* Pin int, Value int */
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

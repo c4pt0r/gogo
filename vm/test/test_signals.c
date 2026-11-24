@@ -34,7 +34,7 @@ static void put_names(uint32_t *c) {
 #define IMG_MAX (8 + 3 + NAMES_WORDS + MAX_CODE)
 static uint32_t build(uint32_t *w, const uint32_t *code, uint32_t n_code) {
     memset(w, 0, IMG_MAX * sizeof(uint32_t));
-    w[0] = 0x4F474F47; w[1] = 1; w[2] = 1; w[3] = 0;
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = NAMES_WORDS; w[5] = n_code; w[6] = 0; w[7] = 0;
     w[8] = 0; w[9] = 0 | (3u << 16); w[10] = 0;
     put_names(&w[11]);

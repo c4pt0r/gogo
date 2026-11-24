@@ -18,7 +18,9 @@ typedef struct ActorExtra ActorExtra;
 /* The only way an actor dies (normal return, Exit, runtime error, quota,
  * kill, cascade): prints the crash report unless code is R_NORMAL or
  * R_SHUTDOWN (" in <func>" when func_name is a const ref to the function's
- * name, nothing more for T_EMPTYSTR), then signals every linked actor: a
+ * name, nothing more for T_EMPTYSTR), closes the ports it owns
+ * (port_close_owned; before any notification, so a restarted child can
+ * reopen them), then signals every linked actor: a
  * trapping one gets its preallocated ExitMsg{From: a, Reason{code,
  * func_name}}; any other is marked to exit with the same code and func_name
  * unless code is R_NORMAL. Marked actors exit when next scheduled, so a
@@ -137,5 +139,21 @@ void actor_extra_free(Vm *vm, Actor *a);
 bool vm_reserve_init(void);
 void vm_reserve_release(void);
 void *signal_alloc(size_t bytes);
+
+/* Counts the SendAfter timers pending for a (timer.c bookkeeping). _ref
+ * allocates a's extra if needed and returns false if it cannot (nothing
+ * counted); _unref undoes one; _has says whether any is pending. */
+bool actor_timer_ref(Actor *a);
+void actor_timer_unref(Actor *a);
+bool actor_timer_has(const Actor *a);
+/* Likewise for pending timers charged to a as their creator. */
+bool actor_timer_own(Actor *a);
+void actor_timer_disown(Actor *a);
+bool actor_timer_owns(const Actor *a);
+/* Likewise for the open ports a owns (port.c): _own is false if the extra
+ * cannot be allocated (nothing counted). */
+bool actor_port_own(Actor *a);
+void actor_port_disown(Actor *a);
+bool actor_port_owns(const Actor *a);
 
 #endif

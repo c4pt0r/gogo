@@ -44,4 +44,58 @@ void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end);
  * messages, pending SendAfter timers) in bytes. */
 size_t actor_memory_bytes(const Actor *a);
 
+/* ---- reading terms (interp.c, port.c) ---- */
+
+/* Pointer to the object a heap or const ref names, or NULL if t is neither
+ * or points outside the heap / const area. */
+static inline const uint32_t *obj_of(const Vm *vm, const Actor *a, term t) {
+    const uint32_t *base;
+    uint32_t off, limit;
+    if (term_is_ref(t)) {
+        base = a->mem;
+        off = term_ref_off(t);
+        limit = a->hp;
+    } else if (term_is_const(t)) {
+        base = vm->img->consts;
+        off = term_const_off(t);
+        limit = vm->img->consts_words;
+    } else {
+        return NULL;
+    }
+    /* Every object has at least two words and lies wholly inside its area. */
+    if (off >= limit || limit - off < 2u) return NULL;
+    uint32_t words = hdr_words(base[off]);
+    if (words < 2u || words > limit - off) return NULL;
+    return base + off;
+}
+
+/* The bytes of a name argument: a string constant, a heap string or the
+ * empty string. False for anything else. */
+static inline bool name_bytes(const Vm *vm, const Actor *a, term t, const uint8_t **p, uint32_t *len) {
+    if (t == T_EMPTYSTR) {
+        *p = NULL;
+        *len = 0;
+        return true;
+    }
+    const uint32_t *o = obj_of(vm, a, t);
+    if (!o || hdr_kind(o[0]) != K_STRING || o[1] > (hdr_words(o[0]) - 2u) * 4u) return false;
+    *p = (const uint8_t *)(o + 2);
+    *len = o[1];
+    return true;
+}
+
+/* Value of a small int or boxed K_INT; false for anything else. */
+static inline bool int_val(const Vm *vm, const Actor *a, term t, int32_t *out) {
+    if (term_is_int(t)) {
+        *out = term_to_int(t);
+        return true;
+    }
+    const uint32_t *o = obj_of(vm, a, t);
+    if (o && hdr_kind(o[0]) == K_INT) {
+        *out = (int32_t)o[1];
+        return true;
+    }
+    return false;
+}
+
 #endif
