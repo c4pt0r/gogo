@@ -15,8 +15,13 @@
  * release (rise, fall, rise) is not taken for a new press.
  *
  * Pins the platform uses are refused: USB D-/D+ (19, 20), the in-package
- * SPI flash (26-32), the LCD (21, 38-41, 45) and the M5PM1 I2C bus (47,
- * 48). */
+ * flash and PSRAM, the LCD (21, 38-41, 45) and the M5PM1 I2C bus (47, 48).
+ * The StickS3's ESP32-S3-PICO-1-N8R8 has 8 MB octal PSRAM in the package
+ * (docs.m5stack.com/en/core/StickS3: "8MB Octal PSRAM"; esptool reports
+ * "Embedded PSRAM 8MB (AP_3v3)"). The ESP32-S3-PICO-1 datasheet's block
+ * diagram wires the flash and PSRAM to SPICS1/SPIHD/SPIWP/SPICS0/SPICLK/
+ * SPIQ/SPID (GPIO26-32) and the octal PSRAM's SPIIO4-7/SPIDQS to GPIO33-37,
+ * so 26-37 are all refused. */
 #include "port.h"
 #include "evq.h"
 #include "opcodes.h"
@@ -31,7 +36,7 @@ enum { E_NONE = 0, E_RISING = 1, E_FALLING = 2, E_BOTH = 3 };
 
 #define NPINS 49
 
-static const uint8_t reserved[] = {19, 20, 21, 26, 27, 28, 29, 30, 31, 32, 38, 39, 40, 41, 45, 47, 48};
+static const uint8_t reserved[] = {19, 20, 21, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 45, 47, 48};
 
 /* Per-pin state shared with the ISR. The VM task fills the config fields
  * before the handler is added and clears `open` after it is removed; the
@@ -90,6 +95,7 @@ static int g_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     p->debounce_ms = (uint16_t)(cfg[3] > 0 ? (cfg[3] > 65535 ? 65535 : cfg[3]) : 20);
     p->state[0] = (uint32_t)pin;
     p->state[1] = (uint32_t)mode;
+    p->state[2] = (uint32_t)edge;
 
     gpio_config_t c = {
         .pin_bit_mask = 1ULL << pin,
@@ -133,7 +139,7 @@ static void g_close(Port *p) {
     s->open = 0;
 }
 
-static bool g_can_event(const Port *p) { return p->state[1] != M_OUTPUT; }
+static bool g_can_event(const Port *p) { return p->state[1] != M_OUTPUT && p->state[2] != E_NONE; }
 
 const PortDriver gpio_esp_driver = {
     "gpio", TYPE_GPIO, TYPE_EDGE, g_open, g_command, g_close, g_can_event

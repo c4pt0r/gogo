@@ -36,7 +36,11 @@ not rebuild or reflash the firmware:
 there) or `-esptool`; `-port` defaults to the only `/dev/cu.usbmodem*`.
 `gogo monitor` copies the console to stdout for `-t` seconds or until a
 line containing `-until`; `-reset` resets the chip first (RTS pulse) so the
-capture starts at boot. Only one program can use the serial port at a time.
+capture starts at boot. On this port DTR/RTS are the chip's reset and boot
+strap, so `gogo monitor` sets the port up on its own descriptor (raw,
+CLOCAL, no HUPCL, both lines idle in one ioctl) and never resets the chip
+unless `-reset` is given. Only one program can use the serial port at a
+time.
 
 ## Flash layout (`partitions.csv`, 8 MB)
 
@@ -47,14 +51,17 @@ capture starts at boot. Only one program can use the serial port at a time.
 | gogo    | data/0x40    | 0x210000 | 0x100000 |
 
 The `gogo` partition holds a 16-byte little-endian header
-`{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the unchanged
-v1 image. At boot the firmware checks the magic, the length (multiple of 4,
+`{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
+(format v3, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
+image version changes, reflash the firmware too: an older firmware refuses
+a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
+one). At boot the firmware checks the magic, the length (multiple of 4,
 at most partition size - 16) and the CRC, then mmaps the partition and runs
 the image in place. Console messages:
 
 - `gogo: no image`: no header (blank partition, or not written by `gogo flash`)
 - `gogo: bad image (<reason>)`: length, crc, or an `image_load` error
-- `gogo <version>: image <N> bytes, arena <cap> bytes`: boot line, then the program runs
+- `gogo <version>: image <N> bytes, arena <cap> bytes, free RAM <F> (largest <L>)`: boot line (internal RAM left after the console is up), then the program runs
 - `gogo: vm exited (<code>), arena used <bytes>`: after `vm_run` returns
 
 after which the firmware idles. The offset 0x210000 is also `partOffset`
@@ -76,12 +83,45 @@ in `cmd/gogo/flash.go`.
   pushes to the event ring and notifies, never locking or allocating. For a
   single-edge pin it also drops an edge that comes less than the debounce
   time after the previous level change (a key release's bounce). Refused
-  pins: 19-20 (USB), 26-32 (flash), 21, 38-41, 45 (LCD), 47-48 (M5PM1 I2C).
+  pins: 19-20 (USB), 26-37 (in-package flash and octal PSRAM of the
+  ESP32-S3-PICO-1-N8R8), 21, 38-41, 45 (LCD), 47-48 (M5PM1 I2C).
 - `image_part.c`: the partition check and mmap above.
 - `main.c`: the VM runs in a FreeRTOS task pinned to CPU1.
+- Screen (debug console, mirror of stdout/stderr):
+  - `pm1.c`: M5PM1 (I2C G47/G48, 0x6E): I2C idle sleep and watchdog off,
+    PM1 GPIO2 high = LCD rail, 200 ms settle (M5GFX/M5Unified StickS3
+    sequence, cited in the file).
+  - `lcd_st7789.c`: ST7789P3 135x240 used as landscape 240x135 (column
+    offset 40, row offset 53, MADCTL 0x6C, inverted), SPI3 40 MHz with DMA;
+    backlight G38.
+  - `console_task.c`: `platform/common` console grid + embedded
+    `platform/common/font/gogo12.font`. The VM task appends to the grid
+    under a short spinlock and notifies the render task (CPU0, priority 1),
+    which snapshots the grid and redraws only dirty rows, at most once per
+    50 ms, one 240x12 band per SPI transfer. stdout white, stderr (crash
+    reports) red, platform lines (boot, exit, image errors) white. If the
+    font blob is invalid the console draws box glyphs (logged once on
+    serial); if the PM1 or the LCD fails the console stays off (logged).
+    `linker.lf` places the renderer in internal RAM (out of the flash
+    cache) and `sdkconfig.defaults` enlarges the caches (32 KB instruction,
+    64 KB data, 64-byte lines), because the VM (CPU1) and the render task
+    (CPU0) share them and rendering from flash evicted the VM's code.
 
-`platform/common/` (console grid, font) is not compiled yet; the hook is in
-`main/CMakeLists.txt`.
+Console build switches (`idf.py -D...`, kept in each build directory's
+CMake cache, so use a separate `-B` directory per variant):
 
-`examples/keys` is an on-device gpio check: it prints KEY1 (G11) edges and
-KEY2 (G12) presses.
+    idf.py -C platform/esp32s3 -B platform/esp32s3/build-noconsole -DGOGO_CONSOLE=0 build
+    idf.py -C platform/esp32s3 -B platform/esp32s3/build-verbose -DGOGO_CONSOLE_VERBOSE=1 build
+
+`GOGO_CONSOLE=0` compiles the console out (timing baseline);
+`GOGO_CONSOLE_VERBOSE=1` logs bring-up time, frame stats and the VM's time
+in console writes on serial.
+
+Examples:
+
+- `examples/keys`: on-device gpio check: prints KEY1 (G11) edges and KEY2
+  (G12) presses.
+- `examples/console`: mixed Chinese/English lines and one forced actor
+  crash (red on screen).
+- `examples/printbench`: 1000 `println` lines, then the elapsed ms.
+- `examples/memfill`: actors grow by recursion until one hits oom; the exit line shows the arena really filled.

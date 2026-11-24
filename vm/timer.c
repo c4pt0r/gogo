@@ -20,9 +20,10 @@ static Timer *timer_new(uint64_t deadline, uint64_t serial, term pid, Msg *msg) 
 }
 
 /* Words a SendAfter timer holding m is charged to its creator: the queued
- * message footprint (as in mbox_words) plus the timer entry. */
+ * message charge (as in mbox_words, off-heap Bytes included) plus the
+ * timer entry. */
 static uint32_t send_charge(const Msg *m) {
-    return msg_footprint_words(m->words) + (uint32_t)((sizeof(Timer) + 3u) / 4u);
+    return msg_charge_words(m) + (uint32_t)((sizeof(Timer) + 3u) / 4u);
 }
 
 /* Takes t's charge off its creator, if it still has one and is alive

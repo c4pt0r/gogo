@@ -35,8 +35,10 @@ void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots);
 bool heap_push_frame(Vm *vm, Actor *a, uint16_t n_regs, int32_t ret_pc);
 
 /* Which words of the heap object at `obj` hold terms: [*first, *end) as
- * indexes into the object (empty range for K_STRING, K_INT, K_REF and
- * K_INT64, whose contents are raw, and for the raw type_id / func_idx word). Shared by the
+ * indexes into the object (empty range for K_STRING, K_INT, K_REF,
+ * K_INT64, K_BYTEARR and K_BYTES, whose contents are raw; never word 1, which is
+ * raw in every kind: type_id, func_idx, a slice's off, an array's length, a buffer's length;
+ * end is always the object's size when the range is not empty). Shared by the
  * GC and by message copy/relocation so they always agree. */
 void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end);
 

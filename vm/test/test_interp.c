@@ -524,3 +524,109 @@ TEST(no_actor_has_zero_pid) {
         actor_free(&vm, a);
     }
 }
+
+/* Two functions (multi-result return):
+ *   main (0 params, 4 regs): LOADK r0, 7; CALL r<dst>, r0, 1, callee;
+ *                            BUILTIN r3, r0, 0, RECEIVE (blocks)
+ *   callee (1 param, 3 regs): BUILTIN r1, r0, 0, MAKE_REF; MOVE r2, r0;
+ *                             RETN r1, <n>
+ * Layout: 8 header + 6 func + 3 consts + 10 code = 27 words. */
+#define RETN_WORDS 27
+static uint32_t retn_img[RETN_WORDS];
+
+static const char *run_retn(uint32_t dst, uint32_t n, Vm *vm, Image *img, Actor **out) {
+    uint32_t *w = retn_img;
+    memset(w, 0, sizeof retn_img);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 2; w[3] = 0;
+    w[4] = 3; w[5] = 10; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 0 | (4u << 16); w[10] = 0;
+    w[11] = 6; w[12] = 1 | (3u << 16); w[13] = 0;
+    w[14] = hdr_make(3, K_STRING); w[15] = 4; memcpy(&w[16], "main", 4);
+    w[17] = OP_MAKE(OP_LOADK, 0, 0, 0); w[18] = term_from_int(7);
+    w[19] = OP_MAKE(OP_CALL, dst, 0, 1); w[20] = 1;
+    w[21] = OP_MAKE(OP_BUILTIN, 3, 0, 0); w[22] = B_RECEIVE;
+    w[23] = OP_MAKE(OP_BUILTIN, 1, 0, 0); w[24] = B_MAKE_REF;
+    w[25] = OP_MAKE(OP_MOVE, 2, 0, 0);
+    w[26] = OP_MAKE(OP_RETN, 1, n, 0);
+    va_reset();
+    CHECK_EQ(image_load(img, w, RETN_WORDS), IMG_OK);
+    CHECK_EQ(vm_init(vm, img, 4), 0);
+    Actor *a = actor_new(vm, 64);
+    CHECK(a != NULL);
+    CHECK(heap_push_frame(vm, a, 4, -1));
+    a->pc = img->code;
+    err_len = 0; err_buf[0] = 0;
+    platform_unix_err_hook = capture_err;
+    int rc = interp_run(vm, a);
+    platform_unix_err_hook = NULL;
+    *out = rc == RUN_EXIT ? NULL : a;
+    return err_buf;
+}
+
+/* RETN a b writes the callee's ra..ra+b-1 into the caller's CALL
+ * destination dst..dst+b-1 and pops the callee frame. */
+TEST(retn_into_caller) {
+    Vm vm; Image img; Actor *a;
+    CHECK_EQ(run_retn(1, 2, &vm, &img, &a)[0], 0);
+    CHECK(a != NULL);
+    term *R = a->mem + a->fp;
+    CHECK_EQ(a->fp + 4u + 2u, (uint32_t)a->mem_words);   /* back in the entry frame */
+    CHECK_EQ(R[0], term_from_int(7));
+    CHECK(term_is_ref(R[1]));
+    CHECK_EQ(a->mem[term_ref_off(R[1])], hdr_make(3, K_REF));
+    CHECK_EQ(R[2], term_from_int(7));
+    actor_free(&vm, a);
+    CHECK_EQ(vm.live, 0);
+}
+
+TEST(retn_past_caller_regs_is_badcode) {
+    Vm vm; Image img; Actor *a;
+    /* dst r3 + 2 results > 4 caller registers */
+    CHECK(strstr(run_retn(3, 2, &vm, &img, &a), "crashed: badcode") != NULL);
+    CHECK(a == NULL);
+    /* source range r1..r3 past the callee's 3 registers */
+    CHECK(strstr(run_retn(0, 3, &vm, &img, &a), "crashed: badcode") != NULL);
+    CHECK(a == NULL);
+    CHECK_EQ(vm.live, 0);
+}
+
+/* CONV c=2: to byte, the low 8 bits of an int or int64 in any
+ * representation; always an immediate. */
+TEST(conv_to_byte) {
+    static uint32_t w[I64_WORDS]; Image img; Vm vm; Actor *a;
+    term r;
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 0, 300);
+    r = run_conv(w, &img, &vm, &a, 0, 2);
+    CHECK(a && r == term_from_int(44));
+    actor_free(&vm, a);
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 0, -6);
+    r = run_conv(w, &img, &vm, &a, 0, 2);
+    CHECK(a && r == term_from_int(250));
+    actor_free(&vm, a);
+    /* a K_INT box */
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 0, 0);
+    w[20] = OP_MAKE(OP_LOADI32, 0, 0, 0); w[21] = (uint32_t)INT32_MIN + 0x1FFu;
+    r = run_conv(w, &img, &vm, &a, 0, 2);
+    CHECK(a && r == term_from_int(0xFF));
+    actor_free(&vm, a);
+    /* a K_INT64 box */
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, (1LL << 40) + 0x1234, 0);
+    r = run_conv(w, &img, &vm, &a, 1, 2);
+    CHECK(a && r == term_from_int(0x34));
+    actor_free(&vm, a);
+    /* not an int; an unknown c */
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 0, 0);
+    w[21] = T_TRUE;
+    r = run_conv(w, &img, &vm, &a, 0, 2);
+    CHECK(!a && strstr(err_buf, "crashed: badcode") != NULL);
+    va_reset();
+    build_int64_op(w, OP_CONV, 0, 0, 5);
+    r = run_conv(w, &img, &vm, &a, 0, 3);
+    CHECK(!a && strstr(err_buf, "crashed: badcode") != NULL);
+    CHECK_EQ(vm.live, 0);
+}

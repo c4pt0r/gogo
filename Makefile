@@ -2,18 +2,18 @@ CC      ?= cc
 CFLAGS  = -std=c99 -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS)
 BUILD   = build
 
-TEST_SRCS = vm/test/test_main.c vm/test/test_term.c vm/test/test_alloc.c vm/test/test_image.c vm/test/test_heap.c vm/test/test_msg.c vm/test/test_interp.c vm/test/test_signals.c vm/test/test_timer.c vm/test/test_call.c vm/test/test_names.c vm/test/test_out.c vm/test/test_evq.c vm/test/test_port.c
+TEST_SRCS = vm/test/test_main.c vm/test/test_term.c vm/test/test_alloc.c vm/test/test_image.c vm/test/test_heap.c vm/test/test_msg.c vm/test/test_interp.c vm/test/test_signals.c vm/test/test_timer.c vm/test/test_call.c vm/test/test_names.c vm/test/test_out.c vm/test/test_evq.c vm/test/test_port.c vm/test/test_strs.c vm/test/test_slices.c vm/test/test_bytes.c
 # VM core + unix platform, without the unix main (shared with the C tests).
 VM_SRCS   = $(wildcard vm/*.c) platform/unix/platform_unix.c platform/unix/gpio_unix.c
 VM_SRCS  := $(filter-out vm/check32.c,$(VM_SRCS))
 VM_CORE_SRCS = $(filter-out vm/check32.c,$(wildcard vm/*.c))
 MAIN_SRCS = platform/unix/main.c
 
-.PHONY: all vm test test-c test-c-mcu test-console test-go check32 console-ppm clean
+.PHONY: vmsize all vm test test-c test-c-mcu test-console test-go check32 console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-console check32 test-go
+test: test-c test-c-mcu test-console check32 test-go vmsize
 
 vm: $(BUILD)/gogovm
 
@@ -32,7 +32,7 @@ test-c-mcu: $(BUILD)/test_c_mcu
 
 $(BUILD)/test_c_mcu: $(TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/test/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Ivm/test -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Ivm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
 
 # Console text grid + font lookup (platform/common), host build.
 CONSOLE_SRCS = platform/common/console.c platform/common/font.c
@@ -62,7 +62,7 @@ test-go: vm
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/test/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Ivm -Ivm/test -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) -Ivm -Ivm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
 
 # Compile-check the core headers for a 32-bit target (no linking).
 check32:
@@ -75,3 +75,7 @@ check32:
 
 clean:
 	rm -rf $(BUILD)
+
+# VM core size on the ESP32-S3 (-Os); fails above 64 KB, skips without the toolchain.
+vmsize:
+	tools/vmsize.sh

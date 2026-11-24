@@ -14,7 +14,7 @@ import (
 // not handled explicitly is reported as "<kind> not supported". Errors are
 // sorted by position.
 func Check(p *Program) (errs []error) {
-	c := &checker{p: p, seen: map[string]bool{}}
+	c := &checker{p: p, seen: map[string]bool{}, okNil: map[*ast.Ident]bool{}}
 	defer func() {
 		if r := recover(); r != nil {
 			errs = append(c.errList(), fmt.Errorf("gogo: internal checker error: %v", r))
@@ -51,6 +51,7 @@ type checker struct {
 	errs    []posErr
 	results *types.Tuple // results of the function being checked
 	seen    map[string]bool
+	okNil   map[*ast.Ident]bool // nil idents that stand for a nil slice
 }
 
 func (c *checker) fail(pos token.Pos, format string, args ...any) {
@@ -100,14 +101,18 @@ func (c *checker) typeProblem(t types.Type) string {
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		switch t.Kind() {
-		case types.Int, types.Int64, types.Bool, types.String, types.UntypedInt, types.UntypedBool, types.UntypedString:
+		case types.Int, types.Int64, types.Uint8, types.Bool, types.String, types.UntypedInt, types.UntypedBool, types.UntypedString, types.UntypedRune:
+			// Uint8 is byte; rune (below) and 'x' literals behave as int.
 			return ""
+		case types.Int32:
+			if t.Name() == "rune" { // the alias, not int32 itself
+				return ""
+			}
+			return t.Name()
 		case types.Float32, types.Float64, types.UntypedFloat:
 			return "float"
 		case types.Complex64, types.Complex128, types.UntypedComplex:
 			return "complex"
-		case types.UntypedRune:
-			return "rune"
 		case types.UntypedNil:
 			return "nil"
 		}
@@ -124,7 +129,10 @@ func (c *checker) typeProblem(t types.Type) string {
 	case *types.Pointer:
 		return "pointer"
 	case *types.Slice:
-		return "slice"
+		if msg := c.typeProblem(t.Elem()); msg != "" {
+			return "slice of " + msg
+		}
+		return ""
 	case *types.Array:
 		return "array"
 	case *types.Map:
@@ -185,19 +193,7 @@ func (c *checker) decl(d ast.Decl) {
 			return
 		}
 		c.fieldList(d.Type.Params)
-		if d.Type.Results != nil {
-			c.fieldList(d.Type.Results)
-			n := 0
-			for _, f := range d.Type.Results.List {
-				n += max(1, len(f.Names))
-				if len(f.Names) > 0 {
-					c.unsupported(f, "named results")
-				}
-			}
-			if n > 1 {
-				c.unsupported(d.Type.Results, "multiple results")
-			}
-		}
+		c.fieldList(d.Type.Results) // any number of results, named or not
 		if d.Body == nil {
 			c.unsupported(d, "function without body")
 			return
@@ -283,18 +279,22 @@ func basicKind(t types.Type) types.BasicKind {
 }
 
 // isIntConv reports whether conversion call is one the subset allows:
-// int64(x) or int(x) where x is an int, an int64 or an untyped constant.
+// int(x), int64(x) or byte(x) where x is an int, an int64, a byte or an
+// untyped constant.
 func (c *checker) isIntConv(call *ast.CallExpr) bool {
 	to := basicKind(c.p.Info.TypeOf(call.Fun))
-	if (to != types.Int && to != types.Int64) || len(call.Args) != 1 {
+	if (to != types.Int && to != types.Int64 && to != types.Uint8) || len(call.Args) != 1 {
 		return false
 	}
 	switch basicKind(c.p.Info.TypeOf(call.Args[0])) {
-	case types.Int, types.Int64, types.UntypedInt:
+	case types.Int, types.Int64, types.Uint8, types.UntypedInt, types.Int32, types.UntypedRune:
 		return true
 	}
 	return false
 }
+
+// isByte reports whether t is byte (uint8), unnamed.
+func isByte(t types.Type) bool { return basicKind(t) == types.Uint8 }
 
 // isAny reports whether t is the empty interface.
 func isAny(t types.Type) bool {
@@ -310,14 +310,75 @@ func isAny(t types.Type) bool {
 // type cannot go into an interface: at run time it is indistinguishable
 // from its underlying type. Nor can a func value.
 func (c *checker) convert(target types.Type, e ast.Expr) {
+	if isSlice(target) {
+		c.nilSlice(e)
+	}
 	if !isAny(target) {
 		return
 	}
 	c.noFuncInAny(e)
-	if n, ok := types.Unalias(c.p.Info.TypeOf(e)).(*types.Named); ok {
+	c.convertType(target, c.p.Info.TypeOf(e), e.Pos())
+}
+
+// convertType checks the implicit conversion of a value of type src (one
+// result of a multi-result call, or e in convert) to type target. A byte
+// cannot go into an interface either: at run time it is a small int.
+func (c *checker) convertType(target, src types.Type, pos token.Pos) {
+	if !isAny(target) {
+		return
+	}
+	if isFunc(src) {
+		c.fail(pos, "func value in interface not supported")
+	}
+	if isByte(src) {
+		c.fail(pos, "byte in interface not supported")
+	}
+	if basicKind(src) == types.Int32 || basicKind(src) == types.UntypedRune {
+		c.fail(pos, "rune in interface not supported")
+	}
+	if n, ok := types.Unalias(src).(*types.Named); ok {
 		if _, basic := n.Underlying().(*types.Basic); basic {
-			c.fail(e.Pos(), "named basic type in interface not supported")
+			c.fail(pos, "named basic type in interface not supported")
 		}
+	}
+}
+
+// multiCall returns e as a call of a compiled (main or library) function
+// with two or more results, else nil. Such a call may stand where its
+// results are taken apart: `a, b := f()`, `return f()`, `g(f())` or a
+// call statement.
+func (c *checker) multiCall(e ast.Expr) *ast.CallExpr {
+	call, ok := ast.Unparen(e).(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+	if tup, ok := c.p.Info.TypeOf(call).(*types.Tuple); !ok || tup.Len() < 2 {
+		return nil
+	}
+	var id *ast.Ident
+	switch fun := ast.Unparen(call.Fun).(type) {
+	case *ast.Ident:
+		id = fun
+	case *ast.SelectorExpr:
+		if c.p.Info.Selections[fun] != nil {
+			return nil
+		}
+		id = fun.Sel
+	default:
+		return nil
+	}
+	if fn, ok := c.p.Info.Uses[id].(*types.Func); !ok || !c.p.compiled(fn.Pkg()) {
+		return nil
+	}
+	return call
+}
+
+// multiConvert checks the conversion of each result of multi-result call
+// to the matching type of targets (nil entries: no conversion).
+func (c *checker) multiConvert(call *ast.CallExpr, targets []types.Type) {
+	tup := c.p.Info.TypeOf(call).(*types.Tuple)
+	for i := 0; i < tup.Len() && i < len(targets); i++ {
+		c.convertType(targets[i], tup.At(i).Type(), call.Pos())
 	}
 }
 
@@ -339,8 +400,14 @@ func (c *checker) typeExpr(e ast.Expr) {
 		c.unsupported(e, msg)
 		return
 	}
-	switch e.(type) {
+	switch e := e.(type) {
 	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType: // FuncType: func(), checked above
+	case *ast.ArrayType:
+		if e.Len != nil {
+			c.unsupported(e, "array")
+			return
+		}
+		c.typeExpr(e.Elt) // []T
 	default:
 		c.unsupported(e, kindName(e))
 	}
@@ -349,12 +416,48 @@ func (c *checker) typeExpr(e ast.Expr) {
 func (c *checker) valueSpec(s *ast.ValueSpec) {
 	if s.Type != nil {
 		c.typeExpr(s.Type)
+		if len(s.Values) == 0 && isBuffer(c.p.Info.TypeOf(s.Type)) {
+			c.zeroBuffer(s)
+		}
 	}
 	for _, v := range s.Values {
 		if s.Type != nil {
 			c.convert(c.p.Info.TypeOf(s.Type), v)
 		}
 		c.expr(v)
+	}
+}
+
+// zeroBuffer reports a zero bytes.Buffer the compiler can see (spec M4
+// §9.1): `var b bytes.Buffer` without a value, `bytes.Buffer{}`, or a
+// struct literal leaving a bytes.Buffer field out. Its methods would fail
+// at run time (badcode); zero Buffers the checker cannot see (a zero
+// struct variable, a named result) still do.
+func (c *checker) zeroBuffer(n ast.Node) {
+	c.fail(n.Pos(), "zero value of bytes.Buffer not supported: use bytes.NewBuffer")
+}
+
+// bufferFieldsSet rejects a struct literal that leaves a bytes.Buffer
+// field zero (positional literals list every field).
+func (c *checker) bufferFieldsSet(e *ast.CompositeLit, st *types.Struct) {
+	if len(e.Elts) > 0 {
+		if _, keyed := e.Elts[0].(*ast.KeyValueExpr); !keyed {
+			return
+		}
+	}
+	set := map[string]bool{}
+	for _, el := range e.Elts {
+		if kv, ok := el.(*ast.KeyValueExpr); ok {
+			if id, ok := kv.Key.(*ast.Ident); ok {
+				set[id.Name] = true
+			}
+		}
+	}
+	for i := 0; i < st.NumFields(); i++ {
+		if f := st.Field(i); isBuffer(f.Type()) && !set[f.Name()] {
+			c.zeroBuffer(e)
+			return
+		}
 	}
 }
 
@@ -375,7 +478,7 @@ func (c *checker) stmt(s ast.Stmt) {
 			c.unsupported(s, "expression statement")
 			return
 		}
-		c.call(call, false)
+		c.call(call, c.multiCall(call) != nil) // results discarded
 	case *ast.AssignStmt:
 		c.assign(s)
 	case *ast.IncDecStmt:
@@ -388,13 +491,20 @@ func (c *checker) stmt(s ast.Stmt) {
 		}
 		c.decl(gd)
 	case *ast.ReturnStmt:
-		if len(s.Results) > 1 {
-			c.unsupported(s, "multiple results")
+		if c.results != nil && c.results.Len() > 1 && len(s.Results) == 1 {
+			// return g() of a multi-result g
+			call := c.multiCall(s.Results[0])
+			if call == nil {
+				c.unsupported(s.Results[0], "multiple values")
+				return
+			}
+			c.multiConvert(call, tupleTypes(c.results))
+			c.call(call, true)
 			return
 		}
-		for _, r := range s.Results {
-			if c.results != nil && c.results.Len() == 1 {
-				c.convert(c.results.At(0).Type(), r)
+		for i, r := range s.Results {
+			if c.results != nil && i < c.results.Len() {
+				c.convert(c.results.At(i).Type(), r)
 			}
 			c.expr(r)
 		}
@@ -424,6 +534,8 @@ func (c *checker) stmt(s ast.Stmt) {
 		}
 	case *ast.TypeSwitchStmt:
 		c.typeSwitch(s)
+	case *ast.RangeStmt:
+		c.rangeStmt(s)
 	default:
 		c.unsupported(s, kindName(s))
 	}
@@ -497,7 +609,14 @@ func (c *checker) lhs(e ast.Expr) {
 		c.lhs(e.X)
 	case *ast.SelectorExpr:
 		c.unsupported(e, "field assignment")
-	case *ast.IndexExpr, *ast.IndexListExpr:
+	case *ast.IndexExpr:
+		if !isSlice(c.p.Info.TypeOf(e.X)) {
+			c.unsupported(e, "index assignment to "+types.TypeString(c.p.Info.TypeOf(e.X), nil))
+			return
+		}
+		c.expr(e.X)
+		c.indexArg(e.Index)
+	case *ast.IndexListExpr:
 		c.unsupported(e, "index assignment")
 	case *ast.StarExpr:
 		c.unsupported(e, "pointer assignment")
@@ -519,6 +638,18 @@ func (c *checker) assign(s *ast.AssignStmt) {
 		}
 		c.call(call, true)
 		return
+	}
+	if len(s.Lhs) > 1 && len(s.Rhs) == 1 && (s.Tok == token.ASSIGN || s.Tok == token.DEFINE) {
+		if call := c.multiCall(s.Rhs[0]); call != nil { // a, b := f()
+			targets := make([]types.Type, len(s.Lhs))
+			for i, l := range s.Lhs {
+				c.lhs(l)
+				targets[i] = c.p.Info.TypeOf(l)
+			}
+			c.multiConvert(call, targets)
+			c.call(call, true)
+			return
+		}
 	}
 	if len(s.Lhs) != len(s.Rhs) {
 		c.unsupported(s, "multi-value assignment")
@@ -574,7 +705,7 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 		cc := cl.(*ast.CaseClause)
 		for _, t := range cc.List {
 			if !c.caseType(t) {
-				c.unsupported(t, "type switch case other than a struct, int, int64, bool, string, actor.PID or actor.Ref")
+				c.unsupported(t, "type switch case other than a struct, int, int64, bool, string, actor.PID, actor.Ref or bytes.Bytes")
 			}
 		}
 		for _, b := range cc.Body {
@@ -584,7 +715,8 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 }
 
 // caseType reports whether t is an allowed type switch case: a struct type,
-// int, int64, bool, string, actor.PID or actor.Ref.
+// int, int64, bool, string, actor.PID, actor.Ref or bytes.Bytes (not
+// bytes.Buffer, which has no type id).
 func (c *checker) caseType(t ast.Expr) bool {
 	tv, ok := c.p.Info.Types[t]
 	if !ok || !tv.IsType() {
@@ -594,8 +726,11 @@ func (c *checker) caseType(t ast.Expr) bool {
 	case *types.Basic:
 		return isBasic(ty)
 	case *types.Named:
-		if isPID(ty) || isRef(ty) {
+		if isPID(ty) || isRef(ty) || isBytes(ty) {
 			return true
+		}
+		if isBuffer(ty) {
+			return false
 		}
 		_, isStruct := ty.Underlying().(*types.Struct)
 		return isStruct && c.typeProblem(ty) == ""
@@ -620,20 +755,58 @@ func stubName(fn *types.Func) string {
 	if fn == nil || fn.Pkg() == nil {
 		return ""
 	}
+	if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
+		return "" // a method: see bytesMethod
+	}
 	switch fn.Pkg().Path() {
 	case ActorPath:
 		return fn.Name()
 	case PortPath:
 		return "port." + fn.Name()
+	case BytesPath:
+		return "bytes." + fn.Name()
 	}
 	return ""
 }
 
-// call checks a call; allowTwo admits the two results of a two-result
-// builtin (the caller has checked the assignment around it).
+// bytesMethod names the gogo/bytes method a selector calls, as
+// "Buffer.WriteString" or "Bytes.Len"; "" for anything else. These are the
+// only method calls of the subset (spec M4 §5.4): the compiler turns each
+// into a builtin.
+func bytesMethod(info *types.Info, sel *ast.SelectorExpr) string {
+	s := info.Selections[sel]
+	if s == nil || s.Kind() != types.MethodVal {
+		return ""
+	}
+	fn, ok := s.Obj().(*types.Func)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != BytesPath {
+		return ""
+	}
+	recv := s.Recv()
+	switch {
+	case isBytes(recv):
+		return "Bytes." + fn.Name()
+	case isBuffer(recv):
+		return "Buffer." + fn.Name()
+	}
+	return ""
+}
+
+// tupleTypes lists the types of t's members.
+func tupleTypes(t *types.Tuple) []types.Type {
+	out := make([]types.Type, t.Len())
+	for i := range out {
+		out[i] = t.At(i).Type()
+	}
+	return out
+}
+
+// call checks a call; allowTwo admits several results: those of a
+// two-result builtin or a multi-result function (multiCall) whose caller
+// has checked the context around it.
 func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 	if tv, ok := c.p.Info.Types[call.Fun]; ok && tv.IsType() {
-		if !c.isIntConv(call) {
+		if !c.isIntConv(call) && !c.isBytesConv(call) {
 			c.unsupported(call, "conversion")
 			return
 		}
@@ -646,7 +819,7 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 			return
 		}
 	}
-	if call.Ellipsis.IsValid() {
+	if call.Ellipsis.IsValid() && !c.isBuiltin(call, "append") {
 		c.unsupported(call, "variadic call")
 		return
 	}
@@ -654,12 +827,29 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 	case *ast.Ident:
 		switch obj := c.p.Info.Uses[fun].(type) {
 		case *types.Builtin:
-			if obj.Name() != "println" {
+			switch obj.Name() {
+			case "len", "cap", "append", "make", "copy":
+				c.seqBuiltin(call, obj.Name())
+				return
+			case "println":
+			default:
 				c.unsupported(call, "builtin "+obj.Name())
 				return
 			}
 			for _, a := range call.Args {
 				c.noFuncInAny(a)
+				if c.multiCall(a) != nil {
+					c.unsupported(a, "multiple values") // println(f())
+					return
+				}
+				if isSlice(c.p.Info.TypeOf(a)) {
+					c.unsupported(a, "println of a slice")
+					return
+				}
+				if t := c.p.Info.TypeOf(a); isBytes(t) || isBuffer(t) {
+					c.unsupported(a, "println of "+types.TypeString(t, pkgName)+" (use String())")
+					return
+				}
 			}
 		case *types.Func:
 			if !c.p.compiled(obj.Pkg()) {
@@ -671,6 +861,11 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 			return
 		}
 	case *ast.SelectorExpr:
+		if bytesMethod(c.p.Info, fun) != "" { // b.WriteString(s), x.Len() ...
+			c.expr(fun.X)
+			c.args(call, 0)
+			return
+		}
 		if c.actorFunc(call) == "" && !c.libFunc(fun) {
 			if sel := c.p.Info.Selections[fun]; sel != nil && sel.Kind() == types.FieldVal {
 				c.fail(call.Pos(), "calling a func value not supported")
@@ -697,6 +892,13 @@ func (c *checker) libFunc(sel *ast.SelectorExpr) bool {
 // first on, including their conversion to the parameter types.
 func (c *checker) args(call *ast.CallExpr, first int) {
 	sig, _ := c.p.Info.TypeOf(call.Fun).(*types.Signature)
+	if first == 0 && len(call.Args) == 1 && sig != nil && !sig.Variadic() {
+		if inner := c.multiCall(call.Args[0]); inner != nil { // f(g())
+			c.multiConvert(inner, tupleTypes(sig.Params()))
+			c.call(inner, true)
+			return
+		}
+	}
 	for i := first; i < len(call.Args); i++ {
 		a := call.Args[i]
 		if sig != nil && !sig.Variadic() && i < sig.Params().Len() {
@@ -730,7 +932,9 @@ func (c *checker) expr(e ast.Expr) {
 			}
 		case *types.Const, nil:
 		case *types.Nil:
-			c.unsupported(e, "nil")
+			if !c.okNil[e] {
+				c.unsupported(e, "nil")
+			}
 		case *types.Func: // a top-level function as a func() value
 			if msg := c.typeProblem(obj.Type()); msg != "" {
 				c.unsupported(e, msg)
@@ -740,7 +944,7 @@ func (c *checker) expr(e ast.Expr) {
 		}
 	case *ast.BasicLit:
 		switch e.Kind {
-		case token.INT, token.STRING:
+		case token.INT, token.STRING, token.CHAR:
 		case token.FLOAT:
 			c.unsupported(e, "float literal")
 		default:
@@ -778,23 +982,49 @@ func (c *checker) expr(e ast.Expr) {
 		c.expr(e.X)
 	case *ast.BinaryExpr:
 		c.binary(e)
+	case *ast.IndexExpr:
+		c.indexExpr(e)
+	case *ast.SliceExpr:
+		c.sliceExpr(e)
 	default:
 		c.unsupported(e, kindName(e))
 	}
 }
 
 func (c *checker) compositeLit(e *ast.CompositeLit) {
-	if e.Type == nil {
+	c.compositeLitIn(e, false)
+}
+
+// compositeLitIn checks a composite literal; elided: it is an element of a
+// slice literal, whose type it may omit (`[]Point{{1, 2}}`).
+func (c *checker) compositeLitIn(e *ast.CompositeLit, elided bool) {
+	if e.Type == nil && !elided {
 		c.unsupported(e, "composite literal without type")
 		return
 	}
-	c.typeExpr(e.Type)
+	if e.Type != nil {
+		c.typeExpr(e.Type)
+	} else if msg := c.typeProblem(c.p.Info.TypeOf(e)); msg != "" {
+		c.unsupported(e, msg)
+		return
+	}
 	t := c.p.Info.TypeOf(e)
-	if isPID(t) || isRef(t) {
+	if sl, ok := underlying(t).(*types.Slice); ok {
+		c.sliceLit(e, sl)
+		return
+	}
+	if isBuffer(t) {
+		c.zeroBuffer(e)
+		return
+	}
+	if isPID(t) || isRef(t) || isBytes(t) {
 		c.unsupported(e, "composite literal of "+types.TypeString(t, func(p *types.Package) string { return p.Name() }))
 		return
 	}
 	st, _ := underlying(t).(*types.Struct)
+	if st != nil {
+		c.bufferFieldsSet(e, st)
+	}
 	for i, el := range e.Elts {
 		val := el
 		var field types.Type
@@ -829,6 +1059,9 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 		xt := c.p.Info.TypeOf(e.X)
 		switch e.Op {
 		case token.EQL, token.NEQ:
+			if c.nilCompare(e) {
+				return
+			}
 			// Both sides: Go converts a non-interface operand to the other
 			// side's interface type, which is not in the subset.
 			for _, t := range []types.Type{xt, c.p.Info.TypeOf(e.Y)} {
@@ -839,6 +1072,9 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 			}
 		case token.LAND, token.LOR:
 		default:
+			if isString(xt) && (e.Op == token.ADD || e.Op == token.LSS || e.Op == token.LEQ || e.Op == token.GTR || e.Op == token.GEQ) {
+				break // concatenation and ordering of strings
+			}
 			if b, ok := underlying(xt).(*types.Basic); !ok || b.Info()&types.IsInteger == 0 {
 				c.unsupported(e, "operator "+e.Op.String()+" on "+types.TypeString(xt, nil))
 				return
@@ -849,14 +1085,14 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 	c.expr(e.Y)
 }
 
-// comparable reports whether == is allowed on t: int, int64, bool (or a named
+// comparable reports whether == is allowed on t: int, int64, bool, string (or a named
 // type of them), actor.PID or actor.Ref.
 func (c *checker) comparable(t types.Type) bool {
 	if isPID(t) || isRef(t) {
 		return true
 	}
 	b, ok := underlying(t).(*types.Basic)
-	return ok && b.Info()&(types.IsInteger|types.IsBoolean) != 0
+	return ok && b.Info()&(types.IsInteger|types.IsBoolean|types.IsString) != 0
 }
 
 func (c *checker) errList() []error {
@@ -865,4 +1101,215 @@ func (c *checker) errList() []error {
 		out[i] = e.err
 	}
 	return out
+}
+
+// isString reports whether t's underlying type is string (or untyped string).
+func isString(t types.Type) bool {
+	b, ok := underlying(t).(*types.Basic)
+	return ok && b.Info()&types.IsString != 0
+}
+
+// indexArg checks an index or slice bound: an int, a byte or an untyped
+// integer constant (an int64 may not fit the VM's small-int index).
+func (c *checker) indexArg(e ast.Expr) {
+	switch basicKind(c.p.Info.TypeOf(e)) {
+	case types.Int, types.Uint8, types.UntypedInt, types.Int32, types.UntypedRune:
+		c.expr(e)
+	default:
+		c.unsupported(e, "index of type "+types.TypeString(c.p.Info.TypeOf(e), nil))
+	}
+}
+
+// indexExpr checks s[i] on a string (a byte) or a slice.
+func (c *checker) indexExpr(e *ast.IndexExpr) {
+	if xt := c.p.Info.TypeOf(e.X); !isString(xt) && !isSlice(xt) {
+		c.unsupported(e, "index of "+types.TypeString(xt, nil))
+		return
+	}
+	c.expr(e.X)
+	c.indexArg(e.Index)
+}
+
+// sliceExpr checks s[a:b], s[a:] and s[:b] on a string or a slice.
+func (c *checker) sliceExpr(e *ast.SliceExpr) {
+	if xt := c.p.Info.TypeOf(e.X); !isString(xt) && !isSlice(xt) {
+		c.unsupported(e, "slice of "+types.TypeString(xt, nil))
+		return
+	}
+	if e.Slice3 {
+		c.unsupported(e, "3-index slice")
+		return
+	}
+	c.expr(e.X)
+	for _, b := range []ast.Expr{e.Low, e.High} {
+		if b != nil {
+			c.indexArg(b)
+		}
+	}
+}
+
+// rangeStmt checks `for i, c := range s` (also with one variable, blanks, or
+// none) over a string or a slice. A string ranges over bytes, not runes: i
+// is the byte index and c the byte value (typed rune, an int32, as in Go;
+// gogo's rune is an int).
+func (c *checker) rangeStmt(s *ast.RangeStmt) {
+	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) {
+		c.unsupported(s, "range over "+types.TypeString(c.p.Info.TypeOf(s.X), nil))
+		return
+	}
+	if s.Tok == token.ASSIGN {
+		c.unsupported(s, "range assigning to existing variables")
+		return
+	}
+	for _, v := range []ast.Expr{s.Key, s.Value} {
+		if v == nil {
+			continue
+		}
+		if _, ok := v.(*ast.Ident); !ok {
+			c.unsupported(v, kindName(v)+" as range variable")
+			return
+		}
+	}
+	c.expr(s.X)
+	c.block(s.Body)
+}
+
+// isSlice reports whether t's underlying type is a slice.
+func isSlice(t types.Type) bool {
+	_, ok := underlying(t).(*types.Slice)
+	return ok
+}
+
+// sliceElem is the element type of slice type t, or nil.
+func sliceElem(t types.Type) types.Type {
+	if sl, ok := underlying(t).(*types.Slice); ok {
+		return sl.Elem()
+	}
+	return nil
+}
+
+// isByteSlice reports whether t is a slice of bytes.
+func isByteSlice(t types.Type) bool { return isByte(sliceElem(t)) }
+
+// nilSlice admits e if it is nil going into a slice-typed destination: the
+// nil slice.
+func (c *checker) nilSlice(e ast.Expr) {
+	if id, ok := ast.Unparen(e).(*ast.Ident); ok {
+		if _, isNil := c.p.Info.Uses[id].(*types.Nil); isNil {
+			c.okNil[id] = true
+		}
+	}
+}
+
+// nilCompare checks s == nil, nil == s and the != forms for a slice s (the
+// only comparison of slices). False if e is not one.
+func (c *checker) nilCompare(e *ast.BinaryExpr) bool {
+	isNil := func(x ast.Expr) bool {
+		id, ok := ast.Unparen(x).(*ast.Ident)
+		if !ok {
+			return false
+		}
+		_, n := c.p.Info.Uses[id].(*types.Nil)
+		return n
+	}
+	x, y := e.X, e.Y
+	if isNil(x) {
+		x, y = y, x
+	}
+	if !isNil(y) || !isSlice(c.p.Info.TypeOf(x)) {
+		return false
+	}
+	c.nilSlice(y)
+	c.expr(x)
+	c.expr(y)
+	return true
+}
+
+// isBuiltin reports whether call calls the predeclared function name.
+func (c *checker) isBuiltin(call *ast.CallExpr, name string) bool {
+	id, ok := ast.Unparen(call.Fun).(*ast.Ident)
+	if !ok {
+		return false
+	}
+	b, ok := c.p.Info.Uses[id].(*types.Builtin)
+	return ok && b.Name() == name
+}
+
+// isBytesConv reports whether call is string(b) of a []byte b or []byte(s)
+// of a string s (both copy).
+func (c *checker) isBytesConv(call *ast.CallExpr) bool {
+	if len(call.Args) != 1 {
+		return false
+	}
+	to, from := c.p.Info.TypeOf(call.Fun), c.p.Info.TypeOf(call.Args[0])
+	if basicKind(to) == types.String {
+		return isByteSlice(from)
+	}
+	_, unnamed := types.Unalias(to).(*types.Slice)
+	return unnamed && isByteSlice(to) && isString(from)
+}
+
+// seqBuiltin checks len, cap, append, make and copy.
+func (c *checker) seqBuiltin(call *ast.CallExpr, name string) {
+	argType := func(i int) types.Type { return c.p.Info.TypeOf(call.Args[i]) }
+	switch name {
+	case "len":
+		if len(call.Args) != 1 || (!isString(argType(0)) && !isSlice(argType(0))) {
+			c.unsupported(call, "len of anything but a string or a slice")
+			return
+		}
+		c.expr(call.Args[0])
+	case "cap":
+		if len(call.Args) != 1 || !isSlice(argType(0)) {
+			c.unsupported(call, "cap of anything but a slice")
+			return
+		}
+		c.expr(call.Args[0])
+	case "append":
+		st := argType(0)
+		c.convert(st, call.Args[0])
+		c.expr(call.Args[0])
+		if call.Ellipsis.IsValid() {
+			if len(call.Args) != 2 {
+				c.unsupported(call, "append with ... and more than one value")
+				return
+			}
+			c.convert(st, call.Args[1])
+			c.expr(call.Args[1])
+			return
+		}
+		for _, a := range call.Args[1:] {
+			c.convert(sliceElem(st), a)
+			c.expr(a)
+		}
+	case "make":
+		if !isSlice(argType(0)) {
+			c.unsupported(call, "make of anything but a slice")
+			return
+		}
+		c.typeExpr(call.Args[0])
+		for _, a := range call.Args[1:] {
+			c.indexArg(a)
+		}
+	case "copy":
+		c.expr(call.Args[0])
+		c.expr(call.Args[1])
+	}
+}
+
+// sliceLit checks a slice literal []T{a, b, ...}: positional elements only;
+// element literals may omit their type.
+func (c *checker) sliceLit(e *ast.CompositeLit, sl *types.Slice) {
+	for _, el := range e.Elts {
+		if _, ok := el.(*ast.KeyValueExpr); ok {
+			c.unsupported(el, "keyed slice element")
+			continue
+		}
+		c.convert(sl.Elem(), el)
+		if lit, ok := el.(*ast.CompositeLit); ok && lit.Type == nil {
+			c.compositeLitIn(lit, true)
+			continue
+		}
+		c.expr(el)
+	}
 }

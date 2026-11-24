@@ -12,11 +12,24 @@
  *   K_INT      [hdr][int32]             raw, not scanned
  *   K_REF      [hdr][serial lo][hi]     raw, not scanned
  *   K_INT64    [hdr][lo][hi]            raw, not scanned
- * Every object has at least two words, so a forwarded object can hold
- * [hdr K_FORWARD][new offset]. */
+ *   K_SLICE    [hdr][off][len][cap][array term]
+ *   K_ARRAY    [hdr][n raw][elements: terms]
+ *   K_BYTEARR  [hdr][nbytes][bytes]     raw, not scanned
+ *   K_BYTES    [hdr][nbytes][bytes]     raw, not scanned
+ *   K_BUF      [hdr][len][array term]
+ * Word 1 is never a term (message copy borrows it, see msg.c), and a
+ * kind's term words always run to its last word (msg.c's walk resumes a
+ * parent with end = its size). Every object has at least two words, so a forwarded object can hold
+ * [hdr K_FORWARD][new offset].
+ *
+ * Off-heap Bytes handles (bytes.h) are immediates to the copy, but every
+ * one the stack, the roots or a live object holds is marked on the actor's
+ * holder list; after a successful collection the unmarked, unpinned ones
+ * are released (bytes_gc_sweep). */
 #include "heap.h"
 #include "alloc.h"
 #include "signals.h"
+#include "bytes.h"
 #include <string.h>
 
 #define MIN_BLOCK_WORDS 24u
@@ -24,13 +37,20 @@
 typedef struct Copier {
     uint32_t *from, *to;
     uint32_t free;            /* next free word in to-space */
+    HeldBytes **held;         /* the actor's holder list, NULL if empty */
 } Copier;
 
 void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end) {
     uint32_t kind = hdr_kind(obj[0]);
-    if (kind == K_STRUCT || kind == K_CLOSURE) {
+    if (kind == K_STRUCT || kind == K_CLOSURE || kind == K_ARRAY) {
         *first = 2;
         *end = hdr_words(obj[0]);
+    } else if (kind == K_SLICE) {
+        *first = 4;
+        *end = 5;
+    } else if (kind == K_BUF) {
+        *first = 2;
+        *end = 3;
     } else {
         *first = *end = 0;
     }
@@ -38,7 +58,10 @@ void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end) {
 
 /* Returns the to-space version of t, copying its object on first visit. */
 static term forward(Copier *c, term t) {
-    if (!term_is_ref(t)) return t;
+    if (!term_is_ref(t)) {
+        if (c->held && term_is_handle(t)) bytes_gc_mark(c->held, t);
+        return t;
+    }
     uint32_t off = term_ref_off(t);
     uint32_t h = c->from[off];
     if (hdr_kind(h) == K_FORWARD) return term_from_ref(c->from[off + 1]);
@@ -95,6 +118,7 @@ static bool copy_into(Actor *a, uint32_t new_words, term *roots, int n_roots) {
     c.from = a->mem;
     c.to = va_alloc((size_t)new_words * 4u);
     c.free = 0;
+    c.held = bytes_gc_begin(a);
     if (!c.to) return false;
 
     /* 1. Roots: the stack (forwarded in its new place) and the caller's. */
@@ -111,6 +135,7 @@ static bool copy_into(Actor *a, uint32_t new_words, term *roots, int n_roots) {
         scan += hdr_words(h);
     }
 
+    if (c.held) bytes_gc_sweep(a, c.held);   /* what nothing reached goes */
     va_free(a->mem, (size_t)old_words * 4u);
     a->mem = c.to;
     a->mem_words = (uint16_t)new_words;

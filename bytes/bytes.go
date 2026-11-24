@@ -1,0 +1,93 @@
+// Package bytes is gogo's byte data API: immutable, shareable Bytes and
+// the Buffer that builds them. These stubs exist only so programs
+// type-check with the standard Go toolchain; the gogo compiler replaces
+// every function and method call with VM instructions, so the bodies are
+// never executed.
+//
+// Bytes is an immutable byte sequence. Its zero value is empty. Small ones
+// (up to 64 bytes from Freeze; any size from FromString and FromSlice) live
+// on the actor's heap and are copied when sent. Larger results of Freeze
+// live off-heap and are shared: sending one to another actor passes a
+// reference, and every actor holding it is charged its full size (a queued
+// message charges its receiver's mailbox; over the receiver's limit, the
+// receiver exits with MailboxOverflow). It is released when no holder can
+// reach it any more (at the holder's next GC, or its exit). A local
+// variable that is no longer used still keeps its Bytes alive until the
+// end of its block (registers are cleared per block), so drop a big one
+// early by putting its use in an inner block or reassigning the variable.
+//
+// An actor holds at most 16 off-heap Bytes at once. It exits with
+// OutOfMemory when, even after a GC:
+//   - creating one (Freeze, Slice) would pass 16, its memory limit, or the
+//     VM-wide table of 64 (when the table is full, the other actors that
+//     hold Bytes are collected first; only Bytes still reachable count);
+//   - receiving a message would take it past 16 held Bytes.
+//
+// Bytes may go into `any` and be matched by `case bytes.Bytes` in a type
+// switch; it cannot be compared with ==, use Equal.
+//
+// Buffer is a reference type, like Go's *bytes.Buffer: b2 := b makes b2
+// the same buffer. Make one with NewBuffer; the zero Buffer is not usable:
+// the compiler rejects one it can see (var b bytes.Buffer without a value,
+// bytes.Buffer{}, a struct literal leaving a Buffer field out), and any
+// method on one it cannot see (a field of a zero struct variable, a named
+// result) crashes the actor with badcode. Freeze copies the
+// contents into a Bytes once and empties the buffer, which can be reused.
+//
+// Out-of-range indexes and bounds crash the actor with badcode.
+package bytes
+
+// Bytes is an immutable byte sequence (see the package comment).
+type Bytes struct{ _ [0]int32 }
+
+// Buffer is a growable byte buffer, a reference type (see the package
+// comment).
+type Buffer struct{ _ [0]int32 }
+
+// NewBuffer returns an empty buffer with room for capacity bytes.
+func NewBuffer(capacity int) Buffer { panic("gogo only") }
+
+// FromString returns a Bytes holding a copy of s.
+func FromString(s string) Bytes { panic("gogo only") }
+
+// FromSlice returns a Bytes holding a copy of p.
+func FromSlice(p []byte) Bytes { panic("gogo only") }
+
+// WriteString appends s.
+func (b Buffer) WriteString(s string) { panic("gogo only") }
+
+// Write appends p.
+func (b Buffer) Write(p []byte) { panic("gogo only") }
+
+// WriteByte appends c. (No error result, deliberately: go vet's stdmethods
+// check expects one, but gogo calls have no error type.)
+func (b Buffer) WriteByte(c byte) { panic("gogo only") }
+
+// WriteBytes appends x.
+func (b Buffer) WriteBytes(x Bytes) { panic("gogo only") }
+
+// Len returns the number of bytes written since the last Freeze.
+func (b Buffer) Len() int { panic("gogo only") }
+
+// Freeze returns the contents as a Bytes (copied once) and empties b.
+func (b Buffer) Freeze() Bytes { panic("gogo only") }
+
+// Len returns the number of bytes in x.
+func (x Bytes) Len() int { panic("gogo only") }
+
+// At returns x[i].
+func (x Bytes) At(i int) byte { panic("gogo only") }
+
+// Slice returns x[lo:hi]. A large part of an off-heap Bytes shares it
+// (and keeps all of it alive); anything else is a copy.
+func (x Bytes) Slice(lo, hi int) Bytes { panic("gogo only") }
+
+// String returns a copy of x as a string.
+func (x Bytes) String() string { panic("gogo only") }
+
+// Equal reports whether x and y hold the same bytes.
+func (x Bytes) Equal(y Bytes) bool { panic("gogo only") }
+
+// CopyTo copies x into p, as copy(p, x) would, and returns the number of
+// bytes copied.
+func (x Bytes) CopyTo(p []byte) int { panic("gogo only") }

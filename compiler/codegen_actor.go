@@ -47,6 +47,32 @@ var actorBuiltins = map[string]uint32{
 	"Now": BNow, "Call": BCall, "Reply": BReply, "Register": BRegister,
 	"Whereis": BWhereis, "Unregister": BUnregister,
 	"port.Open": BPortOpen, "port.Close": BPortClose,
+	"bytes.NewBuffer": BBufNew, "bytes.FromString": BBytesFrom, "bytes.FromSlice": BBytesFrom,
+}
+
+// bytesMethods maps each gogo/bytes method (by bytesMethod) to its
+// BUILTIN id; the receiver is its first argument.
+var bytesMethods = map[string]uint32{
+	"Buffer.WriteString": BBufWrite, "Buffer.Write": BBufWrite, "Buffer.WriteByte": BBufWrite,
+	"Buffer.WriteBytes": BBufWrite, "Buffer.Len": BLen, "Buffer.Freeze": BBufFreeze,
+	"Bytes.Len": BLen, "Bytes.At": BIndex, "Bytes.Slice": BSlice, "Bytes.String": BStrFrom,
+	"Bytes.Equal": BBytesEqual, "Bytes.CopyTo": BBytesCopyto,
+}
+
+// bytesMethodCall compiles x.M(args) of a gogo/bytes method (name as
+// bytesMethod gives it) into dst: BUILTIN with x and the arguments in
+// consecutive registers.
+func (f *fn) bytesMethodCall(call *ast.CallExpr, sel *ast.SelectorExpr, name string, dst uint8) {
+	id, ok := bytesMethods[name]
+	if !ok {
+		f.fail(call, "internal error: unexpected method %s", name)
+	}
+	mark := f.next
+	recv := f.alloc(sel.X)
+	f.exprInto(sel.X, recv)
+	_, n := f.args(call) // right above recv
+	f.asm.EmitExt(OpBuiltin, dst, recv, n+1, id)
+	f.next = mark
 }
 
 // actorCall compiles a call of the stub function called name (stubName)
@@ -200,6 +226,9 @@ func (f *fn) typeID(te ast.Expr) uint32 {
 	}
 	if isRef(t) {
 		return TyRef
+	}
+	if isBytes(t) {
+		return TyBytes
 	}
 	if b, ok := types.Unalias(t).(*types.Basic); ok {
 		switch b.Kind() {

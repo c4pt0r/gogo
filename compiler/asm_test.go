@@ -52,7 +52,7 @@ func TestOpcodesMatchC(t *testing.T) {
 	if len(cConsts) < 30 {
 		t.Fatalf("parsed only %d C constants", len(cConsts))
 	}
-	for _, n := range []string{"BPortOpen", "BPortClose", "TypeGpio", "TypeWrite", "TypeEdge", "OpClear"} {
+	for _, n := range []string{"BPortOpen", "BPortClose", "TypeGpio", "TypeWrite", "TypeEdge", "OpClear", "OpRetn", "BBytesCopyto", "TyBytes"} {
 		if _, ok := cConsts[n]; !ok {
 			t.Errorf("%s not parsed from vm/opcodes.h", n)
 		}
@@ -67,7 +67,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpClear)+1 || len(builtinNames) != int(BPortClose)+1 {
+	if len(opNames) != int(OpRetn)+1 || len(builtinNames) != int(BBytesCopyto)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -187,13 +187,31 @@ func TestTermsMatchC(t *testing.T) {
 		c[m[1]], _ = strconv.ParseUint(m[2], 16, 32)
 	}
 	want := map[string]uint32{"T_NIL": TermNil, "T_FALSE": TermFalse, "T_TRUE": TermTrue,
-		"T_EMPTYSTR": TermEmptyStr, "T_ZEROREF": TermZeroRef, "T_ZEROPID": TermZeroPid}
+		"T_EMPTYSTR": TermEmptyStr, "T_ZEROREF": TermZeroRef, "T_ZEROPID": TermZeroPid,
+		"T_NILSLICE": TermNilSlice, "T_EMPTYBYTES": TermEmptyBytes}
 	if len(c) != len(want) {
 		t.Errorf("vm/term.h defines %v, want the twins of %v", c, want)
 	}
 	for n, v := range want {
 		if g, ok := c[n]; !ok || uint32(g) != v {
 			t.Errorf("%s: C=%#x Go=%#x (present=%v)", n, g, v, ok)
+		}
+	}
+	// Object kinds.
+	kinds := map[string]uint64{}
+	for _, m := range regexp.MustCompile(`\b(K_\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
+		kinds[m[1]], _ = strconv.ParseUint(m[2], 10, 32)
+	}
+	wantK := map[string]uint32{"K_STRUCT": KStruct, "K_STRING": KString, "K_INT": KInt,
+		"K_CLOSURE": KClosure, "K_REF": KRef, "K_INT64": KInt64, "K_SLICE": KSlice,
+		"K_ARRAY": KArray, "K_BYTEARR": KBytearr, "K_BYTES": KBytes, "K_BUF": KBuf,
+		"K_FORWARD": KForward}
+	if len(kinds) != len(wantK) {
+		t.Errorf("vm/term.h defines kinds %v, want the twins of %v", kinds, wantK)
+	}
+	for n, v := range wantK {
+		if g, ok := kinds[n]; !ok || uint32(g) != v {
+			t.Errorf("%s: C=%d Go=%d (present=%v)", n, g, v, ok)
 		}
 	}
 	src, err = os.ReadFile("../vm/image.h")
@@ -204,8 +222,31 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 2 {
-		t.Errorf("imageVersion %d, want 2", imageVersion)
+	if imageVersion != 3 {
+		t.Errorf("imageVersion %d, want 3", imageVersion)
+	}
+}
+
+// TestConfigMatchC cross-checks the off-heap Bytes defaults with
+// vm/config.h.
+func TestConfigMatchC(t *testing.T) {
+	src, err := os.ReadFile("../vm/config.h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := map[string]int{}
+	for _, m := range regexp.MustCompile(`#define\s+(GOGO_BYTES_\w+)\s+(\d+)u`).FindAllStringSubmatch(string(src), -1) {
+		c[m[1]], _ = strconv.Atoi(m[2])
+	}
+	want := map[string]int{"GOGO_BYTES_HANDLES": BytesHandles, "GOGO_BYTES_PER_ACTOR": BytesPerActor,
+		"GOGO_BYTES_INLINE": BytesInline}
+	if len(c) != len(want) {
+		t.Errorf("vm/config.h defines %v, want the twins of %v", c, want)
+	}
+	for n, v := range want {
+		if g, ok := c[n]; !ok || g != v {
+			t.Errorf("%s: C=%d Go=%d (present=%v)", n, g, v, ok)
+		}
 	}
 }
 
@@ -280,7 +321,7 @@ func TestImageLayout(t *testing.T) {
 	}
 	w := words(raw)
 	// "main": 2 hdr words + 1 payload = 3; "P": 3.
-	want := []uint32{0x4F474F47, 2, 1, 1, 6, 1, 0, 0}
+	want := []uint32{0x4F474F47, 3, 1, 1, 6, 1, 0, 0}
 	for i, v := range want {
 		if w[i] != v {
 			t.Fatalf("header word %d = %#x, want %#x", i, w[i], v)

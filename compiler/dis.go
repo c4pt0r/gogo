@@ -63,6 +63,8 @@ func Disassemble(img []byte) (string, error) {
 			return "TyRef"
 		case TyInt64:
 			return "TyInt64"
+		case TyBytes:
+			return "TyBytes"
 		}
 		if int(id) < nt {
 			if s, err := str(types[id*2+1]); err == nil {
@@ -87,6 +89,10 @@ func Disassemble(img []byte) (string, error) {
 			return "zeroref"
 		case t == TermZeroPid:
 			return "zeropid"
+		case t == TermNilSlice:
+			return "nilslice"
+		case t == TermEmptyBytes:
+			return "emptybytes"
 		case t&0xF == 0xA:
 			if s, err := str(t >> 4); err == nil {
 				return fmt.Sprintf("%q", s)
@@ -146,7 +152,7 @@ func Disassemble(img []byte) (string, error) {
 				args = fmt.Sprintf("r%d", a)
 			case OpNewstruct:
 				args = fmt.Sprintf("r%d, r%d, %d, %s", a, b, c, typeName(ext))
-			case OpClear:
+			case OpClear, OpRetn:
 				args = fmt.Sprintf("r%d, %d", a, b)
 			case OpGetfield, OpConv:
 				args = fmt.Sprintf("r%d, r%d, %d", a, b, c)

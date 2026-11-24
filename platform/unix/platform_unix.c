@@ -53,16 +53,22 @@ static uint64_t mono_ms(void) {
 static uint64_t (*clock_hook)(void);
 void platform_unix_set_clock(uint64_t (*fn)(void)) { clock_hook = fn; }
 
+static uint64_t time_start;
+static int time_started;
+
 uint64_t platform_now_ms(void) {
     if (clock_hook) return clock_hook();
-    static uint64_t start;
-    static int started;
     uint64_t now = mono_ms();
-    if (!started) {
-        start = now;
-        started = 1;
+    if (!time_started) {
+        time_start = now;
+        time_started = 1;
     }
-    return now - start;
+    return now - time_start;
+}
+
+void platform_time_reset(void) {
+    time_start = mono_ms();
+    time_started = 1;
 }
 
 void platform_barrier(void) { __sync_synchronize(); }

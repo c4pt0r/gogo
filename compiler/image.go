@@ -9,9 +9,12 @@ const (
 	imageMagic = 0x4F474F47
 	// imageVersion moves in lockstep with IMAGE_VERSION in vm/image.h: any
 	// change to opcode numbers or semantics, builtin numbers, reserved
-	// types or the term encoding bumps it (v2: M3).
-	imageVersion = 2
+	// types or the term encoding bumps it (v2: M3; v3: M4).
+	imageVersion = 3
 )
+
+// ImageVersion is the image format version this compiler emits.
+const ImageVersion = imageVersion
 
 type imgFunc struct {
 	name           uint32 // const offset

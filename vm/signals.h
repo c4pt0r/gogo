@@ -110,11 +110,18 @@ void sig_demonitor(Vm *vm, Actor *a, uint64_t serial);
 void sig_set_trap(Actor *a, bool on);
 
 /* Words charged to a besides its heap block: its queued messages
- * (mbox_words) plus ActorExtra.charged_words (the pending SendAfter timers
- * it created, its monitors, its link sides). Heap block + charged words
+ * (mbox_words, including the off-heap Bytes they carry) plus
+ * ActorExtra.charged_words (the pending SendAfter timers it created, its
+ * monitors, its link sides) plus its held off-heap Bytes (held_bytes,
+ * rounded up to words; bytes.h). Heap block + charged words
  * must stay within actor_max_words; this is the single place limit checks
  * read. */
 uint32_t actor_charged_words(const Actor *a);
+
+/* Where a's extra keeps its off-heap Bytes holder list (bytes.h; the list
+ * is NULL while a holds none). With create, the extra is allocated if
+ * needed (NULL if it cannot be); without, NULL when a has no extra. */
+HeldBytes **actor_held(Actor *a, bool create);
 
 /* ActorExtra.charged_words alone (0 without an extra); for tests. */
 uint32_t actor_extra_charged(const Actor *a);

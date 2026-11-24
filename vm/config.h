@@ -35,4 +35,18 @@
 #define GOGO_ARENA_BYTES 0u
 #endif
 
+/* Off-heap bytes.Bytes (bytes.h): handle table entries for the whole VM
+ * (1..65535), the handles one actor may hold at once (at least 1), and the
+ * largest Buffer.Freeze result kept on the heap (larger ones go
+ * off-heap). */
+#ifndef GOGO_BYTES_HANDLES
+#define GOGO_BYTES_HANDLES 64u
+#endif
+#ifndef GOGO_BYTES_PER_ACTOR
+#define GOGO_BYTES_PER_ACTOR 16u
+#endif
+#ifndef GOGO_BYTES_INLINE
+#define GOGO_BYTES_INLINE 64u
+#endif
+
 #endif

@@ -1,0 +1,56 @@
+4 -1 0 0 -1
+-1 1 0 2 6
+2 -1 -1 0 2
+key value=x true
+novalue  false
+ lead true 0 4
+trail  true 5 0
+ abc true 0 3
+  false 0 0
+a b true
+true false false true true false
+true false false true true false true
+[hello world]
+[]
+[]
+[a b]
+[x] [x] [x]
+1
+hello, world 123 @[`{
+already lower true true
+true false true false true false
+3
+  [a]
+  [b]
+  [c]
+1
+  [a,b,c]
+1
+  []
+2
+  []
+  []
+5
+  []
+  [a]
+  []
+  [b]
+  []
+3
+  [a]
+  [b]
+  [c]
+2
+  []
+  [a]
+2
+  []
+  []
+1
+  [abc]
+3
+  [a]
+  [b]
+  [c]
+0
+4 true bin

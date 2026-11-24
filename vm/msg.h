@@ -19,6 +19,9 @@
  * (so they count the two words). Receive never returns such a block. */
 #define MSG_REPLY 1u
 #define MSG_REPLY_HDR 2u
+/* Msg.flags bit: the block carries off-heap Bytes handles and holds one
+ * reference per occurrence until msg_free (bytes.h). */
+#define MSG_HANDLES 2u
 
 struct Msg {
     Msg *next;
@@ -33,9 +36,13 @@ static inline size_t msg_alloc_bytes(uint16_t words) {
     return sizeof(Msg) + (size_t)words * 4u;
 }
 
-/* Words a queued message of `words` data words takes, as counted in
- * mbox_words (and in a SendAfter creator's timer charge). */
+/* Words the block of a message of `words` data words takes. */
 uint32_t msg_footprint_words(uint16_t words);
+
+/* Words a queued message is charged, as counted in mbox_words (and in a
+ * SendAfter creator's timer charge): its block plus the full length of each
+ * distinct off-heap Bytes root it carries (spec M4 §9.5b). */
+uint32_t msg_charge_words(const Msg *m);
 
 /* Copies t out of src's heap into a new, unqueued message; NULL if out of
  * memory or the copy exceeds 65535 words. Used by msg_send and by spawn
@@ -46,8 +53,9 @@ uint32_t msg_footprint_words(uint16_t words);
 Msg *msg_build(Actor *src, term t);
 
 /* Moves m's words into a's heap (relocating refs) and stores the message
- * term in *out. m is left untouched. May GC; false if a's heap cannot hold
- * it. */
+ * term in *out; a then holds the off-heap Bytes it carries (bytes_adopt).
+ * m is left untouched. May GC; false if a's heap cannot hold it or a
+ * cannot hold that many handles (GOGO_BYTES_PER_ACTOR, after a GC). */
 bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out);
 
 void msg_free(Msg *m);
@@ -55,7 +63,8 @@ void msg_free(Msg *m);
 /* 0 delivered, or dropped by the receiver's quota; 1 dropped (dead or
  * stale pid, or receiver marked for exit); -1 out of memory (sender).
  * Quota (spec M2 §5.1.1): if queuing the message would take the receiver's
- * block + charged words (mailbox, pending timers) past its limit, or its mailbox counter past 65535 words,
+ * block + charged words (mailbox, pending timers) past its limit (counting
+ * the holder list a first off-heap Bytes handle would make, bytes.h), or its mailbox counter past 65535 words,
  * the message is dropped and the receiver is marked to exit with
  * R_MAILBOX_OVERFLOW. Only the receiver's state counts; the sender cannot
  * tell. */

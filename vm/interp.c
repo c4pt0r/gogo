@@ -13,7 +13,7 @@
  *
  * Safety on malformed images: register indices are checked against the
  * current function's n_regs, the pc against the code area, LOADK operands
- * against the term kinds an image may contain, and RET checks that the
+ * against the term kinds an image may contain, and RET/RETN check that the
  * frame chain is consistent. Violations crash the actor with `badcode`.
  *
  * Every way out of an actor (return from the entry frame, EXIT, a runtime
@@ -46,6 +46,8 @@
 #include "platform.h"
 #include "evq.h"
 #include "port.h"
+#include "strs.h"
+#include "bytes.h"
 #include <string.h>
 
 #define REDUCTIONS     1000u
@@ -187,6 +189,26 @@ static bool arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
 
 /* ---- println ---- */
 
+static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth);
+
+/* A slice inside a printed struct: [e0 e1 ...] (println rejects a bare
+ * slice, as Go's prints an address). */
+static void out_slice(Out *o, const Vm *vm, const Actor *a, const uint32_t *h, int depth) {
+    uint32_t off = h[1], len = h[2];
+    const uint32_t *arr = obj_of(vm, a, h[4]);
+    if (depth >= PRINT_MAX_DEPTH) { out_str(o, "[...]"); return; }
+    out_str(o, "[");
+    if (arr && len && off <= arr[1] && len <= arr[1] - off) {
+        bool bytes = hdr_kind(arr[0]) == K_BYTEARR;
+        for (uint32_t i = 0; i < len; i++) {
+            if (i) out_str(o, " ");
+            if (bytes) out_int(o, ((const uint8_t *)(arr + 2))[off + i]);
+            else out_term(o, vm, a, arr[2 + off + i], depth + 1);
+        }
+    }
+    out_str(o, "]");
+}
+
 static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
     int32_t v;
     int64_t v64;
@@ -197,6 +219,13 @@ static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
     if (t == T_NIL) { out_str(o, "nil"); return; }
     if (t == T_EMPTYSTR) return;
     if (t == T_ZEROREF) { out_str(o, "<ref 0>"); return; }
+    if (t == T_NILSLICE) { out_str(o, "[]"); return; }
+    const uint8_t *bp;
+    uint32_t blen;
+    if (bytes_view(vm, a, t, &bp, &blen)) {     /* a Bytes prints as its text */
+        if (blen) out_bytes(o, (const char *)bp, blen);
+        return;
+    }
     if (term_is_pid(t)) {
         out_str(o, "<pid ");
         out_int(o, term_pid_slot(t));
@@ -215,8 +244,12 @@ static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
             out_term(o, vm, a, obj[i], depth + 1);
         }
         out_str(o, "}");
+    } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
+        out_slice(o, vm, a, obj, depth);
     } else if (kind == K_CLOSURE) {
         out_str(o, "<func>");
+    } else if (kind == K_BUF) {
+        out_str(o, "<buffer>");
     } else if (kind == K_REF && hdr_words(obj[0]) == 3u) {
         out_str(o, "<ref ");
         out_dec(o, obj[1], false);
@@ -245,7 +278,9 @@ static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t 
  * child's initial block is raised to the block size, so the spawn succeeds
  * (the child then has no room to grow). With `link`, the child is linked to
  * a before it is queued (SpawnLink); if that fails the child is freed
- * unrun. On success sets *pid and returns
+ * unrun. A child whose captured off-heap Bytes exceed its limit is spawned
+ * but marked to exit with OutOfMemory before it runs. On success sets *pid
+ * and returns
  * R_NORMAL; otherwise returns the crash reason for the caller.
  * Allocates only in the new actor, so the caller's heap does not move
  * (msg_build marks it while copying and restores it byte for byte). */
@@ -280,6 +315,12 @@ static uint32_t do_spawn(Vm *vm, Actor *a, term clo, uint16_t max_words, bool li
         actor_free(vm, n);             /* never ran: not an exit */
         return R_OUT_OF_MEMORY;
     }
+    /* Off-heap Bytes among the captures are charged to the child in full
+     * (spec M4 §9.5): if they take it past its limit, the child exits with
+     * OutOfMemory before running (a visible exit: links and monitors see
+     * it), as a holder over its limit does; the spawner is unaffected. */
+    if ((uint32_t)n->mem_words + actor_charged_words(n) > actor_max_words(n))
+        actor_mark_exit(vm, n, R_OUT_OF_MEMORY, T_EMPTYSTR);
     runq_push(vm, n);
     *pid = n->id;
     return R_NORMAL;
@@ -379,7 +420,8 @@ int interp_run(Vm *vm, Actor *a) {
             /* An image may hold small ints, specials and in-range const
              * refs; never heap refs (they would point into a random heap). */
             CHECK(term_is_int(ext) || ext == T_NIL || ext == T_TRUE || ext == T_FALSE ||
-                  ext == T_EMPTYSTR || ext == T_ZEROPID || ext == T_ZEROREF ||
+                  ext == T_EMPTYSTR || ext == T_ZEROPID || ext == T_ZEROREF || ext == T_NILSLICE ||
+                  ext == T_EMPTYBYTES ||
                   (term_is_const(ext) && obj_of(vm, a, ext) != NULL));
             R[ra] = ext;
             break;
@@ -471,13 +513,21 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_CONV: {
             /* c=0: int(rb) of an int64, truncating to the low 32 bits;
              * c=1: int64(rb) of an int, sign-extending. An immediate is
-             * the same term in both types (its value fits either way). */
+             * the same term in both types (its value fits either way).
+             * c=2: byte(rb) of an int or int64 (either representation),
+             * the low 8 bits: always an immediate. */
             REG(ra); REG(rb);
-            CHECK(rc <= 1u);
+            CHECK(rc <= 2u);
             int32_t x;
             int64_t x64;
             term t;
             bool ok;
+            if (rc == 2u) {
+                if (int_val(vm, a, R[rb], &x)) x64 = x;
+                else CHECK(int64_val(vm, a, R[rb], &x64));
+                R[ra] = term_from_int((int32_t)((uint64_t)x64 & 0xFFu));
+                break;
+            }
             if (rc == 0u) {
                 CHECK(int64_val(vm, a, R[rb], &x64));
                 if (term_is_int(R[rb])) { R[ra] = R[rb]; break; }
@@ -502,6 +552,7 @@ int interp_run(Vm *vm, Actor *a) {
             if (int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y)) eq = x == y;
             else if (int64_box(vm, a, R[rb]) || int64_box(vm, a, R[rc])) CRASH(R_BAD_CODE);
             else if (ref_serial(vm, a, R[rb], &sx)) eq = ref_serial(vm, a, R[rc], &sy) && sx == sy;
+            else if (strs_equal(vm, a, R[rb], R[rc], &eq)) {}   /* by content */
             else eq = R[rb] == R[rc];   /* a ref never equals a non-ref term */
             R[ra] = term_from_bool(op == OP_EQ ? eq : !eq);
             break;
@@ -560,9 +611,14 @@ int interp_run(Vm *vm, Actor *a) {
             break;
         }
 
-        case OP_RET: {
-            REG(ra);
-            term v = R[ra];
+        case OP_RET: case OP_RETN: {
+            /* RET returns ra into the CALL's destination register; RETN
+             * returns ra..ra+b-1 into dst..dst+b-1. The callee frame is
+             * popped first; its words are not touched until the copy, and
+             * they lie below the caller's frame, so the ranges are
+             * disjoint. */
+            uint32_t n = op == OP_RET ? 1u : rb;
+            REGS(ra, n);
             uint32_t fp = a->fp;
             CHECK(term_is_int(R[nregs]) && term_is_int(R[nregs + 1]));
             int32_t saved = term_to_int(R[nregs]);
@@ -582,12 +638,12 @@ int interp_run(Vm *vm, Actor *a) {
             uint32_t caller_fp = a->sp;
             CHECK(caller_fp + caller_regs + 2u <= a->mem_words);
             uint32_t dst = OP_A(code[ret]);
-            CHECK(dst < caller_regs);
+            CHECK(dst + n <= caller_regs);
             a->fp = (uint16_t)caller_fp;
             fn = caller;
             nregs = caller_regs;
             RELOAD();
-            R[dst] = v;
+            for (uint32_t i = 0; i < n; i++) R[dst + i] = a->mem[fp + ra + i];
             next = (uint32_t)ret + 2u;
             break;
         }
@@ -626,6 +682,7 @@ int interp_run(Vm *vm, Actor *a) {
             else if (t == T_EMPTYSTR) ty = TY_STRING;
             else if (term_is_pid(t)) ty = TY_PID;
             else if (t == T_ZEROREF) ty = TY_REF;
+            else if (t == T_EMPTYBYTES || bytes_valid(t)) ty = TY_BYTES;
             else {
                 const uint32_t *obj = obj_of(vm, a, t);
                 uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
@@ -633,6 +690,7 @@ int interp_run(Vm *vm, Actor *a) {
                 else if (kind == K_STRUCT) ty = obj[1];
                 else if (kind == K_REF) ty = TY_REF;
                 else if (kind == K_INT64) ty = TY_INT64;
+                else if (kind == K_BYTES) ty = TY_BYTES;
             }
             R[ra] = term_from_bool(ty == ext);
             break;
@@ -923,6 +981,15 @@ int interp_run(Vm *vm, Actor *a) {
                                            * (e.g. from a failed Open): nothing */
                 R[ra] = T_NIL;
                 break;
+            case B_STR_CONCAT: case B_LEN: case B_INDEX: case B_SETINDEX: case B_SLICE:
+            case B_MAKE_SLICE: case B_APPEND: case B_COPY: case B_CAP: case B_STR_FROM:
+            case B_BYTESLICE_FROM: case B_STR_CMP: case B_BUF_NEW: case B_BUF_WRITE:
+            case B_BUF_FREEZE: case B_BYTES_FROM: case B_BYTES_EQUAL: case B_BYTES_COPYTO: {
+                uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
+                RELOAD();
+                if (err != R_NORMAL) CRASH(err);
+                break;
+            }
             default:
                 /* Unknown builtin id. */
                 CRASH(R_BAD_CODE);
@@ -1006,7 +1073,7 @@ int vm_run(Vm *vm) {
     }
     a->pc = img->code + image_func_code_off(img, entry);
     runq_push(vm, a);
-    (void)platform_now_ms();         /* time 0 for Now() and timers */
+    platform_time_reset();           /* time 0 for Now() and timers */
     evq_reset();
 
     for (;;) {
@@ -1024,6 +1091,8 @@ int vm_run(Vm *vm) {
             bool have = timer_next(vm, &next);
             if (sched_next_deadline(vm, &pn) && (!have || pn < next)) { next = pn; have = true; }
             if (!have && !sched_any_live(vm)) break;
+            /* port_drain stops after GOGO_EVQ_CAP events: more are waiting. */
+            if (!evq_empty()) continue;
             /* Gap between sched_drain (top of pass) and platform_wait: an
              * event pushed here is not lost, because producers call
              * platform_notify after evq_push and platform_wait returns

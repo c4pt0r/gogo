@@ -1,0 +1,109 @@
+// httpparse: the M4 readability check. Parses an HTTP/1.x request (request
+// line, headers, optional body) from a string or a bytes.Bytes into a
+// struct, rejecting malformed input with ok=false. Written the way a small
+// network library would be, to see whether the M4 subset is pleasant for it.
+//
+//	gogo run examples/httpparse
+package main
+
+import (
+	"gogo/bytes"
+	"gogo/strconv"
+	"gogo/strings"
+)
+
+type Header struct {
+	Name  string
+	Value string
+}
+
+type Request struct {
+	Method  string
+	Path    string
+	Headers []Header
+	Body    bytes.Bytes
+}
+
+const crlf = "\r\n"
+
+// header returns the value of the first header called name (case-insensitive).
+func header(h []Header, name string) (string, bool) {
+	for _, x := range h {
+		if strings.EqualFold(x.Name, name) {
+			return x.Value, true
+		}
+	}
+	return "", false
+}
+
+// Parse splits raw into a Request. ok is false if the request line or a
+// header line is malformed, the head is not terminated by an empty line, or
+// Content-Length does not match the body.
+func Parse(raw bytes.Bytes) (req Request, ok bool) {
+	s := raw.String()
+	head, body, found := strings.Cut(s, crlf+crlf)
+	if !found {
+		return Request{}, false
+	}
+	line, rest, _ := strings.Cut(head, crlf)
+	method, tail, found := strings.Cut(line, " ")
+	if !found || method == "" {
+		return Request{}, false
+	}
+	path, version, found := strings.Cut(tail, " ")
+	if !found || path == "" || !strings.HasPrefix(path, "/") || !strings.HasPrefix(version, "HTTP/1.") {
+		return Request{}, false
+	}
+	var hs []Header
+	if rest != "" {
+		for _, l := range strings.Split(rest, crlf) {
+			name, value, found := strings.Cut(l, ":")
+			if !found || name == "" || strings.TrimSpace(name) != name {
+				return Request{}, false
+			}
+			hs = append(hs, Header{name, strings.TrimSpace(value)})
+		}
+	}
+	if cl, has := header(hs, "Content-Length"); has {
+		n, good := strconv.Atoi(cl)
+		if !good || n != len(body) {
+			return Request{}, false
+		}
+	}
+	return Request{method, path, hs, bytes.FromString(body)}, true
+}
+
+func show(raw bytes.Bytes) {
+	req, ok := Parse(raw)
+	if !ok {
+		println("malformed request,", raw.Len(), "bytes")
+		return
+	}
+	println(req.Method, req.Path)
+	for _, h := range req.Headers {
+		println("  " + h.Name + " = [" + h.Value + "]")
+	}
+	println("  body:", req.Body.Len(), "bytes", "["+req.Body.String()+"]")
+}
+
+const get = "GET /index.html HTTP/1.1\r\nHost: example.org\r\nUser-Agent:  gogo/0.4 \r\nAccept: */*\r\n\r\n"
+
+func main() {
+	show(bytes.FromString(get))
+
+	// Built with a Buffer, the way a socket reader would assemble it.
+	b := bytes.NewBuffer(128)
+	body := `{"temp":21}`
+	b.WriteString("POST /api/v1/sensor HTTP/1.1\r\n")
+	b.WriteString("content-length: " + strconv.Itoa(len(body)) + "\r\n")
+	b.WriteString("Content-Type: application/json\r\n\r\n")
+	b.WriteString(body)
+	show(b.Freeze())
+
+	show(bytes.FromString("GET /x HTTP/1.1\r\nHost: a\r\n"))                 // no blank line
+	show(bytes.FromString("GET\r\n\r\n"))                                    // bad request line
+	show(bytes.FromString("GET x HTTP/1.1\r\n\r\n"))                         // path without /
+	show(bytes.FromString("GET / HTTP/1.1\r\nBroken header\r\n\r\n"))        // no colon
+	show(bytes.FromString("PUT /a HTTP/1.1\r\nContent-Length: 5\r\n\r\nab")) // short body
+
+}

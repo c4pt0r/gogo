@@ -58,10 +58,12 @@ TEST(image_bad_magic) {
 
 TEST(image_bad_version) {
     uint32_t w[IMG_WORDS]; Image img;
-    CHECK_EQ(IMAGE_VERSION, 2u);
+    CHECK_EQ(IMAGE_VERSION, 3u);
     build(w); w[1] = 1;        /* M1/M2 images: opcode semantics changed in M3 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 3;
+    build(w); w[1] = 2;        /* M3 images: RETN, CONV c=2 and builtins added in M4 */
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    build(w); w[1] = 4;
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w);
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
@@ -174,6 +176,13 @@ TEST(const_walk_ok) {
 TEST(const_struct_with_heap_ref_rejected) {
     Image img;
     uint32_t e[] = { hdr_make(3, K_STRUCT), 0, term_from_ref(0) };
+    CHECK_EQ(build_consts(&img, e, 3), IMG_ERR_BOUNDS);
+}
+
+/* Off-heap handles only come from the VM: an image cannot forge one. */
+TEST(const_struct_with_handle_rejected) {
+    Image img;
+    uint32_t e[] = { hdr_make(3, K_STRUCT), 0, term_from_handle(0) };
     CHECK_EQ(build_consts(&img, e, 3), IMG_ERR_BOUNDS);
 }
 

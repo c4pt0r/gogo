@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 /* Port layer: the port table, PIDs, the driver interface (a fake driver
  * installed with port_set_drivers), event delivery, debounce, owner exit,
  * and the builtins that reach it. */
@@ -15,6 +16,8 @@
 #include "config.h"
 #include "term.h"
 #include <string.h>
+#include <pthread.h>
+#include "gpio_unix.h"
 
 extern void (*platform_unix_err_hook)(const char *, size_t);
 static void drop_err(const char *s, size_t n) { (void)s; (void)n; }
@@ -541,4 +544,59 @@ TEST(port_builtins) {
     CHECK_EQ(fk.closes, 2);
     CHECK_EQ(vm.live, 0u);
     teardown();
+}
+
+/* ---- bounded drain ---- */
+
+static volatile int flood_done;
+
+static void *flood(void *arg) {
+    uint16_t idx = (uint16_t)(((uintptr_t)arg) >> 16), gen = (uint16_t)((uintptr_t)arg & 0xFFFFu);
+    for (int32_t i = 0; i < 20000; i++) {
+        PortEvent e = { idx, gen, 1, i & 1, 0 };
+        while (!evq_push(&e)) {}      /* keep the ring full: retry when it is */
+    }
+    flood_done = 1;
+    return NULL;
+}
+
+TEST(port_drain_bounded) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm);
+    a->max_words = 65535u;
+    term p = open_fake(&vm, a, 1);
+    uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE);
+    uintptr_t arg = ((uintptr_t)idx << 16) | term_pid_gen(p);
+    pthread_t th;
+    flood_done = 0;
+    CHECK_EQ(pthread_create(&th, NULL, flood, (void *)arg), 0);
+    for (int spin = 0; spin < 100000000 && evq_empty(); spin++) {}
+    port_drain(&vm, 0);                       /* a producer keeps refilling the ring */
+    CHECK(mbox_len(a) <= (int)GOGO_EVQ_CAP);
+    CHECK(mbox_len(a) > 0);
+    clear_runq(&vm);
+    PortEvent e;
+    while (!flood_done) { while (evq_pop(&e)) {} }   /* let the producer finish */
+    pthread_join(th, NULL);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+/* An input pin with Edge None can never produce events: not live. */
+TEST(gpio_unix_edge_none_not_live) {
+    Port p;
+    int32_t none[4] = { 5, 1, 0, 0 }, both[4] = { 6, 1, 3, 0 }, out[4] = { 7, 3, 0, 0 };
+    memset(&p, 0, sizeof p);
+    CHECK_EQ(gpio_unix_driver.open(&p, 0, none, 4), 0);
+    CHECK(!gpio_unix_driver.can_event(&p));
+    gpio_unix_driver.close(&p);
+    memset(&p, 0, sizeof p);
+    CHECK_EQ(gpio_unix_driver.open(&p, 0, both, 4), 0);
+    CHECK(gpio_unix_driver.can_event(&p));
+    gpio_unix_driver.close(&p);
+    memset(&p, 0, sizeof p);
+    CHECK_EQ(gpio_unix_driver.open(&p, 0, out, 4), 0);
+    CHECK(!gpio_unix_driver.can_event(&p));
+    gpio_unix_driver.close(&p);
 }

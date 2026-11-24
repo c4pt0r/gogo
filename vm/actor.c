@@ -1,4 +1,5 @@
 #include "actor.h"
+#include "bytes.h"
 #include "alloc.h"
 #include "msg.h"
 #include "config.h"
@@ -23,6 +24,7 @@ int vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
     if (table_cap > PORT_SLOT_BASE) return -1;
     vm->img = img;
     vm->next_ref = 1;
+    bytes_reset();                 /* the handle table is process-global */
     vm->table = va_alloc((size_t)table_cap * sizeof(uintptr_t));
     if (!vm->table) return -1;
     vm->table_cap = table_cap;

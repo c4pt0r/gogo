@@ -1,7 +1,7 @@
 // Command gogo compiles gogo programs to VM images, runs and disassembles them.
 //
 //	gogo build <dir> [-o out.gogo]
-//	gogo run <dir|file.gogo>
+//	gogo run [--key c=pin]... <dir|file.gogo>
 //	gogo dis <file.gogo>
 //	gogo flash [-port P] [-esptool path] app.gogo
 //	gogo monitor [-port P] [-t seconds] [-until text] [-reset]
@@ -23,13 +23,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"gogo/compiler"
 )
 
-const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]"
+const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run [--key c=pin]... <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -47,6 +49,18 @@ func main() {
 
 // runCmd implements `gogo run` and returns the process exit status.
 func runCmd(args []string) (int, error) {
+	// --key c=pin (unix tty mode) is forwarded to gogovm.
+	var vmArgs []string
+	for len(args) > 0 && args[0] == "--key" {
+		if len(args) < 2 {
+			return 1, errors.New("gogo run: --key needs a value like c=pin\n" + usage)
+		}
+		vmArgs = append(vmArgs, args[0], args[1])
+		args = args[2:]
+	}
+	if len(args) == 0 {
+		return 1, errors.New("gogo run: missing image (a directory or .gogo file)\n" + usage)
+	}
 	if len(args) != 1 {
 		return 1, errors.New(usage)
 	}
@@ -71,12 +85,39 @@ func runCmd(args []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	cmd := exec.Command(vm, image)
+	cmd := exec.Command(vm, append(vmArgs, image)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
+	// Forward SIGINT/SIGTERM to the VM and wait for it, so the VM can
+	// restore the terminal, nothing is orphaned and the temp image is
+	// removed by the defer above.
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	if err := cmd.Start(); err != nil {
+		return 1, fmt.Errorf("gogo: running %s: %v", vm, err)
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case s := <-sigs:
+				cmd.Process.Signal(s)
+			case <-done:
+				return
+			}
+		}
+	}()
+	err = cmd.Wait()
+	close(done)
+	if err != nil {
 		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() >= 0 {
-			return exit.ExitCode(), nil
+		if errors.As(err, &exit) {
+			if ws, ok := exit.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				return 128 + int(ws.Signal()), nil
+			}
+			if exit.ExitCode() >= 0 {
+				return exit.ExitCode(), nil
+			}
 		}
 		return 1, fmt.Errorf("gogo: running %s: %v", vm, err)
 	}

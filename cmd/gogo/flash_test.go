@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gogo/compiler"
 )
 
 // fakeImage returns n bytes that pass the image magic check.
@@ -17,6 +19,9 @@ func fakeImage(n int) []byte {
 	binary.LittleEndian.PutUint32(img, imageMagic)
 	for i := 4; i < n; i++ {
 		img[i] = byte(i * 7)
+	}
+	if n >= 8 {
+		binary.LittleEndian.PutUint32(img[4:], compiler.ImageVersion)
 	}
 	return img
 }
@@ -58,6 +63,10 @@ func TestPackImageRejects(t *testing.T) {
 		"unaligned": fakeImage(66),
 		"too big":   fakeImage(partSize - 16 + 4),
 	}
+	old := fakeImage(64)
+	binary.LittleEndian.PutUint32(old[4:], compiler.ImageVersion-1)
+	cases["old version"] = old
+	cases["truncated header"] = fakeImage(4)
 	for name, img := range cases {
 		if out := packImage(img); out != nil {
 			t.Errorf("%s: packImage accepted it", name)

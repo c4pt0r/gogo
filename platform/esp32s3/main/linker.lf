@@ -1,0 +1,12 @@
+# Keep the console renderer out of the flash cache: the render task runs on
+# CPU0 while the VM runs on CPU1, and both cores share the ESP32-S3's
+# instruction and data caches. Rendering from flash evicted the VM's code
+# and mmapped image (measured: console on 2.4x slower than off). noflash
+# puts the code in IRAM and the read-only data in DRAM.
+[mapping:gogo_console]
+archive: libmain.a
+entries:
+    console (noflash)
+    font (noflash)
+    console_task (noflash)
+    lcd_st7789 (noflash)

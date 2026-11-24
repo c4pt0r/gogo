@@ -15,7 +15,8 @@ import (
 	"gogo/compiler"
 )
 
-// TestGolden compiles every tests/golden/*/ program, runs it on the VM named
+// TestGolden compiles every tests/golden/*/ program (and every
+// examples/*/ with an expected.out), runs it on the VM named
 // by $GOGO_VM (30s timeout) and requires exit status 0 and stdout equal
 // byte-for-byte to expected.out; if expected.err exists, each of its
 // non-empty lines must be a substring of stderr, and no non-empty line of
@@ -29,6 +30,14 @@ func TestGolden(t *testing.T) {
 	dirs, err := filepath.Glob(filepath.Join("golden", "*"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	// ../examples/*/ that ship an expected.out are goldens too.
+	exs, err := filepath.Glob(filepath.Join("..", "examples", "*", "expected.out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range exs {
+		dirs = append(dirs, filepath.Dir(e))
 	}
 	if len(dirs) == 0 {
 		t.Fatal("no golden programs found")

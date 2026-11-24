@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"encoding/binary"
+	"fmt"
 	"go/ast"
 	"go/types"
 	"regexp"
@@ -748,8 +749,9 @@ func TestCompileActorBuiltins(t *testing.T) {
 	}
 }
 
-// A two-result builtin outside a two-value assignment (normally stopped
-// by the checker) is an internal error in codegen, not a write to dst+1.
+// A two-result builtin compiled into a single destination register
+// (every multi-value context goes through multiCallInto, which passes
+// two) is an internal error in codegen, not a write to dst+1.
 func TestCodegenGuardsTwoResultBuiltins(t *testing.T) {
 	prog, err := Load(writeProg(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.ReceiveTimeout(1)\n}\n"))
 	if err != nil {
@@ -765,10 +767,56 @@ func TestCodegenGuardsTwoResultBuiltins(t *testing.T) {
 			fd = f
 		}
 	}
+	call := fd.Body.List[0].(*ast.ExprStmt).X.(*ast.CallExpr)
+	f := &fn{g: g, info: &funcInfo{name: "main"}, locals: map[*types.Var]uint8{}, named: -1,
+		labelDirty: map[Label]int{}, boundAt: -1, lastClear: -1}
+	defer func() {
+		ge, ok := recover().(genError)
+		if !ok || !strings.Contains(ge.err.Error(), "internal error") || !strings.Contains(ge.err.Error(), "ReceiveTimeout") {
+			t.Fatalf("want an internal error naming ReceiveTimeout, got %v", ge.err)
+		}
+	}()
+	f.exprInto(call, f.alloc(call))
+}
+
+// A two-result builtin as a call statement (rejected by the checker)
+// still gets two destination registers from codegen.
+func TestCodegenTwoResultBuiltinStmt(t *testing.T) {
+	prog, err := Load(writeProg(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.ReceiveTimeout(1)\n}\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	g := &gen{p: prog, b: NewImageBuilder(), funcIdx: map[*types.Func]uint32{}, typeIdx: map[*types.TypeName]uint32{}}
+	if err := g.collectTypes(); err != nil {
+		t.Fatal(err)
+	}
+	var fd *ast.FuncDecl
+	for _, d := range prog.Files[0].Decls {
+		if f, ok := d.(*ast.FuncDecl); ok {
+			fd = f
+		}
+	}
 	g.nameLits([]*ast.FuncDecl{fd})
-	err = g.compileFunc(&funcInfo{name: "main"}, nil, nil, fd.Body)
-	if err == nil || !strings.Contains(err.Error(), "internal error") || !strings.Contains(err.Error(), "ReceiveTimeout") {
-		t.Fatalf("want an internal error naming ReceiveTimeout, got %v", err)
+	info := &funcInfo{name: "main"}
+	if err := g.compileFunc(info, nil, nil, fd.Body); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for pc := 0; pc < len(info.code); pc++ {
+		w := info.code[pc]
+		if uint8(w) == OpBuiltin && info.code[pc+1] == BReceiveTimeout {
+			found = true
+			// dst, dst+1 below the arguments, which start at rb
+			if dst, rb := int(w>>8&0xFF), int(w>>16&0xFF); dst+2 > rb {
+				t.Errorf("BUILTIN r%d, r%d: want two destination registers below the arguments", dst, rb)
+			}
+		}
+		if OpHasExt(uint8(w)) {
+			pc++
+		}
+	}
+	if !found {
+		t.Error("no RECEIVE_TIMEOUT")
 	}
 }
 
@@ -1472,5 +1520,241 @@ func TestClearPeepholesRespectLabels(t *testing.T) {
 	f.retNil()
 	if got := ops(f); len(got) != 2 || got[0] != OpLoadk {
 		t.Errorf("CLEAR before a bare return not dropped: %v", got)
+	}
+}
+
+// TestCompileMultiResults: RETN returns consecutive registers; the call
+// site gets one fresh destination register per result (cleared once dead
+// like any call result); f(g()) passes them straight on as arguments; an
+// int64 result going into any is boxed.
+func TestCompileMultiResults(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+func divmod(a, b int) (int, int) { return a / b, a % b }
+
+func digits(n int) (tens, ones int) {
+	tens = n / 10
+	ones = n % 10
+	return
+}
+
+func one() (n int) {
+	n = 3
+	return
+}
+
+func sum(a, b int) int { return a + b }
+
+func raw() (int64, int64) { return 1, 2 }
+
+func boxed() (any, int64) { return raw() }
+
+func main() {
+	q, r := divmod(7, 2)
+	println(sum(divmod(9, 4)))
+	divmod(1, 1)
+	println(q, r, one())
+	t, _ := digits(42)
+	println(t)
+}
+`)
+	_, body := funcDis(t, dis, "divmod")
+	if code := parseIns(t, body); countOp(code, "RETN", "r2, 2") != 1 {
+		t.Errorf("divmod: want RETN r2, 2:\n%s", dis)
+	}
+	_, body = funcDis(t, dis, "digits")
+	if code := parseIns(t, body); countOp(code, "RETN", "r1, 2") != 1 {
+		t.Errorf("digits: bare return of named results r1, r2 wants RETN r1, 2:\n%s", dis)
+	}
+	_, body = funcDis(t, dis, "one")
+	if code := parseIns(t, body); countOp(code, "RET", "r0") != 1 || countOp(code, "RETN", "") != 0 {
+		t.Errorf("one: a single named result returns with RET r0:\n%s", dis)
+	}
+	_, body = funcDis(t, dis, "boxed")
+	code := parseIns(t, body)
+	if len(code) < 3 || code[0].op != "CALL" || !strings.HasPrefix(code[0].args, "r0,") ||
+		code[1].op != "BOX64" || code[1].args != "r0, r0" || code[2].op != "RETN" || code[2].args != "r0, 2" {
+		t.Errorf("boxed: want CALL r0 ..raw; BOX64 r0, r0; RETN r0, 2:\n%s", dis)
+	}
+
+	_, body = funcDis(t, dis, "main")
+	code = parseIns(t, body)
+	// q=r0, r=r1; the results land in r2, r3 and move to q and r.
+	i, dst := callDst(t, code, 0, "divmod")
+	if dst != 2 || code[i+1].op != "MOVE" || code[i+1].args != "r0, r2" ||
+		code[i+2].op != "MOVE" || code[i+2].args != "r1, r3" {
+		t.Errorf("q, r := divmod(): want CALL r2 then MOVE r0, r2; MOVE r1, r3:\n%s", dis)
+	}
+	for _, r := range []int{2, 3} {
+		if !clearCovers(t, code, i, i+5, r) {
+			t.Errorf("result register r%d not cleared after the assignment:\n%s", r, dis)
+		}
+	}
+	// sum(divmod(9, 4)): divmod's results are sum's arguments.
+	j, d2 := callDst(t, code, i+1, "divmod")
+	k, _ := callDst(t, code, j+1, "sum")
+	if want := fmt.Sprintf("r%d, 2, sum", d2); !strings.HasSuffix(code[k].args, want) {
+		t.Errorf("sum(divmod()): CALL sum args %q, want ...%s:\n%s", code[k].args, want, dis)
+	}
+	// divmod(1, 1) as a statement: two destination registers, cleared.
+	l, d3 := callDst(t, code, k+1, "divmod")
+	if !clearCovers(t, code, l, l+2, d3) || !clearCovers(t, code, l, l+2, d3+1) {
+		t.Errorf("discarded results r%d, r%d not cleared:\n%s", d3, d3+1, dis)
+	}
+	last := -1
+	for i, in := range code {
+		if in.op == "BUILTIN" && strings.HasSuffix(in.args, "PRINTLN") {
+			last = i
+		}
+	}
+	for _, r := range []int{0, 1} {
+		if clearCovers(t, code, -1, last, r) {
+			t.Errorf("local r%d cleared while live:\n%s", r, dis)
+		}
+	}
+}
+
+// TestCompileByte: arithmetic producing a byte is truncated with CONV c=2,
+// as is byte(x); int(b) and int64(b) are plain copies; comparisons are not
+// truncated.
+func TestCompileByte(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+func f(c byte, x int, y int64) byte {
+	d := c + 1
+	c += 2
+	c++
+	e := byte(x)
+	g := int(c)
+	h := int64(c)
+	k := byte(y)
+	println(d < e, g, h, k)
+	return -d
+}
+
+func main() { println(f(1, 2, 3)) }
+`)
+	_, body := funcDis(t, dis, "f")
+	code := parseIns(t, body)
+	n := 0
+	for _, in := range code {
+		if in.op == "CONV" {
+			if !strings.HasSuffix(in.args, ", 2") {
+				t.Errorf("unexpected %s %s:\n%s", in.op, in.args, dis)
+			}
+			n++
+		}
+	}
+	// c + 1, c += 2, c++, byte(x), byte(y), -d
+	if n != 6 {
+		t.Errorf("%d CONV ..., 2, want 6:\n%s", n, dis)
+	}
+}
+
+// TestCompileSlices: element writes, multi-value append (one APPEND, so
+// growth is decided once), the struct zero built only on the
+// growth path, nil as the nil slice, and slice temporaries cleared.
+func TestCompileSlices(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+type P struct{ X int }
+
+func g() []int { return nil }
+
+func set(s []int, i int) {
+	s[i] = g()[0]
+	println("x")
+}
+
+func many(s []int) []int {
+	s = append(s, 1, 2, 3)
+	return s
+}
+
+func structs(ps []P) []P {
+	ps = append(ps, P{1})
+	return ps
+}
+
+func isNil(s []int) bool { return s == nil }
+
+func main() {
+	set(nil, 0)
+	many(nil)
+	structs(nil)
+	println(isNil(nil))
+}
+`)
+	_, body := funcDis(t, dis, "set")
+	code := parseIns(t, body)
+	ig, rg := callDst(t, code, 0, "g")
+	if countOp(code, "BUILTIN", "SETINDEX") != 1 {
+		t.Errorf("set: want one SETINDEX:\n%s", dis)
+	}
+	if !clearCovers(t, code, ig, -1, rg) {
+		t.Errorf("set: temporary r%d holding g()'s slice not cleared:\n%s", rg, dis)
+	}
+
+	_, body = funcDis(t, dis, "many")
+	code = parseIns(t, body)
+	if countOp(code, "BUILTIN", ", 6, APPEND") != 1 || countOp(code, "BUILTIN", "APPEND") != 1 {
+		t.Errorf("many: want one APPEND of the slice, mode, zero and 3 values:\n%s", dis)
+	}
+
+	_, body = funcDis(t, dis, "structs")
+	code = parseIns(t, body)
+	jmpt, ns := -1, -1
+	for i, in := range code {
+		if in.op == "JMPT" && jmpt < 0 {
+			jmpt = i
+		}
+		if in.op == "NEWSTRUCT" && ns < 0 {
+			ns = i // the zero; the appended value's literal follows
+		}
+	}
+	if countOp(code, "BUILTIN", "CAP") != 1 || jmpt < 0 || ns < jmpt || jumpTarget(t, code[jmpt]) <= code[ns].pc {
+		t.Errorf("structs: zero struct not built only past the JMPT on len+n <= cap:\n%s", dis)
+	}
+
+	_, body = funcDis(t, dis, "isNil")
+	if code = parseIns(t, body); countOp(code, "LOADK", "nilslice") != 1 || countOp(code, "EQ", "") != 1 {
+		t.Errorf("isNil: want LOADK nilslice and EQ:\n%s", dis)
+	}
+}
+
+// TestCompileBytes: gogo/bytes calls and methods become BUILTINs with the
+// receiver first; the zero Bytes is emptybytes, the zero Buffer nil; case
+// bytes.Bytes is a TYPEIS TyBytes.
+func TestCompileBytes(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+import "gogo/bytes"
+
+// The zero Buffer the checker cannot see (a named result) is nil.
+func zero() (nb bytes.Buffer) { return }
+
+func main() {
+	b := bytes.NewBuffer(4)
+	b.WriteString("x")
+	x := b.Freeze()
+	var z bytes.Bytes
+	println(x.Slice(0, 1).Len(), z.Equal(x), x.At(0), zero().Len())
+	var a any = x
+	switch a.(type) {
+	case bytes.Bytes:
+		println(1)
+	}
+}
+`)
+	for _, want := range []string{
+		"BUILTIN r0, r1, 1, BUF_NEW",
+		"BUILTIN r1, r2, 2, BUF_WRITE", "LOADK r0, nil",
+		"BUF_FREEZE", "SLICE", "BYTES_EQUAL", "INDEX",
+		", emptybytes", ", 3, SLICE",
+		"TYPEIS", "TyBytes",
+	} {
+		if !strings.Contains(dis, want) {
+			t.Errorf("missing %q in:\n%s", want, dis)
+		}
 	}
 }

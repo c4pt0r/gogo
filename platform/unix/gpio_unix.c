@@ -12,7 +12,9 @@
  *    events (can_event false), so the VM may exit.
  *  - tty mode: --key <c>=<pin> maps a key to a pin; a press yields level 0
  *    then 1. The terminal is put in non-canonical no-echo mode while an input
- *    port is open and polled in platform_wait.
+ *    port is open and polled in platform_wait. ISIG stays on: SIGINT/SIGTERM
+ *    restore the terminal and then die by the default action. Ctrl-D (0x04)
+ *    ends the input, so the VM can exit.
  */
 #include "gpio_unix.h"
 #include "platform.h"
@@ -26,6 +28,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <stdlib.h>
+#include <signal.h>
 
 #define NPINS 64
 #define MAX_KEYS 16
@@ -43,7 +46,7 @@ static struct { char c; int pin; } keys[MAX_KEYS];
 static int nkeys;
 
 static struct termios saved_tio;
-static int tio_saved;
+static volatile sig_atomic_t tio_saved;
 
 int gpio_unix_add_key(char c, int pin) {
     if (nkeys >= MAX_KEYS || pin < 0 || pin >= NPINS) return 0;
@@ -58,6 +61,14 @@ static void restore_tty(void) {
     tio_saved = 0;
 }
 
+/* Restores the terminal, then re-raises sig with the default action. Only
+ * async-signal-safe calls (tcsetattr, signal, raise). */
+static void on_fatal_signal(int sig) {
+    if (tio_saved) tcsetattr(STDIN_FILENO, TCSANOW, &saved_tio);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
 static void decide_mode(void) {
     if (tty_mode >= 0) return;
     tty_mode = isatty(STDIN_FILENO) ? 1 : 0;
@@ -67,7 +78,13 @@ static void enter_raw(void) {
     struct termios t;
     if (!tty_mode || tio_saved || tcgetattr(STDIN_FILENO, &saved_tio) != 0) return;
     tio_saved = 1;
-    atexit(restore_tty);
+    static int hooked;             /* atexit and the handlers: once per process */
+    if (!hooked) {
+        hooked = 1;
+        atexit(restore_tty);
+        signal(SIGINT, on_fatal_signal);
+        signal(SIGTERM, on_fatal_signal);
+    }
     t = saved_tio;
     t.c_lflag &= (tcflag_t)~(ICANON | ECHO);
     t.c_cc[VMIN] = 1;
@@ -116,7 +133,7 @@ static void g_close(Port *p) {
     if (!inputs_open) restore_tty();
 }
 
-static bool g_can_event(const Port *p) { return p->state[1] != M_OUTPUT && !stdin_eof; }
+static bool g_can_event(const Port *p) { return p->state[1] != M_OUTPUT && p->state[2] != E_NONE && !stdin_eof; }
 
 const PortDriver gpio_unix_driver = {
     "gpio", TYPE_GPIO, TYPE_EDGE, g_open, g_command, g_close, g_can_event
@@ -192,6 +209,7 @@ void gpio_unix_read_tty(void) {
     ssize_t n = read(STDIN_FILENO, buf, sizeof buf);
     if (n == 0) { stdin_eof = 1; return; }
     for (ssize_t i = 0; i < n; i++) {
+        if (buf[i] == 4) { stdin_eof = 1; restore_tty(); return; }   /* Ctrl-D */
         for (int k = 0; k < nkeys; k++) {
             if (keys[k].c != buf[i]) continue;
             set_level(keys[k].pin, 0);

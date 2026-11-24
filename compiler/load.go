@@ -27,8 +27,12 @@ const ActorPath = "gogo/actor"
 // like gogo/actor. Only package main may import it.
 const PortPath = "gogo/port"
 
+// BytesPath is the import path of the byte data API (bytes.Bytes,
+// bytes.Buffer), a stub package like gogo/actor.
+const BytesPath = "gogo/bytes"
+
 // isStub reports whether path is one of the stub packages.
-func isStub(path string) bool { return path == ActorPath || path == PortPath }
+func isStub(path string) bool { return path == ActorPath || path == PortPath || path == BytesPath }
 
 // libPrefix starts the import path of every gogo library package.
 const libPrefix = "gogo/"
@@ -79,7 +83,8 @@ func sizes() types.Sizes { return &types.StdSizes{WordSize: 4, MaxAlign: 4} }
 // loader parses and type-checks library packages from libs, a file system
 // with one directory per package: gogo/<name> lives in <name>/*.go. It is
 // also the importer of every package it checks; it serves only packages it
-// has already loaded, and the stub packages gogo/actor and gogo/port.
+// has already loaded, and the stub packages gogo/actor, gogo/port and
+// gogo/bytes.
 type loader struct {
 	fset  *token.FileSet
 	libs  fs.FS
@@ -170,7 +175,7 @@ func (l *loader) checkImports(f *ast.File, allowed func(string) bool, why string
 }
 
 // loadLib parses and type-checks library path, which may import only
-// gogo/actor (so libraries never depend on each other).
+// gogo/actor and gogo/bytes (so libraries never depend on each other).
 func (l *loader) loadLib(path string) error {
 	if l.pkgs[path] != nil {
 		return nil
@@ -184,8 +189,8 @@ func (l *loader) loadLib(path string) error {
 		if f.Name.Name != name {
 			return fmt.Errorf("%s: gogo: package %s in library %s (want package %s)", l.fset.Position(f.Name.Pos()), f.Name.Name, path, name)
 		}
-		onlyActor := func(p string) bool { return p == ActorPath }
-		if err := l.checkImports(f, onlyActor, " (a library may import only "+ActorPath+")"); err != nil {
+		libImport := func(p string) bool { return p == ActorPath || p == BytesPath }
+		if err := l.checkImports(f, libImport, " (a library may import only "+ActorPath+" and "+BytesPath+")"); err != nil {
 			return err
 		}
 	}

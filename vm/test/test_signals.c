@@ -355,7 +355,7 @@ TEST(link_prealloc_oom) {
     CHECK_EQ(vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes();
     uint32_t failed = 0, linked = 0;
-    for (size_t extra = 0; extra <= 256; extra += 8) {
+    for (size_t extra = 0; extra <= 384; extra += 8) {   /* past the full cost */
         Actor *a = actor_new(&vm, 24), *b = actor_new(&vm, 24);
         va_set_limit(va_used_bytes() + extra);
         bool ok = sig_link(&vm, a, b->id);
@@ -744,7 +744,7 @@ TEST(monitor_prealloc_oom) {
     CHECK_EQ(vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes();
     uint32_t failed = 0, ok = 0;
-    for (size_t extra = 0; extra <= 256; extra += 8) {
+    for (size_t extra = 0; extra <= 384; extra += 8) {   /* past the full cost */
         Actor *w = actor_new(&vm, 32), *t = actor_new(&vm, 24);
         va_set_limit(va_used_bytes() + extra);
         term r = sig_monitor(&vm, w, t->id);

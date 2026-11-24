@@ -7,7 +7,9 @@ package main
 // Copies the board's console to stdout for -t seconds (default 10), or
 // until a line containing -until has arrived. -reset first resets the chip
 // (RTS pulse, as esptool's hard reset does on the USB-Serial/JTAG port), so
-// the capture starts at boot. -port defaults like `gogo flash`.
+// the capture starts at boot. Without -reset, opening and closing the port
+// never touches the chip: the modem lines (reset/boot strap on this port)
+// are only changed by -reset. -port defaults like `gogo flash`.
 
 import (
 	"bytes"

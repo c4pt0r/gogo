@@ -35,7 +35,8 @@ enum Op {
     OP_MKCLOSURE = 22,  /* ra = closure func ext, captures rb.. +ext */
     OP_TYPEIS    = 23,  /* ra = (dynamic type of rb == ext)    +ext */
     OP_BUILTIN   = 24,  /* ra = builtin ext(rb..rb+c-1)        +ext */
-    OP_CONV      = 25,  /* c=0: ra = int(rb) (low 32 bits); c=1: ra = int64(rb) */
+    OP_CONV      = 25,  /* c=0: ra = int(rb) (low 32 bits); c=1: ra = int64(rb);
+                         * c=2: ra = byte(rb) = rb & 0xFF (rb an int or int64) */
     /* int64 ops. Operands are int64 values in either representation: a
      * small-int immediate or a K_INT64 box (heap or const area); results
      * are immediates when they fit in 31 bits, else boxed. The generic
@@ -52,8 +53,10 @@ enum Op {
     OP_LE64      = 35,
     OP_BOX64     = 36,  /* ra = rb as a K_INT64 box (no-op if already boxed);
                          * an int64 inside `any` is always boxed */
-    OP_CLEAR     = 37   /* ra .. ra+b-1 = nil: dead registers stop being GC
+    OP_CLEAR     = 37,  /* ra .. ra+b-1 = nil: dead registers stop being GC
                          * roots (b is the count, 0 = nothing) */
+    OP_RETN      = 38   /* return ra .. ra+b-1 into the caller's registers
+                         * dst .. dst+b-1, dst = the CALL's ra (RET returns one) */
 };
 
 enum Builtin {
@@ -85,7 +88,41 @@ enum Builtin {
     B_WHEREIS         = 24,  /* name -> pid, ok */
     B_UNREGISTER      = 25,  /* name -> nil */
     B_PORT_OPEN       = 26,  /* driver string, cfg any -> pid, ok */
-    B_PORT_CLOSE      = 27   /* pid -> nil */
+    B_PORT_CLOSE      = 27,  /* pid -> nil */
+    /* Sequences (strs.c): the generic ones dispatch on the kind of their
+     * first argument. Out-of-range -> badcode, allocation failure -> OOM. */
+    B_STR_CONCAT      = 28,  /* a, b -> string */
+    B_LEN             = 29,  /* string | slice | Bytes | Buffer -> int */
+    B_INDEX           = 30,  /* string | slice | Bytes, i -> element; a byte
+                              * (of a string, []byte or Bytes) as an int */
+    B_SETINDEX        = 31,  /* slice, i, v -> nil; a []byte stores v & 0xFF */
+    B_SLICE           = 32,  /* string | slice | Bytes, lo, hi -> the same kind; every
+                              * bound is explicit, any negative or out-of-range
+                              * one is badcode (a slice's hi may reach cap) */
+    B_MAKE_SLICE      = 33,  /* elemkind (0 term, 1 byte), len, cap, zero -> slice;
+                              * every element is `zero` (0 for bytes) */
+    B_APPEND          = 34,  /* slice, mode, zero, v... -> slice. mode 0: append the
+                              * terms v...; 1: the bytes v...; 2: every element of
+                              * the term slice v (one v); 3: every byte of the
+                              * []byte or string v (one v). Growth is decided once
+                              * for all of them: if they do not all fit in cap, a
+                              * new array (x2, min 4, spare slots = zero) gets
+                              * them and the old one is left untouched */
+    B_COPY            = 35,  /* dst slice, src slice | string | Bytes -> n copied */
+    B_CAP             = 36,  /* slice -> int */
+    B_STR_FROM        = 37,  /* []byte | Bytes -> string (a copy) */
+    B_BYTESLICE_FROM  = 38,  /* string | Bytes -> []byte (a copy) */
+    B_STR_CMP         = 39,  /* a, b -> -1 | 0 | 1 */
+    /* bytes.Buffer and bytes.Bytes (strs.c, handles in bytes.c). A Buffer
+     * builtin on anything but a Buffer (the zero Buffer is nil) is badcode. */
+    B_BUF_NEW         = 40,  /* cap -> Buffer */
+    B_BUF_WRITE       = 41,  /* buf, string | []byte | Bytes | byte (an int) -> nil */
+    B_BUF_FREEZE      = 42,  /* buf -> Bytes (a copy: heap K_BYTES up to
+                              * GOGO_BYTES_INLINE bytes, else off-heap); buf
+                              * is emptied and stays usable */
+    B_BYTES_FROM      = 43,  /* string | []byte -> Bytes (a heap copy, any size) */
+    B_BYTES_EQUAL     = 44,  /* Bytes, Bytes -> bool (same contents) */
+    B_BYTES_COPYTO    = 45   /* Bytes, []byte -> n copied */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -95,6 +132,7 @@ enum Builtin {
 #define TY_PID    0x10003u
 #define TY_REF    0x10004u
 #define TY_INT64  0x10005u
+#define TY_BYTES  0x10006u   /* heap K_BYTES, off-heap handle, T_EMPTYBYTES */
 
 /* Reserved type-table indices: the compiler always emits the gogo/actor
  * struct types first, in this order (fields as in actor/actor.go). */

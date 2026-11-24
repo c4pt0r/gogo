@@ -1,0 +1,36 @@
+// Arena check: spawns actors that each grow their stack by recursion to a
+// fixed depth and then wait, until one of them cannot grow (its oom crash
+// report is printed). The platform's exit line then shows how much of the
+// arena (GOGO_ARENA_BYTES) was really allocated.
+//
+//	gogo build platform/esp32s3/examples/memfill -o memfill.gogo
+package main
+
+import "gogo/actor"
+
+type ready struct{ n int }
+
+func deep(d int, me actor.PID, n int) int {
+	if d == 0 {
+		actor.Send(me, ready{n})
+		actor.Receive() // hold the grown stack
+		return 0
+	}
+	return deep(d-1, me, n) + 1
+}
+
+func main() {
+	me := actor.Self()
+	for n := 1; ; n++ {
+		k := n
+		p := actor.Spawn(func() { deep(100, me, k) })
+		actor.Monitor(p)
+		switch m := actor.Receive().(type) {
+		case ready:
+			println("actor", m.n, "ready")
+		default:
+			println("actor", n, "failed to grow; stopping")
+			return
+		}
+	}
+}

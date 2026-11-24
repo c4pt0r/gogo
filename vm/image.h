@@ -6,7 +6,8 @@
  * lockstep and the loader rejects every other version (IMG_ERR_VERSION).
  *   v1  M1/M2.
  *   v2  M3: generic arithmetic is int-only, *64 ops and BOX64, OP_CLEAR,
- *       typed zero PID/Ref (T_ZEROPID, T_ZEROREF), port builtins/types. */
+ *       typed zero PID/Ref (T_ZEROPID, T_ZEROREF), port builtins/types.
+ *   v3  M4: OP_RETN (multi-result return), OP_CONV c=2 (byte). */
 #ifndef GOGO_IMAGE_H
 #define GOGO_IMAGE_H
 
@@ -14,7 +15,7 @@
 #include <stddef.h>
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 2u
+#define IMAGE_VERSION 3u
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {

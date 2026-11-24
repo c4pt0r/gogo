@@ -1,0 +1,14 @@
+GET /index.html
+  Host = [example.org]
+  User-Agent = [gogo/0.4]
+  Accept = [*/*]
+  body: 0 bytes []
+POST /api/v1/sensor
+  content-length = [11]
+  Content-Type = [application/json]
+  body: 11 bytes [{"temp":21}]
+malformed request, 26 bytes
+malformed request, 7 bytes
+malformed request, 18 bytes
+malformed request, 33 bytes
+malformed request, 40 bytes

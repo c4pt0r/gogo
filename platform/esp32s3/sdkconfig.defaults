@@ -12,3 +12,10 @@ CONFIG_LOG_DEFAULT_LEVEL_WARN=y
 CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
 # The VM task runs on CPU1 and may keep it busy for long stretches.
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+# Task notification index 1: console bring-up handshake (index 0 is the
+# VM task's platform_wait).
+CONFIG_FREERTOS_TASK_NOTIFICATION_ARRAY_ENTRIES=2
+# Bigger caches: the VM (CPU1) and the LCD render task (CPU0) share them.
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y

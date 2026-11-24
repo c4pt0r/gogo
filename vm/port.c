@@ -211,9 +211,12 @@ static uint64_t event_time(uint32_t ms, uint64_t now) {
     return back > now ? 0u : now - back;
 }
 
+/* Pops at most GOGO_EVQ_CAP events per call, so a producer that keeps the ring
+ * full cannot hold the scheduler here; the rest wait for the next pass (the
+ * scheduler does not idle while evq_empty() is false). */
 void port_drain(Vm *vm, uint64_t now) {
     PortEvent e;
-    while (evq_pop(&e)) {
+    for (uint32_t n = 0; n < GOGO_EVQ_CAP && evq_pop(&e); n++) {
         if (e.port >= GOGO_MAX_PORTS) continue;
         Port *p = &vm->ports[e.port];
         if (!p->drv || p->gen != e.gen) continue;   /* closed since: stale */

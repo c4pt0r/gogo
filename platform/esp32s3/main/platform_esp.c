@@ -3,7 +3,9 @@
 #include "config.h"
 #include "port.h"
 #include "platform_esp.h"
+#include "console.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -25,21 +27,32 @@ uint64_t platform_esp_ms(void) {
     return (uint64_t)((esp_timer_get_time() - t0_us) / 1000);
 }
 
-/* Program output and diagnostics both go to the console; stdout is flushed
- * first so they interleave in order. */
-void platform_write(const char *s, size_t n) { fwrite(s, 1, n, stdout); }
+/* Program output and diagnostics both go to the serial console (stdout is
+ * flushed first so they interleave in order) and to the on-screen console:
+ * stdout white, stderr (crash reports) red. */
+void platform_write(const char *s, size_t n) {
+    fwrite(s, 1, n, stdout);
+    console_esp_write(s, n, CON_WHITE);
+}
 void platform_write_err(const char *s, size_t n) {
     fflush(stdout);
     fwrite(s, 1, n, stderr);
+    console_esp_write(s, n, CON_RED);
 }
 
+/* Platform lines (boot, exit, image errors): serial and screen, white. */
 void platform_esp_say(const char *fmt, ...) {
+    char b[160];
     va_list ap;
-    fflush(stdout);
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    int n = vsnprintf(b, sizeof b - 1, fmt, ap);
     va_end(ap);
-    fputc('\n', stderr);
+    if (n < 0) return;
+    if ((size_t)n > sizeof b - 2) n = (int)sizeof b - 2;
+    b[n++] = '\n';
+    fflush(stdout);
+    fwrite(b, 1, (size_t)n, stderr);
+    console_esp_write(b, (size_t)n, CON_WHITE);
 }
 
 void platform_esp_idle(void) {
@@ -55,10 +68,39 @@ static size_t arena_used;
 size_t platform_esp_arena_used(void) { return arena_used; }
 size_t platform_esp_arena_cap(void) { return GOGO_ARENA_BYTES; }
 
+/* The first refused request, recorded where it happened so the exit line
+ * can say what limited the VM: the arena cap or the internal heap. */
+static struct {
+    bool set, by_cap;
+    size_t request, used, heap_free, heap_largest;
+} refusal;
+
+static void note_refusal(size_t bytes, bool by_cap) {
+    if (refusal.set) return;
+    refusal.set = true;
+    refusal.by_cap = by_cap;
+    refusal.request = bytes;
+    refusal.used = arena_used;
+    refusal.heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    refusal.heap_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+void platform_esp_report_refusal(void) {
+    if (!refusal.set) return;
+    platform_esp_say("gogo: first refused alloc %lu bytes (%s): arena used %lu of %lu, free RAM %lu (largest %lu)",
+                     (unsigned long)refusal.request, refusal.by_cap ? "arena cap" : "heap exhausted",
+                     (unsigned long)refusal.used, (unsigned long)GOGO_ARENA_BYTES,
+                     (unsigned long)refusal.heap_free, (unsigned long)refusal.heap_largest);
+}
+
 void *platform_chunk_alloc(size_t bytes) {
-    if (GOGO_ARENA_BYTES && bytes > GOGO_ARENA_BYTES - arena_used) return NULL;
+    if (GOGO_ARENA_BYTES && bytes > GOGO_ARENA_BYTES - arena_used) {
+        note_refusal(bytes, true);
+        return NULL;
+    }
     void *p = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (p) arena_used += bytes;
+    else note_refusal(bytes, false);
     return p;
 }
 
@@ -69,6 +111,9 @@ void platform_chunk_free(void *p, size_t bytes) {
 }
 
 uint64_t platform_now_ms(void) { return platform_esp_ms(); }
+
+/* vm_run start: Now() counts from here, after the LCD bring-up. */
+void platform_time_reset(void) { t0_us = esp_timer_get_time(); }
 
 /* Latched wakeup: the VM task's notification value counts notifies; a wait
  * takes (and clears) it, so a notify before or during a wait ends it. */

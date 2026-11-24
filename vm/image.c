@@ -40,7 +40,7 @@ static int consts_ok(const Image *img) {
             heap_obj_terms(obj, &first, &end);
             for (uint32_t i = first; i < end; i++) {
                 term t = obj[i];
-                if (term_is_ref(t)) return 0;
+                if (term_is_ref(t) || term_is_handle(t)) return 0;   /* handles only come from the VM */
                 if (term_is_const(t) && term_const_off(t) >= img->consts_words) return 0;
             }
             break;

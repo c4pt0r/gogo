@@ -3,6 +3,7 @@
 #include "alloc.h"
 #include "signals.h"
 #include "opcodes.h"
+#include "bytes.h"
 #include <string.h>
 
 #define MSG_MAX_WORDS 65535u
@@ -139,6 +140,45 @@ static bool copy_dag(Buf *b, uint32_t *src_mem, term t, term *root, uint32_t ski
     return ok;
 }
 
+/* Calls fn on every handle term of a message: the root and the term words
+ * of its objects in data[skip, words). */
+static void each_handle(const uint32_t *data, uint32_t skip, uint32_t words, term root,
+                        void (*fn)(term, void *), void *ctx) {
+    if (term_is_handle(root)) fn(root, ctx);
+    for (uint32_t scan = skip; scan < words; scan += hdr_words(data[scan])) {
+        uint32_t first, end;
+        heap_obj_terms(data + scan, &first, &end);
+        for (uint32_t i = scan + first; i < scan + end; i++) {
+            if (term_is_handle(data[i])) fn(data[i], ctx);
+        }
+    }
+}
+
+static uint32_t msg_skip(const Msg *m) { return (m->flags & MSG_REPLY) ? MSG_REPLY_HDR : 0u; }
+
+static void ref_fn(term h, void *ctx) {
+    bytes_msg_ref(h);
+    *(bool *)ctx = true;
+}
+
+static void unref_fn(term h, void *ctx) {
+    (void)ctx;
+    bytes_msg_unref(h);
+}
+
+static void charge_fn(term h, void *ctx) { bytes_set_add(ctx, h); }
+
+uint32_t msg_charge_words(const Msg *m) {
+    uint32_t w = msg_footprint_words(m->words);
+    if (m->flags & MSG_HANDLES) {
+        BytesSet s;
+        bytes_set_init(&s);
+        each_handle(m->data, msg_skip(m), m->words, m->root, charge_fn, &s);
+        w += bytes_words(s.bytes);
+    }
+    return w;
+}
+
 uint32_t msg_copy_words(Actor *src, term t) {
     return msg_size(src->mem, t);
 }
@@ -166,6 +206,9 @@ static Msg *build_skip(Actor *src, term t, uint32_t skip) {
     m->words = (uint16_t)words;
     m->flags = 0;
     m->root = root;
+    bool any = false;
+    each_handle(m->data, skip, words, root, ref_fn, &any);
+    if (any) m->flags |= MSG_HANDLES;
     return m;
 }
 
@@ -174,7 +217,15 @@ Msg *msg_build(Actor *src, term t) {
 }
 
 void msg_free(Msg *m) {
+    if (m->flags & MSG_HANDLES) each_handle(m->data, msg_skip(m), m->words, m->root, unref_fn, NULL);
     va_free(m, msg_alloc_bytes(m->words));
+}
+
+typedef struct Adopt { Actor *a; bool ok; } Adopt;
+
+static void adopt_fn(term h, void *ctx) {
+    Adopt *d = ctx;
+    if (!bytes_adopt(d->a, h)) d->ok = false;
 }
 
 bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out) {
@@ -198,13 +249,26 @@ bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out) {
         }
     }
     *out = term_is_ref(m->root) ? m->root + term_from_ref(base) - term_from_ref(skip) : m->root;
+    if (m->flags & MSG_HANDLES) {
+        Adopt d = { a, true };
+        each_handle(m->data, skip, m->words, m->root, adopt_fn, &d);
+        if (!d.ok) {                  /* list full: drop what a no longer reaches */
+            heap_gc(vm, a, 0, out, 1);
+            d.ok = true;
+            each_handle(m->data, skip, m->words, m->root, adopt_fn, &d);
+            if (!d.ok) return false;
+        }
+    }
     return true;
 }
 
 bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
-    uint32_t fw = msg_footprint_words(m->words);
+    uint32_t fw = msg_charge_words(m);
+    /* Receiving the first handle makes the holder list, charged to `to`:
+     * count it now (not queued: mbox_words stays fw). */
+    uint32_t list = (m->flags & MSG_HANDLES) ? bytes_list_words(to) : 0u;
     if (fw > 65535u - to->mbox_words ||
-        (quota && (uint32_t)to->mem_words + actor_charged_words(to) + fw > actor_max_words(to))) {
+        (quota && (uint32_t)to->mem_words + actor_charged_words(to) + fw + list > actor_max_words(to))) {
         msg_free(m);
         actor_mark_exit(vm, to, R_MAILBOX_OVERFLOW, T_EMPTYSTR);
         return false;
@@ -235,7 +299,7 @@ int msg_send(Vm *vm, Actor *from, term to_pid, term msg) {
 /* Removes the head message and stops counting it in mbox_words. */
 static void drop_head(Actor *a) {
     Msg *m = a->mbox_head;
-    a->mbox_words = (uint16_t)(a->mbox_words - msg_footprint_words(m->words));
+    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
     msg_free(m);
@@ -248,7 +312,7 @@ bool msg_receive(Vm *vm, Actor *a, term *out) {
     if (!m) return false;
     /* The message moves from the mailbox into the heap: stop counting it
      * against the limit first, so it is not counted twice while unpacking. */
-    uint16_t fw = (uint16_t)msg_footprint_words(m->words);
+    uint16_t fw = (uint16_t)msg_charge_words(m);
     a->mbox_words = (uint16_t)(a->mbox_words - fw);
     if (!msg_unpack(vm, a, m, out)) {
         a->mbox_words = (uint16_t)(a->mbox_words + fw);  /* stays queued */
@@ -269,7 +333,7 @@ int msg_send_reply(Vm *vm, Actor *from, term to_pid, term ref, term body) {
 
     Msg *m = build_skip(from, body, MSG_REPLY_HDR);
     if (!m) return -1;
-    m->flags = MSG_REPLY;
+    m->flags |= MSG_REPLY;
     m->data[0] = r[1];
     m->data[1] = r[2];
     msg_enqueue(vm, to, m, true);
@@ -284,7 +348,7 @@ int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out) {
             prev = m;
         } else if (((uint64_t)m->data[0] | ((uint64_t)m->data[1] << 32)) == serial) {
             /* As in msg_receive: not counted twice while unpacking. */
-            uint16_t fw = (uint16_t)msg_footprint_words(m->words);
+            uint16_t fw = (uint16_t)msg_charge_words(m);
             a->mbox_words = (uint16_t)(a->mbox_words - fw);
             if (!msg_unpack(vm, a, m, out)) {
                 a->mbox_words = (uint16_t)(a->mbox_words + fw);
@@ -298,7 +362,7 @@ int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out) {
         } else {   /* a stale reply of an earlier, timed-out Call */
             if (prev) prev->next = next; else a->mbox_head = next;
             if (!next) a->mbox_tail = prev;
-            a->mbox_words = (uint16_t)(a->mbox_words - msg_footprint_words(m->words));
+            a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
             msg_free(m);
         }
         m = next;

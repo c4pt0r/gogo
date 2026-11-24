@@ -14,9 +14,10 @@ void platform_write_err(const char *s, size_t n);  /* diagnostics (stderr) */
 void *platform_chunk_alloc(size_t bytes);
 void platform_chunk_free(void *p, size_t bytes);
 
-/* Monotonic milliseconds since the first call (vm_run calls it at start,
- * so this is time since VM start). */
+/* Monotonic milliseconds since the last platform_time_reset (vm_run calls it
+ * at start, so this is time since VM start on every platform). */
 uint64_t platform_now_ms(void);
+void platform_time_reset(void);
 
 /* Idle wait. Called by the scheduler when nothing is runnable: returns after
  * timeout_ms, or earlier when an event may have been pushed to the event

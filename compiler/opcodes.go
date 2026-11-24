@@ -29,7 +29,7 @@ const (
 	OpMkclosure uint8 = 22
 	OpTypeis    uint8 = 23
 	OpBuiltin   uint8 = 24
-	OpConv      uint8 = 25 // c=0: int(rb), c=1: int64(rb)
+	OpConv      uint8 = 25 // c=0: int(rb), c=1: int64(rb), c=2: byte(rb) = rb & 0xFF
 
 	// int64 ops: operands are immediates or K_INT64 boxes; the generic
 	// ADD..LE / NEG are int-only.
@@ -46,6 +46,14 @@ const (
 	OpBox64 uint8 = 36 // ra = rb as a K_INT64 box (every int64 inside any)
 
 	OpClear uint8 = 37 // ra .. ra+b-1 = nil (dead registers stop being GC roots)
+	OpRetn  uint8 = 38 // return ra .. ra+b-1 into the CALL's dst .. dst+b-1
+)
+
+// OP_CONV c operands.
+const (
+	ConvInt   uint8 = 0
+	ConvInt64 uint8 = 1
+	ConvByte  uint8 = 2
 )
 
 // Builtin ids.
@@ -80,6 +88,45 @@ const (
 	BUnregister     uint32 = 25
 	BPortOpen       uint32 = 26 // driver string, cfg any -> pid, ok
 	BPortClose      uint32 = 27 // pid -> nil
+
+	// Sequences (vm/strs.c).
+	BStrConcat     uint32 = 28 // a, b -> string
+	BLen           uint32 = 29 // string | slice | Bytes | Buffer -> int
+	BIndex         uint32 = 30 // string | slice | Bytes, i -> element (a byte as an int)
+	BSetindex      uint32 = 31 // slice, i, v -> nil ([]byte stores v & 0xFF)
+	BSlice         uint32 = 32 // string | slice | Bytes, lo, hi; every bound explicit; negative is badcode
+	BMakeSlice     uint32 = 33 // elemkind (0 term, 1 byte), len, cap, zero -> slice
+	BAppend        uint32 = 34 // slice, mode, zero, v... -> slice (see AppendTerm..)
+	BCopy          uint32 = 35 // dst slice, src slice | string | Bytes -> n
+	BCap           uint32 = 36 // slice -> int
+	BStrFrom       uint32 = 37 // []byte | Bytes -> string
+	BBytesliceFrom uint32 = 38 // string | Bytes -> []byte
+	BStrCmp        uint32 = 39 // a, b -> -1 | 0 | 1
+
+	// bytes.Buffer and bytes.Bytes (vm/strs.c, vm/bytes.c).
+	BBufNew      uint32 = 40 // cap -> Buffer
+	BBufWrite    uint32 = 41 // buf, string | []byte | Bytes | byte -> nil
+	BBufFreeze   uint32 = 42 // buf -> Bytes; buf emptied
+	BBytesFrom   uint32 = 43 // string | []byte -> Bytes (a copy)
+	BBytesEqual  uint32 = 44 // Bytes, Bytes -> bool
+	BBytesCopyto uint32 = 45 // Bytes, []byte -> n
+)
+
+// Off-heap Bytes limits: twins of vm/config.h's defaults (checked by
+// TestConfigMatchC; platforms may override them in C).
+const (
+	BytesHandles  = 64 // GOGO_BYTES_HANDLES: handle table entries
+	BytesPerActor = 16 // GOGO_BYTES_PER_ACTOR: handles one actor may hold
+	BytesInline   = 64 // GOGO_BYTES_INLINE: largest Freeze kept on the heap
+)
+
+// B_APPEND modes: bit 0 = byte elements, bit 1 = spread (v is a slice, or
+// for bytes a slice or string, whose elements are appended).
+const (
+	AppendTerm        int32 = 0
+	AppendByte        int32 = 1
+	AppendTermSpread  int32 = 2
+	AppendBytesSpread int32 = 3
 )
 
 // Builtin type ids for TYPEIS; struct types use their type-table index.
@@ -90,6 +137,7 @@ const (
 	TyPid    uint32 = 0x10003
 	TyRef    uint32 = 0x10004
 	TyInt64  uint32 = 0x10005
+	TyBytes  uint32 = 0x10006 // bytes.Bytes: heap, off-heap or empty
 )
 
 // Reserved type-table indices of the gogo/actor and gogo/port struct types
@@ -113,7 +161,12 @@ const (
 	KInt     uint32 = 3
 	KClosure uint32 = 4
 	KRef     uint32 = 5
-	KInt64   uint32 = 6 // [hdr][lo][hi]; int64s outside 31 bits and every int64 in any
+	KInt64   uint32 = 6  // [hdr][lo][hi]; int64s outside 31 bits and every int64 in any
+	KSlice   uint32 = 7  // [hdr][off][len][cap][array]
+	KArray   uint32 = 8  // [hdr][n][elements]
+	KBytearr uint32 = 9  // [hdr][nbytes][bytes]
+	KBytes   uint32 = 10 // [hdr][nbytes][bytes], immutable: a heap bytes.Bytes
+	KBuf     uint32 = 11 // [hdr][len][array]: a bytes.Buffer
 	KForward uint32 = 63
 )
 
@@ -130,6 +183,10 @@ const (
 	// TermZeroPid is the zero actor.PID: the PID term of slot 0,
 	// generation 0, which no actor or port ever gets.
 	TermZeroPid uint32 = 0x06
+	// TermNilSlice is the nil slice, the zero value of every slice type.
+	TermNilSlice uint32 = 0x52
+	// TermEmptyBytes is the empty bytes.Bytes, its zero value.
+	TermEmptyBytes uint32 = 0x62
 )
 
 // Int31Fits reports whether v is representable as a small int.
@@ -163,13 +220,16 @@ var opNames = [...]string{"NOP", "MOVE", "LOADK", "LOADI32", "ADD", "SUB", "MUL"
 	"DIV", "REM", "NEG", "EQ", "NE", "LT", "LE", "NOT", "JMP", "JMPF", "JMPT",
 	"CALL", "RET", "NEWSTRUCT", "GETFIELD", "MKCLOSURE", "TYPEIS", "BUILTIN",
 	"CONV", "ADD64", "SUB64", "MUL64", "DIV64", "REM64", "NEG64", "EQ64", "NE64",
-	"LT64", "LE64", "BOX64", "CLEAR"}
+	"LT64", "LE64", "BOX64", "CLEAR", "RETN"}
 
 var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "MEMORY",
 	"SPAWN_LINK", "SPAWN_OPT", "LINK", "UNLINK", "TRAP_EXIT", "EXIT", "KILL",
 	"MONITOR", "DEMONITOR", "MAKE_REF", "RECEIVE_TIMEOUT", "SEND_AFTER",
 	"CANCEL_TIMER", "SLEEP", "NOW", "CALL", "REPLY", "REGISTER", "WHEREIS",
-	"UNREGISTER", "PORT_OPEN", "PORT_CLOSE"}
+	"UNREGISTER", "PORT_OPEN", "PORT_CLOSE", "STR_CONCAT", "LEN", "INDEX", "SETINDEX",
+	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
+	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
+	"BYTES_COPYTO"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -186,6 +246,7 @@ var goConstants = map[string]uint32{
 	"OpDiv64": uint32(OpDiv64), "OpRem64": uint32(OpRem64), "OpNeg64": uint32(OpNeg64),
 	"OpEq64": uint32(OpEq64), "OpNe64": uint32(OpNe64), "OpLt64": uint32(OpLt64),
 	"OpLe64": uint32(OpLe64), "OpBox64": uint32(OpBox64), "OpClear": uint32(OpClear),
+	"OpRetn":   uint32(OpRetn),
 	"BPrintln": BPrintln, "BSpawn": BSpawn, "BSelf": BSelf, "BSend": BSend,
 	"BReceive": BReceive, "BMemory": BMemory,
 	"BSpawnLink": BSpawnLink, "BSpawnOpt": BSpawnOpt, "BLink": BLink,
@@ -195,8 +256,14 @@ var goConstants = map[string]uint32{
 	"BCancelTimer": BCancelTimer, "BSleep": BSleep, "BNow": BNow, "BCall": BCall,
 	"BReply": BReply, "BRegister": BRegister, "BWhereis": BWhereis,
 	"BUnregister": BUnregister, "BPortOpen": BPortOpen, "BPortClose": BPortClose,
-	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
-	"TyRef": TyRef, "TyInt64": TyInt64,
+	"BStrConcat": BStrConcat, "BLen": BLen, "BIndex": BIndex, "BSlice": BSlice,
+	"BStrCmp": BStrCmp, "BSetindex": BSetindex, "BMakeSlice": BMakeSlice,
+	"BAppend": BAppend, "BCopy": BCopy, "BCap": BCap, "BStrFrom": BStrFrom,
+	"BBytesliceFrom": BBytesliceFrom, "BBufNew": BBufNew, "BBufWrite": BBufWrite,
+	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
+	"BBytesCopyto": BBytesCopyto,
+	"TyInt":        TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
+	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
 	"TypeDownmsg": TypeDownmsg, "TypeRequest": TypeRequest, "TypeOptions": TypeOptions,
 	"TypeGpio": TypeGpio, "TypeWrite": TypeWrite, "TypeEdge": TypeEdge,

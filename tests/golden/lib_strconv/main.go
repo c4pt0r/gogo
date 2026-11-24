@@ -1,0 +1,101 @@
+package main
+
+import "gogo/strconv"
+
+func atoi(s string) {
+	n, ok := strconv.Atoi(s)
+	println("atoi", s, n, ok)
+}
+
+func parse(s string, base int) {
+	n, ok := strconv.ParseInt64(s, base)
+	println("parse", s, base, n, ok)
+}
+
+func main() {
+	// Itoa
+	println(strconv.Itoa(0), strconv.Itoa(7), strconv.Itoa(-7), strconv.Itoa(1234567890), strconv.Itoa(-2147483648), strconv.Itoa(2147483647))
+	println(len(strconv.Itoa(100)), strconv.Itoa(10)+strconv.Itoa(-1))
+
+	// FormatInt64
+	println(strconv.FormatInt64(0, 10), strconv.FormatInt64(255, 16), strconv.FormatInt64(-255, 16), strconv.FormatInt64(255, 2), strconv.FormatInt64(35, 36), strconv.FormatInt64(-35, 36))
+	println(strconv.FormatInt64(9223372036854775807, 10), strconv.FormatInt64(-9223372036854775808, 10))
+	println(strconv.FormatInt64(9223372036854775807, 16), strconv.FormatInt64(-9223372036854775808, 16))
+	println(strconv.FormatInt64(-9223372036854775808, 2))
+	println(strconv.FormatInt64(9223372036854775807, 36), strconv.FormatInt64(-9223372036854775808, 36), strconv.FormatInt64(1, 2), strconv.FormatInt64(-1, 2), strconv.FormatInt64(4294967296, 10))
+
+	// Atoi
+	atoi("0")
+	atoi("42")
+	atoi("-42")
+	atoi("+42")
+	atoi("007")
+	atoi("-0")
+	atoi("2147483647")
+	atoi("2147483648")
+	atoi("-2147483648")
+	atoi("-2147483649")
+	atoi("99999999999999999999")
+	atoi("")
+	atoi("-")
+	atoi("+")
+	atoi(" 1")
+	atoi("1 ")
+	atoi("1_000")
+	atoi("0x10")
+	atoi("12a")
+	atoi("a12")
+	atoi("--1")
+	atoi("+-1")
+	atoi("1.5")
+
+	// ParseInt64
+	parse("9223372036854775807", 10)
+	parse("9223372036854775808", 10)
+	parse("-9223372036854775808", 10)
+	parse("-9223372036854775809", 10)
+	parse("92233720368547758070", 10)
+	parse("ff", 16)
+	parse("FF", 16)
+	parse("-Ff", 16)
+	parse("7fffffffffffffff", 16)
+	parse("8000000000000000", 16)
+	parse("-8000000000000000", 16)
+	parse("-8000000000000001", 16)
+	parse("101", 2)
+	parse("102", 2)
+	parse("zz", 36)
+	parse("ZZ", 36)
+	parse("zz", 35)
+	parse("1111111111111111111111111111111111111111111111111111111111111111", 2)
+	parse("-1000000000000000000000000000000000000000000000000000000000000000", 2)
+	parse("", 10)
+	parse("-", 10)
+	parse("12", 1)
+	parse("12", 37)
+	parse("12", 0)
+	parse("12", -3)
+	parse("0x1f", 16)
+	parse("3w5e11264sgsf", 36)
+	parse("3w5e11264sgsg", 36)
+	parse("-3w5e11264sgsg", 36)
+	parse("1y2p0ij32e8e7", 36)
+	parse("1y2p0ij32e8e8", 36)
+	parse("-1y2p0ij32e8e8", 36)
+	parse("-1y2p0ij32e8e9", 36)
+
+	// round trips
+	var i int64 = -9223372036854775808
+	for k := 0; k < 5; k++ {
+		for base := 2; base <= 36; base += 7 {
+			s := strconv.FormatInt64(i, base)
+			v, ok := strconv.ParseInt64(s, base)
+			if !ok || v != i {
+				println("ROUNDTRIP FAIL", i, base, s)
+			}
+		}
+		i = i/3 + 12345
+		i = -i
+	}
+	println("done")
+}

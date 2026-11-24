@@ -16,6 +16,7 @@
 typedef struct Msg Msg;   /* defined with the mailbox (Task 5) */
 typedef struct Timer Timer;   /* defined in timer.h */
 typedef struct Name Name;     /* defined in names.c */
+typedef struct HeldBytes HeldBytes;   /* defined in bytes.h */
 
 /* Field order keeps the struct free of padding on both 32- and 64-bit
  * hosts: 48 bytes on 32-bit (checked in check32.c), 72 on 64-bit. */

@@ -5,7 +5,7 @@ package main
 // The partition (platform/esp32s3/partitions.csv: `gogo`, data subtype 0x40
 // at 0x210000, 1 MB) holds a 16-byte little-endian header
 // {magic "GGIM" = 0x4D494747, image_bytes, crc32_ieee(image), 0} followed by
-// the unchanged v1 image; the firmware (platform/esp32s3/main/image_part.c)
+// the image (format v2, the compiler's current version); the firmware (platform/esp32s3/main/image_part.c)
 // checks all three before using the image, so a half-written partition is
 // refused. The write itself is delegated to an external esptool.
 
@@ -18,6 +18,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"gogo/compiler"
 )
 
 const (
@@ -37,6 +39,11 @@ func checkImage(img []byte) error {
 		return errors.New("not a gogo image (bad magic)")
 	case len(img)%4 != 0:
 		return errors.New("not a gogo image (size is not a multiple of 4)")
+	case len(img) < 8:
+		return errors.New("not a gogo image (truncated header)")
+	case binary.LittleEndian.Uint32(img[4:]) != compiler.ImageVersion:
+		return fmt.Errorf("image version %d, this gogo writes version %d: rebuild it with `gogo build`",
+			binary.LittleEndian.Uint32(img[4:]), compiler.ImageVersion)
 	case len(img) > partSize-partHdrSize:
 		return fmt.Errorf("image is %d bytes, the partition holds at most %d", len(img), partSize-partHdrSize)
 	}

@@ -8,6 +8,7 @@
 #include "heap.h"
 #include "timer.h"
 #include "names.h"
+#include "bytes.h"
 #include <string.h>
 
 /* One side of a link: a's entry for its peer holds the ExitMsg a sends the
@@ -45,6 +46,7 @@ struct ActorExtra {
     uint32_t timers_in;       /* SendAfter timers pending for this actor (timer.c) */
     uint32_t timers_out;      /* pending SendAfter timers charged to this actor (timer.c) */
     uint32_t ports;           /* open ports this actor owns (port.c) */
+    HeldBytes *held;          /* off-heap Bytes it holds (bytes.c), or NULL */
 };
 
 /* Words a resource takes, rounded up as the allocator would count them. */
@@ -100,7 +102,12 @@ static ActorExtra *extra_get(Actor *a, bool from_reserve) {
 
 uint32_t actor_charged_words(const Actor *a) {
     const ActorExtra *x = a->extra;
-    return (uint32_t)a->mbox_words + (x ? x->charged_words : 0u);
+    return (uint32_t)a->mbox_words + (x ? x->charged_words + (x->held ? bytes_words(x->held->bytes) : 0u) : 0u);
+}
+
+HeldBytes **actor_held(Actor *a, bool create) {
+    ActorExtra *x = create ? extra_get(a, false) : a->extra;
+    return x ? &x->held : NULL;
 }
 
 bool actor_timer_ref(Actor *a) {
@@ -200,6 +207,7 @@ void actor_extra_free(Vm *vm, Actor *a) {
     drop_watchers(vm, a);
     drop_watching(vm, a);
     drop_links(vm, a);
+    bytes_actor_exit(vm, a);
     va_free(x, sizeof(ActorExtra));
     a->extra = NULL;
 }
