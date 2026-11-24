@@ -1,0 +1,80 @@
+#include "actor.h"
+#include "alloc.h"
+#include "msg.h"
+#include <string.h>
+
+#define GEN_MASK 0xFFFu
+
+static uintptr_t free_slot(uint16_t gen) { return ((uintptr_t)(gen & GEN_MASK) << 1) | 1u; }
+static bool slot_is_free(uintptr_t w) { return (w & 1u) != 0; }
+static uint16_t slot_gen(uintptr_t w) { return (uint16_t)((w >> 1) & GEN_MASK); }
+
+int vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
+    memset(vm, 0, sizeof *vm);
+    vm->img = img;
+    vm->table = va_alloc((size_t)table_cap * sizeof(uintptr_t));
+    if (!vm->table) return -1;
+    vm->table_cap = table_cap;
+    for (uint16_t i = 0; i < table_cap; i++) vm->table[i] = free_slot(0);
+    return 0;
+}
+
+Actor *actor_new(Vm *vm, uint16_t initial_words) {
+    uint16_t slot = 0;
+    while (slot < vm->table_cap && !slot_is_free(vm->table[slot])) slot++;
+    if (slot == vm->table_cap) return NULL;
+
+    Actor *a = va_alloc(sizeof(Actor));
+    if (!a) return NULL;
+    memset(a, 0, sizeof *a);
+    a->mem = va_alloc((size_t)initial_words * 4u);
+    if (!a->mem) {
+        va_free(a, sizeof(Actor));
+        return NULL;
+    }
+    a->mem_words = initial_words;
+    a->hp = 0;
+    a->sp = a->fp = initial_words;          /* empty stack */
+    a->id = term_make_pid(slot, slot_gen(vm->table[slot]));
+    a->state = A_RUNNABLE;
+    vm->table[slot] = (uintptr_t)a;
+    vm->live++;
+    return a;
+}
+
+void actor_free(Vm *vm, Actor *a) {
+    while (a->mbox_head) {
+        Msg *m = a->mbox_head;
+        a->mbox_head = m->next;
+        msg_free(m);
+    }
+    uint16_t slot = term_pid_slot(a->id);
+    vm->table[slot] = free_slot((uint16_t)(term_pid_gen(a->id) + 1u));  /* wraps at 12 bits */
+    va_free(a->mem, (size_t)a->mem_words * 4u);
+    va_free(a, sizeof(Actor));
+    vm->live--;
+}
+
+Actor *actor_lookup(Vm *vm, term pid) {
+    if (!term_is_pid(pid)) return NULL;
+    uint16_t slot = term_pid_slot(pid);
+    if (slot >= vm->table_cap || slot_is_free(vm->table[slot])) return NULL;
+    Actor *a = (Actor *)vm->table[slot];
+    return a->id == pid ? a : NULL;          /* generation must match too */
+}
+
+void runq_push(Vm *vm, Actor *a) {
+    a->next = NULL;
+    if (vm->runq_tail) vm->runq_tail->next = a;
+    else vm->runq_head = a;
+    vm->runq_tail = a;
+}
+
+Actor *runq_pop(Vm *vm) {
+    Actor *a = vm->runq_head;
+    if (!a) return NULL;
+    vm->runq_head = a->next;
+    if (!vm->runq_head) vm->runq_tail = NULL;
+    a->next = NULL;
+    return a;
+}

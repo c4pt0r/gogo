@@ -1,0 +1,115 @@
+package compiler
+
+import "fmt"
+
+// Opcodes. Values mirror vm/opcodes.h (checked by TestOpcodesMatchC).
+const (
+	OpNop       uint8 = 0
+	OpMove      uint8 = 1
+	OpLoadk     uint8 = 2
+	OpLoadi32   uint8 = 3
+	OpAdd       uint8 = 4
+	OpSub       uint8 = 5
+	OpMul       uint8 = 6
+	OpDiv       uint8 = 7
+	OpRem       uint8 = 8
+	OpNeg       uint8 = 9
+	OpEq        uint8 = 10
+	OpNe        uint8 = 11
+	OpLt        uint8 = 12
+	OpLe        uint8 = 13
+	OpNot       uint8 = 14
+	OpJmp       uint8 = 15
+	OpJmpf      uint8 = 16
+	OpJmpt      uint8 = 17
+	OpCall      uint8 = 18
+	OpRet       uint8 = 19
+	OpNewstruct uint8 = 20
+	OpGetfield  uint8 = 21
+	OpMkclosure uint8 = 22
+	OpTypeis    uint8 = 23
+	OpBuiltin   uint8 = 24
+)
+
+// Builtin ids.
+const (
+	BPrintln uint32 = 0
+	BSpawn   uint32 = 1
+	BSelf    uint32 = 2
+	BSend    uint32 = 3
+	BReceive uint32 = 4
+	BMemory  uint32 = 5
+)
+
+// Builtin type ids for TYPEIS; struct types use their type-table index.
+const (
+	TyInt    uint32 = 0x10000
+	TyBool   uint32 = 0x10001
+	TyString uint32 = 0x10002
+	TyPid    uint32 = 0x10003
+)
+
+// Heap object kinds.
+const (
+	KStruct  uint32 = 1
+	KString  uint32 = 2
+	KInt     uint32 = 3
+	KClosure uint32 = 4
+	KForward uint32 = 63
+)
+
+// Special terms.
+const (
+	TermNil   uint32 = 0x02
+	TermFalse uint32 = 0x12
+	TermTrue  uint32 = 0x22
+)
+
+// Int31Fits reports whether v is representable as a small int.
+func Int31Fits(v int32) bool { return v >= -(1<<30) && v < 1<<30 }
+
+// TermInt encodes a small int; it panics if v does not fit in 31 bits.
+func TermInt(v int32) uint32 {
+	if !Int31Fits(v) {
+		panic(fmt.Sprintf("TermInt: %d does not fit in 31 bits", v))
+	}
+	return uint32(v)<<1 | 1
+}
+
+// TermConst encodes a reference to the const-area object at word offset off.
+func TermConst(off uint32) uint32 { return off<<4 | 0xA }
+
+// HdrMake builds a heap object header.
+func HdrMake(words, kind uint32) uint32 { return words<<6 | kind }
+
+// OpHasExt reports whether op is followed by one extra word.
+func OpHasExt(op uint8) bool {
+	switch op {
+	case OpLoadk, OpLoadi32, OpJmp, OpJmpf, OpJmpt, OpCall, OpNewstruct,
+		OpMkclosure, OpTypeis, OpBuiltin:
+		return true
+	}
+	return false
+}
+
+var opNames = [...]string{"NOP", "MOVE", "LOADK", "LOADI32", "ADD", "SUB", "MUL",
+	"DIV", "REM", "NEG", "EQ", "NE", "LT", "LE", "NOT", "JMP", "JMPF", "JMPT",
+	"CALL", "RET", "NEWSTRUCT", "GETFIELD", "MKCLOSURE", "TYPEIS", "BUILTIN"}
+
+var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "MEMORY"}
+
+// goConstants lists every exported Go twin of a C constant, by Go name.
+var goConstants = map[string]uint32{
+	"OpNop": uint32(OpNop), "OpMove": uint32(OpMove), "OpLoadk": uint32(OpLoadk),
+	"OpLoadi32": uint32(OpLoadi32), "OpAdd": uint32(OpAdd), "OpSub": uint32(OpSub),
+	"OpMul": uint32(OpMul), "OpDiv": uint32(OpDiv), "OpRem": uint32(OpRem),
+	"OpNeg": uint32(OpNeg), "OpEq": uint32(OpEq), "OpNe": uint32(OpNe),
+	"OpLt": uint32(OpLt), "OpLe": uint32(OpLe), "OpNot": uint32(OpNot),
+	"OpJmp": uint32(OpJmp), "OpJmpf": uint32(OpJmpf), "OpJmpt": uint32(OpJmpt),
+	"OpCall": uint32(OpCall), "OpRet": uint32(OpRet), "OpNewstruct": uint32(OpNewstruct),
+	"OpGetfield": uint32(OpGetfield), "OpMkclosure": uint32(OpMkclosure),
+	"OpTypeis": uint32(OpTypeis), "OpBuiltin": uint32(OpBuiltin),
+	"BPrintln": BPrintln, "BSpawn": BSpawn, "BSelf": BSelf, "BSend": BSend,
+	"BReceive": BReceive, "BMemory": BMemory,
+	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
+}
