@@ -57,6 +57,11 @@ struct gogo_vm {
     HostPort host_ports[GOGO_MAX_HOST_PORTS];
     const PortDriver *port_list[EMBED_PORT_LIST];
     uint8_t n_host_ports;
+    /* The host port whose open or close callback is running (hostport.c):
+     * events emitted during its open wait in held (oldest first) until the
+     * open succeeds; during its close, emit is refused. */
+    Port *opening, *closing;
+    Msg *held_head, *held_tail;
     /* Atomics (__atomic builtins): state, the shell's references (the
      * owner's plus gogo_retain's) and gogo_post calls in progress. */
     int state;

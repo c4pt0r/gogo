@@ -181,7 +181,7 @@ int gogo_start(gogo_vm *vm);
  * until gogo_next_deadline or a wake (wait, latched); GOGO_DONE: the
  * program has finished (every actor exited or is blocked for good, and,
  * while posts are open, none holds a registered name); later steps return
- * GOGO_DONE too.
+ * GOGO_DONE too, and posts are closed from then on.
  * GOGO_ESTATE before gogo_start. */
 int gogo_step(gogo_vm *vm, uint32_t budget);
 
@@ -192,7 +192,7 @@ int64_t gogo_next_deadline(gogo_vm *vm);
 /* Any thread: queues port.Post{kind, data[0..len)} for the actor registered
  * as name (NUL-terminated) and wakes the host. The data is copied. 0, or
  * GOGO_EFULL, GOGO_E2BIG, GOGO_ENOMEM, GOGO_EINVAL, GOGO_ECLOSED (posts
- * closed, or the VM is being freed). The caller must hold a reference: the
+ * closed, the program finished, or the VM is being freed). The caller must hold a reference: the
  * owner thread its own; any other thread that may post while or after the
  * owner frees the VM must hold one from gogo_retain. */
 int gogo_post(gogo_vm *vm, const char *name, int32_t kind, const void *data, size_t len);
@@ -236,23 +236,32 @@ int gogo_join(gogo_vm *vm);
  * port.Handoff gives it to another actor, a stale PID is ignored. Host
  * ports need no capability bit (they work with caps 0): what one may do is
  * the host's own business. While posts are open (gogo_close_posts), an
- * open host port keeps the VM alive, as it can still get events.
+ * open host port keeps the VM alive, as it can still get events; after
+ * the close it no longer does (a host that only emits between steps
+ * closes posts when it is done with its ports). port.Post carries no
+ * source: an actor that owns several host ports, or also gets gogo_post
+ * messages, tells them apart by Kind.
  *
  * The callbacks run on the VM thread inside gogo_step (close also inside
  * gogo_free) and are hooks: gogo_step, gogo_run, gogo_load and gogo_start
  * return GOGO_EBUSY there. data is valid during the call only; open's is
  * the cfg's Data, command's the command's Data. A port is named by its
- * index and generation: a closed port's value never names a later one. */
+ * index and a 12-bit generation bumped at each close of its slot: a closed
+ * port's value names no later port until that slot has been opened and
+ * closed 4096 more times (as for port PIDs). */
 typedef struct gogo_port { uint16_t index, gen; } gogo_port;
 typedef struct gogo_port_driver {
     /* port.Open: 0 to accept, anything else refuses (Open's ok is false).
-     * NULL accepts every open. An event it emits reaches the owner even if
-     * it then refuses. */
+     * NULL accepts every open. Events it emits (gogo_port_emit returns 0)
+     * are queued on the owner once the open succeeds, then subject to its
+     * quota like any event (over it, dropped); if it refuses, they are
+     * discarded. */
     int  (*open)(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uint8_t *data, size_t len);
     /* A port.Post sent to the port (by any actor). NULL ignores them; so
      * is any other message. */
     void (*command)(void *ctx, gogo_vm *vm, gogo_port port, int32_t kind, const uint8_t *data, size_t len);
-    /* The port has closed (any reason, gogo_free too). NULL: nothing. */
+    /* The port has closed (any reason, gogo_free too); gogo_port_emit to
+     * it returns GOGO_ECLOSED already. NULL: nothing. */
     void (*close)(void *ctx, gogo_vm *vm, gogo_port port);
 } gogo_port_driver;
 
@@ -269,8 +278,9 @@ int gogo_register_port(gogo_vm *vm, const char *name, const gogo_port_driver *dr
 
 /* VM thread (a callback, or between steps): sends the port's owner
  * port.Post{kind, data[0..len)} (copied) now. 0, or GOGO_ECLOSED (the port
- * is closed, or its owner is exiting), GOGO_EFULL (over the owner's
- * mailbox quota: dropped, the owner is not killed), GOGO_ENOMEM,
+ * is closed or closing, or its owner is exiting), GOGO_EFULL (over the
+ * owner's mailbox quota or Bytes limit: dropped, the owner is not
+ * killed), GOGO_ENOMEM,
  * GOGO_E2BIG (over GOGO_POST_DATA_MAX), GOGO_EINVAL. */
 int gogo_port_emit(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
 

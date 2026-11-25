@@ -442,21 +442,21 @@ TEST(embed_close_posts_ends_run) {
     tctx_done(&t);
 }
 
-/* A post accepted after the program finished (posts still open: no name
- * kept it alive) goes nowhere; the next step counts it as dropped. */
-TEST(embed_post_after_done_counted) {
+/* Once the program has finished, posts are refused (posts close at
+ * GOGO_DONE); one that raced the end is counted as dropped. */
+TEST(embed_post_after_done_refused) {
     TCtx t; tctx_init(&t);
     gogo_vm *vm = new_loaded(&t, "echo", NULL);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     CHECK_EQ(gogo_post(vm, "echo", -1, NULL, 0), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_DONE);
-    CHECK_EQ(gogo_post(vm, "echo", 4, "x", 1), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, "x", 1), GOGO_ECLOSED);
     CHECK_EQ(gogo_step(vm, 0), GOGO_DONE);
     gogo_stats st;
     gogo_get_stats(vm, &st);
     CHECK_EQ(st.posts_delivered, 1);
-    CHECK_EQ(st.posts_dropped, 1);
+    CHECK_EQ(st.posts_dropped, 0);
     gogo_free(vm);
     tctx_done(&t);
 }
@@ -681,7 +681,11 @@ typedef struct HCtx {
     int32_t arg, kind;
     char data[64];
     size_t len;
-    int emit_rc;
+    int emit_rc, emit_fails;
+    int32_t open_kind;             /* nonzero: open emits (open_kind, open_data) */
+    const char *open_data;
+    int refuse;                    /* open refuses (after its emit) */
+    int close_emit_rc;             /* an emit tried from close */
     gogo_vm *vm;                   /* set: re-entry tried from open */
     int reenter_step, reenter_reg, reenter_start;
 } HCtx;
@@ -700,6 +704,9 @@ static int h_open(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uin
         h->reenter_start = gogo_start(h->vm);
     }
     if (h->echo) h->emit_rc = gogo_port_emit(vm, port, arg, data, len);
+    if (h->open_kind) h->emit_rc = gogo_port_emit(vm, port, h->open_kind, h->open_data, strlen(h->open_data));
+    if (h->emit_rc) h->emit_fails++;
+    if (h->refuse) return -1;
     __atomic_fetch_add(&h->opens, 1, __ATOMIC_RELEASE);
     return 0;
 }
@@ -710,13 +717,14 @@ static void h_command(void *ctx, gogo_vm *vm, gogo_port port, int32_t kind, cons
     h->len = len < sizeof h->data ? len : sizeof h->data;
     if (len) memcpy(h->data, data, h->len);
     if (h->echo) h->emit_rc = gogo_port_emit(vm, port, kind + 1, data, len);
+    if (h->emit_rc) h->emit_fails++;
     __atomic_fetch_add(&h->commands, 1, __ATOMIC_RELEASE);
 }
 
 static void h_close(void *ctx, gogo_vm *vm, gogo_port port) {
-    (void)vm;
-    (void)port;
-    __atomic_fetch_add(&((HCtx *)ctx)->closes, 1, __ATOMIC_RELEASE);
+    HCtx *h = ctx;
+    h->close_emit_rc = gogo_port_emit(vm, port, 1000, NULL, 0);
+    __atomic_fetch_add(&h->closes, 1, __ATOMIC_RELEASE);
 }
 
 static const gogo_port_driver hdrv = { h_open, h_command, h_close };
@@ -767,6 +775,7 @@ TEST(embed_hostecho_golden) {
     CHECK_EQ(h.commands, 4);       /* the stale Send never reached it */
     CHECK_EQ(h.closes, 1);
     CHECK_EQ(h.emit_rc, GOGO_OK);
+    CHECK_EQ(h.emit_fails, 0);
     gogo_free(vm);
     tctx_done(&t);
 }
@@ -817,6 +826,7 @@ TEST(embed_hostport_stale) {
     gogo_port old = h.port;
     CHECK_EQ(ctl(vm, 3), GOGO_IDLE);
     CHECK_EQ(h.closes, 1);
+    CHECK_EQ(h.close_emit_rc, GOGO_ECLOSED);   /* no event after the close */
     CHECK_EQ(h.commands, 0);
     CHECK_EQ(gogo_port_emit(vm, old, 1000, NULL, 0), GOGO_ECLOSED);
     CHECK_EQ(gogo_port_post(vm, old, 1000, NULL, 0), GOGO_OK);   /* dropped when delivered */
@@ -872,7 +882,9 @@ TEST(embed_hostport_handoff) {
 }
 
 /* Registration: names a board driver has, duplicates, the limit, after
- * start, and from a hook (open's re-entry attempts). */
+ * start, and from a hook (open's re-entry attempts). The embed board has
+ * no drivers of its own yet, so only the reserved names are refused here,
+ * not name_taken's walk of the board's list. */
 TEST(embed_hostport_register) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
@@ -985,6 +997,49 @@ TEST(embed_hostport_post_threads) {
     CHECK(events >= 1000);
     CHECK(st.posts_dropped >= 20);
     CHECK_EQ(h.closes, 1);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+/* Events emitted from open wait for its outcome: a refused open's are
+ * discarded (inline and off-heap alike), an accepted one's follow it. */
+TEST(embed_hostport_open_emit) {
+    TCtx t; tctx_init(&t);
+    HCtx h;
+    gogo_vm *vm = new_hostport(&t, &h);
+    static const char big[] = "an event long enough to go off-heap as a Bytes handle, over sixty-four bytes";
+    h.refuse = 1;
+    h.open_kind = 4242;
+    h.open_data = big;
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    CHECK_EQ(h.emit_rc, GOGO_OK);
+    h.open_data = "ghost";
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    CHECK_EQ(h.emit_rc, GOGO_OK);
+    CHECK(strcmp(t.out, "ready\nopen false\nopen false\n") == 0);
+    h.refuse = 0;
+    h.open_kind = 1500;
+    h.open_data = "hi";
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    CHECK(strcmp(t.out, "ready\nopen false\nopen false\nopen true\nevent 1500 2\n") == 0);
+    CHECK_EQ(h.opens, 1);
+    CHECK_EQ(h.closes, 0);          /* a refused open has no close */
+    gogo_free(vm);
+    CHECK_EQ(h.closes, 1);
+    tctx_done(&t);
+}
+
+/* A registration between gogo_load and gogo_start counts. */
+TEST(embed_hostport_register_after_load) {
+    TCtx t; tctx_init(&t);
+    HCtx h; memset(&h, 0, sizeof h);
+    gogo_vm *vm = new_loaded(&t, "hostport", NULL);
+    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    CHECK_EQ(h.opens, 1);
+    CHECK(strcmp(t.out, "ready\nopen true\n") == 0);
     gogo_free(vm);
     tctx_done(&t);
 }

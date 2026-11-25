@@ -185,9 +185,13 @@ int gogo_step(gogo_vm *g, uint32_t budget) {
     g->stepping = true;
     int r = vm_step(&g->vm, budget);
     if (r == VM_DONE && running) vm_stop(&g->vm);
-    /* Done: a post that raced the end (or gogo_close_posts) has no one to
-     * go to; it is counted as dropped now rather than held until free. */
-    if (r == VM_DONE) inbox_clear(&g->inbox, g->uh, g->uctx);
+    /* Done: later posts are refused (as after gogo_close_posts), and a
+     * post that raced the end has no one to go to: it is counted as
+     * dropped now rather than held until free. */
+    if (r == VM_DONE) {
+        embed_set_state(g, EMBED_CLOSED);
+        inbox_clear(&g->inbox, g->uh, g->uctx);
+    }
     g->stepping = false;
     return r;
 }

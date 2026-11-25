@@ -15,7 +15,10 @@
 #include <string.h>
 
 /* Driver names a board may provide: a host port may not take them, so a
- * program that opens one never gets the host's port instead. */
+ * program that opens one never gets the host's port instead. Kept by hand:
+ * whoever adds a port driver (runtime/input, runtime/net, runtime/vfs,
+ * platform/{unix,esp32s3} gpio) adds its name here. "dns" is reserved for
+ * the host network ports planned beside tcp and udp. */
 static const char *const board_names[] = {
     "gpio", "kbd", "power", "imu", "ir_tx", "ir_rx", "mic", "spk",
     "netif", "tcp", "tcp_listen", "udp", "dns", "tls", "file", NULL
@@ -31,8 +34,23 @@ static gogo_port port_val(const Vm *vm, const Port *p) {
 
 static const HostPort *host_of(const Port *p) { return (const HostPort *)(const void *)p->drv; }
 
+/* Queues the events held during an open on the owner (it succeeded), or
+ * frees them (refused). */
+static void flush_held(gogo_vm *g, Actor *owner, bool ok) {
+    Msg *m = g->held_head;
+    g->held_head = g->held_tail = NULL;
+    while (m) {
+        Msg *next = m->next;
+        m->next = NULL;
+        if (ok) (void)embed_enqueue_post(&g->vm, owner, m);
+        else msg_free(&g->vm, m);
+        m = next;
+    }
+}
+
 static int hp_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg) {
     (void)index;
+    gogo_vm *g = vm->host_ctx;
     const HostPort *hp = host_of(p);
     const uint32_t *o = obj_of(vm, owner, cfg);   /* a port.Host: port_open checked */
     int32_t arg;
@@ -41,7 +59,12 @@ static int hp_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg
     if (hdr_words(o[0]) != 4u || !int_val(vm, owner, o[2], &arg) || !bytes_view(vm, owner, o[3], &d, &len))
         return -1;
     if (!hp->pub.open) return 0;
-    return hp->pub.open(hp->ctx, vm->host_ctx, port_val(vm, p), arg, d, len) ? -1 : 0;
+    g->opening = p;
+    int r = hp->pub.open(hp->ctx, g, port_val(vm, p), arg, d, len) ? -1 : 0;
+    g->opening = NULL;
+    /* A host port has no charge or room: open_in accepts it when r is 0. */
+    flush_held(g, actor_lookup(vm, owner->id), r == 0);
+    return r;
 }
 
 static void hp_command(Vm *vm, const Actor *from, Port *p, term msg) {
@@ -57,8 +80,12 @@ static void hp_command(Vm *vm, const Actor *from, Port *p, term msg) {
 }
 
 static void hp_close(Vm *vm, Port *p) {
+    gogo_vm *g = vm->host_ctx;
     const HostPort *hp = host_of(p);
-    if (hp->pub.close) hp->pub.close(hp->ctx, vm->host_ctx, port_val(vm, p));
+    if (!hp->pub.close) return;
+    g->closing = p;
+    hp->pub.close(hp->ctx, g, port_val(vm, p));
+    g->closing = NULL;
 }
 
 /* Events may still come while posts are open (gogo_port_post). */
@@ -129,18 +156,32 @@ static Port *host_port(gogo_vm *g, uint32_t index, uint32_t gen) {
 int embed_port_send(gogo_vm *g, uint32_t port, int32_t kind, const uint8_t *data, uint32_t len) {
     Vm *vm = &g->vm;
     Port *p = host_port(g, port >> 16 & 0x7FFFu, port & 0xFFFFu);
-    Actor *o = p ? port_owner(vm, p) : NULL;
+    Actor *o = p && p != g->closing ? port_owner(vm, p) : NULL;
     if (!o) return GOGO_ECLOSED;
-    if (len <= GOGO_BYTES_INLINE) return embed_enqueue_post(vm, o, embed_post_msg(vm, kind, data, len, T_NIL));
-    /* Off-heap: the port makes the Bytes for its owner, the message takes
-     * its own reference, and the port lets go before the enqueue, so the
-     * owner's quota counts the bytes once (as the mailbox's). */
-    uint8_t *w;
-    term h = port_bytes_new(vm, p, len, &w);
-    if (h == T_NIL) return GOGO_ENOMEM;
-    memcpy(w, data, len);
-    Msg *m = embed_post_msg(vm, kind, NULL, len, h);
-    port_bytes_release(vm, p, h);
+    Msg *m;
+    if (len <= GOGO_BYTES_INLINE) {
+        m = embed_post_msg(vm, kind, data, len, T_NIL);
+    } else {
+        /* Off-heap: the port makes the Bytes for its owner, the message
+         * takes its own reference, and the port lets go before the
+         * enqueue, so the owner's quota counts the bytes once (as the
+         * mailbox's). A full holder list or limit may be garbage: collect
+         * a waiting owner once, as a receive would. */
+        uint8_t *w;
+        term h = port_bytes_new(vm, p, len, &w);
+        if (h == T_NIL && heap_reclaim_waiting(vm, o)) h = port_bytes_new(vm, p, len, &w);
+        if (h == T_NIL) return GOGO_EFULL;
+        memcpy(w, data, len);
+        m = embed_post_msg(vm, kind, NULL, len, h);
+        port_bytes_release(vm, p, h);
+    }
+    if (m && p == g->opening) {          /* held until the open's outcome */
+        if (g->held_tail) g->held_tail->next = m;
+        else g->held_head = m;
+        g->held_tail = m;
+        m->next = NULL;
+        return 0;
+    }
     return embed_enqueue_post(vm, o, m);
 }
 
