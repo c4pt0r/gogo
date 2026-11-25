@@ -60,7 +60,7 @@ typedef struct TcpPcb {
     Port *port;             /* the "tcp" port; NULL: half-open, orphan or TIME_WAIT */
     uint32_t rip;           /* remote IP; state TCP_CLOSED: free */
     uint32_t snd_una, snd_nxt, rcv_nxt;
-    uint32_t deadline;      /* timer, low 32 bits of platform_now_ms (TF_TIMER) */
+    uint32_t deadline;      /* timer, low 32 bits of vm_now (TF_TIMER) */
     uint32_t until;         /* TF_UNTIL: connect deadline (SYN_SENT), with an upper layer also its
                              * handshake's (until tcp_until_clear); an orphan's close deadline */
     uint32_t wr_off;        /* bytes of wr[0] acknowledged */
@@ -134,7 +134,7 @@ typedef struct NetState {
     volatile uint8_t link_state;
     volatile uint32_t down_seq;      /* Downs offered; written by the producer only */
     uint32_t down_seen;              /* Downs the drain has handled; consumer only */
-    uint8_t attached;
+    uint8_t attached;       /* a Vm with a netif that has a MAC */
     uint8_t link_up;        /* as last drained */
     uint8_t is_up;          /* as last reported to subscribers */
     uint8_t dirty;          /* Up/Down may need reporting */
@@ -145,6 +145,8 @@ typedef struct NetState {
     uint32_t up_ip, up_gw, up_dns;   /* as last reported */
     uint32_t arp_clock;
     Port *netif;
+    struct Vm *vm;          /* the attached Vm (net_attach) */
+    const NetIf *nif;       /* its board's netif */
     term subs[GOGO_NET_MAX_SUBS];
     ArpEntry arp[GOGO_NET_ARP];
     UdpPcb udp[GOGO_NET_MAX_UDP];

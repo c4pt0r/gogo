@@ -1,5 +1,6 @@
 /* Interpreter-level actor tests on a hand-built image. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -62,7 +63,7 @@ TEST(receive_blocks_then_wakes) {
     va_reset(&vm);
     build_receiver(w);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     Actor *r = start(&vm, &img, 32);
     Actor *s = actor_new(&vm, 32);
 
@@ -86,7 +87,7 @@ TEST(receive_oom_crashes_only_receiver) {
     va_reset(&vm);
     build_receiver(w);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     size_t base = va_used_bytes(&vm);
 
     /* The receiver's 256-word block is full: 200 live words (r0) plus
@@ -125,7 +126,7 @@ TEST(make_ref_allocates_serials) {
     w[17] = B_RECEIVE;
     w[5] = 4;
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     for (uint32_t serial = 1; serial <= 2; serial++) {
         Actor *a = start(&vm, &img, 32);
         CHECK_EQ(interp_run(&vm, a), RUN_WAIT);
@@ -145,7 +146,7 @@ TEST(unimplemented_builtin_is_badcode) {
     build_receiver(w);
     w[15] = B_LINK;
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     Actor *a = start(&vm, &img, 32);
     err_len = 0; err_buf[0] = 0;
     platform_unix_err_hook = capture_err;
@@ -180,7 +181,7 @@ static const char *run_hidden_loadk(uint32_t k_off, int direct) {
     c[6] = OP_MAKE(OP_BUILTIN, 0, 0, 0); c[7] = B_RECEIVE;
     c[8] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     Actor *a = start(&vm, &img, 32);
     err_len = 0; err_buf[0] = 0;
     platform_unix_err_hook = capture_err;
@@ -233,7 +234,7 @@ static const char *run_int64_op(uint32_t op, int64_t x, int64_t y, int32_t x_sma
     va_reset(&vm);
     build_int64_op(w, op, x, y, x_small);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     Actor *a = actor_new(&vm, 32);
     CHECK(a != NULL);
     CHECK(heap_push_frame(&vm, a, 3, -1));
@@ -324,7 +325,7 @@ TEST(int64_immediates) {
                 w[21] = (uint32_t)INT32_MIN;
             }
             CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-            CHECK_EQ(vm_init(&vm, &img, 4), 0);
+            CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
             Actor *a = actor_new(&vm, 32);
             CHECK(heap_push_frame(&vm, a, 3, -1));
             a->pc = img.code;
@@ -343,7 +344,7 @@ TEST(int64_immediates) {
 static term run_conv(uint32_t *w, Image *img, Vm *vm, Actor **ap, uint32_t src, uint32_t c) {
     w[24] = OP_MAKE(OP_CONV, 2, src, c);
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(vm, img, 4), 0);
+    CHECK_EQ(test_vm_init(vm, img, 4), 0);
     Actor *a = actor_new(vm, 32);
     CHECK(heap_push_frame(vm, a, 3, -1));
     a->pc = img->code;
@@ -438,7 +439,7 @@ TEST(now_no_alloc) {
     w[24] = OP_MAKE(OP_JMPT, 3, 0, 0); w[25] = 6;
     w[26] = OP_MAKE(OP_BUILTIN, 0, 0, 0); w[27] = B_RECEIVE;
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     Actor *a = actor_new(&vm, 32);
     CHECK(a != NULL);
     CHECK(heap_push_frame(&vm, a, 5, -1));
@@ -481,7 +482,7 @@ static const char *run_code(const uint32_t *code, uint32_t n, uint16_t n_regs,
     memcpy(&w[14], code, n * 4u);
     va_reset(vm);
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(vm, img, 4), 0);
+    CHECK_EQ(test_vm_init(vm, img, 4), 0);
     Actor *a = actor_new(vm, 64);
     CHECK(a != NULL);
     CHECK(heap_push_frame(vm, a, n_regs, -1));
@@ -566,7 +567,7 @@ TEST(no_actor_has_zero_pid) {
     va_reset(&vm);
     build_receiver(w);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     for (uint32_t i = 0; i < 4097u + 3u; i++) {
         Actor *a = actor_new(&vm, 32);
         CHECK(a != NULL);
@@ -601,7 +602,7 @@ static const char *run_retn(uint32_t dst, uint32_t n, Vm *vm, Image *img, Actor 
     w[26] = OP_MAKE(OP_RETN, 1, n, 0);
     va_reset(vm);
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(vm, img, 4), 0);
+    CHECK_EQ(test_vm_init(vm, img, 4), 0);
     Actor *a = actor_new(vm, 64);
     CHECK(a != NULL);
     CHECK(heap_push_frame(vm, a, 4, -1));
@@ -710,7 +711,7 @@ static const char *run_callv(bool nil, uint32_t nargs, Vm *vm, Image *img, Actor
     w[27] = OP_MAKE(OP_RET, 2, 0, 0);
     va_reset(vm);
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(vm, img, 4), 0);
+    CHECK_EQ(test_vm_init(vm, img, 4), 0);
     Actor *a = actor_new(vm, 64);
     CHECK(a != NULL);
     CHECK(heap_push_frame(vm, a, 5, -1));
@@ -783,7 +784,7 @@ static const char *run_bit(uint32_t op, BOp x, BOp y, term *out, int64_t *val) {
     w[25] = OP_MAKE(OP_BUILTIN, 0, 0, 0);
     w[26] = B_RECEIVE;
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     Actor *a = actor_new(&vm, 32);
     CHECK(a != NULL);
     CHECK(heap_push_frame(&vm, a, 3, -1));

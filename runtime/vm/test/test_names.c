@@ -1,5 +1,6 @@
 /* Registered names: the table, name bytes copied, and the exit hook. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "alloc.h"
 #include "heap.h"
@@ -20,7 +21,7 @@ static void setup(uint32_t *w, Image *img, Vm *vm) {
     w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
     w[14] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(vm, img, 8), 0);
+    CHECK_EQ(test_vm_init(vm, img, 8), 0);
 }
 
 #define NAME(s) ((const uint8_t *)(s)), (uint32_t)(sizeof(s) - 1u)

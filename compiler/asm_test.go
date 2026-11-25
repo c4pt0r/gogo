@@ -611,10 +611,10 @@ func TestFsMatchC(t *testing.T) {
 
 // TestCodeMatchC cross-checks gogo/code with C: code.Err with CODE_* and
 // the B_CODE op codes with CODE_OP_* (runtime/vm/module.h), code.Cap* and the
-// compiler's Cap* with CAP_* (runtime/vm/platform.h).
+// compiler's Cap* with CAP_* (runtime/vm/host.h).
 func TestCodeMatchC(t *testing.T) {
 	c := map[string]int64{}
-	for _, f := range []string{"../runtime/vm/module.h", "../runtime/vm/platform.h"} {
+	for _, f := range []string{"../runtime/vm/module.h", "../runtime/vm/host.h"} {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

@@ -1,6 +1,7 @@
 /* Call / Reply: reply blocks in the mailbox, selective receive by Ref
  * serial, and that a blocked Call sends its request exactly once. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -36,7 +37,7 @@ static void setup(uint32_t *w, Image *img, Vm *vm, int32_t ms) {
     va_reset(vm);
     build_call(w, ms);
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(vm, img, 8), 0);
+    CHECK_EQ(test_vm_init(vm, img, 8), 0);
 }
 
 static Actor *start(Vm *vm, const Image *img) {
@@ -274,7 +275,7 @@ TEST(stale_reply_reblocks_receive) {
     build_call(w, 50);
     w[20] = OP_MAKE(OP_BUILTIN, 3, 0, 0); w[21] = B_RECEIVE;   /* r3 = Receive() */
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     size_t base = va_used_bytes(&vm);
     Actor *c = start(&vm, &img), *s = actor_new(&vm, 64);
     CHECK_EQ(interp_run(&vm, c), RUN_WAIT);

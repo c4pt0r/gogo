@@ -2,7 +2,7 @@
 #include "alloc.h"
 #include "config.h"
 #include "opcodes.h"
-#include "platform.h"
+#include "host.h"
 #include "out.h"
 #include "msg.h"
 #include "heap.h"
@@ -338,7 +338,7 @@ static const char *kind_name(uint32_t code) {
 /* `gogo: actor <pid N> crashed: <kind>[ in <func>]` on stderr. */
 static void report_crash(const Vm *vm, const Actor *a, uint32_t code, term func_name) {
     Out o;
-    out_init(&o, platform_write_err);
+    out_init(&o, vm, 2);
     out_str(&o, "gogo: actor <pid ");
     out_int(&o, term_pid_slot(a->id));
     out_str(&o, "> crashed: ");

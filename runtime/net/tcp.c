@@ -39,7 +39,7 @@
 #include "heap.h"
 #include "bytes.h"
 #include "opcodes.h"
-#include "platform.h"
+#include "host.h"
 #include "signals.h"
 #include <string.h>
 
@@ -81,7 +81,7 @@ typedef struct Seg {
     uint8_t fl;
 } Seg;
 
-static uint32_t now32(void) { return (uint32_t)platform_now_ms(); }
+static uint32_t now32(void) { return (uint32_t)vm_now(net_s.vm); }
 static bool due(uint32_t t, uint32_t now) { return (int32_t)(now - t) >= 0; }
 
 void tcp_reset(void) {
@@ -1026,7 +1026,7 @@ bool tcp_next_deadline(uint64_t *deadline) {
     bool have = false;
     uint64_t now = 0;
     if (net_s.tcp_held) {
-        now = platform_now_ms();
+        now = vm_now(net_s.vm);
         int32_t left = (int32_t)(net_s.held_at - (uint32_t)now);
         *deadline = left > 0 ? now + (uint32_t)left : now;
         have = true;
@@ -1034,7 +1034,7 @@ bool tcp_next_deadline(uint64_t *deadline) {
     for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) {
         const TcpPcb *c = &net_s.tcp[i];
         if (!(c->flags & TF_TIMER)) continue;
-        if (!have) now = platform_now_ms();
+        if (!have) now = vm_now(net_s.vm);
         int32_t left = (int32_t)(c->deadline - (uint32_t)now);
         uint64_t d = left > 0 ? now + (uint32_t)left : now;
         if (!have || d < *deadline) *deadline = d;

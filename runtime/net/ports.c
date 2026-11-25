@@ -4,7 +4,7 @@
 #include "heap.h"
 #include "alloc.h"
 #include "opcodes.h"
-#include "platform.h"
+#include "host.h"
 #include "signals.h"
 #include <string.h>
 
@@ -103,12 +103,12 @@ static void notify_sub(Vm *vm, uint32_t i, Actor *a) {
         net_s.sub_owed &= (uint8_t)~bit;
         return;
     }
-    if (!net_s.sub_owed) net_s.sub_retry_at = (uint32_t)platform_now_ms() + NOTIFY_RETRY_MS;
+    if (!net_s.sub_owed) net_s.sub_retry_at = (uint32_t)vm_now(net_s.vm) + NOTIFY_RETRY_MS;
     net_s.sub_owed |= bit;
 }
 
 static bool owed_due(void) {
-    return net_s.sub_owed && due(net_s.sub_retry_at, (uint32_t)platform_now_ms());
+    return net_s.sub_owed && due(net_s.sub_retry_at, (uint32_t)vm_now(net_s.vm));
 }
 
 static void retry_owed(Vm *vm) {
@@ -135,7 +135,7 @@ static void report(Vm *vm) {
     }
     net_s.is_up = up;
     if (!up) tcp_down(vm);
-    platform_net_report(up, up ? net_s.up_ip : 0u, up ? net_s.up_gw : 0u, up ? net_s.up_dns : 0u);
+    net_s.nif->report(net_s.nif->ctx, up, up ? net_s.up_ip : 0u, up ? net_s.up_gw : 0u, up ? net_s.up_dns : 0u);
     for (uint32_t i = 0; i < GOGO_NET_MAX_SUBS; i++) {
         Actor *a = sub_at(vm, i);
         if (a) notify_sub(vm, i, a);
@@ -174,12 +174,12 @@ static void s_drain(Vm *vm, void *ctx, uint64_t now) {
     (void)ctx; (void)now;
     if (net_s.link_pending) {
         net_s.link_pending = 0;
-        platform_barrier();          /* flag cleared before the state is read */
+        vm_barrier();          /* flag cleared before the state is read */
         bool up = net_s.link_state != 0;
-        platform_barrier();          /* link_state read before down_seq */
+        vm_barrier();          /* link_state read before down_seq */
         uint32_t seq = net_s.down_seq;
         if (seq != net_s.down_seen) {
-            platform_barrier();
+            vm_barrier();
             up = net_s.link_state != 0;  /* re-read: the state of any Down seen is visible */
         }
         if (seq != net_s.down_seen) {    /* a Down since the last drain, even if the link is up again */
@@ -197,9 +197,9 @@ static void s_drain(Vm *vm, void *ctx, uint64_t now) {
         net_s.dirty = 1;
     }
     if (net_s.rx_ready) {
-        platform_barrier();          /* flag read before the frame */
+        vm_barrier();          /* flag read before the frame */
         net_rx_frame(vm, net_s.rx, net_s.rx_len);
-        platform_barrier();          /* frame consumed before the slot is freed */
+        vm_barrier();          /* frame consumed before the slot is freed */
         net_s.rx_ready = 0;
     }
     if (net_s.dirty) report(vm);
@@ -220,7 +220,7 @@ static bool s_next_deadline(const Vm *vm, void *ctx, uint64_t *deadline) {
         have = true;
     }
     if (net_s.sub_owed) {
-        uint64_t now = platform_now_ms();
+        uint64_t now = vm_now(net_s.vm);
         int32_t left = (int32_t)(net_s.sub_retry_at - (uint32_t)now);
         d = left > 0 ? now + (uint32_t)left : now;
         if (!have || d < *deadline) *deadline = d;
@@ -235,8 +235,11 @@ void net_attach(Vm *vm) {
     memset(&net_s, 0, sizeof net_s);
     udp_reset();
     tcp_reset();
-    net_s.attached = platform_net_mac(net_s.mac);
-    net_s.link_up = net_s.attached && platform_net_link_up();
+    const NetIf *nif = vm->board->netif;
+    net_s.vm = vm;
+    net_s.nif = nif;
+    net_s.attached = nif && nif->mac(nif->ctx, net_s.mac);
+    net_s.link_up = net_s.attached && nif->link_up(nif->ctx);
     (void)port_add_source(vm, &net_source, NULL);
 }
 

@@ -92,7 +92,7 @@ typedef struct InputHw {
      * clamped to 1..32767 by the caller) into buf: returns its value count,
      * which may exceed cap (then only cap were stored and the rest are
      * lost), 0 when no complete frame waits, -1 error (retried at the next
-     * poll). *start_ms holds the poll's time (platform_now_ms, low 32 bits)
+     * poll). *start_ms holds the poll's time (host->now_ms, low 32 bits)
      * on the call; a hook that knows when the frame began stores that
      * instead. Polled every 20 ms while ir_rx is open. */
     int  (*ir_rx_open)(uint32_t gap_us);
@@ -145,9 +145,7 @@ typedef struct InputHw {
     void (*spk_close)(void);
 } InputHw;
 
-/* The platform's hardware; never NULL, fields NULL when absent. A weak
- * default (no hardware) is in source.c. */
-const InputHw *platform_input(void);
+/* A board gives its InputHw in VmBoard.input (host.h); NULL = none. */
 
 extern const PortDriver input_kbd_driver, input_power_driver, input_imu_driver, input_ir_tx_driver,
     input_ir_rx_driver, input_mic_driver, input_spk_driver;

@@ -4,6 +4,7 @@
  * net_rx_offer and the port layer's drain, out through the unix
  * platform's test TX hook. */
 #include "test.h"
+#include "test_host.h"
 #include "net_int.h"
 #include "actor.h"
 #include "heap.h"
@@ -67,14 +68,13 @@ static void mini_image(void) {
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
 }
 
-void platform_unix_arena_forget(void);
 
 static void setup(void) {
-    platform_unix_arena_forget();   /* setup may run many times in one test */
+    test_host_arena_forget();   /* setup may run many times in one test */
     va_reset(&vm);
     bytes_reset(&vm);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
     memset(&tx, 0, sizeof tx);
     platform_unix_net_set_tx(tx_hook);
     net_attach(&vm);
@@ -347,7 +347,7 @@ TEST(net_mem_report) {
 TEST(net_ports_refused_unattached) {
     va_reset(&vm);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
     net_detach(&vm);
     Actor *a = new_actor();
     CHECK(open_netif(a) == T_NIL);
@@ -857,12 +857,11 @@ TEST(net_subscribe_up_down) {
  * retried from the source's poll (every 50 ms) until it goes out. */
 static uint64_t fake_now;
 static uint64_t fake_clock(void) { return fake_now; }
-extern void platform_unix_set_clock(uint64_t (*fn)(void));
 
 TEST(net_subscribe_retry_on_oom) {
     setup();
     fake_now = 1000;
-    platform_unix_set_clock(fake_clock);
+    test_host_set_clock(fake_clock);
     Actor *a = new_actor(), *s = new_actor();
     CHECK(port_subscribe(&vm, s));
     term n = open_netif(a);
@@ -888,7 +887,7 @@ TEST(net_subscribe_retry_on_oom) {
     drain();
     CHECK_EQ(mbox_len(s), 2);
     CHECK_EQ(msg_type(s, 1), TYPE_NET_DOWN);
-    platform_unix_set_clock(NULL);
+    test_host_set_clock(NULL);
     teardown();
 }
 
@@ -898,7 +897,7 @@ TEST(net_subscribe_retry_on_oom) {
 TEST(net_up_to_full_mailbox_is_owed) {
     setup();
     fake_now = 1000;
-    platform_unix_set_clock(fake_clock);
+    test_host_set_clock(fake_clock);
     Actor *a = new_actor(), *s = new_actor();
     CHECK(port_subscribe(&vm, s));
     term n = open_netif(a);
@@ -926,7 +925,7 @@ TEST(net_up_to_full_mailbox_is_owed) {
     CHECK_EQ(mbox_len(s), 1);
     CHECK_EQ(msg_type(s, 0), TYPE_NET_UP);
     CHECK_EQ(net_s.sub_owed, 0);
-    platform_unix_set_clock(NULL);
+    test_host_set_clock(NULL);
     teardown();
 }
 

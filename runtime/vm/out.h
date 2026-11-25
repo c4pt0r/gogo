@@ -6,13 +6,16 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+struct Vm;
+
 typedef struct Out {
     char buf[256];
     size_t n;
-    void (*write)(const char *s, size_t n);   /* platform_write or _err */
+    const struct Vm *vm;      /* written with vm_out(vm, stream, ...) */
+    int stream;               /* 1 program output, 2 diagnostics */
 } Out;
 
-void out_init(Out *o, void (*write)(const char *s, size_t n));
+void out_init(Out *o, const struct Vm *vm, int stream);
 void out_flush(Out *o);
 void out_bytes(Out *o, const char *s, size_t n);
 void out_str(Out *o, const char *s);

@@ -4,6 +4,7 @@
  * interpreter's B_FS case. Calls go straight through vm.fs_builtin on an
  * actor with an NREGS-register frame: r0 (r1) = B_FS(r2 = op, r3.. = args). */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "alloc.h"
@@ -14,7 +15,7 @@
 #include "port.h"
 #include "bytes.h"
 #include "evq.h"
-#include "platform.h"
+#include "test_host.h"
 #include "term.h"
 #include "vfs.h"
 #include "memfs.h"
@@ -52,7 +53,7 @@ static void setup(void) {
     w[14] = OP_MAKE(OP_RET, 0, 0, 0);
     w[15] = 1u;                              /* v7 const map: "main" at 0 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     vfs_install(&vm);
 }
 
@@ -373,7 +374,7 @@ TEST(fs_stale_and_foreign_handles) {
     CHECK_EQ(fs(a, FS_READ, "ti", g, 3), R_NORMAL);
     CHECK_EQ(ERR2(a), VFS_OK);
     /* `file` is not a platform driver: port.Open("file", ...) cannot make one. */
-    for (const PortDriver *const *l = platform_port_drivers(); l && *l; l++)
+    for (const PortDriver *const *l = test_board.ports; l && *l; l++)
         CHECK(strcmp((*l)->name, "file") != 0);
     done(a);
     done(b);
@@ -730,7 +731,7 @@ static const char *run_fs(int op, Actor **out) {
     c[24] = OP_MAKE(OP_BUILTIN, 0, 0, 0); c[25] = B_RECEIVE;
     c[26] = 1u | 8u;                         /* v7 const map: strings at 0, 3 */
     CHECK_EQ(image_load(&im, c, RUN_WORDS), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &im, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &im, 4), 0);
     if (!no_storage) vfs_install(&vm);
     Actor *a = actor_new(&vm, 32);
     CHECK(a != NULL);

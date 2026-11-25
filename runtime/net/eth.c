@@ -1,6 +1,6 @@
 /* Ethernet: the RX single-slot handoff, frame dispatch, send. */
 #include "net_int.h"
-#include "platform.h"
+#include "host.h"
 #include <string.h>
 
 const uint8_t net_bcast_mac[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -18,9 +18,9 @@ void net_rx_offer(const uint8_t *frame, uint32_t len) {
     }
     memcpy(net_s.rx, frame, len);
     net_s.rx_len = len;
-    platform_barrier();              /* frame visible before the flag */
+    vm_barrier();                    /* frame visible before the flag */
     net_s.rx_ready = 1;
-    platform_notify();
+    vm_wake(net_s.vm);
 }
 
 /* link_pending is one latch, so events between two drains collapse to the
@@ -39,13 +39,13 @@ void net_rx_offer(const uint8_t *frame, uint32_t len) {
 void net_link_event(bool up) {
     if (!net_s.attached) return;
     net_s.link_state = up ? 1u : 0u;
-    platform_barrier();
+    vm_barrier();
     if (!up) {
         net_s.down_seq++;
-        platform_barrier();
+        vm_barrier();
     }
     net_s.link_pending = 1;
-    platform_notify();
+    vm_wake(net_s.vm);
 }
 
 void eth_send(const uint8_t dst[6], uint16_t type, uint32_t len) {
@@ -53,7 +53,7 @@ void eth_send(const uint8_t dst[6], uint16_t type, uint32_t len) {
     memcpy(f, dst, 6);
     memcpy(f + 6, net_s.mac, 6);
     wr16(f + 12, type);
-    if (platform_net_send(f, ETH_HLEN + len) == 0) net_s.st.tx_frames++;
+    if (net_s.nif->send(net_s.nif->ctx, f, ETH_HLEN + len) == 0) net_s.st.tx_frames++;
     else net_s.st.tx_fail++;
 }
 

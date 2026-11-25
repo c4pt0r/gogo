@@ -24,8 +24,8 @@ static struct {
     int8_t last_pct, last_ch, last_ext;   /* as of the last delivered event */
 } w;
 
-static bool power_due(uint64_t now) {
-    const InputHw *hw = platform_input();
+static bool power_due(const Vm *vm, uint64_t now) {
+    const InputHw *hw = input_hw(vm);
     if (!w.port) return false;
     bool pend = hw->power_pending && hw->power_pending();
     if (w.backoff && !w.fail_pend && pend) w.backoff = false;   /* the flag rose again: a new value */
@@ -43,13 +43,13 @@ static int percent(uint32_t mv) {
 static int power_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)vm;
     (void)index;
-    if (input_failed() || w.port || !platform_input()->power_read) return -1;
+    if (input_failed() || w.port || !input_hw(vm)->power_read) return -1;
     memset(&w, 0, sizeof w);
     int32_t per = n > 0 ? cfg[0] : 0;
     w.period = (uint16_t)(per <= 0 ? DEF_PERIOD : per < MIN_PERIOD ? MIN_PERIOD : per > 65535 ? 65535 : per);
     w.port = p;                /* next_at = 0: the first sample is due now */
     w.start = true;
-    if (platform_input()->power_enable) platform_input()->power_enable(true);
+    if (input_hw(vm)->power_enable) input_hw(vm)->power_enable(true);
     return 0;
 }
 
@@ -57,7 +57,7 @@ static void power_close(struct Vm *vm, Port *p) {
     (void)vm;
     if (w.port != p) return;                      /* a refused open's cleanup */
     memset(&w, 0, sizeof w);
-    if (platform_input()->power_enable) platform_input()->power_enable(false);
+    if (input_hw(vm)->power_enable) input_hw(vm)->power_enable(false);
 }
 
 static void power_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm;
@@ -72,7 +72,7 @@ static void power_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *
 
 static bool power_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     (void)p;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     return !hw->live || hw->live();
 }
 
@@ -84,10 +84,10 @@ const PortDriver input_power_driver = {
 
 bool power_is_open(void) { return w.port != NULL; }
 
-bool power_work(uint64_t now) { return power_due(now); }
+bool power_work(const Vm *vm, uint64_t now) { return power_due(vm, now); }
 
-bool power_next_deadline(uint64_t now, uint64_t *d) {
-    if (!w.port || platform_input()->power_event_driven) return false;
+bool power_next_deadline(const Vm *vm, uint64_t now, uint64_t *d) {
+    if (!w.port || input_hw(vm)->power_event_driven) return false;
     *d = w.start ? now : deadline_abs(now, w.next_at);
     return true;
 }
@@ -95,12 +95,12 @@ bool power_next_deadline(uint64_t now, uint64_t *d) {
 void power_drain(Vm *vm, uint64_t now) {
     int32_t mv;
     int8_t ch, ext;
-    if (!power_due(now)) return;
+    if (!power_due(vm, now)) return;
     bool forced = w.read_req;                     /* stays set until an event is delivered */
     w.next_at = (uint32_t)now + w.period;           /* a failure or drop retries then, not sooner */
     w.backoff = true;
     w.start = false;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     w.fail_pend = true;                           /* until proven otherwise (a drop below) */
     if (hw->power_read(&mv, &ch, &ext) != 0) {
         /* Retry at the period, or earlier when the flag rises again. A flag

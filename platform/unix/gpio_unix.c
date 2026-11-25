@@ -9,7 +9,7 @@
  * produce events (can_event false), so the VM may exit.
  */
 #include "gpio_unix.h"
-#include "platform.h"
+#include "platform_unix.h"
 #include "input_unix.h"
 #include "evq.h"
 #include "opcodes.h"

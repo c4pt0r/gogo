@@ -50,7 +50,7 @@
  *
  * Delivery never kills the owner (stream/). */
 #include "input_int.h"
-#include "platform.h"
+#include "host.h"
 #include "stream.h"
 #include "alloc.h"
 #include <string.h>
@@ -88,7 +88,7 @@ static bool rate_ok(int32_t r) { return r == RATE_8K || r == RATE_16K; }
 
 static int mic_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     if (input_failed() || au.mic || au.spk || !hw->mic_open || !hw->mic_read || n < 3) return -1;
     int32_t rate = cfg[0], ms = cfg[1], gain = cfg[2];
     if (!rate_ok(rate)) return -1;
@@ -109,7 +109,7 @@ static int mic_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, 
     au.frames = 0;
     au.frame_ms = (uint16_t)ms;
     au.poll_ms = (uint16_t)(ms < MIC_MAX_POLL ? ms : MIC_MAX_POLL);
-    au.t0 = (uint32_t)platform_now_ms();
+    au.t0 = (uint32_t)vm_now(vm);
     au.mic_next = au.t0 + au.poll_ms;
     au.more = true;                            /* the hardware may hold data from the start */
     au.mic = p;
@@ -120,7 +120,7 @@ static int mic_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, 
 
 static void mic_close(struct Vm *vm, Port *p) {
     if (au.mic != p) return;                   /* a refused open's cleanup */
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     if (hw->mic_close) hw->mic_close();
     va_free(vm, au.buf, au.cap);
     au.buf = NULL;
@@ -129,14 +129,14 @@ static void mic_close(struct Vm *vm, Port *p) {
 
 static void mic_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm; (void)p; (void)type; (void)f; (void)n; }
 
-static bool hw_live(void) {
-    const InputHw *hw = platform_input();
+static bool hw_live(const Vm *vm) {
+    const InputHw *hw = input_hw(vm);
     return !hw->live || hw->live();
 }
 
 static bool mic_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     (void)p;
-    return hw_live() || au.more;               /* dead hardware may still hold captured data */
+    return hw_live(vm) || au.more;               /* dead hardware may still hold captured data */
 }
 
 const PortDriver input_mic_driver = {
@@ -155,7 +155,7 @@ static void spk_reset(void) {
 static int spk_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)vm;
     (void)index;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     if (input_failed() || au.mic || au.spk || !hw->spk_open || !hw->spk_write || n < 2) return -1;
     int32_t rate = cfg[0], vol = cfg[1];
     if (!rate_ok(rate)) return -1;
@@ -173,14 +173,14 @@ static void spk_close(struct Vm *vm, Port *p) {
     stream_out_close(NULL, p, out_of(p));      /* port_close releases the held data */
     au.spk = NULL;
     spk_reset();
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     if (hw->spk_close) hw->spk_close();
 }
 
 static void spk_command(Vm *vm, const Actor *from, Port *p, term msg) {
     if (au.spk != p) return;
     stream_out_accept(vm, from, p, out_of(p), msg, pcm_ok);
-    au.spk_next = (uint32_t)platform_now_ms();   /* write it (or flush a Done{-1}) at once */
+    au.spk_next = (uint32_t)vm_now(vm);   /* write it (or flush a Done{-1}) at once */
 }
 
 static bool spk_can_event(const struct Vm *vm, const Port *p) { (void)vm;
@@ -217,7 +217,7 @@ bool audio_next_deadline(uint64_t now, bool live, uint64_t *d) {
 }
 
 static void mic_drain(Vm *vm, uint64_t now) {
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     au.mic_next = (uint32_t)now + au.poll_ms;
     bool got = false;
     for (int k = 0; k < MIC_READS_PER_POLL; k++) {
@@ -260,7 +260,7 @@ static void spk_shift(void) {
 
 /* Finishes the heads that failed or have played. */
 static void spk_retire(Vm *vm, Port *p, StreamOut *o) {
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     uint32_t played = au.written - (hw->spk_queued ? hw->spk_queued() : 0u);
     while (o->n && au.wi > 0) {                /* the head is all written */
         if (au.bad & 1u) stream_out_fail(vm, p, o);
@@ -273,7 +273,7 @@ static void spk_retire(Vm *vm, Port *p, StreamOut *o) {
 /* Writes the Outs in flight in order, from the cursor, while the hardware
  * takes them. */
 static void spk_write_ahead(Vm *vm, Port *p, StreamOut *o) {
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     for (int writes = 0; au.wi < o->n && writes < SPK_WRITES_PER_POLL; writes++) {
         uint32_t len;
         const uint8_t *d = stream_out_at(vm, o, au.wi, &len);

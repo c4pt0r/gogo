@@ -1,19 +1,25 @@
 #include "test.h"
 #include "out.h"
+#include "actor.h"
 #include <string.h>
 
 static char cap[64];
 static size_t cap_n;
 
-static void capture(const char *s, size_t n) {
+/* Out writes through its Vm's host (host->write, stream 2 here). */
+static void capture(void *ctx, int stream, const char *s, size_t n) {
+    CHECK(ctx == cap);
+    CHECK_EQ(stream, 2);
     memcpy(cap + cap_n, s, n);
     cap_n += n;
 }
+static const gogo_host cap_host = { .write = capture };
+static Vm cv = { .host = &cap_host, .host_ctx = cap };
 
 static void expect_int(int32_t v, const char *want) {
     Out o;
     cap_n = 0;
-    out_init(&o, capture);
+    out_init(&o, &cv, 2);
     out_int(&o, v);
     out_flush(&o);
     CHECK_EQ(cap_n, strlen(want));
@@ -23,7 +29,7 @@ static void expect_int(int32_t v, const char *want) {
 static void expect_int64(int64_t v, const char *want) {
     Out o;
     cap_n = 0;
-    out_init(&o, capture);
+    out_init(&o, &cv, 2);
     out_int64(&o, v);
     out_flush(&o);
     CHECK_EQ(cap_n, strlen(want));

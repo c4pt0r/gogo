@@ -8,7 +8,7 @@
  *
  * Inputs: an any-edge GPIO interrupt; the ISR reads the level, and for a
  * change that matches the configured edge pushes a PortEvent (timestamped
- * with platform_now_ms's clock) to the event ring of the VM that opened the
+ * with esp_host.now_ms, platform_esp_ms) to the event ring of the VM that opened the
  * pin (PinSlot.vm, the handler argument) and notifies the VM task.
  * The ISR never locks or allocates. The VM debounces (port.c); for a
  * single-edge pin the ISR also drops an edge that follows the previous
@@ -28,7 +28,7 @@
 #include "port.h"
 #include "evq.h"
 #include "opcodes.h"
-#include "platform.h"
+#include "host.h"
 #include "platform_esp.h"
 #include "board.h"
 

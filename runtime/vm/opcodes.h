@@ -147,9 +147,9 @@ enum Builtin {
     B_PORT_HANDOFF    = 46,  /* port pid, to pid -> bool (port.h port_handoff) */
     B_NET_SUBSCRIBE   = 47,  /* -> bool: net.Subscribe (port.h port_subscribe) */
     B_CONFIG_GET      = 48,  /* key string -> value string, ok bool: config.Get
-                              * (platform_config_get; "wifi." keys hidden) */
+                              * (host->config_get; "wifi." keys hidden) */
     B_FS              = 49,  /* op int, args... -> result(s): gogo/fs, run by
-                              * the Vm's fs_builtin hook (platform.h; vfs/builtin.c) */
+                              * the Vm's fs_builtin hook (actor.h; vfs/builtin.c) */
     B_CODE            = 50,  /* op int, args... -> result(s): gogo/code
                               * (module_builtin, module.h; CODE_OP_*) */
     B_UNIX_TIME       = 51,  /* -> int64: sys.Time, vm_unix_time_ms (0: unknown) */

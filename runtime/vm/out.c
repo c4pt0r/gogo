@@ -1,13 +1,15 @@
 #include "out.h"
+#include "host.h"
 #include <string.h>
 
-void out_init(Out *o, void (*write)(const char *s, size_t n)) {
+void out_init(Out *o, const struct Vm *vm, int stream) {
     o->n = 0;
-    o->write = write;
+    o->vm = vm;
+    o->stream = stream;
 }
 
 void out_flush(Out *o) {
-    if (o->n) o->write(o->buf, o->n);
+    if (o->n) vm_out(o->vm, o->stream, o->buf, o->n);
     o->n = 0;
 }
 
@@ -15,7 +17,7 @@ void out_bytes(Out *o, const char *s, size_t n) {
     if (n > sizeof o->buf - o->n) {
         out_flush(o);
         if (n > sizeof o->buf) {           /* too big to buffer: write through */
-            o->write(s, n);
+            vm_out(o->vm, o->stream, s, n);
             return;
         }
     }

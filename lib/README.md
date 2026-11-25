@@ -33,7 +33,7 @@ Two kinds of package:
 The capability column is the `requires` bit the compiler records in the
 image (`compiler/modinfo.go`: the import itself, or a constant
 `port.Open` driver name inside the package); the firmware refuses an image
-whose bits it lacks (`code.Cap*`, `CAP_*` in `runtime/vm/platform.h`).
+whose bits it lacks (`code.Cap*`, `CAP_*` in `runtime/vm/host.h`).
 Packages built only on others inherit their bits (for example `gogo/http`
 via `gogo/net`).
 

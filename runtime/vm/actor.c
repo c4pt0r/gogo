@@ -20,8 +20,16 @@ static uint16_t next_gen(uint16_t slot, uint16_t gen) {
     return (slot == 0 && g == 0) ? 1u : g;
 }
 
-int vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
+static const VmBoard no_board;
+
+int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board, uint32_t granted_caps,
+            uint16_t table_cap) {
     memset(vm, 0, sizeof *vm);
+    vm->host = host;
+    vm->host_ctx = host_ctx;
+    if (!board) board = &no_board;
+    vm->board = board;
+    vm->caps = board->caps & granted_caps;
     if (table_cap > PORT_SLOT_BASE) return -1;
     vm->next_ref = 1;
     vm->mod_cap = GOGO_CODE_MEM_DEFAULT;   /* module_config may change it */
@@ -30,7 +38,6 @@ int vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
     vm->table_cap = table_cap;
     for (uint16_t i = 0; i < table_cap; i++) vm->table[i] = free_slot(0);
     if (table_cap) vm->table[0] = free_slot(1);      /* see next_gen */
-    if (img && module_install_static(vm, img) != CODE_OK) return -1;
     return 0;
 }
 

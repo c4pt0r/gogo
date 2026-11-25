@@ -1,7 +1,7 @@
 #include "evq.h"
 #include "actor.h"
 #include "config.h"
-#include "platform.h"
+#include "host.h"
 
 #if (GOGO_EVQ_CAP) < 2u || ((GOGO_EVQ_CAP) & ((GOGO_EVQ_CAP) - 1u)) != 0u
 #error "GOGO_EVQ_CAP must be a power of two"
@@ -19,7 +19,7 @@ bool evq_push(Vm *vm, const PortEvent *e) {
         return false;
     }
     vm->evq_slots[h & EVQ_MASK] = *e;
-    platform_barrier();                  /* slot visible before the index */
+    vm_barrier();                  /* slot visible before the index */
     vm->evq_head = h + 1u;
     return true;
 }
@@ -27,9 +27,9 @@ bool evq_push(Vm *vm, const PortEvent *e) {
 bool evq_pop(Vm *vm, PortEvent *out) {
     uint32_t t = vm->evq_tail;
     if (t == vm->evq_head) return false;
-    platform_barrier();                  /* index read before the slot */
+    vm_barrier();                  /* index read before the slot */
     *out = vm->evq_slots[t & EVQ_MASK];
-    platform_barrier();                  /* slot copied before it is freed */
+    vm_barrier();                  /* slot copied before it is freed */
     vm->evq_tail = t + 1u;
     return true;
 }

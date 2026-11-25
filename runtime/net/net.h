@@ -101,7 +101,7 @@ typedef struct NetStats {
     uint32_t udp_quota;     /* not delivered: owner's quota or memory */
     uint32_t udp_rx;        /* datagrams delivered */
     uint32_t tx_frames;     /* frames sent */
-    uint32_t tx_fail;       /* platform_net_send failed */
+    uint32_t tx_fail;       /* NetIf.send failed */
     uint32_t tx_arp_miss;   /* dropped: next hop not resolved (ARP sent) */
     uint32_t tx_noroute;    /* dropped: no address, no gateway, not allowed */
     uint32_t tx_bad;        /* malformed SendTo/Write/Shutdown, too large */
@@ -114,14 +114,14 @@ typedef struct NetStats {
     uint32_t tcp_rx;        /* data segments delivered */
 } NetStats;
 
-/* The port drivers (platform_port_drivers lists them). */
+/* The port drivers (a VmBoard lists them). */
 extern const PortDriver net_netif_driver;
 extern const PortDriver net_udp_driver;
 extern const PortDriver net_tcp_driver;
 extern const PortDriver net_tcp_listen_driver;
 
 /* Starts the stack: resets its state, registers it as vm's extra port
- * source and reads the link state (platform_net_link_up). Call after
+ * source and reads the link state (NetIf.link_up). Call after
  * vm_boot (vm_init clears the source list) and before vm_run on a platform
  * with a network; without it the ports refuse to open and received frames
  * are dropped. */

@@ -1,6 +1,5 @@
 #include "alloc.h"
 #include "actor.h"
-#include "platform.h"
 
 typedef struct VaFree { struct VaFree *next; } FreeBlock;
 
@@ -16,7 +15,7 @@ void *va_alloc(Vm *vm, size_t bytes) {
 
     void *p;
     if (bytes > VA_MAX_SMALL) {
-        p = platform_chunk_alloc(bytes);
+        p = vm_chunk_alloc(vm, bytes);
     } else {
         size_t cls = size / VA_GRAIN;
         if (h->free_list[cls]) {
@@ -25,7 +24,7 @@ void *va_alloc(Vm *vm, size_t bytes) {
         } else {
             if ((size_t)(h->chunk_end - h->chunk_cur) < size) {
                 /* Tail of the old chunk is abandoned; at most 248 bytes. */
-                char *c = platform_chunk_alloc(VA_CHUNK);
+                char *c = vm_chunk_alloc(vm, VA_CHUNK);
                 if (!c) return NULL;
                 h->chunk_cur = c;
                 h->chunk_end = c + VA_CHUNK;
@@ -43,7 +42,7 @@ void va_free(Vm *vm, void *p, size_t bytes) {
     if (!p) return;
     VaHeap *h = &vm->va;
     if (bytes > VA_MAX_SMALL) {
-        platform_chunk_free(p, bytes);
+        vm_chunk_free(vm, p, bytes);
         h->used -= bytes;
     } else {
         size_t size = round_up(bytes);

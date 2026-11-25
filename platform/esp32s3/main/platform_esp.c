@@ -1,6 +1,7 @@
-/* runtime/vm/platform.h for the ESP32-S3 (FreeRTOS, USB-Serial/JTAG console). */
+/* The ESP32-S3 board: its gogo_host and VmBoard (runtime/vm/host.h) on
+ * FreeRTOS, with the USB-Serial/JTAG console. */
 #include "sdkconfig.h"
-#include "platform.h"
+#include "host.h"
 #include "config.h"
 #include "port.h"
 #include "platform_esp.h"
@@ -19,7 +20,7 @@
 #include "mbedtls/ssl.h"
 #include "esp_crt_bundle.h"
 #if !CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
-#error "GOGO_TLS needs CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC (sdkconfig.defaults): mbedTLS memory is platform_tls_alloc's"
+#error "GOGO_TLS needs CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC (sdkconfig.defaults): mbedTLS memory is esp_tls_hw's"
 #endif
 #endif
 
@@ -147,7 +148,8 @@ void platform_esp_report_refusal(void) {
                      (unsigned long)refusal.heap_free, (unsigned long)refusal.heap_largest);
 }
 
-void *platform_chunk_alloc(size_t bytes) {
+static void *chunk_alloc(void *ctx, size_t bytes) {
+    (void)ctx;
     if (GOGO_ARENA_BYTES && bytes > GOGO_ARENA_BYTES - arena_used) {
         note_refusal(bytes, true);
         return NULL;
@@ -158,31 +160,25 @@ void *platform_chunk_alloc(size_t bytes) {
     return p;
 }
 
-void platform_chunk_free(void *p, size_t bytes) {
-    if (!p) return;
+static void chunk_free(void *ctx, void *p, size_t bytes) {
+    (void)ctx;
     arena_used = bytes > arena_used ? 0 : arena_used - bytes;
     heap_caps_free(p);
 }
 
-uint64_t platform_now_ms(void) { return platform_esp_ms(); }
-
-uint32_t platform_random(void) { return esp_random(); }
-
-/* The system clock (gettimeofday) as a wall clock, so everything that
- * reads time() can agree with gogo/sys: ESP-IDF's mbedTLS
- * (CONFIG_MBEDTLS_HAVE_TIME_DATE) checks certificate validity with time()
- * and gmtime_r, and the tls port runs with GOGO_TLS_MBEDTLS_HOOKS 0 (it
- * installs no time hook into the shared mbedTLS). Unknown until set: the
- * system clock starts at 1970 on every boot (no battery-backed RTC), and
- * wall_known keeps that from counting as a time. Same floor as the VM's
- * (vm_set_unix_time_ms). Not touched by platform_time_reset. Scheduler
- * thread only. */
+/* The wall clock (esp_host's unix_time_ms / set_unix_time_ms) is the
+ * system clock (gettimeofday), so everything that reads time() agrees with
+ * gogo/sys: ESP-IDF's mbedTLS (CONFIG_MBEDTLS_HAVE_TIME_DATE) checks
+ * certificate validity with time() and gmtime_r, and the tls port runs with
+ * GOGO_TLS_MBEDTLS_HOOKS 0 (it installs no time hook into the shared
+ * mbedTLS). Unknown until set: the system clock starts at 1970 on every
+ * boot (no battery-backed RTC), and wall_known keeps that from counting as
+ * a time. vm_set_unix_time_ms applies the floor before it calls set.
+ * Scheduler thread only. */
 static bool wall_known;
 
-int64_t esp_unix_time_ms(void);
-int esp_set_unix_time_ms(int64_t ms);
-
-int64_t esp_unix_time_ms(void) {
+static int64_t host_unix_time_ms(void *ctx) {
+    (void)ctx;
     if (!wall_known) return 0;
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -190,8 +186,8 @@ int64_t esp_unix_time_ms(void) {
     return ms > 0 ? ms : 1;
 }
 
-int esp_set_unix_time_ms(int64_t ms) {
-    if (ms > 0 && ms < GOGO_BUILD_UNIX_MS) return 0;
+static int host_set_unix_time_ms(void *ctx, int64_t ms) {
+    (void)ctx;
     struct timeval tv = {0, 0};
     if (ms > 0) {
         tv.tv_sec = (time_t)(ms / 1000);
@@ -254,11 +250,9 @@ void platform_esp_tls_mem(size_t *now, size_t *peak) {
 }
 #endif
 
-/* The tls port's hooks (runtime/net/tls/tls.h). Here, in an always-linked object: tls.c
- * has weak defaults (see platform_code_alloc below). */
+/* The tls port's hooks (esp_tls_hw, a TlsHw: runtime/net/tls/tls.h). */
 #if CONFIG_GOGO_TLS
-void *platform_tls_alloc(size_t n) { return tls_mem_calloc(1, n ? n : 1u); }
-void platform_tls_free(void *p) { tls_mem_free(p); }
+static void *tls_alloc(size_t n) { return tls_mem_calloc(1, n ? n : 1u); }
 
 /* Trust anchors: IDF's certificate bundle in flash (esp_crt_bundle,
  * CONFIG_MBEDTLS_CERTIFICATE_BUNDLE). esp_crt_bundle_attach gives mbedTLS
@@ -291,15 +285,15 @@ static int tls_esp_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t 
     return esp_crt_verify_callback(ctx, crt, depth, flags);
 }
 
-int platform_tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
+static int tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
     *state = NULL;
     if (esp_crt_bundle_attach(conf) != ESP_OK) return -1;
     mbedtls_ssl_conf_verify(conf, tls_esp_verify, NULL);
     return 0;
 }
-void platform_tls_verify_free(void *state) { (void)state; }
+static void tls_verify_free(void *state) { (void)state; }
 
-uint64_t platform_tls_clock_us(void) { return (uint64_t)esp_timer_get_time(); }
+static uint64_t tls_clock_us(void) { return (uint64_t)esp_timer_get_time(); }
 
 /* mbedTLS's x509_crt.c matches IP-address names with the platform's
  * inet_pton, which ESP-IDF's headers map to lwip_inet_pton. lwIP is not
@@ -329,18 +323,13 @@ int lwip_inet_pton(int af, const char *src, void *dst) {
 /* The hardware RNG: a CSPRNG while the radio is on, which it is whenever a
  * TLS connection can exist. IDF's mbedTLS draws its keys from the same
  * source (its mbedtls_psa_external_get_random), so this only guards open. */
-int platform_tls_random(uint8_t *out, size_t n) {
+static int tls_random(uint8_t *out, size_t n) {
     esp_fill_random(out, n);
     return 0;
 }
-#endif
 
-/* vm_run start: Now() counts from here, after the LCD bring-up. The wall
- * clock starts as the system clock (unknown after boot; SNTP sets it). */
-int64_t platform_time_reset(void) {
-    t0_us = esp_timer_get_time();
-    return esp_unix_time_ms();
-}
+static const TlsHw esp_tls_hw = { tls_alloc, tls_mem_free, tls_verify_setup, tls_verify_free, tls_clock_us, tls_random };
+#endif
 
 /* Latched wakeup: the VM task's notification value counts notifies; a wait
  * takes (and clears) it, so a notify before or during a wait ends it. */
@@ -368,89 +357,132 @@ void platform_notify(void) {
     }
 }
 
-void platform_barrier(void) { __sync_synchronize(); }
-
-/* The strong platform_input, defined here (always linked) rather than next
- * to the hardware: runtime/input/source.c has a weak default, and an archive member
- * is only pulled in to satisfy an undefined symbol, never to override a
- * weak one that is already defined. */
-extern const InputHw input_esp_hw;
-const InputHw *platform_input(void) { return &input_esp_hw; }
-
-const struct PortDriver *const *platform_port_drivers(void) {
-    static const struct PortDriver *const list[] = {
-        &gpio_esp_driver,
-#if CONFIG_GOGO_NET
-        &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver,
-#endif
-#if CONFIG_GOGO_TLS
-        &net_tls_driver,
-#endif
-        &input_kbd_driver, &input_power_driver, &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
-        &input_mic_driver, &input_spk_driver,
-        NULL
-    };
-    return list;
-}
-
-/* Module code memory (runtime/vm/platform.h). Only a board with PSRAM (the StickS3,
+/* Module code memory (gogo_host.code_alloc). Only a board with PSRAM (the StickS3,
  * sdkconfig.sticks3) has any: code is only read (as words) by the interpreter,
  * never executed, so the slower external RAM is fine (MALLOC_CAP_32BIT only
  * states the word access; byte access works on the S3 too), and the internal heap (the VM
  * arena, Wi-Fi, LCD buffers) is not touched. PSRAM is reachable only through
  * these caps (CONFIG_SPIRAM_USE_CAPS_ALLOC): plain malloc never returns it.
- * Defined here, in an always-linked object, not next to hardware code: runtime/vm/
- * has weak defaults, and an archive member is never pulled in to override
- * one that is already defined. */
+ * Without PSRAM the host has no code_alloc (NULL: the VM keeps the code). */
 #if CONFIG_SPIRAM
-void *platform_code_alloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT); }
-void platform_code_free(void *p, size_t n) {
+static void *code_alloc(void *ctx, size_t n) {
+    (void)ctx;
+    return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
+}
+static void code_free(void *ctx, void *p, size_t n) {
+    (void)ctx;
     (void)n;
     heap_caps_free(p);
 }
 #else
-void *platform_code_alloc(size_t n) {
-    (void)n;
-    return NULL;
-}
-void platform_code_free(void *p, size_t n) {
-    (void)p;
-    (void)n;
-}
+#define code_alloc NULL
+#define code_free NULL
 #endif
 
-/* The capabilities this build provides (runtime/vm/platform.h CAP_*). */
-uint32_t platform_caps(void) {
-    uint32_t c = 0;
+/* ---- the host table ---- */
+
+static void host_write(void *ctx, int stream, const char *s, size_t n) {
+    (void)ctx;
+    if (stream == 2) platform_write_err(s, n);
+    else platform_write(s, n);
+}
+static uint64_t host_now(void *ctx) { (void)ctx; return platform_esp_ms(); }
+static void host_wake(void *ctx) { (void)ctx; platform_notify(); }
+static void host_wait(void *ctx, uint32_t ms) { (void)ctx; platform_wait(ms); }
+static uint32_t host_random(void *ctx) { (void)ctx; return esp_random(); }
+static int32_t host_config_get(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
+    (void)ctx;
+    return platform_config_get(k, kl, buf, cap);
+}
+
+/* The wall clock is the system clock (host_unix_time_ms above), unknown
+ * after boot until SNTP or sys.SetTime sets it. */
+const gogo_host esp_host = {
+    host_write, chunk_alloc, chunk_free, host_now, host_wake, host_wait, host_unix_time_ms, host_set_unix_time_ms,
+    host_random, NULL,
+    host_config_get, code_alloc, code_free
+};
+
+/* ---- the board table ---- */
+
+static const struct PortDriver *const esp_ports[] = {
+    &gpio_esp_driver,
 #if CONFIG_GOGO_NET
-    c |= CAP_NET;
+    &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver,
 #endif
 #if CONFIG_GOGO_TLS
-    c |= CAP_TLS;
+    &net_tls_driver,
+#endif
+    &input_kbd_driver, &input_power_driver, &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
+    &input_mic_driver, &input_spk_driver,
+    NULL
+};
+
+extern const InputHw input_esp_hw;
+
+/* The capabilities this build provides (host.h CAP_*). */
+#if CONFIG_GOGO_NET
+#define CAPS_NET CAP_NET
+#else
+#define CAPS_NET 0u
+#endif
+#if CONFIG_GOGO_TLS
+#define CAPS_TLS CAP_TLS
+#else
+#define CAPS_TLS 0u
 #endif
 #if HAS_KBD && CONFIG_GOGO_KBD
-    c |= CAP_KBD;
+#define CAPS_KBD CAP_KBD
+#else
+#define CAPS_KBD 0u
 #endif
 #if CONFIG_GOGO_BATTERY
-    c |= CAP_POWER;
+#define CAPS_POWER CAP_POWER
+#else
+#define CAPS_POWER 0u
 #endif
 #if HAS_SD && CONFIG_GOGO_SD
-    c |= CAP_SD;
+#define CAPS_SD CAP_SD
+#else
+#define CAPS_SD 0u
 #endif
 #if HAS_IMU && CONFIG_GOGO_IMU
-    c |= CAP_IMU;
+#define CAPS_IMU CAP_IMU
+#else
+#define CAPS_IMU 0u
 #endif
 #if HAS_IR_TX && CONFIG_GOGO_IR
-    c |= CAP_IR_TX;
+#define CAPS_IR_TX CAP_IR_TX
+#else
+#define CAPS_IR_TX 0u
 #endif
 #if HAS_IR_RX && CONFIG_GOGO_IR
-    c |= CAP_IR_RX;
+#define CAPS_IR_RX CAP_IR_RX
+#else
+#define CAPS_IR_RX 0u
 #endif
 #if HAS_MIC && CONFIG_GOGO_AUDIO
-    c |= CAP_MIC;
+#define CAPS_MIC CAP_MIC
+#else
+#define CAPS_MIC 0u
 #endif
 #if HAS_SPK && CONFIG_GOGO_AUDIO
-    c |= CAP_SPK;
+#define CAPS_SPK CAP_SPK
+#else
+#define CAPS_SPK 0u
 #endif
-    return c;
-}
+
+const VmBoard esp_board = {
+    esp_ports, &input_esp_hw,
+#if CONFIG_GOGO_NET
+    &wifi_esp_netif,
+#else
+    NULL,
+#endif
+#if CONFIG_GOGO_TLS
+    &esp_tls_hw,
+#else
+    NULL,
+#endif
+    CAPS_NET | CAPS_TLS | CAPS_KBD | CAPS_POWER | CAPS_SD | CAPS_IMU | CAPS_IR_TX | CAPS_IR_RX | CAPS_MIC | CAPS_SPK
+};

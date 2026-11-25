@@ -1,5 +1,5 @@
 /* The device configuration store: NVS namespace "gogo", one
- * blob per key, read by config.Get (platform_config_get; the VM never asks
+ * blob per key, read by config.Get (esp_host.config_get; the VM never asks
  * for "wifi." keys) and by the Wi-Fi bring-up (wifi.ssid, wifi.password).
  *
  * `gogo config` reaches it over the USB-Serial/JTAG console: a task reads
@@ -19,7 +19,7 @@
  * never sent back: get and list show "(set)". Setting or removing a
  * wifi.* key makes the station reconnect with the new settings. */
 #include "sdkconfig.h"
-#include "platform.h"
+#include "host.h"
 #include "platform_esp.h"
 #if CONFIG_GOGO_TLS
 #include "tls.h"

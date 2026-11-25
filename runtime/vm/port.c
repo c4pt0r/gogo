@@ -5,7 +5,7 @@
 #include "signals.h"
 #include "alloc.h"
 #include "evq.h"
-#include "platform.h"
+#include "host.h"
 #include "config.h"
 #include "bytes.h"
 #include <string.h>
@@ -60,7 +60,7 @@ static Port *port_of(Vm *vm, term pid) {
 }
 
 static const PortDriver *find_driver(const Vm *vm, const uint8_t *name, uint32_t len) {
-    const PortDriver *const *l = vm->drivers ? vm->drivers : platform_port_drivers();
+    const PortDriver *const *l = vm->drivers ? vm->drivers : vm->board->ports;
     for (; l && *l; l++) {
         if (strlen((*l)->name) == len && (len == 0 || memcmp((*l)->name, name, len) == 0)) return *l;
     }
@@ -299,7 +299,7 @@ static void flush_due(Vm *vm, Port *p, uint64_t t) {
     if (p->pend_b != p->last_b) deliver_at(vm, p, p->pend_a, p->pend_b, end);
 }
 
-/* The event's 32-bit timestamp as a platform_now_ms value, taking it to be
+/* The event's 32-bit timestamp (made vm_now time by the caller) as a vm_now value, taking it to be
  * at most ~24 days before now (a timestamp after now counts as now). */
 static uint64_t event_time(uint32_t ms, uint64_t now) {
     uint32_t back = (uint32_t)now - ms;
@@ -320,7 +320,7 @@ void port_drain(Vm *vm, uint64_t now) {
             deliver(vm, p, e.a, e.b);
             continue;
         }
-        uint64_t t = event_time(e.time_ms, now);
+        uint64_t t = event_time(e.time_ms - (uint32_t)vm->t0, now);
         flush_due(vm, p, t);
         if (!(p->flags & PORT_DELIVERED) || t >= p->last_t + p->debounce_ms) {
             deliver_at(vm, p, e.a, e.b, t);

@@ -5,6 +5,7 @@
  * Bytes in an Out (the sender's badcode, through the interpreter). The
  * port is a fake "st" driver whose command_term is stream_out_accept. */
 #include "test.h"
+#include "test_host.h"
 #include "stream.h"
 #include "actor.h"
 #include "signals.h"
@@ -21,7 +22,6 @@
 #include <string.h>
 
 extern void (*platform_unix_err_hook)(const char *, size_t);
-void platform_unix_arena_forget(void);
 
 static char err_buf[512];
 static size_t err_len;
@@ -76,11 +76,11 @@ static term sp;
 static Port *port_at(term pid) { return &vm.ports[term_pid_slot(pid) - PORT_SLOT_BASE]; }
 
 static void setup(void) {
-    platform_unix_arena_forget();
+    test_host_arena_forget();
     va_reset(&vm);
     bytes_reset(&vm);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
     port_set_drivers(&vm, drivers);
     owner = actor_new(&vm, 256);
     CHECK(owner != NULL);

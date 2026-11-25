@@ -130,7 +130,7 @@ const (
 	BConfigGet    uint32 = 48 // key string -> value string, ok bool
 	BFs           uint32 = 49 // op int, args... -> result(s): gogo/fs (runtime/vfs/builtin.c)
 	BCode         uint32 = 50 // op int, args... -> result(s): gogo/code (runtime/vm/module.c)
-	BUnixTime     uint32 = 51 // -> int64: sys.Time (platform_unix_time_ms)
+	BUnixTime     uint32 = 51 // -> int64: sys.Time (vm_unix_time_ms)
 	BSetUnixTime  uint32 = 52 // ms int64 -> bool: sys.SetTime (platform_set_unix_time_ms)
 	BRandom       uint32 = 53 // -> int in [0, 2^30): sys.Random (platform_random)
 )

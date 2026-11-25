@@ -3,6 +3,7 @@
  * FIFO reads), a slow consumer, one owner, close and reopen. Time is the
  * fake clock; each step runs port_drain, as the scheduler does. */
 #include "test.h"
+#include "test_host.h"
 #include "fakehw.h"
 #include "actor.h"
 #include "signals.h"
@@ -17,8 +18,6 @@
 #include "bytes.h"
 #include <string.h>
 
-void platform_unix_set_clock(uint64_t (*fn)(void));
-void platform_unix_arena_forget(void);
 
 static uint64_t now;
 static uint64_t clock_fn(void) { return now; }
@@ -45,14 +44,14 @@ static void mini_image(void) {
 static const PortDriver *const drivers[] = { &input_kbd_driver, &input_power_driver, &input_imu_driver, NULL };
 
 static void setup(void) {
-    platform_unix_arena_forget();
+    test_host_arena_forget();
     va_reset(&vm);
     bytes_reset(&vm);
     fake_reset();
     now = 0;
-    platform_unix_set_clock(clock_fn);
+    test_host_set_clock(clock_fn);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
     port_set_drivers(&vm, drivers);
     fake_install(&vm);
     owner = actor_new(&vm, 256);
@@ -62,7 +61,7 @@ static void setup(void) {
 
 static void teardown(void) {
     port_close_all(&vm);
-    platform_unix_set_clock(NULL);
+    test_host_set_clock(NULL);
 }
 
 

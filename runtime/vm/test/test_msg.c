@@ -1,4 +1,5 @@
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -38,7 +39,7 @@ static term fld(Actor *a, term ref, uint32_t i) {
 
 TEST(send_int) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 24), *b = mk(&vm, 24);
     CHECK_EQ(copy_words(&vm, a, term_from_int(42)), 0);
     CHECK_EQ(msg_send(&vm, a, b->id, term_from_int(42)), 0);
@@ -54,7 +55,7 @@ TEST(send_int) {
 
 TEST(send_struct_nested) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 32), *b = mk(&vm, 32);
     term in[2] = { term_from_int(2), term_from_int(3) };
     term inner = mk_struct(a, 8, in, 2);
@@ -88,7 +89,7 @@ TEST(send_struct_nested) {
 
 TEST(send_wakes_waiting) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 24), *b = mk(&vm, 24);
     b->state = A_WAITING;
     CHECK_EQ(msg_send(&vm, a, b->id, T_TRUE), 0);
@@ -102,7 +103,7 @@ TEST(send_wakes_waiting) {
 
 TEST(send_dead_dropped) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 24), *b = mk(&vm, 24);
     term pid = b->id;
     actor_free(&vm, b);
@@ -112,7 +113,7 @@ TEST(send_dead_dropped) {
 
 TEST(mailbox_fifo) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 24), *b = mk(&vm, 24);
     for (int i = 1; i <= 3; i++) CHECK_EQ(msg_send(&vm, a, b->id, term_from_int(i)), 0);
     for (int i = 1; i <= 3; i++) {
@@ -126,7 +127,7 @@ TEST(mailbox_fifo) {
 
 TEST(mbox_counts_footprint) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 32), *b = mk(&vm, 24);
     term f[2] = { term_from_int(1), term_from_int(2) };
     term s = mk_struct(a, 1, f, 2);                 /* 4 words */
@@ -143,7 +144,7 @@ TEST(mbox_counts_footprint) {
 
 TEST(actor_free_frees_queued_msgs) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 32);
     size_t before = va_used_bytes(&vm);
     Actor *b = mk(&vm, 24);
@@ -157,7 +158,7 @@ TEST(actor_free_frees_queued_msgs) {
 
 TEST(send_string_and_closure) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 40), *b = mk(&vm, 40);
     uint32_t so = heap_alloc(NULL, a, 3, NULL, 0);
     a->mem[so] = hdr_make(3, K_STRING);
@@ -184,7 +185,7 @@ TEST(send_string_and_closure) {
 
 TEST(receive_triggers_gc) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 32), *b = mk(&vm, 24);
     term f[2] = { term_from_int(8), term_from_int(9) };
     term s = mk_struct(a, 1, f, 2);
@@ -198,7 +199,7 @@ TEST(receive_triggers_gc) {
 
 TEST(send_shared_object_copied_once) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 40), *b = mk(&vm, 40);
     term pf[2] = { term_from_int(1), term_from_int(2) };
     term p = mk_struct(a, 7, pf, 2);
@@ -236,7 +237,7 @@ static term mk_dag(Actor *a, int levels) {
 
 TEST(send_dag_no_blowup) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 120), *b = mk(&vm, 120);
     term top = mk_dag(a, 20);
     Msg *m = msg_build(&vm, a, top, 0, NULL);
@@ -257,7 +258,7 @@ TEST(send_dag_no_blowup) {
 
 TEST(send_restores_source) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 120);
     term top = mk_dag(a, 20);
     uint32_t before[120];
@@ -272,7 +273,7 @@ TEST(send_restores_source) {
 
 TEST(send_restores_source_on_alloc_failure) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 120);
     term top = mk_dag(a, 20);                   /* 80 words: buffer must grow */
     uint32_t before[120];
@@ -288,7 +289,7 @@ TEST(send_restores_source_on_alloc_failure) {
 /* p -> q -> p: the copy terminates, keeps the cycle, restores the sender. */
 TEST(send_cycle) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 40), *b = mk(&vm, 40);
     term pf[1] = { term_from_int(0) };
     term p = mk_struct(a, 1, pf, 1);
@@ -316,7 +317,7 @@ TEST(send_cycle) {
  * received without oom: it is not counted in both mailbox and heap. */
 TEST(receive_near_limit) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 80), *b = mk(&vm, 24);
     b->max_words = 100;
     CHECK(heap_push_frame(&vm, b, 1, -1));
@@ -340,7 +341,7 @@ TEST(receive_near_limit) {
  * message itself (+256 slack). */
 TEST(msg_build_peak) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 3000);
     if (!a) return;
     term leaf_f[1] = { term_from_int(7) };
@@ -370,7 +371,7 @@ TEST(msg_build_peak) {
  * directions, size and copy exactly (pointer reversal must restore). */
 TEST(msg_size_cycle) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 64);
     term f[2] = { term_from_int(1), T_NIL };
     term x = mk_struct(a, 5, f, 2);
@@ -392,7 +393,7 @@ TEST(msg_size_cycle) {
  * marked and keeps running. One that fits is queued like msg_enqueue. */
 TEST(try_enqueue_never_kills) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 80), *b = mk(&vm, 24);
     b->max_words = 80;
     b->state = A_WAITING;

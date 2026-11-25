@@ -2,7 +2,7 @@
 /* unix net link (platform_unix.c, net_unix.h): framing both ways over a
  * socketpair, and the simulated clock driven by advance messages. */
 #include "test.h"
-#include "platform.h"
+#include "platform_unix.h"
 #include "netif.h"
 #include "net_unix.h"
 #include <string.h>
@@ -54,18 +54,18 @@ TEST(netlink_frames_both_ways) {
     int sv[2];
     CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
     uint8_t mac[6];
-    CHECK(!platform_net_mac(mac));
-    CHECK(!platform_net_link_up());
+    CHECK(!unix_netif.mac(NULL, mac));
+    CHECK(!unix_netif.link_up(NULL));
     platform_unix_net_open(sv[0], false);
     platform_unix_net_set_sink(sink);
     got_n = 0;
-    CHECK(platform_net_mac(mac));
+    CHECK(unix_netif.mac(NULL, mac));
     CHECK_EQ(mac[0], 0x02);
-    CHECK(platform_net_link_up());
+    CHECK(unix_netif.link_up(NULL));
 
     /* VM -> peer. */
     const uint8_t out[5] = { 1, 2, 3, 4, 5 };
-    CHECK_EQ(platform_net_send(out, 5), 0);
+    CHECK_EQ(unix_netif.send(NULL, out, 5), 0);
     uint8_t t, buf[64];
     CHECK_EQ(take(sv[1], &t, buf, sizeof buf), 5);
     CHECK_EQ(t, NET_MSG_FRAME);
@@ -131,7 +131,6 @@ TEST(netlink_sim_clock) {
     platform_unix_net_open(sv[0], true);
     platform_unix_net_set_sink(sink);
     got_n = 0;
-    platform_time_reset();             /* the simulated clock ignores it */
     CHECK_EQ(platform_now_ms(), 0u);
 
     advance(sv[1], 100);

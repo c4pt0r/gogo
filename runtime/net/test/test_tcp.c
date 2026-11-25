@@ -4,6 +4,7 @@
  * net_rx_offer and the port layer's drain, out through the unix
  * platform's test TX hook. */
 #include "test.h"
+#include "test_host.h"
 #include "net_int.h"
 #include "actor.h"
 #include "heap.h"
@@ -18,10 +19,8 @@
 #include "net_unix.h"
 #include <string.h>
 
-extern void platform_unix_set_clock(uint64_t (*fn)(void));
 /* unix platform: forget memory earlier fixtures leaked (the MCU lane caps
  * the arena; the state table sets up a VM per row). */
-void platform_unix_arena_forget(void);
 
 /* ---- fixture ---- */
 
@@ -58,7 +57,7 @@ static Vm vm;
 
 static void setup(void) {
     uint32_t *w = img_w;
-    platform_unix_arena_forget();
+    test_host_arena_forget();
     va_reset(&vm);
     bytes_reset(&vm);
     memset(w, 0, sizeof img_w);
@@ -70,10 +69,10 @@ static void setup(void) {
     w[18] = hdr_make(3, K_STRING); w[19] = 3; memcpy(&w[20], "Cfg", 3);
     w[21] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
     memset(&tx, 0, sizeof tx);
     now_ms = 0;
-    platform_unix_set_clock(fake_clock);
+    test_host_set_clock(fake_clock);
     platform_unix_net_set_tx(tx_hook);
     net_attach(&vm);
 }
@@ -82,7 +81,7 @@ static void teardown(void) {
     port_close_all(&vm);
     net_detach(&vm);
     platform_unix_net_set_tx(NULL);
-    platform_unix_set_clock(NULL);
+    test_host_set_clock(NULL);
 }
 
 static Actor *new_actor(void) {

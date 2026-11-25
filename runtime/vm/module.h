@@ -46,7 +46,7 @@ enum {
 
 /* ModEntry.flags. Where a counted module's code lives: in its Bytes (bytes
  * != T_NIL), or in a copy it owns (MOD_OWN_COPY: VM memory, va_alloc;
- * MOD_OWN_PLATFORM: platform_code_alloc), freed when it unloads. */
+ * MOD_OWN_PLATFORM: host->code_alloc), freed when it unloads. */
 enum {
     MOD_VM_HELD = 1,        /* the boot image: held by the VM, never unloaded */
     MOD_COUNTED = 2,        /* its code bytes count in Vm.mod_mem */
@@ -98,11 +98,11 @@ enum {
     VM_BOOT_REFUSED = 2     /* the refusal line is already on stderr */
 };
 
-/* The boot path every platform calls: vm_init, then the boot image into
- * slot 0 (module_load_static). Then vm_run starts module 0's "main"
- * through module_spawn and runs the scheduler. On a refusal the actor
- * table is freed again. */
-int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words, uint16_t table_cap);
+/* The boot path every platform calls after vm_init: module_config, then
+ * the boot image into slot 0 (module_load_static). Then vm_run starts
+ * module 0's "main" through module_spawn and runs the scheduler. On a
+ * refusal the actor table is freed again (vm_init again to retry). */
+int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words);
 
 /* The boot image into slot 0: image_load, then the capability check
  * (on a missing capability the refusal line goes to stderr in one
@@ -112,7 +112,7 @@ int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words, uint16_t table_cap)
 int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words);
 
 /* Installs an already loaded image as slot 0, VM-held and not counted
- * (module_load_static's last step; vm_init's test convenience). No caps
+ * (module_load_static's last step; tests install hand-built images with it). No caps
  * check: that is module_load_static's. CODE_OK, CODE_TOO_MANY or
  * CODE_NO_MEMORY. */
 int module_install_static(Vm *vm, const Image *img);
@@ -127,12 +127,12 @@ void module_config(Vm *vm);
  * heap or const) into a free slot and makes caller a holder. Checks, in
  * order: the bytes are exactly one valid image (image_load, and no
  * trailing words) -> CODE_BAD_IMAGE; its requires word against
- * platform_caps -> CODE_UNSUPPORTED, with *handle = the missing CAP_* bits;
+ * vm->caps -> CODE_UNSUPPORTED, with *handle = the missing CAP_* bits;
  * the code memory limit (Vm.mod_cap, counting the image's bytes) ->
  * CODE_NO_MEMORY; a free slot -> CODE_TOO_MANY. Unaligned bytes are
  * validated as an aligned copy (whose allocation may fail: CODE_NO_MEMORY).
  * Bytes longer than Vm.mod_cap are CODE_NO_MEMORY at once, before any
- * copy. Where the code then lives: platform_code_alloc memory if the
+ * copy. Where the code then lives: host->code_alloc memory if the
  * platform gives some, aligned (a copy; unaligned bytes are validated
  * there, not copied twice); else the Bytes in place if it is a whole
  * off-heap root at an aligned address (the module keeps one reference on

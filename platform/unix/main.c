@@ -24,13 +24,12 @@
 #include <string.h>
 
 #include "image.h"
-#include "platform.h"
+#include "platform_unix.h"
 #include "actor.h"
 #include "alloc.h"
 #include "interp.h"
 #include "module.h"
 #include "config.h"
-#include "caps_unix.h"
 #include "gpio_unix.h"
 #include "input_unix.h"
 #include "input.h"
@@ -58,30 +57,33 @@ static int load_error(const char *path, const char *what) {
     return 2;
 }
 
-/* The unix keyboard, battery, motion sensor, infrared and audio are simulated (input_unix.c).
- * Each driver is listed only when platform_caps() has its capability, so
- * --caps (test only) models a firmware without it: port.Open of an absent
- * driver returns ok=false, as on that firmware. */
-const InputHw *platform_input(void) { return &input_unix_hw; }
-int platform_unix_input_drivers(const struct PortDriver **out, int cap) {
-    static const struct { const struct PortDriver *d; uint32_t cap; } all[] = {
-        {&input_kbd_driver, CAP_KBD}, {&input_power_driver, CAP_POWER}, {&input_imu_driver, CAP_IMU},
-        {&input_ir_tx_driver, CAP_IR_TX}, {&input_ir_rx_driver, CAP_IR_RX}, {&input_mic_driver, CAP_MIC},
-        {&input_spk_driver, CAP_SPK},
+/* The unix board: gpio, net and the simulated keyboard, battery, motion
+ * sensor, infrared and audio (input_unix.c), and the "tls" port when built
+ * with it; every capability. A driver with a capability bit is listed only
+ * when the granted caps (--caps, test only) have it, so --caps models a
+ * firmware without it: port.Open of an absent driver returns ok=false, as
+ * on that firmware. */
+static const struct { const PortDriver *d; uint32_t cap; } unix_ports_all[] = {
+    {&gpio_unix_driver, 0}, {&net_netif_driver, 0}, {&net_udp_driver, 0}, {&net_tcp_driver, 0},
+    {&net_tcp_listen_driver, 0}, {&input_kbd_driver, CAP_KBD}, {&input_power_driver, CAP_POWER},
+    {&input_imu_driver, CAP_IMU}, {&input_ir_tx_driver, CAP_IR_TX}, {&input_ir_rx_driver, CAP_IR_RX},
+    {&input_mic_driver, CAP_MIC}, {&input_spk_driver, CAP_SPK},
 #ifdef GOGO_TLS
-        {&net_tls_driver, CAP_TLS},
+    {&net_tls_driver, CAP_TLS},
 #endif
-    };
-    const int total = (int)(sizeof all / sizeof all[0]);
-    if (cap < total) {   /* the driver list in platform_unix.c is full: skip them, loudly */
-        fprintf(stderr, "gogovm: no room in the port driver list: kbd, power, imu, ir, mic, spk and tls skipped\n");
-        return 0;
-    }
-    int n = 0;
-    for (int i = 0; i < total; i++)
-        if (platform_caps() & all[i].cap) out[n++] = all[i].d;
-    return n;
-}
+};
+#define UNIX_PORTS_ALL (sizeof unix_ports_all / sizeof unix_ports_all[0])
+static const PortDriver *unix_ports[UNIX_PORTS_ALL + 1u];   /* filled by main: NULL-terminated */
+static const VmBoard unix_board = {
+    unix_ports, &input_unix_hw, &unix_netif,
+#ifdef GOGO_TLS
+    &unix_tls_hw,
+    CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX | CAP_MIC | CAP_SPK | CAP_TLS
+#else
+    NULL,
+    CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX | CAP_MIC | CAP_SPK
+#endif
+};
 
 #ifdef GOGO_TLS
 static size_t tls_heap_base;   /* the TLS heap once tls_init has run (PSA's own state) */
@@ -107,8 +109,7 @@ int main(int argc, char **argv) {
     }
     if (argc == 2 && strcmp(argv[1], "--has-tls") == 0) return TLS_DRIVERS ? 0 : 1;
 #ifdef GOGO_TLS
-    platform_unix_set_caps(platform_caps() | CAP_TLS);   /* --caps below still overrides */
-    if (tls_init()) {                                    /* at boot, so the heap base is known */
+    if (tls_init(&unix_tls_hw)) {                        /* at boot, so the heap base is known */
         size_t peak;
         platform_unix_tls_heap(&tls_heap_base, &peak);
     }
@@ -119,6 +120,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     int net_fd = -1, sim = 0;
+    uint32_t granted = UINT32_MAX;      /* --caps narrows the board's caps */
     const char *fs_root = NULL;
     while (argc >= 2 && strncmp(argv[1], "--", 2) == 0) {
         if (strcmp(argv[1], "--sim-clock") == 0) {
@@ -145,7 +147,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "gogovm: bad --caps %s (want hex)\n", argv[2]);
                 return 2;
             }
-            platform_unix_set_caps(caps);
+            granted = caps;
         } else if (strcmp(argv[1], "--fs-root") == 0) {
             fs_root = argv[2];
         } else if (strcmp(argv[1], "--fs-quota") == 0) {
@@ -174,6 +176,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "gogovm: --sim-clock needs --net-fd\n");
         return 2;
     }
+    size_t nports = 0;
+    for (size_t i = 0; i < UNIX_PORTS_ALL; i++) {
+        if ((unix_ports_all[i].cap & granted) == unix_ports_all[i].cap) unix_ports[nports++] = unix_ports_all[i].d;
+    }
+    unix_ports[nports] = NULL;
     if (argc != 2) {
         fprintf(stderr, "usage: gogovm [--caps <hex>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes> (test)] [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
         return 2;
@@ -228,14 +235,18 @@ int main(int argc, char **argv) {
     /* The unified boot (module.h): load the image as module 0 (caps check
      * included), then vm_run starts its "main" export. */
     Vm vm;
-    int rc = vm_boot(&vm, words, (uint32_t)(size / 4), (uint16_t)GOGO_TABLE_CAP);
+    int rc = VM_BOOT_NO_MEMORY;
+    if (vm_init(&vm, &unix_host, NULL, &unix_board, granted, (uint16_t)GOGO_TABLE_CAP) == 0) {
+        vm_set_unix_time_ms(&vm, platform_unix_wall_start());
+        rc = vm_boot(&vm, words, (uint32_t)(size / 4));
+    }
     if (rc != VM_BOOT_OK) {
         free(words);
         if (rc < 0) return load_error(path, image_err_str(rc));
         if (rc == VM_BOOT_NO_MEMORY) fprintf(stderr, "gogovm: out of memory\n");
         return 1;                    /* VM_BOOT_REFUSED: the line is written */
     }
-    /* After vm_boot: vm_init starts the Vm's source list and fs hook empty. */
+    /* After vm_init: it starts the Vm's source list and fs hook empty. */
     if (net_fd >= 0) net_attach(&vm);
     vfs_install(&vm);
     input_install(&vm);

@@ -1,10 +1,7 @@
-/* Firmware capability check (platform.h CAP_*): an image's requires word
- * against what the firmware provides. Pure: no I/O; callers decide what to
- * do with a refusal. */
-#include "platform.h"
-
-/* Default for a platform that defines none: basic I/O only. */
-__attribute__((weak)) uint32_t platform_caps(void) { return 0; }
+/* Firmware capability check (host.h CAP_*): an image's requires word
+ * against what the Vm may use. Pure: no I/O; callers decide what to do
+ * with a refusal. */
+#include "host.h"
 
 int vm_caps_ok(uint32_t requires, uint32_t caps, uint32_t *missing) {
     uint32_t m = requires & ~caps & ~CAP_ANYPORT;

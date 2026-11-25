@@ -9,6 +9,7 @@
  * close while playing (no Done, amplifier off). Time is the fake clock;
  * each step runs port_drain, as the scheduler does. */
 #include "test.h"
+#include "test_host.h"
 #include "fakehw.h"
 #include "actor.h"
 #include "signals.h"
@@ -23,8 +24,6 @@
 #include "stream.h"
 #include <string.h>
 
-void platform_unix_set_clock(uint64_t (*fn)(void));
-void platform_unix_arena_forget(void);
 
 static uint64_t now;
 static uint64_t clock_fn(void) { return now; }
@@ -55,14 +54,14 @@ static const PortDriver *const drivers[] = {
 };
 
 static void setup(void) {
-    platform_unix_arena_forget();
+    test_host_arena_forget();
     va_reset(&vm);
     bytes_reset(&vm);
     fake_reset();
     now = 0;
-    platform_unix_set_clock(clock_fn);
+    test_host_set_clock(clock_fn);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
     port_set_drivers(&vm, drivers);
     fake_install(&vm);
     owner = actor_new(&vm, 2048);
@@ -73,7 +72,7 @@ static void setup(void) {
 
 static void teardown(void) {
     port_close_all(&vm);
-    platform_unix_set_clock(NULL);
+    test_host_set_clock(NULL);
 }
 
 static term heap_struct(Actor *a, uint32_t type, uint32_t n, const term *f) {

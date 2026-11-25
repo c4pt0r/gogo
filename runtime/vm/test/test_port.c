@@ -3,9 +3,9 @@
  * installed with port_set_drivers), event delivery, debounce, owner exit,
  * and the builtins that reach it. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
-#include "platform.h"
 #include "msg.h"
 #include "alloc.h"
 #include "image.h"
@@ -101,7 +101,7 @@ static void setup(uint32_t *w, Image *img, Vm *vm) {
     va_reset(vm);
     memset(&fk, 0, sizeof fk);
     mini_image(w, img);
-    CHECK_EQ(vm_init(vm, img, 8), 0);
+    CHECK_EQ(test_vm_init(vm, img, 8), 0);
     evq_reset(vm);
     port_set_drivers(vm, fake_list);
     cur_vm = vm;
@@ -505,9 +505,9 @@ TEST(vm_init_rejects_big_table) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
     Vm big;                                 /* each Vm has its own allocator: nothing allocated */
-    CHECK_EQ(vm_init(&big, &img, (uint16_t)(PORT_SLOT_BASE + 1u)), -1);
+    CHECK_EQ(test_vm_init(&big, &img, (uint16_t)(PORT_SLOT_BASE + 1u)), -1);
     CHECK_EQ(va_used_bytes(&big), 0u);
-    CHECK_EQ(vm_init(&big, &img, 0xFFFFu), -1);
+    CHECK_EQ(test_vm_init(&big, &img, 0xFFFFu), -1);
     CHECK_EQ(va_used_bytes(&big), 0u);
     teardown();
 }
@@ -545,7 +545,7 @@ TEST(port_builtins) {
     c[20] = OP_MAKE(OP_BUILTIN, 8, 3, 1); c[21] = B_PORT_CLOSE;
     c[22] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     port_set_drivers(&vm, fake_list);
     CHECK_EQ(vm_run(&vm), 0);
     CHECK_EQ(fk.opens, 2);
@@ -812,8 +812,8 @@ static bool busy_pending(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return 
 static void busy_drain(Vm *vm, void *ctx, uint64_t now) { (void)vm; (void)ctx; (void)now; busy.drains++; busy.left--; }
 static bool busy_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return busy.left > 0; }
 static bool busy_deadline(const Vm *vm, void *ctx, uint64_t *d) {
-    (void)vm; (void)ctx;
-    *d = platform_now_ms() + 300u;
+    (void)ctx;
+    *d = vm_now(vm) + 300u;
     return busy.left > 0;
 }
 static const PortSource busy_src = { busy_pending, busy_drain, busy_live, busy_deadline, NULL };
@@ -822,13 +822,13 @@ TEST(port_source_busy) {
     uint32_t w[MINI_WORDS + 2]; Image img; Vm vm;
     setup(w, &img, &vm);
     CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);    /* main runnable */
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     memset(&busy, 0, sizeof busy);
     busy.left = 6;
     CHECK(port_add_source(&vm, &busy_src, NULL));
     CHECK_EQ(vm_run(&vm), 0);
     CHECK_EQ(busy.drains, 6);
-    CHECK(platform_now_ms() < 250u);            /* the clock restarts at vm_run */
+    CHECK(vm_now(&vm) < 250u);                  /* the clock restarts at vm_run */
     port_remove_source(&vm, &busy_src);
     teardown();
 }
@@ -838,14 +838,13 @@ TEST(port_source_busy) {
  * of spinning. The clock is read a few times per scheduler pass, so the
  * reads bound the passes: a handful, against millions when the pre-sleep
  * check counted the held value as work due now. */
-extern void platform_unix_set_clock(uint64_t (*fn)(void));
 static unsigned db_reads;
 static uint64_t db_clock(void);
 static uint64_t db_clock(void) {            /* the real clock, counted */
     db_reads++;
-    platform_unix_set_clock(NULL);
-    uint64_t t = platform_now_ms();
-    platform_unix_set_clock(db_clock);
+    test_host_set_clock(NULL);
+    uint64_t t = test_host_now();
+    test_host_set_clock(db_clock);
     return t;
 }
 
@@ -853,7 +852,7 @@ TEST(port_debounce_idle_no_spin) {
     uint32_t w[MINI_WORDS + 2]; Image img; Vm vm;
     setup(w, &img, &vm);
     CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);    /* main returns at once */
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     port_set_drivers(&vm, fake_list);
     fk.debounce = 100;
     Actor *a = waiting_actor(&vm);
@@ -871,9 +870,9 @@ TEST(port_debounce_idle_no_spin) {
     p->last_b = 0;
     vm.ports_pending = 1;
     db_reads = 0;
-    platform_unix_set_clock(db_clock);
+    test_host_set_clock(db_clock);
     int rc = vm_run(&vm);
-    platform_unix_set_clock(NULL);
+    test_host_set_clock(NULL);
     CHECK_EQ(rc, 0);
     CHECK_EQ(vm.ports_pending, 0u);          /* flushed at the window's end */
     CHECK(db_reads < 30u);
@@ -1144,7 +1143,7 @@ TEST(port_stale_values_badcode) {
     c[3] = OP_MAKE(OP_BUILTIN, 2, 0, 2); c[4] = B_SEND;        /* Send(r0, r1) */
     c[5] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     port_set_drivers(&vm, fake_list);
     uint32_t tag = mod_tag_make(6, 3);
     term stale = term_from_const(0) | tag;

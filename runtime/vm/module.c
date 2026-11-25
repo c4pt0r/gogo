@@ -6,7 +6,6 @@
 #include "heap.h"
 #include "interp.h"
 #include "opcodes.h"
-#include "platform.h"
 #include <string.h>
 
 /* Words of a loaded image, header to the end of the exports. */
@@ -30,13 +29,9 @@ static ModEntry *install(Vm *vm, uint32_t s, const Image *img, uint8_t flags) {
     return e;
 }
 
-/* The weak defaults (platform.h): no special code memory. */
-__attribute__((weak)) void *platform_code_alloc(size_t n) { (void)n; return NULL; }
-__attribute__((weak)) void platform_code_free(void *p, size_t n) { (void)p; (void)n; }
-
 /* Gives back a code copy of n bytes made under flags (MOD_OWN_*). */
 static void free_code(Vm *vm, const uint32_t *w, uint32_t n, uint8_t flags) {
-    if (flags & MOD_OWN_PLATFORM) platform_code_free((void *)(uintptr_t)w, n);
+    if (flags & MOD_OWN_PLATFORM) vm_code_free(vm, (void *)(uintptr_t)w, n);
     else if (flags & MOD_OWN_COPY) va_free(vm, (void *)(uintptr_t)w, n);
 }
 
@@ -64,8 +59,8 @@ static void drop(Vm *vm, uint32_t s, uint16_t who) {
 }
 
 /* The capability check of every load (boot included). */
-static bool caps_ok(const Image *img, uint32_t *missing) {
-    return vm_caps_ok(img->requires, platform_caps(), missing) != 0;
+static bool caps_ok(const Vm *vm, const Image *img, uint32_t *missing) {
+    return vm_caps_ok(img->requires, vm->caps, missing) != 0;
 }
 
 int module_install_static(Vm *vm, const Image *img) {
@@ -78,9 +73,9 @@ int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words) {
     int rc = image_load(&img, words, n_words);
     if (rc != IMG_OK) return rc;
     uint32_t missing;
-    if (!caps_ok(&img, &missing)) {
+    if (!caps_ok(vm, &img, &missing)) {
         char msg[VM_CAPS_MSG_MAX];
-        platform_write_err(msg, vm_caps_explain(msg, img.requires, missing));
+        vm_write_err(vm, msg, vm_caps_explain(msg, img.requires, missing));
         return CODE_UNSUPPORTED;
     }
     return module_install_static(vm, &img);
@@ -88,7 +83,7 @@ int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words) {
 
 void module_config(Vm *vm) {
     char v[12];
-    int32_t n = platform_config_get((const uint8_t *)"code.mem", 8, (uint8_t *)v, sizeof v);
+    int32_t n = vm_config_get(vm, (const uint8_t *)"code.mem", 8, (uint8_t *)v, sizeof v);
     if (n < 0) return;
     uint64_t x = 0;
     int32_t i = 0;
@@ -97,14 +92,13 @@ void module_config(Vm *vm) {
     else if (i > 0 && i + 1 == n && (v[i] | 0x20) == 'm') { x <<= 20; i++; }
     if (i == 0 || i != n || x > 0xFFFFFFFFu) {   /* 12 bytes: no overflow before this check */
         static const char msg[] = "gogo: bad code.mem; using the default\n";
-        platform_write_err(msg, sizeof msg - 1u);
+        vm_write_err(vm, msg, sizeof msg - 1u);
         return;
     }
     vm->mod_cap = (uint32_t)x;
 }
 
-int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words, uint16_t table_cap) {
-    if (vm_init(vm, NULL, table_cap) != 0) return VM_BOOT_NO_MEMORY;
+int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words) {
     module_config(vm);
     int rc = module_load_static(vm, words, n_words);
     if (rc == CODE_OK) return VM_BOOT_OK;
@@ -120,9 +114,9 @@ int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words, uint16_t table_cap)
  * platform gives some (aligned: an unaligned block goes back), else, if
  * vm_too, in VM memory. Sets the MOD_OWN_* flag; NULL if neither. */
 static uint32_t *copy_code(Vm *vm, const uint8_t *src, uint32_t len, bool vm_too, uint8_t *flags) {
-    uint32_t *d = platform_code_alloc(len);
+    uint32_t *d = vm_code_alloc(vm, len);
     if (d && ((uintptr_t)d & 3u)) {
-        platform_code_free(d, len);
+        vm_code_free(vm, d, len);
         d = NULL;
     }
     if (d) *flags |= MOD_OWN_PLATFORM;
@@ -148,7 +142,7 @@ int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle) {
     int rc = CODE_BAD_IMAGE;
     if ((len & 3u) || image_load(&img, words, len / 4u) != IMG_OK) goto fail;
     if (image_words(&img) != len / 4u) goto fail;          /* exactly one image */
-    if (!caps_ok(&img, &missing)) {
+    if (!caps_ok(vm, &img, &missing)) {
         *handle = missing;
         rc = CODE_UNSUPPORTED;
         goto fail;

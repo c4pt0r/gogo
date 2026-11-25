@@ -1,6 +1,6 @@
 /* B_FS: the gogo/fs builtin and its private `file` port driver.
  *
- * vm/ only holds the hook (Vm.fs_builtin, platform.h) and one case in the
+ * vm/ only holds the hook (Vm.fs_builtin, actor.h) and one case in the
  * interpreter; vfs_install(vm) points the hook here. B_FS's first argument is
  * the op (FS_OPEN..FS_WRITEAT, vfs.h), the rest are the op's arguments.
  * Two-result ops write (value, Err) into ra, ra+1 and check that ra+1 is
@@ -26,7 +26,7 @@
 #include "port.h"
 #include "signals.h"
 #include "opcodes.h"
-#include "platform.h"
+#include "host.h"
 #include "config.h"
 #include <string.h>
 

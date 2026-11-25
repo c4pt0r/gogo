@@ -48,7 +48,7 @@
  */
 #include "input_unix.h"
 #include "gpio_unix.h"
-#include "platform.h"
+#include "platform_unix.h"
 
 #include <stdio.h>
 #include <string.h>

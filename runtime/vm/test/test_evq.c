@@ -1,10 +1,11 @@
 /* Event ring: FIFO order, index wraparound, overflow policy. */
 #include "test.h"
+#include "test_host.h"
 #include <errno.h>
 #include "config.h"
 #include "evq.h"
 #include "actor.h"
-#include "platform.h"
+#include "platform_unix.h"
 
 static Vm qv, qv2;   /* only their rings are used */
 
@@ -86,10 +87,9 @@ TEST(two_rings) {
     evq_reset(&qv);
 }
 
-extern void platform_unix_set_clock(uint64_t (*fn)(void));
 
 TEST(notify_latches_wait) {
-    platform_unix_set_clock(0);
+    test_host_set_clock(0);
     uint64_t t0 = platform_now_ms();
     platform_notify();
     platform_wait(5000);

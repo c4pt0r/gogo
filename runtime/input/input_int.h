@@ -16,13 +16,14 @@ static inline uint64_t deadline_abs(uint64_t now, uint32_t t) {
 }
 
 bool input_failed(void);                     /* input_install found no source slot */
+const InputHw *input_hw(const Vm *vm);       /* the board's input chips; never NULL (fields NULL when absent) */
 bool kbd_is_open(void), power_is_open(void), imu_is_open(void), ir_is_open(void), audio_is_open(void);
-bool kbd_work(uint64_t now);                 /* a raw event waits, or a repeat is due */
-bool kbd_next_deadline(uint64_t now, uint64_t *d);   /* the next auto-repeat or error retry */
+bool kbd_work(const Vm *vm, uint64_t now);                 /* a raw event waits, or a repeat is due */
+bool kbd_next_deadline(const Vm *vm, uint64_t now, uint64_t *d);   /* the next auto-repeat or error retry */
 void kbd_drain(Vm *vm, uint64_t now);
 
-bool power_work(uint64_t now);                /* a sample is due, wanted (Read) or flagged */
-bool power_next_deadline(uint64_t now, uint64_t *d);       /* the next scheduled sample */
+bool power_work(const Vm *vm, uint64_t now);                /* a sample is due, wanted (Read) or flagged */
+bool power_next_deadline(const Vm *vm, uint64_t now, uint64_t *d);       /* the next scheduled sample */
 void power_drain(Vm *vm, uint64_t now);
 bool imu_work(uint64_t now);                  /* a poll is due */
 bool imu_next_deadline(uint64_t now, uint64_t *d);        /* the next poll */

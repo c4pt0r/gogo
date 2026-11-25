@@ -62,7 +62,7 @@ const (
 	TooMany     Err = 6 // the module table (8, the main program included) or the holders (4) are full
 )
 
-// Capability bits (Missing; CAP_* in runtime/vm/platform.h).
+// Capability bits (Missing; CAP_* in runtime/vm/host.h).
 const (
 	CapNet     = 1       // gogo/net, dhcp, dns, http
 	CapKbd     = 2       // the "kbd" port

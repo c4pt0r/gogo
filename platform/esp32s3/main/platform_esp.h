@@ -7,16 +7,29 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "input.h"   /* ImuGestures, for the IMU hooks below */
+#include "host.h"
+
+/* The ESP board (platform_esp.c): its gogo_host (ctx unused, NULL) and
+ * VmBoard (port drivers, input chips, Wi-Fi netif, the build's caps). */
+extern const gogo_host esp_host;
+extern const VmBoard esp_board;
+
+/* The board functions behind esp_host, for the other ESP files. */
+void platform_write(const char *s, size_t n);       /* serial + screen, white */
+void platform_write_err(const char *s, size_t n);   /* serial + screen, red */
+void platform_wait(uint32_t ms);                    /* latched: see platform_notify */
+void platform_notify(void);                         /* ISR-safe; wakes the VM task */
+int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uint32_t cap);   /* config_esp.c */
 
 /* Called from the VM task before vm_init: records the task to notify and
  * the clock origin. */
 void platform_esp_init(void);
-/* Milliseconds since platform_esp_init or the last platform_time_reset
- * (ISR-safe; platform_now_ms). */
+/* Milliseconds since platform_esp_init (ISR-safe; esp_host.now_ms, the
+ * clock of PortEvent.time_ms). */
 uint64_t platform_esp_ms(void);
 size_t platform_esp_arena_used(void);
 size_t platform_esp_arena_cap(void);
-/* Prints the first refused platform_chunk_alloc (size, cause, arena used,
+/* Prints the first refused esp_host.alloc (size, cause, arena used,
  * free internal RAM at that moment), if any. */
 void platform_esp_report_refusal(void);
 /* mbedTLS memory outstanding and its peak since boot, in bytes
@@ -155,5 +168,8 @@ void wifi_esp_start(void);
 void wifi_esp_reconfigure(void);
 int wifi_esp_scan(char *line, size_t cap, void (*out)(const char *tag, const char *text, size_t n));
 void wifi_esp_report_heap(void);
+/* The station as the stack's network interface (VmBoard.netif). */
+struct NetIf;
+extern const struct NetIf wifi_esp_netif;
 
 #endif

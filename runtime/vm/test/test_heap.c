@@ -1,4 +1,5 @@
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "alloc.h"
@@ -21,7 +22,7 @@ static term field(Actor *a, term ref, uint32_t i) {
 
 static Actor *setup(Vm *vm, uint16_t words) {
     va_reset(vm);
-    CHECK_EQ(vm_init(vm, NULL, 16), 0);
+    CHECK_EQ(test_vm_init(vm, NULL, 16), 0);
     Actor *a = actor_new(vm, words);
     CHECK(a != NULL);
     return a;
@@ -242,7 +243,7 @@ TEST(push_frame_oom) {
 TEST(test_pid_generation) {
     Vm vm;
     va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = actor_new(&vm, 24);
     uint16_t s = term_pid_slot(a->id);
     term old = a->id;
@@ -264,7 +265,7 @@ TEST(test_pid_generation) {
 TEST(actor_table_full) {
     Vm vm;
     va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 2), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 2), 0);
     Actor *a = actor_new(&vm, 24);
     Actor *b = actor_new(&vm, 24);
     CHECK(a != NULL && b != NULL);
@@ -276,7 +277,7 @@ TEST(actor_table_full) {
 TEST(runq_fifo) {
     Vm vm;
     va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = actor_new(&vm, 24), *b = actor_new(&vm, 24);
     CHECK(runq_pop(&vm) == NULL);
     runq_push(&vm, a);
@@ -291,7 +292,7 @@ TEST(runq_fifo) {
 TEST(actor_free_releases_memory) {
     Vm vm;
     va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t before = va_used_bytes(&vm);
     Actor *a = actor_new(&vm, 24);
     CHECK(heap_alloc(&vm, a, 200, NULL, 0) != UINT32_MAX);  /* grows block */

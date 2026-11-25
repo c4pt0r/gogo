@@ -1,5 +1,5 @@
 #include "fakehw.h"
-#include "platform.h"
+#include "test_host.h"
 #include <string.h>
 
 static const KbdKey keys[R_COUNT] = {
@@ -134,13 +134,13 @@ static struct {
 static int mopen(uint32_t rate, uint8_t gain) {
     if (fm.open_fail) return -1;
     fm.opens++; fm.on = true; fm.rate = rate; fm.gain = gain;
-    fm.t0 = platform_now_ms(); fm.taken = 0;
+    fm.t0 = test_host_now(); fm.taken = 0;
     return 0;
 }
 static int mread(uint8_t *buf, uint32_t cap, uint32_t *lost) {
     fm.reads++;
     if (fm.fail) return -1;
-    uint64_t made = (platform_now_ms() - fm.t0) * fm.rate / 1000u, room = fm.buffer / 2u;
+    uint64_t made = (test_host_now() - fm.t0) * fm.rate / 1000u, room = fm.buffer / 2u;
     if (made - fm.taken > room) { *lost = (uint32_t)((made - fm.taken - room) * 2u); fm.taken = made - room; }
     uint64_t n = made - fm.taken;
     if (n > cap / 2u) n = cap / 2u;
@@ -168,7 +168,7 @@ static struct {
 } fs;
 
 static void sadvance(void) {
-    uint64_t t = platform_now_ms();
+    uint64_t t = test_host_now();
     if (fs.realtime && fs.amp) {
         uint64_t can = (t - fs.last_ms) * fs.rate * 2u / 1000u, q = fs.written - fs.played;
         if (can >= q && q) fs.dry = true;      /* ran dry by this moment */
@@ -179,7 +179,7 @@ static void sadvance(void) {
 static int sopen(uint32_t rate, uint8_t volume) {
     if (fs.open_fail) return -1;
     fs.opens++; fs.amp = true; fs.rate = rate; fs.volume = volume;
-    fs.written = fs.played = 0; fs.dry = false; fs.last_ms = platform_now_ms();
+    fs.written = fs.played = 0; fs.dry = false; fs.last_ms = test_host_now();
     return 0;
 }
 static int swrite(const uint8_t *d, uint32_t len) {
@@ -224,9 +224,13 @@ void fake_fail_read_after(int n) { fail_after = n; }
 int fake_opens(void) { return opens; }
 int fake_closes(void) { return closes; }
 
-const InputHw *platform_input(void) { return &hw; }
 
-void fake_install(struct Vm *vm) { input_install(vm); }   /* once per Vm: no duplicate check in port_add_source */
+/* once per Vm: no duplicate check in port_add_source. The Vm's board is
+ * test_board, whose input the fake becomes for good. */
+void fake_install(struct Vm *vm) {
+    test_board.input = &hw;
+    input_install(vm);
+}
 void fake_no_power(void) { hw.power_read = 0; hw.power_pending = 0; }
 void fake_power_set(int32_t mv, int8_t charging, int8_t external) { p_mv = mv; p_ch = charging; p_ext = external; }
 void fake_power_fail(bool fail) { p_fail = fail; }
@@ -316,7 +320,7 @@ void fake_spk_play(uint32_t bytes) {
     fs.played += bytes < q ? bytes : q;
 }
 void fake_spk_set_idle(void) { fs.played = fs.written; }
-void fake_spk_realtime(bool on) { fs.realtime = on; fs.last_ms = platform_now_ms(); }
+void fake_spk_realtime(bool on) { fs.realtime = on; fs.last_ms = test_host_now(); }
 int fake_spk_underruns(void) { return fs.underruns; }
 uint32_t fake_spk_played(void) { sadvance(); return (uint32_t)fs.played; }
 void fake_spk_fail(bool on) { fs.fail = on; }

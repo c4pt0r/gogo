@@ -53,7 +53,7 @@
 #include "names.h"
 #include "out.h"
 #include "opcodes.h"
-#include "platform.h"
+#include "host.h"
 #include "evq.h"
 #include "port.h"
 #include "strs.h"
@@ -372,7 +372,7 @@ static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
 
 static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n) {
     Out o;
-    out_init(&o, platform_write);
+    out_init(&o, vm, 1);
     for (uint32_t i = 0; i < n; i++) {
         if (i) out_str(&o, " ");
         out_term(&o, vm, a, args[i], 0);
@@ -480,7 +480,7 @@ static int timed_wait(Vm *vm, Actor *a, int32_t ms) {
         a->flags &= (uint8_t)~AF_TIMED_OUT;
         return WAIT_DONE;
     }
-    if (!timer_add_wakeup(vm, a, platform_now_ms() + (uint32_t)ms)) return WAIT_OOM;
+    if (!timer_add_wakeup(vm, a, vm_now(vm) + (uint32_t)ms)) return WAIT_OOM;
     return WAIT_BLOCK;
 }
 
@@ -1005,7 +1005,7 @@ int interp_run(Vm *vm, Actor *a) {
                     R[ra] = roots[0];
                     CHECK(ref_serial(vm, a, R[ra], &serial));
                     if (ms > 0) {
-                        if (!timer_add_wakeup(vm, a, platform_now_ms() + (uint32_t)ms))
+                        if (!timer_add_wakeup(vm, a, vm_now(vm) + (uint32_t)ms))
                             CRASH(R_OUT_OF_MEMORY);
                         a->flags |= AF_CALL_PENDING;
                     }
@@ -1044,7 +1044,7 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 3);   /* like Send, a non-PID target just drops it */
                 int32_t ms;
                 CHECK(int_val(vm, a, R[rb], &ms));
-                uint64_t deadline = platform_now_ms() + (ms > 0 ? (uint32_t)ms : 0u);
+                uint64_t deadline = vm_now(vm) + (ms > 0 ? (uint32_t)ms : 0u);
                 uint32_t why;
                 term ref = timer_add_send(vm, a, deadline, R[rb + 1], R[rb + 2], &why);
                 if (ref == T_NIL) CRASH(why);
@@ -1062,7 +1062,7 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 0);
                 /* An immediate (no allocation) for the first ~12 days. */
                 term t;
-                if (!make_int64(vm, a, (int64_t)platform_now_ms(), &t)) CRASH(R_OUT_OF_MEMORY);
+                if (!make_int64(vm, a, (int64_t)vm_now(vm), &t)) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
                 R[ra] = t;
                 break;
@@ -1266,7 +1266,7 @@ crash:
 
 /* ---- scheduler ---- */
 
-#define write_err_lit(s) platform_write_err((s), sizeof(s) - 1u)
+#define write_err_lit(s) vm_write_err(vm, (s), sizeof(s) - 1u)
 
 /* Scheduler hooks into the port layer.
  *  sched_drain:         delivers the event ring and any due trailing
@@ -1277,11 +1277,11 @@ crash:
  *  sched_any_live:      true while some open port could still produce
  *                       events; the VM does not exit while it holds.
  *  sched_next_deadline: earliest pending debounce deadline, if any, as an
- *                       absolute platform_now_ms value; folded into the idle
+ *                       absolute vm_now value; folded into the idle
  *                       wait timeout. A deadline already due is serviced by
  *                       the next sched_drain. */
 static void sched_drain(Vm *vm) {
-    if (port_work_pending(vm)) port_drain(vm, platform_now_ms());
+    if (port_work_pending(vm)) port_drain(vm, vm_now(vm));
 }
 static bool sched_any_live(Vm *vm) { return port_any_live(vm); }
 static bool sched_next_deadline(Vm *vm, uint64_t *when) { return port_next_deadline(vm, when); }
@@ -1301,8 +1301,8 @@ int vm_run(Vm *vm) {
         return 1;
     }
     Actor *a;
-    /* time 0 for Now() and timers; the wall clock restarts with it */
-    vm_set_unix_time_ms(vm, platform_time_reset());
+    /* time 0 for Now() and timers (the wall clock does not move) */
+    vm->t0 += vm_now(vm);
     evq_reset(vm);
 
     for (;;) {
@@ -1310,7 +1310,7 @@ int vm_run(Vm *vm) {
         /* Due timers fire between time slices too, so a busy actor cannot
          * hold them back. The clock is read only when a timer is pending
          * (here) or when the loop is about to wait (below). */
-        if (vm->ntimers) timer_fire_due(vm, platform_now_ms());
+        if (vm->ntimers) timer_fire_due(vm, vm_now(vm));
         a = runq_pop(vm);
         if (!a) {
             /* Nothing runnable: wait for the next timer or port event. Stop
@@ -1326,15 +1326,15 @@ int vm_run(Vm *vm) {
              * Not port_work_pending: a held debounce value is due only at
              * its deadline, which is in next (no spinning until then). */
             if (port_due_now(vm)) continue;
-            /* Gap between sched_drain (top of pass) and platform_wait: an
-             * event pushed here is not lost, because producers call
-             * platform_notify after evq_push and platform_wait returns
+            /* Gap between sched_drain (top of pass) and vm_wait: an
+             * event pushed here is not lost, because producers wake the
+             * host after evq_push and host->wait returns
              * immediately for any notify latched since its last return. */
             if (!have) {
-                platform_wait(UINT32_MAX);
+                vm_wait(vm, UINT32_MAX);
             } else {
-                now = platform_now_ms();
-                if (next > now) platform_wait(next - now > UINT32_MAX - 1u ? UINT32_MAX - 1u : (uint32_t)(next - now));
+                now = vm_now(vm);
+                if (next > now) vm_wait(vm, next - now > UINT32_MAX - 1u ? UINT32_MAX - 1u : (uint32_t)(next - now));
             }
             continue;
         }

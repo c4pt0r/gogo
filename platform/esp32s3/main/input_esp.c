@@ -16,7 +16,7 @@
 #include "platform_esp.h"
 #include "board.h"
 #include "input.h"
-#include "platform.h"
+#include "host.h"
 
 #include "sdkconfig.h"
 

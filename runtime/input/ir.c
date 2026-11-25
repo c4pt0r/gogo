@@ -25,7 +25,7 @@
  *
  * One port of each kind at a time. Delivery never kills the owner (stream/). */
 #include "input_int.h"
-#include "platform.h"
+#include "host.h"
 #include "stream.h"
 #include "alloc.h"
 #include <string.h>
@@ -59,7 +59,7 @@ static bool tx_timings_ok(const Port *p, const uint8_t *d, uint32_t len) {
 static int tx_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)vm;
     (void)index;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     if (input_failed() || ir.tx || !hw->ir_tx_start || !hw->ir_tx_busy || n < 2) return -1;
     int32_t carrier = cfg[0] <= 0 ? DEF_CARRIER : cfg[0], duty = cfg[1] <= 0 ? DEF_DUTY : cfg[1];
     if (carrier < MIN_CARRIER || carrier > MAX_CARRIER || duty > 99) return -1;
@@ -78,7 +78,7 @@ static void tx_close(struct Vm *vm, Port *p) {
     stream_out_close(NULL, p, out_of(p));   /* port_close releases the held data */
     ir.tx = NULL;
     ir.running = false;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     if (hw->ir_tx_close) hw->ir_tx_close();
 }
 
@@ -86,7 +86,7 @@ static void tx_command(Vm *vm, const Actor *from, Port *p, term msg) {
     if (ir.tx != p) return;
     /* A new head starts, or a Done{-1} is flushed, at once; one queued
      * behind a running frame waits for the poll already set. */
-    if (stream_out_accept(vm, from, p, out_of(p), msg, tx_timings_ok) != 0) ir.tx_next = (uint32_t)platform_now_ms();
+    if (stream_out_accept(vm, from, p, out_of(p), msg, tx_timings_ok) != 0) ir.tx_next = (uint32_t)vm_now(vm);
 }
 
 static bool tx_can_event(const struct Vm *vm, const Port *p) { (void)vm;
@@ -102,7 +102,7 @@ const PortDriver input_ir_tx_driver = {
 
 static int rx_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     if (input_failed() || ir.rx || !hw->ir_rx_open || !hw->ir_rx_read || n < 1) return -1;
     int32_t gap = cfg[0] <= 0 ? DEF_GAP : cfg[0] > MAX_GAP ? MAX_GAP : cfg[0];
     uint16_t *buf = va_alloc(vm, IR_FRAME_MAX * 2u);
@@ -114,14 +114,14 @@ static int rx_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, u
     memset(&ir.in, 0, sizeof ir.in);
     ir.buf = buf;
     ir.rx = p;
-    ir.rx_next = (uint32_t)platform_now_ms() + IR_POLL_MS;
+    ir.rx_next = (uint32_t)vm_now(vm) + IR_POLL_MS;
     p->charge_words = IR_FRAME_MAX * 2u / 4u;   /* the owner pays; port_open refuses one that cannot */
     return 0;
 }
 
 static void rx_close(struct Vm *vm, Port *p) {
     if (ir.rx != p) return;                    /* a refused open's cleanup */
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     if (hw->ir_rx_close) hw->ir_rx_close();
     va_free(vm, ir.buf, IR_FRAME_MAX * 2u);
     ir.buf = NULL;
@@ -132,7 +132,7 @@ static void rx_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, 
 
 static bool rx_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     (void)p;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     return !hw->live || hw->live();
 }
 
@@ -173,7 +173,7 @@ static uint32_t frame_ms(const uint8_t *d, uint32_t n) {
 
 static void tx_drain(Vm *vm, uint64_t now) {
     StreamOut *o = out_of(ir.tx);
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     stream_out_flush(vm, ir.tx, o);
     uint32_t next = (uint32_t)now + IR_TX_POLL_MS;   /* while busy */
     while (!hw->ir_tx_busy()) {               /* ours, or a frame of a port closed earlier */
@@ -195,11 +195,12 @@ static void tx_drain(Vm *vm, uint64_t now) {
 }
 
 static void rx_drain(Vm *vm, uint64_t now) {
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     ir.rx_next = (uint32_t)now + IR_POLL_MS;
     for (int k = 0; k < IR_FRAMES_PER_POLL; k++) {
-        uint32_t t = (uint32_t)now;           /* the hook may give the frame's start */
+        uint32_t t0 = (uint32_t)vm->t0, t = (uint32_t)now + t0;   /* host clock: the hook may give the frame's start */
         int r = hw->ir_rx_read(ir.buf, IR_FRAME_MAX, &t);
+        t -= t0;
         if (r <= 0) break;                    /* none, or an error: the next poll retries */
         uint32_t n = (uint32_t)r;
         if (n > IR_FRAME_MAX) {               /* cut: the rest of the frame is lost */

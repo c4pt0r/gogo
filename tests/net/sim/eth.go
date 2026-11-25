@@ -15,7 +15,7 @@ type IP [4]byte
 // Broadcast is the Ethernet broadcast address.
 var Broadcast = MAC{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 
-// VMMAC is the MAC the unix platform gives the VM (platform_net_mac).
+// VMMAC is the MAC the unix platform gives the VM (unix_netif.mac).
 var VMMAC = MAC{0x02, 0, 0, 0, 0, 0x01}
 
 // IPv4 makes an address; IPFromInt / Int convert to the int form gogo

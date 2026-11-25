@@ -67,7 +67,7 @@
 #elif defined(GOGO_BOARD_STICKS3)
 
 /* M5StickS3 (ESP32-S3-PICO-1-N8R8: 8 MB flash, 8 MB octal PSRAM: module code only,
- * sdkconfig.sticks3, platform_esp.c platform_code_alloc).
+ * sdkconfig.sticks3, platform_esp.c code_alloc).
  * The M5PM1 (I2C G47/G48, pm1.c) switches the LCD rail. No SD. */
 #define BOARD_NAME "sticks3"
 #define LCD_PIN_MOSI 39

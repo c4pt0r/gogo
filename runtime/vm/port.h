@@ -10,7 +10,8 @@
  * Drivers never see terms: the VM decodes the int fields of the cfg and
  * command structs into an int32 array, and a driver reports input by
  * pushing PortEvent{index, gen, a, b, time_ms} to the VM's event ring (evq.h)
- * and calling platform_notify(). The scheduler drains the ring (port_drain)
+ * and waking it (the board's wake, or vm_wake). time_ms is the low 32 bits
+ * of the host's clock (host->now_ms, not vm_now: port_drain converts). The scheduler drains the ring (port_drain)
  * and sends the owner an `event_type` struct {a, b} as an ordinary message,
  * subject to its mailbox quota. Events whose (index, gen) no longer names
  * an open port are dropped.
@@ -131,7 +132,7 @@ void port_close_all(struct Vm *vm);                      /* VM shutdown: close e
 void port_drain(struct Vm *vm, uint64_t now);            /* ring -> messages, debounce */
 bool port_next_deadline(const struct Vm *vm, uint64_t *deadline);   /* pending trailing debounce */
 bool port_any_live(const struct Vm *vm);
-void port_set_drivers(struct Vm *vm, const PortDriver *const *list);   /* NULL = platform list; after vm_init */
+void port_set_drivers(struct Vm *vm, const PortDriver *const *list);   /* NULL = board->ports; after vm_init */
 
 /* Gives port pid to actor `to` if `from` owns it: the charge, the pinned
  * Bytes (re-pinned for `to`, released for `from`) and later events move;
@@ -158,7 +159,7 @@ void port_bytes_release(struct Vm *vm, Port *p, term h);
  * net stack's RX slot and link slot. pending: cheap check, true when drain
  * has work it can do NOW (it may be called from the scheduler at any time);
  * drain: runs on the scheduler thread inside port_drain; any_live: keeps
- * the VM running; next_deadline (optional): an absolute platform_now_ms
+ * the VM running; next_deadline (optional): an absolute vm_now
  * deadline folded into the idle wait. Each callback gets the ctx given to
  * port_add_source. Up to GOGO_MAX_SOURCES per Vm, visited in no fixed
  * order.

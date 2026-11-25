@@ -1,6 +1,7 @@
 /* The single exit path, deferred exits, the mailbox quota and the
  * emergency reserve. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -60,7 +61,7 @@ TEST(exit_report_kinds) {
     uint32_t w[IMG_MAX]; Image img; Vm vm;
     va_reset(&vm);
     CHECK_EQ(image_load(&img, w, build(w, receiver_code, 3)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     static const struct { uint32_t code; const char *want; } cases[] = {
         { R_NORMAL, "" }, { R_SHUTDOWN, "" },
         { R_KILLED, "gogo: actor <pid 0> crashed: killed\n" },
@@ -98,7 +99,7 @@ TEST(exit_report_bad_name_ignored) {
     consts[0] = hdr_make(1, K_STRING);
     img.consts = consts;
     img.consts_words = 4;
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     Actor *a = actor_new(&vm, 24);
     capture_start();
     actor_exit(&vm, a, R_DIV_ZERO, term_from_const(0));
@@ -118,7 +119,7 @@ TEST(mark_exit_runnable_actor_exits_before_running) {
     uint32_t w[IMG_MAX]; Image img; Vm vm;
     va_reset(&vm);
     CHECK_EQ(image_load(&img, w, build(w, receiver_code, 3)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     Actor *r = start(&vm, &img, 32);
     Actor *s = actor_new(&vm, 24);
     CHECK_EQ(interp_run(&vm, r), RUN_WAIT);
@@ -145,7 +146,7 @@ TEST(mark_exit_waiting_actor_is_woken) {
     uint32_t w[IMG_MAX]; Image img; Vm vm;
     va_reset(&vm);
     CHECK_EQ(image_load(&img, w, build(w, receiver_code, 3)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     size_t base = va_used_bytes(&vm);
     Actor *r = start(&vm, &img, 32);
     CHECK_EQ(interp_run(&vm, r), RUN_WAIT);
@@ -166,7 +167,7 @@ TEST(mark_exit_waiting_actor_is_woken) {
  * marks the receiver and returns 0; the sender is unaffected. */
 TEST(quota_overflow_marks_receiver) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *s = actor_new(&vm, 24), *r = actor_new(&vm, 24);
     r->max_words = 40;
     r->state = A_WAITING;
@@ -194,7 +195,7 @@ TEST(quota_overflow_marks_receiver) {
 
 TEST(quota_mailbox_counter_limit) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = actor_new(&vm, 32), *b = actor_new(&vm, 24);
     b->mbox_words = 65535;
     CHECK_EQ(msg_send(&vm, a, b->id, term_from_int(1)), 0);
@@ -209,7 +210,7 @@ TEST(quota_mailbox_counter_limit) {
  * full mailbox still delivers. */
 TEST(quota_ignores_sender_state) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *s = actor_new(&vm, 64), *r = actor_new(&vm, 24);
     s->max_words = 10;
     s->mbox_words = 65000;
@@ -233,7 +234,7 @@ TEST(self_send_overflow_exits_at_once) {
     uint32_t w[IMG_MAX]; Image img; Vm vm;
     va_reset(&vm);
     CHECK_EQ(image_load(&img, w, build(w, code, 6)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     size_t base = va_used_bytes(&vm);
     Actor *a = start(&vm, &img, 32);
     a->max_words = 48;
@@ -257,7 +258,7 @@ TEST(builtin_exit) {
     c[1] = term_from_int(150);
     va_reset(&vm);
     CHECK_EQ(image_load(&img, w, build(w, c, 5)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     Actor *a = start(&vm, &img, 32);
     capture_start();
     CHECK_EQ(interp_run(&vm, a), RUN_EXIT);
@@ -288,7 +289,7 @@ TEST(reserve_covers_exit_path_allocation) {
     uint32_t w[IMG_MAX]; Image img; Vm vm;
     va_reset(&vm);
     CHECK_EQ(image_load(&img, w, build(w, receiver_code, 3)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     CHECK(vm_reserve_init(&vm));
     size_t base = va_used_bytes(&vm);             /* includes the reserve */
     Actor *r = start(&vm, &img, 32);
@@ -353,7 +354,7 @@ static term recv_exit(Vm *vm, Actor *a, int32_t *code, term *func) {
  * nothing allocated that survives the two actors. */
 TEST(link_prealloc_oom) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     uint32_t failed = 0, linked = 0;
     for (size_t extra = 0; extra <= 384; extra += 8) {   /* past the full cost */
@@ -377,7 +378,7 @@ TEST(link_prealloc_oom) {
  * unlinking an unlinked or dead pid does nothing. */
 TEST(link_unlink_idempotent) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = actor_new(&vm, 24), *b = actor_new(&vm, 24);
     CHECK(sig_link(&vm, a, a->id));            /* self: no effect */
     CHECK(!sig_is_linked(a, a->id));
@@ -405,7 +406,7 @@ TEST(ring_each_exits_once) {
     uint32_t w[IMG_MAX]; Image img; Vm vm;
     va_reset(&vm);
     CHECK_EQ(image_load(&img, w, build(w, receiver_code, 3)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     size_t base = va_used_bytes(&vm);
     Actor *m = actor_new(&vm, 32), *a = start(&vm, &img, 32), *b = start(&vm, &img, 32),
           *c = start(&vm, &img, 32);
@@ -446,7 +447,7 @@ TEST(ring_each_exits_once) {
  * counted in mbox_words. */
 TEST(link_normal_exit_and_quota_bypass) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *d = actor_new(&vm, 24), *t = actor_new(&vm, 24), *n = actor_new(&vm, 24);
     sig_set_trap(t, true);
     CHECK(sig_link(&vm, d, t->id));
@@ -475,7 +476,7 @@ TEST(link_normal_exit_and_quota_bypass) {
  * a trapping target gets an ExitMsg unless the code is Killed. */
 TEST(kill_rules) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     Actor *k = actor_new(&vm, 24), *t = actor_new(&vm, 24);
     t->state = A_WAITING;
@@ -527,7 +528,7 @@ TEST(kill_rules) {
  * non-trapping one is marked to exit with NoProc. */
 TEST(link_dead_pid_is_noproc) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = actor_new(&vm, 24), *d = actor_new(&vm, 24);
     term dead = d->id;
     actor_exit(&vm, d, R_NORMAL, T_EMPTYSTR);
@@ -578,7 +579,7 @@ static uint64_t ref_serial_in(const Actor *a, term ref) {
  * give two messages with their own refs. */
 TEST(monitor_delivers_on_any_exit) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     for (int round = 0; round < 2; round++) {
         Actor *w = actor_new(&vm, 32), *t = actor_new(&vm, 24);
@@ -613,7 +614,7 @@ TEST(monitor_delivers_on_any_exit) {
 /* A code that does not fit a small int is boxed in the preallocated block. */
 TEST(monitor_big_code) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *w = actor_new(&vm, 32), *t = actor_new(&vm, 24);
     term tid = t->id;
     CHECK(sig_monitor(&vm, w, tid) != T_NIL);
@@ -634,7 +635,7 @@ TEST(monitor_big_code) {
  * nothing. */
 TEST(demonitor_frees_and_is_idempotent) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *w = actor_new(&vm, 32), *t = actor_new(&vm, 24);
     size_t base = va_used_bytes(&vm);
     term r = sig_monitor(&vm, w, t->id);
@@ -658,7 +659,7 @@ TEST(demonitor_frees_and_is_idempotent) {
  * message already queued stays queued. */
 TEST(demonitor_after_fire) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     Actor *w = actor_new(&vm, 32), *t = actor_new(&vm, 24);
     term r = sig_monitor(&vm, w, t->id);
@@ -673,7 +674,7 @@ TEST(demonitor_after_fire) {
  * with it, and the target's later exit sends nothing (no use after free). */
 TEST(monitor_watcher_exits_first) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     Actor *w = actor_new(&vm, 32), *t = actor_new(&vm, 24);
     CHECK(sig_monitor(&vm, w, t->id) != T_NIL);
@@ -689,7 +690,7 @@ TEST(monitor_watcher_exits_first) {
  * both dying in the same pass, free everything once. */
 TEST(monitor_marked_watcher_and_mutual) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     Actor *w = actor_new(&vm, 32), *t = actor_new(&vm, 24);
     CHECK(sig_monitor(&vm, w, t->id) != T_NIL);
@@ -714,7 +715,7 @@ TEST(monitor_marked_watcher_and_mutual) {
  * delivers. */
 TEST(monitor_dead_pid_and_self) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     Actor *w = actor_new(&vm, 32), *d = actor_new(&vm, 24);
     term dead = d->id;
@@ -742,7 +743,7 @@ TEST(monitor_dead_pid_and_self) {
  * T_NIL with nothing that survives the two actors. */
 TEST(monitor_prealloc_oom) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     uint32_t failed = 0, ok = 0;
     for (size_t extra = 0; extra <= 384; extra += 8) {   /* past the full cost */
@@ -778,7 +779,7 @@ TEST(spawn_link_prealloc_oom) {
     uint32_t w[IMG_MAX]; Image img; Vm vm;
     va_reset(&vm);
     CHECK_EQ(image_load(&img, w, build(w, code, 5)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
     size_t base = va_used_bytes(&vm);
     uint32_t oom = 0, ok = 0;
     for (size_t extra = 0; extra <= 1024; extra += 8) {
@@ -816,7 +817,7 @@ TEST(spawn_link_prealloc_oom) {
  * zero on Demonitor, on delivery and on the watcher's exit. */
 TEST(monitor_charged_to_watcher) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     Actor *w = actor_new(&vm, 32), *t = actor_new(&vm, 24), *u = actor_new(&vm, 24);
     term tid = t->id;
@@ -880,7 +881,7 @@ TEST(monitor_charged_to_watcher) {
  * caller's limit makes nothing. */
 TEST(link_charged) {
     Vm vm; va_reset(&vm);
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     size_t base = va_used_bytes(&vm);
     Actor *a = actor_new(&vm, 24), *b = actor_new(&vm, 24), *c = actor_new(&vm, 24);
     CHECK(sig_link(&vm, a, b->id));

@@ -2,7 +2,7 @@
  * FreeRTOS task pinned to CPU1. */
 #include "sdkconfig.h"
 #include "image.h"
-#include "platform.h"
+#include "host.h"
 #include "actor.h"
 #include "interp.h"
 #include "module.h"
@@ -61,7 +61,10 @@ static void vm_task(void *arg) {
                      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     /* The unified boot (module.h): the image becomes module 0 (caps check
      * included), then vm_run starts its "main" export. */
-    int rc = vm_boot(&vm, words, nwords, (uint16_t)GOGO_TABLE_CAP);
+    int rc = VM_BOOT_NO_MEMORY;
+    if (vm_init(&vm, &esp_host, NULL, &esp_board, UINT32_MAX, (uint16_t)GOGO_TABLE_CAP) == 0) {
+        rc = vm_boot(&vm, words, nwords);
+    }
     if (rc < 0) {
         platform_esp_say("gogo: bad image (%s)", image_err_str(rc));
         platform_esp_idle();
@@ -71,7 +74,7 @@ static void vm_task(void *arg) {
         platform_esp_say("gogo: out of memory");
         platform_esp_idle();
     }
-    /* After vm_boot: vm_init starts the Vm's source list and fs hook empty. */
+    /* After vm_init: it starts the Vm's source list and fs hook empty. */
 #if CONFIG_GOGO_NET
     net_attach(&vm);
 #endif

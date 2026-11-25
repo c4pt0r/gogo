@@ -10,6 +10,10 @@
 # only emits var.N or var$N, shown as ?.var, which matches any func.var of that file.
 # Fails on a symbol (in any configuration) missing from the allow-list, and on
 # allow-list lines that match nothing (so each embed task deletes its own lines).
+# Also fails on any weak symbol, defined or undefined (nm W/V/w/v on ELF,
+# "weak" on Mach-O): a hook a host may omit is a NULL field in gogo_host or
+# VmBoard, never a weak default. Weak symbols have no allow-list; --print
+# lists them as "<file> weak:<symbol>".
 #   tools/globals.sh [--allow file] [--print] [files...]
 #     --print   list the symbols found (no allow-list check); files default to runtime/
 # Environment (make globals passes the VM build's values):
@@ -63,11 +67,13 @@ elf_nm() {
 }
 
 found="$OUT/found"; : > "$found"
+weak="$OUT/weak"; : > "$weak"
 scan() { # file flags...
     f=$1; shift
     # shellcheck disable=SC2086
     $CC $CFLAGS "$@" -O0 -fno-common $INC -c "$f" -o "$OUT/o.o"
     if [ "$(od -An -tx1 -N4 "$OUT/o.o" | tr -d ' ')" = 7f454c46 ]; then
+        "$(elf_nm)" "$OUT/o.o" | awk -v f="$f" '$(NF-1) ~ /^[WVwv]$/ { print f, "weak:" $NF }' >> "$weak"
         "$(elf_nm)" --format=sysv "$OUT/o.o" | awk -F'|' -v f="$f" '
             { n = $1; gsub(/ /, "", n); sec = $7; gsub(/ /, "", sec) }
             sec ~ /^(\.bss|\.data|\.sbss|\.sdata|\.tbss|\.tdata|\*COM\*)/ && sec !~ /^\.data\.rel\.ro/ && n !~ /^\.L/ {
@@ -76,6 +82,7 @@ scan() { # file flags...
     else
         # Mach-O: classify by section (nm letters are unreliable: a zero-fill
         # global can show as S or __common). ltmpN / l_* are assembler temporaries.
+        nm -m "$OUT/o.o" | awk -v f="$f" '/ weak / { s = $NF; sub(/^_/, "", s); print f, "weak:" s }' >> "$weak"
         nm -m "$OUT/o.o" | awk -v f="$f" '
             /^[0-9a-f]+ \(__(DATA|DATA_DIRTY),__(bss|data|common|thread_bss|thread_data)\)/ && $NF !~ /^(ltmp|l_|lCPI|lJTI)/ {
                 s = $NF; sub(/^_/, "", s); print f, s }' >> "$found"
@@ -93,7 +100,8 @@ for f in $TLS_FILES; do
     eval "scan \"\$f\" $GLOBALS_TLS_CFLAGS -DGOGO_EMBED"
 done
 sort -u "$found" -o "$found"
-if [ "$PRINT" = 1 ]; then cat "$found"; exit 0; fi
+sort -u "$weak" -o "$weak"
+if [ "$PRINT" = 1 ]; then cat "$found" "$weak"; exit 0; fi
 
 sed -e 's/#.*//' "$ALLOW" | awk -v tls="$TLS_FILES" 'NF >= 2 && (tls != "" || $1 !~ /^runtime\/net\/tls\//) { print $1, $2 }' | sort -u > "$OUT/allow"
 # Match: exact, or found "?.var" against any allowed "func.var" of the same file.
@@ -110,6 +118,9 @@ awk -v new="$OUT/new" -v stale="$OUT/stale" '
 ' "$OUT/allow" "$found"
 touch "$OUT/new" "$OUT/stale"
 bad=0
+if [ -s "$weak" ]; then
+    echo "globals: weak symbols in runtime/ (make the hook a NULL-able gogo_host / VmBoard field):"; sed 's/^/  /' "$weak"; bad=1
+fi
 if [ -s "$OUT/new" ]; then
     echo "globals: mutable global state not on the allow-list:"; sort "$OUT/new" | sed 's/^/  /'; bad=1
 fi
@@ -117,4 +128,4 @@ if [ -s "$OUT/stale" ]; then
     echo "globals: allow-list entries that no longer exist (delete them from $ALLOW):"; sort "$OUT/stale" | sed 's/^/  /'; bad=1
 fi
 [ "$bad" -eq 0 ] || exit 1
-echo "globals: ok ($(wc -l < "$OUT/allow" | tr -d ' ') allowed symbols, no new mutable globals)"
+echo "globals: ok ($(wc -l < "$OUT/allow" | tr -d ' ') allowed symbols, no new mutable globals, no weak symbols)"

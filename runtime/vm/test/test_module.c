@@ -3,6 +3,7 @@
  * happens to them once their module is gone. */
 #define _POSIX_C_SOURCE 200112L   /* setenv, mkstemp */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -12,11 +13,10 @@
 #include "interp.h"
 #include "module.h"
 #include "opcodes.h"
-#include "platform.h"
+#include "platform_unix.h"
 #include "signals.h"
 #include "term.h"
 #include "timer.h"
-#include "caps_unix.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -223,7 +223,7 @@ typedef struct Fx {
 static Fx *fx_new(void) {
     Fx *f = calloc(1, sizeof *f);
     CHECK_EQ(image_load(&f->img, f->a, build_a(f->a, true, 0)), IMG_OK);
-    CHECK_EQ(vm_init(&f->vm, &f->img, 16), 0);
+    CHECK_EQ(test_vm_init(&f->vm, &f->img, 16), 0);
     return f;
 }
 
@@ -286,7 +286,7 @@ TEST(boot_is_module0) {
     Vm vm;
     va_reset(&vm);
     uint32_t n = build_a(w, true, 0);
-    CHECK_EQ(vm_boot(&vm, w, n, 16), VM_BOOT_OK);
+    CHECK_EQ(test_vm_boot(&vm, w, n, 16), VM_BOOT_OK);
     CHECK(vm.mods[0] != NULL);
     CHECK(module_resolve(&vm, 0, 0) == &vm.mods[0]->img);
     CHECK_EQ(module_mem_used(&vm), 0u);
@@ -300,7 +300,7 @@ TEST(no_main_refused) {
     Vm vm;
     va_reset(&vm);
     uint32_t n = build_a(w, false, 0);
-    CHECK_EQ(vm_boot(&vm, w, n, 16), VM_BOOT_OK);
+    CHECK_EQ(test_vm_boot(&vm, w, n, 16), VM_BOOT_OK);
     capture_start();
     int rc = vm_run(&vm);
     capture_stop();
@@ -315,11 +315,11 @@ TEST(boot_caps_refused) {
     Vm vm;
     va_reset(&vm);
     uint32_t n = build_a(w, true, CAP_NET);
-    platform_unix_set_caps(0);
+    test_granted = 0;
     capture_start();
-    int rc = vm_boot(&vm, w, n, 16);
+    int rc = test_vm_boot(&vm, w, n, 16);
     capture_stop();
-    platform_unix_set_caps(CAP_NET | CAP_KBD | CAP_POWER | CAP_SD);
+    test_granted = UINT32_MAX;
     CHECK_EQ(rc, VM_BOOT_REFUSED);
     CHECK(strcmp(err_buf, "gogo: image needs net; firmware lacks net\n") == 0);
 }
@@ -330,7 +330,7 @@ TEST(boot_bad_image) {
     va_reset(&vm);
     uint32_t n = build_a(w, true, 0);
     w[0] ^= 1u;
-    CHECK_EQ(vm_boot(&vm, w, n, 16), IMG_ERR_MAGIC);
+    CHECK_EQ(test_vm_boot(&vm, w, n, 16), IMG_ERR_MAGIC);
     CHECK(strcmp(image_err_str(IMG_ERR_MAGIC), "bad magic") == 0);
 }
 
@@ -698,20 +698,23 @@ TEST(module_code_words_counted) {
 
 /* ---- gogo/code (Load / Spawn / Hold / Release, the cap) ---- */
 
-/* The PSRAM hook, overridden for this test binary: off (NULL, "no special
- * memory", the weak default's answer) unless plat_on. */
+/* The PSRAM hooks (test_host.code_alloc / code_free, installed by the
+ * tests that use them): off (NULL, "no special memory", the answer of a
+ * host without them) unless plat_on. */
 static bool plat_on;
 static uint32_t plat_allocs, plat_frees;
 static size_t plat_last;
 static bool plat_misalign;
-void *platform_code_alloc(size_t n) {
+static void *plat_alloc(void *ctx, size_t n) {
+    (void)ctx;
     if (!plat_on) return NULL;
     plat_allocs++;
     plat_last = n;
     char *p = malloc(n + 4u);
     return plat_misalign ? p + 1 : p;
 }
-void platform_code_free(void *p, size_t n) {
+static void plat_free(void *ctx, void *p, size_t n) {
+    (void)ctx;
     CHECK_EQ(n, plat_last);
     plat_frees++;
     free(plat_misalign ? (char *)p - 1 : p);
@@ -889,7 +892,7 @@ static void boot_with_config(Fx *f, const char *line) {
     setenv("GOGO_CONFIG", path, 1);
     uint32_t n = build_a(f->a, true, 0);
     capture_start();
-    CHECK_EQ(vm_boot(&f->vm, f->a, n, 16), VM_BOOT_OK);
+    CHECK_EQ(test_vm_boot(&f->vm, f->a, n, 16), VM_BOOT_OK);
     capture_stop();
     f->img = f->vm.mods[0]->img;
     remove(path);
@@ -945,12 +948,12 @@ TEST(cap_exceeded) {
 TEST(unsupported) {
     Fx *f = fx_new();
     Actor *h = host(f);
-    platform_unix_set_caps(CAP_NET | CAP_POWER | CAP_SD);
+    f->vm.caps = CAP_NET | CAP_POWER | CAP_SD;
     uint32_t n = build_b_with(f->b, CAP_KBD | CAP_NET | CAP_ANYPORT, 0), handle = 0;
     term b = offheap(f, h, f->b, n);
     CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_UNSUPPORTED);
     CHECK_EQ(handle, CAP_KBD);
-    platform_unix_set_caps(CAP_NET | CAP_KBD | CAP_POWER | CAP_SD);
+    f->vm.caps = test_board.caps;
     CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_OK);  /* the same bytes, now supported */
     bytes_release(&f->vm, h, b);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1079,13 +1082,14 @@ TEST(unaligned_bytes_copied) {
     free(f);
 }
 
-/* platform_code_alloc (PSRAM): when it gives memory the module is copied
+/* host->code_alloc (PSRAM): when it gives memory the module is copied
  * there, even from in-place-able Bytes, which it then does not keep; the
  * same size is freed at unload. */
 TEST(platform_code_memory) {
     Fx *f = fx_new();
     Actor *h = host(f);
     plat_on = true; plat_allocs = plat_frees = 0;
+    test_host.code_alloc = plat_alloc; test_host.code_free = plat_free;
     uint32_t n = build_b(f->b), handle;
     term b = offheap(f, h, f->b, n);
     CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_OK);
@@ -1197,11 +1201,11 @@ TEST(code_builtin_ops) {
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN, 3), R_NORMAL);
     CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));   /* stale */
     /* Unsupported: Module{H: 0, Missing: the bits} */
-    platform_unix_set_caps(CAP_NET);
+    f->vm.caps = CAP_NET;
     b = offheap(f, a, f->b, build_b_with(f->b, CAP_KBD | CAP_SD, 0));
     regs(a)[3] = b;
     CHECK_EQ(code_op(f, a, 0, CODE_OP_LOAD, 1), R_NORMAL);
-    platform_unix_set_caps(CAP_NET | CAP_KBD | CAP_POWER | CAP_SD);
+    f->vm.caps = test_board.caps;
     CHECK_EQ(regs(a)[1], term_from_int(CODE_UNSUPPORTED));
     CHECK_EQ(field_h(a, regs(a)[0]), 0);
     regs(a)[3] = regs(a)[0];
@@ -1258,11 +1262,11 @@ TEST(forged_module_values_safe) {
     CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
     CHECK_EQ(regs(a)[6], term_from_int(CODE_OK));
     /* the probe: requires 0x7FFFFFFF on caps 0 */
-    platform_unix_set_caps(0);
+    f->vm.caps = 0;
     term b = offheap(f, a, f->b, build_b_with(f->b, 0x7FFFFFFFu, 0));
     regs(a)[3] = b;
     CHECK_EQ(code_op(f, a, 0, CODE_OP_LOAD, 1), R_NORMAL);
-    platform_unix_set_caps(CAP_NET | CAP_KBD | CAP_POWER | CAP_SD);
+    f->vm.caps = test_board.caps;
     CHECK_EQ(regs(a)[1], term_from_int(CODE_UNSUPPORTED));
     term m = regs(a)[0];
     CHECK_EQ(field_h(a, m), 0);
@@ -1335,6 +1339,7 @@ TEST(platform_memory_single_copy) {
     memcpy(data + 1, f->b, n * 4u);
     term sl = bytes_sub(&f->vm, h, r, 1, n * 4u);
     plat_on = true; plat_allocs = plat_frees = 0;
+    test_host.code_alloc = plat_alloc; test_host.code_free = plat_free;
     size_t va0 = va_used_bytes(&f->vm);
     CHECK_EQ(module_load(&f->vm, h, sl, &handle), CODE_OK);
     CHECK_EQ(plat_allocs, 1u);

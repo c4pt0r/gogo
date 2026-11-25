@@ -81,19 +81,17 @@ time.
 `SPIRAM_IGNORE_NOTFOUND` so a board without it still boots). It is used for
 two things: the code of hot-loaded modules (`gogo/code`) and, with
 `GOGO_TLS`, mbedTLS's memory (see "TLS" below). Module code:
-`platform_code_alloc` / `platform_code_free` in `main/platform_esp.c` are
+`esp_host`'s `code_alloc` / `code_free` in `main/platform_esp.c` are
 `heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT)` / `heap_caps_free`.
 `CONFIG_SPIRAM_USE_CAPS_ALLOC=y` (not malloc-wide) keeps `malloc` and every
-internal-heap user on internal RAM: the VM arena (`platform_chunk_alloc` asks
+internal-heap user on internal RAM: the VM arena (`esp_host.alloc` asks
 for `MALLOC_CAP_INTERNAL`), Wi-Fi and the LCD buffers (`MALLOC_CAP_DMA` /
 internal) are unchanged. Module code is only read as words by the
 interpreter, so the slower external RAM costs nothing that matters. They live
-in `platform_esp.c`, which is always linked: the VM has weak defaults, and a
-weak default is never replaced by an archive member that is not otherwise
-pulled in (checked: `nm build/gogo.elf` shows the strong `platform_code_alloc`
-from `platform_esp.c.obj`). On the Cardputer (no PSRAM, `CONFIG_SPIRAM` off)
-both return `NULL` / do nothing, and modules run from the received `Bytes`
-or a copy in the VM's memory.
+in the `esp_host` table (`platform_esp.c`; the VM reaches them only through
+it, there are no weak defaults). On the Cardputer (no PSRAM, `CONFIG_SPIRAM`
+off) both hooks are `NULL`, and modules run from the received `Bytes` or a
+copy in the VM's memory.
 
 Cost, measured with `idf.py size` / `size-components`:
 `gogo.bin` StickS3 883744 B with PSRAM (875200 B without), Cardputer 927424 B.
@@ -118,7 +116,7 @@ it) then lives in 8 MB of otherwise unused memory instead of competing with
 the VM arena and Wi-Fi for the 160 KB internal heap; one 64 KB module costs
 more internal RAM on the Cardputer than the PSRAM support costs the StickS3.
 `SPIRAM_IGNORE_NOTFOUND` makes a missing or failed PSRAM silent (modules then
-go to the VM's memory); check the address `platform_code_alloc` returns on
+go to the VM's memory); check the address `code_alloc` returns on
 the first run.
 
 **TLS (`GOGO_TLS`).** The "tls" port (`runtime/net/tls/tls.c`) is compiled against
@@ -126,7 +124,8 @@ ESP-IDF's own mbedTLS component (4.1.1, the same source the host build
 uses with `runtime/net/tls/config`), configured in `sdkconfig.defaults` (restartable
 ECC, TLS 1.2 client only, record buffers 16384 / 4096 fixed, X25519,
 `HAVE_TIME_DATE`, the certificate bundle without cross-signed mode, `-O2`;
-reasons there). The port's hooks are in `main/platform_esp.c`:
+reasons there). The port's hooks are `esp_board.tls` (a `TlsHw`, `runtime/net/tls/tls.h`) in
+`main/platform_esp.c`:
 - every mbedTLS allocation (the port's and Wi-Fi's WPA crypto) goes
   through one allocator, installed first thing in `platform_esp_init`
   (`CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC`): PSRAM first on the StickS3 (a
@@ -146,7 +145,7 @@ reasons there). The port's hooks are in `main/platform_esp.c`:
 - `lwip_inet_pton` (IPv4 only): mbedTLS's x509 calls `inet_pton`, which
   would otherwise link all of lwIP (whose `tcp_*` names clash with gogo's
   stack);
-- `platform_tls_random` is `esp_fill_random` (IDF's mbedTLS draws its keys
+- the `TlsHw`'s `random` is `esp_fill_random` (IDF's mbedTLS draws its keys
   from the same source).
 
 Measured on the StickS3 against example.com (`examples/httpsdemo`): a
@@ -176,7 +175,7 @@ adds it by itself):
 (`tls_max_step_us`: the longest slice; `tls_last_hs_us`: the last
 handshake; `tls_last_error`: the last mbedTLS error).
 
-**Capabilities.** `platform_caps()` (same file) returns the `CAP_*` bits this
+**Capabilities.** `esp_board.caps` (same file) holds the `CAP_*` bits this
 build really has: `CAP_NET` (`GOGO_NET`), `CAP_KBD` (Cardputer with `GOGO_KBD`),
 `CAP_POWER` (`GOGO_BATTERY`), `CAP_SD` (Cardputer with `GOGO_SD`), `CAP_IMU`
 (`GOGO_IMU`), `CAP_IR_TX` (`GOGO_IR`), `CAP_IR_RX` (StickS3 with `GOGO_IR`),
@@ -214,20 +213,22 @@ in `cmd/gogo/flash.go`.
 
 ## Platform layer (`main/`)
 
-- `platform_esp.c`: `runtime/vm/platform.h`. Output to the USB-Serial/JTAG console
+- `platform_esp.c`: the board's `gogo_host` (`esp_host`) and `VmBoard`
+  (`esp_board`: port drivers, `input_esp_hw`, the Wi-Fi netif, caps), see
+  `runtime/vm/host.h`. Output to the USB-Serial/JTAG console
   (stdout line-buffered, flushed before each stderr write). Chunks from the
-  internal-RAM heap, capped at `GOGO_ARENA_BYTES`. `platform_now_ms` from
-  `esp_timer_get_time()`. `platform_wait` blocks the VM task in
-  `ulTaskNotifyTake(pdTRUE, timeout)`; `platform_notify` gives the task
+  internal-RAM heap, capped at `GOGO_ARENA_BYTES`. `now_ms` from
+  `esp_timer_get_time()` (`platform_esp_ms`; the VM counts from its own
+  start). `wait` blocks the VM task in
+  `ulTaskNotifyTake(pdTRUE, timeout)`; `wake` (`platform_notify`) gives the task
   notification (`vTaskNotifyGiveFromISR` in an ISR), which latches: a notify
-  before or during a wait ends it. `platform_barrier` is
-  `__sync_synchronize()`. `platform_random` is `esp_random()` (the hardware
-  generator; `sys.Random`, the `gogo/sntp` nonce). The wall clock
-  (`platform_unix_time_ms` / `platform_set_unix_time_ms`, `sys.Time` /
-  `sys.SetTime`) uses the weak defaults in `runtime/vm/walltime.c`: an offset
-  against `platform_now_ms`, unknown at every boot until `gogo/sntp` or
-  `sys.SetTime` sets it, with the build time (`GOGO_BUILD_UNIX_MS`, from
-  `main/CMakeLists.txt`) as the floor.
+  before or during a wait ends it. The event ring's barrier is the VM's
+  `vm_barrier()` (`__atomic_thread_fence`). `random` is `esp_random()` (the
+  hardware generator; `sys.Random`, the `gogo/sntp` nonce). The wall clock
+  (`sys.Time` / `sys.SetTime`) is the system clock (`settimeofday`), through
+  `esp_host`'s `unix_time_ms` / `set_unix_time_ms`: unknown at every boot
+  until `gogo/sntp` or `sys.SetTime` sets it, with the build time
+  (`GOGO_BUILD_UNIX_MS`, from `main/CMakeLists.txt`) as the floor.
 - `gpio_esp.c`: the `gpio` port driver, same semantics as unix (cfg
   `{Pin, Mode, Edge, DebounceMs}`, default debounce 20 ms, `Write{Value}` on
   outputs, events `{pin, level}`). Inputs use an any-edge interrupt; the ISR
@@ -245,8 +246,7 @@ in `cmd/gogo/flash.go`.
   Cardputer ADV port 0, SDA G8, SCL G9 (TCA8418 keyboard, BMI270, ES8311); StickS3
   port 1, SDA G47, SCL G48 (M5PM1, BMI270, ES8311). Internal pull-ups on.
 - `input_esp.c`: the `InputHw` for `runtime/input/` (the `kbd` and `power` ports,
-  design.md 5.4.3); `platform_input` itself is defined in `platform_esp.c`
-  so the strong definition always beats the weak default in `runtime/input/source.c`.
+  design.md 5.4.3); `esp_board` in `platform_esp.c` lists it.
   - Cardputer ADV keyboard: TCA8418 at 0x34, 400 kHz. Init: KP_GPIO1 (0x1D)
     = 0x7F, KP_GPIO2 (0x1E) = 0xFF, KP_GPIO3 (0x1F) = 0x00, CFG (0x01) |=
     0x03; flush KEY_EVENT_A (0x04) until 0, then INT_STAT (0x02) = 0x1F
@@ -457,7 +457,7 @@ in `cmd/gogo/flash.go`.
   `gogo: wifi connected (<ssid>, ch <n>, <rssi> dBm)`, `gogo: wifi lost
   (<why>, reason <n>), reconnecting`, `gogo: wifi: <why> (reason <n>),
   retrying` (first failure only), `gogo: ip <a.b.c.d> (gateway <g>)` when
-  the stack goes up (`platform_net_report`) and `gogo: network down`.
+  the stack goes up (`wifi_esp_netif.report`) and `gogo: network down`.
 - `config_esp.c`: the config store (NVS namespace `gogo`, one blob per key;
   `config.Get` reads it, `wifi.` keys hidden) and the `gogo config` command
   handler: a task (CPU0) reads the USB-Serial/JTAG input (driver installed,

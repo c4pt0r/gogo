@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include "input.h"
 
-/* The unix keyboard and battery; main.c returns it from platform_input(). */
+/* The unix keyboard and battery; main.c's board lists it (VmBoard.input). */
 extern const InputHw input_unix_hw;
 
 /* --key <c>=<pin> (tty mode): sends character c to gpio pin only; false when
@@ -34,11 +34,5 @@ int input_unix_wait(uint32_t ms);
  * input_unix_read_tty consumes what is readable. */
 int input_unix_poll_fd(void);
 void input_unix_read_tty(void);
-
-struct PortDriver;
-/* Appends the kbd and power drivers to out (room for cap) and returns how
- * many. A weak no-op in platform_unix.c (the C test builds have no runtime/input/);
- * main.c overrides it. */
-int platform_unix_input_drivers(const struct PortDriver **out, int cap);
 
 #endif

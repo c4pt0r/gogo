@@ -85,7 +85,7 @@ static void reset(const Port *p) {
 
 static int kbd_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)vm;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     (void)index;
     if (input_failed() || k.port || !hw->keys || !hw->kbd_open || !hw->kbd_pending || !hw->kbd_read ||
         hw->kbd_open() != 0) return -1;
@@ -99,14 +99,14 @@ static int kbd_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, 
 static void kbd_close(struct Vm *vm, Port *p) {
     (void)vm;
     if (k.port != p) return;                      /* a refused open's cleanup */
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     if (hw->kbd_close) hw->kbd_close();
     reset(NULL);
 }
 
 static bool kbd_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     (void)p;
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     return !hw->live || hw->live();
 }
 
@@ -129,15 +129,15 @@ static void strike(uint64_t now) {
     if (k.errs >= 2) k.retry_at = (uint32_t)now + (10u << (k.errs - 2 > 6 ? 6 : k.errs - 2));
 }
 
-bool kbd_work(uint64_t now) {
-    return k.port && ((platform_input()->kbd_pending() && !backing_off(now)) || rep_due(now));
+bool kbd_work(const Vm *vm, uint64_t now) {
+    return k.port && ((input_hw(vm)->kbd_pending() && !backing_off(now)) || rep_due(now));
 }
 
-bool kbd_next_deadline(uint64_t now, uint64_t *d) {
+bool kbd_next_deadline(const Vm *vm, uint64_t now, uint64_t *d) {
     if (!k.port) return false;
     bool have = false;
     if (k.rep_on) { *d = deadline_abs(now, k.rep_at); have = true; }
-    if (backing_off(now) && platform_input()->kbd_pending()) {   /* wake for the retry */
+    if (backing_off(now) && input_hw(vm)->kbd_pending()) {   /* wake for the retry */
         uint64_t r = deadline_abs(now, k.retry_at);
         if (!have || r < *d) *d = r;
         have = true;
@@ -146,7 +146,7 @@ bool kbd_next_deadline(uint64_t now, uint64_t *d) {
 }
 
 void kbd_drain(Vm *vm, uint64_t now) {
-    const InputHw *hw = platform_input();
+    const InputHw *hw = input_hw(vm);
     uint16_t raw;
     bool down;
     if (!k.port) return;

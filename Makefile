@@ -1,15 +1,14 @@
 CC      ?= cc
-# The wall-clock floor (runtime/vm/platform.h): the time of this make run.
+# The wall-clock floor (runtime/vm/host.h): the time of this make run.
 BUILD_UNIX_MS := $(shell date +%s)000
 CFLAGS  = -Iruntime/input -std=c99 -Wall -Wextra -Werror -O2 -g -DGOGO_BUILD_UNIX_MS=$(BUILD_UNIX_MS)LL $(EXTRA_CFLAGS)
 BUILD   = build
 
-TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_term.c runtime/vm/test/test_alloc.c runtime/vm/test/test_image.c runtime/vm/test/test_heap.c runtime/vm/test/test_msg.c runtime/vm/test/test_interp.c runtime/vm/test/test_signals.c runtime/vm/test/test_timer.c runtime/vm/test/test_call.c runtime/vm/test/test_names.c runtime/vm/test/test_out.c runtime/vm/test/test_evq.c runtime/vm/test/test_port.c runtime/vm/test/test_strs.c runtime/vm/test/test_slices.c runtime/vm/test/test_bytes.c runtime/vm/test/test_netlink.c runtime/vm/test/test_caps.c runtime/vm/test/test_module.c runtime/vm/test/test_walltime.c
-# The net stack (pure C99, chip-independent; spec M5): linked as objects
-# into every unix build, so its net_rx_offer / net_link_event replace the
-# platform's weak defaults.
+TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/vm/test/test_term.c runtime/vm/test/test_alloc.c runtime/vm/test/test_image.c runtime/vm/test/test_heap.c runtime/vm/test/test_msg.c runtime/vm/test/test_interp.c runtime/vm/test/test_signals.c runtime/vm/test/test_timer.c runtime/vm/test/test_call.c runtime/vm/test/test_names.c runtime/vm/test/test_out.c runtime/vm/test/test_evq.c runtime/vm/test/test_port.c runtime/vm/test/test_strs.c runtime/vm/test/test_slices.c runtime/vm/test/test_bytes.c runtime/vm/test/test_netlink.c runtime/vm/test/test_caps.c runtime/vm/test/test_module.c runtime/vm/test/test_walltime.c
+# The net stack (pure C99, chip-independent): linked into every
+# unix build (platform_unix.c lists its drivers and feeds it frames).
 NET_SRCS  = $(wildcard runtime/net/*.c)
-NET_TEST_SRCS = runtime/vm/test/test_main.c $(wildcard runtime/net/test/*.c)
+NET_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/net/test/*.c)
 # VM core + unix platform + net stack, without the unix main (shared with the C tests).
 VM_SRCS   = $(wildcard runtime/vm/*.c) platform/unix/platform_unix.c platform/unix/gpio_unix.c platform/unix/input_unix.c $(NET_SRCS)
 VM_SRCS  := $(filter-out runtime/vm/check32.c,$(VM_SRCS))
@@ -93,7 +92,7 @@ $(BUILD)/test_net_mcu: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(
 # a real VM. The MCU build uses the MCU VM config, the MCU slot parameters
 # (the ESP32-S3 LittleFS slot, platform/esp32s3/main/CMakeLists.txt) and -Os.
 VFS_SRCS = $(wildcard runtime/vfs/*.c)
-VFS_TEST_SRCS = runtime/vm/test/test_main.c $(wildcard runtime/vfs/test/*.c)
+VFS_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/vfs/test/*.c)
 VFS_INC = -Iruntime/vfs -Iruntime/vfs/test -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
 VFS_DEPS = $(VFS_SRCS) $(VFS_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vfs/test/*.h) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
 
@@ -112,7 +111,7 @@ $(BUILD)/test_vfs_mcu: $(VFS_DEPS)
 # input (pure C99): the kbd port and the input source against a fake InputHw
 # (runtime/input/test/fakehw.c) on a real VM, in the host and MCU VM configs.
 INPUT_SRCS = $(wildcard runtime/input/*.c)
-INPUT_TEST_SRCS = runtime/vm/test/test_main.c $(wildcard runtime/input/test/*.c)
+INPUT_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/input/test/*.c)
 INPUT_INC = -Iruntime/input -Iruntime/input/test -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
 INPUT_DEPS = $(INPUT_SRCS) $(STREAM_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/input/*.h) $(wildcard runtime/input/test/*.h) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
 
@@ -131,7 +130,7 @@ $(BUILD)/test_input_mcu: $(INPUT_DEPS)
 # stream (pure C99): Chunk delivery and Out bookkeeping against a fake "st"
 # port on a real VM (and the port-send gate through the interpreter), in the
 # host and MCU VM configs.
-STREAM_TEST_SRCS = runtime/vm/test/test_main.c $(wildcard runtime/stream/test/*.c)
+STREAM_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/stream/test/*.c)
 STREAM_INC = -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
 STREAM_DEPS = $(STREAM_SRCS) $(STREAM_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/stream/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 
@@ -151,9 +150,9 @@ $(BUILD)/test_stream_mcu: $(STREAM_DEPS)
 test-fs-host: $(BUILD)/test_fs_host
 	$(BUILD)/test_fs_host
 
-$(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS) $(wildcard runtime/vfs/*.h) $(PLAT_HDRS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h)
+$(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS) $(wildcard runtime/vfs/*.h) $(PLAT_HDRS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(VFS_INC) -o $@ platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(VFS_INC) -o $@ platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS)
 
 # Console text grid + font lookup (runtime/console), host build.
 CONSOLE_SRCS = runtime/console/console.c runtime/console/font.c

@@ -2,8 +2,8 @@
 
 #define MAX_TESTS 512
 
-/* unix platform: forget memory earlier tests leaked (matters under a cap) */
-void platform_unix_arena_forget(void);
+/* the test host (test_host.c): forget memory earlier tests leaked (matters under a cap) */
+void test_host_arena_forget(void);
 
 static struct { const char *name; test_fn fn; } tests[MAX_TESTS];
 static int n_tests;
@@ -36,7 +36,7 @@ int main(void) {
     int passed = 0, failed = 0;
     for (int i = 0; i < n_tests; i++) {
         n_failed_checks = 0;
-        platform_unix_arena_forget();
+        test_host_arena_forget();
         tests[i].fn();
         if (n_failed_checks) {
             printf("FAIL %s\n", tests[i].name);

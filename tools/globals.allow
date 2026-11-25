@@ -14,7 +14,7 @@ runtime/input/source.c installed  # removed by E5
 runtime/net/ports.c net_s  # removed by E6
 runtime/net/tls/tls.c st  # removed by E6
 runtime/net/tls/tls.c tc  # removed by E6
-runtime/net/tls/tls.c tls_init.done  # removed by E6
+runtime/net/tls/tls.c glue  # removed by E6
 runtime/vfs/vfs.c mounts  # removed by E5
 runtime/vfs/vfs.c n_mounts  # removed by E5
 runtime/vfs/vfs.c slots  # removed by E5

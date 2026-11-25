@@ -9,7 +9,7 @@
  * head index and only ever calls evq_push; the consumer (the scheduler)
  * owns the tail index and only ever calls evq_pop. Each side writes only its
  * own index and publishes it after the slot access, ordered with
- * platform_barrier(). When the ring is full the NEW event is dropped and
+ * vm_barrier(). When the ring is full the NEW event is dropped and
  * counted (the producer never touches the consumer's index), so the oldest
  * CAP events stay poppable in order.
  */

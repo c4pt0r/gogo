@@ -1,4 +1,4 @@
-/* Wi-Fi station and the platform network interface (runtime/net/netif.h) on the
+/* Wi-Fi station and the board network interface (runtime/net/netif.h) on the
  * ESP32-S3.
  *
  * Raw Ethernet frames go straight between the Wi-Fi driver and gogo's own
@@ -18,7 +18,6 @@
  * on a successful connection); `gogo config set wifi.*` reconnects at once
  * with the new settings. Link changes go to net_link_event (the stack's
  * single link slot: the latest state wins). */
-#include "platform.h"
 #include "platform_esp.h"
 #include "netif.h"
 
@@ -282,20 +281,23 @@ int wifi_esp_scan(char *line, size_t cap, void (*out)(const char *tag, const cha
 
 /* ---- runtime/net/netif.h ---- */
 
-bool platform_net_mac(uint8_t mac[6]) {
+static bool net_mac(void *ctx, uint8_t mac[6]) {
+    (void)ctx;
     if (!wifi_ok) return false;
     memcpy(mac, sta_mac, 6);
     return true;
 }
 
-int platform_net_send(const uint8_t *frame, uint32_t len) {
+static int net_send(void *ctx, const uint8_t *frame, uint32_t len) {
+    (void)ctx;
     if (!link_up || len > 0xFFFFu) return -1;
     return esp_wifi_internal_tx(WIFI_IF_STA, (void *)frame, (uint16_t)len) == ESP_OK ? 0 : -1;
 }
 
-bool platform_net_link_up(void) { return link_up; }
+static bool net_link_up(void *ctx) { (void)ctx; return link_up; }
 
-void platform_net_report(bool up, uint32_t ip, uint32_t gw, uint32_t dns) {
+static void net_report(void *ctx, bool up, uint32_t ip, uint32_t gw, uint32_t dns) {
+    (void)ctx;
     (void)dns;
     if (up) {
         (void)esp_wifi_internal_set_sta_ip();
@@ -307,6 +309,8 @@ void platform_net_report(bool up, uint32_t ip, uint32_t gw, uint32_t dns) {
         platform_esp_say("gogo: network down");
     }
 }
+
+const NetIf wifi_esp_netif = { net_mac, net_send, net_link_up, net_report, NULL };
 
 /* Serial: the measured Wi-Fi memory at start. */
 void wifi_esp_report_heap(void) {

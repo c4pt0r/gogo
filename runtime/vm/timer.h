@@ -8,7 +8,7 @@
  * for the entry itself) and is freed whenever the heap becomes empty, so an
  * idle VM holds no timer memory. Cancelling by Ref or by actor finds the
  * entry by a linear scan of the array (O(n) to find, O(log n) to remove).
- * Deadlines are absolute platform_now_ms()
+ * Deadlines are absolute vm_now()
  * values, 64-bit, so they never wrap. Entries are va_alloc'd and freed
  * exactly once: when they fire, when they are cancelled, or when the
  * actor they target exits (timer_cancel_actor, called by actor_exit).
@@ -51,7 +51,7 @@
 
 struct Timer {
     uint64_t seq;             /* insertion order, breaks deadline ties */
-    uint64_t deadline;        /* platform_now_ms() value it fires at */
+    uint64_t deadline;        /* vm_now() value it fires at */
     uint64_t serial;          /* SendAfter: its Ref's serial; wakeup: 0 */
     term pid;                 /* the actor it targets (to wake / to send to) */
     Msg *msg;                 /* SendAfter: the copied message; wakeup: NULL */

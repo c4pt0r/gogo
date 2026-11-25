@@ -3,6 +3,7 @@
  * table and per-actor caps; slices keeping their root; the C API for
  * ports. Builtins are called directly on actors with 16-register frames. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -37,7 +38,7 @@ typedef struct Fx { uint32_t w[IMG_WORDS]; Image img; Vm vm; } Fx;
 static void fx_init(Fx *f) {
     build_img(f->w);
     CHECK_EQ(image_load(&f->img, f->w, img_seal(f->w)), IMG_OK);
-    CHECK_EQ(vm_init(&f->vm, &f->img, 16), 0);
+    CHECK_EQ(test_vm_init(&f->vm, &f->img, 16), 0);
     CHECK_EQ(bytes_table_used(&f->vm), 0);
 }
 
@@ -504,7 +505,6 @@ TEST(bytes_mailbox_overflow) {
     CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
-void platform_unix_arena_forget(void);
 
 /* M{Bytes(nb), string of sw words} built on a's heap into r[ra]. */
 static void make_pair(Fx *f, Actor *a, uint32_t ra, uint32_t nb, uint32_t sw) {
@@ -535,7 +535,7 @@ TEST(bytes_receive_stays_within_limit) {
     for (int reply = 0; reply < 2; reply++) {
         for (uint32_t keep = 100; keep <= 700; keep += 150) {
             for (uint32_t extra = 0; extra <= 1200; extra += 60) {
-                platform_unix_arena_forget();   /* fx_init leaves its chunks behind */
+                test_host_arena_forget();   /* fx_init leaves its chunks behind */
                 Fx f; fx_init(&f);
                 Actor *a = spawn(&f, 1024), *b = spawn(&f, 64);
                 make_pair(&f, a, 0, 3200, 300);

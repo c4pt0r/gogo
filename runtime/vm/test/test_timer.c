@@ -1,6 +1,7 @@
 /* Timers: ordering, wakeups, SendAfter, cancellation, and that no timer
  * outlives or touches the actor it targets. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -37,7 +38,7 @@ static void setup_ms(uint32_t *w, Image *img, Vm *vm, int32_t ms) {
     va_reset(vm);
     build_rt(w, ms);
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(vm, img, 8), 0);
+    CHECK_EQ(test_vm_init(vm, img, 8), 0);
 }
 
 static void setup(uint32_t *w, Image *img, Vm *vm) { setup_ms(w, img, vm, 50); }
@@ -321,7 +322,7 @@ TEST(send_after_charged_to_creator) {
     va_reset(&vm);
     build_send_loop(w);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     size_t base = va_used_bytes(&vm);
 
     Actor *u = waiting_actor(&vm);          /* unrelated */
@@ -381,7 +382,6 @@ TEST(timer_wakeup_armed_once) {
 
 /* ---- heap behaviour ---- */
 
-extern void platform_unix_set_clock(uint64_t (*fn)(void));
 
 static uint32_t rng = 12345u;
 static uint32_t next_rand(void) { rng = rng * 1664525u + 1013904223u; return rng >> 8; }
@@ -395,7 +395,7 @@ TEST(timer_heap_order) {
     va_reset(&vm);
     build_rt(w, 50);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, N_HEAP + 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, N_HEAP + 8), 0);
     static Actor *as[N_HEAP];
     static uint64_t dl[N_HEAP];
     for (int i = 0; i < N_HEAP; i++) {
@@ -431,7 +431,7 @@ TEST(timer_cancel_middle) {
     va_reset(&vm);
     build_rt(w, 50);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 208), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 208), 0);
     enum { N = 200 };
     Actor *as[N]; uint64_t dl[N];
     size_t base = va_used_bytes(&vm);
@@ -466,7 +466,7 @@ TEST(timer_exit_no_scan) {
     va_reset(&vm);
     build_rt(w, 50);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 32), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 32), 0);
     Actor *sleeper[20];
     for (int i = 0; i < 20; i++) {
         sleeper[i] = waiting_actor(&vm);
@@ -542,11 +542,11 @@ TEST(clock_reads_lazy) {
     w[22] = OP_MAKE(OP_JMPT, 3, 0, 0); w[23] = 6;
     w[24] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     clock_reads = 0;
-    platform_unix_set_clock(counting_clock);
+    test_host_set_clock(counting_clock);
     int rc = vm_run(&vm);
-    platform_unix_set_clock(NULL);
+    test_host_set_clock(NULL);
     CHECK_EQ(rc, 0);
     CHECK(clock_reads <= 1u);
 }
