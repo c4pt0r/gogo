@@ -1,5 +1,6 @@
 /* M5PM1 power-management chip (I2C SDA G47, SCL G48, address 0x6E): turns
- * on the rail that powers the LCD.
+ * on the rail that powers the LCD, and reports the battery (input_esp.c).
+ * The bus handle comes from i2c_bus.c.
  *
  * Reference (read only, not vendored; MIT): M5GFX 28d4794 (2026-11-05) and
  * M5Unified 96576a1 (2026-11-06), github.com/m5stack:
@@ -26,8 +27,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define PM1_SDA 47
-#define PM1_SCL 48
 #define PM1_ADDR 0x6E
 #define PM1_HZ 100000u
 #define PM1_TIMEOUT_MS 20
@@ -43,14 +42,45 @@
 
 static i2c_master_dev_handle_t pm1;
 
-static int rd(uint8_t reg, uint8_t *v) {
-    return i2c_master_transmit_receive(pm1, &reg, 1, v, 1, PM1_TIMEOUT_MS) == ESP_OK ? 0 : -1;
+/* The PM1 device on the shared bus, added on first use (the console's
+ * bring-up, or the first battery read when the console is off). */
+static int pm1_attach(void) {
+    if (pm1) return 0;
+    i2c_master_bus_handle_t bus = i2c_bus_get();
+    if (!bus) return -1;
+    i2c_device_config_t dc = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = PM1_ADDR,
+        .scl_speed_hz = PM1_HZ,
+    };
+    return i2c_master_bus_add_device(bus, &dc, &pm1) == ESP_OK ? 0 : (pm1 = NULL, -1);
 }
 
-static int wr(uint8_t reg, uint8_t v) {
+static int rd(uint8_t reg, uint8_t *v) {
+    return pm1_read(reg, v, 1);
+}
+
+int pm1_read(uint8_t reg, uint8_t *buf, size_t n) {
+    if (pm1_attach() != 0) return -1;
+    return i2c_master_transmit_receive(pm1, &reg, 1, buf, n, PM1_TIMEOUT_MS) == ESP_OK ? 0 : -1;
+}
+
+int pm1_read_u8(uint8_t reg, uint8_t *v) { return pm1_read(reg, v, 1); }
+
+int pm1_read_u16le(uint8_t reg, uint16_t *v) {
+    uint8_t b[2];
+    if (pm1_read(reg, b, 2) != 0) return -1;
+    *v = (uint16_t)(b[0] | b[1] << 8);
+    return 0;
+}
+
+int pm1_write_u8(uint8_t reg, uint8_t v) {
+    if (pm1_attach() != 0) return -1;
     uint8_t b[2] = {reg, v};
     return i2c_master_transmit(pm1, b, 2, PM1_TIMEOUT_MS) == ESP_OK ? 0 : -1;
 }
+
+static int wr(uint8_t reg, uint8_t v) { return pm1_write_u8(reg, v); }
 
 static int set_bits(uint8_t reg, uint8_t mask, int on) {
     uint8_t v;
@@ -60,22 +90,7 @@ static int set_bits(uint8_t reg, uint8_t mask, int on) {
 }
 
 int pm1_lcd_power_on(void) {
-    i2c_master_bus_config_t bc = {
-        .i2c_port = 1,
-        .sda_io_num = PM1_SDA,
-        .scl_io_num = PM1_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = 1,
-    };
-    i2c_master_bus_handle_t bus;
-    if (i2c_new_master_bus(&bc, &bus) != ESP_OK) return -1;
-    i2c_device_config_t dc = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = PM1_ADDR,
-        .scl_speed_hz = PM1_HZ,
-    };
-    if (i2c_master_bus_add_device(bus, &dc, &pm1) != ESP_OK) return -1;
+    if (pm1_attach() != 0) return -1;
 
     /* Poll the chip for up to ~200 ms. */
     uint8_t id;

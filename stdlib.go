@@ -14,5 +14,5 @@ import "embed"
 // gogo/ringlog, compiled into the image on top of gogo/fs). Libraries may import the stubs and other libraries,
 // without cycles.
 //
-//go:embed actor/*.go port/*.go bytes/*.go netapi/*.go config/*.go fs/*.go dhcp/*.go dns/*.go http/*.go kv/*.go ringlog/*.go supervisor/*.go strings/*.go strconv/*.go
+//go:embed actor/*.go port/*.go bytes/*.go netapi/*.go config/*.go fs/*.go kbd/*.go power/*.go dhcp/*.go dns/*.go http/*.go kv/*.go ringlog/*.go supervisor/*.go strings/*.go strconv/*.go
 var StubFS embed.FS

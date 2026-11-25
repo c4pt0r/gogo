@@ -113,6 +113,14 @@ void __wrap_ff_mutex_delete(int vol) { (void)vol; }
 int __wrap_ff_mutex_take(int vol) { (void)vol; return 1; }
 void __wrap_ff_mutex_give(int vol) { (void)vol; }
 
+/* ---- FatFs timestamps: a fixed time ----
+ * IDF's get_fattime (fatfs/diskio/diskio.c) calls localtime_r, which pulls
+ * picolibc's tzset, sscanf and vfscanf (about 7.6 KB) into the image. gogo has
+ * no clock (spec storage: no timestamps), so the link wraps it to a constant:
+ * 2025-01-01 00:00:00. The IDF version then has no caller and is discarded. */
+uint32_t __wrap_get_fattime(void);
+uint32_t __wrap_get_fattime(void) { return ((uint32_t)(2025 - 1980) << 25) | (1u << 21) | (1u << 16); }
+
 /* ---- diskio: the card's sectors ---- */
 
 static bool direct(const void *p) { return ((uintptr_t)p & 3u) == 0 && esp_ptr_dma_capable(p); }

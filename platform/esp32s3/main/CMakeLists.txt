@@ -10,6 +10,9 @@ file(GLOB GOGO_NET_SRCS "${GOGO_ROOT}/net/*.c")
 # Storage (spec storage §5): the vfs core and the B_FS builtin (pure C99),
 # with fs_lfs.c (/flash on LittleFS) as the backend.
 file(GLOB GOGO_VFS_SRCS "${GOGO_ROOT}/vfs/*.c")
+# Input (spec input): the kbd and power drivers and event source (pure C99);
+# input_esp.c / i2c_bus.c are the hardware.
+file(GLOB GOGO_INPUT_SRCS "${GOGO_ROOT}/input/*.c")
 
 # platform/common: the console grid and the font (shared with the host
 # tests), plus the font blob embedded as _binary_gogo12_font_{start,end}.
@@ -45,14 +48,22 @@ else()
     message(FATAL_ERROR "GOGO_BOARD must be sticks3 or cardputer (got '${GOGO_BOARD}')")
 endif()
 
+# The shared I2C bus (i2c_bus.c) is for the StickS3's PM1 and the Cardputer's
+# keyboard; without GOGO_KBD (main/Kconfig.projbuild) the Cardputer needs none,
+# and the IDF I2C driver is not linked.
+set(GOGO_I2C_SRCS "")
+if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD)
+    set(GOGO_I2C_SRCS i2c_bus.c)
+endif()
+
 idf_component_register(
     SRCS main.c platform_esp.c gpio_esp.c image_part.c console_task.c lcd_st7789.c
-         wifi.c config_esp.c fs_lfs.c ${GOGO_BOARD_SRCS}
-         ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_COMMON_SRCS}
-    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/vm" "${GOGO_ROOT}/net" "${GOGO_ROOT}/vfs" "${GOGO_ROOT}/platform/common"
+         wifi.c config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
+         ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_COMMON_SRCS}
+    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/vm" "${GOGO_ROOT}/net" "${GOGO_ROOT}/vfs" "${GOGO_ROOT}/input" "${GOGO_ROOT}/platform/common"
     EMBED_FILES "${GOGO_ROOT}/platform/common/font/gogo12.font"
     LDFRAGMENTS linker.lf
-    PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c
+    PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c esp_adc
                   esp_rom freertos heap esp_wifi esp_event nvs_flash esp_driver_usb_serial_jtag
                   joltwallet__littlefs
                   # fs_fat.c (Cardputer); listed for both boards because IDF
@@ -63,10 +74,12 @@ idf_component_register(
 if(GOGO_BOARD STREQUAL "cardputer")
     # FatFs is built reentrant (IDF's ffconf.h hard-codes FF_FS_REENTRANT 1)
     # with heap-allocated mutexes; only the VM task calls it, so its
-    # ff_mutex_* are replaced by fs_fat.c's no-op __wrap_ versions.
+    # ff_mutex_* are replaced by fs_fat.c's no-op __wrap_ versions. get_fattime
+    # is wrapped to a fixed time: IDF's calls localtime_r (tzset, vfscanf: 7.6 KB).
     target_link_libraries(${COMPONENT_LIB} INTERFACE
         "-Wl,--wrap=ff_mutex_create" "-Wl,--wrap=ff_mutex_delete"
-        "-Wl,--wrap=ff_mutex_take" "-Wl,--wrap=ff_mutex_give")
+        "-Wl,--wrap=ff_mutex_take" "-Wl,--wrap=ff_mutex_give"
+        "-Wl,--wrap=get_fattime")
 endif()
 
 # Firmware version for the boot line: `git describe` of the repo at
@@ -106,4 +119,4 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Os -Wall -Wextra -Werror
     -Werror=extra -Wunused-parameter -Wsign-compare -Werror=unused-function
     -Werror=unused-variable -Werror=unused-but-set-variable)
 # The VM core is portable C99.
-set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")
+set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")

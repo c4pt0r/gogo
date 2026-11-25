@@ -8,6 +8,7 @@
 #include "board.h"
 #include "net.h"
 #include "vfs.h"
+#include "input.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -45,6 +46,7 @@ static void vm_task(void *arg) {
     platform_esp_log("gogo: fs state %lu bytes", (unsigned long)fs_lfs_state_bytes());
 #endif
     vfs_install();
+    input_install();   /* kbd + power source (spec input §5.6) */
     if (image_part_map(&words, &nwords) != 0) platform_esp_idle();
 
     Image img;

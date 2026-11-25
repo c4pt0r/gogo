@@ -1,0 +1,132 @@
+// kbddemo: opens the keyboard and the battery monitor and prints every
+// event, keys by name ("down a", "down ! +shift", "down up +fn"). Exits on
+// Esc. With no keyboard it reports the battery only and runs until stopped.
+// On unix the events come from the stdin script (key/keydown/keyup/battery
+// lines); on a board, from the hardware.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/kbd"
+	"gogo/port"
+	"gogo/power"
+	"gogo/strconv"
+)
+
+// printable holds the ASCII characters 33..126, so the character c is
+// printable[c-33 : c-32].
+const printable = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+
+const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+// name is a readable name for the key event: its character if it has one,
+// else the key's name.
+func name(code, char int) string {
+	if code == kbd.Enter {
+		return "enter"
+	}
+	if code == kbd.Esc {
+		return "esc"
+	}
+	if code == kbd.Backspace {
+		return "backspace"
+	}
+	if code == kbd.Tab {
+		return "tab"
+	}
+	if code == kbd.Space {
+		return "space"
+	}
+	if code == kbd.Delete {
+		return "delete"
+	}
+	if code == kbd.Up {
+		return "up"
+	}
+	if code == kbd.Down {
+		return "down"
+	}
+	if code == kbd.Left {
+		return "left"
+	}
+	if code == kbd.Right {
+		return "right"
+	}
+	if code == kbd.LeftCtrl {
+		return "ctrl"
+	}
+	if code == kbd.LeftShift {
+		return "shift"
+	}
+	if code == kbd.LeftAlt {
+		return "alt"
+	}
+	if code == kbd.Opt {
+		return "opt"
+	}
+	if code == kbd.Fn {
+		return "fn"
+	}
+	if code >= kbd.F1 && code <= kbd.F12 {
+		return "F" + strconv.Itoa(code-kbd.F1+1)
+	}
+	if char >= 1 && char <= 26 {
+		return "^" + letters[char-1:char]
+	}
+	if char >= 33 && char <= 126 {
+		return printable[char-33 : char-32]
+	}
+	return "code " + strconv.Itoa(code)
+}
+
+// mods lists the held modifiers, e.g. " +shift +fn".
+func mods(m int) string {
+	s := ""
+	if m&kbd.ModCtrl != 0 {
+		s = s + " +ctrl"
+	}
+	if m&kbd.ModShift != 0 {
+		s = s + " +shift"
+	}
+	if m&kbd.ModAlt != 0 {
+		s = s + " +alt"
+	}
+	if m&kbd.ModOpt != 0 {
+		s = s + " +opt"
+	}
+	if m&kbd.ModFn != 0 {
+		s = s + " +fn"
+	}
+	return s
+}
+
+func main() {
+	// Either may be missing (the StickS3 has no keyboard): continue with
+	// what the board has.
+	_, kok := port.Open("kbd", kbd.Config{})
+	if !kok {
+		println("no keyboard")
+	}
+	_, pok := port.Open("power", power.Config{PeriodMs: 1000})
+	if !pok {
+		println("no battery")
+	}
+	if !kok && !pok {
+		return
+	}
+	for {
+		switch m := actor.Receive().(type) {
+		case kbd.Key:
+			state := "up"
+			if m.Down {
+				state = "down"
+			}
+			println(state + " " + name(m.Code, m.Char) + mods(m.Mods))
+			if m.Code == kbd.Esc && m.Down {
+				return
+			}
+		case power.Battery:
+			println("battery", m.MilliVolts, "mV", m.Percent, "%", "charging", m.Charging, "external", m.External)
+		}
+	}
+}

@@ -15,6 +15,8 @@
  *       object starts; every const ref must name a marked start (const
  *       object fields and func/type names checked at load, LOADK operands
  *       when executed).
+ *   v8  input: reserved types kbd.Config (29), kbd.Key (30), power.Config (31),
+ *       power.Battery (32), power.Read (33).
  *
  * Layout (little-endian words): header (8: magic, version, n_funcs,
  * n_types, consts_words, code_words, entry, 0), funcs (3 words each),
@@ -27,7 +29,7 @@
 #include <stddef.h>
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 7u
+#define IMAGE_VERSION 8u
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {

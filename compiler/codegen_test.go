@@ -555,23 +555,24 @@ func TestCompileReservedTypes(t *testing.T) {
 		"net.IfConfig/0", "net.SetAddr/4", "net.Up/3", "net.Down/0", "net.Addr/2", "net.UDP/1",
 		"net.SendTo/2", "net.Datagram/2", "net.Dial/3", "net.Listen/1", "net.Write/1", "net.Shutdown/0",
 		"net.Resume/0", "net.Connected/0", "net.Data/1", "net.Written/0", "net.Closed/1", "net.Accepted/1",
-		"fs.Info/2", "fs.Space/2"}
+		"fs.Info/2", "fs.Space/2",
+		"kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4", "power.Read/0"}
 	// Emitted even when the program imports none of gogo/actor, gogo/port, gogo/net and gogo/fs.
 	img := compileImage(t, "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tvar a any = P{1, 2}\n\tswitch a.(type) {\n\tcase P:\n\t\tprintln(1)\n\t}\n}\n")
 	got := imageTypes(t, img)
 	if strings.Join(got, " ") != strings.Join(append(want, "P/2"), " ") {
 		t.Fatalf("types %v, want %v then P/2", got, want)
 	}
-	// TYPEIS P names index 29, the first after the reserved ones.
+	// TYPEIS P names index 34, the first after the reserved ones.
 	code := words(img)
 	found := false
 	for i := 0; i+1 < len(code); i++ {
-		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == 29 {
+		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == 34 {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("no TYPEIS with type id 29")
+		t.Error("no TYPEIS with type id 34")
 	}
 	// Using the actor types keeps them at their reserved indices.
 	img = compileImage(t, "package main\nimport \"gogo/actor\"\ntype U struct{ A int }\nfunc main() {\n\tu := U{1}\n\tvar o actor.Options\n\tvar r actor.Reason\n\tprintln(u, o, r, actor.Info(actor.Self()).Memory)\n}\n")
@@ -1239,7 +1240,8 @@ func main() {
 	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1 port.GPIO/4 port.Write/1 port.Edge/2" +
 		" net.IfConfig/0 net.SetAddr/4 net.Up/3 net.Down/0 net.Addr/2 net.UDP/1 net.SendTo/2 net.Datagram/2" +
 		" net.Dial/3 net.Listen/1 net.Write/1 net.Shutdown/0 net.Resume/0 net.Connected/0 net.Data/1" +
-		" net.Written/0 net.Closed/1 net.Accepted/1 fs.Info/2 fs.Space/2"
+		" net.Written/0 net.Closed/1 net.Accepted/1 fs.Info/2 fs.Space/2" +
+		" kbd.Config/2 kbd.Key/4 power.Config/1 power.Battery/4 power.Read/0"
 	if got := strings.Join(imageTypes(t, img), " "); got != want {
 		t.Fatalf("types %s, want %s", got, want)
 	}
@@ -1979,5 +1981,44 @@ func main() {
 	}
 	if n := strings.Count(dis, ", FS\n"); n != 8 {
 		t.Errorf("%d FS builtins, want 8:\n%s", n, dis)
+	}
+}
+
+func TestCompileKbdPowerTypes(t *testing.T) {
+	img := compileImage(t, `package main
+
+import (
+	"gogo/actor"
+	"gogo/kbd"
+	"gogo/port"
+	"gogo/power"
+)
+
+func main() {
+	k, ok := port.Open("kbd", kbd.Config{RepeatDelayMs: 400})
+	println(k, ok, kbd.ModCtrl, kbd.Fn, kbd.Enter)
+	p, ok2 := port.Open("power", power.Config{PeriodMs: 1000})
+	println(p, ok2)
+	actor.Send(p, power.Read{})
+	switch m := actor.Receive().(type) {
+	case kbd.Key:
+		println(m.Code, m.Char, m.Mods, m.Down)
+	case power.Battery:
+		println(m.MilliVolts, m.Percent, m.Charging, m.External)
+	}
+}
+`)
+	if v := binary.LittleEndian.Uint32(img[4:]); v != 8 {
+		t.Errorf("image version %d, want 8", v)
+	}
+	seen := map[uint32]bool{}
+	code := words(img)
+	for i := 0; i+1 < len(code); i++ {
+		if code[i]&0xFF == uint32(OpTypeis) {
+			seen[code[i+1]] = true
+		}
+	}
+	if !seen[30] || !seen[32] {
+		t.Errorf("TYPEIS operands %v, want 30 and 32", seen)
 	}
 }

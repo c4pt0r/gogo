@@ -185,6 +185,17 @@ btn, ok := port.Open("gpio", port.GPIO{Pin: 15, Mode: port.InputPullUp, Edge: po
 - **/sd 文件系统**：FAT12 / 16 / 32 和 **exFAT**（覆盖 ESP-IDF 的 `fatfs` 组件，`FF_FS_EXFAT 1`，只在 Cardputer 构建里编进去）。长文件名上限 64 个字符（`FF_MAX_LFN`），更长的名字打不开（不可达）。卡在首次访问时挂载，出 IO 错误后下次访问重新挂载，没有卡检测脚。
 - **板子**：StickS3 只有 `/flash`；Cardputer ADV 有 `/flash` + `/sd`（SPI，20 MHz，失败退到 400 kHz）。构建时用 `GOGO_BOARD=sticks3|cardputer` 选择。固定状态（vfs 表 + LittleFS / FatFs 的静态状态）在 VM 核心之外：StickS3 1060 B、Cardputer 2356 B（预算 3072 B，编译期断言），明细见 `platform/esp32s3/README.md`。
 
+### 5.4.3 输入（`kbd` 与 `power` 端口）
+
+规格见 [输入设计](superpowers/specs/2026-11-24-gogo-input-design.md)，遗留与待验证项见 [input-followups.md](input-followups.md)。
+
+- API：`gogo/kbd`（`port.Open("kbd", kbd.Config{RepeatDelayMs, RepeatMs})`，事件 `kbd.Key{Code, Char, Mods, Down}`：`Code` 为 USB HID 用法码（Fn 用 0xF0），按下、重复为 `Down` true，松开为 false）与 `gogo/power`（`power.Config{PeriodMs}`，事件 `power.Battery{MilliVolts, Percent, Charging, External}`，命令 `power.Read{}`；`Charging`/`External` 为 0/1，-1 表示未知）。没有电源键事件（规格决定）。
+- 平台钩子：`input/` 是与芯片无关的纯 C 代码（按键码到字符、修饰键、自动重复、电源采样与退避），平台只提供一个 `InputHw`（`input/input.h`）：键表、`kbd_open/close/pending/read`、`power_read`，以及可选的 `power_pending`、`live`、`power_enable`、`power_event_driven`。`platform_input()` 有弱默认（无硬件），平台的强定义必须放在一定会被链接的目标文件里（ESP 在 `platform_esp.c`）。`kbd_pending` 是纯读，ISR 只置标志并 `platform_notify()`；所有 I2C/ADC 访问都在调度线程（或 VM 启动前）。
+- 事件源模型：`input_install()` 注册一个 `PortSource`；调度器每轮 `pending → drain`，按键直接投递给端口所有者，不经事件环；电源按 `PeriodMs` 轮询（ESP；unix 为事件驱动，仅 `battery` 脚本行和 `Read` 产生事件）。
+- unix：`kbd`/`power` 由 stdin 脚本或终端模拟（`platform/unix/input_unix.c`）。
+- Cardputer ADV：TCA8418（共享 I2C 总线 G8/G9，0x34，400 kHz，INT 在 G11）；电池为 G10 上的 ADC1（12 dB，曲线拟合校准，×2），充电与外部供电读不到（驱动报 -1）。G8–G11 不再开放给 `gpio` 端口。
+- StickS3：无键盘，`kbd` 打开失败；电池取自 M5PM1（VBAT 0x22/0x23，外部供电 0x04 位 0，充电 = PM1 GPIO0 低电平）。共享 I2C 总线 G47/G48 与 LCD 供电共用。详见 `platform/esp32s3/README.md`。
+
 ### 5.5 值表示与内存
 
 - **统一的 32 位标记字**（宿主和 MCU 相同）。小整数直接放在字里（约 30 位，`int` 和 `int64` 都是），超出范围的值自动装箱；`int64` 放进 `any` 时总是装箱（编译器按静态类型选 `*64` 操作码，并在转换处插入 `BOX64`），这样类型 switch 仍能区分 `int` 与 `int64`；其余复合值是指向 actor 堆的引用。
@@ -351,7 +362,7 @@ FORWARD  （GC 时临时写入）                            转发标记
 - 解释器是一个普通的 `switch` 循环，每个操作码一个 case，不用宏生成代码。
 - 镜像格式：头部（魔数、版本）、常量池、类型描述表（结构体布局、类型名）、函数表、代码段、可选的行号表。镜像与位置无关，可原地执行。实际布局见 `vm/image.h`：头部 8 字、函数表、类型表、常量区、代码段，最后是常量区的对象起点位图（v7 起，每个常量字 1 位，对象起点置 1，共 ceil(常量字数/32) 字，原地从 flash 读，不占 RAM）。
 - 镜像校验：加载器检查各表与常量区的结构，位图必须恰好标出常量头给出的对象起点；常量对象里的常量引用、函数名与类型名都必须指向已标记的起点，否则拒绝加载（`IMG_ERR_BOUNDS`）。LOADK 的常量操作数在执行时查位图（不合格则 badcode），不在加载时查：跳转可能落在扩展字上，加载期的线性解码查不全。指向对象中间的引用能伪造对象（例如字符串内容里的假结构体头），这是内存安全问题，不只是 badcode。
-- 镜像版本（`IMAGE_VERSION`，当前为 7）：操作码编号或语义、builtin 编号、保留类型、term 编码、镜像布局任何一项变化都要升版本；编译器与 VM 同步升级，加载器拒绝其他版本（`unsupported version`）。v1 为 M1/M2；v2 为 M3（通用算术只收 `int`、`*64` 操作码与 `BOX64`、`CLEAR`、有类型的零 PID/Ref）；v3 为 M4（多返回值 `RETN`、`CONV c=2` 转 byte）；v4 为 M5（调用函数值 `CALLV`）；v5 为位运算（`&` `|` `^` `<<` `>>`）；v6 为存储（builtin 49 `B_FS`、保留类型 27 / 28 `fs.Info` / `fs.Space`）；v7 为常量区对象起点位图。
+- 镜像版本（`IMAGE_VERSION`，当前为 8）：操作码编号或语义、builtin 编号、保留类型、term 编码、镜像布局任何一项变化都要升版本；编译器与 VM 同步升级，加载器拒绝其他版本（`unsupported version`）。v1 为 M1/M2；v2 为 M3（通用算术只收 `int`、`*64` 操作码与 `BOX64`、`CLEAR`、有类型的零 PID/Ref）；v3 为 M4（多返回值 `RETN`、`CONV c=2` 转 byte）；v4 为 M5（调用函数值 `CALLV`）；v5 为位运算（`&` `|` `^` `<<` `>>`）；v6 为存储（builtin 49 `B_FS`、保留类型 27 / 28 `fs.Info` / `fs.Space`）；v7 为常量区对象起点位图；v8 为输入（保留类型 29–33：`kbd.Config` / `kbd.Key` / `power.Config` / `power.Battery` / `power.Read`）。
 
 ### 5.7 调度
 
@@ -406,8 +417,9 @@ gogo monitor [-port P] [-t 秒] [-until 文本] [-reset]
 4. **M4 字符串 / 字节 / 切片 / 多返回值**（已完成）：多返回值（`RETN`）、`byte`、镜像 v3；运行时字符串；切片与 `[]byte`；`bytes.Bytes` / `bytes.Buffer`（大块堆外、引用计数、按持有者计费）；`gogo/strings`、`gogo/strconv`；`examples/httpparse` 作为"写网络库是否顺手"的检验。详见 [M4 设计](superpowers/specs/2026-11-23-gogo-m4-strings-bytes-design.md)，遗留事项见 [m4-followups.md](m4-followups.md)。
 5. **M5 网络**（已完成）：极小内存的纯 C 协议栈（ARP / IPv4 / ICMP echo / UDP / TCP）、`gogo/dhcp`、`gogo/dns`、`gogo/http`（客户端与服务器，HTTP/1.0）、函数值带参数调用（镜像 v4）、M5StickS3 上的 Wi-Fi 与 `gogo config`、`examples/netdemo`。TLS 推迟。详见 [M5 设计](superpowers/specs/2026-11-23-gogo-m5-network-design.md)，遗留事项与后续候选见 [m5-followups.md](m5-followups.md)。
 6. **存储**（已完成）：`gogo/fs`（`/flash` 上 LittleFS、`/sd` 上 FAT / exFAT）、`gogo/kv`、`gogo/ringlog`、镜像 v6，StickS3 与 Cardputer ADV 两块板子。详见 §5.4.2 与 [存储设计](superpowers/specs/2026-11-24-gogo-storage-design.md)，遗留事项见 [storage-followups.md](storage-followups.md)。
-7. **接下来：热加载，然后 HTTPS**（用户定的顺序）。热加载见 [m4-followups.md](m4-followups.md)；HTTPS 见 [m5-followups.md](m5-followups.md) 的 TLS 一项。
-8. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
+7. **输入**（已完成，真机验证待做）：`gogo/kbd` 与 `gogo/power` 端口、`input/` 公共代码、镜像 v8、unix 模拟、Cardputer ADV 键盘与电池、StickS3 电池。详见 §5.4.3 与 [input-followups.md](input-followups.md)。
+8. **接下来：热加载，然后 HTTPS**（用户定的顺序）。热加载见 [m4-followups.md](m4-followups.md)；HTTPS 见 [m5-followups.md](m5-followups.md) 的 TLS 一项。
+9. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
 
 ## 6. 交给实现者决定的
 

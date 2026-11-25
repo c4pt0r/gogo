@@ -220,11 +220,11 @@ void net_attach(void) {
     tcp_reset();
     net_s.attached = platform_net_mac(net_s.mac);
     net_s.link_up = net_s.attached && platform_net_link_up();
-    port_set_source(&net_source);
+    (void)port_add_source(&net_source);
 }
 
 void net_detach(void) {
-    port_set_source(NULL);
+    port_remove_source(&net_source);
     net_s.attached = 0;
 }
 

@@ -46,8 +46,18 @@ void console_esp_report(void);
  * lock and wakes the render task; never waits for the LCD. */
 void console_esp_write(const char *s, size_t n, uint8_t color);
 
+/* The board's shared I2C master bus (i2c_bus.c); NULL if it cannot be
+ * created. Only before the VM starts or on the scheduler thread. */
+struct i2c_master_bus_t;
+struct i2c_master_bus_t *i2c_bus_get(void);
+
 /* M5PM1: turns on the LCD rail. 0 on success. */
 int pm1_lcd_power_on(void);
+/* PM1 register reads (little-endian for u16) and a byte write; 0 on success. */
+int pm1_read(uint8_t reg, uint8_t *buf, size_t n);
+int pm1_read_u8(uint8_t reg, uint8_t *v);
+int pm1_read_u16le(uint8_t reg, uint16_t *v);
+int pm1_write_u8(uint8_t reg, uint8_t v);
 /* ST7789: GPIO, SPI bus, reset and init (display on, backlight still off).
  * 0 on success. */
 int lcd_init(void);

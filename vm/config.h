@@ -25,6 +25,10 @@
 #ifndef GOGO_MAX_PORTS
 #define GOGO_MAX_PORTS 16u
 #endif
+/* Extra event sources (net, input, ...) the port layer folds in. */
+#ifndef GOGO_MAX_SOURCES
+#define GOGO_MAX_SOURCES 2u
+#endif
 #ifndef GOGO_EVQ_CAP
 #define GOGO_EVQ_CAP 64u
 #endif

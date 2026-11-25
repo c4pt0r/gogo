@@ -720,7 +720,7 @@ TEST(fs_interp) {
 
 TEST(fs_image_v5_rejected) {
     setup();
-    CHECK_EQ(IMAGE_VERSION, 7u);
+    CHECK_EQ(IMAGE_VERSION, 8u);
     uint32_t v[IMG_WORDS];
     memcpy(v, w, sizeof v);
     v[1] = 5;

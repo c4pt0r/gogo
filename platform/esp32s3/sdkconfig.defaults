@@ -43,3 +43,6 @@ CONFIG_LWIP_IRAM_OPTIMIZATION=n
 # boot (a boot loop) instead of returning an error to fs_lfs.c.
 CONFIG_LITTLEFS_EXPOSE_RAW_API=y
 CONFIG_LITTLEFS_ASSERTS=n
+# The I2C master ISR (shared bus, only scheduler-thread synchronous transfers)
+# may live in flash: saves ~760 B of IRAM.
+CONFIG_I2C_MASTER_ISR_HANDLER_IN_IRAM=n

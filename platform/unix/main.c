@@ -18,6 +18,8 @@
 #include "interp.h"
 #include "config.h"
 #include "gpio_unix.h"
+#include "input_unix.h"
+#include "input.h"
 #include "net_unix.h"
 #include "net.h"
 #include "vfs.h"
@@ -31,6 +33,18 @@
 
 static int load_error(const char *path, const char *what) {
     fprintf(stderr, "gogovm: %s: %s\n", path, what);
+    return 2;
+}
+
+/* The unix keyboard and battery are simulated from stdin (input_unix.c). */
+const InputHw *platform_input(void) { return &input_unix_hw; }
+int platform_unix_input_drivers(const struct PortDriver **out, int cap) {
+    if (cap < 2) {   /* the driver list in platform_unix.c is full: skip them, loudly */
+        fprintf(stderr, "gogovm: no room in the port driver list: kbd and power skipped\n");
+        return 0;
+    }
+    out[0] = &input_kbd_driver;
+    out[1] = &input_power_driver;
     return 2;
 }
 
@@ -58,7 +72,7 @@ int main(int argc, char **argv) {
             char c;
             int pin;
             char tail;
-            if (sscanf(argv[2], "%c=%d%c", &c, &pin, &tail) != 2 || !gpio_unix_add_key(c, pin)) {
+            if (sscanf(argv[2], "%c=%d%c", &c, &pin, &tail) != 2 || !input_unix_add_key(c, pin)) {
                 fprintf(stderr, "gogovm: bad --key %s (want <char>=<pin>, pin 0..63)\n", argv[2]);
                 return 2;
             }
@@ -118,6 +132,7 @@ int main(int argc, char **argv) {
         }
     }
     vfs_install();
+    input_install();
     setvbuf(stdout, NULL, _IOLBF, 0);
     const char *path = argv[1];
     FILE *f = fopen(path, "rb");

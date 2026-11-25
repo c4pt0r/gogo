@@ -31,13 +31,13 @@
  *    the port so close releases them and Handoff moves them.
  *  - Handoff: the owner gives the port (charge, pinned Bytes, events) to
  *    another actor; the driver's handoff callback runs afterwards.
- *  - An extra event source (port_set_source): the net stack's single-slot
- *    RX and link handoff. The port layer folds it into the scheduler hooks
+ *  - An extra event source (port_add_source): e.g. the net stack's
+ *    single-slot RX and link handoff. The port layer folds it into the scheduler hooks
  *    (port_work_pending, port_drain, port_any_live, port_next_deadline), so
  *    vm/ does not depend on net/.
  *  - A driver that delivers a message carrying Bytes handles must build it
  *    with MSG_HANDLES set and one bytes_msg_ref per handle occurrence (or
- *    with msg_build); deliver() below only sends ints (flags 0).
+ *    with msg_build); port_deliver_ints only sends ints (flags 0).
  */
 #ifndef GOGO_PORT_H
 #define GOGO_PORT_H
@@ -144,7 +144,7 @@ void port_bytes_release(struct Vm *vm, Port *p, term h);
  * has work (it may be called from the scheduler at any time); drain: runs
  * on the scheduler thread inside port_drain; any_live: keeps the VM
  * running; next_deadline (optional): an absolute platform_now_ms deadline
- * folded into the idle wait. One source at a time; NULL removes it. */
+ * folded into the idle wait. Up to GOGO_MAX_SOURCES, visited in no fixed order. */
 typedef struct PortSource {
     bool (*pending)(void);
     void (*drain)(struct Vm *vm, uint64_t now);
@@ -153,7 +153,17 @@ typedef struct PortSource {
     /* Optional: builtin net.Subscribe for actor a (false = refused). */
     bool (*subscribe)(struct Vm *vm, struct Actor *a);
 } PortSource;
-void port_set_source(const PortSource *s);
+/* Registers s; false when GOGO_MAX_SOURCES are in. s must not already be
+ * registered; removal does not keep the registration order. */
+bool port_add_source(const PortSource *s);
+void port_remove_source(const PortSource *s);   /* unknown is ignored */
+
+/* Sends p's owner struct `type` with n <= PORT_MAX_FIELDS int fields (bit i
+ * of bool_mask set: field i is a bool, true when v[i] != 0). Non-fatal:
+ * false, nothing charged, when the owner is gone or exiting, memory is out,
+ * or its quota is full. */
+bool port_deliver_ints(struct Vm *vm, const Port *p, uint32_t type, const int32_t *v,
+                       uint32_t n, uint32_t bool_mask);
 
 /* net.Subscribe through the source; false without one. */
 bool port_subscribe(struct Vm *vm, struct Actor *a);

@@ -5,6 +5,7 @@
 #include "platform_esp.h"
 #include "console.h"
 #include "net.h"
+#include "input.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -171,9 +172,17 @@ void platform_notify(void) {
 
 void platform_barrier(void) { __sync_synchronize(); }
 
+/* The strong platform_input, defined here (always linked) rather than next
+ * to the hardware: input/source.c has a weak default, and an archive member
+ * is only pulled in to satisfy an undefined symbol, never to override a
+ * weak one that is already defined. */
+extern const InputHw input_esp_hw;
+const InputHw *platform_input(void) { return &input_esp_hw; }
+
 const struct PortDriver *const *platform_port_drivers(void) {
     static const struct PortDriver *const list[] = {
-        &gpio_esp_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver, NULL
+        &gpio_esp_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver,
+        &input_kbd_driver, &input_power_driver, NULL
     };
     return list;
 }

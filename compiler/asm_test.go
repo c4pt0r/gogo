@@ -139,14 +139,14 @@ func upperSnake(s string) string {
 func TestReservedTypesMatchStubs(t *testing.T) {
 	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath} {
+	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath} {
 		pkg, err := l.Import(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		pkgs[path] = pkg
 	}
-	order := map[string]int{ActorPath: 0, PortPath: 1, NetPath: 2, FsPath: 3}
+	order := map[string]int{ActorPath: 0, PortPath: 1, NetPath: 2, FsPath: 3, KbdPath: 4, PowerPath: 5}
 	last := 0
 	for i, rt := range reservedTypes {
 		if o, ok := order[rt.pkg]; !ok || o < last {
@@ -160,6 +160,10 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			prefix = "TypeNet"
 		case FsPath:
 			prefix = "TypeFs"
+		case KbdPath:
+			prefix = "TypeKbd"
+		case PowerPath:
+			prefix = "TypePower"
 		}
 		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
 			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
@@ -178,8 +182,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 29 {
-		t.Errorf("%d reserved types, want 29", len(reservedTypes))
+	if len(reservedTypes) != 34 {
+		t.Errorf("%d reserved types, want 34", len(reservedTypes))
 	}
 }
 
@@ -230,8 +234,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 7 {
-		t.Errorf("imageVersion %d, want 7", imageVersion)
+	if imageVersion != 8 {
+		t.Errorf("imageVersion %d, want 8", imageVersion)
 	}
 }
 

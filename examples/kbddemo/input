@@ -1,0 +1,16 @@
+key a
+keydown shift
+key 1
+keyup shift
+keydown ctrl
+key c
+keyup ctrl
+keydown fn
+key ;
+keyup fn
+battery 3700 1 1
+battery 3702 1 1
+battery 3700 1 0
+keydown fn
+key `
+keyup fn

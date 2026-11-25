@@ -46,9 +46,19 @@ const ConfigPath = "gogo/config"
 // File.Close the port close builtin. Its reserved types are Info and Space.
 const FsPath = "gogo/fs"
 
+// KbdPath is the import path of the keyboard API (kbd.Config, kbd.Key, key
+// codes), a stub package with only types and constants. Its reserved types
+// are Config and Key.
+const KbdPath = "gogo/kbd"
+
+// PowerPath is the import path of the battery API (power.Config,
+// power.Battery, power.Read), a stub package with only types. All three are
+// reserved types.
+const PowerPath = "gogo/power"
+
 // isStub reports whether path is one of the stub packages.
 func isStub(path string) bool {
-	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath
+	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath
 }
 
 // stubDir is the directory of the library set holding stub package path.

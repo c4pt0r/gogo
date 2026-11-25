@@ -1,6 +1,6 @@
 /* The gogo network stack (spec M5 §5): Ethernet, ARP, IPv4, ICMP echo and
  * UDP over one RX and one TX frame buffer, driven from the scheduler's
- * drain step through the port layer's extra source (port_set_source). Pure
+ * drain step through the port layer's extra source (port_add_source). Pure
  * C99, chip-independent: it uses only vm/'s public interfaces and the
  * platform network interface (netif.h).
  *

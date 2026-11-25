@@ -79,7 +79,7 @@ time.
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v7, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
+(format v8, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
 image version changes, reflash the firmware too: an older firmware refuses
 a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
 one). At boot the firmware checks the magic, the length (multiple of 4,
@@ -113,7 +113,38 @@ in `cmd/gogo/flash.go`.
   pins (`board.h`): StickS3 19-20 (USB), 26-37 (in-package flash and octal
   PSRAM of the ESP32-S3-PICO-1-N8R8), 21, 38-41, 45 (LCD), 47-48 (M5PM1
   I2C); Cardputer ADV 19-20 (USB), 26-32 (flash), 33-38 (LCD), 12, 14,
-  39, 40 (SD card). The Cardputer's G0 button is free (Input, active low).
+  39, 40 (SD card), 8-9 (I2C bus), 10 (battery ADC), 11 (keyboard INT).
+  The Cardputer's G0 button is free (Input, active low).
+- `i2c_bus.c`: the board's one shared I2C master bus, created on first use
+  (before the VM starts, or on the scheduler thread; never in an ISR):
+  Cardputer ADV port 0, SDA G8, SCL G9 (TCA8418 keyboard); StickS3 port 1,
+  SDA G47, SCL G48 (M5PM1). Internal pull-ups on.
+- `input_esp.c`: the `InputHw` for `input/` (the `kbd` and `power` ports,
+  design.md 5.4.3); `platform_input` itself is defined in `platform_esp.c`
+  so the strong definition always beats the weak default in `input/source.c`.
+  - Cardputer ADV keyboard: TCA8418 at 0x34, 400 kHz. Init: KP_GPIO1 (0x1D)
+    = 0x7F, KP_GPIO2 (0x1E) = 0xFF, KP_GPIO3 (0x1F) = 0x00, CFG (0x01) |=
+    0x03; flush KEY_EVENT_A (0x04) until 0, then INT_STAT (0x02) = 0x1F
+    (every source: a latched GPI/overflow/lock bit would hold INT low). INT
+    on G11 (falling edge): the ISR sets a flag and notifies the VM task;
+    the scheduler thread reads KEY_EVENT_A (bit7 = press, low 7 bits = key
+    number n, raw = n - 1) until it is empty, then writes INT_STAT = 0x1F
+    and re-arms from the INT pin level (still low = an event arrived before
+    the clear, keep the flag; no I2C re-check, so it cannot fail). A
+    persistent I2C error backs off (10 ms doubling to 640 ms) instead of
+    spinning. A 70-entry table maps n to a USB HID usage and its Fn variant.
+  - Cardputer ADV battery: ADC1 on G10, 12 dB, curve-fitting calibration,
+    mean of 8 samples, mV x 2 (divider). Charging and external power are
+    unknown (-1): no signal is readable.
+  - StickS3 battery (M5PM1, polled every `PeriodMs`): VBAT mV from
+    0x22/0x23 (little-endian), external power = PWR_SRC (0x04) bit0, charging
+    = PM1 GPIO0 level (GPIO_IN 0x12 bit0, low = charging). VBAT is the whole
+    16-bit register (a full cell is above 4095 mV; no mask). On the first read
+    the driver writes I2C_CFG (0x09) = 0 (idle sleep off; the console
+    bring-up does this too, but not with `GOGO_CONSOLE=0`), sets GPIO_FUNC0
+    (0x16) bits[1:0] to 00 (GPIO function) and switches GPIO0 to an input
+    (GPIO_MODE 0x10 bit0 cleared), each only if it reads otherwise. No keyboard: opening `kbd` fails. There is no
+    power-button event (the PM1 acts on clicks itself).
 - `image_part.c`: the partition check and mmap above.
 - `main.c`: the VM runs in a FreeRTOS task pinned to CPU1.
 - Screen (debug console, mirror of stdout/stderr):
@@ -309,6 +340,37 @@ Firmware cost of storage (vfs + B_FS + LittleFS + `fs_lfs.c`): `gogo.bin`
 844272 -> 866880 bytes (+22.1 KB, LittleFS asserts off); free internal
 heap at the boot line 197672 -> 196736 (-936, measured with asserts on;
 the fixed state is in `.bss`).
+
+Input build switches (Kconfig, `main/Kconfig.projbuild`; `idf.py menuconfig`
+under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
+
+- `GOGO_KBD` (default y): the Cardputer's TCA8418 keyboard. Off: `port.Open("kbd")`
+  returns ok=false, `input_esp.c` has no keyboard code, and `i2c_bus.c` is not
+  built on the Cardputer, so the IDF I2C master driver drops out of the link.
+  No effect on the StickS3 (no keyboard).
+- `GOGO_BATTERY` (default y): the battery reader (Cardputer ADC, StickS3 M5PM1).
+  Off: `port.Open("power")` returns ok=false and no ADC or PM1 battery code is
+  linked. The StickS3 still uses I2C for the PM1 LCD rail when the console is on.
+
+**Warning:** a changed Kconfig default or an `SDKCONFIG_DEFAULTS` overlay does
+not apply to a build directory that already has an `sdkconfig`: the existing
+values win. Use a fresh `-B` directory, change the value with `idf.py
+menuconfig`, or delete that build directory's `sdkconfig` first.
+
+Both off is the Cardputer's smallest image (no input hardware); disabled
+behaves like absent hardware. Example, own build directory per variant:
+
+    printf 'CONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\n' > /tmp/noinput.defaults
+    idf.py -C platform/esp32s3 -B platform/esp32s3/build-cp-off -DGOGO_BOARD=cardputer \
+        -DSDKCONFIG=build-cp-off/sdkconfig \
+        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer;/tmp/noinput.defaults" build
+
+`gogo.bin` sizes (ESP-IDF 6.1.1): Cardputer default 922416 B, Cardputer both
+off 897200 B, StickS3 default 870288 B, StickS3 `GOGO_BATTERY=n` 870080 B.
+
+FatFs timestamps are a fixed time (2025-01-01 00:00:00): `fs_fat.c` wraps
+`get_fattime`, because IDF's calls `localtime_r` and drags picolibc's `tzset`,
+`sscanf` and `vfscanf` (7.7 KB of flash) into the Cardputer image.
 
 Console build switches (`idf.py -D...`, kept in each build directory's
 CMake cache, so use a separate `-B` directory per variant):

@@ -2,6 +2,7 @@
 #include "platform.h"
 #include "config.h"
 #include "gpio_unix.h"
+#include "input_unix.h"
 #include "netif.h"
 #include "net_unix.h"
 #include "net.h"
@@ -270,7 +271,7 @@ static void net_wait(uint32_t ms);
 
 /* Returns after the timeout or once notified; consumes the latch. */
 void platform_wait(uint32_t ms) {
-    if (gpio_unix_wait(ms)) {             /* an input line was consumed: rescan */
+    if (input_unix_wait(ms)) {             /* an input line was consumed: rescan */
         char buf[64];
         while (read(wake_fd[0], buf, sizeof buf) > 0) {}
         return;
@@ -283,10 +284,10 @@ void platform_wait(uint32_t ms) {
     char buf[64];
     int n = 1;
     p[0].fd = wake_fd[0]; p[0].events = POLLIN; p[0].revents = 0;
-    int sfd = gpio_unix_poll_fd();        /* tty stdin, or -1 */
+    int sfd = input_unix_poll_fd();        /* tty stdin, or -1 */
     if (sfd >= 0) { p[1].fd = sfd; p[1].events = POLLIN; p[1].revents = 0; n = 2; }
     int rc = poll(p, (nfds_t)n, ms == UINT32_MAX ? -1 : (ms > 2000000000u ? 2000000000 : (int)ms));
-    if (rc > 0 && n == 2 && p[1].revents) gpio_unix_read_tty();
+    if (rc > 0 && n == 2 && p[1].revents) input_unix_read_tty();
     while (read(wake_fd[0], buf, sizeof buf) > 0) {}   /* clear the latch */
 }
 
@@ -298,10 +299,10 @@ static bool net_poll(int timeout) {
     int n = 0, li = -1, ti = -1;
     p[n].fd = wake_fd[0]; p[n].events = POLLIN; p[n].revents = 0; n++;
     if (net_fd >= 0) { li = n; p[n].fd = net_fd; p[n].events = POLLIN; p[n].revents = 0; n++; }
-    int sfd = gpio_unix_poll_fd();
+    int sfd = input_unix_poll_fd();
     if (sfd >= 0) { ti = n; p[n].fd = sfd; p[n].events = POLLIN; p[n].revents = 0; n++; }
     int rc = poll(p, (nfds_t)n, timeout);
-    if (rc > 0 && ti >= 0 && p[ti].revents) gpio_unix_read_tty();
+    if (rc > 0 && ti >= 0 && p[ti].revents) input_unix_read_tty();
     if (rc > 0 && li >= 0 && p[li].revents) net_read();
     char buf[64];
     while (read(wake_fd[0], buf, sizeof buf) > 0) {}
@@ -326,11 +327,23 @@ static void net_wait(uint32_t ms) {
     net_poll(-1);
 }
 
+/* The kbd and power drivers (input/) are linked into gogovm only, not into
+ * the C test builds that share this file: main.c overrides this weak hook to
+ * append them (a linker does not resolve weak undefined data on every host). */
+__attribute__((weak)) int platform_unix_input_drivers(const struct PortDriver **out, int cap) { (void)out; (void)cap; return 0; }
+
 const struct PortDriver *const *platform_port_drivers(void) {
-    static const struct PortDriver *const list[] = {
-        &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver,
-        &net_tcp_listen_driver, NULL
-    };
+    static const struct PortDriver *list[8];
+    if (!list[0]) {
+        int n = 0;
+        list[n++] = &gpio_unix_driver;
+        list[n++] = &net_netif_driver;
+        list[n++] = &net_udp_driver;
+        list[n++] = &net_tcp_driver;
+        list[n++] = &net_tcp_listen_driver;
+        n += platform_unix_input_drivers(list + n, (int)(sizeof list / sizeof list[0]) - 1 - n);
+        list[n] = NULL;
+    }
     return list;
 }
 

@@ -769,7 +769,7 @@ TEST(port_source_hook) {
     setup(w, &img, &vm);
     memset(&src, 0, sizeof src);
     CHECK(!port_work_pending(&vm));
-    port_set_source(&test_src);
+    CHECK(port_add_source(&test_src));
     CHECK(!port_work_pending(&vm));
     CHECK(!port_any_live(&vm));
     uint64_t dl = 0;
@@ -796,7 +796,7 @@ TEST(port_source_hook) {
     port_drain(&vm, 110);
     CHECK(port_next_deadline(&vm, &dl));
     CHECK_EQ(dl, 150u);
-    port_set_source(NULL);
+    port_remove_source(&test_src);
     CHECK(!port_any_live(&vm));
     clear_runq(&vm);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
@@ -833,12 +833,13 @@ TEST(port_command_term_and_subscribe) {
     CHECK_EQ(fk.cmds, 0);                     /* not decoded */
     CHECK(rawk.from == a && rawk.msg == msg);
     CHECK(!port_subscribe(&vm, a));           /* no source */
-    port_set_source(&test_src);
+    CHECK(port_add_source(&test_src));
     CHECK(!port_subscribe(&vm, a));           /* no hook */
-    port_set_source(&sub_src);
+    port_remove_source(&test_src);
+    CHECK(port_add_source(&sub_src));
     CHECK(port_subscribe(&vm, a));
     CHECK_EQ(rawk.subs, 1);
-    port_set_source(NULL);
+    port_remove_source(&sub_src);
     clear_runq(&vm);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     teardown();
@@ -878,5 +879,124 @@ TEST(handoff_slice_of_large_root) {
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(bytes_table_used(), 0u);
+    teardown();
+}
+
+/* ---- several sources, multi-field delivery ---- */
+
+static struct { bool pending, live, have_dl; uint64_t dl; int drains; } s2;
+static bool s2_pending(void) { return s2.pending; }
+static void s2_drain(Vm *vm, uint64_t now) { (void)vm; (void)now; s2.drains++; s2.pending = false; }
+static bool s2_live(const Vm *vm) { (void)vm; return s2.live; }
+static bool s2_deadline(const Vm *vm, uint64_t *d) { (void)vm; if (s2.have_dl) *d = s2.dl; return s2.have_dl; }
+static const PortSource src2 = { s2_pending, s2_drain, s2_live, s2_deadline, NULL };
+static bool s3_pending(void) { return false; }
+static bool s3_live(const Vm *vm) { (void)vm; return false; }
+static void s3_drain(Vm *vm, uint64_t now) { (void)vm; (void)now; }
+static const PortSource src3 = { s3_pending, s3_drain, s3_live, NULL, NULL };
+
+TEST(two_sources_both_drain) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    memset(&src, 0, sizeof src);
+    memset(&s2, 0, sizeof s2);
+    CHECK(port_add_source(&test_src));
+    CHECK(port_add_source(&src2));
+    src.pending = s2.pending = true;
+    CHECK(port_work_pending(&vm));
+    port_drain(&vm, 7);
+    CHECK_EQ(src.drains, 1);
+    CHECK_EQ(s2.drains, 1);
+    CHECK(!port_work_pending(&vm));
+    CHECK(!port_any_live(&vm));
+    s2.live = true;
+    CHECK(port_any_live(&vm));
+    uint64_t dl = 0;
+    CHECK(!port_next_deadline(&vm, &dl));
+    src.have_dl = s2.have_dl = true;
+    src.dl = 900;
+    s2.dl = 300;
+    CHECK(port_next_deadline(&vm, &dl));
+    CHECK_EQ(dl, 300u);
+    s2.dl = 1000;
+    CHECK(port_next_deadline(&vm, &dl));
+    CHECK_EQ(dl, 900u);
+    port_remove_source(&test_src);
+    port_remove_source(&src2);
+    teardown();
+}
+
+TEST(third_source_refused) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    CHECK(port_add_source(&test_src));
+    CHECK(port_add_source(&src2));
+    CHECK(!port_add_source(&src3));
+    port_remove_source(&src3);                /* unknown: ignored */
+    CHECK(!port_add_source(&src3));
+    port_remove_source(&test_src);
+    CHECK(port_add_source(&src3));
+    port_remove_source(&src2);
+    port_remove_source(&src3);
+    teardown();
+}
+
+static const Port *first_port(Vm *vm) { return &vm->ports[0]; }
+
+TEST(deliver_ints_struct) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm);
+    term p = open_fake(&vm, a, 1);
+    CHECK(port_is(p));
+    int32_t v[2] = { 7, 1 << 30 };
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, 0));
+    CHECK_EQ(mbox_len(a), 1);
+    const Msg *m = a->mbox_head;
+    CHECK_EQ(m->data[0], hdr_make(4, K_STRUCT));
+    CHECK_EQ(m->data[1], (uint32_t)TYPE_EDGE);
+    CHECK_EQ(m->data[2], term_from_int(7));
+    CHECK(term_is_ref(m->data[3]));
+    CHECK_EQ(m->data[term_ref_off(m->data[3]) + 1], 1u << 30);
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+TEST(deliver_ints_bool) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm);
+    term p = open_fake(&vm, a, 1);
+    CHECK(port_is(p));
+    int32_t v[2] = { 5, 1 };
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, 1u << 1));
+    const Msg *m = a->mbox_head;
+    CHECK_EQ(m->data[2], term_from_int(5));
+    CHECK_EQ(m->data[3], T_TRUE);
+    v[1] = 0;
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, 1u << 1));
+    CHECK_EQ(a->mbox_head->next->data[3], T_FALSE);
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+TEST(deliver_ints_full_mailbox_not_fatal) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm);
+    term p = open_fake(&vm, a, 1);
+    CHECK(port_is(p));
+    a->max_words = 96;
+    int32_t v[2] = { 1, 2 };
+    int sent = 0;
+    for (int i = 0; i < 40; i++) sent += port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, 0);
+    CHECK(sent > 0 && sent < 40);
+    CHECK_EQ(mbox_len(a), sent);
+    uint32_t code; term fn;
+    CHECK(!actor_exit_pending(a, &code, &fn));
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     teardown();
 }

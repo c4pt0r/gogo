@@ -1149,7 +1149,7 @@ crash:
 /* Scheduler hooks into the port layer.
  *  sched_drain:         delivers the event ring and any due trailing
  *                       debounce values and drains the extra source (net
- *                       RX/link slots, port_set_source); run at the top of
+ *                       RX/link slots, port_add_source); run at the top of
  *                       every scheduler pass. Reads the clock only when
  *                       there is something to do (port_work_pending).
  *  sched_any_live:      true while some open port could still produce

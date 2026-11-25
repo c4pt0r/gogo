@@ -1,0 +1,18 @@
+down a
+up a
+down shift +shift
+down ! +shift
+up ! +shift
+up shift
+down ctrl +ctrl
+down ^C +ctrl
+up ^C +ctrl
+up ctrl
+down fn +fn
+down up +fn
+up up +fn
+up fn
+battery 3700 mV 50 % charging 1 external 1
+battery 3700 mV 50 % charging 1 external 0
+down fn +fn
+down esc +fn

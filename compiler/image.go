@@ -11,8 +11,8 @@ const (
 	// change to opcode numbers or semantics, builtin numbers, reserved
 	// types or the term encoding bumps it (v2: M3; v3: M4; v4: M5 CALLV; v5: bitwise ops;
 	// v6: B_FS and the gogo/fs reserved types; v7: the const map after the
-	// code, see constMap).
-	imageVersion = 7
+	// code, see constMap; v8: reserved types kbd.*, power.*).
+	imageVersion = 8
 )
 
 // ImageVersion is the image format version this compiler emits.

@@ -193,6 +193,12 @@ const (
 	// gogo/fs
 	TypeFsInfo  uint32 = 27
 	TypeFsSpace uint32 = 28
+	// gogo/kbd, gogo/power
+	TypeKbdConfig    uint32 = 29
+	TypeKbdKey       uint32 = 30
+	TypePowerConfig  uint32 = 31
+	TypePowerBattery uint32 = 32
+	TypePowerRead    uint32 = 33
 )
 
 // Heap object kinds.
@@ -320,4 +326,5 @@ var goConstants = map[string]uint32{
 	"TypeNetSendto": TypeNetSendto, "TypeNetDatagram": TypeNetDatagram,
 	"TypeNetDial": TypeNetDial, "TypeNetListen": TypeNetListen, "TypeNetWrite": TypeNetWrite, "TypeNetShutdown": TypeNetShutdown, "TypeNetResume": TypeNetResume, "TypeNetConnected": TypeNetConnected, "TypeNetData": TypeNetData, "TypeNetWritten": TypeNetWritten, "TypeNetClosed": TypeNetClosed, "TypeNetAccepted": TypeNetAccepted,
 	"TypeFsInfo": TypeFsInfo, "TypeFsSpace": TypeFsSpace,
+	"TypeKbdConfig": TypeKbdConfig, "TypeKbdKey": TypeKbdKey, "TypePowerConfig": TypePowerConfig, "TypePowerBattery": TypePowerBattery, "TypePowerRead": TypePowerRead,
 }

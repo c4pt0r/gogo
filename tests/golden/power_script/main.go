@@ -1,0 +1,23 @@
+// The simulated battery on unix: a Read sent before the first `battery` line
+// is answered as soon as that line is read, and time alone (the sleep, longer
+// than PeriodMs) never produces a Battery event. The script ends at EOF with
+// no timers, so the program exits.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+	"gogo/power"
+)
+
+func main() {
+	p, ok := port.Open("power", power.Config{PeriodMs: 1000})
+	println(ok)
+	actor.Send(p, power.Read{})
+	for {
+		switch m := actor.Receive().(type) {
+		case power.Battery:
+			println("battery", m.MilliVolts, m.Percent, m.Charging, m.External)
+		}
+	}
+}

@@ -17,13 +17,35 @@
 #define GEN_MASK 0xFFFu
 
 static const PortDriver *const *override;
-static const PortSource *source;
+static const PortSource *sources[GOGO_MAX_SOURCES + 1u];   /* NULL-terminated */
+
+#define SOURCES_EACH(q) for (const PortSource *const *q = sources; *q; q++)
 
 void port_set_drivers(const PortDriver *const *list) { override = list; }
-void port_set_source(const PortSource *s) { source = s; }
+
+bool port_add_source(const PortSource *s) {
+    const PortSource **q = sources;
+    while (*q) q++;
+    if (q == sources + GOGO_MAX_SOURCES) return false;
+    *q = s;
+    return true;
+}
+
+/* Order is not kept: the last source takes the freed slot. */
+void port_remove_source(const PortSource *s) {
+    const PortSource **q = sources, **l;
+    while (*q && *q != s) q++;
+    if (!*q) return;
+    for (l = q; l[1]; l++) {}
+    *q = *l;
+    *l = NULL;
+}
 
 bool port_subscribe(Vm *vm, Actor *a) {
-    return source && source->subscribe && source->subscribe(vm, a);
+    SOURCES_EACH(q) {
+        if ((*q)->subscribe) return (*q)->subscribe(vm, a);
+    }
+    return false;
 }
 
 static const PortDriver *const *drivers(void) {
@@ -162,7 +184,9 @@ void port_close_all(Vm *vm) {
 }
 
 bool port_any_live(const Vm *vm) {
-    if (source && source->any_live(vm)) return true;
+    SOURCES_EACH(q) {
+        if ((*q)->any_live(vm)) return true;
+    }
     for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
         const Port *p = &vm->ports[i];
         if (p->drv && p->drv->can_event && p->drv->can_event(p)) return true;
@@ -171,55 +195,79 @@ bool port_any_live(const Vm *vm) {
 }
 
 bool port_work_pending(const Vm *vm) {
-    return vm->ports_pending || !evq_empty() || (source && source->pending());
+    if (vm->ports_pending || !evq_empty()) return true;
+    SOURCES_EACH(q) {
+        if ((*q)->pending()) return true;
+    }
+    return false;
 }
 
 bool port_next_deadline(const Vm *vm, uint64_t *deadline) {
-    bool have = source && source->next_deadline && source->next_deadline(vm, deadline);
-    if (!vm->ports_pending) return have;
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
-        const Port *p = &vm->ports[i];
-        if (!(p->flags & PORT_PENDING)) continue;
-        uint64_t d = p->last_t + p->debounce_ms;
-        if (!have || d < *deadline) *deadline = d;
-        have = true;
+    uint64_t best = UINT64_MAX, d;
+    SOURCES_EACH(q) {
+        if ((*q)->next_deadline && (*q)->next_deadline(vm, &d) && d < best) best = d;
     }
-    return have;
+    for (uint32_t i = 0; vm->ports_pending && i < GOGO_MAX_PORTS; i++) {
+        const Port *p = &vm->ports[i];
+        d = p->last_t + p->debounce_ms;
+        if ((p->flags & PORT_PENDING) && d < best) best = d;
+    }
+    *deadline = best;                        /* meaningful only when true */
+    return best != UINT64_MAX;
 }
 
 /* ---- delivery ---- */
 
-/* Sends the owner an event_type struct {a, b}: [hdr][type][a][b], then a
- * K_INT box for each field that does not fit a small int. Dropped if the
- * owner is gone or marked to exit, or if out of memory; over the owner's
- * quota it exits MailboxOverflow (msg_enqueue). */
-static void deliver(Vm *vm, const Port *p, int32_t a, int32_t b) {
-    Actor *o = actor_lookup(vm, p->owner);
-    if (!o || o->state == A_EXITED || (o->flags & AF_EXIT_PENDING)) return;
-    uint16_t words = 4;
-    if (!term_int_fits(a)) words += 2;
-    if (!term_int_fits(b)) words += 2;
-    Msg *m = va_alloc(msg_alloc_bytes(words));
-    if (!m) return;
+/* A message holding struct `type` with n int fields (bit i of bool_mask:
+ * field i is a bool): [hdr][type][f0..fn-1], then a K_INT box for each
+ * field that does not fit a small int. NULL when out of memory. */
+static Msg *ints_msg(uint32_t type, const int32_t *v, uint32_t n, uint32_t bool_mask) {
+    uint32_t words = 2u + n, i;
+    for (i = 0; i < n; i++) {
+        if (!(bool_mask >> i & 1u) && !term_int_fits(v[i])) words += 2u;
+    }
+    Msg *m = va_alloc(msg_alloc_bytes((uint16_t)words));
+    if (!m) return NULL;
     m->next = NULL;
-    m->words = words;
+    m->words = (uint16_t)words;
     m->flags = 0;
     m->root = term_from_ref(0);
-    m->data[0] = hdr_make(4, K_STRUCT);
-    m->data[1] = p->drv->event_type;
-    uint32_t at = 4;
-    int32_t v[2] = { a, b };
-    for (uint32_t i = 0; i < 2; i++) {
-        if (term_int_fits(v[i])) {
-            m->data[2 + i] = term_from_int(v[i]);
-        } else {
-            m->data[at] = hdr_make(2, K_INT);
-            m->data[at + 1] = (uint32_t)v[i];
-            m->data[2 + i] = term_from_ref(at);
-            at += 2;
+    m->data[0] = hdr_make(2u + n, K_STRUCT);
+    m->data[1] = type;
+    words = 2u + n;                          /* where the next box goes */
+    for (i = 0; i < n; i++) {
+        term t = v[i] ? T_TRUE : T_FALSE;
+        if (!(bool_mask >> i & 1u)) {
+            t = term_from_int(v[i]);
+            if (!term_int_fits(v[i])) {
+                m->data[words] = hdr_make(2, K_INT);
+                m->data[words + 1] = (uint32_t)v[i];
+                t = term_from_ref(words);
+                words += 2u;
+            }
         }
+        m->data[2 + i] = t;
     }
-    msg_enqueue(vm, o, m, true);
+    return m;
+}
+
+bool port_deliver_ints(Vm *vm, const Port *p, uint32_t type, const int32_t *v, uint32_t n,
+                       uint32_t bool_mask) {
+    Actor *o = port_owner(vm, p);
+    Msg *m = o ? ints_msg(type, v, n, bool_mask) : NULL;
+    if (!m) return false;
+    if (msg_try_enqueue(vm, o, m)) return true;
+    msg_free(m);
+    return false;
+}
+
+/* The event_type struct {a, b} to the owner; dropped if the owner is gone
+ * or out of memory, fatal over its quota (msg_enqueue). */
+static void deliver(Vm *vm, const Port *p, int32_t a, int32_t b) {
+    Actor *o = port_owner(vm, p);
+    int32_t v[2] = { a, b };
+    Msg *m = o ? ints_msg(p->drv->event_type, v, 2, 0) : NULL;
+    if (m) msg_enqueue(vm, o, m, true);
 }
 
 static void deliver_at(Vm *vm, Port *p, int32_t a, int32_t b, uint64_t t) {
@@ -277,7 +325,9 @@ void port_drain(Vm *vm, uint64_t now) {
     if (vm->ports_pending) {
         for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) flush_due(vm, &vm->ports[i], now);
     }
-    if (source && source->pending()) source->drain(vm, now);
+    SOURCES_EACH(q) {
+        if ((*q)->pending()) (*q)->drain(vm, now);
+    }
 }
 
 /* ---- ownership (M5) ---- */

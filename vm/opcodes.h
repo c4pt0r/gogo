@@ -197,6 +197,12 @@ enum Builtin {
 /* Then the gogo/fs struct types (fields as in fs/fs.go), always emitted. */
 #define TYPE_FS_INFO  27   /* Size int, IsDir bool: fs.Stat */
 #define TYPE_FS_SPACE 28   /* Used, Total int: fs.Usage */
+/* Then the gogo/kbd and gogo/power struct types (kbd/kbd.go, power/power.go). */
+#define TYPE_KBD_CONFIG    29   /* RepeatDelayMs, RepeatMs int: port.Open("kbd") */
+#define TYPE_KBD_KEY       30   /* Code, Char, Mods int; Down bool: key event */
+#define TYPE_POWER_CONFIG  31   /* PeriodMs int: port.Open("power") */
+#define TYPE_POWER_BATTERY 32   /* MilliVolts, Percent, Charging, External int */
+#define TYPE_POWER_READ    33   /* (no fields): ask for a Battery now */
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

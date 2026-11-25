@@ -25,15 +25,23 @@
 #define LCD_PIN_BL   38
 #define HAS_PM1 0
 #define HAS_SD  1
+#define HAS_KBD 1
+/* Shared I2C bus (i2c_bus.c): TCA8418 keyboard (0x34) with INT on G11, and
+ * the battery divider on G10 (ADC1). */
+#define I2C_BUS_PORT 0
+#define I2C_BUS_SDA  8
+#define I2C_BUS_SCL  9
+#define KBD_PIN_INT  11
+#define BAT_PIN_ADC  10
 /* microSD over SPI (fs_fat.c), on SPI2: SPI3 is the LCD's. */
 #define SD_PIN_CS   12
 #define SD_PIN_MOSI 14
 #define SD_PIN_CLK  40
 #define SD_PIN_MISO 39
 /* Refused by the gpio port: USB D-/D+ (19, 20), the in-package flash
- * (26-32), the LCD (33-38) and the SD card (12, 14, 39, 40). The keyboard
- * (TCA8418 on I2C G8/G9, INT G11) has no driver yet and is left free. */
-#define BOARD_RESERVED_PINS {12, 14, 19, 20, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40}
+ * (26-32), the LCD (33-38), the SD card (12, 14, 39, 40), the I2C bus
+ * (8, 9), the keyboard INT (11) and the battery ADC (10). */
+#define BOARD_RESERVED_PINS {8, 9, 10, 11, 12, 14, 19, 20, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40}
 
 #elif defined(GOGO_BOARD_STICKS3)
 
@@ -48,6 +56,11 @@
 #define LCD_PIN_BL   38
 #define HAS_PM1 1
 #define HAS_SD  0
+#define HAS_KBD 0
+/* Shared I2C bus (i2c_bus.c): the M5PM1 (0x6E). */
+#define I2C_BUS_PORT 1
+#define I2C_BUS_SDA  47
+#define I2C_BUS_SCL  48
 /* Refused by the gpio port: USB D-/D+ (19, 20), the in-package flash and
  * PSRAM (26-37, see gpio_esp.c), the LCD (21, 38-41, 45) and the M5PM1 I2C
  * bus (47, 48). */

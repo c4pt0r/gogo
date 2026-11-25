@@ -61,7 +61,7 @@ TEST(image_bad_magic) {
 
 TEST(image_bad_version) {
     uint32_t w[IMG_WORDS]; Image img;
-    CHECK_EQ(IMAGE_VERSION, 7u);
+    CHECK_EQ(IMAGE_VERSION, 8u);
     build(w); w[1] = 1;        /* M1/M2 images: opcode semantics changed in M3 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w); w[1] = 2;        /* M3 images: RETN, CONV c=2 and builtins added in M4 */
@@ -74,7 +74,9 @@ TEST(image_bad_version) {
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w); w[1] = 6;        /* v6 images: no const map (added in v7) */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 8;
+    build(w); w[1] = 7;        /* v7 images: kbd and power reserved types added in v8 */
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    build(w); w[1] = 9;
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w);
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);

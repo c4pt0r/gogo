@@ -1,0 +1,21 @@
+menu "gogo"
+
+    config GOGO_KBD
+        bool "Keyboard port (kbd)"
+        default y
+        help
+            Build the TCA8418 keyboard driver and the I2C bus it needs
+            (Cardputer ADV; no effect on the StickS3, which has no keyboard).
+            When off, port.Open("kbd") returns ok=false and the IDF I2C
+            master driver is not linked into the Cardputer firmware.
+
+    config GOGO_BATTERY
+        bool "Battery port (power)"
+        default y
+        help
+            Build the battery reader: the ADC divider on the Cardputer, the
+            M5PM1 on the StickS3. When off, port.Open("power") returns
+            ok=false. The StickS3 still uses I2C for the PM1 LCD rail when
+            the console is on.
+
+endmenu

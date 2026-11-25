@@ -7,7 +7,7 @@
  * frame into the stack's RX buffer if its ready flag is clear (else drops
  * and counts it), sets the flag with a release barrier and calls
  * platform_notify; the scheduler (the only consumer) drains it through the
- * port layer's extra source (port_set_source). Link changes go through
+ * port layer's extra source (port_add_source). Link changes go through
  * net_link_event the same way (latest state wins). */
 #ifndef GOGO_NETIF_H
 #define GOGO_NETIF_H
