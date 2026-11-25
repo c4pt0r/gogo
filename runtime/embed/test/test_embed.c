@@ -2,7 +2,8 @@
  * compiled by `make test-embed` into $GOGO_EMBED_IMAGES): posts, the inbox
  * under threads, the latched wake, freeing while posting, the code.Load
  * switch, the memory cap, host ports (and the examples/hostecho golden),
- * and that gogo_free gives back every byte. */
+ * /flash on a host directory (fs_root, fs_quota) and that gogo_free gives
+ * back every byte. */
 #define _POSIX_C_SOURCE 200809L
 #if defined(__APPLE__)
 #define _DARWIN_C_SOURCE
@@ -16,6 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* test_main.c calls it before each test (the VM tests' arena). */
 void test_host_arena_forget(void) {}
@@ -616,7 +619,7 @@ TEST(embed_host_validation) {
     h = thost; h.code_free = t_free;           /* one of a pair */
     CHECK(gogo_new(&h, &t, NULL) == NULL);
     gogo_config cfg = { 0 };
-    cfg.fs_root = "/tmp";
+    cfg.fs_root = "/nonexistent-gogo-root";    /* not a directory (embed_fs_root_bad) */
     CHECK(gogo_new(&thost, &t, &cfg) == NULL);
     cfg.fs_root = NULL;
     cfg.caps = GOGO_CAP_NET;                   /* not provided by this build */
@@ -1042,4 +1045,126 @@ TEST(embed_hostport_register_after_load) {
     CHECK(strcmp(t.out, "ready\nopen true\n") == 0);
     gogo_free(vm);
     tctx_done(&t);
+}
+
+/* ---- /flash (fs_root) ---- */
+
+/* A fresh temp directory in buf (cap bytes). */
+static void temp_dir(char *buf, size_t cap) {
+    snprintf(buf, cap, "%s/gogoembed-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+    CHECK(mkdtemp(buf) != NULL);
+}
+static void rm_tree(const char *dir) {
+    char cmd[600];
+    snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir);
+    CHECK_EQ(system(cmd), 0);
+}
+static long file_size(const char *dir, const char *rel) {
+    char p[600];
+    struct stat st;
+    snprintf(p, sizeof p, "%s/%s", dir, rel);
+    return lstat(p, &st) == 0 ? (long)st.st_size : -1;
+}
+
+/* Two VMs with their own roots and quotas, stepped alternately: each
+ * counts only its own files. */
+TEST(embed_fs_root_quota_per_vm) {
+    char ra[256], rb[256];
+    temp_dir(ra, sizeof ra);
+    temp_dir(rb, sizeof rb);
+    TCtx ta, tb;
+    tctx_init(&ta);
+    tctx_init(&tb);
+    gogo_config ca = { 0 }, cb = { 0 };
+    ca.fs_root = ra;
+    ca.fs_quota = 1000;
+    cb.fs_root = rb;
+    cb.fs_quota = 2500;
+    gogo_vm *a = new_loaded(&ta, "fsuse", &ca);
+    gogo_vm *b = new_loaded(&tb, "fsuse", &cb);
+    CHECK_EQ(gogo_start(a), GOGO_OK);
+    CHECK_EQ(gogo_start(b), GOGO_OK);
+    int sa = GOGO_RUNNABLE, sb = GOGO_RUNNABLE;
+    for (long i = 0; i < 1000000 && (sa == GOGO_RUNNABLE || sb == GOGO_RUNNABLE); i++) {
+        if (sa == GOGO_RUNNABLE) sa = gogo_step(a, 4);
+        if (sb == GOGO_RUNNABLE) sb = gogo_step(b, 4);
+    }
+    CHECK_EQ(sa, GOGO_DONE);
+    CHECK_EQ(sb, GOGO_DONE);
+    /* a.txt holds 5 bytes; big gets the whole 100-byte chunks that fit
+     * and then the rest of the room. */
+    static const char want_a[] = "write 0\nread hello 0\nstat 0\nmkdir 0\nreaddir 0\nbig 900 4\n"
+                                 "usage 1000 1000 0\nrename 0\nremove 0\n";
+    static const char want_b[] = "write 0\nread hello 0\nstat 0\nmkdir 0\nreaddir 0\nbig 2400 4\n"
+                                 "usage 2500 2500 0\nrename 0\nremove 0\n";
+    CHECK(strcmp(ta.out, want_a) == 0);
+    CHECK(strcmp(tb.out, want_b) == 0);
+    if (strcmp(ta.out, want_a) || strcmp(tb.out, want_b)) printf("  a:[%s]  b:[%s]\n", ta.out, tb.out);
+    CHECK_EQ(ta.err_len, 0);
+    CHECK_EQ(file_size(ra, "d/a.txt"), 5);
+    CHECK_EQ(file_size(rb, "d/a.txt"), 5);
+    CHECK_EQ(file_size(ra, "big"), -1);
+    gogo_free(a);
+    gogo_free(b);
+    tctx_done(&ta);
+    tctx_done(&tb);
+    rm_tree(ra);
+    rm_tree(rb);
+}
+
+/* Through the VM: /flash/d is a symlink to a directory outside the
+ * root. Mkdir sees it exists, Rename into it is BadPath (7), and nothing
+ * outside changes. WriteFile of /flash/a.txt, a symlink to an outside
+ * file, replaces the link (rename over it), never the target. */
+TEST(embed_fs_root_symlink_refused) {
+    char base[256], root[300], secret[300], link[400];
+    temp_dir(base, sizeof base);
+    snprintf(root, sizeof root, "%s/root", base);
+    snprintf(secret, sizeof secret, "%s/secret", base);
+    CHECK_EQ(mkdir(root, 0777), 0);
+    FILE *f = fopen(secret, "w");
+    CHECK(f != NULL);
+    if (f) { fputs("secret", f); fclose(f); }
+    snprintf(link, sizeof link, "%s/a.txt", root);
+    CHECK_EQ(symlink(secret, link), 0);
+    snprintf(link, sizeof link, "%s/d", root);
+    CHECK_EQ(symlink(base, link), 0);
+    TCtx t; tctx_init(&t);
+    gogo_config c = { 0 };
+    c.fs_root = root;
+    c.fs_quota = -1;
+    gogo_vm *vm = new_loaded(&t, "fsuse", &c);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_DONE);
+    CHECK(strncmp(t.out, "write 0\nread hello 0\nstat 0\nmkdir 2\n", 36) == 0);
+    CHECK(strstr(t.out, "rename 7\n") != NULL);
+    CHECK_EQ(file_size(base, "secret"), 6);
+    CHECK_EQ(file_size(base, "a.txt"), -1);
+    CHECK_EQ(file_size(root, "a.txt"), 5);   /* a file now, in the root */
+    gogo_free(vm);
+    tctx_done(&t);
+    rm_tree(base);
+}
+
+/* An fs_root that is not a directory makes gogo_new fail, leaking nothing. */
+TEST(embed_fs_root_bad) {
+    char base[256], file[300], missing[300];
+    temp_dir(base, sizeof base);
+    snprintf(file, sizeof file, "%s/file", base);
+    snprintf(missing, sizeof missing, "%s/missing", base);
+    FILE *f = fopen(file, "w");
+    if (f) fclose(f);
+    TCtx t; tctx_init(&t);
+    gogo_config c = { 0 };
+    c.fs_quota = -1;
+    c.fs_root = file;
+    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    c.fs_root = missing;
+    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    c.fs_root = base;
+    t.fail_after = 1;                   /* the gogo_vm, not its FsDir */
+    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    t.fail_after = -1;
+    tctx_done(&t);
+    rm_tree(base);
 }

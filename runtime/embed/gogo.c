@@ -105,6 +105,7 @@ static int vm_setup(gogo_vm *g) {
     uint16_t cap = g->cfg.max_actors ? g->cfg.max_actors : (uint16_t)GOGO_TABLE_CAP;
     if (vm_init(&g->vm, &g->fwd, g, &embed_board, g->cfg.caps, cap) != 0) return -1;
     va_set_limit(&g->vm, g->cfg.mem_limit);
+    if (g->fs) vfs_init(&g->vm, &g->vfs);
     embed_ports_install(g);
     return port_add_source(&g->vm, &inbox_source, g) ? 0 : -1;
 }
@@ -114,7 +115,7 @@ gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg) {
     if (!host_ok(h)) return NULL;
     if (!cfg) cfg = &zero_cfg;
     /* Refuse what this build cannot give, rather than mask it. */
-    if (cfg->fs_root || (cfg->caps & ~embed_board.caps)) return NULL;
+    if (cfg->caps & ~embed_board.caps) return NULL;
     gogo_vm *g = h->alloc(host_ctx, sizeof *g);
     if (!g) return NULL;
     memset(g, 0, sizeof *g);
@@ -123,8 +124,17 @@ gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg) {
     g->cfg = *cfg;
     g->refs = 1;
     make_fwd(g);
+    /* /flash needs no capability: every board has it. */
+    if (cfg->fs_root && (!(g->fs = fs_dir_open(h, host_ctx, cfg->fs_root, cfg->fs_quota)) ||
+                         !vfs_mount(&g->vfs, "/flash", &fs_dir_backend, g->fs))) {
+        fs_dir_close(g->fs);
+        h->free(host_ctx, g, sizeof *g);
+        return NULL;
+    }
+    g->cfg.fs_root = NULL;           /* the caller's string is not kept */
     if (vm_setup(g) != 0) {
         blk_free_all(g, &g->blocks, h->free);
+        fs_dir_close(g->fs);
         h->free(host_ctx, g, sizeof *g);
         return NULL;
     }
@@ -309,9 +319,11 @@ void gogo_free(gogo_vm *g) {
     inbox_clear(&g->inbox, g->uh, g->uctx);
     if (g->vm.run_state == VM_ST_RUN) {
         g->stepping = true;              /* host port close callbacks are hooks */
-        vm_stop(&g->vm);                 /* ports get their close */
+        vm_stop(&g->vm);                 /* ports get their close (open files too) */
         g->stepping = false;
     }
+    fs_dir_close(g->fs);
+    g->fs = NULL;
     blk_free_all(g, &g->code_blocks, g->uh->code_free);
     blk_free_all(g, &g->blocks, g->uh->free);
     if (g->image_copy) g->uh->free(g->uctx, g->image_copy, g->image_bytes);

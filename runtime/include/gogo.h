@@ -119,8 +119,17 @@ typedef struct gogo_config {
                                * Queued posts are outside it (host memory, at most
                                * GOGO_POST_MAX of them) until delivered. */
     uint16_t max_actors;      /* live actors at once; 0 = the build's default (GOGO_TABLE_CAP) */
-    const char *fs_root;      /* a host directory as /flash; not supported in this version: must be NULL */
-    int64_t  fs_quota;        /* bytes under fs_root; -1 = none */
+    /* An existing host directory served as /flash (no capability bit:
+     * every board has /flash), or NULL: no storage. The program is confined to it: paths are walked from the
+     * directory without following symlinks (a symlink, FIFO or device is
+     * BadPath, and so is opening a file with other hard links for
+     * writing). /sd is never mounted. The string is not kept. */
+    const char *fs_root;
+    /* The bytes the regular files under fs_root may hold (counted when the
+     * VM is made, then tracked per VM); a write past it stores what fits
+     * and is NoSpace, and fs.Usage reports (used, fs_quota). -1 = none (the
+     * host file system's own usage); note 0 allows nothing. */
+    int64_t  fs_quota;
     int      allow_code_load; /* 0: code.Load returns NoMemory (bundled images only) */
 } gogo_config;
 
@@ -160,8 +169,9 @@ enum {
 /* A new VM on host h (whose hooks get host_ctx). h and host_ctx must stay
  * valid until the VM is freed and released. NULL if the table is
  * incomplete (write, alloc, free and now_ms are required; wake with wait;
- * the unix_time and code pairs both or neither), cfg is invalid (fs_root,
- * caps this build cannot give) or memory runs out. */
+ * the unix_time and code pairs both or neither), cfg is invalid (caps this
+ * build cannot give, an fs_root that is not a directory) or memory runs
+ * out. */
 gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg);
 
 /* Loads the image (len bytes, little-endian words) as the VM's program.

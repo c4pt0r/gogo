@@ -54,6 +54,7 @@
 
 /* The board's one Vm's vfs, input and net state (runtime/ keeps none). */
 static VfsState vfs_state;
+static FsDir *fs_flash, *fs_sd;   /* --fs-root: /flash and /sd */
 static InputState input_state;
 static NetState net_state;
 
@@ -127,6 +128,7 @@ int main(int argc, char **argv) {
     int net_fd = -1, sim = 0;
     uint32_t granted = UINT32_MAX;      /* --caps narrows the board's caps */
     const char *fs_root = NULL;
+    int64_t fs_quota = -1;
     while (argc >= 2 && strncmp(argv[1], "--", 2) == 0) {
         if (strcmp(argv[1], "--sim-clock") == 0) {
             sim = 1;
@@ -156,15 +158,15 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[1], "--fs-root") == 0) {
             fs_root = argv[2];
         } else if (strcmp(argv[1], "--fs-quota") == 0) {
-            /* --fs-quota <bytes>: test only, the host fs backend returns NoSpace
-             * once this many bytes were written (cumulative, all files). */
+            /* --fs-quota <bytes>: test only, the bytes the files of each
+             * medium may hold (fs_dir.h); a write past it is NoSpace. */
             char tail;
             long long q;
             if (sscanf(argv[2], "%lld%c", &q, &tail) != 1 || q < 0) {
                 fprintf(stderr, "gogovm: bad --fs-quota %s\n", argv[2]);
                 return 2;
             }
-            fs_host_set_quota(q);
+            fs_quota = q;
         } else if (strcmp(argv[1], "--net-fd") == 0) {
             char tail;
             if (sscanf(argv[2], "%d%c", &net_fd, &tail) != 1 || net_fd < 0) {
@@ -196,7 +198,7 @@ int main(int argc, char **argv) {
     }
     if (fs_root) {
         /* /flash -> DIR/flash (created), /sd -> DIR/sd (only if it exists). */
-        char dir[FS_HOST_ROOT_MAX];
+        char dir[1024];
         struct stat st;
         if (snprintf(dir, sizeof dir, "%s/flash", fs_root) >= (int)sizeof dir) {
             fprintf(stderr, "gogovm: --fs-root too long\n");
@@ -210,16 +212,16 @@ int main(int argc, char **argv) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot create flash directory\n", fs_root);
             return 2;
         }
-        void *flash = fs_host_open(0, dir);
-        if (!flash) {
-            fprintf(stderr, "gogovm: --fs-root too long\n");
+        fs_flash = fs_dir_open(&unix_host, NULL, dir, fs_quota);
+        if (!fs_flash) {
+            fprintf(stderr, "gogovm: --fs-root %s: cannot open flash directory\n", fs_root);
             return 2;
         }
-        vfs_mount(&vfs_state, "/flash", &fs_host_be, flash);
+        vfs_mount(&vfs_state, "/flash", &fs_dir_backend, fs_flash);
         if (snprintf(dir, sizeof dir, "%s/sd", fs_root) < (int)sizeof dir &&
             stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) {
-            void *sd = fs_host_open(1, dir);
-            if (sd) vfs_mount(&vfs_state, "/sd", &fs_host_be, sd);
+            fs_sd = fs_dir_open(&unix_host, NULL, dir, fs_quota);
+            if (fs_sd) vfs_mount(&vfs_state, "/sd", &fs_dir_backend, fs_sd);
         }
     }
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -261,5 +263,7 @@ int main(int argc, char **argv) {
 #endif
     fflush(stdout);
     free(words);
+    fs_dir_close(fs_sd);
+    fs_dir_close(fs_flash);
     return rc;
 }

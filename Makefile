@@ -177,13 +177,14 @@ $(BUILD)/test_stream_mcu: $(STREAM_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(STREAM_INC) -o $@ $(STREAM_SRCS) $(STREAM_TEST_SRCS) $(VM_SRCS)
 
-# unix host-directory backend against a temp dir.
+# The host-directory backend (runtime/embed/fs_dir.c) against a temp dir:
+# the vfs contract and the sandbox (symlinks, hard links, a swapped path).
 test-fs-host: $(BUILD)/test_fs_host
 	$(BUILD)/test_fs_host
 
 $(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/embed/fs_dir.c $(VFS_SRCS) $(VM_SRCS) $(wildcard runtime/vfs/*.h) $(PLAT_HDRS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(VFS_INC) -Iruntime/embed -o $@ platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/embed/fs_dir.c $(VFS_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(VFS_INC) -Iruntime/embed -pthread -o $@ platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/embed/fs_dir.c $(VFS_SRCS) $(VM_SRCS)
 
 # Embed mode (runtime/embed, runtime/include/gogo.h): the API, the post
 # inbox and the POSIX host over the VM core alone (no board), against images
@@ -191,16 +192,16 @@ $(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_ma
 # output is compared with their embed.out). test-embed-tsan runs the same
 # tests under ThreadSanitizer; test-embed-leaks checks that no memory leaks
 # (LeakSanitizer on Linux, leaks(1) on macOS, where ASan has no leak check).
-EMBED_SRCS = $(filter-out runtime/embed/fs_dir.c,$(wildcard runtime/embed/*.c))
+EMBED_SRCS = $(wildcard runtime/embed/*.c)
 EMBED_TEST_SRCS = runtime/vm/test/test_main.c $(wildcard runtime/embed/test/*.c)
 EMBED_PROGS = $(notdir $(wildcard runtime/embed/test/testdata/*))
 # Examples run under a test host, their output compared with embed.out.
 EMBED_EXAMPLES = hostecho
-EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vm -Iruntime/vm/test
+EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vfs -Iruntime/vm -Iruntime/vm/test
 
-$(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(wildcard runtime/embed/*.h) runtime/include/gogo.h $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h)
+$(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS) $(wildcard runtime/embed/*.h) runtime/include/gogo.h $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vm/test/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS)
+	$(CC) $(CFLAGS) $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS)
 
 embed-images:
 	@mkdir -p $(BUILD)/embed
