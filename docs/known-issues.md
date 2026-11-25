@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-Open limitations of gogo as of image version 13, by area. Each entry
+Open limitations of gogo as of image version 14, by area. Each entry
 says what the limitation is, what it costs you and, where there is one,
 how to work around it. Hardware facts refer to the two ESP32-S3 boards,
 the M5StickS3 and the Cardputer ADV. The design is in

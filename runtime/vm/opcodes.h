@@ -223,11 +223,14 @@ enum Builtin {
 #define TYPE_AUDIO_SPEAKER 43   /* Rate, Volume int: port.Open("spk") */
 /* Then (v13) the tls port config. */
 #define TYPE_NET_DIALTLS   44   /* IP, Port, TimeoutMs int, Host string: cfg of the "tls" port */
+/* Then (v14) the embedding types (lib/port/port.go). */
+#define TYPE_HOST          45   /* Arg int, Data bytes.Bytes: cfg of a host-defined port */
+#define TYPE_POST          46   /* Kind int, Data bytes.Bytes: a host post, host-port command or event */
 /* How many reserved types there are (0 .. TYPE_RESERVED_COUNT - 1): they are
  * global across modules; every index from here up is a module's own type
  * and carries its module tag in a struct's type word (term.h). The one
  * constant to bump with a new reserved type (compiler: len(reservedTypes)). */
-#define TYPE_RESERVED_COUNT 45u
+#define TYPE_RESERVED_COUNT 47u
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

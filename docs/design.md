@@ -1302,7 +1302,7 @@ together with `mbox_words` through `actor_charged_words`).
   fake struct header inside a string's bytes, say), which would be a
   memory-safety bug, not just `badcode`. Function indexes, type ids and
   jump targets are checked when used (out of range is `badcode`).
-- **Image version** (`IMAGE_VERSION`, now **13**). Any change to opcode
+- **Image version** (`IMAGE_VERSION`, now **14**). Any change to opcode
   numbers or semantics, builtin numbers, reserved types, the term
   encoding or the image layout bumps the version; the compiler and the
   VM move in lockstep, and the loader refuses every other version
@@ -1314,13 +1314,13 @@ together with `mbox_words` through `actor_charged_words`).
   `Buffer`, 46 `port.Handoff`, 47 `net.Subscribe`, 48 `config.Get`, 49
   `B_FS` (gogo/fs), 50 `B_CODE` (gogo/code), 51-53 `sys.Time`,
   `sys.SetTime`, `sys.Random`.
-- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 45 of them,
-  0..44): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
+- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 47 of them,
+  0..46): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
   `Request`, `Options`), 6-8 `port.GPIO`, `port.Write`, `port.Edge`, 9-26
   `gogo/net`, 27-28 `fs.Info`, `fs.Space`, 29-33 `gogo/kbd` and
   `gogo/power`, 34 `code.Module`, 35-37 `port.Chunk`, `port.Out`,
   `port.Done`, 38-39 `gogo/imu`, 40-41 `gogo/ir`, 42-43 `gogo/audio`, 44
-  `net.DialTLS`.
+  `net.DialTLS`, 45-46 `port.Host`, `port.Post` (embed mode).
 
 ### 5.7 Scheduling
 

@@ -189,8 +189,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 45 {
-		t.Errorf("%d reserved types, want 45", len(reservedTypes))
+	if len(reservedTypes) != 47 {
+		t.Errorf("%d reserved types, want 47", len(reservedTypes))
 	}
 }
 
@@ -241,8 +241,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in runtime/vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 13 {
-		t.Errorf("imageVersion %d, want 13", imageVersion)
+	if imageVersion != 14 {
+		t.Errorf("imageVersion %d, want 14", imageVersion)
 	}
 }
 
