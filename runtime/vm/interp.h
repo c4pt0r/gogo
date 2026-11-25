@@ -66,6 +66,10 @@ int vm_start(Vm *vm);
  *  VM_DONE:     no actor is runnable, no timer is pending and no port or
  *               source is live (every actor exited or is blocked for
  *               good), or the Vm is not started. Call vm_stop. */
+/* Not re-entrant: a hook that vm_step calls (write, alloc, ...) must not
+ * call vm_step, vm_start or vm_stop. Boards never do; the embedding API
+ * refuses it (GOGO_EBUSY) with a flag of its own, so the core pays
+ * nothing for a guard. */
 int vm_step(Vm *vm, uint32_t budget);
 
 /* The earliest pending timer or port/source deadline, as an absolute

@@ -1,0 +1,568 @@
+/* The embedding API (include/gogo.h) against real images (testdata/,
+ * compiled by `make test-embed` into $GOGO_EMBED_IMAGES): posts, the inbox
+ * under threads, the latched wake, freeing while posting, the code.Load
+ * switch, the memory cap, and that gogo_free gives back every byte. */
+#define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE
+#endif
+#include "test.h"
+#include "gogo.h"
+#include <pthread.h>
+#include <sched.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+/* test_main.c calls it before each test (the VM tests' arena). */
+void test_host_arena_forget(void) {}
+
+/* ---- a test host: the POSIX one, with counted memory and captured output ---- */
+
+typedef struct TCtx {
+    void *px;               /* a POSIX context: wake and wait */
+    long bytes, blocks;     /* atomic: host memory outstanding */
+    long fail_after;        /* atomic: allocations left before they fail (-1 = never) */
+    char out[8192];         /* the start of stream 1 (VM thread) */
+    size_t out_len;
+    char err[2048];         /* the start of stream 2 */
+    size_t err_len;
+    long lines;             /* atomic: newlines on stream 1 */
+    int delay;              /* wait first spins a random while (the race test) */
+    uint32_t rnd;           /* its generator (VM thread) */
+    gogo_vm *reenter;       /* write steps this VM again (the re-entry test) */
+    int reenter_rc;
+} TCtx;
+
+static const gogo_host *px(void) { return gogo_host_posix(); }
+
+static void t_write(void *c, int s, const char *p, size_t n) {
+    TCtx *t = c;
+    char *buf = s == 2 ? t->err : t->out;
+    size_t cap = s == 2 ? sizeof t->err : sizeof t->out, *len = s == 2 ? &t->err_len : &t->out_len;
+    size_t k = n < cap - 1 - *len ? n : cap - 1 - *len;
+    memcpy(buf + *len, p, k);
+    *len += k;
+    buf[*len] = 0;
+    if (s == 1)
+        for (size_t i = 0; i < n; i++)
+            if (p[i] == '\n') __atomic_fetch_add(&t->lines, 1, __ATOMIC_RELEASE);
+    if (t->reenter) t->reenter_rc = gogo_step(t->reenter, 1);
+}
+
+static void *t_alloc(void *c, size_t n) {
+    TCtx *t = c;
+    if (__atomic_load_n(&t->fail_after, __ATOMIC_RELAXED) >= 0 &&
+        __atomic_fetch_sub(&t->fail_after, 1, __ATOMIC_RELAXED) <= 0) return NULL;
+    void *p = malloc(n);
+    if (p) {
+        __atomic_fetch_add(&t->bytes, (long)n, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&t->blocks, 1, __ATOMIC_RELAXED);
+    }
+    return p;
+}
+
+static void t_free(void *c, void *p, size_t n) {
+    TCtx *t = c;
+    __atomic_fetch_sub(&t->bytes, (long)n, __ATOMIC_RELAXED);
+    __atomic_fetch_sub(&t->blocks, 1, __ATOMIC_RELAXED);
+    free(p);
+}
+
+static uint64_t t_now(void *c) { return px()->now_ms(((TCtx *)c)->px); }
+static void t_wake(void *c) { px()->wake(((TCtx *)c)->px); }
+
+static void t_wait(void *c, uint32_t ms) {
+    TCtx *t = c;
+    if (t->delay) {
+        /* Widen the window between the step's last check and the wait: a
+         * post landing here must still end the wait (the latch). */
+        t->rnd = t->rnd * 1103515245u + 12345u;
+        for (uint32_t k = (t->rnd >> 16) % 48u; k; k--) sched_yield();
+    }
+    px()->wait(t->px, ms);
+}
+
+static const gogo_host thost = {
+    t_write, t_alloc, t_free, t_now, t_wake, t_wait, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+};
+
+static void tctx_init(TCtx *t) {
+    memset(t, 0, sizeof *t);
+    t->px = gogo_posix_ctx_new();
+    t->fail_after = -1;
+    t->rnd = 1;
+}
+
+/* Everything the VM took is back. */
+static void tctx_done(TCtx *t) {
+    CHECK_EQ(__atomic_load_n(&t->bytes, __ATOMIC_ACQUIRE), 0);
+    CHECK_EQ(__atomic_load_n(&t->blocks, __ATOMIC_ACQUIRE), 0);
+    gogo_posix_ctx_free(t->px);
+}
+
+/* ---- images ---- */
+
+typedef struct Img { uint32_t *w; size_t len; } Img;
+
+static Img image(const char *name) {
+    Img r = { NULL, 0 };
+    const char *dir = getenv("GOGO_EMBED_IMAGES");
+    char path[512];
+    snprintf(path, sizeof path, "%s/%s.gogo", dir ? dir : "build/embed", name);
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("  cannot open %s\n", path); return r; }
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    r.w = malloc((size_t)n);
+    if (fread(r.w, 1, (size_t)n, f) != (size_t)n) n = 0;
+    fclose(f);
+    r.len = (size_t)n;
+    return r;
+}
+
+static gogo_vm *new_loaded(TCtx *t, const char *prog, const gogo_config *cfg) {
+    gogo_vm *vm = gogo_new(&thost, t, cfg);
+    CHECK(vm != NULL);
+    if (!vm) return NULL;
+    Img im = image(prog);
+    CHECK(im.w != NULL);
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    free(im.w);
+    return vm;
+}
+
+/* Steps until idle or done; returns that. */
+static int settle(gogo_vm *vm) {
+    int r;
+    while ((r = gogo_step(vm, 0)) == GOGO_RUNNABLE) {}
+    return r;
+}
+
+static uint64_t mono_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+/* Waits (yielding) until t has printed `want` lines; false after 20 s. */
+static bool await_lines(TCtx *t, long want) {
+    uint64_t end = mono_ms() + 20000u;
+    while (__atomic_load_n(&t->lines, __ATOMIC_ACQUIRE) < want) {
+        if (mono_ms() > end) return false;
+        sched_yield();
+    }
+    return true;
+}
+
+static int post_retry(gogo_vm *vm, const char *name, int32_t kind, const void *d, size_t n) {
+    int r;
+    while ((r = gogo_post(vm, name, kind, d, n)) == GOGO_EFULL) sched_yield();
+    return r;
+}
+
+/* ---- tests ---- */
+
+TEST(embed_post_roundtrip) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(gogo_next_deadline(vm), GOGO_NEVER);
+    CHECK(strcmp(t.out, "ready\n") == 0);
+    CHECK_EQ(gogo_post(vm, "echo", 7, "hello", 5), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", -5, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 2000000000, "x", 1), GOGO_OK);   /* a boxed Kind */
+    static uint8_t big[10000];
+    for (size_t i = 0; i < sizeof big; i++) big[i] = (uint8_t)i;
+    CHECK_EQ(gogo_post(vm, "echo", 3, big, sizeof big), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK(strcmp(t.out, "ready\npost 7 5 hello\npost -5 0 \npost 2000000000 1 x\npost 3 10000 0 15\n") == 0);
+    gogo_stats st;
+    gogo_get_stats(vm, &st);
+    CHECK_EQ(st.posts_delivered, 4);
+    CHECK_EQ(st.posts_dropped, 0);
+    CHECK(st.mem_used > 0 && st.mem_peak >= st.mem_used);
+    /* Limits. */
+    CHECK_EQ(gogo_post(vm, "echo", 1, big, GOGO_POST_DATA_MAX + 1u), GOGO_E2BIG);
+    char longname[GOGO_POST_NAME_MAX + 2];
+    memset(longname, 'n', sizeof longname - 1);
+    longname[sizeof longname - 1] = 0;
+    CHECK_EQ(gogo_post(vm, longname, 1, NULL, 0), GOGO_E2BIG);
+    CHECK_EQ(gogo_post(vm, NULL, 1, NULL, 0), GOGO_EINVAL);
+    CHECK_EQ(gogo_post(vm, "echo", 1, NULL, 3), GOGO_EINVAL);
+    /* The name keeps the VM alive; Kind -1 ends main and the VM. */
+    CHECK_EQ(gogo_post(vm, "echo", -1, NULL, 0), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_DONE);
+    CHECK_EQ(gogo_step(vm, 0), GOGO_DONE);
+    CHECK(strstr(t.out, "bye\n") != NULL);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+TEST(embed_post_unknown_name) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(gogo_post(vm, "nobody", 1, "x", 1), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "", 2, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 3, NULL, 0), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    gogo_stats st;
+    gogo_get_stats(vm, &st);
+    CHECK_EQ(st.posts_dropped, 2);
+    CHECK_EQ(st.posts_delivered, 1);
+    CHECK(strcmp(t.out, "ready\npost 3 0 \n") == 0);
+    gogo_free(vm);   /* still running: its ports close, its memory goes back */
+    tctx_done(&t);
+}
+
+/* A post sent before the program registered its name is dropped. */
+TEST(embed_post_before_register) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    CHECK_EQ(gogo_post(vm, "echo", 1, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    gogo_stats st;
+    gogo_get_stats(vm, &st);
+    CHECK_EQ(st.posts_dropped, 1);
+    CHECK(strcmp(t.out, "ready\n") == 0);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+TEST(embed_inbox_full) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);   /* not started: nothing drains */
+    for (int i = 0; i < GOGO_POST_MAX; i++) CHECK_EQ(gogo_post(vm, "echo", i, "abc", 3), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 999, NULL, 0), GOGO_EFULL);
+    CHECK_EQ(gogo_post(vm, "echo", 999, NULL, 0), GOGO_EFULL);
+    gogo_free(vm);   /* frees the queued posts too */
+    tctx_done(&t);
+}
+
+TEST(embed_inbox_full_then_drains) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    for (int i = 0; i < GOGO_POST_MAX; i++) CHECK_EQ(gogo_post(vm, "echo", i, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 999, NULL, 0), GOGO_EFULL);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(gogo_post(vm, "echo", 999, NULL, 0), GOGO_OK);   /* room again */
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(__atomic_load_n(&t.lines, __ATOMIC_ACQUIRE), 1 + GOGO_POST_MAX + 1);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+/* ---- threads ---- */
+
+typedef struct Producer {
+    pthread_t th;
+    gogo_vm *vm;
+    int id, n;
+    int ok, closed;
+} Producer;
+
+static void *produce(void *arg) {
+    Producer *p = arg;
+    for (int s = 1; s <= p->n; s++) {
+        int r = post_retry(p->vm, "count", p->id * 1000000 + s, NULL, 0);
+        if (r == GOGO_OK) p->ok++;
+        else if (r == GOGO_ECLOSED) { p->closed++; break; }
+    }
+    return NULL;
+}
+
+/* 4 threads x 25000 posts to a VM running on its own thread. */
+TEST(embed_post_threads) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "count", NULL);
+    CHECK_EQ(gogo_run_thread(vm), GOGO_OK);
+    CHECK_EQ(gogo_run_thread(vm), GOGO_ESTATE);
+    CHECK(await_lines(&t, 1));
+    Producer p[4];
+    for (int i = 0; i < 4; i++) {
+        p[i] = (Producer){ .vm = vm, .id = i, .n = 25000 };
+        pthread_create(&p[i].th, NULL, produce, &p[i]);
+    }
+    for (int i = 0; i < 4; i++) {
+        pthread_join(p[i].th, NULL);
+        CHECK_EQ(p[i].ok, 25000);
+    }
+    CHECK_EQ(post_retry(vm, "count", -1, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_join(vm), GOGO_OK);
+    gogo_stats st;
+    gogo_get_stats(vm, &st);
+    CHECK_EQ(st.posts_delivered + st.posts_dropped, 100001);
+    char want[64];
+    snprintf(want, sizeof want, "ready\ncount %llu bad 0\n", (unsigned long long)st.posts_delivered - 1u);
+    CHECK(strcmp(t.out, want) == 0);
+    if (strcmp(t.out, want) != 0) printf("  out: %s", t.out);
+    CHECK_EQ(st.posts_dropped, 0);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+/* The lost-wakeup race: each post lands while the VM thread goes idle (in
+ * the window widened by t_wait's delay); a wake it slept through would
+ * hang the handshake. */
+TEST(embed_wake_race) {
+    TCtx t; tctx_init(&t);
+    t.delay = 1;
+    const char *e = getenv("GOGO_EMBED_RACE_N");
+    long n = e ? atol(e) : 100000;
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    CHECK_EQ(gogo_run_thread(vm), GOGO_OK);
+    CHECK(await_lines(&t, 1));
+    uint32_t rnd = 7;
+    long i;
+    for (i = 1; i <= n; i++) {
+        rnd = rnd * 1103515245u + 12345u;
+        for (uint32_t k = (rnd >> 16) % 8u; k; k--) sched_yield();
+        if (gogo_post(vm, "echo", (int32_t)i, NULL, 0) != GOGO_OK || !await_lines(&t, i + 1)) break;
+    }
+    CHECK_EQ(i, n + 1);
+    CHECK_EQ(gogo_post(vm, "echo", -1, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_join(vm), GOGO_OK);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+/* Producers holding a reference post while the owner frees the VM: no
+ * crash, later posts get GOGO_ECLOSED, and every byte comes back once the
+ * last reference goes. */
+TEST(embed_post_while_freeing) {
+    for (int round = 0; round < 20; round++) {
+        TCtx t; tctx_init(&t);
+        gogo_vm *vm = new_loaded(&t, "count", NULL);
+        CHECK_EQ(gogo_run_thread(vm), GOGO_OK);
+        CHECK(await_lines(&t, 1));
+        Producer p[4];
+        for (int i = 0; i < 4; i++) {
+            gogo_retain(vm);
+            p[i] = (Producer){ .vm = vm, .id = i, .n = 1000000 };
+            pthread_create(&p[i].th, NULL, produce, &p[i]);
+        }
+        struct timespec d = { 0, (long)(round % 5) * 200000L };
+        nanosleep(&d, NULL);
+        gogo_free(vm);                 /* stops the VM thread, then frees */
+        for (int i = 0; i < 4; i++) {
+            pthread_join(p[i].th, NULL);
+            CHECK_EQ(p[i].closed, 1);
+            CHECK_EQ(gogo_post(vm, "count", 1, NULL, 0), GOGO_ECLOSED);
+            gogo_release(vm);
+        }
+        tctx_done(&t);
+    }
+}
+
+/* gogo_free stops a VM thread that is busy (never idle) too. */
+TEST(embed_free_stops_busy_thread) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "spin", NULL);
+    CHECK_EQ(gogo_run_thread(vm), GOGO_OK);
+    struct timespec d = { 0, 2000000L };
+    nanosleep(&d, NULL);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+TEST(embed_run_until_done) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "sleeper", NULL);
+    CHECK_EQ(gogo_run(vm), GOGO_OK);
+    CHECK(strcmp(t.out, "a\nb\n") == 0);
+    CHECK_EQ(gogo_run(vm), GOGO_OK);   /* done stays done */
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+TEST(embed_next_deadline) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "sleeper", NULL);
+    CHECK_EQ(gogo_next_deadline(vm), GOGO_NEVER);   /* not started */
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    uint64_t t0 = mono_ms();
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    int64_t dl = gogo_next_deadline(vm);
+    CHECK(dl != GOGO_NEVER);
+    CHECK(dl >= (int64_t)t0 + 40 && dl <= (int64_t)mono_ms() + 50);
+    while (mono_ms() < (uint64_t)dl) sched_yield();
+    CHECK_EQ(settle(vm), GOGO_DONE);
+    CHECK(strcmp(t.out, "a\nb\n") == 0);
+    CHECK_EQ(gogo_next_deadline(vm), GOGO_NEVER);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+TEST(embed_code_load_switch) {
+    for (int allow = 0; allow <= 1; allow++) {
+        TCtx t; tctx_init(&t);
+        gogo_config cfg = { 0 };
+        cfg.allow_code_load = allow;
+        gogo_vm *vm = new_loaded(&t, "codeload", &cfg);
+        CHECK_EQ(gogo_start(vm), GOGO_OK);
+        CHECK_EQ(settle(vm), GOGO_DONE);
+        /* refused: NoMemory (3); allowed: the bytes are BadImage (1) */
+        CHECK(strcmp(t.out, allow ? "load 1\n" : "load 3\n") == 0);
+        gogo_free(vm);
+        tctx_done(&t);
+    }
+}
+
+TEST(embed_mem_limit) {
+    size_t peak[2];
+    for (int k = 0; k < 2; k++) {
+        TCtx t; tctx_init(&t);
+        gogo_config cfg = { 0 };
+        cfg.max_actors = 16;
+        cfg.mem_limit = k ? 0 : 96u * 1024u;
+        gogo_vm *vm = new_loaded(&t, "hog", &cfg);
+        CHECK_EQ(gogo_start(vm), GOGO_OK);
+        CHECK_EQ(settle(vm), GOGO_DONE);
+        CHECK(strstr(t.err, "crashed: oom") != NULL);
+        gogo_stats st;
+        gogo_get_stats(vm, &st);
+        peak[k] = st.mem_peak;
+        gogo_free(vm);
+        tctx_done(&t);
+    }
+    CHECK(peak[0] <= 96u * 1024u);
+    CHECK(peak[1] > 96u * 1024u);   /* the actor's own limit (256 KB) */
+}
+
+TEST(embed_lifecycle_errors) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    CHECK(vm != NULL);
+    CHECK_EQ(gogo_start(vm), GOGO_ESTATE);
+    CHECK_EQ(gogo_step(vm, 0), GOGO_ESTATE);
+    CHECK_EQ(gogo_join(vm), GOGO_ESTATE);
+    uint32_t junk[16] = { 1, 2, 3 };
+    CHECK_EQ(gogo_load(vm, junk, sizeof junk, 0), GOGO_EIMAGE);
+    CHECK(strstr(t.err, "gogo: bad image: ") != NULL);
+    CHECK_EQ(gogo_load(vm, junk, 7, 0), GOGO_EIMAGE);
+    CHECK_EQ(gogo_load(vm, (const char *)junk + 1, 8, 0), GOGO_EINVAL);   /* borrowed, unaligned */
+    Img im = image("echo");
+    /* A failed load leaves the VM loadable; borrowed this time. */
+    CHECK_EQ(gogo_load(vm, im.w, im.len, 0), GOGO_OK);
+    CHECK_EQ(gogo_load(vm, im.w, im.len, 0), GOGO_ESTATE);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(gogo_start(vm), GOGO_ESTARTED);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    gogo_free(vm);
+    free(im.w);
+    tctx_done(&t);
+}
+
+TEST(embed_no_main) {
+    TCtx t; tctx_init(&t);
+    /* codeload's image with its only export renamed: no "main". */
+    Img im = image("codeload");
+    uint8_t *b = (uint8_t *)im.w;
+    int renamed = 0;
+    for (size_t i = 0; i + 4 <= im.len; i++)
+        if (memcmp(b + i, "main", 4) == 0) { b[i] = 'x'; renamed++; }
+    CHECK(renamed > 0);
+    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    int r = gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY);
+    if (r == GOGO_OK) {
+        CHECK_EQ(gogo_start(vm), GOGO_ESTART);
+        CHECK(strstr(t.err, "no main") != NULL);
+        CHECK_EQ(gogo_start(vm), GOGO_ESTART);   /* still new: the same refusal */
+    }
+    gogo_free(vm);
+    free(im.w);
+    tctx_done(&t);
+}
+
+TEST(embed_reentry_refused) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    t.reenter = vm;
+    t.reenter_rc = 1;
+    CHECK_EQ(settle(vm), GOGO_IDLE);   /* "ready" is written from inside the step */
+    CHECK_EQ(t.reenter_rc, GOGO_EBUSY);
+    t.reenter = NULL;
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+TEST(embed_host_validation) {
+    TCtx t; tctx_init(&t);
+    gogo_host h = thost;
+    h.alloc = NULL;
+    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    h = thost; h.free = NULL;
+    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    h = thost; h.now_ms = NULL;
+    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    h = thost; h.write = NULL;
+    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    h = thost; h.wake = NULL;                  /* wait without wake */
+    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    h.wait = NULL;                             /* a busy-loop host: fine */
+    gogo_vm *vm = gogo_new(&h, &t, NULL);
+    CHECK(vm != NULL);
+    CHECK_EQ(gogo_run(vm), GOGO_EINVAL);
+    CHECK_EQ(gogo_run_thread(vm), GOGO_EINVAL);
+    gogo_free(vm);
+    h = thost; h.code_free = t_free;           /* one of a pair */
+    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    gogo_config cfg = { 0 };
+    cfg.fs_root = "/tmp";
+    CHECK(gogo_new(&thost, &t, &cfg) == NULL);
+    CHECK(gogo_new(NULL, NULL, NULL) == NULL);
+    /* Out of memory at every step of gogo_new and gogo_load. */
+    Img im = image("echo");
+    for (long k = 0; k < 40; k++) {
+        t.fail_after = k;
+        gogo_vm *v = gogo_new(&thost, &t, NULL);
+        if (v) {
+            int r = gogo_load(v, im.w, im.len, GOGO_LOAD_COPY);
+            CHECK(r == GOGO_OK || r == GOGO_ENOMEM);
+            gogo_free(v);
+        }
+        t.fail_after = -1;
+        CHECK_EQ(__atomic_load_n(&t.bytes, __ATOMIC_ACQUIRE), 0);
+    }
+    free(im.w);
+    tctx_done(&t);
+}
+
+/* The default host on its own: a VM that owns its POSIX context. */
+TEST(embed_posix_host) {
+    gogo_vm *vm = gogo_new(gogo_host_posix(), NULL, NULL);
+    CHECK(vm != NULL);
+    Img im = image("sleeper");
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    free(im.w);
+    CHECK_EQ(gogo_run(vm), GOGO_OK);   /* prints a and b on stdout */
+    gogo_free(vm);
+    const gogo_host *h = gogo_host_posix();
+    CHECK(h->unix_time_ms(NULL) > 1700000000000LL);
+    CHECK_EQ(h->set_unix_time_ms(NULL, 1800000000000LL), 0);
+    uint8_t b[300];
+    memset(b, 0, sizeof b);
+    CHECK_EQ(h->random_bytes(NULL, b, sizeof b), 0);
+    int nz = 0;
+    for (size_t i = 0; i < sizeof b; i++) nz += b[i] != 0;
+    CHECK(nz > 200);
+    /* A latched wake: the next wait returns at once. */
+    void *c = gogo_posix_ctx_new();
+    uint64_t t0 = h->now_ms(c);
+    h->wake(c);
+    h->wait(c, 5000);
+    h->wait(c, 20);   /* the latch was consumed: this one times out */
+    uint64_t dt = h->now_ms(c) - t0;
+    CHECK(dt >= 15 && dt < 2000);
+    gogo_posix_ctx_free(c);
+}

@@ -49,11 +49,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-fs-host test-console check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
+test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-fs-host test-console test-embed check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
 
 vm: $(BUILD)/gogovm
 
@@ -184,6 +184,42 @@ test-fs-host: $(BUILD)/test_fs_host
 $(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS) $(wildcard runtime/vfs/*.h) $(PLAT_HDRS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(VFS_INC) -o $@ platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS)
+
+# Embed mode (runtime/embed, runtime/include/gogo.h): the API, the post
+# inbox and the POSIX host over the VM core alone (no board), against images
+# compiled from runtime/embed/test/testdata. test-embed-tsan runs the same
+# tests under ThreadSanitizer; test-embed-leaks checks that no memory leaks
+# (LeakSanitizer on Linux, leaks(1) on macOS, where ASan has no leak check).
+EMBED_SRCS = $(wildcard runtime/embed/*.c)
+EMBED_TEST_SRCS = runtime/vm/test/test_main.c $(wildcard runtime/embed/test/*.c)
+EMBED_PROGS = $(notdir $(wildcard runtime/embed/test/testdata/*))
+EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vm -Iruntime/vm/test
+
+$(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(wildcard runtime/embed/*.h) runtime/include/gogo.h $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS)
+
+embed-images:
+	@mkdir -p $(BUILD)/embed
+	go build -o $(BUILD)/gogo ./cmd/gogo
+	for p in $(EMBED_PROGS); do $(BUILD)/gogo build runtime/embed/test/testdata/$$p -o $(BUILD)/embed/$$p.gogo || exit 1; done
+
+test-embed: $(BUILD)/test_embed embed-images
+	GOGO_EMBED_IMAGES=$(BUILD)/embed $(BUILD)/test_embed
+
+test-embed-tsan:
+	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread" build/tsan/test_embed embed-images
+	TSAN_OPTIONS="halt_on_error=1" GOGO_EMBED_IMAGES=build/tsan/embed build/tsan/test_embed
+
+ifeq ($(shell uname -s),Darwin)
+test-embed-leaks: $(BUILD)/test_embed embed-images
+	GOGO_EMBED_IMAGES=$(BUILD)/embed GOGO_EMBED_RACE_N=2000 leaks --atExit -- $(BUILD)/test_embed > $(BUILD)/embed/leaks.out 2>&1 || { cat $(BUILD)/embed/leaks.out; exit 1; }
+	grep -E "passed|leaks for" $(BUILD)/embed/leaks.out
+else
+test-embed-leaks:
+	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/test_embed embed-images
+	ASAN_OPTIONS=detect_leaks=1 GOGO_EMBED_IMAGES=build/asan/embed GOGO_EMBED_RACE_N=2000 build/asan/test_embed
+endif
 
 # Console text grid + font lookup (runtime/console), host build.
 CONSOLE_SRCS = runtime/console/console.c runtime/console/font.c
