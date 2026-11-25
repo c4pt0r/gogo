@@ -195,8 +195,10 @@ $(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_ma
 EMBED_SRCS = $(wildcard runtime/embed/*.c)
 EMBED_TEST_SRCS = runtime/vm/test/test_main.c $(wildcard runtime/embed/test/*.c)
 EMBED_PROGS = $(notdir $(wildcard runtime/embed/test/testdata/*))
-# Examples run under a test host, their output compared with embed.out.
-EMBED_EXAMPLES = hostecho
+# Examples run under a test host, their output compared with embed.out
+# (hostecho) or with their expected.out (the rest, by test_multi.c: 8 VMs
+# on 4 threads; hotload's modules go into $(BUILD)/embed/hotload-flash).
+EMBED_EXAMPLES = hostecho many_idle httpparse hotload
 EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vfs -Iruntime/vm -Iruntime/vm/test
 
 $(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS) $(wildcard runtime/embed/*.h) runtime/include/gogo.h $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vm/test/*.h)
@@ -208,6 +210,8 @@ embed-images:
 	go build -o $(BUILD)/gogo ./cmd/gogo
 	for p in $(EMBED_PROGS); do $(BUILD)/gogo build runtime/embed/test/testdata/$$p -o $(BUILD)/embed/$$p.gogo || exit 1; done
 	for p in $(EMBED_EXAMPLES); do $(BUILD)/gogo build examples/$$p -o $(BUILD)/embed/$$p.gogo || exit 1; done
+	@mkdir -p $(BUILD)/embed/hotload-flash
+	for m in worker_v1 worker_v2; do $(BUILD)/gogo build examples/hotload/mods/$$m -o $(BUILD)/embed/hotload-flash/$$m.gmod || exit 1; done
 
 test-embed: $(BUILD)/test_embed embed-images
 	GOGO_EMBED_IMAGES=$(BUILD)/embed $(BUILD)/test_embed
