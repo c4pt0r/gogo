@@ -115,11 +115,15 @@ own were also considered and rejected in favour of Go syntax.
 5. **Platform layers** (`platform/`): `unix` (the host VM `gogovm`, with
    simulated peripherals) and `esp32s3` (one ESP-IDF firmware for both
    boards). RP2040 is planned.
+6. **The embed layer** (`runtime/embed/`, public header
+   `runtime/include/gogo.h`): the `gogo_*` API that host programs link
+   as `libgogo.a` to run VMs inside their own process (§5.11).
 
 **Repository layout.** `runtime/` is the C runtime shared by all boards:
 `vm/` (interpreter and actors), `net/` (the network stack; `net/tls/` is
-the TLS client port on top of it), `vfs/`, `stream/`, `input/` and
-`console/` (the screen console and fonts). `platform/` holds only
+the TLS client port on top of it), `vfs/`, `stream/`, `input/`,
+`console/` (the screen console and fonts), `embed/` (the embedding API's
+implementation) and `include/` (`gogo.h`, the one public header). `platform/` holds only
 board-specific code (`unix/`, `esp32s3/`). `compiler/` and `cmd/gogo/`
 are the Go toolchain. `lib/` is the library source and its own Go module
 `gogo` (`lib/go.mod`), one directory per package (`gogo/X` is `lib/X/`).
@@ -1436,6 +1440,92 @@ stderr), otherwise the local file.
 - Size: `make vmsize` measures the VM core for the ESP32-S3 (-Os); the
   history is in `docs/vmsize-history.csv`.
 
+### 5.11 Runtime architecture: instances, host and board tables
+
+Since embed mode the runtime is a library of instances: every piece of
+run-time state belongs to one `Vm`, and the VM reaches the outside world
+only through two tables of function pointers that the caller hands it.
+
+- **Per-instance state.** `struct Vm` (`runtime/vm/actor.h`) holds the
+  actor table, run queue, timers, names, the `Bytes` handle table, the
+  emergency reserve, the wall-clock offset, the fallback PRNG state, the
+  module table, the allocator's free lists (`VaHeap`), the port table and
+  the event ring with its indices. Subsystems that only some builds link
+  hang off it as pointers to state the caller supplies: `vm->vfs`
+  (`VfsState`: mounts and open files), `vm->input` (`InputState`: kbd,
+  power, IMU, IR, audio), `vm->net` (`NetState`: the whole MCU IP stack,
+  with the TLS connection inside it). `runtime/` has no mutable globals
+  and no weak symbols; `tools/globals.sh` (run by `make globals` and on
+  `libgogo.a`) fails the build on any `.bss`, `.data` or common symbol
+  not on its allow-list. Board code under `platform/` may keep
+  singletons (the ESP firmware's one `Vm`, its `NetState`, the GPIO pin
+  slots). Field order matters on the ESP32-S3: the hook pointers and hot
+  scalars come first, within the short-load range, and the large arrays
+  (`ports[]`, the event ring) last.
+- **The host table** (`gogo_host`, public in `gogo.h`): what every host
+  gives: output, memory chunks, the monotonic clock, wall clock, random,
+  `wait`/`wake` (a latched wakeup: a wake before or during a wait ends
+  it), config lookup, module code memory. Hooks a host may omit are
+  `NULL`; the wrappers in `runtime/vm/host.c` (`vm_now`, `vm_out`,
+  `vm_alloc_chunk`, ...) are the only callers and apply the defaults.
+  The ESP firmware's table is `esp_host` (`platform_esp.c`), the unix
+  VM's is in `platform/unix/`, and `gogo_host_posix()` is the one that
+  `libgogo` ships.
+- **The board table** (`VmBoard`, internal, `runtime/vm/host.h`): board-only
+  hardware: the port drivers, the input chips (`InputHw`), the network
+  interface (`NetIf`), the TLS port's hooks (`TlsHw`: allocator, clock,
+  trust anchors, random) and the capability bits the build provides. A
+  `Vm` gets `board caps & granted caps`; an embedded VM has no board
+  hardware, only the capabilities its host grants.
+- **Time.** `vm->t0` is the host clock when the VM starts, and `vm_now`
+  counts from it, so every VM starts near 0 whatever the host clock reads
+  (the ESP's `esp_timer` has been running since boot). Code that gets a
+  host timestamp (an IR frame's start, the GPIO debounce) converts with
+  `t0`.
+- **Interrupts and other threads.** Every producer names its instance.
+  The event ring stays single-producer, single-consumer and ISR-safe; the
+  ESP GPIO ISR finds its `Vm *` in the pin's slot and pushes with
+  `evq_push(vm, ...)`. The Wi-Fi task hands frames and link changes to
+  the stack it feeds, `net_rx_offer(NetState *, ...)` and
+  `net_link_event(NetState *, ...)` (a single-slot handoff, not the
+  ring). Both then wake that VM through its host's `wake`.
+- **Start-up order.** `vm_init` (tables, caps, limits), `vm_boot` (the
+  image becomes module 0, caps checked), then the board attaches its
+  subsystems to the instance (`net_install`, `vfs_init`,
+  `input_install`), then `vm_run`. Wi-Fi frames or link events that
+  arrive before `net_install` are dropped; the first link-up and DHCP
+  after boot work unchanged (checked on the StickS3 in E12).
+- **Run loop.** `vm_run` is a loop over `vm_step` (scheduler passes until
+  runnable, idle or done) and `vm_next_deadline`, waiting in `host->wait`
+  when idle. A host that drives the VM itself (a game loop, an event loop)
+  calls the same pair through `gogo_step` / `gogo_next_deadline`;
+  `gogo_step` returns idle only after a final check that the event ring
+  and the post inbox are empty, so a post that races the check is never
+  slept through.
+- **The embed layer** (`runtime/embed/`): `gogo_new` / `gogo_load` /
+  `gogo_start` / `gogo_step` / `gogo_run` / `gogo_free` around a `Vm`;
+  `gogo_post` (any thread, lock-free multi-producer inbox, delivered as
+  `port.Post` to a registered actor) with `gogo_retain` /
+  `gogo_close_posts` for posting threads that outlive the owner; host
+  ports (`gogo_register_port`, `gogo_port_emit`, `gogo_port_post`)
+  opened from Go as `port.Host`; a sandboxed `/flash` on a host directory
+  (`fs_dir.c`, `gogo_config.fs_root`, per-instance `fs_quota`); and the
+  POSIX host (`host_posix.c`, `gogo_run_thread`). Every `gogo_*` call
+  other than the posting ones runs on the thread that owns the VM.
+  Several VMs in one process share nothing.
+- **`libgogo`.** `make lib` builds `build/libgogo.a`: the VM core, vfs,
+  stream and the embed layer, strict C99 with `-DGOGO_EMBED`, no board,
+  input, net or TLS code. The objects are prelinked into one relocatable
+  object whose only globals are the `gogo_*` functions of `gogo.h`
+  (`tools/libsyms.sh` checks it); `libgogo-debug.a` is the same objects
+  unprelinked. The book's chapter 18 (Embedding gogo) is the user guide;
+  `examples/embed-c` is the smallest host.
+- **Cost on the boards** (E12, measured against the pre-embed tree): VM
+  core +644 B (`tools/vmsize.sh`), firmware +1.9 to +2.9 KB, static
+  internal RAM +256 to +320 B, of which 196 B is the `Vm *` in each of
+  the 49 GPIO pin slots; console output and the board smoke programs are
+  unchanged.
+
 ## 6. Status and roadmap
 
 **Done:** actors and the VM (links, monitors, timers, `Call`, names,
@@ -1450,7 +1540,8 @@ streaming uploads).
 **Next:**
 1. **Embed mode** (in progress): embedding the VM in host programs the
    way Lua is embedded (desktop and server programs, phone apps, test
-   tools).
+   tools). The C library (`libgogo`, §5.11) is done; bindings for Rust,
+   Go and the phone platforms are next.
 2. **Language completeness**: the features listed as "not supported yet"
    in §5.2.
 3. **Bluetooth (BLE)**: a connection to a phone app, and Wi-Fi setup from

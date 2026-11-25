@@ -328,6 +328,48 @@ the M5StickS3 and the Cardputer ADV. The design is in
   ports just refuse to open. Pins reserved for a switched-off feature
   stay reserved.
 
+## Embedding (`libgogo`)
+
+- **Posts racing a close are lost quietly.** A `gogo_post` concurrent
+  with `gogo_close_posts` (or with the program finishing) may return 0 and
+  still be discarded; it shows only in `gogo_stats.posts_dropped`. A
+  thread that may post while or after the owner calls `gogo_free` must
+  hold its own reference (`gogo_retain`); without one the handle can be
+  freed under it. Queued posts (up to `GOGO_POST_MAX`, 256) are host
+  memory outside `mem_limit` until delivered.
+- **Host port handles have a 12-bit generation.** A `gogo_port` is a slot
+  index plus a generation bumped at each close of that slot, so after 4096
+  more closes of the same slot a stale handle (or a `gogo_port_post` still
+  queued for it) names whatever port then holds the slot, as with port
+  PIDs.
+- **`code.Load` refused reads as `NoMemory`.** With
+  `gogo_config.allow_code_load = 0`, `code.Load` returns `NoMemory`, not
+  a distinct "not allowed" error.
+- **Embedded VMs sharing a host directory.** VMs that run at the same
+  time must not have nested `fs_root` directories (an outer program could
+  move a directory out of an inner root while the inner VM walks it), and
+  the directory must not be writable by other users (they could hard-link
+  their files in, which the VM may then read). See `gogo_config.fs_root`.
+- **An embedded VM's `fs_quota` counts regular-file bytes only.** Empty
+  files and directories cost nothing, so a program under a quota can
+  still create any number of them (and use the host file system's inodes
+  and directory blocks). Like `--fs-quota`, it sees only the VM's own
+  changes. *Workaround:* a host that runs untrusted programs also limits
+  the directory with the host's own means (a disk quota, a size-limited
+  file system).
+- **Internal symbols in the debug archive.** `libgogo.a` exports only
+  the `gogo_*` functions, but `libgogo-debug.a` (the same objects, not
+  prelinked, for debuggers on macOS) exports every internal name
+  (`msg_free`, `heap_alloc`, `timer_*`, `out_*`, ...), which can clash
+  with a host's own symbols. *Workaround:* link `libgogo.a` in products;
+  use the debug archive only to debug.
+- **Not yet run on Linux.** The embed tests (`make test-embed`, the
+  multi-VM and TSan tests), `make test-fs-host` (the sandbox's Linux
+  error paths: `ENOTDIR` for a symlinked directory, `ENXIO` for a FIFO),
+  the ELF prelink step (`ld -r` + `objcopy --keep-global-symbol`) and
+  `tools/libsyms.sh` / `tools/globals.sh --objects` on ELF have only run
+  on macOS; they are checked by reading only.
+
 ## ESP32-S3 boards
 
 - **The USB serial console sometimes goes silent** a few seconds after a
@@ -341,6 +383,11 @@ the M5StickS3 and the Cardputer ADV. The design is in
 - **The screen console is slow.** With the screen on, 1000 `println`s
   take about 2.2 times as long as without. *Workaround:* print less, or
   build with the console off (`GOGO_CONSOLE=0`).
+- **An IMU open soon after boot sometimes fails.** `port.Open("imu",
+  ...)` with `Gestures: 0`, within about a second of boot, returned false
+  in 2 of 8 tries on the StickS3 (once on each firmware, before and after
+  embed mode), with no log line; the cause is not known. *Workaround:*
+  retry the open.
 - **GPIO debouncing can drop a press.** On a single-edge pin, an edge in
   the same direction within `DebounceMs` after an unreported opposite
   change is dropped.
@@ -380,18 +427,6 @@ the M5StickS3 and the Cardputer ADV. The design is in
   embedded VM's `fs_root`), a symlink inside the directory is `BadPath`
   to open or walk through and `ReadDir` lists it as a file; FIFOs and
   devices are `BadPath` too.
-- **Embedded VMs sharing a host directory.** VMs that run at the same
-  time must not have nested `fs_root` directories (an outer program could
-  move a directory out of an inner root while the inner VM walks it), and
-  the directory must not be writable by other users (they could hard-link
-  their files in, which the VM may then read). See `gogo_config.fs_root`.
-- **An embedded VM's `fs_quota` counts regular-file bytes only.** Empty
-  files and directories cost nothing, so a program under a quota can
-  still create any number of them (and use the host file system's inodes
-  and directory blocks). Like `--fs-quota`, it sees only the VM's own
-  changes. *Workaround:* a host that runs untrusted programs also limits
-  the directory with the host's own means (a disk quota, a size-limited
-  file system).
 - **`tools/vmsize.sh --vfs`** reports a smaller fixed state than the
   boards have (it builds with the default slot size); the compile-time
   assertions in the board's file system glue are the real check.
