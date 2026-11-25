@@ -5,7 +5,8 @@
 #   tools/vmsize.sh            print the per-file table and the total; exit 1 above the limit
 #   tools/vmsize.sh --record   also append "date,commit,bytes" to docs/vmsize-history.csv
 #   tools/vmsize.sh --net      the net stack instead (runtime/net/*.c, not VM core): code
-#                              size and its fixed state (.bss + .data); exit 1 if
+#                              size and its fixed state (sizeof(NetState), the
+#                              board's storage, plus any .bss + .data); exit 1 if
 #                              the fixed state exceeds 4096 bytes
 #   tools/vmsize.sh --vfs      the vfs core instead (runtime/vfs/*.c): code size and fixed
 #                              state (.bss + .data); exit 1 above 3072 bytes
@@ -34,9 +35,17 @@ if [ "$1" = "--net" ]; then
         lines="$lines$(printf '%7d  %s' "$n" "$f")
 "
     done
+    # The stack's state is a NetState the board supplies: measured as the
+    # .bss of one object of that type, built for the target.
+    printf '#include "net_int.h"\nNetState net_size_probe;\n' > "$OUT/probe.c"
+    "$GCC" -std=c99 -Os -mlongcalls -fno-common -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u \
+        -DGOGO_ARENA_BYTES=163840u -Iruntime/vm -Iruntime/net -Iruntime/vm/test/stub -c "$OUT/probe.c" -o "$OUT/probe.o"
+    state=$("$SIZE" -A "$OUT/probe.o" | awk '/^\.bss/ {s += $2} END {print s + 0}')
     printf '%s' "$lines" | sort -rn
     printf '%7d  net code total (text+rodata+literal; not VM core)\n' "$total"
-    printf '%7d  net fixed state (bss+data, limit 4096)\n' "$fixed"
+    printf '%7d  net fixed state: sizeof(NetState) %d (board storage) + bss/data %d (limit 4096)\n' \
+        "$((state + fixed))" "$state" "$fixed"
+    fixed=$((state + fixed))
     if [ "$fixed" -gt 4096 ]; then echo "netsize: fixed state exceeds 4096 bytes"; exit 1; fi
     exit 0
 fi

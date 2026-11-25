@@ -345,7 +345,10 @@ a console that mirrors stdout and stderr, not a port.
   `Resume`).
 - **Single receive slot.** The platform (the Wi-Fi task on CPU0) hands
   one frame to the stack's only receive slot with `net_rx_offer` (copy or
-  drop; the driver buffer is released at once). A frame arriving while
+  drop; the driver buffer is released at once). Each VM has its own stack:
+  all of its state is a `NetState` the board supplies (static on the ESP)
+  and attaches with `net_install`; `net_rx_offer` and `net_link_event`
+  name the stack they feed. A frame arriving while
   the slot is full is dropped; TCP's one-segment window makes that rare.
   The stack allocates no buffers of its own.
 - **TCP.** Windows of one segment each way; only in-order segments are
@@ -867,7 +870,14 @@ explains it from the user's side.
   4 KB out of record buffers plus the connection state); the measured
   peak is about 34-35 KB, the difference being handshake temporaries,
   freed when the handshake ends and not charged. One TLS connection
-  exists at a time (`GOGO_TLS_MAX` 1).
+  exists at a time per VM (`GOGO_TLS_MAX` 1; the connection lives in the
+  VM's net stack state).
+- **One `TlsHw` per process.** mbedTLS's allocator, time and RNG hooks
+  are process-global and take no context, so they are bound to the first
+  board TLS table (`TlsHw`) that sets mbedTLS up. Every VM in one process
+  must use that same table: a VM whose board brings another one has its
+  `tls` opens refused (`ok=false`, logged once). This is the runtime's
+  one piece of process-global state.
 - **`gogo/http`.** `https://` uses the `tls` port. One-shot `Get`, `Post`
   and `Do` send HTTP/1.1 with `Connection: close` over https (HTTP/1.0
   over http), because some servers (Cloudflare among them) answer an

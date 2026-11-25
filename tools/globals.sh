@@ -9,7 +9,9 @@
 # listed. Function-local statics are named func.var (clang, Mach-O); gcc ELF
 # only emits var.N or var$N, shown as ?.var, which matches any func.var of that file.
 # Fails on a symbol (in any configuration) missing from the allow-list, and on
-# allow-list lines that match nothing (so each embed task deletes its own lines).
+# allow-list lines that match nothing (so each embed task deletes its own lines),
+# except lines whose comment starts with "permanent:" (state that must stay
+# process-global, with the reason after the tag): those are never reported stale.
 # Also fails on any weak symbol, defined or undefined (nm W/V/w/v on ELF,
 # "weak" on Mach-O): a hook a host may omit is a NULL field in gogo_host or
 # VmBoard, never a weak default. Weak symbols have no allow-list; --print
@@ -104,9 +106,11 @@ sort -u "$weak" -o "$weak"
 if [ "$PRINT" = 1 ]; then cat "$found" "$weak"; exit 0; fi
 
 sed -e 's/#.*//' "$ALLOW" | awk -v tls="$TLS_FILES" 'NF >= 2 && (tls != "" || $1 !~ /^runtime\/net\/tls\//) { print $1, $2 }' | sort -u > "$OUT/allow"
+awk '/#[ \t]*permanent:/ { sub(/#.*/, ""); if (NF >= 2) print $1, $2 }' "$ALLOW" | sort -u > "$OUT/perm"
 # Match: exact, or found "?.var" against any allowed "func.var" of the same file.
 awk -v new="$OUT/new" -v stale="$OUT/stale" '
-    FNR == NR { allow[$1 " " $2] = 1; split($2, p, "."); next }
+    FILENAME == permf { keep[$1 " " $2] = 1; next }
+    FILENAME == allowf { allow[$1 " " $2] = 1; next }
     { ok = ($1 " " $2) in allow
       if (ok) used[$1 " " $2] = 1
       else if ($2 ~ /^\?\./) {
@@ -114,8 +118,8 @@ awk -v new="$OUT/new" -v stale="$OUT/stale" '
           for (a in allow) { split(a, q, " "); if (q[1] == $1 && q[2] ~ ("(^|\\.)" v "$")) { ok = 1; used[a] = 1 } }
       }
       if (!ok) print $1, $2 > new }
-    END { for (a in allow) if (!(a in used)) print a > stale }
-' "$OUT/allow" "$found"
+    END { for (a in allow) if (!(a in used) && !(a in keep)) print a > stale }
+' permf="$OUT/perm" allowf="$OUT/allow" "$OUT/perm" "$OUT/allow" "$found"
 touch "$OUT/new" "$OUT/stale"
 bad=0
 if [ -s "$weak" ]; then

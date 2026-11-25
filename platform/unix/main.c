@@ -34,7 +34,7 @@
 #include "input_unix.h"
 #include "input_int.h"
 #include "net_unix.h"
-#include "net.h"
+#include "net_int.h"
 #include "vfs_int.h"
 #include "fs_host.h"
 
@@ -52,9 +52,10 @@
 #endif
 
 
-/* The board's one Vm's vfs and input state (runtime/ keeps none). */
+/* The board's one Vm's vfs, input and net state (runtime/ keeps none). */
 static VfsState vfs_state;
 static InputState input_state;
+static NetState net_state;
 
 static int load_error(const char *path, const char *what) {
     fprintf(stderr, "gogovm: %s: %s\n", path, what);
@@ -95,7 +96,7 @@ static size_t tls_vm_peak;     /* the VM allocator's peak, taken when vm_run ret
 
 static void tls_report(void) {
     if (!getenv("GOGO_TLS_STATS")) return;
-    const TlsStats *s = tls_stats();
+    const TlsStats *s = tls_stats(&net_state);
     size_t now, peak;
     platform_unix_tls_heap(&now, &peak);
     fprintf(stderr, "tls-stats opens=%u handshakes=%u steps=%u restarts=%u max_step_us=%u max_step_state=%d "
@@ -191,7 +192,7 @@ int main(int argc, char **argv) {
     }
     if (net_fd >= 0) {
         signal(SIGPIPE, SIG_IGN);        /* a closed link is EOF / a failed send, not death */
-        platform_unix_net_open(net_fd, sim != 0);
+        platform_unix_net_open(net_fd, sim != 0, &net_state);
     }
     if (fs_root) {
         /* /flash -> DIR/flash (created), /sd -> DIR/sd (only if it exists). */
@@ -251,7 +252,7 @@ int main(int argc, char **argv) {
         return 1;                    /* VM_BOOT_REFUSED: the line is written */
     }
     /* After vm_init: it starts the Vm's source list and fs hook empty. */
-    if (net_fd >= 0) net_attach(&vm);
+    if (net_fd >= 0) net_install(&vm, &net_state);
     vfs_init(&vm, &vfs_state);
     input_install(&vm, &input_state);
     rc = vm_run(&vm);

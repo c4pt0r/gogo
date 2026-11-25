@@ -442,8 +442,8 @@ in `cmd/gogo/flash.go`.
   the driver's internal interface, pinned to ESP-IDF v6.1.1:
   `esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_cb)` (the callback runs in the
   Wi-Fi task on CPU0, offers the frame to the stack's single RX slot with
-  `net_rx_offer`, which copies or drops it, and frees the driver buffer at
-  once), `esp_wifi_internal_tx` (copies; called from the VM task) and
+  `net_rx_offer(&esp_net_state, ...)`, which copies or drops it, and frees
+  the driver buffer at once), `esp_wifi_internal_tx` (copies; called from the VM task) and
   `esp_wifi_get_mac`. `esp_netif` and lwIP are never initialised and none of
   their code is linked. The station connects with `wifi.ssid` /
   `wifi.password` from the config store (WPA2 at least when a password is
@@ -499,7 +499,7 @@ RX would mean "unlimited" in IDF, so 1 was not tried below 2.
 | heap: `esp_wifi_start` | 1.8 K |
 | heap: associated (WPA2), steady state | about 2.4 K |
 | heap: dynamic RX/TX buffers under traffic (at most 2 + 2 frames) | up to about 6.5 K, transient |
-| gogo net stack fixed state (`net_s`) | 3640 |
+| gogo net stack fixed state (`esp_net_state`, a `NetState` in main.c, the tls port's state included) | 3704 |
 | config handler (scratch, line buffer; task stack 4 K) | about 2.1 K + 4 K |
 | free internal heap at the boot line (before the VM; was 275 K without Wi-Fi) | 197 K |
 | free internal heap running `examples/netdemo` (`gogo config stats`) | about 173 K (arena 22 K in use) |

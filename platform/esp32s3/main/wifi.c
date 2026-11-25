@@ -5,8 +5,8 @@
  * stack (runtime/net/) through the driver's internal interface:
  *  - receive: esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_cb); rx_cb runs in
  *    the Wi-Fi task (CPU0), offers the frame to the stack's single RX slot
- *    (net_rx_offer copies it or drops it) and frees the driver buffer at
- *    once (esp_wifi_internal_free_rx_buffer);
+ *    (net_rx_offer on esp_net_state copies it or drops it) and frees the
+ *    driver buffer at once (esp_wifi_internal_free_rx_buffer);
  *  - send: esp_wifi_internal_tx(WIFI_IF_STA, ...), which copies the frame,
  *    from the VM task.
  * esp_netif and lwIP are never initialised (esp_wifi links against them,
@@ -57,7 +57,7 @@ static size_t heap_free(void) { return heap_caps_get_free_size(MALLOC_CAP_INTERN
 /* ---- receive ---- */
 
 static esp_err_t rx_cb(void *buffer, uint16_t len, void *eb) {
-    net_rx_offer((const uint8_t *)buffer, len);
+    net_rx_offer(&esp_net_state, (const uint8_t *)buffer, len);
     esp_wifi_internal_free_rx_buffer(eb);
     return ESP_OK;
 }
@@ -152,7 +152,7 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data) {
                          (unsigned)c->channel, rssi);
         (void)esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_cb);
         link_up = true;
-        net_link_event(true);
+        net_link_event(&esp_net_state, true);
         platform_esp_log("gogo: wifi heap: after start %u, connected %u + VM arena %u (internal free)",
                          (unsigned)heap_started, (unsigned)heap_free(), (unsigned)platform_esp_arena_used());
         break;
@@ -163,13 +163,13 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data) {
         link_up = false;
         if (changed) {
             changed = false;
-            if (was_up) net_link_event(false);
+            if (was_up) net_link_event(&esp_net_state, false);
             platform_esp_say("gogo: wifi settings changed, reconnecting");
             retry_in(300);   /* even if the reconfigure's own retry already fired */
             break;
         }
         if (was_up) {
-            net_link_event(false);
+            net_link_event(&esp_net_state, false);
             platform_esp_say("gogo: wifi lost (%s, reason %u), reconnecting", reason_text(d->reason),
                              (unsigned)d->reason);
         } else if (!fail_said) {

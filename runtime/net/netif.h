@@ -3,17 +3,22 @@
  * stack. Raw Ethernet frames, no FCS.
  *
  * Receive is a single-slot handoff, not the gpio event ring: the platform's
- * receive path (the only producer) calls net_rx_offer, which copies the
- * frame into the stack's RX buffer if its ready flag is clear (else drops
- * and counts it), sets the flag with a release barrier and wakes the VM
- * (vm_wake); the scheduler (the only consumer) drains it through the
- * port layer's extra source (port_add_source). Link changes go through
- * net_link_event the same way (latest state wins). */
+ * receive path (the only producer per stack) calls net_rx_offer with the
+ * stack it feeds (the NetState the board gave net_install), which copies
+ * the frame into that stack's RX buffer if its ready flag is clear (else
+ * drops and counts it), sets the flag with a release barrier and wakes that
+ * stack's VM (vm_wake); the scheduler (the only consumer) drains it through
+ * the port layer's extra source (port_add_source). Link changes go through
+ * net_link_event the same way (latest state wins). Before net_install (or
+ * after net_uninstall) both drop what they are given. */
 #ifndef GOGO_NETIF_H
 #define GOGO_NETIF_H
 
 #include <stdint.h>
 #include <stdbool.h>
+
+/* One stack instance (net_int.h); the board owns its storage. */
+typedef struct NetState NetState;
 
 /* ---- provided by the board (every hook gets ctx) ---- */
 typedef struct NetIf {
@@ -35,10 +40,11 @@ typedef struct NetIf {
 
 /* ---- provided by the net stack ---- */
 
-/* A received frame (any context the platform receives in; copies it). */
-void net_rx_offer(const uint8_t *frame, uint32_t len);
+/* A received frame for stack ns (any context the platform receives in;
+ * copies it). */
+void net_rx_offer(NetState *ns, const uint8_t *frame, uint32_t len);
 
-/* The link went up or down. */
-void net_link_event(bool up);
+/* Stack ns's link went up or down. */
+void net_link_event(NetState *ns, bool up);
 
 #endif

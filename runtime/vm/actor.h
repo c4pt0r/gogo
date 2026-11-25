@@ -96,6 +96,7 @@ typedef struct Vm {
     uint32_t (*fs_builtin)(struct Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs);
     struct VfsState *vfs;     /* vfs mounts and open files (vfs_init); NULL = none */
     struct InputState *input; /* input port state (input_install); NULL = none */
+    struct NetState *net;     /* the net stack (net_install, runtime/net/); NULL = none */
     VaHeap va;                /* allocator (alloc.h): scalars, then its free lists */
     Port ports[GOGO_MAX_PORTS];   /* port table (port.h) */
     PortEvent evq_slots[GOGO_EVQ_CAP];   /* event ring storage (evq.h), last: large */

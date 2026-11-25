@@ -15,7 +15,7 @@
 #include "psa/crypto.h"
 
 #if (GOGO_TLS_MAX) != 1u
-#error "GOGO_TLS_MAX: only 1 is implemented"
+#error "GOGO_TLS_MAX: only 1 (per net stack) is implemented"
 #endif
 
 #define HOST_MAX 253u
@@ -39,12 +39,13 @@ enum {
     TS_EOF = 256        /* Closed{Normal} posted (the peer finished sending) */
 };
 
-typedef struct TlsConn {
+struct TlsConn {
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
     void *verify;               /* the board's (TlsHw.verify_setup) */
     const TlsHw *hw;            /* the board's hooks (its Vm's board->tls) */
     const Vm *vm;               /* the Vm whose port this is (its clocks) */
+    NetState *ns;               /* its stack (vm->net): TlsState, counters */
     TcpPcb *c;
     /* Output in flight (bio_send): mbedTLS's own buffer from tx_base, tx_len
      * bytes, of which tx_acked are acknowledged but not yet reported. */
@@ -56,7 +57,8 @@ typedef struct TlsConn {
     uint16_t flags;
     uint8_t verify_set;
     uint8_t rx[RX_CAP];
-} TlsConn;
+};
+typedef struct TlsConn TlsConn;
 
 #define TLS_CHARGE_BYTES (sizeof(TlsConn) + MBEDTLS_SSL_IN_CONTENT_LEN + MBEDTLS_SSL_OUT_CONTENT_LEN + \
                           2u * RECORD_SLACK)
@@ -65,13 +67,20 @@ typedef struct TlsConn {
 #define DATA_WORDS (3u + 2u + (DATA_MAX + 3u) / 4u)
 #define ROOM_64W ((uint8_t)((msg_footprint_words(DATA_WORDS) + TCP_EVENT_RESERVE + 63u) / 64u))
 
-static TlsConn *tc;
-static TlsStats st;
-/* The TlsHw mbedTLS's process-global hooks use (tls_init's; NULL until it
- * succeeds): they get no context. */
-static const TlsHw *glue;
+/* mbedTLS's platform hooks are process-global and get no context: the one
+ * piece of state the port keeps outside the Vm (tls.h: every Vm of a
+ * process shares one TlsHw).
+ *   hw:   the TlsHw the hooks use (tls_init's; NULL until it succeeds);
+ *   cur:  the connection inside an mbedTLS call (the time hooks read its
+ *         Vm's clocks), NULL when none;
+ *   said: a refused tls_init (another TlsHw) was logged. */
+static struct {
+    const TlsHw *hw;
+    const TlsConn *cur;
+    bool said;
+} glue;
 
-const TlsStats *tls_stats(void) { return &st; }
+const TlsStats *tls_stats(const NetState *ns) { return &ns->tls.st; }
 
 /* ---- mbedTLS platform glue ---- */
 
@@ -79,14 +88,15 @@ const TlsStats *tls_stats(void) { return &st; }
 static void *tls_calloc(size_t n, size_t size) {
     if (size && n > SIZE_MAX / size) return NULL;
     size_t total = n * size;
-    return glue->alloc(total != 0u ? total : 1u);
+    return glue.hw->alloc(total != 0u ? total : 1u);
 }
 
-static void tls_free(void *p) { glue->free(p); }
+static void tls_free(void *p) { glue.hw->free(p); }
 
 static mbedtls_time_t tls_time(mbedtls_time_t *t) {
-    /* mbedTLS asks only while verifying a peer: the open connection's Vm. */
-    mbedtls_time_t now = (mbedtls_time_t)(tc ? vm_unix_time_ms(tc->vm) / 1000 : 0);
+    /* mbedTLS asks only while verifying a peer: the Vm of the connection
+     * being driven. */
+    mbedtls_time_t now = (mbedtls_time_t)(glue.cur ? vm_unix_time_ms(glue.cur->vm) / 1000 : 0);
     if (t) *t = now;
     return now;
 }
@@ -94,7 +104,7 @@ static mbedtls_time_t tls_time(mbedtls_time_t *t) {
 
 #if GOGO_TLS_MBEDTLS_HOOKS
 #if defined(MBEDTLS_PLATFORM_MS_TIME_ALT)
-mbedtls_ms_time_t mbedtls_ms_time(void) { return (mbedtls_ms_time_t)(tc ? vm_now(tc->vm) : 0u); }
+mbedtls_ms_time_t mbedtls_ms_time(void) { return (mbedtls_ms_time_t)(glue.cur ? vm_now(glue.cur->vm) : 0u); }
 #endif
 
 /* PSA's randomness: the board's cryptographic source, TlsHw.random
@@ -106,25 +116,38 @@ psa_status_t mbedtls_psa_external_get_random(mbedtls_psa_external_random_context
                                              size_t size, size_t *len) {
     (void)ctx;
     *len = 0;
-    if (!glue || glue->random(out, size) != 0) return PSA_ERROR_INSUFFICIENT_ENTROPY;
+    if (!glue.hw || glue.hw->random(out, size) != 0) return PSA_ERROR_INSUFFICIENT_ENTROPY;
     *len = size;
     return PSA_SUCCESS;
 }
 #endif
 
 bool tls_init(const TlsHw *hw) {
-    if (glue) return true;
     if (!hw) return false;
-    glue = hw;                  /* before psa_crypto_init, which allocates and draws */
+    if (glue.hw) return glue.hw == hw;   /* one TlsHw per process */
+    glue.hw = hw;               /* before psa_crypto_init, which allocates and draws */
 #if GOGO_TLS_MBEDTLS_HOOKS
     mbedtls_platform_set_calloc_free(tls_calloc, tls_free);
     mbedtls_platform_set_time(tls_time);
 #endif
     if (psa_crypto_init() != PSA_SUCCESS) {
-        glue = NULL;
+        glue.hw = NULL;
         return false;
     }
     return true;
+}
+
+/* tls_init for an open on vm; a TlsHw other than the bound one is logged
+ * once per process. */
+static bool bind_hw(const Vm *vm, const TlsHw *hw) {
+    if (tls_init(hw)) return true;
+    if (glue.hw && glue.hw != hw && !glue.said) {
+        static const char msg[] = "gogo: tls: this board's TlsHw is not the one mbedTLS is bound to "
+                                  "(one per process): tls refused\n";
+        glue.said = true;
+        vm_write_err(vm, msg, sizeof msg - 1u);
+    }
+    return false;
 }
 
 /* ---- the bio: TCP underneath ---- */
@@ -166,9 +189,12 @@ static void conn_free(TlsConn *t) {
     mbedtls_ssl_free(&t->ssl);
     mbedtls_ssl_config_free(&t->conf);
     if (t->verify_set) t->hw->verify_free(t->verify);
-    if (tc == t) tc = NULL;
+    if (t->ns->tls.conn == t) {
+        t->ns->tls.conn = NULL;
+        t->ns->tls.st.live = 0;
+    }
+    if (glue.cur == t) glue.cur = NULL;
     t->hw->free(t);
-    st.live = 0;
 }
 
 /* ECDHE groups in our order of preference. X25519 first where the crypto
@@ -192,10 +218,12 @@ static const int suites[] = {
     MBEDTLS_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, MBEDTLS_TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, 0
 };
 
-static TlsConn *conn_new(const TlsHw *hw, const char *host) {
+static TlsConn *conn_new(const Vm *vm, NetState *ns, const TlsHw *hw, const char *host) {
     TlsConn *t = hw->alloc(sizeof *t);
     if (!t) return NULL;
     t->hw = hw;
+    t->vm = vm;
+    t->ns = ns;
     mbedtls_ssl_init(&t->ssl);
     mbedtls_ssl_config_init(&t->conf);
     if (mbedtls_ssl_config_defaults(&t->conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
@@ -233,8 +261,8 @@ static void fail(Vm *vm, TlsConn *t, int32_t reason) {
     t->flags |= TS_DEAD | TS_KICK;
 }
 
-static int32_t reason_of(int r) {
-    st.last_error = r;
+static int32_t reason_of(const TlsConn *t, int r) {
+    t->ns->tls.st.last_error = r;
     if (r == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) return CR_BADCERT;
     if (r == MBEDTLS_ERR_SSL_CONN_EOF) return CR_RESET;
     return CR_TLS;
@@ -246,39 +274,41 @@ static uint32_t slice_us(const TlsConn *t, uint64_t t0) {
     return t1 > t0 ? (uint32_t)(t1 - t0) : 0u;
 }
 static void io_slice(const TlsConn *t, uint64_t t0) {
+    TlsStats *st = &t->ns->tls.st;
     uint32_t us = slice_us(t, t0);
-    if (us > st.max_io_us) st.max_io_us = us;
+    if (us > st->max_io_us) st->max_io_us = us;
 }
 
 /* ---- the drain's work ---- */
 
 static void handshake(Vm *vm, TlsConn *t) {
+    TlsStats *st = &t->ns->tls.st;
     int32_t state = t->ssl.MBEDTLS_PRIVATE(state);
     uint64_t t0 = slice_start(t);
     if (!t->hs_t0) t->hs_t0 = t0 ? t0 : 1u;
     int r = mbedtls_ssl_handshake_step(&t->ssl);
     uint32_t us = slice_us(t, t0);
-    st.steps++;
-    if (us > st.max_step_us) {
-        st.max_step_us = us;
-        st.max_step_state = state;
+    st->steps++;
+    if (us > st->max_step_us) {
+        st->max_step_us = us;
+        st->max_step_state = state;
     }
     if (r == MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS) {
-        st.restarts++;
+        st->restarts++;
         t->flags |= TS_KICK;
         return;
     }
     if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return;   /* rx or an ACK kicks */
     if (r != 0) {
-        fail(vm, t, reason_of(r));
+        fail(vm, t, reason_of(t, r));
         return;
     }
     t->flags |= TS_KICK;
     if (!mbedtls_ssl_is_handshake_over(&t->ssl)) return;
     t->flags |= TS_HS_DONE;
-    st.handshakes++;
-    st.last_hs_us = slice_us(t, t->hs_t0);
-    tcp_until_clear(t->c);
+    st->handshakes++;
+    st->last_hs_us = slice_us(t, t->hs_t0);
+    tcp_until_clear(t->ns, t->c);
     tcp_post(vm, t->c, TYPE_NET_CONNECTED, -1);
 }
 
@@ -300,7 +330,7 @@ static void pump_write(Vm *vm, TlsConn *t) {
         io_slice(t, t0);
         if (r == MBEDTLS_ERR_SSL_WANT_WRITE || r == MBEDTLS_ERR_SSL_WANT_READ) return;
         if (r < 0) {
-            fail(vm, t, reason_of(r));
+            fail(vm, t, reason_of(t, r));
             return;
         }
         c->wr_off += (uint32_t)r;
@@ -322,7 +352,7 @@ static int pump_read(Vm *vm, TlsConn *t) {
         }
         if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return 0;
         if (r < 0) {
-            fail(vm, t, reason_of(r));
+            fail(vm, t, reason_of(t, r));
             return -1;
         }
         if (!avail) {
@@ -363,6 +393,7 @@ static int pump_read(Vm *vm, TlsConn *t) {
 
 static void drain_conn(Vm *vm, TlsConn *t) {
     TcpPcb *c = t->c;
+    glue.cur = t;
     t->flags &= (uint16_t)~(TS_KICK | TS_RETRY);
     if (!(t->flags & TS_DEAD) && c->state != TCP_SYN_SENT) {
         if (!(t->flags & TS_HS_DONE)) {
@@ -379,7 +410,7 @@ static void drain_conn(Vm *vm, TlsConn *t) {
                     t->flags |= TS_SHUT_DONE;
                     tcp_shutdown(vm, c);
                 } else if (r != MBEDTLS_ERR_SSL_WANT_WRITE && r != MBEDTLS_ERR_SSL_WANT_READ) {
-                    fail(vm, t, reason_of(r));
+                    fail(vm, t, reason_of(t, r));
                 }
             }
         }
@@ -393,12 +424,14 @@ static void drain_conn(Vm *vm, TlsConn *t) {
 
 /* ---- TcpUpper ---- */
 
-/* The layer's connection, if c is it (GOGO_TLS_MAX 1: the only one). */
-static TlsConn *conn_of(const TcpPcb *c) { return tc && tc->c == c ? tc : NULL; }
+/* Stack ns's connection, if c is it (GOGO_TLS_MAX 1: the only one). */
+static TlsConn *conn_of(const NetState *ns, const TcpPcb *c) {
+    TlsConn *t = ns->tls.conn;
+    return t && t->c == c ? t : NULL;
+}
 
 static bool u_rx(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n) {
-    (void)vm;
-    TlsConn *t = conn_of(c);
+    TlsConn *t = conn_of(vm->net, c);
     if (!t) return true;
     if (t->rx_off) {
         memmove(t->rx, t->rx + t->rx_off, (size_t)(t->rx_len - t->rx_off));
@@ -416,8 +449,9 @@ static bool u_rx(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n) {
  * connection that sent its own FIN may end right after this); refused (not
  * ACKed, the peer resends) while the owner has no room for it. */
 static bool u_fin(Vm *vm, TcpPcb *c) {
-    TlsConn *t = conn_of(c);
+    TlsConn *t = conn_of(vm->net, c);
     if (!t) return true;
+    glue.cur = t;
     t->flags |= TS_FIN | TS_KICK;
     if ((t->flags & (TS_HS_DONE | TS_DEAD)) == TS_HS_DONE && pump_read(vm, t) > 0) {
         t->flags &= (uint16_t)~TS_FIN;
@@ -429,21 +463,19 @@ static bool u_fin(Vm *vm, TcpPcb *c) {
 }
 
 static void u_connected(Vm *vm, TcpPcb *c) {
-    (void)vm;
-    TlsConn *t = conn_of(c);
+    TlsConn *t = conn_of(vm->net, c);
     if (t) t->flags |= TS_KICK;
 }
 
 static void u_acked(Vm *vm, TcpPcb *c, uint32_t n) {
-    (void)vm;
-    TlsConn *t = conn_of(c);
+    TlsConn *t = conn_of(vm->net, c);
     if (!t) return;
     t->tx_acked += n;
     t->flags |= TS_KICK;
 }
 
-static const uint8_t *u_tx(const TcpPcb *c, uint32_t *len) {
-    TlsConn *t = conn_of(c);
+static const uint8_t *u_tx(const NetState *ns, const TcpPcb *c, uint32_t *len) {
+    const TlsConn *t = conn_of(ns, c);
     if (!t) {
         *len = 0;
         return NULL;
@@ -452,13 +484,13 @@ static const uint8_t *u_tx(const TcpPcb *c, uint32_t *len) {
     return t->tx_base + t->tx_acked;
 }
 
-static void u_ended(TcpPcb *c) {
-    TlsConn *t = conn_of(c);
+static void u_ended(NetState *ns, TcpPcb *c) {
+    TlsConn *t = conn_of(ns, c);
     if (t) conn_free(t);
 }
 
-static bool u_closed(const TcpPcb *c) {
-    const TlsConn *t = conn_of(c);
+static bool u_closed(const NetState *ns, const TcpPcb *c) {
+    const TlsConn *t = conn_of(ns, c);
     return t && (t->flags & TS_CLOSED);
 }
 
@@ -466,21 +498,24 @@ static bool retry_due(const TlsConn *t) {
     return (t->flags & TS_RETRY) && (int32_t)((uint32_t)vm_now(t->vm) - t->retry_at) >= 0;
 }
 
-static bool u_pending(void) {
-    return tc && ((tc->flags & (TS_KICK | TS_DEAD)) || retry_due(tc));
+static bool u_pending(const NetState *ns) {
+    const TlsConn *t = ns->tls.conn;
+    return t && ((t->flags & (TS_KICK | TS_DEAD)) || retry_due(t));
 }
 
 static void u_drain(Vm *vm) {
-    if (tc) drain_conn(vm, tc);
+    TlsConn *t = vm->net->tls.conn;
+    if (t) drain_conn(vm, t);
 }
 
 /* Only the blocked-delivery retry is a deadline: work left for the next
  * drain (TS_KICK, TS_DEAD) is pending(), which the scheduler checks before
  * it sleeps (vm_run). */
-static bool u_next_deadline(uint64_t *deadline) {
-    if (!tc || !(tc->flags & TS_RETRY)) return false;
-    uint64_t now = vm_now(tc->vm);
-    int32_t left = (int32_t)(tc->retry_at - (uint32_t)now);
+static bool u_next_deadline(const NetState *ns, uint64_t *deadline) {
+    const TlsConn *t = ns->tls.conn;
+    if (!t || !(t->flags & TS_RETRY)) return false;
+    uint64_t now = vm_now(t->vm);
+    int32_t left = (int32_t)(t->retry_at - (uint32_t)now);
     *deadline = left > 0 ? now + (uint32_t)left : now;
     return true;
 }
@@ -493,6 +528,7 @@ static const TcpUpper upper = {
 
 /* DialTLS{IP, Port, TimeoutMs, Host}. */
 static int t_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg) {
+    NetState *ns = vm->net;
     (void)index;
     const uint32_t *o = obj_of(vm, owner, cfg);
     int32_t f[3];
@@ -502,37 +538,36 @@ static int t_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
     for (uint32_t i = 0; i < 3u; i++) {
         if (!int_val(vm, owner, o[2 + i], &f[i])) return -1;
     }
-    if (!name_bytes(vm, owner, o[5], &host, &hlen) || hlen == 0 || hlen > HOST_MAX || tc) return -1;
+    if (!name_bytes(vm, owner, o[5], &host, &hlen) || hlen == 0 || hlen > HOST_MAX || !ns || ns->tls.conn) return -1;
     for (uint32_t i = 0; i < hlen; i++) {
         if (!host[i]) return -1;                /* not a C string */
     }
     const TlsHw *hw = vm->board->tls;
     uint8_t probe;
-    if (!hw || !tls_init(hw) || hw->random(&probe, 1) != 0) return -1;   /* no secure randomness: no TLS */
-    net_s.upper = &upper;
+    if (!hw || !bind_hw(vm, hw) || hw->random(&probe, 1) != 0) return -1;   /* no secure randomness: no TLS */
+    ns->upper = &upper;
     if (vm_unix_time_ms(vm) <= 0) {             /* certificates cannot be checked */
-        tcp_hold_closed(p, CR_NOTIME);
+        tcp_hold_closed(ns, p, CR_NOTIME);
         return 0;
     }
     char name[HOST_MAX + 1u];
     memcpy(name, host, hlen);
     name[hlen] = 0;
     if (f[2] == 0) f[2] = (int32_t)GOGO_TLS_HANDSHAKE_MS;
-    TcpPcb *c = tcp_dial(p, f, 3);
+    TcpPcb *c = tcp_dial(ns, p, f, 3);
     if (!c) return -1;
-    TlsConn *t = conn_new(hw, name);
+    TlsConn *t = conn_new(vm, ns, hw, name);
     if (!t) {
         tcp_close_port(vm, p);                  /* SYN_SENT: just frees the slot */
         return -1;
     }
     t->c = c;
-    t->vm = vm;
-    tc = t;
+    ns->tls.conn = t;
     c->flags |= TF_UPPER;
     p->charge_words = (uint16_t)(p->charge_words + TLS_CHARGE_WORDS);
     p->room_64w = ROOM_64W;
-    st.opens++;
-    st.live = 1;
+    ns->tls.st.opens++;
+    ns->tls.st.live = 1;
     return 0;
 }
 
@@ -540,10 +575,10 @@ static int t_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
  * it was shut down, which this layer does only once its close_notify is
  * acknowledged (TS_SHUT_DONE): then TCP finishes the close as an orphan. */
 static void t_close(Vm *vm, Port *p) {
-    TcpPcb *c = tcp_pcb_of(p);
+    TcpPcb *c = tcp_pcb_of(vm->net, p);
     if (c && (c->flags & TF_UPPER)) {
         c->flags &= (uint8_t)~TF_UPPER;
-        TlsConn *t = conn_of(c);
+        TlsConn *t = conn_of(vm->net, c);
         if (t) conn_free(t);
     }
     tcp_close_port(vm, p);
@@ -551,12 +586,12 @@ static void t_close(Vm *vm, Port *p) {
 
 /* Write{Data} and Shutdown{}. */
 static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
-    TcpPcb *c = tcp_pcb_of(p);
+    TcpPcb *c = tcp_pcb_of(vm->net, p);
     const uint32_t *o = obj_of(vm, from, msg);
-    TlsConn *t = tc;
+    TlsConn *t = vm->net->tls.conn;
     if (!c || !t || t->c != c) return;          /* the connection has ended */
     if (!o || hdr_kind(o[0]) != K_STRUCT) {
-        net_s.st.tx_bad++;
+        vm->net->st.tx_bad++;
         return;
     }
     switch (o[1]) {
@@ -571,7 +606,7 @@ static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
     default:
         break;
     }
-    net_s.st.tx_bad++;
+    vm->net->st.tx_bad++;
 }
 
 const PortDriver net_tls_driver = {

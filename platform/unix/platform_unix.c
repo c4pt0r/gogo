@@ -108,18 +108,20 @@ uint32_t platform_random(void) {
  * idle, after all the frames it sent meanwhile; advance 0 is a sync.
  * Without --sim-clock, advances are acknowledged at once. Frames are read
  * one per platform_wait, so the stack's single RX slot is drained between
- * them. At EOF the link is down (net_link_event(false)); with --sim-clock
+ * them. At EOF the link is down (net_link_event(ns, false)); with --sim-clock
  * time can no longer move, so the process exits 0 (the simulator is done). */
 static int net_fd = -1;
 static bool link_down;        /* set by NET_MSG_LINK: sends fail while down */
 static bool ack_owed;
 static uint32_t net_rx_count;
+static NetState *net_ns;      /* the stack the link feeds (NULL: frames dropped) */
 
 /* Frames go to net_rx_offer unless a test diverts them. */
 static void (*rx_sink)(const uint8_t *, uint32_t);
 
-void platform_unix_net_open(int fd, bool sim) {
+void platform_unix_net_open(int fd, bool sim, NetState *ns) {
     net_fd = fd;
+    net_ns = ns;
     link_down = false;
     sim_clock = sim;
     sim_now = sim_target = 0;
@@ -128,6 +130,7 @@ void platform_unix_net_open(int fd, bool sim) {
 
 void platform_unix_net_close(void) {      /* test-only */
     net_fd = -1;
+    net_ns = NULL;
     sim_clock = false;
     ack_owed = false;
 }
@@ -194,7 +197,7 @@ const NetIf unix_netif = { net_mac, net_send, net_link_up, net_report, NULL };
 
 static void net_eof(void) {
     net_fd = -1;
-    net_link_event(false);
+    if (net_ns) net_link_event(net_ns, false);
     if (sim_clock) {
         fflush(stdout);
         exit(0);
@@ -222,7 +225,7 @@ static void net_read(void) {
         if (len > keep) break;                          /* too long for any frame */
         net_rx_count++;
         if (rx_sink) rx_sink(buf, len);
-        else net_rx_offer(buf, len);
+        else if (net_ns) net_rx_offer(net_ns, buf, len);
         break;
     case NET_MSG_ADVANCE:
         if (len != 4) break;
@@ -237,7 +240,7 @@ static void net_read(void) {
     case NET_MSG_LINK:
         if (len != 1) break;
         link_down = buf[0] == 0;
-        net_link_event(buf[0] != 0);
+        if (net_ns) net_link_event(net_ns, buf[0] != 0);
         break;
     default:                                            /* unknown: ignored */
         break;

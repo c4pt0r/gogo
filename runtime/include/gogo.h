@@ -3,7 +3,13 @@
  * public API (gogo_new, gogo_step, gogo_post, ...) comes with libgogo.
  *
  * Every hook gets the host_ctx given with the table. Unless noted, hooks
- * are called on the thread that owns the VM. Optional hooks may be NULL. */
+ * are called on the thread that owns the VM. Optional hooks may be NULL.
+ *
+ * Each VM keeps all of its state in its own instance: VMs in one process
+ * share nothing, with one exception. The "tls" port's mbedTLS allocator,
+ * time and RNG hooks are process-global (mbedTLS gives them no context):
+ * every VM in a process must use the same board TLS table (TlsHw,
+ * runtime/net/tls/tls.h); a VM with another one has its tls opens refused. */
 #ifndef GOGO_H
 #define GOGO_H
 

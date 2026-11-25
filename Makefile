@@ -49,11 +49,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: vmsize netsize tlssize test-tls-asan all vm test test-c test-c-mcu test-net-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: vmsize netsize tlssize test-tls-asan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-vfs test-input test-stream test-fs-host test-console check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
+test: test-c test-c-mcu test-net-c test-tls-c test-vfs test-input test-stream test-fs-host test-console check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
 
 vm: $(BUILD)/gogovm
 
@@ -82,6 +82,21 @@ test-net-c: $(BUILD)/test_net $(BUILD)/test_net_mcu
 $(BUILD)/test_net: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
+
+# The "tls" port's per-stack state (two Vms, two connections), against the
+# mbedTLS library; skipped without the mbedTLS source tree.
+TLS_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/net/tls/test/*.c)
+ifneq ($(TLS_CFLAGS),)
+test-tls-c: $(BUILD)/test_tls
+	$(BUILD)/test_tls
+else
+test-tls-c:
+	@echo "test-tls-c: skipped (no mbedTLS source at $(MBEDTLS_DIR))"
+endif
+
+$(BUILD)/test_tls: $(TLS_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS) $(TLS_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix -o $@ $(TLS_TEST_SRCS) $(VM_SRCS) $(TLS_LINK)
 
 $(BUILD)/test_net_mcu: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
@@ -205,8 +220,9 @@ test-net-mcu: $(BUILD)/gogovm_mcu
 # LeakSanitizer); the tls tests check the TLS heap returns to 0 instead.
 ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer
 test-tls-asan:
-	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net
+	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls
 	build/asan/test_net
+	build/asan/test_tls
 	GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
 
 # Test code is host-only: it may use stdio and GCC/Clang constructors.

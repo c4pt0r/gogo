@@ -172,5 +172,10 @@ void wifi_esp_report_heap(void);
 /* The station as the stack's network interface (VmBoard.netif). */
 struct NetIf;
 extern const struct NetIf wifi_esp_netif;
+/* The net stack's storage (main.c; runtime/net/ keeps none): main installs
+ * it on the Vm (net_install), the Wi-Fi task feeds it (net_rx_offer,
+ * net_link_event) and `gogo config stats` reads its counters. */
+struct NetState;
+extern struct NetState esp_net_state;
 
 #endif

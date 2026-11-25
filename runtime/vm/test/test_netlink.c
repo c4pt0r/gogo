@@ -56,7 +56,7 @@ TEST(netlink_frames_both_ways) {
     uint8_t mac[6];
     CHECK(!unix_netif.mac(NULL, mac));
     CHECK(!unix_netif.link_up(NULL));
-    platform_unix_net_open(sv[0], false);
+    platform_unix_net_open(sv[0], false, NULL);
     platform_unix_net_set_sink(sink);
     got_n = 0;
     CHECK(unix_netif.mac(NULL, mac));
@@ -128,7 +128,7 @@ static void idle_wait(int fd, uint32_t ms) {
 TEST(netlink_sim_clock) {
     int sv[2];
     CHECK_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
-    platform_unix_net_open(sv[0], true);
+    platform_unix_net_open(sv[0], true, NULL);
     platform_unix_net_set_sink(sink);
     got_n = 0;
     CHECK_EQ(platform_now_ms(), 0u);

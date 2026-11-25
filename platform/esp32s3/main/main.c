@@ -10,7 +10,7 @@
 #include "platform_esp.h"
 #include "board.h"
 #if CONFIG_GOGO_NET
-#include "net.h"
+#include "net_int.h"
 #endif
 #include "vfs_int.h"
 #include "input_int.h"
@@ -27,8 +27,11 @@
 #define VM_PRIORITY    5
 
 static Vm vm;      /* static: too big for a task stack */
-static VfsState vfs_state;     /* its vfs and input state (runtime/ keeps none) */
+static VfsState vfs_state;     /* its vfs, input and net state (runtime/ keeps none) */
 static InputState input_state;
+#if CONFIG_GOGO_NET
+NetState esp_net_state;        /* shared with wifi.c and config_esp.c (platform_esp.h) */
+#endif
 
 static void vm_task(void *arg) {
     (void)arg;
@@ -78,7 +81,7 @@ static void vm_task(void *arg) {
     }
     /* After vm_init: it starts the Vm's source list and fs hook empty. */
 #if CONFIG_GOGO_NET
-    net_attach(&vm);
+    net_install(&vm, &esp_net_state);
 #endif
     vfs_init(&vm, &vfs_state);
     input_install(&vm, &input_state);   /* kbd + power source */

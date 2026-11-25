@@ -54,6 +54,7 @@ static const uint8_t OTHER_MAC[6] = { 0x02, 0, 0, 0, 0, 0x55 };
 static uint32_t img_w[MINI_WORDS];
 static Image img;
 static Vm vm;
+static NetState nst;     /* the stack under test (net_install) */
 
 static void mini_image(void) {
     uint32_t *w = img_w;
@@ -77,12 +78,12 @@ static void setup(void) {
     CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
     memset(&tx, 0, sizeof tx);
     platform_unix_net_set_tx(tx_hook);
-    net_attach(&vm);
+    net_install(&vm, &nst);
 }
 
 static void teardown(void) {
     port_close_all(&vm);
-    net_detach(&vm);
+    net_uninstall(&vm);
     platform_unix_net_set_tx(NULL);
 }
 
@@ -179,11 +180,11 @@ static term configure(Actor *owner) {
 static void drain(void) {
     CHECK(port_work_pending(&vm));
     port_drain(&vm, 0);
-    CHECK(!net_s.rx_ready);
+    CHECK(!nst.rx_ready);
 }
 
 static void rx(const uint8_t *f, uint32_t len) {
-    net_rx_offer(f, len);
+    net_rx_offer(&nst, f, len);
     drain();
 }
 
@@ -348,7 +349,7 @@ TEST(net_ports_refused_unattached) {
     va_reset(&vm);
     mini_image();
     CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
-    net_detach(&vm);
+    net_uninstall(&vm);
     Actor *a = new_actor();
     CHECK(open_netif(a) == T_NIL);
     CHECK(open_udp(a, 7) == T_NIL);
@@ -362,11 +363,11 @@ TEST(net_netif_single_owner) {
     CHECK(port_is(n));
     CHECK(open_netif(b) == T_NIL);           /* one owner at a time */
     set_addr(b, n, MY_IP, MASK, PEER_IP, 0); /* not the owner: ignored */
-    CHECK(!ip_configured());
+    CHECK(!ip_configured(&nst));
     set_addr(a, n, MY_IP, MASK, PEER_IP, 0);
-    CHECK_EQ(net_s.ip, MY_IP);
+    CHECK_EQ(nst.ip, MY_IP);
     port_close(&vm, n);                      /* the address goes with it */
-    CHECK(!ip_configured());
+    CHECK(!ip_configured(&nst));
     CHECK(port_is(open_netif(b)));
     teardown();
 }
@@ -400,13 +401,13 @@ TEST(net_arp_reply_and_preresolve) {
     CHECK(memcmp(f + 32, PEER_MAC, 6) == 0);
     CHECK_EQ(rd32(f + 38), PEER_IP);
     /* the requester was learned */
-    CHECK(arp_resolve(PEER_IP) != NULL);
+    CHECK(arp_resolve(&nst, PEER_IP) != NULL);
     tx.n = 0;
     len = arp_frame(b, 1, OTHER_MAC, IP4(10, 0, 0, 7), (const uint8_t *)"\0\0\0\0\0\0", IP4(10, 0, 0, 9), net_bcast_mac);
-    uint32_t ign = net_s.st.arp_ignored;
+    uint32_t ign = nst.st.arp_ignored;
     rx(b, len);                              /* for another host */
     CHECK_EQ(tx.n, 0);
-    CHECK_EQ(net_s.st.arp_ignored, ign + 1);
+    CHECK_EQ(nst.st.arp_ignored, ign + 1);
     teardown();
 }
 
@@ -417,15 +418,15 @@ TEST(net_arp_cache_lru) {
     uint8_t mac[6] = { 2, 0, 0, 0, 1, 0 };
     for (uint32_t i = 0; i < 2u * GOGO_NET_ARP; i++) {
         mac[5] = (uint8_t)i;
-        arp_learn(IP4(10, 0, 0, 100 + i), mac, true);
+        arp_learn(&nst, IP4(10, 0, 0, 100 + i), mac, true);
     }
     /* Many newer local hosts: the gateway, the least recently used, is
      * still there (never evicted); the oldest of the others went. */
     CHECK_EQ(tx.n, 0);
-    CHECK(arp_resolve(PEER_IP) != NULL);
+    CHECK(arp_resolve(&nst, PEER_IP) != NULL);
     CHECK_EQ(tx.n, 0);
-    CHECK(arp_resolve(IP4(10, 0, 0, 100 + 2u * GOGO_NET_ARP - 1u)) != NULL);
-    CHECK(arp_resolve(IP4(10, 0, 0, 100)) == NULL);
+    CHECK(arp_resolve(&nst, IP4(10, 0, 0, 100 + 2u * GOGO_NET_ARP - 1u)) != NULL);
+    CHECK(arp_resolve(&nst, IP4(10, 0, 0, 100)) == NULL);
     CHECK_EQ(tx.n, 1);                       /* a request went out instead */
     /* Inbound traffic from new local hosts does not push it out either. */
     uint8_t b[1600], d[4] = { 1, 2, 3, 4 };
@@ -435,7 +436,7 @@ TEST(net_arp_cache_lru) {
         rx(b, len);
     }
     tx.n = 0;
-    CHECK(arp_resolve(PEER_IP) != NULL);
+    CHECK(arp_resolve(&nst, PEER_IP) != NULL);
     CHECK_EQ(tx.n, 0);
     teardown();
 }
@@ -457,7 +458,7 @@ TEST(net_icmp_echo) {
     CHECK_EQ(rd16(m + 4), 0x1234);
     CHECK_EQ(rd16(m + 6), 7);
     CHECK(memcmp(m + 8, data, 100) == 0);
-    CHECK_EQ(net_s.st.icmp_echo, 1u);
+    CHECK_EQ(nst.st.icmp_echo, 1u);
     /* not an echo request: ignored; to a broadcast address: ignored */
     tx.n = 0;
     b[14 + 20] = 13;
@@ -510,7 +511,7 @@ TEST(net_udp_deliver) {
     /* unbound port: counted */
     len = udp_frame(b, MY_MAC, PEER_IP, MY_IP, 9, 8, data, 4);
     rx(b, len);
-    CHECK_EQ(net_s.st.udp_noport, 1u);
+    CHECK_EQ(nst.st.udp_noport, 1u);
     CHECK_EQ(mbox_len(o), 0);
     /* IP options are skipped */
     uint8_t useg[64];
@@ -560,14 +561,14 @@ TEST(net_udp_send) {
     CHECK_EQ(tx.n, 4);
     CHECK_EQ(rd16(tx.f[3] + 12), ETH_ARP);
     CHECK_EQ(rd32(tx.f[3] + 38), IP4(10, 0, 0, 5));
-    CHECK_EQ(net_s.st.tx_arp_miss, 1u);
+    CHECK_EQ(nst.st.tx_arp_miss, 1u);
     uint8_t b[64];
     rx(b, arp_frame(b, 2, OTHER_MAC, IP4(10, 0, 0, 5), MY_MAC, MY_IP, MY_MAC));
     send_to(a, u, IP4(10, 0, 0, 5), 53, data, 10);
     CHECK_EQ(tx.n, 5);
     check_ip(4, OTHER_MAC, MY_IP, IP4(10, 0, 0, 5), 17, &n);
     /* malformed commands: bad port, too large, wrong struct; to ourselves */
-    uint32_t bad = net_s.st.tx_bad;
+    uint32_t bad = nst.st.tx_bad;
     send_to(a, u, PEER_IP, 0, data, 1);
     send_to(a, u, PEER_IP, 70000, data, 1);
     static uint8_t big[1500];
@@ -575,11 +576,11 @@ TEST(net_udp_send) {
     a->hp = 0;
     term one = term_from_int(1);
     port_command(&vm, a, u, heap_struct(a, TYPE_NET_UDP, &one, 1));
-    CHECK_EQ(net_s.st.tx_bad, bad + 4);
+    CHECK_EQ(nst.st.tx_bad, bad + 4);
     send_to(a, u, 0, 9, data, 1);                      /* 0.0.0.0 */
     send_to(a, u, IP4(224, 0, 0, 251), 5353, data, 1); /* multicast */
     send_to(a, u, IP4(239, 1, 2, 3), 9, data, 1);
-    CHECK_EQ(net_s.st.tx_bad, bad + 7);
+    CHECK_EQ(nst.st.tx_bad, bad + 7);
     send_to(a, u, MY_IP, 9, data, 1);
     CHECK_EQ(tx.n, 5);
     send_to(a, u, PEER_IP, 9, big, UDP_MAX_PAYLOAD);   /* the largest fits */
@@ -600,9 +601,9 @@ TEST(net_udp_quota_never_kills) {
     for (int i = 0; i < 10; i++) rx(b, len);
     int got = mbox_len(o);
     CHECK(got >= 1 && got < 10);
-    CHECK_EQ(net_s.st.udp_quota, (uint32_t)(10 - got));
+    CHECK_EQ(nst.st.udp_quota, (uint32_t)(10 - got));
     uint32_t drops = 0;
-    for (uint32_t i = 0; i < GOGO_NET_MAX_UDP; i++) drops += net_s.udp[i].drops;
+    for (uint32_t i = 0; i < GOGO_NET_MAX_UDP; i++) drops += nst.udp[i].drops;
     CHECK_EQ(drops, (uint32_t)(10 - got));
     CHECK(!(o->flags & AF_EXIT_PENDING));    /* never killed */
     while (o->mbox_head) pop(o);
@@ -661,7 +662,7 @@ TEST(net_udp_reclaims_waiting_slack) {
     uint32_t len = udp_frame(b, MY_MAC, PEER_IP, MY_IP, 9, 7, data, sizeof data);
     rx(b, len);
     CHECK_EQ(mbox_len(o), 1);
-    CHECK_EQ(net_s.st.udp_quota, 0);
+    CHECK_EQ(nst.st.udp_quota, 0);
     CHECK(o->mem_words < 256);
     teardown();
 }
@@ -681,7 +682,7 @@ TEST(net_unconfigured_dhcp_only) {
     send_to(a, c, IP_BCAST, 68, data, 8);    /* wrong server port */
     send_to(a, s, IP_BCAST, 67, data, 8);    /* wrong client port */
     CHECK_EQ(tx.n, 1);
-    CHECK_EQ(net_s.st.tx_noroute, 3u);
+    CHECK_EQ(nst.st.tx_noroute, 3u);
     uint8_t b[1600];
     /* an offer to the offered address (unicast to our MAC): delivered */
     uint8_t reply[240] = { 2 };
@@ -701,7 +702,7 @@ TEST(net_unconfigured_dhcp_only) {
     rx(b, len);
     CHECK_EQ(mbox_len(a), 2);
     CHECK_EQ(tx.n, 1);
-    CHECK_EQ(net_s.st.ip_filtered, 3u);
+    CHECK_EQ(nst.st.ip_filtered, 3u);
     teardown();
 }
 
@@ -741,7 +742,7 @@ TEST(net_dhcp_chaddr) {
     len = udp_frame(b, net_bcast_mac, PEER_IP, IP_BCAST, 67, 68, reply, 33);
     rx(b, len);
     CHECK_EQ(mbox_len(a), 0);
-    CHECK_EQ(net_s.st.ip_filtered, 2u);
+    CHECK_EQ(nst.st.ip_filtered, 2u);
     len = udp_frame(b, net_bcast_mac, PEER_IP, IP_BCAST, 67, 68, reply, 34);
     rx(b, len);
     CHECK_EQ(mbox_len(a), 1);
@@ -790,35 +791,35 @@ TEST(net_subscribe_up_down) {
     CHECK_EQ(s->mbox_head->next->next->words, 2);
     set_addr(a, n, MY_IP, MASK, PEER_IP, 0);
     CHECK_EQ(mbox_len(s), 4);
-    net_link_event(false);                   /* link lost: Down */
+    net_link_event(&nst, false);                   /* link lost: Down */
     drain();
     CHECK_EQ(mbox_len(s), 5);
     CHECK_EQ(msg_type(s, 4), TYPE_NET_DOWN);
-    net_link_event(true);                    /* back: Up, gateway re-resolved */
+    net_link_event(&nst, true);                    /* back: Up, gateway re-resolved */
     tx.n = 0;
     drain();
     CHECK_EQ(mbox_len(s), 6);
     CHECK_EQ(msg_type(s, 5), TYPE_NET_UP);
     CHECK_EQ(tx.n, 1);
-    net_link_event(false);                   /* Down and Up before one drain: */
-    net_link_event(true);                    /* the Down is not lost */
+    net_link_event(&nst, false);                   /* Down and Up before one drain: */
+    net_link_event(&nst, true);                    /* the Down is not lost */
     drain();
     CHECK_EQ(mbox_len(s), 8);
     CHECK_EQ(msg_type(s, 6), TYPE_NET_DOWN);
     CHECK_EQ(msg_type(s, 7), TYPE_NET_UP);
     /* The producer's steps taken one at a time (state, then the counter):
      * a drain between them reports the Down once, not twice, and no Up. */
-    net_s.link_state = 0;
-    net_s.link_pending = 1;                  /* mid net_link_event(false) */
+    nst.link_state = 0;
+    nst.link_pending = 1;                  /* mid net_link_event(&nst, false) */
     drain();
     CHECK_EQ(mbox_len(s), 9);
     CHECK_EQ(msg_type(s, 8), TYPE_NET_DOWN);
-    net_s.down_seq++;
-    net_s.link_pending = 1;                  /* the event completes */
+    nst.down_seq++;
+    nst.link_pending = 1;                  /* the event completes */
     drain();
     CHECK_EQ(mbox_len(s), 9);
-    net_s.link_state = 1;
-    net_s.link_pending = 1;                  /* net_link_event(true) */
+    nst.link_state = 1;
+    nst.link_pending = 1;                  /* net_link_event(&nst, true) */
     drain();
     CHECK_EQ(mbox_len(s), 10);
     CHECK_EQ(msg_type(s, 9), TYPE_NET_UP);
@@ -826,13 +827,13 @@ TEST(net_subscribe_up_down) {
      * (an old Up) and its read of the counter: the re-read gives the Down,
      * so exactly one Down and no Up (the stale 1 cannot be injected, the
      * end state it would race with is checked). */
-    net_s.link_state = 0;
-    net_s.down_seq++;
-    net_s.link_pending = 1;
+    nst.link_state = 0;
+    nst.down_seq++;
+    nst.link_pending = 1;
     drain();
     CHECK_EQ(mbox_len(s), 11);
     CHECK_EQ(msg_type(s, 10), TYPE_NET_DOWN);
-    net_link_event(true);
+    net_link_event(&nst, true);
     drain();
     CHECK_EQ(mbox_len(s), 12);
     CHECK_EQ(msg_type(s, 11), TYPE_NET_UP);
@@ -868,7 +869,7 @@ TEST(net_subscribe_retry_on_oom) {
     va_set_limit(&vm, va_used_bytes(&vm));           /* no message can be allocated */
     set_addr(a, n, MY_IP, MASK, PEER_IP, 0);
     CHECK_EQ(mbox_len(s), 0);
-    CHECK(net_s.sub_owed != 0);
+    CHECK(nst.sub_owed != 0);
     CHECK(!port_work_pending(&vm));          /* not before the retry time */
     fake_now += 50;
     drain();                                 /* still no memory: owed again */
@@ -878,7 +879,7 @@ TEST(net_subscribe_retry_on_oom) {
     drain();
     CHECK_EQ(mbox_len(s), 1);
     CHECK_EQ(msg_type(s, 0), TYPE_NET_UP);
-    CHECK_EQ(net_s.sub_owed, 0);
+    CHECK_EQ(nst.sub_owed, 0);
     va_set_limit(&vm, va_used_bytes(&vm));
     set_addr(a, n, 0, 0, 0, 0);              /* the Down, likewise */
     CHECK_EQ(mbox_len(s), 1);
@@ -914,7 +915,7 @@ TEST(net_up_to_full_mailbox_is_owed) {
     set_addr(a, n, MY_IP, MASK, PEER_IP, 0);
     CHECK(!(s->flags & AF_EXIT_PENDING));
     CHECK_EQ(mbox_len(s), 0);
-    CHECK(net_s.sub_owed != 0);
+    CHECK(nst.sub_owed != 0);
     fake_now += 50;
     drain();                                 /* still full: owed again */
     CHECK(!(s->flags & AF_EXIT_PENDING));
@@ -924,7 +925,7 @@ TEST(net_up_to_full_mailbox_is_owed) {
     drain();
     CHECK_EQ(mbox_len(s), 1);
     CHECK_EQ(msg_type(s, 0), TYPE_NET_UP);
-    CHECK_EQ(net_s.sub_owed, 0);
+    CHECK_EQ(nst.sub_owed, 0);
     test_host_set_clock(NULL);
     teardown();
 }
@@ -942,8 +943,118 @@ TEST(net_up_reclaims_waiting_subscriber_slack) {
     CHECK(!(s->flags & AF_EXIT_PENDING));
     CHECK_EQ(mbox_len(s), 1);
     CHECK_EQ(msg_type(s, 0), TYPE_NET_UP);
-    CHECK_EQ(net_s.sub_owed, 0);
+    CHECK_EQ(nst.sub_owed, 0);
     CHECK(s->mem_words < 256);
+    teardown();
+}
+
+/* Two stacks in one process (two Vms, each with its own NetState): a frame
+ * or link change offered to one is taken, counted, learned from and
+ * answered by that one only, and its datagrams reach only its own Vm. */
+static Vm vm2;
+static NetState nst2;
+#define MY_IP2 IP4(10, 0, 0, 3)
+
+static term open_on(Vm *v, Actor *a, const char *name, uint32_t type, const term *f, uint32_t n) {
+    uint32_t len = (uint32_t)strlen(name), words = 2u + (len + 3u) / 4u;
+    a->hp = 0;
+    uint32_t off = heap_alloc(v, a, words + 2u + n, NULL, 0);
+    CHECK(off != UINT32_MAX);
+    a->mem[off] = hdr_make(words, K_STRING);
+    a->mem[off + 1] = len;
+    memcpy(a->mem + off + 2, name, len);
+    uint32_t s = off + words;
+    a->mem[s] = hdr_make(2u + n, K_STRUCT);
+    a->mem[s + 1] = type;
+    for (uint32_t i = 0; i < n; i++) a->mem[s + 2 + i] = f[i];
+    return port_open(v, a, term_from_ref(off), term_from_ref(s));
+}
+
+TEST(net_two_stacks_do_not_cross) {
+    setup();
+    CHECK_EQ(test_vm_init(&vm2, &img, 16), 0);
+    net_install(&vm2, &nst2);
+    CHECK(vm.net == &nst && vm2.net == &nst2);
+    Actor *a = new_actor(), *o = new_actor();
+    configure(a);                            /* vm: MY_IP, gateway learned */
+    Actor *a2 = actor_new(&vm2, 256), *o2 = actor_new(&vm2, 256);
+    CHECK(a2 != NULL && o2 != NULL);
+    a2->state = o2->state = A_WAITING;
+    term n2 = open_on(&vm2, a2, "netif", TYPE_NET_IFCONFIG, NULL, 0);
+    CHECK(port_is(n2));
+    a2->hp = 0;
+    uint32_t off = heap_alloc(&vm2, a2, 6, NULL, 0);
+    a2->mem[off] = hdr_make(6, K_STRUCT);
+    a2->mem[off + 1] = TYPE_NET_SETADDR;
+    a2->mem[off + 2] = term_from_int((int32_t)MY_IP2);
+    a2->mem[off + 3] = term_from_int((int32_t)MASK);
+    a2->mem[off + 4] = term_from_int(0);     /* no gateway: nothing pre-resolved */
+    a2->mem[off + 5] = term_from_int(0);
+    port_command(&vm2, a2, n2, term_from_ref(off));
+    CHECK_EQ(nst2.ip, MY_IP2);
+    CHECK_EQ(nst.ip, MY_IP);
+    term f7 = term_from_int(7);
+    CHECK(port_is(open_udp(o, 7)));
+    CHECK(port_is(open_on(&vm2, o2, "udp", TYPE_NET_UDP, &f7, 1)));
+    tx.n = 0;
+    uint32_t frames = nst.st.rx_frames;
+
+    /* An ARP request for vm2's address, offered to vm2's stack: answered
+     * from MY_IP2, the requester learned there only. */
+    uint8_t b[1600];
+    uint32_t len = arp_frame(b, 1, OTHER_MAC, IP4(10, 0, 0, 7), (const uint8_t *)"\0\0\0\0\0\0", MY_IP2,
+                             net_bcast_mac);
+    net_rx_offer(&nst2, b, len);
+    CHECK(nst2.rx_ready && !nst.rx_ready);
+    CHECK(!port_work_pending(&vm));
+    CHECK(port_work_pending(&vm2));
+    port_drain(&vm2, 0);
+    CHECK_EQ(tx.n, 1);
+    CHECK_EQ(rd32(tx.f[0] + 28), MY_IP2);
+    CHECK_EQ(nst2.st.rx_frames, 1u);
+    CHECK_EQ(nst.st.rx_frames, frames);
+    bool in1 = false, in2 = false;
+    for (uint32_t i = 0; i < GOGO_NET_ARP; i++) {
+        in1 |= nst.arp[i].ip == IP4(10, 0, 0, 7);
+        in2 |= nst2.arp[i].ip == IP4(10, 0, 0, 7);
+    }
+    CHECK(in2 && !in1);
+
+    /* The same request offered to vm's stack: not its address. */
+    tx.n = 0;
+    uint32_t ign = nst.st.arp_ignored;
+    rx(b, len);
+    CHECK_EQ(tx.n, 0);
+    CHECK_EQ(nst.st.arp_ignored, ign + 1u);
+    CHECK_EQ(nst2.st.arp_ignored, 0u);
+
+    /* A datagram to port 7 reaches only the Vm whose stack it was offered to. */
+    const uint8_t d[3] = { 1, 2, 3 };
+    len = udp_frame(b, MY_MAC, PEER_IP, MY_IP, 5000, 7, d, 3);
+    rx(b, len);
+    CHECK_EQ(mbox_len(o), 1);
+    CHECK_EQ(mbox_len(o2), 0);
+    CHECK(!port_work_pending(&vm2));
+    len = udp_frame(b, MY_MAC, PEER_IP, MY_IP2, 5000, 7, d, 3);
+    net_rx_offer(&nst2, b, len);
+    port_drain(&vm2, 0);
+    CHECK_EQ(mbox_len(o), 1);
+    CHECK_EQ(mbox_len(o2), 1);
+    CHECK_EQ(nst.st.udp_rx, 1u);
+    CHECK_EQ(nst2.st.udp_rx, 1u);
+
+    /* A link change on one stack only. */
+    net_link_event(&nst2, false);
+    CHECK(nst2.link_pending && !nst.link_pending);
+    CHECK(!port_work_pending(&vm));
+    port_drain(&vm2, 0);
+    CHECK(!nst2.link_up && nst.link_up);
+
+    port_close_all(&vm2);
+    net_uninstall(&vm2);
+    CHECK(vm2.net == NULL);
+    net_rx_offer(&nst2, b, len);             /* uninstalled: dropped */
+    CHECK(!nst2.rx_ready);
     teardown();
 }
 
@@ -951,15 +1062,15 @@ TEST(net_rx_slot) {
     setup();
     uint8_t b[NET_FRAME_MAX + 1];
     memset(b, 0, sizeof b);
-    net_rx_offer(b, NET_FRAME_MAX + 1);
-    CHECK_EQ(net_s.st.rx_oversize, 1u);
-    CHECK(!net_s.rx_ready);
-    net_rx_offer(b, 60);
-    CHECK(net_s.rx_ready);
-    net_rx_offer(b, 60);                     /* slot busy: dropped */
-    CHECK_EQ(net_s.st.rx_busy, 1u);
+    net_rx_offer(&nst, b, NET_FRAME_MAX + 1);
+    CHECK_EQ(nst.st.rx_oversize, 1u);
+    CHECK(!nst.rx_ready);
+    net_rx_offer(&nst, b, 60);
+    CHECK(nst.rx_ready);
+    net_rx_offer(&nst, b, 60);                     /* slot busy: dropped */
+    CHECK_EQ(nst.st.rx_busy, 1u);
     drain();
-    CHECK_EQ(net_s.st.rx_frames, 1u);
+    CHECK_EQ(nst.st.rx_frames, 1u);
     teardown();
 }
 
@@ -974,7 +1085,7 @@ TEST(net_malformed_frames) {
     uint8_t b[1600], d[32];
     memset(d, 0xAB, sizeof d);
     uint32_t len;
-    const NetStats *st = net_stats();
+    const NetStats *st = net_stats(&nst);
 #define DROP(counter, frame_len) do {                                       \
         uint32_t before_ = st->counter;                                     \
         tx.n = 0;                                                           \

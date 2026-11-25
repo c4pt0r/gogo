@@ -8,6 +8,7 @@
 #include "net.h"
 #include "actor.h"
 #include "msg.h"
+#include "tls/tls.h"
 
 #if (GOGO_NET_RX_BUFS) != 1u
 #error "GOGO_NET_RX_BUFS: only 1 is implemented"
@@ -33,7 +34,7 @@
 
 typedef struct ArpEntry {
     uint32_t ip;            /* 0: free */
-    uint32_t used;          /* net_s.arp_clock at the last use or update */
+    uint32_t used;          /* NetState.arp_clock at the last use or update */
     uint8_t mac[6];
     uint8_t pad[2];
 } ArpEntry;
@@ -74,12 +75,14 @@ typedef struct TcpPcb {
 } TcpPcb;
 
 /* An upper layer over one TCP connection (runtime/net/tls/tls.c): a pcb with TF_UPPER
- * hands its stream to net_s.upper instead of to the port's owner. The
+ * hands its stream to NetState.upper instead of to the port's owner. The
  * owner then gets only what the layer posts (tcp_post) and the end of the
  * connection (Closed from TCP: reset, timeout, no route, ...). At most one
- * layer is installed (net_s.upper); every pcb with TF_UPPER uses it. The
- * callbacks run inside the stack (TCP input or the drain): they must not
- * free or end the connection themselves (only drain may call tcp_abort).
+ * layer is installed per stack (NetState.upper); every pcb with TF_UPPER uses
+ * it. The layer keeps its per-stack state in the stack's NetState (given, or
+ * the Vm's vm->net). The callbacks run inside the stack (TCP input or the
+ * drain): they must not free or end the connection themselves (only drain
+ * may call tcp_abort).
  *   rx:        in-order bytes; true = taken (ACKed), false = refused (not
  *              ACKed: the peer resends);
  *   fin:       the peer's FIN after all rx; true = taken, false = refused;
@@ -107,12 +110,12 @@ typedef struct TcpUpper {
     bool (*fin)(Vm *vm, TcpPcb *c);
     void (*connected)(Vm *vm, TcpPcb *c);
     void (*acked)(Vm *vm, TcpPcb *c, uint32_t n);
-    const uint8_t *(*tx)(const TcpPcb *c, uint32_t *len);
-    void (*ended)(TcpPcb *c);
-    bool (*pending)(void);
+    const uint8_t *(*tx)(const NetState *ns, const TcpPcb *c, uint32_t *len);
+    void (*ended)(NetState *ns, TcpPcb *c);
+    bool (*pending)(const NetState *ns);
     void (*drain)(Vm *vm);
-    bool (*next_deadline)(uint64_t *deadline);
-    bool (*closed)(const TcpPcb *c);
+    bool (*next_deadline)(const NetState *ns, uint64_t *deadline);
+    bool (*closed)(const NetState *ns, const TcpPcb *c);
 } TcpUpper;
 
 typedef struct TcpListen {
@@ -121,7 +124,11 @@ typedef struct TcpListen {
     uint16_t pad;
 } TcpListen;
 
-typedef struct NetState {
+/* One stack instance: everything the stack keeps. The board supplies the
+ * storage (static on the ESP) and hands it to net_install; the stack reaches
+ * it through vm->net (drivers, the source) or as a parameter (internals, the
+ * board's net_rx_offer / net_link_event). */
+struct NetState {
     uint8_t rx[NET_FRAME_MAX];
     uint8_t tx[NET_FRAME_MAX];
     /* RX slot: producer net_rx_offer, consumer the drain.
@@ -145,7 +152,7 @@ typedef struct NetState {
     uint32_t up_ip, up_gw, up_dns;   /* as last reported */
     uint32_t arp_clock;
     Port *netif;
-    struct Vm *vm;          /* the attached Vm (net_attach) */
+    struct Vm *vm;          /* the attached Vm (net_install) */
     const NetIf *nif;       /* its board's netif */
     term subs[GOGO_NET_MAX_SUBS];
     ArpEntry arp[GOGO_NET_ARP];
@@ -162,13 +169,12 @@ typedef struct NetState {
     uint32_t sub_retry_at;  /* when sub_owed is retried */
     const TcpUpper *upper;  /* the upper layer (TF_UPPER pcbs), or NULL */
     NetStats st;
-} NetState;
+    TlsState tls;           /* the "tls" port's connection and counters (tls.c) */
+};
 
 #define UDP_PCB_WORDS ((uint16_t)((sizeof(UdpPcb) + 3u) / 4u))
 #define TCP_PCB_WORDS ((uint16_t)((sizeof(TcpPcb) + 3u) / 4u))
 #define TCP_LISTEN_WORDS ((uint16_t)((sizeof(TcpListen) + 3u) / 4u))
-
-extern NetState net_s;
 
 /* The memory budgets hold at compile time, on any target. */
 typedef char net_budget_fixed[sizeof(NetState) <= NET_FIXED_LIMIT ? 1 : -1];
@@ -187,43 +193,43 @@ static inline void wr32(uint8_t *p, uint32_t v) {
 
 /* ---- eth.c ---- */
 extern const uint8_t net_bcast_mac[6];
-/* Sends net_s.tx[0..ETH_HLEN + len) after filling in its Ethernet header. */
-void eth_send(const uint8_t dst[6], uint16_t type, uint32_t len);
-void net_rx_frame(struct Vm *vm, const uint8_t *f, uint32_t len);
+/* Sends ns->tx[0..ETH_HLEN + len) after filling in its Ethernet header. */
+void eth_send(NetState *ns, const uint8_t dst[6], uint16_t type, uint32_t len);
+void net_rx_frame(NetState *ns, const uint8_t *f, uint32_t len);
 
 /* ---- arp.c ---- */
-void arp_rx(const uint8_t *p, uint32_t len);
+void arp_rx(NetState *ns, const uint8_t *p, uint32_t len);
 /* The MAC for next hop ip, or NULL (an ARP request is then sent). */
-const uint8_t *arp_resolve(uint32_t ip);
-void arp_learn(uint32_t ip, const uint8_t mac[6], bool add);
-void arp_request(uint32_t ip);
+const uint8_t *arp_resolve(NetState *ns, uint32_t ip);
+void arp_learn(NetState *ns, uint32_t ip, const uint8_t mac[6], bool add);
+void arp_request(NetState *ns, uint32_t ip);
 
 /* ---- ip.c ---- */
 uint32_t net_sum(uint32_t s, const uint8_t *p, uint32_t n);
 uint16_t net_fold(uint32_t s);
-bool ip_configured(void);
-bool ip_on_link(uint32_t ip);
-void ip_rx(struct Vm *vm, const uint8_t *f, uint32_t len);
-/* Sends net_s.tx's IPv4 payload (len bytes at ETH_HLEN + IP_HLEN) from src
+bool ip_configured(const NetState *ns);
+bool ip_on_link(const NetState *ns, uint32_t ip);
+void ip_rx(NetState *ns, const uint8_t *f, uint32_t len);
+/* Sends ns->tx's IPv4 payload (len bytes at ETH_HLEN + IP_HLEN) from src
  * to dst; next hop by route and ARP unless dst_mac is given. */
-bool ip_send(uint32_t src, uint32_t dst, uint8_t proto, uint32_t len, const uint8_t *dst_mac);
+bool ip_send(NetState *ns, uint32_t src, uint32_t dst, uint8_t proto, uint32_t len, const uint8_t *dst_mac);
 
 /* ---- icmp.c ---- */
-void icmp_rx(const uint8_t *eth_src, uint32_t src, const uint8_t *p, uint32_t len);
+void icmp_rx(NetState *ns, const uint8_t *eth_src, uint32_t src, const uint8_t *p, uint32_t len);
 
 /* ---- udp.c ---- */
-void udp_rx(struct Vm *vm, uint32_t src, uint32_t dst, const uint8_t *p, uint32_t len);
-void udp_reset(void);
+void udp_rx(NetState *ns, uint32_t src, uint32_t dst, const uint8_t *p, uint32_t len);
+void udp_reset(NetState *ns);
 
 /* ---- tcp.c ---- */
-void tcp_rx(struct Vm *vm, uint32_t src, uint32_t dst, const uint8_t *p, uint32_t len);
-void tcp_reset(void);
+void tcp_rx(NetState *ns, uint32_t src, uint32_t dst, const uint8_t *p, uint32_t len);
+void tcp_reset(NetState *ns);
 /* Timers: any due at now (cheap when none is set); fire the due ones;
  * the earliest deadline; orphans still closing (keep the VM running). */
-bool tcp_due(void);
+bool tcp_due(const NetState *ns);
 void tcp_poll(struct Vm *vm);
-bool tcp_next_deadline(uint64_t *deadline);
-bool tcp_any_orphan(void);
+bool tcp_next_deadline(const NetState *ns, uint64_t *deadline);
+bool tcp_any_orphan(const NetState *ns);
 /* The interface went down: every connection ends (Closed{NoRoute}). */
 void tcp_down(struct Vm *vm);
 
@@ -257,17 +263,17 @@ enum {
  *    it ended the connection or was malformed;
  *  - tcp_write_done: wr[0] is fully sent: released, Written posted, the
  *    next one (and empty ones after it, Written too) moved up. */
-TcpPcb *tcp_dial(Port *p, const int32_t *cfg, uint32_t n);
-TcpPcb *tcp_pcb_of(const Port *p);
+TcpPcb *tcp_dial(NetState *ns, Port *p, const int32_t *cfg, uint32_t n);
+TcpPcb *tcp_pcb_of(const NetState *ns, const Port *p);
 void tcp_close_port(struct Vm *vm, Port *p);
 bool tcp_port_can_event(const struct Vm *vm, const Port *p);
 void tcp_post(struct Vm *vm, const TcpPcb *c, uint32_t type, int32_t reason);
 bool tcp_flush(struct Vm *vm, Port *p);
-void tcp_hold_closed(Port *p, int32_t reason);
+void tcp_hold_closed(NetState *ns, Port *p, int32_t reason);
 void tcp_output(struct Vm *vm, TcpPcb *c);
 void tcp_shutdown(struct Vm *vm, TcpPcb *c);
 void tcp_abort(struct Vm *vm, TcpPcb *c, int32_t reason, bool rst);
-void tcp_until_clear(TcpPcb *c);
+void tcp_until_clear(const NetState *ns, TcpPcb *c);
 bool tcp_write_cmd(struct Vm *vm, const Actor *from, Port *p, TcpPcb *c, const uint32_t *o);
 void tcp_write_done(struct Vm *vm, TcpPcb *c);
 

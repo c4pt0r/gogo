@@ -74,13 +74,23 @@
  *    (the peer's chain, ECDHE keys, PSA operations), freed when the
  *    handshake ends and not charged (they are bounded: one connection at
  *    a time; the platform sizes its TLS memory for the peak plus its trust
- *    store). At most GOGO_TLS_MAX (1) connection: a second open is
- *    refused. A connection's memory is freed when it ends, the port closes
- *    or its owner exits; what tls_init sets up (PSA's key store) stays.
+ *    store). At most GOGO_TLS_MAX (1) connection per net stack (each Vm's
+ *    NetState has its own): a second open on the same stack is refused. A
+ *    connection's memory is freed when it ends, the port closes or its
+ *    owner exits; what tls_init sets up (PSA's key store) stays.
  *  - Randomness: only TlsHw.random (never the VM's vm_random); a board
  *    without a secure source has no TLS (open is refused).
  *  - Hooks: the board's TlsHw (VmBoard.tls, host.h; below). A board
  *    without one has no TLS (open is refused).
+ *  - State: the connection and the counters live in the stack's NetState
+ *    (TlsState below; per Vm). The one thing shared by the whole process is
+ *    mbedTLS's own platform layer (allocator, time, RNG, PSA): its hooks
+ *    take no context, so they are bound once, to the first TlsHw given to
+ *    tls_init. ALL VMs IN ONE PROCESS MUST SHARE ONE TlsHw: tls_init with a
+ *    different one fails, and that Vm's opens are refused (ok=false; logged
+ *    once per process). mbedTLS's time hook reads the wall clock of the Vm
+ *    whose connection is inside an mbedTLS call; two VMs running TLS on two
+ *    threads at once are not supported.
  */
 #ifndef GOGO_TLS_H
 #define GOGO_TLS_H
@@ -89,6 +99,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "port.h"
+
+struct NetState;
+struct TlsConn;
 
 #ifndef GOGO_TLS_MAX
 #define GOGO_TLS_MAX 1u
@@ -155,9 +168,11 @@ typedef struct TlsHw {
 
 /* The process-global mbedTLS / PSA state, set up once (psa_crypto_init and
  * the hooks above); never torn down by the port. mbedTLS's hooks have no
- * context, so the TlsHw of the first call serves them for the whole
- * process. The first open calls it with its Vm's board->tls; a board may
- * call it at boot. Idempotent; false if PSA failed. */
+ * context, so the TlsHw of the first successful call serves them for the
+ * whole process. The first open calls it with its Vm's board->tls; a board
+ * may call it at boot. Idempotent for the same hw; false if PSA failed or
+ * hw is not the TlsHw already bound (every Vm of a process must use the
+ * same one). */
 bool tls_init(const TlsHw *hw);
 
 /* Counters for tests and measurements (since start). A slice is one
@@ -170,10 +185,19 @@ typedef struct TlsStats {
     uint32_t max_step_us;   /* longest handshake slice */
     int32_t max_step_state; /* the handshake state that slice started in */
     uint32_t max_io_us;     /* longest read or write slice */
-    uint32_t live;          /* connections now (0 or 1) */
+    uint32_t live;          /* connections now on this stack (0 or 1) */
     uint32_t last_hs_us;    /* the last completed handshake, first slice to done (network waits included) */
     int32_t last_error;     /* the mbedTLS error of the last failed connection (0: none yet) */
 } TlsStats;
-const TlsStats *tls_stats(void);
+
+/* One net stack's TLS state (NetState.tls, runtime/net/net_int.h): its
+ * connection (GOGO_TLS_MAX of them) and counters. Cleared by net_install. */
+typedef struct TlsState {
+    struct TlsConn *conn;   /* the open connection, or NULL */
+    TlsStats st;
+} TlsState;
+
+/* Stack ns's counters. */
+const TlsStats *tls_stats(const struct NetState *ns);
 
 #endif

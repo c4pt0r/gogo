@@ -1,8 +1,6 @@
 # Mutable global state still in runtime/ (tools/globals.sh). One entry per line:
-#   <file> <symbol>   # removed by E<n>
-# Function-local statics are func.var (a gcc ELF "var.N" matches any func.var of that file). Each embed task deletes its own lines;
-# the guard also fails on entries that no longer exist.
-runtime/net/ports.c net_s  # removed by E6
-runtime/net/tls/tls.c st  # removed by E6
-runtime/net/tls/tls.c tc  # removed by E6
-runtime/net/tls/tls.c glue  # removed by E6
+#   <file> <symbol>   # <why>
+# Function-local statics are func.var (a gcc ELF "var.N" matches any func.var of that file).
+# The guard fails on entries that no longer exist, except those tagged
+# "# permanent: <reason>": state that must stay process-global by design.
+runtime/net/tls/tls.c glue  # permanent: mbedTLS process-global hooks (allocator, time, RNG take no context; one TlsHw per process, tls.h)
