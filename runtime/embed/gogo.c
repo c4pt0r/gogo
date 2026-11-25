@@ -105,6 +105,7 @@ static int vm_setup(gogo_vm *g) {
     uint16_t cap = g->cfg.max_actors ? g->cfg.max_actors : (uint16_t)GOGO_TABLE_CAP;
     if (vm_init(&g->vm, &g->fwd, g, &embed_board, g->cfg.caps, cap) != 0) return -1;
     va_set_limit(&g->vm, g->cfg.mem_limit);
+    embed_ports_install(g);
     return port_add_source(&g->vm, &inbox_source, g) ? 0 : -1;
 }
 
@@ -240,18 +241,29 @@ int embed_set_state(gogo_vm *g, int s) {
     return old;
 }
 
-int gogo_post(gogo_vm *g, const char *name, int32_t kind, const void *data, size_t len) {
-    if (!g || !name || (len && !data)) return GOGO_EINVAL;
-    size_t nl = strlen(name);
-    if (nl > GOGO_POST_NAME_MAX || len > GOGO_POST_DATA_MAX) return GOGO_E2BIG;
+/* Queues a post for the name (port 0) or the host port, and wakes. */
+static int post(gogo_vm *g, const char *name, size_t nl, uint32_t port, int32_t kind, const void *data, size_t len) {
     __atomic_fetch_add(&g->posting, 1, __ATOMIC_SEQ_CST);   /* handshake: seq_cst (above) */
     int r = GOGO_ECLOSED;
     if (__atomic_load_n(&g->state, __ATOMIC_SEQ_CST) == EMBED_LIVE) {
-        r = inbox_push(&g->inbox, g->uh, g->uctx, name, nl, kind, data, len);
+        r = inbox_push(&g->inbox, g->uh, g->uctx, name, nl, port, kind, data, len);
         if (r == 0 && g->uh->wake) g->uh->wake(g->uctx);
     }
     __atomic_fetch_sub(&g->posting, 1, __ATOMIC_RELEASE);
     return r;
+}
+
+int gogo_post(gogo_vm *g, const char *name, int32_t kind, const void *data, size_t len) {
+    if (!g || !name || (len && !data)) return GOGO_EINVAL;
+    size_t nl = strlen(name);
+    if (nl > GOGO_POST_NAME_MAX || len > GOGO_POST_DATA_MAX) return GOGO_E2BIG;
+    return post(g, name, nl, 0, kind, data, len);
+}
+
+int gogo_port_post(gogo_vm *g, gogo_port port, int32_t kind, const void *data, size_t len) {
+    if (!g || (len && !data) || port.index >= GOGO_MAX_PORTS) return GOGO_EINVAL;
+    if (len > GOGO_POST_DATA_MAX) return GOGO_E2BIG;
+    return post(g, "", 0, embed_port_enc(port), kind, data, len);
 }
 
 void gogo_close_posts(gogo_vm *g) {
@@ -291,7 +303,11 @@ void gogo_free(gogo_vm *g) {
         if (spins >= 1000u && g->uh->wait) g->uh->wait(g->uctx, 1);
     }
     inbox_clear(&g->inbox, g->uh, g->uctx);
-    if (g->vm.run_state == VM_ST_RUN) vm_stop(&g->vm);   /* ports get their close */
+    if (g->vm.run_state == VM_ST_RUN) {
+        g->stepping = true;              /* host port close callbacks are hooks */
+        vm_stop(&g->vm);                 /* ports get their close */
+        g->stepping = false;
+    }
     blk_free_all(g, &g->code_blocks, g->uh->code_free);
     blk_free_all(g, &g->blocks, g->uh->free);
     if (g->image_copy) g->uh->free(g->uctx, g->image_copy, g->image_bytes);

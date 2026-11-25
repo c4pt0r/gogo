@@ -13,8 +13,9 @@
  *  4. frees it with gogo_free.
  *
  * Threads. A VM is single-threaded: every gogo_* call runs on the thread
- * that owns the VM, except gogo_post, gogo_close_posts, gogo_retain and
- * gogo_release, which any thread holding a reference may call at any time.
+ * that owns the VM, except gogo_post, gogo_port_post, gogo_close_posts,
+ * gogo_retain and gogo_release, which any thread holding a reference may
+ * call at any time.
  * Hooks run on the owning thread unless noted.
  *
  * Re-entrancy. Hooks run inside gogo_step. A hook must not call gogo_step,
@@ -139,7 +140,8 @@ enum {
     GOGO_EBUSY = -8,      /* called from a hook while the VM is stepping */
     GOGO_EFULL = -9,      /* the inbox holds GOGO_POST_MAX posts */
     GOGO_E2BIG = -10,     /* a post's name or data is too long */
-    GOGO_ECLOSED = -11    /* the VM is being freed, or was freed */
+    GOGO_ECLOSED = -11,   /* the VM is being freed, or was freed; a host port is closed */
+    GOGO_EEXIST = -12     /* gogo_register_port: the name is taken */
 };
 #define GOGO_NEVER (-1)
 
@@ -222,6 +224,62 @@ int gogo_run(gogo_vm *vm);
  * wait, GOGO_ESTATE if a thread is already running, GOGO_ENOMEM. */
 int gogo_run_thread(gogo_vm *vm);
 int gogo_join(gogo_vm *vm);
+
+/* ---- host ports: the embedder's own extension surface ----
+ *
+ * A host defines ports of its own, which Go code opens by name like any
+ * port: port.Open("ui", port.Host{Arg: 1, Data: cfg}) calls the driver's
+ * open; actor.Send(p, port.Post{Kind, Data}) calls its command; the port's
+ * events reach its owner as port.Post{Kind, Data} (gogo_port_emit,
+ * gogo_port_post). Ports keep their usual rules: the owner's exit,
+ * port.Close or actor.Kill closes one (the driver's close runs once),
+ * port.Handoff gives it to another actor, a stale PID is ignored. Host
+ * ports need no capability bit (they work with caps 0): what one may do is
+ * the host's own business. While posts are open (gogo_close_posts), an
+ * open host port keeps the VM alive, as it can still get events.
+ *
+ * The callbacks run on the VM thread inside gogo_step (close also inside
+ * gogo_free) and are hooks: gogo_step, gogo_run, gogo_load and gogo_start
+ * return GOGO_EBUSY there. data is valid during the call only; open's is
+ * the cfg's Data, command's the command's Data. A port is named by its
+ * index and generation: a closed port's value never names a later one. */
+typedef struct gogo_port { uint16_t index, gen; } gogo_port;
+typedef struct gogo_port_driver {
+    /* port.Open: 0 to accept, anything else refuses (Open's ok is false).
+     * NULL accepts every open. An event it emits reaches the owner even if
+     * it then refuses. */
+    int  (*open)(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uint8_t *data, size_t len);
+    /* A port.Post sent to the port (by any actor). NULL ignores them; so
+     * is any other message. */
+    void (*command)(void *ctx, gogo_vm *vm, gogo_port port, int32_t kind, const uint8_t *data, size_t len);
+    /* The port has closed (any reason, gogo_free too). NULL: nothing. */
+    void (*close)(void *ctx, gogo_vm *vm, gogo_port port);
+} gogo_port_driver;
+
+/* Most host ports per VM, and the longest name. */
+#define GOGO_MAX_HOST_PORTS 4
+#define GOGO_PORT_NAME_MAX 31u
+
+/* Registers a host port driver as name (NUL-terminated; both are copied),
+ * its callbacks getting ctx. Before gogo_start. 0, or GOGO_EEXIST (a
+ * port of this name exists, or it names a board driver: "gpio", "tcp",
+ * ...), GOGO_EFULL (GOGO_MAX_HOST_PORTS already), GOGO_E2BIG (the name),
+ * GOGO_EINVAL (no name or driver), GOGO_ESTARTED, GOGO_EBUSY. */
+int gogo_register_port(gogo_vm *vm, const char *name, const gogo_port_driver *drv, void *ctx);
+
+/* VM thread (a callback, or between steps): sends the port's owner
+ * port.Post{kind, data[0..len)} (copied) now. 0, or GOGO_ECLOSED (the port
+ * is closed, or its owner is exiting), GOGO_EFULL (over the owner's
+ * mailbox quota: dropped, the owner is not killed), GOGO_ENOMEM,
+ * GOGO_E2BIG (over GOGO_POST_DATA_MAX), GOGO_EINVAL. */
+int gogo_port_emit(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
+
+/* Any thread: gogo_port_emit through the inbox, as gogo_post: queued,
+ * wakes the host, delivered at the VM's next step. Returns as gogo_post
+ * does (GOGO_ECLOSED once posts are closed). A post the port can no longer
+ * take when it is delivered (closed since, its owner exiting, over quota)
+ * is dropped and counted in posts_dropped. */
+int gogo_port_post(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
 
 /* Counters. On the owning thread: with gogo_run_thread, after gogo_join
  * (or from a hook). */

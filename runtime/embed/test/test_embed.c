@@ -1,7 +1,8 @@
 /* The embedding API (include/gogo.h) against real images (testdata/,
  * compiled by `make test-embed` into $GOGO_EMBED_IMAGES): posts, the inbox
  * under threads, the latched wake, freeing while posting, the code.Load
- * switch, the memory cap, and that gogo_free gives back every byte. */
+ * switch, the memory cap, host ports (and the examples/hostecho golden),
+ * and that gogo_free gives back every byte. */
 #define _POSIX_C_SOURCE 200809L
 #if defined(__APPLE__)
 #define _DARWIN_C_SOURCE
@@ -665,4 +666,325 @@ TEST(embed_posix_host) {
     uint64_t dt = h->now_ms(c) - t0;
     CHECK(dt >= 15 && dt < 2000);
     gogo_posix_ctx_free(c);
+}
+
+/* ---- host ports (gogo_register_port) ---- */
+
+/* A host port driver's record of its calls. Its open accepts Arg >= 0
+ * (with echo set, it answers with an event Kind = Arg, Data = the cfg's
+ * Data); a command is recorded and, with echo set, sent back to the owner
+ * with Kind + 1. */
+typedef struct HCtx {
+    int echo;
+    int opens, commands, closes;   /* atomic */
+    gogo_port port;                /* the last opened (VM thread, read after a sync) */
+    int32_t arg, kind;
+    char data[64];
+    size_t len;
+    int emit_rc;
+    gogo_vm *vm;                   /* set: re-entry tried from open */
+    int reenter_step, reenter_reg, reenter_start;
+} HCtx;
+
+static int h_open(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uint8_t *data, size_t len) {
+    HCtx *h = ctx;
+    if (arg < 0) return -1;
+    h->port = port;
+    h->arg = arg;
+    h->len = len < sizeof h->data ? len : sizeof h->data;
+    if (len) memcpy(h->data, data, h->len);
+    if (h->vm) {
+        static const gogo_port_driver none = { NULL, NULL, NULL };
+        h->reenter_step = gogo_step(h->vm, 1);
+        h->reenter_reg = gogo_register_port(h->vm, "late", &none, NULL);
+        h->reenter_start = gogo_start(h->vm);
+    }
+    if (h->echo) h->emit_rc = gogo_port_emit(vm, port, arg, data, len);
+    __atomic_fetch_add(&h->opens, 1, __ATOMIC_RELEASE);
+    return 0;
+}
+
+static void h_command(void *ctx, gogo_vm *vm, gogo_port port, int32_t kind, const uint8_t *data, size_t len) {
+    HCtx *h = ctx;
+    h->kind = kind;
+    h->len = len < sizeof h->data ? len : sizeof h->data;
+    if (len) memcpy(h->data, data, h->len);
+    if (h->echo) h->emit_rc = gogo_port_emit(vm, port, kind + 1, data, len);
+    __atomic_fetch_add(&h->commands, 1, __ATOMIC_RELEASE);
+}
+
+static void h_close(void *ctx, gogo_vm *vm, gogo_port port) {
+    (void)vm;
+    (void)port;
+    __atomic_fetch_add(&((HCtx *)ctx)->closes, 1, __ATOMIC_RELEASE);
+}
+
+static const gogo_port_driver hdrv = { h_open, h_command, h_close };
+
+static gogo_vm *new_hostport(TCtx *t, HCtx *h) {
+    memset(h, 0, sizeof *h);
+    gogo_vm *vm = gogo_new(&thost, t, NULL);
+    CHECK(vm != NULL);
+    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, h), GOGO_OK);
+    Img im = image("hostport");
+    CHECK(im.w != NULL);
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    free(im.w);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    return vm;
+}
+
+static int ctl(gogo_vm *vm, int32_t kind) {
+    int r = gogo_post(vm, "ctl", kind, NULL, 0);
+    return r ? r : settle(vm);
+}
+
+/* The golden: examples/hostecho under an echo host, its output compared
+ * with examples/hostecho/embed.out. */
+TEST(embed_hostecho_golden) {
+    TCtx t; tctx_init(&t);
+    HCtx h; memset(&h, 0, sizeof h);
+    h.echo = 1;
+    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    CHECK_EQ(gogo_register_port(vm, "echo", &hdrv, &h), GOGO_OK);
+    Img im = image("hostecho");
+    CHECK(im.w != NULL);
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    free(im.w);
+    CHECK_EQ(gogo_run(vm), GOGO_OK);
+    const char *dir = getenv("GOGO_EMBED_EXAMPLES");
+    char path[512], want[2048];
+    snprintf(path, sizeof path, "%s/hostecho/embed.out", dir ? dir : "examples");
+    FILE *f = fopen(path, "rb");
+    CHECK(f != NULL);
+    size_t n = f ? fread(want, 1, sizeof want - 1, f) : 0;
+    if (f) fclose(f);
+    want[n] = 0;
+    CHECK(strcmp(t.out, want) == 0);
+    if (strcmp(t.out, want) != 0) printf("  out:\n%s", t.out);
+    CHECK_EQ(h.opens, 1);          /* Arg -1 was refused by the host */
+    CHECK_EQ(h.commands, 4);       /* the stale Send never reached it */
+    CHECK_EQ(h.closes, 1);
+    CHECK_EQ(h.emit_rc, GOGO_OK);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+/* Open with a config, a command in, an event out (from outside a step and
+ * from inside the command), the Kind boxed and the Data large. */
+TEST(embed_hostport_echo) {
+    TCtx t; tctx_init(&t);
+    HCtx h;
+    gogo_vm *vm = new_hostport(&t, &h);
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    CHECK_EQ(h.opens, 1);
+    CHECK_EQ(h.arg, 1);
+    CHECK_EQ(h.len, 0);
+    CHECK_EQ(gogo_port_emit(vm, h.port, 1000, "hi", 2), GOGO_OK);
+    static uint8_t big[5000];
+    CHECK_EQ(gogo_port_emit(vm, h.port, 2000000000, big, sizeof big), GOGO_OK);
+    CHECK_EQ(gogo_port_emit(vm, h.port, 1001, NULL, 0), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(ctl(vm, 2), GOGO_IDLE);
+    CHECK_EQ(h.commands, 1);
+    CHECK_EQ(h.kind, 5);
+    CHECK(h.len == 3 && memcmp(h.data, "cmd", 3) == 0);
+    CHECK(strcmp(t.out, "ready\nopen true\nevent 1000 2\nevent 2000000000 5000\nevent 1001 0\n") == 0);
+    /* Bad arguments. */
+    CHECK_EQ(gogo_port_emit(vm, h.port, 1, NULL, 1), GOGO_EINVAL);
+    CHECK_EQ(gogo_port_emit(vm, h.port, 1, big, GOGO_POST_DATA_MAX + 1u), GOGO_E2BIG);
+    gogo_port bad = { 99, 0 };
+    CHECK_EQ(gogo_port_emit(vm, bad, 1, NULL, 0), GOGO_EINVAL);
+    CHECK_EQ(gogo_port_post(vm, bad, 1, NULL, 0), GOGO_EINVAL);
+    gogo_port other = { (uint16_t)(h.port.index + 1u), 0 };   /* no port there */
+    CHECK_EQ(gogo_port_emit(vm, other, 1, NULL, 0), GOGO_ECLOSED);
+    CHECK_EQ(h.closes, 0);
+    CHECK_EQ(ctl(vm, -1), GOGO_DONE);   /* main's exit closes its port */
+    CHECK_EQ(h.closes, 1);
+    gogo_free(vm);
+    CHECK_EQ(h.closes, 1);
+    tctx_done(&t);
+}
+
+/* A closed port's value never names it again, nor the port opened next in
+ * its slot; a Send to its stale PID never reaches the host. */
+TEST(embed_hostport_stale) {
+    TCtx t; tctx_init(&t);
+    HCtx h;
+    gogo_vm *vm = new_hostport(&t, &h);
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    gogo_port old = h.port;
+    CHECK_EQ(ctl(vm, 3), GOGO_IDLE);
+    CHECK_EQ(h.closes, 1);
+    CHECK_EQ(h.commands, 0);
+    CHECK_EQ(gogo_port_emit(vm, old, 1000, NULL, 0), GOGO_ECLOSED);
+    CHECK_EQ(gogo_port_post(vm, old, 1000, NULL, 0), GOGO_OK);   /* dropped when delivered */
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    gogo_stats st;
+    gogo_get_stats(vm, &st);
+    CHECK_EQ(st.posts_dropped, 1);
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    CHECK_EQ(h.port.index, old.index);
+    CHECK(h.port.gen != old.gen);
+    CHECK_EQ(gogo_port_emit(vm, old, 1000, NULL, 0), GOGO_ECLOSED);
+    CHECK_EQ(gogo_port_emit(vm, h.port, 1000, NULL, 0), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK(strcmp(t.out, "ready\nopen true\nclosed\nopen true\nevent 1000 0\n") == 0);
+    gogo_free(vm);                     /* the open port is closed: once */
+    CHECK_EQ(h.closes, 2);
+    tctx_done(&t);
+}
+
+/* The owner's exit closes the port, and the host's close runs once. */
+TEST(embed_hostport_owner_exit) {
+    TCtx t; tctx_init(&t);
+    HCtx h;
+    gogo_vm *vm = new_hostport(&t, &h);
+    CHECK_EQ(ctl(vm, 5), GOGO_IDLE);
+    CHECK_EQ(h.opens, 1);
+    CHECK_EQ(h.arg, 2);
+    CHECK_EQ(h.closes, 1);
+    CHECK_EQ(gogo_port_emit(vm, h.port, 1000, NULL, 0), GOGO_ECLOSED);
+    CHECK(strcmp(t.out, "ready\nchild opened true\n") == 0);
+    gogo_free(vm);
+    CHECK_EQ(h.closes, 1);
+    tctx_done(&t);
+}
+
+/* Handoff: later events go to the new owner, whose exit closes the port. */
+TEST(embed_hostport_handoff) {
+    TCtx t; tctx_init(&t);
+    HCtx h;
+    gogo_vm *vm = new_hostport(&t, &h);
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    CHECK_EQ(ctl(vm, 4), GOGO_IDLE);
+    CHECK_EQ(gogo_port_emit(vm, h.port, 1000, "x", 1), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(h.closes, 0);
+    CHECK_EQ(gogo_port_post(vm, h.port, 1999, "end", 3), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(h.closes, 1);
+    CHECK(strcmp(t.out, "ready\nopen true\nhandoff true\nkid event 1000 x\nkid event 1999 end\n") == 0);
+    gogo_free(vm);
+    CHECK_EQ(h.closes, 1);
+    tctx_done(&t);
+}
+
+/* Registration: names a board driver has, duplicates, the limit, after
+ * start, and from a hook (open's re-entry attempts). */
+TEST(embed_hostport_register) {
+    TCtx t; tctx_init(&t);
+    HCtx h; memset(&h, 0, sizeof h);
+    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    CHECK_EQ(gogo_register_port(vm, "gpio", &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "tcp", &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "kbd", &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, NULL, &hdrv, &h), GOGO_EINVAL);
+    CHECK_EQ(gogo_register_port(vm, "", &hdrv, &h), GOGO_EINVAL);
+    CHECK_EQ(gogo_register_port(vm, "x", NULL, &h), GOGO_EINVAL);
+    char longname[GOGO_PORT_NAME_MAX + 2];
+    memset(longname, 'n', sizeof longname - 1);
+    longname[sizeof longname - 1] = 0;
+    CHECK_EQ(gogo_register_port(vm, longname, &hdrv, &h), GOGO_E2BIG);
+    longname[GOGO_PORT_NAME_MAX] = 0;
+    CHECK_EQ(gogo_register_port(vm, longname, &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "c", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "d", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "e", &hdrv, &h), GOGO_EFULL);
+    /* A failed load keeps the registrations. */
+    uint32_t junk[4] = { 1, 2, 3, 4 };
+    CHECK_EQ(gogo_load(vm, junk, sizeof junk, 0), GOGO_EIMAGE);
+    Img im = image("hostport");
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    free(im.w);
+    CHECK_EQ(gogo_register_port(vm, "f", &hdrv, &h), GOGO_EFULL);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "e", &hdrv, &h), GOGO_ESTARTED);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    h.vm = vm;
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    CHECK_EQ(h.opens, 1);
+    CHECK_EQ(h.reenter_step, GOGO_EBUSY);
+    CHECK_EQ(h.reenter_reg, GOGO_EBUSY);
+    CHECK_EQ(h.reenter_start, GOGO_EBUSY);
+    gogo_free(vm);
+    CHECK_EQ(h.closes, 1);
+    tctx_done(&t);
+}
+
+/* Host ports need no capability: a VM with caps 0 opens them (the
+ * golden's VM has a NULL config). With posts closed, an open host port no
+ * longer keeps the VM alive. */
+TEST(embed_hostport_close_posts) {
+    TCtx t; tctx_init(&t);
+    HCtx h;
+    gogo_vm *vm = new_hostport(&t, &h);
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    gogo_close_posts(vm);
+    CHECK_EQ(gogo_port_post(vm, h.port, 1000, NULL, 0), GOGO_ECLOSED);
+    CHECK_EQ(settle(vm), GOGO_DONE);
+    CHECK_EQ(h.closes, 1);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+typedef struct PortProducer {
+    pthread_t th;
+    gogo_vm *vm;
+    gogo_port port;
+    int n, ok;                     /* ok: atomic */
+} PortProducer;
+
+static void *port_produce(void *arg) {
+    PortProducer *p = arg;
+    for (int s = 0; s < p->n; s++) {
+        int r;
+        while ((r = gogo_port_post(p->vm, p->port, 1000 + s, "data", 4)) == GOGO_EFULL) sched_yield();
+        if (r == GOGO_OK) __atomic_fetch_add(&p->ok, 1, __ATOMIC_RELEASE);
+    }
+    return NULL;
+}
+
+/* Posts from another thread to a port that closes meanwhile: those
+ * delivered after the close are dropped and counted; nothing is lost
+ * from the accounting. */
+TEST(embed_hostport_post_threads) {
+    TCtx t; tctx_init(&t);
+    HCtx h; memset(&h, 0, sizeof h);
+    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    Img im = image("hostport");
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    free(im.w);
+    CHECK_EQ(gogo_run_thread(vm), GOGO_OK);
+    CHECK(await_lines(&t, 1));
+    CHECK_EQ(post_retry(vm, "ctl", 1, NULL, 0), GOGO_OK);
+    CHECK(await_lines(&t, 2));                 /* "open true": the port is known */
+    CHECK_EQ(__atomic_load_n(&h.opens, __ATOMIC_ACQUIRE), 1);
+    PortProducer p = { .vm = vm, .port = h.port, .n = 3000 };
+    pthread_create(&p.th, NULL, port_produce, &p);
+    while (__atomic_load_n(&p.ok, __ATOMIC_ACQUIRE) < 1000) sched_yield();
+    CHECK_EQ(post_retry(vm, "ctl", 3, NULL, 0), GOGO_OK);   /* closes mid-stream */
+    pthread_join(p.th, NULL);
+    CHECK_EQ(p.ok, 3000);
+    uint64_t end = mono_ms() + 20000u;
+    while (__atomic_load_n(&h.closes, __ATOMIC_ACQUIRE) < 1 && mono_ms() < end) sched_yield();
+    CHECK_EQ(__atomic_load_n(&h.closes, __ATOMIC_ACQUIRE), 1);
+    for (int i = 0; i < 20; i++) CHECK_EQ(gogo_port_post(vm, h.port, 3, NULL, 0), GOGO_OK);
+    CHECK_EQ(post_retry(vm, "ctl", -1, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_join(vm), GOGO_OK);
+    gogo_stats st;
+    gogo_get_stats(vm, &st);
+    long events = __atomic_load_n(&t.lines, __ATOMIC_ACQUIRE) - 4;   /* ready, open, closed, bye */
+    /* 3 ctl posts and the events delivered; the rest dropped. */
+    CHECK_EQ(st.posts_delivered, 3 + (uint64_t)events);
+    CHECK_EQ(st.posts_delivered + st.posts_dropped, 3 + 3000 + 20);
+    CHECK(events >= 1000);
+    CHECK(st.posts_dropped >= 20);
+    CHECK_EQ(h.closes, 1);
+    gogo_free(vm);
+    tctx_done(&t);
 }

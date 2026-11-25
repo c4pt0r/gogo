@@ -187,12 +187,15 @@ $(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_ma
 
 # Embed mode (runtime/embed, runtime/include/gogo.h): the API, the post
 # inbox and the POSIX host over the VM core alone (no board), against images
-# compiled from runtime/embed/test/testdata. test-embed-tsan runs the same
+# compiled from runtime/embed/test/testdata (and the EMBED_EXAMPLES, whose
+# output is compared with their embed.out). test-embed-tsan runs the same
 # tests under ThreadSanitizer; test-embed-leaks checks that no memory leaks
 # (LeakSanitizer on Linux, leaks(1) on macOS, where ASan has no leak check).
 EMBED_SRCS = $(wildcard runtime/embed/*.c)
 EMBED_TEST_SRCS = runtime/vm/test/test_main.c $(wildcard runtime/embed/test/*.c)
 EMBED_PROGS = $(notdir $(wildcard runtime/embed/test/testdata/*))
+# Examples run under a test host, their output compared with embed.out.
+EMBED_EXAMPLES = hostecho
 EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vm -Iruntime/vm/test
 
 $(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(wildcard runtime/embed/*.h) runtime/include/gogo.h $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h)
@@ -203,6 +206,7 @@ embed-images:
 	@mkdir -p $(BUILD)/embed
 	go build -o $(BUILD)/gogo ./cmd/gogo
 	for p in $(EMBED_PROGS); do $(BUILD)/gogo build runtime/embed/test/testdata/$$p -o $(BUILD)/embed/$$p.gogo || exit 1; done
+	for p in $(EMBED_EXAMPLES); do $(BUILD)/gogo build examples/$$p -o $(BUILD)/embed/$$p.gogo || exit 1; done
 
 test-embed: $(BUILD)/test_embed embed-images
 	GOGO_EMBED_IMAGES=$(BUILD)/embed $(BUILD)/test_embed

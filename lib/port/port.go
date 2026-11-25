@@ -60,8 +60,9 @@ type Out struct{ Data bytes.Bytes }
 type Done struct{ Seq int }
 
 // Host configures a port that the program embedding the VM defines (embed
-// mode, runtime/include/gogo.h): Arg and Data are passed to the host's open
-// as they are.
+// mode, gogo_register_port in runtime/include/gogo.h): Arg and Data are
+// passed to the host's open as they are. Such a port takes Post commands
+// and sends its owner Post events.
 type Host struct {
 	Arg  int
 	Data bytes.Bytes
