@@ -2,7 +2,7 @@ char *mkdtemp(char *);   /* POSIX; not exposed under -std=c99 on every libc */
 /* fs_host against a temp directory, directly and through vfs. */
 #include "test.h"
 #include "vfs_int.h"
-#include "fs_host.h"
+#include "fs_dir.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

@@ -5,3 +5,5 @@
 # "# permanent: <reason>": state that must stay process-global by design.
 runtime/net/tls/tls.c glue  # permanent: mbedTLS process-global hooks (allocator, time, RNG take no context; one TlsHw per process, tls.h)
 runtime/net/tls/tls.c clock_vm  # permanent: per-thread Vm for mbedTLS's context-free time hooks (host builds only, thread-local)
+runtime/embed/fs_dir.c quota_left  # host fs backend before the per-instance FsDir
+runtime/embed/fs_dir.c roots       # host fs backend before the per-instance FsDir

@@ -36,7 +36,7 @@
 #include "net_unix.h"
 #include "net_int.h"
 #include "vfs_int.h"
-#include "fs_host.h"
+#include "fs_dir.h"
 
 #include <sys/stat.h>
 #include <errno.h>

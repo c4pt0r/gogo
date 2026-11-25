@@ -15,8 +15,8 @@ VM_SRCS  := $(filter-out runtime/vm/check32.c,$(VM_SRCS))
 VM_CORE_SRCS = $(filter-out runtime/vm/check32.c,$(wildcard runtime/vm/*.c))
 # runtime/stream/ (pure C99): Chunk / Out / Done for every streaming driver (spec input2 §1).
 STREAM_SRCS = $(wildcard runtime/stream/*.c)
-MAIN_SRCS = platform/unix/main.c platform/unix/fs_host.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(STREAM_SRCS)
-PLAT_HDRS = $(wildcard platform/unix/*.h) $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h)
+MAIN_SRCS = platform/unix/main.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(STREAM_SRCS)
+PLAT_HDRS = $(wildcard platform/unix/*.h) runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h)
 
 # The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
 # built here with runtime/net/tls/config (gogo_*_config.h) into its own static library,
@@ -59,7 +59,7 @@ vm: $(BUILD)/gogovm
 
 $(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/embed -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-c: $(BUILD)/test_c
 	$(BUILD)/test_c
@@ -181,9 +181,9 @@ $(BUILD)/test_stream_mcu: $(STREAM_DEPS)
 test-fs-host: $(BUILD)/test_fs_host
 	$(BUILD)/test_fs_host
 
-$(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS) $(wildcard runtime/vfs/*.h) $(PLAT_HDRS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h)
+$(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/embed/fs_dir.c $(VFS_SRCS) $(VM_SRCS) $(wildcard runtime/vfs/*.h) $(PLAT_HDRS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(VFS_INC) -o $@ platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(VFS_INC) -Iruntime/embed -o $@ platform/unix/test/test_fs_host.c runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/embed/fs_dir.c $(VFS_SRCS) $(VM_SRCS)
 
 # Embed mode (runtime/embed, runtime/include/gogo.h): the API, the post
 # inbox and the POSIX host over the VM core alone (no board), against images
@@ -191,7 +191,7 @@ $(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c runtime/vm/test/test_ma
 # output is compared with their embed.out). test-embed-tsan runs the same
 # tests under ThreadSanitizer; test-embed-leaks checks that no memory leaks
 # (LeakSanitizer on Linux, leaks(1) on macOS, where ASan has no leak check).
-EMBED_SRCS = $(wildcard runtime/embed/*.c)
+EMBED_SRCS = $(filter-out runtime/embed/fs_dir.c,$(wildcard runtime/embed/*.c))
 EMBED_TEST_SRCS = runtime/vm/test/test_main.c $(wildcard runtime/embed/test/*.c)
 EMBED_PROGS = $(notdir $(wildcard runtime/embed/test/testdata/*))
 # Examples run under a test host, their output compared with embed.out.
@@ -266,7 +266,7 @@ test-lib:
 # limit (16 KB per actor): the library actors must fit.
 $(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/embed -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-net-mcu: $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/
