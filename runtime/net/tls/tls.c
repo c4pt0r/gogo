@@ -8,6 +8,9 @@
 #include "host.h"
 #include <stdlib.h>
 #include <string.h>
+#if GOGO_TLS_MBEDTLS_HOOKS
+#include <pthread.h>
+#endif
 
 #include "mbedtls/ssl.h"
 #include "mbedtls/platform.h"
@@ -71,14 +74,23 @@ typedef struct TlsConn TlsConn;
  * state the port keeps outside the Vm (tls.h: every Vm of a process shares
  * one TlsHw).
  *   hw:   the TlsHw the hooks use (tls_init's; NULL until it succeeds);
- *   said: a refused tls_init (another TlsHw) was logged (only where gogo
- *         installs the hooks: a firmware has one board, one TlsHw). */
+ *   said: a refused tls_init (another TlsHw) was logged;
+ *   mu:   serializes tls_init and said (Vms on several threads may open
+ *         tls at once).
+ * said and mu only where gogo installs the hooks (a firmware has one
+ * board, one TlsHw, one Vm task). hw is written only under mu, and every
+ * reader (the hooks, an open) runs after its own thread's tls_init. */
 static struct {
     const TlsHw *hw;
 #if GOGO_TLS_MBEDTLS_HOOKS
     bool said;
+    pthread_mutex_t mu;
 #endif
-} glue;
+} glue
+#if GOGO_TLS_MBEDTLS_HOOKS
+    = { .mu = PTHREAD_MUTEX_INITIALIZER }
+#endif
+;
 
 #if GOGO_TLS_MBEDTLS_HOOKS
 /* The Vm whose connection this thread is driving through mbedTLS (NULL
@@ -141,7 +153,7 @@ psa_status_t mbedtls_psa_external_get_random(mbedtls_psa_external_random_context
 }
 #endif
 
-bool tls_init(const TlsHw *hw) {
+static bool init_locked(const TlsHw *hw) {
     if (!hw) return false;
     if (glue.hw) return glue.hw == hw;   /* one TlsHw per process */
     glue.hw = hw;               /* before psa_crypto_init, which allocates and draws */
@@ -157,22 +169,32 @@ bool tls_init(const TlsHw *hw) {
     return true;
 }
 
+#if GOGO_TLS_MBEDTLS_HOOKS
+bool tls_init(const TlsHw *hw) {
+    pthread_mutex_lock(&glue.mu);
+    bool ok = init_locked(hw);
+    pthread_mutex_unlock(&glue.mu);
+    return ok;
+}
+
 /* tls_init for an open on vm; a TlsHw other than the bound one is logged
  * once per process. */
 static bool bind_hw(const Vm *vm, const TlsHw *hw) {
-    if (tls_init(hw)) return true;
-#if GOGO_TLS_MBEDTLS_HOOKS
-    if (glue.hw && glue.hw != hw && !glue.said) {
+    pthread_mutex_lock(&glue.mu);
+    bool ok = init_locked(hw), say = !ok && glue.hw && glue.hw != hw && !glue.said;
+    if (say) glue.said = true;
+    pthread_mutex_unlock(&glue.mu);
+    if (say) {
         static const char msg[] = "gogo: tls: this board's TlsHw is not the one mbedTLS is bound to "
                                   "(one per process): tls refused\n";
-        glue.said = true;
         vm_write_err(vm, msg, sizeof msg - 1u);
     }
-#else
-    (void)vm;
-#endif
-    return false;
+    return ok;
 }
+#else
+bool tls_init(const TlsHw *hw) { return init_locked(hw); }   /* one Vm task */
+#define bind_hw(vm, hw) ((void)(vm), init_locked(hw))
+#endif
 
 /* ---- the bio: TCP underneath ---- */
 

@@ -33,6 +33,8 @@
 
 #define HDR 16u          /* keeps the payload 16-byte aligned */
 
+/* Bytes outstanding and their peak: atomics, since every Vm of the process
+ * shares this TlsHw and Vms may run on several threads. */
 static size_t heap_now, heap_peak;
 
 static void *tls_alloc(size_t n) {
@@ -40,8 +42,11 @@ static void *tls_alloc(size_t n) {
     unsigned char *p = calloc(1, n + HDR);
     if (!p) return NULL;
     memcpy(p, &n, sizeof n);
-    heap_now += n;
-    if (heap_now > heap_peak) heap_peak = heap_now;
+    size_t now = __atomic_add_fetch(&heap_now, n, __ATOMIC_RELAXED);
+    size_t peak = __atomic_load_n(&heap_peak, __ATOMIC_RELAXED);
+    while (now > peak && !__atomic_compare_exchange_n(&heap_peak, &peak, now, true, __ATOMIC_RELAXED,
+                                                      __ATOMIC_RELAXED)) {
+    }
     return p + HDR;
 }
 
@@ -50,13 +55,13 @@ static void tls_free(void *q) {
     unsigned char *p = (unsigned char *)q - HDR;
     size_t n;
     memcpy(&n, p, sizeof n);
-    heap_now -= n;
+    __atomic_sub_fetch(&heap_now, n, __ATOMIC_RELAXED);
     free(p);
 }
 
 void platform_unix_tls_heap(size_t *now, size_t *peak) {
-    *now = heap_now;
-    *peak = heap_peak;
+    *now = __atomic_load_n(&heap_now, __ATOMIC_RELAXED);
+    *peak = __atomic_load_n(&heap_peak, __ATOMIC_RELAXED);
 }
 
 static int tls_random(uint8_t *out, size_t n) {
@@ -117,10 +122,13 @@ typedef struct Bundle {
 } Bundle;
 
 static const mbedtls_x509_crt dummy_ca;   /* as IDF's s_dummy_crt: never a parent */
-/* What tls_verify_setup gave the open connection as its state (a
- * Bundle or a CA chain), for tls_verify_free: one connection at a
- * time (GOGO_TLS_MAX 1). */
-static int state_is_bundle;
+/* Whether tls_verify_setup gives a connection a Bundle (else a CA chain)
+ * as its state: read from the environment each time, so connections on
+ * several threads share no flag. */
+static int use_bundle(void) {
+    const char *bf = getenv("GOGO_TLS_BUNDLE_FILE");
+    return bf && *bf;
+}
 
 static int bundle_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
     (void)depth;
@@ -152,9 +160,7 @@ static int bundle_setup(struct mbedtls_ssl_config *conf, void **state, const cha
 
 static int tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
     static const char *const bundles[] = { "/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt" };
-    const char *bf = getenv("GOGO_TLS_BUNDLE_FILE");
-    state_is_bundle = bf && *bf;
-    if (state_is_bundle) return bundle_setup(conf, state, bf);
+    if (use_bundle()) return bundle_setup(conf, state, getenv("GOGO_TLS_BUNDLE_FILE"));
     const char *env = getenv("GOGO_TLS_CA_FILE");
     unsigned char *pem = NULL;
     size_t len = 0;
@@ -183,7 +189,7 @@ static int tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
 }
 
 static void tls_verify_free(void *state) {
-    if (!state_is_bundle) mbedtls_x509_crt_free(state);
+    if (!use_bundle()) mbedtls_x509_crt_free(state);
     tls_free(state);
 }
 

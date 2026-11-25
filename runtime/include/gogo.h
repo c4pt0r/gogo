@@ -11,7 +11,9 @@
  * every VM in a process must use the same board TLS table (TlsHw,
  * runtime/net/tls/tls.h); a VM with another one has its tls opens refused.
  * VMs on different threads may each run TLS: certificate checks read the
- * wall clock of the VM the calling thread is running. */
+ * wall clock of the VM the calling thread is running, and that shared TlsHw
+ * is then called from several threads at once, so its hooks must be
+ * thread-safe. */
 #ifndef GOGO_H
 #define GOGO_H
 

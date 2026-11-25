@@ -94,8 +94,11 @@
  *    thread-local pointer, set around each mbedTLS call), so VMs on
  *    different threads, each on its owner thread, each verify against their
  *    own wall clock. The host's mbedTLS is built thread-safe
- *    (MBEDTLS_THREADING_C, runtime/net/tls/config). The first tls_init must
- *    finish before other threads open tls (a board calls it at boot).
+ *    (MBEDTLS_THREADING_C, runtime/net/tls/config). tls_init is serialized
+ *    (a lock), so Vms on several threads may open tls first at the same
+ *    time. The port sets psa_interruptible_set_max_ops once, in tls_init;
+ *    hosts must not call it themselves (it is process-wide in mbedTLS, and
+ *    the ThreadSanitizer run relies on every store being that one value).
  */
 #ifndef GOGO_TLS_H
 #define GOGO_TLS_H
@@ -134,9 +137,12 @@ struct TlsConn;
 
 extern const PortDriver net_tls_driver;
 
-/* The board's TLS hooks (VmBoard.tls, host.h), a static const table. All
- * are called on the scheduler thread only. Every field is required but
- * clock_us.
+/* The board's TLS hooks (VmBoard.tls, host.h), a static const table.
+ * Every field is required but clock_us. They run on the thread of the Vm
+ * whose connection needs them, and every Vm of a process shares the one
+ * TlsHw (State above): with Vms on several threads, any hook may be called
+ * from several threads at once and must be thread-safe (alloc and free
+ * also serve mbedTLS's process-wide allocator).
  *
  * alloc: n zeroed bytes for mbedTLS and the connection state, or NULL.
  * PSRAM on boards that have it; a connection peaks at about 34 KB (record
