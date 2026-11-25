@@ -150,6 +150,16 @@ func (f flasher) flash(args []string) error {
 			return err
 		}
 	}
+	if err := writeImage(f.run, esptool, port, img, nil); err != nil {
+		return fmt.Errorf("gogo flash: %v", err)
+	}
+	return nil
+}
+
+// writeImage writes img (a gogo image that passed checkImage) with its
+// partition header to the image partition. opts are esptool options put
+// before the command (gogo setup passes --after watchdog-reset).
+func writeImage(run func(string, []string) error, esptool, port string, img []byte, opts []string) error {
 	tmp, err := os.CreateTemp("", "gogo-flash-*.bin")
 	if err != nil {
 		return err
@@ -162,8 +172,14 @@ func (f flasher) flash(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.run(esptool, []string{"--port", port, "write-flash", partOffset, tmp.Name()}); err != nil {
-		return fmt.Errorf("gogo flash: %s: %v", esptool, err)
+	args := append(append([]string{"--port", port}, opts...), imageWriteArgs(tmp.Name())...)
+	if err := run(esptool, args); err != nil {
+		return fmt.Errorf("%s: %v", esptool, err)
 	}
 	return nil
+}
+
+// imageWriteArgs is the esptool command that writes a packed image file.
+func imageWriteArgs(file string) []string {
+	return []string{"write-flash", partOffset, file}
 }

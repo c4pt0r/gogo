@@ -7,6 +7,8 @@
 //	gogo monitor [-port P] [-t seconds] [-until text] [-reset]
 //	gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
 //	gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
+//	gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-yes] [-dry-run]
+//	gogo version
 //
 // `gogo run` builds a directory to a temporary image first, then runs the VM
 // and exits with its status. The VM is $GOGO_VM if set, else
@@ -18,6 +20,7 @@
 // external esptool (see flash.go); `gogo monitor` captures the board's
 // serial console (see monitor.go). `gogo config` edits the configuration
 // store that config.Get reads, on the board or locally (see config.go).
+// `gogo setup` takes a new board to a running program (see setup.go).
 package main
 
 import (
@@ -34,7 +37,7 @@ import (
 	"gogotools/compiler"
 )
 
-const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats"
+const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats\n       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-yes] [-dry-run]\n       gogo version"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -217,6 +220,14 @@ func run(args []string) error {
 		return configCmd(args[1:], os.Stdout)
 	case "firmware":
 		return firmwareCmd(args[1:], os.Stdout, runIdfInRepo)
+	case "setup":
+		return setupCmd(args[1:])
+	case "version":
+		if len(args) != 1 {
+			return errors.New(usage)
+		}
+		fmt.Printf("gogo %s (image version %d)\n", version, compiler.ImageVersion)
+		return nil
 	}
 	return errors.New(usage)
 }
