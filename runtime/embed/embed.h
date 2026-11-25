@@ -56,8 +56,8 @@ static inline int embed_state(const gogo_vm *g) { return __atomic_load_n(&g->sta
 static inline bool embed_dead(const gogo_vm *g) { return embed_state(g) == EMBED_DEAD; }
 
 /* Raises the state to at least s (never lowers it); seq_cst, as the post
- * handshake needs. */
-void embed_set_state(gogo_vm *g, int s);
+ * handshake needs. Returns the state before. */
+int embed_set_state(gogo_vm *g, int s);
 
 /* host_posix.c: stops and joins a gogo_run_thread thread (gogo_free). */
 void embed_thread_stop(gogo_vm *g);

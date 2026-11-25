@@ -198,7 +198,9 @@ int gogo_post(gogo_vm *vm, const char *name, int32_t kind, const void *data, siz
 /* Any thread (holding a reference): later posts return GOGO_ECLOSED,
  * registered names no longer keep the VM alive, and the host is woken, so
  * a VM whose actors only wait for posts ends (gogo_run returns 0). Posts
- * already queued are still delivered. gogo_free implies it. */
+ * already queued are still delivered. A post concurrent with the close
+ * may return 0 and still be discarded (the VM finished first); it is
+ * counted in posts_dropped. gogo_free implies it. */
 void gogo_close_posts(gogo_vm *vm);
 
 /* Any thread: keeps the handle valid for gogo_post (which then returns
@@ -225,7 +227,8 @@ int gogo_join(gogo_vm *vm);
  * (or from a hook). */
 typedef struct gogo_stats {
     uint64_t posts_delivered;  /* posts queued on their receiver */
-    uint64_t posts_dropped;    /* posts not delivered: unknown name, over quota, out of memory */
+    uint64_t posts_dropped;    /* posts not delivered: unknown name, over quota, out of memory,
+                                * or the VM finished first */
     size_t   mem_used;         /* the VM allocator's bytes in use */
     size_t   mem_peak;         /* its highest use */
 } gogo_stats;

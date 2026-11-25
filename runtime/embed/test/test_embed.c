@@ -34,6 +34,7 @@ typedef struct TCtx {
     uint32_t rnd;           /* its generator (VM thread) */
     gogo_vm *reenter;       /* write steps this VM again (the re-entry test) */
     int reenter_rc;
+    long wakes;             /* atomic: wake calls */
 } TCtx;
 
 static const gogo_host *px(void) { return gogo_host_posix(); }
@@ -72,7 +73,10 @@ static void t_free(void *c, void *p, size_t n) {
 }
 
 static uint64_t t_now(void *c) { return px()->now_ms(((TCtx *)c)->px); }
-static void t_wake(void *c) { px()->wake(((TCtx *)c)->px); }
+static void t_wake(void *c) {
+    __atomic_fetch_add(&((TCtx *)c)->wakes, 1, __ATOMIC_RELAXED);
+    px()->wake(((TCtx *)c)->px);
+}
 
 static void t_wait(void *c, uint32_t ms) {
     TCtx *t = c;
@@ -430,7 +434,28 @@ TEST(embed_close_posts_ends_run) {
     /* The post sent before the close was still delivered. */
     CHECK(strcmp(t.out, "ready\npost 5 0 \n") == 0);
     CHECK_EQ(gogo_post(vm, "echo", 7, NULL, 0), GOGO_ECLOSED);
-    gogo_close_posts(vm);                  /* again: no effect */
+    long wakes = __atomic_load_n(&t.wakes, __ATOMIC_RELAXED);
+    gogo_close_posts(vm);                  /* again: no effect, no wake */
+    CHECK_EQ(__atomic_load_n(&t.wakes, __ATOMIC_RELAXED), wakes);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+/* A post accepted after the program finished (posts still open: no name
+ * kept it alive) goes nowhere; the next step counts it as dropped. */
+TEST(embed_post_after_done_counted) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(gogo_post(vm, "echo", -1, NULL, 0), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_DONE);
+    CHECK_EQ(gogo_post(vm, "echo", 4, "x", 1), GOGO_OK);
+    CHECK_EQ(gogo_step(vm, 0), GOGO_DONE);
+    gogo_stats st;
+    gogo_get_stats(vm, &st);
+    CHECK_EQ(st.posts_delivered, 1);
+    CHECK_EQ(st.posts_dropped, 1);
     gogo_free(vm);
     tctx_done(&t);
 }

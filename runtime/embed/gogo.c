@@ -184,6 +184,9 @@ int gogo_step(gogo_vm *g, uint32_t budget) {
     g->stepping = true;
     int r = vm_step(&g->vm, budget);
     if (r == VM_DONE && running) vm_stop(&g->vm);
+    /* Done: a post that raced the end (or gogo_close_posts) has no one to
+     * go to; it is counted as dropped now rather than held until free. */
+    if (r == VM_DONE) inbox_clear(&g->inbox, g->uh, g->uctx);
     g->stepping = false;
     return r;
 }
@@ -230,10 +233,11 @@ int gogo_run(gogo_vm *g) {
  * the old value (with an acquire read, arm64 may satisfy the load before
  * its earlier store is visible). Either the post sees the close and backs
  * off, or the free sees the post in progress and waits for it. */
-void embed_set_state(gogo_vm *g, int s) {
+int embed_set_state(gogo_vm *g, int s) {
     int old = __atomic_load_n(&g->state, __ATOMIC_SEQ_CST);
     while (old < s && !__atomic_compare_exchange_n(&g->state, &old, s, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
     }
+    return old;
 }
 
 int gogo_post(gogo_vm *g, const char *name, int32_t kind, const void *data, size_t len) {
@@ -252,9 +256,9 @@ int gogo_post(gogo_vm *g, const char *name, int32_t kind, const void *data, size
 
 void gogo_close_posts(gogo_vm *g) {
     if (!g) return;
-    embed_set_state(g, EMBED_CLOSED);
-    /* A VM idle only because a name kept it alive re-checks and ends. */
-    if (g->uh->wake) g->uh->wake(g->uctx);
+    /* A VM idle only because a name kept it alive re-checks and ends
+     * (once: a later close changes nothing). */
+    if (embed_set_state(g, EMBED_CLOSED) < EMBED_CLOSED && g->uh->wake) g->uh->wake(g->uctx);
 }
 
 void gogo_retain(gogo_vm *g) { __atomic_fetch_add(&g->refs, 1, __ATOMIC_RELAXED); }

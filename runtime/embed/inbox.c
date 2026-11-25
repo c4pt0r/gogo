@@ -53,6 +53,7 @@ static InboxNode *take(Inbox *in) {
 void inbox_clear(Inbox *in, const gogo_host *h, void *hctx) {
     for (InboxNode *n = take(in), *next; n; n = next) {
         next = n->next;
+        in->dropped++;
         h->free(hctx, n, n->bytes);
     }
 }

@@ -36,7 +36,8 @@ extern const PortSource inbox_source;
 int inbox_push(Inbox *in, const gogo_host *h, void *hctx, const char *name, size_t name_len,
                int32_t kind, const void *data, size_t len);
 
-/* Frees every node still queued (the VM is going away; no producer left). */
+/* Frees every node still queued, counting each as dropped: the VM has
+ * finished or is going away. VM thread; producers may still push. */
 void inbox_clear(Inbox *in, const gogo_host *h, void *hctx);
 
 #endif
