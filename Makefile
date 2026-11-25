@@ -36,7 +36,7 @@ MBEDTLS_PRIV = $(MBEDTLS_PUB) -Iruntime/net/tls/host -I$(MBEDTLS_DIR)/library -I
                -I$(MBEDTLS_TF)/dispatch -I$(MBEDTLS_TF)/utilities -I$(MBEDTLS_TF)/platform -I$(MBEDTLS_TF)/extras
 MBEDTLS_LIB  = $(BUILD)/libgogo_mbedtls.a
 TLS_SRCS     = runtime/net/tls/tls.c runtime/net/tls/anchor.c platform/unix/tls_unix.c
-TLS_CFLAGS   = -DGOGO_TLS -Iruntime/net/tls $(MBEDTLS_PUB)
+TLS_CFLAGS   = -DGOGO_TLS -pthread -Iruntime/net/tls $(MBEDTLS_PUB)
 TLS_LINK     = $(TLS_SRCS) $(MBEDTLS_LIB)
 TLS_DEPS     = $(TLS_SRCS) $(wildcard runtime/net/tls/*.h) $(wildcard runtime/net/tls/config/*.h) $(MBEDTLS_LIB)
 
@@ -49,11 +49,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: vmsize netsize tlssize test-tls-asan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-tls-c test-vfs test-input test-stream test-fs-host test-console check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
+test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-fs-host test-console check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
 
 vm: $(BUILD)/gogovm
 
@@ -85,14 +85,30 @@ $(BUILD)/test_net: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wild
 
 # The "tls" port's per-stack state (two Vms, two connections), against the
 # mbedTLS library; skipped without the mbedTLS source tree.
-TLS_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/net/tls/test/*.c)
+TLS_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/net/tls/test/test_tls.c
 ifneq ($(TLS_CFLAGS),)
 test-tls-c: $(BUILD)/test_tls
 	$(BUILD)/test_tls
+
+# Two Vms on two threads, TLS handshakes at once with different wall clocks
+# (tls_threads.c), against a real TLS server the Go test starts; under
+# ThreadSanitizer with test-tls-tsan.
+test-tls-threads: $(BUILD)/test_tls_threads
+	GOGO_TLS_THREADS=$(CURDIR)/$(BUILD)/test_tls_threads go test -count=1 -run '^TestTLSThreads$$' ./tests/net/
+test-tls-tsan:
+	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread" build/tsan/test_tls_threads
+	TSAN_OPTIONS="halt_on_error=1 suppressions=$(CURDIR)/runtime/net/tls/test/tsan.supp" \
+	    GOGO_TLS_THREADS=$(CURDIR)/build/tsan/test_tls_threads go test -count=1 -run '^TestTLSThreads$$' ./tests/net/
 else
 test-tls-c:
 	@echo "test-tls-c: skipped (no mbedTLS source at $(MBEDTLS_DIR))"
+test-tls-threads test-tls-tsan:
+	@echo "$@: skipped (no mbedTLS source at $(MBEDTLS_DIR))"
 endif
+
+$(BUILD)/test_tls_threads: runtime/net/tls/test/tls_threads.c $(VM_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix -o $@ runtime/net/tls/test/tls_threads.c $(VM_SRCS) $(TLS_LINK)
 
 $(BUILD)/test_tls: $(TLS_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)

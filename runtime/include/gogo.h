@@ -9,7 +9,9 @@
  * share nothing, with one exception. The "tls" port's mbedTLS allocator,
  * time and RNG hooks are process-global (mbedTLS gives them no context):
  * every VM in a process must use the same board TLS table (TlsHw,
- * runtime/net/tls/tls.h); a VM with another one has its tls opens refused. */
+ * runtime/net/tls/tls.h); a VM with another one has its tls opens refused.
+ * VMs on different threads may each run TLS: certificate checks read the
+ * wall clock of the VM the calling thread is running. */
 #ifndef GOGO_H
 #define GOGO_H
 

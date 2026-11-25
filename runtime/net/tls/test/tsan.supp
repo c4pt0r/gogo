@@ -1,0 +1,8 @@
+# ThreadSanitizer suppressions for test-tls-tsan (tls_threads.c).
+# mbedTLS keeps restartable ECC's operation budget in one process-global
+# (ecp.c ecp_max_ops); psa_*_hash_complete stores psa_interruptible_max_ops
+# into it on every slice, from whichever thread runs one. Every store is the
+# same value (tls_init sets it once, before any thread), so the race is
+# benign; it lives inside mbedTLS, not in gogo.
+race:ecp_max_ops
+race:mbedtls_ecp_set_max_ops

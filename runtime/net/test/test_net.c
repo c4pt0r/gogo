@@ -954,6 +954,12 @@ TEST(net_up_reclaims_waiting_subscriber_slack) {
 static Vm vm2;
 static NetState nst2;
 #define MY_IP2 IP4(10, 0, 0, 3)
+/* Wakes, by Vm: vm keeps test_host (its wake swapped for the test), vm2
+ * gets a copy with its own. */
+static uint32_t wakes[2];
+static void wake1(void *ctx) { (void)ctx; wakes[0]++; }
+static void wake2(void *ctx) { (void)ctx; wakes[1]++; }
+static gogo_host host2;
 
 static term open_on(Vm *v, Actor *a, const char *name, uint32_t type, const term *f, uint32_t n) {
     uint32_t len = (uint32_t)strlen(name), words = 2u + (len + 3u) / 4u;
@@ -973,6 +979,11 @@ static term open_on(Vm *v, Actor *a, const char *name, uint32_t type, const term
 TEST(net_two_stacks_do_not_cross) {
     setup();
     CHECK_EQ(test_vm_init(&vm2, &img, 16), 0);
+    host2 = test_host;
+    host2.wake = wake2;
+    vm2.host = &host2;
+    void (*old_wake)(void *) = test_host.wake;
+    test_host.wake = wake1;
     net_install(&vm2, &nst2);
     CHECK(vm.net == &nst && vm2.net == &nst2);
     Actor *a = new_actor(), *o = new_actor();
@@ -1004,8 +1015,11 @@ TEST(net_two_stacks_do_not_cross) {
     uint8_t b[1600];
     uint32_t len = arp_frame(b, 1, OTHER_MAC, IP4(10, 0, 0, 7), (const uint8_t *)"\0\0\0\0\0\0", MY_IP2,
                              net_bcast_mac);
+    wakes[0] = wakes[1] = 0;
     net_rx_offer(&nst2, b, len);
     CHECK(nst2.rx_ready && !nst.rx_ready);
+    CHECK_EQ(wakes[1], 1u);                  /* vm2's host woken, vm's not */
+    CHECK_EQ(wakes[0], 0u);
     CHECK(!port_work_pending(&vm));
     CHECK(port_work_pending(&vm2));
     port_drain(&vm2, 0);
@@ -1044,8 +1058,10 @@ TEST(net_two_stacks_do_not_cross) {
     CHECK_EQ(nst2.st.udp_rx, 1u);
 
     /* A link change on one stack only. */
+    wakes[0] = wakes[1] = 0;
     net_link_event(&nst2, false);
     CHECK(nst2.link_pending && !nst.link_pending);
+    CHECK(wakes[1] == 1u && wakes[0] == 0u);
     CHECK(!port_work_pending(&vm));
     port_drain(&vm2, 0);
     CHECK(!nst2.link_up && nst.link_up);
@@ -1055,6 +1071,7 @@ TEST(net_two_stacks_do_not_cross) {
     CHECK(vm2.net == NULL);
     net_rx_offer(&nst2, b, len);             /* uninstalled: dropped */
     CHECK(!nst2.rx_ready);
+    test_host.wake = old_wake;
     teardown();
 }
 

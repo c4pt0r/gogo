@@ -67,18 +67,37 @@ typedef struct TlsConn TlsConn;
 #define DATA_WORDS (3u + 2u + (DATA_MAX + 3u) / 4u)
 #define ROOM_64W ((uint8_t)((msg_footprint_words(DATA_WORDS) + TCP_EVENT_RESERVE + 63u) / 64u))
 
-/* mbedTLS's platform hooks are process-global and get no context: the one
- * piece of state the port keeps outside the Vm (tls.h: every Vm of a
- * process shares one TlsHw).
+/* mbedTLS's platform hooks are process-global and get no context: the
+ * state the port keeps outside the Vm (tls.h: every Vm of a process shares
+ * one TlsHw).
  *   hw:   the TlsHw the hooks use (tls_init's; NULL until it succeeds);
- *   cur:  the connection inside an mbedTLS call (the time hooks read its
- *         Vm's clocks), NULL when none;
- *   said: a refused tls_init (another TlsHw) was logged. */
+ *   said: a refused tls_init (another TlsHw) was logged (only where gogo
+ *         installs the hooks: a firmware has one board, one TlsHw). */
 static struct {
     const TlsHw *hw;
-    const TlsConn *cur;
+#if GOGO_TLS_MBEDTLS_HOOKS
     bool said;
+#endif
 } glue;
+
+#if GOGO_TLS_MBEDTLS_HOOKS
+/* The Vm whose connection this thread is driving through mbedTLS (NULL
+ * outside): the context-free time hooks read its clocks. Per thread, so
+ * Vms on different threads (each on its owner thread) each see their own;
+ * set and restored around every mbedTLS call that can read the time
+ * (drain_conn, u_fin). __thread: a GCC / Clang extension. */
+static __thread const Vm *clock_vm;
+
+static const Vm *clock_enter(const Vm *vm) {
+    const Vm *prev = clock_vm;
+    clock_vm = vm;
+    return prev;
+}
+#define clock_leave(prev) (clock_vm = (prev))
+#else
+#define clock_enter(vm) ((void)(vm), (const Vm *)NULL)
+#define clock_leave(prev) ((void)(prev))
+#endif
 
 const TlsStats *tls_stats(const NetState *ns) { return &ns->tls.st; }
 
@@ -96,7 +115,7 @@ static void tls_free(void *p) { glue.hw->free(p); }
 static mbedtls_time_t tls_time(mbedtls_time_t *t) {
     /* mbedTLS asks only while verifying a peer: the Vm of the connection
      * being driven. */
-    mbedtls_time_t now = (mbedtls_time_t)(glue.cur ? vm_unix_time_ms(glue.cur->vm) / 1000 : 0);
+    mbedtls_time_t now = (mbedtls_time_t)(clock_vm ? vm_unix_time_ms(clock_vm) / 1000 : 0);
     if (t) *t = now;
     return now;
 }
@@ -104,7 +123,7 @@ static mbedtls_time_t tls_time(mbedtls_time_t *t) {
 
 #if GOGO_TLS_MBEDTLS_HOOKS
 #if defined(MBEDTLS_PLATFORM_MS_TIME_ALT)
-mbedtls_ms_time_t mbedtls_ms_time(void) { return (mbedtls_ms_time_t)(glue.cur ? vm_now(glue.cur->vm) : 0u); }
+mbedtls_ms_time_t mbedtls_ms_time(void) { return (mbedtls_ms_time_t)(clock_vm ? vm_now(clock_vm) : 0u); }
 #endif
 
 /* PSA's randomness: the board's cryptographic source, TlsHw.random
@@ -134,6 +153,7 @@ bool tls_init(const TlsHw *hw) {
         glue.hw = NULL;
         return false;
     }
+    psa_interruptible_set_max_ops(GOGO_TLS_MAX_OPS);   /* process-wide too */
     return true;
 }
 
@@ -141,12 +161,16 @@ bool tls_init(const TlsHw *hw) {
  * once per process. */
 static bool bind_hw(const Vm *vm, const TlsHw *hw) {
     if (tls_init(hw)) return true;
+#if GOGO_TLS_MBEDTLS_HOOKS
     if (glue.hw && glue.hw != hw && !glue.said) {
         static const char msg[] = "gogo: tls: this board's TlsHw is not the one mbedTLS is bound to "
                                   "(one per process): tls refused\n";
         glue.said = true;
         vm_write_err(vm, msg, sizeof msg - 1u);
     }
+#else
+    (void)vm;
+#endif
     return false;
 }
 
@@ -193,7 +217,6 @@ static void conn_free(TlsConn *t) {
         t->ns->tls.conn = NULL;
         t->ns->tls.st.live = 0;
     }
-    if (glue.cur == t) glue.cur = NULL;
     t->hw->free(t);
 }
 
@@ -237,7 +260,6 @@ static TlsConn *conn_new(const Vm *vm, NetState *ns, const TlsHw *hw, const char
     mbedtls_ssl_conf_max_tls_version(&t->conf, MBEDTLS_SSL_VERSION_TLS1_2);   /* 1.3 cannot be sliced */
     if (mbedtls_ssl_setup(&t->ssl, &t->conf) != 0 || mbedtls_ssl_set_hostname(&t->ssl, host) != 0) goto fail;
     mbedtls_ssl_set_bio(&t->ssl, t, bio_send, bio_recv, NULL);
-    psa_interruptible_set_max_ops(GOGO_TLS_MAX_OPS);
     return t;
 fail:
     conn_free(t);
@@ -391,9 +413,8 @@ static int pump_read(Vm *vm, TlsConn *t) {
     return 0;
 }
 
-static void drain_conn(Vm *vm, TlsConn *t) {
+static void drive(Vm *vm, TlsConn *t) {
     TcpPcb *c = t->c;
-    glue.cur = t;
     t->flags &= (uint16_t)~(TS_KICK | TS_RETRY);
     if (!(t->flags & TS_DEAD) && c->state != TCP_SYN_SENT) {
         if (!(t->flags & TS_HS_DONE)) {
@@ -420,6 +441,13 @@ static void drain_conn(Vm *vm, TlsConn *t) {
         return;
     }
     tcp_output(vm, c);
+}
+
+/* drive with this thread's clock Vm set (the time hooks). */
+static void drain_conn(Vm *vm, TlsConn *t) {
+    const Vm *prev = clock_enter(vm);
+    drive(vm, t);
+    clock_leave(prev);
 }
 
 /* ---- TcpUpper ---- */
@@ -451,9 +479,14 @@ static bool u_rx(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n) {
 static bool u_fin(Vm *vm, TcpPcb *c) {
     TlsConn *t = conn_of(vm->net, c);
     if (!t) return true;
-    glue.cur = t;
     t->flags |= TS_FIN | TS_KICK;
-    if ((t->flags & (TS_HS_DONE | TS_DEAD)) == TS_HS_DONE && pump_read(vm, t) > 0) {
+    int r = 0;
+    if ((t->flags & (TS_HS_DONE | TS_DEAD)) == TS_HS_DONE) {
+        const Vm *prev = clock_enter(vm);
+        r = pump_read(vm, t);
+        clock_leave(prev);
+    }
+    if (r > 0) {
         t->flags &= (uint16_t)~TS_FIN;
         t->flags |= TS_RETRY;
         t->retry_at = (uint32_t)vm_now(vm) + RETRY_MS;

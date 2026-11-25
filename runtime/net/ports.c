@@ -258,6 +258,14 @@ void net_install(Vm *vm, NetState *ns) {
 void net_uninstall(Vm *vm) {
     NetState *ns = vm->net;
     if (!ns) return;
+    /* Its ports first: their close needs vm->net (the tls port frees its
+     * connection, TCP resets). */
+    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
+        const Port *p = &vm->ports[i];
+        const PortDriver *d = p->drv;
+        if (d && (d == &net_netif_driver || d == &net_udp_driver || d == &net_tcp_driver ||
+                  d == &net_tcp_listen_driver || (ns->upper && d == ns->upper->drv))) port_close(vm, p->id);
+    }
     port_remove_source(vm, &net_source);
     ns->attached = 0;
     vm->net = NULL;

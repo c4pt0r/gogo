@@ -88,9 +88,14 @@
  *    take no context, so they are bound once, to the first TlsHw given to
  *    tls_init. ALL VMs IN ONE PROCESS MUST SHARE ONE TlsHw: tls_init with a
  *    different one fails, and that Vm's opens are refused (ok=false; logged
- *    once per process). mbedTLS's time hook reads the wall clock of the Vm
- *    whose connection is inside an mbedTLS call; two VMs running TLS on two
- *    threads at once are not supported.
+ *    once per process). Where gogo installs the hooks
+ *    (GOGO_TLS_MBEDTLS_HOOKS 1, the host), mbedTLS's time hooks read the
+ *    clocks of the Vm this thread is driving a connection for (a
+ *    thread-local pointer, set around each mbedTLS call), so VMs on
+ *    different threads, each on its owner thread, each verify against their
+ *    own wall clock. The host's mbedTLS is built thread-safe
+ *    (MBEDTLS_THREADING_C, runtime/net/tls/config). The first tls_init must
+ *    finish before other threads open tls (a board calls it at boot).
  */
 #ifndef GOGO_TLS_H
 #define GOGO_TLS_H

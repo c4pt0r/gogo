@@ -52,6 +52,14 @@
  * twice) to guard against memory shared with an untrusted caller; mbedTLS is
  * its only caller here. */
 #define MBEDTLS_PSA_ASSUME_EXCLUSIVE_BUFFERS
+/* Host builds: VMs on several threads may run TLS at once, so PSA's key
+ * store and the rest of the process-global crypto state take pthread
+ * mutexes. Not on the MCU (tools/vmsize.sh --tls measures the port alone;
+ * the ESP firmware uses ESP-IDF's own mbedTLS configuration). */
+#if defined(__unix__) || defined(__APPLE__)
+#define MBEDTLS_THREADING_C
+#define MBEDTLS_THREADING_PTHREAD
+#endif
 
 /* Platform: memory through the board's TlsHw alloc / free, wall
  * clock through vm_unix_time_ms (certificate validity). */

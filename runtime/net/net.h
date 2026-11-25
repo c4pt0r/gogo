@@ -130,10 +130,11 @@ extern const PortDriver net_tcp_listen_driver;
  * and reads the link state (NetIf.link_up). Call after vm_boot (vm_init
  * clears the source list) and before vm_run on a platform with a network;
  * without it the ports refuse to open. Frames and link events offered to
- * ns before it are dropped. */
+ * ns before it are dropped. Once per Vm (net_uninstall first to move it:
+ * ns is cleared, and a live stack's ports would lose their state). */
 void net_install(struct Vm *vm, NetState *ns);
-/* Unregisters it and clears vm->net (tests; after the Vm's net ports are
- * closed); later offers to its NetState are dropped. */
+/* Closes the Vm's net ports (tcp connections are reset), unregisters the
+ * stack and clears vm->net; later offers to its NetState are dropped. */
 void net_uninstall(struct Vm *vm);
 
 /* Bytes of fixed state per stack (sizeof(NetState): RX/TX buffers, tables,

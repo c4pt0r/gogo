@@ -83,11 +83,12 @@ scan() { # file flags...
                 print f, n }' >> "$found"
     else
         # Mach-O: classify by section (nm letters are unreliable: a zero-fill
-        # global can show as S or __common). ltmpN / l_* are assembler temporaries.
+        # global can show as S or __common). ltmpN / l_* are assembler temporaries;
+        # a thread-local's storage is named var$tlv$init (listed as var).
         nm -m "$OUT/o.o" | awk -v f="$f" '/ weak / { s = $NF; sub(/^_/, "", s); print f, "weak:" s }' >> "$weak"
         nm -m "$OUT/o.o" | awk -v f="$f" '
             /^[0-9a-f]+ \(__(DATA|DATA_DIRTY),__(bss|data|common|thread_bss|thread_data)\)/ && $NF !~ /^(ltmp|l_|lCPI|lJTI)/ {
-                s = $NF; sub(/^_/, "", s); print f, s }' >> "$found"
+                s = $NF; sub(/^_/, "", s); sub(/\$tlv\$init$/, "", s); print f, s }' >> "$found"
     fi
 }
 for f in $FILES; do

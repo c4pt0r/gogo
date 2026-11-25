@@ -877,7 +877,11 @@ explains it from the user's side.
   board TLS table (`TlsHw`) that sets mbedTLS up. Every VM in one process
   must use that same table: a VM whose board brings another one has its
   `tls` opens refused (`ok=false`, logged once). This is the runtime's
-  one piece of process-global state.
+  one piece of process-global state. VMs on different threads may still
+  run TLS at the same time: on the host the time hook reads a
+  thread-local pointer to the VM being driven, so each VM checks
+  certificates against its own wall clock, and the host's mbedTLS is
+  built thread-safe.
 - **`gogo/http`.** `https://` uses the `tls` port. One-shot `Get`, `Post`
   and `Do` send HTTP/1.1 with `Connection: close` over https (HTTP/1.0
   over http), because some servers (Cloudflare among them) answer an
