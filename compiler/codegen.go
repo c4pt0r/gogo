@@ -170,7 +170,7 @@ func isBuffer(t types.Type) bool { return isBytesType(t, "Buffer") }
 // gogo/power, gogo/code, gogo/imu, gogo/ir and gogo/audio struct types (and the
 // later port.Chunk, Out and Done: types are only ever appended). Every image
 // starts its type table with them, in this order, so the VM can build and
-// recognize these structs by fixed index (TYPE_* in vm/opcodes.h).
+// recognize these structs by fixed index (TYPE_* in runtime/vm/opcodes.h).
 var reservedTypes = []struct {
 	pkg    string
 	name   string
@@ -1263,10 +1263,10 @@ func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 		return
 	}
 	switch {
-	case isPID(t): // typed: no actor or port has it (vm/term.h)
+	case isPID(t): // typed: no actor or port has it (runtime/vm/term.h)
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermZeroPid)
 		return
-	case isRef(t): // typed: no live ref has serial 0 (vm/term.h)
+	case isRef(t): // typed: no live ref has serial 0 (runtime/vm/term.h)
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermZeroRef)
 		return
 	case isSlice(t):

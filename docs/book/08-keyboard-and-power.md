@@ -261,7 +261,7 @@ reported, again averaged.
 
 > **Note.** The package documentation calls `MilliVolts` "the cell
 > voltage", but it is a moving average of the last 4 samples (see
-> `input/power.c`). After a sudden change it takes 4 samples to settle.
+> `runtime/input/power.c`). After a sudden change it takes 4 samples to settle.
 
 There is no power-button event: the StickS3's power chip handles its button
 by itself (click to restart, double click to power off).

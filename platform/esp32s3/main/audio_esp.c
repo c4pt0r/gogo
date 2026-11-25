@@ -1,9 +1,9 @@
 /* Audio on the ES8311 codec over I2S (spec audio §3): the InputHw mic_* and
- * spk_* hooks for input/audio.c, on both boards (pins and amplifier in
+ * spk_* hooks for runtime/input/audio.c, on both boards (pins and amplifier in
  * board.h). Built with CONFIG_GOGO_AUDIO only. Every hook runs on the
  * scheduler thread; only the I2S DMA callbacks run in an ISR.
  *
- * Half duplex (input/ never opens both): one I2S channel at a time on
+ * Half duplex (runtime/input/ never opens both): one I2S channel at a time on
  * I2S_NUM_0, simplex, master, created by the open (RX for mic, TX for spk)
  * and deleted by the close, so its DMA buffers (internal RAM, the IDF's
  * DMA-capable allocation) and our staging buffer or ring exist only while a
@@ -64,7 +64,7 @@
  *    short fill ends in silence) and counts the bytes of the one that
  *    played: spk_queued() = bytes taken - bytes played, exact. spk_write
  *    copies into the ring and never blocks. The buffers are short because a
- *    fill happens 3 buffers ahead of the sound: with input/audio.c's two
+ *    fill happens 3 buffers ahead of the sound: with runtime/input/audio.c's two
  *    Outs in flight, Done when played, the next Out must reach the ring
  *    before the DMA wants it; with 30 ms buffers the ring ran dry at each
  *    Out boundary (6 s of 4000-byte Outs played in 7.5 s), with 10 ms none
@@ -304,7 +304,7 @@ int audio_esp_mic_read(uint8_t *buf, uint32_t cap, uint32_t *lost) {
         }
     }
     uint32_t k = stage_len - stage_pos;
-    if (k > cap) k = cap & ~1u;         /* input/audio.c passes an even cap >= 2; the rest stays staged */
+    if (k > cap) k = cap & ~1u;         /* runtime/input/audio.c passes an even cap >= 2; the rest stays staged */
     memcpy(buf, stage + stage_pos, k);
     stage_pos += k;
     return (int)k;

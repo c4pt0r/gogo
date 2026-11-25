@@ -39,7 +39,7 @@
  * itself matches long and short names that way); rename cannot replace, so
  * rename(replace=true) returns Exists and vfs removes then renames (not
  * atomic); case_insensitive also makes vfs refuse a Write open (truncate)
- * while the path is open for reading (vfs/vfs.h). Usage on a card above 2 GB
+ * while the path is open for reading (runtime/vfs/vfs.h). Usage on a card above 2 GB
  * is clamped to INT32_MAX bytes; the first Usage on a FAT32 card without
  * a valid FSINFO, or on an exFAT card, scans the FAT / allocation bitmap
  * and can take seconds.
@@ -50,7 +50,7 @@
  * directory-entry buffer on the stack next to the long name (LFN on stack)
  * and a few bytes to FATFS and FIL (both checked below).
  *
- * Contract: see the VfsBackend comment in vfs/vfs.h. Only the VM task
+ * Contract: see the VfsBackend comment in runtime/vfs/vfs.h. Only the VM task
  * calls in. */
 #include "vfs_int.h"
 #include "platform_esp.h"

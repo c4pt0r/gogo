@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"gogo/compiler"
+	"gogotools/compiler"
 )
 
 // TestGolden compiles every tests/golden/*/ program (and every

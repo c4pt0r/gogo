@@ -7,7 +7,7 @@ import (
 
 const (
 	imageMagic = 0x4F474F47
-	// imageVersion moves in lockstep with IMAGE_VERSION in vm/image.h: any
+	// imageVersion moves in lockstep with IMAGE_VERSION in runtime/vm/image.h: any
 	// change to opcode numbers or semantics, builtin numbers, reserved
 	// types or the term encoding bumps it (v2: M3; v3: M4; v4: M5 CALLV; v5: bitwise ops;
 	// v6: B_FS and the gogo/fs reserved types; v7: the const map after the
@@ -24,7 +24,7 @@ const (
 // ImageVersion is the image format version this compiler emits.
 const ImageVersion = imageVersion
 
-// Index limits of an image (vm/term.h): at run time the top 11 bits of a
+// Index limits of an image (runtime/vm/term.h): at run time the top 11 bits of a
 // const ref, a closure's function word and a module struct's type word are
 // the module tag, so an image's const offsets have 17 bits (512 KB of
 // constants), function indexes 21 and type indexes 16 (TYPEIS's basic

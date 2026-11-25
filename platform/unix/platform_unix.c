@@ -84,7 +84,7 @@ uint64_t platform_now_ms(void) {
 
 /* The wall clock (platform.h) starts from $GOGO_UNIX_TIME_MS if set (0:
  * unknown), else from the host clock, but unknown under --sim-clock (the
- * network goldens set it with SNTP). The weak vm/walltime.c keeps it. */
+ * network goldens set it with SNTP). The weak runtime/vm/walltime.c keeps it. */
 static int64_t wall_start(void) {
     const char *e = getenv("GOGO_UNIX_TIME_MS");
     if (e) return (int64_t)strtoll(e, NULL, 10);
@@ -354,7 +354,7 @@ static void net_wait(uint32_t ms) {
     net_poll(-1);
 }
 
-/* The kbd, power, imu, ir, mic and spk drivers (input/) are linked into gogovm only, not into
+/* The kbd, power, imu, ir, mic and spk drivers (runtime/input/) are linked into gogovm only, not into
  * the C test builds that share this file: main.c overrides this weak hook to
  * append them (a linker does not resolve weak undefined data on every host). */
 __attribute__((weak)) int platform_unix_input_drivers(const struct PortDriver **out, int cap) { (void)out; (void)cap; return 0; }

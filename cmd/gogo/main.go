@@ -11,7 +11,7 @@
 // `gogo run` builds a directory to a temporary image first, then runs the VM
 // and exits with its status. The VM is $GOGO_VM if set, else
 // <repo>/build/gogovm (built by `make vm`), where <repo> is the first
-// directory containing a go.mod declaring `module gogo`, searched upwards
+// directory containing a go.mod declaring `module gogotools` (the repository root), searched upwards
 // from the gogo executable and then from the current directory.
 //
 // `gogo flash` writes an image to the ESP32-S3 image partition with an
@@ -31,7 +31,7 @@ import (
 	"strings"
 	"syscall"
 
-	"gogo/compiler"
+	"gogotools/compiler"
 )
 
 const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats"
@@ -158,7 +158,7 @@ func findVM() (string, error) {
 	return "", errors.New("gogo: cannot find the VM: set GOGO_VM or run from inside the gogo repository")
 }
 
-// findRepo walks up from dir to the directory whose go.mod says `module gogo`.
+// findRepo walks up from dir to the directory whose go.mod says `module gogotools`.
 func findRepo(dir string) (string, bool) {
 	for {
 		if isGogoModule(filepath.Join(dir, "go.mod")) {
@@ -182,7 +182,7 @@ func isGogoModule(path string) bool {
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
 		if len(fields) == 2 && fields[0] == "module" {
-			return fields[1] == "gogo"
+			return fields[1] == "gogotools"
 		}
 	}
 	return false

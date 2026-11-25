@@ -5,7 +5,7 @@ import (
 	"go/types"
 )
 
-// B_FS op codes (the first argument; FS_* in vfs/vfs.h, cross-checked by
+// B_FS op codes (the first argument; FS_* in runtime/vfs/vfs.h, cross-checked by
 // TestFsMatchC).
 const (
 	FsOpen      = 0

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"gogo/tests/net/sim"
+	"gogotools/tests/net/sim"
 )
 
 // startDNS starts dns_client with a static address (10.0.0.2/24, gateway

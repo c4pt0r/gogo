@@ -3,7 +3,7 @@ package nettest
 import (
 	"testing"
 
-	"gogo/tests/net/sim"
+	"gogotools/tests/net/sim"
 )
 
 // connect leases an address for leaseS seconds and brings up the

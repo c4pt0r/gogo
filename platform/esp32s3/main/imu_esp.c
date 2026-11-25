@@ -1,5 +1,5 @@
 /* BMI270 motion sensor (spec input2 §2, §4): the InputHw imu_* hooks for
- * input/imu.c. Both boards have it on their shared I2C bus (i2c_bus.c):
+ * runtime/input/imu.c. Both boards have it on their shared I2C bus (i2c_bus.c):
  * StickS3 G47/G48 (rail L1 of the M5PM1), Cardputer ADV G8/G9. Address
  * 0x69 is tried first, then 0x68 (as M5Unified IMU_Class.inl:79-83; the
  * StickS3 docs say 0x68, the Cardputer ADV address is not documented).

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"gogo/tests/net/sim"
+	"gogotools/tests/net/sim"
 )
 
 // startSNTP starts sntp_client with a static address (10.0.0.2/24, gateway

@@ -136,20 +136,34 @@ ever reach it again, so the VM exits.
 
 ### Editor support
 
-The gogo packages (`gogo/actor`, `gogo/port`, ...) exist as ordinary Go
-source in the gogo tree (function bodies are just `panic("gogo only")`), so
-an editor with `gopls` can complete and type-check your program when its
-directory is part of the gogo module (a directory under the tree root
-without its own `go.mod`). Programs are only ever compiled and run by
-`gogo`, never by `go run`.
+The gogo packages (`gogo/actor`, `gogo/port`, `gogo/net`, `gogo/http`, ...)
+exist as ordinary Go source in the gogo tree, in `lib/`, which is a Go
+module named `gogo` (stub function bodies are just `panic("gogo only")`).
+Give your program's directory a `go.mod` that points at it, and an editor
+with `gopls` can complete and type-check every import, network packages
+included:
 
-> **Note.** This works for most packages but not for the network ones:
-> `go vet` on such a directory accepts a program using `gogo/actor`, but one
-> importing `gogo/net` fails with `package gogo/net is not in std`, and one
-> importing `gogo/dhcp`, `gogo/dns` or `gogo/http` fails with `build
-> constraints exclude all Go files`. Expect red squiggles under network
-> code in your editor; `gogo build` is the real judge. (The book's own
-> examples live under a nested `go.mod` to keep them away from `go vet`.)
+```
+module myapp
+
+go 1.27
+
+require gogo v0.0.0
+
+replace gogo => /path/to/gogo/lib
+```
+
+The repository's own program directories (`examples/`, the book's examples, `tests/golden/`, `tests/net/progs/`, `tests/footprint/` and `platform/esp32s3/examples/`) are set up this way. Programs are only ever
+compiled and run by `gogo`, never by `go run`.
+
+> **Note.** The host type checker is not the gogo compiler. It accepts
+> things gogo rejects (maps, globals, ...: see chapter 3), and rejects one
+> thing gogo accepts: `println` of a struct or other composite value
+> (`illegal types for operand: println`). `go vet` also reports gogo's
+> `bytes.Buffer.WriteByte`, which deliberately returns no error, and
+> composite literals of library structs without field names (`unkeyed
+> fields`, for example `http.Header{"Accept", "*/*"}`). `gogo
+> build` is the real judge.
 
 ## 2.5 Running on a board
 

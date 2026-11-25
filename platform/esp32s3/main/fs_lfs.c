@@ -22,7 +22,7 @@
  * boot) is formatted; any other mount error (IO), or a file system bigger
  * than the partition, leaves /flash unmounted and its data untouched.
  *
- * Contract: see the VfsBackend comment in vfs/vfs.h. Only the VM task
+ * Contract: see the VfsBackend comment in runtime/vfs/vfs.h. Only the VM task
  * calls in, so LittleFS needs no lock. */
 #include "vfs_int.h"
 #include "platform_esp.h"

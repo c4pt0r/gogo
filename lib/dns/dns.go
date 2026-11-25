@@ -1,0 +1,332 @@
+// Package dns is the gogo DNS resolver (spec M5 §5.4), written in the gogo
+// subset and compiled into every image that imports it.
+//
+// Lookup asks the resolver actor, registered as "dns" and started by the
+// first Lookup, for an IPv4 address (A record). The resolver learns the
+// DNS server from net.Up (net.Subscribe), sends one query at a time over
+// UDP (a fresh "udp" port per query) and retries it twice; lookups that
+// arrive meanwhile wait their turn. Answers are cached by TTL (4 entries,
+// at most a day; names compared exactly); failures are not cached. The
+// cache is flushed on net.Down and on an Up with another DNS server, and a
+// query in flight to the old server then fails at once. If net.Subscribe
+// fails (all its slots taken), the resolver tries again on each Lookup
+// (failing that Lookup meanwhile) rather than staying broken.
+package dns
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/net"
+	"gogo/port"
+)
+
+// query is Lookup's request to the resolver: give up at Deadline
+// (actor.Now time).
+type query struct {
+	Name     string
+	Deadline int64
+}
+
+// answer is the resolver's reply.
+type answer struct {
+	IP int
+	OK bool
+}
+
+// cacheSize is the number of cached answers.
+const cacheSize = 4
+
+// Lookup returns the IPv4 address of name (a.b.c.d as a<<24|b<<16|c<<8|d),
+// or false if it cannot be resolved within timeoutMs (<= 0: 5000): no
+// network or DNS server, no such name, no A record, or no answer after 3
+// tries. A dotted IPv4 address is returned as it is.
+func Lookup(name string, timeoutMs int) (int, bool) {
+	if ip, ok := parseIP(name); ok {
+		return ip, true
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = 5000
+	}
+	if len(name) > 0 && name[len(name)-1] == '.' {
+		name = name[:len(name)-1]
+	}
+	pid, ok := actor.Whereis("dns")
+	if !ok {
+		pid = actor.Spawn(resolver)
+		if !actor.Register("dns", pid) { // another Lookup was first
+			actor.Kill(pid, actor.Shutdown)
+			pid, _ = actor.Whereis("dns")
+		}
+	}
+	r, ok := actor.Call(pid, query{Name: name, Deadline: actor.Now() + int64(timeoutMs)}, timeoutMs)
+	switch a := r.(type) {
+	case answer:
+		return a.IP, ok && a.OK
+	}
+	return 0, false
+}
+
+// resolver is the "dns" actor.
+func resolver() {
+	subscribed := net.Subscribe()
+	if !subscribed {
+		// Without Up there is never a server, so Lookups fail at once until
+		// a later one subscribes.
+		println("dns: net.Subscribe failed (no network or 4 subscribers): retrying on each lookup")
+	}
+	server := 0
+	names := make([]string, cacheSize)
+	ips := make([]int, cacheSize)
+	expires := make([]int64, cacheSize)
+	var queue []actor.Request
+	var cur actor.Request // the query in progress, if busy
+	var name string
+	var deadline, retryAt int64
+	var u actor.PID
+	var data bytes.Bytes // the query in progress
+	busy := false
+	tries, id := 0, int(actor.Now())
+	for {
+		// Queued lookups start once the mailbox is empty, so that an Up
+		// (the server) queued behind them is seen first.
+		var m any
+		got := true
+		if busy {
+			wait := retryAt - actor.Now()
+			if wait < 0 {
+				wait = 0
+			}
+			m, got = actor.ReceiveTimeout(int(wait))
+		} else if len(queue) > 0 {
+			m, got = actor.ReceiveTimeout(0)
+		} else {
+			m = actor.Receive()
+		}
+		ip, ttl, done := 0, -2, false
+		if busy && !got { // no answer in time
+			done = tries == 3 || actor.Now() >= deadline
+		}
+		switch m := m.(type) {
+		case net.Up:
+			if m.DNS != server {
+				flush(expires)
+				done = busy // the old server's answer no longer counts
+			}
+			server = m.DNS
+		case net.Down:
+			flush(expires)
+			done = busy
+			server = 0
+		case actor.Request:
+			if !subscribed {
+				subscribed = net.Subscribe() // an Up, if any, arrives before the lookup starts
+			}
+			queue = append(queue, m)
+		case net.Datagram:
+			if busy && m.From.IP == server && m.From.Port == 53 {
+				ip, ttl = parse(m.Data, id, name)
+				done = ttl != -1
+			}
+		}
+		if done {
+			if ttl > 0 {
+				put(names, ips, expires, name, ip, ttl)
+			}
+			actor.Reply(cur, answer{IP: ip, OK: ttl >= 0})
+			port.Close(u)
+			busy = false
+		}
+		for !busy && !got && len(queue) > 0 {
+			cur = queue[0]
+			queue = queue[1:]
+			switch q := cur.Body.(type) {
+			case query:
+				name, deadline = q.Name, q.Deadline
+			}
+			id = (id + 1) & 0xFFFF
+			tries = 0
+			ip, ok := cached(names, ips, expires, name)
+			if !ok {
+				data, ok = encode(name, id)
+				if ok && server != 0 && actor.Now() < deadline {
+					u, busy = port.Open("udp", net.UDP{})
+				}
+				ok = false
+			}
+			if !busy {
+				actor.Reply(cur, answer{IP: ip, OK: ok})
+			}
+		}
+		if busy && (!got || tries == 0) {
+			// (Re)send: the 3 tries share the time left.
+			now := actor.Now()
+			tries++
+			retryAt = now + (deadline-now)/int64(4-tries)
+			actor.Send(u, net.SendTo{Addr: net.Addr{IP: server, Port: 53}, Data: data})
+		}
+	}
+}
+
+// flush empties the cache.
+func flush(expires []int64) {
+	for i := 0; i < cacheSize; i++ {
+		expires[i] = 0
+	}
+}
+
+// cached returns the unexpired cache entry for name.
+func cached(names []string, ips []int, expires []int64, name string) (int, bool) {
+	now := actor.Now()
+	for i := 0; i < cacheSize; i++ {
+		if names[i] == name && expires[i] > now {
+			return ips[i], true
+		}
+	}
+	return 0, false
+}
+
+// put caches name -> ip for ttl seconds (at most a day), replacing the
+// entry that expires first.
+func put(names []string, ips []int, expires []int64, name string, ip, ttl int) {
+	if ttl > 86400 {
+		ttl = 86400
+	}
+	j := 0
+	for i := 1; i < cacheSize; i++ {
+		if expires[i] < expires[j] {
+			j = i
+		}
+	}
+	names[j], ips[j], expires[j] = name, ip, actor.Now()+int64(ttl)*1000
+}
+
+// encode builds the query for name's A record with this id; false if name
+// is not a valid domain name (labels of 1-63 bytes, 253 bytes in all; no
+// trailing dot: Lookup drops it).
+func encode(name string, id int) (bytes.Bytes, bool) {
+	b := bytes.NewBuffer(len(name) + 18)
+	b.Write([]byte{byte(id >> 8), byte(id), 1, 0, 0, 1, 0, 0, 0, 0, 0, 0}) // RD; one question
+	start := 0
+	for i := 0; i <= len(name); i++ {
+		if i == len(name) || name[i] == '.' {
+			if i == start || i-start > 63 {
+				return b.Freeze(), false
+			}
+			b.WriteByte(byte(i - start))
+			b.WriteString(name[start:i])
+			start = i + 1
+		}
+	}
+	b.Write([]byte{0, 0, 1, 0, 1}) // root; type A, class IN
+	return b.Freeze(), len(name) > 0 && len(name) <= 253
+}
+
+// parse reads a response to query id for name: the address and TTL in
+// seconds (>= 0) of the A record for name, following CNAMEs in answer
+// order; TTL -2 for a definite failure (an error code, or no such A
+// record); -1 if d is not a well-formed response to this query (the
+// question must echo name, type A, class IN). Names compare exactly.
+func parse(d bytes.Bytes, id int, name string) (int, int) {
+	n := d.Len()
+	if n < 12 || get16(d, 0) != id || d.At(2) < 128 || get16(d, 4) != 1 {
+		return 0, -1
+	}
+	q, i := readName(d, 12)
+	if i < 0 || i+4 > n || q != name || get16(d, i) != 1 || get16(d, i+2) != 1 {
+		return 0, -1
+	}
+	if d.At(3)&15 != 0 {
+		return 0, -2
+	}
+	i += 4
+	for a := get16(d, 6); a > 0; a-- {
+		owner, j := readName(d, i)
+		if j < 0 || j+10 > n {
+			return 0, -1
+		}
+		typ, l := get16(d, j), get16(d, j+8)
+		i = j + 10 + l
+		if i > n {
+			return 0, -1
+		}
+		if owner == name && get16(d, j+2) == 1 {
+			if typ == 1 && l == 4 {
+				ttl := get16(d, j+4)<<16 | get16(d, j+6)
+				if ttl < 0 {
+					ttl = 0
+				}
+				return get16(d, j+10)<<16 | get16(d, j+12), ttl
+			}
+			if typ == 5 { // CNAME: look for the target's record next
+				name, j = readName(d, j+10)
+				if j < 0 {
+					return 0, -1
+				}
+			}
+		}
+	}
+	return 0, -2
+}
+
+// readName decodes the (possibly compressed) name at i as dotted labels
+// and returns it with the offset after it; offset -1 if it is malformed
+// (runs past d, a bad label, over 16 jumps or 255 bytes).
+func readName(d bytes.Bytes, i int) (string, int) {
+	b := bytes.NewBuffer(32)
+	end, jumps := -1, 0
+	for i >= 0 && i < d.Len() && jumps <= 16 && b.Len() < 256 {
+		l := int(d.At(i))
+		if l == 0 {
+			if end < 0 {
+				end = i + 1
+			}
+			return b.Freeze().String(), end
+		}
+		if l >= 192 {
+			if i+1 >= d.Len() {
+				return "", -1
+			}
+			if end < 0 {
+				end = i + 2
+			}
+			i = (l&63)<<8 | int(d.At(i+1))
+			jumps++
+		} else if l >= 64 || i+1+l > d.Len() {
+			return "", -1
+		} else {
+			if b.Len() > 0 {
+				b.WriteByte('.')
+			}
+			b.WriteBytes(d.Slice(i+1, i+1+l))
+			i += l + 1
+		}
+	}
+	return "", -1
+}
+
+func get16(d bytes.Bytes, i int) int {
+	return int(d.At(i))<<8 | int(d.At(i+1))
+}
+
+// parseIP parses a dotted IPv4 address a.b.c.d.
+func parseIP(s string) (int, bool) {
+	ip, part, digits, dots := 0, 0, 0, 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == '.' {
+			if digits == 0 || part > 255 {
+				return 0, false
+			}
+			ip = ip<<8 | part
+			part, digits = 0, 0
+			if i < len(s) {
+				dots++
+			}
+		} else if s[i] < '0' || s[i] > '9' || digits == 3 {
+			return 0, false
+		} else {
+			part = part*10 + int(s[i]-'0')
+			digits++
+		}
+	}
+	return ip, dots == 3
+}

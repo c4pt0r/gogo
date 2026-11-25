@@ -1,5 +1,5 @@
 // Command gogo-font converts a 12 px BDF bitmap font into the compact blob
-// platform/common/font.c reads.
+// runtime/console/font.c reads.
 //
 //	gogo-font [-ascii] -o gogo12.font in.bdf
 //
@@ -7,7 +7,7 @@
 // BDF has glyphs for; with -ascii, printable ASCII only (the GOGO_FONT_CJK=n
 // firmware font). Glyphs 6 px wide (DWIDTH 6) go in the half-width
 // table, 12 px wide ones in the full-width table. The blob format is
-// documented in platform/common/font/README.md.
+// documented in runtime/console/font/README.md.
 package main
 
 import (

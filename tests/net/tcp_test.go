@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"gogo/tests/net/sim"
+	"gogotools/tests/net/sim"
 )
 
 func alpha(n int) string {

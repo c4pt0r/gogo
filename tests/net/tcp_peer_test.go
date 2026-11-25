@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"gogo/tests/net/sim"
+	"gogotools/tests/net/sim"
 )
 
 // tcpConn is the simulator's end of one TCP connection with the VM.

@@ -1,11 +1,11 @@
 # gogo on the ESP32-S3 (M5StickS3, Cardputer ADV)
 
 An ESP-IDF project whose `main` component is the ESP platform layer; it
-compiles the VM core (`vm/*.c` except `check32.c`) in place from the repo
-root, with the ESP values of the `vm/config.h` knobs:
+compiles the VM core (`runtime/vm/*.c` except `check32.c`) in place from the repo
+root, with the ESP values of the `runtime/vm/config.h` knobs:
 `GOGO_DEFAULT_MAX_WORDS=4096`, `GOGO_TABLE_CAP=1024`, `GOGO_MAX_PORTS=16`,
 `GOGO_EVQ_CAP=64`, `GOGO_ARENA_BYTES=163840` (160 KB), `-Os`; and the
-storage core (`vfs/*.c`) with `GOGO_FS_MAX_OPEN=4`,
+storage core (`runtime/vfs/*.c`) with `GOGO_FS_MAX_OPEN=4`,
 `GOGO_FS_SLOT_BYTES=160` (one LittleFS file, see `/flash` below).
 
 One source tree, two boards, chosen at build time with the CMake variable
@@ -140,7 +140,7 @@ firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v12, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
+(format v12, lockstep with `IMAGE_VERSION` in `runtime/vm/image.h`; when the
 image version changes, reflash the firmware too: an older firmware refuses
 a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
 one). At boot the firmware checks the magic, the length (multiple of 4,
@@ -157,7 +157,7 @@ in `cmd/gogo/flash.go`.
 
 ## Platform layer (`main/`)
 
-- `platform_esp.c`: `vm/platform.h`. Output to the USB-Serial/JTAG console
+- `platform_esp.c`: `runtime/vm/platform.h`. Output to the USB-Serial/JTAG console
   (stdout line-buffered, flushed before each stderr write). Chunks from the
   internal-RAM heap, capped at `GOGO_ARENA_BYTES`. `platform_now_ms` from
   `esp_timer_get_time()`. `platform_wait` blocks the VM task in
@@ -181,9 +181,9 @@ in `cmd/gogo/flash.go`.
   (before the VM starts, or on the scheduler thread; never in an ISR):
   Cardputer ADV port 0, SDA G8, SCL G9 (TCA8418 keyboard, BMI270, ES8311); StickS3
   port 1, SDA G47, SCL G48 (M5PM1, BMI270, ES8311). Internal pull-ups on.
-- `input_esp.c`: the `InputHw` for `input/` (the `kbd` and `power` ports,
+- `input_esp.c`: the `InputHw` for `runtime/input/` (the `kbd` and `power` ports,
   design.md 5.4.3); `platform_input` itself is defined in `platform_esp.c`
-  so the strong definition always beats the weak default in `input/source.c`.
+  so the strong definition always beats the weak default in `runtime/input/source.c`.
   - Cardputer ADV keyboard: TCA8418 at 0x34, 400 kHz. Init: KP_GPIO1 (0x1D)
     = 0x7F, KP_GPIO2 (0x1E) = 0xFF, KP_GPIO3 (0x1F) = 0x00, CFG (0x01) |=
     0x03; flush KEY_EVENT_A (0x04) until 0, then INT_STAT (0x02) = 0x1F
@@ -208,7 +208,7 @@ in `cmd/gogo/flash.go`.
     (GPIO_MODE 0x10 bit0 cleared), each only if it reads otherwise. No keyboard: opening `kbd` fails. There is no
     power-button event (the PM1 acts on clicks itself).
 - `imu_esp.c` (`GOGO_IMU`, both boards): the IMU hooks of `InputHw` for
-  `input/imu.c` (design.md 5.4.6), a Bosch BMI270 on the shared I2C bus at
+  `runtime/input/imu.c` (design.md 5.4.6), a Bosch BMI270 on the shared I2C bus at
   400 kHz, probed at 0x69 then 0x68 (CHIP_ID 0x24; three rounds 10 ms
   apart). Both boards answer at 0x69 (bus scan on the Cardputer ADV: 0x18
   ES8311, 0x34 TCA8418, 0x69 BMI270). Polled only: neither
@@ -268,7 +268,7 @@ in `cmd/gogo/flash.go`.
     allocated at open, freed at close); the RMT done callback (ISR) records
     the slot and re-arms `rmt_receive` on the next free one, so frames keep
     arriving between the 20 ms polls. A frame of 129 symbols is longer than
-    256 values and is cut by `input/ir.c` (counted in `Dropped`). The frame's
+    256 values and is cut by `runtime/input/ir.c` (counted in `Dropped`). The frame's
     start time is the done time minus the gap and the frame's length.
   - `sdkconfig.defaults` moves the RMT ISRs and the encoder out of IRAM
     (`RMT_TX/RX_ISR_HANDLER_IN_IRAM=n`, `RMT_ENCODER_FUNC_IN_IRAM=n`): about
@@ -300,7 +300,7 @@ in `cmd/gogo/flash.go`.
   - Pins G42, G46 (StickS3) and G44 (Cardputer, also U0RXD; the console is
     USB-Serial/JTAG) are reserved: the gpio port refuses them.
 - `audio_esp.c` (`GOGO_AUDIO`, both boards): the `mic_*` / `spk_*` hooks
-  of `InputHw` for `input/audio.c`, on the ES8311 codec (I2C 0x18 on the
+  of `InputHw` for `runtime/input/audio.c`, on the ES8311 codec (I2C 0x18 on the
   shared bus, 100 kHz) and I2S. Pins (`board.h`, from M5Unified
   `_begin_audio`): StickS3 BCLK G17, WS G15, DOUT G14, DIN G16 (G18, the
   codec's MCLK, is not driven); Cardputer ADV BCLK G41, WS G43, DOUT G42,
@@ -316,7 +316,7 @@ in `cmd/gogo/flash.go`.
   - mic: 11 DMA buffers of 30 ms (16 kHz: 960 B; 10.5 KB, internal RAM,
     allocated at open) so 300 ms wait in the IDF queue; reads take whole
     buffers through a staging copy; the first 2 buffers are discarded here
-    (not in `input/audio.c`); a queue overflow is reported as lost bytes.
+    (not in `runtime/input/audio.c`); a queue overflow is reported as lost bytes.
     `Gain` is dB above the platform's normal level (book 16.1); here
     `Gain` 0 = PGA 30 dB + ADC scale 24 dB (54 dB), and `Gain` adds digital
     volume. High-pass reg 0x1B = 0x0A, 0x1C = 0x64 (0x6A left a ~600 ms DC
@@ -345,7 +345,7 @@ in `cmd/gogo/flash.go`.
     timing, playback), `examples/audiotone` + `examples/audiolisten` in
     `platform/esp32s3/examples` (one board plays, the other listens).
   - Off (`GOGO_AUDIO=n`): `audio_esp.c` and the IDF I2S driver are not
-    linked; `input/audio.c` (the common driver) still is, its ports fail to
+    linked; `runtime/input/audio.c` (the common driver) still is, its ports fail to
     open. Cost of audio (2026-11-25): StickS3 +18720 B firmware, +592 B
     static DIRAM; Cardputer ADV +19680 B, +820 B.
 - `image_part.c`: the partition check and mmap above.
@@ -360,8 +360,8 @@ in `cmd/gogo/flash.go`.
   - `lcd_st7789.c`: ST7789 135x240 used as landscape 240x135 (column
     offset 40, row offset 53, MADCTL 0x6C, inverted; the same on both
     boards), SPI3 40 MHz with DMA, pins from `board.h`; backlight G38.
-  - `console_task.c`: `platform/common` console grid + embedded
-    `platform/common/font/gogo12.font`. The VM task appends to the grid
+  - `console_task.c`: `runtime/console` console grid + embedded
+    `runtime/console/font/gogo12.font`. The VM task appends to the grid
     under a short spinlock and notifies the render task (CPU0, priority 1),
     which snapshots the grid and redraws only dirty rows, at most once per
     50 ms, one 240x12 band per SPI transfer. stdout white, stderr (crash
@@ -374,8 +374,8 @@ in `cmd/gogo/flash.go`.
     (CPU0) share them and rendering from flash evicted the VM's code.
 
 - `fs_lfs.c`: `/flash`, see below.
-- `wifi.c`: Wi-Fi station and `net/netif.h` (M5). The driver's raw frames go
-  straight to gogo's own stack (`net/`, compiled into the firmware) through
+- `wifi.c`: Wi-Fi station and `runtime/net/netif.h` (M5). The driver's raw frames go
+  straight to gogo's own stack (`runtime/net/`, compiled into the firmware) through
   the driver's internal interface, pinned to ESP-IDF v6.1.1:
   `esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_cb)` (the callback runs in the
   Wi-Fi task on CPU0, offers the frame to the stack's single RX slot with
@@ -584,7 +584,7 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   references, and 580 / 904 B of DIRAM (the RMT and GDMA ISR glue that stays
   in IRAM, plus `ir_esp.c`'s 85 B of state). With both off the firmware is
   still about 1.5 KB above the earlier default: the chip-independent
-  `input/imu.c`, `input/ir.c` and `stream/` are always linked (the ports
+  `runtime/input/imu.c`, `runtime/input/ir.c` and `runtime/stream/` are always linked (the ports
   exist and refuse to open). Run time, all in internal RAM and only while
   open: the IMU batch buffer (`va_alloc`, up to 2400 B, charged to the
   owner) and the `ir_rx` frame buffer (512 B, `va_alloc`, charged) come from
@@ -598,9 +598,9 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   ES8311 and I2S (both boards; see `audio_esp.c` above). It selects
   `CONFIG_I2S_ISR_IRAM_SAFE`. Off: `port.Open` of `mic` and `spk` returns
   ok=false, `CAP_MIC`/`CAP_SPK` are 0, and the IDF I2S driver is not linked;
-  `input/audio.c` (the common driver) is still linked. Cost: StickS3 +18720 B
+  `runtime/input/audio.c` (the common driver) is still linked. Cost: StickS3 +18720 B
   `gogo.bin`, +592 B static DIRAM; Cardputer ADV +19680 B, +820 B.
-- `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `net/*.c`
+- `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `runtime/net/*.c`
   are not built, the capability `net` is absent (an image that needs it is
   refused at boot with the missing cap named), `port.Open` of `netif`, `udp`,
   `tcp` and `tcp_listen` returns ok=false, `net.Subscribe` returns false (no port
@@ -625,8 +625,8 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   (`NotMounted`).
 - `GOGO_FONT_CJK` (default y): the console font. Off: `gogo12-ascii.font` (95
   printable ASCII glyphs, 1536 B, generated by `go run ./cmd/gogo-font -ascii
-  -o platform/common/font/gogo12-ascii.font <bdf>`, see
-  `platform/common/font/README.md`) is embedded instead of `gogo12.font`
+  -o runtime/console/font/gogo12-ascii.font <bdf>`, see
+  `runtime/console/font/README.md`) is embedded instead of `gogo12.font`
   (162958 B); every other character, Chinese included, draws as the console's
   box in the same one or two columns. `make test-console` runs the console
   tests against both fonts.

@@ -5,7 +5,7 @@ import (
 	"go/types"
 )
 
-// B_CODE op codes (the first argument; CODE_OP_* in vm/module.h,
+// B_CODE op codes (the first argument; CODE_OP_* in runtime/vm/module.h,
 // cross-checked by TestCodeMatchC).
 const (
 	CodeLoad      = 0

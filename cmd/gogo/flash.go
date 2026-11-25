@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gogo/compiler"
+	"gogotools/compiler"
 )
 
 const (

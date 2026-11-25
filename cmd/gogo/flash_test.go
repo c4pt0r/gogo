@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"gogo/compiler"
+	"gogotools/compiler"
 )
 
 // fakeImage returns n bytes that pass the image magic check.

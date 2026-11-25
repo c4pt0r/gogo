@@ -1,5 +1,5 @@
 /* Infrared on the RMT peripheral (spec input2 §3, §4): the InputHw ir_*
- * hooks for input/ir.c. Pins in board.h: StickS3 TX G46, RX G42; Cardputer
+ * hooks for runtime/input/ir.c. Pins in board.h: StickS3 TX G46, RX G42; Cardputer
  * ADV TX G44 (an LED on the pin through 22 ohms, no receiver). Every hook
  * runs on the scheduler thread; only the RMT callbacks run in an ISR.
  *

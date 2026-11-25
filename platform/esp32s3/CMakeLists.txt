@@ -1,7 +1,7 @@
 # gogo firmware for the M5StickS3 and the Cardputer ADV (ESP32-S3; board:
 # main/CMakeLists.txt GOGO_BOARD). Build from the repo root:
 #   . ~/esp/esp-idf/export.sh && idf.py -C platform/esp32s3 build
-# The VM sources are compiled in place from <repo>/vm (see main/CMakeLists.txt).
+# The VM sources are compiled in place from <repo>/runtime/vm (see main/CMakeLists.txt).
 cmake_minimum_required(VERSION 3.16)
 # The default board (StickS3) has PSRAM: sdkconfig.sticks3 on top of the
 # defaults. The Cardputer build gives its own SDKCONFIG_DEFAULTS (see

@@ -1,0 +1,33 @@
+// Package power is the gogo battery API: the "power" port. It is a stub
+// package like gogo/fs: the compiler type-checks against it and the bodies
+// (there are none) are never run. The C side is the board's power driver.
+//
+// Open it with port.Open("power", power.Config{PeriodMs: 5000}). One actor
+// owns the port at a time. ok is false when the board has no battery
+// monitor. The owner receives a Battery message when the port opens (the
+// first good sample), for every Read it sends to the port with actor.Send,
+// at once when Charging or External changes, and when Percent has moved by
+// 2 or more since the last one sent. There is no heartbeat: nothing is sent
+// while nothing changes. PeriodMs is how often the board samples the chip:
+// 0 or less means 10000, the minimum is 1000 (on unix there is no sampling;
+// the stdin script's battery lines are the samples). A Battery that would
+// take the owner past its memory limit is dropped (the owner is not
+// killed). There is no power-button event.
+//
+// The struct types Config, Battery and Read have fixed type indices 31, 32
+// and 33 in every image (TYPE_POWER_CONFIG, TYPE_POWER_BATTERY,
+// TYPE_POWER_READ in runtime/vm/opcodes.h); keep their field order in sync with
+// compiler.reservedTypes.
+package power
+
+// Config configures the port.
+type Config struct{ PeriodMs int }
+
+// Battery is a reading: the cell voltage in millivolts, the charge in
+// percent, and Charging and External as 1, 0, or -1 when the board cannot
+// tell (charging now; running on external power). The Cardputer always
+// reports -1 for both.
+type Battery struct{ MilliVolts, Percent, Charging, External int }
+
+// Read asks the port for a Battery message now.
+type Read struct{}

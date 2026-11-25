@@ -1,13 +1,13 @@
 #!/bin/sh
-# VM core size: compiles vm/*.c (except check32.c) for the ESP32-S3 with -Os
+# VM core size: compiles runtime/vm/*.c (except check32.c) for the ESP32-S3 with -Os
 # and sums .text/.rodata/.literal — the same measure as the M3 budget
 # (platform/esp32s3/vmsize.sh, which reads the IDF build instead).
 #   tools/vmsize.sh            print the per-file table and the total; exit 1 above the limit
 #   tools/vmsize.sh --record   also append "date,commit,bytes" to docs/vmsize-history.csv
-#   tools/vmsize.sh --net      the net stack instead (net/*.c, not VM core): code
+#   tools/vmsize.sh --net      the net stack instead (runtime/net/*.c, not VM core): code
 #                              size and its fixed state (.bss + .data); exit 1 if
 #                              the fixed state exceeds 4096 bytes
-#   tools/vmsize.sh --vfs      the vfs core instead (vfs/*.c): code size and fixed
+#   tools/vmsize.sh --vfs      the vfs core instead (runtime/vfs/*.c): code size and fixed
 #                              state (.bss + .data); exit 1 above 3072 bytes
 # Skips (exit 0) when the xtensa toolchain is not installed.
 set -e
@@ -20,10 +20,10 @@ OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 if [ "$1" = "--net" ]; then
     total=0; fixed=0; lines=""
-    for f in net/*.c; do
+    for f in runtime/net/*.c; do
         o="$OUT/$(basename "$f" .c).o"
         "$GCC" -std=c99 -Os -mlongcalls -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u \
-            -DGOGO_ARENA_BYTES=163840u -Ivm -Inet -Ivm/test/stub -c "$f" -o "$o"
+            -DGOGO_ARENA_BYTES=163840u -Iruntime/vm -Iruntime/net -Iruntime/vm/test/stub -c "$f" -o "$o"
         n=$("$SIZE" -A "$o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
         b=$("$SIZE" -A "$o" | awk '/^\.(bss|data)/ {s += $2} END {print s + 0}')
         total=$((total + n)); fixed=$((fixed + b))
@@ -38,9 +38,9 @@ if [ "$1" = "--net" ]; then
 fi
 if [ "$1" = "--vfs" ]; then
     total=0; fixed=0; lines=""
-    for f in vfs/*.c; do
+    for f in runtime/vfs/*.c; do
         o="$OUT/$(basename "$f" .c).o"
-        "$GCC" -std=c99 -Os -mlongcalls -Ivfs -Ivm -Ivm/test/stub -c "$f" -o "$o"
+        "$GCC" -std=c99 -Os -mlongcalls -Iruntime/vfs -Iruntime/vm -Iruntime/vm/test/stub -c "$f" -o "$o"
         n=$("$SIZE" -A "$o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
         b=$("$SIZE" -A "$o" | awk '/^\.(bss|data)/ {s += $2} END {print s + 0}')
         total=$((total + n)); fixed=$((fixed + b))
@@ -55,11 +55,11 @@ if [ "$1" = "--vfs" ]; then
 fi
 total=0
 lines=""
-for f in vm/*.c; do
-    [ "$f" = vm/check32.c ] && continue
+for f in runtime/vm/*.c; do
+    [ "$f" = runtime/vm/check32.c ] && continue
     o="$OUT/$(basename "$f" .c).o"
     "$GCC" -std=c99 -Os -mlongcalls -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u \
-        -DGOGO_ARENA_BYTES=163840u -Ivm -Ivm/test/stub -c "$f" -o "$o"
+        -DGOGO_ARENA_BYTES=163840u -Iruntime/vm -Iruntime/vm/test/stub -c "$f" -o "$o"
     n=$("$SIZE" -A "$o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
     total=$((total + n))
     lines="$lines$(printf '%7d  %s' "$n" "$f")

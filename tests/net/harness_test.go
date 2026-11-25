@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"gogo/compiler"
-	"gogo/tests/net/sim"
+	"gogotools/compiler"
+	"gogotools/tests/net/sim"
 )
 
 // realLimit bounds each VM child in real time.

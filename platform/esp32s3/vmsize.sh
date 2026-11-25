@@ -1,7 +1,7 @@
 #!/bin/sh
 # VM code size gate: sums the .text, .rodata and .literal sections (with
 # -ffunction-sections these are .text.*, .rodata.*, .literal.*) of the
-# vm/*.c objects in the ESP-IDF build and fails above the 64 KB budget.
+# runtime/vm/*.c objects in the ESP-IDF build and fails above the 64 KB budget.
 #
 #   platform/esp32s3/vmsize.sh [build-dir]    (default: platform/esp32s3/build)
 #
@@ -24,13 +24,13 @@ if [ -z "$size" ]; then
 fi
 [ -n "$size" ] || { echo "vmsize: xtensa-esp32s3-elf-size not found (source export.sh or set SIZE)" >&2; exit 2; }
 
-objs=$(find "$build/esp-idf/main" -path '*/vm/*.c.obj' ! -name 'check32.c.obj' 2>/dev/null | sort)
-[ -n "$objs" ] || { echo "vmsize: no vm/*.c objects under $build (run idf.py build first)" >&2; exit 2; }
+objs=$(find "$build/esp-idf/main" -path '*/runtime/vm/*.c.obj' ! -name 'check32.c.obj' 2>/dev/null | sort)
+[ -n "$objs" ] || { echo "vmsize: no runtime/vm/*.c objects under $build (run idf.py build first)" >&2; exit 2; }
 
 # shellcheck disable=SC2086
 total=$("$size" -A $objs | awk '
     $1 ~ /^\.(text|rodata|literal)(\.|$)/ { sum += $2 }
     END { print sum + 0 }')
 n=$(echo "$objs" | wc -l | tr -d ' ')
-echo "vm code: $total bytes (.text+.rodata+.literal of $n vm/*.c objects, limit $LIMIT)"
+echo "vm code: $total bytes (.text+.rodata+.literal of $n runtime/vm/*.c objects, limit $LIMIT)"
 [ "$total" -le "$LIMIT" ] || { echo "vmsize: over the $LIMIT-byte budget" >&2; exit 1; }

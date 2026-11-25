@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"gogo/compiler"
+	"gogotools/compiler"
 )
 
 const firmwareUsage = "usage: gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files..."

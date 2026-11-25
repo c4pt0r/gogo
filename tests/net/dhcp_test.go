@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"gogo/tests/net/sim"
+	"gogotools/tests/net/sim"
 )
 
 // The DHCP server is the gateway; it offers the VM 10.0.0.2/24 with DNS

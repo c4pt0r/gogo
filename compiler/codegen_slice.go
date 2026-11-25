@@ -6,7 +6,7 @@ import (
 )
 
 // Slices: a slice value is the nil slice (TermNilSlice) or a header over a
-// mutable backing array (vm/strs.c). Element reads, len and slicing use the
+// mutable backing array (runtime/vm/strs.c). Element reads, len and slicing use the
 // generic sequence builtins (codegen_str.go); this file adds make, append,
 // cap, copy, slice literals and element writes.
 

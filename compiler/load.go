@@ -33,8 +33,7 @@ const BytesPath = "gogo/bytes"
 
 // NetPath is the import path of the network API (port configs, commands,
 // events, Subscribe), a stub package like gogo/port. Its source is in
-// netapi/ (stubDir): net/ holds the C stack, and a Go package directory
-// cannot hold C files without cgo.
+// lib/net/.
 const NetPath = "gogo/net"
 
 // ConfigPath is the import path of the configuration store API
@@ -84,11 +83,9 @@ func isStub(path string) bool {
 	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath
 }
 
-// stubDir is the directory of the library set holding stub package path.
+// stubDir is the directory of the library set holding stub package path:
+// gogo/<name> lives in <name>/ (lib/<name>/ in the repository).
 func stubDir(path string) string {
-	if path == NetPath {
-		return "netapi"
-	}
 	return strings.TrimPrefix(path, libPrefix)
 }
 

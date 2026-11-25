@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 /* VfsBackend on POSIX: a host directory as a medium. The slot storage
- * holds the fd. Contract notes: see the VfsBackend comment in vfs/vfs.h. */
+ * holds the fd. Contract notes: see the VfsBackend comment in runtime/vfs/vfs.h. */
 #include "fs_host.h"
 
 #include <dirent.h>

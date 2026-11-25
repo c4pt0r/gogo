@@ -105,14 +105,14 @@ struct PortDriver;
 extern const struct PortDriver gpio_esp_driver;
 
 /* BMI270 motion sensor (imu_esp.c, built with CONFIG_GOGO_IMU on a board
- * with HAS_IMU): the InputHw imu_* hooks, contracts in input/input.h. */
+ * with HAS_IMU): the InputHw imu_* hooks, contracts in runtime/input/input.h. */
 int imu_esp_open(uint16_t rate_hz, uint8_t gestures);
 void imu_esp_close(void);
 int imu_esp_read_fifo(uint8_t *buf, uint32_t cap);
 int imu_esp_read_gestures(ImuGestures *g);
 
 /* Infrared on the RMT (ir_esp.c, built with CONFIG_GOGO_IR): the InputHw
- * ir_* hooks, contracts in input/input.h. The receiver hooks exist only on
+ * ir_* hooks, contracts in runtime/input/input.h. The receiver hooks exist only on
  * a board with HAS_IR_RX. */
 int ir_esp_tx_open(uint32_t carrier_hz, uint8_t duty_pct);
 void ir_esp_tx_close(void);
@@ -123,7 +123,7 @@ int ir_esp_rx_read(uint16_t *buf, uint32_t cap, uint32_t *start_ms);
 void ir_esp_rx_close(void);
 
 /* Audio on the ES8311 codec (audio_esp.c, built with CONFIG_GOGO_AUDIO):
- * the InputHw mic_* and spk_* hooks, contracts in input/input.h. */
+ * the InputHw mic_* and spk_* hooks, contracts in runtime/input/input.h. */
 int audio_esp_mic_open(uint32_t rate, uint8_t gain_db);
 int audio_esp_mic_read(uint8_t *buf, uint32_t cap, uint32_t *lost);
 void audio_esp_mic_close(void);

@@ -37,7 +37,7 @@ void input_unix_read_tty(void);
 
 struct PortDriver;
 /* Appends the kbd and power drivers to out (room for cap) and returns how
- * many. A weak no-op in platform_unix.c (the C test builds have no input/);
+ * many. A weak no-op in platform_unix.c (the C test builds have no runtime/input/);
  * main.c overrides it. */
 int platform_unix_input_drivers(const struct PortDriver **out, int cap);
 

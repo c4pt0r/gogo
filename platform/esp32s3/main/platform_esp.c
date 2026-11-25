@@ -1,4 +1,4 @@
-/* vm/platform.h for the ESP32-S3 (FreeRTOS, USB-Serial/JTAG console). */
+/* runtime/vm/platform.h for the ESP32-S3 (FreeRTOS, USB-Serial/JTAG console). */
 #include "sdkconfig.h"
 #include "platform.h"
 #include "config.h"
@@ -180,7 +180,7 @@ void platform_notify(void) {
 void platform_barrier(void) { __sync_synchronize(); }
 
 /* The strong platform_input, defined here (always linked) rather than next
- * to the hardware: input/source.c has a weak default, and an archive member
+ * to the hardware: runtime/input/source.c has a weak default, and an archive member
  * is only pulled in to satisfy an undefined symbol, never to override a
  * weak one that is already defined. */
 extern const InputHw input_esp_hw;
@@ -199,13 +199,13 @@ const struct PortDriver *const *platform_port_drivers(void) {
     return list;
 }
 
-/* Module code memory (vm/platform.h). Only a board with PSRAM (the StickS3,
+/* Module code memory (runtime/vm/platform.h). Only a board with PSRAM (the StickS3,
  * sdkconfig.sticks3) has any: code is only read (as words) by the interpreter,
  * never executed, so the slower external RAM is fine (MALLOC_CAP_32BIT only
  * states the word access; byte access works on the S3 too), and the internal heap (the VM
  * arena, Wi-Fi, LCD buffers) is not touched. PSRAM is reachable only through
  * these caps (CONFIG_SPIRAM_USE_CAPS_ALLOC): plain malloc never returns it.
- * Defined here, in an always-linked object, not next to hardware code: vm/
+ * Defined here, in an always-linked object, not next to hardware code: runtime/vm/
  * has weak defaults, and an archive member is never pulled in to override
  * one that is already defined. */
 #if CONFIG_SPIRAM
@@ -225,7 +225,7 @@ void platform_code_free(void *p, size_t n) {
 }
 #endif
 
-/* The capabilities this build provides (vm/platform.h CAP_*). */
+/* The capabilities this build provides (runtime/vm/platform.h CAP_*). */
 uint32_t platform_caps(void) {
     uint32_t c = 0;
 #if CONFIG_GOGO_NET

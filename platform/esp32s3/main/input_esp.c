@@ -1,5 +1,5 @@
 /* ESP32-S3 input hardware (spec input §5.6, input2 §4): the InputHw the
- * chip-independent input/ code drives. The IMU hooks are in imu_esp.c
+ * chip-independent runtime/input/ code drives. The IMU hooks are in imu_esp.c
  * (BMI270), the IR hooks in ir_esp.c (RMT), the audio hooks in audio_esp.c
  * (ES8311 + I2S).
  *
@@ -236,7 +236,7 @@ static int adc_setup(void) {
 }
 
 /* A cell outside this range is a bad sample, not a reading: power_read fails,
- * so input/ keeps it out of its average (a failed read is no sample). Seen
+ * so runtime/input/ keeps it out of its average (a failed read is no sample). Seen
  * on a StickS3: the PM1 occasionally returns ~0 for VBAT. */
 #define BAT_MV_MIN 2500
 #define BAT_MV_MAX 4500

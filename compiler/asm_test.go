@@ -28,7 +28,7 @@ func goName(prefix, suffix string) string {
 }
 
 func TestOpcodesMatchC(t *testing.T) {
-	src, err := os.ReadFile("../vm/opcodes.h")
+	src, err := os.ReadFile("../runtime/vm/opcodes.h")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestOpcodesMatchC(t *testing.T) {
 	}
 	for _, n := range []string{"BPortOpen", "BPortClose", "TypeGpio", "TypeWrite", "TypeEdge", "OpClear", "OpRetn", "OpCallv", "BBytesCopyto", "BPortHandoff", "BNetSubscribe", "BConfigGet", "TypeNetDatagram", "TyBytes"} {
 		if _, ok := cConsts[n]; !ok {
-			t.Errorf("%s not parsed from vm/opcodes.h", n)
+			t.Errorf("%s not parsed from runtime/vm/opcodes.h", n)
 		}
 	}
 	for n, v := range cConsts {
@@ -86,7 +86,7 @@ func TestOpcodesMatchC(t *testing.T) {
 // TestReasonCodesMatchC cross-checks the gogo/actor reason constants with
 // the C R_* enum: actor.OutOfMemory <-> R_OUT_OF_MEMORY.
 func TestReasonCodesMatchC(t *testing.T) {
-	src, err := os.ReadFile("../vm/opcodes.h")
+	src, err := os.ReadFile("../runtime/vm/opcodes.h")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,9 +195,9 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 }
 
 // TestTermsMatchC cross-checks the special terms and the image version
-// with vm/term.h and vm/image.h.
+// with runtime/vm/term.h and runtime/vm/image.h.
 func TestTermsMatchC(t *testing.T) {
-	src, err := os.ReadFile("../vm/term.h")
+	src, err := os.ReadFile("../runtime/vm/term.h")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestTermsMatchC(t *testing.T) {
 		"T_EMPTYSTR": TermEmptyStr, "T_ZEROREF": TermZeroRef, "T_ZEROPID": TermZeroPid,
 		"T_NILSLICE": TermNilSlice, "T_EMPTYBYTES": TermEmptyBytes}
 	if len(c) != len(want) {
-		t.Errorf("vm/term.h defines %v, want the twins of %v", c, want)
+		t.Errorf("runtime/vm/term.h defines %v, want the twins of %v", c, want)
 	}
 	for n, v := range want {
 		if g, ok := c[n]; !ok || uint32(g) != v {
@@ -226,20 +226,20 @@ func TestTermsMatchC(t *testing.T) {
 		"K_ARRAY": KArray, "K_BYTEARR": KBytearr, "K_BYTES": KBytes, "K_BUF": KBuf,
 		"K_FORWARD": KForward}
 	if len(kinds) != len(wantK) {
-		t.Errorf("vm/term.h defines kinds %v, want the twins of %v", kinds, wantK)
+		t.Errorf("runtime/vm/term.h defines kinds %v, want the twins of %v", kinds, wantK)
 	}
 	for n, v := range wantK {
 		if g, ok := kinds[n]; !ok || uint32(g) != v {
 			t.Errorf("%s: C=%d Go=%d (present=%v)", n, g, v, ok)
 		}
 	}
-	src, err = os.ReadFile("../vm/image.h")
+	src, err = os.ReadFile("../runtime/vm/image.h")
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := regexp.MustCompile(`#define\s+IMAGE_VERSION\s+(\d+)u`).FindStringSubmatch(string(src))
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
-		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
+		t.Errorf("IMAGE_VERSION in runtime/vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
 	if imageVersion != 12 {
 		t.Errorf("imageVersion %d, want 12", imageVersion)
@@ -247,9 +247,9 @@ func TestTermsMatchC(t *testing.T) {
 }
 
 // TestConfigMatchC cross-checks the off-heap Bytes defaults with
-// vm/config.h.
+// runtime/vm/config.h.
 func TestConfigMatchC(t *testing.T) {
-	src, err := os.ReadFile("../vm/config.h")
+	src, err := os.ReadFile("../runtime/vm/config.h")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestConfigMatchC(t *testing.T) {
 	want := map[string]int{"GOGO_BYTES_HANDLES": BytesHandles, "GOGO_BYTES_PER_ACTOR": BytesPerActor,
 		"GOGO_BYTES_INLINE": BytesInline}
 	if len(c) != len(want) {
-		t.Errorf("vm/config.h defines %v, want the twins of %v", c, want)
+		t.Errorf("runtime/vm/config.h defines %v, want the twins of %v", c, want)
 	}
 	for n, v := range want {
 		if g, ok := c[n]; !ok || g != v {
@@ -506,7 +506,7 @@ func TestReservedTypeCount(t *testing.T) {
 }
 
 // TestImageConstAreaLimit: a const ref carries a 17-bit word offset (the
-// top bits of the runtime term are the module tag, vm/term.h), so a const
+// top bits of the runtime term are the module tag, runtime/vm/term.h), so a const
 // area past 1<<17 words is a compile error, not an image the VM rejects.
 func TestImageConstAreaLimit(t *testing.T) {
 	b := NewImageBuilder()
@@ -533,9 +533,9 @@ func TestImageEmptyFuncRejected(t *testing.T) {
 }
 
 // TestFsMatchC cross-checks the fs.Err values (the gogo/fs stub) and the
-// B_FS op codes and open modes of the compiler with vfs/vfs.h.
+// B_FS op codes and open modes of the compiler with runtime/vfs/vfs.h.
 func TestFsMatchC(t *testing.T) {
-	src, err := os.ReadFile("../vfs/vfs.h")
+	src, err := os.ReadFile("../runtime/vfs/vfs.h")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,11 +610,11 @@ func TestFsMatchC(t *testing.T) {
 }
 
 // TestCodeMatchC cross-checks gogo/code with C: code.Err with CODE_* and
-// the B_CODE op codes with CODE_OP_* (vm/module.h), code.Cap* and the
-// compiler's Cap* with CAP_* (vm/platform.h).
+// the B_CODE op codes with CODE_OP_* (runtime/vm/module.h), code.Cap* and the
+// compiler's Cap* with CAP_* (runtime/vm/platform.h).
 func TestCodeMatchC(t *testing.T) {
 	c := map[string]int64{}
-	for _, f := range []string{"../vm/module.h", "../vm/platform.h"} {
+	for _, f := range []string{"../runtime/vm/module.h", "../runtime/vm/platform.h"} {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

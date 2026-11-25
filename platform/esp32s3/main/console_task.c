@@ -1,5 +1,5 @@
 /* On-screen debug console: platform_write / platform_write_err mirror into a
- * platform/common Console grid; a low-priority render task draws the dirty
+ * runtime/console Console grid; a low-priority render task draws the dirty
  * rows on the ST7789.
  *
  * The VM task only takes `lock` (a spinlock) long enough to append bytes to

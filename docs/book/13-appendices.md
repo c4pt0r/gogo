@@ -2,9 +2,10 @@
 
 ## A. Library quick reference
 
-The authoritative definitions are the package sources in the gogo tree
-(`actor/`, `port/`, `bytes/`, `netapi/` for `gogo/net`, and so on); their
-comments give every detail.
+The authoritative definitions are the package sources in the gogo tree,
+one directory per package under `lib/` (`lib/actor/`, `lib/port/`,
+`lib/bytes/`, `lib/net/` for `gogo/net`, and so on; `lib/README.md` lists
+them all); their comments give every detail.
 
 ### gogo/actor
 

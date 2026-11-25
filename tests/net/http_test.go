@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"gogo/tests/net/sim"
+	"gogotools/tests/net/sim"
 )
 
 // startHTTP starts progs/<name> with a static address (10.0.0.2/24,

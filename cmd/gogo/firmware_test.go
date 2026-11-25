@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"gogo/compiler"
+	"gogotools/compiler"
 )
 
 // writeImg writes a minimal v9 image whose requires word is bits.

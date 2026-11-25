@@ -2,7 +2,7 @@ package compiler
 
 import "fmt"
 
-// Opcodes. Values mirror vm/opcodes.h (checked by TestOpcodesMatchC).
+// Opcodes. Values mirror runtime/vm/opcodes.h (checked by TestOpcodesMatchC).
 const (
 	OpNop       uint8 = 0
 	OpMove      uint8 = 1
@@ -103,7 +103,7 @@ const (
 	BPortOpen       uint32 = 26 // driver string, cfg any -> pid, ok
 	BPortClose      uint32 = 27 // pid -> nil
 
-	// Sequences (vm/strs.c).
+	// Sequences (runtime/vm/strs.c).
 	BStrConcat     uint32 = 28 // a, b -> string
 	BLen           uint32 = 29 // string | slice | Bytes | Buffer -> int
 	BIndex         uint32 = 30 // string | slice | Bytes, i -> element (a byte as an int)
@@ -117,7 +117,7 @@ const (
 	BBytesliceFrom uint32 = 38 // string | Bytes -> []byte
 	BStrCmp        uint32 = 39 // a, b -> -1 | 0 | 1
 
-	// bytes.Buffer and bytes.Bytes (vm/strs.c, vm/bytes.c).
+	// bytes.Buffer and bytes.Bytes (runtime/vm/strs.c, runtime/vm/bytes.c).
 	BBufNew      uint32 = 40 // cap -> Buffer
 	BBufWrite    uint32 = 41 // buf, string | []byte | Bytes | byte -> nil
 	BBufFreeze   uint32 = 42 // buf -> Bytes; buf emptied
@@ -128,14 +128,14 @@ const (
 	BPortHandoff  uint32 = 46 // port pid, to pid -> bool
 	BNetSubscribe uint32 = 47 // -> bool
 	BConfigGet    uint32 = 48 // key string -> value string, ok bool
-	BFs           uint32 = 49 // op int, args... -> result(s): gogo/fs (vfs/builtin.c)
-	BCode         uint32 = 50 // op int, args... -> result(s): gogo/code (vm/module.c)
+	BFs           uint32 = 49 // op int, args... -> result(s): gogo/fs (runtime/vfs/builtin.c)
+	BCode         uint32 = 50 // op int, args... -> result(s): gogo/code (runtime/vm/module.c)
 	BUnixTime     uint32 = 51 // -> int64: sys.Time (platform_unix_time_ms)
 	BSetUnixTime  uint32 = 52 // ms int64 -> bool: sys.SetTime (platform_set_unix_time_ms)
 	BRandom       uint32 = 53 // -> int in [0, 2^30): sys.Random (platform_random)
 )
 
-// Off-heap Bytes limits: twins of vm/config.h's defaults (checked by
+// Off-heap Bytes limits: twins of runtime/vm/config.h's defaults (checked by
 // TestConfigMatchC; platforms may override them in C).
 const (
 	BytesHandles  = 64 // GOGO_BYTES_HANDLES: handle table entries
@@ -218,7 +218,7 @@ const (
 	TypeAudioSpeaker uint32 = 43
 	// TypeReservedCount is how many reserved types there are: every type
 	// index from here up is a module's own (TYPE_RESERVED_COUNT in
-	// vm/opcodes.h; TestReservedTypeCount checks len(reservedTypes)).
+	// runtime/vm/opcodes.h; TestReservedTypeCount checks len(reservedTypes)).
 	TypeReservedCount uint32 = 44
 )
 

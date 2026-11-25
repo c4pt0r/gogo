@@ -1,0 +1,194 @@
+// Package fs is the gogo storage API: files and directories on /flash (the
+// internal flash) and /sd (an SD card, if the board has one). It is a stub
+// package like gogo/actor: the compiler replaces every call with the VM
+// builtin B_FS (File.Close with the port close builtin), so the bodies are
+// never executed. The C side is runtime/vfs/.
+//
+// The struct types Info and Space have fixed type indices 27 and 28 in
+// every image (TYPE_FS_INFO, TYPE_FS_SPACE in runtime/vm/opcodes.h); keep their
+// field order in sync with compiler.reservedTypes.
+//
+// Paths. A path is absolute and starts with the mount prefix /flash or /sd,
+// matched as a whole segment: "/flashx/a" is NotMounted. A name is 1 to 32
+// bytes of A-Z a-z 0-9 . _ - ; a path is at most 96 bytes; a name ending
+// in "." (so also "." and ".."), an empty segment ("/flash//a") and a
+// trailing "/" are BadPath, on both mounts (FAT drops trailing dots, so
+// "a.txt." would be another name for "a.txt"). Prefer
+// lower-case names: /sd is FAT, which ignores case ("A.TXT" is "a.txt"),
+// and /flash does not. A name that breaks the rules (made on a PC, say) is
+// still listed by ReadDir under its original name, but opening it, or
+// anything else in the path, is BadPath. /sd without a card, or a card that
+// failed to mount, is NotMounted on every call; a card inserted later is
+// used from the next call on.
+//
+// Rulings. Mkdir, Remove and Rename of a mount root ("/flash") and any
+// operation on "/" are BadPath. Rename across mounts is BadPath. Mkdir is
+// not recursive. Remove deletes a file or an empty directory. Rename onto
+// an existing file or directory is Exists, also onto itself. Rename into
+// its own subtree ("/flash/d" to "/flash/d/x") is BadPath; on /sd this
+// ignores case ("/sd/d" to "/sd/D/x" too). On the device a case-only rename
+// works on both mounts ("/flash/p" to "/flash/P", "/sd/a.txt" to
+// "/sd/A.TXT"). Under gogovm on a case-insensitive host (the macOS default)
+// the host backend compares exactly, so the same rename is Exists.
+//
+// Files. Open returns a File, which is a port: its PID is an ordinary
+// port PID, the opening actor owns it, and its exit closes (and so
+// commits) the file, also when it crashes or is killed. At most 4 files
+// are open at once in the whole VM (TooMany), each charging a few bytes to
+// its owner (NoMemory when the owner's quota does not allow it). ReadFile
+// and WriteFile (and so kv) use one of those 4 slots while they run: with
+// 4 Files held they are TooMany too. Only the
+// owner may Read, Write, Sync or Size a File; anything else, a closed file
+// or a PID that is no file gives Closed, never a crash. Anyone holding the
+// PID may Close it (port.Close(actor.PID(f)) is the same), and
+// port.Handoff(actor.PID(f), other) gives the file, and its charge, to
+// another actor. A File opened Write or Append cannot be Read and a File
+// opened Read cannot be Written (Closed). A file produces no event
+// messages.
+//
+// Busy. At most one Write or Append open per path at a time, and as long as
+// any open file exists on a path, Remove, Rename (source or target) and the
+// final replace of WriteFile on it are Busy. Renaming a directory while
+// any file is open on the same mount (inside it or not) is Busy; renaming a
+// file follows the per-path rule only. Any number of readers may open
+// a file that is being written; what they see of the unclosed writer's data
+// is not guaranteed. On /sd (FAT) a Write open (which truncates) of a file
+// that is open for reading is Busy too; Append is allowed.
+//
+// WriteFile replaces the file with a temporary "<name>.tmp" beside it: on
+// /flash that is atomic (a power loss leaves the old or the new content);
+// on /sd (FAT) it is the temporary, then remove, then rename, which is not
+// atomic: a power loss in between leaves "<name>.tmp" instead, and so does
+// a failed final rename (WriteFile returns the error and keeps the
+// temporary, the only copy left).
+//
+// Sizes. Size, Stat and Usage report at most 2147483647 (2 GB - 1): a
+// larger file or medium (any SDHC/SDXC card's Total) reads as that. A value
+// of 2^30 or more is a boxed int; if its 2-word allocation does not fit the
+// caller's quota the caller is killed (out of memory), not given NoMemory.
+//
+// /sd differences. A path through a file ("/sd/file/x") is NotFound on
+// /sd, where /flash says NotDir (FatFs does not tell the two apart).
+//
+// Every call runs synchronously and stalls all actors: a flash erase costs
+// tens of milliseconds, and an SD card occasionally hundreds. Write
+// results in large pieces (or use WriteFile) and keep such calls out of
+// time-critical actors.
+package fs
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+)
+
+// File is an open file: the PID of a "file" port.
+type File actor.PID
+
+// Err is the result of every call; OK is 0.
+type Err int
+
+// Error values (same numbers as VFS_* in runtime/vfs/vfs.h).
+const (
+	OK         Err = 0
+	NotFound   Err = 1  // the file or directory does not exist
+	Exists     Err = 2  // the target of Mkdir or Rename exists
+	NotMounted Err = 3  // unknown prefix, or /sd has no (working) card
+	NoSpace    Err = 4  // the medium is full
+	TooMany    Err = 5  // 4 files are open already
+	Busy       Err = 6  // see Busy above
+	BadPath    Err = 7  // a path or name that breaks the rules
+	IsDir      Err = 8  // a file operation on a directory
+	NotDir     Err = 9  // a path segment before the last is not a directory (/sd: NotFound)
+	NotEmpty   Err = 10 // Remove of a directory that has entries
+	NoMemory   Err = 11 // the result does not fit the caller's quota (it is not killed)
+	IO         Err = 12 // medium error (card removed, ...)
+	Closed     Err = 13 // closed, not owned by the caller, or not a file
+)
+
+// Open modes. Write creates the file or truncates it, Append creates it or
+// appends to it.
+const (
+	Read   = 0
+	Write  = 1
+	Append = 2
+)
+
+// Info is what Stat returns: Size is 0 for a directory.
+type Info struct {
+	Size  int
+	IsDir bool
+}
+
+// Space is what Usage returns, in bytes.
+type Space struct{ Used, Total int }
+
+// Open opens path in mode (Read, Write or Append). On error the File is
+// the zero File, which is Closed for every call.
+func Open(path string, mode int) (File, Err) { panic("gogo only") }
+
+// Read returns up to max bytes from the current position and advances it.
+// max is clamped to 4096; max <= 0 returns an empty Bytes. An empty Bytes
+// with OK is the end of the file. If the data does not fit the caller's
+// memory quota the result is an empty Bytes and NoMemory, and the position
+// does not advance.
+func (f File) Read(max int) (bytes.Bytes, Err) { panic("gogo only") }
+
+// Write appends all of data (a string, a bytes.Bytes or a []byte; any other
+// type crashes the caller) at the current position, or returns an error.
+func (f File) Write(data any) Err { panic("gogo only") }
+
+// WriteAt overwrites len(data) bytes at byte offset off of a file opened
+// with Write (data as in Write). It never extends the file: off must be at
+// least 0 and off + len(data) at most the current Size, else the result is
+// BadPath and nothing is written. A file opened Read or Append, a closed or
+// foreign File is Closed. The position of the next Write is not moved: it
+// still appends at the end. It is for fixing up what was written (the
+// sizes in a WAV header) and, as it needs no new space on /sd, it works on a
+// full card; on /flash (copy-on-write) it needs one free block, and is IO
+// or NoSpace without. Like Write, the data is not on the medium until
+// Sync or Close.
+func (f File) WriteAt(off int, data any) Err { panic("gogo only") }
+
+// Sync commits what was written, without closing the file, and reports a
+// failed commit (IO, NoSpace).
+func (f File) Sync() Err { panic("gogo only") }
+
+// Size is the current size of the file, including what is written so far.
+func (f File) Size() (int, Err) { panic("gogo only") }
+
+// Close closes the file, committing what was written. Close has no result:
+// a failed commit is not reported, so a writer that cares calls Sync first
+// (WriteFile and ringlog.Append do). Closing a closed or foreign File is
+// ignored.
+func (f File) Close() { panic("gogo only") }
+
+// ReadFile returns the whole file; NoMemory if it is larger than max (or
+// does not fit the quota), with nothing read.
+func ReadFile(path string, max int) (bytes.Bytes, Err) { panic("gogo only") }
+
+// WriteFile replaces the file with data (a string, a bytes.Bytes or a
+// []byte); see "WriteFile replaces" above for atomicity.
+func WriteFile(path string, data any) Err { panic("gogo only") }
+
+// Stat describes path; "/flash" and "/sd" themselves are directories.
+func Stat(path string) (Info, Err) { panic("gogo only") }
+
+// ReadDir lists the names in directory path in no particular order,
+// directories with a trailing "/", never "." or "..". Every name on the
+// medium is listed, also those that break the name rules.
+func ReadDir(path string) ([]string, Err) { panic("gogo only") }
+
+// Mkdir creates one directory (not recursive).
+func Mkdir(path string) Err { panic("gogo only") }
+
+// Remove deletes a file or an empty directory.
+func Remove(path string) Err { panic("gogo only") }
+
+// Rename renames within one medium; Exists if to exists, BadPath if to
+// lies inside from, Busy for a directory while any file is open on
+// that medium (see Rulings and Busy above).
+func Rename(from, to string) Err { panic("gogo only") }
+
+// Usage returns the used and total bytes of the medium; prefix is "/flash"
+// or "/sd".
+func Usage(prefix string) (Space, Err) { panic("gogo only") }

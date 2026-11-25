@@ -1,8 +1,8 @@
-/* Wi-Fi station and the platform network interface (net/netif.h) on the
+/* Wi-Fi station and the platform network interface (runtime/net/netif.h) on the
  * ESP32-S3 (spec M5 §5.1, §5.4, §9.8, §9.9).
  *
  * Raw Ethernet frames go straight between the Wi-Fi driver and gogo's own
- * stack (net/) through the driver's internal interface:
+ * stack (runtime/net/) through the driver's internal interface:
  *  - receive: esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_cb); rx_cb runs in
  *    the Wi-Fi task (CPU0), offers the frame to the stack's single RX slot
  *    (net_rx_offer copies it or drops it) and frees the driver buffer at
@@ -280,7 +280,7 @@ int wifi_esp_scan(char *line, size_t cap, void (*out)(const char *tag, const cha
     return n;
 }
 
-/* ---- net/netif.h ---- */
+/* ---- runtime/net/netif.h ---- */
 
 bool platform_net_mac(uint8_t mac[6]) {
     if (!wifi_ok) return false;

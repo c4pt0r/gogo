@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"gogo/tests/net/sim"
+	"gogotools/tests/net/sim"
 )
 
 // The VM is 10.0.0.2/24; the peer is its gateway 10.0.0.1.

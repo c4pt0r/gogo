@@ -2,7 +2,7 @@
 # root (no copies).
 get_filename_component(GOGO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 
-file(GLOB GOGO_VM_SRCS "${GOGO_ROOT}/vm/*.c")
+file(GLOB GOGO_VM_SRCS "${GOGO_ROOT}/runtime/vm/*.c")
 list(FILTER GOGO_VM_SRCS EXCLUDE REGEX "/check32\\.c$")
 # The net stack (pure C99, chip-independent; spec M5): its net_rx_offer /
 # net_link_event are what wifi.c feeds.
@@ -10,22 +10,22 @@ list(FILTER GOGO_VM_SRCS EXCLUDE REGEX "/check32\\.c$")
 set(GOGO_NET_SRCS "")
 set(GOGO_WIFI_SRCS "")
 if(CONFIG_GOGO_NET)
-    file(GLOB GOGO_NET_SRCS "${GOGO_ROOT}/net/*.c")
+    file(GLOB GOGO_NET_SRCS "${GOGO_ROOT}/runtime/net/*.c")
     set(GOGO_WIFI_SRCS wifi.c)
 endif()
 # Storage (spec storage §5): the vfs core and the B_FS builtin (pure C99),
 # with fs_lfs.c (/flash on LittleFS) as the backend.
-file(GLOB GOGO_VFS_SRCS "${GOGO_ROOT}/vfs/*.c")
+file(GLOB GOGO_VFS_SRCS "${GOGO_ROOT}/runtime/vfs/*.c")
 # Input (spec input): the kbd and power drivers and event source (pure C99);
 # input_esp.c / i2c_bus.c are the hardware.
-file(GLOB GOGO_INPUT_SRCS "${GOGO_ROOT}/input/*.c")
+file(GLOB GOGO_INPUT_SRCS "${GOGO_ROOT}/runtime/input/*.c")
 # Streams (spec input2 §1): Chunk / Out / Done for the streaming drivers
 # (pure C99).
-file(GLOB GOGO_STREAM_SRCS "${GOGO_ROOT}/stream/*.c")
+file(GLOB GOGO_STREAM_SRCS "${GOGO_ROOT}/runtime/stream/*.c")
 
-# platform/common: the console grid and the font (shared with the host
+# runtime/console: the console grid and the font (shared with the host
 # tests), plus the font blob embedded as _binary_gogo12_font_{start,end}.
-set(GOGO_COMMON_SRCS "${GOGO_ROOT}/platform/common/console.c" "${GOGO_ROOT}/platform/common/font.c")
+set(GOGO_COMMON_SRCS "${GOGO_ROOT}/runtime/console/console.c" "${GOGO_ROOT}/runtime/console/font.c")
 
 # On-screen console switch (timing baseline: idf.py -B build-noconsole
 # -DGOGO_CONSOLE=0 build) and serial bring-up/frame logging.
@@ -102,8 +102,8 @@ idf_component_register(
          ${GOGO_WIFI_SRCS} config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
          ${GOGO_IMU_SRCS} ${GOGO_IR_SRCS} ${GOGO_AUDIO_SRCS}
          ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_COMMON_SRCS}
-    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/vm" "${GOGO_ROOT}/net" "${GOGO_ROOT}/vfs" "${GOGO_ROOT}/input" "${GOGO_ROOT}/stream" "${GOGO_ROOT}/platform/common"
-    EMBED_FILES "${GOGO_ROOT}/platform/common/font/${GOGO_FONT_FILE}"
+    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/runtime/vm" "${GOGO_ROOT}/runtime/net" "${GOGO_ROOT}/runtime/vfs" "${GOGO_ROOT}/runtime/input" "${GOGO_ROOT}/runtime/stream" "${GOGO_ROOT}/runtime/console"
+    EMBED_FILES "${GOGO_ROOT}/runtime/console/font/${GOGO_FONT_FILE}"
     LDFRAGMENTS linker.lf
     PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c esp_adc
                   esp_rom freertos heap nvs_flash esp_driver_usb_serial_jtag
@@ -145,10 +145,10 @@ if(NOT GOGO_VERSION)
     set(GOGO_VERSION "dev")
 endif()
 
-# The wall-clock floor (vm/platform.h): the build time, Unix ms.
+# The wall-clock floor (runtime/vm/platform.h): the build time, Unix ms.
 string(TIMESTAMP GOGO_BUILD_S "%s" UTC)
 
-# ESP values of the vm/config.h knobs (plan: Global Constraints).
+# ESP values of the runtime/vm/config.h knobs (plan: Global Constraints).
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GOGO_BUILD_UNIX_MS=${GOGO_BUILD_S}000LL
     GOGO_DEFAULT_MAX_WORDS=4096u
