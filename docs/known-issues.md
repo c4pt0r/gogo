@@ -385,6 +385,13 @@ the M5StickS3 and the Cardputer ADV. The design is in
   move a directory out of an inner root while the inner VM walks it), and
   the directory must not be writable by other users (they could hard-link
   their files in, which the VM may then read). See `gogo_config.fs_root`.
+- **An embedded VM's `fs_quota` counts regular-file bytes only.** Empty
+  files and directories cost nothing, so a program under a quota can
+  still create any number of them (and use the host file system's inodes
+  and directory blocks). Like `--fs-quota`, it sees only the VM's own
+  changes. *Workaround:* a host that runs untrusted programs also limits
+  the directory with the host's own means (a disk quota, a size-limited
+  file system).
 - **`tools/vmsize.sh --vfs`** reports a smaller fixed state than the
   boards have (it builds with the default slot size); the compile-time
   assertions in the board's file system glue are the real check.
