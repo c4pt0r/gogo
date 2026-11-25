@@ -203,7 +203,7 @@ EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vfs -Iruntime/vm -Irunti
 
 $(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS) $(wildcard runtime/embed/*.h) runtime/include/gogo.h $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vm/test/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS)
+	$(CC) $(CFLAGS) -DGOGO_EMBED $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS)
 
 embed-images:
 	@mkdir -p $(BUILD)/embed

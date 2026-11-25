@@ -152,7 +152,8 @@ static const gogo_host pipe_host = {
 | `wake(ctx)` | wakes the host's wait, from any thread |
 | `wait(ctx, timeout_ms)` | the idle wait `gogo_run` uses; `NULL` if the host steps the VM itself |
 | `unix_time_ms`, `set_unix_time_ms` | a wall clock (an RTC); `NULL`: the VM keeps its own, unknown until a program sets it |
-| `random`, `random_bytes` | random numbers; `NULL`: a clock-seeded mixer |
+| `random(ctx)` | 32 random bits; `NULL`: the VM's own clock-seeded mixer (not for secrets) |
+| `random_bytes(ctx, buf, n)` | cryptographic random bytes, for TLS; optional, with no fallback (the library has no TLS yet) |
 | `config_get` | the values `config.Get` reads; `NULL`: nothing is set |
 | `code_alloc`, `code_free` | special memory for hot-loaded code; `NULL`: ordinary memory |
 
@@ -259,7 +260,10 @@ it, except `gogo_post`, `gogo_port_post`, `gogo_close_posts`,
 `gogo_retain` and `gogo_release`, which any thread may call. Different VMs
 may run on different threads at once; the embed tests run 8 VMs on 4
 threads, each thread stepping two of them as above
-(`runtime/embed/test/test_multi.c`).
+(`runtime/embed/test/test_multi.c`). In `--two` nothing wakes the loop
+from another thread; the embed tests do (`runtime/embed/test/test_embed.c`
+posts from other threads at the worst moment, just before the wait, many
+thousands of times), and so does `post.c` in the next section.
 
 ## 18.6 Posts: messages from the host
 

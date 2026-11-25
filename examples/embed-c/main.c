@@ -72,7 +72,7 @@ static int run_one(const char *path, const gogo_config *cfg) {
 /* Each VM's host context: its line prefix and the loop's wake pipe. */
 typedef struct Ctx {
     const char *tag;   /* "a| " */
-    int bol;           /* at the beginning of a line */
+    int bol[2];        /* stdout, stderr: at the beginning of a line */
     int wake_fd;       /* the pipe's write end, shared by both VMs */
 } Ctx;
 
@@ -80,9 +80,10 @@ static void w_write(void *c, int stream, const char *s, size_t n) {
     Ctx *x = c;
     FILE *f = stream == 2 ? stderr : stdout;
     for (size_t i = 0; i < n; i++) {
-        if (x->bol) fputs(x->tag, f);
+        int *bol = &x->bol[stream == 2];
+        if (*bol) fputs(x->tag, f);
         fputc(s[i], f);
-        x->bol = s[i] == '\n';
+        *bol = s[i] == '\n';
     }
 }
 static void *w_alloc(void *c, size_t n) { (void)c; return malloc(n ? n : 1); }
@@ -113,11 +114,11 @@ static int run_two(const char *pa, const char *pb) {
     if (pipe(fds) != 0) return 1;
     fcntl(fds[0], F_SETFL, O_NONBLOCK);
     fcntl(fds[1], F_SETFL, O_NONBLOCK);
-    Ctx ctx[2] = { { "a| ", 1, fds[1] }, { "b| ", 1, fds[1] } };
+    Ctx ctx[2] = { { "a| ", { 1, 1 }, fds[1] }, { "b| ", { 1, 1 }, fds[1] } };
     gogo_vm *vm[2];
     vm[0] = load_vm(&pipe_host, &ctx[0], NULL, pa);
     vm[1] = vm[0] ? load_vm(&pipe_host, &ctx[1], NULL, pb) : NULL;
-    int live = 0, rc = 0;
+    int live = 0, rc = vm[0] && vm[1] ? 0 : 1;   /* an image that cannot be read or loaded */
     for (int i = 0; i < 2 && vm[1]; i++)
         if (gogo_start(vm[i]) == GOGO_OK) live |= 1 << i;
         else rc = 1;
