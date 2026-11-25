@@ -132,6 +132,19 @@ static int l_write(void *f, const uint8_t *buf, uint32_t n) {
     if (k < 0) return map_err((int)k);
     return (uint32_t)k == n ? VFS_OK : VFS_NOSPACE;
 }
+/* Overwrites inside the file (vfs checked the bounds), then goes back to
+ * the end so the next write appends. */
+static int l_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+    lfs_file_t *lf = &((Lf *)f)->f;
+    lfs_soff_t end = lfs_file_seek(&L.lfs, lf, 0, LFS_SEEK_CUR);
+    if (end < 0) return map_err((int)end);
+    lfs_soff_t at = lfs_file_seek(&L.lfs, lf, (lfs_soff_t)off, LFS_SEEK_SET);
+    if (at < 0) return map_err((int)at);
+    lfs_ssize_t k = lfs_file_write(&L.lfs, lf, buf, n);
+    int e = k < 0 ? map_err((int)k) : (uint32_t)k == n ? VFS_OK : VFS_NOSPACE;
+    lfs_soff_t back = lfs_file_seek(&L.lfs, lf, end, LFS_SEEK_SET);
+    return e ? e : back < 0 ? map_err((int)back) : VFS_OK;
+}
 static int l_sync(void *f) { return map_err(lfs_file_sync(&L.lfs, &((Lf *)f)->f)); }
 static int l_size(void *f, int32_t *out) {
     lfs_soff_t s = lfs_file_size(&L.lfs, &((Lf *)f)->f);
@@ -182,7 +195,7 @@ static int l_usage(int32_t *used, int32_t *total) {
 
 static const VfsBackend backend = {
     false, l_open, l_read, l_write, l_sync, l_size, l_close,
-    l_stat, l_readdir, l_mkdir, l_remove, l_rename, l_usage
+    l_stat, l_readdir, l_mkdir, l_remove, l_rename, l_usage, l_write_at
 };
 
 /* ---- mount ---- */

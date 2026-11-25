@@ -1,0 +1,10 @@
+record 16000 250 true
+recorded path "" ms 0 dropped 0 err 0
+record 16000 500 true
+recorded path "" ms 0 dropped 0 err 0
+record 8000 500 true
+recorded path "" ms 0 dropped 0 err 0
+record long true
+recorded path "/flash/long/0000.wav" ms 1000 dropped 0 err 0
+recorded path "" ms 0 dropped 0 err 0
+size 32044

@@ -304,6 +304,20 @@ static int t_write(void *f, const uint8_t *buf, uint32_t n) {
     if (e) return e;
     return bw == n ? VFS_OK : VFS_NOSPACE;
 }
+/* Overwrites inside the file (vfs checked the bounds), then goes back to
+ * the end so the next write appends. FAT patches the clusters in place. */
+static int t_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+    FIL *fp = f;
+    FSIZE_t end = f_tell(fp);
+    int e = map_err(f_lseek(fp, off));
+    UINT bw = 0;
+    if (!e) {
+        e = map_err(f_write(fp, buf, n, &bw));
+        if (!e && bw != n) e = VFS_NOSPACE;
+    }
+    int e2 = map_err(f_lseek(fp, end));
+    return e ? e : e2;
+}
 static int t_sync(void *f) { return map_err(f_sync(f)); }
 static int t_size(void *f, int32_t *out) {
     *out = clamp32(f_size((FIL *)f));
@@ -374,7 +388,7 @@ static int t_usage(int32_t *used, int32_t *total) {
 
 static const VfsBackend backend = {
     true, t_open, t_read, t_write, t_sync, t_size, t_close,
-    t_stat, t_readdir, t_mkdir, t_remove, t_rename, t_usage
+    t_stat, t_readdir, t_mkdir, t_remove, t_rename, t_usage, t_write_at
 };
 
 int fs_fat_init(void) { return vfs_mount("/sd", &backend) ? 0 : -1; }

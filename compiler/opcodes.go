@@ -210,10 +210,13 @@ const (
 	TypeImuGesture uint32 = 39
 	TypeIrTx       uint32 = 40
 	TypeIrRx       uint32 = 41
+	// gogo/audio (v11)
+	TypeAudioMic     uint32 = 42
+	TypeAudioSpeaker uint32 = 43
 	// TypeReservedCount is how many reserved types there are: every type
 	// index from here up is a module's own (TYPE_RESERVED_COUNT in
 	// vm/opcodes.h; TestReservedTypeCount checks len(reservedTypes)).
-	TypeReservedCount uint32 = 42
+	TypeReservedCount uint32 = 44
 )
 
 // Heap object kinds.
@@ -345,5 +348,6 @@ var goConstants = map[string]uint32{
 	"TypeCodeModule":    TypeCodeModule,
 	"TypeChunk": TypeChunk, "TypeOut": TypeOut, "TypeDone": TypeDone,
 	"TypeImuConfig": TypeImuConfig, "TypeImuGesture": TypeImuGesture, "TypeIrTx": TypeIrTx, "TypeIrRx": TypeIrRx,
+	"TypeAudioMic": TypeAudioMic, "TypeAudioSpeaker": TypeAudioSpeaker,
 	"TypeReservedCount": TypeReservedCount,
 }

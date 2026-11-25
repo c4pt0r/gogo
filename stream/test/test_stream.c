@@ -331,6 +331,28 @@ TEST(out_done_ordering_and_head) {
     teardown();
 }
 
+/* stream_out_at: every Out in flight by position, NULL past the end; the
+ * queued one moves to 0 when the head finishes. */
+TEST(out_at_positions) {
+    setup();
+    const uint8_t a[2] = { 7, 0 }, b[4] = { 8, 0, 9, 0 };
+    uint32_t len;
+    CHECK(stream_out_at(&so, 0, &len) == NULL); CHECK_EQ(len, 0u);
+    CHECK_EQ(send_out(owner, a, 2), 1);
+    CHECK(stream_out_at(&so, 1, &len) == NULL); CHECK_EQ(len, 0u);
+    CHECK_EQ(send_out(owner, b, 4), 0);
+    const uint8_t *d = stream_out_at(&so, 0, &len);
+    CHECK(d && len == 2 && d[0] == 7);
+    d = stream_out_at(&so, 1, &len);
+    CHECK(d && len == 4 && d[0] == 8 && d[2] == 9);
+    CHECK(stream_out_at(&so, 2, &len) == NULL);
+    CHECK(stream_out_done(&vm, port_at(sp), &so));
+    d = stream_out_at(&so, 0, &len);
+    CHECK(d && len == 4 && d[0] == 8);
+    CHECK(stream_out_at(&so, 1, &len) == NULL);
+    teardown();
+}
+
 /* A head the driver could not send: Done{-1}, no Seq used, the queued one
  * becomes the head; Dones stay in order. */
 TEST(out_fail_head) {

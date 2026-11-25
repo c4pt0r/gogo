@@ -25,7 +25,10 @@
  *  - Charges: a driver sets Port.charge_words in open for the state it
  *    keeps for the port (e.g. a TCP control block in a fixed C table); the
  *    owner is charged that (open fails if it does not fit its limit) until
- *    close, and Handoff moves it.
+ *    close, and Handoff moves it. A driver whose events are large sets
+ *    Port.room_64w too (64-word units): open also fails unless the owner has that much
+ *    more free (checked once, not charged), so a port whose every event
+ *    would be over the owner's quota is refused instead of silent.
  *  - Port-held Bytes: port_bytes_new / port_bytes_retain pin off-heap Bytes
  *    on the owner's behalf (at most PORT_MAX_HELD per port), recorded in
  *    the port so close releases them and Handoff moves them.
@@ -94,6 +97,9 @@ struct Port {
     int32_t last_b;
     int32_t pend_a, pend_b; /* valid with PORT_PENDING */
     uint8_t flags;
+    uint8_t room_64w;       /* driver sets in open: words the owner must have free besides
+                             * the charge (one stream Chunk), in 64-word units rounded up
+                             * (fits the padding); checked at open, not charged */
     uint16_t charge_words;  /* driver sets in open: words charged to the owner */
     term held[PORT_MAX_HELD];   /* Bytes pinned for the owner; 0 = free (never a handle) */
 };

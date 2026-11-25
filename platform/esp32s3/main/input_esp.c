@@ -1,6 +1,7 @@
 /* ESP32-S3 input hardware (spec input §5.6, input2 §4): the InputHw the
  * chip-independent input/ code drives. The IMU hooks are in imu_esp.c
- * (BMI270), the IR hooks in ir_esp.c (RMT).
+ * (BMI270), the IR hooks in ir_esp.c (RMT), the audio hooks in audio_esp.c
+ * (ES8311 + I2S).
  *
  *  - Cardputer ADV keyboard: TCA8418 key-scan chip on the shared I2C bus
  *    (0x34, 400 kHz), INT on G11 (open drain, active low). The ISR only sets
@@ -47,6 +48,16 @@
 #define WITH_IR_RX 1
 #else
 #define WITH_IR_RX 0
+#endif
+#if HAS_MIC && CONFIG_GOGO_AUDIO
+#define WITH_MIC 1
+#else
+#define WITH_MIC 0
+#endif
+#if HAS_SPK && CONFIG_GOGO_AUDIO
+#define WITH_SPK 1
+#else
+#define WITH_SPK 0
 #endif
 
 #if WITH_KBD
@@ -317,5 +328,16 @@ const InputHw input_esp_hw = {
 #if WITH_IR_TX
     .ir_tx_open = ir_esp_tx_open,
     .ir_tx_close = ir_esp_tx_close,
+#endif
+#if WITH_MIC
+    .mic_open = audio_esp_mic_open,
+    .mic_read = audio_esp_mic_read,
+    .mic_close = audio_esp_mic_close,
+#endif
+#if WITH_SPK
+    .spk_open = audio_esp_spk_open,
+    .spk_write = audio_esp_spk_write,
+    .spk_queued = audio_esp_spk_queued,
+    .spk_close = audio_esp_spk_close,
 #endif
 };

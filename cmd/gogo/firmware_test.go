@@ -59,7 +59,7 @@ func TestFirmwareUnion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -72,7 +72,7 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\n"
+	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -107,7 +107,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -390,6 +390,35 @@ func TestFirmwareImuIr(t *testing.T) {
 	}
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-without", "imu", im); err == nil {
 		t.Error("removing a required imu should fail")
+	}
+}
+
+func TestFirmwareAudio(t *testing.T) {
+	d := t.TempDir()
+	mic := writeImg(t, d, "mic.gogo", compiler.CapMic)
+	spk := writeImg(t, d, "spk.gogo", compiler.CapSpk)
+	im := writeImg(t, d, "im.gogo", compiler.CapIMU)
+	for _, board := range []string{"sticks3", "cardputer"} {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, mic); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_AUDIO=y\n") {
+			t.Errorf("%s mic: %v\n%s", board, err, cfg)
+		}
+		// mic and spk share one switch: an image that needs one keeps both
+		if _, _, err := fwRun(t, "-board", board, "-o", d, "-without", "spk", mic); err == nil || !strings.Contains(err.Error(), "GOGO_AUDIO") {
+			t.Errorf("%s -without spk with a mic image: %v", board, err)
+		}
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-without", "mic", im); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_AUDIO=n\n") {
+			t.Errorf("%s -without mic: %v\n%s", board, err, cfg)
+		}
+		if _, _, err := fwRun(t, "-board", board, "-o", d, "-without", "mic", spk); err == nil {
+			t.Errorf("%s: removing a required switch should fail", board)
+		}
+	}
+	if _, err := fwPlan("sticks3", 0, []string{"mic"}, []string{"spk"}); err == nil || !strings.Contains(err.Error(), "GOGO_AUDIO") {
+		t.Errorf("-with mic -without spk: %v", err)
+	}
+	on, err := fwPlan("sticks3", 0, nil, []string{"spk"})
+	if err != nil || on["mic"] || on["spk"] {
+		t.Errorf("-without spk alone: %v %v", on, err)
 	}
 }
 

@@ -1,0 +1,63 @@
+// Microphone half of the two-board audio check: records 10 s at 16 kHz
+// (Gain 0) and prints the RMS and peak of every 500 ms, with the time since
+// the open. Run audiotone on the other board at the same time.
+//
+//	gogo build platform/esp32s3/examples/audiolisten -o listen.gogo && gogo flash listen.gogo
+package main
+
+import (
+	"gogo/actor"
+	"gogo/audio"
+	"gogo/port"
+)
+
+func main() {
+	p, ok := port.Open("mic", audio.Mic{Rate: 16000, FrameMs: 100})
+	if !ok {
+		println("listen: no mic")
+		return
+	}
+	sum := int64(0)
+	peak := 0
+	n := 0
+	for frames := 0; frames < 100; {
+		switch c := actor.Receive().(type) {
+		case port.Chunk:
+			frames++
+			for k := 0; k+1 < c.Data.Len(); k += 2 {
+				v := int(c.Data.At(k)) | int(c.Data.At(k+1))<<8
+				if v >= 32768 {
+					v = v - 65536
+				}
+				if v < 0 && -v > peak {
+					peak = -v
+				} else if v > peak {
+					peak = v
+				}
+				sum = sum + int64(v)*int64(v)
+				n++
+			}
+			if frames%5 == 0 {
+				println("listen: t", c.TimeMs+100, "rms", isqrt(sum/int64(n)), "peak", peak, "dropped", c.Dropped)
+				sum = 0
+				peak = 0
+				n = 0
+			}
+		}
+	}
+	port.Close(p)
+}
+
+func isqrt(v int64) int {
+	lo := int64(0) // lo*lo <= v < hi*hi
+	hi := int64(46341)
+	for hi-lo > 1 {
+		mid := (lo + hi) / 2
+		if mid*mid <= v {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return int(lo)
+}

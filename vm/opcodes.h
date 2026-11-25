@@ -215,11 +215,14 @@ enum Builtin {
 #define TYPE_IMU_GESTURE 39   /* Kind, Value int: gesture event */
 #define TYPE_IR_TX       40   /* CarrierHz, DutyPct int: port.Open("ir_tx") */
 #define TYPE_IR_RX       41   /* GapUs int: port.Open("ir_rx") */
+/* Then (v11) the gogo/audio types. */
+#define TYPE_AUDIO_MIC     42   /* Rate, FrameMs, Gain int: port.Open("mic") */
+#define TYPE_AUDIO_SPEAKER 43   /* Rate, Volume int: port.Open("spk") */
 /* How many reserved types there are (0 .. TYPE_RESERVED_COUNT - 1): they are
  * global across modules; every index from here up is a module's own type
  * and carries its module tag in a struct's type word (term.h). The one
  * constant to bump with a new reserved type (compiler: len(reservedTypes)). */
-#define TYPE_RESERVED_COUNT 42u
+#define TYPE_RESERVED_COUNT 44u
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

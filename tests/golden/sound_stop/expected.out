@@ -1,0 +1,7 @@
+record a true
+recorded path "" ms 0 dropped 0 err 0
+record b true
+recorded path "/flash/b/0000.wav" ms 1000 dropped 0 err 0
+recorded path "" ms 0 dropped 0 err 0
+/flash/a files 0
+/flash/b files 1

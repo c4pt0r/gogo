@@ -115,9 +115,10 @@ term port_open_with(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
     p->gen = gen;
     p->id = term_make_pid((uint16_t)(PORT_SLOT_BASE + i), gen);
     bool ok = drv->open(p, i, f, n) == 0;
-    if (ok && p->charge_words) {
-        /* The driver's state for the port is the owner's. */
-        ok = (uint32_t)owner->mem_words + actor_charged_words(owner) + p->charge_words <=
+    if (ok && (p->charge_words || p->room_64w)) {
+        /* The driver's state for the port is the owner's; room_64w must
+         * fit beside it (an event the owner could never take). */
+        ok = (uint32_t)owner->mem_words + actor_charged_words(owner) + p->charge_words + p->room_64w * 64u <=
                  actor_max_words(owner) && actor_charge(owner, p->charge_words);
         if (!ok && drv->close) drv->close(p);
     }

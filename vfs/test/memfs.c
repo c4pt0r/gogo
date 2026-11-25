@@ -90,6 +90,11 @@ static int m_write(void *f, const uint8_t *buf, uint32_t n) {
     h->m->used += (int32_t)n;
     return VFS_OK;
 }
+static int m_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+    H *h = f;
+    memcpy(h->nd->data + off, buf, n);              /* vfs checked the bounds */
+    return VFS_OK;
+}
 static int m_ok(void *f) { (void)f; return VFS_OK; }
 static int m_close(void *f) { return ((H *)f)->m->close_fails ? VFS_IO : VFS_OK; }
 static int m_size(void *f, int32_t *out) { *out = (int32_t)((H *)f)->nd->size; return VFS_OK; }
@@ -179,7 +184,7 @@ void memfs_init(int i, bool ci, bool atomic, int32_t budget) {
     mem[i].ci = ci; mem[i].atomic = atomic; mem[i].budget = budget;
     VfsBackend b = { ci, i ? open1 : open0, m_read, m_write, m_ok, m_size, m_close,
                      i ? stat1 : stat0, i ? rdir1 : rdir0, i ? mkd1 : mkd0, i ? rm1 : rm0,
-                     i ? mv1 : mv0, i ? use1 : use0 };
+                     i ? mv1 : mv0, i ? use1 : use0, m_write_at };
     memfs_be[i] = b;
 }
 void memfs_set_budget(int i, int32_t budget) { mem[i].budget = budget; }

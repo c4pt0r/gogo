@@ -190,6 +190,7 @@ const struct PortDriver *const *platform_port_drivers(void) {
         &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver,
 #endif
         &input_kbd_driver, &input_power_driver, &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
+        &input_mic_driver, &input_spk_driver,
         NULL
     };
     return list;
@@ -244,6 +245,12 @@ uint32_t platform_caps(void) {
 #endif
 #if HAS_IR_RX && CONFIG_GOGO_IR
     c |= CAP_IR_RX;
+#endif
+#if HAS_MIC && CONFIG_GOGO_AUDIO
+    c |= CAP_MIC;
+#endif
+#if HAS_SPK && CONFIG_GOGO_AUDIO
+    c |= CAP_SPK;
 #endif
     return c;
 }

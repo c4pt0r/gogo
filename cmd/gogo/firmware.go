@@ -36,7 +36,7 @@ type fwFeature struct {
 //
 // This table and fwBoards below are the single place in Go that knows the
 // features and boards. They MUST match platform/esp32s3/main/board.h
-// (HAS_KBD, HAS_SD, HAS_IMU, HAS_IR_TX, HAS_IR_RX per board) and platform/esp32s3/main/Kconfig.projbuild
+// (HAS_KBD, HAS_SD, HAS_IMU, HAS_IR_TX, HAS_IR_RX, HAS_MIC, HAS_SPK per board) and platform/esp32s3/main/Kconfig.projbuild
 // (the GOGO_* symbols and GOGO_FS_EXFAT depends on GOGO_SD);
 // TestFirmwareTableMatchesSources checks both. Change them together.
 var fwFeatures = []fwFeature{
@@ -51,6 +51,9 @@ var fwFeatures = []fwFeature{
 	// drivers; the board's HAS_IR_RX says whether it has a receiver).
 	{name: "irtx", kconf: "CONFIG_GOGO_IR", cap: compiler.CapIRTX, onBy: true, hasH: "HAS_IR_TX"},
 	{name: "irrx", kconf: "CONFIG_GOGO_IR", cap: compiler.CapIRRX, onBy: true, hasH: "HAS_IR_RX"},
+	// mic and spk likewise share GOGO_AUDIO (one codec and I2S bus, half duplex).
+	{name: "mic", kconf: "CONFIG_GOGO_AUDIO", cap: compiler.CapMic, onBy: true, hasH: "HAS_MIC"},
+	{name: "spk", kconf: "CONFIG_GOGO_AUDIO", cap: compiler.CapSpk, onBy: true, hasH: "HAS_SPK"},
 }
 
 // fwBoard describes one board: its SDKCONFIG_DEFAULTS overlay (see
@@ -69,8 +72,8 @@ func fwHas(names ...string) map[string]bool {
 }
 
 var fwBoards = map[string]fwBoard{
-	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx")},
-	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx")},
+	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "spk")},
+	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "spk")},
 }
 
 func fwLookup(name string) (fwFeature, bool) {
@@ -94,7 +97,7 @@ func fwNames() string {
 // of the files and the -with / -without lists.
 func fwPlan(board string, req uint32, with, without []string) (map[string]bool, error) {
 	has := func(f fwFeature) bool { return fwBoards[board].has[f.name] }
-	const known = compiler.CapNet | compiler.CapKbd | compiler.CapPower | compiler.CapSD | compiler.CapIMU | compiler.CapIRTX | compiler.CapIRRX | compiler.CapAnyPort
+	const known = compiler.CapNet | compiler.CapKbd | compiler.CapPower | compiler.CapSD | compiler.CapIMU | compiler.CapIRTX | compiler.CapIRRX | compiler.CapMic | compiler.CapSpk | compiler.CapAnyPort
 	if bad := req &^ known; bad != 0 {
 		return nil, fmt.Errorf("gogo firmware: the images require capability bits %#x that this gogo does not know", bad)
 	}

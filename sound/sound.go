@@ -1,0 +1,403 @@
+// Package sound records the microphone to WAV files and plays WAV files on
+// the speaker, in the background. It is written in the gogo subset on top
+// of gogo/audio, gogo/wav, gogo/port and gogo/fs and compiled into every
+// image that imports it.
+//
+// Record starts a small actor that opens the "mic" port and writes
+// every Chunk to dir/NNNN.wav (16-bit mono PCM, see gogo/wav). NNNN is a
+// four-digit number that continues from the highest one already in dir.
+// After maxSec seconds of sound (default 600) the file is closed and the
+// next Chunk starts the next file. Every finished file is reported to the
+// actor that called Record as one Recorded message. Send Stop{} to the
+// recorder to finish the current file and end it: a Stop always gets
+// exactly one final Recorded, with Path "" if it came between files (or
+// before the first Chunk), when nothing was written since the last one.
+//
+// A write error or a full medium finishes the file as far as it can be
+// (gogo/wav patches the header in place, which needs no free space on /sd;
+// a failed patch leaves the planned length in it, and the file size is the
+// truth), reports it in
+// Recorded.Err and ends the recorder. Nothing is ever deleted.
+//
+// The recorder is spawned with an explicit actor.Options{MaxMemory}: at
+// 16 kHz and 100 ms frames the mic port needs heap + F + (ceil(300/FrameMs)
+// + 1) * (F+10) words (F = frame bytes / 4, see gogo/audio) to ride out a
+// 300 ms stall (an SD write) without losing frames, more than the default
+// limit of a board. The recorder opens the mic itself (Record waits for
+// its answer), so the port's charge counts against that MaxMemory and
+// never against the caller's limit.
+//
+// Play opens "spk" at the file's rate, hands it to a player actor and
+// keeps two Outs in flight (the driver plays the second right after the
+// first, so there is no gap). When it is over the caller gets one Played.
+// The mic and speaker are half duplex: while Record runs, Play returns
+// false, and the other way round. The recorder gives the mic back before its
+// last Recorded (after a Stop or an error), and the player the speaker
+// before Played, so the caller may start the other one at once.
+package sound
+
+import (
+	"gogo/actor"
+	"gogo/audio"
+	"gogo/fs"
+	"gogo/port"
+	"gogo/wav"
+)
+
+// Stop asks a recorder or player to finish and end.
+type Stop struct{}
+
+// Recorded reports one finished recording file: Ms of sound in it,
+// Dropped frames the mic lost in it (their time is not in the file), Err
+// fs.OK, or why the recorder ended. The final Recorded after a Stop that
+// came while no file was open (right after a file filled up, or before the
+// first Chunk) has Path "" and Ms 0: nothing was written since the last
+// Recorded.
+type Recorded struct {
+	Path    string
+	Ms      int
+	Dropped int
+	Err     fs.Err
+}
+
+// Played reports the end of a playback: Bytes of PCM handed to the speaker
+// (also the Outs a Stop cut off: only Dones counts those that completed), Dones the Outs
+// that completed, Err fs.OK, a read error, or SpkFailed.
+type Played struct {
+	Path  string
+	Bytes int
+	Dones int
+	Err   fs.Err
+}
+
+// Errors beside the fs ones.
+const (
+	BadWav    fs.Err = 100 // not a canonical 16-bit mono PCM WAV at 8000 or 16000 Hz
+	SpkFailed fs.Err = 101 // the speaker refused or failed an Out
+)
+
+// DefaultMaxSec is the length of a recording file when maxSec is 0.
+const DefaultMaxSec = 600
+
+// MaxMaxSec is the longest file Record writes (an hour: 115 MB at 16 kHz,
+// inside the 32-bit sizes of a WAV header).
+const MaxMaxSec = 3600
+
+// PlayVolume is the speaker volume Play uses.
+const PlayVolume = 60
+
+// playChunk is the PCM bytes in one Out.
+const playChunk = 4096
+
+// headroom is the recorder's own heap, in words, on top of what the mic
+// port needs.
+const headroom = 3072
+
+func pad4(n int) string {
+	s := ""
+	if n < 1000 {
+		s = "0"
+	}
+	if n < 100 {
+		s = s + "0"
+	}
+	if n < 10 {
+		s = s + "0"
+	}
+	d := ""
+	for {
+		d = "0123456789"[n%10:n%10+1] + d
+		n = n / 10
+		if n == 0 {
+			break
+		}
+	}
+	return s + d
+}
+
+// number reports whether name is "NNNN.wav" (4 or more digits) and its
+// number.
+func number(name string) (int, bool) {
+	n := len(name)
+	if n < 8 || name[n-4:] != ".wav" {
+		return 0, false
+	}
+	v := 0
+	for i := 0; i < n-4; i++ {
+		c := name[i]
+		if c < '0' || c > '9' || v > 100000 {
+			return 0, false
+		}
+		v = v*10 + int(c-'0')
+	}
+	return v, true
+}
+
+func nextNumber(dir string) (int, bool) {
+	names, e := fs.ReadDir(dir)
+	if e == fs.NotFound {
+		if e = fs.Mkdir(dir); e != fs.OK {
+			return 0, false
+		}
+		names, e = fs.ReadDir(dir)
+	}
+	if e != fs.OK {
+		return 0, false
+	}
+	top := 0
+	for _, nm := range names {
+		if v, ok := number(nm); ok && v >= top {
+			top = v + 1
+		}
+	}
+	return top, true
+}
+
+// clampFrame is the FrameMs the mic port really uses.
+func clampFrame(ms int) int {
+	if ms == 0 {
+		return audio.DefaultFrameMs
+	}
+	if ms < audio.MinFrameMs {
+		return audio.MinFrameMs
+	}
+	if ms > audio.MaxFrameMs {
+		return audio.MaxFrameMs
+	}
+	return ms
+}
+
+// framesPerFile is how many frames fill a file of secs seconds (at least 1).
+func framesPerFile(secs, frameMs int) int {
+	n := secs * 1000 / frameMs
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// memoryFor is the recorder's MaxMemory in bytes.
+func memoryFor(rate, frameMs int) int {
+	f := rate * frameMs / 2000 // frame words
+	frames := (300+frameMs-1)/frameMs + 1
+	return (headroom + f + frames*(f+10)) * 4
+}
+
+// Record starts the recorder for dir (created, one level, if missing),
+// which opens the mic with cfg, and waits for that open; ok is false if
+// the mic does not open (no mic, the speaker open, a bad cfg, no memory)
+// or dir is unusable. maxSec is
+// the length of a file in seconds (0 means DefaultMaxSec); a file ends on a
+// frame boundary, so it is a whole number of FrameMs. One recorder per dir.
+func Record(dir string, cfg audio.Mic, maxSec int) (actor.PID, bool) {
+	secs := maxSec
+	if secs <= 0 {
+		secs = DefaultMaxSec
+	}
+	if secs > MaxMaxSec {
+		secs = MaxMaxSec
+	}
+	frameMs := clampFrame(cfg.FrameMs)
+	next, ok := nextNumber(dir)
+	if !ok {
+		return actor.Self(), false
+	}
+	frames := framesPerFile(secs, frameMs)
+	rate := cfg.Rate
+	planned := frames * (rate * frameMs / 1000 * 2)
+	parent := actor.Self()
+	r := actor.SpawnOpt(func() {
+		record(parent, cfg, dir, next, rate, frameMs, frames, planned)
+	}, actor.Options{MaxMemory: memoryFor(rate, frameMs)})
+	// The recorder opens the mic itself, so the port's charge and room
+	// check count against its MaxMemory, not the caller's limit; it
+	// answers this Call with whether the open worked.
+	rep, ok := actor.Call(r, 0, openTimeoutMs)
+	opened := false
+	switch b := rep.(type) {
+	case bool:
+		opened = b
+	}
+	if !ok || !opened {
+		actor.Kill(r, actor.Killed)
+		return actor.Self(), false
+	}
+	return r, true
+}
+
+// openTimeoutMs bounds Record's wait for the recorder's open (it answers
+// at once; this only covers a recorder that died before answering).
+const openTimeoutMs = 5000
+
+// record is the recorder actor. Its first message is Record's Call: it
+// opens the mic with cfg, answers whether that worked and ends if not.
+func record(parent actor.PID, cfg audio.Mic, dir string, next, rate, frameMs, frames, planned int) {
+	var mic actor.PID
+	switch req := actor.Receive().(type) {
+	case actor.Request:
+		p, opened := port.Open("mic", cfg)
+		actor.Reply(req, opened)
+		if !opened {
+			return
+		}
+		mic = p
+	default:
+		return
+	}
+	var w wav.Writer
+	open := false
+	path := ""
+	n, dropped := 0, 0 // frames in the file, frames lost in it
+	for {
+		m := actor.Receive()
+		stop := false
+		var err fs.Err
+		switch c := m.(type) {
+		case port.Chunk:
+			if !open {
+				path = dir + "/" + pad4(next) + ".wav"
+				nw, e := wav.Create(path, rate, planned)
+				if e != fs.OK {
+					port.Close(mic)
+					actor.Send(parent, Recorded{Path: path, Err: e})
+					return
+				}
+				w = nw
+				open = true
+				n, dropped = 0, 0
+				next++
+			}
+			dropped += c.Dropped
+			nw, e := wav.Write(w, c.Data)
+			w = nw
+			if e != fs.OK {
+				err = e
+				stop = true
+			} else {
+				n++
+			}
+		case Stop:
+			stop = true
+		}
+		if open && (stop || n >= frames) {
+			e := wav.Close(w)
+			if err == fs.OK {
+				err = e
+			}
+			open = false
+			if !stop {
+				actor.Send(parent, Recorded{Path: path, Ms: n * frameMs, Dropped: dropped, Err: err})
+				continue
+			}
+		} else if stop {
+			// Stop between files (or before the first Chunk): nothing was
+			// written since the last report; still the one final Recorded
+			// the caller waits for.
+			path = ""
+			n = 0
+			dropped = 0
+		}
+		if stop {
+			port.Close(mic) // before the report: the caller may Play at once
+			actor.Send(parent, Recorded{Path: path, Ms: n * frameMs, Dropped: dropped, Err: err})
+			return
+		}
+	}
+}
+
+// Play opens the speaker for the WAV file at path and starts the player
+// that sends it, two Outs in flight; the caller gets one Played at the end.
+// ok is false (and nothing started) if the file is missing or not a
+// canonical 16-bit mono PCM WAV at 8000 or 16000 Hz (the files Record
+// writes), or the speaker does not open. Send Stop{} to the player to end
+// it early (it then reports Played too). Volume is PlayVolume.
+func Play(path string) (actor.PID, bool) {
+	f, e := fs.Open(path, fs.Read)
+	if e != fs.OK {
+		return actor.Self(), false
+	}
+	h, e := f.Read(wav.HeaderLen)
+	hd, ok := wav.Info(h)
+	if e != fs.OK || !ok || (hd.Rate != audio.Rate8k && hd.Rate != audio.Rate16k) {
+		f.Close()
+		return actor.Self(), false
+	}
+	sp, ok := port.Open("spk", audio.Speaker{Rate: hd.Rate, Volume: PlayVolume})
+	if !ok {
+		f.Close()
+		return actor.Self(), false
+	}
+	parent := actor.Self()
+	size, _ := f.Size()
+	n := size - wav.HeaderLen // the file size is the truth; the header may say more
+	if hd.Data >= 0 && hd.Data < n {
+		n = hd.Data
+	}
+	total := n &^ 1
+	r := actor.Spawn(func() { play(parent, path, f, sp, total) })
+	if !port.Handoff(actor.PID(f), r) || !port.Handoff(sp, r) {
+		port.Close(actor.PID(f))
+		port.Close(sp)
+		actor.Kill(r, actor.Killed)
+		return actor.Self(), false
+	}
+	return r, true
+}
+
+// play is the player actor. It owns the file and the speaker.
+func play(parent actor.PID, path string, f fs.File, sp actor.PID, left int) {
+	sent, dones := 0, 0
+	var err fs.Err
+	inflight := 0
+	eof := false
+	for {
+		for inflight < 2 && !eof {
+			n := playChunk
+			if n > left {
+				n = left
+			}
+			if n <= 0 {
+				eof = true
+				break
+			}
+			b, e := f.Read(n)
+			if e != fs.OK {
+				err = e
+				eof = true
+				break
+			}
+			if b.Len() == 0 {
+				eof = true
+				break
+			}
+			if b.Len()&1 == 1 {
+				b = b.Slice(0, b.Len()-1)
+			}
+			left -= b.Len()
+			actor.Send(sp, port.Out{Data: b})
+			sent += b.Len()
+			inflight++
+		}
+		if inflight == 0 {
+			break
+		}
+		switch d := actor.Receive().(type) {
+		case port.Done:
+			inflight--
+			if d.Seq < 0 {
+				err = SpkFailed
+				eof = true
+			} else {
+				dones++
+			}
+		case Stop:
+			// Outs still in flight are cut when this actor exits and the
+			// speaker closes.
+			inflight = 0
+			eof = true
+		}
+	}
+	port.Close(sp) // the speaker is free again when the caller gets Played
+	f.Close()
+	actor.Send(parent, Played{Path: path, Bytes: sent, Dones: dones, Err: err})
+}

@@ -1,0 +1,5 @@
+record true
+recorded /flash/rec/0000.wav ms 300 dropped 0 err 4 nospace true
+recorder ended, reason 0
+file 0000.wav size 5000
+header ok true declares 4800

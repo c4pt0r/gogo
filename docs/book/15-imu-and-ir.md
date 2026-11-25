@@ -404,7 +404,8 @@ receiver and the LED at least 30 cm apart when you try this on a board.
   it was already on). **While an IR port is open, the Grove and Hat 5 V pins
   are outputs: do not feed 5 V into them then.** While `ir_rx` is open the
   speaker amplifier is held off, because the receiver does not work with it
-  on.
+  on: opening `"spk"` then fails, and a speaker already playing goes silent
+  until `ir_rx` closes.
 - The G42, G44 and G46 pins are reserved for IR: the `gpio` port refuses
   them.
 

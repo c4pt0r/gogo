@@ -29,7 +29,10 @@
 #define HAS_IMU 1
 #define HAS_IR_TX 1
 #define HAS_IR_RX 0
-/* Shared I2C bus (i2c_bus.c): TCA8418 keyboard (0x34) with INT on G11, and
+#define HAS_MIC 1
+#define HAS_SPK 1
+/* Shared I2C bus (i2c_bus.c): TCA8418 keyboard (0x34) with INT on G11, the
+ * ES8311 codec (0x18), and
  * the battery divider on G10 (ADC1). */
 #define I2C_BUS_PORT 0
 #define I2C_BUS_SDA  8
@@ -40,6 +43,16 @@
  * unused here (the console is USB-Serial/JTAG). No IR receiver. The BMI270
  * is on the I2C bus above (0x68 or 0x69, imu_esp.c). */
 #define IR_PIN_TX    44
+/* Audio (audio_esp.c): ES8311 codec on the I2C bus above (0x18), clocked
+ * from BCLK (no MCLK pin); NS4150B amplifier with no enable pin found
+ * (M5Unified's ADV speaker callback drives none): taken to be always on.
+ * M5Unified src/M5Unified.inl _begin_audio (96576a1). */
+#define AUDIO_PIN_MCLK -1
+#define AUDIO_PIN_BCLK 41
+#define AUDIO_PIN_WS   43
+#define AUDIO_PIN_DOUT 42
+#define AUDIO_PIN_DIN  46
+#define AUDIO_SPK_MAX_DB 0      /* Volume 100 = DAC 0 dB */
 /* microSD over SPI (fs_fat.c), on SPI2: SPI3 is the LCD's. */
 #define SD_PIN_CS   12
 #define SD_PIN_MOSI 14
@@ -47,8 +60,9 @@
 #define SD_PIN_MISO 39
 /* Refused by the gpio port: USB D-/D+ (19, 20), the in-package flash
  * (26-32), the LCD (33-38), the SD card (12, 14, 39, 40), the I2C bus
- * (8, 9), the keyboard INT (11), the battery ADC (10) and the IR LED (44). */
-#define BOARD_RESERVED_PINS {8, 9, 10, 11, 12, 14, 19, 20, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44}
+ * (8, 9), the keyboard INT (11), the battery ADC (10), the IR LED (44) and
+ * the codec's I2S (41, 42, 43, 46). */
+#define BOARD_RESERVED_PINS {8, 9, 10, 11, 12, 14, 19, 20, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46}
 
 #elif defined(GOGO_BOARD_STICKS3)
 
@@ -68,8 +82,10 @@
 #define HAS_IMU 1
 #define HAS_IR_TX 1
 #define HAS_IR_RX 1
-/* Shared I2C bus (i2c_bus.c): the M5PM1 (0x6E) and the BMI270 (0x68 or
- * 0x69, imu_esp.c). */
+#define HAS_MIC 1
+#define HAS_SPK 1
+/* Shared I2C bus (i2c_bus.c): the M5PM1 (0x6E), the BMI270 (0x68 or
+ * 0x69, imu_esp.c) and the ES8311 (0x18, audio_esp.c). */
 #define I2C_BUS_PORT 1
 #define I2C_BUS_SDA  47
 #define I2C_BUS_SCL  48
@@ -77,10 +93,24 @@
  * EXT_5V (M5PM1 PWR_CFG bit 3, pm1.c). */
 #define IR_PIN_TX    46
 #define IR_PIN_RX    42
+/* Audio (audio_esp.c): ES8311 codec on the I2C bus above (0x18), clocked
+ * from BCLK: G18 is wired to its MCLK but not driven (the codec ignores it
+ * with reg 0x01 bit 7 set, as M5Unified does). Codec rail L3B (PM1 GPIO2),
+ * amplifier (AW8737) enable PM1 GPIO3 (pm1.c). M5Unified src/M5Unified.inl
+ * _begin_audio (96576a1). */
+#define AUDIO_PIN_MCLK 18
+#define AUDIO_PIN_BCLK 17
+#define AUDIO_PIN_WS   15
+#define AUDIO_PIN_DOUT 14
+#define AUDIO_PIN_DIN  16
+/* Volume 100 = DAC -4 dB: at 0 dB (Volume 100, a -6 dBFS tone) the
+ * USB-Serial/JTAG console once stopped answering while the sound went on,
+ * likely a supply dip from the amplifier (M5 advises <= 75% on battery). */
+#define AUDIO_SPK_MAX_DB (-4)
 /* Refused by the gpio port: USB D-/D+ (19, 20), the in-package flash and
  * PSRAM (26-37, see gpio_esp.c), the LCD (21, 38-41, 45), the M5PM1 I2C
- * bus (47, 48) and IR (42, 46). */
-#define BOARD_RESERVED_PINS {19, 20, 21, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 47, 48}
+ * bus (47, 48), IR (42, 46) and the codec's I2S (14-18). */
+#define BOARD_RESERVED_PINS {14, 15, 16, 17, 18, 19, 20, 21, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 47, 48}
 
 #else
 #error "define GOGO_BOARD_STICKS3 or GOGO_BOARD_CARDPUTER (CMake GOGO_BOARD)"

@@ -31,6 +31,7 @@ static void drop_err(const char *s, size_t n) { (void)s; (void)n; }
 static struct {
     int opens, closes, cmds, refuse, handoffs;
     uint16_t charge;       /* charge_words the driver sets in open */
+    uint8_t room;          /* room_64w the driver sets in open */
     uint16_t debounce;     /* debounce_ms the driver sets in open */
     bool live;             /* can_event result */
     uint16_t index;        /* last open */
@@ -53,6 +54,7 @@ static int fk_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     for (uint32_t i = 0; i < n && i < 8u; i++) fk.cfg[i] = cfg[i];
     p->debounce_ms = fk.debounce;
     p->charge_words = fk.charge;
+    p->room_64w = fk.room;
     fk.last = p;
     return 0;
 }
@@ -714,6 +716,35 @@ TEST(port_open_charge_limit) {
     CHECK_EQ(actor_extra_charged(a), 10u);
     port_close(&vm, p);
     CHECK_EQ(actor_extra_charged(a), 0u);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+/* room_64w (64-word units) must fit beside the charge at open, and is not
+ * charged. */
+TEST(port_open_room_limit) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm);
+    a->max_words = (uint16_t)(a->mem_words + 133u);
+    fk.charge = 6;
+    fk.room = 2;                                /* 6 + 128 > 133 */
+    CHECK(open_fake(&vm, a, 1) == T_NIL);
+    CHECK_EQ(fk.closes, 1);                     /* the driver undid its open */
+    CHECK_EQ(actor_extra_charged(a), 0u);
+    fk.charge = 5;
+    term p = open_fake(&vm, a, 1);
+    CHECK(p != T_NIL);
+    CHECK_EQ(actor_extra_charged(a), 5u);       /* only the charge */
+    port_close(&vm, p);
+    fk.charge = 0;
+    fk.room = 3;                                /* room alone is checked too */
+    CHECK(open_fake(&vm, a, 1) == T_NIL);
+    fk.room = 2;
+    p = open_fake(&vm, a, 1);
+    CHECK(p != T_NIL);
+    CHECK_EQ(actor_extra_charged(a), 0u);
+    port_close(&vm, p);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     teardown();
 }

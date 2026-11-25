@@ -1,0 +1,43 @@
+// sound_diskfull: the medium fills up while recording (the test-only VM
+// flag --fs-quota 5000 in vmargs: 5000 bytes may be written in all). The
+// recorder must finish the file, report fs.NoSpace in Recorded.Err, end
+// (normal exit) and delete nothing. File: 44 bytes of header, 3 whole
+// frames of 1600 bytes, then the 156 bytes of the 4th frame that still
+// fitted: 5000 bytes. The rewrite of the header needs room too, so it
+// fails and the original stays (its header still says the planned size,
+// 600 s of 8 kHz: 9600000 bytes). Recorded.Ms counts whole frames only.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/audio"
+	"gogo/fs"
+	"gogo/sound"
+	"gogo/wav"
+)
+
+func main() {
+	r, ok := sound.Record("/flash/rec", audio.Mic{Rate: 8000, FrameMs: 100}, 0)
+	println("record", ok)
+	actor.Monitor(r)
+	for n := 0; n < 2; {
+		switch m := actor.Receive().(type) {
+		case sound.Recorded:
+			println("recorded", m.Path, "ms", m.Ms, "dropped", m.Dropped, "err", int(m.Err), "nospace", m.Err == fs.NoSpace)
+			n++
+		case actor.DownMsg:
+			println("recorder ended, reason", m.Reason.Code)
+			n++
+		}
+	}
+	names, _ := fs.ReadDir("/flash/rec")
+	for _, nm := range names {
+		i, _ := fs.Stat("/flash/rec/" + nm)
+		println("file", nm, "size", i.Size)
+	}
+	f, _ := fs.Open("/flash/rec/0000.wav", fs.Read)
+	b, _ := f.Read(wav.HeaderLen)
+	f.Close()
+	h, ok := wav.Info(b)
+	println("header ok", ok, "declares", h.Data)
+}

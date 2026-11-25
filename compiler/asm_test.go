@@ -139,7 +139,7 @@ func upperSnake(s string) string {
 func TestReservedTypesMatchStubs(t *testing.T) {
 	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath} {
+	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath} {
 		pkg, err := l.Import(path)
 		if err != nil {
 			t.Fatal(err)
@@ -169,6 +169,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			prefix = "TypeImu"
 		case IrPath:
 			prefix = "TypeIr"
+		case AudioPath:
+			prefix = "TypeAudio"
 		}
 		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
 			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
@@ -187,8 +189,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 42 {
-		t.Errorf("%d reserved types, want 42", len(reservedTypes))
+	if len(reservedTypes) != 44 {
+		t.Errorf("%d reserved types, want 44", len(reservedTypes))
 	}
 }
 
@@ -239,8 +241,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 10 {
-		t.Errorf("imageVersion %d, want 10", imageVersion)
+	if imageVersion != 11 {
+		t.Errorf("imageVersion %d, want 11", imageVersion)
 	}
 }
 
@@ -579,7 +581,7 @@ func TestFsMatchC(t *testing.T) {
 	// The op codes of the compiler.
 	ops := map[string]int32{"FS_OPEN": FsOpen, "FS_READ": FsRead, "FS_WRITE": FsWrite, "FS_SYNC": FsSync, "FS_SIZE": FsSize,
 		"FS_READFILE": FsReadFile, "FS_WRITEFILE": FsWriteFile, "FS_STAT": FsStat, "FS_READDIR": FsReadDir,
-		"FS_MKDIR": FsMkdir, "FS_REMOVE": FsRemove, "FS_RENAME": FsRename, "FS_USAGE": FsUsage}
+		"FS_MKDIR": FsMkdir, "FS_REMOVE": FsRemove, "FS_RENAME": FsRename, "FS_USAGE": FsUsage, "FS_WRITEAT": FsWriteAt}
 	for name, v := range ops {
 		if cv, ok := c[name]; !ok || cv != int64(v) {
 			t.Errorf("%s: C=%d Go=%d (present=%v)", name, cv, v, ok)
@@ -636,7 +638,7 @@ func TestCodeMatchC(t *testing.T) {
 	}
 	stub := map[string]string{"OK": "CODE_OK", "BadImage": "CODE_BAD_IMAGE", "Unsupported": "CODE_UNSUPPORTED",
 		"NoMemory": "CODE_NO_MEMORY", "NotFound": "CODE_NOT_FOUND", "BadArg": "CODE_BAD_ARG", "TooMany": "CODE_TOO_MANY",
-		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapIMU": "CAP_IMU", "CapIRTX": "CAP_IR_TX", "CapIRRX": "CAP_IR_RX", "CapAnyPort": "CAP_ANYPORT"}
+		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapIMU": "CAP_IMU", "CapIRTX": "CAP_IR_TX", "CapIRRX": "CAP_IR_RX", "CapMic": "CAP_MIC", "CapSpk": "CAP_SPK", "CapAnyPort": "CAP_ANYPORT"}
 	for name, cname := range stub {
 		k, ok := pkg.Scope().Lookup(name).(*types.Const)
 		if !ok {
@@ -648,7 +650,7 @@ func TestCodeMatchC(t *testing.T) {
 			t.Errorf("code.%s = %d, %s = %d (present=%v)", name, v, cname, cv, ok)
 		}
 	}
-	for name, v := range map[string]uint32{"CAP_NET": CapNet, "CAP_KBD": CapKbd, "CAP_POWER": CapPower, "CAP_SD": CapSD, "CAP_IMU": CapIMU, "CAP_IR_TX": CapIRTX, "CAP_IR_RX": CapIRRX, "CAP_ANYPORT": CapAnyPort} {
+	for name, v := range map[string]uint32{"CAP_NET": CapNet, "CAP_KBD": CapKbd, "CAP_POWER": CapPower, "CAP_SD": CapSD, "CAP_IMU": CapIMU, "CAP_IR_TX": CapIRTX, "CAP_IR_RX": CapIRRX, "CAP_MIC": CapMic, "CAP_SPK": CapSpk, "CAP_ANYPORT": CapAnyPort} {
 		if c[name] != int64(v) {
 			t.Errorf("compiler %s = %d, C %d", name, v, c[name])
 		}

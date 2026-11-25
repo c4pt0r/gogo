@@ -74,6 +74,24 @@ TEST(host_rw_size_stat) {
     cleanup();
 }
 
+TEST(host_write_at) {
+    setup();
+    uint8_t f[GOGO_FS_SLOT_BYTES] __attribute__((aligned(8))), b[32];
+    uint32_t got;
+    CHECK_EQ(be->open(f, "/w", VFS_WRITE), VFS_OK);
+    CHECK_EQ(be->write(f, (const uint8_t *)"hello", 5), VFS_OK);
+    CHECK_EQ(be->write_at(f, 1, (const uint8_t *)"EL", 2), VFS_OK);
+    CHECK_EQ(be->write(f, (const uint8_t *)"!", 1), VFS_OK);          /* the position did not move */
+    CHECK_EQ(be->write_at(f, 5, (const uint8_t *)"?", 1), VFS_OK);
+    CHECK_EQ(be->close(f), VFS_OK);
+    CHECK_EQ(be->open(f, "/w", VFS_READ), VFS_OK);
+    CHECK_EQ(be->read(f, b, sizeof b, &got), VFS_OK);
+    CHECK_EQ(got, 6);
+    CHECK(memcmp(b, "hELlo?", 6) == 0);
+    be->close(f);
+    cleanup();
+}
+
 TEST(host_dirs_readdir_remove) {
     setup();
     CHECK_EQ(be->mkdir("/d"), VFS_OK);

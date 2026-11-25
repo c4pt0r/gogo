@@ -1,0 +1,51 @@
+// sound_long_frames: Record with long frames works on a board's actor
+// memory limit (this golden also runs on the MCU-config VM, file `mcu`):
+// the recorder opens the mic itself, so the port's charge (F words plus
+// room for one more Chunk) counts against its MaxMemory, not the caller's
+// 4096-word limit. 16 kHz at FrameMs 250 and 500 and 8 kHz at 500 each
+// open and Stop; then 16 kHz at 500 with maxSec 1 records a whole file
+// (two frames) from the script's tone.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/audio"
+	"gogo/fs"
+	"gogo/sound"
+)
+
+func main() {
+	cfgs := []audio.Mic{{Rate: 16000, FrameMs: 250}, {Rate: 16000, FrameMs: 500}, {Rate: 8000, FrameMs: 500}}
+	for i, c := range cfgs {
+		r, ok := sound.Record("/flash/r"+"abc"[i:i+1], c, 0)
+		println("record", c.Rate, c.FrameMs, ok)
+		if ok {
+			actor.Send(r, sound.Stop{})
+			wait()
+		}
+	}
+	r, ok := sound.Record("/flash/long", audio.Mic{Rate: 16000, FrameMs: 500}, 1)
+	println("record long", ok)
+	if !ok {
+		return
+	}
+	wait() // the full file
+	actor.Send(r, sound.Stop{})
+	wait()
+	f, e := fs.Open("/flash/long/0000.wav", fs.Read)
+	if e == fs.OK {
+		n, _ := f.Size()
+		println("size", n)
+		f.Close()
+	}
+}
+
+func wait() {
+	for {
+		switch m := actor.Receive().(type) {
+		case sound.Recorded:
+			println("recorded path", "\""+m.Path+"\"", "ms", m.Ms, "dropped", m.Dropped, "err", int(m.Err))
+			return
+		}
+	}
+}

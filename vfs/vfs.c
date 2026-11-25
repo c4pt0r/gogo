@@ -90,6 +90,20 @@ int vfs_write(int slot, const uint8_t *p, uint32_t n) {
     return mounts[s->mnt].be->write(&s->f, p, n);
 }
 
+int vfs_write_at(int slot, uint32_t off, const uint8_t *p, uint32_t n) {
+    Slot *s = get(slot);
+    const VfsBackend *b;
+    int32_t size;
+    if (!s || s->mode != VFS_WRITE) return VFS_CLOSED;
+    b = mounts[s->mnt].be;
+    if (!b->write_at) return VFS_IO;
+    if (n == 0) return VFS_OK;
+    int e = b->size(&s->f, &size);
+    if (e) return e;
+    if (size < 0 || off > (uint32_t)size || n > (uint32_t)size - off) return VFS_BADPATH;
+    return b->write_at(&s->f, off, p, n);
+}
+
 int vfs_sync(int slot) {
     Slot *s = get(slot);
     return s ? mounts[s->mnt].be->sync(&s->f) : VFS_CLOSED;

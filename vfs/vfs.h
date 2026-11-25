@@ -32,7 +32,7 @@ enum { VFS_READ = 0, VFS_WRITE = 1, VFS_APPEND = 2 };
 enum {
     FS_OPEN = 0, FS_READ = 1, FS_WRITE = 2, FS_SYNC = 3, FS_SIZE = 4, FS_READFILE = 5,
     FS_WRITEFILE = 6, FS_STAT = 7, FS_READDIR = 8, FS_MKDIR = 9, FS_REMOVE = 10,
-    FS_RENAME = 11, FS_USAGE = 12
+    FS_RENAME = 11, FS_USAGE = 12, FS_WRITEAT = 13
 };
 
 /* Most bytes one File.Read returns. */
@@ -54,6 +54,11 @@ typedef int (*VfsDirCb)(void *ctx, const char *name, bool is_dir);
  *    (POSIX rename replaces, so check first); replace=true replaces.
  *  - remove of a non-empty directory returns VFS_NOTEMPTY (rmdir
  *    semantics); remove of a file or an empty directory returns VFS_OK.
+ *  - write_at(f, off, buf, n) overwrites bytes already in the file (vfs
+ *    checked off + n <= size and the Write mode): it never extends the
+ *    file, and it leaves the position where the next write() goes (the end
+ *    of the file) alone. It needs no new space on FAT and one block on
+ *    LittleFS.
  *  - errors map: not found -> NOTFOUND, exists -> EXISTS, no space ->
  *    NOSPACE, is a directory -> ISDIR, not a directory -> NOTDIR, not
  *    empty -> NOTEMPTY, anything else -> IO. */
@@ -76,6 +81,7 @@ typedef struct VfsBackend {
     int (*remove)(const char *rel);
     int (*rename)(const char *from, const char *to, bool replace);
     int (*usage)(int32_t *used, int32_t *total);
+    int (*write_at)(void *f, uint32_t off, const uint8_t *buf, uint32_t n);
 } VfsBackend;
 
 bool vfs_mount(const char *prefix, const VfsBackend *b);   /* prefix outlives the mount */
@@ -84,6 +90,11 @@ void vfs_reset(void);                                      /* tests: drop mounts
 int vfs_open(const char *p, uint32_t len, int mode, int *slot);
 int vfs_read(int slot, uint8_t *buf, uint32_t n, uint32_t *got);
 int vfs_write(int slot, const uint8_t *p, uint32_t n);
+/* Overwrites n bytes at off in a file opened VFS_WRITE (VFS_CLOSED for a
+ * Read or Append open or a free slot); VFS_BADPATH if off + n is past the
+ * end of the file (it is never extended); VFS_IO if the backend has no
+ * write_at. */
+int vfs_write_at(int slot, uint32_t off, const uint8_t *p, uint32_t n);
 int vfs_sync(int slot);
 int vfs_size(int slot, int32_t *out);
 void vfs_close(int slot);

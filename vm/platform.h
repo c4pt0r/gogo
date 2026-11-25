@@ -81,6 +81,8 @@ void platform_code_free(void *p, size_t n);
  *   CAP_IMU    the "imu" port driver
  *   CAP_IR_TX  the "ir_tx" port driver
  *   CAP_IR_RX  the "ir_rx" port driver
+ *   CAP_MIC    the "mic" port driver
+ *   CAP_SPK    the "spk" port driver
  *   CAP_ANYPORT is only a build-time warning marker (the image opens a port
  *   driver whose name is not known at build time); it never counts as missing.
  * A platform returns exactly the bits its build provides, never more. */
@@ -91,6 +93,8 @@ void platform_code_free(void *p, size_t n);
 #define CAP_IMU     16u
 #define CAP_IR_TX   32u
 #define CAP_IR_RX   64u
+#define CAP_MIC     128u
+#define CAP_SPK     256u
 #define CAP_ANYPORT (1u << 31)
 
 /* The CAP_* bits this firmware provides. vm/caps.c has a weak default that
@@ -102,11 +106,11 @@ uint32_t platform_caps(void);
 int vm_caps_ok(uint32_t requires, uint32_t caps, uint32_t *missing);
 
 /* Writes the refusal line "gogo: image needs <names>; firmware lacks
- * <names>\n" (names: net kbd power sd imu irtx irrx) into buf, which must hold
+ * <names>\n" (names: net kbd power sd imu irtx irrx mic spk) into buf, which must hold
  * VM_CAPS_MSG_MAX bytes, and returns its length. No NUL, no I/O: the
  * caller sends it (one platform_write_err call) and decides whether to exit
  * (boot) or only refuse the module (hot load). */
-#define VM_CAPS_MSG_MAX 112
+#define VM_CAPS_MSG_MAX 128
 size_t vm_caps_explain(char *buf, uint32_t requires, uint32_t missing);
 
 #endif

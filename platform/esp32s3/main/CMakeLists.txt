@@ -62,11 +62,11 @@ else()
 endif()
 
 # The shared I2C bus (i2c_bus.c) is for the StickS3's PM1, the Cardputer's
-# keyboard and both boards' BMI270; without GOGO_KBD and GOGO_IMU
+# keyboard and both boards' BMI270 and ES8311; without GOGO_KBD, GOGO_IMU and GOGO_AUDIO
 # (main/Kconfig.projbuild) the Cardputer needs none, and the IDF I2C driver is
 # not linked.
 set(GOGO_I2C_SRCS "")
-if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD OR CONFIG_GOGO_IMU)
+if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD OR CONFIG_GOGO_IMU OR CONFIG_GOGO_AUDIO)
     set(GOGO_I2C_SRCS i2c_bus.c)
 endif()
 
@@ -82,6 +82,12 @@ set(GOGO_IR_SRCS "")
 if(CONFIG_GOGO_IR)
     set(GOGO_IR_SRCS ir_esp.c)
 endif()
+# Audio (GOGO_AUDIO: audio_esp.c, the ES8311 codec on I2S). Off, the hooks
+# stay NULL and the IDF I2S driver is not linked.
+set(GOGO_AUDIO_SRCS "")
+if(CONFIG_GOGO_AUDIO)
+    set(GOGO_AUDIO_SRCS audio_esp.c)
+endif()
 
 # The console font blob (GOGO_FONT_CJK): the embedded symbol is named after
 # the file, console_task.c picks it by the same switch.
@@ -94,7 +100,7 @@ endif()
 idf_component_register(
     SRCS main.c platform_esp.c gpio_esp.c image_part.c console_task.c lcd_st7789.c
          ${GOGO_WIFI_SRCS} config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
-         ${GOGO_IMU_SRCS} ${GOGO_IR_SRCS}
+         ${GOGO_IMU_SRCS} ${GOGO_IR_SRCS} ${GOGO_AUDIO_SRCS}
          ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_COMMON_SRCS}
     PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/vm" "${GOGO_ROOT}/net" "${GOGO_ROOT}/vfs" "${GOGO_ROOT}/input" "${GOGO_ROOT}/stream" "${GOGO_ROOT}/platform/common"
     EMBED_FILES "${GOGO_ROOT}/platform/common/font/${GOGO_FONT_FILE}"
@@ -104,6 +110,8 @@ idf_component_register(
                   # ir_esp.c (GOGO_IR); like esp_wifi below, unreferenced
                   # (so not linked) when the switch is off.
                   esp_driver_rmt
+                  # audio_esp.c (GOGO_AUDIO), likewise.
+                  esp_driver_i2s
                   joltwallet__littlefs
                   # wifi.c (GOGO_NET): listed unconditionally because IDF
                   # expands requirements before CONFIG_GOGO_NET is known;

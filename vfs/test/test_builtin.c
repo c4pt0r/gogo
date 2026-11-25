@@ -231,6 +231,50 @@ TEST(fs_open_write_read) {
     CHECK_EQ(open_ports(), 0);
 }
 
+/* File.WriteAt: in bounds, never extends, Write mode only, owner only. */
+TEST(fs_write_at) {
+    setup();
+    Actor *a = actor(0), *b = actor(0);
+    CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/w", VFS_WRITE), R_NORMAL);
+    term f = R(a)[0];
+    CHECK_EQ(fs(a, FS_WRITE, "ts", f, "hello"), R_NORMAL);
+    CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, 1, "EL"), R_NORMAL);
+    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(fs(a, FS_WRITEAT, "tiB", f, 3, "xy"), R_NORMAL);          /* Bytes */
+    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, 4, "xy"), R_NORMAL);          /* past the end */
+    CHECK_EQ(ERR1(a), VFS_BADPATH);
+    CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, -1, "x"), R_NORMAL);
+    CHECK_EQ(ERR1(a), VFS_BADPATH);
+    CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, 0, ""), R_NORMAL);
+    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(fs(a, FS_WRITEAT, "tti", f, T_TRUE, 1), R_BAD_CODE);      /* off not an int */
+    CHECK_EQ(fs(a, FS_WRITEAT, "tii", f, 0, 5), R_BAD_CODE);           /* not data */
+    CHECK_EQ(fs(b, FS_WRITEAT, "tis", f, 0, "x"), R_NORMAL);           /* not the owner */
+    CHECK_EQ(ERR1(b), VFS_CLOSED);
+    CHECK_EQ(fs(a, FS_WRITE, "ts", f, "!"), R_NORMAL);                 /* still appends */
+    CHECK_EQ(fs(a, FS_SIZE, "t", f), R_NORMAL);
+    CHECK_EQ(ival(R(a)[0]), 6);
+    port_close(&vm, f);
+    CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, 0, "x"), R_NORMAL);           /* closed */
+    CHECK_EQ(ERR1(a), VFS_CLOSED);
+
+    CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/w", 100), R_NORMAL);
+    CHECK(bytes_is(a, R(a)[0], "hELxy!"));
+    CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/w", VFS_READ), R_NORMAL);    /* Read mode */
+    term r = R(a)[0];
+    CHECK_EQ(fs(a, FS_WRITEAT, "tis", r, 0, "x"), R_NORMAL);
+    CHECK_EQ(ERR1(a), VFS_CLOSED);
+    port_close(&vm, r);
+    CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/w", VFS_APPEND), R_NORMAL);  /* Append mode */
+    term g = R(a)[0];
+    CHECK_EQ(fs(a, FS_WRITEAT, "tis", g, 0, "x"), R_NORMAL);
+    CHECK_EQ(ERR1(a), VFS_CLOSED);
+    done(a);
+    done(b);
+    CHECK_EQ(open_slots(), 0);
+}
+
 TEST(fs_open_errors) {
     setup();
     Actor *a = actor(0);
@@ -720,7 +764,7 @@ TEST(fs_interp) {
 
 TEST(fs_image_v5_rejected) {
     setup();
-    CHECK_EQ(IMAGE_VERSION, 10u);
+    CHECK_EQ(IMAGE_VERSION, 11u);
     uint32_t v[IMG_WORDS];
     memcpy(v, w, sizeof v);
     v[1] = 5;

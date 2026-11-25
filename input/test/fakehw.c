@@ -1,4 +1,5 @@
 #include "fakehw.h"
+#include "platform.h"
 #include <string.h>
 
 static const KbdKey keys[R_COUNT] = {
@@ -123,12 +124,91 @@ static int irread(uint16_t *buf, uint32_t cap, uint32_t *start_ms) {
 }
 static void irrclose(void) { fir.rx_closes++; }
 
+static struct {
+    uint32_t buffer, rate, gain, read_max;
+    uint64_t t0, taken;        /* samples taken by mic_read since the open */
+    bool on, fail, open_fail;
+    int opens, closes, reads;
+} fm;
+
+static int mopen(uint32_t rate, uint8_t gain) {
+    if (fm.open_fail) return -1;
+    fm.opens++; fm.on = true; fm.rate = rate; fm.gain = gain;
+    fm.t0 = platform_now_ms(); fm.taken = 0;
+    return 0;
+}
+static int mread(uint8_t *buf, uint32_t cap, uint32_t *lost) {
+    fm.reads++;
+    if (fm.fail) return -1;
+    uint64_t made = (platform_now_ms() - fm.t0) * fm.rate / 1000u, room = fm.buffer / 2u;
+    if (made - fm.taken > room) { *lost = (uint32_t)((made - fm.taken - room) * 2u); fm.taken = made - room; }
+    uint64_t n = made - fm.taken;
+    if (n > cap / 2u) n = cap / 2u;
+    if (n > fm.read_max / 2u) n = fm.read_max / 2u;
+    for (uint64_t i = 0; i < n; i++) {
+        uint16_t v = (uint16_t)(fm.taken + i);
+        buf[2 * i] = (uint8_t)(v & 0xFF);
+        buf[2 * i + 1] = (uint8_t)(v >> 8);
+    }
+    fm.taken += n;
+    return (int)(n * 2u);
+}
+static void mclose(void) { fm.closes++; fm.on = false; }
+
+/* The speaker: written - played bytes are queued in a buffer of `size`;
+ * played moves by fake_spk_play / fake_spk_set_idle, or in real time on
+ * the platform clock (fake_spk_realtime), counting underruns: the buffer
+ * ran dry and more came later. */
+static struct {
+    uint32_t accept, size, rate;
+    uint64_t written, played, last_ms;
+    int volume, opens, closes, writes, underruns;
+    bool amp, fail, open_fail, realtime, dry;
+    uint8_t data[65536];
+} fs;
+
+static void sadvance(void) {
+    uint64_t t = platform_now_ms();
+    if (fs.realtime && fs.amp) {
+        uint64_t can = (t - fs.last_ms) * fs.rate * 2u / 1000u, q = fs.written - fs.played;
+        if (can >= q && q) fs.dry = true;      /* ran dry by this moment */
+        fs.played += can < q ? can : q;
+    }
+    fs.last_ms = t;
+}
+static int sopen(uint32_t rate, uint8_t volume) {
+    if (fs.open_fail) return -1;
+    fs.opens++; fs.amp = true; fs.rate = rate; fs.volume = volume;
+    fs.written = fs.played = 0; fs.dry = false; fs.last_ms = platform_now_ms();
+    return 0;
+}
+static int swrite(const uint8_t *d, uint32_t len) {
+    fs.writes++;
+    sadvance();
+    if (fs.fail) return -1;
+    uint64_t left = fs.size - (fs.written - fs.played);
+    uint32_t n = len < fs.accept ? len : fs.accept;
+    if (n > left) n = (uint32_t)left;
+    if (n && fs.dry) { fs.underruns++; fs.dry = false; }
+    for (uint32_t i = 0; i < n; i++) if (fs.written + i < sizeof fs.data) fs.data[fs.written + i] = d[i];
+    fs.written += n;
+    return (int)n;
+}
+static uint32_t squeued(void) { sadvance(); return (uint32_t)(fs.written - fs.played); }
+static void sclose(void) { fs.closes++; fs.amp = false; }
+
 static InputHw hw;
 
 void fake_reset(void) {
     qh = qt = 0; opens = closes = 0; fail_read = flag = false; fail_after = -1; fail_all = false; kreads = 0;
     hw = (InputHw){ keys, R_COUNT, kopen, kclose, kpending, kread, pread, ppending, 0, 0, false, iopen, iclose, iread, igest,
-                    irstart, irbusy, irropen, irread, irrclose, irtopen, irtclose };
+                    irstart, irbusy, irropen, irread, irrclose, irtopen, irtclose,
+                    mopen, mread, mclose, sopen, swrite, squeued, sclose };
+    memset(&fm, 0, sizeof fm);
+    fm.buffer = 9600;
+    fm.read_max = UINT32_MAX;
+    memset(&fs, 0, sizeof fs);
+    fs.accept = fs.size = UINT32_MAX;
     memset(&fir, 0, sizeof fir);
     imu_q.h = imu_q.t = 0; imu_opens = imu_closes = imu_freads = imu_greads = 0; imu_rate = imu_mask = 0;
     imu_fifo_fail = imu_open_fail = false; imu_g = (ImuGestures){ 0, 0, 0 };
@@ -217,3 +297,37 @@ int fake_ir_rx_closes(void) { return fir.rx_closes; }
 int fake_ir_rx_reads(void) { return fir.rx_reads; }
 uint32_t fake_ir_rx_gap(void) { return fir.gap; }
 int fake_ir_tx_fails(void) { return fir.fails; }
+
+void fake_no_mic(void) { hw.mic_open = 0; hw.mic_read = 0; hw.mic_close = 0; }
+void fake_no_spk(void) { hw.spk_open = 0; hw.spk_write = 0; hw.spk_queued = 0; hw.spk_close = 0; }
+void fake_no_spk_queued(void) { hw.spk_queued = 0; }
+void fake_mic_buffer(uint32_t bytes) { fm.buffer = bytes; }
+void fake_mic_read_max(uint32_t bytes) { fm.read_max = bytes; }
+void fake_mic_fail(bool on) { fm.fail = on; }
+void fake_mic_open_fail(bool on) { fm.open_fail = on; }
+int fake_mic_opens(void) { return fm.opens; }
+int fake_mic_closes(void) { return fm.closes; }
+int fake_mic_reads(void) { return fm.reads; }
+uint32_t fake_mic_rate(void) { return fm.rate; }
+int fake_mic_gain(void) { return (int)fm.gain; }
+bool fake_mic_on(void) { return fm.on; }
+void fake_spk_accept(uint32_t max_per_write) { fs.accept = max_per_write; }
+void fake_spk_size(uint32_t bytes) { fs.size = bytes; }
+void fake_spk_play(uint32_t bytes) {
+    uint64_t q = fs.written - fs.played;
+    fs.played += bytes < q ? bytes : q;
+}
+void fake_spk_set_idle(void) { fs.played = fs.written; }
+void fake_spk_realtime(bool on) { fs.realtime = on; fs.last_ms = platform_now_ms(); }
+int fake_spk_underruns(void) { return fs.underruns; }
+uint32_t fake_spk_played(void) { sadvance(); return (uint32_t)fs.played; }
+void fake_spk_fail(bool on) { fs.fail = on; }
+void fake_spk_open_fail(bool on) { fs.open_fail = on; }
+int fake_spk_opens(void) { return fs.opens; }
+int fake_spk_closes(void) { return fs.closes; }
+int fake_spk_writes(void) { return fs.writes; }
+uint32_t fake_spk_rate(void) { return fs.rate; }
+int fake_spk_volume(void) { return fs.volume; }
+bool fake_spk_amp(void) { return fs.amp; }
+uint32_t fake_spk_written(void) { return (uint32_t)fs.written; }
+const uint8_t *fake_spk_data(void) { return fs.data; }

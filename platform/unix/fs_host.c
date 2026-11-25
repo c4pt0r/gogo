@@ -66,7 +66,24 @@ static int h_read(void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
     *got = (uint32_t)k;
     return VFS_OK;
 }
+/* Test only (gogovm --fs-quota): the most bytes all writes may add up to;
+ * a write past it stores what still fits and fails with ENOSPC. */
+static int64_t quota_left = -1;   /* -1: no limit */
+void fs_host_set_quota(int64_t bytes) { quota_left = bytes; }
+
 static int h_write(void *f, const uint8_t *buf, uint32_t n) {
+    if (quota_left >= 0 && (int64_t)n > quota_left) {
+        uint32_t fit = (uint32_t)quota_left;
+        quota_left = 0;
+        while (fit > 0) {
+            ssize_t k = write(((H *)f)->fd, buf, fit);
+            if (k < 0) { if (errno == EINTR) continue; break; }
+            buf += k;
+            fit -= (uint32_t)k;
+        }
+        return VFS_NOSPACE;
+    }
+    if (quota_left >= 0) quota_left -= n;
     while (n > 0) {
         ssize_t k = write(((H *)f)->fd, buf, n);
         if (k < 0) {
@@ -74,6 +91,19 @@ static int h_write(void *f, const uint8_t *buf, uint32_t n) {
             return map_errno(errno);
         }
         buf += k;
+        n -= (uint32_t)k;
+    }
+    return VFS_OK;
+}
+static int h_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+    while (n > 0) {
+        ssize_t k = pwrite(((H *)f)->fd, buf, n, (off_t)off);   /* vfs allows Write opens only: no O_APPEND */
+        if (k < 0) {
+            if (errno == EINTR) continue;
+            return map_errno(errno);
+        }
+        buf += k;
+        off += (uint32_t)k;
         n -= (uint32_t)k;
     }
     return VFS_OK;
@@ -154,7 +184,7 @@ static int h_usage(int i, int32_t *used, int32_t *total) {
 INSTANCE(0)
 INSTANCE(1)
 
-#define BE(I) { false, o##I, h_read, h_write, h_sync, h_size, h_close, st##I, rd##I, mk##I, rm##I, rn##I, us##I }
+#define BE(I) { false, o##I, h_read, h_write, h_sync, h_size, h_close, st##I, rd##I, mk##I, rm##I, rn##I, us##I, h_write_at }
 static const VfsBackend backends[FS_HOST_INSTANCES] = { BE(0), BE(1) };
 
 const VfsBackend *fs_host_open(int i, const char *dir) {

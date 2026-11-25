@@ -71,6 +71,8 @@ const (
 	CapIMU     = 16      // the "imu" port
 	CapIRTX    = 32      // the "ir_tx" port
 	CapIRRX    = 64      // the "ir_rx" port
+	CapMic     = 128     // the "mic" port
+	CapSpk     = 256     // the "spk" port
 	CapAnyPort = 1 << 31 // only a build-time marker: never missing
 )
 

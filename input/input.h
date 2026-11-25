@@ -1,5 +1,5 @@
-/* Keyboard, power, IMU and IR ports (spec input §5, input2 §4):
- * chip-independent code; the IMU and IR streams go through stream/. A
+/* Keyboard, power, IMU, IR and audio ports (spec input §5, input2 §4, audio §3):
+ * chip-independent code; the IMU, IR and audio streams go through stream/. A
  * platform describes its hardware with an InputHw; input/ turns raw key
  * events into kbd.Key messages (codes, characters, modifiers, auto-repeat)
  * and, on the scheduler thread, polls the power chip. Every hook runs on
@@ -108,6 +108,41 @@ typedef struct InputHw {
      * the struct so positional initialisers stay valid. */
     int  (*ir_tx_open)(uint32_t carrier_hz, uint8_t duty_pct);
     void (*ir_tx_close)(void);
+    /* Audio (spec audio §3): 16-bit little-endian mono PCM at rate 8000 or
+     * 16000. The two sides are half duplex: input/ never has both open, so
+     * a platform may share one codec and one I2S channel pair.
+     * Microphone: mic_open and mic_read (NULL = no mic); mic_close is
+     * optional. mic_open: starts capture at rate with gain_db (0, 6, 12,
+     * 18 or 24) of extra gain above the platform's normal mic level (0 =
+     * normal: speech at arm's length clearly above the noise floor without
+     * clipping; the platform picks the codec gain for that) and discards
+     * the start-up garbage (the first 2 DMA buffers) itself; 0 ok. Its buffer should hold at least
+     * 300 ms, so a late poll (an SD write stall) loses nothing.
+     * mic_read: moves up to cap bytes (cap is even) of captured samples
+     * into buf and returns the byte count, even (0 = nothing waits, -1
+     * error, retried at the next poll); it may return less than cap with
+     * more waiting (one DMA buffer per call): the caller reads until 0.
+     * *lost (0 on the call) is set to the bytes lost since the last call
+     * because its buffer was full. Polled every min(FrameMs, 50) ms while
+     * mic is open.
+     * Speaker: spk_open and spk_write (NULL = no speaker); spk_queued and
+     * spk_close are optional. spk_open: powers the codec and the amplifier
+     * (in the order that does not pop) at rate and volume (0 mute, 1..100
+     * from 40 dB below the platform's loudest level up to it); 0 ok.
+     * spk_write: never blocks; queues up to len bytes (len even, > 0) to
+     * play after what it already has, copying them, and returns how many it
+     * took (0 = its buffer is full, -1 error: that Out gets Done{-1}).
+     * spk_queued: the bytes written but not played yet (0 = idle); a pure
+     * read, polled; NULL = a hardware that plays what it takes at once
+     * (Done when written). spk_close: stops at once, cutting what is
+     * queued, and switches the amplifier off. */
+    int  (*mic_open)(uint32_t rate, uint8_t gain_db);
+    int  (*mic_read)(uint8_t *buf, uint32_t cap, uint32_t *lost);
+    void (*mic_close)(void);
+    int  (*spk_open)(uint32_t rate, uint8_t volume);
+    int  (*spk_write)(const uint8_t *data, uint32_t len);
+    uint32_t (*spk_queued)(void);
+    void (*spk_close)(void);
 } InputHw;
 
 /* The platform's hardware; never NULL, fields NULL when absent. A weak
@@ -115,7 +150,7 @@ typedef struct InputHw {
 const InputHw *platform_input(void);
 
 extern const PortDriver input_kbd_driver, input_power_driver, input_imu_driver, input_ir_tx_driver,
-    input_ir_rx_driver;
+    input_ir_rx_driver, input_mic_driver, input_spk_driver;
 
 /* Registers the input source (call once at startup). */
 void input_install(void);

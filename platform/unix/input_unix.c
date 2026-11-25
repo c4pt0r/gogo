@@ -1,9 +1,11 @@
 #define _POSIX_C_SOURCE 200112L   /* nanosleep, termios */
 /* unix input simulation (spec M3 5.4, input §5.6): the only reader of stdin.
  *
- * gpio input ports, the kbd, power, imu and ir_rx ports are fed from it;
- * ir_tx prints `ir tx: <n> values` on stderr for each frame and is busy
- * for as long as the frame would take (the sum of its timings).
+ * gpio input ports, the kbd, power, imu, ir_rx and mic ports are fed from
+ * it; ir_tx prints `ir tx: <n> values` on stderr for each frame and is busy
+ * for as long as the frame would take (the sum of its timings); spk prints
+ * `spk: <n> bytes` for each write (at most 4096 bytes each) and is busy for
+ * as long as they take to play.
  *
  *  - Script mode (stdin is not a terminal): one line per idle wait while a
  *    port that can produce events is open, so the output depends only on
@@ -22,6 +24,12 @@
  *                               1..32767; a line is a whole frame, GapUs
  *                               plays no part), queued (4 frames) while
  *                               ir_rx is open, handed over at its next poll
+ *      mic tone <hz> <ms>       a sine (hz 1..8000 and under Rate/2, ms
+ *                               1..600000) at amplitude
+ *                               1000 << Gain/6; queued (16 lines) while mic
+ *                               is open, handed over at its next poll; a line
+ *                               that finds the queue full counts in Dropped
+ *      mic silence <ms>         zeros, likewise
  *    Names: a-z 0-9 enter esc backspace tab space delete up down left right
  *    f1-f12 ctrl shift alt opt fn, and the punctuation characters
  *    - = [ ] \ ; ' ` , . /   Unknown lines are reported on stderr and
@@ -400,10 +408,129 @@ static bool ir_push_frame(const char *s) {
     return true;
 }
 
+/* ---- audio ---- */
+
+/* `mic tone` / `mic silence` lines queue segments (MIC_SEGS) while mic is
+ * open; mic_read renders them as PCM on demand, so a segment of any length
+ * costs a few bytes and reaches the driver at its next poll. A line that
+ * finds the queue full is lost and reported as an overflow (Dropped).
+ * Tones are integer sines from a quarter-wave table (no floating point):
+ * amplitude 1000 at Gain 0, doubled every 6 dB (16000 at 24 dB), the phase
+ * running on across segments. */
+#define MIC_SEGS 16u
+static const int16_t quarter_sine[65] = {   /* round(32767 * sin(i * pi / 128)), i = 0..64 */
+    0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793,
+    12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787, 21403,
+    22005, 22594, 23170, 23731, 24279, 24811, 25329, 25832, 26319, 26790, 27245, 27683, 28105, 28510,
+    28898, 29268, 29621, 29956, 30273, 30571, 30852, 31113, 31356, 31580, 31785, 31971, 32137, 32285,
+    32412, 32521, 32609, 32678, 32728, 32757, 32767,
+};
+static struct {
+    bool on;
+    uint32_t rate, amp, phase;     /* phase: 2^32 per cycle */
+    uint32_t lost;                 /* bytes of lines that found the queue full */
+    struct { uint16_t hz; uint32_t left; } q[MIC_SEGS];   /* hz 0: silence; left in samples */
+    unsigned h, t;
+} mics;
+
+/* sin(phase) * 32767, phase 2^32 per cycle, from the top 8 bits. */
+static int32_t sine(uint32_t phase) {
+    uint32_t i = phase >> 24;
+    int32_t v = quarter_sine[(i & 64u) ? 64u - (i & 63u) : (i & 63u)];
+    return (i & 128u) ? -v : v;
+}
+
+static int m_open(uint32_t rate, uint8_t gain_db) {
+    memset(&mics, 0, sizeof mics);
+    mics.on = true;
+    mics.rate = rate;
+    mics.amp = 1000u << (gain_db / 6u);
+    input_unix_attach();
+    return 0;
+}
+static void m_close(void) {
+    if (!mics.on) return;
+    mics.on = false;
+    input_unix_detach();
+}
+static int m_read(uint8_t *buf, uint32_t cap, uint32_t *lost) {
+    *lost = mics.lost;
+    mics.lost = 0;
+    uint32_t n = 0;
+    while (mics.h != mics.t && n + 2u <= cap) {
+        unsigned k = mics.h % MIC_SEGS;
+        uint32_t hz = mics.q[k].hz, step = (uint32_t)(((uint64_t)hz << 32) / mics.rate);
+        for (; mics.q[k].left && n + 2u <= cap; mics.q[k].left--, n += 2u) {
+            int32_t v = hz ? sine(mics.phase) * (int32_t)mics.amp / 32767 : 0;
+            mics.phase += step;
+            buf[n] = (uint8_t)((uint32_t)v & 0xFFu);
+            buf[n + 1u] = (uint8_t)((uint32_t)v >> 8 & 0xFFu);
+        }
+        if (!mics.q[k].left) mics.h++;
+    }
+    return (int)n;
+}
+
+/* A `mic tone <hz> <ms>` (hz 1..8000) or `mic silence <ms>` (hz 0) line;
+ * ms 1..600000. Dropped while mic is closed; false (a bad line) for a tone
+ * at or above half the open Rate, which would alias. */
+static bool mic_push(uint32_t hz, uint32_t ms) {
+    if (!mics.on) return true;
+    if (hz * 2u >= mics.rate) return false;
+    uint32_t n = ms * (mics.rate / 1000u);
+    if (mics.t - mics.h >= MIC_SEGS) {         /* full: lost like a buffer overflow */
+        mics.lost += n * 2u;
+        return true;
+    }
+    unsigned k = mics.t++ % MIC_SEGS;
+    mics.q[k].hz = (uint16_t)hz;
+    mics.q[k].left = n;
+    platform_notify();
+    return true;
+}
+
+/* The speaker takes at most SPK_SIM_WRITE bytes per write (so an Out is
+ * written in parts, the same way every run) into an unbounded buffer,
+ * prints `spk: <n> bytes` on stderr for each, and plays in real time at
+ * Rate from the write that found it idle. */
+#define SPK_SIM_WRITE 4096u
+static struct {
+    uint32_t rate;
+    uint64_t written, base;        /* samples: all written; those written before `start` */
+    uint64_t start;                /* ms: playing (re)started */
+} spks;
+
+static uint64_t s_played(void) {
+    uint64_t can = spks.base + (platform_now_ms() - spks.start) * spks.rate / 1000u;
+    return can < spks.written ? can : spks.written;
+}
+static int s_open(uint32_t rate, uint8_t volume) {
+    (void)volume;
+    memset(&spks, 0, sizeof spks);
+    spks.rate = rate;
+    return 0;
+}
+static int s_write(const uint8_t *d, uint32_t len) {
+    (void)d;
+    uint32_t n = len < SPK_SIM_WRITE ? len : SPK_SIM_WRITE;
+    if (s_played() == spks.written) {          /* idle: starts playing now */
+        spks.base = spks.written;
+        spks.start = platform_now_ms();
+    }
+    spks.written += n / 2u;
+    char b[32];
+    int k = snprintf(b, sizeof b, "spk: %lu bytes\n", (unsigned long)n);
+    if (k > 0) platform_write_err(b, (size_t)k);
+    return (int)n;
+}
+static uint32_t s_queued(void) { return (uint32_t)((spks.written - s_played()) * 2u); }
+static void s_close(void) { memset(&spks, 0, sizeof spks); }
+
 const InputHw input_unix_hw = {
     keytab, 256, k_open, k_close, k_pending, k_read, p_read, p_pending, input_unix_live, p_enable, true,
     i_open, i_close, i_read_fifo, i_read_gestures,
-    ir_start, ir_busy, ir_rx_open, ir_rx_read, ir_rx_close, NULL, NULL   /* no ir_tx_open / ir_tx_close */
+    ir_start, ir_busy, ir_rx_open, ir_rx_read, ir_rx_close, NULL, NULL,   /* no ir_tx_open / ir_tx_close */
+    m_open, m_read, m_close, s_open, s_write, s_queued, s_close,
 };
 
 /* ---- script ---- */
@@ -466,6 +593,17 @@ static bool script_line(void) {
         }
     }
     if (strncmp(buf, "ir rx ", 6) == 0 && ir_push_frame(buf + 6)) return false;
+    {
+        unsigned long hz, mms;
+        if (sscanf(buf, "mic tone %lu %lu %c", &hz, &mms, &tail) == 2 && hz >= 1 && hz <= 8000 && mms >= 1 &&
+            mms <= 600000) {
+            if (mic_push((uint32_t)hz, (uint32_t)mms)) return false;
+        }
+        if (sscanf(buf, "mic silence %lu %c", &mms, &tail) == 1 && mms >= 1 && mms <= 600000) {
+            mic_push(0, (uint32_t)mms);
+            return false;
+        }
+    }
     err_line("input: bad line, skipped: ", buf);
     return false;
 }

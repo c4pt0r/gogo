@@ -2,7 +2,7 @@
  *
  * vm/ only holds the hook (vm_fs_builtin, platform.h) and one case in the
  * interpreter; vfs_install points the hook here. B_FS's first argument is
- * the op (FS_OPEN..FS_USAGE, vfs.h), the rest are the op's arguments.
+ * the op (FS_OPEN..FS_WRITEAT, vfs.h), the rest are the op's arguments.
  * Two-result ops write (value, Err) into ra, ra+1 and check that ra+1 is
  * in the frame; the others write Err into ra only.
  *
@@ -33,7 +33,7 @@
 #define CHARGE_WORDS (GOGO_FS_SLOT_BYTES / 4u)
 
 /* Arguments after the op, and the ops with two results. */
-static const uint8_t n_args[FS_USAGE + 1] = { 2, 2, 2, 1, 1, 2, 2, 1, 1, 1, 1, 2, 1 };
+static const uint8_t n_args[FS_WRITEAT + 1] = { 2, 2, 2, 1, 1, 2, 2, 1, 1, 1, 1, 2, 1, 3 };
 #define TWO_RESULTS ((1u << FS_OPEN) | (1u << FS_READ) | (1u << FS_SIZE) | (1u << FS_READFILE) | \
                      (1u << FS_STAT) | (1u << FS_READDIR) | (1u << FS_USAGE))
 
@@ -272,7 +272,7 @@ static int write_file(const char *p, uint32_t len, const uint8_t *data, uint32_t
 static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs) {
     term *R = (term *)a->mem + a->fp;
     int32_t op, i = 0;
-    if (rc == 0 || !int_val(vm, a, R[rb], &op) || op < 0 || op > FS_USAGE || rc != 1u + n_args[op])
+    if (rc == 0 || !int_val(vm, a, R[rb], &op) || op < 0 || op > FS_WRITEAT || rc != 1u + n_args[op])
         return R_BAD_CODE;
     bool two = (TWO_RESULTS >> op) & 1u;
     if (two && ra + 1u >= nregs) return R_BAD_CODE;
@@ -285,10 +285,11 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
 
     /* Decode. */
     switch (op) {
-    case FS_READ: case FS_WRITE: case FS_SYNC: case FS_SIZE:
+    case FS_READ: case FS_WRITE: case FS_SYNC: case FS_SIZE: case FS_WRITEAT:
         f = file_of(vm, a, x);
         if (op == FS_READ && !int_val(vm, a, y, &i)) return R_BAD_CODE;
         if (op == FS_WRITE && !arg_data(vm, a, y, &data, &n)) return R_BAD_CODE;
+        if (op == FS_WRITEAT && (!int_val(vm, a, y, &i) || !arg_data(vm, a, R[rb + 3], &data, &n))) return R_BAD_CODE;
         if (!f) e = VFS_CLOSED;
         break;
     default:
@@ -333,6 +334,9 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
         break;
     case FS_WRITE:
         if (!e) e = vfs_write(slot, data, n);
+        break;
+    case FS_WRITEAT:
+        if (!e) e = i < 0 ? VFS_BADPATH : vfs_write_at(slot, (uint32_t)i, data, n);
         break;
     case FS_SYNC:
         if (!e) e = vfs_sync(slot);

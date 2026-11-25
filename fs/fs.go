@@ -137,6 +137,18 @@ func (f File) Read(max int) (bytes.Bytes, Err) { panic("gogo only") }
 // type crashes the caller) at the current position, or returns an error.
 func (f File) Write(data any) Err { panic("gogo only") }
 
+// WriteAt overwrites len(data) bytes at byte offset off of a file opened
+// with Write (data as in Write). It never extends the file: off must be at
+// least 0 and off + len(data) at most the current Size, else the result is
+// BadPath and nothing is written. A file opened Read or Append, a closed or
+// foreign File is Closed. The position of the next Write is not moved: it
+// still appends at the end. It is for fixing up what was written (the
+// sizes in a WAV header) and, as it needs no new space on /sd, it works on a
+// full card; on /flash (copy-on-write) it needs one free block, and is IO
+// or NoSpace without. Like Write, the data is not on the medium until
+// Sync or Close.
+func (f File) WriteAt(off int, data any) Err { panic("gogo only") }
+
 // Sync commits what was written, without closing the file, and reports a
 // failed commit (IO, NoSpace).
 func (f File) Sync() Err { panic("gogo only") }

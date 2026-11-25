@@ -1,0 +1,7 @@
+recorded /flash/rec/0008.wav ms 1000 dropped 0 err 0
+  size 16044 header ok true rate 8000 data 16000 samples 8000 peak 999
+recorded /flash/rec/0009.wav ms 500 dropped 0 err 0
+  size 8044 header ok true rate 8000 data 8000 samples 4000 peak 999
+play true
+played 8000 dones 2 err 0
+files 4

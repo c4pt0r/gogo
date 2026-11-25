@@ -36,13 +36,16 @@ TEST(caps_explain) {
     CHECK(strcmp(b, "gogo: image needs net kbd power sd; firmware lacks net kbd power sd\n") == 0);
     explain(b, CAP_IMU | CAP_IR_TX | CAP_IR_RX, CAP_IR_TX);
     CHECK(strcmp(b, "gogo: image needs imu irtx irrx; firmware lacks irtx\n") == 0);
-    explain(b, 127, 127);   /* the longest line must fit VM_CAPS_MSG_MAX */
-    CHECK(strcmp(b, "gogo: image needs net kbd power sd imu irtx irrx; firmware lacks net kbd power sd imu irtx irrx\n") == 0);
+    explain(b, CAP_MIC | CAP_SPK, CAP_SPK);
+    CHECK(strcmp(b, "gogo: image needs mic spk; firmware lacks spk\n") == 0);
+    explain(b, 511, 511);   /* the longest line must fit VM_CAPS_MSG_MAX */
+    CHECK(strcmp(b, "gogo: image needs net kbd power sd imu irtx irrx mic spk; firmware lacks net kbd power sd imu irtx irrx mic spk\n") == 0);
 }
 
 /* The weak default of a platform that defines none is tested by the
- * strong unix definition overriding it: net, kbd, power, sd, imu, irtx and
- * irrx. */
+ * strong unix definition overriding it: net, kbd, power, sd, imu, irtx,
+ * irrx, mic and spk. */
 TEST(caps_unix_platform) {
-    CHECK_EQ(platform_caps(), CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX);
+    CHECK_EQ(platform_caps(), CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX | CAP_MIC |
+                              CAP_SPK);
 }

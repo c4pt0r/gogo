@@ -23,6 +23,7 @@ and assumes no knowledge of embedded programming or Erlang.
 13. [Appendices](13-appendices.md): library quick reference, exit reasons, error codes, limits, differences from Go
 14. [Hot Loading](14-hot-loading.md): loading code at run time, modules, supervised upgrades
 15. [IMU and IR](15-imu-and-ir.md): the motion sensor, infrared send and receive, streams (`Chunk`, `Out`, `Done`)
+16. [Audio](16-audio.md): the microphone and speaker, recording to WAV files, playing them back
 
 [Notes for maintainers](NOTES-for-maintainers.md) lists the places where
 the documentation and the behaviour disagree, found while writing the book.

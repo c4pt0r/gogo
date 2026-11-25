@@ -72,4 +72,41 @@ void fake_ir_rx_open_fail(bool on);
 int fake_ir_rx_opens(void), fake_ir_rx_closes(void), fake_ir_rx_reads(void);
 uint32_t fake_ir_rx_gap(void);         /* gap_us of the last ir_rx_open */
 
+/* Audio: fake_reset() installs a mic and a speaker. The mic captures in
+ * real time on the platform clock from its open: sample i (counted from
+ * the open) has the value (uint16)i; its buffer holds fake_mic_buffer
+ * bytes (default 9600: 300 ms at 16 kHz), older samples are lost to an
+ * overflow (reported as lost bytes); a read returns at most
+ * fake_mic_read_max bytes (default no cap; 960 = one DMA buffer). The
+ * speaker takes at most fake_spk_accept bytes per write (default all) into
+ * a buffer of fake_spk_size bytes (default unlimited); spk_queued is
+ * written - played, and played moves by fake_spk_play / fake_spk_set_idle,
+ * or in real time (fake_spk_realtime) at Rate, counting underruns. */
+void fake_no_mic(void);                /* mic hooks NULL */
+void fake_no_spk(void);                /* spk hooks NULL */
+void fake_no_spk_queued(void);         /* spk_queued NULL (optional) */
+void fake_mic_buffer(uint32_t bytes);
+void fake_mic_read_max(uint32_t bytes);
+void fake_mic_fail(bool on);           /* mic_read returns -1 while set */
+void fake_mic_open_fail(bool on);
+int fake_mic_opens(void), fake_mic_closes(void), fake_mic_reads(void);
+uint32_t fake_mic_rate(void);
+int fake_mic_gain(void);
+bool fake_mic_on(void);
+void fake_spk_accept(uint32_t max_per_write);
+void fake_spk_size(uint32_t bytes);
+void fake_spk_play(uint32_t bytes);    /* that many more have played */
+void fake_spk_set_idle(void);          /* everything written has played */
+void fake_spk_realtime(bool on);
+int fake_spk_underruns(void);
+uint32_t fake_spk_played(void);
+void fake_spk_fail(bool on);           /* spk_write returns -1 while set */
+void fake_spk_open_fail(bool on);
+int fake_spk_opens(void), fake_spk_closes(void), fake_spk_writes(void);
+uint32_t fake_spk_rate(void);
+int fake_spk_volume(void);
+bool fake_spk_amp(void);               /* on between spk_open and spk_close */
+uint32_t fake_spk_written(void);       /* bytes taken since the open */
+const uint8_t *fake_spk_data(void);    /* the first 64 KiB of them */
+
 #endif

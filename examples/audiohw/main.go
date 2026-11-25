@@ -1,0 +1,246 @@
+// audiohw: a hardware check of the microphone and the speaker (a board's
+// ES8311 codec, or the unix simulation). It prints numbers for a person
+// to judge; nothing here compares them.
+//
+//  1. Half duplex: with the mic open, opening spk fails, and the other way
+//     round.
+//  2. Record: about 2 s at 16 kHz and 1 s at 8 kHz with gogo/sound into
+//     /sd/audiohw (a card is in) or /flash/audiohw. For each file: its size,
+//     the RMS and peak of the PCM, the RMS of the first and the last 100 ms
+//     (a codec that warms up starts quiet), and how many samples sit at the
+//     rails (clipped: |v| >= 32767). Room noise gives an RMS above 0 and
+//     well under clipping.
+//  3. Tone: 0.5 s of a sine (1 kHz at 16 kHz, 500 Hz at 8 kHz) sent as
+//     port.Outs of 2000 samples, two in flight. The time from the first Out
+//     to the last Done should be 500 ms plus the output latency (the DMA
+//     buffers ahead of the sound, about 100 ms on a board).
+//  4. Play the 16 kHz recording back with gogo/sound and time it.
+//
+// The files this program recorded are removed at the end, and the
+// directory too if nothing else is in it.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/audio"
+	"gogo/bytes"
+	"gogo/fs"
+	"gogo/port"
+	"gogo/sound"
+	"gogo/wav"
+)
+
+func main() {
+	actor.Sleep(2000) // time to attach a serial monitor after a reset
+	halfDuplex()
+	// Through a variable: a constant "/sd" given to gogo/fs would make the
+	// image require the sd capability, and the StickS3 has none.
+	sd := "/sd"
+	dir := "/flash/audiohw"
+	if _, e := fs.ReadDir(sd); e == fs.OK {
+		dir = sd + "/audiohw"
+	}
+	println("dir", dir)
+	f16 := record(dir, 16000, 2)
+	f8 := record(dir, 8000, 1)
+	tone(16000)
+	tone(8000)
+	if f16 != "" {
+		play(f16)
+	}
+	remove(f16)
+	remove(f8)
+	fs.Remove(dir) // only if empty: NotEmpty otherwise
+	println("audiohw done")
+}
+
+func halfDuplex() {
+	m, ok := port.Open("mic", audio.Mic{Rate: 16000})
+	_, ok2 := port.Open("spk", audio.Speaker{Rate: 16000, Volume: 50})
+	println("mic open", ok, "spk while mic", ok2)
+	if ok {
+		port.Close(m)
+	}
+	s, ok := port.Open("spk", audio.Speaker{Rate: 16000, Volume: 50})
+	_, ok2 = port.Open("mic", audio.Mic{Rate: 16000})
+	println("spk open", ok, "mic while spk", ok2)
+	if ok {
+		port.Close(s)
+	}
+}
+
+// record makes one file of about secs seconds at rate and reports on it;
+// it returns its path ("" if none). The recorder runs with no file limit
+// and is stopped after secs seconds (and 150 ms).
+func record(dir string, rate, secs int) string {
+	r, ok := sound.Record(dir, audio.Mic{Rate: rate, FrameMs: 100}, 0)
+	if !ok {
+		println("record", rate, "failed")
+		return ""
+	}
+	actor.Sleep(secs*1000 + 150)
+	actor.Send(r, sound.Stop{})
+	path := ""
+	for path == "" {
+		switch m := actor.Receive().(type) {
+		case sound.Recorded:
+			println("recorded", m.Path, "ms", m.Ms, "dropped", m.Dropped, "err", int(m.Err))
+			path = m.Path
+		}
+	}
+	analyse(path, rate)
+	return path
+}
+
+func isqrt(v int64) int {
+	if v <= 0 {
+		return 0
+	}
+	x := int64(1)
+	for x*x <= v {
+		x = x * 2
+	}
+	lo := x / 2 // lo*lo <= v < hi*hi
+	hi := x
+	for hi-lo > 1 {
+		mid := (lo + hi) / 2
+		if mid*mid <= v {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return int(lo)
+}
+
+func analyse(path string, rate int) {
+	i, _ := fs.Stat(path)
+	f, e := fs.Open(path, fs.Read)
+	if e != fs.OK {
+		println("  open failed", int(e))
+		return
+	}
+	h, _ := f.Read(wav.HeaderLen)
+	hd, ok := wav.Info(h)
+	edge := rate / 10 // samples in 100 ms
+	total := (i.Size - wav.HeaderLen) / 2
+	n := 0
+	peak := 0
+	rails := 0
+	zeros := 0
+	sum := int64(0)
+	first := int64(0)
+	last := int64(0)
+	for {
+		b, _ := f.Read(1000)
+		if b.Len() == 0 {
+			break
+		}
+		for k := 0; k+1 < b.Len(); k += 2 {
+			v := int(b.At(k)) | int(b.At(k+1))<<8
+			if v >= 32768 {
+				v = v - 65536
+			}
+			a := v
+			if a < 0 {
+				a = -a
+			}
+			if a > peak {
+				peak = a
+			}
+			if a >= 32767 {
+				rails++
+			}
+			if v == 0 {
+				zeros++
+			}
+			sq := int64(v) * int64(v)
+			sum = sum + sq
+			if n < edge {
+				first = first + sq
+			}
+			if n >= total-edge {
+				last = last + sq
+			}
+			n++
+		}
+	}
+	f.Close()
+	println("  size", i.Size, "header", ok, "rate", hd.Rate, "samples", n)
+	if n == 0 {
+		return
+	}
+	println("  rms", isqrt(sum/int64(n)), "peak", peak, "clipped", rails, "zeros", zeros,
+		"rms first 100ms", isqrt(first/int64(edge)), "rms last 100ms", isqrt(last/int64(edge)))
+}
+
+// tone plays 0.5 s of a sine at rate and times it.
+func tone(rate int) {
+	p, ok := port.Open("spk", audio.Speaker{Rate: rate, Volume: 50})
+	if !ok {
+		println("tone", rate, "spk failed")
+		return
+	}
+	const per = 2000 // samples per Out
+	outs := rate / 2 / per
+	w := wave(per) // made before the clock starts; Bytes are immutable, so every Out can share it
+	t0 := actor.Now()
+	sent := 0
+	dones := 0
+	fails := 0
+	for sent < outs && sent < 2 {
+		actor.Send(p, port.Out{Data: w})
+		sent++
+	}
+	for dones+fails < outs {
+		switch m := actor.Receive().(type) {
+		case port.Done:
+			if m.Seq < 0 {
+				fails++
+			} else {
+				dones++
+			}
+			if sent < outs {
+				actor.Send(p, port.Out{Data: w})
+				sent++
+			}
+		}
+	}
+	el := actor.Now() - t0
+	port.Close(p)
+	println("tone", rate, "Hz:", outs, "Outs", rate/2, "samples (500 ms), dones", dones, "fails", fails, "elapsed ms", int(el))
+}
+
+// wave is samples of a sine with a 16-sample period, amplitude 8000.
+func wave(samples int) bytes.Bytes {
+	sine := []int{0, 3061, 5657, 7391, 8000, 7391, 5657, 3061, 0, -3061, -5657, -7391, -8000, -7391, -5657, -3061}
+	b := bytes.NewBuffer(samples * 2)
+	for i := 0; i < samples; i++ {
+		v := sine[i%16]
+		b.WriteByte(byte(v))
+		b.WriteByte(byte(v >> 8))
+	}
+	return b.Freeze()
+}
+
+func play(path string) {
+	t0 := actor.Now()
+	_, ok := sound.Play(path)
+	if !ok {
+		println("play failed")
+		return
+	}
+	for {
+		switch m := actor.Receive().(type) {
+		case sound.Played:
+			println("played", m.Path, "bytes", m.Bytes, "dones", m.Dones, "err", int(m.Err), "elapsed ms", int(actor.Now()-t0))
+			return
+		}
+	}
+}
+
+func remove(path string) {
+	if path != "" {
+		fs.Remove(path)
+	}
+}

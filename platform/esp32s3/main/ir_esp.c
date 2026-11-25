@@ -46,8 +46,8 @@
  * close turns it off again, but only if gogo turned it on. While it is on,
  * the Grove/Hat 5 V pins are outputs: nothing may feed 5 V into them then
  * (M5 docs). While ir_rx is open the speaker amplifier (PM1 GPIO3) is held
- * off, as M5 requires for IR reception; ir_rx_close turns it back on only if
- * it was on before.
+ * off, as M5 requires for IR reception (pm1_spk_amp_block): a speaker open
+ * then fails, one already open goes silent until ir_rx closes.
  *
  * Sources: docs.m5stack.com StickS3 pin map and ir_nec example, M5Cardputer
  * UserDemo CardputerADV hal_config.h, ESP-IDF v6.1.1 esp_driver_rmt
@@ -212,7 +212,6 @@ static uint8_t rx_head, rx_count;
 static bool rx_armed, rx_stop;
 static uint16_t rx_nsym[RX_SLOTS];
 static uint32_t rx_done_ms[RX_SLOTS];
-static bool spk_was_on;
 
 /* Starts receiving into the next free slot, if there is one (rx_mux held). */
 static void rx_arm_locked(void) {
@@ -249,9 +248,9 @@ static void rx_free(void) {
 
 int ir_esp_rx_open(uint32_t gap_us) {
     if (rx_chan || ir_power_get() != 0) return -1;
-    spk_was_on = false;
 #if HAS_PM1
-    if (pm1_spk_amp(false, &spk_was_on) != 0) {
+    if (pm1_spk_amp_block(true) != 0) {
+        pm1_spk_amp_block(false);
         ir_power_put();
         return -1;
     }
@@ -288,7 +287,7 @@ int ir_esp_rx_open(uint32_t gap_us) {
 fail:
     rx_free();
 #if HAS_PM1
-    if (spk_was_on) pm1_spk_amp(true, NULL);
+    pm1_spk_amp_block(false);
 #endif
     ir_power_put();
     platform_esp_log("gogo: ir_rx: RMT setup failed");
@@ -301,7 +300,7 @@ void ir_esp_rx_close(void) {
     portEXIT_CRITICAL(&rx_mux);
     rx_free();
 #if HAS_PM1
-    if (spk_was_on) pm1_spk_amp(true, NULL);
+    pm1_spk_amp_block(false);
 #endif
     ir_power_put();
 }

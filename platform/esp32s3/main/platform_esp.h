@@ -57,13 +57,18 @@ struct i2c_master_bus_t *i2c_bus_get(void);
  * sleep off (once; every user calls it first); pm1_lcd_power_on turns on the
  * LCD rail; pm1_ext5v switches the EXT_5V boost (IR LED and receiver, Grove
  * 5 V out), *was = its state before (may be NULL);
- * pm1_imu_power_on rail L1 (BMI270); pm1_spk_amp switches the speaker
- * amplifier (PM1 GPIO3), *was = its level before (may be NULL). */
+ * pm1_imu_power_on rail L1 (BMI270); pm1_audio_power_on the codec's rail
+ * (L3B, PM1 GPIO2, shared with the LCD). The speaker amplifier (PM1 GPIO3)
+ * is on while the speaker wants it (pm1_spk_amp) and the IR receiver does
+ * not block it (pm1_spk_amp_block; pm1_spk_amp_blocked tells). */
 int pm1_wake(void);
 int pm1_lcd_power_on(void);
 int pm1_ext5v(bool on, bool *was);
 int pm1_imu_power_on(void);
-int pm1_spk_amp(bool on, bool *was);
+int pm1_audio_power_on(void);
+int pm1_spk_amp(bool on);
+int pm1_spk_amp_block(bool block);
+bool pm1_spk_amp_blocked(void);
 /* PM1 register reads (little-endian for u16) and a byte write; 0 on success. */
 int pm1_read(uint8_t reg, uint8_t *buf, size_t n);
 int pm1_read_u8(uint8_t reg, uint8_t *v);
@@ -116,6 +121,16 @@ bool ir_esp_tx_busy(void);
 int ir_esp_rx_open(uint32_t gap_us);
 int ir_esp_rx_read(uint16_t *buf, uint32_t cap, uint32_t *start_ms);
 void ir_esp_rx_close(void);
+
+/* Audio on the ES8311 codec (audio_esp.c, built with CONFIG_GOGO_AUDIO):
+ * the InputHw mic_* and spk_* hooks, contracts in input/input.h. */
+int audio_esp_mic_open(uint32_t rate, uint8_t gain_db);
+int audio_esp_mic_read(uint8_t *buf, uint32_t cap, uint32_t *lost);
+void audio_esp_mic_close(void);
+int audio_esp_spk_open(uint32_t rate, uint8_t volume);
+int audio_esp_spk_write(const uint8_t *data, uint32_t len);
+uint32_t audio_esp_spk_queued(void);
+void audio_esp_spk_close(void);
 
 /* Config store (config_esp.c): NVS namespace "gogo". config_esp_init
  * opens it (0 on success); config_esp_get reads key into buf (at most cap

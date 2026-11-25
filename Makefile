@@ -150,8 +150,8 @@ $(BUILD)/console_ppm: platform/common/tools/console_ppm.c $(CONSOLE_SRCS) $(wild
 console-ppm: $(BUILD)/console_ppm
 	$(BUILD)/console_ppm platform/common/font/gogo12.font $(TEXT) $(OUT)
 
-test-go: vm
-	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm go test ./...
+test-go: vm $(BUILD)/gogovm_mcu
+	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm GOGO_VM_MCU=$(CURDIR)/$(BUILD)/gogovm_mcu go test ./...
 
 # The network scenarios (dhcp, dns, ...) on a VM with the MCU actor memory
 # limit (16 KB per actor): the library actors must fit.

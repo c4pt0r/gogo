@@ -146,6 +146,7 @@ func Open(path string, mode int) (File, Err)   // fs.Read, fs.Write (create or t
 
 func (f File) Read(max int) (bytes.Bytes, Err) // at most 4096 bytes; empty with OK = end of file
 func (f File) Write(data any) Err              // string, bytes.Bytes or []byte
+func (f File) WriteAt(off int, data any) Err   // overwrite inside a Write-mode file, never extends it
 func (f File) Sync() Err                       // commit without closing
 func (f File) Size() (int, Err)
 func (f File) Close()
@@ -261,6 +262,14 @@ gives a file to another actor.
 know that the data reached the medium, call `Sync` before `Close`.
 
 A file opened for writing cannot be read and vice versa (`Closed`).
+
+`WriteAt(off, data)` overwrites bytes that are already in a file opened with
+`fs.Write`, for fixing up what was written (a length field in a header, as
+`gogo/wav` does). It never extends the file: `off + len(data)` must be at
+most `Size`, else the result is `BadPath` and nothing is written. A file
+opened `Read` or `Append` gives `Closed`. It does not move the position
+of the next `Write`, which still appends at the end. On `/sd` it needs no
+free space, so it works on a full card; on `/flash` it needs a free block.
 
 > **Note.** `fs.File` cannot be a case in a type switch (`type switch case
 > fs.File not supported; wrap it in a struct`), because at run time it is

@@ -72,6 +72,18 @@ menu "gogo"
             of those ports returns ok=false, and the IDF RMT driver is not
             linked.
 
+    config GOGO_AUDIO
+        bool "Audio ports (mic, spk)"
+        default y
+        select I2S_ISR_IRAM_SAFE
+        help
+            Build the audio drivers (audio_esp.c): mic and spk on both
+            boards (ES8311 codec and I2S), and make the I2S interrupt
+            IRAM-safe so a /flash write does not lose or replay DMA
+            buffers. When off, CAP_MIC and CAP_SPK are absent, port.Open
+            of those ports returns ok=false, and the IDF I2S driver is not
+            linked.
+
     config GOGO_FONT_CJK
         bool "Chinese console font (GB 2312)"
         default y

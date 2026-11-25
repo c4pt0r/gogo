@@ -1,0 +1,9 @@
+mic true
+spk while mic false
+chunk 1 dropped 0 bytes 1600 first 0 2828 4000 peak 4000 last sound 799
+chunk 2 dropped 0 bytes 1600 first 0 2828 4000 peak 4000 last sound 799
+chunk 3 dropped 0 bytes 1600 first 0 2828 4000 peak 4000 last sound 399
+spk true
+mic while spk false
+done -1
+done 1

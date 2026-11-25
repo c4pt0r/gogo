@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Capability bits of the image's requires word (v9; bits 4-6 added in v10): what the host must
+// Capability bits of the image's requires word (v9; bits 4-6 added in v10, 7-8 in v11): what the host must
 // provide for the module to run. Inferred by Requires.
 const (
 	CapNet     uint32 = 1
@@ -17,6 +17,8 @@ const (
 	CapIMU     uint32 = 16
 	CapIRTX    uint32 = 32
 	CapIRRX    uint32 = 64
+	CapMic     uint32 = 128
+	CapSpk     uint32 = 256
 	CapAnyPort uint32 = 1 << 31 // port.Open with a driver name not known at build time
 )
 
@@ -73,7 +75,7 @@ var importCaps = map[string]uint32{
 
 // driverCaps maps a constant port.Open driver name to its capability.
 var driverCaps = map[string]uint32{
-	"kbd": CapKbd, "power": CapPower, "imu": CapIMU, "ir_tx": CapIRTX, "ir_rx": CapIRRX,
+	"kbd": CapKbd, "power": CapPower, "imu": CapIMU, "ir_tx": CapIRTX, "ir_rx": CapIRRX, "mic": CapMic, "spk": CapSpk,
 	"netif": CapNet, "udp": CapNet, "tcp": CapNet, "tcp_listen": CapNet,
 }
 

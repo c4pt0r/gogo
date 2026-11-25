@@ -139,6 +139,35 @@ TEST(vfs_routing) {
     CHECK(!vfs_mount("/flash/x", &memfs_be[0]));              /* prefix is one segment */
 }
 
+TEST(vfs_write_at) {
+    setup_default();
+    char b[32];
+    int w, r;
+    CHECK_EQ(vfs_open(S("/flash/a"), VFS_WRITE, &w), VFS_OK);
+    CHECK_EQ(vfs_write(w, (const uint8_t *)"hello", 5), VFS_OK);
+    CHECK_EQ(vfs_write_at(w, 1, (const uint8_t *)"EL", 2), VFS_OK);            /* inside */
+    CHECK_EQ(vfs_write_at(w, 0, (const uint8_t *)"HELLO", 5), VFS_OK);         /* the whole file */
+    CHECK_EQ(vfs_write_at(w, 3, (const uint8_t *)"abc", 3), VFS_BADPATH);      /* past the end */
+    CHECK_EQ(vfs_write_at(w, 6, (const uint8_t *)"x", 1), VFS_BADPATH);
+    CHECK_EQ(vfs_write_at(w, 5, (const uint8_t *)"x", 1), VFS_BADPATH);        /* exactly at the end: extends */
+    CHECK_EQ(vfs_write_at(w, 0xffffffffu, (const uint8_t *)"x", 2), VFS_BADPATH);   /* off + n wraps */
+    CHECK_EQ(vfs_write_at(w, 5, (const uint8_t *)"", 0), VFS_OK);              /* nothing to write */
+    CHECK_EQ(vfs_write(w, (const uint8_t *)"!", 1), VFS_OK);                   /* still appends */
+    CHECK_EQ(vfs_write_at(w, 5, (const uint8_t *)"?", 1), VFS_OK);
+    CHECK_EQ(vfs_write_at(w, 7, (const uint8_t *)"?", 1), VFS_BADPATH);
+    vfs_close(w);
+    CHECK_EQ(get("/flash/a", b, sizeof b), VFS_OK);
+    CHECK(strcmp(b, "HELLO?") == 0);
+    CHECK_EQ(vfs_open(S("/flash/a"), VFS_READ, &r), VFS_OK);                   /* wrong mode */
+    CHECK_EQ(vfs_write_at(r, 0, (const uint8_t *)"x", 1), VFS_CLOSED);
+    vfs_close(r);
+    CHECK_EQ(vfs_open(S("/flash/a"), VFS_APPEND, &w), VFS_OK);
+    CHECK_EQ(vfs_write_at(w, 0, (const uint8_t *)"x", 1), VFS_CLOSED);       /* Append refused */
+    vfs_close(w);
+    CHECK_EQ(vfs_write_at(w, 0, (const uint8_t *)"x", 1), VFS_CLOSED);        /* a closed slot */
+    CHECK_EQ(vfs_write_at(-1, 0, (const uint8_t *)"x", 1), VFS_CLOSED);
+}
+
 TEST(vfs_single_writer) {
     setup_default();
     int w, w2, r, r2;

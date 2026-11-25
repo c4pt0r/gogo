@@ -170,10 +170,12 @@ int stream_out_accept(struct Vm *vm, const Actor *from, Port *p, StreamOut *o, t
     return o->n == 1u ? 1 : 0;
 }
 
-const uint8_t *stream_out_head(const StreamOut *o, uint32_t *len) {
+const uint8_t *stream_out_at(const StreamOut *o, uint32_t k, uint32_t *len) {
     *len = 0;
-    return o->n ? bytes_data(o->held[0], len) : NULL;
+    return k < o->n ? bytes_data(o->held[k], len) : NULL;
 }
+
+const uint8_t *stream_out_head(const StreamOut *o, uint32_t *len) { return stream_out_at(o, 0, len); }
 
 static bool finish(struct Vm *vm, Port *p, StreamOut *o, bool ok) {
     if (!o->n) return false;

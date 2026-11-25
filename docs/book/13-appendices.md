@@ -158,6 +158,7 @@ const (fs.Read = 0; fs.Write = 1; fs.Append = 2)
 func fs.Open(path string, mode int) (File, Err)
 func (f File) Read(max int) (bytes.Bytes, Err)
 func (f File) Write(data any) Err   // string, bytes.Bytes or []byte
+func (f File) WriteAt(off int, data any) Err // Write-mode files, inside the file only
 func (f File) Sync() Err
 func (f File) Size() (int, Err)
 func (f File) Close()

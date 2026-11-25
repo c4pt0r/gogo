@@ -122,7 +122,9 @@ the first run.
 
 **Capabilities.** `platform_caps()` (same file) returns the `CAP_*` bits this
 build really has: `CAP_NET` (`GOGO_NET`), `CAP_KBD` (Cardputer with `GOGO_KBD`),
-`CAP_POWER` (`GOGO_BATTERY`), `CAP_SD` (Cardputer with `GOGO_SD`). An image or module whose
+`CAP_POWER` (`GOGO_BATTERY`), `CAP_SD` (Cardputer with `GOGO_SD`), `CAP_IMU`
+(`GOGO_IMU`), `CAP_IR_TX` (`GOGO_IR`), `CAP_IR_RX` (StickS3 with `GOGO_IR`),
+`CAP_MIC` and `CAP_SPK` (`GOGO_AUDIO`). An image or module whose
 `requires` word needs more is refused at boot (`gogo: image needs ...;
 firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
 64 KB) limits the total module code.
@@ -138,7 +140,7 @@ firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v10, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
+(format v11, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
 image version changes, reflash the firmware too: an older firmware refuses
 a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
 one). At boot the firmware checks the magic, the length (multiple of 4,
@@ -171,14 +173,14 @@ in `cmd/gogo/flash.go`.
   time after the previous level change (a key release's bounce). Refused
   pins (`board.h`): StickS3 19-20 (USB), 26-37 (in-package flash and octal
   PSRAM of the ESP32-S3-PICO-1-N8R8), 21, 38-41, 45 (LCD), 47-48 (M5PM1
-  I2C), 42 and 46 (IR); Cardputer ADV 19-20 (USB), 26-32 (flash), 33-38
-  (LCD), 12, 14, 39, 40 (SD card), 8-9 (I2C bus), 10 (battery ADC), 11
-  (keyboard INT), 44 (IR LED).
+  I2C), 42 and 46 (IR), 14-18 (codec I2S); Cardputer ADV 19-20 (USB), 26-32
+  (flash), 33-38 (LCD), 12, 14, 39, 40 (SD card), 8-9 (I2C bus), 10 (battery
+  ADC), 11 (keyboard INT), 44 (IR LED), 41-43 and 46 (codec I2S).
   The Cardputer's G0 button is free (Input, active low).
 - `i2c_bus.c`: the board's one shared I2C master bus, created on first use
   (before the VM starts, or on the scheduler thread; never in an ISR):
-  Cardputer ADV port 0, SDA G8, SCL G9 (TCA8418 keyboard, BMI270); StickS3
-  port 1, SDA G47, SCL G48 (M5PM1, BMI270). Internal pull-ups on.
+  Cardputer ADV port 0, SDA G8, SCL G9 (TCA8418 keyboard, BMI270, ES8311); StickS3
+  port 1, SDA G47, SCL G48 (M5PM1, BMI270, ES8311). Internal pull-ups on.
 - `input_esp.c`: the `InputHw` for `input/` (the `kbd` and `power` ports,
   design.md 5.4.3); `platform_input` itself is defined in `platform_esp.c`
   so the strong definition always beats the weak default in `input/source.c`.
@@ -287,14 +289,65 @@ in `cmd/gogo/flash.go`.
     on (checked on the board: `PWR_CFG` 0x17 -> 0x1F -> 0x17). **While it is
     on, the Grove and Hat 5 V pins are outputs: nothing may feed 5 V into
     them (M5 docs).** While `ir_rx` is open the speaker amplifier is held
-    off: PM1 GPIO3 (`GPIO_OUT` 0x11 bit 3 = 0 first, then `GPIO_FUNC0` 0x16
+    off: PM1 GPIO3 (`GPIO_OUT` 0x11 bit 3 first, then `GPIO_FUNC0` 0x16
     bit 3 = GPIO, `GPIO_DRV` 0x13 bit 3 = push-pull, `GPIO_MODE` 0x10 bit 3 =
-    output, so it never glitches on); closing turns it back on only if it was
-    an output driven high before. All PM1 users start with
+    output, so it never glitches on). `pm1.c` drives it to "the speaker
+    wants it and `ir_rx` does not block it" (`pm1_spk_amp`,
+    `pm1_spk_amp_block`): a `spk` open fails while `ir_rx` is open, and an
+    `ir_rx` opened during playback silences the speaker until it closes. All PM1 users start with
     `pm1_wake` (poll the chip up to 200 ms, `I2C_CFG` 0x09 = 0: no idle
     sleep), once per boot.
   - Pins G42, G46 (StickS3) and G44 (Cardputer, also U0RXD; the console is
     USB-Serial/JTAG) are reserved: the gpio port refuses them.
+- `audio_esp.c` (`GOGO_AUDIO`, both boards): the `mic_*` / `spk_*` hooks
+  of `InputHw` for `input/audio.c`, on the ES8311 codec (I2C 0x18 on the
+  shared bus, 100 kHz) and I2S. Pins (`board.h`, from M5Unified
+  `_begin_audio`): StickS3 BCLK G17, WS G15, DOUT G14, DIN G16 (G18, the
+  codec's MCLK, is not driven); Cardputer ADV BCLK G41, WS G43, DOUT G42,
+  DIN G46 (no MCLK). All reserved for the gpio port. Details and sources at
+  the top of the file; in short:
+  - Half duplex: one simplex I2S channel (I2S_NUM_0, master, Philips,
+    16-bit mono) created at open and deleted at close; every open restarts
+    the codec (reg 0x00 = 0x80) and programs its direction.
+  - The codec is clocked from BCLK (reg 0x01 bit 7), as M5Unified does: 16
+    kHz uses 16-bit slots (BCLK 512 kHz, codec x8), 8 kHz 32-bit slots
+    (BCLK 512 kHz, codec x4). Serial format written explicitly (0x09 =
+    0x0A = 0x0C, I2S 16-bit).
+  - mic: 11 DMA buffers of 30 ms (16 kHz: 960 B; 10.5 KB, internal RAM,
+    allocated at open) so 300 ms wait in the IDF queue; reads take whole
+    buffers through a staging copy; the first 2 buffers are discarded here
+    (not in `input/audio.c`); a queue overflow is reported as lost bytes.
+    `Gain` is dB above the platform's normal level (book 16.1); here
+    `Gain` 0 = PGA 30 dB + ADC scale 24 dB (54 dB), and `Gain` adds digital
+    volume. High-pass reg 0x1B = 0x0A, 0x1C = 0x64 (0x6A left a ~600 ms DC
+    step after each open).
+  - spk: 4 DMA buffers of 10 ms refilled by the `on_sent` callback from an
+    8 KB ring (internal RAM, allocated at open), so `spk_queued` is exact
+    and the latency at most 40 ms. Volume 1..100 = the board's ceiling
+    `AUDIO_SPK_MAX_DB` (`board.h`) minus 40 dB .. the ceiling, 0 mute. The
+    ceiling is 0 dB on the Cardputer ADV and **-4 dB on the StickS3**: at DAC
+    0 dB its USB console once stopped answering (probably a supply dip from
+    the amplifier; `docs/audio-followups.md`).
+  - Amplifier: StickS3: rail, codec, I2S running silence, then the
+    amplifier (PM1 GPIO3; a failure to switch it fails the open); close:
+    mute, amplifier off. Cardputer ADV: no amplifier enable pin is known
+    (M5Unified's ADV callback drives none): taken to be always on.
+  - The codec's analog reference stays on after the first open: powered
+    down, every open began with about 1 s of exact zeros (ES8311 warm-up).
+    The first `mic` open after power-up still has it. The idle current of
+    the reference is not measured (`docs/audio-followups.md`).
+  - `GOGO_AUDIO` selects `CONFIG_I2S_ISR_IRAM_SAFE` (the two callbacks are
+    `IRAM_ATTR`): without it a `/flash` write holds the I2S interrupt off and
+    the GDMA reports only the last finished buffer, so the others would be
+    lost (mic) or replayed (spk). Recording 16 kHz to `/flash` loses nothing
+    (`examples/audiohw`).
+  - Checks: `examples/audiohw` (half duplex, record and analyse, tone
+    timing, playback), `examples/audiotone` + `examples/audiolisten` in
+    `platform/esp32s3/examples` (one board plays, the other listens).
+  - Off (`GOGO_AUDIO=n`): `audio_esp.c` and the IDF I2S driver are not
+    linked; `input/audio.c` (the common driver) still is, its ports fail to
+    open. Cost of audio (2026-11-25): StickS3 +18720 B firmware, +592 B
+    static DIRAM; Cardputer ADV +19680 B, +820 B.
 - `image_part.c`: the partition check and mmap above.
 - `main.c`: the VM runs in a FreeRTOS task pinned to CPU1.
 - Screen (debug console, mirror of stdout/stderr):
@@ -302,7 +355,8 @@ in `cmd/gogo/flash.go`.
     PM1 GPIO2 high = LCD rail, 200 ms settle (M5GFX/M5Unified StickS3
     sequence, cited in the file). Also `pm1_wake` (idle sleep off, once, for
     every PM1 user), EXT_5V (`PWR_CFG` bit 3) and rail L1 (bit 2) on, and the
-    speaker amplifier (GPIO3) for `ir_esp.c` / `imu_esp.c`.
+    speaker amplifier (GPIO3) for `ir_esp.c` / `audio_esp.c`, and the codec
+    rail (L3B, GPIO2, the LCD's) for `audio_esp.c`.
   - `lcd_st7789.c`: ST7789 135x240 used as landscape 240x135 (column
     offset 40, row offset 53, MADCTL 0x6C, inverted; the same on both
     boards), SPI3 40 MHz with DMA, pins from `board.h`; backlight G38.
@@ -540,6 +594,12 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   owning actor (only the arena buffers above are); they are system heap,
   held only while the port is open.
 
+- `GOGO_AUDIO` (default y): `audio_esp.c`, the `mic` and `spk` ports on the
+  ES8311 and I2S (both boards; see `audio_esp.c` above). It selects
+  `CONFIG_I2S_ISR_IRAM_SAFE`. Off: `port.Open` of `mic` and `spk` returns
+  ok=false, `CAP_MIC`/`CAP_SPK` are 0, and the IDF I2S driver is not linked;
+  `input/audio.c` (the common driver) is still linked. Cost: StickS3 +18720 B
+  `gogo.bin`, +592 B static DIRAM; Cardputer ADV +19680 B, +820 B.
 - `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `net/*.c`
   are not built, the capability `net` is absent (an image that needs it is
   refused at boot with the missing cap named), `port.Open` of `netif`, `udp`,
@@ -629,16 +689,16 @@ firmware` does this for its own directory, see below.)
 `gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list]
 [-without list] files...` reads the `requires` word of the given images and
 modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
-`_BATTERY`, `_SD`, `_FS_EXFAT`, `_FONT_CJK`), then prints (or, with
+`_BATTERY`, `_SD`, `_FS_EXFAT`, `_FONT_CJK`, `_IMU`, `_IR`, `_AUDIO`), then prints (or, with
 `-build`, runs) the matching build:
 
     idf.py -C platform/esp32s3 -B <dir> -DGOGO_BOARD=<board> -DSDKCONFIG=<dir>/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;<board overlay>;<dir>/sdkconfig.gogo" build
 
-Feature names are `net kbd power sd exfat cjk imu irtx irrx`; `net`, `kbd`,
+Feature names are `net kbd power sd exfat cjk imu irtx irrx mic spk`; `net`, `kbd`,
 `power` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
-`imu`, `irtx`, `irrx` are on by default and `-without` turns them off
-(`irtx` and `irrx` are one switch, `GOGO_IR`). A required feature cannot be removed,
+`imu`, `irtx`, `irrx`, `mic`, `spk` are on by default and `-without` turns them off
+(`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `spk` are one, `GOGO_AUDIO`). A required feature cannot be removed,
 and one the board lacks (`kbd`, `sd` on the StickS3) is an error. The board
 feature table is in `cmd/gogo/firmware.go` and must match `main/board.h` and
 `main/Kconfig.projbuild`. `gogo firmware` owns its build directory: if

@@ -1,7 +1,8 @@
 /* M5PM1 power-management chip (I2C SDA G47, SCL G48, address 0x6E): turns
  * on the rail that powers the LCD, reports the battery (input_esp.c), and
  * switches EXT_5V and the speaker amplifier for the IR ports and the IMU
- * rail (ir_esp.c, imu_esp.c). The bus handle comes from i2c_bus.c.
+ * rail (ir_esp.c, imu_esp.c), and the codec rail and the amplifier for
+ * audio (audio_esp.c). The bus handle comes from i2c_bus.c.
  *
  * Reference (read only, not vendored; MIT): M5GFX 28d4794 (2026-11-05) and
  * M5Unified 96576a1 (2026-11-06), github.com/m5stack:
@@ -154,17 +155,47 @@ int pm1_imu_power_on(void) {
 }
 
 /* The speaker amplifier enable, PM1 GPIO3 (M5Unified.inl:1975-1983 and
- * :662-695): GPIO function, push-pull output, high = on. The IR receiver
- * does not work while the amplifier is on (docs.m5stack.com StickS3, "IR
- * reception notes"). *was (may be NULL) is true only if GPIO3 was already
- * an output driven high. The level is written before the pin becomes an
- * output, so a stale OUT bit never glitches the amplifier on. */
-int pm1_spk_amp(bool on, bool *was) {
-    uint8_t out, mode;
-    if (pm1_wake() != 0 || rd(REG_GPIO_OUT, &out) != 0 || rd(REG_GPIO_MODE, &mode) != 0) return -1;
-    if (was) *was = (out & SPK_AMP_BIT) && (mode & SPK_AMP_BIT);
+ * :662-695): GPIO function, push-pull output, high = on. The level is
+ * written before the pin becomes an output, so a stale OUT bit never
+ * glitches the amplifier on. */
+static int spk_amp_set(bool on) {
+    if (pm1_wake() != 0) return -1;
     if (set_bits(REG_GPIO_OUT, SPK_AMP_BIT, on) != 0 || set_bits(REG_GPIO_FUNC0, SPK_AMP_BIT, 0) != 0 ||
         set_bits(REG_GPIO_DRV, SPK_AMP_BIT, 0) != 0)
         return -1;
     return set_bits(REG_GPIO_MODE, SPK_AMP_BIT, 1);
+}
+
+/* Two users share the amplifier: the speaker wants it on while spk is
+ * open (audio_esp.c), and the IR receiver needs it off while ir_rx is open
+ * (docs.m5stack.com StickS3, "IR reception notes": the receiver does not
+ * work while the amplifier is on; ir_esp.c). The pin is driven to
+ * "wanted and not blocked". Both run on the scheduler thread. */
+static bool amp_want, amp_block;
+
+int pm1_spk_amp(bool on) {
+    amp_want = on;
+    return spk_amp_set(on && !amp_block);
+}
+
+int pm1_spk_amp_block(bool block) {
+    amp_block = block;
+    return spk_amp_set(amp_want && !block);
+}
+
+bool pm1_spk_amp_blocked(void) { return amp_block; }
+
+/* The ES8311 codec's supply: rail L3B, switched by PM1 GPIO2 like the LCD
+ * (3P Kmal/sticks3-local-automation board_audio_power.c; M5Unified never
+ * switches it, because M5GFX's sticks3_power_on already did). On with the
+ * console; without it this turns the rail on and waits 10 ms for it. */
+int pm1_audio_power_on(void) {
+    uint8_t out, mode;
+    if (pm1_wake() != 0 || rd(REG_GPIO_OUT, &out) != 0 || rd(REG_GPIO_MODE, &mode) != 0) return -1;
+    if ((out & LCD_RAIL_BIT) && (mode & LCD_RAIL_BIT)) return 0;
+    if (set_bits(REG_GPIO_OUT, LCD_RAIL_BIT, 1) != 0 || set_bits(REG_GPIO_FUNC0, LCD_RAIL_BIT, 0) != 0 ||
+        set_bits(REG_GPIO_DRV, LCD_RAIL_BIT, 0) != 0 || set_bits(REG_GPIO_MODE, LCD_RAIL_BIT, 1) != 0)
+        return -1;
+    vTaskDelay(pdMS_TO_TICKS(10));
+    return 0;
 }

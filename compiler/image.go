@@ -13,8 +13,10 @@ const (
 	// v6: B_FS and the gogo/fs reserved types; v7: the const map after the
 	// code, see constMap; v8: reserved types kbd.*, power.*; v9: requires
 	// bitmask and exports table after the const map, B_CODE and the
-	// gogo/code reserved type Module).
-	imageVersion = 10
+	// gogo/code reserved type Module; v10: the port stream types Chunk,
+	// Out, Done and the gogo/imu and gogo/ir reserved types; v11: the
+	// gogo/audio reserved types Mic and Speaker, requires bits mic and spk).
+	imageVersion = 11
 )
 
 // ImageVersion is the image format version this compiler emits.

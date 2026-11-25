@@ -39,11 +39,11 @@ static int load_error(const char *path, const char *what) {
     return 2;
 }
 
-/* The unix keyboard, battery, motion sensor and infrared are simulated from stdin (input_unix.c). */
+/* The unix keyboard, battery, motion sensor, infrared and audio are simulated (input_unix.c). */
 const InputHw *platform_input(void) { return &input_unix_hw; }
 int platform_unix_input_drivers(const struct PortDriver **out, int cap) {
-    if (cap < 5) {   /* the driver list in platform_unix.c is full: skip them, loudly */
-        fprintf(stderr, "gogovm: no room in the port driver list: kbd, power, imu and ir skipped\n");
+    if (cap < 7) {   /* the driver list in platform_unix.c is full: skip them, loudly */
+        fprintf(stderr, "gogovm: no room in the port driver list: kbd, power, imu, ir, mic and spk skipped\n");
         return 0;
     }
     out[0] = &input_kbd_driver;
@@ -51,7 +51,9 @@ int platform_unix_input_drivers(const struct PortDriver **out, int cap) {
     out[2] = &input_imu_driver;
     out[3] = &input_ir_tx_driver;
     out[4] = &input_ir_rx_driver;
-    return 5;
+    out[5] = &input_mic_driver;
+    out[6] = &input_spk_driver;
+    return 7;
 }
 
 
@@ -94,6 +96,16 @@ int main(int argc, char **argv) {
             platform_unix_set_caps(caps);
         } else if (strcmp(argv[1], "--fs-root") == 0) {
             fs_root = argv[2];
+        } else if (strcmp(argv[1], "--fs-quota") == 0) {
+            /* --fs-quota <bytes>: test only, the host fs backend returns NoSpace
+             * once this many bytes were written (cumulative, all files). */
+            char tail;
+            long long q;
+            if (sscanf(argv[2], "%lld%c", &q, &tail) != 1 || q < 0) {
+                fprintf(stderr, "gogovm: bad --fs-quota %s\n", argv[2]);
+                return 2;
+            }
+            fs_host_set_quota(q);
         } else if (strcmp(argv[1], "--net-fd") == 0) {
             char tail;
             if (sscanf(argv[2], "%d%c", &net_fd, &tail) != 1 || net_fd < 0) {
@@ -111,7 +123,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (argc != 2) {
-        fprintf(stderr, "usage: gogovm [--caps <hex>] [--key <c>=<pin>]... [--fs-root <dir>] [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
+        fprintf(stderr, "usage: gogovm [--caps <hex>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes> (test)] [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
         return 2;
     }
     if (net_fd >= 0) {

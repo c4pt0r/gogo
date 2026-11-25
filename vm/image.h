@@ -23,6 +23,11 @@
  *       refs, closure and struct type words carry a module tag (term.h);
  *       images keep them untagged, so const offsets are 17 bits, function
  *       indexes 21 and type indexes 16.
+ *   v10 streams: reserved types port.Chunk (35), port.Out (36), port.Done
+ *       (37), imu.Config (38), imu.Gesture (39), ir.Tx (40), ir.Rx (41);
+ *       requires bits imu, ir_tx and ir_rx.
+ *   v11 audio: reserved types audio.Mic (42), audio.Speaker (43);
+ *       requires bits mic and spk.
  *
  * Layout (little-endian words): header (8: magic, version, n_funcs,
  * n_types, consts_words, code_words, entry, 0), funcs (3 words each),
@@ -38,7 +43,7 @@
 #include <stddef.h>
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 10u
+#define IMAGE_VERSION 11u
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {

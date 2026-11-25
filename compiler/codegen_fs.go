@@ -21,6 +21,7 @@ const (
 	FsRemove    = 10
 	FsRename    = 11
 	FsUsage     = 12
+	FsWriteAt   = 13
 )
 
 // fsOps maps each gogo/fs function (stubName) and method (fsMethod) except
@@ -29,7 +30,7 @@ var fsOps = map[string]int32{
 	"fs.Open": FsOpen, "File.Read": FsRead, "File.Write": FsWrite, "File.Sync": FsSync,
 	"File.Size": FsSize, "fs.ReadFile": FsReadFile, "fs.WriteFile": FsWriteFile,
 	"fs.Stat": FsStat, "fs.ReadDir": FsReadDir, "fs.Mkdir": FsMkdir,
-	"fs.Remove": FsRemove, "fs.Rename": FsRename, "fs.Usage": FsUsage,
+	"fs.Remove": FsRemove, "fs.Rename": FsRename, "fs.Usage": FsUsage, "File.WriteAt": FsWriteAt,
 }
 
 // fsCall compiles a call of the gogo/fs function or method called name

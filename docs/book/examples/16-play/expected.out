@@ -1,0 +1,7 @@
+create 0
+write 0 10000
+close 0
+missing file false
+bad file false
+play true
+played /flash/ramp.wav bytes 10000 dones 3 err 0
