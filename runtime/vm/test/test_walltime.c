@@ -72,7 +72,7 @@ TEST(random_varies) {
     CHECK(a != b || b != c);
 }
 
-/* A new time base (vm_run's t0) moves vm_now, not the wall clock. */
+/* A new time base (vm_start's t0) moves vm_now, not the wall clock. */
 TEST(walltime_keeps_across_t0) {
     test_host_set_clock(fake_clock);
     fake_now = 500;

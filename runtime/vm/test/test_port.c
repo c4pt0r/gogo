@@ -841,8 +841,8 @@ static bool src_deadline(const Vm *vm, void *ctx, uint64_t *d) { (void)vm; (void
 static const PortSource test_src = { src_pending, src_drain, src_live, src_deadline, NULL };
 
 /* A source whose drain leaves work behind (as a sliced TLS handshake
- * does) is drained again at once: vm_run checks pending() before it
- * sleeps. Its only deadline is 300 ms away, so without that check each
+ * does) is drained again at once: vm_step checks pending() before it
+ * reports idle. Its only deadline is 300 ms away, so without that check each
  * re-drain would wait for it (6 x 300 ms). */
 static struct { int left, drains; } busy;
 static bool busy_pending(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return busy.left > 0; }
@@ -865,7 +865,7 @@ TEST(port_source_busy) {
     CHECK(port_add_source(&vm, &busy_src, NULL));
     CHECK_EQ(vm_run(&vm), 0);
     CHECK_EQ(busy.drains, 6);
-    CHECK(vm_now(&vm) < 250u);                  /* the clock restarts at vm_run */
+    CHECK(vm_now(&vm) < 250u);                  /* the clock restarts at vm_start */
     port_remove_source(&vm, &busy_src);
     teardown();
 }

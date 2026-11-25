@@ -33,13 +33,19 @@ typedef struct gogo_host {
      * Required. */
     uint64_t (*now_ms)(void *ctx);
     /* Wakes a wait in progress or latches one for the next wait. Any
-     * thread or ISR; never locks or allocates. NULL if nothing ever waits. */
+     * thread or ISR; never locks or allocates. Required whenever the host
+     * sleeps between steps, through wait or a wait of its own: event
+     * sources (ports, net RX) and posts from other threads call it. NULL
+     * only if the host never sleeps (it steps the VM in a busy loop) or if
+     * no event source, other thread or post can make work. */
     void     (*wake)(void *ctx);
     /* Idle wait (the VM's own run loop only): returns after timeout_ms
      * (UINT32_MAX = none) or earlier once woken. Latched: a wake since the
      * previous wait returned makes it return at once. Spurious early
-     * returns are fine. NULL: the host steps the VM itself
-     * between its own waits (the VM's run loop refuses to start). */
+     * returns are fine. NULL: the host steps the VM itself between waits
+     * of its own (the VM's run loop refuses to start); those waits must be
+     * latched the same way, with the latch consumed before each step and
+     * never between an idle result and the wait. */
     void     (*wait)(void *ctx, uint32_t timeout_ms);
     /* Wall clock (an RTC), Unix ms, 0 = unknown. NULL: the VM keeps its own
      * offset clock, unknown until set. set returns 1, or 0 to refuse;

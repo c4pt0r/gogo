@@ -565,7 +565,7 @@ static void u_drain(Vm *vm) {
 
 /* Only the blocked-delivery retry is a deadline: work left for the next
  * drain (TS_KICK, TS_DEAD) is pending(), which the scheduler checks before
- * it sleeps (vm_run). */
+ * it reports idle (vm_step). */
 static bool u_next_deadline(const NetState *ns, uint64_t *deadline) {
     const TlsConn *t = ns->tls.conn;
     if (!t || !(t->flags & TS_RETRY)) return false;

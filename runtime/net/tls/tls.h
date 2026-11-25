@@ -22,7 +22,7 @@
  *    GOGO_TLS_MAX_OPS), so a step gives up (MBEDTLS_ERR_SSL_CRYPTO_IN_PROGRESS)
  *    and resumes on the next drain, which runs at once (the layer's
  *    pending() stays true, and the scheduler does not sleep while a source
- *    has work: vm_run).
+ *    has work: vm_step).
  *    Connected follows the handshake.
  *    TimeoutMs bounds connect plus handshake (GOGO_TLS_HANDSHAKE_MS when 0).
  *    NOT sliced (docs/known-issues.md): the ECDHE key

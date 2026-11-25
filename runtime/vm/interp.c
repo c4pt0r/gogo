@@ -1374,11 +1374,7 @@ void vm_stop(Vm *vm) {
 }
 
 int vm_run(Vm *vm) {
-    if (!vm->host->wait) {
-        write_err_lit("gogo: host has no wait\n");
-        return 1;
-    }
-    if (vm_start(vm)) return 1;
+    if (!vm->host->wait || vm_start(vm)) return 1;   /* no wait: the host steps */
     while (vm_step(vm, 0) != VM_DONE) {
         /* Idle: wait for the next deadline or a port event. An event pushed
          * after vm_step's last check is not lost: producers wake the host

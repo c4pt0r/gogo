@@ -99,6 +99,7 @@ TEST(step_timer_deadline) {
     CHECK_EQ(vm_start(&vm), 0);
     uint64_t dl = 0;
     CHECK(!vm_next_deadline(&vm, &dl));          /* main has not run yet */
+    CHECK_EQ(vm_step(&vm, 1), VM_IDLE);          /* budget spent on main's Sleep: idle */
     CHECK_EQ(vm_step(&vm, 0), VM_IDLE);
     CHECK(vm_next_deadline(&vm, &dl));
     CHECK_EQ(dl, 50);
@@ -116,7 +117,7 @@ TEST(step_timer_deadline) {
 /* An extra source: live while `live`, due while `left` > 0 (each drain is
  * one slice of its work, like a sliced TLS handshake); the first drain
  * after `push_once` is set pushes a ring event, as an ISR could mid-pass. */
-static struct { bool live, push_once; int left, drains; } src;
+static struct { bool live, push_once, have_dl; int left, drains; uint64_t dl; } src;
 static bool s_pending(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return src.left > 0; }
 static void s_drain(Vm *vm, void *ctx, uint64_t now) {
     (void)ctx; (void)now;
@@ -129,7 +130,7 @@ static void s_drain(Vm *vm, void *ctx, uint64_t now) {
     }
 }
 static bool s_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return src.live; }
-static bool s_deadline(const Vm *vm, void *ctx, uint64_t *d) { (void)vm; (void)ctx; (void)d; return false; }
+static bool s_deadline(const Vm *vm, void *ctx, uint64_t *d) { (void)vm; (void)ctx; if (src.have_dl) *d = src.dl; return src.have_dl; }
 static const PortSource step_src = { s_pending, s_drain, s_live, s_deadline, NULL };
 
 static void src_setup(Vm *vm, uint32_t *w, Image *img) {
@@ -190,6 +191,42 @@ TEST(step_busy_source) {
     port_remove_source(&vm, &step_src);
 }
 
+/* A source deadline feeds vm_next_deadline, and the earlier of it and a
+ * timer wins. Main sleeps 100 ms (a timer at 100). */
+TEST(step_source_deadline) {
+    uint32_t w[SLEEP_WORDS]; Image img; Vm vm;
+    sleep_image(w, &img, 100);
+    init(&vm, &img);
+    memset(&src, 0, sizeof src);
+    src.live = true;
+    fake_ms = 7;
+    test_host_set_clock(fake_clock);
+    CHECK(port_add_source(&vm, &step_src, NULL));
+    CHECK_EQ(vm_start(&vm), 0);
+    CHECK_EQ(vm_step(&vm, 0), VM_IDLE);
+    uint64_t dl = 0;
+    CHECK(vm_next_deadline(&vm, &dl));
+    CHECK_EQ(dl, 100);                           /* the timer alone */
+    src.have_dl = true;
+    src.dl = 40;
+    CHECK(vm_next_deadline(&vm, &dl));
+    CHECK_EQ(dl, 40);                            /* the source's is earlier */
+    CHECK_EQ(vm_host_ms(&vm, dl), 47);
+    src.dl = 250;
+    CHECK(vm_next_deadline(&vm, &dl));
+    CHECK_EQ(dl, 100);                           /* the timer's is earlier */
+    fake_ms = 107;
+    src.have_dl = false;
+    src.live = false;
+    CHECK_EQ(vm_step(&vm, 0), VM_DONE);          /* main woke and returned */
+    src.have_dl = true;
+    CHECK(vm_next_deadline(&vm, &dl));           /* only the source's now */
+    CHECK_EQ(dl, 250);
+    vm_stop(&vm);
+    port_remove_source(&vm, &step_src);
+    test_host_set_clock(NULL);
+}
+
 /* DONE once main has exited and nothing else is live; a finished or
  * stopped Vm stays DONE and refuses vm_start and vm_run. */
 TEST(step_done_and_reentry) {
@@ -223,7 +260,7 @@ TEST(step_run_needs_wait) {
     CHECK_EQ(vm_run(&vm), 1);
     platform_unix_err_hook = NULL;
     test_host.wait = wait;
-    CHECK(strstr(err_buf, "host has no wait") != NULL);
+    CHECK_EQ(err_len, 0u);                       /* refused without a message */
     CHECK_EQ(vm.run_state, VM_ST_NEW);
     CHECK_EQ(vm_run(&vm), 0);                    /* with wait: runs */
     CHECK_EQ(vm_run(&vm), 1);                    /* once */

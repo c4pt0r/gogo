@@ -857,8 +857,8 @@ explains it from the user's side.
   (ServerKeyExchange and the certificate chain) are split with PSA's
   interruptible operations (`GOGO_TLS_MAX_OPS` per slice), and a slice
   that gives up continues at the next drain. While work remains, the
-  port source's `pending()` stays true, and `vm_run` checks it before
-  sleeping, so the next slice runs at once. **Not sliced:** the ECDHE key
+  port source's `pending()` stays true, and `vm_step` checks it before
+  reporting idle, so the next slice runs at once. **Not sliced:** the ECDHE key
   generation plus agreement (one step) and each RSA signature check.
 - **Verification is always on.** The platform provides the trust anchors
   (`platform_tls_verify_setup`); validity dates are checked against the
@@ -1071,7 +1071,7 @@ The VM holds at most `GOGO_MAX_MODULES` (8 by default, at most 8)
 modules in its module table `Vm.mods` (`runtime/vm/module.h`). The boot
 image is module 0 and takes the same load and start path as a hot-loaded
 module: `vm_boot` installs the image in slot 0 (the capability check
-included), and `vm_run` starts it with `module_spawn` through its export
+included), and `vm_start` starts it with `module_spawn` through its export
 `main` (without one it reports `gogo: image has no main` and exits
 non-zero). Module 0 differs only in that its code is in flash, it does
 not count against the code-memory limit, and the VM holds it forever.
@@ -1332,6 +1332,11 @@ together with `mbox_words` through `actor_charged_words`).
   scheduler computes the nearest deadline (timers and event sources) and
   waits on the platform (`platform_wait`: a FreeRTOS notification on the
   ESP, `poll` on Unix) until an interrupt or event wakes it.
+- The run loop is split (`runtime/vm/interp.h`): `vm_start` starts
+  `main`, `vm_step` runs scheduler passes and reports runnable, idle or
+  done, `vm_next_deadline` gives the nearest deadline and `vm_stop`
+  closes the ports. `vm_run` loops over them; an embedding host may
+  call them itself, waiting with the same latched wakeup.
 
 ### 5.8 Errors and crashes
 

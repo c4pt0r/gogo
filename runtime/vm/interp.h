@@ -31,7 +31,15 @@ bool vm_spawn_opt_words(const Vm *vm, const Actor *a, term opts, uint16_t *out);
 /* Running a program. A host either calls vm_run, or drives the scheduler
  * itself: vm_start once, then vm_step until it returns VM_DONE (waiting
  * between steps while it returns VM_IDLE), then vm_stop. All on the
- * thread that owns the Vm. */
+ * thread that owns the Vm.
+ *
+ * Latched wake, for a host that steps the Vm itself: events arrive from
+ * ISRs and other threads (evq_push, net RX) and call host->wake, so such
+ * a host MUST still provide wake, and its own wait MUST be latched: a wake
+ * since the host last consumed the latch makes the wait return at once.
+ * The host consumes (clears) the latch before it calls vm_step, never
+ * between a VM_IDLE result and its wait; then a wake that lands after
+ * vm_step's final check is never slept through. */
 
 /* vm_step's results. */
 enum { VM_RUNNABLE, VM_IDLE, VM_DONE };
@@ -47,11 +55,14 @@ enum { VM_ST_NEW, VM_ST_RUN, VM_ST_DONE };
 int vm_start(Vm *vm);
 
 /* Runs scheduler passes: each delivers queued events and due source work,
- * fires due timers and runs one time slice of the next runnable actor.
- * budget: passes to run, 0 = until VM_IDLE or VM_DONE. Returns
- *  VM_RUNNABLE: the budget ran out (actors may be runnable or work due);
+ * fires due timers and runs at most one time slice of the next runnable
+ * actor. budget: scheduler passes to run (a pass that runs no actor, only
+ * a drain, counts too), 0 = until VM_IDLE or VM_DONE. Returns
+ *  VM_RUNNABLE: the budget ran out and work remains (an actor is
+ *               runnable, or events, source work or a timer are due);
  *  VM_IDLE:     nothing is runnable, no event is queued, no source and no
- *               timer is due: wait until vm_next_deadline or a host wake;
+ *               timer is due: wait (latched, above) until vm_next_deadline
+ *               or a wake;
  *  VM_DONE:     no actor is runnable, no timer is pending and no port or
  *               source is live (every actor exited or is blocked for
  *               good), or the Vm is not started. Call vm_stop. */
@@ -59,7 +70,9 @@ int vm_step(Vm *vm, uint32_t budget);
 
 /* The earliest pending timer or port/source deadline, as an absolute
  * vm_now value (the Vm's epoch; vm_host_ms converts it to the host's
- * now_ms epoch). False if there is none: only a wake can make work. */
+ * now_ms epoch). It may already have passed by the time the host reads
+ * its clock: step again at once (compare before subtracting). False if
+ * there is none: only a wake can make work. */
 bool vm_next_deadline(const Vm *vm, uint64_t *abs_vm_ms);
 
 /* A vm_now value as a host->now_ms value. */
@@ -71,8 +84,8 @@ void vm_stop(Vm *vm);
 
 /* vm_start, then vm_step(vm, 0), waiting in host->wait while it returns
  * VM_IDLE, until VM_DONE; then vm_stop. Returns 0 then; 1 if vm_start
- * fails, or at once if the host has no wait hook ("gogo: host has no
- * wait" on stderr: such a host drives vm_step itself). */
+ * fails, or at once (no message) if the host has no wait hook: such a
+ * host drives vm_step itself. */
 int vm_run(Vm *vm);
 
 #endif
