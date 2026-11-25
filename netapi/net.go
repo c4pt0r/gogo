@@ -24,7 +24,9 @@
 //     actor.Send(u, SendTo{Addr, Data}); datagrams arrive at the owner as
 //     Datagram{From, Data}, Data a heap copy of the payload. A datagram that
 //     would take the owner past its memory limit is dropped (the owner is
-//     not killed; UDP has no retransmission). A datagram to a host whose
+//     not killed; UDP has no retransmission); delivery leaves room for an
+//     Up. A Call reply to an owner whose mailbox datagrams filled is an
+//     ordinary message and can still kill it. A datagram to a host whose
 //     Ethernet address is not known yet is dropped while the stack asks for
 //     it (ARP); send again.
 //   - "tcp", cfg Dial{IP, Port, TimeoutMs} (TimeoutMs 0: the retransmission
@@ -106,7 +108,9 @@ type Datagram struct {
 // Subscribe makes the caller receive Up and Down; Up at once if the
 // interface is up already. ok is false if there is no network or the
 // subscriber table (4 live subscribers) is full. Subscribing twice is
-// the same as once; a subscriber's exit ends it.
+// the same as once; a subscriber's exit ends it. An Up or Down never
+// kills a subscriber: one that does not fit its memory limit is resent,
+// with the state current then, once it has room.
 func Subscribe() (ok bool) { panic("gogo only") }
 
 // Dial configures a "tcp" port: connect to IP:Port. TimeoutMs bounds the

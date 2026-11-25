@@ -5,6 +5,7 @@
 #include "alloc.h"
 #include "opcodes.h"
 #include "platform.h"
+#include "signals.h"
 #include <string.h>
 
 NetState net_s;
@@ -39,6 +40,15 @@ Msg *net_msg_new(uint32_t words) {
     return m;
 }
 
+bool net_deliver(Vm *vm, Actor *o, Msg *m, uint32_t reserve) {
+    for (int k = 0; k < 2; k++) {
+        if ((uint32_t)o->mem_words + actor_charged_words(o) + msg_charge_words(m) + reserve <=
+                actor_max_words(o) && msg_try_enqueue(vm, o, m)) return true;
+        if (k || !heap_reclaim_waiting(vm, o)) break;
+    }
+    return false;
+}
+
 /* ---- Up / Down ---- */
 
 /* Retry interval for an Up/Down that could not be allocated. */
@@ -46,8 +56,9 @@ Msg *net_msg_new(uint32_t words) {
 
 static bool due(uint32_t t, uint32_t now) { return (int32_t)(now - t) >= 0; }
 
-/* Up{IP, Gateway, DNS} or Down{} to a (M2 quota rules, like port events);
- * false if the message could not be allocated. */
+/* Up{IP, Gateway, DNS} or Down{} to a, never killing it (spec §9.1);
+ * false if the message could not be allocated or a has no room for it
+ * (the caller owes it and retries). */
 static bool notify(Vm *vm, Actor *a, bool up) {
     int32_t v[3] = { (int32_t)net_s.up_ip, (int32_t)net_s.up_gw, (int32_t)net_s.up_dns };
     uint32_t words = 2u;
@@ -60,8 +71,9 @@ static bool notify(Vm *vm, Actor *a, bool up) {
     if (up) {
         for (uint32_t i = 0; i < 3; i++) m->data[2 + i] = net_put_int(m->data, &at, v[i]);
     }
-    msg_enqueue(vm, a, m, true);
-    return true;
+    if (net_deliver(vm, a, m, 0)) return true;   /* a waiting a's slack collected first */
+    msg_free(m);
+    return false;
 }
 
 /* The live subscriber in slot i, or NULL (a dead one's slot is freed). */

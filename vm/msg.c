@@ -323,19 +323,30 @@ static void drop_head(Actor *a) {
     msg_free(m);
 }
 
+/* Unpacks queued m into a's heap. Only m's own block stops counting
+ * against a's limit first (so it is not counted twice while unpacking).
+ * Its off-heap Bytes, and the holder list adopting them may make, stay
+ * charged to the mailbox until bytes_adopt has charged them to a: the GC
+ * that makes room cannot grow the block into their room, so a never ends
+ * a successful receive over its limit. On failure m stays queued. */
+static bool take(Vm *vm, Actor *a, Msg *m, term *out) {
+    uint32_t fw = msg_charge_words(m), keep = fw - msg_footprint_words(m->words);
+    if (m->flags & MSG_HANDLES) keep += bytes_list_words(a);
+    a->mbox_words = (uint16_t)(a->mbox_words - fw + keep);
+    if (!msg_unpack(vm, a, m, out)) {
+        a->mbox_words = (uint16_t)(a->mbox_words + fw - keep);
+        return false;
+    }
+    a->mbox_words = (uint16_t)(a->mbox_words - keep);
+    return true;
+}
+
 bool msg_receive(Vm *vm, Actor *a, term *out) {
     /* Replies are for Call only; any at the head are stale. */
     while (a->mbox_head && (a->mbox_head->flags & MSG_REPLY)) drop_head(a);
     Msg *m = a->mbox_head;
     if (!m) return false;
-    /* The message moves from the mailbox into the heap: stop counting it
-     * against the limit first, so it is not counted twice while unpacking. */
-    uint16_t fw = (uint16_t)msg_charge_words(m);
-    a->mbox_words = (uint16_t)(a->mbox_words - fw);
-    if (!msg_unpack(vm, a, m, out)) {
-        a->mbox_words = (uint16_t)(a->mbox_words + fw);  /* stays queued */
-        return false;
-    }
+    if (!take(vm, a, m, out)) return false;
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
     msg_free(m);
@@ -365,13 +376,7 @@ int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out) {
         if (!(m->flags & MSG_REPLY)) {
             prev = m;
         } else if (((uint64_t)m->data[0] | ((uint64_t)m->data[1] << 32)) == serial) {
-            /* As in msg_receive: not counted twice while unpacking. */
-            uint16_t fw = (uint16_t)msg_charge_words(m);
-            a->mbox_words = (uint16_t)(a->mbox_words - fw);
-            if (!msg_unpack(vm, a, m, out)) {
-                a->mbox_words = (uint16_t)(a->mbox_words + fw);
-                return -1;
-            }
+            if (!take(vm, a, m, out)) return -1;
             /* unpack may GC but never touches the queue; unlink m. */
             if (prev) prev->next = next; else a->mbox_head = next;
             if (!next) a->mbox_tail = prev;

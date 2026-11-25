@@ -20,7 +20,7 @@ static void drop_err(const char *s, size_t n) { (void)s; (void)n; }
  *   LOADK r0, <ms>; BUILTIN r1, r0, 1, RECEIVE_TIMEOUT (-> r1, r2);
  *   BUILTIN r0, r0, 0, RECEIVE (blocks, so r1/r2 can be inspected); RET r0
  * Layout: 8 header + 3 func + 3 consts + 7 code = 21 words. */
-#define IMG_WORDS 21
+#define IMG_WORDS 22
 static void build_rt(uint32_t *w, int32_t ms) {
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
@@ -36,7 +36,7 @@ static void build_rt(uint32_t *w, int32_t ms) {
 static void setup_ms(uint32_t *w, Image *img, Vm *vm, int32_t ms) {
     va_reset();
     build_rt(w, ms);
-    CHECK_EQ(image_load(img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(vm, img, 8), 0);
 }
 
@@ -293,7 +293,7 @@ TEST(timer_receive_timeout_zero) {
 /* A loop of SendAfter(1000000, self, 5):
  *   LOADK r1, 1000000; SELF r2; LOADK r3, 5; SEND_AFTER r0, r1..r3; JMP 6
  * Layout: 8 header + 3 func + 3 consts + 10 code = 24 words. */
-#define LOOP_WORDS 24
+#define LOOP_WORDS 25
 static void build_send_loop(uint32_t *w) {
     memset(w, 0, LOOP_WORDS * sizeof(uint32_t));
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
@@ -320,7 +320,7 @@ TEST(send_after_charged_to_creator) {
     uint32_t w[LOOP_WORDS]; Image img; Vm vm;
     va_reset();
     build_send_loop(w);
-    CHECK_EQ(image_load(&img, w, LOOP_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 8), 0);
     size_t base = va_used_bytes();
 
@@ -394,7 +394,7 @@ TEST(timer_heap_order) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     va_reset();
     build_rt(w, 50);
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, N_HEAP + 8), 0);
     static Actor *as[N_HEAP];
     static uint64_t dl[N_HEAP];
@@ -430,7 +430,7 @@ TEST(timer_cancel_middle) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     va_reset();
     build_rt(w, 50);
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 208), 0);
     enum { N = 200 };
     Actor *as[N]; uint64_t dl[N];
@@ -465,7 +465,7 @@ TEST(timer_exit_no_scan) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     va_reset();
     build_rt(w, 50);
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 32), 0);
     Actor *sleeper[20];
     for (int i = 0; i < 20; i++) {
@@ -525,7 +525,7 @@ static uint64_t counting_clock(void) { clock_reads++; return 0; }
 
 /* A busy actor with no timers pending: 100+ time slices cost at most one
  * clock read in total (the scheduler's time-0 read). */
-#define BUSY_WORDS 25
+#define BUSY_WORDS 26
 TEST(clock_reads_lazy) {
     uint32_t w[BUSY_WORDS]; Image img; Vm vm;
     va_reset();
@@ -541,7 +541,7 @@ TEST(clock_reads_lazy) {
     w[21] = OP_MAKE(OP_LT, 3, 0, 1);
     w[22] = OP_MAKE(OP_JMPT, 3, 0, 0); w[23] = 6;
     w[24] = OP_MAKE(OP_RET, 0, 0, 0);
-    CHECK_EQ(image_load(&img, w, BUSY_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 8), 0);
     clock_reads = 0;
     platform_unix_set_clock(counting_clock);

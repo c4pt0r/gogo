@@ -21,7 +21,7 @@ static void capture_err(const char *s, size_t n) {
  *   BUILTIN r1, r0, 0, RECEIVE
  *   RET r1
  * Layout: 8 header + 3 func + 3 consts + 3 code = 17 words. */
-#define IMG_WORDS 17
+#define IMG_WORDS 18
 
 static void build_receiver(uint32_t *w) {
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
@@ -61,7 +61,7 @@ TEST(receive_blocks_then_wakes) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     va_reset();
     build_receiver(w);
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 4), 0);
     Actor *r = start(&vm, &img, 32);
     Actor *s = actor_new(&vm, 32);
@@ -85,7 +85,7 @@ TEST(receive_oom_crashes_only_receiver) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     va_reset();
     build_receiver(w);
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 4), 0);
     size_t base = va_used_bytes();
 
@@ -124,7 +124,7 @@ TEST(make_ref_allocates_serials) {
     w[16] = OP_MAKE(OP_BUILTIN, 0, 0, 0);      /* then block in RECEIVE */
     w[17] = B_RECEIVE;
     w[5] = 4;
-    CHECK_EQ(image_load(&img, w, IMG_WORDS + 1), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 4), 0);
     for (uint32_t serial = 1; serial <= 2; serial++) {
         Actor *a = start(&vm, &img, 32);
@@ -144,7 +144,7 @@ TEST(unimplemented_builtin_is_badcode) {
     va_reset();
     build_receiver(w);
     w[15] = B_LINK;
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 4), 0);
     Actor *a = start(&vm, &img, 32);
     err_len = 0; err_buf[0] = 0;
@@ -155,11 +155,62 @@ TEST(unimplemented_builtin_is_badcode) {
     CHECK_EQ(vm.live, 0);
 }
 
+/* VM-1 (review 2026-11-24): LOADK operands are checked when executed, so
+ * a LOADK hidden in an ext word (reached by a jump that lands on it) still
+ * refuses a const ref
+ * into the middle of an object (here a fake K_STRUCT inside a string's
+ * payload): badcode, not a forged object. With the ref at the string
+ * itself the same code loads it. */
+static const char *run_hidden_loadk(uint32_t k_off, int direct) {
+    static uint32_t w[8 + 3 + 8 + 9 + 1]; static Image img; static Vm vm;
+    va_reset();
+    memset(w, 0, sizeof w);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
+    w[4] = 8; w[5] = 9; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 0 | (2u << 16); w[10] = 0;
+    w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
+    w[14] = hdr_make(5, K_STRING); w[15] = 12;
+    w[16] = hdr_make(3, K_STRUCT); w[17] = 0; w[18] = term_from_ref(0x100000);
+    uint32_t *c = w + 19;
+    c[0] = OP_MAKE(OP_JMP, 0, 0, 0); c[1] = 3;              /* into the next ext */
+    c[2] = OP_MAKE(OP_LOADI32, 0, 0, 0); c[3] = OP_MAKE(OP_LOADK, 0, 0, 0);
+    if (direct) c[0] = c[1] = c[2] = OP_MAKE(OP_NOP, 0, 0, 0);   /* a plain LOADK at 3 */
+    c[4] = term_from_const(k_off);                         /* an unknown op linearly */
+    c[5] = OP_MAKE(OP_NOP, 0, 0, 0);
+    c[6] = OP_MAKE(OP_BUILTIN, 0, 0, 0); c[7] = B_RECEIVE;
+    c[8] = OP_MAKE(OP_RET, 0, 0, 0);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
+    CHECK_EQ(vm_init(&vm, &img, 4), 0);
+    Actor *a = start(&vm, &img, 32);
+    err_len = 0; err_buf[0] = 0;
+    platform_unix_err_hook = capture_err;
+    int rc = interp_run(&vm, a);
+    platform_unix_err_hook = NULL;
+    if (rc != RUN_EXIT) actor_free(&vm, a);
+    return err_buf;
+}
+
+TEST(hidden_loadk_interior_const_is_badcode) {
+    CHECK(strstr(run_hidden_loadk(5, 0), "crashed: badcode") != NULL);
+    CHECK(strstr(run_hidden_loadk(3, 0), "crashed") == NULL);
+}
+
+/* VM-1 (round 1 repro): an image whose plain LOADK names the middle of an
+ * object loads (LOADK operands are checked when executed, not at load) and
+ * crashes the actor with badcode when that LOADK runs; ones into a
+ * string's header word + 1 or past the const area likewise. */
+TEST(loadk_interior_const_is_badcode) {
+    CHECK(strstr(run_hidden_loadk(5, 1), "crashed: badcode") != NULL);
+    CHECK(strstr(run_hidden_loadk(4, 1), "crashed: badcode") != NULL);
+    CHECK(strstr(run_hidden_loadk(8, 1), "crashed: badcode") != NULL);
+    CHECK(strstr(run_hidden_loadk(3, 1), "crashed") == NULL);
+}
+
 /* One function "main" (0 params, 3 regs) with two K_INT64 consts x, y:
  *   LOADK r0, x; LOADK r1, y; <op> r2, r0, r1 (c ignored by NEG);
  *   RECEIVE r0 (blocks, so the result can be inspected)
  * x_small != 0 loads x as the small int x_small instead. */
-#define I64_WORDS 27
+#define I64_WORDS 28
 
 static void build_int64_op(uint32_t *w, uint32_t op, int64_t x, int64_t y, int32_t x_small) {
     memset(w, 0, I64_WORDS * sizeof(uint32_t));
@@ -181,7 +232,7 @@ static const char *run_int64_op(uint32_t op, int64_t x, int64_t y, int32_t x_sma
     static uint32_t w[I64_WORDS]; static Image img; static Vm vm;
     va_reset();
     build_int64_op(w, op, x, y, x_small);
-    CHECK_EQ(image_load(&img, w, I64_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 4), 0);
     Actor *a = actor_new(&vm, 32);
     CHECK(a != NULL);
@@ -272,7 +323,7 @@ TEST(int64_immediates) {
                 w[20] = OP_MAKE(OP_LOADI32, 0, 0, 0);
                 w[21] = (uint32_t)INT32_MIN;
             }
-            CHECK_EQ(image_load(&img, w, I64_WORDS), IMG_OK);
+            CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
             CHECK_EQ(vm_init(&vm, &img, 4), 0);
             Actor *a = actor_new(&vm, 32);
             CHECK(heap_push_frame(&vm, a, 3, -1));
@@ -291,7 +342,7 @@ TEST(int64_immediates) {
  * through w[20..21]) and LOADK r1, <y box>; returns the result register. */
 static term run_conv(uint32_t *w, Image *img, Vm *vm, Actor **ap, uint32_t src, uint32_t c) {
     w[24] = OP_MAKE(OP_CONV, 2, src, c);
-    CHECK_EQ(image_load(img, w, I64_WORDS), IMG_OK);
+    CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(vm, img, 4), 0);
     Actor *a = actor_new(vm, 32);
     CHECK(heap_push_frame(vm, a, 3, -1));
@@ -368,7 +419,7 @@ TEST(int64_conv) {
  *   LOADK r0, 10000; LOADK r2, 1; LOADK r4, 0
  *   6: BUILTIN r1, r0, 0, NOW; SUB r0, r0, r2; LT r3, r4, r0; JMPT r3, @6
  *   BUILTIN r0, r0, 0, RECEIVE */
-#define NOW_WORDS 28
+#define NOW_WORDS 29
 
 TEST(now_no_alloc) {
     static uint32_t w[NOW_WORDS]; Image img; Vm vm;
@@ -386,7 +437,7 @@ TEST(now_no_alloc) {
     w[23] = OP_MAKE(OP_LT, 3, 4, 0);
     w[24] = OP_MAKE(OP_JMPT, 3, 0, 0); w[25] = 6;
     w[26] = OP_MAKE(OP_BUILTIN, 0, 0, 0); w[27] = B_RECEIVE;
-    CHECK_EQ(image_load(&img, w, NOW_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 4), 0);
     Actor *a = actor_new(&vm, 32);
     CHECK(a != NULL);
@@ -416,7 +467,7 @@ TEST(now_no_alloc) {
  * the code should end by blocking in RECEIVE so registers can be read.
  * Layout: 8 header + 3 func + 3 consts + code. */
 #define CODE_MAX 40
-static uint32_t code_img[14 + CODE_MAX];
+static uint32_t code_img[14 + CODE_MAX + 1];
 
 static const char *run_code(const uint32_t *code, uint32_t n, uint16_t n_regs,
                             Vm *vm, Image *img, Actor **out) {
@@ -429,7 +480,7 @@ static const char *run_code(const uint32_t *code, uint32_t n, uint16_t n_regs,
     w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
     memcpy(&w[14], code, n * 4u);
     va_reset();
-    CHECK_EQ(image_load(img, w, 14 + n), IMG_OK);
+    CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(vm, img, 4), 0);
     Actor *a = actor_new(vm, 64);
     CHECK(a != NULL);
@@ -514,7 +565,7 @@ TEST(no_actor_has_zero_pid) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     va_reset();
     build_receiver(w);
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 4), 0);
     for (uint32_t i = 0; i < 4097u + 3u; i++) {
         Actor *a = actor_new(&vm, 32);
@@ -531,7 +582,7 @@ TEST(no_actor_has_zero_pid) {
  *   callee (1 param, 3 regs): BUILTIN r1, r0, 0, MAKE_REF; MOVE r2, r0;
  *                             RETN r1, <n>
  * Layout: 8 header + 6 func + 3 consts + 10 code = 27 words. */
-#define RETN_WORDS 27
+#define RETN_WORDS 28
 static uint32_t retn_img[RETN_WORDS];
 
 static const char *run_retn(uint32_t dst, uint32_t n, Vm *vm, Image *img, Actor **out) {
@@ -549,7 +600,7 @@ static const char *run_retn(uint32_t dst, uint32_t n, Vm *vm, Image *img, Actor 
     w[25] = OP_MAKE(OP_MOVE, 2, 0, 0);
     w[26] = OP_MAKE(OP_RETN, 1, n, 0);
     va_reset();
-    CHECK_EQ(image_load(img, w, RETN_WORDS), IMG_OK);
+    CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(vm, img, 4), 0);
     Actor *a = actor_new(vm, 64);
     CHECK(a != NULL);
@@ -638,7 +689,7 @@ TEST(conv_to_byte) {
  *   callee (2 params, 3 regs): ADD r2, r0, r1; RET r2
  * The capture 7 is the callee's r0, the argument 5 its r1.
  * Layout: 8 header + 6 func + 3 consts + 11 code = 28 words. */
-#define CALLV_WORDS 28
+#define CALLV_WORDS 29
 static uint32_t callv_img[CALLV_WORDS];
 
 static const char *run_callv(bool nil, uint32_t nargs, Vm *vm, Image *img, Actor **out) {
@@ -658,7 +709,7 @@ static const char *run_callv(bool nil, uint32_t nargs, Vm *vm, Image *img, Actor
     w[26] = OP_MAKE(OP_ADD, 2, 0, 1);
     w[27] = OP_MAKE(OP_RET, 2, 0, 0);
     va_reset();
-    CHECK_EQ(image_load(img, w, CALLV_WORDS), IMG_OK);
+    CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(vm, img, 4), 0);
     Actor *a = actor_new(vm, 64);
     CHECK(a != NULL);
@@ -731,7 +782,7 @@ static const char *run_bit(uint32_t op, BOp x, BOp y, term *out, int64_t *val) {
     w[24] = OP_MAKE(op, 2, 0, 1);
     w[25] = OP_MAKE(OP_BUILTIN, 0, 0, 0);
     w[26] = B_RECEIVE;
-    CHECK_EQ(image_load(&img, w, I64_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 4), 0);
     Actor *a = actor_new(&vm, 32);
     CHECK(a != NULL);

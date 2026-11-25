@@ -207,10 +207,12 @@ func (c *checker) decl(d ast.Decl) {
 			c.unsupported(d, "function without body")
 			return
 		}
+		var sig *types.Signature
 		if fn, ok := c.p.Info.Defs[d.Name].(*types.Func); ok {
-			c.results = fn.Type().(*types.Signature).Results()
+			sig = fn.Type().(*types.Signature)
+			c.results = sig.Results()
 		}
-		c.capturedWrites(d.Body)
+		c.capturedWrites(d.Body, sig)
 		c.block(d.Body)
 	default:
 		c.unsupported(d, kindName(d))
@@ -577,8 +579,10 @@ func (c *checker) stmt(s ast.Stmt) {
 // capturedWrites rejects every write to a variable that a func literal in
 // body captures. Closures copy their captures by value, which matches Go's
 // by-reference capture only if the variable never changes after its
-// declaration (its single assignment), in or out of the closure.
-func (c *checker) capturedWrites(body *ast.BlockStmt) {
+// declaration (its single assignment), in or out of the closure. A return
+// with values writes every named result of its function (sig for body, the
+// literal's own signature inside a func literal); a bare return writes none.
+func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 	captured := map[*types.Var]bool{}
 	ast.Inspect(body, func(n ast.Node) bool {
 		if lit, ok := n.(*ast.FuncLit); ok {
@@ -599,17 +603,35 @@ func (c *checker) capturedWrites(body *ast.BlockStmt) {
 			}
 		}
 	}
-	ast.Inspect(body, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.AssignStmt:
-			for _, l := range n.Lhs {
-				write(l)
+	var walk func(n ast.Node, sig *types.Signature)
+	walk = func(n ast.Node, sig *types.Signature) {
+		ast.Inspect(n, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.FuncLit:
+				s, _ := c.p.Info.TypeOf(n).(*types.Signature)
+				walk(n.Body, s)
+				return false
+			case *ast.ReturnStmt:
+				if len(n.Results) == 0 || sig == nil {
+					break
+				}
+				for i := 0; i < sig.Results().Len(); i++ {
+					if v := sig.Results().At(i); v.Name() != "" && captured[v] {
+						c.fail(n.Pos(), "captured named result must not be set by return; use unnamed results")
+						break
+					}
+				}
+			case *ast.AssignStmt:
+				for _, l := range n.Lhs {
+					write(l)
+				}
+			case *ast.IncDecStmt:
+				write(n.X)
 			}
-		case *ast.IncDecStmt:
-			write(n.X)
-		}
-		return true
-	})
+			return true
+		})
+	}
+	walk(body, sig)
 }
 
 // litCaptures lists the variables lit uses but does not declare, in order

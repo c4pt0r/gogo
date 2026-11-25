@@ -16,7 +16,7 @@
 #include "config.h"
 #include <string.h>
 
-#define IMG_WORDS 17
+#define IMG_WORDS 18
 
 /* An image whose const area holds the string "main" (at const offset 0). */
 static void build_img(uint32_t *w) {
@@ -37,7 +37,7 @@ typedef struct Fx { uint32_t w[IMG_WORDS]; Image img; Vm vm; } Fx;
 static void fx_init(Fx *f) {
     va_reset();
     build_img(f->w);
-    CHECK_EQ(image_load(&f->img, f->w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&f->img, f->w, img_seal(f->w)), IMG_OK);
     CHECK_EQ(vm_init(&f->vm, &f->img, 16), 0);
     CHECK_EQ(bytes_table_used(), 0);
 }
@@ -503,6 +503,81 @@ TEST(bytes_mailbox_overflow) {
     actor_free(&f.vm, b);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(bytes_table_used(), 0);
+}
+
+void platform_unix_arena_forget(void);
+
+/* M{Bytes(nb), string of sw words} built on a's heap into r[ra]. */
+static void make_pair(Fx *f, Actor *a, uint32_t ra, uint32_t nb, uint32_t sw) {
+    CHECK_EQ(make_bytes(f, a, 15, nb), R_NORMAL);
+    uint32_t so = heap_alloc(&f->vm, a, sw, NULL, 0);
+    CHECK(so != UINT32_MAX);
+    memset(a->mem + so, 0, (size_t)sw * 4u);
+    a->mem[so] = hdr_make(sw, K_STRING);
+    a->mem[so + 1] = (sw - 2u) * 4u;
+    uint32_t o = heap_alloc(&f->vm, a, 4, NULL, 0);
+    CHECK(o != UINT32_MAX);
+    a->mem[o] = hdr_make(4, K_STRUCT);
+    a->mem[o + 1] = 0;
+    a->mem[o + 2] = R(a)[15];
+    a->mem[o + 3] = term_from_ref(so);
+    R(a)[ra] = term_from_ref(o);
+    R(a)[15] = T_NIL;
+}
+
+/* VM-2 (review 2026-11-24): a successful receive never leaves the
+ * receiver over its limit. The message's off-heap Bytes stay charged (to
+ * the mailbox) until bytes_adopt charges them to the holder, so the GC
+ * that makes room for the unpacked copy cannot grow the block into their
+ * room. Swept over receivers holding different amounts of live data and
+ * limits, for Receive and for a Call's reply. */
+TEST(bytes_receive_stays_within_limit) {
+    uint32_t received = 0, refused = 0;
+    for (int reply = 0; reply < 2; reply++) {
+        for (uint32_t keep = 100; keep <= 700; keep += 150) {
+            for (uint32_t extra = 0; extra <= 1200; extra += 60) {
+                platform_unix_arena_forget();   /* fx_init leaves its chunks behind */
+                Fx f; fx_init(&f);
+                Actor *a = spawn(&f, 1024), *b = spawn(&f, 64);
+                make_pair(&f, a, 0, 3200, 300);
+                uint32_t ko = heap_alloc(&f.vm, b, keep, NULL, 0);   /* b's live data */
+                CHECK(ko != UINT32_MAX);
+                memset(b->mem + ko, 0, (size_t)keep * 4u);
+                b->mem[ko] = hdr_make(keep, K_STRING);
+                b->mem[ko + 1] = (keep - 2u) * 4u;
+                R(b)[1] = term_from_ref(ko);
+                heap_gc_tight(&f.vm, b, 0, NULL, 0);                 /* no slack yet */
+                b->max_words = (uint16_t)(b->mem_words + 1100u + extra);
+                term t;
+                bool ok;
+                if (reply) {
+                    uint32_t ro = heap_alloc(&f.vm, a, 3, NULL, 0);
+                    CHECK(ro != UINT32_MAX);
+                    a->mem[ro] = hdr_make(3, K_REF);
+                    a->mem[ro + 1] = 7;
+                    a->mem[ro + 2] = 0;
+                    if (msg_send_reply(&f.vm, a, b->id, term_from_ref(ro), R(a)[0]) != 0) CHECK(false);
+                    ok = !(b->flags & AF_EXIT_PENDING) && msg_take_reply(&f.vm, b, 7, &t) == 1;
+                } else {
+                    CHECK_EQ(msg_send(&f.vm, a, b->id, R(a)[0]), 0);
+                    ok = !(b->flags & AF_EXIT_PENDING) && msg_receive(&f.vm, b, &t);
+                }
+                if (ok) {
+                    received++;
+                    R(b)[0] = t;
+                    CHECK((uint32_t)b->mem_words + actor_charged_words(b) <= actor_max_words(b));
+                    CHECK_EQ(bytes_held_bytes(b), 3200);
+                } else {
+                    refused++;
+                }
+                actor_exit(&f.vm, b, R_NORMAL, T_EMPTYSTR);
+                actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
+                CHECK_EQ(bytes_table_used(), 0);
+            }
+        }
+    }
+    CHECK(received > 0);
+    CHECK(refused > 0);
 }
 
 /* The holder list a first handle makes is in the enqueue quota: a message

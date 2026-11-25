@@ -2,9 +2,16 @@
 #include "term.h"
 #include "heap.h"
 
-/* True if consts[off] starts a well-formed K_STRING lying wholly in consts. */
+int image_const_start(const Image *img, uint32_t off) {
+    return off < img->consts_words && ((img->cmap[off >> 5] >> (off & 31u)) & 1u);
+}
+
+/* True if consts[off] starts a well-formed K_STRING lying wholly in consts,
+ * at an object start in the const map (func and type names too: a func
+ * name becomes a const ref in Reason.Func; the map itself is proven by
+ * consts_ok, which image_load runs after the names). */
 static int string_ok(const Image *img, uint32_t off) {
-    if (off >= img->consts_words || img->consts_words - off < 2) return 0;
+    if (!image_const_start(img, off) || img->consts_words - off < 2) return 0;
     uint32_t h = img->consts[off];
     uint32_t words = hdr_words(h);
     if (hdr_kind(h) != K_STRING || words < 2) return 0;
@@ -14,7 +21,10 @@ static int string_ok(const Image *img, uint32_t off) {
 }
 
 /* Walks the const area (objects contiguous from offset 0) checking every
- * object's header, extent and term-bearing words. */
+ * object's header, extent and term-bearing words, and that the const map
+ * marks its first word and none of the others. A const ref checked before
+ * the walk reaches its target is still sound: a wrong mark there fails the
+ * walk later. */
 static int consts_ok(const Image *img) {
     uint32_t off = 0;
     while (off < img->consts_words) {
@@ -23,6 +33,9 @@ static int consts_ok(const Image *img) {
         uint32_t words = hdr_words(h);
         uint32_t kind = hdr_kind(h);
         if (words == 0 || words > img->consts_words - off) return 0;
+        for (uint32_t i = 0; i < words; i++) {
+            if (image_const_start(img, off + i) != (i == 0)) return 0;
+        }
         switch (kind) {
         case K_STRING:
             if (!string_ok(img, off)) return 0;
@@ -41,7 +54,7 @@ static int consts_ok(const Image *img) {
             for (uint32_t i = first; i < end; i++) {
                 term t = obj[i];
                 if (term_is_ref(t) || term_is_handle(t)) return 0;   /* handles only come from the VM */
-                if (term_is_const(t) && term_const_off(t) >= img->consts_words) return 0;
+                if (term_is_const(t) && !image_const_start(img, term_const_off(t))) return 0;
             }
             break;
         }
@@ -59,7 +72,8 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     if (w[1] != IMAGE_VERSION) return IMG_ERR_VERSION;
 
     uint64_t total = (uint64_t)IMAGE_HEADER_WORDS + (uint64_t)w[2] * 3u +
-                     (uint64_t)w[3] * 2u + (uint64_t)w[4] + (uint64_t)w[5];
+                     (uint64_t)w[3] * 2u + (uint64_t)w[4] + (uint64_t)w[5] +
+                     ((uint64_t)w[4] + 31u) / 32u;
     if (total > n_words) return IMG_ERR_TRUNCATED;
 
     img->n_funcs = w[2];
@@ -71,6 +85,7 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     img->types = img->funcs + (size_t)img->n_funcs * 3u;
     img->consts = img->types + (size_t)img->n_types * 2u;
     img->code = img->consts + img->consts_words;
+    img->cmap = img->code + img->code_words;
 
     if (img->entry >= img->n_funcs) return IMG_ERR_BOUNDS;
     for (uint32_t i = 0; i < img->n_funcs; i++) {

@@ -6,6 +6,8 @@
 #include <string.h>
 
 #define EPH_FIRST 49152u
+/* Headroom delivery leaves: the largest Up (Up{IP, Gateway, DNS}, each boxed). */
+#define UP_RESERVE msg_footprint_words(11)
 
 void udp_reset(void) {
     memset(net_s.udp, 0, sizeof net_s.udp);
@@ -138,13 +140,15 @@ static void deliver(Vm *vm, UdpPcb *pcb, uint32_t src, uint32_t sport, const uin
     } else {
         d[3] = T_EMPTYBYTES;
     }
-    if (!msg_try_enqueue(vm, o, m)) {
-        msg_free(m);
-        pcb->drops++;
-        net_s.st.udp_quota++;
+    /* Leave room for one Up, so the stack's own next message never fails
+     * for want of it (spec §9.1). */
+    if (net_deliver(vm, o, m, UP_RESERVE)) {
+        net_s.st.udp_rx++;
         return;
     }
-    net_s.st.udp_rx++;
+    msg_free(m);
+    pcb->drops++;
+    net_s.st.udp_quota++;
 }
 
 void udp_rx(Vm *vm, uint32_t src, uint32_t dst, const uint8_t *p, uint32_t len) {

@@ -10,8 +10,9 @@ const (
 	// imageVersion moves in lockstep with IMAGE_VERSION in vm/image.h: any
 	// change to opcode numbers or semantics, builtin numbers, reserved
 	// types or the term encoding bumps it (v2: M3; v3: M4; v4: M5 CALLV; v5: bitwise ops;
-	// v6: B_FS and the gogo/fs reserved types).
-	imageVersion = 6
+	// v6: B_FS and the gogo/fs reserved types; v7: the const map after the
+	// code, see constMap).
+	imageVersion = 7
 )
 
 // ImageVersion is the image format version this compiler emits.
@@ -128,9 +129,21 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 	}
 	words = append(words, b.consts...)
 	words = append(words, code...)
+	words = append(words, constMap(b.consts)...)
 	out := make([]byte, 4*len(words))
 	for i, w := range words {
 		binary.LittleEndian.PutUint32(out[i*4:], w)
 	}
 	return out, nil
+}
+
+// constMap is the v7 const map: one bit per const word (bit i%32 of word
+// i/32), set where an object starts. The VM accepts a const ref only to a
+// marked start, so a ref into an object's middle cannot forge another.
+func constMap(consts []uint32) []uint32 {
+	m := make([]uint32, (len(consts)+31)/32)
+	for off := 0; off < len(consts); off += int(consts[off] >> 6) {
+		m[off/32] |= 1 << (off % 32)
+	}
+	return m
 }

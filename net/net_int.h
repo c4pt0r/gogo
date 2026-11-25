@@ -189,5 +189,9 @@ term net_put_int(uint32_t *d, uint32_t *at, int32_t v);
 static inline uint32_t net_int_words(int32_t v) { return term_int_fits(v) ? 0u : 2u; }
 /* A message block of `words` words (root at 0), or NULL. */
 Msg *net_msg_new(uint32_t words);
+/* Queues m to o (never killing it) if that leaves `reserve` words of o's
+ * limit free, again once a waiting o's heap slack is collected; false
+ * (m still the caller's) otherwise. */
+bool net_deliver(Vm *vm, Actor *o, Msg *m, uint32_t reserve);
 
 #endif

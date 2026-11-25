@@ -29,4 +29,17 @@ void test_fail_eq(const char *file, int line, const char *ea, const char *eb,
         if (a_ != b_) test_fail_eq(__FILE__, __LINE__, #a, #b, a_, b_); \
     } while (0)
 
+/* Appends the v7 const-area object-start map to the hand-built image w
+ * (header counts already set, room for it after the code) and returns
+ * the image's length in words. */
+#include <stdint.h>
+#include <string.h>
+static inline uint32_t img_seal(uint32_t *w) {
+    uint32_t *c = w + 8 + w[2] * 3u + w[3] * 2u, nc = w[4], *map = c + nc + w[5];
+    memset(map, 0, (nc + 31u) / 32u * 4u);
+    for (uint32_t off = 0; off < nc; off += (c[off] >> 6) ? (c[off] >> 6) : 1u)
+        map[off >> 5] |= 1u << (off & 31u);
+    return (uint32_t)(map - w) + (nc + 31u) / 32u;
+}
+
 #endif

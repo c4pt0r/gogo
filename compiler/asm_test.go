@@ -230,8 +230,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 6 {
-		t.Errorf("imageVersion %d, want 6", imageVersion)
+	if imageVersion != 7 {
+		t.Errorf("imageVersion %d, want 7", imageVersion)
 	}
 }
 
@@ -343,6 +343,43 @@ func TestImageLayout(t *testing.T) {
 	}
 	if w[8+3] != 2 { // type n_fields
 		t.Fatal("type fields")
+	}
+	// v7: the const map follows the code, one bit per const word set at
+	// each object start ("main" at 0, "P" at 3).
+	if len(w) != 8+3+2+6+1+1 || w[len(w)-1] != 1|1<<3 {
+		t.Fatalf("const map: image %d words, last %#x", len(w), w[len(w)-1])
+	}
+}
+
+// The const map takes ceil(consts/32) words and marks K_INT64 constants
+// and strings alike, across word boundaries.
+func TestImageConstMap(t *testing.T) {
+	b := NewImageBuilder()
+	f := b.AddFunc("main", 0, 1) // consts 0..2
+	b.SetFuncCode(f, []uint32{uint32(OpNop)})
+	var starts []uint32
+	for i := int64(0); i < 11; i++ { // 11 K_INT64s: 3..35
+		starts = append(starts, b.AddInt64(1<<40+i))
+	}
+	starts = append(starts, b.AddString("abcdefgh")) // 36..39
+	raw, err := b.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := words(raw)
+	if w[4] != 40 {
+		t.Fatalf("consts %d words, want 40", w[4])
+	}
+	cmap := w[len(w)-2:]
+	if len(w) != 8+3+40+1+2 {
+		t.Fatalf("image %d words", len(w))
+	}
+	want := [2]uint32{1}
+	for _, s := range starts {
+		want[s/32] |= 1 << (s % 32)
+	}
+	if cmap[0] != want[0] || cmap[1] != want[1] {
+		t.Fatalf("const map %#x %#x, want %#x %#x", cmap[0], cmap[1], want[0], want[1])
 	}
 }
 

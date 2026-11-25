@@ -295,11 +295,7 @@ static bool deliver(Vm *vm, const TcpPcb *c, const uint8_t *p, uint32_t n) {
     d[4] = n;
     d[3u + bw - 1u] = 0;             /* padding */
     memcpy(&d[5], p, n);
-    for (int k = 0; k < 2; k++) {    /* again once a waiting owner's slack is collected */
-        if ((uint32_t)o->mem_words + actor_charged_words(o) + msg_charge_words(m) + EVENT_RESERVE <=
-                actor_max_words(o) && msg_try_enqueue(vm, o, m)) return true;
-        if (k || !heap_reclaim_waiting(vm, o)) break;
-    }
+    if (net_deliver(vm, o, m, EVENT_RESERVE)) return true;
     msg_free(m);
     return false;
 }

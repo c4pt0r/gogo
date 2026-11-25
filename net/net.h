@@ -12,14 +12,18 @@
  *    net.SendTo{Addr, Data}; event net.Datagram{From, Data} to the owner,
  *    the payload a heap K_BYTES inside the message block (spec §9.2),
  *    delivered with msg_try_enqueue: over the owner's quota the datagram
- *    is dropped and counted, the owner is never killed.
+ *    is dropped and counted, the owner is never killed. Delivery leaves
+ *    room for one net.Up (and first collects a waiting owner's heap
+ *    slack, as TCP does). A Call reply to an owner whose mailbox net data
+ *    filled is an ordinary message and can still kill it (M2 rule).
  *  - net.Subscribe() (builtin): the caller gets net.Up{IP, Gateway, DNS}
  *    whenever the interface comes up (link up and an address set; again on
  *    an address change) and net.Down{} when it goes down, and net.Up at
  *    once if it is up already. At most GOGO_NET_MAX_SUBS live subscribers.
- *    A report that cannot be allocated is retried (every 50 ms, with the
- *    state current then), so no subscriber misses an Up or Down for want
- *    of memory.
+ *    A report that cannot be allocated, or does not fit the subscriber's
+ *    quota, is retried (every 50 ms, with the state current then), so no
+ *    subscriber misses an Up or Down for want of memory and none is killed
+ *    by one.
  *
  *  - "tcp", cfg net.Dial{IP, Port, TimeoutMs}, and "tcp_listen", cfg
  *    net.Listen{Port}: TCP (tcp.c; spec §5.2, §5.3, §9.3, §9.5, §9.6).

@@ -11,10 +11,20 @@
  * is re-derived with RELOAD() after each such call. Ints taken out of terms
  * are plain C values and need no protection.
  *
- * Safety on malformed images: register indices are checked against the
- * current function's n_regs, the pc against the code area, LOADK operands
- * against the term kinds an image may contain, and RET/RETN check that the
- * frame chain is consistent. Violations crash the actor with `badcode`.
+ * Safety on malformed images: image_load proves the tables and the const
+ * area well-formed, and that every const ref inside a const object (and
+ * every func/type name) names an object start in the const map. Here
+ * register indices are checked against the current function's n_regs, the
+ * pc against the code area, LOADK operands against the term kinds an image
+ * may contain and, for const refs, against the const map (LOADK operands
+ * are checked when executed, not at load: a jump may land on an ext word),
+ * and RET/RETN check that the frame chain is consistent. Violations
+ * crash the actor with `badcode`; func indexes, type ids and jump targets
+ * are checked only when used. Not every malformed image is merely a
+ * badcode: a const ref into the middle of an object would forge one that
+ * the GC reads and writes out of bounds, which is why the const map is
+ * checked at load and in LOADK (v7). docs/m3-followups.md lists what
+ * stays unchecked.
  *
  * Every way out of an actor (return from the entry frame, EXIT, a runtime
  * error, a pending exit mark) goes through actor_exit (signals.c), which
@@ -456,12 +466,13 @@ int interp_run(Vm *vm, Actor *a) {
 
         case OP_LOADK:
             REG(ra);
-            /* An image may hold small ints, specials and in-range const
-             * refs; never heap refs (they would point into a random heap). */
+            /* An image may hold small ints, specials and const refs to an
+             * object start (image_const_start); never heap refs (they would
+             * point into a random heap). */
             CHECK(term_is_int(ext) || ext == T_NIL || ext == T_TRUE || ext == T_FALSE ||
                   ext == T_EMPTYSTR || ext == T_ZEROPID || ext == T_ZEROREF || ext == T_NILSLICE ||
                   ext == T_EMPTYBYTES ||
-                  (term_is_const(ext) && obj_of(vm, a, ext) != NULL));
+                  (term_is_const(ext) && image_const_start(vm->img, term_const_off(ext))));
             R[ra] = ext;
             break;
 

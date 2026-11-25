@@ -51,7 +51,7 @@ static const uint8_t PEER_MAC[6] = { 0x02, 0, 0, 0, 0, 0x99 };
 #define PEER_IP IP4(10, 0, 0, 1)
 #define PEER_ISN 1000u
 
-#define MINI_WORDS 22
+#define MINI_WORDS 23
 static uint32_t img_w[MINI_WORDS];
 static Image img;
 static Vm vm;
@@ -71,7 +71,7 @@ static void setup(void) {
     w[15] = hdr_make(3, K_STRING); w[16] = 4; memcpy(&w[17], "main", 4);
     w[18] = hdr_make(3, K_STRING); w[19] = 3; memcpy(&w[20], "Cfg", 3);
     w[21] = OP_MAKE(OP_RET, 0, 0, 0);
-    CHECK_EQ(image_load(&img, w, MINI_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
     memset(&tx, 0, sizeof tx);
     now_ms = 0;

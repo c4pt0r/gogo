@@ -49,7 +49,7 @@ static const uint8_t OTHER_MAC[6] = { 0x02, 0, 0, 0, 0, 0x55 };
 
 /* ---- VM fixture ---- */
 
-#define MINI_WORDS 22
+#define MINI_WORDS 23
 static uint32_t img_w[MINI_WORDS];
 static Image img;
 static Vm vm;
@@ -64,10 +64,13 @@ static void mini_image(void) {
     w[15] = hdr_make(3, K_STRING); w[16] = 4; memcpy(&w[17], "main", 4);
     w[18] = hdr_make(3, K_STRING); w[19] = 3; memcpy(&w[20], "Cfg", 3);
     w[21] = OP_MAKE(OP_RET, 0, 0, 0);
-    CHECK_EQ(image_load(&img, w, MINI_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
 }
 
+void platform_unix_arena_forget(void);
+
 static void setup(void) {
+    platform_unix_arena_forget();   /* setup may run many times in one test */
     va_reset();
     evq_reset();
     bytes_reset();
@@ -612,6 +615,60 @@ TEST(net_udp_quota_never_kills) {
     teardown();
 }
 
+static uint32_t msg_type(const Actor *a, int nth);
+
+/* NET-1 (review 2026-11-24): an owner that is also a subscriber, busy
+ * while datagrams fill its mailbox, is not killed by the stack's next
+ * Up: delivery leaves room for one Up, so it arrives at once. For every
+ * quota the flood of large then empty datagrams stops short of the limit. */
+TEST(net_udp_fill_leaves_up_room) {
+    static uint8_t data[1400];
+    memset(data, 0x41, sizeof data);
+    for (uint32_t slack = 40; slack < 1200; slack += 37) {
+        setup();
+        Actor *a = new_actor(), *o = new_actor();
+        term n = configure(a);
+        term u = open_udp(o, 5000);
+        CHECK(port_is(u));
+        CHECK(port_subscribe(&vm, o));
+        while (o->mbox_head) pop(o);         /* the initial Up */
+        o->max_words = (uint16_t)(o->mem_words + actor_charged_words(o) + slack);
+        uint8_t b[1600];
+        uint32_t len = udp_frame(b, MY_MAC, PEER_IP, MY_IP, 9999, 5000, data, sizeof data);
+        for (int i = 0; i < 10; i++) rx(b, len);
+        len = udp_frame(b, MY_MAC, PEER_IP, MY_IP, 9999, 5000, data, 0);
+        for (int i = 0; i < 40; i++) rx(b, len);
+        CHECK(actor_max_words(o) - (o->mem_words + actor_charged_words(o)) >= msg_footprint_words(11));
+        int got = mbox_len(o);
+        set_addr(a, n, MY_IP, MASK, PEER_IP, IP4(8, 8, 8, 8));   /* a new DNS server: Up */
+        CHECK(!(o->flags & AF_EXIT_PENDING));
+        CHECK_EQ(mbox_len(o), got + 1);
+        CHECK_EQ(msg_type(o, got), TYPE_NET_UP);
+        teardown();
+    }
+}
+
+/* NET-5: delivery to an owner blocked in Receive first collects the slack
+ * of its grown block (as TCP does), instead of dropping a datagram that
+ * fits once the slack is gone. */
+TEST(net_udp_reclaims_waiting_slack) {
+    setup();
+    Actor *a = new_actor(), *o = new_actor();
+    configure(a);
+    term u = open_udp(o, 7);
+    CHECK(port_is(u));
+    o->hp = 0;                               /* nothing live: the 256-word block is slack */
+    o->max_words = (uint16_t)(o->mem_words + actor_charged_words(o) + 20u);
+    uint8_t b[1600], data[400];
+    memset(data, 0x5A, sizeof data);
+    uint32_t len = udp_frame(b, MY_MAC, PEER_IP, MY_IP, 9, 7, data, sizeof data);
+    rx(b, len);
+    CHECK_EQ(mbox_len(o), 1);
+    CHECK_EQ(net_s.st.udp_quota, 0);
+    CHECK(o->mem_words < 256);
+    teardown();
+}
+
 TEST(net_unconfigured_dhcp_only) {
     setup();
     Actor *a = new_actor();
@@ -835,6 +892,62 @@ TEST(net_subscribe_retry_on_oom) {
     CHECK_EQ(mbox_len(s), 2);
     CHECK_EQ(msg_type(s, 1), TYPE_NET_DOWN);
     platform_unix_set_clock(NULL);
+    teardown();
+}
+
+/* NET-1: an Up to a subscriber whose mailbox is full never kills it
+ * (spec §9.1): it is owed and retried until the subscriber has room. This
+ * covers subscribers that own TCP connections as well as UDP ports. */
+TEST(net_up_to_full_mailbox_is_owed) {
+    setup();
+    fake_now = 1000;
+    platform_unix_set_clock(fake_clock);
+    Actor *a = new_actor(), *s = new_actor();
+    CHECK(port_subscribe(&vm, s));
+    term n = open_netif(a);
+    /* s's whole block is live data (no slack a GC could collect), and its
+     * limit is what it uses: no room. */
+    CHECK(heap_push_frame(&vm, s, 1, -1));
+    uint32_t live = (uint32_t)(s->sp - s->hp), o = heap_alloc(&vm, s, live, NULL, 0);
+    CHECK(o != UINT32_MAX);
+    memset(s->mem + o, 0, live * 4u);
+    s->mem[o] = hdr_make(live, K_STRING);
+    s->mem[o + 1] = (live - 2u) * 4u;
+    s->mem[s->fp] = term_from_ref(o);
+    s->max_words = (uint16_t)(s->mem_words + actor_charged_words(s));
+    set_addr(a, n, MY_IP, MASK, PEER_IP, 0);
+    CHECK(!(s->flags & AF_EXIT_PENDING));
+    CHECK_EQ(mbox_len(s), 0);
+    CHECK(net_s.sub_owed != 0);
+    fake_now += 50;
+    drain();                                 /* still full: owed again */
+    CHECK(!(s->flags & AF_EXIT_PENDING));
+    CHECK_EQ(mbox_len(s), 0);
+    s->max_words = 0;                        /* the subscriber drained */
+    fake_now += 50;
+    drain();
+    CHECK_EQ(mbox_len(s), 1);
+    CHECK_EQ(msg_type(s, 0), TYPE_NET_UP);
+    CHECK_EQ(net_s.sub_owed, 0);
+    platform_unix_set_clock(NULL);
+    teardown();
+}
+
+/* Review Q1: a subscriber blocked in Receive whose grown block is all
+ * slack gets its Up at once: the slack is collected first, as for UDP and
+ * TCP delivery, instead of the Up being owed forever. */
+TEST(net_up_reclaims_waiting_subscriber_slack) {
+    setup();
+    Actor *a = new_actor(), *s = new_actor();   /* s: A_WAITING, 256 words, nothing live */
+    CHECK(port_subscribe(&vm, s));
+    term n = open_netif(a);
+    s->max_words = (uint16_t)(s->mem_words + actor_charged_words(s));
+    set_addr(a, n, MY_IP, MASK, PEER_IP, 0);
+    CHECK(!(s->flags & AF_EXIT_PENDING));
+    CHECK_EQ(mbox_len(s), 1);
+    CHECK_EQ(msg_type(s, 0), TYPE_NET_UP);
+    CHECK_EQ(net_s.sub_owed, 0);
+    CHECK(s->mem_words < 256);
     teardown();
 }
 

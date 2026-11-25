@@ -10,7 +10,7 @@
 #include "term.h"
 #include <string.h>
 
-#define IMG_WORDS 15
+#define IMG_WORDS 16
 static void setup(uint32_t *w, Image *img, Vm *vm) {
     va_reset();
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
@@ -19,7 +19,7 @@ static void setup(uint32_t *w, Image *img, Vm *vm) {
     w[9] = 0 | (2u << 16);
     w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
     w[14] = OP_MAKE(OP_RET, 0, 0, 0);
-    CHECK_EQ(image_load(img, w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(vm, img, 8), 0);
 }
 

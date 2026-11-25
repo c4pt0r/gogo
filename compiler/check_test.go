@@ -247,6 +247,10 @@ func TestRejects(t *testing.T) {
 		{"funcvalue-return-any", "package main\nfunc f() {}\nfunc g() any {\n\treturn f // ERR\n}\nfunc main() { _ = g() }\n", []string{"func value in interface not supported"}},
 		{"funcvalue-anyfield", "package main\ntype B struct{ V any }\nfunc f() {}\nfunc main() {\n\tb := B{V: f} // ERR\n\t_ = b\n}\n", []string{"func value in interface not supported"}},
 		{"captured-assign-nested", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tx := 1\n\tactor.Spawn(func() {\n\t\tf := func() {\n\t\t\tx = 2 // ERR\n\t\t}\n\t\tactor.Spawn(f)\n\t})\n\tprintln(x)\n}\n", []string{"captured variable"}},
+		{"captured-named-return", "package main\nfunc f() (r int, g func() int) {\n\th := func() int { return r }\n\treturn 5, h // ERR\n}\nfunc main() { n, g := f(); println(n, g()) }\n", []string{"captured named result must not be set by return"}},
+		{"captured-named-return-call", "package main\nfunc pair() (int, func() int) { return 1, func() int { return 0 } }\nfunc f() (r int, g func() int) {\n\th := func() int { return r }\n\t_ = h\n\treturn pair() // ERR\n}\nfunc main() { n, _ := f(); println(n) }\n", []string{"captured named result must not be set by return"}},
+		{"captured-named-return-lit", "package main\nfunc main() {\n\tf := func() (r int, g func() int) {\n\t\th := func() int { return r }\n\t\treturn 9, h // ERR\n\t}\n\tn, g := f()\n\tprintln(n, g())\n}\n", []string{"captured named result must not be set by return"}},
+		{"captured-named-return-third", "package main\nfunc f() (a, b int, g func() int) {\n\tg = func() int { return a + b }\n\treturn 1, 2, g // ERR\n}\nfunc main() { x, y, g := f(); println(x, y, g()) }\n", []string{"captured"}},
 		{"captured-opassign-before", "package main\nfunc main() {\n\tx := 1\n\tx += 1 // ERR\n\tf := func() { println(x) }\n\t_ = f\n}\n", []string{"captured variable must not be reassigned"}},
 		{"import-unknown-lib", "package main\nimport \"gogo/nosuch\" // ERR\nfunc main() { nosuch.X() }\n", []string{`import "gogo/nosuch" not supported`}},
 		{"fs-file-case", "package main\nimport (\n\t\"gogo/actor\"\n\t\"gogo/fs\"\n)\nfunc main() {\n\tvar x any = actor.Self()\n\tswitch x.(type) {\n\tcase fs.File: // ERR\n\t\tprintln(\"file\")\n\tcase actor.PID:\n\t}\n}\n", []string{"type switch case fs.File not supported; wrap it in a struct"}},
@@ -419,6 +423,16 @@ func TestRejectsReview(t *testing.T) {
 
 func TestAcceptsForwardAndLocals(t *testing.T) {
 	const src = "package main\nimport \"gogo/actor\"\ntype P struct{ X int }\nconst c = 3\nfunc main() {\n\tx := 1\n\tactor.Spawn(func() {\n\t\ty := x + c\n\t\ty = 2\n\t\ty++\n\t\tswitch m := actor.Receive().(type) {\n\t\tcase P:\n\t\t\tprintln(m.X, y)\n\t\tdefault:\n\t\t\tactor.Send(actor.Self(), m)\n\t\t}\n\t})\n}\n"
+	if errs := checkSrc(t, src); len(errs) != 0 {
+		t.Fatalf("unexpected: %v", errs)
+	}
+}
+
+// COMP-1: a bare return leaves captured named results untouched, and a
+// return with values is fine when no closure captures a named result
+// (here the literal captures only the parameter).
+func TestAcceptsNamedResultReturns(t *testing.T) {
+	const src = "package main\nfunc f(n int) (r int, g func() int) {\n\tr = n\n\tg = func() int { return n }\n\treturn\n}\nfunc k(n int) (r int, g func() int) {\n\th := func() int { return n }\n\treturn n, h\n}\nfunc b() (r int, g func() int) {\n\tg = func() int { return r }\n\treturn\n}\nfunc main() {\n\tx, g := f(1)\n\ty, h := k(2)\n\tz, i := b()\n\tprintln(x, g(), y, h(), z, i())\n}\n"
 	if errs := checkSrc(t, src); len(errs) != 0 {
 		t.Fatalf("unexpected: %v", errs)
 	}

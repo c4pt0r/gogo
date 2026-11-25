@@ -11,7 +11,7 @@
 #include "term.h"
 #include <string.h>
 
-#define IMG_WORDS 17
+#define IMG_WORDS 18
 
 /* An image whose const area holds the string "main" (at const offset 0). */
 static void build_img(uint32_t *w) {
@@ -32,7 +32,7 @@ typedef struct Fx { uint32_t w[IMG_WORDS]; Image img; Vm vm; Actor *a; } Fx;
 static void fx_init(Fx *f, uint16_t words) {
     va_reset();
     build_img(f->w);
-    CHECK_EQ(image_load(&f->img, f->w, IMG_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&f->img, f->w, img_seal(f->w)), IMG_OK);
     CHECK_EQ(vm_init(&f->vm, &f->img, 4), 0);
     f->a = actor_new(&f->vm, words);
     CHECK(f->a != NULL);

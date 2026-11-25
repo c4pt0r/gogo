@@ -32,7 +32,7 @@ static void capture_err(const char *s, size_t n) {
 #define CHARGE (GOGO_FS_SLOT_BYTES / 4u)
 
 /* An image with the one const "main" (for direct calls; no code runs). */
-#define IMG_WORDS 15
+#define IMG_WORDS 16
 static uint32_t w[IMG_WORDS];
 static Image img;
 static Vm vm;
@@ -52,6 +52,7 @@ static void setup(void) {
     w[8] = 0; w[9] = 0 | (NREGS << 16); w[10] = 0;
     w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
     w[14] = OP_MAKE(OP_RET, 0, 0, 0);
+    w[15] = 1u;                              /* v7 const map: "main" at 0 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 8), 0);
 }
@@ -670,7 +671,7 @@ TEST(fs_frame_bounds) {
 /* Through the interpreter: main (3 regs) runs
  *   LOADK r0, op; LOADK r1, "/flash/d"; BUILTIN r2, r0, 2, B_FS; RECEIVE
  * so r2 is the last register and r2+1 is outside the frame. */
-#define RUN_WORDS 26
+#define RUN_WORDS 27
 static const char *run_fs(int op, Actor **out) {
     static uint32_t c[RUN_WORDS]; static Image im;
     memset(c, 0, sizeof c);
@@ -683,6 +684,7 @@ static const char *run_fs(int op, Actor **out) {
     c[20] = OP_MAKE(OP_LOADK, 1, 0, 0); c[21] = term_from_const(3);
     c[22] = OP_MAKE(OP_BUILTIN, 2, 0, 2); c[23] = B_FS;
     c[24] = OP_MAKE(OP_BUILTIN, 0, 0, 0); c[25] = B_RECEIVE;
+    c[26] = 1u | 8u;                         /* v7 const map: strings at 0, 3 */
     CHECK_EQ(image_load(&im, c, RUN_WORDS), IMG_OK);
     CHECK_EQ(vm_init(&vm, &im, 4), 0);
     Actor *a = actor_new(&vm, 32);
@@ -718,7 +720,7 @@ TEST(fs_interp) {
 
 TEST(fs_image_v5_rejected) {
     setup();
-    CHECK_EQ(IMAGE_VERSION, 6u);
+    CHECK_EQ(IMAGE_VERSION, 7u);
     uint32_t v[IMG_WORDS];
     memcpy(v, w, sizeof v);
     v[1] = 5;

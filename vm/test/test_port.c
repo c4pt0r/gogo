@@ -77,7 +77,7 @@ static const PortDriver fake = {
 static const PortDriver *const fake_list[] = { &fake, NULL };
 
 /* An image with one trivial function and the two types (cfg, event). */
-#define MINI_WORDS 22
+#define MINI_WORDS 23
 static void mini_image(uint32_t *w, Image *img) {
     memset(w, 0, MINI_WORDS * sizeof(uint32_t));
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 2;
@@ -87,7 +87,7 @@ static void mini_image(uint32_t *w, Image *img) {
     w[15] = hdr_make(3, K_STRING); w[16] = 4; memcpy(&w[17], "main", 4);
     w[18] = hdr_make(3, K_STRING); w[19] = 3; memcpy(&w[20], "Cfg", 3);
     w[21] = OP_MAKE(OP_RET, 0, 0, 0);
-    CHECK_EQ(image_load(img, w, MINI_WORDS), IMG_OK);
+    CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
 }
 
 static void setup(uint32_t *w, Image *img, Vm *vm) {
@@ -507,7 +507,7 @@ TEST(vm_init_rejects_big_table) {
  *   r0 = "fake"; r2 = 7; r1 = Cfg{r2}; r3, r4 = PORT_OPEN(r0, r1)
  *   r5 = Cmd{r2}; SEND(r3, r5); KILL(r3, 1)
  *   r3, r4 = PORT_OPEN(r0, r1); PORT_CLOSE(r3); RET */
-#define BI_WORDS 50
+#define BI_WORDS 51
 TEST(port_builtins) {
     uint32_t w[BI_WORDS]; Image img; Vm vm;
     va_reset();
@@ -537,7 +537,7 @@ TEST(port_builtins) {
     c[18] = OP_MAKE(OP_BUILTIN, 3, 0, 2); c[19] = B_PORT_OPEN;
     c[20] = OP_MAKE(OP_BUILTIN, 8, 3, 1); c[21] = B_PORT_CLOSE;
     c[22] = OP_MAKE(OP_RET, 0, 0, 0);
-    CHECK_EQ(image_load(&img, w, BI_WORDS), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 8), 0);
     CHECK_EQ(vm_run(&vm), 0);
     CHECK_EQ(fk.opens, 2);
