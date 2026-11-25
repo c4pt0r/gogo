@@ -398,11 +398,11 @@ TEST(mic_defaults_fit_the_mcu_limit) {
     step(100);
     collect(a);
     CHECK_EQ(ngot, 1);
-    uint32_t lost = input_dropped();
+    uint32_t lost = input_dropped(&vm);
     step(400);                                           /* 300 ms stall, nothing read meanwhile */
-    CHECK_EQ(input_dropped(), lost);                     /* 3 Chunks waiting, all delivered */
+    CHECK_EQ(input_dropped(&vm), lost);                     /* 3 Chunks waiting, all delivered */
     for (uint64_t t = 450; t <= 600; t += 50) step(t);   /* the owner still has not read them */
-    CHECK_EQ(input_dropped(), lost + 2u);                /* a 4th does not fit: the margin is 3 */
+    CHECK_EQ(input_dropped(&vm), lost + 2u);                /* a 4th does not fit: the margin is 3 */
     collect(a);
     CHECK_EQ(ngot, 3);
     for (int i = 0; i < 3; i++) {

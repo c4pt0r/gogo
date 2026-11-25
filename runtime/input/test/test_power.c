@@ -366,9 +366,9 @@ TEST(power_full_mailbox_drops) {
     setup();
     CHECK(port_is(open_power(owner, 0)));
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
-    uint32_t d0 = input_dropped();
+    uint32_t d0 = input_dropped(&vm);
     step(0);
-    CHECK_EQ(input_dropped() - d0, 1);
+    CHECK_EQ(input_dropped(&vm) - d0, 1);
     CHECK(owner->state != A_EXITED && !(owner->flags & AF_EXIT_PENDING));
     teardown();
 }
@@ -475,10 +475,10 @@ TEST(power_install_without_slot_disables_port) {
     input_uninstall(&vm);
     int n = 0;
     while (n < 8 && port_add_source(&vm, &filler, NULL)) n++;   /* the same source twice is only for the test */
-    input_install(&vm);
+    input_install(&vm, vm.input);
     CHECK(!port_is(open_power(owner, 0)));
     for (int i = 0; i < n; i++) port_remove_source(&vm, &filler);
-    input_install(&vm);
+    input_install(&vm, vm.input);
     CHECK(port_is(open_power(owner, 0)));
     teardown();
 }
@@ -569,10 +569,10 @@ TEST(power_read_retried_after_drop) {
     CHECK_EQ(ngot, 1);
     uint16_t mw = owner->max_words;
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
-    uint32_t d0 = input_dropped();
+    uint32_t d0 = input_dropped(&vm);
     send_read(owner, pp);
     step(100);
-    CHECK_EQ(input_dropped() - d0, 1);
+    CHECK_EQ(input_dropped(&vm) - d0, 1);
     CHECK(!port_work_pending(&vm));
     owner->max_words = mw;
     step(200);
@@ -597,11 +597,11 @@ TEST(power_event_driven_drop_recovers) {
     CHECK_EQ(ngot, 1);
     uint16_t full = owner->max_words;
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
-    uint32_t d0 = input_dropped();
+    uint32_t d0 = input_dropped(&vm);
     fake_power_set(3700, 1, 0);            /* a state change: reported, but over quota */
     fake_power_new();
     step(10);
-    CHECK_EQ(input_dropped() - d0, 1);
+    CHECK_EQ(input_dropped(&vm) - d0, 1);
     owner->max_words = full;
     fake_power_set(3700, 0, 1);
     fake_power_new();                      /* a later line */

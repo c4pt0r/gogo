@@ -2,19 +2,7 @@
 #   <file> <symbol>   # removed by E<n>
 # Function-local statics are func.var (a gcc ELF "var.N" matches any func.var of that file). Each embed task deletes its own lines;
 # the guard also fails on entries that no longer exist.
-runtime/input/audio.c au  # removed by E5
-runtime/input/imu.c m  # removed by E5
-runtime/input/ir.c ir  # removed by E5
-runtime/input/kbd.c dropped  # removed by E5
-runtime/input/kbd.c k  # removed by E5
-runtime/input/kbd.c read_errors  # removed by E5
-runtime/input/power.c w  # removed by E5
-runtime/input/source.c failed  # removed by E5
-runtime/input/source.c installed  # removed by E5
 runtime/net/ports.c net_s  # removed by E6
 runtime/net/tls/tls.c st  # removed by E6
 runtime/net/tls/tls.c tc  # removed by E6
 runtime/net/tls/tls.c glue  # removed by E6
-runtime/vfs/vfs.c mounts  # removed by E5
-runtime/vfs/vfs.c n_mounts  # removed by E5
-runtime/vfs/vfs.c slots  # removed by E5

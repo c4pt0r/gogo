@@ -272,7 +272,8 @@ static bool is_dir(const char *rel) {
     return is_root(rel) || (f_stat(rel, &fi) == FR_OK && (fi.fattrib & AM_DIR));
 }
 
-static int t_open(void *f, const char *rel, int mode) {
+static int t_open(void *c, void *f, const char *rel, int mode) {
+    (void)c;
     int e = ready();
     if (e) return e;
     if (is_root(rel)) return VFS_ISDIR;
@@ -291,14 +292,16 @@ static int t_open(void *f, const char *rel, int mode) {
     }
     return map_err(r);
 }
-static int t_read(void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
+static int t_read(void *c, void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
+    (void)c;
     UINT br = 0;
     int e = map_err(f_read(f, buf, n, &br));
     if (e) return e;
     *got = br;
     return VFS_OK;
 }
-static int t_write(void *f, const uint8_t *buf, uint32_t n) {
+static int t_write(void *c, void *f, const uint8_t *buf, uint32_t n) {
+    (void)c;
     UINT bw = 0;
     int e = map_err(f_write(f, buf, n, &bw));
     if (e) return e;
@@ -306,7 +309,8 @@ static int t_write(void *f, const uint8_t *buf, uint32_t n) {
 }
 /* Overwrites inside the file (vfs checked the bounds), then goes back to
  * the end so the next write appends. FAT patches the clusters in place. */
-static int t_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+static int t_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+    (void)c;
     FIL *fp = f;
     FSIZE_t end = f_tell(fp);
     int e = map_err(f_lseek(fp, off));
@@ -318,14 +322,16 @@ static int t_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
     int e2 = map_err(f_lseek(fp, end));
     return e ? e : e2;
 }
-static int t_sync(void *f) { return map_err(f_sync(f)); }
-static int t_size(void *f, int32_t *out) {
+static int t_sync(void *c, void *f) { (void)c; return map_err(f_sync(f)); }
+static int t_size(void *c, void *f, int32_t *out) {
+    (void)c;
     *out = clamp32(f_size((FIL *)f));
     return VFS_OK;
 }
-static int t_close(void *f) { return map_err(f_close(f)); }
+static int t_close(void *c, void *f) { (void)c; return map_err(f_close(f)); }
 
-static int t_stat(const char *rel, int32_t *size, bool *dir) {
+static int t_stat(void *c, const char *rel, int32_t *size, bool *dir) {
+    (void)c;
     int e = ready();
     if (e) return e;
     if (is_root(rel)) { *dir = true; *size = 0; return VFS_OK; }
@@ -336,7 +342,8 @@ static int t_stat(const char *rel, int32_t *size, bool *dir) {
     *size = *dir ? 0 : clamp32(fi.fsize);
     return VFS_OK;
 }
-static int t_readdir(const char *rel, VfsDirCb cb, void *ctx) {
+static int t_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) {
+    (void)c;
     int e = ready();
     if (e) return e;
     FF_DIR d;
@@ -354,26 +361,30 @@ static int t_readdir(const char *rel, VfsDirCb cb, void *ctx) {
     f_closedir(&d);
     return map_err(r);
 }
-static int t_mkdir(const char *rel) {
+static int t_mkdir(void *c, const char *rel) {
+    (void)c;
     int e = ready();
     if (e) return e;
     FRESULT r = f_mkdir(rel);
     return r == FR_DENIED ? VFS_NOSPACE : map_err(r);   /* FatFs: no space / directory full */
 }
-static int t_remove(const char *rel) {
+static int t_remove(void *c, const char *rel) {
+    (void)c;
     int e = ready();
     if (e) return e;
     FRESULT r = f_unlink(rel);
     if (r == FR_DENIED) return is_dir(rel) ? VFS_NOTEMPTY : VFS_IO;   /* else read-only */
     return map_err(r);
 }
-static int t_rename(const char *from, const char *to, bool replace) {
+static int t_rename(void *c, const char *from, const char *to, bool replace) {
+    (void)c;
     int e = ready();
     if (e) return e;
     (void)replace;               /* FAT cannot replace: Exists either way */
     return map_err(f_rename(from, to));
 }
-static int t_usage(int32_t *used, int32_t *total) {
+static int t_usage(void *c, int32_t *used, int32_t *total) {
+    (void)c;
     int e = ready();
     if (e) return e;
     DWORD nfree;
@@ -391,4 +402,4 @@ static const VfsBackend backend = {
     t_stat, t_readdir, t_mkdir, t_remove, t_rename, t_usage, t_write_at
 };
 
-int fs_fat_init(void) { return vfs_mount("/sd", &backend) ? 0 : -1; }
+int fs_fat_init(VfsState *vs) { return vfs_mount(vs, "/sd", &backend, NULL) ? 0 : -1; }

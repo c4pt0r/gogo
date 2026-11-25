@@ -3,9 +3,10 @@
  * rename(replace=true) works (LittleFS-like) or returns Exists (FAT-like). */
 #ifndef GOGO_MEMFS_H
 #define GOGO_MEMFS_H
-#include "vfs.h"
+#include "vfs_int.h"
 
 extern VfsBackend memfs_be[2];
+void *memfs_ctx(int i);                 /* instance i: the be_ctx to mount memfs_be[i] with */
 
 /* Reset instance i (all files gone); budget < 0 = unlimited. */
 void memfs_init(int i, bool case_insensitive, bool atomic_replace, int32_t budget);

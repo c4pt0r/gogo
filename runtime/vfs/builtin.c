@@ -1,7 +1,7 @@
 /* B_FS: the gogo/fs builtin and its private `file` port driver.
  *
  * vm/ only holds the hook (Vm.fs_builtin, actor.h) and one case in the
- * interpreter; vfs_install(vm) points the hook here. B_FS's first argument is
+ * interpreter; vfs_init(vm, st) points the hook here and the state at st. B_FS's first argument is
  * the op (FS_OPEN..FS_WRITEAT, vfs.h), the rest are the op's arguments.
  * Two-result ops write (value, Err) into ra, ra+1 and check that ra+1 is
  * in the frame; the others write Err into ra only.
@@ -47,7 +47,7 @@ static int f_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
     p->charge_words = CHARGE_WORDS;
     return 0;
 }
-static void f_close(struct Vm *vm, Port *p) { (void)vm; vfs_close((int)p->state[0]); }
+static void f_close(struct Vm *vm, Port *p) { vfs_close(vm->vfs, (int)p->state[0]); }
 static bool f_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return false; }
 
 static const PortDriver file_drv = {
@@ -177,7 +177,7 @@ static int dir_fill(void *ctx, const char *name, bool is_dir) {
 static int read_dir(Vm *vm, Actor *a, const char *p, uint32_t len, term *out) {
     Dir d = { a, 0, 7, 0, 0, 0 };
     *out = T_NILSLICE;
-    int e = vfs_readdir(p, len, dir_count, &d);
+    int e = vfs_readdir(vm->vfs, p, len, dir_count, &d);
     if (e || d.n == 0) return e;
     d.words += d.n;
     if (d.words > HEAP_MAX_WORDS) return VFS_NOMEMORY;
@@ -197,7 +197,7 @@ static int read_dir(Vm *vm, Actor *a, const char *p, uint32_t len, term *out) {
     for (uint32_t i = 0; i < d.cap; i++) m[7 + i] = T_EMPTYSTR;
     /* Words a changed directory leaves unused are never reached (the GC
      * only follows refs), so they need no filling. */
-    e = vfs_readdir(p, len, dir_fill, &d);
+    e = vfs_readdir(vm->vfs, p, len, dir_fill, &d);
     if (e) return e;
     m[2] = m[3] = d.n;
     *out = term_from_ref(o);
@@ -205,10 +205,10 @@ static int read_dir(Vm *vm, Actor *a, const char *p, uint32_t len, term *out) {
 }
 
 /* Reads exactly n bytes from slot into d: IO on a short read. */
-static int read_full(int slot, uint8_t *d, uint32_t n) {
+static int read_full(VfsState *st, int slot, uint8_t *d, uint32_t n) {
     uint32_t done = 0, got;
     while (done < n) {
-        int e = vfs_read(slot, d + done, n - done, &got);
+        int e = vfs_read(st, slot, d + done, n - done, &got);
         if (e) return e;
         if (got == 0) return VFS_IO;
         done += got;
@@ -223,7 +223,7 @@ static int read_bytes(Vm *vm, Actor *a, int slot, uint32_t n, term *out) {
     if (n == 0) return VFS_OK;
     term t;
     if (!new_bytes(vm, a, n, &t, &d)) return VFS_NOMEMORY;
-    int e = read_full(slot, d, n);
+    int e = read_full(vm->vfs, slot, d, n);
     if (!e) *out = t;
     return e;
 }
@@ -232,7 +232,7 @@ static int read_bytes(Vm *vm, Actor *a, int slot, uint32_t n, term *out) {
  * fits the name and path limits and differs from the file), then
  * vfs_replace. A failure removes the temporary, unless the replace
  * failed with the target already gone. */
-static int write_file(const char *p, uint32_t len, const uint8_t *data, uint32_t n) {
+static int write_file(VfsState *st, const char *p, uint32_t len, const uint8_t *data, uint32_t n) {
     char tmp[VFS_PATH_MAX + 1];
     uint32_t first, slash = len, k;
     int32_t sz;
@@ -240,7 +240,7 @@ static int write_file(const char *p, uint32_t len, const uint8_t *data, uint32_t
     int e = vfs_path_check(p, len, &first), s;
     if (e) return e;
     if (first == len) return VFS_BADPATH;                /* a mount root */
-    if (!vfs_stat(p, len, &sz, &dir) && dir) return VFS_ISDIR;
+    if (!vfs_stat(st, p, len, &sz, &dir) && dir) return VFS_ISDIR;
     while (p[slash - 1u] != '/') slash--;
     k = len - slash;
     /* <name>.tmp is the file itself when the name ends in ".tmp" and was
@@ -253,18 +253,18 @@ static int write_file(const char *p, uint32_t len, const uint8_t *data, uint32_t
     memcpy(tmp, p, slash + k);
     memcpy(tmp + slash + k, ".tmp", 4);
     uint32_t tl = slash + k + 4u;
-    e = vfs_open(tmp, tl, VFS_WRITE, &s);
+    e = vfs_open(st, tmp, tl, VFS_WRITE, &s);
     if (e) return e;
-    e = vfs_write(s, data, n);
-    if (!e) e = vfs_sync(s);
-    vfs_close(s);
+    e = vfs_write(st, s, data, n);
+    if (!e) e = vfs_sync(st, s);
+    vfs_close(st, s);
     if (!e) {
-        e = vfs_replace(tmp, tl, p, len);
+        e = vfs_replace(st, tmp, tl, p, len);
         /* A failed replace with the target gone (FAT: removed, then the
          * rename failed): the temporary is the only copy, keep it (§5.6). */
-        if (e && vfs_stat(p, len, &sz, &dir) != VFS_OK) return e;
+        if (e && vfs_stat(st, p, len, &sz, &dir) != VFS_OK) return e;
     }
-    if (e) vfs_remove(tmp, tl);
+    if (e) vfs_remove(st, tmp, tl);
     return e;
 }
 
@@ -272,6 +272,7 @@ static int write_file(const char *p, uint32_t len, const uint8_t *data, uint32_t
 
 static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs) {
     term *R = (term *)a->mem + a->fp;
+    VfsState *st = vm->vfs;
     int32_t op, i = 0;
     if (rc == 0 || !int_val(vm, a, R[rb], &op) || op < 0 || op > FS_WRITEAT || rc != 1u + n_args[op])
         return R_BAD_CODE;
@@ -311,11 +312,11 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
         if (k == GOGO_MAX_PORTS) e = VFS_TOOMANY;
         else if ((uint32_t)a->mem_words + actor_charged_words(a) + CHARGE_WORDS > actor_max_words(a))
             e = VFS_NOMEMORY;
-        else if (!(e = vfs_open(pa, la, i, &slot))) {
+        else if (!(e = vfs_open(st, pa, la, i, &slot))) {
             int32_t c = slot;
             res = port_open_with(vm, a, &file_drv, &c, 1);   /* no GC */
             if (res == T_NIL) {
-                vfs_close(slot);
+                vfs_close(st, slot);
                 res = T_ZEROPID;
                 e = VFS_TOOMANY;
             }
@@ -324,26 +325,26 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
     }
     case FS_READ:
         res = T_EMPTYBYTES;
-        if (e || vfs_slot_mode(slot) != VFS_READ) { e = VFS_CLOSED; break; }
+        if (e || vfs_slot_mode(st, slot) != VFS_READ) { e = VFS_CLOSED; break; }
         if (i <= 0) break;
         if (i > VFS_READ_MAX) i = VFS_READ_MAX;
-        if ((e = vfs_size(slot, &v))) break;
+        if ((e = vfs_size(st, slot, &v))) break;
         v = v > (int32_t)f->state[1] ? v - (int32_t)f->state[1] : 0;   /* left to read */
         if (v > i) v = i;
         e = read_bytes(vm, a, slot, (uint32_t)v, &res);   /* may GC; f stays valid */
         if (!e) f->state[1] += (uint32_t)v;
         break;
     case FS_WRITE:
-        if (!e) e = vfs_write(slot, data, n);
+        if (!e) e = vfs_write(st, slot, data, n);
         break;
     case FS_WRITEAT:
-        if (!e) e = i < 0 ? VFS_BADPATH : vfs_write_at(slot, (uint32_t)i, data, n);
+        if (!e) e = i < 0 ? VFS_BADPATH : vfs_write_at(st, slot, (uint32_t)i, data, n);
         break;
     case FS_SYNC:
-        if (!e) e = vfs_sync(slot);
+        if (!e) e = vfs_sync(st, slot);
         break;
     case FS_SIZE:
-        if (!e) e = vfs_size(slot, &v);
+        if (!e) e = vfs_size(st, slot, &v);
         if (e) v = 0;
         res = term_from_int(v);
         if (!term_int_fits(v)) {                                   /* boxed */
@@ -353,33 +354,33 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
         break;
     case FS_READFILE:
         res = T_EMPTYBYTES;
-        if ((e = vfs_open(pa, la, VFS_READ, &slot))) break;
-        e = vfs_size(slot, &v);
+        if ((e = vfs_open(st, pa, la, VFS_READ, &slot))) break;
+        e = vfs_size(st, slot, &v);
         if (!e && v > i) e = VFS_NOMEMORY;
         if (!e) e = read_bytes(vm, a, slot, (uint32_t)v, &res);   /* may GC */
-        vfs_close(slot);
+        vfs_close(st, slot);
         break;
     case FS_WRITEFILE:
-        e = write_file(pa, la, data, n);
+        e = write_file(st, pa, la, data, n);
         break;
     case FS_STAT:
-        if ((e = vfs_stat(pa, la, &v, &d))) { v = 0; d = false; }
+        if ((e = vfs_stat(st, pa, la, &v, &d))) { v = 0; d = false; }
         res = new_pair(vm, a, TYPE_FS_INFO, v, d, true);
         break;
     case FS_READDIR:
         e = read_dir(vm, a, pa, la, &res);
         break;
     case FS_MKDIR:
-        e = vfs_mkdir(pa, la);
+        e = vfs_mkdir(st, pa, la);
         break;
     case FS_REMOVE:
-        e = vfs_remove(pa, la);
+        e = vfs_remove(st, pa, la);
         break;
     case FS_RENAME:
-        e = vfs_rename(pa, la, pb, lb);
+        e = vfs_rename(st, pa, la, pb, lb);
         break;
     default: /* FS_USAGE */
-        if ((e = vfs_usage(pa, la, &v, &w))) v = w = 0;
+        if ((e = vfs_usage(st, pa, la, &v, &w))) v = w = 0;
         res = new_pair(vm, a, TYPE_FS_SPACE, v, w, false);
         break;
     }
@@ -390,4 +391,7 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
     return R_NORMAL;
 }
 
-void vfs_install(Vm *vm) { vm->fs_builtin = fs_builtin; }
+void vfs_init(Vm *vm, VfsState *st) {
+    vm->vfs = st;
+    vm->fs_builtin = fs_builtin;
+}

@@ -37,14 +37,15 @@ static void capture_err(const char *s, size_t n) {
 static uint32_t w[IMG_WORDS];
 static Image img;
 static Vm vm;
+static VfsState vs;
 
 static void setup(void) {
     va_reset(&vm);
-    vfs_reset();
+    vfs_reset(&vs);
     memfs_init(0, false, true, 4000);        /* /flash: LittleFS-like, budget */
     memfs_init(1, true, false, -1);          /* /sd: FAT-like */
-    CHECK(vfs_mount("/flash", &memfs_be[0]));
-    CHECK(vfs_mount("/sd", &memfs_be[1]));
+    CHECK(vfs_mount(&vs, "/flash", &memfs_be[0], memfs_ctx(0)));
+    CHECK(vfs_mount(&vs, "/sd", &memfs_be[1], memfs_ctx(1)));
     memset(w, 0, sizeof w);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = 3; w[5] = 1; w[6] = 0; w[7] = 0;
@@ -54,7 +55,7 @@ static void setup(void) {
     w[15] = 1u;                              /* v7 const map: "main" at 0 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
     CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
-    vfs_install(&vm);
+    vfs_init(&vm, &vs);
 }
 
 static Actor *actor(uint16_t max_words) {
@@ -144,7 +145,7 @@ static uint32_t bytes_len(Actor *a, term t) {
 
 static int open_slots(void) {
     int n = 0;
-    for (int i = 0; i < (int)GOGO_FS_MAX_OPEN; i++) n += vfs_slot_mode(i) >= 0;
+    for (int i = 0; i < (int)GOGO_FS_MAX_OPEN; i++) n += vfs_slot_mode(&vs, i) >= 0;
     return n;
 }
 static int open_ports(void) {
@@ -158,9 +159,9 @@ static void make_file(const char *path, uint32_t n) {
     static uint8_t buf[4200];
     int s;
     for (uint32_t i = 0; i < n; i++) buf[i] = (uint8_t)('0' + i % 10u);
-    CHECK_EQ(vfs_open(path, (uint32_t)strlen(path), VFS_WRITE, &s), VFS_OK);
-    CHECK_EQ(vfs_write(s, buf, n), VFS_OK);
-    vfs_close(s);
+    CHECK_EQ(vfs_open(&vs, path, (uint32_t)strlen(path), VFS_WRITE, &s), VFS_OK);
+    CHECK_EQ(vfs_write(&vs, s, buf, n), VFS_OK);
+    vfs_close(&vs, s);
 }
 
 TEST(fs_open_write_read) {
@@ -328,7 +329,7 @@ TEST(fs_open_errors) {
     CHECK_EQ(open_slots(), 0);
     CHECK_EQ(open_ports(), 0);
     int32_t sz; bool d;
-    CHECK_EQ(vfs_stat("/flash/keep", 11, &sz, &d), VFS_OK);
+    CHECK_EQ(vfs_stat(&vs, "/flash/keep", 11, &sz, &d), VFS_OK);
     CHECK_EQ(sz, 10);
     done(s);
 }
@@ -428,7 +429,7 @@ TEST(fs_owner_killed_mid_write) {
     CHECK_EQ(open_slots(), 0);
     CHECK_EQ(open_ports(), 0);
     int32_t sz; bool d;
-    CHECK_EQ(vfs_stat("/flash/log", 10, &sz, &d), VFS_OK);
+    CHECK_EQ(vfs_stat(&vs, "/flash/log", 10, &sz, &d), VFS_OK);
     CHECK_EQ(sz, 4);                                           /* committed */
     uint32_t bb = actor_charged_words(b);
     CHECK_EQ(fs(b, FS_OPEN, "si", "/flash/log", VFS_APPEND), R_NORMAL);
@@ -437,7 +438,7 @@ TEST(fs_owner_killed_mid_write) {
     CHECK_EQ(fs(b, FS_WRITE, "ts", R(b)[0], "+more"), R_NORMAL);
     CHECK_EQ(ERR1(b), VFS_OK);
     done(b);
-    CHECK_EQ(vfs_stat("/flash/log", 10, &sz, &d), VFS_OK);
+    CHECK_EQ(vfs_stat(&vs, "/flash/log", 10, &sz, &d), VFS_OK);
     CHECK_EQ(sz, 9);
 }
 
@@ -523,7 +524,7 @@ TEST(fs_readfile_writefile) {
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/f", 100), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "new!"));
     int32_t sz; bool d;
-    CHECK_EQ(vfs_stat("/flash/f.tmp", 12, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(vfs_stat(&vs, "/flash/f.tmp", 12, &sz, &d), VFS_NOTFOUND);
     /* FAT-like /sd: remove + rename. */
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/f", "one"), R_NORMAL);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/f", "two"), R_NORMAL);
@@ -540,8 +541,8 @@ TEST(fs_readfile_writefile) {
     memfs_set_budget(0, 30);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/flash/g", "0123456789012345678901234567890123456789"), R_NORMAL);
     CHECK_EQ(ERR1(a), VFS_NOSPACE);
-    CHECK_EQ(vfs_stat("/flash/g.tmp", 12, &sz, &d), VFS_NOTFOUND);
-    CHECK_EQ(vfs_stat("/flash/g", 8, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(vfs_stat(&vs, "/flash/g.tmp", 12, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(vfs_stat(&vs, "/flash/g", 8, &sz, &d), VFS_NOTFOUND);
     CHECK_EQ(open_slots(), 0);
     done(a);
 }
@@ -558,7 +559,7 @@ TEST(fs_writefile_keeps_tmp_when_target_gone) {
     memfs_fail_next_rename(1, VFS_IO);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/cfg", "NEW"), R_NORMAL);
     CHECK_EQ(ERR1(a), VFS_IO);
-    CHECK_EQ(vfs_stat("/sd/cfg", 7, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(vfs_stat(&vs, "/sd/cfg", 7, &sz, &d), VFS_NOTFOUND);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/sd/cfg.tmp", 100), R_NORMAL);
     CHECK_EQ(ERR2(a), VFS_OK);
     CHECK(bytes_is(a, R(a)[0], "NEW"));
@@ -566,14 +567,14 @@ TEST(fs_writefile_keeps_tmp_when_target_gone) {
     /* the next WriteFile replaces the stale temporary and succeeds */
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/cfg", "NEWER"), R_NORMAL);
     CHECK_EQ(ERR1(a), VFS_OK);
-    CHECK_EQ(vfs_stat("/sd/cfg.tmp", 11, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(vfs_stat(&vs, "/sd/cfg.tmp", 11, &sz, &d), VFS_NOTFOUND);
     /* the target is still there (Busy): the temporary goes */
     CHECK_EQ(fs(a, FS_OPEN, "si", "/sd/cfg", VFS_READ), R_NORMAL);
     term f = R(a)[0];
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/cfg", "zzz"), R_NORMAL);
     CHECK_EQ(ERR1(a), VFS_BUSY);
     port_close(&vm, f);
-    CHECK_EQ(vfs_stat("/sd/cfg.tmp", 11, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(vfs_stat(&vs, "/sd/cfg.tmp", 11, &sz, &d), VFS_NOTFOUND);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/sd/cfg", 100), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "NEWER"));
     done(a);
@@ -732,7 +733,7 @@ static const char *run_fs(int op, Actor **out) {
     c[26] = 1u | 8u;                         /* v7 const map: strings at 0, 3 */
     CHECK_EQ(image_load(&im, c, RUN_WORDS), IMG_OK);
     CHECK_EQ(test_vm_init(&vm, &im, 4), 0);
-    if (!no_storage) vfs_install(&vm);
+    if (!no_storage) vfs_init(&vm, &vs);
     Actor *a = actor_new(&vm, 32);
     CHECK(a != NULL);
     CHECK(heap_push_frame(&vm, a, 3, -1));
@@ -753,11 +754,11 @@ TEST(fs_interp) {
     CHECK_EQ(a->mem[a->fp + 2], term_from_int(VFS_OK));
     actor_free(&vm, a);
     int32_t sz; bool d;
-    CHECK_EQ(vfs_stat("/flash/d", 8, &sz, &d), VFS_OK);
+    CHECK_EQ(vfs_stat(&vs, "/flash/d", 8, &sz, &d), VFS_OK);
     CHECK(d);
     CHECK(strstr(run_fs(FS_STAT, &a), "crashed: badcode") != NULL);   /* r3 missing */
     CHECK(a == NULL);
-    no_storage = true;                                         /* no storage linked: no vfs_install */
+    no_storage = true;                                         /* no storage linked: no vfs_init */
     CHECK(strstr(run_fs(FS_MKDIR, &a), "crashed: badcode") != NULL);
     CHECK(a == NULL);
     no_storage = false;
@@ -771,4 +772,67 @@ TEST(fs_image_v5_rejected) {
     v[1] = 5;
     Image im;
     CHECK_EQ(image_load(&im, v, IMG_WORDS), IMG_ERR_VERSION);
+}
+
+/* B_FS on v with path p (a heap string on a): the Err of op (Stat or
+ * Open, two results) and the result term. */
+static int32_t fs_on(Vm *v, Actor *a, int op, const char *p, int32_t arg, term *res) {
+    uint32_t len = (uint32_t)strlen(p), words = 2u + (len + 3u) / 4u;
+    a->hp = 0;
+    uint32_t off = heap_alloc(v, a, words, NULL, 0);
+    CHECK(off != UINT32_MAX);
+    a->mem[off] = hdr_make(words, K_STRING);
+    a->mem[off + 1] = len;
+    a->mem[off + words - 1] = 0;
+    memcpy(a->mem + off + 2, p, len);
+    term *r = (term *)a->mem + a->fp;
+    r[2] = term_from_int(op);
+    r[3] = term_from_ref(off);
+    r[4] = term_from_int(arg);
+    CHECK_EQ(v->fs_builtin(v, a, 0, 2, op == FS_STAT ? 2u : 3u, NREGS), R_NORMAL);
+    r = (term *)a->mem + a->fp;
+    if (res) *res = r[0];
+    return ival(r[1]);
+}
+
+/* Two VMs in one process, each with its own VfsState: different mounts
+ * (vm2's /flash is the medium vm has at /sd), and each sees only its own
+ * files and its own open-file slots. */
+TEST(fs_two_vms_own_mounts) {
+    setup();
+    static Vm vm2;
+    static VfsState vs2;
+    vfs_reset(&vs2);
+    CHECK(vfs_mount(&vs2, "/flash", &memfs_be[1], memfs_ctx(1)));
+    va_reset(&vm2);
+    CHECK_EQ(test_vm_init(&vm2, &img, 8), 0);
+    vfs_init(&vm2, &vs2);
+    CHECK(vm.vfs == &vs && vm2.vfs == &vs2);
+    Actor *a = actor(4000);
+    Actor *b = actor_new(&vm2, 64);
+    CHECK(b != NULL);
+    b->max_words = 4000;
+    b->state = A_WAITING;
+    CHECK(heap_push_frame(&vm2, b, NREGS, -1));
+
+    CHECK_EQ(fs(a, FS_WRITEFILE, "sb", "/flash/only_vm", "x"), R_NORMAL);
+    CHECK_EQ(ERR1(a), VFS_OK);
+    term t;
+    CHECK_EQ(fs_on(&vm, a, FS_STAT, "/flash/only_vm", 0, &t), VFS_OK);
+    CHECK_EQ(fs_on(&vm2, b, FS_STAT, "/flash/only_vm", 0, &t), VFS_NOTFOUND);
+    CHECK_EQ(fs_on(&vm2, b, FS_STAT, "/sd/only_vm", 0, &t), VFS_NOTMOUNTED);
+    /* A file vm2 opens for writing is in vs2's slots, not vs's. */
+    CHECK_EQ(fs_on(&vm2, b, FS_OPEN, "/flash/only_vm2", VFS_WRITE, &t), VFS_OK);
+    CHECK(port_is(t));
+    CHECK_EQ(open_slots(), 0);
+    int n2 = 0;
+    for (int i = 0; i < (int)GOGO_FS_MAX_OPEN; i++) n2 += vfs_slot_mode(&vs2, i) >= 0;
+    CHECK_EQ(n2, 1);
+    CHECK_EQ(fs_on(&vm, a, FS_STAT, "/flash/only_vm2", 0, &t), VFS_NOTFOUND);
+    CHECK_EQ(fs_on(&vm, a, FS_STAT, "/sd/only_vm2", 0, &t), VFS_OK);   /* the same medium, mounted at /sd */
+    /* vm2's file port closes its slot in vs2. */
+    port_close_all(&vm2);
+    for (int i = 0; i < (int)GOGO_FS_MAX_OPEN; i++) CHECK_EQ(vfs_slot_mode(&vs2, i), -1);
+    actor_exit(&vm2, b, R_NORMAL, T_EMPTYSTR);
+    done(a);
 }

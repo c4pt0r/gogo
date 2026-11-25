@@ -435,6 +435,43 @@ TEST(port_debounce_burst) {
     teardown();
 }
 
+/* A host clock ahead of VM time (t0 != 0, as on ESP after bring-up): event
+ * stamps are host time and get -t0 exactly once; the debounce window and the
+ * deadline port_next_deadline reports are VM time. */
+TEST(port_debounce_t0) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    vm.t0 = 5000;
+    fk.debounce = 20;
+    Actor *a = waiting_actor(&vm);
+    term p = open_fake(&vm, a, 1);
+    uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE), gen = term_pid_gen(p);
+    uint64_t d;
+    push(idx, gen, 1, 1, 5100);                 /* VM time 100 */
+    push(idx, gen, 1, 0, 5104);                 /* VM time 104: trailing */
+    port_drain(&vm, 104);
+    CHECK_EQ(mbox_len(a), 1);
+    CHECK(port_next_deadline(&vm, &d));
+    CHECK_EQ(d, 120);                           /* 100 + 20, not 104 + 20 (no offset) */
+    port_drain(&vm, 119);
+    CHECK_EQ(mbox_len(a), 1);
+    port_drain(&vm, 120);
+    CHECK_EQ(mbox_len(a), 2);
+    CHECK_EQ(evt_field(a, 1, 1), 0);
+    /* An edge after the window is delivered at once. */
+    push(idx, gen, 1, 1, 5200);
+    port_drain(&vm, 200);
+    CHECK_EQ(mbox_len(a), 3);
+    push(idx, gen, 1, 0, 5210);                 /* inside the window again */
+    port_drain(&vm, 210);
+    CHECK(port_next_deadline(&vm, &d));
+    CHECK_EQ(d, 220);
+    port_close(&vm, p);
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
 TEST(port_debounce_off) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);

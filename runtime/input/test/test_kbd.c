@@ -356,18 +356,18 @@ TEST(kbd_full_mailbox_drops) {
     setup();
     CHECK(port_is(open_kbd(owner, 0, 0)));
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner) + 20u);
-    uint32_t d0 = input_dropped();
+    uint32_t d0 = input_dropped(&vm);
     int sent = 0;
-    while (input_dropped() == d0 && sent < 100) {
+    while (input_dropped(&vm) == d0 && sent < 100) {
         press(R_A); release(R_A);
         step(1);
         sent += 2;
     }
-    CHECK(input_dropped() > d0 && sent < 100);
-    uint32_t d1 = input_dropped();
+    CHECK(input_dropped(&vm) > d0 && sent < 100);
+    uint32_t d1 = input_dropped(&vm);
     for (int i = 0; i < 5; i++) { press(R_A); release(R_A); }
     step(2);
-    CHECK_EQ(input_dropped() - d1, 10);
+    CHECK_EQ(input_dropped(&vm) - d1, 10);
     CHECK(owner->state != A_EXITED && !(owner->flags & AF_EXIT_PENDING));
     collect(owner);
     CHECK(ngot > 0);
@@ -376,20 +376,20 @@ TEST(kbd_full_mailbox_drops) {
     collect(owner);
     CHECK_EQ(ngot, 1);
     is(0, 0x05, 'b', 0, true);
-    CHECK_EQ(input_dropped() - d1, 10);
+    CHECK_EQ(input_dropped(&vm) - d1, 10);
     teardown();
 }
 
 TEST(kbd_read_error_ends_drain) {
     setup();
     CHECK(port_is(open_kbd(owner, 0, 0)));
-    uint32_t e0 = input_read_errors();
+    uint32_t e0 = input_read_errors(&vm);
     fake_fail_next_read();
     press(R_A);
     step(1);
     collect(owner);
     CHECK_EQ(ngot, 0);
-    CHECK_EQ(input_read_errors() - e0, 1);
+    CHECK_EQ(input_read_errors(&vm) - e0, 1);
     step(2);                                         /* the event is still queued */
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -413,13 +413,13 @@ TEST(kbd_pending_is_pure_read) {
 TEST(kbd_error_mid_drain_recovers) {
     setup();
     CHECK(port_is(open_kbd(owner, 0, 0)));
-    uint32_t e0 = input_read_errors();
+    uint32_t e0 = input_read_errors(&vm);
     press(R_A); press(R_B); press(R_C);
     fake_fail_read_after(1);                         /* first read ok, second fails */
     step(1);
     collect(owner);
     CHECK_EQ(ngot, 1);
-    CHECK_EQ(input_read_errors() - e0, 1);
+    CHECK_EQ(input_read_errors(&vm) - e0, 1);
     CHECK(port_work_pending(&vm));                   /* flag still set: retry */
     step(2);
     collect(owner);
@@ -548,10 +548,10 @@ TEST(kbd_install_without_slot_disables_port) {
     input_uninstall(&vm);
     int n = 0;
     while (n < 8 && port_add_source(&vm, &k_filler, NULL)) n++;
-    input_install(&vm);
+    input_install(&vm, vm.input);
     CHECK(!port_is(open_kbd(owner, 0, 0)));
     for (int i = 0; i < n; i++) port_remove_source(&vm, &k_filler);
-    input_install(&vm);
+    input_install(&vm, vm.input);
     CHECK(port_is(open_kbd(owner, 0, 0)));
     teardown();
 }

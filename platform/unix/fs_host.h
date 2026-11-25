@@ -9,9 +9,12 @@
 #define FS_HOST_INSTANCES 2
 #define FS_HOST_ROOT_MAX 512   /* longest directory string, with its NUL */
 
+/* The backend; its ctx is the root directory string fs_host_open returns. */
+extern const VfsBackend fs_host_be;
+
 /* Instance i (0..1) serves the host directory `dir` (must exist; the
- * string is copied). Returns the backend to pass to vfs_mount, or NULL. */
-const VfsBackend *fs_host_open(int i, const char *dir);
+ * string is copied). Returns the be_ctx to mount fs_host_be with, or NULL. */
+void *fs_host_open(int i, const char *dir);
 
 /* Test only: limit the bytes all writes may add up to (ENOSPC beyond). */
 void fs_host_set_quota(int64_t bytes);

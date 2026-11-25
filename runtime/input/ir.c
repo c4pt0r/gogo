@@ -34,17 +34,7 @@ enum { IR_POLL_MS = 20, IR_TX_POLL_MS = 5, IR_FRAMES_PER_POLL = 4,
        DEF_CARRIER = 38000, MIN_CARRIER = 10000, MAX_CARRIER = 500000, DEF_DUTY = 33,
        DEF_GAP = 10000, MAX_GAP = 32767, MAX_US = 32767 };
 
-static struct {
-    Port *tx;                  /* the open ir_tx, NULL = closed; its StreamOut is tx->state */
-    uint32_t carrier;
-    uint32_t tx_next;          /* ms, wrapping: the next busy poll, start or Done retry */
-    uint8_t duty;
-    bool running;              /* the head was started (ir_tx_start succeeded) */
-    const Port *rx;            /* the open ir_rx, NULL = closed */
-    uint16_t *buf;             /* IR_FRAME_MAX values, while rx is open */
-    StreamIn in;
-    uint32_t rx_next;          /* ms, wrapping: the next ir_rx_read poll */
-} ir;
+typedef InputIr Ir;
 
 static StreamOut *out_of(Port *p) { return (StreamOut *)(void *)p->state; }
 
@@ -57,36 +47,38 @@ static bool tx_timings_ok(const Port *p, const uint8_t *d, uint32_t len) {
 /* ---- ir_tx ---- */
 
 static int tx_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
-    (void)vm;
     (void)index;
     const InputHw *hw = input_hw(vm);
-    if (input_failed() || ir.tx || !hw->ir_tx_start || !hw->ir_tx_busy || n < 2) return -1;
+    if (input_failed(vm)) return -1;
+    Ir *ir = &vm->input->ir;
+    if (ir->tx || !hw->ir_tx_start || !hw->ir_tx_busy || n < 2) return -1;
     int32_t carrier = cfg[0] <= 0 ? DEF_CARRIER : cfg[0], duty = cfg[1] <= 0 ? DEF_DUTY : cfg[1];
     if (carrier < MIN_CARRIER || carrier > MAX_CARRIER || duty > 99) return -1;
     if (hw->ir_tx_open && hw->ir_tx_open((uint32_t)carrier, (uint8_t)duty) != 0) return -1;
     memset(out_of(p), 0, sizeof(StreamOut));
-    ir.tx = p;
-    ir.carrier = (uint32_t)carrier;
-    ir.duty = (uint8_t)duty;
-    ir.running = false;
+    ir->tx = p;
+    ir->carrier = (uint32_t)carrier;
+    ir->duty = (uint8_t)duty;
+    ir->running = false;
     return 0;
 }
 
 static void tx_close(struct Vm *vm, Port *p) {
-    (void)vm;
-    if (ir.tx != p) return;                    /* a refused open's cleanup */
+    Ir *ir = vm->input ? &vm->input->ir : NULL;
+    if (!ir || ir->tx != p) return;                    /* a refused open's cleanup */
     stream_out_close(NULL, p, out_of(p));   /* port_close releases the held data */
-    ir.tx = NULL;
-    ir.running = false;
+    ir->tx = NULL;
+    ir->running = false;
     const InputHw *hw = input_hw(vm);
     if (hw->ir_tx_close) hw->ir_tx_close();
 }
 
 static void tx_command(Vm *vm, const Actor *from, Port *p, term msg) {
-    if (ir.tx != p) return;
+    Ir *ir = &vm->input->ir;
+    if (ir->tx != p) return;
     /* A new head starts, or a Done{-1} is flushed, at once; one queued
      * behind a running frame waits for the poll already set. */
-    if (stream_out_accept(vm, from, p, out_of(p), msg, tx_timings_ok) != 0) ir.tx_next = (uint32_t)vm_now(vm);
+    if (stream_out_accept(vm, from, p, out_of(p), msg, tx_timings_ok) != 0) ir->tx_next = (uint32_t)vm_now(vm);
 }
 
 static bool tx_can_event(const struct Vm *vm, const Port *p) { (void)vm;
@@ -103,7 +95,9 @@ const PortDriver input_ir_tx_driver = {
 static int rx_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
     const InputHw *hw = input_hw(vm);
-    if (input_failed() || ir.rx || !hw->ir_rx_open || !hw->ir_rx_read || n < 1) return -1;
+    if (input_failed(vm)) return -1;
+    Ir *ir = &vm->input->ir;
+    if (ir->rx || !hw->ir_rx_open || !hw->ir_rx_read || n < 1) return -1;
     int32_t gap = cfg[0] <= 0 ? DEF_GAP : cfg[0] > MAX_GAP ? MAX_GAP : cfg[0];
     uint16_t *buf = va_alloc(vm, IR_FRAME_MAX * 2u);
     if (!buf) return -1;
@@ -111,21 +105,22 @@ static int rx_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, u
         va_free(vm, buf, IR_FRAME_MAX * 2u);
         return -1;
     }
-    memset(&ir.in, 0, sizeof ir.in);
-    ir.buf = buf;
-    ir.rx = p;
-    ir.rx_next = (uint32_t)vm_now(vm) + IR_POLL_MS;
+    memset(&ir->in, 0, sizeof ir->in);
+    ir->buf = buf;
+    ir->rx = p;
+    ir->rx_next = (uint32_t)vm_now(vm) + IR_POLL_MS;
     p->charge_words = IR_FRAME_MAX * 2u / 4u;   /* the owner pays; port_open refuses one that cannot */
     return 0;
 }
 
 static void rx_close(struct Vm *vm, Port *p) {
-    if (ir.rx != p) return;                    /* a refused open's cleanup */
+    Ir *ir = vm->input ? &vm->input->ir : NULL;
+    if (!ir || ir->rx != p) return;                    /* a refused open's cleanup */
     const InputHw *hw = input_hw(vm);
     if (hw->ir_rx_close) hw->ir_rx_close();
-    va_free(vm, ir.buf, IR_FRAME_MAX * 2u);
-    ir.buf = NULL;
-    ir.rx = NULL;
+    va_free(vm, ir->buf, IR_FRAME_MAX * 2u);
+    ir->buf = NULL;
+    ir->rx = NULL;
 }
 
 static void rx_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm; (void)p; (void)type; (void)f; (void)n; }
@@ -142,22 +137,22 @@ const PortDriver input_ir_rx_driver = {
 
 /* ---- scheduler side ---- */
 
-bool ir_is_open(void) { return ir.tx || ir.rx; }
-
-static bool tx_waits(void) {
-    const StreamOut *o = ir.tx ? out_of(ir.tx) : NULL;
+static bool tx_waits(const Ir *ir) {
+    const StreamOut *o = ir->tx ? out_of(ir->tx) : NULL;
     return o && (o->n || o->owed_n);
 }
 
-bool ir_work(uint64_t now) {
-    return (tx_waits() && reached(now, ir.tx_next)) || (ir.rx && reached(now, ir.rx_next));
+bool ir_work(const Vm *vm, uint64_t now) {
+    const Ir *ir = &vm->input->ir;
+    return (tx_waits(ir) && reached(now, ir->tx_next)) || (ir->rx && reached(now, ir->rx_next));
 }
 
-bool ir_next_deadline(uint64_t now, bool live, uint64_t *d) {
+bool ir_next_deadline(const Vm *vm, uint64_t now, bool live, uint64_t *d) {
+    const Ir *ir = &vm->input->ir;
     bool any = false;
-    if (tx_waits()) { *d = deadline_abs(now, ir.tx_next); any = true; }
-    if (live && ir.rx) {
-        uint64_t t = deadline_abs(now, ir.rx_next);
+    if (tx_waits(ir)) { *d = deadline_abs(now, ir->tx_next); any = true; }
+    if (live && ir->rx) {
+        uint64_t t = deadline_abs(now, ir->rx_next);
         if (!any || t < *d) *d = t;
         any = true;
     }
@@ -172,53 +167,56 @@ static uint32_t frame_ms(const uint8_t *d, uint32_t n) {
 }
 
 static void tx_drain(Vm *vm, uint64_t now) {
-    StreamOut *o = out_of(ir.tx);
+    Ir *ir = &vm->input->ir;
+    StreamOut *o = out_of(ir->tx);
     const InputHw *hw = input_hw(vm);
-    stream_out_flush(vm, ir.tx, o);
+    stream_out_flush(vm, ir->tx, o);
     uint32_t next = (uint32_t)now + IR_TX_POLL_MS;   /* while busy */
     while (!hw->ir_tx_busy()) {               /* ours, or a frame of a port closed earlier */
-        if (ir.running) {
-            ir.running = false;
-            stream_out_done(vm, ir.tx, o);
+        if (ir->running) {
+            ir->running = false;
+            stream_out_done(vm, ir->tx, o);
         }
         uint32_t len;
         const uint8_t *d = stream_out_head(vm, o, &len);
         if (!d) { next = (uint32_t)now + IR_POLL_MS; break; }   /* only owed Dones may remain */
-        if (hw->ir_tx_start(d, len / 2u, ir.carrier, ir.duty) == 0) {
-            ir.running = true;
+        if (hw->ir_tx_start(d, len / 2u, ir->carrier, ir->duty) == 0) {
+            ir->running = true;
             next = (uint32_t)now + frame_ms(d, len / 2u);
             break;
         }
-        stream_out_fail(vm, ir.tx, o);         /* not sent: Done{-1}; try the queued one */
+        stream_out_fail(vm, ir->tx, o);         /* not sent: Done{-1}; try the queued one */
     }
-    ir.tx_next = next;
+    ir->tx_next = next;
 }
 
 static void rx_drain(Vm *vm, uint64_t now) {
+    Ir *ir = &vm->input->ir;
     const InputHw *hw = input_hw(vm);
-    ir.rx_next = (uint32_t)now + IR_POLL_MS;
+    ir->rx_next = (uint32_t)now + IR_POLL_MS;
     for (int k = 0; k < IR_FRAMES_PER_POLL; k++) {
         uint32_t t0 = (uint32_t)vm->t0, t = (uint32_t)now + t0;   /* host clock: the hook may give the frame's start */
-        int r = hw->ir_rx_read(ir.buf, IR_FRAME_MAX, &t);
+        int r = hw->ir_rx_read(ir->buf, IR_FRAME_MAX, &t);
         t -= t0;
         if (r <= 0) break;                    /* none, or an error: the next poll retries */
         uint32_t n = (uint32_t)r;
         if (n > IR_FRAME_MAX) {               /* cut: the rest of the frame is lost */
             n = IR_FRAME_MAX;
-            ir.in.dropped_since++;
+            ir->in.dropped_since++;
         }
-        uint8_t *b = (uint8_t *)ir.buf;       /* to uint16 LE in place: value i is bytes 2i, 2i+1 */
+        uint8_t *b = (uint8_t *)ir->buf;       /* to uint16 LE in place: value i is bytes 2i, 2i+1 */
         for (uint32_t i = 0; i < n; i++) {
-            uint16_t v = ir.buf[i];
+            uint16_t v = ir->buf[i];
             v = v == 0 ? 1 : v > MAX_US ? MAX_US : v;
             b[2 * i] = (uint8_t)(v & 0xFF);
             b[2 * i + 1] = (uint8_t)(v >> 8);
         }
-        if (!stream_deliver_chunk(vm, ir.rx, &ir.in, t, b, n * 2u)) dropped_inc();
+        if (!stream_deliver_chunk(vm, ir->rx, &ir->in, t, b, n * 2u)) dropped_inc(vm);
     }
 }
 
 void ir_drain(Vm *vm, uint64_t now) {
-    if (tx_waits() && reached(now, ir.tx_next)) tx_drain(vm, now);
-    if (ir.rx && reached(now, ir.rx_next)) rx_drain(vm, now);
+    const Ir *ir = &vm->input->ir;
+    if (tx_waits(ir) && reached(now, ir->tx_next)) tx_drain(vm, now);
+    if (ir->rx && reached(now, ir->rx_next)) rx_drain(vm, now);
 }

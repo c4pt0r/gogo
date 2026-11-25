@@ -34,19 +34,19 @@ static int map_errno(int e) {
 
 static int clamp32(off_t v) { return v > INT32_MAX ? INT32_MAX : (int)v; }
 
-static bool join(int i, const char *rel, char *out) {
-    size_t r = strlen(roots[i]);
+static bool join(const char *root, const char *rel, char *out) {
+    size_t r = strlen(root);
     size_t n = (rel[0] == '/' && !rel[1]) ? 0 : strlen(rel);
     if (r + n + 1 > PATH_MAX || r + n + 1 > FS_HOST_ROOT_MAX + VFS_PATH_MAX) return false;
-    memcpy(out, roots[i], r);
+    memcpy(out, root, r);
     memcpy(out + r, rel, n);
     out[r + n] = 0;
     return true;
 }
 
-static int h_open(int i, void *f, const char *rel, int mode) {
+static int h_open(void *c, void *f, const char *rel, int mode) {
     char p[PATH_MAX];
-    if (!join(i, rel, p)) return VFS_BADPATH;
+    if (!join(c, rel, p)) return VFS_BADPATH;
     int fl = O_CLOEXEC;
     if (mode == VFS_READ) fl |= O_RDONLY;
     else if (mode == VFS_WRITE) fl |= O_WRONLY | O_CREAT | O_TRUNC;
@@ -59,7 +59,8 @@ static int h_open(int i, void *f, const char *rel, int mode) {
     ((H *)f)->fd = fd;
     return VFS_OK;
 }
-static int h_read(void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
+static int h_read(void *c, void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
+    (void)c;
     ssize_t k;
     do k = read(((H *)f)->fd, buf, n); while (k < 0 && errno == EINTR);
     if (k < 0) return map_errno(errno);
@@ -71,7 +72,8 @@ static int h_read(void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
 static int64_t quota_left = -1;   /* -1: no limit */
 void fs_host_set_quota(int64_t bytes) { quota_left = bytes; }
 
-static int h_write(void *f, const uint8_t *buf, uint32_t n) {
+static int h_write(void *c, void *f, const uint8_t *buf, uint32_t n) {
+    (void)c;
     if (quota_left >= 0 && (int64_t)n > quota_left) {
         uint32_t fit = (uint32_t)quota_left;
         quota_left = 0;
@@ -95,7 +97,8 @@ static int h_write(void *f, const uint8_t *buf, uint32_t n) {
     }
     return VFS_OK;
 }
-static int h_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+static int h_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+    (void)c;
     while (n > 0) {
         ssize_t k = pwrite(((H *)f)->fd, buf, n, (off_t)off);   /* vfs allows Write opens only: no O_APPEND */
         if (k < 0) {
@@ -108,27 +111,28 @@ static int h_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
     }
     return VFS_OK;
 }
-static int h_sync(void *f) { return fsync(((H *)f)->fd) == 0 ? VFS_OK : map_errno(errno); }
-static int h_size(void *f, int32_t *out) {
+static int h_sync(void *c, void *f) { (void)c; return fsync(((H *)f)->fd) == 0 ? VFS_OK : map_errno(errno); }
+static int h_size(void *c, void *f, int32_t *out) {
+    (void)c;
     struct stat st;
     if (fstat(((H *)f)->fd, &st) != 0) return map_errno(errno);
     *out = clamp32(st.st_size);
     return VFS_OK;
 }
-static int h_close(void *f) { return close(((H *)f)->fd) == 0 ? VFS_OK : map_errno(errno); }
+static int h_close(void *c, void *f) { (void)c; return close(((H *)f)->fd) == 0 ? VFS_OK : map_errno(errno); }
 
-static int h_stat(int i, const char *rel, int32_t *size, bool *is_dir) {
+static int h_stat(void *c, const char *rel, int32_t *size, bool *is_dir) {
     char p[PATH_MAX];
     struct stat st;
-    if (!join(i, rel, p)) return VFS_BADPATH;
+    if (!join(c, rel, p)) return VFS_BADPATH;
     if (stat(p, &st) != 0) return map_errno(errno);
     *is_dir = S_ISDIR(st.st_mode);
     *size = *is_dir ? 0 : clamp32(st.st_size);
     return VFS_OK;
 }
-static int h_readdir(int i, const char *rel, VfsDirCb cb, void *ctx) {
+static int h_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) {
     char p[PATH_MAX], q[PATH_MAX + VFS_NAME_MAX + 2];
-    if (!join(i, rel, p)) return VFS_BADPATH;
+    if (!join(c, rel, p)) return VFS_BADPATH;
     DIR *d = opendir(p);
     if (!d) return map_errno(errno);
     struct dirent *e;
@@ -143,29 +147,29 @@ static int h_readdir(int i, const char *rel, VfsDirCb cb, void *ctx) {
     closedir(d);
     return VFS_OK;
 }
-static int h_mkdir(int i, const char *rel) {
+static int h_mkdir(void *c, const char *rel) {
     char p[PATH_MAX];
-    if (!join(i, rel, p)) return VFS_BADPATH;
+    if (!join(c, rel, p)) return VFS_BADPATH;
     return mkdir(p, 0777) == 0 ? VFS_OK : map_errno(errno);
 }
-static int h_remove(int i, const char *rel) {
+static int h_remove(void *c, const char *rel) {
     char p[PATH_MAX];
     struct stat st;
-    if (!join(i, rel, p)) return VFS_BADPATH;
+    if (!join(c, rel, p)) return VFS_BADPATH;
     if (lstat(p, &st) != 0) return map_errno(errno);
     int rc = S_ISDIR(st.st_mode) ? rmdir(p) : unlink(p);
     return rc == 0 ? VFS_OK : map_errno(errno);
 }
-static int h_rename(int i, const char *from, const char *to, bool replace) {
+static int h_rename(void *c, const char *from, const char *to, bool replace) {
     char a[PATH_MAX], b[PATH_MAX];
     struct stat st;
-    if (!join(i, from, a) || !join(i, to, b)) return VFS_BADPATH;
+    if (!join(c, from, a) || !join(c, to, b)) return VFS_BADPATH;
     if (!replace && lstat(b, &st) == 0) return VFS_EXISTS;
     return rename(a, b) == 0 ? VFS_OK : map_errno(errno);
 }
-static int h_usage(int i, int32_t *used, int32_t *total) {
+static int h_usage(void *c, int32_t *used, int32_t *total) {
     struct statvfs sv;
-    if (statvfs(roots[i], &sv) != 0) return map_errno(errno);
+    if (statvfs((const char *)c, &sv) != 0) return map_errno(errno);
     unsigned long long fr = sv.f_frsize ? sv.f_frsize : sv.f_bsize;
     unsigned long long t = fr * sv.f_blocks, u = t - fr * sv.f_bfree;
     *total = t > INT32_MAX ? INT32_MAX : (int32_t)t;
@@ -173,24 +177,13 @@ static int h_usage(int i, int32_t *used, int32_t *total) {
     return VFS_OK;
 }
 
-#define INSTANCE(I) \
-    static int o##I(void *f, const char *r, int m) { return h_open(I, f, r, m); } \
-    static int st##I(const char *r, int32_t *s, bool *d) { return h_stat(I, r, s, d); } \
-    static int rd##I(const char *r, VfsDirCb cb, void *c) { return h_readdir(I, r, cb, c); } \
-    static int mk##I(const char *r) { return h_mkdir(I, r); } \
-    static int rm##I(const char *r) { return h_remove(I, r); } \
-    static int rn##I(const char *a, const char *b, bool rp) { return h_rename(I, a, b, rp); } \
-    static int us##I(int32_t *u, int32_t *t) { return h_usage(I, u, t); }
-INSTANCE(0)
-INSTANCE(1)
+const VfsBackend fs_host_be = { false, h_open, h_read, h_write, h_sync, h_size, h_close, h_stat, h_readdir,
+                                 h_mkdir, h_remove, h_rename, h_usage, h_write_at };
 
-#define BE(I) { false, o##I, h_read, h_write, h_sync, h_size, h_close, st##I, rd##I, mk##I, rm##I, rn##I, us##I, h_write_at }
-static const VfsBackend backends[FS_HOST_INSTANCES] = { BE(0), BE(1) };
-
-const VfsBackend *fs_host_open(int i, const char *dir) {
+void *fs_host_open(int i, const char *dir) {
     if (i < 0 || i >= FS_HOST_INSTANCES || strlen(dir) >= FS_HOST_ROOT_MAX) return NULL;
     size_t n = strlen(dir);
     memcpy(roots[i], dir, n + 1);
     while (n > 1 && roots[i][n - 1] == '/') roots[i][--n] = 0;
-    return &backends[i];
+    return roots[i];
 }

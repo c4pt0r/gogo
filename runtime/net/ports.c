@@ -238,8 +238,12 @@ void net_attach(Vm *vm) {
     const NetIf *nif = vm->board->netif;
     net_s.vm = vm;
     net_s.nif = nif;
-    net_s.attached = nif && nif->mac(nif->ctx, net_s.mac);
-    net_s.link_up = net_s.attached && nif->link_up(nif->ctx);
+    bool up = nif && nif->mac(nif->ctx, net_s.mac);
+    /* The Wi-Fi task (net_rx_offer, net_link_event) reads `attached` and then
+     * net_s.vm: publish vm, nif and the MAC before it. */
+    vm_barrier();
+    net_s.attached = up;
+    net_s.link_up = up && nif->link_up(nif->ctx);
     (void)port_add_source(vm, &net_source, NULL);
 }
 

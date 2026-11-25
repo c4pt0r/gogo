@@ -58,14 +58,15 @@ enum {
  * (gen << 1) | 1, where gen is the 12-bit generation the next actor in
  * that slot will get. Actor pointers are aligned, so bit 0 tells them apart. */
 typedef struct Vm {
+    /* First: every host.c wrapper loads these (offsets in short-load range). */
+    const gogo_host *host;    /* the host's hooks (host.h wrappers only) */
+    void *host_ctx;           /* their ctx */
+    const VmBoard *board;     /* board hardware; never NULL after vm_init */
     ModEntry *mods[GOGO_MAX_MODULES];   /* module table (module.h); NULL = free slot */
     uint16_t mod_gen[GOGO_MAX_MODULES]; /* each slot's current generation */
     uint32_t mod_mem;         /* code bytes of the counted (loaded, not boot) modules */
     uint32_t mod_cap;         /* their limit: config code.mem (module_config) */
     uint8_t mod_next;         /* where module_load's round-robin slot search starts */
-    const gogo_host *host;    /* the host's hooks (host.h wrappers only) */
-    void *host_ctx;           /* their ctx */
-    const VmBoard *board;     /* board hardware; never NULL after vm_init */
     uint32_t caps;            /* CAP_* this Vm may use: board caps & granted */
     uint32_t rand_x;          /* vm_random's fallback state */
     uint64_t t0;              /* host->now_ms at the time base; vm_now counts from it */
@@ -91,8 +92,10 @@ typedef struct Vm {
     volatile uint32_t evq_head, evq_tail, evq_dropped;
     const PortDriver *const *drivers;   /* port_set_drivers; NULL = board->ports */
     PortSrcSlot sources[GOGO_MAX_SOURCES + 1u];   /* port_add_source; s NULL-terminated */
-    /* B_FS (vfs_install; NULL = no storage linked: bad code). */
+    /* B_FS (vfs_init; NULL = no storage linked: bad code). */
     uint32_t (*fs_builtin)(struct Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs);
+    struct VfsState *vfs;     /* vfs mounts and open files (vfs_init); NULL = none */
+    struct InputState *input; /* input port state (input_install); NULL = none */
     VaHeap va;                /* allocator (alloc.h): scalars, then its free lists */
     Port ports[GOGO_MAX_PORTS];   /* port table (port.h) */
     PortEvent evq_slots[GOGO_EVQ_CAP];   /* event ring storage (evq.h), last: large */

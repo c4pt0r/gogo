@@ -81,8 +81,16 @@ if [ "$1" = "--vfs" ]; then
 "
     done
     printf '%s' "$lines" | sort -rn
+    # VfsState (one instance's mounts and slots) lives in board storage, not
+    # in runtime/vfs: count it as fixed state.
+    printf '#include "vfs_int.h"\nVfsState vfs_state_probe;\n' > "$OUT/probe.c"
+    "$GCC" -std=c99 -Os -Iruntime/vfs -c "$OUT/probe.c" -o "$OUT/probe.o"
+    st=$("$SIZE" -A "$OUT/probe.o" | awk '/^\.(bss|data|common)/ {s += $2} END {print s + 0}')
+    [ "$st" -gt 0 ] || st=$("$SIZE" "$OUT/probe.o" | awk 'NR == 2 {print $3}')
+    fixed=$((fixed + st))
     printf '%7d  vfs code total (text+rodata+literal; not VM core)\n' "$total"
-    printf '%7d  vfs fixed state (bss+data, storage limit 3072)\n' "$fixed"
+    printf '%7d  VfsState (board storage, per instance)\n' "$st"
+    printf '%7d  vfs fixed state (bss+data + VfsState, storage limit 3072)\n' "$fixed"
     if [ "$fixed" -gt 3072 ]; then echo "vfssize: fixed state exceeds 3072 bytes"; exit 1; fi
     exit 0
 fi

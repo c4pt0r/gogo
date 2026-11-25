@@ -4,15 +4,21 @@
 #include "input_int.h"
 #include "host.h"
 #include <stdio.h>
+#include <string.h>
 
 static const InputHw none;   /* no hardware */
 const InputHw *input_hw(const Vm *vm) { return vm->board->input ? vm->board->input : &none; }
 
+/* Any input port open (no clock read for programs without input). */
+static bool any_open(const InputState *in) {
+    return in->kbd.port || in->pwr.port || in->imu.port || in->ir.tx || in->ir.rx || in->au.mic || in->au.spk;
+}
+
 static bool src_pending(const Vm *vm, void *ctx) {
     (void)ctx;
-    if (!kbd_is_open() && !power_is_open() && !imu_is_open() && !ir_is_open() && !audio_is_open()) return false;   /* no clock read for programs without input */
+    if (!any_open(vm->input)) return false;
     uint64_t now = vm_now(vm);
-    return kbd_work(vm, now) || power_work(vm, now) || imu_work(now) || ir_work(now) || audio_work(now);
+    return kbd_work(vm, now) || power_work(vm, now) || imu_work(vm, now) || ir_work(vm, now) || audio_work(vm, now);
 }
 
 static void src_drain(Vm *vm, void *ctx, uint64_t now) {
@@ -28,7 +34,7 @@ static bool src_any_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return 
 
 static bool src_next_deadline(const Vm *vm, void *ctx, uint64_t *d) {
     (void)ctx;
-    if (!kbd_is_open() && !power_is_open() && !imu_is_open() && !ir_is_open() && !audio_is_open()) return false;
+    if (!any_open(vm->input)) return false;
     /* Dead hardware (live false): no repeat, sample or receive poll is
      * coming; an IR frame being sent still finishes (its Done). */
     bool live = !input_hw(vm)->live || input_hw(vm)->live();
@@ -36,25 +42,29 @@ static bool src_next_deadline(const Vm *vm, void *ctx, uint64_t *d) {
     bool any = false;
     if (live && kbd_next_deadline(vm, now, &t)) { *d = t; any = true; }
     if (live && power_next_deadline(vm, now, &t) && (!any || t < *d)) { *d = t; any = true; }
-    if (live && imu_next_deadline(now, &t) && (!any || t < *d)) { *d = t; any = true; }
-    if (ir_next_deadline(now, live, &t) && (!any || t < *d)) { *d = t; any = true; }
-    if (audio_next_deadline(now, live, &t) && (!any || t < *d)) { *d = t; any = true; }
+    if (live && imu_next_deadline(vm, now, &t) && (!any || t < *d)) { *d = t; any = true; }
+    if (ir_next_deadline(vm, now, live, &t) && (!any || t < *d)) { *d = t; any = true; }
+    if (audio_next_deadline(vm, now, live, &t) && (!any || t < *d)) { *d = t; any = true; }
     return any;
 }
 
 static const PortSource input_source = { src_pending, src_drain, src_any_live, src_next_deadline, NULL };
 
-static bool installed, failed;
-
-void input_install(Vm *vm) {
-    failed = !port_add_source(vm, &input_source, NULL);
-    installed = !failed;
-    if (failed) fprintf(stderr, "gogo: input: no free event-source slot, kbd, power, imu, ir, mic and spk disabled\n");
+void input_install(Vm *vm, InputState *st) {
+    memset(st, 0, sizeof *st);
+    vm->input = st;
+    st->failed = !port_add_source(vm, &input_source, NULL);
+    st->installed = !st->failed;
+    if (st->failed) fprintf(stderr, "gogo: input: no free event-source slot, kbd, power, imu, ir, mic and spk disabled\n");
 }
 
 void input_uninstall(Vm *vm) {   /* tests */
-    if (installed) port_remove_source(vm, &input_source);
-    installed = failed = false;
+    InputState *st = vm->input;
+    if (!st) return;
+    if (st->installed) port_remove_source(vm, &input_source);
+    st->installed = st->failed = false;
 }
 
-bool input_failed(void) { return failed; }
+bool input_failed(const Vm *vm) { return !vm->input || vm->input->failed; }
+uint32_t input_dropped(const Vm *vm) { return vm->input ? vm->input->dropped : 0; }
+uint32_t input_read_errors(const Vm *vm) { return vm->input ? vm->input->read_errors : 0; }

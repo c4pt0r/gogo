@@ -150,11 +150,15 @@ typedef struct InputHw {
 extern const PortDriver input_kbd_driver, input_power_driver, input_imu_driver, input_ir_tx_driver,
     input_ir_rx_driver, input_mic_driver, input_spk_driver;
 
-/* Registers the input source on vm (once per Vm, after vm_boot: vm_init
- * clears the source list). */
-void input_install(struct Vm *vm);
-/* If the source could not be registered (every slot taken), a line is logged
+/* One Vm's input state (input_int.h). */
+typedef struct InputState InputState;
+
+/* Clears st, points vm->input at it and registers the input source on vm
+ * (once per Vm, after vm_boot: vm_init clears the source list). st must
+ * outlive the Vm. Without it every input port refuses to open.
+ * If the source could not be registered (every slot taken), a line is logged
  * and the kbd and power ports refuse to open, as on absent hardware. */
+void input_install(struct Vm *vm, InputState *st);
 void input_uninstall(struct Vm *vm);   /* tests: removes the source so input_install can run again */
 
 /* Key codes are USB HID usages; Fn has no usage, gogo uses 0xF0. */
@@ -164,7 +168,7 @@ enum { MOD_CTRL = 1, MOD_SHIFT = 2, MOD_ALT = 4, MOD_OPT = 8, MOD_FN = 16 };
 /* The ASCII character of key `code` under mods (US layout), 0 if none. */
 uint8_t input_key_char(uint8_t code, uint32_t mods);
 
-uint32_t input_dropped(void);       /* events dropped (owner gone, or over its quota) */
-uint32_t input_read_errors(void);   /* kbd_read failures */
+uint32_t input_dropped(const struct Vm *vm);       /* events dropped (owner gone, or over its quota) */
+uint32_t input_read_errors(const struct Vm *vm);   /* kbd_read failures */
 
 #endif

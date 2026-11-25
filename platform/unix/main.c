@@ -32,10 +32,10 @@
 #include "config.h"
 #include "gpio_unix.h"
 #include "input_unix.h"
-#include "input.h"
+#include "input_int.h"
 #include "net_unix.h"
 #include "net.h"
-#include "vfs.h"
+#include "vfs_int.h"
 #include "fs_host.h"
 
 #include <sys/stat.h>
@@ -51,6 +51,10 @@
 #define TLS_DRIVERS 0
 #endif
 
+
+/* The board's one Vm's vfs and input state (runtime/ keeps none). */
+static VfsState vfs_state;
+static InputState input_state;
 
 static int load_error(const char *path, const char *what) {
     fprintf(stderr, "gogovm: %s: %s\n", path, what);
@@ -205,16 +209,16 @@ int main(int argc, char **argv) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot create flash directory\n", fs_root);
             return 2;
         }
-        const VfsBackend *flash = fs_host_open(0, dir);
+        void *flash = fs_host_open(0, dir);
         if (!flash) {
             fprintf(stderr, "gogovm: --fs-root too long\n");
             return 2;
         }
-        vfs_mount("/flash", flash);
+        vfs_mount(&vfs_state, "/flash", &fs_host_be, flash);
         if (snprintf(dir, sizeof dir, "%s/sd", fs_root) < (int)sizeof dir &&
             stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) {
-            const VfsBackend *sd = fs_host_open(1, dir);
-            if (sd) vfs_mount("/sd", sd);
+            void *sd = fs_host_open(1, dir);
+            if (sd) vfs_mount(&vfs_state, "/sd", &fs_host_be, sd);
         }
     }
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -248,8 +252,8 @@ int main(int argc, char **argv) {
     }
     /* After vm_init: it starts the Vm's source list and fs hook empty. */
     if (net_fd >= 0) net_attach(&vm);
-    vfs_install(&vm);
-    input_install(&vm);
+    vfs_init(&vm, &vfs_state);
+    input_install(&vm, &input_state);
     rc = vm_run(&vm);
 #ifdef GOGO_TLS
     tls_vm_peak = va_peak_bytes(&vm);

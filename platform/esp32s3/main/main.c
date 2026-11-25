@@ -12,8 +12,8 @@
 #if CONFIG_GOGO_NET
 #include "net.h"
 #endif
-#include "vfs.h"
-#include "input.h"
+#include "vfs_int.h"
+#include "input_int.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,6 +27,8 @@
 #define VM_PRIORITY    5
 
 static Vm vm;      /* static: too big for a task stack */
+static VfsState vfs_state;     /* its vfs and input state (runtime/ keeps none) */
+static InputState input_state;
 
 static void vm_task(void *arg) {
     (void)arg;
@@ -43,10 +45,10 @@ static void vm_task(void *arg) {
 #endif
     /* Storage: /flash (LittleFS on `gogofs`; formats on first boot) and
      * the B_FS builtin. Without /flash every fs path is NotMounted. */
-    (void)fs_lfs_mount();
+    (void)fs_lfs_mount(&vfs_state);
 #if HAS_SD && CONFIG_GOGO_SD
     /* /sd (FatFs on the microSD card): mounted by the first call. */
-    (void)fs_fat_init();
+    (void)fs_fat_init(&vfs_state);
     platform_esp_log("gogo: fs state %lu bytes", (unsigned long)(fs_lfs_state_bytes() + fs_fat_state_bytes()));
 #else
     platform_esp_log("gogo: fs state %lu bytes", (unsigned long)fs_lfs_state_bytes());
@@ -78,8 +80,8 @@ static void vm_task(void *arg) {
 #if CONFIG_GOGO_NET
     net_attach(&vm);
 #endif
-    vfs_install(&vm);
-    input_install(&vm);   /* kbd + power source */
+    vfs_init(&vm, &vfs_state);
+    input_install(&vm, &input_state);   /* kbd + power source */
 #if CONFIG_GOGO_NET
     wifi_esp_report_heap();
     platform_esp_log("gogo: net stack fixed state %lu bytes", (unsigned long)net_fixed_bytes());

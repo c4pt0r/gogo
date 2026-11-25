@@ -600,6 +600,28 @@ TEST(ir_rx_time_from_hook) {
     teardown();
 }
 
+/* A host clock ahead of VM time (t0 != 0): the poll schedule is VM time and
+ * the hook's host-clock frame start gets -t0 exactly once. */
+TEST(ir_rx_time_with_t0) {
+    setup();
+    vm.t0 = 1000;
+    now = 1000;                                 /* host 1000 = VM 0 */
+    CHECK(port_is(open_rx(owner, 10000)));      /* first poll at VM 20 */
+    fake_ir_rx_start(1007);                     /* host clock */
+    fake_ir_rx_push(F3, 3);
+    now = 1019;
+    port_drain(&vm, 19);
+    collect(owner);
+    CHECK_EQ(ngot, 0);
+    CHECK_EQ(fake_ir_rx_reads(), 0);
+    now = 1020;
+    port_drain(&vm, 20);
+    collect(owner);
+    CHECK_EQ(ngot, 1);
+    CHECK_EQ(got[0].time, 7);
+    teardown();
+}
+
 /* The optional ir_tx_open / ir_tx_close hooks bracket the port: open (with
  * the port's carrier and duty, defaults applied) before any start, close
  * after the last; once per port, also when the owner exits. */
