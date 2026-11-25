@@ -1,0 +1,21 @@
+// Only the actor that registered a name may unregister it.
+package main
+
+import "gogo/actor"
+
+func main() {
+	self := actor.Self()
+	other := actor.Spawn(func() {
+		actor.Unregister("svc") // not its registrant: nothing happens
+		actor.Send(self, 1)
+		actor.Receive()
+	})
+	println(actor.Register("svc", other))
+	actor.Receive()
+	_, ok := actor.Whereis("svc")
+	println("after other", ok)
+	actor.Unregister("svc")
+	_, ok = actor.Whereis("svc")
+	println("after registrant", ok)
+	actor.Send(other, 0)
+}

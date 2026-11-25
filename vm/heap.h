@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include "term.h"
 #include "actor.h"
+#include "module.h"
 
 #define HEAP_MAX_WORDS 65535u
 
@@ -68,26 +69,17 @@ size_t actor_memory_bytes(const Actor *a);
 /* ---- reading terms (interp.c, port.c) ---- */
 
 /* Pointer to the object a heap or const ref names, or NULL if t is neither
- * or points outside the heap / const area. */
+ * or points outside the heap / const area. A const ref resolves through the
+ * module table (const_obj_of, module.h). */
 static inline const uint32_t *obj_of(const Vm *vm, const Actor *a, term t) {
-    const uint32_t *base;
-    uint32_t off, limit;
-    if (term_is_ref(t)) {
-        base = a->mem;
-        off = term_ref_off(t);
-        limit = a->hp;
-    } else if (term_is_const(t)) {
-        base = vm->img->consts;
-        off = term_const_off(t);
-        limit = vm->img->consts_words;
-    } else {
-        return NULL;
-    }
-    /* Every object has at least two words and lies wholly inside its area. */
+    if (term_is_const(t)) return const_obj_of(vm, t);
+    if (!term_is_ref(t)) return NULL;
+    uint32_t off = term_ref_off(t), limit = a->hp;
+    /* Every object has at least two words and lies wholly inside the heap. */
     if (off >= limit || limit - off < 2u) return NULL;
-    uint32_t words = hdr_words(base[off]);
+    uint32_t words = hdr_words(a->mem[off]);
     if (words < 2u || words > limit - off) return NULL;
-    return base + off;
+    return a->mem + off;
 }
 
 /* The bytes of a name argument: a string constant, a heap string or the

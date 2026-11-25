@@ -77,7 +77,7 @@ static const PortDriver fake = {
 static const PortDriver *const fake_list[] = { &fake, NULL };
 
 /* An image with one trivial function and the two types (cfg, event). */
-#define MINI_WORDS 23
+#define MINI_WORDS 25
 static void mini_image(uint32_t *w, Image *img) {
     memset(w, 0, MINI_WORDS * sizeof(uint32_t));
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 2;
@@ -507,7 +507,7 @@ TEST(vm_init_rejects_big_table) {
  *   r0 = "fake"; r2 = 7; r1 = Cfg{r2}; r3, r4 = PORT_OPEN(r0, r1)
  *   r5 = Cmd{r2}; SEND(r3, r5); KILL(r3, 1)
  *   r3, r4 = PORT_OPEN(r0, r1); PORT_CLOSE(r3); RET */
-#define BI_WORDS 51
+#define BI_WORDS 55
 TEST(port_builtins) {
     uint32_t w[BI_WORDS]; Image img; Vm vm;
     va_reset();
@@ -537,7 +537,7 @@ TEST(port_builtins) {
     c[18] = OP_MAKE(OP_BUILTIN, 3, 0, 2); c[19] = B_PORT_OPEN;
     c[20] = OP_MAKE(OP_BUILTIN, 8, 3, 1); c[21] = B_PORT_CLOSE;
     c[22] = OP_MAKE(OP_RET, 0, 0, 0);
-    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 8), 0);
     CHECK_EQ(vm_run(&vm), 0);
     CHECK_EQ(fk.opens, 2);
@@ -998,5 +998,72 @@ TEST(deliver_ints_full_mailbox_not_fatal) {
     CHECK(!actor_exit_pending(a, &code, &fn));
     clear_runq(&vm);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
+static char stale_err[256];
+static void stale_cap(const char *s, size_t n) {
+    size_t l = strlen(stale_err);
+    if (l + n < sizeof stale_err) { memcpy(stale_err + l, s, n); stale_err[l + n] = 0; }
+}
+
+/* A stale value (a const ref or struct type of a module that is gone; here
+ * a slot no module is in) given to port.Open or sent as a port command is
+ * badcode for the actor, never a silent failure (Task 5). The gate is the
+ * builtin, so every driver's command handler is covered. */
+TEST(port_stale_values_badcode) {
+    uint32_t w[40]; Image img; Vm vm;
+    va_reset();
+    evq_reset();
+    memset(&fk, 0, sizeof fk);
+    port_set_drivers(fake_list);
+    memset(w, 0, sizeof w);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 2;
+    w[4] = 6; w[5] = 6; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 0 | (4u << 16); w[10] = 0;
+    w[11] = 2; w[12] = 3; w[13] = 2; w[14] = 3;
+    w[15] = hdr_make(3, K_STRING); w[16] = 4; memcpy(&w[17], "main", 4);
+    w[18] = hdr_make(3, K_STRING); w[19] = 3; memcpy(&w[20], "Cfg", 3);
+    uint32_t *c = w + 21;
+    c[0] = OP_MAKE(OP_BUILTIN, 2, 0, 2); c[1] = B_PORT_OPEN;   /* port.Open(r0, r1) */
+    c[2] = OP_MAKE(OP_RET, 0, 0, 0);
+    c[3] = OP_MAKE(OP_BUILTIN, 2, 0, 2); c[4] = B_SEND;        /* Send(r0, r1) */
+    c[5] = OP_MAKE(OP_RET, 0, 0, 0);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
+    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    uint32_t tag = mod_tag_make(6, 3);
+    term stale = term_from_const(0) | tag;
+    int32_t cfg[2] = { 1, 0 };
+    for (int k = 0; k < 5; k++) {
+        Actor *a = actor_new(&vm, 128);
+        CHECK(heap_push_frame(&vm, a, 4, -1));
+        term *R = (term *)a->mem + a->fp;
+        a->pc = img.code + (k < 3 ? 0u : 3u);
+        term ok_cfg = heap_struct(&vm, a, CFG_TYPE, cfg, 2);
+        term name = heap_str(&vm, a, "fake");
+        if (k == 0) { R[0] = stale; R[1] = ok_cfg; }                         /* stale name */
+        if (k == 1) { R[0] = name; R[1] = heap_struct(&vm, a, 40u | tag, cfg, 2); }   /* stale cfg type */
+        if (k == 2) { a->mem[term_ref_off(ok_cfg) + 3] = stale; R[0] = name; R[1] = ok_cfg; }
+        Actor *o = NULL;
+        if (k >= 3) {
+            o = actor_new(&vm, 64);
+            R[0] = open_fake(&vm, o, 1);
+            CHECK(port_is(R[0]));
+            term cmd = heap_struct(&vm, a, 7, cfg, 2);
+            if (k == 3) a->mem[term_ref_off(cmd) + 2] = stale;               /* stale field */
+            else a->mem[term_ref_off(cmd) + 1] = 40u | tag;                 /* stale type */
+            R[1] = cmd;
+        }
+        stale_err[0] = 0;
+        platform_unix_err_hook = stale_cap;
+        int r = interp_run(&vm, a);
+        platform_unix_err_hook = NULL;
+        CHECK_EQ(r, RUN_EXIT);
+        CHECK(strstr(stale_err, "crashed: badcode") != NULL);
+        CHECK_EQ(fk.opens, k >= 3 ? k - 2 : 0);   /* only open_fake's */
+        CHECK_EQ(fk.cmds, 0);
+        if (o) actor_exit(&vm, o, R_NORMAL, T_EMPTYSTR);
+    }
+    CHECK_EQ(vm.live, 0u);
     teardown();
 }

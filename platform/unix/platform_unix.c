@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200112L   /* clock_gettime, nanosleep, poll, pipe */
 #include "platform.h"
+#include "caps_unix.h"
 #include "config.h"
 #include "gpio_unix.h"
 #include "input_unix.h"
@@ -385,3 +386,8 @@ int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uin
     fclose(f);
     return found;
 }
+
+/* Unix provides every capability; --caps <hex> (test only) overrides. */
+static uint32_t unix_caps = CAP_NET | CAP_KBD | CAP_POWER | CAP_SD;
+void platform_unix_set_caps(uint32_t caps) { unix_caps = caps; }
+uint32_t platform_caps(void) { return unix_caps; }

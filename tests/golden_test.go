@@ -25,7 +25,9 @@ import (
 // is the config store ($GOGO_CONFIG). A file `fsroot` runs the VM with
 // --fs-root on a fresh temporary directory (gogovm creates flash/ in it;
 // the runner creates sd/ too if a line of fsroot has the field "sd", and a line
-// "file flash/My File" creates that file, containing "seed", first). `make test-go`
+// "file flash/My File" creates that file, containing "seed", first). A file
+// `vmargs` holds extra VM flags (whitespace-separated, before the image); a
+// file `exitfail` makes a non-zero exit status the expected one. `make test-go`
 // builds the VM and sets GOGO_VM.
 func TestGolden(t *testing.T) {
 	vm := os.Getenv("GOGO_VM")
@@ -72,8 +74,35 @@ func TestGolden(t *testing.T) {
 			defer cancel()
 			var stdout, stderr bytes.Buffer
 			vmArgs := []string{imgPath}
-			if mark, err := os.ReadFile(filepath.Join(dir, "fsroot")); err == nil {
+			var mods []string // mods/<name>/ directories only
+			if ents, err := os.ReadDir(filepath.Join(dir, "mods")); err == nil {
+				for _, e := range ents {
+					if e.IsDir() {
+						mods = append(mods, filepath.Join(dir, "mods", e.Name()))
+					}
+				}
+			}
+			mark, markErr := os.ReadFile(filepath.Join(dir, "fsroot"))
+			if markErr == nil || len(mods) > 0 {
 				root := t.TempDir()
+				if len(mods) > 0 {
+					if err := os.MkdirAll(filepath.Join(root, "flash"), 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, mod := range mods {
+					mprog, err := compiler.Load(mod)
+					if err != nil {
+						t.Fatalf("load module %s: %v", mod, err)
+					}
+					mimg, err := compiler.Compile(mprog)
+					if err != nil {
+						t.Fatalf("compile module %s: %v", mod, err)
+					}
+					if err := os.WriteFile(filepath.Join(root, "flash", filepath.Base(mod)+".gmod"), mimg, 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
 				for _, line := range strings.Split(string(mark), "\n") {
 					if rest, ok := strings.CutPrefix(line, "file "); ok { // seed file "<medium>/<path>"
 						p := filepath.Join(root, rest)
@@ -91,6 +120,11 @@ func TestGolden(t *testing.T) {
 				}
 				vmArgs = []string{"--fs-root", root, imgPath}
 			}
+			if extra, err := os.ReadFile(filepath.Join(dir, "vmargs")); err == nil {
+				vmArgs = append(strings.Fields(string(extra)), vmArgs...)
+			}
+			_, statErr := os.Stat(filepath.Join(dir, "exitfail"))
+			wantFail := statErr == nil
 			cmd := exec.CommandContext(ctx, vm, vmArgs...)
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
@@ -114,7 +148,11 @@ func TestGolden(t *testing.T) {
 			if ctx.Err() != nil {
 				t.Fatalf("VM timed out after 30s\n--- stdout ---\n%s\n--- stderr ---\n%s", stdout.Bytes(), stderr.Bytes())
 			}
-			if runErr != nil {
+			if wantFail {
+				if runErr == nil {
+					t.Errorf("VM exited 0, want a non-zero status")
+				}
+			} else if runErr != nil {
 				t.Errorf("VM failed: %v (want exit status 0)\n--- stderr ---\n%s", runErr, stderr.Bytes())
 			}
 			if !bytes.Equal(stdout.Bytes(), want) {

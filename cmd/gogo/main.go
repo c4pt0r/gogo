@@ -249,5 +249,9 @@ func build(args []string) error {
 	if err != nil {
 		return err
 	}
+	_, warnings := compiler.Requires(prog)
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "gogo: warning:", w)
+	}
 	return os.WriteFile(out, img, 0o644)
 }

@@ -102,7 +102,7 @@ The chapters build on each other:
 | 11. Configuration and Devices | `gogo config`, Wi-Fi, the two boards |
 | 12. Toolchain Reference | Every `gogo` command |
 | 13. Appendices | Library quick reference, exit reasons, error codes, differences from Go |
-| 14. Coming Soon: Hot Loading | Loading code at run time (designed, not yet available) |
+| 14. Hot Loading | Loading code at run time: `gogo/code`, modules, supervised upgrades |
 
 Every example in the book is a complete program in
 [`docs/book/examples/`](examples/), and the output shown is the real output

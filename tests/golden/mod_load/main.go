@@ -1,0 +1,150 @@
+// Hot loading: Load, Spawn by entry name, Hold/Release, unloading, the
+// table limit, stale handles and copies of heap or unaligned Bytes.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/code"
+	"gogo/fs"
+)
+
+func read(path string) bytes.Bytes {
+	b, e := fs.ReadFile(path, 100000)
+	if e != fs.OK {
+		println("read", path, int(e))
+	}
+	return b
+}
+
+// wait returns once p has exited.
+func wait(p actor.PID) {
+	actor.Monitor(p)
+	for {
+		switch actor.Receive().(type) {
+		case actor.DownMsg:
+			return
+		}
+	}
+}
+
+func run(m code.Module, entry string, arg any) {
+	p, e := code.Spawn(m, entry, arg)
+	if e != code.OK {
+		println("spawn", entry, int(e))
+		return
+	}
+	wait(p)
+}
+
+// loader loads the module, sends it to host and exits once host says so.
+func loader(host actor.PID) {
+	m, e := code.Load(read("/flash/hello.gmod"))
+	println("loader load", int(e))
+	actor.Send(host, m)
+	actor.Receive()
+}
+
+func main() {
+	b := read("/flash/hello.gmod")
+	m, e := code.Load(b)
+	println("load", int(e), code.MemUsed() == b.Len())
+	run(m, "Main", "x")
+	run(m, "main", 0)
+	_, e = code.Spawn(m, "Nope", 0)
+	println("Nope", int(e))
+	_, e = code.Spawn(m, "main2", 0)
+	println("main2", int(e))
+	_, e = code.Spawn(m, "helper", 0)
+	println("helper", int(e))
+	_, e = code.Spawn(m, "Two", 0)
+	println("Two", int(e))
+	_, e = code.Spawn(code.Module{}, "main", 0)
+	println("zero", int(e))
+	for _, h := range []int{1, -1, 65536, 1 << 30, -1 << 30} { // never module 0, never a crash
+		f := code.Module{H: h, Missing: h}
+		_, e = code.Spawn(f, "main", 0)
+		println("forged", int(e), int(code.Hold(f)), code.Missing(f) == h)
+		code.Release(f)
+	}
+	println("missing", code.Missing(m))
+
+	// Released with no actor of it left: unloaded, the handle is stale.
+	code.Release(m)
+	println("released", code.MemUsed())
+	_, e = code.Spawn(m, "Main", "y")
+	println("stale", int(e), int(code.Hold(m)))
+
+	// Released while its actor runs: unloaded when that actor exits.
+	m, _ = code.Load(b)
+	p, _ := code.Spawn(m, "Wait", 0)
+	code.Release(m)
+	println("running", code.MemUsed() == b.Len())
+	actor.Send(p, 1)
+	wait(p)
+	println("after last actor", code.MemUsed())
+
+	// A Hold from another actor keeps it past its loader's exit.
+	self := actor.Self()
+	l := actor.Spawn(func() { loader(self) })
+	var held code.Module
+	switch x := actor.Receive().(type) {
+	case code.Module:
+		held = x
+	}
+	println("hold", int(code.Hold(held)), int(code.Hold(held)))
+	actor.Send(l, 0)
+	wait(l)
+	run(held, "Main", "holder")
+	code.Release(held)
+	println("holder released", code.MemUsed())
+
+	// The table: 7 modules besides the main program.
+	var ms []code.Module
+	for i := 0; i < 8; i++ {
+		x, e := code.Load(b)
+		if e != code.OK {
+			println("load", i, int(e))
+			break
+		}
+		ms = append(ms, x)
+	}
+	println("loaded", len(ms), code.MemUsed() == 7*b.Len())
+	for _, x := range ms {
+		code.Release(x)
+	}
+	println("all released", code.MemUsed())
+
+	// A stale handle never reaches the module that reuses its slot.
+	old, _ := code.Load(b)
+	slot := (old.H - 1) >> 16 // H = slot<<16 | generation, plus 1
+	code.Release(old)
+	var cur code.Module
+	for {
+		cur, _ = code.Load(b)
+		if (cur.H-1)>>16 == slot {
+			break
+		}
+		code.Release(cur)
+	}
+	_, e = code.Spawn(old, "Main", "old")
+	println("old handle", int(e))
+	run(cur, "Main", "new")
+	code.Release(cur)
+
+	// Heap Bytes and an unaligned slice are copied once, counted the same.
+	h := bytes.FromString(b.String())
+	m, e = code.Load(h)
+	println("heap", int(e), code.MemUsed() == b.Len())
+	run(m, "Main", "heap")
+	code.Release(m)
+	buf := bytes.NewBuffer(b.Len() + 1)
+	buf.WriteByte(0)
+	buf.WriteBytes(b)
+	u := buf.Freeze().Slice(1, b.Len()+1)
+	m, e = code.Load(u)
+	println("unaligned", int(e), code.MemUsed() == b.Len())
+	run(m, "Main", "unaligned")
+	code.Release(m)
+	println("end", code.MemUsed())
+}

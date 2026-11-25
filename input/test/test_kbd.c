@@ -24,7 +24,7 @@ static uint64_t now;
 static uint64_t clock_fn(void) { return now; }
 
 #define SHIFT MOD_SHIFT
-#define MINI_WORDS 23
+#define MINI_WORDS 25
 static uint32_t img_w[MINI_WORDS];
 static Image img;
 static Vm vm;

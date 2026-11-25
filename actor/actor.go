@@ -58,6 +58,7 @@ const (
 	BadCode         = 6
 	Shutdown        = 7
 	BadShift        = 8
+	BadMsg          = 9 // sent a value that may not cross modules (a module's own struct, a func value)
 )
 
 // Spawn starts a new actor running f and returns its PID.
@@ -136,5 +137,5 @@ func Register(name string, p PID) bool { panic("gogo only") }
 // Whereis looks a registered name up.
 func Whereis(name string) (PID, bool) { panic("gogo only") }
 
-// Unregister removes a name.
+// Unregister removes a name; only the actor that registered it may.
 func Unregister(name string) { panic("gogo only") }

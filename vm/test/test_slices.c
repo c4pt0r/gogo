@@ -11,9 +11,19 @@
 #include "term.h"
 #include <string.h>
 
-#define IMG_WORDS 18
+#define IMG_WORDS 20
 
 /* An image whose const area holds the string "main" (at const offset 0). */
+
+/* Words of the message msg_build makes for t (UINT32_MAX if none): the
+ * test-side size check (the VM has no separate size-only entry). */
+static uint32_t copy_words(Vm *vm, Actor *a, term t) {
+    Msg *m = msg_build(vm, a, t, a->mod, NULL);
+    uint32_t w = m ? m->words : UINT32_MAX;
+    if (m) msg_free(m);
+    return w;
+}
+
 static void build_img(uint32_t *w) {
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
@@ -339,11 +349,11 @@ TEST(slices_msg_copy_shares) {
     f.a->mem[off + 3] = REGS(&f)[1];
     term st = term_from_ref(off);
     /* struct 4 + two headers 5 + 5 + array 2 + 6 */
-    CHECK_EQ(msg_copy_words(f.a, st), 4 + 5 + 5 + 8);
+    CHECK_EQ(copy_words(&f.vm, f.a, st), 4 + 5 + 5 + 8);
     uint16_t hp = f.a->hp;
     uint32_t before[256];
     memcpy(before, f.a->mem, (size_t)hp * 4u);
-    Msg *m = msg_build(f.a, st);
+    Msg *m = msg_build(&f.vm, f.a, st, 0, NULL);
     CHECK(m != NULL);
     if (!m) return;
     CHECK_EQ(memcmp(before, f.a->mem, (size_t)hp * 4u), 0);   /* source restored */

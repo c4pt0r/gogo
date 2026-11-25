@@ -51,7 +51,27 @@ func Info(p PID) ProcInfo
 const (Permanent = 0; Transient = 1)
 type Spec struct{ Restart, MaxRestarts, PeriodMs int }
 func Supervise(child func(), spec Spec) actor.PID
+func SuperviseModule(m code.Module, entry string, arg any, spec Spec) actor.PID
+type Upgrade struct{ Module code.Module }     // actor.Call(sup, Upgrade{m}, ms): 0 is ok
 ```
+
+### gogo/code
+
+```go
+type Module struct{ H, Missing int }          // H == 0: none
+type Err int                                  // OK, BadImage, Unsupported, NoMemory, NotFound, BadArg, TooMany
+
+func Load(b bytes.Bytes) (Module, Err)
+func Spawn(m Module, entry string, arg any) (actor.PID, Err)
+func SpawnLink(m Module, entry string, arg any) (actor.PID, Err)
+func SpawnOpt(m Module, entry string, arg any, opts actor.Options) (actor.PID, Err)
+func Hold(m Module) Err
+func Release(m Module)
+func Missing(m Module) int
+func MemUsed() int
+```
+
+Chapter 14 describes them.
 
 ### gogo/port
 
@@ -222,6 +242,7 @@ func config.Get(key string) (value string, ok bool)
 | 6 | `actor.BadCode` | `badcode` | index or slice out of range, nil function value called, unusable zero `Buffer`, a bad image |
 | 7 | `actor.Shutdown` | (none) | asked to stop; supervisors use it |
 | 8 | `actor.BadShift` | `badshift` | negative shift count |
+| 9 | `actor.BadMsg` | `badmsg` | sent a message holding a module's own struct or closure to an actor of another module (the sender exits; chapter 14) |
 | 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)`; `http.ListenFailed` is 100 |
 
 The crash report is `gogo: actor <pid N> crashed: <kind>[ in <function>]`,
@@ -240,6 +261,12 @@ on standard error.
 | 0 | 1 | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|
 | `Normal` (peer finished sending) | `Reset` | `Timeout` | `Refused` | `Overflow` (too many Writes) | `NoRoute` (address or link lost) |
+
+**`code.Err`** (the result of every `gogo/code` call):
+
+| 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| `OK` | `BadImage` | `Unsupported` (firmware lacks a feature: see `Missing`) | `NoMemory` (over `code.mem`) | `NotFound` | `BadArg` | `TooMany` (module table or holders full) |
 
 ## D. Limits
 
@@ -262,6 +289,9 @@ on standard error.
 | file name / path | 32 / 96 bytes | same |
 | `kv` value | 4096 bytes | same |
 | program image | 1 MB | |
+| modules loaded at once (the main program included) | 8 | 8 |
+| holders per module (`code.Hold`, the loader) | 4 | 4 |
+| module code in memory (`code.mem`) | 64 KB (config key `code.mem`, `K`/`M` suffix) | 64 KB |
 
 ## E. Differences from Go at a glance
 

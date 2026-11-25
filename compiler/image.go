@@ -11,12 +11,25 @@ const (
 	// change to opcode numbers or semantics, builtin numbers, reserved
 	// types or the term encoding bumps it (v2: M3; v3: M4; v4: M5 CALLV; v5: bitwise ops;
 	// v6: B_FS and the gogo/fs reserved types; v7: the const map after the
-	// code, see constMap; v8: reserved types kbd.*, power.*).
-	imageVersion = 8
+	// code, see constMap; v8: reserved types kbd.*, power.*; v9: requires
+	// bitmask and exports table after the const map, B_CODE and the
+	// gogo/code reserved type Module).
+	imageVersion = 9
 )
 
 // ImageVersion is the image format version this compiler emits.
 const ImageVersion = imageVersion
+
+// Index limits of an image (vm/term.h): at run time the top 11 bits of a
+// const ref, a closure's function word and a module struct's type word are
+// the module tag, so an image's const offsets have 17 bits (512 KB of
+// constants), function indexes 21 and type indexes 16 (TYPEIS's basic
+// types start at 0x10000).
+const (
+	MaxConstWords = 1 << 17
+	MaxFuncs      = 1 << 21
+	MaxTypes      = 1 << 16
+)
 
 type imgFunc struct {
 	name           uint32 // const offset
@@ -38,6 +51,14 @@ type ImageBuilder struct {
 	funcs   []imgFunc
 	types   []imgType
 	entry   uint32
+	// v9 trailer: capability bits, and the exported entries by name.
+	requires uint32
+	exports  []imgExport
+}
+
+type imgExport struct {
+	name uint32 // const offset of the name string
+	fn   uint32
 }
 
 // NewImageBuilder returns an empty builder.
@@ -91,12 +112,26 @@ func (b *ImageBuilder) AddType(name string, nFields uint32) uint32 {
 	return uint32(len(b.types) - 1)
 }
 
+// SetRequires sets the capability bits the image needs (Cap*).
+func (b *ImageBuilder) SetRequires(bits uint32) { b.requires = bits }
+
+// AddExport exports function f under name (the host spawns it by name).
+func (b *ImageBuilder) AddExport(name string, f uint32) {
+	b.exports = append(b.exports, imgExport{name: b.AddString(name), fn: f})
+}
+
 // SetEntry selects the entry function.
 func (b *ImageBuilder) SetEntry(f uint32) { b.entry = f }
 
 // Bytes serializes the image (little-endian words). Function code is laid out
 // in index order and function-relative jump targets are made absolute.
 func (b *ImageBuilder) Bytes() ([]byte, error) {
+	if len(b.consts) > MaxConstWords {
+		return nil, fmt.Errorf("image: const area is %d words, over the %d-word limit (strings and int64 constants)", len(b.consts), MaxConstWords)
+	}
+	if len(b.funcs) > MaxFuncs || len(b.types) > MaxTypes {
+		return nil, fmt.Errorf("image: %d functions, %d types: over the limits (%d, %d)", len(b.funcs), len(b.types), MaxFuncs, MaxTypes)
+	}
 	var code []uint32
 	var funcWords []uint32
 	for fi, f := range b.funcs {
@@ -130,6 +165,10 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 	words = append(words, b.consts...)
 	words = append(words, code...)
 	words = append(words, constMap(b.consts)...)
+	words = append(words, b.requires, uint32(len(b.exports)))
+	for _, e := range b.exports {
+		words = append(words, e.name, e.fn)
+	}
 	out := make([]byte, 4*len(words))
 	for i, w := range words {
 		binary.LittleEndian.PutUint32(out[i*4:], w)

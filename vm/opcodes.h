@@ -148,8 +148,10 @@ enum Builtin {
     B_NET_SUBSCRIBE   = 47,  /* -> bool: net.Subscribe (port.h port_subscribe) */
     B_CONFIG_GET      = 48,  /* key string -> value string, ok bool: config.Get
                               * (platform_config_get; "wifi." keys hidden) */
-    B_FS              = 49   /* op int, args... -> result(s): gogo/fs, run by
+    B_FS              = 49,  /* op int, args... -> result(s): gogo/fs, run by
                               * the vm_fs_builtin hook (platform.h; vfs/builtin.c) */
+    B_CODE            = 50   /* op int, args... -> result(s): gogo/code
+                              * (module_builtin, module.h; CODE_OP_*) */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -203,6 +205,13 @@ enum Builtin {
 #define TYPE_POWER_CONFIG  31   /* PeriodMs int: port.Open("power") */
 #define TYPE_POWER_BATTERY 32   /* MilliVolts, Percent, Charging, External int */
 #define TYPE_POWER_READ    33   /* (no fields): ask for a Battery now */
+/* Then the gogo/code struct type (code/code.go). */
+#define TYPE_CODE_MODULE   34   /* H, Missing int: a module handle (module_builtin) */
+/* How many reserved types there are (0 .. TYPE_RESERVED_COUNT - 1): they are
+ * global across modules; every index from here up is a module's own type
+ * and carries its module tag in a struct's type word (term.h). The one
+ * constant to bump with a new reserved type (compiler: len(reservedTypes)). */
+#define TYPE_RESERVED_COUNT 35u
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {
@@ -214,7 +223,8 @@ enum Reason {
     R_DIV_ZERO         = 5,
     R_BAD_CODE         = 6,
     R_SHUTDOWN         = 7,
-    R_BAD_SHIFT        = 8
+    R_BAD_SHIFT        = 8,
+    R_BAD_MSG          = 9    /* a value that may not cross modules (msg.h) */
 };
 
 /* Instruction decoders. */

@@ -1,6 +1,6 @@
 #include "test.h"
 
-#define MAX_TESTS 256
+#define MAX_TESTS 512
 
 /* unix platform: forget memory earlier tests leaked (matters under a cap) */
 void platform_unix_arena_forget(void);

@@ -6,6 +6,16 @@
 #include "term.h"
 #include <string.h>
 
+
+/* Words of the message msg_build makes for t (UINT32_MAX if none): the
+ * test-side size check (the VM has no separate size-only entry). */
+static uint32_t copy_words(Vm *vm, Actor *a, term t) {
+    Msg *m = msg_build(vm, a, t, a->mod, NULL);
+    uint32_t w = m ? m->words : UINT32_MAX;
+    if (m) msg_free(m);
+    return w;
+}
+
 static Actor *mk(Vm *vm, uint16_t words) {
     Actor *a = actor_new(vm, words);
     CHECK(a != NULL);
@@ -30,7 +40,7 @@ TEST(send_int) {
     Vm vm; va_reset();
     CHECK_EQ(vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 24), *b = mk(&vm, 24);
-    CHECK_EQ(msg_copy_words(a, term_from_int(42)), 0);
+    CHECK_EQ(copy_words(&vm, a, term_from_int(42)), 0);
     CHECK_EQ(msg_send(&vm, a, b->id, term_from_int(42)), 0);
     CHECK(b->mbox_head != NULL);
     CHECK_EQ(b->mbox_head->words, 0);
@@ -51,7 +61,7 @@ TEST(send_struct_nested) {
     term out_f[2] = { term_from_int(1), inner };
     term outer = mk_struct(a, 9, out_f, 2);
     uint16_t hp = a->hp;
-    CHECK_EQ(msg_copy_words(a, outer), 8);
+    CHECK_EQ(copy_words(&vm, a, outer), 8);
     CHECK_EQ(msg_send(&vm, a, b->id, outer), 0);
 
     /* sender untouched */
@@ -158,7 +168,7 @@ TEST(send_string_and_closure) {
     a->mem[co + 1] = 4;                         /* func_idx 4 looks like a ref */
     a->mem[co + 2] = term_from_ref(so);
     a->mem[co + 3] = term_from_int(5);
-    CHECK_EQ(msg_copy_words(a, term_from_ref(co)), 7);
+    CHECK_EQ(copy_words(&vm, a, term_from_ref(co)), 7);
     CHECK_EQ(msg_send(&vm, a, b->id, term_from_ref(co)), 0);
     term pre = mk_struct(b, 1, NULL, 0);        /* shift receiver offsets */
     (void)pre;
@@ -194,8 +204,8 @@ TEST(send_shared_object_copied_once) {
     term p = mk_struct(a, 7, pf, 2);
     term qf[2] = { p, p };
     term q = mk_struct(a, 8, qf, 2);
-    CHECK_EQ(msg_copy_words(a, q), 4 + 4);
-    Msg *m = msg_build(a, q);
+    CHECK_EQ(copy_words(&vm, a, q), 4 + 4);
+    Msg *m = msg_build(&vm, a, q, 0, NULL);
     CHECK(m != NULL);
     if (!m) return;
     CHECK_EQ(m->words, 4 /*Q*/ + 4 /*P*/);
@@ -229,7 +239,7 @@ TEST(send_dag_no_blowup) {
     CHECK_EQ(vm_init(&vm, NULL, 4), 0);
     Actor *a = mk(&vm, 120), *b = mk(&vm, 120);
     term top = mk_dag(a, 20);
-    Msg *m = msg_build(a, top);
+    Msg *m = msg_build(&vm, a, top, 0, NULL);
     CHECK(m != NULL);
     if (!m) return;
     CHECK_EQ(m->words, 20 * 4);
@@ -253,7 +263,7 @@ TEST(send_restores_source) {
     uint32_t before[120];
     CHECK_EQ(a->mem_words, 120);
     memcpy(before, a->mem, sizeof before);
-    Msg *m = msg_build(a, top);
+    Msg *m = msg_build(&vm, a, top, 0, NULL);
     CHECK(m != NULL);
     if (!m) return;
     CHECK_EQ(memcmp(before, a->mem, sizeof before), 0);
@@ -269,7 +279,7 @@ TEST(send_restores_source_on_alloc_failure) {
     memcpy(before, a->mem, sizeof before);
     size_t used = va_used_bytes();
     va_set_limit(used + 100);                   /* 16-word buffer fits, growth fails */
-    CHECK(msg_build(a, top) == NULL);
+    CHECK(msg_build(&vm, a, top, 0, NULL) == NULL);
     CHECK_EQ(memcmp(before, a->mem, sizeof before), 0);
     CHECK_EQ(va_used_bytes(), used);
     va_set_limit(0);
@@ -287,7 +297,7 @@ TEST(send_cycle) {
     a->mem[term_ref_off(p) + 2] = q;            /* close the cycle */
     uint32_t before[40];
     memcpy(before, a->mem, sizeof before);
-    Msg *m = msg_build(a, p);
+    Msg *m = msg_build(&vm, a, p, 0, NULL);
     CHECK(m != NULL);
     if (!m) return;
     CHECK_EQ(m->words, 3 + 3);
@@ -340,11 +350,11 @@ TEST(msg_build_peak) {
         term f[2] = { leaf, head };            /* shared leaf, list link */
         head = mk_struct(a, 4, f, 2);
     }
-    uint32_t words = msg_copy_words(a, head);
+    uint32_t words = copy_words(&vm, a, head);
     CHECK_EQ(words, 600 * 4 + 3);
     size_t before = va_used_bytes();
     va_reset_peak();
-    Msg *m = msg_build(a, head);
+    Msg *m = msg_build(&vm, a, head, 0, NULL);
     CHECK(m != NULL);
     if (!m) return;
     CHECK_EQ(m->words, words);
@@ -367,11 +377,11 @@ TEST(msg_size_cycle) {
     term g[2] = { x, x };
     term y = mk_struct(a, 6, g, 2);
     a->mem[term_ref_off(x) + 3] = y;             /* x.1 -> y -> x */
-    CHECK_EQ(msg_copy_words(a, y), 8);
+    CHECK_EQ(copy_words(&vm, a, y), 8);
     CHECK_EQ(fld(a, x, 1), y);
     CHECK_EQ(fld(a, y, 0), x);
     CHECK_EQ(fld(a, y, 1), x);
-    Msg *m = msg_build(a, y);
+    Msg *m = msg_build(&vm, a, y, 0, NULL);
     CHECK(m != NULL);
     if (m) { CHECK_EQ(m->words, 8); msg_free(m); }
     CHECK_EQ(a->mem[term_ref_off(x)], hdr_make(4, K_STRUCT));
@@ -389,7 +399,7 @@ TEST(try_enqueue_never_kills) {
     term f[58];
     for (int i = 0; i < 58; i++) f[i] = term_from_int(i);
     term s = mk_struct(a, 3, f, 58);            /* 60 words: 24 + 60+ > 80 */
-    Msg *m = msg_build(a, s);
+    Msg *m = msg_build(&vm, a, s, 0, NULL);
     CHECK(m != NULL);
     if (!m) return;
     CHECK(!msg_try_enqueue(&vm, b, m));
@@ -401,7 +411,7 @@ TEST(try_enqueue_never_kills) {
     msg_free(m);
 
     /* A small one fits, is queued and wakes b. */
-    m = msg_build(a, term_from_int(5));
+    m = msg_build(&vm, a, term_from_int(5), 0, NULL);
     CHECK(m != NULL);
     if (!m) return;
     CHECK(msg_try_enqueue(&vm, b, m));
@@ -413,7 +423,7 @@ TEST(try_enqueue_never_kills) {
     CHECK_EQ(r, term_from_int(5));
 
     /* A receiver marked for exit takes nothing. */
-    m = msg_build(a, term_from_int(6));
+    m = msg_build(&vm, a, term_from_int(6), 0, NULL);
     CHECK(m != NULL);
     if (!m) return;
     b->flags |= AF_EXIT_PENDING;

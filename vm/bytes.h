@@ -129,6 +129,10 @@ term bytes_sub(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len);
 /* True if h names a live entry. */
 bool bytes_valid(term h);
 
+/* Bytes a reference on handle h keeps alive: the length of its root's
+ * block (a slice keeps its whole root). 0 if h is no live handle. */
+uint32_t bytes_pinned_len(term h);
+
 /* GC (heap.c): where a's list is if it has one, else NULL. begin clears the
  * marks, mark records that h was reached, sweep drops what was neither
  * reached nor pinned (run only after a successful collection). */

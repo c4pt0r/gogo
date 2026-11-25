@@ -117,6 +117,10 @@ func (f *fn) twoResultCall(call *ast.CallExpr, dst uint8) {
 		f.fsCall(call, name, dst)
 		return
 	}
+	if _, isCode := codeOps[name]; isCode {
+		f.codeCall(call, name, dst)
+		return
+	}
 	mark := f.next
 	base, n := f.args(call)
 	f.asm.EmitExt(OpBuiltin, dst, base, n, actorBuiltins[name])

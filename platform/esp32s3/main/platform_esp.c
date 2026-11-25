@@ -6,6 +6,8 @@
 #include "console.h"
 #include "net.h"
 #include "input.h"
+#include "board.h"
+#include "sdkconfig.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -185,4 +187,45 @@ const struct PortDriver *const *platform_port_drivers(void) {
         &input_kbd_driver, &input_power_driver, NULL
     };
     return list;
+}
+
+/* Module code memory (vm/platform.h). Only a board with PSRAM (the StickS3,
+ * sdkconfig.sticks3) has any: code is only read (as words) by the interpreter,
+ * never executed, so the slower external RAM is fine (MALLOC_CAP_32BIT only
+ * states the word access; byte access works on the S3 too), and the internal heap (the VM
+ * arena, Wi-Fi, LCD buffers) is not touched. PSRAM is reachable only through
+ * these caps (CONFIG_SPIRAM_USE_CAPS_ALLOC): plain malloc never returns it.
+ * Defined here, in an always-linked object, not next to hardware code: vm/
+ * has weak defaults, and an archive member is never pulled in to override
+ * one that is already defined. */
+#if CONFIG_SPIRAM
+void *platform_code_alloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT); }
+void platform_code_free(void *p, size_t n) {
+    (void)n;
+    heap_caps_free(p);
+}
+#else
+void *platform_code_alloc(size_t n) {
+    (void)n;
+    return NULL;
+}
+void platform_code_free(void *p, size_t n) {
+    (void)p;
+    (void)n;
+}
+#endif
+
+/* The capabilities this build provides (vm/platform.h CAP_*). */
+uint32_t platform_caps(void) {
+    uint32_t c = CAP_NET;
+#if HAS_KBD && CONFIG_GOGO_KBD
+    c |= CAP_KBD;
+#endif
+#if CONFIG_GOGO_BATTERY
+    c |= CAP_POWER;
+#endif
+#if HAS_SD
+    c |= CAP_SD;
+#endif
+    return c;
 }

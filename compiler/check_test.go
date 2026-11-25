@@ -385,9 +385,12 @@ func TestIntIs32Bit(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresMain(t *testing.T) {
-	if _, err := Load(writeProg(t, "package main\nfunc other() {}\n")); err == nil {
-		t.Fatal("expected error for missing func main")
+func TestLoadMain(t *testing.T) {
+	if _, err := Load(writeProg(t, "package main\nfunc other() {}\n")); err != nil {
+		t.Fatalf("a package without main is a module: %v", err)
+	}
+	if _, err := Load(writeProg(t, "package main\nfunc main(x int) {}\n")); err == nil {
+		t.Fatal("expected error for func main with parameters")
 	}
 	if _, err := Load(writeProg(t, "package foo\nfunc main() {}\n")); err == nil {
 		t.Fatal("expected error for non-main package")

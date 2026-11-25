@@ -8,7 +8,10 @@
 // not return while the tree should keep running.
 package supervisor
 
-import "gogo/actor"
+import (
+	"gogo/actor"
+	"gogo/code"
+)
 
 // Restart strategies.
 const (
@@ -39,34 +42,142 @@ const shutdownWaitMs = 1000
 // Shutdown is not restarted and the supervisor exits Normal.
 func Supervise(child func(), spec Spec) actor.PID {
 	parent := actor.Self()
-	return actor.SpawnLink(func() { run(parent, child, spec) })
+	return actor.SpawnLink(func() { run(parent, code.Module{}, "", 0, child, spec) })
+}
+
+// Upgrade is the message that hot-swaps the code of a SuperviseModule
+// supervisor. Send it to the PID SuperviseModule returned, either with
+// actor.Send (fire and forget) or with actor.Call, whose reply is an int, a code.Err:
+// int(code.OK), or why nothing changed.
+//
+// The supervisor holds Module, stops the child, starts it again (same entry
+// and argument) from Module and releases the old module. If that fails the
+// supervisor keeps the old module and its hold, restarts the child from it
+// and carries on; the Err is Hold's or Spawn's (TooMany, NotFound for a
+// module without the entry or already unloaded), or BadArg for the module it
+// already runs or for a supervisor of a plain function (Supervise). An
+// upgrade is not a restart: it does not count against MaxRestarts. Messages
+// sent to the old child between its stop and the new start are lost. Any
+// actor can send Upgrade; there is no ownership check in this version.
+type Upgrade struct{ Module code.Module }
+
+// SuperviseModule is Supervise for a child that lives in a loaded module:
+// the supervisor holds m and starts entry of m with arg (code.SpawnLink),
+// then restarts it exactly as Supervise would, from the module.
+//
+// SuperviseModule returns once the supervisor holds m and has started the
+// child, so the caller may Release m (or exit) right after it returns. If
+// that cannot be done (m is not loaded, has no such entry, or has 4 holders
+// already) the supervisor exits Normal at once and SuperviseModule returns
+// the zero PID (which is never alive); the caller has to check for it.
+func SuperviseModule(m code.Module, entry string, arg any, spec Spec) actor.PID {
+	parent := actor.Self()
+	sup := actor.SpawnLink(func() { run(parent, m, entry, arg, func() {}, spec) })
+	var none actor.PID
+	r, ok := actor.Call(sup, 0, helloWaitMs)
+	if !ok {
+		return none
+	}
+	switch e := r.(type) {
+	case int:
+		if e != int(code.OK) {
+			return none
+		}
+	}
+	return sup
+}
+
+// helloWaitMs is how long SuperviseModule waits for its supervisor to
+// start.
+const helloWaitMs = 1000
+
+// start starts the child linked to the caller: entry of m when m is a
+// module (m.H != 0), else the function child.
+func start(m code.Module, entry string, arg any, child func()) (actor.PID, code.Err) {
+	if m.H == 0 {
+		return actor.SpawnLink(child), code.OK
+	}
+	p, e := code.SpawnLink(m, entry, arg)
+	return p, e
+}
+
+// hello answers SuperviseModule's Call with e. The Call is the first message
+// the supervisor gets; anything before it is dropped.
+func hello(e code.Err) {
+	for {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			actor.Reply(r, int(e))
+			return
+		}
+	}
+}
+
+// swap is the Upgrade: it moves the child (pid, running from m) to module
+// nm. It returns the module the child now runs from, its pid and the result.
+// If the old child cannot be restarted either, the supervisor exits.
+func swap(m code.Module, nm code.Module, entry string, arg any, child func(), pid actor.PID) (code.Module, actor.PID, code.Err) {
+	if m.H == 0 || nm.H == m.H {
+		return m, pid, code.BadArg
+	}
+	if e := code.Hold(nm); e != code.OK {
+		return m, pid, e
+	}
+	shutdown(pid)
+	p, e := start(nm, entry, arg, child)
+	if e == code.OK {
+		code.Release(m)
+		return nm, p, code.OK
+	}
+	code.Release(nm)
+	p, e2 := start(m, entry, arg, child)
+	if e2 != code.OK {
+		actor.Exit(actor.Shutdown)
+	}
+	return m, p, e
 }
 
 // run is the supervisor actor's body.
-func run(parent actor.PID, child func(), spec Spec) {
+func run(parent actor.PID, m code.Module, entry string, arg any, child func(), spec Spec) {
 	actor.TrapExit(true)
 	// The caller may have exited before this actor first ran and started
 	// trapping; a Normal exit signal then had no effect and the link is
 	// gone. Linking again turns that into an ExitMsg (NoProc) from the
 	// parent; while the parent lives it is a no-op.
 	actor.Link(parent)
-	pid := actor.SpawnLink(child)
+	var pid actor.PID
+	e := code.OK
+	if m.H != 0 {
+		// A module supervisor holds m before it tells SuperviseModule it
+		// is up, so the caller may Release m as soon as that returns.
+		e = code.Hold(m)
+		if e == code.OK {
+			pid, e = start(m, entry, arg, child)
+		}
+		hello(e)
+		if e != code.OK {
+			actor.Exit(actor.Normal)
+			return
+		}
+	} else {
+		pid, e = start(m, entry, arg, child)
+	}
 	restarts := 0
 	var windowStart int64
 	for {
-		switch m := actor.Receive().(type) {
+		switch x := actor.Receive().(type) {
 		case actor.ExitMsg:
-			if m.From == parent {
+			if x.From == parent {
 				shutdown(pid)
 				actor.Exit(actor.Shutdown)
 				return
 			}
-			if m.From != pid {
+			if x.From != pid {
 				continue // a stale or foreign link
 			}
 			// The child has exited; nothing is left to shut down on
 			// any of the exits below.
-			if spec.Restart == Transient && !abnormal(m.Reason.Code) {
+			if spec.Restart == Transient && !abnormal(x.Reason.Code) {
 				actor.Exit(actor.Normal)
 				return
 			}
@@ -80,7 +191,21 @@ func run(parent actor.PID, child func(), spec Spec) {
 				actor.Exit(actor.Shutdown)
 				return
 			}
-			pid = actor.SpawnLink(child)
+			pid, e = start(m, entry, arg, child)
+			if e != code.OK {
+				actor.Exit(actor.Shutdown)
+				return
+			}
+		case Upgrade:
+			m, pid, e = swap(m, x.Module, entry, arg, child, pid)
+			actor.Link(parent) // shutdown may have dropped its exit
+		case actor.Request:
+			switch u := x.Body.(type) {
+			case Upgrade:
+				m, pid, e = swap(m, u.Module, entry, arg, child, pid)
+				actor.Link(parent)
+				actor.Reply(x, int(e))
+			}
 		default:
 			// Not for us: drop it so the mailbox cannot fill up.
 		}

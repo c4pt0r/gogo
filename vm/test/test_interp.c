@@ -21,7 +21,7 @@ static void capture_err(const char *s, size_t n) {
  *   BUILTIN r1, r0, 0, RECEIVE
  *   RET r1
  * Layout: 8 header + 3 func + 3 consts + 3 code = 17 words. */
-#define IMG_WORDS 18
+#define IMG_WORDS 20
 
 static void build_receiver(uint32_t *w) {
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
@@ -117,7 +117,7 @@ TEST(receive_oom_crashes_only_receiver) {
 }
 
 TEST(make_ref_allocates_serials) {
-    uint32_t w[IMG_WORDS + 1]; Image img; Vm vm;
+    uint32_t w[IMG_WORDS + 3]; Image img; Vm vm;
     va_reset();
     build_receiver(w);
     w[15] = B_MAKE_REF;
@@ -162,7 +162,7 @@ TEST(unimplemented_builtin_is_badcode) {
  * payload): badcode, not a forged object. With the ref at the string
  * itself the same code loads it. */
 static const char *run_hidden_loadk(uint32_t k_off, int direct) {
-    static uint32_t w[8 + 3 + 8 + 9 + 1]; static Image img; static Vm vm;
+    static uint32_t w[8 + 3 + 8 + 9 + 1 + 2]; static Image img; static Vm vm;
     va_reset();
     memset(w, 0, sizeof w);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
@@ -210,7 +210,7 @@ TEST(loadk_interior_const_is_badcode) {
  *   LOADK r0, x; LOADK r1, y; <op> r2, r0, r1 (c ignored by NEG);
  *   RECEIVE r0 (blocks, so the result can be inspected)
  * x_small != 0 loads x as the small int x_small instead. */
-#define I64_WORDS 28
+#define I64_WORDS 30
 
 static void build_int64_op(uint32_t *w, uint32_t op, int64_t x, int64_t y, int32_t x_small) {
     memset(w, 0, I64_WORDS * sizeof(uint32_t));
@@ -419,7 +419,7 @@ TEST(int64_conv) {
  *   LOADK r0, 10000; LOADK r2, 1; LOADK r4, 0
  *   6: BUILTIN r1, r0, 0, NOW; SUB r0, r0, r2; LT r3, r4, r0; JMPT r3, @6
  *   BUILTIN r0, r0, 0, RECEIVE */
-#define NOW_WORDS 29
+#define NOW_WORDS 31
 
 TEST(now_no_alloc) {
     static uint32_t w[NOW_WORDS]; Image img; Vm vm;
@@ -467,7 +467,7 @@ TEST(now_no_alloc) {
  * the code should end by blocking in RECEIVE so registers can be read.
  * Layout: 8 header + 3 func + 3 consts + code. */
 #define CODE_MAX 40
-static uint32_t code_img[14 + CODE_MAX + 1];
+static uint32_t code_img[14 + CODE_MAX + 1 + 2];
 
 static const char *run_code(const uint32_t *code, uint32_t n, uint16_t n_regs,
                             Vm *vm, Image *img, Actor **out) {
@@ -582,7 +582,7 @@ TEST(no_actor_has_zero_pid) {
  *   callee (1 param, 3 regs): BUILTIN r1, r0, 0, MAKE_REF; MOVE r2, r0;
  *                             RETN r1, <n>
  * Layout: 8 header + 6 func + 3 consts + 10 code = 27 words. */
-#define RETN_WORDS 28
+#define RETN_WORDS 30
 static uint32_t retn_img[RETN_WORDS];
 
 static const char *run_retn(uint32_t dst, uint32_t n, Vm *vm, Image *img, Actor **out) {
@@ -689,7 +689,7 @@ TEST(conv_to_byte) {
  *   callee (2 params, 3 regs): ADD r2, r0, r1; RET r2
  * The capture 7 is the callee's r0, the argument 5 its r1.
  * Layout: 8 header + 6 func + 3 consts + 11 code = 28 words. */
-#define CALLV_WORDS 29
+#define CALLV_WORDS 31
 static uint32_t callv_img[CALLV_WORDS];
 
 static const char *run_callv(bool nil, uint32_t nargs, Vm *vm, Image *img, Actor **out) {

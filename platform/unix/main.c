@@ -14,9 +14,12 @@
 #include <string.h>
 
 #include "image.h"
+#include "platform.h"
 #include "actor.h"
 #include "interp.h"
+#include "module.h"
 #include "config.h"
+#include "caps_unix.h"
 #include "gpio_unix.h"
 #include "input_unix.h"
 #include "input.h"
@@ -48,6 +51,7 @@ int platform_unix_input_drivers(const struct PortDriver **out, int cap) {
     return 2;
 }
 
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--sizeof-actor") == 0) {
         printf("%zu\n", sizeof(Actor));
@@ -76,6 +80,15 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "gogovm: bad --key %s (want <char>=<pin>, pin 0..63)\n", argv[2]);
                 return 2;
             }
+        } else if (strcmp(argv[1], "--caps") == 0) {
+            /* --caps <hex>: test only, the firmware capability bits. */
+            char tail;
+            unsigned caps;
+            if (sscanf(argv[2], "%x%c", &caps, &tail) != 1) {
+                fprintf(stderr, "gogovm: bad --caps %s (want hex)\n", argv[2]);
+                return 2;
+            }
+            platform_unix_set_caps(caps);
         } else if (strcmp(argv[1], "--fs-root") == 0) {
             fs_root = argv[2];
         } else if (strcmp(argv[1], "--net-fd") == 0) {
@@ -95,7 +108,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (argc != 2) {
-        fprintf(stderr, "usage: gogovm [--key <c>=<pin>]... [--fs-root <dir>] [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
+        fprintf(stderr, "usage: gogovm [--caps <hex>] [--key <c>=<pin>]... [--fs-root <dir>] [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
         return 2;
     }
     if (net_fd >= 0) {
@@ -148,19 +161,15 @@ int main(int argc, char **argv) {
     if (got != (size_t)size) { free(words); return load_error(path, "cannot read"); }
     /* Image words are little-endian; this loader assumes a little-endian host. */
 
-    Image img;
-    int rc = image_load(&img, words, (uint32_t)(size / 4));
-    if (rc != IMG_OK) {
-        static const char *msgs[] = {"ok", "bad magic", "unsupported version", "truncated image", "bad offsets"};
-        const char *m = (rc <= 0 && rc >= -4) ? msgs[-rc] : "invalid image";
-        free(words);
-        return load_error(path, m);
-    }
+    /* The unified boot (module.h): load the image as module 0 (caps check
+     * included), then vm_run starts its "main" export. */
     Vm vm;
-    if (vm_init(&vm, &img, (uint16_t)GOGO_TABLE_CAP) != 0) {
+    int rc = vm_boot(&vm, words, (uint32_t)(size / 4), (uint16_t)GOGO_TABLE_CAP);
+    if (rc != VM_BOOT_OK) {
         free(words);
-        fprintf(stderr, "gogovm: out of memory\n");
-        return 1;
+        if (rc < 0) return load_error(path, image_err_str(rc));
+        if (rc == VM_BOOT_NO_MEMORY) fprintf(stderr, "gogovm: out of memory\n");
+        return 1;                    /* VM_BOOT_REFUSED: the line is written */
     }
     rc = vm_run(&vm);
     fflush(stdout);

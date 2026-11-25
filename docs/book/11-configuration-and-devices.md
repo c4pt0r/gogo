@@ -138,6 +138,7 @@ The board talks to `gogo config` over the USB serial console, so close
 | `net.ip`, `net.mask`, `net.gw`, `net.dns` | `gogo/dhcp` | a static address instead of DHCP (`net.mask` defaults to 255.255.255.0) |
 | `fs.flash.size` | firmware | size of `/flash` (chapter 9) |
 | `fs.flash.format` | firmware | `yes`: format `/flash` once at the next boot |
+| `code.mem` | `gogo/code` | budget for loaded module code, default 64 KB (`K`/`M` suffix; chapter 14) |
 
 Anything else is yours. A dotted prefix per program (`demo.url`,
 `fsdemo.mode`) keeps keys apart.

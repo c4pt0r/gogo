@@ -67,13 +67,16 @@ bool timer_add_wakeup(Vm *vm, Actor *a, uint64_t deadline);
 /* Removes a's wakeup if armed, and clears AF_WAKEUP_ARMED and AF_TIMED_OUT. */
 void timer_cancel_wakeup(Vm *vm, Actor *a);
 
-/* SendAfter: copies msg out of from's heap now and queues it for to_pid at
- * `deadline`, charging it to from. Returns a fresh Ref on from's heap naming
- * the timer (may GC: the caller reloads its register pointer), or T_NIL if
- * out of memory or the charge would take from past its limit (nothing is
- * left behind; the caller exits with R_OUT_OF_MEMORY). A dead or stale to_pid is allowed: the timer
- * fires into nothing. */
-term timer_add_send(Vm *vm, Actor *from, uint64_t deadline, term to_pid, term msg);
+/* SendAfter: copies msg out of from's heap now (msg_build, for to_pid's
+ * module: the cross-module rules are checked here, at the call) and queues
+ * it for to_pid at `deadline`, charging it to from. Returns a fresh Ref on
+ * from's heap naming the timer (may GC: the caller reloads its register
+ * pointer), or T_NIL with *why (if why is not NULL) the caller's exit
+ * reason: R_BAD_MSG / R_BAD_CODE when the copy is refused, else
+ * R_OUT_OF_MEMORY (out of memory, or the charge would take from past its
+ * limit); nothing is left behind. A dead or stale to_pid is allowed: the
+ * timer fires into nothing (its copy follows from's own module). */
+term timer_add_send(Vm *vm, Actor *from, uint64_t deadline, term to_pid, term msg, uint32_t *why);
 
 /* Cancels the SendAfter timer whose Ref has this serial and frees its
  * message. False if there is none (fired, cancelled, or never a timer). */

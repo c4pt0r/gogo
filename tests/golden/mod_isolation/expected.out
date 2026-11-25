@@ -1,0 +1,18 @@
+load 0
+unloaded 0
+const from module
+true
+7 in reason
+struct true
+module call ok false
+caller 0
+restarted true
+spawn host struct true
+spawn reason 0
+echo reason 3 r
+echo got reason 4
+echo 0
+echo string a string
+sendafter true
+same module 5
+exit true true 0

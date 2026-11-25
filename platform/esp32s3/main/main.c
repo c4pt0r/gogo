@@ -1,8 +1,10 @@
 /* gogo firmware entry: maps the image partition and runs the VM in a
  * FreeRTOS task pinned to CPU1. */
 #include "image.h"
+#include "platform.h"
 #include "actor.h"
 #include "interp.h"
+#include "module.h"
 #include "config.h"
 #include "platform_esp.h"
 #include "board.h"
@@ -49,20 +51,21 @@ static void vm_task(void *arg) {
     input_install();   /* kbd + power source (spec input §5.6) */
     if (image_part_map(&words, &nwords) != 0) platform_esp_idle();
 
-    Image img;
-    int rc = image_load(&img, words, nwords);
-    if (rc != IMG_OK) {
-        static const char *const msgs[] = {"ok", "bad magic", "unsupported version", "truncated image", "bad offsets"};
-        platform_esp_say("gogo: bad image (%s)", (rc <= 0 && rc >= -4) ? msgs[-rc] : "invalid image");
-        platform_esp_idle();
-    }
     /* Internal RAM left for the arena once the console (font tables) and
      * the Wi-Fi driver are up. */
     platform_esp_say("gogo %s: image %lu bytes, arena %lu bytes, free RAM %lu (largest %lu)", GOGO_VERSION,
                      (unsigned long)nwords * 4u, (unsigned long)platform_esp_arena_cap(),
                      (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    if (vm_init(&vm, &img, (uint16_t)GOGO_TABLE_CAP) != 0) {
+    /* The unified boot (module.h): the image becomes module 0 (caps check
+     * included), then vm_run starts its "main" export. */
+    int rc = vm_boot(&vm, words, nwords, (uint16_t)GOGO_TABLE_CAP);
+    if (rc < 0) {
+        platform_esp_say("gogo: bad image (%s)", image_err_str(rc));
+        platform_esp_idle();
+    }
+    if (rc == VM_BOOT_REFUSED) platform_esp_idle();   /* the line is written */
+    if (rc != VM_BOOT_OK) {
         platform_esp_say("gogo: out of memory");
         platform_esp_idle();
     }

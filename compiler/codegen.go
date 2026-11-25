@@ -74,7 +74,16 @@ func Compile(p *Program) ([]byte, error) {
 		}
 		g.b.SetFuncCode(idx, f.code)
 	}
-	g.b.SetEntry(g.funcIdx[p.Pkg.Scope().Lookup("main").(*types.Func)])
+	// Entry: func main, or function 0 in a package without one (a module
+	// the host loads and spawns by export name).
+	if m, ok := p.Pkg.Scope().Lookup("main").(*types.Func); ok {
+		g.b.SetEntry(g.funcIdx[m])
+	}
+	bits, _ := Requires(p)
+	g.b.SetRequires(bits)
+	for _, e := range Exports(p) {
+		g.b.AddExport(e.Name, g.funcIdx[e.Fn])
+	}
 	return g.b.Bytes()
 }
 
@@ -157,7 +166,8 @@ func isBytes(t types.Type) bool { return isBytesType(t, "Bytes") }
 
 func isBuffer(t types.Type) bool { return isBytesType(t, "Buffer") }
 
-// reservedTypes are the gogo/actor, gogo/port, gogo/net, gogo/fs, gogo/kbd and gogo/power struct types. Every image
+// reservedTypes are the gogo/actor, gogo/port, gogo/net, gogo/fs, gogo/kbd,
+// gogo/power and gogo/code struct types. Every image
 // starts its type table with them, in this order, so the VM can build and
 // recognize these structs by fixed index (TYPE_* in vm/opcodes.h).
 var reservedTypes = []struct {
@@ -199,6 +209,7 @@ var reservedTypes = []struct {
 	{PowerPath, "Config", []string{"PeriodMs"}},
 	{PowerPath, "Battery", []string{"MilliVolts", "Percent", "Charging", "External"}},
 	{PowerPath, "Read", nil},
+	{CodePath, "Module", []string{"H", "Missing"}},
 }
 
 // collectTypes emits the reserved types first (whether used or not), then
@@ -227,6 +238,8 @@ func (g *gen) collectTypes() error {
 			name = "kbd." + rt.name
 		case PowerPath:
 			name = "power." + rt.name
+		case CodePath:
+			name = "code." + rt.name
 		}
 		idx := g.b.AddType(name, uint32(len(rt.fields)))
 		stub := stubs[rt.pkg]
@@ -1409,6 +1422,10 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 		if name := stubName(obj); ok && name != "" {
 			if _, isFs := fsOps[name]; isFs {
 				f.fsCall(call, name, dst)
+				return
+			}
+			if _, isCode := codeOps[name]; isCode {
+				f.codeCall(call, name, dst)
 				return
 			}
 			f.actorCall(call, name, dst)

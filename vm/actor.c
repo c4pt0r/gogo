@@ -4,6 +4,7 @@
 #include "msg.h"
 #include "config.h"
 #include "signals.h"
+#include "module.h"
 #include <string.h>
 
 #define GEN_MASK 0xFFFu
@@ -22,18 +23,21 @@ static uint16_t next_gen(uint16_t slot, uint16_t gen) {
 int vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
     memset(vm, 0, sizeof *vm);
     if (table_cap > PORT_SLOT_BASE) return -1;
-    vm->img = img;
     vm->next_ref = 1;
+    vm->mod_cap = GOGO_CODE_MEM_DEFAULT;   /* module_config may change it */
     bytes_reset();                 /* the handle table is process-global */
     vm->table = va_alloc((size_t)table_cap * sizeof(uintptr_t));
     if (!vm->table) return -1;
     vm->table_cap = table_cap;
     for (uint16_t i = 0; i < table_cap; i++) vm->table[i] = free_slot(0);
     if (table_cap) vm->table[0] = free_slot(1);      /* see next_gen */
+    if (img && module_install_static(vm, img) != CODE_OK) return -1;
     return 0;
 }
 
-Actor *actor_new(Vm *vm, uint16_t initial_words) {
+Actor *actor_new(Vm *vm, uint16_t initial_words) { return actor_new_in(vm, initial_words, 0); }
+
+Actor *actor_new_in(Vm *vm, uint16_t initial_words, uint8_t mod) {
     uint16_t slot = 0;
     while (slot < vm->table_cap && !slot_is_free(vm->table[slot])) slot++;
     if (slot == vm->table_cap) return NULL;
@@ -52,8 +56,10 @@ Actor *actor_new(Vm *vm, uint16_t initial_words) {
     a->id = term_make_pid(slot, slot_gen(vm->table[slot]));
     a->state = A_RUNNABLE;
     a->max_words = 0;                        /* default limit */
+    a->mod = mod;
     vm->table[slot] = (uintptr_t)a;
     vm->live++;
+    module_actor_enter(vm, a);
     return a;
 }
 
@@ -72,6 +78,7 @@ void actor_free(Vm *vm, Actor *a) {
     uint16_t slot = term_pid_slot(a->id);
     vm->table[slot] = free_slot(next_gen(slot, term_pid_gen(a->id)));
     va_free(a->mem, (size_t)a->mem_words * 4u);
+    module_actor_exit(vm, a);              /* may unload its module */
     va_free(a, sizeof(Actor));
     vm->live--;
 }

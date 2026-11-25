@@ -86,7 +86,7 @@ func main() {
 	actor.Monitor(sleeper)
 	_, e = fs.Open("/flash/killed.txt", fs.Write)
 	println("while held", int(e))
-	actor.Kill(sleeper, 9)
+	actor.Kill(sleeper, 109)
 	waitDown()
 	println("after kill:", content("/flash/killed.txt"))
 	_, e = held.Read(1)

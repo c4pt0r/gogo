@@ -1,0 +1,73 @@
+// Load errors, checked in order: BadImage, Unsupported, NoMemory. Runs
+// with code.mem=2K (one hello module fits, two do not) and no firmware
+// capabilities (vmargs --caps 0); a failed Load never counts anything.
+package main
+
+import (
+	"gogo/bytes"
+	"gogo/code"
+	"gogo/fs"
+)
+
+func read(path string) bytes.Bytes {
+	b, e := fs.ReadFile(path, 100000)
+	if e != fs.OK {
+		println("read", path, int(e))
+	}
+	return b
+}
+
+func try(what string, b bytes.Bytes, used int) {
+	m, e := code.Load(b)
+	println(what, int(e), m.H == 0 && m.Missing == 0, code.MemUsed() == used)
+}
+
+func main() {
+	b := read("/flash/hello.gmod")
+	n := b.Len()
+	first, e0 := code.Load(b)
+	used := n
+	println("first", int(e0), n > 1024 && n <= 2048, code.MemUsed() == used)
+	try("empty", bytes.FromString(""), used)
+	try("short", b.Slice(0, 16), used)
+	try("truncated", b.Slice(0, n-4), used)
+	try("odd", b.Slice(0, n-1), used)
+	buf := bytes.NewBuffer(n)
+	buf.WriteByte(b.At(0) ^ 1)
+	buf.WriteBytes(b.Slice(1, n))
+	try("magic", buf.Freeze(), used)
+	buf.WriteBytes(b.Slice(0, 4))
+	buf.WriteByte(b.At(4) + 1)
+	buf.WriteBytes(b.Slice(5, n))
+	try("version", buf.Freeze(), used)
+	buf.WriteBytes(b.Slice(0, n-4))
+	for i := 0; i < 4; i++ {
+		buf.WriteByte(255)
+	}
+	try("exports", buf.Freeze(), used)
+	buf.WriteBytes(b)
+	buf.WriteBytes(b.Slice(0, 4))
+	try("trailing", buf.Freeze(), used)
+	buf.WriteByte(0)
+	buf.WriteBytes(b.Slice(0, n-4))
+	try("unaligned truncated", buf.Freeze().Slice(1, n-3), used)
+
+	// A valid image that needs kbd: Unsupported, before the cap.
+	k := read("/flash/kbdmod.gmod")
+	m, e := code.Load(k)
+	println("kbd", int(e), code.Missing(m) == code.CapKbd, m.Missing == code.CapKbd, m.H, code.MemUsed() == used)
+	_, e = code.Spawn(m, "Main", 0)
+	println("spawn unsupported", int(e), int(code.Hold(m)))
+
+	// A valid, supported image over code.mem with the first one loaded,
+	// and Bytes longer than code.mem itself (refused before anything else).
+	try("over cap", b, used)
+	try("empty buffer", bytes.NewBuffer(4).Freeze(), used)
+	huge := bytes.NewBuffer(3000)
+	for i := 0; i < 3000; i++ {
+		huge.WriteByte(1)
+	}
+	try("longer than cap", huge.Freeze(), used)
+	code.Release(first)
+	println("end", code.MemUsed())
+}

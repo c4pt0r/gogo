@@ -16,6 +16,12 @@ One source tree, two boards, chosen at build time with the CMake variable
 | M5StickS3 (ESP32-S3-PICO-1-N8R8) | `sticks3` (default) | MOSI 39, SCLK 40, DC 45, CS 41, RST 21, BL 38 | M5PM1 (`pm1.c`) | `/flash` |
 | Cardputer ADV (M5Stamp S3A, ESP32-S3FN8, no PSRAM) | `cardputer` | MOSI 35, SCLK 36, DC 34, CS 37, RST 33, BL 38 | none | `/flash`, `/sd` (SPI2: CS 12, MOSI 14, CLK 40, MISO 39) |
 
+The StickS3 build also takes `sdkconfig.sticks3` (PSRAM, see "PSRAM and
+firmware capabilities" below); `CMakeLists.txt` adds it to
+`SDKCONFIG_DEFAULTS` when none is given. After pulling this change, delete the
+generated `platform/esp32s3/sdkconfig` (and `build/CMakeCache.txt`) once, so
+the new defaults are applied: IDF keeps the values already in `sdkconfig`.
+
 Both have 8 MB flash and the same partition table, so `gogo flash` writes
 a program image to either without a board option.
 
@@ -68,6 +74,59 @@ CLOCAL, no HUPCL, both lines idle in one ioctl) and never resets the chip
 unless `-reset` is given. Only one program can use the serial port at a
 time.
 
+## PSRAM and firmware capabilities
+
+**PSRAM (StickS3 only).** The ESP32-S3-PICO-1-N8R8 has 8 MB octal PSRAM
+(`sdkconfig.sticks3`: `CONFIG_SPIRAM`, `SPIRAM_MODE_OCT`, 80 MHz,
+`SPIRAM_IGNORE_NOTFOUND` so a board without it still boots). It is used for
+exactly one thing, the code of hot-loaded modules (`gogo/code`):
+`platform_code_alloc` / `platform_code_free` in `main/platform_esp.c` are
+`heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT)` / `heap_caps_free`.
+`CONFIG_SPIRAM_USE_CAPS_ALLOC=y` (not malloc-wide) keeps `malloc` and every
+internal-heap user on internal RAM: the VM arena (`platform_chunk_alloc` asks
+for `MALLOC_CAP_INTERNAL`), Wi-Fi and the LCD buffers (`MALLOC_CAP_DMA` /
+internal) are unchanged. Module code is only read as words by the
+interpreter, so the slower external RAM costs nothing that matters. They live
+in `platform_esp.c`, which is always linked: the VM has weak defaults, and a
+weak default is never replaced by an archive member that is not otherwise
+pulled in (checked: `nm build/gogo.elf` shows the strong `platform_code_alloc`
+from `platform_esp.c.obj`). On the Cardputer (no PSRAM, `CONFIG_SPIRAM` off)
+both return `NULL` / do nothing, and modules run from the received `Bytes`
+or a copy in the VM's memory.
+
+Cost, measured with `idf.py size` / `size-components` (hot loading task 7):
+`gogo.bin` StickS3 883744 B with PSRAM (875200 B without), Cardputer 927424 B.
+Static DIRAM (internal RAM, the part that comes out of the heap) is
+123898 B with PSRAM against 118125 B without: **+5773 B**, about 1.7 % of the
+340 KB, so the boot line's `free RAM` should drop by about that much on the
+StickS3 (earlier: 197 K; to be measured on the board, see
+docs/hotload-followups.md). It is IRAM code and data of the PSRAM init and
+the cache/MMU support (`libesp_hw_support` +2.2 KB, `libesp_psram` +1.3 KB,
+`libesp_driver_spi` +0.3 KB, `libesp_system` +0.2 KB, `libesp_mm` +0.1 KB):
+the IDF puts it in IRAM because it runs while the cache is off. Trimmed:
+`SPIRAM_MEMTEST=n` (no 8 MB boot test; it was in flash, so DIRAM is
+unchanged, boot is faster). Not trimmable: `STDATOMIC_S32C1I_SPIRAM_WORKAROUND`
+is derived from `SPIRAM`, not a setting. Not done: moving the heap
+(`libheap`, 5.6 KB of IRAM with or without PSRAM) into flash with
+`CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH`; it is the largest internal-RAM win
+available, but it is unrelated to PSRAM, changes both boards, and is unsafe
+where the heap is used while flash cache is disabled (flash writes on
+`/flash`, Wi-Fi tasks), so it needs its own measurement. Why it is worth it:
+module code (up to `code.mem`, 64 KB by default, and more if the user sets
+it) then lives in 8 MB of otherwise unused memory instead of competing with
+the VM arena and Wi-Fi for the 160 KB internal heap; one 64 KB module costs
+more internal RAM on the Cardputer than the PSRAM support costs the StickS3.
+`SPIRAM_IGNORE_NOTFOUND` makes a missing or failed PSRAM silent (modules then
+go to the VM's memory); check the address `platform_code_alloc` returns on
+the first run.
+
+**Capabilities.** `platform_caps()` (same file) returns the `CAP_*` bits this
+build really has: `CAP_NET` always, `CAP_KBD` (Cardputer with `GOGO_KBD`),
+`CAP_POWER` (`GOGO_BATTERY`), `CAP_SD` (Cardputer). An image or module whose
+`requires` word needs more is refused at boot (`gogo: image needs ...;
+firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
+64 KB) limits the total module code.
+
 ## Flash layout (`partitions.csv`, 8 MB)
 
 | name    | type/subtype | offset   | size     |
@@ -79,7 +138,7 @@ time.
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v8, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
+(format v9, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
 image version changes, reflash the firmware too: an older firmware refuses
 a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
 one). At boot the firmware checks the magic, the length (multiple of 4,

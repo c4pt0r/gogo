@@ -2,7 +2,7 @@ CC      ?= cc
 CFLAGS  = -Iinput -std=c99 -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS)
 BUILD   = build
 
-TEST_SRCS = vm/test/test_main.c vm/test/test_term.c vm/test/test_alloc.c vm/test/test_image.c vm/test/test_heap.c vm/test/test_msg.c vm/test/test_interp.c vm/test/test_signals.c vm/test/test_timer.c vm/test/test_call.c vm/test/test_names.c vm/test/test_out.c vm/test/test_evq.c vm/test/test_port.c vm/test/test_strs.c vm/test/test_slices.c vm/test/test_bytes.c vm/test/test_netlink.c
+TEST_SRCS = vm/test/test_main.c vm/test/test_term.c vm/test/test_alloc.c vm/test/test_image.c vm/test/test_heap.c vm/test/test_msg.c vm/test/test_interp.c vm/test/test_signals.c vm/test/test_timer.c vm/test/test_call.c vm/test/test_names.c vm/test/test_out.c vm/test/test_evq.c vm/test/test_port.c vm/test/test_strs.c vm/test/test_slices.c vm/test/test_bytes.c vm/test/test_netlink.c vm/test/test_caps.c vm/test/test_module.c
 # The net stack (pure C99, chip-independent; spec M5): linked as objects
 # into every unix build, so its net_rx_offer / net_link_event replace the
 # platform's weak defaults.

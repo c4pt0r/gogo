@@ -1,0 +1,33 @@
+load 0 true
+hello from module x
+main of module
+Nope 4
+main2 4
+helper 4
+Two 4
+zero 4
+forged 4 4 true
+forged 4 4 true
+forged 4 4 true
+forged 4 4 true
+forged 4 4 true
+missing 0
+released 0
+stale 4 4
+running true
+wait done
+after last actor 0
+loader load 0
+hold 0 0
+hello from module holder
+holder released 0
+load 7 6
+loaded 7 true
+all released 0
+old handle 4
+hello from module new
+heap 0 true
+hello from module heap
+unaligned 0 true
+hello from module unaligned
+end 0

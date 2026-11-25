@@ -12,16 +12,18 @@
 #include <stdbool.h>
 #include "actor.h"
 
-/* Registers name for pid. 1 = done; 0 = refused (the name is taken, or pid
- * is not a live actor); -1 = out of memory. */
-int names_register(Vm *vm, const uint8_t *name, uint32_t len, term pid);
+/* Registers name for pid, by actor `by` (the registrant). 1 = done; 0 =
+ * refused (the name is taken, or pid is not a live actor); -1 = out of
+ * memory. */
+int names_register(Vm *vm, term by, const uint8_t *name, uint32_t len, term pid);
 
 /* Looks name up; false if it is not registered. */
 bool names_whereis(Vm *vm, const uint8_t *name, uint32_t len, term *pid);
 
-/* Removes name, whichever actor registered it (any actor may unregister
- * any name, as in Erlang); does nothing if it is not registered. */
-void names_unregister(Vm *vm, const uint8_t *name, uint32_t len);
+/* Removes name if actor `by` registered it (design §5.3: only the
+ * registrant may; not the named actor, unless it registered itself);
+ * otherwise, or if it is not registered, does nothing. */
+void names_unregister(Vm *vm, term by, const uint8_t *name, uint32_t len);
 
 /* Removes every name pid holds. */
 void names_drop_actor(Vm *vm, term pid);

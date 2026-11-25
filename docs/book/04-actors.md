@@ -401,7 +401,9 @@ after unregister: false
 ```
 
 A name belongs to the actor until it exits or the name is unregistered;
-then the name is free again. A supervisor that restarts a named service can
+then the name is free again. Only the actor that registered a name can
+unregister it; `Unregister` from any other actor does nothing.
+A supervisor that restarts a named service can
 have the new instance register the same name, so clients that look the
 name up each time always find the live one. One actor can hold several
 names.

@@ -67,7 +67,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpShr64)+1 || len(builtinNames) != int(BFs)+1 {
+	if len(opNames) != int(OpShr64)+1 || len(builtinNames) != int(BCode)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -106,8 +106,8 @@ func TestReasonCodesMatchC(t *testing.T) {
 			goCodes[upperSnake(name)] = v
 		}
 	}
-	if len(goCodes) != 9 {
-		t.Errorf("gogo/actor has %d constants, want the 9 reason codes", len(goCodes))
+	if len(goCodes) != 10 {
+		t.Errorf("gogo/actor has %d constants, want the 10 reason codes", len(goCodes))
 	}
 	for n, v := range goCodes {
 		if cv, ok := cCodes[n]; !ok || cv != v {
@@ -139,14 +139,14 @@ func upperSnake(s string) string {
 func TestReservedTypesMatchStubs(t *testing.T) {
 	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath} {
+	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath, CodePath} {
 		pkg, err := l.Import(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		pkgs[path] = pkg
 	}
-	order := map[string]int{ActorPath: 0, PortPath: 1, NetPath: 2, FsPath: 3, KbdPath: 4, PowerPath: 5}
+	order := map[string]int{ActorPath: 0, PortPath: 1, NetPath: 2, FsPath: 3, KbdPath: 4, PowerPath: 5, CodePath: 6}
 	last := 0
 	for i, rt := range reservedTypes {
 		if o, ok := order[rt.pkg]; !ok || o < last {
@@ -164,6 +164,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			prefix = "TypeKbd"
 		case PowerPath:
 			prefix = "TypePower"
+		case CodePath:
+			prefix = "TypeCode"
 		}
 		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
 			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
@@ -182,8 +184,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 34 {
-		t.Errorf("%d reserved types, want 34", len(reservedTypes))
+	if len(reservedTypes) != 35 {
+		t.Errorf("%d reserved types, want 35", len(reservedTypes))
 	}
 }
 
@@ -234,8 +236,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 8 {
-		t.Errorf("imageVersion %d, want 8", imageVersion)
+	if imageVersion != 9 {
+		t.Errorf("imageVersion %d, want 9", imageVersion)
 	}
 }
 
@@ -350,7 +352,7 @@ func TestImageLayout(t *testing.T) {
 	}
 	// v7: the const map follows the code, one bit per const word set at
 	// each object start ("main" at 0, "P" at 3).
-	if len(w) != 8+3+2+6+1+1 || w[len(w)-1] != 1|1<<3 {
+	if len(w) != 8+3+2+6+1+1+2 || w[len(w)-3] != 1|1<<3 {
 		t.Fatalf("const map: image %d words, last %#x", len(w), w[len(w)-1])
 	}
 }
@@ -374,8 +376,8 @@ func TestImageConstMap(t *testing.T) {
 	if w[4] != 40 {
 		t.Fatalf("consts %d words, want 40", w[4])
 	}
-	cmap := w[len(w)-2:]
-	if len(w) != 8+3+40+1+2 {
+	cmap := w[len(w)-4 : len(w)-2]
+	if len(w) != 8+3+40+1+2+2 {
 		t.Fatalf("image %d words", len(w))
 	}
 	want := [2]uint32{1}
@@ -490,6 +492,33 @@ func TestImageRelocatesJumps(t *testing.T) {
 	}
 }
 
+// TestReservedTypeCount: the one reserved-type count (R2) matches the
+// table the compiler emits first in every image.
+func TestReservedTypeCount(t *testing.T) {
+	if len(reservedTypes) != int(TypeReservedCount) {
+		t.Fatalf("len(reservedTypes) = %d, TypeReservedCount = %d", len(reservedTypes), TypeReservedCount)
+	}
+}
+
+// TestImageConstAreaLimit: a const ref carries a 17-bit word offset (the
+// top bits of the runtime term are the module tag, vm/term.h), so a const
+// area past 1<<17 words is a compile error, not an image the VM rejects.
+func TestImageConstAreaLimit(t *testing.T) {
+	b := NewImageBuilder()
+	f := b.AddFunc("main", 0, 1)
+	b.SetFuncCode(f, []uint32{uint32(OpRet)})
+	// "main" takes 3 words; the big string 2 + payload: exactly the limit.
+	b.AddString(strings.Repeat("x", (MaxConstWords-5)*4))
+	if _, err := b.Bytes(); err != nil {
+		t.Fatalf("at the limit: %v", err)
+	}
+	b.AddString("y") // 3 more words
+	_, err := b.Bytes()
+	if err == nil || !strings.Contains(err.Error(), "const area") {
+		t.Fatalf("past the limit: err = %v", err)
+	}
+}
+
 func TestImageEmptyFuncRejected(t *testing.T) {
 	b := NewImageBuilder()
 	b.AddFunc("x", 0, 1)
@@ -572,5 +601,87 @@ func TestFsMatchC(t *testing.T) {
 	}
 	if len(seen) != len(ops) {
 		t.Errorf("fsOps covers %d op codes, want %d", len(seen), len(ops))
+	}
+}
+
+// TestCodeMatchC cross-checks gogo/code with C: code.Err with CODE_* and
+// the B_CODE op codes with CODE_OP_* (vm/module.h), code.Cap* and the
+// compiler's Cap* with CAP_* (vm/platform.h).
+func TestCodeMatchC(t *testing.T) {
+	c := map[string]int64{}
+	for _, f := range []string{"../vm/module.h", "../vm/platform.h"} {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range regexp.MustCompile(`\b(CODE_\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
+			c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
+		}
+		for _, m := range regexp.MustCompile(`#define\s+(CAP_\w+)\s+\(?(\d+)u(?:\s*<<\s*(\d+))?`).FindAllStringSubmatch(string(src), -1) {
+			v, _ := strconv.ParseInt(m[2], 10, 64)
+			if m[3] != "" {
+				sh, _ := strconv.Atoi(m[3])
+				v <<= sh
+			}
+			c[m[1]] = v
+		}
+	}
+	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
+	pkg, err := l.Import(CodePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := map[string]string{"OK": "CODE_OK", "BadImage": "CODE_BAD_IMAGE", "Unsupported": "CODE_UNSUPPORTED",
+		"NoMemory": "CODE_NO_MEMORY", "NotFound": "CODE_NOT_FOUND", "BadArg": "CODE_BAD_ARG", "TooMany": "CODE_TOO_MANY",
+		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapAnyPort": "CAP_ANYPORT"}
+	for name, cname := range stub {
+		k, ok := pkg.Scope().Lookup(name).(*types.Const)
+		if !ok {
+			t.Errorf("code.%s missing from the stub", name)
+			continue
+		}
+		v, _ := constant.Int64Val(k.Val())
+		if cv, ok := c[cname]; !ok || cv != v {
+			t.Errorf("code.%s = %d, %s = %d (present=%v)", name, v, cname, cv, ok)
+		}
+	}
+	for name, v := range map[string]uint32{"CAP_NET": CapNet, "CAP_KBD": CapKbd, "CAP_POWER": CapPower, "CAP_SD": CapSD, "CAP_ANYPORT": CapAnyPort} {
+		if c[name] != int64(v) {
+			t.Errorf("compiler %s = %d, C %d", name, v, c[name])
+		}
+	}
+	nErr := 0
+	for name := range c {
+		if strings.HasPrefix(name, "CODE_") && !strings.HasPrefix(name, "CODE_OP_") {
+			nErr++
+		}
+	}
+	if nErr != 7 {
+		t.Errorf("%d CODE_ errors in module.h, the stub has 7", nErr)
+	}
+	ops := map[string]int32{"CODE_OP_LOAD": CodeLoad, "CODE_OP_SPAWN": CodeSpawn, "CODE_OP_SPAWN_LINK": CodeSpawnLink,
+		"CODE_OP_SPAWN_OPT": CodeSpawnOpt, "CODE_OP_HOLD": CodeHold, "CODE_OP_RELEASE": CodeRelease,
+		"CODE_OP_MISSING": CodeMissing, "CODE_OP_MEM_USED": CodeMemUsed}
+	nOps := 0
+	for name := range c {
+		if strings.HasPrefix(name, "CODE_OP_") {
+			nOps++
+		}
+	}
+	if nOps != len(ops) || len(codeOps) != len(ops) {
+		t.Errorf("module.h has %d CODE_OP_ codes, the compiler %d (codeOps %d)", nOps, len(ops), len(codeOps))
+	}
+	for name, v := range ops {
+		if cv, ok := c[name]; !ok || cv != int64(v) {
+			t.Errorf("%s: C=%d Go=%d (present=%v)", name, cv, v, ok)
+		}
+	}
+	// Every gogo/code function has an op.
+	for _, name := range pkg.Scope().Names() {
+		if fn, ok := pkg.Scope().Lookup(name).(*types.Func); ok {
+			if _, ok := codeOps["code."+fn.Name()]; !ok {
+				t.Errorf("code.%s has no B_CODE op", fn.Name())
+			}
+		}
 	}
 }

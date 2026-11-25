@@ -1,0 +1,39 @@
+// Load a module from a file and start one of its entries in a new actor.
+// run.sh builds mods/greeter into /flash/greeter.gmod first.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/code"
+	"gogo/fs"
+)
+
+func main() {
+	b, e := fs.ReadFile("/flash/greeter.gmod", 8192)
+	if e != fs.OK {
+		println("read failed", int(e))
+		return
+	}
+	m, err := code.Load(b)
+	println("load:", int(err), "code mem in use:", code.MemUsed() > 0)
+
+	// Start the entry "Greet" in a new actor; its argument is our PID.
+	p, err := code.Spawn(m, "Greet", actor.Self())
+	println("spawn Greet:", int(err), p != actor.Self())
+	switch s := actor.Receive().(type) {
+	case string:
+		println(s)
+	}
+
+	// Entry names are case sensitive; a missing one is NotFound, not a crash.
+	_, err = code.Spawn(m, "greet", actor.Self())
+	println("spawn greet:", int(err), "NotFound is", int(code.NotFound))
+
+	// Let the finished Greet actor go, then drop our hold: nothing keeps the
+	// module any more, so it is unloaded and its handle is stale.
+	actor.Sleep(50)
+	code.Release(m)
+	println("code mem in use after release:", code.MemUsed())
+	_, err = code.Spawn(m, "Greet", actor.Self())
+	println("spawn after unload:", int(err))
+}

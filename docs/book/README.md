@@ -21,7 +21,7 @@ and assumes no knowledge of embedded programming or Erlang.
 11. [Configuration and Devices](11-configuration-and-devices.md): `gogo config`, `config.Get`, Wi-Fi, the two boards
 12. [Toolchain Reference](12-toolchain-reference.md): `gogo build`, `run`, `dis`, `flash`, `monitor`, `config`
 13. [Appendices](13-appendices.md): library quick reference, exit reasons, error codes, limits, differences from Go
-14. [Coming Soon: Hot Loading](14-coming-soon-hot-loading.md): loading code at run time (designed, not yet available)
+14. [Hot Loading](14-hot-loading.md): loading code at run time, modules, supervised upgrades
 
 [Notes for maintainers](NOTES-for-maintainers.md) lists the places where
 the documentation and the behaviour disagree, found while writing the book.

@@ -129,6 +129,7 @@ const (
 	BNetSubscribe uint32 = 47 // -> bool
 	BConfigGet    uint32 = 48 // key string -> value string, ok bool
 	BFs           uint32 = 49 // op int, args... -> result(s): gogo/fs (vfs/builtin.c)
+	BCode         uint32 = 50 // op int, args... -> result(s): gogo/code (vm/module.c)
 )
 
 // Off-heap Bytes limits: twins of vm/config.h's defaults (checked by
@@ -199,6 +200,12 @@ const (
 	TypePowerConfig  uint32 = 31
 	TypePowerBattery uint32 = 32
 	TypePowerRead    uint32 = 33
+	// gogo/code
+	TypeCodeModule uint32 = 34
+	// TypeReservedCount is how many reserved types there are: every type
+	// index from here up is a module's own (TYPE_RESERVED_COUNT in
+	// vm/opcodes.h; TestReservedTypeCount checks len(reservedTypes)).
+	TypeReservedCount uint32 = 35
 )
 
 // Heap object kinds.
@@ -278,7 +285,7 @@ var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "M
 	"UNREGISTER", "PORT_OPEN", "PORT_CLOSE", "STR_CONCAT", "LEN", "INDEX", "SETINDEX",
 	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
 	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
-	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS"}
+	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -315,7 +322,7 @@ var goConstants = map[string]uint32{
 	"BBytesliceFrom": BBytesliceFrom, "BBufNew": BBufNew, "BBufWrite": BBufWrite,
 	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
 	"BBytesCopyto": BBytesCopyto, "BPortHandoff": BPortHandoff, "BNetSubscribe": BNetSubscribe,
-	"BConfigGet": BConfigGet, "BFs": BFs,
+	"BConfigGet": BConfigGet, "BFs": BFs, "BCode": BCode,
 	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
@@ -327,4 +334,6 @@ var goConstants = map[string]uint32{
 	"TypeNetDial": TypeNetDial, "TypeNetListen": TypeNetListen, "TypeNetWrite": TypeNetWrite, "TypeNetShutdown": TypeNetShutdown, "TypeNetResume": TypeNetResume, "TypeNetConnected": TypeNetConnected, "TypeNetData": TypeNetData, "TypeNetWritten": TypeNetWritten, "TypeNetClosed": TypeNetClosed, "TypeNetAccepted": TypeNetAccepted,
 	"TypeFsInfo": TypeFsInfo, "TypeFsSpace": TypeFsSpace,
 	"TypeKbdConfig": TypeKbdConfig, "TypeKbdKey": TypeKbdKey, "TypePowerConfig": TypePowerConfig, "TypePowerBattery": TypePowerBattery, "TypePowerRead": TypePowerRead,
+	"TypeCodeModule":    TypeCodeModule,
+	"TypeReservedCount": TypeReservedCount,
 }

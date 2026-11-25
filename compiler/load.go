@@ -56,9 +56,14 @@ const KbdPath = "gogo/kbd"
 // reserved types.
 const PowerPath = "gogo/power"
 
+// CodePath is the import path of the hot-loading API (code.Load,
+// code.Spawn, ...), a stub package like gogo/fs: calls become B_CODE. Its
+// reserved type is Module.
+const CodePath = "gogo/code"
+
 // isStub reports whether path is one of the stub packages.
 func isStub(path string) bool {
-	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath
+	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath
 }
 
 // stubDir is the directory of the library set holding stub package path.
@@ -118,8 +123,7 @@ func sizes() types.Sizes { return &types.StdSizes{WordSize: 4, MaxAlign: 4} }
 // loader parses and type-checks library packages from libs, a file system
 // with one directory per package: gogo/<name> lives in <name>/*.go. It is
 // also the importer of every package it checks; it serves only packages it
-// has already loaded, and the stub packages gogo/actor, gogo/port,
-// gogo/bytes, gogo/net, gogo/config and gogo/fs.
+// has already loaded, and the stub packages (isStub).
 type loader struct {
 	fset  *token.FileSet
 	libs  fs.FS
@@ -139,10 +143,10 @@ func (l *loader) Import(path string) (*types.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	// gogo/port, gogo/net and gogo/fs import gogo/actor and gogo/bytes through l,
-	// so every package sees the same actor.PID and bytes.Bytes.
+	// gogo/port, gogo/net, gogo/fs and gogo/code import gogo/actor and gogo/bytes
+	// through l, so every package sees the same actor.PID and bytes.Bytes.
 	var imp types.Importer = importer.Default()
-	if path == PortPath || path == NetPath || path == FsPath {
+	if path == PortPath || path == NetPath || path == FsPath || path == CodePath {
 		imp = l
 	}
 	conf := types.Config{Sizes: sizes(), Importer: imp}
@@ -335,8 +339,11 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 	if err != nil {
 		return nil, err
 	}
-	if fn, ok := pkg.Scope().Lookup("main").(*types.Func); !ok || fn.Type().(*types.Signature).Params().Len() != 0 || fn.Type().(*types.Signature).Results().Len() != 0 {
-		return nil, fmt.Errorf("%s: gogo: package main needs a func main()", dir)
+	// main is optional (every image is a module); when present it is func main().
+	if obj := pkg.Scope().Lookup("main"); obj != nil {
+		if fn, ok := obj.(*types.Func); !ok || fn.Type().(*types.Signature).Params().Len() != 0 || fn.Type().(*types.Signature).Results().Len() != 0 {
+			return nil, fmt.Errorf("%s: gogo: main must be func main()", dir)
+		}
 	}
 	sort.SliceStable(files, func(i, j int) bool { return fset.File(files[i].Pos()).Name() < fset.File(files[j].Pos()).Name() })
 	return &Program{Fset: fset, Files: files, Pkg: pkg, Info: l.info, Libs: l.order}, nil

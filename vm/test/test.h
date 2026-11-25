@@ -29,9 +29,10 @@ void test_fail_eq(const char *file, int line, const char *ea, const char *eb,
         if (a_ != b_) test_fail_eq(__FILE__, __LINE__, #a, #b, a_, b_); \
     } while (0)
 
-/* Appends the v7 const-area object-start map to the hand-built image w
- * (header counts already set, room for it after the code) and returns
- * the image's length in words. */
+/* Appends the v7 const-area object-start map and the v9 trailer
+ * (requires = 0, n_exports = 0) to the hand-built image w (header counts
+ * already set, room for map + 2 words after the code) and returns the
+ * image's length in words. */
 #include <stdint.h>
 #include <string.h>
 static inline uint32_t img_seal(uint32_t *w) {
@@ -39,7 +40,19 @@ static inline uint32_t img_seal(uint32_t *w) {
     memset(map, 0, (nc + 31u) / 32u * 4u);
     for (uint32_t off = 0; off < nc; off += (c[off] >> 6) ? (c[off] >> 6) : 1u)
         map[off >> 5] |= 1u << (off & 31u);
-    return (uint32_t)(map - w) + (nc + 31u) / 32u;
+    uint32_t *tr = map + (nc + 31u) / 32u;
+    tr[0] = 0; tr[1] = 0;
+    return (uint32_t)(tr - w) + 2u;
+}
+
+/* img_seal, then exports function 0 as "main" (its name must be the const
+ * string at offset 0, "main"): an image vm_run can boot (module 0's main
+ * starts by its export, never the header's entry). Needs 2 more words. */
+static inline uint32_t img_seal_main(uint32_t *w) {
+    uint32_t n = img_seal(w);
+    w[n - 1] = 1;
+    w[n] = 0; w[n + 1] = 0;
+    return n + 2u;
 }
 
 #endif

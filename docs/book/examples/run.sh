@@ -7,6 +7,8 @@
 #   input          fed to stdin (gpio / kbd / power script)
 #   fsroot         present: run with --fs-root on a fresh temp directory
 #                  (a line "sd" also creates the /sd directory)
+#   mods/<name>/   present: each is built as a module into <fs root>/flash/<name>.gmod
+#                  (implies an fs root, like fsroot)
 #   config         used as the config store ($GOGO_CONFIG)
 #   compile-fails  present: the program must NOT compile; the compiler's
 #                  message is compared with expected.err
@@ -33,9 +35,16 @@ for name in $names; do
         : >"$out"
     else
         args=""
-        if [ -f "$d/fsroot" ]; then
+        if [ -f "$d/fsroot" ] || [ -d "$d/mods" ]; then
             root="$tmp/$name.fs"; mkdir -p "$root"
-            grep -qw sd "$d/fsroot" && mkdir -p "$root/sd"
+            [ -f "$d/fsroot" ] && grep -qw sd "$d/fsroot" && mkdir -p "$root/sd"
+            if [ -d "$d/mods" ]; then
+                mkdir -p "$root/flash"
+                for m in "$d"/mods/*/; do
+                    mn=$(basename "$m")
+                    (cd "$m" && "$gogo" build . -o "$root/flash/$mn.gmod") || { echo "FAIL $name: module $mn"; fail=$((fail+1)); continue 2; }
+                done
+            fi
             args="--fs-root $root"
         fi
         cfg="$tmp/no-config"

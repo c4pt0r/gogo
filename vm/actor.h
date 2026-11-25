@@ -17,6 +17,7 @@ typedef struct Msg Msg;   /* defined with the mailbox (Task 5) */
 typedef struct Timer Timer;   /* defined in timer.h */
 typedef struct Name Name;     /* defined in names.c */
 typedef struct HeldBytes HeldBytes;   /* defined in bytes.h */
+typedef struct ModEntry ModEntry;     /* defined in module.h */
 
 /* Field order keeps the struct free of padding on both 32- and 64-bit
  * hosts: 48 bytes on 32-bit (checked in check32.c), 72 on 64-bit. */
@@ -32,7 +33,9 @@ typedef struct Actor {
     uint8_t state, flags;
     uint16_t reductions;
     uint16_t mbox_words, max_words;
-    uint32_t reserved;        /* unused (timers live in the Vm timer heap); keeps 48 B on 32-bit */
+    uint8_t mod;              /* module slot whose code it runs (module.h); counted in its live */
+    uint8_t pad8;
+    uint16_t pad16;           /* keeps 48 B on 32-bit */
 } Actor;
 
 enum { A_RUNNABLE = 1, A_WAITING = 2, A_EXITED = 3 };
@@ -50,7 +53,11 @@ enum {
  * (gen << 1) | 1, where gen is the 12-bit generation the next actor in
  * that slot will get. Actor pointers are aligned, so bit 0 tells them apart. */
 typedef struct Vm {
-    const Image *img;
+    ModEntry *mods[GOGO_MAX_MODULES];   /* module table (module.h); NULL = free slot */
+    uint16_t mod_gen[GOGO_MAX_MODULES]; /* each slot's current generation */
+    uint32_t mod_mem;         /* code bytes of the counted (loaded, not boot) modules */
+    uint32_t mod_cap;         /* their limit: config code.mem (module_config) */
+    uint8_t mod_next;         /* where module_load's round-robin slot search starts */
     uintptr_t *table;
     uint16_t table_cap;
     Actor *runq_head, *runq_tail;
@@ -67,11 +74,21 @@ typedef struct Vm {
 } Vm;
 
 /* Returns 0, or -1 if the table cannot be allocated or table_cap exceeds
- * PORT_SLOT_BASE (the slots above it name ports). */
+ * PORT_SLOT_BASE (the slots above it name ports). img is a test
+ * convenience: NULL initialises only (vm_boot's use); a hand-built image
+ * already loaded by image_load is installed as module 0 through the boot's
+ * own install step, module_install_static, without the caps check. Boot
+ * code calls vm_boot. */
 int vm_init(Vm *vm, const Image *img, uint16_t table_cap);
 
 /* Slot + PID assigned, block allocated, empty stack, state A_RUNNABLE,
- * max_words 0 (default limit), not enqueued. NULL if the table is full or memory runs out. */
+ * max_words 0 (default limit), not enqueued, running module slot `mod`'s
+ * code (counted in that module's live actors). NULL if the table is full
+ * or memory runs out. */
+Actor *actor_new_in(Vm *vm, uint16_t initial_words, uint8_t mod);
+
+/* actor_new_in(vm, initial_words, 0): an actor of module 0 (tests, C
+ * helpers); actors spawned by code inherit their spawner's module. */
 Actor *actor_new(Vm *vm, uint16_t initial_words);
 
 /* The actor's memory limit in words (heap block + queued messages):

@@ -1,0 +1,172 @@
+// hotload_net: hot loading over the network, on a board.
+//
+// On boot: join Wi-Fi (dhcp), fetch worker_v1.gmod from the base URL in the
+// config key demo.modurl, load it, and run its "Work" entry under
+// supervisor.SuperviseModule. After a few seconds fetch worker_v2.gmod and
+// upgrade the running worker to it, printing each step, the code memory in
+// use (code.MemUsed) and how long the fetch and the load took in ms.
+//
+//	gogo config set wifi.ssid <name>
+//	gogo config set wifi.password -
+//	gogo config set demo.modurl http://192.168.1.10:8000    # no trailing /
+//	gogo build examples/hotload_net -o hotload_net.gogo && gogo flash hotload_net.gogo
+//
+// The modules are those of examples/hotload (see README.md there).
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/code"
+	"gogo/config"
+	"gogo/dhcp"
+	"gogo/net"
+	"gogo/http"
+	"gogo/strconv"
+	"gogo/supervisor"
+)
+
+// modBody is the largest module accepted. The body is charged to this actor,
+// whose default limit on a board is 16 KB; http.Do cuts a longer body and
+// sets Truncated, which fetch treats as a failure. For larger modules raise
+// it (at most http.MaxBodyLimit) and run fetch in an actor started with a
+// bigger actor.Options.MaxMemory.
+const modBody = 4096
+
+// fetch downloads base+"/"+name and loads it, printing the timings. A
+// non-empty string is the failure reason.
+func fetch(base, name string) (code.Module, string) {
+	var none code.Module
+	t0 := actor.Now()
+	var nobody bytes.Bytes
+	r, ok := http.Do("GET", base+"/"+name, "", nobody, modBody, 10000)
+	if !ok {
+		return none, "fetch " + name + " (DNS, connect or timeout)"
+	}
+	if r.Status != 200 || r.Truncated {
+		return none, "fetch " + name + ": status " + strconv.Itoa(r.Status) + ", or longer than modBody"
+	}
+	t1 := actor.Now()
+	m, e := code.Load(r.Body)
+	t2 := actor.Now()
+	if e != code.OK {
+		return none, "load " + name + ": error " + strconv.Itoa(int(e)) + ", missing " + strconv.Itoa(code.Missing(m))
+	}
+	println("fetched", name, r.Body.Len(), "bytes in", int(t1-t0), "ms; loaded in", int(t2-t1), "ms; code mem", code.MemUsed())
+	return m, ""
+}
+
+// announced returns the PID the (re)started worker sends us; false after 3 s.
+func announced() (actor.PID, bool) {
+	var p actor.PID
+	m, ok := actor.ReceiveTimeout(3000)
+	if !ok {
+		return p, false
+	}
+	switch x := m.(type) {
+	case actor.PID:
+		return x, true
+	}
+	return p, false
+}
+
+func feed(w actor.PID, n int) {
+	for i := 0; i < n; i++ {
+		actor.Send(w, i)
+	}
+	actor.Sleep(100)
+}
+
+// run does the demo; the result is "" or why it failed.
+func run() string {
+	base, ok := config.Get("demo.modurl")
+	if !ok {
+		return "demo.modurl is not set (gogo config set demo.modurl http://<host>:<port>)"
+	}
+	println("step 1: network")
+	// Subscribe first, then start one DHCP client and wait for net.Up: the
+	// Wi-Fi link may come up seconds after boot, and the client keeps
+	// trying after dhcp.Start's own timeout (a second Start would fail
+	// while the first client owns netif).
+	net.Subscribe()
+	up := dhcp.Start(dhcp.Config{TimeoutMs: 1000})
+	// Wait by deadline, not by message count: other messages (a late
+	// reply, net.Down while associating) may arrive first.
+	deadline := actor.Now() + 30000
+	for !up && actor.Now() < deadline {
+		m, ok := actor.ReceiveTimeout(1000)
+		if ok {
+			switch m.(type) {
+			case net.Up:
+				up = true
+			}
+		}
+	}
+	if !up {
+		return "no network"
+	}
+	println("network up; code mem", code.MemUsed())
+
+	println("step 2: fetch and load v1")
+	v1, why := fetch(base, "worker_v1.gmod")
+	if why != "" {
+		return why
+	}
+	sup := supervisor.SuperviseModule(v1, "Work", actor.Self(),
+		supervisor.Spec{Restart: supervisor.Permanent, MaxRestarts: 3})
+	var nobody actor.PID
+	if sup == nobody {
+		return "SuperviseModule failed (module not loaded, no entry Work, or too many holders)"
+	}
+	code.Release(v1) // the supervisor holds it now
+	w, ok := announced()
+	if !ok {
+		return "v1 worker did not announce itself"
+	}
+	println("step 3: v1 running")
+	feed(w, 3) // the third message crashes v1; the supervisor restarts it
+	w, ok = announced()
+	if !ok {
+		return "v1 worker was not restarted from the module"
+	}
+	println("worker restarted from the module")
+	feed(w, 1)
+
+	println("step 4: waiting 5 s, then upgrade")
+	actor.Sleep(5000)
+	v2, why := fetch(base, "worker_v2.gmod")
+	if why != "" {
+		return why
+	}
+	r, ok := actor.Call(sup, supervisor.Upgrade{Module: v2}, 5000)
+	code.Release(v2)
+	if !ok {
+		return "upgrade: no reply from the supervisor"
+	}
+	println("upgrade result (0 is ok):", r)
+	switch n := r.(type) {
+	case int:
+		if n != 0 {
+			return "upgrade refused, code.Err " + strconv.Itoa(n)
+		}
+	default:
+		return "upgrade: unexpected reply"
+	}
+	w, ok = announced()
+	if !ok {
+		return "v2 worker did not announce itself"
+	}
+	println("step 5: v2 running; code mem", code.MemUsed())
+	feed(w, 2)
+	return ""
+}
+
+// main ends with one last line to wait for: "done" or "FAIL: <reason>".
+func main() {
+	why := run()
+	if why != "" {
+		println("FAIL:", why)
+		return
+	}
+	println("done")
+}

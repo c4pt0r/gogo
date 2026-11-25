@@ -148,10 +148,11 @@ void timer_cancel_wakeup(Vm *vm, Actor *a) {
     a->flags &= (uint8_t)~(AF_WAKEUP_ARMED | AF_TIMED_OUT);
 }
 
-term timer_add_send(Vm *vm, Actor *from, uint64_t deadline, term to_pid, term msg) {
+term timer_add_send(Vm *vm, Actor *from, uint64_t deadline, term to_pid, term msg, uint32_t *why) {
     /* Copy first: msg_build leaves from's heap unchanged, while
      * heap_new_ref may GC and move msg. */
-    Msg *m = msg_build(from, msg);
+    const Actor *dst = actor_lookup(vm, to_pid);
+    Msg *m = msg_build(vm, from, msg, (dst ? dst : from)->mod, why);
     if (!m) return T_NIL;
     uint32_t charge = send_charge(m);
     /* The pending timer counts against the creator's limit, like a queued

@@ -20,7 +20,7 @@ static void drop_err(const char *s, size_t n) { (void)s; (void)n; }
  *   LOADK r0, <ms>; BUILTIN r1, r0, 1, RECEIVE_TIMEOUT (-> r1, r2);
  *   BUILTIN r0, r0, 0, RECEIVE (blocks, so r1/r2 can be inspected); RET r0
  * Layout: 8 header + 3 func + 3 consts + 7 code = 21 words. */
-#define IMG_WORDS 22
+#define IMG_WORDS 24
 static void build_rt(uint32_t *w, int32_t ms) {
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
@@ -144,7 +144,7 @@ TEST(timer_send_after_delivers_and_cancels) {
     size_t base = va_used_bytes();
     Actor *s = actor_new(&vm, 64), *r = waiting_actor(&vm);
 
-    term ref = timer_add_send(&vm, s, 5, r->id, term_from_int(7));
+    term ref = timer_add_send(&vm, s, 5, r->id, term_from_int(7), NULL);
     CHECK(term_is_ref(ref));
     const uint32_t *obj = s->mem + term_ref_off(ref);
     CHECK_EQ(obj[0], hdr_make(3, K_REF));
@@ -156,7 +156,7 @@ TEST(timer_send_after_delivers_and_cancels) {
     /* The message is copied at call time: the sender's heap may change. */
     uint32_t off = heap_alloc(&vm, s, 3, NULL, 0);
     s->mem[off] = hdr_make(3, K_STRUCT); s->mem[off + 1] = 0; s->mem[off + 2] = term_from_int(42);
-    ref = timer_add_send(&vm, s, 5, r->id, term_from_ref(off));
+    ref = timer_add_send(&vm, s, 5, r->id, term_from_ref(off), NULL);
     CHECK(term_is_ref(ref));
     s->mem[off + 2] = term_from_int(99);
     timer_fire_due(&vm, 4);
@@ -181,7 +181,7 @@ TEST(timer_send_after_dead_target_drops) {
     term to = r->id;
     actor_free(&vm, r);                    /* no timer_cancel_actor */
     Actor *reuse = actor_new(&vm, 32);     /* same slot, next generation */
-    CHECK(term_is_ref(timer_add_send(&vm, s, 1, to, term_from_int(1))));
+    CHECK(term_is_ref(timer_add_send(&vm, s, 1, to, term_from_int(1), NULL)));
     timer_fire_due(&vm, 1);
     CHECK(reuse->mbox_head == NULL);
     CHECK_EQ(timer_count(&vm), 0);
@@ -197,8 +197,8 @@ TEST(timer_cancelled_on_exit) {
     size_t base = va_used_bytes();
     Actor *a = waiting_actor(&vm), *other = waiting_actor(&vm);
     CHECK(timer_add_wakeup(&vm, a, 10));
-    CHECK(term_is_ref(timer_add_send(&vm, other, 20, a->id, term_from_int(1))));
-    CHECK(term_is_ref(timer_add_send(&vm, a, 30, other->id, term_from_int(2))));
+    CHECK(term_is_ref(timer_add_send(&vm, other, 20, a->id, term_from_int(1), NULL)));
+    CHECK(term_is_ref(timer_add_send(&vm, a, 30, other->id, term_from_int(2), NULL)));
     CHECK_EQ(timer_count(&vm), 3);
     a->state = A_RUNNABLE;
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
@@ -293,7 +293,7 @@ TEST(timer_receive_timeout_zero) {
 /* A loop of SendAfter(1000000, self, 5):
  *   LOADK r1, 1000000; SELF r2; LOADK r3, 5; SEND_AFTER r0, r1..r3; JMP 6
  * Layout: 8 header + 3 func + 3 consts + 10 code = 24 words. */
-#define LOOP_WORDS 25
+#define LOOP_WORDS 27
 static void build_send_loop(uint32_t *w) {
     memset(w, 0, LOOP_WORDS * sizeof(uint32_t));
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
@@ -349,15 +349,15 @@ TEST(send_after_charged_to_creator) {
     CHECK(runq_pop(&vm) == u);
 
     /* Release on cancel, on fire, and when the creator exits. */
-    term ref = timer_add_send(&vm, s, 10, u->id, term_from_int(2));
+    term ref = timer_add_send(&vm, s, 10, u->id, term_from_int(2), NULL);
     CHECK(actor_charged_words(s) > 0);
     CHECK(timer_cancel(&vm, s->mem[term_ref_off(ref) + 1]));
     CHECK_EQ(actor_charged_words(s), 0);
-    CHECK(term_is_ref(timer_add_send(&vm, s, 10, u->id, term_from_int(3))));
+    CHECK(term_is_ref(timer_add_send(&vm, s, 10, u->id, term_from_int(3), NULL)));
     CHECK(actor_charged_words(s) > 0);
     timer_fire_due(&vm, 10);
     CHECK_EQ(actor_charged_words(s), 0);
-    CHECK(term_is_ref(timer_add_send(&vm, s, 20, u->id, term_from_int(4))));
+    CHECK(term_is_ref(timer_add_send(&vm, s, 20, u->id, term_from_int(4), NULL)));
     actor_exit(&vm, s, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(timer_count(&vm), 1);          /* still fires for its target */
     timer_fire_due(&vm, 20);                /* must not touch the freed creator */
@@ -474,7 +474,7 @@ TEST(timer_exit_no_scan) {
     }
     Actor *c = waiting_actor(&vm), *t = waiting_actor(&vm);
     /* c creates a timer for t, so c has an extra but nothing targets c. */
-    CHECK(term_is_ref(timer_add_send(&vm, c, 500, t->id, term_from_int(1))));
+    CHECK(term_is_ref(timer_add_send(&vm, c, 500, t->id, term_from_int(1), NULL)));
     CHECK_EQ(vm.timer_scanned, 0u);
     Actor *idle = waiting_actor(&vm);            /* no timers of any kind */
     idle->state = A_RUNNABLE;
@@ -502,9 +502,9 @@ TEST(timer_exit_no_scan_after_fire) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
     Actor *s = waiting_actor(&vm), *t = waiting_actor(&vm);
-    term ref = timer_add_send(&vm, s, 5, t->id, term_from_int(1));
+    term ref = timer_add_send(&vm, s, 5, t->id, term_from_int(1), NULL);
     CHECK(term_is_ref(ref));
-    term ref2 = timer_add_send(&vm, s, 9, t->id, term_from_int(2));
+    term ref2 = timer_add_send(&vm, s, 9, t->id, term_from_int(2), NULL);
     CHECK(term_is_ref(ref2));
     const uint32_t *obj = s->mem + term_ref_off(ref2);
     CHECK(timer_cancel(&vm, (uint64_t)obj[1] | ((uint64_t)obj[2] << 32)));
@@ -525,7 +525,7 @@ static uint64_t counting_clock(void) { clock_reads++; return 0; }
 
 /* A busy actor with no timers pending: 100+ time slices cost at most one
  * clock read in total (the scheduler's time-0 read). */
-#define BUSY_WORDS 26
+#define BUSY_WORDS 30
 TEST(clock_reads_lazy) {
     uint32_t w[BUSY_WORDS]; Image img; Vm vm;
     va_reset();
@@ -541,7 +541,7 @@ TEST(clock_reads_lazy) {
     w[21] = OP_MAKE(OP_LT, 3, 0, 1);
     w[22] = OP_MAKE(OP_JMPT, 3, 0, 0); w[23] = 6;
     w[24] = OP_MAKE(OP_RET, 0, 0, 0);
-    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
+    CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 8), 0);
     clock_reads = 0;
     platform_unix_set_clock(counting_clock);
@@ -558,7 +558,7 @@ TEST(timer_creator_exit_detaches) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
     Actor *c = waiting_actor(&vm), *t = waiting_actor(&vm);
-    CHECK(term_is_ref(timer_add_send(&vm, c, 50, t->id, term_from_int(1))));
+    CHECK(term_is_ref(timer_add_send(&vm, c, 50, t->id, term_from_int(1), NULL)));
     CHECK(vm.timers[0]->owner == c->id && vm.timers[0]->charge > 0);
     uint32_t cid = c->id;
     c->state = A_RUNNABLE;
@@ -582,7 +582,7 @@ TEST(timer_creator_exit_no_scan) {
     setup(w, &img, &vm);
     Actor *c = waiting_actor(&vm), *t = waiting_actor(&vm), *o = waiting_actor(&vm);
     CHECK(timer_add_wakeup(&vm, o, 500));
-    term ref = timer_add_send(&vm, c, 5, t->id, term_from_int(1));
+    term ref = timer_add_send(&vm, c, 5, t->id, term_from_int(1), NULL);
     CHECK(term_is_ref(ref));
     timer_fire_due(&vm, 10);                 /* delivered: c owns nothing now */
     CHECK_EQ(vm.timer_scanned, 0u);

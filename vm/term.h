@@ -5,9 +5,35 @@
  *   0010  special                     T_NIL, T_FALSE, T_TRUE, T_EMPTYSTR, T_ZEROREF,
  *                                     T_NILSLICE, T_EMPTYBYTES
  *   0110  PID                         (gen << 20) | (slot << 4) | 0x6; T_ZEROPID
- *   1010  const ref                   const_word_offset << 4 | 0xA
+ *   1010  const ref                   tag | const_word_offset << 4 | 0xA (below)
  *   1110  off-heap Bytes handle       (index << 4) | 0xE (bytes.h)
- */
+ *
+ * Module tags (hot loading, module.h; design §5.5.3). Every term or raw
+ * word that names something in a module's image carries the module's tag in
+ * its top 11 bits: generation (low 8 bits of the slot's generation) in
+ * 31..24, slot in 23..21.
+ *   const ref        gen:8 | slot:3 | offset:17 | 1010
+ *   K_CLOSURE word 1 gen:8 | slot:3 | func index:21
+ *   K_STRUCT word 1  gen:8 | slot:3 | 0:5 | type index:16 for a module's own
+ *                    types (index >= TYPE_RESERVED_COUNT); a reserved type
+ *                    (system packages, opcodes.h) is its bare index: global,
+ *                    the same in every module
+ * Images hold untagged refs (tag 0: offset < CONST_MAX_WORDS, as before);
+ * the VM ORs the module's tag in where an image word becomes a runtime term
+ * (LOADK, MKCLOSURE, NEWSTRUCT, a crash's function name, a field read out of
+ * a const object). Slot 0 is the boot image (module 0), which is never
+ * unloaded, so its generation stays 0 and its tag is 0: a module-0 ref is
+ * bit for bit the image ref. Every read through a tagged word checks the
+ * slot's current generation (module_of_tag); a mismatch is `badcode`.
+ *
+ * Residual alias bound: a tag carries 8 generation bits, so a stale term
+ * resolves again (to whatever module then sits in its slot) only after
+ * exactly 256 more loads into that same slot while the term survives.
+ * module_load picks free slots round-robin, so with the 7 non-boot slots
+ * free that takes about 7 x 256 = 1792 loads. Even then the result is
+ * memory-safe (a const ref must still name an object start of the newer
+ * module; a closure runs only through that module's checked function
+ * table), but it is the wrong module's data or code, not `badcode`. */
 #ifndef GOGO_TERM_H
 #define GOGO_TERM_H
 
@@ -81,10 +107,30 @@ static inline term term_make_pid(uint16_t slot, uint16_t gen) {
 static inline uint16_t term_pid_slot(term t) { return (uint16_t)((t >> 4) & 0xFFFFu); }
 static inline uint16_t term_pid_gen(term t) { return (uint16_t)(t >> 20); }
 
-/* Const-area references: word offset into the image's const area. */
+/* Module tags (see the top of this file). */
+#define MOD_TAG_SHIFT 21u
+#define MOD_TAG_MASK  0xFFE00000u
+#define MOD_SLOT_MASK 7u               /* slot bits: at most 8 modules */
+#define MOD_GEN_MASK  255u             /* generation bits carried in a tag */
+static inline uint32_t mod_tag_make(uint32_t slot, uint32_t gen) {
+    return ((gen & MOD_GEN_MASK) << 24) | ((slot & MOD_SLOT_MASK) << MOD_TAG_SHIFT);
+}
+static inline uint32_t mod_tag_slot(uint32_t w) { return (w >> MOD_TAG_SHIFT) & MOD_SLOT_MASK; }
+static inline uint32_t mod_tag_gen(uint32_t w) { return w >> 24; }
+
+/* Index limits left by the tag: const word offsets (17 bits: 512 KB of
+ * constants per image; the ESP image partition is 1 MB), function indexes
+ * (21), struct type indexes (16: TYPEIS uses 0x10000+ for the basic types,
+ * opcodes.h). image_load and the compiler check them. */
+#define CONST_MAX_WORDS (1u << 17)
+#define FUNC_MAX        (1u << 21)
+#define TYPE_MAX        (1u << 16)
+
+/* Const-area references: tag | word offset into that module's const area.
+ * term_from_const makes the untagged (image, module 0) form. */
 static inline bool term_is_const(term t) { return (t & 0xFu) == 0xAu; }
 static inline term term_from_const(uint32_t off) { return (off << 4) | 0xAu; }
-static inline uint32_t term_const_off(term t) { return t >> 4; }
+static inline uint32_t term_const_off(term t) { return (t >> 4) & (CONST_MAX_WORDS - 1u); }
 
 /* Off-heap Bytes handles: index into the handle table (bytes.h). */
 static inline bool term_is_handle(term t) { return (t & 0xFu) == 0xEu; }

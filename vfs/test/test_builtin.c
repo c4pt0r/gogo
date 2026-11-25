@@ -32,7 +32,7 @@ static void capture_err(const char *s, size_t n) {
 #define CHARGE (GOGO_FS_SLOT_BYTES / 4u)
 
 /* An image with the one const "main" (for direct calls; no code runs). */
-#define IMG_WORDS 16
+#define IMG_WORDS 18
 static uint32_t w[IMG_WORDS];
 static Image img;
 static Vm vm;
@@ -671,7 +671,7 @@ TEST(fs_frame_bounds) {
 /* Through the interpreter: main (3 regs) runs
  *   LOADK r0, op; LOADK r1, "/flash/d"; BUILTIN r2, r0, 2, B_FS; RECEIVE
  * so r2 is the last register and r2+1 is outside the frame. */
-#define RUN_WORDS 27
+#define RUN_WORDS 29
 static const char *run_fs(int op, Actor **out) {
     static uint32_t c[RUN_WORDS]; static Image im;
     memset(c, 0, sizeof c);
@@ -720,7 +720,7 @@ TEST(fs_interp) {
 
 TEST(fs_image_v5_rejected) {
     setup();
-    CHECK_EQ(IMAGE_VERSION, 8u);
+    CHECK_EQ(IMAGE_VERSION, 9u);
     uint32_t v[IMG_WORDS];
     memcpy(v, w, sizeof v);
     v[1] = 5;

@@ -44,13 +44,24 @@ uint32_t msg_footprint_words(uint16_t words);
  * distinct off-heap Bytes root it carries (spec M4 §9.5b). */
 uint32_t msg_charge_words(const Msg *m);
 
-/* Copies t out of src's heap into a new, unqueued message; NULL if out of
- * memory or the copy exceeds 65535 words. Used by msg_send and by spawn
- * (which moves a closure into the new actor the same way). src is not
- * const: the copy temporarily writes forward markers into src's heap and
- * restores it byte for byte before returning, on success and on failure.
- * Safe because the VM has a single scheduler thread. */
-Msg *msg_build(Actor *src, term t);
+/* Copies t out of src's heap into a new, unqueued message for an actor of
+ * module slot dst_mod; NULL if out of memory, the copy exceeds 65535
+ * words, or the cross-module rules refuse it (design §5.3; the same rules
+ * for every module, the main program included): a value naming a module
+ * (const ref, closure, struct of a module's own type) enters only that
+ * module's actors as it is; into another module a const string, int or
+ * int64 goes as a heap copy (so the receiver never pins or reads that
+ * module's code), anything else of a module is refused with R_BAD_MSG,
+ * and a value of a module that is gone with R_BAD_CODE (also within one
+ * module). *why (if why is not NULL) is the sender's exit reason on NULL:
+ * R_BAD_MSG, R_BAD_CODE or R_OUT_OF_MEMORY. Reserved structs, Bytes,
+ * PIDs, Refs and immediates always pass. Used by msg_send, SendAfter and
+ * spawn (which moves a closure or code.Spawn's arg into the new actor the
+ * same way). src is not const: the copy temporarily writes forward markers
+ * into src's heap and restores it byte for byte before returning, on
+ * success and on failure. Safe because the VM has a single scheduler
+ * thread. */
+Msg *msg_build(const Vm *vm, Actor *src, term t, uint32_t dst_mod, uint32_t *why);
 
 /* Moves m's words into a's heap (relocating refs) and stores the message
  * term in *out; a then holds the off-heap Bytes it carries (bytes_adopt).
@@ -61,7 +72,10 @@ bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out);
 void msg_free(Msg *m);
 
 /* 0 delivered, or dropped by the receiver's quota; 1 dropped (dead or
- * stale pid, or receiver marked for exit); -1 out of memory (sender).
+ * stale pid, or receiver marked for exit); or the sender's exit reason,
+ * negated: -R_OUT_OF_MEMORY, -R_BAD_MSG, -R_BAD_CODE (msg_build). A
+ * dropped message is still checked, against from's own module (as
+ * SendAfter to a dead target): a stale value is -R_BAD_CODE either way.
  * Quota (spec M2 §5.1.1): if queuing the message would take the receiver's
  * block + charged words (mailbox, pending timers) past its limit (counting
  * the holder list a first off-heap Bytes handle would make, bytes.h), or its mailbox counter past 65535 words,
@@ -94,7 +108,8 @@ bool msg_receive(Vm *vm, Actor *a, term *out);
 /* Sends a reply to the Call that created `ref` (a K_REF term on from's
  * heap) with a copy of body. Like msg_send: 0 delivered or quota-dropped, 1
  * dropped (dead or stale pid, receiver marked for exit, or ref not a Ref),
- * -1 out of memory. A reply that overflows the caller's quota marks the
+ * or a negated exit reason as msg_send (a dropped body is checked the same
+ * way). A reply that overflows the caller's quota marks the
  * caller MailboxOverflow, as any message does. */
 int msg_send_reply(Vm *vm, Actor *from, term to_pid, term ref, term body);
 
@@ -104,10 +119,5 @@ int msg_send_reply(Vm *vm, Actor *from, term to_pid, term ref, term body);
  * outstanding) and is freed. 0 if no such reply is queued; -1 if it is but
  * the heap cannot hold it (it stays queued). May GC. */
 int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out);
-
-/* Heap words a copy of t needs, or UINT32_MAX if it cannot be copied
- * (out of memory or more than 65535 words). Mutates and restores src's
- * heap like msg_build. */
-uint32_t msg_copy_words(Actor *src, term t);
 
 #endif

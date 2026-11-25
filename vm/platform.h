@@ -58,4 +58,49 @@ extern uint32_t (*vm_fs_builtin)(struct Vm *vm, struct Actor *a, uint32_t ra, ui
 struct PortDriver;
 const struct PortDriver *const *platform_port_drivers(void);
 
+/* Special memory for hot-loaded module code (gogo/code, module.h), such
+ * as PSRAM. platform_code_alloc returns n bytes, 4-byte aligned, that the
+ * VM may read as words, or NULL for "no special memory": the module then
+ * runs from its Bytes in place (off-heap and aligned) or from a copy in
+ * the VM's own memory. Code is only read (never executed as machine code)
+ * and stays put until the module unloads, when platform_code_free gets the
+ * pointer and the same n back. A NULL return is never an error. Called
+ * only from the scheduler, never from an ISR. vm/module.c has weak
+ * defaults (NULL / nothing), so a platform without such memory defines
+ * neither. */
+void *platform_code_alloc(size_t n);
+void platform_code_free(void *p, size_t n);
+
+/* Firmware capabilities: the optional features this build can really serve,
+ * checked against an image's `requires` word (image.h v9, compiler Cap*) at
+ * load. Basic I/O (print, actors, gpio, timers) needs none.
+ *   CAP_NET    the net stack and a link (gogo/net, dhcp, dns, http, udp ports)
+ *   CAP_KBD    the "kbd" port driver
+ *   CAP_POWER  the "power" port driver
+ *   CAP_SD     a mounted-on-demand /sd file system
+ *   CAP_ANYPORT is only a build-time warning marker (the image opens a port
+ *   driver whose name is not known at build time); it never counts as missing.
+ * A platform returns exactly the bits its build provides, never more. */
+#define CAP_NET     1u
+#define CAP_KBD     2u
+#define CAP_POWER   4u
+#define CAP_SD      8u
+#define CAP_ANYPORT (1u << 31)
+
+/* The CAP_* bits this firmware provides. vm/caps.c has a weak default that
+ * returns 0 (basic I/O only), so a new platform links without defining it. */
+uint32_t platform_caps(void);
+
+/* 1 if every bit of requires (CAP_ANYPORT aside) is in caps; else 0.
+ * *missing (may be NULL) gets the bits that are not. Pure. */
+int vm_caps_ok(uint32_t requires, uint32_t caps, uint32_t *missing);
+
+/* Writes the refusal line "gogo: image needs <names>; firmware lacks
+ * <names>\n" (names: net kbd power sd) into buf, which must hold
+ * VM_CAPS_MSG_MAX bytes, and returns its length. No NUL, no I/O: the
+ * caller sends it (one platform_write_err call) and decides whether to exit
+ * (boot) or only refuse the module (hot load). */
+#define VM_CAPS_MSG_MAX 80
+size_t vm_caps_explain(char *buf, uint32_t requires, uint32_t missing);
+
 #endif

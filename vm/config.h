@@ -53,4 +53,18 @@
 #define GOGO_BYTES_INLINE 64u
 #endif
 
+/* Module table (module.h): loaded modules at once, the boot image (module
+ * 0) included. At most 8: the slot is 3 bits of a module tag (term.h). */
+#ifndef GOGO_MAX_MODULES
+#define GOGO_MAX_MODULES 8u
+#endif
+/* Code memory limit in bytes for all loaded modules together (the boot
+ * image aside) when the config key code.mem is not set (module.h). */
+#ifndef GOGO_CODE_MEM_DEFAULT
+#define GOGO_CODE_MEM_DEFAULT 65536u
+#endif
+#if GOGO_MAX_MODULES < 1 || GOGO_MAX_MODULES > 8
+#error "GOGO_MAX_MODULES must be 1..8"
+#endif
+
 #endif

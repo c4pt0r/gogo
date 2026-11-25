@@ -1,0 +1,77 @@
+// hotload: run a worker from a module under a supervisor, then upgrade it
+// without stopping the program.
+//
+// The host reads /flash/worker_v1.gmod, loads it and starts "Work" under
+// supervisor.SuperviseModule. v1 crashes on its third message; the supervisor
+// restarts it from the module. The host then loads /flash/worker_v2.gmod and
+// sends supervisor.Upgrade: the child is restarted from v2 and v1 unloads.
+//
+//	gogo build examples/hotload/mods/worker_v1 -o worker_v1.gmod
+//	gogo build examples/hotload/mods/worker_v2 -o worker_v2.gmod
+//
+// (copy both into /flash, then build and run this program)
+package main
+
+import (
+	"gogo/actor"
+	"gogo/code"
+	"gogo/fs"
+	"gogo/supervisor"
+)
+
+func load(path string) code.Module {
+	b, e := fs.ReadFile(path, 100000)
+	if e != fs.OK {
+		println("read", path, int(e))
+	}
+	m, le := code.Load(b)
+	if le != code.OK {
+		println("load", path, int(le))
+	}
+	return m
+}
+
+// announced returns the PID the (re)started worker sends us.
+func announced() actor.PID {
+	var p actor.PID
+	switch x := actor.Receive().(type) {
+	case actor.PID:
+		p = x
+	}
+	return p
+}
+
+// feed sends the worker n messages and lets it print.
+func feed(w actor.PID, n int) {
+	for i := 0; i < n; i++ {
+		actor.Send(w, i)
+	}
+	actor.Sleep(50)
+}
+
+func main() {
+	v1 := load("/flash/worker_v1.gmod")
+	size1 := code.MemUsed()
+	println("loaded v1:", size1 > 0)
+	// The supervisor holds v1 once this returns; we could Release it now.
+	sup := supervisor.SuperviseModule(v1, "Work", actor.Self(),
+		supervisor.Spec{Restart: supervisor.Permanent, MaxRestarts: 3})
+	w := announced()
+	println("worker started")
+	feed(w, 3) // the third message crashes v1
+	w = announced()
+	println("worker restarted from the module")
+	feed(w, 1)
+
+	v2 := load("/flash/worker_v2.gmod")
+	size2 := code.MemUsed() - size1
+	println("loaded v2, both resident:", size2 > 0)
+	code.Release(v1) // the supervisor's hold keeps v1 until the upgrade
+	r, _ := actor.Call(sup, supervisor.Upgrade{Module: v2}, 2000)
+	println("upgrade result (0 is ok):", r)
+	w = announced()
+	println("upgraded to v2")
+	code.Release(v2)
+	println("v1 unloaded, only v2 resident:", code.MemUsed() == size2)
+	feed(w, 2)
+}

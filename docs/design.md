@@ -98,7 +98,7 @@ func Kill(p PID, code int)                      // 向别的 actor 发 exit 信�
 func MakeRef() Ref
 func Register(name string, p PID) bool          // 名字被占用或 p 已退出时 false
 func Whereis(name string) (PID, bool)
-func Unregister(name string)
+func Unregister(name string)                    // 只有注册者本人能注销
 func SendAfter(ms int, to PID, msg any) Ref; func CancelTimer(r Ref) bool
 func Sleep(ms int); func Now() int64            // VM 启动以来的毫秒数
 func Info(p PID) ProcInfo
@@ -109,7 +109,7 @@ type DownMsg struct{ Ref Ref; From PID; Reason Reason }
 type Request struct{ From PID; Ref Ref; Body any }
 ```
 
-原因码常量：`Normal`、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`、`BadShift`，用户码从 100 起。`error` 类型的退出原因留到语言里程碑（见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7）。
+原因码常量：`Normal`、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`、`BadShift`、`BadMsg`（发送了不能跨模块的值，见[热加载设计](superpowers/specs/2026-11-24-gogo-hotload-design.md) §5.3），用户码从 100 起。`error` 类型的退出原因留到语言里程碑（见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7）。
 
 接收侧用类型 switch 代替 Erlang 的模式匹配：
 
@@ -196,6 +196,37 @@ btn, ok := port.Open("gpio", port.GPIO{Pin: 15, Mode: port.InputPullUp, Edge: po
 - Cardputer ADV：TCA8418（共享 I2C 总线 G8/G9，0x34，400 kHz，INT 在 G11）；电池为 G10 上的 ADC1（12 dB，曲线拟合校准，×2），充电与外部供电读不到（驱动报 -1）。G8–G11 不再开放给 `gpio` 端口。
 - StickS3：无键盘，`kbd` 打开失败；电池取自 M5PM1（VBAT 0x22/0x23，外部供电 0x04 位 0，充电 = PM1 GPIO0 低电平）。共享 I2C 总线 G47/G48 与 LCD 供电共用。详见 `platform/esp32s3/README.md`。
 
+### 5.4.4 热加载（`gogo/code`）
+
+设计见 [热加载设计](superpowers/specs/2026-11-24-gogo-hotload-design.md)，遗留事项见 [hotload-followups.md](hotload-followups.md)，书里的讲解见 `docs/book/14-hot-loading.md`。运行中的程序可以把另一个镜像（经网络、文件或消息拿到的 `bytes.Bytes`）加载成**模块**，按名字在新 actor 里启动它的入口函数。代码从不原地替换：升级就是监督者用新模块重启子 actor。
+
+**API**（存根包 `gogo/code`，编译成 builtin 50 `B_CODE`，C 侧在 `vm/module.c`）：
+
+```go
+type Module struct{ H, Missing int }   // 保留类型 34；普通值，可以发给别的 actor
+type Err int  // OK BadImage Unsupported NoMemory NotFound BadArg TooMany
+func Load(b bytes.Bytes) (Module, Err)
+func Spawn(m Module, entry string, arg any) (actor.PID, Err)       // 另有 SpawnLink、SpawnOpt
+func Hold(m Module) Err
+func Release(m Module)
+func Missing(m Module) int       // Load 返回 Unsupported 之后：固件缺少的 Cap* 位
+func MemUsed() int               // 已加载模块的代码字节数（计入 code.mem）
+```
+
+入口是模块 `package main` 里签名为 `func()` 或 `func(arg any)` 的导出函数，另有 `func main()`（导出名 `main`）；按名字查找，区分大小写。`arg` 按消息规则拷贝进新 actor。
+
+**生命周期**：所有镜像格式相同，开机镜像是 0 号模块（走同一条加载、启动路径，VM 持有、永不卸载、不计入 `code.mem`）。模块在"还有属于它且活着的 actor"或"还有 actor 持有它"时保持加载：`Load` 让调用者持有，其他 actor 用 `Hold`，`Release` 或持有者退出时结束（每个模块最多 4 个持有者）。两者都没有时卸载：释放代码内存，槽的代号加 1，旧句柄 `Spawn` 返回 `NotFound`，值里还指着它的常量、闭包、结构体在使用时让 actor 以 `badcode` 结束。模块表最多 `GOGO_MAX_MODULES`（8）项，满了 `Load` 返回 `TooMany`。`supervisor.SuperviseModule(m, entry, arg, spec)` 持有模块并在崩溃后用 `SpawnLink` 重启；向它发 `supervisor.Upgrade{Module: m2}`（用 `actor.Call`，回复 `int(code.Err)`）会持有新模块、停旧子 actor、用新模块重启、释放旧模块。
+
+**编码**：模块号写进项本身（常量引用、闭包、模块自己的结构体类型号带 3 位槽号加 8 位代号），镜像里不带标记，运行时在 `LOADK` 等处加上，每次访问先查模块表，陈旧即 `badcode`。位分配、混淆上限（同一槽装入 256 次后陈旧项才可能重新解析）与代价见 §5.5.3。镜像版本 v9：`requires` 位图与导出表在常量区位图之后。
+
+**跨模块规则**（对称，主程序没有特例）：发送者与接收者属于不同模块时，消息里的常量字符串、字节、`int64` 装箱值拷贝成堆上副本；只允许基础值、`Bytes`、PID、Ref、`Module`、保留类型（`gogo` 各包的结构体）。含某个模块自己的结构体或闭包时，**发送者**以 `BadMsg` 退出，由它的监督者处理；`code.Spawn` 的 `arg` 同理但返回 `BadArg`。检查发生在构造消息时（`Send`、`Call`、`Reply`、`SendAfter` 调用时、`Spawn` 的捕获变量）；同一模块内部不受影响。向已卸载模块的目标或带陈旧值的消息一律 `badcode`（`term_live`）。退出通知里跨模块时 `Reason.Func` 为空；`names_unregister` 只许注册者本人注销。
+
+**能力（caps）**：编译器按导入的包和字面量端口驱动名/`/sd` 路径算出镜像的 `requires` 位图（`Cap*`：net、kbd、power、sd；驱动名运行时才知道时带 `CapAnyPort` 标记并给编译警告）。固件的 `platform_caps()`（`vm/platform.h`，`vm/caps.c` 有返回 0 的弱默认）返回它真正提供的位，`vm_caps_ok` 对照；缺少时 `Load` 返回 `Unsupported`，`Missing` 给出缺的位。开机镜像检查同一条规则（`gogo: image needs ...; firmware lacks ...`）。
+
+**代码内存与 `code.mem`**：所有已加载（非开机）模块的代码字节合计不超过配置键 `code.mem`（`K`/`M` 后缀，默认 64 KB），超过为 `NoMemory`；不计入任何 actor 的内存上限。代码放哪里：`module_load` 对每次加载**先**问 `platform_code_alloc`（`vm/platform.h`，弱默认返回 `NULL`），成功就把镜像拷贝到那块内存（StickS3 上总是 PSRAM）；返回 `NULL` 时，整块的、堆外的、4 字节对齐的 `Bytes` 就地运行（模块持有它），其他 `Bytes`（堆内、任何切片、未对齐）拷贝进 VM 自己的内存；计数总是镜像大小。ESP32-S3：StickS3 有 8 MB 八线 PSRAM，`platform_esp.c` 用 `heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT)` 提供代码内存，PSRAM 只经 caps 分配（`CONFIG_SPIRAM_USE_CAPS_ALLOC`，不是全局 malloc），VM arena、Wi-Fi、LCD 缓冲都留在内部 RAM；Cardputer ADV 没有 PSRAM，返回 `NULL`。详见 `platform/esp32s3/README.md`。
+
+**这一版没有**：权限（模块与主程序权利相同）、签名、写 flash 的模块、`sys.Has`、原地换代码、跨模块函数调用或共享类型，见 [hotload-followups.md](hotload-followups.md)。`examples/hotload` 是主机上的黄金示例，`examples/hotload_net` 是板子上经 HTTP 取模块并升级的演示。
+
 ### 5.5 值表示与内存
 
 - **统一的 32 位标记字**（宿主和 MCU 相同）。小整数直接放在字里（约 30 位，`int` 和 `int64` 都是），超出范围的值自动装箱；`int64` 放进 `any` 时总是装箱（编译器按静态类型选 `*64` 操作码，并在转换处插入 `BOX64`），这样类型 switch 仍能区分 `int` 与 `int64`；其余复合值是指向 actor 堆的引用。
@@ -223,9 +254,9 @@ btn, ok := port.Open("gpio", port.GPIO{Pin: 15, Mode: port.InputPullUp, Edge: po
 | `[]T`（切片） | `T_NILSLICE` = `0x52`（`s == nil` 为真） | `K_SLICE` 堆对象 `[hdr][off][len][cap][array]`，off/len/cap 为原始字；`array` 是 `K_ARRAY` `[hdr][n][elems]`（元素按 term 扫描）或 `K_BYTEARR` `[hdr][nbytes][bytes]`（`[]byte`，字节不扫描）的引用，容量为 0 时是 `T_NIL`；空而非 nil 的切片是 cap=0 的 `K_SLICE` | 原样 | 切片头与底层数组一起复制；`K_BYTEARR` 的字节不扫描 | 深拷贝，保留共享与环（所以别名在消息里仍然成立，但不跨 actor） |
 | `bytes.Bytes` | `T_EMPTYBYTES` = `0x62` | 堆内 `K_BYTES` `[hdr][nbytes][bytes]`（不可变，字节不扫描，≤ 64 字节的 `Freeze` 结果与 `FromString`/`FromSlice` 的结果）；更大的 `Freeze` 结果是堆外句柄，标签 `1110`：`(index << 4) \| 0xE`，指向 VM 全局的引用计数表 | 原样（类型 switch 的 `case bytes.Bytes` 匹配 `TY_BYTES`） | 堆内字节不扫描；句柄在 GC 时重算持有关系，不可达则释放 | 堆内深拷贝；句柄只传引用，计数 +1，接收方按全部大小计费（排队消息计入邮箱） |
 | `bytes.Buffer` | 不可用（零值调用方法会 `badcode`，必须 `NewBuffer`） | 引用类型 `K_BUF` `[hdr][len][array]`，`len` 为原始字，`array` 是 `K_BYTEARR`（即容量），容量为 0 时是 `T_NIL`；`Freeze` 复制一次并清空 | 原样 | 数组字节不扫描 | 深拷贝 |
-| 结构体（含 `actor.*`、`port.*` 保留类型） | 各字段为其零值的 `K_STRUCT` | `K_STRUCT` 堆对象 `[hdr][type id][字段...]` | 原样（`TYPEIS` 比较 type id） | 字段逐个扫描 | 深拷贝，保留共享与环 |
+| 结构体（含 `actor.*`、`port.*` 保留类型） | 各字段为其零值的 `K_STRUCT` | `K_STRUCT` 堆对象 `[hdr][type id][字段...]`；模块自己的类型 id 带模块标记，保留类型不带（5.5.3） | 原样（`TYPEIS` 比较 type id） | 字段逐个扫描 | 深拷贝，保留共享与环 |
 | `any` | `T_NIL` | 所装动态值本身的 term | — | 按动态值 | 按动态值 |
-| 函数值（任意签名） | `T_NIL`（`Spawn` 与调用都 `badcode`） | `K_CLOSURE` 堆对象 `[hdr][函数号][捕获...]`；`CALLV` 把捕获作为前导参数、实参随后 | 原样 | 捕获逐个扫描 | 深拷贝 |
+| 函数值（任意签名） | `T_NIL`（`Spawn` 与调用都 `badcode`） | `K_CLOSURE` 堆对象 `[hdr][模块标记 \| 函数号][捕获...]`；`CALLV` 把捕获作为前导参数、实参随后 | 原样 | 捕获逐个扫描 | 深拷贝 |
 | `actor.PID` | `T_ZEROPID` = `0x6`（槽 0、代 0：槽 0 从不使用代 0，端口槽 ≥ `0xFFF0`，所以不等于任何活着的 actor 或端口） | PID 立即数 `(代 << 20) \| (槽 << 4) \| 0x6` | 原样（`TYPEIS` → `PID`） | 不扫描 | 原样 |
 | `actor.Ref` | `T_ZEROREF` = `0x42` 特殊常量，序号视为 0 | `K_REF` 堆对象 `[hdr][serial 低][高]`，序号从 1 开始 | 原样（`TYPEIS` → `Ref`，零值也是） | `K_REF` 被复制，内部不扫描；`T_ZEROREF` 不扫描 | `K_REF` 深拷贝（序号不变）；`T_ZEROREF` 原样 |
 
@@ -256,11 +287,32 @@ xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxx1   小整数，31 位有符号（超出范围
 oooooooo oooooooo oooooooo oooooo00   堆引用：本 actor 内存块内的字偏移（不是指针）
 iiiiiiii iiiiiiii iiiiiiii iiii0010   特殊常量：nil / false / true / 空串 / 零 Ref（/ 空切片）
 iiiiiiii iiiiiiii iiiiiiii iiii0110   PID：16 位槽号 + 12 位代数（槽 0 代 0 = 零 PID）
-oooooooo oooooooo oooooooo oooo1010   flash 常量引用：镜像内偏移（字符串常量、只读包级变量）
+gggggggg sss ooooo oooooooo oooo1010   常量引用：模块标记（代 8 位 + 槽 3 位）+ 17 位常量区字偏移（见 5.5.3）
 iiiiiiii iiiiiiii iiiiiiii iiii1110   堆外大数据句柄：全局引用计数表的下标（冻结的 Bytes）
 ```
 
 堆引用是相对内存块起点的偏移，所以内存块可以整体搬家（GC、扩容、收缩），消息块并入堆时只需给块内所有引用加同一个常数。
+
+### 5.5.3 多模块的项编码（v9，热加载）
+
+VM 里最多 `GOGO_MAX_MODULES`（默认 8，最多 8）个模块，放在模块表 `Vm.mods` 里（`vm/module.h`）。开机镜像是 0 号模块，和热加载的模块走同一条加载、启动路径：`vm_boot` 把镜像装进 0 号槽（含能力检查），`vm_run` 用 `module_spawn` 按导出名 `main` 启动它，没有 `main` 导出就报 `gogo: image has no main` 并以非零退出。0 号模块只是代码在 flash 里、不计入代码内存上限、由 VM 持有永不卸载。每个 actor 记住自己的模块槽号（控制块的 `mod` 字节），`actor.Spawn` 派生的 actor 继承它。
+
+凡是指向某个模块镜像内容的项或原始字，最高 11 位都是**模块标记**：第 31–24 位是该槽代号的低 8 位，第 23–21 位是槽号。
+
+```
+常量引用        gggggggg sss  17 位常量区字偏移        1010
+闭包第 1 字     gggggggg sss  21 位函数号
+结构体第 1 字   gggggggg sss  00000  16 位类型号        （模块自己的类型，类型号 >= TYPE_RESERVED_COUNT）
+                00000000 000  00000  16 位类型号        （保留类型 0..TYPE_RESERVED_COUNT-1：全局，不带标记）
+```
+
+- **镜像里不带标记**：编译器照旧输出 `偏移 << 4 | 0xA`，所以镜像格式不变，只是偏移上限从 28 位缩到 17 位（每个镜像的常量区最多 2^17 字 = 512 KB；ESP 的镜像分区只有 1 MB），函数号上限 2^21，类型号上限 2^16（`TYPEIS` 的基本类型从 `0x10000` 起）。加载器和编译器都检查（`IMG_ERR_BOUNDS` / 编译错误），常量对象里的常量引用和常量结构体的类型字必须不带标记。
+- **VM 在镜像字变成运行时项的地方加上本模块的标记**：`LOADK`（常量引用）、`MKCLOSURE`（函数号）、`NEWSTRUCT`（模块自己的类型号）、崩溃时的函数名、从常量对象里读出的字段（加容器的标记）。`TYPEIS` 比较时也给自己镜像里的类型号加上标记，所以两个模块的同号类型互不相等，保留类型在所有模块里相同。
+- **0 号模块的标记恰好是 0**：0 号槽永不卸载，代号一直是 0，所以主程序的项和镜像里的项逐位相同。这不是特例，是统一规则（每个槽从代 0 开始，卸载时加 1）的结果。
+- **每次经过标记的访问都查模块表**：常量引用经 `const_obj_of` 解析（槽空了或代号不符就是 NULL，调用方以 `badcode` 结束当前 actor），并且只接受该模块常量位图里的对象起点（见下面的混淆上限：撞上新模块时也只能读到新模块里校验过的对象，伪造不了对象）。闭包只能在自己模块的 actor 里调用或 `Spawn`（`CALLV` 与 `Spawn` 要求标记等于当前 actor 的模块；代码不能跨模块执行）。结构体的 `GETFIELD` 和 `TYPEIS` 要求类型是保留类型、本模块的，或另一个仍在的模块的；否则 `badcode`。比较（`EQ`/`NE`）、`TYPEIS` 和 `println`（含结构体字段、切片元素）遇到指向已卸载模块的值（常量引用、闭包、结构体）同样是 `badcode`，不会给出"不相等""不是这个类型"或 `?`：它们共用一个检查 `term_live`。
+- **混淆上限**：标记里的代号只有 8 位，一个陈旧的项要在**同一个槽**又装入 256 次之后才会重新解析成功（指向那时槽里的模块）。`module_load` 按轮转选空槽（从上次用过的槽的下一个开始），重载分散到 7 个非开机槽上，7 个槽都空闲时大约要 7 × 256 ≈ 1800 次加载。即使撞上，结果仍然内存安全（常量引用必须落在新模块的对象起点；闭包只能经新模块校验过的函数表执行），只是拿到了别的模块的数据或代码，而不是 `badcode`。要做到完全精确，需要在代号回绕前扫描所有 actor 把匹配的标记作废，留给用户决定。
+- **为什么在执行时加标记，而不是加载时重定位**：镜像在 flash 里或者在别人的 `Bytes` 里，都不能改写；按 actor 的模块在 `LOADK` 处加一次标记，主程序（标记 0）和热加载模块走同一段代码。代价：每次 `LOADK` 常量多一次判断，常量访问多一次查表（`const_obj_of` 不再内联），`GETFIELD` / `TYPEIS` 多一次比较。实测（unix，Apple M 系列）`fib(30)` 多约 3.5% 指令、约 4% 时间；常量字符串和结构体密集的循环多约 6% 指令，时间基本不变。任务 3（标记与模块表）当时的 VM 核心代价约 +1.9 KB（ESP32-S3 `-Os`，其中 `module.c` 约 1 KB）；整个热加载里程碑合计 VM 核心 30784 -> 36095 B，+5311 B（在 R4 预算约 5.5 KB 之内）。
+- **模块表项**（`ModEntry`，32 位上 64 字节，加载时 `va_alloc`，卸载时释放；`Vm` 里只有 8 个指针、8 个代号、已用代码字节数和轮转起点）：校验过的 `Image`（48 字节，解释器原地读它，所以整块保留；代码内存就是镜像本身，大小从表头推出）、所在的 `Bytes`（持有一次引用）、最多 4 个持有者的 actor 槽号（各 2 字节：actor 退出时就清掉，槽号不会被重用前失效）、活着的 actor 数、标志（VM 持有 / 计入上限）。代号只存在 `Vm.mod_gen` 里。actor 释放时（`actor_free` → `module_actor_exit`）减少它所属模块的 live 计数，清掉它的持有；两者都没有了就卸载：代号加 1，释放 `Bytes` 引用和表项。句柄 `code.Module` 是 `槽 << 16 | 代号`（16 位代号，比项里的 8 位更不容易撞）。
 
 **actor 控制块（32 位目标上 48 字节，字段顺序以 `vm/actor.h` 为准）**
 
@@ -282,7 +334,8 @@ iiiiiiii iiiiiiii iiiiiiii iiii1110   堆外大数据句柄：全局引用计数
 38    2    reductions   本时间片剩余配额
 40    2    mbox_words   排队消息总大小（计入配额）
 42    2    max_words    内存配额（0 = 默认）
-44    4    reserved     未用（定时器在 Vm.timers 里）；保持 32 位上 48 字节
+44    1    mod          所属模块的槽号（执行哪个模块的代码，计入该模块的 live）
+45    3    pad          未用；保持 32 位上 48 字节
 ```
 
 另有全局 actor 表：每个槽 4 字节（指向控制块），PID 的槽号索引它，代数防止旧 PID 误投。
@@ -360,9 +413,9 @@ FORWARD  （GC 时临时写入）                            转发标记
 
 - 寄存器式字节码，定长 32 位指令字（8 位操作码 + 3 个 8 位操作数），需要时跟扩展字。每个函数有固定数量的寄存器（栈帧大小由编译器算出）。
 - 解释器是一个普通的 `switch` 循环，每个操作码一个 case，不用宏生成代码。
-- 镜像格式：头部（魔数、版本）、常量池、类型描述表（结构体布局、类型名）、函数表、代码段、可选的行号表。镜像与位置无关，可原地执行。实际布局见 `vm/image.h`：头部 8 字、函数表、类型表、常量区、代码段，最后是常量区的对象起点位图（v7 起，每个常量字 1 位，对象起点置 1，共 ceil(常量字数/32) 字，原地从 flash 读，不占 RAM）。
+- 镜像格式：头部（魔数、版本）、常量池、类型描述表（结构体布局、类型名）、函数表、代码段、可选的行号表。镜像与位置无关，可原地执行。实际布局见 `vm/image.h`：头部 8 字、函数表、类型表、常量区、代码段，最后是常量区的对象起点位图（v7 起，每个常量字 1 位，对象起点置 1，共 ceil(常量字数/32) 字，原地从 flash 读，不占 RAM）。v9 起位图之后还有 `requires`（1 字，能力位：Net=1、Kbd=2、Power=4、SD=8、任意端口=1<<31，由编译器按导入、常量 `port.Open` 驱动名与 `/sd` 路径推断）和导出表（`n_exports` 1 字，其后每项 `{名称常量偏移, 函数下标}` 两字）；每个镜像都是一个模块，`main` 以 `"main"` 导出，包 `main` 里导出的 `func()` / `func(arg any)` 也导出，加载器校验名称落在常量对象起点、函数下标越界即拒绝；头部第 7 字仍保留为 0。
 - 镜像校验：加载器检查各表与常量区的结构，位图必须恰好标出常量头给出的对象起点；常量对象里的常量引用、函数名与类型名都必须指向已标记的起点，否则拒绝加载（`IMG_ERR_BOUNDS`）。LOADK 的常量操作数在执行时查位图（不合格则 badcode），不在加载时查：跳转可能落在扩展字上，加载期的线性解码查不全。指向对象中间的引用能伪造对象（例如字符串内容里的假结构体头），这是内存安全问题，不只是 badcode。
-- 镜像版本（`IMAGE_VERSION`，当前为 8）：操作码编号或语义、builtin 编号、保留类型、term 编码、镜像布局任何一项变化都要升版本；编译器与 VM 同步升级，加载器拒绝其他版本（`unsupported version`）。v1 为 M1/M2；v2 为 M3（通用算术只收 `int`、`*64` 操作码与 `BOX64`、`CLEAR`、有类型的零 PID/Ref）；v3 为 M4（多返回值 `RETN`、`CONV c=2` 转 byte）；v4 为 M5（调用函数值 `CALLV`）；v5 为位运算（`&` `|` `^` `<<` `>>`）；v6 为存储（builtin 49 `B_FS`、保留类型 27 / 28 `fs.Info` / `fs.Space`）；v7 为常量区对象起点位图；v8 为输入（保留类型 29–33：`kbd.Config` / `kbd.Key` / `power.Config` / `power.Battery` / `power.Read`）。
+- 镜像版本（`IMAGE_VERSION`，当前为 9）：操作码编号或语义、builtin 编号、保留类型、term 编码、镜像布局任何一项变化都要升版本；编译器与 VM 同步升级，加载器拒绝其他版本（`unsupported version`）。v1 为 M1/M2；v2 为 M3（通用算术只收 `int`、`*64` 操作码与 `BOX64`、`CLEAR`、有类型的零 PID/Ref）；v3 为 M4（多返回值 `RETN`、`CONV c=2` 转 byte）；v4 为 M5（调用函数值 `CALLV`）；v5 为位运算（`&` `|` `^` `<<` `>>`）；v6 为存储（builtin 49 `B_FS`、保留类型 27 / 28 `fs.Info` / `fs.Space`）；v7 为常量区对象起点位图；v8 为输入（保留类型 29–33：`kbd.Config` / `kbd.Key` / `power.Config` / `power.Battery` / `power.Read`）；v9 为热加载（位图之后加 `requires` 与导出表；builtin 50 `B_CODE`、保留类型 34 `code.Module`；运行时的常量引用、闭包与结构体类型字带模块标记，镜像里不带，所以常量偏移 17 位、函数号 21 位、类型号 16 位，见 5.5.3）。
 
 ### 5.7 调度
 
@@ -373,9 +426,9 @@ FORWARD  （GC 时临时写入）                            转发标记
 ### 5.8 错误与崩溃
 
 - 运行时错误（越界、nil map 写入、除零、类型断言失败、写只读内存、超出内存上限、`panic`）都只让当前 actor 退出。
-- 退出原因（M2 实现）：`actor.Reason{Code int; Func string}`。`Code` 是 `actor.Normal`（从入口函数返回）、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`、`BadShift` 或用户码（≥ 100，`actor.Exit(code)` / `actor.Kill(p, code)`）；`Func` 是运行时错误所在函数名，否则为空串。原设想的 `error` 类型原因（`RuntimeError{Kind, Msg, Func, Line}`、`panic(v)`）留到语言里程碑，见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7。
+- 退出原因（M2 实现）：`actor.Reason{Code int; Func string}`。`Code` 是 `actor.Normal`（从入口函数返回）、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`、`BadShift`、`BadMsg` 或用户码（≥ 100，`actor.Exit(code)` / `actor.Kill(p, code)`）；`Func` 是运行时错误所在函数名，否则为空串。原设想的 `error` 类型原因（`RuntimeError{Kind, Msg, Func, Line}`、`panic(v)`）留到语言里程碑，见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7。
 - 退出时向链接的 actor 发 exit 信号（开启 `TrapExit` 则收到 `ExitMsg`，否则原因不是 `Normal` 时级联退出），向监视者发 `DownMsg`。这两种通知的消息块在建立 link/monitor 时就预留好，退出时不分配内存，送达有保证；预留的内存计入建立者自己的内存上限。`Kill(p, Killed)` 不可捕获。
-- 崩溃报告打印到 stderr：`gogo: actor <pid N> crashed: <kind>[ in <func>]`，`<kind>` 为 `killed`、`oom`、`mailbox_overflow`、`noproc`、`divzero`、`badcode`、`badshift` 或 `exit(<code>)`；`Normal`、`Shutdown` 不报告。行号留到以后。
+- 崩溃报告打印到 stderr：`gogo: actor <pid N> crashed: <kind>[ in <func>]`，`<kind>` 为 `killed`、`oom`、`mailbox_overflow`、`noproc`、`divzero`、`badcode`、`badshift`、`badmsg` 或 `exit(<code>)`；`Normal`、`Shutdown` 不报告。行号留到以后。
 - 监督树由标准库 `gogo/supervisor` 包用 Go 子集实现：M2 是单子进程版（重启策略 Permanent/Transient、最大重启强度），多子进程 one_for_one 留到以后。
 
 ### 5.9 工具链与工作流
@@ -417,9 +470,10 @@ gogo monitor [-port P] [-t 秒] [-until 文本] [-reset]
 4. **M4 字符串 / 字节 / 切片 / 多返回值**（已完成）：多返回值（`RETN`）、`byte`、镜像 v3；运行时字符串；切片与 `[]byte`；`bytes.Bytes` / `bytes.Buffer`（大块堆外、引用计数、按持有者计费）；`gogo/strings`、`gogo/strconv`；`examples/httpparse` 作为"写网络库是否顺手"的检验。详见 [M4 设计](superpowers/specs/2026-11-23-gogo-m4-strings-bytes-design.md)，遗留事项见 [m4-followups.md](m4-followups.md)。
 5. **M5 网络**（已完成）：极小内存的纯 C 协议栈（ARP / IPv4 / ICMP echo / UDP / TCP）、`gogo/dhcp`、`gogo/dns`、`gogo/http`（客户端与服务器，HTTP/1.0）、函数值带参数调用（镜像 v4）、M5StickS3 上的 Wi-Fi 与 `gogo config`、`examples/netdemo`。TLS 推迟。详见 [M5 设计](superpowers/specs/2026-11-23-gogo-m5-network-design.md)，遗留事项与后续候选见 [m5-followups.md](m5-followups.md)。
 6. **存储**（已完成）：`gogo/fs`（`/flash` 上 LittleFS、`/sd` 上 FAT / exFAT）、`gogo/kv`、`gogo/ringlog`、镜像 v6，StickS3 与 Cardputer ADV 两块板子。详见 §5.4.2 与 [存储设计](superpowers/specs/2026-11-24-gogo-storage-design.md)，遗留事项见 [storage-followups.md](storage-followups.md)。
-7. **输入**（已完成，真机验证待做）：`gogo/kbd` 与 `gogo/power` 端口、`input/` 公共代码、镜像 v8、unix 模拟、Cardputer ADV 键盘与电池、StickS3 电池。详见 §5.4.3 与 [input-followups.md](input-followups.md)。
-8. **接下来：热加载，然后 HTTPS**（用户定的顺序）。热加载见 [m4-followups.md](m4-followups.md)；HTTPS 见 [m5-followups.md](m5-followups.md) 的 TLS 一项。
-9. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
+7. **输入**（已完成，2026-11-24 两块板真机验证通过）：`gogo/kbd` 与 `gogo/power` 端口、`input/` 公共代码、镜像 v8、unix 模拟、Cardputer ADV 键盘与电池、StickS3 电池。详见 §5.4.3 与 [input-followups.md](input-followups.md)。
+8. **热加载**（已完成；StickS3 真机验证通过，PSRAM 与无 PSRAM 两种构建都跑过；Cardputer ADV 真机运行推迟）：镜像 v9（`requires` 与导出表）、固件能力位、统一的模块表（开机镜像是 0 号模块）与带模块标记的项、`gogo/code`、对称的跨模块规则（`BadMsg`）、`supervisor.SuperviseModule` / `Upgrade`、StickS3 的 PSRAM 代码内存、`examples/hotload` 与 `examples/hotload_net`。VM 核心 36095 B（基线 30784 B，+5311 B）。详见 §5.4.4 与 [热加载设计](superpowers/specs/2026-11-24-gogo-hotload-design.md)，遗留事项见 [hotload-followups.md](hotload-followups.md)。
+9. **接下来**（用户定的顺序）：可裁剪固件（编译开关、能力位、`gogo firmware`）→ 输入第二期（六轴传感器、红外，统一的 Chunk / Out / Done 数据流）→ 录音（存 SD 卡）→ 蓝牙（手机 App 连接、手机配网，位置待定）→ HTTPS（含大文件流式上传，见 [m5-followups.md](m5-followups.md) 的 TLS 一项）。
+10. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
 
 ## 6. 交给实现者决定的
 

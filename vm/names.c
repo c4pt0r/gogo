@@ -5,6 +5,7 @@
 struct Name {
     struct Name *next;
     term pid;
+    term by;                  /* the registrant: only it may unregister */
     uint32_t len;
     uint8_t bytes[];          /* len bytes, no terminator */
 };
@@ -25,13 +26,14 @@ static void unlink_free(Name **p) {
     va_free(n, name_size(n->len));
 }
 
-int names_register(Vm *vm, const uint8_t *name, uint32_t len, term pid) {
+int names_register(Vm *vm, term by, const uint8_t *name, uint32_t len, term pid) {
     const Actor *a = actor_lookup(vm, pid);
     if (!a || a->state == A_EXITED || (a->flags & AF_EXIT_PENDING)) return 0;
     if (find(vm, name, len)) return 0;
     Name *n = va_alloc(name_size(len));
     if (!n) return -1;
     n->pid = pid;
+    n->by = by;
     n->len = len;
     if (len) memcpy(n->bytes, name, len);
     n->next = vm->names;
@@ -46,9 +48,9 @@ bool names_whereis(Vm *vm, const uint8_t *name, uint32_t len, term *pid) {
     return true;
 }
 
-void names_unregister(Vm *vm, const uint8_t *name, uint32_t len) {
+void names_unregister(Vm *vm, term by, const uint8_t *name, uint32_t len) {
     Name **p = find(vm, name, len);
-    if (p) unlink_free(p);
+    if (p && (*p)->by == by) unlink_free(p);
 }
 
 void names_drop_actor(Vm *vm, term pid) {

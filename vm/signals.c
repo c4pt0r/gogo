@@ -254,6 +254,14 @@ static Msg *note_new(void) {
     return m;
 }
 
+/* Reason.Func as the notice to `to` carries it: a function name of another
+ * module than to's (a const ref with another tag) is blanked (design
+ * §5.3), so a notice never names, or keeps reading, a module its receiver
+ * does not run; the crash report still prints it. */
+static term func_for(const Vm *vm, const Actor *to, term f) {
+    return term_is_const(f) && (f & MOD_TAG_MASK) != module_tag(vm, to->mod) ? T_EMPTYSTR : f;
+}
+
 static void note_fill(Msg *m, term from, uint32_t code, term func_name) {
     m->data[2] = from;
     reason_set(m->data, 4, code, func_name);
@@ -320,6 +328,7 @@ static const char *kind_name(uint32_t code) {
     case R_DIV_ZERO:         return "divzero";
     case R_BAD_CODE:         return "badcode";
     case R_BAD_SHIFT:        return "badshift";
+    case R_BAD_MSG:          return "badmsg";
     default:                 return NULL;
     }
 }
@@ -339,10 +348,13 @@ static void report_crash(const Vm *vm, const Actor *a, uint32_t code, term func_
         out_int(&o, (int32_t)code);
         out_str(&o, ")");
     }
-    if (term_is_const(func_name) && vm->img) {
+    /* The function's module, through the module table like any const ref
+     * (no name if the module is gone). */
+    const ModEntry *e = term_is_const(func_name) ? module_of_tag(vm, func_name) : NULL;
+    if (e) {
         /* A K_STRING wholly inside the const area: [hdr][len][bytes]. */
-        const uint32_t *c = vm->img->consts;
-        uint32_t off = term_const_off(func_name), area = vm->img->consts_words;
+        const uint32_t *c = e->img.consts;
+        uint32_t off = term_const_off(func_name), area = e->img.consts_words;
         uint32_t words = off < area ? hdr_words(c[off]) : 0u;
         if (words >= 2u && words <= area - off && hdr_kind(c[off]) == K_STRING &&
             c[off + 1] <= (words - 2u) * 4u) {
@@ -545,7 +557,7 @@ static void signal_monitors(Vm *vm, Actor *a, uint32_t code, term func_name) {
         watcher_forget(w, m->serial);      /* the charge ends here */
         va_free(m, sizeof *m);
         if (w && !(w->flags & AF_EXIT_PENDING)) {
-            down_set_reason(note, code, func_name);
+            down_set_reason(note, code, func_for(vm, w, func_name));
             msg_enqueue(vm, w, note, false);   /* guaranteed: no quota */
         } else {
             msg_free(note);
@@ -617,10 +629,16 @@ static void signal_links(Vm *vm, Actor *a, uint32_t code, term func_name) {
         actor_uncharge(a, link_words());
         if (p) link_remove(p, a->id);      /* releases p's charge */
         if (p && (p->flags & AF_TRAP_EXIT) && !(p->flags & AF_EXIT_PENDING)) {
-            note_fill(note, a->id, code, func_name);
+            note_fill(note, a->id, code, func_for(vm, p, func_name));
             msg_enqueue(vm, p, note, false);   /* guaranteed: no quota */
         } else {
             msg_free(note);
+            /* The cascade keeps a's func_name, possibly of another module
+             * than p's (M-6, intended): it only travels on as a tagged
+             * const. p's crash report reads it through the module table
+             * (no name once that module is gone), and p's own notices
+             * pass it through func_for per receiver, so it never reaches
+             * an actor of another module. */
             if (p && code != R_NORMAL) actor_mark_exit(vm, p, code, func_name);
         }
         l = next;

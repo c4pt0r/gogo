@@ -556,23 +556,23 @@ func TestCompileReservedTypes(t *testing.T) {
 		"net.SendTo/2", "net.Datagram/2", "net.Dial/3", "net.Listen/1", "net.Write/1", "net.Shutdown/0",
 		"net.Resume/0", "net.Connected/0", "net.Data/1", "net.Written/0", "net.Closed/1", "net.Accepted/1",
 		"fs.Info/2", "fs.Space/2",
-		"kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4", "power.Read/0"}
+		"kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4", "power.Read/0", "code.Module/2"}
 	// Emitted even when the program imports none of gogo/actor, gogo/port, gogo/net and gogo/fs.
 	img := compileImage(t, "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tvar a any = P{1, 2}\n\tswitch a.(type) {\n\tcase P:\n\t\tprintln(1)\n\t}\n}\n")
 	got := imageTypes(t, img)
 	if strings.Join(got, " ") != strings.Join(append(want, "P/2"), " ") {
 		t.Fatalf("types %v, want %v then P/2", got, want)
 	}
-	// TYPEIS P names index 34, the first after the reserved ones.
+	// TYPEIS P names index 35, the first after the reserved ones.
 	code := words(img)
 	found := false
 	for i := 0; i+1 < len(code); i++ {
-		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == 34 {
+		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == TypeReservedCount {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("no TYPEIS with type id 34")
+		t.Error("no TYPEIS with type id 35")
 	}
 	// Using the actor types keeps them at their reserved indices.
 	img = compileImage(t, "package main\nimport \"gogo/actor\"\ntype U struct{ A int }\nfunc main() {\n\tu := U{1}\n\tvar o actor.Options\n\tvar r actor.Reason\n\tprintln(u, o, r, actor.Info(actor.Self()).Memory)\n}\n")
@@ -1241,7 +1241,7 @@ func main() {
 		" net.IfConfig/0 net.SetAddr/4 net.Up/3 net.Down/0 net.Addr/2 net.UDP/1 net.SendTo/2 net.Datagram/2" +
 		" net.Dial/3 net.Listen/1 net.Write/1 net.Shutdown/0 net.Resume/0 net.Connected/0 net.Data/1" +
 		" net.Written/0 net.Closed/1 net.Accepted/1 fs.Info/2 fs.Space/2" +
-		" kbd.Config/2 kbd.Key/4 power.Config/1 power.Battery/4 power.Read/0"
+		" kbd.Config/2 kbd.Key/4 power.Config/1 power.Battery/4 power.Read/0 code.Module/2"
 	if got := strings.Join(imageTypes(t, img), " "); got != want {
 		t.Fatalf("types %s, want %s", got, want)
 	}
@@ -2008,8 +2008,8 @@ func main() {
 	}
 }
 `)
-	if v := binary.LittleEndian.Uint32(img[4:]); v != 8 {
-		t.Errorf("image version %d, want 8", v)
+	if v := binary.LittleEndian.Uint32(img[4:]); v != 9 {
+		t.Errorf("image version %d, want 9", v)
 	}
 	seen := map[uint32]bool{}
 	code := words(img)
@@ -2020,5 +2020,59 @@ func main() {
 	}
 	if !seen[30] || !seen[32] {
 		t.Errorf("TYPEIS operands %v, want 30 and 32", seen)
+	}
+}
+
+func TestCompileCode(t *testing.T) {
+	img := compileImage(t, `package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/code"
+)
+
+func main() {
+	m, e := code.Load(bytes.FromString("x"))
+	p, e2 := code.Spawn(m, "Main", 1)
+	p, e2 = code.SpawnLink(m, "Main", "s")
+	p, e2 = code.SpawnOpt(m, "Main", 0, actor.Options{MaxMemory: 4096})
+	println(p, e, e2, code.Hold(m), code.Missing(m), code.MemUsed(), m.H, code.CapKbd)
+	code.Release(m)
+	var a any = m
+	switch x := a.(type) {
+	case code.Module:
+		println(x.H)
+	}
+}
+`)
+	dis, err := Disassemble(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, re := range []string{
+		`LOADK r\d+, 0\n(?:.*\n){1,2}\s+\d+\s+BUILTIN r\d+, r\d+, 2, CODE\n`, // Load(b)
+		`LOADK r\d+, 3\n(?:.*\n){4,6}\s+\d+\s+BUILTIN r\d+, r\d+, 5, CODE\n`, // SpawnOpt(m, entry, arg, opts)
+		`LOADK r\d+, 7\n\s+\d+\s+BUILTIN r\d+, r\d+, 1, CODE\n`,              // MemUsed()
+	} {
+		if !regexp.MustCompile(re).MatchString(dis) {
+			t.Errorf("no match for %s:\n%s", re, dis)
+		}
+	}
+	if n := strings.Count(dis, ", CODE\n"); n != 8 {
+		t.Errorf("%d CODE builtins, want 8:\n%s", n, dis)
+	}
+	code := words(img)
+	if !strings.Contains(dis, "TYPEIS") {
+		t.Errorf("no TYPEIS:\n%s", dis)
+	}
+	found := false
+	for i := 0; i+1 < len(code); i++ {
+		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == TypeCodeModule {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no TYPEIS code.Module (34)")
 	}
 }

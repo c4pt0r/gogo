@@ -47,6 +47,10 @@ bool bytes_valid(term h) {
 
 static uint32_t root_of(uint32_t i) { return tab[i].parent == NO_PARENT ? i : tab[i].parent; }
 
+uint32_t bytes_pinned_len(term h) {
+    return bytes_valid(h) ? tab[root_of(term_handle_idx(h))].len : 0u;
+}
+
 /* A free slot (allocating the table on first use), or -1. The table is
  * never freed once made (until vm_init resets it): it is a fixed
  * TAB_BYTES, and keeping it avoids free/alloc churn on the arena when a

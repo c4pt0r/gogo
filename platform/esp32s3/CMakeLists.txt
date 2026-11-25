@@ -3,6 +3,15 @@
 #   . ~/esp/esp-idf/export.sh && idf.py -C platform/esp32s3 build
 # The VM sources are compiled in place from <repo>/vm (see main/CMakeLists.txt).
 cmake_minimum_required(VERSION 3.16)
+# The default board (StickS3) has PSRAM: sdkconfig.sticks3 on top of the
+# defaults. The Cardputer build gives its own SDKCONFIG_DEFAULTS (see
+# main/CMakeLists.txt), so this applies only when none is given.
+if(NOT DEFINED SDKCONFIG_DEFAULTS AND NOT DEFINED ENV{SDKCONFIG_DEFAULTS})
+    if(DEFINED GOGO_BOARD AND NOT GOGO_BOARD STREQUAL "sticks3")
+        message(FATAL_ERROR "GOGO_BOARD=${GOGO_BOARD} needs its own -DSDKCONFIG_DEFAULTS (the default would add the StickS3's PSRAM); see README.md")
+    endif()
+    set(SDKCONFIG_DEFAULTS "sdkconfig.defaults;sdkconfig.sticks3")
+endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(gogo)
 

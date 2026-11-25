@@ -49,7 +49,7 @@ static const uint8_t OTHER_MAC[6] = { 0x02, 0, 0, 0, 0, 0x55 };
 
 /* ---- VM fixture ---- */
 
-#define MINI_WORDS 23
+#define MINI_WORDS 25
 static uint32_t img_w[MINI_WORDS];
 static Image img;
 static Vm vm;

@@ -16,7 +16,7 @@
 #include "config.h"
 #include <string.h>
 
-#define IMG_WORDS 18
+#define IMG_WORDS 20
 
 /* An image whose const area holds the string "main" (at const offset 0). */
 static void build_img(uint32_t *w) {

@@ -17,7 +17,7 @@
  *   r0 = Self(); r1 = 7; r2 = 500; r3, r4 = Call(r0, r1, r2);
  *   Sleep(r2) (blocks, so r3/r4 can be inspected; ignores messages); RET
  * Layout: 8 header + 3 func + 3 consts + 11 code = 25 words. */
-#define IMG_WORDS 26
+#define IMG_WORDS 28
 static void build_call(uint32_t *w, int32_t ms) {
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;

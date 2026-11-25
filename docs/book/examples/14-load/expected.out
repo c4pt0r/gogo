@@ -1,0 +1,6 @@
+load: 0 code mem in use: true
+spawn Greet: 0 true
+hello from a module
+spawn greet: 4 NotFound is 4
+code mem in use after release: 0
+spawn after unload: 4

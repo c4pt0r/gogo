@@ -4,6 +4,7 @@
 #include "signals.h"
 #include "opcodes.h"
 #include "bytes.h"
+#include "module.h"
 #include <string.h>
 
 #define MSG_MAX_WORDS 65535u
@@ -26,9 +27,51 @@ typedef struct Buf {
 #define WALK_MARK 0x20u
 #define WALK_TOP  UINT32_MAX
 
+/* The module rules a copy into module tag follows (design §5.3), applied
+ * to every value it reaches. A value naming a module (a const ref, a
+ * closure, a struct of a module's own type: term.h) may enter only that
+ * module's actors as it is. Crossing into another module, a const string,
+ * int or int64 becomes a heap copy (words: the room those copies take);
+ * any other module value fails the copy with `why`: R_BAD_CODE if its
+ * module is gone (stale, whatever the destination), else R_BAD_MSG.
+ * Inside one module every live value passes unchanged. */
+typedef struct Xm {
+    const Vm *vm;
+    uint32_t tag, why, words;
+} Xm;
+
+static void xm_fail(Xm *x, uint32_t why) {
+    if (!x->why) x->why = why;
+}
+
+/* The const object to copy for t, or NULL: t stays as it is (not a const
+ * ref, or one of module tag), or it fails the copy (x->why). */
+static const uint32_t *xm_const(Xm *x, term t) {
+    if (!term_is_const(t) || (t & MOD_TAG_MASK) == x->tag) return NULL;
+    const uint32_t *o = const_obj_of(x->vm, t);
+    uint32_t k = o ? hdr_kind(o[0]) : 0u;
+    if (k == K_STRING || k == K_INT || k == K_INT64) return o;   /* no terms inside */
+    xm_fail(x, o ? R_BAD_MSG : R_BAD_CODE);
+    return NULL;
+}
+
+/* Checks heap object o (closure or struct type word) and counts the const
+ * copies its terms need. */
+static void xm_obj(Xm *x, const uint32_t *o) {
+    uint32_t k = hdr_kind(o[0]), first, end;
+    if ((k == K_CLOSURE || (k == K_STRUCT && o[1] >= TYPE_RESERVED_COUNT)) &&
+        (o[1] & MOD_TAG_MASK) != x->tag)
+        xm_fail(x, module_of_tag(x->vm, o[1]) ? R_BAD_MSG : R_BAD_CODE);
+    heap_obj_terms(o, &first, &end);
+    for (uint32_t i = first; i < end; i++) {
+        const uint32_t *c = xm_const(x, o[i]);
+        if (c) x->words += hdr_words(c[0]);
+    }
+}
+
 /* With set, marks the unmarked objects reachable from root and returns their
  * total words; without, unmarks the marked ones (returns 0). */
-static uint32_t walk(uint32_t *mem, term root, bool set) {
+static uint32_t walk(uint32_t *mem, term root, bool set, Xm *x) {
     uint32_t total = 0;
     if (!term_is_ref(root)) return 0;
     uint32_t cur = term_ref_off(root), up = WALK_TOP, i, end;
@@ -45,6 +88,7 @@ static uint32_t walk(uint32_t *mem, term root, bool set) {
             enter:
                 o = mem + cur;
                 if (set) {
+                    xm_obj(x, o);   /* set: x is never NULL */
                     heap_obj_terms(o, &i, &end);
                     total += hdr_words(o[0]);
                     o[0] |= WALK_MARK;
@@ -68,11 +112,39 @@ static uint32_t walk(uint32_t *mem, term root, bool set) {
     }
 }
 
-/* Words a copy of t takes (UINT32_MAX when more than 65535). */
-static uint32_t msg_size(uint32_t *src_mem, term t) {
-    uint32_t n = walk(src_mem, t, true);
-    walk(src_mem, t, false);
+/* Words a copy of t into module x->tag takes (UINT32_MAX when more than
+ * 65535), the const copies included; x->why set if the rules refuse it. */
+static uint32_t msg_size(uint32_t *src_mem, term t, Xm *x) {
+    uint32_t n = walk(src_mem, t, true, x);
+    walk(src_mem, t, false, NULL);
+    const uint32_t *c = xm_const(x, t);
+    if (c) x->words += hdr_words(c[0]);
+    n += x->words;
     return n > MSG_MAX_WORDS ? UINT32_MAX : n;
+}
+
+/* A heap copy of const t appended to b if t crosses into x->tag (msg_size
+ * counted it): the term to store for t. */
+static term xm_put(Buf *b, Xm *x, term t) {
+    const uint32_t *c = xm_const(x, t);
+    if (!c) return t;
+    uint32_t w = hdr_words(c[0]);
+    memcpy(b->w + b->len, c, (size_t)w * 4u);
+    t = term_from_ref(b->len);
+    b->len += w;
+    return t;
+}
+
+/* After copy_dag: xm_put on every term of the copied objects (from skip)
+ * and on the root, which it returns. The const copies hold no terms. */
+static term xm_copy(Buf *b, Xm *x, uint32_t skip, term root) {
+    uint32_t end = b->len;
+    for (uint32_t scan = skip; scan < end; scan += hdr_words(b->w[scan])) {
+        uint32_t first, last;
+        heap_obj_terms(b->w + scan, &first, &last);
+        for (uint32_t i = scan + first; i < scan + last; i++) b->w[i] = xm_put(b, x, b->w[i]);
+    }
+    return xm_put(b, x, root);
 }
 
 /* Sharing-preserving copy (spec M2 §5.1.7). While copying, each source
@@ -179,19 +251,19 @@ uint32_t msg_charge_words(const Msg *m) {
     return w;
 }
 
-uint32_t msg_copy_words(Actor *src, term t) {
-    return msg_size(src->mem, t);
-}
-
 uint32_t msg_footprint_words(uint16_t words) {
     return (uint32_t)((msg_alloc_bytes(words) + 3u) / 4u);
 }
 
 /* msg_build with `skip` reserved words (zeroed) before the objects: sizes
- * the copy first, allocates the message once, then copies into it. */
-static Msg *build_skip(Actor *src, term t, uint32_t skip) {
-    uint32_t n = msg_size(src->mem, t);
-    if (n == UINT32_MAX || n > MSG_MAX_WORDS - skip) return NULL;
+ * the copy first (checking the module rules), allocates the message once,
+ * then copies into it. */
+static Msg *build_skip(const Vm *vm, Actor *src, term t, uint32_t skip, uint32_t dst_mod,
+                       uint32_t *why) {
+    Xm x = { vm, module_tag(vm, dst_mod), 0, 0 };
+    uint32_t n = msg_size(src->mem, t, &x);
+    if (why) *why = x.why ? x.why : R_OUT_OF_MEMORY;
+    if (x.why || n == UINT32_MAX || n > MSG_MAX_WORDS - skip) return NULL;
     uint32_t words = skip + n;
     Msg *m = va_alloc(msg_alloc_bytes((uint16_t)words));
     if (!m) return NULL;
@@ -205,15 +277,15 @@ static Msg *build_skip(Actor *src, term t, uint32_t skip) {
     m->next = NULL;
     m->words = (uint16_t)words;
     m->flags = 0;
-    m->root = root;
+    m->root = x.words ? xm_copy(&b, &x, skip, root) : root;
     bool any = false;
-    each_handle(m->data, skip, words, root, ref_fn, &any);
+    each_handle(m->data, skip, words, m->root, ref_fn, &any);
     if (any) m->flags |= MSG_HANDLES;
     return m;
 }
 
-Msg *msg_build(Actor *src, term t) {
-    return build_skip(src, t, 0);
+Msg *msg_build(const Vm *vm, Actor *src, term t, uint32_t dst_mod, uint32_t *why) {
+    return build_skip(vm, src, t, 0, dst_mod, why);
 }
 
 void msg_free(Msg *m) {
@@ -304,12 +376,23 @@ bool msg_try_enqueue(Vm *vm, Actor *to, Msg *m) {
     return true;
 }
 
+/* A send that drops (no live target) still checks t, against from's own
+ * module as SendAfter does for a dead target: a stale value is the
+ * sender's badcode whether or not its receiver lives. 1, or the negated
+ * reason. Only the size walk: no allocation. */
+static int dropped(const Vm *vm, Actor *from, term t) {
+    Xm x = { vm, module_tag(vm, from->mod), 0, 0 };
+    msg_size(from->mem, t, &x);
+    return x.why ? -(int)x.why : 1;
+}
+
 int msg_send(Vm *vm, Actor *from, term to_pid, term msg) {
     Actor *to = actor_lookup(vm, to_pid);
-    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) return 1;
+    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) return dropped(vm, from, msg);
 
-    Msg *m = msg_build(from, msg);
-    if (!m) return -1;
+    uint32_t why;
+    Msg *m = msg_build(vm, from, msg, to->mod, &why);
+    if (!m) return -(int)why;
     msg_enqueue(vm, to, m, true);
     return 0;
 }
@@ -355,13 +438,13 @@ bool msg_receive(Vm *vm, Actor *a, term *out) {
 
 int msg_send_reply(Vm *vm, Actor *from, term to_pid, term ref, term body) {
     Actor *to = actor_lookup(vm, to_pid);
-    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) return 1;
-    if (!term_is_ref(ref)) return 1;
-    const uint32_t *r = from->mem + term_ref_off(ref);
-    if (hdr_kind(r[0]) != K_REF) return 1;
+    const uint32_t *r = term_is_ref(ref) ? from->mem + term_ref_off(ref) : NULL;
+    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING) || !r || hdr_kind(r[0]) != K_REF)
+        return dropped(vm, from, body);
 
-    Msg *m = build_skip(from, body, MSG_REPLY_HDR);
-    if (!m) return -1;
+    uint32_t why;
+    Msg *m = build_skip(vm, from, body, MSG_REPLY_HDR, to->mod, &why);
+    if (!m) return -(int)why;
     m->flags |= MSG_REPLY;
     m->data[0] = r[1];
     m->data[1] = r[2];

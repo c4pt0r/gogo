@@ -58,6 +58,7 @@
 #include "port.h"
 #include "strs.h"
 #include "bytes.h"
+#include "module.h"
 #include <string.h>
 
 #define REDUCTIONS     1000u
@@ -81,6 +82,69 @@ static uint32_t func_of_pc(const Image *img, uint32_t pc) {
 }
 
 /* obj_of, name_bytes and int_val are in heap.h (shared with port.c). */
+
+/* ---- module tags (term.h) ---- */
+
+/* A term word read out of the object t names: a const ref inside a const
+ * object is untagged in its image and gets the container's tag. */
+static inline term field_term(term t, term f) {
+    return (term_is_const(t) && term_is_const(f)) ? f | (t & MOD_TAG_MASK) : f;
+}
+
+/* The type word of the struct obj that t names: a const struct's word is
+ * untagged in its image; a module type gets the module's tag. */
+static inline uint32_t struct_type(term t, const uint32_t *obj) {
+    uint32_t ty = obj[1];
+    return (term_is_const(t) && ty >= TYPE_RESERVED_COUNT) ? ty | (t & MOD_TAG_MASK) : ty;
+}
+
+/* A struct of type word ty may be used: a reserved type (global), one of
+ * the running module's own (tag), or of another module still loaded. */
+static inline bool type_live(const Vm *vm, uint32_t tag, uint32_t ty) {
+    return ty < TYPE_RESERVED_COUNT || (ty & MOD_TAG_MASK) == tag || module_of_tag(vm, ty) != NULL;
+}
+
+/* False if t names something of a module that is gone: a const ref that
+ * no longer resolves, or a heap closure or module struct whose tag names a
+ * gone module. The one check every operation that answers about a value
+ * without using it as a specific kind (EQ/NE, TYPEIS, println) applies, so
+ * a stale value is `badcode` there too rather than "not equal" / "not
+ * this type" / "?". Operations that need a kind fail through obj_of (NULL),
+ * type_live or the CALLV/Spawn tag check. */
+static bool term_live(const Vm *vm, const Actor *a, term t) {
+    if (term_is_const(t)) return const_obj_of(vm, t) != NULL;
+    if (!term_is_ref(t)) return true;
+    const uint32_t *o = obj_of(vm, a, t);
+    if (!o) return true;                 /* not an object: the kind checks decide */
+    uint32_t k = hdr_kind(o[0]);
+    if (k == K_CLOSURE) return module_of_tag(vm, o[1]) != NULL;
+    if (k == K_STRUCT) return o[1] < TYPE_RESERVED_COUNT || module_of_tag(vm, o[1]) != NULL;
+    return true;
+}
+
+/* term_live for everything println would print: t and, as out_term walks
+ * them, struct fields and slice elements (to the same depth). Also the
+ * gate for what a port reads in place (port.Open's name and cfg, a port
+ * command): a stale value there is badcode for the actor too, for every
+ * driver, rather than a silently refused open or ignored command. */
+static bool deep_live(const Vm *vm, const Actor *a, term t, int depth) {
+    if (!term_live(vm, a, t)) return false;
+    if (depth >= PRINT_MAX_DEPTH) return true;
+    const uint32_t *obj = obj_of(vm, a, t);
+    uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
+    if (kind == K_STRUCT) {
+        for (uint32_t i = 2; i < hdr_words(obj[0]); i++)
+            if (!deep_live(vm, a, field_term(t, obj[i]), depth + 1)) return false;
+    } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
+        const uint32_t *arr = obj_of(vm, a, obj[4]);
+        uint32_t off = obj[1], len = obj[2];
+        if (arr && hdr_kind(arr[0]) == K_ARRAY && len && off <= arr[1] && len <= arr[1] - off) {
+            for (uint32_t i = 0; i < len; i++)
+                if (!deep_live(vm, a, arr[2 + off + i], depth + 1)) return false;
+        }
+    }
+    return true;
+}
 
 /* ---- ints ---- */
 
@@ -290,7 +354,7 @@ static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
         out_str(o, "{");
         for (uint32_t i = 2; i < hdr_words(obj[0]); i++) {
             if (i > 2) out_str(o, " ");
-            out_term(o, vm, a, obj[i], depth + 1);
+            out_term(o, vm, a, field_term(t, obj[i]), depth + 1);
         }
         out_str(o, "}");
     } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
@@ -321,53 +385,43 @@ static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t 
 
 /* ---- actors ---- */
 
-/* Spawns an actor running closure clo: its captures are copied into the new
- * actor like a message and become r0.. of the entry frame. max_words is the
- * child's memory limit in words, 0 for the default; a limit below the
- * child's initial block is raised to the block size, so the spawn succeeds
- * (the child then has no room to grow). With `link`, the child is linked to
- * a before it is queued (SpawnLink); if that fails the child is freed
- * unrun. A child whose captured off-heap Bytes exceed its limit is spawned
- * but marked to exit with OutOfMemory before it runs. On success sets *pid
- * and returns
- * R_NORMAL; otherwise returns the crash reason for the caller.
- * Allocates only in the new actor, so the caller's heap does not move
- * (msg_build marks it while copying and restores it byte for byte). */
-static uint32_t do_spawn(Vm *vm, Actor *a, term clo, uint16_t max_words, bool link, term *pid) {
-    const Image *img = vm->img;
-    const uint32_t *obj = obj_of(vm, a, clo);
-    if (!obj || !term_is_ref(clo) || hdr_kind(obj[0]) != K_CLOSURE) return R_BAD_CODE;
-    uint32_t f = obj[1];
-    uint32_t ncaps = hdr_words(obj[0]) - 2u;
-    if (f >= img->n_funcs || image_func_nparams(img, f) != ncaps) return R_BAD_CODE;
+uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool caps,
+                     uint16_t max_words, bool link, term *pid) {
+    const Image *img = &vm->mods[mod]->img;
+    uint32_t nparams = image_func_nparams(img, f);
     uint32_t nregs = image_func_nregs(img, f);
-    if (ncaps > nregs) return R_BAD_CODE;
+    if (nparams > nregs) return R_BAD_CODE;
 
-    Msg *m = msg_build(a, clo);
-    if (!m) return R_OUT_OF_MEMORY;
-    uint32_t words = nregs + 2u + m->words + 8u;
-    Actor *n = words <= HEAP_MAX_WORDS ? actor_new(vm, (uint16_t)words) : NULL;
+    Msg *m = NULL;
+    uint32_t why;
+    if (src && !(m = msg_build(vm, src, val, mod, &why))) return why;
+    uint32_t words = nregs + 2u + (m ? m->words : 0u) + 8u;
+    Actor *n = words <= HEAP_MAX_WORDS ? actor_new_in(vm, (uint16_t)words, mod) : NULL;
     /* The block is sized for the frame and the copy, so neither GCs; the
-     * frame goes first anyway, so a GC could not drop the copied closure. */
-    term copy;
-    if (!n || !heap_push_frame(vm, n, (uint16_t)nregs, -1) || !msg_unpack(vm, n, m, &copy)) {
-        msg_free(m);
+     * frame goes first anyway, so a GC could not drop the copy. */
+    term copy = val;
+    if (!n || !heap_push_frame(vm, n, (uint16_t)nregs, -1) || (m && !msg_unpack(vm, n, m, &copy))) {
+        if (m) msg_free(m);
         if (n) actor_free(vm, n);      /* never ran, never visible: not an exit */
         return R_OUT_OF_MEMORY;
     }
-    msg_free(m);
+    if (m) msg_free(m);
     if (max_words) n->max_words = max_words < words ? (uint16_t)words : max_words;
-    const uint32_t *caps = n->mem + term_ref_off(copy) + 2u;
-    for (uint32_t i = 0; i < ncaps; i++) n->mem[n->fp + i] = caps[i];
+    if (caps) {
+        const uint32_t *c = n->mem + term_ref_off(copy) + 2u;
+        for (uint32_t i = 0; i < nparams; i++) n->mem[n->fp + i] = c[i];
+    } else if (nparams) {
+        n->mem[n->fp] = copy;
+    }
     n->pc = img->code + image_func_code_off(img, f);
-    if (link && !sig_link(vm, a, n->id)) {
+    if (link && !sig_link(vm, src, n->id)) {
         actor_free(vm, n);             /* never ran: not an exit */
         return R_OUT_OF_MEMORY;
     }
-    /* Off-heap Bytes among the captures are charged to the child in full
-     * (spec M4 §9.5): if they take it past its limit, the child exits with
-     * OutOfMemory before running (a visible exit: links and monitors see
-     * it), as a holder over its limit does; the spawner is unaffected. */
+    /* Off-heap Bytes among the copied values are charged to the child in
+     * full (spec M4 §9.5): if they take it past its limit, the child exits
+     * with OutOfMemory before running (a visible exit: links and monitors
+     * see it), as a holder over its limit does; the spawner is unaffected. */
     if ((uint32_t)n->mem_words + actor_charged_words(n) > actor_max_words(n))
         actor_mark_exit(vm, n, R_OUT_OF_MEMORY, T_EMPTYSTR);
     runq_push(vm, n);
@@ -375,10 +429,35 @@ static uint32_t do_spawn(Vm *vm, Actor *a, term clo, uint16_t max_words, bool li
     return R_NORMAL;
 }
 
+/* Spawns an actor running closure clo: its captures are copied into the new
+ * actor like a message and become r0.. of the entry frame. The closure must
+ * be one of a's own module (a closure of another module, live or gone, is
+ * badcode): the child runs a's module, as every actor.Spawn child does.
+ * max_words is the child's memory limit in words, 0 for the default; a
+ * limit below the child's initial block is raised to the block size, so the
+ * spawn succeeds (the child then has no room to grow). With `link`, the
+ * child is linked to a before it is queued (SpawnLink); if that fails the
+ * child is freed unrun. A child whose captured off-heap Bytes exceed its
+ * limit is spawned but marked to exit with OutOfMemory before it runs. On
+ * success sets *pid and returns R_NORMAL; otherwise returns the crash
+ * reason for the caller. Allocates only in the new actor, so the caller's
+ * heap does not move (msg_build marks it while copying and restores it
+ * byte for byte). */
+static uint32_t do_spawn(Vm *vm, Actor *a, term clo, uint16_t max_words, bool link, term *pid) {
+    const Image *img = &vm->mods[a->mod]->img;
+    const uint32_t *obj = obj_of(vm, a, clo);
+    if (!obj || !term_is_ref(clo) || hdr_kind(obj[0]) != K_CLOSURE ||
+        (obj[1] & MOD_TAG_MASK) != module_tag(vm, a->mod)) return R_BAD_CODE;
+    uint32_t f = obj[1] & ~MOD_TAG_MASK;
+    uint32_t ncaps = hdr_words(obj[0]) - 2u;
+    if (f >= img->n_funcs || image_func_nparams(img, f) != ncaps) return R_BAD_CODE;
+    return vm_spawn_fn(vm, a, a->mod, f, clo, true, max_words, link, pid);
+}
+
 /* The child limit SpawnOpt asks for: Options{MaxMemory} in bytes, as words
  * (0 or less: the default; rounded down but at least 1; at most
  * HEAP_MAX_WORDS). False if opts is not an Options struct. */
-static bool spawn_opt_words(const Vm *vm, const Actor *a, term opts, uint16_t *out) {
+bool vm_spawn_opt_words(const Vm *vm, const Actor *a, term opts, uint16_t *out) {
     const uint32_t *obj = obj_of(vm, a, opts);
     int32_t bytes;
     if (!obj || hdr_kind(obj[0]) != K_STRUCT || obj[1] != TYPE_OPTIONS ||
@@ -410,7 +489,14 @@ static int timed_wait(Vm *vm, Actor *a, int32_t ms) {
 /* ---- interpreter ---- */
 
 int interp_run(Vm *vm, Actor *a) {
-    const Image *img = vm->img;
+    /* The actor's module is loaded while it lives (its live count). */
+    const ModEntry *me = a->mod < GOGO_MAX_MODULES ? vm->mods[a->mod] : NULL;
+    if (!me) {
+        actor_exit(vm, a, R_BAD_CODE, T_EMPTYSTR);
+        return RUN_EXIT;
+    }
+    const Image *img = &me->img;
+    const uint32_t tag = module_tag(vm, a->mod);   /* ORed into what its image words become (term.h) */
     const uint32_t *code = img->code;
     uint32_t pc = (uint32_t)(a->pc - code);
     uint32_t fn = func_of_pc(img, pc);
@@ -419,6 +505,7 @@ int interp_run(Vm *vm, Actor *a) {
     uint32_t reason = R_BAD_CODE;
     term reason_func;
     term *R;
+    int r;                       /* msg_send results */
 
 #define RELOAD() (R = (term *)a->mem + a->fp)
 #define CRASH(r) do { reason = (r); goto crash; } while (0)
@@ -466,14 +553,15 @@ int interp_run(Vm *vm, Actor *a) {
 
         case OP_LOADK:
             REG(ra);
-            /* An image may hold small ints, specials and const refs to an
-             * object start (image_const_start); never heap refs (they would
-             * point into a random heap). */
+            /* An image may hold small ints, specials and untagged const refs
+             * to an object start (image_const_start); never heap refs (they
+             * would point into a random heap). A const ref gets the
+             * module's tag (term.h). */
             CHECK(term_is_int(ext) || ext == T_NIL || ext == T_TRUE || ext == T_FALSE ||
                   ext == T_EMPTYSTR || ext == T_ZEROPID || ext == T_ZEROREF || ext == T_NILSLICE ||
                   ext == T_EMPTYBYTES ||
-                  (term_is_const(ext) && image_const_start(vm->img, term_const_off(ext))));
-            R[ra] = ext;
+                  (term_is_const(ext) && !(ext & MOD_TAG_MASK) && image_const_start(img, term_const_off(ext))));
+            R[ra] = term_is_const(ext) ? ext | tag : ext;
             break;
 
         case OP_LOADI32: {
@@ -615,6 +703,7 @@ int interp_run(Vm *vm, Actor *a) {
             bool eq;
             uint64_t sx, sy;
             if (int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y)) eq = x == y;
+            else if (!term_live(vm, a, R[rb]) || !term_live(vm, a, R[rc])) CRASH(R_BAD_CODE);
             else if (int64_box(vm, a, R[rb]) || int64_box(vm, a, R[rc])) CRASH(R_BAD_CODE);
             else if (ref_serial(vm, a, R[rb], &sx)) eq = ref_serial(vm, a, R[rc], &sy) && sx == sy;
             else if (strs_equal(vm, a, R[rb], R[rc], &eq)) {}   /* by content */
@@ -681,9 +770,12 @@ int interp_run(Vm *vm, Actor *a) {
              * the closure's captures followed by the args. A nil (or any
              * non-closure) value is badcode. */
             REG(rb); REGS(rb + 1u, rc);
+            /* Only a closure of this module: another module's code cannot
+             * run on this actor's frames (and a gone module's is stale). */
             const uint32_t *obj = obj_of(vm, a, R[rb]);
-            CHECK(obj && term_is_ref(R[rb]) && hdr_kind(obj[0]) == K_CLOSURE);
-            uint32_t f = obj[1];
+            CHECK(obj && term_is_ref(R[rb]) && hdr_kind(obj[0]) == K_CLOSURE &&
+                  (obj[1] & MOD_TAG_MASK) == tag);
+            uint32_t f = obj[1] & ~MOD_TAG_MASK;
             uint32_t ncaps = hdr_words(obj[0]) - 2u;
             CHECK(f < img->n_funcs);
             uint32_t callee_regs = image_func_nregs(img, f);
@@ -752,7 +844,9 @@ int interp_run(Vm *vm, Actor *a) {
             RELOAD();
             uint32_t *obj = a->mem + off;
             obj[0] = hdr_make(words, op == OP_NEWSTRUCT ? K_STRUCT : K_CLOSURE);
-            obj[1] = ext;
+            /* The module's tag on its functions and its own types; a
+             * reserved type stays bare (global). */
+            obj[1] = (op == OP_MKCLOSURE || ext >= TYPE_RESERVED_COUNT) ? ext | tag : ext;
             for (uint32_t i = 0; i < rc; i++) obj[2 + i] = R[rb + i];
             R[ra] = term_from_ref(off);
             break;
@@ -761,8 +855,9 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_GETFIELD: {
             REG(ra); REG(rb);
             const uint32_t *obj = obj_of(vm, a, R[rb]);
-            CHECK(obj && hdr_kind(obj[0]) == K_STRUCT && 2u + rc < hdr_words(obj[0]));
-            R[ra] = obj[2 + rc];
+            CHECK(obj && hdr_kind(obj[0]) == K_STRUCT && 2u + rc < hdr_words(obj[0]) &&
+                  type_live(vm, tag, struct_type(R[rb], obj)));
+            R[ra] = field_term(R[rb], obj[2 + rc]);
             break;
         }
 
@@ -770,6 +865,7 @@ int interp_run(Vm *vm, Actor *a) {
             REG(ra); REG(rb);
             term t = R[rb];
             uint32_t ty = UINT32_MAX;
+            CHECK(term_live(vm, a, t));
             int32_t dummy;
             if (int_val(vm, a, t, &dummy)) ty = TY_INT;
             else if (t == T_TRUE || t == T_FALSE) ty = TY_BOOL;
@@ -781,12 +877,15 @@ int interp_run(Vm *vm, Actor *a) {
                 const uint32_t *obj = obj_of(vm, a, t);
                 uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
                 if (kind == K_STRING) ty = TY_STRING;
-                else if (kind == K_STRUCT) ty = obj[1];
+                else if (kind == K_STRUCT) ty = struct_type(t, obj);   /* live: checked above */
                 else if (kind == K_REF) ty = TY_REF;
                 else if (kind == K_INT64) ty = TY_INT64;
                 else if (kind == K_BYTES) ty = TY_BYTES;
             }
-            R[ra] = term_from_bool(ty == ext);
+            /* ext names a type of this module's image: its own struct
+             * types are tagged like its structs. */
+            CHECK(!(ext & MOD_TAG_MASK));
+            R[ra] = term_from_bool(ty == (ext >= TYPE_RESERVED_COUNT && ext < TY_INT ? ext | tag : ext));
             break;
         }
 
@@ -794,13 +893,15 @@ int interp_run(Vm *vm, Actor *a) {
             REG(ra); REGS(rb, rc);
             switch (ext) {
             case B_PRINTLN:
+                /* Anything printed that names a gone module is badcode. */
+                for (uint32_t i = 0; i < rc; i++) CHECK(deep_live(vm, a, R[rb + i], 0));
                 do_println(vm, a, R + rb, rc);
                 R[ra] = T_NIL;
                 break;
             case B_SPAWN: case B_SPAWN_LINK: case B_SPAWN_OPT: {
                 CHECK(rc == (ext == B_SPAWN_OPT ? 2u : 1u));
                 uint16_t max_words = 0;
-                if (ext == B_SPAWN_OPT) CHECK(spawn_opt_words(vm, a, R[rb + 1], &max_words));
+                if (ext == B_SPAWN_OPT) CHECK(vm_spawn_opt_words(vm, a, R[rb + 1], &max_words));
                 term pid;
                 uint32_t err = do_spawn(vm, a, R[rb], max_words, ext == B_SPAWN_LINK, &pid);
                 if (err != R_NORMAL) CRASH(err);
@@ -815,13 +916,15 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 2);
                 if (port_is(R[rb])) {
                     /* A command: handed to the driver in place, for any sender. */
+                    CHECK(deep_live(vm, a, R[rb + 1], 0));
                     port_command(vm, a, R[rb], R[rb + 1]);
                     R[ra] = T_NIL;
                     break;
                 }
-                /* Only -1 (out of memory copying the message) concerns
-                 * the sender; a dropped message does not. */
-                if (msg_send(vm, a, R[rb], R[rb + 1]) < 0) CRASH(R_OUT_OF_MEMORY);
+                /* Only a failed copy (out of memory, or refused by the
+                 * module rules) concerns the sender; a dropped message
+                 * does not. */
+                if ((r = msg_send(vm, a, R[rb], R[rb + 1])) < 0) CRASH((uint32_t)-r);
                 R[ra] = T_NIL;
                 break;
             case B_RECEIVE: {
@@ -900,7 +1003,7 @@ int interp_run(Vm *vm, Actor *a) {
                     obj[2] = a->id;
                     obj[3] = roots[0];
                     obj[4] = R[rb + 1];
-                    if (msg_send(vm, a, pid, term_from_ref(off)) < 0) CRASH(R_OUT_OF_MEMORY);
+                    if ((r = msg_send(vm, a, pid, term_from_ref(off))) < 0) CRASH((uint32_t)-r);
                     R[ra] = roots[0];
                     CHECK(ref_serial(vm, a, R[ra], &serial));
                     if (ms > 0) {
@@ -935,7 +1038,7 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(req && hdr_kind(req[0]) == K_STRUCT && req[1] == TYPE_REQUEST &&
                       hdr_words(req[0]) == 5u);
                 /* A dead sender, or a Request not made by Call, drops it. */
-                if (msg_send_reply(vm, a, req[2], req[3], R[rb + 1]) < 0) CRASH(R_OUT_OF_MEMORY);
+                if ((r = msg_send_reply(vm, a, req[2], req[3], R[rb + 1])) < 0) CRASH((uint32_t)-r);
                 R[ra] = T_NIL;
                 break;
             }
@@ -944,8 +1047,9 @@ int interp_run(Vm *vm, Actor *a) {
                 int32_t ms;
                 CHECK(int_val(vm, a, R[rb], &ms));
                 uint64_t deadline = platform_now_ms() + (ms > 0 ? (uint32_t)ms : 0u);
-                term ref = timer_add_send(vm, a, deadline, R[rb + 1], R[rb + 2]);
-                if (ref == T_NIL) CRASH(R_OUT_OF_MEMORY);
+                uint32_t why;
+                term ref = timer_add_send(vm, a, deadline, R[rb + 1], R[rb + 2], &why);
+                if (ref == T_NIL) CRASH(why);
                 RELOAD();
                 R[ra] = ref;
                 break;
@@ -1035,7 +1139,7 @@ int interp_run(Vm *vm, Actor *a) {
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
-                int r = names_register(vm, name, len, R[rb + 1]);
+                r = names_register(vm, a->id, name, len, R[rb + 1]);
                 if (r < 0) CRASH(R_OUT_OF_MEMORY);
                 R[ra] = term_from_bool(r > 0);
                 break;
@@ -1057,13 +1161,14 @@ int interp_run(Vm *vm, Actor *a) {
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
-                names_unregister(vm, name, len);
+                names_unregister(vm, a->id, name, len);
                 R[ra] = T_NIL;
                 break;
             }
             case B_PORT_OPEN: {
                 CHECK(rc == 2);
                 REGS(ra, 2);
+                CHECK(deep_live(vm, a, R[rb], 0) && deep_live(vm, a, R[rb + 1], 0));
                 term pid = port_open(vm, a, R[rb], R[rb + 1]);   /* no GC */
                 R[ra] = pid != T_NIL ? pid : T_ZEROPID;   /* failed: the zero PID */
                 R[ra + 1] = term_from_bool(pid != T_NIL);
@@ -1099,9 +1204,10 @@ int interp_run(Vm *vm, Actor *a) {
                 if (err != R_NORMAL) CRASH(err);
                 break;
             }
-            case B_FS: {
-                /* The hook checks ra+1 itself (two-result ops only). */
-                uint32_t err = vm_fs_builtin ? vm_fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
+            case B_FS: case B_CODE: {
+                /* Both check ra+1 themselves (two-result ops only). */
+                uint32_t err = ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
+                             : vm_fs_builtin ? vm_fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
                 RELOAD();      /* may GC */
                 if (err != R_NORMAL) CRASH(err);
                 break;
@@ -1132,7 +1238,7 @@ int interp_run(Vm *vm, Actor *a) {
     }
 
 crash:
-    actor_exit(vm, a, reason, term_from_const(image_func_name_off(img, fn)));
+    actor_exit(vm, a, reason, term_from_const(image_func_name_off(img, fn)) | tag);
     return RUN_EXIT;
 
 #undef RELOAD
@@ -1165,31 +1271,20 @@ static bool sched_any_live(Vm *vm) { return port_any_live(vm); }
 static bool sched_next_deadline(Vm *vm, uint64_t *when) { return port_next_deadline(vm, when); }
 
 int vm_run(Vm *vm) {
-    const Image *img = vm->img;
-    uint32_t entry = img->entry;
-    uint16_t nregs = image_func_nregs(img, entry);
-    if (nregs > 65535u - 10u) {      /* initial block of nregs + 2 + 8 words */
-        write_err_lit("gogo: entry function has too many registers\n");
-        return 2;
-    }
     if (!vm_reserve_init()) {
         write_err_lit("gogo: cannot reserve emergency memory\n");
         return 1;
     }
-    Actor *a = actor_new(vm, (uint16_t)(nregs + 2u + 8u));
-    if (!a) {
+    /* Module 0's main starts like any module's entry (code.Spawn). */
+    term pid;
+    int err = module_spawn(vm, NULL, module_handle(vm, 0), (const uint8_t *)"main", 4u, T_NIL, 0, &pid);
+    if (err != CODE_OK) {
         vm_reserve_release();
-        write_err_lit("gogo: cannot start main actor\n");
+        if (err == CODE_NOT_FOUND) write_err_lit("gogo: image has no main\n");
+        else write_err_lit("gogo: cannot start main actor\n");
         return 1;
     }
-    if (!heap_push_frame(vm, a, nregs, -1)) {
-        write_err_lit("gogo: cannot start main actor\n");
-        actor_free(vm, a);             /* never ran: not an exit */
-        vm_reserve_release();
-        return 1;
-    }
-    a->pc = img->code + image_func_code_off(img, entry);
-    runq_push(vm, a);
+    Actor *a;
     platform_time_reset();           /* time 0 for Now() and timers */
     evq_reset();
 

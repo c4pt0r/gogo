@@ -1,0 +1,18 @@
+# StickS3 build only (the default board), on top of sdkconfig.defaults: the
+# ESP32-S3-PICO-1-N8R8 has 8 MB octal PSRAM. Used for hot-loaded module code
+# only (main/platform_esp.c platform_code_alloc), never as general heap:
+# CAPS_ALLOC keeps plain malloc and every internal-heap user (the VM arena,
+# Wi-Fi, LCD buffers) on internal RAM. The Cardputer ADV has no PSRAM and
+# does not use this file.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+# A board without (working) PSRAM still boots; platform_code_alloc then
+# returns NULL and modules load into the VM's own memory.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+# Trims (measured, README "PSRAM and firmware capabilities"): no boot memory
+# test of the 8 MB (hundreds of ms, and its code); module images are checked
+# by the loader. (STDATOMIC_S32C1I_SPIRAM_WORKAROUND is derived from SPIRAM,
+# not settable.)
+CONFIG_SPIRAM_MEMTEST=n

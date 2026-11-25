@@ -1,0 +1,159 @@
+// Cross-module rules (design §5.3): const data crosses as copies; a
+// module's own struct or a func value makes the sender (any module) exit
+// BadMsg; reserved types cross; code.Spawn's arg gives BadArg instead;
+// SendAfter checks when called; exit notices blank Reason.Func across
+// modules.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/code"
+	"gogo/fs"
+	"gogo/supervisor"
+)
+
+// Host is the main program's own struct type.
+type Host struct{ X int }
+
+func read(path string) bytes.Bytes {
+	b, e := fs.ReadFile(path, 100000)
+	if e != fs.OK {
+		println("read", path, int(e))
+	}
+	return b
+}
+
+// down waits for the DownMsg of p and returns its reason code.
+func down(p actor.PID) int {
+	actor.Monitor(p)
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.DownMsg:
+			return m.Reason.Code
+		}
+	}
+}
+
+// whereis waits until "srv" names a server other than old.
+func whereis(old actor.PID) actor.PID {
+	for {
+		p, ok := actor.Whereis("srv")
+		if ok && p != old {
+			return p
+		}
+		actor.Sleep(1)
+	}
+}
+
+func spawnDown(m code.Module, entry string, arg any) int {
+	p, e := code.Spawn(m, entry, arg)
+	if e != code.OK {
+		println("spawn", entry, int(e))
+		return -1
+	}
+	return down(p)
+}
+
+// server answers every Call with a Host struct: across modules that is
+// BadMsg for the server, which its supervisor restarts.
+func server() {
+	actor.Register("srv", actor.Self())
+	for {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			actor.Reply(r, Host{1})
+		}
+	}
+}
+
+func main() {
+	self := actor.Self()
+	m, e := code.Load(read("/flash/iso.gmod"))
+	println("load", int(e))
+
+	// Const string, int64 and a reserved struct with a const string: copies,
+	// still readable after the module is gone.
+	c, _ := code.Spawn(m, "Consts", self)
+	s1 := actor.Receive()
+	s2 := actor.Receive()
+	s3 := actor.Receive()
+	down(c)
+	code.Release(m)
+	println("unloaded", code.MemUsed())
+	switch s := s1.(type) {
+	case string:
+		println(s)
+	}
+	switch n := s2.(type) {
+	case int64:
+		println(n == int64(1)<<40)
+	}
+	switch r := s3.(type) {
+	case actor.Reason:
+		println(r.Code, r.Func)
+	}
+
+	m, _ = code.Load(read("/flash/iso.gmod"))
+	// A module struct or a func value: the module's actor exits BadMsg.
+	println("struct", spawnDown(m, "Struct", self) == actor.BadMsg)
+
+	// Symmetric: the host's server replies to the module's Call with a host
+	// struct: the server exits BadMsg and is restarted; the Call times out.
+	supervisor.Supervise(func() { server() }, supervisor.Spec{
+		Restart:     supervisor.Permanent,
+		MaxRestarts: 5,
+		PeriodMs:    1000,
+	})
+	var none actor.PID
+	srv := whereis(none)
+	println("caller", spawnDown(m, "Caller", srv))
+	println("restarted", whereis(srv) != srv)
+
+	// code.Spawn's arg: BadArg, no crash.
+	_, e = code.Spawn(m, "Echo", Host{1})
+	println("spawn host struct", int(e) == int(code.BadArg))
+
+	// Reserved types and const strings cross.
+	p, e := code.Spawn(m, "Echo", actor.Reason{Code: 3, Func: "r"})
+	println("spawn reason", int(e))
+	actor.Send(p, actor.Reason{Code: 4})
+	actor.Send(p, m)
+	actor.Send(p, 0)
+	println("echo", down(p))
+	p2, _ := code.Spawn(m, "Echo", "a string")
+
+	// SendAfter is checked when it is called.
+	q := actor.Spawn(func() {
+		actor.SendAfter(1000, p2, Host{2})
+		println("never")
+	})
+	println("sendafter", down(q) == actor.BadMsg)
+	actor.Send(p2, 0)
+	down(p2)
+
+	// Inside the main program a Host struct goes as before.
+	r := actor.Spawn(func() {
+		switch h := actor.Receive().(type) {
+		case Host:
+			println("same module", h.X)
+		}
+	})
+	actor.Send(r, Host{5})
+	down(r)
+
+	// Exit notices: Reason.Func is blank for a host watcher; read after the
+	// module is gone. stderr still names boom.
+	actor.TrapExit(true)
+	b, _ := code.SpawnLink(m, "Boom", 0)
+	code.Release(m)
+	for {
+		switch x := actor.Receive().(type) {
+		case actor.ExitMsg:
+			if x.From == b {
+				println("exit", x.Reason.Code == actor.DivZero, x.Reason.Func == "", code.MemUsed())
+				return
+			}
+		}
+	}
+}
