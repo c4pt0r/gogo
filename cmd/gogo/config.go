@@ -116,6 +116,15 @@ func writeConfig(path string, lines []string) error {
 	return err
 }
 
+// checkValue reports why v cannot be a value in the store, or nil. The
+// board's frame cannot carry newlines, NUL or STX.
+func checkValue(v string) error {
+	if len(v) > configMaxValue || strings.ContainsAny(v, "\n\r\x00\x02") {
+		return fmt.Errorf("gogo config: bad value (at most %d bytes, no newlines)", configMaxValue)
+	}
+	return nil
+}
+
 func shown(key, value string) string {
 	if key == configSecret {
 		return "(set)"
@@ -167,9 +176,8 @@ func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer,
 		args[1] = strings.TrimRight(v, "\r\n")
 	}
 	if op == "set" {
-		v := args[1]
-		if len(v) > configMaxValue || strings.ContainsAny(v, "\n\r\x00\x02") {
-			return fmt.Errorf("gogo config: bad value (at most %d bytes, no newlines)", configMaxValue)
+		if err := checkValue(args[1]); err != nil {
+			return err
 		}
 	}
 	if port == "" && !local && os.Getenv("GOGO_CONFIG") == "" {

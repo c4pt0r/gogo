@@ -272,7 +272,7 @@ func (s *setup) localFirmware(board string, lb localBuild) (*firmwareSet, error)
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	hello := filepath.Join(tmp, "hello.gogo")
+	hello := filepath.Join(tmp, "hello"+imageExt)
 	if err := writeHello(board, hello); err != nil {
 		return nil, err
 	}

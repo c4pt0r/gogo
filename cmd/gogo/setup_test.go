@@ -13,8 +13,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // esptool v5.6.0 banners, as printed by the two boards.
@@ -227,6 +229,14 @@ type setupBench struct {
 	release string // release asset directory
 	env     *setupEnv
 	out     *bytes.Buffer
+
+	mu        sync.Mutex
+	boot      []string          // console lines after each open
+	store     map[string]string // the board's config store
+	sets      []string          // keys set, in order
+	scans     int
+	scanFails int // the first scanFails scans fail
+	opens     int
 }
 
 func newSetupBench(t *testing.T, chip string, stdin string) *setupBench {
@@ -257,17 +267,100 @@ func newSetupBench(t *testing.T, chip string, stdin string) *setupBench {
 		getenv:   func(string) string { return "" },
 		glob:     func(string) ([]string, error) { return []string{"/dev/cu.usbmodem9"}, nil },
 		lookPath: exec.LookPath,
-		openPort: func(string) (io.ReadWriteCloser, error) { return nil, fmt.Errorf("no serial port in this test") },
+		openPort: func(string) (io.ReadWriteCloser, error) { return f.openConsole(), nil },
 		client:   http.DefaultClient,
 		cacheDir: filepath.Join(dir, "cache"),
 		repoDir:  func() (string, bool) { return "", false },
+
+		retryDelay: time.Millisecond,
 		runIdf: func(localBuild, []string) error {
 			t.Fatal("unexpected local build")
 			return nil
 		},
 	}
 	f.env.in = bufio.NewReader(f.env.stdin)
+	f.store = map[string]string{}
+	f.boot = []string{"gogo vtest: image 1556 bytes, arena 163840 bytes, free RAM 190000 (largest 180000)", "hello from gogo on the board!"}
 	return f
+}
+
+// fakeConsole is the board's serial console: it prints f.boot when
+// opened and answers config frames like platform/esp32s3/main/config_esp.c.
+type fakeConsole struct {
+	b      *setupBench
+	pr     *io.PipeReader
+	pw     *io.PipeWriter
+	in     []byte
+	closed int32
+}
+
+func (f *setupBench) openConsole() *fakeConsole {
+	pr, pw := io.Pipe()
+	c := &fakeConsole{b: f, pr: pr, pw: pw}
+	f.mu.Lock()
+	f.opens++
+	f.mu.Unlock()
+	go func() {
+		for _, l := range f.boot {
+			if _, err := io.WriteString(pw, "noise\r\n"+l+"\r\n"); err != nil {
+				return
+			}
+		}
+	}()
+	return c
+}
+
+func (c *fakeConsole) Read(p []byte) (int, error) { return c.pr.Read(p) }
+func (c *fakeConsole) Close() error {
+	atomic.StoreInt32(&c.closed, 1)
+	c.pr.Close()
+	return c.pw.Close()
+}
+
+func (c *fakeConsole) Write(p []byte) (int, error) {
+	c.in = append(c.in, p...)
+	for {
+		i := bytes.IndexByte(c.in, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		frame := string(c.in[:i])
+		c.in = c.in[i+1:]
+		reply := c.answer(strings.TrimPrefix(frame, "\x02gogo-config "))
+		go io.WriteString(c.pw, reply)
+	}
+}
+
+func (c *fakeConsole) answer(cmd string) string {
+	b := c.b
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	op, rest, _ := strings.Cut(cmd, " ")
+	key, value, _ := strings.Cut(rest, " ")
+	switch op {
+	case "scan":
+		b.scans++
+		if b.scans <= b.scanFails {
+			return "\x02err scan failed (wifi busy connecting; try again)\n"
+		}
+		return "tick\x02kv " + fmt.Sprintf("%-32s ch %2d %4d dBm secured", "Home Net", 6, -50) + "\n" +
+			"\x02kv " + fmt.Sprintf("%-32s ch %2d %4d dBm open", "Cafe", 11, -70) + "\n" +
+			"\x02kv " + fmt.Sprintf("%-32s ch %2d %4d dBm secured", "Home Net", 1, -80) + "\n\x02ok\n"
+	case "set":
+		b.store[key] = value
+		b.sets = append(b.sets, key)
+		if key == "wifi.ssid" {
+			return "\x02ok\ngogo: wifi settings changed, reconnecting\ngogo: wifi connected (" + value + ", ch 6, -50 dBm)\n"
+		}
+		return "more output\x02ok\n"
+	case "rm":
+		if _, ok := b.store[key]; !ok {
+			return "\x02err not set\n"
+		}
+		delete(b.store, key)
+		return "\x02ok\n"
+	}
+	return "\x02err usage\n"
 }
 
 // flasherArgsJSON is ESP-IDF's flasher_args.json for the gogo firmware.
@@ -495,7 +588,7 @@ func TestSetupBoardChoice(t *testing.T) {
 	if err := f.run("-skip-wifi", "-release-url", f.release); err != nil {
 		t.Fatalf("%v\n%s", err, f.out)
 	}
-	if l := f.writeFlashLines(); len(l) != 1 || !strings.Contains(l[0], filepath.Join(f.env.cacheDir, "release")) {
+	if l := f.writeFlashLines(); len(l) != 2 || !strings.Contains(l[0], filepath.Join(f.env.cacheDir, "release")) {
 		t.Fatalf("writes %q", l)
 	}
 	if !strings.Contains(f.out.String(), "Flash this firmware to the M5StickS3") {
@@ -563,7 +656,7 @@ func TestSetupFallsBackToLocalBuild(t *testing.T) {
 	}
 	lines := f.writeFlashLines()
 	build := filepath.Join(f.dir, "repo", "build", "setup-sticks3")
-	if len(lines) != 1 || !strings.Contains(lines[0], "0x10000 "+filepath.Join(build, "gogo.bin")) {
+	if len(lines) != 2 || !strings.Contains(lines[0], "0x10000 "+filepath.Join(build, "gogo.bin")) {
 		t.Fatalf("writes %q", lines)
 	}
 	checkNoNVSWrite(t, lines)
@@ -672,5 +765,178 @@ func TestHelloCompiles(t *testing.T) {
 		if err := checkImage(img); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestParseScan(t *testing.T) {
+	text := fmt.Sprintf("%-32s ch %2d %4d dBm secured\n%-32s ch %2d %4d dBm open\n%-32s ch %2d %4d dBm secured\n garbage\n", "Home Net", 6, -50, "Cafe", 11, -70, "Home Net", 1, -80)
+	nets := parseScan(text)
+	if len(nets) != 2 || nets[0].ssid != "Home Net" || nets[0].open || nets[0].detail != "ch 6 -50 dBm" || nets[1].ssid != "Cafe" || !nets[1].open {
+		t.Fatalf("%+v", nets)
+	}
+}
+
+const testPassword = "correct-horse-battery"
+
+func TestSetupWifiAndFirstProgram(t *testing.T) {
+	// Pick network 1, type the password; the first scan fails while the
+	// board starts Wi-Fi.
+	f := newSetupBench(t, chipStickS3, "y\ny\ny\n1\n"+testPassword+"\n")
+	f.scanFails = 1
+	f.writeRelease()
+	if err := f.run("-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if f.store["wifi.ssid"] != "Home Net" || f.store["wifi.password"] != testPassword {
+		t.Fatalf("store %q", f.store)
+	}
+	if strings.Join(f.sets, " ") != "wifi.password wifi.ssid" {
+		t.Errorf("set order %q", f.sets)
+	}
+	out := f.out.String()
+	for _, want := range []string{
+		"[5/6] Setting up Wi-Fi",
+		"wifi.ssid=Home Net, wifi.password=(set)",
+		"| gogo: wifi connected (Home Net",
+		"Wi-Fi works",
+		"[6/6] Running a first program",
+		"write-flash 0x210000 ",
+		"| hello from gogo on the board!",
+		"Your M5StickS3 runs gogo",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	checkNoNVSWrite(t, f.writeFlashLines())
+	checkNoSecret(t, f)
+}
+
+// checkNoSecret: the password is in no output, log or cached file.
+func checkNoSecret(t *testing.T, f *setupBench) {
+	t.Helper()
+	if strings.Contains(f.out.String(), testPassword) {
+		t.Error("password in the output")
+	}
+	if strings.Contains(f.esptoolLog(), testPassword) {
+		t.Error("password on an esptool command line")
+	}
+	filepath.Walk(f.dir, func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			if b, _ := os.ReadFile(p); bytes.Contains(b, []byte(testPassword)) {
+				t.Errorf("password in %s", p)
+			}
+		}
+		return nil
+	})
+}
+
+func TestSetupWifiDryRun(t *testing.T) {
+	f := newSetupBench(t, chipCardputer, "y\ny\ny\n1\n"+testPassword+"\n")
+	f.writeRelease()
+	if err := f.run("-dry-run", "-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if len(f.store) != 0 || len(f.writeFlashLines()) != 0 {
+		t.Fatalf("dry run wrote: store %q, flash %q", f.store, f.writeFlashLines())
+	}
+	out := f.out.String()
+	for _, want := range []string{
+		`would set wifi.ssid to "Home Net" and wifi.password (not shown)`,
+		"would run: " + filepath.Join(f.dir, "bin", "esptool") + " --port /dev/cu.usbmodem9 --chip esp32s3 --after watchdog-reset write-flash 0x210000 ",
+		"Dry run done",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	checkNoSecret(t, f)
+}
+
+func TestSetupWifiOpenAndTyped(t *testing.T) {
+	// An open network from the list: no password, an old one is removed.
+	f := newSetupBench(t, chipStickS3, "y\ny\ny\n2\n")
+	f.store["wifi.password"] = "old-password"
+	f.writeRelease()
+	if err := f.run("-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if _, ok := f.store["wifi.password"]; ok || f.store["wifi.ssid"] != "Cafe" {
+		t.Fatalf("store %q", f.store)
+	}
+	// A typed name; a too short password is asked again.
+	g := newSetupBench(t, chipStickS3, "y\ny\ny\n3\nHidden Lab\ny\nshort\n"+testPassword+"\n")
+	g.writeRelease()
+	if err := g.run("-release-url", g.release); err != nil {
+		t.Fatalf("%v\n%s", err, g.out)
+	}
+	if g.store["wifi.ssid"] != "Hidden Lab" || g.store["wifi.password"] != testPassword {
+		t.Fatalf("store %q", g.store)
+	}
+	if !strings.Contains(g.out.String(), "8 to 63 characters") {
+		t.Errorf("short password accepted:\n%s", g.out)
+	}
+	checkNoSecret(t, g)
+}
+
+func TestSetupSkipWifiKeepsSettings(t *testing.T) {
+	f := newSetupBench(t, chipStickS3, "")
+	f.store["wifi.ssid"] = "Home Net"
+	f.store["wifi.password"] = testPassword
+	f.writeRelease()
+	if err := f.run("-yes", "-skip-wifi", "-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if len(f.sets) != 0 || f.store["wifi.password"] != testPassword {
+		t.Fatalf("settings touched: %q", f.sets)
+	}
+	checkNoSecret(t, f)
+}
+
+func TestSetupProgramRefused(t *testing.T) {
+	f := newSetupBench(t, chipStickS3, "")
+	f.boot = []string{"gogo vold: image 1556 bytes, arena 1 bytes, free RAM 1 (largest 1)", "gogo: bad image (unsupported version)"}
+	f.writeRelease()
+	err := f.run("-yes", "-skip-wifi", "-release-url", f.release)
+	if err == nil || !strings.Contains(err.Error(), "unsupported version") || !strings.Contains(err.Error(), "gogo version") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestConsoleViews(t *testing.T) {
+	// Program output, then two config commands back to back and a watch:
+	// each exchange gets its own reply, nothing is lost between them.
+	f := &setupBench{store: map[string]string{}}
+	c := newConsole(f.openConsole())
+	defer c.Close()
+	for i := 0; i < 20; i++ {
+		if err := c.config("set", []string{"k", fmt.Sprint(i)}, io.Discard, time.Second); err != nil {
+			t.Fatal(i, err)
+		}
+	}
+	if err := c.config("set", []string{"wifi.ssid", "X"}, io.Discard, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if !c.watch(time.Second, func(l string) bool { return strings.HasPrefix(l, "gogo: wifi connected (X") }) {
+		t.Fatal("the line after the reply was lost")
+	}
+	if err := c.config("rm", []string{"nope"}, io.Discard, time.Second); err == nil || !strings.Contains(err.Error(), "not set") {
+		t.Fatal(err)
+	}
+}
+
+func TestSetupWindowsSkipsConsole(t *testing.T) {
+	f := newSetupBench(t, chipStickS3, "y\ny\n")
+	f.env.goos = "windows"
+	f.writeRelease()
+	if err := f.run("-board", "sticks3", "-release-url", f.release); err == nil || !strings.Contains(err.Error(), "-port COM5") {
+		t.Fatalf("no -port on Windows: %v", err)
+	}
+	f.out.Reset()
+	if err := f.run("-board", "sticks3", "-port", "COM5", "-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if f.opens != 0 || len(f.writeFlashLines()) != 2 || !strings.Contains(f.out.String(), "Wi-Fi from macOS or Linux") {
+		t.Fatalf("opens %d, writes %q:\n%s", f.opens, f.writeFlashLines(), f.out)
 	}
 }

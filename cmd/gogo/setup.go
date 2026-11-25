@@ -41,8 +41,14 @@ const setupUsage = "usage: gogo setup [-port P] [-board sticks3|cardputer] [-ver
 // tools/release.sh (-ldflags "-X main.version=v1.2.3").
 var version = "dev"
 
+// File names gogo setup writes: compiled images and gogo source files.
+const (
+	imageExt  = ".gogo"
+	sourceExt = ".go"
+)
+
 // setupSteps is the number of steps gogo setup prints.
-const setupSteps = 4
+const setupSteps = 6
 
 var setupBoardTitles = map[string]string{"sticks3": "M5StickS3", "cardputer": "Cardputer ADV"}
 
@@ -65,6 +71,8 @@ type setupEnv struct {
 	cacheDir string
 	repoDir  func() (string, bool)
 	runIdf   func(lb localBuild, args []string) error
+	// retryDelay is the wait between attempts to open the port.
+	retryDelay time.Duration
 }
 
 func defaultSetupEnv() (*setupEnv, error) {
@@ -85,6 +93,8 @@ func defaultSetupEnv() (*setupEnv, error) {
 		cacheDir: filepath.Join(cache, "gogo"),
 		repoDir:  findSourceRepo,
 		runIdf:   runIdfLocal(os.Stdout),
+
+		retryDelay: 500 * time.Millisecond,
 	}, nil
 }
 
@@ -190,11 +200,19 @@ func setupMain(args []string, env *setupEnv) error {
 	if err := s.flashFirmware(fw, oldParts); err != nil {
 		return err
 	}
+	s.step("Setting up Wi-Fi")
+	if err := s.setupWifi(); err != nil {
+		return err
+	}
+	s.step("Running a first program")
+	if err := s.firstProgram(); err != nil {
+		return err
+	}
 	if o.dryRun {
 		fmt.Fprintln(env.out, "\nDry run done: nothing was written to the board.")
 		return nil
 	}
-	fmt.Fprintf(env.out, "\nDone: the %s runs the gogo firmware.\n", setupBoardTitles[s.board])
+	s.nextSteps()
 	return nil
 }
 
@@ -537,7 +555,7 @@ func writeHello(board, out string) error {
 	}
 	defer os.RemoveAll(dir)
 	src := strings.Replace(helloSource, "BOARD", setupBoardTitles[board], 1)
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "main"+sourceExt), []byte(src), 0o644); err != nil {
 		return err
 	}
 	prog, err := compiler.Load(dir)
