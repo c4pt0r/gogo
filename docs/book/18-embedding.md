@@ -32,10 +32,12 @@ embedding layer, compiled as strict C99. Link it with `-pthread`:
 cc -std=c99 -Iruntime/include -o host host.c build/libgogo.a -pthread
 ```
 
-Only the `gogo_*` functions are public. The library also defines internal
-symbols that a static archive cannot hide (`vm_`, `va_`, `port_`, `actor_`
-and a few more prefixes); [`runtime/include/README.md`](../../runtime/include/README.md)
-lists them, and your program must not define symbols with those prefixes.
+The library exports only the `gogo_*` functions: everything else in it is
+local, so your program may use any other names. `make lib` also builds
+`build/libgogo-debug.a`, the same code as separate objects, for debugging
+on a machine other than the one that built it
+([`runtime/include/README.md`](../../runtime/include/README.md) explains
+the difference).
 
 ## 18.2 The smallest host
 
@@ -492,5 +494,3 @@ as in `main.c --two`, or on many threads, as in the stress test.
 - `port.Post` carries no source: an actor that owns several host ports,
   or also gets posts, tells them apart by `Kind`.
 - The `fs_quota` counts regular-file bytes only (section 18.8).
-- Internal symbols with the library's reserved prefixes are visible to
-  the linker (section 18.1).

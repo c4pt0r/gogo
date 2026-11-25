@@ -49,11 +49,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lib example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-fs-host test-console test-embed example-embed check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
+test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
 
 vm: $(BUILD)/gogovm
 
@@ -232,21 +232,43 @@ endif
 
 # libgogo.a: the embedding library (runtime/include/gogo.h). The VM core,
 # vfs, stream and the embed layer, built as strict C99 (-pedantic) with
-# -DGOGO_EMBED; no board, input, net or tls. Link it with -pthread. Only
-# gogo_* is public; runtime/include/README.md lists the symbol prefixes the
-# library reserves, which tools/libsyms.sh checks.
+# -DGOGO_EMBED; no board, input, net or tls. Link it with -pthread.
+# The objects are prelinked into one relocatable object (ld -r) that keeps
+# only the gogo_* API global (an export list on Darwin, objcopy on ELF), so
+# the library's internal functions never clash with the host's;
+# tools/libsyms.sh checks that its globals are exactly gogo.h's functions.
+# libgogo-debug.a is the same objects archived as they are: on macOS the
+# prelinked object's debug info lives in build/lib/*.o (ld -r keeps a debug
+# map, not the DWARF), so a library copied elsewhere for debugging is that
+# one; its internal symbols are not hidden.
 LIB_SRCS   = $(VM_CORE_SRCS) $(VFS_SRCS) $(STREAM_SRCS) $(EMBED_SRCS)
 LIB_OBJS   = $(foreach f,$(LIB_SRCS),$(BUILD)/lib/$(subst /,_,$(patsubst runtime/%.c,%,$(f))).o)
-LIB_CFLAGS = -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g -DGOGO_EMBED -DGOGO_BUILD_UNIX_MS=$(BUILD_UNIX_MS)LL $(EXTRA_CFLAGS) \
+LIB_CFLAGS = -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g -fvisibility=hidden -DGOGO_EMBED -DGOGO_BUILD_UNIX_MS=$(BUILD_UNIX_MS)LL $(EXTRA_CFLAGS) \
              -Iruntime/include -Iruntime/embed -Iruntime/vm -Iruntime/vfs -Iruntime/stream
 LIB_HDRS   = runtime/include/gogo.h $(wildcard runtime/embed/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/stream/*.h)
+LIB_LD      ?= ld
+LIB_OBJCOPY ?= objcopy
 
-lib: $(BUILD)/libgogo.a
+lib: $(BUILD)/libgogo.a $(BUILD)/libgogo-debug.a
 
-$(BUILD)/libgogo.a: $(LIB_OBJS)
+$(BUILD)/libgogo.o: $(LIB_OBJS)
+ifeq ($(shell uname -s),Darwin)
+	@echo '_gogo_*' > $(BUILD)/lib/exports.txt
+	$(LIB_LD) -r -exported_symbols_list $(BUILD)/lib/exports.txt -o $@ $(LIB_OBJS)
+else
+	$(LIB_LD) -r -o $@ $(LIB_OBJS)
+	$(LIB_OBJCOPY) -w --keep-global-symbol='gogo_*' $@
+endif
+
+$(BUILD)/libgogo.a: $(BUILD)/libgogo.o runtime/include/gogo.h
+	@rm -f $@
+	ar rcs $@ $(BUILD)/libgogo.o
+	tools/libsyms.sh $@ runtime/include/gogo.h
+	tools/globals.sh --objects $@
+
+$(BUILD)/libgogo-debug.a: $(LIB_OBJS)
 	@rm -f $@
 	ar rcs $@ $(LIB_OBJS)
-	tools/libsyms.sh $@
 	tools/globals.sh --objects $@
 
 define LIB_OBJ_RULE
@@ -255,6 +277,21 @@ $(BUILD)/lib/$(subst /,_,$(patsubst runtime/%.c,%,$(1))).o: $(1) $(LIB_HDRS)
 	$(CC) $(LIB_CFLAGS) -c $(1) -o $$@
 endef
 $(foreach f,$(LIB_SRCS),$(eval $(call LIB_OBJ_RULE,$(f))))
+
+# A host defining functions named like libgogo's internal ones links
+# against libgogo.a and runs an image (the names must exist in the library,
+# else the test proves nothing).
+CLASH_SYMS = msg_free heap_alloc vm_step bytes_new port_open
+
+$(BUILD)/libgogo_clash: runtime/embed/test/clash/main.c runtime/include/gogo.h $(BUILD)/libgogo.a
+	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 $(EXTRA_CFLAGS) -Iruntime/include -o $@ $< $(BUILD)/libgogo.a -pthread
+
+test-libgogo: $(BUILD)/libgogo_clash $(BUILD)/libgogo-debug.a
+	for s in $(CLASH_SYMS); do nm -g $(BUILD)/libgogo-debug.a | grep -Eq " T _?$$s$$" || { echo "test-libgogo: $$s is not in the library"; exit 1; }; done
+	go build -o $(BUILD)/gogo ./cmd/gogo
+	$(BUILD)/gogo build examples/many_idle -o $(BUILD)/libgogo_clash.gogo
+	$(BUILD)/libgogo_clash $(BUILD)/libgogo_clash.gogo > $(BUILD)/libgogo_clash.out
+	cmp $(BUILD)/libgogo_clash.out examples/many_idle/expected.out
 
 # examples/embed-c: host programs on libgogo.a (examples/embed-c/test.sh
 # runs them on example images and compares their output).

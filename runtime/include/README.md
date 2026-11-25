@@ -7,7 +7,7 @@ images inside it. The book chapter
 ## libgogo.a
 
 ```sh
-make lib            # build/libgogo.a
+make lib            # build/libgogo.a (and build/libgogo-debug.a)
 cc -std=c99 -Iruntime/include -o host host.c build/libgogo.a -pthread
 ```
 
@@ -23,19 +23,19 @@ process, on any threads. It needs POSIX threads and clocks for
 
 ## Symbols
 
-Only the `gogo_*` functions declared in `gogo.h` are public. A static
-archive cannot hide the library's internal functions, so it also defines
-external symbols with these prefixes, which are reserved: a program
-linking libgogo.a must not define symbols that start with them.
+The library exports exactly the `gogo_*` functions declared in `gogo.h`
+(marked `GOGO_API`). `make lib` compiles the sources with
+`-fvisibility=hidden` and prelinks them into one relocatable object
+(`ld -r`) in which every other function is local: an export list on
+Darwin, `objcopy -w --keep-global-symbol='gogo_*'` on ELF (set `LIB_LD`
+and `LIB_OBJCOPY` for a cross toolchain). A host may define functions of
+any name, `msg_free` or `vm_step` included; `make test-libgogo` links
+such a host. `tools/libsyms.sh` fails the build if the archive's global
+symbols are not exactly gogo.h's functions.
 
-| prefix | from |
-|---|---|
-| `vm_`, `va_` | the VM and its allocator |
-| `actor_`, `bytes_`, `const_`, `evq_`, `heap_`, `image_`, `interp_`, `module_`, `msg_`, `names_`, `out_`, `port_`, `runq_`, `sig_`, `signal_`, `strs_`, `timer_` | the VM core |
-| `vfs_`, `fs_dir_` | the file system layer and the host directory behind `/flash` |
-| `stream_` | streams |
-| `embed_`, `inbox_` | the embedding layer |
-
-`make lib` runs `tools/libsyms.sh`, which fails if the archive defines a
-symbol outside this list (or a `gogo_*` symbol outside `runtime/embed`).
-Keep the two in sync.
+`build/libgogo-debug.a` holds the same objects archived as they are. On
+macOS `ld -r` keeps a debug map that points at `build/lib/*.o` rather
+than the DWARF itself, so debugging a program linked with `libgogo.a`
+works while those objects exist; to debug elsewhere, link
+`libgogo-debug.a` instead. Its internal functions are not hidden (a host
+symbol of the same name is a duplicate), so it is for debugging only.

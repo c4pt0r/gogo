@@ -1,26 +1,22 @@
 #!/bin/sh
-# Checks libgogo.a's external symbols: gogo_* is the public API (gogo.h);
-# every other symbol the archive defines must start with one of the
-# internal prefixes runtime/include/README.md reserves (a static archive
-# cannot hide them). Fails on a defined symbol with any other prefix, and on
-# a gogo_* symbol outside runtime/embed.
-#   tools/libsyms.sh build/libgogo.a
+# Checks that libgogo.a's global symbols are exactly the API functions
+# that gogo.h declares (GOGO_API ... gogo_name(...)): no internal function
+# leaks out, and every declared function is there.
+#   tools/libsyms.sh build/libgogo.a runtime/include/gogo.h
 set -e
 LC_ALL=C; export LC_ALL
-[ $# -eq 1 ] || { echo "usage: $0 libgogo.a" >&2; exit 2; }
-# Keep in sync with runtime/include/README.md.
-RESERVED="vm_ va_ actor_ bytes_ const_ embed_ evq_ fs_dir_ heap_ image_ inbox_ interp_ module_ msg_ names_ out_ port_ runq_ sig_ signal_ stream_ strs_ timer_ vfs_"
-# "member.o: " headers (GNU and LLVM nm) or "archive(member.o):" (macOS nm),
-# then "addr T name"; Mach-O names carry a leading underscore.
-nm -g "$1" | awk -v reserved="$RESERVED" '
-    BEGIN { n = split(reserved, r, " ") }
-    /:$/ { m = $0; sub(/:$/, "", m); sub(/^.*\(/, "", m); sub(/\)$/, "", m); next }
-    NF == 3 && $2 ~ /^[TDBSCRV]$/ {
-        s = $3; sub(/^_/, "", s)
-        total++
-        if (s ~ /^gogo_/) { pub++; if (m !~ /^embed_/) { print "libsyms: " s " (public) defined in " m " outside runtime/embed"; bad = 1 }; next }
-        ok = 0
-        for (i = 1; i <= n; i++) if (index(s, r[i]) == 1) { ok = 1; break }
-        if (!ok) { print "libsyms: " s " in " m ": not gogo_* and no reserved prefix"; bad = 1 }
-    }
-    END { if (bad) exit 1; printf "libsyms: ok (%d public gogo_* symbols, %d internal under reserved prefixes)\n", pub, total - pub }'
+[ $# -eq 2 ] || { echo "usage: $0 libgogo.a gogo.h" >&2; exit 2; }
+t=$(mktemp -d)
+trap 'rm -rf "$t"' EXIT
+sed -n 's/^GOGO_API .*[^a-z_]\(gogo_[a-z_]*\)(.*/\1/p' "$2" | sort -u > "$t/want"
+[ -s "$t/want" ] || { echo "libsyms: no GOGO_API functions in $2" >&2; exit 2; }
+# Defined globals ("addr T name"); Mach-O names carry a leading underscore.
+macho=0
+[ "$(uname -s)" = Darwin ] && macho=1
+nm -g "$1" | awk -v macho=$macho 'NF == 3 && $2 ~ /^[A-TV-Z]$/ { s = $3; if (macho) sub(/^_/, "", s); print s }' | sort -u > "$t/got"
+if ! cmp -s "$t/want" "$t/got"; then
+    echo "libsyms: $1's global symbols differ from $2's API (< missing, > extra):"
+    diff "$t/want" "$t/got" | grep '^[<>]' | sed 's/^/  /'
+    exit 1
+fi
+echo "libsyms: ok ($(wc -l < "$t/got" | tr -d ' ') global symbols, exactly gogo.h's API)"
