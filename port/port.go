@@ -4,8 +4,8 @@
 // every call with VM instructions, so the bodies are never executed.
 //
 // The struct types GPIO, Write and Edge have fixed type indices 6-8 in every
-// image (TYPE_* in vm/opcodes.h); keep their field order in sync with
-// compiler.reservedTypes.
+// image, Chunk, Out and Done 35-37 (TYPE_* in vm/opcodes.h); keep their
+// field order in sync with compiler.reservedTypes.
 //
 // Send a command to a port with actor.Send(p, port.Write{Value: 1}); any
 // actor holding the PID may. Events (port.Edge) go to the owner, the actor
@@ -15,7 +15,10 @@
 // with Handoff.
 package port
 
-import "gogo/actor"
+import (
+	"gogo/actor"
+	"gogo/bytes"
+)
 
 // GPIO configures a "gpio" port: one pin.
 type GPIO struct {
@@ -30,6 +33,30 @@ type Write struct{ Value int }
 
 // Edge is an event: the pin's level changed; Value is the level after it.
 type Edge struct{ Pin, Value int }
+
+// Chunk is a stream event, the one message type of every port that delivers
+// data in blocks (the "imu" sample batches, "ir_rx" frames). Seq counts the
+// chunks the port made, from 1, dropped ones included, so a gap in Seq means
+// chunks were lost; TimeMs is when the data began (the low 31 bits of the
+// millisecond clock; each port documents its precision); Dropped is how
+// many chunks were dropped since the last one delivered (a chunk over the
+// owner's mailbox quota is dropped and counted; the owner is not killed).
+type Chunk struct {
+	Seq, TimeMs, Dropped int
+	Data                 bytes.Bytes
+}
+
+// Out is a stream command: send Data to a port that outputs a stream (the
+// "ir_tx" timings). At most 2 Outs are in flight per port (one running, one
+// queued).
+type Out struct{ Data bytes.Bytes }
+
+// Done is a stream event: an Out has finished. Every accepted Out gets one,
+// in the order the Outs were sent; a refusal (Seq -1) is dropped only when
+// 16 Dones are already owed and unread (an owner that reads nothing, flooded
+// with Outs). Seq numbers the Outs sent successfully, from 1; it is -1 when the port refused the Out (too many in flight, or bad
+// data) or the hardware could not send it, and such an Out uses no number.
+type Done struct{ Seq int }
 
 // GPIO modes.
 const (

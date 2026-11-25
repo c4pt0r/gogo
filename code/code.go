@@ -68,6 +68,9 @@ const (
 	CapKbd     = 2       // the "kbd" port
 	CapPower   = 4       // the "power" port
 	CapSD      = 8       // the /sd file system
+	CapIMU     = 16      // the "imu" port
+	CapIRTX    = 32      // the "ir_tx" port
+	CapIRRX    = 64      // the "ir_rx" port
 	CapAnyPort = 1 << 31 // only a build-time marker: never missing
 )
 

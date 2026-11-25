@@ -189,7 +189,8 @@ const struct PortDriver *const *platform_port_drivers(void) {
 #if CONFIG_GOGO_NET
         &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver,
 #endif
-        &input_kbd_driver, &input_power_driver, NULL
+        &input_kbd_driver, &input_power_driver, &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
+        NULL
     };
     return list;
 }
@@ -234,6 +235,15 @@ uint32_t platform_caps(void) {
 #endif
 #if HAS_SD && CONFIG_GOGO_SD
     c |= CAP_SD;
+#endif
+#if HAS_IMU && CONFIG_GOGO_IMU
+    c |= CAP_IMU;
+#endif
+#if HAS_IR_TX && CONFIG_GOGO_IR
+    c |= CAP_IR_TX;
+#endif
+#if HAS_IR_RX && CONFIG_GOGO_IR
+    c |= CAP_IR_RX;
 #endif
     return c;
 }

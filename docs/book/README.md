@@ -22,6 +22,7 @@ and assumes no knowledge of embedded programming or Erlang.
 12. [Toolchain Reference](12-toolchain-reference.md): `gogo build`, `run`, `dis`, `flash`, `monitor`, `config`
 13. [Appendices](13-appendices.md): library quick reference, exit reasons, error codes, limits, differences from Go
 14. [Hot Loading](14-hot-loading.md): loading code at run time, modules, supervised upgrades
+15. [IMU and IR](15-imu-and-ir.md): the motion sensor, infrared send and receive, streams (`Chunk`, `Out`, `Done`)
 
 [Notes for maintainers](NOTES-for-maintainers.md) lists the places where
 the documentation and the behaviour disagree, found while writing the book.

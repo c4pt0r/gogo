@@ -1,4 +1,5 @@
-/* Keyboard and power ports (spec input §5): chip-independent code. A
+/* Keyboard, power, IMU and IR ports (spec input §5, input2 §4):
+ * chip-independent code; the IMU and IR streams go through stream/. A
  * platform describes its hardware with an InputHw; input/ turns raw key
  * events into kbd.Key messages (codes, characters, modifiers, auto-repeat)
  * and, on the scheduler thread, polls the power chip. Every hook runs on
@@ -10,6 +11,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "port.h"
+
+/* What imu_read_gestures reports: the gesture kinds seen since the last
+ * call (bits as imu.Tap .. imu.Step), and the values that go with two of
+ * them: the orientation number (valid with the Orientation bit) and the
+ * cumulative step count (valid with the Step bit). */
+typedef struct { uint8_t bits, orient; uint32_t steps; } ImuGestures;
+/* The most timings in one IR frame, sent or received (spec input2 §3). */
+#define IR_FRAME_MAX 256u
+
+/* The gesture bits (imu.Tap .. imu.Step) that carry a Value. */
+enum { IMU_ORIENTATION = 8, IMU_STEP = 128 };
 
 /* A board's key table, indexed by the chip's raw key number. */
 typedef struct { uint8_t code, fn_code; } KbdKey;   /* code 0 = no key at this raw index */
@@ -45,13 +57,65 @@ typedef struct InputHw {
      * deadline keeps the VM waiting (unix: only `battery` script lines and
      * Read produce events). */
     bool power_event_driven;
+    /* IMU (spec input2 §4); imu_open NULL = no IMU. imu_read_fifo is needed
+     * only for RateHz > 0 and imu_read_gestures only for a non-zero gesture
+     * mask: a Config asking for what a hook table lacks is refused. Polled from the scheduler
+     * thread every min(BatchMs, 50) ms; there is no interrupt flag.
+     * imu_open: starts the sensor at rate_hz (0 = no samples, gestures only;
+     * 25, 50, 100 or 200) with the gesture kinds in `gestures` enabled, and
+     * flushes its FIFO; 0 ok. imu_close stops it (optional). imu_read_fifo:
+     * moves up to cap bytes of whole 12-byte samples (int16 LE gx gy gz ax
+     * ay az) into buf, returns the byte count (0 = empty, -1 error, retried
+     * at the next poll); it is never called when rate_hz is 0.
+     * imu_read_gestures: the kinds seen since the last call, which it clears;
+     * 0 ok, -1 error. */
+    int  (*imu_open)(uint16_t rate_hz, uint8_t gestures);
+    void (*imu_close)(void);
+    int  (*imu_read_fifo)(uint8_t *buf, uint32_t cap);
+    int  (*imu_read_gestures)(ImuGestures *g);
+    /* Infrared (spec input2 §3, §4). Timings are microseconds, mark and
+     * space alternating, mark first, each 1..32767; a frame holds at most
+     * IR_FRAME_MAX values either way.
+     * Transmitter: both hooks or neither (NULL = no ir_tx); the optional
+     * ir_tx_open / ir_tx_close are at the end of the struct. ir_tx_start
+     * starts sending n (1..IR_FRAME_MAX) timings, given as 2n bytes of
+     * uint16 LE, with the carrier at carrier_hz and duty_pct; it copies
+     * (converts) what it needs before returning, so the bytes are not used
+     * afterwards, and it is called only while ir_tx_busy is false; 0 ok,
+     * -1 error (the program gets Done{-1}). ir_tx_busy: true while a frame
+     * is being sent; a pure read, polled. */
+    int  (*ir_tx_start)(const uint8_t *timings, uint32_t n, uint32_t carrier_hz, uint8_t duty_pct);
+    bool (*ir_tx_busy)(void);
+    /* Receiver: ir_rx_open and ir_rx_read (NULL = no ir_rx); ir_rx_close is
+     * optional. ir_rx_open: a gap longer than gap_us (1..32767) ends a
+     * frame; 0 ok. ir_rx_read: the oldest complete frame, its values (each
+     * clamped to 1..32767 by the caller) into buf: returns its value count,
+     * which may exceed cap (then only cap were stored and the rest are
+     * lost), 0 when no complete frame waits, -1 error (retried at the next
+     * poll). *start_ms holds the poll's time (platform_now_ms, low 32 bits)
+     * on the call; a hook that knows when the frame began stores that
+     * instead. Polled every 20 ms while ir_rx is open. */
+    int  (*ir_rx_open)(uint32_t gap_us);
+    int  (*ir_rx_read)(uint16_t *buf, uint32_t cap, uint32_t *start_ms);
+    void (*ir_rx_close)(void);
+    /* Transmitter, optional (NULL = nothing to do), like ir_rx_close: called
+     * when an ir_tx port opens (after its config is checked; -1 makes the
+     * open fail) and when it closes, so a platform can power the emitter
+     * and hold its resources only while a port is open. carrier_hz and
+     * duty_pct are the port's, the same values every ir_tx_start of that
+     * port gets. ir_tx_close may cut a frame still being sent; the next
+     * ir_tx_open starts from idle (ir_tx_busy false). Kept at the end of
+     * the struct so positional initialisers stay valid. */
+    int  (*ir_tx_open)(uint32_t carrier_hz, uint8_t duty_pct);
+    void (*ir_tx_close)(void);
 } InputHw;
 
 /* The platform's hardware; never NULL, fields NULL when absent. A weak
  * default (no hardware) is in source.c. */
 const InputHw *platform_input(void);
 
-extern const PortDriver input_kbd_driver, input_power_driver;
+extern const PortDriver input_kbd_driver, input_power_driver, input_imu_driver, input_ir_tx_driver,
+    input_ir_rx_driver;
 
 /* Registers the input source (call once at startup). */
 void input_install(void);

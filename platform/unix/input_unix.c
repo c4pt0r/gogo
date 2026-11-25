@@ -1,7 +1,9 @@
 #define _POSIX_C_SOURCE 200112L   /* nanosleep, termios */
 /* unix input simulation (spec M3 5.4, input §5.6): the only reader of stdin.
  *
- * gpio input ports, the kbd port and the power port are fed from it.
+ * gpio input ports, the kbd, power, imu and ir_rx ports are fed from it;
+ * ir_tx prints `ir tx: <n> values` on stderr for each frame and is busy
+ * for as long as the frame would take (the sum of its timings).
  *
  *  - Script mode (stdin is not a terminal): one line per idle wait while a
  *    port that can produce events is open, so the output depends only on
@@ -11,6 +13,15 @@
  *      key <name>               key press, then release
  *      keydown <name> / keyup <name>
  *      battery <mV> <charging> <external>
+ *      imu sample <gx> <gy> <gz> <ax> <ay> <az>   int16 each; queued, handed to
+ *                                                 the driver at its next poll
+ *      imu gesture <kind> [value]   tap doubletap tripletap orientation flat
+ *                                   anymotion nomotion step (value: the
+ *                                   orientation number or step count)
+ *      ir rx <us> <us> ...      one received frame (1 to 512 values, each
+ *                               1..32767; a line is a whole frame, GapUs
+ *                               plays no part), queued (4 frames) while
+ *                               ir_rx is open, handed over at its next poll
  *    Names: a-z 0-9 enter esc backspace tab space delete up down left right
  *    f1-f12 ctrl shift alt opt fn, and the punctuation characters
  *    - = [ ] \ ; ' ` , . /   Unknown lines are reported on stderr and
@@ -113,7 +124,12 @@ bool input_unix_live(void) { return !stdin_eof; }
 static void err_line(const char *prefix, const char *s) {
     char b[160];
     int n = snprintf(b, sizeof b, "%s%s\n", prefix, s);
-    if (n > 0) platform_write_err(b, (size_t)(n < (int)sizeof b ? n : (int)sizeof b - 1));
+    if (n <= 0) return;
+    if (n >= (int)sizeof b) {                    /* cut (a long `ir rx` line): keep the newline */
+        n = (int)sizeof b - 1;
+        memcpy(b + n - 4, "...\n", 4);
+    }
+    platform_write_err(b, (size_t)n);
 }
 
 /* ---- the keyboard ---- */
@@ -245,8 +261,149 @@ static int p_read(int32_t *mv, int8_t *ch, int8_t *ext) {
 }
 static bool p_pending(void) { return bat.pend; }
 
+/* ---- the motion sensor ---- */
+
+/* `imu sample` lines queue samples (the FIFO); imu_read_fifo releases what
+ * is queued, so a sample reaches the driver at the next poll after its
+ * line. Samples are kept only while the port is open at a RateHz above 0;
+ * `imu gesture` lines accumulate until imu_read_gestures. */
+#define IMU_QLEN 256u
+enum { IMU_SAMPLE = 12 };
+static struct {
+    bool on;
+    uint16_t rate;
+    uint8_t mask;
+    uint8_t q[IMU_QLEN][IMU_SAMPLE];
+    unsigned qh, qt;
+    ImuGestures g;
+} imu;
+
+static int i_open(uint16_t rate, uint8_t mask) {
+    memset(&imu, 0, sizeof imu);
+    imu.on = true;
+    imu.rate = rate;
+    imu.mask = mask;
+    input_unix_attach();
+    return 0;
+}
+static void i_close(void) {
+    if (!imu.on) return;
+    imu.on = false;
+    input_unix_detach();
+}
+static int i_read_fifo(uint8_t *buf, uint32_t cap) {
+    uint32_t n = 0;
+    while (imu.qh != imu.qt && n + IMU_SAMPLE <= cap) {
+        memcpy(buf + n, imu.q[imu.qh % IMU_QLEN], IMU_SAMPLE);
+        imu.qh++;
+        n += IMU_SAMPLE;
+    }
+    return (int)n;
+}
+static int i_read_gestures(ImuGestures *g) {
+    *g = imu.g;
+    imu.g.bits = 0;
+    return 0;
+}
+
+static void imu_push_sample(const int *v) {
+    if (!imu.on || !imu.rate || imu.qt - imu.qh >= IMU_QLEN) return;   /* full: dropped like a FIFO overflow */
+    uint8_t *d = imu.q[imu.qt % IMU_QLEN];
+    for (int i = 0; i < 6; i++) {
+        d[2 * i] = (uint8_t)(v[i] & 0xFF);
+        d[2 * i + 1] = (uint8_t)((unsigned)v[i] >> 8 & 0xFF);
+    }
+    imu.qt++;
+}
+
+static void imu_push_gesture(unsigned bit, int value) {
+    if (!imu.on || !(imu.mask & bit)) return;
+    imu.g.bits = (uint8_t)(imu.g.bits | bit);
+    if (bit == IMU_ORIENTATION) imu.g.orient = (uint8_t)value;
+    if (bit == IMU_STEP) imu.g.steps = (uint32_t)value;
+}
+
+/* imu.Tap .. imu.Step bit of a gesture name, 0 if unknown. */
+static unsigned gesture_bit(const char *s) {
+    static const char *const names[8] = { "tap", "doubletap", "tripletap", "orientation", "flat", "anymotion",
+                                          "nomotion", "step" };
+    for (unsigned i = 0; i < 8; i++) {
+        if (strcmp(names[i], s) == 0) return 1u << i;
+    }
+    return 0;
+}
+
+/* ---- infrared ---- */
+
+#define IR_SIM_FRAMES 4u
+#define IR_SIM_MAX 512u
+static struct {
+    bool rx_on;
+    uint16_t f[IR_SIM_FRAMES][IR_SIM_MAX];
+    uint16_t n[IR_SIM_FRAMES];
+    uint32_t at[IR_SIM_FRAMES];   /* ms: when its line was read (the frame's start) */
+    unsigned h, t;
+    uint64_t tx_end;           /* ms: the frame being sent ends */
+} irs;
+
+static int ir_start(const uint8_t *t, uint32_t n, uint32_t carrier, uint8_t duty) {
+    (void)carrier; (void)duty;
+    uint64_t us = 0;
+    for (uint32_t i = 0; i < n; i++) us += (uint32_t)t[2 * i] | (uint32_t)t[2 * i + 1] << 8;
+    irs.tx_end = platform_now_ms() + (us + 999u) / 1000u;
+    char b[48];
+    int k = snprintf(b, sizeof b, "ir tx: %lu values\n", (unsigned long)n);
+    if (k > 0) platform_write_err(b, (size_t)k);
+    return 0;
+}
+static bool ir_busy(void) { return platform_now_ms() < irs.tx_end; }
+static int ir_rx_open(uint32_t gap_us) {
+    (void)gap_us;
+    irs.h = irs.t = 0;
+    irs.rx_on = true;
+    input_unix_attach();
+    return 0;
+}
+static void ir_rx_close(void) {
+    if (!irs.rx_on) return;
+    irs.rx_on = false;
+    input_unix_detach();
+}
+static int ir_rx_read(uint16_t *buf, uint32_t cap, uint32_t *start_ms) {
+    if (irs.h == irs.t) return 0;
+    unsigned k = irs.h++ % IR_SIM_FRAMES;
+    uint32_t n = irs.n[k];
+    *start_ms = irs.at[k];
+    memcpy(buf, irs.f[k], (n < cap ? n : cap) * sizeof *buf);
+    return (int)n;
+}
+
+/* An `ir rx` line's values (after "ir rx"); false if malformed. */
+static bool ir_push_frame(const char *s) {
+    static uint16_t v[IR_SIM_MAX];
+    uint32_t n = 0;
+    for (;;) {
+        while (*s == ' ' || *s == '\t') s++;
+        if (!*s) break;
+        char *end;
+        long x = strtol(s, &end, 10);
+        if (end == s || (*end && *end != ' ' && *end != '\t') || x < 1 || x > 32767 || n == IR_SIM_MAX) return false;
+        v[n++] = (uint16_t)x;
+        s = end;
+    }
+    if (!n) return false;
+    if (!irs.rx_on || irs.t - irs.h >= IR_SIM_FRAMES) return true;   /* closed, or full: lost like on air */
+    unsigned k = irs.t++ % IR_SIM_FRAMES;
+    memcpy(irs.f[k], v, n * sizeof v[0]);
+    irs.n[k] = (uint16_t)n;
+    irs.at[k] = (uint32_t)platform_now_ms();
+    return true;
+}
+
 const InputHw input_unix_hw = {
-    keytab, 256, k_open, k_close, k_pending, k_read, p_read, p_pending, input_unix_live, p_enable, true
+    keytab, 256, k_open, k_close, k_pending, k_read, p_read, p_pending, input_unix_live, p_enable, true,
+    i_open, i_close, i_read_fifo, i_read_gestures,
+    ir_start, ir_busy, ir_rx_open, ir_rx_read, ir_rx_close, NULL, NULL   /* no ir_tx_open / ir_tx_close */
 };
 
 /* ---- script ---- */
@@ -260,7 +417,7 @@ static void sleep_ms(unsigned long ms) {
 
 /* One script line; true at EOF. */
 static bool script_line(void) {
-    char buf[128];
+    static char buf[4096];      /* an `ir rx` line of 512 values fits */
     if (!fgets(buf, sizeof buf, stdin)) return true;
     size_t n = strlen(buf);
     if (n && buf[n - 1] == '\n') buf[--n] = 0;
@@ -294,6 +451,21 @@ static bool script_line(void) {
         platform_notify();
         return false;
     }
+    {
+        int v[6], val = 0, got;
+        got = sscanf(buf, "imu sample %d %d %d %d %d %d %c", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &tail);
+        if (got == 6) {
+            int ok = 1;
+            for (int i = 0; i < 6; i++) ok &= v[i] >= -32768 && v[i] <= 32767;
+            if (ok) { imu_push_sample(v); return false; }
+        }
+        got = sscanf(buf, "imu gesture %15s %d %c", name, &val, &tail);
+        if (got >= 1 && got <= 2 && gesture_bit(name) && (got == 1 || val >= 0)) {
+            imu_push_gesture(gesture_bit(name), val);
+            return false;
+        }
+    }
+    if (strncmp(buf, "ir rx ", 6) == 0 && ir_push_frame(buf + 6)) return false;
     err_line("input: bad line, skipped: ", buf);
     return false;
 }

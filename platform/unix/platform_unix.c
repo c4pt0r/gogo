@@ -328,13 +328,13 @@ static void net_wait(uint32_t ms) {
     net_poll(-1);
 }
 
-/* The kbd and power drivers (input/) are linked into gogovm only, not into
+/* The kbd, power, imu and ir drivers (input/) are linked into gogovm only, not into
  * the C test builds that share this file: main.c overrides this weak hook to
  * append them (a linker does not resolve weak undefined data on every host). */
 __attribute__((weak)) int platform_unix_input_drivers(const struct PortDriver **out, int cap) { (void)out; (void)cap; return 0; }
 
 const struct PortDriver *const *platform_port_drivers(void) {
-    static const struct PortDriver *list[8];
+    static const struct PortDriver *list[12];
     if (!list[0]) {
         int n = 0;
         list[n++] = &gpio_unix_driver;
@@ -388,6 +388,6 @@ int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uin
 }
 
 /* Unix provides every capability; --caps <hex> (test only) overrides. */
-static uint32_t unix_caps = CAP_NET | CAP_KBD | CAP_POWER | CAP_SD;
+static uint32_t unix_caps = CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX;
 void platform_unix_set_caps(uint32_t caps) { unix_caps = caps; }
 uint32_t platform_caps(void) { return unix_caps; }

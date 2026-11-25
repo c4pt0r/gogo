@@ -51,6 +51,27 @@ menu "gogo"
             fails with the existing "no FAT or exFAT file system" message
             and /sd stays NotMounted.
 
+    config GOGO_IMU
+        bool "Motion sensor port (imu)"
+        default y
+        help
+            Build the BMI270 IMU driver (imu_esp.c, both boards, on the
+            shared I2C bus) and its 8 KB legacy configuration (Bosch,
+            BSD-3). When off, CAP_IMU is absent (an image that needs it is
+            refused at boot), port.Open("imu") returns ok=false, and on the
+            Cardputer with GOGO_KBD also off the IDF I2C driver is not
+            linked.
+
+    config GOGO_IR
+        bool "Infrared ports (ir_tx, ir_rx)"
+        default y
+        help
+            Build the RMT infrared drivers (ir_esp.c): ir_tx on both
+            boards (StickS3 G46, Cardputer G44), ir_rx on the StickS3 only
+            (G42). When off, CAP_IR_TX and CAP_IR_RX are absent, port.Open
+            of those ports returns ok=false, and the IDF RMT driver is not
+            linked.
+
     config GOGO_FONT_CJK
         bool "Chinese console font (GB 2312)"
         default y

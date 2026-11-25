@@ -39,16 +39,19 @@ static int load_error(const char *path, const char *what) {
     return 2;
 }
 
-/* The unix keyboard and battery are simulated from stdin (input_unix.c). */
+/* The unix keyboard, battery, motion sensor and infrared are simulated from stdin (input_unix.c). */
 const InputHw *platform_input(void) { return &input_unix_hw; }
 int platform_unix_input_drivers(const struct PortDriver **out, int cap) {
-    if (cap < 2) {   /* the driver list in platform_unix.c is full: skip them, loudly */
-        fprintf(stderr, "gogovm: no room in the port driver list: kbd and power skipped\n");
+    if (cap < 5) {   /* the driver list in platform_unix.c is full: skip them, loudly */
+        fprintf(stderr, "gogovm: no room in the port driver list: kbd, power, imu and ir skipped\n");
         return 0;
     }
     out[0] = &input_kbd_driver;
     out[1] = &input_power_driver;
-    return 2;
+    out[2] = &input_imu_driver;
+    out[3] = &input_ir_tx_driver;
+    out[4] = &input_ir_rx_driver;
+    return 5;
 }
 
 

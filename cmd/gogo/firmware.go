@@ -36,7 +36,7 @@ type fwFeature struct {
 //
 // This table and fwBoards below are the single place in Go that knows the
 // features and boards. They MUST match platform/esp32s3/main/board.h
-// (HAS_KBD, HAS_SD per board) and platform/esp32s3/main/Kconfig.projbuild
+// (HAS_KBD, HAS_SD, HAS_IMU, HAS_IR_TX, HAS_IR_RX per board) and platform/esp32s3/main/Kconfig.projbuild
 // (the GOGO_* symbols and GOGO_FS_EXFAT depends on GOGO_SD);
 // TestFirmwareTableMatchesSources checks both. Change them together.
 var fwFeatures = []fwFeature{
@@ -46,6 +46,11 @@ var fwFeatures = []fwFeature{
 	{name: "sd", kconf: "CONFIG_GOGO_SD", cap: compiler.CapSD, onBy: true, hasH: "HAS_SD"},
 	{name: "exfat", kconf: "CONFIG_GOGO_FS_EXFAT", onBy: true, needs: "sd"},
 	{name: "cjk", kconf: "CONFIG_GOGO_FONT_CJK", onBy: true},
+	{name: "imu", kconf: "CONFIG_GOGO_IMU", cap: compiler.CapIMU, onBy: true, hasH: "HAS_IMU"},
+	// irtx and irrx are two capabilities of one switch (GOGO_IR builds both
+	// drivers; the board's HAS_IR_RX says whether it has a receiver).
+	{name: "irtx", kconf: "CONFIG_GOGO_IR", cap: compiler.CapIRTX, onBy: true, hasH: "HAS_IR_TX"},
+	{name: "irrx", kconf: "CONFIG_GOGO_IR", cap: compiler.CapIRRX, onBy: true, hasH: "HAS_IR_RX"},
 }
 
 // fwBoard describes one board: its SDKCONFIG_DEFAULTS overlay (see
@@ -64,8 +69,8 @@ func fwHas(names ...string) map[string]bool {
 }
 
 var fwBoards = map[string]fwBoard{
-	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk")},
-	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk")},
+	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx")},
+	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx")},
 }
 
 func fwLookup(name string) (fwFeature, bool) {
@@ -89,7 +94,7 @@ func fwNames() string {
 // of the files and the -with / -without lists.
 func fwPlan(board string, req uint32, with, without []string) (map[string]bool, error) {
 	has := func(f fwFeature) bool { return fwBoards[board].has[f.name] }
-	const known = compiler.CapNet | compiler.CapKbd | compiler.CapPower | compiler.CapSD | compiler.CapAnyPort
+	const known = compiler.CapNet | compiler.CapKbd | compiler.CapPower | compiler.CapSD | compiler.CapIMU | compiler.CapIRTX | compiler.CapIRRX | compiler.CapAnyPort
 	if bad := req &^ known; bad != 0 {
 		return nil, fmt.Errorf("gogo firmware: the images require capability bits %#x that this gogo does not know", bad)
 	}
@@ -97,6 +102,15 @@ func fwPlan(board string, req uint32, with, without []string) (map[string]bool, 
 	for _, f := range fwFeatures {
 		if f.cap != 0 && (req&f.cap != 0 || (req&compiler.CapAnyPort != 0 && f.port && has(f))) {
 			required[f.name] = true
+		}
+	}
+	// features that share one Kconfig switch are one build option: what one
+	// of them needs, the others (that the board has) need too
+	for _, f := range fwFeatures {
+		for _, g := range fwFeatures {
+			if g.kconf == f.kconf && required[g.name] && has(f) {
+				required[f.name] = true
+			}
 		}
 	}
 	on := map[string]bool{}
@@ -116,6 +130,14 @@ func fwPlan(board string, req uint32, with, without []string) (map[string]bool, 
 		}
 		on[n] = true
 	}
+	for _, n := range with { // an explicit -with must not be undone by its switch partner's -without
+		f, _ := fwLookup(n)
+		for _, w := range without {
+			if g, ok := fwLookup(w); ok && g.kconf == f.kconf && g.name != f.name {
+				return nil, fmt.Errorf("gogo firmware: -with %s and -without %s conflict: they share the %s switch", n, w, f.kconf)
+			}
+		}
+	}
 	for _, n := range without {
 		if _, ok := fwLookup(n); !ok {
 			return nil, fmt.Errorf("gogo firmware: unknown feature %q in -without (features: %s)", n, fwNames())
@@ -128,11 +150,23 @@ func fwPlan(board string, req uint32, with, without []string) (map[string]bool, 
 		if required[n] {
 			f, _ := fwLookup(n)
 			if f.cap&req == 0 {
+				for _, g := range fwFeatures { // required only through its switch partner
+					if g.name != n && g.kconf == f.kconf && g.cap&req != 0 {
+						return nil, fmt.Errorf("gogo firmware: cannot remove %s: it shares the %s switch with %s, which the images require", n, f.kconf, g.name)
+					}
+				}
 				return nil, fmt.Errorf("gogo firmware: cannot remove %s: required (an image opens ports by run-time name)", n)
 			}
 			return nil, fmt.Errorf("gogo firmware: cannot remove %s: it is required by the images", n)
 		}
 		on[n] = false
+	}
+	for _, f := range fwFeatures { // one switch, one value: off if any of its features is off
+		for _, g := range fwFeatures {
+			if g.kconf == f.kconf && has(g) && !on[g.name] {
+				on[f.name] = false
+			}
+		}
 	}
 	for _, f := range fwFeatures { // Kconfig depends-on, in table order
 		if f.needs != "" && !on[f.needs] {
@@ -151,7 +185,12 @@ func fwPlan(board string, req uint32, with, without []string) (map[string]bool, 
 func fwOverlay(board string, on map[string]bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# gogo firmware overlay for %s (generated by `gogo firmware`)\n", board)
+	done := map[string]bool{} // a switch shared by several features is written once
 	for _, f := range fwFeatures {
+		if done[f.kconf] {
+			continue
+		}
+		done[f.kconf] = true
 		v := "n"
 		if on[f.name] {
 			v = "y"

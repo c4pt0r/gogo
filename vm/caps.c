@@ -13,8 +13,9 @@ int vm_caps_ok(uint32_t requires, uint32_t caps, uint32_t *missing) {
 }
 
 static char *put_names(char *p, uint32_t bits) {
-    static const char names[4][6] = {"net", "kbd", "power", "sd"};   /* CAP_NET.. in bit order */
-    for (int i = 0; i < 4; i++) {
+    /* the width 6 is "power" plus NUL; widen it with the longest new name */
+    static const char names[][6] = {"net", "kbd", "power", "sd", "imu", "irtx", "irrx"};   /* CAP_NET.. in bit order */
+    for (unsigned i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (!(bits & (1u << i))) continue;
         if (p[-1] != ' ') *p++ = ' ';
         for (const char *s = names[i]; *s; s++) *p++ = *s;

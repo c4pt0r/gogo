@@ -1,0 +1,6 @@
+double tap: recording
+orientation: on its left side, face up
+steps: 4
+double tap: stopped
+orientation: upside down, face down
+steps: 12

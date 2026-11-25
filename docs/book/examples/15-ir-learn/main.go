@@ -1,0 +1,56 @@
+// Learn a remote control button and send it back. The first frame the
+// receiver hears is kept; if it is an NEC code it is also decoded. Then the
+// learned frame is sent twice, followed by an NEC code built from scratch.
+// A transmitter takes at most two Outs at a time, so the third is sent
+// when the first Done comes back. On the host the frames come from the
+// "ir rx <us> ..." lines of the stdin script, and every frame sent prints
+// "ir tx: <n> values" on stderr.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/ir"
+	"gogo/irproto"
+	"gogo/port"
+)
+
+func main() {
+	rx, ok := port.Open("ir_rx", ir.RX{GapUs: 10000})
+	if !ok {
+		println("no IR receiver on this board")
+		return
+	}
+	var learned bytes.Bytes
+	for got := false; !got; {
+		switch c := actor.Receive().(type) {
+		case port.Chunk:
+			learned = c.Data
+			got = true
+		}
+	}
+	port.Close(rx)
+	println("learned a frame of", learned.Len()/2, "timings")
+	addr, cmd, nec := irproto.DecodeNEC(learned)
+	if nec {
+		println("it is NEC: address", addr, "command", cmd)
+	}
+
+	tx, ok := port.Open("ir_tx", ir.TX{CarrierHz: 38000, DutyPct: 33})
+	if !ok {
+		println("no IR transmitter on this board")
+		return
+	}
+	actor.Send(tx, port.Out{Data: learned})
+	actor.Send(tx, port.Out{Data: learned})
+	for sent := 0; sent < 3; {
+		switch d := actor.Receive().(type) {
+		case port.Done:
+			sent++
+			println("sent", d.Seq)
+			if d.Seq == 1 {
+				actor.Send(tx, port.Out{Data: irproto.EncodeNEC(4, 9)})
+			}
+		}
+	}
+}

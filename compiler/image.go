@@ -14,7 +14,7 @@ const (
 	// code, see constMap; v8: reserved types kbd.*, power.*; v9: requires
 	// bitmask and exports table after the const map, B_CODE and the
 	// gogo/code reserved type Module).
-	imageVersion = 9
+	imageVersion = 10
 )
 
 // ImageVersion is the image format version this compiler emits.

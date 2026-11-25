@@ -1,0 +1,140 @@
+/* The imu port (spec input2 §2, §4): polls the board's motion sensor on the
+ * scheduler thread every min(BatchMs, 50) ms. FIFO bytes (12-byte samples)
+ * are gathered into one batch and sent as a port.Chunk when BatchMs has
+ * passed or the batch is full; gesture bits become imu.Gesture events,
+ * filtered by the Config mask. Delivery never kills the owner: a Chunk it
+ * has no room for is dropped and counted (stream/). The batch buffer is
+ * BatchMs * RateHz * 12 / 1000 bytes (at most IMU_BATCH_MAX), allocated on
+ * open (VM allocator, charged to the owner through Port.charge_words) and
+ * freed on close; the rest of the state is the small struct below.
+ *
+ * Two things programs must know: TimeMs of a Chunk is the start of its batch
+ * window (the open, or the previous cut), within one poll period of the
+ * first sample; and closing the port (or the owner exiting) discards the
+ * partial last batch, so close right after a Chunk to lose nothing. */
+#include "input_int.h"
+#include "platform.h"
+#include "stream.h"
+#include "alloc.h"
+#include <string.h>
+
+enum { SAMPLE = 12, IMU_BATCH_MAX = 2400, DEF_BATCH = 200, MIN_BATCH = 50, MAX_BATCH = 1000, MAX_POLL = 50,
+       GESTURE_ALL = 0xFF };
+
+static struct {
+    const Port *port;          /* the open port, NULL = closed */
+    uint8_t *buf;              /* the batch, NULL when rate is 0 */
+    StreamIn in;
+    uint32_t next_poll;        /* ms, wrapping */
+    uint32_t batch_at;         /* ms, wrapping: when the batch began */
+    uint16_t cap, fill;        /* bytes */
+    uint16_t batch_ms, poll_ms;
+    uint8_t mask;
+    uint8_t rate;              /* RateHz / 25 (0, 1, 2, 4, 8): fits a byte */
+} m;
+
+static int imu_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)index;
+    const InputHw *hw = platform_input();
+    if (input_failed() || m.port || !hw->imu_open || n < 3) return -1;
+    int32_t rate = cfg[0], mask = cfg[1], batch = cfg[2];
+    if (rate != 0 && rate != 25 && rate != 50 && rate != 100 && rate != 200) return -1;
+    if (mask < 0 || mask > GESTURE_ALL) return -1;
+    if (rate && !hw->imu_read_fifo) return -1;
+    if (mask && !hw->imu_read_gestures) return -1;
+    batch = batch <= 0 ? DEF_BATCH : batch < MIN_BATCH ? MIN_BATCH : batch > MAX_BATCH ? MAX_BATCH : batch;
+    uint32_t cap = (uint32_t)batch * (uint32_t)rate * SAMPLE / 1000u;
+    if (cap > IMU_BATCH_MAX) cap = IMU_BATCH_MAX;
+    cap -= cap % SAMPLE;
+    memset(&m, 0, sizeof m);
+    if (rate) {
+        if (cap < SAMPLE) cap = SAMPLE;
+        m.buf = va_alloc(cap);
+        if (!m.buf) return -1;
+    }
+    if (hw->imu_open((uint16_t)rate, (uint8_t)mask) != 0) {
+        if (m.buf) va_free(m.buf, cap);
+        memset(&m, 0, sizeof m);
+        return -1;
+    }
+    m.cap = (uint16_t)(rate ? cap : 0);
+    m.rate = (uint8_t)(rate / 25);
+    m.mask = (uint8_t)mask;
+    m.batch_ms = (uint16_t)batch;
+    m.poll_ms = (uint16_t)(batch < MAX_POLL ? batch : MAX_POLL);
+    m.batch_at = (uint32_t)platform_now_ms();
+    m.next_poll = m.batch_at + m.poll_ms;
+    p->charge_words = (uint16_t)((m.cap + 3u) / 4u);   /* the owner pays; port_open refuses one that cannot */
+    m.port = p;
+    return 0;
+}
+
+static void imu_close(Port *p) {
+    if (m.port != p) return;                      /* a refused open's cleanup */
+    const InputHw *hw = platform_input();
+    if (hw->imu_close) hw->imu_close();
+    if (m.buf) va_free(m.buf, m.cap);
+    memset(&m, 0, sizeof m);
+}
+
+static void imu_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)p; (void)type; (void)f; (void)n; }
+
+static bool imu_can_event(const Port *p) {
+    (void)p;
+    const InputHw *hw = platform_input();
+    return !hw->live || hw->live();
+}
+
+const PortDriver input_imu_driver = {
+    "imu", TYPE_IMU_CONFIG, TYPE_IMU_GESTURE, imu_open, imu_command, imu_close, imu_can_event, NULL, NULL,
+};
+
+/* ---- scheduler side ---- */
+
+bool imu_is_open(void) { return m.port != NULL; }
+
+bool imu_work(uint64_t now) { return m.port && (m.rate || m.mask) && reached(now, m.next_poll); }
+
+bool imu_next_deadline(uint64_t now, uint64_t *d) {
+    if (!m.port || (!m.rate && !m.mask)) return false;     /* nothing to poll */
+    *d = deadline_abs(now, m.next_poll);
+    return true;
+}
+
+static void send_batch(Vm *vm, uint64_t now) {
+    if (m.fill) {
+        if (!stream_deliver_chunk(vm, m.port, &m.in, m.batch_at, m.buf, m.fill)) dropped_inc();
+        m.fill = 0;                               /* sent or dropped: never kept for later */
+    }
+    m.batch_at = (uint32_t)now;
+}
+
+static void gestures(Vm *vm) {
+    ImuGestures g;
+    if (!m.mask || platform_input()->imu_read_gestures(&g) != 0) return;
+    uint8_t bits = (uint8_t)(g.bits & m.mask);
+    for (uint8_t k = 1; bits; k = (uint8_t)(k << 1)) {
+        if (!(bits & k)) continue;
+        bits = (uint8_t)(bits & ~k);
+        int32_t v[2] = { k, k == IMU_ORIENTATION ? g.orient : k == IMU_STEP ? (g.steps > 0x7FFFFFFFu ? 0x7FFFFFFF : (int32_t)g.steps) : 0 };
+        if (!port_deliver_ints(vm, m.port, TYPE_IMU_GESTURE, v, 2, 0)) dropped_inc();
+    }
+}
+
+void imu_drain(Vm *vm, uint64_t now) {
+    if (!imu_work(now)) return;
+    m.next_poll = (uint32_t)now + m.poll_ms;
+    const InputHw *hw = platform_input();
+    while (m.rate) {                              /* RateHz 0: imu_read_fifo is never called */
+        uint32_t room = (uint32_t)(m.cap - m.fill);
+        int r = hw->imu_read_fifo(m.buf + m.fill, room);
+        if (r <= 0) break;                        /* empty, or an error: the next poll retries */
+        r -= r % SAMPLE;
+        if ((uint32_t)r > room) break;            /* a hook that broke its contract */
+        m.fill = (uint16_t)(m.fill + r);
+        if (m.fill == m.cap) send_batch(vm, now);       /* full: more may wait in the FIFO */
+        else break;
+    }
+    if (m.rate && reached(now, m.batch_at + m.batch_ms)) send_batch(vm, now);
+    gestures(vm);
+}

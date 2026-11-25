@@ -16,7 +16,7 @@ static inline uint64_t deadline_abs(uint64_t now, uint32_t t) {
 }
 
 bool input_failed(void);                     /* input_install found no source slot */
-bool kbd_is_open(void), power_is_open(void);
+bool kbd_is_open(void), power_is_open(void), imu_is_open(void), ir_is_open(void);
 bool kbd_work(uint64_t now);                 /* a raw event waits, or a repeat is due */
 bool kbd_next_deadline(uint64_t now, uint64_t *d);   /* the next auto-repeat or error retry */
 void kbd_drain(Vm *vm, uint64_t now);
@@ -24,6 +24,12 @@ void kbd_drain(Vm *vm, uint64_t now);
 bool power_work(uint64_t now);                /* a sample is due, wanted (Read) or flagged */
 bool power_next_deadline(uint64_t now, uint64_t *d);       /* the next scheduled sample */
 void power_drain(Vm *vm, uint64_t now);
+bool imu_work(uint64_t now);                  /* a poll is due */
+bool imu_next_deadline(uint64_t now, uint64_t *d);        /* the next poll */
+void imu_drain(Vm *vm, uint64_t now);
+bool ir_work(uint64_t now);                   /* a Done, a start or a receive poll is due */
+bool ir_next_deadline(uint64_t now, bool live, uint64_t *d);   /* the next of those (receive polls only if live) */
+void ir_drain(Vm *vm, uint64_t now);
 void dropped_inc(void);                      /* counts an event dropped for input_dropped() */
 
 #endif

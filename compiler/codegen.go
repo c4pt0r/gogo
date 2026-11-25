@@ -167,7 +167,8 @@ func isBytes(t types.Type) bool { return isBytesType(t, "Bytes") }
 func isBuffer(t types.Type) bool { return isBytesType(t, "Buffer") }
 
 // reservedTypes are the gogo/actor, gogo/port, gogo/net, gogo/fs, gogo/kbd,
-// gogo/power and gogo/code struct types. Every image
+// gogo/power, gogo/code, gogo/imu and gogo/ir struct types (and the
+// later port.Chunk, Out and Done: types are only ever appended). Every image
 // starts its type table with them, in this order, so the VM can build and
 // recognize these structs by fixed index (TYPE_* in vm/opcodes.h).
 var reservedTypes = []struct {
@@ -210,6 +211,13 @@ var reservedTypes = []struct {
 	{PowerPath, "Battery", []string{"MilliVolts", "Percent", "Charging", "External"}},
 	{PowerPath, "Read", nil},
 	{CodePath, "Module", []string{"H", "Missing"}},
+	{PortPath, "Chunk", []string{"Seq", "TimeMs", "Dropped", "Data"}},
+	{PortPath, "Out", []string{"Data"}},
+	{PortPath, "Done", []string{"Seq"}},
+	{ImuPath, "Config", []string{"RateHz", "Gestures", "BatchMs"}},
+	{ImuPath, "Gesture", []string{"Kind", "Value"}},
+	{IrPath, "TX", []string{"CarrierHz", "DutyPct"}},
+	{IrPath, "RX", []string{"GapUs"}},
 }
 
 // collectTypes emits the reserved types first (whether used or not), then
@@ -240,6 +248,10 @@ func (g *gen) collectTypes() error {
 			name = "power." + rt.name
 		case CodePath:
 			name = "code." + rt.name
+		case ImuPath:
+			name = "imu." + rt.name
+		case IrPath:
+			name = "ir." + rt.name
 		}
 		idx := g.b.AddType(name, uint32(len(rt.fields)))
 		stub := stubs[rt.pkg]

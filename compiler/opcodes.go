@@ -202,10 +202,18 @@ const (
 	TypePowerRead    uint32 = 33
 	// gogo/code
 	TypeCodeModule uint32 = 34
+	// gogo/port streams, gogo/imu, gogo/ir (v10)
+	TypeChunk      uint32 = 35
+	TypeOut        uint32 = 36
+	TypeDone       uint32 = 37
+	TypeImuConfig  uint32 = 38
+	TypeImuGesture uint32 = 39
+	TypeIrTx       uint32 = 40
+	TypeIrRx       uint32 = 41
 	// TypeReservedCount is how many reserved types there are: every type
 	// index from here up is a module's own (TYPE_RESERVED_COUNT in
 	// vm/opcodes.h; TestReservedTypeCount checks len(reservedTypes)).
-	TypeReservedCount uint32 = 35
+	TypeReservedCount uint32 = 42
 )
 
 // Heap object kinds.
@@ -335,5 +343,7 @@ var goConstants = map[string]uint32{
 	"TypeFsInfo": TypeFsInfo, "TypeFsSpace": TypeFsSpace,
 	"TypeKbdConfig": TypeKbdConfig, "TypeKbdKey": TypeKbdKey, "TypePowerConfig": TypePowerConfig, "TypePowerBattery": TypePowerBattery, "TypePowerRead": TypePowerRead,
 	"TypeCodeModule":    TypeCodeModule,
+	"TypeChunk": TypeChunk, "TypeOut": TypeOut, "TypeDone": TypeDone,
+	"TypeImuConfig": TypeImuConfig, "TypeImuGesture": TypeImuGesture, "TypeIrTx": TypeIrTx, "TypeIrRx": TypeIrRx,
 	"TypeReservedCount": TypeReservedCount,
 }

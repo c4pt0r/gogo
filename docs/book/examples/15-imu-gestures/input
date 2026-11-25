@@ -1,0 +1,13 @@
+imu gesture doubletap
+sleep 100
+imu gesture tap
+imu gesture orientation 1
+sleep 100
+imu gesture step 4
+sleep 100
+imu gesture doubletap
+sleep 100
+imu gesture orientation 6
+sleep 100
+imu gesture step 12
+sleep 100

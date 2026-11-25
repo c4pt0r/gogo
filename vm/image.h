@@ -38,7 +38,7 @@
 #include <stddef.h>
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 9u
+#define IMAGE_VERSION 10u
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {

@@ -139,20 +139,19 @@ func upperSnake(s string) string {
 func TestReservedTypesMatchStubs(t *testing.T) {
 	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath, CodePath} {
+	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath} {
 		pkg, err := l.Import(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		pkgs[path] = pkg
 	}
-	order := map[string]int{ActorPath: 0, PortPath: 1, NetPath: 2, FsPath: 3, KbdPath: 4, PowerPath: 5, CodePath: 6}
-	last := 0
+	// Types are only ever appended (later milestones add port.Chunk after
+	// code.Module), so packages are not grouped; every package must be known.
 	for i, rt := range reservedTypes {
-		if o, ok := order[rt.pkg]; !ok || o < last {
-			t.Errorf("reserved type %s: package %s out of order", rt.name, rt.pkg)
-		} else {
-			last = o
+		if pkgs[rt.pkg] == nil {
+			t.Errorf("reserved type %s: unknown package %s", rt.name, rt.pkg)
+			continue
 		}
 		prefix := "Type"
 		switch rt.pkg {
@@ -166,6 +165,10 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			prefix = "TypePower"
 		case CodePath:
 			prefix = "TypeCode"
+		case ImuPath:
+			prefix = "TypeImu"
+		case IrPath:
+			prefix = "TypeIr"
 		}
 		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
 			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
@@ -184,8 +187,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 35 {
-		t.Errorf("%d reserved types, want 35", len(reservedTypes))
+	if len(reservedTypes) != 42 {
+		t.Errorf("%d reserved types, want 42", len(reservedTypes))
 	}
 }
 
@@ -236,8 +239,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 9 {
-		t.Errorf("imageVersion %d, want 9", imageVersion)
+	if imageVersion != 10 {
+		t.Errorf("imageVersion %d, want 10", imageVersion)
 	}
 }
 
@@ -633,7 +636,7 @@ func TestCodeMatchC(t *testing.T) {
 	}
 	stub := map[string]string{"OK": "CODE_OK", "BadImage": "CODE_BAD_IMAGE", "Unsupported": "CODE_UNSUPPORTED",
 		"NoMemory": "CODE_NO_MEMORY", "NotFound": "CODE_NOT_FOUND", "BadArg": "CODE_BAD_ARG", "TooMany": "CODE_TOO_MANY",
-		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapAnyPort": "CAP_ANYPORT"}
+		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapIMU": "CAP_IMU", "CapIRTX": "CAP_IR_TX", "CapIRRX": "CAP_IR_RX", "CapAnyPort": "CAP_ANYPORT"}
 	for name, cname := range stub {
 		k, ok := pkg.Scope().Lookup(name).(*types.Const)
 		if !ok {
@@ -645,7 +648,7 @@ func TestCodeMatchC(t *testing.T) {
 			t.Errorf("code.%s = %d, %s = %d (present=%v)", name, v, cname, cv, ok)
 		}
 	}
-	for name, v := range map[string]uint32{"CAP_NET": CapNet, "CAP_KBD": CapKbd, "CAP_POWER": CapPower, "CAP_SD": CapSD, "CAP_ANYPORT": CapAnyPort} {
+	for name, v := range map[string]uint32{"CAP_NET": CapNet, "CAP_KBD": CapKbd, "CAP_POWER": CapPower, "CAP_SD": CapSD, "CAP_IMU": CapIMU, "CAP_IR_TX": CapIRTX, "CAP_IR_RX": CapIRRX, "CAP_ANYPORT": CapAnyPort} {
 		if c[name] != int64(v) {
 			t.Errorf("compiler %s = %d, C %d", name, v, c[name])
 		}

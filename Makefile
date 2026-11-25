@@ -12,20 +12,22 @@ NET_TEST_SRCS = vm/test/test_main.c $(wildcard net/test/*.c)
 VM_SRCS   = $(wildcard vm/*.c) platform/unix/platform_unix.c platform/unix/gpio_unix.c platform/unix/input_unix.c $(NET_SRCS)
 VM_SRCS  := $(filter-out vm/check32.c,$(VM_SRCS))
 VM_CORE_SRCS = $(filter-out vm/check32.c,$(wildcard vm/*.c))
-MAIN_SRCS = platform/unix/main.c platform/unix/fs_host.c $(wildcard vfs/*.c) $(wildcard input/*.c)
-PLAT_HDRS = $(wildcard platform/unix/*.h) $(wildcard net/*.h) $(wildcard vfs/*.h) $(wildcard input/*.h)
+# stream/ (pure C99): Chunk / Out / Done for every streaming driver (spec input2 §1).
+STREAM_SRCS = $(wildcard stream/*.c)
+MAIN_SRCS = platform/unix/main.c platform/unix/fs_host.c $(wildcard vfs/*.c) $(wildcard input/*.c) $(STREAM_SRCS)
+PLAT_HDRS = $(wildcard platform/unix/*.h) $(wildcard net/*.h) $(wildcard vfs/*.h) $(wildcard input/*.h) $(wildcard stream/*.h)
 
-.PHONY: vmsize netsize all vm test test-c test-c-mcu test-net-c test-net-mcu test-vfs test-input test-fs-host vfssize test-console test-go check32 console-ppm clean
+.PHONY: vmsize netsize all vm test test-c test-c-mcu test-net-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go check32 console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-vfs test-input test-fs-host test-console check32 test-go test-net-mcu vmsize netsize vfssize
+test: test-c test-c-mcu test-net-c test-vfs test-input test-stream test-fs-host test-console check32 test-go test-net-mcu vmsize netsize vfssize
 
 vm: $(BUILD)/gogovm
 
 $(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard vm/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Ivm -Inet -Ivfs -Iinput -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) -Ivm -Inet -Ivfs -Iinput -Istream -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
 
 test-c: $(BUILD)/test_c
 	$(BUILD)/test_c
@@ -78,8 +80,8 @@ $(BUILD)/test_vfs_mcu: $(VFS_DEPS)
 # (input/test/fakehw.c) on a real VM, in the host and MCU VM configs.
 INPUT_SRCS = $(wildcard input/*.c)
 INPUT_TEST_SRCS = vm/test/test_main.c $(wildcard input/test/*.c)
-INPUT_INC = -Iinput -Iinput/test -Ivm -Inet -Ivm/test -Iplatform/unix
-INPUT_DEPS = $(INPUT_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS) $(wildcard input/*.h) $(wildcard input/test/*.h) $(wildcard vm/*.h) $(PLAT_HDRS)
+INPUT_INC = -Iinput -Iinput/test -Istream -Ivm -Inet -Ivm/test -Iplatform/unix
+INPUT_DEPS = $(INPUT_SRCS) $(STREAM_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS) $(wildcard input/*.h) $(wildcard input/test/*.h) $(wildcard vm/*.h) $(PLAT_HDRS)
 
 test-input: $(BUILD)/test_input $(BUILD)/test_input_mcu
 	$(BUILD)/test_input
@@ -87,11 +89,30 @@ test-input: $(BUILD)/test_input $(BUILD)/test_input_mcu
 
 $(BUILD)/test_input: $(INPUT_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(INPUT_INC) -o $@ $(INPUT_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(INPUT_INC) -o $@ $(INPUT_SRCS) $(STREAM_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS)
 
 $(BUILD)/test_input_mcu: $(INPUT_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(INPUT_INC) -o $@ $(INPUT_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(INPUT_INC) -o $@ $(INPUT_SRCS) $(STREAM_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS)
+
+# stream (pure C99): Chunk delivery and Out bookkeeping against a fake "st"
+# port on a real VM (and the port-send gate through the interpreter), in the
+# host and MCU VM configs.
+STREAM_TEST_SRCS = vm/test/test_main.c $(wildcard stream/test/*.c)
+STREAM_INC = -Istream -Ivm -Inet -Ivm/test -Iplatform/unix
+STREAM_DEPS = $(STREAM_SRCS) $(STREAM_TEST_SRCS) $(VM_SRCS) $(wildcard stream/*.h) $(wildcard vm/*.h) $(wildcard vm/test/*.h) $(PLAT_HDRS)
+
+test-stream: $(BUILD)/test_stream $(BUILD)/test_stream_mcu
+	$(BUILD)/test_stream
+	$(BUILD)/test_stream_mcu
+
+$(BUILD)/test_stream: $(STREAM_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(STREAM_INC) -o $@ $(STREAM_SRCS) $(STREAM_TEST_SRCS) $(VM_SRCS)
+
+$(BUILD)/test_stream_mcu: $(STREAM_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(STREAM_INC) -o $@ $(STREAM_SRCS) $(STREAM_TEST_SRCS) $(VM_SRCS)
 
 # unix host-directory backend against a temp dir.
 test-fs-host: $(BUILD)/test_fs_host
@@ -136,7 +157,7 @@ test-go: vm
 # limit (16 KB per actor): the library actors must fit.
 $(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard vm/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Inet -Ivfs -Iinput -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Inet -Ivfs -Iinput -Istream -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
 
 test-net-mcu: $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/
@@ -153,6 +174,9 @@ check32:
 	done
 	for f in $(NET_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Ivm -Inet -Ivm/test/stub $$f || exit 1; \
+	done
+	for f in $(STREAM_SRCS); do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Istream -Ivm -Ivm/test/stub $$f || exit 1; \
 	done
 	for f in $(VFS_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Ivfs -Ivm -Ivm/test/stub $$f || exit 1; \

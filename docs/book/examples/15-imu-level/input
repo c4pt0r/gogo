@@ -1,0 +1,9 @@
+imu sample 3 -2 1 40 -20 4090
+imu sample 2 -1 0 44 -18 4100
+imu sample 1 0 -1 36 -22 4096
+sleep 300
+imu sample 0 0 0 4100 12 -30
+imu sample 0 0 0 4092 8 -26
+sleep 300
+imu sample 0 0 0 -10 -4096 50
+sleep 300

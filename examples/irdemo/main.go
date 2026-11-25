@@ -1,0 +1,53 @@
+// irdemo: infrared learning. Every frame the receiver hears is decoded as
+// NEC (gogo/irproto) and, if it is one, sent back exactly as it was
+// received; once two learned frames went out, a frame made with
+// irproto.EncodeNEC follows, and the program exits on its Done. Without IR
+// hardware it says so. On unix the frames come from the stdin script
+// (`ir rx <µs> ...` lines) and every frame sent prints `ir tx: <n> values`
+// on stderr; on a board, from the IR receiver and to the IR LED.
+//
+// The golden script keeps every timing margin at 100 ms or more: each
+// frame line is followed by `sleep 300`, more than an NEC frame (about
+// 68 ms) plus the 20 ms receive poll plus 100 ms.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/ir"
+	"gogo/irproto"
+	"gogo/port"
+)
+
+func main() {
+	_, ok := port.Open("ir_rx", ir.RX{GapUs: 10000})
+	if !ok {
+		println("no ir_rx")
+		return
+	}
+	tx, ok := port.Open("ir_tx", ir.TX{CarrierHz: 38000, DutyPct: 33})
+	if !ok {
+		println("no ir_tx")
+		return
+	}
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Chunk:
+			addr, cmd, nec := irproto.DecodeNEC(m.Data)
+			if nec {
+				same := m.Data.Equal(irproto.EncodeNEC(addr, cmd))
+				println("frame", m.Seq, "dropped", m.Dropped, "NEC addr", addr, "cmd", cmd, "exact", same)
+				actor.Send(tx, port.Out{Data: m.Data}) // learned: replay it as received
+			} else {
+				println("frame", m.Seq, "dropped", m.Dropped, "values", m.Data.Len()/2, "not NEC")
+			}
+		case port.Done:
+			println("sent", m.Seq)
+			if m.Seq == 2 {
+				actor.Send(tx, port.Out{Data: irproto.EncodeNEC(4, 9)})
+			}
+			if m.Seq == 3 {
+				return
+			}
+		}
+	}
+}

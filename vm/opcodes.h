@@ -207,11 +207,19 @@ enum Builtin {
 #define TYPE_POWER_READ    33   /* (no fields): ask for a Battery now */
 /* Then the gogo/code struct type (code/code.go). */
 #define TYPE_CODE_MODULE   34   /* H, Missing int: a module handle (module_builtin) */
+/* Then (v10) the port stream types and the gogo/imu and gogo/ir types. */
+#define TYPE_CHUNK       35   /* Seq, TimeMs, Dropped int; Data bytes.Bytes: stream event */
+#define TYPE_OUT         36   /* Data bytes.Bytes: stream command */
+#define TYPE_DONE        37   /* Seq int: stream event, an Out finished */
+#define TYPE_IMU_CONFIG  38   /* RateHz, Gestures, BatchMs int: port.Open("imu") */
+#define TYPE_IMU_GESTURE 39   /* Kind, Value int: gesture event */
+#define TYPE_IR_TX       40   /* CarrierHz, DutyPct int: port.Open("ir_tx") */
+#define TYPE_IR_RX       41   /* GapUs int: port.Open("ir_rx") */
 /* How many reserved types there are (0 .. TYPE_RESERVED_COUNT - 1): they are
  * global across modules; every index from here up is a module's own type
  * and carries its module tag in a struct's type word (term.h). The one
  * constant to bump with a new reserved type (compiler: len(reservedTypes)). */
-#define TYPE_RESERVED_COUNT 35u
+#define TYPE_RESERVED_COUNT 42u
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

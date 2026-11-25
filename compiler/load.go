@@ -61,9 +61,17 @@ const PowerPath = "gogo/power"
 // reserved type is Module.
 const CodePath = "gogo/code"
 
+// ImuPath and IrPath are the import paths of the IMU and infrared APIs
+// (imu.Config, imu.Gesture; ir.TX, ir.RX), stub packages with only types and
+// constants. Their types are reserved.
+const (
+	ImuPath = "gogo/imu"
+	IrPath  = "gogo/ir"
+)
+
 // isStub reports whether path is one of the stub packages.
 func isStub(path string) bool {
-	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath
+	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath
 }
 
 // stubDir is the directory of the library set holding stub package path.

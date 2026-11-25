@@ -35,4 +35,41 @@ void fake_set_live(bool live);
 void fake_event_driven(bool on);       /* power_event_driven: no periodic sampling */
 int fake_power_enabled(void);          /* opens - closes seen by power_enable */
 
+/* IMU: fake_reset() installs one. The FIFO holds whole 12-byte samples. */
+void fake_no_imu(void);                /* imu hooks NULL */
+void fake_imu_no_fifo(void);           /* imu_read_fifo NULL: a gesture-only chip */
+void fake_imu_push(int n, int16_t first);   /* n samples; sample i has all six values first + i */
+int fake_imu_fifo_len(void);           /* samples waiting */
+int fake_imu_fifo_reads(void);         /* imu_read_fifo calls */
+void fake_imu_fifo_fail(bool on);      /* imu_read_fifo returns -1 while set */
+void fake_imu_gesture(uint8_t bits, uint8_t orient, uint16_t steps);   /* seen at the next imu_read_gestures */
+int fake_imu_gesture_reads(void);
+void fake_imu_open_fail(bool on);
+int fake_imu_opens(void), fake_imu_closes(void);
+int fake_imu_rate(void), fake_imu_mask(void);   /* the arguments of the last imu_open */
+
+/* IR: fake_reset() installs a transmitter and a receiver. */
+void fake_no_ir(void);                 /* every ir hook NULL */
+void fake_no_ir_rx_close(void);        /* ir_rx_close NULL (optional) */
+void fake_no_ir_tx_open_close(void);   /* ir_tx_open / ir_tx_close NULL (optional) */
+void fake_ir_tx_open_fail(bool on);    /* ir_tx_open returns -1 while set */
+const char *fake_ir_tx_log(void);      /* the tx hook calls in order: O open, S start, C close */
+uint32_t fake_ir_tx_open_carrier(void);
+int fake_ir_tx_open_duty(void);
+int fake_ir_tx_starts(void);           /* successful ir_tx_start calls */
+int fake_ir_tx_n(void);                /* value count of the last start */
+uint16_t fake_ir_tx_value(int i);      /* value i of the last start (copied by the hook) */
+uint32_t fake_ir_tx_carrier(void);
+int fake_ir_tx_duty(void);
+void fake_ir_tx_set_busy(bool on);     /* ir_tx_busy's answer */
+void fake_ir_tx_fail(bool on);         /* ir_tx_start returns -1 while set */
+bool fake_ir_tx_started_while_busy(void);
+void fake_ir_rx_push(const uint16_t *v, int n);   /* one frame, any length up to 400 */
+void fake_ir_rx_start(uint32_t ms);    /* ir_rx_read reports frames as begun at ms */
+int fake_ir_tx_fails(void);            /* failed ir_tx_start calls */
+void fake_ir_rx_fail(bool on);         /* ir_rx_read returns -1 while set */
+void fake_ir_rx_open_fail(bool on);
+int fake_ir_rx_opens(void), fake_ir_rx_closes(void), fake_ir_rx_reads(void);
+uint32_t fake_ir_rx_gap(void);         /* gap_us of the last ir_rx_open */
+
 #endif

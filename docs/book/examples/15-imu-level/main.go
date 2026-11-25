@@ -1,0 +1,62 @@
+// A spirit level: sample the motion sensor at 25 Hz in batches of 200 ms,
+// average the acceleration of each batch and print it in milli-g, with
+// the axis that gravity pulls on. On the host the samples come from the
+// "imu sample gx gy gz ax ay az" lines of the stdin script.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/imu"
+	"gogo/port"
+)
+
+// s16 is the little-endian int16 at byte i of b.
+func s16(b []byte, i int) int {
+	v := int(b[i]) | int(b[i+1])<<8
+	if v >= 32768 {
+		v = v - 65536
+	}
+	return v
+}
+
+// mg converts a raw acceleration (+-8 g over +-32768) to milli-g.
+func mg(raw int) int { return raw * 8000 / 32768 }
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func main() {
+	_, ok := port.Open("imu", imu.Config{RateHz: 25, BatchMs: 200})
+	if !ok {
+		println("no motion sensor on this board")
+		return
+	}
+	buf := make([]byte, 0, 240) // one batch: 200 ms at 25 Hz = 5 samples of 12 bytes
+	for batches := 0; batches < 3; {
+		switch c := actor.Receive().(type) {
+		case port.Chunk:
+			batches++
+			n := c.Data.Len() / 12
+			buf = buf[:c.Data.Len()]
+			c.Data.CopyTo(buf)
+			ax, ay, az := 0, 0, 0
+			for i := 0; i < n; i++ {
+				ax += s16(buf, 12*i+6) // a sample is gx gy gz ax ay az
+				ay += s16(buf, 12*i+8)
+				az += s16(buf, 12*i+10)
+			}
+			ax, ay, az = mg(ax/n), mg(ay/n), mg(az/n)
+			down := "z"
+			if abs(ax) > abs(ay) && abs(ax) > abs(az) {
+				down = "x"
+			} else if abs(ay) > abs(az) {
+				down = "y"
+			}
+			println("batch", c.Seq, "samples", n, "accel mg", ax, ay, az, "gravity on", down)
+		}
+	}
+}

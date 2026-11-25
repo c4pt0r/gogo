@@ -34,10 +34,15 @@ TEST(caps_explain) {
     CHECK(strcmp(b, "gogo: image needs kbd sd; firmware lacks sd\n") == 0);
     explain(b, 15, 15);
     CHECK(strcmp(b, "gogo: image needs net kbd power sd; firmware lacks net kbd power sd\n") == 0);
+    explain(b, CAP_IMU | CAP_IR_TX | CAP_IR_RX, CAP_IR_TX);
+    CHECK(strcmp(b, "gogo: image needs imu irtx irrx; firmware lacks irtx\n") == 0);
+    explain(b, 127, 127);   /* the longest line must fit VM_CAPS_MSG_MAX */
+    CHECK(strcmp(b, "gogo: image needs net kbd power sd imu irtx irrx; firmware lacks net kbd power sd imu irtx irrx\n") == 0);
 }
 
 /* The weak default of a platform that defines none is tested by the
- * strong unix definition overriding it: all four bits. */
+ * strong unix definition overriding it: net, kbd, power, sd, imu, irtx and
+ * irrx. */
 TEST(caps_unix_platform) {
-    CHECK_EQ(platform_caps(), CAP_NET | CAP_KBD | CAP_POWER | CAP_SD);
+    CHECK_EQ(platform_caps(), CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX);
 }

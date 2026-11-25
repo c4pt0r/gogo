@@ -77,7 +77,8 @@ typedef struct PortDriver {
 } PortDriver;
 
 /* Most off-heap Bytes one port pins for its owner (a TCP connection holds
- * at most one in flight and one queued write, spec M5 §5.2). */
+ * at most one in flight and one queued write, spec M5 §5.2; a stream/
+ * StreamOut port uses both for its running and queued Out). */
 #define PORT_MAX_HELD 2u
 
 /* Port.flags bits (VM-private debounce bookkeeping). */

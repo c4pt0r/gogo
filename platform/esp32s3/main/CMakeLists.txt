@@ -19,6 +19,9 @@ file(GLOB GOGO_VFS_SRCS "${GOGO_ROOT}/vfs/*.c")
 # Input (spec input): the kbd and power drivers and event source (pure C99);
 # input_esp.c / i2c_bus.c are the hardware.
 file(GLOB GOGO_INPUT_SRCS "${GOGO_ROOT}/input/*.c")
+# Streams (spec input2 §1): Chunk / Out / Done for the streaming drivers
+# (pure C99).
+file(GLOB GOGO_STREAM_SRCS "${GOGO_ROOT}/stream/*.c")
 
 # platform/common: the console grid and the font (shared with the host
 # tests), plus the font blob embedded as _binary_gogo12_font_{start,end}.
@@ -58,12 +61,26 @@ else()
     message(FATAL_ERROR "GOGO_BOARD must be sticks3 or cardputer (got '${GOGO_BOARD}')")
 endif()
 
-# The shared I2C bus (i2c_bus.c) is for the StickS3's PM1 and the Cardputer's
-# keyboard; without GOGO_KBD (main/Kconfig.projbuild) the Cardputer needs none,
-# and the IDF I2C driver is not linked.
+# The shared I2C bus (i2c_bus.c) is for the StickS3's PM1, the Cardputer's
+# keyboard and both boards' BMI270; without GOGO_KBD and GOGO_IMU
+# (main/Kconfig.projbuild) the Cardputer needs none, and the IDF I2C driver is
+# not linked.
 set(GOGO_I2C_SRCS "")
-if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD)
+if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD OR CONFIG_GOGO_IMU)
     set(GOGO_I2C_SRCS i2c_bus.c)
+endif()
+
+# The BMI270 (GOGO_IMU: imu_esp.c and the 8 KB legacy configuration, Bosch
+# BSD-3) and IR on the RMT (GOGO_IR: ir_esp.c). Off, the file is not built,
+# its hooks stay NULL (port.Open fails, the capability is absent) and, for
+# IR, the IDF RMT driver is not linked.
+set(GOGO_IMU_SRCS "")
+if(CONFIG_GOGO_IMU)
+    set(GOGO_IMU_SRCS imu_esp.c bmi270_legacy_config.c)
+endif()
+set(GOGO_IR_SRCS "")
+if(CONFIG_GOGO_IR)
+    set(GOGO_IR_SRCS ir_esp.c)
 endif()
 
 # The console font blob (GOGO_FONT_CJK): the embedded symbol is named after
@@ -77,12 +94,16 @@ endif()
 idf_component_register(
     SRCS main.c platform_esp.c gpio_esp.c image_part.c console_task.c lcd_st7789.c
          ${GOGO_WIFI_SRCS} config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
-         ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_COMMON_SRCS}
-    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/vm" "${GOGO_ROOT}/net" "${GOGO_ROOT}/vfs" "${GOGO_ROOT}/input" "${GOGO_ROOT}/platform/common"
+         ${GOGO_IMU_SRCS} ${GOGO_IR_SRCS}
+         ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_COMMON_SRCS}
+    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/vm" "${GOGO_ROOT}/net" "${GOGO_ROOT}/vfs" "${GOGO_ROOT}/input" "${GOGO_ROOT}/stream" "${GOGO_ROOT}/platform/common"
     EMBED_FILES "${GOGO_ROOT}/platform/common/font/${GOGO_FONT_FILE}"
     LDFRAGMENTS linker.lf
     PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c esp_adc
                   esp_rom freertos heap nvs_flash esp_driver_usb_serial_jtag
+                  # ir_esp.c (GOGO_IR); like esp_wifi below, unreferenced
+                  # (so not linked) when the switch is off.
+                  esp_driver_rmt
                   joltwallet__littlefs
                   # wifi.c (GOGO_NET): listed unconditionally because IDF
                   # expands requirements before CONFIG_GOGO_NET is known;
@@ -141,4 +162,4 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Os -Wall -Wextra -Werror
     -Werror=extra -Wunused-parameter -Wsign-compare -Werror=unused-function
     -Werror=unused-variable -Werror=unused-but-set-variable)
 # The VM core is portable C99.
-set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")
+set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")

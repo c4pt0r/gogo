@@ -1,5 +1,6 @@
-/* ESP32-S3 input hardware (spec input §5.6): the InputHw the chip-independent
- * input/ code drives.
+/* ESP32-S3 input hardware (spec input §5.6, input2 §4): the InputHw the
+ * chip-independent input/ code drives. The IMU hooks are in imu_esp.c
+ * (BMI270), the IR hooks in ir_esp.c (RMT).
  *
  *  - Cardputer ADV keyboard: TCA8418 key-scan chip on the shared I2C bus
  *    (0x34, 400 kHz), INT on G11 (open drain, active low). The ISR only sets
@@ -29,6 +30,23 @@
 #define WITH_BATTERY 1
 #else
 #define WITH_BATTERY 0
+#endif
+/* GOGO_IMU / GOGO_IR: the hooks live in imu_esp.c and ir_esp.c, which are
+ * built only with their switch (CMakeLists.txt). */
+#if HAS_IMU && CONFIG_GOGO_IMU
+#define WITH_IMU 1
+#else
+#define WITH_IMU 0
+#endif
+#if HAS_IR_TX && CONFIG_GOGO_IR
+#define WITH_IR_TX 1
+#else
+#define WITH_IR_TX 0
+#endif
+#if HAS_IR_RX && CONFIG_GOGO_IR
+#define WITH_IR_RX 1
+#else
+#define WITH_IR_RX 0
 #endif
 
 #if WITH_KBD
@@ -234,7 +252,6 @@ static int power_read(int32_t *mv, int8_t *charging, int8_t *external) {
 #elif WITH_BATTERY && defined(GOGO_BOARD_STICKS3)
 
 #define PM1_REG_PWR_SRC 0x04
-#define PM1_REG_I2C_CFG 0x09
 #define PM1_REG_GPIO_MODE 0x10
 #define PM1_REG_GPIO_IN 0x12
 #define PM1_REG_GPIO_FUNC0 0x16
@@ -246,9 +263,9 @@ static bool gpio0_ready;
 static int power_read(int32_t *mv, int8_t *charging, int8_t *external) {
     uint8_t v;
     if (!gpio0_ready) {
-        /* The console bring-up (pm1.c) does this too, but not when built with
-         * GOGO_CONSOLE=0: no I2C idle sleep, or the chip NACKs after a pause. */
-        if (pm1_write_u8(PM1_REG_I2C_CFG, 0x00) != 0) return -1;
+        /* No I2C idle sleep, or the chip NACKs after a pause (pm1_wake; the
+         * console bring-up does it too, but not when built with GOGO_CONSOLE=0). */
+        if (pm1_wake() != 0) return -1;
         /* PM1 GPIO0 is the charger's status line: function GPIO (0x16
          * bits[1:0] = 00, as M5Unified) and an input. */
         if (pm1_read_u8(PM1_REG_GPIO_FUNC0, &v) != 0) return -1;
@@ -281,5 +298,24 @@ const InputHw input_esp_hw = {
 #endif
 #if WITH_BATTERY
     .power_read = power_read,
+#endif
+#if WITH_IMU
+    .imu_open = imu_esp_open,
+    .imu_close = imu_esp_close,
+    .imu_read_fifo = imu_esp_read_fifo,
+    .imu_read_gestures = imu_esp_read_gestures,
+#endif
+#if WITH_IR_TX
+    .ir_tx_start = ir_esp_tx_start,
+    .ir_tx_busy = ir_esp_tx_busy,
+#endif
+#if WITH_IR_RX
+    .ir_rx_open = ir_esp_rx_open,
+    .ir_rx_read = ir_esp_rx_read,
+    .ir_rx_close = ir_esp_rx_close,
+#endif
+#if WITH_IR_TX
+    .ir_tx_open = ir_esp_tx_open,
+    .ir_tx_close = ir_esp_tx_close,
 #endif
 };

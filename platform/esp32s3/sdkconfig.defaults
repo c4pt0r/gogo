@@ -46,3 +46,10 @@ CONFIG_LITTLEFS_ASSERTS=n
 # The I2C master ISR (shared bus, only scheduler-thread synchronous transfers)
 # may live in flash: saves ~760 B of IRAM.
 CONFIG_I2C_MASTER_ISR_HANDLER_IN_IRAM=n
+# IR (ir_esp.c, GOGO_IR): the RMT ISRs and the copy encoder run from flash,
+# not IRAM (about 3 KB of internal RAM). IR timings are hundreds of us, so a
+# cache miss in the ISR does not matter; the ISR is not cache-safe either way
+# (RMT_*_ISR_CACHE_SAFE stays off).
+CONFIG_RMT_TX_ISR_HANDLER_IN_IRAM=n
+CONFIG_RMT_RX_ISR_HANDLER_IN_IRAM=n
+CONFIG_RMT_ENCODER_FUNC_IN_IRAM=n

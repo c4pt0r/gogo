@@ -556,14 +556,15 @@ func TestCompileReservedTypes(t *testing.T) {
 		"net.SendTo/2", "net.Datagram/2", "net.Dial/3", "net.Listen/1", "net.Write/1", "net.Shutdown/0",
 		"net.Resume/0", "net.Connected/0", "net.Data/1", "net.Written/0", "net.Closed/1", "net.Accepted/1",
 		"fs.Info/2", "fs.Space/2",
-		"kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4", "power.Read/0", "code.Module/2"}
+		"kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4", "power.Read/0", "code.Module/2",
+		"port.Chunk/4", "port.Out/1", "port.Done/1", "imu.Config/3", "imu.Gesture/2", "ir.TX/2", "ir.RX/1"}
 	// Emitted even when the program imports none of gogo/actor, gogo/port, gogo/net and gogo/fs.
 	img := compileImage(t, "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tvar a any = P{1, 2}\n\tswitch a.(type) {\n\tcase P:\n\t\tprintln(1)\n\t}\n}\n")
 	got := imageTypes(t, img)
 	if strings.Join(got, " ") != strings.Join(append(want, "P/2"), " ") {
 		t.Fatalf("types %v, want %v then P/2", got, want)
 	}
-	// TYPEIS P names index 35, the first after the reserved ones.
+	// TYPEIS P names index 42, the first after the reserved ones.
 	code := words(img)
 	found := false
 	for i := 0; i+1 < len(code); i++ {
@@ -572,7 +573,7 @@ func TestCompileReservedTypes(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("no TYPEIS with type id 35")
+		t.Error("no TYPEIS with type id 42")
 	}
 	// Using the actor types keeps them at their reserved indices.
 	img = compileImage(t, "package main\nimport \"gogo/actor\"\ntype U struct{ A int }\nfunc main() {\n\tu := U{1}\n\tvar o actor.Options\n\tvar r actor.Reason\n\tprintln(u, o, r, actor.Info(actor.Self()).Memory)\n}\n")
@@ -1241,7 +1242,8 @@ func main() {
 		" net.IfConfig/0 net.SetAddr/4 net.Up/3 net.Down/0 net.Addr/2 net.UDP/1 net.SendTo/2 net.Datagram/2" +
 		" net.Dial/3 net.Listen/1 net.Write/1 net.Shutdown/0 net.Resume/0 net.Connected/0 net.Data/1" +
 		" net.Written/0 net.Closed/1 net.Accepted/1 fs.Info/2 fs.Space/2" +
-		" kbd.Config/2 kbd.Key/4 power.Config/1 power.Battery/4 power.Read/0 code.Module/2"
+		" kbd.Config/2 kbd.Key/4 power.Config/1 power.Battery/4 power.Read/0 code.Module/2" +
+		" port.Chunk/4 port.Out/1 port.Done/1 imu.Config/3 imu.Gesture/2 ir.TX/2 ir.RX/1"
 	if got := strings.Join(imageTypes(t, img), " "); got != want {
 		t.Fatalf("types %s, want %s", got, want)
 	}
@@ -2008,8 +2010,8 @@ func main() {
 	}
 }
 `)
-	if v := binary.LittleEndian.Uint32(img[4:]); v != 9 {
-		t.Errorf("image version %d, want 9", v)
+	if v := binary.LittleEndian.Uint32(img[4:]); v != 10 {
+		t.Errorf("image version %d, want 10", v)
 	}
 	seen := map[uint32]bool{}
 	code := words(img)

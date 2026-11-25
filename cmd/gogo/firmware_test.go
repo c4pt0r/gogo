@@ -59,7 +59,7 @@ func TestFirmwareUnion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -72,7 +72,7 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\n"
+	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -107,7 +107,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -361,5 +361,52 @@ func TestFirmwareTableMatchesSources(t *testing.T) {
 				t.Errorf("board.h has no %s for %s", f.hasH, b)
 			}
 		}
+	}
+}
+
+func TestFirmwareImuIr(t *testing.T) {
+	d := t.TempDir()
+	rx := writeImg(t, d, "rx.gogo", compiler.CapIRRX)
+	tx := writeImg(t, d, "tx.gogo", compiler.CapIRTX)
+	im := writeImg(t, d, "im.gogo", compiler.CapIMU)
+	// the Cardputer has no receiver
+	if _, _, err := fwRun(t, "-board", "cardputer", "-o", d, rx); err == nil || !strings.Contains(err.Error(), "irrx") {
+		t.Errorf("cardputer irrx: %v", err)
+	}
+	if _, cfg, err := fwRun(t, "-board", "cardputer", "-o", d, tx); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_IR=y\n") {
+		t.Errorf("cardputer irtx: %v\n%s", err, cfg)
+	}
+	// irtx and irrx share one switch: removing one that the images do not
+	// need is still refused while the other is required
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-without", "irtx", rx); err == nil || !strings.Contains(err.Error(), "irtx") {
+		t.Errorf("sticks3 -without irtx with an irrx image: %v", err)
+	}
+	// nothing requires them: both go together
+	if _, cfg, err := fwRun(t, "-board", "sticks3", "-o", d, "-without", "irtx", im); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_IR=n\n") || !strings.Contains(cfg, "CONFIG_GOGO_IMU=y\n") {
+		t.Errorf("sticks3 -without irtx: %v\n%s", err, cfg)
+	}
+	if _, cfg, err := fwRun(t, "-board", "sticks3", "-o", d, "-without", "imu", tx); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_IMU=n\n") || !strings.Contains(cfg, "CONFIG_GOGO_IR=y\n") {
+		t.Errorf("sticks3 -without imu: %v\n%s", err, cfg)
+	}
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-without", "imu", im); err == nil {
+		t.Error("removing a required imu should fail")
+	}
+}
+
+func TestFirmwarePlanSharedIRSwitch(t *testing.T) {
+	// an irrx image: -without irtx must name the shared switch, not "required by run-time name"
+	_, err := fwPlan("sticks3", compiler.CapIRRX, nil, []string{"irtx"})
+	if err == nil || !strings.Contains(err.Error(), "GOGO_IR") || !strings.Contains(err.Error(), "irrx") {
+		t.Errorf("-without irtx with an irrx image: %v", err)
+	}
+	// -with irrx -without irtx contradicts itself through the shared switch
+	_, err = fwPlan("sticks3", 0, []string{"irrx"}, []string{"irtx"})
+	if err == nil || !strings.Contains(err.Error(), "GOGO_IR") {
+		t.Errorf("-with irrx -without irtx: %v", err)
+	}
+	// -without irtx alone is still fine: both go off
+	on, err := fwPlan("sticks3", 0, nil, []string{"irtx"})
+	if err != nil || on["irtx"] || on["irrx"] {
+		t.Errorf("-without irtx alone: %v %v", on, err)
 	}
 }

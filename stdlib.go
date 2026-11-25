@@ -11,9 +11,10 @@ import "embed"
 // (gogo/supervisor, compiled into the image), strings/ and strconv/ (gogo/strings
 // and gogo/strconv, compiled into the image like supervisor), dhcp/,
 // dns/ and http/ (gogo/dhcp, gogo/dns and gogo/http, likewise; Go build
-// tag gogo, since they import gogo/net), kv/ and ringlog/ (gogo/kv and
-// gogo/ringlog, compiled into the image on top of gogo/fs). Libraries may import the stubs and other libraries,
+// tag gogo, since they import gogo/net), kv/, ringlog/ and imulog/ (gogo/kv,
+// gogo/ringlog and gogo/imulog, compiled into the image on top of gogo/fs), irproto/ (gogo/irproto, IR
+// protocol codecs, compiled into the image). Libraries may import the stubs and other libraries,
 // without cycles.
 //
-//go:embed actor/*.go port/*.go bytes/*.go netapi/*.go config/*.go fs/*.go kbd/*.go power/*.go code/*.go dhcp/*.go dns/*.go http/*.go kv/*.go ringlog/*.go supervisor/*.go strings/*.go strconv/*.go
+//go:embed actor/*.go port/*.go bytes/*.go netapi/*.go config/*.go fs/*.go kbd/*.go power/*.go code/*.go imu/*.go ir/*.go dhcp/*.go dns/*.go http/*.go kv/*.go ringlog/*.go imulog/*.go supervisor/*.go strings/*.go strconv/*.go irproto/*.go
 var StubFS embed.FS

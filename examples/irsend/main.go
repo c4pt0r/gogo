@@ -1,0 +1,35 @@
+// irsend: sends the NEC code address 4, command 8 (irproto.EncodeNEC) five
+// times, half a second apart, and prints each Done; the program then exits.
+// It is the sending half of the two-board IR check: run it on the
+// Cardputer ADV (or any board with an IR LED) while the StickS3 runs
+// examples/irdemo, which decodes and prints what it hears. Without IR
+// hardware it says so. On unix every frame prints `ir tx: <n> values` on
+// stderr.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/ir"
+	"gogo/irproto"
+	"gogo/port"
+)
+
+func main() {
+	tx, ok := port.Open("ir_tx", ir.TX{CarrierHz: 38000, DutyPct: 33})
+	if !ok {
+		println("no ir_tx")
+		return
+	}
+	frame := irproto.EncodeNEC(4, 8)
+	for i := 0; i < 5; i++ {
+		actor.Send(tx, port.Out{Data: frame})
+		for done := false; !done; {
+			switch d := actor.Receive().(type) {
+			case port.Done:
+				println("sent", d.Seq)
+				done = true
+			}
+		}
+		actor.Sleep(500)
+	}
+}

@@ -138,7 +138,7 @@ firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v9, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
+(format v10, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
 image version changes, reflash the firmware too: an older firmware refuses
 a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
 one). At boot the firmware checks the magic, the length (multiple of 4,
@@ -171,13 +171,14 @@ in `cmd/gogo/flash.go`.
   time after the previous level change (a key release's bounce). Refused
   pins (`board.h`): StickS3 19-20 (USB), 26-37 (in-package flash and octal
   PSRAM of the ESP32-S3-PICO-1-N8R8), 21, 38-41, 45 (LCD), 47-48 (M5PM1
-  I2C); Cardputer ADV 19-20 (USB), 26-32 (flash), 33-38 (LCD), 12, 14,
-  39, 40 (SD card), 8-9 (I2C bus), 10 (battery ADC), 11 (keyboard INT).
+  I2C), 42 and 46 (IR); Cardputer ADV 19-20 (USB), 26-32 (flash), 33-38
+  (LCD), 12, 14, 39, 40 (SD card), 8-9 (I2C bus), 10 (battery ADC), 11
+  (keyboard INT), 44 (IR LED).
   The Cardputer's G0 button is free (Input, active low).
 - `i2c_bus.c`: the board's one shared I2C master bus, created on first use
   (before the VM starts, or on the scheduler thread; never in an ISR):
-  Cardputer ADV port 0, SDA G8, SCL G9 (TCA8418 keyboard); StickS3 port 1,
-  SDA G47, SCL G48 (M5PM1). Internal pull-ups on.
+  Cardputer ADV port 0, SDA G8, SCL G9 (TCA8418 keyboard, BMI270); StickS3
+  port 1, SDA G47, SCL G48 (M5PM1, BMI270). Internal pull-ups on.
 - `input_esp.c`: the `InputHw` for `input/` (the `kbd` and `power` ports,
   design.md 5.4.3); `platform_input` itself is defined in `platform_esp.c`
   so the strong definition always beats the weak default in `input/source.c`.
@@ -204,12 +205,104 @@ in `cmd/gogo/flash.go`.
     (0x16) bits[1:0] to 00 (GPIO function) and switches GPIO0 to an input
     (GPIO_MODE 0x10 bit0 cleared), each only if it reads otherwise. No keyboard: opening `kbd` fails. There is no
     power-button event (the PM1 acts on clicks itself).
+- `imu_esp.c` (`GOGO_IMU`, both boards): the IMU hooks of `InputHw` for
+  `input/imu.c` (design.md 5.4.6), a Bosch BMI270 on the shared I2C bus at
+  400 kHz, probed at 0x69 then 0x68 (CHIP_ID 0x24; three rounds 10 ms
+  apart). Both boards answer at 0x69 (bus scan on the Cardputer ADV: 0x18
+  ES8311, 0x34 TCA8418, 0x69 BMI270). Polled only: neither
+  board wires the IMU interrupt to an ESP32 GPIO (StickS3 INT1 goes to PM1
+  GPIO4, the Cardputer's is not connected). The first open loads Bosch's
+  legacy feature configuration (soft reset, `PWR_CONF` = 0, `INIT_CTRL` = 0,
+  8192 B in 64-byte chunks to `INIT_DATA` 0x5E, each after its word address
+  in `INIT_ADDR_0/1` 0x5B/0x5C, `INIT_CTRL` = 1, `INTERNAL_STATUS` & 0x0F ==
+  1): about 250 ms of the scheduler thread, once per boot. Every open: both
+  sensors off, legacy features enabled per gesture mask (feature pages via
+  `FEAT_PAGE` 0x2F / 0x30: any/no-motion page 1, orientation 2, flat 3, step
+  4, tap 5; the bits are in the file's header), `ACC_RANGE` 0x41 = 2 (+-8 g),
+  `GYR_RANGE` 0x43 = 0 (+-2000 dps), `ACC_CONF`/`GYR_CONF` = 0xA0 | ODR,
+  FIFO headerless gyro + accel (`FIFO_CONFIG_1` 0x49 = 0xC0; 12-byte frames
+  gx gy gz ax ay az, already gogo's order), FIFO flushed, `INT_LATCH` = 1,
+  features mapped to INT1 (output off) so `INT_STATUS_0` 0x1C latches them
+  between polls; then `PWR_CTRL` 0x7D on (accel + gyro, or accel only for
+  `RateHz` 0). With gestures the sensor runs at 100 Hz at least and
+  `FIFO_DOWNS` 0x45 thins the FIFO to `RateHz`. `imu_read_fifo` reads
+  `FIFO_LENGTH` and then whole frames (at most 960 B per call) from
+  `FIFO_DATA` 0x26, dropping frames with a dummy half (`0x01|0x02 0x7F 0x00
+  0x80`: the accelerometer has no sample yet, the first two frames after
+  every open on both boards);
+  `imu_read_gestures` reads `INT_STATUS_0` (tap kind from 0x20, step count
+  and orientation from feature page 0). Axes are the chip's own (no board
+  remap). On the StickS3 the open also makes sure PM1 rail L1 (`PWR_CFG`
+  0x06 bit 2, LDO3V3, the BMI270's supply) is on; the PM1 turns it on at
+  power-up anyway.
+- `bmi270_legacy_config.c` (`GOGO_IMU`): the 8192-byte array
+  `bmi270_legacy_config_file` from `bmi270_legacy.c` of
+  github.com/boschsensortec/BMI270_SensorAPI, commit
+  41129fcfe39c583ee5462d79195741945d51c1fe (2025-06-18), copied byte for
+  byte under **Bosch's BSD-3-Clause license**, whose header is kept verbatim
+  at the top of the file (redistributions in binary form must reproduce the
+  notice: it is in the source and in this paragraph). It is flash data, not
+  RAM. The legacy configuration was chosen over the base one (which
+  M5Unified loads) because only it has tap, double/triple tap and
+  orientation; it has no wrist gestures.
+- `ir_esp.c` (`GOGO_IR`): the IR hooks on the RMT peripheral, 1 MHz
+  resolution, one 48-symbol memory block per channel, no DMA.
+  - TX (both boards: StickS3 G46, Cardputer G44): `ir_tx_open` (port open)
+    creates the channel, the copy encoder and a 128-symbol buffer (512 B,
+    internal heap), applies the carrier from `ir.TX` (`rmt_apply_carrier`,
+    frequency and duty as given; checked: 38 kHz / 0.33 like M5's demo) and
+    sets the pin to the strongest drive (`GPIO_DRIVE_CAP_3`; the default
+    `CAP_2` is weaker, and the Cardputer's LED hangs on G44 through 22 ohms).
+    `ir_tx_start` converts the timings into the buffer before it returns.
+    `ir_tx_busy` is a flag cleared by the RMT done callback. `ir_tx_close`
+    (port close) waits up to 100 ms for a running frame (NEC: 68 ms), then
+    frees the channel, encoder and buffer.
+  - RX (StickS3 G42 only): input inverted (the receiver module pulls low
+    during a burst) with the internal pull-up on (its output is open
+    collector: without it G42 floats low and nothing is received; the IDF
+    6.1 RMT driver does not enable one), `signal_range_min_ns` 1000, `signal_range_max_ns` =
+    `GapUs` x 1000 (`GapUs` at most 32767: the 15-bit idle threshold at
+    1 MHz). Three frame slots of 129 symbols (1548 B, internal heap,
+    allocated at open, freed at close); the RMT done callback (ISR) records
+    the slot and re-arms `rmt_receive` on the next free one, so frames keep
+    arriving between the 20 ms polls. A frame of 129 symbols is longer than
+    256 values and is cut by `input/ir.c` (counted in `Dropped`). The frame's
+    start time is the done time minus the gap and the frame's length.
+  - `sdkconfig.defaults` moves the RMT ISRs and the encoder out of IRAM
+    (`RMT_TX/RX_ISR_HANDLER_IN_IRAM=n`, `RMT_ENCODER_FUNC_IN_IRAM=n`): about
+    3 KB of internal RAM; IR timings are hundreds of microseconds, so a cache
+    miss does not matter.
+  - **`/flash` writes and long frames.** The RMT interrupt is not cache-safe
+    (`RMT_*_ISR_CACHE_SAFE` off; this does not depend on where the handler
+    lives), so it is held off while a `/flash` write has the cache off. A TX
+    frame longer than one 48-symbol block (about 47 symbols, 94 values) needs
+    refills from that interrupt and can then be **garbled** (stale half-blocks
+    are replayed); a long received frame can be cut. Frames that fit one block
+    are unaffected, NEC (34 symbols) included; only their Done may come later.
+  - StickS3 power (`pm1.c`): the IR LED and receiver are on EXT_5V, M5PM1
+    `PWR_CFG` 0x06 bit 3 (the boost converter that also feeds the Grove and
+    Hat 5 V pins, off after M5's init). It is reference-counted over the open
+    IR ports (`ir_tx` and `ir_rx`): the first open turns it on (10 ms settle)
+    if it was off, the last close turns it off again, only if gogo turned it
+    on (checked on the board: `PWR_CFG` 0x17 -> 0x1F -> 0x17). **While it is
+    on, the Grove and Hat 5 V pins are outputs: nothing may feed 5 V into
+    them (M5 docs).** While `ir_rx` is open the speaker amplifier is held
+    off: PM1 GPIO3 (`GPIO_OUT` 0x11 bit 3 = 0 first, then `GPIO_FUNC0` 0x16
+    bit 3 = GPIO, `GPIO_DRV` 0x13 bit 3 = push-pull, `GPIO_MODE` 0x10 bit 3 =
+    output, so it never glitches on); closing turns it back on only if it was
+    an output driven high before. All PM1 users start with
+    `pm1_wake` (poll the chip up to 200 ms, `I2C_CFG` 0x09 = 0: no idle
+    sleep), once per boot.
+  - Pins G42, G46 (StickS3) and G44 (Cardputer, also U0RXD; the console is
+    USB-Serial/JTAG) are reserved: the gpio port refuses them.
 - `image_part.c`: the partition check and mmap above.
 - `main.c`: the VM runs in a FreeRTOS task pinned to CPU1.
 - Screen (debug console, mirror of stdout/stderr):
   - `pm1.c` (StickS3 only): M5PM1 (I2C G47/G48, 0x6E): I2C idle sleep and watchdog off,
     PM1 GPIO2 high = LCD rail, 200 ms settle (M5GFX/M5Unified StickS3
-    sequence, cited in the file).
+    sequence, cited in the file). Also `pm1_wake` (idle sleep off, once, for
+    every PM1 user), EXT_5V (`PWR_CFG` bit 3) and rail L1 (bit 2) on, and the
+    speaker amplifier (GPIO3) for `ir_esp.c` / `imu_esp.c`.
   - `lcd_st7789.c`: ST7789 135x240 used as landscape 240x135 (column
     offset 40, row offset 53, MADCTL 0x6C, inverted; the same on both
     boards), SPI3 40 MHz with DMA, pins from `board.h`; backlight G38.
@@ -411,6 +504,42 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   Off: `port.Open("power")` returns ok=false and no ADC or PM1 battery code is
   linked. The StickS3 still uses I2C for the PM1 LCD rail when the console is on.
 
+- `GOGO_IMU` (default y): the BMI270 driver (`imu_esp.c`) and its 8 KB
+  configuration. Off: `port.Open("imu")` returns ok=false, `CAP_IMU` is 0, and
+  on the Cardputer with `GOGO_KBD` also off `i2c_bus.c` and the IDF I2C master
+  driver drop out.
+- `GOGO_IR` (default y): `ir_esp.c` on the RMT. Off: `port.Open` of `ir_tx`
+  and `ir_rx` returns ok=false, `CAP_IR_TX`/`CAP_IR_RX` are 0, and the IDF RMT
+  driver is not linked (checked: no `rmt_new_tx_channel` in `gogo.elf`). The
+  IR pins stay reserved.
+
+  `gogo.bin` / static DIRAM (ESP-IDF 6.1.1, fresh build directories; before
+  input phase 2 the defaults were StickS3 885712 / 123978 and Cardputer
+  929408 / 121084):
+
+  | variant | StickS3 `.bin` | DIRAM | Cardputer `.bin` | DIRAM |
+  |---|---|---|---|---|
+  | default (IMU and IR on) | 923472 | 124882 | 957888 | 121664 |
+  | `GOGO_IMU=n` | 912992 | 124866 | 947472 | 121648 |
+  | `GOGO_IR=n` | 897680 | 123978 | 941248 | 121084 |
+  | both off | 887232 | 123978 | 930864 | 121084 |
+
+  The IMU costs about 10.5 KB of flash (8 KB configuration, about 2 KB of
+  code) and 16 B of DIRAM (6 B of state plus alignment); IR costs 16.6 KB (Cardputer, TX only) to
+  25.8 KB (StickS3) of flash, mostly the IDF RMT driver and the GDMA code it
+  references, and 580 / 904 B of DIRAM (the RMT and GDMA ISR glue that stays
+  in IRAM, plus `ir_esp.c`'s 85 B of state). With both off the firmware is
+  still about 1.5 KB above the earlier default: the chip-independent
+  `input/imu.c`, `input/ir.c` and `stream/` are always linked (the ports
+  exist and refuse to open). Run time, all in internal RAM and only while
+  open: the IMU batch buffer (`va_alloc`, up to 2400 B, charged to the
+  owner) and the `ir_rx` frame buffer (512 B, `va_alloc`, charged) come from
+  the VM arena; the RMT buffers come from the system heap (TX 512 B from the
+  port open, plus the IDF channel objects; RX 1548 B while `ir_rx` is
+  open). The RMT buffers and channel objects are **not charged** to the
+  owning actor (only the arena buffers above are); they are system heap,
+  held only while the port is open.
+
 - `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `net/*.c`
   are not built, the capability `net` is absent (an image that needs it is
   refused at boot with the missing cap named), `port.Open` of `netif`, `udp`,
@@ -506,9 +635,10 @@ modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
     idf.py -C platform/esp32s3 -B <dir> -DGOGO_BOARD=<board> -DSDKCONFIG=<dir>/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;<board overlay>;<dir>/sdkconfig.gogo" build
 
-Feature names are `net kbd power sd exfat cjk`; `net`, `kbd`, `power` are on
-only if required or given with `-with`; `sd`, `exfat`, `cjk` are on by
-default and `-without` turns them off. A required feature cannot be removed,
+Feature names are `net kbd power sd exfat cjk imu irtx irrx`; `net`, `kbd`,
+`power` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
+`imu`, `irtx`, `irrx` are on by default and `-without` turns them off
+(`irtx` and `irrx` are one switch, `GOGO_IR`). A required feature cannot be removed,
 and one the board lacks (`kbd`, `sd` on the StickS3) is an error. The board
 feature table is in `cmd/gogo/firmware.go` and must match `main/board.h` and
 `main/Kconfig.projbuild`. `gogo firmware` owns its build directory: if

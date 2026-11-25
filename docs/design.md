@@ -237,6 +237,18 @@ func MemUsed() int               // 已加载模块的代码字节数（计入 c
 - **尺寸亮点**（`gogo.bin`，ESP-IDF 6.1.1）：关 `GOGO_NET` StickS3 883728 -> 460352 B、静态 DIRAM 约 -33 KB；关 `GOGO_FONT_CJK` 约 -161 KB；Cardputer 关 `GOGO_SD` -42.6 KB；全部可选项关闭 StickS3 298704 B、Cardputer 276160 B（约 -66% / -70%）。全局瘦身（日志级别、`CHECKS_SILENT`、关 WPA3）只测量未采用，见 `platform/esp32s3/README.md`。
 - 真机验证已通过（StickS3：`GOGO_NET=n` 固件刷入后，`netdemo` 被拒绝、`fsdemo` 正常运行，启动时空闲内存 +64 KB），结果见 followups 文件。`gogo firmware` 管理自己的构建目录：已有的 `sdkconfig` 与新的开关不一致时会删除它。
 
+### 5.4.6 六轴传感器、红外与统一数据流（输入第二期）
+
+规格见[输入第二期设计](superpowers/specs/2026-11-25-gogo-input2-design.md)，硬件出处见[硬件调研](superpowers/specs/2026-11-25-input2-hw-research.md)，遗留与真机检查清单见 [input2-followups.md](input2-followups.md)，书里的讲解见 `docs/book/15-imu-and-ir.md`。
+
+- **统一数据流**（`stream/`，纯 C）：输入流 `port.Chunk{Seq, TimeMs, Dropped, Data}`（序号含被丢的，送不进邮箱就丢并计数，不杀接收者），输出流命令 `port.Out{Data}`，每个被接受的 `Out` 回一个 `port.Done{Seq}`（成功发送的从 1 编号，拒收或发送失败为 -1；接收者什么都不读、已欠 16 个 `Done` 时，拒收的 `Done{-1}` 可能被丢），每个端口最多 2 个在途，第三个直接 `Done{-1}`；`Done` 进不了邮箱时欠着，按顺序补发。保留类型 35–41，镜像 v10。
+- **`imu` 端口**（`gogo/imu`）：`imu.Config{RateHz, Gestures, BatchMs}`。`RateHz` 为 0/25/50/100/200，样本 12 字节 `gx gy gz ax ay az`（int16 LE，±2000 dps、±8 g，芯片自己的坐标轴），按 `BatchMs`（默认 200，限制在 50..1000）攒成一个 `Chunk`；批缓冲用 VM 分配器、计入所有者（最多 2400 B）。手势 `imu.Gesture{Kind, Value}`，位为 `Tap DoubleTap TripleTap Orientation Flat AnyMotion NoMotion Step`，`Orientation` 的 Value 低两位为竖/左横/倒竖/右横、+4 为朝下，`Step` 的 Value 为累计步数。轮询周期 `min(BatchMs, 50)` ms。
+- **`ir_tx` / `ir_rx` 端口**（`gogo/ir`、`gogo/irproto`）：时序为 uint16 LE 微秒、亮灭交替、亮开头，每个值 1..32767，每帧最多 256 个值，收发格式相同（可原样重放）。`ir.TX{CarrierHz, DutyPct}` 收 `Out`；`ir.RX{GapUs}` 每帧一个 `Chunk`，超长截断并在 `Dropped` 加 1。`irproto` 提供 NEC 编解码。
+- **平台钩子**：`InputHw` 增加 `imu_open/close/read_fifo/read_gestures` 与 `ir_tx_start/tx_busy/rx_open/rx_read/rx_close`，以及可选的 `ir_tx_open/ir_tx_close`（发射端口打开/关闭时调用，ESP 用它给 StickS3 的 EXT_5V 计数；unix 留 NULL）（签名与契约见 `input/input.h` 和规格 §4）。unix 用 stdin 脚本模拟（`imu sample`、`imu gesture`、`ir rx`），`ir_tx` 打印到 stderr。
+- **ESP32-S3**：两块板子都是 BMI270（共享 I2C 总线，先探 0x69 再探 0x68，只轮询），首次打开时上传 Bosch 的 legacy 配置（8192 B，BSD-3，原样保留许可头，`bmi270_legacy_config.c`），因为只有它带敲击与朝向。红外用 RMT（1 MHz）：TX StickS3 G46、Cardputer G44，RX 只有 StickS3（G42，3 个帧槽，完成回调里重新接收）。StickS3 在有红外端口打开期间打开 PM1 的 EXT_5V（`PWR_CFG` 0x06 bit 3，按打开的端口计数，最后一个关闭时关掉；打开期间 Grove/Hat 的 5 V 是输出，不能从那里供电），`ir_rx` 打开期间关掉喇叭功放（PM1 G3）。
+- **后台记录**（`gogo/imulog`，用 Go 子集写，建在 `gogo/fs` 上）：`imulog.Start(cfg, dir, maxBytes)` 打开 imu 端口并交给一个记录 actor，把每个 `Chunk` 和每个手势追加成二进制记录（15 字节头 `kind, a, timeMs, b, len` 加载荷）写进 `dir/0.imu` 与 `dir/1.imu`，轮转方式同 `ringlog`，总量不超过 `maxBytes` 加一条记录；`imulog.Read(dir, max)` 返回最新的 `max` 条记录。黄金测试 `examples/imulogdemo`。
+- **开关与能力位**：Kconfig `GOGO_IMU`、`GOGO_IR`（默认开），能力位 `CAP_IMU`、`CAP_IR_TX`、`CAP_IR_RX`；关掉 `GOGO_IR` 时 RMT 驱动不链接。`gogo.bin`：StickS3 默认 923472 B（输入第二期前 885712 B），IMU 约 10.5 KB（其中配置 8 KB）、红外约 25.8 KB（主要是 IDF 的 RMT 驱动）；静态 DIRAM +904 B。明细见 `platform/esp32s3/README.md`。
+
 ### 5.5 值表示与内存
 
 - **统一的 32 位标记字**（宿主和 MCU 相同）。小整数直接放在字里（约 30 位，`int` 和 `int64` 都是），超出范围的值自动装箱；`int64` 放进 `any` 时总是装箱（编译器按静态类型选 `*64` 操作码，并在转换处插入 `BOX64`），这样类型 switch 仍能区分 `int` 与 `int64`；其余复合值是指向 actor 堆的引用。
@@ -423,9 +435,9 @@ FORWARD  （GC 时临时写入）                            转发标记
 
 - 寄存器式字节码，定长 32 位指令字（8 位操作码 + 3 个 8 位操作数），需要时跟扩展字。每个函数有固定数量的寄存器（栈帧大小由编译器算出）。
 - 解释器是一个普通的 `switch` 循环，每个操作码一个 case，不用宏生成代码。
-- 镜像格式：头部（魔数、版本）、常量池、类型描述表（结构体布局、类型名）、函数表、代码段、可选的行号表。镜像与位置无关，可原地执行。实际布局见 `vm/image.h`：头部 8 字、函数表、类型表、常量区、代码段，最后是常量区的对象起点位图（v7 起，每个常量字 1 位，对象起点置 1，共 ceil(常量字数/32) 字，原地从 flash 读，不占 RAM）。v9 起位图之后还有 `requires`（1 字，能力位：Net=1、Kbd=2、Power=4、SD=8、任意端口=1<<31，由编译器按导入、常量 `port.Open` 驱动名与 `/sd` 路径推断）和导出表（`n_exports` 1 字，其后每项 `{名称常量偏移, 函数下标}` 两字）；每个镜像都是一个模块，`main` 以 `"main"` 导出，包 `main` 里导出的 `func()` / `func(arg any)` 也导出，加载器校验名称落在常量对象起点、函数下标越界即拒绝；头部第 7 字仍保留为 0。
+- 镜像格式：头部（魔数、版本）、常量池、类型描述表（结构体布局、类型名）、函数表、代码段、可选的行号表。镜像与位置无关，可原地执行。实际布局见 `vm/image.h`：头部 8 字、函数表、类型表、常量区、代码段，最后是常量区的对象起点位图（v7 起，每个常量字 1 位，对象起点置 1，共 ceil(常量字数/32) 字，原地从 flash 读，不占 RAM）。v9 起位图之后还有 `requires`（1 字，能力位：Net=1、Kbd=2、Power=4、SD=8、IMU=16、IrTx=32、IrRx=64、任意端口=1<<31，由编译器按导入、常量 `port.Open` 驱动名与 `/sd` 路径推断）和导出表（`n_exports` 1 字，其后每项 `{名称常量偏移, 函数下标}` 两字）；每个镜像都是一个模块，`main` 以 `"main"` 导出，包 `main` 里导出的 `func()` / `func(arg any)` 也导出，加载器校验名称落在常量对象起点、函数下标越界即拒绝；头部第 7 字仍保留为 0。
 - 镜像校验：加载器检查各表与常量区的结构，位图必须恰好标出常量头给出的对象起点；常量对象里的常量引用、函数名与类型名都必须指向已标记的起点，否则拒绝加载（`IMG_ERR_BOUNDS`）。LOADK 的常量操作数在执行时查位图（不合格则 badcode），不在加载时查：跳转可能落在扩展字上，加载期的线性解码查不全。指向对象中间的引用能伪造对象（例如字符串内容里的假结构体头），这是内存安全问题，不只是 badcode。
-- 镜像版本（`IMAGE_VERSION`，当前为 9）：操作码编号或语义、builtin 编号、保留类型、term 编码、镜像布局任何一项变化都要升版本；编译器与 VM 同步升级，加载器拒绝其他版本（`unsupported version`）。v1 为 M1/M2；v2 为 M3（通用算术只收 `int`、`*64` 操作码与 `BOX64`、`CLEAR`、有类型的零 PID/Ref）；v3 为 M4（多返回值 `RETN`、`CONV c=2` 转 byte）；v4 为 M5（调用函数值 `CALLV`）；v5 为位运算（`&` `|` `^` `<<` `>>`）；v6 为存储（builtin 49 `B_FS`、保留类型 27 / 28 `fs.Info` / `fs.Space`）；v7 为常量区对象起点位图；v8 为输入（保留类型 29–33：`kbd.Config` / `kbd.Key` / `power.Config` / `power.Battery` / `power.Read`）；v9 为热加载（位图之后加 `requires` 与导出表；builtin 50 `B_CODE`、保留类型 34 `code.Module`；运行时的常量引用、闭包与结构体类型字带模块标记，镜像里不带，所以常量偏移 17 位、函数号 21 位、类型号 16 位，见 5.5.3）。
+- 镜像版本（`IMAGE_VERSION`，当前为 10）：操作码编号或语义、builtin 编号、保留类型、term 编码、镜像布局任何一项变化都要升版本；编译器与 VM 同步升级，加载器拒绝其他版本（`unsupported version`）。v1 为 M1/M2；v2 为 M3（通用算术只收 `int`、`*64` 操作码与 `BOX64`、`CLEAR`、有类型的零 PID/Ref）；v3 为 M4（多返回值 `RETN`、`CONV c=2` 转 byte）；v4 为 M5（调用函数值 `CALLV`）；v5 为位运算（`&` `|` `^` `<<` `>>`）；v6 为存储（builtin 49 `B_FS`、保留类型 27 / 28 `fs.Info` / `fs.Space`）；v7 为常量区对象起点位图；v8 为输入（保留类型 29–33：`kbd.Config` / `kbd.Key` / `power.Config` / `power.Battery` / `power.Read`）；v9 为热加载（位图之后加 `requires` 与导出表；builtin 50 `B_CODE`、保留类型 34 `code.Module`；运行时的常量引用、闭包与结构体类型字带模块标记，镜像里不带，所以常量偏移 17 位、函数号 21 位、类型号 16 位，见 5.5.3）；v10 为输入二期（保留类型 35–41：`port.Chunk` / `port.Out` / `port.Done` / `imu.Config` / `imu.Gesture` / `ir.TX` / `ir.RX`；能力位 `CAP_IMU` / `CAP_IR_TX` / `CAP_IR_RX`）。
 
 ### 5.7 调度
 
@@ -483,8 +495,9 @@ gogo monitor [-port P] [-t 秒] [-until 文本] [-reset]
 7. **输入**（已完成，2026-11-24 两块板真机验证通过）：`gogo/kbd` 与 `gogo/power` 端口、`input/` 公共代码、镜像 v8、unix 模拟、Cardputer ADV 键盘与电池、StickS3 电池。详见 §5.4.3 与 [input-followups.md](input-followups.md)。
 8. **热加载**（已完成；StickS3 真机验证通过，PSRAM 与无 PSRAM 两种构建都跑过；Cardputer ADV 真机运行推迟）：镜像 v9（`requires` 与导出表）、固件能力位、统一的模块表（开机镜像是 0 号模块）与带模块标记的项、`gogo/code`、对称的跨模块规则（`BadMsg`）、`supervisor.SuperviseModule` / `Upgrade`、StickS3 的 PSRAM 代码内存、`examples/hotload` 与 `examples/hotload_net`。VM 核心 36095 B（基线 30784 B，+5311 B）。详见 §5.4.4 与 [热加载设计](superpowers/specs/2026-11-24-gogo-hotload-design.md)，遗留事项见 [hotload-followups.md](hotload-followups.md)。
 9. **可裁剪固件**（已完成；2026-11-25 StickS3 真机验证通过：不带网络的固件拒绝需要网络的镜像，开机可用 RAM 多 64 KB）：Kconfig 开关 `GOGO_NET` / `GOGO_SD` / `GOGO_FS_EXFAT` / `GOGO_FONT_CJK` / `GOGO_KBD` / `GOGO_BATTERY`、能力位、`gogo firmware`、尺寸表。详见 §5.4.5 与 [optional-firmware-followups.md](optional-firmware-followups.md)。
-10. **接下来**（用户定的顺序）：输入第二期（六轴传感器、红外，统一的 Chunk / Out / Done 数据流）→ 录音（存 SD 卡）→ 蓝牙（手机 App 连接、手机配网，位置待定）→ HTTPS（含大文件流式上传，见 [m5-followups.md](m5-followups.md) 的 TLS 一项）。
-11. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
+10. **输入第二期**（主机部分已完成；真机：两块板的 IMU 静置通过、Cardputer 红外发射完成、StickS3 红外接收收到相关的突发，NEC 解码待手动对准，手势待用户）：统一的 `Chunk` / `Out` / `Done` 数据流（`stream/`）、`gogo/imu`（BMI270，采样批与手势）、`gogo/ir` 与 `gogo/irproto`（RMT 收发、NEC）、镜像 v10、能力位与 `GOGO_IMU` / `GOGO_IR` 开关、unix 模拟与黄金测试。详见 §5.4.6 与 [input2-followups.md](input2-followups.md)。
+11. **接下来**（用户定的顺序）：录音（存 SD 卡）→ 蓝牙（手机 App 连接、手机配网，位置待定）→ HTTPS（含大文件流式上传，见 [m5-followups.md](m5-followups.md) 的 TLS 一项）。
+12. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
 
 ## 6. 交给实现者决定的
 

@@ -80,6 +80,10 @@ func TestRequiresInference(t *testing.T) {
 		{"kbd driver", "package main\nimport (\n\"gogo/port\"\n\"gogo/kbd\"\n)\nfunc main() { _, _ = port.Open(\"kbd\", kbd.Config{}) }\n", CapKbd, 0},
 		{"kbd driver no import", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"kbd\", 1) }\n", CapKbd, 0},
 		{"power driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"power\", 1) }\n", CapPower, 0},
+		{"imu driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"imu\", 1) }\n", CapIMU, 0},
+		{"ir_tx driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"ir_tx\", 1) }\n", CapIRTX, 0},
+		{"ir_rx driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"ir_rx\", 1) }\n", CapIRRX, 0},
+		{"imu import alone", "package main\nimport \"gogo/imu\"\nfunc main() { _ = imu.Config{} }\n", 0, 0},
 		{"udp driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"udp\", 1) }\n", CapNet, 0},
 		{"sd path", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/sd/a\", 10) }\n", CapSD, 0},
 		{"sd exact", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/sd\", 10) }\n", CapSD, 0},
@@ -115,7 +119,7 @@ func TestRequiresInference(t *testing.T) {
 }
 
 func TestCapConstants(t *testing.T) {
-	if CapNet != 1 || CapKbd != 2 || CapPower != 4 || CapSD != 8 || CapAnyPort != 1<<31 {
+	if CapNet != 1 || CapKbd != 2 || CapPower != 4 || CapSD != 8 || CapIMU != 16 || CapIRTX != 32 || CapIRRX != 64 || CapAnyPort != 1<<31 {
 		t.Error("capability bits changed")
 	}
 }

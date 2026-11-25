@@ -3,8 +3,10 @@
 #ifndef GOGO_PLATFORM_ESP_H
 #define GOGO_PLATFORM_ESP_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "input.h"   /* ImuGestures, for the IMU hooks below */
 
 /* Called from the VM task before vm_init: records the task to notify and
  * the clock origin. */
@@ -51,8 +53,17 @@ void console_esp_write(const char *s, size_t n, uint8_t color);
 struct i2c_master_bus_t;
 struct i2c_master_bus_t *i2c_bus_get(void);
 
-/* M5PM1: turns on the LCD rail. 0 on success. */
+/* M5PM1 (StickS3, pm1.c). 0 on success. pm1_wake turns the chip's I2C idle
+ * sleep off (once; every user calls it first); pm1_lcd_power_on turns on the
+ * LCD rail; pm1_ext5v switches the EXT_5V boost (IR LED and receiver, Grove
+ * 5 V out), *was = its state before (may be NULL);
+ * pm1_imu_power_on rail L1 (BMI270); pm1_spk_amp switches the speaker
+ * amplifier (PM1 GPIO3), *was = its level before (may be NULL). */
+int pm1_wake(void);
 int pm1_lcd_power_on(void);
+int pm1_ext5v(bool on, bool *was);
+int pm1_imu_power_on(void);
+int pm1_spk_amp(bool on, bool *was);
 /* PM1 register reads (little-endian for u16) and a byte write; 0 on success. */
 int pm1_read(uint8_t reg, uint8_t *buf, size_t n);
 int pm1_read_u8(uint8_t reg, uint8_t *v);
@@ -87,6 +98,24 @@ uint32_t fs_fat_state_bytes(void);
 
 struct PortDriver;
 extern const struct PortDriver gpio_esp_driver;
+
+/* BMI270 motion sensor (imu_esp.c, built with CONFIG_GOGO_IMU on a board
+ * with HAS_IMU): the InputHw imu_* hooks, contracts in input/input.h. */
+int imu_esp_open(uint16_t rate_hz, uint8_t gestures);
+void imu_esp_close(void);
+int imu_esp_read_fifo(uint8_t *buf, uint32_t cap);
+int imu_esp_read_gestures(ImuGestures *g);
+
+/* Infrared on the RMT (ir_esp.c, built with CONFIG_GOGO_IR): the InputHw
+ * ir_* hooks, contracts in input/input.h. The receiver hooks exist only on
+ * a board with HAS_IR_RX. */
+int ir_esp_tx_open(uint32_t carrier_hz, uint8_t duty_pct);
+void ir_esp_tx_close(void);
+int ir_esp_tx_start(const uint8_t *timings, uint32_t n, uint32_t carrier_hz, uint8_t duty_pct);
+bool ir_esp_tx_busy(void);
+int ir_esp_rx_open(uint32_t gap_us);
+int ir_esp_rx_read(uint16_t *buf, uint32_t cap, uint32_t *start_ms);
+void ir_esp_rx_close(void);
 
 /* Config store (config_esp.c): NVS namespace "gogo". config_esp_init
  * opens it (0 on success); config_esp_get reads key into buf (at most cap

@@ -1,0 +1,6 @@
+frame 1 dropped 0 NEC addr 4 cmd 8 exact false
+sent 1
+frame 2 dropped 0 values 3 not NEC
+frame 3 dropped 0 NEC addr 4660 cmd 66 exact true
+sent 2
+sent 3
