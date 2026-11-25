@@ -13,9 +13,9 @@
  *  4. frees it with gogo_free.
  *
  * Threads. A VM is single-threaded: every gogo_* call runs on the thread
- * that owns the VM, except gogo_post, gogo_retain and gogo_release, which
- * any thread may call at any time. Hooks run on the owning thread unless
- * noted.
+ * that owns the VM, except gogo_post, gogo_close_posts, gogo_retain and
+ * gogo_release, which any thread holding a reference may call at any time.
+ * Hooks run on the owning thread unless noted.
  *
  * Re-entrancy. Hooks run inside gogo_step. A hook must not call gogo_step,
  * gogo_run, gogo_load or gogo_start (they return GOGO_EBUSY) nor gogo_free
@@ -26,11 +26,13 @@
  * message. Posts are queued in a lock-free inbox and delivered in order per
  * posting thread at the VM's next step, as ordinary messages under the
  * receiver's mailbox quota. A post whose name is not registered when it is
- * delivered (for example one sent before the program registered it), or
- * that is over the receiver's quota, is dropped and counted
- * (gogo_get_stats). While some actor holds a registered name the VM keeps
- * running (it can still get posts): it is done only when it has no
- * registered name either.
+ * delivered is dropped and counted (gogo_get_stats): in particular posts
+ * sent before the program has registered the name (wait for a sign from
+ * the program, such as an output line or a post of its own, first). A post
+ * over the receiver's quota is dropped and counted too. While posts are
+ * open and some actor holds a registered name, the VM keeps running (it
+ * can still get posts); gogo_close_posts ends that, and the VM is then
+ * done when its actors are, as on a board.
  *
  * TLS. The "tls" port's mbedTLS allocator, time and RNG hooks are
  * process-global (mbedTLS gives them no context): every VM in a process
@@ -95,9 +97,9 @@ typedef struct gogo_host {
 } gogo_host;
 
 /* Capability bits (gogo_config.caps; an image's requires word). A VM gets
- * the granted bits that this library provides; an image that needs one it
- * lacks is refused (GOGO_ECAPS, the reason on stream 2). Basic I/O
- * (print, actors, timers) needs none. */
+ * the granted bits; an image that needs one it lacks is refused
+ * (GOGO_ECAPS, the reason on stream 2). Basic I/O (print, actors, timers)
+ * needs none. This version provides no capability yet: grant none. */
 #define GOGO_CAP_NET    1u
 #define GOGO_CAP_KBD    2u
 #define GOGO_CAP_POWER  4u
@@ -111,8 +113,10 @@ typedef struct gogo_host {
 
 /* A NULL config is the all-zero one. */
 typedef struct gogo_config {
-    uint32_t caps;            /* granted GOGO_CAP_* bits */
-    size_t   mem_limit;       /* bytes the whole VM may allocate, over every actor's own limit; 0 = none */
+    uint32_t caps;            /* granted GOGO_CAP_* bits; a bit this build cannot give makes gogo_new fail */
+    size_t   mem_limit;       /* bytes the whole VM may allocate, over every actor's own limit; 0 = none.
+                               * Queued posts are outside it (host memory, at most
+                               * GOGO_POST_MAX of them) until delivered. */
     uint16_t max_actors;      /* live actors at once; 0 = the build's default (GOGO_TABLE_CAP) */
     const char *fs_root;      /* a host directory as /flash; not supported in this version: must be NULL */
     int64_t  fs_quota;        /* bytes under fs_root; -1 = none */
@@ -141,7 +145,9 @@ enum {
 
 /* Posts queued and not yet delivered, at most. */
 #define GOGO_POST_MAX 256
-/* Longest name and data of one post (the data is one message block). */
+/* Longest name and data of one post (the data goes in one message block).
+ * In practice a post must also fit the receiver's memory limit beside its
+ * heap and mailbox (256 KB in all by default), or it is dropped. */
 #define GOGO_POST_NAME_MAX 255u
 #define GOGO_POST_DATA_MAX 262080u
 
@@ -152,9 +158,8 @@ enum {
 /* A new VM on host h (whose hooks get host_ctx). h and host_ctx must stay
  * valid until the VM is freed and released. NULL if the table is
  * incomplete (write, alloc, free and now_ms are required; wake with wait;
- * the unix_time and code pairs both or neither), cfg is invalid or memory
- * runs out. With h = gogo_host_posix() and host_ctx NULL the VM makes and
- * owns a POSIX context. */
+ * the unix_time and code pairs both or neither), cfg is invalid (fs_root,
+ * caps this build cannot give) or memory runs out. */
 gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg);
 
 /* Loads the image (len bytes, little-endian words) as the VM's program.
@@ -172,8 +177,9 @@ int gogo_start(gogo_vm *vm);
  * fires due timers and runs one time slice of one actor; 0 = until idle or
  * done). GOGO_RUNNABLE: work remains, step again; GOGO_IDLE: nothing to do
  * until gogo_next_deadline or a wake (wait, latched); GOGO_DONE: the
- * program has finished (every actor exited or is blocked for good, and
- * none holds a registered name); later steps return GOGO_DONE too.
+ * program has finished (every actor exited or is blocked for good, and,
+ * while posts are open, none holds a registered name); later steps return
+ * GOGO_DONE too.
  * GOGO_ESTATE before gogo_start. */
 int gogo_step(gogo_vm *vm, uint32_t budget);
 
@@ -183,10 +189,17 @@ int64_t gogo_next_deadline(gogo_vm *vm);
 
 /* Any thread: queues port.Post{kind, data[0..len)} for the actor registered
  * as name (NUL-terminated) and wakes the host. The data is copied. 0, or
- * GOGO_EFULL, GOGO_E2BIG, GOGO_ENOMEM, GOGO_EINVAL, GOGO_ECLOSED (freed or
- * being freed; safe only while the caller holds a reference: the owner's,
- * until gogo_free returns, or one from gogo_retain). */
+ * GOGO_EFULL, GOGO_E2BIG, GOGO_ENOMEM, GOGO_EINVAL, GOGO_ECLOSED (posts
+ * closed, or the VM is being freed). The caller must hold a reference: the
+ * owner thread its own; any other thread that may post while or after the
+ * owner frees the VM must hold one from gogo_retain. */
 int gogo_post(gogo_vm *vm, const char *name, int32_t kind, const void *data, size_t len);
+
+/* Any thread (holding a reference): later posts return GOGO_ECLOSED,
+ * registered names no longer keep the VM alive, and the host is woken, so
+ * a VM whose actors only wait for posts ends (gogo_run returns 0). Posts
+ * already queued are still delivered. gogo_free implies it. */
+void gogo_close_posts(gogo_vm *vm);
 
 /* Any thread: keeps the handle valid for gogo_post (which then returns
  * GOGO_ECLOSED) after gogo_free, until the matching gogo_release. Call it
@@ -208,7 +221,8 @@ int gogo_run(gogo_vm *vm);
 int gogo_run_thread(gogo_vm *vm);
 int gogo_join(gogo_vm *vm);
 
-/* Counters, owning thread. */
+/* Counters. On the owning thread: with gogo_run_thread, after gogo_join
+ * (or from a hook). */
 typedef struct gogo_stats {
     uint64_t posts_delivered;  /* posts queued on their receiver */
     uint64_t posts_dropped;    /* posts not delivered: unknown name, over quota, out of memory */
@@ -217,19 +231,21 @@ typedef struct gogo_stats {
 } gogo_stats;
 void gogo_get_stats(gogo_vm *vm, gogo_stats *out);
 
-/* Closes the program's ports and returns every byte the VM took from its
- * host (pending posts included); a VM running in gogo_run_thread is
+/* Closes posts (gogo_close_posts) and the program's ports and returns
+ * every byte the VM took from its host (pending posts included); a VM running in gogo_run_thread is
  * stopped and joined first. Never from a hook. The handle stays valid for
  * gogo_post / gogo_release while retained. NULL is ignored. */
 void gogo_free(gogo_vm *vm);
 
 /* The POSIX default host: malloc, CLOCK_MONOTONIC, CLOCK_REALTIME as the
- * wall clock (setting it is refused), getentropy, stdout/stderr, and a
- * latched condition-variable wait and wake. Its state lives in a context
- * (gogo_posix_ctx_new; or pass NULL to gogo_new to let the VM own one). */
+ * wall clock (setting it is refused), getentropy (random aborts if it
+ * fails), stdout/stderr, and a latched condition-variable wait and wake.
+ * Its state lives in a context: gogo_posix_ctx_new, or gogo_new_posix,
+ * which makes a VM that owns one (freed with the VM's last reference). */
 const gogo_host *gogo_host_posix(void);
 void *gogo_posix_ctx_new(void);         /* NULL if out of memory */
 void gogo_posix_ctx_free(void *ctx);
+gogo_vm *gogo_new_posix(const gogo_config *cfg);
 
 #ifdef __cplusplus
 }

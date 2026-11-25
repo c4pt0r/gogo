@@ -137,9 +137,11 @@ static int p_random_bytes(void *ctx, uint8_t *buf, size_t n) {
     return 0;
 }
 
+/* random promises bits a peer cannot predict: with no entropy source
+ * left, stop rather than return something guessable. */
 static uint32_t p_random(void *ctx) {
     uint32_t x = 0;
-    p_random_bytes(ctx, (uint8_t *)&x, sizeof x);
+    if (p_random_bytes(ctx, (uint8_t *)&x, sizeof x) != 0) abort();
     return x;
 }
 
@@ -149,6 +151,18 @@ static const gogo_host posix_host = {
 };
 
 const gogo_host *gogo_host_posix(void) { return &posix_host; }
+
+gogo_vm *gogo_new_posix(const gogo_config *cfg) {
+    void *ctx = gogo_posix_ctx_new();
+    if (!ctx) return NULL;
+    gogo_vm *g = gogo_new(&posix_host, ctx, cfg);
+    if (!g) {
+        gogo_posix_ctx_free(ctx);
+        return NULL;
+    }
+    g->ctx_free = gogo_posix_ctx_free;   /* at the last release */
+    return g;
+}
 
 /* ---- gogo_run_thread ---- */
 

@@ -21,8 +21,10 @@ typedef struct EmbedBlk {
 #define EMBED_BLK_HDR 32u
 typedef char embed_blk_fits[sizeof(EmbedBlk) <= EMBED_BLK_HDR ? 1 : -1];
 
-/* gogo_vm.state */
-enum { EMBED_LIVE = 0, EMBED_DEAD = 1 };
+/* gogo_vm.state, only ever growing: LIVE takes posts; CLOSED
+ * (gogo_close_posts) refuses them and no longer counts registered names
+ * as liveness; DEAD (gogo_free) also stops gogo_run. */
+enum { EMBED_LIVE = 0, EMBED_CLOSED = 1, EMBED_DEAD = 2 };
 
 struct EmbedThread;   /* host_posix.c: gogo_run_thread's thread */
 
@@ -45,13 +47,17 @@ struct gogo_vm {
     int posting;
     bool loaded;                 /* gogo_load succeeded */
     bool stepping;               /* inside gogo_step (re-entry guard) */
-    bool own_ctx;                /* uctx is a POSIX context the VM made */
+    void (*ctx_free)(void *);    /* frees uctx at the last release (gogo_new_posix), or NULL */
 };
 
-/* gogo_run's loop asks for a stop between steps once state is EMBED_DEAD. */
-static inline bool embed_dead(const gogo_vm *g) {
-    return __atomic_load_n(&g->state, __ATOMIC_ACQUIRE) != EMBED_LIVE;
-}
+static inline int embed_state(const gogo_vm *g) { return __atomic_load_n(&g->state, __ATOMIC_ACQUIRE); }
+
+/* gogo_run's loop stops between steps once the VM is being freed. */
+static inline bool embed_dead(const gogo_vm *g) { return embed_state(g) == EMBED_DEAD; }
+
+/* Raises the state to at least s (never lowers it); seq_cst, as the post
+ * handshake needs. */
+void embed_set_state(gogo_vm *g, int s);
 
 /* host_posix.c: stops and joins a gogo_run_thread thread (gogo_free). */
 void embed_thread_stop(gogo_vm *g);

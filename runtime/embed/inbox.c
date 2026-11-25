@@ -6,6 +6,10 @@
 #include "opcodes.h"
 #include <string.h>
 
+/* The largest post is one message block: the struct (4 words), a Kind box
+ * (2), the K_BYTES header (2) and the data. */
+typedef char post_fits_block[4u + 2u + 2u + (GOGO_POST_DATA_MAX + 3u) / 4u <= 0xFFFFu ? 1 : -1];
+
 int inbox_push(Inbox *in, const gogo_host *h, void *hctx, const char *name, size_t name_len,
                int32_t kind, const void *data, size_t len) {
     if (__atomic_fetch_add(&in->depth, 1, __ATOMIC_RELAXED) >= GOGO_POST_MAX) {
@@ -128,9 +132,10 @@ static void src_drain(Vm *vm, void *ctx, uint64_t now) {
     }
 }
 
-/* Live while a post is queued or some actor holds a name a post can reach. */
+/* Live while a post is queued, or while posts are open and some actor
+ * holds a name a post can reach. */
 static bool src_any_live(const Vm *vm, void *ctx) {
-    return src_pending(vm, ctx) || vm->names != NULL;
+    return src_pending(vm, ctx) || (vm->names != NULL && embed_state(ctx) == EMBED_LIVE);
 }
 
 const PortSource inbox_source = { src_pending, src_drain, src_any_live, NULL, NULL };

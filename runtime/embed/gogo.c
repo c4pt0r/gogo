@@ -112,28 +112,19 @@ gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg) {
     static const gogo_config zero_cfg;
     if (!host_ok(h)) return NULL;
     if (!cfg) cfg = &zero_cfg;
-    if (cfg->fs_root) return NULL;
-    bool own = false;
-    if (h == gogo_host_posix() && !host_ctx) {
-        if (!(host_ctx = gogo_posix_ctx_new())) return NULL;
-        own = true;
-    }
+    /* Refuse what this build cannot give, rather than mask it. */
+    if (cfg->fs_root || (cfg->caps & ~embed_board.caps)) return NULL;
     gogo_vm *g = h->alloc(host_ctx, sizeof *g);
-    if (!g) {
-        if (own) gogo_posix_ctx_free(host_ctx);
-        return NULL;
-    }
+    if (!g) return NULL;
     memset(g, 0, sizeof *g);
     g->uh = h;
     g->uctx = host_ctx;
-    g->own_ctx = own;
     g->cfg = *cfg;
     g->refs = 1;
     make_fwd(g);
     if (vm_setup(g) != 0) {
         blk_free_all(g, &g->blocks, h->free);
         h->free(host_ctx, g, sizeof *g);
-        if (own) gogo_posix_ctx_free(host_ctx);
         return NULL;
     }
     return g;
@@ -233,13 +224,23 @@ int gogo_run(gogo_vm *g) {
     }
 }
 
+/* The free/post handshake is a store-buffering pair: gogo_post writes
+ * `posting` then reads `state`; gogo_free writes `state` then reads
+ * `posting`. Only if all four accesses are seq_cst can both sides not read
+ * the old value (with an acquire read, arm64 may satisfy the load before
+ * its earlier store is visible). Either the post sees the close and backs
+ * off, or the free sees the post in progress and waits for it. */
+void embed_set_state(gogo_vm *g, int s) {
+    int old = __atomic_load_n(&g->state, __ATOMIC_SEQ_CST);
+    while (old < s && !__atomic_compare_exchange_n(&g->state, &old, s, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+    }
+}
+
 int gogo_post(gogo_vm *g, const char *name, int32_t kind, const void *data, size_t len) {
     if (!g || !name || (len && !data)) return GOGO_EINVAL;
     size_t nl = strlen(name);
     if (nl > GOGO_POST_NAME_MAX || len > GOGO_POST_DATA_MAX) return GOGO_E2BIG;
-    /* Announce the post, then check the state; gogo_free marks the state,
-     * then waits for posts in progress: one of the two sees the other. */
-    __atomic_fetch_add(&g->posting, 1, __ATOMIC_SEQ_CST);
+    __atomic_fetch_add(&g->posting, 1, __ATOMIC_SEQ_CST);   /* handshake: seq_cst (above) */
     int r = GOGO_ECLOSED;
     if (__atomic_load_n(&g->state, __ATOMIC_SEQ_CST) == EMBED_LIVE) {
         r = inbox_push(&g->inbox, g->uh, g->uctx, name, nl, kind, data, len);
@@ -249,18 +250,26 @@ int gogo_post(gogo_vm *g, const char *name, int32_t kind, const void *data, size
     return r;
 }
 
+void gogo_close_posts(gogo_vm *g) {
+    if (!g) return;
+    embed_set_state(g, EMBED_CLOSED);
+    /* A VM idle only because a name kept it alive re-checks and ends. */
+    if (g->uh->wake) g->uh->wake(g->uctx);
+}
+
 void gogo_retain(gogo_vm *g) { __atomic_fetch_add(&g->refs, 1, __ATOMIC_RELAXED); }
 
 void gogo_release(gogo_vm *g) {
     if (__atomic_fetch_sub(&g->refs, 1, __ATOMIC_ACQ_REL) != 1) return;
     const gogo_host *h = g->uh;
     void *ctx = g->uctx;
-    bool own = g->own_ctx;
+    void (*ctx_free)(void *) = g->ctx_free;
     h->free(ctx, g, sizeof *g);
-    if (own) gogo_posix_ctx_free(ctx);
+    if (ctx_free) ctx_free(ctx);
 }
 
 void gogo_get_stats(gogo_vm *g, gogo_stats *out) {
+    if (!g || !out) return;
     out->posts_delivered = g->inbox.delivered;
     out->posts_dropped = g->inbox.dropped;
     out->mem_used = va_used_bytes(&g->vm);
@@ -269,11 +278,13 @@ void gogo_get_stats(gogo_vm *g, gogo_stats *out) {
 
 void gogo_free(gogo_vm *g) {
     if (!g) return;
-    __atomic_store_n(&g->state, EMBED_DEAD, __ATOMIC_SEQ_CST);
+    embed_set_state(g, EMBED_DEAD);
     if (g->thread) embed_thread_stop(g);
     /* Posts in progress finish quickly (a copy and a push); later ones see
-     * the state and leave the inbox alone. */
-    while (__atomic_load_n(&g->posting, __ATOMIC_ACQUIRE) != 0) {
+     * the state and leave the inbox alone. The read is seq_cst: the
+     * handshake (gogo_post). After a while, let a preempted poster run. */
+    for (unsigned spins = 0; __atomic_load_n(&g->posting, __ATOMIC_SEQ_CST) != 0; spins++) {
+        if (spins >= 1000u && g->uh->wait) g->uh->wait(g->uctx, 1);
     }
     inbox_clear(&g->inbox, g->uh, g->uctx);
     if (g->vm.run_state == VM_ST_RUN) vm_stop(&g->vm);   /* ports get their close */

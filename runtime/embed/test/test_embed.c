@@ -363,6 +363,78 @@ TEST(embed_post_while_freeing) {
     }
 }
 
+/* The same on a VM the owner steps itself: no run thread, so no join or
+ * mutex orders the free against the posts; only the post handshake does.
+ * Many short rounds, the free landing at varying points of a post. */
+typedef struct Hammer {
+    gogo_vm *vm;
+    long ok, closed;
+} Hammer;
+
+static void *hammer(void *arg) {
+    Hammer *h = arg;
+    for (;;) {
+        int r = gogo_post(h->vm, "echo", 1, "abcd", 4);
+        if (r == GOGO_OK) __atomic_fetch_add(&h->ok, 1, __ATOMIC_RELEASE);
+        else if (r == GOGO_ECLOSED) { h->closed++; break; }
+        else sched_yield();   /* full */
+    }
+    return NULL;
+}
+
+TEST(embed_post_while_freeing_stepped) {
+    const char *e = getenv("GOGO_EMBED_FREE_ROUNDS");
+    long rounds = e ? atol(e) : 2000;
+    gogo_config cfg = { 0 };
+    cfg.max_actors = 16;
+    for (long round = 0; round < rounds; round++) {
+        TCtx t; tctx_init(&t);
+        gogo_vm *vm = new_loaded(&t, "echo", &cfg);
+        CHECK_EQ(gogo_start(vm), GOGO_OK);
+        CHECK_EQ(settle(vm), GOGO_IDLE);
+        Hammer h = { vm, 0, 0 };
+        pthread_t th;
+        gogo_retain(vm);
+        pthread_create(&th, NULL, hammer, &h);
+        long want = round % 4;   /* free before, right at, or after the first posts */
+        while (__atomic_load_n(&h.ok, __ATOMIC_ACQUIRE) < want) sched_yield();
+        if (round & 1) gogo_step(vm, 1);
+        gogo_free(vm);
+        pthread_join(th, NULL);
+        CHECK_EQ(h.closed, 1);
+        CHECK_EQ(gogo_post(vm, "echo", 1, NULL, 0), GOGO_ECLOSED);
+        gogo_release(vm);
+        tctx_done(&t);
+    }
+}
+
+/* gogo_close_posts from another thread ends gogo_run on the owner thread,
+ * though the program's actor holds a name and waits for posts. */
+static void *close_later(void *arg) {
+    gogo_vm *vm = arg;
+    struct timespec d = { 0, 20000000L };
+    nanosleep(&d, NULL);
+    CHECK_EQ(gogo_post(vm, "echo", 5, NULL, 0), GOGO_OK);
+    gogo_close_posts(vm);
+    CHECK_EQ(gogo_post(vm, "echo", 6, NULL, 0), GOGO_ECLOSED);
+    return NULL;
+}
+
+TEST(embed_close_posts_ends_run) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    pthread_t th;
+    pthread_create(&th, NULL, close_later, vm);
+    CHECK_EQ(gogo_run(vm), GOGO_OK);       /* returns: posts closed, main blocked */
+    pthread_join(th, NULL);
+    /* The post sent before the close was still delivered. */
+    CHECK(strcmp(t.out, "ready\npost 5 0 \n") == 0);
+    CHECK_EQ(gogo_post(vm, "echo", 7, NULL, 0), GOGO_ECLOSED);
+    gogo_close_posts(vm);                  /* again: no effect */
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
 /* gogo_free stops a VM thread that is busy (never idle) too. */
 TEST(embed_free_stops_busy_thread) {
     TCtx t; tctx_init(&t);
@@ -520,6 +592,9 @@ TEST(embed_host_validation) {
     gogo_config cfg = { 0 };
     cfg.fs_root = "/tmp";
     CHECK(gogo_new(&thost, &t, &cfg) == NULL);
+    cfg.fs_root = NULL;
+    cfg.caps = GOGO_CAP_NET;                   /* not provided by this build */
+    CHECK(gogo_new(&thost, &t, &cfg) == NULL);
     CHECK(gogo_new(NULL, NULL, NULL) == NULL);
     /* Out of memory at every step of gogo_new and gogo_load. */
     Img im = image("echo");
@@ -540,7 +615,7 @@ TEST(embed_host_validation) {
 
 /* The default host on its own: a VM that owns its POSIX context. */
 TEST(embed_posix_host) {
-    gogo_vm *vm = gogo_new(gogo_host_posix(), NULL, NULL);
+    gogo_vm *vm = gogo_new_posix(NULL);
     CHECK(vm != NULL);
     Img im = image("sleeper");
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
