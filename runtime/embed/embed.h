@@ -53,7 +53,7 @@ struct gogo_vm {
     EmbedBlk *blocks;            /* live alloc blocks */
     EmbedBlk *code_blocks;       /* live code_alloc blocks */
     Inbox inbox;
-    VfsState vfs;                /* its mounts and open files */
+    VfsState vfs;                /* its mounts (none without fs_root) and open files */
     FsDir *fs;                   /* cfg.fs_root as /flash (from uh->alloc), or NULL */
     void *image_copy;            /* GOGO_LOAD_COPY: the copy (from uh->alloc) */
     size_t image_bytes;

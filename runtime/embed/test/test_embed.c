@@ -1112,6 +1112,22 @@ TEST(embed_fs_root_quota_per_vm) {
     rm_tree(rb);
 }
 
+/* No fs_root: there is no storage, and every gogo/fs call is NotMounted
+ * (as on a board without the medium), never a bad-code crash. */
+TEST(embed_fs_none_is_not_mounted) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "fsuse", NULL);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_DONE);
+    static const char want[] = "write 3\nread  3\nstat 3\nmkdir 3\nreaddir 3\nbig 0 3\n"
+                               "usage 0 0 3\nrename 3\nremove 3\n";
+    CHECK(strcmp(t.out, want) == 0);
+    if (strcmp(t.out, want)) printf("  out:\n%s  err:\n%s", t.out, t.err);
+    CHECK_EQ(t.err_len, 0);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
 /* Through the VM: /flash/d is a symlink to a directory outside the
  * root. Mkdir sees it exists, Rename into it is BadPath (7), and nothing
  * outside changes. WriteFile of /flash/a.txt, a symlink to an outside

@@ -120,7 +120,8 @@ typedef struct gogo_config {
                                * GOGO_POST_MAX of them) until delivered. */
     uint16_t max_actors;      /* live actors at once; 0 = the build's default (GOGO_TABLE_CAP) */
     /* An existing host directory served as /flash (no capability bit:
-     * every board has /flash), or NULL: no storage. The program is confined to it: paths are walked from the
+     * every board has /flash), or NULL: no storage, every gogo/fs call is
+     * NotMounted. The program is confined to it: paths are walked from the
      * directory without following symlinks (a symlink, FIFO or device is
      * BadPath, and so is opening a file with other hard links for
      * writing). /sd is never mounted. The string is not kept. */

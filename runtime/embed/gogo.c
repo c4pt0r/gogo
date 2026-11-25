@@ -105,7 +105,7 @@ static int vm_setup(gogo_vm *g) {
     uint16_t cap = g->cfg.max_actors ? g->cfg.max_actors : (uint16_t)GOGO_TABLE_CAP;
     if (vm_init(&g->vm, &g->fwd, g, &embed_board, g->cfg.caps, cap) != 0) return -1;
     va_set_limit(&g->vm, g->cfg.mem_limit);
-    if (g->fs) vfs_init(&g->vm, &g->vfs);
+    vfs_init(&g->vm, &g->vfs);       /* no fs_root: no mounts, every gogo/fs call is NotMounted */
     embed_ports_install(g);
     return port_add_source(&g->vm, &inbox_source, g) ? 0 : -1;
 }
