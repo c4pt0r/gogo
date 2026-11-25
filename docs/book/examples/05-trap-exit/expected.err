@@ -1,0 +1,4 @@
+gogo: actor <pid 1> crashed: exit(100)
+gogo: actor <pid 2> crashed: divzero in flaky
+gogo: actor <pid 3> crashed: exit(102)
+gogo: actor <pid 1> crashed: killed

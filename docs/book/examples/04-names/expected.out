@@ -1,0 +1,7 @@
+register true
+again false
+log 1 from a worker
+log 2 from a worker
+log 3 from main
+lines logged: 3
+after unregister: false

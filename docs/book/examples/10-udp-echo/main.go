@@ -1,0 +1,31 @@
+// A UDP echo server on port 7, straight on the "udp" port. The DHCP actor
+// owns the network interface; this actor owns the UDP port.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/dhcp"
+	"gogo/net"
+	"gogo/port"
+)
+
+func main() {
+	if !dhcp.Start(dhcp.Config{}) {
+		println("no network")
+		return
+	}
+	u, ok := port.Open("udp", net.UDP{Port: 7})
+	if !ok {
+		println("udp port 7 is taken")
+		return
+	}
+	println("echoing on udp port 7")
+	for i := 0; i < 3; i++ {
+		switch d := actor.Receive().(type) {
+		case net.Datagram:
+			println("echo", d.Data.Len(), "bytes to port", d.From.Port)
+			actor.Send(u, net.SendTo{Addr: d.From, Data: d.Data})
+		}
+	}
+	println("done")
+}

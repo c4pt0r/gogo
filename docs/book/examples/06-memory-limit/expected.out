@@ -1,0 +1,5 @@
+main uses 152 bytes
+  holding 1000 ints, memory true
+  holding 2000 ints, memory true
+grower exited, OutOfMemory: true
+main still runs

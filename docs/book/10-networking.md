@@ -1,0 +1,558 @@
+# 10. Networking
+
+The boards have Wi-Fi, and gogo has its own small TCP/IP stack written in
+C (Ethernet, ARP, IPv4, ICMP echo, UDP and TCP), sized for a
+microcontroller: its fixed state is under 4 KB. On top of it, libraries
+written in the gogo subset give you DHCP, DNS and an HTTP/1.0 client and
+server.
+
+Networking follows the same model as everything else:
+
+- The network interface, each UDP socket and each TCP connection is a
+  **port**, owned by one actor, with typed events.
+- Libraries such as DHCP and DNS are **actors** you talk to by message.
+- A crashed connection handler takes only its own connection with it.
+
+There is **no TLS**, so no HTTPS. `http.Get` of an `https://` URL fails at
+once.
+
+## 10.1 Running network programs
+
+Before a board can join your network, store the Wi-Fi name and password in
+its configuration store (chapter 11; once per board, the settings survive
+reflashing):
+
+```sh
+gogo config set wifi.ssid MyNetwork
+gogo config set wifi.password -      # type the password; it is not echoed back
+```
+
+The firmware connects to Wi-Fi by itself, reconnects when the link drops,
+and shows `gogo: wifi connected (...)` and later `gogo: ip <address>` on the
+screen. Only 2.4 GHz networks work.
+
+**On your computer, `gogo run` has no network.** The network ports refuse
+to open, `net.Subscribe` returns false, and `dhcp.Start` returns false at
+once. The examples in this chapter check for that and say `no network`,
+which is what you see when you run them on the host. gogo's own tests run
+network programs against a simulated network (`tests/net`); the HTTP
+server, UDP echo and TCP echo examples below were checked that way too,
+and the results are shown with them.
+
+> **Note.** There is no user-facing way to run a network program on your
+> computer against a real or simulated network. The simulator in
+> `tests/net` is driven from Go test code, not from `gogo run`.
+
+## 10.2 Getting an address: gogo/dhcp
+
+```go
+func Start(cfg dhcp.Config) bool   // Config{TimeoutMs int}; <= 0 means 10000
+```
+
+`dhcp.Start` starts the DHCP client actor, linked to the caller, and waits
+until the interface has an address (`true`) or the timeout has passed
+(`false`; the client keeps trying in the background). It returns `false`
+at once when there is no network. The client renews the lease, rebinds,
+and starts over if the lease runs out. It owns the `"netif"` port, so keep
+it alive (do not let the caller exit) while you use the network.
+
+For a fixed address, set it in the configuration store and DHCP is
+skipped:
+
+```sh
+gogo config set net.ip 192.168.1.50
+gogo config set net.mask 255.255.255.0   # the default
+gogo config set net.gw 192.168.1.1
+gogo config set net.dns 192.168.1.1
+```
+
+### Watching the link
+
+`net.Subscribe()` makes the caller receive `net.Up{IP, Gateway, DNS}`
+whenever the interface gets (or changes) its address, and `net.Down{}`
+when it loses it. It returns false if there is no network or 4 actors are
+subscribed already.
+
+IPv4 addresses are `int`s: `a.b.c.d` is `a<<24 | b<<16 | c<<8 | d`, so
+addresses from 128.0.0.0 up are negative. Format them through `int64`:
+
+```go
+// net.Subscribe delivers net.Up when the interface gets an address and
+// net.Down when it loses it. IP addresses are ints; format them yourself.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/dhcp"
+	"gogo/net"
+	"gogo/strconv"
+)
+
+// ipString formats a.b.c.d held in an int (addresses from 128.0.0.0 up are
+// negative ints, so work in int64).
+func ipString(ip int) string {
+	v := int64(ip)
+	if v < 0 {
+		v += 4294967296
+	}
+	s := ""
+	for shift := 24; shift >= 0; shift -= 8 {
+		if s != "" {
+			s = s + "."
+		}
+		s = s + strconv.FormatInt64(v>>shift&255, 10)
+	}
+	return s
+}
+
+// ipv4 packs a.b.c.d into an int (wrapping past 2^31, as int does).
+func ipv4(a, b, c, d int) int { return a<<24 | b<<16 | c<<8 | d }
+
+func main() {
+	println(ipString(ipv4(192, 168, 1, 42)), ipString(ipv4(10, 0, 0, 1)))
+	if !net.Subscribe() {
+		println("no network to watch")
+		return
+	}
+	dhcp.Start(dhcp.Config{TimeoutMs: 1000}) // keeps trying in the background
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Up:
+			println("up: ip", ipString(m.IP), "gateway", ipString(m.Gateway), "dns", ipString(m.DNS))
+		case net.Down:
+			println("down")
+		}
+	}
+}
+```
+
+On the host:
+
+```text
+192.168.1.42 10.0.0.1
+no network to watch
+```
+
+## 10.3 Names: gogo/dns
+
+```go
+func Lookup(name string, timeoutMs int) (int, bool) // timeoutMs <= 0: 5000
+```
+
+`dns.Lookup` returns the IPv4 address of a name (an A record), asking the
+DNS server learned from DHCP. A dotted address like `"10.0.0.1"` is returned
+as is. Behind it is a resolver actor registered as `"dns"`, started by the
+first lookup; it sends one query at a time, retries twice, and caches 4
+answers by their time-to-live. You rarely call it directly: `http.Get` does.
+
+## 10.4 HTTP client
+
+```go
+func Get(url string, timeoutMs int) (http.Response, bool)
+func Post(url, contentType string, body bytes.Bytes, timeoutMs int) (http.Response, bool)
+func Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (http.Response, bool)
+func HeaderValue(h []http.Header, name string) (string, bool) // case-insensitive
+
+type Response struct {
+	Status    int
+	Headers   []Header // Header{Name, Value string}
+	Body      bytes.Bytes
+	Truncated bool
+}
+```
+
+The client speaks HTTP/1.0 with `Connection: close`, `http://` URLs only.
+Each request runs in a temporary actor; the caller waits for it the way
+`actor.Call` waits, and on timeout the request is abandoned. `ok` is false
+when DNS, the connection or the timeout fails; an HTTP error status such
+as 404 is `ok` with that `Status`.
+
+```go
+// Fetch a page with http.Get. The URL comes from the config store
+// (gogo config set fetch.url http://...); http:// only, no https.
+package main
+
+import (
+	"gogo/config"
+	"gogo/dhcp"
+	"gogo/http"
+)
+
+func main() {
+	url, ok := config.Get("fetch.url")
+	if !ok {
+		url = "http://example.com/"
+	}
+	if !dhcp.Start(dhcp.Config{}) {
+		println("no network")
+		return
+	}
+	r, ok := http.Get(url, 8000)
+	if !ok {
+		println("GET", url, "failed (DNS, connect or timeout)")
+		return
+	}
+	ct, _ := http.HeaderValue(r.Headers, "content-type")
+	println("GET", url, "->", r.Status, ct, r.Body.Len(), "bytes", "truncated:", r.Truncated)
+
+	// https is refused at once: there is no TLS yet.
+	_, ok = http.Get("https://example.com/", 1000)
+	println("https ok:", ok)
+}
+```
+
+On the host:
+
+```text
+no network
+```
+
+**Response size.** The body is cut at `http.MaxBody` (8 KB) and marked
+`Truncated`. `Do` takes a different limit, up to 64 KB. The whole body is
+charged to the caller's memory, and the default limit on a board is 16 KB,
+so a caller that wants big responses needs a larger `SpawnOpt` limit (or a
+small `maxBody`). Responses using chunked transfer encoding are not
+supported and fail.
+
+## 10.5 HTTP server
+
+```go
+func Serve(port int, handler func(http.Request) http.Response) actor.PID
+
+type Request struct {
+	Method, Path string
+	Headers      []Header
+	Body         bytes.Bytes
+}
+```
+
+`http.Serve` starts a listener actor, linked to the caller. For every
+connection it starts a **new actor** that reads one request, calls your
+handler, sends the response with `Content-Length` and `Connection: close`,
+and exits. So the handler runs in its own actor: a handler that crashes
+loses only that one connection, and the server carries on. `Status` 0
+means 200.
+
+Limits: the request line and headers at most 2 KB, the body at most 8 KB
+(by `Content-Length`; chunked bodies are not supported). Bad requests get
+400 and too-large bodies 413 without calling the handler. A connection
+that does not send a complete request within 10 s is closed. If the
+listener cannot listen (the port is taken), it exits with code 100,
+`http.ListenFailed`; trap exits to see that.
+
+Since the handler is an ordinary function, you can call it directly to
+test it, which is what this example does on the host:
+
+```go
+// A small web server: GET / shows a hit counter kept by its own actor;
+// anything else is 404. On a board it serves on port 80 once DHCP (or the
+// static net.ip setting) gives it an address. On the host there is no
+// network, so it tests its handler by calling it directly instead.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/dhcp"
+	"gogo/http"
+	"gogo/strconv"
+)
+
+type hit struct{}
+
+// hits counts requests; it is registered as "hits".
+func hits() {
+	n := 0
+	for {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			n++
+			actor.Reply(r, n)
+		}
+	}
+}
+
+// count asks the hits actor for the next number (0 if it is not there).
+func count() int {
+	p, ok := actor.Whereis("hits")
+	if !ok {
+		return 0
+	}
+	v, ok := actor.Call(p, hit{}, 500)
+	if !ok {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return n
+	}
+	return 0
+}
+
+// handle runs in a fresh actor for every connection.
+func handle(r http.Request) http.Response {
+	text := []http.Header{{"Content-Type", "text/plain"}}
+	if r.Method != "GET" || r.Path != "/" {
+		return http.Response{Status: 404, Headers: text, Body: bytes.FromString("not found\n")}
+	}
+	n := count()
+	return http.Response{Headers: text, Body: bytes.FromString("hello from gogo, visitor " + strconv.Itoa(n) + "\n")}
+}
+
+func show(r http.Response) {
+	status := r.Status
+	if status == 0 {
+		status = 200
+	}
+	body := r.Body.String()
+	println(status, body[:len(body)-1]) // without the newline
+}
+
+func main() {
+	actor.Register("hits", actor.Spawn(hits))
+	if !dhcp.Start(dhcp.Config{TimeoutMs: 10000}) {
+		println("no network: testing the handler directly")
+		show(handle(http.Request{Method: "GET", Path: "/"}))
+		show(handle(http.Request{Method: "GET", Path: "/"}))
+		show(handle(http.Request{Method: "GET", Path: "/secret"}))
+		return
+	}
+	actor.TrapExit(true) // Serve's listener is linked to us
+	http.Serve(80, handle)
+	println("serving on port 80")
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.ExitMsg:
+			if m.Reason.Code == http.ListenFailed {
+				println("port 80 is taken")
+			}
+		}
+	}
+}
+```
+
+On the host:
+
+```text
+no network: testing the handler directly
+200 hello from gogo, visitor 1
+200 hello from gogo, visitor 2
+404 not found
+```
+
+On the simulated network (with `net.ip` set), three requests to the server
+got these responses:
+
+```text
+GET / HTTP/1.0   ->  HTTP/1.0 200 OK
+                     Content-Length: 27
+                     Connection: close
+                     Content-Type: text/plain
+
+                     hello from gogo, visitor 1
+GET / HTTP/1.0   ->  ... hello from gogo, visitor 2
+GET /x HTTP/1.0  ->  HTTP/1.0 404 Not Found ... not found
+```
+
+and the program printed `serving on port 80`.
+
+Note how the counter works: handlers run in separate, short-lived actors
+and cannot share a variable, so the count lives in a `hits` actor that
+handlers ask with `Call`. That is the actor way to share state.
+
+`examples/netdemo` in the gogo tree is a fuller program for the M5StickS3:
+a bilingual page showing button presses and uptime, plus a periodic
+`http.Get`.
+
+## 10.6 UDP
+
+```go
+port.Open("udp", net.UDP{Port: 7})             // Port 0: pick a free one
+actor.Send(u, net.SendTo{Addr: a, Data: data}) // command
+// event to the owner:
+type Datagram struct{ From net.Addr; Data bytes.Bytes } // Addr{IP, Port int}
+```
+
+```go
+// A UDP echo server on port 7, straight on the "udp" port. The DHCP actor
+// owns the network interface; this actor owns the UDP port.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/dhcp"
+	"gogo/net"
+	"gogo/port"
+)
+
+func main() {
+	if !dhcp.Start(dhcp.Config{}) {
+		println("no network")
+		return
+	}
+	u, ok := port.Open("udp", net.UDP{Port: 7})
+	if !ok {
+		println("udp port 7 is taken")
+		return
+	}
+	println("echoing on udp port 7")
+	for i := 0; i < 3; i++ {
+		switch d := actor.Receive().(type) {
+		case net.Datagram:
+			println("echo", d.Data.Len(), "bytes to port", d.From.Port)
+			actor.Send(u, net.SendTo{Addr: d.From, Data: d.Data})
+		}
+	}
+	println("done")
+}
+```
+
+On the host:
+
+```text
+no network
+```
+
+On the simulated network, three datagrams of `hello` came back to their
+sender, and the program printed:
+
+```text
+echoing on udp port 7
+echo 5 bytes to port 5000
+echo 5 bytes to port 5000
+echo 5 bytes to port 5000
+done
+```
+
+UDP has no flow control: a datagram that would take its owner over its
+memory limit is dropped (the owner is not killed). A datagram to a host
+whose hardware address is not known yet is dropped while the stack asks
+for it with ARP; send again.
+
+## 10.7 TCP
+
+TCP connections are ports too:
+
+| Port | Config | Commands | Events to the owner |
+|---|---|---|---|
+| `"tcp"` | `net.Dial{IP, Port, TimeoutMs}` | `net.Write{Data}`, `net.Shutdown{}` | `net.Connected{}`, `net.Data{Data}`, `net.Written{}`, `net.Closed{Reason}` |
+| `"tcp_listen"` | `net.Listen{Port}` | | `net.Accepted{Conn}` |
+
+- **Dialing.** `port.Open("tcp", net.Dial{...})` starts connecting; you get
+  `Connected`, or `Closed` with `net.Refused`, `net.Timeout` or
+  `net.NoRoute`.
+- **Accepting.** A listener's owner gets `Accepted{Conn}` for each new
+  connection. `Conn` is a `"tcp"` port owned by the listener's owner and
+  **paused** until you `port.Handoff` it to the actor that will handle it
+  (or send it `net.Resume{}` to keep it).
+- **Receiving.** Each `Data` is the next segment from the peer, in order.
+  A segment is acknowledged only once its `Data` is in your mailbox, so a
+  slow reader slows the sender down instead of being killed.
+- **Sending.** `Write{Data}` sends a `Bytes`; `Written` follows when the
+  peer has acknowledged it. One `Write` may wait behind the one in
+  progress; **a third `Write` before a `Written` closes the connection**
+  with `Closed{Overflow}`.
+- **Closing.** `Closed{Normal}` means the peer has finished sending (you may
+  still write). Any other reason means the connection is gone. Send
+  `Shutdown{}` to finish your side, then close the port: the stack completes
+  the close on its own. Closing the port without `Shutdown` (or exiting)
+  resets the connection.
+
+The write rule matters in practice. This echo server queues data in a
+`Buffer` while two writes are in flight:
+
+```go
+// A TCP echo server on port 7: the listener accepts connections and hands
+// each one to its own actor, which echoes until the peer closes.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/dhcp"
+	"gogo/net"
+	"gogo/port"
+)
+
+// echo owns one connection. A tcp port takes at most two Writes before a
+// Written comes back (a third closes the connection with Overflow), so
+// data that arrives while two are in flight waits in a Buffer.
+func echo(conn actor.PID) {
+	inFlight := 0
+	waiting := bytes.NewBuffer(256)
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Data:
+			if inFlight < 2 {
+				actor.Send(conn, net.Write{Data: m.Data})
+				inFlight++
+			} else {
+				waiting.WriteBytes(m.Data)
+			}
+		case net.Written:
+			inFlight--
+			if waiting.Len() > 0 {
+				actor.Send(conn, net.Write{Data: waiting.Freeze()})
+				inFlight++
+			}
+		case net.Closed:
+			if m.Reason == net.Normal {
+				// The peer has finished sending: finish our side too.
+				actor.Send(conn, net.Shutdown{})
+			}
+			port.Close(conn) // after Shutdown the stack completes the close
+			return
+		}
+	}
+}
+
+func main() {
+	if !dhcp.Start(dhcp.Config{}) {
+		println("no network")
+		return
+	}
+	_, ok := port.Open("tcp_listen", net.Listen{Port: 7})
+	if !ok {
+		println("port 7 is taken")
+		return
+	}
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Accepted:
+			conn := m.Conn
+			h := actor.Spawn(func() { echo(conn) })
+			if !port.Handoff(conn, h) {
+				port.Close(conn)
+			}
+		}
+	}
+}
+```
+
+On the host:
+
+```text
+no network
+```
+
+On the simulated network a client sent five segments without
+acknowledging the echoes, and got `one two three four five` back in full,
+followed by the server's FIN. With a naive echo (one `Write` per `Data`)
+the same exchange ended in a reset, because the third `Write` arrived
+before the first `Written`.
+
+The stack is deliberately small: one segment in flight in each direction
+(1460 bytes), in-order segments only, retransmission after 1 s doubling to
+8 s, and giving up after 6 retransmissions (`Closed{Timeout}`). There are
+4 connection slots in all, and incoming connections never take the last
+one, so the device can always dial out. All connections end with
+`Closed{NoRoute}` when the interface loses its address, or when the
+`"netif"` owner (the DHCP actor) exits.
+
+## 10.8 Memory on the board
+
+On the M5StickS3 the Wi-Fi driver takes about 30 KB of heap and 31 KB of
+static memory, gogo's stack under 4 KB, and each HTTP connection a handler
+actor of about 3 KB plus its body buffers (handler and client actors are
+started with a limit of 2 x body limit + 6 KB, 22 KB by default). Running
+`examples/netdemo` leaves about 173 KB of internal RAM free.

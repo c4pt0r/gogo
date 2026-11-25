@@ -1,0 +1,36 @@
+// This program does NOT compile: it collects the Go features the gogo
+// subset rejects, so you can see the compiler's messages.
+package main
+
+var counter = 0 // package-level variable
+
+type Shape interface{ Area() int } // user interface
+
+type Sq struct{ S int }
+
+func (s Sq) Area() int { return s.S * s.S } // method
+
+func Max[T int | int64](a, b T) T { // generics
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func main() {
+	ch := make(chan int) // channel
+	go func() { ch <- 1 }()
+	defer println("bye")
+	m := map[string]int{} // map
+	p := &Sq{2}           // pointer
+	x := 1.5              // float
+	switch counter {      // expression switch
+	case 0:
+		println("zero")
+	}
+	var a [4]int // array
+	s := Sq{1}
+	s.S = 2 // field assignment
+	println(m, p, x, a[0])
+	panic("boom")
+}

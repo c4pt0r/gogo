@@ -1,0 +1,85 @@
+// A small web server: GET / shows a hit counter kept by its own actor;
+// anything else is 404. On a board it serves on port 80 once DHCP (or the
+// static net.ip setting) gives it an address. On the host there is no
+// network, so it tests its handler by calling it directly instead.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/dhcp"
+	"gogo/http"
+	"gogo/strconv"
+)
+
+type hit struct{}
+
+// hits counts requests; it is registered as "hits".
+func hits() {
+	n := 0
+	for {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			n++
+			actor.Reply(r, n)
+		}
+	}
+}
+
+// count asks the hits actor for the next number (0 if it is not there).
+func count() int {
+	p, ok := actor.Whereis("hits")
+	if !ok {
+		return 0
+	}
+	v, ok := actor.Call(p, hit{}, 500)
+	if !ok {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return n
+	}
+	return 0
+}
+
+// handle runs in a fresh actor for every connection.
+func handle(r http.Request) http.Response {
+	text := []http.Header{{"Content-Type", "text/plain"}}
+	if r.Method != "GET" || r.Path != "/" {
+		return http.Response{Status: 404, Headers: text, Body: bytes.FromString("not found\n")}
+	}
+	n := count()
+	return http.Response{Headers: text, Body: bytes.FromString("hello from gogo, visitor " + strconv.Itoa(n) + "\n")}
+}
+
+func show(r http.Response) {
+	status := r.Status
+	if status == 0 {
+		status = 200
+	}
+	body := r.Body.String()
+	println(status, body[:len(body)-1]) // without the newline
+}
+
+func main() {
+	actor.Register("hits", actor.Spawn(hits))
+	if !dhcp.Start(dhcp.Config{TimeoutMs: 10000}) {
+		println("no network: testing the handler directly")
+		show(handle(http.Request{Method: "GET", Path: "/"}))
+		show(handle(http.Request{Method: "GET", Path: "/"}))
+		show(handle(http.Request{Method: "GET", Path: "/secret"}))
+		return
+	}
+	actor.TrapExit(true) // Serve's listener is linked to us
+	http.Serve(80, handle)
+	println("serving on port 80")
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.ExitMsg:
+			if m.Reason.Code == http.ListenFailed {
+				println("port 80 is taken")
+			}
+		}
+	}
+}

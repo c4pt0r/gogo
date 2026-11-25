@@ -1,0 +1,4 @@
+[42] = 42
+[] error: empty input 1
+[x1] error: not a number 2
+[250] error: out of range 3

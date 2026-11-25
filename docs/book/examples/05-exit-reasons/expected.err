@@ -1,0 +1,7 @@
+gogo: actor <pid 1> crashed: exit(150)
+gogo: actor <pid 1> crashed: divzero in main.main.func3
+gogo: actor <pid 1> crashed: badcode in main.main.func4
+gogo: actor <pid 1> crashed: badshift in main.main.func5
+gogo: actor <pid 1> crashed: badcode in main.main.func6
+gogo: actor <pid 1> crashed: oom in deep
+gogo: actor <pid 1> crashed: killed

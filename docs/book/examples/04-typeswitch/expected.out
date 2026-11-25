@@ -1,0 +1,8 @@
+temperature 21
+reset
+int 7
+int64 7
+string hi
+bool true
+a pid
+something else

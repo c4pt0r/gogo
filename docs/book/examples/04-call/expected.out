@@ -1,0 +1,7 @@
+put led: true
+put fan: true
+led 1 true
+door 0 false
+fan 0 true
+kept for later
+silent answered: false

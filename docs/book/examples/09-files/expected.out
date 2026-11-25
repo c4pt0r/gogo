@@ -1,0 +1,12 @@
+hello.txt: [hello, flash]
+written 21 bytes
+chunk of 10 bytes
+chunk of 10 bytes
+chunk of 8 bytes
+log.txt: [line 1
+line 2
+line 3
+line 4]
+size 28 dir? false
+entries in /flash: 2
+after remove, NotFound: true

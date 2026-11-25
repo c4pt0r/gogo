@@ -1,0 +1,34 @@
+// Strings are immutable byte sequences. gogo/strings and gogo/strconv
+// cover the common needs; both work on bytes, not runes.
+package main
+
+import (
+	"gogo/strconv"
+	"gogo/strings"
+)
+
+func main() {
+	line := "  GET /index.html HTTP/1.0  "
+	t := strings.TrimSpace(line)
+	parts := strings.Split(t, " ")
+	println(len(parts), parts[0], parts[1])
+
+	method, rest, found := strings.Cut(t, " ")
+	println(method, found, strings.HasPrefix(rest, "/"), strings.HasSuffix(t, "1.0"))
+	println(strings.Index(t, "HTTP"), strings.IndexByte(t, '/'), strings.ToLower(method))
+	println(strings.EqualFold("Content-Length", "content-length"))
+
+	// Numbers and strings.
+	n, ok := strconv.Atoi("-1234")
+	println(n, ok)
+	_, ok = strconv.Atoi("12x")
+	println(ok)
+	println(strconv.Itoa(99) + " bottles")
+	println(strconv.FormatInt64(255, 16), strconv.FormatInt64(-5, 2))
+	big, ok := strconv.ParseInt64("9000000000", 10)
+	println(big, ok)
+
+	// Indexing gives a byte; slicing gives a new string; < compares.
+	s := "héllo"
+	println(len(s), s[0], s[3:], "abc" < "abd")
+}

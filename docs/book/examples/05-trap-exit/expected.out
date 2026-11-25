@@ -1,0 +1,5 @@
+worker 0 exited with 100
+worker 1 exited with 5
+worker 2 exited with 102
+target trapped code 7
+target gone, code 1

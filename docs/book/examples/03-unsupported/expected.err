@@ -1,0 +1,18 @@
+main.go:5:1: gogo: global variable not supported
+main.go:7:6: gogo: type definition other than struct or int, int64, bool, string not supported
+main.go:11:1: gogo: method not supported
+main.go:13:1: gogo: generic function not supported
+main.go:21:8: gogo: channel not supported
+main.go:22:2: gogo: go statement not supported
+main.go:23:2: gogo: defer statement not supported
+main.go:24:7: gogo: map not supported
+main.go:25:7: gogo: pointer not supported
+main.go:26:7: gogo: float not supported
+main.go:27:2: gogo: switch statement not supported
+main.go:31:8: gogo: array not supported
+main.go:33:2: gogo: field assignment not supported
+main.go:34:10: gogo: map not supported
+main.go:34:13: gogo: pointer not supported
+main.go:34:16: gogo: float not supported
+main.go:34:19: gogo: index of [4]int not supported
+main.go:35:2: gogo: builtin panic not supported

@@ -1,0 +1,4 @@
+blink.ms=250
+retries=lots
+device.name=kitchen sensor
+wifi.ssid=home

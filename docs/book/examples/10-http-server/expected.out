@@ -1,0 +1,4 @@
+no network: testing the handler directly
+200 hello from gogo, visitor 1
+200 hello from gogo, visitor 2
+404 not found

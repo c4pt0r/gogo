@@ -1,0 +1,5 @@
+blink.ms = 250
+config: retries is not a number: lots
+retries = 3
+device.name = kitchen sensor true
+wifi.ssid visible: false

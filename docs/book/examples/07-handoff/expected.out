@@ -1,0 +1,6 @@
+open true
+handoff true
+handoff again (main is no longer the owner) false
+handler: edge on pin 12
+handler: edge on pin 12
+handler done

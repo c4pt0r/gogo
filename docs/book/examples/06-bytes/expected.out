@@ -1,0 +1,6 @@
+frozen 201 bytes; buffer now 0
+first abcde last 33
+sink got frame 1 201 abc
+sink charged for it: true
+true ping
+2 pi

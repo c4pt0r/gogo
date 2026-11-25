@@ -1,0 +1,53 @@
+// TrapExit turns exit signals from linked actors into ExitMsg messages, so
+// an actor can react to a partner's death instead of dying with it.
+package main
+
+import "gogo/actor"
+
+func flaky(n int) {
+	if n%2 == 1 {
+		zero := 0
+		println(1 / zero)
+	}
+	actor.Exit(100 + n)
+}
+
+func main() {
+	actor.TrapExit(true)
+	var pids []actor.PID
+	for i := 0; i < 3; i++ {
+		n := i // the loop variable changes (i++): capture a fresh copy
+		pids = append(pids, actor.SpawnLink(func() { flaky(n) }))
+	}
+	for i := 0; i < 3; i++ {
+		switch m := actor.Receive().(type) {
+		case actor.ExitMsg:
+			who := -1
+			for j, p := range pids {
+				if p == m.From {
+					who = j
+				}
+			}
+			println("worker", who, "exited with", m.Reason.Code)
+		}
+	}
+
+	// Kill with Shutdown is trapped like any other signal; Killed cannot be.
+	t := actor.SpawnLink(func() {
+		actor.TrapExit(true)
+		for {
+			switch m := actor.Receive().(type) {
+			case actor.ExitMsg:
+				println("target trapped code", m.Reason.Code)
+			}
+		}
+	})
+	actor.Sleep(10)
+	actor.Kill(t, actor.Shutdown)
+	actor.Sleep(10)
+	actor.Kill(t, actor.Killed)
+	switch m := actor.Receive().(type) {
+	case actor.ExitMsg:
+		println("target gone, code", m.Reason.Code)
+	}
+}

@@ -1,0 +1,47 @@
+// Monitors watch an actor one way: the watcher gets a DownMsg and is never
+// taken down itself. Pair Call with a monitor to notice a dead server early.
+package main
+
+import "gogo/actor"
+
+type Work struct{ N int }
+
+func server() {
+	for {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			switch w := r.Body.(type) {
+			case Work:
+				actor.Reply(r, 100/w.N) // N == 0 crashes the server
+			}
+		}
+	}
+}
+
+func main() {
+	s := actor.Spawn(server)
+	ref := actor.Monitor(s)
+
+	reply, ok := actor.Call(s, Work{4}, 1000)
+	println("reply", reply, ok)
+
+	// This request crashes the server. Call does not return early when the
+	// server dies: it waits out its timeout.
+	start := actor.Now()
+	_, ok = actor.Call(s, Work{0}, 200)
+	println("ok:", ok, "waited the full timeout:", actor.Now()-start >= 200)
+
+	// The DownMsg was queued meanwhile.
+	switch m := actor.Receive().(type) {
+	case actor.DownMsg:
+		println("server down:", m.Ref == ref, m.Reason.Code)
+	}
+
+	// Monitoring an actor that is already gone gives a DownMsg at once,
+	// with reason NoProc.
+	actor.Monitor(s)
+	switch m := actor.Receive().(type) {
+	case actor.DownMsg:
+		println("late monitor:", m.Reason.Code == actor.NoProc)
+	}
+}

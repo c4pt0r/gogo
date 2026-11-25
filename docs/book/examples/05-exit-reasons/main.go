@@ -1,0 +1,41 @@
+// Every way an actor can end, and the reason code a monitor sees for it.
+package main
+
+import "gogo/actor"
+
+func watch(name string, f func()) {
+	p := actor.Spawn(f)
+	actor.Monitor(p)
+	switch m := actor.Receive().(type) {
+	case actor.DownMsg:
+		println(name, "-> code", m.Reason.Code, "func ["+m.Reason.Func+"]")
+	}
+}
+
+func deep(n int) int { return deep(n+1) + 1 }
+
+func main() {
+	watch("return", func() {})
+	watch("exit(150)", func() { actor.Exit(150) })
+	watch("divide by zero", func() {
+		zero := 0
+		println(1 / zero)
+	})
+	watch("index out of range", func() {
+		xs := []int{1, 2, 3}
+		i := 3
+		println(xs[i])
+	})
+	watch("negative shift", func() {
+		n := -1
+		println(1 << n)
+	})
+	watch("nil func", func() {
+		var f func()
+		f()
+	})
+	watch("endless recursion", func() { println(deep(0)) })
+	watch("killed", func() {
+		actor.Kill(actor.Self(), actor.Killed)
+	})
+}

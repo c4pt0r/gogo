@@ -1,0 +1,71 @@
+// Let it crash: a worker parses commands and crashes on bad ones. A
+// supervisor restarts it, so the service keeps working.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/strconv"
+	"gogo/supervisor"
+)
+
+type Ready struct{ From actor.PID }
+
+// parse turns "n" into n, and crashes on anything else: no error handling
+// at all, the supervisor takes care of failure.
+func parse(s string) int {
+	n, ok := strconv.Atoi(s)
+	if !ok {
+		actor.Exit(100) // "bad input"
+	}
+	return n
+}
+
+func worker(boss actor.PID) {
+	actor.Send(boss, Ready{actor.Self()})
+	for {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			switch s := r.Body.(type) {
+			case string:
+				actor.Reply(r, parse(s)*2)
+			}
+		}
+	}
+}
+
+func main() {
+	me := actor.Self()
+	supervisor.Supervise(func() { worker(me) }, supervisor.Spec{
+		Restart:     supervisor.Permanent,
+		MaxRestarts: 3,
+		PeriodMs:    1000,
+	})
+	var none, w actor.PID // zero PIDs
+	for _, in := range []string{"21", "oops", "50", "x", "4"} {
+		// Every new instance says Ready first; take the newest PID.
+		for {
+			m, ok := actor.ReceiveTimeout(0)
+			if !ok {
+				break
+			}
+			switch r := m.(type) {
+			case Ready:
+				w = r.From
+			}
+		}
+		if w == none {
+			switch r := actor.Receive().(type) {
+			case Ready:
+				w = r.From
+			}
+		}
+		reply, ok := actor.Call(w, in, 100)
+		if ok {
+			println(in, "->", reply)
+		} else {
+			println(in, "-> no answer (worker crashed)")
+			w = none
+		}
+	}
+	// main returns: the supervisor shuts the worker down and exits too.
+}

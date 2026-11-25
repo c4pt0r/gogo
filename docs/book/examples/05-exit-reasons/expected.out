@@ -1,0 +1,8 @@
+return -> code 0 func []
+exit(150) -> code 150 func []
+divide by zero -> code 5 func [main.main.func3]
+index out of range -> code 6 func [main.main.func4]
+negative shift -> code 8 func [main.main.func5]
+nil func -> code 6 func [main.main.func6]
+endless recursion -> code 2 func [deep]
+killed -> code 1 func []

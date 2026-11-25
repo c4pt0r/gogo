@@ -1,0 +1,40 @@
+// Watch the battery. The power port sends a Battery message when it opens,
+// on every Read, when charging or external power changes, and when the
+// charge moves by 2 % or more. On the host the samples come from the
+// "battery <mV> <charging> <external>" lines of the stdin script.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+	"gogo/power"
+)
+
+func main() {
+	p, ok := port.Open("power", power.Config{PeriodMs: 5000})
+	if !ok {
+		println("no battery monitor on this board")
+		return
+	}
+	actor.Send(p, power.Read{}) // ask for a reading now
+	n := 0
+	for n < 3 {
+		switch b := actor.Receive().(type) {
+		case power.Battery:
+			n++
+			state := "on battery"
+			if b.External == 1 {
+				state = "on external power"
+			} else if b.External < 0 {
+				state = "power source unknown"
+			}
+			if b.Charging == 1 {
+				state = state + ", charging"
+			}
+			println(b.MilliVolts, "mV", b.Percent, "%", state)
+			if b.Percent < 20 && b.External != 1 {
+				println("  low battery!")
+			}
+		}
+	}
+}

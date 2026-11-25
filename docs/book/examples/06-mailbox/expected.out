@@ -1,0 +1,2 @@
+sender sent 1000 messages
+receiver exited, MailboxOverflow: true
