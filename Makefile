@@ -50,11 +50,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: vmsize netsize tlssize test-tls-asan all vm test test-c test-c-mcu test-net-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 console-ppm clean
+.PHONY: vmsize netsize tlssize test-tls-asan all vm test test-c test-c-mcu test-net-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-vfs test-input test-stream test-fs-host test-console check32 test-go test-net-mcu vmsize netsize vfssize
+test: test-c test-c-mcu test-net-c test-vfs test-input test-stream test-fs-host test-console check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
 
 vm: $(BUILD)/gogovm
 
@@ -232,6 +232,15 @@ check32:
 	for f in $(CONSOLE_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/console -Iruntime/vm/test/stub $$f || exit 1; \
 	done
+
+# No mutable globals in runtime/ (embed mode): tools/globals.sh compiles it with the VM build's CC/CFLAGS.
+globals: export GLOBALS_TLS_CFLAGS = $(TLS_CFLAGS)
+globals:
+	GLOBALS_CC='$(CC)' GLOBALS_CFLAGS='$(CFLAGS)' GLOBALS_MCU_FLAGS='$(MCU_FLAGS)' tools/globals.sh
+
+# The guard must flag exactly the mutable symbols of its fixture (and no const ones).
+globals-selftest:
+	GLOBALS_CC='$(CC)' GLOBALS_CFLAGS='$(CFLAGS)' GLOBALS_MCU_FLAGS='$(MCU_FLAGS)' tools/globals.sh --print tools/selftest/globals_fixture.c | diff - tools/selftest/globals_fixture.expect
 
 clean:
 	rm -rf $(BUILD)
