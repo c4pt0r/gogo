@@ -1,0 +1,29 @@
+// sound_absent: gogo/sound declares //gogo:optional mic spk, so an image
+// that imports it requires neither: it loads on a firmware without audio
+// (vmargs --caps 0: no capability at all), where Record and Play fail
+// cleanly (port.Open's ok=false for an absent driver) instead of the image
+// being refused. The WAV file is valid, so Play gets as far as the open.
+package main
+
+import (
+	"gogo/audio"
+	"gogo/bytes"
+	"gogo/fs"
+	"gogo/sound"
+	"gogo/wav"
+)
+
+func main() {
+	println("mkdir", int(fs.Mkdir("/flash/rec")), int(fs.Mkdir("/flash/p")))
+	_, ok := sound.Record("/flash/rec", audio.Mic{Rate: 8000, FrameMs: 100}, 0)
+	println("record", ok)
+	w, e := wav.Create("/flash/p/t.wav", 8000, 0)
+	b := bytes.NewBuffer(800)
+	for i := 0; i < 800; i++ {
+		b.WriteByte(0)
+	}
+	w, e2 := wav.Write(w, b.Freeze())
+	println("wav", int(e), int(e2), int(wav.Close(w)))
+	_, ok = sound.Play("/flash/p/t.wav")
+	println("play", ok)
+}

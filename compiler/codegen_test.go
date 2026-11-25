@@ -558,7 +558,7 @@ func TestCompileReservedTypes(t *testing.T) {
 		"fs.Info/2", "fs.Space/2",
 		"kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4", "power.Read/0", "code.Module/2",
 		"port.Chunk/4", "port.Out/1", "port.Done/1", "imu.Config/3", "imu.Gesture/2", "ir.TX/2", "ir.RX/1",
-		"audio.Mic/3", "audio.Speaker/2"}
+		"audio.Mic/3", "audio.Speaker/2", "net.DialTLS/4"}
 	// Emitted even when the program imports none of gogo/actor, gogo/port, gogo/net and gogo/fs.
 	img := compileImage(t, "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tvar a any = P{1, 2}\n\tswitch a.(type) {\n\tcase P:\n\t\tprintln(1)\n\t}\n}\n")
 	got := imageTypes(t, img)
@@ -1244,7 +1244,7 @@ func main() {
 		" net.Dial/3 net.Listen/1 net.Write/1 net.Shutdown/0 net.Resume/0 net.Connected/0 net.Data/1" +
 		" net.Written/0 net.Closed/1 net.Accepted/1 fs.Info/2 fs.Space/2" +
 		" kbd.Config/2 kbd.Key/4 power.Config/1 power.Battery/4 power.Read/0 code.Module/2" +
-		" port.Chunk/4 port.Out/1 port.Done/1 imu.Config/3 imu.Gesture/2 ir.TX/2 ir.RX/1 audio.Mic/3 audio.Speaker/2"
+		" port.Chunk/4 port.Out/1 port.Done/1 imu.Config/3 imu.Gesture/2 ir.TX/2 ir.RX/1 audio.Mic/3 audio.Speaker/2 net.DialTLS/4"
 	if got := strings.Join(imageTypes(t, img), " "); got != want {
 		t.Fatalf("types %s, want %s", got, want)
 	}
@@ -2011,8 +2011,8 @@ func main() {
 	}
 }
 `)
-	if v := binary.LittleEndian.Uint32(img[4:]); v != 12 {
-		t.Errorf("image version %d, want 12", v)
+	if v := binary.LittleEndian.Uint32(img[4:]); v != 13 {
+		t.Errorf("image version %d, want 13", v)
 	}
 	seen := map[uint32]bool{}
 	code := words(img)
@@ -2080,16 +2080,22 @@ func main() {
 	}
 }
 
-// gogo/sys: the wall clock and random builtins.
-func TestCompileSys(t *testing.T) {
+// gogo/sys: the wall clock builtins; net.DialTLS is the tls port's config.
+func TestCompileSysAndDialTLS(t *testing.T) {
 	src := `package main
 
-import "gogo/sys"
+import (
+	"gogo/net"
+	"gogo/port"
+	"gogo/sys"
+)
 
 func main() {
 	set := sys.SetTime(1700000000000)
 	now := sys.Time()
 	println(now > 0, set, sys.Random())
+	_, ok := port.Open("tls", net.DialTLS{IP: 1, Port: 443, TimeoutMs: 100, Host: "example.com"})
+	println(ok)
 }
 `
 	img := compileImage(t, src)
@@ -2101,6 +2107,7 @@ func main() {
 		`BUILTIN r\d+, r\d+, 1, SET_UNIX_TIME\n`,
 		`BUILTIN r\d+, r\d+, 0, UNIX_TIME\n`,
 		`BUILTIN r\d+, r\d+, 0, RANDOM\n`,
+		`NEWSTRUCT r\d+, r\d+, 4, net\.DialTLS\n`,
 	} {
 		if !regexp.MustCompile(re).MatchString(dis) {
 			t.Errorf("no match for %s:\n%s", re, dis)

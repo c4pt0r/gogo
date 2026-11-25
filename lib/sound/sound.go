@@ -34,6 +34,13 @@
 // false, and the other way round. The recorder gives the mic back before its
 // last Recorded (after a Stop or an error), and the player the speaker
 // before Played, so the caller may start the other one at once.
+//
+// The "mic" and "spk" drivers are optional (the directive below):
+// importing gogo/sound does not make an image require either. On a
+// firmware without the mic, Record returns false; without the speaker,
+// Play returns false (port.Open returns ok=false for an absent driver).
+//
+//gogo:optional mic spk
 package sound
 
 import (

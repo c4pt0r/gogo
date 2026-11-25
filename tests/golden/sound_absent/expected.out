@@ -1,0 +1,4 @@
+mkdir 0 0
+record false
+wav 0 0 0
+play false

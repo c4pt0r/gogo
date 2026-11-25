@@ -17,6 +17,7 @@ void fake_push(uint16_t raw, bool down);
 void fake_fail_next_read(void);        /* the next kbd_read returns -1 */
 void fake_fail_all_reads(bool on);   /* every kbd_read returns -1 while set */
 int fake_kbd_reads(void);              /* kbd_read calls */
+void fake_kbd_stuck(bool on);          /* INT stuck low: kbd_pending stays true on an empty FIFO */
 void fake_fail_read_after(int n);   /* the (n+1)th kbd_read from now returns -1 */
 int fake_opens(void), fake_closes(void);
 void fake_install_once(void);          /* input_install() once per test binary */

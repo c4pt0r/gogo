@@ -21,6 +21,9 @@
 #include "sdkconfig.h"
 #include "platform.h"
 #include "platform_esp.h"
+#if CONFIG_GOGO_TLS
+#include "tls.h"
+#endif
 #if CONFIG_GOGO_NET
 #include "net.h"
 #endif
@@ -212,6 +215,27 @@ static void stats_net(void) {
 }
 #endif
 
+#if CONFIG_GOGO_TLS
+/* The tls port's counters (runtime/net/tls/tls.h TlsStats): slices and their longest
+ * time, the last handshake's time. */
+static void stats_tls(void) {
+    const volatile TlsStats *t = tls_stats();
+    char line[48];
+    const struct { const char *name; uint32_t v; } kv[] = {
+        {"tls_opens", t->opens}, {"tls_handshakes", t->handshakes}, {"tls_steps", t->steps},
+        {"tls_restarts", t->restarts}, {"tls_max_step_us", t->max_step_us},
+        {"tls_max_step_state", (uint32_t)t->max_step_state}, {"tls_max_io_us", t->max_io_us},
+        {"tls_last_hs_us", t->last_hs_us}, {"tls_live", t->live},
+    };
+    for (size_t i = 0; i < sizeof kv / sizeof kv[0]; i++) {
+        int n = snprintf(line, sizeof line, "%s=%lu", kv[i].name, (unsigned long)kv[i].v);
+        reply("kv", line, (size_t)n);
+    }
+    int n = snprintf(line, sizeof line, "tls_last_error=-0x%04x", (unsigned)-t->last_error);
+    reply("kv", line, (size_t)n);
+}
+#endif
+
 static void cmd_stats(void) {
 #if CONFIG_GOGO_NET
     stats_net();
@@ -224,6 +248,26 @@ static void cmd_stats(void) {
     reply("kv", line, (size_t)n);
     n = snprintf(line, sizeof line, "arena_used=%u", (unsigned)platform_esp_arena_used());
     reply("kv", line, (size_t)n);
+#if CONFIG_SPIRAM
+    /* PSRAM (StickS3): free now, lowest since boot. */
+    n = snprintf(line, sizeof line, "psram_free=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    reply("kv", line, (size_t)n);
+    n = snprintf(line, sizeof line, "psram_min=%u", (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+    reply("kv", line, (size_t)n);
+#endif
+#if CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
+    {
+        size_t now, peak;
+        platform_esp_tls_mem(&now, &peak);
+        n = snprintf(line, sizeof line, "mbedtls_mem=%u", (unsigned)now);
+        reply("kv", line, (size_t)n);
+        n = snprintf(line, sizeof line, "mbedtls_mem_peak=%u", (unsigned)peak);
+        reply("kv", line, (size_t)n);
+    }
+#endif
+#if CONFIG_GOGO_TLS
+    stats_tls();
+#endif
     reply_s("ok", NULL);
 }
 

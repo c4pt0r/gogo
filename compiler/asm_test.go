@@ -189,8 +189,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 44 {
-		t.Errorf("%d reserved types, want 44", len(reservedTypes))
+	if len(reservedTypes) != 45 {
+		t.Errorf("%d reserved types, want 45", len(reservedTypes))
 	}
 }
 
@@ -241,8 +241,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in runtime/vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 12 {
-		t.Errorf("imageVersion %d, want 12", imageVersion)
+	if imageVersion != 13 {
+		t.Errorf("imageVersion %d, want 13", imageVersion)
 	}
 }
 
@@ -638,7 +638,7 @@ func TestCodeMatchC(t *testing.T) {
 	}
 	stub := map[string]string{"OK": "CODE_OK", "BadImage": "CODE_BAD_IMAGE", "Unsupported": "CODE_UNSUPPORTED",
 		"NoMemory": "CODE_NO_MEMORY", "NotFound": "CODE_NOT_FOUND", "BadArg": "CODE_BAD_ARG", "TooMany": "CODE_TOO_MANY",
-		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapIMU": "CAP_IMU", "CapIRTX": "CAP_IR_TX", "CapIRRX": "CAP_IR_RX", "CapMic": "CAP_MIC", "CapSpk": "CAP_SPK", "CapAnyPort": "CAP_ANYPORT"}
+		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapIMU": "CAP_IMU", "CapIRTX": "CAP_IR_TX", "CapIRRX": "CAP_IR_RX", "CapMic": "CAP_MIC", "CapSpk": "CAP_SPK", "CapTLS": "CAP_TLS", "CapAnyPort": "CAP_ANYPORT"}
 	for name, cname := range stub {
 		k, ok := pkg.Scope().Lookup(name).(*types.Const)
 		if !ok {
@@ -650,7 +650,7 @@ func TestCodeMatchC(t *testing.T) {
 			t.Errorf("code.%s = %d, %s = %d (present=%v)", name, v, cname, cv, ok)
 		}
 	}
-	for name, v := range map[string]uint32{"CAP_NET": CapNet, "CAP_KBD": CapKbd, "CAP_POWER": CapPower, "CAP_SD": CapSD, "CAP_IMU": CapIMU, "CAP_IR_TX": CapIRTX, "CAP_IR_RX": CapIRRX, "CAP_MIC": CapMic, "CAP_SPK": CapSpk, "CAP_ANYPORT": CapAnyPort} {
+	for name, v := range map[string]uint32{"CAP_NET": CapNet, "CAP_KBD": CapKbd, "CAP_POWER": CapPower, "CAP_SD": CapSD, "CAP_IMU": CapIMU, "CAP_IR_TX": CapIRTX, "CAP_IR_RX": CapIRRX, "CAP_MIC": CapMic, "CAP_SPK": CapSpk, "CAP_TLS": CapTLS, "CAP_ANYPORT": CapAnyPort} {
 		if c[name] != int64(v) {
 			t.Errorf("compiler %s = %d, C %d", name, v, c[name])
 		}

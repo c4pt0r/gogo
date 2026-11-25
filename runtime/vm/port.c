@@ -89,19 +89,9 @@ static bool int_struct(const Vm *vm, const Actor *a, term t, uint32_t *type,
     return true;
 }
 
-term port_open(Vm *vm, Actor *owner, term name, term cfg) {
-    const uint8_t *nm;
-    uint32_t len;
-    if (!name_bytes(vm, owner, name, &nm, &len)) return T_NIL;
-    const PortDriver *drv = find_driver(nm, len);
-    if (!drv) return T_NIL;
-    uint32_t type, n;
-    int32_t f[PORT_MAX_FIELDS];
-    if (!int_struct(vm, owner, cfg, &type, f, &n) || type != drv->cfg_type) return T_NIL;
-    return port_open_with(vm, owner, drv, f, n);
-}
-
-term port_open_with(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *f, uint32_t n) {
+/* Opens a port of drv for owner: with the decoded cfg fields f[0..n), or
+ * through drv->open_term with the raw cfg when cfg is not T_NIL. */
+static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *f, uint32_t n, term cfg) {
     uint16_t i = 0;
     while (i < GOGO_MAX_PORTS && vm->ports[i].drv) i++;
     if (i == GOGO_MAX_PORTS) return T_NIL;
@@ -114,7 +104,7 @@ term port_open_with(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
     p->owner = owner->id;
     p->gen = gen;
     p->id = term_make_pid((uint16_t)(PORT_SLOT_BASE + i), gen);
-    bool ok = drv->open(p, i, f, n) == 0;
+    bool ok = (cfg != T_NIL ? drv->open_term(vm, owner, p, i, cfg) : drv->open(p, i, f, n)) == 0;
     if (ok && (p->charge_words || p->room_64w)) {
         /* The driver's state for the port is the owner's; room_64w must
          * fit beside it (an event the owner could never take). */
@@ -131,6 +121,28 @@ term port_open_with(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
         return T_NIL;
     }
     return p->id;
+}
+
+term port_open(Vm *vm, Actor *owner, term name, term cfg) {
+    const uint8_t *nm;
+    uint32_t len;
+    if (!name_bytes(vm, owner, name, &nm, &len)) return T_NIL;
+    const PortDriver *drv = find_driver(nm, len);
+    if (!drv) return T_NIL;
+    if (drv->open_term) {
+        const uint32_t *o = obj_of(vm, owner, cfg);
+        if (!o || hdr_kind(o[0]) != K_STRUCT || o[1] != drv->cfg_type) return T_NIL;
+        return open_in(vm, owner, drv, NULL, 0, cfg);
+    }
+    uint32_t type, n;
+    int32_t f[PORT_MAX_FIELDS];
+    if (!int_struct(vm, owner, cfg, &type, f, &n) || type != drv->cfg_type) return T_NIL;
+    return open_in(vm, owner, drv, f, n, T_NIL);
+}
+
+term port_open_with(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *f, uint32_t n) {
+    if (!drv->open) return T_NIL;                /* an open_term-only driver */
+    return open_in(vm, owner, drv, f, n, T_NIL);
 }
 
 void port_command(Vm *vm, const Actor *from, term pid, term msg) {
@@ -196,7 +208,12 @@ bool port_any_live(const Vm *vm) {
 }
 
 bool port_work_pending(const Vm *vm) {
-    if (vm->ports_pending || !evq_empty()) return true;
+    return vm->ports_pending || port_due_now(vm);
+}
+
+bool port_due_now(const Vm *vm) {
+    (void)vm;
+    if (!evq_empty()) return true;
     SOURCES_EACH(q) {
         if ((*q)->pending()) return true;
     }

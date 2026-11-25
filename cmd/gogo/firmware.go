@@ -30,6 +30,11 @@ type fwFeature struct {
 	onBy  bool   // on by default whenever the board has it
 	needs string // another feature this one depends on (Kconfig depends on)
 	hasH  string // board.h macro that says whether the board has it, if any
+	// offDefaults is an sdkconfig fragment (in platform/esp32s3) added to
+	// SDKCONFIG_DEFAULTS when the feature is off: IDF settings that only
+	// the feature needs, put back to IDF's own defaults (sdkconfig.defaults
+	// holds the default build's, with every default-on feature on).
+	offDefaults string
 }
 
 // fwFeatures lists the features in the order of the overlay lines.
@@ -37,7 +42,7 @@ type fwFeature struct {
 // This table and fwBoards below are the single place in Go that knows the
 // features and boards. They MUST match platform/esp32s3/main/board.h
 // (HAS_KBD, HAS_SD, HAS_IMU, HAS_IR_TX, HAS_IR_RX, HAS_MIC, HAS_SPK per board) and platform/esp32s3/main/Kconfig.projbuild
-// (the GOGO_* symbols and GOGO_FS_EXFAT depends on GOGO_SD);
+// (the GOGO_* symbols; GOGO_FS_EXFAT depends on GOGO_SD, GOGO_TLS on GOGO_NET);
 // TestFirmwareTableMatchesSources checks both. Change them together.
 var fwFeatures = []fwFeature{
 	{name: "net", kconf: "CONFIG_GOGO_NET", cap: compiler.CapNet, port: true},
@@ -54,6 +59,10 @@ var fwFeatures = []fwFeature{
 	// mic and spk likewise share GOGO_AUDIO (one codec and I2S bus, half duplex).
 	{name: "mic", kconf: "CONFIG_GOGO_AUDIO", cap: compiler.CapMic, onBy: true, hasH: "HAS_MIC"},
 	{name: "spk", kconf: "CONFIG_GOGO_AUDIO", cap: compiler.CapSpk, onBy: true, hasH: "HAS_SPK"},
+	// tls is the TLS client over the net stack (mbedTLS): it depends on net.
+	// Its mbedTLS settings (-O2, the PSRAM allocator, restartable ECC) would
+	// otherwise also apply to Wi-Fi's WPA crypto: sdkconfig.tls-off undoes them.
+	{name: "tls", kconf: "CONFIG_GOGO_TLS", cap: compiler.CapTLS, onBy: true, needs: "net", offDefaults: "sdkconfig.tls-off"},
 }
 
 // fwBoard describes one board: its SDKCONFIG_DEFAULTS overlay (see
@@ -72,8 +81,8 @@ func fwHas(names ...string) map[string]bool {
 }
 
 var fwBoards = map[string]fwBoard{
-	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "spk")},
-	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "spk")},
+	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "spk", "tls")},
+	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "spk", "tls")},
 }
 
 func fwLookup(name string) (fwFeature, bool) {
@@ -97,7 +106,7 @@ func fwNames() string {
 // of the files and the -with / -without lists.
 func fwPlan(board string, req uint32, with, without []string) (map[string]bool, error) {
 	has := func(f fwFeature) bool { return fwBoards[board].has[f.name] }
-	const known = compiler.CapNet | compiler.CapKbd | compiler.CapPower | compiler.CapSD | compiler.CapIMU | compiler.CapIRTX | compiler.CapIRRX | compiler.CapMic | compiler.CapSpk | compiler.CapAnyPort
+	const known = compiler.CapNet | compiler.CapKbd | compiler.CapPower | compiler.CapSD | compiler.CapIMU | compiler.CapIRTX | compiler.CapIRRX | compiler.CapMic | compiler.CapSpk | compiler.CapTLS | compiler.CapAnyPort
 	if bad := req &^ known; bad != 0 {
 		return nil, fmt.Errorf("gogo firmware: the images require capability bits %#x that this gogo does not know", bad)
 	}
@@ -201,6 +210,19 @@ func fwOverlay(board string, on map[string]bool) string {
 		fmt.Fprintf(&b, "%s=%s\n", f.kconf, v)
 	}
 	return b.String()
+}
+
+// fwDefaults is the SDKCONFIG_DEFAULTS list: the common defaults, the
+// board's overlay, the fragment of every feature that is off and has one,
+// then the generated overlay (the GOGO switches, last so they win).
+func fwDefaults(boardOverlay string, on map[string]bool, cfg string) string {
+	list := []string{"sdkconfig.defaults", boardOverlay}
+	for _, f := range fwFeatures {
+		if f.offDefaults != "" && !on[f.name] {
+			list = append(list, f.offDefaults)
+		}
+	}
+	return strings.Join(append(list, cfg), ";")
 }
 
 var fwCfgRe = regexp.MustCompile(`^(?:# )?(CONFIG_GOGO_\w+)(?:=(\S+)| is not set)$`)
@@ -330,7 +352,7 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 	}
 	idf := []string{"-C", "platform/esp32s3", "-B", abs, "-DGOGO_BOARD=" + *board,
 		"-DSDKCONFIG=" + filepath.Join(abs, "sdkconfig"),
-		"-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;" + fwb.overlay + ";" + cfg, "build"}
+		"-DSDKCONFIG_DEFAULTS=" + fwDefaults(fwb.overlay, on, cfg), "build"}
 	var quoted []string
 	for _, a := range idf {
 		quoted = append(quoted, shQuote(a))

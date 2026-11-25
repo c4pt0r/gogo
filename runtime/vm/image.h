@@ -30,6 +30,7 @@
  *       requires bits mic and spk.
  *   v12 sys: builtins B_UNIX_TIME (51), B_SET_UNIX_TIME (52), B_RANDOM (53)
  *       (gogo/sys: wall clock and randomness).
+ *   v13 https: reserved type net.DialTLS (44); requires bit tls.
  *
  * Layout (little-endian words): header (8: magic, version, n_funcs,
  * n_types, consts_words, code_words, entry, 0), funcs (3 words each),
@@ -45,7 +46,7 @@
 #include <stddef.h>
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 12u
+#define IMAGE_VERSION 13u
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {

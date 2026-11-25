@@ -4,6 +4,12 @@
  *          exit 0 when the run queue empties, 2 on load error
  *   gogovm --sizeof-actor  prints sizeof(Actor)
  *   gogovm --sizeof-net    prints the net stack's fixed state in bytes
+ *   gogovm --has-tls       exit 0 if built with the "tls" port (GOGO_TLS)
+ *
+ * Built with GOGO_TLS (the Makefile does when it finds the mbedTLS source),
+ * gogovm has the "tls" port and CAP_TLS; $GOGO_TLS_STATS set makes it print
+ * one "tls-stats ..." line to stderr at exit (tls_stats, the TLS heap, and
+ * vm_peak: the VM allocator's peak, va_peak_bytes).
  *
  * --net-fd N: fd N (inherited, e.g. a socketpair end) is the network link
  * (net_unix.h); --sim-clock: time is simulated, moved only by the peer
@@ -16,6 +22,7 @@
 #include "image.h"
 #include "platform.h"
 #include "actor.h"
+#include "alloc.h"
 #include "interp.h"
 #include "module.h"
 #include "config.h"
@@ -33,28 +40,59 @@
 
 #include <signal.h>
 
+#ifdef GOGO_TLS
+#include "tls.h"
+#include "tls_unix.h"
+#define TLS_DRIVERS 1
+#else
+#define TLS_DRIVERS 0
+#endif
+
 
 static int load_error(const char *path, const char *what) {
     fprintf(stderr, "gogovm: %s: %s\n", path, what);
     return 2;
 }
 
-/* The unix keyboard, battery, motion sensor, infrared and audio are simulated (input_unix.c). */
+/* The unix keyboard, battery, motion sensor, infrared and audio are simulated (input_unix.c).
+ * Each driver is listed only when platform_caps() has its capability, so
+ * --caps (test only) models a firmware without it: port.Open of an absent
+ * driver returns ok=false, as on that firmware. */
 const InputHw *platform_input(void) { return &input_unix_hw; }
 int platform_unix_input_drivers(const struct PortDriver **out, int cap) {
-    if (cap < 7) {   /* the driver list in platform_unix.c is full: skip them, loudly */
-        fprintf(stderr, "gogovm: no room in the port driver list: kbd, power, imu, ir, mic and spk skipped\n");
+    static const struct { const struct PortDriver *d; uint32_t cap; } all[] = {
+        {&input_kbd_driver, CAP_KBD}, {&input_power_driver, CAP_POWER}, {&input_imu_driver, CAP_IMU},
+        {&input_ir_tx_driver, CAP_IR_TX}, {&input_ir_rx_driver, CAP_IR_RX}, {&input_mic_driver, CAP_MIC},
+        {&input_spk_driver, CAP_SPK},
+#ifdef GOGO_TLS
+        {&net_tls_driver, CAP_TLS},
+#endif
+    };
+    const int total = (int)(sizeof all / sizeof all[0]);
+    if (cap < total) {   /* the driver list in platform_unix.c is full: skip them, loudly */
+        fprintf(stderr, "gogovm: no room in the port driver list: kbd, power, imu, ir, mic, spk and tls skipped\n");
         return 0;
     }
-    out[0] = &input_kbd_driver;
-    out[1] = &input_power_driver;
-    out[2] = &input_imu_driver;
-    out[3] = &input_ir_tx_driver;
-    out[4] = &input_ir_rx_driver;
-    out[5] = &input_mic_driver;
-    out[6] = &input_spk_driver;
-    return 7;
+    int n = 0;
+    for (int i = 0; i < total; i++)
+        if (platform_caps() & all[i].cap) out[n++] = all[i].d;
+    return n;
 }
+
+#ifdef GOGO_TLS
+static size_t tls_heap_base;   /* the TLS heap once tls_init has run (PSA's own state) */
+
+static void tls_report(void) {
+    if (!getenv("GOGO_TLS_STATS")) return;
+    const TlsStats *s = tls_stats();
+    size_t now, peak;
+    platform_unix_tls_heap(&now, &peak);
+    fprintf(stderr, "tls-stats opens=%u handshakes=%u steps=%u restarts=%u max_step_us=%u max_step_state=%d "
+            "max_io_us=%u live=%u last_hs_us=%u last_error=%d heap_base=%zu heap_now=%zu heap_peak=%zu vm_peak=%zu\n", s->opens,
+            s->handshakes, s->steps, s->restarts, s->max_step_us, (int)s->max_step_state, s->max_io_us, s->live,
+            s->last_hs_us, (int)s->last_error, tls_heap_base, now, peak, va_peak_bytes());
+}
+#endif
 
 
 int main(int argc, char **argv) {
@@ -62,6 +100,15 @@ int main(int argc, char **argv) {
         printf("%zu\n", sizeof(Actor));
         return 0;
     }
+    if (argc == 2 && strcmp(argv[1], "--has-tls") == 0) return TLS_DRIVERS ? 0 : 1;
+#ifdef GOGO_TLS
+    platform_unix_set_caps(platform_caps() | CAP_TLS);   /* --caps below still overrides */
+    if (tls_init()) {                                    /* at boot, so the heap base is known */
+        size_t peak;
+        platform_unix_tls_heap(&tls_heap_base, &peak);
+    }
+    atexit(tls_report);
+#endif
     if (argc == 2 && strcmp(argv[1], "--sizeof-net") == 0) {
         printf("%u\n", (unsigned)net_fixed_bytes());   /* the net stack's fixed state */
         return 0;

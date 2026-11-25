@@ -79,7 +79,8 @@ time.
 **PSRAM (StickS3 only).** The ESP32-S3-PICO-1-N8R8 has 8 MB octal PSRAM
 (`sdkconfig.sticks3`: `CONFIG_SPIRAM`, `SPIRAM_MODE_OCT`, 80 MHz,
 `SPIRAM_IGNORE_NOTFOUND` so a board without it still boots). It is used for
-exactly one thing, the code of hot-loaded modules (`gogo/code`):
+two things: the code of hot-loaded modules (`gogo/code`) and, with
+`GOGO_TLS`, mbedTLS's memory (see "TLS" below). Module code:
 `platform_code_alloc` / `platform_code_free` in `main/platform_esp.c` are
 `heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT)` / `heap_caps_free`.
 `CONFIG_SPIRAM_USE_CAPS_ALLOC=y` (not malloc-wide) keeps `malloc` and every
@@ -120,11 +121,67 @@ more internal RAM on the Cardputer than the PSRAM support costs the StickS3.
 go to the VM's memory); check the address `platform_code_alloc` returns on
 the first run.
 
+**TLS (`GOGO_TLS`).** The "tls" port (`runtime/net/tls/tls.c`) is compiled against
+ESP-IDF's own mbedTLS component (4.1.1, the same source the host build
+uses with `runtime/net/tls/config`), configured in `sdkconfig.defaults` (restartable
+ECC, TLS 1.2 client only, record buffers 16384 / 4096 fixed, X25519,
+`HAVE_TIME_DATE`, the certificate bundle without cross-signed mode, `-O2`;
+reasons there). The port's hooks are in `main/platform_esp.c`:
+- every mbedTLS allocation (the port's and Wi-Fi's WPA crypto) goes
+  through one allocator, installed first thing in `platform_esp_init`
+  (`CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC`): PSRAM first on the StickS3 (a
+  connection peaks at about 35 KB there; the internal heap does not move
+  during a handshake), internal RAM on the Cardputer ADV. This is PSRAM's
+  second use, beside module code;
+- the wall clock (`gogo/sys`, `gogo/sntp`) is the system clock
+  (`settimeofday`), which mbedTLS reads for certificate validity; unknown
+  (0) until set after each boot;
+- trust anchors: the bundle in flash; a chain is checked link by link
+  (sliced) up to its last certificate, which is trusted if it is a bundle
+  root itself (same subject and key, e.g. a cross-signed root; shared
+  `runtime/net/tls/anchor.c`, host-tested, ruling R16) or else checked against its
+  issuer's key in the bundle (IDF's callback). It relies on IDF v6.1.1
+  internals (the bundle layout and symbols, `esp_crt_verify_callback`),
+  listed in `platform_esp.c`;
+- `lwip_inet_pton` (IPv4 only): mbedTLS's x509 calls `inet_pton`, which
+  would otherwise link all of lwIP (whose `tcp_*` names clash with gogo's
+  stack);
+- `platform_tls_random` is `esp_fill_random` (IDF's mbedTLS draws its keys
+  from the same source).
+
+Measured on the StickS3 against example.com (`examples/httpsdemo`): a
+handshake about 2.5 s (software ECC: chain 1.8 s, ServerKeyExchange 0.35
+s), sliced steps 11-26 ms with a few near 50 ms, and one unsliced ECDHE
+step of 204 ms (above ruling R4's 50 ms cap, accepted as an exception:
+ruling R15; `docs/https-followups.md` 1).
+`gogo.bin` with and without `GOGO_TLS`: StickS3 1090208 / 946464 B
+(+143744: the bundle 66 KB, mbedTLS's TLS layer and X.509, and -O2 for
+mbedTLS, about 28 KB), Cardputer ADV 1125376 / 982224 B (+143152); static
+DIRAM +288 / +152 B. Without it neither tls.c nor mbedTLS's TLS layer is
+linked, and the mbedTLS settings that would also change Wi-Fi's WPA crypto
+go back to IDF's defaults (`sdkconfig.tls-off`, ruling R17): the TLS-off
+firmware is within a few hundred bytes of the firmware before HTTPS
+(StickS3 +224 B, Cardputer +112 B, DIRAM unchanged: the wall clock on the
+system clock and the scheduler's due-now check).
+
+A TLS-off build by hand adds the fragment (`gogo firmware -without tls`
+adds it by itself):
+
+    idf.py -C platform/esp32s3 -B platform/esp32s3/build-tlsoff \
+        -DSDKCONFIG=build-tlsoff/sdkconfig \
+        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.sticks3;sdkconfig.tls-off" build
+
+`gogo config stats` adds `psram_free`,
+`psram_min`, `mbedtls_mem`, `mbedtls_mem_peak` and the `tls_*` counters
+(`tls_max_step_us`: the longest slice; `tls_last_hs_us`: the last
+handshake; `tls_last_error`: the last mbedTLS error).
+
 **Capabilities.** `platform_caps()` (same file) returns the `CAP_*` bits this
 build really has: `CAP_NET` (`GOGO_NET`), `CAP_KBD` (Cardputer with `GOGO_KBD`),
 `CAP_POWER` (`GOGO_BATTERY`), `CAP_SD` (Cardputer with `GOGO_SD`), `CAP_IMU`
 (`GOGO_IMU`), `CAP_IR_TX` (`GOGO_IR`), `CAP_IR_RX` (StickS3 with `GOGO_IR`),
-`CAP_MIC` and `CAP_SPK` (`GOGO_AUDIO`). An image or module whose
+`CAP_MIC` and `CAP_SPK` (`GOGO_AUDIO`), `CAP_TLS` (`GOGO_TLS`, needs
+`GOGO_NET`; see "TLS" below). An image or module whose
 `requires` word needs more is refused at boot (`gogo: image needs ...;
 firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
 64 KB) limits the total module code.
@@ -140,7 +197,7 @@ firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v12, lockstep with `IMAGE_VERSION` in `runtime/vm/image.h`; when the
+(format v13, lockstep with `IMAGE_VERSION` in `runtime/vm/image.h`; when the
 image version changes, reflash the firmware too: an older firmware refuses
 a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
 one). At boot the firmware checks the magic, the length (multiple of 4,
@@ -695,11 +752,14 @@ modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
     idf.py -C platform/esp32s3 -B <dir> -DGOGO_BOARD=<board> -DSDKCONFIG=<dir>/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;<board overlay>;<dir>/sdkconfig.gogo" build
 
-Feature names are `net kbd power sd exfat cjk imu irtx irrx mic spk`; `net`, `kbd`,
+Feature names are `net kbd power sd exfat cjk imu irtx irrx mic spk tls`; `net`, `kbd`,
 `power` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
-`imu`, `irtx`, `irrx`, `mic`, `spk` are on by default and `-without` turns them off
-(`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `spk` are one, `GOGO_AUDIO`). A required feature cannot be removed,
-and one the board lacks (`kbd`, `sd` on the StickS3) is an error. The board
+`imu`, `irtx`, `irrx`, `mic`, `spk`, `tls` are on by default and `-without` turns them off
+(`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `spk` are one, `GOGO_AUDIO`; `tls` needs `net`, `GOGO_TLS` depends on `GOGO_NET`). A required feature cannot be removed,
+and one the board lacks (`kbd`, `sd` on the StickS3) is an error. A feature
+that is off may add its own sdkconfig fragment to `SDKCONFIG_DEFAULTS` (the
+table's `offDefaults`): `tls` off adds `sdkconfig.tls-off`, which puts
+mbedTLS back to IDF's defaults for Wi-Fi's WPA crypto. The board
 feature table is in `cmd/gogo/firmware.go` and must match `main/board.h` and
 `main/Kconfig.projbuild`. `gogo firmware` owns its build directory: if
 `<dir>/sdkconfig` exists and any `CONFIG_GOGO_*` value in it differs from the

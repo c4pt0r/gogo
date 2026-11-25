@@ -84,6 +84,16 @@ menu "gogo"
             of those ports returns ok=false, and the IDF I2S driver is not
             linked.
 
+    config GOGO_TLS
+        bool "TLS client (https)"
+        depends on GOGO_NET
+        default y
+        help
+            Build the "tls" port (runtime/net/tls/tls.c): a TLS 1.2 client over gogo's
+            tcp, on ESP-IDF's mbedTLS component (sdkconfig.defaults) with
+            the certificate bundle. When off, tls.c is not built, CAP_TLS is
+            absent and port.Open("tls") returns ok=false.
+
     config GOGO_FONT_CJK
         bool "Chinese console font (GB 2312)"
         default y

@@ -77,6 +77,14 @@ typedef struct PortDriver {
      * allocation; no GC happens during the call), for commands that carry
      * nested structs or Bytes (net.SendTo). */
     void (*command_term)(struct Vm *vm, const struct Actor *from, Port *p, term msg);
+    /* Optional (NULL = use `open`): takes the cfg raw, for a cfg struct
+     * with non-int fields (net.DialTLS's Host string). port_open calls it
+     * only for a struct of type cfg_type, read in place on the owner's heap
+     * (valid during the call; no GC happens in it); it returns as `open`
+     * does, and the charge and room checks follow alike. port_open_with
+     * (C callers, int fields) uses `open` only: it refuses a driver that
+     * has none. */
+    int  (*open_term)(struct Vm *vm, const struct Actor *owner, Port *p, uint16_t index, term cfg);
 } PortDriver;
 
 /* Most off-heap Bytes one port pins for its owner (a TCP connection holds
@@ -148,10 +156,22 @@ void port_bytes_release(struct Vm *vm, Port *p, term h);
 
 /* An extra event source drained by the scheduler (spec M5 §9.9), e.g. the
  * net stack's RX slot and link slot. pending: cheap check, true when drain
- * has work (it may be called from the scheduler at any time); drain: runs
- * on the scheduler thread inside port_drain; any_live: keeps the VM
- * running; next_deadline (optional): an absolute platform_now_ms deadline
- * folded into the idle wait. Up to GOGO_MAX_SOURCES, visited in no fixed order. */
+ * has work it can do NOW (it may be called from the scheduler at any time);
+ * drain: runs on the scheduler thread inside port_drain; any_live: keeps
+ * the VM running; next_deadline (optional): an absolute platform_now_ms
+ * deadline folded into the idle wait. Up to GOGO_MAX_SOURCES, visited in no
+ * fixed order.
+ *
+ * The rule pending must keep: the scheduler never sleeps while any
+ * pending() is true (port_due_now), it drains again at once. So pending
+ * may be true only when the next drain will make progress (consume an
+ * event, advance a sliced step), and must turn false once drain has done
+ * what it can now. Work that waits for time (a retry, a poll, a backoff)
+ * belongs in next_deadline, with pending false until it is due. A pending
+ * that stays true while drain makes no progress (a hardware flag stuck
+ * set, an error retried at once forever) spins the CPU at 100%: such a
+ * source must count those passes and back off (as kbd does for a failing
+ * read or an INT line stuck low). */
 typedef struct PortSource {
     bool (*pending)(void);
     void (*drain)(struct Vm *vm, uint64_t now);
@@ -178,5 +198,12 @@ bool port_subscribe(struct Vm *vm, struct Actor *a);
 /* True when port_drain has work: a queued event, a pending trailing
  * debounce value, or a pending source. */
 bool port_work_pending(const struct Vm *vm);
+
+/* True when port_drain has work due NOW: a queued event or a pending
+ * source. Unlike port_work_pending it leaves out the trailing debounce
+ * values, which are due only at their deadline (port_next_deadline): the
+ * scheduler checks this before it sleeps, so a held trailing value does not
+ * keep it spinning through the debounce window. */
+bool port_due_now(const struct Vm *vm);
 
 #endif

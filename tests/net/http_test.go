@@ -92,7 +92,8 @@ func dialed(t *testing.T, v *sim.VM, peer sim.Host, pport uint16, s []sim.TCP) (
 	return c, req
 }
 
-// Get with a literal address: URLs that are not http:// fail at once;
+// Get with a literal address: URLs that are not http:// or https://
+// fail at once;
 // the request is HTTP/1.0 with Host and Connection: close; a response
 // split anywhere is reassembled; Content-Length (any case) ends the body
 // before the server closes; without it the body runs to the close; the
@@ -100,7 +101,7 @@ func dialed(t *testing.T, v *sim.VM, peer sim.Host, pport uint16, s []sim.TCP) (
 // is complete fails.
 func TestHTTPGet(t *testing.T) {
 	v := startHTTP(t, "http_client",
-		"test.script=GET:https://a.test/ GET:http://:80/ GET:http://h:99999/ GET:ftp://x sleep:100 GET:http://10.0.0.1:8080/index.html#top GET:http://10.0.0.1:81 GET:http://10.0.0.1:83/short\n")
+		"test.script=GET:httpx://a.test/ GET:http://:80/ GET:http://h:99999/ GET:ftp://x sleep:100 GET:http://10.0.0.1:8080/index.html#top GET:http://10.0.0.1:81 GET:http://10.0.0.1:83/short\n")
 	a, req := dialed(t, v, gwHost, 8080, split(newConn(t, v, 0, 0).segs(v.Advance(100)))[8080])
 	if want := "GET /index.html HTTP/1.0\r\nHost: 10.0.0.1:8080\r\nConnection: close\r\n\r\n"; req != want {
 		t.Fatalf("request %q, want %q", req, want)
@@ -128,7 +129,7 @@ func TestHTTPGet(t *testing.T) {
 	c.expect(c.mine(c.send(sim.PSH|sim.ACK, []byte("HTTP/1.0 200 OK\r\nContent-Length: 20\r\n\r\nshort"))), sim.ACK, "")
 	c.rst(c.mine(c.send(sim.FIN|sim.ACK, nil)))
 	stop(t, v, "start true\n"+
-		"GET https://a.test/ false 0 0 false 0\n  body []\n"+
+		"GET httpx://a.test/ false 0 0 false 0\n  body []\n"+
 		"GET http://:80/ false 0 0 false 0\n  body []\n"+
 		"GET http://h:99999/ false 0 0 false 0\n  body []\n"+
 		"GET ftp://x false 0 0 false 0\n  body []\n"+

@@ -169,15 +169,18 @@ type Response struct {
 }
 ```
 
-The client speaks HTTP/1.0 with `Connection: close`, `http://` URLs only.
-Each request runs in a temporary actor; the caller waits for it the way
-`actor.Call` waits, and on timeout the request is abandoned. `ok` is false
+The client speaks HTTP/1.0 with `Connection: close` to `http://` URLs, and
+HTTP/1.1 with `Connection: close` to `https://` URLs (chapter 17 covers https, the keep-alive `http.Client` and
+`http.Upload`). Each request runs in a temporary actor; the caller waits for it the way
+`actor.Call` waits, and on timeout the request is abandoned. The temporary
+actor follows its caller: if the caller exits or is killed meanwhile, the
+request stops and its connection is reset. `ok` is false
 when DNS, the connection or the timeout fails; an HTTP error status such
 as 404 is `ok` with that `Status`.
 
 ```go
 // Fetch a page with http.Get. The URL comes from the config store
-// (gogo config set fetch.url http://...); http:// only, no https.
+// (gogo config set fetch.url http://...); for https:// see chapter 17.
 package main
 
 import (
@@ -202,10 +205,6 @@ func main() {
 	}
 	ct, _ := http.HeaderValue(r.Headers, "content-type")
 	println("GET", url, "->", r.Status, ct, r.Body.Len(), "bytes", "truncated:", r.Truncated)
-
-	// https is refused at once: there is no TLS yet.
-	_, ok = http.Get("https://example.com/", 1000)
-	println("https ok:", ok)
 }
 ```
 
@@ -219,8 +218,9 @@ no network
 `Truncated`. `Do` takes a different limit, up to 64 KB. The whole body is
 charged to the caller's memory, and the default limit on a board is 16 KB,
 so a caller that wants big responses needs a larger `SpawnOpt` limit (or a
-small `maxBody`). Responses using chunked transfer encoding are not
-supported and fail.
+small `maxBody`). Over http, responses using chunked transfer encoding
+fail (an HTTP/1.0 request must not get one); https requests and the
+keep-alive client of chapter 17 decode them.
 
 ## 10.5 HTTP server
 

@@ -65,7 +65,7 @@ static void st_command(Vm *v, const Actor *from, Port *p, term msg) {
     last_rc = stream_out_accept(v, from, p, &so, msg, check);
 }
 static const PortDriver st_driver = {
-    "st", TYPE_IR_TX, TYPE_DONE, st_open, NULL, st_close, st_can_event, NULL, st_command
+    "st", TYPE_IR_TX, TYPE_DONE, st_open, NULL, st_close, st_can_event, NULL, st_command, NULL
 };
 static const PortDriver *const drivers[] = { &st_driver, NULL };
 

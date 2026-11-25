@@ -1321,8 +1321,12 @@ int vm_run(Vm *vm) {
             bool have = timer_next(vm, &next);
             if (sched_next_deadline(vm, &pn) && (!have || pn < next)) { next = pn; have = true; }
             if (!have && !sched_any_live(vm)) break;
-            /* port_drain stops after GOGO_EVQ_CAP events: more are waiting. */
-            if (!evq_empty()) continue;
+            /* port_drain stops after GOGO_EVQ_CAP events: more are waiting;
+             * a source whose drain left work behind (a sliced TLS handshake
+             * step) drains again now, not at the next unrelated wakeup.
+             * Not port_work_pending: a held debounce value is due only at
+             * its deadline, which is in next (no spinning until then). */
+            if (port_due_now(vm)) continue;
             /* Gap between sched_drain (top of pass) and platform_wait: an
              * event pushed here is not lost, because producers call
              * platform_notify after evq_push and platform_wait returns

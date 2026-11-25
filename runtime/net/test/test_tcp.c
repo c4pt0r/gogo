@@ -985,3 +985,274 @@ TEST(tcp_held_written_overflow) {
     CHECK_EQ(actor_charged_words(k.o), 0);
     teardown();
 }
+
+/* ---- an upper layer over TCP (TcpUpper; runtime/net/tls/tls.c is the real one) ---- */
+
+static struct {
+    int connected, ended, fins, drains;
+    bool refuse_rx, refuse_fin, pend;
+    int32_t fin_post;       /* >= 0: fin posts Closed{fin_post} itself */
+    bool closed;            /* the layer posted its terminal Closed */
+    uint8_t rx[256];
+    uint32_t rx_n;
+    const uint8_t *tx;
+    uint32_t tx_len, acked;
+} up;
+
+static bool up_rx(Vm *v, TcpPcb *c, const uint8_t *p, uint32_t n) {
+    (void)v; (void)c;
+    if (up.refuse_rx || up.rx_n + n > sizeof up.rx) return false;
+    memcpy(up.rx + up.rx_n, p, n);
+    up.rx_n += n;
+    return true;
+}
+static bool up_fin(Vm *v, TcpPcb *c) {
+    up.fins++;
+    if (up.fin_post >= 0) {
+        tcp_post(v, c, TYPE_NET_CLOSED, up.fin_post);
+        if (up.fin_post != CR_NORMAL) up.closed = true;
+    }
+    return !up.refuse_fin;
+}
+static bool up_closed(const TcpPcb *c) { (void)c; return up.closed; }
+static void up_connected(Vm *v, TcpPcb *c) { (void)v; (void)c; up.connected++; }
+static void up_acked(Vm *v, TcpPcb *c, uint32_t n) {
+    (void)v; (void)c;
+    up.acked += n;
+    up.tx += n;
+    up.tx_len -= n;
+}
+static const uint8_t *up_tx(const TcpPcb *c, uint32_t *len) { (void)c; *len = up.tx_len; return up.tx; }
+static void up_ended(TcpPcb *c) { (void)c; up.ended++; }
+static bool up_pending(void) { return up.pend; }
+static void up_drain(Vm *v) { (void)v; up.pend = false; up.drains++; }
+
+static int up_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n);
+static void up_close(Port *p) {
+    TcpPcb *c = tcp_pcb_of(p);
+    if (c && (c->flags & TF_UPPER)) {
+        c->flags &= (uint8_t)~TF_UPPER;
+        up.ended++;
+    }
+    tcp_close_port(p);
+}
+static const PortDriver up_driver = {
+    "up", TYPE_NET_DIAL, TYPE_NET_DATA, up_open, NULL, up_close, tcp_port_can_event, NULL, NULL, NULL
+};
+static const TcpUpper upper = {
+    &up_driver, up_rx, up_fin, up_connected, up_acked, up_tx, up_ended, up_pending, up_drain, NULL, up_closed
+};
+static int up_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)index;
+    TcpPcb *c = tcp_dial(p, cfg, n);
+    if (!c) return -1;
+    c->flags |= TF_UPPER;
+    net_s.upper = &upper;
+    return 0;
+}
+static const PortDriver *const up_list[] = { &net_netif_driver, &net_tcp_driver, &up_driver, NULL };
+
+/* Opens "up" to PEER_IP:80 and completes the TCP handshake. */
+static Conn up_dial(int32_t timeout) {
+    Conn k;
+    memset(&k, 0, sizeof k);
+    memset(&up, 0, sizeof up);
+    up.fin_post = -1;
+    port_set_drivers(up_list);
+    configure();
+    k.o = new_actor();
+    term f[3] = { heap_int(k.o, (int32_t)PEER_IP), term_from_int(80), term_from_int(timeout) };
+    k.o->hp = 0;
+    f[0] = heap_int(k.o, (int32_t)PEER_IP);
+    k.port = port_open(&vm, k.o, heap_str(k.o, "up"), heap_struct(k.o, TYPE_NET_DIAL, f, 3));
+    CHECK(port_is(k.port));
+    drain();
+    CHECK_EQ(tx.n, 1);
+    Out s = out_at(0);
+    k.pport = 80;
+    k.vport = s.sport;
+    k.nxt = s.seq + 1u;
+    k.c = find_pcb(k.vport);
+    seg_in(k.pport, k.vport, PEER_ISN, k.nxt, 0x12, NULL);
+    k.una = k.nxt;
+    k.peer = PEER_ISN + 1u;
+    tx.n = 0;
+    return k;
+}
+
+/* The stream goes to the upper layer instead of the owner: Connected,
+ * received bytes and the peer's FIN are its to take or refuse (not
+ * ACKed), what it offers is sent and its acknowledgment reported; the
+ * source hooks run in the stack's drain; the end of the connection frees
+ * it and the owner gets Closed. */
+TEST(tcp_upper_layer) {
+    setup();
+    Conn k = up_dial(0);
+    CHECK_EQ(up.connected, 1);
+    CHECK_EQ(event_of(k.o, NULL), 0);          /* Connected is the layer's to send */
+    CHECK(k.c->state == TCP_ESTABLISHED);
+    tcp_post(&vm, k.c, TYPE_NET_CONNECTED, -1);
+    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_CONNECTED);
+    /* Sending: the layer's bytes, MSS-sized, acknowledgments reported. */
+    static const char msg[] = "hello, upper";
+    up.tx = (const uint8_t *)msg;
+    up.tx_len = 12;
+    tcp_output(k.c);
+    CHECK_EQ(tx.n, 1);
+    Out s = out_at(0);
+    CHECK_EQ(s.n, 12u);
+    CHECK(memcmp(s.data, msg, 12) == 0);
+    seg_in(k.pport, k.vport, k.peer, k.una + 5u, 0x10, NULL);   /* a partial ACK */
+    CHECK_EQ(up.acked, 5u);
+    seg_in(k.pport, k.vport, k.peer, k.una + 12u, 0x10, NULL);
+    CHECK_EQ(up.acked, 12u);
+    k.una += 12u;
+    k.nxt = k.una;
+    CHECK_EQ(event_of(k.o, NULL), 0);          /* no Written: the layer reports its own */
+    /* Receiving: taken and ACKed, or refused and not. */
+    tx.n = 0;
+    seg_in(k.pport, k.vport, k.peer, k.una, 0x18, "abc");
+    CHECK_EQ(up.rx_n, 3u);
+    CHECK_EQ(out_at(0).ack, k.peer + 3u);
+    k.peer += 3u;
+    CHECK_EQ(event_of(k.o, NULL), 0);          /* no Data to the owner */
+    up.refuse_rx = true;
+    seg_in(k.pport, k.vport, k.peer, k.una, 0x18, "def");
+    CHECK_EQ(up.rx_n, 3u);
+    CHECK_EQ(out_at(tx.n - 1).ack, k.peer);
+    up.refuse_rx = false;
+    /* The peer's FIN: the layer may refuse it (not ACKed) or take it. */
+    up.refuse_fin = true;
+    seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
+    CHECK_EQ(up.fins, 1);
+    CHECK_EQ(out_at(tx.n - 1).ack, k.peer);
+    CHECK(k.c->state == TCP_ESTABLISHED);
+    up.refuse_fin = false;
+    seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
+    CHECK_EQ(out_at(tx.n - 1).ack, k.peer + 1u);
+    CHECK(k.c->state == TCP_CLOSE_WAIT);
+    CHECK_EQ(event_of(k.o, NULL), 0);          /* Closed{Normal} is the layer's too */
+    k.peer++;
+    /* The source hooks. */
+    up.pend = true;
+    CHECK(port_work_pending(&vm));
+    drain();
+    CHECK_EQ(up.drains, 1);
+    /* A reset ends it: the layer is freed, the owner gets Closed{Reset}. */
+    seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);
+    CHECK_EQ(up.ended, 1);
+    int32_t r = -1;
+    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(r, 1);
+    CHECK(k.c->state == TCP_CLOSED);
+    CHECK_EQ(actor_charged_words(k.o), 0);
+    teardown();
+}
+
+/* With an upper layer, TimeoutMs bounds the connect and the layer's own
+ * handshake: it ends with RST and Closed{Timeout} unless the layer clears
+ * the deadline (tcp_until_clear) first. */
+TEST(tcp_upper_deadline) {
+    setup();
+    Conn k = up_dial(5000);
+    advance(4999);
+    CHECK(k.c->state == TCP_ESTABLISHED);
+    tx.n = 0;
+    advance(1);
+    CHECK_EQ(tx.n, 1);
+    CHECK_EQ(out_at(0).fl, F_RA);
+    int32_t r = -1;
+    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(r, 2);
+    CHECK_EQ(up.ended, 1);
+    teardown();
+    setup();
+    k = up_dial(5000);
+    tcp_until_clear(k.c);
+    advance(60000);
+    CHECK(k.c->state == TCP_ESTABLISHED);
+    CHECK_EQ(event_of(k.o, NULL), 0);
+    teardown();
+}
+
+/* A port with no connection can still be given a Closed{reason}
+ * (net.NoTime: the tls port's Dial before the clock is set). */
+static int nc_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)index; (void)cfg; (void)n;
+    tcp_hold_closed(p, CR_NOTIME);
+    return 0;
+}
+static const PortDriver nc_driver = {
+    "nc", TYPE_NET_DIAL, TYPE_NET_DATA, nc_open, NULL, tcp_close_port, tcp_port_can_event, NULL, NULL, NULL
+};
+static const TcpUpper nc_upper = { &nc_driver, NULL, NULL, NULL, NULL, NULL, NULL, up_pending, up_drain, NULL, NULL };
+static const PortDriver *const nc_list[] = { &nc_driver, NULL };
+
+TEST(tcp_hold_closed_without_connection) {
+    setup();
+    port_set_drivers(nc_list);
+    net_s.upper = &nc_upper;
+    Actor *o = new_actor();
+    term f[3] = { term_from_int(1), term_from_int(80), term_from_int(0) };
+    term p = open_port(o, "nc", TYPE_NET_DIAL, f, 3);
+    CHECK(port_is(p));
+    CHECK(port_any_live(&vm));
+    drain();
+    int32_t r = -1;
+    CHECK_EQ(event_of(o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(r, CR_NOTIME);
+    CHECK(!port_any_live(&vm));
+    port_close(&vm, p);
+    teardown();
+}
+
+/* Exactly one terminal Closed per connection: a layer that posted its own
+ * (a failure found while taking the FIN) is not followed by TCP's when the
+ * connection then ends (here a RST). */
+TEST(tcp_upper_one_terminal_closed) {
+    setup();
+    Conn k = up_dial(0);
+    up.fin_post = CR_TLS;
+    seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
+    k.peer++;
+    seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);   /* then the peer resets */
+    CHECK(k.c->state == TCP_CLOSED);
+    int32_t r = -1;
+    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(r, CR_TLS);
+    CHECK_EQ(event_of(k.o, NULL), 0);          /* no second Closed */
+    teardown();
+}
+
+/* After the layer's Closed{Normal} the connection's end still gets its
+ * terminal Closed, also while the Normal is held (the owner full): the
+ * terminal reason replaces the held Normal, it is never dropped. */
+TEST(tcp_upper_terminal_after_normal) {
+    setup();
+    Conn k = up_dial(0);
+    up.fin_post = CR_NORMAL;
+    seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
+    k.peer++;
+    seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);
+    int32_t r = -1;
+    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(r, CR_NORMAL);
+    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(r, CR_RESET);
+    teardown();
+    setup();
+    k = up_dial(0);
+    up.fin_post = CR_NORMAL;
+    k.o->max_words = (uint16_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room: Normal held */
+    seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
+    k.peer++;
+    CHECK_EQ(event_of(k.o, NULL), 0);
+    seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);
+    k.o->max_words = 4096;
+    advance(100);
+    r = -1;
+    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(r, CR_RESET);
+    CHECK_EQ(event_of(k.o, NULL), 0);
+    teardown();
+}

@@ -1,5 +1,5 @@
 // Fetch a page with http.Get. The URL comes from the config store
-// (gogo config set fetch.url http://...); http:// only, no https.
+// (gogo config set fetch.url http://...); for https:// see chapter 17.
 package main
 
 import (
@@ -24,8 +24,4 @@ func main() {
 	}
 	ct, _ := http.HeaderValue(r.Headers, "content-type")
 	println("GET", url, "->", r.Status, ct, r.Body.Len(), "bytes", "truncated:", r.Truncated)
-
-	// https is refused at once: there is no TLS yet.
-	_, ok = http.Get("https://example.com/", 1000)
-	println("https ok:", ok)
 }

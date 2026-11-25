@@ -86,7 +86,7 @@ static bool imu_can_event(const Port *p) {
 }
 
 const PortDriver input_imu_driver = {
-    "imu", TYPE_IMU_CONFIG, TYPE_IMU_GESTURE, imu_open, imu_command, imu_close, imu_can_event, NULL, NULL,
+    "imu", TYPE_IMU_CONFIG, TYPE_IMU_GESTURE, imu_open, imu_command, imu_close, imu_can_event, NULL, NULL, NULL
 };
 
 /* ---- scheduler side ---- */

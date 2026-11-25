@@ -1,0 +1,297 @@
+// The HTTPS (and keep-alive, upload) client of the tls bridge tests. It
+// runs the steps in the store's test.script, space separated:
+//
+//	time         sys.SetTime(test.time seconds)
+//	GET:url      http.Get (one-shot, HTTP/1.0)
+//	POST:url     http.Post with body test.body (text/plain)
+//	new          c = http.NewClient()
+//	CGET:url     http.ClientDo(c, "GET", ...)
+//	CPOST:url    http.ClientDo(c, "POST", ...) with body test.body
+//	cclose       http.CloseClient(c)
+//	UP:url       http.Upload(url, test.file, "application/octet-stream",
+//	             the token config.Get("upload.token"))
+//	UPMISS:url   http.Upload of /flash/missing.bin (no such file)
+//	UPNT:url     http.Upload of test.file without a token
+//	CUP:url      http.ClientUpload(c, ...) as UP
+//	QSTALE:url   another actor runs CGET url on c with a 2 s timeout (a
+//	             url nobody answers keeps c busy); meanwhile this one
+//	             queues CPOST https://gogo.test/stale behind it with a
+//	             300 ms timeout (it gives up while waiting), then waits
+//	CRASH:url    an actor makes a Client, CGET url on it and exits (100)
+//	             without CloseClient; prints when it and its client are down
+//	QFULL:url    another actor keeps c busy with CGET url (3 s, as QSTALE);
+//	             MaxQueued more queue a CPOST https://gogo.test/queued
+//	             (1.5 s); 1 s later one over that (https://gogo.test/over) must fail
+//	             at once: prints "over ok fast"
+//	QDEAD:url    an actor (the creator) makes a Client and CGETs url on
+//	             it (10 s; a url that never answers keeps it in flight)
+//	QUEUE2       two more actors queue CGET https://gogo.test/queued on
+//	             that Client (5 s)
+//	QKILL        kills the creator (100); prints each queued result and
+//	             whether it came within 100 ms of the kill, then the
+//	             creator's and the client's Down
+//	UPCRASH:url  an actor (the caller) starts UP url, without waiting
+//	GETCRASH:url the same with GET url
+//	WAIT:url     http.Get url (plain http) every 100 ms until it answers
+//	             "yes" (a test server telling the request got there)
+//	KILL         kills the caller (100); prints when it is down
+//	sleep:MS     actor.Sleep(MS)
+//
+// Each request prints "OP url ok status len truncated" and its body (a
+// byte sum if over 64 bytes); an upload prints "UP url status err". The
+// address is static (10.0.0.2/24, gateway and DNS 10.0.0.1), set on the
+// "netif" port directly; at the end the resolver is stopped and the port
+// closed, so the VM exits by itself.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/config"
+	"gogo/http"
+	"gogo/net"
+	"gogo/port"
+	"gogo/strconv"
+	"gogo/strings"
+	"gogo/sys"
+)
+
+// qres is a QDEAD queued request's result and when it came.
+type qres struct {
+	OK bool
+	At int64
+}
+
+// recvClient waits for a Client sent by another actor.
+func recvClient() http.Client {
+	for {
+		switch m := actor.Receive().(type) {
+		case http.Client:
+			return m
+		}
+	}
+}
+
+func atoi(key string, def int) int {
+	if s, ok := config.Get(key); ok {
+		n, _ := strconv.Atoi(s)
+		return n
+	}
+	return def
+}
+
+func show(op, url string, r http.Response, ok bool) {
+	println(op, url, ok, r.Status, r.Body.Len(), r.Truncated)
+	if r.Body.Len() <= 64 {
+		println("  body [" + r.Body.String() + "]")
+	} else {
+		sum := 0
+		for i := 0; i < r.Body.Len(); i++ {
+			sum += int(r.Body.At(i))
+		}
+		println("  sum", sum)
+	}
+}
+
+func main() {
+	nif, ok := port.Open("netif", net.IfConfig{})
+	actor.Send(nif, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1, DNS: 10<<24 | 1})
+	println("start", ok)
+	script, _ := config.Get("test.script")
+	text, _ := config.Get("test.body")
+	timeout := atoi("test.timeout", 5000)
+	var c http.Client
+	var caller actor.PID
+	var qcl http.Client // QDEAD's Client
+	for _, step := range strings.Split(script, " ") {
+		op, arg, _ := strings.Cut(step, ":")
+		var none bytes.Bytes
+		if op == "time" {
+			println("time", sys.SetTime(int64(atoi("test.time", 0))*1000))
+		} else if op == "sleep" {
+			n, _ := strconv.Atoi(arg)
+			actor.Sleep(n)
+		} else if op == "new" {
+			c = http.NewClient()
+			println("new")
+		} else if op == "cclose" {
+			http.CloseClient(c)
+			println("cclose")
+		} else if op == "GET" {
+			r, ok := http.Get(arg, timeout)
+			show(op, arg, r, ok)
+		} else if op == "POST" {
+			r, ok := http.Post(arg, "text/plain", bytes.FromString(text), timeout)
+			show(op, arg, r, ok)
+		} else if op == "CGET" {
+			r, ok := http.ClientDo(c, "GET", arg, "", none, timeout)
+			show(op, arg, r, ok)
+		} else if op == "CPOST" {
+			r, ok := http.ClientDo(c, "POST", arg, "text/plain", bytes.FromString(text), timeout)
+			show(op, arg, r, ok)
+		} else if op == "UP" || op == "UPMISS" || op == "UPNT" || op == "CUP" {
+			path, _ := config.Get("test.file")
+			if op == "UPMISS" {
+				path = "/flash/missing.bin"
+			}
+			token, _ := config.Get("upload.token")
+			if op == "UPNT" {
+				token = ""
+			}
+			status, err := 0, http.Failed
+			if op == "CUP" {
+				status, err = http.ClientUpload(c, arg, path, "application/octet-stream", token)
+			} else {
+				status, err = http.Upload(arg, path, "application/octet-stream", token)
+			}
+			println(op, arg, status, int(err))
+		} else if op == "QSTALE" {
+			me, cl, slow := actor.Self(), c, arg
+			actor.Spawn(func() {
+				var none bytes.Bytes
+				r, ok := http.ClientDo(cl, "GET", slow, "", none, 2000)
+				show("CGET", slow, r, ok)
+				actor.Send(me, "slow done")
+			})
+			actor.Sleep(50)
+			r, ok := http.ClientDo(c, "POST", "https://gogo.test/stale", "text/plain", bytes.FromString(text), 300)
+			show("CPOST", "https://gogo.test/stale", r, ok)
+			println(actor.Receive())
+		} else if op == "QFULL" {
+			me, cl, slow := actor.Self(), c, arg
+			actor.Spawn(func() {
+				var none bytes.Bytes
+				r, ok := http.ClientDo(cl, "GET", slow, "", none, 3000)
+				show("CGET", slow, r, ok)
+				actor.Send(me, "done")
+			})
+			actor.Sleep(50)
+			for i := 0; i < http.MaxQueued; i++ {
+				actor.Spawn(func() {
+					http.ClientDo(cl, "POST", "https://gogo.test/queued", "text/plain", bytes.FromString(text), 1500)
+					actor.Send(me, "done")
+				})
+			}
+			actor.Sleep(1000) // the client is surely waiting on the connect by now
+			t0 := actor.Now()
+			_, ok := http.ClientDo(c, "POST", "https://gogo.test/over", "text/plain", bytes.FromString(text), 1000)
+			println("over", ok, actor.Now()-t0 < 100)
+			for i := 0; i <= http.MaxQueued; i++ {
+				actor.Receive()
+			}
+			println("qfull done")
+		} else if op == "UPCRASH" || op == "GETCRASH" {
+			u := arg
+			path, _ := config.Get("test.file")
+			token, _ := config.Get("upload.token")
+			up := op == "UPCRASH"
+			p := actor.Spawn(func() {
+				if up {
+					status, err := http.Upload(u, path, "application/octet-stream", token)
+					println("UP", u, status, int(err))
+				} else {
+					r, ok := http.Get(u, timeout)
+					show("GET", u, r, ok)
+				}
+			})
+			actor.Monitor(p)
+			caller = p
+		} else if op == "WAIT" {
+			for i := 0; i < 300; i++ {
+				r, ok := http.Get(arg, timeout)
+				if ok && r.Body.String() == "yes" {
+					break
+				}
+				actor.Sleep(100)
+			}
+			println("ready")
+		} else if op == "KILL" {
+			actor.Kill(caller, 100)
+			for down := false; !down; {
+				switch d := actor.Receive().(type) {
+				case actor.DownMsg:
+					println("caller down", d.Reason.Code)
+					down = true
+				}
+			}
+		} else if op == "QDEAD" {
+			me := actor.Self()
+			u := arg
+			p := actor.Spawn(func() {
+				cl := http.NewClient()
+				actor.Send(me, cl)
+				var none bytes.Bytes
+				http.ClientDo(cl, "GET", u, "", none, 10000)
+				println("not reached")
+			})
+			qcl = recvClient()
+			actor.Monitor(p)
+			actor.Monitor(qcl.PID)
+			caller = p
+		} else if op == "QUEUE2" {
+			me, cl := actor.Self(), qcl
+			for i := 0; i < 2; i++ {
+				actor.Spawn(func() {
+					var none bytes.Bytes
+					_, ok := http.ClientDo(cl, "GET", "https://gogo.test/queued", "", none, 5000)
+					actor.Send(me, qres{ok, actor.Now()})
+				})
+			}
+			actor.Sleep(50) // both are in the Client's mailbox
+		} else if op == "QKILL" {
+			t0 := actor.Now()
+			actor.Kill(caller, 100)
+			var res []qres
+			creator, client := -1, -1
+			for len(res) < 2 || creator < 0 || client < 0 {
+				switch m := actor.Receive().(type) {
+				case qres:
+					res = append(res, m)
+				case actor.DownMsg:
+					if m.From == caller {
+						creator = m.Reason.Code
+					} else {
+						client = m.Reason.Code
+					}
+				}
+			}
+			for _, r := range res {
+				println("queued", r.OK, r.At-t0 < 100)
+			}
+			println("creator down", creator, "client down", client)
+		} else if op == "CRASH" {
+			me := actor.Self()
+			u := arg
+			p := actor.Spawn(func() {
+				cl := http.NewClient()
+				actor.Send(me, cl)
+				var none bytes.Bytes
+				r, ok := http.ClientDo(cl, "GET", u, "", none, 5000)
+				show("CGET", u, r, ok)
+				actor.Exit(100)
+			})
+			var cl http.Client
+			switch m := actor.Receive().(type) {
+			case http.Client:
+				cl = m
+			}
+			actor.Monitor(p)
+			actor.Monitor(cl.PID)
+			for i := 0; i < 2; i++ {
+				switch m := actor.Receive().(type) {
+				case actor.DownMsg:
+					if m.From == p {
+						println("creator down", m.Reason.Code)
+					} else {
+						println("client down", m.Reason.Code)
+					}
+				}
+			}
+		}
+	}
+	println("done")
+	if p, ok := actor.Whereis("dns"); ok {
+		actor.Kill(p, actor.Shutdown)
+	}
+	port.Close(nif)
+}

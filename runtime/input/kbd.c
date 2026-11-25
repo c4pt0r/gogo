@@ -109,7 +109,7 @@ static bool kbd_can_event(const Port *p) {
 }
 
 const PortDriver input_kbd_driver = {
-    "kbd", TYPE_KBD_CONFIG, TYPE_KBD_KEY, kbd_open, NULL, kbd_close, kbd_can_event, NULL, NULL,
+    "kbd", TYPE_KBD_CONFIG, TYPE_KBD_KEY, kbd_open, NULL, kbd_close, kbd_can_event, NULL, NULL, NULL
 };
 
 /* ---- scheduler side ---- */
@@ -118,6 +118,14 @@ static bool rep_due(uint64_t now) { return k.rep_on && reached(now, k.rep_at); }
 static bool backing_off(uint64_t now) { return k.errs >= 2 && !reached(now, k.retry_at); }
 
 bool kbd_is_open(void) { return k.port != NULL; }
+
+/* A pass that failed (a read error, or no progress on a stuck INT): the
+ * first retries at once; consecutive ones back off 10, 20, ... 640 ms, so
+ * a dead chip, bus or line cannot spin the scheduler. */
+static void strike(uint64_t now) {
+    if (k.errs < 255) k.errs++;
+    if (k.errs >= 2) k.retry_at = (uint32_t)now + (10u << (k.errs - 2 > 6 ? 6 : k.errs - 2));
+}
 
 bool kbd_work(uint64_t now) {
     return k.port && ((platform_input()->kbd_pending() && !backing_off(now)) || rep_due(now));
@@ -145,15 +153,25 @@ void kbd_drain(Vm *vm, uint64_t now) {
             int r = hw->kbd_read(&raw, &down);
             if (r < 0) {
                 read_errors++;
-                /* The first failure retries at once; consecutive ones back
-                 * off 10, 20, ... 640 ms so a dead chip or bus cannot spin
-                 * the scheduler in I2C timeouts. */
-                if (k.errs < 255) k.errs++;
-                if (k.errs >= 2) k.retry_at = (uint32_t)now + (10u << (k.errs - 2 > 6 ? 6 : k.errs - 2));
+                strike(now);
+                break;
+            }
+            if (r == 0) {
+                /* Empty at once, yet still pending (INT held low with an
+                 * empty FIFO): this pass made no progress. Once is the
+                 * race kbd_read allows for (an event between the empty
+                 * read and the clear: the next read gets it); twice in a
+                 * row is a stuck line, which backs off like an error
+                 * instead of spinning the scheduler (PortSource rule). */
+                if (i == 0 && hw->kbd_pending()) {
+                    if (k.errs >= 1) read_errors++;
+                    strike(now);
+                } else {
+                    k.errs = 0;
+                }
                 break;
             }
             k.errs = 0;
-            if (r == 0) break;
             if (raw < hw->nkeys && raw < 256u && hw->keys[raw].code) key_event(vm, hw->keys, raw, down, now);
             if (!k.port) return;
         }

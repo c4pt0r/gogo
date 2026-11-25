@@ -188,5 +188,5 @@ void udp_rx(Vm *vm, uint32_t src, uint32_t dst, const uint8_t *p, uint32_t len) 
 }
 
 const PortDriver net_udp_driver = {
-    "udp", TYPE_NET_UDP, TYPE_NET_DATAGRAM, u_open, NULL, u_close, u_can_event, NULL, u_command
+    "udp", TYPE_NET_UDP, TYPE_NET_DATAGRAM, u_open, NULL, u_close, u_can_event, NULL, u_command, NULL
 };

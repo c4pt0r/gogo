@@ -27,6 +27,9 @@
  *
  *  - "tcp", cfg net.Dial{IP, Port, TimeoutMs}, and "tcp_listen", cfg
  *    net.Listen{Port}: TCP (tcp.c; spec §5.2, §5.3, §9.3, §9.5, §9.6).
+ *  - "tls", cfg net.DialTLS{IP, Port, TimeoutMs, Host}: TLS over a "tcp"
+ *    connection, in runtime/net/tls/ (not linked here): a TCP connection marked
+ *    TF_UPPER hands its stream to the one installed TcpUpper (net_int.h).
  *
  * Unconfigured (no address), the stack passes only UDP from local port 68
  * to remote port 67 (sent from 0.0.0.0 to 255.255.255.255) and UDP to

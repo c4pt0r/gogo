@@ -355,9 +355,12 @@ host file system fails every write beyond that many bytes in all with
 
 ## 16.6 Capabilities and firmware
 
-The compiler records that a program opens `"mic"` or `"spk"` in the image,
-like the other ports; a firmware built without them refuses the image at
-boot. Both are on by default and share one switch, `GOGO_AUDIO` (`gogo
+The compiler records in the image that a program opens `"mic"` or `"spk"`
+itself, like the other ports; a firmware built without them refuses that
+image at boot. Importing `gogo/sound` does not require them: the library
+declares `//gogo:optional mic spk` (chapter 12), and `Record` and `Play`
+return false when the hardware is absent. A program that opens `"mic"` or
+`"spk"` with `port.Open` itself still requires them. Both are on by default and share one switch, `GOGO_AUDIO` (`gogo
 firmware` names them `mic` and `spk`). A board without the hardware
 refuses `port.Open` (`ok == false`). The codec's I2S pins are reserved: the
 `gpio` port refuses G14 to G18 on the StickS3 and G41, G42, G43 and G46 on

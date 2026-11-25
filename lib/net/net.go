@@ -3,7 +3,7 @@
 // compiler replaces every call with VM instructions, so the bodies are never
 // executed.
 //
-// The struct types below have fixed type indices 9-26 in every image
+// The struct types below have fixed type indices 9-26 (and 44, DialTLS) in every image
 // (TYPE_NET_* in runtime/vm/opcodes.h); keep their field order in sync with
 // compiler.reservedTypes.
 //
@@ -34,6 +34,8 @@
 //     free connection slot (4 in all; a TIME_WAIT or half-open inbound one
 //     is reclaimed). The owner gets Connected, or Closed with Refused,
 //     Timeout or NoRoute. See Write, Shutdown, Data and Closed.
+//   - "tls", cfg DialTLS{IP, Port, TimeoutMs, Host}: like "tcp", with TLS
+//     1.2 on top (see DialTLS). At most one at a time: a second open fails.
 //   - "tcp_listen", cfg Listen{Port}: the owner gets Accepted{Conn} for each
 //     connection the peer completes; Conn is a "tcp" port owned by the
 //     listener and paused (no Data, window 0) until port.Handoff gives it
@@ -118,6 +120,46 @@ type Dial struct {
 	IP, Port, TimeoutMs int
 }
 
+// DialTLS configures a "tls" port: a "tcp" connection to IP:Port with TLS
+// on top, to the server named Host (the SNI name, and the name its
+// certificate is checked against). The port speaks the same messages as
+// "tcp" (Connected, Write, Written, Data, Shutdown, Closed), only the bytes
+// are the TLS plaintext; it is a separate config type, not a field of Dial,
+// because a port's config type is fixed per driver and Dial is the "tcp"
+// one. IP, Port and TimeoutMs are as in Dial (TimeoutMs bounds the connect
+// and the handshake together). The certificate is always verified, there is
+// no way to turn that off, and the check needs the wall clock (gogo/sys,
+// set by gogo/sntp). Needs the firmware capability "tls".
+//
+// TimeoutMs 0 bounds the handshake at 30 s. Before the wall clock is set
+// the port opens but at once gets Closed{NoTime} (nothing is sent). A
+// certificate that is not trusted, not valid now or not for Host gives
+// Closed{BadCert}; any other TLS failure Closed{TLS}; the peer closing
+// during the handshake Closed{Reset}. Connected comes after the handshake.
+// close_notify (or a plain FIN, as Go's crypto/tls accepts) is
+// Closed{Normal}. Shutdown sends close_notify, then the FIN; closing the
+// port before that went out resets the connection.
+//
+// Memory: the TLS state (about 23 KB: record buffers of 16 KB in and 4 KB
+// out) is charged to the owner, which needs room for it and one Data on
+// top of its heap, or the open fails: on a board with the default 16 KB
+// actor limit, open it from an actor spawned with a larger MaxMemory
+// (actor.SpawnOpt). A connection peaks at about 34 KB of TLS memory (the
+// handshake's temporaries are not charged). Only one tls connection exists
+// at a time; a second open fails while one is open. TLS 1.2 only.
+//
+// Truncation: a FIN at a record boundary also gives Closed{Normal}, so an
+// attacker on the path can cut the stream short there unnoticed; frame
+// what you read (a length, a terminator) and treat a short read as an
+// error, never "read until close".
+//
+// Closed: at most one Normal, then exactly one terminal Closed (any other
+// reason) per connection; a Write still pending then gets no Written.
+type DialTLS struct {
+	IP, Port, TimeoutMs int
+	Host                string
+}
+
 // Listen configures a "tcp_listen" port on local Port.
 type Listen struct {
 	Port int
@@ -181,4 +223,7 @@ const (
 	Refused  = 3
 	Overflow = 4
 	NoRoute  = 5
+	NoTime   = 6 // tls: the wall clock is not set (gogo/sntp, gogo/sys)
+	BadCert  = 7 // tls: the server's certificate is untrusted, expired or not for Host
+	TLS      = 8 // tls: any other TLS failure (an alert, a bad record, out of memory)
 )

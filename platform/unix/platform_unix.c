@@ -14,9 +14,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <unistd.h>
-#ifdef __APPLE__
-#include <sys/random.h>
-#endif
+#include <sys/random.h>      /* getentropy: declared here on macOS and glibc (unistd.h hides it under _POSIX_C_SOURCE) */
 #include <fcntl.h>
 #include <string.h>
 
@@ -413,7 +411,8 @@ int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uin
     return found;
 }
 
-/* Unix provides every capability; --caps <hex> (test only) overrides. */
+/* Unix provides every capability (CAP_TLS too in a gogovm built with the
+ * "tls" port: main.c adds it); --caps <hex> (test only) overrides. */
 static uint32_t unix_caps = CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX |
                            CAP_MIC | CAP_SPK;
 void platform_unix_set_caps(uint32_t caps) { unix_caps = caps; }

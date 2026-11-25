@@ -462,6 +462,58 @@ TEST(kbd_persistent_error_backs_off) {
     teardown();
 }
 
+/* Runs the scheduler's idle logic from t0 to t1 (as interp.c: drain while
+ * port_due_now, else sleep to the next deadline) and returns the passes
+ * (drains); stops at max passes. */
+static int sched_passes(uint64_t t0, uint64_t t1, int max) {
+    int passes = 0;
+    now = t0;
+    while (now < t1 && passes < max) {
+        if (port_due_now(&vm)) {
+            passes++;
+            step(now);
+            continue;
+        }
+        uint64_t d;
+        if (!port_next_deadline(&vm, &d) || d >= t1) break;
+        now = d > now ? d : now + 1;
+    }
+    return passes;
+}
+
+/* I3: an INT line stuck low (kbd_pending true, the FIFO empty) is no
+ * progress: after one immediate retry it backs off like a read error, so
+ * the scheduler sleeps instead of spinning. A real event racing the clear
+ * (pending once, then an event) costs no backoff; after the line recovers
+ * keys come through. */
+TEST(kbd_stuck_int_backs_off) {
+    setup();
+    CHECK(port_is(open_kbd(owner, 0, 0)));
+    step(0);                                         /* the open's look: empty */
+    fake_kbd_stuck(true);
+    int passes = sched_passes(1, 2001, 1000);
+    CHECK(passes < 16);                              /* 10, 20, ... 640 ms: about 9 */
+    CHECK(fake_kbd_reads() < 18);
+    fake_kbd_stuck(false);
+    press(R_A);
+    passes = sched_passes(2001, 3000, 1000);
+    CHECK(passes >= 1 && passes < 4);
+    collect(owner);
+    CHECK_EQ(ngot, 1);
+    is(0, 0x04, 'a', 0, true);
+    /* The race: pending after an empty read once, then the event comes. */
+    fake_kbd_stuck(true);
+    step(3000);                                      /* empty, still pending: one strike */
+    fake_kbd_stuck(false);
+    press(R_B);
+    CHECK(port_due_now(&vm));                        /* no backoff after one */
+    step(3000);
+    collect(owner);
+    CHECK_EQ(ngot, 1);
+    is(0, 0x05, 'b', 0, true);
+    teardown();
+}
+
 /* M2: the 32-bit deadlines survive the wrap of the low 32 bits of the clock. */
 TEST(kbd_repeat_across_32bit_wrap) {
     setup();

@@ -37,12 +37,29 @@ whose bits it lacks (`code.Cap*`, `CAP_*` in `runtime/vm/platform.h`).
 Packages built only on others inherit their bits (for example `gogo/http`
 via `gogo/net`).
 
+A library whose port drivers are soft (opened only when a call asks for
+them at run time, their absence reported as that call's failure) names
+them in a directive line, conventionally the last line of its package doc
+comment after an empty `//` line:
+
+```go
+//gogo:optional tls
+```
+
+Those drivers then add no bit for the package's **own** constant
+`port.Open` calls; `package main`, importers and other libraries still
+count theirs. Names must be capability drivers (`imu ir_rx ir_tx kbd mic
+netif power spk tcp tcp_listen tls udp`); an unknown name, an empty list,
+a misspelt `//gogo:` directive or the directive in `package main` is a
+compile error (`directives` in `compiler/load.go`). `gogo/http` declares
+`tls`, `gogo/sound` declares `mic spk`. Book chapter 12 has the details.
+
 | package | kind | imports | capability |
 |---------|------|---------|------------|
 | `gogo/actor` | stub | | none |
 | `gogo/port` | stub | actor, bytes | none (per driver opened) |
 | `gogo/bytes` | stub | | none |
-| `gogo/net` | stub | actor, bytes | net |
+| `gogo/net` | stub | actor, bytes | net (the `tls` port: tls) |
 | `gogo/config` | stub | | none |
 | `gogo/fs` | stub | actor, bytes | none (`/sd` paths: sd) |
 | `gogo/kbd` | stub | | kbd |
@@ -57,11 +74,11 @@ via `gogo/net`).
 | `gogo/strconv` | library | | none |
 | `gogo/dhcp` | library | actor, bytes, config, net, port | net |
 | `gogo/dns` | library | actor, bytes, net, port | net |
-| `gogo/http` | library | actor, bytes, dns, net, port, strconv, strings | net |
+| `gogo/http` | library | actor, bytes, dns, fs, net, port, strconv, strings | net (opens the `tls` port for `https://` URLs without requiring tls: `//gogo:optional tls`) |
 | `gogo/sntp` | library | actor, bytes, dns, net, port, sys | net |
 | `gogo/kv` | library | bytes, fs | none |
 | `gogo/ringlog` | library | bytes, fs | none |
 | `gogo/imulog` | library | actor, bytes, fs, imu, port | imu |
 | `gogo/wav` | library | bytes, fs | none |
-| `gogo/sound` | library | actor, audio, fs, port, wav | mic, spk |
+| `gogo/sound` | library | actor, audio, fs, port, wav | none (opens `mic` for Record and `spk` for Play without requiring them: `//gogo:optional mic spk`) |
 | `gogo/irproto` | library | bytes | none |

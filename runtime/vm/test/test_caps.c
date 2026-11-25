@@ -38,8 +38,10 @@ TEST(caps_explain) {
     CHECK(strcmp(b, "gogo: image needs imu irtx irrx; firmware lacks irtx\n") == 0);
     explain(b, CAP_MIC | CAP_SPK, CAP_SPK);
     CHECK(strcmp(b, "gogo: image needs mic spk; firmware lacks spk\n") == 0);
-    explain(b, 511, 511);   /* the longest line must fit VM_CAPS_MSG_MAX */
-    CHECK(strcmp(b, "gogo: image needs net kbd power sd imu irtx irrx mic spk; firmware lacks net kbd power sd imu irtx irrx mic spk\n") == 0);
+    explain(b, CAP_TLS, CAP_TLS);
+    CHECK(strcmp(b, "gogo: image needs tls; firmware lacks tls\n") == 0);
+    explain(b, 1023, 1023);   /* the longest line must fit VM_CAPS_MSG_MAX */
+    CHECK(strcmp(b, "gogo: image needs net kbd power sd imu irtx irrx mic spk tls; firmware lacks net kbd power sd imu irtx irrx mic spk tls\n") == 0);
 }
 
 /* The weak default of a platform that defines none is tested by the

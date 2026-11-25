@@ -189,11 +189,12 @@ func ringlog.Read(dir string, max int) (bytes.Bytes, fs.Err)
 type net.IfConfig struct{}
 type net.UDP struct{ Port int }
 type net.Dial struct{ IP, Port, TimeoutMs int }
+type net.DialTLS struct{ IP, Port, TimeoutMs int; Host string }  // "tls"
 type net.Listen struct{ Port int }
 // commands
 type net.SetAddr struct{ IP, Mask, Gateway, DNS int }  // to "netif", owner only
 type net.SendTo struct{ Addr Addr; Data bytes.Bytes }  // to "udp"
-type net.Write struct{ Data bytes.Bytes }              // to "tcp"
+type net.Write struct{ Data bytes.Bytes }              // to "tcp" or "tls"
 type net.Shutdown struct{}
 type net.Resume struct{}
 // events
@@ -223,6 +224,16 @@ func http.Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Respon
 func http.Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, bool)
 func http.HeaderValue(h []Header, name string) (string, bool)
 func http.Serve(port int, handler func(Request) Response) actor.PID
+
+// chapter 17: https://, keep-alive, upload
+type http.Client struct{ PID actor.PID }
+const (http.Failed fs.Err = 100; BadURL fs.Err = 101; TLSMemory = 26624;
+	UploadChunk = 4096; LingerMs = 1000; MaxQueued = 4)
+func http.NewClient() Client
+func http.ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
+func http.ClientUpload(c Client, url, path, contentType, token string) (status int, err fs.Err)
+func http.CloseClient(c Client)
+func http.Upload(url, path, contentType, token string) (status int, err fs.Err)
 ```
 
 ### gogo/config
@@ -260,9 +271,9 @@ on standard error.
 
 **`net.Closed` reasons:**
 
-| 0 | 1 | 2 | 3 | 4 | 5 |
-|---|---|---|---|---|---|
-| `Normal` (peer finished sending) | `Reset` | `Timeout` | `Refused` | `Overflow` (too many Writes) | `NoRoute` (address or link lost) |
+| 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| `Normal` (peer finished sending) | `Reset` | `Timeout` | `Refused` | `Overflow` (too many Writes) | `NoRoute` (address or link lost) | `NoTime` (the wall clock is not set) | `BadCert` (the certificate failed verification) | `TLS` (any other TLS failure) |
 
 **`code.Err`** (the result of every `gogo/code` call):
 
@@ -287,6 +298,7 @@ on standard error.
 | TCP connections | 4 | (no network) |
 | `net.Subscribe` subscribers | 4 | (no network) |
 | HTTP head / body | 2 KB / 8 KB (client body up to 64 KB with `Do`) | (no network) |
+| TLS connections | 1 (about 23 KB charged to its owner) | (no network) |
 | config key / value | 15 chars / 1000 bytes | same |
 | file name / path | 32 / 96 bytes | same |
 | `kv` value | 4096 bytes | same |

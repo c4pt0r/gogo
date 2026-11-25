@@ -1,0 +1,11 @@
+# Added to SDKCONFIG_DEFAULTS when the "tls" feature is off (GOGO_TLS=n;
+# `gogo firmware` does it, see cmd/gogo/firmware.go offDefaults; by hand:
+# -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;<board overlay>;sdkconfig.tls-off").
+# sdkconfig.defaults sets mbedTLS up for the tls port; without the port
+# only Wi-Fi's WPA crypto uses mbedTLS, so these go back to ESP-IDF's
+# defaults (no -O2 build, no PSRAM allocator, no restartable ECC).
+CONFIG_GOGO_TLS=n
+CONFIG_MBEDTLS_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC=y
+CONFIG_MBEDTLS_ECP_RESTARTABLE=n
+CONFIG_MBEDTLS_HAVE_TIME_DATE=n

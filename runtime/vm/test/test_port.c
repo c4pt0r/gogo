@@ -5,6 +5,7 @@
 #include "test.h"
 #include "actor.h"
 #include "heap.h"
+#include "platform.h"
 #include "msg.h"
 #include "alloc.h"
 #include "image.h"
@@ -74,7 +75,7 @@ static bool fk_can_event(const Port *p) { (void)p; return fk.live; }
 static void fk_handoff(Vm *vm, Port *p) { (void)vm; (void)p; fk.handoffs++; }
 
 static const PortDriver fake = {
-    "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event, fk_handoff, NULL
+    "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event, fk_handoff, NULL, NULL
 };
 static const PortDriver *const fake_list[] = { &fake, NULL };
 
@@ -795,6 +796,82 @@ static bool src_live(const Vm *vm) { (void)vm; return src.live; }
 static bool src_deadline(const Vm *vm, uint64_t *d) { (void)vm; if (src.have_dl) *d = src.dl; return src.have_dl; }
 static const PortSource test_src = { src_pending, src_drain, src_live, src_deadline, NULL };
 
+/* A source whose drain leaves work behind (as a sliced TLS handshake
+ * does) is drained again at once: vm_run checks pending() before it
+ * sleeps. Its only deadline is 300 ms away, so without that check each
+ * re-drain would wait for it (6 x 300 ms). */
+static struct { int left, drains; } busy;
+static bool busy_pending(void) { return busy.left > 0; }
+static void busy_drain(Vm *vm, uint64_t now) { (void)vm; (void)now; busy.drains++; busy.left--; }
+static bool busy_live(const Vm *vm) { (void)vm; return busy.left > 0; }
+static bool busy_deadline(const Vm *vm, uint64_t *d) {
+    (void)vm;
+    *d = platform_now_ms() + 300u;
+    return busy.left > 0;
+}
+static const PortSource busy_src = { busy_pending, busy_drain, busy_live, busy_deadline, NULL };
+
+TEST(port_source_busy) {
+    uint32_t w[MINI_WORDS + 2]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);    /* main runnable */
+    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    memset(&busy, 0, sizeof busy);
+    busy.left = 6;
+    CHECK(port_add_source(&busy_src));
+    CHECK_EQ(vm_run(&vm), 0);
+    CHECK_EQ(busy.drains, 6);
+    CHECK(platform_now_ms() < 250u);            /* the clock restarts at vm_run */
+    port_remove_source(&busy_src);
+    teardown();
+}
+
+/* A debounced port holding a trailing value is due only at the end of its
+ * window: an idle scheduler sleeps until then (port_next_deadline) instead
+ * of spinning. The clock is read a few times per scheduler pass, so the
+ * reads bound the passes: a handful, against millions when the pre-sleep
+ * check counted the held value as work due now. */
+extern void platform_unix_set_clock(uint64_t (*fn)(void));
+static unsigned db_reads;
+static uint64_t db_clock(void);
+static uint64_t db_clock(void) {            /* the real clock, counted */
+    db_reads++;
+    platform_unix_set_clock(NULL);
+    uint64_t t = platform_now_ms();
+    platform_unix_set_clock(db_clock);
+    return t;
+}
+
+TEST(port_debounce_idle_no_spin) {
+    uint32_t w[MINI_WORDS + 2]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);    /* main returns at once */
+    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    fk.debounce = 100;
+    Actor *a = waiting_actor(&vm);
+    (void)open_fake(&vm, a, 1);
+    Port *p = fk.last;
+    Actor *gone = waiting_actor(&vm);
+    term gone_id = gone->id;
+    gone->state = A_RUNNABLE;
+    actor_exit(&vm, gone, R_NORMAL, T_EMPTYSTR);
+    p->owner = gone_id;                      /* the flushed value is dropped, nothing runs */
+    p->flags |= PORT_DELIVERED | PORT_PENDING;
+    p->last_t = 0;
+    p->pend_a = 1;
+    p->pend_b = 1;
+    p->last_b = 0;
+    vm.ports_pending = 1;
+    db_reads = 0;
+    platform_unix_set_clock(db_clock);
+    int rc = vm_run(&vm);
+    platform_unix_set_clock(NULL);
+    CHECK_EQ(rc, 0);
+    CHECK_EQ(vm.ports_pending, 0u);          /* flushed at the window's end */
+    CHECK(db_reads < 30u);
+    teardown();
+}
+
 TEST(port_source_hook) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
@@ -851,7 +928,7 @@ TEST(port_command_term_and_subscribe) {
     setup(w, &img, &vm);
     memset(&rawk, 0, sizeof rawk);
     static const PortDriver raw = {
-        "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event, NULL, rk_command_term
+        "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event, NULL, rk_command_term, NULL
     };
     static const PortDriver *const raw_list[] = { &raw, NULL };
     port_set_drivers(raw_list);
@@ -1096,5 +1173,68 @@ TEST(port_stale_values_badcode) {
         if (o) actor_exit(&vm, o, R_NORMAL, T_EMPTYSTR);
     }
     CHECK_EQ(vm.live, 0u);
+    teardown();
+}
+
+/* A driver with open_term gets the cfg raw (a struct of cfg_type that may
+ * hold strings), with the owner; the charge and room checks still apply,
+ * and a cfg of another type never reaches it. */
+static struct { int opens; const Actor *owner; term cfg; uint16_t charge; int refuse; } otk;
+static int ot_open_term(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg) {
+    (void)vm; (void)index;
+    otk.opens++;
+    otk.owner = owner;
+    otk.cfg = cfg;
+    p->charge_words = otk.charge;
+    return otk.refuse ? -1 : 0;
+}
+
+TEST(port_open_term) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    memset(&otk, 0, sizeof otk);
+    static const PortDriver ot = {
+        "fake", CFG_TYPE, EVT_TYPE, NULL, fk_command, fk_close, fk_can_event, NULL, NULL, ot_open_term
+    };
+    static const PortDriver *const ot_list[] = { &ot, NULL };
+    port_set_drivers(ot_list);
+    Actor *a = waiting_actor(&vm);
+    /* A cfg struct with a string field (not decodable as ints). */
+    a->hp = 0;
+    term s = heap_str(&vm, a, "example.com");
+    uint32_t off = heap_alloc(&vm, a, 4, NULL, 0);
+    a->mem[off] = hdr_make(4, K_STRUCT);
+    a->mem[off + 1] = CFG_TYPE;
+    a->mem[off + 2] = term_from_int(443);
+    a->mem[off + 3] = s;
+    term cfg = term_from_ref(off);
+    term name = heap_str(&vm, a, "fake");
+    term p = port_open(&vm, a, name, cfg);
+    CHECK(port_is(p));
+    CHECK_EQ(otk.opens, 1);
+    CHECK_EQ(fk.opens, 0);                      /* open is not used */
+    CHECK(otk.owner == a && otk.cfg == cfg);
+    port_close(&vm, p);
+    CHECK_EQ(fk.closes, 1);
+    /* A C caller's port_open_with: refused (no `open`), never a NULL call. */
+    CHECK(port_open_with(&vm, a, &ot, NULL, 0) == T_NIL);
+    CHECK_EQ(otk.opens, 1);
+    /* Another struct type: refused before the driver. */
+    int32_t f[1] = { 1 };
+    p = port_open(&vm, a, name, heap_struct(&vm, a, EVT_TYPE, f, 1));
+    CHECK(p == T_NIL);
+    CHECK_EQ(otk.opens, 1);
+    /* The driver refuses: nothing owned. */
+    otk.refuse = 1;
+    CHECK(port_open(&vm, a, name, cfg) == T_NIL);
+    CHECK(!actor_port_owns(a));
+    otk.refuse = 0;
+    /* Over the limit: the driver's close undoes it. */
+    a->max_words = (uint16_t)(a->mem_words + 10u);
+    otk.charge = 11;
+    CHECK(port_open(&vm, a, name, cfg) == T_NIL);
+    CHECK_EQ(fk.closes, 2);
+    CHECK_EQ(actor_extra_charged(a), 0u);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     teardown();
 }

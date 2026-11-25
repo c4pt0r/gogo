@@ -14,7 +14,7 @@ static unsigned qh, qt;
 static int opens, closes;
 static bool fail_read, flag;      /* flag: the ISR flag, an edge: set by an event, cleared by an empty read */
 static int fail_after = -1, kreads;
-static bool fail_all;
+static bool fail_all, stuck;      /* stuck: INT held low, an empty read leaves the flag set */
 
 static int kopen(void) { opens++; qh = qt = 0; flag = false; return 0; }   /* flushes the FIFO */
 static void kclose(void) { closes++; }
@@ -24,7 +24,7 @@ static int kread(uint16_t *raw, bool *down) {
     if (fail_all) return -1;
     if (fail_read || fail_after == 0) { fail_read = false; fail_after = -1; return -1; }
     if (fail_after > 0) fail_after--;
-    if (qh == qt) { flag = false; return 0; }
+    if (qh == qt) { flag = stuck; return 0; }
     *raw = q[qh % 64].raw;
     *down = q[qh % 64].down;
     qh++;
@@ -200,7 +200,7 @@ static void sclose(void) { fs.closes++; fs.amp = false; }
 static InputHw hw;
 
 void fake_reset(void) {
-    qh = qt = 0; opens = closes = 0; fail_read = flag = false; fail_after = -1; fail_all = false; kreads = 0;
+    qh = qt = 0; opens = closes = 0; fail_read = flag = false; fail_after = -1; fail_all = stuck = false; kreads = 0;
     hw = (InputHw){ keys, R_COUNT, kopen, kclose, kpending, kread, pread, ppending, 0, 0, false, iopen, iclose, iread, igest,
                     irstart, irbusy, irropen, irread, irrclose, irtopen, irtclose,
                     mopen, mread, mclose, sopen, swrite, squeued, sclose };
@@ -219,6 +219,7 @@ void fake_push(uint16_t raw, bool down) { q[qt % 64].raw = raw; q[qt % 64].down 
 void fake_fail_next_read(void) { fail_read = true; }
 void fake_fail_all_reads(bool on) { fail_all = on; }
 int fake_kbd_reads(void) { return kreads; }
+void fake_kbd_stuck(bool on) { stuck = on; if (on) flag = true; }
 void fake_fail_read_after(int n) { fail_after = n; }
 int fake_opens(void) { return opens; }
 int fake_closes(void) { return closes; }

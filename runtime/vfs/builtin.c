@@ -50,7 +50,7 @@ static void f_close(Port *p) { vfs_close((int)p->state[0]); }
 static bool f_can_event(const Port *p) { (void)p; return false; }
 
 static const PortDriver file_drv = {
-    "file", UINT32_MAX, UINT32_MAX, f_open, NULL, f_close, f_can_event, NULL, NULL
+    "file", UINT32_MAX, UINT32_MAX, f_open, NULL, f_close, f_can_event, NULL, NULL, NULL
 };
 
 /* The open file t names if a owns it, else NULL (Closed). */

@@ -57,7 +57,7 @@ static void g_close(Port *p) {
 static bool g_can_event(const Port *p) { return p->state[1] != M_OUTPUT && p->state[2] != E_NONE && input_unix_live(); }
 
 const PortDriver gpio_unix_driver = {
-    "gpio", TYPE_GPIO, TYPE_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL
+    "gpio", TYPE_GPIO, TYPE_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL, NULL
 };
 
 /* ---- input (the shared reader, input_unix.c, calls this) ---- */

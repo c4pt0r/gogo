@@ -37,15 +37,16 @@ func build(t *testing.T, name string) string {
 	return p
 }
 
-// start builds progs/<name> and starts it linked to a simulator; the VM
-// is waited for (and its output logged on failure) at cleanup.
-func start(t *testing.T, name string) *sim.VM {
+// start builds progs/<name> and starts it linked to a simulator, with
+// extra VM arguments (--fs-root DIR); the VM is waited for (and its output
+// logged on failure) at cleanup.
+func start(t *testing.T, name string, extra ...string) *sim.VM {
 	t.Helper()
 	vmPath := os.Getenv("GOGO_VM")
 	if vmPath == "" {
 		t.Fatal("GOGO_VM is not set: run `make test-go`, or build the VM with `make vm` and set GOGO_VM=$PWD/build/gogovm")
 	}
-	v, err := sim.Start(vmPath, build(t, name), realLimit)
+	v, err := sim.Start(vmPath, build(t, name), realLimit, extra...)
 	if err != nil {
 		t.Fatal(err)
 	}

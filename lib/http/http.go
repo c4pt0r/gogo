@@ -1,15 +1,37 @@
-// Package http is a small HTTP/1.0 client and server (spec M5 §5.5,
-// §5.6), written in the gogo subset and compiled into every image that
-// imports it.
+// Package http is a small HTTP/1.x client and HTTP/1.0 server (spec M5
+// §5.5, §5.6; HTTPS design 2026-11-25), written in the gogo subset and
+// compiled into every image that imports it.
 //
-// Client: Get, Post and Do take an http:// URL (no https: they fail at
-// once), resolve the host with dns.Lookup and send an HTTP/1.0 request
-// with Host and "Connection: close". The response is read until the
-// connection closes or its Content-Length is complete. The request runs
-// in a temporary actor; the caller waits for it as actor.Call does, and on
-// timeout the request is abandoned (its connection reset) and the result
-// is false. A body longer than the limit (MaxBody unless Do says
-// otherwise) is cut there and marked Truncated.
+// Client: Get, Post and Do take an http:// or https:// URL, resolve the
+// host with dns.Lookup and send a request with Host and "Connection:
+// close": HTTP/1.0 over http, HTTP/1.1 over https, so the server frames
+// the body (Content-Length or chunked; some, Cloudflare among them, answer
+// an HTTP/1.0 request with a body delimited only by the close, which is
+// refused over TLS). https uses the "tls" port (net.DialTLS: the
+// certificate checked for the host, TLS 1.2; the wall clock must be set,
+// see gogo/sntp) and http the "tcp" port, through the same code; the
+// differences are the port (dial), its memory (connMemory), unframed
+// bodies (refused over TLS, below), a Bearer token (https only) and the
+// graceful close (finish waits for the peer over TLS). The
+// response is read until its Content-Length is complete or, over http
+// only, until the connection closes (over TLS a close can be forged at a
+// record boundary, so an unframed or short body is an error there). The
+// request runs in a temporary actor spawned with the memory it needs
+// (connMemory: more for tls); the caller waits for it as actor.Call
+// does, and on timeout the request is abandoned (its connection reset)
+// and the result is false. The temporary actor monitors its caller: if
+// the caller exits (or is killed) meanwhile, it stops, resets its
+// connection and ends, so a dead caller never keeps a connection (or the
+// one TLS connection) busy. A body longer than the limit (MaxBody unless
+// Do says otherwise) is cut there and marked Truncated.
+//
+// NewClient starts a keep-alive client, which follows the actor that
+// made it: ClientDo and ClientUpload send HTTP/1.1 requests over one kept
+// connection (Content-Length or chunked responses; interim 1xx skipped),
+// and it reconnects when the server closed it while idle. Upload streams a
+// file as a POST body with Content-Length and an optional Bearer token
+// (https only). At most one https connection exists at a time (the "tls"
+// port's limit).
 //
 // Server: Serve starts a listener actor, linked to the caller, that hands
 // each accepted connection to a fresh actor. That actor reads one request
@@ -26,12 +48,20 @@
 // response limits make each request actor's memory bounded: it is spawned
 // with a limit of 2*body limit + 6 KB (actor.SpawnOpt; 22 KB for
 // MaxBody), as the body is assembled in a buffer and then copied once.
+//
+// The "tls" driver is optional (the directive below): importing gogo/http
+// does not make an image require tls. On a firmware without it an https
+// request fails (port.Open returns ok=false), as ClientDo/ClientUpload do,
+// while http works.
+//
+//gogo:optional tls
 package http
 
 import (
 	"gogo/actor"
 	"gogo/bytes"
 	"gogo/dns"
+	"gogo/fs"
 	"gogo/net"
 	"gogo/port"
 	"gogo/strconv"
@@ -78,26 +108,103 @@ const (
 	ListenFailed = 100
 )
 
-// job is a client request, sent to the worker actor.
-type job struct {
-	Method, Host, HostPort, Path, ContentType string
-	Port, MaxBody                             int
-	Body                                      bytes.Bytes
-	Deadline                                  int64
+// target is a parsed URL: http:// or https:// (Secure), the host, the
+// Host header value (host[:port] as written), the port and the request
+// target (path and query).
+type target struct {
+	Secure               bool
+	Host, HostPort, Path string
+	Port                 int
 }
 
-// result is the worker's reply.
+// job is a client request, sent to the actor that makes it (a worker, a
+// Client or an uploader).
+type job struct {
+	Method, ContentType, Token string
+	URL                        target
+	MaxBody                    int
+	Body                       bytes.Bytes
+	Deadline                   int64
+	V11                        bool   // HTTP/1.1 (chunked responses are decoded); else HTTP/1.0
+	Keep                       bool   // keep the connection: no "Connection: close"
+	File                       string // Upload: the file to send as the body
+}
+
+// result is a worker's or Client's reply.
 type result struct {
 	Resp Response
 	OK   bool
 }
 
-// Get fetches url (http://host[:port][/path][?query][#fragment]) and
-// returns the response; false if the URL is not http:// (or has user
-// info, spaces or control bytes), the host does not resolve, the
-// connection fails, or the response is malformed (a chunked one included:
-// Transfer-Encoding is not decoded), contradictory or incomplete within
-// timeoutMs (<= 0: DefaultTimeoutMs).
+// upResult is the uploader's reply.
+type upResult struct {
+	Status int
+	Err    fs.Err
+}
+
+// closeReq asks a Client to end.
+type closeReq struct{}
+
+// Client is a keep-alive HTTP/1.1 client (NewClient): the PID of the
+// actor that owns its connection.
+type Client struct {
+	PID actor.PID
+}
+
+// Errors of Upload beside the fs ones.
+const (
+	// Failed: no usable response (the host did not resolve, the
+	// connection failed, closed or timed out, the response was malformed
+	// or cut short).
+	Failed fs.Err = 100
+	// BadURL: the URL is not http:// or https://, or the content type
+	// or token has bytes that cannot go in a header.
+	BadURL fs.Err = 101
+)
+
+// TLSMemory is what a "tls" connection charges its owner (the TLS state
+// and room for one Data): the actor that opens one is spawned with this
+// much more MaxMemory than for "tcp".
+const TLSMemory = 26624
+
+// UploadChunk is the bytes Upload reads from the file and writes at a
+// time; at most 2 such writes are in flight.
+const UploadChunk = 4096
+
+// uploadMaxBody is how much of an upload's response body is read.
+const uploadMaxBody = 1024
+
+// LingerMs bounds how long a graceful close over TLS waits for the peer's
+// close before the port closes (see finish).
+const LingerMs = 1000
+
+// replySlackMs is how much longer than its own deadline a caller waits
+// for the Client's reply.
+const replySlackMs = 500
+
+// Response reading outcomes.
+const (
+	failed     = 0 // no usable response: reset the connection
+	done       = 1 // complete: close the connection gracefully
+	reuse      = 2 // complete: the connection may carry the next request
+	cutShort   = 3 // cut at the body limit (Truncated): reset the connection
+	peerClosed = 4 // the peer closed the idle connection: close it gracefully
+)
+
+// Body framings.
+const (
+	byLength = 0
+	byChunks = 1
+	byClose  = 2
+)
+
+// Get fetches url (http:// or https://host[:port][/path][?query][#fragment])
+// and returns the response; false if the URL is not http:// or https://
+// (or has user info, spaces or control bytes), the host does not resolve,
+// the connection fails (for https: also the certificate is not valid
+// for the host, or the clock is not set), or the response is malformed (a
+// chunked one included: HTTP/1.0 is not sent one), contradictory or
+// incomplete within timeoutMs (<= 0: DefaultTimeoutMs).
 //
 // The response body is an off-heap Bytes charged in full to the caller
 // (and to every actor it is sent to): the caller needs room for up to
@@ -121,7 +228,7 @@ func Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, b
 // for any method but GET and HEAD. A method or content type with spaces
 // or control bytes (resp. control bytes) fails at once.
 func Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, bool) {
-	host, hostPort, portNum, path, ok := parseURL(url)
+	u, ok := parseURL(url)
 	if !ok || method == "" || !safe(method, false) || !safe(contentType, true) {
 		return Response{}, false
 	}
@@ -133,9 +240,10 @@ func Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs in
 	} else if maxBody > MaxBodyLimit {
 		maxBody = MaxBodyLimit
 	}
-	w := actor.SpawnOpt(worker, actor.Options{MaxMemory: memFor(maxBody)})
-	r, ok := actor.Call(w, job{Method: method, Host: host, HostPort: hostPort, Path: path, ContentType: contentType,
-		Port: portNum, MaxBody: maxBody, Body: body, Deadline: actor.Now() + int64(timeoutMs)}, timeoutMs)
+	w := actor.SpawnOpt(worker, actor.Options{MaxMemory: connMemory(u.Secure, maxBody)})
+	// https: HTTP/1.1, so the body is framed (see the package doc).
+	r, ok := actor.Call(w, job{Method: method, ContentType: contentType, URL: u, MaxBody: maxBody, Body: body,
+		Deadline: actor.Now() + int64(timeoutMs), V11: u.Secure}, timeoutMs+replySlackMs)
 	switch x := r.(type) {
 	case result:
 		if ok {
@@ -154,13 +262,27 @@ func memFor(maxBody int) int {
 	return 2*maxBody + 6144
 }
 
-// parseURL splits http://host[:port][/path][?query][#fragment] into the
-// host, host[:port], port and request target (path and query).
-func parseURL(url string) (string, string, int, string, bool) {
-	if !strings.HasPrefix(url, "http://") {
-		return "", "", 0, "", false
+// connMemory is the memory limit of an actor that opens a connection and
+// reads a body of up to maxBody bytes on it: memFor, plus what the port
+// charges its owner (TLSMemory for "tls"; "tcp" fits memFor's slack).
+func connMemory(secure bool, maxBody int) int {
+	if secure {
+		return memFor(maxBody) + TLSMemory
 	}
-	rest, i := url[7:], 0
+	return memFor(maxBody)
+}
+
+// parseURL splits http[s]://host[:port][/path][?query][#fragment].
+func parseURL(url string) (target, bool) {
+	secure, rest := false, ""
+	if strings.HasPrefix(url, "http://") {
+		rest = url[7:]
+	} else if strings.HasPrefix(url, "https://") {
+		secure, rest = true, url[8:]
+	} else {
+		return target{}, false
+	}
+	i := 0
 	for i < len(rest) && rest[i] != '/' && rest[i] != '?' && rest[i] != '#' {
 		i++
 	}
@@ -171,11 +293,14 @@ func parseURL(url string) (string, string, int, string, bool) {
 	}
 	host, p, found := strings.Cut(hostPort, ":")
 	n, ok := 80, true
+	if secure {
+		n = 443
+	}
 	if found {
 		n, ok = strconv.Atoi(p)
 		ok = ok && n > 0 && n < 65536
 	}
-	return host, hostPort, n, path, ok && host != "" && strings.IndexByte(hostPort, '@') < 0 &&
+	return target{secure, host, hostPort, path, n}, ok && host != "" && strings.IndexByte(hostPort, '@') < 0 &&
 		safe(hostPort, false) && safe(path, false)
 }
 
@@ -208,10 +333,112 @@ func contentLength(hs []Header) int {
 	return n
 }
 
-// worker runs one client request: it answers the Call that brings the job.
+// dial resolves u's host and opens a connection to it, "tls" for https
+// and "tcp" for http: the one place the schemes differ. The caller owns
+// the port; it needs connMemory(u.Secure, ...).
+func dial(u target, deadline int64) (actor.PID, bool) {
+	var none actor.PID
+	ip, ok := dns.Lookup(u.Host, int(deadline-actor.Now()))
+	left := int(deadline - actor.Now())
+	if !ok || left <= 0 {
+		return none, false
+	}
+	if u.Secure {
+		c, ok := port.Open("tls", net.DialTLS{IP: ip, Port: u.Port, TimeoutMs: left, Host: u.Host})
+		return c, ok
+	}
+	c, ok := port.Open("tcp", net.Dial{IP: ip, Port: u.Port, TimeoutMs: left})
+	return c, ok
+}
+
+// requestHead is j's request line and headers for a body of length bytes
+// (-1: no Content-Length).
+func requestHead(j job, length int) bytes.Bytes {
+	b := bytes.NewBuffer(160)
+	version := " HTTP/1.0\r\nHost: "
+	if j.V11 {
+		version = " HTTP/1.1\r\nHost: "
+	}
+	b.WriteString(j.Method + " " + j.URL.Path + version + j.URL.HostPort + "\r\n")
+	if !j.Keep {
+		b.WriteString("Connection: close\r\n")
+	}
+	if j.Token != "" {
+		b.WriteString("Authorization: Bearer " + j.Token + "\r\n")
+	}
+	if j.ContentType != "" {
+		b.WriteString("Content-Type: " + j.ContentType + "\r\n")
+	}
+	if length >= 0 {
+		b.WriteString("Content-Length: " + strconv.Itoa(length) + "\r\n")
+	}
+	b.WriteString("\r\n")
+	return b.Freeze()
+}
+
+// sendRequest writes j (head and body) to c.
+func sendRequest(c actor.PID, j job) {
+	n := -1
+	if j.Method != "GET" && j.Method != "HEAD" {
+		n = j.Body.Len()
+	}
+	actor.Send(c, net.Write{Data: requestHead(j, n)})
+	if j.Body.Len() > 0 {
+		actor.Send(c, net.Write{Data: j.Body})
+	}
+}
+
+// finish ends a connection after a response read with outcome how:
+// gracefully if it is complete (done, reuse) or the peer closed it
+// (peerClosed), else with a reset. Gracefully is Shutdown, then closing
+// the port: the stack finishes a "tcp" close on its own, but a "tls" one
+// is reset if the port closes before its close_notify went out, so after
+// a complete response over TLS finish waits for the peer's close (the
+// server closes after "Connection: close", or when it reads our
+// close_notify), until the time until at most. Messages a Client keeps
+// that arrive meanwhile are added to queue (see keepMsg).
+func finish(c actor.PID, how int, secure bool, until int64, queue []any) []any {
+	if how == done || how == reuse || how == peerClosed {
+		actor.Send(c, net.Shutdown{})
+	}
+	waiting := secure && (how == done || how == reuse)
+	for waiting {
+		wait := int(until - actor.Now())
+		if wait <= 0 {
+			break
+		}
+		m, got := actor.ReceiveTimeout(wait)
+		waiting = got
+		switch m.(type) {
+		case net.Closed:
+			waiting = false
+		case actor.DownMsg: // the caller (creator) ended: nobody to linger for
+			waiting = false
+			queue = keepMsg(queue, m)
+		default:
+			queue = keepMsg(queue, m)
+		}
+	}
+	port.Close(c)
+	return queue
+}
+
+// lingerUntil is when finish stops waiting for a peer's close: LingerMs
+// from now, or deadline if that comes first.
+func lingerUntil(deadline int64) int64 {
+	t := actor.Now() + int64(LingerMs)
+	if deadline < t {
+		return deadline
+	}
+	return t
+}
+
+// worker runs one client request: it answers the Call that brings the job,
+// following its caller (a DownMsg ends the exchange: see readResponse).
 func worker() {
 	switch r := actor.Receive().(type) {
 	case actor.Request:
+		actor.Monitor(r.From)
 		switch j := r.Body.(type) {
 		case job:
 			resp, ok := fetch(j)
@@ -220,78 +447,80 @@ func worker() {
 	}
 }
 
-// fetch performs j; the caller gives up (and kills the worker) at
-// j.Deadline, so fetch need not watch it except to stop waiting.
+// fetch performs j on a connection of its own; the caller gives up (and
+// kills the worker) at j.Deadline, so fetch need not watch it except to
+// stop waiting.
 func fetch(j job) (Response, bool) {
-	ip, ok := dns.Lookup(j.Host, int(j.Deadline-actor.Now()))
-	left := int(j.Deadline - actor.Now())
-	if !ok || left <= 0 {
-		return Response{}, false
-	}
-	c, ok := port.Open("tcp", net.Dial{IP: ip, Port: j.Port, TimeoutMs: left})
+	c, ok := dial(j.URL, j.Deadline)
 	if !ok {
 		return Response{}, false
 	}
-	b := bytes.NewBuffer(128)
-	b.WriteString(j.Method + " " + j.Path + " HTTP/1.0\r\nHost: " + j.HostPort + "\r\nConnection: close\r\n")
-	if j.ContentType != "" {
-		b.WriteString("Content-Type: " + j.ContentType + "\r\n")
-	}
-	if j.Method != "GET" && j.Method != "HEAD" {
-		b.WriteString("Content-Length: " + strconv.Itoa(j.Body.Len()) + "\r\n")
-	}
-	b.WriteString("\r\n")
-	actor.Send(c, net.Write{Data: b.Freeze()})
-	if j.Body.Len() > 0 {
-		actor.Send(c, net.Write{Data: j.Body})
-	}
+	sendRequest(c, j)
+	var none bytes.Bytes
+	resp, how, _ := readResponse(c, j, none, nil)
+	finish(c, how, j.URL.Secure, lingerUntil(j.Deadline), nil)
+	return resp, how != failed
+}
+
+// readResponse reads the response to j from c, starting with the bytes
+// first already taken from it, until j.Deadline. Messages a Client keeps
+// that arrive meanwhile are added to queue (keepMsg). Interim 1xx
+// responses (but 101) are skipped. A body is framed by its
+// Content-Length, by chunks (HTTP/1.1 only) or, over http only, by the
+// close; a close before the frame is complete is a failure (over TLS a
+// close at a record boundary looks normal, so the frame is the only
+// defence against a cut-short response). A DownMsg (the actor that the
+// reader follows, its caller or creator, ended) fails the exchange at once
+// and is kept in queue.
+func readResponse(c actor.PID, j job, first bytes.Bytes, queue []any) (Response, int, []any) {
 	head := ""
-	status, lim := -1, 0
-	known, exact, truncated := false, false, false // Content-Length known; within the limit
+	status, lim, framing := -1, 0, byLength
+	exact, keep := false, false
 	var hs []Header
 	body := bytes.NewBuffer(0)
+	phase, left, line := 0, 0, "" // chunks: 0 size line, 1 data, 2 CRLF after data, 3 trailers
+	var empty bytes.Bytes
+	d := first
 	for {
-		left = int(j.Deadline - actor.Now())
-		if left <= 0 {
-			break
-		}
-		m, got := actor.ReceiveTimeout(left)
-		if !got {
-			break
-		}
-		switch e := m.(type) {
-		case net.Closed:
-			if e.Reason == net.Normal && status >= 0 && !known { // the body ran to the close
-				actor.Send(c, net.Shutdown{})
-				port.Close(c)
-				return Response{status, hs, body.Freeze(), false}, true
-			}
-			port.Close(c)
-			return Response{}, false
-		case net.Data:
-			d := e.Data
-			if status < 0 {
-				head += d.String()
-				i := strings.Index(head, "\r\n\r\n")
-				if i < 0 && len(head) <= 2*MaxHead {
-					continue
-				}
+		if d.Len() > 0 && status < 0 {
+			head += d.String()
+			i := strings.Index(head, "\r\n\r\n")
+			if i < 0 && len(head) <= 2*MaxHead {
+				d = empty
+			} else {
+				ok := false
 				n := -2
-				if i >= 0 {
+				if i >= 0 && i <= 2*MaxHead {
 					status, hs, ok = parseStatus(head[:i])
 					n = contentLength(hs)
 				}
-				_, chunked := HeaderValue(hs, "Transfer-Encoding")
-				if i < 0 || i > 2*MaxHead || !ok || n == -2 || chunked {
-					port.Close(c)
-					return Response{}, false
+				te, chunked := HeaderValue(hs, "Transfer-Encoding")
+				if !ok || n == -2 || (chunked && (!j.V11 || n >= 0 || !strings.EqualFold(te, "chunked"))) {
+					return Response{}, failed, queue
 				}
-				lim, known = j.MaxBody, n >= 0
-				if known && n <= lim {
-					lim, exact = n, true
+				if status >= 100 && status < 200 && status != 101 { // interim (100 Continue, 103): the real one follows
+					d = bytes.FromString(head[i+4:])
+					head, status = "", -1
+					continue
 				}
-				if j.Method == "HEAD" || status == 204 || status == 304 || (status >= 100 && status < 200) {
-					lim, known, exact = 0, true, true
+				framing = byLength
+				if j.Method == "HEAD" || status == 204 || status == 304 || status == 101 {
+					n = 0
+				} else if chunked {
+					framing = byChunks
+				} else if n < 0 {
+					framing = byClose
+					if j.URL.Secure {
+						return Response{}, failed, queue
+					}
+				}
+				conn, _ := HeaderValue(hs, "Connection")
+				keep = j.Keep && framing != byClose && strings.HasPrefix(head, "HTTP/1.1") &&
+					!strings.EqualFold(conn, "close")
+				lim = j.MaxBody
+				exact = framing == byLength && n <= lim
+				if exact {
+					lim = n
 				}
 				// Without a known length the buffer starts at 2 KB, or at
 				// the largest even fraction of the limit up to that, so its
@@ -304,24 +533,595 @@ func fetch(j job) (Response, bool) {
 				d = bytes.FromString(head[i+4:])
 				head = ""
 			}
+		}
+		if status >= 0 && framing != byChunks {
 			if room := lim - body.Len(); d.Len() > room {
+				if !exact {
+					body.WriteBytes(d.Slice(0, room))
+					return Response{status, hs, body.Freeze(), true}, cutShort, queue
+				}
 				d = d.Slice(0, room)
-				truncated = !exact
+				keep = false // bytes after the response: not HTTP we can follow
 			}
 			body.WriteBytes(d)
 			if exact && body.Len() == lim {
-				actor.Send(c, net.Shutdown{})
-				port.Close(c)
-				return Response{status, hs, body.Freeze(), false}, true
+				if keep {
+					return Response{status, hs, body.Freeze(), false}, reuse, queue
+				}
+				return Response{status, hs, body.Freeze(), false}, done, queue
 			}
-			if truncated {
-				port.Close(c) // reset: the rest is not wanted
-				return Response{status, hs, body.Freeze(), true}, true
+		} else if status >= 0 {
+			i := 0
+			for i < d.Len() {
+				if phase == 1 {
+					k := d.Len() - i
+					if k > left {
+						k = left
+					}
+					if body.Len()+k > lim {
+						body.WriteBytes(d.Slice(i, i+lim-body.Len()))
+						return Response{status, hs, body.Freeze(), true}, cutShort, queue
+					}
+					body.WriteBytes(d.Slice(i, i+k))
+					i += k
+					left -= k
+					if left == 0 {
+						phase = 2
+					}
+					continue
+				}
+				e := i
+				for e < d.Len() && d.At(e) != '\n' {
+					e++
+				}
+				line += d.Slice(i, e).String()
+				if len(line) > MaxHead {
+					return Response{}, failed, queue
+				}
+				if e == d.Len() {
+					break // the line goes on in the next Data
+				}
+				i = e + 1
+				l := strings.TrimSpace(line)
+				line = ""
+				if phase == 0 {
+					size, _, _ := strings.Cut(l, ";")
+					v, ok := strconv.ParseInt64(strings.TrimSpace(size), 16)
+					if !ok || v < 0 || v > MaxBodyLimit+1 || len(size) > 8 {
+						return Response{}, failed, queue
+					}
+					if v == 0 {
+						phase = 3
+					} else {
+						phase, left = 1, int(v)
+					}
+				} else if phase == 2 {
+					if l != "" {
+						return Response{}, failed, queue
+					}
+					phase = 0
+				} else if l == "" { // the end of the trailers: complete
+					if keep && i == d.Len() {
+						return Response{status, hs, body.Freeze(), false}, reuse, queue
+					}
+					return Response{status, hs, body.Freeze(), false}, done, queue
+				}
+			}
+		}
+		wait := int(j.Deadline - actor.Now())
+		if wait <= 0 {
+			return Response{}, failed, queue
+		}
+		m, got := actor.ReceiveTimeout(wait)
+		if !got {
+			return Response{}, failed, queue
+		}
+		d = empty
+		switch e := m.(type) {
+		case net.Data:
+			d = e.Data
+		case net.Closed:
+			if e.Reason == net.Normal && status >= 0 && framing == byClose { // the body ran to the close
+				return Response{status, hs, body.Freeze(), false}, done, queue
+			}
+			return Response{}, failed, queue
+		case actor.DownMsg:
+			return Response{}, failed, keepMsg(queue, m)
+		default:
+			queue = keepMsg(queue, m)
+		}
+	}
+}
+
+// NewClient starts a keep-alive client: an actor that makes the requests
+// given to ClientDo and ClientUpload over HTTP/1.1, one at a time, keeping
+// the connection open after each response for the next request to the
+// same scheme, host and port. It owns at most one connection: a request
+// elsewhere closes the one it has first. A connection the server closed
+// while idle is noticed and a new one opened, transparently; one that ends
+// after a request went out on it is not retried (the server may have
+// acted on it): the call fails, and the next one reconnects. A request
+// whose caller has given up (its timeout passed while it waited behind
+// others) is dropped unsent. Responses are cut at MaxBody, as Get's.
+//
+// The client follows the actor that called NewClient: when that actor
+// exits (or crashes) without CloseClient, the client closes its connection
+// and ends too, so a dead owner never keeps the one TLS connection. A
+// request in progress then (even another actor's) fails at once, its
+// connection reset, and the requests queued behind it fail at once,
+// unsent: the client ends right after that abort.
+//
+// The client is spawned with the memory an https connection and an upload
+// need (clientMemory: 60 KB), so it can be used from any actor. Requests
+// that wait for it are held in its memory (their bodies too); beyond
+// MaxQueued waiting at once, a new one fails at once. While it holds an
+// https connection, no other "tls" connection can open (one at a time):
+// Get, Post, Do and Upload to an https URL fail until CloseClient.
+func NewClient() Client {
+	creator := actor.Self()
+	return Client{actor.SpawnOpt(func() { client(creator) }, actor.Options{MaxMemory: clientMemory})}
+}
+
+// clientMemory is a Client's memory limit: an https connection with a
+// MaxBody response, and an upload's 3 chunks.
+const clientMemory = 2*MaxBody + 6144 + TLSMemory + 3*UploadChunk
+
+// MaxQueued is how many requests a Client holds while it is busy with
+// another; one more fails at once.
+const MaxQueued = 4
+
+// ClientDo makes a request through c, as Do does with maxBody MaxBody,
+// on c's kept connection; false also if c is closed (after timeoutMs).
+func ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool) {
+	u, ok := parseURL(url)
+	if !ok || method == "" || !safe(method, false) || !safe(contentType, true) {
+		return Response{}, false
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = DefaultTimeoutMs
+	}
+	r, ok := actor.Call(c.PID, job{Method: method, ContentType: contentType, URL: u, MaxBody: MaxBody, Body: body,
+		Deadline: actor.Now() + int64(timeoutMs), V11: true, Keep: true}, timeoutMs+replySlackMs)
+	switch x := r.(type) {
+	case result:
+		if ok {
+			return x.Resp, x.OK
+		}
+	}
+	return Response{}, false
+}
+
+// CloseClient closes c's connection gracefully and ends it. Requests still
+// waiting for it fail.
+func CloseClient(c Client) {
+	if _, ok := actor.Call(c.PID, closeReq{}, DefaultTimeoutMs); !ok {
+		actor.Kill(c.PID, actor.Shutdown)
+	}
+}
+
+// client is a Client's actor, following creator: conn is its connection
+// while open, to key (scheme://host:port); queue holds the messages it
+// took while busy (keepMsg).
+func client(creator actor.PID) {
+	actor.Monitor(creator)
+	var conn actor.PID
+	open, key := false, ""
+	var queue []any
+	for {
+		var m any
+		if len(queue) > 0 {
+			m, queue = queue[0], queue[1:]
+		} else {
+			m = actor.Receive()
+		}
+		switch r := m.(type) {
+		case actor.Request:
+			switch b := r.Body.(type) {
+			case job:
+				var resp Response
+				e := fs.OK
+				resp, e, conn, open, key, queue = clientFetch(b, conn, open, key, queue)
+				if b.File != "" {
+					actor.Reply(r, upResult{resp.Status, e})
+				} else {
+					actor.Reply(r, result{resp, e == fs.OK})
+				}
+				if creatorDown(queue) { // the creator ended meanwhile: the
+					// requests queued behind it fail now, unsent
+					clientEnd(conn, open, key, queue)
+					return
+				}
+			case closeReq:
+				clientEnd(conn, open, key, queue)
+				actor.Reply(r, true)
+				return
+			}
+		case actor.DownMsg: // the creator ended: so does the client
+			clientEnd(conn, open, key, queue)
+			return
+		case net.Closed: // the server ended the idle connection
+			if open {
+				finish(conn, peerClosed, false, 0, nil)
+				open = false
+				queue = flush(queue)
+			}
+		case net.Data: // bytes on an idle connection: not HTTP we follow
+			if open {
+				finish(conn, failed, false, 0, nil)
+				open = false
+				queue = flush(queue)
 			}
 		}
 	}
-	port.Close(c)
-	return Response{}, false
+}
+
+// creatorDown reports whether queue holds the creator's DownMsg (the only
+// one a Client gets: it monitors nobody else).
+func creatorDown(queue []any) bool {
+	for _, m := range queue {
+		switch m.(type) {
+		case actor.DownMsg:
+			return true
+		}
+	}
+	return false
+}
+
+// clientEnd closes the Client's connection gracefully and fails the
+// requests still waiting.
+func clientEnd(conn actor.PID, open bool, key string, queue []any) {
+	if open {
+		queue = finish(conn, done, strings.HasPrefix(key, "https:"), actor.Now()+int64(LingerMs), queue)
+	}
+	for _, m := range queue {
+		switch r := m.(type) {
+		case actor.Request:
+			refuse(r)
+		}
+	}
+}
+
+// keepMsg adds to a Client's queue what it must not lose while busy: a
+// Request (refused at once beyond MaxQueued, but a CloseClient), or its
+// creator's DownMsg. Anything else (a connection's events) is dropped.
+func keepMsg(queue []any, m any) []any {
+	switch r := m.(type) {
+	case actor.Request:
+		switch r.Body.(type) {
+		case closeReq:
+			return append(queue, m)
+		}
+		if len(queue) >= MaxQueued {
+			refuse(r)
+			return queue
+		}
+		return append(queue, m)
+	case actor.DownMsg:
+		return append(queue, m)
+	}
+	return queue
+}
+
+// refuse answers a Client request with a failure.
+func refuse(r actor.Request) {
+	switch b := r.Body.(type) {
+	case job:
+		if b.File != "" {
+			actor.Reply(r, upResult{0, Failed})
+			return
+		}
+	}
+	actor.Reply(r, result{})
+}
+
+// flush takes what is left in the mailbox after a connection was closed
+// (its last events) without waiting, keeping what keepMsg keeps.
+func flush(queue []any) []any {
+	for {
+		m, got := actor.ReceiveTimeout(0)
+		if !got {
+			return queue
+		}
+		queue = keepMsg(queue, m)
+	}
+}
+
+// clientFetch makes request j on the Client's connection (opening one if
+// it has none for j's host) and returns the response with fs.OK (or why
+// not) and the new state. Nothing is sent once j's caller has given up.
+func clientFetch(j job, conn actor.PID, open bool, key string, queue []any) (Response, fs.Err, actor.PID, bool, string, []any) {
+	if j.Deadline <= actor.Now() {
+		return Response{}, Failed, conn, open, key, queue
+	}
+	var f fs.File
+	size := 0
+	if j.File != "" {
+		var e fs.Err
+		f, size, e = openFile(j.File)
+		if e != fs.OK {
+			return Response{}, e, conn, open, key, queue
+		}
+	}
+	k := "http://"
+	if j.URL.Secure {
+		k = "https://"
+	}
+	k = k + j.URL.Host + ":" + strconv.Itoa(j.URL.Port)
+	// An event of the idle connection that came after the last look (the
+	// server closed it): drop it, nothing has been sent on it yet.
+	for open {
+		m, got := actor.ReceiveTimeout(0)
+		if !got {
+			break
+		}
+		switch m.(type) {
+		case net.Closed:
+			finish(conn, peerClosed, false, 0, nil)
+			open = false
+			queue = flush(queue)
+		case net.Data:
+			finish(conn, failed, false, 0, nil)
+			open = false
+			queue = flush(queue)
+		default:
+			queue = keepMsg(queue, m)
+		}
+	}
+	if open && key != k {
+		queue = finish(conn, done, strings.HasPrefix(key, "https:"), lingerUntil(j.Deadline), queue)
+		open = false
+		queue = flush(queue)
+	}
+	if !open && !creatorDown(queue) {
+		c, ok := dial(j.URL, j.Deadline)
+		if !ok {
+			if j.File != "" {
+				f.Close()
+			}
+			return Response{}, Failed, conn, false, "", queue
+		}
+		conn, open, key = c, true, k
+	}
+	// the close or the connect took the time left, or the creator ended
+	// meanwhile (the Client ends after this; no dial then): send nothing
+	if j.Deadline <= actor.Now() || creatorDown(queue) {
+		if j.File != "" {
+			f.Close()
+		}
+		return Response{}, Failed, conn, open, key, queue
+	}
+	resp, how, e, q := exchange(conn, j, f, size, queue)
+	if j.File != "" {
+		f.Close()
+	}
+	if how == reuse {
+		return resp, fs.OK, conn, true, key, q
+	}
+	q = finish(conn, how, j.URL.Secure, lingerUntil(j.Deadline), q)
+	return resp, e, conn, false, "", flush(q)
+}
+
+// exchange sends j on c, its body from j.Body or (j.File != "") size
+// bytes of the open file f, and reads the response: the outcome (finish
+// it), and fs.OK, Failed or the file's error.
+func exchange(c actor.PID, j job, f fs.File, size int, queue []any) (Response, int, fs.Err, []any) {
+	if j.File == "" {
+		sendRequest(c, j)
+		var none bytes.Bytes
+		resp, how, q := readResponse(c, j, none, queue)
+		if how == failed {
+			return resp, how, Failed, q
+		}
+		return resp, how, fs.OK, q
+	}
+	early, sent, e, q := sendFile(c, j, f, size, queue)
+	if e != fs.OK {
+		return Response{}, failed, e, q
+	}
+	resp, how, q := readResponse(c, job{Method: j.Method, URL: j.URL, MaxBody: j.MaxBody, V11: j.V11, Keep: j.Keep,
+		Deadline: waitUntil(j.Deadline)}, early, q)
+	if sent < size && how != failed {
+		how = cutShort // the server answered before the body was all sent: reset
+	}
+	if how == failed {
+		return resp, how, Failed, q
+	}
+	return resp, how, fs.OK, q
+}
+
+// sendFile writes j's head and size bytes of f to c, UploadChunk at a
+// time with at most 2 writes in flight. It stops early when the response
+// begins (early: its first bytes); sent is what was written; fs.OK,
+// Failed (the connection closed, a wait timed out, or a DownMsg came: the
+// actor followed ended; it is kept in queue) or the file's error.
+func sendFile(c actor.PID, j job, f fs.File, size int, queue []any) (bytes.Bytes, int, fs.Err, []any) {
+	actor.Send(c, net.Write{Data: requestHead(j, size)})
+	sent, inflight := 0, 1
+	var early bytes.Bytes
+	for (sent < size || inflight > 0) && early.Len() == 0 {
+		for inflight < 2 && sent < size {
+			d, e := f.Read(UploadChunk)
+			if e == fs.OK && d.Len() == 0 {
+				e = fs.IO // the file shrank
+			}
+			if e != fs.OK {
+				return early, sent, e, queue
+			}
+			if d.Len() > size-sent {
+				d = d.Slice(0, size-sent) // the file grew: send what Content-Length says
+			}
+			actor.Send(c, net.Write{Data: d})
+			sent += d.Len()
+			inflight++
+		}
+		wait := int(waitUntil(j.Deadline) - actor.Now())
+		if wait <= 0 {
+			return early, sent, Failed, queue
+		}
+		m, got := actor.ReceiveTimeout(wait)
+		if !got {
+			return early, sent, Failed, queue
+		}
+		switch x := m.(type) {
+		case net.Written:
+			inflight--
+		case net.Data:
+			early = x.Data
+		case net.Closed:
+			return early, sent, Failed, queue
+		case actor.DownMsg:
+			return early, sent, Failed, keepMsg(queue, m)
+		default:
+			queue = keepMsg(queue, m)
+		}
+	}
+	return early, sent, fs.OK, queue
+}
+
+// waitUntil is the end of one wait of an upload: DefaultTimeoutMs from
+// now, or deadline if that comes first.
+func waitUntil(deadline int64) int64 {
+	t := actor.Now() + int64(DefaultTimeoutMs)
+	if deadline < t {
+		return deadline
+	}
+	return t
+}
+
+// openFile opens path for reading and returns its size.
+func openFile(path string) (fs.File, int, fs.Err) {
+	f, e := fs.Open(path, fs.Read)
+	if e != fs.OK {
+		return f, 0, e
+	}
+	size, e := f.Size()
+	if e != fs.OK {
+		f.Close()
+	}
+	return f, size, e
+}
+
+// Upload sends the file at path to url as the body of a POST with
+// Content-Type contentType and, if token is not "", "Authorization:
+// Bearer <token>" (take it from the store, config.Get("upload.token"),
+// rather than from the source; it is never logged). A token goes over
+// https only: with an http:// URL it is BadURL, so a mistyped URL cannot
+// send it in the clear. The file is streamed: read UploadChunk bytes at a
+// time with fs.File.Read, at most 2 writes in flight, sent with its
+// Content-Length, so it is never in memory whole. The request is HTTP/1.1
+// with "Connection: close" on a connection of its own (ClientUpload sends
+// it on a Client's kept connection).
+//
+// It returns the response status (anything the server answers, 2xx or
+// not) with fs.OK; or 0 and the fs error of the file (opening, reading;
+// a file that shrinks while it is sent is fs.IO), Failed (no usable
+// response) or BadURL. A server that answers before it has read the whole
+// body (401, 413) stops the upload and its status is returned. Each wait
+// (connecting, a write, the response) is bounded by DefaultTimeoutMs, and
+// the upload as a whole by 3*DefaultTimeoutMs plus 1 ms per byte: a link
+// slower than about 1 KB/s fails (Failed).
+//
+// It runs in an actor of its own, spawned with what it needs
+// (uploadMemory: 46 KB for https); the caller's own limit is not
+// touched. That actor monitors the caller: if the caller exits (a crash,
+// a supervisor's kill) before the upload ends, it stops sending, resets
+// the connection (freeing the one TLS connection for a restarted caller's
+// retry) and ends.
+func Upload(url, path, contentType, token string) (int, fs.Err) {
+	j, ms, e := uploadJob(url, path, contentType, token, false)
+	if e != fs.OK {
+		return 0, e
+	}
+	w := actor.SpawnOpt(uploader, actor.Options{MaxMemory: uploadMemory(j.URL.Secure)})
+	r, ok := actor.Call(w, j, ms+replySlackMs)
+	switch x := r.(type) {
+	case upResult:
+		if ok {
+			return x.Status, x.Err
+		}
+	}
+	actor.Kill(w, actor.Shutdown)
+	return 0, Failed
+}
+
+// ClientUpload is Upload on c's kept connection (HTTP/1.1, the connection
+// kept after the response, as ClientDo).
+func ClientUpload(c Client, url, path, contentType, token string) (int, fs.Err) {
+	j, ms, e := uploadJob(url, path, contentType, token, true)
+	if e != fs.OK {
+		return 0, e
+	}
+	r, ok := actor.Call(c.PID, j, ms+replySlackMs)
+	switch x := r.(type) {
+	case upResult:
+		if ok {
+			return x.Status, x.Err
+		}
+	}
+	return 0, Failed
+}
+
+// uploadJob checks an upload's arguments and makes its job, with its
+// deadline: 3 waits, plus 1 ms per byte (1 KB/s at the least), ms from now.
+func uploadJob(url, path, contentType, token string, keep bool) (job, int, fs.Err) {
+	u, ok := parseURL(url)
+	if !ok || !safe(contentType, true) || !safe(token, false) || (token != "" && !u.Secure) {
+		return job{}, 0, BadURL
+	}
+	info, e := fs.Stat(path)
+	if e != fs.OK {
+		return job{}, 0, e
+	}
+	if info.IsDir {
+		return job{}, 0, fs.IsDir
+	}
+	ms := info.Size
+	if ms > 2000000000 {
+		ms = 2000000000
+	}
+	ms += 3 * DefaultTimeoutMs
+	return job{Method: "POST", ContentType: contentType, Token: token, URL: u, V11: true, Keep: keep,
+		MaxBody: uploadMaxBody, File: path, Deadline: actor.Now() + int64(ms)}, ms, fs.OK
+}
+
+// uploadMemory is the uploader's memory limit: the response (memFor of a
+// small body), 3 chunks (2 in flight, 1 being read) and the port.
+func uploadMemory(secure bool) int {
+	return connMemory(secure, uploadMaxBody) + 3*UploadChunk
+}
+
+// uploader runs one Upload: it answers the Call that brings the job,
+// following its caller (a DownMsg ends the exchange: see sendFile).
+func uploader() {
+	switch r := actor.Receive().(type) {
+	case actor.Request:
+		actor.Monitor(r.From)
+		switch j := r.Body.(type) {
+		case job:
+			status, e := upload(j)
+			actor.Reply(r, upResult{status, e})
+		}
+	}
+}
+
+// upload performs Upload's job j on a connection of its own.
+func upload(j job) (int, fs.Err) {
+	f, size, e := openFile(j.File)
+	if e != fs.OK {
+		return 0, e
+	}
+	c, ok := dial(j.URL, waitUntil(j.Deadline))
+	if !ok {
+		f.Close()
+		return 0, Failed
+	}
+	resp, how, e, _ := exchange(c, j, f, size, nil)
+	f.Close()
+	finish(c, how, j.URL.Secure, lingerUntil(j.Deadline), nil)
+	if e != fs.OK {
+		return 0, e
+	}
+	return resp.Status, fs.OK
 }
 
 // parseStatus parses a response head: "HTTP/1.x NNN reason" and headers.

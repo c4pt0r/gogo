@@ -13,6 +13,16 @@ if(CONFIG_GOGO_NET)
     file(GLOB GOGO_NET_SRCS "${GOGO_ROOT}/runtime/net/*.c")
     set(GOGO_WIFI_SRCS wifi.c)
 endif()
+# The "tls" port (GOGO_TLS, spec HTTPS): runtime/net/tls/tls.c, compiled against
+# ESP-IDF's own mbedTLS component (4.1.1, the same source the host build
+# uses; configured in sdkconfig.defaults), not the repo's runtime/net/tls/config build:
+# the hardware AES / SHA / MPI and the certificate bundle come with it, and
+# Wi-Fi's WPA crypto links it anyway. Its hooks are in platform_esp.c. Off,
+# tls.c is not built and nothing references mbedTLS's TLS layer.
+set(GOGO_TLS_SRCS "")
+if(CONFIG_GOGO_TLS)
+    set(GOGO_TLS_SRCS "${GOGO_ROOT}/runtime/net/tls/tls.c" "${GOGO_ROOT}/runtime/net/tls/anchor.c")
+endif()
 # Storage (spec storage §5): the vfs core and the B_FS builtin (pure C99),
 # with fs_lfs.c (/flash on LittleFS) as the backend.
 file(GLOB GOGO_VFS_SRCS "${GOGO_ROOT}/runtime/vfs/*.c")
@@ -101,8 +111,8 @@ idf_component_register(
     SRCS main.c platform_esp.c gpio_esp.c image_part.c console_task.c lcd_st7789.c
          ${GOGO_WIFI_SRCS} config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
          ${GOGO_IMU_SRCS} ${GOGO_IR_SRCS} ${GOGO_AUDIO_SRCS}
-         ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_COMMON_SRCS}
-    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/runtime/vm" "${GOGO_ROOT}/runtime/net" "${GOGO_ROOT}/runtime/vfs" "${GOGO_ROOT}/runtime/input" "${GOGO_ROOT}/runtime/stream" "${GOGO_ROOT}/runtime/console"
+         ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_COMMON_SRCS}
+    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/runtime/vm" "${GOGO_ROOT}/runtime/net" "${GOGO_ROOT}/runtime/net/tls" "${GOGO_ROOT}/runtime/vfs" "${GOGO_ROOT}/runtime/input" "${GOGO_ROOT}/runtime/stream" "${GOGO_ROOT}/runtime/console"
     EMBED_FILES "${GOGO_ROOT}/runtime/console/font/${GOGO_FONT_FILE}"
     LDFRAGMENTS linker.lf
     PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c esp_adc
@@ -117,6 +127,8 @@ idf_component_register(
                   # expands requirements before CONFIG_GOGO_NET is known;
                   # without GOGO_NET nothing references them, so nothing links.
                   esp_wifi esp_event
+                  # tls.c (GOGO_TLS) and its hooks in platform_esp.c, likewise.
+                  mbedtls
                   # fs_fat.c (Cardputer); listed for both boards because IDF
                   # expands requirements before GOGO_BOARD is known. The
                   # StickS3 links none of it (no references).
@@ -151,6 +163,10 @@ string(TIMESTAMP GOGO_BUILD_S "%s" UTC)
 # ESP values of the runtime/vm/config.h knobs (plan: Global Constraints).
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GOGO_BUILD_UNIX_MS=${GOGO_BUILD_S}000LL
+    # tls.c: IDF's mbedTLS is shared (Wi-Fi's WPA crypto), so the port
+    # installs no allocator or time hook and defines no RNG; platform_esp.c
+    # and sdkconfig.defaults set them up (runtime/net/tls/tls.h).
+    GOGO_TLS_MBEDTLS_HOOKS=0
     GOGO_DEFAULT_MAX_WORDS=4096u
     GOGO_TABLE_CAP=1024u
     GOGO_MAX_PORTS=16u
@@ -174,4 +190,4 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Os -Wall -Wextra -Werror
     -Werror=extra -Wunused-parameter -Wsign-compare -Werror=unused-function
     -Werror=unused-variable -Werror=unused-but-set-variable)
 # The VM core is portable C99.
-set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")
+set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")

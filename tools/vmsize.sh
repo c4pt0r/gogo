@@ -9,6 +9,10 @@
 #                              the fixed state exceeds 4096 bytes
 #   tools/vmsize.sh --vfs      the vfs core instead (runtime/vfs/*.c): code size and fixed
 #                              state (.bss + .data); exit 1 above 3072 bytes
+#   tools/vmsize.sh --tls      the "tls" port (runtime/net/tls/tls.c) and the mbedTLS it links
+#                              ($MBEDTLS_DIR, runtime/net/tls/config): linked with
+#                              --gc-sections from net_tls_driver, so only what the
+#                              port reaches counts (not VM core; informational)
 # Skips (exit 0) when the xtensa toolchain is not installed.
 set -e
 LIMIT=65536
@@ -34,6 +38,35 @@ if [ "$1" = "--net" ]; then
     printf '%7d  net code total (text+rodata+literal; not VM core)\n' "$total"
     printf '%7d  net fixed state (bss+data, limit 4096)\n' "$fixed"
     if [ "$fixed" -gt 4096 ]; then echo "netsize: fixed state exceeds 4096 bytes"; exit 1; fi
+    exit 0
+fi
+if [ "$1" = "--tls" ]; then
+    M=${MBEDTLS_DIR:-$HOME/esp/esp-idf/components/mbedtls/mbedtls}
+    T=$M/tf-psa-crypto
+    if [ ! -f "$M/library/ssl_tls.c" ]; then echo "tlssize: skipped (no mbedTLS source at $M)"; exit 0; fi
+    INC="-Iruntime/net/tls/config -Iruntime/net/tls/host -I$M/include -I$T/include -I$T/drivers/builtin/include -I$M/library -I$T/core
+         -I$T/drivers/builtin/src -I$T/dispatch -I$T/utilities -I$T/platform -I$T/extras"
+    FLAGS="-std=c99 -Os -mlongcalls -ffunction-sections -fdata-sections -w"
+    i=0
+    for f in "$M"/library/*.c "$T"/core/*.c "$T"/drivers/builtin/src/*.c "$T"/extras/*.c "$T"/platform/*.c "$T"/utilities/*.c; do
+        i=$((i + 1))
+        # shellcheck disable=SC2086
+        "$GCC" $FLAGS $INC -DMBEDTLS_CONFIG_FILE='"gogo_mbedtls_config.h"' \
+            -DTF_PSA_CRYPTO_CONFIG_FILE='"gogo_crypto_config.h"' -c "$f" -o "$OUT/mb_$i.o"
+    done
+    # shellcheck disable=SC2086
+    # The port itself with warnings on (32-bit target), unlike mbedTLS.
+    "$GCC" ${FLAGS%-w} -Wall -Wextra -Werror $INC -DMBEDTLS_CONFIG_FILE='"gogo_mbedtls_config.h"' -DTF_PSA_CRYPTO_CONFIG_FILE='"gogo_crypto_config.h"' \
+        -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_BYTES=163840u -Iruntime/net/tls -Iruntime/vm -Iruntime/net -Iruntime/vm/test/stub \
+        -c runtime/net/tls/tls.c -o "$OUT/tls.o"
+    "$GCC" -nostdlib -Wl,--gc-sections -Wl,-u,net_tls_driver -Wl,-e,0 -Wl,--unresolved-symbols=ignore-all \
+        -o "$OUT/tls.elf" "$OUT/tls.o" "$OUT"/mb_*.o
+    port=$("$SIZE" -A "$OUT/tls.o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
+    code=$("$SIZE" -A "$OUT/tls.elf" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
+    fixed=$("$SIZE" -A "$OUT/tls.elf" | awk '/^\.(bss|data)/ {s += $2} END {print s + 0}')
+    printf '%7d  runtime/net/tls/tls.c (the port, before gc)\n' "$port"
+    printf '%7d  tls code total: the port + mbedTLS as linked (text+rodata+literal; not VM core)\n' "$code"
+    printf '%7d  tls fixed state (bss+data)\n' "$fixed"
     exit 0
 fi
 if [ "$1" = "--vfs" ]; then

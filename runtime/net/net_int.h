@@ -61,7 +61,8 @@ typedef struct TcpPcb {
     uint32_t rip;           /* remote IP; state TCP_CLOSED: free */
     uint32_t snd_una, snd_nxt, rcv_nxt;
     uint32_t deadline;      /* timer, low 32 bits of platform_now_ms (TF_TIMER) */
-    uint32_t until;         /* SYN_SENT: connect deadline (TF_UNTIL) */
+    uint32_t until;         /* TF_UNTIL: connect deadline (SYN_SENT), with an upper layer also its
+                             * handshake's (until tcp_until_clear); an orphan's close deadline */
     uint32_t wr_off;        /* bytes of wr[0] acknowledged */
     term wr[2];             /* Write data in progress and queued: handles, 0 none */
     uint16_t lport, rport;
@@ -71,6 +72,48 @@ typedef struct TcpPcb {
     uint8_t state, flags, retries;
     uint8_t listener;       /* SYN_RCVD: index of its listener */
 } TcpPcb;
+
+/* An upper layer over one TCP connection (runtime/net/tls/tls.c): a pcb with TF_UPPER
+ * hands its stream to net_s.upper instead of to the port's owner. The
+ * owner then gets only what the layer posts (tcp_post) and the end of the
+ * connection (Closed from TCP: reset, timeout, no route, ...). At most one
+ * layer is installed (net_s.upper); every pcb with TF_UPPER uses it. The
+ * callbacks run inside the stack (TCP input or the drain): they must not
+ * free or end the connection themselves (only drain may call tcp_abort).
+ *   rx:        in-order bytes; true = taken (ACKed), false = refused (not
+ *              ACKed: the peer resends);
+ *   fin:       the peer's FIN after all rx; true = taken, false = refused;
+ *   connected: the TCP handshake completed (TF_UNTIL stays set: TimeoutMs
+ *              bounds the layer's handshake too, until tcp_until_clear);
+ *   acked:     n bytes from the start of what tx offered were ACKed;
+ *   tx:        the bytes to send (*len of them, possibly 0), stable in
+ *              memory until acknowledged (acked);
+ *   ended:     the connection is gone (any reason): free the layer's state;
+ *              it posts nothing (TCP posts Closed if there is one to post);
+ *   pending, drain, next_deadline: folded into the stack's port source
+ *              (next_deadline may be NULL), under PortSource's rule
+ *              (runtime/vm/port.h): pending only when drain will make
+ *              progress now, time-gated work in next_deadline;
+ *   closed:    true once the layer has posted the connection's terminal
+ *              Closed (any reason but Normal) itself: TCP then posts none
+ *              of its own when the connection ends (may be NULL).
+ * Exactly one terminal Closed per connection: a layer posts its own only
+ * while closed() is false, then reports true; a terminal Closed replaces a
+ * Normal still held in the port (tcp_post). */
+#define TF_UPPER 128u
+typedef struct TcpUpper {
+    const struct PortDriver *drv;  /* the layer's port driver (held events are retried for it) */
+    bool (*rx)(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n);
+    bool (*fin)(Vm *vm, TcpPcb *c);
+    void (*connected)(Vm *vm, TcpPcb *c);
+    void (*acked)(Vm *vm, TcpPcb *c, uint32_t n);
+    const uint8_t *(*tx)(const TcpPcb *c, uint32_t *len);
+    void (*ended)(TcpPcb *c);
+    bool (*pending)(void);
+    void (*drain)(Vm *vm);
+    bool (*next_deadline)(uint64_t *deadline);
+    bool (*closed)(const TcpPcb *c);
+} TcpUpper;
 
 typedef struct TcpListen {
     Port *port;             /* NULL: free */
@@ -115,6 +158,7 @@ typedef struct NetState {
     uint8_t pad_sub;
     uint32_t held_at;
     uint32_t sub_retry_at;  /* when sub_owed is retried */
+    const TcpUpper *upper;  /* the upper layer (TF_UPPER pcbs), or NULL */
     NetStats st;
 } NetState;
 
@@ -181,6 +225,50 @@ bool tcp_any_orphan(void);
 /* The interface went down: every connection ends (Closed{NoRoute}). */
 void tcp_down(struct Vm *vm);
 
+/* Close reasons (net.Normal ...; NoTime, BadCert and TLS are the tls
+ * port's). */
+enum {
+    CR_NORMAL = 0, CR_RESET = 1, CR_TIMEOUT = 2, CR_REFUSED = 3, CR_OVERFLOW = 4, CR_NOROUTE = 5,
+    CR_NOTIME = 6, CR_BADCERT = 7, CR_TLS = 8
+};
+/* Headroom a Data delivery leaves for control events: two Written, two Closed. */
+#define TCP_EVENT_RESERVE (4u * msg_footprint_words(3))
+
+/* For a driver built on the "tcp" port (an upper layer's):
+ *  - tcp_dial: the active open of Dial{IP, Port, TimeoutMs} (cfg[0..3)) for
+ *    port p, as "tcp" does (p charged TCP_PCB_WORDS); NULL if refused;
+ *  - tcp_pcb_of / tcp_close_port / tcp_port_can_event: the "tcp" port's
+ *    lookup, close and can_event;
+ *  - tcp_post: Connected / Written / Closed{reason} to the owner, held in
+ *    the port (in order) while it has no room, never killing it;
+ *  - tcp_flush: delivers p's held events; true when none is left (a Data
+ *    goes out only after them);
+ *  - tcp_hold_closed: Closed{reason} to p's owner soon (p has no
+ *    connection: state[0] none);
+ *  - tcp_output: sends what is ready (the layer's tx) if nothing is in
+ *    flight; tcp_shutdown: FIN after it (Shutdown);
+ *  - tcp_abort: ends c (RST if rst; Closed{reason} unless reason < 0);
+ *  - tcp_until_clear: drops TimeoutMs's deadline (the layer's handshake is
+ *    done);
+ *  - tcp_write_cmd: a Write command's rules (pinning into c->wr[], at most
+ *    two outstanding, Overflow) with output left to the caller; false if
+ *    it ended the connection or was malformed;
+ *  - tcp_write_done: wr[0] is fully sent: released, Written posted, the
+ *    next one (and empty ones after it, Written too) moved up. */
+TcpPcb *tcp_dial(Port *p, const int32_t *cfg, uint32_t n);
+TcpPcb *tcp_pcb_of(const Port *p);
+void tcp_close_port(Port *p);
+bool tcp_port_can_event(const Port *p);
+void tcp_post(struct Vm *vm, const TcpPcb *c, uint32_t type, int32_t reason);
+bool tcp_flush(struct Vm *vm, Port *p);
+void tcp_hold_closed(Port *p, int32_t reason);
+void tcp_output(TcpPcb *c);
+void tcp_shutdown(TcpPcb *c);
+void tcp_abort(struct Vm *vm, TcpPcb *c, int32_t reason, bool rst);
+void tcp_until_clear(TcpPcb *c);
+bool tcp_write_cmd(struct Vm *vm, const Actor *from, Port *p, TcpPcb *c, const uint32_t *o);
+void tcp_write_done(struct Vm *vm, TcpPcb *c);
+
 /* ---- ports.c ---- */
 /* Puts int v at d[*at] boxed (K_INT) if it does not fit a small int;
  * returns its term. */
@@ -193,5 +281,8 @@ Msg *net_msg_new(uint32_t words);
  * limit free, again once a waiting o's heap slack is collected; false
  * (m still the caller's) otherwise. */
 bool net_deliver(Vm *vm, Actor *o, Msg *m, uint32_t reserve);
+/* Whether o can take `words` more words leaving `reserve` free (a waiting
+ * o's heap slack collected first if needed): net_deliver's check. */
+bool net_room(Vm *vm, Actor *o, uint32_t words, uint32_t reserve);
 
 #endif

@@ -216,10 +216,12 @@ const (
 	// gogo/audio (v11)
 	TypeAudioMic     uint32 = 42
 	TypeAudioSpeaker uint32 = 43
+	// net.DialTLS (v13): cfg of the "tls" port
+	TypeNetDialtls uint32 = 44
 	// TypeReservedCount is how many reserved types there are: every type
 	// index from here up is a module's own (TYPE_RESERVED_COUNT in
 	// runtime/vm/opcodes.h; TestReservedTypeCount checks len(reservedTypes)).
-	TypeReservedCount uint32 = 44
+	TypeReservedCount uint32 = 45
 )
 
 // Heap object kinds.
@@ -351,6 +353,6 @@ var goConstants = map[string]uint32{
 	"TypeCodeModule":    TypeCodeModule,
 	"TypeChunk": TypeChunk, "TypeOut": TypeOut, "TypeDone": TypeDone,
 	"TypeImuConfig": TypeImuConfig, "TypeImuGesture": TypeImuGesture, "TypeIrTx": TypeIrTx, "TypeIrRx": TypeIrRx,
-	"TypeAudioMic": TypeAudioMic, "TypeAudioSpeaker": TypeAudioSpeaker,
+	"TypeAudioMic": TypeAudioMic, "TypeAudioSpeaker": TypeAudioSpeaker, "TypeNetDialtls": TypeNetDialtls,
 	"TypeReservedCount": TypeReservedCount,
 }

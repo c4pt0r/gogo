@@ -53,3 +53,49 @@ CONFIG_I2C_MASTER_ISR_HANDLER_IN_IRAM=n
 CONFIG_RMT_TX_ISR_HANDLER_IN_IRAM=n
 CONFIG_RMT_RX_ISR_HANDLER_IN_IRAM=n
 CONFIG_RMT_ENCODER_FUNC_IN_IRAM=n
+# mbedTLS (the "tls" port, GOGO_TLS; runtime/net/tls/tls.h, spec HTTPS). These are the
+# default build's settings (GOGO_TLS on); a TLS-off build adds
+# sdkconfig.tls-off, which puts the ones that would also change Wi-Fi's WPA
+# crypto (-O2, the allocator, restartable ECC, time) back to IDF's defaults
+# (`gogo firmware` adds it by itself; ruling R17). The port uses
+# ESP-IDF's own mbedTLS component (4.1.1, the source the host build compiles
+# with runtime/net/tls/config), shared with Wi-Fi's WPA crypto; these mirror runtime/net/tls/config:
+# - every mbedTLS allocation goes through platform_tls_alloc's allocator
+#   (platform_esp.c tls_mem_calloc, installed by platform_esp_init: PSRAM
+#   first on the StickS3);
+CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC=y
+# - certificate validity is checked against time() (gmtime_r), which reads
+#   the system clock that gogo/sys and gogo/sntp set (platform_esp.c);
+#   without HAVE_TIME_DATE mbedTLS would not check validity at all;
+CONFIG_MBEDTLS_HAVE_TIME=y
+CONFIG_MBEDTLS_HAVE_TIME_DATE=y
+# - built for speed (-O2), not size: the handshake's ECC is software on the
+#   S3 (the MPI unit helps the big multiplications only); measured on the
+#   StickS3 against example.com: ECDHE X25519 260 -> 204 ms, the chain
+#   checks 2.3 -> 1.75 s, for +28 KB of flash;
+CONFIG_MBEDTLS_COMPILER_OPTIMIZATION_PERF=y
+# - sliced ECDSA checks (ServerKeyExchange and the chain);
+CONFIG_MBEDTLS_ECP_RESTARTABLE=y
+# - TLS 1.2 client only (ruling R5), no renegotiation, no RSA key exchange
+#   (tls.c offers ECDHE AEAD suites only);
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_2=y
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=n
+CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y
+CONFIG_MBEDTLS_SSL_RENEGOTIATION=n
+CONFIG_MBEDTLS_KEY_EXCHANGE_RSA=n
+# - record buffers 16 KB in (servers do not negotiate smaller) and 4 KB out;
+#   fixed: IDF's dynamic buffers reallocate the output buffer, which the
+#   port sends from in place until TCP has it acknowledged;
+CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN=y
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=n
+# - X25519 (tls.c prefers it: the unsliced ECDHE step, ruling R4);
+CONFIG_MBEDTLS_ECP_DP_CURVE25519_ENABLED=y
+# - trust anchors: the certificate bundle in flash. Cross-signed
+#   verification off: it verifies through a CA callback, and mbedTLS's
+#   chain check with a CA callback is not restartable (the whole chain would
+#   be one slice); with it off the chain is checked restartably and only the
+#   top certificate's signature against the bundle root is one step.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=n

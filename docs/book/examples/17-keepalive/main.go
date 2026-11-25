@@ -1,0 +1,34 @@
+// Poll a server once a second over one kept HTTPS connection: one TLS
+// handshake for all the requests, not one each. The URL comes from the
+// config store (gogo config set poll.url https://...).
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/config"
+	"gogo/dhcp"
+	"gogo/http"
+	"gogo/sntp"
+)
+
+func main() {
+	url, ok := config.Get("poll.url")
+	if !ok {
+		url = "https://example.com/status"
+	}
+	if !dhcp.Start(dhcp.Config{}) || !sntp.Sync("pool.ntp.org", 5000) {
+		println("no network")
+		return
+	}
+	c := http.NewClient()
+	var none bytes.Bytes
+	for i := 0; i < 5; i++ {
+		r, ok := http.ClientDo(c, "GET", url, "", none, 5000)
+		// A failed request (the server went away mid-request) is not
+		// retried for you; the next one reconnects.
+		println(i, ok, r.Status, r.Body.Len())
+		actor.Sleep(1000)
+	}
+	http.CloseClient(c)
+}

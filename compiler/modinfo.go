@@ -4,10 +4,11 @@ import (
 	"go/ast"
 	"go/constant"
 	"go/types"
+	"sort"
 	"strings"
 )
 
-// Capability bits of the image's requires word (v9; bits 4-6 added in v10, 7-8 in v11): what the host must
+// Capability bits of the image's requires word (v9; bits 4-6 added in v10, 7-8 in v11, 9 in v13): what the host must
 // provide for the module to run. Inferred by Requires.
 const (
 	CapNet     uint32 = 1
@@ -19,6 +20,7 @@ const (
 	CapIRRX    uint32 = 64
 	CapMic     uint32 = 128
 	CapSpk     uint32 = 256
+	CapTLS     uint32 = 512
 	CapAnyPort uint32 = 1 << 31 // port.Open with a driver name not known at build time
 )
 
@@ -75,14 +77,26 @@ var importCaps = map[string]uint32{
 
 // driverCaps maps a constant port.Open driver name to its capability.
 var driverCaps = map[string]uint32{
-	"kbd": CapKbd, "power": CapPower, "imu": CapIMU, "ir_tx": CapIRTX, "ir_rx": CapIRRX, "mic": CapMic, "spk": CapSpk,
+	"kbd": CapKbd, "power": CapPower, "imu": CapIMU, "ir_tx": CapIRTX, "ir_rx": CapIRRX, "mic": CapMic, "spk": CapSpk, "tls": CapTLS,
 	"netif": CapNet, "udp": CapNet, "tcp": CapNet, "tcp_listen": CapNet,
 }
 
+// capDriverNames lists the driver names of driverCaps, sorted: the names
+// a //gogo:optional directive accepts.
+func capDriverNames() []string {
+	var names []string
+	for d := range driverCaps {
+		names = append(names, d)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Requires infers the capabilities the program needs, over package main
-// and every compiled library: imports, constant port.Open drivers and
-// constant gogo/fs paths under /sd. A non-constant driver name requires
-// any port, with a warning.
+// and every compiled library: imports, constant port.Open drivers (but
+// those a library names in its //gogo:optional directive, for its own
+// calls; see directivePrefix) and constant gogo/fs paths under /sd. A
+// non-constant driver name requires any port, with a warning.
 func Requires(p *Program) (bits uint32, warnings []string) {
 	warned := false
 	for _, pkg := range p.packages() {
@@ -112,7 +126,9 @@ func Requires(p *Program) (bits uint32, warnings []string) {
 						return true
 					}
 					if s, ok := constString(p, call.Args[0]); ok {
-						bits |= driverCaps[s]
+						if !pkg.Optional[s] {
+							bits |= driverCaps[s]
+						}
 					} else {
 						bits |= CapAnyPort
 						if !warned {

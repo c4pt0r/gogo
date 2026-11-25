@@ -73,6 +73,7 @@ const (
 	CapIRRX    = 64      // the "ir_rx" port
 	CapMic     = 128     // the "mic" port
 	CapSpk     = 256     // the "spk" port
+	CapTLS     = 512     // the "tls" port
 	CapAnyPort = 1 << 31 // only a build-time marker: never missing
 )
 

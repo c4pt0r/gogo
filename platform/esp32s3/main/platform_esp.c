@@ -10,11 +10,24 @@
 #endif
 #include "input.h"
 #include "board.h"
+#if CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
+#include "mbedtls/platform.h"
+#endif
+#if CONFIG_GOGO_TLS
+#include "tls.h"
+#include "anchor.h"
+#include "mbedtls/ssl.h"
+#include "esp_crt_bundle.h"
+#if !CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
+#error "GOGO_TLS needs CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC (sdkconfig.defaults): mbedTLS memory is platform_tls_alloc's"
+#endif
+#endif
 
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -25,7 +38,14 @@
 static TaskHandle_t vm_task;
 static int64_t t0_us;
 
+#if CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
+static void mbedtls_mem_init(void);
+#endif
+
 void platform_esp_init(void) {
+#if CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
+    mbedtls_mem_init();
+#endif
     vm_task = xTaskGetCurrentTaskHandle();
     t0_us = esp_timer_get_time();
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -148,6 +168,170 @@ uint64_t platform_now_ms(void) { return platform_esp_ms(); }
 
 uint32_t platform_random(void) { return esp_random(); }
 
+/* The wall clock (runtime/vm/platform.h) is the system clock (gettimeofday), so
+ * everything that reads time() agrees with gogo/sys: ESP-IDF's mbedTLS
+ * (CONFIG_MBEDTLS_HAVE_TIME_DATE) checks certificate validity with time()
+ * and gmtime_r, and the tls port runs with GOGO_TLS_MBEDTLS_HOOKS 0 (it
+ * installs no time hook into the shared mbedTLS). Unknown until set: the
+ * system clock starts at 1970 on every boot (no battery-backed RTC), and
+ * wall_known keeps that from counting as a time. Same floor as the weak
+ * default (runtime/vm/walltime.c). Not touched by platform_time_reset. Scheduler
+ * thread only. */
+static bool wall_known;
+
+int64_t platform_unix_time_ms(void) {
+    if (!wall_known) return 0;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    int64_t ms = (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+    return ms > 0 ? ms : 1;
+}
+
+int platform_set_unix_time_ms(int64_t ms) {
+    if (ms > 0 && ms < GOGO_BUILD_UNIX_MS) return 0;
+    struct timeval tv = {0, 0};
+    if (ms > 0) {
+        tv.tv_sec = (time_t)(ms / 1000);
+        tv.tv_usec = (suseconds_t)(ms % 1000) * 1000;
+    }
+    settimeofday(&tv, NULL);
+    wall_known = ms > 0;
+    return 1;
+}
+
+/* mbedTLS memory (CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC: IDF leaves mbedTLS on
+ * plain calloc until the application installs its own, which
+ * platform_esp_init does first thing, before Wi-Fi starts; from then on
+ * every mbedTLS allocation, the tls port's and Wi-Fi's WPA crypto alike,
+ * comes from here; an earlier one (IDF's PSA init) is freed here too,
+ * heap_caps_free takes any heap pointer). On the
+ * StickS3 it prefers PSRAM, so a TLS connection (about 34 KB at its peak:
+ * the 16 KB + 4 KB record buffers, the peer's chain, ECDHE and PSA state)
+ * does not compete with the VM arena for internal RAM; internal RAM when
+ * PSRAM is full or absent (the Cardputer). The bytes outstanding and their
+ * peak are counted for `gogo config stats` (any task may allocate, hence
+ * the lock). */
+#if CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
+static portMUX_TYPE tls_mem_lock = portMUX_INITIALIZER_UNLOCKED;
+static size_t tls_mem_now, tls_mem_peak;
+
+static void *tls_mem_calloc(size_t n, size_t size) {
+    if (size && n > SIZE_MAX / size) return NULL;
+#if CONFIG_SPIRAM
+    void *p = heap_caps_calloc_prefer(n, size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT,
+                                      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#else
+    void *p = heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#endif
+    if (!p) return NULL;
+    size_t got = heap_caps_get_allocated_size(p);
+    portENTER_CRITICAL(&tls_mem_lock);
+    tls_mem_now += got;
+    if (tls_mem_now > tls_mem_peak) tls_mem_peak = tls_mem_now;
+    portEXIT_CRITICAL(&tls_mem_lock);
+    return p;
+}
+
+static void tls_mem_free(void *p) {
+    if (!p) return;
+    size_t got = heap_caps_get_allocated_size(p);
+    portENTER_CRITICAL(&tls_mem_lock);
+    tls_mem_now = got > tls_mem_now ? 0 : tls_mem_now - got;
+    portEXIT_CRITICAL(&tls_mem_lock);
+    heap_caps_free(p);
+}
+
+static void mbedtls_mem_init(void) { mbedtls_platform_set_calloc_free(tls_mem_calloc, tls_mem_free); }
+
+void platform_esp_tls_mem(size_t *now, size_t *peak) {
+    portENTER_CRITICAL(&tls_mem_lock);
+    *now = tls_mem_now;
+    *peak = tls_mem_peak;
+    portEXIT_CRITICAL(&tls_mem_lock);
+}
+#endif
+
+/* The tls port's hooks (runtime/net/tls/tls.h). Here, in an always-linked object: tls.c
+ * has weak defaults (see platform_code_alloc below). */
+#if CONFIG_GOGO_TLS
+void *platform_tls_alloc(size_t n) { return tls_mem_calloc(1, n ? n : 1u); }
+void platform_tls_free(void *p) { tls_mem_free(p); }
+
+/* Trust anchors: IDF's certificate bundle in flash (esp_crt_bundle,
+ * CONFIG_MBEDTLS_CERTIFICATE_BUNDLE). esp_crt_bundle_attach gives mbedTLS
+ * its dummy CA chain, so the peer's chain is checked link by link
+ * restartably (sliced) up to the last certificate it sent; the verify
+ * callback then decides that one:
+ *  - it IS a bundle root (same subject and key: runtime/net/tls/anchor.h, ruling R16),
+ *    whatever signed it: trusted. Needed for cross-signed roots
+ *    (example.com sends "SSL.com TLS ECC Root CA 2022" signed by Comodo's
+ *    "AAA Certificate Services", which is not in the bundle);
+ *  - otherwise IDF's esp_crt_verify_callback: its issuer must be a bundle
+ *    root, whose key checks its signature (one unsliced verify).
+ * IDF's cross-signed mode (CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY)
+ * would do the first case too, but through a CA callback, with which
+ * mbedTLS checks the whole chain in one unsliced call (sdkconfig.defaults).
+ *
+ * IDF internals relied on (ESP-IDF v6.1.1; check them on an IDF upgrade):
+ * the bundle's embed symbols _binary_x509_crt_bundle_start / _end (the
+ * default bundle; a bundle set with esp_crt_bundle_set, which gogo never
+ * calls, is not seen), its layout (runtime/net/tls/anchor.h), and
+ * esp_crt_verify_callback, which esp_crt_bundle.c defines non-static but
+ * esp_crt_bundle.h does not declare. Nothing is allocated per connection. */
+extern const uint8_t gogo_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
+extern const uint8_t gogo_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
+int esp_crt_verify_callback(void *buf, mbedtls_x509_crt *crt, int depth, uint32_t *flags);
+
+static int tls_esp_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
+    if (tls_anchor_trust(gogo_crt_bundle_start, (size_t)(gogo_crt_bundle_end - gogo_crt_bundle_start), crt, flags))
+        return 0;
+    return esp_crt_verify_callback(ctx, crt, depth, flags);
+}
+
+int platform_tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
+    *state = NULL;
+    if (esp_crt_bundle_attach(conf) != ESP_OK) return -1;
+    mbedtls_ssl_conf_verify(conf, tls_esp_verify, NULL);
+    return 0;
+}
+void platform_tls_verify_free(void *state) { (void)state; }
+
+uint64_t platform_tls_clock_us(void) { return (uint64_t)esp_timer_get_time(); }
+
+/* mbedTLS's x509_crt.c matches IP-address names with the platform's
+ * inet_pton, which ESP-IDF's headers map to lwip_inet_pton. lwIP is not
+ * linked (gogo has its own stack, and lwIP's tcp_* names clash with it), so
+ * it is defined here: dotted-quad IPv4 only (AF_INET is 2 in lwIP), 1 if
+ * src is one, else 0; anything else (AF_INET6: gogo has no IPv6) is 0, so
+ * such a name matches no certificate. */
+int lwip_inet_pton(int af, const char *src, void *dst);
+int lwip_inet_pton(int af, const char *src, void *dst) {
+    uint8_t a[4];
+    if (af != 2) return 0;
+    for (int i = 0; i < 4; i++) {
+        unsigned v = 0, digits = 0;
+        while (*src >= '0' && *src <= '9') {
+            if (digits && v == 0) return 0;         /* no leading zeros */
+            v = v * 10u + (unsigned)(*src++ - '0');
+            if (++digits > 3u || v > 255u) return 0;
+        }
+        if (!digits || *src != (i < 3 ? '.' : '\0')) return 0;
+        src++;
+        a[i] = (uint8_t)v;
+    }
+    memcpy(dst, a, sizeof a);
+    return 1;
+}
+
+/* The hardware RNG: a CSPRNG while the radio is on, which it is whenever a
+ * TLS connection can exist. IDF's mbedTLS draws its keys from the same
+ * source (its mbedtls_psa_external_get_random), so this only guards open. */
+int platform_tls_random(uint8_t *out, size_t n) {
+    esp_fill_random(out, n);
+    return 0;
+}
+#endif
+
 /* vm_run start: Now() counts from here, after the LCD bring-up. */
 void platform_time_reset(void) { t0_us = esp_timer_get_time(); }
 
@@ -192,6 +376,9 @@ const struct PortDriver *const *platform_port_drivers(void) {
 #if CONFIG_GOGO_NET
         &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver,
 #endif
+#if CONFIG_GOGO_TLS
+        &net_tls_driver,
+#endif
         &input_kbd_driver, &input_power_driver, &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
         &input_mic_driver, &input_spk_driver,
         NULL
@@ -230,6 +417,9 @@ uint32_t platform_caps(void) {
     uint32_t c = 0;
 #if CONFIG_GOGO_NET
     c |= CAP_NET;
+#endif
+#if CONFIG_GOGO_TLS
+    c |= CAP_TLS;
 #endif
 #if HAS_KBD && CONFIG_GOGO_KBD
     c |= CAP_KBD;

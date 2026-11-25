@@ -59,7 +59,7 @@ func TestFirmwareUnion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -72,12 +72,12 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\n"
+	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
 	wantCmd := "idf.py -C platform/esp32s3 -B " + d + " -DGOGO_BOARD=cardputer -DSDKCONFIG=" + d +
-		"/sdkconfig -DSDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.cardputer;" + d + "/sdkconfig.gogo\" build"
+		"/sdkconfig -DSDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.cardputer;sdkconfig.tls-off;" + d + "/sdkconfig.gogo\" build"
 	if !strings.Contains(out, wantCmd+"\n") {
 		t.Fatalf("command missing:\n%s\nwant %s", out, wantCmd)
 	}
@@ -107,7 +107,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -213,7 +213,7 @@ func TestFirmwareQuotesSpaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`-B "` + d + `"`, `-DSDKCONFIG="` + d + `/sdkconfig"`,
-		`-DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer;` + d + `/sdkconfig.gogo"`} {
+		`-DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer;sdkconfig.tls-off;` + d + `/sdkconfig.gogo"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %s in\n%s", want, out)
 		}
@@ -311,6 +311,11 @@ func TestFirmwareTableMatchesSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range fwFeatures {
+		if f.offDefaults != "" {
+			if _, err := os.Stat(filepath.Join(repo, "platform/esp32s3", f.offDefaults)); err != nil {
+				t.Errorf("%s: %v", f.name, err)
+			}
+		}
 		if !regexp.MustCompile(`(?m)^\s*config ` + strings.TrimPrefix(f.kconf, "CONFIG_") + `\s*$`).Match(kc) {
 			t.Errorf("Kconfig has no %s", f.kconf)
 		}
@@ -393,13 +398,48 @@ func TestFirmwareImuIr(t *testing.T) {
 	}
 }
 
+func TestFirmwareTLS(t *testing.T) {
+	d := t.TempDir()
+	tls := writeImg(t, d, "tls.gogo", compiler.CapNet|compiler.CapTLS)
+	none := writeImg(t, d, "none.gogo", 0)
+	for _, board := range []string{"sticks3", "cardputer"} {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, tls); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_NET=y\n") || !strings.Contains(cfg, "CONFIG_GOGO_TLS=y\n") {
+			t.Errorf("%s: %v\n%s", board, err, cfg)
+		}
+		if _, _, err := fwRun(t, "-board", board, "-o", d, "-without", "tls", tls); err == nil {
+			t.Errorf("%s: removing a required tls should fail", board)
+		}
+		// default on, but only on top of net (Kconfig depends on GOGO_NET)
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, none); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_NET=n\n") || !strings.Contains(cfg, "CONFIG_GOGO_TLS=n\n") {
+			t.Errorf("%s no net: %v\n%s", board, err, cfg)
+		}
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "net", none); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_TLS=y\n") {
+			t.Errorf("%s -with net: %v\n%s", board, err, cfg)
+		}
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "net", "-without", "tls", none); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_TLS=n\n") {
+			t.Errorf("%s -without tls: %v\n%s", board, err, cfg)
+		}
+		if _, _, err := fwRun(t, "-board", board, "-o", d, "-with", "tls", none); err == nil {
+			t.Errorf("%s: -with tls without net should fail", board)
+		}
+		// tls off adds its fragment (mbedTLS back to IDF's defaults); on does not
+		if out, _, err := fwRun(t, "-board", board, "-o", d, tls); err != nil || strings.Contains(out, "sdkconfig.tls-off") {
+			t.Errorf("%s tls on: %v\n%s", board, err, out)
+		}
+		if out, _, err := fwRun(t, "-board", board, "-o", d, "-with", "net", "-without", "tls", none); err != nil ||
+			!strings.Contains(out, ";sdkconfig.tls-off;") {
+			t.Errorf("%s tls off: %v\n%s", board, err, out)
+		}
+	}
+}
+
 func TestFirmwareAudio(t *testing.T) {
 	d := t.TempDir()
 	mic := writeImg(t, d, "mic.gogo", compiler.CapMic)
 	spk := writeImg(t, d, "spk.gogo", compiler.CapSpk)
 	im := writeImg(t, d, "im.gogo", compiler.CapIMU)
 	for _, board := range []string{"sticks3", "cardputer"} {
-		if _, cfg, err := fwRun(t, "-board", board, "-o", d, mic); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_AUDIO=y\n") {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, mic); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\n") {
 			t.Errorf("%s mic: %v\n%s", board, err, cfg)
 		}
 		// mic and spk share one switch: an image that needs one keeps both

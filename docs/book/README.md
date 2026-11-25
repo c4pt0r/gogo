@@ -24,6 +24,7 @@ and assumes no knowledge of embedded programming or Erlang.
 14. [Hot Loading](14-hot-loading.md): loading code at run time, modules, supervised upgrades
 15. [IMU and IR](15-imu-and-ir.md): the motion sensor, infrared send and receive, streams (`Chunk`, `Out`, `Done`)
 16. [Audio](16-audio.md): the microphone and speaker, recording to WAV files, playing them back
+17. [HTTPS](17-https.md): https URLs, the clock, the keep-alive `http.Client`, streaming uploads, the `"tls"` port
 
 [Notes for maintainers](NOTES-for-maintainers.md) lists the places where
 the documentation and the behaviour disagree, found while writing the book.

@@ -1,6 +1,7 @@
 # StickS3 build only (the default board), on top of sdkconfig.defaults: the
 # ESP32-S3-PICO-1-N8R8 has 8 MB octal PSRAM. Used for hot-loaded module code
-# only (main/platform_esp.c platform_code_alloc), never as general heap:
+# (main/platform_esp.c platform_code_alloc) and mbedTLS's memory (the TLS
+# connection; platform_esp.c tls_mem_calloc), never as general heap:
 # CAPS_ALLOC keeps plain malloc and every internal-heap user (the VM arena,
 # Wi-Fi, LCD buffers) on internal RAM. The Cardputer ADV has no PSRAM and
 # does not use this file.

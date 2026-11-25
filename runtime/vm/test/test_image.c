@@ -64,7 +64,7 @@ TEST(image_bad_magic) {
 
 TEST(image_bad_version) {
     uint32_t w[IMG_WORDS]; Image img;
-    CHECK_EQ(IMAGE_VERSION, 12u);
+    CHECK_EQ(IMAGE_VERSION, 13u);
     build(w); w[1] = 1;        /* M1/M2 images: opcode semantics changed in M3 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w); w[1] = 2;        /* M3 images: RETN, CONV c=2 and builtins added in M4 */
@@ -87,7 +87,9 @@ TEST(image_bad_version) {
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w); w[1] = 11;       /* v11 images: no gogo/sys builtins 51-53 (added in v12) */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 13;
+    build(w); w[1] = 12;       /* v12 images: no net.DialTLS reserved type (added in v13) */
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    build(w); w[1] = 14;
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w);
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);

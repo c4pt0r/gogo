@@ -17,8 +17,8 @@ const (
 	// Out, Done and the gogo/imu and gogo/ir reserved types; v11: the
 	// gogo/audio reserved types Mic and Speaker, requires bits mic and spk;
 	// v12: the gogo/sys builtins B_UNIX_TIME, B_SET_UNIX_TIME and B_RANDOM,
-	// 51-53).
-	imageVersion = 12
+	// 51-53; v13: the reserved type net.DialTLS (44), requires bit tls).
+	imageVersion = 13
 )
 
 // ImageVersion is the image format version this compiler emits.

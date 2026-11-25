@@ -106,6 +106,9 @@ type Program struct {
 type Package struct {
 	Pkg   *types.Package
 	Files []*ast.File
+	// Optional holds the drivers named by the package's //gogo:optional
+	// directives (see directives).
+	Optional map[string]bool
 }
 
 // packages lists every compiled package: the libraries, then main.
@@ -189,7 +192,7 @@ func (l *loader) parseDir(dir string) ([]*ast.File, error) {
 		if err != nil {
 			return nil, err
 		}
-		f, err := parser.ParseFile(l.fset, name, src, 0)
+		f, err := parser.ParseFile(l.fset, name, src, parser.ParseComments)
 		if err != nil {
 			return nil, err
 		}
@@ -265,13 +268,71 @@ func (l *loader) loadLib(path string, stack []string) error {
 			}
 		}
 	}
+	optional, err := l.directives(files, true)
+	if err != nil {
+		return err
+	}
 	pkg, err := l.check(path, files)
 	if err != nil {
 		return err
 	}
 	l.pkgs[path] = pkg
-	l.order = append(l.order, &Package{Pkg: pkg, Files: files})
+	l.order = append(l.order, &Package{Pkg: pkg, Files: files, Optional: optional})
 	return nil
+}
+
+// directivePrefix starts every gogo source directive. The one directive
+// is
+//
+//	//gogo:optional name...
+//
+// a comment line of a library package (any file; conventionally the last
+// line of the package doc comment, after a blank // line, as gofmt places
+// directives) naming port drivers the package opens only when a call asks
+// for them at run time, and whose absence (port.Open's ok=false) it
+// reports as an ordinary failure of that call. Requires then adds no
+// capability for that package's own constant port.Open of those drivers;
+// importers, package main and other libraries are unaffected.
+const directivePrefix = "//gogo:"
+
+// directives parses the //gogo: directives of one package's files and
+// returns the drivers named by //gogo:optional. lib is false for package
+// main, where the directive is an error: a main program's own port.Open
+// calls always count. An unknown directive or driver name is an error.
+func (l *loader) directives(files []*ast.File, lib bool) (map[string]bool, error) {
+	var optional map[string]bool
+	for _, f := range files {
+		for _, g := range f.Comments {
+			for _, c := range g.List {
+				rest, ok := strings.CutPrefix(c.Text, directivePrefix)
+				if !ok {
+					continue
+				}
+				pos := l.fset.Position(c.Pos())
+				names, ok := strings.CutPrefix(rest, "optional")
+				if !ok || names != "" && names[0] != ' ' && names[0] != '\t' {
+					return nil, fmt.Errorf("%s: gogo: unknown directive %s (want //gogo:optional)", pos, strings.Fields(c.Text)[0])
+				}
+				if !lib {
+					return nil, fmt.Errorf("%s: gogo: //gogo:optional in package main (a main program's port.Open calls always require their driver)", pos)
+				}
+				fields := strings.Fields(names)
+				if len(fields) == 0 {
+					return nil, fmt.Errorf("%s: gogo: //gogo:optional names no driver", pos)
+				}
+				for _, d := range fields {
+					if driverCaps[d] == 0 {
+						return nil, fmt.Errorf("%s: gogo: //gogo:optional: unknown driver %q (want one of %s)", pos, d, strings.Join(capDriverNames(), ", "))
+					}
+					if optional == nil {
+						optional = map[string]bool{}
+					}
+					optional[d] = true
+				}
+			}
+		}
+	}
+	return optional, nil
 }
 
 // check type-checks one compiled package, recording into l.info.
@@ -306,7 +367,7 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ParseComments)
 		if err != nil {
 			return nil, err
 		}
@@ -330,6 +391,9 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 			Implicits:  map[ast.Node]types.Object{},
 		},
 		pkgs: map[string]*types.Package{},
+	}
+	if _, err := l.directives(files, false); err != nil {
+		return nil, err
 	}
 	allowed := func(p string) bool { return isStub(p) || l.isLib(p) }
 	var libPaths []string

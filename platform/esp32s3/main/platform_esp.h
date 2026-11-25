@@ -19,6 +19,9 @@ size_t platform_esp_arena_cap(void);
 /* Prints the first refused platform_chunk_alloc (size, cause, arena used,
  * free internal RAM at that moment), if any. */
 void platform_esp_report_refusal(void);
+/* mbedTLS memory outstanding and its peak since boot, in bytes
+ * (CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC; platform_esp.c). */
+void platform_esp_tls_mem(size_t *now, size_t *peak);
 /* Prints a line on the console (stderr). */
 void platform_esp_say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 /* Prints a line on the serial console only (not the screen). */

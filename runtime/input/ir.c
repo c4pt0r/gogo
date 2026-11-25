@@ -93,7 +93,7 @@ static bool tx_can_event(const Port *p) {
 }
 
 const PortDriver input_ir_tx_driver = {
-    "ir_tx", TYPE_IR_TX, TYPE_DONE, tx_open, NULL, tx_close, tx_can_event, NULL, tx_command,
+    "ir_tx", TYPE_IR_TX, TYPE_DONE, tx_open, NULL, tx_close, tx_can_event, NULL, tx_command, NULL
 };
 
 /* ---- ir_rx ---- */
@@ -135,7 +135,7 @@ static bool rx_can_event(const Port *p) {
 }
 
 const PortDriver input_ir_rx_driver = {
-    "ir_rx", TYPE_IR_RX, TYPE_CHUNK, rx_open, rx_command, rx_close, rx_can_event, NULL, NULL,
+    "ir_rx", TYPE_IR_RX, TYPE_CHUNK, rx_open, rx_command, rx_close, rx_can_event, NULL, NULL, NULL
 };
 
 /* ---- scheduler side ---- */

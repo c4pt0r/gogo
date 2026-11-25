@@ -36,6 +36,49 @@ main.go:9:2: gogo: captured variable must not be reassigned
 Type errors are reported first; subset errors appear once the program
 type-checks. Chapter 3 lists the subset errors.
 
+### The `requires` word and `//gogo:optional`
+
+The image also records the capabilities it needs (its `requires` word,
+appendix F): the compiler infers them from the imports, from every
+`port.Open` with a constant driver name, and from constant `/sd` paths, in
+`package main` and in every library compiled in. A firmware that lacks one
+refuses the image at boot (`code.Load` returns `Unsupported`, chapter 14).
+
+A library can declare that it uses some drivers only softly: it opens them
+only when a call asks for that at run time, and reports their absence
+(`port.Open` returns `ok=false`) as an ordinary failure of that call. It
+says so with a directive line in any of its files, conventionally the last
+line of the package doc comment, after an empty `//` line (where gofmt puts
+directives):
+
+```go
+// Package http is a small HTTP/1.x client and server...
+//
+//gogo:optional tls
+package http
+```
+
+- The listed drivers add no capability **for that package's own**
+  `port.Open` calls. The same driver opened by `package main`, by a
+  package that imports this one, or by any other library still counts: a
+  program that calls `port.Open("tls", ...)` itself requires `tls`.
+- The names must be drivers that carry a capability (`imu ir_rx ir_tx kbd
+  mic netif power spk tcp tcp_listen tls udp`). An unknown name, an empty
+  list, a misspelt `//gogo:` directive, or the directive in `package main`
+  is a compile error, for example
+  `a.go:3:1: gogo: //gogo:optional: unknown driver "tsl" (want one of ...)`.
+- `gogo/http` declares `tls` (an http-only program runs on a firmware
+  without TLS, where an https request fails), and `gogo/sound` declares
+  `mic spk` (`Record` returns false without a microphone, `Play` without a
+  speaker).
+- The directive is a convention for library authors; the compiler does not
+  enforce it. A library can still hand `main` a function that opens the
+  driver; that open then fails cleanly at run time (`ok=false`) on a
+  firmware without the driver.
+- `gogo firmware` (below) chooses features from `requires`, so it does not
+  turn a soft driver on by itself; `tls`, `mic` and `spk` are on by default,
+  and `-without` makes those calls fail at run time instead.
+
 ## gogo run
 
 ```text
@@ -171,7 +214,8 @@ driver nobody uses. It reads the capabilities each file declares (the
   board has. `sd`, `exfat` (exFAT media) and `cjk` (the Chinese font) are
   not capabilities: they are on by default on boards that have them.
 - `-with a,b` adds features. `-without a,b` removes them; a feature that a
-  file requires cannot be removed (error). `exfat` goes off with `sd`.
+  file requires cannot be removed (error). `exfat` goes off with `sd`, and
+  `tls` with `net`.
 - A required feature the board lacks is an error that names it, for example
   `kbd` or `sd` on the `sticks3`.
 - `-o dir`: the build directory and where `sdkconfig.gogo` goes (default

@@ -1,0 +1,251 @@
+// A TLS client driven by the store (GOGO_CONFIG): test.script is a list of
+// steps, space separated, run by an actor with a 64 KB limit (the TLS state
+// is charged to it):
+//
+//	time        sys.SetTime(test.time seconds)
+//	dial        open "tls" to 10.0.0.1:443, Host test.host, TimeoutMs
+//	            test.timeout; print "dial ok", then "connected" or
+//	            "closed <reason>"
+//	open        open as dial does, print "open ok", do not wait
+//	dialtime    as dial, then print "handshake sim ms N": the simulated
+//	            time the open took (the simulator advances it only while
+//	            the VM is idle)
+//	dial2       a second open while one is open: print "dial2 ok"
+//	send:TEXT   Write TEXT, print "written" when acknowledged
+//	upload:N    Write N pattern bytes (byte(i % 251)) in 4096-byte Writes,
+//	            two in flight; print "uploaded N"
+//	recv:N      receive N bytes; print "recv N bad B" (B: bytes not
+//	            matching the pattern) or the Closed that came first
+//	echo:N      receive N bytes and print them as text: "echo TEXT"
+//	recvall     receive until Closed; print "recvall N closed R"
+//	shut        Shutdown; then wait for Closed: print "closed R"
+//	close       port.Close; print "closed port"
+//	exit        the actor exits with the port open (its exit closes it)
+//	sleep:MS    actor.Sleep(MS)
+//	small       try to open with a 16 KB limit: print "small ok"
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/config"
+	"gogo/net"
+	"gogo/port"
+	"gogo/strconv"
+	"gogo/strings"
+	"gogo/sys"
+)
+
+func cfg(key string, def int) int {
+	if s, ok := config.Get(key); ok {
+		n, _ := strconv.Atoi(s)
+		return n
+	}
+	return def
+}
+
+func dialCfg() net.DialTLS {
+	host, _ := config.Get("test.host")
+	return net.DialTLS{IP: 10<<24 | 1, Port: 443, TimeoutMs: cfg("test.timeout", 0), Host: host}
+}
+
+// connect waits for Connected or Closed.
+func connect() {
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Connected:
+			println("connected")
+			return
+		case net.Closed:
+			println("closed", m.Reason)
+			return
+		}
+	}
+}
+
+func pattern(n, off int) bytes.Bytes {
+	b := bytes.NewBuffer(n)
+	for i := 0; i < n; i++ {
+		b.WriteByte(byte((off + i) % 251))
+	}
+	return b.Freeze()
+}
+
+func upload(c actor.PID, total int) {
+	sent, inflight := 0, 0
+	for sent < total || inflight > 0 {
+		for inflight < 2 && sent < total {
+			n := total - sent
+			if n > 4096 {
+				n = 4096
+			}
+			actor.Send(c, net.Write{Data: pattern(n, sent)})
+			sent += n
+			inflight++
+		}
+		switch m := actor.Receive().(type) {
+		case net.Written:
+			inflight--
+		case net.Closed:
+			println("closed", m.Reason)
+			return
+		}
+	}
+	println("uploaded", total)
+}
+
+// recv takes total pattern bytes starting at pattern position pos; returns
+// the position after them.
+func recv(pos, total int) int {
+	got, bad := 0, 0
+	for got < total {
+		switch m := actor.Receive().(type) {
+		case net.Data:
+			for i := 0; i < m.Data.Len(); i++ {
+				if int(m.Data.At(i)) != (pos+i)%251 {
+					bad++
+				}
+			}
+			pos += m.Data.Len()
+			got += m.Data.Len()
+		case net.Closed:
+			println("recv", got, "closed", m.Reason)
+			return pos
+		}
+	}
+	println("recv", got, "bad", bad)
+	return pos
+}
+
+func echo(total int) {
+	text := ""
+	for len(text) < total {
+		switch m := actor.Receive().(type) {
+		case net.Data:
+			text += m.Data.String()
+		case net.Closed:
+			println("echo", text, "closed", m.Reason)
+			return
+		}
+	}
+	println("echo", text)
+}
+
+func recvall() {
+	got := 0
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Data:
+			got += m.Data.Len()
+		case net.Closed:
+			println("recvall", got, "closed", m.Reason)
+			return
+		}
+	}
+}
+
+// waitFor waits for Written (true) or Closed (false, printed).
+func waitWritten() {
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Written:
+			println("written")
+			return
+		case net.Closed:
+			println("closed", m.Reason)
+			return
+		}
+	}
+}
+
+func waitClosed() {
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Closed:
+			println("closed", m.Reason)
+			return
+		}
+	}
+}
+
+func run() {
+	script, _ := config.Get("test.script")
+	c, _ := port.Open("none", net.IfConfig{}) // a PID that names nothing yet
+	pos := 0
+	for _, step := range strings.Split(script, " ") {
+		if step == "time" {
+			println("time", sys.SetTime(int64(cfg("test.time", 0))*1000))
+		} else if step == "dial" || step == "open" {
+			p, ok := port.Open("tls", dialCfg())
+			println(step, ok)
+			c = p
+			pos = 0
+			if ok && step == "dial" {
+				connect()
+			}
+		} else if step == "dialtime" {
+			t0 := actor.Now()
+			p, ok := port.Open("tls", dialCfg())
+			println("dial", ok)
+			c = p
+			pos = 0
+			if ok {
+				connect()
+				println("handshake sim ms", actor.Now()-t0)
+			}
+		} else if step == "dial2" {
+			p, ok := port.Open("tls", dialCfg())
+			println("dial2", ok)
+			if ok {
+				port.Close(p)
+			}
+		} else if strings.HasPrefix(step, "send:") {
+			actor.Send(c, net.Write{Data: bytes.FromString(step[5:])})
+			waitWritten()
+		} else if strings.HasPrefix(step, "upload:") {
+			n, _ := strconv.Atoi(step[7:])
+			upload(c, n)
+		} else if strings.HasPrefix(step, "recv:") {
+			n, _ := strconv.Atoi(step[5:])
+			pos = recv(pos, n)
+		} else if strings.HasPrefix(step, "echo:") {
+			n, _ := strconv.Atoi(step[5:])
+			echo(n)
+		} else if step == "recvall" {
+			recvall()
+		} else if step == "shut" {
+			actor.Send(c, net.Shutdown{})
+			waitClosed()
+		} else if step == "close" {
+			port.Close(c)
+			println("closed port")
+		} else if step == "exit" {
+			println("exit")
+			return
+		} else if strings.HasPrefix(step, "sleep:") {
+			n, _ := strconv.Atoi(step[6:])
+			actor.Sleep(n)
+		}
+	}
+	port.Close(c)
+}
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	script, _ := config.Get("test.script")
+	var a actor.PID
+	if strings.HasPrefix(script, "small") {
+		a = actor.SpawnOpt(func() {
+			sys.SetTime(int64(cfg("test.time", 0)) * 1000)
+			_, ok := port.Open("tls", dialCfg())
+			println("small", ok)
+		}, actor.Options{MaxMemory: 16 * 1024})
+	} else {
+		a = actor.SpawnOpt(run, actor.Options{MaxMemory: 64 * 1024})
+	}
+	actor.Monitor(a)
+	actor.Receive()
+	println("done")
+	port.Close(n)
+}

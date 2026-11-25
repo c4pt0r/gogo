@@ -19,7 +19,38 @@ STREAM_SRCS = $(wildcard runtime/stream/*.c)
 MAIN_SRCS = platform/unix/main.c platform/unix/fs_host.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(STREAM_SRCS)
 PLAT_HDRS = $(wildcard platform/unix/*.h) $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h)
 
-.PHONY: vmsize netsize all vm test test-c test-c-mcu test-net-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 console-ppm clean
+# The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
+# built here with runtime/net/tls/config (gogo_*_config.h) into its own static library,
+# linked into gogovm / gogovm_mcu only (never the VM core: `make vmsize` is
+# unaffected; `make tlssize` reports it). Without the source tree gogovm is
+# built without the port (and the tls tests skip).
+MBEDTLS_DIR ?= $(HOME)/esp/esp-idf/components/mbedtls/mbedtls
+ifneq ($(wildcard $(MBEDTLS_DIR)/library/ssl_tls.c),)
+MBEDTLS_TF   = $(MBEDTLS_DIR)/tf-psa-crypto
+MBEDTLS_SRCS = $(wildcard $(MBEDTLS_DIR)/library/*.c) $(wildcard $(MBEDTLS_TF)/core/*.c) \
+               $(wildcard $(MBEDTLS_TF)/drivers/builtin/src/*.c) $(wildcard $(MBEDTLS_TF)/extras/*.c) \
+               $(wildcard $(MBEDTLS_TF)/platform/*.c) $(wildcard $(MBEDTLS_TF)/utilities/*.c)
+MBEDTLS_OBJS = $(patsubst $(MBEDTLS_DIR)/%.c,$(BUILD)/mbedtls/%.o,$(MBEDTLS_SRCS))
+MBEDTLS_CFG  = -Iruntime/net/tls/config -DMBEDTLS_CONFIG_FILE='"gogo_mbedtls_config.h"' -DTF_PSA_CRYPTO_CONFIG_FILE='"gogo_crypto_config.h"'
+MBEDTLS_PUB  = $(MBEDTLS_CFG) -I$(MBEDTLS_DIR)/include -I$(MBEDTLS_TF)/include -I$(MBEDTLS_TF)/drivers/builtin/include
+MBEDTLS_PRIV = $(MBEDTLS_PUB) -Iruntime/net/tls/host -I$(MBEDTLS_DIR)/library -I$(MBEDTLS_TF)/core -I$(MBEDTLS_TF)/drivers/builtin/src \
+               -I$(MBEDTLS_TF)/dispatch -I$(MBEDTLS_TF)/utilities -I$(MBEDTLS_TF)/platform -I$(MBEDTLS_TF)/extras
+MBEDTLS_LIB  = $(BUILD)/libgogo_mbedtls.a
+TLS_SRCS     = runtime/net/tls/tls.c runtime/net/tls/anchor.c platform/unix/tls_unix.c
+TLS_CFLAGS   = -DGOGO_TLS -Iruntime/net/tls $(MBEDTLS_PUB)
+TLS_LINK     = $(TLS_SRCS) $(MBEDTLS_LIB)
+TLS_DEPS     = $(TLS_SRCS) $(wildcard runtime/net/tls/*.h) $(wildcard runtime/net/tls/config/*.h) $(MBEDTLS_LIB)
+
+$(BUILD)/mbedtls/%.o: $(MBEDTLS_DIR)/%.c $(wildcard runtime/net/tls/config/*.h)
+	@mkdir -p $(dir $@)
+	@$(CC) -std=c99 -O2 -g -w $(EXTRA_CFLAGS) $(MBEDTLS_PRIV) -c $< -o $@
+
+$(MBEDTLS_LIB): $(MBEDTLS_OBJS)
+	@rm -f $@
+	ar rcs $@ $(MBEDTLS_OBJS)
+endif
+
+.PHONY: vmsize netsize tlssize test-tls-asan all vm test test-c test-c-mcu test-net-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 console-ppm clean
 
 all: test
 
@@ -27,9 +58,9 @@ test: test-c test-c-mcu test-net-c test-vfs test-input test-stream test-fs-host 
 
 vm: $(BUILD)/gogovm
 
-$(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
+$(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-c: $(BUILD)/test_c
 	$(BUILD)/test_c
@@ -163,12 +194,21 @@ test-lib:
 
 # The network scenarios (dhcp, dns, ...) on a VM with the MCU actor memory
 # limit (16 KB per actor): the library actors must fit.
-$(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
+$(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-net-mcu: $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/
+
+# The net and tls scenarios on a gogovm (and its mbedTLS) built with
+# AddressSanitizer (build/asan). On macOS leaks are not reported (no
+# LeakSanitizer); the tls tests check the TLS heap returns to 0 instead.
+ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer
+test-tls-asan:
+	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net
+	build/asan/test_net
+	GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
 
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
@@ -203,6 +243,10 @@ vmsize:
 # runtime/net/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
 netsize:
 	tools/vmsize.sh --net
+
+# runtime/net/tls/ plus the mbedTLS it links, on the ESP32-S3 (-Os), reported apart from the VM core.
+tlssize:
+	MBEDTLS_DIR=$(MBEDTLS_DIR) tools/vmsize.sh --tls
 
 # runtime/vfs/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
 vfssize:

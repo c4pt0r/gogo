@@ -40,6 +40,14 @@ Msg *net_msg_new(uint32_t words) {
     return m;
 }
 
+bool net_room(Vm *vm, Actor *o, uint32_t words, uint32_t reserve) {
+    for (int k = 0; k < 2; k++) {
+        if ((uint32_t)o->mem_words + actor_charged_words(o) + words + reserve <= actor_max_words(o)) return true;
+        if (k || !heap_reclaim_waiting(vm, o)) break;
+    }
+    return false;
+}
+
 bool net_deliver(Vm *vm, Actor *o, Msg *m, uint32_t reserve) {
     for (int k = 0; k < 2; k++) {
         if ((uint32_t)o->mem_words + actor_charged_words(o) + msg_charge_words(m) + reserve <=
@@ -156,7 +164,8 @@ static bool s_subscribe(Vm *vm, Actor *a) {
 /* ---- the port-layer source ---- */
 
 static bool s_pending(void) {
-    return net_s.rx_ready || net_s.link_pending || net_s.dirty || owed_due() || tcp_due();
+    return net_s.rx_ready || net_s.link_pending || net_s.dirty || owed_due() || tcp_due() ||
+           (net_s.upper && net_s.upper->pending());
 }
 
 static void s_drain(Vm *vm, uint64_t now) {
@@ -194,6 +203,7 @@ static void s_drain(Vm *vm, uint64_t now) {
     if (net_s.dirty) report(vm);
     if (owed_due()) retry_owed(vm);
     tcp_poll(vm);
+    if (net_s.upper && net_s.upper->pending()) net_s.upper->drain(vm);
 }
 
 /* Orphan connections finish their close even with no actor left. */
@@ -202,10 +212,15 @@ static bool s_any_live(const Vm *vm) { (void)vm; return tcp_any_orphan(); }
 static bool s_next_deadline(const Vm *vm, uint64_t *deadline) {
     (void)vm;
     bool have = tcp_next_deadline(deadline);
+    uint64_t d;
+    if (net_s.upper && net_s.upper->next_deadline && net_s.upper->next_deadline(&d) && (!have || d < *deadline)) {
+        *deadline = d;
+        have = true;
+    }
     if (net_s.sub_owed) {
         uint64_t now = platform_now_ms();
         int32_t left = (int32_t)(net_s.sub_retry_at - (uint32_t)now);
-        uint64_t d = left > 0 ? now + (uint32_t)left : now;
+        d = left > 0 ? now + (uint32_t)left : now;
         if (!have || d < *deadline) *deadline = d;
         have = true;
     }
@@ -266,5 +281,5 @@ static void n_command(Vm *vm, const Actor *from, Port *p, term msg) {
 }
 
 const PortDriver net_netif_driver = {
-    "netif", TYPE_NET_IFCONFIG, TYPE_NET_UP, n_open, NULL, n_close, n_can_event, NULL, n_command
+    "netif", TYPE_NET_IFCONFIG, TYPE_NET_UP, n_open, NULL, n_close, n_can_event, NULL, n_command, NULL
 };
