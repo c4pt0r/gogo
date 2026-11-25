@@ -49,15 +49,14 @@ static const PortDriver *const drivers[] = { &input_kbd_driver, &input_power_dri
 static void setup(void) {
     platform_unix_arena_forget();
     va_reset(&vm);
-    evq_reset();
     bytes_reset(&vm);
     fake_reset();
     now = 0;
     platform_unix_set_clock(clock_fn);
-    port_set_drivers(drivers);
-    fake_install_once();
     mini_image();
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
+    fake_install(&vm);
     owner = actor_new(&vm, 256);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -67,7 +66,6 @@ static void setup(void) {
 static void teardown(void) {
     port_close_all(&vm);
     platform_unix_set_clock(NULL);
-    port_set_drivers(NULL);
 }
 
 static term heap_str(Actor *a, const char *s) {
@@ -539,22 +537,22 @@ TEST(kbd_repeat_across_32bit_wrap) {
     teardown();
 }
 
-static bool k_nb_pending(void) { return false; }
-static void k_nb_drain(Vm *v, uint64_t n) { (void)v; (void)n; }
-static bool k_nb_live(const Vm *v) { (void)v; return false; }
-static bool k_nb_next(const Vm *v, uint64_t *d) { (void)v; (void)d; return false; }
+static bool k_nb_pending(const Vm *v, void *c) { (void)v; (void)c; return false; }
+static void k_nb_drain(Vm *v, void *c, uint64_t n) { (void)v; (void)c; (void)n; }
+static bool k_nb_live(const Vm *v, void *c) { (void)v; (void)c; return false; }
+static bool k_nb_next(const Vm *v, void *c, uint64_t *d) { (void)v; (void)c; (void)d; return false; }
 static const PortSource k_filler = { k_nb_pending, k_nb_drain, k_nb_live, k_nb_next, NULL };
 
 /* No free source slot: input_install logs and the port opens as absent hardware. */
 TEST(kbd_install_without_slot_disables_port) {
     setup();
-    input_uninstall();
+    input_uninstall(&vm);
     int n = 0;
-    while (n < 8 && port_add_source(&k_filler)) n++;
-    input_install();
+    while (n < 8 && port_add_source(&vm, &k_filler, NULL)) n++;
+    input_install(&vm);
     CHECK(!port_is(open_kbd(owner, 0, 0)));
-    for (int i = 0; i < n; i++) port_remove_source(&k_filler);
-    input_install();
+    for (int i = 0; i < n; i++) port_remove_source(&vm, &k_filler);
+    input_install(&vm);
     CHECK(port_is(open_kbd(owner, 0, 0)));
     teardown();
 }

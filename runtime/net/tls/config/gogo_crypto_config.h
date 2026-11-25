@@ -54,7 +54,7 @@
 #define MBEDTLS_PSA_ASSUME_EXCLUSIVE_BUFFERS
 
 /* Platform: memory through platform_tls_alloc / platform_tls_free, wall
- * clock through platform_unix_time_ms (certificate validity). */
+ * clock through vm_unix_time_ms (certificate validity). */
 #define MBEDTLS_PLATFORM_C
 #define MBEDTLS_PLATFORM_MEMORY
 #define MBEDTLS_HAVE_TIME

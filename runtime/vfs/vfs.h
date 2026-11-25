@@ -111,8 +111,10 @@ int vfs_rename(const char *a, uint32_t alen, const char *b, uint32_t blen);
 int vfs_replace(const char *tmp, uint32_t tlen, const char *p, uint32_t len); /* rename-over (WriteFile) */
 int vfs_usage(const char *prefix, uint32_t len, int32_t *used, int32_t *total);
 
-/* builtin.c (links against vm/): points vm_fs_builtin at the B_FS
- * implementation and its private `file` port driver. Mount first. */
-void vfs_install(void);
+/* builtin.c (links against vm/): points vm's fs_builtin hook at the B_FS
+ * implementation and its private `file` port driver. Mount first; call
+ * after vm_boot (vm_init clears the hook). */
+struct Vm;
+void vfs_install(struct Vm *vm);
 
 #endif

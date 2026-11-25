@@ -39,7 +39,7 @@
  *    gives Closed{TLS}.
  *  - Verification is always on: the platform's trust anchors
  *    (platform_tls_verify_setup), the certificate validity against the wall
- *    clock (platform_unix_time_ms) and the name against Host (SNI too).
+ *    clock (vm_unix_time_ms) and the name against Host (SNI too).
  *    Dial before the clock is set gives Closed{NoTime} (no connection is
  *    made); a certificate that fails gives Closed{BadCert}; any other TLS
  *    failure (an alert, a malformed record, memory) Closed{TLS}; the peer
@@ -100,7 +100,7 @@
 #define GOGO_TLS_HANDSHAKE_MS 30000u
 #endif
 /* 1: tls_init installs mbedTLS's process-global allocator
- * (platform_tls_alloc) and time source (platform_unix_time_ms), and tls.c
+ * (platform_tls_alloc) and time source (vm_unix_time_ms), and tls.c
  * defines mbedTLS's port functions mbedtls_psa_external_get_random
  * (platform_tls_random) and mbedtls_ms_time. 0: the platform's mbedTLS
  * port provides all of them (ESP-IDF, whose mbedTLS other components share:

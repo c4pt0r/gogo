@@ -64,8 +64,6 @@
 #define REDUCTIONS     1000u
 #define PRINT_MAX_DEPTH 16
 
-uint32_t (*vm_fs_builtin)(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs);
-
 /* ---- image helpers ---- */
 
 /* The function containing code offset pc: the last one whose code_off is
@@ -1207,7 +1205,7 @@ int interp_run(Vm *vm, Actor *a) {
             case B_UNIX_TIME: {
                 CHECK(rc == 0);
                 term t;
-                if (!make_int64(vm, a, platform_unix_time_ms(), &t)) CRASH(R_OUT_OF_MEMORY);
+                if (!make_int64(vm, a, vm_unix_time_ms(vm), &t)) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
                 R[ra] = t;
                 break;
@@ -1215,17 +1213,17 @@ int interp_run(Vm *vm, Actor *a) {
             case B_SET_UNIX_TIME: {
                 int64_t ms;
                 CHECK(rc == 1 && int64_val(vm, a, R[rb], &ms));
-                R[ra] = term_from_bool(platform_set_unix_time_ms(ms) != 0);
+                R[ra] = term_from_bool(vm_set_unix_time_ms(vm, ms) != 0);
                 break;
             }
             case B_RANDOM:
                 CHECK(rc == 0);
-                R[ra] = term_from_int((int32_t)(platform_random() & 0x3FFFFFFFu));
+                R[ra] = term_from_int((int32_t)(vm_random(vm) & 0x3FFFFFFFu));
                 break;
             case B_FS: case B_CODE: {
                 /* Both check ra+1 themselves (two-result ops only). */
                 uint32_t err = ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
-                             : vm_fs_builtin ? vm_fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
+                             : vm->fs_builtin ? vm->fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
                 RELOAD();      /* may GC */
                 if (err != R_NORMAL) CRASH(err);
                 break;
@@ -1303,8 +1301,9 @@ int vm_run(Vm *vm) {
         return 1;
     }
     Actor *a;
-    platform_time_reset();           /* time 0 for Now() and timers */
-    evq_reset();
+    /* time 0 for Now() and timers; the wall clock restarts with it */
+    vm_set_unix_time_ms(vm, platform_time_reset());
+    evq_reset(vm);
 
     for (;;) {
         sched_drain(vm);

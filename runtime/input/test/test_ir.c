@@ -52,15 +52,14 @@ static const PortDriver *const drivers[] = {
 static void setup(void) {
     platform_unix_arena_forget();
     va_reset(&vm);
-    evq_reset();
     bytes_reset(&vm);
     fake_reset();
     now = 0;
     platform_unix_set_clock(clock_fn);
-    port_set_drivers(drivers);
-    fake_install_once();
     mini_image();
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
+    fake_install(&vm);
     owner = actor_new(&vm, 256);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -69,7 +68,6 @@ static void setup(void) {
 static void teardown(void) {
     port_close_all(&vm);
     platform_unix_set_clock(NULL);
-    port_set_drivers(NULL);
 }
 
 static term heap_struct(Actor *a, uint32_t type, uint32_t n, const term *f) {
@@ -225,7 +223,7 @@ TEST(ir_tx_out_done_queue) {
     CHECK(port_is(tx));
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));                /* idle: no poll */
-    CHECK(!input_ir_tx_driver.can_event(&vm.ports[term_pid_slot(tx) - PORT_SLOT_BASE]));
+    CHECK(!input_ir_tx_driver.can_event(&vm, &vm.ports[term_pid_slot(tx) - PORT_SLOT_BASE]));
     fake_ir_tx_set_busy(true);
     send_out(owner, tx, F3, 3);
     static const uint16_t G[2] = { 1000, 1000 };
@@ -235,7 +233,7 @@ TEST(ir_tx_out_done_queue) {
     CHECK_EQ(ngot, 1);
     CHECK_EQ(got[0].len, -1);
     CHECK_EQ(got[0].seq, -1);
-    CHECK(input_ir_tx_driver.can_event(&vm.ports[term_pid_slot(tx) - PORT_SLOT_BASE]));
+    CHECK(input_ir_tx_driver.can_event(&vm, &vm.ports[term_pid_slot(tx) - PORT_SLOT_BASE]));
     step(0);
     CHECK_EQ(fake_ir_tx_starts(), 0);                   /* busy: waits (a frame of before) */
     fake_ir_tx_set_busy(false);
@@ -267,7 +265,7 @@ TEST(ir_tx_out_done_queue) {
     CHECK_EQ(ngot, 1);
     CHECK_EQ(got[0].seq, 2);
     CHECK(!port_next_deadline(&vm, &d));                /* nothing in flight */
-    CHECK(!input_ir_tx_driver.can_event(&vm.ports[term_pid_slot(tx) - PORT_SLOT_BASE]));
+    CHECK(!input_ir_tx_driver.can_event(&vm, &vm.ports[term_pid_slot(tx) - PORT_SLOT_BASE]));
     teardown();
 }
 
@@ -530,9 +528,9 @@ TEST(ir_rx_can_event_follows_live) {
     fake_live_hook(true);
     Port p;
     memset(&p, 0, sizeof p);
-    CHECK(input_ir_rx_driver.can_event(&p));
+    CHECK(input_ir_rx_driver.can_event(&vm, &p));
     fake_set_live(false);
-    CHECK(!input_ir_rx_driver.can_event(&p));
+    CHECK(!input_ir_rx_driver.can_event(&vm, &p));
     term rx = open_rx(owner, 10000);
     CHECK(port_is(rx));
     uint64_t d;

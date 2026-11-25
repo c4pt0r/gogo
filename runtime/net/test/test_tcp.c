@@ -60,9 +60,7 @@ static void setup(void) {
     uint32_t *w = img_w;
     platform_unix_arena_forget();
     va_reset(&vm);
-    evq_reset();
     bytes_reset(&vm);
-    port_set_drivers(NULL);
     memset(w, 0, sizeof img_w);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 2;
     w[4] = 6; w[5] = 1; w[6] = 0; w[7] = 0;
@@ -77,12 +75,12 @@ static void setup(void) {
     now_ms = 0;
     platform_unix_set_clock(fake_clock);
     platform_unix_net_set_tx(tx_hook);
-    net_attach();
+    net_attach(&vm);
 }
 
 static void teardown(void) {
     port_close_all(&vm);
-    net_detach();
+    net_detach(&vm);
     platform_unix_net_set_tx(NULL);
     platform_unix_set_clock(NULL);
 }
@@ -1059,7 +1057,7 @@ static Conn up_dial(int32_t timeout) {
     memset(&k, 0, sizeof k);
     memset(&up, 0, sizeof up);
     up.fin_post = -1;
-    port_set_drivers(up_list);
+    port_set_drivers(&vm, up_list);
     configure();
     k.o = new_actor();
     term f[3] = { heap_int(k.o, (int32_t)PEER_IP), term_from_int(80), term_from_int(timeout) };
@@ -1191,7 +1189,7 @@ static const PortDriver *const nc_list[] = { &nc_driver, NULL };
 
 TEST(tcp_hold_closed_without_connection) {
     setup();
-    port_set_drivers(nc_list);
+    port_set_drivers(&vm, nc_list);
     net_s.upper = &nc_upper;
     Actor *o = new_actor();
     term f[3] = { term_from_int(1), term_from_int(80), term_from_int(0) };

@@ -1,7 +1,7 @@
 /* B_FS: the gogo/fs builtin and its private `file` port driver.
  *
- * vm/ only holds the hook (vm_fs_builtin, platform.h) and one case in the
- * interpreter; vfs_install points the hook here. B_FS's first argument is
+ * vm/ only holds the hook (Vm.fs_builtin, platform.h) and one case in the
+ * interpreter; vfs_install(vm) points the hook here. B_FS's first argument is
  * the op (FS_OPEN..FS_WRITEAT, vfs.h), the rest are the op's arguments.
  * Two-result ops write (value, Err) into ra, ra+1 and check that ra+1 is
  * in the frame; the others write Err into ra only.
@@ -48,7 +48,7 @@ static int f_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
     return 0;
 }
 static void f_close(struct Vm *vm, Port *p) { (void)vm; vfs_close((int)p->state[0]); }
-static bool f_can_event(const Port *p) { (void)p; return false; }
+static bool f_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return false; }
 
 static const PortDriver file_drv = {
     "file", UINT32_MAX, UINT32_MAX, f_open, NULL, f_close, f_can_event, NULL, NULL, NULL
@@ -390,4 +390,4 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
     return R_NORMAL;
 }
 
-void vfs_install(void) { vm_fs_builtin = fs_builtin; }
+void vfs_install(Vm *vm) { vm->fs_builtin = fs_builtin; }

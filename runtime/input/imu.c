@@ -77,9 +77,9 @@ static void imu_close(struct Vm *vm, Port *p) {
     memset(&m, 0, sizeof m);
 }
 
-static void imu_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)p; (void)type; (void)f; (void)n; }
+static void imu_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm; (void)p; (void)type; (void)f; (void)n; }
 
-static bool imu_can_event(const Port *p) {
+static bool imu_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     (void)p;
     const InputHw *hw = platform_input();
     return !hw->live || hw->live();

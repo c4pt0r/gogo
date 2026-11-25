@@ -502,7 +502,7 @@ void tcp_close_port(Vm *vm, Port *p) {
     memset(c, 0, sizeof *c);         /* the port layer releases wr[] */
 }
 
-bool tcp_port_can_event(const Port *p) { return tcp_pcb_of(p) != NULL || p->state[1] != 0; }
+bool tcp_port_can_event(const struct Vm *vm, const Port *p) { (void)vm; return tcp_pcb_of(p) != NULL || p->state[1] != 0; }
 
 static void unpause(TcpPcb *c) {
     if (!(c->flags & TF_PAUSED)) return;
@@ -642,7 +642,7 @@ static void l_close(struct Vm *vm, Port *p) {
     memset(&net_s.lis[i], 0, sizeof net_s.lis[i]);
 }
 
-static bool l_can_event(const Port *p) { (void)p; return true; }
+static bool l_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return true; }
 
 const PortDriver net_tcp_listen_driver = {
     "tcp_listen", TYPE_NET_LISTEN, TYPE_NET_ACCEPTED, l_open, NULL, l_close, l_can_event, NULL, NULL, NULL

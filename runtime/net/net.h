@@ -120,13 +120,14 @@ extern const PortDriver net_udp_driver;
 extern const PortDriver net_tcp_driver;
 extern const PortDriver net_tcp_listen_driver;
 
-/* Starts the stack: resets its state, registers it as the port layer's
- * extra source and reads the link state (platform_net_link_up). Call
- * before vm_run on a platform with a network; without it the ports refuse
- * to open and received frames are dropped. */
-void net_attach(void);
+/* Starts the stack: resets its state, registers it as vm's extra port
+ * source and reads the link state (platform_net_link_up). Call after
+ * vm_boot (vm_init clears the source list) and before vm_run on a platform
+ * with a network; without it the ports refuse to open and received frames
+ * are dropped. */
+void net_attach(struct Vm *vm);
 /* Unregisters it (tests). */
-void net_detach(void);
+void net_detach(struct Vm *vm);
 
 /* Bytes of fixed state (RX/TX buffers, tables, counters); <= NET_FIXED_LIMIT. */
 uint32_t net_fixed_bytes(void);

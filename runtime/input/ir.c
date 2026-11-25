@@ -89,7 +89,7 @@ static void tx_command(Vm *vm, const Actor *from, Port *p, term msg) {
     if (stream_out_accept(vm, from, p, out_of(p), msg, tx_timings_ok) != 0) ir.tx_next = (uint32_t)platform_now_ms();
 }
 
-static bool tx_can_event(const Port *p) {
+static bool tx_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     const StreamOut *o = (const StreamOut *)(const void *)p->state;
     return o->n || o->owed_n;                 /* Dones are coming */
 }
@@ -128,9 +128,9 @@ static void rx_close(struct Vm *vm, Port *p) {
     ir.rx = NULL;
 }
 
-static void rx_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)p; (void)type; (void)f; (void)n; }
+static void rx_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm; (void)p; (void)type; (void)f; (void)n; }
 
-static bool rx_can_event(const Port *p) {
+static bool rx_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     (void)p;
     const InputHw *hw = platform_input();
     return !hw->live || hw->live();

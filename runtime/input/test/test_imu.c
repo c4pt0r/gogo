@@ -47,15 +47,14 @@ static const PortDriver *const drivers[] = { &input_kbd_driver, &input_power_dri
 static void setup(void) {
     platform_unix_arena_forget();
     va_reset(&vm);
-    evq_reset();
     bytes_reset(&vm);
     fake_reset();
     now = 0;
     platform_unix_set_clock(clock_fn);
-    port_set_drivers(drivers);
-    fake_install_once();
     mini_image();
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
+    fake_install(&vm);
     owner = actor_new(&vm, 256);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -64,7 +63,6 @@ static void setup(void) {
 static void teardown(void) {
     port_close_all(&vm);
     platform_unix_set_clock(NULL);
-    port_set_drivers(NULL);
 }
 
 
@@ -435,9 +433,9 @@ TEST(imu_can_event_follows_live) {
     fake_live_hook(true);
     Port p;
     memset(&p, 0, sizeof p);
-    CHECK(input_imu_driver.can_event(&p));
+    CHECK(input_imu_driver.can_event(&vm, &p));
     fake_set_live(false);
-    CHECK(!input_imu_driver.can_event(&p));
+    CHECK(!input_imu_driver.can_event(&vm, &p));
     teardown();
 }
 

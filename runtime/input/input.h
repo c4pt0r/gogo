@@ -152,11 +152,12 @@ const InputHw *platform_input(void);
 extern const PortDriver input_kbd_driver, input_power_driver, input_imu_driver, input_ir_tx_driver,
     input_ir_rx_driver, input_mic_driver, input_spk_driver;
 
-/* Registers the input source (call once at startup). */
-void input_install(void);
+/* Registers the input source on vm (once per Vm, after vm_boot: vm_init
+ * clears the source list). */
+void input_install(struct Vm *vm);
 /* If the source could not be registered (every slot taken), a line is logged
  * and the kbd and power ports refuse to open, as on absent hardware. */
-void input_uninstall(void);   /* tests: removes the source so input_install can run again */
+void input_uninstall(struct Vm *vm);   /* tests: removes the source so input_install can run again */
 
 /* Key codes are USB HID usages; Fn has no usage, gogo uses 0xF0. */
 enum { KEY_CTRL = 0xE0, KEY_SHIFT = 0xE1, KEY_ALT = 0xE2, KEY_OPT = 0xE3, KEY_FN = 0xF0 };

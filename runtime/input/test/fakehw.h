@@ -20,7 +20,7 @@ int fake_kbd_reads(void);              /* kbd_read calls */
 void fake_kbd_stuck(bool on);          /* INT stuck low: kbd_pending stays true on an empty FIFO */
 void fake_fail_read_after(int n);   /* the (n+1)th kbd_read from now returns -1 */
 int fake_opens(void), fake_closes(void);
-void fake_install_once(void);          /* input_install() once per test binary */
+void fake_install(struct Vm *vm);       /* input_install(vm): once per Vm, after vm_init */
 
 /* Power: fake_reset() installs a power chip at 3700 mV, not charging, no external. */
 void fake_no_power(void);              /* power_read == NULL */

@@ -43,6 +43,7 @@ typedef struct TlsConn {
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
     void *verify;               /* the platform's (platform_tls_verify_setup) */
+    const Vm *vm;               /* the Vm whose port this is (its wall clock) */
     TcpPcb *c;
     /* Output in flight (bio_send): mbedTLS's own buffer from tx_base, tx_len
      * bytes, of which tx_acked are acknowledged but not yet reported. */
@@ -93,7 +94,8 @@ static void *tls_calloc(size_t n, size_t size) {
 }
 
 static mbedtls_time_t tls_time(mbedtls_time_t *t) {
-    mbedtls_time_t now = (mbedtls_time_t)(platform_unix_time_ms() / 1000);
+    /* mbedTLS asks only while verifying a peer: the open connection's Vm. */
+    mbedtls_time_t now = (mbedtls_time_t)(tc ? vm_unix_time_ms(tc->vm) / 1000 : 0);
     if (t) *t = now;
     return now;
 }
@@ -512,7 +514,7 @@ static int t_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
     uint8_t probe;
     if (!tls_init() || platform_tls_random(&probe, 1) != 0) return -1;   /* no secure randomness: no TLS */
     net_s.upper = &upper;
-    if (platform_unix_time_ms() <= 0) {         /* certificates cannot be checked */
+    if (vm_unix_time_ms(vm) <= 0) {             /* certificates cannot be checked */
         tcp_hold_closed(p, CR_NOTIME);
         return 0;
     }
@@ -528,6 +530,7 @@ static int t_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
         return -1;
     }
     t->c = c;
+    t->vm = vm;
     tc = t;
     c->flags |= TF_UPPER;
     p->charge_words = (uint16_t)(p->charge_words + TLS_CHARGE_WORDS);

@@ -72,19 +72,17 @@ void platform_unix_arena_forget(void);
 static void setup(void) {
     platform_unix_arena_forget();   /* setup may run many times in one test */
     va_reset(&vm);
-    evq_reset();
     bytes_reset(&vm);
-    port_set_drivers(NULL);
     mini_image();
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
     memset(&tx, 0, sizeof tx);
     platform_unix_net_set_tx(tx_hook);
-    net_attach();
+    net_attach(&vm);
 }
 
 static void teardown(void) {
     port_close_all(&vm);
-    net_detach();
+    net_detach(&vm);
     platform_unix_net_set_tx(NULL);
 }
 
@@ -348,10 +346,9 @@ TEST(net_mem_report) {
 
 TEST(net_ports_refused_unattached) {
     va_reset(&vm);
-    evq_reset();
     mini_image();
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
-    net_detach();
+    net_detach(&vm);
     Actor *a = new_actor();
     CHECK(open_netif(a) == T_NIL);
     CHECK(open_udp(a, 7) == T_NIL);

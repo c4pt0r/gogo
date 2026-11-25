@@ -9,7 +9,7 @@
  *
  * Drivers never see terms: the VM decodes the int fields of the cfg and
  * command structs into an int32 array, and a driver reports input by
- * pushing PortEvent{index, gen, a, b, time_ms} to the event ring (evq.h)
+ * pushing PortEvent{index, gen, a, b, time_ms} to the VM's event ring (evq.h)
  * and calling platform_notify(). The scheduler drains the ring (port_drain)
  * and sends the owner an `event_type` struct {a, b} as an ordinary message,
  * subject to its mailbox quota. Events whose (index, gen) no longer names
@@ -65,9 +65,9 @@ typedef struct PortDriver {
     /* cfg: the cfg struct's int fields in order. 0 = ok, else refuse. */
     int  (*open)(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n);
     /* A command struct of reserved type `type` whose fields are all int. */
-    void (*command)(Port *p, uint32_t type, const int32_t *f, uint32_t n);
+    void (*command)(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n);
     void (*close)(struct Vm *vm, Port *p);
-    bool (*can_event)(const Port *p);   /* may still produce events */
+    bool (*can_event)(const struct Vm *vm, const Port *p);   /* may still produce events */
     /* Optional (NULL = none): called after port_handoff gave p to a new
      * owner (or to the same one: Handoff to itself), e.g. to resume a
      * paused connection. */
@@ -131,7 +131,7 @@ void port_close_all(struct Vm *vm);                      /* VM shutdown: close e
 void port_drain(struct Vm *vm, uint64_t now);            /* ring -> messages, debounce */
 bool port_next_deadline(const struct Vm *vm, uint64_t *deadline);   /* pending trailing debounce */
 bool port_any_live(const struct Vm *vm);
-void port_set_drivers(const PortDriver *const *list);        /* tests; NULL = platform list */
+void port_set_drivers(struct Vm *vm, const PortDriver *const *list);   /* NULL = platform list; after vm_init */
 
 /* Gives port pid to actor `to` if `from` owns it: the charge, the pinned
  * Bytes (re-pinned for `to`, released for `from`) and later events move;
@@ -159,8 +159,9 @@ void port_bytes_release(struct Vm *vm, Port *p, term h);
  * has work it can do NOW (it may be called from the scheduler at any time);
  * drain: runs on the scheduler thread inside port_drain; any_live: keeps
  * the VM running; next_deadline (optional): an absolute platform_now_ms
- * deadline folded into the idle wait. Up to GOGO_MAX_SOURCES, visited in no
- * fixed order.
+ * deadline folded into the idle wait. Each callback gets the ctx given to
+ * port_add_source. Up to GOGO_MAX_SOURCES per Vm, visited in no fixed
+ * order.
  *
  * The rule pending must keep: the scheduler never sleeps while any
  * pending() is true (port_due_now), it drains again at once. So pending
@@ -173,17 +174,23 @@ void port_bytes_release(struct Vm *vm, Port *p, term h);
  * source must count those passes and back off (as kbd does for a failing
  * read or an INT line stuck low). */
 typedef struct PortSource {
-    bool (*pending)(void);
-    void (*drain)(struct Vm *vm, uint64_t now);
-    bool (*any_live)(const struct Vm *vm);
-    bool (*next_deadline)(const struct Vm *vm, uint64_t *deadline);
+    bool (*pending)(const struct Vm *vm, void *ctx);
+    void (*drain)(struct Vm *vm, void *ctx, uint64_t now);
+    bool (*any_live)(const struct Vm *vm, void *ctx);
+    bool (*next_deadline)(const struct Vm *vm, void *ctx, uint64_t *deadline);
     /* Optional: builtin net.Subscribe for actor a (false = refused). */
-    bool (*subscribe)(struct Vm *vm, struct Actor *a);
+    bool (*subscribe)(struct Vm *vm, void *ctx, struct Actor *a);
 } PortSource;
-/* Registers s; false when GOGO_MAX_SOURCES are in. s must not already be
- * registered; removal does not keep the registration order. */
-bool port_add_source(const PortSource *s);
-void port_remove_source(const PortSource *s);   /* unknown is ignored */
+/* A registered source: Vm.sources[], terminated by s == NULL. */
+typedef struct PortSrcSlot {
+    const PortSource *s;
+    void *ctx;
+} PortSrcSlot;
+/* Registers s with ctx on vm (after vm_init, which starts the list empty);
+ * false when GOGO_MAX_SOURCES are in. s must not already be registered;
+ * removal does not keep the registration order. */
+bool port_add_source(struct Vm *vm, const PortSource *s, void *ctx);
+void port_remove_source(struct Vm *vm, const PortSource *s);   /* unknown is ignored */
 
 /* Sends p's owner struct `type` with n <= PORT_MAX_FIELDS int fields (bit i
  * of bool_mask set: field i is a bool, true when v[i] != 0). Non-fatal:

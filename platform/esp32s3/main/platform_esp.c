@@ -168,18 +168,21 @@ uint64_t platform_now_ms(void) { return platform_esp_ms(); }
 
 uint32_t platform_random(void) { return esp_random(); }
 
-/* The wall clock (runtime/vm/platform.h) is the system clock (gettimeofday), so
- * everything that reads time() agrees with gogo/sys: ESP-IDF's mbedTLS
+/* The system clock (gettimeofday) as a wall clock, so everything that
+ * reads time() can agree with gogo/sys: ESP-IDF's mbedTLS
  * (CONFIG_MBEDTLS_HAVE_TIME_DATE) checks certificate validity with time()
  * and gmtime_r, and the tls port runs with GOGO_TLS_MBEDTLS_HOOKS 0 (it
  * installs no time hook into the shared mbedTLS). Unknown until set: the
  * system clock starts at 1970 on every boot (no battery-backed RTC), and
- * wall_known keeps that from counting as a time. Same floor as the weak
- * default (runtime/vm/walltime.c). Not touched by platform_time_reset. Scheduler
+ * wall_known keeps that from counting as a time. Same floor as the VM's
+ * (vm_set_unix_time_ms). Not touched by platform_time_reset. Scheduler
  * thread only. */
 static bool wall_known;
 
-int64_t platform_unix_time_ms(void) {
+int64_t esp_unix_time_ms(void);
+int esp_set_unix_time_ms(int64_t ms);
+
+int64_t esp_unix_time_ms(void) {
     if (!wall_known) return 0;
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -187,7 +190,7 @@ int64_t platform_unix_time_ms(void) {
     return ms > 0 ? ms : 1;
 }
 
-int platform_set_unix_time_ms(int64_t ms) {
+int esp_set_unix_time_ms(int64_t ms) {
     if (ms > 0 && ms < GOGO_BUILD_UNIX_MS) return 0;
     struct timeval tv = {0, 0};
     if (ms > 0) {
@@ -332,8 +335,12 @@ int platform_tls_random(uint8_t *out, size_t n) {
 }
 #endif
 
-/* vm_run start: Now() counts from here, after the LCD bring-up. */
-void platform_time_reset(void) { t0_us = esp_timer_get_time(); }
+/* vm_run start: Now() counts from here, after the LCD bring-up. The wall
+ * clock starts as the system clock (unknown after boot; SNTP sets it). */
+int64_t platform_time_reset(void) {
+    t0_us = esp_timer_get_time();
+    return esp_unix_time_ms();
+}
 
 /* Latched wakeup: the VM task's notification value counts notifies; a wait
  * takes (and clears) it, so a notify before or during a wait ends it. */

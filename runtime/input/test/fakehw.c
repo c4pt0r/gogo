@@ -226,10 +226,7 @@ int fake_closes(void) { return closes; }
 
 const InputHw *platform_input(void) { return &hw; }
 
-void fake_install_once(void) {
-    static bool installed;
-    if (!installed) { input_install(); installed = true; }   /* no duplicate check in port_add_source */
-}
+void fake_install(struct Vm *vm) { input_install(vm); }   /* once per Vm: no duplicate check in port_add_source */
 void fake_no_power(void) { hw.power_read = 0; hw.power_pending = 0; }
 void fake_power_set(int32_t mv, int8_t charging, int8_t external) { p_mv = mv; p_ch = charging; p_ext = external; }
 void fake_power_fail(bool fail) { p_fail = fail; }

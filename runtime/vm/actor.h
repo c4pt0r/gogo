@@ -14,6 +14,7 @@
 #include "config.h"
 #include "port.h"
 #include "alloc.h"
+#include "evq.h"
 
 typedef struct Msg Msg;   /* defined with the mailbox */
 typedef struct Timer Timer;   /* defined in timer.h */
@@ -76,9 +77,18 @@ typedef struct Vm {
     uint32_t bytes_used;      /* its live entries */
     void *reserve;            /* emergency reserve (signals.h), NULL while used up */
     bool reserve_wanted;      /* between vm_reserve_init and _release */
+    bool wall_known;          /* wall clock set (walltime.c) */
+    uint8_t ports_pending;    /* ports holding a trailing debounce value */
+    int64_t wall_offset;      /* unix ms - platform_now_ms at the last set */
+    /* Event ring indices (evq.h): head producer-only (ISR), tail consumer-only. */
+    volatile uint32_t evq_head, evq_tail, evq_dropped;
+    const PortDriver *const *drivers;   /* port_set_drivers; NULL = platform_port_drivers() */
+    PortSrcSlot sources[GOGO_MAX_SOURCES + 1u];   /* port_add_source; s NULL-terminated */
+    /* B_FS (vfs_install; NULL = no storage linked: bad code). */
+    uint32_t (*fs_builtin)(struct Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs);
     VaHeap va;                /* allocator (alloc.h): scalars, then its free lists */
     Port ports[GOGO_MAX_PORTS];   /* port table (port.h) */
-    uint8_t ports_pending;    /* ports holding a trailing debounce value */
+    PortEvent evq_slots[GOGO_EVQ_CAP];   /* event ring storage (evq.h), last: large */
 } Vm;
 
 /* Returns 0, or -1 if the table cannot be allocated or table_cap exceeds

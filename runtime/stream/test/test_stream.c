@@ -60,7 +60,7 @@ static int st_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, u
     return 0;
 }
 static void st_close(struct Vm *vm, Port *p) { (void)vm; closes++; stream_out_close(NULL, p, &so); }
-static bool st_can_event(const Port *p) { (void)p; return true; }
+static bool st_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return true; }
 static void st_command(Vm *v, const Actor *from, Port *p, term msg) {
     accepts++;
     last_rc = stream_out_accept(v, from, p, &so, msg, check);
@@ -78,11 +78,10 @@ static Port *port_at(term pid) { return &vm.ports[term_pid_slot(pid) - PORT_SLOT
 static void setup(void) {
     platform_unix_arena_forget();
     va_reset(&vm);
-    evq_reset();
     bytes_reset(&vm);
-    port_set_drivers(drivers);
     mini_image();
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
     owner = actor_new(&vm, 256);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -95,7 +94,6 @@ static void setup(void) {
 
 static void teardown(void) {
     port_close_all(&vm);
-    port_set_drivers(NULL);
 }
 
 /* ---- mailbox helpers ---- */

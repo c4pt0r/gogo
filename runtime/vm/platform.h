@@ -15,9 +15,11 @@ void *platform_chunk_alloc(size_t bytes);
 void platform_chunk_free(void *p, size_t bytes);
 
 /* Monotonic milliseconds since the last platform_time_reset (vm_run calls it
- * at start, so this is time since VM start on every platform). */
+ * at start, so this is time since VM start on every platform). It returns
+ * the wall clock the VM starts with (Unix ms, 0 = unknown; vm_run hands it
+ * to vm_set_unix_time_ms, so the floor applies). */
 uint64_t platform_now_ms(void);
-void platform_time_reset(void);
+int64_t platform_time_reset(void);
 
 /* Wall clock (Unix time in milliseconds, UTC). Separate from the monotonic
  * platform_now_ms: it can be unknown, and it can be set (sys.SetTime, set by
@@ -31,34 +33,31 @@ void platform_time_reset(void);
  * A time earlier than the floor is refused, so a clock set backwards can
  * never make a certificate that expired before the build valid again.
  *
- * platform_unix_time_ms returns the current Unix time in ms, or 0 when the
- * time is unknown (never set and the platform has no clock of its own). It
- * never returns a negative number; a time that is known is always > 0.
- * platform_set_unix_time_ms(ms) makes ms the current time from now on (it
- * keeps advancing with platform_now_ms) and returns 1; ms < GOGO_BUILD_UNIX_MS
- * (other than ms <= 0) changes nothing and returns 0; ms <= 0 forgets the
- * time (unknown) and returns 1. The VM calls neither by itself; scheduler
- * context only, never an ISR.
+ * vm_unix_time_ms(vm) returns the current Unix time in ms, or 0 when the
+ * time is unknown. It never returns a negative number; a time that is known
+ * is always > 0. vm_set_unix_time_ms(vm, ms) makes ms the current time from
+ * now on (it keeps advancing with platform_now_ms) and returns 1;
+ * ms < GOGO_BUILD_UNIX_MS (other than ms <= 0) changes nothing and returns
+ * 0; ms <= 0 forgets the time (unknown) and returns 1. Scheduler context
+ * only, never an ISR.
  *
- * vm/walltime.c has weak defaults that keep an offset against
- * platform_now_ms, starting unknown. A platform with a battery-backed RTC
- * defines both itself (and applies the floor). Unix (platform_time_reset)
- * starts from the host clock, or from $GOGO_UNIX_TIME_MS (a number of ms, 0 =
- * unknown; goldens use it; subject to the floor), and with --sim-clock starts
- * unknown. platform_time_reset restarts the monotonic clock, so a platform
- * keeping the offset must set the time again after it (unix does). */
+ * vm/walltime.c keeps the clock per Vm as an offset against
+ * platform_now_ms, unknown after vm_init. vm_run sets it from what
+ * platform_time_reset returns: unix gives the host clock, or
+ * $GOGO_UNIX_TIME_MS (a number of ms, 0 = unknown; goldens use it; subject
+ * to the floor), and unknown with --sim-clock; the ESP gives 0 (unknown). */
 #ifndef GOGO_BUILD_UNIX_MS
 #define GOGO_BUILD_UNIX_MS 1764000000000LL   /* 2025-11-24 */
 #endif
-int64_t platform_unix_time_ms(void);
-int platform_set_unix_time_ms(int64_t ms);
+struct Vm;
+int64_t vm_unix_time_ms(const struct Vm *vm);
+int vm_set_unix_time_ms(struct Vm *vm, int64_t ms);
 
 /* Randomness (sys.Random, gogo/sntp's nonce): 32 random bits, unpredictable
- * to a network peer. Platforms define it from the hardware (unix:
- * getentropy, ESP: esp_random). vm/walltime.c has a weak default that mixes
- * the clocks and a counter: NOT unpredictable to a local attacker, only a
- * fallback for a platform without a source. */
+ * to a network peer. Every platform defines it from the hardware (unix:
+ * getentropy, ESP: esp_random); the VM reads it through vm_random(vm). */
 uint32_t platform_random(void);
+#define vm_random(vm) ((void)(vm), platform_random())
 
 /* Idle wait. Called by the scheduler when nothing is runnable: returns after
  * timeout_ms, or earlier when an event may have been pushed to the event
@@ -85,15 +84,11 @@ void platform_barrier(void);
  * The VM never asks for "wifi." keys. */
 int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uint32_t cap);
 
-/* Storage (gogo/fs): B_FS calls this hook with BUILTIN's ra, rb, rc and
- * the frame's register count (ra and rb..rb+rc-1 are checked; a
- * two-result op checks ra+1 itself). It returns R_NORMAL or the crash
- * reason and may GC. NULL (no storage linked): B_FS is badcode. Set by
- * vfs_install (vfs/builtin.c). */
-struct Vm;
-struct Actor;
-extern uint32_t (*vm_fs_builtin)(struct Vm *vm, struct Actor *a, uint32_t ra, uint32_t rb,
-                                 uint32_t rc, uint32_t nregs);
+/* Storage (gogo/fs): B_FS calls the Vm's fs_builtin hook (actor.h) with
+ * BUILTIN's ra, rb, rc and the frame's register count (ra and rb..rb+rc-1
+ * are checked; a two-result op checks ra+1 itself). It returns R_NORMAL or
+ * the crash reason and may GC. NULL (no storage linked): B_FS is badcode.
+ * Set by vfs_install(vm) (vfs/builtin.c). */
 
 /* The port drivers this platform provides (port.h), NULL-terminated. */
 struct PortDriver;

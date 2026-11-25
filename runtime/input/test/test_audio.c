@@ -57,15 +57,14 @@ static const PortDriver *const drivers[] = {
 static void setup(void) {
     platform_unix_arena_forget();
     va_reset(&vm);
-    evq_reset();
     bytes_reset(&vm);
     fake_reset();
     now = 0;
     platform_unix_set_clock(clock_fn);
-    port_set_drivers(drivers);
-    fake_install_once();
     mini_image();
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
+    fake_install(&vm);
     owner = actor_new(&vm, 2048);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -75,7 +74,6 @@ static void setup(void) {
 static void teardown(void) {
     port_close_all(&vm);
     platform_unix_set_clock(NULL);
-    port_set_drivers(NULL);
 }
 
 static term heap_struct(Actor *a, uint32_t type, uint32_t n, const term *f) {
@@ -288,7 +286,7 @@ TEST(mic_frames_in_order) {
         CHECK_EQ(got[i].first, i * 1600);
         CHECK(got[i].counts_up);
     }
-    CHECK(input_mic_driver.can_event(port_of(m)));
+    CHECK(input_mic_driver.can_event(&vm, port_of(m)));
     teardown();
 }
 
@@ -514,11 +512,11 @@ TEST(mic_deadline_after_eof) {
     fake_set_live(false);
     uint64_t d;
     CHECK(port_next_deadline(&vm, &d));                  /* data came: keep polling */
-    CHECK(input_mic_driver.can_event(port_of(m)));
+    CHECK(input_mic_driver.can_event(&vm, port_of(m)));
     fake_mic_fail(true);                                 /* nothing more comes */
     step(100);
     CHECK(!port_next_deadline(&vm, &d));
-    CHECK(!input_mic_driver.can_event(port_of(m)));
+    CHECK(!input_mic_driver.can_event(&vm, port_of(m)));
     fake_set_live(true);
     CHECK(port_next_deadline(&vm, &d));
     teardown();
@@ -591,9 +589,9 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     CHECK(port_is(s));
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));                 /* idle: no poll */
-    CHECK(!input_spk_driver.can_event(port_of(s)));
+    CHECK(!input_spk_driver.can_event(&vm, port_of(s)));
     send_out(owner, s, 6000, 7);
-    CHECK(input_spk_driver.can_event(port_of(s)));
+    CHECK(input_spk_driver.can_event(&vm, port_of(s)));
     CHECK(port_next_deadline(&vm, &d));
     CHECK_EQ(d, 0u);                                     /* started at once */
     step(0);
@@ -625,7 +623,7 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     for (uint32_t i = 0; i < 6000; i++) same = same && w[i] == (uint8_t)(i + 7);
     CHECK(same);
     CHECK(!port_next_deadline(&vm, &d));
-    CHECK(!input_spk_driver.can_event(port_of(s)));
+    CHECK(!input_spk_driver.can_event(&vm, port_of(s)));
     teardown();
 }
 
@@ -769,7 +767,7 @@ TEST(spk_close_while_playing) {
     fake_spk_set_idle();
     step(120);
     CHECK(owner->mbox_head == NULL);                     /* owed */
-    CHECK(input_spk_driver.can_event(port_of(s)));
+    CHECK(input_spk_driver.can_event(&vm, port_of(s)));
     port_close(&vm, s);
     owner->max_words = ROOMY;
     step(130);

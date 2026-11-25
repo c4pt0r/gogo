@@ -40,7 +40,6 @@ static void vm_task(void *arg) {
     /* Wi-Fi (driver only, no esp_netif/lwIP) and gogo's net stack. */
 #if CONFIG_GOGO_NET
     wifi_esp_start();
-    net_attach();
 #endif
     /* Storage: /flash (LittleFS on `gogofs`; formats on first boot) and
      * the B_FS builtin. Without /flash every fs path is NotMounted. */
@@ -52,8 +51,6 @@ static void vm_task(void *arg) {
 #else
     platform_esp_log("gogo: fs state %lu bytes", (unsigned long)fs_lfs_state_bytes());
 #endif
-    vfs_install();
-    input_install();   /* kbd + power source (spec input §5.6) */
     if (image_part_map(&words, &nwords) != 0) platform_esp_idle();
 
     /* Internal RAM left for the arena once the console (font tables) and
@@ -74,6 +71,12 @@ static void vm_task(void *arg) {
         platform_esp_say("gogo: out of memory");
         platform_esp_idle();
     }
+    /* After vm_boot: vm_init starts the Vm's source list and fs hook empty. */
+#if CONFIG_GOGO_NET
+    net_attach(&vm);
+#endif
+    vfs_install(&vm);
+    input_install(&vm);   /* kbd + power source */
 #if CONFIG_GOGO_NET
     wifi_esp_report_heap();
     platform_esp_log("gogo: net stack fixed state %lu bytes", (unsigned long)net_fixed_bytes());

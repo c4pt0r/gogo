@@ -16,40 +16,34 @@
 
 #define GEN_MASK 0xFFFu
 
-static const PortDriver *const *override;
-static const PortSource *sources[GOGO_MAX_SOURCES + 1u];   /* NULL-terminated */
+#define SOURCES_EACH(vm, q) for (const PortSrcSlot *q = (vm)->sources; q->s; q++)
 
-#define SOURCES_EACH(q) for (const PortSource *const *q = sources; *q; q++)
+void port_set_drivers(Vm *vm, const PortDriver *const *list) { vm->drivers = list; }
 
-void port_set_drivers(const PortDriver *const *list) { override = list; }
-
-bool port_add_source(const PortSource *s) {
-    const PortSource **q = sources;
-    while (*q) q++;
-    if (q == sources + GOGO_MAX_SOURCES) return false;
-    *q = s;
+bool port_add_source(Vm *vm, const PortSource *s, void *ctx) {
+    PortSrcSlot *q = vm->sources;
+    while (q->s) q++;
+    if (q == vm->sources + GOGO_MAX_SOURCES) return false;
+    q->s = s;
+    q->ctx = ctx;
     return true;
 }
 
 /* Order is not kept: the last source takes the freed slot. */
-void port_remove_source(const PortSource *s) {
-    const PortSource **q = sources, **l;
-    while (*q && *q != s) q++;
-    if (!*q) return;
-    for (l = q; l[1]; l++) {}
+void port_remove_source(Vm *vm, const PortSource *s) {
+    PortSrcSlot *q = vm->sources, *l;
+    while (q->s && q->s != s) q++;
+    if (!q->s) return;
+    for (l = q; l[1].s; l++) {}
     *q = *l;
-    *l = NULL;
+    l->s = NULL;
 }
 
 bool port_subscribe(Vm *vm, Actor *a) {
-    SOURCES_EACH(q) {
-        if ((*q)->subscribe) return (*q)->subscribe(vm, a);
+    SOURCES_EACH(vm, q) {
+        if (q->s->subscribe) return q->s->subscribe(vm, q->ctx, a);
     }
     return false;
-}
-
-static const PortDriver *const *drivers(void) {
-    return override ? override : platform_port_drivers();
 }
 
 bool port_is(term pid) {
@@ -65,8 +59,8 @@ static Port *port_of(Vm *vm, term pid) {
     return p->drv && p->id == pid ? p : NULL;
 }
 
-static const PortDriver *find_driver(const uint8_t *name, uint32_t len) {
-    const PortDriver *const *l = drivers();
+static const PortDriver *find_driver(const Vm *vm, const uint8_t *name, uint32_t len) {
+    const PortDriver *const *l = vm->drivers ? vm->drivers : platform_port_drivers();
     for (; l && *l; l++) {
         if (strlen((*l)->name) == len && (len == 0 || memcmp((*l)->name, name, len) == 0)) return *l;
     }
@@ -127,7 +121,7 @@ term port_open(Vm *vm, Actor *owner, term name, term cfg) {
     const uint8_t *nm;
     uint32_t len;
     if (!name_bytes(vm, owner, name, &nm, &len)) return T_NIL;
-    const PortDriver *drv = find_driver(nm, len);
+    const PortDriver *drv = find_driver(vm, nm, len);
     if (!drv) return T_NIL;
     if (drv->open_term) {
         const uint32_t *o = obj_of(vm, owner, cfg);
@@ -156,7 +150,7 @@ void port_command(Vm *vm, const Actor *from, term pid, term msg) {
     uint32_t type, n;
     int32_t f[PORT_MAX_FIELDS];
     if (!int_struct(vm, from, msg, &type, f, &n)) return;
-    p->drv->command(p, type, f, n);
+    p->drv->command(vm, p, type, f, n);
 }
 
 void port_close(Vm *vm, term pid) {
@@ -197,12 +191,12 @@ void port_close_all(Vm *vm) {
 }
 
 bool port_any_live(const Vm *vm) {
-    SOURCES_EACH(q) {
-        if ((*q)->any_live(vm)) return true;
+    SOURCES_EACH(vm, q) {
+        if (q->s->any_live(vm, q->ctx)) return true;
     }
     for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
         const Port *p = &vm->ports[i];
-        if (p->drv && p->drv->can_event && p->drv->can_event(p)) return true;
+        if (p->drv && p->drv->can_event && p->drv->can_event(vm, p)) return true;
     }
     return false;
 }
@@ -212,18 +206,17 @@ bool port_work_pending(const Vm *vm) {
 }
 
 bool port_due_now(const Vm *vm) {
-    (void)vm;
-    if (!evq_empty()) return true;
-    SOURCES_EACH(q) {
-        if ((*q)->pending()) return true;
+    if (!evq_empty(vm)) return true;
+    SOURCES_EACH(vm, q) {
+        if (q->s->pending(vm, q->ctx)) return true;
     }
     return false;
 }
 
 bool port_next_deadline(const Vm *vm, uint64_t *deadline) {
     uint64_t best = UINT64_MAX, d;
-    SOURCES_EACH(q) {
-        if ((*q)->next_deadline && (*q)->next_deadline(vm, &d) && d < best) best = d;
+    SOURCES_EACH(vm, q) {
+        if (q->s->next_deadline && q->s->next_deadline(vm, q->ctx, &d) && d < best) best = d;
     }
     for (uint32_t i = 0; vm->ports_pending && i < GOGO_MAX_PORTS; i++) {
         const Port *p = &vm->ports[i];
@@ -316,10 +309,10 @@ static uint64_t event_time(uint32_t ms, uint64_t now) {
 
 /* Pops at most GOGO_EVQ_CAP events per call, so a producer that keeps the ring
  * full cannot hold the scheduler here; the rest wait for the next pass (the
- * scheduler does not idle while evq_empty() is false). */
+ * scheduler does not idle while evq_empty(vm) is false). */
 void port_drain(Vm *vm, uint64_t now) {
     PortEvent e;
-    for (uint32_t n = 0; n < GOGO_EVQ_CAP && evq_pop(&e); n++) {
+    for (uint32_t n = 0; n < GOGO_EVQ_CAP && evq_pop(vm, &e); n++) {
         if (e.port >= GOGO_MAX_PORTS) continue;
         Port *p = &vm->ports[e.port];
         if (!p->drv || p->gen != e.gen) continue;   /* closed since: stale */
@@ -343,8 +336,8 @@ void port_drain(Vm *vm, uint64_t now) {
     if (vm->ports_pending) {
         for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) flush_due(vm, &vm->ports[i], now);
     }
-    SOURCES_EACH(q) {
-        if ((*q)->pending()) (*q)->drain(vm, now);
+    SOURCES_EACH(vm, q) {
+        if (q->s->pending(vm, q->ctx)) q->s->drain(vm, q->ctx, now);
     }
 }
 

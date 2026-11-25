@@ -8,7 +8,8 @@
  *
  * Inputs: an any-edge GPIO interrupt; the ISR reads the level, and for a
  * change that matches the configured edge pushes a PortEvent (timestamped
- * with platform_now_ms's clock) to the event ring and notifies the VM task.
+ * with platform_now_ms's clock) to the event ring of the VM that opened the
+ * pin (PinSlot.vm, the handler argument) and notifies the VM task.
  * The ISR never locks or allocates. The VM debounces (port.c); for a
  * single-edge pin the ISR also drops an edge that follows the previous
  * level change by less than the debounce time, so the bounce of a key's
@@ -41,10 +42,12 @@ enum { E_NONE = 0, E_RISING = 1, E_FALLING = 2, E_BOTH = 3 };
 
 static const uint8_t reserved[] = BOARD_RESERVED_PINS;
 
-/* Per-pin state shared with the ISR. The VM task fills the config fields
+/* Per-pin state shared with the ISR (its handler argument). The VM task
+ * fills the config fields (vm: whose event ring gets the pin's events)
  * before the handler is added and clears `open` after it is removed; the
  * ISR alone writes level and changed_ms while the pin is open. */
 typedef struct {
+    struct Vm *vm;
     uint16_t index, gen;
     uint16_t debounce_ms;
     uint8_t open, mode, edge;
@@ -79,12 +82,11 @@ static void gpio_isr(void *arg) {
     e.a = pin;
     e.b = level;
     e.time_ms = now;
-    evq_push(&e);
+    evq_push(s->vm, &e);
     platform_notify();
 }
 
 static int g_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
-    (void)vm;
     if (n != 4) return -1;
     int32_t pin = cfg[0], mode = cfg[1], edge = cfg[2];
     if (pin < 0 || pin >= NPINS || mode < M_INPUT || mode > M_OUTPUT || edge < E_NONE || edge > E_BOTH) return -1;
@@ -111,6 +113,7 @@ static int g_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
     if (gpio_config(&c) != ESP_OK) return -1;
 
     PinSlot *s = &pins[pin];
+    s->vm = vm;
     s->index = index;
     s->gen = p->gen;
     s->debounce_ms = p->debounce_ms;
@@ -127,7 +130,7 @@ static int g_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
     return 0;
 }
 
-static void g_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) {
+static void g_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm;
     if (type != TYPE_WRITE || n != 1 || p->state[1] != M_OUTPUT) return;
     gpio_set_level((gpio_num_t)p->state[0], f[0] != 0);
 }
@@ -144,7 +147,7 @@ static void g_close(struct Vm *vm, Port *p) {
     s->open = 0;
 }
 
-static bool g_can_event(const Port *p) { return p->state[1] != M_OUTPUT && p->state[2] != E_NONE; }
+static bool g_can_event(const struct Vm *vm, const Port *p) { (void)vm; return p->state[1] != M_OUTPUT && p->state[2] != E_NONE; }
 
 const PortDriver gpio_esp_driver = {
     "gpio", TYPE_GPIO, TYPE_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL, NULL

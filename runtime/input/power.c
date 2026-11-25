@@ -60,7 +60,7 @@ static void power_close(struct Vm *vm, Port *p) {
     if (platform_input()->power_enable) platform_input()->power_enable(false);
 }
 
-static void power_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) {
+static void power_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm;
     (void)f; (void)n;
     if (w.port != p || type != TYPE_POWER_READ) return;
     w.read_req = true;
@@ -70,7 +70,7 @@ static void power_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) 
     w.backoff = false;
 }
 
-static bool power_can_event(const Port *p) {
+static bool power_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     (void)p;
     const InputHw *hw = platform_input();
     return !hw->live || hw->live();

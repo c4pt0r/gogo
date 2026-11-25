@@ -127,14 +127,14 @@ static void mic_close(struct Vm *vm, Port *p) {
     au.mic = NULL;
 }
 
-static void mic_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)p; (void)type; (void)f; (void)n; }
+static void mic_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm; (void)p; (void)type; (void)f; (void)n; }
 
 static bool hw_live(void) {
     const InputHw *hw = platform_input();
     return !hw->live || hw->live();
 }
 
-static bool mic_can_event(const Port *p) {
+static bool mic_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     (void)p;
     return hw_live() || au.more;               /* dead hardware may still hold captured data */
 }
@@ -183,7 +183,7 @@ static void spk_command(Vm *vm, const Actor *from, Port *p, term msg) {
     au.spk_next = (uint32_t)platform_now_ms();   /* write it (or flush a Done{-1}) at once */
 }
 
-static bool spk_can_event(const Port *p) {
+static bool spk_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     const StreamOut *o = (const StreamOut *)(const void *)p->state;
     return o->n || o->owed_n;                  /* Dones are coming */
 }

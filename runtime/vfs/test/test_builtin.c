@@ -1,7 +1,7 @@
 /* B_FS (vfs/builtin.c) on a real VM against the memfs fake: every op's
  * results and Err numbers, the `file` port (owner check, charge, Handoff,
  * owner exit), Read's limits, the frame checks of the hook, and the
- * interpreter's B_FS case. Calls go straight through vm_fs_builtin on an
+ * interpreter's B_FS case. Calls go straight through vm.fs_builtin on an
  * actor with an NREGS-register frame: r0 (r1) = B_FS(r2 = op, r3.. = args). */
 #include "test.h"
 #include "actor.h"
@@ -39,13 +39,11 @@ static Vm vm;
 
 static void setup(void) {
     va_reset(&vm);
-    evq_reset();
     vfs_reset();
     memfs_init(0, false, true, 4000);        /* /flash: LittleFS-like, budget */
     memfs_init(1, true, false, -1);          /* /sd: FAT-like */
     CHECK(vfs_mount("/flash", &memfs_be[0]));
     CHECK(vfs_mount("/sd", &memfs_be[1]));
-    vfs_install();
     memset(w, 0, sizeof w);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = 3; w[5] = 1; w[6] = 0; w[7] = 0;
@@ -55,6 +53,7 @@ static void setup(void) {
     w[15] = 1u;                              /* v7 const map: "main" at 0 */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    vfs_install(&vm);
 }
 
 static Actor *actor(uint16_t max_words) {
@@ -121,7 +120,7 @@ static uint32_t fs_at(Actor *a, uint32_t ra, int op, const char *fmt, ...) {
     }
     va_end(ap);
     R(a)[0] = R(a)[1] = T_NIL;
-    return vm_fs_builtin(&vm, a, ra, 2, 1 + n, NREGS);
+    return vm.fs_builtin(&vm, a, ra, 2, 1 + n, NREGS);
 }
 #define fs(a, op, ...) fs_at(a, 0, op, __VA_ARGS__)
 
@@ -707,8 +706,8 @@ TEST(fs_frame_bounds) {
     CHECK_EQ(fs(a, FS_MKDIR, "ss", "/flash/d", "/flash/e"), R_BAD_CODE);
     CHECK_EQ(fs(a, FS_MKDIR, ""), R_BAD_CODE);
     R(a)[2] = T_TRUE;                                          /* op not an int */
-    CHECK_EQ(vm_fs_builtin(&vm, a, 0, 2, 1, NREGS), R_BAD_CODE);
-    CHECK_EQ(vm_fs_builtin(&vm, a, 0, 2, 0, NREGS), R_BAD_CODE);
+    CHECK_EQ(vm.fs_builtin(&vm, a, 0, 2, 1, NREGS), R_BAD_CODE);
+    CHECK_EQ(vm.fs_builtin(&vm, a, 0, 2, 0, NREGS), R_BAD_CODE);
     done(a);
 }
 
@@ -716,6 +715,7 @@ TEST(fs_frame_bounds) {
  *   LOADK r0, op; LOADK r1, "/flash/d"; BUILTIN r2, r0, 2, B_FS; RECEIVE
  * so r2 is the last register and r2+1 is outside the frame. */
 #define RUN_WORDS 29
+static bool no_storage;   /* run_fs: leave the fs hook unset */
 static const char *run_fs(int op, Actor **out) {
     static uint32_t c[RUN_WORDS]; static Image im;
     memset(c, 0, sizeof c);
@@ -731,6 +731,7 @@ static const char *run_fs(int op, Actor **out) {
     c[26] = 1u | 8u;                         /* v7 const map: strings at 0, 3 */
     CHECK_EQ(image_load(&im, c, RUN_WORDS), IMG_OK);
     CHECK_EQ(vm_init(&vm, &im, 4), 0);
+    if (!no_storage) vfs_install(&vm);
     Actor *a = actor_new(&vm, 32);
     CHECK(a != NULL);
     CHECK(heap_push_frame(&vm, a, 3, -1));
@@ -755,11 +756,10 @@ TEST(fs_interp) {
     CHECK(d);
     CHECK(strstr(run_fs(FS_STAT, &a), "crashed: badcode") != NULL);   /* r3 missing */
     CHECK(a == NULL);
-    uint32_t (*hook)(struct Vm *, struct Actor *, uint32_t, uint32_t, uint32_t, uint32_t) = vm_fs_builtin;
-    vm_fs_builtin = NULL;                                      /* no storage linked */
+    no_storage = true;                                         /* no storage linked: no vfs_install */
     CHECK(strstr(run_fs(FS_MKDIR, &a), "crashed: badcode") != NULL);
     CHECK(a == NULL);
-    vm_fs_builtin = hook;
+    no_storage = false;
 }
 
 TEST(fs_image_v5_rejected) {

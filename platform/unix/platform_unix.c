@@ -82,7 +82,8 @@ uint64_t platform_now_ms(void) {
 
 /* The wall clock (platform.h) starts from $GOGO_UNIX_TIME_MS if set (0:
  * unknown), else from the host clock, but unknown under --sim-clock (the
- * network goldens set it with SNTP). The weak runtime/vm/walltime.c keeps it. */
+ * network goldens set it with SNTP). platform_time_reset hands it to vm_run,
+ * which keeps it in the Vm (runtime/vm/walltime.c). */
 static int64_t wall_start(void) {
     const char *e = getenv("GOGO_UNIX_TIME_MS");
     if (e) return (int64_t)strtoll(e, NULL, 10);
@@ -102,10 +103,10 @@ uint32_t platform_random(void) {
     return r;
 }
 
-void platform_time_reset(void) {
+int64_t platform_time_reset(void) {
     time_start = mono_ms();
     time_started = 1;
-    platform_set_unix_time_ms(wall_start());
+    return wall_start();
 }
 
 void platform_barrier(void) { __sync_synchronize(); }

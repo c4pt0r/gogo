@@ -148,7 +148,8 @@ static void resolve_gateway(void) {
     if (net_s.link_up && net_s.gw && ip_on_link(net_s.gw)) arp_request(net_s.gw);
 }
 
-static bool s_subscribe(Vm *vm, Actor *a) {
+static bool s_subscribe(Vm *vm, void *ctx, Actor *a) {
+    (void)ctx;
     uint32_t free = GOGO_NET_MAX_SUBS;
     for (uint32_t i = 0; i < GOGO_NET_MAX_SUBS; i++) {
         if (net_s.subs[i] == a->id) return true;
@@ -163,13 +164,14 @@ static bool s_subscribe(Vm *vm, Actor *a) {
 
 /* ---- the port-layer source ---- */
 
-static bool s_pending(void) {
+static bool s_pending(const Vm *vm, void *ctx) {
+    (void)vm; (void)ctx;
     return net_s.rx_ready || net_s.link_pending || net_s.dirty || owed_due() || tcp_due() ||
            (net_s.upper && net_s.upper->pending());
 }
 
-static void s_drain(Vm *vm, uint64_t now) {
-    (void)now;
+static void s_drain(Vm *vm, void *ctx, uint64_t now) {
+    (void)ctx; (void)now;
     if (net_s.link_pending) {
         net_s.link_pending = 0;
         platform_barrier();          /* flag cleared before the state is read */
@@ -207,10 +209,10 @@ static void s_drain(Vm *vm, uint64_t now) {
 }
 
 /* Orphan connections finish their close even with no actor left. */
-static bool s_any_live(const Vm *vm) { (void)vm; return tcp_any_orphan(); }
+static bool s_any_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return tcp_any_orphan(); }
 
-static bool s_next_deadline(const Vm *vm, uint64_t *deadline) {
-    (void)vm;
+static bool s_next_deadline(const Vm *vm, void *ctx, uint64_t *deadline) {
+    (void)vm; (void)ctx;
     bool have = tcp_next_deadline(deadline);
     uint64_t d;
     if (net_s.upper && net_s.upper->next_deadline && net_s.upper->next_deadline(&d) && (!have || d < *deadline)) {
@@ -229,17 +231,17 @@ static bool s_next_deadline(const Vm *vm, uint64_t *deadline) {
 
 static const PortSource net_source = { s_pending, s_drain, s_any_live, s_next_deadline, s_subscribe };
 
-void net_attach(void) {
+void net_attach(Vm *vm) {
     memset(&net_s, 0, sizeof net_s);
     udp_reset();
     tcp_reset();
     net_s.attached = platform_net_mac(net_s.mac);
     net_s.link_up = net_s.attached && platform_net_link_up();
-    (void)port_add_source(&net_source);
+    (void)port_add_source(vm, &net_source, NULL);
 }
 
-void net_detach(void) {
-    port_remove_source(&net_source);
+void net_detach(Vm *vm) {
+    port_remove_source(vm, &net_source);
     net_s.attached = 0;
 }
 
@@ -262,7 +264,7 @@ static void n_close(struct Vm *vm, Port *p) {
     net_s.dirty = 1;
 }
 
-static bool n_can_event(const Port *p) { (void)p; return true; }
+static bool n_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return true; }
 
 /* SetAddr{IP, Mask, Gateway, DNS}, from the owner only. */
 static void n_command(Vm *vm, const Actor *from, Port *p, term msg) {

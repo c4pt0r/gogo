@@ -181,7 +181,6 @@ int main(int argc, char **argv) {
     if (net_fd >= 0) {
         signal(SIGPIPE, SIG_IGN);        /* a closed link is EOF / a failed send, not death */
         platform_unix_net_open(net_fd, sim != 0);
-        net_attach();
     }
     if (fs_root) {
         /* /flash -> DIR/flash (created), /sd -> DIR/sd (only if it exists). */
@@ -211,8 +210,6 @@ int main(int argc, char **argv) {
             if (sd) vfs_mount("/sd", sd);
         }
     }
-    vfs_install();
-    input_install();
     setvbuf(stdout, NULL, _IOLBF, 0);
     const char *path = argv[1];
     FILE *f = fopen(path, "rb");
@@ -238,6 +235,10 @@ int main(int argc, char **argv) {
         if (rc == VM_BOOT_NO_MEMORY) fprintf(stderr, "gogovm: out of memory\n");
         return 1;                    /* VM_BOOT_REFUSED: the line is written */
     }
+    /* After vm_boot: vm_init starts the Vm's source list and fs hook empty. */
+    if (net_fd >= 0) net_attach(&vm);
+    vfs_install(&vm);
+    input_install(&vm);
     rc = vm_run(&vm);
 #ifdef GOGO_TLS
     tls_vm_peak = va_peak_bytes(&vm);

@@ -258,7 +258,7 @@ enum {
 TcpPcb *tcp_dial(Port *p, const int32_t *cfg, uint32_t n);
 TcpPcb *tcp_pcb_of(const Port *p);
 void tcp_close_port(struct Vm *vm, Port *p);
-bool tcp_port_can_event(const Port *p);
+bool tcp_port_can_event(const struct Vm *vm, const Port *p);
 void tcp_post(struct Vm *vm, const TcpPcb *c, uint32_t type, int32_t reason);
 bool tcp_flush(struct Vm *vm, Port *p);
 void tcp_hold_closed(Port *p, int32_t reason);

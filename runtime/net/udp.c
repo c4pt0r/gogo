@@ -60,7 +60,7 @@ static void u_close(struct Vm *vm, Port *p) {
     if (pcb) memset(pcb, 0, sizeof *pcb);
 }
 
-static bool u_can_event(const Port *p) { (void)p; return true; }
+static bool u_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return true; }
 
 /* SendTo{Addr{IP, Port}, Data}: the payload goes straight from the
  * sender's Bytes into the TX buffer. */

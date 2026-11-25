@@ -104,7 +104,7 @@ static void kbd_close(struct Vm *vm, Port *p) {
     reset(NULL);
 }
 
-static bool kbd_can_event(const Port *p) {
+static bool kbd_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     (void)p;
     const InputHw *hw = platform_input();
     return !hw->live || hw->live();

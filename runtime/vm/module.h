@@ -151,7 +151,7 @@ int module_hold(Vm *vm, Actor *a, uint32_t handle);
  * the module is gone); unloads it if that leaves neither holder nor actor. */
 void module_release(Vm *vm, Actor *a, uint32_t handle);
 
-/* B_CODE (the interpreter's BUILTIN, same contract as vm_fs_builtin): ra,
+/* B_CODE (the interpreter's BUILTIN, same contract as the fs_builtin hook): ra,
  * rb, rc and the frame's register count; R[rb] is the CODE_OP_*, the
  * operation's arguments follow. Two-result ops check ra+1 themselves.
  * Returns R_NORMAL or the caller's crash reason (R_BAD_CODE for a bad op,
