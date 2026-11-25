@@ -115,7 +115,7 @@ gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg) {
     if (!host_ok(h)) return NULL;
     if (!cfg) cfg = &zero_cfg;
     /* Refuse what this build cannot give, rather than mask it. */
-    if (cfg->caps & ~embed_board.caps) return NULL;
+    if ((cfg->caps & ~embed_board.caps) || cfg->fs_quota < 0) return NULL;
     gogo_vm *g = h->alloc(host_ctx, sizeof *g);
     if (!g) return NULL;
     memset(g, 0, sizeof *g);
@@ -124,9 +124,10 @@ gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg) {
     g->cfg = *cfg;
     g->refs = 1;
     make_fwd(g);
-    /* /flash needs no capability: every board has it. */
-    if (cfg->fs_root && (!(g->fs = fs_dir_open(h, host_ctx, cfg->fs_root, cfg->fs_quota)) ||
-                         !vfs_mount(&g->vfs, "/flash", &fs_dir_backend, g->fs))) {
+    /* /flash needs no capability: every board has it. fs_quota 0 is no
+     * quota (fs_dir: -1). */
+    if (cfg->fs_root && (!(g->fs = fs_dir_open(h, host_ctx, cfg->fs_root, cfg->fs_quota ? cfg->fs_quota : -1)) ||
+                         !vfs_mount(&g->vfs, "/flash", fs_dir_vfs(g->fs), g->fs))) {
         fs_dir_close(g->fs);
         h->free(host_ctx, g, sizeof *g);
         return NULL;

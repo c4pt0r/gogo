@@ -798,7 +798,7 @@ font.
   finished. The common driver is `runtime/input/audio.c`, and all data
   goes through `runtime/stream/`. Unix simulates the ports from the stdin
   script (`mic tone <hz> <ms>`, `mic silence <ms>`) and prints speaker
-  writes to stderr; `--fs-quota` (test only) simulates a full disk.
+  writes to stderr; `--fs-quota` (test only) simulates a full disk (a byte quota per medium).
 - **ESP32-S3** (`audio_esp.c`, Kconfig `GOGO_AUDIO`, on by default):
   ES8311 on the shared I2C bus (0x18); I2S_NUM_0 as master, Philips,
   simplex, created at open and deleted at close; the codec is clocked by

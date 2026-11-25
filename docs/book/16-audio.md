@@ -349,9 +349,13 @@ The speaker prints `spk: <n> bytes` on stderr for every write (at most 4096
 bytes) and plays in real time, so `Done` arrives as late as on the board.
 
 `--fs-root` gives `/flash` a directory on the host; for testing a full
-medium `gogovm` has the flag `--fs-quota <bytes>` (not in `gogo run`): the
-host file system fails every write beyond that many bytes in all with
-`fs.NoSpace`. The golden test `tests/golden/sound_diskfull` uses it.
+medium `gogovm` has the flag `--fs-quota <bytes>` (not in `gogo run`).
+Each medium (`/flash`, and `/sd` if present) then holds at most that many
+bytes of files: what is already in its directory counts from the start,
+deleting or truncating a file gives its bytes back, a write that does not
+fit stores what does and fails with `fs.NoSpace`, and `fs.Usage` reports
+the bytes used and the quota. `--fs-quota 0` is a full medium. The golden
+test `tests/golden/sound_diskfull` uses it.
 
 ## 16.6 Capabilities and firmware
 

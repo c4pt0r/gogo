@@ -5,7 +5,9 @@
  *          exit 0 when the run queue empties (also after a crash), 1 when
  *          the firmware lacks a capability the image needs, 2 on a usage
  *          or load error. --caps and --fs-quota are for tests: the
- *          firmware's capability bits, and a simulated full disk.
+ *          firmware's capability bits, and a simulated full disk:
+ *          each medium may hold BYTES of files (what is there counts,
+ *          deletes give room back; Usage reports used and BYTES).
  *   gogovm --sizeof-actor  prints sizeof(Actor)
  *   gogovm --sizeof-net    prints the net stack's fixed state in bytes
  *   gogovm --has-tls       exit 0 if built with the "tls" port (GOGO_TLS)
@@ -159,7 +161,8 @@ int main(int argc, char **argv) {
             fs_root = argv[2];
         } else if (strcmp(argv[1], "--fs-quota") == 0) {
             /* --fs-quota <bytes>: test only, the bytes the files of each
-             * medium may hold (fs_dir.h); a write past it is NoSpace. */
+             * medium may hold (fs_dir.h); a write past it is NoSpace, 0
+             * is a full medium. */
             char tail;
             long long q;
             if (sscanf(argv[2], "%lld%c", &q, &tail) != 1 || q < 0) {
@@ -189,7 +192,7 @@ int main(int argc, char **argv) {
     }
     unix_ports[nports] = NULL;
     if (argc != 2) {
-        fprintf(stderr, "usage: gogovm [--caps <hex>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes> (test)] [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
+        fprintf(stderr, "usage: gogovm [--caps <hex>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
         return 2;
     }
     if (net_fd >= 0) {
@@ -217,11 +220,11 @@ int main(int argc, char **argv) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot open flash directory\n", fs_root);
             return 2;
         }
-        vfs_mount(&vfs_state, "/flash", &fs_dir_backend, fs_flash);
+        vfs_mount(&vfs_state, "/flash", fs_dir_vfs(fs_flash), fs_flash);
         if (snprintf(dir, sizeof dir, "%s/sd", fs_root) < (int)sizeof dir &&
             stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) {
             fs_sd = fs_dir_open(&unix_host, NULL, dir, fs_quota);
-            if (fs_sd) vfs_mount(&vfs_state, "/sd", &fs_dir_backend, fs_sd);
+            if (fs_sd) vfs_mount(&vfs_state, "/sd", fs_dir_vfs(fs_sd), fs_sd);
         }
     }
     setvbuf(stdout, NULL, _IOLBF, 0);

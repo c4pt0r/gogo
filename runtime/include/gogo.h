@@ -124,12 +124,22 @@ typedef struct gogo_config {
      * NotMounted. The program is confined to it: paths are walked from the
      * directory without following symlinks (a symlink, FIFO or device is
      * BadPath, and so is opening a file with other hard links for
-     * writing). /sd is never mounted. The string is not kept. */
+     * writing). On a host file system that ignores case (macOS by
+     * default) /flash does too, as /sd does on a board. /sd is never
+     * mounted. The string is not kept.
+     * The directory must not be writable by other users (they could link
+     * their files in), and the roots of VMs running at the same time must
+     * not nest (an outer program moving a directory out of an inner root
+     * during the inner VM's walk would take that walk outside). */
     const char *fs_root;
-    /* The bytes the regular files under fs_root may hold (counted when the
-     * VM is made, then tracked per VM); a write past it stores what fits
-     * and is NoSpace, and fs.Usage reports (used, fs_quota). -1 = none (the
-     * host file system's own usage); note 0 allows nothing. */
+    /* 0 = no quota (the host file system's own limits; fs.Usage reports
+     * its usage). Else the bytes the regular files under fs_root may hold:
+     * what is there is counted when the VM is made (a walk of the whole
+     * tree), then the VM tracks how much each write grows a file and what
+     * truncation, removal and replacement give back; a write past it
+     * stores what fits and is NoSpace, and fs.Usage reports (used,
+     * fs_quota). Changes made by others (the host, another VM on the same
+     * directory) are not seen. Negative: gogo_new fails. */
     int64_t  fs_quota;
     int      allow_code_load; /* 0: code.Load returns NoMemory (bundled images only) */
 } gogo_config;
@@ -171,8 +181,8 @@ enum {
  * valid until the VM is freed and released. NULL if the table is
  * incomplete (write, alloc, free and now_ms are required; wake with wait;
  * the unix_time and code pairs both or neither), cfg is invalid (caps this
- * build cannot give, an fs_root that is not a directory) or memory runs
- * out. */
+ * build cannot give, a negative fs_quota, an fs_root that is not a
+ * directory) or memory runs out. */
 gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg);
 
 /* Loads the image (len bytes, little-endian words) as the VM's program.

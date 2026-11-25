@@ -1147,8 +1147,7 @@ TEST(embed_fs_root_symlink_refused) {
     CHECK_EQ(symlink(base, link), 0);
     TCtx t; tctx_init(&t);
     gogo_config c = { 0 };
-    c.fs_root = root;
-    c.fs_quota = -1;
+    c.fs_root = root;                   /* fs_quota 0: none */
     gogo_vm *vm = new_loaded(&t, "fsuse", &c);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_DONE);
@@ -1172,15 +1171,40 @@ TEST(embed_fs_root_bad) {
     if (f) fclose(f);
     TCtx t; tctx_init(&t);
     gogo_config c = { 0 };
-    c.fs_quota = -1;
     c.fs_root = file;
     CHECK(gogo_new(&thost, &t, &c) == NULL);
     c.fs_root = missing;
     CHECK(gogo_new(&thost, &t, &c) == NULL);
     c.fs_root = base;
+    c.fs_quota = -1;                    /* negative: invalid (0 is none) */
+    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    c.fs_root = NULL;
+    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    c.fs_root = base;
+    c.fs_quota = 0;
     t.fail_after = 1;                   /* the gogo_vm, not its FsDir */
     CHECK(gogo_new(&thost, &t, &c) == NULL);
     t.fail_after = -1;
     tctx_done(&t);
     rm_tree(base);
+}
+
+/* fs_quota 0 is no quota: the program fills past any small limit, and
+ * Usage reports the host file system. */
+TEST(embed_fs_quota_zero_is_unlimited) {
+    char root[256];
+    temp_dir(root, sizeof root);
+    TCtx t; tctx_init(&t);
+    gogo_config c = { 0 };
+    c.fs_root = root;
+    gogo_vm *vm = new_loaded(&t, "fsuse", &c);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_DONE);
+    CHECK(strncmp(t.out, "write 0\nread hello 0\nstat 0\nmkdir 0\nreaddir 0\nbig 100000 0\nusage ", 65) == 0);
+    if (strncmp(t.out, "write 0\nread hello 0\nstat 0\nmkdir 0\nreaddir 0\nbig 100000 0\nusage ", 65))
+        printf("  out:[%s]\n", t.out);
+    CHECK(strstr(t.out, "rename 0\nremove 0\n") != NULL);
+    gogo_free(vm);
+    tctx_done(&t);
+    rm_tree(root);
 }

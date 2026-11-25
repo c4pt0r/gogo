@@ -372,6 +372,19 @@ the M5StickS3 and the Cardputer ADV. The design is in
 - **Test-only VM flags** (`--caps`, `--fs-quota`, `--net-fd`,
   `--sim-clock`) are not passed through by `gogo run`. *Workaround:* run
   `build/gogovm` directly on an image built with `gogo build`.
+- **`--fs-quota` is per medium** (`/flash` and `/sd` each), counts the
+  files already in the directory, and gives room back on delete and
+  truncation; it only sees the VM's own changes, so files the host adds
+  or removes meanwhile make it approximate.
+- **Host storage does not follow symlinks.** With `--fs-root` (and an
+  embedded VM's `fs_root`), a symlink inside the directory is `BadPath`
+  to open or walk through and `ReadDir` lists it as a file; FIFOs and
+  devices are `BadPath` too.
+- **Embedded VMs sharing a host directory.** VMs that run at the same
+  time must not have nested `fs_root` directories (an outer program could
+  move a directory out of an inner root while the inner VM walks it), and
+  the directory must not be writable by other users (they could hard-link
+  their files in, which the VM may then read). See `gogo_config.fs_root`.
 - **`tools/vmsize.sh --vfs`** reports a smaller fixed state than the
   boards have (it builds with the default slot size); the compile-time
   assertions in the board's file system glue are the real check.

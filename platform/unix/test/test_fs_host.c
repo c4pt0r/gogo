@@ -37,8 +37,8 @@ static void setup_quota(int64_t quota) {
     CHECK_EQ(mkdir(root, 0777), 0);
     CHECK_EQ(mkdir(out, 0777), 0);
     bc = fs_dir_open(&mhost, NULL, root, quota);
-    be = &fs_dir_backend;
     CHECK(bc != NULL);
+    be = bc ? fs_dir_vfs(bc) : &fs_dir_backend;
 }
 static void setup(void) { setup_quota(-1); }
 static void cleanup(void) {
@@ -391,7 +391,8 @@ TEST(sandbox_fifo) {
     int32_t sz;
     bool dir;
     CHECK_EQ(be->open(bc, f, "/fifo", VFS_READ), VFS_BADPATH);
-    CHECK(be->open(bc, f, "/fifo", VFS_WRITE) != VFS_OK);       /* ENXIO (no reader) or BadPath */
+    CHECK_EQ(be->open(bc, f, "/fifo", VFS_WRITE), VFS_BADPATH);  /* refused unopened */
+    CHECK_EQ(be->open(bc, f, "/fifo", VFS_APPEND), VFS_BADPATH);
     CHECK_EQ(be->stat(bc, "/fifo", &sz, &dir), VFS_BADPATH);
     cleanup();
 }
@@ -537,5 +538,83 @@ TEST(quota_tracks_usage) {
     CHECK_EQ(put("/d", "12345678", VFS_APPEND), VFS_OK);
     CHECK_EQ(put("/d", "9", VFS_APPEND), VFS_NOSPACE);
     fs_dir_close(other);
+    cleanup();
+}
+
+/* A write past the end of a file the host shrank under the handle pays
+ * for the hole; bytes the host added after the count never drive the
+ * count below 0. */
+TEST(quota_charges_growth) {
+    setup_quota(100);
+    uint8_t f[GOGO_FS_SLOT_BYTES] __attribute__((aligned(8))), b[100];
+    memset(b, 'x', sizeof b);
+    char p[256];
+    int32_t used, total;
+    in_root(p, sizeof p, "/late");
+    host_put(p, "12345678");                              /* not counted */
+    CHECK_EQ(be->remove(bc, "/late"), VFS_OK);
+    CHECK_EQ(be->usage(bc, &used, &total), VFS_OK);
+    CHECK_EQ(used, 0);                                    /* not -8 */
+    CHECK_EQ(be->open(bc, f, "/a", VFS_WRITE), VFS_OK);
+    CHECK_EQ(be->write(bc, f, b, 30), VFS_OK);            /* 30 */
+    in_root(p, sizeof p, "/a");
+    CHECK_EQ(truncate(p, 0), 0);                          /* behind the count: still 30 */
+    CHECK_EQ(be->write(bc, f, b, 60), VFS_NOSPACE);       /* at 30: up to 70 fits */
+    struct stat st;
+    CHECK_EQ(stat(p, &st), 0);
+    CHECK_EQ(st.st_size, 70);                             /* the hole is paid for */
+    CHECK_EQ(be->usage(bc, &used, &total), VFS_OK);
+    CHECK_EQ(used, 100);
+    be->close(bc, f);
+    cleanup();
+}
+
+/* On a host file system that ignores case, /a and /A are one file: the
+ * mount says so, vfs refuses a second writer, and the quota holds
+ * (the alias attack: truncate through /A under /a's writer, write past
+ * the hole, remove, repeat). Skipped where the file system respects case. */
+TEST(quota_case_alias) {
+    setup_quota(100000);
+    char lo[256], up[256];
+    struct stat st;
+    in_root(lo, sizeof lo, "/probe");
+    in_root(up, sizeof up, "/PROBE");
+    host_put(lo, "");
+    bool host_ci = stat(up, &st) == 0;
+    unlink(lo);
+    CHECK_EQ(fs_dir_vfs(bc)->case_insensitive, host_ci);
+    if (!host_ci) {
+        printf("  (case-sensitive file system here; skipped)\n");
+        cleanup();
+        return;
+    }
+    static uint8_t buf[100000];
+    memset(buf, 'x', sizeof buf);
+    vfs_reset(&vs);
+    CHECK(vfs_mount(&vs, "/flash", be, bc));
+    int32_t used, total;
+    for (int round = 0; round < 6; round++) {
+        int a, b;
+        CHECK_EQ(vfs_open(&vs, S("/flash/a"), VFS_WRITE, &a), VFS_OK);
+        CHECK_EQ(vfs_write(&vs, a, buf, 50000), VFS_OK);
+        CHECK_EQ(vfs_open(&vs, S("/flash/A"), VFS_WRITE, &b), VFS_BUSY);
+        CHECK_EQ(vfs_remove(&vs, S("/flash/A")), VFS_BUSY);
+        CHECK_EQ(vfs_usage(&vs, S("/flash"), &used, &total), VFS_OK);
+        CHECK_EQ(vfs_write(&vs, a, buf, (uint32_t)(total - used)), VFS_OK);
+        vfs_close(&vs, a);
+        CHECK_EQ(vfs_remove(&vs, S("/flash/A")), VFS_OK);   /* the same file */
+        CHECK_EQ(vfs_usage(&vs, S("/flash"), &used, &total), VFS_OK);
+        CHECK_EQ(used, 0);
+    }
+    int g;
+    long long stored = 0;
+    CHECK_EQ(vfs_open(&vs, S("/flash/big"), VFS_WRITE, &g), VFS_OK);
+    while (vfs_write(&vs, g, buf, sizeof buf) == VFS_OK && stored < 10000000) stored += (long long)sizeof buf;
+    vfs_close(&vs, g);
+    char p[256];
+    in_root(p, sizeof p, "/big");
+    CHECK_EQ(stat(p, &st), 0);
+    CHECK_EQ(st.st_size, 100000);
+    vfs_reset(&vs);
     cleanup();
 }

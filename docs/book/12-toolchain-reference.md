@@ -101,6 +101,14 @@ Options:
 
 - `--fs-root DIR`: back `/flash` with `DIR/flash` (created if missing) and
   `/sd` with `DIR/sd` (only if it exists). Without it there is no storage.
+  Programs stay inside those directories: symlinks in them are not
+  followed (opening one, or a path through one, is `BadPath`; `ReadDir`
+  lists it as a file), and neither are FIFOs or devices. On a host file
+  system that ignores case (macOS by default) the media ignore case too.
+  The VM program `build/gogovm` also takes `--fs-quota BYTES` (tests
+  only): each medium may then hold that many bytes of files, counting
+  what is already there; deletes give room back, and `fs.Usage` reports
+  (used, quota). See section 16.5.
 - `--key c=pin`: in a terminal, pressing the character `c` presses the
   simulated GPIO input `pin` (the level goes to 0, then back to 1). Up to
   16 keys.
