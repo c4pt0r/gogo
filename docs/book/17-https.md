@@ -401,7 +401,7 @@ What the numbers say:
   here) is a single step of about 200 ms. For that long nothing else runs:
   no other actor, no timer. A program that must not pause that long (audio
   to SD, say) should not start an https request while it is busy. Making
-  this step sliced too is on the list (`docs/https-followups.md`).
+  this step sliced too is on the list (`docs/known-issues.md`).
 - **The wrong name is refused.** Here the server itself refuses a name it
   does not serve (`Closed{TLS}`, reason 8); a server that answers with its
   certificate anyway gets `Closed{BadCert}` (7) from the name check.

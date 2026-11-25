@@ -1,21 +1,9 @@
 // httpsdemo: HTTPS on the device (the "tls" port, gogo/http over TLS).
 //
-//	gogo config set wifi.ssid <名字>          # 一次即可，存在设备上
-//	gogo config set wifi.password -          # 从 stdin 读密码
+//	gogo config set wifi.ssid <name>          # once; stored on the device
+//	gogo config set wifi.password -          # reads the password from stdin
 //	gogo build examples/httpsdemo -o httpsdemo.gogo && gogo flash httpsdemo.gogo
 //	gogo monitor -reset -t 90 -until "httpsdemo: done"
-//
-// 开机后：DHCP 拿地址，用 SNTP（pool.ntp.org）对时（证书检查要用日期），
-// 然后：
-//  1. http.Get("https://example.com/") 一次（一次性：一个连接、一次握手）；
-//  2. NewClient 连发 3 个 GET（keep-alive：只握手一次）；
-//  3. 反例：连 example.com 的地址，但 Host 写 wrong.example，证书对不上，
-//     应当被拒绝（Closed{BadCert}；服务器自己不认这个名字时是 Closed{TLS}，
-//     example.com 所在的 Cloudflare 就是这样）。
-//
-// 每一步打印状态、正文长度和耗时；之后安静地待着。握手的切片时间和
-// TLS 内存在 `gogo config stats`（tls_max_step_us、tls_last_hs_us、
-// mbedtls_mem_peak、psram_min）里看。
 //
 // On boot: DHCP, SNTP from pool.ntp.org (certificate checks need the
 // date), then (1) one http.Get of https://example.com/ (one connection, one

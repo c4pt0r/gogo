@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// `gogo config set|get|list|rm` (spec M5 §5.4) edits the store that
+// `gogo config set|get|list|rm` edits the store that
 // config.Get reads. On this computer: $GOGO_CONFIG, else ~/.gogo/config,
 // one key=value per line (the first line of a key wins). On the board:
 // its NVS store, over the serial console (boardConfig; `scan` lists the

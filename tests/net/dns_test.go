@@ -200,7 +200,7 @@ func TestDNSDownFlushes(t *testing.T) {
 }
 
 // A resolver whose net.Subscribe failed (all 4 slots taken) is not broken
-// for good: a later lookup subscribes again (spec M5 final review).
+// for good: a later lookup subscribes again.
 func TestDNSResubscribe(t *testing.T) {
 	cfg := "net.ip=10.0.0.2\nnet.gw=10.0.0.1\nnet.dns=" + gwHost.IP.String() + "\n"
 	path := filepath.Join(t.TempDir(), "config")

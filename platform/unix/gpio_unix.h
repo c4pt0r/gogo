@@ -1,4 +1,4 @@
-/* unix gpio simulation (spec M3 5.4). Used by platform_unix.c and main.c. */
+/* unix gpio simulation. Used by platform_unix.c and main.c. */
 #ifndef GOGO_GPIO_UNIX_H
 #define GOGO_GPIO_UNIX_H
 

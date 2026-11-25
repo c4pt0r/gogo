@@ -288,7 +288,7 @@ func TestTCPOrphanClose(t *testing.T) {
 	finish(t, v, "accepted\nhandler exit 0\n")
 }
 
-// An orphan's life is bounded (spec §9.5): a peer with a 1-byte window
+// An orphan's life is bounded: a peer with a 1-byte window
 // that acknowledges every byte just before the retransmission timer keeps
 // it progressing, but it is reset 20 s after its owner exited, its data
 // released; the program carries on.

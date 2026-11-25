@@ -80,9 +80,29 @@ device down.**
 - **Hard real-time work.** The scheduler is preemptive but not real-time,
   and storage calls stall all actors while they run (a flash erase takes
   tens of milliseconds).
-- **Secure networking.** There is no TLS yet, so no HTTPS.
+- **General-purpose secure networking.** There is an HTTPS client (TLS 1.2,
+  one connection at a time), but no TLS server, no client certificates
+  and no HTTP/2.
 - **Big data.** Each actor is limited to 16 KB by default on a board, and a
   single actor can never use more than 256 KB.
+
+## Where gogo is going
+
+This book describes what is on gogo's `main` branch.
+The next steps, in order:
+
+1. **Embed mode** (in progress): embedding the VM in other programs, the
+   way Lua is embedded, for desktop and server programs, phone apps and
+   test tools.
+2. **Language completeness**: more of Go, such as methods, maps, arrays,
+   type assertions and the expression `switch` (chapter 3 lists what is
+   missing today).
+3. **Bluetooth (BLE)**: talking to a phone app, and setting up Wi-Fi from
+   the phone.
+
+HTTPS (TLS, chapter 17) is done. RP2040 boards are planned, with the
+board and the timing still open. The design document,
+[`docs/design.md`](../design.md), describes how the VM works.
 
 ## How to read this book
 
@@ -98,19 +118,22 @@ The chapters build on each other:
 | 7. Ports and Peripherals | GPIO, events, owners, Handoff |
 | 8. Keyboard and Power | The `kbd` and `power` ports |
 | 9. Storage | Files on `/flash` and `/sd`, `kv`, `ringlog` |
-| 10. Networking | DHCP, DNS, UDP, TCP, HTTP client and server |
+| 10. Networking | DHCP, DNS, UDP, TCP, HTTP client and server, the date (SNTP) |
 | 11. Configuration and Devices | `gogo config`, Wi-Fi, the two boards |
 | 12. Toolchain Reference | Every `gogo` command |
-| 13. Appendices | Library quick reference, exit reasons, error codes, differences from Go |
+| 13. Appendices | Library quick reference, exit reasons, error codes, limits, differences from Go, capabilities |
 | 14. Hot Loading | Loading code at run time: `gogo/code`, modules, supervised upgrades |
+| 15. IMU and IR | The motion sensor, infrared send and receive, streams |
+| 16. Audio | The microphone and speaker, WAV files |
+| 17. HTTPS | `https://` URLs, the clock, keep-alive `http.Client`, streaming uploads, the `"tls"` port |
 
 Every example in the book is a complete program in
 [`docs/book/examples/`](examples/), and the output shown is the real output
 of running it on the host VM. You can run all of them with
 `docs/book/examples/run.sh`, which also checks the output against the
-book. Where the documentation and the behaviour disagree, the book says so
-in a **Note** box, and the disagreement is listed in
-[`NOTES-for-maintainers.md`](NOTES-for-maintainers.md).
+book. Where the behaviour is likely to surprise you, the book says so in
+a **Note** box; the open limitations are collected in
+[`docs/known-issues.md`](../known-issues.md).
 
 You should know some Go, or at least one C-like language. You do not need
 to know Erlang or embedded programming; the book explains the ideas as they

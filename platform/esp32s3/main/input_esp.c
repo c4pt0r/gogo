@@ -11,8 +11,8 @@
  *  - StickS3: no keyboard. Battery from the M5PM1: VBAT mV (0x22/0x23 LE),
  *    external power = PWR_SRC (0x04) bit0, charging = PM1 GPIO0 level
  *    (GPIO_IN 0x12 bit0, low = charging).
- * Sources and registers: .superpowers/sdd/2026-11-24-gogo-input/hw-research.md
- * (M5Cardputer bf64d31, M5Unified, M5PM1 datasheet). */
+ * Sources for the registers: M5Cardputer bf64d31, M5Unified, the M5PM1
+ * datasheet. */
 #include "platform_esp.h"
 #include "board.h"
 #include "input.h"

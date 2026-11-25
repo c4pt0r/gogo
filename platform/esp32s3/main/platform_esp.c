@@ -262,7 +262,7 @@ void platform_tls_free(void *p) { tls_mem_free(p); }
  * its dummy CA chain, so the peer's chain is checked link by link
  * restartably (sliced) up to the last certificate it sent; the verify
  * callback then decides that one:
- *  - it IS a bundle root (same subject and key: runtime/net/tls/anchor.h, ruling R16),
+ *  - it IS a bundle root (same subject and key: runtime/net/tls/anchor.h),
  *    whatever signed it: trusted. Needed for cross-signed roots
  *    (example.com sends "SSL.com TLS ECC Root CA 2022" signed by Comodo's
  *    "AAA Certificate Services", which is not in the bundle);

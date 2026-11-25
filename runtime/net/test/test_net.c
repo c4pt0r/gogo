@@ -1,5 +1,5 @@
 /* The net stack: ARP, IPv4, ICMP echo, UDP, the netif and udp ports,
- * Subscribe, and malformed frames of every layer (M5 Review Focus 4):
+ * Subscribe, and malformed frames of every layer:
  * dropped, counted, nothing sent or delivered. Frames go in through
  * net_rx_offer and the port layer's drain, out through the unix
  * platform's test TX hook. */
@@ -617,7 +617,7 @@ TEST(net_udp_quota_never_kills) {
 
 static uint32_t msg_type(const Actor *a, int nth);
 
-/* NET-1 (review 2026-11-24): an owner that is also a subscriber, busy
+/* An owner that is also a subscriber, busy
  * while datagrams fill its mailbox, is not killed by the stack's next
  * Up: delivery leaves room for one Up, so it arrives at once. For every
  * quota the flood of large then empty datagrams stops short of the limit. */
@@ -895,8 +895,8 @@ TEST(net_subscribe_retry_on_oom) {
     teardown();
 }
 
-/* NET-1: an Up to a subscriber whose mailbox is full never kills it
- * (spec §9.1): it is owed and retried until the subscriber has room. This
+/* NET-1: an Up to a subscriber whose mailbox is full never kills it:
+ * it is owed and retried until the subscriber has room. This
  * covers subscribers that own TCP connections as well as UDP ports. */
 TEST(net_up_to_full_mailbox_is_owed) {
     setup();
@@ -933,7 +933,7 @@ TEST(net_up_to_full_mailbox_is_owed) {
     teardown();
 }
 
-/* Review Q1: a subscriber blocked in Receive whose grown block is all
+/* A subscriber blocked in Receive whose grown block is all
  * slack gets its Up at once: the slack is collected first, as for UDP and
  * TCP delivery, instead of the Up being owed forever. */
 TEST(net_up_reclaims_waiting_subscriber_slack) {

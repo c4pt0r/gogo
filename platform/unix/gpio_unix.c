@@ -1,4 +1,4 @@
-/* unix gpio simulation (spec M3 5.4).
+/* unix gpio simulation.
  *
  * Output pins: a Write prints "gpio: pin N = V" on stderr.
  *

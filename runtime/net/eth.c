@@ -1,4 +1,4 @@
-/* Ethernet: the RX single-slot handoff (spec §9.9), frame dispatch, send. */
+/* Ethernet: the RX single-slot handoff, frame dispatch, send. */
 #include "net_int.h"
 #include "platform.h"
 #include <string.h>

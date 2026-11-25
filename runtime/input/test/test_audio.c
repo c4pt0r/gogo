@@ -1,5 +1,5 @@
-/* The mic and spk ports against a fake InputHw on a real VM (spec audio
- * §1, §3; plan Review Focus 1, 2, 4, 5): Config validation and clamping
+/* The mic and spk ports against a fake InputHw on a real VM: Config
+ * validation and clamping
  * (Rate, FrameMs, Gain, Volume), frame sizing and the charged frame
  * buffer, frames in order, a 300 ms poll stall absorbed by the hardware
  * buffer and a longer one counted in Dropped, over-quota Chunks, close with
@@ -292,7 +292,7 @@ TEST(mic_frames_in_order) {
     teardown();
 }
 
-/* Review Focus 1: the scheduler stalls (an SD write) for 300 ms: the
+/* The scheduler stalls (an SD write) for 300 ms: the
  * hardware buffer (300 ms) holds it all and the next poll catches up, every
  * frame there and in order, also from a hardware that gives one DMA
  * buffer (960 bytes) per read. A longer stall loses samples to the
@@ -524,7 +524,7 @@ TEST(mic_deadline_after_eof) {
     teardown();
 }
 
-/* ---- half duplex: Review Focus 2 ---- */
+/* ---- half duplex ---- */
 
 TEST(spk_refused_while_mic_open_mic_keeps_running) {
     setup();
@@ -580,7 +580,7 @@ TEST(spk_config) {
     teardown();
 }
 
-/* Review Focus 4: an Out larger than the hardware takes at once is written
+/* An Out larger than the hardware takes at once is written
  * in parts, across polls while its buffer is full, in order; its Done
  * comes only once it has all been written and played. */
 TEST(spk_large_out_written_in_parts_done_after_played) {
@@ -629,7 +629,7 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     teardown();
 }
 
-/* Gapless (ruling R2): a hardware playing in real time with a 100 ms
+/* Gapless: a hardware playing in real time with a 100 ms
  * buffer, a program keeping two Outs in flight and sending the next on
  * each Done (as gogo/sound's Play does): the queued Out is written as soon
  * as the head is, so the hardware never runs dry between them (no
@@ -736,7 +736,7 @@ TEST(spk_queue_refusals_and_write_errors) {
     teardown();
 }
 
-/* Review Focus 5: closing while playing cuts at once: no Done after the
+/* Closing while playing cuts at once: no Done after the
  * close (nor an owed one), the hardware is stopped and the amplifier is
  * off; a new open starts afresh. The owner exiting is the same close. */
 TEST(spk_close_while_playing) {

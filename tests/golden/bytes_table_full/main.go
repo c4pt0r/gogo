@@ -2,7 +2,7 @@
 // receive and discard 16 off-heap Bytes and block in Receive again, never
 // collecting, so their stale handles stay on their holder lists. A fresh
 // worker's Freeze finds the table full: it collects those holders and
-// succeeds instead of dying OutOfMemory (M4 final review, finding 1).
+// succeeds instead of dying OutOfMemory.
 package main
 
 import (

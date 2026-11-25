@@ -1,4 +1,4 @@
-/* unix net link (--net-fd / --sim-clock, platform_unix.c; spec M5 §9.7). */
+/* unix net link (--net-fd / --sim-clock, platform_unix.c). */
 #ifndef GOGO_NET_UNIX_H
 #define GOGO_NET_UNIX_H
 

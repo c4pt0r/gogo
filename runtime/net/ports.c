@@ -10,7 +10,7 @@
 
 NetState net_s;
 
-/* Fixed state within budget (spec §3), on every target. */
+/* Fixed state within budget, on every target. */
 typedef char net_fixed_state_fits[sizeof(NetState) <= NET_FIXED_LIMIT ? 1 : -1];
 typedef char net_udp_pcb_fits[sizeof(UdpPcb) <= 32u ? 1 : -1];
 typedef char net_tcp_pcb_fits[sizeof(TcpPcb) <= 64u ? 1 : -1];
@@ -64,7 +64,7 @@ bool net_deliver(Vm *vm, Actor *o, Msg *m, uint32_t reserve) {
 
 static bool due(uint32_t t, uint32_t now) { return (int32_t)(now - t) >= 0; }
 
-/* Up{IP, Gateway, DNS} or Down{} to a, never killing it (spec §9.1);
+/* Up{IP, Gateway, DNS} or Down{} to a, never killing it;
  * false if the message could not be allocated or a has no room for it
  * (the caller owes it and retries). */
 static bool notify(Vm *vm, Actor *a, bool up) {

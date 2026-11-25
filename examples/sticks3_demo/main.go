@@ -1,10 +1,12 @@
-// sticks3_demo: M5StickS3 上的"崩溃后被监督者重启"演示。
+// sticks3_demo: "crash, and the supervisor restarts it" on the M5StickS3.
 //
-//   KEY1 (G11)  让 worker 崩溃（除零），监督者把它重启
-//   KEY2 (G12)  打印重启次数和 worker 的内存占用
-//   5 秒内崩溃超过 3 次，监督者放弃，演示停止
+//	KEY1 (G11)  crashes the worker (division by zero); the supervisor restarts it
+//	KEY2 (G12)  prints the restart count and the worker's memory
+//	more than 3 crashes within 5 s: the supervisor gives up and the demo stops
 //
-// 所有 println 同时出现在 USB 串口和屏幕上；崩溃报告（stderr）在屏幕上是红色。
+// Every println appears on the USB serial port and on the screen; crash
+// reports (stderr) are red on the screen. The program prints Chinese text
+// on purpose, to show the screen's CJK font.
 package main
 
 import (
@@ -18,10 +20,10 @@ const (
 	key2 = 12
 )
 
-// Hello 是每个新 worker 实例发给 main 的第一条消息。
+// Hello is the first message each new worker instance sends to main.
 type Hello struct{ From actor.PID }
 
-// Welcome 告诉 worker 它是第几个实例。
+// Welcome tells a worker which instance it is.
 type Welcome struct{ N int }
 
 func worker(boss actor.PID) {
@@ -32,7 +34,7 @@ func worker(boss actor.PID) {
 		n = m.N
 	}
 
-	// 上一个实例退出时，它打开的端口已被自动关闭，这里可以重新打开。
+	// The previous instance's port was closed when it exited, so it can be opened again here.
 	_, ok := port.Open("gpio", port.GPIO{
 		Pin:  key1,
 		Mode: port.InputPullUp,
@@ -46,13 +48,13 @@ func worker(boss actor.PID) {
 	beat := 0
 	for {
 		msg, ok := actor.ReceiveTimeout(1000)
-		if !ok { // 1 秒内没有消息：心跳
+		if !ok { // no message for 1 s: heartbeat
 			beat++
 			println("worker #", n, "心跳", beat)
 			continue
 		}
 		switch msg.(type) {
-		case port.Edge: // KEY1 按下
+		case port.Edge: // KEY1 pressed
 			println("worker #", n, "要崩溃了!")
 			zero := 0
 			println(1 / zero)
@@ -63,8 +65,8 @@ func worker(boss actor.PID) {
 func main() {
 	me := actor.Self()
 	println("gogo demo: KEY1 崩溃, KEY2 状态")
-	// Supervise 会把 main 和监督者链接起来；捕获退出信号，
-	// 监督者放弃时 main 收到 ExitMsg 而不是跟着死掉。
+	// Supervise links main and the supervisor; trap exits so that main gets
+	// an ExitMsg instead of dying with it when the supervisor gives up.
 	actor.TrapExit(true)
 
 	sup := supervisor.Supervise(func() { worker(me) }, supervisor.Spec{
@@ -92,7 +94,7 @@ func main() {
 			if instances > 1 {
 				println("已重启, 第", instances, "个实例")
 			}
-		case port.Edge: // KEY2 按下
+		case port.Edge: // KEY2 pressed
 			println("重启次数:", instances-1, "worker 内存:", actor.Info(cur).Memory, "B")
 		case actor.ExitMsg:
 			if m.From == sup {

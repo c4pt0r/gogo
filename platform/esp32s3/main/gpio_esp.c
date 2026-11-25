@@ -1,5 +1,5 @@
 /* `gpio` port driver for the ESP32-S3: same semantics as the unix driver
- * (platform/unix/gpio_unix.c, spec M3 5.1).
+ * (platform/unix/gpio_unix.c).
  *
  * cfg {Pin, Mode, Edge, DebounceMs}: modes Input=0 InputPullUp=1
  * InputPullDown=2 Output=3; edges None=0 Rising=1 Falling=2 Both=3;

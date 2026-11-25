@@ -11,7 +11,7 @@
  * (The component's CONFIG_LITTLEFS_MALLOC_STRATEGY_DISABLE would do it too,
  * but its unused VFS wrapper does not compile with it.)
  *
- * Size (spec 5.8): config fs.flash.size (bytes, optional K/M suffix,
+ * Size: config fs.flash.size (bytes, optional K/M suffix,
  * rounded down to 4096, clamped to 64 KB .. the partition; unset = the
  * whole partition). Mount reads the size from the superblock (block_count
  * 0); a larger setting grows the file system in place (lfs_fs_grow, data

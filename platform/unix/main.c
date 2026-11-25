@@ -1,7 +1,11 @@
 /* gogovm: runs a gogo image file.
  *
- *   gogovm [--key c=pin]... [--fs-root DIR] [--net-fd N [--sim-clock]] <file.gogo>
- *          exit 0 when the run queue empties, 2 on load error
+ *   gogovm [--caps HEX] [--key c=pin]... [--fs-root DIR] [--fs-quota BYTES]
+ *          [--net-fd N [--sim-clock]] <file.gogo>
+ *          exit 0 when the run queue empties (also after a crash), 1 when
+ *          the firmware lacks a capability the image needs, 2 on a usage
+ *          or load error. --caps and --fs-quota are for tests: the
+ *          firmware's capability bits, and a simulated full disk.
  *   gogovm --sizeof-actor  prints sizeof(Actor)
  *   gogovm --sizeof-net    prints the net stack's fixed state in bytes
  *   gogovm --has-tls       exit 0 if built with the "tls" port (GOGO_TLS)
@@ -13,7 +17,7 @@
  *
  * --net-fd N: fd N (inherited, e.g. a socketpair end) is the network link
  * (net_unix.h); --sim-clock: time is simulated, moved only by the peer
- * simulator over that link (spec M5 §9.7).
+ * simulator over that link.
  */
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,563 +1,1465 @@
-# gogo 设计文档（草案）
+# gogo design
 
-> 项目名 gogo。日期 2026-11-23。状态：待用户确认。
+This document describes how gogo works: the language subset, the actor
+model, ports, the value representation and memory layout, the image
+format, the scheduler and the main subsystems (network, storage, input,
+hot loading, audio, TLS). It is the reference for the VM and the
+compiler. The user-facing guide is the book ([docs/book](book/README.md));
+open limitations are in [known-issues.md](known-issues.md).
 
-## 1. 意图
+## 1. Intent
 
-在单片机（目标：ESP32-S3 板子 M5StickS3 与 Cardputer ADV，之后是 RP2040，板子待定）上，用 **Go 语法** 写一组相互隔离的小 actor，来管理传感器、屏幕、按键等外设。借鉴 AtomVM 的核心思想（轻量进程、每进程独立堆、邮箱、按 reduction 抢占、link/monitor/监督树、"让它崩溃"），但 **不兼容 BEAM**，从语言到字节码到内存布局都自己设计。
+gogo runs a set of small, isolated actors, written in **Go syntax**, on
+microcontrollers (today the ESP32-S3 boards M5StickS3 and Cardputer ADV;
+RP2040 boards are planned) to manage sensors, screens, keys and other
+peripherals. It borrows AtomVM's core ideas (lightweight processes, a
+heap per process, mailboxes, preemption by reductions, links, monitors,
+supervision trees, "let it crash") but is **not compatible with BEAM**:
+the language, the bytecode and the memory layout are its own.
 
-同时这是一个研究项目：整套系统要小到一个人能完整读懂，设计干净优先于功能多。
+It is also a research project: the whole system should be small enough
+for one person to read completely, and a clean design comes before
+features.
 
-## 2. 目标 / 非目标 / 反目标
+## 2. Goals, non-goals, anti-goals
 
-**目标**
-- 用 Go 语法写 actor 代码；编辑时 gopls 能补全和报错（通过 gogo 提供的 stub 包和 32 位类型设置）。程序 **只在 gogo VM 上运行**，不要求能用 `go run` 运行（用户决定）。
-- actor 之间真正隔离：一个 actor 崩溃、死循环或耗尽自己的内存上限，不影响其他 actor 和 VM。
-- 能跑在 RP2040（Raspberry Pi Pico，264KB RAM，2MB flash，Cortex-M0+）上并驱动真实外设。
-- 同一个 VM 能在 macOS / Linux 上运行（宿主构建，用于开发调试和测试，不是硬件目标）。
-- 代码量可读：VM 目标 ≤ 5k 行 C，编译器目标 ≤ 5k 行 Go，均不含测试。
+**Goals**
+- Actor code is written in Go syntax; editors give completion and errors
+  through gopls, using gogo's stub packages and 32-bit type sizes.
+  Programs run **only on the gogo VM**; running them with `go run` is not
+  a goal.
+- Real isolation between actors: an actor that crashes, loops forever or
+  exhausts its own memory limit affects no other actor and not the VM.
+- Run on small microcontrollers (down to RP2040 class: 264 KB RAM, 2 MB
+  flash, Cortex-M0+) and drive real peripherals.
+- The same VM runs on macOS and Linux (the host build, for development
+  and tests, not a hardware target).
+- Readable code size: the VM aims at about 5k lines of C and the compiler
+  at about 5k lines of Go, tests excluded.
 
-**非目标（v1 不做）**
-- 完整 Go 兼容；channel、泛型、反射、`defer`/`recover`、用户自定义接口的方法调用、浮点数、goroutine 间共享内存。
-- 热更新代码、分布式、多核调度、JIT。
-- 兼容 Go 标准库；只提供一个很小的自有标准库。
+**Non-goals**
+- Full Go compatibility: channels, generics, reflection, `defer` /
+  `recover`, method calls through user-defined interfaces, floating point
+  and shared memory between goroutines are out.
+- Distribution, multi-core scheduling, JIT.
+- Go standard library compatibility; gogo has a small library of its own.
 
-**反目标（做到了也算失败）**
-- 变成一个"Go 编译器复刻"，为追兼容不断堆特性。
-- 出现任何 actor 之间共享可变状态的途径。
-- 任何单个 actor 的错误能让整个 VM 崩溃。
-- 靠宏技巧、难读的代码换性能（对照 AtomVM 的 `opcodesswitch.h`）。
+**Anti-goals (failures even if achieved)**
+- Becoming a Go compiler clone that keeps adding features for
+  compatibility.
+- Any way for actors to share mutable state.
+- Any single actor's error crashing the whole VM.
+- Trading readability for speed with macro tricks (compare AtomVM's
+  `opcodesswitch.h`).
 
-## 3. 约束
+## 3. Constraints
 
-- **VM 用纯 C（C99）写，不用第三方库**（用户要求）。只依赖 C 标准库和 POSIX；唯一例外是 MCU 平台层使用芯片厂商 SDK（RP2040 用 Pico SDK），且只出现在 `platform/rp2040` 目录。VM 的测试框架自己写（一个很小的断言和用例运行器）。
-- **电脑上的工具（编译器 `gogo`）用 Go 写，只用 Go 标准库**，同样不引入第三方模块（用户要求）。
-- VM 同一份源码在 MCU 和 Unix 上编译。
-- 最小目标硬件：RP2040。VM 固件（-Os）目标 ≤ 64KB flash；**每个 actor 的内存占用要尽可能小，不大于 AtomVM**：空闲 actor（阻塞在 `Receive`、没有待处理消息）目标 ≤ 160 字节（32 位），硬上限 256 字节；RP2040 上应能同时容纳 1000 个空闲 actor。对照基线：AtomVM 空闲进程 `process_info(memory)` 报 552 字节（64 位），实测 2 万个空闲进程平均约 1KB RSS（含 malloc 开销），32 位下估计约 300～500 字节。
-- 编译器在电脑上运行；设备上不含编译器。
-- 程序镜像存在 flash 中，原地执行（XIP），常量不拷进 RAM。
+- **The VM is plain C99 with no third-party libraries.** It depends only
+  on the C library and POSIX; the exception is a board's platform layer,
+  which uses the chip vendor's SDK (ESP-IDF) and lives only under
+  `platform/<board>`. The VM's test framework is its own (a small
+  assertion and test runner). TLS (`runtime/net/tls/`) uses mbedTLS, the
+  one external library, and only in the `tls` port.
+- **The host tools (the `gogo` command, the compiler) are written in Go
+  with only the Go standard library.**
+- The same VM sources compile for the microcontrollers and for Unix.
+- Memory: **an actor must be as small as possible, no larger than in
+  AtomVM.** An idle actor (blocked in `Receive`, no pending messages)
+  aims at 160 bytes or less on 32-bit, with a hard limit of 256 bytes; a
+  small board should hold 1000 idle actors. For comparison, AtomVM's
+  idle process reports 552 bytes in `process_info(memory)` on 64-bit.
+- The compiler runs on the computer; the device has no compiler.
+- The program image lives in flash and is executed in place: constants
+  are not copied into RAM.
 
-## 4. 方案选择
+## 4. Approach
 
-考虑过三种做法：
+Three approaches were considered:
 
-| 方案 | 说明 | 取舍 |
+| Approach | Description | Trade-off |
 |---|---|---|
-| **A. Go 子集 → 自有字节码 → C VM（已选）** | 编译器用 Go 写，前端直接用标准库 `go/parser` + `go/types` | Go 语法 + 真隔离 + 能上 MCU + 可完整读懂；代价是只支持子集、标准库自己写 |
-| B. TinyGo，goroutine 当 actor | 写个监督树库即可 | 无隔离、协作式调度，与"带隔离"冲突 |
-| C. TinyGo → wasm，每个 actor 一个 WAMR 实例 | 完整 Go、真隔离 | 每实例几十 KB，RP2040 放不下几个；VM 不是自己的，研究价值低 |
+| **A. Go subset -> own bytecode -> C VM (chosen)** | the compiler is written in Go and uses `go/parser` and `go/types` as its front end | Go syntax, real isolation, fits a microcontroller, readable end to end; costs: only a subset, and an own standard library |
+| B. TinyGo, goroutines as actors | only a supervision library to write | no isolation, cooperative scheduling |
+| C. TinyGo -> wasm, one WAMR instance per actor | full Go, real isolation | tens of KB per instance; the VM is not our own |
 
-此前还讨论过兼容 BEAM（精简 AtomVM）和自创类 Erlang 语言，用户最终选择"不兼容 BEAM、用 Go 写"。
+BEAM compatibility (a trimmed AtomVM) and an Erlang-like language of our
+own were also considered and rejected in favour of Go syntax.
 
-## 5. 设计
+## 5. Design
 
-### 5.1 组成部分
+### 5.1 Components
 
-1. **编译器 `gogo`（命令行工具，Go，只用标准库）**：`go/parser` 解析 → `go/types` 类型检查（32 位尺寸）→ 子集检查 → 生成字节码镜像 `.gogo`。
-2. **VM**（C）：镜像加载、解释器、调度器、每 actor 堆与 GC、邮箱、定时器、端口（外设驱动）接口。
-3. **`gogo/actor`、`gogo/port` 等内建包**：只有一份。Go 源码里是只含签名的 stub（供 `go/types` 和编辑器里的 gopls 使用，函数体为 `panic("gogo only")`）；编译器把对它们的调用识别为 VM 内建操作。
-4. **小标准库**（用 Go 子集写，导入路径都在 `gogo/` 下，不冒充 Go 标准库路径）：`gogo/supervisor`、`gogo/fmt`（只支持 `%d %s %v %x` 和基本类型、结构体的简单打印）、`gogo/strings`（`Index`/`IndexByte`/`Cut`/`HasPrefix`/`HasSuffix`/`TrimSpace`/`ToLower`/`EqualFold`/`Split`）、`gogo/strconv`（`Itoa`/`Atoi`/`FormatInt64`/`ParseInt64`）、`gogo/bytes`（`Bytes`、`Buffer`，内建）、`gogo/fs`（存根包，`B_FS`，见 §5.4.2）、`gogo/kv`、`gogo/ringlog`（用 Go 子集写在 `gogo/fs` 之上）等。strings 与 strconv 是用 Go 子集写的库，按字节工作（无 rune 解码），导入即整体编进镜像（无死函数消除）。库可以导入存根包和其他库（无环，按依赖顺序编译）。M5：`gogo/dhcp`（`dhcp.Start(dhcp.Config{TimeoutMs})`：DHCP 客户端 actor，拥有 `netif`，T1 续租 / T2 重绑定 / 到期清地址；配置项 `net.ip`/`net.mask`/`net.gw`/`net.dns` 时用静态地址）、`gogo/dns`（`dns.Lookup(name, timeoutMs) (int, bool)`：注册名 `dns` 的解析 actor，A 记录，重试 2 次，4 条按 TTL 缓存）、`gogo/http`（`http.Get`/`http.Post`/`http.Do(method, url, contentType, body, maxBody, timeoutMs)`：`http://` 用 HTTP/1.0、`https://` 用 HTTP/1.1（均 `Connection: close`），请求在临时 actor 里完成、调用者按 `Call` 等待，响应体默认上限 `MaxBody` 8 KB、超出截断并标 `Truncated`；`http.Serve(port, handler func(Request) Response) actor.PID`：监听 actor 与调用者 link，监听失败以退出码 100（`ListenFailed`）退出，每个连接 `Handoff` 给新 handler actor，请求头 ≤ 2 KB、体 ≤ 8 KB（按 `Content-Length`，不支持 chunked），畸形请求 400、体过大 413，回 `Content-Length` + `Connection: close` 后 `Shutdown` 退出；临时/handler actor 以 `SpawnOpt` 设内存上限 2×体上限 + 6 KB；响应体按全长记在调用者账上，16 KB 默认上限的调用者要么用更大的 `SpawnOpt`，要么用 `Do` 的小 `maxBody`；https 响应按 Content-Length 或 chunked 分帧（只有 http 接受读到关闭）；另有 `NewClient`/`ClientDo`/`ClientUpload`/`CloseClient` 与 `Upload`（见 §5.4.8、书第 17 章））、`gogo/config`（存根，`config.Get(key) (string, bool)` 是内建 48，`wifi.` 键对程序不可见；unix 存在 `$GOGO_CONFIG`（默认 `~/.gogo/config`，`key=value` 行），由 `gogo config set|get|list|rm` 编辑）。
-5. **平台层**：`unix`（含模拟外设）和 `rp2040`；ESP32-S3 已做；Linux 真实外设平台已取消。
+1. **The compiler** (`compiler/`, driven by the `gogo` command in
+   `cmd/gogo/`; Go standard library only): `go/parser` -> `go/types`
+   (32-bit sizes) -> subset check (`compiler/check.go`) -> code
+   generation -> a bytecode image (`.gogo`).
+2. **The VM** (`runtime/vm/`, C): image loader, interpreter, scheduler,
+   per-actor heaps and GC, mailboxes, timers, the port (peripheral driver)
+   layer and the module table.
+3. **Stub packages** (`gogo/actor`, `gogo/port`, `gogo/bytes`,
+   `gogo/net`, `gogo/fs`, `gogo/code`, `gogo/sys`, ...): Go sources that
+   hold only signatures and types (bodies are `panic("gogo only")`), for
+   `go/types` and gopls. The compiler turns every call into a VM
+   instruction or builtin, and their struct types have fixed reserved
+   type ids.
+4. **Libraries**, written in the gogo subset and compiled into every image
+   that imports them: `gogo/supervisor`, `gogo/strings`, `gogo/strconv`,
+   `gogo/dhcp`, `gogo/dns`, `gogo/http`, `gogo/sntp`, `gogo/kv`,
+   `gogo/ringlog`, `gogo/imulog`, `gogo/wav`, `gogo/sound`,
+   `gogo/irproto`. All import paths are under `gogo/`, never a Go
+   standard library path. `gogo/strings` and `gogo/strconv` work on bytes
+   (no rune decoding). Importing a library compiles all of it into the
+   image (no dead-function elimination). Libraries may import stubs and
+   other libraries, without cycles. The package table, with each
+   package's kind and capability, is [lib/README.md](../lib/README.md).
+5. **Platform layers** (`platform/`): `unix` (the host VM `gogovm`, with
+   simulated peripherals) and `esp32s3` (one ESP-IDF firmware for both
+   boards). RP2040 is planned.
 
-**仓库布局**（2026-11-25，见 [布局设计](superpowers/specs/2026-11-25-gogo-repo-layout-design.md)）：`runtime/` 是各板共用的 C 运行时（`vm/` 解释器与 actor、`net/` 网络栈（`net/tls/` 是其上的 TLS 客户端端口）、`vfs/`、`stream/`、`input/`、`console/` 屏幕控制台与字体）；`platform/` 只放板子相关代码（`unix/`、`esp32s3/`）；`compiler/` 与 `cmd/gogo/` 是 Go 工具链；`lib/` 是标准库源码，自成 Go 模块 `gogo`（`lib/go.mod`），每个包一个目录（`gogo/X` 在 `lib/X/`，`gogo/net` 在 `lib/net/`），包表见 `lib/README.md`。根模块名为 `gogotools`（`gogotools/compiler` 等），以 `replace gogo => ./lib` 依赖它，编译器导入 `lib/embed.go`（包 `gogo`）里用 `//go:embed` 嵌入的库源码。用户程序目录的 `go.mod` 同样 `replace gogo => <仓库>/lib`，gopls 就能解析所有 `gogo/...` 导入（含网络包）并做类型检查。
+**Repository layout.** `runtime/` is the C runtime shared by all boards:
+`vm/` (interpreter and actors), `net/` (the network stack; `net/tls/` is
+the TLS client port on top of it), `vfs/`, `stream/`, `input/` and
+`console/` (the screen console and fonts). `platform/` holds only
+board-specific code (`unix/`, `esp32s3/`). `compiler/` and `cmd/gogo/`
+are the Go toolchain. `lib/` is the library source and its own Go module
+`gogo` (`lib/go.mod`), one directory per package (`gogo/X` is `lib/X/`).
+The root module is `gogotools`; it depends on `gogo` with `replace gogo
+=> ./lib`, and the compiler embeds the library sources through
+`lib/embed.go` (`//go:embed`). A program directory whose `go.mod` has
+`replace gogo => <repo>/lib` gets gopls completion and type checking for
+every `gogo/...` import.
 
-### 5.2 Go 子集（v1）
+### 5.2 The Go subset
 
-支持：
-- 类型：`bool`、`int`（固定 32 位；编译器以 `types.StdSizes{WordSize:4, MaxAlign:4}` 做类型检查，常量越界在编译期报错；运行时溢出按二进制补码回绕，和 Go 语义一致）、`int64`、`uint8/byte`、`uint32`、`string`（不可变字节串）、数组、切片、`map`（键限 int/string）、结构体、指针（仅在本 actor 内有意义）、`any`、函数值和函数字面量（闭包）、结构体方法（静态分派）。
-- 位运算：`&`、`|`、`^`、`&^`、`<<`、`>>`、一元 `^`，及对应的复合赋值（`&=` `|=` `^=` `&^=` `<<=` `>>=`），作用于 `int`、`int64`、`byte`；移位语义同 Go：计数可以是任何整数类型，计数 ≥ 位宽时 `<<` 得 0、`>>` 按符号得 0 或 -1，负计数使 actor 以 `badshift` 退出；`>>` 是算术右移（没有无符号类型，`byte` 除外），`byte` 结果在每次运算后截断。
-- 控制流：`if`、`for`（含 `range`）、`switch`、类型 switch 与类型断言、`break/continue/return`、`const`/`iota`。
-- 包：多文件、多包；`const` 不限。包级 `var` 的初始值必须是编译期可求值的常量数据（字面量、复合字面量），编进镜像放在 flash 中，**只读**。VM 的每条写内存指令都检查目标是否在当前 actor 自己的堆里，所以经由别名写入（`s := tbl; s[0] = 1`）在运行时报错退出，不需要编译器做别名分析。
-- `panic(v)`：使当前 actor 以原因 `v` 退出。
-- 内建 `error` 接口作为唯一的特例支持（`gogo/errors.New`、`.Error()`），其余用户接口的方法调用不支持。
+**Supported today:**
+- Types: `bool`; `int` (always 32 bits: the compiler type-checks with
+  `types.StdSizes{WordSize: 4, MaxAlign: 4}`, so constant overflow is a
+  compile error, and run-time overflow wraps in two's complement as in
+  Go); `int64`; `byte` (`uint8`); `string` (immutable bytes); `rune`
+  only as the value of `range` over a string and as the type of character
+  literals; slices; structs; `any`; func values and func literals
+  (closures, any signature); named types of `int`, `int64`, `bool` and
+  `string` (`type Code int`); `bytes.Bytes` and `bytes.Buffer`.
+- Operators: arithmetic and comparison; string concatenation and
+  comparison; bitwise `&`, `|`, `^`, `&^`, `<<`, `>>`, unary `^` and the
+  compound assignments `&=`, `|=`, `^=`, `&^=`, `<<=`, `>>=`, on `int`,
+  `int64` and `byte`. Shifts follow Go: the count may be any integer
+  type, a count at or above the width gives 0 for `<<` and 0 or -1 for
+  `>>`, a negative count ends the actor with `badshift`; `>>` is
+  arithmetic (there are no unsigned types except `byte`), and `byte`
+  results are truncated after each operation.
+- Slices: `make`, `append` (also `append(a, b...)`), `copy`, `len`,
+  `cap`, indexing, element assignment and slicing; `len`, indexing and
+  slicing of strings and `Bytes`.
+- Statements: `if`, `for` (three-clause, condition-only, infinite, and
+  `range` over a slice or a string), type `switch` over an `any` value,
+  `break` and `continue` (without labels), `return` with any number of
+  results (named or not), `const` and `iota`.
+- Functions with several results; func values called through `CALLV`.
+- Programs: one `package main`, possibly in several files, plus the
+  `gogo/...` libraries.
 
-不支持（编译时报清楚的错误）：channel 与 `select`、`go` 语句（改用 `actor.Spawn`）、泛型、`defer`/`recover`、反射、`unsafe`、浮点、用户自定义接口的方法调用、可变的包级变量。
+**Not supported yet (planned for the "language completeness"
+milestone):** maps, methods, pointers, arrays, integer types other than
+`int`, `int64` and `byte` (`uint32` included), package-level variables,
+the expression `switch`, type assertions, `panic`, the `error` interface,
+assignment to struct fields, labeled statements, interfaces other than
+`any`, variadic functions and user packages (a program cannot import a
+package of its own). Each is rejected at compile time with a `<what> not
+supported` error (`compiler/check.go`). There is no `gogo/fmt` or
+`gogo/errors` package.
 
-### 5.3 actor API（`actor` 包）
+**Out of the design:** channels and `select`, the `go` statement (use
+`actor.Spawn`), generics, `defer` / `recover`, reflection, `unsafe`,
+floating point.
 
-M2 实际实现的 API（权威定义见 `lib/actor/actor.go`）：
+**Closures capture by value.** A func literal copies each captured
+variable into the closure when it is created (the capture slots of its
+`K_CLOSURE`), unlike Go's capture by reference. So that both give the
+same result, the compiler requires a captured variable to be assigned
+only once: any write after its declaration, inside or outside the
+closure (`=`, `op=`, `++`/`--`, a `:=` redeclaration), is rejected with
+"captured variable must not be reassigned". A `return` with values also
+writes every named result, so a function whose named result is captured
+rejects such returns ("captured named result must not be set by
+return"); a bare `return` writes nothing and is allowed. A consequence:
+the variable of a three-clause `for` loop cannot be captured (copy it
+first, `n := i`).
+
+### 5.3 The actor API (`gogo/actor`)
+
+The authoritative definition is `lib/actor/actor.go`.
 
 ```go
 type PID struct{ /* opaque */ }
-type Ref struct{ /* opaque，可 == / != 比较 */ }
-type Reason struct{ Code int; Func string }   // 退出原因，见 §5.8
-type Options struct{ MaxMemory int }          // 字节；0 = 平台默认
+type Ref struct{ /* opaque; == and != compare */ }
+type Reason struct{ Code int; Func string }   // exit reason, §5.8
+type Options struct{ MaxMemory int }          // bytes; 0 = the platform default
+type ProcInfo struct{ Memory int }
 
 func Spawn(f func()) PID
-func SpawnLink(f func()) PID                    // 创建并原子地链接
-func SpawnOpt(f func(), opts Options) PID       // 带内存上限
+func SpawnLink(f func()) PID                    // spawn and link atomically
+func SpawnOpt(f func(), opts Options) PID       // with a memory limit
 func Self() PID
 func Send(to PID, msg any)
-func Receive() any                              // FIFO 取下一条
-func ReceiveTimeout(ms int) (msg any, ok bool)  // ms == 0 只查看不等待
-func Call(to PID, req any, timeoutMs int) (reply any, ok bool) // 带 Ref 的请求-应答
-func Reply(req Request, reply any)              // Call 的服务端
+func Receive() any                              // the next message, FIFO
+func ReceiveTimeout(ms int) (msg any, ok bool)  // ms == 0 only looks
+func Call(to PID, req any, timeoutMs int) (reply any, ok bool) // request/reply with a Ref
+func Reply(req Request, reply any)              // the server side of Call
 func Link(p PID); func Unlink(p PID)
 func Monitor(p PID) Ref; func Demonitor(r Ref)
 func TrapExit(on bool)
-func Exit(code int)                             // 以原因码退出
-func Kill(p PID, code int)                      // 向别的 actor 发 exit 信号
+func Exit(code int)                             // exit with a reason code
+func Kill(p PID, code int)                      // send an exit signal
 func MakeRef() Ref
-func Register(name string, p PID) bool          // 名字被占用或 p 已退出时 false
+func Register(name string, p PID) bool          // false if taken or p has exited
 func Whereis(name string) (PID, bool)
-func Unregister(name string)                    // 只有注册者本人能注销
+func Unregister(name string)                    // only the registering actor may
 func SendAfter(ms int, to PID, msg any) Ref; func CancelTimer(r Ref) bool
-func Sleep(ms int); func Now() int64            // VM 启动以来的毫秒数
+func Sleep(ms int); func Now() int64            // ms since the VM started
 func Info(p PID) ProcInfo
 
-// 系统消息
+// System messages
 type ExitMsg struct{ From PID; Reason Reason }
 type DownMsg struct{ Ref Ref; From PID; Reason Reason }
 type Request struct{ From PID; Ref Ref; Body any }
 ```
 
-原因码常量：`Normal`、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`、`BadShift`、`BadMsg`（发送了不能跨模块的值，见[热加载设计](superpowers/specs/2026-11-24-gogo-hotload-design.md) §5.3），用户码从 100 起。`error` 类型的退出原因留到语言里程碑（见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7）。
+Reason codes: `Normal`, `Killed`, `OutOfMemory`, `MailboxOverflow`,
+`NoProc`, `DivZero`, `BadCode`, `Shutdown`, `BadShift`, `BadMsg` (a value
+that may not cross modules was sent, §5.4.4); user codes start at 100.
 
-接收侧用类型 switch 代替 Erlang 的模式匹配：
+A type switch takes the place of Erlang's pattern matching on receive:
 
 ```go
 for {
     switch m := actor.Receive().(type) {
     case ButtonPressed:
         count++
-        actor.Send(screen, ShowText{fmt.Sprint(count)})
+        actor.Send(screen, ShowText{strconv.Itoa(count)})
     case actor.Request:
         actor.Reply(m, count)
     }
 }
 ```
 
-**选择性接收**只做一种：`Call` 等待带特定 Ref 的应答，其余消息留在邮箱里。不做任意条件的选择性接收（避免 O(n) 扫描和语义复杂度）。
+**Selective receive** exists in one form only: `Call` waits for the
+reply carrying its Ref and leaves other messages in the mailbox. There
+is no general selective receive (no O(n) scans, simpler semantics).
+`Call` does not return early when the server dies; it waits for its
+timeout.
 
-**发送语义**：`Send` 对消息做深拷贝（含切片、map、指针指向的数据），接收方拿到的是独立副本。这与 Go 的别名语义不同，是隔离的代价，文档中明确写出。
-- 拷贝 **保留内部共享和环**（两个字段指向同一对象，拷贝后仍指向同一副本）。实现上复用 GC 的复制算法：拷贝时在源对象上临时写转发标记，拷贝完再恢复，不需要额外的 visited 表。
-- PID、Ref、端口、冻结的 `Bytes`、flash 中的常量原样传递，不拷贝。
-- 闭包可以随消息发送（函数 + 捕获环境一起深拷贝）。
+**Send semantics.** `Send` deep-copies the message (slices and nested
+structs included); the receiver gets an independent copy. This differs
+from Go's aliasing and is the price of isolation.
+- The copy **preserves internal sharing and cycles** (two fields that
+  point to one object point to one copy). It reuses the GC's copying
+  algorithm: forwarding marks are written into the source objects during
+  the copy and restored afterwards, so no visited table is needed.
+- PIDs, Refs, ports, frozen off-heap `Bytes` and constants in flash are
+  passed as they are, not copied.
+- Closures may be sent (the function and its captures are copied).
 
-**Spawn 的闭包**：被捕获的变量在 spawn 时深拷贝进新 actor 的堆。
+**Spawn** deep-copies the closure's captured variables into the new
+actor's heap.
 
-**闭包按值捕获**：函数字面量在创建时把捕获的变量逐个拷进闭包（`K_CLOSURE` 的捕获槽），不是 Go 的引用捕获。为了让两者结果一致，编译器要求被捕获的变量在整个函数里只赋值一次：声明之后、闭包内外的任何写（`=`、`op=`、`++`/`--`、`:=` 重声明）都报 "captured variable must not be reassigned"。带值的 `return`（`return v, h`、`return f()`）也算写：它把值赋给函数的每个具名结果，所以一个具名结果若被闭包捕获，所在函数（声明或函数字面量）里的带值 `return` 报 "captured named result must not be set by return"，改用不具名结果即可。裸 `return` 不写具名结果，不受影响。
+### 5.4 Ports (peripherals)
 
-### 5.4 端口（外设）
-
-外设统一建模为"端口"：一个由 C 驱动实现的特殊 actor，有 PID，收命令消息、向所有者发事件消息。以下是 M3 的实际实现（详见 [M3 设计](superpowers/specs/2026-11-23-gogo-m3-design.md) §5.4 与 `lib/port/port.go`）。
+A peripheral is a **port**: a special actor implemented by a C driver.
+It has a PID, takes command messages and sends event messages to its
+owner. The API is `lib/port/port.go`.
 
 ```go
 led, ok := port.Open("gpio", port.GPIO{Pin: 25, Mode: port.Output})
 actor.Send(led, port.Write{Value: 1})
 btn, ok := port.Open("gpio", port.GPIO{Pin: 15, Mode: port.InputPullUp, Edge: port.Falling})
-// 之后本 actor（所有者）会收到 port.Edge{Pin, Value} 消息
+// the owner then receives port.Edge{Pin, Value} messages
 ```
 
-- `port.Open(driver string, cfg any) (actor.PID, bool)`：调用者成为所有者；驱动未知、配置无效、资源被占或内存不足时 `ok == false`，返回零 PID。`port.Close(p)` 关闭端口，陈旧或未知的 PID 被忽略。`port.Handoff(p, to) bool`（M5）：所有者把端口交给另一个活着的 actor，之后的事件发给 `to`，`to` 退出时端口关闭，端口的记账（驱动状态、端口代持的 `Bytes`）一起转过去；非所有者调用、`to` 不是活 actor、或 `to` 的配额放不下记账时返回 `false` 且什么都不变；交给自己只是恢复暂停的端口（如刚接受的 TCP 连接）。
-- 端口用 `actor.PID` 表示；任何持有 PID 的 actor 都能 `Send` 命令（`port.Write{Value}`），事件（`port.Edge{Pin, Value}`，Value 为变化后的电平）只发给所有者，占所有者邮箱配额。所有者退出时端口自动关闭，VM 结束时关闭所有仍开着的端口；对端口 `Kill` 等同 `Close`。M3 不支持对端口 `Link`/`Monitor`，对端口 `SendAfter`/`Call` 被静默忽略。
-- `port.GPIO{Pin, Mode, Edge, DebounceMs}`：Mode 为 `Input`/`InputPullUp`/`InputPullDown`/`Output`，Edge 为 `None`/`Rising`/`Falling`/`Both`，`DebounceMs <= 0` 取默认 20 ms。平台自己占用的引脚（ESP 上的屏幕、PM1、PSRAM、USB 等）`Open` 失败。
-- 驱动接口是一张 C 函数表（open / command / close），新增外设不用改 VM 核心；端口表固定容量（`GOGO_MAX_PORTS`，默认 16）。驱动可选提供 `command_term`（M5），直接拿到原始命令项（嵌套结构、`Bytes` 字段，如 `net.SendTo`）。
-- 网络（M5，`runtime/net/` 纯 C 协议栈，规格见 [M5 设计](superpowers/specs/2026-11-23-gogo-m5-network-design.md)）：端口 `netif`（`net.IfConfig{}`，全机一个所有者，命令 `net.SetAddr{IP, Mask, Gateway, DNS}`）和 `udp`（`net.UDP{Port}`，命令 `net.SendTo{Addr, Data}`，事件 `net.Datagram{From, Data}`，载荷是消息块里的堆内 `K_BYTES`，超配额丢弃并计数、不杀接收方）；`net.Subscribe()`（内建）之后收 `net.Up{IP, Gateway, DNS}` / `net.Down{}`；TCP：端口 `tcp`（`net.Dial{IP, Port, TimeoutMs}`，命令 `net.Write{Data}` / `net.Shutdown{}` / `net.Resume{}`，事件 `net.Connected{}` / `net.Data{Data}` / `net.Written{}` / `net.Closed{Reason}`）和 `tcp_listen`（`net.Listen{Port}`，事件 `net.Accepted{Conn}`，新连接归监听者所有且暂停到 `port.Handoff` 或 `Resume`）；窗口各 1 段、只收按序段、投递进邮箱成功才 ACK、RTO 1 s 倍增到 8 s / 6 次重传、TIME_WAIT 2 s；`Shutdown` 后关端口（或所有者退出）留下孤儿连接自行完成关闭，否则 RST；地址或链路丢失时所有连接以 `NoRoute` 结束（`runtime/net/tcp.c` 头注释）。`gogo/net` 的存根源码在 `lib/net/`（C 协议栈在 `runtime/net/`），保留类型 9–26。
-- 中断 / 输入事件走无锁单生产者环形缓冲区（`GOGO_EVQ_CAP`）；ISR 只写环，不加锁、不分配；调度器在每轮取出并转成消息。`platform_wait` 带"锁存唤醒"语义，生产者用 `platform_notify()`（ISR 安全）唤醒，不会丢唤醒。
-- 平台实现：unix 的 `gpio` 从 stdin 读模拟事件（行 `pin value`，`sleep ms`，黄金测试用 `input` 文件；`gogo run --key c=pin ... <dir|file.gogo>` 的终端模式把按键映射成引脚（`--key` 转发给 gogovm；终端中 Ctrl-C / SIGTERM 会先恢复终端再退出；Ctrl-D 结束输入，之后没有定时器的程序即可退出，而 sticks3_demo 的监督者有周期定时器，需 Ctrl-C 结束）），输出打印到终端；ESP32-S3 的 `gpio` 用 GPIO 中断，KEY1=G11、KEY2=G12。单边沿引脚上的 ISR 释放回弹过滤：在未上报的反向变化后 `debounce_ms` 内到来的同向边沿被丢弃（已接受的取舍，见 [m3-followups.md](m3-followups.md)）。
+- `port.Open(driver string, cfg any) (actor.PID, bool)`: the caller
+  becomes the owner. An unknown driver, an invalid configuration, a busy
+  resource or a lack of memory gives `ok == false` and the zero PID.
+  `port.Close(p)` closes a port; stale or unknown PIDs are ignored.
+  `port.Handoff(p, to) bool`: the owner hands the port to another live
+  actor; later events go to `to`, the port closes when `to` exits, and
+  the port's accounting (driver state, `Bytes` the port holds) moves
+  with it. It returns `false` and changes nothing if the caller is not
+  the owner, `to` is not a live actor, or `to`'s quota cannot take the
+  accounting. Handing a port to oneself only resumes a paused port (a
+  freshly accepted TCP connection).
+- Any actor holding a port's PID may send it commands; events go only to
+  the owner and count against the owner's mailbox quota. A port closes
+  when its owner exits, and the VM closes every open port when it ends.
+  `Kill` on a port is `Close`. Ports cannot be linked or monitored;
+  `SendAfter` and `Call` to a port are silently ignored.
+- `port.GPIO{Pin, Mode, Edge, DebounceMs}`: Mode is `Input`,
+  `InputPullUp`, `InputPullDown` or `Output`; Edge is `None`, `Rising`,
+  `Falling` or `Both`; `DebounceMs <= 0` means 20 ms. Pins the platform
+  uses itself (the screen, the PM1, PSRAM, USB, the SD card, the
+  keyboard, ...) fail to open.
+- A driver is a table of C functions (open, command, close, and optional
+  hooks such as `command_term` for structured commands, `handoff`); new
+  peripherals need no change to the VM core. The port table has a fixed
+  size (`GOGO_MAX_PORTS`, 16 by default).
+- Interrupt and input events go through a lock-free single-producer ring
+  (`GOGO_EVQ_CAP`): an ISR only writes the ring, without locks or
+  allocation, and the scheduler drains it each round into messages.
+  `platform_wait` has latched-wakeup semantics: a producer calls
+  `platform_notify()` (ISR-safe), and no wakeup is lost. Larger sources
+  (the network, input, TLS) register as event sources (`PortSource`,
+  `runtime/vm/port.h`) that the scheduler drains, and it does not sleep
+  while a source reports pending work.
+- Unix: `gpio` reads simulated events from stdin (lines `pin value` and
+  `sleep ms`; golden tests use an `input` file). `gogo run --key c=pin ...`
+  is a terminal mode that maps keys to pins; Ctrl-C and SIGTERM restore
+  the terminal first; Ctrl-D ends input. Outputs are printed.
+- ESP32-S3: `gpio` uses GPIO interrupts (StickS3: KEY1 = G11, KEY2 =
+  G12). On a single-edge pin, the ISR drops an edge in the same direction
+  that arrives within `DebounceMs` after an unreported opposite change
+  (release bounce).
 
-后续驱动：`uart`、`i2c`、`spi`、`display`（帧缓冲区整块刷新，帧缓冲用大二进制传递）。M3 的屏幕只是 stdout/stderr 的调试字符界面镜像，不是 `display` 端口。
+Not yet: `uart`, `i2c`, `spi` and a display port. The board's screen is
+a console that mirrors stdout and stderr, not a port.
 
-### 5.4.1 网络栈（M5 实际实现）
+### 5.4.1 The network stack
 
-规格见 [M5 设计](superpowers/specs/2026-11-23-gogo-m5-network-design.md)，取舍与遗留见 [m5-followups.md](m5-followups.md)。
+- **Layers.** `runtime/net/` is plain C (Ethernet, ARP, IPv4, ICMP echo,
+  UDP, TCP) and depends only on the platform hooks of
+  `runtime/net/netif.h`. Above it are the ports `netif`, `udp`, `tcp`,
+  `tcp_listen` and `tls`, and above those the libraries `gogo/dhcp`,
+  `gogo/dns`, `gogo/http` and `gogo/sntp`, written in the subset. The
+  stub package `gogo/net` (`lib/net/`) holds the port types (reserved
+  types 9-26 and 44).
+- **Ports.** `netif` (`net.IfConfig{}`, one owner for the whole machine;
+  command `net.SetAddr{IP, Mask, Gateway, DNS}`). `udp` (`net.UDP{Port}`;
+  command `net.SendTo{Addr, Data}`; event `net.Datagram{From, Data}`, the
+  payload a heap `K_BYTES` inside the message block; datagrams over the
+  receiver's quota are dropped and counted, never killing it).
+  `net.Subscribe()` (a builtin) makes the caller receive `net.Up{IP,
+  Gateway, DNS}` and `net.Down{}`. `tcp` (`net.Dial{IP, Port,
+  TimeoutMs}`; commands `net.Write{Data}`, `net.Shutdown{}`,
+  `net.Resume{}`; events `net.Connected{}`, `net.Data{Data}`,
+  `net.Written{}`, `net.Closed{Reason}`) and `tcp_listen`
+  (`net.Listen{Port}`; event `net.Accepted{Conn}`: the new connection
+  belongs to the listener and stays paused until `port.Handoff` or
+  `Resume`).
+- **Single receive slot.** The platform (the Wi-Fi task on CPU0) hands
+  one frame to the stack's only receive slot with `net_rx_offer` (copy or
+  drop; the driver buffer is released at once). A frame arriving while
+  the slot is full is dropped; TCP's one-segment window makes that rare.
+  The stack allocates no buffers of its own.
+- **TCP.** Windows of one segment each way; only in-order segments are
+  accepted. A segment is ACKed only after its payload was delivered into
+  the owner's mailbox; a full mailbox means no ACK and the peer resends.
+  `Data` leaves room for control events (`Written`, `Closed`), so a slow
+  reader cannot be choked by them. RTO 1 s, doubling to 8 s, 6
+  retransmissions; TIME_WAIT 2 s. A connection takes one `Write` in
+  flight and one queued; a third before `Written` closes it with
+  `Closed{Overflow}`. TCP keeps one deadline per connection and reports
+  it to the scheduler through its event source rather than using VM
+  timers.
+- **Orphan close.** Closing the port after `Shutdown`, or the owner
+  exiting, leaves an orphan connection that finishes the close (FIN
+  exchange, retransmissions) on its own, for at most
+  `GOGO_NET_ORPHAN_MS` (20 s); otherwise a close resets. Losing the
+  address or the link (a `SetAddr` with a new address included) ends
+  every connection with `NoRoute`; so does the exit of the `netif` owner.
+- **Memory** (measured on the ESP32-S3): the stack's fixed state is
+  3640 B (budget 4096 B, checked at compile time); a TCB is 56 B, a UDP
+  control block 12 B, a `Port` 64 B (32-bit); the net code is about
+  11.3 KB (xtensa, -Os). The Wi-Fi driver takes about 30 KB of heap and
+  31.5 KB of static RAM; lwIP and esp_netif are not linked.
+- **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs})` starts the DHCP
+  client actor, which owns `netif` (renewal at T1, rebinding at T2, the
+  address cleared at expiry). With the configuration keys `net.ip`,
+  `net.mask`, `net.gw` and `net.dns` it sets a static address instead.
+- **`gogo/dns`**: `dns.Lookup(name, timeoutMs) (int, bool)`, served by a
+  resolver actor registered as `dns`: A records, 2 retries, a cache of 4
+  entries by TTL, cleared when the network goes down or the DNS server
+  changes.
+- **`gogo/http`**: the client `http.Get`, `http.Post` and
+  `http.Do(method, url, contentType, body, maxBody, timeoutMs)` take
+  `http://` (HTTP/1.0) or `https://` (HTTP/1.1, through the `tls` port)
+  URLs, both with `Connection: close`. Each request runs in a temporary
+  actor; the caller waits as with `Call`. The response body is limited
+  (`MaxBody`, 8 KB by default; `Do` up to `MaxBodyLimit`, 64 KB), cut
+  there and marked `Truncated`, and charged to the caller, whose default
+  limit on a board is 16 KB. `NewClient` / `ClientDo` / `ClientUpload` /
+  `CloseClient` keep one connection alive; `Upload` streams a file as a
+  POST body (§5.4.8). The server `http.Serve(port, handler func(Request)
+  Response) actor.PID` starts a listener actor linked to the caller (if
+  it cannot listen it exits with code 100, `ListenFailed`) and hands each
+  connection to a new handler actor: request head at most 2 KB, body at
+  most 8 KB by `Content-Length` (no chunked bodies), 400 for a malformed
+  request, 413 for a body too large, then a response with
+  `Content-Length` and `Connection: close`, `Shutdown` and exit. Request
+  actors are spawned with a limit of 2 x body limit + 6 KB (22 KB by
+  default): the body exists in a buffer and in its frozen copy, and the
+  GC copies the heap. When an allocation fails against the limit, the VM
+  retries once after a tight GC (block = live data + the request, no
+  growth slack).
+- **`gogo/config`**: `config.Get(key) (string, bool)` (builtin 48) reads
+  the device configuration store; `wifi.` keys are invisible to programs.
+  On Unix the store is `$GOGO_CONFIG` (default `~/.gogo/config`, lines
+  `key=value`), edited with `gogo config set|get|list|rm` (§5.9).
+- **Wall clock and randomness** (`gogo/sys`, builtins 51-53; `gogo/sntp`):
+  `sys.Time() int64` is Unix time in ms (UTC), 0 while unknown.
+  `sys.SetTime(ms) bool` sets it, after which it advances with the
+  monotonic clock; a time earlier than the build-time floor
+  (`GOGO_BUILD_UNIX_MS`, set by the Makefile and the firmware's CMake) is
+  refused with `false`, and `ms <= 0` forgets the time. `sys.Random()
+  int` returns 30 random bits (`getentropy` on Unix, `esp_random` on the
+  ESP). The C hooks are `platform_unix_time_ms`,
+  `platform_set_unix_time_ms` and `platform_random`
+  (`runtime/vm/platform.h`; `runtime/vm/walltime.c` has weak defaults: an
+  offset from the monotonic clock, unknown at boot). There is no
+  permission model: any code may set the time, and the floor is the only
+  protection. `sntp.Sync(server, timeoutMs) bool` does one SNTP exchange
+  in a helper actor (up to 3 sends, 60 random bits as a nonce, source and
+  fields checked, half the round trip added) and calls `sys.SetTime` on
+  success. On Unix the wall clock starts from the host clock or from
+  `$GOGO_UNIX_TIME_MS` (0: unknown); with `--sim-clock` it starts unknown.
 
-- **分层**：`runtime/net/`（纯 C：以太网 / ARP / IPv4 / ICMP echo / UDP / TCP，只依赖 `runtime/net/netif.h` 的平台钩子）→ 端口 `netif` / `udp` / `tcp` / `tcp_listen`（`runtime/vm/` 端口层）→ 用 Go 子集写的库 `gogo/dhcp`、`gogo/dns`、`gogo/http` 与内建 `config.Get`。`gogo/net` 的存根源码在 `lib/net/`。**用 `dhcp.Start` 取代规格里的 `net.Start`**（`gogo/net` 是编译器存根包，放不下库代码）；`lib/` 自成模块 `gogo`，这些库在宿主 Go 工具链上也能类型检查（不再需要构建标签）。
-- **单槽接收**：平台（Wi-Fi 任务，CPU0）用 `net_rx_offer` 把一帧交给栈的唯一接收槽（拷贝或丢弃，立即释放驱动缓冲）；槽满时丢帧，TCP 一段窗口使之很少发生。栈本身不分配缓冲。
-- **背压**：UDP 无 ACK，超出接收者配额的数据报被丢弃并计数（不杀接收者）；TCP 只有载荷成功投递进所有者邮箱才 ACK，邮箱满则不 ACK、对端重传；Data 给 Written / Closed 等控制事件预留余量，慢读者不会被控制事件挤死。
-- **孤儿关闭**：`Shutdown` 后关端口、或所有者退出，连接作为孤儿自行完成关闭（FIN 握手 / 重传），否则 RST。地址或链路丢失（含 `SetAddr` 改地址）时所有连接以 `NoRoute` 结束；`netif` 所有者退出同样丢掉全部连接。
-- **内存**（ESP32-S3 实测）：栈固定状态 `net_s` 3640 B（预算 4096 B）；TCB 56 B、UDP CB 12 B、Port 64 B（32 位）；net 代码约 11.3 KB（xtensa -Os）。Wi-Fi 驱动：堆约 30 KB（`esp_wifi_init` 25.1 KB + start 1.8 KB + 关联后约 2.4 KB，通信时再瞬时最多约 6.5 KB）、静态约 31.5 KB；lwIP / esp_netif 不链接，驻留为 0。启动时空闲堆 197 KB，运行 `examples/netdemo` 时约 173 KB。每个 HTTP 连接除 TCB 外有一个 handler actor（约 3.3 KB）。
-- **HTTP actor 内存**：worker / handler 的 `MaxMemory` = 2×体上限 + 6 KB（默认 22 KB）：体在缓冲和冻结副本里各存一次，GC 拷贝堆；8 KB 体实测峰值 Get 19.7 KB、handler 17.9 KB。限额失败后 VM 再做一次"紧"GC（块大小 = 存活 + 需求，无扩容余量）。
-- **语言与镜像**：函数值带参数和返回值（`CALLV`，镜像 v4），`http.Serve` 的 handler 用它；`port.Handoff`、`msg_try_enqueue`（TCP 的 Data 用不致命的入队）等见 `runtime/vm/port.h`。函数值不能放进 `any`、不能比较（包括与 `nil`）、不支持具名函数类型。
-- **TLS 推迟**（规格 §5.7、第 9 项任务）：TLS 需要 mbedTLS 上下文（几十 KB，只能放 PSRAM，不可移植到 RP2040 级芯片）、同步握手会阻塞所有 actor 数百毫秒、证书包放 flash、没有宿主测试手段。M5 不含 HTTPS：`http.Get` 对 `https://` 立即失败。
+### 5.4.2 Storage (`gogo/fs`, `gogo/kv`, `gogo/ringlog`)
 
-### 5.4.2 存储（`gogo/fs`、`gogo/kv`、`gogo/ringlog`）
+One file API over `/flash` (on-chip flash, LittleFS) and `/sd` (SD card,
+FatFs).
 
-统一的文件 API：`/flash`（片上 flash，LittleFS）和 `/sd`（SD 卡，FatFs）。详见 [存储设计](superpowers/specs/2026-11-24-gogo-storage-design.md)（状态：已实现），遗留事项见 [storage-followups.md](storage-followups.md)。
+- **Implementation.** `runtime/vfs/` (plain C: path rules, the open-file
+  table, the backend interface `VfsBackend`) plus backends: LittleFS and
+  FatFs on the ESP32-S3; a host directory on Unix (`gogo run --fs-root
+  <dir>`; without it every path is `NotMounted`). `gogo/fs` is a stub
+  package: the compiler turns its calls into `B_FS` (builtin 49, first
+  argument the operation number); `File.Close` is a port close.
+  `fs.Info` and `fs.Space` are reserved types 27 and 28.
+- **API.** `Open(path, mode) (File, Err)` (`Read`, `Write`, `Append`);
+  `File.Read(max) (bytes.Bytes, Err)`, `Write(data any) Err`,
+  `WriteAt`, `Sync`, `Size`, `Close`; `ReadFile(path, max)`,
+  `WriteFile(path, data)` (writes `<name>.tmp`, then replaces, so after a
+  power loss `/flash` holds the old or the new content); `Stat`,
+  `ReadDir`, `Mkdir` (not recursive), `Remove` (a file or an empty
+  directory), `Rename`, `Usage(prefix)`. Every call returns an `fs.Err`
+  (`OK` = 0, `NotFound` ... `Closed`, numbered as `VFS_*`). Calls are
+  synchronous and stop every actor while they run (a flash erase takes
+  tens of ms, an SD access occasionally hundreds).
+- **A File is a port.** Its PID is an ordinary port PID owned by the
+  opener; it closes (and commits) when the owner exits, crashes or is
+  killed, and `port.Handoff` passes it on. At most 4 files are open in
+  the whole VM (`TooMany`, `GOGO_FS_MAX_OPEN`); each is charged to its
+  owner. Operations by a non-owner give `Closed` and do not crash.
+- **Path rules.** Absolute paths with `/flash` or `/sd` as the whole
+  first segment; names of 1 to 32 bytes from `A-Z a-z 0-9 . _ -`; a whole
+  path of at most 96 bytes. Segments ending in `.` (`.` and `..`
+  included), empty segments and a trailing `/` are `BadPath`. Renaming a
+  directory into its own subtree (`/flash/d` -> `/flash/d/x`) is
+  `BadPath`; renaming a directory while any file is open on the same
+  mount is `Busy`. Case folding happens only on `/sd` (FAT is
+  case-insensitive), so a case-only rename works there; `/flash` is
+  case-sensitive. Mkdir, Remove and Rename of a mount root, any operation
+  on `/`, and renames across mounts are `BadPath`. Names created on a PC
+  that break the rules are listed by `ReadDir` but give `BadPath` on open.
+- **Busy rules.** One `Write` or `Append` open per path at a time;
+  `Remove`, `Rename` (source or target) and `WriteFile`'s final replace
+  of a path with an open file are `Busy`; on `/sd`, opening a file that
+  is being read with `Write` (which truncates) is `Busy` too, `Append` is
+  allowed. A reader may open a file that is being written; what it sees
+  is not specified.
+- **`gogo/kv`**: one file per key under `/flash/kv/`. `Get(key)
+  (bytes.Bytes, fs.Err)` (a missing key is `fs.NotFound`; read errors are
+  returned as they are), `Put(key, v any) fs.Err` (`string` or `Bytes`,
+  replaced atomically, at most 4096 B), `Delete(key) fs.Err`, `Keys()
+  ([]string, fs.Err)`.
+- **`gogo/ringlog`**: `Append(dir, maxBytes, line)` and `Read(dir, max)`
+  over two files `0.log` and `1.log` that rotate, so the total stays
+  within `maxBytes` (plus one line); one writer per directory.
+- **Configuration.** `fs.flash.size` (`gogo config set fs.flash.size 3M`;
+  bytes with an optional K or M suffix, rounded to 4 KB, at least 64 KB;
+  unset = the whole partition): a size larger than the current file
+  system grows it in place at boot; a smaller one is not applied (a
+  message says so); `fs.flash.format=yes` reformats once at the set size
+  and deletes the key. A first mount that fails formats. The partition
+  `gogofs` is at `0x310000`, size `0x4F0000`.
+- **`/sd` file systems**: FAT12/16/32 and **exFAT** (ESP-IDF's `fatfs`
+  component is overridden with `FF_FS_EXFAT 1`, in the Cardputer build
+  only). Long names are limited to 64 characters (`FF_MAX_LFN`). The card
+  is mounted on first access and remounted after an I/O error; there is
+  no card-detect pin.
+- **Boards.** The StickS3 has `/flash` only; the Cardputer ADV has
+  `/flash` and `/sd` (SPI at 20 MHz, falling back to 400 kHz). The build
+  picks the board with `GOGO_BOARD=sticks3|cardputer`. The fixed state
+  (the vfs table plus LittleFS and FatFs static state) is outside the VM
+  core: 1060 B on the StickS3, 2356 B on the Cardputer (budget 3072 B,
+  asserted at compile time); details in
+  [platform/esp32s3/README.md](../platform/esp32s3/README.md).
 
-- **实现**：`runtime/vfs/`（纯 C，路径规则与文件槽表，后端接口 `VfsBackend`）+ 后端（ESP32-S3 上 LittleFS 与 FatFs；unix 上宿主目录，`gogo run --fs-root <dir>`，不给就没有存储，所有路径 `NotMounted`）。`gogo/fs` 是存根包，编译器把调用替换成 `B_FS`（builtin 49，第一个参数是操作码），`File.Close` 走端口关闭。`fs.Info` / `fs.Space` 是保留类型 27 / 28，镜像 v6。
-- **API**：`Open(path, mode) (File, Err)`（`Read` / `Write` / `Append`）；`File.Read(max) (bytes.Bytes, Err)`、`Write(data any) Err`、`Sync`、`Size`、`Close`；`ReadFile(path, max)`、`WriteFile(path, data)`（先写 `<name>.tmp` 再替换，`/flash` 上掉电后是旧内容或新内容）；`Stat`、`ReadDir`、`Mkdir`（不递归）、`Remove`（文件或空目录）、`Rename`、`Usage(prefix)`。所有调用返回 `fs.Err`（`OK` = 0，`NotFound` … `Closed`，编号同 `VFS_*`）。每个调用同步执行，会停住所有 actor（flash 擦除几十毫秒，SD 偶尔几百毫秒）。
-- **File 是端口**：PID 是普通端口 PID，打开者拥有，退出（含崩溃、被杀）即关闭并提交；`port.Handoff` 可转交。全机最多 4 个打开的文件（`TooMany`），每个文件向所有者记账。非所有者操作得 `Closed`，不崩溃。
-- **路径规则**：绝对路径，以 `/flash` 或 `/sd` 为整段前缀；名字 1 到 32 字节，字符集 `A-Z a-z 0-9 . _ -`；整个路径最多 96 字节。以 `.` 结尾的段（含 `.`、`..`）、空段、结尾 `/` 都是 `BadPath`。**Rename 进自己的子树（`/flash/d` → `/flash/d/x`）是 `BadPath`**；**目录被改名时，同一挂载上只要有任何打开的文件就是 `Busy`**（文件改名只按路径规则）。**大小写折叠只在 `/sd` 上**（FAT 不区分大小写）：`/sd` 上的子树检查也忽略大小写，仅大小写不同的改名在设备上可行；`/flash` 区分大小写。挂载根（`/flash`）的 Mkdir / Remove / Rename、对 `/` 的任何操作、跨挂载 Rename 都是 `BadPath`。不符合规则的名字（PC 上建的）`ReadDir` 仍按原名列出，但打开它得 `BadPath`。
-- **Busy 规则**：同一路径同时最多一个 `Write` / `Append` 打开；只要路径上有打开的文件，对它的 `Remove`、`Rename`（源或目标）和 `WriteFile` 的最终替换都是 `Busy`；`/sd` 上对正在被读的文件做 `Write` 打开（会截断）也是 `Busy`，`Append` 允许。读者可以打开正在被写的文件，所见内容不保证。
-- **`gogo/kv`**：`/flash/kv/` 下每键一个文件，`Get(key) (bytes.Bytes, fs.Err)`（缺键是 `fs.NotFound`，读错误原样返回，不再当成"不存在"）、`Put(key, v any) fs.Err`（`string` 或 `Bytes`，原子替换，值最多 4096 B）、`Delete(key) fs.Err`、`Keys() ([]string, fs.Err)`。
-- **`gogo/ringlog`**：`Append(dir, maxBytes, line)` / `Read(dir, max)`，两个文件 `0.log` / `1.log` 轮转，总量不超过 `maxBytes`（加一行）；每个目录一个写者。
-- **配置**：`fs.flash.size`（`gogo config set fs.flash.size 3M`，字节数可带 K/M 后缀，4 KB 取整，最小 64 KB，不设 = 整个分区）：设置值大于当前文件系统时开机原地扩容，小于时不缩小并提示；`fs.flash.format=yes` 按设置值重新格式化一次并删除这个键。首次挂载失败自动格式化。分区表 `gogofs` 在 `0x310000`，大小 `0x4F0000`。
-- **/sd 文件系统**：FAT12 / 16 / 32 和 **exFAT**（覆盖 ESP-IDF 的 `fatfs` 组件，`FF_FS_EXFAT 1`，只在 Cardputer 构建里编进去）。长文件名上限 64 个字符（`FF_MAX_LFN`），更长的名字打不开（不可达）。卡在首次访问时挂载，出 IO 错误后下次访问重新挂载，没有卡检测脚。
-- **板子**：StickS3 只有 `/flash`；Cardputer ADV 有 `/flash` + `/sd`（SPI，20 MHz，失败退到 400 kHz）。构建时用 `GOGO_BOARD=sticks3|cardputer` 选择。固定状态（vfs 表 + LittleFS / FatFs 的静态状态）在 VM 核心之外：StickS3 1060 B、Cardputer 2356 B（预算 3072 B，编译期断言），明细见 `platform/esp32s3/README.md`。
+### 5.4.3 Input (the `kbd` and `power` ports)
 
-### 5.4.3 输入（`kbd` 与 `power` 端口）
+- **API.** `gogo/kbd`: `port.Open("kbd", kbd.Config{RepeatDelayMs,
+  RepeatMs})`, events `kbd.Key{Code, Char, Mods, Down}` (`Code` is the USB
+  HID usage, Fn is 0xF0; presses and repeats have `Down` true, releases
+  false). `gogo/power`: `power.Config{PeriodMs}`, events
+  `power.Battery{MilliVolts, Percent, Charging, External}`, command
+  `power.Read{}`; `Charging` and `External` are 0 or 1, -1 when unknown.
+  `MilliVolts` is the average of the last 4 good samples; `Percent` is
+  linear from 3300 to 4100 mV. There is no power-button event.
+- **Platform hooks.** `runtime/input/` is chip-independent C (key codes
+  to characters, modifiers, auto-repeat, battery sampling and backoff).
+  The platform provides one `InputHw` (`runtime/input/input.h`): the key
+  table, `kbd_open/close/pending/read`, `power_read`, and the optional
+  `power_pending`, `live`, `power_enable` and `power_event_driven`.
+  `platform_input()` has a weak default (no hardware); a platform's strong
+  definition must be in an object file that is always linked (on the ESP,
+  `platform_esp.c`). `kbd_pending` only reads; the ISR only sets a flag
+  and calls `platform_notify()`; every I2C and ADC access happens on the
+  scheduler thread (or before the VM starts).
+- **Event source.** `input_install()` registers a `PortSource`; each
+  round the scheduler calls `pending` then `drain`. Keys go straight to
+  the port's owner, not through the event ring. Power is polled every
+  `PeriodMs` on the ESP; on Unix it is event-driven (only `battery`
+  script lines and `Read` produce events).
+- **Unix.** `kbd` and `power` are simulated from the stdin script or the
+  terminal (`platform/unix/input_unix.c`).
+- **Cardputer ADV.** TCA8418 keyboard on the shared I2C bus (G8/G9,
+  address 0x34, 400 kHz, INT on G11); battery through ADC1 on G10 (12 dB,
+  curve-fitting calibration, x2); charging and external power cannot be
+  read (-1). G8-G11 are not available to the `gpio` port.
+- **StickS3.** No keyboard (`kbd` fails to open). The battery comes from
+  the M5PM1 (VBAT at 0x22/0x23, external power at 0x04 bit 0, charging =
+  PM1 GPIO0 low), on the shared I2C bus G47/G48 that also powers the LCD.
 
-规格见 [输入设计](superpowers/specs/2026-11-24-gogo-input-design.md)，遗留与待验证项见 [input-followups.md](input-followups.md)。
+### 5.4.4 Hot loading (`gogo/code`)
 
-- API：`gogo/kbd`（`port.Open("kbd", kbd.Config{RepeatDelayMs, RepeatMs})`，事件 `kbd.Key{Code, Char, Mods, Down}`：`Code` 为 USB HID 用法码（Fn 用 0xF0），按下、重复为 `Down` true，松开为 false）与 `gogo/power`（`power.Config{PeriodMs}`，事件 `power.Battery{MilliVolts, Percent, Charging, External}`，命令 `power.Read{}`；`Charging`/`External` 为 0/1，-1 表示未知）。没有电源键事件（规格决定）。
-- 平台钩子：`runtime/input/` 是与芯片无关的纯 C 代码（按键码到字符、修饰键、自动重复、电源采样与退避），平台只提供一个 `InputHw`（`runtime/input/input.h`）：键表、`kbd_open/close/pending/read`、`power_read`，以及可选的 `power_pending`、`live`、`power_enable`、`power_event_driven`。`platform_input()` 有弱默认（无硬件），平台的强定义必须放在一定会被链接的目标文件里（ESP 在 `platform_esp.c`）。`kbd_pending` 是纯读，ISR 只置标志并 `platform_notify()`；所有 I2C/ADC 访问都在调度线程（或 VM 启动前）。
-- 事件源模型：`input_install()` 注册一个 `PortSource`；调度器每轮 `pending → drain`，按键直接投递给端口所有者，不经事件环；电源按 `PeriodMs` 轮询（ESP；unix 为事件驱动，仅 `battery` 脚本行和 `Read` 产生事件）。
-- unix：`kbd`/`power` 由 stdin 脚本或终端模拟（`platform/unix/input_unix.c`）。
-- Cardputer ADV：TCA8418（共享 I2C 总线 G8/G9，0x34，400 kHz，INT 在 G11）；电池为 G10 上的 ADC1（12 dB，曲线拟合校准，×2），充电与外部供电读不到（驱动报 -1）。G8–G11 不再开放给 `gpio` 端口。
-- StickS3：无键盘，`kbd` 打开失败；电池取自 M5PM1（VBAT 0x22/0x23，外部供电 0x04 位 0，充电 = PM1 GPIO0 低电平）。共享 I2C 总线 G47/G48 与 LCD 供电共用。详见 `platform/esp32s3/README.md`。
+A running program can load another image (a `bytes.Bytes` obtained from
+the network, a file or a message) as a **module** and start its entry
+functions in new actors by name. Code is never replaced in place: an
+upgrade is a supervisor restarting a child with the new module. Book
+chapter 14 explains it from the user's side.
 
-### 5.4.4 热加载（`gogo/code`）
-
-设计见 [热加载设计](superpowers/specs/2026-11-24-gogo-hotload-design.md)，遗留事项见 [hotload-followups.md](hotload-followups.md)，书里的讲解见 `docs/book/14-hot-loading.md`。运行中的程序可以把另一个镜像（经网络、文件或消息拿到的 `bytes.Bytes`）加载成**模块**，按名字在新 actor 里启动它的入口函数。代码从不原地替换：升级就是监督者用新模块重启子 actor。
-
-**API**（存根包 `gogo/code`，编译成 builtin 50 `B_CODE`，C 侧在 `runtime/vm/module.c`）：
+**API** (stub package `gogo/code`, compiled to builtin 50 `B_CODE`; the C
+side is `runtime/vm/module.c`):
 
 ```go
-type Module struct{ H, Missing int }   // 保留类型 34；普通值，可以发给别的 actor
+type Module struct{ H, Missing int }   // reserved type 34; a plain value, may be sent
 type Err int  // OK BadImage Unsupported NoMemory NotFound BadArg TooMany
 func Load(b bytes.Bytes) (Module, Err)
-func Spawn(m Module, entry string, arg any) (actor.PID, Err)       // 另有 SpawnLink、SpawnOpt
+func Spawn(m Module, entry string, arg any) (actor.PID, Err)       // also SpawnLink, SpawnOpt
 func Hold(m Module) Err
 func Release(m Module)
-func Missing(m Module) int       // Load 返回 Unsupported 之后：固件缺少的 Cap* 位
-func MemUsed() int               // 已加载模块的代码字节数（计入 code.mem）
+func Missing(m Module) int       // after Load returned Unsupported: the Cap* bits the firmware lacks
+func MemUsed() int               // code bytes of loaded modules (counted in code.mem)
 ```
 
-入口是模块 `package main` 里签名为 `func()` 或 `func(arg any)` 的导出函数，另有 `func main()`（导出名 `main`）；按名字查找，区分大小写。`arg` 按消息规则拷贝进新 actor。
+An entry is an exported function of the module's `package main` with
+signature `func()` or `func(arg any)`, or `func main()` (exported as
+`main`); it is looked up by name, case-sensitively. `arg` is copied into
+the new actor by the message rules.
 
-**生命周期**：所有镜像格式相同，开机镜像是 0 号模块（走同一条加载、启动路径，VM 持有、永不卸载、不计入 `code.mem`）。模块在"还有属于它且活着的 actor"或"还有 actor 持有它"时保持加载：`Load` 让调用者持有，其他 actor 用 `Hold`，`Release` 或持有者退出时结束（每个模块最多 4 个持有者）。两者都没有时卸载：释放代码内存，槽的代号加 1，旧句柄 `Spawn` 返回 `NotFound`，值里还指着它的常量、闭包、结构体在使用时让 actor 以 `badcode` 结束。模块表最多 `GOGO_MAX_MODULES`（8）项，满了 `Load` 返回 `TooMany`。`supervisor.SuperviseModule(m, entry, arg, spec)` 持有模块并在崩溃后用 `SpawnLink` 重启；向它发 `supervisor.Upgrade{Module: m2}`（用 `actor.Call`，回复 `int(code.Err)`）会持有新模块、停旧子 actor、用新模块重启、释放旧模块。
+**Lifetime.** Every image has the same format; the boot image is module 0
+(same load and start path; held by the VM, never unloaded, not counted in
+`code.mem`). A module stays loaded while an actor of its own is alive or
+an actor holds it: `Load` makes the caller a holder, other actors call
+`Hold`, and a hold ends with `Release` or the holder's exit (at most 4
+holders per module). When neither remains, the module is unloaded: its
+code memory is freed and the slot's generation increases, so a `Spawn`
+through an old handle returns `NotFound`, and a constant, closure or
+struct value still pointing into it ends the actor that uses it with
+`badcode`. The module table has `GOGO_MAX_MODULES` (8) entries; when it
+is full, `Load` returns `TooMany`.
+`supervisor.SuperviseModule(m, entry, arg, spec)` holds the module and
+restarts the child with `SpawnLink` after a crash; sending it
+`supervisor.Upgrade{Module: m2}` (with `actor.Call`; the reply is
+`int(code.Err)`) holds the new module, stops the old child, restarts it
+from the new module and releases the old one.
 
-**编码**：模块号写进项本身（常量引用、闭包、模块自己的结构体类型号带 3 位槽号加 8 位代号），镜像里不带标记，运行时在 `LOADK` 等处加上，每次访问先查模块表，陈旧即 `badcode`。位分配、混淆上限（同一槽装入 256 次后陈旧项才可能重新解析）与代价见 §5.5.3。镜像版本 v9：`requires` 位图与导出表在常量区位图之后。
+**Encoding.** The module is written into the values themselves: constant
+refs, closures and a module's own struct type ids carry a 3-bit slot and
+an 8-bit generation. Images hold them untagged; the VM adds the tag at
+run time (`LOADK` and the like) and checks the module table on every
+access, so a stale value is `badcode`. The bit layout, the alias bound and
+the cost are in §5.5.3. Images carry a `requires` bitmask and an export
+table after the constant map (§5.6).
 
-**跨模块规则**（对称，主程序没有特例）：发送者与接收者属于不同模块时，消息里的常量字符串、字节、`int64` 装箱值拷贝成堆上副本；只允许基础值、`Bytes`、PID、Ref、`Module`、保留类型（`gogo` 各包的结构体）。含某个模块自己的结构体或闭包时，**发送者**以 `BadMsg` 退出，由它的监督者处理；`code.Spawn` 的 `arg` 同理但返回 `BadArg`。检查发生在构造消息时（`Send`、`Call`、`Reply`、`SendAfter` 调用时、`Spawn` 的捕获变量）；同一模块内部不受影响。向已卸载模块的目标或带陈旧值的消息一律 `badcode`（`term_live`）。退出通知里跨模块时 `Reason.Func` 为空；`names_unregister` 只许注册者本人注销。
+**Cross-module rules** (symmetric: the main program is not special).
+When sender and receiver belong to different modules, constant strings,
+bytes and boxed `int64`s in the message are copied to the heap; only
+basic values, `Bytes`, PIDs, Refs, `Module` values and reserved types
+(the structs of the `gogo` stub packages) may cross. A message that
+contains a module's own struct type or a closure makes the **sender**
+exit with `BadMsg`, for its supervisor to handle; `code.Spawn`'s `arg`
+follows the same rule but returns `BadArg`. The check runs when the
+message is built (`Send`, `Call`, `Reply`, `SendAfter`, a `Spawn`'s
+captures); messages within one module are not affected. A target in an
+unloaded module, or a message with a stale value, is `badcode`
+(`term_live`). In exit notifications across modules `Reason.Func` is
+empty. Only the actor that registered a name may unregister it.
 
-**能力（caps）**：编译器按导入的包和字面量端口驱动名/`/sd` 路径算出镜像的 `requires` 位图（`Cap*`：net、kbd、power、sd；驱动名运行时才知道时带 `CapAnyPort` 标记并给编译警告）。固件的 `platform_caps()`（`runtime/vm/platform.h`，`runtime/vm/caps.c` 有返回 0 的弱默认）返回它真正提供的位，`vm_caps_ok` 对照；缺少时 `Load` 返回 `Unsupported`，`Missing` 给出缺的位。开机镜像检查同一条规则（`gogo: image needs ...; firmware lacks ...`）。
+**Capabilities.** The compiler infers an image's `requires` bits (`Cap*`:
+net, kbd, power, sd, imu, ir_tx, ir_rx, mic, spk, tls) from its imports,
+the driver names of constant `port.Open` calls and constant `/sd` paths
+given to `gogo/fs` (`compiler/modinfo.go`). A driver name known only at
+run time sets the `CapAnyPort` marker and gives a build warning. The
+firmware's `platform_caps()` (`runtime/vm/platform.h`; a weak default in
+`runtime/vm/caps.c` returns 0) returns the bits it really provides, and
+`vm_caps_ok` compares. If bits are missing, `Load` returns `Unsupported`
+and `Missing` names them; the boot image is checked by the same rule
+(`gogo: image needs ...; firmware lacks ...`).
 
-**`//gogo:optional` 指令**：库包可以声明某些驱动是“软”的，即只在某次调用运行时用到、驱动不存在时（`port.Open` 返回 `ok=false`）把那次调用作为普通失败报告。写法是包里任意文件的一行注释 `//gogo:optional 驱动名...`（与 `//go:` 指令同一习惯，通常放在包文档注释末尾、空的 `//` 行之后，gofmt 也这样摆放指令）。语义：
-- 只对声明它的包**自己**的常量 `port.Open` 调用生效：这些驱动不进镜像的 `requires`；导入它的包、其他库、`package main` 自己的 `port.Open` 照常计入（main 程序直接 `port.Open("tls", …)` 仍然要求 tls）。
-- 名字必须是有能力位的驱动（`imu`、`ir_rx`、`ir_tx`、`kbd`、`mic`、`netif`、`power`、`spk`、`tcp`、`tcp_listen`、`tls`、`udp`），未知名字、空列表、拼错的 `//gogo:` 指令都是编译错误；`package main` 里写它也是错误。
-- 用法：`gogo/http` 声明 `//gogo:optional tls`（只用 http 的镜像不要求 tls，固件没有 tls 时 https 请求失败）；`gogo/sound` 声明 `//gogo:optional mic spk`（没有麦克风时 `Record` 返回 false，没有扬声器时 `Play` 返回 false）。编译器里不出现任何库的路径（替代了原来的 `optionalDrivers` 表，裁定 R10 修订）。
-- 注意：`gogo firmware` 按 `requires` 选功能，软驱动不会被自动打开；`tls` 与音频默认就开，`-without` 去掉它们时这些调用在运行时失败。
+**The `//gogo:optional` directive.** A library package can declare
+drivers it uses only softly: opened only when a call needs them at run
+time, and their absence (`port.Open` returning `ok=false`) reported as
+that call's failure. The directive is a comment line in any file of the
+package, `//gogo:optional name...` (by convention at the end of the
+package doc comment, after an empty `//` line, as gofmt places
+directives).
+- It applies only to the declaring package's **own** constant
+  `port.Open` calls: those drivers add nothing to the image's `requires`.
+  Importers, other libraries and `package main` still count their own
+  calls (a program that calls `port.Open("tls", ...)` itself requires
+  tls).
+- Names must be drivers with a capability bit (`imu`, `ir_rx`, `ir_tx`,
+  `kbd`, `mic`, `netif`, `power`, `spk`, `tcp`, `tcp_listen`, `tls`,
+  `udp`). An unknown name, an empty list or a misspelt `//gogo:`
+  directive is a compile error, and so is the directive in
+  `package main`.
+- `gogo/http` declares `//gogo:optional tls` (an image that uses http
+  does not require tls; on a firmware without tls, https requests fail);
+  `gogo/sound` declares `//gogo:optional mic spk` (without a microphone
+  `Record` returns false, without a speaker `Play` does). No library path
+  appears in the compiler.
+- `gogo firmware` picks features from `requires`, so it never turns soft
+  drivers on by itself; `tls` and audio are on by default, and building
+  without them makes those calls fail at run time.
 
-**代码内存与 `code.mem`**：所有已加载（非开机）模块的代码字节合计不超过配置键 `code.mem`（`K`/`M` 后缀，默认 64 KB），超过为 `NoMemory`；不计入任何 actor 的内存上限。代码放哪里：`module_load` 对每次加载**先**问 `platform_code_alloc`（`runtime/vm/platform.h`，弱默认返回 `NULL`），成功就把镜像拷贝到那块内存（StickS3 上总是 PSRAM）；返回 `NULL` 时，整块的、堆外的、4 字节对齐的 `Bytes` 就地运行（模块持有它），其他 `Bytes`（堆内、任何切片、未对齐）拷贝进 VM 自己的内存；计数总是镜像大小。ESP32-S3：StickS3 有 8 MB 八线 PSRAM，`platform_esp.c` 用 `heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT)` 提供代码内存，PSRAM 只经 caps 分配（`CONFIG_SPIRAM_USE_CAPS_ALLOC`，不是全局 malloc），VM arena、Wi-Fi、LCD 缓冲都留在内部 RAM；Cardputer ADV 没有 PSRAM，返回 `NULL`。详见 `platform/esp32s3/README.md`。
+**Code memory and `code.mem`.** The code bytes of all loaded modules
+(the boot image aside) are limited by the configuration key `code.mem`
+(`K`/`M` suffix; 64 KB by default); past it `Load` returns `NoMemory`.
+This memory counts against no actor's limit. Where the code goes:
+`module_load` first asks `platform_code_alloc` (`runtime/vm/platform.h`;
+the weak default returns `NULL`); if it succeeds, the image is copied
+there (on the StickS3, always PSRAM). If it returns `NULL`, a whole,
+off-heap, 4-byte-aligned `Bytes` runs in place (the module holds it), and
+any other `Bytes` (on the heap, a slice, unaligned) is copied into VM
+memory. The count is always the image size. The StickS3 has 8 MB of
+octal PSRAM; `platform_esp.c` allocates code with
+`heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT)`. PSRAM is used
+only through caps allocation (`CONFIG_SPIRAM_USE_CAPS_ALLOC`, not the
+global malloc), so the VM arena, Wi-Fi and the LCD buffers stay in
+internal RAM. The Cardputer ADV has no PSRAM and returns `NULL`.
 
-**这一版没有**：权限（模块与主程序权利相同）、签名、写 flash 的模块、`sys.Has`、原地换代码、跨模块函数调用或共享类型，见 [hotload-followups.md](hotload-followups.md)。`examples/hotload` 是主机上的黄金示例，`examples/hotload_net` 是板子上经 HTTP 取模块并升级的演示。
+Not provided: permissions (modules have the main program's rights),
+signatures, modules stored in flash, `sys.Has`, in-place code
+replacement, cross-module function calls and shared types.
+`examples/hotload` is the host golden example; `examples/hotload_net`
+fetches modules over HTTP and upgrades on a board.
 
-### 5.4.5 可裁剪固件
+### 5.4.5 Optional firmware features
 
-固件里不是每样东西都有人要：只做离线显示的程序不需要 Wi-Fi 和网络栈，没有 SD 卡的板子不需要 FatFs，纯英文界面不需要 160 KB 的中文字库。规格见[可裁剪固件设计](superpowers/specs/2026-11-25-gogo-optional-firmware-design.md)，遗留事项与尺寸表见 [optional-firmware-followups.md](optional-firmware-followups.md)。
+Not every program needs everything in the firmware: an offline display
+program needs neither Wi-Fi nor the network stack, a board without an SD
+slot needs no FatFs, and an English-only interface needs no 160 KB CJK
+font.
 
-- **编译开关**（Kconfig，`main/Kconfig.projbuild`，默认全开）：`GOGO_NET`（Wi-Fi 与网络栈）、`GOGO_SD`（Cardputer 的 `/sd`）、`GOGO_FS_EXFAT`（依赖 `GOGO_SD`）、`GOGO_FONT_CJK`（关闭后内嵌 1.5 KB 的 ASCII 字库，中文画成方框）、`GOGO_KBD`、`GOGO_BATTERY`，以及后来加的 `GOGO_IMU`、`GOGO_IR`（§5.4.6）与 `GOGO_AUDIO`（§5.4.7）。关掉的功能表现得像板子上没有这块硬件：对应端口 `port.Open` 返回 `ok=false`，`gogo config scan` 等回"no network in this firmware"。
-- **能力位**：`platform_caps()` 返回这份固件真正有的 `CAP_NET` / `CAP_KBD` / `CAP_POWER` / `CAP_SD`，以及后来加的 `CAP_IMU` / `CAP_IR_TX` / `CAP_IR_RX`（§5.4.6）与 `CAP_MIC` / `CAP_SPK`（§5.4.7）。镜像和热加载模块的 `requires` 字写明需要哪些位；缺能力的镜像开机被拒绝（`gogo: image needs ...; firmware lacks ...`），`code.Load` 返回 `Unsupported`。
-- **`gogo firmware`**：`gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with 列表] [-without 列表] 文件...` 读取镜像和模块的 `requires`，写出 `sdkconfig.gogo` 覆盖文件，打印（`-build` 时直接执行）对应的 `idf.py` 命令。需要的功能不能被去掉，板子没有的功能是错误。
-- **尺寸亮点**（`gogo.bin`，ESP-IDF 6.1.1）：关 `GOGO_NET` StickS3 883728 -> 460352 B、静态 DIRAM 约 -33 KB；关 `GOGO_FONT_CJK` 约 -161 KB；Cardputer 关 `GOGO_SD` -42.6 KB；全部可选项关闭 StickS3 298704 B、Cardputer 276160 B（约 -66% / -70%）。全局瘦身（日志级别、`CHECKS_SILENT`、关 WPA3）只测量未采用，见 `platform/esp32s3/README.md`。
-- 真机验证已通过（StickS3：`GOGO_NET=n` 固件刷入后，`netdemo` 被拒绝、`fsdemo` 正常运行，启动时空闲内存 +64 KB），结果见 followups 文件。`gogo firmware` 管理自己的构建目录：已有的 `sdkconfig` 与新的开关不一致时会删除它。
+- **Build switches** (Kconfig, `platform/esp32s3/main/Kconfig.projbuild`,
+  all on by default): `GOGO_NET` (Wi-Fi and the network stack), `GOGO_TLS`
+  (depends on `GOGO_NET`), `GOGO_SD` (the Cardputer's `/sd`),
+  `GOGO_FS_EXFAT` (depends on `GOGO_SD`), `GOGO_FONT_CJK` (off: a 1.5 KB
+  ASCII font is built in and CJK characters are drawn as boxes),
+  `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR` and `GOGO_AUDIO`. A
+  switched-off feature behaves as if the board lacked the hardware: its
+  `port.Open` returns `ok=false`, and `gogo config scan` and the like
+  answer "no network in this firmware".
+- **Capability bits.** `platform_caps()` returns the `CAP_*` bits this
+  firmware really has; an image or module whose `requires` has other bits
+  is refused at boot (`gogo: image needs ...; firmware lacks ...`) or by
+  `code.Load` (`Unsupported`).
+- **`gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with
+  list] [-without list] files...`** reads the `requires` bits of images
+  and modules, writes an `sdkconfig.gogo` overlay and prints (with
+  `-build`, runs) the `idf.py` command. A needed feature cannot be
+  removed, and a feature the board lacks is an error. It manages its own
+  build directory and deletes an existing `sdkconfig` that disagrees with
+  the new switches.
+- **Sizes** (`gogo.bin`, ESP-IDF 6.1.1, before audio and TLS were
+  added): turning off `GOGO_NET` takes the StickS3 from 883728 to 460352 B
+  and its static DIRAM down by about 33 KB; `GOGO_FONT_CJK` off saves
+  about 161 KB; `GOGO_SD` off saves 42.6 KB on the Cardputer; with every
+  optional feature off the StickS3 is 298704 B and the Cardputer 276160 B
+  (about -66 % and -70 %). Current figures per feature are in
+  [platform/esp32s3/README.md](../platform/esp32s3/README.md).
 
-### 5.4.6 六轴传感器、红外与统一数据流（输入第二期）
+### 5.4.6 IMU, infrared and streams
 
-规格见[输入第二期设计](superpowers/specs/2026-11-25-gogo-input2-design.md)，硬件出处见[硬件调研](superpowers/specs/2026-11-25-input2-hw-research.md)，遗留与真机检查清单见 [input2-followups.md](input2-followups.md)，书里的讲解见 `docs/book/15-imu-and-ir.md`。
+- **Streams** (`runtime/stream/`, plain C). Input streams deliver
+  `port.Chunk{Seq, TimeMs, Dropped, Data}` (`Seq` counts dropped chunks
+  too; a chunk that does not fit the mailbox is dropped and counted, never
+  killing the receiver). Output streams take `port.Out{Data}` commands;
+  every accepted `Out` is answered with a `port.Done{Seq}` (sent ones
+  numbered from 1; refused or failed ones -1; a refusal `Done{-1}` may be
+  dropped when the receiver reads nothing and already owes 16). At most 2
+  `Out`s per port are in flight; a third gets `Done{-1}` at once. A
+  `Done` that does not fit the mailbox is owed and delivered later, in
+  order. Reserved types 35-41.
+- **`imu` port** (`gogo/imu`): `imu.Config{RateHz, Gestures, BatchMs}`.
+  `RateHz` is 0, 25, 50, 100 or 200; a sample is 12 bytes `gx gy gz ax ay
+  az` (int16 LE, +-2000 dps and +-8 g, the chip's own axes), collected
+  into one `Chunk` per `BatchMs` (default 200, clamped to 50..1000); the
+  batch buffer comes from the VM allocator and is charged to the owner (at
+  most 2400 B). Gestures arrive as `imu.Gesture{Kind, Value}`; the bits
+  are `Tap DoubleTap TripleTap Orientation Flat AnyMotion NoMotion Step`.
+  For `Orientation` the low two bits of `Value` are portrait / landscape
+  left / portrait upside down / landscape right, +4 for face down; for
+  `Step`, `Value` is the step count. The port polls every `min(BatchMs,
+  50)` ms.
+- **`ir_tx` and `ir_rx` ports** (`gogo/ir`, `gogo/irproto`): timings are
+  uint16 LE microseconds, alternating mark and space, starting with a
+  mark, each 1..32767, at most 256 values per frame, the same format both
+  ways (a received frame can be replayed as is). `ir.TX{CarrierHz,
+  DutyPct}` takes `Out`s; `ir.RX{GapUs}` delivers one `Chunk` per frame,
+  and a frame that is too long is cut and counted in `Dropped`.
+  `gogo/irproto` encodes and decodes NEC.
+- **Platform hooks.** `InputHw` adds `imu_open/close/read_fifo/
+  read_gestures`, `ir_tx_start/tx_busy/rx_open/rx_read/rx_close`, and the
+  optional `ir_tx_open/ir_tx_close` (called when a transmit port opens or
+  closes; the ESP uses them to reference-count the StickS3's EXT_5V; NULL
+  on Unix). Signatures and contracts are in `runtime/input/input.h`.
+  Unix simulates them from the stdin script (`imu sample`, `imu
+  gesture`, `ir rx`); `ir_tx` prints to stderr.
+- **ESP32-S3.** Both boards have a BMI270 on the shared I2C bus (probed at
+  0x69, then 0x68; polled only). The first open uploads Bosch's legacy
+  configuration (8192 B, BSD-3, license header kept,
+  `bmi270_legacy_config.c`), the only one with tap and orientation. IR
+  uses the RMT (1 MHz): TX on G46 (StickS3) and G44 (Cardputer); RX only
+  on the StickS3 (G42, 3 frame slots, receive re-armed in the completion
+  callback). On the StickS3, the PM1's EXT_5V is on while any IR port is
+  open (reference-counted, off after the last close; the Grove/Hat 5 V
+  pins are outputs then and must not be fed), and the speaker amplifier
+  (PM1 GPIO3) is off while `ir_rx` is open.
+- **Background recording** (`gogo/imulog`, written in the subset on
+  `gogo/fs`): `imulog.Start(cfg, dir, maxBytes)` opens the imu port and
+  hands it to a logging actor that appends every `Chunk` and gesture as a
+  binary record (a 15-byte header `kind, a, timeMs, b, len` plus the
+  payload) to `dir/0.imu` and `dir/1.imu`, rotating like `ringlog`, so
+  the total stays within `maxBytes` plus one record; `imulog.Read(dir,
+  max)` returns the newest `max` records.
+- **Switches and capabilities.** Kconfig `GOGO_IMU` and `GOGO_IR` (on by
+  default); bits `CAP_IMU`, `CAP_IR_TX`, `CAP_IR_RX`. With `GOGO_IR` off
+  the RMT driver is not linked. The IMU costs about 10.5 KB of flash
+  (8 KB of it the configuration) and IR about 25.8 KB (mostly IDF's RMT
+  driver).
 
-- **统一数据流**（`runtime/stream/`，纯 C）：输入流 `port.Chunk{Seq, TimeMs, Dropped, Data}`（序号含被丢的，送不进邮箱就丢并计数，不杀接收者），输出流命令 `port.Out{Data}`，每个被接受的 `Out` 回一个 `port.Done{Seq}`（成功发送的从 1 编号，拒收或发送失败为 -1；接收者什么都不读、已欠 16 个 `Done` 时，拒收的 `Done{-1}` 可能被丢），每个端口最多 2 个在途，第三个直接 `Done{-1}`；`Done` 进不了邮箱时欠着，按顺序补发。保留类型 35–41，镜像 v10。
-- **`imu` 端口**（`gogo/imu`）：`imu.Config{RateHz, Gestures, BatchMs}`。`RateHz` 为 0/25/50/100/200，样本 12 字节 `gx gy gz ax ay az`（int16 LE，±2000 dps、±8 g，芯片自己的坐标轴），按 `BatchMs`（默认 200，限制在 50..1000）攒成一个 `Chunk`；批缓冲用 VM 分配器、计入所有者（最多 2400 B）。手势 `imu.Gesture{Kind, Value}`，位为 `Tap DoubleTap TripleTap Orientation Flat AnyMotion NoMotion Step`，`Orientation` 的 Value 低两位为竖/左横/倒竖/右横、+4 为朝下，`Step` 的 Value 为累计步数。轮询周期 `min(BatchMs, 50)` ms。
-- **`ir_tx` / `ir_rx` 端口**（`gogo/ir`、`gogo/irproto`）：时序为 uint16 LE 微秒、亮灭交替、亮开头，每个值 1..32767，每帧最多 256 个值，收发格式相同（可原样重放）。`ir.TX{CarrierHz, DutyPct}` 收 `Out`；`ir.RX{GapUs}` 每帧一个 `Chunk`，超长截断并在 `Dropped` 加 1。`irproto` 提供 NEC 编解码。
-- **平台钩子**：`InputHw` 增加 `imu_open/close/read_fifo/read_gestures` 与 `ir_tx_start/tx_busy/rx_open/rx_read/rx_close`，以及可选的 `ir_tx_open/ir_tx_close`（发射端口打开/关闭时调用，ESP 用它给 StickS3 的 EXT_5V 计数；unix 留 NULL）（签名与契约见 `runtime/input/input.h` 和规格 §4）。unix 用 stdin 脚本模拟（`imu sample`、`imu gesture`、`ir rx`），`ir_tx` 打印到 stderr。
-- **ESP32-S3**：两块板子都是 BMI270（共享 I2C 总线，先探 0x69 再探 0x68，只轮询），首次打开时上传 Bosch 的 legacy 配置（8192 B，BSD-3，原样保留许可头，`bmi270_legacy_config.c`），因为只有它带敲击与朝向。红外用 RMT（1 MHz）：TX StickS3 G46、Cardputer G44，RX 只有 StickS3（G42，3 个帧槽，完成回调里重新接收）。StickS3 在有红外端口打开期间打开 PM1 的 EXT_5V（`PWR_CFG` 0x06 bit 3，按打开的端口计数，最后一个关闭时关掉；打开期间 Grove/Hat 的 5 V 是输出，不能从那里供电），`ir_rx` 打开期间关掉喇叭功放（PM1 G3）。
-- **后台记录**（`gogo/imulog`，用 Go 子集写，建在 `gogo/fs` 上）：`imulog.Start(cfg, dir, maxBytes)` 打开 imu 端口并交给一个记录 actor，把每个 `Chunk` 和每个手势追加成二进制记录（15 字节头 `kind, a, timeMs, b, len` 加载荷）写进 `dir/0.imu` 与 `dir/1.imu`，轮转方式同 `ringlog`，总量不超过 `maxBytes` 加一条记录；`imulog.Read(dir, max)` 返回最新的 `max` 条记录。黄金测试 `examples/imulogdemo`。
-- **开关与能力位**：Kconfig `GOGO_IMU`、`GOGO_IR`（默认开），能力位 `CAP_IMU`、`CAP_IR_TX`、`CAP_IR_RX`；关掉 `GOGO_IR` 时 RMT 驱动不链接。`gogo.bin`：StickS3 默认 923472 B（输入第二期前 885712 B），IMU 约 10.5 KB（其中配置 8 KB）、红外约 25.8 KB（主要是 IDF 的 RMT 驱动）；静态 DIRAM +904 B。明细见 `platform/esp32s3/README.md`。
+### 5.4.7 Audio (the `mic` and `spk` ports)
 
-### 5.4.7 音频（`mic` 与 `spk` 端口）
+- **Ports** (`gogo/audio`, reserved types 42-43). PCM is always 16-bit
+  little-endian mono; `Rate` is 8000 or 16000. `mic`: `audio.Mic{Rate,
+  FrameMs, Gain}`; `FrameMs` 0 means 100, otherwise it is clamped to
+  20..500. Each full frame (`Rate * FrameMs / 1000 * 2` bytes) is sent as
+  a `port.Chunk` whose `TimeMs` is the frame's nominal start (the open
+  time plus `FrameMs` per earlier frame, dropped ones included).
+  `Dropped` counts whole frames: chunks that did not fit the mailbox, and
+  bytes lost to a hardware overflow (rounded up to frames). On an
+  overflow the partial frame before it and the data after it up to the
+  next frame boundary are discarded, so every `Chunk` is contiguous and
+  its `TimeMs` exact. `spk`: `audio.Speaker{Rate, Volume}`; the commands
+  are `port.Out`s holding PCM, and each `Done` comes when its `Out` has
+  really been played (not merely written to a hardware buffer). With two
+  `Out`s in flight the second follows the first without a gap. Closing
+  (or the owner's exit) cuts playback at once, without `Done`.
+- **Half-duplex.** One `mic` or one `spk` at a time; a second open is
+  refused before any hook is called, and the open one is unaffected. Both
+  boards have one ES8311 codec on one I2S bus.
+- **Gain and Volume** are relative to the platform, not codec values.
+  `Gain` (dB, clamped to 0..24, rounded down to 6 dB steps) is added to
+  the platform's "normal" microphone level, at which speech at arm's
+  length is well above the noise floor without clipping. `Volume` 0 is
+  mute; 1..100 runs from 40 dB below the platform's maximum level to the
+  maximum. A different codec later needs no program change.
+- **Memory.** The frame buffer is allocated from the VM allocator at open
+  and charged to the owner (`Port.charge_words`; F = frame bytes / 4
+  words); each `Chunk` waiting in the mailbox costs F + 10 words more.
+  Open also checks that the owner has room for one `Chunk` beside the
+  buffer (`Port.room_64w`, in `Port`'s padding, so `Port` stays 64 bytes)
+  and returns `ok=false` otherwise, rather than staying silent forever. To
+  survive a stall of S ms (writing to SD), the owner needs heap + F +
+  (ceil(S / FrameMs) + 1) x (F + 10) words: at 16 kHz and 100 ms, a 300 ms
+  stall needs heap + 4040 words, more than the default 4096-word limit on
+  a board, so `gogo/sound`'s recorder starts with `actor.Options{MaxMemory}`
+  and opens `mic` itself.
+- **Platform hooks.** `InputHw` adds `mic_open/mic_read/mic_close` and
+  `spk_open/spk_write/spk_queued/spk_close` (contracts in
+  `runtime/input/input.h`), all optional (`mic_open`/`mic_read` or
+  `spk_open`/`spk_write` NULL means no such hardware) and all called on
+  the scheduler thread. `mic_read` may return a single DMA buffer, fewer
+  bytes than asked, and reports bytes lost to a full buffer in `*lost`;
+  `spk_write` does not block, and `spk_queued` returns the bytes written
+  but not yet played, from which the common code knows when an `Out` has
+  finished. The common driver is `runtime/input/audio.c`, and all data
+  goes through `runtime/stream/`. Unix simulates the ports from the stdin
+  script (`mic tone <hz> <ms>`, `mic silence <ms>`) and prints speaker
+  writes to stderr; `--fs-quota` (test only) simulates a full disk.
+- **ESP32-S3** (`audio_esp.c`, Kconfig `GOGO_AUDIO`, on by default):
+  ES8311 on the shared I2C bus (0x18); I2S_NUM_0 as master, Philips,
+  simplex, created at open and deleted at close; the codec is clocked by
+  BCLK. `mic` uses 11 DMA buffers of 30 ms (960 B at 16 kHz, internal RAM,
+  allocated at open), which survives a 300 ms stall; the first 2 buffers
+  are discarded. `spk` uses 4 DMA buffers of 10 ms plus an 8 KB ring, for
+  at most 40 ms of latency. `GOGO_AUDIO` selects
+  `CONFIG_I2S_ISR_IRAM_SAFE` (callbacks in IRAM); otherwise during a
+  `/flash` write the GDMA reports only the last finished buffer and data
+  is lost or replayed. The StickS3's amplifier (AW8737, PM1 GPIO3) is
+  turned on last at open and muted then turned off first at close; `spk`
+  cannot open while `ir_rx` is open. The StickS3's maximum level is
+  capped at DAC -4 dB (`AUDIO_SPK_MAX_DB`), the Cardputer ADV's is 0 dB.
+  The codec's analog reference stays on after the first open, so only
+  the first `mic` open after power-up has about 1 s of zeros. With
+  `GOGO_AUDIO` off, IDF's I2S driver is not linked and `CAP_MIC` /
+  `CAP_SPK` are 0; `runtime/input/audio.c` is still linked (its ports
+  refuse to open).
+- **`fs.File.WriteAt`** (`B_FS` operation 13) overwrites bytes of a file
+  opened with `Write`, without extending it or moving the append
+  position; the host (`pwrite`), FatFs, LittleFS and memfs backends behave
+  the same. It needs no new space, so a WAV header can be fixed on a full
+  SD card; on `/flash` (copy-on-write) it needs one free block.
+- **`gogo/wav`** (subset library): `Create(path, rate, planned)` writes a
+  standard 44-byte header for the planned length, `Write` appends PCM,
+  and `Close` fixes the header in place with `WriteAt` when the real
+  length differs; `Info` parses a header.
+- **`gogo/sound`** (subset library): `sound.Record(dir, cfg, maxSec)`
+  starts a recorder actor (it opens `mic` itself; `Record` waits for its
+  answer with `actor.Call`, so the open's charge falls on the recorder's
+  `MaxMemory`) that writes each `Chunk` to `dir/NNNN.wav`, starts a new
+  file every `maxSec` seconds (default 600, at most 3600) and sends a
+  `sound.Recorded` per file; `sound.Stop{}` ends it, followed by exactly
+  one last `Recorded`. On a write error or a full disk it closes the file
+  properly, reports the error in `Err` and ends, deleting nothing.
+  `sound.Play(path)` opens `spk`, keeps two 4096-byte `Out`s in flight
+  and answers with a `sound.Played` at the end. Both actors close their
+  port before their last message, so the caller can open the other
+  direction at once. `gogo/sound` declares `//gogo:optional mic spk`.
 
-规格见[音频设计](superpowers/specs/2026-11-25-gogo-audio-design.md)，硬件出处见[音频硬件调研](superpowers/specs/2026-11-25-audio-hw-research.md)，遗留事项见 [audio-followups.md](audio-followups.md)，书里的讲解见 `docs/book/16-audio.md`。
+### 5.4.8 TLS (the `tls` port) and HTTPS
 
-- **端口**（`gogo/audio`，保留类型 42–43，镜像 v11）：PCM 一律 16 位小端单声道，`Rate` 取 8000 或 16000。`mic`：`audio.Mic{Rate, FrameMs, Gain}`，`FrameMs` 为 0 时取 100，否则限制在 20..500；每满一帧（`Rate * FrameMs / 1000 * 2` 字节）发一个 `port.Chunk`，`TimeMs` 是该帧的名义起点（打开时刻加之前每帧 `FrameMs`，丢掉的帧也算）。`Dropped` 计整帧：送不进邮箱的 `Chunk`，以及硬件溢出丢掉的字节（按帧向上取整）；溢出时帧里已有的半帧和溢出后到下一帧边界的数据一起丢掉，所以 `Chunk` 总是连续的，`TimeMs` 准确。`spk`：`audio.Speaker{Rate, Volume}`，命令是装 PCM 的 `port.Out`，每个 `Out` 真正播完（不只是写进硬件缓冲）才回 `Done`；两个 `Out` 在途时第二个紧接第一个播放，没有间隙。关闭（或所有者退出）立即截断，不回 `Done`。
-- **半双工**：同一时间只能开一个 `mic` 或一个 `spk`；第二个打开在调用任何钩子之前就被拒绝，已开的那个不受影响。两块板子都是一个 ES8311 编解码器共用一组 I2S。
-- **Gain 与 Volume**：都相对平台定义，不是编解码器的绝对值。`Gain`（dB，限制在 0..24，向下取到 6 dB 一档）是在平台"正常"麦克风电平之上加的增益，0 表示一臂远的说话声明显高于底噪又不削顶；`Volume` 0 静音，1..100 从平台最大声级以下 40 dB 到最大声级。这样以后换编解码器，程序不用改。
-- **内存规则**：帧缓冲在打开时由 VM 分配器分配，计入所有者（`Port.charge_words`，F = 帧字节 / 4 字）；邮箱里每个等待的 `Chunk` 再算 F + 10 字。打开时还要检查所有者在缓冲之外放得下一个 `Chunk`（`Port.room_64w`，放在 `Port` 的填充字节里，`Port` 仍为 64 字节），放不下就 `ok=false`，而不是永远静音。要扛住 S 毫秒的停顿（写 SD），所有者需要堆 + F + (ceil(S / FrameMs) + 1) × (F + 10) 字：16 kHz、100 ms 时 300 ms 停顿要堆 + 4040 字，超过板子上 actor 默认的 4096 字上限，所以 `gogo/sound` 的录音 actor 用 `actor.Options{MaxMemory}` 启动，并且自己打开 `mic`。
-- **平台钩子**：`InputHw` 增加 `mic_open/mic_read/mic_close` 与 `spk_open/spk_write/spk_queued/spk_close`（签名与契约见 `runtime/input/input.h` 和规格 §3），全部可选（`mic_open`/`mic_read` 或 `spk_open`/`spk_write` 为 NULL 表示没有这件硬件），都在调度线程上调用。`mic_read` 可以一次只给一个 DMA 缓冲、少于请求的字节，并用 `*lost` 报告缓冲区满丢掉的字节；`spk_write` 不阻塞，`spk_queued` 返回已写未播的字节，公共代码据此判断一个 `Out` 是否播完。公共驱动是 `runtime/input/audio.c`，数据都走 `runtime/stream/`。unix 用 stdin 脚本模拟（`mic tone <hz> <ms>`、`mic silence <ms>`），喇叭写入打印到 stderr；`--fs-quota` 是测试用的参数，模拟磁盘满。
-- **ESP32-S3**（`audio_esp.c`，Kconfig `GOGO_AUDIO`，默认开）：ES8311 在共享 I2C 总线上（0x18），I2S_NUM_0 主模式、Philips、单工，打开时创建、关闭时删除，编解码器由 BCLK 作时钟。`mic` 用 11 个 30 ms 的 DMA 缓冲（16 kHz 时 960 B，内部 RAM，打开时分配），能扛 300 ms 停顿，开头 2 个缓冲丢弃；`spk` 用 4 个 10 ms 的 DMA 缓冲加 8 KB 环形缓冲，延迟不超过 40 ms。`GOGO_AUDIO` 选上 `CONFIG_I2S_ISR_IRAM_SAFE`（回调放在 IRAM），否则写 `/flash` 时 GDMA 只报最后一个完成的缓冲，会丢数据或重放。StickS3 的功放（AW8737，PM1 GPIO3）在打开时最后打开、关闭时先静音再关；`ir_rx` 打开期间不能开 `spk`。StickS3 的最大声级封顶在 DAC -4 dB（`AUDIO_SPK_MAX_DB`，见 followups 第 1 项），Cardputer ADV 为 0 dB。编解码器的模拟参考电压首次打开后一直开着，所以只有上电后第一次打开 `mic` 有约 1 s 的全零。尺寸：StickS3 `gogo.bin` +18720 B、静态 DIRAM +592 B；Cardputer ADV +19680 B、+820 B。关掉 `GOGO_AUDIO` 时 IDF 的 I2S 驱动不链接，`CAP_MIC` / `CAP_SPK` 为 0，`runtime/input/audio.c` 仍链接（端口打开返回 `ok=false`）。
-- **`fs.File.WriteAt`**（`B_FS` 操作码 13）：覆盖用 `Write` 打开的文件里已有的字节，不扩展文件、不移动追加位置；宿主 `pwrite`、FatFs、LittleFS 与 memfs 四个后端行为一致。不需要新空间，所以 SD 卡满了也能改 WAV 头；`/flash` 是写时复制，需要一个空闲块。
-- **`gogo/wav`**（Go 子集）：`Create(path, rate, planned)` 先按计划长度写好 44 字节的标准头，`Write` 追加 PCM，`Close` 在实际长度不同时用 `WriteAt` 原地改头；`Info` 解析头。
-- **`gogo/sound`**（Go 子集）：`sound.Record(dir, cfg, maxSec)` 启动录音 actor（它自己打开 `mic`，`Record` 用 `actor.Call` 等它的结果，所以打开时的计费算在录音 actor 的 `MaxMemory` 上），把每个 `Chunk` 写进 `dir/NNNN.wav`，每满 `maxSec` 秒（默认 600，最多 3600）换一个文件，每个文件回一个 `sound.Recorded`；发 `sound.Stop{}` 结束，总会再收到恰好一个最后的 `Recorded`。写错或磁盘满时把文件收好、在 `Err` 里报告并结束，不删任何东西。`sound.Play(path)` 打开 `spk`，保持两个 4096 字节的 `Out` 在途，结束时回一个 `sound.Played`。录音 actor 在最后一个 `Recorded` 之前、播放 actor 在 `Played` 之前就把端口关掉，调用者可以立刻开另一个方向。`gogo/sound` 声明 `//gogo:optional mic spk`，导入它不要求 `mic` / `spk`：固件没有麦克风时 `Record` 返回 false，没有扬声器时 `Play` 返回 false（见上文 caps 一节）。
-- **真机**（2026-11-25，两块板）：录音到 `/flash`（StickS3）和 `/sd`（Cardputer，exFAT）`Dropped` 为 0；0.5 s 的音调在 533–541 ms 后回 `Done`；半双工正确；两块板互相放音、收音都通过（`audiotone` / `audiolisten`）。听感（爆音、清晰度）与功放空闲电流待人工检查。
+The contract is at the top of `runtime/net/tls/tls.h`; book chapter 17
+explains it from the user's side.
 
-### 5.4.8 网络加密（`tls` 端口与 HTTPS）
+- **Port.** `tls`, configured with `net.DialTLS{IP, Port, TimeoutMs,
+  Host}` (reserved type 44). Its messages are exactly those of `tcp`
+  (`Connected`, `Write`, `Written`, `Data`, `Shutdown`, `Closed`), with
+  TLS plaintext as the bytes. It is a mode of the `tcp` driver (a
+  `TcpUpper`), not a second stack: TCP's events, retries, write rules and
+  deadlines all apply, and the owner sees `tcp`'s semantics. TLS 1.2
+  client only (mbedTLS 4.x's TLS 1.3 key exchange cannot be sliced), with
+  ECDHE and AEAD suites.
+- **Sliced handshake.** Each drain of the network stack runs one
+  `mbedtls_ssl_handshake_step`. The ECDSA verifications
+  (ServerKeyExchange and the certificate chain) are split with PSA's
+  interruptible operations (`GOGO_TLS_MAX_OPS` per slice), and a slice
+  that gives up continues at the next drain. While work remains, the
+  port source's `pending()` stays true, and `vm_run` checks it before
+  sleeping, so the next slice runs at once. **Not sliced:** the ECDHE key
+  generation plus agreement (one step) and each RSA signature check.
+- **Verification is always on.** The platform provides the trust anchors
+  (`platform_tls_verify_setup`); validity dates are checked against the
+  wall clock (`gogo/sys`, set by `gogo/sntp`, with the build time as a
+  floor) and the name against `Host` (also sent as SNI). Without a clock
+  the result is `Closed{NoTime}`, a bad certificate is `Closed{BadCert}`,
+  any other TLS failure `Closed{TLS}`. There is no "don't verify" mode.
+- **Memory.** Each connection charges its owner about 23 KB (16 KB in and
+  4 KB out of record buffers plus the connection state); the measured
+  peak is about 34-35 KB, the difference being handshake temporaries,
+  freed when the handshake ends and not charged. One TLS connection
+  exists at a time (`GOGO_TLS_MAX` 1).
+- **`gogo/http`.** `https://` uses the `tls` port. One-shot `Get`, `Post`
+  and `Do` send HTTP/1.1 with `Connection: close` over https (HTTP/1.0
+  over http), because some servers (Cloudflare among them) answer an
+  HTTP/1.0 request with a body delimited only by the connection close,
+  which is refused over TLS (a close can be forged at a record boundary).
+  `NewClient` / `ClientDo` keep the connection and handshake once;
+  `Upload` / `ClientUpload` stream a file. Actors that open a tls
+  connection are spawned with `http.TLSMemory` (26 KB) more memory.
+- **ESP32-S3** (Kconfig `GOGO_TLS`, on by default, depends on
+  `GOGO_NET`). The firmware uses ESP-IDF's own mbedTLS component (4.1.1,
+  the same source as the host build) rather than a second copy: hardware
+  AES, SHA and MPI and the certificate bundle come with it, and Wi-Fi's
+  WPA links it anyway. The configuration is in `sdkconfig.defaults`
+  (restartable ECC, TLS 1.2 client only, record buffers 16384 / 4096
+  without IDF's dynamic buffers, which would move the output buffer the
+  port sends from, X25519, `HAVE_TIME_DATE` so that validity is checked
+  at all, mbedTLS built with -O2). A build without TLS adds
+  `sdkconfig.tls-off`, which restores IDF's defaults for the settings that
+  also affect Wi-Fi's WPA crypto (-O2, the allocator, restartable ECC,
+  time); `gogo firmware` adds it by itself. `tls.c` is built with
+  `GOGO_TLS_MBEDTLS_HOOKS=0` and installs no hooks into the shared mbedTLS;
+  the platform sets it up:
+  - **Memory:** `CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC`; `platform_esp_init`
+    first installs the `platform_tls_alloc` allocator, which prefers PSRAM
+    on the StickS3 (a handshake leaves internal RAM untouched; about
+    35 KB of PSRAM at the peak) and uses internal RAM on the Cardputer.
+    `gogo config stats` shows `mbedtls_mem`, `mbedtls_mem_peak`,
+    `psram_*` and `tls_*`.
+  - **Time:** the wall clock is the system clock (`settimeofday` /
+    `gettimeofday`), which mbedTLS reads with `time()`, consistent with
+    `gogo/sys`; `platform_unix_time_ms` returns 0 until it is set.
+  - **Randomness:** IDF's mbedTLS draws keys from `esp_fill_random` (a
+    CSPRNG while Wi-Fi is on); `platform_tls_random` uses the same source
+    and only guards open.
+  - **Trust anchors:** IDF's certificate bundle in flash. The chain is
+    checked link by link (restartably) up to the last certificate the
+    peer sent; if that one is itself a bundle root (same subject and key;
+    the shared rule in `runtime/net/tls/anchor.c`, host-tested through
+    `$GOGO_TLS_BUNDLE_FILE`), it is trusted (a root cross-signed by an
+    older root, as for example.com), otherwise its signature is checked
+    with its issuer's key from the bundle (one step). IDF's
+    "cross-signed" mode is off: it verifies through a CA callback, with
+    which mbedTLS checks the whole chain in one unsliced call.
+  - **lwIP:** x509 calls `inet_pton` to match IP-address names, which IDF
+    maps to lwIP and would link all of lwIP (whose `tcp_*` names clash
+    with gogo's stack); the platform defines `lwip_inet_pton` (dotted
+    IPv4 only).
+- **Size.** TLS on adds about 140 KB to `gogo.bin` (the bundle 66 KB,
+  mbedTLS -O2 about 28 KB); see "TLS" in
+  [platform/esp32s3/README.md](../platform/esp32s3/README.md). With it
+  off, neither `tls.c` nor mbedTLS's TLS layer is linked.
+- **Measured** on the StickS3 against example.com
+  (`examples/httpsdemo`): a handshake takes about 2.5 s, nearly all of it
+  software ECC (the chain about 1.75 s, ServerKeyExchange about 0.35 s);
+  sliced steps take 11-26 ms, a few that cannot be split further about
+  50 ms; the unsliced ECDHE step (X25519) takes 204 ms (about 300 ms with
+  P-256). A keep-alive `http.Client` handshakes once and later requests
+  take about 0.3 s.
 
-规格见 [HTTPS 设计](superpowers/specs/2026-11-25-gogo-https-design.md)，遗留事项与实测数字见 [https-followups.md](https-followups.md)，契约在 `runtime/net/tls/tls.h` 开头，书里的讲解见 `docs/book/17-https.md`。
+### 5.5 Value representation and memory
 
-- **端口**：`tls`，配置 `net.DialTLS{IP, Port, TimeoutMs, Host}`（保留类型 44，镜像 v13），消息与 `tcp` 完全相同（`Connected` / `Write` / `Written` / `Data` / `Shutdown` / `Closed`），字节是 TLS 明文。实现是 `tcp` 驱动的一种模式（`TcpUpper`），不是第二个协议栈：TCP 的事件、重试、写规则、定时器都照旧，所有者看到的语义与 `tcp` 一样。只做 TLS 1.2 客户端（裁定 R5：mbedTLS 4.x 的 TLS 1.3 密钥交换不能切片），ECDHE 加 AEAD 套件。
-- **切片握手**：每次网络栈排空做一步 `mbedtls_ssl_handshake_step`；ECDSA 验签（ServerKeyExchange 与证书链）用 PSA 可中断操作切开，放弃后下一次排空接着做。还有工作没做完时，端口源的 `pending()` 保持为真，调度器（`vm_run`）在睡觉之前检查它，所以下一片立即接着做，而不是等不相干的唤醒。这是对所有端口源的通用规则；原来 `vm_run` 只看定时器和截止时间，这个问题在宿主上被模拟器掩盖了，真机上每一片要等几百毫秒到几秒，2026-11-25 修正，回归测试 `port_source_busy`（VM）与 `TestTLSHandshakeNoIdleStall`（宿主网络）。**不能切片的**（裁定 R4）：ECDHE 密钥生成加协商是一步，RSA 验签是一步。
-- **校验总是开着**：信任锚由平台给（`platform_tls_verify_setup`），有效期按墙上时钟（`gogo/sys`，`gogo/sntp` 对时，构建时刻为下限）检查，名字按 `Host` 检查（也作 SNI）。时钟没设就 `Closed{NoTime}`，证书不对 `Closed{BadCert}`，其他 TLS 失败 `Closed{TLS}`。没有"不校验"模式。
-- **内存**：每个连接计入所有者约 23 KB（收 16 KB、发 4 KB 记录缓冲和连接状态）；实测峰值约 34–35 KB，差额是握手临时数据，握手结束即释放、不计费（裁定 R6）。同时只能有一个 TLS 连接（`GOGO_TLS_MAX` 1）。
-- **`gogo/http`**：`https://` 走 `tls` 端口；一次性的 `Get` / `Post` / `Do` 在 https 上发 HTTP/1.1 加 `Connection: close`（http 上仍是 HTTP/1.0），因为有的服务器（Cloudflare，example.com 就在它后面）对 HTTP/1.0 请求回一个只靠关闭连接定界的正文，而 TLS 上这种正文会被拒绝（关闭可以在记录边界被伪造）。`NewClient` / `ClientDo` 保持连接，只握手一次；`Upload` / `ClientUpload` 流式上传文件。
-- **ESP32-S3**（Kconfig `GOGO_TLS`，默认开，依赖 `GOGO_NET`）：用 ESP-IDF 自带的 mbedTLS 组件（4.1.1，与宿主构建用的源码相同），不另编一份：硬件 AES / SHA / MPI 和证书包随之而来，Wi-Fi 的 WPA 本来就链接它。配置在 `sdkconfig.defaults`（默认构建，TLS 开；关掉 TLS 的构建再叠加 `sdkconfig.tls-off`，把会影响 Wi-Fi WPA 加密的几项（`-O2`、分配器、可重启 ECC、时间）恢复为 IDF 默认，`gogo firmware` 自动加上，裁定 R17）：可重启 ECC、只做 TLS 1.2 客户端、记录缓冲 16384 / 4096（不用 IDF 的动态缓冲：它会挪发送缓冲，而端口直接从那里发送、等 ACK）、X25519、`HAVE_TIME_DATE`（否则 mbedTLS 根本不查有效期）、mbedTLS 按 `-O2` 编译。tls.c 以 `GOGO_TLS_MBEDTLS_HOOKS=0` 编译，不往共享的 mbedTLS 里装钩子，由平台配好：
-  - **内存**：`CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC`，`platform_esp_init` 第一件事装上 `platform_tls_alloc` 的分配器；StickS3 优先 PSRAM（一次握手内部 RAM 不动，PSRAM 峰值约 35 KB），Cardputer 用内部 RAM。`gogo config stats` 显示 `mbedtls_mem` / `mbedtls_mem_peak` / `psram_*` / `tls_*`。
-  - **时间**：墙上时钟就是系统时钟（`settimeofday` / `gettimeofday`），mbedTLS 用 `time()` 查有效期，与 `gogo/sys` 一致；开机未设时 `platform_unix_time_ms` 返回 0。
-  - **随机数**：IDF 的 mbedTLS 自己用 `esp_fill_random` 生成密钥（Wi-Fi 开着时是 CSPRNG）；`platform_tls_random` 同源，只用来在打开时把关。
-  - **信任锚**：flash 里的 IDF 证书包。证书链按可重启方式逐环检查到对方发来的最后一张；最后一张如果本身就是证书包里的根（主题和公钥都相同；裁定 R16，公共代码 `runtime/net/tls/anchor.c`，宿主用 `$GOGO_TLS_BUNDLE_FILE` 测正反例），直接信任（对方发来的是被旧根交叉签名的根，如 example.com 的 SSL.com ECC Root 2022 由不在包里的 Comodo AAA 签），否则用包里签发者的公钥验它的签名（一步）。IDF 的"交叉签名"模式走 CA 回调，mbedTLS 在那条路上整条链一步验完，所以关掉。
-  - **lwIP**：x509 里匹配 IP 地址名字要调 `inet_pton`，IDF 把它映射到 lwIP，会把整个 lwIP 拉进来（与 gogo 自己栈的 `tcp_*` 重名）；平台自己定义 `lwip_inet_pton`（只认点分 IPv4）。
-- **尺寸**：见 `platform/esp32s3/README.md` 的 "TLS" 一节（TLS 开比关大约 140 KB，其中证书包 66 KB、mbedTLS 的 `-O2` 约 28 KB）。关掉时 tls.c 与 mbedTLS 的 TLS 层都不链接，固件回到里程碑之前的大小（差几百字节以内）。
-- **真机**（2026-11-25，StickS3，`examples/httpsdemo`，对 example.com）：SNTP 对时成功；`http.Get("https://example.com/")` 返回 200；`NewClient` 连发三次 200，只握手一次（后两次约 0.3 s）；一次握手约 2.5 s（几乎全是软件 ECC：证书链约 1.75 s，ServerKeyExchange 约 0.35 s）。最长一片：ECDHE（X25519）204 ms，**超过 R4 的 50 ms 上限，按裁定 R15 作为记录在案的例外接受**（P-256 约 300 ms 更慢）；要消除它得给 mbedTLS 打可中断密钥生成与协商的补丁，并改为优先 P-256（X25519 的标量乘法不可重启），见 followups 第 1 项；切开的验签片一般 11–26 ms，个别不可再分的（P-384 求逆等）约 50 ms。用错误的名字连 example.com 的地址被服务器拒绝（Cloudflare 对不认识的 SNI 回 handshake_failure，`Closed{TLS}`）。
+- **One 32-bit tagged word format** on the host and the microcontroller.
+  Small integers live in the word (31 bits, for `int` and `int64`); values
+  outside that range are boxed automatically. An `int64` put into `any`
+  is always boxed (the compiler picks the `*64` opcodes by static type
+  and inserts `BOX64` at the conversion), so a type switch can tell `int`
+  from `int64`. Other composite values are references into the actor's
+  heap.
+  - Tagged words rather than raw values typed statically: the GC needs no
+    stack maps from the compiler and the VM stays simple; the cost is
+    boxing some integers.
+- **Heap references are word offsets, not native pointers**, so the
+  memory layout on a 64-bit host is the same as on the microcontroller.
+- Structs carry a header with their type id on the heap (for type
+  switches).
+- **Each actor has one contiguous block** holding its heap and its stack
+  frames. When space runs out, a Cheney copying GC runs and grows or
+  shrinks the block by policy. Each actor has a memory limit; exceeding
+  it ends the actor with `OutOfMemory`.
+- **Zero-copy large data goes through one type only.** A
+  `gogo/bytes.Buffer` (writable, owned by the current actor) becomes an
+  immutable `bytes.Bytes` with `Freeze()`. A `Bytes` larger than 64 bytes
+  (`GOGO_BYTES_INLINE`) lives off the heap, reference-counted, and a send
+  passes only the reference. Ordinary `[]byte` and `string` values are
+  copied when sent (string constants in flash are not).
+- **Messages** are deep-copied into a separately allocated message block
+  that is linked into the receiver's mailbox; `Receive` merges the block
+  into the receiver's heap. The VM is single-threaded and needs no atomic
+  operations.
+- **Accounting.** Queued messages count against the **receiver's** limit
+  (heap + mailbox). A receiver over its limit exits with
+  `MailboxOverflow` (its supervisor decides whether to restart it); the
+  sender is not affected.
+- **Machine out of memory.** When an allocation fails, the actor that is
+  allocating is killed (`OutOfMemory`). The VM keeps a small emergency
+  reserve (`GOGO_RESERVE_BYTES`, 1 KB) so that exit processing and the
+  exit and down messages still complete; the VM itself does not crash.
+- Constants in the image (strings, constant tables) are referenced in
+  flash, not copied.
+- **GC roots and dead registers.** The GC scans every register of every
+  live frame, so a dead register that still holds a heap value keeps it
+  alive. The compiler therefore emits `CLEAR a n` (`ra..ra+n-1 = nil`) at
+  the end of each statement (for freed temporaries, discarded call
+  results and, at the end of a block or loop, its locals) and before
+  every backward jump, merged into one instruction per contiguous range.
+  Jumps carry the "to clear" set to their target label, so paths that
+  leave through `break`, `continue` or a conditional jump are cleared too.
+  Registers that never hold heap objects (bool, PID, constants) need no
+  clearing. Register allocation is lexically scoped: every register
+  below the current allocation point is a live local of an enclosing
+  scope and is never cleared.
 
-### 5.5 值表示与内存
+**Values by static type**
 
-- **统一的 32 位标记字**（宿主和 MCU 相同）。小整数直接放在字里（约 30 位，`int` 和 `int64` 都是），超出范围的值自动装箱；`int64` 放进 `any` 时总是装箱（编译器按静态类型选 `*64` 操作码，并在转换处插入 `BOX64`），这样类型 switch 仍能区分 `int` 与 `int64`；其余复合值是指向 actor 堆的引用。
-  - 选标记字而非"依赖静态类型的裸值"：GC 不需要编译器生成栈映射表，VM 更简单易读；代价是部分整数要装箱。
-- **堆内引用用"字偏移"而非原生指针**，所以 64 位宿主上的内存布局与 MCU 完全相同，镜像和调试工具可通用。
-- 结构体在堆上带头部，含类型 ID（供类型 switch 和类型断言用）。
-- **每个 actor 一块连续内存**，内含堆和栈帧。空间不够时做 Cheney 复制式 GC，同时按策略扩大或缩小；每个 actor 有可配置的内存上限，超过就以 `out_of_memory` 退出。
-- **大块数据零拷贝只走一种类型**：`gogo/bytes.Buffer`（可写、属于当前 actor）调用 `Freeze()` 后变成不可变的 `bytes.Bytes`，所有权转移，原 Buffer 失效，不复制内容。`Bytes` 超过 64 字节时放在堆外、引用计数，发送时只传引用。帧缓冲就这样构建后发给 `display` 端口。普通 `[]byte` 和 `string` 发送时照常拷贝（小字符串常量在 flash 中不拷贝）。
-- **消息**：发送时深拷贝到单独申请的消息块并挂到接收方邮箱；`Receive` 时再并入接收方的堆。VM 单线程，无需原子操作。
-- **内存记账**：排队中的消息计入 **接收方** 的内存配额（堆 + 邮箱）。接收方超出上限时以 `MailboxOverflow` 退出（由监督者决定是否重启），发送方不受影响。
-- **整机内存耗尽**：分配失败时，杀死正在尝试分配的那个 actor（原因 `OutOfMemory`）。VM 预留一小块应急内存，保证在这种情况下仍能完成退出处理、发出 exit/down 消息，VM 自身不崩。
-- 镜像中的常量（字符串、常量表）直接引用 flash，不拷贝。
-- **GC 根与死寄存器**：GC 扫描每个活动栈帧的全部寄存器，所以已经死掉但仍存着堆值的寄存器也会把对象留住。编译器在每条语句结束（释放的临时寄存器、被丢弃的调用结果，块或循环结束时还有其中的局部变量）和每次循环回跳之前插入 `CLEAR a n`（`ra..ra+n-1 = nil`），按区间合并，每个连续区间一条；跳转把"待清除"标记带到目标标签，`break`/`continue`/条件跳转离开的路径同样会被清掉。只存放从不为堆对象的值（bool、PID、常量）的寄存器不必清除。寄存器分配是词法作用域式的，低于当前分配点的寄存器都是外层仍然活着的局部变量，永远不会被清掉。
-
-**值表示（按静态类型）**
-
-| 静态类型 | 零值 | term 表示 | 转换进 `any` | GC 扫描 | 消息拷贝 |
+| Static type | Zero value | Term | Into `any` | GC | Message copy |
 |---|---|---|---|---|---|
-| `int` | 小整数 0 | 31 位内为小整数立即数；超出为 `K_INT` 堆盒 | 原样（`TYPEIS` → `int`） | 立即数不扫描；`K_INT` 盒被复制，内部不扫描 | 立即数原样；盒深拷贝 |
-| `int64` | 小整数 0 | 31 位内为立即数；超出为 `K_INT64` 盒（堆或常量区） | 总是 `BOX64` 成 `K_INT64` 盒（常量在编译期放进常量区），以便与 `int` 区分 | 同 `int` | 同 `int`；常量区盒原样 |
-| `bool` | `T_FALSE` | 特殊常量 `T_FALSE` / `T_TRUE` | 原样 | 不扫描 | 原样 |
-| `string` | `T_EMPTYSTR` | `K_STRING` 堆对象，或常量区引用 | 原样 | 堆串被复制（字节不扫描）；常量区引用不动 | 堆串深拷贝；常量区串原样，不拷贝 |
-| `byte`（`uint8`） | 小整数 0 | 0..255 的小整数立即数；`byte` 算术在每次运算后截断回绕 | 不能放进 `any`（运行时与 `int` 无法区分，编译期拒绝） | 不扫描 | 原样 |
-| `rune`（`int32`） | 小整数 0 | 小整数立即数；仅作 `range` 字符串的循环值和字符字面量类型，其余用法拒绝 | 不能放进 `any` | 不扫描 | 原样 |
-| `[]T`（切片） | `T_NILSLICE` = `0x52`（`s == nil` 为真） | `K_SLICE` 堆对象 `[hdr][off][len][cap][array]`，off/len/cap 为原始字；`array` 是 `K_ARRAY` `[hdr][n][elems]`（元素按 term 扫描）或 `K_BYTEARR` `[hdr][nbytes][bytes]`（`[]byte`，字节不扫描）的引用，容量为 0 时是 `T_NIL`；空而非 nil 的切片是 cap=0 的 `K_SLICE` | 原样 | 切片头与底层数组一起复制；`K_BYTEARR` 的字节不扫描 | 深拷贝，保留共享与环（所以别名在消息里仍然成立，但不跨 actor） |
-| `bytes.Bytes` | `T_EMPTYBYTES` = `0x62` | 堆内 `K_BYTES` `[hdr][nbytes][bytes]`（不可变，字节不扫描，≤ 64 字节的 `Freeze` 结果与 `FromString`/`FromSlice` 的结果）；更大的 `Freeze` 结果是堆外句柄，标签 `1110`：`(index << 4) \| 0xE`，指向 VM 全局的引用计数表 | 原样（类型 switch 的 `case bytes.Bytes` 匹配 `TY_BYTES`） | 堆内字节不扫描；句柄在 GC 时重算持有关系，不可达则释放 | 堆内深拷贝；句柄只传引用，计数 +1，接收方按全部大小计费（排队消息计入邮箱） |
-| `bytes.Buffer` | 不可用（零值调用方法会 `badcode`，必须 `NewBuffer`） | 引用类型 `K_BUF` `[hdr][len][array]`，`len` 为原始字，`array` 是 `K_BYTEARR`（即容量），容量为 0 时是 `T_NIL`；`Freeze` 复制一次并清空 | 原样 | 数组字节不扫描 | 深拷贝 |
-| 结构体（含 `actor.*`、`port.*` 保留类型） | 各字段为其零值的 `K_STRUCT` | `K_STRUCT` 堆对象 `[hdr][type id][字段...]`；模块自己的类型 id 带模块标记，保留类型不带（5.5.3） | 原样（`TYPEIS` 比较 type id） | 字段逐个扫描 | 深拷贝，保留共享与环 |
-| `any` | `T_NIL` | 所装动态值本身的 term | — | 按动态值 | 按动态值 |
-| 函数值（任意签名） | `T_NIL`（`Spawn` 与调用都 `badcode`） | `K_CLOSURE` 堆对象 `[hdr][模块标记 \| 函数号][捕获...]`；`CALLV` 把捕获作为前导参数、实参随后 | 原样 | 捕获逐个扫描 | 深拷贝 |
-| `actor.PID` | `T_ZEROPID` = `0x6`（槽 0、代 0：槽 0 从不使用代 0，端口槽 ≥ `0xFFF0`，所以不等于任何活着的 actor 或端口） | PID 立即数 `(代 << 20) \| (槽 << 4) \| 0x6` | 原样（`TYPEIS` → `PID`） | 不扫描 | 原样 |
-| `actor.Ref` | `T_ZEROREF` = `0x42` 特殊常量，序号视为 0 | `K_REF` 堆对象 `[hdr][serial 低][高]`，序号从 1 开始 | 原样（`TYPEIS` → `Ref`，零值也是） | `K_REF` 被复制，内部不扫描；`T_ZEROREF` 不扫描 | `K_REF` 深拷贝（序号不变）；`T_ZEROREF` 原样 |
+| `int` | small int 0 | small-int immediate within 31 bits; a `K_INT` heap box beyond | as is (`TYPEIS` -> `int`) | immediates not scanned; a `K_INT` box is copied, its content not scanned | immediates as is; boxes deep-copied |
+| `int64` | small int 0 | immediate within 31 bits; a `K_INT64` box (heap or constant area) beyond | always `BOX64` to a `K_INT64` box (constants boxed at compile time in the constant area), to tell it from `int` | as `int` | as `int`; constant-area boxes as is |
+| `bool` | `T_FALSE` | the specials `T_FALSE` / `T_TRUE` | as is | not scanned | as is |
+| `string` | `T_EMPTYSTR` | a `K_STRING` heap object or a constant-area ref | as is | heap strings copied (bytes not scanned); constant refs untouched | heap strings deep-copied; constant strings as is |
+| `byte` (`uint8`) | small int 0 | small-int immediate 0..255; `byte` arithmetic is truncated after each operation | not allowed (indistinguishable from `int` at run time; rejected at compile time) | not scanned | as is |
+| `rune` (`int32`) | small int 0 | small-int immediate; only as the value of `range` over a string and the type of character literals | not allowed | not scanned | as is |
+| `[]T` (slice) | `T_NILSLICE` = `0x52` (`s == nil` is true) | a `K_SLICE` heap object `[hdr][off][len][cap][array]` with raw off/len/cap; `array` is a `K_ARRAY` `[hdr][n][elems]` (elements scanned as terms) or a `K_BYTEARR` `[hdr][nbytes][bytes]` (`[]byte`, bytes not scanned), or `T_NIL` at capacity 0; an empty non-nil slice is a `K_SLICE` with cap 0 | as is | the header and the backing array are copied; `K_BYTEARR` bytes not scanned | deep copy preserving sharing and cycles (aliases hold within a message, never across actors) |
+| `bytes.Bytes` | `T_EMPTYBYTES` = `0x62` | a heap `K_BYTES` `[hdr][nbytes][bytes]` (immutable, not scanned; `Freeze` results up to 64 bytes and the results of `FromString` / `FromSlice`), or, for a larger `Freeze` result, an off-heap handle with tag `1110`: `(index << 4) \| 0xE` into the VM-wide reference-counted table | as is (`case bytes.Bytes` matches `TY_BYTES`) | heap bytes not scanned; handles' holders recomputed at GC, released when unreachable | heap ones deep-copied; handles passed by reference (count + 1), the receiver charged their full size (queued ones in the mailbox) |
+| `bytes.Buffer` | not usable (methods on the zero value are `badcode`; use `NewBuffer`) | a `K_BUF` `[hdr][len][array]` with raw `len`; `array` is a `K_BYTEARR` (its capacity), `T_NIL` at capacity 0; `Freeze` copies once and empties it | as is | array bytes not scanned | deep copy |
+| struct (the reserved `actor.*`, `port.*`, ... types included) | a `K_STRUCT` with each field's zero value | `K_STRUCT` heap object `[hdr][type id][fields...]`; a module's own type ids carry the module tag, reserved types do not (§5.5.3) | as is (`TYPEIS` compares the type id) | fields scanned | deep copy preserving sharing and cycles |
+| `any` | `T_NIL` | the term of the dynamic value | - | by the dynamic value | by the dynamic value |
+| func value (any signature) | `T_NIL` (`Spawn` and calls are `badcode`) | a `K_CLOSURE` heap object `[hdr][module tag \| function index][captures...]`; `CALLV` passes the captures as leading arguments, then the arguments | not allowed (rejected at compile time) | captures scanned | deep copy |
+| `actor.PID` | `T_ZEROPID` = `0x6` (slot 0, generation 0: slot 0 never has generation 0 and port slots are >= `0xFFF0`, so it equals no live actor or port) | PID immediate `(gen << 20) \| (slot << 4) \| 0x6` | as is (`TYPEIS` -> `PID`) | not scanned | as is |
+| `actor.Ref` | `T_ZEROREF` = `0x42`, a special whose serial counts as 0 | a `K_REF` heap object `[hdr][serial lo][hi]`; serials start at 1 | as is (`TYPEIS` -> `Ref`, the zero value too) | a `K_REF` is copied, content not scanned; `T_ZEROREF` not scanned | `K_REF` deep-copied (same serial); `T_ZEROREF` as is |
 
-零值 PID / Ref 的语义：`Send` 到零 PID 被丢弃；`Link` / `Monitor` 零 PID 与对已死 PID 相同（`NoProc`）；`CancelTimer` / `Demonitor` 零 Ref 什么也不做（返回 `false`）；零值彼此相等，与任何活着的值都不等；`println` 打印为 `<pid 0>` / `<ref 0>`。注意崩溃报告和 `println` 只显示 PID 的槽位（`<pid N>`，不含代数）：重启后的 worker 可能复用旧槽位，零 PID 的 `<pid 0>` 也与主 actor（槽位 0）看起来相同。查不到名字的 `Whereis`、失败的 `port.Open` 返回零 PID。
+Zero PID and Ref: `Send` to the zero PID is dropped; `Link` or `Monitor`
+of the zero PID behaves as for a dead PID (`NoProc`); `CancelTimer` and
+`Demonitor` of the zero Ref do nothing (`false`); zero values are equal
+to each other and to no live value; `println` prints `<pid 0>` and
+`<ref 0>`. Crash reports and `println` show only a PID's slot (`<pid
+N>`, no generation): a restarted worker may reuse its predecessor's
+slot, and the zero PID looks like the main actor (slot 0). `Whereis` of
+an unknown name and a failed `port.Open` return the zero PID.
 
-### 5.5.1 每个 actor 的内存预算（核心约束）
+### 5.5.1 Per-actor memory budget
 
-空闲 actor 的内存由三部分组成，目标（32 位）：
+An idle actor's memory has three parts (32-bit targets):
 
-| 部分 | 目标 | 做法 |
+| Part | Target | How |
 |---|---|---|
-| actor 控制块 | ≤ 48 字节 | 只放：pc、栈帧指针、堆起止与分配指针、邮箱头尾、id、状态与标志、内存配额、指向"附加信息"的指针。不像 AtomVM 那样在控制块里内嵌 17 个 x 寄存器、异常字段、进程字典等 |
-| 堆 + 栈 | 初始 ≤ 96 字节 | 寄存器放在栈帧里（属于该 actor 的内存块），不在控制块里。初始大小 = 入口函数的帧大小 + 闭包环境 + 一点余量，编译器在镜像里给出每个函数的帧大小，按需增长 |
-| 附加信息 | 0（不用就不占） | link、monitor、注册名、定时器、`TrapExit` 等放在单独按需分配的小结构或全局表里，绝大多数 actor 一个字节都不付 |
+| control block | 48 bytes | only pc, frame pointer, heap bounds and allocation pointer, mailbox head and tail, id, state and flags, memory limit, module slot, and a pointer to the extra record. Unlike AtomVM, no x registers, exception fields or process dictionary in the control block |
+| heap + stack | about 96 bytes at start | registers live in stack frames inside the actor's block, not in the control block. The initial size is the entry function's frame + the closure environment + some slack (the image gives each function's frame size); it grows on demand |
+| extra record | 0 unless used | links, monitors, pending exits and the charge of timers live in a separate record allocated on demand (`struct ActorExtra`, `runtime/vm/signals.c`); registered names (`runtime/vm/names.c`) and timers (`Vm.timers`) are in global tables. Most actors pay nothing |
 
-配套规则：
-- **空闲时收缩**：actor 阻塞在 `Receive` 且栈只剩入口帧时，若堆的空闲比例过高，下一次 GC 把内存块缩回最小尺寸（类似 Erlang 的 hibernate，但自动进行）。
-- **无隐藏的每 actor 开销**：调度队列、邮箱都用控制块内的侵入式链表，不额外分配节点。消息块本身计入接收方配额。
-- **内存分配器**：VM 自带一个面向小块的分配器（按尺寸分级的空闲链表），避免依赖平台 malloc 每块 8～16 字节的头部开销。
-- **可观测**：`actor.Info(pid).Memory` 返回该 actor 的总字节数（控制块 + 内存块 + 附加信息 + 排队消息），与 AtomVM 的 `process_info(memory)` 口径可比。
+Rules that go with it:
+- **Shrink when idle.** When the GC finds a block mostly empty (live data
+  under a quarter of it), it copies into a smaller block (not below the
+  minimum), so an idle actor shrinks back, much like Erlang's hibernate
+  but automatic.
+- **No hidden per-actor overhead.** The run queue and mailboxes are
+  intrusive lists through the control block and the message blocks; no
+  extra nodes are allocated. Message blocks count against the receiver.
+- **Allocator.** The VM has its own small-block allocator (size classes
+  with free lists, `runtime/vm/alloc.c`) to avoid the 8-16 byte header
+  per block of a platform malloc.
+- **Observable.** `actor.Info(pid).Memory` returns the actor's bytes
+  (control block + table slot + block + charged words: queued messages,
+  pending `SendAfter`s, links and monitors), comparable to AtomVM's
+  `process_info(memory)`. `tests/footprint` checks the idle-actor budget.
 
-### 5.5.2 内存布局（草案，32 位）
+### 5.5.2 Memory layout (32-bit)
 
-**值（term，32 位）** —— 低位标记：
-
-```
-xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxx1   小整数，31 位有符号（超出范围自动装箱）
-oooooooo oooooooo oooooooo oooooo00   堆引用：本 actor 内存块内的字偏移（不是指针）
-iiiiiiii iiiiiiii iiiiiiii iiii0010   特殊常量：nil / false / true / 空串 / 零 Ref（/ 空切片）
-iiiiiiii iiiiiiii iiiiiiii iiii0110   PID：16 位槽号 + 12 位代数（槽 0 代 0 = 零 PID）
-gggggggg sss ooooo oooooooo oooo1010   常量引用：模块标记（代 8 位 + 槽 3 位）+ 17 位常量区字偏移（见 5.5.3）
-iiiiiiii iiiiiiii iiiiiiii iiii1110   堆外大数据句柄：全局引用计数表的下标（冻结的 Bytes）
-```
-
-堆引用是相对内存块起点的偏移，所以内存块可以整体搬家（GC、扩容、收缩），消息块并入堆时只需给块内所有引用加同一个常数。
-
-### 5.5.3 多模块的项编码（v9，热加载）
-
-VM 里最多 `GOGO_MAX_MODULES`（默认 8，最多 8）个模块，放在模块表 `Vm.mods` 里（`runtime/vm/module.h`）。开机镜像是 0 号模块，和热加载的模块走同一条加载、启动路径：`vm_boot` 把镜像装进 0 号槽（含能力检查），`vm_run` 用 `module_spawn` 按导出名 `main` 启动它，没有 `main` 导出就报 `gogo: image has no main` 并以非零退出。0 号模块只是代码在 flash 里、不计入代码内存上限、由 VM 持有永不卸载。每个 actor 记住自己的模块槽号（控制块的 `mod` 字节），`actor.Spawn` 派生的 actor 继承它。
-
-凡是指向某个模块镜像内容的项或原始字，最高 11 位都是**模块标记**：第 31–24 位是该槽代号的低 8 位，第 23–21 位是槽号。
+**Terms** (low-bit tags, `runtime/vm/term.h`):
 
 ```
-常量引用        gggggggg sss  17 位常量区字偏移        1010
-闭包第 1 字     gggggggg sss  21 位函数号
-结构体第 1 字   gggggggg sss  00000  16 位类型号        （模块自己的类型，类型号 >= TYPE_RESERVED_COUNT）
-                00000000 000  00000  16 位类型号        （保留类型 0..TYPE_RESERVED_COUNT-1：全局，不带标记）
+xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxx1   small int, 31-bit signed (boxed beyond)
+oooooooo oooooooo oooooooo oooooo00   heap ref: word offset within the actor's block (not a pointer)
+iiiiiiii iiiiiiii iiiiiiii iiii0010   special: nil, false, true, empty string, zero Ref, nil slice, empty Bytes
+iiiiiiii iiiiiiii iiiiiiii iiii0110   PID: 16-bit slot + 12-bit generation (slot 0 gen 0 = zero PID)
+gggggggg sssooooo oooooooo oooo1010   const ref: module tag (8-bit generation + 3-bit slot) + 17-bit const-area word offset (§5.5.3)
+iiiiiiii iiiiiiii iiiiiiii iiii1110   off-heap data handle: index into the VM-wide reference-counted table (frozen Bytes)
 ```
 
-- **镜像里不带标记**：编译器照旧输出 `偏移 << 4 | 0xA`，所以镜像格式不变，只是偏移上限从 28 位缩到 17 位（每个镜像的常量区最多 2^17 字 = 512 KB；ESP 的镜像分区只有 1 MB），函数号上限 2^21，类型号上限 2^16（`TYPEIS` 的基本类型从 `0x10000` 起）。加载器和编译器都检查（`IMG_ERR_BOUNDS` / 编译错误），常量对象里的常量引用和常量结构体的类型字必须不带标记。
-- **VM 在镜像字变成运行时项的地方加上本模块的标记**：`LOADK`（常量引用）、`MKCLOSURE`（函数号）、`NEWSTRUCT`（模块自己的类型号）、崩溃时的函数名、从常量对象里读出的字段（加容器的标记）。`TYPEIS` 比较时也给自己镜像里的类型号加上标记，所以两个模块的同号类型互不相等，保留类型在所有模块里相同。
-- **0 号模块的标记恰好是 0**：0 号槽永不卸载，代号一直是 0，所以主程序的项和镜像里的项逐位相同。这不是特例，是统一规则（每个槽从代 0 开始，卸载时加 1）的结果。
-- **每次经过标记的访问都查模块表**：常量引用经 `const_obj_of` 解析（槽空了或代号不符就是 NULL，调用方以 `badcode` 结束当前 actor），并且只接受该模块常量位图里的对象起点（见下面的混淆上限：撞上新模块时也只能读到新模块里校验过的对象，伪造不了对象）。闭包只能在自己模块的 actor 里调用或 `Spawn`（`CALLV` 与 `Spawn` 要求标记等于当前 actor 的模块；代码不能跨模块执行）。结构体的 `GETFIELD` 和 `TYPEIS` 要求类型是保留类型、本模块的，或另一个仍在的模块的；否则 `badcode`。比较（`EQ`/`NE`）、`TYPEIS` 和 `println`（含结构体字段、切片元素）遇到指向已卸载模块的值（常量引用、闭包、结构体）同样是 `badcode`，不会给出"不相等""不是这个类型"或 `?`：它们共用一个检查 `term_live`。
-- **混淆上限**：标记里的代号只有 8 位，一个陈旧的项要在**同一个槽**又装入 256 次之后才会重新解析成功（指向那时槽里的模块）。`module_load` 按轮转选空槽（从上次用过的槽的下一个开始），重载分散到 7 个非开机槽上，7 个槽都空闲时大约要 7 × 256 ≈ 1800 次加载。即使撞上，结果仍然内存安全（常量引用必须落在新模块的对象起点；闭包只能经新模块校验过的函数表执行），只是拿到了别的模块的数据或代码，而不是 `badcode`。要做到完全精确，需要在代号回绕前扫描所有 actor 把匹配的标记作废，留给用户决定。
-- **为什么在执行时加标记，而不是加载时重定位**：镜像在 flash 里或者在别人的 `Bytes` 里，都不能改写；按 actor 的模块在 `LOADK` 处加一次标记，主程序（标记 0）和热加载模块走同一段代码。代价：每次 `LOADK` 常量多一次判断，常量访问多一次查表（`const_obj_of` 不再内联），`GETFIELD` / `TYPEIS` 多一次比较。实测（unix，Apple M 系列）`fib(30)` 多约 3.5% 指令、约 4% 时间；常量字符串和结构体密集的循环多约 6% 指令，时间基本不变。任务 3（标记与模块表）当时的 VM 核心代价约 +1.9 KB（ESP32-S3 `-Os`，其中 `module.c` 约 1 KB）；整个热加载里程碑合计 VM 核心 30784 -> 36095 B，+5311 B（在 R4 预算约 5.5 KB 之内）。
-- **模块表项**（`ModEntry`，32 位上 64 字节，加载时 `va_alloc`，卸载时释放；`Vm` 里只有 8 个指针、8 个代号、已用代码字节数和轮转起点）：校验过的 `Image`（48 字节，解释器原地读它，所以整块保留；代码内存就是镜像本身，大小从表头推出）、所在的 `Bytes`（持有一次引用）、最多 4 个持有者的 actor 槽号（各 2 字节：actor 退出时就清掉，槽号不会被重用前失效）、活着的 actor 数、标志（VM 持有 / 计入上限）。代号只存在 `Vm.mod_gen` 里。actor 释放时（`actor_free` → `module_actor_exit`）减少它所属模块的 live 计数，清掉它的持有；两者都没有了就卸载：代号加 1，释放 `Bytes` 引用和表项。句柄 `code.Module` 是 `槽 << 16 | 代号`（16 位代号，比项里的 8 位更不容易撞）。
+Heap references are offsets from the start of the block, so a block can
+move as a whole (GC, growth, shrinking), and merging a message block into
+a heap only adds one constant to every reference in it.
 
-**actor 控制块（32 位目标上 48 字节，字段顺序以 `runtime/vm/actor.h` 为准）**
+### 5.5.3 Module tags (hot loading)
+
+The VM holds at most `GOGO_MAX_MODULES` (8 by default, at most 8)
+modules in its module table `Vm.mods` (`runtime/vm/module.h`). The boot
+image is module 0 and takes the same load and start path as a hot-loaded
+module: `vm_boot` installs the image in slot 0 (the capability check
+included), and `vm_run` starts it with `module_spawn` through its export
+`main` (without one it reports `gogo: image has no main` and exits
+non-zero). Module 0 differs only in that its code is in flash, it does
+not count against the code-memory limit, and the VM holds it forever.
+Each actor records its module slot (the control block's `mod` byte);
+actors spawned with `actor.Spawn` inherit it.
+
+Every term or raw word that names something in a module's image carries
+the **module tag** in its top 11 bits: bits 31-24 are the low 8 bits of
+the slot's generation, bits 23-21 the slot.
 
 ```
-偏移  大小  字段
- 0    4    next         调度队列 / 空闲链表（侵入式）
- 4    4    mem          内存块起始地址
- 8    2    mem_words    内存块大小（字），单 actor 上限 64K 字 = 256KB
-10    2    hp           堆顶（字偏移，向上长）
-12    2    sp           栈顶（字偏移，向下长）
-14    2    fp           当前栈帧（字偏移）
-16    4    pc           指向 flash 中的字节码
-20    4    mbox_head    消息链表头
-24    4    mbox_tail    消息链表尾
-28    4    extra        附加信息指针，绝大多数为 NULL
-32    4    id           PID（槽号 + 代数）
-36    1    state        RUNNABLE / WAITING / EXITED
-37    1    flags        trap_exit、has_extra、...
-38    2    reductions   本时间片剩余配额
-40    2    mbox_words   排队消息总大小（计入配额）
-42    2    max_words    内存配额（0 = 默认）
-44    1    mod          所属模块的槽号（执行哪个模块的代码，计入该模块的 live）
-45    3    pad          未用；保持 32 位上 48 字节
+const ref          gggggggg sss  17-bit const-area word offset    1010
+closure word 1     gggggggg sss  21-bit function index
+struct word 1      gggggggg sss  00000  16-bit type index        (a module's own type, index >= TYPE_RESERVED_COUNT)
+                   00000000 000  00000  16-bit type index        (reserved types 0..TYPE_RESERVED_COUNT-1: global, untagged)
 ```
 
-另有全局 actor 表：每个槽 4 字节（指向控制块），PID 的槽号索引它，代数防止旧 PID 误投。
+- **Images hold no tags.** The compiler emits `offset << 4 | 0xA` as
+  before, so the image format is unchanged except that offsets are
+  limited to 17 bits (at most 2^17 words = 512 KB of constants per image;
+  the ESP image partition is 1 MB), function indexes to 2^21 and type
+  indexes to 2^16 (`TYPEIS`'s basic types start at `0x10000`). Both the
+  loader and the compiler check this (`IMG_ERR_BOUNDS` / a compile
+  error), and constant refs inside constant objects and the type words
+  of constant structs must be untagged.
+- **The VM adds the module's tag where an image word becomes a run-time
+  term:** `LOADK` (constant refs), `MKCLOSURE` (function index),
+  `NEWSTRUCT` (a module's own type index), a crash's function name, and
+  fields read out of constant objects (the container's tag). `TYPEIS`
+  tags the type ids of its own image before comparing, so equal indexes
+  in two modules are different types, while reserved types are the same
+  in every module.
+- **Module 0's tag is 0.** Slot 0 is never unloaded and its generation
+  stays 0, so the main program's terms equal the image's bit for bit.
+  This is not a special case but the uniform rule (every slot starts at
+  generation 0 and increments on unload).
+- **Every access through a tag checks the module table.** Constant refs
+  resolve through `const_obj_of` (NULL when the slot is empty or the
+  generation differs; the caller then ends the actor with `badcode`) and
+  only to object starts in that module's constant map. Closures may be
+  called or spawned only by actors of their own module (`CALLV` and
+  `Spawn` require the tag to match the current actor's module; code never
+  runs across modules). `GETFIELD` and `TYPEIS` require a struct's type to
+  be reserved, the actor's own module's, or another module's that is
+  still loaded; otherwise `badcode`. Comparisons (`EQ`/`NE`), `TYPEIS` and
+  `println` (struct fields and slice elements included) that meet a value
+  of an unloaded module (a constant ref, closure or struct) are `badcode`
+  too, rather than "not equal", "not this type" or `?`: they share one
+  check, `term_live`.
+- **Alias bound.** A tag holds 8 generation bits, so a stale term
+  resolves again (to whatever module then occupies the slot) only after
+  256 more loads into the **same slot**. `module_load` picks free slots
+  round-robin (starting after the last slot used), which spreads reloads
+  over the 7 non-boot slots: with all 7 free it takes about 7 x 256 =
+  1800 loads. Even then the result is memory-safe (a constant ref must
+  land on an object start of the new module; a closure runs only through
+  the new module's checked function table), but it is the wrong module's
+  data or code rather than `badcode`. An exact solution would scan every
+  actor and invalidate matching tags before a generation wraps; it is not
+  done.
+- **Why tag at run time rather than relocate at load:** an image in flash
+  or in another actor's `Bytes` cannot be rewritten; tagging once per
+  `LOADK` by the actor's module serves the main program (tag 0) and
+  hot-loaded modules with the same code. The cost: one test per `LOADK`
+  of a constant, one table lookup per constant access (`const_obj_of` is
+  no longer inline), and one comparison more in `GETFIELD` and `TYPEIS`.
+  Measured on Unix (Apple M series): `fib(30)` runs about 3.5 % more
+  instructions and takes about 4 % more time; loops heavy in constant
+  strings and structs run about 6 % more instructions in about the same
+  time. Hot loading as a whole added about 5.3 KB to the VM core.
+- **Module table entries** (`ModEntry`, 64 bytes on 32-bit, allocated with
+  `va_alloc` at load and freed at unload; `Vm` holds only 8 pointers, 8
+  generations, the code bytes in use and the round-robin start): the
+  validated `Image` (48 bytes; the interpreter reads it in place, so it is
+  kept whole; the code memory is the image itself, its size derived from
+  the header), the `Bytes` it lives in (one reference held), the actor
+  slots of up to 4 holders (2 bytes each, cleared when the actor exits,
+  so they are invalid before the slot is reused), the number of live
+  actors and flags (held by the VM / counted in the limit). The
+  generation lives only in `Vm.mod_gen`. When an actor is freed
+  (`actor_free` -> `module_actor_exit`), its module's live count drops
+  and its holds end; when neither remains, the module is unloaded: the
+  generation increments and the `Bytes` reference and the entry are
+  released. A `code.Module` handle is `slot << 16 | generation` (16
+  generation bits, less prone to collisions than the 8 in terms).
 
-**内存块（堆 + 栈共用一块）**
+**Actor control block** (48 bytes on 32-bit targets; `runtime/vm/actor.h`
+is authoritative):
+
+```
+offset size field
+ 0     4    next         run queue / free list link (intrusive)
+ 4     4    mem          start of the memory block
+ 8     2    mem_words    block size in words (at most 64K words = 256 KB per actor)
+10     2    hp           heap top (word offset, grows up)
+12     2    sp           stack top (word offset, grows down)
+14     2    fp           current frame (word offset)
+16     4    pc           bytecode position (in flash)
+20     4    mbox_head    message list head
+24     4    mbox_tail    message list tail
+28     4    extra        extra record, NULL for most actors
+32     4    id           PID (slot + generation)
+36     1    state        RUNNABLE / WAITING / EXITED
+37     1    flags        trap_exit, has_extra, ...
+38     2    reductions   reductions left in this time slice
+40     2    mbox_words   total size of queued messages (charged)
+42     2    max_words    memory limit (0 = default)
+44     1    mod          module slot whose code it runs (counted in that module's live actors)
+45     3    pad          unused; keeps 48 bytes on 32-bit
+```
+
+There is also a global actor table, 4 bytes per slot (a pointer to the
+control block); a PID's slot indexes it, and the generation stops stale
+PIDs from reaching a new actor.
+
+**Memory block** (heap and stack share one block):
 
 ```
 mem[0]                                                        mem[mem_words]
-├──────────────────────────┬──────────────┬─────────────────────────────┤
-│ 堆对象 ...           → hp │    空闲区     │ sp ← ... 栈帧 n ... 栈帧 0   │
-└──────────────────────────┴──────────────┴─────────────────────────────┘
-           向上长                                    向下长
-hp 与 sp 相遇 → 触发 GC（Cheney 复制到新块，同时按策略扩容或收缩）
++--------------------------+--------------+-----------------------------+
+| heap objects ...    -> hp |     free     | sp <- ... frame n ... frame 0 |
++--------------------------+--------------+-----------------------------+
+         grows up                                   grows down
+hp meets sp -> GC (Cheney copy into a new block, growing or shrinking it)
 ```
 
-**栈帧**（寄存器就在这里，不在控制块里）
+**Stack frame** (the registers live here, not in the control block):
 
 ```
-高地址  ┌──────────────┐
-        │ ret_pc       │  以小整数形式存（镜像内偏移）
-        │ saved_fp     │  以小整数形式存
-        │ r0           │
-        │ r1           │  寄存器个数由编译器给出（镜像函数表里的帧大小）
-        │ ...          │
-低地址  │ r(n-1)       │ ← fp
-        └──────────────┘
+high  +--------------+
+      | ret_pc       |  a small int (code offset; -1 for an entry frame)
+      | saved_fp     |  a small int (top-relative; 0 for an entry frame)
+      | r(n-1)       |
+      | ...          |  the register count comes from the compiler
+      | r1           |  (the frame size in the image's function table)
+low   | r0           | <- fp
+      +--------------+
 ```
 
-栈上每个字都是合法的 term（返回地址和帧指针也编码成小整数），GC 扫栈时不需要栈映射表，统一处理。
+Every word on the stack is a valid term (the return address and the
+saved frame pointer are small ints), so the GC scans the stack without
+stack maps.
 
-**堆对象**：首字是头部 `[ 大小:26 位 | 种类:6 位 ]`，后跟内容。
-
-```
-STRUCT   [hdr][type_id][field0][field1]...           结构体（type_id 供类型 switch）
-ARRAY    [hdr][e0][e1]...                             数组 / 切片底层存储（元素是 term）
-BYTES    [hdr][len][b0 b1 b2 b3][...]                 字节数据，GC 不扫描内容
-SLICE    [hdr][backing][off][len][cap]                切片头（backing 指向 ARRAY 或 BYTES）
-STRING   [hdr][len][bytes...]                         运行时生成的字符串
-MAP      [hdr][count][k0][v0][k1][v1]...              小 map：有序数组，二分查找
-CLOSURE  [hdr][func_idx][cap0][cap1]...               闭包
-CELL     [hdr][value]                                 被取地址或被闭包捕获的变量
-INT      [hdr][raw32] / [hdr][lo][hi]                 装箱的 int / int64
-REF      [hdr][serial_lo][serial_hi]                  actor.Ref
-FORWARD  （GC 时临时写入）                            转发标记
-```
-
-子集限制（与布局相关）：`&` 只能用于变量和复合字面量，不支持取字段或元素地址（`&s.f`、`&a[i]`）。结构体是值类型，赋值时由编译器生成拷贝。
-
-**消息块**（堆外，由 VM 的小块分配器分配）
+**Heap objects**: the first word is a header `[size: 26 bits | kind: 6
+bits]`, followed by the contents (`runtime/vm/term.h`).
 
 ```
-┌──────┬────────┬───────┬──────┬────────────────────────┐
-│ next │ words  │ flags │ root │ 拷贝出来的对象 ...       │
-└──────┴────────┴───────┴──────┴────────────────────────┘
-  4B      2B       2B      4B     引用是"相对块内"的偏移
+K_STRUCT   [hdr][type id][field0][field1]...     struct (type id for type switches)
+K_STRING   [hdr][len][bytes...]                  string built at run time
+K_INT      [hdr][raw32]                          boxed int
+K_CLOSURE  [hdr][func index][cap0][cap1]...      closure
+K_REF      [hdr][serial lo][serial hi]           actor.Ref
+K_INT64    [hdr][lo][hi]                         boxed int64
+K_SLICE    [hdr][off][len][cap][array]           slice header (array: K_ARRAY or K_BYTEARR)
+K_ARRAY    [hdr][n][e0][e1]...                   slice backing store (terms), mutable
+K_BYTEARR  [hdr][nbytes][bytes...]               []byte backing store, mutable, not scanned
+K_BYTES    [hdr][nbytes][bytes...]               bytes.Bytes on the heap, immutable, not scanned
+K_BUF      [hdr][len][array]                     bytes.Buffer
+K_FORWARD  (written during GC)                   forwarding mark
 ```
 
-`Receive` 时把块整体拷到接收方 `hp` 处，块内每个引用加上 `hp`，然后释放消息块。小整数、PID 这类消息（`root` 本身就是值）`words = 0`，没有对象部分。
+**Message block** (off the heap, from the VM's small-block allocator):
 
-**附加信息**（只有用到时才分配）
+```
++------+-------+-------+------+-------------------------+
+| next | words | flags | root | copied objects ...      |
++------+-------+-------+------+-------------------------+
+  4B     2B      2B      4B     refs are relative to the block
+```
 
-以 `runtime/vm/signals.c` 中的 `struct ActorExtra` 为准：待处理退出的原因码与函数名、links、monitors（监视本 actor 的）、watching（本 actor 监视的）、`charged_words`（本 actor 创建的待触发 SendAfter、它的 monitor（两端条目 + 预留 DownMsg）、它那一侧 link（条目 + 预留 ExitMsg）占的字数，与 `mbox_words` 一起经 `actor_charged_words` 计入内存上限）。注册名在 `runtime/vm/names.c` 的全局表里，定时器在 `Vm.timers` 里。
+`Receive` copies the block to the receiver's `hp`, adds `hp` to every
+reference in it and frees the block. A message that is a plain value (a
+small int, a PID: `root` is the value itself) has `words = 0` and no
+objects.
 
-**空闲 actor 的账（典型 `for { switch m := actor.Receive().(type) { ... } }` 循环）**
+**The extra record** (allocated only when used): `struct ActorExtra` in
+`runtime/vm/signals.c`: a pending exit's reason code and function name,
+links, monitors (of this actor), watching (monitors this actor set up),
+and `charged_words` (the words of pending `SendAfter`s it created, its
+monitors (entries at both ends plus a reserved `DownMsg`) and its side of
+links (entry plus a reserved `ExitMsg`), which count against its limit
+together with `mbox_words` through `actor_charged_words`).
 
-| 项目 | 字节 |
+**An idle actor** (a typical `for { switch m := actor.Receive().(type) {
+... } }` loop):
+
+| Item | Bytes |
 |---|---|
-| 控制块 | 48 |
-| 全局 actor 表槽 | 4 |
-| 内存块：入口帧（2 + 4 个寄存器）+ 闭包环境（约 4 字）+ 余量 | 约 96 |
-| 附加信息 | 0 |
-| **合计** | **约 148**（目标 ≤ 160） |
+| control block | 48 |
+| actor table slot | 4 |
+| memory block: entry frame (2 + 4 registers) + closure environment (about 4 words) + slack | about 96 |
+| extra record | 0 |
+| **total** | **about 148** (target 160 or less) |
 
-### 5.6 字节码与解释器
+### 5.6 Bytecode and interpreter
 
-- 寄存器式字节码，定长 32 位指令字（8 位操作码 + 3 个 8 位操作数），需要时跟扩展字。每个函数有固定数量的寄存器（栈帧大小由编译器算出）。
-- 解释器是一个普通的 `switch` 循环，每个操作码一个 case，不用宏生成代码。
-- 镜像格式：头部（魔数、版本）、常量池、类型描述表（结构体布局、类型名）、函数表、代码段、可选的行号表。镜像与位置无关，可原地执行。实际布局见 `runtime/vm/image.h`：头部 8 字、函数表、类型表、常量区、代码段，最后是常量区的对象起点位图（v7 起，每个常量字 1 位，对象起点置 1，共 ceil(常量字数/32) 字，原地从 flash 读，不占 RAM）。v9 起位图之后还有 `requires`（1 字，能力位：Net=1、Kbd=2、Power=4、SD=8、IMU=16、IrTx=32、IrRx=64、Mic=128、Spk=256、任意端口=1<<31，由编译器按导入、常量 `port.Open` 驱动名与 `/sd` 路径推断）和导出表（`n_exports` 1 字，其后每项 `{名称常量偏移, 函数下标}` 两字）；每个镜像都是一个模块，`main` 以 `"main"` 导出，包 `main` 里导出的 `func()` / `func(arg any)` 也导出，加载器校验名称落在常量对象起点、函数下标越界即拒绝；头部第 7 字仍保留为 0。
-- 镜像校验：加载器检查各表与常量区的结构，位图必须恰好标出常量头给出的对象起点；常量对象里的常量引用、函数名与类型名都必须指向已标记的起点，否则拒绝加载（`IMG_ERR_BOUNDS`）。LOADK 的常量操作数在执行时查位图（不合格则 badcode），不在加载时查：跳转可能落在扩展字上，加载期的线性解码查不全。指向对象中间的引用能伪造对象（例如字符串内容里的假结构体头），这是内存安全问题，不只是 badcode。
-- 镜像版本（`IMAGE_VERSION`，当前为 13）：操作码编号或语义、builtin 编号、保留类型、term 编码、镜像布局任何一项变化都要升版本；编译器与 VM 同步升级，加载器拒绝其他版本（`unsupported version`）。v1 为 M1/M2；v2 为 M3（通用算术只收 `int`、`*64` 操作码与 `BOX64`、`CLEAR`、有类型的零 PID/Ref）；v3 为 M4（多返回值 `RETN`、`CONV c=2` 转 byte）；v4 为 M5（调用函数值 `CALLV`）；v5 为位运算（`&` `|` `^` `<<` `>>`）；v6 为存储（builtin 49 `B_FS`、保留类型 27 / 28 `fs.Info` / `fs.Space`）；v7 为常量区对象起点位图；v8 为输入（保留类型 29–33：`kbd.Config` / `kbd.Key` / `power.Config` / `power.Battery` / `power.Read`）；v9 为热加载（位图之后加 `requires` 与导出表；builtin 50 `B_CODE`、保留类型 34 `code.Module`；运行时的常量引用、闭包与结构体类型字带模块标记，镜像里不带，所以常量偏移 17 位、函数号 21 位、类型号 16 位，见 5.5.3）；v10 为输入二期（保留类型 35–41：`port.Chunk` / `port.Out` / `port.Done` / `imu.Config` / `imu.Gesture` / `ir.TX` / `ir.RX`；能力位 `CAP_IMU` / `CAP_IR_TX` / `CAP_IR_RX`）。v11 为音频（保留类型 42–43：`audio.Mic` / `audio.Speaker`；能力位 `CAP_MIC` / `CAP_SPK`；`B_FS` 加操作码 13 `FS_WRITEAT`，即 `File.WriteAt`，未升版本，因为 v11 尚未发布）。v12 为 sys builtin（builtin 51 / 52 / 53 `B_UNIX_TIME` / `B_SET_UNIX_TIME` / `B_RANDOM`，即 `gogo/sys` 的 `Time` / `SetTime` / `Random`：墙上时钟与随机数，供 `gogo/sntp` 使用；保留类型与能力位不变）。v13 为 HTTPS（保留类型 44 `net.DialTLS`，`tls` 端口的配置，字段 `IP, Port, TimeoutMs, Host`；能力位 `CAP_TLS`）。
+- Register-based bytecode with fixed 32-bit instruction words (`op | a<<8
+  | b<<16 | c<<24`: an 8-bit opcode and three 8-bit operands), some
+  followed by one extension word (`runtime/vm/opcodes.h`, which the Go
+  compiler parses too). Each function has a fixed number of registers
+  (its frame size, computed by the compiler).
+- The interpreter is a plain `switch` loop with one case per opcode, no
+  macro-generated code.
+- **Image layout** (`runtime/vm/image.h`, little-endian words): an
+  8-word header (magic, version, n_funcs, n_types, consts_words,
+  code_words, entry, 0), the function table (3 words each), the type
+  table (2 words each), the constant area, the code, and the constant
+  map: one bit per constant word, set where an object starts
+  (ceil(consts_words / 32) words, read in place from flash, no RAM).
+  After the map come `requires` (1 word of capability bits: Net = 1,
+  Kbd = 2, Power = 4, SD = 8, IMU = 16, IrTx = 32, IrRx = 64, Mic = 128,
+  Spk = 256, TLS = 512, any port = 1 << 31; inferred by the compiler,
+  §5.4.4) and the export table (`n_exports`, then one `{name constant
+  offset, function index}` pair per export). Every image is a module:
+  `main` is exported as `"main"`, and exported `func()` / `func(arg any)`
+  functions of package `main` are exported too. The loader checks that
+  export names are at constant object starts and rejects out-of-range
+  function indexes. Header word 7 is reserved (0). Images are
+  position-independent and run in place.
+- **Image validation.** The loader checks the structure of every table
+  and of the constant area: the map must mark exactly the object starts
+  that the constant headers define, and constant refs inside constant
+  objects, function names and type names must point to marked starts,
+  otherwise the image is refused (`IMG_ERR_BOUNDS`). `LOADK`'s constant
+  operand is checked against the map when executed, not at load (a jump
+  may land on an extension word, so a linear decode at load cannot see
+  every operand). A ref into the middle of an object could forge one (a
+  fake struct header inside a string's bytes, say), which would be a
+  memory-safety bug, not just `badcode`. Function indexes, type ids and
+  jump targets are checked when used (out of range is `badcode`).
+- **Image version** (`IMAGE_VERSION`, now **13**). Any change to opcode
+  numbers or semantics, builtin numbers, reserved types, the term
+  encoding or the image layout bumps the version; the compiler and the
+  VM move in lockstep, and the loader refuses every other version
+  (`unsupported version`). The history is in the comment at the top of
+  `runtime/vm/image.h`.
+- **Builtins** (`B_*` in `runtime/vm/opcodes.h`, called with
+  `OP_BUILTIN`): 0-27 actors and ports (`println`, `Spawn`, ... ,
+  `port.Open` 26, `port.Close` 27), 28-45 strings, slices, `Bytes` and
+  `Buffer`, 46 `port.Handoff`, 47 `net.Subscribe`, 48 `config.Get`, 49
+  `B_FS` (gogo/fs), 50 `B_CODE` (gogo/code), 51-53 `sys.Time`,
+  `sys.SetTime`, `sys.Random`.
+- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 45 of them,
+  0..44): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
+  `Request`, `Options`), 6-8 `port.GPIO`, `port.Write`, `port.Edge`, 9-26
+  `gogo/net`, 27-28 `fs.Info`, `fs.Space`, 29-33 `gogo/kbd` and
+  `gogo/power`, 34 `code.Module`, 35-37 `port.Chunk`, `port.Out`,
+  `port.Done`, 38-39 `gogo/imu`, 40-41 `gogo/ir`, 42-43 `gogo/audio`, 44
+  `net.DialTLS`.
 
-### 5.7 调度
+### 5.7 Scheduling
 
-- 单个调度器，就绪队列 FIFO。
-- 每次函数调用和循环回跳消耗 1 个 reduction，配额用完就切换（初始配额暂定 1000，可调）。因此死循环也会被抢占。
-- 无就绪 actor 时，计算最近的定时器截止时间，进入平台等待（MCU 上为 WFI，unix 上为 poll/sleep），被中断或事件唤醒。
+- One scheduler with a FIFO run queue.
+- Every call and every backward jump costs one reduction; when the
+  budget (1000 per slice) is used up the actor is switched out, so an
+  endless loop is preempted too.
+- With no runnable actor and no event source reporting pending work, the
+  scheduler computes the nearest deadline (timers and event sources) and
+  waits on the platform (`platform_wait`: a FreeRTOS notification on the
+  ESP, `poll` on Unix) until an interrupt or event wakes it.
 
-### 5.8 错误与崩溃
+### 5.8 Errors and crashes
 
-- 运行时错误（越界、nil map 写入、除零、类型断言失败、写只读内存、超出内存上限、`panic`）都只让当前 actor 退出。
-- 退出原因（M2 实现）：`actor.Reason{Code int; Func string}`。`Code` 是 `actor.Normal`（从入口函数返回）、`Killed`、`OutOfMemory`、`MailboxOverflow`、`NoProc`、`DivZero`、`BadCode`、`Shutdown`、`BadShift`、`BadMsg` 或用户码（≥ 100，`actor.Exit(code)` / `actor.Kill(p, code)`）；`Func` 是运行时错误所在函数名，否则为空串。原设想的 `error` 类型原因（`RuntimeError{Kind, Msg, Func, Line}`、`panic(v)`）留到语言里程碑，见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md) §5.2、§7。
-- 退出时向链接的 actor 发 exit 信号（开启 `TrapExit` 则收到 `ExitMsg`，否则原因不是 `Normal` 时级联退出），向监视者发 `DownMsg`。这两种通知的消息块在建立 link/monitor 时就预留好，退出时不分配内存，送达有保证；预留的内存计入建立者自己的内存上限。`Kill(p, Killed)` 不可捕获。
-- 崩溃报告打印到 stderr：`gogo: actor <pid N> crashed: <kind>[ in <func>]`，`<kind>` 为 `killed`、`oom`、`mailbox_overflow`、`noproc`、`divzero`、`badcode`、`badshift`、`badmsg` 或 `exit(<code>)`；`Normal`、`Shutdown` 不报告。行号留到以后。
-- 监督树由标准库 `gogo/supervisor` 包用 Go 子集实现：M2 是单子进程版（重启策略 Permanent/Transient、最大重启强度），多子进程 one_for_one 留到以后。
+- A run-time error (index out of range, division by zero, a write to
+  read-only memory, exceeding the memory limit, ...) ends only the
+  current actor.
+- **Exit reasons** are `actor.Reason{Code int; Func string}`. `Code` is
+  `actor.Normal` (the entry function returned), `Killed`, `OutOfMemory`,
+  `MailboxOverflow`, `NoProc`, `DivZero`, `BadCode`, `Shutdown`,
+  `BadShift`, `BadMsg`, or a user code (100 or more, from
+  `actor.Exit(code)` / `actor.Kill(p, code)`); `Func` is the name of the
+  function where a run-time error happened, else empty.
+- On exit, linked actors get an exit signal (an `ExitMsg` if they trap
+  exits, otherwise they exit too unless the reason is `Normal`), and
+  monitors get a `DownMsg`. The message blocks for both notifications are
+  reserved when the link or monitor is set up, so exit allocates nothing
+  and delivery is guaranteed; the reserved memory counts against the
+  limit of the actor that set it up. `Kill(p, Killed)` cannot be
+  trapped.
+- Crash reports go to stderr: `gogo: actor <pid N> crashed: <kind>[ in
+  <func>]`, where `<kind>` is `killed`, `oom`, `mailbox_overflow`,
+  `noproc`, `divzero`, `badcode`, `badshift`, `badmsg` or `exit(<code>)`;
+  `Normal` and `Shutdown` are not reported. There are no line numbers
+  yet.
+- Supervision is the `gogo/supervisor` library, written in the subset:
+  `Supervise(child, spec)` and `SuperviseModule(m, entry, arg, spec)`
+  supervise one child each (restart types Permanent and Transient, a
+  maximum restart intensity), and `Upgrade` replaces a module's child.
+  There is no multi-child strategy yet.
 
-### 5.9 工具链与工作流
+### 5.9 Toolchain and workflow
 
 ```
-gogo build ./app -o app.gogo          # 编译
-gogo run app.gogo                      # 在宿主 VM 上运行（模拟外设；stdin 为模拟 gpio 事件）
-gogo flash app.gogo                    # 把镜像写入板子的 gogo 分区（需要 esptool）
-gogo monitor -reset -t 30 -until "vm exited"   # 抓取串口输出
+gogo build ./app -o app.gogo          # compile
+gogo run app.gogo                     # run on the host VM (simulated peripherals)
+gogo dis app.gogo                     # disassemble
+gogo flash app.gogo                   # write the image to the board's image partition (needs esptool)
+gogo monitor -reset -t 30 -until "vm exited"   # capture the serial output
 ```
 
-ESP32-S3（M5StickS3）上固件与镜像分开存放：固件用 ESP-IDF 构建、只需刷一次，换程序不必重刷固件：
+`gogo` with no arguments prints its usage. `gogo run` builds a directory
+to a temporary image, runs `$GOGO_VM` or `<repo>/build/gogovm` and exits
+with its status.
+
+On an ESP32-S3 the firmware and the image are stored separately: the
+firmware is built with ESP-IDF and flashed once, and programs change
+without reflashing it:
 
 ```
 . ~/esp/esp-idf/export.sh
-idf.py -C platform/esp32s3 build flash         # 固件（VM + 平台层 + 屏幕控制台）
-gogo flash app.gogo                            # 镜像，写入 0x210000 的 gogo 分区（头部 + CRC）
-gogo monitor [-port P] [-t 秒] [-until 文本] [-reset]
+idf.py -C platform/esp32s3 build flash         # firmware (VM + platform + screen console)
+gogo flash app.gogo                            # image, into the gogo partition at 0x210000 (header + CRC)
+gogo monitor [-port P] [-t seconds] [-until text] [-reset]
 ```
 
-`gogo flash` 默认使用唯一的 `/dev/cu.usbmodem*`；`gogo monitor` 在自己的描述符上把串口设为 raw、CLOCAL、不 HUP，只有 `-reset` 才复位芯片（DTR/RTS 是复位与启动脚）。同一时间只有一个程序能打开串口。板子启动信息、分区表等见 `platform/esp32s3/README.md`。`examples/sticks3_demo` 是 M3 的演示程序，`examples/many_idle` 是"1000 个空闲 actor"检查；两者带 `expected.out`，由 `tests/golden_test.go` 一并在宿主 VM 上运行。
+`gogo flash` uses the only `/dev/cu.usbmodem*` by default. `gogo monitor`
+sets the serial port to raw, CLOCAL and no HUP on its own descriptor, and
+resets the chip only with `-reset` (DTR/RTS are the reset and boot
+pins). Only one program can open the serial port at a time. Boot
+messages and the partition table are described in
+[platform/esp32s3/README.md](../platform/esp32s3/README.md).
 
-**设备配置 `gogo config`（M5）**：`gogo config set|get|rm|list <key> [value]`，另有 `scan`（板子看到的 2.4 GHz 网络）和 `stats`（网络计数、堆）；值写 `-` 表示从 stdin 读一行（密码用 `gogo config set wifi.password -`，不进 shell 历史）。设备存在固件的 NVS 里（命名空间 `gogo`，重刷固件或镜像都不会清掉），通过 USB 串口以 `\x02gogo-config ...` 帧通信；程序自己的输出里 `\x02` 被写成 `?`，程序伪造不了回复。`wifi.` 键对程序的 `config.Get` 不可见，`get wifi.password` 只回显 `(set)`。宿主侧存储选择：`-port` 指定板子；`-local` 指定本地文件 `$GOGO_CONFIG`（默认 `~/.gogo/config`）；都没给时，若设了 `$GOGO_CONFIG` 用本地文件，否则恰好连着一块板子就用板子（向 stderr 打一行提示），否则用本地文件——即板子优先于 `~/.gogo/config`。`examples/netdemo` 是 M5 的演示：DHCP、80 端口中英文页面（KEY1/KEY2 次数、最近抓取、运行时间）、每 10 秒 `http.Get(demo.url)`。
+**Device configuration (`gogo config`).** `gogo config set|get|rm|list
+<key> [value]`, plus `scan` (the 2.4 GHz networks the board sees) and
+`stats` (network counters, heap). A value of `-` reads one line from
+stdin (`gogo config set wifi.password -` keeps the password out of the
+shell history). On the device the store is the firmware's NVS
+(namespace `gogo`; reflashing the firmware or the image does not clear
+it), reached over the USB serial port with `\x02gogo-config ...` frames;
+`\x02` in a program's own output is written as `?`, so a program cannot
+forge a reply. `wifi.` keys are invisible to `config.Get`, and `get
+wifi.password` echoes only `(set)`. Store selection on the host: `-port`
+names a board; `-local` the local file `$GOGO_CONFIG` (default
+`~/.gogo/config`); with neither, a set `$GOGO_CONFIG` means the local
+file, otherwise exactly one connected board is used (with a note on
+stderr), otherwise the local file.
 
-### 5.10 测试
+### 5.10 Tests
 
-- **黄金输出测试**：一批示例程序在 `gogo run` 下的输出与提交在仓库里的期望输出比对。示例程序的输出只依赖消息因果顺序（例如统一交给一个打印 actor），不依赖调度细节和 map 遍历顺序。这是验证编译器和 VM 语义的主要手段。
-- 编译器：子集检查的正例和反例测试。
-- VM：GC 压力测试、调度公平性测试、崩溃隔离测试（死循环、内存耗尽、panic）。
-- 基准：fib、1 万 actor ping-pong，与 AtomVM 对比。
-- **内存占用测试（每次提交都跑）**：创建 N 个空闲 actor，检查 `actor.Info().Memory` 和平台实际内存增量，超过 160 字节目标给警告，超过 256 字节硬上限则测试失败。
+- **Golden output tests** (`tests/golden/`, `tests/golden_test.go`): the
+  output of example programs under the host VM is compared with expected
+  output committed in the repository. Programs make their output depend
+  only on the causal order of messages (for example through one printing
+  actor), not on scheduling details. This is the main check of the
+  compiler and VM semantics. Board examples with an `expected.out`
+  (`examples/`) run the same way.
+- Compiler: positive and negative tests of the subset check, code
+  generation and image tests (`compiler/*_test.go`).
+- VM: C unit tests per module (`runtime/*/test/`), built for the host and
+  for the MCU configuration (`make test`), plus a 32-bit compile check
+  (`make check32`).
+- Network: scenarios against a peer simulator over a socket link with a
+  simulated clock (`tests/net/`), TLS included.
+- **Memory footprint test**: creates N idle actors and checks
+  `actor.Info().Memory` against the 160-byte target (warning) and the
+  256-byte hard limit (failure) (`tests/footprint`).
+- Size: `make vmsize` measures the VM core for the ESP32-S3 (-Os); the
+  history is in `docs/vmsize-history.csv`.
 
-### 5.11 里程碑
+## 6. Status and roadmap
 
-1. **M1 宿主可跑**：编译器 + VM，跑通 fib 和两个 actor 的 ping-pong；内存占用测试从 M1 起就纳入。
-2. **M2 actor 语义完整**（已完成）：link/monitor/定时器/Call/监督树，黄金输出测试通过。
-   - 交付：link/monitor/`Kill`/`TrapExit`、退出原因与崩溃报告、定时器与 `ReceiveTimeout`、`Call`/`Reply`、注册名、`int64`、函数值与多包构建、每 actor 内存上限与邮箱配额，以及用 Go 子集写的单子进程 `gogo/supervisor`（两层监督树黄金测试）。详见 [M2 设计](superpowers/specs/2026-11-23-gogo-m2-design.md)，遗留事项见 [m2-followups.md](m2-followups.md)。
-3. **M3 端口层 + M5StickS3 真机**（已完成）：端口层（`gpio` 驱动）、定时器最小堆、int64 立即数、镜像 v2（带类型的零 PID/Ref 与 `CLEAR`）、ESP32-S3 平台（固件、`gogo flash`/`gogo monitor`、屏幕调试控制台含中文），以及在 M5StickS3 上演示"按 KEY1 让 worker 崩溃、监督者重启它"（`examples/sticks3_demo`）。1000 个空闲 actor 在 160KB 内存上限内创建成功（`examples/many_idle`）。详见 [M3 设计](superpowers/specs/2026-11-23-gogo-m3-design.md)，遗留事项见 [m3-followups.md](m3-followups.md)。
-4. **M4 字符串 / 字节 / 切片 / 多返回值**（已完成）：多返回值（`RETN`）、`byte`、镜像 v3；运行时字符串；切片与 `[]byte`；`bytes.Bytes` / `bytes.Buffer`（大块堆外、引用计数、按持有者计费）；`gogo/strings`、`gogo/strconv`；`examples/httpparse` 作为"写网络库是否顺手"的检验。详见 [M4 设计](superpowers/specs/2026-11-23-gogo-m4-strings-bytes-design.md)，遗留事项见 [m4-followups.md](m4-followups.md)。
-5. **M5 网络**（已完成）：极小内存的纯 C 协议栈（ARP / IPv4 / ICMP echo / UDP / TCP）、`gogo/dhcp`、`gogo/dns`、`gogo/http`（客户端与服务器，HTTP/1.0）、函数值带参数调用（镜像 v4）、M5StickS3 上的 Wi-Fi 与 `gogo config`、`examples/netdemo`。TLS 推迟。详见 [M5 设计](superpowers/specs/2026-11-23-gogo-m5-network-design.md)，遗留事项与后续候选见 [m5-followups.md](m5-followups.md)。
-6. **存储**（已完成）：`gogo/fs`（`/flash` 上 LittleFS、`/sd` 上 FAT / exFAT）、`gogo/kv`、`gogo/ringlog`、镜像 v6，StickS3 与 Cardputer ADV 两块板子。详见 §5.4.2 与 [存储设计](superpowers/specs/2026-11-24-gogo-storage-design.md)，遗留事项见 [storage-followups.md](storage-followups.md)。
-7. **输入**（已完成，2026-11-24 两块板真机验证通过）：`gogo/kbd` 与 `gogo/power` 端口、`runtime/input/` 公共代码、镜像 v8、unix 模拟、Cardputer ADV 键盘与电池、StickS3 电池。详见 §5.4.3 与 [input-followups.md](input-followups.md)。
-8. **热加载**（已完成；StickS3 真机验证通过，PSRAM 与无 PSRAM 两种构建都跑过；Cardputer ADV 真机运行推迟）：镜像 v9（`requires` 与导出表）、固件能力位、统一的模块表（开机镜像是 0 号模块）与带模块标记的项、`gogo/code`、对称的跨模块规则（`BadMsg`）、`supervisor.SuperviseModule` / `Upgrade`、StickS3 的 PSRAM 代码内存、`examples/hotload` 与 `examples/hotload_net`。VM 核心 36095 B（基线 30784 B，+5311 B）。详见 §5.4.4 与 [热加载设计](superpowers/specs/2026-11-24-gogo-hotload-design.md)，遗留事项见 [hotload-followups.md](hotload-followups.md)。
-9. **可裁剪固件**（已完成；2026-11-25 StickS3 真机验证通过：不带网络的固件拒绝需要网络的镜像，开机可用 RAM 多 64 KB）：Kconfig 开关 `GOGO_NET` / `GOGO_SD` / `GOGO_FS_EXFAT` / `GOGO_FONT_CJK` / `GOGO_KBD` / `GOGO_BATTERY`、能力位、`gogo firmware`、尺寸表。详见 §5.4.5 与 [optional-firmware-followups.md](optional-firmware-followups.md)。
-10. **输入第二期**（主机部分已完成；真机：两块板的 IMU 静置通过、Cardputer 红外发射完成、StickS3 红外接收收到相关的突发，NEC 解码待手动对准，手势待用户）：统一的 `Chunk` / `Out` / `Done` 数据流（`runtime/stream/`）、`gogo/imu`（BMI270，采样批与手势）、`gogo/ir` 与 `gogo/irproto`（RMT 收发、NEC）、镜像 v10、能力位与 `GOGO_IMU` / `GOGO_IR` 开关、unix 模拟与黄金测试。详见 §5.4.6 与 [input2-followups.md](input2-followups.md)。
-11. **音频**（已完成；2026-11-25 两块板真机验证通过：录音到 `/flash` 与 `/sd` 不丢帧，放音 `Done` 准时，两块板互相放音收音）：`mic` / `spk` 端口（`runtime/input/audio.c`，建在 `runtime/stream/` 上）、`gogo/audio`、`gogo/wav`、`gogo/sound`、`fs.File.WriteAt`、镜像 v11、能力位 `CAP_MIC` / `CAP_SPK` 与 `GOGO_AUDIO` 开关、ES8311 + I2S 驱动（StickS3 与 Cardputer ADV）、unix 模拟与黄金测试、书第 16 章。VM 核心 36145 B（+32 B，`Port.room_64w`）。详见 §5.4.7、[音频设计](superpowers/specs/2026-11-25-gogo-audio-design.md)，遗留事项见 [audio-followups.md](audio-followups.md)。
-12. **接下来**（用户定的顺序）：蓝牙（手机 App 连接、手机配网，位置待定）→ HTTPS（含大文件流式上传，见 [m5-followups.md](m5-followups.md) 的 TLS 一项）。
-13. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
+**Done:** actors and the VM (links, monitors, timers, `Call`, names,
+supervisors, per-actor limits, strings, slices and `Bytes`); networking
+(Ethernet to TCP, DHCP, DNS, the HTTP client and server, Wi-Fi and
+`gogo config`); storage (`/flash`, `/sd`, `kv`, `ringlog`); input
+(keyboard and battery); hot loading; optional firmware features; IMU and
+infrared; audio; the wall clock and SNTP (`gogo/sys`, `gogo/sntp`);
+HTTPS (the `tls` port, `https://` in `gogo/http`, the keep-alive client,
+streaming uploads).
 
-## 6. 交给实现者决定的
+**Next:**
+1. **Embed mode** (in progress): embedding the VM in host programs the
+   way Lua is embedded (desktop and server programs, phone apps, test
+   tools).
+2. **Language completeness**: the features listed as "not supported yet"
+   in §5.2.
+3. **Bluetooth (BLE)**: a connection to a phone app, and Wi-Fi setup from
+   the phone.
 
-- 具体操作码列表与编码细节、镜像格式字段。
-- 编译器内部 IR 的形式、寄存器分配算法。
-- GC 的扩容/缩容策略具体参数、reduction 配额默认值。
-- 源码目录结构（现状见 §5.1 末尾）。构建：Unix 上用一个普通 Makefile；RP2040 移植因 Pico SDK 要求而用 CMake，只限该平台目录。
-- 标准库首批函数的具体范围（以示例程序需要为准）。
+RP2040 boards are planned; the board and the timing are open.
 
-## 7. 本轮由 Claude 拍板的决定（请用户过目）
+## 7. Design decisions
 
-1. 内建包和标准库都放在 `gogo/` 导入路径下，不冒充 `fmt`、`strings` 等标准库路径；`gogo/fmt` 只支持少量格式。
-2. `int` 固定 32 位，按 32 位做编译期类型检查，运行时溢出回绕。
-3. 包级变量只能用常量数据初始化，放在 flash 中只读，由 VM 写指令检查强制。
-4. 大块数据零拷贝只通过 `bytes.Buffer.Freeze()` → `bytes.Bytes`（所有权转移）。
-5. 深拷贝保留共享和环；PID/Ref/端口/冻结 Bytes 原样传；闭包可发送。
-6. 排队消息计入接收方配额，超限接收方退出；整机内存耗尽时杀死正在分配的 actor，VM 有应急内存。
-7. 退出原因为 `gogo/actor` 中的一组具体类型，均实现 `error`；`error` 是唯一支持方法调用的接口。
-8. 测试以黄金输出为主，示例程序输出只依赖消息因果顺序。
-9. 每 actor 内存预算：控制块 ≤ 48B、初始堆栈 ≤ 96B、附加信息按需分配；空闲目标 ≤ 160B、硬上限 256B（32 位），并作为每次提交都跑的测试。
-10. 语言与依赖：VM 纯 C、只依赖 libc/POSIX（MCU 平台层允许芯片 SDK），Unix 用 Makefile，测试框架自写；编译器用 Go，只用标准库。
+1. Built-in packages and libraries live under the `gogo/` import path and
+   never pose as Go standard library paths.
+2. `int` is always 32 bits, type-checked as 32 bits at compile time; run
+   time overflow wraps.
+3. Zero-copy large data goes only through `bytes.Buffer.Freeze()` ->
+   `bytes.Bytes`.
+4. Message copies preserve sharing and cycles; PIDs, Refs, ports and
+   frozen `Bytes` pass as they are; closures can be sent.
+5. Queued messages count against the receiver's limit, and a receiver
+   over its limit exits; when the whole machine runs out of memory the
+   allocating actor is killed, and the VM keeps an emergency reserve.
+6. Exit reasons are integer codes plus a function name
+   (`actor.Reason`), not error values.
+7. Tests are mainly golden outputs, and example output depends only on
+   the causal order of messages.
+8. Per-actor budget: control block 48 bytes, initial heap and stack
+   about 96 bytes, extra record on demand; idle target 160 bytes, hard
+   limit 256 bytes on 32-bit, checked by a test.
+9. Dependencies: the VM is plain C99 on libc and POSIX (board platform
+   layers may use the chip SDK; TLS uses mbedTLS), built with a Makefile
+   on Unix, with its own test framework; the compiler is Go with only the
+   standard library.

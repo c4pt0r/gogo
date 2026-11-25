@@ -11,7 +11,7 @@
  * does not rely on the order. An IDF upgrade that changes the format must
  * change this file (tests/net/tls_test.go writes the same format).
  *
- * The rule (ruling R16): the platform gives mbedTLS a dummy CA chain, so the
+ * The rule: the platform gives mbedTLS a dummy CA chain, so the
  * peer's chain is checked link by link (restartably, sliced) up to the last
  * certificate the peer sent, which then carries NOT_TRUSTED. That
  * certificate is trusted if it IS a bundle root: the same subject and the

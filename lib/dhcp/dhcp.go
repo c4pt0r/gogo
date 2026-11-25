@@ -1,4 +1,4 @@
-// Package dhcp is the gogo DHCP client (spec M5 §5.4), written in the gogo
+// Package dhcp is the gogo DHCP client, written in the gogo
 // subset and compiled into every image that imports it.
 //
 // Start spawns the client actor, linked to the caller. It owns the

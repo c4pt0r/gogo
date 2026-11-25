@@ -1,4 +1,4 @@
-/* The device configuration store (spec M5 §5.4): NVS namespace "gogo", one
+/* The device configuration store: NVS namespace "gogo", one
  * blob per key, read by config.Get (platform_config_get; the VM never asks
  * for "wifi." keys) and by the Wi-Fi bring-up (wifi.ssid, wifi.password).
  *

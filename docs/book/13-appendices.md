@@ -242,6 +242,21 @@ func http.Upload(url, path, contentType, token string) (status int, err fs.Err)
 func config.Get(key string) (value string, ok bool)
 ```
 
+### gogo/sys and gogo/sntp
+
+```go
+func sys.Time() int64           // Unix time in ms (UTC); 0: unknown
+func sys.SetTime(ms int64) bool // false: earlier than the build, refused; ms <= 0 forgets
+func sys.Random() int           // 30 random bits
+
+func sntp.Sync(server string, timeoutMs int) bool // sets sys's clock; timeoutMs <= 0: 5000
+func sntp.Now() int64                             // sys.Time()
+```
+
+Chapter 10.8 describes them. The packages for the motion sensor, infrared
+and audio (`gogo/imu`, `gogo/ir`, `gogo/audio` and the libraries built on
+them) are described in chapters 15 and 16.
+
 ## B. Exit reasons
 
 | Code | Constant | Crash report | Cause |
@@ -330,3 +345,28 @@ on standard error.
 | UTF-8 aware `range` over strings | bytes |
 | `go run` | `gogo run`; `gogo build` + `gogo flash` |
 | runtime panics crash the program | runtime errors end only the actor |
+
+## F. Capabilities
+
+The compiler records in every image and module the optional firmware
+features it needs (the `requires` word); a firmware without one refuses
+the image at boot and `code.Load` returns `Unsupported` (chapter 14).
+`gogo firmware` (chapter 12) picks the firmware switches from it.
+
+| Bit | `gogo/code` constant | Needed by | `gogo firmware` feature | Firmware switch |
+|---|---|---|---|---|
+| 1 | `CapNet` | `gogo/net` and everything built on it: `dhcp`, `dns`, `http`, `sntp` | `net` | `CONFIG_GOGO_NET` |
+| 2 | `CapKbd` | the `kbd` port (`gogo/kbd`) | `kbd` | `CONFIG_GOGO_KBD` |
+| 4 | `CapPower` | the `power` port (`gogo/power`) | `power` | `CONFIG_GOGO_BATTERY` |
+| 8 | `CapSD` | a constant `/sd` path in a `gogo/fs` call | `sd` | `CONFIG_GOGO_SD` |
+| 16 | `CapIMU` | the `imu` port (`gogo/imu`, `gogo/imulog`) | `imu` | `CONFIG_GOGO_IMU` |
+| 32 | `CapIRTX` | the `ir_tx` port | `irtx` | `CONFIG_GOGO_IR` |
+| 64 | `CapIRRX` | the `ir_rx` port | `irrx` | `CONFIG_GOGO_IR` |
+| 128 | `CapMic` | the `mic` port opened directly; `gogo/sound` opens it for `Record` but does not require it (`//gogo:optional`, chapter 12) | `mic` | `CONFIG_GOGO_AUDIO` |
+| 256 | `CapSpk` | the `spk` port opened directly; `gogo/sound` opens it for `Play` but does not require it | `spk` | `CONFIG_GOGO_AUDIO` |
+| 512 | `CapTLS` | the `tls` port opened directly (`net.DialTLS`); `gogo/http` opens it for `https://` URLs but does not require it (`//gogo:optional`, chapters 12 and 17) | `tls` | `CONFIG_GOGO_TLS` (needs `CONFIG_GOGO_NET`) |
+
+Every other package needs none, including `gogo/sys` (the wall clock and
+`Random` work on every firmware) and `gogo/fs` on `/flash`. A port opened
+by a name known only at run time marks the image as needing every port
+the board has (`CapAnyPort`, with a compiler warning).

@@ -1,5 +1,5 @@
 #define _POSIX_C_SOURCE 200112L   /* nanosleep, termios */
-/* unix input simulation (spec M3 5.4, input §5.6): the only reader of stdin.
+/* unix input simulation: the only reader of stdin.
  *
  * gpio input ports, the kbd, power, imu, ir_rx and mic ports are fed from
  * it; ir_tx prints `ir tx: <n> values` on stderr for each frame and is busy

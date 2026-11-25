@@ -863,7 +863,7 @@ func fsMethod(info *types.Info, sel *ast.SelectorExpr) string {
 
 // bytesMethod names the gogo/bytes method a selector calls, as
 // "Buffer.WriteString" or "Bytes.Len"; "" for anything else. These are the
-// only method calls of the subset (spec M4 §5.4): the compiler turns each
+// only method calls of the subset: the compiler turns each
 // into a builtin.
 func bytesMethod(info *types.Info, sel *ast.SelectorExpr) string {
 	s := info.Selections[sel]

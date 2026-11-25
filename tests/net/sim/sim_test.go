@@ -233,8 +233,8 @@ func TestLinkAdvance(t *testing.T) {
 
 // exitedVM is a link whose VM end wrote frames and then exited (closed)
 // before the simulator's next message: the write to it fails, and the
-// frames must still come back (the MCU-lane TestUDPEcho flake, M5 final
-// review: the reply was dropped when the VM exited first).
+// frames must still come back (otherwise the reply
+// would be lost when the VM exited first).
 func exitedVM(t *testing.T, frames ...string) *Link {
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {

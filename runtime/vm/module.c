@@ -63,7 +63,7 @@ static void drop(Vm *vm, uint32_t s, uint16_t who) {
     if (!e->live && !held) unload(vm, s);
 }
 
-/* The capability check of every load (boot included, Task 2 / R1). */
+/* The capability check of every load (boot included). */
 static bool caps_ok(const Image *img, uint32_t *missing) {
     return vm_caps_ok(img->requires, platform_caps(), missing) != 0;
 }

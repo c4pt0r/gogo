@@ -755,7 +755,7 @@ static void write_held(Actor *o, term p) {
 /* A slow reader whose mailbox the Data filled to its quota is never
  * killed by the control events that follow (Written, Closed{Reset}): Data
  * leaves headroom for them, and an event that still does not fit waits
- * and is retried until the reader has room (spec §9.1). */
+ * and is retried until the reader has room. */
 TEST(tcp_slow_reader_never_killed) {
     static char big[201];
     memset(big, 'y', 200);
@@ -884,7 +884,7 @@ TEST(tcp_address_change) {
  * progresses: a peer with a 1-byte window that acknowledges each byte
  * just before the retransmission timer (which would otherwise keep it, and
  * its uncharged data, forever) gets RST at the deadline, and the data's
- * handles are released (spec §9.5). */
+ * handles are released. */
 TEST(tcp_orphan_lifetime) {
     setup();
     uint32_t handles0 = bytes_table_used();

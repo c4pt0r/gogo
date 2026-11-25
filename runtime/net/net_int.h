@@ -22,7 +22,7 @@
 #define IP_UDP 17u
 #define IP_TCP 6u
 #define TCP_HLEN 20u
-/* Our MSS and receive window (one segment, spec §5.3). */
+/* Our MSS and receive window (one segment). */
 #define TCP_MSS 1460u
 #define IP_BCAST 0xFFFFFFFFu
 /* Largest UDP payload: an IPv4 MTU of 1500. */
@@ -46,7 +46,7 @@ typedef struct UdpPcb {
     uint32_t drops;         /* datagrams not delivered (quota) */
 } UdpPcb;
 
-/* TCP states (spec §5.3, plus CLOSING for a simultaneous close). */
+/* TCP states (with CLOSING, for a simultaneous close). */
 enum {
     TCP_CLOSED = 0, TCP_SYN_SENT, TCP_SYN_RCVD, TCP_ESTABLISHED, TCP_FIN_WAIT_1,
     TCP_FIN_WAIT_2, TCP_CLOSE_WAIT, TCP_CLOSING, TCP_LAST_ACK, TCP_TIME_WAIT
@@ -124,7 +124,7 @@ typedef struct TcpListen {
 typedef struct NetState {
     uint8_t rx[NET_FRAME_MAX];
     uint8_t tx[NET_FRAME_MAX];
-    /* RX slot (spec §9.9): producer net_rx_offer, consumer the drain.
+    /* RX slot: producer net_rx_offer, consumer the drain.
      * rx_len is written before rx_ready is set; the drain clears rx_ready
      * after the frame is processed. */
     volatile uint32_t rx_len;
@@ -168,7 +168,7 @@ typedef struct NetState {
 
 extern NetState net_s;
 
-/* The memory budgets (spec M5 §3) hold at compile time, on any target. */
+/* The memory budgets hold at compile time, on any target. */
 typedef char net_budget_fixed[sizeof(NetState) <= NET_FIXED_LIMIT ? 1 : -1];
 typedef char net_budget_tcb[sizeof(TcpPcb) <= 64u ? 1 : -1];
 typedef char net_budget_udp[sizeof(UdpPcb) <= 32u ? 1 : -1];

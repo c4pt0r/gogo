@@ -1,4 +1,4 @@
-/* Timers (spec M2 §5.3): ReceiveTimeout / Sleep wakeups and SendAfter.
+/* Timers: ReceiveTimeout / Sleep wakeups and SendAfter.
  *
  * All timers live in one VM-global binary min-heap, Vm.timers (an array of
  * Timer pointers, Vm.ntimers used), ordered by (deadline, seq): seq is a

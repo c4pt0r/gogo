@@ -1,11 +1,6 @@
-// sddemo: /sd 设备检查 / /sd device checks (Cardputer ADV).
+// sddemo: /sd device checks (Cardputer ADV).
 //
 //	gogo build examples/sddemo -o sddemo.gogo && gogo flash sddemo.gogo
-//
-// 开机、按 G0 键、以及卡重新插入后：Stat、Usage、写 /sd/gogo/hello.txt
-// 并读回、追加 /sd/gogo/log.txt、读者打开时 Write 应为 Busy、256 KB 读写
-// 计时、列出 /sd 和 /sd/gogo、读电脑写的文件。每 2 秒对 "/sd" 做一次计时
-// 的 Stat：出错（没卡）时每次都打印，状态变化时也打印。
 //
 // At boot, on each G0 press, and whenever the card comes back, a full
 // check: Stat, Usage, WriteFile /sd/gogo/hello.txt and read it back,

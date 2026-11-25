@@ -1,5 +1,5 @@
 /* Wi-Fi station and the platform network interface (runtime/net/netif.h) on the
- * ESP32-S3 (spec M5 §5.1, §5.4, §9.8, §9.9).
+ * ESP32-S3.
  *
  * Raw Ethernet frames go straight between the Wi-Fi driver and gogo's own
  * stack (runtime/net/) through the driver's internal interface:

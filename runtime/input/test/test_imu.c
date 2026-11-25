@@ -370,7 +370,7 @@ TEST(imu_fifo_error_retries) {
     teardown();
 }
 
-/* Review Focus 3: a consumer that reads nothing is not killed; its Chunks
+/* A consumer that reads nothing is not killed; its Chunks
  * drop and the Seq gap and Dropped show it. */
 TEST(imu_slow_consumer) {
     setup();

@@ -158,10 +158,11 @@ A key event that would take the owner over its memory limit is dropped;
 the owner is not killed. A key held when the port opens never got a press
 event, so you may see a release without a press; ignore it.
 
-> **Note.** The keyboard and battery code has been tested in the
-> simulator and with unit tests, but the hardware checks on the boards
-> (every key, Fn layer, repeat, fast typing, battery readings against the
-> vendor firmware) are still listed as to do in `docs/input-followups.md`.
+> **Note.** The keyboard and battery have been checked on both boards
+> (every key, the Fn layer, modifiers, fast typing, battery and charging
+> readings). Auto-repeat has not been exercised on a board yet, and the
+> Cardputer's battery reading has not been compared with the vendor
+> firmware's; see [`docs/known-issues.md`](../known-issues.md).
 
 ## 8.2 The battery
 

@@ -141,7 +141,7 @@ static void deliver(Vm *vm, UdpPcb *pcb, uint32_t src, uint32_t sport, const uin
         d[3] = T_EMPTYBYTES;
     }
     /* Leave room for one Up, so the stack's own next message never fails
-     * for want of it (spec §9.1). */
+     * for want of it. */
     if (net_deliver(vm, o, m, UP_RESERVE)) {
         net_s.st.udp_rx++;
         return;

@@ -447,7 +447,7 @@ TEST(reclaim_waiting_drops_slack) {
 
 /* The sweep alone can free room: a waiting actor at the smallest block
  * (no slack to drop) holding a Bytes handle it no longer reaches gets it
- * released, and that counts as reclaimed (spec M5 final review). */
+ * released, and that counts as reclaimed. */
 TEST(reclaim_waiting_counts_released_bytes) {
     Vm vm;
     Actor *a = setup(&vm, 24);

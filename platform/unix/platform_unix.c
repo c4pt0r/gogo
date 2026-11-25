@@ -63,7 +63,7 @@ void platform_unix_set_clock(uint64_t (*fn)(void)) { clock_hook = fn; }
 static uint64_t time_start;
 static int time_started;
 
-/* Simulated clock (--sim-clock, spec M5 §9.7): time moves only in
+/* Simulated clock (--sim-clock): time moves only in
  * platform_wait, toward the target the peer simulator set with
  * advance_clock messages on the net link. */
 static bool sim_clock;
@@ -110,7 +110,7 @@ void platform_time_reset(void) {
 
 void platform_barrier(void) { __sync_synchronize(); }
 
-/* ---- net link (--net-fd, spec M5 §6, §9.7) ----
+/* ---- net link (--net-fd) ----
  *
  * One stream fd (a socketpair end in tests) carries messages
  * [u16 len, big-endian][u8 type][len bytes]: NET_MSG_FRAME (a raw Ethernet
@@ -372,7 +372,7 @@ const struct PortDriver *const *platform_port_drivers(void) {
     return list;
 }
 
-/* config.Get (spec M5 §5.4): the file $GOGO_CONFIG, else ~/.gogo/config,
+/* config.Get: the file $GOGO_CONFIG, else ~/.gogo/config,
  * of key=value lines, which `gogo config set|get|list|rm` edits. Read on
  * every call; the first line for the key wins; lines that are too long
  * (UNIX_CONFIG_LINE) are skipped. */

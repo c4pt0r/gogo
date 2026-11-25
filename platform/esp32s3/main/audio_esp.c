@@ -86,8 +86,8 @@
  * works): taken to be on with the board; the codec's mute and DAC
  * power-down silence it.
  *
- * Sources: docs/superpowers/specs/2026-11-25-audio-hw-research.md
- * (M5Unified 96576a1, esp-adf esp_codec_dev 20c1047, ESP-IDF v6.1.1). */
+ * Sources: M5Unified 96576a1, esp-adf esp_codec_dev 20c1047, ESP-IDF
+ * v6.1.1. */
 #include "platform_esp.h"
 #include "board.h"
 

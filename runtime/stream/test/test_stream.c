@@ -214,7 +214,7 @@ TEST(chunk_fields_and_data) {
     teardown();
 }
 
-/* Review Focus 3's core: over quota Chunks drop without killing the
+/* Over-quota Chunks drop without killing the
  * owner; Seq keeps counting; the next delivered one carries Dropped. */
 TEST(chunk_seq_dropped_full_mailbox) {
     setup();
@@ -279,7 +279,7 @@ TEST(chunk_seq_wraps_positive) {
 
 /* ---- Out ---- */
 
-/* Review Focus 1: ten Outs at once: two accepted (head, queued), eight
+/* Ten Outs at once: two accepted (head, queued), eight
  * Done{-1}; finishing both gives Done{1}, Done{2}; one Done per Out. */
 TEST(out_flood) {
     setup();

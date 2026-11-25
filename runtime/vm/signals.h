@@ -81,7 +81,7 @@ bool sig_is_linked(const Actor *a, term pid);
  * subject to the target's quota. */
 bool sig_kill(Vm *vm, Actor *from, term pid, uint32_t code);
 
-/* Monitors (spec M2 §5.3). Makes a fresh Ref on a's heap and returns it
+/* Monitors. Makes a fresh Ref on a's heap and returns it
  * (it may GC: the caller reloads its register pointer); T_NIL if out of
  * memory, and the caller exits with R_OUT_OF_MEMORY. When the actor pid
  * names exits, for whatever reason (Normal included, never cascaded),

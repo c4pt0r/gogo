@@ -525,7 +525,7 @@ static void make_pair(Fx *f, Actor *a, uint32_t ra, uint32_t nb, uint32_t sw) {
     R(a)[15] = T_NIL;
 }
 
-/* VM-2 (review 2026-11-24): a successful receive never leaves the
+/* A successful receive never leaves the
  * receiver over its limit. The message's off-heap Bytes stay charged (to
  * the mailbox) until bytes_adopt charges them to the holder, so the GC
  * that makes room for the unpacked copy cannot grow the block into their

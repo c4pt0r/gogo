@@ -39,6 +39,7 @@ usage: gogo build <dir> [-o out.gogo]
        gogo dis <file.gogo>
        gogo flash [-port P] [-esptool path] app.gogo
        gogo monitor [-port P] [-t seconds] [-until text] [-reset]
+       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
        gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
 ```
 

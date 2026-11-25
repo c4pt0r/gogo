@@ -1,4 +1,4 @@
-/* The module table (hot loading, design §5.2-§5.5).
+/* The module table (hot loading, docs/design.md §5.4.4, §5.5.3).
  *
  * Every image is a module. The VM holds at most GOGO_MAX_MODULES of them in
  * Vm.mods; slot 0 is the boot image, loaded by vm_boot (module_load_static)
@@ -31,7 +31,7 @@
 #include "actor.h"
 #include "config.h"
 
-/* code.Err values (gogo/code, Task 4). */
+/* code.Err values (gogo/code). */
 enum {
     CODE_OK = 0,
     CODE_BAD_IMAGE = 1,     /* not a valid image (image_load), or unusable bytes */
@@ -105,7 +105,7 @@ enum {
 int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words, uint16_t table_cap);
 
 /* The boot image into slot 0: image_load, then the capability check
- * (Task 2: on a missing capability the refusal line goes to stderr in one
+ * (on a missing capability the refusal line goes to stderr in one
  * write), then module_install_static. Returns IMG_OK, a negative IMG_ERR_*,
  * CODE_UNSUPPORTED, CODE_NO_MEMORY or CODE_TOO_MANY (slot 0 in use). The
  * words are used in place, never copied, and must outlive the VM. */

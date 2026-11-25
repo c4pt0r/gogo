@@ -155,7 +155,7 @@ TEST(unimplemented_builtin_is_badcode) {
     CHECK_EQ(vm.live, 0);
 }
 
-/* VM-1 (review 2026-11-24): LOADK operands are checked when executed, so
+/* LOADK operands are checked when executed, so
  * a LOADK hidden in an ext word (reached by a jump that lands on it) still
  * refuses a const ref
  * into the middle of an object (here a fake K_STRUCT inside a string's

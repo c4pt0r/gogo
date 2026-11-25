@@ -1,5 +1,5 @@
 /* Off-heap bytes.Bytes: the handle table, its holders and the C API for
- * ports (spec M4 §5.2, §9.5, §9.7, §9.8; M5 §9.2, §9.6).
+ * ports.
  *
  * A Bytes value is T_EMPTYBYTES, a heap K_BYTES of any size, or a handle
  * term (index << 4) | 0xE naming an entry of one VM-wide table of
@@ -23,7 +23,7 @@
  *    message keeps its handles alive whatever its sender does;
  *  - slice entries: one each on their root.
  *
- * Charging (all holders in full, spec §8.2): a holder is charged the length
+ * Charging (all holders in full): a holder is charged the length
  * of each distinct root among its entries (a slice charges its root's
  * length, since it keeps the root alive) as held_bytes, counted in
  * actor_charged_words. A queued message is charged to its receiver's

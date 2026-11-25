@@ -3,8 +3,8 @@
 The boards have Wi-Fi, and gogo has its own small TCP/IP stack written in
 C (Ethernet, ARP, IPv4, ICMP echo, UDP and TCP), sized for a
 microcontroller: its fixed state is under 4 KB. On top of it, libraries
-written in the gogo subset give you DHCP, DNS and an HTTP/1.0 client and
-server.
+written in the gogo subset give you DHCP, DNS, SNTP (the date) and an
+HTTP client (HTTP/1.0, and HTTP/1.1 keep-alive) and server.
 
 Networking follows the same model as everything else:
 
@@ -13,8 +13,8 @@ Networking follows the same model as everything else:
 - Libraries such as DHCP and DNS are **actors** you talk to by message.
 - A crashed connection handler takes only its own connection with it.
 
-There is **no TLS**, so no HTTPS. `http.Get` of an `https://` URL fails at
-once.
+HTTPS (the `"tls"` port, keep-alive and file upload) has a chapter of its
+own: [chapter 17](17-https.md).
 
 ## 10.1 Running network programs
 
@@ -145,13 +145,7 @@ as is. Behind it is a resolver actor registered as `"dns"`, started by the
 first lookup; it sends one query at a time, retries twice, and caches 4
 answers by their time-to-live. You rarely call it directly: `http.Get` does.
 
-**The date: gogo/sntp and gogo/sys.** The board has no battery-backed clock,
-so the date is unknown after boot. `gogo/sys` holds the wall clock (Unix time
-in ms, UTC): `sys.Time()` returns it, or 0 if unknown, and `sys.SetTime(ms)`
-sets it; once set it keeps advancing with `actor.Now`. `sntp.Sync(server,
-timeoutMs) bool` asks an SNTP server (a name or an address; port 123) and sets
-that clock; `sntp.Now()` is `sys.Time()`. On the unix VM the clock starts from the host's, or from
-`$GOGO_UNIX_TIME_MS`.
+To set the date from the network, see section 10.8.
 
 ## 10.4 HTTP client
 
@@ -557,7 +551,141 @@ one, so the device can always dial out. All connections end with
 `Closed{NoRoute}` when the interface loses its address, or when the
 `"netif"` owner (the DHCP actor) exits.
 
-## 10.8 Memory on the board
+## 10.8 The date: gogo/sys and gogo/sntp
+
+```go
+// gogo/sys
+func Time() int64        // Unix time in ms (UTC), or 0 if unknown
+func SetTime(ms int64) bool
+func Random() int        // 30 random bits: 0 <= n < 1<<30
+
+// gogo/sntp
+func Sync(server string, timeoutMs int) bool // timeoutMs <= 0: 5000
+func Now() int64                             // sys.Time()
+```
+
+The boards have no battery-backed clock, so after boot nothing knows the
+date. `actor.Now` only counts milliseconds since the VM started. The
+**wall clock** in `gogo/sys` is separate: `sys.Time()` returns the Unix
+time in milliseconds, or 0 while it is unknown. Once set, it keeps
+advancing by itself.
+
+`sys.SetTime(ms)` sets it and returns true, with one exception: a time
+earlier than the moment the firmware (or the host VM) was **built** is
+refused, `SetTime` returns false and the clock is unchanged. That floor is
+the only protection the clock has. Any code may set it, so nothing can move
+it back to before the build. `SetTime` with 0 or less forgets the time, and
+`Time` returns 0 again.
+
+`sntp.Sync(server, timeoutMs)` asks an SNTP server (a name, resolved with
+`gogo/dns`, or a dotted address; UDP port 123) for the time and sets the
+wall clock. It runs the exchange in a helper actor, so your mailbox is not
+touched, sends the request up to 3 times within the timeout, and corrects
+for half the round trip. It returns false, leaving the clock alone, if the
+name does not resolve, no valid reply comes in time, or the floor refuses
+the answer. SNTP is not authenticated, so a reply could come from anyone on
+the network path. Sync once at startup, and again every few hours if the
+date matters; the clock drifts with the board's crystal in between.
+
+`sys.Random()` returns 30 bits from the platform's entropy source (the
+chip's hardware generator on the board, `getentropy` on the host). It is
+meant for protocol nonces and IDs; `gogo/sntp` uses it for its request.
+
+```go
+// The wall clock and randomness: gogo/sys, set from the network with
+// gogo/sntp. The server comes from the config store
+// (gogo config set clock.server pool.ntp.org).
+package main
+
+import (
+	"gogo/config"
+	"gogo/dhcp"
+	"gogo/sntp"
+	"gogo/strconv"
+	"gogo/sys"
+)
+
+// pad2 formats 0..99 with two digits.
+func pad2(n int) string {
+	if n < 10 {
+		return "0" + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
+}
+
+// date formats Unix time ms (UTC) as "YYYY-MM-DD hh:mm"
+// (the days-to-civil algorithm, for dates after 1970).
+func date(ms int64) string {
+	mins := ms / 60000
+	days := int(mins / 1440)
+	hm := int(mins % 1440)
+	z := days + 719468
+	era := z / 146097
+	doe := z - era*146097
+	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
+	doy := doe - (365*yoe + yoe/4 - yoe/100)
+	mp := (5*doy + 2) / 153
+	d := doy - (153*mp+2)/5 + 1
+	m := mp + 3
+	if m > 12 {
+		m -= 12
+	}
+	y := yoe + era*400
+	if m <= 2 {
+		y++
+	}
+	return strconv.Itoa(y) + "-" + pad2(m) + "-" + pad2(d) + " " + pad2(hm/60) + ":" + pad2(hm%60)
+}
+
+func main() {
+	server, ok := config.Get("clock.server")
+	if !ok {
+		server = "pool.ntp.org"
+	}
+	if dhcp.Start(dhcp.Config{}) && sntp.Sync(server, 5000) {
+		println("synced with", server, "->", date(sys.Time()), "UTC")
+	} else {
+		println("not synced: no network or no answer")
+	}
+
+	// Forget the time, then set it by hand.
+	sys.SetTime(0)
+	println("known:", sys.Time() != 0)
+	noon := int64(4102488000000) // 2100-01-01 12:00 UTC
+	println("set 2100:", sys.SetTime(noon))
+	println("now:", date(sys.Time()))
+	// Earlier than the build: refused, the clock is unchanged.
+	println("set 1970:", sys.SetTime(1000))
+	println("still:", date(sys.Time()))
+
+	// 30 random bits.
+	a, b := sys.Random(), sys.Random()
+	println("random in range:", a >= 0 && a < 1<<30, "differ:", a != b)
+}
+```
+
+On the host there is no network, so `Sync` fails, and the rest runs as on
+a board:
+
+```text
+not synced: no network or no answer
+known: false
+set 2100: true
+now: 2100-01-01 12:00
+set 1970: false
+still: 2100-01-01 12:00
+random in range: true differ: true
+```
+
+On a board with Wi-Fi the first line is `synced with pool.ntp.org ->
+<the date> UTC` instead. On the host the wall clock starts from the
+computer's clock (or from `$GOGO_UNIX_TIME_MS`, in ms; 0 means unknown), so
+`sys.Time()` is known from the start. The example forgets it first to show
+the board's behaviour. On a board it starts unknown at every boot and reset.
+gogo has no time zones and no date formatting. `date` above is the usual
+days-to-civil arithmetic, valid for dates after 1970.
+
+## 10.9 Memory on the board
 
 On the M5StickS3 the Wi-Fi driver takes about 30 KB of heap and 31 KB of
 static memory, gogo's stack under 4 KB, and each HTTP connection a handler

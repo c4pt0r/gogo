@@ -100,7 +100,7 @@ TEST(names_oom) {
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
 }
 
-/* Only the actor that registered a name may unregister it (Task 5): not
+/* Only the actor that registered a name may unregister it: not
  * the named actor, not a third one. */
 TEST(names_unregister_owner) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;

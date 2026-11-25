@@ -1,14 +1,9 @@
-// netdemo: M5StickS3 网络演示 / network demo (M5).
+// netdemo: network demo (M5StickS3).
 //
-//	gogo config set wifi.ssid <名字>          # 一次即可，存在设备上
-//	gogo config set wifi.password -          # 从 stdin 读密码
-//	gogo config set demo.url http://example.com/   # 可选：定时抓取的地址
+//	gogo config set wifi.ssid <name>          # once; stored on the device
+//	gogo config set wifi.password -          # reads the password from stdin
+//	gogo config set demo.url http://example.com/   # optional: the URL to fetch
 //	gogo build examples/netdemo -o netdemo.gogo && gogo flash netdemo.gogo
-//
-// 开机：DHCP 拿地址，屏幕显示 http://<IP>/。浏览器打开它，看到中英文
-// 页面：KEY1 / KEY2 按了几次、最近一次抓取的结果、运行时间（每 5 秒自动
-// 刷新）。每 10 秒 http.Get 一次 demo.url（默认 http://example.com/），
-// 结果打印在屏幕上。
 //
 // On boot it gets an address over DHCP and shows http://<IP>/ on the
 // screen. The page (Chinese/English) shows the KEY1/KEY2 press counts, the

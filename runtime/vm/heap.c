@@ -212,8 +212,8 @@ bool heap_reclaim_waiting(Vm *vm, Actor *a) {
 }
 
 /* Room for `words` free words: a normal GC (sized with growth slack), and
- * if that fails against the limit, a tight one (spec M5 task 6: a request
- * near the limit fits once the slack is gone). */
+ * if that fails against the limit, a tight one (a request near the limit
+ * fits once the slack is gone). */
 static bool make_room(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots) {
     if ((uint32_t)(a->sp - a->hp) >= words) return true;
     heap_gc(vm, a, words, roots, n_roots);

@@ -23,8 +23,8 @@
  * are checked only when used. Not every malformed image is merely a
  * badcode: a const ref into the middle of an object would forge one that
  * the GC reads and writes out of bounds, which is why the const map is
- * checked at load and in LOADK (v7). docs/m3-followups.md lists what
- * stays unchecked.
+ * checked at load and in LOADK (v7). docs/known-issues.md ("Hot loading")
+ * notes what stays unchecked.
  *
  * Every way out of an actor (return from the entry frame, EXIT, a runtime
  * error, a pending exit mark) goes through actor_exit (signals.c), which
@@ -419,7 +419,7 @@ uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool
         return R_OUT_OF_MEMORY;
     }
     /* Off-heap Bytes among the copied values are charged to the child in
-     * full (spec M4 §9.5): if they take it past its limit, the child exits
+     * full: if they take it past its limit, the child exits
      * with OutOfMemory before running (a visible exit: links and monitors
      * see it), as a holder over its limit does; the spawner is unaffected. */
     if ((uint32_t)n->mem_words + actor_charged_words(n) > actor_max_words(n))

@@ -87,8 +87,10 @@ gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>
 
 Runs a program on the host VM. Given a directory it builds it first (to a
 temporary image); given a `.gogo` file it runs that image. The exit status
-is the VM's: 0 when the VM ran until nothing was left to do, 2 if the
-image could not be loaded.
+is the VM's: 0 when the VM ran until nothing was left to do, 1 if the
+image needs a capability the host VM lacks (for example `tls` in a VM
+built without mbedTLS), 2 if the image could not be loaded. A build error
+is status 1 too.
 
 > **Note.** A crash, even of the `main` actor, does not change the exit
 > status: crashes are reported on standard error and the VM goes on until
@@ -115,6 +117,9 @@ Options:
   | `key <name>` | a key press and release (`kbd` port) |
   | `keydown <name>`, `keyup <name>` | press or release only, for modifiers |
   | `battery <mV> <charging> <external>` | a battery sample (`power` port) |
+  | `imu sample <gx> <gy> <gz> <ax> <ay> <az>`, `imu gesture <kind> [value]` | IMU data (`imu` port, chapter 15) |
+  | `ir rx <us> <us> ...` | a received infrared frame (`ir_rx` port, chapter 15) |
+  | `mic tone <hz> <ms>`, `mic silence <ms>` | microphone input (`mic` port, chapter 16) |
   | `sleep <ms>` | pause before the next line |
 
   Unknown lines are reported on standard error and skipped. Key lines are
@@ -129,7 +134,10 @@ simulated GPIO outputs (`gpio: pin 5 = 1`) go to standard error.
 
 **Environment.** `GOGO_VM` names the VM to use (default: `build/gogovm` of
 the gogo tree). `GOGO_CONFIG` names the configuration file that
-`config.Get` reads (default `~/.gogo/config`).
+`config.Get` reads (default `~/.gogo/config`). `GOGO_UNIX_TIME_MS` starts
+the wall clock (`sys.Time`, chapter 10.8) at that Unix time in ms instead of
+the computer's clock; `0`, or a time earlier than the VM's build, starts it
+unknown, as on a board.
 
 There is no network on the host (chapter 10).
 
@@ -208,11 +216,15 @@ driver nobody uses. It reads the capabilities each file declares (the
 `<dir>/sdkconfig.gogo`, a list of `CONFIG_GOGO_*` lines, then prints the
 `idf.py` command that builds with it. It never flashes.
 
-- Feature names: `net kbd power sd exfat cjk`. `net`, `kbd` and `power` are
-  on only when a file requires them (or `-with` adds them); a file that
-  opens a port by a name only known at run time requires every port the
-  board has. `sd`, `exfat` (exFAT media) and `cjk` (the Chinese font) are
-  not capabilities: they are on by default on boards that have them.
+- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic spk tls`.
+  `net`, `kbd` and `power` are on only when a file requires them (or
+  `-with` adds them); a file that opens a port by a name only known at run
+  time requires every port the board has. The others are on by default on
+  boards that have them: `sd`, `imu`, `irtx`/`irrx` (the infrared sender
+  and receiver), `mic`/`spk` and `tls` (the TLS client, chapter 17) are
+  capabilities too, so a file that needs one keeps it on, while `exfat` (exFAT media) and `cjk` (the Chinese font)
+  are not. `irtx` and `irrx` share one firmware switch, as do `mic` and
+  `spk`, so they go on and off together.
 - `-with a,b` adds features. `-without a,b` removes them; a feature that a
   file requires cannot be removed (error). `exfat` goes off with `sd`, and
   `tls` with `net`.
@@ -251,7 +263,8 @@ The firmware is an ESP-IDF project in `platform/esp32s3`, built with
 `idf.py` (ESP-IDF v6.1.1). See chapter 2 for the commands and
 `platform/esp32s3/README.md` for build options (`GOGO_BOARD`,
 `GOGO_CONSOLE=0`, and the `CONFIG_GOGO_*` feature switches `NET`, `KBD`,
-`BATTERY`, `SD`, `FS_EXFAT`, `FONT_CJK`) and hardware details. To choose the
+`BATTERY`, `SD`, `FS_EXFAT`, `FONT_CJK`, `IMU`, `IR`, `AUDIO`, `TLS`) and hardware
+details. To choose the
 switches from what your programs need, use `gogo firmware` (above).
 
 ## Running the book's examples

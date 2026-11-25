@@ -4,7 +4,7 @@
  * (interruptible) ECC so signature checks are sliced. Used by the host build
  * (Makefile, ESP-IDF's mbedTLS 4.x source tree) and meant for any platform
  * that builds mbedTLS itself (RP2040); ESP-IDF configures its own copy
- * through sdkconfig (Task 4) and must match the choices marked "needed". */
+ * through sdkconfig and must match the choices marked "needed". */
 #ifndef GOGO_CRYPTO_CONFIG_H
 #define GOGO_CRYPTO_CONFIG_H
 
@@ -25,7 +25,7 @@
 /* Curves: P-256 and P-384 (ECDHE and certificate keys) and X25519 (ECDHE).
  * No ECDHE curve is sliced in mbedTLS 4.1 (the key exchange is plain PSA
  * calls); X25519 is the cheaper one on the ESP32-S3 (204 ms against about
- * 300 ms for P-256, ruling R15), so tls.c prefers it, here as there (the
+ * 300 ms for P-256), so tls.c prefers it, here as there (the
  * ESP build has it through CONFIG_MBEDTLS_ECP_DP_CURVE25519_ENABLED). */
 #define PSA_WANT_ECC_SECP_R1_256                1
 #define PSA_WANT_ECC_SECP_R1_384                1

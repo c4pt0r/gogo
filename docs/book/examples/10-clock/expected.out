@@ -1,0 +1,7 @@
+not synced: no network or no answer
+known: false
+set 2100: true
+now: 2100-01-01 12:00
+set 1970: false
+still: 2100-01-01 12:00
+random in range: true differ: true

@@ -1117,7 +1117,7 @@ static void stale_cap(const char *s, size_t n) {
 
 /* A stale value (a const ref or struct type of a module that is gone; here
  * a slot no module is in) given to port.Open or sent as a port command is
- * badcode for the actor, never a silent failure (Task 5). The gate is the
+ * badcode for the actor, never a silent failure. The gate is the
  * builtin, so every driver's command handler is covered. */
 TEST(port_stale_values_badcode) {
     uint32_t w[40]; Image img; Vm vm;

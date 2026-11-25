@@ -160,7 +160,7 @@ endif()
 # The wall-clock floor (runtime/vm/platform.h): the build time, Unix ms.
 string(TIMESTAMP GOGO_BUILD_S "%s" UTC)
 
-# ESP values of the runtime/vm/config.h knobs (plan: Global Constraints).
+# ESP values of the runtime/vm/config.h knobs.
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GOGO_BUILD_UNIX_MS=${GOGO_BUILD_S}000LL
     # tls.c: IDF's mbedTLS is shared (Wi-Fi's WPA crypto), so the port

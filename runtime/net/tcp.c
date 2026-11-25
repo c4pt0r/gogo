@@ -23,10 +23,10 @@
  * unacknowledged data by message references (bytes_msg_ref), charged to
  * no one, until acknowledged, for at most GOGO_NET_ORPHAN_MS from the
  * close: then it is reset (RST) whatever its progress, so a peer that
- * acknowledges a byte at a time cannot keep it alive (spec §9.5). Closing
+ * acknowledges a byte at a time cannot keep it alive. Closing
  * it otherwise sends RST.
  *
- * Nothing TCP sends its owner can kill it (spec §9.1): every event goes
+ * Nothing TCP sends its owner can kill it: every event goes
  * through msg_try_enqueue. Data is refused (and not acknowledged) unless
  * it leaves EVENT_RESERVE words of headroom (an owner waiting in Receive
  * is first collected without growth slack, heap_reclaim_waiting, since it
@@ -314,7 +314,7 @@ static bool try_event(Vm *vm, const TcpPcb *c, uint32_t type, int32_t reason) {
     return flush(vm, c->port) && post(vm, c->port, type, reason);
 }
 
-/* Data{Data}: the payload as a heap K_BYTES in the block (spec §9.2). An
+/* Data{Data}: the payload as a heap K_BYTES in the block. An
  * orphan discards it. */
 static bool deliver(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n) {
     if (!c->port) return true;
@@ -483,7 +483,7 @@ void tcp_close_port(Port *p) {
     case TCP_ESTABLISHED: case TCP_CLOSE_WAIT: case TCP_FIN_WAIT_1:
     case TCP_FIN_WAIT_2: case TCP_CLOSING: case TCP_LAST_ACK:
         if (c->flags & TF_SHUT) {
-            /* Orphan (spec §9.5): it finishes the FIN exchange alone. */
+            /* Orphan: it finishes the FIN exchange alone. */
             if (c->wr[0]) bytes_msg_ref(c->wr[0]);
             if (c->wr[1]) bytes_msg_ref(c->wr[1]);
             c->flags = (uint8_t)((c->flags | TF_ORPHAN | TF_UNTIL) & ~TF_PAUSED);

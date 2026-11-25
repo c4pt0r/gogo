@@ -25,16 +25,16 @@
  *    has work: vm_run).
  *    Connected follows the handshake.
  *    TimeoutMs bounds connect plus handshake (GOGO_TLS_HANDSHAKE_MS when 0).
- *    NOT sliced (ruling R4, docs/https-followups.md): the ECDHE key
+ *    NOT sliced (docs/known-issues.md): the ECDHE key
  *    generation plus agreement (one ClientKeyExchange step: mbedTLS 4.x does
  *    it with plain PSA calls; ~1 ms on the host, tens of ms expected on an
  *    ESP32-S3 with software P-256) and RSA signature checks (an RSA chain;
- *    cheap, e = 65537). Measured on the StickS3 (docs/https-followups.md
- *    1): the ECDHE step is 204 ms with X25519, above the 50 ms cap,
- *    accepted as an exception (ruling R15); the fix is mbedTLS's
+ *    cheap, e = 65537). Measured on the StickS3: the ECDHE step is 204 ms
+ *    with X25519, above the 50 ms cap,
+ *    accepted as an exception; the fix is mbedTLS's
  *    interruptible key generation and agreement (psa_*_iop) WITH P-256 as
  *    the preferred group (X25519's multiplication is not restartable).
- *  - TLS 1.2 only (ruling R5): mbedTLS 4.x's TLS 1.3 key exchange and
+ *  - TLS 1.2 only: mbedTLS 4.x's TLS 1.3 key exchange and
  *    CertificateVerify cannot be sliced either. A server that requires 1.3
  *    gives Closed{TLS}.
  *  - Verification is always on: the platform's trust anchors
@@ -72,7 +72,7 @@
  *    (about 23 KB + one Data + its own heap). The measured peak per
  *    connection is about 34 KB: the other ~11 KB are handshake temporaries
  *    (the peer's chain, ECDHE keys, PSA operations), freed when the
- *    handshake ends and not charged (ruling R6: bounded, one connection at
+ *    handshake ends and not charged (they are bounded: one connection at
  *    a time; the platform sizes its TLS memory for the peak plus its trust
  *    store). At most GOGO_TLS_MAX (1) connection: a second open is
  *    refused. A connection's memory is freed when it ends, the port closes

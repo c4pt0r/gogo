@@ -8,7 +8,7 @@
  * (Cardputer / Cardputer ADV: MOSI G35, SCLK G36, DC G34, CS G37, RST G33,
  * backlight G38, SPI3 at 40 MHz, panel 135x240 offset 52/40, rotation 1,
  * invert: the StickS3's panel numbers too); M5Cardputer SD pins (CS G12,
- * MOSI G14, CLK G40, MISO G39; docs/m3-followups.md). */
+ * MOSI G14, CLK G40, MISO G39). */
 #ifndef GOGO_BOARD_H
 #define GOGO_BOARD_H
 

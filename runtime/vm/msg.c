@@ -27,7 +27,7 @@ typedef struct Buf {
 #define WALK_MARK 0x20u
 #define WALK_TOP  UINT32_MAX
 
-/* The module rules a copy into module tag follows (design §5.3), applied
+/* The module rules a copy into module tag follows (docs/design.md §5.4.4), applied
  * to every value it reaches. A value naming a module (a const ref, a
  * closure, a struct of a module's own type: term.h) may enter only that
  * module's actors as it is. Crossing into another module, a const string,
@@ -147,7 +147,7 @@ static term xm_copy(Buf *b, Xm *x, uint32_t skip, term root) {
     return xm_put(b, x, root);
 }
 
-/* Sharing-preserving copy (spec M2 §5.1.7). While copying, each source
+/* Sharing-preserving copy. While copying, each source
  * object that has been copied gets its header overwritten with a one-word
  * forward marker, hdr_make(offset in b, K_FORWARD), so a second ref to it
  * reuses the copy (this also makes cycles terminate). The marker keeps the

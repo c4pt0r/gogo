@@ -13,7 +13,7 @@
 #include "term.h"
 #include "actor.h"
 
-/* Msg.flags bit: a reply to a Call (spec M2 §5.3). Its data starts with
+/* Msg.flags bit: a reply to a Call. Its data starts with
  * two words, the low and high half of the Ref serial being answered; the
  * body's objects follow, and refs inside are relative to data as always
  * (so they count the two words). Receive never returns such a block. */
@@ -41,12 +41,12 @@ uint32_t msg_footprint_words(uint16_t words);
 
 /* Words a queued message is charged, as counted in mbox_words (and in a
  * SendAfter creator's timer charge): its block plus the full length of each
- * distinct off-heap Bytes root it carries (spec M4 §9.5b). */
+ * distinct off-heap Bytes root it carries. */
 uint32_t msg_charge_words(const Msg *m);
 
 /* Copies t out of src's heap into a new, unqueued message for an actor of
  * module slot dst_mod; NULL if out of memory, the copy exceeds 65535
- * words, or the cross-module rules refuse it (design §5.3; the same rules
+ * words, or the cross-module rules refuse it (docs/design.md §5.4.4; the same rules
  * for every module, the main program included): a value naming a module
  * (const ref, closure, struct of a module's own type) enters only that
  * module's actors as it is; into another module a const string, int or
@@ -76,7 +76,7 @@ void msg_free(Msg *m);
  * negated: -R_OUT_OF_MEMORY, -R_BAD_MSG, -R_BAD_CODE (msg_build). A
  * dropped message is still checked, against from's own module (as
  * SendAfter to a dead target): a stale value is -R_BAD_CODE either way.
- * Quota (spec M2 §5.1.1): if queuing the message would take the receiver's
+ * Quota: if queuing the message would take the receiver's
  * block + charged words (mailbox, pending timers) past its limit (counting
  * the holder list a first off-heap Bytes handle would make, bytes.h), or its mailbox counter past 65535 words,
  * the message is dropped and the receiver is marked to exit with
@@ -86,13 +86,13 @@ int msg_send(Vm *vm, Actor *from, term to_pid, term msg);
 
 /* Queues m (which it now owns) on `to` and wakes it if waiting. With
  * `quota`, the receiver's limit applies as in msg_send; without (exit
- * notifications, spec M2 §5.3) the message is still counted in mbox_words.
+ * notifications) the message is still counted in mbox_words.
  * Either way, if the 16-bit mailbox counter cannot hold it, m is freed, the
  * receiver is marked to exit with R_MAILBOX_OVERFLOW and false returned.
  * `to` must be alive and not marked for exit. Never allocates. */
 bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota);
 
-/* Non-fatal delivery (spec M5 §9.1, network data only): queues m on `to`
+/* Non-fatal delivery: queues m on `to`
  * like msg_enqueue with quota and returns true; but if `to` is exited or
  * marked to exit, or m would take it past its limit or its mailbox
  * counter, returns false and leaves m unqueued and still the caller's (to

@@ -57,7 +57,7 @@ CONFIG_RMT_ENCODER_FUNC_IN_IRAM=n
 # default build's settings (GOGO_TLS on); a TLS-off build adds
 # sdkconfig.tls-off, which puts the ones that would also change Wi-Fi's WPA
 # crypto (-O2, the allocator, restartable ECC, time) back to IDF's defaults
-# (`gogo firmware` adds it by itself; ruling R17). The port uses
+# (`gogo firmware` adds it by itself). The port uses
 # ESP-IDF's own mbedTLS component (4.1.1, the source the host build compiles
 # with runtime/net/tls/config), shared with Wi-Fi's WPA crypto; these mirror runtime/net/tls/config:
 # - every mbedTLS allocation goes through platform_tls_alloc's allocator
@@ -76,7 +76,7 @@ CONFIG_MBEDTLS_HAVE_TIME_DATE=y
 CONFIG_MBEDTLS_COMPILER_OPTIMIZATION_PERF=y
 # - sliced ECDSA checks (ServerKeyExchange and the chain);
 CONFIG_MBEDTLS_ECP_RESTARTABLE=y
-# - TLS 1.2 client only (ruling R5), no renegotiation, no RSA key exchange
+# - TLS 1.2 client only, no renegotiation, no RSA key exchange
 #   (tls.c offers ECDHE AEAD suites only);
 CONFIG_MBEDTLS_SSL_PROTO_TLS1_2=y
 CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=n
@@ -90,7 +90,7 @@ CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN=y
 CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=n
-# - X25519 (tls.c prefers it: the unsliced ECDHE step, ruling R4);
+# - X25519 (tls.c prefers it: the unsliced ECDHE step);
 CONFIG_MBEDTLS_ECP_DP_CURVE25519_ENABLED=y
 # - trust anchors: the certificate bundle in flash. Cross-signed
 #   verification off: it verifies through a CA callback, and mbedTLS's

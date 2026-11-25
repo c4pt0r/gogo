@@ -45,9 +45,8 @@ You cannot write your own packages yet; split a large program over several
 files of `package main` instead. Renamed imports (`import s "gogo/strings"`)
 are rejected too.
 
-> **Note.** The design document mentions `gogo/fmt` and `gogo/errors`
-> packages. They do not exist. Print with `println`, and report errors as
-> shown in section 3.9.
+> **Note.** There is no `gogo/fmt` or `gogo/errors` package. Print with
+> `println`, and report errors as shown in section 3.9.
 
 ## 3.2 Types and values
 
@@ -866,11 +865,11 @@ The full list, with what to do instead:
 | embedded fields | `embedded field not supported` | a named field |
 | variadic functions `f(xs ...int)` | `Ellipsis not supported` | pass a slice |
 
-> **Note.** The design document (`docs/design.md` §5.2) still lists
-> struct methods, maps, arrays, pointers, `uint32`, read-only package-level
-> variables, the `error` interface, `panic`, type assertions and the
-> expression `switch` as supported. The compiler rejects all of them; this
-> chapter describes what the compiler actually does.
+> **Note.** Struct methods, maps, arrays, pointers, `uint32`,
+> package-level variables, the `error` interface, `panic`, type assertions
+> and the expression `switch` are not supported yet. They are planned for
+> the "language completeness" milestone, next after embed mode (see
+> `docs/design.md` §5.2).
 
 ### Small surprises
 

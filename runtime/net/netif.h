@@ -1,4 +1,4 @@
-/* Platform network interface (spec M5 §5.1, §9.9): what the net stack
+/* Platform network interface: what the net stack
  * (net/) needs from a platform, and the two entry points a platform calls
  * into the stack. Raw Ethernet frames, no FCS.
  *

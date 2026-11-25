@@ -333,7 +333,7 @@ TEST(fs_open_errors) {
     done(s);
 }
 
-/* Review Focus 5: stale handles never crash, they return Closed. */
+/* Stale handles never crash, they return Closed. */
 TEST(fs_stale_and_foreign_handles) {
     setup();
     Actor *a = actor(0), *b = actor(0);
@@ -380,7 +380,7 @@ TEST(fs_stale_and_foreign_handles) {
     done(b);
 }
 
-/* Review Focus 5: Handoff moves the charge; the old owner gets Closed. */
+/* Handoff moves the charge; the old owner gets Closed. */
 TEST(fs_handoff) {
     setup();
     Actor *a = actor(0), *b = actor(0);
@@ -405,7 +405,7 @@ TEST(fs_handoff) {
     CHECK_EQ(open_ports(), 0);
 }
 
-/* Review Focus 1: the owner dies mid-write: the file is closed (committed),
+/* The owner dies mid-write: the file is closed (committed),
  * the slot and charge go, and another actor can open it for Write at once. */
 TEST(fs_owner_killed_mid_write) {
     setup();
@@ -547,7 +547,7 @@ TEST(fs_readfile_writefile) {
 }
 
 /* FAT-like /sd: the final rename of WriteFile fails after the old file was
- * removed. The temporary is then the only copy and must stay (spec §5.6);
+ * removed. The temporary is then the only copy and must stay;
  * a failure while the target still exists still removes it. */
 TEST(fs_writefile_keeps_tmp_when_target_gone) {
     setup();

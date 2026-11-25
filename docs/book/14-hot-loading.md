@@ -10,8 +10,8 @@ and its supervisor restarts it with the newly loaded code. The unit of
 replacement is an actor, and replacement is just a supervised restart.
 
 The package is `gogo/code`. Its full reference is in
-[`docs/design.md`](../design.md) section 5.4.4; follow-ups and the status of
-the on-board runs are in [`docs/hotload-followups.md`](../hotload-followups.md).
+[`docs/design.md`](../design.md) section 5.4.4; its open limitations are in
+[`docs/known-issues.md`](../known-issues.md).
 
 ## 14.1 Modules
 
@@ -176,14 +176,18 @@ crashing. Messages inside one module are unaffected.
 ## 14.6 What a module may do, and what the firmware offers
 
 - **Capabilities.** The compiler records which optional features an image
-  needs (the network packages, the `kbd` and `power` ports, `/sd`). Each
-  firmware knows which it was built with. `code.Load` of a module that
-  needs more returns `Unsupported`, and `code.Missing(m)` gives the missing
-  bits (`code.CapNet`, `CapKbd`, `CapPower`, `CapSD`). The main image is
-  checked the same way at boot.
+  needs (the network packages, the `kbd`, `power`, `imu`, `ir_tx`, `ir_rx`,
+  `mic`, `spk` and `tls` ports, `/sd`). Drivers that a library marks
+  `//gogo:optional` do not count for that library's own opens (chapter
+  12). Each firmware knows which it was built with. `code.Load` of a module that needs more returns `Unsupported`, and
+  `code.Missing(m)` gives the missing bits (`code.CapNet`, `CapKbd`,
+  `CapPower`, `CapSD`, `CapIMU`, `CapIRTX`, `CapIRRX`, `CapMic`, `CapSpk`,
+  `CapTLS`;
+  appendix F). The main image is checked the same way at boot.
 - **Rights.** This version has no permissions: a module can do everything
   the main program can (ports, files, network, configuration). Signing and
-  permissions are planned together with HTTPS.
+  permissions are not built yet; they were meant to come with HTTPS, which
+  does not add them (chapter 17).
 - **Memory.** All loaded module code together is limited by the
   configuration key `code.mem` (default 64 KB):
 

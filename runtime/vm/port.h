@@ -1,4 +1,4 @@
-/* Ports: peripherals as special actors with a PID (spec M3 §5.1-5.2).
+/* Ports: peripherals as special actors with a PID.
  *
  * A fixed table of GOGO_MAX_PORTS entries lives in the Vm. A port PID is an
  * ordinary PID term whose slot is PORT_SLOT_BASE + index and whose
@@ -21,7 +21,7 @@
  * wins). When the window ends, the pending value is delivered if its b
  * differs from the last delivered b, and that delivery opens a new window.
  *
- * M5 additions (spec M5 §5.2, §9.1, §9.6, §9.9):
+ * M5 additions:
  *  - Charges: a driver sets Port.charge_words in open for the state it
  *    keeps for the port (e.g. a TCP control block in a fixed C table); the
  *    owner is charged that (open fails if it does not fit its limit) until
@@ -154,7 +154,7 @@ term port_bytes_new(struct Vm *vm, Port *p, uint32_t len, uint8_t **data);
 bool port_bytes_retain(struct Vm *vm, Port *p, term h);
 void port_bytes_release(struct Vm *vm, Port *p, term h);
 
-/* An extra event source drained by the scheduler (spec M5 §9.9), e.g. the
+/* An extra event source drained by the scheduler, e.g. the
  * net stack's RX slot and link slot. pending: cheap check, true when drain
  * has work it can do NOW (it may be called from the scheduler at any time);
  * drain: runs on the scheduler thread inside port_drain; any_live: keeps

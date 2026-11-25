@@ -1,4 +1,4 @@
-// Package config reads the platform configuration store (spec M5 §5.4).
+// Package config reads the platform configuration store.
 // It is a stub package like gogo/actor: the compiler replaces Get with a
 // VM builtin, so the body is never executed.
 //

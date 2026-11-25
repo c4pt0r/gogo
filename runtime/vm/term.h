@@ -1,4 +1,4 @@
-/* 32-bit tagged term representation. See the "Term tags" table in the design.
+/* 32-bit tagged term representation. See docs/design.md §5.5.2.
  *
  *   ...1  small int (31-bit signed)   (v << 1) | 1
  *   ..00  heap ref                    word_offset << 2
@@ -8,7 +8,7 @@
  *   1010  const ref                   tag | const_word_offset << 4 | 0xA (below)
  *   1110  off-heap Bytes handle       (index << 4) | 0xE (bytes.h)
  *
- * Module tags (hot loading, module.h; design §5.5.3). Every term or raw
+ * Module tags (hot loading, module.h; docs/design.md §5.5.3). Every term or raw
  * word that names something in a module's image carries the module's tag in
  * its top 11 bits: generation (low 8 bits of the slot's generation) in
  * 31..24, slot in 23..21.

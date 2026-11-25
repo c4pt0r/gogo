@@ -339,7 +339,7 @@ TEST(boot_bad_image) {
  * B's image although A has other constants at the same offsets. The
  * reserved struct it builds (Options) is A's Options. What it sends the
  * host (module 0) crosses modules: its const string arrives as a heap
- * copy (Task 5), so the host keeps it after B unloads. */
+ * copy, so the host keeps it after B unloads. */
 TEST(two_modules_same_interpreter) {
     Fx *f = fx_new();
     Vm *vm = &f->vm;
@@ -417,7 +417,7 @@ static uint32_t load_and_unload_b(Fx *f, uint32_t *slot) {
     return tag;
 }
 
-/* Review Focus 5: a const ref of B planted in an A actor; B unloads; using
+/* A const ref of B planted in an A actor; B unloads; using
  * the ref is badcode for that actor; another A actor is unaffected. */
 TEST(stale_const_ref_badcode) {
     Fx *f = fx_new();
@@ -697,7 +697,7 @@ TEST(module_code_words_counted) {
     free(f);
 }
 
-/* ---- Task 4: gogo/code (Load / Spawn / Hold / Release, the cap) ---- */
+/* ---- gogo/code (Load / Spawn / Hold / Release, the cap) ---- */
 
 /* The PSRAM hook, overridden for this test binary: off (NULL, "no special
  * memory", the weak default's answer) unless plat_on. */
@@ -819,7 +819,7 @@ TEST(entry_not_found) {
     free(f);
 }
 
-/* Review Focus 3: truncated, bit-flipped header, garbage exports, trailing
+/* Truncated, bit-flipped header, garbage exports, trailing
  * words: BadImage, nothing counted or kept (the bytes are not retained),
  * the loader unaffected. Also from unaligned bytes (validated as a copy,
  * which is freed again). */
@@ -982,7 +982,7 @@ TEST(unload_after_last_actor) {
     free(f);
 }
 
-/* Review Focus 4: the loader exits before Spawn, a new module reuses the
+/* The loader exits before Spawn, a new module reuses the
  * slot: the old handle is NotFound for Spawn and Hold and never runs the
  * new code. */
 TEST(stale_handle_after_reuse) {
@@ -1356,7 +1356,7 @@ TEST(platform_memory_single_copy) {
     free(f);
 }
 
-/* ---- cross-module rules (Task 5, design §5.3) ---- */
+/* ---- cross-module rules (docs/design.md §5.4.4) ---- */
 
 /* An actor of module slot (B's), with a frame. */
 static Actor *mod_actor(Fx *f, uint32_t slot) {
@@ -1574,7 +1574,7 @@ TEST(xmod_sendafter_checked_at_call) {
     free(f);
 }
 
-/* Review Focus 2: the ExitMsg / DownMsg of a B actor that crashed in B's
+/* The ExitMsg / DownMsg of a B actor that crashed in B's
  * "get" carry Func "" for host watchers, the name for a B watcher; the
  * crash report names it. Read after B unloaded. */
 TEST(exit_notice_func_blank_across_modules) {
@@ -1656,7 +1656,7 @@ TEST(stale_send_badcode) {
     free(f);
 }
 
-/* Review I-1: a send that drops (dead target, not a PID, a Reply to a dead
+/* A send that drops (dead target, not a PID, a Reply to a dead
  * caller or with no Ref) still checks its value, against the sender's own
  * module as SendAfter does: a stale value is the sender's badcode whether
  * or not the receiver lives; a live value just drops. */

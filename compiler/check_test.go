@@ -308,7 +308,7 @@ func TestRejects(t *testing.T) {
 func itoa(n int) string { return strconv.Itoa(n) }
 
 // TestAcceptsMultiResultsAndByte: user functions with several (or named)
-// results in every supported form, and the byte type (M4 Task 1).
+// results in every supported form, and the byte type.
 func TestAcceptsMultiResultsAndByte(t *testing.T) {
 	src := `package main
 
@@ -406,7 +406,7 @@ func checkSrc(t *testing.T, src string) []error {
 	return Check(prog)
 }
 
-func TestRejectsReview(t *testing.T) {
+func TestRejectsMore(t *testing.T) {
 	const hdr = "package main\nimport \"gogo/actor\"\ntype P struct{ X int }\ntype Q struct{ Y int }\n"
 	tests := []struct{ name, src, want string }{
 		{"global-var", "package main\nvar g int\nfunc main() { println(g) }\n", "global variable"},

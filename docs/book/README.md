@@ -17,17 +17,17 @@ and assumes no knowledge of embedded programming or Erlang.
 7. [Ports and Peripherals](07-ports-and-peripherals.md): ports, GPIO, events, debouncing, owners, Handoff
 8. [Keyboard and Power](08-keyboard-and-power.md): the `kbd` and `power` ports
 9. [Storage](09-storage.md): `/flash` and `/sd`, `gogo/fs`, `gogo/kv`, `gogo/ringlog`
-10. [Networking](10-networking.md): DHCP, DNS, UDP, TCP, the HTTP client and server
+10. [Networking](10-networking.md): DHCP, DNS, UDP, TCP, the HTTP client and server, the wall clock (`gogo/sys`, `gogo/sntp`)
 11. [Configuration and Devices](11-configuration-and-devices.md): `gogo config`, `config.Get`, Wi-Fi, the two boards
 12. [Toolchain Reference](12-toolchain-reference.md): `gogo build`, `run`, `dis`, `flash`, `monitor`, `config`
-13. [Appendices](13-appendices.md): library quick reference, exit reasons, error codes, limits, differences from Go
+13. [Appendices](13-appendices.md): library quick reference, exit reasons, error codes, limits, differences from Go, capabilities
 14. [Hot Loading](14-hot-loading.md): loading code at run time, modules, supervised upgrades
 15. [IMU and IR](15-imu-and-ir.md): the motion sensor, infrared send and receive, streams (`Chunk`, `Out`, `Done`)
 16. [Audio](16-audio.md): the microphone and speaker, recording to WAV files, playing them back
 17. [HTTPS](17-https.md): https URLs, the clock, the keep-alive `http.Client`, streaming uploads, the `"tls"` port
 
-[Notes for maintainers](NOTES-for-maintainers.md) lists the places where
-the documentation and the behaviour disagree, found while writing the book.
+[Known issues](../known-issues.md) lists gogo's open limitations, with
+workarounds.
 
 ## Examples
 

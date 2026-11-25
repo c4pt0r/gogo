@@ -687,7 +687,7 @@ func TestTLSHandshakeNoIdleStall(t *testing.T) {
 	}
 }
 
-// ---- the ESP trust-anchor rule (runtime/net/tls/anchor.h, ruling R16) ----
+// ---- the ESP trust-anchor rule (runtime/net/tls/anchor.h) ----
 
 // espBundle writes certs (subject DER, SubjectPublicKeyInfo DER) in
 // ESP-IDF's esp_crt_bundle format: a u32 LE offset per certificate (the

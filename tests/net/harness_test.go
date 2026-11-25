@@ -1,4 +1,4 @@
-// Package nettest runs network scenarios (spec M5 §6, §9.7): each test
+// Package nettest runs network scenarios: each test
 // compiles a gogo program from progs/, starts it on the VM named by
 // $GOGO_VM with --net-fd 3 --sim-clock over a socketpair, and plays the
 // peer with package sim. Simulated time makes timeouts and retransmits

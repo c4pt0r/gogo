@@ -1,16 +1,16 @@
-/* The gogo network stack (spec M5 §5): Ethernet, ARP, IPv4, ICMP echo and
+/* The gogo network stack: Ethernet, ARP, IPv4, ICMP echo and
  * UDP over one RX and one TX frame buffer, driven from the scheduler's
  * drain step through the port layer's extra source (port_add_source). Pure
  * C99, chip-independent: it uses only vm/'s public interfaces and the
  * platform network interface (netif.h).
  *
- * Ports (Shared definitions of the M5 plan):
+ * Ports:
  *  - "netif", cfg net.IfConfig{}: one owner at a time (the DHCP actor);
  *    command net.SetAddr{IP, Mask, Gateway, DNS} (owner only; IP 0 clears
  *    the address). Closing it clears the address too.
  *  - "udp", cfg net.UDP{Port} (0 = an ephemeral port): command
  *    net.SendTo{Addr, Data}; event net.Datagram{From, Data} to the owner,
- *    the payload a heap K_BYTES inside the message block (spec §9.2),
+ *    the payload a heap K_BYTES inside the message block,
  *    delivered with msg_try_enqueue: over the owner's quota the datagram
  *    is dropped and counted, the owner is never killed. Delivery leaves
  *    room for one net.Up (and first collects a waiting owner's heap
@@ -26,14 +26,14 @@
  *    by one.
  *
  *  - "tcp", cfg net.Dial{IP, Port, TimeoutMs}, and "tcp_listen", cfg
- *    net.Listen{Port}: TCP (tcp.c; spec §5.2, §5.3, §9.3, §9.5, §9.6).
+ *    net.Listen{Port}: TCP (tcp.c).
  *  - "tls", cfg net.DialTLS{IP, Port, TimeoutMs, Host}: TLS over a "tcp"
  *    connection, in runtime/net/tls/ (not linked here): a TCP connection marked
  *    TF_UPPER hands its stream to the one installed TcpUpper (net_int.h).
  *
  * Unconfigured (no address), the stack passes only UDP from local port 68
  * to remote port 67 (sent from 0.0.0.0 to 255.255.255.255) and UDP to
- * port 68 from port 67 (spec §9.4): what DHCP needs. Configured or not,
+ * port 68 from port 67: what DHCP needs. Configured or not,
  * a BOOTP request from port 68 to 67 gets the interface MAC stamped into
  * chaddr (programs cannot know it), and BOOTP replies to port 68 for
  * another chaddr (or too short to have one) are dropped (ip_filtered).
@@ -68,7 +68,7 @@
 #ifndef GOGO_NET_ARP
 #define GOGO_NET_ARP 4u
 #endif
-/* An orphan connection's whole life (spec §9.5): reset when it is up. */
+/* An orphan connection's whole life: reset when it is up. */
 #ifndef GOGO_NET_ORPHAN_MS
 #define GOGO_NET_ORPHAN_MS 20000u
 #endif
@@ -77,7 +77,7 @@
 #endif
 /* Largest frame (no FCS) the RX and TX buffers hold. */
 #define NET_FRAME_MAX 1536u
-/* Budget for the whole stack's fixed state (spec §3). */
+/* Budget for the whole stack's fixed state. */
 #define NET_FIXED_LIMIT 4096u
 
 /* Drop and traffic counters (each written by one side only). */

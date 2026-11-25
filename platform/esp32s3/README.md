@@ -95,13 +95,13 @@ from `platform_esp.c.obj`). On the Cardputer (no PSRAM, `CONFIG_SPIRAM` off)
 both return `NULL` / do nothing, and modules run from the received `Bytes`
 or a copy in the VM's memory.
 
-Cost, measured with `idf.py size` / `size-components` (hot loading task 7):
+Cost, measured with `idf.py size` / `size-components`:
 `gogo.bin` StickS3 883744 B with PSRAM (875200 B without), Cardputer 927424 B.
 Static DIRAM (internal RAM, the part that comes out of the heap) is
 123898 B with PSRAM against 118125 B without: **+5773 B**, about 1.7 % of the
 340 KB, so the boot line's `free RAM` should drop by about that much on the
-StickS3 (earlier: 197 K; to be measured on the board, see
-docs/hotload-followups.md). It is IRAM code and data of the PSRAM init and
+StickS3 (measured: 192052 B free at boot, against 197408 B without
+PSRAM). It is IRAM code and data of the PSRAM init and
 the cache/MMU support (`libesp_hw_support` +2.2 KB, `libesp_psram` +1.3 KB,
 `libesp_driver_spi` +0.3 KB, `libesp_system` +0.2 KB, `libesp_mm` +0.1 KB):
 the IDF puts it in IRAM because it runs while the cache is off. Trimmed:
@@ -139,7 +139,7 @@ reasons there). The port's hooks are in `main/platform_esp.c`:
 - trust anchors: the bundle in flash; a chain is checked link by link
   (sliced) up to its last certificate, which is trusted if it is a bundle
   root itself (same subject and key, e.g. a cross-signed root; shared
-  `runtime/net/tls/anchor.c`, host-tested, ruling R16) or else checked against its
+  `runtime/net/tls/anchor.c`, host-tested) or else checked against its
   issuer's key in the bundle (IDF's callback). It relies on IDF v6.1.1
   internals (the bundle layout and symbols, `esp_crt_verify_callback`),
   listed in `platform_esp.c`;
@@ -152,14 +152,14 @@ reasons there). The port's hooks are in `main/platform_esp.c`:
 Measured on the StickS3 against example.com (`examples/httpsdemo`): a
 handshake about 2.5 s (software ECC: chain 1.8 s, ServerKeyExchange 0.35
 s), sliced steps 11-26 ms with a few near 50 ms, and one unsliced ECDHE
-step of 204 ms (above ruling R4's 50 ms cap, accepted as an exception:
-ruling R15; `docs/https-followups.md` 1).
+step of 204 ms (above the 50 ms target for one step, accepted as a
+documented exception; see `docs/known-issues.md`).
 `gogo.bin` with and without `GOGO_TLS`: StickS3 1090208 / 946464 B
 (+143744: the bundle 66 KB, mbedTLS's TLS layer and X.509, and -O2 for
 mbedTLS, about 28 KB), Cardputer ADV 1125376 / 982224 B (+143152); static
 DIRAM +288 / +152 B. Without it neither tls.c nor mbedTLS's TLS layer is
 linked, and the mbedTLS settings that would also change Wi-Fi's WPA crypto
-go back to IDF's defaults (`sdkconfig.tls-off`, ruling R17): the TLS-off
+go back to IDF's defaults (`sdkconfig.tls-off`): the TLS-off
 firmware is within a few hundred bytes of the firmware before HTTPS
 (StickS3 +224 B, Cardputer +112 B, DIRAM unchanged: the wall clock on the
 system clock and the scheduler's due-now check).
@@ -221,7 +221,13 @@ in `cmd/gogo/flash.go`.
   `ulTaskNotifyTake(pdTRUE, timeout)`; `platform_notify` gives the task
   notification (`vTaskNotifyGiveFromISR` in an ISR), which latches: a notify
   before or during a wait ends it. `platform_barrier` is
-  `__sync_synchronize()`.
+  `__sync_synchronize()`. `platform_random` is `esp_random()` (the hardware
+  generator; `sys.Random`, the `gogo/sntp` nonce). The wall clock
+  (`platform_unix_time_ms` / `platform_set_unix_time_ms`, `sys.Time` /
+  `sys.SetTime`) uses the weak defaults in `runtime/vm/walltime.c`: an offset
+  against `platform_now_ms`, unknown at every boot until `gogo/sntp` or
+  `sys.SetTime` sets it, with the build time (`GOGO_BUILD_UNIX_MS`, from
+  `main/CMakeLists.txt`) as the floor.
 - `gpio_esp.c`: the `gpio` port driver, same semantics as unix (cfg
   `{Pin, Mode, Edge, DebounceMs}`, default debounce 20 ms, `Write{Value}` on
   outputs, events `{pin, level}`). Inputs use an any-edge interrupt; the ISR
@@ -384,7 +390,7 @@ in `cmd/gogo/flash.go`.
     `AUDIO_SPK_MAX_DB` (`board.h`) minus 40 dB .. the ceiling, 0 mute. The
     ceiling is 0 dB on the Cardputer ADV and **-4 dB on the StickS3**: at DAC
     0 dB its USB console once stopped answering (probably a supply dip from
-    the amplifier; `docs/audio-followups.md`).
+    the amplifier; `docs/known-issues.md`).
   - Amplifier: StickS3: rail, codec, I2S running silence, then the
     amplifier (PM1 GPIO3; a failure to switch it fails the open); close:
     mute, amplifier off. Cardputer ADV: no amplifier enable pin is known
@@ -392,7 +398,7 @@ in `cmd/gogo/flash.go`.
   - The codec's analog reference stays on after the first open: powered
     down, every open began with about 1 s of exact zeros (ES8311 warm-up).
     The first `mic` open after power-up still has it. The idle current of
-    the reference is not measured (`docs/audio-followups.md`).
+    the reference is not measured (`docs/known-issues.md`).
   - `GOGO_AUDIO` selects `CONFIG_I2S_ISR_IRAM_SAFE` (the two callbacks are
     `IRAM_ATTR`): without it a `/flash` write holds the I2S interrupt off and
     the GDMA reports only the last finished buffer, so the others would be
@@ -820,4 +826,12 @@ The screen shows `gogo: wifi connected ...`, then `gogo: ip <addr> (gateway
 <g>)` and the page URL; open `http://<addr>/` in a browser on the same LAN.
 The page (Chinese/English) shows the KEY1/KEY2 counts, fetches ok/total and
 uptime, and refreshes every 5 s; the device also prints an `http.Get` result
-every 10 s. There is no HTTPS (TLS is deferred, see `docs/m5-followups.md`).
+every 10 s. `demo.url` may be an `https://` URL (see "TLS" below and
+`examples/httpsdemo`).
+
+- `examples/httpsdemo` (repo root): HTTPS on the board. DHCP, `sntp.Sync`
+  (pool.ntp.org), one `http.Get("https://example.com/")`, three requests
+  through an `http.NewClient` (one handshake), and a "tls" port to
+  example.com's address with the wrong `Host`, which must be refused; then
+  it idles. Build and flash it as netdemo above; `gogo config stats` then
+  shows the TLS counters.

@@ -13,7 +13,7 @@
 #include "config.h"
 #include "port.h"
 
-typedef struct Msg Msg;   /* defined with the mailbox (Task 5) */
+typedef struct Msg Msg;   /* defined with the mailbox */
 typedef struct Timer Timer;   /* defined in timer.h */
 typedef struct Name Name;     /* defined in names.c */
 typedef struct HeldBytes HeldBytes;   /* defined in bytes.h */

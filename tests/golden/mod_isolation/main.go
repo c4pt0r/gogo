@@ -1,4 +1,4 @@
-// Cross-module rules (design §5.3): const data crosses as copies; a
+// Cross-module rules (docs/design.md §5.4.4): const data crosses as copies; a
 // module's own struct or a func value makes the sender (any module) exit
 // BadMsg; reserved types cross; code.Spawn's arg gives BadArg instead;
 // SendAfter checks when called; exit notices blank Reason.Func across

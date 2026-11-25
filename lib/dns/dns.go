@@ -1,4 +1,4 @@
-// Package dns is the gogo DNS resolver (spec M5 §5.4), written in the gogo
+// Package dns is the gogo DNS resolver, written in the gogo
 // subset and compiled into every image that imports it.
 //
 // Lookup asks the resolver actor, registered as "dns" and started by the

@@ -20,7 +20,7 @@ int names_register(Vm *vm, term by, const uint8_t *name, uint32_t len, term pid)
 /* Looks name up; false if it is not registered. */
 bool names_whereis(Vm *vm, const uint8_t *name, uint32_t len, term *pid);
 
-/* Removes name if actor `by` registered it (design §5.3: only the
+/* Removes name if actor `by` registered it (docs/design.md §5.3: only the
  * registrant may; not the named actor, unless it registered itself);
  * otherwise, or if it is not registered, does nothing. */
 void names_unregister(Vm *vm, term by, const uint8_t *name, uint32_t len);

@@ -269,7 +269,7 @@ func TestConfigMatchC(t *testing.T) {
 	}
 }
 
-// TestPortConstants pins the gogo/port constants (spec M3 §5.1).
+// TestPortConstants pins the gogo/port constants.
 func TestPortConstants(t *testing.T) {
 	pkg, err := (&loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}).Import(PortPath)
 	if err != nil {

@@ -176,9 +176,9 @@ static void conn_free(TlsConn *t) {
 }
 
 /* ECDHE groups in our order of preference. X25519 first where the crypto
- * has it (ESP-IDF): the ECDHE step is not sliced (ruling R4) and X25519 is
+ * has it (ESP-IDF): the ECDHE step is not sliced and X25519 is
  * the cheaper one on the ESP32-S3 (StickS3, mbedTLS -O2: 204 ms against
- * P-256's ~300 ms; docs/https-followups.md 1). */
+ * P-256's ~300 ms; docs/known-issues.md). */
 static const uint16_t groups[] = {
 #if defined(PSA_WANT_ECC_MONTGOMERY_255) && !defined(GOGO_TLS_NO_X25519)
     MBEDTLS_SSL_IANA_TLS_GROUP_X25519,
@@ -209,7 +209,7 @@ static TlsConn *conn_new(const char *host) {
     mbedtls_ssl_conf_groups(&t->conf, groups);
     mbedtls_ssl_conf_ciphersuites(&t->conf, suites);
     mbedtls_ssl_conf_min_tls_version(&t->conf, MBEDTLS_SSL_VERSION_TLS1_2);
-    mbedtls_ssl_conf_max_tls_version(&t->conf, MBEDTLS_SSL_VERSION_TLS1_2);   /* ruling R5 */
+    mbedtls_ssl_conf_max_tls_version(&t->conf, MBEDTLS_SSL_VERSION_TLS1_2);   /* 1.3 cannot be sliced */
     if (mbedtls_ssl_setup(&t->ssl, &t->conf) != 0 || mbedtls_ssl_set_hostname(&t->ssl, host) != 0) goto fail;
     mbedtls_ssl_set_bio(&t->ssl, t, bio_send, bio_recv, NULL);
     psa_interruptible_set_max_ops(GOGO_TLS_MAX_OPS);

@@ -1,4 +1,4 @@
-/* Path validation and hashing (spec §5.4). */
+/* Path validation and hashing. */
 #include "vfs_int.h"
 
 static bool name_char(char c) {

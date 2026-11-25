@@ -1,10 +1,6 @@
-// fsdemo: /flash 演示 / storage demo (M5StickS3).
+// fsdemo: storage demo (M5StickS3).
 //
 //	gogo build examples/fsdemo -o fsdemo.gogo && gogo flash fsdemo.gogo
-//
-// 每次开机：kv 里的开机次数加一（boots），写一行到 ringlog
-// /flash/presses，屏幕和串口显示次数、日志大小和 /flash 用量。按 KEY1 /
-// KEY2：追加一行到同一个 ringlog，显示新的日志大小和用量。
 //
 // Every boot adds one to the boot counter (kv key "boots") and appends a
 // line to the ringlog /flash/presses; the screen and serial show the

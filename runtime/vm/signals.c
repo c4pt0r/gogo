@@ -12,7 +12,7 @@
 #include <string.h>
 
 /* One side of a link: a's entry for its peer holds the ExitMsg a sends the
- * peer when a exits, allocated when the link is made (spec M2 §5.3). */
+ * peer when a exits, allocated when the link is made. */
 typedef struct Link {
     struct Link *next;
     term peer;                /* PID of the linked actor */
