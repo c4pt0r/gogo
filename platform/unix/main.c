@@ -1,6 +1,6 @@
 /* gogovm: runs a gogo image file.
  *
- *   gogovm [--key c=pin]... [--net-fd N [--sim-clock]] <file.gogo>
+ *   gogovm [--key c=pin]... [--fs-root DIR] [--net-fd N [--sim-clock]] <file.gogo>
  *          exit 0 when the run queue empties, 2 on load error
  *   gogovm --sizeof-actor  prints sizeof(Actor)
  *   gogovm --sizeof-net    prints the net stack's fixed state in bytes
@@ -20,6 +20,11 @@
 #include "gpio_unix.h"
 #include "net_unix.h"
 #include "net.h"
+#include "vfs.h"
+#include "fs_host.h"
+
+#include <sys/stat.h>
+#include <errno.h>
 
 #include <signal.h>
 
@@ -39,6 +44,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     int net_fd = -1, sim = 0;
+    const char *fs_root = NULL;
     while (argc >= 2 && strncmp(argv[1], "--", 2) == 0) {
         if (strcmp(argv[1], "--sim-clock") == 0) {
             sim = 1;
@@ -56,6 +62,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "gogovm: bad --key %s (want <char>=<pin>, pin 0..63)\n", argv[2]);
                 return 2;
             }
+        } else if (strcmp(argv[1], "--fs-root") == 0) {
+            fs_root = argv[2];
         } else if (strcmp(argv[1], "--net-fd") == 0) {
             char tail;
             if (sscanf(argv[2], "%d%c", &net_fd, &tail) != 1 || net_fd < 0) {
@@ -73,7 +81,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (argc != 2) {
-        fprintf(stderr, "usage: gogovm [--key <c>=<pin>]... [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
+        fprintf(stderr, "usage: gogovm [--key <c>=<pin>]... [--fs-root <dir>] [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
         return 2;
     }
     if (net_fd >= 0) {
@@ -81,6 +89,35 @@ int main(int argc, char **argv) {
         platform_unix_net_open(net_fd, sim != 0);
         net_attach();
     }
+    if (fs_root) {
+        /* /flash -> DIR/flash (created), /sd -> DIR/sd (only if it exists). */
+        char dir[FS_HOST_ROOT_MAX];
+        struct stat st;
+        if (snprintf(dir, sizeof dir, "%s/flash", fs_root) >= (int)sizeof dir) {
+            fprintf(stderr, "gogovm: --fs-root too long\n");
+            return 2;
+        }
+        if (mkdir(fs_root, 0777) != 0 && errno != EEXIST) {
+            fprintf(stderr, "gogovm: --fs-root %s: cannot create\n", fs_root);
+            return 2;
+        }
+        if ((mkdir(dir, 0777) != 0 && errno != EEXIST) || stat(dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "gogovm: --fs-root %s: cannot create flash directory\n", fs_root);
+            return 2;
+        }
+        const VfsBackend *flash = fs_host_open(0, dir);
+        if (!flash) {
+            fprintf(stderr, "gogovm: --fs-root too long\n");
+            return 2;
+        }
+        vfs_mount("/flash", flash);
+        if (snprintf(dir, sizeof dir, "%s/sd", fs_root) < (int)sizeof dir &&
+            stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) {
+            const VfsBackend *sd = fs_host_open(1, dir);
+            if (sd) vfs_mount("/sd", sd);
+        }
+    }
+    vfs_install();
     setvbuf(stdout, NULL, _IOLBF, 0);
     const char *path = argv[1];
     FILE *f = fopen(path, "rb");

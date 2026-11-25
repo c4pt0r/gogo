@@ -1,0 +1,220 @@
+// fsdemo: /flash 演示 / storage demo (M5StickS3).
+//
+//	gogo build examples/fsdemo -o fsdemo.gogo && gogo flash fsdemo.gogo
+//
+// 每次开机：kv 里的开机次数加一（boots），写一行到 ringlog
+// /flash/presses，屏幕和串口显示次数、日志大小和 /flash 用量。按 KEY1 /
+// KEY2：追加一行到同一个 ringlog，显示新的日志大小和用量。
+//
+// Every boot adds one to the boot counter (kv key "boots") and appends a
+// line to the ringlog /flash/presses; the screen and serial show the
+// counter, the log size and /flash Usage. KEY1 / KEY2 presses append to
+// the same ringlog and show the new log size and Usage.
+//
+// Test modes, chosen by config fsdemo.mode (gogo config set fsdemo.mode
+// <mode>; gogo config rm fsdemo.mode for the plain demo), after the boot
+// counter:
+//
+//	keep      write /flash/keep.txt (every boot shows whether it exists)
+//	fill      write /flash/fill.bin until NoSpace, remove it, and check
+//	          Usage is back where it started
+//	powercut  rewrite kv key "pc" with a counter in a loop, logging each
+//	          committed value to the ringlog /flash/pc; at boot, check the
+//	          stored value parses and is the last logged value or the one
+//	          after it (cut between kv.Put and the log append)
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/config"
+	"gogo/fs"
+	"gogo/kv"
+	"gogo/port"
+	"gogo/ringlog"
+	"gogo/strconv"
+)
+
+const (
+	key1   = 11
+	key2   = 12
+	logDir = "/flash/presses"
+	logMax = 2048
+	pcDir  = "/flash/pc"
+)
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+func usage() string {
+	s, e := fs.Usage("/flash")
+	if e != fs.OK {
+		return "usage error " + itoa(int(e))
+	}
+	return "used " + itoa(s.Used/1024) + " KB of " + itoa(s.Total/1024) + " KB"
+}
+
+func logSize() int {
+	b, e := ringlog.Read(logDir, 4096)
+	if e != fs.OK {
+		return -1
+	}
+	return b.Len()
+}
+
+func bootCount() int {
+	n := 0
+	b, e := kv.Get("boots")
+	if e == fs.OK {
+		n, _ = strconv.Atoi(b.String())
+	} else if e != fs.NotFound {
+		println("fsdemo: kv.Get error", int(e))
+		return -1 // do not overwrite a count we failed to read
+	}
+	n++
+	if e := kv.Put("boots", itoa(n)); e != fs.OK {
+		println("fsdemo: kv.Put error", int(e))
+	}
+	return n
+}
+
+func keep() {
+	_, e := fs.Stat("/flash/keep.txt")
+	if e == fs.OK {
+		b, _ := fs.ReadFile("/flash/keep.txt", 100)
+		println("fsdemo: keep.txt present: " + b.String())
+	} else {
+		println("fsdemo: keep.txt absent", int(e))
+	}
+}
+
+func fill() {
+	before, e := fs.Usage("/flash")
+	println("fill: before, used", before.Used, "total", before.Total, int(e))
+	buf := bytes.NewBuffer(4096)
+	for i := 0; i < 4096; i++ {
+		buf.WriteByte(byte('a' + i%26))
+	}
+	chunk := buf.Freeze()
+	f, e := fs.Open("/flash/fill.bin", fs.Write)
+	if e != fs.OK {
+		println("fill: open error", int(e))
+		return
+	}
+	t0 := actor.Now()
+	n := 0
+	for {
+		e = f.Write(chunk)
+		if e != fs.OK {
+			break
+		}
+		n += 4096
+		if n%(512*1024) == 0 {
+			println("fill:", n/1024, "KB")
+		}
+	}
+	ms := actor.Now() - t0
+	println("fill: write stopped, err", int(e), "after", n, "bytes,", strconv.FormatInt64(ms, 10), "ms")
+	full, _ := fs.Usage("/flash")
+	println("fill: full, used", full.Used, "total", full.Total)
+	f.Close()
+	println("fill: remove", int(fs.Remove("/flash/fill.bin")))
+	after, _ := fs.Usage("/flash")
+	println("fill: after, used", after.Used, "total", after.Total)
+	if e == fs.NoSpace && after.Used == before.Used {
+		println("fill: OK (NoSpace, Usage back to", before.Used, ")")
+	} else {
+		println("fill: FAILED")
+	}
+}
+
+// lastLogged is the last counter in the ringlog pcDir, or -1.
+func lastLogged() int {
+	b, e := ringlog.Read(pcDir, 64)
+	if e != fs.OK || b.Len() == 0 {
+		return -1
+	}
+	s := b.String()
+	end := len(s)
+	if s[end-1] == '\n' {
+		end--
+	}
+	i := end
+	for i > 0 && s[i-1] != '\n' {
+		i--
+	}
+	n, ok := strconv.Atoi(s[i:end])
+	if !ok {
+		return -1
+	}
+	return n
+}
+
+func powercut() {
+	n := 0
+	last := lastLogged()
+	v, e := kv.Get("pc")
+	if e != fs.OK && e != fs.NotFound {
+		println("powercut: kv.Get error", int(e))
+		return
+	}
+	if e == fs.OK {
+		x, good := strconv.Atoi(v.String())
+		verdict := "BAD"
+		if good && (x == last || x == last+1) {
+			verdict = "OK"
+		}
+		println("powercut: kv pc=" + v.String() + ", last logged " + itoa(last) + ": " + verdict)
+		if good {
+			n = x
+		}
+	} else {
+		println("powercut: no kv pc yet (last logged " + itoa(last) + ")")
+	}
+	for {
+		n++
+		if e := kv.Put("pc", itoa(n)); e != fs.OK {
+			println("powercut: kv.Put error", int(e))
+			actor.Sleep(1000)
+			continue
+		}
+		ringlog.Append(pcDir, 4096, itoa(n)+"\n")
+		if n%10 == 0 {
+			println("powercut: committed", n)
+		}
+	}
+}
+
+func main() {
+	mode, _ := config.Get("fsdemo.mode")
+	n := bootCount()
+	ringlog.Append(logDir, logMax, "boot "+itoa(n)+"\n")
+	println("fsdemo: boot", n)
+	println("fsdemo: log", logSize(), "B, /flash", usage())
+	if mode == "keep" {
+		println("fsdemo: write keep.txt", int(fs.WriteFile("/flash/keep.txt", "kept since boot "+itoa(n))))
+	} else if mode == "fill" {
+		fill()
+	} else if mode == "powercut" {
+		powercut()
+	}
+	keep()
+
+	_, ok1 := port.Open("gpio", port.GPIO{Pin: key1, Mode: port.InputPullUp, Edge: port.Falling})
+	_, ok2 := port.Open("gpio", port.GPIO{Pin: key2, Mode: port.InputPullUp, Edge: port.Falling})
+	if !ok1 || !ok2 {
+		println("fsdemo: keys unavailable")
+	}
+	presses := 0
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Edge:
+			presses++
+			k := "KEY1"
+			if m.Pin == key2 {
+				k = "KEY2"
+			}
+			e := ringlog.Append(logDir, logMax, k+" press "+itoa(presses)+" (boot "+itoa(n)+")\n")
+			println("fsdemo:", k, presses, "err", int(e), "log", logSize(), "B,", usage())
+		}
+	}
+}

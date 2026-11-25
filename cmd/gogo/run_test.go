@@ -97,3 +97,28 @@ func TestRunKeyNeedsValue(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestRunFsRoot(t *testing.T) {
+	if _, err := runCmd([]string{"--fs-root"}); err == nil || !strings.Contains(err.Error(), "--fs-root needs") {
+		t.Errorf("err = %v", err)
+	}
+	work := t.TempDir()
+	args := filepath.Join(work, "args")
+	vm := filepath.Join(work, "fakevm.sh")
+	if err := os.WriteFile(vm, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+args+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	img := filepath.Join(work, "x.gogo")
+	if err := os.WriteFile(img, []byte("img"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOGO_VM", vm)
+	if code, err := runCmd([]string{"--key", "a=1", "--fs-root", "/some/dir", img}); err != nil || code != 0 {
+		t.Fatalf("code %d err %v", code, err)
+	}
+	b, _ := os.ReadFile(args)
+	want := "--key\na=1\n--fs-root\n/some/dir\n" + img + "\n"
+	if string(b) != want {
+		t.Errorf("vm args = %q, want %q", b, want)
+	}
+}

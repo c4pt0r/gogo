@@ -9,8 +9,9 @@ const (
 	imageMagic = 0x4F474F47
 	// imageVersion moves in lockstep with IMAGE_VERSION in vm/image.h: any
 	// change to opcode numbers or semantics, builtin numbers, reserved
-	// types or the term encoding bumps it (v2: M3; v3: M4; v4: M5 CALLV; v5: bitwise ops).
-	imageVersion = 5
+	// types or the term encoding bumps it (v2: M3; v3: M4; v4: M5 CALLV; v5: bitwise ops;
+	// v6: B_FS and the gogo/fs reserved types).
+	imageVersion = 6
 )
 
 // ImageVersion is the image format version this compiler emits.

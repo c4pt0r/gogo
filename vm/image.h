@@ -9,7 +9,8 @@
  *       typed zero PID/Ref (T_ZEROPID, T_ZEROREF), port builtins/types.
  *   v3  M4: OP_RETN (multi-result return), OP_CONV c=2 (byte).
  *   v4  M5: OP_CALLV (calling a func value).
- *   v5  bitwise ops AND..SHR64 (40-51), R_BAD_SHIFT. */
+ *   v5  bitwise ops AND..SHR64 (40-51), R_BAD_SHIFT.
+ *   v6  storage: B_FS (49), reserved types fs.Info (27), fs.Space (28). */
 #ifndef GOGO_IMAGE_H
 #define GOGO_IMAGE_H
 
@@ -17,7 +18,7 @@
 #include <stddef.h>
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 5u
+#define IMAGE_VERSION 6u
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {

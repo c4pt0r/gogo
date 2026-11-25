@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,10 @@ import (
 // byte-for-byte to expected.out; if expected.err exists, each of its
 // non-empty lines must be a substring of stderr, and no non-empty line of
 // forbidden.err may be. An `input` file is fed to stdin; a `config` file
-// is the config store ($GOGO_CONFIG). `make test-go`
+// is the config store ($GOGO_CONFIG). A file `fsroot` runs the VM with
+// --fs-root on a fresh temporary directory (gogovm creates flash/ in it;
+// the runner creates sd/ too if a line of fsroot has the field "sd", and a line
+// "file flash/My File" creates that file, containing "seed", first). `make test-go`
 // builds the VM and sets GOGO_VM.
 func TestGolden(t *testing.T) {
 	vm := os.Getenv("GOGO_VM")
@@ -67,7 +71,27 @@ func TestGolden(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			var stdout, stderr bytes.Buffer
-			cmd := exec.CommandContext(ctx, vm, imgPath)
+			vmArgs := []string{imgPath}
+			if mark, err := os.ReadFile(filepath.Join(dir, "fsroot")); err == nil {
+				root := t.TempDir()
+				for _, line := range strings.Split(string(mark), "\n") {
+					if rest, ok := strings.CutPrefix(line, "file "); ok { // seed file "<medium>/<path>"
+						p := filepath.Join(root, rest)
+						if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(p, []byte("seed"), 0o644); err != nil {
+							t.Fatal(err)
+						}
+					} else if slices.Contains(strings.Fields(line), "sd") {
+						if err := os.MkdirAll(filepath.Join(root, "sd"), 0o755); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				vmArgs = []string{"--fs-root", root, imgPath}
+			}
+			cmd := exec.CommandContext(ctx, vm, vmArgs...)
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
 			// The config store (config.Get) is the optional `config`

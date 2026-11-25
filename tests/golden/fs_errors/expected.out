@@ -1,0 +1,77 @@
+0 1 2 3 4 5 6 7 8 9 10 11 12 13
+open missing 1
+readfile missing 1
+stat missing 1
+readdir missing 1
+remove missing 1
+rename missing 1
+mkdir under missing 1
+mkdir 0
+mkdir again 2
+write a 0
+write b 0
+rename onto file 2
+rename onto dir 2
+sd open 3
+sd mkdir 3
+sd writefile 3
+sd stat root 3
+sd usage 3
+flashx 3
+unknown prefix 3
+fifth open 5
+after close 0
+second writer 6
+append beside writer 6
+reader beside writer 0
+remove open 6
+rename open source 6
+rename onto open 6
+writefile over open 6
+remove closed 0
+writefile closed 0
+relative 7
+trailing slash 7
+empty segment 7
+dot dot 7
+dot 7
+space 7
+fine name, absent dir 1
+33-byte name 7
+32-byte name 1
+96-byte path 1
+97-byte path 7
+stat / 7
+empty path 7
+mkdir mount root 7
+remove mount root 7
+rename mount root 7
+writefile mount root 7
+open mount root 8
+open dir for write 8
+readfile dir 8
+writefile dir 8
+through a file 9
+mkdir through a file 9
+readdir of a file 9
+write in d 0
+remove full dir 10
+remove file 0
+remove empty dir 0
+write big 0
+readfile over max 11
+readfile at max 0
+5000
+read after close 13
+size after close 13
+sync after close 13
+write after close 13
+zero file 13
+read a write file 13
+write a read file 13
+read by non-owner 13
+write by non-owner 13
+size by non-owner 13
+read clamps 0
+4096
+sync closed 13

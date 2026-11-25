@@ -1,0 +1,20 @@
+# Cardputer ADV build only (GOGO_BOARD=cardputer), on top of
+# sdkconfig.defaults: FatFs for /sd (main/fs_fat.c; spec storage 5.3).
+# No per-file cache: a FIL has no private 512-byte buffer (FF_FS_TINY).
+CONFIG_FATFS_PER_FILE_CACHE=n
+# 512-byte sectors: FF_MAX_SS is MAX(512, CONFIG_WL_SECTOR_SIZE), so the
+# wear-levelling sector size must be 512 too, or FATFS carries a 4 KB window.
+# CONFIG_FATFS_SECTOR_512 itself only affects the image generator.
+CONFIG_FATFS_SECTOR_512=y
+CONFIG_WL_SECTOR_SIZE_512=y
+# The window is part of the (static) FATFS object, not allocated at mount.
+CONFIG_FATFS_USE_DYN_BUFFERS=n
+# Long names on the VM task's stack (IDF has no static option; HEAP would
+# be an unowned allocation), at most 64 characters.
+CONFIG_FATFS_LFN_STACK=y
+CONFIG_FATFS_MAX_LFN=64
+CONFIG_FATFS_CODEPAGE_437=y
+# No FatFs file lock table: vfs does the open rules.
+CONFIG_FATFS_FS_LOCK=0
+# One volume (/sd).
+CONFIG_FATFS_VOLUME_COUNT=1

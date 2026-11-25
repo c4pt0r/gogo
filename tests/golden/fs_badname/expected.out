@@ -1,0 +1,8 @@
+readdir 2 0
+listed My File.TXT
+listed ok.txt
+open 7
+readfile 7
+stat 7
+remove 7
+ok.txt seed 0

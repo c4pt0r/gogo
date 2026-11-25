@@ -1,7 +1,7 @@
 // Command gogo compiles gogo programs to VM images, runs and disassembles them.
 //
 //	gogo build <dir> [-o out.gogo]
-//	gogo run [--key c=pin]... <dir|file.gogo>
+//	gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>
 //	gogo dis <file.gogo>
 //	gogo flash [-port P] [-esptool path] app.gogo
 //	gogo monitor [-port P] [-t seconds] [-until text] [-reset]
@@ -33,7 +33,7 @@ import (
 	"gogo/compiler"
 )
 
-const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run [--key c=pin]... <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats"
+const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -51,10 +51,14 @@ func main() {
 
 // runCmd implements `gogo run` and returns the process exit status.
 func runCmd(args []string) (int, error) {
-	// --key c=pin (unix tty mode) is forwarded to gogovm.
+	// --key c=pin (unix tty mode) and --fs-root DIR (host directory behind
+	// /flash and /sd) are forwarded to gogovm.
 	var vmArgs []string
-	for len(args) > 0 && args[0] == "--key" {
+	for len(args) > 0 && (args[0] == "--key" || args[0] == "--fs-root") {
 		if len(args) < 2 {
+			if args[0] == "--fs-root" {
+				return 1, errors.New("gogo run: --fs-root needs a directory\n" + usage)
+			}
 			return 1, errors.New("gogo run: --key needs a value like c=pin\n" + usage)
 		}
 		vmArgs = append(vmArgs, args[0], args[1])

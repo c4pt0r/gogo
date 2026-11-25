@@ -1,0 +1,148 @@
+// sddemo: /sd 设备检查 / /sd device checks (Cardputer ADV).
+//
+//	gogo build examples/sddemo -o sddemo.gogo && gogo flash sddemo.gogo
+//
+// 开机、按 G0 键、以及卡重新插入后：Stat、Usage、写 /sd/gogo/hello.txt
+// 并读回、追加 /sd/gogo/log.txt、读者打开时 Write 应为 Busy、256 KB 读写
+// 计时、列出 /sd 和 /sd/gogo、读电脑写的文件。每 2 秒对 "/sd" 做一次计时
+// 的 Stat：出错（没卡）时每次都打印，状态变化时也打印。
+//
+// At boot, on each G0 press, and whenever the card comes back, a full
+// check: Stat, Usage, WriteFile /sd/gogo/hello.txt and read it back,
+// Append a line to /sd/gogo/log.txt, a Write open under a reader (Busy),
+// 256 KB written and read back with timings, ReadDir of /sd and /sd/gogo,
+// and a read of /sd/mac.txt through a lower-case path (write it as MAC.TXT
+// on a computer). Every 2 s a timed Stat("/sd") runs; it is printed when
+// it fails (no card: NotMounted, with the call's milliseconds) or when the
+// result changes.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/fs"
+	"gogo/port"
+	"gogo/strconv"
+)
+
+const g0 = 0
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+func since(t0 int64) string { return strconv.FormatInt64(actor.Now()-t0, 10) + " ms" }
+
+func list(dir string) {
+	names, e := fs.ReadDir(dir)
+	s := ""
+	for i := 0; i < len(names); i++ {
+		s = s + " " + names[i]
+	}
+	println("sd: ls " + dir + " err " + itoa(int(e)) + ":" + s)
+}
+
+func bulk() {
+	buf := bytes.NewBuffer(4096)
+	for i := 0; i < 4096; i++ {
+		buf.WriteByte(byte('a' + i%26))
+	}
+	chunk := buf.Freeze()
+	f, e := fs.Open("/sd/gogo/bulk.bin", fs.Write)
+	if e != fs.OK {
+		println("sd: bulk open err", int(e))
+		return
+	}
+	t0 := actor.Now()
+	for i := 0; i < 64 && e == fs.OK; i++ {
+		e = f.Write(chunk)
+	}
+	f.Close()
+	println("sd: write 256 KB err", int(e), since(t0))
+	f, e = fs.Open("/sd/gogo/bulk.bin", fs.Read)
+	if e != fs.OK {
+		println("sd: bulk reopen err", int(e))
+		return
+	}
+	t0 = actor.Now()
+	n := 0
+	good := true
+	for {
+		b, re := f.Read(4096)
+		if re != fs.OK || b.Len() == 0 {
+			e = re
+			break
+		}
+		if b.Len() != 4096 || b.At(0) != 'a' || b.At(4095) != byte('a'+4095%26) {
+			good = false
+		}
+		n += b.Len()
+	}
+	f.Close()
+	println("sd: read", n/1024, "KB err", int(e), "ok", good, since(t0))
+}
+
+func check(n int) {
+	t0 := actor.Now()
+	_, e := fs.Stat("/sd")
+	println("sd: check " + itoa(n) + ": Stat /sd err " + itoa(int(e)) + ", " + since(t0))
+	if e != fs.OK {
+		return
+	}
+	sp, e := fs.Usage("/sd")
+	println("sd: usage err", int(e), "used", sp.Used/1024, "KB of", sp.Total/1024, "KB")
+	println("sd: mkdir /sd/gogo", int(fs.Mkdir("/sd/gogo")), "(0 or Exists=2)")
+	text := "hello from gogo on the Cardputer ADV, check " + itoa(n) + "\n"
+	println("sd: WriteFile hello.txt", int(fs.WriteFile("/sd/gogo/hello.txt", text)))
+	b, e := fs.ReadFile("/sd/gogo/HELLO.TXT", 200)
+	println("sd: read back via HELLO.TXT err", int(e), "same", b.String() == text)
+	f, e := fs.Open("/sd/gogo/log.txt", fs.Append)
+	if e == fs.OK {
+		e = f.Write("check " + itoa(n) + " at " + strconv.FormatInt64(actor.Now(), 10) + " ms\n")
+		f.Close()
+	}
+	println("sd: append log.txt err", int(e))
+	r, e := fs.Open("/sd/gogo/hello.txt", fs.Read)
+	if e == fs.OK {
+		w, e2 := fs.Open("/sd/gogo/Hello.txt", fs.Write)
+		println("sd: Write open under a reader err", int(e2), "(Busy=6)")
+		if e2 == fs.OK {
+			w.Close()
+		}
+		r.Close()
+	}
+	bulk()
+	list("/sd")
+	list("/sd/gogo")
+	b, e = fs.ReadFile("/sd/mac.txt", 200)
+	println("sd: /sd/mac.txt err " + itoa(int(e)) + ": " + b.String())
+}
+
+func main() {
+	n := 1
+	check(n)
+	if _, ok := port.Open("gpio", port.GPIO{Pin: g0, Mode: port.InputPullUp, Edge: port.Falling}); !ok {
+		println("sd: G0 unavailable")
+	}
+	last := fs.OK
+	for {
+		m, ok := actor.ReceiveTimeout(2000)
+		if ok {
+			switch m.(type) {
+			case port.Edge:
+				println("sd: G0 pressed")
+				n++
+				check(n)
+			}
+			continue
+		}
+		t0 := actor.Now()
+		_, e := fs.Stat("/sd")
+		if e != fs.OK || e != last {
+			println("sd: Stat /sd err " + itoa(int(e)) + ", " + since(t0))
+		}
+		if e == fs.OK && last != fs.OK {
+			n++
+			check(n)
+		}
+		last = e
+	}
+}

@@ -1,0 +1,108 @@
+// Package kv is a small persistent key-value store on /flash/kv/, one file
+// per key. It is written in the gogo subset on top of gogo/fs and compiled
+// into every image that imports it.
+//
+// A []byte value must go through bytes.FromSlice first (Put rejects it).
+//
+// A key is a file name: 1 to 32 bytes of A-Z a-z 0-9 . _ - (not ending in
+// ".", so not "." or "..", and not ending in ".tmp", which is WriteFile's
+// temporary); a bad key is fs.BadPath. A value is at most 4096 bytes. Put
+// replaces the value atomically (fs.WriteFile), so a power loss leaves the
+// old or the new value. The directory is created by the first Put; before
+// that Get is fs.NotFound, Keys is empty with fs.OK and Delete is
+// fs.NotFound.
+//
+// Only fs.NotFound means "no such key". Get and Keys return any other
+// error as it is (fs.NoMemory when the value does not fit the caller's
+// quota, fs.IO, fs.NotMounted, ...), so a caller that stores a default on
+// NotFound does not overwrite a value it merely failed to read. Every call
+// is a synchronous fs call (see gogo/fs) and uses a file slot while it
+// runs, so it is fs.TooMany while 4 Files are open.
+package kv
+
+import (
+	"gogo/bytes"
+	"gogo/fs"
+)
+
+// MaxValue is the largest value Put accepts.
+const MaxValue = 4096
+
+const dir = "/flash/kv"
+
+func validKey(k string) bool {
+	n := len(k)
+	if n < 1 || n > 32 || k[n-1] == '.' {
+		return false
+	}
+	if n > 4 && k[n-4:] == ".tmp" {
+		return false
+	}
+	for i := 0; i < n; i++ {
+		c := k[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// Get returns the value of key and fs.OK; fs.NotFound if there is none,
+// fs.BadPath for a bad key, or the fs error that stopped the read (with an
+// empty value).
+func Get(key string) (bytes.Bytes, fs.Err) {
+	if !validKey(key) {
+		return bytes.FromString(""), fs.BadPath
+	}
+	b, e := fs.ReadFile(dir+"/"+key, MaxValue)
+	return b, e
+}
+
+// Put stores v (a string or a bytes.Bytes; anything else is fs.BadPath)
+// under key. A bad key is fs.BadPath, a value over 4096 bytes fs.NoMemory.
+func Put(key string, v any) fs.Err {
+	if !validKey(key) {
+		return fs.BadPath
+	}
+	n := 0
+	switch x := v.(type) {
+	case string:
+		n = len(x)
+	case bytes.Bytes:
+		n = x.Len()
+	default:
+		return fs.BadPath // a []byte cannot be size-checked here
+	}
+	if n > MaxValue {
+		return fs.NoMemory
+	}
+	fs.Mkdir(dir) // Exists is fine; a real failure shows in WriteFile
+	return fs.WriteFile(dir+"/"+key, v)
+}
+
+// Delete removes key; fs.NotFound if there is none.
+func Delete(key string) fs.Err {
+	if !validKey(key) {
+		return fs.BadPath
+	}
+	return fs.Remove(dir + "/" + key)
+}
+
+// Keys lists the keys, in no particular order. No store yet (no /flash/kv)
+// is nil and fs.OK; any other ReadDir error is returned as it is.
+func Keys() ([]string, fs.Err) {
+	names, e := fs.ReadDir(dir)
+	if e == fs.NotFound {
+		return nil, fs.OK
+	}
+	if e != fs.OK {
+		return nil, e
+	}
+	var out []string
+	for _, n := range names {
+		if validKey(n) {
+			out = append(out, n)
+		}
+	}
+	return out, fs.OK
+}

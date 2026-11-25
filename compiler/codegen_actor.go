@@ -47,7 +47,7 @@ var actorBuiltins = map[string]uint32{
 	"Now": BNow, "Call": BCall, "Reply": BReply, "Register": BRegister,
 	"Whereis": BWhereis, "Unregister": BUnregister,
 	"port.Open": BPortOpen, "port.Close": BPortClose, "port.Handoff": BPortHandoff,
-	"net.Subscribe":   BNetSubscribe, "config.Get": BConfigGet,
+	"net.Subscribe": BNetSubscribe, "config.Get": BConfigGet,
 	"bytes.NewBuffer": BBufNew, "bytes.FromString": BBytesFrom, "bytes.FromSlice": BBytesFrom,
 }
 
@@ -106,17 +106,16 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 }
 
 // twoResultCall compiles a two-result builtin call (ReceiveTimeout, Call,
-// Whereis, port.Open) whose results go to dst and dst+1, two fresh
+// Whereis, port.Open, config.Get and the gogo/fs ones) whose results go to dst and dst+1, two fresh
 // temporaries.
 func (f *fn) twoResultCall(call *ast.CallExpr, dst uint8) {
-	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	var name string
-	if ok {
-		obj, _ := f.g.p.Info.Uses[sel.Sel].(*types.Func)
-		name = stubName(obj)
-	}
+	name := f.stubOf(call)
 	if !twoResult[name] {
 		f.fail(call, "internal error: two-value assignment from something other than a two-result builtin")
+	}
+	if _, isFs := fsOps[name]; isFs {
+		f.fsCall(call, name, dst)
+		return
 	}
 	mark := f.next
 	base, n := f.args(call)

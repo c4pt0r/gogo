@@ -5,7 +5,9 @@
 #include "interp.h"
 #include "config.h"
 #include "platform_esp.h"
+#include "board.h"
 #include "net.h"
+#include "vfs.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -23,7 +25,7 @@ static Vm vm;      /* static: too big for a task stack */
 static void vm_task(void *arg) {
     (void)arg;
     platform_esp_init();
-    console_esp_start(); /* M5PM1 LCD rail, ST7789, render task */
+    console_esp_start(); /* LCD rail (StickS3 M5PM1), ST7789, render task */
     /* `gogo config` works even without (or with a bad) image. */
     (void)config_esp_init();
     config_esp_start_serial();
@@ -32,6 +34,17 @@ static void vm_task(void *arg) {
     /* Wi-Fi (driver only, no esp_netif/lwIP) and gogo's net stack. */
     wifi_esp_start();
     net_attach();
+    /* Storage: /flash (LittleFS on `gogofs`; formats on first boot) and
+     * the B_FS builtin. Without /flash every fs path is NotMounted. */
+    (void)fs_lfs_mount();
+#if HAS_SD
+    /* /sd (FatFs on the microSD card): mounted by the first call. */
+    (void)fs_fat_init();
+    platform_esp_log("gogo: fs state %lu bytes", (unsigned long)(fs_lfs_state_bytes() + fs_fat_state_bytes()));
+#else
+    platform_esp_log("gogo: fs state %lu bytes", (unsigned long)fs_lfs_state_bytes());
+#endif
+    vfs_install();
     if (image_part_map(&words, &nwords) != 0) platform_esp_idle();
 
     Image img;

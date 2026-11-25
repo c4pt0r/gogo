@@ -1,0 +1,41 @@
+root 0 true 0
+mkdir 0
+d 0 true 0
+writefile 0
+a.txt hello
+writefile replace 0
+a.txt hello again
+writefile slice 0
+s.txt slice
+open write 0
+write string 0
+write bytes 0
+write slice 0
+sync 0
+size 8 0
+b.txt 8 false 0
+open append 0
+append 0
+size 10 0
+b.txt abcdefghXY
+open read 0
+read abcd 4 0
+read efghXY 6 0
+eof 0 0
+read0 0 0
+size 10 0
+truncated 0
+rename 0
+old name 1
+readdir 4 0
+  a.txt
+  c.txt
+  d/
+  s.txt
+empty dir 0 0
+usage true true 0
+remove c 0
+remove a 0
+remove s 0
+remove d 0
+left 0

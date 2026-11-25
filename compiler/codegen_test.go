@@ -554,23 +554,24 @@ func TestCompileReservedTypes(t *testing.T) {
 		"port.GPIO/4", "port.Write/1", "port.Edge/2",
 		"net.IfConfig/0", "net.SetAddr/4", "net.Up/3", "net.Down/0", "net.Addr/2", "net.UDP/1",
 		"net.SendTo/2", "net.Datagram/2", "net.Dial/3", "net.Listen/1", "net.Write/1", "net.Shutdown/0",
-		"net.Resume/0", "net.Connected/0", "net.Data/1", "net.Written/0", "net.Closed/1", "net.Accepted/1"}
-	// Emitted even when the program imports none of gogo/actor, gogo/port and gogo/net.
+		"net.Resume/0", "net.Connected/0", "net.Data/1", "net.Written/0", "net.Closed/1", "net.Accepted/1",
+		"fs.Info/2", "fs.Space/2"}
+	// Emitted even when the program imports none of gogo/actor, gogo/port, gogo/net and gogo/fs.
 	img := compileImage(t, "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tvar a any = P{1, 2}\n\tswitch a.(type) {\n\tcase P:\n\t\tprintln(1)\n\t}\n}\n")
 	got := imageTypes(t, img)
 	if strings.Join(got, " ") != strings.Join(append(want, "P/2"), " ") {
 		t.Fatalf("types %v, want %v then P/2", got, want)
 	}
-	// TYPEIS P names index 27, the first after the reserved ones.
+	// TYPEIS P names index 29, the first after the reserved ones.
 	code := words(img)
 	found := false
 	for i := 0; i+1 < len(code); i++ {
-		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == 27 {
+		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == 29 {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("no TYPEIS with type id 27")
+		t.Error("no TYPEIS with type id 29")
 	}
 	// Using the actor types keeps them at their reserved indices.
 	img = compileImage(t, "package main\nimport \"gogo/actor\"\ntype U struct{ A int }\nfunc main() {\n\tu := U{1}\n\tvar o actor.Options\n\tvar r actor.Reason\n\tprintln(u, o, r, actor.Info(actor.Self()).Memory)\n}\n")
@@ -1238,7 +1239,7 @@ func main() {
 	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1 port.GPIO/4 port.Write/1 port.Edge/2" +
 		" net.IfConfig/0 net.SetAddr/4 net.Up/3 net.Down/0 net.Addr/2 net.UDP/1 net.SendTo/2 net.Datagram/2" +
 		" net.Dial/3 net.Listen/1 net.Write/1 net.Shutdown/0 net.Resume/0 net.Connected/0 net.Data/1" +
-		" net.Written/0 net.Closed/1 net.Accepted/1"
+		" net.Written/0 net.Closed/1 net.Accepted/1 fs.Info/2 fs.Space/2"
 	if got := strings.Join(imageTypes(t, img), " "); got != want {
 		t.Fatalf("types %s, want %s", got, want)
 	}
@@ -1930,4 +1931,53 @@ func bytes(b, m byte, s []byte) {
 	has("neg", map[string]int{"XOR": 2, "XOR64": 1, "CONV": 1})
 	// Only b<<1, ^b, b<<=1, s[1]<<=4 end in CONV; b&^m, b>>=9, s[0]|=m cannot exceed 255.
 	has("bytes", map[string]int{"SHL": 3, "SHR": 1, "XOR": 1, "ANDNOT": 1, "OR": 1, "CONV": 4})
+}
+
+// TestCompileFs checks the gogo/fs mapping: B_FS with the op code in the
+// first register (functions and methods), File.Close as PORT_CLOSE, the
+// File <-> PID conversion as a plain copy, and the reserved fs types.
+func TestCompileFs(t *testing.T) {
+	src := `package main
+
+import (
+	"gogo/actor"
+	"gogo/fs"
+	"gogo/port"
+)
+
+func main() {
+	f, e := fs.Open("/flash/a", fs.Write)
+	e = f.Write("x")
+	n, e := f.Size()
+	b, e := f.Read(4)
+	e = f.Sync()
+	f.Close()
+	port.Close(actor.PID(f))
+	info, e := fs.Stat("/flash")
+	names, e := fs.ReadDir("/flash")
+	e = fs.Rename("/flash/a", "/flash/b")
+	println(n, b.Len(), info.Size, len(names), int(e))
+}
+`
+	img := compileImage(t, src)
+	dis, err := Disassemble(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, re := range []string{
+		`LOADK r\d+, 0\n\s+\d+\s+LOADK r\d+, "/flash/a"\n\s+\d+\s+LOADK r\d+, 1\n\s+\d+\s+BUILTIN r\d+, r\d+, 3, FS\n`, // Open(path, Write)
+		`LOADK r\d+, 4\n\s+\d+\s+MOVE r\d+, r0\n\s+\d+\s+BUILTIN r\d+, r\d+, 2, FS\n`,                                  // f.Size()
+		`LOADK r\d+, 11\n(?:.*\n){2}\s+\d+\s+BUILTIN r\d+, r\d+, 3, FS\n`,                                              // Rename
+		`BUILTIN r\d+, r\d+, 1, PORT_CLOSE\n`,
+	} {
+		if !regexp.MustCompile(re).MatchString(dis) {
+			t.Errorf("no match for %s:\n%s", re, dis)
+		}
+	}
+	if n := strings.Count(dis, ", PORT_CLOSE\n"); n != 2 {
+		t.Errorf("%d PORT_CLOSE, want 2 (f.Close and port.Close):\n%s", n, dis)
+	}
+	if n := strings.Count(dis, ", FS\n"); n != 8 {
+		t.Errorf("%d FS builtins, want 8:\n%s", n, dis)
+	}
 }

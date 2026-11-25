@@ -1,0 +1,5 @@
+## LittleFS for /flash (fs_lfs.c). Only its native lfs.h API is used, never
+## esp_vfs_littlefs_register. Pinned exactly: 1.23.3 bundles littlefs v2.11
+## (lfs_fs_grow, block_count 0 = read from the superblock need >= v2.7).
+dependencies:
+  joltwallet/littlefs: "==1.23.3"

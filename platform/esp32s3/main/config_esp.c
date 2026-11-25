@@ -92,6 +92,13 @@ int32_t config_esp_get(const char *key, uint8_t *buf, uint32_t cap) {
     return r;
 }
 
+int config_esp_erase(const char *key) {
+    if (!cfg_ok) return -1;
+    esp_err_t e = nvs_erase_key(cfg_nvs, key);
+    if (e == ESP_OK) e = nvs_commit(cfg_nvs);
+    return e == ESP_OK ? 0 : -1;
+}
+
 int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uint32_t cap) {
     char k[CFG_KEY_MAX + 1u];
     if (!valid_key((const char *)key, klen)) return -1;

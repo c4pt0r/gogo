@@ -41,9 +41,14 @@ const NetPath = "gogo/net"
 // (config.Get), a stub package like gogo/actor.
 const ConfigPath = "gogo/config"
 
+// FsPath is the import path of the storage API (fs.Open, fs.ReadFile, ...,
+// fs.File's methods), a stub package like gogo/actor: calls become B_FS,
+// File.Close the port close builtin. Its reserved types are Info and Space.
+const FsPath = "gogo/fs"
+
 // isStub reports whether path is one of the stub packages.
 func isStub(path string) bool {
-	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath
+	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath
 }
 
 // stubDir is the directory of the library set holding stub package path.
@@ -104,7 +109,7 @@ func sizes() types.Sizes { return &types.StdSizes{WordSize: 4, MaxAlign: 4} }
 // with one directory per package: gogo/<name> lives in <name>/*.go. It is
 // also the importer of every package it checks; it serves only packages it
 // has already loaded, and the stub packages gogo/actor, gogo/port,
-// gogo/bytes, gogo/net and gogo/config.
+// gogo/bytes, gogo/net, gogo/config and gogo/fs.
 type loader struct {
 	fset  *token.FileSet
 	libs  fs.FS
@@ -124,10 +129,10 @@ func (l *loader) Import(path string) (*types.Package, error) {
 	if err != nil {
 		return nil, err
 	}
-	// gogo/port and gogo/net import gogo/actor and gogo/bytes through l,
+	// gogo/port, gogo/net and gogo/fs import gogo/actor and gogo/bytes through l,
 	// so every package sees the same actor.PID and bytes.Bytes.
 	var imp types.Importer = importer.Default()
-	if path == PortPath || path == NetPath {
+	if path == PortPath || path == NetPath || path == FsPath {
 		imp = l
 	}
 	conf := types.Config{Sizes: sizes(), Importer: imp}

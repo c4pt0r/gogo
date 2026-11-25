@@ -67,7 +67,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpShr64)+1 || len(builtinNames) != int(BConfigGet)+1 {
+	if len(opNames) != int(OpShr64)+1 || len(builtinNames) != int(BFs)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -139,20 +139,30 @@ func upperSnake(s string) string {
 func TestReservedTypesMatchStubs(t *testing.T) {
 	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath, NetPath} {
+	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath} {
 		pkg, err := l.Import(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		pkgs[path] = pkg
 	}
-	order := map[string]int{ActorPath: 0, PortPath: 1, NetPath: 2}
+	order := map[string]int{ActorPath: 0, PortPath: 1, NetPath: 2, FsPath: 3}
 	last := 0
 	for i, rt := range reservedTypes {
 		if o, ok := order[rt.pkg]; !ok || o < last {
 			t.Errorf("reserved type %s: package %s out of order", rt.name, rt.pkg)
 		} else {
 			last = o
+		}
+		prefix := "Type"
+		switch rt.pkg {
+		case NetPath:
+			prefix = "TypeNet"
+		case FsPath:
+			prefix = "TypeFs"
+		}
+		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
+			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
 		}
 		obj, ok := pkgs[rt.pkg].Scope().Lookup(rt.name).(*types.TypeName)
 		if !ok {
@@ -167,16 +177,9 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 		if strings.Join(names, " ") != strings.Join(rt.fields, " ") {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
-		prefix := "Type"
-		if rt.pkg == NetPath {
-			prefix = "TypeNet"
-		}
-		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
-			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
-		}
 	}
-	if len(reservedTypes) != 27 {
-		t.Errorf("%d reserved types, want 27", len(reservedTypes))
+	if len(reservedTypes) != 29 {
+		t.Errorf("%d reserved types, want 29", len(reservedTypes))
 	}
 }
 
@@ -227,8 +230,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 5 {
-		t.Errorf("imageVersion %d, want 5", imageVersion)
+	if imageVersion != 6 {
+		t.Errorf("imageVersion %d, want 6", imageVersion)
 	}
 }
 
@@ -451,5 +454,82 @@ func TestImageEmptyFuncRejected(t *testing.T) {
 	b.AddFunc("x", 0, 1)
 	if _, err := b.Bytes(); err == nil {
 		t.Fatal("expected error for func without code")
+	}
+}
+
+// TestFsMatchC cross-checks the fs.Err values (the gogo/fs stub) and the
+// B_FS op codes and open modes of the compiler with vfs/vfs.h.
+func TestFsMatchC(t *testing.T) {
+	src, err := os.ReadFile("../vfs/vfs.h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := map[string]int64{} // C name -> value
+	for _, m := range regexp.MustCompile(`\b((?:VFS|FS)_[A-Z]+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
+		c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
+	}
+	// fs.Err and the modes: from the stub, by name.
+	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
+	pkg, err := l.Import(FsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := map[string]string{"OK": "VFS_OK", "NotFound": "VFS_NOTFOUND", "Exists": "VFS_EXISTS", "NotMounted": "VFS_NOTMOUNTED",
+		"NoSpace": "VFS_NOSPACE", "TooMany": "VFS_TOOMANY", "Busy": "VFS_BUSY", "BadPath": "VFS_BADPATH", "IsDir": "VFS_ISDIR",
+		"NotDir": "VFS_NOTDIR", "NotEmpty": "VFS_NOTEMPTY", "NoMemory": "VFS_NOMEMORY", "IO": "VFS_IO", "Closed": "VFS_CLOSED",
+		"Read": "VFS_READ", "Write": "VFS_WRITE", "Append": "VFS_APPEND"}
+	for name, cname := range errs {
+		k, ok := pkg.Scope().Lookup(name).(*types.Const)
+		if !ok {
+			t.Errorf("fs.%s missing from the stub", name)
+			continue
+		}
+		v, _ := constant.Int64Val(k.Val())
+		cv, ok := c[cname]
+		if !ok || cv != v {
+			t.Errorf("fs.%s = %d, %s = %d (present=%v)", name, v, cname, cv, ok)
+		}
+	}
+	// Every VFS_ error (not the modes) has a stub constant.
+	for cname := range c {
+		if !strings.HasPrefix(cname, "VFS_") {
+			continue
+		}
+		found := false
+		for _, v := range errs {
+			found = found || v == cname
+		}
+		if !found {
+			t.Errorf("%s has no fs constant", cname)
+		}
+	}
+	// The op codes of the compiler.
+	ops := map[string]int32{"FS_OPEN": FsOpen, "FS_READ": FsRead, "FS_WRITE": FsWrite, "FS_SYNC": FsSync, "FS_SIZE": FsSize,
+		"FS_READFILE": FsReadFile, "FS_WRITEFILE": FsWriteFile, "FS_STAT": FsStat, "FS_READDIR": FsReadDir,
+		"FS_MKDIR": FsMkdir, "FS_REMOVE": FsRemove, "FS_RENAME": FsRename, "FS_USAGE": FsUsage}
+	for name, v := range ops {
+		if cv, ok := c[name]; !ok || cv != int64(v) {
+			t.Errorf("%s: C=%d Go=%d (present=%v)", name, cv, v, ok)
+		}
+	}
+	nOps := 0
+	for name := range c {
+		if strings.HasPrefix(name, "FS_") {
+			nOps++
+		}
+	}
+	if nOps != len(ops) {
+		t.Errorf("vfs.h has %d FS_ op codes, the compiler %d", nOps, len(ops))
+	}
+	// Every op code is reached by exactly one fsOps entry.
+	seen := map[int32]string{}
+	for name, op := range fsOps {
+		if prev, dup := seen[op]; dup {
+			t.Errorf("op %d used by %s and %s", op, prev, name)
+		}
+		seen[op] = name
+	}
+	if len(seen) != len(ops) {
+		t.Errorf("fsOps covers %d op codes, want %d", len(seen), len(ops))
 	}
 }

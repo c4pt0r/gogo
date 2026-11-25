@@ -1,6 +1,10 @@
-/* ST7789P3 LCD of the M5StickS3: 135x240 panel used as landscape 240x135,
- * 4-wire SPI (MOSI G39, SCK G40, DC G45, CS G41, RST G21) on SPI3 at 40 MHz
- * with DMA; backlight on G38 (on = high).
+/* ST7789 LCD of the M5StickS3 and the Cardputer ADV: 135x240 panel used as
+ * landscape 240x135, 4-wire SPI on SPI3 at 40 MHz with DMA; pins from
+ * board.h (StickS3: MOSI G39, SCK G40, DC G45, CS G41, RST G21; Cardputer:
+ * MOSI G35, SCK G36, DC G34, CS G37, RST G33); backlight on G38 (on =
+ * high). Both boards use the same panel setup below (M5GFX gives the
+ * Cardputer the same offsets 52/40, rotation 1 and invert; src/M5GFX.cpp
+ * autodetect).
  *
  * Reference (read only, not vendored; MIT / FreeBSD): M5GFX 28d4794
  * (2026-11-05), github.com/m5stack/M5GFX:
@@ -23,6 +27,7 @@
  *    INVON since invert = 1.
  */
 #include "platform_esp.h"
+#include "board.h"
 
 #include <string.h>
 
@@ -32,12 +37,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define PIN_MOSI 39
-#define PIN_SCLK 40
-#define PIN_DC 45
-#define PIN_CS 41
-#define PIN_RST 21
-#define PIN_BL 38
+#define PIN_MOSI LCD_PIN_MOSI
+#define PIN_SCLK LCD_PIN_SCLK
+#define PIN_DC LCD_PIN_DC
+#define PIN_CS LCD_PIN_CS
+#define PIN_RST LCD_PIN_RST
+#define PIN_BL LCD_PIN_BL
 
 #define LCD_HOST SPI3_HOST
 #define LCD_HZ 40000000

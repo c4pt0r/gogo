@@ -1,0 +1,29 @@
+empty 0 0
+after 2 21 -1
+after 6 14 35
+after 19 -1 35
+bounded true
+all 35 0
+line P
+line Q
+line R
+line S
+line T
+
+tail20 20 0
+ine R
+line S
+line T
+
+tail3 3 0
+ T
+
+zero 0 0
+bytes 0
+xy
+
+bad 7
+busy writer 6
+size 2
+busy rotate 6 5
+rotate retried 0 -1 7

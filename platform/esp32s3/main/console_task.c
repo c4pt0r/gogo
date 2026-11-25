@@ -15,6 +15,7 @@
  * stats on serial.
  */
 #include "platform_esp.h"
+#include "board.h"
 #include "console.h"
 #include "font.h"
 
@@ -72,13 +73,16 @@ static TaskHandle_t starter;
 #define BRINGUP_NOTIFY_INDEX 1 /* the VM task's platform_wait uses index 0 */
 #define BRINGUP_TIMEOUT_MS 3000
 
-/* Runs on CPU0. The M5PM1 / SPI bring-up happens here rather than on the VM
+/* Runs on CPU0. The M5PM1 (StickS3) / SPI bring-up happens here rather than on the VM
  * task so the SPI driver's interrupt is allocated on this core and its
  * completions never interrupt the VM. */
 static void render_main(void *arg) {
     (void)arg;
+#if HAS_PM1
     if (pm1_lcd_power_on() != 0) bringup_err = "M5PM1 not responding";
-    else if (lcd_init() != 0) bringup_err = "ST7789 init failed";
+    else
+#endif
+    if (lcd_init() != 0) bringup_err = "ST7789 init failed";
     bool ok = bringup_err == NULL;
     xTaskNotifyGiveIndexed(starter, BRINGUP_NOTIFY_INDEX);
     if (!ok) vTaskDelete(NULL);

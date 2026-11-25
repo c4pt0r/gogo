@@ -14,8 +14,10 @@
  * level change by less than the debounce time, so the bounce of a key's
  * release (rise, fall, rise) is not taken for a new press.
  *
- * Pins the platform uses are refused: USB D-/D+ (19, 20), the in-package
- * flash and PSRAM, the LCD (21, 38-41, 45) and the M5PM1 I2C bus (47, 48).
+ * Pins the platform uses are refused (board.h BOARD_RESERVED_PINS). On the
+ * StickS3: USB D-/D+ (19, 20), the in-package flash and PSRAM, the LCD
+ * (21, 38-41, 45) and the M5PM1 I2C bus (47, 48); on the Cardputer ADV:
+ * USB, the flash (26-32), the LCD (33-38) and the SD card (12, 14, 39, 40).
  * The StickS3's ESP32-S3-PICO-1-N8R8 has 8 MB octal PSRAM in the package
  * (docs.m5stack.com/en/core/StickS3: "8MB Octal PSRAM"; esptool reports
  * "Embedded PSRAM 8MB (AP_3v3)"). The ESP32-S3-PICO-1 datasheet's block
@@ -27,6 +29,7 @@
 #include "opcodes.h"
 #include "platform.h"
 #include "platform_esp.h"
+#include "board.h"
 
 #include "driver/gpio.h"
 #include "esp_err.h"
@@ -36,7 +39,7 @@ enum { E_NONE = 0, E_RISING = 1, E_FALLING = 2, E_BOTH = 3 };
 
 #define NPINS 49
 
-static const uint8_t reserved[] = {19, 20, 21, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 45, 47, 48};
+static const uint8_t reserved[] = BOARD_RESERVED_PINS;
 
 /* Per-pin state shared with the ISR. The VM task fills the config fields
  * before the handler is added and clears `open` after it is removed; the

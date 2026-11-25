@@ -7,6 +7,8 @@
 #   tools/vmsize.sh --net      the net stack instead (net/*.c, not VM core): code
 #                              size and its fixed state (.bss + .data); exit 1 if
 #                              the fixed state exceeds 4096 bytes
+#   tools/vmsize.sh --vfs      the vfs core instead (vfs/*.c): code size and fixed
+#                              state (.bss + .data); exit 1 above 3072 bytes
 # Skips (exit 0) when the xtensa toolchain is not installed.
 set -e
 LIMIT=65536
@@ -32,6 +34,23 @@ if [ "$1" = "--net" ]; then
     printf '%7d  net code total (text+rodata+literal; not VM core)\n' "$total"
     printf '%7d  net fixed state (bss+data, limit 4096)\n' "$fixed"
     if [ "$fixed" -gt 4096 ]; then echo "netsize: fixed state exceeds 4096 bytes"; exit 1; fi
+    exit 0
+fi
+if [ "$1" = "--vfs" ]; then
+    total=0; fixed=0; lines=""
+    for f in vfs/*.c; do
+        o="$OUT/$(basename "$f" .c).o"
+        "$GCC" -std=c99 -Os -mlongcalls -Ivfs -Ivm -Ivm/test/stub -c "$f" -o "$o"
+        n=$("$SIZE" -A "$o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
+        b=$("$SIZE" -A "$o" | awk '/^\.(bss|data)/ {s += $2} END {print s + 0}')
+        total=$((total + n)); fixed=$((fixed + b))
+        lines="$lines$(printf '%7d  %s' "$n" "$f")
+"
+    done
+    printf '%s' "$lines" | sort -rn
+    printf '%7d  vfs code total (text+rodata+literal; not VM core)\n' "$total"
+    printf '%7d  vfs fixed state (bss+data, storage limit 3072)\n' "$fixed"
+    if [ "$fixed" -gt 3072 ]; then echo "vfssize: fixed state exceeds 3072 bytes"; exit 1; fi
     exit 0
 fi
 total=0

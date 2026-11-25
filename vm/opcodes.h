@@ -146,8 +146,10 @@ enum Builtin {
     B_BYTES_COPYTO    = 45,  /* Bytes, []byte -> n copied */
     B_PORT_HANDOFF    = 46,  /* port pid, to pid -> bool (port.h port_handoff) */
     B_NET_SUBSCRIBE   = 47,  /* -> bool: net.Subscribe (port.h port_subscribe) */
-    B_CONFIG_GET      = 48   /* key string -> value string, ok bool: config.Get
+    B_CONFIG_GET      = 48,  /* key string -> value string, ok bool: config.Get
                               * (platform_config_get; "wifi." keys hidden) */
+    B_FS              = 49   /* op int, args... -> result(s): gogo/fs, run by
+                              * the vm_fs_builtin hook (platform.h; vfs/builtin.c) */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -192,6 +194,9 @@ enum Builtin {
 #define TYPE_NET_WRITTEN   24   /* (no fields): tcp event, a Write was acknowledged */
 #define TYPE_NET_CLOSED    25   /* Reason int: tcp event */
 #define TYPE_NET_ACCEPTED  26   /* Conn PID: tcp_listen event */
+/* Then the gogo/fs struct types (fields as in fs/fs.go), always emitted. */
+#define TYPE_FS_INFO  27   /* Size int, IsDir bool: fs.Stat */
+#define TYPE_FS_SPACE 28   /* Used, Total int: fs.Usage */
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

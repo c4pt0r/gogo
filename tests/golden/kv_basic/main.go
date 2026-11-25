@@ -1,0 +1,98 @@
+// gogo/kv: missing directory, put/get/overwrite/delete/keys, bad keys,
+// oversize value, a leftover .tmp, and errors that are not "no such key"
+// (Get and Keys return them as they are).
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/fs"
+	"gogo/kv"
+)
+
+func sorted(names []string) []string {
+	for i := 1; i < len(names); i++ {
+		for j := i; j > 0 && names[j] < names[j-1]; j-- {
+			names[j], names[j-1] = names[j-1], names[j]
+		}
+	}
+	return names
+}
+
+func get(k string) {
+	b, e := kv.Get(k)
+	println("get", k, int(e), b.String())
+}
+
+func keys() {
+	ks, e := kv.Keys()
+	ks = sorted(ks)
+	println("keys", len(ks), int(e))
+	for _, k := range ks {
+		println("  " + k)
+	}
+}
+
+func main() {
+	get("a")
+	keys()
+	// /flash/kv is a file: the real error (NotDir), not "no such key".
+	fs.WriteFile("/flash/kv", "x")
+	get("a")
+	keys()
+	println("put over file", int(kv.Put("a", "one")))
+	fs.Remove("/flash/kv")
+	println("delete missing", int(kv.Delete("a")))
+
+	println("put a", int(kv.Put("a", "one")))
+	println("put b", int(kv.Put("b.cfg", bytes.FromString("two"))))
+	println("put c", int(kv.Put("c_1", bytes.FromSlice([]byte{51, 51}))))
+	get("a")
+	get("b.cfg")
+	get("c_1")
+	get("zz")
+	keys()
+
+	println("overwrite", int(kv.Put("a", "uno")))
+	get("a")
+	println("empty", int(kv.Put("e", "")))
+	get("e")
+
+	println("badkey empty", int(kv.Put("", "x")))
+	println("badkey slash", int(kv.Put("a/b", "x")))
+	println("badkey dot", int(kv.Put("..", "x")))
+	println("badkey space", int(kv.Put("a b", "x")))
+	println("badkey tmp", int(kv.Put("a.tmp", "x")))
+	println("badkey trailing dot", int(kv.Put("a.", "x")))
+	println("badkey long", int(kv.Put("0123456789012345678901234567890123", "x")))
+	println("badkey delete", int(kv.Delete("a/b")))
+	_, e := kv.Get("a/b")
+	println("badkey get", int(e))
+
+	big := bytes.FromSlice(make([]byte, 4096))
+	println("max value", int(kv.Put("big", big)))
+	b, e := kv.Get("big")
+	println("big", int(e), b.Len())
+	big2 := make([]byte, 4097)
+	println("oversize", int(kv.Put("big", bytes.FromSlice(big2))))
+	b, e = kv.Get("big")
+	println("big kept", int(e), b.Len())
+	println("oversize bytes", int(kv.Put("big2", bytes.FromSlice(big2))))
+	get("big2")
+
+	// A value that does not fit the caller's quota is NoMemory, not absent.
+	me := actor.Self()
+	actor.SpawnOpt(func() {
+		b, e := kv.Get("big")
+		println("small actor get big", int(e), b.Len())
+		actor.Send(me, true)
+	}, actor.Options{MaxMemory: 2000})
+	actor.Receive()
+
+	fs.WriteFile("/flash/kv/stale.tmp", "x")
+	println("delete big", int(kv.Delete("big")))
+	println("delete a", int(kv.Delete("a")))
+	println("delete again", int(kv.Delete("a")))
+	get("a")
+	keys()
+}

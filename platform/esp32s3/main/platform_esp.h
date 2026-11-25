@@ -56,6 +56,25 @@ void lcd_backlight(int on);
  * RGB565 pixels, DMA-capable memory). Blocks until sent. 0 on success. */
 int lcd_write_rows(int y, int h, const uint16_t *px);
 
+/* /flash (fs_lfs.c): mounts LittleFS on the `gogofs` partition (size from
+ * fs.flash.size, grow / format / first-boot format) and registers it with
+ * vfs. Needs config_esp_init first. 0 on success; failures are said on the
+ * console and leave /flash unmounted (NotMounted). fs_lfs_state_bytes is
+ * the storage fixed state: vfs tables + LittleFS state and buffers. */
+int fs_lfs_mount(void);
+uint32_t fs_lfs_state_bytes(void);
+/* Bound on fs_lfs.c's own state (asserted there), so fs_fat.c can check
+ * the whole storage fixed state (vfs + LittleFS + FatFs <= 3072) at
+ * compile time. */
+#define FS_LFS_STATE_MAX 384u
+
+/* /sd (fs_fat.c, boards with HAS_SD): registers /sd with vfs; the card is
+ * mounted lazily by the first call (NotMounted without a card). 0 on
+ * success. fs_fat_state_bytes is its static state (FATFS, card, bounce
+ * sector). */
+int fs_fat_init(void);
+uint32_t fs_fat_state_bytes(void);
+
 struct PortDriver;
 extern const struct PortDriver gpio_esp_driver;
 
@@ -66,6 +85,8 @@ extern const struct PortDriver gpio_esp_driver;
  * on the USB-Serial/JTAG console input. */
 int config_esp_init(void);
 int32_t config_esp_get(const char *key, uint8_t *buf, uint32_t cap);
+/* Removes key (0 on success; -1 if unset or on error). */
+int config_esp_erase(const char *key);
 void config_esp_start_serial(void);
 
 /* Wi-Fi station (wifi.c): wifi_esp_start initialises and starts the driver

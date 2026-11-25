@@ -130,7 +130,20 @@ func isActorType(t types.Type, name string) bool {
 	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == ActorPath && n.Obj().Name() == name
 }
 
-func isPID(t types.Type) bool { return isActorType(t, "PID") }
+// isFsFile reports whether t is fs.File, a PID in the VM.
+func isFsFile(t types.Type) bool {
+	n, ok := types.Unalias(t).(*types.Named)
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == FsPath && n.Obj().Name() == "File"
+}
+
+// isPID reports whether t is actor.PID or fs.File (a port PID).
+func isPID(t types.Type) bool { return isActorType(t, "PID") || isFsFile(t) }
+
+// isPIDConv reports whether call converts between actor.PID and fs.File,
+// which share their representation.
+func isPIDConv(info *types.Info, call *ast.CallExpr) bool {
+	return len(call.Args) == 1 && isPID(info.TypeOf(call.Fun)) && isPID(info.TypeOf(call.Args[0]))
+}
 
 func isRef(t types.Type) bool { return isActorType(t, "Ref") }
 
@@ -144,7 +157,7 @@ func isBytes(t types.Type) bool { return isBytesType(t, "Bytes") }
 
 func isBuffer(t types.Type) bool { return isBytesType(t, "Buffer") }
 
-// reservedTypes are the gogo/actor, gogo/port and gogo/net struct types. Every image
+// reservedTypes are the gogo/actor, gogo/port, gogo/net and gogo/fs struct types. Every image
 // starts its type table with them, in this order, so the VM can build and
 // recognize these structs by fixed index (TYPE_* in vm/opcodes.h).
 var reservedTypes = []struct {
@@ -179,6 +192,8 @@ var reservedTypes = []struct {
 	{NetPath, "Written", nil},
 	{NetPath, "Closed", []string{"Reason"}},
 	{NetPath, "Accepted", []string{"Conn"}},
+	{FsPath, "Info", []string{"Size", "IsDir"}},
+	{FsPath, "Space", []string{"Used", "Total"}},
 }
 
 // collectTypes emits the reserved types first (whether used or not), then
@@ -201,6 +216,8 @@ func (g *gen) collectTypes() error {
 			name = "port." + rt.name // actor types keep their bare names
 		case NetPath:
 			name = "net." + rt.name
+		case FsPath:
+			name = "fs." + rt.name
 		}
 		idx := g.b.AddType(name, uint32(len(rt.fields)))
 		stub := stubs[rt.pkg]
@@ -686,7 +703,10 @@ func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
 func (f *fn) stubOf(call *ast.CallExpr) string {
 	if sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr); ok {
 		obj, _ := f.g.p.Info.Uses[sel.Sel].(*types.Func)
-		return stubName(obj)
+		if name := stubName(obj); name != "" {
+			return name
+		}
+		return fsMethod(f.g.p.Info, sel)
 	}
 	return ""
 }
@@ -1171,6 +1191,9 @@ func isInt64(t types.Type) bool {
 func (f *fn) conversion(call *ast.CallExpr, dst uint8) {
 	to, from := f.g.p.Info.TypeOf(call.Fun), f.g.p.Info.TypeOf(call.Args[0])
 	switch {
+	case isPID(to): // actor.PID <-> fs.File: the same term
+		f.exprInto(call.Args[0], dst)
+		return
 	case isString(to): // string(b []byte)
 		f.seqCall(call, dst, BStrFrom, f.into(call.Args[0]))
 		return
@@ -1369,8 +1392,16 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			f.bytesMethodCall(call, fun, name, dst)
 			return
 		}
+		if name := fsMethod(f.g.p.Info, fun); name != "" {
+			f.fsCall(call, name, dst)
+			return
+		}
 		obj, ok := f.g.p.Info.Uses[fun.Sel].(*types.Func)
 		if name := stubName(obj); ok && name != "" {
+			if _, isFs := fsOps[name]; isFs {
+				f.fsCall(call, name, dst)
+				return
+			}
 			f.actorCall(call, name, dst)
 			return
 		}

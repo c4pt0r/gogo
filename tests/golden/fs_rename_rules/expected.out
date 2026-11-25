@@ -1,0 +1,23 @@
+write a.txt 0
+open a.txt 0
+open a.txt. 7
+sd stat a.txt. 7
+remove a.txt.. 7
+mkdir d. 7
+dot segment 7
+leading dot 1
+mkdir p 0
+rename p into p/q 7
+rename p onto p 2
+rename a.txt onto a.txt 2
+sd mkdir d 0
+sd rename d into d/x 7
+rename p to pq 0
+mkdir d 0
+open d/log 0
+rename d (file open inside) 6
+rename pq (file open elsewhere) 6
+rename a file 0
+sd rename d 0
+rename d after close 0
+stat e/log 0

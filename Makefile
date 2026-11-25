@@ -12,20 +12,20 @@ NET_TEST_SRCS = vm/test/test_main.c $(wildcard net/test/*.c)
 VM_SRCS   = $(wildcard vm/*.c) platform/unix/platform_unix.c platform/unix/gpio_unix.c $(NET_SRCS)
 VM_SRCS  := $(filter-out vm/check32.c,$(VM_SRCS))
 VM_CORE_SRCS = $(filter-out vm/check32.c,$(wildcard vm/*.c))
-MAIN_SRCS = platform/unix/main.c
-PLAT_HDRS = $(wildcard platform/unix/*.h) $(wildcard net/*.h)
+MAIN_SRCS = platform/unix/main.c platform/unix/fs_host.c $(wildcard vfs/*.c)
+PLAT_HDRS = $(wildcard platform/unix/*.h) $(wildcard net/*.h) $(wildcard vfs/*.h)
 
-.PHONY: vmsize netsize all vm test test-c test-c-mcu test-net-c test-net-mcu test-console test-go check32 console-ppm clean
+.PHONY: vmsize netsize all vm test test-c test-c-mcu test-net-c test-net-mcu test-vfs test-fs-host vfssize test-console test-go check32 console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-console check32 test-go test-net-mcu vmsize netsize
+test: test-c test-c-mcu test-net-c test-vfs test-fs-host test-console check32 test-go test-net-mcu vmsize netsize vfssize
 
 vm: $(BUILD)/gogovm
 
 $(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard vm/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Ivm -Inet -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) -Ivm -Inet -Ivfs -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
 
 test-c: $(BUILD)/test_c
 	$(BUILD)/test_c
@@ -52,6 +52,35 @@ $(BUILD)/test_net: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/
 $(BUILD)/test_net_mcu: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard vm/*.h) $(wildcard vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Inet -Ivm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
+
+# vfs (pure C99): path rules, slot table, rules, and the B_FS builtin
+# (builtin.c, the only file that sees VM types), against the memfs fake on
+# a real VM. The MCU build uses the MCU VM config, the MCU slot parameters
+# (the ESP32-S3 LittleFS slot, platform/esp32s3/main/CMakeLists.txt) and -Os.
+VFS_SRCS = $(wildcard vfs/*.c)
+VFS_TEST_SRCS = vm/test/test_main.c $(wildcard vfs/test/*.c)
+VFS_INC = -Ivfs -Ivfs/test -Ivm -Inet -Ivm/test -Iplatform/unix
+VFS_DEPS = $(VFS_SRCS) $(VFS_TEST_SRCS) $(VM_SRCS) $(wildcard vfs/*.h) $(wildcard vfs/test/*.h) $(wildcard vm/*.h) $(PLAT_HDRS)
+
+test-vfs: $(BUILD)/test_vfs $(BUILD)/test_vfs_mcu
+	$(BUILD)/test_vfs
+	$(BUILD)/test_vfs_mcu
+
+$(BUILD)/test_vfs: $(VFS_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(VFS_INC) -o $@ $(VFS_SRCS) $(VFS_TEST_SRCS) $(VM_SRCS)
+
+$(BUILD)/test_vfs_mcu: $(VFS_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os -DGOGO_FS_MAX_OPEN=4u -DGOGO_FS_SLOT_BYTES=160u $(VFS_INC) -o $@ $(VFS_SRCS) $(VFS_TEST_SRCS) $(VM_SRCS)
+
+# unix host-directory backend against a temp dir.
+test-fs-host: $(BUILD)/test_fs_host
+	$(BUILD)/test_fs_host
+
+$(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c vm/test/test_main.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS) $(wildcard vfs/*.h) $(PLAT_HDRS) $(wildcard vm/*.h) $(wildcard vm/test/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(VFS_INC) -o $@ platform/unix/test/test_fs_host.c vm/test/test_main.c platform/unix/fs_host.c $(VFS_SRCS) $(VM_SRCS)
 
 # Console text grid + font lookup (platform/common), host build.
 CONSOLE_SRCS = platform/common/console.c platform/common/font.c
@@ -82,7 +111,7 @@ test-go: vm
 # limit (16 KB per actor): the library actors must fit.
 $(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard vm/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Inet -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Ivm -Inet -Ivfs -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
 
 test-net-mcu: $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/
@@ -100,6 +129,9 @@ check32:
 	for f in $(NET_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Ivm -Inet -Ivm/test/stub $$f || exit 1; \
 	done
+	for f in $(VFS_SRCS); do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Ivfs -Ivm -Ivm/test/stub $$f || exit 1; \
+	done
 	for f in $(CONSOLE_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iplatform/common -Ivm/test/stub $$f || exit 1; \
 	done
@@ -114,3 +146,7 @@ vmsize:
 # net/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
 netsize:
 	tools/vmsize.sh --net
+
+# vfs/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
+vfssize:
+	tools/vmsize.sh --vfs

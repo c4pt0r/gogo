@@ -306,13 +306,17 @@ func basicKind(t types.Type) types.BasicKind {
 
 // isIntConv reports whether conversion call is one the subset allows:
 // int(x), int64(x) or byte(x) where x is an int, an int64, a byte or an
-// untyped constant.
+// untyped constant (or of a named type with one of those underlying).
 func (c *checker) isIntConv(call *ast.CallExpr) bool {
 	to := basicKind(c.p.Info.TypeOf(call.Fun))
 	if (to != types.Int && to != types.Int64 && to != types.Uint8) || len(call.Args) != 1 {
 		return false
 	}
-	switch basicKind(c.p.Info.TypeOf(call.Args[0])) {
+	from := c.p.Info.TypeOf(call.Args[0])
+	if _, named := types.Unalias(from).(*types.Named); named {
+		from = from.Underlying() // a named int (fs.Err) converts too
+	}
+	switch basicKind(from) {
 	case types.Int, types.Int64, types.Uint8, types.UntypedInt, types.Int32, types.UntypedRune:
 		return true
 	}
@@ -697,7 +701,9 @@ func (c *checker) assign(s *ast.AssignStmt) {
 }
 
 // twoResult lists the stub functions that return two values (by stubName).
-var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true, "config.Get": true}
+var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true, "config.Get": true,
+	"fs.Open": true, "fs.ReadFile": true, "fs.Stat": true, "fs.ReadDir": true, "fs.Usage": true,
+	"File.Read": true, "File.Size": true}
 
 // twoResultCall returns the call of `a, b := actor.X(...)` or
 // `a, b = actor.X(...)` when X is a two-result builtin, else nil.
@@ -734,7 +740,9 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 	for _, cl := range s.Body.List {
 		cc := cl.(*ast.CaseClause)
 		for _, t := range cc.List {
-			if !c.caseType(t) {
+			if isFsFile(c.p.Info.TypeOf(t)) {
+				c.unsupported(t, "type switch case fs.File not supported; wrap it in a struct")
+			} else if !c.caseType(t) {
 				c.unsupported(t, "type switch case other than a struct, int, int64, bool, string, actor.PID, actor.Ref or bytes.Bytes")
 			}
 		}
@@ -756,6 +764,9 @@ func (c *checker) caseType(t ast.Expr) bool {
 	case *types.Basic:
 		return isBasic(ty)
 	case *types.Named:
+		if isFsFile(ty) {
+			return false // the same term tag as actor.PID: the case would match every PID
+		}
 		if isPID(ty) || isRef(ty) || isBytes(ty) {
 			return true
 		}
@@ -768,12 +779,16 @@ func (c *checker) caseType(t ast.Expr) bool {
 	return false
 }
 
-// actorFunc returns the stubName of the stub function (gogo/actor or
-// gogo/port) a call invokes, or "".
+// actorFunc returns the stubName of the stub function (gogo/actor, port,
+// bytes, net, config or fs) a call invokes, or the fsMethod name of a
+// gogo/fs method call, or "".
 func (c *checker) actorFunc(call *ast.CallExpr) string {
 	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok || c.p.Info.Selections[sel] != nil {
+	if !ok {
 		return ""
+	}
+	if c.p.Info.Selections[sel] != nil {
+		return fsMethod(c.p.Info, sel)
 	}
 	fn, _ := c.p.Info.Uses[sel.Sel].(*types.Func)
 	return stubName(fn)
@@ -799,8 +814,24 @@ func stubName(fn *types.Func) string {
 		return "net." + fn.Name()
 	case ConfigPath:
 		return "config." + fn.Name()
+	case FsPath:
+		return "fs." + fn.Name()
 	}
 	return ""
+}
+
+// fsMethod names the gogo/fs method a selector calls, as "File.Read"; ""
+// for anything else.
+func fsMethod(info *types.Info, sel *ast.SelectorExpr) string {
+	s := info.Selections[sel]
+	if s == nil || s.Kind() != types.MethodVal {
+		return ""
+	}
+	fn, ok := s.Obj().(*types.Func)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != FsPath || !isFsFile(s.Recv()) {
+		return ""
+	}
+	return "File." + fn.Name()
 }
 
 // bytesMethod names the gogo/bytes method a selector calls, as
@@ -840,7 +871,7 @@ func tupleTypes(t *types.Tuple) []types.Type {
 // has checked the context around it.
 func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 	if tv, ok := c.p.Info.Types[call.Fun]; ok && tv.IsType() {
-		if !c.isIntConv(call) && !c.isBytesConv(call) {
+		if !c.isIntConv(call) && !c.isBytesConv(call) && !isPIDConv(c.p.Info, call) {
 			c.unsupported(call, "conversion")
 			return
 		}
@@ -901,6 +932,11 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 		}
 	case *ast.SelectorExpr:
 		if bytesMethod(c.p.Info, fun) != "" { // b.WriteString(s), x.Len() ...
+			c.expr(fun.X)
+			c.args(call, 0)
+			return
+		}
+		if fsMethod(c.p.Info, fun) != "" { // f.Read(n), f.Close() ...
 			c.expr(fun.X)
 			c.args(call, 0)
 			return
@@ -1122,7 +1158,7 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 }
 
 // comparable reports whether == is allowed on t: int, int64, bool, string (or a named
-// type of them), actor.PID or actor.Ref.
+// type of them), actor.PID, fs.File or actor.Ref.
 func (c *checker) comparable(t types.Type) bool {
 	if isPID(t) || isRef(t) {
 		return true

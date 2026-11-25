@@ -128,6 +128,7 @@ const (
 	BPortHandoff  uint32 = 46 // port pid, to pid -> bool
 	BNetSubscribe uint32 = 47 // -> bool
 	BConfigGet    uint32 = 48 // key string -> value string, ok bool
+	BFs           uint32 = 49 // op int, args... -> result(s): gogo/fs (vfs/builtin.c)
 )
 
 // Off-heap Bytes limits: twins of vm/config.h's defaults (checked by
@@ -189,6 +190,9 @@ const (
 	TypeNetWritten   uint32 = 24
 	TypeNetClosed    uint32 = 25
 	TypeNetAccepted  uint32 = 26
+	// gogo/fs
+	TypeFsInfo  uint32 = 27
+	TypeFsSpace uint32 = 28
 )
 
 // Heap object kinds.
@@ -268,7 +272,7 @@ var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "M
 	"UNREGISTER", "PORT_OPEN", "PORT_CLOSE", "STR_CONCAT", "LEN", "INDEX", "SETINDEX",
 	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
 	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
-	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET"}
+	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -305,7 +309,7 @@ var goConstants = map[string]uint32{
 	"BBytesliceFrom": BBytesliceFrom, "BBufNew": BBufNew, "BBufWrite": BBufWrite,
 	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
 	"BBytesCopyto": BBytesCopyto, "BPortHandoff": BPortHandoff, "BNetSubscribe": BNetSubscribe,
-	"BConfigGet": BConfigGet,
+	"BConfigGet": BConfigGet, "BFs": BFs,
 	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
@@ -315,4 +319,5 @@ var goConstants = map[string]uint32{
 	"TypeNetDown": TypeNetDown, "TypeNetAddr": TypeNetAddr, "TypeNetUdp": TypeNetUdp,
 	"TypeNetSendto": TypeNetSendto, "TypeNetDatagram": TypeNetDatagram,
 	"TypeNetDial": TypeNetDial, "TypeNetListen": TypeNetListen, "TypeNetWrite": TypeNetWrite, "TypeNetShutdown": TypeNetShutdown, "TypeNetResume": TypeNetResume, "TypeNetConnected": TypeNetConnected, "TypeNetData": TypeNetData, "TypeNetWritten": TypeNetWritten, "TypeNetClosed": TypeNetClosed, "TypeNetAccepted": TypeNetAccepted,
+	"TypeFsInfo": TypeFsInfo, "TypeFsSpace": TypeFsSpace,
 }

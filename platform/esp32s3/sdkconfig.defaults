@@ -35,3 +35,11 @@ CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 CONFIG_ESP_WIFI_IRAM_OPT=n
 CONFIG_ESP_WIFI_RX_IRAM_OPT=n
 CONFIG_LWIP_IRAM_OPTIMIZATION=n
+# LittleFS for /flash (main/fs_lfs.c): its raw lfs.h API. No malloc: every
+# buffer is static and passed in; lfs.c is built without heap access (see
+# CMakeLists.txt). The component's own VFS wrapper (unused) does not compile
+# with CONFIG_LITTLEFS_MALLOC_STRATEGY_DISABLE, so that stays at default.
+# Asserts off: an LFS_ASSERT on a corrupt partition would abort at every
+# boot (a boot loop) instead of returning an error to fs_lfs.c.
+CONFIG_LITTLEFS_EXPOSE_RAW_API=y
+CONFIG_LITTLEFS_ASSERTS=n

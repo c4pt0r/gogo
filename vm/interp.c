@@ -53,6 +53,8 @@
 #define REDUCTIONS     1000u
 #define PRINT_MAX_DEPTH 16
 
+uint32_t (*vm_fs_builtin)(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs);
+
 /* ---- image helpers ---- */
 
 /* The function containing code offset pc: the last one whose code_off is
@@ -1083,6 +1085,13 @@ int interp_run(Vm *vm, Actor *a) {
                 REGS(ra, 2);   /* two results: value, ok */
                 uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
                 RELOAD();
+                if (err != R_NORMAL) CRASH(err);
+                break;
+            }
+            case B_FS: {
+                /* The hook checks ra+1 itself (two-result ops only). */
+                uint32_t err = vm_fs_builtin ? vm_fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
+                RELOAD();      /* may GC */
                 if (err != R_NORMAL) CRASH(err);
                 break;
             }

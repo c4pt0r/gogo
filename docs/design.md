@@ -4,7 +4,7 @@
 
 ## 1. 意图
 
-在单片机和小型 Linux 设备（如带 Whisplay 小屏的 Raspberry Pi）上，用 **Go 语法** 写一组相互隔离的小 actor，来管理传感器、屏幕、按键等外设。借鉴 AtomVM 的核心思想（轻量进程、每进程独立堆、邮箱、按 reduction 抢占、link/monitor/监督树、"让它崩溃"），但 **不兼容 BEAM**，从语言到字节码到内存布局都自己设计。
+在单片机（目标：ESP32-S3 板子 M5StickS3 与 Cardputer ADV，之后是 RP2040，板子待定）上，用 **Go 语法** 写一组相互隔离的小 actor，来管理传感器、屏幕、按键等外设。借鉴 AtomVM 的核心思想（轻量进程、每进程独立堆、邮箱、按 reduction 抢占、link/monitor/监督树、"让它崩溃"），但 **不兼容 BEAM**，从语言到字节码到内存布局都自己设计。
 
 同时这是一个研究项目：整套系统要小到一个人能完整读懂，设计干净优先于功能多。
 
@@ -14,7 +14,7 @@
 - 用 Go 语法写 actor 代码；编辑时 gopls 能补全和报错（通过 gogo 提供的 stub 包和 32 位类型设置）。程序 **只在 gogo VM 上运行**，不要求能用 `go run` 运行（用户决定）。
 - actor 之间真正隔离：一个 actor 崩溃、死循环或耗尽自己的内存上限，不影响其他 actor 和 VM。
 - 能跑在 RP2040（Raspberry Pi Pico，264KB RAM，2MB flash，Cortex-M0+）上并驱动真实外设。
-- 同一个 VM 能在 macOS / Linux 上运行（开发调试用，也用于 Pi）。
+- 同一个 VM 能在 macOS / Linux 上运行（宿主构建，用于开发调试和测试，不是硬件目标）。
 - 代码量可读：VM 目标 ≤ 5k 行 C，编译器目标 ≤ 5k 行 Go，均不含测试。
 
 **非目标（v1 不做）**
@@ -56,8 +56,8 @@
 1. **编译器 `gogo`（命令行工具，Go，只用标准库）**：`go/parser` 解析 → `go/types` 类型检查（32 位尺寸）→ 子集检查 → 生成字节码镜像 `.gogo`。
 2. **VM**（C）：镜像加载、解释器、调度器、每 actor 堆与 GC、邮箱、定时器、端口（外设驱动）接口。
 3. **`gogo/actor`、`gogo/port` 等内建包**：只有一份。Go 源码里是只含签名的 stub（供 `go/types` 和编辑器里的 gopls 使用，函数体为 `panic("gogo only")`）；编译器把对它们的调用识别为 VM 内建操作。
-4. **小标准库**（用 Go 子集写，导入路径都在 `gogo/` 下，不冒充 Go 标准库路径）：`gogo/supervisor`、`gogo/fmt`（只支持 `%d %s %v %x` 和基本类型、结构体的简单打印）、`gogo/strings`（`Index`/`IndexByte`/`Cut`/`HasPrefix`/`HasSuffix`/`TrimSpace`/`ToLower`/`EqualFold`/`Split`）、`gogo/strconv`（`Itoa`/`Atoi`/`FormatInt64`/`ParseInt64`）、`gogo/bytes`（`Bytes`、`Buffer`，内建）等。strings 与 strconv 是用 Go 子集写的库，按字节工作（无 rune 解码），导入即整体编进镜像（无死函数消除）。库可以导入存根包和其他库（无环，按依赖顺序编译）。M5：`gogo/dhcp`（`dhcp.Start(dhcp.Config{TimeoutMs})`：DHCP 客户端 actor，拥有 `netif`，T1 续租 / T2 重绑定 / 到期清地址；配置项 `net.ip`/`net.mask`/`net.gw`/`net.dns` 时用静态地址）、`gogo/dns`（`dns.Lookup(name, timeoutMs) (int, bool)`：注册名 `dns` 的解析 actor，A 记录，重试 2 次，4 条按 TTL 缓存）、`gogo/http`（`http.Get`/`http.Post`/`http.Do(method, url, contentType, body, maxBody, timeoutMs)`：只支持 `http://`，HTTP/1.0 + `Connection: close`，请求在临时 actor 里完成、调用者按 `Call` 等待，响应体默认上限 `MaxBody` 8 KB、超出截断并标 `Truncated`；`http.Serve(port, handler func(Request) Response) actor.PID`：监听 actor 与调用者 link，监听失败以退出码 100（`ListenFailed`）退出，每个连接 `Handoff` 给新 handler actor，请求头 ≤ 2 KB、体 ≤ 8 KB（按 `Content-Length`，不支持 chunked），畸形请求 400、体过大 413，回 `Content-Length` + `Connection: close` 后 `Shutdown` 退出；临时/handler actor 以 `SpawnOpt` 设内存上限 2×体上限 + 6 KB；响应体按全长记在调用者账上，16 KB 默认上限的调用者要么用更大的 `SpawnOpt`，要么用 `Do` 的小 `maxBody`；响应带 `Transfer-Encoding` 一律失败）、`gogo/config`（存根，`config.Get(key) (string, bool)` 是内建 48，`wifi.` 键对程序不可见；unix 存在 `$GOGO_CONFIG`（默认 `~/.gogo/config`，`key=value` 行），由 `gogo config set|get|list|rm` 编辑）。
-5. **平台层**：`unix`（含模拟外设）和 `rp2040`；之后可加 ESP32 和 Linux 真实外设（Whisplay）。
+4. **小标准库**（用 Go 子集写，导入路径都在 `gogo/` 下，不冒充 Go 标准库路径）：`gogo/supervisor`、`gogo/fmt`（只支持 `%d %s %v %x` 和基本类型、结构体的简单打印）、`gogo/strings`（`Index`/`IndexByte`/`Cut`/`HasPrefix`/`HasSuffix`/`TrimSpace`/`ToLower`/`EqualFold`/`Split`）、`gogo/strconv`（`Itoa`/`Atoi`/`FormatInt64`/`ParseInt64`）、`gogo/bytes`（`Bytes`、`Buffer`，内建）、`gogo/fs`（存根包，`B_FS`，见 §5.4.2）、`gogo/kv`、`gogo/ringlog`（用 Go 子集写在 `gogo/fs` 之上）等。strings 与 strconv 是用 Go 子集写的库，按字节工作（无 rune 解码），导入即整体编进镜像（无死函数消除）。库可以导入存根包和其他库（无环，按依赖顺序编译）。M5：`gogo/dhcp`（`dhcp.Start(dhcp.Config{TimeoutMs})`：DHCP 客户端 actor，拥有 `netif`，T1 续租 / T2 重绑定 / 到期清地址；配置项 `net.ip`/`net.mask`/`net.gw`/`net.dns` 时用静态地址）、`gogo/dns`（`dns.Lookup(name, timeoutMs) (int, bool)`：注册名 `dns` 的解析 actor，A 记录，重试 2 次，4 条按 TTL 缓存）、`gogo/http`（`http.Get`/`http.Post`/`http.Do(method, url, contentType, body, maxBody, timeoutMs)`：只支持 `http://`，HTTP/1.0 + `Connection: close`，请求在临时 actor 里完成、调用者按 `Call` 等待，响应体默认上限 `MaxBody` 8 KB、超出截断并标 `Truncated`；`http.Serve(port, handler func(Request) Response) actor.PID`：监听 actor 与调用者 link，监听失败以退出码 100（`ListenFailed`）退出，每个连接 `Handoff` 给新 handler actor，请求头 ≤ 2 KB、体 ≤ 8 KB（按 `Content-Length`，不支持 chunked），畸形请求 400、体过大 413，回 `Content-Length` + `Connection: close` 后 `Shutdown` 退出；临时/handler actor 以 `SpawnOpt` 设内存上限 2×体上限 + 6 KB；响应体按全长记在调用者账上，16 KB 默认上限的调用者要么用更大的 `SpawnOpt`，要么用 `Do` 的小 `maxBody`；响应带 `Transfer-Encoding` 一律失败）、`gogo/config`（存根，`config.Get(key) (string, bool)` 是内建 48，`wifi.` 键对程序不可见；unix 存在 `$GOGO_CONFIG`（默认 `~/.gogo/config`，`key=value` 行），由 `gogo config set|get|list|rm` 编辑）。
+5. **平台层**：`unix`（含模拟外设）和 `rp2040`；ESP32-S3 已做；Linux 真实外设平台已取消。
 
 ### 5.2 Go 子集（v1）
 
@@ -167,6 +167,21 @@ btn, ok := port.Open("gpio", port.GPIO{Pin: 15, Mode: port.InputPullUp, Edge: po
 - **HTTP actor 内存**：worker / handler 的 `MaxMemory` = 2×体上限 + 6 KB（默认 22 KB）：体在缓冲和冻结副本里各存一次，GC 拷贝堆；8 KB 体实测峰值 Get 19.7 KB、handler 17.9 KB。限额失败后 VM 再做一次"紧"GC（块大小 = 存活 + 需求，无扩容余量）。
 - **语言与镜像**：函数值带参数和返回值（`CALLV`，镜像 v4），`http.Serve` 的 handler 用它；`port.Handoff`、`msg_try_enqueue`（TCP 的 Data 用不致命的入队）等见 `vm/port.h`。函数值不能放进 `any`、不能比较（包括与 `nil`）、不支持具名函数类型。
 - **TLS 推迟**（规格 §5.7、第 9 项任务）：TLS 需要 mbedTLS 上下文（几十 KB，只能放 PSRAM，不可移植到 RP2040 级芯片）、同步握手会阻塞所有 actor 数百毫秒、证书包放 flash、没有宿主测试手段。M5 不含 HTTPS：`http.Get` 对 `https://` 立即失败。
+
+### 5.4.2 存储（`gogo/fs`、`gogo/kv`、`gogo/ringlog`）
+
+统一的文件 API：`/flash`（片上 flash，LittleFS）和 `/sd`（SD 卡，FatFs）。详见 [存储设计](superpowers/specs/2026-11-24-gogo-storage-design.md)（状态：已实现），遗留事项见 [storage-followups.md](storage-followups.md)。
+
+- **实现**：`vfs/`（纯 C，路径规则与文件槽表，后端接口 `VfsBackend`）+ 后端（ESP32-S3 上 LittleFS 与 FatFs；unix 上宿主目录，`gogo run --fs-root <dir>`，不给就没有存储，所有路径 `NotMounted`）。`gogo/fs` 是存根包，编译器把调用替换成 `B_FS`（builtin 49，第一个参数是操作码），`File.Close` 走端口关闭。`fs.Info` / `fs.Space` 是保留类型 27 / 28，镜像 v6。
+- **API**：`Open(path, mode) (File, Err)`（`Read` / `Write` / `Append`）；`File.Read(max) (bytes.Bytes, Err)`、`Write(data any) Err`、`Sync`、`Size`、`Close`；`ReadFile(path, max)`、`WriteFile(path, data)`（先写 `<name>.tmp` 再替换，`/flash` 上掉电后是旧内容或新内容）；`Stat`、`ReadDir`、`Mkdir`（不递归）、`Remove`（文件或空目录）、`Rename`、`Usage(prefix)`。所有调用返回 `fs.Err`（`OK` = 0，`NotFound` … `Closed`，编号同 `VFS_*`）。每个调用同步执行，会停住所有 actor（flash 擦除几十毫秒，SD 偶尔几百毫秒）。
+- **File 是端口**：PID 是普通端口 PID，打开者拥有，退出（含崩溃、被杀）即关闭并提交；`port.Handoff` 可转交。全机最多 4 个打开的文件（`TooMany`），每个文件向所有者记账。非所有者操作得 `Closed`，不崩溃。
+- **路径规则**：绝对路径，以 `/flash` 或 `/sd` 为整段前缀；名字 1 到 32 字节，字符集 `A-Z a-z 0-9 . _ -`；整个路径最多 96 字节。以 `.` 结尾的段（含 `.`、`..`）、空段、结尾 `/` 都是 `BadPath`。**Rename 进自己的子树（`/flash/d` → `/flash/d/x`）是 `BadPath`**；**目录被改名时，同一挂载上只要有任何打开的文件就是 `Busy`**（文件改名只按路径规则）。**大小写折叠只在 `/sd` 上**（FAT 不区分大小写）：`/sd` 上的子树检查也忽略大小写，仅大小写不同的改名在设备上可行；`/flash` 区分大小写。挂载根（`/flash`）的 Mkdir / Remove / Rename、对 `/` 的任何操作、跨挂载 Rename 都是 `BadPath`。不符合规则的名字（PC 上建的）`ReadDir` 仍按原名列出，但打开它得 `BadPath`。
+- **Busy 规则**：同一路径同时最多一个 `Write` / `Append` 打开；只要路径上有打开的文件，对它的 `Remove`、`Rename`（源或目标）和 `WriteFile` 的最终替换都是 `Busy`；`/sd` 上对正在被读的文件做 `Write` 打开（会截断）也是 `Busy`，`Append` 允许。读者可以打开正在被写的文件，所见内容不保证。
+- **`gogo/kv`**：`/flash/kv/` 下每键一个文件，`Get(key) (bytes.Bytes, fs.Err)`（缺键是 `fs.NotFound`，读错误原样返回，不再当成"不存在"）、`Put(key, v any) fs.Err`（`string` 或 `Bytes`，原子替换，值最多 4096 B）、`Delete(key) fs.Err`、`Keys() ([]string, fs.Err)`。
+- **`gogo/ringlog`**：`Append(dir, maxBytes, line)` / `Read(dir, max)`，两个文件 `0.log` / `1.log` 轮转，总量不超过 `maxBytes`（加一行）；每个目录一个写者。
+- **配置**：`fs.flash.size`（`gogo config set fs.flash.size 3M`，字节数可带 K/M 后缀，4 KB 取整，最小 64 KB，不设 = 整个分区）：设置值大于当前文件系统时开机原地扩容，小于时不缩小并提示；`fs.flash.format=yes` 按设置值重新格式化一次并删除这个键。首次挂载失败自动格式化。分区表 `gogofs` 在 `0x310000`，大小 `0x4F0000`。
+- **/sd 文件系统**：FAT12 / 16 / 32 和 **exFAT**（覆盖 ESP-IDF 的 `fatfs` 组件，`FF_FS_EXFAT 1`，只在 Cardputer 构建里编进去）。长文件名上限 64 个字符（`FF_MAX_LFN`），更长的名字打不开（不可达）。卡在首次访问时挂载，出 IO 错误后下次访问重新挂载，没有卡检测脚。
+- **板子**：StickS3 只有 `/flash`；Cardputer ADV 有 `/flash` + `/sd`（SPI，20 MHz，失败退到 400 kHz）。构建时用 `GOGO_BOARD=sticks3|cardputer` 选择。固定状态（vfs 表 + LittleFS / FatFs 的静态状态）在 VM 核心之外：StickS3 1060 B、Cardputer 2356 B（预算 3072 B，编译期断言），明细见 `platform/esp32s3/README.md`。
 
 ### 5.5 值表示与内存
 
@@ -333,7 +348,7 @@ FORWARD  （GC 时临时写入）                            转发标记
 - 寄存器式字节码，定长 32 位指令字（8 位操作码 + 3 个 8 位操作数），需要时跟扩展字。每个函数有固定数量的寄存器（栈帧大小由编译器算出）。
 - 解释器是一个普通的 `switch` 循环，每个操作码一个 case，不用宏生成代码。
 - 镜像格式：头部（魔数、版本）、常量池、类型描述表（结构体布局、类型名）、函数表、代码段、可选的行号表。镜像与位置无关，可原地执行。
-- 镜像版本（`IMAGE_VERSION`，当前为 4）：操作码编号或语义、builtin 编号、保留类型、term 编码任何一项变化都要升版本；编译器与 VM 同步升级，加载器拒绝其他版本（`unsupported version`）。v1 为 M1/M2；v2 为 M3（通用算术只收 `int`、`*64` 操作码与 `BOX64`、`CLEAR`、有类型的零 PID/Ref）；v3 为 M4（多返回值 `RETN`、`CONV c=2` 转 byte）；v4 为 M5（调用函数值 `CALLV`）。
+- 镜像版本（`IMAGE_VERSION`，当前为 6）：操作码编号或语义、builtin 编号、保留类型、term 编码任何一项变化都要升版本；编译器与 VM 同步升级，加载器拒绝其他版本（`unsupported version`）。v1 为 M1/M2；v2 为 M3（通用算术只收 `int`、`*64` 操作码与 `BOX64`、`CLEAR`、有类型的零 PID/Ref）；v3 为 M4（多返回值 `RETN`、`CONV c=2` 转 byte）；v4 为 M5（调用函数值 `CALLV`）；v5 为位运算（`&` `|` `^` `<<` `>>`）；v6 为存储（builtin 49 `B_FS`、保留类型 27 / 28 `fs.Info` / `fs.Space`）。
 
 ### 5.7 调度
 
@@ -387,7 +402,9 @@ gogo monitor [-port P] [-t 秒] [-until 文本] [-reset]
 3. **M3 端口层 + M5StickS3 真机**（已完成）：端口层（`gpio` 驱动）、定时器最小堆、int64 立即数、镜像 v2（带类型的零 PID/Ref 与 `CLEAR`）、ESP32-S3 平台（固件、`gogo flash`/`gogo monitor`、屏幕调试控制台含中文），以及在 M5StickS3 上演示"按 KEY1 让 worker 崩溃、监督者重启它"（`examples/sticks3_demo`）。1000 个空闲 actor 在 160KB 内存上限内创建成功（`examples/many_idle`）。详见 [M3 设计](superpowers/specs/2026-11-23-gogo-m3-design.md)，遗留事项见 [m3-followups.md](m3-followups.md)。
 4. **M4 字符串 / 字节 / 切片 / 多返回值**（已完成）：多返回值（`RETN`）、`byte`、镜像 v3；运行时字符串；切片与 `[]byte`；`bytes.Bytes` / `bytes.Buffer`（大块堆外、引用计数、按持有者计费）；`gogo/strings`、`gogo/strconv`；`examples/httpparse` 作为"写网络库是否顺手"的检验。详见 [M4 设计](superpowers/specs/2026-11-23-gogo-m4-strings-bytes-design.md)，遗留事项见 [m4-followups.md](m4-followups.md)。
 5. **M5 网络**（已完成）：极小内存的纯 C 协议栈（ARP / IPv4 / ICMP echo / UDP / TCP）、`gogo/dhcp`、`gogo/dns`、`gogo/http`（客户端与服务器，HTTP/1.0）、函数值带参数调用（镜像 v4）、M5StickS3 上的 Wi-Fi 与 `gogo config`、`examples/netdemo`。TLS 推迟。详见 [M5 设计](superpowers/specs/2026-11-23-gogo-m5-network-design.md)，遗留事项与后续候选见 [m5-followups.md](m5-followups.md)。
-6. **M6 Pi + Whisplay 小屏**：Linux 平台真实外设，在 Pi + Whisplay 上用 actor 驱动屏幕和按键（原"M4 小屏"顺延）。
+6. **存储**（已完成）：`gogo/fs`（`/flash` 上 LittleFS、`/sd` 上 FAT / exFAT）、`gogo/kv`、`gogo/ringlog`、镜像 v6，StickS3 与 Cardputer ADV 两块板子。详见 §5.4.2 与 [存储设计](superpowers/specs/2026-11-24-gogo-storage-design.md)，遗留事项见 [storage-followups.md](storage-followups.md)。
+7. **接下来：热加载，然后 HTTPS**（用户定的顺序）。热加载见 [m4-followups.md](m4-followups.md)；HTTPS 见 [m5-followups.md](m5-followups.md) 的 TLS 一项。
+8. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
 
 ## 6. 交给实现者决定的
 

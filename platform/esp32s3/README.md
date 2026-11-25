@@ -1,10 +1,23 @@
-# gogo on the ESP32-S3 (M5StickS3)
+# gogo on the ESP32-S3 (M5StickS3, Cardputer ADV)
 
 An ESP-IDF project whose `main` component is the ESP platform layer; it
 compiles the VM core (`vm/*.c` except `check32.c`) in place from the repo
 root, with the ESP values of the `vm/config.h` knobs:
 `GOGO_DEFAULT_MAX_WORDS=4096`, `GOGO_TABLE_CAP=1024`, `GOGO_MAX_PORTS=16`,
-`GOGO_EVQ_CAP=64`, `GOGO_ARENA_BYTES=163840` (160 KB), `-Os`.
+`GOGO_EVQ_CAP=64`, `GOGO_ARENA_BYTES=163840` (160 KB), `-Os`; and the
+storage core (`vfs/*.c`) with `GOGO_FS_MAX_OPEN=4`,
+`GOGO_FS_SLOT_BYTES=160` (one LittleFS file, see `/flash` below).
+
+One source tree, two boards, chosen at build time with the CMake variable
+`GOGO_BOARD` (`main/board.h` holds each board's pins and features):
+
+| board | `GOGO_BOARD` | LCD (ST7789 240x135, SPI3) | power | storage |
+|-------|--------------|----------------------------|-------|---------|
+| M5StickS3 (ESP32-S3-PICO-1-N8R8) | `sticks3` (default) | MOSI 39, SCLK 40, DC 45, CS 41, RST 21, BL 38 | M5PM1 (`pm1.c`) | `/flash` |
+| Cardputer ADV (M5Stamp S3A, ESP32-S3FN8, no PSRAM) | `cardputer` | MOSI 35, SCLK 36, DC 34, CS 37, RST 33, BL 38 | none | `/flash`, `/sd` (SPI2: CS 12, MOSI 14, CLK 40, MISO 39) |
+
+Both have 8 MB flash and the same partition table, so `gogo flash` writes
+a program image to either without a board option.
 
 ## Toolchain
 
@@ -23,6 +36,19 @@ From the repo root:
     idf.py -C platform/esp32s3 build
     platform/esp32s3/vmsize.sh                         # VM code size gate (<= 65536)
     idf.py -C platform/esp32s3 -p /dev/cu.usbmodemXXXX flash   # firmware, once
+
+The Cardputer ADV firmware builds in its own directory, with its own
+sdkconfig (FatFs options from `sdkconfig.cardputer` on top of
+`sdkconfig.defaults`; `SDKCONFIG` is relative to `platform/esp32s3`):
+
+    idf.py -C platform/esp32s3 -B platform/esp32s3/build-cardputer -DGOGO_BOARD=cardputer \
+        -DSDKCONFIG=build-cardputer/sdkconfig \
+        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer" build
+    idf.py -C platform/esp32s3 -B platform/esp32s3/build-cardputer -p /dev/cu.usbmodemXXXX flash
+    platform/esp32s3/vmsize.sh platform/esp32s3/build-cardputer
+
+Check which board is on the port before flashing (`esptool chip-id`: the
+StickS3 reports embedded PSRAM, the Cardputer ADV none).
 
 Programs go to the separate `gogo` partition, so changing the program does
 not rebuild or reflash the firmware:
@@ -49,10 +75,11 @@ time.
 | nvs     | data/nvs     | 0x9000   | 0x6000   |
 | factory | app/factory  | 0x10000  | 0x200000 |
 | gogo    | data/0x40    | 0x210000 | 0x100000 |
+| gogofs  | data/0x83    | 0x310000 | 0x4F0000 |
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v5, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
+(format v6, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
 image version changes, reflash the firmware too: an older firmware refuses
 a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
 one). At boot the firmware checks the magic, the length (multiple of 4,
@@ -83,17 +110,19 @@ in `cmd/gogo/flash.go`.
   pushes to the event ring and notifies, never locking or allocating. For a
   single-edge pin it also drops an edge that comes less than the debounce
   time after the previous level change (a key release's bounce). Refused
-  pins: 19-20 (USB), 26-37 (in-package flash and octal PSRAM of the
-  ESP32-S3-PICO-1-N8R8), 21, 38-41, 45 (LCD), 47-48 (M5PM1 I2C).
+  pins (`board.h`): StickS3 19-20 (USB), 26-37 (in-package flash and octal
+  PSRAM of the ESP32-S3-PICO-1-N8R8), 21, 38-41, 45 (LCD), 47-48 (M5PM1
+  I2C); Cardputer ADV 19-20 (USB), 26-32 (flash), 33-38 (LCD), 12, 14,
+  39, 40 (SD card). The Cardputer's G0 button is free (Input, active low).
 - `image_part.c`: the partition check and mmap above.
 - `main.c`: the VM runs in a FreeRTOS task pinned to CPU1.
 - Screen (debug console, mirror of stdout/stderr):
-  - `pm1.c`: M5PM1 (I2C G47/G48, 0x6E): I2C idle sleep and watchdog off,
+  - `pm1.c` (StickS3 only): M5PM1 (I2C G47/G48, 0x6E): I2C idle sleep and watchdog off,
     PM1 GPIO2 high = LCD rail, 200 ms settle (M5GFX/M5Unified StickS3
     sequence, cited in the file).
-  - `lcd_st7789.c`: ST7789P3 135x240 used as landscape 240x135 (column
-    offset 40, row offset 53, MADCTL 0x6C, inverted), SPI3 40 MHz with DMA;
-    backlight G38.
+  - `lcd_st7789.c`: ST7789 135x240 used as landscape 240x135 (column
+    offset 40, row offset 53, MADCTL 0x6C, inverted; the same on both
+    boards), SPI3 40 MHz with DMA, pins from `board.h`; backlight G38.
   - `console_task.c`: `platform/common` console grid + embedded
     `platform/common/font/gogo12.font`. The VM task appends to the grid
     under a short spinlock and notifies the render task (CPU0, priority 1),
@@ -107,6 +136,7 @@ in `cmd/gogo/flash.go`.
     64 KB data, 64-byte lines), because the VM (CPU1) and the render task
     (CPU0) share them and rendering from flash evicted the VM's code.
 
+- `fs_lfs.c`: `/flash`, see below.
 - `wifi.c`: Wi-Fi station and `net/netif.h` (M5). The driver's raw frames go
   straight to gogo's own stack (`net/`, compiled into the firmware) through
   the driver's internal interface, pinned to ESP-IDF v6.1.1:
@@ -179,6 +209,107 @@ The boot logs the driver's heap use on serial (`gogo: wifi heap: ...`).
 The receive path drops frames while the single RX slot is full
 (`rx_busy`); TCP's one-segment windows keep that rare.
 
+## `/flash` (LittleFS)
+
+`fs_lfs.c` is the `vfs` backend for `/flash`: LittleFS from the
+`joltwallet/littlefs` component (pinned `==1.23.3` in
+`main/idf_component.yml`, bundling littlefs v2.11), used only through its
+raw `lfs.h` API (`CONFIG_LITTLEFS_EXPOSE_RAW_API=y`), never its ESP-IDF VFS
+wrapper, on the `gogofs` partition. Neither `idf.py flash` nor `gogo flash`
+writes that partition, so files survive reflashing (the whole-flash erase
+`idf.py erase-flash` wipes them, and the Wi-Fi settings).
+
+- Config: `read_size 16`, `prog_size 16`, `block_size 4096`,
+  `cache_size 64`, `lookahead_size 16`, `block_cycles 500`. No malloc: the
+  read / prog caches and lookahead buffer are static and each open file's
+  64-byte cache is in its vfs slot (`lfs_file_opencfg`). Enforced at build
+  time (`platform/esp32s3/CMakeLists.txt`): `lfs.c` alone is compiled with
+  `LFS_NO_MALLOC` and with `malloc` / `free` renamed to `fs_lfs.c`'s
+  NULL-returning stubs, so its object imports no `malloc` / `free`. (The
+  component's `CONFIG_LITTLEFS_MALLOC_STRATEGY_DISABLE` cannot be used: its
+  unused VFS wrapper does not compile with it.) `CONFIG_LITTLEFS_ASSERTS=n`:
+  an internal assert on a corrupt partition would abort at every boot.
+- Fixed state (logged at boot as `gogo: fs state N bytes`, at most 3072,
+  checked at compile time in `fs_lfs.c`): 1060 bytes = vfs tables 700 (4
+  slots of 168: an `lfs_file_t`, its `lfs_file_config` and cache, plus slot
+  header) + LittleFS 360 (`lfs_t`, `lfs_config`, two 64-byte caches, the
+  16-byte lookahead, the partition pointer). An open file charges its owner
+  160 bytes.
+- Size: config `fs.flash.size` (bytes, `K` or `M` suffix, rounded down to
+  4 KB, clamped to 64 KB .. the partition; unset = the whole partition,
+  5056 KB; a bad value is said on the console and means the whole
+  partition). At boot the size is read from the superblock; a larger
+  setting grows the file system in place (`lfs_fs_grow`, files kept); a
+  smaller one keeps the current size and prints `gogo: /flash shrink needs
+  format (fs.flash.format=yes)`. Setting `fs.flash.format` to `yes` formats
+  once at the set size at the next boot (`gogo: formatting /flash
+  (fs.flash.format=yes)`; everything on `/flash` is lost) and removes the
+  key; the key is removed before formatting, and if that fails nothing is
+  formatted (`gogo: could not clear fs.flash.format; /flash not formatted
+  (gogo config rm fs.flash.format)`), so a stuck key cannot wipe `/flash`
+  at every boot. A blank or unreadable partition (mount says corrupt or
+  invalid; first boot) is formatted: `gogo: formatting /flash` (LittleFS
+  logs `Corrupted dir pair at {0x0, 0x1}` first). "Invalid" also covers a
+  file system from a newer LittleFS on-disk version or with a larger name
+  limit, so a firmware downgrade can wipe `/flash` (PLAT-5, deferred). Any other mount error
+  (flash I/O), or a file system bigger than the partition, leaves `/flash`
+  unmounted (every path `NotMounted`) with its data untouched and a console
+  line. Serial only: `gogo: /flash <N> KB (partition 5056 KB)`.
+
+      build/gogo config set fs.flash.size 1M
+      build/gogo config set fs.flash.format yes   # only to shrink, or to wipe
+      build/gogo config rm fs.flash.size          # back to the whole partition
+
+- Measured on the M5StickS3: filling the whole partition with 4 KB writes
+  runs at about 68 KB/s (5 MB in 75 s) and ends in `NoSpace`; removing the
+  file returns `Usage` to its earlier value. A fresh file system uses
+  24 KB (root, `kv/` and the demo's log directory included).
+
+## `/sd` (FAT, Cardputer ADV)
+
+`fs_fat.c` is the `vfs` backend for `/sd` on boards with an SD slot: FatFs
+(ESP-IDF's `fatfs` component, its `f_*` API only, never `esp_vfs_fat_*`;
+FAT12/16/32 and exFAT, from the vendored copy in `components/fatfs` with
+`FF_FS_EXFAT 1`, see its README)
+over the `sdspi` driver on SPI2 (SPI3 is the LCD's), 20 MHz, retried once
+at 400 kHz. Details are in the file's top comment; in short:
+
+- Lazy mount, no reboot needed: boot only registers `/sd`. Every path call
+  checks the card (one CMD13 when mounted) and, without a mounted card,
+  initialises and mounts it. Without a card every call is `NotMounted`
+  quickly; a card inserted later works on the next call; a disk error
+  unmounts, so the next call remounts. A card with neither FAT nor exFAT
+  is `NotMounted` (`gogo: /sd: no FAT or exFAT file system on the card
+  (<what is there>; ...)` once); the firmware never formats a card.
+- FatFs config (`sdkconfig.cardputer`): no per-file cache (`FF_FS_TINY`),
+  512-byte sectors (`CONFIG_WL_SECTOR_SIZE_512`: FatFs takes the larger of
+  the SD and wear-levelling sector sizes), window inside the static
+  `FATFS` (`CONFIG_FATFS_USE_DYN_BUFFERS=n`), long names on the stack (max
+  64), code page 437, no FatFs lock table, one volume. FatFs's mutexes
+  (hard-coded reentrant in IDF, heap-allocated) are link-time wrapped to
+  no-ops (`main/CMakeLists.txt`): only the VM task calls in.
+- No malloc per file or per transfer: `FATFS`, the card state and a
+  512-byte bounce sector (for buffers the SPI DMA cannot take directly) are
+  static; a `FIL` lives in its vfs slot. The IDF drivers allocate once on
+  the first call (SPI bus, sdspi device, a 20-byte diskio entry), and card
+  initialisation uses short-lived buffers.
+- Names compare ignoring case (FatFs matches short and long names that way,
+  and the vfs slot hash is lower-cased). `Rename` cannot replace, so
+  `WriteFile` is `.tmp`, remove, rename (not atomic). A `Write` open
+  (truncate) of a path open for reading is `Busy` on `/sd` (vfs rule for
+  case-insensitive backends: FatFs would free the clusters under the
+  reader). `Usage` is clamped to 2 GB - 1 on bigger cards, and its first call on an
+  exFAT card (or FAT32 without FSINFO) scans the allocation map.
+- Fixed state (Cardputer build, logged as `gogo: fs state N bytes`, checked
+  at compile time in `fs_fat.c`): 2356 bytes = vfs 700 + LittleFS 360 +
+  `fs_fat.c` 1296 (`FATFS` 572 with its 512-byte window, `sdmmc_card_t`
+  204, the 512-byte bounce sector). A `FIL` is 80 bytes (slot 160).
+
+Firmware cost of storage (vfs + B_FS + LittleFS + `fs_lfs.c`): `gogo.bin`
+844272 -> 866880 bytes (+22.1 KB, LittleFS asserts off); free internal
+heap at the boot line 197672 -> 196736 (-936, measured with asserts on;
+the fixed state is in `.bss`).
+
 Console build switches (`idf.py -D...`, kept in each build directory's
 CMake cache, so use a separate `-B` directory per variant):
 
@@ -197,6 +328,12 @@ Examples:
   crash (red on screen).
 - `examples/printbench`: 1000 `println` lines, then the elapsed ms.
 - `examples/memfill`: actors grow by recursion until one hits oom; the exit line shows the arena really filled.
+- `examples/fsdemo` (repo root): `/flash` demo and device tests: boot
+  counter in `kv`, KEY1/KEY2 presses appended to a `ringlog`, `Usage` on
+  screen and serial; `gogo config set fsdemo.mode keep|fill|powercut`
+  selects a test (see the file's comment).
+- `examples/sddemo` (repo root, Cardputer ADV): `/sd` device checks
+  (see the file's comment).
 - `examples/netdemo` (repo root): DHCP, a Chinese/English page on port 80
   (KEY1/KEY2 counts, last fetch, uptime) and an `http.Get` of `demo.url`
   every 10 s.

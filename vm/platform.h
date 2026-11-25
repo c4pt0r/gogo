@@ -44,6 +44,16 @@ void platform_barrier(void);
  * The VM never asks for "wifi." keys. */
 int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uint32_t cap);
 
+/* Storage (gogo/fs): B_FS calls this hook with BUILTIN's ra, rb, rc and
+ * the frame's register count (ra and rb..rb+rc-1 are checked; a
+ * two-result op checks ra+1 itself). It returns R_NORMAL or the crash
+ * reason and may GC. NULL (no storage linked): B_FS is badcode. Set by
+ * vfs_install (vfs/builtin.c). */
+struct Vm;
+struct Actor;
+extern uint32_t (*vm_fs_builtin)(struct Vm *vm, struct Actor *a, uint32_t ra, uint32_t rb,
+                                 uint32_t rc, uint32_t nregs);
+
 /* The port drivers this platform provides (port.h), NULL-terminated. */
 struct PortDriver;
 const struct PortDriver *const *platform_port_drivers(void);
