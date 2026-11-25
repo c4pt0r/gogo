@@ -7,6 +7,8 @@
 #include "font.h"
 #include "test.h"
 
+/* FONT_ASCII: built against the ASCII-only font (GOGO_FONT_CJK=n firmware):
+ * every CJK glyph is missing and renders as the console's box. */
 #ifndef FONT_PATH
 #define FONT_PATH "platform/common/font/gogo12.font"
 #endif
@@ -215,10 +217,16 @@ TEST(font_lookup) {
     int w = 0;
     CHECK(font_glyph(&font, 'A', &w) != NULL);
     CHECK_EQ(w, 6);
+#ifdef FONT_ASCII
+    CHECK(font_glyph(&font, 0x4E2D, &w) == NULL);
+    CHECK(font_glyph(&font, 0x3002, &w) == NULL);
+    CHECK(font_glyph(&font, 0xE9, &w) == NULL);
+#else
     CHECK(font_glyph(&font, 0x4E2D, &w) != NULL);
     CHECK_EQ(w, 12);
     CHECK(font_glyph(&font, 0x3002, &w) != NULL);
     CHECK_EQ(w, 12);
+#endif
     CHECK(font_glyph(&font, 0x1F600, &w) == NULL);
     CHECK(font_glyph(&font, 0, &w) == NULL);
     CHECK(font_glyph(&font, CONSOLE_BOX, &w) == NULL);
@@ -260,7 +268,12 @@ TEST(font_console_agree) {
             break;
         }
     }
+#ifdef FONT_ASCII
+    CHECK_EQ(font.n_wide, 0);
+    CHECK_EQ(font.n_half, 95);
+#else
     CHECK(font.n_wide > 6700);
+#endif
 }
 
 TEST(font_init_rejects_garbage) {
@@ -294,7 +307,7 @@ TEST(con_render) {
     console_render_row(&c, &font, 0, px);
     CHECK(count_px(px, 0, 6, WHITE) > 8);   /* 'A' */
     CHECK_EQ(count_px(px, 0, 6, RED), 0);
-    CHECK(count_px(px, 6, 18, RED) > 20);   /* red wide glyph */
+    CHECK(count_px(px, 6, 18, RED) > 20);   /* red wide glyph (a box with the ASCII font) */
     CHECK_EQ(count_px(px, 6, 18, WHITE), 0);
     CHECK(count_px(px, 18, 24, WHITE) > 8); /* box for the invalid byte */
     CHECK_EQ(count_px(px, 24, 240, WHITE) + count_px(px, 24, 240, RED), 0);
@@ -319,3 +332,28 @@ TEST(con_render_missing_glyph_is_box) {
     /* a wide missing glyph is a wider box than the 6 px one */
     CHECK(count_px(a, 0, 12, WHITE) > count_px(b, 0, 12, WHITE));
 }
+
+#ifdef FONT_ASCII
+/* With the ASCII-only font a CJK character takes the same two columns and
+ * draws exactly the box a missing glyph always gets. */
+TEST(con_render_cjk_is_box_without_cjk_font) {
+    load_font();
+    static uint16_t a[CONSOLE_PX_W * 12], b[CONSOLE_PX_W * 12];
+    Console c;
+    fresh(&c);
+    put(&c, "\xe4\xb8\xad", CON_WHITE); /* U+4E2D */
+    CHECK_EQ(console_cell_cp(&c, 0, 0), 0x4E2D);
+    CHECK(console_cell_cont(&c, 0, 1));
+    console_render_row(&c, &font, 0, a);
+    fresh(&c);
+    put(&c, "\xf0\x9f\x98\x80", CON_WHITE); /* U+1F600: never in the font */
+    console_render_row(&c, &font, 0, b);
+    CHECK(memcmp(a, b, sizeof a) == 0);
+    CHECK(count_px(a, 0, 12, WHITE) > 20);
+    /* ASCII still renders from the glyph, not the box */
+    fresh(&c);
+    put(&c, "A", CON_WHITE);
+    console_render_row(&c, &font, 0, b);
+    CHECK(count_px(b, 0, 6, WHITE) > 8);
+}
+#endif

@@ -6,7 +6,13 @@ file(GLOB GOGO_VM_SRCS "${GOGO_ROOT}/vm/*.c")
 list(FILTER GOGO_VM_SRCS EXCLUDE REGEX "/check32\\.c$")
 # The net stack (pure C99, chip-independent; spec M5): its net_rx_offer /
 # net_link_event are what wifi.c feeds.
-file(GLOB GOGO_NET_SRCS "${GOGO_ROOT}/net/*.c")
+# Without GOGO_NET (main/Kconfig.projbuild) neither it nor wifi.c is built.
+set(GOGO_NET_SRCS "")
+set(GOGO_WIFI_SRCS "")
+if(CONFIG_GOGO_NET)
+    file(GLOB GOGO_NET_SRCS "${GOGO_ROOT}/net/*.c")
+    set(GOGO_WIFI_SRCS wifi.c)
+endif()
 # Storage (spec storage §5): the vfs core and the B_FS builtin (pure C99),
 # with fs_lfs.c (/flash on LittleFS) as the backend.
 file(GLOB GOGO_VFS_SRCS "${GOGO_ROOT}/vfs/*.c")
@@ -42,7 +48,11 @@ if(GOGO_BOARD STREQUAL "sticks3")
     set(GOGO_BOARD_SRCS pm1.c)
     set(GOGO_BOARD_DEF GOGO_BOARD_STICKS3)
 elseif(GOGO_BOARD STREQUAL "cardputer")
-    set(GOGO_BOARD_SRCS fs_fat.c)
+    # fs_fat.c is /sd (GOGO_SD, main/Kconfig.projbuild).
+    set(GOGO_BOARD_SRCS "")
+    if(CONFIG_GOGO_SD)
+        set(GOGO_BOARD_SRCS fs_fat.c)
+    endif()
     set(GOGO_BOARD_DEF GOGO_BOARD_CARDPUTER)
 else()
     message(FATAL_ERROR "GOGO_BOARD must be sticks3 or cardputer (got '${GOGO_BOARD}')")
@@ -56,22 +66,34 @@ if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD)
     set(GOGO_I2C_SRCS i2c_bus.c)
 endif()
 
+# The console font blob (GOGO_FONT_CJK): the embedded symbol is named after
+# the file, console_task.c picks it by the same switch.
+if(CONFIG_GOGO_FONT_CJK)
+    set(GOGO_FONT_FILE gogo12.font)
+else()
+    set(GOGO_FONT_FILE gogo12-ascii.font)
+endif()
+
 idf_component_register(
     SRCS main.c platform_esp.c gpio_esp.c image_part.c console_task.c lcd_st7789.c
-         wifi.c config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
+         ${GOGO_WIFI_SRCS} config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
          ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_COMMON_SRCS}
     PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/vm" "${GOGO_ROOT}/net" "${GOGO_ROOT}/vfs" "${GOGO_ROOT}/input" "${GOGO_ROOT}/platform/common"
-    EMBED_FILES "${GOGO_ROOT}/platform/common/font/gogo12.font"
+    EMBED_FILES "${GOGO_ROOT}/platform/common/font/${GOGO_FONT_FILE}"
     LDFRAGMENTS linker.lf
     PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c esp_adc
-                  esp_rom freertos heap esp_wifi esp_event nvs_flash esp_driver_usb_serial_jtag
+                  esp_rom freertos heap nvs_flash esp_driver_usb_serial_jtag
                   joltwallet__littlefs
+                  # wifi.c (GOGO_NET): listed unconditionally because IDF
+                  # expands requirements before CONFIG_GOGO_NET is known;
+                  # without GOGO_NET nothing references them, so nothing links.
+                  esp_wifi esp_event
                   # fs_fat.c (Cardputer); listed for both boards because IDF
                   # expands requirements before GOGO_BOARD is known. The
                   # StickS3 links none of it (no references).
                   fatfs sdmmc esp_driver_sdspi)
 
-if(GOGO_BOARD STREQUAL "cardputer")
+if(GOGO_BOARD STREQUAL "cardputer" AND CONFIG_GOGO_SD)
     # FatFs is built reentrant (IDF's ffconf.h hard-codes FF_FS_REENTRANT 1)
     # with heap-allocated mutexes; only the VM task calls it, so its
     # ff_mutex_* are replaced by fs_fat.c's no-op __wrap_ versions. get_fattime

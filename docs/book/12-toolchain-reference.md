@@ -9,6 +9,7 @@ gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>
 gogo dis <file.gogo>
 gogo flash [-port P] [-esptool path] app.gogo
 gogo monitor [-port P] [-t seconds] [-until text] [-reset]
+gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
 ```
 
@@ -151,6 +152,38 @@ Copies the board's console to standard output.
 It is not interactive. Only one program can have the serial port open, so
 stop `gogo monitor` before `gogo flash` or `gogo config`.
 
+## gogo firmware
+
+```text
+gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
+```
+
+Chooses which optional parts the firmware needs to contain for a set of
+images and modules, so a build does not carry a network stack or an SD
+driver nobody uses. It reads the capabilities each file declares (the
+`requires` word that `gogo build` writes), takes their union, and writes
+`<dir>/sdkconfig.gogo`, a list of `CONFIG_GOGO_*` lines, then prints the
+`idf.py` command that builds with it. It never flashes.
+
+- Feature names: `net kbd power sd exfat cjk`. `net`, `kbd` and `power` are
+  on only when a file requires them (or `-with` adds them); a file that
+  opens a port by a name only known at run time requires every port the
+  board has. `sd`, `exfat` (exFAT media) and `cjk` (the Chinese font) are
+  not capabilities: they are on by default on boards that have them.
+- `-with a,b` adds features. `-without a,b` removes them; a feature that a
+  file requires cannot be removed (error). `exfat` goes off with `sd`.
+- A required feature the board lacks is an error that names it, for example
+  `kbd` or `sd` on the `sticks3`.
+- `-o dir`: the build directory and where `sdkconfig.gogo` goes (default
+  `build-fw-<board>`). `-build` runs the printed command (from the gogo
+  repository root, with ESP-IDF exported, chapter 2).
+
+The tool owns the build directory. ESP-IDF would let an existing
+`<dir>/sdkconfig` override a changed `sdkconfig.gogo`, so if that file exists
+and any `CONFIG_GOGO_*` value in it differs from the new features, the tool
+deletes it and prints a line saying so. If nothing differs it is kept and the
+next build stays incremental. A lone `-` argument is an error.
+
 ## gogo config
 
 ```text
@@ -165,15 +198,17 @@ gogo config [-port P] stats
 Edits the configuration store on the board or in the local file. See
 chapter 11 for how the store is chosen, the key rules and the keys gogo
 uses. `scan` lists the 2.4 GHz networks the board sees; `stats` prints the
-board's network counters and free memory. Both need a board.
+board's network counters and free memory (on a firmware built without
+`net`, only the memory figures). Both need a board.
 
 ## Building the firmware
 
 The firmware is an ESP-IDF project in `platform/esp32s3`, built with
 `idf.py` (ESP-IDF v6.1.1). See chapter 2 for the commands and
 `platform/esp32s3/README.md` for build options (`GOGO_BOARD`,
-`GOGO_CONSOLE=0`, `CONFIG_GOGO_KBD=n`, `CONFIG_GOGO_BATTERY=n`) and
-hardware details.
+`GOGO_CONSOLE=0`, and the `CONFIG_GOGO_*` feature switches `NET`, `KBD`,
+`BATTERY`, `SD`, `FS_EXFAT`, `FONT_CJK`) and hardware details. To choose the
+switches from what your programs need, use `gogo firmware` (above).
 
 ## Running the book's examples
 

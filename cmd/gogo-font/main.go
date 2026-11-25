@@ -1,10 +1,11 @@
 // Command gogo-font converts a 12 px BDF bitmap font into the compact blob
 // platform/common/font.c reads.
 //
-//	gogo-font -o gogo12.font in.bdf
+//	gogo-font [-ascii] -o gogo12.font in.bdf
 //
 // It keeps printable ASCII (U+0020..U+007E) plus the GB 2312 characters the
-// BDF has glyphs for. Glyphs 6 px wide (DWIDTH 6) go in the half-width
+// BDF has glyphs for; with -ascii, printable ASCII only (the GOGO_FONT_CJK=n
+// firmware font). Glyphs 6 px wide (DWIDTH 6) go in the half-width
 // table, 12 px wide ones in the full-width table. The blob format is
 // documented in platform/common/font/README.md.
 package main
@@ -52,18 +53,19 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("gogo-font", flag.ContinueOnError)
 	out := fs.String("o", "", "output font blob (required)")
+	ascii := fs.Bool("ascii", false, "keep printable ASCII only (no GB 2312)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *out == "" || fs.NArg() != 1 {
-		return errors.New("usage: gogo-font -o gogo12.font in.bdf")
+		return errors.New("usage: gogo-font [-ascii] -o gogo12.font in.bdf")
 	}
 	in, err := os.Open(fs.Arg(0))
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	blob, st, err := convert(in)
+	blob, st, err := convert(in, *ascii)
 	if err != nil {
 		return fmt.Errorf("%s: %w", fs.Arg(0), err)
 	}
@@ -85,7 +87,7 @@ func gb2312Set() map[rune]bool {
 	return set
 }
 
-func convert(r io.Reader) ([]byte, stats, error) {
+func convert(r io.Reader, asciiOnly bool) ([]byte, stats, error) {
 	var st stats
 	gb := gb2312Set()
 	st.GBTotal = len(gb)
@@ -150,7 +152,7 @@ func convert(r io.Reader) ([]byte, stats, error) {
 					continue
 				}
 				cp := rune(enc)
-				if !(cp >= 0x20 && cp <= 0x7E) && !gb[cp] {
+				if !(cp >= 0x20 && cp <= 0x7E) && (asciiOnly || !gb[cp]) {
 					continue
 				}
 				if seen[uint32(cp)] {

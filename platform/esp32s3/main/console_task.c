@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "sdkconfig.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -41,9 +42,15 @@
 #define RENDER_CORE 0     /* the VM task is pinned to CPU1 */
 #define RENDER_STACK 4096
 
-/* platform/common/font/gogo12.font, embedded by main/CMakeLists.txt. */
+/* The blob main/CMakeLists.txt embeds for GOGO_FONT_CJK (the symbol is named
+ * after the file); font_init takes either, a glyph the blob lacks is a box. */
+#if CONFIG_GOGO_FONT_CJK
 extern const uint8_t font_blob_start[] asm("_binary_gogo12_font_start");
 extern const uint8_t font_blob_end[] asm("_binary_gogo12_font_end");
+#else
+extern const uint8_t font_blob_start[] asm("_binary_gogo12_ascii_font_start");
+extern const uint8_t font_blob_end[] asm("_binary_gogo12_ascii_font_end");
+#endif
 
 static Console con;        /* shared; guarded by lock */
 static Console snap;       /* render task only */

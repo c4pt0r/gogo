@@ -104,12 +104,18 @@ $(BUILD)/test_fs_host: platform/unix/test/test_fs_host.c vm/test/test_main.c pla
 # Console text grid + font lookup (platform/common), host build.
 CONSOLE_SRCS = platform/common/console.c platform/common/font.c
 
-test-console: $(BUILD)/test_console
+test-console: $(BUILD)/test_console $(BUILD)/test_console_ascii
 	$(BUILD)/test_console
+	$(BUILD)/test_console_ascii
 
 $(BUILD)/test_console: platform/common/test/test_console.c vm/test/test_main.c $(CONSOLE_SRCS) $(wildcard platform/common/*.h) platform/common/font/gogo12.font
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Iplatform/common -Ivm/test -o $@ platform/common/test/test_console.c vm/test/test_main.c $(CONSOLE_SRCS)
+
+# The same tests against the ASCII-only font (GOGO_FONT_CJK=n firmware).
+$(BUILD)/test_console_ascii: platform/common/test/test_console.c vm/test/test_main.c $(CONSOLE_SRCS) $(wildcard platform/common/*.h) platform/common/font/gogo12-ascii.font
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DFONT_ASCII -DFONT_PATH='"platform/common/font/gogo12-ascii.font"' -Iplatform/common -Ivm/test -o $@ platform/common/test/test_console.c vm/test/test_main.c $(CONSOLE_SRCS)
 
 # Render a text file through the console grid and font into a PPM:
 #   make console-ppm TEXT=platform/common/font/sample.txt OUT=build/sample.ppm

@@ -1,13 +1,15 @@
 /* vm/platform.h for the ESP32-S3 (FreeRTOS, USB-Serial/JTAG console). */
+#include "sdkconfig.h"
 #include "platform.h"
 #include "config.h"
 #include "port.h"
 #include "platform_esp.h"
 #include "console.h"
+#if CONFIG_GOGO_NET
 #include "net.h"
+#endif
 #include "input.h"
 #include "board.h"
-#include "sdkconfig.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -183,7 +185,10 @@ const InputHw *platform_input(void) { return &input_esp_hw; }
 
 const struct PortDriver *const *platform_port_drivers(void) {
     static const struct PortDriver *const list[] = {
-        &gpio_esp_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver,
+        &gpio_esp_driver,
+#if CONFIG_GOGO_NET
+        &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver,
+#endif
         &input_kbd_driver, &input_power_driver, NULL
     };
     return list;
@@ -217,14 +222,17 @@ void platform_code_free(void *p, size_t n) {
 
 /* The capabilities this build provides (vm/platform.h CAP_*). */
 uint32_t platform_caps(void) {
-    uint32_t c = CAP_NET;
+    uint32_t c = 0;
+#if CONFIG_GOGO_NET
+    c |= CAP_NET;
+#endif
 #if HAS_KBD && CONFIG_GOGO_KBD
     c |= CAP_KBD;
 #endif
 #if CONFIG_GOGO_BATTERY
     c |= CAP_POWER;
 #endif
-#if HAS_SD
+#if HAS_SD && CONFIG_GOGO_SD
     c |= CAP_SD;
 #endif
     return c;

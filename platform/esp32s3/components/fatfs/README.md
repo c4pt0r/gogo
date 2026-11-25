@@ -1,4 +1,4 @@
-# fatfs (vendored ESP-IDF component, exFAT on)
+# fatfs (vendored ESP-IDF component, exFAT switchable)
 
 A copy of ESP-IDF **v6.1.1** `components/fatfs` that overrides the IDF
 component of the same name (a project `components/` directory takes
@@ -10,10 +10,17 @@ Why: `/sd` (`main/fs_fat.c`, Cardputer ADV) must mount exFAT cards, and
 IDF's `src/ffconf.h` hard-codes `FF_FS_EXFAT 0` with no Kconfig option.
 Every other FatFs option still comes from Kconfig (`sdkconfig.cardputer`).
 
-The changes from IDF v6.1.1, both in `src/ffconf.h`:
+The changes from IDF v6.1.1, all in `src/ffconf.h`:
 
     -#define FF_FS_EXFAT		0
+    +#if defined(CONFIG_GOGO_FS_EXFAT)
     +#define FF_FS_EXFAT		1
+    +#else
+    +#define FF_FS_EXFAT		0
+    +#endif
+
+(`GOGO_FS_EXFAT`, `main/Kconfig.projbuild`, default y; `main/fs_fat.c` checks
+the two agree at compile time)
 
 and, because exFAT code uses `FF_USE_LABEL` in a C expression (not only in
 `#if`) and `CONFIG_FATFS_USE_LABEL` is undefined when the Kconfig option is
@@ -26,7 +33,7 @@ off (the IDF build fails with exFAT on otherwise):
     +#define FF_USE_LABEL	0
     +#endif
 
-On an IDF upgrade: copy the same files from the new IDF, reapply these two
+On an IDF upgrade: copy the same files from the new IDF, reapply these
 changes, and check `diff -r ~/esp/esp-idf/components/fatfs/src src` shows only
 them.
 The StickS3 build compiles this component too but links none of it

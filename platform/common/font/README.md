@@ -15,6 +15,15 @@ monospaced, `zh_hans` variant, release **2026.11.10**, SIL OFL 1.1 (`OFL.txt`).
 
       go run ./cmd/gogo-font -o platform/common/font/gogo12.font fusion-pixel-12px-monospaced-zh_hans.bdf
 
+The ASCII-only font for `GOGO_FONT_CJK=n` (`gogo12-ascii.font`, 95 half-width
+glyphs, 1536 bytes, same blob format) comes from the same BDF:
+
+      go run ./cmd/gogo-font -ascii -o platform/common/font/gogo12-ascii.font fusion-pixel-12px-monospaced-zh_hans.bdf
+
+`font_init` / `font_glyph` do not care which font they get; a code point it
+lacks (every CJK one) is drawn as the console's box. The host test
+`make test-console` runs against both blobs.
+
 Why Fusion Pixel: its GB 2312 coverage is 7378 of 7445 code points (99.10%;
 6727 of 6763 hanzi, 99.47%), over the 99% bar, so Ark Pixel was not needed.
 Missing: 36 rare hanzi and 31 math symbols (for example U+2264 and U+2260);

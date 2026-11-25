@@ -1,5 +1,6 @@
 /* gogo firmware entry: maps the image partition and runs the VM in a
  * FreeRTOS task pinned to CPU1. */
+#include "sdkconfig.h"
 #include "image.h"
 #include "platform.h"
 #include "actor.h"
@@ -8,7 +9,9 @@
 #include "config.h"
 #include "platform_esp.h"
 #include "board.h"
+#if CONFIG_GOGO_NET
 #include "net.h"
+#endif
 #include "vfs.h"
 #include "input.h"
 
@@ -35,12 +38,14 @@ static void vm_task(void *arg) {
     const uint32_t *words;
     uint32_t nwords;
     /* Wi-Fi (driver only, no esp_netif/lwIP) and gogo's net stack. */
+#if CONFIG_GOGO_NET
     wifi_esp_start();
     net_attach();
+#endif
     /* Storage: /flash (LittleFS on `gogofs`; formats on first boot) and
      * the B_FS builtin. Without /flash every fs path is NotMounted. */
     (void)fs_lfs_mount();
-#if HAS_SD
+#if HAS_SD && CONFIG_GOGO_SD
     /* /sd (FatFs on the microSD card): mounted by the first call. */
     (void)fs_fat_init();
     platform_esp_log("gogo: fs state %lu bytes", (unsigned long)(fs_lfs_state_bytes() + fs_fat_state_bytes()));
@@ -69,8 +74,10 @@ static void vm_task(void *arg) {
         platform_esp_say("gogo: out of memory");
         platform_esp_idle();
     }
+#if CONFIG_GOGO_NET
     wifi_esp_report_heap();
     platform_esp_log("gogo: net stack fixed state %lu bytes", (unsigned long)net_fixed_bytes());
+#endif
     rc = vm_run(&vm);
     console_esp_report();
     platform_esp_report_refusal();

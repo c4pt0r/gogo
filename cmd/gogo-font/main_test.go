@@ -30,7 +30,7 @@ func TestConvertTiny(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer in.Close()
-	blob, st, err := convert(in)
+	blob, st, err := convert(in, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestRejectsNot12px(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer in.Close()
-	if _, _, err := convert(in); err == nil || !strings.Contains(err.Error(), "12") {
+	if _, _, err := convert(in, false); err == nil || !strings.Contains(err.Error(), "12") {
 		t.Fatalf("want a 12 px error, got %v", err)
 	}
 }
@@ -90,7 +90,7 @@ FF
 ENDCHAR
 ENDFONT
 `
-	if _, _, err := convert(strings.NewReader(src)); err == nil {
+	if _, _, err := convert(strings.NewReader(src), false); err == nil {
 		t.Fatal("want error for a glyph wider than its cell")
 	}
 }
@@ -106,5 +106,24 @@ func TestRunWritesFile(t *testing.T) {
 	}
 	if len(b) != 16+4*4+12*2+18*2 {
 		t.Fatalf("file is %d bytes", len(b))
+	}
+}
+
+func TestConvertASCIIOnly(t *testing.T) {
+	in, err := os.Open("testdata/tiny.bdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	blob, st, err := convert(in, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// only A and B are kept; the GB 2312 glyphs U+3002 and U+4E2D are dropped
+	if st.Half != 2 || st.Wide != 0 {
+		t.Fatalf("got %d half %d wide, want 2 and 0", st.Half, st.Wide)
+	}
+	if want := 16 + 2*4 + 2*12; len(blob) != want {
+		t.Fatalf("blob is %d bytes, want %d", len(blob), want)
 	}
 }

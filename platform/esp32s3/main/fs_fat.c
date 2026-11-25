@@ -44,8 +44,9 @@
  * a valid FSINFO, or on an exFAT card, scans the FAT / allocation bitmap
  * and can take seconds.
  *
- * FAT12/16/32 and exFAT: FF_FS_EXFAT is 1 in the vendored fatfs component
- * (platform/esp32s3/components/fatfs, IDF hard-codes 0). exFAT adds a
+ * FAT12/16/32 and exFAT: FF_FS_EXFAT follows GOGO_FS_EXFAT (default y) in the
+ * vendored fatfs component (platform/esp32s3/components/fatfs, IDF hard-codes
+ * 0); with it off an exFAT card is the "no FAT or exFAT" path. exFAT adds a
  * directory-entry buffer on the stack next to the long name (LFN on stack)
  * and a few bytes to FATFS and FIL (both checked below).
  *
@@ -74,8 +75,8 @@
 #if FF_MAX_SS != 512 || FF_USE_DYN_BUFFER || !FF_FS_TINY || FF_USE_LFN != 2 || FF_MAX_LFN != 64 || FF_FS_LOCK
 #error "FatFs config: see sdkconfig.cardputer (512-byte sectors, static window, tiny, LFN on stack 64, no lock)"
 #endif
-#if !FF_FS_EXFAT
-#error "exFAT off: the vendored platform/esp32s3/components/fatfs (FF_FS_EXFAT 1) is not the one being built"
+#if FF_FS_EXFAT != !!CONFIG_GOGO_FS_EXFAT
+#error "FF_FS_EXFAT does not follow GOGO_FS_EXFAT: the vendored platform/esp32s3/components/fatfs is not the one being built"
 #endif
 
 #define SD_HOST   SPI2_HOST

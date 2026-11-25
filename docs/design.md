@@ -227,6 +227,16 @@ func MemUsed() int               // 已加载模块的代码字节数（计入 c
 
 **这一版没有**：权限（模块与主程序权利相同）、签名、写 flash 的模块、`sys.Has`、原地换代码、跨模块函数调用或共享类型，见 [hotload-followups.md](hotload-followups.md)。`examples/hotload` 是主机上的黄金示例，`examples/hotload_net` 是板子上经 HTTP 取模块并升级的演示。
 
+### 5.4.5 可裁剪固件
+
+固件里不是每样东西都有人要：只做离线显示的程序不需要 Wi-Fi 和网络栈，没有 SD 卡的板子不需要 FatFs，纯英文界面不需要 160 KB 的中文字库。规格见[可裁剪固件设计](superpowers/specs/2026-11-25-gogo-optional-firmware-design.md)，遗留事项与尺寸表见 [optional-firmware-followups.md](optional-firmware-followups.md)。
+
+- **编译开关**（Kconfig，`main/Kconfig.projbuild`，默认全开）：`GOGO_NET`（Wi-Fi 与网络栈）、`GOGO_SD`（Cardputer 的 `/sd`）、`GOGO_FS_EXFAT`（依赖 `GOGO_SD`）、`GOGO_FONT_CJK`（关闭后内嵌 1.5 KB 的 ASCII 字库，中文画成方框）、`GOGO_KBD`、`GOGO_BATTERY`。关掉的功能表现得像板子上没有这块硬件：对应端口 `port.Open` 返回 `ok=false`，`gogo config scan` 等回"no network in this firmware"。
+- **能力位**：`platform_caps()` 返回这份固件真正有的 `CAP_NET` / `CAP_KBD` / `CAP_POWER` / `CAP_SD`。镜像和热加载模块的 `requires` 字写明需要哪些位；缺能力的镜像开机被拒绝（`gogo: image needs ...; firmware lacks ...`），`code.Load` 返回 `Unsupported`。
+- **`gogo firmware`**：`gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with 列表] [-without 列表] 文件...` 读取镜像和模块的 `requires`，写出 `sdkconfig.gogo` 覆盖文件，打印（`-build` 时直接执行）对应的 `idf.py` 命令。需要的功能不能被去掉，板子没有的功能是错误。
+- **尺寸亮点**（`gogo.bin`，ESP-IDF 6.1.1）：关 `GOGO_NET` StickS3 883728 -> 460352 B、静态 DIRAM 约 -33 KB；关 `GOGO_FONT_CJK` 约 -161 KB；Cardputer 关 `GOGO_SD` -42.6 KB；全部可选项关闭 StickS3 298704 B、Cardputer 276160 B（约 -66% / -70%）。全局瘦身（日志级别、`CHECKS_SILENT`、关 WPA3）只测量未采用，见 `platform/esp32s3/README.md`。
+- 真机验证已通过（StickS3：`GOGO_NET=n` 固件刷入后，`netdemo` 被拒绝、`fsdemo` 正常运行，启动时空闲内存 +64 KB），结果见 followups 文件。`gogo firmware` 管理自己的构建目录：已有的 `sdkconfig` 与新的开关不一致时会删除它。
+
 ### 5.5 值表示与内存
 
 - **统一的 32 位标记字**（宿主和 MCU 相同）。小整数直接放在字里（约 30 位，`int` 和 `int64` 都是），超出范围的值自动装箱；`int64` 放进 `any` 时总是装箱（编译器按静态类型选 `*64` 操作码，并在转换处插入 `BOX64`），这样类型 switch 仍能区分 `int` 与 `int64`；其余复合值是指向 actor 堆的引用。
@@ -472,8 +482,9 @@ gogo monitor [-port P] [-t 秒] [-until 文本] [-reset]
 6. **存储**（已完成）：`gogo/fs`（`/flash` 上 LittleFS、`/sd` 上 FAT / exFAT）、`gogo/kv`、`gogo/ringlog`、镜像 v6，StickS3 与 Cardputer ADV 两块板子。详见 §5.4.2 与 [存储设计](superpowers/specs/2026-11-24-gogo-storage-design.md)，遗留事项见 [storage-followups.md](storage-followups.md)。
 7. **输入**（已完成，2026-11-24 两块板真机验证通过）：`gogo/kbd` 与 `gogo/power` 端口、`input/` 公共代码、镜像 v8、unix 模拟、Cardputer ADV 键盘与电池、StickS3 电池。详见 §5.4.3 与 [input-followups.md](input-followups.md)。
 8. **热加载**（已完成；StickS3 真机验证通过，PSRAM 与无 PSRAM 两种构建都跑过；Cardputer ADV 真机运行推迟）：镜像 v9（`requires` 与导出表）、固件能力位、统一的模块表（开机镜像是 0 号模块）与带模块标记的项、`gogo/code`、对称的跨模块规则（`BadMsg`）、`supervisor.SuperviseModule` / `Upgrade`、StickS3 的 PSRAM 代码内存、`examples/hotload` 与 `examples/hotload_net`。VM 核心 36095 B（基线 30784 B，+5311 B）。详见 §5.4.4 与 [热加载设计](superpowers/specs/2026-11-24-gogo-hotload-design.md)，遗留事项见 [hotload-followups.md](hotload-followups.md)。
-9. **接下来**（用户定的顺序）：可裁剪固件（编译开关、能力位、`gogo firmware`）→ 输入第二期（六轴传感器、红外，统一的 Chunk / Out / Done 数据流）→ 录音（存 SD 卡）→ 蓝牙（手机 App 连接、手机配网，位置待定）→ HTTPS（含大文件流式上传，见 [m5-followups.md](m5-followups.md) 的 TLS 一项）。
-10. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
+9. **可裁剪固件**（已完成；2026-11-25 StickS3 真机验证通过：不带网络的固件拒绝需要网络的镜像，开机可用 RAM 多 64 KB）：Kconfig 开关 `GOGO_NET` / `GOGO_SD` / `GOGO_FS_EXFAT` / `GOGO_FONT_CJK` / `GOGO_KBD` / `GOGO_BATTERY`、能力位、`gogo firmware`、尺寸表。详见 §5.4.5 与 [optional-firmware-followups.md](optional-firmware-followups.md)。
+10. **接下来**（用户定的顺序）：输入第二期（六轴传感器、红外，统一的 Chunk / Out / Done 数据流）→ 录音（存 SD 卡）→ 蓝牙（手机 App 连接、手机配网，位置待定）→ HTTPS（含大文件流式上传，见 [m5-followups.md](m5-followups.md) 的 TLS 一项）。
+11. **平台焦点：ESP32 + RP2040**。原来的"M6 Pi + Whisplay、Linux 真实外设平台"已由用户取消（"linux 太简单了"）。RP2040 用哪块板子、排在里程碑的哪个位置，尚未决定。
 
 ## 6. 交给实现者决定的
 

@@ -18,4 +18,45 @@ menu "gogo"
             ok=false. The StickS3 still uses I2C for the PM1 LCD rail when
             the console is on.
 
+    config GOGO_NET
+        bool "Network (Wi-Fi + net stack)"
+        default y
+        help
+            Build the Wi-Fi station driver and gogo's net stack (netif, udp,
+            tcp, tcp_listen ports). When off, the capability "net" is absent
+            (an image that needs it is refused at boot), port.Open of those
+            ports returns ok=false, net.Subscribe returns false, and
+            `gogo config scan` answers "no network in this firmware" and `stats`
+            prints only the memory figures.
+            esp_wifi, wpa_supplicant, libnet80211, libpp and libphy are not linked.
+
+    config GOGO_SD
+        bool "microSD card (/sd on FatFs)"
+        default y
+        help
+            Build fs_fat.c (the /sd backend on FatFs) and the SD driver
+            (Cardputer ADV; no effect on the StickS3, which has no slot).
+            When off, /sd is not registered (every path is NotMounted),
+            CAP_SD is absent, and FatFs, sdmmc and sdspi are not linked.
+            The SD pins (G12, G14, G39, G40) stay reserved: the card slot
+            is still wired to them, so the gpio port keeps refusing them.
+
+    config GOGO_FS_EXFAT
+        bool "exFAT on the SD card"
+        depends on GOGO_SD
+        default y
+        help
+            Compile FatFs with exFAT (FF_FS_EXFAT 1, components/fatfs/src
+            /ffconf.h). When off, only FAT12/16/32 mount; an exFAT card
+            fails with the existing "no FAT or exFAT file system" message
+            and /sd stays NotMounted.
+
+    config GOGO_FONT_CJK
+        bool "Chinese console font (GB 2312)"
+        default y
+        help
+            Embed gogo12.font (printable ASCII plus GB 2312, 162958 bytes).
+            When off, embed gogo12-ascii.font (printable ASCII only, 1536
+            bytes) and every other character shows as the console's box.
+
 endmenu

@@ -18,9 +18,12 @@
  * it out of program output, which may be mid-line. The Wi-Fi password is
  * never sent back: get and list show "(set)". Setting or removing a
  * wifi.* key makes the station reconnect with the new settings. */
+#include "sdkconfig.h"
 #include "platform.h"
 #include "platform_esp.h"
+#if CONFIG_GOGO_NET
 #include "net.h"
+#endif
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -172,7 +175,9 @@ static void cmd_set(const char *key, const char *value, size_t vn) {
     if (e == ESP_OK) e = nvs_commit(cfg_nvs);
     if (e != ESP_OK) { reply_s("err", esp_err_to_name(e)); return; }
     reply_s("ok", NULL);
+#if CONFIG_GOGO_NET
     if (strncmp(key, "wifi.", 5) == 0) wifi_esp_reconfigure();
+#endif
 }
 
 static void cmd_rm(const char *key) {
@@ -181,13 +186,16 @@ static void cmd_rm(const char *key) {
     if (e == ESP_OK) e = nvs_commit(cfg_nvs);
     if (e != ESP_OK) { reply_s("err", esp_err_to_name(e)); return; }
     reply_s("ok", NULL);
+#if CONFIG_GOGO_NET
     if (strncmp(key, "wifi.", 5) == 0) wifi_esp_reconfigure();
+#endif
 }
 
 /* `gogo config stats`: the net stack's counters and the memory figures
  * (read from this task while the VM updates them: a snapshot that may be
  * a frame behind). */
-static void cmd_stats(void) {
+#if CONFIG_GOGO_NET
+static void stats_net(void) {
     static const char *const names[] = {
         "rx_frames", "rx_busy", "rx_oversize", "eth_bad", "eth_filtered", "eth_unknown", "arp_bad",
         "arp_ignored", "ip_bad", "ip_frag", "ip_filtered", "ip_proto", "icmp_bad", "icmp_echo", "udp_bad",
@@ -201,6 +209,14 @@ static void cmd_stats(void) {
         int n = snprintf(line, sizeof line, "%s=%lu", names[i], (unsigned long)c[i]);
         reply("kv", line, (size_t)n);
     }
+}
+#endif
+
+static void cmd_stats(void) {
+#if CONFIG_GOGO_NET
+    stats_net();
+#endif
+    char line[48];
     /* Internal RAM: free now, lowest since boot; the VM arena's use. */
     int n = snprintf(line, sizeof line, "heap_free=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     reply("kv", line, (size_t)n);
@@ -212,9 +228,13 @@ static void cmd_stats(void) {
 }
 
 static void cmd_scan(void) {
+#if CONFIG_GOGO_NET
     int n = wifi_esp_scan(scratch, 80, reply);
     if (n < 0) reply_s("err", "scan failed (wifi busy connecting; try again)");
     else reply_s("ok", NULL);
+#else
+    reply_s("err", "no network in this firmware");
+#endif
 }
 
 /* line: the frame after \x02, without the \n. */

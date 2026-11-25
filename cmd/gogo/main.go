@@ -5,6 +5,7 @@
 //	gogo dis <file.gogo>
 //	gogo flash [-port P] [-esptool path] app.gogo
 //	gogo monitor [-port P] [-t seconds] [-until text] [-reset]
+//	gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
 //	gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
 //
 // `gogo run` builds a directory to a temporary image first, then runs the VM
@@ -33,7 +34,7 @@ import (
 	"gogo/compiler"
 )
 
-const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats"
+const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -214,6 +215,8 @@ func run(args []string) error {
 		return monitorCmd(args[1:])
 	case "config":
 		return configCmd(args[1:], os.Stdout)
+	case "firmware":
+		return firmwareCmd(args[1:], os.Stdout, runIdfInRepo)
 	}
 	return errors.New(usage)
 }
