@@ -49,11 +49,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lib test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: lib example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-fs-host test-console test-embed check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
+test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-fs-host test-console test-embed example-embed check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
 
 vm: $(BUILD)/gogovm
 
@@ -251,6 +251,19 @@ $(BUILD)/lib/$(subst /,_,$(patsubst runtime/%.c,%,$(1))).o: $(1) $(LIB_HDRS)
 	$(CC) $(LIB_CFLAGS) -c $(1) -o $$@
 endef
 $(foreach f,$(LIB_SRCS),$(eval $(call LIB_OBJ_RULE,$(f))))
+
+# examples/embed-c: host programs on libgogo.a (examples/embed-c/test.sh
+# runs them on example images and compares their output).
+EXAMPLE_EMBED_PROGS = main post port
+EXAMPLE_EMBED_BINS  = $(addprefix $(BUILD)/embed-c/,$(EXAMPLE_EMBED_PROGS))
+
+$(BUILD)/embed-c/%: examples/embed-c/%.c runtime/include/gogo.h $(BUILD)/libgogo.a
+	@mkdir -p $(BUILD)/embed-c
+	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iruntime/include -o $@ $< $(BUILD)/libgogo.a -pthread
+
+example-embed: $(EXAMPLE_EMBED_BINS)
+	go build -o $(BUILD)/gogo ./cmd/gogo
+	examples/embed-c/test.sh $(BUILD)
 
 # Console text grid + font lookup (runtime/console), host build.
 CONSOLE_SRCS = runtime/console/console.c runtime/console/font.c
