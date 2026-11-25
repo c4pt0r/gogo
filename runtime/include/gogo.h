@@ -38,7 +38,8 @@ typedef struct gogo_host {
     /* Idle wait (the VM's own run loop only): returns after timeout_ms
      * (UINT32_MAX = none) or earlier once woken. Latched: a wake since the
      * previous wait returned makes it return at once. Spurious early
-     * returns are fine. */
+     * returns are fine. NULL: the host steps the VM itself
+     * between its own waits (the VM's run loop refuses to start). */
     void     (*wait)(void *ctx, uint32_t timeout_ms);
     /* Wall clock (an RTC), Unix ms, 0 = unknown. NULL: the VM keeps its own
      * offset clock, unknown until set. set returns 1, or 0 to refuse;

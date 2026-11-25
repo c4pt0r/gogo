@@ -139,8 +139,8 @@ void actor_uncharge(Actor *a, uint32_t words);
  * peers' entries naming a and their charges (no notifications). */
 void actor_extra_free(Vm *vm, Actor *a);
 
-/* Emergency reserve: vm_run grabs GOGO_RESERVE_BYTES at start (false if it
- * cannot) and releases it when it returns. Exit-path allocations use
+/* Emergency reserve: vm_start grabs GOGO_RESERVE_BYTES (false if it
+ * cannot) and vm_stop releases it. Exit-path allocations use
  * signal_alloc: if the allocator fails, the reserve is released and the
  * allocation retried once; the reserve is re-acquired after the exit (or
  * mark) completes, when memory is available again. */

@@ -73,7 +73,7 @@ size_t vm_caps_explain(char *buf, uint32_t requires, uint32_t missing);
 
 /* ---- wrappers (host.c): the only callers of the host's hooks ---- */
 
-/* Milliseconds since the VM's time base (vm->t0: vm_run's start). */
+/* Milliseconds since the VM's time base (vm->t0: set by vm_start). */
 uint64_t vm_now(const struct Vm *vm);
 /* host->write: stream 1 program output, 2 diagnostics. */
 void vm_out(const struct Vm *vm, int stream, const char *s, size_t n);

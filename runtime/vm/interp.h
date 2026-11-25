@@ -28,11 +28,51 @@ uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool
  * HEAP_MAX_WORDS). False if opts is not an actor.Options struct. */
 bool vm_spawn_opt_words(const Vm *vm, const Actor *a, term opts, uint16_t *out);
 
+/* Running a program. A host either calls vm_run, or drives the scheduler
+ * itself: vm_start once, then vm_step until it returns VM_DONE (waiting
+ * between steps while it returns VM_IDLE), then vm_stop. All on the
+ * thread that owns the Vm. */
+
+/* vm_step's results. */
+enum { VM_RUNNABLE, VM_IDLE, VM_DONE };
+/* Vm.run_state: before vm_start, between vm_start and vm_stop, after. */
+enum { VM_ST_NEW, VM_ST_RUN, VM_ST_DONE };
+
 /* Grabs the emergency reserve, starts module 0's "main" export the way
- * code.Spawn starts any entry (module_spawn) and runs the scheduler until
- * the run queue is empty. Returns 0 then; 1 if module 0 has no "main"
- * export ("gogo: image has no main" on stderr), or the reserve or the main
- * actor cannot be allocated. */
+ * code.Spawn starts any entry (module_spawn), sets the time base (vm_now
+ * restarts at 0) and empties the event ring. Returns 0; 1 if module 0 has
+ * no "main" export ("gogo: image has no main" on stderr), the reserve or
+ * the main actor cannot be allocated; 1 without a message if the Vm has
+ * been started before (a Vm runs once). */
+int vm_start(Vm *vm);
+
+/* Runs scheduler passes: each delivers queued events and due source work,
+ * fires due timers and runs one time slice of the next runnable actor.
+ * budget: passes to run, 0 = until VM_IDLE or VM_DONE. Returns
+ *  VM_RUNNABLE: the budget ran out (actors may be runnable or work due);
+ *  VM_IDLE:     nothing is runnable, no event is queued, no source and no
+ *               timer is due: wait until vm_next_deadline or a host wake;
+ *  VM_DONE:     no actor is runnable, no timer is pending and no port or
+ *               source is live (every actor exited or is blocked for
+ *               good), or the Vm is not started. Call vm_stop. */
+int vm_step(Vm *vm, uint32_t budget);
+
+/* The earliest pending timer or port/source deadline, as an absolute
+ * vm_now value (the Vm's epoch; vm_host_ms converts it to the host's
+ * now_ms epoch). False if there is none: only a wake can make work. */
+bool vm_next_deadline(const Vm *vm, uint64_t *abs_vm_ms);
+
+/* A vm_now value as a host->now_ms value. */
+static inline uint64_t vm_host_ms(const Vm *vm, uint64_t vm_ms) { return vm_ms + vm->t0; }
+
+/* Closes every open port (output drivers always get close) and releases
+ * the reserve; the Vm cannot be started again. Safe to repeat. */
+void vm_stop(Vm *vm);
+
+/* vm_start, then vm_step(vm, 0), waiting in host->wait while it returns
+ * VM_IDLE, until VM_DONE; then vm_stop. Returns 0 then; 1 if vm_start
+ * fails, or at once if the host has no wait hook ("gogo: host has no
+ * wait" on stderr: such a host drives vm_step itself). */
 int vm_run(Vm *vm);
 
 #endif

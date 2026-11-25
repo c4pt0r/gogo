@@ -1269,24 +1269,23 @@ crash:
 #define write_err_lit(s) vm_write_err(vm, (s), sizeof(s) - 1u)
 
 /* Scheduler hooks into the port layer.
- *  sched_drain:         delivers the event ring and any due trailing
- *                       debounce values and drains the extra source (net
- *                       RX/link slots, port_add_source); run at the top of
- *                       every scheduler pass. Reads the clock only when
- *                       there is something to do (port_work_pending).
- *  sched_any_live:      true while some open port could still produce
- *                       events; the VM does not exit while it holds.
- *  sched_next_deadline: earliest pending debounce deadline, if any, as an
- *                       absolute vm_now value; folded into the idle
- *                       wait timeout. A deadline already due is serviced by
- *                       the next sched_drain. */
+ *  sched_drain:    delivers the event ring and any due trailing debounce
+ *                  values and drains the extra sources (net RX/link slots,
+ *                  port_add_source); run at the top of every scheduler
+ *                  pass. Reads the clock only when there is something to
+ *                  do (port_work_pending).
+ *  sched_any_live: true while some open port could still produce events;
+ *                  the VM does not finish while it holds.
+ * port_next_deadline (the earliest pending debounce or source deadline)
+ * is folded into vm_next_deadline; a deadline already due is serviced by
+ * the next sched_drain. */
 static void sched_drain(Vm *vm) {
     if (port_work_pending(vm)) port_drain(vm, vm_now(vm));
 }
 static bool sched_any_live(Vm *vm) { return port_any_live(vm); }
-static bool sched_next_deadline(Vm *vm, uint64_t *when) { return port_next_deadline(vm, when); }
 
-int vm_run(Vm *vm) {
+int vm_start(Vm *vm) {
+    if (vm->run_state != VM_ST_NEW) return 1;   /* a Vm runs once */
     if (!vm_reserve_init(vm)) {
         write_err_lit("gogo: cannot reserve emergency memory\n");
         return 1;
@@ -1300,59 +1299,99 @@ int vm_run(Vm *vm) {
         else write_err_lit("gogo: cannot start main actor\n");
         return 1;
     }
-    Actor *a;
     /* time 0 for Now() and timers (the wall clock does not move) */
     vm->t0 += vm_now(vm);
     evq_reset(vm);
+    vm->run_state = VM_ST_RUN;
+    return 0;
+}
 
-    for (;;) {
-        sched_drain(vm);
-        /* Due timers fire between time slices too, so a busy actor cannot
-         * hold them back. The clock is read only when a timer is pending
-         * (here) or when the loop is about to wait (below). */
-        if (vm->ntimers) timer_fire_due(vm, vm_now(vm));
-        a = runq_pop(vm);
-        if (!a) {
-            /* Nothing runnable: wait for the next timer or port event. Stop
-             * only when no timer is pending and no input source is live
-             * (every actor exited or blocked forever). */
-            uint64_t next, pn, now;
-            bool have = timer_next(vm, &next);
-            if (sched_next_deadline(vm, &pn) && (!have || pn < next)) { next = pn; have = true; }
-            if (!have && !sched_any_live(vm)) break;
-            /* port_drain stops after GOGO_EVQ_CAP events: more are waiting;
-             * a source whose drain left work behind (a sliced TLS handshake
-             * step) drains again now, not at the next unrelated wakeup.
-             * Not port_work_pending: a held debounce value is due only at
-             * its deadline, which is in next (no spinning until then). */
-            if (port_due_now(vm)) continue;
-            /* Gap between sched_drain (top of pass) and vm_wait: an
-             * event pushed here is not lost, because producers wake the
-             * host after evq_push and host->wait returns
-             * immediately for any notify latched since its last return. */
-            if (!have) {
-                vm_wait(vm, UINT32_MAX);
-            } else {
-                now = vm_now(vm);
-                if (next > now) vm_wait(vm, next - now > UINT32_MAX - 1u ? UINT32_MAX - 1u : (uint32_t)(next - now));
+bool vm_next_deadline(const Vm *vm, uint64_t *abs_vm_ms) {
+    uint64_t next, pn;
+    bool have = timer_next(vm, &next);
+    if (port_next_deadline(vm, &pn) && (!have || pn < next)) { next = pn; have = true; }
+    if (have) *abs_vm_ms = next;
+    return have;
+}
+
+int vm_step(Vm *vm, uint32_t budget) {
+    if (vm->run_state != VM_ST_RUN) return VM_DONE;
+    for (bool spent = false;;) {
+        /* Once the budget is spent, nothing more runs: the last pass only
+         * classifies what is left (runnable, due, idle or done). */
+        Actor *a = NULL;
+        if (!spent) {
+            sched_drain(vm);
+            /* Due timers fire between time slices too, so a busy actor
+             * cannot hold them back. The clock is read only when a timer
+             * is pending (here) or when the scheduler is about to go idle
+             * (below). */
+            if (vm->ntimers) timer_fire_due(vm, vm_now(vm));
+            a = runq_pop(vm);
+        } else if (vm->runq_head) {
+            return VM_RUNNABLE;
+        }
+        if (a) {
+            switch (interp_run(vm, a)) {
+            case RUN_YIELD:
+                runq_push(vm, a);
+                break;
+            case RUN_WAIT:
+                /* Not requeued: a message, a timer or an exit mark pushes it
+                 * back exactly once (only a waiting actor is pushed). */
+                a->state = A_WAITING;
+                break;
+            default:
+                /* RUN_EXIT: actor_exit has already freed it. */
+                break;
             }
-            continue;
+        } else {
+            /* Nothing runnable. Done only when no timer is pending and no
+             * input source is live (every actor exited or blocked forever). */
+            uint64_t next;
+            bool have = vm_next_deadline(vm, &next);
+            if (!have && !sched_any_live(vm)) {
+                vm->run_state = VM_ST_DONE;
+                return VM_DONE;
+            }
+            /* Still work now, not idle: port_drain stops after
+             * GOGO_EVQ_CAP events (more are waiting); a source whose drain
+             * left work behind (a sliced TLS handshake step) drains again
+             * now, not at the next unrelated wakeup; a timer is due. Not
+             * port_work_pending: a held debounce value is due only at its
+             * deadline, which is in next (no spinning until then). */
+            if (!port_due_now(vm) && (!have || next > vm_now(vm))) return VM_IDLE;
+            if (spent) return VM_RUNNABLE;
         }
-        switch (interp_run(vm, a)) {
-        case RUN_YIELD:
-            runq_push(vm, a);
-            break;
-        case RUN_WAIT:
-            /* Not requeued: a message, a timer or an exit mark pushes it
-             * back exactly once (only a waiting actor is pushed). */
-            a->state = A_WAITING;
-            break;
-        default:
-            /* RUN_EXIT: actor_exit has already freed it. */
-            break;
-        }
+        spent = budget && --budget == 0;
     }
+}
+
+void vm_stop(Vm *vm) {
     port_close_all(vm);              /* output drivers always get close */
     vm_reserve_release(vm);
+    vm->run_state = VM_ST_DONE;
+}
+
+int vm_run(Vm *vm) {
+    if (!vm->host->wait) {
+        write_err_lit("gogo: host has no wait\n");
+        return 1;
+    }
+    if (vm_start(vm)) return 1;
+    while (vm_step(vm, 0) != VM_DONE) {
+        /* Idle: wait for the next deadline or a port event. An event pushed
+         * after vm_step's last check is not lost: producers wake the host
+         * after evq_push, and host->wait returns at once for any wake
+         * latched since its last return. */
+        uint64_t next, now;
+        if (!vm_next_deadline(vm, &next)) {
+            vm_wait(vm, UINT32_MAX);
+        } else {
+            now = vm_now(vm);
+            if (next > now) vm_wait(vm, next - now > UINT32_MAX - 1u ? UINT32_MAX - 1u : (uint32_t)(next - now));
+        }
+    }
+    vm_stop(vm);
     return 0;
 }
