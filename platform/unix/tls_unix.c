@@ -115,20 +115,24 @@ static unsigned char *read_file(const char *path, size_t *len) {
  * is trusted only if it is a bundle root (subject and key). The ESP
  * fallback (the top certificate signed by a bundle root's key, IDF's
  * esp_crt_verify_callback) is not here, so such a chain fails. For the
- * tests of that rule. state: the bundle, the size first. */
+ * tests of that rule.
+ *
+ * A connection's verify state (tls_verify_setup's *state) records its own
+ * mode first, so tls_verify_free frees it the way it was made whatever the
+ * environment says by then, and connections on several threads share no
+ * flag: a Bundle (the size, then the bundle) or a CaState (a CA chain). */
+enum { VS_CHAIN = 0, VS_BUNDLE = 1 };
 typedef struct Bundle {
+    int mode;                /* VS_BUNDLE */
     size_t size;
     uint8_t data[];
 } Bundle;
+typedef struct CaState {
+    int mode;                /* VS_CHAIN */
+    mbedtls_x509_crt crt;
+} CaState;
 
 static const mbedtls_x509_crt dummy_ca;   /* as IDF's s_dummy_crt: never a parent */
-/* Whether tls_verify_setup gives a connection a Bundle (else a CA chain)
- * as its state: read from the environment each time, so connections on
- * several threads share no flag. */
-static int use_bundle(void) {
-    const char *bf = getenv("GOGO_TLS_BUNDLE_FILE");
-    return bf && *bf;
-}
 
 static int bundle_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
     (void)depth;
@@ -149,6 +153,7 @@ static int bundle_setup(struct mbedtls_ssl_config *conf, void **state, const cha
         free(raw);
         return -1;
     }
+    b->mode = VS_BUNDLE;
     b->size = len - 1u;
     memcpy(b->data, raw, len - 1u);
     free(raw);
@@ -160,7 +165,8 @@ static int bundle_setup(struct mbedtls_ssl_config *conf, void **state, const cha
 
 static int tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
     static const char *const bundles[] = { "/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt" };
-    if (use_bundle()) return bundle_setup(conf, state, getenv("GOGO_TLS_BUNDLE_FILE"));
+    const char *bf = getenv("GOGO_TLS_BUNDLE_FILE");
+    if (bf && *bf) return bundle_setup(conf, state, bf);
     const char *env = getenv("GOGO_TLS_CA_FILE");
     unsigned char *pem = NULL;
     size_t len = 0;
@@ -170,26 +176,26 @@ static int tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
         for (size_t i = 0; !pem && i < sizeof bundles / sizeof bundles[0]; i++) pem = read_file(bundles[i], &len);
     }
     if (!pem) return -1;
-    mbedtls_x509_crt *ca = tls_alloc(sizeof *ca);
-    if (!ca) {
+    CaState *s = tls_alloc(sizeof *s);    /* zeroed: mode VS_CHAIN */
+    if (!s) {
         free(pem);
         return -1;
     }
-    mbedtls_x509_crt_init(ca);
-    int r = mbedtls_x509_crt_parse(ca, pem, len);   /* > 0: some certificates skipped */
+    mbedtls_x509_crt_init(&s->crt);
+    int r = mbedtls_x509_crt_parse(&s->crt, pem, len);   /* > 0: some certificates skipped */
     free(pem);
-    if (r < 0 || !ca->raw.p) {
-        mbedtls_x509_crt_free(ca);
-        tls_free(ca);
+    if (r < 0 || !s->crt.raw.p) {
+        mbedtls_x509_crt_free(&s->crt);
+        tls_free(s);
         return -1;
     }
-    mbedtls_ssl_conf_ca_chain(conf, ca, NULL);
-    *state = ca;
+    mbedtls_ssl_conf_ca_chain(conf, &s->crt, NULL);
+    *state = s;
     return 0;
 }
 
 static void tls_verify_free(void *state) {
-    if (!use_bundle()) mbedtls_x509_crt_free(state);
+    if (*(const int *)state == VS_CHAIN) mbedtls_x509_crt_free(&((CaState *)state)->crt);
     tls_free(state);
 }
 
