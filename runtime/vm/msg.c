@@ -214,38 +214,38 @@ static bool copy_dag(Buf *b, uint32_t *src_mem, term t, term *root, uint32_t ski
 
 /* Calls fn on every handle term of a message: the root and the term words
  * of its objects in data[skip, words). */
-static void each_handle(const uint32_t *data, uint32_t skip, uint32_t words, term root,
-                        void (*fn)(term, void *), void *ctx) {
-    if (term_is_handle(root)) fn(root, ctx);
+static void each_handle(Vm *vm, const uint32_t *data, uint32_t skip, uint32_t words, term root,
+                        void (*fn)(Vm *, term, void *), void *ctx) {
+    if (term_is_handle(root)) fn(vm, root, ctx);
     for (uint32_t scan = skip; scan < words; scan += hdr_words(data[scan])) {
         uint32_t first, end;
         heap_obj_terms(data + scan, &first, &end);
         for (uint32_t i = scan + first; i < scan + end; i++) {
-            if (term_is_handle(data[i])) fn(data[i], ctx);
+            if (term_is_handle(data[i])) fn(vm, data[i], ctx);
         }
     }
 }
 
 static uint32_t msg_skip(const Msg *m) { return (m->flags & MSG_REPLY) ? MSG_REPLY_HDR : 0u; }
 
-static void ref_fn(term h, void *ctx) {
-    bytes_msg_ref(h);
+static void ref_fn(Vm *vm, term h, void *ctx) {
+    bytes_msg_ref(vm, h);
     *(bool *)ctx = true;
 }
 
-static void unref_fn(term h, void *ctx) {
+static void unref_fn(Vm *vm, term h, void *ctx) {
     (void)ctx;
-    bytes_msg_unref(h);
+    bytes_msg_unref(vm, h);
 }
 
-static void charge_fn(term h, void *ctx) { bytes_set_add(ctx, h); }
+static void charge_fn(Vm *vm, term h, void *ctx) { bytes_set_add(vm, ctx, h); }
 
-uint32_t msg_charge_words(const Msg *m) {
+uint32_t msg_charge_words(Vm *vm, const Msg *m) {
     uint32_t w = msg_footprint_words(m->words);
     if (m->flags & MSG_HANDLES) {
         BytesSet s;
         bytes_set_init(&s);
-        each_handle(m->data, msg_skip(m), m->words, m->root, charge_fn, &s);
+        each_handle(vm, m->data, msg_skip(m), m->words, m->root, charge_fn, &s);
         w += bytes_words(s.bytes);
     }
     return w;
@@ -258,20 +258,20 @@ uint32_t msg_footprint_words(uint16_t words) {
 /* msg_build with `skip` reserved words (zeroed) before the objects: sizes
  * the copy first (checking the module rules), allocates the message once,
  * then copies into it. */
-static Msg *build_skip(const Vm *vm, Actor *src, term t, uint32_t skip, uint32_t dst_mod,
+static Msg *build_skip(Vm *vm, Actor *src, term t, uint32_t skip, uint32_t dst_mod,
                        uint32_t *why) {
     Xm x = { vm, module_tag(vm, dst_mod), 0, 0 };
     uint32_t n = msg_size(src->mem, t, &x);
     if (why) *why = x.why ? x.why : R_OUT_OF_MEMORY;
     if (x.why || n == UINT32_MAX || n > MSG_MAX_WORDS - skip) return NULL;
     uint32_t words = skip + n;
-    Msg *m = va_alloc(msg_alloc_bytes((uint16_t)words));
+    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
     if (!m) return NULL;
     memset(m->data, 0, (size_t)skip * 4u);
     Buf b = { m->data, words, skip };
     term root;
     if (!copy_dag(&b, src->mem, t, &root, skip)) {   /* cannot happen: sized by walk */
-        va_free(m, msg_alloc_bytes((uint16_t)words));
+        va_free(vm, m, msg_alloc_bytes((uint16_t)words));
         return NULL;
     }
     m->next = NULL;
@@ -279,25 +279,25 @@ static Msg *build_skip(const Vm *vm, Actor *src, term t, uint32_t skip, uint32_t
     m->flags = 0;
     m->root = x.words ? xm_copy(&b, &x, skip, root) : root;
     bool any = false;
-    each_handle(m->data, skip, words, m->root, ref_fn, &any);
+    each_handle(vm, m->data, skip, words, m->root, ref_fn, &any);
     if (any) m->flags |= MSG_HANDLES;
     return m;
 }
 
-Msg *msg_build(const Vm *vm, Actor *src, term t, uint32_t dst_mod, uint32_t *why) {
+Msg *msg_build(Vm *vm, Actor *src, term t, uint32_t dst_mod, uint32_t *why) {
     return build_skip(vm, src, t, 0, dst_mod, why);
 }
 
-void msg_free(Msg *m) {
-    if (m->flags & MSG_HANDLES) each_handle(m->data, msg_skip(m), m->words, m->root, unref_fn, NULL);
-    va_free(m, msg_alloc_bytes(m->words));
+void msg_free(Vm *vm, Msg *m) {
+    if (m->flags & MSG_HANDLES) each_handle(vm, m->data, msg_skip(m), m->words, m->root, unref_fn, NULL);
+    va_free(vm, m, msg_alloc_bytes(m->words));
 }
 
 typedef struct Adopt { Actor *a; bool ok; } Adopt;
 
-static void adopt_fn(term h, void *ctx) {
+static void adopt_fn(Vm *vm, term h, void *ctx) {
     Adopt *d = ctx;
-    if (!bytes_adopt(d->a, h)) d->ok = false;
+    if (!bytes_adopt(vm, d->a, h)) d->ok = false;
 }
 
 bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out) {
@@ -323,11 +323,11 @@ bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out) {
     *out = term_is_ref(m->root) ? m->root + term_from_ref(base) - term_from_ref(skip) : m->root;
     if (m->flags & MSG_HANDLES) {
         Adopt d = { a, true };
-        each_handle(m->data, skip, m->words, m->root, adopt_fn, &d);
+        each_handle(vm, m->data, skip, m->words, m->root, adopt_fn, &d);
         if (!d.ok) {                  /* list full: drop what a no longer reaches */
             heap_gc(vm, a, 0, out, 1);
             d.ok = true;
-            each_handle(m->data, skip, m->words, m->root, adopt_fn, &d);
+            each_handle(vm, m->data, skip, m->words, m->root, adopt_fn, &d);
             if (!d.ok) return false;
         }
     }
@@ -358,9 +358,9 @@ static void queue(Vm *vm, Actor *to, Msg *m, uint32_t fw) {
 }
 
 bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
-    uint32_t fw = msg_charge_words(m);
+    uint32_t fw = msg_charge_words(vm, m);
     if (!fits(to, m, fw, quota)) {
-        msg_free(m);
+        msg_free(vm, m);
         actor_mark_exit(vm, to, R_MAILBOX_OVERFLOW, T_EMPTYSTR);
         return false;
     }
@@ -370,7 +370,7 @@ bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
 
 bool msg_try_enqueue(Vm *vm, Actor *to, Msg *m) {
     if (to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) return false;
-    uint32_t fw = msg_charge_words(m);
+    uint32_t fw = msg_charge_words(vm, m);
     if (!fits(to, m, fw, true)) return false;
     queue(vm, to, m, fw);
     return true;
@@ -398,12 +398,12 @@ int msg_send(Vm *vm, Actor *from, term to_pid, term msg) {
 }
 
 /* Removes the head message and stops counting it in mbox_words. */
-static void drop_head(Actor *a) {
+static void drop_head(Vm *vm, Actor *a) {
     Msg *m = a->mbox_head;
-    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
+    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(vm, m));
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
-    msg_free(m);
+    msg_free(vm, m);
 }
 
 /* Unpacks queued m into a's heap. Only m's own block stops counting
@@ -413,7 +413,7 @@ static void drop_head(Actor *a) {
  * that makes room cannot grow the block into their room, so a never ends
  * a successful receive over its limit. On failure m stays queued. */
 static bool take(Vm *vm, Actor *a, Msg *m, term *out) {
-    uint32_t fw = msg_charge_words(m), keep = fw - msg_footprint_words(m->words);
+    uint32_t fw = msg_charge_words(vm, m), keep = fw - msg_footprint_words(m->words);
     if (m->flags & MSG_HANDLES) keep += bytes_list_words(a);
     a->mbox_words = (uint16_t)(a->mbox_words - fw + keep);
     if (!msg_unpack(vm, a, m, out)) {
@@ -426,13 +426,13 @@ static bool take(Vm *vm, Actor *a, Msg *m, term *out) {
 
 bool msg_receive(Vm *vm, Actor *a, term *out) {
     /* Replies are for Call only; any at the head are stale. */
-    while (a->mbox_head && (a->mbox_head->flags & MSG_REPLY)) drop_head(a);
+    while (a->mbox_head && (a->mbox_head->flags & MSG_REPLY)) drop_head(vm, a);
     Msg *m = a->mbox_head;
     if (!m) return false;
     if (!take(vm, a, m, out)) return false;
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
-    msg_free(m);
+    msg_free(vm, m);
     return true;
 }
 
@@ -463,13 +463,13 @@ int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out) {
             /* unpack may GC but never touches the queue; unlink m. */
             if (prev) prev->next = next; else a->mbox_head = next;
             if (!next) a->mbox_tail = prev;
-            msg_free(m);
+            msg_free(vm, m);
             return 1;
         } else {   /* a stale reply of an earlier, timed-out Call */
             if (prev) prev->next = next; else a->mbox_head = next;
             if (!next) a->mbox_tail = prev;
-            a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-            msg_free(m);
+            a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(vm, m));
+            msg_free(vm, m);
         }
         m = next;
     }

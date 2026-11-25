@@ -42,7 +42,7 @@ uint32_t msg_footprint_words(uint16_t words);
 /* Words a queued message is charged, as counted in mbox_words (and in a
  * SendAfter creator's timer charge): its block plus the full length of each
  * distinct off-heap Bytes root it carries. */
-uint32_t msg_charge_words(const Msg *m);
+uint32_t msg_charge_words(Vm *vm, const Msg *m);
 
 /* Copies t out of src's heap into a new, unqueued message for an actor of
  * module slot dst_mod; NULL if out of memory, the copy exceeds 65535
@@ -61,7 +61,7 @@ uint32_t msg_charge_words(const Msg *m);
  * into src's heap and restores it byte for byte before returning, on
  * success and on failure. Safe because the VM has a single scheduler
  * thread. */
-Msg *msg_build(const Vm *vm, Actor *src, term t, uint32_t dst_mod, uint32_t *why);
+Msg *msg_build(Vm *vm, Actor *src, term t, uint32_t dst_mod, uint32_t *why);
 
 /* Moves m's words into a's heap (relocating refs) and stores the message
  * term in *out; a then holds the off-heap Bytes it carries (bytes_adopt).
@@ -69,7 +69,7 @@ Msg *msg_build(const Vm *vm, Actor *src, term t, uint32_t dst_mod, uint32_t *why
  * cannot hold that many handles (GOGO_BYTES_PER_ACTOR, after a GC). */
 bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out);
 
-void msg_free(Msg *m);
+void msg_free(Vm *vm, Msg *m);
 
 /* 0 delivered, or dropped by the receiver's quota; 1 dropped (dead or
  * stale pid, or receiver marked for exit); or the sender's exit reason,

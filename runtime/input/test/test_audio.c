@@ -9,6 +9,7 @@
  * close while playing (no Done, amplifier off). Time is the fake clock;
  * each step runs port_drain, as the scheduler does. */
 #include "test.h"
+#include "test_host.h"
 #include "fakehw.h"
 #include "actor.h"
 #include "signals.h"
@@ -23,8 +24,6 @@
 #include "stream.h"
 #include <string.h>
 
-void platform_unix_set_clock(uint64_t (*fn)(void));
-void platform_unix_arena_forget(void);
 
 static uint64_t now;
 static uint64_t clock_fn(void) { return now; }
@@ -55,17 +54,16 @@ static const PortDriver *const drivers[] = {
 };
 
 static void setup(void) {
-    platform_unix_arena_forget();
-    va_reset();
-    evq_reset();
-    bytes_reset();
+    test_host_arena_forget();
+    va_reset(&vm);
+    bytes_reset(&vm);
     fake_reset();
     now = 0;
-    platform_unix_set_clock(clock_fn);
-    port_set_drivers(drivers);
-    fake_install_once();
+    test_host_set_clock(clock_fn);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
+    fake_install(&vm);
     owner = actor_new(&vm, 2048);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -74,8 +72,7 @@ static void setup(void) {
 
 static void teardown(void) {
     port_close_all(&vm);
-    platform_unix_set_clock(NULL);
-    port_set_drivers(NULL);
+    test_host_set_clock(NULL);
 }
 
 static term heap_struct(Actor *a, uint32_t type, uint32_t n, const term *f) {
@@ -178,8 +175,8 @@ static void collect(Actor *a) {
         if (ngot < 64) ngot++;
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-        msg_free(m);
+        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        msg_free(&vm, m);
     }
 }
 
@@ -212,15 +209,15 @@ TEST(mic_config_rate_and_frame_size) {
     };
     for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) {
         uint32_t charged = actor_charged_words(owner);
-        size_t used = va_used_bytes();
+        size_t used = va_used_bytes(&vm);
         term m = open_mic(owner, c[i].rate, c[i].ms, 0);
         CHECK(port_is(m));
         CHECK_EQ(fake_mic_rate(), (uint32_t)c[i].rate);
         CHECK_EQ(actor_charged_words(owner), charged + c[i].bytes / 4u);   /* the frame buffer */
-        CHECK(va_used_bytes() >= used + c[i].bytes);
+        CHECK(va_used_bytes(&vm) >= used + c[i].bytes);
         port_close(&vm, m);
         CHECK_EQ(actor_charged_words(owner), charged);
-        CHECK(va_used_bytes() <= used);
+        CHECK(va_used_bytes(&vm) <= used);
     }
     teardown();
 }
@@ -255,10 +252,10 @@ TEST(mic_open_failure_leaves_nothing) {
     setup();
     fake_mic_open_fail(true);
     uint32_t charged = actor_charged_words(owner);
-    size_t used = va_used_bytes();
+    size_t used = va_used_bytes(&vm);
     CHECK(!port_is(open_mic(owner, 16000, 100, 0)));
     CHECK_EQ(actor_charged_words(owner), charged);
-    CHECK(va_used_bytes() <= used + 64);
+    CHECK(va_used_bytes(&vm) <= used + 64);
     fake_mic_open_fail(false);
     CHECK(port_is(open_mic(owner, 16000, 100, 0)));     /* not left half open */
     teardown();
@@ -288,7 +285,7 @@ TEST(mic_frames_in_order) {
         CHECK_EQ(got[i].first, i * 1600);
         CHECK(got[i].counts_up);
     }
-    CHECK(input_mic_driver.can_event(port_of(m)));
+    CHECK(input_mic_driver.can_event(&vm, port_of(m)));
     teardown();
 }
 
@@ -401,11 +398,11 @@ TEST(mic_defaults_fit_the_mcu_limit) {
     step(100);
     collect(a);
     CHECK_EQ(ngot, 1);
-    uint32_t lost = input_dropped();
+    uint32_t lost = input_dropped(&vm);
     step(400);                                           /* 300 ms stall, nothing read meanwhile */
-    CHECK_EQ(input_dropped(), lost);                     /* 3 Chunks waiting, all delivered */
+    CHECK_EQ(input_dropped(&vm), lost);                     /* 3 Chunks waiting, all delivered */
     for (uint64_t t = 450; t <= 600; t += 50) step(t);   /* the owner still has not read them */
-    CHECK_EQ(input_dropped(), lost + 2u);                /* a 4th does not fit: the margin is 3 */
+    CHECK_EQ(input_dropped(&vm), lost + 2u);                /* a 4th does not fit: the margin is 3 */
     collect(a);
     CHECK_EQ(ngot, 3);
     for (int i = 0; i < 3; i++) {
@@ -459,12 +456,12 @@ TEST(mic_close_with_partial_frame) {
     step(150);                                           /* a frame and a half */
     collect(owner);
     CHECK_EQ(ngot, 1);
-    size_t used = va_used_bytes();
+    size_t used = va_used_bytes(&vm);
     port_close(&vm, m);
     CHECK_EQ(fake_mic_closes(), 1);
     CHECK(!fake_mic_on());
     CHECK_EQ(actor_charged_words(owner), charged);
-    CHECK(va_used_bytes() + 3200u <= used);              /* the frame buffer */
+    CHECK(va_used_bytes(&vm) + 3200u <= used);              /* the frame buffer */
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));
     step(200);
@@ -514,11 +511,11 @@ TEST(mic_deadline_after_eof) {
     fake_set_live(false);
     uint64_t d;
     CHECK(port_next_deadline(&vm, &d));                  /* data came: keep polling */
-    CHECK(input_mic_driver.can_event(port_of(m)));
+    CHECK(input_mic_driver.can_event(&vm, port_of(m)));
     fake_mic_fail(true);                                 /* nothing more comes */
     step(100);
     CHECK(!port_next_deadline(&vm, &d));
-    CHECK(!input_mic_driver.can_event(port_of(m)));
+    CHECK(!input_mic_driver.can_event(&vm, port_of(m)));
     fake_set_live(true);
     CHECK(port_next_deadline(&vm, &d));
     teardown();
@@ -591,9 +588,9 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     CHECK(port_is(s));
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));                 /* idle: no poll */
-    CHECK(!input_spk_driver.can_event(port_of(s)));
+    CHECK(!input_spk_driver.can_event(&vm, port_of(s)));
     send_out(owner, s, 6000, 7);
-    CHECK(input_spk_driver.can_event(port_of(s)));
+    CHECK(input_spk_driver.can_event(&vm, port_of(s)));
     CHECK(port_next_deadline(&vm, &d));
     CHECK_EQ(d, 0u);                                     /* started at once */
     step(0);
@@ -625,7 +622,7 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     for (uint32_t i = 0; i < 6000; i++) same = same && w[i] == (uint8_t)(i + 7);
     CHECK(same);
     CHECK(!port_next_deadline(&vm, &d));
-    CHECK(!input_spk_driver.can_event(port_of(s)));
+    CHECK(!input_spk_driver.can_event(&vm, port_of(s)));
     teardown();
 }
 
@@ -769,7 +766,7 @@ TEST(spk_close_while_playing) {
     fake_spk_set_idle();
     step(120);
     CHECK(owner->mbox_head == NULL);                     /* owed */
-    CHECK(input_spk_driver.can_event(port_of(s)));
+    CHECK(input_spk_driver.can_event(&vm, port_of(s)));
     port_close(&vm, s);
     owner->max_words = ROOMY;
     step(130);

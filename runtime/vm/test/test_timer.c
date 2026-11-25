@@ -1,6 +1,7 @@
 /* Timers: ordering, wakeups, SendAfter, cancellation, and that no timer
  * outlives or touches the actor it targets. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -34,10 +35,10 @@ static void build_rt(uint32_t *w, int32_t ms) {
 }
 
 static void setup_ms(uint32_t *w, Image *img, Vm *vm, int32_t ms) {
-    va_reset();
+    va_reset(vm);
     build_rt(w, ms);
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(vm, img, 8), 0);
+    CHECK_EQ(test_vm_init(vm, img, 8), 0);
 }
 
 static void setup(uint32_t *w, Image *img, Vm *vm) { setup_ms(w, img, vm, 50); }
@@ -67,7 +68,7 @@ static int timer_count(const Vm *vm) {
 TEST(timer_order) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *a = waiting_actor(&vm), *b = waiting_actor(&vm), *c = waiting_actor(&vm);
     CHECK(timer_add_wakeup(&vm, a, 30));
     CHECK(timer_add_wakeup(&vm, b, 10));
@@ -90,7 +91,7 @@ TEST(timer_order) {
     CHECK(runq_pop(&vm) == NULL);
     CHECK(!timer_next(&vm, &next));
     actor_free(&vm, a); actor_free(&vm, b); actor_free(&vm, c);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* Deadlines are 64-bit: values past 2^32 ms order and fire correctly. */
@@ -124,7 +125,7 @@ TEST(timer_large_deadlines) {
 TEST(timer_stale_wakeup_not_double_queued) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *r = waiting_actor(&vm), *s = actor_new(&vm, 32);
     CHECK(timer_add_wakeup(&vm, r, 10));
     CHECK_EQ(msg_send(&vm, s, r->id, term_from_int(1)), 0);
@@ -135,13 +136,13 @@ TEST(timer_stale_wakeup_not_double_queued) {
     timer_cancel_wakeup(&vm, r);           /* what taking the message does */
     CHECK(!(r->flags & (AF_TIMED_OUT | AF_WAKEUP_ARMED)));
     actor_free(&vm, r); actor_free(&vm, s);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 TEST(timer_send_after_delivers_and_cancels) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *s = actor_new(&vm, 64), *r = waiting_actor(&vm);
 
     term ref = timer_add_send(&vm, s, 5, r->id, term_from_int(7), NULL);
@@ -168,7 +169,7 @@ TEST(timer_send_after_delivers_and_cancels) {
     CHECK_EQ(r->mbox_head->data[2], term_from_int(42));
     CHECK(!timer_cancel(&vm, s->mem[term_ref_off(ref) + 1]));   /* fired */
     actor_free(&vm, s); actor_free(&vm, r);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* A target that is gone when the timer fires, even one freed without the
@@ -176,7 +177,7 @@ TEST(timer_send_after_delivers_and_cancels) {
 TEST(timer_send_after_dead_target_drops) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *s = actor_new(&vm, 64), *r = actor_new(&vm, 32);
     term to = r->id;
     actor_free(&vm, r);                    /* no timer_cancel_actor */
@@ -186,7 +187,7 @@ TEST(timer_send_after_dead_target_drops) {
     CHECK(reuse->mbox_head == NULL);
     CHECK_EQ(timer_count(&vm), 0);
     actor_free(&vm, s); actor_free(&vm, reuse);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* actor_exit frees the timers targeting the actor (its wakeup and
@@ -194,7 +195,7 @@ TEST(timer_send_after_dead_target_drops) {
 TEST(timer_cancelled_on_exit) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *a = waiting_actor(&vm), *other = waiting_actor(&vm);
     CHECK(timer_add_wakeup(&vm, a, 10));
     CHECK(term_is_ref(timer_add_send(&vm, other, 20, a->id, term_from_int(1), NULL)));
@@ -207,7 +208,7 @@ TEST(timer_cancelled_on_exit) {
     CHECK(runq_pop(&vm) == other);
     CHECK(other->mbox_head && other->mbox_head->root == term_from_int(2));
     actor_free(&vm, other);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* An actor killed while blocked in ReceiveTimeout exits and leaves no
@@ -215,7 +216,7 @@ TEST(timer_cancelled_on_exit) {
 TEST(timer_receive_timeout_killed) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *k = start(&vm, &img);
     CHECK_EQ(interp_run(&vm, k), RUN_WAIT);
     k->state = A_WAITING;
@@ -227,14 +228,14 @@ TEST(timer_receive_timeout_killed) {
     platform_unix_err_hook = NULL;
     CHECK_EQ(timer_count(&vm), 0);
     CHECK_EQ(vm.live, 0);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* Timeout fires: the re-run BUILTIN yields (nil, false). */
 TEST(timer_receive_timeout_expires) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *t = start(&vm, &img);
     CHECK_EQ(interp_run(&vm, t), RUN_WAIT);
     CHECK(t->pc == img.code + 2);          /* on the RECEIVE_TIMEOUT */
@@ -251,14 +252,14 @@ TEST(timer_receive_timeout_expires) {
     CHECK_EQ(timer_count(&vm), 0);
     t->state = A_RUNNABLE;
     actor_exit(&vm, t, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* A message arriving first: (msg, true), and the wakeup is cancelled. */
 TEST(timer_receive_timeout_message_first) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *t = start(&vm, &img), *s = actor_new(&vm, 32);
     CHECK_EQ(interp_run(&vm, t), RUN_WAIT);
     t->state = A_WAITING;
@@ -273,7 +274,7 @@ TEST(timer_receive_timeout_message_first) {
     t->state = A_RUNNABLE;
     actor_exit(&vm, t, R_NORMAL, T_EMPTYSTR);
     actor_free(&vm, s);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* ReceiveTimeout(0) on an empty mailbox returns at once, arming nothing. */
@@ -318,11 +319,11 @@ static void capture_oom(const char *s, size_t n) {
  * or its creator exits. */
 TEST(send_after_charged_to_creator) {
     uint32_t w[LOOP_WORDS]; Image img; Vm vm;
-    va_reset();
+    va_reset(&vm);
     build_send_loop(w);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
-    size_t base = va_used_bytes();
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
+    size_t base = va_used_bytes(&vm);
 
     Actor *u = waiting_actor(&vm);          /* unrelated */
     Actor *c = actor_new(&vm, 32);
@@ -364,7 +365,7 @@ TEST(send_after_charged_to_creator) {
     CHECK(u->mbox_head && u->mbox_head->next && u->mbox_head->next->next &&
           u->mbox_head->next->next->root == term_from_int(4));
     actor_free(&vm, u);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* A second timer_add_wakeup while one is armed adds nothing. */
@@ -381,7 +382,6 @@ TEST(timer_wakeup_armed_once) {
 
 /* ---- heap behaviour ---- */
 
-extern void platform_unix_set_clock(uint64_t (*fn)(void));
 
 static uint32_t rng = 12345u;
 static uint32_t next_rand(void) { rng = rng * 1664525u + 1013904223u; return rng >> 8; }
@@ -392,10 +392,10 @@ static uint32_t next_rand(void) { rng = rng * 1664525u + 1013904223u; return rng
 #define N_HEAP 1000
 TEST(timer_heap_order) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
-    va_reset();
+    va_reset(&vm);
     build_rt(w, 50);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, N_HEAP + 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, N_HEAP + 8), 0);
     static Actor *as[N_HEAP];
     static uint64_t dl[N_HEAP];
     for (int i = 0; i < N_HEAP; i++) {
@@ -428,13 +428,13 @@ TEST(timer_heap_order) {
 /* Cancelling arbitrary wakeups leaves the rest firing in order. */
 TEST(timer_cancel_middle) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
-    va_reset();
+    va_reset(&vm);
     build_rt(w, 50);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 208), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 208), 0);
     enum { N = 200 };
     Actor *as[N]; uint64_t dl[N];
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     for (int i = 0; i < N; i++) {
         as[i] = waiting_actor(&vm);
         dl[i] = next_rand() % 500u;
@@ -463,10 +463,10 @@ TEST(timer_cancel_middle) {
 /* An actor no timer targets exits without the heap being looked at. */
 TEST(timer_exit_no_scan) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
-    va_reset();
+    va_reset(&vm);
     build_rt(w, 50);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 32), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 32), 0);
     Actor *sleeper[20];
     for (int i = 0; i < 20; i++) {
         sleeper[i] = waiting_actor(&vm);
@@ -528,7 +528,7 @@ static uint64_t counting_clock(void) { clock_reads++; return 0; }
 #define BUSY_WORDS 30
 TEST(clock_reads_lazy) {
     uint32_t w[BUSY_WORDS]; Image img; Vm vm;
-    va_reset();
+    va_reset(&vm);
     memset(w, 0, sizeof w);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = 3; w[5] = 11; w[6] = 0; w[7] = 0;
@@ -542,11 +542,11 @@ TEST(clock_reads_lazy) {
     w[22] = OP_MAKE(OP_JMPT, 3, 0, 0); w[23] = 6;
     w[24] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     clock_reads = 0;
-    platform_unix_set_clock(counting_clock);
+    test_host_set_clock(counting_clock);
     int rc = vm_run(&vm);
-    platform_unix_set_clock(NULL);
+    test_host_set_clock(NULL);
     CHECK_EQ(rc, 0);
     CHECK(clock_reads <= 1u);
 }
@@ -568,7 +568,7 @@ TEST(timer_creator_exit_detaches) {
     CHECK_EQ(vm.timers[0]->charge, 0u);
     Actor *n = waiting_actor(&vm);           /* takes c's slot, new generation */
     CHECK(n->id != cid);
-    CHECK(actor_charge(n, 7));
+    CHECK(actor_charge(&vm, n, 7));
     timer_fire_due(&vm, 100);
     CHECK_EQ(actor_extra_charged(n), 7u);
     CHECK(runq_pop(&vm) == t);

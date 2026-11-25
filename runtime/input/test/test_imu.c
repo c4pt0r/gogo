@@ -3,6 +3,7 @@
  * FIFO reads), a slow consumer, one owner, close and reopen. Time is the
  * fake clock; each step runs port_drain, as the scheduler does. */
 #include "test.h"
+#include "test_host.h"
 #include "fakehw.h"
 #include "actor.h"
 #include "signals.h"
@@ -17,8 +18,6 @@
 #include "bytes.h"
 #include <string.h>
 
-void platform_unix_set_clock(uint64_t (*fn)(void));
-void platform_unix_arena_forget(void);
 
 static uint64_t now;
 static uint64_t clock_fn(void) { return now; }
@@ -45,17 +44,16 @@ static void mini_image(void) {
 static const PortDriver *const drivers[] = { &input_kbd_driver, &input_power_driver, &input_imu_driver, NULL };
 
 static void setup(void) {
-    platform_unix_arena_forget();
-    va_reset();
-    evq_reset();
-    bytes_reset();
+    test_host_arena_forget();
+    va_reset(&vm);
+    bytes_reset(&vm);
     fake_reset();
     now = 0;
-    platform_unix_set_clock(clock_fn);
-    port_set_drivers(drivers);
-    fake_install_once();
+    test_host_set_clock(clock_fn);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
+    fake_install(&vm);
     owner = actor_new(&vm, 256);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -63,8 +61,7 @@ static void setup(void) {
 
 static void teardown(void) {
     port_close_all(&vm);
-    platform_unix_set_clock(NULL);
-    port_set_drivers(NULL);
+    test_host_set_clock(NULL);
 }
 
 
@@ -134,8 +131,8 @@ static void collect(Actor *a) {
         if (ngot < 64) got[ngot++] = e;
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-        msg_free(m);
+        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        msg_free(&vm, m);
     }
 }
 
@@ -435,9 +432,9 @@ TEST(imu_can_event_follows_live) {
     fake_live_hook(true);
     Port p;
     memset(&p, 0, sizeof p);
-    CHECK(input_imu_driver.can_event(&p));
+    CHECK(input_imu_driver.can_event(&vm, &p));
     fake_set_live(false);
-    CHECK(!input_imu_driver.can_event(&p));
+    CHECK(!input_imu_driver.can_event(&vm, &p));
     teardown();
 }
 
@@ -449,17 +446,17 @@ TEST(imu_buffer_charged_and_freed) {
     big->state = A_WAITING;
     uint32_t charged = actor_charged_words(big);
     CHECK(port_is(open_imu(big, 200, 0, 1000)));       /* 2400 B = 600 words */
-    size_t used = va_used_bytes();
+    size_t used = va_used_bytes(&vm);
     CHECK_EQ(actor_charged_words(big), charged + 600u);
     port_close_owned(&vm, big->id);                    /* the owner exits */
-    CHECK(va_used_bytes() + 2400 <= used);             /* the buffer went back */
+    CHECK(va_used_bytes(&vm) + 2400 <= used);             /* the buffer went back */
     CHECK_EQ(actor_charged_words(big), charged);
     CHECK_EQ(fake_imu_closes(), 1);
     /* An owner that cannot afford it is refused, and nothing is left behind. */
     owner->max_words = 400;
-    size_t before = va_used_bytes();
+    size_t before = va_used_bytes(&vm);
     CHECK(!port_is(open_imu(owner, 200, 0, 1000)));    /* owner: 256 words */
-    CHECK(va_used_bytes() <= before + 64);            /* only the Config struct on the heap */
+    CHECK(va_used_bytes(&vm) <= before + 64);            /* only the Config struct on the heap */
     CHECK_EQ(actor_charged_words(owner), 0u);
     CHECK_EQ(fake_imu_closes(), 2);                    /* the hardware was stopped again */
     CHECK(port_is(open_imu(owner, 0, 1, 200)));        /* RateHz 0: no buffer, no charge */

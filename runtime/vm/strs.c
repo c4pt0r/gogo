@@ -37,7 +37,7 @@
 #include "opcodes.h"
 #include "bytes.h"
 #include "config.h"
-#include "platform.h"
+#include "host.h"
 #include <string.h>
 
 /* Number of heap words of a string with len bytes. */
@@ -596,14 +596,14 @@ static uint32_t config_get(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) 
     uint32_t kl;
     if (!str_view(vm, a, R[rb], &k, &kl)) return R_BAD_CODE;
     int32_t n = -1;
-    if (kl < 5u || memcmp(k, "wifi.", 5) != 0) n = platform_config_get(k, kl, NULL, 0);
+    if (kl < 5u || memcmp(k, "wifi.", 5) != 0) n = vm_config_get(vm, k, kl, NULL, 0);
     term v = T_EMPTYSTR;
     if (n > 0) {
         uint32_t off;
         if (!str_alloc(vm, a, (uint32_t)n, &off)) return R_OUT_OF_MEMORY;
         R = (term *)a->mem + a->fp;
         str_view(vm, a, R[rb], &k, &kl);
-        if (platform_config_get(k, kl, (uint8_t *)(a->mem + off + 2), (uint32_t)n) == n) v = term_from_ref(off);
+        if (vm_config_get(vm, k, kl, (uint8_t *)(a->mem + off + 2), (uint32_t)n) == n) v = term_from_ref(off);
         else n = -1;
     }
     R[ra] = v;

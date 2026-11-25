@@ -5,6 +5,7 @@
  * Bytes in an Out (the sender's badcode, through the interpreter). The
  * port is a fake "st" driver whose command_term is stream_out_accept. */
 #include "test.h"
+#include "test_host.h"
 #include "stream.h"
 #include "actor.h"
 #include "signals.h"
@@ -21,7 +22,6 @@
 #include <string.h>
 
 extern void (*platform_unix_err_hook)(const char *, size_t);
-void platform_unix_arena_forget(void);
 
 static char err_buf[512];
 static size_t err_len;
@@ -53,13 +53,14 @@ static StreamOut so;
 static StreamCheck check;
 static int last_rc, accepts, closes;
 
-static int st_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int st_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     (void)p; (void)index; (void)cfg; (void)n;
     memset(&so, 0, sizeof so);
     return 0;
 }
-static void st_close(Port *p) { closes++; stream_out_close(NULL, p, &so); }
-static bool st_can_event(const Port *p) { (void)p; return true; }
+static void st_close(struct Vm *vm, Port *p) { (void)vm; closes++; stream_out_close(NULL, p, &so); }
+static bool st_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return true; }
 static void st_command(Vm *v, const Actor *from, Port *p, term msg) {
     accepts++;
     last_rc = stream_out_accept(v, from, p, &so, msg, check);
@@ -75,13 +76,12 @@ static term sp;
 static Port *port_at(term pid) { return &vm.ports[term_pid_slot(pid) - PORT_SLOT_BASE]; }
 
 static void setup(void) {
-    platform_unix_arena_forget();
-    va_reset();
-    evq_reset();
-    bytes_reset();
-    port_set_drivers(drivers);
+    test_host_arena_forget();
+    va_reset(&vm);
+    bytes_reset(&vm);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
     owner = actor_new(&vm, 256);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -94,7 +94,6 @@ static void setup(void) {
 
 static void teardown(void) {
     port_close_all(&vm);
-    port_set_drivers(NULL);
 }
 
 /* ---- mailbox helpers ---- */
@@ -104,7 +103,7 @@ static Msg *pop(Actor *a) {
     if (!m) return NULL;
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
-    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
+    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
     return m;
 }
 
@@ -131,7 +130,7 @@ static int dones(Actor *a, int32_t *seqs, int cap) {
         CHECK_EQ(m->data[1], TYPE_DONE);
         if (n < cap) seqs[n] = word_int(m, m->data[2]);
         n++;
-        msg_free(m);
+        msg_free(&vm, m);
     }
     return n;
 }
@@ -157,7 +156,7 @@ static bool pop_chunk(Actor *a, Chunk *c) {
         if (c->len <= sizeof c->data) memcpy(c->data, &b[2], c->len);
     }
     /* The block is exactly what it holds: no slack, no stray refs. */
-    msg_free(m);
+    msg_free(&vm, m);
     return true;
 }
 
@@ -308,18 +307,18 @@ TEST(out_done_ordering_and_head) {
     setup();
     const uint8_t a[2] = { 7, 0 }, b[4] = { 8, 0, 9, 0 }, c[2] = { 10, 0 };
     uint32_t len;
-    CHECK(stream_out_head(&so, &len) == NULL); CHECK_EQ(len, 0u);
+    CHECK(stream_out_head(&vm, &so, &len) == NULL); CHECK_EQ(len, 0u);
     CHECK_EQ(send_out(owner, a, 2), 1);
     CHECK_EQ(send_out(owner, b, 4), 0);
-    const uint8_t *h = stream_out_head(&so, &len);
+    const uint8_t *h = stream_out_head(&vm, &so, &len);
     CHECK(h && len == 2 && h[0] == 7);
     CHECK(stream_out_done(&vm, port_at(sp), &so));
-    h = stream_out_head(&so, &len);
+    h = stream_out_head(&vm, &so, &len);
     CHECK(h && len == 4 && h[0] == 8 && h[2] == 9);
     CHECK_EQ(send_out(owner, c, 2), 0);                 /* queued behind b */
     CHECK_EQ(send_out(owner, c, 2), -1);                /* full: refused, no Seq */
     CHECK(stream_out_done(&vm, port_at(sp), &so));
-    h = stream_out_head(&so, &len);
+    h = stream_out_head(&vm, &so, &len);
     CHECK(h && len == 2 && h[0] == 10);
     CHECK(!stream_out_done(&vm, port_at(sp), &so));
     CHECK_EQ(send_out(owner, a, 2), 1);                 /* idle again: starts at once */
@@ -337,19 +336,19 @@ TEST(out_at_positions) {
     setup();
     const uint8_t a[2] = { 7, 0 }, b[4] = { 8, 0, 9, 0 };
     uint32_t len;
-    CHECK(stream_out_at(&so, 0, &len) == NULL); CHECK_EQ(len, 0u);
+    CHECK(stream_out_at(&vm, &so, 0, &len) == NULL); CHECK_EQ(len, 0u);
     CHECK_EQ(send_out(owner, a, 2), 1);
-    CHECK(stream_out_at(&so, 1, &len) == NULL); CHECK_EQ(len, 0u);
+    CHECK(stream_out_at(&vm, &so, 1, &len) == NULL); CHECK_EQ(len, 0u);
     CHECK_EQ(send_out(owner, b, 4), 0);
-    const uint8_t *d = stream_out_at(&so, 0, &len);
+    const uint8_t *d = stream_out_at(&vm, &so, 0, &len);
     CHECK(d && len == 2 && d[0] == 7);
-    d = stream_out_at(&so, 1, &len);
+    d = stream_out_at(&vm, &so, 1, &len);
     CHECK(d && len == 4 && d[0] == 8 && d[2] == 9);
-    CHECK(stream_out_at(&so, 2, &len) == NULL);
+    CHECK(stream_out_at(&vm, &so, 2, &len) == NULL);
     CHECK(stream_out_done(&vm, port_at(sp), &so));
-    d = stream_out_at(&so, 0, &len);
+    d = stream_out_at(&vm, &so, 0, &len);
     CHECK(d && len == 4 && d[0] == 8);
-    CHECK(stream_out_at(&so, 1, &len) == NULL);
+    CHECK(stream_out_at(&vm, &so, 1, &len) == NULL);
     teardown();
 }
 
@@ -362,7 +361,7 @@ TEST(out_fail_head) {
     CHECK_EQ(send_out(owner, a, 2), 1);
     CHECK_EQ(send_out(owner, b, 2), 0);
     CHECK(stream_out_fail(&vm, port_at(sp), &so));
-    const uint8_t *h = stream_out_head(&so, &len);
+    const uint8_t *h = stream_out_head(&vm, &so, &len);
     CHECK(h && len == 2 && h[0] == 8);
     CHECK(!stream_out_done(&vm, port_at(sp), &so));
     CHECK(!stream_out_fail(&vm, port_at(sp), &so));    /* nothing in flight: no-op */
@@ -375,7 +374,7 @@ TEST(out_fail_head) {
     teardown();
 }
 
-static bool is_free(term h) { return !bytes_valid(h); }
+static bool is_free(term h) { return !bytes_valid(&vm, h); }
 
 /* Malformed Outs: Done{-1} each, nothing held, the port still works. */
 TEST(out_malformed) {
@@ -446,7 +445,7 @@ TEST(out_close_in_flight) {
     term copy = so.held[1];
     CHECK(term_is_handle(copy) && copy != h);
     uint32_t len;
-    CHECK(stream_out_head(&so, &len) == bytes_data(h, &len));
+    CHECK(stream_out_head(&vm, &so, &len) == bytes_data(&vm, h, &len));
     stream_out_close(&vm, port_at(sp), &so);
     CHECK_EQ(so.n, 0u); CHECK_EQ(so.held[0], 0u); CHECK_EQ(so.held[1], 0u);
     for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(port_at(sp)->held[k], 0u);
@@ -641,7 +640,7 @@ TEST(out_via_interp_and_stale_badcode) {
     CHECK_EQ(accepts, 1);
     CHECK_EQ(last_rc, 1);
     uint32_t len;
-    const uint8_t *hd = stream_out_head(&so, &len);
+    const uint8_t *hd = stream_out_head(&vm, &so, &len);
     CHECK(hd && len == 4 && hd[0] == 16 && hd[2] == 32);
     CHECK(term_is_handle(so.held[0]));                 /* a port-held copy */
     CHECK_EQ(interp_run(&vm, sender(live_const)), RUN_EXIT);

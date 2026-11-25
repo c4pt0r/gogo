@@ -60,7 +60,7 @@ CONFIG_RMT_ENCODER_FUNC_IN_IRAM=n
 # (`gogo firmware` adds it by itself). The port uses
 # ESP-IDF's own mbedTLS component (4.1.1, the source the host build compiles
 # with runtime/net/tls/config), shared with Wi-Fi's WPA crypto; these mirror runtime/net/tls/config:
-# - every mbedTLS allocation goes through platform_tls_alloc's allocator
+# - every mbedTLS allocation goes through esp_tls_hw's allocator
 #   (platform_esp.c tls_mem_calloc, installed by platform_esp_init: PSRAM
 #   first on the StickS3);
 CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC=y

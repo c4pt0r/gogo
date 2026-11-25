@@ -1,0 +1,7 @@
+# Mutable global state still in runtime/ (tools/globals.sh). One entry per line:
+#   <file> <symbol>   # <why>
+# Function-local statics are func.var (a gcc ELF "var.N" matches any func.var of that file).
+# The guard fails on entries that no longer exist, except those tagged
+# "# permanent: <reason>": state that must stay process-global by design.
+runtime/net/tls/tls.c glue  # permanent: mbedTLS process-global hooks (allocator, time, RNG take no context; one TlsHw per process, tls.h)
+runtime/net/tls/tls.c clock_vm  # permanent: per-thread Vm for mbedTLS's context-free time hooks (host builds only, thread-local)

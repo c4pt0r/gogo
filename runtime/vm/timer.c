@@ -5,8 +5,8 @@
 #include "signals.h"
 #include <string.h>
 
-static Timer *timer_new(uint64_t deadline, uint64_t serial, term pid, Msg *msg) {
-    Timer *t = va_alloc(sizeof *t);
+static Timer *timer_new(Vm *vm, uint64_t deadline, uint64_t serial, term pid, Msg *msg) {
+    Timer *t = va_alloc(vm, sizeof *t);
     if (!t) return NULL;
     t->seq = 0;
     t->deadline = deadline;
@@ -22,8 +22,8 @@ static Timer *timer_new(uint64_t deadline, uint64_t serial, term pid, Msg *msg) 
 /* Words a SendAfter timer holding m is charged to its creator: the queued
  * message charge (as in mbox_words, off-heap Bytes included) plus the
  * timer entry. */
-static uint32_t send_charge(const Msg *m) {
-    return msg_charge_words(m) + (uint32_t)((sizeof(Timer) + 3u) / 4u);
+static uint32_t send_charge(Vm *vm, const Msg *m) {
+    return msg_charge_words(vm, m) + (uint32_t)((sizeof(Timer) + 3u) / 4u);
 }
 
 /* Takes t's charge off its creator, if it still has one and is alive
@@ -45,8 +45,8 @@ static void timer_free(Vm *vm, Timer *t) {
         if (to) actor_timer_unref(to);
         t->counted = false;
     }
-    if (t->msg) msg_free(t->msg);
-    va_free(t, sizeof *t);
+    if (t->msg) msg_free(vm, t->msg);
+    va_free(vm, t, sizeof *t);
 }
 
 /* ---- the heap: Vm.timers[0..ntimers), min at [0] ---- */
@@ -83,10 +83,10 @@ static void sift_down(Timer **h, uint32_t n, uint32_t i) {
 static bool heap_reserve(Vm *vm) {
     if (vm->ntimers < vm->timers_cap) return true;
     uint32_t cap = vm->timers_cap ? vm->timers_cap * 2u : 8u;
-    Timer **h = va_alloc((size_t)cap * sizeof(Timer *));
+    Timer **h = va_alloc(vm, (size_t)cap * sizeof(Timer *));
     if (!h) return false;
     if (vm->ntimers) memcpy(h, vm->timers, (size_t)vm->ntimers * sizeof(Timer *));
-    va_free(vm->timers, (size_t)vm->timers_cap * sizeof(Timer *));   /* NULL, 0 when first */
+    va_free(vm, vm->timers, (size_t)vm->timers_cap * sizeof(Timer *));   /* NULL, 0 when first */
     vm->timers = h;
     vm->timers_cap = cap;
     return true;
@@ -95,7 +95,7 @@ static bool heap_reserve(Vm *vm) {
 /* Frees the array once nothing is pending. */
 static void heap_trim(Vm *vm) {
     if (vm->ntimers == 0 && vm->timers) {
-        va_free(vm->timers, (size_t)vm->timers_cap * sizeof(Timer *));
+        va_free(vm, vm->timers, (size_t)vm->timers_cap * sizeof(Timer *));
         vm->timers = NULL;
         vm->timers_cap = 0;
     }
@@ -128,7 +128,7 @@ uint32_t timer_pending(const Vm *vm) { return vm->ntimers; }
 bool timer_add_wakeup(Vm *vm, Actor *a, uint64_t deadline) {
     if (a->flags & AF_WAKEUP_ARMED) return true;   /* at most one per actor */
     if (!heap_reserve(vm)) return false;
-    Timer *t = timer_new(deadline, 0, a->id, NULL);
+    Timer *t = timer_new(vm, deadline, 0, a->id, NULL);
     if (!t) { heap_trim(vm); return false; }
     timer_insert(vm, t);
     a->flags |= AF_WAKEUP_ARMED;
@@ -154,40 +154,40 @@ term timer_add_send(Vm *vm, Actor *from, uint64_t deadline, term to_pid, term ms
     const Actor *dst = actor_lookup(vm, to_pid);
     Msg *m = msg_build(vm, from, msg, (dst ? dst : from)->mod, why);
     if (!m) return T_NIL;
-    uint32_t charge = send_charge(m);
+    uint32_t charge = send_charge(vm, m);
     /* The pending timer counts against the creator's limit, like a queued
      * message against the receiver's. */
     if ((uint32_t)from->mem_words + actor_charged_words(from) + charge > actor_max_words(from)) {
-        msg_free(m);
+        msg_free(vm, m);
         return T_NIL;
     }
     /* Everything that can fail but the Ref comes first, so inserting
      * cannot fail afterwards. */
     if (!heap_reserve(vm)) {
-        msg_free(m);
+        msg_free(vm, m);
         return T_NIL;
     }
-    Timer *t = timer_new(deadline, 0, to_pid, m);
+    Timer *t = timer_new(vm, deadline, 0, to_pid, m);
     if (!t) {
-        msg_free(m);
+        msg_free(vm, m);
         heap_trim(vm);
         return T_NIL;
     }
     Actor *to = actor_lookup(vm, to_pid);
     if (to && to->state != A_EXITED) {
-        if (!actor_timer_ref(to)) {
+        if (!actor_timer_ref(vm, to)) {
             timer_free(vm, t);
             heap_trim(vm);
             return T_NIL;
         }
         t->counted = true;
     }
-    if (!actor_charge(from, charge)) {
+    if (!actor_charge(vm, from, charge)) {
         timer_free(vm, t);
         heap_trim(vm);
         return T_NIL;
     }
-    if (!actor_timer_own(from)) {
+    if (!actor_timer_own(vm, from)) {
         timer_free(vm, t);
         heap_trim(vm);
         return T_NIL;

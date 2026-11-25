@@ -1,5 +1,5 @@
 /* The device configuration store: NVS namespace "gogo", one
- * blob per key, read by config.Get (platform_config_get; the VM never asks
+ * blob per key, read by config.Get (esp_host.config_get; the VM never asks
  * for "wifi." keys) and by the Wi-Fi bring-up (wifi.ssid, wifi.password).
  *
  * `gogo config` reaches it over the USB-Serial/JTAG console: a task reads
@@ -19,7 +19,7 @@
  * never sent back: get and list show "(set)". Setting or removing a
  * wifi.* key makes the station reconnect with the new settings. */
 #include "sdkconfig.h"
-#include "platform.h"
+#include "host.h"
 #include "platform_esp.h"
 #if CONFIG_GOGO_TLS
 #include "tls.h"
@@ -206,7 +206,7 @@ static void stats_net(void) {
         "tcp_bad", "tcp_noconn", "tcp_drop", "tcp_quota", "tcp_syn_drop", "tcp_retx", "tcp_rx",
     };
     _Static_assert(sizeof names / sizeof names[0] == sizeof(NetStats) / sizeof(uint32_t), "NetStats fields");
-    const volatile uint32_t *c = (const volatile uint32_t *)net_stats();
+    const volatile uint32_t *c = (const volatile uint32_t *)net_stats(&esp_net_state);
     char line[48];
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         int n = snprintf(line, sizeof line, "%s=%lu", names[i], (unsigned long)c[i]);
@@ -219,7 +219,7 @@ static void stats_net(void) {
 /* The tls port's counters (runtime/net/tls/tls.h TlsStats): slices and their longest
  * time, the last handshake's time. */
 static void stats_tls(void) {
-    const volatile TlsStats *t = tls_stats();
+    const volatile TlsStats *t = tls_stats(&esp_net_state);
     char line[48];
     const struct { const char *name; uint32_t v; } kv[] = {
         {"tls_opens", t->opens}, {"tls_handshakes", t->handshakes}, {"tls_steps", t->steps},

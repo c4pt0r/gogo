@@ -1,5 +1,5 @@
 #include "test.h"
-#include "platform.h"
+#include "test_host.h"
 #include <string.h>
 
 TEST(caps_ok_table) {
@@ -44,10 +44,15 @@ TEST(caps_explain) {
     CHECK(strcmp(b, "gogo: image needs net kbd power sd imu irtx irrx mic spk tls; firmware lacks net kbd power sd imu irtx irrx mic spk tls\n") == 0);
 }
 
-/* The weak default of a platform that defines none is tested by the
- * strong unix definition overriding it: net, kbd, power, sd, imu, irtx,
- * irrx, mic and spk. */
-TEST(caps_unix_platform) {
-    CHECK_EQ(platform_caps(), CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX | CAP_MIC |
-                              CAP_SPK);
+/* A Vm's caps: its board's, narrowed by what vm_init grants; no board
+ * (NULL) means basic I/O only. */
+TEST(caps_board_and_granted) {
+    static Vm v;
+    CHECK_EQ(vm_init(&v, &test_host, NULL, &test_board, UINT32_MAX, 4), 0);
+    CHECK_EQ(v.caps, CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX | CAP_MIC | CAP_SPK);
+    CHECK_EQ(vm_init(&v, &test_host, NULL, &test_board, CAP_NET | CAP_ANYPORT, 4), 0);
+    CHECK_EQ(v.caps, CAP_NET);
+    CHECK_EQ(vm_init(&v, &test_host, NULL, NULL, UINT32_MAX, 4), 0);
+    CHECK_EQ(v.caps, 0u);
+    CHECK(v.board != NULL && v.board->ports == NULL && v.board->input == NULL);
 }

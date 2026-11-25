@@ -4,7 +4,7 @@
  *
  *   {magic 0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}
  *
- * followed by the image (format v13, runtime/vm/image.h IMAGE_VERSION). The image is used in place through a
+ * followed by the image (format v14, runtime/vm/image.h IMAGE_VERSION). The image is used in place through a
  * flash mmap; a blank, half-written or corrupted partition is refused. An
  * image of another version is refused by image_load: when IMAGE_VERSION
  * changes, the firmware must be reflashed along with the image. */

@@ -77,9 +77,28 @@ Tests: `make test` runs the C tests (host and MCU configurations), the Go
 tests (compiler, golden outputs, network simulator) and the size checks.
 `docs/book/examples/run.sh` checks every example in the book.
 
+## Embedding
+
+gogo also runs inside other programs, the way Lua is embedded: `make lib`
+builds `build/libgogo.a`, a C99 library with one header,
+[`runtime/include/gogo.h`](runtime/include/gogo.h). A host loads an image,
+runs it (or steps it from its own event loop), posts messages to its
+actors and gives it ports of its own; any number of VMs share one process.
+
+```c
+gogo_vm *vm = gogo_new_posix(NULL);
+gogo_load(vm, image, len, GOGO_LOAD_COPY);
+gogo_run(vm);
+gogo_free(vm);
+```
+
+The book chapter [Embedding gogo](docs/book/18-embedding.md) is the guide;
+[`examples/embed-c/`](examples/embed-c/) has the example hosts
+(`make example-embed`).
+
 ## Documentation
 
-- [Programming gogo](docs/book/README.md): the book, 17 chapters, every
+- [Programming gogo](docs/book/README.md): the book, 18 chapters, every
   example tested.
 - [docs/design.md](docs/design.md): the design document: the VM, the
   image format, the term encoding, ports, the network stack, storage and

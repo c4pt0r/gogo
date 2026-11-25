@@ -168,25 +168,27 @@ static int m_usage(Mem *m, int32_t *used, int32_t *total) {
     return VFS_OK;
 }
 
-#define INST(N)                                                                     \
-    static int open##N(void *f, const char *r, int mo) { return m_open(&mem[N], f, r, mo); } \
-    static int stat##N(const char *r, int32_t *s, bool *d) { return m_stat(&mem[N], r, s, d); } \
-    static int rdir##N(const char *r, VfsDirCb cb, void *c) { return m_readdir(&mem[N], r, cb, c); } \
-    static int mkd##N(const char *r) { return m_mkdir(&mem[N], r); }                \
-    static int rm##N(const char *r) { return m_remove(&mem[N], r); }                \
-    static int mv##N(const char *a, const char *b, bool rp) { return m_rename(&mem[N], a, b, rp); } \
-    static int use##N(int32_t *u, int32_t *t) { return m_usage(&mem[N], u, t); }
-INST(0)
-INST(1)
+static int open_(void *c, void *f, const char *r, int mo) { return m_open(c, f, r, mo); }
+static int read_(void *c, void *f, uint8_t *b, uint32_t n, uint32_t *g) { (void)c; return m_read(f, b, n, g); }
+static int write_(void *c, void *f, const uint8_t *b, uint32_t n) { (void)c; return m_write(f, b, n); }
+static int ok_(void *c, void *f) { (void)c; return m_ok(f); }
+static int size_(void *c, void *f, int32_t *o) { (void)c; return m_size(f, o); }
+static int close_(void *c, void *f) { (void)c; return m_close(f); }
+static int stat_(void *c, const char *r, int32_t *s, bool *d) { return m_stat(c, r, s, d); }
+static int rdir_(void *c, const char *r, VfsDirCb cb, void *x) { return m_readdir(c, r, cb, x); }
+static int mkd_(void *c, const char *r) { return m_mkdir(c, r); }
+static int rm_(void *c, const char *r) { return m_remove(c, r); }
+static int mv_(void *c, const char *a, const char *b, bool rp) { return m_rename(c, a, b, rp); }
+static int use_(void *c, int32_t *u, int32_t *t) { return m_usage(c, u, t); }
+static int wat_(void *c, void *f, uint32_t off, const uint8_t *b, uint32_t n) { (void)c; return m_write_at(f, off, b, n); }
 
 void memfs_init(int i, bool ci, bool atomic, int32_t budget) {
     memset(&mem[i], 0, sizeof mem[i]);
     mem[i].ci = ci; mem[i].atomic = atomic; mem[i].budget = budget;
-    VfsBackend b = { ci, i ? open1 : open0, m_read, m_write, m_ok, m_size, m_close,
-                     i ? stat1 : stat0, i ? rdir1 : rdir0, i ? mkd1 : mkd0, i ? rm1 : rm0,
-                     i ? mv1 : mv0, i ? use1 : use0, m_write_at };
+    VfsBackend b = { ci, open_, read_, write_, ok_, size_, close_, stat_, rdir_, mkd_, rm_, mv_, use_, wat_ };
     memfs_be[i] = b;
 }
+void *memfs_ctx(int i) { return &mem[i]; }
 void memfs_set_budget(int i, int32_t budget) { mem[i].budget = budget; }
 int memfs_rename_calls(int i) { return mem[i].rename_calls; }
 void memfs_set_stat_err(int i, int err) { mem[i].stat_err = err; }

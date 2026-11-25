@@ -4,8 +4,9 @@
 // every call with VM instructions, so the bodies are never executed.
 //
 // The struct types GPIO, Write and Edge have fixed type indices 6-8 in every
-// image, Chunk, Out and Done 35-37 (TYPE_* in runtime/vm/opcodes.h); keep their
-// field order in sync with compiler.reservedTypes.
+// image, Chunk, Out and Done 35-37, Host and Post 45-46 (TYPE_* in
+// runtime/vm/opcodes.h); keep their field order in sync with
+// compiler.reservedTypes.
 //
 // Send a command to a port with actor.Send(p, port.Write{Value: 1}); any
 // actor holding the PID may. Events (port.Edge) go to the owner, the actor
@@ -57,6 +58,25 @@ type Out struct{ Data bytes.Bytes }
 // with Outs). Seq numbers the Outs sent successfully, from 1; it is -1 when the port refused the Out (too many in flight, or bad
 // data) or the hardware could not send it, and such an Out uses no number.
 type Done struct{ Seq int }
+
+// Host configures a port that the program embedding the VM defines (embed
+// mode, gogo_register_port in runtime/include/gogo.h): Arg and Data are
+// passed to the host's open as they are. Such a port takes Post commands
+// and sends its owner Post events.
+type Host struct {
+	Arg  int
+	Data bytes.Bytes
+}
+
+// Post is a message from the program embedding the VM (embed mode). The
+// host's gogo_post sends one to a registered name: Kind and Data are what
+// the host gave; it arrives as an ordinary message under the receiver's
+// mailbox quota (a post over it is dropped, and the receiver is not
+// killed). Host-defined ports use it for their commands and events too.
+type Post struct {
+	Kind int
+	Data bytes.Bytes
+}
 
 // GPIO modes.
 const (

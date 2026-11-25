@@ -15,104 +15,104 @@ uint16_t net_fold(uint32_t s) {
     return (uint16_t)s;
 }
 
-bool ip_configured(void) { return net_s.ip != 0; }
+bool ip_configured(const NetState *ns) { return ns->ip != 0; }
 
-bool ip_on_link(uint32_t ip) {
-    return ip_configured() && ((ip ^ net_s.ip) & net_s.mask) == 0;
+bool ip_on_link(const NetState *ns, uint32_t ip) {
+    return ip_configured(ns) && ((ip ^ ns->ip) & ns->mask) == 0;
 }
 
 /* The directed broadcast of our subnet (none for a /31 or /32). */
-static bool subnet_bcast(uint32_t ip) {
-    uint32_t m = net_s.mask;
-    return ip_configured() && m && ~m > 1u && ip == (net_s.ip | ~m);
+static bool subnet_bcast(const NetState *ns, uint32_t ip) {
+    uint32_t m = ns->mask;
+    return ip_configured(ns) && m && ~m > 1u && ip == (ns->ip | ~m);
 }
 
-void ip_rx(struct Vm *vm, const uint8_t *f, uint32_t len) {
+void ip_rx(NetState *ns, const uint8_t *f, uint32_t len) {
     const uint8_t *p = f + ETH_HLEN;
     len -= ETH_HLEN;
     if (len < IP_HLEN) {
-        net_s.st.ip_bad++;
+        ns->st.ip_bad++;
         return;
     }
     uint32_t hl = (p[0] & 0xFu) * 4u;
     if ((p[0] >> 4) != 4u || hl < IP_HLEN) {
-        net_s.st.ip_bad++;
+        ns->st.ip_bad++;
         return;
     }
     uint32_t tl = rd16(p + 2);
     if (tl < hl || tl > len || tl > 1500u || net_fold(net_sum(0, p, hl)) != 0xFFFFu) {
-        net_s.st.ip_bad++;
+        ns->st.ip_bad++;
         return;
     }
     if (rd16(p + 6) & 0x3FFFu) {     /* MF or a fragment offset */
-        net_s.st.ip_frag++;
+        ns->st.ip_frag++;
         return;
     }
     uint32_t src = rd32(p + 12), dst = rd32(p + 16);
-    if (src == IP_BCAST || (src >> 28) == 0xEu || (ip_configured() && (src == net_s.ip || subnet_bcast(src)))) {
-        net_s.st.ip_filtered++;      /* no host sends from these: forged (or our own echoed) */
+    if (src == IP_BCAST || (src >> 28) == 0xEu || (ip_configured(ns) && (src == ns->ip || subnet_bcast(ns, src)))) {
+        ns->st.ip_filtered++;      /* no host sends from these: forged (or our own echoed) */
         return;
     }
     uint8_t proto = p[9];
     const uint8_t *pl = p + hl;
     uint32_t pn = tl - hl;
-    if (!ip_configured()) {
+    if (!ip_configured(ns)) {
         /* Only DHCP (UDP 67 -> 68, any destination: offers may be unicast). */
         if (proto != IP_UDP) {
-            net_s.st.ip_filtered++;
+            ns->st.ip_filtered++;
             return;
         }
-        udp_rx(vm, src, dst, pl, pn);
+        udp_rx(ns, src, dst, pl, pn);
         return;
     }
-    bool unicast = dst == net_s.ip;
-    if (!unicast && dst != IP_BCAST && !subnet_bcast(dst)) {
-        net_s.st.ip_filtered++;
+    bool unicast = dst == ns->ip;
+    if (!unicast && dst != IP_BCAST && !subnet_bcast(ns, dst)) {
+        ns->st.ip_filtered++;
         return;
     }
-    if (unicast && ip_on_link(src)) arp_learn(src, f + 6, true);
+    if (unicast && ip_on_link(ns, src)) arp_learn(ns, src, f + 6, true);
     switch (proto) {
     case IP_ICMP:
-        if (unicast) icmp_rx(f + 6, src, pl, pn);
-        else net_s.st.ip_filtered++;
+        if (unicast) icmp_rx(ns, f + 6, src, pl, pn);
+        else ns->st.ip_filtered++;
         break;
     case IP_UDP:
-        udp_rx(vm, src, dst, pl, pn);
+        udp_rx(ns, src, dst, pl, pn);
         break;
     case IP_TCP:
-        if (unicast) tcp_rx(vm, src, dst, pl, pn);
-        else net_s.st.ip_filtered++;
+        if (unicast) tcp_rx(ns, src, dst, pl, pn);
+        else ns->st.ip_filtered++;
         break;
     default:
-        net_s.st.ip_proto++;
+        ns->st.ip_proto++;
         break;
     }
 }
 
-bool ip_send(uint32_t src, uint32_t dst, uint8_t proto, uint32_t len, const uint8_t *dst_mac) {
+bool ip_send(NetState *ns, uint32_t src, uint32_t dst, uint8_t proto, uint32_t len, const uint8_t *dst_mac) {
     if (!dst_mac) {
-        if (dst == IP_BCAST || subnet_bcast(dst)) {
+        if (dst == IP_BCAST || subnet_bcast(ns, dst)) {
             dst_mac = net_bcast_mac;
         } else {
-            uint32_t hop = ip_on_link(dst) ? dst : net_s.gw;
-            if (!ip_configured() || hop == 0 || dst == net_s.ip) {
-                net_s.st.tx_noroute++;
+            uint32_t hop = ip_on_link(ns, dst) ? dst : ns->gw;
+            if (!ip_configured(ns) || hop == 0 || dst == ns->ip) {
+                ns->st.tx_noroute++;
                 return false;
             }
-            dst_mac = arp_resolve(hop);
+            dst_mac = arp_resolve(ns, hop);
             if (!dst_mac) {
-                net_s.st.tx_arp_miss++;
+                ns->st.tx_arp_miss++;
                 return false;
             }
         }
     }
     uint8_t mac[6];
     memcpy(mac, dst_mac, 6);         /* arp_resolve's entry; the TX buffer is rewritten below */
-    uint8_t *p = net_s.tx + ETH_HLEN;
+    uint8_t *p = ns->tx + ETH_HLEN;
     p[0] = 0x45;
     p[1] = 0;
     wr16(p + 2, IP_HLEN + len);
-    wr16(p + 4, net_s.ip_id++);
+    wr16(p + 4, ns->ip_id++);
     wr16(p + 6, 0x4000u);            /* DF */
     p[8] = 64;
     p[9] = proto;
@@ -120,6 +120,6 @@ bool ip_send(uint32_t src, uint32_t dst, uint8_t proto, uint32_t len, const uint
     wr32(p + 12, src);
     wr32(p + 16, dst);
     wr16(p + 10, (uint16_t)~net_fold(net_sum(0, p, IP_HLEN)));
-    eth_send(mac, ETH_IPV4, IP_HLEN + len);
+    eth_send(ns, mac, ETH_IPV4, IP_HLEN + len);
     return true;
 }

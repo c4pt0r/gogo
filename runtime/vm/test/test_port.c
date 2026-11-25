@@ -3,9 +3,9 @@
  * installed with port_set_drivers), event delivery, debounce, owner exit,
  * and the builtins that reach it. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
-#include "platform.h"
 #include "msg.h"
 #include "alloc.h"
 #include "image.h"
@@ -47,7 +47,8 @@ static struct {
 
 static int mbox_len(const Actor *a);
 
-static int fk_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int fk_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     if (fk.refuse) return -1;
     fk.opens++;
     fk.index = index;
@@ -59,19 +60,20 @@ static int fk_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     fk.last = p;
     return 0;
 }
-static void fk_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) {
+static void fk_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm;
     (void)p;
     fk.cmds++;
     fk.cmd_type = type;
     fk.cmd_n = n;
     for (uint32_t i = 0; i < n && i < 8u; i++) fk.cmd[i] = f[i];
 }
-static void fk_close(Port *p) {
+static void fk_close(struct Vm *vm, Port *p) {
+    (void)vm;
     (void)p;
     fk.closes++;
     if (fk.watch) fk.watch_mbox = mbox_len(fk.watch);
 }
-static bool fk_can_event(const Port *p) { (void)p; return fk.live; }
+static bool fk_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return fk.live; }
 static void fk_handoff(Vm *vm, Port *p) { (void)vm; (void)p; fk.handoffs++; }
 
 static const PortDriver fake = {
@@ -93,16 +95,19 @@ static void mini_image(uint32_t *w, Image *img) {
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
 }
 
+static Vm *cur_vm;   /* push()'s ring */
+
 static void setup(uint32_t *w, Image *img, Vm *vm) {
-    va_reset();
-    evq_reset();
+    va_reset(vm);
     memset(&fk, 0, sizeof fk);
-    port_set_drivers(fake_list);
     mini_image(w, img);
-    CHECK_EQ(vm_init(vm, img, 8), 0);
+    CHECK_EQ(test_vm_init(vm, img, 8), 0);
+    evq_reset(vm);
+    port_set_drivers(vm, fake_list);
+    cur_vm = vm;
 }
 
-static void teardown(void) { port_set_drivers(NULL); }
+static void teardown(void) { cur_vm = NULL; }
 
 static Actor *waiting_actor(Vm *vm) {
     Actor *a = actor_new(vm, 64);
@@ -162,7 +167,7 @@ static int32_t evt_field(const Actor *a, int nth, int i) {
 
 static void push(uint16_t port, uint16_t gen, int32_t a, int32_t b, uint32_t t) {
     PortEvent e = { port, gen, a, b, t };
-    CHECK(evq_push(&e));
+    CHECK(evq_push(cur_vm, &e));
 }
 
 static void clear_runq(Vm *vm) { while (runq_pop(vm)) {} }
@@ -244,7 +249,7 @@ TEST(port_open_fails) {
 TEST(port_owner_exit) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *a = waiting_actor(&vm), *b = waiting_actor(&vm);
     term p1 = open_fake(&vm, a, 1);
     term p2 = open_fake(&vm, a, 2);
@@ -262,7 +267,7 @@ TEST(port_owner_exit) {
     CHECK(p3 != p1);
     actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(fk.closes, 3);
-    CHECK_EQ(va_used_bytes(), base);          /* extras freed */
+    CHECK_EQ(va_used_bytes(&vm), base);          /* extras freed */
     teardown();
 }
 
@@ -430,6 +435,43 @@ TEST(port_debounce_burst) {
     teardown();
 }
 
+/* A host clock ahead of VM time (t0 != 0, as on ESP after bring-up): event
+ * stamps are host time and get -t0 exactly once; the debounce window and the
+ * deadline port_next_deadline reports are VM time. */
+TEST(port_debounce_t0) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    vm.t0 = 5000;
+    fk.debounce = 20;
+    Actor *a = waiting_actor(&vm);
+    term p = open_fake(&vm, a, 1);
+    uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE), gen = term_pid_gen(p);
+    uint64_t d;
+    push(idx, gen, 1, 1, 5100);                 /* VM time 100 */
+    push(idx, gen, 1, 0, 5104);                 /* VM time 104: trailing */
+    port_drain(&vm, 104);
+    CHECK_EQ(mbox_len(a), 1);
+    CHECK(port_next_deadline(&vm, &d));
+    CHECK_EQ(d, 120);                           /* 100 + 20, not 104 + 20 (no offset) */
+    port_drain(&vm, 119);
+    CHECK_EQ(mbox_len(a), 1);
+    port_drain(&vm, 120);
+    CHECK_EQ(mbox_len(a), 2);
+    CHECK_EQ(evt_field(a, 1, 1), 0);
+    /* An edge after the window is delivered at once. */
+    push(idx, gen, 1, 1, 5200);
+    port_drain(&vm, 200);
+    CHECK_EQ(mbox_len(a), 3);
+    push(idx, gen, 1, 0, 5210);                 /* inside the window again */
+    port_drain(&vm, 210);
+    CHECK(port_next_deadline(&vm, &d));
+    CHECK_EQ(d, 220);
+    port_close(&vm, p);
+    clear_runq(&vm);
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    teardown();
+}
+
 TEST(port_debounce_off) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
@@ -499,10 +541,11 @@ TEST(port_any_live) {
 TEST(vm_init_rejects_big_table) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
-    CHECK_EQ(vm_init(&vm, &img, (uint16_t)(PORT_SLOT_BASE + 1u)), -1);
-    CHECK_EQ(vm_init(&vm, &img, 0xFFFFu), -1);
-    CHECK_EQ(va_used_bytes(), base);
+    Vm big;                                 /* each Vm has its own allocator: nothing allocated */
+    CHECK_EQ(test_vm_init(&big, &img, (uint16_t)(PORT_SLOT_BASE + 1u)), -1);
+    CHECK_EQ(va_used_bytes(&big), 0u);
+    CHECK_EQ(test_vm_init(&big, &img, 0xFFFFu), -1);
+    CHECK_EQ(va_used_bytes(&big), 0u);
     teardown();
 }
 
@@ -513,10 +556,8 @@ TEST(vm_init_rejects_big_table) {
 #define BI_WORDS 55
 TEST(port_builtins) {
     uint32_t w[BI_WORDS]; Image img; Vm vm;
-    va_reset();
-    evq_reset();
+    va_reset(&vm);
     memset(&fk, 0, sizeof fk);
-    port_set_drivers(fake_list);
     memset(w, 0, sizeof w);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 2;
     w[4] = 12; w[5] = 23; w[6] = 0; w[7] = 0;
@@ -541,7 +582,8 @@ TEST(port_builtins) {
     c[20] = OP_MAKE(OP_BUILTIN, 8, 3, 1); c[21] = B_PORT_CLOSE;
     c[22] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
+    port_set_drivers(&vm, fake_list);
     CHECK_EQ(vm_run(&vm), 0);
     CHECK_EQ(fk.opens, 2);
     CHECK_EQ(fk.cfg[0], 7);
@@ -556,12 +598,13 @@ TEST(port_builtins) {
 /* ---- bounded drain ---- */
 
 static volatile int flood_done;
+static Vm *flood_vm;
 
 static void *flood(void *arg) {
     uint16_t idx = (uint16_t)(((uintptr_t)arg) >> 16), gen = (uint16_t)((uintptr_t)arg & 0xFFFFu);
     for (int32_t i = 0; i < 20000; i++) {
         PortEvent e = { idx, gen, 1, i & 1, 0 };
-        while (!evq_push(&e)) {}      /* keep the ring full: retry when it is */
+        while (!evq_push(flood_vm, &e)) {}   /* keep the ring full: retry when it is */
     }
     flood_done = 1;
     return NULL;
@@ -577,14 +620,15 @@ TEST(port_drain_bounded) {
     uintptr_t arg = ((uintptr_t)idx << 16) | term_pid_gen(p);
     pthread_t th;
     flood_done = 0;
+    flood_vm = &vm;
     CHECK_EQ(pthread_create(&th, NULL, flood, (void *)arg), 0);
-    for (int spin = 0; spin < 100000000 && evq_empty(); spin++) {}
+    for (int spin = 0; spin < 100000000 && evq_empty(&vm); spin++) {}
     port_drain(&vm, 0);                       /* a producer keeps refilling the ring */
     CHECK(mbox_len(a) <= (int)GOGO_EVQ_CAP);
     CHECK(mbox_len(a) > 0);
     clear_runq(&vm);
     PortEvent e;
-    while (!flood_done) { while (evq_pop(&e)) {} }   /* let the producer finish */
+    while (!flood_done) { while (evq_pop(&vm, &e)) {} }   /* let the producer finish */
     pthread_join(th, NULL);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     teardown();
@@ -595,17 +639,17 @@ TEST(gpio_unix_edge_none_not_live) {
     Port p;
     int32_t none[4] = { 5, 1, 0, 0 }, both[4] = { 6, 1, 3, 0 }, out[4] = { 7, 3, 0, 0 };
     memset(&p, 0, sizeof p);
-    CHECK_EQ(gpio_unix_driver.open(&p, 0, none, 4), 0);
-    CHECK(!gpio_unix_driver.can_event(&p));
-    gpio_unix_driver.close(&p);
+    CHECK_EQ(gpio_unix_driver.open(NULL, &p, 0, none, 4), 0);
+    CHECK(!gpio_unix_driver.can_event(NULL, &p));
+    gpio_unix_driver.close(NULL, &p);
     memset(&p, 0, sizeof p);
-    CHECK_EQ(gpio_unix_driver.open(&p, 0, both, 4), 0);
-    CHECK(gpio_unix_driver.can_event(&p));
-    gpio_unix_driver.close(&p);
+    CHECK_EQ(gpio_unix_driver.open(NULL, &p, 0, both, 4), 0);
+    CHECK(gpio_unix_driver.can_event(NULL, &p));
+    gpio_unix_driver.close(NULL, &p);
     memset(&p, 0, sizeof p);
-    CHECK_EQ(gpio_unix_driver.open(&p, 0, out, 4), 0);
-    CHECK(!gpio_unix_driver.can_event(&p));
-    gpio_unix_driver.close(&p);
+    CHECK_EQ(gpio_unix_driver.open(NULL, &p, 0, out, 4), 0);
+    CHECK(!gpio_unix_driver.can_event(NULL, &p));
+    gpio_unix_driver.close(NULL, &p);
 }
 
 /* ---- Handoff, port-held Bytes, extra sources (M5) ---- */
@@ -645,7 +689,7 @@ TEST(handoff_moves_charge) {
     CHECK_EQ(actor_extra_charged(b), 16u + list);
     CHECK_EQ(bytes_held_bytes(b), 200u);
     CHECK(actor_port_owns(b));
-    CHECK(bytes_valid(h));
+    CHECK(bytes_valid(&vm, h));
 
     /* Events now go to b. */
     uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE);
@@ -660,8 +704,8 @@ TEST(handoff_moves_charge) {
     CHECK_EQ(fk.closes, 0);
     actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(fk.closes, 1);
-    CHECK(!bytes_valid(h));
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK(!bytes_valid(&vm, h));
+    CHECK_EQ(bytes_table_used(&vm), 0u);
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
     teardown();
 }
@@ -769,7 +813,7 @@ TEST(port_close_releases_held) {
     CHECK(port_bytes_new(&vm, pt, 4, &d) == T_NIL);
     CHECK_EQ(bytes_held_bytes(a), 400u);
     port_bytes_release(&vm, pt, h1);
-    CHECK(!bytes_valid(h1));
+    CHECK(!bytes_valid(&vm, h1));
     CHECK_EQ(bytes_held_bytes(a), 300u);
     port_bytes_release(&vm, pt, h1);            /* not held: ignored */
     CHECK_EQ(bytes_held_bytes(a), 300u);
@@ -778,10 +822,10 @@ TEST(port_close_releases_held) {
     port_close(&vm, p);
     CHECK_EQ(bytes_held_bytes(a), 0u);
     CHECK_EQ(bytes_held_count(a), 0u);
-    CHECK(!bytes_valid(h2));
-    CHECK(bytes_valid(hb));                     /* still b's */
+    CHECK(!bytes_valid(&vm, h2));
+    CHECK(bytes_valid(&vm, hb));                     /* still b's */
     bytes_release(&vm, b, hb);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&vm), 0u);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
     teardown();
@@ -790,23 +834,23 @@ TEST(port_close_releases_held) {
 /* An extra event source (the net stack's RX / link slots) is drained,
  * keeps the VM alive and contributes deadlines through the port layer. */
 static struct { bool pending, live, have_dl; uint64_t dl; int drains; uint64_t now; } src;
-static bool src_pending(void) { return src.pending; }
-static void src_drain(Vm *vm, uint64_t now) { (void)vm; src.drains++; src.now = now; src.pending = false; }
-static bool src_live(const Vm *vm) { (void)vm; return src.live; }
-static bool src_deadline(const Vm *vm, uint64_t *d) { (void)vm; if (src.have_dl) *d = src.dl; return src.have_dl; }
+static bool src_pending(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return src.pending; }
+static void src_drain(Vm *vm, void *ctx, uint64_t now) { (void)vm; (void)ctx; src.drains++; src.now = now; src.pending = false; }
+static bool src_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return src.live; }
+static bool src_deadline(const Vm *vm, void *ctx, uint64_t *d) { (void)vm; (void)ctx; if (src.have_dl) *d = src.dl; return src.have_dl; }
 static const PortSource test_src = { src_pending, src_drain, src_live, src_deadline, NULL };
 
 /* A source whose drain leaves work behind (as a sliced TLS handshake
- * does) is drained again at once: vm_run checks pending() before it
- * sleeps. Its only deadline is 300 ms away, so without that check each
+ * does) is drained again at once: vm_step checks pending() before it
+ * reports idle. Its only deadline is 300 ms away, so without that check each
  * re-drain would wait for it (6 x 300 ms). */
 static struct { int left, drains; } busy;
-static bool busy_pending(void) { return busy.left > 0; }
-static void busy_drain(Vm *vm, uint64_t now) { (void)vm; (void)now; busy.drains++; busy.left--; }
-static bool busy_live(const Vm *vm) { (void)vm; return busy.left > 0; }
-static bool busy_deadline(const Vm *vm, uint64_t *d) {
-    (void)vm;
-    *d = platform_now_ms() + 300u;
+static bool busy_pending(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return busy.left > 0; }
+static void busy_drain(Vm *vm, void *ctx, uint64_t now) { (void)vm; (void)ctx; (void)now; busy.drains++; busy.left--; }
+static bool busy_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return busy.left > 0; }
+static bool busy_deadline(const Vm *vm, void *ctx, uint64_t *d) {
+    (void)ctx;
+    *d = vm_now(vm) + 300u;
     return busy.left > 0;
 }
 static const PortSource busy_src = { busy_pending, busy_drain, busy_live, busy_deadline, NULL };
@@ -815,14 +859,14 @@ TEST(port_source_busy) {
     uint32_t w[MINI_WORDS + 2]; Image img; Vm vm;
     setup(w, &img, &vm);
     CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);    /* main runnable */
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
     memset(&busy, 0, sizeof busy);
     busy.left = 6;
-    CHECK(port_add_source(&busy_src));
+    CHECK(port_add_source(&vm, &busy_src, NULL));
     CHECK_EQ(vm_run(&vm), 0);
     CHECK_EQ(busy.drains, 6);
-    CHECK(platform_now_ms() < 250u);            /* the clock restarts at vm_run */
-    port_remove_source(&busy_src);
+    CHECK(vm_now(&vm) < 250u);                  /* the clock restarts at vm_start */
+    port_remove_source(&vm, &busy_src);
     teardown();
 }
 
@@ -831,14 +875,13 @@ TEST(port_source_busy) {
  * of spinning. The clock is read a few times per scheduler pass, so the
  * reads bound the passes: a handful, against millions when the pre-sleep
  * check counted the held value as work due now. */
-extern void platform_unix_set_clock(uint64_t (*fn)(void));
 static unsigned db_reads;
 static uint64_t db_clock(void);
 static uint64_t db_clock(void) {            /* the real clock, counted */
     db_reads++;
-    platform_unix_set_clock(NULL);
-    uint64_t t = platform_now_ms();
-    platform_unix_set_clock(db_clock);
+    test_host_set_clock(NULL);
+    uint64_t t = test_host_now();
+    test_host_set_clock(db_clock);
     return t;
 }
 
@@ -846,7 +889,8 @@ TEST(port_debounce_idle_no_spin) {
     uint32_t w[MINI_WORDS + 2]; Image img; Vm vm;
     setup(w, &img, &vm);
     CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);    /* main returns at once */
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
+    port_set_drivers(&vm, fake_list);
     fk.debounce = 100;
     Actor *a = waiting_actor(&vm);
     (void)open_fake(&vm, a, 1);
@@ -863,9 +907,9 @@ TEST(port_debounce_idle_no_spin) {
     p->last_b = 0;
     vm.ports_pending = 1;
     db_reads = 0;
-    platform_unix_set_clock(db_clock);
+    test_host_set_clock(db_clock);
     int rc = vm_run(&vm);
-    platform_unix_set_clock(NULL);
+    test_host_set_clock(NULL);
     CHECK_EQ(rc, 0);
     CHECK_EQ(vm.ports_pending, 0u);          /* flushed at the window's end */
     CHECK(db_reads < 30u);
@@ -877,7 +921,7 @@ TEST(port_source_hook) {
     setup(w, &img, &vm);
     memset(&src, 0, sizeof src);
     CHECK(!port_work_pending(&vm));
-    CHECK(port_add_source(&test_src));
+    CHECK(port_add_source(&vm, &test_src, NULL));
     CHECK(!port_work_pending(&vm));
     CHECK(!port_any_live(&vm));
     uint64_t dl = 0;
@@ -904,7 +948,7 @@ TEST(port_source_hook) {
     port_drain(&vm, 110);
     CHECK(port_next_deadline(&vm, &dl));
     CHECK_EQ(dl, 150u);
-    port_remove_source(&test_src);
+    port_remove_source(&vm, &test_src);
     CHECK(!port_any_live(&vm));
     clear_runq(&vm);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
@@ -920,7 +964,7 @@ static void rk_command_term(Vm *vm, const Actor *from, Port *p, term msg) {
     rawk.from = from;
     rawk.msg = msg;
 }
-static bool rk_subscribe(Vm *vm, Actor *a) { (void)vm; (void)a; rawk.subs++; return true; }
+static bool rk_subscribe(Vm *vm, void *ctx, Actor *a) { (void)vm; (void)ctx; (void)a; rawk.subs++; return true; }
 static const PortSource sub_src = { src_pending, src_drain, src_live, NULL, rk_subscribe };
 
 TEST(port_command_term_and_subscribe) {
@@ -931,7 +975,7 @@ TEST(port_command_term_and_subscribe) {
         "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event, NULL, rk_command_term, NULL
     };
     static const PortDriver *const raw_list[] = { &raw, NULL };
-    port_set_drivers(raw_list);
+    port_set_drivers(&vm, raw_list);
     Actor *a = waiting_actor(&vm);
     term p = open_fake(&vm, a, 3);
     CHECK(port_is(p));
@@ -941,13 +985,13 @@ TEST(port_command_term_and_subscribe) {
     CHECK_EQ(fk.cmds, 0);                     /* not decoded */
     CHECK(rawk.from == a && rawk.msg == msg);
     CHECK(!port_subscribe(&vm, a));           /* no source */
-    CHECK(port_add_source(&test_src));
+    CHECK(port_add_source(&vm, &test_src, NULL));
     CHECK(!port_subscribe(&vm, a));           /* no hook */
-    port_remove_source(&test_src);
-    CHECK(port_add_source(&sub_src));
+    port_remove_source(&vm, &test_src);
+    CHECK(port_add_source(&vm, &sub_src, NULL));
     CHECK(port_subscribe(&vm, a));
     CHECK_EQ(rawk.subs, 1);
-    port_remove_source(&sub_src);
+    port_remove_source(&vm, &sub_src);
     clear_runq(&vm);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     teardown();
@@ -970,7 +1014,7 @@ TEST(handoff_slice_of_large_root) {
     CHECK(port_bytes_retain(&vm, pt, sl));
     bytes_release(&vm, a, root);              /* a's own pin; the slice keeps the root */
     uint32_t need = 250u + bytes_list_words(c);
-    CHECK_EQ(bytes_extra_words(c, pt->held, PORT_MAX_HELD), need);
+    CHECK_EQ(bytes_extra_words(&vm, c, pt->held, PORT_MAX_HELD), need);
     c->max_words = (uint16_t)(c->mem_words + need - 1u);
     CHECK(!port_handoff(&vm, a, p, c->id));
     CHECK(pt->owner == a->id);
@@ -986,21 +1030,21 @@ TEST(handoff_slice_of_large_root) {
     clear_runq(&vm);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&vm), 0u);
     teardown();
 }
 
 /* ---- several sources, multi-field delivery ---- */
 
 static struct { bool pending, live, have_dl; uint64_t dl; int drains; } s2;
-static bool s2_pending(void) { return s2.pending; }
-static void s2_drain(Vm *vm, uint64_t now) { (void)vm; (void)now; s2.drains++; s2.pending = false; }
-static bool s2_live(const Vm *vm) { (void)vm; return s2.live; }
-static bool s2_deadline(const Vm *vm, uint64_t *d) { (void)vm; if (s2.have_dl) *d = s2.dl; return s2.have_dl; }
+static bool s2_pending(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return s2.pending; }
+static void s2_drain(Vm *vm, void *ctx, uint64_t now) { (void)vm; (void)ctx; (void)now; s2.drains++; s2.pending = false; }
+static bool s2_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return s2.live; }
+static bool s2_deadline(const Vm *vm, void *ctx, uint64_t *d) { (void)vm; (void)ctx; if (s2.have_dl) *d = s2.dl; return s2.have_dl; }
 static const PortSource src2 = { s2_pending, s2_drain, s2_live, s2_deadline, NULL };
-static bool s3_pending(void) { return false; }
-static bool s3_live(const Vm *vm) { (void)vm; return false; }
-static void s3_drain(Vm *vm, uint64_t now) { (void)vm; (void)now; }
+static bool s3_pending(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return false; }
+static bool s3_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return false; }
+static void s3_drain(Vm *vm, void *ctx, uint64_t now) { (void)vm; (void)ctx; (void)now; }
 static const PortSource src3 = { s3_pending, s3_drain, s3_live, NULL, NULL };
 
 TEST(two_sources_both_drain) {
@@ -1008,8 +1052,8 @@ TEST(two_sources_both_drain) {
     setup(w, &img, &vm);
     memset(&src, 0, sizeof src);
     memset(&s2, 0, sizeof s2);
-    CHECK(port_add_source(&test_src));
-    CHECK(port_add_source(&src2));
+    CHECK(port_add_source(&vm, &test_src, NULL));
+    CHECK(port_add_source(&vm, &src2, NULL));
     src.pending = s2.pending = true;
     CHECK(port_work_pending(&vm));
     port_drain(&vm, 7);
@@ -1029,23 +1073,23 @@ TEST(two_sources_both_drain) {
     s2.dl = 1000;
     CHECK(port_next_deadline(&vm, &dl));
     CHECK_EQ(dl, 900u);
-    port_remove_source(&test_src);
-    port_remove_source(&src2);
+    port_remove_source(&vm, &test_src);
+    port_remove_source(&vm, &src2);
     teardown();
 }
 
 TEST(third_source_refused) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    CHECK(port_add_source(&test_src));
-    CHECK(port_add_source(&src2));
-    CHECK(!port_add_source(&src3));
-    port_remove_source(&src3);                /* unknown: ignored */
-    CHECK(!port_add_source(&src3));
-    port_remove_source(&test_src);
-    CHECK(port_add_source(&src3));
-    port_remove_source(&src2);
-    port_remove_source(&src3);
+    CHECK(port_add_source(&vm, &test_src, NULL));
+    CHECK(port_add_source(&vm, &src2, NULL));
+    CHECK(!port_add_source(&vm, &src3, NULL));
+    port_remove_source(&vm, &src3);                /* unknown: ignored */
+    CHECK(!port_add_source(&vm, &src3, NULL));
+    port_remove_source(&vm, &test_src);
+    CHECK(port_add_source(&vm, &src3, NULL));
+    port_remove_source(&vm, &src2);
+    port_remove_source(&vm, &src3);
     teardown();
 }
 
@@ -1121,10 +1165,8 @@ static void stale_cap(const char *s, size_t n) {
  * builtin, so every driver's command handler is covered. */
 TEST(port_stale_values_badcode) {
     uint32_t w[40]; Image img; Vm vm;
-    va_reset();
-    evq_reset();
+    va_reset(&vm);
     memset(&fk, 0, sizeof fk);
-    port_set_drivers(fake_list);
     memset(w, 0, sizeof w);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 2;
     w[4] = 6; w[5] = 6; w[6] = 0; w[7] = 0;
@@ -1138,7 +1180,8 @@ TEST(port_stale_values_badcode) {
     c[3] = OP_MAKE(OP_BUILTIN, 2, 0, 2); c[4] = B_SEND;        /* Send(r0, r1) */
     c[5] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
-    CHECK_EQ(vm_init(&vm, &img, 8), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
+    port_set_drivers(&vm, fake_list);
     uint32_t tag = mod_tag_make(6, 3);
     term stale = term_from_const(0) | tag;
     int32_t cfg[2] = { 1, 0 };
@@ -1197,7 +1240,7 @@ TEST(port_open_term) {
         "fake", CFG_TYPE, EVT_TYPE, NULL, fk_command, fk_close, fk_can_event, NULL, NULL, ot_open_term
     };
     static const PortDriver *const ot_list[] = { &ot, NULL };
-    port_set_drivers(ot_list);
+    port_set_drivers(&vm, ot_list);
     Actor *a = waiting_actor(&vm);
     /* A cfg struct with a string field (not decodable as ints). */
     a->hp = 0;

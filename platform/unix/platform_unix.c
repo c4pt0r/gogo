@@ -1,6 +1,5 @@
 #define _POSIX_C_SOURCE 200112L   /* clock_gettime, nanosleep, poll, pipe */
-#include "platform.h"
-#include "caps_unix.h"
+#include "platform_unix.h"
 #include "config.h"
 #include "gpio_unix.h"
 #include "input_unix.h"
@@ -27,25 +26,19 @@ void platform_write_err(const char *s, size_t n) {
     fwrite(s, 1, n, stderr);
 }
 
-/* Bytes handed out by platform_chunk_alloc and not yet freed; a nonzero cap
- * makes the allocator fail past it, like a small MCU arena. */
+/* Bytes handed out by chunk_alloc and not yet freed; a nonzero cap makes
+ * the allocator fail past it, like a small MCU arena. */
 static size_t arena_used;
-static size_t arena_cap = GOGO_ARENA_BYTES;
 
-void platform_unix_set_arena_cap(size_t bytes) { arena_cap = bytes; }   /* test-only */
-size_t platform_unix_arena_used(void) { return arena_used; }             /* test-only */
-/* Test-only: forgets memory earlier tests leaked (va_reset abandons chunks),
- * so each test starts with the whole cap. Later frees of it saturate at 0. */
-void platform_unix_arena_forget(void) { arena_used = 0; }
-
-void *platform_chunk_alloc(size_t bytes) {
-    if (arena_cap && bytes > arena_cap - arena_used) return NULL;
+static void *chunk_alloc(void *ctx, size_t bytes) {
+    (void)ctx;
+    if (GOGO_ARENA_BYTES && bytes > (size_t)GOGO_ARENA_BYTES - arena_used) return NULL;
     void *p = malloc(bytes);
     if (p) arena_used += bytes;
     return p;
 }
-void platform_chunk_free(void *p, size_t bytes) {
-    if (!p) return;
+static void chunk_free(void *ctx, void *p, size_t bytes) {
+    (void)ctx;
     arena_used = bytes > arena_used ? 0 : arena_used - bytes;
     free(p);
 }
@@ -55,10 +48,6 @@ static uint64_t mono_ms(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
-
-/* Test-only: replaces the clock (NULL = the real one), e.g. to count reads. */
-static uint64_t (*clock_hook)(void);
-void platform_unix_set_clock(uint64_t (*fn)(void)) { clock_hook = fn; }
 
 static uint64_t time_start;
 static int time_started;
@@ -70,7 +59,6 @@ static bool sim_clock;
 static uint64_t sim_now, sim_target;
 
 uint64_t platform_now_ms(void) {
-    if (clock_hook) return clock_hook();
     if (sim_clock) return sim_now;
     uint64_t now = mono_ms();
     if (!time_started) {
@@ -80,10 +68,11 @@ uint64_t platform_now_ms(void) {
     return now - time_start;
 }
 
-/* The wall clock (platform.h) starts from $GOGO_UNIX_TIME_MS if set (0:
+/* The wall clock (host.h) starts from $GOGO_UNIX_TIME_MS if set (0:
  * unknown), else from the host clock, but unknown under --sim-clock (the
- * network goldens set it with SNTP). The weak runtime/vm/walltime.c keeps it. */
-static int64_t wall_start(void) {
+ * network goldens set it with SNTP). gogovm hands it to the Vm, which keeps
+ * it as an offset (runtime/vm/host.c). */
+int64_t platform_unix_wall_start(void) {
     const char *e = getenv("GOGO_UNIX_TIME_MS");
     if (e) return (int64_t)strtoll(e, NULL, 10);
     if (sim_clock) return 0;
@@ -102,13 +91,6 @@ uint32_t platform_random(void) {
     return r;
 }
 
-void platform_time_reset(void) {
-    time_start = mono_ms();
-    time_started = 1;
-    platform_set_unix_time_ms(wall_start());
-}
-
-void platform_barrier(void) { __sync_synchronize(); }
 
 /* ---- net link (--net-fd) ----
  *
@@ -126,26 +108,20 @@ void platform_barrier(void) { __sync_synchronize(); }
  * idle, after all the frames it sent meanwhile; advance 0 is a sync.
  * Without --sim-clock, advances are acknowledged at once. Frames are read
  * one per platform_wait, so the stack's single RX slot is drained between
- * them. At EOF the link is down (net_link_event(false)); with --sim-clock
+ * them. At EOF the link is down (net_link_event(ns, false)); with --sim-clock
  * time can no longer move, so the process exits 0 (the simulator is done). */
 static int net_fd = -1;
 static bool link_down;        /* set by NET_MSG_LINK: sends fail while down */
 static bool ack_owed;
 static uint32_t net_rx_count;
+static NetState *net_ns;      /* the stack the link feeds (NULL: frames dropped) */
 
 /* Frames go to net_rx_offer unless a test diverts them. */
 static void (*rx_sink)(const uint8_t *, uint32_t);
 
-/* Defaults for a build without the net stack: frames are dropped. The
- * net stack's strong definitions override them at link time; it must be
- * linked as object files, not from an archive (a linker does not pull an
- * archive member to replace a weak definition it already has). Other
- * platforms (ESP) define these strongly and have no weak default. */
-__attribute__((weak)) void net_rx_offer(const uint8_t *frame, uint32_t len) { (void)frame; (void)len; }
-__attribute__((weak)) void net_link_event(bool up) { (void)up; }
-
-void platform_unix_net_open(int fd, bool sim) {
+void platform_unix_net_open(int fd, bool sim, NetState *ns) {
     net_fd = fd;
+    net_ns = ns;
     link_down = false;
     sim_clock = sim;
     sim_now = sim_target = 0;
@@ -154,6 +130,7 @@ void platform_unix_net_open(int fd, bool sim) {
 
 void platform_unix_net_close(void) {      /* test-only */
     net_fd = -1;
+    net_ns = NULL;
     sim_clock = false;
     ack_owed = false;
 }
@@ -194,29 +171,33 @@ static bool net_put(uint8_t type, const uint8_t *payload, uint32_t len) {
 static int (*tx_hook)(const uint8_t *, uint32_t);
 void platform_unix_net_set_tx(int (*fn)(const uint8_t *, uint32_t)) { tx_hook = fn; }
 
-bool platform_net_mac(uint8_t mac[6]) {
+static bool net_mac(void *ctx, uint8_t mac[6]) {
     static const uint8_t m[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };   /* locally administered */
+    (void)ctx;
     if (net_fd < 0 && !tx_hook) return false;
     memcpy(mac, m, 6);
     return true;
 }
 
-int platform_net_send(const uint8_t *frame, uint32_t len) {
+static int net_send(void *ctx, const uint8_t *frame, uint32_t len) {
+    (void)ctx;
     if (link_down) return -1;
     if (tx_hook) return tx_hook(frame, len);
     return net_put(NET_MSG_FRAME, frame, len) ? 0 : -1;
 }
 
-bool platform_net_link_up(void) { return !link_down && (net_fd >= 0 || tx_hook); }
+static bool net_link_up(void *ctx) { (void)ctx; return !link_down && (net_fd >= 0 || tx_hook); }
 
 /* No status line on unix: programs print what they need (golden output). */
-void platform_net_report(bool up, uint32_t ip, uint32_t gw, uint32_t dns) {
-    (void)up; (void)ip; (void)gw; (void)dns;
+static void net_report(void *ctx, bool up, uint32_t ip, uint32_t gw, uint32_t dns) {
+    (void)ctx; (void)up; (void)ip; (void)gw; (void)dns;
 }
+
+const NetIf unix_netif = { net_mac, net_send, net_link_up, net_report, NULL };
 
 static void net_eof(void) {
     net_fd = -1;
-    net_link_event(false);
+    if (net_ns) net_link_event(net_ns, false);
     if (sim_clock) {
         fflush(stdout);
         exit(0);
@@ -244,7 +225,7 @@ static void net_read(void) {
         if (len > keep) break;                          /* too long for any frame */
         net_rx_count++;
         if (rx_sink) rx_sink(buf, len);
-        else net_rx_offer(buf, len);
+        else if (net_ns) net_rx_offer(net_ns, buf, len);
         break;
     case NET_MSG_ADVANCE:
         if (len != 4) break;
@@ -259,7 +240,7 @@ static void net_read(void) {
     case NET_MSG_LINK:
         if (len != 1) break;
         link_down = buf[0] == 0;
-        net_link_event(buf[0] != 0);
+        if (net_ns) net_link_event(net_ns, buf[0] != 0);
         break;
     default:                                            /* unknown: ignored */
         break;
@@ -352,25 +333,12 @@ static void net_wait(uint32_t ms) {
     net_poll(-1);
 }
 
-/* The kbd, power, imu, ir, mic and spk drivers (runtime/input/) are linked into gogovm only, not into
- * the C test builds that share this file: main.c overrides this weak hook to
- * append them (a linker does not resolve weak undefined data on every host). */
-__attribute__((weak)) int platform_unix_input_drivers(const struct PortDriver **out, int cap) { (void)out; (void)cap; return 0; }
-
-const struct PortDriver *const *platform_port_drivers(void) {
-    static const struct PortDriver *list[16];
-    if (!list[0]) {
-        int n = 0;
-        list[n++] = &gpio_unix_driver;
-        list[n++] = &net_netif_driver;
-        list[n++] = &net_udp_driver;
-        list[n++] = &net_tcp_driver;
-        list[n++] = &net_tcp_listen_driver;
-        n += platform_unix_input_drivers(list + n, (int)(sizeof list / sizeof list[0]) - 1 - n);
-        list[n] = NULL;
-    }
-    return list;
-}
+/* The kbd, power, imu, ir, mic and spk drivers (runtime/input/) are linked
+ * into gogovm only, not into the C test builds that share this file:
+ * main.c's board lists them after these. */
+const PortDriver *const unix_base_ports[] = {
+    &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver, NULL
+};
 
 /* config.Get: the file $GOGO_CONFIG, else ~/.gogo/config,
  * of key=value lines, which `gogo config set|get|list|rm` edits. Read on
@@ -411,9 +379,25 @@ int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uin
     return found;
 }
 
-/* Unix provides every capability (CAP_TLS too in a gogovm built with the
- * "tls" port: main.c adds it); --caps <hex> (test only) overrides. */
-static uint32_t unix_caps = CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX |
-                           CAP_MIC | CAP_SPK;
-void platform_unix_set_caps(uint32_t caps) { unix_caps = caps; }
-uint32_t platform_caps(void) { return unix_caps; }
+/* ---- the host table ---- */
+
+static void host_write(void *ctx, int stream, const char *s, size_t n) {
+    (void)ctx;
+    if (stream == 2) platform_write_err(s, n);
+    else platform_write(s, n);
+}
+static uint64_t host_now(void *ctx) { (void)ctx; return platform_now_ms(); }
+static void host_wake(void *ctx) { (void)ctx; platform_notify(); }
+static void host_wait(void *ctx, uint32_t ms) { (void)ctx; platform_wait(ms); }
+static uint32_t host_random(void *ctx) { (void)ctx; return platform_random(); }
+static int32_t host_config_get(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
+    (void)ctx;
+    return platform_config_get(k, kl, buf, cap);
+}
+
+/* No RTC hooks: the Vm keeps the wall clock (main.c seeds it); no special
+ * code memory. */
+const gogo_host unix_host = {
+    host_write, chunk_alloc, chunk_free, host_now, host_wake, host_wait, NULL, NULL, host_random, NULL,
+    host_config_get, NULL, NULL
+};

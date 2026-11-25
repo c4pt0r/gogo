@@ -2,7 +2,7 @@
  * layout assumptions. */
 #include "term.h"
 #include "opcodes.h"
-#include "platform.h"
+#include "host.h"
 #include "image.h"
 #include "actor.h"
 #include "heap.h"

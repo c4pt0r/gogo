@@ -4,6 +4,7 @@
  * mailbox, and the US keymap. Time is the fake clock `now`; each step
  * runs port_drain, as the scheduler does. */
 #include "test.h"
+#include "test_host.h"
 #include "fakehw.h"
 #include "actor.h"
 #include "signals.h"
@@ -17,8 +18,6 @@
 #include "bytes.h"
 #include <string.h>
 
-void platform_unix_set_clock(uint64_t (*fn)(void));
-void platform_unix_arena_forget(void);
 
 static uint64_t now;
 static uint64_t clock_fn(void) { return now; }
@@ -47,17 +46,16 @@ static void mini_image(void) {
 static const PortDriver *const drivers[] = { &input_kbd_driver, &input_power_driver, NULL };
 
 static void setup(void) {
-    platform_unix_arena_forget();
-    va_reset();
-    evq_reset();
-    bytes_reset();
+    test_host_arena_forget();
+    va_reset(&vm);
+    bytes_reset(&vm);
     fake_reset();
     now = 0;
-    platform_unix_set_clock(clock_fn);
-    port_set_drivers(drivers);
-    fake_install_once();
+    test_host_set_clock(clock_fn);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
+    fake_install(&vm);
     owner = actor_new(&vm, 256);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -66,8 +64,7 @@ static void setup(void) {
 
 static void teardown(void) {
     port_close_all(&vm);
-    platform_unix_set_clock(NULL);
-    port_set_drivers(NULL);
+    test_host_set_clock(NULL);
 }
 
 static term heap_str(Actor *a, const char *s) {
@@ -117,8 +114,8 @@ static void collect(Actor *a) {
         }
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-        msg_free(m);
+        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        msg_free(&vm, m);
     }
 }
 
@@ -359,18 +356,18 @@ TEST(kbd_full_mailbox_drops) {
     setup();
     CHECK(port_is(open_kbd(owner, 0, 0)));
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner) + 20u);
-    uint32_t d0 = input_dropped();
+    uint32_t d0 = input_dropped(&vm);
     int sent = 0;
-    while (input_dropped() == d0 && sent < 100) {
+    while (input_dropped(&vm) == d0 && sent < 100) {
         press(R_A); release(R_A);
         step(1);
         sent += 2;
     }
-    CHECK(input_dropped() > d0 && sent < 100);
-    uint32_t d1 = input_dropped();
+    CHECK(input_dropped(&vm) > d0 && sent < 100);
+    uint32_t d1 = input_dropped(&vm);
     for (int i = 0; i < 5; i++) { press(R_A); release(R_A); }
     step(2);
-    CHECK_EQ(input_dropped() - d1, 10);
+    CHECK_EQ(input_dropped(&vm) - d1, 10);
     CHECK(owner->state != A_EXITED && !(owner->flags & AF_EXIT_PENDING));
     collect(owner);
     CHECK(ngot > 0);
@@ -379,20 +376,20 @@ TEST(kbd_full_mailbox_drops) {
     collect(owner);
     CHECK_EQ(ngot, 1);
     is(0, 0x05, 'b', 0, true);
-    CHECK_EQ(input_dropped() - d1, 10);
+    CHECK_EQ(input_dropped(&vm) - d1, 10);
     teardown();
 }
 
 TEST(kbd_read_error_ends_drain) {
     setup();
     CHECK(port_is(open_kbd(owner, 0, 0)));
-    uint32_t e0 = input_read_errors();
+    uint32_t e0 = input_read_errors(&vm);
     fake_fail_next_read();
     press(R_A);
     step(1);
     collect(owner);
     CHECK_EQ(ngot, 0);
-    CHECK_EQ(input_read_errors() - e0, 1);
+    CHECK_EQ(input_read_errors(&vm) - e0, 1);
     step(2);                                         /* the event is still queued */
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -416,13 +413,13 @@ TEST(kbd_pending_is_pure_read) {
 TEST(kbd_error_mid_drain_recovers) {
     setup();
     CHECK(port_is(open_kbd(owner, 0, 0)));
-    uint32_t e0 = input_read_errors();
+    uint32_t e0 = input_read_errors(&vm);
     press(R_A); press(R_B); press(R_C);
     fake_fail_read_after(1);                         /* first read ok, second fails */
     step(1);
     collect(owner);
     CHECK_EQ(ngot, 1);
-    CHECK_EQ(input_read_errors() - e0, 1);
+    CHECK_EQ(input_read_errors(&vm) - e0, 1);
     CHECK(port_work_pending(&vm));                   /* flag still set: retry */
     step(2);
     collect(owner);
@@ -539,22 +536,22 @@ TEST(kbd_repeat_across_32bit_wrap) {
     teardown();
 }
 
-static bool k_nb_pending(void) { return false; }
-static void k_nb_drain(Vm *v, uint64_t n) { (void)v; (void)n; }
-static bool k_nb_live(const Vm *v) { (void)v; return false; }
-static bool k_nb_next(const Vm *v, uint64_t *d) { (void)v; (void)d; return false; }
+static bool k_nb_pending(const Vm *v, void *c) { (void)v; (void)c; return false; }
+static void k_nb_drain(Vm *v, void *c, uint64_t n) { (void)v; (void)c; (void)n; }
+static bool k_nb_live(const Vm *v, void *c) { (void)v; (void)c; return false; }
+static bool k_nb_next(const Vm *v, void *c, uint64_t *d) { (void)v; (void)c; (void)d; return false; }
 static const PortSource k_filler = { k_nb_pending, k_nb_drain, k_nb_live, k_nb_next, NULL };
 
 /* No free source slot: input_install logs and the port opens as absent hardware. */
 TEST(kbd_install_without_slot_disables_port) {
     setup();
-    input_uninstall();
+    input_uninstall(&vm);
     int n = 0;
-    while (n < 8 && port_add_source(&k_filler)) n++;
-    input_install();
+    while (n < 8 && port_add_source(&vm, &k_filler, NULL)) n++;
+    input_install(&vm, vm.input);
     CHECK(!port_is(open_kbd(owner, 0, 0)));
-    for (int i = 0; i < n; i++) port_remove_source(&k_filler);
-    input_install();
+    for (int i = 0; i < n; i++) port_remove_source(&vm, &k_filler);
+    input_install(&vm, vm.input);
     CHECK(port_is(open_kbd(owner, 0, 0)));
     teardown();
 }

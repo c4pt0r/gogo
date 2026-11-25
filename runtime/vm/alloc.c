@@ -1,75 +1,69 @@
 #include "alloc.h"
-#include "platform.h"
+#include "actor.h"
 
-#define VA_GRAIN      8u
-#define VA_MAX_SMALL  256u
-#define VA_CLASSES    (VA_MAX_SMALL / VA_GRAIN)
-#define VA_CHUNK      4096u
-
-typedef struct FreeBlock { struct FreeBlock *next; } FreeBlock;
-
-static FreeBlock *free_list[VA_CLASSES + 1];  /* indexed by size / VA_GRAIN */
-static char *chunk_cur, *chunk_end;           /* unused tail of newest chunk */
-static size_t used, limit, peak;
+typedef struct VaFree { struct VaFree *next; } FreeBlock;
 
 static size_t round_up(size_t n) {
     if (n == 0) n = 1;
     return (n + VA_GRAIN - 1) & ~(size_t)(VA_GRAIN - 1);
 }
 
-void *va_alloc(size_t bytes) {
+void *va_alloc(Vm *vm, size_t bytes) {
+    VaHeap *h = &vm->va;
     size_t size = bytes > VA_MAX_SMALL ? bytes : round_up(bytes);
-    if (limit && used + size > limit) return NULL;
+    if (h->limit && h->used + size > h->limit) return NULL;
 
     void *p;
     if (bytes > VA_MAX_SMALL) {
-        p = platform_chunk_alloc(bytes);
+        p = vm_chunk_alloc(vm, bytes);
     } else {
         size_t cls = size / VA_GRAIN;
-        if (free_list[cls]) {
-            p = free_list[cls];
-            free_list[cls] = free_list[cls]->next;
+        if (h->free_list[cls]) {
+            p = h->free_list[cls];
+            h->free_list[cls] = h->free_list[cls]->next;
         } else {
-            if ((size_t)(chunk_end - chunk_cur) < size) {
+            if ((size_t)(h->chunk_end - h->chunk_cur) < size) {
                 /* Tail of the old chunk is abandoned; at most 248 bytes. */
-                char *c = platform_chunk_alloc(VA_CHUNK);
+                char *c = vm_chunk_alloc(vm, VA_CHUNK);
                 if (!c) return NULL;
-                chunk_cur = c;
-                chunk_end = c + VA_CHUNK;
+                h->chunk_cur = c;
+                h->chunk_end = c + VA_CHUNK;
             }
-            p = chunk_cur;
-            chunk_cur += size;
+            p = h->chunk_cur;
+            h->chunk_cur += size;
         }
     }
-    if (p) used += size;
-    if (used > peak) peak = used;
+    if (p) h->used += size;
+    if (h->used > h->peak) h->peak = h->used;
     return p;
 }
 
-void va_free(void *p, size_t bytes) {
+void va_free(Vm *vm, void *p, size_t bytes) {
     if (!p) return;
+    VaHeap *h = &vm->va;
     if (bytes > VA_MAX_SMALL) {
-        platform_chunk_free(p, bytes);
-        used -= bytes;
+        vm_chunk_free(vm, p, bytes);
+        h->used -= bytes;
     } else {
         size_t size = round_up(bytes);
         FreeBlock *b = p;
-        b->next = free_list[size / VA_GRAIN];
-        free_list[size / VA_GRAIN] = b;
-        used -= size;
+        b->next = h->free_list[size / VA_GRAIN];
+        h->free_list[size / VA_GRAIN] = b;
+        h->used -= size;
     }
 }
 
-size_t va_used_bytes(void) { return used; }
-void va_set_limit(size_t bytes) { limit = bytes; }
-size_t va_peak_bytes(void) { return peak; }
-void va_reset_peak(void) { peak = used; }
+size_t va_used_bytes(const Vm *vm) { return vm->va.used; }
+void va_set_limit(Vm *vm, size_t bytes) { vm->va.limit = bytes; }
+size_t va_peak_bytes(const Vm *vm) { return vm->va.peak; }
+void va_reset_peak(Vm *vm) { vm->va.peak = vm->va.used; }
 
-void va_reset(void) {
+void va_reset(Vm *vm) {
     /* Chunks are intentionally not returned: blocks may still be live. */
-    for (size_t i = 0; i <= VA_CLASSES; i++) free_list[i] = NULL;
-    chunk_cur = chunk_end = NULL;
-    used = 0;
-    limit = 0;
-    peak = 0;
+    VaHeap *h = &vm->va;
+    for (size_t i = 0; i <= VA_CLASSES; i++) h->free_list[i] = NULL;
+    h->chunk_cur = h->chunk_end = NULL;
+    h->used = 0;
+    h->limit = 0;
+    h->peak = 0;
 }

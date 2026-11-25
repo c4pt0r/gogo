@@ -1,6 +1,7 @@
 /* String builtins, called directly on an actor with a 8-register frame. */
 #define _POSIX_C_SOURCE 200112L   /* setenv, mkstemp */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "alloc.h"
@@ -32,10 +33,9 @@ static void build_img(uint32_t *w) {
 typedef struct Fx { uint32_t w[IMG_WORDS]; Image img; Vm vm; Actor *a; } Fx;
 
 static void fx_init(Fx *f, uint16_t words) {
-    va_reset();
     build_img(f->w);
     CHECK_EQ(image_load(&f->img, f->w, img_seal(f->w)), IMG_OK);
-    CHECK_EQ(vm_init(&f->vm, &f->img, 4), 0);
+    CHECK_EQ(test_vm_init(&f->vm, &f->img, 4), 0);
     f->a = actor_new(&f->vm, words);
     CHECK(f->a != NULL);
     CHECK(heap_push_frame(&f->vm, f->a, 8, -1));

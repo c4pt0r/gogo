@@ -80,6 +80,8 @@ Chapter 14 describes them.
 type GPIO struct{ Pin, Mode, Edge, DebounceMs int }
 type Write struct{ Value int }
 type Edge struct{ Pin, Value int }
+type Host struct{ Arg int; Data bytes.Bytes }   // cfg of a host-defined port (embed mode)
+type Post struct{ Kind int; Data bytes.Bytes }  // a message from the embedding host
 const (Input = 0; InputPullUp = 1; InputPullDown = 2; Output = 3)
 const (None = 0; Rising = 1; Falling = 2; Both = 3)
 

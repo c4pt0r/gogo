@@ -1,6 +1,7 @@
 /* Slice builtins (strs.c), GC and message copy of slices. The builtins are
  * called directly on an actor with a 16-register frame. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -20,7 +21,7 @@
 static uint32_t copy_words(Vm *vm, Actor *a, term t) {
     Msg *m = msg_build(vm, a, t, a->mod, NULL);
     uint32_t w = m ? m->words : UINT32_MAX;
-    if (m) msg_free(m);
+    if (m) msg_free(vm, m);
     return w;
 }
 
@@ -40,10 +41,9 @@ static void build_img(uint32_t *w) {
 typedef struct Fx { uint32_t w[IMG_WORDS]; Image img; Vm vm; Actor *a; } Fx;
 
 static void fx_init(Fx *f, uint16_t words) {
-    va_reset();
     build_img(f->w);
     CHECK_EQ(image_load(&f->img, f->w, img_seal(f->w)), IMG_OK);
-    CHECK_EQ(vm_init(&f->vm, &f->img, 4), 0);
+    CHECK_EQ(test_vm_init(&f->vm, &f->img, 4), 0);
     f->a = actor_new(&f->vm, words);
     CHECK(f->a != NULL);
     CHECK(heap_push_frame(&f->vm, f->a, 16, -1));
@@ -359,7 +359,7 @@ TEST(slices_msg_copy_shares) {
     CHECK_EQ(memcmp(before, f.a->mem, (size_t)hp * 4u), 0);   /* source restored */
     term r = T_NIL;
     CHECK(msg_unpack(&f.vm, b, m, &r));
-    msg_free(m);
+    msg_free(&f.vm, m);
     term s0 = b->mem[term_ref_off(r) + 2], s1 = b->mem[term_ref_off(r) + 3];
     term a0 = b->mem[term_ref_off(s0) + 4], a1 = b->mem[term_ref_off(s1) + 4];
     CHECK_EQ(a0, a1);

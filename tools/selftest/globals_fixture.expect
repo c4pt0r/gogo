@@ -1,0 +1,8 @@
+tools/selftest/globals_fixture.c fx_bss
+tools/selftest/globals_fixture.c fx_data
+tools/selftest/globals_fixture.c fx_fn.cnt
+tools/selftest/globals_fixture.c fx_ptr_tab
+tools/selftest/globals_fixture.c fx_static_bss
+tools/selftest/globals_fixture.c fx_static_data
+tools/selftest/globals_fixture.c weak:fx_weak_def
+tools/selftest/globals_fixture.c weak:fx_weak_ref

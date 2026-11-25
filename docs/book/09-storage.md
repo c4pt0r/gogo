@@ -15,8 +15,10 @@ store, and `gogo/ringlog`, a size-bounded log.
 On your computer, storage is a directory: `gogo run --fs-root DIR` maps
 `/flash` to `DIR/flash` (created if needed) and `/sd` to `DIR/sd` (only if
 that directory exists). Without `--fs-root` there is no storage at all and
-every call fails with `NotMounted`. The examples in this chapter are run
-that way.
+every call fails with `NotMounted`. Programs stay inside those
+directories: a symlink in them is not followed (it is listed as a file,
+and opening it is `BadPath`). The examples in this chapter are run that
+way.
 
 ## 9.1 Paths
 

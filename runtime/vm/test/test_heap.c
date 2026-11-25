@@ -1,4 +1,5 @@
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "alloc.h"
@@ -20,8 +21,8 @@ static term field(Actor *a, term ref, uint32_t i) {
 }
 
 static Actor *setup(Vm *vm, uint16_t words) {
-    va_reset();
-    CHECK_EQ(vm_init(vm, NULL, 16), 0);
+    va_reset(vm);
+    CHECK_EQ(test_vm_init(vm, NULL, 16), 0);
     Actor *a = actor_new(vm, words);
     CHECK(a != NULL);
     return a;
@@ -241,8 +242,8 @@ TEST(push_frame_oom) {
 
 TEST(test_pid_generation) {
     Vm vm;
-    va_reset();
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    va_reset(&vm);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = actor_new(&vm, 24);
     uint16_t s = term_pid_slot(a->id);
     term old = a->id;
@@ -263,8 +264,8 @@ TEST(test_pid_generation) {
 
 TEST(actor_table_full) {
     Vm vm;
-    va_reset();
-    CHECK_EQ(vm_init(&vm, NULL, 2), 0);
+    va_reset(&vm);
+    CHECK_EQ(test_vm_init(&vm, NULL, 2), 0);
     Actor *a = actor_new(&vm, 24);
     Actor *b = actor_new(&vm, 24);
     CHECK(a != NULL && b != NULL);
@@ -275,8 +276,8 @@ TEST(actor_table_full) {
 
 TEST(runq_fifo) {
     Vm vm;
-    va_reset();
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
+    va_reset(&vm);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = actor_new(&vm, 24), *b = actor_new(&vm, 24);
     CHECK(runq_pop(&vm) == NULL);
     runq_push(&vm, a);
@@ -290,13 +291,13 @@ TEST(runq_fifo) {
 
 TEST(actor_free_releases_memory) {
     Vm vm;
-    va_reset();
-    CHECK_EQ(vm_init(&vm, NULL, 4), 0);
-    size_t before = va_used_bytes();
+    va_reset(&vm);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
+    size_t before = va_used_bytes(&vm);
     Actor *a = actor_new(&vm, 24);
     CHECK(heap_alloc(&vm, a, 200, NULL, 0) != UINT32_MAX);  /* grows block */
     actor_free(&vm, a);
-    CHECK_EQ(va_used_bytes(), before);
+    CHECK_EQ(va_used_bytes(&vm), before);
 }
 
 TEST(idle_footprint) {
@@ -363,9 +364,9 @@ TEST(actor_max_words_default) {
 
 /* Peak va use during one heap_alloc/heap_gc must stay within
  * (everything outside this actor's block) + old block + new block. */
-static void check_peak(size_t before, uint32_t old_words, const Actor *a) {
+static void check_peak(const Vm *vm, size_t before, uint32_t old_words, const Actor *a) {
     size_t outside = before - (size_t)old_words * 4u;
-    CHECK(va_peak_bytes() <= outside + (size_t)old_words * 4u + (size_t)a->mem_words * 4u);
+    CHECK(va_peak_bytes(vm) <= outside + (size_t)old_words * 4u + (size_t)a->mem_words * 4u);
 }
 
 TEST(gc_peak_growing) {
@@ -378,12 +379,12 @@ TEST(gc_peak_growing) {
         a->mem[o + 1] = 0;
         a->mem[a->fp] = term_from_ref(o);        /* live: the GC must grow */
         uint32_t need = certain ? 250 : 150;     /* 250 cannot fit in 200 at all */
-        size_t before = va_used_bytes();
+        size_t before = va_used_bytes(&vm);
         uint32_t old_words = a->mem_words;
-        va_reset_peak();
+        va_reset_peak(&vm);
         CHECK(heap_alloc(&vm, a, need, NULL, 0) != UINT32_MAX);
         CHECK(a->mem_words > old_words);
-        check_peak(before, old_words, a);
+        check_peak(&vm, before, old_words, a);
         CHECK_EQ(a->mem[term_ref_off(a->mem[a->fp])], hdr_make(100, K_STRING));
     }
 }
@@ -396,11 +397,11 @@ TEST(gc_peak_shrinking) {
     a->mem[o] = hdr_make(10, K_STRING);
     a->mem[o + 1] = 0;
     a->mem[a->fp] = term_from_ref(o);
-    size_t before = va_used_bytes();
-    va_reset_peak();
+    size_t before = va_used_bytes(&vm);
+    va_reset_peak(&vm);
     heap_gc(&vm, a, 0, NULL, 0);
     CHECK(a->mem_words < 400);
-    check_peak(before, 400, a);
+    check_peak(&vm, before, 400, a);
     CHECK_EQ(a->hp, 10);
     CHECK_EQ(a->mem[term_ref_off(a->mem[a->fp])], hdr_make(10, K_STRING));
     CHECK_EQ(a->mem[a->mem_words - 1], term_from_int(-1));
@@ -451,7 +452,7 @@ TEST(reclaim_waiting_drops_slack) {
 TEST(reclaim_waiting_counts_released_bytes) {
     Vm vm;
     Actor *a = setup(&vm, 24);
-    bytes_reset();
+    bytes_reset(&vm);
     CHECK(heap_push_frame(&vm, a, 1, -1));
     uint8_t *d;
     term h = bytes_make(&vm, a, 1000, &d);   /* unpinned: the sweep may drop it */

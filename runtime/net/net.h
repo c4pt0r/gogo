@@ -38,6 +38,11 @@
  * chaddr (programs cannot know it), and BOOTP replies to port 68 for
  * another chaddr (or too short to have one) are dropped (ip_filtered).
  *
+ * One stack per Vm: all of its state is a NetState (net_int.h) the board
+ * supplies (static storage on the ESP), attached with net_install and
+ * reached through vm->net; runtime/net/ keeps no state of its own. The
+ * board's receive path names the instance (net_rx_offer, net_link_event).
+ *
  * ARP: requests for our address are answered; senders of ARP packets for
  * us and of IP packets to our unicast address on our subnet are learned
  * into a GOGO_NET_ARP-entry cache (least recently used replaced, never the
@@ -101,7 +106,7 @@ typedef struct NetStats {
     uint32_t udp_quota;     /* not delivered: owner's quota or memory */
     uint32_t udp_rx;        /* datagrams delivered */
     uint32_t tx_frames;     /* frames sent */
-    uint32_t tx_fail;       /* platform_net_send failed */
+    uint32_t tx_fail;       /* NetIf.send failed */
     uint32_t tx_arp_miss;   /* dropped: next hop not resolved (ARP sent) */
     uint32_t tx_noroute;    /* dropped: no address, no gateway, not allowed */
     uint32_t tx_bad;        /* malformed SendTo/Write/Shutdown, too large */
@@ -114,22 +119,27 @@ typedef struct NetStats {
     uint32_t tcp_rx;        /* data segments delivered */
 } NetStats;
 
-/* The port drivers (platform_port_drivers lists them). */
+/* The port drivers (a VmBoard lists them). */
 extern const PortDriver net_netif_driver;
 extern const PortDriver net_udp_driver;
 extern const PortDriver net_tcp_driver;
 extern const PortDriver net_tcp_listen_driver;
 
-/* Starts the stack: resets its state, registers it as the port layer's
- * extra source and reads the link state (platform_net_link_up). Call
- * before vm_run on a platform with a network; without it the ports refuse
- * to open and received frames are dropped. */
-void net_attach(void);
-/* Unregisters it (tests). */
-void net_detach(void);
+/* Starts a stack in ns (the board's storage; it must outlive the Vm):
+ * clears it, points vm->net at it, registers it as vm's extra port source
+ * and reads the link state (NetIf.link_up). Call after vm_boot (vm_init
+ * clears the source list) and before vm_run on a platform with a network;
+ * without it the ports refuse to open. Frames and link events offered to
+ * ns before it are dropped. Once per Vm (net_uninstall first to move it:
+ * ns is cleared, and a live stack's ports would lose their state). */
+void net_install(struct Vm *vm, NetState *ns);
+/* Closes the Vm's net ports (tcp connections are reset), unregisters the
+ * stack and clears vm->net; later offers to its NetState are dropped. */
+void net_uninstall(struct Vm *vm);
 
-/* Bytes of fixed state (RX/TX buffers, tables, counters); <= NET_FIXED_LIMIT. */
+/* Bytes of fixed state per stack (sizeof(NetState): RX/TX buffers, tables,
+ * counters); <= NET_FIXED_LIMIT. */
 uint32_t net_fixed_bytes(void);
-const NetStats *net_stats(void);
+const NetStats *net_stats(const NetState *ns);
 
 #endif

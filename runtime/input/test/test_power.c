@@ -3,6 +3,7 @@
  * change, 2-point threshold), failed reads, and power_pending. Time is the
  * fake clock; each step runs port_drain, as the scheduler does. */
 #include "test.h"
+#include "test_host.h"
 #include "fakehw.h"
 #include "actor.h"
 #include "signals.h"
@@ -16,8 +17,6 @@
 #include "bytes.h"
 #include <string.h>
 
-void platform_unix_set_clock(uint64_t (*fn)(void));
-void platform_unix_arena_forget(void);
 
 static uint64_t now;
 static uint64_t clock_fn(void) { return now; }
@@ -44,17 +43,16 @@ static void mini_image(void) {
 static const PortDriver *const drivers[] = { &input_kbd_driver, &input_power_driver, NULL };
 
 static void setup(void) {
-    platform_unix_arena_forget();
-    va_reset();
-    evq_reset();
-    bytes_reset();
+    test_host_arena_forget();
+    va_reset(&vm);
+    bytes_reset(&vm);
     fake_reset();
     now = 0;
-    platform_unix_set_clock(clock_fn);
-    port_set_drivers(drivers);
-    fake_install_once();
+    test_host_set_clock(clock_fn);
     mini_image();
-    CHECK_EQ(vm_init(&vm, &img, 16), 0);
+    CHECK_EQ(test_vm_init(&vm, &img, 16), 0);
+    port_set_drivers(&vm, drivers);
+    fake_install(&vm);
     owner = actor_new(&vm, 256);
     CHECK(owner != NULL);
     owner->state = A_WAITING;
@@ -62,8 +60,7 @@ static void setup(void) {
 
 static void teardown(void) {
     port_close_all(&vm);
-    platform_unix_set_clock(NULL);
-    port_set_drivers(NULL);
+    test_host_set_clock(NULL);
 }
 
 static term heap_str(Actor *a, const char *s) {
@@ -119,8 +116,8 @@ static void collect(Actor *a) {
         }
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-        msg_free(m);
+        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        msg_free(&vm, m);
     }
 }
 
@@ -369,9 +366,9 @@ TEST(power_full_mailbox_drops) {
     setup();
     CHECK(port_is(open_power(owner, 0)));
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
-    uint32_t d0 = input_dropped();
+    uint32_t d0 = input_dropped(&vm);
     step(0);
-    CHECK_EQ(input_dropped() - d0, 1);
+    CHECK_EQ(input_dropped(&vm) - d0, 1);
     CHECK(owner->state != A_EXITED && !(owner->flags & AF_EXIT_PENDING));
     teardown();
 }
@@ -452,11 +449,11 @@ TEST(power_can_event_follows_live) {
     CHECK_EQ(fake_power_enabled(), 1);
     Port p;
     memset(&p, 0, sizeof p);
-    CHECK(input_power_driver.can_event(&p));
-    CHECK(input_kbd_driver.can_event(&p));
+    CHECK(input_power_driver.can_event(&vm, &p));
+    CHECK(input_kbd_driver.can_event(&vm, &p));
     fake_set_live(false);
-    CHECK(!input_power_driver.can_event(&p));
-    CHECK(!input_kbd_driver.can_event(&p));
+    CHECK(!input_power_driver.can_event(&vm, &p));
+    CHECK(!input_kbd_driver.can_event(&vm, &p));
     uint64_t d;
     fake_set_live(true);
     CHECK(port_next_deadline(&vm, &d));    /* the next sample keeps a timer-less VM waiting... */
@@ -466,22 +463,22 @@ TEST(power_can_event_follows_live) {
     CHECK_EQ(fake_power_enabled(), 0);
 }
 
-static bool nb_pending(void) { return false; }
-static void nb_drain(Vm *v, uint64_t n) { (void)v; (void)n; }
-static bool nb_live(const Vm *v) { (void)v; return false; }
-static bool nb_next(const Vm *v, uint64_t *d) { (void)v; (void)d; return false; }
+static bool nb_pending(const Vm *v, void *c) { (void)v; (void)c; return false; }
+static void nb_drain(Vm *v, void *c, uint64_t n) { (void)v; (void)c; (void)n; }
+static bool nb_live(const Vm *v, void *c) { (void)v; (void)c; return false; }
+static bool nb_next(const Vm *v, void *c, uint64_t *d) { (void)v; (void)c; (void)d; return false; }
 static const PortSource filler = { nb_pending, nb_drain, nb_live, nb_next, NULL };
 
 /* No free source slot: input_install logs and the port opens as absent hardware. */
 TEST(power_install_without_slot_disables_port) {
     setup();
-    input_uninstall();
+    input_uninstall(&vm);
     int n = 0;
-    while (n < 8 && port_add_source(&filler)) n++;   /* the same source twice is only for the test */
-    input_install();
+    while (n < 8 && port_add_source(&vm, &filler, NULL)) n++;   /* the same source twice is only for the test */
+    input_install(&vm, vm.input);
     CHECK(!port_is(open_power(owner, 0)));
-    for (int i = 0; i < n; i++) port_remove_source(&filler);
-    input_install();
+    for (int i = 0; i < n; i++) port_remove_source(&vm, &filler);
+    input_install(&vm, vm.input);
     CHECK(port_is(open_power(owner, 0)));
     teardown();
 }
@@ -572,10 +569,10 @@ TEST(power_read_retried_after_drop) {
     CHECK_EQ(ngot, 1);
     uint16_t mw = owner->max_words;
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
-    uint32_t d0 = input_dropped();
+    uint32_t d0 = input_dropped(&vm);
     send_read(owner, pp);
     step(100);
-    CHECK_EQ(input_dropped() - d0, 1);
+    CHECK_EQ(input_dropped(&vm) - d0, 1);
     CHECK(!port_work_pending(&vm));
     owner->max_words = mw;
     step(200);
@@ -600,11 +597,11 @@ TEST(power_event_driven_drop_recovers) {
     CHECK_EQ(ngot, 1);
     uint16_t full = owner->max_words;
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
-    uint32_t d0 = input_dropped();
+    uint32_t d0 = input_dropped(&vm);
     fake_power_set(3700, 1, 0);            /* a state change: reported, but over quota */
     fake_power_new();
     step(10);
-    CHECK_EQ(input_dropped() - d0, 1);
+    CHECK_EQ(input_dropped(&vm) - d0, 1);
     owner->max_words = full;
     fake_power_set(3700, 0, 1);
     fake_power_new();                      /* a later line */

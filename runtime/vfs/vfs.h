@@ -40,7 +40,8 @@ enum {
 
 typedef int (*VfsDirCb)(void *ctx, const char *name, bool is_dir);
 
-/* Every function returns a VfsErr. `rel` is the path after the mount
+/* Every function returns a VfsErr; `ctx` is the be_ctx given to vfs_mount
+ * (one backend table can serve several media). `rel` is the path after the mount
  * prefix ("/" for the root, NUL-terminated); `f` points at the slot's
  * pointer-aligned GOGO_FS_SLOT_BYTES of storage. open leaves f unused on
  * failure. rename(replace=true) may return VFS_EXISTS when the medium
@@ -69,50 +70,60 @@ typedef struct VfsBackend {
      * the reader's handle (it could then read another file's data). Append
      * and Read opens are not affected. */
     bool case_insensitive;
-    int (*open)(void *f, const char *rel, int mode);
-    int (*read)(void *f, uint8_t *buf, uint32_t n, uint32_t *got);
-    int (*write)(void *f, const uint8_t *buf, uint32_t n);
-    int (*sync)(void *f);
-    int (*size)(void *f, int32_t *out);
-    int (*close)(void *f);
-    int (*stat)(const char *rel, int32_t *size, bool *is_dir);
-    int (*readdir)(const char *rel, VfsDirCb cb, void *ctx);
-    int (*mkdir)(const char *rel);
-    int (*remove)(const char *rel);
-    int (*rename)(const char *from, const char *to, bool replace);
-    int (*usage)(int32_t *used, int32_t *total);
-    int (*write_at)(void *f, uint32_t off, const uint8_t *buf, uint32_t n);
+    int (*open)(void *ctx, void *f, const char *rel, int mode);
+    int (*read)(void *ctx, void *f, uint8_t *buf, uint32_t n, uint32_t *got);
+    int (*write)(void *ctx, void *f, const uint8_t *buf, uint32_t n);
+    int (*sync)(void *ctx, void *f);
+    int (*size)(void *ctx, void *f, int32_t *out);
+    int (*close)(void *ctx, void *f);
+    int (*stat)(void *ctx, const char *rel, int32_t *size, bool *is_dir);
+    int (*readdir)(void *ctx, const char *rel, VfsDirCb cb, void *cb_ctx);
+    int (*mkdir)(void *ctx, const char *rel);
+    int (*remove)(void *ctx, const char *rel);
+    int (*rename)(void *ctx, const char *from, const char *to, bool replace);
+    int (*usage)(void *ctx, int32_t *used, int32_t *total);
+    int (*write_at)(void *ctx, void *f, uint32_t off, const uint8_t *buf, uint32_t n);
 } VfsBackend;
 
-bool vfs_mount(const char *prefix, const VfsBackend *b);   /* prefix outlives the mount */
-void vfs_reset(void);                                      /* tests: drop mounts and slots */
+/* One instance's mounts and open-file slots (vfs_int.h; VFS_STATE_BYTES).
+ * Zeroed storage (a static) is an empty state; so is one after vfs_reset.
+ * Every call below runs on the thread that owns the Vm it is attached to. */
+typedef struct VfsState VfsState;
+uint32_t vfs_state_bytes(void);                            /* sizeof(VfsState) */
 
-int vfs_open(const char *p, uint32_t len, int mode, int *slot);
-int vfs_read(int slot, uint8_t *buf, uint32_t n, uint32_t *got);
-int vfs_write(int slot, const uint8_t *p, uint32_t n);
+/* prefix outlives the mount; be_ctx is passed to every op of b. */
+bool vfs_mount(VfsState *st, const char *prefix, const VfsBackend *b, void *be_ctx);
+void vfs_reset(VfsState *st);                              /* drop mounts and slots (no backend close) */
+
+int vfs_open(VfsState *st, const char *p, uint32_t len, int mode, int *slot);
+int vfs_read(VfsState *st, int slot, uint8_t *buf, uint32_t n, uint32_t *got);
+int vfs_write(VfsState *st, int slot, const uint8_t *p, uint32_t n);
 /* Overwrites n bytes at off in a file opened VFS_WRITE (VFS_CLOSED for a
  * Read or Append open or a free slot); VFS_BADPATH if off + n is past the
  * end of the file (it is never extended); VFS_IO if the backend has no
  * write_at. */
-int vfs_write_at(int slot, uint32_t off, const uint8_t *p, uint32_t n);
-int vfs_sync(int slot);
-int vfs_size(int slot, int32_t *out);
-void vfs_close(int slot);
-int vfs_slot_mode(int slot);           /* VFS_READ/WRITE/APPEND, or -1 if the slot is free */
+int vfs_write_at(VfsState *st, int slot, uint32_t off, const uint8_t *p, uint32_t n);
+int vfs_sync(VfsState *st, int slot);
+int vfs_size(VfsState *st, int slot, int32_t *out);
+void vfs_close(VfsState *st, int slot);
+int vfs_slot_mode(VfsState *st, int slot);   /* VFS_READ/WRITE/APPEND, or -1 if the slot is free */
 
-int vfs_stat(const char *p, uint32_t len, int32_t *size, bool *is_dir);
-int vfs_readdir(const char *p, uint32_t len, VfsDirCb cb, void *ctx);
-int vfs_mkdir(const char *p, uint32_t len);
-int vfs_remove(const char *p, uint32_t len);
+int vfs_stat(VfsState *st, const char *p, uint32_t len, int32_t *size, bool *is_dir);
+int vfs_readdir(VfsState *st, const char *p, uint32_t len, VfsDirCb cb, void *ctx);
+int vfs_mkdir(VfsState *st, const char *p, uint32_t len);
+int vfs_remove(VfsState *st, const char *p, uint32_t len);
 /* Exists if b exists (also b == a); BadPath if b lies in a's subtree (case
  * folded on a case-insensitive mount, where a case-only rename goes to the
  * backend); Busy if a is a directory and any file is open on that mount. */
-int vfs_rename(const char *a, uint32_t alen, const char *b, uint32_t blen);
-int vfs_replace(const char *tmp, uint32_t tlen, const char *p, uint32_t len); /* rename-over (WriteFile) */
-int vfs_usage(const char *prefix, uint32_t len, int32_t *used, int32_t *total);
+int vfs_rename(VfsState *st, const char *a, uint32_t alen, const char *b, uint32_t blen);
+int vfs_replace(VfsState *st, const char *tmp, uint32_t tlen, const char *p, uint32_t len); /* rename-over (WriteFile) */
+int vfs_usage(VfsState *st, const char *prefix, uint32_t len, int32_t *used, int32_t *total);
 
-/* builtin.c (links against vm/): points vm_fs_builtin at the B_FS
- * implementation and its private `file` port driver. Mount first. */
-void vfs_install(void);
+/* builtin.c (links against vm/): attaches st to vm (vm->vfs) and points
+ * vm's fs_builtin hook at the B_FS implementation and its private `file`
+ * port driver. Mount before or after; call after vm_boot (vm_init clears
+ * the hook). st must outlive the Vm. */
+struct Vm;
+void vfs_init(struct Vm *vm, VfsState *st);
 
 #endif

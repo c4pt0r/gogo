@@ -112,7 +112,8 @@ static uint32_t cur_blocks(void) {
     return lfs_fs_stat(&L.lfs, &fi) == 0 ? (uint32_t)fi.block_count : 0u;
 }
 
-static int l_open(void *f, const char *rel, int mode) {
+static int l_open(void *c, void *f, const char *rel, int mode) {
+    (void)c;
     Lf *h = f;
     int fl = mode == VFS_READ ? LFS_O_RDONLY
            : mode == VFS_WRITE ? (LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC)
@@ -121,20 +122,23 @@ static int l_open(void *f, const char *rel, int mode) {
     h->fc.buffer = h->cache;
     return map_err(lfs_file_opencfg(&L.lfs, &h->f, rel, fl, &h->fc));
 }
-static int l_read(void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
+static int l_read(void *c, void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
+    (void)c;
     lfs_ssize_t k = lfs_file_read(&L.lfs, &((Lf *)f)->f, buf, n);
     if (k < 0) return map_err((int)k);
     *got = (uint32_t)k;
     return VFS_OK;
 }
-static int l_write(void *f, const uint8_t *buf, uint32_t n) {
+static int l_write(void *c, void *f, const uint8_t *buf, uint32_t n) {
+    (void)c;
     lfs_ssize_t k = lfs_file_write(&L.lfs, &((Lf *)f)->f, buf, n);
     if (k < 0) return map_err((int)k);
     return (uint32_t)k == n ? VFS_OK : VFS_NOSPACE;
 }
 /* Overwrites inside the file (vfs checked the bounds), then goes back to
  * the end so the next write appends. */
-static int l_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+static int l_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
+    (void)c;
     lfs_file_t *lf = &((Lf *)f)->f;
     lfs_soff_t end = lfs_file_seek(&L.lfs, lf, 0, LFS_SEEK_CUR);
     if (end < 0) return map_err((int)end);
@@ -145,16 +149,18 @@ static int l_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
     lfs_soff_t back = lfs_file_seek(&L.lfs, lf, end, LFS_SEEK_SET);
     return e ? e : back < 0 ? map_err((int)back) : VFS_OK;
 }
-static int l_sync(void *f) { return map_err(lfs_file_sync(&L.lfs, &((Lf *)f)->f)); }
-static int l_size(void *f, int32_t *out) {
+static int l_sync(void *c, void *f) { (void)c; return map_err(lfs_file_sync(&L.lfs, &((Lf *)f)->f)); }
+static int l_size(void *c, void *f, int32_t *out) {
+    (void)c;
     lfs_soff_t s = lfs_file_size(&L.lfs, &((Lf *)f)->f);
     if (s < 0) return map_err((int)s);
     *out = clamp32((uint32_t)s);
     return VFS_OK;
 }
-static int l_close(void *f) { return map_err(lfs_file_close(&L.lfs, &((Lf *)f)->f)); }
+static int l_close(void *c, void *f) { (void)c; return map_err(lfs_file_close(&L.lfs, &((Lf *)f)->f)); }
 
-static int l_stat(const char *rel, int32_t *size, bool *is_dir) {
+static int l_stat(void *c, const char *rel, int32_t *size, bool *is_dir) {
+    (void)c;
     struct lfs_info in;
     int e = lfs_stat(&L.lfs, rel, &in);
     if (e < 0) return map_err(e);
@@ -162,7 +168,8 @@ static int l_stat(const char *rel, int32_t *size, bool *is_dir) {
     *size = *is_dir ? 0 : clamp32(in.size);
     return VFS_OK;
 }
-static int l_readdir(const char *rel, VfsDirCb cb, void *ctx) {
+static int l_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) {
+    (void)c;
     lfs_dir_t d;
     struct lfs_info in;
     int e = lfs_dir_open(&L.lfs, &d, rel);
@@ -174,9 +181,10 @@ static int l_readdir(const char *rel, VfsDirCb cb, void *ctx) {
     lfs_dir_close(&L.lfs, &d);
     return map_err(e);
 }
-static int l_mkdir(const char *rel) { return map_err(lfs_mkdir(&L.lfs, rel)); }
-static int l_remove(const char *rel) { return map_err(lfs_remove(&L.lfs, rel)); }
-static int l_rename(const char *from, const char *to, bool replace) {
+static int l_mkdir(void *c, const char *rel) { (void)c; return map_err(lfs_mkdir(&L.lfs, rel)); }
+static int l_remove(void *c, const char *rel) { (void)c; return map_err(lfs_remove(&L.lfs, rel)); }
+static int l_rename(void *c, const char *from, const char *to, bool replace) {
+    (void)c;
     struct lfs_info in;
     if (!replace) {
         int e = lfs_stat(&L.lfs, to, &in);
@@ -185,7 +193,8 @@ static int l_rename(const char *from, const char *to, bool replace) {
     }
     return map_err(lfs_rename(&L.lfs, from, to));   /* replaces atomically */
 }
-static int l_usage(int32_t *used, int32_t *total) {
+static int l_usage(void *c, int32_t *used, int32_t *total) {
+    (void)c;
     lfs_ssize_t n = lfs_fs_size(&L.lfs);
     if (n < 0) return map_err((int)n);
     *used = clamp32((uint32_t)n * BLOCK);
@@ -242,7 +251,7 @@ static int format_mount(uint32_t blocks) {
     return e < 0 ? e : lfs_mount(&L.lfs, &L.cfg);
 }
 
-int fs_lfs_mount(void) {
+int fs_lfs_mount(VfsState *vs) {
     L.part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_LITTLEFS, "gogofs");
     if (!L.part) {
         platform_esp_say("gogo: /flash unavailable (no gogofs partition; flash the partition table)");
@@ -302,7 +311,7 @@ int fs_lfs_mount(void) {
         platform_esp_say("gogo: /flash mount failed (%d); not mounted", e);
         return -1;
     }
-    if (!vfs_mount("/flash", &backend)) return -1;
+    if (!vfs_mount(vs, "/flash", &backend, NULL)) return -1;
     platform_esp_log("gogo: /flash %lu KB (partition %lu KB)", (unsigned long)cur_blocks() * 4u,
                      (unsigned long)part_blocks * 4u);
     return 0;

@@ -147,14 +147,14 @@ enum Builtin {
     B_PORT_HANDOFF    = 46,  /* port pid, to pid -> bool (port.h port_handoff) */
     B_NET_SUBSCRIBE   = 47,  /* -> bool: net.Subscribe (port.h port_subscribe) */
     B_CONFIG_GET      = 48,  /* key string -> value string, ok bool: config.Get
-                              * (platform_config_get; "wifi." keys hidden) */
+                              * (host->config_get; "wifi." keys hidden) */
     B_FS              = 49,  /* op int, args... -> result(s): gogo/fs, run by
-                              * the vm_fs_builtin hook (platform.h; vfs/builtin.c) */
+                              * the Vm's fs_builtin hook (actor.h; vfs/builtin.c) */
     B_CODE            = 50,  /* op int, args... -> result(s): gogo/code
                               * (module_builtin, module.h; CODE_OP_*) */
-    B_UNIX_TIME       = 51,  /* -> int64: sys.Time, platform_unix_time_ms (0: unknown) */
-    B_SET_UNIX_TIME   = 52,  /* ms int64 -> bool: sys.SetTime, platform_set_unix_time_ms (false: below the build-time floor) */
-    B_RANDOM          = 53   /* -> int in [0, 2^30): sys.Random, platform_random */
+    B_UNIX_TIME       = 51,  /* -> int64: sys.Time, vm_unix_time_ms (0: unknown) */
+    B_SET_UNIX_TIME   = 52,  /* ms int64 -> bool: sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor) */
+    B_RANDOM          = 53   /* -> int in [0, 2^30): sys.Random, vm_random */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -223,11 +223,14 @@ enum Builtin {
 #define TYPE_AUDIO_SPEAKER 43   /* Rate, Volume int: port.Open("spk") */
 /* Then (v13) the tls port config. */
 #define TYPE_NET_DIALTLS   44   /* IP, Port, TimeoutMs int, Host string: cfg of the "tls" port */
+/* Then (v14) the embedding types (lib/port/port.go). */
+#define TYPE_HOST          45   /* Arg int, Data bytes.Bytes: cfg of a host-defined port */
+#define TYPE_POST          46   /* Kind int, Data bytes.Bytes: a host post, host-port command or event */
 /* How many reserved types there are (0 .. TYPE_RESERVED_COUNT - 1): they are
  * global across modules; every index from here up is a module's own type
  * and carries its module tag in a struct's type word (term.h). The one
  * constant to bump with a new reserved type (compiler: len(reservedTypes)). */
-#define TYPE_RESERVED_COUNT 45u
+#define TYPE_RESERVED_COUNT 47u
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

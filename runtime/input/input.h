@@ -92,7 +92,7 @@ typedef struct InputHw {
      * clamped to 1..32767 by the caller) into buf: returns its value count,
      * which may exceed cap (then only cap were stored and the rest are
      * lost), 0 when no complete frame waits, -1 error (retried at the next
-     * poll). *start_ms holds the poll's time (platform_now_ms, low 32 bits)
+     * poll). *start_ms holds the poll's time (host->now_ms, low 32 bits)
      * on the call; a hook that knows when the frame began stores that
      * instead. Polled every 20 ms while ir_rx is open. */
     int  (*ir_rx_open)(uint32_t gap_us);
@@ -145,18 +145,21 @@ typedef struct InputHw {
     void (*spk_close)(void);
 } InputHw;
 
-/* The platform's hardware; never NULL, fields NULL when absent. A weak
- * default (no hardware) is in source.c. */
-const InputHw *platform_input(void);
+/* A board gives its InputHw in VmBoard.input (host.h); NULL = none. */
 
 extern const PortDriver input_kbd_driver, input_power_driver, input_imu_driver, input_ir_tx_driver,
     input_ir_rx_driver, input_mic_driver, input_spk_driver;
 
-/* Registers the input source (call once at startup). */
-void input_install(void);
-/* If the source could not be registered (every slot taken), a line is logged
+/* One Vm's input state (input_int.h). */
+typedef struct InputState InputState;
+
+/* Clears st, points vm->input at it and registers the input source on vm
+ * (once per Vm, after vm_boot: vm_init clears the source list). st must
+ * outlive the Vm. Without it every input port refuses to open.
+ * If the source could not be registered (every slot taken), a line is logged
  * and the kbd and power ports refuse to open, as on absent hardware. */
-void input_uninstall(void);   /* tests: removes the source so input_install can run again */
+void input_install(struct Vm *vm, InputState *st);
+void input_uninstall(struct Vm *vm);   /* tests: removes the source so input_install can run again */
 
 /* Key codes are USB HID usages; Fn has no usage, gogo uses 0xF0. */
 enum { KEY_CTRL = 0xE0, KEY_SHIFT = 0xE1, KEY_ALT = 0xE2, KEY_OPT = 0xE3, KEY_FN = 0xF0 };
@@ -165,7 +168,7 @@ enum { MOD_CTRL = 1, MOD_SHIFT = 2, MOD_ALT = 4, MOD_OPT = 8, MOD_FN = 16 };
 /* The ASCII character of key `code` under mods (US layout), 0 if none. */
 uint8_t input_key_char(uint8_t code, uint32_t mods);
 
-uint32_t input_dropped(void);       /* events dropped (owner gone, or over its quota) */
-uint32_t input_read_errors(void);   /* kbd_read failures */
+uint32_t input_dropped(const struct Vm *vm);       /* events dropped (owner gone, or over its quota) */
+uint32_t input_read_errors(const struct Vm *vm);   /* kbd_read failures */
 
 #endif

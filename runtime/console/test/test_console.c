@@ -14,7 +14,7 @@
 #endif
 
 /* test_main.c (shared with the VM tests) calls this; nothing to forget here. */
-void platform_unix_arena_forget(void) {}
+void test_host_arena_forget(void) {}
 
 static uint8_t *blob;
 static size_t blob_n;

@@ -1,8 +1,8 @@
 // Package sys is the gogo system API: the wall clock and randomness. It is a
 // stub package like gogo/config: the compiler replaces every call with a VM
 // builtin (B_UNIX_TIME, B_SET_UNIX_TIME, B_RANDOM), so the bodies are never
-// executed. The C side is the platform hooks platform_unix_time_ms,
-// platform_set_unix_time_ms and platform_random (runtime/vm/platform.h).
+// executed. The C side is vm_unix_time_ms, vm_set_unix_time_ms and
+// vm_random (runtime/vm/host.h), over the host's optional RTC and random hooks.
 //
 // The wall clock is separate from actor.Now (milliseconds since the VM
 // started): it can be unknown. gogo/sntp sets it from the network; a TLS

@@ -157,7 +157,7 @@ if(NOT GOGO_VERSION)
     set(GOGO_VERSION "dev")
 endif()
 
-# The wall-clock floor (runtime/vm/platform.h): the build time, Unix ms.
+# The wall-clock floor (runtime/vm/host.h): the build time, Unix ms.
 string(TIMESTAMP GOGO_BUILD_S "%s" UTC)
 
 # ESP values of the runtime/vm/config.h knobs.

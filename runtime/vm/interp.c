@@ -53,7 +53,7 @@
 #include "names.h"
 #include "out.h"
 #include "opcodes.h"
-#include "platform.h"
+#include "host.h"
 #include "evq.h"
 #include "port.h"
 #include "strs.h"
@@ -63,8 +63,6 @@
 
 #define REDUCTIONS     1000u
 #define PRINT_MAX_DEPTH 16
-
-uint32_t (*vm_fs_builtin)(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs);
 
 /* ---- image helpers ---- */
 
@@ -374,7 +372,7 @@ static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
 
 static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n) {
     Out o;
-    out_init(&o, platform_write);
+    out_init(&o, vm, 1);
     for (uint32_t i = 0; i < n; i++) {
         if (i) out_str(&o, " ");
         out_term(&o, vm, a, args[i], 0);
@@ -401,11 +399,11 @@ uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool
      * frame goes first anyway, so a GC could not drop the copy. */
     term copy = val;
     if (!n || !heap_push_frame(vm, n, (uint16_t)nregs, -1) || (m && !msg_unpack(vm, n, m, &copy))) {
-        if (m) msg_free(m);
+        if (m) msg_free(vm, m);
         if (n) actor_free(vm, n);      /* never ran, never visible: not an exit */
         return R_OUT_OF_MEMORY;
     }
-    if (m) msg_free(m);
+    if (m) msg_free(vm, m);
     if (max_words) n->max_words = max_words < words ? (uint16_t)words : max_words;
     if (caps) {
         const uint32_t *c = n->mem + term_ref_off(copy) + 2u;
@@ -482,7 +480,7 @@ static int timed_wait(Vm *vm, Actor *a, int32_t ms) {
         a->flags &= (uint8_t)~AF_TIMED_OUT;
         return WAIT_DONE;
     }
-    if (!timer_add_wakeup(vm, a, platform_now_ms() + (uint32_t)ms)) return WAIT_OOM;
+    if (!timer_add_wakeup(vm, a, vm_now(vm) + (uint32_t)ms)) return WAIT_OOM;
     return WAIT_BLOCK;
 }
 
@@ -872,7 +870,7 @@ int interp_run(Vm *vm, Actor *a) {
             else if (t == T_EMPTYSTR) ty = TY_STRING;
             else if (term_is_pid(t)) ty = TY_PID;
             else if (t == T_ZEROREF) ty = TY_REF;
-            else if (t == T_EMPTYBYTES || bytes_valid(t)) ty = TY_BYTES;
+            else if (t == T_EMPTYBYTES || bytes_valid(vm, t)) ty = TY_BYTES;
             else {
                 const uint32_t *obj = obj_of(vm, a, t);
                 uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
@@ -1007,7 +1005,7 @@ int interp_run(Vm *vm, Actor *a) {
                     R[ra] = roots[0];
                     CHECK(ref_serial(vm, a, R[ra], &serial));
                     if (ms > 0) {
-                        if (!timer_add_wakeup(vm, a, platform_now_ms() + (uint32_t)ms))
+                        if (!timer_add_wakeup(vm, a, vm_now(vm) + (uint32_t)ms))
                             CRASH(R_OUT_OF_MEMORY);
                         a->flags |= AF_CALL_PENDING;
                     }
@@ -1046,7 +1044,7 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 3);   /* like Send, a non-PID target just drops it */
                 int32_t ms;
                 CHECK(int_val(vm, a, R[rb], &ms));
-                uint64_t deadline = platform_now_ms() + (ms > 0 ? (uint32_t)ms : 0u);
+                uint64_t deadline = vm_now(vm) + (ms > 0 ? (uint32_t)ms : 0u);
                 uint32_t why;
                 term ref = timer_add_send(vm, a, deadline, R[rb + 1], R[rb + 2], &why);
                 if (ref == T_NIL) CRASH(why);
@@ -1064,7 +1062,7 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 0);
                 /* An immediate (no allocation) for the first ~12 days. */
                 term t;
-                if (!make_int64(vm, a, (int64_t)platform_now_ms(), &t)) CRASH(R_OUT_OF_MEMORY);
+                if (!make_int64(vm, a, (int64_t)vm_now(vm), &t)) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
                 R[ra] = t;
                 break;
@@ -1207,7 +1205,7 @@ int interp_run(Vm *vm, Actor *a) {
             case B_UNIX_TIME: {
                 CHECK(rc == 0);
                 term t;
-                if (!make_int64(vm, a, platform_unix_time_ms(), &t)) CRASH(R_OUT_OF_MEMORY);
+                if (!make_int64(vm, a, vm_unix_time_ms(vm), &t)) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
                 R[ra] = t;
                 break;
@@ -1215,17 +1213,17 @@ int interp_run(Vm *vm, Actor *a) {
             case B_SET_UNIX_TIME: {
                 int64_t ms;
                 CHECK(rc == 1 && int64_val(vm, a, R[rb], &ms));
-                R[ra] = term_from_bool(platform_set_unix_time_ms(ms) != 0);
+                R[ra] = term_from_bool(vm_set_unix_time_ms(vm, ms) != 0);
                 break;
             }
             case B_RANDOM:
                 CHECK(rc == 0);
-                R[ra] = term_from_int((int32_t)(platform_random() & 0x3FFFFFFFu));
+                R[ra] = term_from_int((int32_t)(vm_random(vm) & 0x3FFFFFFFu));
                 break;
             case B_FS: case B_CODE: {
                 /* Both check ra+1 themselves (two-result ops only). */
                 uint32_t err = ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
-                             : vm_fs_builtin ? vm_fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
+                             : vm->fs_builtin ? vm->fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
                 RELOAD();      /* may GC */
                 if (err != R_NORMAL) CRASH(err);
                 break;
@@ -1268,28 +1266,27 @@ crash:
 
 /* ---- scheduler ---- */
 
-#define write_err_lit(s) platform_write_err((s), sizeof(s) - 1u)
+#define write_err_lit(s) vm_write_err(vm, (s), sizeof(s) - 1u)
 
 /* Scheduler hooks into the port layer.
- *  sched_drain:         delivers the event ring and any due trailing
- *                       debounce values and drains the extra source (net
- *                       RX/link slots, port_add_source); run at the top of
- *                       every scheduler pass. Reads the clock only when
- *                       there is something to do (port_work_pending).
- *  sched_any_live:      true while some open port could still produce
- *                       events; the VM does not exit while it holds.
- *  sched_next_deadline: earliest pending debounce deadline, if any, as an
- *                       absolute platform_now_ms value; folded into the idle
- *                       wait timeout. A deadline already due is serviced by
- *                       the next sched_drain. */
+ *  sched_drain:    delivers the event ring and any due trailing debounce
+ *                  values and drains the extra sources (net RX/link slots,
+ *                  port_add_source); run at the top of every scheduler
+ *                  pass. Reads the clock only when there is something to
+ *                  do (port_work_pending).
+ *  sched_any_live: true while some open port could still produce events;
+ *                  the VM does not finish while it holds.
+ * port_next_deadline (the earliest pending debounce or source deadline)
+ * is folded into vm_next_deadline; a deadline already due is serviced by
+ * the next sched_drain. */
 static void sched_drain(Vm *vm) {
-    if (port_work_pending(vm)) port_drain(vm, platform_now_ms());
+    if (port_work_pending(vm)) port_drain(vm, vm_now(vm));
 }
 static bool sched_any_live(Vm *vm) { return port_any_live(vm); }
-static bool sched_next_deadline(Vm *vm, uint64_t *when) { return port_next_deadline(vm, when); }
 
-int vm_run(Vm *vm) {
-    if (!vm_reserve_init()) {
+int vm_start(Vm *vm) {
+    if (vm->run_state != VM_ST_NEW) return 1;   /* a Vm runs once */
+    if (!vm_reserve_init(vm)) {
         write_err_lit("gogo: cannot reserve emergency memory\n");
         return 1;
     }
@@ -1297,63 +1294,100 @@ int vm_run(Vm *vm) {
     term pid;
     int err = module_spawn(vm, NULL, module_handle(vm, 0), (const uint8_t *)"main", 4u, T_NIL, 0, &pid);
     if (err != CODE_OK) {
-        vm_reserve_release();
+        vm_reserve_release(vm);
         if (err == CODE_NOT_FOUND) write_err_lit("gogo: image has no main\n");
         else write_err_lit("gogo: cannot start main actor\n");
         return 1;
     }
-    Actor *a;
-    platform_time_reset();           /* time 0 for Now() and timers */
-    evq_reset();
+    /* time 0 for Now() and timers (the wall clock does not move) */
+    vm->t0 += vm_now(vm);
+    evq_reset(vm);
+    vm->run_state = VM_ST_RUN;
+    return 0;
+}
 
-    for (;;) {
-        sched_drain(vm);
-        /* Due timers fire between time slices too, so a busy actor cannot
-         * hold them back. The clock is read only when a timer is pending
-         * (here) or when the loop is about to wait (below). */
-        if (vm->ntimers) timer_fire_due(vm, platform_now_ms());
-        a = runq_pop(vm);
-        if (!a) {
-            /* Nothing runnable: wait for the next timer or port event. Stop
-             * only when no timer is pending and no input source is live
-             * (every actor exited or blocked forever). */
-            uint64_t next, pn, now;
-            bool have = timer_next(vm, &next);
-            if (sched_next_deadline(vm, &pn) && (!have || pn < next)) { next = pn; have = true; }
-            if (!have && !sched_any_live(vm)) break;
-            /* port_drain stops after GOGO_EVQ_CAP events: more are waiting;
-             * a source whose drain left work behind (a sliced TLS handshake
-             * step) drains again now, not at the next unrelated wakeup.
-             * Not port_work_pending: a held debounce value is due only at
-             * its deadline, which is in next (no spinning until then). */
-            if (port_due_now(vm)) continue;
-            /* Gap between sched_drain (top of pass) and platform_wait: an
-             * event pushed here is not lost, because producers call
-             * platform_notify after evq_push and platform_wait returns
-             * immediately for any notify latched since its last return. */
-            if (!have) {
-                platform_wait(UINT32_MAX);
-            } else {
-                now = platform_now_ms();
-                if (next > now) platform_wait(next - now > UINT32_MAX - 1u ? UINT32_MAX - 1u : (uint32_t)(next - now));
-            }
-            continue;
+bool vm_next_deadline(const Vm *vm, uint64_t *abs_vm_ms) {
+    uint64_t next, pn;
+    bool have = timer_next(vm, &next);
+    if (port_next_deadline(vm, &pn) && (!have || pn < next)) { next = pn; have = true; }
+    if (have) *abs_vm_ms = next;
+    return have;
+}
+
+int vm_step(Vm *vm, uint32_t budget) {
+    if (vm->run_state != VM_ST_RUN) return VM_DONE;
+    for (bool spent = false;;) {
+        /* Once the budget is spent, nothing more runs: the last pass only
+         * classifies what is left (runnable, due, idle or done). */
+        Actor *a = NULL;
+        if (!spent) {
+            sched_drain(vm);
+            /* Due timers fire between time slices too, so a busy actor
+             * cannot hold them back. The clock is read only when a timer
+             * is pending (here) or when the scheduler is about to go idle
+             * (below). */
+            if (vm->ntimers) timer_fire_due(vm, vm_now(vm));
+            a = runq_pop(vm);
+        } else if (vm->runq_head) {
+            return VM_RUNNABLE;
         }
-        switch (interp_run(vm, a)) {
-        case RUN_YIELD:
-            runq_push(vm, a);
-            break;
-        case RUN_WAIT:
-            /* Not requeued: a message, a timer or an exit mark pushes it
-             * back exactly once (only a waiting actor is pushed). */
-            a->state = A_WAITING;
-            break;
-        default:
-            /* RUN_EXIT: actor_exit has already freed it. */
-            break;
+        if (a) {
+            switch (interp_run(vm, a)) {
+            case RUN_YIELD:
+                runq_push(vm, a);
+                break;
+            case RUN_WAIT:
+                /* Not requeued: a message, a timer or an exit mark pushes it
+                 * back exactly once (only a waiting actor is pushed). */
+                a->state = A_WAITING;
+                break;
+            default:
+                /* RUN_EXIT: actor_exit has already freed it. */
+                break;
+            }
+        } else {
+            /* Nothing runnable. Done only when no timer is pending and no
+             * input source is live (every actor exited or blocked forever). */
+            uint64_t next;
+            bool have = vm_next_deadline(vm, &next);
+            if (!have && !sched_any_live(vm)) {
+                vm->run_state = VM_ST_DONE;
+                return VM_DONE;
+            }
+            /* Still work now, not idle: port_drain stops after
+             * GOGO_EVQ_CAP events (more are waiting); a source whose drain
+             * left work behind (a sliced TLS handshake step) drains again
+             * now, not at the next unrelated wakeup; a timer is due. Not
+             * port_work_pending: a held debounce value is due only at its
+             * deadline, which is in next (no spinning until then). */
+            if (!port_due_now(vm) && (!have || next > vm_now(vm))) return VM_IDLE;
+            if (spent) return VM_RUNNABLE;
+        }
+        spent = budget && --budget == 0;
+    }
+}
+
+void vm_stop(Vm *vm) {
+    port_close_all(vm);              /* output drivers always get close */
+    vm_reserve_release(vm);
+    vm->run_state = VM_ST_DONE;
+}
+
+int vm_run(Vm *vm) {
+    if (!vm->host->wait || vm_start(vm)) return 1;   /* no wait: the host steps */
+    while (vm_step(vm, 0) != VM_DONE) {
+        /* Idle: wait for the next deadline or a port event. An event pushed
+         * after vm_step's last check is not lost: producers wake the host
+         * after evq_push, and host->wait returns at once for any wake
+         * latched since its last return. */
+        uint64_t next, now;
+        if (!vm_next_deadline(vm, &next)) {
+            vm_wait(vm, UINT32_MAX);
+        } else {
+            now = vm_now(vm);
+            if (next > now) vm_wait(vm, next - now > UINT32_MAX - 1u ? UINT32_MAX - 1u : (uint32_t)(next - now));
         }
     }
-    port_close_all(vm);              /* output drivers always get close */
-    vm_reserve_release();
+    vm_stop(vm);
     return 0;
 }

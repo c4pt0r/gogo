@@ -1,17 +1,18 @@
-/* Unix hooks of the "tls" port (runtime/net/tls/tls.h), linked into gogovm when it is
- * built with TLS (Makefile: GOGO_TLS):
- *  - platform_tls_alloc / platform_tls_free: calloc / free with a size
+/* unix_tls_hw, the "tls" port's TlsHw (runtime/net/tls/tls.h), linked into
+ * gogovm when it is built with TLS (Makefile: GOGO_TLS):
+ *  - alloc / free: calloc / free with a size
  *    header, counting the bytes outstanding and their peak
  *    (platform_unix_tls_heap: tests check that every connection gives all
  *    of it back);
- *  - platform_tls_verify_setup: trust anchors from the PEM file
+ *  - verify_setup: trust anchors from the PEM file
  *    $GOGO_TLS_CA_FILE, else the system bundle; or, with
  *    $GOGO_TLS_BUNDLE_FILE, from an esp_crt_bundle-format bundle with the
  *    ESP firmware's anchor rule (runtime/net/tls/anchor.h; tests only);
- *  - platform_tls_clock_us: CLOCK_MONOTONIC (real time, also under
+ *  - clock_us: CLOCK_MONOTONIC (real time, also under
  *    --sim-clock), for the slice timing;
- *  - platform_tls_random: getentropy, failing on error (the test switch
- *    $GOGO_TLS_TEST_NO_RANDOM makes it fail always, as the weak default).
+ *  - random: getentropy, failing on error (the test switch
+ *    $GOGO_TLS_TEST_NO_RANDOM makes it fail always, as on a board without
+ *    a secure source).
  *
  * The CA file is read and parsed again for every connection: with the
  * system bundle (about 150 certificates) that is an unsliced cost in open
@@ -32,33 +33,38 @@
 
 #define HDR 16u          /* keeps the payload 16-byte aligned */
 
+/* Bytes outstanding and their peak: atomics, since every Vm of the process
+ * shares this TlsHw and Vms may run on several threads. */
 static size_t heap_now, heap_peak;
 
-void *platform_tls_alloc(size_t n) {
+static void *tls_alloc(size_t n) {
     if (n > SIZE_MAX - HDR) return NULL;
     unsigned char *p = calloc(1, n + HDR);
     if (!p) return NULL;
     memcpy(p, &n, sizeof n);
-    heap_now += n;
-    if (heap_now > heap_peak) heap_peak = heap_now;
+    size_t now = __atomic_add_fetch(&heap_now, n, __ATOMIC_RELAXED);
+    size_t peak = __atomic_load_n(&heap_peak, __ATOMIC_RELAXED);
+    while (now > peak && !__atomic_compare_exchange_n(&heap_peak, &peak, now, true, __ATOMIC_RELAXED,
+                                                      __ATOMIC_RELAXED)) {
+    }
     return p + HDR;
 }
 
-void platform_tls_free(void *q) {
+static void tls_free(void *q) {
     if (!q) return;
     unsigned char *p = (unsigned char *)q - HDR;
     size_t n;
     memcpy(&n, p, sizeof n);
-    heap_now -= n;
+    __atomic_sub_fetch(&heap_now, n, __ATOMIC_RELAXED);
     free(p);
 }
 
 void platform_unix_tls_heap(size_t *now, size_t *peak) {
-    *now = heap_now;
-    *peak = heap_peak;
+    *now = __atomic_load_n(&heap_now, __ATOMIC_RELAXED);
+    *peak = __atomic_load_n(&heap_peak, __ATOMIC_RELAXED);
 }
 
-int platform_tls_random(uint8_t *out, size_t n) {
+static int tls_random(uint8_t *out, size_t n) {
     if (getenv("GOGO_TLS_TEST_NO_RANDOM")) return -1;
     while (n) {
         size_t k = n < 256u ? n : 256u;   /* getentropy's limit */
@@ -69,7 +75,7 @@ int platform_tls_random(uint8_t *out, size_t n) {
     return 0;
 }
 
-uint64_t platform_tls_clock_us(void) {
+static uint64_t tls_clock_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
@@ -109,17 +115,24 @@ static unsigned char *read_file(const char *path, size_t *len) {
  * is trusted only if it is a bundle root (subject and key). The ESP
  * fallback (the top certificate signed by a bundle root's key, IDF's
  * esp_crt_verify_callback) is not here, so such a chain fails. For the
- * tests of that rule. state: the bundle, the size first. */
+ * tests of that rule.
+ *
+ * A connection's verify state (tls_verify_setup's *state) records its own
+ * mode first, so tls_verify_free frees it the way it was made whatever the
+ * environment says by then, and connections on several threads share no
+ * flag: a Bundle (the size, then the bundle) or a CaState (a CA chain). */
+enum { VS_CHAIN = 0, VS_BUNDLE = 1 };
 typedef struct Bundle {
+    int mode;                /* VS_BUNDLE */
     size_t size;
     uint8_t data[];
 } Bundle;
+typedef struct CaState {
+    int mode;                /* VS_CHAIN */
+    mbedtls_x509_crt crt;
+} CaState;
 
 static const mbedtls_x509_crt dummy_ca;   /* as IDF's s_dummy_crt: never a parent */
-/* What platform_tls_verify_setup gave the open connection as its state (a
- * Bundle or a CA chain), for platform_tls_verify_free: one connection at a
- * time (GOGO_TLS_MAX 1). */
-static int state_is_bundle;
 
 static int bundle_verify(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
     (void)depth;
@@ -135,11 +148,12 @@ static int bundle_setup(struct mbedtls_ssl_config *conf, void **state, const cha
         free(raw);
         return -1;
     }
-    Bundle *b = platform_tls_alloc(sizeof *b + len);
+    Bundle *b = tls_alloc(sizeof *b + len);
     if (!b) {
         free(raw);
         return -1;
     }
+    b->mode = VS_BUNDLE;
     b->size = len - 1u;
     memcpy(b->data, raw, len - 1u);
     free(raw);
@@ -149,11 +163,10 @@ static int bundle_setup(struct mbedtls_ssl_config *conf, void **state, const cha
     return 0;
 }
 
-int platform_tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
+static int tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
     static const char *const bundles[] = { "/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt" };
     const char *bf = getenv("GOGO_TLS_BUNDLE_FILE");
-    state_is_bundle = bf && *bf;
-    if (state_is_bundle) return bundle_setup(conf, state, bf);
+    if (bf && *bf) return bundle_setup(conf, state, bf);
     const char *env = getenv("GOGO_TLS_CA_FILE");
     unsigned char *pem = NULL;
     size_t len = 0;
@@ -163,25 +176,27 @@ int platform_tls_verify_setup(struct mbedtls_ssl_config *conf, void **state) {
         for (size_t i = 0; !pem && i < sizeof bundles / sizeof bundles[0]; i++) pem = read_file(bundles[i], &len);
     }
     if (!pem) return -1;
-    mbedtls_x509_crt *ca = platform_tls_alloc(sizeof *ca);
-    if (!ca) {
+    CaState *s = tls_alloc(sizeof *s);    /* zeroed: mode VS_CHAIN */
+    if (!s) {
         free(pem);
         return -1;
     }
-    mbedtls_x509_crt_init(ca);
-    int r = mbedtls_x509_crt_parse(ca, pem, len);   /* > 0: some certificates skipped */
+    mbedtls_x509_crt_init(&s->crt);
+    int r = mbedtls_x509_crt_parse(&s->crt, pem, len);   /* > 0: some certificates skipped */
     free(pem);
-    if (r < 0 || !ca->raw.p) {
-        mbedtls_x509_crt_free(ca);
-        platform_tls_free(ca);
+    if (r < 0 || !s->crt.raw.p) {
+        mbedtls_x509_crt_free(&s->crt);
+        tls_free(s);
         return -1;
     }
-    mbedtls_ssl_conf_ca_chain(conf, ca, NULL);
-    *state = ca;
+    mbedtls_ssl_conf_ca_chain(conf, &s->crt, NULL);
+    *state = s;
     return 0;
 }
 
-void platform_tls_verify_free(void *state) {
-    if (!state_is_bundle) mbedtls_x509_crt_free(state);
-    platform_tls_free(state);
+static void tls_verify_free(void *state) {
+    if (*(const int *)state == VS_CHAIN) mbedtls_x509_crt_free(&((CaState *)state)->crt);
+    tls_free(state);
 }
+
+const TlsHw unix_tls_hw = { tls_alloc, tls_free, tls_verify_setup, tls_verify_free, tls_clock_us, tls_random };

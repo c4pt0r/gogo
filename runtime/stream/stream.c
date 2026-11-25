@@ -32,11 +32,11 @@ static term put_int(uint32_t *d, uint32_t *at, int32_t v) {
 /* Chunk{Seq, TimeMs, Dropped, Data} as one message block: [0..5] the
  * struct, then the int boxes it needs, then Data as a heap K_BYTES (none
  * when empty). NULL if it does not fit a block or memory is out. */
-static Msg *chunk_msg(int32_t seq, int32_t time, int32_t dropped, const uint8_t *data, uint32_t len) {
+static Msg *chunk_msg(struct Vm *vm, int32_t seq, int32_t time, int32_t dropped, const uint8_t *data, uint32_t len) {
     uint64_t words = 6u + box_words(seq) + box_words(time) + box_words(dropped) +
                      (len ? 2u + ((uint64_t)len + 3u) / 4u : 0u);
     if (words > 0xFFFFu) return NULL;
-    Msg *m = va_alloc(msg_alloc_bytes((uint16_t)words));
+    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
     if (!m) return NULL;
     m->next = NULL;
     m->words = (uint16_t)words;
@@ -76,13 +76,13 @@ bool stream_deliver_chunk(struct Vm *vm, const Port *p, StreamIn *s, uint32_t ti
     s->seq = s->seq >= INT31_MAX ? 1u : s->seq + 1u;
     uint32_t dropped = s->dropped_since > INT31_MAX ? INT31_MAX : s->dropped_since;
     Actor *o = port_owner(vm, p);
-    Msg *m = o ? chunk_msg((int32_t)s->seq, (int32_t)(time_ms & INT31_MAX), (int32_t)dropped, data, len)
+    Msg *m = o ? chunk_msg(vm, (int32_t)s->seq, (int32_t)(time_ms & INT31_MAX), (int32_t)dropped, data, len)
                : NULL;
     if (m && try_deliver(vm, o, m)) {
         s->dropped_since = 0;
         return true;
     }
-    if (m) msg_free(m);
+    if (m) msg_free(vm, m);
     if (s->dropped_since < UINT32_MAX) s->dropped_since++;
     return false;
 }
@@ -170,12 +170,12 @@ int stream_out_accept(struct Vm *vm, const Actor *from, Port *p, StreamOut *o, t
     return o->n == 1u ? 1 : 0;
 }
 
-const uint8_t *stream_out_at(const StreamOut *o, uint32_t k, uint32_t *len) {
+const uint8_t *stream_out_at(const struct Vm *vm, const StreamOut *o, uint32_t k, uint32_t *len) {
     *len = 0;
-    return k < o->n ? bytes_data(o->held[k], len) : NULL;
+    return k < o->n ? bytes_data(vm, o->held[k], len) : NULL;
 }
 
-const uint8_t *stream_out_head(const StreamOut *o, uint32_t *len) { return stream_out_at(o, 0, len); }
+const uint8_t *stream_out_head(const struct Vm *vm, const StreamOut *o, uint32_t *len) { return stream_out_at(vm, o, 0, len); }
 
 static bool finish(struct Vm *vm, Port *p, StreamOut *o, bool ok) {
     if (!o->n) return false;

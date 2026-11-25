@@ -3,6 +3,7 @@
  * table and per-actor caps; slices keeping their root; the C API for
  * ports. Builtins are called directly on actors with 16-register frames. */
 #include "test.h"
+#include "test_host.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -35,11 +36,10 @@ static void build_img(uint32_t *w) {
 typedef struct Fx { uint32_t w[IMG_WORDS]; Image img; Vm vm; } Fx;
 
 static void fx_init(Fx *f) {
-    va_reset();
     build_img(f->w);
     CHECK_EQ(image_load(&f->img, f->w, img_seal(f->w)), IMG_OK);
-    CHECK_EQ(vm_init(&f->vm, &f->img, 16), 0);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(test_vm_init(&f->vm, &f->img, 16), 0);
+    CHECK_EQ(bytes_table_used(&f->vm), 0);
 }
 
 static Actor *spawn(Fx *f, uint16_t words) {
@@ -170,7 +170,7 @@ TEST(buffer_write_len_freeze_reuse) {
     CHECK_EQ(call(&f, a, B_BUF_WRITE, 3, 1, 2), R_BAD_CODE);
     R(a)[1] = I(-1);
     CHECK_EQ(call(&f, a, B_BUF_NEW, 3, 1, 1), R_BAD_CODE);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
     actor_free(&f.vm, a);
 }
 
@@ -248,7 +248,7 @@ TEST(bytes_from_index_slice_equal_copyto) {
     CHECK_EQ(call(&f, a, B_STR_FROM, 8, 10, 1), R_NORMAL);
     CHECK_EQ(R(a)[8], T_EMPTYSTR);
     /* TYPEIS-relevant: none of this made a handle. */
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
     actor_free(&f.vm, a);
 }
 
@@ -265,7 +265,7 @@ TEST(bytes_refcount) {
     CHECK(term_is_handle(R(a)[0]));
     CHECK(alpha_is(&f, a, 0, 200));
     CHECK_EQ(int_of(&f, a, B_LEN, 0), 200);
-    CHECK_EQ(bytes_table_used(), 1);
+    CHECK_EQ(bytes_table_used(&f.vm), 1);
     CHECK_EQ(bytes_held_bytes(a), 200);
     CHECK_EQ(bytes_held_count(a), 1);
     CHECK_EQ(actor_charged_words(a), base + 50 + LIST_W);
@@ -280,14 +280,14 @@ TEST(bytes_refcount) {
         CHECK_EQ(r[i]->mbox_words, mb);
         CHECK_EQ(bytes_held_bytes(r[i]), 200);
     }
-    CHECK_EQ(bytes_table_used(), 1);
+    CHECK_EQ(bytes_table_used(&f.vm), 1);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&f.vm, r[0], R_NORMAL, T_EMPTYSTR);
     actor_exit(&f.vm, r[1], R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 1);
+    CHECK_EQ(bytes_table_used(&f.vm), 1);
     CHECK(alpha_is(&f, r[2], 0, 200));
     actor_exit(&f.vm, r[2], R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
     CHECK_EQ(f.vm.live, 0);
 }
 
@@ -299,7 +299,7 @@ TEST(bytes_gc_drop) {
     CHECK_EQ(make_bytes(&f, a, 0, 100), R_NORMAL);
     CHECK_EQ(make_bytes(&f, a, 1, 90), R_NORMAL);
     CHECK_EQ(make_bytes(&f, a, 2, 80), R_NORMAL);
-    CHECK_EQ(bytes_table_used(), 3);
+    CHECK_EQ(bytes_table_used(&f.vm), 3);
     CHECK_EQ(bytes_held_bytes(a), 270);
     /* r0 into a struct (kept in r3), r2 only in a C root. */
     uint32_t off = heap_alloc(&f.vm, a, 3, NULL, 0);
@@ -310,14 +310,14 @@ TEST(bytes_gc_drop) {
     term root = R(a)[2];
     R(a)[0] = R(a)[1] = R(a)[2] = T_NIL;
     heap_gc(&f.vm, a, 0, &root, 1);
-    CHECK_EQ(bytes_table_used(), 2);
+    CHECK_EQ(bytes_table_used(&f.vm), 2);
     CHECK_EQ(bytes_held_bytes(a), 180);
     CHECK_EQ(bytes_held_count(a), 2);
     heap_gc(&f.vm, a, 0, NULL, 0);                           /* the root is gone */
     CHECK_EQ(bytes_held_bytes(a), 100);
     R(a)[3] = T_NIL;
     heap_gc(&f.vm, a, 0, NULL, 0);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
     CHECK_EQ(bytes_held_bytes(a), 0);
     CHECK_EQ(bytes_held_count(a), 0);
     actor_free(&f.vm, a);
@@ -332,10 +332,10 @@ TEST(bytes_exit_releases) {
     CHECK_EQ(msg_send(&f.vm, a, b->id, R(a)[0]), 0);       /* queued, unread */
     CHECK_EQ(b->mbox_words, msg_footprint_words(0) + 75u);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 1);                         /* the message keeps it */
+    CHECK_EQ(bytes_table_used(&f.vm), 1);                         /* the message keeps it */
     actor_exit(&f.vm, b, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
-    CHECK_EQ(va_used_bytes() > 0, 1);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
+    CHECK_EQ(va_used_bytes(&f.vm) > 0, 1);
 }
 
 /* Per-actor cap: the 17th live handle fails (OutOfMemory) even after a GC;
@@ -378,14 +378,14 @@ TEST(bytes_table_full_and_per_actor_cap) {
         R(h)[r] = term_from_ref(off);
         R(h)[0] = T_NIL;
     }
-    CHECK_EQ(bytes_table_used(), GOGO_BYTES_HANDLES);
+    CHECK_EQ(bytes_table_used(&f.vm), GOGO_BYTES_HANDLES);
     Actor *e = act[4];
     CHECK_EQ(make_bytes(&f, e, 0, 65), R_OUT_OF_MEMORY);     /* the offender */
     CHECK_EQ(bytes_held_count(e), 0);
     CHECK_EQ(make_bytes(&f, e, 0, 64), R_NORMAL);            /* inline: no handle */
-    CHECK_EQ(bytes_table_used(), GOGO_BYTES_HANDLES);
+    CHECK_EQ(bytes_table_used(&f.vm), GOGO_BYTES_HANDLES);
     for (int i = 0; i < 5; i++) actor_exit(&f.vm, act[i], R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
 /* Table full of handles only idle actors' stale registers name (they
@@ -408,7 +408,7 @@ TEST(bytes_table_full_idle_holders) {
         CHECK_EQ(bytes_held_count(sink[i]), GOGO_BYTES_HANDLES / 4u);
         if (i < 3) R(sink[i])[0] = T_NIL;                     /* sink[3] keeps its last */
     }
-    CHECK_EQ(bytes_table_used(), GOGO_BYTES_HANDLES);
+    CHECK_EQ(bytes_table_used(&f.vm), GOGO_BYTES_HANDLES);
     CHECK_EQ(make_bytes(&f, e, 0, 100), R_NORMAL);
     CHECK(alpha_is(&f, e, 0, 100));
     for (int i = 0; i < 3; i++) {
@@ -419,11 +419,11 @@ TEST(bytes_table_full_idle_holders) {
     CHECK_EQ(bytes_held_count(sink[3]), 1);
     CHECK_EQ(bytes_held_bytes(sink[3]), 65);
     CHECK_EQ(actor_charged_words(sink[3]), (uint32_t)sink[3]->mbox_words + LIST_W + 17u);
-    CHECK_EQ(bytes_table_used(), 2);
+    CHECK_EQ(bytes_table_used(&f.vm), 2);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&f.vm, e, R_NORMAL, T_EMPTYSTR);
     for (int i = 0; i < 4; i++) actor_exit(&f.vm, sink[i], R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
 /* A Freeze that would take the actor past its limit is OutOfMemory; the
@@ -436,13 +436,13 @@ TEST(bytes_limit_on_create) {
     uint32_t live = (uint32_t)a->hp + (a->mem_words - a->sp);
     a->max_words = (uint16_t)(live + 200u);                   /* 800 bytes beside the live data */
     CHECK_EQ(call(&f, a, B_BUF_FREEZE, 0, 13, 1), R_OUT_OF_MEMORY);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
     a->max_words = (uint16_t)(live + 260u + LIST_W);          /* 1040 bytes + list */
     CHECK_EQ(freeze(&f, a, 0), R_NORMAL);
     CHECK(alpha_is(&f, a, 0, 1000));
     CHECK_EQ(bytes_held_bytes(a), 1000);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
 /* The retry after a Freeze fails against the limit collects without
@@ -463,7 +463,7 @@ TEST(bytes_make_retry_drops_slack) {
     CHECK(alpha_is(&f, a, 0, 1000));
     CHECK((uint32_t)a->mem_words + actor_charged_words(a) <= a->max_words);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
 /* A heap allocation that fails because garbage Bytes still count against
@@ -481,7 +481,7 @@ TEST(heap_alloc_retry_after_bytes_sweep) {
     CHECK_EQ(bytes_held_bytes(a), 0);
     CHECK((uint32_t)a->mem_words + actor_charged_words(a) <= a->max_words);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
 /* A message carrying a handle charges the receiver's mailbox in full on
@@ -498,14 +498,13 @@ TEST(bytes_mailbox_overflow) {
     uint32_t code; term fn;
     CHECK(actor_exit_pending(b, &code, &fn));
     CHECK_EQ(code, R_MAILBOX_OVERFLOW);
-    CHECK_EQ(bytes_table_used(), 1);
+    CHECK_EQ(bytes_table_used(&f.vm), 1);
     CHECK_EQ(bytes_held_bytes(a), 3000);
     actor_free(&f.vm, b);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
-void platform_unix_arena_forget(void);
 
 /* M{Bytes(nb), string of sw words} built on a's heap into r[ra]. */
 static void make_pair(Fx *f, Actor *a, uint32_t ra, uint32_t nb, uint32_t sw) {
@@ -536,7 +535,7 @@ TEST(bytes_receive_stays_within_limit) {
     for (int reply = 0; reply < 2; reply++) {
         for (uint32_t keep = 100; keep <= 700; keep += 150) {
             for (uint32_t extra = 0; extra <= 1200; extra += 60) {
-                platform_unix_arena_forget();   /* fx_init leaves its chunks behind */
+                test_host_arena_forget();   /* fx_init leaves its chunks behind */
                 Fx f; fx_init(&f);
                 Actor *a = spawn(&f, 1024), *b = spawn(&f, 64);
                 make_pair(&f, a, 0, 3200, 300);
@@ -572,7 +571,7 @@ TEST(bytes_receive_stays_within_limit) {
                 }
                 actor_exit(&f.vm, b, R_NORMAL, T_EMPTYSTR);
                 actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
-                CHECK_EQ(bytes_table_used(), 0);
+                CHECK_EQ(bytes_table_used(&f.vm), 0);
             }
         }
     }
@@ -609,7 +608,7 @@ TEST(bytes_enqueue_counts_list) {
     actor_free(&f.vm, b);
     actor_exit(&f.vm, c, R_NORMAL, T_EMPTYSTR);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
 /* Slice of a handle shares its root: the holder is charged the root's full
@@ -622,7 +621,7 @@ TEST(bytes_slice_parent) {
     CHECK_EQ(call(&f, a, B_SLICE, 1, 10, 3), R_NORMAL);
     CHECK(term_is_handle(R(a)[1]));
     CHECK(R(a)[1] != R(a)[0]);
-    CHECK_EQ(bytes_table_used(), 2);
+    CHECK_EQ(bytes_table_used(&f.vm), 2);
     CHECK_EQ(bytes_held_bytes(a), 200);                      /* one root, counted once */
     CHECK_EQ(int_of(&f, a, B_LEN, 1), 100);
     R(a)[10] = R(a)[1]; R(a)[11] = I(1);
@@ -632,7 +631,7 @@ TEST(bytes_slice_parent) {
     R(a)[10] = R(a)[1]; R(a)[11] = I(10); R(a)[12] = I(90);
     CHECK_EQ(call(&f, a, B_SLICE, 2, 10, 3), R_NORMAL);
     CHECK(term_is_handle(R(a)[2]));
-    CHECK_EQ(bytes_table_used(), 3);
+    CHECK_EQ(bytes_table_used(&f.vm), 3);
     R(a)[10] = R(a)[2]; R(a)[11] = I(0);
     CHECK_EQ(call(&f, a, B_INDEX, 9, 10, 2), R_NORMAL);
     CHECK_EQ(R(a)[9], I('k'));
@@ -640,7 +639,7 @@ TEST(bytes_slice_parent) {
     R(a)[10] = R(a)[0]; R(a)[11] = I(0); R(a)[12] = I(GOGO_BYTES_INLINE);
     CHECK_EQ(call(&f, a, B_SLICE, 3, 10, 3), R_NORMAL);
     CHECK(term_is_ref(R(a)[3]));
-    CHECK_EQ(bytes_table_used(), 3);
+    CHECK_EQ(bytes_table_used(&f.vm), 3);
     /* b gets only the slice: charged the root in full. */
     pass(&f, a, 1, b);
     CHECK_EQ(bytes_held_bytes(b), 200);
@@ -649,13 +648,13 @@ TEST(bytes_slice_parent) {
     for (int r = 0; r < 16; r++) R(a)[r] = T_NIL;            /* args too */
     heap_gc(&f.vm, a, 0, NULL, 0);
     CHECK_EQ(bytes_held_bytes(a), 0);
-    CHECK_EQ(bytes_table_used(), 2);                         /* root + b's slice */
+    CHECK_EQ(bytes_table_used(&f.vm), 2);                         /* root + b's slice */
     R(b)[10] = R(b)[1]; R(b)[11] = I(99);
     CHECK_EQ(call(&f, b, B_INDEX, 9, 10, 2), R_NORMAL);
     CHECK_EQ(R(b)[9], I('a' + (26 + 99) % 26));
     R(b)[1] = R(b)[10] = T_NIL;
     heap_gc(&f.vm, b, 0, NULL, 0);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
     actor_free(&f.vm, a);
     actor_free(&f.vm, b);
 }
@@ -686,10 +685,10 @@ TEST(bytes_in_struct_through_message) {
     R(b)[2] = T_NIL;
     heap_gc(&f.vm, b, 0, NULL, 0);
     CHECK_EQ(bytes_held_count(b), 0);
-    CHECK_EQ(bytes_table_used(), 1);
+    CHECK_EQ(bytes_table_used(&f.vm), 1);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&f.vm, b, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
 /* The C API as a port would use it: a handle made for (and charged to) the
@@ -706,7 +705,7 @@ TEST(bytes_port_api) {
     CHECK_EQ(d[0], 0);
     memcpy(d, "frame", 5);
     uint32_t len = 0;
-    const uint8_t *p = bytes_data(h, &len);
+    const uint8_t *p = bytes_data(&f.vm, h, &len);
     CHECK_EQ(len, 1000);
     CHECK(memcmp(p, "frame", 5) == 0);
     CHECK_EQ(bytes_held_bytes(owner), 1000);
@@ -719,11 +718,11 @@ TEST(bytes_port_api) {
     CHECK_EQ(bytes_held_bytes(owner), 0);
     CHECK_EQ(actor_charged_words(owner), base);
     CHECK_EQ(bytes_held_bytes(other), 1000);
-    CHECK_EQ(bytes_table_used(), 1);
+    CHECK_EQ(bytes_table_used(&f.vm), 1);
     /* The owner's code holding it too: release keeps it until a GC finds
      * it unreachable. */
     R(other)[0] = h;
-    CHECK(bytes_adopt(other, h));
+    CHECK(bytes_adopt(&f.vm, other, h));
     bytes_release(&f.vm, other, h);
     CHECK_EQ(bytes_held_bytes(other), 1000);
     heap_gc(&f.vm, other, 0, NULL, 0);
@@ -731,20 +730,20 @@ TEST(bytes_port_api) {
     R(other)[0] = T_NIL;
     heap_gc(&f.vm, other, 0, NULL, 0);
     CHECK_EQ(bytes_held_bytes(other), 0);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
     CHECK_EQ(actor_extra_charged(other), 0);                  /* list gone, uncharged */
     CHECK(!bytes_retain(&f.vm, other, h));                    /* stale */
-    CHECK(bytes_data(h, &len) == NULL);
+    CHECK(bytes_data(&f.vm, h, &len) == NULL);
     bytes_release(&f.vm, other, h);                           /* no-op */
     /* Over the limit, a port allocation fails. */
     owner->max_words = 200;
     CHECK_EQ(bytes_new(&f.vm, owner, 4000, &d), T_NIL);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
     /* A pinned handle still held at exit is released. */
     CHECK(term_is_handle(bytes_new(&f.vm, other, 10, &d)));
     actor_exit(&f.vm, other, R_NORMAL, T_EMPTYSTR);
     actor_exit(&f.vm, owner, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
 /* The receiver's per-actor cap applies when it takes a message: over it
@@ -759,7 +758,7 @@ TEST(bytes_receive_cap) {
         heap_gc(&f.vm, a, 0, NULL, 0);                       /* a lets go of it */
     }
     CHECK_EQ(bytes_held_count(a), 0);
-    CHECK_EQ(bytes_table_used(), GOGO_BYTES_PER_ACTOR + 1u);
+    CHECK_EQ(bytes_table_used(&f.vm), GOGO_BYTES_PER_ACTOR + 1u);
     for (uint32_t i = 0; i < GOGO_BYTES_PER_ACTOR; i++) {
         term t;
         CHECK(msg_receive(&f.vm, b, &t));
@@ -774,7 +773,7 @@ TEST(bytes_receive_cap) {
     CHECK_EQ(bytes_held_count(b), GOGO_BYTES_PER_ACTOR);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&f.vm, b, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
 
 /* The holder list is charged while it exists: it appears with the first
@@ -802,5 +801,5 @@ TEST(bytes_list_charged) {
     CHECK_EQ(actor_extra_charged(a), 0);
     CHECK(term_is_handle(bytes_new(&f.vm, a, 8, &d)));
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);              /* exit frees it */
-    CHECK_EQ(bytes_table_used(), 0);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
 }

@@ -1,12 +1,12 @@
-/* Wi-Fi station and the platform network interface (runtime/net/netif.h) on the
+/* Wi-Fi station and the board network interface (runtime/net/netif.h) on the
  * ESP32-S3.
  *
  * Raw Ethernet frames go straight between the Wi-Fi driver and gogo's own
  * stack (runtime/net/) through the driver's internal interface:
  *  - receive: esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_cb); rx_cb runs in
  *    the Wi-Fi task (CPU0), offers the frame to the stack's single RX slot
- *    (net_rx_offer copies it or drops it) and frees the driver buffer at
- *    once (esp_wifi_internal_free_rx_buffer);
+ *    (net_rx_offer on esp_net_state copies it or drops it) and frees the
+ *    driver buffer at once (esp_wifi_internal_free_rx_buffer);
  *  - send: esp_wifi_internal_tx(WIFI_IF_STA, ...), which copies the frame,
  *    from the VM task.
  * esp_netif and lwIP are never initialised (esp_wifi links against them,
@@ -18,7 +18,6 @@
  * on a successful connection); `gogo config set wifi.*` reconnects at once
  * with the new settings. Link changes go to net_link_event (the stack's
  * single link slot: the latest state wins). */
-#include "platform.h"
 #include "platform_esp.h"
 #include "netif.h"
 
@@ -58,7 +57,7 @@ static size_t heap_free(void) { return heap_caps_get_free_size(MALLOC_CAP_INTERN
 /* ---- receive ---- */
 
 static esp_err_t rx_cb(void *buffer, uint16_t len, void *eb) {
-    net_rx_offer((const uint8_t *)buffer, len);
+    net_rx_offer(&esp_net_state, (const uint8_t *)buffer, len);
     esp_wifi_internal_free_rx_buffer(eb);
     return ESP_OK;
 }
@@ -153,7 +152,7 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data) {
                          (unsigned)c->channel, rssi);
         (void)esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_cb);
         link_up = true;
-        net_link_event(true);
+        net_link_event(&esp_net_state, true);
         platform_esp_log("gogo: wifi heap: after start %u, connected %u + VM arena %u (internal free)",
                          (unsigned)heap_started, (unsigned)heap_free(), (unsigned)platform_esp_arena_used());
         break;
@@ -164,13 +163,13 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data) {
         link_up = false;
         if (changed) {
             changed = false;
-            if (was_up) net_link_event(false);
+            if (was_up) net_link_event(&esp_net_state, false);
             platform_esp_say("gogo: wifi settings changed, reconnecting");
             retry_in(300);   /* even if the reconfigure's own retry already fired */
             break;
         }
         if (was_up) {
-            net_link_event(false);
+            net_link_event(&esp_net_state, false);
             platform_esp_say("gogo: wifi lost (%s, reason %u), reconnecting", reason_text(d->reason),
                              (unsigned)d->reason);
         } else if (!fail_said) {
@@ -282,20 +281,23 @@ int wifi_esp_scan(char *line, size_t cap, void (*out)(const char *tag, const cha
 
 /* ---- runtime/net/netif.h ---- */
 
-bool platform_net_mac(uint8_t mac[6]) {
+static bool net_mac(void *ctx, uint8_t mac[6]) {
+    (void)ctx;
     if (!wifi_ok) return false;
     memcpy(mac, sta_mac, 6);
     return true;
 }
 
-int platform_net_send(const uint8_t *frame, uint32_t len) {
+static int net_send(void *ctx, const uint8_t *frame, uint32_t len) {
+    (void)ctx;
     if (!link_up || len > 0xFFFFu) return -1;
     return esp_wifi_internal_tx(WIFI_IF_STA, (void *)frame, (uint16_t)len) == ESP_OK ? 0 : -1;
 }
 
-bool platform_net_link_up(void) { return link_up; }
+static bool net_link_up(void *ctx) { (void)ctx; return link_up; }
 
-void platform_net_report(bool up, uint32_t ip, uint32_t gw, uint32_t dns) {
+static void net_report(void *ctx, bool up, uint32_t ip, uint32_t gw, uint32_t dns) {
+    (void)ctx;
     (void)dns;
     if (up) {
         (void)esp_wifi_internal_set_sta_ip();
@@ -307,6 +309,8 @@ void platform_net_report(bool up, uint32_t ip, uint32_t gw, uint32_t dns) {
         platform_esp_say("gogo: network down");
     }
 }
+
+const NetIf wifi_esp_netif = { net_mac, net_send, net_link_up, net_report, NULL };
 
 /* Serial: the measured Wi-Fi memory at start. */
 void wifi_esp_report_heap(void) {

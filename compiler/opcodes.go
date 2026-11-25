@@ -130,7 +130,7 @@ const (
 	BConfigGet    uint32 = 48 // key string -> value string, ok bool
 	BFs           uint32 = 49 // op int, args... -> result(s): gogo/fs (runtime/vfs/builtin.c)
 	BCode         uint32 = 50 // op int, args... -> result(s): gogo/code (runtime/vm/module.c)
-	BUnixTime     uint32 = 51 // -> int64: sys.Time (platform_unix_time_ms)
+	BUnixTime     uint32 = 51 // -> int64: sys.Time (vm_unix_time_ms)
 	BSetUnixTime  uint32 = 52 // ms int64 -> bool: sys.SetTime (platform_set_unix_time_ms)
 	BRandom       uint32 = 53 // -> int in [0, 2^30): sys.Random (platform_random)
 )
@@ -218,10 +218,13 @@ const (
 	TypeAudioSpeaker uint32 = 43
 	// net.DialTLS (v13): cfg of the "tls" port
 	TypeNetDialtls uint32 = 44
+	// port.Host, port.Post (v14): host-defined ports and host posts
+	TypeHost uint32 = 45
+	TypePost uint32 = 46
 	// TypeReservedCount is how many reserved types there are: every type
 	// index from here up is a module's own (TYPE_RESERVED_COUNT in
 	// runtime/vm/opcodes.h; TestReservedTypeCount checks len(reservedTypes)).
-	TypeReservedCount uint32 = 45
+	TypeReservedCount uint32 = 47
 )
 
 // Heap object kinds.
@@ -350,9 +353,10 @@ var goConstants = map[string]uint32{
 	"TypeNetDial": TypeNetDial, "TypeNetListen": TypeNetListen, "TypeNetWrite": TypeNetWrite, "TypeNetShutdown": TypeNetShutdown, "TypeNetResume": TypeNetResume, "TypeNetConnected": TypeNetConnected, "TypeNetData": TypeNetData, "TypeNetWritten": TypeNetWritten, "TypeNetClosed": TypeNetClosed, "TypeNetAccepted": TypeNetAccepted,
 	"TypeFsInfo": TypeFsInfo, "TypeFsSpace": TypeFsSpace,
 	"TypeKbdConfig": TypeKbdConfig, "TypeKbdKey": TypeKbdKey, "TypePowerConfig": TypePowerConfig, "TypePowerBattery": TypePowerBattery, "TypePowerRead": TypePowerRead,
-	"TypeCodeModule":    TypeCodeModule,
-	"TypeChunk": TypeChunk, "TypeOut": TypeOut, "TypeDone": TypeDone,
+	"TypeCodeModule": TypeCodeModule,
+	"TypeChunk":      TypeChunk, "TypeOut": TypeOut, "TypeDone": TypeDone,
 	"TypeImuConfig": TypeImuConfig, "TypeImuGesture": TypeImuGesture, "TypeIrTx": TypeIrTx, "TypeIrRx": TypeIrRx,
 	"TypeAudioMic": TypeAudioMic, "TypeAudioSpeaker": TypeAudioSpeaker, "TypeNetDialtls": TypeNetDialtls,
+	"TypeHost": TypeHost, "TypePost": TypePost,
 	"TypeReservedCount": TypeReservedCount,
 }

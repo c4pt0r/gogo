@@ -1,0 +1,34 @@
+// Uses /flash: a small file round trip, then writes 100-byte chunks to
+// /flash/big until a write fails, and reports the usage. Every line ends
+// with an fs.Err number. (Naming /sd would make the image need CAP_SD.)
+package main
+
+import "gogo/fs"
+
+func main() {
+	println("write", int(fs.WriteFile("/flash/a.txt", "hello")))
+	b, e := fs.ReadFile("/flash/a.txt", 64)
+	println("read", b.String(), int(e))
+	_, e = fs.Stat("/flash/a.txt")
+	println("stat", int(e))
+	println("mkdir", int(fs.Mkdir("/flash/d")))
+	_, e = fs.ReadDir("/flash")
+	println("readdir", int(e))
+	f, e := fs.Open("/flash/big", fs.Write)
+	total := 0
+	if e == fs.OK {
+		chunk := make([]byte, 100)
+		for total < 100000 {
+			if e = f.Write(chunk); e != fs.OK {
+				break
+			}
+			total += 100
+		}
+		f.Close()
+	}
+	println("big", total, int(e))
+	sp, e := fs.Usage("/flash")
+	println("usage", sp.Used, sp.Total, int(e))
+	println("rename", int(fs.Rename("/flash/a.txt", "/flash/d/a.txt")))
+	println("remove", int(fs.Remove("/flash/big")))
+}

@@ -52,15 +52,23 @@
  * twice) to guard against memory shared with an untrusted caller; mbedTLS is
  * its only caller here. */
 #define MBEDTLS_PSA_ASSUME_EXCLUSIVE_BUFFERS
+/* Host builds: VMs on several threads may run TLS at once, so PSA's key
+ * store and the rest of the process-global crypto state take pthread
+ * mutexes. Not on the MCU (tools/vmsize.sh --tls measures the port alone;
+ * the ESP firmware uses ESP-IDF's own mbedTLS configuration). */
+#if defined(__unix__) || defined(__APPLE__)
+#define MBEDTLS_THREADING_C
+#define MBEDTLS_THREADING_PTHREAD
+#endif
 
-/* Platform: memory through platform_tls_alloc / platform_tls_free, wall
- * clock through platform_unix_time_ms (certificate validity). */
+/* Platform: memory through the board's TlsHw alloc / free, wall
+ * clock through vm_unix_time_ms (certificate validity). */
 #define MBEDTLS_PLATFORM_C
 #define MBEDTLS_PLATFORM_MEMORY
 #define MBEDTLS_HAVE_TIME
 #define MBEDTLS_HAVE_TIME_DATE
 #define MBEDTLS_PLATFORM_TIME_ALT
-#define MBEDTLS_PLATFORM_MS_TIME_ALT   /* mbedtls_ms_time: platform_now_ms (tls.c) */
+#define MBEDTLS_PLATFORM_MS_TIME_ALT   /* mbedtls_ms_time: vm_now (tls.c) */
 
 /* Parsing (X.509 and PEM bundles). */
 #define MBEDTLS_ASN1_PARSE_C
