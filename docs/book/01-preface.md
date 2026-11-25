@@ -93,7 +93,8 @@ The next steps, in order:
 
 1. **Embed mode** (in progress): embedding the VM in other programs, the
    way Lua is embedded, for desktop and server programs, phone apps and
-   test tools.
+   test tools. The C library and its API are in place (chapter 18); the
+   network and the board peripherals are not in it yet.
 2. **Language completeness**: more of Go, such as methods, maps, arrays,
    type assertions and the expression `switch` (chapter 3 lists what is
    missing today).
@@ -126,6 +127,7 @@ The chapters build on each other:
 | 15. IMU and IR | The motion sensor, infrared send and receive, streams |
 | 16. Audio | The microphone and speaker, WAV files |
 | 17. HTTPS | `https://` URLs, the clock, keep-alive `http.Client`, streaming uploads, the `"tls"` port |
+| 18. Embedding gogo | Running images inside a C program: `libgogo.a`, the host table, stepping, posts, host ports |
 
 Every example in the book is a complete program in
 [`docs/book/examples/`](examples/), and the output shown is the real output

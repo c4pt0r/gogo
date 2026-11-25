@@ -8,6 +8,8 @@
 #   main --two A B                httpparse and many_idle stepped by one loop
 #   post greeter.gogo             greeter/embed.out
 #   port hostecho.gogo            examples/hostecho/embed.out
+#   docs/book/18-embedding.md     every c (go) block is cut verbatim from
+#                                 examples/embed-c/*.c (the Go programs it runs)
 # Usage: examples/embed-c/test.sh BUILD   (from the repository root; needs BUILD/gogo)
 set -u
 B=${1:-build}
@@ -51,6 +53,23 @@ check "post greeter" examples/embed-c/greeter/embed.out "$T/out"
 "$E/port" "$T/img/hostecho.gogo" > "$T/out" 2> "$T/err" || { echo "FAIL port: exit status"; fail=1; }
 check "port hostecho" examples/hostecho/embed.out "$T/out"
 grep -qx "4 commands" "$T/err" || { echo "FAIL port: commands"; cat "$T/err"; fail=1; }
+
+# The book chapter's snippets: each block must appear, as it is, in a source.
+snip() { # lang sources...
+    lang=$1; shift
+    awk -v lang="$lang" '
+        FNR == 1 { file++ }
+        file < nsrc + 1 && FILENAME != book { src = src $0 "\n"; next }
+        FILENAME == book && $0 == "```" lang { inb = 1; blk = ""; start = FNR; next }
+        FILENAME == book && inb && $0 == "```" { inb = 0; n++
+            if (index(src, blk) == 0) { print "FAIL book snippet at line " start " (" lang "): not in the example sources"; bad = 1 }
+            next }
+        FILENAME == book && inb { blk = blk $0 "\n" }
+        END { if (bad) exit 1; if (n == 0) { print "FAIL book: no " lang " snippets"; exit 1 }; print "ok   book " lang " snippets (" n ")" }
+    ' nsrc=$# book=docs/book/18-embedding.md "$@" docs/book/18-embedding.md || fail=1
+}
+snip c examples/embed-c/main.c examples/embed-c/post.c examples/embed-c/port.c
+snip go examples/embed-c/greeter/main.go examples/hostecho/main.go
 
 [ $fail = 0 ] && echo "example-embed: ok"
 exit $fail

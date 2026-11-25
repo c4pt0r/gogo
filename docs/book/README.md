@@ -25,6 +25,7 @@ and assumes no knowledge of embedded programming or Erlang.
 15. [IMU and IR](15-imu-and-ir.md): the motion sensor, infrared send and receive, streams (`Chunk`, `Out`, `Done`)
 16. [Audio](16-audio.md): the microphone and speaker, recording to WAV files, playing them back
 17. [HTTPS](17-https.md): https URLs, the clock, the keep-alive `http.Client`, streaming uploads, the `"tls"` port
+18. [Embedding gogo](18-embedding.md): running gogo images inside a C program: `libgogo.a`, the host table and the latched wake, stepping, posts, host ports, a sandboxed `/flash`
 
 [Known issues](../known-issues.md) lists gogo's open limitations, with
 workarounds.
@@ -43,3 +44,7 @@ make vm
 go build -o build/gogo ./cmd/gogo
 docs/book/examples/run.sh
 ```
+
+Chapter 18's C programs are in [`examples/embed-c/`](../../examples/embed-c/);
+`make example-embed` builds them, runs them and checks that every C
+snippet in the chapter is cut from them.
