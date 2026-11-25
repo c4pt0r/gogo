@@ -17,7 +17,12 @@
 # VmBoard, never a weak default. Weak symbols have no allow-list; --print
 # lists them as "<file> weak:<symbol>".
 #   tools/globals.sh [--allow file] [--print] [files...]
+#   tools/globals.sh [--print] --objects file.a|file.o...
 #     --print   list the symbols found (no allow-list check); files default to runtime/
+#     --objects scan built objects and archives (each member) as they are, with
+#               no compile and no allow-list: any mutable or weak symbol fails
+#               (make lib checks build/libgogo.a this way; members are listed
+#               as archive(member)).
 # Environment (make globals passes the VM build's values):
 #   GLOBALS_CC, GLOBALS_CFLAGS, GLOBALS_MCU_FLAGS, GLOBALS_NM (GNU/LLVM nm for ELF),
 #   GLOBALS_TLS_CFLAGS: the "tls" port's flags (mbedTLS headers, shell-quoted). runtime/net/tls/*.c
@@ -26,11 +31,12 @@
 set -e
 LC_ALL=C; export LC_ALL
 cd "$(dirname "$0")/.."
-ALLOW=tools/globals.allow; PRINT=0; TLS_FILES=""
+ALLOW=tools/globals.allow; PRINT=0; TLS_FILES=""; OBJECTS=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --allow) ALLOW=$2; shift 2 ;;
         --print) PRINT=1; shift ;;
+        --objects) OBJECTS=1; shift ;;
         *) break ;;
     esac
 done
@@ -41,7 +47,9 @@ INC="-Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 
-if [ $# -gt 0 ]; then FILES="$*"; else
+if [ "$OBJECTS" = 1 ]; then FILES="$*"; ALLOW=/dev/null
+    [ -n "$FILES" ] || { echo "globals: --objects needs files" >&2; exit 2; }
+elif [ $# -gt 0 ]; then FILES="$*"; else
     FILES=""
     for d in vm vfs stream input net console embed; do
         for f in runtime/$d/*.c; do
@@ -74,9 +82,13 @@ scan() { # file flags...
     f=$1; shift
     # shellcheck disable=SC2086
     $CC $CFLAGS "$@" -O0 -fno-common $INC -c "$f" -o "$OUT/o.o"
-    if [ "$(od -An -tx1 -N4 "$OUT/o.o" | tr -d ' ')" = 7f454c46 ]; then
-        "$(elf_nm)" "$OUT/o.o" | awk -v f="$f" '$(NF-1) ~ /^[WVwv]$/ { print f, "weak:" $NF }' >> "$weak"
-        "$(elf_nm)" --format=sysv "$OUT/o.o" | awk -F'|' -v f="$f" '
+    scan_obj "$OUT/o.o" "$f"
+}
+scan_obj() { # object label
+    o=$1; label=$2
+    if [ "$(od -An -tx1 -N4 "$o" | tr -d ' ')" = 7f454c46 ]; then
+        "$(elf_nm)" "$o" | awk -v f="$label" '$(NF-1) ~ /^[WVwv]$/ { print f, "weak:" $NF }' >> "$weak"
+        "$(elf_nm)" --format=sysv "$o" | awk -F'|' -v f="$label" '
             { n = $1; gsub(/ /, "", n); sec = $7; gsub(/ /, "", sec) }
             sec ~ /^(\.bss|\.data|\.sbss|\.sdata|\.tbss|\.tdata|\*COM\*)/ && sec !~ /^\.data\.rel\.ro/ && n !~ /^\.L/ {
                 if (n ~ /[.$][0-9]+$/) { sub(/[.$][0-9]+$/, "", n); n = "?." n }
@@ -85,12 +97,27 @@ scan() { # file flags...
         # Mach-O: classify by section (nm letters are unreliable: a zero-fill
         # global can show as S or __common). ltmpN / l_* are assembler temporaries;
         # a thread-local's storage is named var$tlv$init (listed as var).
-        nm -m "$OUT/o.o" | awk -v f="$f" '/ weak / { s = $NF; sub(/^_/, "", s); print f, "weak:" s }' >> "$weak"
-        nm -m "$OUT/o.o" | awk -v f="$f" '
+        nm -m "$o" | awk -v f="$label" '/ weak / { s = $NF; sub(/^_/, "", s); print f, "weak:" s }' >> "$weak"
+        nm -m "$o" | awk -v f="$label" '
             /^[0-9a-f]+ \(__(DATA|DATA_DIRTY),__(bss|data|common|thread_bss|thread_data)\)/ && $NF !~ /^(ltmp|l_|lCPI|lJTI)/ {
                 s = $NF; sub(/^_/, "", s); sub(/\$tlv\$init$/, "", s); print f, s }' >> "$found"
     fi
 }
+if [ "$OBJECTS" = 1 ]; then
+    for f in $FILES; do
+        case "$f" in
+        *.a)
+            x="$OUT/ar"; rm -rf "$x"; mkdir "$x"
+            a=$(cd "$(dirname "$f")" && pwd)/$(basename "$f")
+            (cd "$x" && ar x "$a")
+            for m in $(ar t "$f"); do
+                case "$m" in *.o) scan_obj "$x/$m" "$(basename "$f")($m)" ;; esac
+            done ;;
+        *) scan_obj "$f" "$f" ;;
+        esac
+    done
+    FILES=""
+fi
 for f in $FILES; do
     scan "$f"
     scan "$f" $MCU

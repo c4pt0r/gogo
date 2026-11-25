@@ -49,7 +49,7 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: lib test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
@@ -225,6 +225,32 @@ test-embed-leaks:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/test_embed embed-images
 	ASAN_OPTIONS=detect_leaks=1 GOGO_EMBED_IMAGES=build/asan/embed GOGO_EMBED_RACE_N=2000 build/asan/test_embed
 endif
+
+# libgogo.a: the embedding library (runtime/include/gogo.h). The VM core,
+# vfs, stream and the embed layer, built as strict C99 (-pedantic) with
+# -DGOGO_EMBED; no board, input, net or tls. Link it with -pthread. Only
+# gogo_* is public; runtime/include/README.md lists the symbol prefixes the
+# library reserves, which tools/libsyms.sh checks.
+LIB_SRCS   = $(VM_CORE_SRCS) $(VFS_SRCS) $(STREAM_SRCS) $(EMBED_SRCS)
+LIB_OBJS   = $(foreach f,$(LIB_SRCS),$(BUILD)/lib/$(subst /,_,$(patsubst runtime/%.c,%,$(f))).o)
+LIB_CFLAGS = -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g -DGOGO_EMBED -DGOGO_BUILD_UNIX_MS=$(BUILD_UNIX_MS)LL $(EXTRA_CFLAGS) \
+             -Iruntime/include -Iruntime/embed -Iruntime/vm -Iruntime/vfs -Iruntime/stream
+LIB_HDRS   = runtime/include/gogo.h $(wildcard runtime/embed/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/stream/*.h)
+
+lib: $(BUILD)/libgogo.a
+
+$(BUILD)/libgogo.a: $(LIB_OBJS)
+	@rm -f $@
+	ar rcs $@ $(LIB_OBJS)
+	tools/libsyms.sh $@
+	tools/globals.sh --objects $@
+
+define LIB_OBJ_RULE
+$(BUILD)/lib/$(subst /,_,$(patsubst runtime/%.c,%,$(1))).o: $(1) $(LIB_HDRS)
+	@mkdir -p $(BUILD)/lib
+	$(CC) $(LIB_CFLAGS) -c $(1) -o $$@
+endef
+$(foreach f,$(LIB_SRCS),$(eval $(call LIB_OBJ_RULE,$(f))))
 
 # Console text grid + font lookup (runtime/console), host build.
 CONSOLE_SRCS = runtime/console/console.c runtime/console/font.c
