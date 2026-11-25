@@ -145,6 +145,14 @@ as is. Behind it is a resolver actor registered as `"dns"`, started by the
 first lookup; it sends one query at a time, retries twice, and caches 4
 answers by their time-to-live. You rarely call it directly: `http.Get` does.
 
+**The date: gogo/sntp and gogo/sys.** The board has no battery-backed clock,
+so the date is unknown after boot. `gogo/sys` holds the wall clock (Unix time
+in ms, UTC): `sys.Time()` returns it, or 0 if unknown, and `sys.SetTime(ms)`
+sets it; once set it keeps advancing with `actor.Now`. `sntp.Sync(server,
+timeoutMs) bool` asks an SNTP server (a name or an address; port 123) and sets
+that clock; `sntp.Now()` is `sys.Time()`. On the unix VM the clock starts from the host's, or from
+`$GOGO_UNIX_TIME_MS`.
+
 ## 10.4 HTTP client
 
 ```go

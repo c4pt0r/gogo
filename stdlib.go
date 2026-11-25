@@ -16,5 +16,5 @@ import "embed"
 // protocol codecs, compiled into the image). Libraries may import the stubs and other libraries,
 // without cycles.
 //
-//go:embed actor/*.go port/*.go bytes/*.go netapi/*.go config/*.go fs/*.go kbd/*.go power/*.go code/*.go imu/*.go ir/*.go audio/*.go dhcp/*.go dns/*.go http/*.go kv/*.go ringlog/*.go imulog/*.go wav/*.go sound/*.go supervisor/*.go strings/*.go strconv/*.go irproto/*.go
+//go:embed actor/*.go port/*.go bytes/*.go netapi/*.go config/*.go fs/*.go kbd/*.go power/*.go code/*.go imu/*.go ir/*.go audio/*.go sys/*.go sntp/*.go dhcp/*.go dns/*.go http/*.go kv/*.go ringlog/*.go imulog/*.go wav/*.go sound/*.go supervisor/*.go strings/*.go strconv/*.go irproto/*.go
 var StubFS embed.FS

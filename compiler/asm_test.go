@@ -67,7 +67,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpShr64)+1 || len(builtinNames) != int(BCode)+1 {
+	if len(opNames) != int(OpShr64)+1 || len(builtinNames) != int(BRandom)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -241,8 +241,8 @@ func TestTermsMatchC(t *testing.T) {
 	if m == nil || m[1] != strconv.Itoa(imageVersion) {
 		t.Errorf("IMAGE_VERSION in vm/image.h %v, Go imageVersion %d", m, imageVersion)
 	}
-	if imageVersion != 11 {
-		t.Errorf("imageVersion %d, want 11", imageVersion)
+	if imageVersion != 12 {
+		t.Errorf("imageVersion %d, want 12", imageVersion)
 	}
 }
 

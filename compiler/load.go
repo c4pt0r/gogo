@@ -69,6 +69,11 @@ const (
 	IrPath  = "gogo/ir"
 )
 
+// SysPath is the import path of the system API (sys.Time, sys.SetTime: the
+// wall clock), a stub package like gogo/config: calls become B_UNIX_TIME and
+// B_SET_UNIX_TIME.
+const SysPath = "gogo/sys"
+
 // AudioPath is the import path of the audio port types (audio.Mic,
 // audio.Speaker), a stub package with only types and constants; the types
 // are reserved. The recording and playback library is gogo/sound.
@@ -76,7 +81,7 @@ const AudioPath = "gogo/audio"
 
 // isStub reports whether path is one of the stub packages.
 func isStub(path string) bool {
-	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath
+	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath
 }
 
 // stubDir is the directory of the library set holding stub package path.

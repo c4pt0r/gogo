@@ -19,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include "esp_heap_caps.h"
 
 static TaskHandle_t vm_task;
@@ -144,6 +145,8 @@ void platform_chunk_free(void *p, size_t bytes) {
 }
 
 uint64_t platform_now_ms(void) { return platform_esp_ms(); }
+
+uint32_t platform_random(void) { return esp_random(); }
 
 /* vm_run start: Now() counts from here, after the LCD bring-up. */
 void platform_time_reset(void) { t0_us = esp_timer_get_time(); }

@@ -14,6 +14,9 @@
 #include <errno.h>
 #include <poll.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/random.h>
+#endif
 #include <fcntl.h>
 #include <string.h>
 
@@ -79,9 +82,32 @@ uint64_t platform_now_ms(void) {
     return now - time_start;
 }
 
+/* The wall clock (platform.h) starts from $GOGO_UNIX_TIME_MS if set (0:
+ * unknown), else from the host clock, but unknown under --sim-clock (the
+ * network goldens set it with SNTP). The weak vm/walltime.c keeps it. */
+static int64_t wall_start(void) {
+    const char *e = getenv("GOGO_UNIX_TIME_MS");
+    if (e) return (int64_t)strtoll(e, NULL, 10);
+    if (sim_clock) return 0;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+uint32_t platform_random(void) {
+    uint32_t r;
+    if (getentropy(&r, sizeof r) != 0) {      /* never, in practice: mix the clocks */
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        r = (uint32_t)ts.tv_nsec * 2654435761u ^ (uint32_t)ts.tv_sec ^ (uint32_t)mono_ms();
+    }
+    return r;
+}
+
 void platform_time_reset(void) {
     time_start = mono_ms();
     time_started = 1;
+    platform_set_unix_time_ms(wall_start());
 }
 
 void platform_barrier(void) { __sync_synchronize(); }

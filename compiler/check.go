@@ -837,6 +837,8 @@ func stubName(fn *types.Func) string {
 		return "net." + fn.Name()
 	case ConfigPath:
 		return "config." + fn.Name()
+	case SysPath:
+		return "sys." + fn.Name()
 	case FsPath:
 		return "fs." + fn.Name()
 	case CodePath:

@@ -85,6 +85,7 @@ func TestRequiresInference(t *testing.T) {
 		{"ir_rx driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"ir_rx\", 1) }\n", CapIRRX, 0},
 		{"mic driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"mic\", 1) }\n", CapMic, 0},
 		{"spk driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"spk\", 1) }\n", CapSpk, 0},
+		{"sys import alone", "package main\nimport \"gogo/sys\"\nfunc main() { _ = sys.Time() }\n", 0, 0},
 		{"audio import alone", "package main\nimport \"gogo/audio\"\nfunc main() { _ = audio.Mic{} }\n", 0, 0},
 		{"imu import alone", "package main\nimport \"gogo/imu\"\nfunc main() { _ = imu.Config{} }\n", 0, 0},
 		{"udp driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"udp\", 1) }\n", CapNet, 0},

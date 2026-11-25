@@ -140,7 +140,7 @@ firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v11, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
+(format v12, lockstep with `IMAGE_VERSION` in `vm/image.h`; when the
 image version changes, reflash the firmware too: an older firmware refuses
 a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
 one). At boot the firmware checks the magic, the length (multiple of 4,

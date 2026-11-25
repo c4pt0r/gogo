@@ -130,6 +130,9 @@ const (
 	BConfigGet    uint32 = 48 // key string -> value string, ok bool
 	BFs           uint32 = 49 // op int, args... -> result(s): gogo/fs (vfs/builtin.c)
 	BCode         uint32 = 50 // op int, args... -> result(s): gogo/code (vm/module.c)
+	BUnixTime     uint32 = 51 // -> int64: sys.Time (platform_unix_time_ms)
+	BSetUnixTime  uint32 = 52 // ms int64 -> bool: sys.SetTime (platform_set_unix_time_ms)
+	BRandom       uint32 = 53 // -> int in [0, 2^30): sys.Random (platform_random)
 )
 
 // Off-heap Bytes limits: twins of vm/config.h's defaults (checked by
@@ -296,7 +299,7 @@ var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "M
 	"UNREGISTER", "PORT_OPEN", "PORT_CLOSE", "STR_CONCAT", "LEN", "INDEX", "SETINDEX",
 	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
 	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
-	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE"}
+	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE", "UNIX_TIME", "SET_UNIX_TIME", "RANDOM"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -333,7 +336,7 @@ var goConstants = map[string]uint32{
 	"BBytesliceFrom": BBytesliceFrom, "BBufNew": BBufNew, "BBufWrite": BBufWrite,
 	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
 	"BBytesCopyto": BBytesCopyto, "BPortHandoff": BPortHandoff, "BNetSubscribe": BNetSubscribe,
-	"BConfigGet": BConfigGet, "BFs": BFs, "BCode": BCode,
+	"BConfigGet": BConfigGet, "BFs": BFs, "BCode": BCode, "BUnixTime": BUnixTime, "BSetUnixTime": BSetUnixTime, "BRandom": BRandom,
 	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,

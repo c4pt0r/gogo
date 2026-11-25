@@ -1,0 +1,41 @@
+// Runs the steps in the store's test.script, space separated, in order:
+// "sync:server" runs sntp.Sync(server, test.timeout) and prints "sync
+// server ok time wall"; "wall" prints the wall clock; "sleep:ms" sleeps.
+// test.timeout is the Sync timeout (default 3000).
+package main
+
+import (
+	"gogo/actor"
+	"gogo/config"
+	"gogo/dhcp"
+	"gogo/sntp"
+	"gogo/strconv"
+	"gogo/strings"
+	"gogo/sys"
+)
+
+func main() {
+	println("start", dhcp.Start(dhcp.Config{}))
+	script, _ := config.Get("test.script")
+	timeout := 3000
+	if s, ok := config.Get("test.timeout"); ok {
+		timeout, _ = strconv.Atoi(s)
+	}
+	for _, step := range strings.Split(script, " ") {
+		if strings.HasPrefix(step, "sleep:") {
+			ms, _ := strconv.Atoi(step[6:])
+			actor.Sleep(ms)
+		} else if strings.HasPrefix(step, "sync:") {
+			ok := sntp.Sync(step[5:], timeout)
+			println("sync", step[5:], ok, actor.Now(), sntp.Now())
+		} else if step == "wall" {
+			println("wall", sys.Time())
+		} else if step == "set" {
+			t := sys.Time() + 1000
+			println("set", sys.SetTime(t), sys.Time() >= t)
+			println("floor", sys.SetTime(1000000000000), sys.Time() >= t)
+			println("rand", sys.Random() != sys.Random())
+		}
+	}
+	println("done")
+}

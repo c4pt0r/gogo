@@ -28,6 +28,8 @@
  *       requires bits imu, ir_tx and ir_rx.
  *   v11 audio: reserved types audio.Mic (42), audio.Speaker (43);
  *       requires bits mic and spk.
+ *   v12 sys: builtins B_UNIX_TIME (51), B_SET_UNIX_TIME (52), B_RANDOM (53)
+ *       (gogo/sys: wall clock and randomness).
  *
  * Layout (little-endian words): header (8: magic, version, n_funcs,
  * n_types, consts_words, code_words, entry, 0), funcs (3 words each),
@@ -43,7 +45,7 @@
 #include <stddef.h>
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 11u
+#define IMAGE_VERSION 12u
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {

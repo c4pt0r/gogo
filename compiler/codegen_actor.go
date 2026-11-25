@@ -48,6 +48,7 @@ var actorBuiltins = map[string]uint32{
 	"Whereis": BWhereis, "Unregister": BUnregister,
 	"port.Open": BPortOpen, "port.Close": BPortClose, "port.Handoff": BPortHandoff,
 	"net.Subscribe": BNetSubscribe, "config.Get": BConfigGet,
+	"sys.Time": BUnixTime, "sys.SetTime": BSetUnixTime, "sys.Random": BRandom,
 	"bytes.NewBuffer": BBufNew, "bytes.FromString": BBytesFrom, "bytes.FromSlice": BBytesFrom,
 }
 

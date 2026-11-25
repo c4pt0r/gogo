@@ -145,8 +145,12 @@ if(NOT GOGO_VERSION)
     set(GOGO_VERSION "dev")
 endif()
 
+# The wall-clock floor (vm/platform.h): the build time, Unix ms.
+string(TIMESTAMP GOGO_BUILD_S "%s" UTC)
+
 # ESP values of the vm/config.h knobs (plan: Global Constraints).
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    GOGO_BUILD_UNIX_MS=${GOGO_BUILD_S}000LL
     GOGO_DEFAULT_MAX_WORDS=4096u
     GOGO_TABLE_CAP=1024u
     GOGO_MAX_PORTS=16u

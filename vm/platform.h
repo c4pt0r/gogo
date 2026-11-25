@@ -19,6 +19,47 @@ void platform_chunk_free(void *p, size_t bytes);
 uint64_t platform_now_ms(void);
 void platform_time_reset(void);
 
+/* Wall clock (Unix time in milliseconds, UTC). Separate from the monotonic
+ * platform_now_ms: it can be unknown, and it can be set (sys.SetTime, set by
+ * the gogo/sntp library).
+ *
+ * The wall clock is TRUSTED IMAGE STATE: gogo has no privilege model (every
+ * image and module already has the file system and the network), so any code
+ * may set it, and SNTP is unauthenticated. The one protection is a floor:
+ * the time of the firmware / VM build (GOGO_BUILD_UNIX_MS, given by the
+ * build systems; the fallback below is only for builds that do not give it).
+ * A time earlier than the floor is refused, so a clock set backwards can
+ * never make a certificate that expired before the build valid again.
+ *
+ * platform_unix_time_ms returns the current Unix time in ms, or 0 when the
+ * time is unknown (never set and the platform has no clock of its own). It
+ * never returns a negative number; a time that is known is always > 0.
+ * platform_set_unix_time_ms(ms) makes ms the current time from now on (it
+ * keeps advancing with platform_now_ms) and returns 1; ms < GOGO_BUILD_UNIX_MS
+ * (other than ms <= 0) changes nothing and returns 0; ms <= 0 forgets the
+ * time (unknown) and returns 1. The VM calls neither by itself; scheduler
+ * context only, never an ISR.
+ *
+ * vm/walltime.c has weak defaults that keep an offset against
+ * platform_now_ms, starting unknown. A platform with a battery-backed RTC
+ * defines both itself (and applies the floor). Unix (platform_time_reset)
+ * starts from the host clock, or from $GOGO_UNIX_TIME_MS (a number of ms, 0 =
+ * unknown; goldens use it; subject to the floor), and with --sim-clock starts
+ * unknown. platform_time_reset restarts the monotonic clock, so a platform
+ * keeping the offset must set the time again after it (unix does). */
+#ifndef GOGO_BUILD_UNIX_MS
+#define GOGO_BUILD_UNIX_MS 1764000000000LL   /* 2025-11-24 */
+#endif
+int64_t platform_unix_time_ms(void);
+int platform_set_unix_time_ms(int64_t ms);
+
+/* Randomness (sys.Random, gogo/sntp's nonce): 32 random bits, unpredictable
+ * to a network peer. Platforms define it from the hardware (unix:
+ * getentropy, ESP: esp_random). vm/walltime.c has a weak default that mixes
+ * the clocks and a counter: NOT unpredictable to a local attacker, only a
+ * fallback for a platform without a source. */
+uint32_t platform_random(void);
+
 /* Idle wait. Called by the scheduler when nothing is runnable: returns after
  * timeout_ms, or earlier when an event may have been pushed to the event
  * ring (spurious early returns are fine; the scheduler re-checks).

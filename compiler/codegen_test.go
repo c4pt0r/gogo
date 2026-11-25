@@ -565,7 +565,7 @@ func TestCompileReservedTypes(t *testing.T) {
 	if strings.Join(got, " ") != strings.Join(append(want, "P/2"), " ") {
 		t.Fatalf("types %v, want %v then P/2", got, want)
 	}
-	// TYPEIS P names index 44, the first after the reserved ones.
+	// TYPEIS P names index 45, the first after the reserved ones.
 	code := words(img)
 	found := false
 	for i := 0; i+1 < len(code); i++ {
@@ -574,7 +574,7 @@ func TestCompileReservedTypes(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("no TYPEIS with type id 44")
+		t.Error("no TYPEIS with type id 45")
 	}
 	// Using the actor types keeps them at their reserved indices.
 	img = compileImage(t, "package main\nimport \"gogo/actor\"\ntype U struct{ A int }\nfunc main() {\n\tu := U{1}\n\tvar o actor.Options\n\tvar r actor.Reason\n\tprintln(u, o, r, actor.Info(actor.Self()).Memory)\n}\n")
@@ -2011,8 +2011,8 @@ func main() {
 	}
 }
 `)
-	if v := binary.LittleEndian.Uint32(img[4:]); v != 11 {
-		t.Errorf("image version %d, want 11", v)
+	if v := binary.LittleEndian.Uint32(img[4:]); v != 12 {
+		t.Errorf("image version %d, want 12", v)
 	}
 	seen := map[uint32]bool{}
 	code := words(img)
@@ -2077,5 +2077,33 @@ func main() {
 	}
 	if !found {
 		t.Error("no TYPEIS code.Module (34)")
+	}
+}
+
+// gogo/sys: the wall clock and random builtins.
+func TestCompileSys(t *testing.T) {
+	src := `package main
+
+import "gogo/sys"
+
+func main() {
+	set := sys.SetTime(1700000000000)
+	now := sys.Time()
+	println(now > 0, set, sys.Random())
+}
+`
+	img := compileImage(t, src)
+	dis, err := Disassemble(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, re := range []string{
+		`BUILTIN r\d+, r\d+, 1, SET_UNIX_TIME\n`,
+		`BUILTIN r\d+, r\d+, 0, UNIX_TIME\n`,
+		`BUILTIN r\d+, r\d+, 0, RANDOM\n`,
+	} {
+		if !regexp.MustCompile(re).MatchString(dis) {
+			t.Errorf("no match for %s:\n%s", re, dis)
+		}
 	}
 }

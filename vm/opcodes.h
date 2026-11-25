@@ -150,8 +150,11 @@ enum Builtin {
                               * (platform_config_get; "wifi." keys hidden) */
     B_FS              = 49,  /* op int, args... -> result(s): gogo/fs, run by
                               * the vm_fs_builtin hook (platform.h; vfs/builtin.c) */
-    B_CODE            = 50   /* op int, args... -> result(s): gogo/code
+    B_CODE            = 50,  /* op int, args... -> result(s): gogo/code
                               * (module_builtin, module.h; CODE_OP_*) */
+    B_UNIX_TIME       = 51,  /* -> int64: sys.Time, platform_unix_time_ms (0: unknown) */
+    B_SET_UNIX_TIME   = 52,  /* ms int64 -> bool: sys.SetTime, platform_set_unix_time_ms (false: below the build-time floor) */
+    B_RANDOM          = 53   /* -> int in [0, 2^30): sys.Random, platform_random */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */

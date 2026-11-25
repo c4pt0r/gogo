@@ -1204,6 +1204,24 @@ int interp_run(Vm *vm, Actor *a) {
                 if (err != R_NORMAL) CRASH(err);
                 break;
             }
+            case B_UNIX_TIME: {
+                CHECK(rc == 0);
+                term t;
+                if (!make_int64(vm, a, platform_unix_time_ms(), &t)) CRASH(R_OUT_OF_MEMORY);
+                RELOAD();
+                R[ra] = t;
+                break;
+            }
+            case B_SET_UNIX_TIME: {
+                int64_t ms;
+                CHECK(rc == 1 && int64_val(vm, a, R[rb], &ms));
+                R[ra] = term_from_bool(platform_set_unix_time_ms(ms) != 0);
+                break;
+            }
+            case B_RANDOM:
+                CHECK(rc == 0);
+                R[ra] = term_from_int((int32_t)(platform_random() & 0x3FFFFFFFu));
+                break;
             case B_FS: case B_CODE: {
                 /* Both check ra+1 themselves (two-result ops only). */
                 uint32_t err = ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
