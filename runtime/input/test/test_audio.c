@@ -56,9 +56,9 @@ static const PortDriver *const drivers[] = {
 
 static void setup(void) {
     platform_unix_arena_forget();
-    va_reset();
+    va_reset(&vm);
     evq_reset();
-    bytes_reset();
+    bytes_reset(&vm);
     fake_reset();
     now = 0;
     platform_unix_set_clock(clock_fn);
@@ -178,8 +178,8 @@ static void collect(Actor *a) {
         if (ngot < 64) ngot++;
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-        msg_free(m);
+        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        msg_free(&vm, m);
     }
 }
 
@@ -212,15 +212,15 @@ TEST(mic_config_rate_and_frame_size) {
     };
     for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) {
         uint32_t charged = actor_charged_words(owner);
-        size_t used = va_used_bytes();
+        size_t used = va_used_bytes(&vm);
         term m = open_mic(owner, c[i].rate, c[i].ms, 0);
         CHECK(port_is(m));
         CHECK_EQ(fake_mic_rate(), (uint32_t)c[i].rate);
         CHECK_EQ(actor_charged_words(owner), charged + c[i].bytes / 4u);   /* the frame buffer */
-        CHECK(va_used_bytes() >= used + c[i].bytes);
+        CHECK(va_used_bytes(&vm) >= used + c[i].bytes);
         port_close(&vm, m);
         CHECK_EQ(actor_charged_words(owner), charged);
-        CHECK(va_used_bytes() <= used);
+        CHECK(va_used_bytes(&vm) <= used);
     }
     teardown();
 }
@@ -255,10 +255,10 @@ TEST(mic_open_failure_leaves_nothing) {
     setup();
     fake_mic_open_fail(true);
     uint32_t charged = actor_charged_words(owner);
-    size_t used = va_used_bytes();
+    size_t used = va_used_bytes(&vm);
     CHECK(!port_is(open_mic(owner, 16000, 100, 0)));
     CHECK_EQ(actor_charged_words(owner), charged);
-    CHECK(va_used_bytes() <= used + 64);
+    CHECK(va_used_bytes(&vm) <= used + 64);
     fake_mic_open_fail(false);
     CHECK(port_is(open_mic(owner, 16000, 100, 0)));     /* not left half open */
     teardown();
@@ -459,12 +459,12 @@ TEST(mic_close_with_partial_frame) {
     step(150);                                           /* a frame and a half */
     collect(owner);
     CHECK_EQ(ngot, 1);
-    size_t used = va_used_bytes();
+    size_t used = va_used_bytes(&vm);
     port_close(&vm, m);
     CHECK_EQ(fake_mic_closes(), 1);
     CHECK(!fake_mic_on());
     CHECK_EQ(actor_charged_words(owner), charged);
-    CHECK(va_used_bytes() + 3200u <= used);              /* the frame buffer */
+    CHECK(va_used_bytes(&vm) + 3200u <= used);              /* the frame buffer */
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));
     step(200);

@@ -95,7 +95,7 @@ static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
     uint16_t i = 0;
     while (i < GOGO_MAX_PORTS && vm->ports[i].drv) i++;
     if (i == GOGO_MAX_PORTS) return T_NIL;
-    if (!actor_port_own(owner)) return T_NIL;
+    if (!actor_port_own(vm, owner)) return T_NIL;
 
     Port *p = &vm->ports[i];
     uint16_t gen = p->gen;
@@ -104,13 +104,13 @@ static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
     p->owner = owner->id;
     p->gen = gen;
     p->id = term_make_pid((uint16_t)(PORT_SLOT_BASE + i), gen);
-    bool ok = (cfg != T_NIL ? drv->open_term(vm, owner, p, i, cfg) : drv->open(p, i, f, n)) == 0;
+    bool ok = (cfg != T_NIL ? drv->open_term(vm, owner, p, i, cfg) : drv->open(vm, p, i, f, n)) == 0;
     if (ok && (p->charge_words || p->room_64w)) {
         /* The driver's state for the port is the owner's; room_64w must
          * fit beside it (an event the owner could never take). */
         ok = (uint32_t)owner->mem_words + actor_charged_words(owner) + p->charge_words + p->room_64w * 64u <=
-                 actor_max_words(owner) && actor_charge(owner, p->charge_words);
-        if (!ok && drv->close) drv->close(p);
+                 actor_max_words(owner) && actor_charge(vm, owner, p->charge_words);
+        if (!ok && drv->close) drv->close(vm, p);
     }
     if (!ok) {
         /* Refused. Bump the generation anyway: anything the driver pushed
@@ -162,7 +162,7 @@ void port_command(Vm *vm, const Actor *from, term pid, term msg) {
 void port_close(Vm *vm, term pid) {
     Port *p = port_of(vm, pid);
     if (!p) return;
-    if (p->drv->close) p->drv->close(p);
+    if (p->drv->close) p->drv->close(vm, p);
     Actor *o = actor_lookup(vm, p->owner);
     if (o) {
         /* Release what the port pinned for o (o is alive here: an owner's
@@ -239,12 +239,12 @@ bool port_next_deadline(const Vm *vm, uint64_t *deadline) {
 /* A message holding struct `type` with n int fields (bit i of bool_mask:
  * field i is a bool): [hdr][type][f0..fn-1], then a K_INT box for each
  * field that does not fit a small int. NULL when out of memory. */
-static Msg *ints_msg(uint32_t type, const int32_t *v, uint32_t n, uint32_t bool_mask) {
+static Msg *ints_msg(Vm *vm, uint32_t type, const int32_t *v, uint32_t n, uint32_t bool_mask) {
     uint32_t words = 2u + n, i;
     for (i = 0; i < n; i++) {
         if (!(bool_mask >> i & 1u) && !term_int_fits(v[i])) words += 2u;
     }
-    Msg *m = va_alloc(msg_alloc_bytes((uint16_t)words));
+    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
     if (!m) return NULL;
     m->next = NULL;
     m->words = (uint16_t)words;
@@ -272,10 +272,10 @@ static Msg *ints_msg(uint32_t type, const int32_t *v, uint32_t n, uint32_t bool_
 bool port_deliver_ints(Vm *vm, const Port *p, uint32_t type, const int32_t *v, uint32_t n,
                        uint32_t bool_mask) {
     Actor *o = port_owner(vm, p);
-    Msg *m = o ? ints_msg(type, v, n, bool_mask) : NULL;
+    Msg *m = o ? ints_msg(vm, type, v, n, bool_mask) : NULL;
     if (!m) return false;
     if (msg_try_enqueue(vm, o, m)) return true;
-    msg_free(m);
+    msg_free(vm, m);
     return false;
 }
 
@@ -284,7 +284,7 @@ bool port_deliver_ints(Vm *vm, const Port *p, uint32_t type, const int32_t *v, u
 static void deliver(Vm *vm, const Port *p, int32_t a, int32_t b) {
     Actor *o = port_owner(vm, p);
     int32_t v[2] = { a, b };
-    Msg *m = o ? ints_msg(p->drv->event_type, v, 2, 0) : NULL;
+    Msg *m = o ? ints_msg(vm, p->drv->event_type, v, 2, 0) : NULL;
     if (m) msg_enqueue(vm, o, m, true);
 }
 
@@ -365,10 +365,10 @@ bool port_handoff(Vm *vm, Actor *from, term pid, term to) {
          * (each root t does not hold yet, at its full length, and t's
          * holder list if it has none). */
         uint32_t k;
-        uint64_t need = (uint64_t)p->charge_words + bytes_extra_words(t, p->held, PORT_MAX_HELD);
+        uint64_t need = (uint64_t)p->charge_words + bytes_extra_words(vm, t, p->held, PORT_MAX_HELD);
         if ((uint64_t)t->mem_words + actor_charged_words(t) + need > actor_max_words(t)) return false;
-        if (!actor_port_own(t)) return false;
-        if (p->charge_words && !actor_charge(t, p->charge_words)) {
+        if (!actor_port_own(vm, t)) return false;
+        if (p->charge_words && !actor_charge(vm, t, p->charge_words)) {
             actor_port_disown(t);
             return false;
         }

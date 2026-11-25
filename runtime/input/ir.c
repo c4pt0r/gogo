@@ -56,7 +56,8 @@ static bool tx_timings_ok(const Port *p, const uint8_t *d, uint32_t len) {
 
 /* ---- ir_tx ---- */
 
-static int tx_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int tx_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     (void)index;
     const InputHw *hw = platform_input();
     if (input_failed() || ir.tx || !hw->ir_tx_start || !hw->ir_tx_busy || n < 2) return -1;
@@ -71,7 +72,8 @@ static int tx_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     return 0;
 }
 
-static void tx_close(Port *p) {
+static void tx_close(struct Vm *vm, Port *p) {
+    (void)vm;
     if (ir.tx != p) return;                    /* a refused open's cleanup */
     stream_out_close(NULL, p, out_of(p));   /* port_close releases the held data */
     ir.tx = NULL;
@@ -98,15 +100,15 @@ const PortDriver input_ir_tx_driver = {
 
 /* ---- ir_rx ---- */
 
-static int rx_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int rx_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
     const InputHw *hw = platform_input();
     if (input_failed() || ir.rx || !hw->ir_rx_open || !hw->ir_rx_read || n < 1) return -1;
     int32_t gap = cfg[0] <= 0 ? DEF_GAP : cfg[0] > MAX_GAP ? MAX_GAP : cfg[0];
-    uint16_t *buf = va_alloc(IR_FRAME_MAX * 2u);
+    uint16_t *buf = va_alloc(vm, IR_FRAME_MAX * 2u);
     if (!buf) return -1;
     if (hw->ir_rx_open((uint32_t)gap) != 0) {
-        va_free(buf, IR_FRAME_MAX * 2u);
+        va_free(vm, buf, IR_FRAME_MAX * 2u);
         return -1;
     }
     memset(&ir.in, 0, sizeof ir.in);
@@ -117,11 +119,11 @@ static int rx_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     return 0;
 }
 
-static void rx_close(Port *p) {
+static void rx_close(struct Vm *vm, Port *p) {
     if (ir.rx != p) return;                    /* a refused open's cleanup */
     const InputHw *hw = platform_input();
     if (hw->ir_rx_close) hw->ir_rx_close();
-    va_free(ir.buf, IR_FRAME_MAX * 2u);
+    va_free(vm, ir.buf, IR_FRAME_MAX * 2u);
     ir.buf = NULL;
     ir.rx = NULL;
 }
@@ -180,7 +182,7 @@ static void tx_drain(Vm *vm, uint64_t now) {
             stream_out_done(vm, ir.tx, o);
         }
         uint32_t len;
-        const uint8_t *d = stream_out_head(o, &len);
+        const uint8_t *d = stream_out_head(vm, o, &len);
         if (!d) { next = (uint32_t)now + IR_POLL_MS; break; }   /* only owed Dones may remain */
         if (hw->ir_tx_start(d, len / 2u, ir.carrier, ir.duty) == 0) {
             ir.running = true;

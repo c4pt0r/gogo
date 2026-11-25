@@ -85,6 +85,7 @@ int platform_unix_input_drivers(const struct PortDriver **out, int cap) {
 
 #ifdef GOGO_TLS
 static size_t tls_heap_base;   /* the TLS heap once tls_init has run (PSA's own state) */
+static size_t tls_vm_peak;     /* the VM allocator's peak, taken when vm_run returns */
 
 static void tls_report(void) {
     if (!getenv("GOGO_TLS_STATS")) return;
@@ -94,7 +95,7 @@ static void tls_report(void) {
     fprintf(stderr, "tls-stats opens=%u handshakes=%u steps=%u restarts=%u max_step_us=%u max_step_state=%d "
             "max_io_us=%u live=%u last_hs_us=%u last_error=%d heap_base=%zu heap_now=%zu heap_peak=%zu vm_peak=%zu\n", s->opens,
             s->handshakes, s->steps, s->restarts, s->max_step_us, (int)s->max_step_state, s->max_io_us, s->live,
-            s->last_hs_us, (int)s->last_error, tls_heap_base, now, peak, va_peak_bytes());
+            s->last_hs_us, (int)s->last_error, tls_heap_base, now, peak, tls_vm_peak);
 }
 #endif
 
@@ -238,6 +239,9 @@ int main(int argc, char **argv) {
         return 1;                    /* VM_BOOT_REFUSED: the line is written */
     }
     rc = vm_run(&vm);
+#ifdef GOGO_TLS
+    tls_vm_peak = va_peak_bytes(&vm);
+#endif
     fflush(stdout);
     free(words);
     return rc;

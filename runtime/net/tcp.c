@@ -157,10 +157,10 @@ static void send_ack(const TcpPcb *c) { seg_out(c, c->snd_nxt, TH_ACK, NULL, 0);
 static void send_rst(const TcpPcb *c) { seg_out(c, c->snd_nxt, TH_RST | TH_ACK, NULL, 0); }
 
 /* The bytes to send: wr[0] from wr_off, or the upper layer's. */
-static const uint8_t *tx_view(const TcpPcb *c, uint32_t *len) {
+static const uint8_t *tx_view(Vm *vm, const TcpPcb *c, uint32_t *len) {
     if (c->flags & TF_UPPER) return net_s.upper->tx(c, len);
     uint32_t n = 0;
-    const uint8_t *d = c->wr[0] ? bytes_data(c->wr[0], &n) : NULL;
+    const uint8_t *d = c->wr[0] ? bytes_data(vm, c->wr[0], &n) : NULL;
     if (!d || c->wr_off > n) {
         *len = 0;
         return NULL;
@@ -174,7 +174,7 @@ static bool fin_in_flight(const TcpPcb *c) {
 }
 
 /* (Re)sends the segment in flight. */
-static void xmit(const TcpPcb *c) {
+static void xmit(Vm *vm, const TcpPcb *c) {
     switch (c->state) {
     case TCP_SYN_SENT:
         seg_out(c, c->snd_una, TH_SYN, NULL, 0);
@@ -187,7 +187,7 @@ static void xmit(const TcpPcb *c) {
         const uint8_t *d = NULL;
         uint32_t len = 0;
         if (c->seg) {
-            d = tx_view(c, &len);
+            d = tx_view(vm, c, &len);
             if (!d || c->seg > len) return;   /* cannot happen */
             fl |= TH_PSH;
         }
@@ -199,10 +199,10 @@ static void xmit(const TcpPcb *c) {
 }
 
 /* Sends the next segment (data and/or FIN) if none is in flight. */
-static void output(TcpPcb *c) {
+static void output(Vm *vm, TcpPcb *c) {
     if (c->snd_nxt != c->snd_una || (c->state != TCP_ESTABLISHED && c->state != TCP_CLOSE_WAIT)) return;
     uint32_t left;
-    (void)tx_view(c, &left);
+    (void)tx_view(vm, c, &left);
     uint32_t n = left;
     if (n > c->mss) n = c->mss;
     if (n > c->wnd) n = c->wnd ? c->wnd : 1u;    /* zero window: a 1-byte probe */
@@ -215,7 +215,7 @@ static void output(TcpPcb *c) {
     }
     c->snd_nxt = c->snd_una + n + (fin ? 1u : 0u);
     c->retries = 0;
-    xmit(c);
+    xmit(vm, c);
     timer_set(c, rto(c));
 }
 
@@ -224,9 +224,9 @@ static void output(TcpPcb *c) {
 static Actor *owner(Vm *vm, const TcpPcb *c) { return c->port ? port_owner(vm, c->port) : NULL; }
 
 /* A struct event of `type` with no field, or with int field `reason` >= 0. */
-static Msg *event_new(uint32_t type, int32_t reason) {
+static Msg *event_new(Vm *vm, uint32_t type, int32_t reason) {
     uint32_t words = reason >= 0 ? 3u : 2u;
-    Msg *m = net_msg_new(words);
+    Msg *m = net_msg_new(vm, words);
     if (!m) return NULL;
     m->data[0] = hdr_make(words, K_STRUCT);
     m->data[1] = type;
@@ -234,15 +234,15 @@ static Msg *event_new(uint32_t type, int32_t reason) {
     return m;
 }
 
-void tcp_output(TcpPcb *c) { output(c); }
+void tcp_output(Vm *vm, TcpPcb *c) { output(vm, c); }
 
 /* Queues an event on p's owner if it fits (never fatal). */
 static bool post(Vm *vm, const Port *p, uint32_t type, int32_t reason) {
     Actor *o = port_owner(vm, p);
-    Msg *m = o ? event_new(type, reason) : NULL;
+    Msg *m = o ? event_new(vm, type, reason) : NULL;
     if (!m) return false;
     if (msg_try_enqueue(vm, o, m)) return true;
-    msg_free(m);
+    msg_free(vm, m);
     return false;
 }
 
@@ -321,7 +321,7 @@ static bool deliver(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n) {
     if (c->flags & TF_UPPER) return net_s.upper->rx(vm, c, p, n);
     Actor *o = owner(vm, c);
     uint32_t bw = 2u + (n + 3u) / 4u;
-    Msg *m = o && flush(vm, c->port) ? net_msg_new(3u + bw) : NULL;
+    Msg *m = o && flush(vm, c->port) ? net_msg_new(vm, 3u + bw) : NULL;
     if (!m) return false;
     uint32_t *d = m->data;
     d[0] = hdr_make(3, K_STRUCT);
@@ -332,7 +332,7 @@ static bool deliver(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n) {
     d[3u + bw - 1u] = 0;             /* padding */
     memcpy(&d[5], p, n);
     if (net_deliver(vm, o, m, EVENT_RESERVE)) return true;
-    msg_free(m);
+    msg_free(vm, m);
     return false;
 }
 
@@ -349,7 +349,7 @@ static void drop_data(Vm *vm, TcpPcb *c, uint32_t k) {
     term h = c->wr[k];
     c->wr[k] = 0;
     if (!term_is_handle(h)) return;  /* none, or an empty Write */
-    if (c->flags & TF_ORPHAN) bytes_msg_unref(h);
+    if (c->flags & TF_ORPHAN) bytes_msg_unref(vm, h);
     else if (c->port && vm) port_bytes_release(vm, c->port, h);
 }
 
@@ -461,7 +461,8 @@ TcpPcb *tcp_dial(Port *p, const int32_t *cfg, uint32_t n) {
 
 /* Dial{IP, Port, TimeoutMs}; or, with no fields, the connection being
  * accepted (net_s.accepting, set by accept() below). */
-static int t_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int t_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     (void)index;
     if (n != 0u) return tcp_dial(p, cfg, n) ? 0 : -1;
     if (!net_s.accepting) return -1;
@@ -472,8 +473,8 @@ static int t_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     return 0;
 }
 
-/* No vm here: the port layer releases the pins after this. */
-void tcp_close_port(Port *p) {
+/* The port layer releases the pins after this. */
+void tcp_close_port(Vm *vm, Port *p) {
     TcpPcb *c = tcp_pcb_of(p);
     if (!c) return;
     switch (c->state) {
@@ -484,8 +485,8 @@ void tcp_close_port(Port *p) {
     case TCP_FIN_WAIT_2: case TCP_CLOSING: case TCP_LAST_ACK:
         if (c->flags & TF_SHUT) {
             /* Orphan: it finishes the FIN exchange alone. */
-            if (c->wr[0]) bytes_msg_ref(c->wr[0]);
-            if (c->wr[1]) bytes_msg_ref(c->wr[1]);
+            if (c->wr[0]) bytes_msg_ref(vm, c->wr[0]);
+            if (c->wr[1]) bytes_msg_ref(vm, c->wr[1]);
             c->flags = (uint8_t)((c->flags | TF_ORPHAN | TF_UNTIL) & ~TF_PAUSED);
             c->port = NULL;
             c->until = now32() + GOGO_NET_ORPHAN_MS;
@@ -569,9 +570,9 @@ bool tcp_write_cmd(Vm *vm, const Actor *from, Port *p, TcpPcb *c, const uint32_t
     return true;
 }
 
-void tcp_shutdown(TcpPcb *c) {
+void tcp_shutdown(Vm *vm, TcpPcb *c) {
     c->flags |= TF_SHUT;
-    output(c);
+    output(vm, c);
 }
 
 /* Write{Data}, Shutdown{}, Resume{}. */
@@ -585,11 +586,11 @@ static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
     }
     switch (o[1]) {
     case TYPE_NET_WRITE:
-        if (tcp_write_cmd(vm, from, p, c, o)) output(c);
+        if (tcp_write_cmd(vm, from, p, c, o)) output(vm, c);
         return;
     case TYPE_NET_SHUTDOWN:
         if (hdr_words(o[0]) != 2u) break;
-        tcp_shutdown(c);
+        tcp_shutdown(vm, c);
         return;
     case TYPE_NET_RESUME:
         if (hdr_words(o[0]) != 2u) break;
@@ -607,7 +608,8 @@ const PortDriver net_tcp_driver = {
 
 /* ---- the "tcp_listen" port ---- */
 
-static int l_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int l_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     (void)index;
     if (!net_s.attached || n != 1u || cfg[0] <= 0 || cfg[0] > 65535) return -1;
     for (uint32_t i = 0; i < GOGO_NET_MAX_LISTEN; i++) {
@@ -626,7 +628,8 @@ static int l_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
 }
 
 /* Resets its half-open connections; accepted ones are their own ports. */
-static void l_close(Port *p) {
+static void l_close(struct Vm *vm, Port *p) {
+    (void)vm;
     uint32_t i = p->state[0];
     if (i >= GOGO_NET_MAX_LISTEN || net_s.lis[i].port != p) return;
     for (uint32_t k = 0; k < GOGO_NET_MAX_TCP; k++) {
@@ -657,13 +660,13 @@ static bool accept(Vm *vm, TcpPcb *c) {
     term pid = port_open_with(vm, o, &net_tcp_driver, NULL, 0);
     net_s.accepting = 0;
     if (pid == T_NIL) return false;
-    Msg *m = net_msg_new(3);
+    Msg *m = net_msg_new(vm, 3);
     if (m) {
         m->data[0] = hdr_make(3, K_STRUCT);
         m->data[1] = TYPE_NET_ACCEPTED;
         m->data[2] = pid;
         if (msg_try_enqueue(vm, o, m)) return true;
-        msg_free(m);
+        msg_free(vm, m);
     }
     port_close(vm, pid);             /* t_close leaves it half-open */
     return false;
@@ -690,7 +693,7 @@ static uint16_t peer_mss(const Seg *s) {
 
 /* A SYN for listener li: a half-open connection, or dropped (no slot, or
  * it would take the last free or TIME_WAIT one, kept for Dial). */
-static void passive(uint32_t li, uint32_t src, uint32_t sport, uint32_t dport, const Seg *s) {
+static void passive(Vm *vm, uint32_t li, uint32_t src, uint32_t sport, uint32_t dport, const Seg *s) {
     uint32_t avail = 0;
     for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) {
         if (net_s.tcp[i].state == TCP_CLOSED || net_s.tcp[i].state == TCP_TIME_WAIT) avail++;
@@ -711,7 +714,7 @@ static void passive(uint32_t li, uint32_t src, uint32_t sport, uint32_t dport, c
     c->mss = peer_mss(s);
     c->wnd = s->wnd;
     c->flags = TF_PAUSED | TF_INBOUND;
-    xmit(c);
+    xmit(vm, c);
     timer_set(c, rto(c));
 }
 
@@ -740,7 +743,7 @@ static void syn_sent(Vm *vm, TcpPcb *c, const Seg *s, uint32_t sport) {
     timer_stop(c);
     send_ack(c);
     event(vm, c, TYPE_NET_CONNECTED, -1);
-    output(c);
+    output(vm, c);
 }
 
 /* The ACK field (synchronized states). False: drop the segment. */
@@ -763,7 +766,7 @@ static bool ack_in(Vm *vm, TcpPcb *c, const Seg *s) {
         if (d) net_s.upper->acked(vm, c, d);
     } else {
         c->wr_off += d;
-        if (c->wr[0] && !c->seg && bytes_data(c->wr[0], &len) && c->wr_off >= len) tcp_write_done(vm, c);
+        if (c->wr[0] && !c->seg && bytes_data(vm, c->wr[0], &len) && c->wr_off >= len) tcp_write_done(vm, c);
     }
     if (c->snd_una == c->snd_nxt) timer_stop(c);
     else timer_set(c, rto(c));
@@ -798,7 +801,7 @@ static bool fin_acked(Vm *vm, TcpPcb *c) {
 static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
     uint32_t off = s->seq - c->rcv_nxt;
     if (c->state == TCP_SYN_RCVD && (s->fl & TH_SYN) && !(s->fl & TH_ACK) && s->seq + 1u == c->rcv_nxt) {
-        xmit(c);                     /* the peer resent its SYN */
+        xmit(vm, c);                     /* the peer resent its SYN */
         return;
     }
     if (off > TCP_MSS + 1u) {        /* before rcv_nxt, or beyond any window we offered (+ FIN) */
@@ -858,13 +861,13 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
              * have (window 0 while paused). */
             send_ack(c);
             net_s.st.tcp_drop++;
-            output(c);
+            output(vm, c);
             return;
         }
         if (s->n) {
             if (!deliver(vm, c, s->p, s->n)) {
                 net_s.st.tcp_quota++;    /* not ACKed: the peer resends */
-                output(c);
+                output(vm, c);
                 return;
             }
             net_s.st.tcp_rx++;
@@ -887,7 +890,7 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
         }
     }
     if (ack) send_ack(c);
-    output(c);
+    output(vm, c);
 }
 
 void tcp_rx(Vm *vm, uint32_t src, uint32_t dst, const uint8_t *t, uint32_t len) {
@@ -930,7 +933,7 @@ void tcp_rx(Vm *vm, uint32_t src, uint32_t dst, const uint8_t *t, uint32_t len) 
         if ((s.fl & (TH_SYN | TH_ACK | TH_RST)) == TH_SYN) {
             for (uint32_t i = 0; i < GOGO_NET_MAX_LISTEN; i++) {
                 if (net_s.lis[i].port && net_s.lis[i].lport == dport) {
-                    passive(i, src, sport, dport, &s);
+                    passive(vm, i, src, sport, dport, &s);
                     return;
                 }
             }
@@ -962,7 +965,7 @@ static void fire(Vm *vm, TcpPcb *c, uint32_t now) {
     case TCP_SYN_SENT:
         if (c->snd_nxt == c->snd_una) {  /* the first SYN (deferred from open) */
             c->snd_nxt++;
-            xmit(c);
+            xmit(vm, c);
             timer_set(c, rto(c));
             return;
         }
@@ -985,7 +988,7 @@ static void fire(Vm *vm, TcpPcb *c, uint32_t now) {
     }
     c->retries++;
     net_s.st.tcp_retx++;
-    xmit(c);
+    xmit(vm, c);
     timer_set(c, rto(c));
 }
 

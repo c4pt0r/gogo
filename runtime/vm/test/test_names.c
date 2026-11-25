@@ -12,7 +12,7 @@
 
 #define IMG_WORDS 18
 static void setup(uint32_t *w, Image *img, Vm *vm) {
-    va_reset();
+    va_reset(vm);
     memset(w, 0, IMG_WORDS * sizeof(uint32_t));
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
     w[4] = 3; w[5] = 1; w[6] = 0; w[7] = 0;
@@ -28,7 +28,7 @@ static void setup(uint32_t *w, Image *img, Vm *vm) {
 TEST(names_basic) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *a = actor_new(&vm, 32), *b = actor_new(&vm, 32);
     term p;
     CHECK_EQ(names_register(&vm, a->id, NAME("svc"), a->id), 1);
@@ -49,27 +49,27 @@ TEST(names_basic) {
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);                 /* drops the rest */
     CHECK(vm.names == NULL);
     actor_free(&vm, b);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 TEST(names_dead_pid_refused) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *a = actor_new(&vm, 32);
     term stale = a->id;
     actor_free(&vm, a);
     CHECK_EQ(names_register(&vm, stale, NAME("x"), stale), 0);
     CHECK_EQ(names_register(&vm, T_NIL, NAME("x"), T_NIL), 0);
     CHECK(vm.names == NULL);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* The name is copied: the source bytes can move or change afterwards. */
 TEST(names_copy_bytes) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *a = actor_new(&vm, 32);
     uint32_t off = heap_alloc(&vm, a, 3, NULL, 0);
     a->mem[off] = hdr_make(3, K_STRING);
@@ -83,7 +83,7 @@ TEST(names_copy_bytes) {
     CHECK(names_whereis(&vm, NAME("name"), &p) && p == a->id);
     CHECK(!names_whereis(&vm, NAME("XXXX"), &p));
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* An allocation failure reports -1 and leaves the table unchanged. */
@@ -91,12 +91,12 @@ TEST(names_oom) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
     Actor *a = actor_new(&vm, 32);
-    size_t base = va_used_bytes();
-    va_set_limit(base);
+    size_t base = va_used_bytes(&vm);
+    va_set_limit(&vm, base);
     CHECK_EQ(names_register(&vm, a->id, NAME("x"), a->id), -1);
-    va_set_limit(0);
+    va_set_limit(&vm, 0);
     CHECK(vm.names == NULL);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
 }
 

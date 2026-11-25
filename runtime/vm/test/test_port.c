@@ -47,7 +47,8 @@ static struct {
 
 static int mbox_len(const Actor *a);
 
-static int fk_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int fk_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     if (fk.refuse) return -1;
     fk.opens++;
     fk.index = index;
@@ -66,7 +67,8 @@ static void fk_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) {
     fk.cmd_n = n;
     for (uint32_t i = 0; i < n && i < 8u; i++) fk.cmd[i] = f[i];
 }
-static void fk_close(Port *p) {
+static void fk_close(struct Vm *vm, Port *p) {
+    (void)vm;
     (void)p;
     fk.closes++;
     if (fk.watch) fk.watch_mbox = mbox_len(fk.watch);
@@ -94,7 +96,7 @@ static void mini_image(uint32_t *w, Image *img) {
 }
 
 static void setup(uint32_t *w, Image *img, Vm *vm) {
-    va_reset();
+    va_reset(vm);
     evq_reset();
     memset(&fk, 0, sizeof fk);
     port_set_drivers(fake_list);
@@ -244,7 +246,7 @@ TEST(port_open_fails) {
 TEST(port_owner_exit) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *a = waiting_actor(&vm), *b = waiting_actor(&vm);
     term p1 = open_fake(&vm, a, 1);
     term p2 = open_fake(&vm, a, 2);
@@ -262,7 +264,7 @@ TEST(port_owner_exit) {
     CHECK(p3 != p1);
     actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(fk.closes, 3);
-    CHECK_EQ(va_used_bytes(), base);          /* extras freed */
+    CHECK_EQ(va_used_bytes(&vm), base);          /* extras freed */
     teardown();
 }
 
@@ -499,10 +501,11 @@ TEST(port_any_live) {
 TEST(vm_init_rejects_big_table) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    size_t base = va_used_bytes();
-    CHECK_EQ(vm_init(&vm, &img, (uint16_t)(PORT_SLOT_BASE + 1u)), -1);
-    CHECK_EQ(vm_init(&vm, &img, 0xFFFFu), -1);
-    CHECK_EQ(va_used_bytes(), base);
+    Vm big;                                 /* each Vm has its own allocator: nothing allocated */
+    CHECK_EQ(vm_init(&big, &img, (uint16_t)(PORT_SLOT_BASE + 1u)), -1);
+    CHECK_EQ(va_used_bytes(&big), 0u);
+    CHECK_EQ(vm_init(&big, &img, 0xFFFFu), -1);
+    CHECK_EQ(va_used_bytes(&big), 0u);
     teardown();
 }
 
@@ -513,7 +516,7 @@ TEST(vm_init_rejects_big_table) {
 #define BI_WORDS 55
 TEST(port_builtins) {
     uint32_t w[BI_WORDS]; Image img; Vm vm;
-    va_reset();
+    va_reset(&vm);
     evq_reset();
     memset(&fk, 0, sizeof fk);
     port_set_drivers(fake_list);
@@ -595,17 +598,17 @@ TEST(gpio_unix_edge_none_not_live) {
     Port p;
     int32_t none[4] = { 5, 1, 0, 0 }, both[4] = { 6, 1, 3, 0 }, out[4] = { 7, 3, 0, 0 };
     memset(&p, 0, sizeof p);
-    CHECK_EQ(gpio_unix_driver.open(&p, 0, none, 4), 0);
+    CHECK_EQ(gpio_unix_driver.open(NULL, &p, 0, none, 4), 0);
     CHECK(!gpio_unix_driver.can_event(&p));
-    gpio_unix_driver.close(&p);
+    gpio_unix_driver.close(NULL, &p);
     memset(&p, 0, sizeof p);
-    CHECK_EQ(gpio_unix_driver.open(&p, 0, both, 4), 0);
+    CHECK_EQ(gpio_unix_driver.open(NULL, &p, 0, both, 4), 0);
     CHECK(gpio_unix_driver.can_event(&p));
-    gpio_unix_driver.close(&p);
+    gpio_unix_driver.close(NULL, &p);
     memset(&p, 0, sizeof p);
-    CHECK_EQ(gpio_unix_driver.open(&p, 0, out, 4), 0);
+    CHECK_EQ(gpio_unix_driver.open(NULL, &p, 0, out, 4), 0);
     CHECK(!gpio_unix_driver.can_event(&p));
-    gpio_unix_driver.close(&p);
+    gpio_unix_driver.close(NULL, &p);
 }
 
 /* ---- Handoff, port-held Bytes, extra sources (M5) ---- */
@@ -645,7 +648,7 @@ TEST(handoff_moves_charge) {
     CHECK_EQ(actor_extra_charged(b), 16u + list);
     CHECK_EQ(bytes_held_bytes(b), 200u);
     CHECK(actor_port_owns(b));
-    CHECK(bytes_valid(h));
+    CHECK(bytes_valid(&vm, h));
 
     /* Events now go to b. */
     uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE);
@@ -660,8 +663,8 @@ TEST(handoff_moves_charge) {
     CHECK_EQ(fk.closes, 0);
     actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(fk.closes, 1);
-    CHECK(!bytes_valid(h));
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK(!bytes_valid(&vm, h));
+    CHECK_EQ(bytes_table_used(&vm), 0u);
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
     teardown();
 }
@@ -769,7 +772,7 @@ TEST(port_close_releases_held) {
     CHECK(port_bytes_new(&vm, pt, 4, &d) == T_NIL);
     CHECK_EQ(bytes_held_bytes(a), 400u);
     port_bytes_release(&vm, pt, h1);
-    CHECK(!bytes_valid(h1));
+    CHECK(!bytes_valid(&vm, h1));
     CHECK_EQ(bytes_held_bytes(a), 300u);
     port_bytes_release(&vm, pt, h1);            /* not held: ignored */
     CHECK_EQ(bytes_held_bytes(a), 300u);
@@ -778,10 +781,10 @@ TEST(port_close_releases_held) {
     port_close(&vm, p);
     CHECK_EQ(bytes_held_bytes(a), 0u);
     CHECK_EQ(bytes_held_count(a), 0u);
-    CHECK(!bytes_valid(h2));
-    CHECK(bytes_valid(hb));                     /* still b's */
+    CHECK(!bytes_valid(&vm, h2));
+    CHECK(bytes_valid(&vm, hb));                     /* still b's */
     bytes_release(&vm, b, hb);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&vm), 0u);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
     teardown();
@@ -970,7 +973,7 @@ TEST(handoff_slice_of_large_root) {
     CHECK(port_bytes_retain(&vm, pt, sl));
     bytes_release(&vm, a, root);              /* a's own pin; the slice keeps the root */
     uint32_t need = 250u + bytes_list_words(c);
-    CHECK_EQ(bytes_extra_words(c, pt->held, PORT_MAX_HELD), need);
+    CHECK_EQ(bytes_extra_words(&vm, c, pt->held, PORT_MAX_HELD), need);
     c->max_words = (uint16_t)(c->mem_words + need - 1u);
     CHECK(!port_handoff(&vm, a, p, c->id));
     CHECK(pt->owner == a->id);
@@ -986,7 +989,7 @@ TEST(handoff_slice_of_large_root) {
     clear_runq(&vm);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&vm), 0u);
     teardown();
 }
 
@@ -1121,7 +1124,7 @@ static void stale_cap(const char *s, size_t n) {
  * builtin, so every driver's command handler is covered. */
 TEST(port_stale_values_badcode) {
     uint32_t w[40]; Image img; Vm vm;
-    va_reset();
+    va_reset(&vm);
     evq_reset();
     memset(&fk, 0, sizeof fk);
     port_set_drivers(fake_list);

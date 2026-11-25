@@ -8,16 +8,19 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include "term.h"
 #include "image.h"
 #include "config.h"
 #include "port.h"
+#include "alloc.h"
 
 typedef struct Msg Msg;   /* defined with the mailbox */
 typedef struct Timer Timer;   /* defined in timer.h */
 typedef struct Name Name;     /* defined in names.c */
 typedef struct HeldBytes HeldBytes;   /* defined in bytes.h */
 typedef struct ModEntry ModEntry;     /* defined in module.h */
+struct BytesEntry;                    /* defined in bytes.c */
 
 /* Field order keeps the struct free of padding on both 32- and 64-bit
  * hosts: 48 bytes on 32-bit (checked in check32.c), 72 on 64-bit. */
@@ -69,6 +72,11 @@ typedef struct Vm {
     uint64_t timer_seq;       /* next insertion sequence number (tie-break) */
     uint32_t timer_scanned;   /* heap entries timer_cancel_actor has visited (tests) */
     Name *names;              /* registered names (names.h) */
+    struct BytesEntry *bytes_tab; /* off-heap Bytes handle table (bytes.h), NULL until first use */
+    uint32_t bytes_used;      /* its live entries */
+    void *reserve;            /* emergency reserve (signals.h), NULL while used up */
+    bool reserve_wanted;      /* between vm_reserve_init and _release */
+    VaHeap va;                /* allocator (alloc.h): scalars, then its free lists */
     Port ports[GOGO_MAX_PORTS];   /* port table (port.h) */
     uint8_t ports_pending;    /* ports holding a trailing debounce value */
 } Vm;

@@ -51,9 +51,9 @@ static const PortDriver *const drivers[] = {
 
 static void setup(void) {
     platform_unix_arena_forget();
-    va_reset();
+    va_reset(&vm);
     evq_reset();
-    bytes_reset();
+    bytes_reset(&vm);
     fake_reset();
     now = 0;
     platform_unix_set_clock(clock_fn);
@@ -164,8 +164,8 @@ static void collect(Actor *a) {
         if (ngot < 16) ngot++;
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-        msg_free(m);
+        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        msg_free(&vm, m);
     }
 }
 
@@ -502,21 +502,21 @@ TEST(ir_rx_frames_per_poll_and_errors) {
 TEST(ir_rx_buffer_charged_and_freed) {
     setup();
     uint32_t charged = actor_charged_words(owner);
-    size_t used0 = va_used_bytes();
+    size_t used0 = va_used_bytes(&vm);
     term rx = open_rx(owner, 10000);
     CHECK(port_is(rx));
     CHECK_EQ(actor_charged_words(owner), charged + 128u);
-    CHECK(va_used_bytes() >= used0 + 512u);
-    size_t used = va_used_bytes();
+    CHECK(va_used_bytes(&vm) >= used0 + 512u);
+    size_t used = va_used_bytes(&vm);
     port_close_owned(&vm, owner->id);                   /* the owner exits */
-    CHECK(va_used_bytes() + 512u <= used);
+    CHECK(va_used_bytes(&vm) + 512u <= used);
     CHECK_EQ(actor_charged_words(owner), charged);
     CHECK_EQ(fake_ir_rx_closes(), 1);
     /* Refused hardware: nothing left behind. */
     fake_ir_rx_open_fail(true);
-    size_t before = va_used_bytes();
+    size_t before = va_used_bytes(&vm);
     CHECK(!port_is(open_rx(owner, 10000)));
-    CHECK(va_used_bytes() <= before + 64);
+    CHECK(va_used_bytes(&vm) <= before + 64);
     fake_ir_rx_open_fail(false);
     fake_no_ir_rx_close();                              /* optional */
     rx = open_rx(owner, 10000);

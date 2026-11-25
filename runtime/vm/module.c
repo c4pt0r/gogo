@@ -18,7 +18,7 @@ uint32_t module_code_words(const ModEntry *e) { return image_words(&e->img); }
 
 /* A new entry for img in slot s (which must be free). */
 static ModEntry *install(Vm *vm, uint32_t s, const Image *img, uint8_t flags) {
-    ModEntry *e = va_alloc(sizeof *e);
+    ModEntry *e = va_alloc(vm, sizeof *e);
     if (!e) return NULL;
     memset(e, 0, sizeof *e);
     e->img = *img;
@@ -35,20 +35,20 @@ __attribute__((weak)) void *platform_code_alloc(size_t n) { (void)n; return NULL
 __attribute__((weak)) void platform_code_free(void *p, size_t n) { (void)p; (void)n; }
 
 /* Gives back a code copy of n bytes made under flags (MOD_OWN_*). */
-static void free_code(const uint32_t *w, uint32_t n, uint8_t flags) {
+static void free_code(Vm *vm, const uint32_t *w, uint32_t n, uint8_t flags) {
     if (flags & MOD_OWN_PLATFORM) platform_code_free((void *)(uintptr_t)w, n);
-    else if (flags & MOD_OWN_COPY) va_free((void *)(uintptr_t)w, n);
+    else if (flags & MOD_OWN_COPY) va_free(vm, (void *)(uintptr_t)w, n);
 }
 
 static void unload(Vm *vm, uint32_t s) {
     ModEntry *e = vm->mods[s];
     uint32_t n = module_code_words(e) * 4u;
     if (e->flags & MOD_COUNTED) vm->mod_mem -= n;
-    if (e->bytes != T_NIL) bytes_msg_unref(e->bytes);
-    free_code(e->img.funcs - IMAGE_HEADER_WORDS, n, e->flags);
+    if (e->bytes != T_NIL) bytes_msg_unref(vm, e->bytes);
+    free_code(vm, e->img.funcs - IMAGE_HEADER_WORDS, n, e->flags);
     vm->mods[s] = NULL;
     vm->mod_gen[s]++;                  /* every ref to it is stale from now on */
-    va_free(e, sizeof *e);
+    va_free(vm, e, sizeof *e);
 }
 
 /* Ends holder who's hold on slot s's module (MOD_NO_HOLDER: none) and
@@ -109,7 +109,7 @@ int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words, uint16_t table_cap)
     int rc = module_load_static(vm, words, n_words);
     if (rc == CODE_OK) return VM_BOOT_OK;
     /* Refused: give back the actor table, so a caller may boot again. */
-    va_free(vm->table, (size_t)vm->table_cap * sizeof(uintptr_t));
+    va_free(vm, vm->table, (size_t)vm->table_cap * sizeof(uintptr_t));
     vm->table = NULL;
     vm->table_cap = 0;
     if (rc < 0) return rc;
@@ -119,14 +119,14 @@ int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words, uint16_t table_cap)
 /* A copy of len bytes of src as module code: in platform memory if the
  * platform gives some (aligned: an unaligned block goes back), else, if
  * vm_too, in VM memory. Sets the MOD_OWN_* flag; NULL if neither. */
-static uint32_t *copy_code(const uint8_t *src, uint32_t len, bool vm_too, uint8_t *flags) {
+static uint32_t *copy_code(Vm *vm, const uint8_t *src, uint32_t len, bool vm_too, uint8_t *flags) {
     uint32_t *d = platform_code_alloc(len);
     if (d && ((uintptr_t)d & 3u)) {
         platform_code_free(d, len);
         d = NULL;
     }
     if (d) *flags |= MOD_OWN_PLATFORM;
-    else if (vm_too && (d = va_alloc(len)) != NULL) *flags |= MOD_OWN_COPY;
+    else if (vm_too && (d = va_alloc(vm, len)) != NULL) *flags |= MOD_OWN_COPY;
     if (d) memcpy(d, src, len);
     return d;
 }
@@ -138,11 +138,11 @@ int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle) {
     if (len > vm->mod_cap) return CODE_NO_MEMORY;           /* can never fit: before any copy */
     /* In place only from a whole off-heap root: what it keeps alive is
      * what is counted (a slice would pin its whole root). */
-    bool in_place = !((uintptr_t)data & 3u) && bytes_pinned_len(bytes) == len;
+    bool in_place = !((uintptr_t)data & 3u) && bytes_pinned_len(vm, bytes) == len;
     const uint32_t *words = (const uint32_t *)(const void *)data;
     uint8_t flags = MOD_COUNTED;
     /* Unaligned: validate an aligned copy, made where the code will live. */
-    if (((uintptr_t)data & 3u) && !(words = copy_code(data, len, true, &flags))) return CODE_NO_MEMORY;
+    if (((uintptr_t)data & 3u) && !(words = copy_code(vm, data, len, true, &flags))) return CODE_NO_MEMORY;
     Image img;
     uint32_t missing, s = vm->mod_next, tries = 0;
     int rc = CODE_BAD_IMAGE;
@@ -166,7 +166,7 @@ int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle) {
      * Bytes in place, else a VM copy. */
     rc = CODE_NO_MEMORY;
     if (!(flags & (MOD_OWN_COPY | MOD_OWN_PLATFORM))) {
-        uint32_t *d = copy_code(data, len, !in_place, &flags);
+        uint32_t *d = copy_code(vm, data, len, !in_place, &flags);
         if (d) {
             words = d;
             image_load(&img, words, len / 4u);   /* the same image: re-points img */
@@ -178,14 +178,14 @@ int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle) {
     if (!e) goto fail;
     vm->mod_next = (uint8_t)((s + 1u) % GOGO_MAX_MODULES);
     if (!(flags & (MOD_OWN_COPY | MOD_OWN_PLATFORM))) {
-        bytes_msg_ref(bytes);          /* the code stays put while loaded */
+        bytes_msg_ref(vm, bytes);          /* the code stays put while loaded */
         e->bytes = bytes;
     }
     e->holders[0] = term_pid_slot(caller->id);
     *handle = module_handle(vm, s);
     return CODE_OK;
 fail:
-    free_code(words, len, flags);
+    free_code(vm, words, len, flags);
     return rc;
 }
 

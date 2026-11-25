@@ -25,8 +25,7 @@ int vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
     if (table_cap > PORT_SLOT_BASE) return -1;
     vm->next_ref = 1;
     vm->mod_cap = GOGO_CODE_MEM_DEFAULT;   /* module_config may change it */
-    bytes_reset();                 /* the handle table is process-global */
-    vm->table = va_alloc((size_t)table_cap * sizeof(uintptr_t));
+    vm->table = va_alloc(vm, (size_t)table_cap * sizeof(uintptr_t));
     if (!vm->table) return -1;
     vm->table_cap = table_cap;
     for (uint16_t i = 0; i < table_cap; i++) vm->table[i] = free_slot(0);
@@ -42,12 +41,12 @@ Actor *actor_new_in(Vm *vm, uint16_t initial_words, uint8_t mod) {
     while (slot < vm->table_cap && !slot_is_free(vm->table[slot])) slot++;
     if (slot == vm->table_cap) return NULL;
 
-    Actor *a = va_alloc(sizeof(Actor));
+    Actor *a = va_alloc(vm, sizeof(Actor));
     if (!a) return NULL;
     memset(a, 0, sizeof *a);
-    a->mem = va_alloc((size_t)initial_words * 4u);
+    a->mem = va_alloc(vm, (size_t)initial_words * 4u);
     if (!a->mem) {
-        va_free(a, sizeof(Actor));
+        va_free(vm, a, sizeof(Actor));
         return NULL;
     }
     a->mem_words = initial_words;
@@ -72,14 +71,14 @@ void actor_free(Vm *vm, Actor *a) {
     while (a->mbox_head) {
         Msg *m = a->mbox_head;
         a->mbox_head = m->next;
-        msg_free(m);
+        msg_free(vm, m);
     }
     actor_extra_free(vm, a);
     uint16_t slot = term_pid_slot(a->id);
     vm->table[slot] = free_slot(next_gen(slot, term_pid_gen(a->id)));
-    va_free(a->mem, (size_t)a->mem_words * 4u);
+    va_free(vm, a->mem, (size_t)a->mem_words * 4u);
     module_actor_exit(vm, a);              /* may unload its module */
-    va_free(a, sizeof(Actor));
+    va_free(vm, a, sizeof(Actor));
     vm->live--;
 }
 

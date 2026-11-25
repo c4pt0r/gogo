@@ -26,7 +26,8 @@ static bool port_used(uint32_t lport) {
     return false;
 }
 
-static int u_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int u_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     (void)index;
     if (!net_s.attached || n != 1u || cfg[0] < 0 || cfg[0] > 65535) return -1;
     UdpPcb *pcb = NULL;
@@ -53,7 +54,8 @@ static int u_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     return 0;
 }
 
-static void u_close(Port *p) {
+static void u_close(struct Vm *vm, Port *p) {
+    (void)vm;
     UdpPcb *pcb = pcb_of(p);
     if (pcb) memset(pcb, 0, sizeof *pcb);
 }
@@ -116,7 +118,7 @@ static void deliver(Vm *vm, UdpPcb *pcb, uint32_t src, uint32_t sport, const uin
     Actor *o = port_owner(vm, pcb->port);
     int32_t ip = (int32_t)src;
     uint32_t words = 8u + net_int_words(ip) + (len ? 2u + (len + 3u) / 4u : 0u);
-    Msg *m = o ? net_msg_new(words) : NULL;
+    Msg *m = o ? net_msg_new(vm, words) : NULL;
     if (!m) {
         pcb->drops++;
         net_s.st.udp_quota++;
@@ -146,7 +148,7 @@ static void deliver(Vm *vm, UdpPcb *pcb, uint32_t src, uint32_t sport, const uin
         net_s.st.udp_rx++;
         return;
     }
-    msg_free(m);
+    msg_free(vm, m);
     pcb->drops++;
     net_s.st.udp_quota++;
 }

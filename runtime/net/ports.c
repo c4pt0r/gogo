@@ -29,9 +29,9 @@ term net_put_int(uint32_t *d, uint32_t *at, int32_t v) {
     return t;
 }
 
-Msg *net_msg_new(uint32_t words) {
+Msg *net_msg_new(Vm *vm, uint32_t words) {
     if (words > 0xFFFFu) return NULL;
-    Msg *m = va_alloc(msg_alloc_bytes((uint16_t)words));
+    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
     if (!m) return NULL;
     m->next = NULL;
     m->words = (uint16_t)words;
@@ -50,7 +50,7 @@ bool net_room(Vm *vm, Actor *o, uint32_t words, uint32_t reserve) {
 
 bool net_deliver(Vm *vm, Actor *o, Msg *m, uint32_t reserve) {
     for (int k = 0; k < 2; k++) {
-        if ((uint32_t)o->mem_words + actor_charged_words(o) + msg_charge_words(m) + reserve <=
+        if ((uint32_t)o->mem_words + actor_charged_words(o) + msg_charge_words(vm, m) + reserve <=
                 actor_max_words(o) && msg_try_enqueue(vm, o, m)) return true;
         if (k || !heap_reclaim_waiting(vm, o)) break;
     }
@@ -71,7 +71,7 @@ static bool notify(Vm *vm, Actor *a, bool up) {
     int32_t v[3] = { (int32_t)net_s.up_ip, (int32_t)net_s.up_gw, (int32_t)net_s.up_dns };
     uint32_t words = 2u;
     if (up) words = 5u + net_int_words(v[0]) + net_int_words(v[1]) + net_int_words(v[2]);
-    Msg *m = net_msg_new(words);
+    Msg *m = net_msg_new(vm, words);
     if (!m) return false;
     uint32_t at = 5;
     m->data[0] = hdr_make(up ? 5u : 2u, K_STRUCT);
@@ -80,7 +80,7 @@ static bool notify(Vm *vm, Actor *a, bool up) {
         for (uint32_t i = 0; i < 3; i++) m->data[2 + i] = net_put_int(m->data, &at, v[i]);
     }
     if (net_deliver(vm, a, m, 0)) return true;   /* a waiting a's slack collected first */
-    msg_free(m);
+    msg_free(vm, m);
     return false;
 }
 
@@ -245,7 +245,8 @@ void net_detach(void) {
 
 /* ---- the "netif" port ---- */
 
-static int n_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int n_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     (void)index; (void)cfg;
     if (!net_s.attached || n != 0u || net_s.netif) return -1;
     net_s.netif = p;
@@ -253,7 +254,8 @@ static int n_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
 }
 
 /* The address goes with the port: its owner's lease ends with it. */
-static void n_close(Port *p) {
+static void n_close(struct Vm *vm, Port *p) {
+    (void)vm;
     if (net_s.netif != p) return;
     net_s.netif = NULL;
     net_s.ip = net_s.mask = net_s.gw = net_s.dns = 0;

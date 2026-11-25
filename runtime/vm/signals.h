@@ -119,9 +119,10 @@ void sig_set_trap(Actor *a, bool on);
 uint32_t actor_charged_words(const Actor *a);
 
 /* Where a's extra keeps its off-heap Bytes holder list (bytes.h; the list
- * is NULL while a holds none). With create, the extra is allocated if
- * needed (NULL if it cannot be); without, NULL when a has no extra. */
-HeldBytes **actor_held(Actor *a, bool create);
+ * is NULL while a holds none). actor_held: NULL when a has no extra.
+ * actor_held_new: the extra is allocated if needed (NULL if it cannot be). */
+HeldBytes **actor_held(Actor *a);
+HeldBytes **actor_held_new(Vm *vm, Actor *a);
 
 /* ActorExtra.charged_words alone (0 without an extra); for tests. */
 uint32_t actor_extra_charged(const Actor *a);
@@ -130,7 +131,7 @@ uint32_t actor_extra_charged(const Actor *a);
  * (timer.c: pending SendAfter timers). actor_charge allocates the extra
  * block on first use; false if out of memory (nothing is charged). The
  * caller checks the limit. */
-bool actor_charge(Actor *a, uint32_t words);
+bool actor_charge(Vm *vm, Actor *a, uint32_t words);
 void actor_uncharge(Actor *a, uint32_t words);
 
 /* Frees a->extra, if any. Called by actor_free. After actor_exit its lists
@@ -143,23 +144,23 @@ void actor_extra_free(Vm *vm, Actor *a);
  * signal_alloc: if the allocator fails, the reserve is released and the
  * allocation retried once; the reserve is re-acquired after the exit (or
  * mark) completes, when memory is available again. */
-bool vm_reserve_init(void);
-void vm_reserve_release(void);
-void *signal_alloc(size_t bytes);
+bool vm_reserve_init(Vm *vm);
+void vm_reserve_release(Vm *vm);
+void *signal_alloc(Vm *vm, size_t bytes);
 
 /* Counts the SendAfter timers pending for a (timer.c bookkeeping). _ref
  * allocates a's extra if needed and returns false if it cannot (nothing
  * counted); _unref undoes one; _has says whether any is pending. */
-bool actor_timer_ref(Actor *a);
+bool actor_timer_ref(Vm *vm, Actor *a);
 void actor_timer_unref(Actor *a);
 bool actor_timer_has(const Actor *a);
 /* Likewise for pending timers charged to a as their creator. */
-bool actor_timer_own(Actor *a);
+bool actor_timer_own(Vm *vm, Actor *a);
 void actor_timer_disown(Actor *a);
 bool actor_timer_owns(const Actor *a);
 /* Likewise for the open ports a owns (port.c): _own is false if the extra
  * cannot be allocated (nothing counted). */
-bool actor_port_own(Actor *a);
+bool actor_port_own(Vm *vm, Actor *a);
 void actor_port_disown(Actor *a);
 bool actor_port_owns(const Actor *a);
 

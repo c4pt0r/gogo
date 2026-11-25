@@ -32,7 +32,6 @@ static void build_img(uint32_t *w) {
 typedef struct Fx { uint32_t w[IMG_WORDS]; Image img; Vm vm; Actor *a; } Fx;
 
 static void fx_init(Fx *f, uint16_t words) {
-    va_reset();
     build_img(f->w);
     CHECK_EQ(image_load(&f->img, f->w, img_seal(f->w)), IMG_OK);
     CHECK_EQ(vm_init(&f->vm, &f->img, 4), 0);

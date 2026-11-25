@@ -33,7 +33,7 @@ static struct {
     uint8_t rate;              /* RateHz / 25 (0, 1, 2, 4, 8): fits a byte */
 } m;
 
-static int imu_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int imu_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
     const InputHw *hw = platform_input();
     if (input_failed() || m.port || !hw->imu_open || n < 3) return -1;
@@ -49,11 +49,11 @@ static int imu_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     memset(&m, 0, sizeof m);
     if (rate) {
         if (cap < SAMPLE) cap = SAMPLE;
-        m.buf = va_alloc(cap);
+        m.buf = va_alloc(vm, cap);
         if (!m.buf) return -1;
     }
     if (hw->imu_open((uint16_t)rate, (uint8_t)mask) != 0) {
-        if (m.buf) va_free(m.buf, cap);
+        if (m.buf) va_free(vm, m.buf, cap);
         memset(&m, 0, sizeof m);
         return -1;
     }
@@ -69,11 +69,11 @@ static int imu_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     return 0;
 }
 
-static void imu_close(Port *p) {
+static void imu_close(struct Vm *vm, Port *p) {
     if (m.port != p) return;                      /* a refused open's cleanup */
     const InputHw *hw = platform_input();
     if (hw->imu_close) hw->imu_close();
-    if (m.buf) va_free(m.buf, m.cap);
+    if (m.buf) va_free(vm, m.buf, m.cap);
     memset(&m, 0, sizeof m);
 }
 

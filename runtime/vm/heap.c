@@ -110,13 +110,13 @@ static uint32_t policy_words(uint32_t old_words, uint32_t live, uint32_t need,
  * top-relative, so only sp and fp shift. The old block is freed after the
  * copy, so at most two blocks exist at once. False (nothing changed) if the
  * new block cannot be allocated. */
-static bool copy_into(Actor *a, uint32_t new_words, term *roots, int n_roots) {
+static bool copy_into(Vm *vm, Actor *a, uint32_t new_words, term *roots, int n_roots) {
     uint32_t old_words = a->mem_words;
     uint32_t stack_words = old_words - a->sp;
     uint32_t new_sp = new_words - stack_words;
     Copier c;
     c.from = a->mem;
-    c.to = va_alloc((size_t)new_words * 4u);
+    c.to = va_alloc(vm, (size_t)new_words * 4u);
     c.free = 0;
     c.held = bytes_gc_begin(a);
     if (!c.to) return false;
@@ -135,8 +135,8 @@ static bool copy_into(Actor *a, uint32_t new_words, term *roots, int n_roots) {
         scan += hdr_words(h);
     }
 
-    if (c.held) bytes_gc_sweep(a, c.held);   /* what nothing reached goes */
-    va_free(a->mem, (size_t)old_words * 4u);
+    if (c.held) bytes_gc_sweep(vm, a, c.held);   /* what nothing reached goes */
+    va_free(vm, a->mem, (size_t)old_words * 4u);
     a->mem = c.to;
     a->mem_words = (uint16_t)new_words;
     a->hp = (uint16_t)c.free;
@@ -147,14 +147,14 @@ static bool copy_into(Actor *a, uint32_t new_words, term *roots, int n_roots) {
 
 /* Copies the compacted heap [0, hp) and the stack into a block of new_words
  * (no tracing needed: everything in the block is live). */
-static void resize_block(Actor *a, uint32_t new_words) {
+static void resize_block(Vm *vm, Actor *a, uint32_t new_words) {
     uint32_t old_words = a->mem_words;
     uint32_t stack_words = old_words - a->sp;
-    uint32_t *mem = va_alloc((size_t)new_words * 4u);
+    uint32_t *mem = va_alloc(vm, (size_t)new_words * 4u);
     if (!mem) return;                            /* keep the compacted block */
     memcpy(mem, a->mem, (size_t)a->hp * 4u);
     memcpy(mem + new_words - stack_words, a->mem + a->sp, (size_t)stack_words * 4u);
-    va_free(a->mem, (size_t)old_words * 4u);
+    va_free(vm, a->mem, (size_t)old_words * 4u);
     a->mem = mem;
     a->mem_words = (uint16_t)new_words;
     a->sp = (uint16_t)(new_words - stack_words);
@@ -183,25 +183,25 @@ void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots) {
     bool grow_certain = target > old_words && stack_words + need_words > old_words &&
                         used <= cap && need_words <= cap - used;  /* target >= used + need */
     if (grow_certain || target < old_words) {
-        if (copy_into(a, target, roots, n_roots)) return;
+        if (copy_into(vm, a, target, roots, n_roots)) return;
     }
-    if (!copy_into(a, old_words, roots, n_roots)) return;  /* no memory to collect with */
+    if (!copy_into(vm, a, old_words, roots, n_roots)) return;  /* no memory to collect with */
 
     uint32_t live = (uint32_t)a->hp + stack_words;
     uint32_t new_words = policy_words(old_words, live, need_words, cap);
-    if (new_words != old_words) resize_block(a, new_words);
+    if (new_words != old_words) resize_block(vm, a, new_words);
 }
 
 void heap_gc_tight(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots) {
     (void)vm;
     uint32_t old_words = a->mem_words;
-    if (!copy_into(a, old_words, roots, n_roots)) return;  /* no memory to collect with */
+    if (!copy_into(vm, a, old_words, roots, n_roots)) return;  /* no memory to collect with */
     uint32_t live = (uint32_t)a->hp + (old_words - a->sp);
     uint32_t cap = block_cap(a);                 /* after the sweep released Bytes */
     uint32_t want = live + need_words;           /* <= 2 * 65535, no overflow */
     if (need_words && want > cap) return;        /* cannot fit: keep the compacted block */
     if (want < MIN_BLOCK_WORDS && MIN_BLOCK_WORDS <= old_words) want = MIN_BLOCK_WORDS;
-    if (want != old_words) resize_block(a, want);
+    if (want != old_words) resize_block(vm, a, want);
 }
 
 bool heap_reclaim_waiting(Vm *vm, Actor *a) {

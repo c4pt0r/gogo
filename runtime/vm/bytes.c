@@ -13,7 +13,7 @@
 typedef char bytes_config_ok[(GOGO_BYTES_HANDLES >= 1u && GOGO_BYTES_HANDLES <= 65535u &&
                               GOGO_BYTES_PER_ACTOR >= 1u) ? 1 : -1];
 
-typedef struct Entry {
+typedef struct BytesEntry {
     uint32_t refcnt;          /* 0: free */
     uint32_t off;             /* into the root's block (0 for a root) */
     uint32_t len;
@@ -26,58 +26,58 @@ typedef struct Entry {
 /* Words an actor's holder list is charged while it exists. */
 #define LIST_WORDS ((uint32_t)((sizeof(HeldBytes) + 3u) / 4u))
 
-static Entry *tab;            /* GOGO_BYTES_HANDLES entries, NULL until the first handle */
-static uint32_t tab_used;     /* live entries */
+/* The table is vm->bytes_tab (GOGO_BYTES_HANDLES entries, NULL until the
+ * first handle) with vm->bytes_used live entries. */
 
-void bytes_reset(void) {
-    tab = NULL;
-    tab_used = 0;
+void bytes_reset(Vm *vm) {
+    vm->bytes_tab = NULL;
+    vm->bytes_used = 0;
 }
 
-uint32_t bytes_table_used(void) { return tab_used; }
+uint32_t bytes_table_used(const Vm *vm) { return vm->bytes_used; }
 
 /* Block size for len bytes (the allocator takes no zero-size blocks). */
 static size_t block_bytes(uint32_t len) { return len ? (size_t)len : 1u; }
 
-bool bytes_valid(term h) {
-    if (!term_is_handle(h) || !tab) return false;
+bool bytes_valid(const Vm *vm, term h) {
+    if (!term_is_handle(h) || !vm->bytes_tab) return false;
     uint32_t i = term_handle_idx(h);
-    return i < GOGO_BYTES_HANDLES && tab[i].refcnt != 0;
+    return i < GOGO_BYTES_HANDLES && vm->bytes_tab[i].refcnt != 0;
 }
 
-static uint32_t root_of(uint32_t i) { return tab[i].parent == NO_PARENT ? i : tab[i].parent; }
+static uint32_t root_of(const Vm *vm, uint32_t i) { return vm->bytes_tab[i].parent == NO_PARENT ? i : vm->bytes_tab[i].parent; }
 
-uint32_t bytes_pinned_len(term h) {
-    return bytes_valid(h) ? tab[root_of(term_handle_idx(h))].len : 0u;
+uint32_t bytes_pinned_len(const Vm *vm, term h) {
+    return bytes_valid(vm, h) ? vm->bytes_tab[root_of(vm, term_handle_idx(h))].len : 0u;
 }
 
 /* A free slot (allocating the table on first use), or -1. The table is
  * never freed once made (until vm_init resets it): it is a fixed
  * TAB_BYTES, and keeping it avoids free/alloc churn on the arena when a
  * program makes and drops handles in a loop. */
-static int32_t slot_find(void) {
-    if (!tab) {
-        tab = va_alloc(TAB_BYTES);
-        if (!tab) return -1;
-        memset(tab, 0, TAB_BYTES);
+static int32_t slot_find(Vm *vm) {
+    if (!vm->bytes_tab) {
+        vm->bytes_tab = va_alloc(vm, TAB_BYTES);
+        if (!vm->bytes_tab) return -1;
+        memset(vm->bytes_tab, 0, TAB_BYTES);
     }
-    if (tab_used >= GOGO_BYTES_HANDLES) return -1;
+    if (vm->bytes_used >= GOGO_BYTES_HANDLES) return -1;
     for (uint32_t i = 0; i < GOGO_BYTES_HANDLES; i++) {
-        if (tab[i].refcnt == 0) return (int32_t)i;
+        if (vm->bytes_tab[i].refcnt == 0) return (int32_t)i;
     }
     return -1;
 }
 
 /* Drops one reference to entry i; the last one frees the entry (and the
  * block, for a root) and drops the slice's reference on its root. */
-static void entry_unref(uint32_t i) {
+static void entry_unref(Vm *vm, uint32_t i) {
     for (;;) {
-        Entry *e = &tab[i];
+        Entry *e = &vm->bytes_tab[i];
         if (--e->refcnt) return;
         uint32_t parent = e->parent;
-        if (parent == NO_PARENT) va_free(e->data, block_bytes(e->len));
+        if (parent == NO_PARENT) va_free(vm, e->data, block_bytes(e->len));
         memset(e, 0, sizeof *e);
-        tab_used--;
+        vm->bytes_used--;
         if (parent == NO_PARENT) break;
         i = parent;
     }
@@ -87,27 +87,27 @@ static void entry_unref(uint32_t i) {
 
 void bytes_set_init(BytesSet *s) { memset(s, 0, sizeof *s); }
 
-void bytes_set_add(BytesSet *s, term h) {
-    if (!bytes_valid(h)) return;
-    uint32_t r = root_of(term_handle_idx(h));
+void bytes_set_add(const Vm *vm, BytesSet *s, term h) {
+    if (!bytes_valid(vm, h)) return;
+    uint32_t r = root_of(vm, term_handle_idx(h));
     uint32_t bit = 1u << (r % 32u);
     if (s->seen[r / 32u] & bit) return;
     s->seen[r / 32u] |= bit;
-    s->bytes += tab[r].len;
+    s->bytes += vm->bytes_tab[r].len;
 }
 
 /* ---- holder lists ---- */
 
 /* a's list, or NULL while it holds nothing. */
 static HeldBytes *list_of(const Actor *a) {
-    HeldBytes **slot = actor_held((Actor *)a, false);
+    HeldBytes **slot = actor_held((Actor *)a);
     return slot ? *slot : NULL;
 }
 
-static void held_recount(HeldBytes *hb) {
+static void held_recount(const Vm *vm, HeldBytes *hb) {
     BytesSet s;
     bytes_set_init(&s);
-    for (uint32_t k = 0; k < hb->n; k++) bytes_set_add(&s, term_from_handle(hb->e[k].idx));
+    for (uint32_t k = 0; k < hb->n; k++) bytes_set_add(vm, &s, term_from_handle(hb->e[k].idx));
     hb->bytes = s.bytes;
 }
 
@@ -121,28 +121,28 @@ static int32_t held_find(const HeldBytes *hb, uint32_t i) {
 /* Removes entry k of a's list *slot (its reference goes), freeing the list
  * (and its charge) when it empties, and recounts unless told not to (a
  * sweep recounts once at the end). */
-static void held_remove(Actor *a, HeldBytes **slot, uint32_t k, bool recount) {
+static void held_remove(Vm *vm, Actor *a, HeldBytes **slot, uint32_t k, bool recount) {
     HeldBytes *hb = *slot;
     uint32_t i = hb->e[k].idx;
     hb->e[k] = hb->e[hb->n - 1u];
     hb->n--;
     if (hb->n == 0) {
-        va_free(hb, sizeof *hb);
+        va_free(vm, hb, sizeof *hb);
         *slot = NULL;
         actor_uncharge(a, LIST_WORDS);
     } else if (recount) {
-        entry_unref(i);
-        held_recount(hb);
+        entry_unref(vm, i);
+        held_recount(vm, hb);
         return;
     }
-    entry_unref(i);
+    entry_unref(vm, i);
 }
 
 /* Adds entry i to a's list with the given pin / heap reachability, or
  * updates a's existing entry for it. A new list entry takes a reference.
  * False (nothing changed) if the list is full or memory runs out. */
-static bool held_add(Actor *a, uint32_t i, bool pin, bool heap) {
-    HeldBytes **slot = actor_held(a, true);
+static bool held_add(Vm *vm, Actor *a, uint32_t i, bool pin, bool heap) {
+    HeldBytes **slot = actor_held_new(vm, a);
     if (!slot) return false;
     HeldBytes *hb = *slot;
     int32_t k = held_find(hb, i);
@@ -155,10 +155,10 @@ static bool held_add(Actor *a, uint32_t i, bool pin, bool heap) {
         return true;
     }
     if (!hb) {
-        hb = va_alloc(sizeof *hb);
+        hb = va_alloc(vm, sizeof *hb);
         if (!hb) return false;
-        if (!actor_charge(a, LIST_WORDS)) {   /* the list counts against a */
-            va_free(hb, sizeof *hb);
+        if (!actor_charge(vm, a, LIST_WORDS)) {   /* the list counts against a */
+            va_free(vm, hb, sizeof *hb);
             return false;
         }
         hb->n = 0;
@@ -170,20 +170,20 @@ static bool held_add(Actor *a, uint32_t i, bool pin, bool heap) {
     hb->e[hb->n].pins = pin ? 1u : 0u;
     hb->e[hb->n].flags = heap ? HELD_HEAP : 0u;
     hb->n++;
-    tab[i].refcnt++;
-    held_recount(hb);
+    vm->bytes_tab[i].refcnt++;
+    held_recount(vm, hb);
     return true;
 }
 
 /* True if a may take one more list entry whose root is r (r is charged
  * unless a already holds something of that root; the list itself is
  * charged when it is made), within its limit. */
-static bool room_for(const Actor *a, uint32_t r, uint32_t root_len) {
+static bool room_for(const Vm *vm, const Actor *a, uint32_t r, uint32_t root_len) {
     const HeldBytes *hb = list_of(a);
     uint32_t n = hb ? hb->n : 0u, held = hb ? hb->bytes : 0u;
     if (n >= GOGO_BYTES_PER_ACTOR) return false;
     for (uint32_t k = 0; k < n; k++) {
-        if (root_of(hb->e[k].idx) == r) return true;   /* no new charge */
+        if (root_of(vm, hb->e[k].idx) == r) return true;   /* no new charge */
     }
     uint64_t words = (uint64_t)a->mem_words + actor_charged_words(a) - bytes_words(held) +
                      bytes_words(held + root_len < held ? UINT32_MAX : held + root_len) +
@@ -191,19 +191,19 @@ static bool room_for(const Actor *a, uint32_t r, uint32_t root_len) {
     return words <= actor_max_words(a);
 }
 
-uint32_t bytes_extra_words(const Actor *a, const term *hs, uint32_t n) {
+uint32_t bytes_extra_words(const Vm *vm, const Actor *a, const term *hs, uint32_t n) {
     const HeldBytes *hb = list_of(a);
     uint32_t held = hb ? hb->bytes : 0u;
     uint64_t total = held;
     BytesSet s;
     bytes_set_init(&s);
-    for (uint32_t k = 0; hb && k < hb->n; k++) bytes_set_add(&s, term_from_handle(hb->e[k].idx));
+    for (uint32_t k = 0; hb && k < hb->n; k++) bytes_set_add(vm, &s, term_from_handle(hb->e[k].idx));
     bool any = false;
     for (uint32_t j = 0; j < n; j++) {
-        if (!hs[j] || !bytes_valid(hs[j])) continue;
+        if (!hs[j] || !bytes_valid(vm, hs[j])) continue;
         any = true;
         uint32_t before = s.bytes;
-        bytes_set_add(&s, hs[j]);
+        bytes_set_add(vm, &s, hs[j]);
         total += s.bytes - before;        /* a root not seen yet: its full length */
     }
     if (!any) return 0u;
@@ -226,43 +226,43 @@ uint32_t bytes_held_count(const Actor *a) {
 /* ---- making entries ---- */
 
 /* One attempt at a new root of len bytes held by a. */
-static term try_new(Actor *a, uint32_t len, bool pin, uint8_t **data) {
-    if (!room_for(a, NO_PARENT, len)) return T_NIL;
-    int32_t s = slot_find();
+static term try_new(Vm *vm, Actor *a, uint32_t len, bool pin, uint8_t **data) {
+    if (!room_for(vm, a, NO_PARENT, len)) return T_NIL;
+    int32_t s = slot_find(vm);
     if (s < 0) return T_NIL;
-    uint8_t *d = va_alloc(block_bytes(len));
+    uint8_t *d = va_alloc(vm, block_bytes(len));
     if (!d) return T_NIL;
-    Entry *e = &tab[s];
+    Entry *e = &vm->bytes_tab[s];
     e->refcnt = 0;
     e->off = 0;
     e->len = len;
     e->parent = NO_PARENT;
     e->data = d;
-    tab_used++;
+    vm->bytes_used++;
     e->refcnt = 1;                        /* while held_add runs */
-    bool ok = held_add(a, (uint32_t)s, pin, !pin);
-    entry_unref((uint32_t)s);             /* the list's reference stays, if any */
+    bool ok = held_add(vm, a, (uint32_t)s, pin, !pin);
+    entry_unref(vm, (uint32_t)s);             /* the list's reference stays, if any */
     if (!ok) return T_NIL;
     *data = d;
     return term_from_handle((uint32_t)s);
 }
 
 /* One attempt at the slice [lo, lo + len) of the live handle h. */
-static term try_sub(Actor *a, term h, uint32_t lo, uint32_t len) {
-    uint32_t i = term_handle_idx(h), r = root_of(i);
-    if (!room_for(a, r, tab[r].len)) return T_NIL;
-    int32_t s = slot_find();
+static term try_sub(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len) {
+    uint32_t i = term_handle_idx(h), r = root_of(vm, i);
+    if (!room_for(vm, a, r, vm->bytes_tab[r].len)) return T_NIL;
+    int32_t s = slot_find(vm);
     if (s < 0) return T_NIL;              /* the table is live: h is in it */
-    Entry *e = &tab[s];
-    e->off = tab[i].off + lo;
+    Entry *e = &vm->bytes_tab[s];
+    e->off = vm->bytes_tab[i].off + lo;
     e->len = len;
     e->parent = (uint16_t)r;
-    e->data = tab[r].data;
+    e->data = vm->bytes_tab[r].data;
     e->refcnt = 1;                        /* while held_add runs */
-    tab_used++;
-    tab[r].refcnt++;
-    bool ok = held_add(a, (uint32_t)s, false, true);
-    entry_unref((uint32_t)s);
+    vm->bytes_used++;
+    vm->bytes_tab[r].refcnt++;
+    bool ok = held_add(vm, a, (uint32_t)s, false, true);
+    entry_unref(vm, (uint32_t)s);
     return ok ? term_from_handle((uint32_t)s) : T_NIL;
 }
 
@@ -286,32 +286,32 @@ static void gc_holders(Vm *vm, Actor *a) {
     }
 }
 
-static bool tab_full(void) { return tab && tab_used >= GOGO_BYTES_HANDLES; }
+static bool tab_full(const Vm *vm) { return vm->bytes_tab && vm->bytes_used >= GOGO_BYTES_HANDLES; }
 
 term bytes_make(Vm *vm, Actor *a, uint32_t len, uint8_t **data) {
-    term h = try_new(a, len, false, data);
+    term h = try_new(vm, a, len, false, data);
     if (h == T_NIL) {
         heap_gc_tight(vm, a, 0, NULL, 0); /* drops what a no longer reaches, and the slack */
-        h = try_new(a, len, false, data);
+        h = try_new(vm, a, len, false, data);
     }
-    if (h == T_NIL && tab_full()) {
+    if (h == T_NIL && tab_full(vm)) {
         gc_holders(vm, a);
-        h = try_new(a, len, false, data);
+        h = try_new(vm, a, len, false, data);
     }
     return h;
 }
 
 term bytes_sub(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len) {
-    if (!bytes_valid(h)) return T_NIL;
-    term s = try_sub(a, h, lo, len);
+    if (!bytes_valid(vm, h)) return T_NIL;
+    term s = try_sub(vm, a, h, lo, len);
     if (s == T_NIL) {
         heap_gc_tight(vm, a, 0, NULL, 0); /* h is in a register: it stays */
-        if (!bytes_valid(h)) return T_NIL;
-        s = try_sub(a, h, lo, len);
+        if (!bytes_valid(vm, h)) return T_NIL;
+        s = try_sub(vm, a, h, lo, len);
     }
-    if (s == T_NIL && tab_full()) {
+    if (s == T_NIL && tab_full(vm)) {
         gc_holders(vm, a);                /* a holds h: it stays */
-        s = try_sub(a, h, lo, len);
+        s = try_sub(vm, a, h, lo, len);
     }
     return s;
 }
@@ -319,9 +319,8 @@ term bytes_sub(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len) {
 /* ---- C API ---- */
 
 term bytes_new(Vm *vm, Actor *owner, uint32_t len, uint8_t **data) {
-    (void)vm;
     uint8_t *d;
-    term h = try_new(owner, len, true, &d);
+    term h = try_new(vm, owner, len, true, &d);
     if (h == T_NIL) return T_NIL;
     memset(d, 0, len);
     *data = d;
@@ -329,23 +328,21 @@ term bytes_new(Vm *vm, Actor *owner, uint32_t len, uint8_t **data) {
 }
 
 bool bytes_retain(Vm *vm, Actor *holder, term h) {
-    (void)vm;
-    return bytes_valid(h) && held_add(holder, term_handle_idx(h), true, false);
+    return bytes_valid(vm, h) && held_add(vm, holder, term_handle_idx(h), true, false);
 }
 
 void bytes_release(Vm *vm, Actor *holder, term h) {
-    (void)vm;
-    HeldBytes **slot = actor_held(holder, false);
+    HeldBytes **slot = actor_held(holder);
     HeldBytes *hb = slot ? *slot : NULL;
-    int32_t k = bytes_valid(h) ? held_find(hb, term_handle_idx(h)) : -1;
+    int32_t k = bytes_valid(vm, h) ? held_find(hb, term_handle_idx(h)) : -1;
     if (k < 0 || hb->e[k].pins == 0) return;
     hb->e[k].pins--;
-    if (hb->e[k].pins == 0 && !(hb->e[k].flags & HELD_HEAP)) held_remove(holder, slot, (uint32_t)k, true);
+    if (hb->e[k].pins == 0 && !(hb->e[k].flags & HELD_HEAP)) held_remove(vm, holder, slot, (uint32_t)k, true);
 }
 
-const uint8_t *bytes_data(term h, uint32_t *len) {
-    if (!bytes_valid(h)) return NULL;
-    const Entry *e = &tab[term_handle_idx(h)];
+const uint8_t *bytes_data(const Vm *vm, term h, uint32_t *len) {
+    if (!bytes_valid(vm, h)) return NULL;
+    const Entry *e = &vm->bytes_tab[term_handle_idx(h)];
     *len = e->len;
     return e->data + e->off;
 }
@@ -357,7 +354,7 @@ bool bytes_view(const Vm *vm, const Actor *a, term t, const uint8_t **p, uint32_
         return true;
     }
     if (term_is_handle(t)) {
-        *p = bytes_data(t, len);
+        *p = bytes_data(vm, t, len);
         return *p != NULL;
     }
     const uint32_t *o = obj_of(vm, a, t);
@@ -368,15 +365,14 @@ bool bytes_view(const Vm *vm, const Actor *a, term t, const uint8_t **p, uint32_
 }
 
 void bytes_actor_exit(Vm *vm, Actor *a) {
-    (void)vm;
-    HeldBytes **slot = actor_held(a, false);
-    while (slot && *slot) held_remove(a, slot, (*slot)->n - 1u, false);
+    HeldBytes **slot = actor_held(a);
+    while (slot && *slot) held_remove(vm, a, slot, (*slot)->n - 1u, false);
 }
 
 /* ---- GC ---- */
 
 HeldBytes **bytes_gc_begin(Actor *a) {
-    HeldBytes **slot = actor_held(a, false);
+    HeldBytes **slot = actor_held(a);
     if (!slot || !*slot) return NULL;
     HeldBytes *hb = *slot;
     for (uint32_t k = 0; k < hb->n; k++) hb->e[k].flags &= (uint8_t)~HELD_MARK;
@@ -389,30 +385,30 @@ void bytes_gc_mark(HeldBytes **slot, term h) {
     if (k >= 0) hb->e[k].flags |= HELD_MARK;
 }
 
-void bytes_gc_sweep(Actor *a, HeldBytes **slot) {
+void bytes_gc_sweep(Vm *vm, Actor *a, HeldBytes **slot) {
     bool changed = false;
     for (uint32_t k = (*slot)->n; k-- > 0; ) {
         Held *e = &(*slot)->e[k];
         e->flags = (e->flags & HELD_MARK) ? HELD_HEAP : 0u;
         if (!e->flags && !e->pins) {
-            held_remove(a, slot, k, false);
+            held_remove(vm, a, slot, k, false);
             changed = true;
             if (!*slot) return;          /* emptied and freed */
         }
     }
-    if (changed) held_recount(*slot);
+    if (changed) held_recount(vm, *slot);
 }
 
 /* ---- messages ---- */
 
-void bytes_msg_ref(term h) {
-    if (bytes_valid(h)) tab[term_handle_idx(h)].refcnt++;
+void bytes_msg_ref(Vm *vm, term h) {
+    if (bytes_valid(vm, h)) vm->bytes_tab[term_handle_idx(h)].refcnt++;
 }
 
-void bytes_msg_unref(term h) {
-    if (bytes_valid(h)) entry_unref(term_handle_idx(h));
+void bytes_msg_unref(Vm *vm, term h) {
+    if (bytes_valid(vm, h)) entry_unref(vm, term_handle_idx(h));
 }
 
-bool bytes_adopt(Actor *a, term h) {
-    return bytes_valid(h) && held_add(a, term_handle_idx(h), false, true);
+bool bytes_adopt(Vm *vm, Actor *a, term h) {
+    return bytes_valid(vm, h) && held_add(vm, a, term_handle_idx(h), false, true);
 }

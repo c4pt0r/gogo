@@ -2,7 +2,7 @@
  * ports.
  *
  * A Bytes value is T_EMPTYBYTES, a heap K_BYTES of any size, or a handle
- * term (index << 4) | 0xE naming an entry of one VM-wide table of
+ * term (index << 4) | 0xE naming an entry of its VM's table of
  * GOGO_BYTES_HANDLES entries {refcnt, off, len, parent, data}. Only
  * Buffer.Freeze (more than GOGO_BYTES_INLINE bytes), Bytes.Slice of a
  * handle and the C API make handles. A root entry owns its data block
@@ -39,8 +39,8 @@
  * The table is allocated on first use and then kept (it is fixed memory,
  * GOGO_BYTES_HANDLES entries, and keeping it avoids free/realloc churn on
  * the MCU arena when handles are made and dropped in a loop): a program
- * without off-heap Bytes pays nothing. It is process-global, like the
- * allocator: one Vm at a time (vm_init resets it).
+ * without off-heap Bytes pays nothing. Each Vm has its own (Vm.bytes_tab,
+ * from its own allocator; vm_init starts it empty).
  *
  * Table full: bytes_make / bytes_sub first collect the caller; if the table
  * is still full they collect every other actor that holds handles (idle
@@ -99,7 +99,7 @@ void bytes_release(Vm *vm, Actor *holder, term h);
 
 /* The bytes of handle h, *len of them; NULL if h is not a live handle. The
  * block never moves while referenced. */
-const uint8_t *bytes_data(term h, uint32_t *len);
+const uint8_t *bytes_data(const Vm *vm, term h, uint32_t *len);
 
 /* The bytes of any Bytes value as seen by actor a: a handle, a heap or
  * const K_BYTES (valid until a's next allocation) or T_EMPTYBYTES (len 0,
@@ -127,18 +127,18 @@ term bytes_make(Vm *vm, Actor *a, uint32_t len, uint8_t **data);
 term bytes_sub(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len);
 
 /* True if h names a live entry. */
-bool bytes_valid(term h);
+bool bytes_valid(const Vm *vm, term h);
 
 /* Bytes a reference on handle h keeps alive: the length of its root's
  * block (a slice keeps its whole root). 0 if h is no live handle. */
-uint32_t bytes_pinned_len(term h);
+uint32_t bytes_pinned_len(const Vm *vm, term h);
 
 /* GC (heap.c): where a's list is if it has one, else NULL. begin clears the
  * marks, mark records that h was reached, sweep drops what was neither
  * reached nor pinned (run only after a successful collection). */
 HeldBytes **bytes_gc_begin(Actor *a);
 void bytes_gc_mark(HeldBytes **slot, term h);
-void bytes_gc_sweep(Actor *a, HeldBytes **slot);
+void bytes_gc_sweep(Vm *vm, Actor *a, HeldBytes **slot);
 
 /* Words taking a first handle would add to a's charge: the holder list's
  * size if a has none yet, else 0 (msg_enqueue counts it in the quota for a
@@ -150,16 +150,16 @@ uint32_t bytes_list_words(const Actor *a);
  * entries and dead handles are skipped): the full length of each root it
  * does not hold yet (a slice counts its root), plus its holder list if it
  * has none. Used by port_handoff to check the new owner's limit. */
-uint32_t bytes_extra_words(const Actor *a, const term *hs, uint32_t n);
+uint32_t bytes_extra_words(const Vm *vm, const Actor *a, const term *hs, uint32_t n);
 
 /* Message references (msg.c): one per occurrence. */
-void bytes_msg_ref(term h);
-void bytes_msg_unref(term h);
+void bytes_msg_ref(Vm *vm, term h);
+void bytes_msg_unref(Vm *vm, term h);
 
 /* a received h in a message or spawn capture: a holds it (HELD_HEAP)
  * unless it already does. False if a's list is full or memory runs out.
  * Charged even past a's limit: the mailbox already counted it. */
-bool bytes_adopt(Actor *a, term h);
+bool bytes_adopt(Vm *vm, Actor *a, term h);
 
 /* Sets of distinct roots, for charging: add each handle, then read the
  * bytes of the distinct roots seen. */
@@ -168,19 +168,19 @@ typedef struct BytesSet {
     uint32_t bytes;
 } BytesSet;
 void bytes_set_init(BytesSet *s);
-void bytes_set_add(BytesSet *s, term h);
+void bytes_set_add(const Vm *vm, BytesSet *s, term h);
 
 /* Words for b bytes, rounded up. */
 static inline uint32_t bytes_words(uint32_t b) { return (uint32_t)(((uint64_t)b + 3u) / 4u); }
 
 /* Live table entries (tests). */
-uint32_t bytes_table_used(void);
+uint32_t bytes_table_used(const Vm *vm);
 
 /* a's held_bytes and number of held entries (tests, Info). */
 uint32_t bytes_held_bytes(const Actor *a);
 uint32_t bytes_held_count(const Actor *a);
 
 /* Forgets the table (vm_init, tests). */
-void bytes_reset(void);
+void bytes_reset(Vm *vm);
 
 #endif

@@ -40,7 +40,8 @@ static int percent(uint32_t mv) {
     return (int)(p > 100u ? 100u : p);
 }
 
-static int power_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int power_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     (void)index;
     if (input_failed() || w.port || !platform_input()->power_read) return -1;
     memset(&w, 0, sizeof w);
@@ -52,7 +53,8 @@ static int power_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     return 0;
 }
 
-static void power_close(Port *p) {
+static void power_close(struct Vm *vm, Port *p) {
+    (void)vm;
     if (w.port != p) return;                      /* a refused open's cleanup */
     memset(&w, 0, sizeof w);
     if (platform_input()->power_enable) platform_input()->power_enable(false);

@@ -83,7 +83,8 @@ static void gpio_isr(void *arg) {
     platform_notify();
 }
 
-static int g_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int g_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     if (n != 4) return -1;
     int32_t pin = cfg[0], mode = cfg[1], edge = cfg[2];
     if (pin < 0 || pin >= NPINS || mode < M_INPUT || mode > M_OUTPUT || edge < E_NONE || edge > E_BOTH) return -1;
@@ -131,7 +132,8 @@ static void g_command(Port *p, uint32_t type, const int32_t *f, uint32_t n) {
     gpio_set_level((gpio_num_t)p->state[0], f[0] != 0);
 }
 
-static void g_close(Port *p) {
+static void g_close(struct Vm *vm, Port *p) {
+    (void)vm;
     gpio_num_t pin = (gpio_num_t)p->state[0];
     PinSlot *s = &pins[pin];
     if (s->mode != M_OUTPUT && s->edge != E_NONE) {

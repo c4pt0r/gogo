@@ -257,13 +257,13 @@ enum {
  *    next one (and empty ones after it, Written too) moved up. */
 TcpPcb *tcp_dial(Port *p, const int32_t *cfg, uint32_t n);
 TcpPcb *tcp_pcb_of(const Port *p);
-void tcp_close_port(Port *p);
+void tcp_close_port(struct Vm *vm, Port *p);
 bool tcp_port_can_event(const Port *p);
 void tcp_post(struct Vm *vm, const TcpPcb *c, uint32_t type, int32_t reason);
 bool tcp_flush(struct Vm *vm, Port *p);
 void tcp_hold_closed(Port *p, int32_t reason);
-void tcp_output(TcpPcb *c);
-void tcp_shutdown(TcpPcb *c);
+void tcp_output(struct Vm *vm, TcpPcb *c);
+void tcp_shutdown(struct Vm *vm, TcpPcb *c);
 void tcp_abort(struct Vm *vm, TcpPcb *c, int32_t reason, bool rst);
 void tcp_until_clear(TcpPcb *c);
 bool tcp_write_cmd(struct Vm *vm, const Actor *from, Port *p, TcpPcb *c, const uint32_t *o);
@@ -276,7 +276,7 @@ term net_put_int(uint32_t *d, uint32_t *at, int32_t v);
 /* Words net_put_int takes for v beyond the field itself. */
 static inline uint32_t net_int_words(int32_t v) { return term_int_fits(v) ? 0u : 2u; }
 /* A message block of `words` words (root at 0), or NULL. */
-Msg *net_msg_new(uint32_t words);
+Msg *net_msg_new(struct Vm *vm, uint32_t words);
 /* Queues m to o (never killing it) if that leaves `reserve` words of o's
  * limit free, again once a waiting o's heap slack is collected; false
  * (m still the caller's) otherwise. */

@@ -38,7 +38,7 @@ static Image img;
 static Vm vm;
 
 static void setup(void) {
-    va_reset();
+    va_reset(&vm);
     evq_reset();
     vfs_reset();
     memfs_init(0, false, true, 4000);        /* /flash: LittleFS-like, budget */

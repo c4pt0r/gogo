@@ -98,12 +98,12 @@ int stream_out_accept(struct Vm *vm, const struct Actor *from, Port *p, StreamOu
                       term msg, StreamCheck check);
 
 /* The head's data and length, or NULL (*len 0) when nothing is in flight. */
-const uint8_t *stream_out_head(const StreamOut *o, uint32_t *len);
+const uint8_t *stream_out_head(const struct Vm *vm, const StreamOut *o, uint32_t *len);
 
 /* Out k in flight (0 the head, 1 the queued one), or NULL (*len 0) if
  * k >= o->n: for a driver that hands the queued Out to the hardware while
  * the head is still running (the speaker, to play without a gap). */
-const uint8_t *stream_out_at(const StreamOut *o, uint32_t k, uint32_t *len);
+const uint8_t *stream_out_at(const struct Vm *vm, const StreamOut *o, uint32_t k, uint32_t *len);
 
 /* The head finished: releases its data, promotes the queued one and sends
  * (or owes) Done{Seq}. True if there is a new head (the driver starts it

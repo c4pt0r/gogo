@@ -59,9 +59,9 @@ static Vm vm;
 static void setup(void) {
     uint32_t *w = img_w;
     platform_unix_arena_forget();
-    va_reset();
+    va_reset(&vm);
     evq_reset();
-    bytes_reset();
+    bytes_reset(&vm);
     port_set_drivers(NULL);
     memset(w, 0, sizeof img_w);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 2;
@@ -243,8 +243,8 @@ static uint32_t event_of(Actor *a, int32_t *field) {
     if (field) *field = hdr_words(d[0]) > 2u && term_is_int(d[2]) ? term_to_int(d[2]) : -1;
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
-    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-    msg_free(m);
+    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+    msg_free(&vm, m);
     return type;
 }
 
@@ -887,7 +887,7 @@ TEST(tcp_address_change) {
  * handles are released. */
 TEST(tcp_orphan_lifetime) {
     setup();
-    uint32_t handles0 = bytes_table_used();
+    uint32_t handles0 = bytes_table_used(&vm);
     Conn k = mk(TCP_ESTABLISHED);
     uint8_t b[1600];
     rx_frame(b, tcp_frame(b, k.pport, k.vport, k.peer, k.una, 0x10, 1, NULL, false));   /* window 1 */
@@ -896,7 +896,7 @@ TEST(tcp_orphan_lifetime) {
     write_str(k.o, k.port, data);
     CHECK_EQ(tx.n, 1);
     CHECK_EQ(out_at(0).n, 1u);
-    CHECK(bytes_table_used() > handles0);
+    CHECK(bytes_table_used(&vm) > handles0);
     command(k.o, k.port, TYPE_NET_SHUTDOWN, 0, false);
     port_close(&vm, k.port);                 /* after Shutdown: orphan */
     CHECK(k.c->port == NULL && tcp_any_orphan());
@@ -923,7 +923,7 @@ TEST(tcp_orphan_lifetime) {
     CHECK_EQ(out_at(0).fl, F_RA);
     CHECK(k.c->state == TCP_CLOSED);
     CHECK(!tcp_any_orphan());
-    CHECK_EQ(bytes_table_used(), handles0);
+    CHECK_EQ(bytes_table_used(&vm), handles0);
     teardown();
 }
 
@@ -1027,14 +1027,14 @@ static void up_ended(TcpPcb *c) { (void)c; up.ended++; }
 static bool up_pending(void) { return up.pend; }
 static void up_drain(Vm *v) { (void)v; up.pend = false; up.drains++; }
 
-static int up_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n);
-static void up_close(Port *p) {
+static int up_open(Vm *v, Port *p, uint16_t index, const int32_t *cfg, uint32_t n);
+static void up_close(Vm *v, Port *p) {
     TcpPcb *c = tcp_pcb_of(p);
     if (c && (c->flags & TF_UPPER)) {
         c->flags &= (uint8_t)~TF_UPPER;
         up.ended++;
     }
-    tcp_close_port(p);
+    tcp_close_port(v, p);
 }
 static const PortDriver up_driver = {
     "up", TYPE_NET_DIAL, TYPE_NET_DATA, up_open, NULL, up_close, tcp_port_can_event, NULL, NULL, NULL
@@ -1042,7 +1042,8 @@ static const PortDriver up_driver = {
 static const TcpUpper upper = {
     &up_driver, up_rx, up_fin, up_connected, up_acked, up_tx, up_ended, up_pending, up_drain, NULL, up_closed
 };
-static int up_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int up_open(Vm *v, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)v;
     (void)index;
     TcpPcb *c = tcp_dial(p, cfg, n);
     if (!c) return -1;
@@ -1097,7 +1098,7 @@ TEST(tcp_upper_layer) {
     static const char msg[] = "hello, upper";
     up.tx = (const uint8_t *)msg;
     up.tx_len = 12;
-    tcp_output(k.c);
+    tcp_output(&vm, k.c);
     CHECK_EQ(tx.n, 1);
     Out s = out_at(0);
     CHECK_EQ(s.n, 12u);
@@ -1177,8 +1178,8 @@ TEST(tcp_upper_deadline) {
 
 /* A port with no connection can still be given a Closed{reason}
  * (net.NoTime: the tls port's Dial before the clock is set). */
-static int nc_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
-    (void)index; (void)cfg; (void)n;
+static int nc_open(Vm *v, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)v; (void)index; (void)cfg; (void)n;
     tcp_hold_closed(p, CR_NOTIME);
     return 0;
 }

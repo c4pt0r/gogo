@@ -71,9 +71,9 @@ void platform_unix_arena_forget(void);
 
 static void setup(void) {
     platform_unix_arena_forget();   /* setup may run many times in one test */
-    va_reset();
+    va_reset(&vm);
     evq_reset();
-    bytes_reset();
+    bytes_reset(&vm);
     port_set_drivers(NULL);
     mini_image();
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
@@ -319,8 +319,8 @@ static void pop(Actor *a) {
     if (!m) return;
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
-    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-    msg_free(m);
+    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+    msg_free(&vm, m);
 }
 
 /* ---- tests ---- */
@@ -347,7 +347,7 @@ TEST(net_mem_report) {
 }
 
 TEST(net_ports_refused_unattached) {
-    va_reset();
+    va_reset(&vm);
     evq_reset();
     mini_image();
     CHECK_EQ(vm_init(&vm, &img, 16), 0);
@@ -869,7 +869,7 @@ TEST(net_subscribe_retry_on_oom) {
     Actor *a = new_actor(), *s = new_actor();
     CHECK(port_subscribe(&vm, s));
     term n = open_netif(a);
-    va_set_limit(va_used_bytes());           /* no message can be allocated */
+    va_set_limit(&vm, va_used_bytes(&vm));           /* no message can be allocated */
     set_addr(a, n, MY_IP, MASK, PEER_IP, 0);
     CHECK_EQ(mbox_len(s), 0);
     CHECK(net_s.sub_owed != 0);
@@ -877,16 +877,16 @@ TEST(net_subscribe_retry_on_oom) {
     fake_now += 50;
     drain();                                 /* still no memory: owed again */
     CHECK_EQ(mbox_len(s), 0);
-    va_set_limit(0);
+    va_set_limit(&vm, 0);
     fake_now += 50;
     drain();
     CHECK_EQ(mbox_len(s), 1);
     CHECK_EQ(msg_type(s, 0), TYPE_NET_UP);
     CHECK_EQ(net_s.sub_owed, 0);
-    va_set_limit(va_used_bytes());
+    va_set_limit(&vm, va_used_bytes(&vm));
     set_addr(a, n, 0, 0, 0, 0);              /* the Down, likewise */
     CHECK_EQ(mbox_len(s), 1);
-    va_set_limit(0);
+    va_set_limit(&vm, 0);
     fake_now += 50;
     drain();
     CHECK_EQ(mbox_len(s), 2);

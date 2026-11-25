@@ -63,10 +63,10 @@ typedef struct PortDriver {
     uint32_t cfg_type;      /* reserved type index the cfg struct must have */
     uint32_t event_type;    /* reserved type of event messages: struct of 2 ints (a, b) */
     /* cfg: the cfg struct's int fields in order. 0 = ok, else refuse. */
-    int  (*open)(Port *p, uint16_t index, const int32_t *cfg, uint32_t n);
+    int  (*open)(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n);
     /* A command struct of reserved type `type` whose fields are all int. */
     void (*command)(Port *p, uint32_t type, const int32_t *f, uint32_t n);
-    void (*close)(Port *p);
+    void (*close)(struct Vm *vm, Port *p);
     bool (*can_event)(const Port *p);   /* may still produce events */
     /* Optional (NULL = none): called after port_handoff gave p to a new
      * owner (or to the same one: Handoff to itself), e.g. to resume a

@@ -18,14 +18,6 @@ runtime/net/tls/tls.c tls_init.done  # removed by E6
 runtime/vfs/vfs.c mounts  # removed by E5
 runtime/vfs/vfs.c n_mounts  # removed by E5
 runtime/vfs/vfs.c slots  # removed by E5
-runtime/vm/alloc.c chunk_cur  # removed by E2
-runtime/vm/alloc.c chunk_end  # removed by E2
-runtime/vm/alloc.c free_list  # removed by E2
-runtime/vm/alloc.c limit  # removed by E2
-runtime/vm/alloc.c peak  # removed by E2
-runtime/vm/alloc.c used  # removed by E2
-runtime/vm/bytes.c tab  # removed by E2
-runtime/vm/bytes.c tab_used  # removed by E2
 runtime/vm/evq.c dropped  # removed by E3
 runtime/vm/evq.c head  # removed by E3
 runtime/vm/evq.c slots  # removed by E3
@@ -33,8 +25,6 @@ runtime/vm/evq.c tail  # removed by E3
 runtime/vm/interp.c vm_fs_builtin  # removed by E3
 runtime/vm/port.c override  # removed by E3
 runtime/vm/port.c sources  # removed by E3
-runtime/vm/signals.c reserve  # removed by E2
-runtime/vm/signals.c reserve_wanted  # removed by E2
 runtime/vm/walltime.c platform_random.x  # removed by E3
 runtime/vm/walltime.c wall_known  # removed by E3
 runtime/vm/walltime.c wall_offset  # removed by E3

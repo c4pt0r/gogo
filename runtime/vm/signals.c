@@ -52,46 +52,43 @@ struct ActorExtra {
 /* Words a resource takes, rounded up as the allocator would count them. */
 #define WORDS_OF(T) ((uint32_t)((sizeof(T) + 3u) / 4u))
 
-/* ---- emergency reserve ---- */
+/* ---- emergency reserve (Vm.reserve, Vm.reserve_wanted) ---- */
 
-static void *reserve;         /* GOGO_RESERVE_BYTES, or NULL while used up */
-static bool reserve_wanted;   /* between vm_reserve_init and _release */
-
-bool vm_reserve_init(void) {
-    reserve_wanted = true;
-    if (!reserve) reserve = va_alloc(GOGO_RESERVE_BYTES);
-    return reserve != NULL;
+bool vm_reserve_init(Vm *vm) {
+    vm->reserve_wanted = true;
+    if (!vm->reserve) vm->reserve = va_alloc(vm, GOGO_RESERVE_BYTES);
+    return vm->reserve != NULL;
 }
 
-void vm_reserve_release(void) {
-    va_free(reserve, GOGO_RESERVE_BYTES);
-    reserve = NULL;
-    reserve_wanted = false;
+void vm_reserve_release(Vm *vm) {
+    va_free(vm, vm->reserve, GOGO_RESERVE_BYTES);
+    vm->reserve = NULL;
+    vm->reserve_wanted = false;
 }
 
-void *signal_alloc(size_t bytes) {
-    void *p = va_alloc(bytes);
-    if (!p && reserve) {
-        va_free(reserve, GOGO_RESERVE_BYTES);
-        reserve = NULL;
-        p = va_alloc(bytes);
+void *signal_alloc(Vm *vm, size_t bytes) {
+    void *p = va_alloc(vm, bytes);
+    if (!p && vm->reserve) {
+        va_free(vm, vm->reserve, GOGO_RESERVE_BYTES);
+        vm->reserve = NULL;
+        p = va_alloc(vm, bytes);
     }
     return p;
 }
 
 /* After an exit or mark: take the reserve again if it was used. */
-static void reserve_refill(void) {
-    if (reserve_wanted && !reserve) reserve = va_alloc(GOGO_RESERVE_BYTES);
+static void reserve_refill(Vm *vm) {
+    if (vm->reserve_wanted && !vm->reserve) vm->reserve = va_alloc(vm, GOGO_RESERVE_BYTES);
 }
 
 /* ---- extra ---- */
 
 /* a's extra, allocated on first use. The exit path may fall back on the
  * reserve (from_reserve); other callers (linking) must not. */
-static ActorExtra *extra_get(Actor *a, bool from_reserve) {
+static ActorExtra *extra_get(Vm *vm, Actor *a, bool from_reserve) {
     if (!a->extra) {
-        ActorExtra *x = from_reserve ? signal_alloc(sizeof(ActorExtra))
-                                     : va_alloc(sizeof(ActorExtra));
+        ActorExtra *x = from_reserve ? signal_alloc(vm, sizeof(ActorExtra))
+                                     : va_alloc(vm, sizeof(ActorExtra));
         if (!x) return NULL;
         memset(x, 0, sizeof *x);
         x->exit_func = T_EMPTYSTR;
@@ -105,13 +102,18 @@ uint32_t actor_charged_words(const Actor *a) {
     return (uint32_t)a->mbox_words + (x ? x->charged_words + (x->held ? bytes_words(x->held->bytes) : 0u) : 0u);
 }
 
-HeldBytes **actor_held(Actor *a, bool create) {
-    ActorExtra *x = create ? extra_get(a, false) : a->extra;
+HeldBytes **actor_held(Actor *a) {
+    ActorExtra *x = a->extra;
     return x ? &x->held : NULL;
 }
 
-bool actor_timer_ref(Actor *a) {
-    ActorExtra *x = extra_get(a, false);
+HeldBytes **actor_held_new(Vm *vm, Actor *a) {
+    ActorExtra *x = extra_get(vm, a, false);
+    return x ? &x->held : NULL;
+}
+
+bool actor_timer_ref(Vm *vm, Actor *a) {
+    ActorExtra *x = extra_get(vm, a, false);
     if (!x) return false;
     x->timers_in++;
     return true;
@@ -122,8 +124,8 @@ void actor_timer_unref(Actor *a) {
     if (x && x->timers_in) x->timers_in--;
 }
 
-bool actor_timer_own(Actor *a) {
-    ActorExtra *x = extra_get(a, false);
+bool actor_timer_own(Vm *vm, Actor *a) {
+    ActorExtra *x = extra_get(vm, a, false);
     if (!x) return false;
     x->timers_out++;
     return true;
@@ -139,8 +141,8 @@ bool actor_timer_owns(const Actor *a) {
     return x && x->timers_out;
 }
 
-bool actor_port_own(Actor *a) {
-    ActorExtra *x = extra_get(a, false);
+bool actor_port_own(Vm *vm, Actor *a) {
+    ActorExtra *x = extra_get(vm, a, false);
     if (!x) return false;
     x->ports++;
     return true;
@@ -171,8 +173,8 @@ static bool charge_fits(const Actor *a, uint32_t words) {
     return (uint32_t)a->mem_words + actor_charged_words(a) + words <= actor_max_words(a);
 }
 
-bool actor_charge(Actor *a, uint32_t words) {
-    ActorExtra *x = extra_get(a, false);
+bool actor_charge(Vm *vm, Actor *a, uint32_t words) {
+    ActorExtra *x = extra_get(vm, a, false);
     if (!x) return false;
     x->charged_words += words;
     return true;
@@ -183,15 +185,15 @@ void actor_uncharge(Actor *a, uint32_t words) {
     if (x) x->charged_words -= words;
 }
 
-static void link_free(Link *l) {
+static void link_free(Vm *vm, Link *l) {
     if (!l) return;
-    if (l->note) msg_free(l->note);
-    va_free(l, sizeof *l);
+    if (l->note) msg_free(vm, l->note);
+    va_free(vm, l, sizeof *l);
 }
 
-static void monitor_free(Monitor *m) {
-    if (m->note) msg_free(m->note);
-    va_free(m, sizeof *m);
+static void monitor_free(Vm *vm, Monitor *m) {
+    if (m->note) msg_free(vm, m->note);
+    va_free(vm, m, sizeof *m);
 }
 
 static void drop_watching(Vm *vm, Actor *a);
@@ -208,7 +210,7 @@ void actor_extra_free(Vm *vm, Actor *a) {
     drop_watching(vm, a);
     drop_links(vm, a);
     bytes_actor_exit(vm, a);
-    va_free(x, sizeof(ActorExtra));
+    va_free(vm, x, sizeof(ActorExtra));
     a->extra = NULL;
 }
 
@@ -239,8 +241,8 @@ static void reason_set(uint32_t *d, uint32_t at, uint32_t code, term func_name) 
     d[at + 5] = code;
 }
 
-static Msg *note_new(void) {
-    Msg *m = va_alloc(msg_alloc_bytes(NOTE_WORDS));
+static Msg *note_new(Vm *vm) {
+    Msg *m = va_alloc(vm, msg_alloc_bytes(NOTE_WORDS));
     if (!m) return NULL;
     m->next = NULL;
     m->words = NOTE_WORDS;
@@ -272,8 +274,8 @@ static void note_fill(Msg *m, term from, uint32_t code, term func_name) {
  * that does not fit a small int; [11..13] the K_REF. Fixed size. */
 #define DOWN_WORDS 14u
 
-static Msg *down_new(void) {
-    Msg *m = va_alloc(msg_alloc_bytes(DOWN_WORDS));
+static Msg *down_new(Vm *vm) {
+    Msg *m = va_alloc(vm, msg_alloc_bytes(DOWN_WORDS));
     if (!m) return NULL;
     m->next = NULL;
     m->words = DOWN_WORDS;
@@ -379,12 +381,12 @@ static Link **link_slot(const Actor *a, term pid) {
 
 /* Removes a's link to pid, freeing its entry and preallocated message,
  * and releases a's charge for it. */
-static void link_remove(Actor *a, term pid) {
+static void link_remove(Vm *vm, Actor *a, term pid) {
     Link **pl = link_slot(a, pid);
     if (!pl) return;
     Link *l = *pl;
     *pl = l->next;
-    link_free(l);
+    link_free(vm, l);
     actor_uncharge(a, link_words());
 }
 
@@ -392,14 +394,14 @@ bool sig_is_linked(const Actor *a, term pid) {
     return link_slot(a, pid) != NULL;
 }
 
-static Link *link_new(term peer) {
-    Link *l = va_alloc(sizeof *l);
+static Link *link_new(Vm *vm, term peer) {
+    Link *l = va_alloc(vm, sizeof *l);
     if (!l) return NULL;
     l->next = NULL;
     l->peer = peer;
-    l->note = note_new();
+    l->note = note_new(vm);
     if (!l->note) {
-        va_free(l, sizeof *l);
+        va_free(vm, l, sizeof *l);
         return NULL;
     }
     return l;
@@ -409,7 +411,7 @@ static Link *link_new(term peer) {
 static bool exit_signal(Vm *vm, Actor *t, term from, uint32_t code) {
     if (t->flags & AF_EXIT_PENDING) return true;
     if ((t->flags & AF_TRAP_EXIT) && code != R_KILLED) {
-        Msg *m = note_new();
+        Msg *m = note_new(vm);
         if (!m) return false;
         note_fill(m, from, code, T_EMPTYSTR);
         msg_enqueue(vm, t, m, true);
@@ -424,11 +426,11 @@ bool sig_link(Vm *vm, Actor *a, term pid) {
     Actor *p = actor_lookup(vm, pid);
     if (!p || p->state == A_EXITED) return exit_signal(vm, a, pid, R_NO_PROC);
     if (!charge_fits(a, link_words())) return false;
-    Link *la = link_new(pid), *lp = link_new(a->id);
-    ActorExtra *xa = extra_get(a, false), *xp = extra_get(p, false);
+    Link *la = link_new(vm, pid), *lp = link_new(vm, a->id);
+    ActorExtra *xa = extra_get(vm, a, false), *xp = extra_get(vm, p, false);
     if (!la || !lp || !xa || !xp) {
-        link_free(la);
-        link_free(lp);
+        link_free(vm, la);
+        link_free(vm, lp);
         return false;     /* an extra allocated here stays; freed with its actor */
     }
     la->next = xa->links;
@@ -441,9 +443,9 @@ bool sig_link(Vm *vm, Actor *a, term pid) {
 }
 
 void sig_unlink(Vm *vm, Actor *a, term pid) {
-    link_remove(a, pid);
+    link_remove(vm, a, pid);
     Actor *p = actor_lookup(vm, pid);
-    if (p) link_remove(p, a->id);
+    if (p) link_remove(vm, p, a->id);
 }
 
 bool sig_kill(Vm *vm, Actor *from, term pid, uint32_t code) {
@@ -469,25 +471,25 @@ static Monitor **monitor_slot(Monitor **head, uint64_t serial) {
 
 /* Removes and frees the entry for `serial` (and its message, if any).
  * False if there was none. */
-static bool monitor_remove(Monitor **head, uint64_t serial) {
+static bool monitor_remove(Vm *vm, Monitor **head, uint64_t serial) {
     Monitor **pm = monitor_slot(head, serial);
     if (!pm) return false;
     Monitor *m = *pm;
     *pm = m->next;
-    monitor_free(m);
+    monitor_free(vm, m);
     return true;
 }
 
 /* Drops w's watching entry for `serial` and, if it had one, releases the
  * monitor's charge (w is the watcher, found by a generation-checked
  * lookup, or NULL). */
-static void watcher_forget(Actor *w, uint64_t serial) {
-    if (w && w->extra && monitor_remove(&((ActorExtra *)w->extra)->watching, serial))
+static void watcher_forget(Vm *vm, Actor *w, uint64_t serial) {
+    if (w && w->extra && monitor_remove(vm, &((ActorExtra *)w->extra)->watching, serial))
         actor_uncharge(w, monitor_words());
 }
 
-static Monitor *monitor_new(term peer, uint64_t serial, Msg *note) {
-    Monitor *m = va_alloc(sizeof *m);
+static Monitor *monitor_new(Vm *vm, term peer, uint64_t serial, Msg *note) {
+    Monitor *m = va_alloc(vm, sizeof *m);
     if (!m) return NULL;
     m->next = NULL;
     m->serial = serial;
@@ -503,23 +505,23 @@ term sig_monitor(Vm *vm, Actor *a, term pid) {
     Actor *t = actor_lookup(vm, pid);
     if (t == a) return ref;
     if (!t || t->state == A_EXITED) {
-        Msg *m = down_new();
+        Msg *m = down_new(vm);
         if (!m) return T_NIL;
         down_set_ref(m, serial, pid);
         down_set_reason(m, R_NO_PROC, T_EMPTYSTR);
-        if (a->flags & AF_EXIT_PENDING) msg_free(m);
+        if (a->flags & AF_EXIT_PENDING) msg_free(vm, m);
         else msg_enqueue(vm, a, m, true);
         return ref;
     }
     if (!charge_fits(a, monitor_words())) return T_NIL;
-    Msg *note = down_new();
-    Monitor *mt = note ? monitor_new(a->id, serial, note) : NULL;
-    Monitor *mw = monitor_new(pid, serial, NULL);
-    ActorExtra *xa = extra_get(a, false), *xt = extra_get(t, false);
+    Msg *note = down_new(vm);
+    Monitor *mt = note ? monitor_new(vm, a->id, serial, note) : NULL;
+    Monitor *mw = monitor_new(vm, pid, serial, NULL);
+    ActorExtra *xa = extra_get(vm, a, false), *xt = extra_get(vm, t, false);
     if (!mt || !mw || !xa || !xt) {
-        if (mt) monitor_free(mt);
-        else if (note) msg_free(note);
-        if (mw) monitor_free(mw);
+        if (mt) monitor_free(vm, mt);
+        else if (note) msg_free(vm, note);
+        if (mw) monitor_free(vm, mw);
         return T_NIL;     /* an extra allocated here stays; freed with its actor */
     }
     down_set_ref(note, serial, pid);
@@ -537,8 +539,8 @@ void sig_demonitor(Vm *vm, Actor *a, uint64_t serial) {
     Monitor **pm = monitor_slot(&x->watching, serial);
     if (!pm) return;
     Actor *t = actor_lookup(vm, (*pm)->peer);
-    if (t && t->extra) monitor_remove(&((ActorExtra *)t->extra)->monitors, serial);
-    monitor_remove(&x->watching, serial);
+    if (t && t->extra) monitor_remove(vm, &((ActorExtra *)t->extra)->monitors, serial);
+    monitor_remove(vm, &x->watching, serial);
     actor_uncharge(a, monitor_words());
 }
 
@@ -554,13 +556,13 @@ static void signal_monitors(Vm *vm, Actor *a, uint32_t code, term func_name) {
         Monitor *next = m->next;
         Msg *note = m->note;
         Actor *w = actor_lookup(vm, m->peer);
-        watcher_forget(w, m->serial);      /* the charge ends here */
-        va_free(m, sizeof *m);
+        watcher_forget(vm, w, m->serial);      /* the charge ends here */
+        va_free(vm, m, sizeof *m);
         if (w && !(w->flags & AF_EXIT_PENDING)) {
             down_set_reason(note, code, func_for(vm, w, func_name));
             msg_enqueue(vm, w, note, false);   /* guaranteed: no quota */
         } else {
-            msg_free(note);
+            msg_free(vm, note);
         }
         m = next;
     }
@@ -575,8 +577,8 @@ static void drop_watching(Vm *vm, Actor *a) {
     while (m) {
         Monitor *next = m->next;
         Actor *t = actor_lookup(vm, m->peer);
-        if (t && t->extra) monitor_remove(&((ActorExtra *)t->extra)->monitors, m->serial);
-        va_free(m, sizeof *m);
+        if (t && t->extra) monitor_remove(vm, &((ActorExtra *)t->extra)->monitors, m->serial);
+        va_free(vm, m, sizeof *m);
         actor_uncharge(a, monitor_words());
         m = next;
     }
@@ -590,8 +592,8 @@ static void drop_watchers(Vm *vm, Actor *a) {
     if (x) x->monitors = NULL;
     while (m) {
         Monitor *next = m->next;
-        watcher_forget(actor_lookup(vm, m->peer), m->serial);
-        monitor_free(m);
+        watcher_forget(vm, actor_lookup(vm, m->peer), m->serial);
+        monitor_free(vm, m);
         m = next;
     }
 }
@@ -605,8 +607,8 @@ static void drop_links(Vm *vm, Actor *a) {
     while (l) {
         Link *next = l->next;
         Actor *p = actor_lookup(vm, l->peer);
-        if (p) link_remove(p, a->id);
-        link_free(l);
+        if (p) link_remove(vm, p, a->id);
+        link_free(vm, l);
         actor_uncharge(a, link_words());
         l = next;
     }
@@ -625,14 +627,14 @@ static void signal_links(Vm *vm, Actor *a, uint32_t code, term func_name) {
         Link *next = l->next;
         Msg *note = l->note;
         Actor *p = actor_lookup(vm, l->peer);
-        va_free(l, sizeof *l);
+        va_free(vm, l, sizeof *l);
         actor_uncharge(a, link_words());
-        if (p) link_remove(p, a->id);      /* releases p's charge */
+        if (p) link_remove(vm, p, a->id);      /* releases p's charge */
         if (p && (p->flags & AF_TRAP_EXIT) && !(p->flags & AF_EXIT_PENDING)) {
             note_fill(note, a->id, code, func_for(vm, p, func_name));
             msg_enqueue(vm, p, note, false);   /* guaranteed: no quota */
         } else {
-            msg_free(note);
+            msg_free(vm, note);
             /* The cascade keeps a's func_name, possibly of another module
              * than p's (M-6, intended): it only travels on as a tagged
              * const. p's crash report reads it through the module table
@@ -657,12 +659,12 @@ void actor_exit(Vm *vm, Actor *a, uint32_t code, term func_name) {
     names_drop_actor(vm, a->id);       /* frees only; cannot fail */
     timer_cancel_actor(vm, a);         /* its wakeup and SendAfters to it */
     actor_free(vm, a);                 /* mailbox, extra, block, slot */
-    reserve_refill();
+    reserve_refill(vm);
 }
 
 void actor_mark_exit(Vm *vm, Actor *a, uint32_t code, term func_name) {
     if (a->state == A_EXITED || (a->flags & AF_EXIT_PENDING)) return;
-    ActorExtra *x = extra_get(a, true);
+    ActorExtra *x = extra_get(vm, a, true);
     if (x) {
         x->exit_code = code;
         x->exit_func = func_name;
@@ -674,7 +676,7 @@ void actor_mark_exit(Vm *vm, Actor *a, uint32_t code, term func_name) {
     }
     /* A runnable actor is already on the run queue (or is the one running,
      * which checks the flag after each builtin). */
-    reserve_refill();
+    reserve_refill(vm);
 }
 
 bool actor_exit_pending(const Actor *a, uint32_t *code, term *func_name) {

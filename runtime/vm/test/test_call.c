@@ -33,7 +33,7 @@ static void build_call(uint32_t *w, int32_t ms) {
 }
 
 static void setup(uint32_t *w, Image *img, Vm *vm, int32_t ms) {
-    va_reset();
+    va_reset(vm);
     build_call(w, ms);
     CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(vm, img, 8), 0);
@@ -95,7 +95,7 @@ static int32_t body_x(const Actor *a, term t) {
 TEST(reply_skipped_by_receive) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm, 50);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *r = actor_new(&vm, 64), *s = actor_new(&vm, 64);
     term ref = make_ref(&vm, s, 77);
     CHECK_EQ(msg_send_reply(&vm, s, r->id, ref, make_body(&vm, s, 1)), 0);
@@ -113,7 +113,7 @@ TEST(reply_skipped_by_receive) {
     CHECK(r->mbox_head == NULL && r->mbox_tail == NULL);
     CHECK_EQ(r->mbox_words, 0);
     actor_free(&vm, r); actor_free(&vm, s);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* msg_take_reply: takes the matching reply (body relocated), frees stale
@@ -121,7 +121,7 @@ TEST(reply_skipped_by_receive) {
 TEST(take_reply_selective) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm, 50);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *r = actor_new(&vm, 64), *s = actor_new(&vm, 64);
     term old = make_ref(&vm, s, 1), cur = make_ref(&vm, s, 0x100000002ull);
     CHECK_EQ(msg_send(&vm, s, r->id, term_from_int(5)), 0);
@@ -142,20 +142,20 @@ TEST(take_reply_selective) {
     CHECK(msg_receive(&vm, r, &t)); CHECK_EQ(t, term_from_int(6));
     CHECK_EQ(r->mbox_words, 0);
     actor_free(&vm, r); actor_free(&vm, s);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* A dead or stale target drops the reply silently. */
 TEST(reply_dead_target_drops) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm, 50);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *r = actor_new(&vm, 64), *s = actor_new(&vm, 64);
     term to = r->id;
     actor_free(&vm, r);
     CHECK_EQ(msg_send_reply(&vm, s, to, make_ref(&vm, s, 1), term_from_int(1)), 1);
     actor_free(&vm, s);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* The caller is woken by unrelated messages while waiting: it re-blocks
@@ -163,7 +163,7 @@ TEST(reply_dead_target_drops) {
 TEST(call_no_resend_on_resume) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm, 500);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *c = start(&vm, &img), *s = actor_new(&vm, 64);
     CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
     c->state = A_WAITING;
@@ -203,14 +203,14 @@ TEST(call_no_resend_on_resume) {
     c->state = A_RUNNABLE;
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
     actor_free(&vm, s);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* Timeout: (nil, false), pending state cleared, a late reply is invisible. */
 TEST(call_timeout_clears_state) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm, 500);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *c = start(&vm, &img), *s = actor_new(&vm, 64);
     CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
     c->state = A_WAITING;
@@ -240,14 +240,14 @@ TEST(call_timeout_clears_state) {
     c->state = A_RUNNABLE;
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
     actor_free(&vm, s);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* A dead target answers (nil, false) at once: no request, no wait. */
 TEST(call_dead_target_immediate) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm, 5000);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *c = start(&vm, &img);
     /* Patch r0 = Self() into r0 = r5 and put a stale pid in r5. */
     Actor *tmp = actor_new(&vm, 32);
@@ -263,19 +263,19 @@ TEST(call_dead_target_immediate) {
     CHECK(!(c->flags & AF_CALL_PENDING));
     c->state = A_RUNNABLE;
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* A stale reply wakes an actor blocked in plain Receive: it skips the reply
  * and blocks again (no out-of-memory crash). */
 TEST(stale_reply_reblocks_receive) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
-    va_reset();
+    va_reset(&vm);
     build_call(w, 50);
     w[20] = OP_MAKE(OP_BUILTIN, 3, 0, 0); w[21] = B_RECEIVE;   /* r3 = Receive() */
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
     CHECK_EQ(vm_init(&vm, &img, 8), 0);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     Actor *c = start(&vm, &img), *s = actor_new(&vm, 64);
     CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
     c->state = A_WAITING;
@@ -289,7 +289,7 @@ TEST(stale_reply_reblocks_receive) {
     c->state = A_RUNNABLE;
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
     actor_free(&vm, s);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }
 
 /* ms <= 0: the request is sent once, no reply is queued, so (nil, false)
@@ -297,7 +297,7 @@ TEST(stale_reply_reblocks_receive) {
 TEST(call_zero_ms_sends_once_returns_false) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm, 0);
-    size_t base = va_used_bytes();
+    size_t base = va_used_bytes(&vm);
     w[22] = OP_MAKE(OP_BUILTIN, 0, 1, 1);        /* Sleep(r1 = 7): blocks */
     Actor *c = start(&vm, &img);
     CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
@@ -310,5 +310,5 @@ TEST(call_zero_ms_sends_once_returns_false) {
     CHECK_EQ(timer_count(&vm), 1);               /* only Sleep's wakeup */
     c->state = A_RUNNABLE;
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(va_used_bytes(), base);
+    CHECK_EQ(va_used_bytes(&vm), base);
 }

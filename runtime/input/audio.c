@@ -86,7 +86,7 @@ static bool rate_ok(int32_t r) { return r == RATE_8K || r == RATE_16K; }
 
 /* ---- mic ---- */
 
-static int mic_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int mic_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
     const InputHw *hw = platform_input();
     if (input_failed() || au.mic || au.spk || !hw->mic_open || !hw->mic_read || n < 3) return -1;
@@ -95,10 +95,10 @@ static int mic_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     ms = ms == 0 ? DEF_FRAME_MS : ms < MIN_FRAME_MS ? MIN_FRAME_MS : ms > MAX_FRAME_MS ? MAX_FRAME_MS : ms;
     gain = gain < 0 ? 0 : gain > MAX_GAIN ? MAX_GAIN : gain - gain % GAIN_STEP;
     uint32_t cap = (uint32_t)rate * (uint32_t)ms / 1000u * 2u;   /* at most 16000 */
-    uint8_t *buf = va_alloc(cap);
+    uint8_t *buf = va_alloc(vm, cap);
     if (!buf) return -1;
     if (hw->mic_open((uint32_t)rate, (uint8_t)gain) != 0) {
-        va_free(buf, cap);
+        va_free(vm, buf, cap);
         return -1;
     }
     memset(&au.in, 0, sizeof au.in);
@@ -118,11 +118,11 @@ static int mic_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     return 0;
 }
 
-static void mic_close(Port *p) {
+static void mic_close(struct Vm *vm, Port *p) {
     if (au.mic != p) return;                   /* a refused open's cleanup */
     const InputHw *hw = platform_input();
     if (hw->mic_close) hw->mic_close();
-    va_free(au.buf, au.cap);
+    va_free(vm, au.buf, au.cap);
     au.buf = NULL;
     au.mic = NULL;
 }
@@ -152,7 +152,8 @@ static void spk_reset(void) {
     au.wi = au.bad = 0;
 }
 
-static int spk_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int spk_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     (void)index;
     const InputHw *hw = platform_input();
     if (input_failed() || au.mic || au.spk || !hw->spk_open || !hw->spk_write || n < 2) return -1;
@@ -166,7 +167,8 @@ static int spk_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     return 0;
 }
 
-static void spk_close(Port *p) {
+static void spk_close(struct Vm *vm, Port *p) {
+    (void)vm;
     if (au.spk != p) return;                   /* a refused open's cleanup */
     stream_out_close(NULL, p, out_of(p));      /* port_close releases the held data */
     au.spk = NULL;
@@ -274,7 +276,7 @@ static void spk_write_ahead(Vm *vm, Port *p, StreamOut *o) {
     const InputHw *hw = platform_input();
     for (int writes = 0; au.wi < o->n && writes < SPK_WRITES_PER_POLL; writes++) {
         uint32_t len;
-        const uint8_t *d = stream_out_at(o, au.wi, &len);
+        const uint8_t *d = stream_out_at(vm, o, au.wi, &len);
         int r = hw->spk_write(d + au.cur, len - au.cur);
         if (r == 0) return;                    /* its buffer is full: the next poll */
         if (r < 0 || (uint32_t)r > len - au.cur) {   /* an error (or a broken hook): not played */

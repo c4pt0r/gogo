@@ -83,7 +83,8 @@ static void reset(const Port *p) {
     k.port = p;
 }
 
-static int kbd_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int kbd_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     const InputHw *hw = platform_input();
     (void)index;
     if (input_failed() || k.port || !hw->keys || !hw->kbd_open || !hw->kbd_pending || !hw->kbd_read ||
@@ -95,7 +96,8 @@ static int kbd_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     return 0;
 }
 
-static void kbd_close(Port *p) {
+static void kbd_close(struct Vm *vm, Port *p) {
+    (void)vm;
     if (k.port != p) return;                      /* a refused open's cleanup */
     const InputHw *hw = platform_input();
     if (hw->kbd_close) hw->kbd_close();

@@ -291,7 +291,7 @@ static void pump_write(Vm *vm, TlsConn *t) {
     TcpPcb *c = t->c;
     while (c->wr[0] && !(t->flags & TS_DEAD)) {
         uint32_t len = 0;
-        const uint8_t *d = bytes_data(c->wr[0], &len);
+        const uint8_t *d = bytes_data(vm, c->wr[0], &len);
         if (!d || c->wr_off >= len) {
             tcp_write_done(vm, c);
             continue;
@@ -339,10 +339,10 @@ static int pump_read(Vm *vm, TlsConn *t) {
         uint32_t bw = 2u + (n + 3u) / 4u;
         Actor *o = port_owner(vm, p);
         if (!o) return 0;                           /* exiting: its close frees us */
-        Msg *m = tcp_flush(vm, p) ? net_msg_new(3u + bw) : NULL;
+        Msg *m = tcp_flush(vm, p) ? net_msg_new(vm, 3u + bw) : NULL;
         if (!m) return 1;
-        if (!net_room(vm, o, msg_charge_words(m), TCP_EVENT_RESERVE)) {
-            msg_free(m);
+        if (!net_room(vm, o, msg_charge_words(vm, m), TCP_EVENT_RESERVE)) {
+            msg_free(vm, m);
             return 1;
         }
         uint32_t *d = m->data;
@@ -356,7 +356,7 @@ static int pump_read(Vm *vm, TlsConn *t) {
         r = mbedtls_ssl_read(&t->ssl, (unsigned char *)&d[5], n);
         io_slice(t0);
         if (r != (int)n || !net_deliver(vm, o, m, TCP_EVENT_RESERVE)) {   /* cannot happen */
-            msg_free(m);
+            msg_free(vm, m);
             fail(vm, t, CR_TLS);
             return -1;
         }
@@ -380,7 +380,7 @@ static void drain_conn(Vm *vm, TlsConn *t) {
                 int r = mbedtls_ssl_close_notify(&t->ssl);
                 if (r == 0) {
                     t->flags |= TS_SHUT_DONE;
-                    tcp_shutdown(c);
+                    tcp_shutdown(vm, c);
                 } else if (r != MBEDTLS_ERR_SSL_WANT_WRITE && r != MBEDTLS_ERR_SSL_WANT_READ) {
                     fail(vm, t, reason_of(r));
                 }
@@ -391,7 +391,7 @@ static void drain_conn(Vm *vm, TlsConn *t) {
         tcp_abort(vm, c, -1, true);                 /* ended() frees t */
         return;
     }
-    tcp_output(c);
+    tcp_output(vm, c);
 }
 
 /* ---- TcpUpper ---- */
@@ -524,7 +524,7 @@ static int t_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
     if (!c) return -1;
     TlsConn *t = conn_new(name);
     if (!t) {
-        tcp_close_port(p);                      /* SYN_SENT: just frees the slot */
+        tcp_close_port(vm, p);                  /* SYN_SENT: just frees the slot */
         return -1;
     }
     t->c = c;
@@ -540,14 +540,14 @@ static int t_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
 /* The TLS state goes with the port. TCP then resets the connection unless
  * it was shut down, which this layer does only once its close_notify is
  * acknowledged (TS_SHUT_DONE): then TCP finishes the close as an orphan. */
-static void t_close(Port *p) {
+static void t_close(Vm *vm, Port *p) {
     TcpPcb *c = tcp_pcb_of(p);
     if (c && (c->flags & TF_UPPER)) {
         c->flags &= (uint8_t)~TF_UPPER;
         TlsConn *t = conn_of(c);
         if (t) conn_free(t);
     }
-    tcp_close_port(p);
+    tcp_close_port(vm, p);
 }
 
 /* Write{Data} and Shutdown{}. */

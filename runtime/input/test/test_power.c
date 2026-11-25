@@ -45,9 +45,9 @@ static const PortDriver *const drivers[] = { &input_kbd_driver, &input_power_dri
 
 static void setup(void) {
     platform_unix_arena_forget();
-    va_reset();
+    va_reset(&vm);
     evq_reset();
-    bytes_reset();
+    bytes_reset(&vm);
     fake_reset();
     now = 0;
     platform_unix_set_clock(clock_fn);
@@ -119,8 +119,8 @@ static void collect(Actor *a) {
         }
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(m));
-        msg_free(m);
+        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        msg_free(&vm, m);
     }
 }
 

@@ -401,11 +401,11 @@ uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool
      * frame goes first anyway, so a GC could not drop the copy. */
     term copy = val;
     if (!n || !heap_push_frame(vm, n, (uint16_t)nregs, -1) || (m && !msg_unpack(vm, n, m, &copy))) {
-        if (m) msg_free(m);
+        if (m) msg_free(vm, m);
         if (n) actor_free(vm, n);      /* never ran, never visible: not an exit */
         return R_OUT_OF_MEMORY;
     }
-    if (m) msg_free(m);
+    if (m) msg_free(vm, m);
     if (max_words) n->max_words = max_words < words ? (uint16_t)words : max_words;
     if (caps) {
         const uint32_t *c = n->mem + term_ref_off(copy) + 2u;
@@ -872,7 +872,7 @@ int interp_run(Vm *vm, Actor *a) {
             else if (t == T_EMPTYSTR) ty = TY_STRING;
             else if (term_is_pid(t)) ty = TY_PID;
             else if (t == T_ZEROREF) ty = TY_REF;
-            else if (t == T_EMPTYBYTES || bytes_valid(t)) ty = TY_BYTES;
+            else if (t == T_EMPTYBYTES || bytes_valid(vm, t)) ty = TY_BYTES;
             else {
                 const uint32_t *obj = obj_of(vm, a, t);
                 uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
@@ -1289,7 +1289,7 @@ static bool sched_any_live(Vm *vm) { return port_any_live(vm); }
 static bool sched_next_deadline(Vm *vm, uint64_t *when) { return port_next_deadline(vm, when); }
 
 int vm_run(Vm *vm) {
-    if (!vm_reserve_init()) {
+    if (!vm_reserve_init(vm)) {
         write_err_lit("gogo: cannot reserve emergency memory\n");
         return 1;
     }
@@ -1297,7 +1297,7 @@ int vm_run(Vm *vm) {
     term pid;
     int err = module_spawn(vm, NULL, module_handle(vm, 0), (const uint8_t *)"main", 4u, T_NIL, 0, &pid);
     if (err != CODE_OK) {
-        vm_reserve_release();
+        vm_reserve_release(vm);
         if (err == CODE_NOT_FOUND) write_err_lit("gogo: image has no main\n");
         else write_err_lit("gogo: cannot start main actor\n");
         return 1;
@@ -1354,6 +1354,6 @@ int vm_run(Vm *vm) {
         }
     }
     port_close_all(vm);              /* output drivers always get close */
-    vm_reserve_release();
+    vm_reserve_release(vm);
     return 0;
 }

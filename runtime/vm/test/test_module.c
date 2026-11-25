@@ -222,7 +222,6 @@ typedef struct Fx {
 
 static Fx *fx_new(void) {
     Fx *f = calloc(1, sizeof *f);
-    va_reset();
     CHECK_EQ(image_load(&f->img, f->a, build_a(f->a, true, 0)), IMG_OK);
     CHECK_EQ(vm_init(&f->vm, &f->img, 16), 0);
     return f;
@@ -285,7 +284,7 @@ static term plant(Actor *a, uint32_t kind, uint32_t word1, uint32_t nfields, ter
 TEST(boot_is_module0) {
     static uint32_t w[MAXW];
     Vm vm;
-    va_reset();
+    va_reset(&vm);
     uint32_t n = build_a(w, true, 0);
     CHECK_EQ(vm_boot(&vm, w, n, 16), VM_BOOT_OK);
     CHECK(vm.mods[0] != NULL);
@@ -299,7 +298,7 @@ TEST(boot_is_module0) {
 TEST(no_main_refused) {
     static uint32_t w[MAXW];
     Vm vm;
-    va_reset();
+    va_reset(&vm);
     uint32_t n = build_a(w, false, 0);
     CHECK_EQ(vm_boot(&vm, w, n, 16), VM_BOOT_OK);
     capture_start();
@@ -314,7 +313,7 @@ TEST(no_main_refused) {
 TEST(boot_caps_refused) {
     static uint32_t w[MAXW];
     Vm vm;
-    va_reset();
+    va_reset(&vm);
     uint32_t n = build_a(w, true, CAP_NET);
     platform_unix_set_caps(0);
     capture_start();
@@ -328,7 +327,7 @@ TEST(boot_caps_refused) {
 TEST(boot_bad_image) {
     static uint32_t w[MAXW];
     Vm vm;
-    va_reset();
+    va_reset(&vm);
     uint32_t n = build_a(w, true, 0);
     w[0] ^= 1u;
     CHECK_EQ(vm_boot(&vm, w, n, 16), IMG_ERR_MAGIC);
@@ -375,7 +374,7 @@ TEST(two_modules_same_interpreter) {
     CHECK(vm->mods[slot] == NULL);
     CHECK_EQ(module_mem_used(vm), 0u);
     CHECK(module_resolve(vm, slot, handle & 0xFFFFu) == NULL);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(vm), 0u);
     CHECK(name_bytes(vm, h, h->mem[h->fp + 1], &p, &len));
     CHECK(len == 4 && memcmp(p, "BBBB", 4) == 0);
     h->pc = f->img.code + image_func_code_off(&f->img, F_IS5);
@@ -768,10 +767,10 @@ TEST(load_spawn_main_runs) {
     Fx *f = fx_new();
     Actor *h = host(f);
     uint32_t n = build_b(f->b), handle;
-    size_t before = va_used_bytes();
+    size_t before = va_used_bytes(&f->vm);
     CHECK_EQ(module_load(&f->vm, h, heapbytes(h, f->b, n), &handle), CODE_OK);
     CHECK_EQ(module_mem_used(&f->vm), n * 4u);
-    CHECK(va_used_bytes() > before);
+    CHECK(va_used_bytes(&f->vm) > before);
     CHECK(f->vm.mods[handle >> 16]->bytes == T_NIL);      /* its own copy */
     h->hp = 0;                                             /* the heap bytes are gone */
     b_main_runs(f, h, handle);
@@ -801,7 +800,7 @@ TEST(load_main_program_image) {
     CHECK_EQ(f->vm.mods[handle >> 16]->live, 0);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
     CHECK(f->vm.mods[handle >> 16] == NULL);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);
     free(f);
 }
 
@@ -846,9 +845,9 @@ TEST(bad_image) {
         }
         uint32_t handle = 12345;
         term b = offheap(f, h, w, len);
-        size_t va0 = va_used_bytes();
+        size_t va0 = va_used_bytes(&f->vm);
         CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_BAD_IMAGE);
-        CHECK_EQ(va_used_bytes(), va0);
+        CHECK_EQ(va_used_bytes(&f->vm), va0);
         bytes_release(&f->vm, h, b);
         CHECK_EQ(handle, 12345u);
         /* the same, unaligned */
@@ -857,14 +856,14 @@ TEST(bad_image) {
         memcpy(data + 1, w, len * 4u);
         term sl = bytes_sub(&f->vm, h, r, 1, len * 4u);
         CHECK(sl != T_NIL);
-        va0 = va_used_bytes();
+        va0 = va_used_bytes(&f->vm);
         CHECK_EQ(module_load(&f->vm, h, sl, &handle), CODE_BAD_IMAGE);
-        CHECK_EQ(va_used_bytes(), va0);                     /* the copy is freed */
+        CHECK_EQ(va_used_bytes(&f->vm), va0);                     /* the copy is freed */
         bytes_release(&f->vm, h, r);
         heap_gc(&f->vm, h, 0, NULL, 0);
         CHECK_EQ(module_mem_used(&f->vm), used);
     }
-    CHECK_EQ(bytes_table_used(), 1u);                       /* only good's: nothing retained */
+    CHECK_EQ(bytes_table_used(&f->vm), 1u);                       /* only good's: nothing retained */
     /* not Bytes at all */
     uint32_t handle;
     CHECK_EQ(module_load(&f->vm, h, term_from_int(3), &handle), CODE_BAD_ARG);
@@ -888,7 +887,6 @@ static void boot_with_config(Fx *f, const char *line) {
     const char *old = getenv("GOGO_CONFIG");
     char *saved = old ? strdup(old) : NULL;
     setenv("GOGO_CONFIG", path, 1);
-    va_reset();
     uint32_t n = build_a(f->a, true, 0);
     capture_start();
     CHECK_EQ(vm_boot(&f->vm, f->a, n, 16), VM_BOOT_OK);
@@ -912,7 +910,7 @@ TEST(cap_exceeded) {
     CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_NO_MEMORY);
     bytes_release(&f->vm, h, b);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);
     uint32_t small = load_b(f, h);                          /* < 1024 B */
     CHECK(module_mem_used(&f->vm) <= 1024u);
     /* two small ones exceed it together */
@@ -957,7 +955,7 @@ TEST(unsupported) {
     bytes_release(&f->vm, h, b);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);
     free(f);
 }
 
@@ -975,7 +973,7 @@ TEST(unload_after_last_actor) {
     run_queue(&f->vm);
     CHECK(f->vm.mods[s] == NULL);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);
     module_release(&f->vm, h, handle);                      /* stale: nothing */
     CHECK_EQ(module_hold(&f->vm, h, handle), CODE_NOT_FOUND);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1051,7 +1049,7 @@ TEST(table_full) {
     bytes_release(&f->vm, h, b);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);
     free(f);
 }
 
@@ -1074,7 +1072,7 @@ TEST(unaligned_bytes_copied) {
     CHECK(e->bytes == T_NIL && ((uintptr_t)e->img.funcs & 3u) == 0);
     bytes_release(&f->vm, h, r);
     heap_gc(&f->vm, h, 0, NULL, 0);
-    CHECK_EQ(bytes_table_used(), 0u);                       /* the module did not keep it */
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);                       /* the module did not keep it */
     b_main_runs(f, h, handle);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
@@ -1092,7 +1090,7 @@ TEST(platform_code_memory) {
     term b = offheap(f, h, f->b, n);
     CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_OK);
     bytes_release(&f->vm, h, b);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);
     CHECK_EQ(plat_allocs, 1u);
     CHECK_EQ(plat_last, n * 4u);
     CHECK_EQ(module_mem_used(&f->vm), n * 4u);
@@ -1220,7 +1218,7 @@ TEST(code_builtin_ops) {
     CHECK_EQ(code_op(f, a, 7, CODE_OP_LOAD, 1), R_BAD_CODE);
     actor_exit(&f->vm, a, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);
     free(f);
 }
 
@@ -1297,14 +1295,14 @@ TEST(slice_not_pinned) {
     memcpy(data + 1024, f->b, n * 4u);
     term sl = bytes_sub(&f->vm, h, big, 1024, n * 4u);
     CHECK(sl != T_NIL);
-    size_t va0 = va_used_bytes();
+    size_t va0 = va_used_bytes(&f->vm);
     CHECK_EQ(module_load(&f->vm, h, sl, &handle), CODE_OK);
-    CHECK(va_used_bytes() - va0 < 8u * 1024u);              /* about the slice, not the root */
+    CHECK(va_used_bytes(&f->vm) - va0 < 8u * 1024u);              /* about the slice, not the root */
     CHECK(f->vm.mods[handle >> 16]->bytes == T_NIL);
     CHECK_EQ(module_mem_used(&f->vm), n * 4u);
     bytes_release(&f->vm, h, big);
     heap_gc(&f->vm, h, 0, NULL, 0);
-    CHECK_EQ(bytes_table_used(), 0u);                       /* the big root is gone */
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);                       /* the big root is gone */
     b_main_runs(f, h, handle);
     /* a whole root: in place */
     term r = offheap(f, h, f->b, n);
@@ -1315,13 +1313,13 @@ TEST(slice_not_pinned) {
     f->vm.mod_cap = 1024;
     term u = bytes_new(&f->vm, h, 4001, &data);
     term us = bytes_sub(&f->vm, h, u, 1, 4000);
-    va0 = va_used_bytes();
+    va0 = va_used_bytes(&f->vm);
     CHECK_EQ(module_load(&f->vm, h, us, &handle), CODE_NO_MEMORY);
-    CHECK_EQ(va_used_bytes(), va0);
+    CHECK_EQ(va_used_bytes(&f->vm), va0);
     bytes_release(&f->vm, h, u);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
-    CHECK_EQ(bytes_table_used(), 0u);
+    CHECK_EQ(bytes_table_used(&f->vm), 0u);
     free(f);
 }
 
@@ -1337,10 +1335,10 @@ TEST(platform_memory_single_copy) {
     memcpy(data + 1, f->b, n * 4u);
     term sl = bytes_sub(&f->vm, h, r, 1, n * 4u);
     plat_on = true; plat_allocs = plat_frees = 0;
-    size_t va0 = va_used_bytes();
+    size_t va0 = va_used_bytes(&f->vm);
     CHECK_EQ(module_load(&f->vm, h, sl, &handle), CODE_OK);
     CHECK_EQ(plat_allocs, 1u);
-    CHECK(va_used_bytes() - va0 <= sizeof(ModEntry) + 8u); /* the entry only */
+    CHECK(va_used_bytes(&f->vm) - va0 <= sizeof(ModEntry) + 8u); /* the entry only */
     b_main_runs(f, h, handle);
     module_release(&f->vm, h, handle);
     CHECK_EQ(plat_frees, 1u);

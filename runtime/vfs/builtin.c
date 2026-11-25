@@ -39,14 +39,15 @@ static const uint8_t n_args[FS_WRITEAT + 1] = { 2, 2, 2, 1, 1, 2, 2, 1, 1, 1, 1,
 
 /* ---- the `file` port ---- */
 
-static int f_open(Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+static int f_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    (void)vm;
     (void)index; (void)n;
     p->state[0] = (uint32_t)cfg[0];
     p->state[1] = 0;
     p->charge_words = CHARGE_WORDS;
     return 0;
 }
-static void f_close(Port *p) { vfs_close((int)p->state[0]); }
+static void f_close(struct Vm *vm, Port *p) { (void)vm; vfs_close((int)p->state[0]); }
 static bool f_can_event(const Port *p) { (void)p; return false; }
 
 static const PortDriver file_drv = {
