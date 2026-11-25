@@ -2,7 +2,7 @@
 
 gogo is a small actor VM for microcontrollers and a compiler for a subset
 of Go. You write programs in Go syntax as a set of isolated actors, in the
-style of Erlang: each actor has its own heap and memory limit, they talk
+style of *Erlang* : each actor has its own heap and memory limit, they talk
 only by copied messages, and supervisors restart the ones that crash.
 Peripherals such as GPIO, the keyboard, files, sockets, the IMU, infrared
 and audio are **ports**, which are actors that take commands and send
