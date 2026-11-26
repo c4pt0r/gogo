@@ -64,7 +64,10 @@ bool heap_push_frame(Vm *vm, Actor *a, uint16_t n_regs, int32_t ret_pc);
  * indexes into the object. *end is always the object's size (a kind's
  * terms run to its last word); the range is empty (*first = *end) for
  * K_STRING, K_INT, K_REF, K_INT64, K_BYTEARR, K_BYTES and K_FLOAT, whose
- * contents are raw, and for a K_SLICE of fewer than 5 words. Never word 1,
+ * contents are raw. A K_SLICE's starts at word 4, so it must have at least
+ * 5 words (every slice made at run time has exactly 5, and image_load
+ * refuses a const slice of any other size): one shorter would give
+ * *first > *end, which heap_map_terms does not allow. Never word 1,
  * which is raw in every kind: type_id, func_idx, a slice's off, an array's
  * length, a buffer's length. Shared by the GC, message copy/relocation and
  * image validation so they always agree. */
