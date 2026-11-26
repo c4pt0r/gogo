@@ -69,6 +69,14 @@ bool heap_push_frame(Vm *vm, Actor *a, uint16_t n_regs, int32_t ret_pc);
  * image validation so they always agree. */
 void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end);
 
+/* fn on every root, then on every term word of the objects in mem[scan,
+ * *end), that has one of the low-4-bit tags in the set `tags` (bit n: tag
+ * n); fn may rewrite the word, and *end may grow as fn appends objects. */
+#define TAGS_REF    0x1111u            /* heap refs: ..00 */
+#define TAGS_HANDLE (1u << 0xE)
+void heap_map_terms(uint32_t *mem, uint32_t scan, const uint32_t *end, term *roots, uint32_t n_roots,
+                    uint32_t tags, void (*fn)(void *, term *), void *ctx);
+
 /* sizeof(Actor) + its table slot + the block + its charged words (queued
  * messages, pending SendAfter timers) in bytes. */
 size_t actor_memory_bytes(const Actor *a);

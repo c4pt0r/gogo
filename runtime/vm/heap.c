@@ -53,23 +53,41 @@ void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end) {
            : words;
 }
 
-/* Returns the to-space version of t, copying its object on first visit. */
-static term forward(Copier *c, term t) {
-    if (!term_is_ref(t)) {
-        if (c->held && term_is_handle(t)) bytes_gc_mark(c->held, t);
-        return t;
+void heap_map_terms(uint32_t *mem, uint32_t scan, const uint32_t *end, term *roots, uint32_t n_roots,
+                    uint32_t tags, void (*fn)(void *, term *), void *ctx) {
+    for (;;) {
+        for (uint32_t i = 0; i < n_roots; i++)
+            if (tags >> (roots[i] & 15u) & 1u) fn(ctx, roots + i);
+        if (scan >= *end) return;
+        uint32_t first, last;
+        heap_obj_terms(mem + scan, &first, &last);
+        roots = mem + scan + first;
+        n_roots = last - first;
+        scan += last;                 /* a kind's terms run to its last word */
+    }
+}
+
+/* Replaces the heap ref or handle at p with its to-space version, copying
+ * the object on first visit; marks a handle as held. */
+static void forward(void *ctx, term *p) {
+    Copier *c = ctx;
+    term t = *p;
+    if (!term_is_ref(t)) {                       /* a handle (TAGS_HANDLE) */
+        if (c->held) bytes_gc_mark(c->held, t);
+        return;
     }
     uint32_t off = term_ref_off(t);
     uint32_t h = c->from[off];
-    if (hdr_kind(h) == K_FORWARD) return term_from_ref(c->from[off + 1]);
-
-    uint32_t words = hdr_words(h);
-    uint32_t dst = c->free;
-    memcpy(c->to + dst, c->from + off, words * 4u);
-    c->free += words;
-    c->from[off] = hdr_make(words, K_FORWARD);
-    c->from[off + 1] = dst;
-    return term_from_ref(dst);
+    uint32_t dst = c->from[off + 1];
+    if (hdr_kind(h) != K_FORWARD) {
+        uint32_t words = hdr_words(h);
+        dst = c->free;
+        memcpy(c->to + dst, c->from + off, words * 4u);
+        c->free += words;
+        c->from[off] = hdr_make(words, K_FORWARD);
+        c->from[off + 1] = dst;
+    }
+    *p = term_from_ref(dst);
 }
 
 /* The largest block this actor may have: its limit minus the words its
@@ -123,18 +141,11 @@ static bool copy_into(Vm *vm, Actor *a, uint32_t new_words, term *roots, int n_r
     if (trace) {
         c.free = 0;
         c.held = bytes_gc_begin(a);
-        /* 1. Roots: the stack (forwarded in its new place) and the caller's. */
-        for (uint32_t i = new_sp; i < new_words; i++) c.to[i] = forward(&c, c.to[i]);
-        for (int i = 0; i < n_roots; i++) roots[i] = forward(&c, roots[i]);
-
-        /* 2. Cheney scan: forward the term words of each copied object. */
-        for (uint32_t scan = 0; scan < c.free; ) {
-            uint32_t h = c.to[scan];
-            uint32_t first, end;
-            heap_obj_terms(c.to + scan, &first, &end);
-            for (uint32_t i = scan + first; i < scan + end; i++) c.to[i] = forward(&c, c.to[i]);
-            scan += hdr_words(h);
-        }
+        /* 1. Roots: the stack (forwarded in its new place); 2. the
+         * caller's, then the Cheney scan of each copied object. */
+        uint32_t none = 0;
+        heap_map_terms(c.to, 0, &none, c.to + new_sp, stack_words, TAGS_REF | TAGS_HANDLE, forward, &c);
+        heap_map_terms(c.to, 0, &c.free, roots, (uint32_t)n_roots, TAGS_REF | TAGS_HANDLE, forward, &c);
 
         if (c.held) bytes_gc_sweep(vm, a, c.held);   /* what nothing reached goes */
     } else {
