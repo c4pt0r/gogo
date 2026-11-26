@@ -325,6 +325,17 @@ static host. The book's sources stay the markdown in `docs/book`
 (`SUMMARY.md` lists the chapters for mdBook); its links to repository
 files outside the book point to GitHub on the site.
 
+### What are the best practices for writing gogo programs?
+[Book chapter 21](book/21-best-practices.md) collects them, each with the
+reason it follows from how gogo works and a tested example: give every
+working actor a measured `MaxMemory` (16 KB per actor and about 160 KB in
+all on a board, against 256 KB per actor on the host); keep messages small
+and move bulk data as frozen `bytes.Bytes`; bound every producer with acks,
+`Call` or pulling; keep shared state in one owner actor; give every `Call`
+a timeout and never call in a cycle; persist what must survive a restart;
+handle every message type in every state; and keep per-byte loops in C. It
+ends with a checklist to review a design against.
+
 ## The VM
 
 ### How does the VM run code?
@@ -445,6 +456,28 @@ lists, progress bars, a status line, a line editor) on the `screen` port.
 The port is written in C (cell grid, LCD flush, terminal and headless
 renderers); the library and widgets are written in gogo. See the Text UI
 chapter of the book ([chapter 19](book/19-text-ui.md)).
+
+### How do I write audio or camera software in gogo?
+In two layers. The data plane (DMA, the codec, timing, the buffers) is a
+C driver behind a port; the control plane (start, stop, where each frame
+goes, what to do on failure) is actors, which see the data only as whole
+frames, a few to a few dozen times a second. The ports speak the stream
+protocol: frames come as `port.Chunk`s, output goes as `port.Out`s with
+two in flight, and a stream never kills its owner (a frame that does not
+fit is dropped and counted in `Dropped`). Build a pipeline of actors
+(capture, process, write to SD or the network) that pass frames with a
+window of acknowledgements, so each stage has a known memory need and can
+fail and restart alone. Size each stage's `MaxMemory` for the longest stall
+with the formula in [§16.1](book/16-audio.md), keep few frames in flight,
+and let the driver drop when something falls behind. The microphone and
+speaker ports exist today (chapter 16, and `gogo/sound` records and plays
+WAV files); **there is no camera port**. A camera driver would follow the
+same protocol, but a 10 to 30 KB JPEG frame is more than a board's default
+16 KB actor limit and a large share of the 160 KB all actors share, so it
+would need one or two frames in flight and raised limits. Keeping frames
+in driver memory (PSRAM) and handing actors a handle is a possible future
+design, not something that exists. [Book §21.9](book/21-best-practices.md)
+has the details and a runnable recorder pipeline.
 
 ## Embedding and the future
 
