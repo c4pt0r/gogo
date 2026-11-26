@@ -737,7 +737,13 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
     if (id == B_CMP) {
         term *T = (term *)a->mem + a->fp;
         int32_t left = CMP_BUDGET;
-        int c = rc == 2u ? cmp_terms(vm, a, T[rb], T[rb + 1], 0, &left) : R_BAD_CODE;
+        SliceV s;
+        /* Two arguments: interface values or structs, so a slice at the
+         * top is one in an interface, which equals nothing (Go: false for
+         * slices of two types, a panic for one type). Three: arrays. */
+        int c = rc - 2u > 1u ? R_BAD_CODE
+              : rc == 2u && (slice_view(vm, a, T[rb], &s) || slice_view(vm, a, T[rb + 1], &s)) ? 1
+              : cmp_terms(vm, a, T[rb], T[rb + 1], 0, &left);
         if (c > 1) return (uint32_t)c;
         T[ra] = term_from_int(c);
         return R_NORMAL;

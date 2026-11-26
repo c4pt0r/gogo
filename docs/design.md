@@ -311,8 +311,11 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   `float64` are different kinds), Refs by serial, strings and `Bytes` by
   their bytes, structs of one type field by field, arrays (slices) element
   by element, anything else by its term (bools, PIDs and `nil`; a func or
-  `Buffer` by identity). A slice inside an interface compares by its
-  elements where Go panics. Values of different dynamic types are never
+  `Buffer` by identity). A slice held by an interface equals nothing
+  (Go: false, or a panic for two slices of one type): B_CMP compares a
+  top-level slice by its elements only when a third argument says the
+  values are arrays; a slice deeper inside compares by its elements, as
+  an array. Values of different dynamic types are never
   equal: an `int64` is boxed inside an interface and plain outside one,
   so an `int` and an `int64` of one value differ. Maps (later) order
   their keys with it. The walk does not preempt; nesting deeper than 64

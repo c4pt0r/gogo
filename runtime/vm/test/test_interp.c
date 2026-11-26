@@ -1108,27 +1108,34 @@ TEST(cmp_budget) {
     CHECK(strstr(cmp_run(a, 2, &r), "crashed: badcode") != NULL);
 }
 
-/* A slice (an array's value) compares element by element; a mode
- * argument is badcode. */
+/* With three arguments (arrays) a slice (an array's value) compares
+ * element by element; with two (interface values) a slice equals nothing,
+ * not even itself; four is badcode. */
 TEST(cmp_elements) {
     const int32_t a3[] = {1, 2, 3};
     int32_t r = 99;
-    Actor *a = cmp_start(2);
+    Actor *a = cmp_start(3);
     term s = cmp_slice(a, false, 3, a3);
     a->mem[a->fp] = s; a->mem[a->fp + 1] = s;
-    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
-    a = cmp_start(2);
+    CHECK_EQ(cmp_run(a, 3, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(3);
     a->mem[a->fp] = cmp_slice(a, false, 3, a3); a->mem[a->fp + 1] = cmp_slice(a, false, 3, a3);
-    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
-    a = cmp_start(2);
+    CHECK_EQ(cmp_run(a, 3, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(3);
     a->mem[a->fp] = cmp_slice(a, false, 2, a3); a->mem[a->fp + 1] = cmp_slice(a, false, 3, a3);
-    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, -1);
-    a = cmp_start(2);
+    CHECK_EQ(cmp_run(a, 3, &r)[0], 0); CHECK_EQ(r, -1);
+    a = cmp_start(3);
     a->mem[a->fp] = cmp_slice(a, true, 3, a3); a->mem[a->fp + 1] = cmp_slice(a, true, 3, a3);
-    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
-    a = cmp_start(3);                         /* three arguments: badcode */
-    a->mem[a->fp] = term_from_int(1); a->mem[a->fp + 1] = term_from_int(1); a->mem[a->fp + 2] = term_from_int(0);
-    CHECK(strstr(cmp_run(a, 3, &r), "crashed: badcode") != NULL);
+    CHECK_EQ(cmp_run(a, 3, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(2);                         /* two arguments: a slice in an interface */
+    a->mem[a->fp] = s = cmp_slice(a, false, 3, a3); a->mem[a->fp + 1] = s;
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 1);
+    a = cmp_start(2);
+    a->mem[a->fp] = T_NILSLICE; a->mem[a->fp + 1] = T_NILSLICE;
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 1);
+    a = cmp_start(4);                         /* four arguments: badcode */
+    a->mem[a->fp] = term_from_int(1); a->mem[a->fp + 1] = term_from_int(1);
+    CHECK(strstr(cmp_run(a, 4, &r), "crashed: badcode") != NULL);
 }
 
 /* Types first, then values; a struct chain through its last field is a

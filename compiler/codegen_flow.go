@@ -100,13 +100,13 @@ func (f *fn) switchStmt(s *ast.SwitchStmt) {
 				// tag == e by B_CMP: both as values of one type (an
 				// interface one's), in two fresh registers.
 				ct := cmpType(tt, et)
-				r := f.allocN(e, 2)
+				r := f.allocN(e, int(cmpWidth(ct)))
 				f.asm.Emit(OpMove, r, tag, 0)
 				if convertsToIface(tt, ct) {
 					f.toIface(e, tt, r)
 				}
 				f.comparedInto(e, ct, r+1)
-				f.cmpRegs(e, r, OpEq, r)
+				f.cmpRegs(e, r, ct, OpEq, r)
 				f.jump(OpJmpt, r, bodyL[i])
 			} else {
 				t := f.allocScalar(e) // EQ results are bools

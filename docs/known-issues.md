@@ -443,9 +443,12 @@ rebuilt:
   handle. Its value prints as `println` prints it (a struct as `{1 2}`, a
   named basic value inside an interface as `{5}`),
   where Go prints a struct's type and address.
-- **`==` on interfaces holding slices does not panic.** Two `any`
-  values holding slices compare element by element, as arrays do; Go
-  panics there (`comparing uncomparable type`).
+- **`==` on interfaces holding slices does not panic.** An `any` holding
+  a slice equals nothing, not even itself: Go gives false for slices of
+  two types and panics for slices of one (`comparing uncomparable type`).
+  A slice deeper inside, in a struct field of an `any`, compares element
+  by element, as arrays do, and without its element type
+  (`S{[]int(nil)} == S{[]string{}}` is true).
 - **`==` has a depth and a work limit.** `==` and `switch` on structs,
   arrays and interface values walk both values in one VM instruction,
   without preemption, like a large message copy. Nesting deeper than 64

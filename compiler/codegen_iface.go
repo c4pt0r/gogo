@@ -306,10 +306,10 @@ func (f *fn) cmpInto(x, y ast.Expr, t types.Type, op uint8, dst uint8) {
 		return
 	}
 	mark := f.next
-	base := f.allocN(x, 2)
+	base := f.allocN(x, int(cmpWidth(t)))
 	f.comparedInto(x, t, base)
 	f.comparedInto(y, t, base+1)
-	f.cmpRegs(x, base, op, dst)
+	f.cmpRegs(x, base, t, op, dst)
 	f.next = mark
 }
 
@@ -321,10 +321,22 @@ func (f *fn) comparedInto(e ast.Expr, t types.Type, dst uint8) {
 	f.compared = false
 }
 
+// cmpWidth is the number of registers cmpRegs uses for values of type t.
+func cmpWidth(t types.Type) uint8 {
+	if isArray(t) {
+		return 3
+	}
+	return 2
+}
+
 // cmpRegs emits dst = r == r+1 (op OpEq) or != (OpNe) by B_CMP, on two
-// registers holding comparable values of one type; r+1 is clobbered.
-func (f *fn) cmpRegs(n ast.Node, r uint8, op uint8, dst uint8) {
-	f.asm.EmitExt(OpBuiltin, r, r, 2, BCmp)
+// registers holding comparable values of type t; r+1 is clobbered. Two
+// arrays pass a third register (r+2, allocated by the caller, its value
+// unused): B_CMP compares slices at the top by their elements only then,
+// as arrays; elsewhere a top-level slice is one held by an interface,
+// which equals nothing.
+func (f *fn) cmpRegs(n ast.Node, r uint8, t types.Type, op uint8, dst uint8) {
+	f.asm.EmitExt(OpBuiltin, r, r, cmpWidth(t), BCmp)
 	f.asm.EmitExt(OpLoadk, r+1, 0, 0, TermInt(0))
 	f.asm.Emit(op, dst, r, r+1)
 }

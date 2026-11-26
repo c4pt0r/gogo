@@ -85,4 +85,10 @@ func main() {
 		println(describe(v))
 	}
 	println(origin(Point{}), origin(a))
+
+	// A slice in an interface: slices of different types are different
+	// values (Go panics only for two slices of one type).
+	var ns []int
+	var e, g any = ns, []string{}
+	println(e == g, e == nil, g == 1)
 }

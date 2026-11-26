@@ -274,7 +274,7 @@ func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 				r := f.allocN(te, 2)
 				f.asm.Emit(OpMove, r, m, 0)
 				f.asm.EmitExt(OpLoadk, r+1, 0, 0, TermNil)
-				f.cmpRegs(te, r, OpEq, t)
+				f.cmpRegs(te, r, anyType, OpEq, t)
 			} else if tt := f.g.p.Info.TypeOf(te); isIface(tt) {
 				f.ifaceTest(te, tt, m, t)
 			} else {

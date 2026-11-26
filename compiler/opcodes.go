@@ -174,7 +174,7 @@ const (
 
 	// Since 15.4 (ifaceMinor).
 	BPanic uint32 = 56 // v -> (does not return): panic(v), exit reason R_PANIC
-	BCmp   uint32 = 57 // a, b -> -1 | 0 | 1: the order of two values (== on interfaces, structs and arrays)
+	BCmp   uint32 = 57 // a, b [, x] -> -1 | 0 | 1: the order of two values (== on interfaces, structs; x for arrays)
 )
 
 // Off-heap Bytes limits: twins of runtime/vm/config.h's defaults (checked by
