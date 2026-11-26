@@ -70,11 +70,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: float-corpus lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: float-corpus lint gogo-cmd test-examples test-book lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize floatlibsize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize floatlibsize
 
 vm: $(BUILD)/gogovm
 
@@ -418,14 +418,56 @@ test-libgogo: $(BUILD)/libgogo_clash $(BUILD)/libgogo-debug.a gogo-cmd
 	$(BUILD)/libgogo_clash $(BUILD)/libgogo_clash.ggb > $(BUILD)/libgogo_clash.out
 	cmp $(BUILD)/libgogo_clash.out examples/many_idle/expected.out
 
-# examples/embed-c: host programs on libgogo.a (examples/embed-c/test.sh
-# runs them on example images and compares their output).
-EXAMPLE_EMBED_PROGS = main post port
-EXAMPLE_EMBED_BINS  = $(addprefix $(BUILD)/embed-c/,$(EXAMPLE_EMBED_PROGS))
+# gogotools/embed, the Go binding over libgogo.a (build tag libgogo):
+# vet, its tests, and the tests again under the race detector. cgo links
+# $(BUILD)/libgogo.a (put ahead of the caller's CGO_LDFLAGS); go does not
+# hash a C archive, so the archive's checksum goes into a link flag
+# (GOBIND_FLAGS) to make go relink what it built against an older one.
+GOBIND       = CGO_LDFLAGS="-L$(abspath $(BUILD)) $$CGO_LDFLAGS" go
+GOBIND_FLAGS = -tags libgogo -ldflags="-X=gogotools/embed.libgogoSum=$$(cksum < $(BUILD)/libgogo.a | tr -d ' ')"
+
+test-gobind: $(BUILD)/libgogo.a
+	$(GOBIND) vet -tags libgogo ./embed/... ./examples/embed-go
+	$(GOBIND) test $(GOBIND_FLAGS) -count=1 -timeout 120s ./embed/
+	$(GOBIND) test $(GOBIND_FLAGS) -count=1 -timeout 120s -race ./embed/
+
+# libgogoc.a: the compiler as a C library (embed/gogoc/gogoc.h), a Go
+# c-archive prelinked so that only the gogoc_* functions are global
+# (tools/libgogoc.sh, which checks them against embed/gogoc/libgogoc.syms).
+# It carries the Go runtime. It is rebuilt when a Go source it is made of
+# changes (the compiler, the gogo libraries it embeds, the embed package):
+# go's archive differs at every build, so go cannot decide that alone. test-gogoc links it beside libgogo.a in a C program
+# that compiles source and runs it, and that defines functions named like
+# the Go runtime's C symbols.
+libgogoc: $(BUILD)/libgogoc.a
+
+GOGOC_SRCS = go.mod $(shell find compiler lib embed -name '*.go' -o -name '*.gg' -o -name '*.[ch]') tools/libgogoc.sh
+
+$(BUILD)/libgogoc.a: $(GOGOC_SRCS)
+	LIB_LD='$(LIB_LD)' LIB_OBJCOPY='$(LIB_OBJCOPY)' tools/libgogoc.sh $(BUILD)
+
+$(BUILD)/gogoc/test_gogoc: embed/gogoc/test/test_gogoc.c embed/gogoc/gogoc.h $(wildcard runtime/include/*.h) $(BUILD)/libgogoc.a $(BUILD)/libgogo.a
+	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iembed/gogoc -Iruntime/include -o $@ $< $(BUILD)/libgogoc.a $(BUILD)/libgogo.a -pthread
+
+test-gogoc: $(BUILD)/gogoc/test_gogoc
+	$(BUILD)/gogoc/test_gogoc examples/many_idle
+
+# examples/embed-c: host programs on libgogo.a, compile.c on libgogoc.a
+# too; examples/embed-go: a Go host (examples/embed-c/test.sh runs them
+# and compares their output).
+EXAMPLE_EMBED_PROGS = main post port compile
+EXAMPLE_EMBED_BINS  = $(addprefix $(BUILD)/embed-c/,$(EXAMPLE_EMBED_PROGS)) $(BUILD)/embed-go
 
 $(BUILD)/embed-c/%: examples/embed-c/%.c $(wildcard runtime/include/*.h) $(BUILD)/libgogo.a
 	@mkdir -p $(BUILD)/embed-c
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iruntime/include -o $@ $< $(BUILD)/libgogo.a -pthread
+
+$(BUILD)/embed-c/compile: examples/embed-c/compile.c embed/gogoc/gogoc.h $(wildcard runtime/include/*.h) $(BUILD)/libgogoc.a $(BUILD)/libgogo.a
+	@mkdir -p $(BUILD)/embed-c
+	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iembed/gogoc -Iruntime/include -o $@ $< $(BUILD)/libgogoc.a $(BUILD)/libgogo.a -pthread
+
+$(BUILD)/embed-go: $(BUILD)/libgogo.a FORCE
+	$(GOBIND) build $(GOBIND_FLAGS) -o $@ ./examples/embed-go
 
 example-embed: $(EXAMPLE_EMBED_BINS) gogo-cmd
 	examples/embed-c/test.sh $(BUILD)

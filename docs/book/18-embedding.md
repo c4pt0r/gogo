@@ -12,8 +12,10 @@ The API is one C header, [`runtime/include/gogo.h`](../../runtime/include/gogo.h
 [`gogo_posix.h`](../../runtime/include/gogo_posix.h) for the POSIX host
 and a VM on a thread of its own, and one library, `libgogo.a`. This
 chapter walks through it with the
-programs in [`examples/embed-c/`](../../examples/embed-c/). Every C snippet
-here is cut from them, and `make example-embed` builds them and checks
+programs in [`examples/embed-c/`](../../examples/embed-c/); Go programs
+use the binding `gogotools/embed` (section 18.12), and a host can
+compile source itself (section 18.13). Every C and Go snippet
+here is cut from the examples, and `make example-embed` builds them and checks
 their output.
 
 What an embedded VM does not have in this version: the board peripherals
@@ -676,7 +678,137 @@ library has no global state (`make lib` checks its objects with
 `tools/globals.sh --objects`), so VMs can run side by side on one thread,
 as in `main.c --two`, or on many threads, as in the stress test.
 
-## 18.12 What is stable
+## 18.12 Hosts in Go: `gogotools/embed`
+
+A Go program embeds gogo through the package `gogotools/embed`, a cgo
+binding over `libgogo.a`. It is built with the build tag `libgogo`:
+
+```sh
+make lib
+CGO_LDFLAGS="-L$PWD/build" go run -tags libgogo ./examples/embed-go
+```
+
+`CGO_LDFLAGS` names the directory of `libgogo.a`. go does not notice when
+`make lib` rebuilds the archive, so after that build with `-a` (`make
+example-embed` and `make test-gobind` relink by themselves). Without the
+tag, or without cgo, the package holds only the compiler (section 18.13),
+so a plain `go build ./...` needs neither a C compiler nor the library.
+
+The binding maps the C API one to one: `embed.New` (with a `Config` whose
+`Host` holds Go functions for the output, the clocks, random numbers and
+`sys.Config`; zero fields take the OS's), `Load`, `Start`, `Step`,
+`NextDeadline`, `Post`, `ClosePosts`, `Stats`, `Close`, and the
+image inspection functions `GetImageInfo` and `ImageRequires`. Errors are
+`embed.Errno` values, gogo.h's codes with `gogo_strerror`'s messages,
+wrapped with the call that failed: `errors.Is(err, embed.ErrRequires)`.
+Messages are `embed.Message{Kind, Data}`, a `port.Post` on the gogo side.
+
+`examples/embed-go/main.go` compiles its program, defines a host port in
+Go and runs the VM. A host port is a `PortDriver`, or a `PortFuncs` of
+the methods it needs; its `Port` emits events to the port's owner:
+
+```go
+	upper := embed.PortFuncs{
+		OpenFunc: func(p embed.Port, arg int32, data []byte) error {
+			close(ready) // the program has registered "words"
+			return nil
+		},
+		CommandFunc: func(p embed.Port, m embed.Message) {
+			p.Emit(embed.Message{Kind: m.Kind, Data: bytes.ToUpper(m.Data)})
+		},
+	}
+```
+
+A VM is single-threaded, as in C: its methods are not safe for
+concurrent use, and its hooks and drivers run inside `Step` on the
+goroutine that calls it (which may move between OS threads: the library
+only needs calls not to overlap). Hooks and drivers must not block: a
+driver with slow work (a network request, a device read) does it on a
+goroutine of its own and delivers the result with `Poster.PortPost`.
+`Run` checks its context between steps, so a blocked driver delays its
+return. `Run(ctx)` is the loop of section 18.5
+in Go: it steps the VM, waits on its `Wake` channel (the latch) or its
+next deadline while it is idle, and returns when the program has finished
+or the context ends. Other goroutines post through a `Poster`, which is
+safe for concurrent use. The example runs the VM on a goroutine of its
+own and posts from five more:
+
+```go
+	// Posters are made on the VM's goroutine, before Run takes it over.
+	posters := make([]*embed.Poster, 5)
+	for i := range posters {
+		if posters[i], err = vm.NewPoster(); err != nil {
+			log.Fatal(err)
+		}
+	}
+	done := make(chan error, 1)
+	go func() { done <- vm.Run(context.Background()) }()
+```
+
+The Go values the C hooks reach cross as `cgo.Handle` numbers, so no Go
+pointer is kept by C; memory comes from C's `malloc`, counted, and the
+binding's tests check that every byte comes back when a VM is closed. A
+panic in a hook or driver is caught at the C boundary and raised again
+when the call that ran it (`Step`, `Load`, ...) returns. `make
+test-gobind` runs the binding's tests, also under the race detector.
+
+## 18.13 Compiling in process
+
+A host can also compile source at run time, without the `gogo` command.
+In Go, `embed.Compile` takes the source files (a map of paths to
+contents; `CompileFS` takes an `fs.FS`, `CompileDir` a path) and
+returns the image `gogo build` would make:
+
+```go
+	img, err := embed.Compile(map[string][]byte{"main.gg": program}, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+```
+
+Files at the top level are package main; a subdirectory is a user
+package, imported under `CompileOptions.Root` (`"app"` serves `import
+"app/util"`). Errors name the files by their keys (`main.gg:3:5: ...`).
+The search path is empty unless `CompileOptions.Path` gives one, so a
+build reads only its sources and the gogo libraries. `Compile` writes the
+files into a temporary directory, which the compiler reads, and removes
+it; calls may run on many goroutines at once.
+
+A C host links `libgogoc.a` (`make libgogoc`), the same compiler built
+as a Go c-archive, with the header
+[`embed/gogoc/gogoc.h`](../../embed/gogoc/gogoc.h). `gogoc_compile`
+takes a path (a directory or a `.gg` file) or, with `GOGOC_SOURCE`, the
+text of one file; `examples/embed-c/compile.c` compiles and runs:
+
+```c
+    if (gogoc_compile(in, strlen(in), source ? GOGOC_SOURCE : 0, &img, &len, &msg) != 0) {
+        fprintf(stderr, "%s\n", msg);   /* "main.gg:3:5: ..." */
+        gogoc_free(msg);
+        return 1;
+    }
+```
+
+```sh
+cc -std=c99 -Iembed/gogoc -Iruntime/include -o compile compile.c build/libgogoc.a build/libgogo.a -pthread
+./compile -e 'package main
+
+func main() { println("hi", 1+2) }'
+```
+
+On success the image comes with the warnings in `msg` (or `NULL`); both
+are freed with `gogoc_free`. The call is thread-safe.
+
+`libgogoc.a` carries the Go runtime: a 6 MB archive that adds about
+5 MB to a program, and a few threads that start with the
+program. A process can hold only one Go runtime, so it links at most one
+Go c-archive, and a Go program does not link `libgogoc.a` at all: it
+calls `embed.Compile`. As with `libgogo.a`, the archive's objects are
+prelinked so that only the `gogoc_*` functions are global; the Go
+runtime's C symbols (`crosscall2`, `x_cgo_init`, ...) are local, and
+`make test-gogoc` links a host that defines functions of those names. A
+host that only runs precompiled images needs none of this.
+
+## 18.14 What is stable
 
 From v0.2 the API has a compatibility promise: within a major version
 (during 0.x, within a minor) functions keep their signatures and
@@ -704,7 +836,12 @@ deprecation:
 The compiler then warns at each use (`make test-libgogo` builds its
 host this way with `-Werror`, to keep it on the stable part).
 
-## 18.13 Limits
+The Go binding (`gogotools/embed`) and `libgogoc.a` (`gogoc.h`) are new
+in this version and outside the promise: they may change in any minor
+release. Their experimental parts are the C API's (host ports,
+`Grant`, `FSRoot`, `FSQuota`, `CodeLoad`, `Stats`, image inspection).
+
+## 18.15 Limits
 
 - No network, TLS or board peripherals in the library yet; host ports are
   the way to give a program access to the host's own devices.
@@ -715,3 +852,5 @@ host this way with `-Werror`, to keep it on the stable part).
   away on another thread hands the news to that thread first (a flag it
   checks between steps, say).
 - The `fs_quota` counts regular-file bytes only (section 18.8).
+- `libgogoc.a` brings the Go runtime, and only one Go runtime fits in a
+  process (section 18.13).

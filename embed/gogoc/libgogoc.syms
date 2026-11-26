@@ -1,0 +1,6 @@
+# The functions libgogoc.a exports: exactly these, and exactly the
+# GOGOC_API declarations of gogoc.h (tools/libsyms.sh checks both).
+# Sorted (LC_ALL=C); an API change edits this list in the same commit.
+gogoc_compile
+gogoc_free
+gogoc_image_format

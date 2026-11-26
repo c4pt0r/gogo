@@ -928,7 +928,36 @@ rebuilt:
   test workflow runs them daily on Ubuntu x86-64 and macOS, where they
   have passed.
   `make test-embed-tsan` and `make test-embed-leaks` (LeakSanitizer) have
-  not run on Linux.
+  not run on Linux. The Go binding's tests (`make test-gobind`, with
+  the race detector) and `libgogoc.a`'s ELF prelink (`make test-gogoc`)
+  pass on Linux arm64 (Debian, GNU ld and objcopy 2.44); on x86-64 the
+  test workflow is their first run.
+- **`libgogoc.a` brings the Go runtime.** The compiler library is a Go
+  c-archive: it adds about 5 MB and the Go runtime's threads to a
+  program, and a process can link only one Go c-archive (two Go runtimes
+  do not coexist), so a C program that already links another Go library
+  cannot link it. A Go program uses `embed.Compile` instead.
+- **In-process compilation goes through a temporary directory.**
+  `embed.Compile`, `CompileFS` and `gogoc_compile` with `GOGOC_SOURCE`
+  write the sources into a directory under `$TMPDIR` for the compiler to
+  read, and remove it after; they fail where no temporary directory is
+  writable. *Workaround:* `embed.CompileDir` (or `gogoc_compile` on a
+  path) reads a directory in place.
+- **The Go binding links a prebuilt `libgogo.a`.** `gogotools/embed`'s
+  VM half needs the build tag `libgogo`, cgo and `libgogo.a` from `make
+  lib`, named by `CGO_LDFLAGS=-L<dir>`; `go install` of the module alone
+  cannot build it. go does not notice a rebuilt `libgogo.a`: `make`
+  passes the archive's checksum in a link flag to force a relink; by
+  hand, use `go build -a` or the same flag.
+- **A blocking hook or driver holds up the VM.** The Go binding's hooks
+  and port drivers run inside `Step`; one that blocks stops the VM, and
+  `Run(ctx)` sees its context only between steps. *Workaround:* do slow
+  work on a goroutine and report back with `Poster.PortPost` or
+  `Poster.Post`.
+- **The Go binding does not check threads.** A VM's methods must not be
+  called concurrently; nothing stops a program that does (the race
+  detector does not see into the C library). Use a `Poster` from other
+  goroutines.
 - **No leak checking of the net and TLS C code.** `make test-tls-asan`
   turns LeakSanitizer off, because the C suites' fixtures and gogovm's
   exit do not free their VM, so a leak in the net stack or the TLS port
