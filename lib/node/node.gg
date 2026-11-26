@@ -11,18 +11,24 @@
 //
 // Both ends need the same shared token: the config key node.token (or
 // Options.Token). A node without one refuses to listen or connect. The
-// handshake is a challenge-response with HMAC-SHA-256 over plain TCP; the
-// traffic itself is not encrypted (see the book on security).
+// handshake is a challenge-response with HMAC-SHA-256 over plain TCP, and
+// every frame then carries a MAC under a session key; the traffic itself
+// is not encrypted (see the book on security).
 //
 // What crosses: ints, int64, bool, string, bytes.Bytes, []byte, slices,
 // nil, actor PIDs, Refs, the reserved structs (actor.Request, ...) and a
-// module's own structs, matched by qualified name ("snake/board.View") and
-// field count in the receiving program (a struct the receiver does not
-// have is dropped there). A closure, a bytes.Buffer, a port's PID, nesting
-// deeper than 16 or more than 4 KB of encoding crashes the sender with
-// actor.BadMsg. Delivery is at most once and in order between two actors;
-// when a node becomes unreachable, monitors of its actors get a DownMsg
-// with reason actor.NoConnection and links an exit signal with it.
+// module's own structs, matched by qualified name ("snake/board.View"),
+// field count and field kinds in the receiving program (a struct the
+// receiver does not have is dropped there). A closure, a bytes.Buffer, a
+// pointer or map, a port's PID, nesting deeper than 16 or more than 4 KB
+// of encoding crashes the sender with actor.BadMsg. Delivery is at most
+// once and in order between two actors; when a node becomes unreachable,
+// monitors of its actors get a DownMsg with reason actor.NoConnection,
+// links an exit signal with it, and Calls to it fail at once.
+//
+// A peer reaches a node's door (its zero PID), which only answers
+// Whereis for names exported with Register, and the PIDs the node gave
+// out in messages; never the agent that keeps the names.
 //
 // Drivers: "tcp", "tcp_listen" and "node", opened without requiring them,
 // so a program that only may join a node runs on a firmware without

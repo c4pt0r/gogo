@@ -739,38 +739,49 @@ rebuilt:
 ## Distributed actors (`gogo/node`)
 
 - **Node links are not encrypted.** The handshake proves the shared token
-  (HMAC-SHA-256 challenge-response, the token never sent), but the
-  messages then travel in plain TCP: anyone on the network path can read
-  them and could inject frames into an established link. A captured
-  handshake also allows an offline guess of a weak token. *Workaround:* a
-  trusted network and a long random token. TLS on node links needs a TLS
-  *server* port, which gogo does not have yet.
+  (HMAC-SHA-256 challenge-response, the token never sent) and every frame
+  carries a MAC under a session key, so frames cannot be changed, injected
+  or replayed; but anyone on the network path can read them, and a
+  captured handshake allows an offline guess of a weak token.
+  *Workaround:* a trusted network and a long random token. Encryption
+  needs a TLS *server* port (or an AEAD on the frames), which gogo does
+  not have yet.
 - **A star only.** Boards reach each other through the server; there are
   no direct board-to-board links yet, and a lost server cuts every board
   off (monitors and links fire with `NoConnection`).
 - **The server node is a host VM** (`gogovm --host-net` / `GOGO_NET=host`):
-  an embedding program cannot be one yet, and under `GOGO_NET=host` the
-  host VM has `tcp` and `tcp_listen` only (no `udp`, DNS or DHCP), so
-  addresses are numeric.
-- **Fixed tables.** 64 remote PIDs known at once (a message that needs
-  another is dropped), 64 local PIDs given out (dead ones are reused; with
-  64 live ones a message that would give out another is dropped), 32
-  remote links and monitors (a full table answers with `NoConnection`), 8
-  links. Remote PIDs are not reclaimed while their node is connected.
-- **Not across nodes:** `actor.Kill` and `actor.SendAfter` of a remote PID
-  do nothing, `actor.Info` reports 0, a remote exit reason has no function
-  name, and the sharing of values inside one message is not kept (two
-  fields naming one slice arrive as two copies).
-- **Own structs are matched by name and field count only.** A struct of
-  the same qualified name and field count but other field types is
-  accepted, and the receiver's code then meets values of the wrong type
-  (badcode where it uses them). Share message types through one package.
+  an embedding program cannot be one yet. Under `GOGO_NET=host` the host
+  VM has `tcp` and `tcp_listen` only (no `udp`, DNS, DHCP or `tls`: the
+  `tls` port still runs on the simulated stack), so addresses are
+  numeric; `tcp_listen` binds every interface of the computer and `tcp`
+  connects anywhere.
+- **At most 7 boards per server.** Each board takes two of the server's
+  16 ports (its TCP connection and its node link), the listener one.
+- **Fixed tables.** 64 remote PIDs known at once (a full table gives up
+  the least recently used one that no link or monitor names; a message
+  that needs one more when none can go is dropped), 64 local PIDs given
+  out (dead ones are reused), 32 remote links and monitors (a full table
+  answers with `NoConnection`), 16 Calls in flight, 8 links.
+- **Who can reach what.** The PIDs a node gave out are reachable by every
+  peer, not only by the one they were sent to.
+- **Not across nodes:** `actor.SendAfter` to a remote PID is `BadMsg`,
+  `actor.Info` reports 0, a remote exit reason has no function name, the
+  sharing of values inside one message is not kept (two fields naming one
+  slice arrive as two copies), pointers and maps do not cross, and a Ref
+  sent back to the node that made it is dropped there.
+- **Own structs** are matched by qualified name, field count and field
+  kinds (a shape hash the compiler stores with the type's name). Images
+  from a compiler before the hash match by name and field count only; a
+  mismatched definition then gives the receiver values of the wrong kind,
+  which may misbehave where it uses them. Share message types through one
+  package.
 - **Drops are silent.** At most once means a message can be lost (a full
-  link queue, no route, a full table) without the sender knowing; the
-  counters (`dist_stats`) are visible to C only.
-- **Config keys.** `node.token` and `node.name` are not in `gogo config
-  keys` yet, so `gogo config set` does not check them (they work as plain
-  keys).
+  link queue, a full table, a receiver over its memory limit) without the
+  sender knowing; the counters (`dist_stats`) are visible to C only.
+- **Remote link and monitor notes are made when they fire.** The VM
+  reserves the memory of a local link's or monitor's note in advance; a
+  remote one is allocated when it fires, so under memory exhaustion it
+  can be lost.
 
 ## Storage
 

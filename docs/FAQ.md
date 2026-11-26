@@ -500,14 +500,18 @@ Yes, with `gogo/node` (book chapter 20). A remote PID is an ordinary
 whether the target is local, on another board or on a server. It is a
 star: boards connect over TCP to a server node (a host VM with real
 sockets, `GOGO_NET=host gogo run ...`), which also relays board-to-board
-messages. Nodes prove a shared token (`node.token`) with HMAC-SHA-256;
-a remote node can reach only names you export with `node.Register` and
-PIDs you sent it. When a node becomes unreachable, monitors get a
-`DownMsg` and links an exit signal with reason `actor.NoConnection`.
-Messages may hold the basic values, PIDs, Refs, system structs and your
-own structs (matched by qualified name and field count), up to 4 KB;
-delivery is at most once and in order between two actors. The links are
-not encrypted yet. The snake example runs its autopilot on the server.
+messages. Nodes prove a shared token (`node.token`) with HMAC-SHA-256,
+and every frame then carries a MAC under a session key, so frames cannot
+be changed or injected (they are not encrypted, though: use a trusted
+network). A peer reaches a node's door, which answers lookups of names
+exported with `node.Register`, and the PIDs the node has given out in
+messages; never its agent, or a PID it did not give out. When a node
+becomes unreachable, monitors get a `DownMsg` and links an exit signal
+with reason `actor.NoConnection`, and Calls to it fail at once. Messages
+may hold the basic values, PIDs, Refs, system structs and your own
+structs (matched by qualified name, field count and field kinds), up to
+4 KB; delivery is at most once and in order between two actors. The
+snake example runs its autopilot on the server.
 Direct links between boards on the same network, with the server as
 directory and fallback relay, are the next step.
 

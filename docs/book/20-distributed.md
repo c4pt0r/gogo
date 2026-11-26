@@ -29,7 +29,9 @@ and then use it like any other:
 | `actor.Link(p)` / `Unlink` | exit signals both ways; `NoConnection` when the node is lost |
 | `==`, type switches | as for local PIDs: one remote actor has one PID value on this node |
 | `println(p)` | `<pid 5@2>`: actor slot 5 on node 2 |
-| `actor.Kill`, `actor.SendAfter`, `actor.Info`, `actor.Register` | not across nodes: Kill and SendAfter do nothing, Info reports 0, Register refuses |
+| `actor.Kill(p, code)` | an exit signal on `p`'s node, as for a local actor (`p` must have been given out by its node; a node's door cannot be killed) |
+| `actor.SendAfter(ms, p, m)` | not across nodes: the sender exits with `actor.BadMsg` |
+| `actor.Info`, `actor.Register` | Info reports 0; Register refuses a remote PID |
 
 A PID of this node that comes back from another node is the local PID
 again, so `actor.Self()` sent away and back is `== actor.Self()`.
@@ -39,7 +41,10 @@ again, so `actor.Self()` sent away and back is `== actor.Self()`.
 The server is a gogo program on a host VM that uses the host's sockets:
 `gogovm --host-net`, or `GOGO_NET=host` in the environment, which also
 works through `gogo run`. (Without it the host VM's `tcp` port is the
-simulated network of the tests, chapter 12.)
+simulated network of the tests, chapter 12.) With it, a program gets the
+host's real network: `tcp_listen` listens on every interface of the
+computer, and `tcp` may connect anywhere. Do not export `GOGO_NET=host`
+in a shell profile: every `gogo run` would get real sockets.
 
 ```go
 func main() {
@@ -100,8 +105,9 @@ the receiver's. What may cross:
 | `int`, `int64`, `bool`, `string`, `bytes.Bytes`, `[]byte`, slices, `nil` | yes |
 | actor PIDs, Refs | yes |
 | the system structs (`actor.Request`, `port.Chunk`, `net.Addr`, ...) | yes |
-| your own structs | yes, by name: the receiver must have a struct of the same qualified name (`snake/board.View`, `main.Ping`) and the same number of fields; otherwise the receiver drops the message |
-| func values, `bytes.Buffer`, a port's PID | no: the sender exits with `actor.BadMsg` |
+| your own structs | yes, by name: the receiver must have a struct of the same qualified name (`snake/board.View`, `main.Ping`), the same number of fields and the same field kinds (int, string, PID, a slice of int, ...); otherwise the receiver drops the message |
+| func values, `bytes.Buffer`, pointers and maps, a port's PID | no: the sender exits with `actor.BadMsg` |
+| a Ref made by the receiving node itself | no: the receiver drops the message (a peer could otherwise forge a reply or a `DownMsg`) |
 | a value nested deeper than 16, or more than about 4 KB encoded | no: `actor.BadMsg` |
 
 The simplest way to share message types is a package that both programs
@@ -116,7 +122,7 @@ message arrive as separate copies (local sends keep the sharing), and a
 ## 20.5 When a node goes away
 
 Links and monitors cover remote actors exactly as local ones, with one
-new reason, `actor.NoConnection` (10): the node holding the actor became
+new reason, `actor.NoConnection` (11): the node holding the actor became
 unreachable (its TCP connection ended, or the server reported it gone).
 
 ```go
@@ -130,7 +136,13 @@ case actor.DownMsg:
 
 A board that loses the server loses every node at once. Monitoring or
 linking a PID whose node is already gone gets the `DownMsg` or exit
-signal at once, as for a dead local actor (with `NoConnection`).
+signal at once, as for a dead local actor (with `NoConnection`). A
+`Killed` exit reaches a linked actor that traps exits as an `ExitMsg`,
+as locally.
+
+`actor.Call` to a PID whose node is gone returns `(nil, false)` at once,
+as a Call to a dead local actor does, and so does a Call waiting for its
+reply when the node goes.
 
 `node.Subscribe()` makes the caller receive `node.Up{Node}` and
 `node.Down{Node}` for every node that joins or goes. A board that wants
@@ -149,30 +161,42 @@ for {
 ## 20.6 Delivery
 
 - **At most once.** A message is never duplicated. It may be lost: when
-  the link is down or full, when its node is gone, or when the receiver
-  does not have its struct type. `Call` then times out, as for a dead
-  local server.
+  the link is full, when the receiver does not have its struct type, or
+  when it would take the receiver over its memory limit. A `Call` whose
+  request or reply is lost that way waits for its timeout (a Call to a
+  node that is gone fails at once, 20.5).
 - **In order** between one sender and one receiver, relayed or not.
 - **Backpressure.** Each connection's link actor sends frames to TCP at
   TCP's pace (the stream protocol's `Out` and `Done`, chapter 10.7) and
   queues up to 8 KB more; beyond that, messages are dropped. Senders never
-  block. The receiver's memory limit applies as for local messages: a
-  receiver flooded over its limit exits with `MailboxOverflow`.
+  block. Unlike a local send, a remote message that would take its
+  receiver over its memory limit is dropped: a peer cannot end a local
+  actor by sending it data.
 
 ## 20.7 Security
 
 - **Authentication.** Both ends prove the token with a challenge and
   HMAC-SHA-256; the token itself never crosses the network. A node with
   the wrong token is refused.
-- **What a peer can reach.** A remote node can send only to actors this
-  node exported: names from `node.Register`, and PIDs this node sent out
-  in a message (a `Request`'s `From`, a field). Guessing a PID gets it
-  nothing; link and monitor signals are accepted only for links and
-  monitors that exist.
+- **What a peer can reach.** A node's zero PID is its *door*, which only
+  answers `node.Whereis` for names exported with `node.Register`; the
+  node's agent, which keeps the names and the node table, is never
+  reachable from outside. Besides the door, a peer can send to the PIDs
+  this node gave out in a message to *any* peer (a `Request`'s `From`, a
+  field): the list is per node, not per peer, and a PID once seen by one
+  peer may be passed to another. A PID the node never gave out reaches
+  nothing; link, monitor and kill signals need a PID given out, and exit
+  and down signals are accepted only for links and monitors that exist.
+- **Integrity.** Both ends derive a session key from the token and the
+  handshake, and every frame carries a MAC (HMAC-SHA-256) over its
+  number: a frame changed, injected or replayed on the way ends the link.
 - **Not encrypted.** The messages travel in plain TCP; someone on the
-  network can read them and, after the handshake, could inject into a
-  connection. Use a trusted network and a long random token. TLS for node
+  network can read them. Use a trusted network and a long random token
+  (a captured handshake allows guessing a weak one offline). TLS for node
   links is not there yet (known issues).
+- **Unauthenticated connections** may hold at most two handshakes at a
+  time on a server; more are closed at once, and a handshake that does not
+  finish within its timeout (5 s) ends.
 - All nodes with the token are trusted alike.
 
 ## 20.8 Example: the snake's autopilot on a server
@@ -195,7 +219,7 @@ delays a few by several hundred ms).
 | Limit | Value |
 |---|---|
 | frame (one message, encoded) | 4096 bytes |
-| node links per VM | 8 |
+| node links per VM | 8; a server node serves at most 7 boards (each board takes 2 of its 16 ports, the listener one) |
 | remote PIDs known at once | 64 (a message that needs one more is dropped) |
 | local PIDs given out | 64 (dead ones are reused) |
 | remote links and monitors | 32 (a full table answers with `NoConnection`) |
