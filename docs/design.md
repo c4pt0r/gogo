@@ -802,7 +802,7 @@ text grid while it is open.
 - **Memory** (measured on the ESP32-S3): the stack's fixed state is
   3640 B (budget 4096 B, checked at compile time); a TCB is 56 B, a UDP
   control block 12 B, a `Port` 64 B (32-bit); the net code is about
-  12.1 KB (`make netsize`). The Wi-Fi driver takes about 30 KB of heap and
+  11.8 KB (`make netsize`). The Wi-Fi driver takes about 30 KB of heap and
   31.5 KB of static RAM; lwIP and esp_netif are not linked.
 - **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs}) error` starts the DHCP
   client actor, which owns `netif` (renewal at T1, rebinding at T2, the
@@ -1484,7 +1484,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   actor that hands the port over), so a UI composes with other messages.
   It declares `//gogo:optional kbd`.
 - **Switch and sizes.** Kconfig `GOGO_SCREEN` (on): the board lists the
-  driver, the requirement `screen`; `screen.Config` is image format 15.1. `runtime/screen` is 4.9 KB of code on the
+  driver, the requirement `screen`; `screen.Config` is image format 15.1. `runtime/screen` is 4.8 KB of code on the
   ESP32-S3 with no fixed state (`make screensize`); the firmware grows by
   about 5.1 KB, plus the 1760-byte shared grid allocated at the first
   open.
