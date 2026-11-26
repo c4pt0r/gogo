@@ -58,6 +58,8 @@ int image_part_map(const uint32_t **words, uint32_t *nwords);
  * Failures are logged on serial and leave the console off. No-op when built
  * with GOGO_ESP_CONSOLE=0. */
 void console_esp_start(void);
+/* The "screen" port (GOGO_SCREEN; console_task.c draws its grid). */
+extern const struct PortDriver esp_screen_driver;
 /* GOGO_CONSOLE_VERBOSE builds: logs the time the VM spent in console writes. */
 void console_esp_report(void);
 /* Copies n bytes into the console grid (CON_WHITE / CON_RED) under a short

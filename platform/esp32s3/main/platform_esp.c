@@ -437,6 +437,9 @@ static const struct PortDriver *const esp_ports[] = {
 #if HAS_SPK && CONFIG_GOGO_AUDIO
     &input_spk_driver,
 #endif
+#if CONFIG_GOGO_SCREEN && GOGO_ESP_CONSOLE   /* the console task draws the grid */
+    &esp_screen_driver,
+#endif
     NULL
 };
 
