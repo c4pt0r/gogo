@@ -440,3 +440,31 @@ func TestUserPackageMoreErrors(t *testing.T) {
 		})
 	}
 }
+
+// Functions of user packages are named by import path in the image,
+// libraries by package name.
+func TestUserPackageNames(t *testing.T) {
+	work := t.TempDir()
+	app := writeTree(t, filepath.Join(work, "app"), map[string]string{
+		"main.gg":     "package main\n\nimport (\n\t\"app/a/util\"\n\t\"gogo/strings\"\n)\n\nfunc main() { util.Mk(); println(strings.TrimSpace(\" \")) }\n",
+		"a/util/u.gg": "package util\n\nimport \"app/b/util\"\n\nfunc Mk() { f := func() { util.Mk() }; f() }\n",
+		"b/util/u.gg": "package util\n\nfunc Mk() {}\n",
+	})
+	prog, err := buildRun(t, app, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := Compile(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := Disassemble(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{"func app/a/util.Mk ", "func app/b/util.Mk ", "func app/a/util.Mk.func1 ", "func strings.TrimSpace "} {
+		if !strings.Contains(text, w) {
+			t.Errorf("disassembly lacks %q", w)
+		}
+	}
+}

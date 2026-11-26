@@ -108,12 +108,24 @@ type gen struct {
 }
 
 // qualified names a function or type of package pkg in the image: plain
-// for package main, pkg.Name otherwise.
+// for package main, pkgPrefix.name otherwise.
 func (g *gen) qualified(pkg *types.Package, name string) string {
 	if pkg == g.p.Pkg {
 		return name
 	}
-	return pkg.Name() + "." + name
+	return pkgPrefix(pkg) + "." + name
+}
+
+// pkgPrefix names package pkg in the image's function and type names: a
+// library by its package name (strings.Index), a user package by its
+// import path (app/a/util.Mk), so that two user packages of one name, or
+// a user package named like a library, stay apart in crash reports,
+// actor.Reason.Func and gogo dis.
+func pkgPrefix(pkg *types.Package) string {
+	if isUser(pkg.Path()) && pkg.Path() != "main" {
+		return pkg.Path()
+	}
+	return pkg.Name()
 }
 
 // structType returns the named struct type behind t, or nil. actor.PID,
