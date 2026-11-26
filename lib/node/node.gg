@@ -457,28 +457,43 @@ func agentRun() {
 				actor.Monitor(r.PID)
 				actor.Reply(m, true)
 			case assignReq: // server: a board passed the handshake
-				for i, p := range peers {
-					if p.Name == r.Name && p.Link != zero {
-						actor.Send(p.Link, kick{}) // a rebooted board: its old link goes
-						peers = without(peers, i)
-						notify(subs, Down{Node: r.Name})
-						break
-					}
-				}
 				if r.Name == name {
 					actor.Reply(m, 0)
 					break
 				}
-				id := nextID
-				nextID++
-				if nextID > 65535 {
-					nextID = 2
+				// The next id no live board has (ids wrap after 65535).
+				id := 0
+				for k := 0; k < 65534 && id == 0; k++ {
+					c := nextID
+					nextID++
+					if nextID > 65535 {
+						nextID = 2
+					}
+					inUse := false
+					for _, p := range peers {
+						if p.ID == c {
+							inUse = true
+						}
+					}
+					if !inUse {
+						id = c
+					}
 				}
 				actor.Reply(m, id)
 			}
 		case linkUp:
 			if !server {
 				selfID = m.Self
+			}
+			// A board of that name already here (it rebooted): its old link
+			// goes, now that the new one is open.
+			for i, p := range peers {
+				if server && p.Name == m.Name && p.Link != zero {
+					actor.Send(p.Link, kick{})
+					peers = without(peers, i)
+					notify(subs, Down{Node: p.Name})
+					break
+				}
 			}
 			ref := actor.Monitor(m.Link)
 			peers = append(peers, peer{Name: m.Name, ID: m.ID, Agent: m.Agent, Link: m.Link, Ref: ref})
