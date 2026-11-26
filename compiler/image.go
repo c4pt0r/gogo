@@ -22,10 +22,11 @@ const (
 	// 14 came before: see runtime/vm/image.h).
 	imageMajor = 15
 	// imageMinor is the newest feature minor. Renumbering a feature's
-	// minor touches its constant here (floatMinor, sizedMinor), IMAGE_MINOR
-	// in runtime/vm/image.h when it is the newest (TestTermsMatchC checks
-	// both), and the "15.N" in docs and opcodes.h comments.
-	imageMinor = max(floatMinor, sizedMinor)
+	// minor touches its constant here (floatMinor, sizedMinor, ifaceMinor),
+	// IMAGE_MINOR in runtime/vm/image.h when it is the newest
+	// (TestTermsMatchC checks both), and the "15.N" in docs and opcodes.h
+	// comments.
+	imageMinor = max(floatMinor, sizedMinor, ifaceMinor)
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -41,7 +42,8 @@ const (
 // 15.0; 15.1 added screen.Config; 15.2 floating point (the float ops,
 // B_FLOAT, and the K_FLOAT constants and TYPEIS ids, which scan counts
 // apart: floatMinor); 15.3 sized integers (the unsigned ops, B_PRINTLNU
-// and the new CONV modes: sizedMinor). A reserved type is keyed by its image name ("port.Chunk"); its
+// and the new CONV modes: sizedMinor); 15.4 the builtins and reserved
+// types of panic, interfaces and equality (ifaceMinor). A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
 var (
@@ -50,8 +52,12 @@ var (
 		OpEqf: floatMinor, OpNef: floatMinor, OpLtf: floatMinor, OpLef: floatMinor, OpConvf: floatMinor,
 		OpDivu64: sizedMinor, OpRemu64: sizedMinor, OpLtu64: sizedMinor, OpLeu64: sizedMinor, OpShru64: sizedMinor,
 	}
-	builtinMinor = map[uint32]uint16{BFloat: floatMinor, BPrintlnu: sizedMinor}
-	typeMinor    = map[string]uint16{
+	builtinMinor = map[uint32]uint16{
+		BFloat:    floatMinor,
+		BPrintlnu: sizedMinor,
+		BPanic:    ifaceMinor,
+	}
+	typeMinor = map[string]uint16{
 		"screen.Config": 1, // 15.1: the "screen" port
 	}
 )
@@ -65,6 +71,11 @@ const floatMinor = 2
 // unsigned op, B_PRINTLNU, or a CONV mode they added (convMinor) needs
 // it.
 const sizedMinor = 3
+
+// ifaceMinor is the minor of the language's abstraction phase (15.4:
+// panic, interfaces, equality): every builtin and reserved type it added
+// is stamped with it.
+const ifaceMinor = 4
 
 // convMinor is the minor of an OP_CONV with mode c (op): the modes 0-2
 // are 15.0's.

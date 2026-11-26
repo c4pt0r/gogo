@@ -68,7 +68,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpShru64)+1 || len(builtinNames) != int(BPrintlnu)+1 {
+	if len(opNames) != int(OpShru64)+1 || len(builtinNames) != int(BPanic)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -107,8 +107,8 @@ func TestReasonCodesMatchC(t *testing.T) {
 			goCodes[upperSnake(name)] = v
 		}
 	}
-	if len(goCodes) != 11 {
-		t.Errorf("gogo/actor has %d constants, want the 10 reason codes and Failed", len(goCodes))
+	if len(goCodes) != 12 {
+		t.Errorf("gogo/actor has %d constants, want the 11 reason codes and Failed", len(goCodes))
 	}
 	for n, v := range goCodes {
 		if cv, ok := cCodes[n]; !ok || cv != v {
@@ -248,8 +248,8 @@ func TestTermsMatchC(t *testing.T) {
 			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
 		}
 	}
-	if newest := max(floatMinor, sizedMinor); imageMajor != 15 || imageMinor != newest {
-		t.Errorf("image format %d.%d, want 15.%d (the newest of floatMinor and sizedMinor)", imageMajor, imageMinor, newest)
+	if newest := max(floatMinor, sizedMinor, ifaceMinor); imageMajor != 15 || imageMinor != newest {
+		t.Errorf("image format %d.%d, want 15.%d (the newest of floatMinor, sizedMinor and ifaceMinor)", imageMajor, imageMinor, newest)
 	}
 }
 

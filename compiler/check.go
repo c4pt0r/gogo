@@ -369,6 +369,9 @@ func (c *checker) isIntConv(call *ast.CallExpr) bool {
 // isByte reports whether t is byte (uint8), unnamed.
 func isByte(t types.Type) bool { return basicKind(t) == types.Uint8 }
 
+// anyType is the empty interface, any.
+var anyType = types.Universe.Lookup("any").Type()
+
 // isAny reports whether t is the empty interface.
 func isAny(t types.Type) bool {
 	if t == nil {
@@ -1094,6 +1097,13 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 			switch obj.Name() {
 			case "len", "cap", "append", "make", "copy":
 				c.seqBuiltin(call, obj.Name())
+				return
+			case "panic": // panic(v): v goes into an any
+				c.convert(anyType, call.Args[0])
+				c.expr(call.Args[0])
+				return
+			case "recover":
+				c.unsupported(call, "recover (a panic ends the actor: let its supervisor restart it)")
 				return
 			case "println":
 			default:

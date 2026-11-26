@@ -262,7 +262,7 @@ rebuilt:
 
 - **Not supported yet (planned).** The compiler rejects maps, pointer
   receivers ("pointer receivers are not supported yet"), pointers, package-level `var`s, a `switch` on an
-  `any` or a struct value, type assertions, `panic`, the `error` type
+  `any` or a struct value, type assertions, the `error` type
   and interfaces other than `any` ("interface
   types are not supported yet": methods are called on concrete types
   only). `goto` is rejected (labeled `break` and
@@ -398,6 +398,10 @@ rebuilt:
 - **Some error messages are unhelpful.** An interface type gives `type
   definition other than struct or an integer, float, bool or string type
   not supported`.
+- **`panic` ends the actor; there is no `recover`.** A panic is a crash
+  with the reason `actor.Panic`, for links, monitors and supervisors to
+  handle. Its value prints as `println` prints it (a struct as `{1 2}`),
+  where Go prints a struct's type and address.
 - **`println` of a slice differs from Go.** gogo prints the elements,
   `[1 2 3]`; Go's `println` prints `[len/cap]address` (only
   `fmt.Println` prints elements).

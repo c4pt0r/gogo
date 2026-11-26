@@ -461,7 +461,8 @@ type Request struct{ From PID; Ref Ref; Body any }
 
 Reason codes: `Normal`, `Killed`, `OutOfMemory`, `MailboxOverflow`,
 `NoProc`, `DivZero`, `BadCode`, `Shutdown`, `BadShift`, `BadMsg` (a value
-that may not cross modules was sent, §5.4.4); user codes start at 100.
+that may not cross modules was sent, §5.4.4), `Panic` (`panic(v)`);
+user codes start at 100.
 
 A type switch takes the place of Erlang's pattern matching on receive:
 
@@ -1713,7 +1714,8 @@ together with `mbox_words` through `actor_charged_words`).
   `TYPEIS` ids of `float32` and `float64`, which also make the image
   require `float`; 15.3 sized integers, the unsigned `uint64` ops,
   `B_PRINTLNU` and `OP_CONV` modes 3-6 (`sizedMinor`, which the scan
-  reads off each `OP_CONV`'s mode).
+  reads off each `OP_CONV`'s mode); 15.4 the language's abstraction
+  phase, `panic` and the interface and equality builtins (`ifaceMinor`).
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old
@@ -1744,7 +1746,8 @@ together with `mbox_words` through `actor_charged_words`).
   `B_FS` (gogo/fs), 50 `B_CODE` (gogo/code), 51-53 `sys.Time`,
   `sys.SetTime`, `sys.Random`, 54 `B_FLOAT` (15.2: gogo/math and
   `strconv.FormatFloat` / `ParseFloat`, `runtime/floatlib`), 55
-  `B_PRINTLNU` (15.3: `println` with `uint64` values).
+  `B_PRINTLNU` (15.3: `println` with `uint64` values); from 15.4, 56
+  `panic`.
 - **Float ops** (15.2, `OP_ADDF` .. `OP_CONVF`, 52-61): one set for both
   widths. The operands' boxes carry the width (a 2-word `K_FLOAT` is a
   `float32`, a 3-word one a `float64`), and the op computes in it; mixed
@@ -1790,9 +1793,10 @@ together with `mbox_words` through `actor_charged_words`).
 - **Exit reasons** are `actor.Reason{Code int; Func string}`. `Code` is
   `actor.Normal` (the entry function returned), `Killed`, `OutOfMemory`,
   `MailboxOverflow`, `NoProc`, `DivZero`, `BadCode`, `Shutdown`,
-  `BadShift`, `BadMsg`, a library failure (64..99: `actor.Failed` (64)
-  plus a shared error code, such as `http.ListenFailed`; 10..63 are kept
-  for the VM), or a user code (100 or more, from
+  `BadShift`, `BadMsg`, `Panic` (10), a library failure (64..99:
+  `actor.Failed` (64) plus a shared error code, such as
+  `http.ListenFailed`; 11..63 are kept for the VM), or a user code (100
+  or more, from
   `actor.Exit(code)` / `actor.Kill(p, code)`); `Func` is the name of the
   function where a run-time error happened, else empty.
 - On exit, linked actors get an exit signal (an `ExitMsg` if they trap
@@ -1804,9 +1808,14 @@ together with `mbox_words` through `actor_charged_words`).
   trapped.
 - Crash reports go to stderr: `gogo: actor <pid N> crashed: <kind>[ in
   <func>]`, where `<kind>` is `killed`, `oom`, `mailbox_overflow`,
-  `noproc`, `divzero`, `badcode`, `badshift`, `badmsg` or `exit(<code>)`;
-  `Normal` and `Shutdown` are not reported. There are no line numbers
-  yet.
+  `noproc`, `divzero`, `badcode`, `badshift`, `badmsg`, `panic` or
+  `exit(<code>)`; `Normal` and `Shutdown` are not reported. There are no
+  line numbers yet.
+- **`panic(v)`** (builtin 56 `B_PANIC`, 15.4) prints `panic: ` and `v`
+  (as `println` prints it) on stderr and ends the actor with
+  `actor.Panic`, like any run-time error: links, monitors and supervisors
+  see it. There is no `recover`: a supervisor restarts the actor
+  instead.
 - **Error codes** are one space, `gogo/errors` (`errors.Code`; the C
   side's `GOGO_E_*` in `runtime/include/gogo_errors.h`, which a test keeps
   equal): 0 is `OK`, 1..35 are meanings every package shares

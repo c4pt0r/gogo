@@ -35,6 +35,7 @@ func main() {
 		f()
 	})
 	watch("endless recursion", func() { println(deep(0)) })
+	watch("panic", func() { panic("boom") })
 	watch("killed", func() {
 		actor.Kill(actor.Self(), actor.Killed)
 	})

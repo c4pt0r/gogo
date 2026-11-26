@@ -1772,8 +1772,8 @@ as a negative number. Chapter 10 shows how to format one.
 
 ## 3.9 Errors without `error`
 
-The `error` type is not in the subset, and neither is `panic`. Library
-functions report failure in one of two ways, and your code can do the same:
+The `error` type is not in the subset yet. Library functions report
+failure in one of two ways, and your code can do the same:
 
 - a `bool` result, like `strconv.Atoi` or `actor.Whereis`;
 - a named `int` type of error codes, where 0 means success, like `fs.Err`.
@@ -1843,8 +1843,11 @@ func main() {
 
 For failures you do not expect and cannot handle, gogo's answer is
 different: let the actor crash, and let a supervisor restart it. That is
-the subject of chapter 5. To stop the current actor deliberately, call
-`actor.Exit(code)` with a code of 100 or more.
+the subject of chapter 5. `panic(v)` crashes the current actor on
+purpose: it prints `panic: ` and `v` on standard error and ends the actor
+with the reason `actor.Panic`. There is no `recover`. To stop the current
+actor with a code of your own instead, call `actor.Exit(code)` with a
+code of 100 or more.
 
 ## 3.10 What is not supported
 
@@ -1885,7 +1888,7 @@ done:
 	y := any(1).(int)    // type assertion
 	_ = y
 	println(m, p, x, a)
-	panic("boom")
+	println(recover())
 }
 ```
 
@@ -1909,7 +1912,7 @@ main.gg:32:7: gogo: type assertion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
 main.gg:34:16: gogo: complex not supported
-main.gg:35:2: gogo: builtin panic not supported
+main.gg:35:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
 ```
 
 The full list, with what to do instead:
@@ -1919,8 +1922,7 @@ The full list, with what to do instead:
 | `go f()` | `go statement not supported` | `actor.Spawn(f)` |
 | channels, `select`, `<-` | `channel not supported`, `operator <- not supported` | messages: `actor.Send`, `actor.Receive` |
 | `defer` in a loop | `defer inside a loop not supported: deferred calls are static (move the loop body into a function)` | a function per iteration |
-| `recover` | `builtin recover not supported` | let the actor exit; a supervisor restarts it; ports and files close automatically |
-| `panic(v)` | `builtin panic not supported` | `actor.Exit(code)` |
+| `recover()` | `recover (a panic ends the actor: let its supervisor restart it) not supported` | let the actor exit; a supervisor restarts it (chapter 5); ports and files close automatically |
 | `error` | `error not supported` | `bool` or an `int` code type |
 | package-level `var` | `global variable not supported` | `const`, or state in an actor |
 | maps | `map not supported` | a slice of key/value structs |
@@ -1941,7 +1943,7 @@ The full list, with what to do instead:
 | `func init()` | `func init not supported` | call it from `main` |
 
 > **Note.** Pointer receivers, maps, pointers,
-> package-level variables, the `error` interface, `panic` and type
+> package-level variables, the `error` interface and type
 > assertions are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see
 > `docs/design.md` §5.2).

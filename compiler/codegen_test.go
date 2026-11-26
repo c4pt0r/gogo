@@ -2385,3 +2385,19 @@ func main() {
 		t.Errorf("want s[0] read and written once:\n%s", dis)
 	}
 }
+
+// TestPanicMinor: panic compiles to B_PANIC, which stamps the image with
+// ifaceMinor; a program without it stays 15.0.
+func TestPanicMinor(t *testing.T) {
+	src := "package main\nfunc f(n int) int {\n\tif n < 0 {\n\t\tpanic(n)\n\t}\n\treturn n\n}\nfunc main() { println(f(1)) }\n"
+	_, body := funcDis(t, compileSrc(t, src), "f")
+	if countOp(parseIns(t, body), "BUILTIN", "PANIC") != 1 {
+		t.Errorf("want one BUILTIN PANIC:\n%s", strings.Join(body, "\n"))
+	}
+	if v := words(compileImage(t, src))[1]; v != 15<<16|ifaceMinor {
+		t.Errorf("version %s, want 15.%d", VersionString(v), ifaceMinor)
+	}
+	if v := words(compileImage(t, "package main\nfunc main() { println(1) }\n"))[1]; v != 15<<16 {
+		t.Errorf("version %s, want 15.0", VersionString(v))
+	}
+}

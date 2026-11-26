@@ -4,7 +4,7 @@ main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
-main.gg:23:8: gogo: builtin recover not supported
+main.gg:23:8: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
 main.gg:24:7: gogo: map not supported
 main.gg:25:7: gogo: pointer not supported
 main.gg:26:7: gogo: complex not supported
@@ -15,4 +15,4 @@ main.gg:32:7: gogo: type assertion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
 main.gg:34:16: gogo: complex not supported
-main.gg:35:2: gogo: builtin panic not supported
+main.gg:35:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported

@@ -7,13 +7,13 @@ This is the per-opcode reference for the gogo VM, generated from the single sour
 `runtime/vm/opcodes.h` (the Go compiler parses the same file, `compiler/opcodes.go` mirrors it and
 `TestOpcodesMatchC` keeps the two equal). The design behind it is in [design.md](design.md) §5.6
 (bytecode, image layout, versioning) and §5.5 (value representation); `gogo dis file.ggb` prints a
-program's bytecode. Image format 15.3.
+program's bytecode. Image format 15.4.
 
 ## Contents
 
 - [Instruction encoding](#instruction-encoding)
 - [Opcodes](#opcodes) (67)
-- [Builtins](#builtins) (56)
+- [Builtins](#builtins) (57)
 - [Type ids and reserved types](#type-ids-and-reserved-types)
 - [Exit reasons](#exit-reasons)
 - [Image file layout](#image-file-layout)
@@ -163,6 +163,7 @@ the registers `rb ..`; a builtin with two results writes `ra` and `ra+1`.
 | 53 | `B_RANDOM` | - | `int` | sys.Random: an int in [0, 2^30), vm_random. |
 | 54 | `B_FLOAT` | `op int, args...` | `result(s)` | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). |
 | 55 | `B_PRINTLNU` | `mask, values...` | `nil` | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. |
+| 56 | `B_PANIC` | `v` | `(does not return)` | panic(v): print "panic: " and v (as println prints it) to stderr, then end the calling actor with R_PANIC. Deferred calls do not run. |
 
 ## Type ids and reserved types
 
@@ -248,6 +249,7 @@ codes are >= 100.
 | 7 | `R_SHUTDOWN` |  |
 | 8 | `R_BAD_SHIFT` |  |
 | 9 | `R_BAD_MSG` | a value that may not cross modules (msg.h) |
+| 10 | `R_PANIC` | panic(v), a failed type assertion, a method call on a nil interface (15.4) |
 | 64 | `R_FAILED` | + a GOGO_E_* code: a library failure (no VM code uses it) |
 
 ## Image file layout

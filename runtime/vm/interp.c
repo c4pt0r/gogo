@@ -410,11 +410,14 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
     return left;
 }
 
-/* Bit i of mask: args[i] is a uint64 (an int64's bits), printed unsigned. */
-static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n, uint32_t mask) {
+/* println(args...) on stream 1, bit i of mask marking args[i] a uint64
+ * (an int64's bits), printed unsigned; panic(v) on stream 2, after
+ * "panic: ". */
+static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n, uint32_t mask, int stream) {
     Out o;
     int64_t v;
-    out_init(&o, vm, 1);
+    out_init(&o, vm, stream);
+    if (stream == 2) out_str(&o, "panic: ");
     for (uint32_t i = 0; i < n; i++) {
         if (i) out_str(&o, " ");
         if (i < 30u && mask >> i & 1u && int64_val(vm, a, args[i], &v)) out_dec(&o, (uint64_t)v, false);
@@ -969,10 +972,14 @@ int interp_run(Vm *vm, Actor *a) {
                 uint32_t first = ext == B_PRINTLNU;
                 if (first) CHECK(rc && int_val(vm, a, R[rb], &mask));
                 for (uint32_t i = first; i < rc; i++) CHECK(deep_live(vm, a, R[rb + i], 0, WALK_BUDGET) != WALK_STALE);
-                do_println(vm, a, R + rb + first, rc - first, (uint32_t)mask);
+                do_println(vm, a, R + rb + first, rc - first, (uint32_t)mask, 1);
                 R[ra] = T_NIL;
                 break;
             }
+            case B_PANIC:
+                CHECK(rc == 1 && deep_live(vm, a, R[rb], 0, WALK_BUDGET) != WALK_STALE);
+                do_println(vm, a, R + rb, 1, 0, 2);
+                CRASH(R_PANIC);
             case B_SPAWN: case B_SPAWN_LINK: case B_SPAWN_OPT: {
                 CHECK(rc == (ext == B_SPAWN_OPT ? 2u : 1u));
                 uint16_t max_words = 0;

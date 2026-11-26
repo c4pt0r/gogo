@@ -1641,8 +1641,12 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
 		switch obj := f.g.p.Info.Uses[fun].(type) {
-		case *types.Builtin: // println and the sequence builtins
+		case *types.Builtin: // println, panic and the sequence builtins
 			if f.seqBuiltin(call, obj.Name(), dst) {
+				return
+			}
+			if obj.Name() == "panic" {
+				f.panicCall(call, dst)
 				return
 			}
 			if f.printlnUnsigned(call, dst) {
@@ -1697,6 +1701,17 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 		}
 	}
 	f.fail(call, "internal error: unexpected call")
+}
+
+// panicCall compiles panic(v): B_PANIC prints v as println would, on
+// stderr after "panic: ", and ends the actor with reason actor.Panic. It
+// does not return.
+func (f *fn) panicCall(call *ast.CallExpr, dst uint8) {
+	mark := f.next
+	v := f.alloc(call)
+	f.valueInto(call.Args[0], anyType, v)
+	f.asm.EmitExt(OpBuiltin, dst, v, 1, BPanic)
+	f.next = mark
 }
 
 // callValue compiles a call of a func value into dst: the closure goes into

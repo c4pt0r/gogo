@@ -178,7 +178,9 @@ enum Builtin {
     B_SET_UNIX_TIME   = 52,  /*! ms int64 -> bool | sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor). */
     B_RANDOM          = 53,  /*! -> int | sys.Random: an int in [0, 2^30), vm_random. */
     B_FLOAT           = 54,  /*! op int, args... -> result(s) | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). */
-    B_PRINTLNU        = 55   /*! mask, values... -> nil | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. */
+    B_PRINTLNU        = 55,  /*! mask, values... -> nil | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. */
+    /* Since 15.4 (the language's abstraction phase). */
+    B_PANIC           = 56   /*! v -> (does not return) | panic(v): print "panic: " and v (as println prints it) to stderr, then end the calling actor with R_PANIC. Deferred calls do not run. */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -318,6 +320,7 @@ enum Reason {
     R_SHUTDOWN         = 7,
     R_BAD_SHIFT        = 8,
     R_BAD_MSG          = 9,   /* a value that may not cross modules (msg.h) */
+    R_PANIC            = 10,  /* panic(v), a failed type assertion, a method call on a nil interface (15.4) */
     R_FAILED           = 64   /* + a GOGO_E_* code: a library failure (no VM code uses it) */
 };
 

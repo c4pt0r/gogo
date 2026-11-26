@@ -1,0 +1,10 @@
+8
+string 10 true check
+int 10 true main.main.func2
+int64 10 true main.main.func3
+struct 10 true main.main.func4
+bool 10 true main.main.func5
+exit 10 main.main.func6
+run 0
+run 1
+run 2

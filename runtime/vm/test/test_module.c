@@ -861,7 +861,7 @@ TEST(bad_image) {
         case 0: len = n - 1; break;                        /* truncated */
         case 1: len = 7; break;                            /* not even a header */
         case 2: w[0] ^= 0x100u; break;                     /* magic */
-        case 3: w[1] ^= 4u; break;                         /* version */
+        case 3: w[1] = IMAGE_VERSION + 1u; break;          /* version */
         case 4: w[2] ^= 0x40u; break;                      /* n_funcs */
         case 5: w[n - 3] = 1000; break;                    /* n_exports */
         case 6: w[n - 1] = 99; break;                      /* export's func index */
@@ -871,7 +871,7 @@ TEST(bad_image) {
         uint32_t handle = 12345;
         term b = offheap(f, h, w, len);
         size_t va0 = va_used_bytes(&f->vm);
-        int want = c == 3 ? GOGO_E_BADVERSION : GOGO_E_BADIMAGE;   /* 15.4: newer than the VM */
+        int want = c == 3 ? GOGO_E_BADVERSION : GOGO_E_BADIMAGE;   /* newer than the VM */
         CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), want);
         CHECK_EQ(va_used_bytes(&f->vm), va0);
         bytes_release(&f->vm, h, b);
