@@ -451,6 +451,12 @@ The assets setup reads are:
 | `gogo-<os>-<arch>[.exe]` | the gogo command, for `darwin`, `linux`, `windows` on `amd64`, `arm64` |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md`, `font-licenses.zip`, `LICENSE-APACHE-2.0.txt` | the licenses that go with the binaries (setup does not read them) |
 
+A release's version is also the C embedding API's: the tag's `X.Y.Z`
+(`v0.2.0`, or `v0.2.0-rc1`) must equal `GOGO_VERSION_MAJOR`, `_MINOR` and
+`_PATCH` in `runtime/include/gogo.h` (what `gogo_version()` reports, book
+chapter 18), and `tools/release.sh` refuses the tag otherwise. So every
+release bumps them, a firmware-only patch release included.
+
 To try a release layout before publishing it, point setup at the
 directory, or serve it over HTTP:
 

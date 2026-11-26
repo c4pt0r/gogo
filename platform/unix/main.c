@@ -238,7 +238,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot create flash directory\n", fs_root);
             return 2;
         }
-        fs_flash = fs_dir_open(&unix_host, NULL, dir, fs_quota);
+        fs_flash = fs_dir_open(&unix_host, NULL, dir, fs_quota, NULL);
         if (!fs_flash) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot open flash directory\n", fs_root);
             return 2;
@@ -246,7 +246,7 @@ int main(int argc, char **argv) {
         if (!listed(without, "/flash")) vfs_mount(&vfs_state, "/flash", fs_dir_vfs(fs_flash), fs_flash);
         if (!listed(without, "/sd") && snprintf(dir, sizeof dir, "%s/sd", fs_root) < (int)sizeof dir &&
             stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) {
-            fs_sd = fs_dir_open(&unix_host, NULL, dir, fs_quota);
+            fs_sd = fs_dir_open(&unix_host, NULL, dir, fs_quota, NULL);
             if (fs_sd) vfs_mount(&vfs_state, "/sd", fs_dir_vfs(fs_sd), fs_sd);
         }
     }

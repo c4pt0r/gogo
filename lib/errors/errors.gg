@@ -10,7 +10,8 @@
 //
 //	0        OK
 //	1..35    shared meanings (below; 28..35 are free for later ones)
-//	36..99   reserved, never shared codes
+//	36..99   reserved, never shared codes (the C embedding API's
+//	         results are the shared codes negated, plus its own -36)
 //	>= 100   per package, each in its own block of 20:
 //	         100..119 gogo/http, 120..139 gogo/sound (both unused so far)
 //

@@ -2,7 +2,7 @@
  * Producers (any thread) push with a CAS; the VM thread takes the whole
  * stack with one exchange, reverses it (oldest first) and delivers each
  * post as port.Post{Kind, Data} to the actor registered under its name
- * (gogo_post) or to a host port's owner (gogo_port_post).
+ * (gogo_post) or to a host port's owner (gogo_poster_port_post).
  * The inbox is one of the Vm's event sources (port.h PortSource), so the
  * scheduler drains it before it goes idle, and a push after its last
  * check wakes the host (latched). */
@@ -43,6 +43,15 @@ int inbox_push(Inbox *in, const gogo_host *h, void *hctx, const char *name, size
  * block takes a reference of its own) or, for T_NIL, data[0..len) copied
  * inline; NULL if memory is out. VM thread. */
 struct Msg *embed_post_msg(struct Vm *vm, term from, int32_t kind, const uint8_t *data, uint32_t len, term h);
+
+/* port.Closed{from, Reason 0} as a message block, its reason (word 3, an
+ * immediate int) to be set when it is sent; NULL if memory is out. */
+struct Msg *embed_closed_msg(struct Vm *vm, term from);
+
+/* Delivers every queued post now, oldest first, as the VM's next step
+ * would. VM thread. */
+struct gogo_vm;
+void embed_inbox_drain(struct gogo_vm *g);
 
 /* Queues m (NULL: out of memory) on `to` without ever marking it: 0, or
  * GOGO_ENOMEM, or GOGO_EFULL (over its quota, or exiting: m is freed). */

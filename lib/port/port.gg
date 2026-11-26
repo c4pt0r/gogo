@@ -62,7 +62,8 @@ type Done struct {
 }
 
 // Closed is a stream event: the port ended by itself (the peer closed or
-// reset a connection, a timeout, the hardware failed). From is the port;
+// reset a connection, a timeout, the hardware failed, the program
+// embedding the VM ended a host port with gogo_port_close). From is the port;
 // Reason says why: a shared code of gogo/errors (the net package names
 // the ones tcp and tls send), or Normal (0, errors.OK). Normal (0)
 // from tcp or tls means only that the peer finished sending: Outs still

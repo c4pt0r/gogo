@@ -19,8 +19,8 @@
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 
-#ifndef GOGO_VERSION
-#define GOGO_VERSION "dev"
+#ifndef GOGO_FIRMWARE_VERSION
+#define GOGO_FIRMWARE_VERSION "dev"
 #endif
 
 #define VM_STACK_BYTES 16384u
@@ -69,7 +69,7 @@ static void vm_task(void *arg) {
     /* Internal RAM left for the arena once the console (font tables) and
      * the Wi-Fi driver are up. */
     platform_esp_say("gogo %s (image format %u.%u): image %lu bytes, arena %lu bytes, free RAM %lu (largest %lu)",
-                     GOGO_VERSION, IMAGE_MAJOR, IMAGE_MINOR, (unsigned long)nwords * 4u, (unsigned long)platform_esp_arena_cap(),
+                     GOGO_FIRMWARE_VERSION, IMAGE_MAJOR, IMAGE_MINOR, (unsigned long)nwords * 4u, (unsigned long)platform_esp_arena_cap(),
                      (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     /* The unified boot (module.h): the image becomes module 0 (requirement

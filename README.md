@@ -179,14 +179,16 @@ hand; it has passed on both.
 
 gogo also runs inside other programs, the way Lua is embedded: `make lib`
 builds `build/libgogo.a`, a C99 library with one header,
-[`runtime/include/gogo.h`](runtime/include/gogo.h). A host loads an image,
+[`runtime/include/gogo.h`](runtime/include/gogo.h) (and
+[`gogo_posix.h`](runtime/include/gogo_posix.h) for the POSIX host used
+below). A host loads an image,
 runs it (or steps it from its own event loop), posts messages to its
 actors and gives it ports of its own; any number of VMs share one process.
 
 ```c
-gogo_vm *vm = gogo_new_posix(NULL);
-gogo_load(vm, image, len, GOGO_LOAD_COPY);
-gogo_run(vm);
+gogo_vm *vm;
+if (gogo_new_posix(NULL, &vm) == GOGO_OK && gogo_load(vm, image, len, GOGO_LOAD_COPY) == GOGO_OK)
+    gogo_run(vm);
 gogo_free(vm);
 ```
 

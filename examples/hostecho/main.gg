@@ -4,7 +4,9 @@
 // runtime/include/gogo.h). Its open refuses a negative Arg and otherwise
 // answers at once with an event: Kind = Arg, Data = the config's Data.
 // Every port.Post sent to the port comes back to the owner as an event
-// with Kind + 1 and the same Data. The embed tests (runtime/embed/test)
+// with Kind + 1 and the same Data, except Kind 100: then the host ends
+// the port from its side (gogo_port_close), and the owner gets a
+// port.Closed with Reason errors.IO. The embed tests (runtime/embed/test)
 // run it with such a host and compare its output with embed.out; on a
 // board or under gogovm there is no "echo" port.
 //
@@ -18,6 +20,7 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 	"gogo/port"
 )
 
@@ -60,4 +63,15 @@ func main() {
 	port.Close(p)
 	actor.Send(p, port.Post{Kind: 9}) // a closed port's PID: ignored
 	println("closed")
+
+	q, _ := port.Open("echo", port.Host{Arg: 8})
+	event()
+	actor.Send(q, port.Post{Kind: 100}) // the host ends the port
+	for ended := false; !ended; {
+		switch c := actor.Receive().(type) {
+		case port.Closed:
+			println("ended by the host:", c.From == q, c.Reason == int(errors.IO))
+			ended = true
+		}
+	}
 }

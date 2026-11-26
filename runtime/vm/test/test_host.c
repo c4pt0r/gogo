@@ -43,7 +43,15 @@ static int32_t t_config_get(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *b
 }
 
 gogo_host test_host = {
-    t_write, t_alloc, t_free, t_now, t_wake, t_wait, NULL, NULL, t_random, NULL, t_config_get, NULL, NULL
+    .size = sizeof(gogo_host),
+    .write = t_write,
+    .alloc = t_alloc,
+    .free = t_free,
+    .now_ms = t_now,
+    .wake = t_wake,
+    .wait = t_wait,
+    .random = t_random,
+    .config_get = t_config_get,
 };
 
 static const char *const test_mounts[] = { "/flash", "/sd", NULL };

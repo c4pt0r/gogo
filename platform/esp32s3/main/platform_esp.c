@@ -195,7 +195,7 @@ static int host_set_unix_time_ms(void *ctx, int64_t ms) {
     }
     settimeofday(&tv, NULL);
     wall_known = ms > 0;
-    return 1;
+    return 0;
 }
 
 /* mbedTLS memory (CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC: IDF leaves mbedTLS on
@@ -365,18 +365,18 @@ void platform_notify(void) {
  * these caps (CONFIG_SPIRAM_USE_CAPS_ALLOC): plain malloc never returns it.
  * Without PSRAM the host has no code_alloc (NULL: the VM keeps the code). */
 #if CONFIG_SPIRAM
-static void *code_alloc(void *ctx, size_t n) {
+static void *psram_code_alloc(void *ctx, size_t n) {
     (void)ctx;
     return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT);
 }
-static void code_free(void *ctx, void *p, size_t n) {
+static void psram_code_free(void *ctx, void *p, size_t n) {
     (void)ctx;
     (void)n;
     heap_caps_free(p);
 }
 #else
-#define code_alloc NULL
-#define code_free NULL
+#define psram_code_alloc NULL
+#define psram_code_free NULL
 #endif
 
 /* ---- the host table ---- */
@@ -398,9 +398,19 @@ static int32_t host_config_get(void *ctx, const uint8_t *k, uint32_t kl, uint8_t
 /* The wall clock is the system clock (host_unix_time_ms above), unknown
  * after boot until SNTP or sys.SetTime sets it. */
 const gogo_host esp_host = {
-    host_write, chunk_alloc, chunk_free, host_now, host_wake, host_wait, host_unix_time_ms, host_set_unix_time_ms,
-    host_random, NULL,
-    host_config_get, code_alloc, code_free
+    .size = sizeof(gogo_host),
+    .write = host_write,
+    .alloc = chunk_alloc,
+    .free = chunk_free,
+    .now_ms = host_now,
+    .wake = host_wake,
+    .wait = host_wait,
+    .unix_time_ms = host_unix_time_ms,
+    .set_unix_time_ms = host_set_unix_time_ms,
+    .random = host_random,
+    .config_get = host_config_get,
+    .code_alloc = psram_code_alloc,
+    .code_free = psram_code_free,
 };
 
 /* ---- the board table ---- */

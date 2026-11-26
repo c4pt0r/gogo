@@ -59,6 +59,44 @@ rebuilt:
   start at 100. An image built before this change still runs on new
   firmware, but the codes it compiled into its own comparisons are the
   old ones while the firmware returns the new ones: rebuild it.
+- **Embedding API** (`gogo.h`; hosts must be edited and rebuilt, see
+  the book's chapter 18):
+  - `gogo_host` and `gogo_config` begin with a `size`: start them from
+    `GOGO_HOST_INIT` and `GOGO_CONFIG_INIT` (a table without its size is
+    refused). Fill tables with designated initializers; positional ones
+    no longer line up. `gogo_new` copies the host table.
+  - `gogo_new(h, ctx, cfg)` and `gogo_new_posix(cfg)` return a result
+    code and give the VM through a last argument, `&vm`.
+  - `gogo_host.random_bytes` is gone (nothing called it). The new
+    `destroy` hook frees the host's context after the VM's last
+    reference.
+  - `set_unix_time_ms` returns 0 to accept and a negative `GOGO_E*` to
+    refuse (it returned 1 and 0).
+  - `gogo_config.allow_code_load` is the flag `GOGO_CONFIG_CODE_LOAD` in
+    `flags`; `mem_limit` is a `uint64_t` and `max_actors` a `uint32_t`.
+  - The POSIX host and `gogo_run_thread` / `gogo_join` moved to
+    `gogo_posix.h` (which includes `gogo.h`): a host that uses them
+    includes that header instead.
+  - Other threads post through a `gogo_poster` (`gogo_poster_new` on
+    the owner's thread, then `gogo_poster_post`, `gogo_poster_port_post`,
+    `gogo_poster_close_posts`, `gogo_poster_free`): `gogo_retain`,
+    `gogo_release` and `gogo_port_post` are gone, and `gogo_post` and
+    `gogo_close_posts` are for the VM's own thread.
+  - Names take a length: `gogo_post(vm, name, name_len, kind, data,
+    len)` and `gogo_register_port(vm, name, name_len, drv, ctx)`.
+  - `gogo_port` is a `uint32_t` (it was a struct of index and
+    generation); compare it with `==`. `gogo_port_driver` and
+    `gogo_stats` begin with a `size` too (`GOGO_PORT_DRIVER_INIT`,
+    `GOGO_STATS_INIT`); a stats counter is a `uint64_t`, and
+    `gogo_get_stats` returns a result code. A driver's `open` refuses
+    with a negative `GOGO_E*`. `GOGO_MAX_HOST_PORTS` is gone (a VM still
+    takes 4 host ports).
+  - The `GOGO_E*` results are the shared error codes negated, so their
+    numbers changed (`GOGO_EINVAL` -1 is -6, `GOGO_EREQUIRES` -4 is
+    -10, `GOGO_EVERSION` -13 is -27, ...); code that uses the names
+    needs no edit. `GOGO_ESTARTED` is `GOGO_ESTATE`, `GOGO_ESTART` is
+    `GOGO_ENOTFOUND` (no `main`) or `GOGO_ENOMEM`, and the old name
+    `GOGO_ECAPS` is gone.
 
 ## VM
 
@@ -263,13 +301,11 @@ rebuilt:
 - **Small writes need a `Bytes` handle.** A small `Out` is copied into
   a port-held handle (for retransmission); if the VM's 64 handles are all
   taken, it is refused with `Done{-1}`.
-- **Only tcp and tls send `port.Closed`.** The microphone does not
-  report a hardware failure, and a host port cannot end itself from the
-  C side yet (there is no `gogo_port_close`): the owner learns of either
-  only by silence. The `Reason` such ports will give is not specified
-  yet; it waits for one error numbering shared by every package. The message and its meaning (the port ended by itself;
-  close it) are fixed, so these ports can start sending it without a
-  change to programs.
+- **The microphone does not send `port.Closed`.** tcp, tls and host
+  ports (`gogo_port_close`) do, but a microphone hardware failure is not
+  reported: its owner learns of it only by silence. The message and its
+  meaning (the port ended by itself; close it) are fixed, so it can
+  start sending one without a change to programs.
 - **Losing the link or address ends every connection** with
   `Closed{NoRoute}`, and so does the exit of the `netif` owner (the DHCP
   actor). A crashed DHCP actor therefore drops all connections.
@@ -475,20 +511,21 @@ rebuilt:
 
 ## Embedding (`libgogo`)
 
-- **Posts racing a close are lost quietly.** A `gogo_post` concurrent
-  with `gogo_close_posts` (or with the program finishing) may return 0 and
-  still be discarded; it shows only in `gogo_stats.posts_dropped`. A
-  thread that may post while or after the owner calls `gogo_free` must
-  hold its own reference (`gogo_retain`); without one the handle can be
-  freed under it. Queued posts (up to `GOGO_POST_MAX`, 256) are host
-  memory outside `mem_limit` until delivered.
+- **Posts racing a close are lost quietly.** A post concurrent with
+  closing posts (or with the program finishing) may return 0 and still
+  be discarded; it shows only in `gogo_stats.posts_dropped`. A thread
+  other than the owner posts only through a `gogo_poster`, which keeps
+  the handle valid; posting on a bare `gogo_vm` from another thread is
+  not checked, and the VM can be freed under it. Queued posts (up to
+  `GOGO_POST_MAX`, 256) are host memory outside `mem_limit` until
+  delivered.
 - **Host port handles have a 12-bit generation.** A `gogo_port` is a slot
   index plus a generation bumped at each close of that slot, so after 4096
-  more closes of the same slot a stale handle (or a `gogo_port_post` still
+  more closes of the same slot a stale handle (or a `gogo_poster_port_post` still
   queued for it) names whatever port then holds the slot, as with port
   PIDs.
 - **`code.Load` refused reads as `NoMemory`.** With
-  `gogo_config.allow_code_load = 0`, `code.Load` returns `NoMemory`, not
+  `GOGO_CONFIG_CODE_LOAD` not in `gogo_config.flags`, `code.Load` returns `NoMemory`, not
   a distinct "not allowed" error.
 - **Embedded VMs sharing a host directory.** VMs that run at the same
   time must not have nested `fs_root` directories (an outer program could
@@ -502,6 +539,11 @@ rebuilt:
   changes. *Workaround:* a host that runs untrusted programs also limits
   the directory with the host's own means (a disk quota, a size-limited
   file system).
+- **`libgogo.a` needs POSIX.** `gogo.h` is free of threads, but the
+  library is one prelinked object that calls pthreads, `getentropy`,
+  `clock_gettime` and the `*at` file calls whichever header a host
+  includes, so it does not link on an RTOS without POSIX. *Planned:* a
+  library build without the POSIX host and the host-directory `/flash`.
 - **Internal symbols in the debug archive.** `libgogo.a` exports only
   the `gogo_*` functions, but `libgogo-debug.a` (the same objects, not
   prelinked, for debuggers on macOS) exports every internal name

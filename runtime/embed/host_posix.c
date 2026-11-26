@@ -124,44 +124,43 @@ static int64_t p_unix(void *ctx) {
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-static int p_set_unix(void *ctx, int64_t ms) { (void)ctx; (void)ms; return 0; }   /* the OS owns it */
-
-static int p_random_bytes(void *ctx, uint8_t *buf, size_t n) {
-    (void)ctx;
-    while (n) {
-        size_t k = n > 256u ? 256u : n;   /* getentropy's limit */
-        if (getentropy(buf, k) != 0) return -1;
-        buf += k;
-        n -= k;
-    }
-    return 0;
-}
+static int p_set_unix(void *ctx, int64_t ms) { (void)ctx; (void)ms; return GOGO_EINVAL; }   /* the OS owns it */
 
 /* random promises bits a peer cannot predict: with no entropy source
  * left, stop rather than return something guessable. */
 static uint32_t p_random(void *ctx) {
+    (void)ctx;
     uint32_t x = 0;
-    if (p_random_bytes(ctx, (uint8_t *)&x, sizeof x) != 0) abort();
+    if (getentropy(&x, sizeof x) != 0) abort();
     return x;
 }
 
 static const gogo_host posix_host = {
-    p_write, p_alloc, p_free, p_now, p_wake, p_wait, p_unix, p_set_unix,
-    p_random, p_random_bytes, NULL, NULL, NULL
+    .size = sizeof(gogo_host),
+    .write = p_write,
+    .alloc = p_alloc,
+    .free = p_free,
+    .now_ms = p_now,
+    .wake = p_wake,
+    .wait = p_wait,
+    .unix_time_ms = p_unix,
+    .set_unix_time_ms = p_set_unix,
+    .random = p_random,
 };
 
 const gogo_host *gogo_host_posix(void) { return &posix_host; }
 
-gogo_vm *gogo_new_posix(const gogo_config *cfg) {
+/* The VM owns the context: the destroy hook frees it. */
+int gogo_new_posix(const gogo_config *cfg, gogo_vm **out) {
+    if (!out) return GOGO_EINVAL;
+    *out = NULL;
     void *ctx = gogo_posix_ctx_new();
-    if (!ctx) return NULL;
-    gogo_vm *g = gogo_new(&posix_host, ctx, cfg);
-    if (!g) {
-        gogo_posix_ctx_free(ctx);
-        return NULL;
-    }
-    g->ctx_free = gogo_posix_ctx_free;   /* at the last release */
-    return g;
+    if (!ctx) return GOGO_ENOMEM;
+    gogo_host h = posix_host;
+    h.destroy = gogo_posix_ctx_free;
+    int rc = gogo_new(&h, ctx, cfg, out);
+    if (rc != GOGO_OK) gogo_posix_ctx_free(ctx);
+    return rc;
 }
 
 /* ---- gogo_run_thread ---- */
@@ -178,15 +177,15 @@ static void *run_main(void *arg) {
 }
 
 int gogo_run_thread(gogo_vm *g) {
-    if (!g || !g->uh->wait) return GOGO_EINVAL;
+    if (!g || !g->uh.wait) return GOGO_EINVAL;
     if (g->thread) return GOGO_ESTATE;
-    struct EmbedThread *t = g->uh->alloc(g->uctx, sizeof *t);
+    struct EmbedThread *t = g->uh.alloc(g->uctx, sizeof *t);
     if (!t) return GOGO_ENOMEM;
     t->rc = 0;
     g->thread = t;
     if (pthread_create(&t->t, NULL, run_main, g) != 0) {
         g->thread = NULL;
-        g->uh->free(g->uctx, t, sizeof *t);
+        g->uh.free(g->uctx, t, sizeof *t);
         return GOGO_ENOMEM;
     }
     return GOGO_OK;
@@ -198,13 +197,13 @@ int gogo_join(gogo_vm *g) {
     pthread_join(t->t, NULL);
     int rc = t->rc;
     g->thread = NULL;
-    g->uh->free(g->uctx, t, sizeof *t);
+    g->uh.free(g->uctx, t, sizeof *t);
     return rc;
 }
 
 void embed_thread_stop(gogo_vm *g) {
     /* The state is already EMBED_DEAD: the run loop stops at its next
      * check, and the wake ends an idle wait (latched). */
-    if (g->uh->wake) g->uh->wake(g->uctx);
+    if (g->uh.wake) g->uh.wake(g->uctx);
     gogo_join(g);
 }

@@ -14,13 +14,13 @@
 #include "opcodes.h"
 #include <string.h>
 
-/* An inbox node's port: index and generation, never 0. */
+/* gogo_port_driver's first size (v0.2), which never changes. */
+#define DRIVER_SIZE_V1 (offsetof(gogo_port_driver, close) + sizeof(void (*)(void)))
+
+/* A gogo_port (and an inbox node's port): index and generation, never 0. */
 #define PORT_ENC(i, g) (0x80000000u | (uint32_t)(i) << 16 | (uint32_t)(g))
 
-static gogo_port port_val(const Vm *vm, const Port *p) {
-    gogo_port r = { (uint16_t)(p - vm->ports), p->gen };
-    return r;
-}
+static gogo_port port_val(const Vm *vm, const Port *p) { return PORT_ENC(p - vm->ports, p->gen); }
 
 static const HostPort *host_of(const Port *p) { return (const HostPort *)(const void *)p->drv; }
 
@@ -48,12 +48,22 @@ static int hp_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg
     uint32_t len;
     if (hdr_words(o[0]) != 4u || !int_val(vm, owner, o[2], &arg) || !bytes_view(vm, owner, o[3], &d, &len))
         return -1;
-    if (!hp->pub.open) return 0;
-    g->opening = p;
-    int r = hp->pub.open(hp->ctx, g, port_val(vm, p), arg, d, len) ? -1 : 0;
-    g->opening = NULL;
-    /* A host port has no charge or room: open_in accepts it when r is 0. */
-    flush_held(g, actor_lookup(vm, owner->id), r == 0);
+    /* The port's Closed is made now, so gogo_port_close can always send
+     * it (a stream port's terminal Closed is never lost either). */
+    Msg **closed = &g->closed_msg[p - vm->ports];
+    if (!(*closed = embed_closed_msg(vm, p->id))) return -1;
+    int r = 0;
+    if (hp->pub.open) {
+        g->opening = p;
+        r = hp->pub.open(hp->ctx, g, port_val(vm, p), arg, d, len) ? -1 : 0;   /* any nonzero refuses */
+        g->opening = NULL;
+        /* A host port has no charge or room: open_in accepts it when r is 0. */
+        flush_held(g, actor_lookup(vm, owner->id), r == 0);
+    }
+    if (r) {
+        msg_free(vm, *closed);
+        *closed = NULL;
+    }
     return r;
 }
 
@@ -72,13 +82,16 @@ static void hp_command(Vm *vm, const Actor *from, Port *p, term msg) {
 static void hp_close(Vm *vm, Port *p) {
     gogo_vm *g = vm->host_ctx;
     const HostPort *hp = host_of(p);
+    Msg **closed = &g->closed_msg[p - vm->ports];
+    if (*closed) msg_free(vm, *closed);   /* not sent: an ordinary close */
+    *closed = NULL;
     if (!hp->pub.close) return;
     g->closing = p;
     hp->pub.close(hp->ctx, g, port_val(vm, p));
     g->closing = NULL;
 }
 
-/* Events may still come while posts are open (gogo_port_post). */
+/* Events may still come while posts are open (gogo_poster_port_post). */
 static bool hp_live(const Vm *vm, const Port *p) {
     (void)p;
     return embed_state(vm->host_ctx) == EMBED_LIVE;
@@ -122,18 +135,22 @@ static uint32_t board_count(const gogo_vm *g) {
     return n;
 }
 
-int gogo_register_port(gogo_vm *g, const char *name, const gogo_port_driver *drv, void *ctx) {
-    if (!g || !name || !*name || !drv) return GOGO_EINVAL;
+int gogo_register_port(gogo_vm *g, const char *name, size_t nl, const gogo_port_driver *drv, void *ctx) {
+    if (!g || !name || !nl || memchr(name, 0, nl) || !drv) return GOGO_EINVAL;
+    gogo_port_driver d;
+    if (!embed_copy_sized(&d, sizeof d, drv, drv->size, DRIVER_SIZE_V1) || d.reserved) return GOGO_EINVAL;
     if (g->stepping) return GOGO_EBUSY;
     if (g->loaded) return GOGO_ESTATE;    /* registered ports count as the image's requirements */
-    size_t nl = strlen(name);
     if (nl > GOGO_PORT_NAME_MAX) return GOGO_E2BIG;
-    if (name_taken(g, name)) return GOGO_EEXIST;
-    if (g->n_host_ports == GOGO_MAX_HOST_PORTS || board_count(g) > EMBED_BOARD_PORTS_MAX) return GOGO_EFULL;
+    char z[GOGO_PORT_NAME_MAX + 1u];      /* the name as a C string, as drivers' names are */
+    memcpy(z, name, nl);
+    z[nl] = 0;
+    if (name_taken(g, z)) return GOGO_EEXIST;
+    if (g->n_host_ports == EMBED_HOST_PORTS || board_count(g) > EMBED_BOARD_PORTS_MAX) return GOGO_EFULL;
     HostPort *hp = &g->host_ports[g->n_host_ports++];
     memset(hp, 0, sizeof *hp);
-    memcpy(hp->name, name, nl + 1u);
-    hp->pub = *drv;
+    memcpy(hp->name, z, nl + 1u);
+    hp->pub = d;
     hp->ctx = ctx;
     hp->base.name = hp->name;
     hp->base.cfg_type = TYPE_HOST;
@@ -146,18 +163,20 @@ int gogo_register_port(gogo_vm *g, const char *name, const gogo_port_driver *drv
     return GOGO_OK;
 }
 
-/* The open host port at index with generation gen, or NULL. */
-static Port *host_port(gogo_vm *g, uint32_t index, uint32_t gen) {
-    if (index >= GOGO_MAX_PORTS) return NULL;
-    Port *p = &g->vm.ports[index];
+bool embed_port_valid(gogo_port port) { return (port & 0x80000000u) && (port >> 16 & 0x7FFFu) < GOGO_MAX_PORTS; }
+
+/* The open host port a gogo_port names, or NULL. */
+static Port *host_port(gogo_vm *g, gogo_port port) {
+    if (!embed_port_valid(port)) return NULL;
+    Port *p = &g->vm.ports[port >> 16 & 0x7FFFu];
     for (uint32_t k = 0; k < g->n_host_ports; k++)
-        if (p->drv == &g->host_ports[k].base) return p->gen == gen ? p : NULL;
+        if (p->drv == &g->host_ports[k].base) return p->gen == (port & 0xFFFFu) ? p : NULL;
     return NULL;
 }
 
 int embed_port_send(gogo_vm *g, uint32_t port, int32_t kind, const uint8_t *data, uint32_t len) {
     Vm *vm = &g->vm;
-    Port *p = host_port(g, port >> 16 & 0x7FFFu, port & 0xFFFFu);
+    Port *p = host_port(g, port);
     Actor *o = p && p != g->closing ? port_owner(vm, p) : NULL;
     if (!o) return GOGO_ECLOSED;
     Msg *m;
@@ -188,9 +207,34 @@ int embed_port_send(gogo_vm *g, uint32_t port, int32_t kind, const uint8_t *data
 }
 
 int gogo_port_emit(gogo_vm *g, gogo_port port, int32_t kind, const void *data, size_t len) {
-    if (!g || (len && !data) || port.index >= GOGO_MAX_PORTS) return GOGO_EINVAL;
+    if (!g || (len && !data) || !embed_port_valid(port)) return GOGO_EINVAL;
     if (len > GOGO_POST_DATA_MAX) return GOGO_E2BIG;
-    return embed_port_send(g, PORT_ENC(port.index, port.gen), kind, data, (uint32_t)len);
+    return embed_port_send(g, port, kind, data, (uint32_t)len);
 }
 
-uint32_t embed_port_enc(gogo_port port) { return PORT_ENC(port.index, port.gen); }
+/* Posts queued for the port first (delivered in order, as the next step
+ * would), then Closed{From, Reason} to the owner from the message made
+ * at the open, outside its quota (as an exit notice: it cannot be
+ * dropped), then the ordinary close (the driver's close runs, the owner's
+ * charges go back, the PID goes stale: the program's own port.Close of it
+ * later does nothing). */
+int gogo_port_close(gogo_vm *g, gogo_port port, int32_t reason) {
+    if (!g || !embed_port_valid(port) || reason <= 0 || reason > EMBED_REASON_MAX) return GOGO_EINVAL;
+    Vm *vm = &g->vm;
+    Port *p = host_port(g, port);
+    if (p && p == g->opening) return GOGO_EBUSY;
+    if (!p || p == g->closing || !port_owner(vm, p)) return GOGO_ECLOSED;
+    embed_inbox_drain(g);
+    Actor *o = port_owner(vm, p);    /* the drain may have ended it (a mailbox overflow) */
+    if (o) {
+        Msg *m = g->closed_msg[p - vm->ports];
+        g->closed_msg[p - vm->ports] = NULL;
+        m->data[3] = term_from_int(reason);
+        msg_enqueue(vm, o, m, false);
+    }
+    bool was = g->stepping;
+    g->stepping = true;              /* the driver's close is a hook */
+    port_close(vm, p->id);
+    g->stepping = was;
+    return GOGO_OK;
+}

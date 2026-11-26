@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../include/gogo.h"
+#include "../include/gogo_posix.h"   /* and gogo.h */
 #include "actor.h"
 #include "inbox.h"
 #include "vfs_int.h"
@@ -30,6 +30,9 @@ enum { EMBED_LIVE = 0, EMBED_CLOSED = 1, EMBED_DEAD = 2 };
 
 struct EmbedThread;   /* host_posix.c: gogo_run_thread's thread */
 
+/* Most host ports per VM (gogo_register_port's GOGO_EFULL beyond). */
+#define EMBED_HOST_PORTS 4
+
 /* A registered host port (hostport.c): base first, so a Port's drv points
  * back to its HostPort. */
 typedef struct HostPort {
@@ -42,11 +45,11 @@ typedef struct HostPort {
 /* The driver list a Vm with host ports looks names up in (Vm.drivers):
  * the board's drivers first, then the host's, NULL-terminated. */
 #define EMBED_BOARD_PORTS_MAX 8
-#define EMBED_PORT_LIST (EMBED_BOARD_PORTS_MAX + GOGO_MAX_HOST_PORTS + 1)
+#define EMBED_PORT_LIST (EMBED_BOARD_PORTS_MAX + EMBED_HOST_PORTS + 1)
 
 struct gogo_vm {
     Vm vm;                       /* its host is .fwd, with ctx this gogo_vm */
-    const gogo_host *uh;         /* the host's own table and ctx */
+    gogo_host uh;                /* the host's own table (gogo_new's copy) and ctx */
     void *uctx;
     gogo_host fwd;               /* forwarders to uh (NULL where uh has NULL) */
     gogo_config cfg;
@@ -54,27 +57,33 @@ struct gogo_vm {
     EmbedBlk *code_blocks;       /* live code_alloc blocks */
     Inbox inbox;
     VfsState vfs;                /* its mounts (none without fs_root) and open files */
-    FsDir *fs;                   /* cfg.fs_root as /flash (from uh->alloc), or NULL */
-    void *image_copy;            /* GOGO_LOAD_COPY: the copy (from uh->alloc) */
+    FsDir *fs;                   /* cfg.fs_root as /flash (from uh.alloc), or NULL */
+    void *image_copy;            /* GOGO_LOAD_COPY: the copy (from uh.alloc) */
     size_t image_bytes;
     struct EmbedThread *thread;  /* gogo_run_thread, until gogo_join */
-    HostPort host_ports[GOGO_MAX_HOST_PORTS];
+    HostPort host_ports[EMBED_HOST_PORTS];
     const PortDriver *port_list[EMBED_PORT_LIST];
     uint8_t n_host_ports;
     /* The host port whose open or close callback is running (hostport.c):
      * events emitted during its open wait in held (oldest first) until the
      * open succeeds; during its close, emit is refused. */
     Port *opening, *closing;
+    /* Each open host port's Closed message, made at the open so
+     * gogo_port_close never fails to send it (by port index), or NULL. */
+    Msg *closed_msg[GOGO_MAX_PORTS];
     Msg *held_head, *held_tail;
     /* Atomics (__atomic builtins): state, the shell's references (the
-     * owner's plus gogo_retain's) and gogo_post calls in progress. */
+     * owner's plus one per gogo_poster) and posts in progress. */
     int state;
     int refs;
     int posting;
     bool loaded;                 /* gogo_load succeeded */
     bool stepping;               /* inside gogo_step (re-entry guard) */
-    void (*ctx_free)(void *);    /* frees uctx at the last release (gogo_new_posix), or NULL */
 };
+
+/* *dst = the host's struct src of the given size: its first min(size,
+ * cap) bytes, the rest zero; false (dst zeroed) if size < min (gogo.c). */
+bool embed_copy_sized(void *dst, size_t cap, const void *src, uint32_t size, size_t min);
 
 /* True if the config's grant has name (or there is no grant: all). */
 bool embed_granted(const gogo_vm *g, const char *name);
@@ -94,7 +103,12 @@ void embed_ports_install(gogo_vm *g);
 /* hostport.c: sends host port `port` (an inbox node's encoding) a post as
  * gogo_port_emit does: 0, or a GOGO_E* error. VM thread. */
 int embed_port_send(gogo_vm *g, uint32_t port, int32_t kind, const uint8_t *data, uint32_t len);
-uint32_t embed_port_enc(gogo_port port);
+/* gogo_port_close's largest reason: an immediate int. */
+#define EMBED_REASON_MAX TERM_INT_MAX
+
+/* hostport.c: whether port can name a port slot at all (nonzero, its
+ * index in range). */
+bool embed_port_valid(gogo_port port);
 
 /* host_posix.c: stops and joins a gogo_run_thread thread (gogo_free). */
 void embed_thread_stop(gogo_vm *g);

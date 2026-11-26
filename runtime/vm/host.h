@@ -79,6 +79,8 @@ uint32_t vm_random(struct Vm *vm);
  * is always > 0. vm_set_unix_time_ms(vm, ms) makes ms the current time from
  * now on and returns 1; ms < GOGO_BUILD_UNIX_MS (other than ms <= 0) changes
  * nothing and returns 0; ms <= 0 forgets the time (unknown) and returns 1.
+ * With a host clock, 1 if the host's set returned 0 (gogo.h's hook
+ * convention), else 0.
  * Scheduler context only, never an ISR.
  *
  * With host->unix_time_ms (an RTC) both go to the host (the floor still

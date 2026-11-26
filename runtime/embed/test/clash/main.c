@@ -3,7 +3,7 @@
  * against libgogo.a, which exports only the gogo_* API, and run an image;
  * each side must keep calling its own functions. make test-libgogo builds
  * it (outside test_embed, which links the runtime's sources directly). */
-#include "gogo.h"
+#include "gogo_posix.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -23,8 +23,9 @@ int main(int argc, char **argv) {
     void *img = n > 0 ? malloc((size_t)n) : NULL;
     if (!img || fread(img, 1, (size_t)n, f) != (size_t)n) { fclose(f); free(img); return 1; }
     fclose(f);
-    gogo_vm *vm = gogo_new_posix(NULL);
-    int rc = vm ? gogo_load(vm, img, (size_t)n, GOGO_LOAD_COPY) : GOGO_ENOMEM;
+    gogo_vm *vm = NULL;
+    int rc = gogo_new_posix(NULL, &vm);
+    if (rc == GOGO_OK) rc = gogo_load(vm, img, (size_t)n, GOGO_LOAD_COPY);
     free(img);
     if (rc == GOGO_OK) rc = gogo_run(vm);
     gogo_free(vm);

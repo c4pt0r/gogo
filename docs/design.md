@@ -788,8 +788,9 @@ font.
   Outs still in flight. While the driver holds events of its own
   (`StreamOut.user`: tcp's held `Connected` or `Closed`) every `Done` is
   owed, so none overtakes them. A port that ends by itself sends
-  `port.Closed{From, Reason}` (tcp and tls today, with the `net`
-  reasons; a host port and a failing microphone are meant to, later).
+  `port.Closed{From, Reason}` (tcp and tls, with the `net` reasons, and
+  a host port the embedder ends with `gogo_port_close`, with the reason
+  it gives; a failing microphone is meant to, later).
   Reserved types 31-34.
 - **`imu` port** (`gogo/imu`): `imu.Config{RateHz, Gestures, BatchMs}`.
   `RateHz` is 0, 25, 50, 100 or 200; a sample is 12 bytes `gx gy gz ax ay
@@ -1678,12 +1679,20 @@ only through two tables of function pointers that the caller hands it.
 - **The host table** (`gogo_host`, public in `gogo.h`): what every host
   gives: output, memory chunks, the monotonic clock, wall clock, random,
   `wait`/`wake` (a latched wakeup: a wake before or during a wait ends
-  it), config lookup, module code memory. Hooks a host may omit are
-  `NULL`; the wrappers in `runtime/vm/host.c` (`vm_now`, `vm_out`,
-  `vm_alloc_chunk`, ...) are the only callers and apply the defaults.
-  The ESP firmware's table is `esp_host` (`platform_esp.c`), the unix
-  VM's is in `platform/unix/`, and `gogo_host_posix()` is the one that
-  `libgogo` ships.
+  it), config lookup, module code memory, and (embed only) `destroy`, run
+  once with the host's context after the VM's last reference. Hooks a
+  host may omit are `NULL`; the wrappers in `runtime/vm/host.c`
+  (`vm_now`, `vm_out`, `vm_alloc_chunk`, ...) are the only callers and
+  apply the defaults. A hook that can fail returns 0 or a negative
+  `GOGO_E*` (`set_unix_time_ms`; `host.c` turns that into the VM's own
+  1/0). The table starts with its `size` and grows only at the end;
+  every table is written with designated initializers (`.write =
+  host_write`), never positionally. The ESP firmware's table is
+  `esp_host` (`platform_esp.c`), the unix VM's is in `platform/unix/`,
+  and `gogo_host_posix()` is the one that `libgogo` ships. The VM core
+  reads a board's table in place and does not look at `size`;
+  `gogo_new` copies an embedder's table into the `gogo_vm` (the first
+  `size` bytes, the rest `NULL`), so the embedder's copy may go at once.
 - **The board table** (`VmBoard`, internal, `runtime/vm/host.h`): board-only
   hardware: the port drivers, the input chips (`InputHw`), the network
   interface (`NetIf`), the TLS port's hooks (`TlsHw`: allocator, clock,
@@ -1721,17 +1730,33 @@ only through two tables of function pointers that the caller hands it.
   slept through.
 - **The embed layer** (`runtime/embed/`): `gogo_new` / `gogo_load` /
   `gogo_start` / `gogo_step` / `gogo_run` / `gogo_free` around a `Vm`;
-  `gogo_post` (any thread, lock-free multi-producer inbox, delivered as
-  `port.Post` to a registered actor) with `gogo_retain` /
-  `gogo_close_posts` for posting threads that outlive the owner; host
-  ports (`gogo_register_port`, `gogo_port_emit`, `gogo_port_post`)
-  opened from Go as `port.Host`, registered before `gogo_load` so they
+  `gogo_post` (lock-free multi-producer inbox, delivered as `port.Post`
+  to a registered actor) and `gogo_close_posts`; for other threads a
+  `gogo_poster` (`gogo_poster_post`, `_port_post`, `_close_posts`,
+  `_free`): a small block from the host's `alloc` holding a reference to
+  the `gogo_vm` and a state word (a use after the free is undefined
+  behaviour, which a debug build often catches), so a posting thread may outlive
+  the owner's `gogo_free` (posts then return
+  `GOGO_ECLOSED`; the memory and the host's `destroy` wait for the last
+  reference); host ports (`gogo_register_port`, `gogo_port_emit`,
+  `gogo_port_close`, which delivers every queued post and then a
+  `port.Closed` made at the open and queued outside the owner's quota, so
+  it is never lost; a `gogo_port`
+  is an opaque `uint32_t`) opened from Go as `port.Host`, registered
+  before `gogo_load` so they
   satisfy the image's requirements (`gogo_config.grant`, a list of names
   or NULL for all, can withhold them); a sandboxed `/flash` on a host directory
   (`fs_dir.c`, `gogo_config.fs_root`, per-instance `fs_quota`); and the
-  POSIX host (`host_posix.c`, `gogo_run_thread`). Every `gogo_*` call
-  other than the posting ones runs on the thread that owns the VM.
-  Several VMs in one process share nothing.
+  POSIX host (`host_posix.c`, `gogo_run_thread`, declared apart in
+  `gogo_posix.h` so that `gogo.h` stays free of threads). Every call that takes a
+  `gogo_vm` runs on the thread that owns the VM; the poster's calls run
+  on any thread, so the two handle types carry the threading rule (in
+  Rust, `Send` and `Send + Sync`). A post and `gogo_free` meet in a
+  store-buffering handshake (the poster counts itself in with seq_cst,
+  then reads the state; the free raises the state, then waits for the
+  count to drain), so either the post sees the close or the free waits
+  for it. Names are a pointer and a length throughout. Several VMs in one
+  process share nothing.
 - **`libgogo`.** `make lib` builds `build/libgogo.a`: the VM core, vfs,
   stream and the embed layer, strict C99 with `-DGOGO_EMBED`, no board,
   input, net or TLS code. The objects are prelinked into one relocatable
@@ -1766,10 +1791,33 @@ only through two tables of function pointers that the caller hands it.
   change: an image that names it is simply refused by a firmware without
   it.
 - **C ABI** (`runtime/include/gogo.h`): within an ABI version functions
-  keep their signatures and meaning and new ones are additive; structs
-  will carry a leading `size` and grow only at the end; anything marked
-  experimental is outside these guarantees; `libgogo.a` exports only
-  `GOGO_API` symbols.
+  keep their signatures and meaning and new ones are additive; the structs
+  a host fills (`gogo_host`, `gogo_config`) carry a leading `size`, set by
+  their `GOGO_*_INIT`, and grow only at the end: the library reads the
+  fields it knows, an older struct's missing fields take their defaults,
+  and a newer one's extra fields are ignored, so a field may be appended
+  only if its 0 keeps the old behaviour; a size below the v0.2 struct's
+  and a nonzero reserved word are refused (`GOGO_EINVAL`), so no size
+  ends inside a field and the reserved words stay free to use; in the structs the library fills
+  (`gogo_stats`, `gogo_image_info`) it writes back in `size` how much it
+  filled, and every field within that is written, 0 on an error; anything marked experimental is
+  outside these guarantees (`GOGO_EXPERIMENTAL` on the declaration, a
+  macro that is empty unless the host makes it a deprecation; the book's
+  18.12 has the table: host ports, `grant`, `fs_root`, `fs_quota`, the
+  code-load flag (the `flags` field itself is stable), stats, image inspection, `gogo_run_thread`);
+  `gogo.h` is C99 without threads and `gogo_posix.h` adds the POSIX host
+  and `gogo_run_thread` (a split of the headers only: the prelinked
+  `libgogo.a` still needs pthreads, `getentropy`, `clock_gettime` and the
+  `*at` file calls); `libgogo.a` exports only `GOGO_API` symbols,
+  the reviewed list in `runtime/include/libgogo.syms`
+  (`tools/libsyms.sh`). `gogo_version()` gives the library's version and
+  `gogo_image_format()` the image formats it loads; `gogo_image_info_get`
+  and `gogo_image_requires` read an image's format and requirement names
+  without a VM. The API's error
+  results are the shared error codes negated (`GOGO_EINVAL` is
+  `-GOGO_E_BADARG`), so one table describes them (`gogo_strerror`); only
+  `GOGO_ESTATE` (-36) is the API's own, from the range 36..99 that is
+  never a shared code.
 - **Library API:** stable at v0.2: `actor`, `bytes`, `port` (its generic
   part), `fs`, `sys`, `strings`, `strconv`, `kv`. Experimental: `net`,
   `http`, `dns`, `dhcp`, `sntp`, `code`, `supervisor`, `imu`, `ir`,

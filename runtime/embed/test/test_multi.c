@@ -9,7 +9,7 @@
  * GOGO_EMBED_MULTI_N sets the number of rounds (default 2). */
 #define _POSIX_C_SOURCE 200809L
 #include "test.h"
-#include "gogo.h"
+#include "gogo_posix.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,7 +79,12 @@ static void m_wake(void *c) { gogo_host_posix()->wake(((MJob *)c)->w->px); }
 
 /* No wait hook: the thread waits for its two VMs itself. */
 static const gogo_host mhost = {
-    m_write, m_alloc, m_free, m_now, m_wake, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    .size = sizeof(gogo_host),
+    .write = m_write,
+    .alloc = m_alloc,
+    .free = m_free,
+    .now_ms = m_now,
+    .wake = m_wake,
 };
 
 static void *m_read(const char *path, size_t *len) {
@@ -108,13 +113,12 @@ static void *m_worker(void *arg) {
     int live = 0;
     for (int i = 0; i < N; i++) {
         MJob *j = w->job[i];
-        gogo_config cfg;
-        memset(&cfg, 0, sizeof cfg);
+        gogo_config cfg = GOGO_CONFIG_INIT;
         if (strcmp(j->prog, "hotload") == 0) {
             cfg.fs_root = flash;          /* read only: the VMs may share it */
-            cfg.allow_code_load = 1;
+            cfg.flags = GOGO_CONFIG_CODE_LOAD;
         }
-        j->vm = gogo_new(&mhost, j, &cfg);
+        if (gogo_new(&mhost, j, &cfg, &j->vm) != GOGO_OK) j->vm = NULL;
         j->load_rc = j->start_rc = GOGO_ESTATE;
         if (!j->vm) continue;
         char path[512];

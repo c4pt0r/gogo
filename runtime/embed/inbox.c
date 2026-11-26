@@ -110,6 +110,20 @@ Msg *embed_post_msg(Vm *vm, term from, int32_t kind, const uint8_t *data, uint32
     return post_msg(vm, from, kind, data, len, h);
 }
 
+Msg *embed_closed_msg(Vm *vm, term from) {
+    Msg *m = va_alloc(vm, msg_alloc_bytes(4u));
+    if (!m) return NULL;
+    m->next = NULL;
+    m->words = 4u;
+    m->flags = 0;
+    m->root = term_from_ref(0);
+    m->data[0] = hdr_make(4, K_STRUCT);
+    m->data[1] = TYPE_CLOSED;
+    m->data[2] = from;
+    m->data[3] = term_from_int(0);   /* the reason, set when it is sent */
+    return m;
+}
+
 int embed_enqueue_post(Vm *vm, Actor *to, Msg *m) {
     if (!m) return GOGO_ENOMEM;
     /* Like a port event: never marks the receiver; once more after
@@ -146,9 +160,11 @@ static void src_drain(Vm *vm, void *ctx, uint64_t now) {
         next = n->next;
         if (deliver(g, n)) g->inbox.delivered++;
         else g->inbox.dropped++;
-        g->uh->free(g->uctx, n, n->bytes);
+        g->uh.free(g->uctx, n, n->bytes);
     }
 }
+
+void embed_inbox_drain(gogo_vm *g) { src_drain(&g->vm, g, 0); }
 
 /* Live while a post is queued, or while posts are open and some actor
  * holds a name a post can reach. */

@@ -8,6 +8,9 @@
 //	   on Kind 1999 (its exit closes the port)    prints "handoff true"
 //	5: a new actor opens "hp" (Arg 2) and returns at once
 //	-1: return
+//
+// A port.Closed from the host (gogo_port_close) prints "ended", whether
+// it came from the port, and its Reason.
 package main
 
 import (
@@ -39,6 +42,8 @@ func main() {
 	var p actor.PID
 	for {
 		switch m := actor.Receive().(type) {
+		case port.Closed:
+			println("ended", m.From == p, m.Reason)
 		case port.Post:
 			if m.Kind >= 1000 {
 				println("event", m.Kind, m.Data.Len())
