@@ -211,7 +211,7 @@ The book chapter [Embedding gogo](docs/book/18-embedding.md) is the guide;
 
 ## Documentation
 
-- [Programming gogo](docs/book/README.md): the book, 18 chapters, every
+- [Programming gogo](docs/book/README.md): the book, 19 chapters, every
   example tested. It reads as a website too: `make site` builds it with
   mdBook into `build/site`, next to the landing page.
 - [docs/design.md](docs/design.md): the design document: the VM, the
