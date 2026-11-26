@@ -167,11 +167,11 @@ release workflow on a `v*` tag).
 
 Tests: `make test` runs the C tests (host and MCU configurations), the Go
 tests (compiler, golden outputs, network simulator), the size checks,
-`make lint` (gofmt, also on `.gg` files, and go vet) and
-`make test-examples` (every example builds; those with an expected output
-run) and every example in the book (`make test-book`,
+`make lint` (gofmt, also on `.gg` files, go vet, and shellcheck when
+installed), `make test-examples` (every example builds; those with an
+expected output run) and every example in the book (`make test-book`,
 `docs/book/examples/run.sh`). The test workflow
-(`.github/workflows/test.yml`) runs it, `make test-lib` and
+(`.github/workflows/test.yml`) is set up to run it, `make test-lib` and
 `make test-tls-asan` on macOS and Linux for every push and pull request
 to main.
 

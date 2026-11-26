@@ -521,7 +521,7 @@ path.
 ## Checking a change to gogo
 
 `make test` is the full check before a commit. Besides the C and Go
-tests and the size budgets, it runs:
+tests, it runs:
 
 - `make lint`: `gofmt` on every `.go` file and on every `.gg` file
   (gogo source is Go syntax, but `gofmt` reads only `.go`, so
@@ -541,18 +541,18 @@ tests and the size budgets, it runs:
   `gogopath` names the example's `GOGOPATH`, relative to the example
   (`examples/packages` uses all three).
 - `make test-book`: every example in this book, through
-  `docs/book/examples/run.sh` (below).
-
-Outside `make test`: `make test-lib` (the standard library on the host
-Go toolchain, also part of `go test ./...`) and `make test-tls-asan`
-(the network and TLS tests under AddressSanitizer). The test workflow,
-`.github/workflows/test.yml`, runs all three on macOS and Linux for
-every push and pull request to main. The TLS tests need mbedTLS's
-source (ESP-IDF's `components/mbedtls/mbedtls`; `MBEDTLS_DIR` names
-another copy) and are skipped without it; the workflow fetches the
-commit ESP-IDF v6.1.1 pins.
+  `docs/book/examples/run.sh` (above).
 - `make vmsize` (and `netsize`, `vfssize`, `screensize`): the code size
   of the VM core and of each runtime part for the ESP32-S3, against
   their budgets (skipped without the ESP-IDF compiler). `vmsize` also
   prints the VM core's lines of C; `tools/vmsize.sh --record` appends
   the size and the line count to `docs/vmsize-history.csv`.
+
+Outside `make test`: `make test-lib` (the standard library on the host
+Go toolchain, also part of `go test ./...`) and `make test-tls-asan`
+(the network and TLS tests under AddressSanitizer). The test workflow,
+`.github/workflows/test.yml`, is set up to run all three on macOS and
+Linux (x86-64) for every push and pull request to main. The TLS tests need mbedTLS's
+source (ESP-IDF's `components/mbedtls/mbedtls`; `MBEDTLS_DIR` names
+another copy) and are skipped without it; the workflow fetches the
+commit ESP-IDF v6.1.1 pins.

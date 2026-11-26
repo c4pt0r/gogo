@@ -325,10 +325,10 @@ runs.
 | Building firmware from source | yes (ESP-IDF) | yes (ESP-IDF) | ESP-IDF supports it; untested here |
 
 Release binaries of the CLI are built for macOS, Linux and Windows on
-amd64 and arm64. Development happens on macOS (Apple silicon); the test
-workflow runs the full test suite on macOS and Linux (x86-64), and it has
-also passed on Linux arm64; see known-issues for what has not run on
-Linux yet.
+amd64 and arm64. Development happens on macOS (Apple silicon). The full
+test suite has passed on Linux arm64, and the test workflow is set up to
+run it on macOS and Linux x86-64 for every change; see known-issues for
+what has not run on Linux yet.
 
 **The VM** runs on:
 - **ESP32-S3** under ESP-IDF (v6.1.1) and FreeRTOS: the M5StickS3 and the
