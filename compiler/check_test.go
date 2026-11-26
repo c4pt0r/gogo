@@ -188,7 +188,13 @@ func TestRejects(t *testing.T) {
 		{"map", "package main\nfunc main() {\n\tm := map[string]int{} // ERR\n\t_ = m\n}\n", []string{"map"}},
 		{"defer", "package main\nfunc f() {}\nfunc main() {\n\tdefer f() // ERR\n}\n", []string{"defer"}},
 		{"float", "package main\nfunc main() {\n\tx := 1.5 // ERR\n\t_ = x\n}\n", []string{"float"}},
-		{"method", "package main\ntype P struct{ X int }\nfunc (p P) M() {} // ERR\nfunc main() {}\n", []string{"method"}},
+		{"method-pointer-receiver", "package main\ntype P struct{ X int }\nfunc (p *P) M() {} // ERR\nfunc main() {}\n", []string{"pointer receivers are not supported yet"}},
+		{"method-pointer-call", "package main\ntype P struct{ X int }\nfunc (p *P) M() {} // ERR\nfunc main() {\n\tp := P{}\n\tp.M()\n}\n", []string{"pointer receivers are not supported yet"}},
+		{"method-interface", "package main\ntype S interface{ Area() int } // ERR\nfunc main() {}\n", []string{"interface types are not supported yet"}},
+		{"method-interface-param", "package main\nfunc f(s interface{ M() }) {} // ERR\nfunc main() {}\n", []string{"interface not supported"}},
+		{"method-on-slice-type", "package main\ntype L []int // ERR\nfunc (l L) Len() int { return len(l) }\nfunc main() {}\n", []string{"type definition"}},
+		{"method-value-any", "package main\ntype P struct{ X int }\nfunc (p P) M() {}\nfunc main() {\n\tvar x any = P{}.M // ERR\n\t_ = x\n}\n", []string{"func value in interface not supported"}},
+		{"method-on-named-byte", "package main\ntype B byte // ERR\nfunc (b B) M() {}\nfunc main() {}\n", []string{"type definition"}},
 		{"slice-typeswitch", "package main\nfunc main() {\n\tvar x any = []int{1}\n\tswitch x.(type) {\n\tcase []int: // ERR\n\t}\n}\n", []string{"type switch case"}},
 		{"slice-keyed", "package main\nfunc main() {\n\ts := []int{2: 1} // ERR\n\t_ = s\n}\n", []string{"keyed slice element"}},
 		{"slice-of-map", "package main\nfunc main() {\n\tvar s []map[int]int // ERR\n\t_ = s\n}\n", []string{"slice of map"}},
@@ -300,7 +306,6 @@ func TestRejects(t *testing.T) {
 		{"bytes-println", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.FromString(\"a\")\n\tprintln(x) // ERR\n}\n", []string{"println of bytes.Bytes"}},
 		{"bytes-compare", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.FromString(\"a\")\n\tprintln(x == x) // ERR\n}\n", []string{"comparison of"}},
 		{"bytes-methodvalue", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.FromString(\"a\")\n\tf := x.Len // ERR\n\t_ = f\n}\n", []string{"not supported"}},
-		{"user-method", "package main\ntype T struct{}\nfunc (t T) M() {} // ERR\nfunc main() { T{}.M() }\n", []string{"method not supported"}},
 		{"port-renamed", "package main\nimport p \"gogo/port\" // ERR\nfunc main() { p.Close(p.Edge{}) }\n", []string{`import p "gogo/port" not supported`}},
 	}
 	for _, tc := range tests {

@@ -36,7 +36,7 @@ func Compile(p *Program) ([]byte, error) {
 				if fd, ok := d.(*ast.FuncDecl); ok {
 					fn := p.Info.Defs[fd.Name].(*types.Func)
 					g.funcIdx[fn] = uint32(len(g.funcs))
-					g.funcs = append(g.funcs, &funcInfo{name: g.qualified(fn.Pkg(), fd.Name.Name)})
+					g.funcs = append(g.funcs, &funcInfo{name: g.qualified(fn.Pkg(), funcName(fn))})
 					decls = append(decls, fd)
 				}
 			}
@@ -46,7 +46,11 @@ func Compile(p *Program) ([]byte, error) {
 	var errs []error
 	for _, fd := range decls {
 		fn := p.Info.Defs[fd.Name].(*types.Func)
-		if err := g.compileFunc(g.funcs[g.funcIdx[fn]], g.declParams(fd.Type), fn.Type().(*types.Signature).Results(), fd.Body); err != nil {
+		params := g.declParams(fd.Type)
+		if fd.Recv != nil { // the receiver is parameter 0
+			params = append(g.fieldVars(fd.Recv), params...)
+		}
+		if err := g.compileFunc(g.funcs[g.funcIdx[fn]], params, fn.Type().(*types.Signature).Results(), fd.Body); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -114,6 +118,17 @@ func (g *gen) qualified(pkg *types.Package, name string) string {
 		return name
 	}
 	return pkgPrefix(pkg) + "." + name
+}
+
+// funcName names a declared function in the image, without its package:
+// its name, or Type.Method for a method.
+func funcName(fn *types.Func) string {
+	if recv := fn.Type().(*types.Signature).Recv(); recv != nil {
+		if n, ok := types.Unalias(recv.Type()).(*types.Named); ok {
+			return n.Obj().Name() + "." + fn.Name()
+		}
+	}
+	return fn.Name()
 }
 
 // pkgPrefix names package pkg in the image's function and type names: a
@@ -388,8 +403,14 @@ type fn struct {
 // declParams lists the parameters of a declared function; unnamed ones are
 // nil (they get a register but no variable).
 func (g *gen) declParams(ft *ast.FuncType) []*types.Var {
+	return g.fieldVars(ft.Params)
+}
+
+// fieldVars lists the variables a parameter or receiver list declares;
+// unnamed ones are nil.
+func (g *gen) fieldVars(fl *ast.FieldList) []*types.Var {
 	var params []*types.Var
-	for _, field := range ft.Params.List {
+	for _, field := range fl.List {
 		if len(field.Names) == 0 {
 			params = append(params, nil)
 			continue
@@ -1146,6 +1167,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 	case *ast.BinaryExpr:
 		f.binaryInto(e, dst)
 	case *ast.SelectorExpr:
+		if m := f.g.p.method(e); m != nil {
+			f.methodValueInto(e, m, dst)
+			return
+		}
 		if fn, ok := f.g.p.Info.Uses[e.Sel].(*types.Func); ok {
 			f.funcValueInto(e, fn, dst) // lib.F
 			return
@@ -1516,6 +1541,10 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			return
 		}
 	case *ast.SelectorExpr:
+		if m := f.g.p.method(fun); m != nil {
+			f.methodCall(call, fun, m, dst)
+			return
+		}
 		if name := bytesMethod(f.g.p.Info, fun); name != "" {
 			f.bytesMethodCall(call, fun, name, dst)
 			return

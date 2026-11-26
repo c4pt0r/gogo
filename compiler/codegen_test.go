@@ -2254,3 +2254,91 @@ func main() {
 		t.Errorf("want n() to pass the nil slice:\n%s", dis)
 	}
 }
+
+// TestCompileMethods: a method is a function named Type.Method whose
+// parameter 0 is the receiver; x.M(args) passes x right below the
+// arguments, x.M is a closure capturing x, and T.M is the function itself.
+func TestCompileMethods(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+type P struct{ X, Y int }
+
+type C int
+
+func (p P) Add(q P) P { return P{p.X + q.X, p.Y + q.Y} }
+
+func (p P) Sum(xs ...int) int { return p.X + len(xs) }
+
+func (c C) Twice() C { return c * 2 }
+
+func (C) Name() string {
+	f := func() string { return "C" }
+	return f()
+}
+
+func main() {
+	p := P{1, 2}
+	println(p.Add(p).X, p.Sum(), p.Sum(1, 2))
+	f := p.Add
+	g := P.Add
+	println(f(p).Y, g(p, p).X, C(3).Twice(), C(1).Name())
+}
+`)
+	for name, params := range map[string]string{"P.Add": "params=2", "P.Sum": "params=2", "C.Twice": "params=1", "C.Name": "params=1", "main.C.Name.func1": "params=0"} {
+		if header, _ := funcDis(t, dis, name); !strings.Contains(header, params) {
+			t.Errorf("%s header %q, want %s", name, header, params)
+		}
+	}
+	_, body := funcDis(t, dis, "main")
+	code := parseIns(t, body)
+	// p.Add(p): the receiver (a copy of p) and then p, both above the locals.
+	if countOp(code, "CALL", ", 2, P.Add") != 1 {
+		t.Errorf("want one CALL of P.Add with 2 arguments:\n%s", dis)
+	}
+	// p.Sum() passes the receiver and the nil slice; p.Sum(1, 2) a new slice.
+	if countOp(code, "CALL", ", 2, P.Sum") != 2 || countOp(code, "LOADK", "nilslice") != 1 {
+		t.Errorf("want two CALLs of P.Sum with 2 arguments, one with the nil slice:\n%s", dis)
+	}
+	if countOp(code, "MKCLOSURE", ", 1, P.Add") != 1 || countOp(code, "MKCLOSURE", ", 0, P.Add") != 1 {
+		t.Errorf("want p.Add capturing p and P.Add capturing nothing:\n%s", dis)
+	}
+}
+
+// TestCompileLibraryMethods: a library's methods are named
+// pkg.Type.Method, called and taken as values like main's.
+func TestCompileLibraryMethods(t *testing.T) {
+	libs := fakeLibs(t, map[string]string{"lib/lib.gg": `package lib
+
+type Temp int
+
+func (t Temp) F() int { return int(t)*9/5 + 32 }
+
+type Box struct{ N int }
+
+func (b Box) Get() int {
+	g := func() int { return b.N }
+	return g()
+}
+`})
+	src := "package main\nimport \"gogo/lib\"\ntype Box struct{ N int }\nfunc (b Box) Get() int { return b.N }\nfunc main() {\n\tf := lib.Box{1}.Get\n\tprintln(lib.Temp(3).F(), f(), Box{2}.Get(), lib.Temp.F(1))\n}\n"
+	prog, err := LoadWith(writeProg(t, src), libs)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	img, err := Compile(prog)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	dis, err := Disassemble(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"lib.Temp.F", "lib.Box.Get", "lib.Box.Get.func1", "Box.Get"} {
+		funcDis(t, dis, name)
+	}
+	for _, re := range []string{`CALL r\d+, r\d+, 1, lib\.Temp\.F\n`, `MKCLOSURE r\d+, r\d+, 1, lib\.Box\.Get\n`, `CALL r\d+, r\d+, 1, Box\.Get\n`} {
+		if n := len(regexp.MustCompile(re).FindAllString(dis, -1)); n == 0 {
+			t.Errorf("no %s:\n%s", re, dis)
+		}
+	}
+}
