@@ -67,6 +67,7 @@ typedef struct Vm {
     uint32_t mod_mem;         /* code bytes of the counted (loaded, not boot) modules */
     uint32_t mod_cap;         /* their limit: config code.mem (module_config) */
     uint8_t mod_next;         /* where module_load's round-robin slot search starts */
+    uint8_t open_err;         /* why the last refused port open failed: GOGO_E_* (port.h) */
     uint32_t rand_x;          /* vm_random's fallback state */
     uint64_t t0;              /* host->now_ms at the time base; vm_now counts from it */
     uintptr_t *table;

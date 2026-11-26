@@ -224,22 +224,32 @@ TEST(port_open_fails) {
     setup(w, &img, &vm);
     Actor *a = waiting_actor(&vm);
     int32_t cfg[2] = { 1, 2 };
-    /* Unknown driver (also a prefix of a known name). */
+    /* Unknown driver (also a prefix of a known name), or a name that is
+     * no string: NotFound in vm->open_err. */
     CHECK(port_open(&vm, a, heap_str(&vm, a, "nope"), heap_struct(&vm, a, CFG_TYPE, cfg, 2)) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_NOTFOUND);
     CHECK(port_open(&vm, a, heap_str(&vm, a, "fak"), heap_struct(&vm, a, CFG_TYPE, cfg, 2)) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_NOTFOUND);
     CHECK(port_open(&vm, a, T_EMPTYSTR, heap_struct(&vm, a, CFG_TYPE, cfg, 2)) == T_NIL);
-    /* Wrong cfg type, or not a struct. */
+    CHECK_EQ(vm.open_err, GOGO_E_NOTFOUND);
+    CHECK(port_open(&vm, a, term_from_int(7), heap_struct(&vm, a, CFG_TYPE, cfg, 2)) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_NOTFOUND);
+    /* Wrong cfg type, or not a struct: BadArg. */
     CHECK(port_open(&vm, a, heap_str(&vm, a, "fake"), heap_struct(&vm, a, EVT_TYPE, cfg, 2)) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_BADARG);
     CHECK(port_open(&vm, a, heap_str(&vm, a, "fake"), term_from_int(3)) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_BADARG);
     CHECK_EQ(fk.opens, 0);
-    /* Driver refusal. */
+    /* Driver refusal: Busy. */
     fk.refuse = 1;
     CHECK(open_fake(&vm, a, 1) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_BUSY);
     fk.refuse = 0;
     CHECK(!actor_port_owns(a));
-    /* Table full. */
+    /* Table full: TooMany. */
     for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) CHECK(open_fake(&vm, a, (int32_t)i) != T_NIL);
     CHECK(open_fake(&vm, a, 99) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_TOOMANY);
     CHECK_EQ(fk.opens, (int)GOGO_MAX_PORTS);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(fk.closes, (int)GOGO_MAX_PORTS);
@@ -751,6 +761,7 @@ TEST(port_open_charge_limit) {
     a->max_words = (uint16_t)(a->mem_words + 10u);
     fk.charge = 11;
     CHECK(open_fake(&vm, a, 1) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_NOMEMORY);
     CHECK_EQ(fk.opens, 1);
     CHECK_EQ(fk.closes, 1);                     /* the driver undid its open */
     CHECK(!actor_port_owns(a));
@@ -785,6 +796,7 @@ TEST(port_open_room_limit) {
     fk.charge = 0;
     fk.room = 3;                                /* room alone is checked too */
     CHECK(open_fake(&vm, a, 1) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_NOMEMORY);
     fk.room = 2;
     p = open_fake(&vm, a, 1);
     CHECK(p != T_NIL);

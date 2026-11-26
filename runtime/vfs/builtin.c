@@ -318,7 +318,7 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
             if (res == T_NIL) {
                 vfs_close(st, slot);
                 res = T_ZEROPID;
-                e = GOGO_E_TOOMANY;
+                e = vm->open_err;               /* the port layer's reason (port.h) */
             }
         }
         break;

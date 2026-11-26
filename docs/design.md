@@ -325,7 +325,11 @@ btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: 
 
 - `port.Open(driver string, cfg any) (actor.PID, bool)`: the caller
   becomes the owner. An unknown driver, an invalid configuration, a busy
-  resource or a lack of memory gives `ok == false` and the zero PID.
+  resource or a lack of memory gives `ok == false` and the zero PID. The
+  VM keeps the reason as a shared error code, `vm->open_err`
+  (`NotFound`, `BadArg`, `TooMany`, `NoMemory` or `Busy`, `port.h`):
+  `fs.Open` reports it, and Go code will get it when `port.Open` returns
+  `error` (language phase B).
   `port.Close(p)` closes a port; stale or unknown PIDs are ignored.
   `port.Handoff(p, to) bool`: the owner hands the port to another live
   actor; later events go to `to`, the port closes when `to` exits, and

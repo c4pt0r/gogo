@@ -97,7 +97,9 @@ type Post struct {
 
 // Open opens a port of the named driver with cfg; the caller becomes its
 // owner. ok is false if the driver is unknown, cfg is invalid for it, the
-// resource is taken, or memory runs out.
+// resource is taken, or memory runs out. The VM knows which (as a
+// gogo/errors code: NotFound, BadArg, Busy, TooMany or NoMemory); Open
+// will return it as an error once the language has one.
 func Open(driver string, cfg any) (p actor.PID, ok bool) { panic("gogo only") }
 
 // Close closes the port p. A stale or unknown p is ignored.
