@@ -10,6 +10,28 @@ why source files end in `.gg` and compiled images in `.ggb`. See
 [book chapter 3](book/03-language-basics.md) for the subset and §3.10 for
 what is missing.
 
+### Is gogo compiled or interpreted?
+Both, in two steps. `gogo build` compiles `.gg` source ahead of time, on your
+computer, into a `.ggb` bytecode image: parsing, type checking and code
+generation all happen there, so type errors are found before anything runs.
+The VM on the device then interprets that bytecode; there is no native code
+generation. This is the model of Java or Erlang/BEAM, not of Go (native) or
+Python (source interpreted on the device). It keeps the device small: the
+board never needs the compiler, and an image is portable, so the same
+`.ggb` runs on the boards, in the host VM and in embedded hosts.
+
+### What is gogovm?
+The gogo VM built for your computer (macOS or Linux): the same C runtime
+that runs on the boards, compiled as a command-line program,
+`build/gogovm` (`make vm`). It runs `.ggb` images with simulated hardware:
+GPIO, keyboard, IMU, IR and the microphone are driven by script lines on
+standard input, the network can be simulated or connected, `/flash` and
+`/sd` map to host directories (`--fs-root`), and the screen renders in the
+terminal. `gogo run` builds a program and runs it in gogovm, which is how
+you develop and test without a board; all the golden tests and book examples
+run this way. `build/gogovm_mcu` is the same VM with the boards' memory
+limits, to check that a program fits.
+
 ### Does the compiler use Go's parser?
 Yes. The front end is Go's standard library: `go/parser` for parsing,
 `go/ast` and `go/token`, `go/types` for type checking (configured for a
@@ -99,7 +121,7 @@ Yes: `gogo/tui`, a small ncurses-like text UI (frames, windows, boxes,
 lists, progress bars, a status line, a line editor) on the `screen` port.
 The port is written in C (cell grid, LCD flush, terminal and headless
 renderers); the library and widgets are written in gogo. See the Text UI
-chapter of the book.
+chapter of the book ([chapter 19](book/19-text-ui.md)).
 
 ## Embedding and the future
 
