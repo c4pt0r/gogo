@@ -6,6 +6,8 @@
 #   tools/release.sh [version]          everything, into build/release/<version>/
 #   tools/release.sh firmware BOARD DIR  one board's firmware (sticks3, cardputer)
 #   tools/release.sh cli VERSION DIR     the gogo command for every OS and CPU
+#   tools/release.sh vm DIR [OS/ARCH...] the host VM, gogovm, for each target
+#                                        (default: every one in VM_TARGETS)
 #   tools/release.sh notices DIR         the license files (below)
 #   tools/release.sh sums DIR            DIR/SHA256SUMS over the other files
 #
@@ -20,12 +22,22 @@
 # ~/esp/esp-idf/export.sh is sourced. The ESP-IDF build directories go
 # under $GOGO_RELEASE_WORK (default build/release-work), each started
 # afresh. The gogo command is cross-compiled with GOOS/GOARCH (no cgo).
+#
+# gogovm (C, `make vm`) is built for macOS and Linux on amd64 and arm64 as
+# gogovm-<os>-<arch>; `gogo run` finds it next to the gogo command. The
+# compiler for a target is $CC_<os>_<arch> if set (e.g.
+# CC_linux_arm64=aarch64-linux-gnu-gcc), else on macOS `clang -arch` for
+# both darwin targets, else on Linux `cc` for the host's own CPU. The
+# Linux VMs are linked statically. The release VMs are built without the
+# tls port (it needs ESP-IDF's mbedTLS source): build gogovm from source
+# for HTTPS on the host.
 set -eu
 cd "$(dirname "$0")/.."
 repo=$(pwd)
 
 BOARDS="sticks3 cardputer"
 TARGETS="darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64"
+VM_TARGETS="darwin/amd64 darwin/arm64 linux/amd64 linux/arm64"
 
 die() { echo "release.sh: $*" >&2; exit 1; }
 
@@ -82,6 +94,44 @@ cli() {
     done
 }
 
+# vm_cc OS ARCH: the C compiler command for a gogovm target, or nothing.
+vm_cc() {
+    os=$1 arch=$2
+    eval "cc=\${CC_${os}_${arch}:-}"
+    if [ -n "$cc" ]; then echo "$cc"; return; fi
+    host_arch=$(uname -m)
+    case $host_arch in x86_64|amd64) host_arch=amd64 ;; aarch64|arm64) host_arch=arm64 ;; esac
+    case $os/$(uname -s) in
+    darwin/Darwin)
+        a=$arch; [ "$a" = amd64 ] && a=x86_64
+        echo "clang -arch $a -mmacosx-version-min=11.0" ;;
+    linux/Linux)
+        [ "$arch" = "$host_arch" ] && echo "${CC:-cc}" ;;
+    esac
+}
+
+# vm DIR [OS/ARCH...]
+vm() {
+    out=$1; shift
+    # shellcheck disable=SC2086 # one target per word
+    [ $# -gt 0 ] || set -- $VM_TARGETS
+    mkdir -p "$out"
+    for t in "$@"; do
+        os=${t%/*} arch=${t#*/}
+        case " $VM_TARGETS " in *" $t "*) ;; *) die "no gogovm for $t (targets: $VM_TARGETS)" ;; esac
+        cc=$(vm_cc "$os" "$arch")
+        [ -n "$cc" ] || die "cannot build gogovm-$os-$arch on $(uname -s) $(uname -m): set CC_${os}_${arch} to a C compiler for it"
+        flags=-g0
+        [ "$os" = linux ] && flags="-g0 -static"
+        work=${GOGO_RELEASE_WORK:-$repo/build/release-work}/vm-$os-$arch
+        rm -rf "$work"
+        # MBEDTLS_DIR points nowhere: no tls port (above).
+        make -s BUILD="$work" CC="$cc" EXTRA_CFLAGS="$flags" MBEDTLS_DIR=/nonexistent "$work/gogovm"
+        cp "$work/gogovm" "$out/gogovm-$os-$arch"
+        echo "vm gogovm-$os-$arch"
+    done
+}
+
 # notices DIR
 notices() {
     mkdir -p "$1"
@@ -104,9 +154,10 @@ sums() {
 case ${1:-} in
 firmware) [ $# -eq 3 ] || die "usage: tools/release.sh firmware BOARD DIR"; firmware "$2" "$3" ;;
 cli) [ $# -eq 3 ] || die "usage: tools/release.sh cli VERSION DIR"; cli "$2" "$3" ;;
+vm) [ $# -ge 2 ] || die "usage: tools/release.sh vm DIR [OS/ARCH...]"; shift; vm "$@" ;;
 notices) [ $# -eq 2 ] || die "usage: tools/release.sh notices DIR"; notices "$2" ;;
 sums) [ $# -eq 2 ] || die "usage: tools/release.sh sums DIR"; sums "$2" ;;
--*) die "usage: tools/release.sh [version] | firmware BOARD DIR | cli VERSION DIR | notices DIR | sums DIR" ;;
+-*) die "usage: tools/release.sh [version] | firmware BOARD DIR | cli VERSION DIR | vm DIR [OS/ARCH...] | notices DIR | sums DIR" ;;
 *)
     v=${1:-$(git describe --tags --always --dirty)}
     case $v in
@@ -117,6 +168,7 @@ sums) [ $# -eq 2 ] || die "usage: tools/release.sh sums DIR"; sums "$2" ;;
     mkdir -p "$out"
     for b in $BOARDS; do firmware "$b" "$out"; done
     cli "$v" "$out"
+    vm "$out"
     notices "$out"
     sums "$out"
     echo "release $v: $out"

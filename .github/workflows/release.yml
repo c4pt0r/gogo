@@ -1,5 +1,6 @@
-# Release: on a tag v*, build the firmware for both boards and the gogo
-# command for every OS and CPU with tools/release.sh, and attach them with
+# Release: on a tag v*, build the firmware for both boards, the gogo
+# command for every OS and CPU and the host VM gogovm for macOS and Linux
+# with tools/release.sh, and attach them with
 # SHA256SUMS to a draft GitHub release for the tag (a pre-release if the tag
 # has a "-", e.g. v1.0.0-rc1). A maintainer checks the draft on both boards
 # and publishes it (platform/esp32s3/README.md, "Releases"); until then
@@ -63,8 +64,61 @@ jobs:
           path: out/
           if-no-files-found: error
 
+  vm:
+    # gogovm is C: macOS builds both CPUs with clang -arch, Linux its own
+    # CPU natively and arm64 with the Debian cross compiler.
+    strategy:
+      matrix:
+        include:
+          - name: darwin
+            runner: macos-15
+            targets: darwin/amd64 darwin/arm64
+            smoke: darwin-arm64
+          - name: linux
+            runner: ubuntu-24.04
+            targets: linux/amd64 linux/arm64
+            smoke: linux-amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Cross compiler
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+      - name: Build
+        shell: bash
+        env:
+          CC_linux_arm64: aarch64-linux-gnu-gcc
+          VM_TARGETS: ${{ matrix.targets }}
+        run: |
+          read -ra targets <<< "$VM_TARGETS"
+          GOGO_RELEASE_WORK="$RUNNER_TEMP/work" tools/release.sh vm out "${targets[@]}"
+          file out/*
+      - name: Smoke test
+        shell: bash
+        env:
+          SMOKE: ${{ matrix.smoke }}
+        run: |
+          go build -o "$RUNNER_TEMP/gogo" ./cmd/gogo
+          cp "out/gogovm-$SMOKE" "$RUNNER_TEMP/gogovm"
+          "$RUNNER_TEMP/gogo" env
+          "$RUNNER_TEMP/gogo" run tests/golden/pkgs > "$RUNNER_TEMP/got"
+          diff tests/golden/pkgs/expected.out "$RUNNER_TEMP/got"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-${{ matrix.name }}
+          path: out/
+          if-no-files-found: error
+
   release:
-    needs: [firmware, cli]
+    needs: [firmware, cli, vm]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -89,5 +143,5 @@ jobs:
           case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; esac
           gh release create "$GITHUB_REF_NAME" out/* --draft $pre \
             --title "gogo $GITHUB_REF_NAME" \
-            --notes "Install: download gogo for your system, install esptool, run \`gogo setup\`. See docs/book/02-getting-started.md." \
+            --notes "Install: download gogo for your system, install esptool, run \`gogo setup\`. To run programs on your computer, put gogovm for your system next to gogo, named gogovm. See docs/book/02-getting-started.md." \
             --verify-tag

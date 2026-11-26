@@ -56,6 +56,56 @@ func TestEnv(t *testing.T) {
 	}
 }
 
+// lookVM: gogovm (or its release asset name) next to gogo, else the
+// repository's build/gogovm, else an error that says what to do.
+func TestLookVM(t *testing.T) {
+	work := t.TempDir()
+	touch := func(p string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(work, "bin")
+	repo := filepath.Join(work, "repo")
+	touch(filepath.Join(repo, "go.mod"))
+	os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module gogotools\n"), 0o644)
+	sub := filepath.Join(repo, "examples", "x")
+	os.MkdirAll(sub, 0o755)
+	os.MkdirAll(bin, 0o755)
+
+	// Nothing next to gogo, outside the repository: an error.
+	if _, _, err := lookVM(bin, work); err == nil || !strings.Contains(err.Error(), "cannot find the VM") || !strings.Contains(err.Error(), vmAsset) {
+		t.Errorf("err = %v", err)
+	}
+	// Inside the repository without build/gogovm: says make vm.
+	if _, _, err := lookVM(bin, sub); err == nil || !strings.Contains(err.Error(), "make vm") {
+		t.Errorf("err = %v", err)
+	}
+	touch(filepath.Join(repo, "build", vmName))
+	if vm, from, err := lookVM(bin, sub); err != nil || vm != filepath.Join(repo, "build", vmName) || from != "the gogo repository" {
+		t.Errorf("repo: %q %q %v", vm, from, err)
+	}
+	// The release asset name next to gogo comes before the repository.
+	touch(filepath.Join(bin, vmAsset))
+	if vm, from, err := lookVM(bin, sub); err != nil || vm != filepath.Join(bin, vmAsset) || from != "next to gogo" {
+		t.Errorf("asset: %q %q %v", vm, from, err)
+	}
+	// gogovm next to gogo comes first.
+	touch(filepath.Join(bin, vmName))
+	if vm, _, err := lookVM(bin, sub); err != nil || vm != filepath.Join(bin, vmName) {
+		t.Errorf("next to gogo: %q %v", vm, err)
+	}
+	// $GOGO_VM comes before everything.
+	t.Setenv("GOGO_VM", "/x/vm")
+	if vm, from, err := findVM(); err != nil || vm != "/x/vm" || from != "$GOGO_VM" {
+		t.Errorf("GOGO_VM: %q %q %v", vm, from, err)
+	}
+}
+
 // buildGogo builds the gogo command into dir.
 func buildGogo(t *testing.T, dir string) string {
 	t.Helper()

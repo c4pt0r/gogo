@@ -36,6 +36,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -152,35 +153,71 @@ func runCmd(args []string) (int, error) {
 	return 0, nil
 }
 
+// vmName is the VM's file name, and vmAsset the name of the release asset
+// that holds it for this OS and CPU (tools/release.sh).
+var (
+	vmName  = "gogovm" + exeSuffix(runtime.GOOS)
+	vmAsset = "gogovm-" + runtime.GOOS + "-" + runtime.GOARCH + exeSuffix(runtime.GOOS)
+)
+
+func exeSuffix(goos string) string {
+	if goos == "windows" {
+		return ".exe"
+	}
+	return ""
+}
+
 // findVM returns the VM `gogo run` starts and where it was found: $GOGO_VM
-// if set, else build/gogovm in the gogo repository (built by `make vm`),
-// the first directory containing a go.mod declaring `module gogotools`,
-// searched upwards from the gogo executable and then from the current
-// directory.
+// if set; else gogovm (or the release asset name gogovm-<os>-<arch>) in
+// the directory of the gogo executable, as a release installs them; else
+// build/gogovm in the gogo repository (built by `make vm`), the first
+// directory containing a go.mod declaring `module gogotools`, searched
+// upwards from the gogo executable and then from the current directory.
 func findVM() (vm, from string, err error) {
 	if vm := os.Getenv("GOGO_VM"); vm != "" {
 		return vm, "$GOGO_VM", nil
 	}
-	var starts []string
+	var exeDir string
 	if exe, err := os.Executable(); err == nil {
 		if real, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = real
 		}
-		starts = append(starts, filepath.Dir(exe))
+		exeDir = filepath.Dir(exe)
 	}
-	if wd, err := os.Getwd(); err == nil {
+	wd, _ := os.Getwd()
+	return lookVM(exeDir, wd)
+}
+
+// lookVM is findVM without $GOGO_VM: exeDir is the gogo executable's
+// directory, wd the current directory ("" for unknown).
+func lookVM(exeDir, wd string) (string, string, error) {
+	var starts []string
+	if exeDir != "" {
+		for _, name := range []string{vmName, vmAsset} {
+			vm := filepath.Join(exeDir, name)
+			if fi, err := os.Stat(vm); err == nil && !fi.IsDir() {
+				return vm, "next to gogo", nil
+			}
+		}
+		starts = append(starts, exeDir)
+	}
+	if wd != "" {
 		starts = append(starts, wd)
 	}
 	for _, dir := range starts {
 		if repo, ok := findRepo(dir); ok {
-			vm := filepath.Join(repo, "build", "gogovm")
+			vm := filepath.Join(repo, "build", vmName)
 			if _, err := os.Stat(vm); err != nil {
 				return "", "", fmt.Errorf("gogo: VM not found at %s (run `make vm` in %s, or set GOGO_VM)", vm, repo)
 			}
 			return vm, "the gogo repository", nil
 		}
 	}
-	return "", "", errors.New("gogo: cannot find the VM: set GOGO_VM or run from inside the gogo repository")
+	where := "next to gogo"
+	if exeDir != "" {
+		where = "in " + exeDir
+	}
+	return "", "", fmt.Errorf("gogo: cannot find the VM: no $GOGO_VM, no %s or %s %s, and not inside the gogo repository; download %s from the release into the directory of gogo (renamed %s), or set GOGO_VM", vmName, vmAsset, where, vmAsset, vmName)
 }
 
 // findRepo walks up from dir to the directory whose go.mod says `module gogotools`.
