@@ -941,15 +941,17 @@ func failure(deadline int64) errors.Code {
 // sendFile writes j's head and size bytes of f to c, UploadChunk at a
 // time with at most 2 writes in flight. It stops early when the response
 // begins (early: its first bytes); sent is what was written; errors.OK,
-// Timeout (a wait timed out), IO (the connection closed, or a DownMsg
-// came: the actor followed ended; it is kept in queue) or the file's
-// error.
+// Timeout (a wait timed out), the connection's Closed reason (Timeout,
+// Refused, Reset, NoRoute, BadCert, NoTime, TLS: a shared code), IO (the
+// peer closed normally before the response, or a DownMsg came: the actor
+// followed ended; it is kept in queue) or the file's error.
 func sendFile(c actor.PID, j job, f fs.File, size int, queue []any) (bytes.Bytes, int, errors.Code, []any) {
 	actor.Send(c, port.Out{Data: requestHead(j, size)})
 	sent, inflight := 0, 1
+	lost := false // an Out came back not sent: wait for the Closed that says why
 	var early bytes.Bytes
-	for (sent < size || inflight > 0) && early.Len() == 0 {
-		for inflight < 2 && sent < size {
+	for (sent < size || inflight > 0 || lost) && early.Len() == 0 {
+		for inflight < 2 && sent < size && !lost {
 			d, e := f.Read(UploadChunk)
 			if e == fs.OK && d.Len() == 0 {
 				e = fs.IO // the file shrank
@@ -975,12 +977,13 @@ func sendFile(c actor.PID, j job, f fs.File, size int, queue []any) (bytes.Bytes
 		switch x := m.(type) {
 		case port.Done:
 			inflight--
-			if x.Seq < 0 { // not sent: the connection is gone
-				return early, sent, errors.IO, queue
-			}
+			lost = lost || x.Seq < 0 // not sent: the connection is gone
 		case port.Chunk:
 			early = x.Data
 		case port.Closed:
+			if x.Reason != net.Normal {
+				return early, sent, errors.Code(x.Reason), queue
+			}
 			return early, sent, errors.IO, queue
 		case actor.DownMsg:
 			return early, sent, errors.IO, keepMsg(queue, m)
@@ -1028,10 +1031,12 @@ func openFile(path string) (fs.File, int, errors.Code) {
 // It returns the response status (anything the server answers, 2xx or
 // not) with errors.OK; or 0 and the error: the file's (opening, reading:
 // the gogo/fs codes, which are the shared ones; a file that shrinks while
-// it is sent is errors.IO), BadURL, or for no usable response Timeout (a
-// wait or the whole upload ran out of time) or IO (the host did not
-// resolve, the connection failed or closed, the response was malformed
-// or cut short). A server that answers before it has read the whole
+// it is sent is errors.IO), BadURL, or for no usable response: why the
+// connection ended while the request was sent (its port.Closed reason:
+// Timeout for a host that does not answer, Refused, Reset, NoRoute,
+// BadCert, NoTime, TLS), Timeout (a wait or the whole upload ran out of
+// time) or IO (the host did not resolve, the peer closed, the response
+// was malformed or cut short). A server that answers before it has read the whole
 // body (401, 413) stops the upload and its status is returned. Each wait
 // (connecting, a write, the response) is bounded by DefaultTimeoutMs, and
 // the upload as a whole by 3*DefaultTimeoutMs plus 1 ms per byte: a link

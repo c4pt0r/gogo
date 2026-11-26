@@ -251,8 +251,9 @@ Otherwise `status` is 0 and `err` says why:
 | `err` | meaning |
 |---|---|
 | a storage error | the file, with the same number as in `gogo/fs`: `errors.NotFound`, `errors.IsDir`, `errors.IO` (also: the file got shorter while it was sent) |
+| a connection's `Closed` reason | the connection ended while the request was sent: `errors.Timeout` (9, a host that does not answer), `Refused`, `Reset`, `NoRoute`, `BadCert` (21, the certificate failed), `NoTime`, `TLS` |
 | `errors.Timeout` (9) | no usable answer in time: a wait or the whole upload ran out |
-| `errors.IO` (8) | no usable answer otherwise: DNS, connection, certificate, or a malformed or cut-short response |
+| `errors.IO` (8) | no usable answer otherwise: DNS, the peer closed, or a malformed or cut-short response |
 | `http.BadURL` (25, `errors.BadURL`) | not an `http://` or `https://` URL, a content type or token that cannot go in a header, or a token with an `http://` URL |
 
 A server that answers before it has read the whole body (a 401 for a bad
