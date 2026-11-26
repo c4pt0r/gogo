@@ -227,13 +227,14 @@ variadic functions, packages of your own, methods with value receivers
 assignment (`p.X = v`, `s[i].X += 1`), embedded fields (promoted
 fields and methods), arrays (`[N]T`, values as in Go, but no `==` yet
 and not in an `any`), floating point (`float32` and `float64`, with
-`gogo/math` and `strconv.FormatFloat` / `ParseFloat`) and a static
+`gogo/math` and `strconv.FormatFloat` / `ParseFloat`), the sized integers
+(`int8` .. `uint64` and `uint`, 32 bits like `int`, not in an `any`) and a static
 `defer` (not inside loops; deferred calls run on normal returns only,
 not when the actor crashes) are supported.
 Planned, in this order: `panic`, type assertions,
 interfaces and `error`; then pointers (boxed, copied when sent) and pointer receivers, maps (a
-library, deterministic order), read-only package variables and `fmt`; then
-sized integers. Not planned: `goto`, `recover`, `defer` inside loops,
+library, deterministic order), read-only package variables and `fmt`.
+Not planned: `goto`, `recover`, `defer` inside loops,
 per-actor mutable globals, channels, `go` statements. Generics are
 deferred.
 

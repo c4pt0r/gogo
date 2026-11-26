@@ -1,0 +1,103 @@
+package main
+
+// Conversions between every pair of sized integer types, and to and from
+// float32 and float64, on edge values. Checked against Go (gocompare):
+// int and uint are left out of the matrix (32 bits in gogo, 64 in Go on
+// the host); float to integer conversions stay within the target's range
+// or follow what Go does on arm64.
+
+func fromInt8(x int8) {
+	println("int8", x, int16(x), int32(x), int64(x), uint8(x), uint16(x), uint32(x), uint64(x), float32(x), float64(x))
+}
+
+func fromInt16(x int16) {
+	println("int16", int8(x), x, int32(x), int64(x), uint8(x), uint16(x), uint32(x), uint64(x), float32(x), float64(x))
+}
+
+func fromInt32(x int32) {
+	println("int32", int8(x), int16(x), x, int64(x), uint8(x), uint16(x), uint32(x), uint64(x), float32(x), float64(x))
+}
+
+func fromInt64(x int64) {
+	println("int64", int8(x), int16(x), int32(x), x, uint8(x), uint16(x), uint32(x), uint64(x), float32(x), float64(x))
+}
+
+func fromUint8(x uint8) {
+	println("uint8", int8(x), int16(x), int32(x), int64(x), x, uint16(x), uint32(x), uint64(x), float32(x), float64(x))
+}
+
+func fromUint16(x uint16) {
+	println("uint16", int8(x), int16(x), int32(x), int64(x), uint8(x), x, uint32(x), uint64(x), float32(x), float64(x))
+}
+
+func fromUint32(x uint32) {
+	println("uint32", int8(x), int16(x), int32(x), int64(x), uint8(x), uint16(x), x, uint64(x), float32(x), float64(x))
+}
+
+func fromUint64(x uint64) {
+	println("uint64", int8(x), int16(x), int32(x), int64(x), uint8(x), uint16(x), uint32(x), x, float32(x), float64(x))
+}
+
+func fromFloat64(f float64) {
+	println("float64", f, int8(f), int16(f), int32(f), int64(f), uint8(f), uint16(f), uint32(f), uint64(f))
+}
+
+func fromFloat32(f float32) {
+	println("float32", f, int8(f), int16(f), int32(f), int64(f), uint8(f), uint16(f), uint32(f), uint64(f))
+}
+
+// A named type converts like its underlying type, and has methods.
+type Reg uint32
+
+func (r Reg) Bit(n int) bool { return r>>uint(n)&1 != 0 }
+
+func (r Reg) Set(n int) Reg { return r | 1<<uint(n) }
+
+type Level int8
+
+func main() {
+	for _, v := range []int8{0, 1, -1, 127, -128} {
+		fromInt8(v)
+	}
+	for _, v := range []int16{0, -1, 255, 256, -129, 32767, -32768} {
+		fromInt16(v)
+	}
+	for _, v := range []int32{-1, 65535, 65536, -32769, 2147483647, -2147483648} {
+		fromInt32(v)
+	}
+	for _, v := range []int64{-1, 4294967295, 4294967296, -2147483649, 9223372036854775807, -9223372036854775808} {
+		fromInt64(v)
+	}
+	for _, v := range []uint8{0, 127, 128, 255} {
+		fromUint8(v)
+	}
+	for _, v := range []uint16{255, 32767, 32768, 65535} {
+		fromUint16(v)
+	}
+	for _, v := range []uint32{65535, 2147483647, 2147483648, 4294967295, 16777217} {
+		fromUint32(v)
+	}
+	for _, v := range []uint64{4294967295, 4294967296, 9223372036854775807, 9223372036854775808,
+		18446744073709551615, 9007199254740993, 18446744073709550592, 18446744073709550593} {
+		fromUint64(v)
+	}
+	for _, f := range []float64{0, 1.9, -1.9, 127.5, -128.5, 255.9, 65535.5, 4294967295.5,
+		3e9, 9.2e18, 1.8e19, -0.5} {
+		fromFloat64(f)
+	}
+	for _, f := range []float32{0, 2.5, -2.5, 65535, 4294967040, 1e19, 1.8e19} {
+		fromFloat32(f)
+	}
+	// conversions of variables to named types and back
+	var r Reg = 0x80000000
+	r = r.Set(3)
+	println(r, r.Bit(31), r.Bit(3), r.Bit(4), uint32(r), int64(r), Reg(uint64(r)+1))
+	l := Level(-5)
+	l *= 30
+	println(l, int(l), uint8(l))
+	// constants of every type
+	const big = 1 << 40
+	println(uint64(big), int64(big)>>8, uint32(big>>9), uint16(big>>25), int8(big>>34))
+	var f32 float32 = 16777217
+	println(uint32(f32), uint64(float64(1<<53)+1))
+}

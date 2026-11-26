@@ -190,20 +190,23 @@ The supported types are:
   wraps around, as in Go. Constants that do not fit are compile errors.
 - `int64`: 64 bits. `actor.Now()` returns one.
 - `byte` (`uint8`): arithmetic is cut to 8 bits after every operation.
+- The other sized integers, as in Go: `int8`, `int16`, `int32` (`rune`),
+  `uint8`, `uint16`, `uint32`, `uint64` and `uint` (32 bits, like `int`).
+  See *Sized integers* below.
 - `float64` and `float32`: IEEE 754 floating point, as in Go (see
   *Floating point* below).
 - `bool` and `string`. A string is an immutable sequence of bytes.
-- `rune` only as the type of character literals and of the value in
-  `range` over a string.
+- `rune` (`int32`) is the type of character literals and of the value in
+  `range` over a string (which gives bytes, not decoded runes).
 - Slices (`[]T`), arrays (`[N]T`), structs, function values and `any`.
-- Named types whose underlying type is `int`, `int64`, `float32`,
-  `float64`, `bool` or `string` (`type Weekday int`), and named structs.
+- Named types whose underlying type is an integer or float type, `bool`
+  or `string` (`type Weekday int`, `type Reg uint32`), and named structs.
 - `const` with `iota`.
 - The gogo types `actor.PID`, `actor.Ref`, `bytes.Bytes`, `bytes.Buffer`
   and the struct types of the gogo packages.
 
-There are **no** unsigned types except `byte`, no `int8/16/32`,
-no maps, no pointers, no channels, no complex numbers.
+There are **no** maps, no pointers, no channels, no complex numbers and
+no `uintptr`.
 
 ```go
 // The basic types of the subset: int (32 bits), int64, byte, bool, string,
@@ -260,9 +263,9 @@ div: -3 -1 3
 convert: 300000000 44 5
 ```
 
-Conversions between `int`, `int64` and `byte` must be written out, as in
-Go, and so must a conversion to a named type built on `int` or `int64`
-(`Weekday(n)`, `errors.Code(e)` for an `fs.Err` e). `string(b)` and
+Conversions between the integer types must be written out, as in Go, and
+so must a conversion to a named type built on one (`Weekday(n)`,
+`errors.Code(e)` for an `fs.Err` e). `string(b)` and
 `[]byte(s)` convert between strings and byte slices (each copies). Other
 conversions are rejected.
 
@@ -360,6 +363,121 @@ strconv: 3.142 6.02e+23 true
   image format 15.2 (chapter 12). `gogo firmware` turns it on when an
   image needs it. A program that only imports `gogo/strconv` for `Atoi`
   or `Itoa` does not need it.
+
+### Sized integers
+
+`int8`, `int16`, `int32`, `int64`, `uint8` (`byte`), `uint16`, `uint32`,
+`uint64` and `uint` follow Go: arithmetic wraps around at the type's
+width after every operation, `/` truncates toward zero and `%` takes the
+dividend's sign (for the signed types), the unsigned types divide,
+compare and shift right as unsigned numbers, and a shift by the width or
+more gives 0 (or -1 for a negative signed value shifted right). Division
+by zero ends the actor with `divzero`, as for `int`. A constant that does
+not fit its type is a compile error. `uint` is 32 bits, like `int`.
+
+```go
+// Sized integers: Go's int8 .. uint64, with wraparound at each type's
+// width, unsigned division, comparison and shifts, and explicit
+// conversions.
+package main
+
+// Reg is a named uint32 with methods, like a hardware register.
+type Reg uint32
+
+func (r Reg) Bit(n int) bool { return r>>n&1 != 0 }
+
+// crc32 is the IEEE CRC-32 (the one zip and Ethernet use).
+func crc32(s string) uint32 {
+	crc := ^uint32(0)
+	for i := 0; i < len(s); i++ {
+		crc ^= uint32(s[i])
+		for k := 0; k < 8; k++ {
+			if crc&1 != 0 {
+				crc = crc>>1 ^ 0xEDB88320
+			} else {
+				crc >>= 1
+			}
+		}
+	}
+	return ^crc
+}
+
+// fnv1a is the 64-bit FNV-1a hash.
+func fnv1a(s string) uint64 {
+	h := uint64(14695981039346656037)
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= 1099511628211
+	}
+	return h
+}
+
+func main() {
+	// Each type wraps at its own width.
+	var a int8 = 127
+	var b uint16 = 65535
+	var c uint32 = 0
+	a++
+	b++
+	c--
+	println("wrap:", a, b, c)
+
+	// Unsigned values print, divide, compare and shift as unsigned.
+	var big uint64 = 1<<64 - 1
+	println("unsigned:", big, big/3, c > 1<<31, c>>28)
+
+	// uint and int are 32 bits, as everywhere in gogo.
+	var u uint = 1 << 31
+	println("uint:", u, u*2, int(u))
+
+	// Conversions are explicit; they keep the low bits or extend.
+	n := -1
+	w := 200
+	println("convert:", uint8(n), uint32(n), uint64(n), int8(w), int64(c))
+
+	r := Reg(0x80000001)
+	println("register:", r.Bit(31), r.Bit(1), uint32(r))
+
+	println("crc32:", crc32("hello"))
+	println("fnv1a:", fnv1a("gogo"))
+}
+```
+
+```text
+wrap: -128 0 4294967295
+unsigned: 18446744073709551615 6148914691236517205 true 15
+uint: 2147483648 0 -2147483648
+convert: 255 4294967295 18446744073709551615 -56 4294967295
+register: true false 2147483649
+crc32: 907060870
+fnv1a: 11313272551757906769
+```
+
+- Conversions follow Go: to a narrower type they keep the low bits
+  (`uint8(n)` of an `int` -1 is 255, `int8(w)` of 200 is -56), to a wider
+  one they extend by the source's sign (`int64(c)` of a `uint32` is never
+  negative). From a float they truncate toward zero; where Go leaves the
+  result to the implementation (NaN, out of range), gogo does what Go does
+  on arm64, as for `int` (for `f := -1.0`, `uint32(f)` is 4294967295 and
+  `uint64(f)` is 0).
+- They work everywhere an `int` does: struct fields, slices, arrays,
+  `switch`, indexes (any integer of up to 32 bits; not `int64` or
+  `uint64`), `range` over a sized count, and messages (as struct fields).
+  They cannot go into `any` on their own (`uint32 in interface not
+  supported`): inside an interface the VM could not tell a `uint32` from an
+  `int`. Put the value in a struct, or convert it.
+- `println` prints an unsigned value as unsigned. A struct, slice or array
+  holding a `uint32`, `uint` or `uint64` cannot be printed whole (`println
+  of main.P not supported`): print its fields one by one.
+- **Cost.** `int8`, `int16`, `uint8`, `uint16` and `int32` are as cheap as
+  `int` (a narrow result costs one extra instruction to cut it back);
+  `uint64` as cheap as `int64`. `uint32` (and `uint`) `+ - * & | ^ <<` cost
+  what `int`'s do, but its `/`, `%`, `<`, `<=`, `>`, `>=` and `>>` widen
+  both operands to 64 bits first: three or four instructions instead of
+  one, and values from 2^30 up are heap objects, as large `int`s are.
+- **Firmware.** Programs that use the unsigned 64-bit operations or the
+  narrow conversions need image format 15.3 (chapter 12); `byte`, `int32`
+  and `uint32` addition alone do not.
 
 ## 3.3 Control flow
 
@@ -1582,9 +1700,10 @@ allocated. Chapter 8 uses it for keyboard characters.
 ## 3.8 Bit operations
 
 `&`, `|`, `^`, `&^`, `<<`, `>>`, unary `^` and their assignment forms work on
-`int`, `int64` and `byte`, with Go's rules: a shift count of the type width
-or more gives 0 (or -1 when shifting a negative number right), `>>` keeps the
-sign, and a **negative shift count crashes the actor** with `badshift`.
+every integer type, with Go's rules: a shift count of the type width or
+more gives 0 (or -1 when shifting a negative number right), `>>` keeps the
+sign of a signed type and shifts zeros into an unsigned one, and a
+**negative shift count crashes the actor** with `badshift`.
 
 ```go
 // Bit operations on int, int64 and byte.
@@ -1802,7 +1921,8 @@ The full list, with what to do instead:
 | type assertion `x.(T)` | `type assertion not supported` (and `multi-value assignment not supported` for `v, ok := x.(T)`) | a type switch |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
 | `complex64/128` | `complex not supported` | two floats |
-| `uint32`, `int16`, ... | `uint32 not supported` | `int`, `int64`, `byte` |
+| `uintptr` | `uintptr not supported` | `uint32` |
+| a sized integer in `any` | `uint32 in interface not supported` | a struct holding it, or `int` / `int64` |
 | generics | `generic function not supported` | write the function per type |
 | `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
 | `struct == struct` | `comparison of main.P not supported` | compare fields |
@@ -1810,7 +1930,7 @@ The full list, with what to do instead:
 | an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
 
-> **Note.** Pointer receivers, maps, pointers, `uint32`,
+> **Note.** Pointer receivers, maps, pointers,
 > package-level variables, the `error` interface, `panic` and type
 > assertions are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see
@@ -1818,10 +1938,11 @@ The full list, with what to do instead:
 
 ### Small surprises
 
-- `println` accepts any number of `int`, `int64`, float, `bool`, `string`, PID,
+- `println` accepts any number of integer, float, `bool`, `string`, PID,
   Ref, struct and slice arguments (structs print as `{1 2}`, slices as
-  `[1 2]`, unlike Go), but not `Bytes` or `Buffer` (use `.String()`), and
-  not a multi-result call (`println(divmod(7, 2))` is `multiple values not
+  `[1 2]`, unlike Go), but not `Bytes` or `Buffer` (use `.String()`), not
+  a struct or slice holding `uint32` or `uint64` values, and not a
+  multi-result call (`println(divmod(7, 2))` is `multiple values not
   supported`).
 - A two-result gogo builtin cannot be a statement on its own: `actor.
   Call(p, req, 100)` on a line by itself is rejected with `multiple values

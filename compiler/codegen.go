@@ -527,9 +527,9 @@ func (f *fn) scalar(e ast.Expr) bool {
 		return true
 	}
 	if tv.Value != nil {
-		if tv.Value.Kind() == constant.Int && !isInt64(tv.Type) {
-			n, exact := constant.Int64Val(tv.Value)
-			return exact && n >= -(1<<30) && n < 1<<30
+		if tv.Value.Kind() == constant.Int && !isWide(tv.Type) && !isFloat(tv.Type) {
+			n, ok := constBits(tv.Value, tv.Type)
+			return ok && n >= -(1<<30) && n < 1<<30
 		}
 		return true
 	}
@@ -701,8 +701,7 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		mark := f.next
 		one := f.allocScalar(s)
 		f.oneInto(s.X, one)
-		f.asm.Emit(f.typedOp(op, s.X), x, x, one)
-		f.truncByte(s.X, x)
+		f.arith(s.X, op, x, x, one)
 		f.next = mark
 	case *ast.DeclStmt:
 		f.declStmt(s.Decl.(*ast.GenDecl))
@@ -823,7 +822,7 @@ func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
 	}
 	tup := f.g.p.Info.TypeOf(call).(*types.Tuple)
 	for i := 0; i < tup.Len() && i < len(targets); i++ {
-		if targets[i] != nil && isAny(targets[i]) && isInt64(tup.At(i).Type()) {
+		if targets[i] != nil && isAny(targets[i]) && isWide(tup.At(i).Type()) {
 			f.asm.Emit(OpBox64, base+uint8(i), base+uint8(i), 0)
 		}
 	}
@@ -888,8 +887,7 @@ func (f *fn) assign(s *ast.AssignStmt) {
 	if op, ok := assignOps[s.Tok]; ok { // x op= e
 		x := f.localOf(s.Lhs[0])
 		mark := f.next
-		f.asm.Emit(f.typedOp(op, s.Lhs[0]), x, x, f.operand(s.Rhs[0]))
-		f.truncByteOp(s.Lhs[0], x, op)
+		f.arith(s.Lhs[0], op, x, x, f.rhsOperand(op, s.Rhs[0]))
 		f.next = mark
 		return
 	}
@@ -1114,7 +1112,7 @@ func (f *fn) localReg(e ast.Expr) (uint8, bool) {
 // (BOX64): inside `any` an int64 is always a K_INT64 box. Named int64 types
 // cannot go into an interface (the checker rejects them).
 func (f *fn) boxes(e ast.Expr, target types.Type) bool {
-	return isAny(target) && isInt64(f.g.p.Info.TypeOf(e))
+	return isAny(target) && isWide(f.g.p.Info.TypeOf(e))
 }
 
 // valueInto compiles e into dst as a value of type target (the type of the
@@ -1151,14 +1149,19 @@ var int64Ops = map[uint8]uint8{
 	OpNeg: OpNeg64, OpEq: OpEq64, OpNe: OpNe64, OpLt: OpLt64, OpLe: OpLe64,
 }
 
-// typedOp returns op, or its int64 or float twin when operand x has
-// static type int64 or float32 / float64 (or a named type of one): the
-// generic ops are int-only.
+// typedOp returns op, or its int64, uint64 or float twin when operand x
+// has static type int64, uint64 or float32 / float64 (or a named type of
+// one): the generic ops are int-only. (A uint32's division, remainder,
+// ordering and >> are not one op: see arith.)
 func (f *fn) typedOp(op uint8, x ast.Expr) uint8 {
-	if opf, ok := floatOpsOf[op]; ok && isFloat(f.g.p.Info.TypeOf(x)) {
+	t := f.g.p.Info.TypeOf(x)
+	if opf, ok := floatOpsOf[op]; ok && isFloat(t) {
 		return opf
 	}
-	if op64, ok := int64Ops[op]; ok && isInt64(f.g.p.Info.TypeOf(x)) {
+	if opu, ok := uint64Ops[op]; ok && isUint64(t) {
+		return opu
+	}
+	if op64, ok := int64Ops[op]; ok && isWide(t) {
 		return op64
 	}
 	return op
@@ -1206,13 +1209,13 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 		if e.Op == token.XOR { // ^x == x XOR -1
 			x := f.operand(e.X)
 			m := f.allocScalar(e)
-			if isInt64(f.g.p.Info.TypeOf(e.X)) {
+			if isWide(f.g.p.Info.TypeOf(e.X)) {
 				f.int64Into(-1, m)
 			} else {
 				f.asm.EmitExt(OpLoadi32, m, 0, 0, uint32(0xffffffff))
 			}
 			f.asm.Emit(f.typedOp(OpXor, e.X), dst, x, m)
-			f.truncByte(e, dst)
+			f.trunc(e, dst)
 			return
 		}
 		op := f.typedOp(OpNeg, e.X)
@@ -1220,7 +1223,7 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 			op = OpNot
 		}
 		f.asm.Emit(op, dst, f.operand(e.X), 0)
-		f.truncByte(e, dst)
+		f.trunc(e, dst)
 	case *ast.BinaryExpr:
 		f.binaryInto(e, dst)
 	case *ast.SelectorExpr:
@@ -1277,37 +1280,18 @@ func (f *fn) binaryInto(e *ast.BinaryExpr, dst uint8) {
 		f.bind(endL)
 	case token.GTR: // x > y  ==  y < x
 		x, y := f.operand(e.X), f.operand(e.Y)
-		f.asm.Emit(f.typedOp(OpLt, e.X), dst, y, x)
+		f.arith(e.X, OpLt, dst, y, x)
 	case token.GEQ: // x >= y  ==  y <= x
 		x, y := f.operand(e.X), f.operand(e.Y)
-		f.asm.Emit(f.typedOp(OpLe, e.X), dst, y, x)
+		f.arith(e.X, OpLe, dst, y, x)
 	default:
 		op, ok := binaryOps[e.Op]
 		if !ok {
 			f.fail(e, "internal error: unexpected operator %s", e.Op)
 		}
-		x, y := f.operand(e.X), f.operand(e.Y)
-		f.asm.Emit(f.typedOp(op, e.X), dst, x, y)
-		f.truncByteOp(e, dst, op)
-	}
-}
-
-// truncByteOp is truncByte for a result of op: &, |, ^, &^ and >> of two
-// bytes (0..255) cannot leave 0..255, so they need no CONV.
-func (f *fn) truncByteOp(e ast.Expr, r uint8, op uint8) {
-	switch op {
-	case OpAnd, OpOr, OpXor, OpAndnot, OpShr:
-		return
-	}
-	f.truncByte(e, r)
-}
-
-// truncByte truncates register r, just computed by arithmetic on e (an
-// expression or variable of type byte), to its low 8 bits (CONV c=2).
-// Nothing for any other type.
-func (f *fn) truncByte(e ast.Expr, r uint8) {
-	if isByte(f.g.p.Info.TypeOf(e)) {
-		f.asm.Emit(OpConv, r, r, ConvByte)
+		x := f.operand(e.X)
+		y := f.rhsOperand(op, e.Y)
+		f.arith(e.X, op, dst, x, y)
 	}
 }
 
@@ -1330,16 +1314,14 @@ func (f *fn) constInto(e ast.Expr, v constant.Value, dst uint8) {
 	case constant.String:
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddString(constant.StringVal(v))))
 	case constant.Int:
-		n, exact := constant.Int64Val(v)
-		if isInt64(f.g.p.Info.TypeOf(e)) {
-			if !exact {
-				f.fail(e, "constant %s overflows int64", v)
-			}
+		t := f.g.p.Info.TypeOf(e)
+		n, ok := constBits(v, t)
+		if !ok {
+			f.fail(e, "constant %s overflows %s", v, t)
+		}
+		if isWide(t) {
 			f.int64Into(n, dst)
 			return
-		}
-		if !exact || n < -1<<31 || n >= 1<<31 {
-			f.fail(e, "constant %s overflows int", v)
 		}
 		f.intInto(int32(n), dst)
 	default:
@@ -1365,16 +1347,8 @@ func (f *fn) int64Into(n int64, dst uint8) {
 	f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddInt64(n)))
 }
 
-// isInt64 reports whether t's underlying type is int64.
-func isInt64(t types.Type) bool {
-	b, ok := underlying(t).(*types.Basic)
-	return ok && b.Kind() == types.Int64
-}
-
-// conversion compiles int(x), int64(x), byte(x), string(b) or []byte(s)
-// (the only conversions the checker allows) into dst. Converting to x's own type, and a byte to
-// int or int64 (0..255 is an immediate of both), is a plain copy; to byte
-// keeps the low 8 bits.
+// conversion compiles a conversion between numeric types, string(b) or
+// []byte(s) (the only conversions the checker allows) into dst.
 func (f *fn) conversion(call *ast.CallExpr, dst uint8) {
 	to, from := f.g.p.Info.TypeOf(call.Fun), f.g.p.Info.TypeOf(call.Args[0])
 	switch {
@@ -1392,17 +1366,10 @@ func (f *fn) conversion(call *ast.CallExpr, dst uint8) {
 		f.floatConversion(call, to, from, dst)
 		return
 	}
-	var c uint8
-	switch {
-	case isByte(to) && !isByte(from):
-		c = ConvByte
-	case isByte(to), isByte(from), isInt64(to) == isInt64(from):
+	c, ok := intConvMode(to, from)
+	if !ok { // the same term
 		f.exprInto(call.Args[0], dst)
 		return
-	case isInt64(to):
-		c = ConvInt64
-	default:
-		c = ConvInt
 	}
 	mark := f.next
 	f.asm.Emit(OpConv, dst, f.operand(call.Args[0]), c)
@@ -1443,7 +1410,7 @@ func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 	switch {
 	case ok && b.Info()&types.IsFloat != 0: // a const-area 0.0 of t's width
 		f.floatInto(constant.MakeInt64(0), t, dst)
-	case ok && b.Kind() == types.Int64:
+	case ok && isWide(b):
 		f.int64Into(0, dst)
 	case ok && b.Info()&types.IsInteger != 0:
 		f.intInto(0, dst)
@@ -1604,6 +1571,9 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 		switch obj := f.g.p.Info.Uses[fun].(type) {
 		case *types.Builtin: // println and the sequence builtins
 			if f.seqBuiltin(call, obj.Name(), dst) {
+				return
+			}
+			if f.printlnUnsigned(call, dst) {
 				return
 			}
 			base, n := f.argsAs(call, nil) // prints an int64 in either representation

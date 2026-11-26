@@ -1,0 +1,219 @@
+package main
+
+// Sized integers: wraparound after every operation, division and
+// remainder, shifts, comparisons and printing, for each width and
+// signedness. Checked against Go (gocompare). The operands come from
+// variables, so nothing is folded at compile time.
+
+func i8(a, b int8) {
+	println("int8", a+b, a-b, a*b, -a, ^a, a&b, a|b, a^b, a&^b)
+	if b != 0 {
+		println("  div", a/b, a%b)
+	}
+	println("  shift", a<<1, a<<7, a<<8, a>>1, a>>7, a>>8, a>>100)
+	println("  cmp", a < b, a <= b, a > b, a >= b, a == b, a != b)
+}
+
+func i16(a, b int16) {
+	println("int16", a+b, a-b, a*b, -a, ^a, a&b, a|b, a^b, a&^b)
+	if b != 0 {
+		println("  div", a/b, a%b)
+	}
+	println("  shift", a<<1, a<<15, a<<16, a>>1, a>>15, a>>16)
+	println("  cmp", a < b, a <= b, a > b, a >= b, a == b, a != b)
+}
+
+func i32(a, b int32) {
+	println("int32", a+b, a-b, a*b, -a, ^a, a&b, a|b, a^b, a&^b)
+	if b != 0 {
+		println("  div", a/b, a%b)
+	}
+	println("  shift", a<<1, a<<31, a<<32, a>>1, a>>31, a>>32)
+	println("  cmp", a < b, a <= b, a > b, a >= b, a == b, a != b)
+}
+
+func u8(a, b uint8) {
+	println("uint8", a+b, a-b, a*b, -a, ^a, a&b, a|b, a^b, a&^b)
+	if b != 0 {
+		println("  div", a/b, a%b)
+	}
+	println("  shift", a<<1, a<<7, a<<8, a>>1, a>>7, a>>8)
+	println("  cmp", a < b, a <= b, a > b, a >= b, a == b, a != b)
+}
+
+func u16(a, b uint16) {
+	println("uint16", a+b, a-b, a*b, -a, ^a, a&b, a|b, a^b, a&^b)
+	if b != 0 {
+		println("  div", a/b, a%b)
+	}
+	println("  shift", a<<1, a<<15, a<<16, a>>1, a>>15, a>>16)
+	println("  cmp", a < b, a <= b, a > b, a >= b, a == b, a != b)
+}
+
+func u32(a, b uint32) {
+	println("uint32", a+b, a-b, a*b, -a, ^a, a&b, a|b, a^b, a&^b)
+	if b != 0 {
+		println("  div", a/b, a%b)
+	}
+	println("  shift", a<<1, a<<31, a<<32, a>>1, a>>31, a>>32)
+	println("  cmp", a < b, a <= b, a > b, a >= b, a == b, a != b)
+}
+
+func u64(a, b uint64) {
+	println("uint64", a+b, a-b, a*b, -a, ^a, a&b, a|b, a^b, a&^b)
+	if b != 0 {
+		println("  div", a/b, a%b)
+	}
+	println("  shift", a<<1, a<<63, a<<64, a>>1, a>>63, a>>64)
+	println("  cmp", a < b, a <= b, a > b, a >= b, a == b, a != b)
+}
+
+func i64(a, b int64) {
+	println("int64", a+b, a-b, a*b, -a, ^a)
+	if b != 0 {
+		println("  div", a/b, a%b)
+	}
+	println("  cmp", a < b, a <= b, a > b, a >= b)
+}
+
+// shifts by counts of every unsigned type, at and beyond the width.
+func counts(x uint32, y int8, z uint64) {
+	var c8 uint8 = 200
+	var c16 uint16 = 40000
+	var c32 uint32 = 0x80000000
+	var c64 uint64 = 1 << 63
+	var c33 uint32 = 33
+	var c3 uint64 = 3
+	println("counts", x<<c8, x>>c16, x<<c32, x>>c64, y>>c32, y<<c64, z>>c33, z<<c3, z>>c64)
+	n := uint64(65)
+	println("  u64 count", x<<n, z>>n, z<<(n-62))
+}
+
+func compound() {
+	var a int8 = 100
+	a += 100
+	println("compound int8", a)
+	a *= 3
+	println("  ", a)
+	a <<= 2
+	println("  ", a)
+	a--
+	a--
+	println("  ", a)
+	var b uint16 = 65530
+	for i := 0; i < 10; i++ {
+		b++
+	}
+	println("compound uint16", b)
+	b -= 11
+	println("  ", b)
+	b >>= 3
+	println("  ", b)
+	var c uint32 = 1
+	for i := 0; i < 40; i++ {
+		c *= 3
+	}
+	println("compound uint32", c)
+	c /= 7
+	println("  ", c)
+	c %= 1000
+	println("  ", c)
+	var d uint64 = 1
+	for i := 0; i < 50; i++ {
+		d *= 7
+	}
+	println("compound uint64", d)
+	d /= 3
+	println("  ", d)
+	d %= 1000000007
+	println("  ", d)
+	d = 0
+	d--
+	println("  ", d)
+	d >>= 1
+	println("  ", d)
+}
+
+// edge values, printed directly and through variables.
+func edges() {
+	println(int8(-128), int8(127), int16(-32768), int16(32767))
+	println(int32(-2147483648), int32(2147483647))
+	println(uint8(255), uint16(65535), uint32(4294967295), uint64(18446744073709551615))
+	var m8 int8 = -128
+	var m16 int16 = -32768
+	var m32 int32 = -2147483648
+	var m64 int64 = -9223372036854775808
+	var neg int8 = -1
+	println(m8/neg, m8%neg, -m8, m16/-1, -m16, m32/-1, m32%-1, -m32, m64/-1, -m64)
+	x := -1
+	println(uint8(x), uint16(x), uint32(x), uint64(x))
+	var y int64 = -1
+	println(uint8(y), uint16(y), uint32(y), uint64(y))
+	var u uint32 = 4294967295
+	var v uint64 = 18446744073709551615
+	println(u, v, u+1, v+1, u/2, v/2, u%10, v%10)
+	println(u > 0, v > 0, u > 2147483647, v > 9223372036854775807)
+}
+
+// unsigned loops and ranges.
+func loops() {
+	var s uint32
+	for i := uint32(4294967290); i > 10; i++ {
+		s += i
+	}
+	println("wrapping loop", s)
+	var n uint8
+	for i := range uint8(5) {
+		n += i
+	}
+	println("range uint8", n)
+	var big uint32 = 3000000000
+	k := 0
+	for i := big - 3; i < big; i++ {
+		k++
+	}
+	println("range near 3e9", k)
+	cnt := 0
+	for i := range uint16(300) {
+		if i%100 == 0 {
+			cnt++
+		}
+	}
+	println("range uint16", cnt)
+}
+
+func main() {
+	i8(100, 50)
+	i8(-128, -1)
+	i8(-7, 2)
+	i8(127, 127)
+	i16(30000, 30000)
+	i16(-32768, -1)
+	i16(-7, 3)
+	i32(2147483647, 1)
+	i32(-2147483648, -1)
+	i32(-7, 2)
+	u8(200, 100)
+	u8(0, 1)
+	u8(255, 255)
+	u8(7, 0)
+	u16(65535, 1)
+	u16(0, 3)
+	u16(40000, 300)
+	u32(4294967295, 1)
+	u32(0, 1)
+	u32(3000000000, 7)
+	u32(2147483648, 2147483648)
+	u32(123456789, 4000000000)
+	u64(18446744073709551615, 1)
+	u64(0, 1)
+	u64(9223372036854775808, 3)
+	u64(12345678901234567890, 10)
+	u64(7, 18446744073709551615)
+	i64(9223372036854775807, 1)
+	i64(-9223372036854775808, -1)
+	counts(0xDEADBEEF, -100, 0xFEDCBA9876543210)
+	compound()
+	edges()
+	loops()
+}

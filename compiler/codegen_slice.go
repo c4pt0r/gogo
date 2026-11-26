@@ -163,13 +163,12 @@ func (f *fn) indexOpAssign(ix *ast.IndexExpr, op uint8, rhs ast.Expr) {
 	case rhs == nil:
 		one := f.allocScalar(ix)
 		f.oneInto(ix, one)
-		f.asm.Emit(f.typedOp(op, ix), v, v, one)
+		f.arith(ix, op, v, v, one)
 	case op == OpAdd && isString(et):
 		f.seqCall(ix, v, BStrConcat, f.moveFrom(v), f.into(rhs))
 	default:
-		f.asm.Emit(f.typedOp(op, ix), v, v, f.operand(rhs))
+		f.arith(ix, op, v, v, f.rhsOperand(op, rhs))
 	}
-	f.truncByteOp(ix, v, op)
 	f.asm.EmitExt(OpBuiltin, blk, blk, 3, BSetindex)
 	f.next = mark
 }
