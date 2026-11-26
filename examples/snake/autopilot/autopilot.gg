@@ -18,7 +18,8 @@ func Run() {
 	for {
 		switch v := actor.Receive().(type) {
 		case board.View:
-			actor.Send(v.Game, board.Move{Seq: v.Seq, Dir: Choose(v)})
+			d, _ := Choose(v)
+			actor.Send(v.Game, board.Move{Seq: v.Seq, Dir: d})
 		case Stop:
 			return
 		}
@@ -35,7 +36,15 @@ func Run() {
 // knot the snake has tied itself into, and the snake would follow its
 // tail round the knot forever.
 
-// Choose picks the next direction for the snake in v:
+// Why Choose chose a move.
+const (
+	ToFood   = 0 // the food path, safe
+	Starving = 1 // the food path, unsafe, but the snake ran out of patience
+	ToTail   = 2 // a move that keeps the tail in reach
+	ToRoom   = 3 // the move with the most room (or none is safe)
+)
+
+// Choose picks the next direction for the snake in v, and says why:
 //
 //  1. the shortest path to the food, if after eating the snake can still
 //     reach its tail or has room for its length (so it does not shut
@@ -44,9 +53,15 @@ func Run() {
 //  3. otherwise the move into the largest free area.
 //
 // As a last guard against going round in circles, once the snake has gone
-// hungry for twice as many steps as the field has cells it takes the food
-// path even if it is unsafe: the worst case is a game over.
-func Choose(v board.View) int {
+// hungry for more than v.Patience steps (the game uses twice the number of
+// cells) it takes the food path even if it is unsafe: the worst case is a
+// game over.
+//
+// Choose is written for clarity, not thrift: every search makes fresh
+// slices, about 20 a call and some 30 KB of garbage for a long snake on
+// the 40 x 10 field. The actor's collector takes it back after each View,
+// so the autopilot runs with a 64 KB memory limit (see startPilot).
+func Choose(v board.View) (int, int) {
 	stride := v.W + 2
 	offs := []int{-stride, 1, stride, -1} // by direction: up, right, down, left
 	body := make([]int, len(v.Body))
@@ -59,21 +74,24 @@ func Choose(v board.View) int {
 	prev, _ := search(free, offs, head, food, len(free))
 	if prev[food] != 0 {
 		path := pathTo(prev, head, food)
-		if v.Hungry > 2*v.W*v.H || safeAfter(stride, v.H, offs, body, path) {
-			return dirTo(offs, head, path[0])
+		if safeAfter(stride, v.H, offs, body, path) {
+			return dirTo(offs, head, path[0]), ToFood
+		}
+		if v.Hungry > v.Patience {
+			return dirTo(offs, head, path[0]), Starving
 		}
 	}
-	if d := chaseTail(stride, v.H, offs, body); d >= 0 {
-		return d
+	if d := chaseTail(stride, v.H, offs, body, food); d >= 0 {
+		return d, ToTail
 	}
-	return roomiest(v.Dir, free, offs, head, len(body))
+	return roomiest(v.Dir, free, offs, head, len(body)), ToRoom
 }
 
 // chaseTail is the move after which the snake can still reach its tail,
 // by the longest of the shortest paths (-1 if there is none). Taking the
 // long way round stretches the snake out, which opens it up for the food
 // later; always taking the short way would make it circle in a knot.
-func chaseTail(stride, h int, offs, body []int) int {
+func chaseTail(stride, h int, offs, body []int, food int) int {
 	head := body[len(body)-1]
 	free := freeAt(stride, h, body)
 	best, far := -1, -1
@@ -82,8 +100,12 @@ func chaseTail(stride, h int, offs, body []int) int {
 		if free[n] > 1 {
 			continue
 		}
-		// The snake after this move, without eating.
+		// The snake after this move; onto the food it grows, so the tail
+		// stays.
 		moved := append(append([]int{}, body[1:]...), n)
+		if n == food {
+			moved = append(append([]int{}, body...), n)
+		}
 		tail := moved[0]
 		prev, _ := search(freeAt(stride, h, moved), offs, n, tail, len(free))
 		if prev[tail] == 0 {

@@ -32,6 +32,7 @@ type View struct {
 	Body      []int
 	Food, Dir int
 	Hungry    int
+	Patience  int       // past this many hungry steps the autopilot takes any food path
 	Game      actor.PID // where to send the Move
 }
 
@@ -143,7 +144,8 @@ func Step(g Game, w, h int) Game {
 	return Game{Body: body, Dir: g.Next, Next: g.Next, Food: food, Score: g.Score + 1, Rng: rng, Over: food < 0}
 }
 
-// ViewOf is the View of g for the autopilot.
-func ViewOf(g Game, seq, w, h int) View {
-	return View{Seq: seq, W: w, H: h, Body: g.Body, Food: g.Food, Dir: g.Dir, Hungry: g.Hungry, Game: actor.Self()}
+// ViewOf is the View of g for the autopilot, with its patience.
+func ViewOf(g Game, seq, w, h, patience int) View {
+	return View{Seq: seq, W: w, H: h, Body: g.Body, Food: g.Food, Dir: g.Dir, Hungry: g.Hungry, Patience: patience,
+		Game: actor.Self()}
 }

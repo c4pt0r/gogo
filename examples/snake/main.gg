@@ -28,6 +28,7 @@ import (
 	"gogo/actor"
 	"gogo/fs"
 	"gogo/kv"
+	"gogo/port"
 	"gogo/screen"
 	"gogo/strconv"
 	"gogo/sys"
@@ -118,11 +119,22 @@ func startPilot(p Autopilot) Autopilot {
 	return Autopilot{PID: pid, Ref: actor.Monitor(pid), Up: true, Crashes: p.Crashes, Since: p.Since}
 }
 
-// ask sends the autopilot a View of g.
+// ask sends the autopilot a View of g. Its patience is twice the field:
+// the autopilot takes an unsafe food path only after that many hungry
+// steps.
 func ask(p Autopilot, g board.Game, seq, w, h int) {
 	if p.Up && !g.Over {
-		actor.Send(p.PID, board.ViewOf(g, seq, w, h))
+		actor.Send(p.PID, board.ViewOf(g, seq, w, h, 2*w*h))
 	}
+}
+
+// saveHigh stores the high score if it is above the stored one, and returns
+// the high score now stored. Without a flash store it lasts for the run.
+func saveHigh(hi, saved int) int {
+	if hi > saved {
+		kv.Put(hiKey, strconv.Itoa(hi))
+	}
+	return hi
 }
 
 func main() {
@@ -134,7 +146,7 @@ func main() {
 		if v, ok := sys.Config("snake.seeds"); ok {
 			seeds, _ = strconv.Atoi(v)
 		}
-		simulateAll(seeds, steps, 40, 10)
+		simulateAll(seeds, steps)
 		return
 	}
 	s, ok := tui.Open(screen.Config{})
@@ -151,8 +163,9 @@ func main() {
 	w, h := s.Cols, s.Rows-1 // the last row is the status row
 	g := board.NewGame(w, h, sys.Random()|1)
 	hi := loadHigh()
+	savedHi := hi
 	seq := 0 // counts steps and new games; stale Moves are dropped
-	games, frames := 1, 0
+	games, frames, dropped := 1, 0, 0
 	auto, paused := true, false
 	var overAt int64
 	note, noteUntil, shown := "", int64(0), ""
@@ -168,6 +181,17 @@ func main() {
 
 	for {
 		msg := actor.Receive()
+		// tui.Event takes the screen's Dones. Done{Seq: -1} means the port
+		// dropped a frame (malformed, or too many unanswered); the next
+		// frame redraws the whole screen, so the game only counts it for
+		// the console log. The port closes only when this actor exits, so
+		// there is no closed screen to handle.
+		switch d := msg.(type) {
+		case port.Done:
+			if d.From == s.Port && d.Seq < 0 {
+				dropped++
+			}
+		}
 		k2, k, ui := tui.Event(s, keys, msg)
 		keys = k2
 		now := actor.Now()
@@ -189,7 +213,9 @@ func main() {
 					g = board.NewGame(w, h, g.Rng)
 					seq++
 					games++
-					ask(pilot, g, seq, w, h)
+					if auto {
+						ask(pilot, g, seq, w, h)
+					}
 				}
 			} else if k.Code == tui.KeyChar {
 				switch k.Char {
@@ -227,15 +253,15 @@ func main() {
 				if !paused && !g.Over {
 					g = board.Step(g, w, h)
 					seq++
+					if g.Score > hi {
+						hi = g.Score
+					}
 					if g.Over {
 						overAt = now
-						if g.Score > hi {
-							hi = g.Score
-							kv.Put(hiKey, strconv.Itoa(hi)) // no store: memory only
-						}
+						savedHi = saveHigh(hi, savedHi)
 						// On the serial console only: the screen hides it.
 						println("snake: game", games, "over: score", g.Score, "high", hi,
-							"frames", frames, "mem", actor.Info(self).Memory)
+							"frames", frames, "dropped", dropped, "mem", actor.Info(self).Memory)
 					}
 					if auto {
 						ask(pilot, g, seq, w, h)
@@ -260,6 +286,14 @@ func main() {
 			case actor.DownMsg:
 				if m.Ref != pilot.Ref {
 					continue
+				}
+				if !auto {
+					// Not needed in manual mode: m starts a new one.
+					pilot = Autopilot{Crashes: pilot.Crashes, Since: pilot.Since}
+					note = "pilot stopped"
+					noteUntil = now + noteMs
+					println("snake: autopilot died (reason " + strconv.Itoa(m.Reason.Code) + "), manual mode")
+					break
 				}
 				// The autopilot died: count it, then restart it or give up.
 				since, crashes := pilot.Since, pilot.Crashes+1
@@ -289,6 +323,7 @@ func main() {
 			frames++
 		}
 	}
+	saveHigh(hi, savedHi)
 	if pilot.Up {
 		actor.Send(pilot.PID, autopilot.Stop{})
 	}

@@ -1,5 +1,10 @@
-seed 1 games 1 food 173 best 173 hungriest 157 ok true
-seed 2 games 2 food 192 best 157 hungriest 167 ok true
-seed 3 games 2 food 220 best 120 hungriest 133 ok true
-seed 4 games 1 food 163 best 163 hungriest 130 ok true
-snake sim: 4 seeds of 5000 steps, 0 stuck
+seed 1 games 1 food 96 best 96 hungriest 59
+  moves: food 1970 starving 0 tail 26 room 4
+seed 2 games 1 food 97 best 97 hungriest 65
+  moves: food 1996 starving 0 tail 1 room 3
+seed 3 games 1 food 98 best 98 hungriest 80
+  moves: food 1927 starving 0 tail 51 room 22
+40x10: 3 seeds of 2000 steps, 0 stuck
+seed 1 games 4 food 272 best 69 hungriest 185
+  moves: food 2895 starving 41 tail 1063 room 1
+12x6: starvation fallback fired: true bounded: true

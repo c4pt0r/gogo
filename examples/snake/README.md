@@ -18,7 +18,8 @@ touches is a live demo.
 | `k` | kill the autopilot actor, to watch it come back |
 | Esc (Fn+`` ` ``) | quit |
 
-The high score is stored with `gogo/kv` in `/flash/kv/snake.hi`. Without
+The high score follows the score live and is stored with `gogo/kv` in
+`/flash/kv/snake.hi` at game over and on Esc. Without
 a flash file system (`gogo run` without `--fs-root`) it lasts for the run.
 
 ## Packages
@@ -53,13 +54,17 @@ shortest path to the food if, after eating, the snake could still reach its
 tail or has more room than its length. Otherwise it makes the move that
 keeps the tail in reach by the longest way round, which stretches the snake
 out instead of circling in a knot; failing that, the move with the most
-room. As a last guard, after 2 x 400 steps without food it takes the food
-path whatever the risk.
+room. As a last guard, once the snake has been hungry for longer than the
+`Patience` in the `View` (the game sends 2 x 400 steps) it takes the food
+path whatever the risk. `autopilot.Choose` also says which rule picked the
+move, which the test counts.
 
 ## Supervision
 
-The game monitors the autopilot (`actor.Monitor`). When the autopilot dies,
-the game gets an `actor.DownMsg`, restarts it and shows `pilot restarted`.
+The game monitors the autopilot (`actor.Monitor`). When the autopilot dies
+in auto mode, the game gets an `actor.DownMsg`, restarts it and shows
+`pilot restarted`; in manual mode it lets it go (`pilot stopped`), and `m`
+starts a new one.
 After more than 3 deaths within 10 s it gives up, like a supervisor's
 restart intensity, and switches to manual (`pilot down: manual`); `m`
 starts a fresh autopilot. The autopilot keeps no state of its own, so a
@@ -67,18 +72,33 @@ restart loses nothing. Press `k` to try it: the game keeps running
 whatever happens to the autopilot.
 
 The game prints a line on the serial console at every game over (score,
-high score, frames sent and the game actor's memory) and when the autopilot
+high score, frames sent, frames the screen port dropped and the game
+actor's memory) and when the autopilot
 is restarted. While the screen is open, only `gogo monitor` shows them.
 
 ## Test
 
 With the config key `snake.sim` (steps) set, and optionally `snake.seeds`,
-the program plays that many autopilot steps for each seed without a screen
-or actors and prints, per seed, the games, the food, the best score and the
-longest wait for food. The golden test (`make test-go`) runs it with the
-`config` file of this directory and compares the output with
-`expected.out`; `ok false` would mean the snake went a whole field (400
-steps) without eating.
+the program runs the autopilot without a screen or actors (`sim.gg`) and
+prints, per seed, the games, the food, the best score, the longest wait for
+food and how often each of the autopilot's rules picked the move:
+
+- on the 40 x 10 field, for each seed, the snake must never go 400 steps
+  without food (`stuck` counts the seeds that did);
+- on a 12 x 6 field, which fills up, the starvation fallback must fire and
+  keep the waits bounded.
+
+The golden test (`make test-go`, or `go test ./tests -run
+TestGolden/snake` with `GOGO_VM` set) runs it with the `config` file of
+this directory (3 seeds of 2000 steps, about 1.5 s) and compares the
+output with `expected.out`. A snake circling in a knot shows only after
+thousands of steps; for a long check:
+
+```sh
+printf 'snake.sim=20000\nsnake.seeds=20\n' > /tmp/snake.cfg
+build/gogo build examples/snake -o snake.ggb
+GOGO_CONFIG=/tmp/snake.cfg build/gogovm snake.ggb    # about 100 s
+```
 
 ## Build and run
 
