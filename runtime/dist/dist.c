@@ -1533,8 +1533,16 @@ static DistState *state_new(Vm *vm) {
         !(ds->proxies = table(vm, ds->nprox, sizeof *ds->proxies)) ||
         !(ds->exports = table(vm, ds->nexp, sizeof *ds->exports)) ||
         !(ds->watches = table(vm, ds->nwatch, sizeof *ds->watches)) ||
-        !(ds->calls = table(vm, ds->ncalls, sizeof *ds->calls)))
-        return NULL;   /* a partial state stays allocated: rare, and the open fails */
+        !(ds->calls = table(vm, ds->ncalls, sizeof *ds->calls))) {
+        /* The open fails: give back what was allocated (a board retrying
+         * under memory pressure must not lose it every time). */
+        if (ds->links) va_free(vm, ds->links, ds->nlinks * sizeof *ds->links);
+        if (ds->proxies) va_free(vm, ds->proxies, ds->nprox * sizeof *ds->proxies);
+        if (ds->exports) va_free(vm, ds->exports, ds->nexp * sizeof *ds->exports);
+        if (ds->watches) va_free(vm, ds->watches, ds->nwatch * sizeof *ds->watches);
+        va_free(vm, ds, sizeof *ds);
+        return NULL;
+    }
     ds->hooks.send = h_send;
     ds->hooks.monitor = h_monitor;
     ds->hooks.link = h_link;
