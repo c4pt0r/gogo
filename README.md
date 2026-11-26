@@ -214,7 +214,7 @@ The book chapter [Embedding gogo](docs/book/18-embedding.md) is the guide;
 
 ## Documentation
 
-- [Programming gogo](docs/book/README.md): the book, 21 chapters, every
+- [Programming gogo](docs/book/README.md): the book, 22 chapters, every
   example tested. Read it online at
   <https://gogovm.dev/book/>, or build the site locally with
   `make site` (mdBook, into `build/site`, next to the landing page).
