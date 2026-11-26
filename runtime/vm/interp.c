@@ -221,12 +221,24 @@ static bool count_val(const Vm *vm, const Actor *a, term t, int32_t *out) {
     return true;
 }
 
-/* x op y for the binary arithmetic ops with Go semantics (wrapping; MinInt
+/* An integer operand: of an int64 op (wide) an int64 in either
+ * representation, of an int op an int (a small int or a K_INT box; an
+ * int64 box is badcode), sign-extended. False for anything else. */
+static bool int_operand(const Vm *vm, const Actor *a, term t, bool wide, int64_t *out) {
+    int32_t v;
+    if (wide) return int64_val(vm, a, t, out);
+    if (!int_val(vm, a, t, &v)) return false;
+    *out = v;
+    return true;
+}
+
+/* x op y for the int arithmetic ops with Go semantics (wrapping; MinInt
  * / -1 == MinInt; x % -1 == 0; shifts take a count from count_val, >> is
- * arithmetic). Returns 0 or the crash reason (division by zero, negative
- * shift count). */
+ * arithmetic; NEG ignores y). Returns 0 or the crash reason (division by
+ * zero, negative shift count). */
 static uint32_t arith32(uint32_t op, int32_t x, int32_t y, int32_t *r) {
     switch (op) {
+    case OP_NEG: *r = wrap(0u - (uint32_t)x); return 0;
     case OP_ADD: *r = wrap((uint32_t)x + (uint32_t)y); return 0;
     case OP_SUB: *r = wrap((uint32_t)x - (uint32_t)y); return 0;
     case OP_MUL: *r = wrap((uint32_t)x * (uint32_t)y); return 0;
@@ -253,8 +265,10 @@ static uint32_t arith32(uint32_t op, int32_t x, int32_t y, int32_t *r) {
     }
 }
 
+/* The same for the int64 ops. */
 static uint32_t arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
     switch (op) {
+    case OP_NEG64: *r = wrap64(0u - (uint64_t)x); return 0;
     case OP_ADD64: *r = wrap64((uint64_t)x + (uint64_t)y); return 0;
     case OP_SUB64: *r = wrap64((uint64_t)x - (uint64_t)y); return 0;
     case OP_MUL64: *r = wrap64((uint64_t)x * (uint64_t)y); return 0;
@@ -541,6 +555,8 @@ static int timed_wait(Vm *vm, Actor *a, int32_t ms) {
 #define OPF_C   8u     /* rc is a register */
 #define OPF_BC  16u    /* rb .. rb+c-1 are registers */
 #define OPF_AB  32u    /* ra .. ra+b-1 are registers */
+#define OPF_W   64u    /* an int64 arithmetic op (the int ones run in 32 bits) */
+#define OPF_SH  128u   /* rc is a shift count: any integer (count_val) */
 #define OPF_AB_ (OPF_A | OPF_B)
 #define OPF_ABC (OPF_A | OPF_B | OPF_C)
 static const uint8_t op_info[] = {
@@ -551,17 +567,17 @@ static const uint8_t op_info[] = {
     [OP_CALL] = OPF_EXT | OPF_A | OPF_BC, [OP_RET] = OPF_A, [OP_NEWSTRUCT] = OPF_EXT | OPF_A | OPF_BC,
     [OP_GETFIELD] = OPF_AB_, [OP_MKCLOSURE] = OPF_EXT | OPF_A | OPF_BC, [OP_TYPEIS] = OPF_EXT | OPF_AB_,
     [OP_BUILTIN] = OPF_EXT | OPF_A | OPF_BC, [OP_CONV] = OPF_AB_,
-    [OP_ADD64] = OPF_ABC, [OP_SUB64] = OPF_ABC, [OP_MUL64] = OPF_ABC, [OP_DIV64] = OPF_ABC, [OP_REM64] = OPF_ABC,
-    [OP_NEG64] = OPF_AB_, [OP_EQ64] = OPF_ABC, [OP_NE64] = OPF_ABC, [OP_LT64] = OPF_ABC, [OP_LE64] = OPF_ABC,
+    [OP_ADD64] = OPF_ABC | OPF_W, [OP_SUB64] = OPF_ABC | OPF_W, [OP_MUL64] = OPF_ABC | OPF_W, [OP_DIV64] = OPF_ABC | OPF_W, [OP_REM64] = OPF_ABC | OPF_W,
+    [OP_NEG64] = OPF_AB_ | OPF_W, [OP_EQ64] = OPF_ABC, [OP_NE64] = OPF_ABC, [OP_LT64] = OPF_ABC, [OP_LE64] = OPF_ABC,
     [OP_BOX64] = OPF_AB_, [OP_CLEAR] = OPF_AB, [OP_RETN] = OPF_AB, [OP_CALLV] = OPF_AB_,
     [OP_AND] = OPF_ABC, [OP_OR] = OPF_ABC, [OP_XOR] = OPF_ABC, [OP_ANDNOT] = OPF_ABC,
-    [OP_SHL] = OPF_ABC, [OP_SHR] = OPF_ABC,
-    [OP_AND64] = OPF_ABC, [OP_OR64] = OPF_ABC, [OP_XOR64] = OPF_ABC, [OP_ANDNOT64] = OPF_ABC,
-    [OP_SHL64] = OPF_ABC, [OP_SHR64] = OPF_ABC,
+    [OP_SHL] = OPF_ABC | OPF_SH, [OP_SHR] = OPF_ABC | OPF_SH,
+    [OP_AND64] = OPF_ABC | OPF_W, [OP_OR64] = OPF_ABC | OPF_W, [OP_XOR64] = OPF_ABC | OPF_W, [OP_ANDNOT64] = OPF_ABC | OPF_W,
+    [OP_SHL64] = OPF_ABC | OPF_W | OPF_SH, [OP_SHR64] = OPF_ABC | OPF_W | OPF_SH,
     [OP_ADDF] = 0, [OP_SUBF] = 0, [OP_MULF] = 0, [OP_DIVF] = 0, [OP_NEGF] = 0,
     [OP_EQF] = 0, [OP_NEF] = 0, [OP_LTF] = 0, [OP_LEF] = 0, [OP_CONVF] = 0,
-    [OP_DIVU64] = OPF_ABC, [OP_REMU64] = OPF_ABC, [OP_LTU64] = OPF_ABC, [OP_LEU64] = OPF_ABC,
-    [OP_SHRU64] = OPF_ABC, [OP_SETFIELD] = OPF_AB_,
+    [OP_DIVU64] = OPF_ABC | OPF_W, [OP_REMU64] = OPF_ABC | OPF_W, [OP_LTU64] = OPF_ABC, [OP_LEU64] = OPF_ABC,
+    [OP_SHRU64] = OPF_ABC | OPF_W | OPF_SH, [OP_SETFIELD] = OPF_AB_,
 };
 typedef char op_info_complete[sizeof op_info == OP_SETFIELD + 1u ? 1 : -1];
 
@@ -687,59 +703,34 @@ int interp_run(Vm *vm, Actor *a) {
             break;
         }
 
-        case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REM:
-        case OP_AND: case OP_OR: case OP_XOR: case OP_ANDNOT: case OP_SHL: case OP_SHR: {
-            /* ints only (an int64 box is badcode; see the *64 ops), except
-             * a shift count, which may be any integer. */
-            int32_t x, y, r;
-            uint32_t why;
-            term t;
-            CHECK(int_val(vm, a, R[rb], &x));
-            CHECK((op == OP_SHL || op == OP_SHR) ? count_val(vm, a, R[rc], &y)
-                                                 : int_val(vm, a, R[rc], &y));
-            if ((why = arith32(op, x, y, &r)) != 0) CRASH(why);
-            if (!make_int(vm, a, r, &t)) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
-        }
-
-        case OP_NEG: {
-            int32_t x;
-            term t;
-            CHECK(int_val(vm, a, R[rb], &x));
-            if (!make_int(vm, a, wrap(0u - (uint32_t)x), &t)) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
-        }
-
-        case OP_ADD64: case OP_SUB64: case OP_MUL64: case OP_DIV64: case OP_REM64:
+        case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REM: case OP_NEG:
+        case OP_AND: case OP_OR: case OP_XOR: case OP_ANDNOT: case OP_SHL: case OP_SHR:
+        case OP_ADD64: case OP_SUB64: case OP_MUL64: case OP_DIV64: case OP_REM64: case OP_NEG64:
         case OP_AND64: case OP_OR64: case OP_XOR64: case OP_ANDNOT64:
         case OP_SHL64: case OP_SHR64: case OP_DIVU64: case OP_REMU64: case OP_SHRU64: {
-            int64_t x, y, r;
-            int32_t n;
+            /* The int ops take ints (an int64 box is badcode) and run in
+             * 32 bits (arith32); the int64 ops (OPF_W) take int64s in
+             * either representation (arith64). A shift count (OPF_SH)
+             * may be any integer; NEG has no rc. */
+            bool wide = (info & OPF_W) != 0;
+            int64_t x, y = 0, r;
+            int32_t n, r32;
             uint32_t why;
             term t;
-            CHECK(int64_val(vm, a, R[rb], &x));
-            if (op == OP_SHL64 || op == OP_SHR64 || op == OP_SHRU64) {     /* the count may be an int */
+            /* a small int is the same value for both: no call */
+            if (term_is_int(R[rb])) x = term_to_int(R[rb]);
+            else CHECK(int_operand(vm, a, R[rb], wide, &x));
+            if (info & OPF_SH) {
                 CHECK(count_val(vm, a, R[rc], &n));
                 y = n;
-            } else {
-                CHECK(int64_val(vm, a, R[rc], &y));
+            } else if (info & OPF_C) {
+                if (term_is_int(R[rc])) y = term_to_int(R[rc]);
+                else CHECK(int_operand(vm, a, R[rc], wide, &y));
             }
-            if ((why = arith64(op, x, y, &r)) != 0) CRASH(why);
-            if (!make_int64(vm, a, r, &t)) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
-        }
-
-        case OP_NEG64: {
-            int64_t x;
-            term t;
-            CHECK(int64_val(vm, a, R[rb], &x));
-            if (!make_int64(vm, a, wrap64(0u - (uint64_t)x), &t)) CRASH(R_OUT_OF_MEMORY);
+            if (wide) why = arith64(op, x, y, &r);
+            else { why = arith32(op, (int32_t)x, (int32_t)y, &r32); r = r32; }
+            if (why != 0) CRASH(why);
+            if (!(wide ? make_int64(vm, a, r, &t) : make_int(vm, a, (int32_t)r, &t))) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
             break;
