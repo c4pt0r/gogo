@@ -1976,8 +1976,11 @@ the same text are equal: an error is a value, compared by what it holds.
 > `errors.OK`, the code 0. Put into an `error`, `errors.OK` is a
 > non-nil error, like a typed nil pointer in Go: `return
 > fs.WriteFile(p, b)` in a function that returns `error` would report
-> every success as a failure. The compiler rejects that form
-> (`errors.Code result used as an error`); check the code first:
+> every success as a failure. The compiler rejects that form, and the
+> same in a `var` or an assignment (`errors.Code result used as an
+> error`); passing the result to compare it (`errors.Is(fs.Remove(p),
+> errors.NotFound)`) and an explicit `error(...)` conversion are
+> allowed. Check the code first:
 >
 > ```go
 > func save(p string, b bytes.Bytes) error {

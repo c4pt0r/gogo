@@ -418,16 +418,17 @@ func (c *checker) convert(target types.Type, e ast.Expr) {
 		return
 	}
 	c.noFuncInAny(e)
-	c.codeAsError(target, e)
 	c.convertType(target, c.p.Info.TypeOf(e), e.Pos())
 }
 
 // codeAsError rejects the result of a call that returns an errors.Code
-// (fs.WriteFile, code.Load's ...: fs.Err and code.Err are aliases) used
-// directly as an error, as in `return fs.WriteFile(p, b)` in a function
-// that returns error: errors.OK in an error is not nil, so success would
-// read as a failure. A Code held in a variable, checked against OK first,
-// converts as any value does.
+// (fs.WriteFile, code.Load's ...: fs.Err and code.Err are aliases)
+// returned or stored as an error, as in `return fs.WriteFile(p, b)` in a
+// function that returns error: errors.OK in an error is not nil, so
+// success would read as a failure. Its callers are the return, var and
+// assignment statements; an argument (errors.Is(fs.Remove(p),
+// errors.NotFound), which compares), an explicit error(...) conversion
+// and a Code held in a variable convert as any value does.
 func (c *checker) codeAsError(target types.Type, e ast.Expr) {
 	call, ok := ast.Unparen(e).(*ast.CallExpr)
 	if !ok || c.p.Info.Types[call.Fun].IsType() || !types.Identical(target, errorType) || !isErrorsCode(c.p.Info.TypeOf(call)) {
@@ -596,6 +597,7 @@ func (c *checker) valueSpec(s *ast.ValueSpec) {
 	for _, v := range s.Values {
 		if s.Type != nil {
 			c.convert(c.p.Info.TypeOf(s.Type), v)
+			c.codeAsError(c.p.Info.TypeOf(s.Type), v)
 		}
 		c.expr(v)
 	}
@@ -680,6 +682,7 @@ func (c *checker) stmt(s ast.Stmt) {
 		for i, r := range s.Results {
 			if c.results != nil && i < c.results.Len() {
 				c.convert(c.results.At(i).Type(), r)
+				c.codeAsError(c.results.At(i).Type(), r)
 			}
 			c.expr(r)
 		}
@@ -943,6 +946,7 @@ func (c *checker) assign(s *ast.AssignStmt) {
 	for i, r := range s.Rhs {
 		if s.Tok == token.ASSIGN || s.Tok == token.DEFINE {
 			c.convert(c.p.Info.TypeOf(s.Lhs[i]), r)
+			c.codeAsError(c.p.Info.TypeOf(s.Lhs[i]), r)
 		}
 		c.expr(r)
 	}

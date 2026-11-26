@@ -436,10 +436,12 @@ rebuilt:
   `errors.OK`, the code 0; converted to `error` it is a non-nil value,
   like a typed nil pointer in Go, so `return fs.WriteFile(p, b)` in a
   function that returns `error` would turn every success into a failure.
-  The compiler rejects a call's `errors.Code` result used directly as an
-  `error` (`errors.Code result used as an error`), but not a `Code`
-  variable converted later. *Workaround:* `if c != fs.OK { return c };
-  return nil`. The library functions that return `error` return `nil`
+  The compiler rejects a call's `errors.Code` result returned or stored
+  directly as an `error` (a `return`, a `var` or an assignment:
+  `errors.Code result used as an error`); passing one to compare it,
+  `errors.Is(fs.Remove(p), errors.NotFound)`, an explicit
+  `error(fs.Remove(p))` and a `Code` variable converted later are
+  allowed. *Workaround:* `if c != fs.OK { return c }; return nil`. The library functions that return `error` return `nil`
   on success.
 - **The VM's own types do not implement your interfaces.** The methods
   of `bytes.Bytes`, `bytes.Buffer` and `fs.File` are builtins, which a
