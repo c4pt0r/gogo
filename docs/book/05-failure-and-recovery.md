@@ -444,7 +444,7 @@ afterwards.
 A **supervisor** is an actor whose only job is to start a child, watch it,
 and restart it when it fails. `gogo/supervisor` provides one, written in the
 gogo subset with the pieces from this chapter (it is about 120 lines; read
-`lib/supervisor/supervisor.go` to see exactly what it does).
+`lib/supervisor/supervisor.gg` to see exactly what it does).
 
 ```go
 func Supervise(child func(), spec Spec) actor.PID

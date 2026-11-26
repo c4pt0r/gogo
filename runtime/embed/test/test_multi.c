@@ -118,7 +118,7 @@ static void *m_worker(void *arg) {
         j->load_rc = j->start_rc = GOGO_ESTATE;
         if (!j->vm) continue;
         char path[512];
-        snprintf(path, sizeof path, "%s/%s.gogo", images_dir(), j->prog);
+        snprintf(path, sizeof path, "%s/%s.ggb", images_dir(), j->prog);
         size_t len = 0;
         void *img = m_read(path, &len);
         j->load_rc = img ? gogo_load(j->vm, img, len, GOGO_LOAD_COPY) : GOGO_EINVAL;

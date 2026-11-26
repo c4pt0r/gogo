@@ -43,10 +43,11 @@ const setupUsage = "usage: gogo setup [-port P] [-board sticks3|cardputer] [-ver
 // tools/release.sh (-ldflags "-X main.version=v1.2.3").
 var version = "dev"
 
-// File names gogo setup writes: compiled images and gogo source files.
+// File name extensions of compiled images (gogo build's default output,
+// what run, dis and flash take) and of gogo source files (compiler.Load).
 const (
-	imageExt  = ".gogo"
-	sourceExt = ".go"
+	imageExt  = ".ggb"
+	sourceExt = compiler.SourceExt
 )
 
 // setupSteps is the number of steps gogo setup prints.

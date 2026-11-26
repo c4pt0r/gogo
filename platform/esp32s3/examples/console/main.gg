@@ -5,7 +5,7 @@
 // console rows exactly, so nothing scrolls off. The final ✓ is not in
 // GB2312, so it shows as a box glyph.
 //
-//	gogo build platform/esp32s3/examples/console -o console.gogo && gogo flash console.gogo
+//	gogo build platform/esp32s3/examples/console -o console.ggb && gogo flash console.ggb
 package main
 
 import "gogo/actor"

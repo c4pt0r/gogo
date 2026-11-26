@@ -2,7 +2,7 @@
 // Spawns them, prints the count and the sum of their actor.Info memory, then
 // returns; the VM exiting reclaims them all.
 //
-//	gogo build examples/many_idle -o many_idle.gogo && gogo flash many_idle.gogo
+//	gogo build examples/many_idle -o many_idle.ggb && gogo flash many_idle.ggb
 package main
 
 import "gogo/actor"

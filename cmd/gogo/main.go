@@ -1,9 +1,9 @@
 // Command gogo compiles gogo programs to VM images, runs and disassembles them.
 //
-//	gogo build <dir> [-o out.gogo]
-//	gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>
-//	gogo dis <file.gogo>
-//	gogo flash [-port P] [-esptool path] app.gogo
+//	gogo build <dir> [-o out.ggb]
+//	gogo run [--key c=pin]... [--fs-root DIR] <dir|file.ggb>
+//	gogo dis <file.ggb>
+//	gogo flash [-port P] [-esptool path] app.ggb
 //	gogo monitor [-port P] [-t seconds] [-until text] [-reset]
 //	gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
 //	gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
@@ -37,7 +37,7 @@ import (
 	"gogotools/compiler"
 )
 
-const usage = "usage: gogo build <dir> [-o out.gogo]\n       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>\n       gogo dis <file.gogo>\n       gogo flash [-port P] [-esptool path] app.gogo\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats\n       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]\n       gogo version"
+const usage = "usage: gogo build <dir> [-o out" + imageExt + "]\n       gogo run [--key c=pin]... [--fs-root DIR] <dir|file" + imageExt + ">\n       gogo dis <file" + imageExt + ">\n       gogo flash [-port P] [-esptool path] app" + imageExt + "\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats\n       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]\n       gogo version"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -69,7 +69,7 @@ func runCmd(args []string) (int, error) {
 		args = args[2:]
 	}
 	if len(args) == 0 {
-		return 1, errors.New("gogo run: missing image (a directory or .gogo file)\n" + usage)
+		return 1, errors.New("gogo run: missing image (a directory or " + imageExt + " file)\n" + usage)
 	}
 	if len(args) != 1 {
 		return 1, errors.New(usage)
@@ -86,7 +86,7 @@ func runCmd(args []string) (int, error) {
 			return 1, err
 		}
 		defer os.RemoveAll(tmp)
-		image = filepath.Join(tmp, "main.gogo")
+		image = filepath.Join(tmp, "main"+imageExt)
 		if err := build([]string{target, "-o", image}); err != nil {
 			return 1, err
 		}
@@ -253,7 +253,7 @@ func build(args []string) error {
 		if err != nil {
 			return err
 		}
-		out = filepath.Base(abs) + ".gogo"
+		out = filepath.Base(abs) + imageExt
 	}
 	prog, err := compiler.Load(dir)
 	if err != nil {

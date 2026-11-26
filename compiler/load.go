@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gogo"
+	"gogotools/lib"
 )
 
 // ActorPath is the import path of the actor API. Its package is a stub:
@@ -92,6 +92,10 @@ func stubDir(path string) string {
 // libPrefix starts the import path of every gogo library package.
 const libPrefix = "gogo/"
 
+// SourceExt is the file name extension of gogo source files: a package is
+// the *.gg files of its directory (Go-subset source, parsed with go/parser).
+const SourceExt = ".gg"
+
 // Program is a parsed and type-checked gogo program: package main plus the
 // library packages it imports.
 type Program struct {
@@ -139,7 +143,7 @@ func (p *Program) isLib(pkg *types.Package) bool {
 func sizes() types.Sizes { return &types.StdSizes{WordSize: 4, MaxAlign: 4} }
 
 // loader parses and type-checks library packages from libs, a file system
-// with one directory per package: gogo/<name> lives in <name>/*.go. It is
+// with one directory per package: gogo/<name> lives in <name>/*.gg. It is
 // also the importer of every package it checks; it serves only packages it
 // has already loaded, and the stub packages (isStub).
 type loader struct {
@@ -176,18 +180,15 @@ func (l *loader) Import(path string) (*types.Package, error) {
 	return pkg, nil
 }
 
-// parseDir parses the non-test Go files of directory dir of the library
+// parseDir parses the gogo source files of directory dir of the library
 // set, in file name order.
 func (l *loader) parseDir(dir string) ([]*ast.File, error) {
-	names, err := fs.Glob(l.libs, dir+"/*.go")
+	names, err := fs.Glob(l.libs, dir+"/*"+SourceExt)
 	if err != nil {
 		return nil, err
 	}
 	var files []*ast.File
 	for _, name := range names {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
 		src, err := fs.ReadFile(l.libs, name)
 		if err != nil {
 			return nil, err
@@ -199,19 +200,19 @@ func (l *loader) parseDir(dir string) ([]*ast.File, error) {
 		files = append(files, f)
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("gogo: library %s%s has no Go files", libPrefix, dir)
+		return nil, fmt.Errorf("gogo: library %s%s has no %s files", libPrefix, dir, SourceExt)
 	}
 	return files, nil
 }
 
 // isLib reports whether path names a compiled library package: gogo/<name>
-// with Go files in <name>/, other than the stub packages.
+// with gogo source files in <name>/, other than the stub packages.
 func (l *loader) isLib(path string) bool {
 	name, ok := strings.CutPrefix(path, libPrefix)
 	if !ok || isStub(path) || name == "" || name == "main" || strings.ContainsAny(name, "/.*?[\\") {
 		return false
 	}
-	names, err := fs.Glob(l.libs, name+"/*.go")
+	names, err := fs.Glob(l.libs, name+"/*"+SourceExt)
 	return err == nil && len(names) > 0
 }
 
@@ -352,7 +353,7 @@ func (l *loader) check(path string, files []*ast.File) (*types.Package, error) {
 
 // Load parses and type-checks the package main in dir, with the libraries
 // embedded in the compiler.
-func Load(dir string) (*Program, error) { return LoadWith(dir, gogo.StubFS) }
+func Load(dir string) (*Program, error) { return LoadWith(dir, lib.StubFS) }
 
 // LoadWith is Load with the library set libs (see loader).
 func LoadWith(dir string, libs fs.FS) (*Program, error) {
@@ -362,9 +363,13 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 	}
 	fset := token.NewFileSet()
 	var files []*ast.File
+	goFiles := 0
 	for _, e := range entries {
 		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+		if !e.IsDir() && strings.HasSuffix(name, ".go") {
+			goFiles++
+		}
+		if e.IsDir() || !strings.HasSuffix(name, SourceExt) {
 			continue
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ParseComments)
@@ -377,7 +382,10 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 		files = append(files, f)
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("%s: no Go files", dir)
+		if goFiles > 0 {
+			return nil, fmt.Errorf("%s: no %s files, only .go files: gogo source files end in %s (rename main.go to main%s)", dir, SourceExt, SourceExt, SourceExt)
+		}
+		return nil, fmt.Errorf("%s: no %s files", dir, SourceExt)
 	}
 
 	l := &loader{

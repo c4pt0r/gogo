@@ -144,7 +144,7 @@ func TestCapConstants(t *testing.T) {
 func TestOptionalDirective(t *testing.T) {
 	const opt = "// Package a opens mic only when asked.\n//\n//gogo:optional mic spk\npackage a\nimport \"gogo/port\"\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok }\nfunc Play() bool { _, ok := port.Open(\"spk\", 1); return ok }\nfunc IR() bool { _, ok := port.Open(\"ir_tx\", 1); return ok }\n"
 	const user = "package b\nimport (\n\"gogo/a\"\n\"gogo/port\"\n)\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok && a.Rec() }\n"
-	libs := fakeLibs(t, map[string]string{"a/a.go": opt, "b/b.go": user})
+	libs := fakeLibs(t, map[string]string{"a/a.gg": opt, "b/b.gg": user})
 	tests := []struct {
 		name, src string
 		bits      uint32
@@ -172,13 +172,13 @@ func TestOptionalDirective(t *testing.T) {
 func TestOptionalDirectiveErrors(t *testing.T) {
 	const useLib = "package main\nimport \"gogo/a\"\nfunc main() { a.F() }\n"
 	lib := func(directive string) fstest.MapFS {
-		return fakeLibs(t, map[string]string{"a/a.go": "package a\n\n" + directive + "\n\nfunc F() {}\n"})
+		return fakeLibs(t, map[string]string{"a/a.gg": "package a\n\n" + directive + "\n\nfunc F() {}\n"})
 	}
 	tests := []struct{ name, src, directive, want string }{
-		{"unknown driver", useLib, "//gogo:optional tls gpio", `a/a.go:3:1: gogo: //gogo:optional: unknown driver "gpio" (want one of imu, ir_rx, ir_tx, kbd, mic, netif, power, spk, tcp, tcp_listen, tls, udp)`},
+		{"unknown driver", useLib, "//gogo:optional tls gpio", `a/a.gg:3:1: gogo: //gogo:optional: unknown driver "gpio" (want one of imu, ir_rx, ir_tx, kbd, mic, netif, power, spk, tcp, tcp_listen, tls, udp)`},
 		{"misspelt driver", useLib, "//gogo:optional tsl", `unknown driver "tsl"`},
-		{"no driver", useLib, "//gogo:optional", `a/a.go:3:1: gogo: //gogo:optional names no driver`},
-		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.go:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`},
+		{"no driver", useLib, "//gogo:optional", `a/a.gg:3:1: gogo: //gogo:optional names no driver`},
+		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`},
 		{"glued name", useLib, "//gogo:optionaltls", `unknown directive //gogo:optionaltls`},
 		{"in main", "package main\n\n//gogo:optional tls\n\nfunc main() {}\n", "", `gogo: //gogo:optional in package main`},
 	}

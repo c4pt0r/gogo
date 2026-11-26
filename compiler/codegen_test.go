@@ -1082,7 +1082,7 @@ func main() {
 }
 
 func TestCompileLibrary(t *testing.T) {
-	libs := fakeLibs(t, map[string]string{"lib/lib.go": `package lib
+	libs := fakeLibs(t, map[string]string{"lib/lib.gg": `package lib
 
 import "gogo/actor"
 

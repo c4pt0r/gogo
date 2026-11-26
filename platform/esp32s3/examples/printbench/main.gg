@@ -2,7 +2,7 @@
 // Compare a firmware with the LCD console (default) against one built with
 // -DGOGO_CONSOLE=0 (see platform/esp32s3/README.md).
 //
-//	gogo build platform/esp32s3/examples/printbench -o printbench.gogo
+//	gogo build platform/esp32s3/examples/printbench -o printbench.ggb
 package main
 
 import "gogo/actor"

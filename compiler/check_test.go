@@ -10,16 +10,38 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"gogo"
+	"gogotools/lib"
 )
 
 func writeProg(t *testing.T, src string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "main.gg"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// TestLoadSourceExt: a package is its .gg files; .go files are not read,
+// and a directory with only .go files says to rename them.
+func TestLoadSourceExt(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "no .gg files, only .go files") || !strings.Contains(err.Error(), "rename main.go to main.gg") {
+		t.Fatalf("only .go files: err = %v", err)
+	}
+	if _, err := Load(t.TempDir()); err == nil || !strings.HasSuffix(err.Error(), ": no .gg files") {
+		t.Fatalf("empty dir: err = %v", err)
+	}
+	// A .go file next to the .gg files is ignored (here it would not type-check).
+	if err := os.WriteFile(filepath.Join(dir, "main.gg"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err != nil {
+		t.Fatalf(".gg beside .go: %v", err)
+	}
 }
 
 // firstErr returns the first error of a (possibly joined) error.
@@ -641,19 +663,19 @@ func TestAcceptsFuncValues(t *testing.T) {
 // packages given as dir/file.go -> source.
 func fakeLibs(t *testing.T, extra map[string]string) fstest.MapFS {
 	t.Helper()
-	src, err := gogo.StubFS.ReadFile("actor/actor.go")
+	src, err := lib.StubFS.ReadFile("actor/actor.gg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	psrc, err := gogo.StubFS.ReadFile("port/port.go")
+	psrc, err := lib.StubFS.ReadFile("port/port.gg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	bsrc, err := gogo.StubFS.ReadFile("bytes/bytes.go")
+	bsrc, err := lib.StubFS.ReadFile("bytes/bytes.gg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	fsys := fstest.MapFS{"actor/actor.go": {Data: src}, "port/port.go": {Data: psrc}, "bytes/bytes.go": {Data: bsrc}}
+	fsys := fstest.MapFS{"actor/actor.gg": {Data: src}, "port/port.gg": {Data: psrc}, "bytes/bytes.gg": {Data: bsrc}}
 	for name, s := range extra {
 		fsys[name] = &fstest.MapFile{Data: []byte(s)}
 	}
@@ -676,22 +698,22 @@ func loadErr(t *testing.T, src string, libs fstest.MapFS) error {
 func TestLibraries(t *testing.T) {
 	const useLib = "package main\nimport \"gogo/lib\"\nfunc main() { lib.F() }\n"
 	tests := []struct{ name, lib, want string }{
-		{"lib-imports-fmt", "package lib\nimport \"fmt\"\nfunc F() { fmt.Println() }\n", `lib/lib.go:2:8: gogo: import "fmt" not supported`},
+		{"lib-imports-fmt", "package lib\nimport \"fmt\"\nfunc F() { fmt.Println() }\n", `lib/lib.gg:2:8: gogo: import "fmt" not supported`},
 		{"lib-imports-itself", "package lib\nimport \"gogo/lib\"\nfunc F() { lib.F() }\n", `import cycle gogo/lib -> gogo/lib`},
 		{"lib-imports-missing", "package lib\nimport \"gogo/nolib\"\nfunc F() {}\n", `import "gogo/nolib" not supported`},
 		{"lib-renamed-actor", "package lib\nimport a \"gogo/actor\"\nfunc F() { a.Self() }\n", `import a "gogo/actor" not supported`},
 		{"lib-wrong-package", "package other\nfunc F() {}\n", "package other"},
-		{"lib-global", "package lib\nvar g int\nfunc F() { println(g) }\n", "lib/lib.go:2:1: gogo: global variable not supported"},
-		{"lib-subset", "package lib\nfunc F() {\n\tm := map[int]int{}\n\t_ = m\n}\n", "lib/lib.go:3:7: gogo: map not supported"},
+		{"lib-global", "package lib\nvar g int\nfunc F() { println(g) }\n", "lib/lib.gg:2:1: gogo: global variable not supported"},
+		{"lib-subset", "package lib\nfunc F() {\n\tm := map[int]int{}\n\t_ = m\n}\n", "lib/lib.gg:3:7: gogo: map not supported"},
 		{"lib-type-error", "package lib\nfunc F() { undefined() }\n", "undefined"},
-		{"lib-captured-reassign", "package lib\nimport \"gogo/actor\"\nfunc F() {\n\tx := 1\n\tx = 2\n\tactor.Spawn(func() { println(x) })\n}\n", "lib/lib.go:5:2: gogo: captured variable must not be reassigned"},
+		{"lib-captured-reassign", "package lib\nimport \"gogo/actor\"\nfunc F() {\n\tx := 1\n\tx = 2\n\tactor.Spawn(func() { println(x) })\n}\n", "lib/lib.gg:5:2: gogo: captured variable must not be reassigned"},
 		{"lib-imports-port", "package lib\nimport (\n\t\"gogo/actor\"\n\t\"gogo/port\"\n)\nfunc F() { port.Close(actor.Self()) }\n", ""},
 		{"lib-ok", "package lib\nimport \"gogo/actor\"\nfunc F() { actor.Spawn(func() { println(1) }) }\n", ""},
 		{"lib-bytes-ok", "package lib\nimport \"gogo/bytes\"\nfunc F() {\n\tb := bytes.NewBuffer(4)\n\tb.WriteString(\"x\")\n\tprintln(b.Freeze().Len())\n}\n", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := loadErr(t, useLib, fakeLibs(t, map[string]string{"lib/lib.go": tc.lib}))
+			err := loadErr(t, useLib, fakeLibs(t, map[string]string{"lib/lib.gg": tc.lib}))
 			if tc.want == "" {
 				if err != nil {
 					t.Fatalf("unexpected: %v", err)
@@ -765,9 +787,9 @@ func main() {
 // dependency order, each once.
 func TestLibraryImportsLibrary(t *testing.T) {
 	libs := fakeLibs(t, map[string]string{
-		"a/a.go": "package a\nimport \"gogo/b\"\nfunc F() int { return b.G() + 1 }\n",
-		"b/b.go": "package b\nimport \"gogo/c\"\nfunc G() int { return c.H() + 1 }\n",
-		"c/c.go": "package c\nfunc H() int { return 1 }\n",
+		"a/a.gg": "package a\nimport \"gogo/b\"\nfunc F() int { return b.G() + 1 }\n",
+		"b/b.gg": "package b\nimport \"gogo/c\"\nfunc G() int { return c.H() + 1 }\n",
+		"c/c.gg": "package c\nfunc H() int { return 1 }\n",
 	})
 	prog, err := LoadWith(writeProg(t, "package main\nimport (\n\t\"gogo/a\"\n\t\"gogo/c\"\n)\nfunc main() { println(a.F(), c.H()) }\n"), libs)
 	if err != nil {
@@ -784,8 +806,8 @@ func TestLibraryImportsLibrary(t *testing.T) {
 		t.Fatalf("Check: %v", errs)
 	}
 	cyc := fakeLibs(t, map[string]string{
-		"a/a.go": "package a\nimport \"gogo/b\"\nfunc F() { b.G() }\n",
-		"b/b.go": "package b\nimport \"gogo/a\"\nfunc G() { a.F() }\n",
+		"a/a.gg": "package a\nimport \"gogo/b\"\nfunc F() { b.G() }\n",
+		"b/b.gg": "package b\nimport \"gogo/a\"\nfunc G() { a.F() }\n",
 	})
 	err = loadErr(t, "package main\nimport \"gogo/a\"\nfunc main() { a.F() }\n", cyc)
 	if err == nil || !strings.Contains(err.Error(), "import cycle gogo/a -> gogo/b -> gogo/a") {

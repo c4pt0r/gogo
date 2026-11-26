@@ -60,8 +60,8 @@ Programs go to the separate `gogo` partition, so changing the program does
 not rebuild or reflash the firmware:
 
     go build -o build/gogo ./cmd/gogo
-    build/gogo build tests/golden/hello -o hello.gogo
-    build/gogo flash hello.gogo              # [-port P] [-esptool path]
+    build/gogo build tests/golden/hello -o hello.ggb
+    build/gogo flash hello.ggb              # [-port P] [-esptool path]
     build/gogo monitor -reset -t 5 -until "gogo: vm exited"
 
 `gogo flash` needs `esptool` (or `esptool.py`) in `PATH` (export.sh puts it
@@ -847,8 +847,8 @@ netdemo usage (after the Wi-Fi setup above; the password is never written
 to a file or the command line, only typed to `gogo config set wifi.password -`):
 
     build/gogo config set demo.url http://example.com/   # optional fetch target
-    build/gogo build examples/netdemo -o netdemo.gogo
-    build/gogo flash netdemo.gogo
+    build/gogo build examples/netdemo -o netdemo.ggb
+    build/gogo flash netdemo.ggb
 
 The screen shows `gogo: wifi connected ...`, then `gogo: ip <addr> (gateway
 <g>)` and the page URL; open `http://<addr>/` in a browser on the same LAN.

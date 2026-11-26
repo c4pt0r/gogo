@@ -3,7 +3,7 @@
 // one board while audiolisten runs on the other, placed side by side: the
 // listener's level should rise for those 6 s.
 //
-//	gogo build platform/esp32s3/examples/audiotone -o tone.gogo && gogo flash tone.gogo
+//	gogo build platform/esp32s3/examples/audiotone -o tone.ggb && gogo flash tone.ggb
 package main
 
 import (

@@ -18,8 +18,8 @@ build/gogo build examples/hotload/mods/worker_v2 -o /tmp/mods/worker_v2.gmod
 gogo config set wifi.ssid <name>
 gogo config set wifi.password -                         # reads stdin
 gogo config set demo.modurl http://<mac-lan-ip>:8000    # base URL, no trailing /
-build/gogo build examples/hotload_net -o hotload_net.gogo
-build/gogo flash hotload_net.gogo
+build/gogo build examples/hotload_net -o hotload_net.ggb
+build/gogo flash hotload_net.ggb
 build/gogo monitor -reset -t 40 -until "done"
 ```
 

@@ -2,7 +2,7 @@
 //
 //	gogo config set wifi.ssid <name>          # once; stored on the device
 //	gogo config set wifi.password -          # reads the password from stdin
-//	gogo build examples/httpsdemo -o httpsdemo.gogo && gogo flash httpsdemo.gogo
+//	gogo build examples/httpsdemo -o httpsdemo.ggb && gogo flash httpsdemo.ggb
 //	gogo monitor -reset -t 90 -until "httpsdemo: done"
 //
 // On boot: DHCP, SNTP from pool.ntp.org (certificate checks need the

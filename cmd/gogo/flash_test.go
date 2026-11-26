@@ -106,7 +106,7 @@ func TestDetectPort(t *testing.T) {
 
 func TestFlashRunsEsptool(t *testing.T) {
 	dir := t.TempDir()
-	app := filepath.Join(dir, "app.gogo")
+	app := filepath.Join(dir, "app.ggb")
 	img := fakeImage(32)
 	if err := os.WriteFile(app, img, 0o644); err != nil {
 		t.Fatal(err)
@@ -154,11 +154,11 @@ func TestFlashRunsEsptool(t *testing.T) {
 
 func TestFlashRejects(t *testing.T) {
 	dir := t.TempDir()
-	bad := filepath.Join(dir, "bad.gogo")
+	bad := filepath.Join(dir, "bad.ggb")
 	if err := os.WriteFile(bad, []byte("not an image"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	good := filepath.Join(dir, "good.gogo")
+	good := filepath.Join(dir, "good.ggb")
 	if err := os.WriteFile(good, fakeImage(16), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -170,10 +170,10 @@ func TestFlashRejects(t *testing.T) {
 	for _, args := range [][]string{
 		{"-port", "/dev/x", "-esptool", "e", bad},
 		{},
-		{"a.gogo", "b.gogo"},
+		{"a.ggb", "b.ggb"},
 		{"-port"},
 		{"-bogus", good},
-		{"-port", "/dev/x", "-esptool", "e", filepath.Join(dir, "missing.gogo")},
+		{"-port", "/dev/x", "-esptool", "e", filepath.Join(dir, "missing.ggb")},
 		{"-esptool", "e", good}, // no -port and no board
 	} {
 		if err := f.flash(args); err == nil {

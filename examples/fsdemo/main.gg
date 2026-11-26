@@ -1,6 +1,6 @@
 // fsdemo: storage demo (M5StickS3).
 //
-//	gogo build examples/fsdemo -o fsdemo.gogo && gogo flash fsdemo.gogo
+//	gogo build examples/fsdemo -o fsdemo.ggb && gogo flash fsdemo.ggb
 //
 // Every boot adds one to the boot counter (kv key "boots") and appends a
 // line to the ringlog /flash/presses; the screen and serial show the

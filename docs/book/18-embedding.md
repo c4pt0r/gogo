@@ -82,8 +82,8 @@ The life of a VM is always the same four steps:
 4. **`gogo_free`** closes its ports and gives back every byte it took.
 
 ```sh
-gogo build examples/many_idle -o many_idle.gogo
-build/embed-c/main many_idle.gogo
+gogo build examples/many_idle -o many_idle.ggb
+build/embed-c/main many_idle.ggb
 ```
 
 ```
@@ -243,7 +243,7 @@ in turn, and sleeps when both are idle:
 ```
 
 ```sh
-build/embed-c/main --two httpparse.gogo many_idle.gogo
+build/embed-c/main --two httpparse.ggb many_idle.ggb
 ```
 
 ```
@@ -369,7 +369,7 @@ and registers it before the program starts:
     if (rc == GOGO_OK) rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before start */
 ```
 
-The Go side ([`examples/hostecho`](../../examples/hostecho/main.go)) opens
+The gogo side ([`examples/hostecho`](../../examples/hostecho/main.gg)) opens
 it with a `port.Host` config, sends it `port.Post` commands and receives
 `port.Post` events:
 
@@ -451,12 +451,12 @@ and an image that needs one is refused by `gogo_load` with `GOGO_ECAPS`
 and a reason on the error stream:
 
 ```sh
-build/embed-c/main netdemo.gogo
+build/embed-c/main netdemo.ggb
 ```
 
 ```
 gogo: image needs net; firmware lacks net
-gogo_load netdemo.gogo: error -4
+gogo_load netdemo.ggb: error -4
 ```
 
 ## 18.10 Hot loading: `allow_code_load`
@@ -471,8 +471,8 @@ memory. Bundled code (the image itself) is unaffected.
 `fs_root` and `allow_code_load`:
 
 ```sh
-build/embed-c/main --flash dir --allow-load hotload.gogo   # runs as under gogovm
-build/embed-c/main --flash dir hotload.gogo
+build/embed-c/main --flash dir --allow-load hotload.ggb   # runs as under gogovm
+build/embed-c/main --flash dir hotload.ggb
 ```
 
 ```

@@ -1,2 +1,2 @@
-main.go:9:2: gogo: captured variable must not be reassigned
-main.go:12:14: gogo: byte in interface not supported
+main.gg:9:2: gogo: captured variable must not be reassigned
+main.gg:12:14: gogo: byte in interface not supported
