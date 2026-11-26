@@ -51,6 +51,7 @@
 #include "actor.h"
 #include "alloc.h"
 #include "interp.h"
+#include "signals.h"
 #include "module.h"
 #include "config.h"
 #include "gpio_unix.h"
@@ -108,7 +109,7 @@ static int exit_status(int32_t code) {
  * ("gogo: actor <pid N> crashed: <kind> | exit(<code>)[ in f]", N the
  * slot, which still holds main), main_status is its status. */
 static void err_line_done(void) {
-    static const char pre[] = "gogo: actor <pid ", mid[] = "> crashed: ";
+    static const char pre[] = CRASH_REPORT_PID, mid[] = CRASH_REPORT_KIND;
     const char *p = err_line, *end = err_line + err_len;
     if (err_len < sizeof pre - 1u || memcmp(p, pre, sizeof pre - 1u) != 0) return;
     p += sizeof pre - 1u;
@@ -150,8 +151,12 @@ static void main_write(void *ctx, int stream, const char *s, size_t n) {
  * is the one actor vm_start made. */
 static int run_main(Vm *vm) {
     if (vm_start(vm)) return EXIT_USAGE;   /* said on stream 2: no main, or no memory */
-    for (uint16_t i = 0; i < vm->table_cap; i++) {
+    for (uint16_t i = 0; i < vm->table_cap && !main_pid; i++) {
         if (!(vm->table[i] & 1u)) main_pid = ((const Actor *)vm->table[i])->id;
+    }
+    if (vm->live != 1u) {   /* vm_start makes main only: anything else is a bug here */
+        fprintf(stderr, "gogovm: %u actors at start, want 1\n", (unsigned)vm->live);
+        abort();
     }
     main_vm = vm;
     while (vm_step(vm, 0) != VM_DONE) {
