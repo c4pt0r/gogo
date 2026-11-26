@@ -326,9 +326,9 @@ runs.
 
 Release binaries of the CLI are built for macOS, Linux and Windows on
 amd64 and arm64. Development happens on macOS (Apple silicon). The full
-test suite has passed on Linux arm64, and the test workflow is set up to
-run it on macOS and Linux x86-64 for every change; see known-issues for
-what has not run on Linux yet.
+test suite has passed on Linux arm64, and the test workflow runs it daily
+on macOS and Linux x86-64, where it has passed; see known-issues for what
+has not run on Linux yet.
 
 **The VM** runs on:
 - **ESP32-S3** under ESP-IDF (v6.1.1) and FreeRTOS: the M5StickS3 and the
