@@ -631,6 +631,8 @@ static void cmp_key(const Vm *vm, const Actor *a, term t, CmpKey *k) {
     SliceV s;
     const uint32_t *o = obj_of(vm, a, t);
     uint32_t kind = o ? hdr_kind(o[0]) : 0u;
+    k->p = NULL;
+    k->n = 0;
     k->e = NULL;
     k->hi = 0;
     k->lo = t;
