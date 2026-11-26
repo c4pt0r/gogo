@@ -629,6 +629,7 @@ func Unregister(name string)                    // only the registering actor ma
 func SendAfter(to PID, msg any, ms int) Ref; func CancelTimer(r Ref) bool
 func Sleep(ms int); func Now() int64            // ms since the VM started
 func Info(p PID) ProcInfo
+func Fail(code errors.Code) int                 // exit reason Failed + int(code) (64..99)
 
 // System messages
 type ExitMsg struct{ From PID; Reason Reason }
@@ -842,8 +843,8 @@ text grid while it is open.
   `CloseClient` keep one connection alive; `Upload` streams a file as a
   POST body (§5.4.8). The server `http.Serve(port, handler func(Request)
   Response) actor.PID` starts a listener actor linked to the caller (if
-  it cannot listen it exits with code 69, `ListenFailed`, `actor.Failed +
-  errors.Busy`) and hands each
+  it cannot listen it exits with code 69, `ListenFailed`,
+  `actor.Fail(errors.Busy)`) and hands each
   connection to a new handler actor: request head at most 2 KB, body at
   most 8 KB by `Content-Length` (no chunked bodies), 400 for a malformed
   request, 413 for a body too large, then a response with
@@ -2035,7 +2036,7 @@ together with `mbox_words` through `actor_charged_words`).
   `BadShift`, `BadMsg`, `Panic` (10), `NoConnection` (11, 15.5: the node
   of a linked or monitored remote actor became unreachable, §5.13), `Nil`
   (12, 15.6: a nil pointer or map dereference), a library failure (64..99:
-  `actor.Failed` (64) plus a shared error code, such as
+  `actor.Failed` (64) plus a shared error code, `actor.Fail(code)`, such as
   `http.ListenFailed`; 13..63 are kept for the VM), or a user code (100
   or more, from
   `actor.Exit(code)` / `actor.Kill(p, code)`); `Func` is the name of the

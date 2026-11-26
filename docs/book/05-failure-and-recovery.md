@@ -94,6 +94,7 @@ type Reason struct {
 | 10 | `actor.Panic` | `panic(v)`, a failed type assertion, a method call on a nil interface | `panic`, after `panic: v` |
 | 11 | `actor.NoConnection` | linked to an actor on another node that became unreachable ([20.5](20-distributed.md#205-when-a-node-goes-away)) | `noconnection` |
 | 12 | `actor.Nil` | a nil pointer dereference, a write to a nil map | `nil` |
+| 64..99 | `actor.Fail(code)` | a failure a shared error code describes: `actor.Failed` (64) + the code (appendix C), as `http.ListenFailed` is `actor.Fail(errors.Busy)`, 69 | `exit(<code>)` |
 | ≥ 100 | your own | `actor.Exit(code)` or `actor.Kill(p, code)` | `exit(<code>)` |
 
 `Normal` and `Shutdown` are the two "expected" endings; everything else

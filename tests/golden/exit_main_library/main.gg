@@ -7,5 +7,5 @@ import (
 
 // A library failure (actor.Failed + a shared code) passes through: 69.
 func main() {
-	actor.Exit(actor.Failed + int(errors.Busy))
+	actor.Exit(actor.Fail(errors.Busy))
 }

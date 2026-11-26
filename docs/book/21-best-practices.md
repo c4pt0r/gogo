@@ -765,14 +765,14 @@ The writer appends each frame to a file and acknowledges it:
 func writer(path string) {
 	f, e := fs.Open(path, fs.Write)
 	if e != fs.OK {
-		actor.Exit(actor.Failed + int(e))
+		actor.Exit(actor.Fail(e))
 	}
 	frames, n := 0, 0
 	for {
 		switch m := actor.Receive().(type) {
 		case Frame:
 			if e := f.Write(m.Data); e != fs.OK {
-				actor.Exit(actor.Failed + int(e)) // a supervisor decides what next
+				actor.Exit(actor.Fail(e)) // a supervisor decides what next
 			}
 			frames++
 			n += m.Data.Len()
@@ -802,7 +802,7 @@ bytes each, and all of them arrived. Two details matter:
 - `pop` clears the slot it frees (`q[len(q)-1] = Frame{}`), so the queue's
   array does not keep a frame alive after it was sent.
 - The writer is where failures happen (a full card, a removed card). It
-  exits with `actor.Failed` plus the storage error; under a supervisor
+  exits with `actor.Fail` of the storage error; under a supervisor
   it restarts with a new file, and the capture should monitor it and treat
   frames still in flight as lost. `gogo/sound` (section 16.2) is a
   one-actor recorder that stops cleanly on a storage error instead.
@@ -964,7 +964,7 @@ supervisor keeps the listener alive:
 func listener(portNum int) {
 	_, err := port.Open("tcp_listen", net.Listen{Port: portNum})
 	if err != nil {
-		actor.Exit(actor.Failed + int(errors.Busy)) // the supervisor retries
+		actor.Exit(actor.Fail(errors.Busy)) // the supervisor retries
 	}
 	live := 0
 	for {

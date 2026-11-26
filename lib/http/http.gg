@@ -105,8 +105,9 @@ const (
 	DefaultTimeoutMs = 10000
 	// ListenFailed is the exit code of a Serve listener that could not
 	// listen (no network, port taken, or both listen slots in use):
-	// actor.Failed + errors.Busy, in the exit codes kept for library
-	// failures (gogo/actor). It reaches the linked caller as an exit signal.
+	// actor.Fail(errors.Busy), 69, in the exit codes kept for library
+	// failures (gogo/actor). It reaches the linked caller as an exit
+	// signal. (A constant, so written out: actor.Failed + the code.)
 	ListenFailed = actor.Failed + int(errors.Busy)
 )
 

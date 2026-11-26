@@ -1,12 +1,15 @@
 // Package actor is the gogo actor API. Its functions (marked
 // //gogo:builtin) exist only so programs type-check with the standard Go
 // toolchain; the gogo compiler replaces every call with VM instructions, so
-// the bodies are never executed.
+// the bodies are never executed. The functions with a body (Fail) are
+// ordinary library code.
 //
 // The struct types ProcInfo, Reason, ExitMsg, DownMsg, Request and Options
 // have fixed type indices 0-5 in every image (TYPE_* in runtime/vm/opcodes.h); keep
 // their field order in sync with compiler.reservedTypes.
 package actor
+
+import "gogo/errors"
 
 // PID identifies an actor.
 //
@@ -75,7 +78,7 @@ type Options struct {
 
 // Reason codes (R_* in runtime/vm/opcodes.h). 10..63 are kept for the VM.
 // 64..99 are failures a library reports as an exit: Failed plus a shared
-// code of gogo/errors (Failed + int(errors.Busy) is 69; gogo/http's
+// code of gogo/errors, Fail(code) (Fail(errors.Busy) is 69; gogo/http's
 // ListenFailed is one). User codes start at 100.
 const (
 	Normal          = 0
@@ -93,6 +96,13 @@ const (
 	Nil             = 12 // a nil pointer dereference or a write to a nil map
 	Failed          = 64 // the base of library failures: Failed + a shared error code (1..35, gogo/errors)
 )
+
+// Fail is the exit reason of a failure that a shared error code of
+// gogo/errors describes: Failed + int(code), 64..99 for the shared codes
+// (1..35). Exit with it, actor.Exit(actor.Fail(errors.Busy)), so that a
+// supervisor or a linked actor can tell the cause from the reason; Code -
+// Failed gives the code back.
+func Fail(code errors.Code) int { return Failed + int(code) }
 
 // Spawn starts a new actor running f and returns its PID.
 //

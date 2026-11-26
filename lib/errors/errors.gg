@@ -29,9 +29,10 @@
 // needs some, go in its block, never in 1..99.
 //
 // An actor that ends because of one of these failures exits with
-// actor.Failed + the code (gogo/actor's exit reasons 64..99): gogo/http's
-// ListenFailed is actor.Failed + int(Busy). That is why shared codes stop
-// at 35: 64 + 35 = 99 stays below the user exit codes from 100.
+// actor.Fail(code), actor.Failed + the code (gogo/actor's exit reasons
+// 64..99): gogo/http's ListenFailed is actor.Fail(Busy). That is why
+// shared codes stop at 35: 64 + 35 = 99 stays below the user exit codes
+// from 100.
 package errors
 
 // Code is an error code: OK (0), a shared code, or a package's own. In an

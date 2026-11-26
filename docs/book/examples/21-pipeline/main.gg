@@ -66,14 +66,14 @@ func writerMemory() int {
 func writer(path string) {
 	f, e := fs.Open(path, fs.Write)
 	if e != fs.OK {
-		actor.Exit(actor.Failed + int(e))
+		actor.Exit(actor.Fail(e))
 	}
 	frames, n := 0, 0
 	for {
 		switch m := actor.Receive().(type) {
 		case Frame:
 			if e := f.Write(m.Data); e != fs.OK {
-				actor.Exit(actor.Failed + int(e)) // a supervisor decides what next
+				actor.Exit(actor.Fail(e)) // a supervisor decides what next
 			}
 			frames++
 			n += m.Data.Len()

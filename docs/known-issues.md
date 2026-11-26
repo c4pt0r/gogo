@@ -700,7 +700,7 @@ rebuilt:
   yet (uploads stream). Request actors run with 2 x body limit + 6 KB
   (22 KB by default; about 134 KB with a 64 KB body limit). `http.Serve`
   has no error result: if it cannot listen it kills the linked caller
-  with exit code 69, `http.ListenFailed` (`actor.Failed + errors.Busy`),
+  with exit code 69, `http.ListenFailed` (`actor.Fail(errors.Busy)`),
   whatever the cause.
 - **TLS is 1.2 only.** mbedTLS's TLS 1.3 key exchange cannot be sliced.
   A server that requires 1.3 gives `Closed{TLS}`.

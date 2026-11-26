@@ -46,6 +46,7 @@ func CancelTimer(r Ref) bool
 func Sleep(ms int)
 func Now() int64
 func Info(p PID) ProcInfo
+func Fail(code errors.Code) int   // the exit reason Failed + int(code)
 ```
 
 ### gogo/supervisor
@@ -249,7 +250,7 @@ type http.Header struct{ Name, Value string }
 type http.Request struct{ Method, Path string; Headers []Header; Body bytes.Bytes }
 type http.Response struct{ Status int; Headers []Header; Body bytes.Bytes; Truncated bool }
 const (http.MaxBody = 8192; MaxBodyLimit = 65536; MaxHead = 2048;
-	ReadTimeoutMs = 10000; DefaultTimeoutMs = 10000; ListenFailed = 69)   // actor.Failed + errors.Busy
+	ReadTimeoutMs = 10000; DefaultTimeoutMs = 10000; ListenFailed = 69)   // actor.Fail(errors.Busy)
 func http.Get(url string, timeoutMs int) (Response, error)
 func http.Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, error)
 func http.Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, error)
@@ -325,7 +326,7 @@ them) are described in chapters 15 and 16.
 | 11 | `actor.NoConnection` | `noconnection` | the node of a linked or monitored remote actor became unreachable (chapter 20) |
 | 12 | `actor.Nil` | `nil` | a nil pointer dereference: a field read or write, or `*p`, of a nil pointer; a write to a nil map |
 | 13..63 | | | kept for the VM |
-| 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus a shared code, 1..35 (appendix C); `http.ListenFailed` is 69, `actor.Failed + errors.Busy` |
+| 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus a shared code, 1..35 (appendix C); `actor.Fail(code)` gives it; `http.ListenFailed` is 69, `actor.Fail(errors.Busy)` |
 | 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)` |
 
 The crash report is `gogo: actor <pid N> crashed: <kind>[ in <function>]`,
