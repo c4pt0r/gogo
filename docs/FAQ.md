@@ -296,6 +296,15 @@ about 5 MB to a program, and a process can hold only one Go c-archive).
 A host that only runs precompiled images needs neither. See the book,
 sections 18.12 and 18.13.
 
+### Is there editor support for `.gg` files?
+Yes, in [`editors/`](../editors/README.md): a VS Code extension, Vim and
+Neovim runtime files and an Emacs `gogo-mode`. They give `.gg` files a
+`gogo` file type with Go highlighting and indentation plus gogo's
+`//gogo:` directives and `#!` scripts, and a black and white color scheme,
+*gogo mono*. It is syntax only: `gopls` does not read `.gg` files, so
+`gogo build` is the checker. Any other editor works with `.gg` mapped to
+Go (book, section 2.4).
+
 ### Where is the bytecode documented?
 [bytecode.md](bytecode.md) is the per-opcode reference: every opcode with its
 number, operands, effect and meaning, the builtins table, the reserved types

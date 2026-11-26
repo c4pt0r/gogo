@@ -374,27 +374,30 @@ ever reach it again, so the VM exits.
 ### Editor support
 
 gogo source files end in `.gg`, and compiled images in `.ggb`. A `.gg`
-file is Go syntax, so map the extension to Go in your editor to get
-highlighting and indentation:
+file is Go syntax. The repository's [`editors/`](../../editors/README.md)
+directory has ready-made support that gives `.gg` a `gogo` file type (Go
+highlighting and indentation, plus the `//gogo:` directives and `#!`
+scripts) and a black and white color scheme, *gogo mono*:
 
-- **VS Code**: in `settings.json`,
+- **VS Code**: link the extension and restart VS Code,
 
-  ```json
-  "files.associations": { "*.gg": "go" }
+  ```sh
+  ln -s "$PWD/editors/vscode" ~/.vscode/extensions/gogo-lang
   ```
 
-- **Vim / Neovim**: in your `vimrc` (or `init.vim`),
+- **Vim / Neovim**: add `editors/vim` to the runtime path,
 
   ```vim
-  autocmd BufRead,BufNewFile *.gg setfiletype go
+  set runtimepath^=/path/to/gogo/editors/vim
   ```
 
-  or in Lua for Neovim, `vim.filetype.add({ extension = { gg = "go" } })`.
-- **Emacs**: with `go-mode` installed,
+  and optionally `colorscheme gogo-mono`.
+- **Emacs**: with `go-mode` installed, load `editors/emacs/gogo-mode.el`
+  (`(require 'gogo-mode)` after adding the directory to `load-path`).
 
-  ```elisp
-  (add-to-list 'auto-mode-alist '("\\.gg\\'" . go-mode))
-  ```
+In any other editor, map the extension to Go: in VS Code without the
+extension that is `"files.associations": { "*.gg": "go" }`, in Vim
+`autocmd BufRead,BufNewFile *.gg setfiletype go`.
 
 That is syntax only. `gopls` and `go vet` do not apply: the Go toolchain
 does not read `.gg` files, and gogo is a subset of Go with its own

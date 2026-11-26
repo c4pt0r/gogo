@@ -1,0 +1,36 @@
+{
+  "name": "gogo-lang",
+  "displayName": "gogo",
+  "description": "Syntax highlighting for gogo source files (.gg), and the gogo mono color themes.",
+  "version": "0.1.0",
+  "publisher": "gogo",
+  "license": "MIT",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Programming Languages", "Themes"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "gogo",
+        "aliases": ["gogo", "gg"],
+        "extensions": [".gg"],
+        "firstLine": "^#!.*\\bgogo\\b",
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gogo",
+        "scopeName": "source.gogo",
+        "path": "./syntaxes/gogo.tmLanguage.json",
+        "embeddedLanguages": { "source.go": "go" }
+      }
+    ],
+    "themes": [
+      { "label": "gogo mono light", "uiTheme": "vs", "path": "./themes/gogo-mono-light.json" },
+      { "label": "gogo mono dark", "uiTheme": "vs-dark", "path": "./themes/gogo-mono-dark.json" }
+    ],
+    "configurationDefaults": {
+      "[gogo]": { "editor.insertSpaces": false, "editor.tabSize": 4 }
+    }
+  }
+}

@@ -170,7 +170,7 @@ build/gogo device stats                   # the board's counters and memory
 
 [Chapter 2 of the book](docs/book/02-getting-started.md) has the details,
 including building and flashing the firmware by hand with ESP-IDF v6.1.1,
-and editor setup for `.gg` files. Releases are built by `tools/release.sh` (and the
+and editor setup for `.gg` files ([`editors/`](editors/README.md): VS Code, Vim and Neovim, Emacs). Releases are built by `tools/release.sh` (and the
 release workflow on a `v*` tag).
 
 Tests: `make test` runs the C tests (host and MCU configurations), the Go

@@ -1,0 +1,4 @@
+# gogo source is Go syntax: let GitHub highlight it as Go.
+*.gg linguist-language=Go
+# compiled images
+*.ggb binary

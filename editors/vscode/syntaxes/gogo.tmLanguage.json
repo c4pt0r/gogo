@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "gogo",
+  "scopeName": "source.gogo",
+  "comment": "gogo source is Go syntax: this grammar marks gogo's own //gogo: directives and a #! first line, and hands everything else to VS Code's built-in Go grammar (source.go).",
+  "patterns": [
+    {
+      "name": "comment.line.shebang.gogo",
+      "match": "\\A#!.*$"
+    },
+    {
+      "name": "meta.directive.gogo",
+      "match": "^\\s*(//)(gogo:)([A-Za-z]+)(.*)$",
+      "captures": {
+        "1": { "name": "comment.line.double-slash.gogo punctuation.definition.comment.gogo" },
+        "2": { "name": "keyword.control.directive.gogo" },
+        "3": { "name": "keyword.control.directive.gogo" },
+        "4": { "name": "comment.line.double-slash.gogo" }
+      }
+    },
+    { "include": "source.go" }
+  ]
+}
