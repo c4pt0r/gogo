@@ -255,7 +255,7 @@ footer span { color: var(--faint); font-size: 12px; }
   ═════════════════════════╪════════════════════════
   TARGET                   ▼
   ┌────────────────────────┴───────────────────────┐
-  │ VM core   C99, ~41 KB                          │
+  │ VM core   C99, ~38 KB                          │
   │ actors · scheduler · GC · messages · modules   │
   ├────────────────────────────────────────────────┤
   │ ports     gpio · keys · files · tcp/tls · imu  │
@@ -274,7 +274,7 @@ footer span { color: var(--faint); font-size: 12px; }
     <p class="tagline">Measured after every change.</p>
     <div class="body">
       <dl class="num">
-        <dt>VM core</dt><dd>about 41 KB of code, against a 64 KB budget</dd>
+        <dt>VM core</dt><dd>about 38 KB of code, against a 64 KB budget</dd>
         <dt>idle actor</dt><dd>about 150 bytes</dd>
         <dt>state</dt><dd>all of it per VM; any number of VMs share one process</dd>
       </dl>
@@ -310,7 +310,7 @@ server gone, reason 11</pre>
         </div>
         <div class="qa">
           <h3>How is it different from MicroPython?</h3>
-          <p>MicroPython compiles on the device, gives you a REPL and has a large library and many boards. gogo compiles on your computer, catches type errors before the code ships, isolates each activity in an actor with its own heap, restarts what crashes, hot-loads modules without a restart, and keeps the VM core around 41 KB.</p>
+          <p>MicroPython compiles on the device, gives you a REPL and has a large library and many boards. gogo compiles on your computer, catches type errors before the code ships, isolates each activity in an actor with its own heap, restarts what crashes, hot-loads modules without a restart, and keeps the VM core around 38 KB.</p>
         </div>
         <div class="qa">
           <h3>Is gogo an RTOS?</h3>

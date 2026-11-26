@@ -723,11 +723,14 @@ tests, it runs:
   checks that every link and anchor in it resolves (`tools/sitecheck`);
   skipped when `mdbook` is not installed.
 - `make vmsize` (and `netsize`, `vfssize`, `screensize`, `floatlibsize`): the code size
-  of the VM core and of each runtime part for the ESP32-S3, against
-  their budgets (skipped without the ESP-IDF compiler). `vmsize` also
-  prints the VM core's lines of C; `tools/vmsize.sh --record` appends
-  the size and the line count to `docs/vmsize-history.csv`, and
-  `tools/vmsize.sh --no-float` measures the core without floating point.
+  of the VM core and of each runtime part as linked into the ESP32-S3
+  firmware (the firmware's flags, a relaxed `--gc-sections` link from
+  the part's API), against their budgets (skipped without the ESP-IDF
+  compiler); `tools/vmsize.sh --objects` gives the older, unlinked sum.
+  `vmsize` also prints the VM core's lines of C; `tools/vmsize.sh
+  --record` appends the size and the line count to
+  `docs/vmsize-history.csv`, and `tools/vmsize.sh --no-float` measures
+  the core without floating point.
 
 Outside `make test`: `make test-lib` (the standard library on the host
 Go toolchain, also part of `go test ./...`) and `make test-tls-asan`

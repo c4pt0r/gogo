@@ -744,8 +744,8 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   one; book 3.2). Cost (ESP-IDF 6.1.1, the same tree with
   `CONFIG_GOGO_FLOAT=n`): StickS3 1101952 -> 1111552 B `gogo.bin`
   (+9600), Cardputer ADV 1137072 -> 1146800 (+9728), +80 B static
-  DIRAM. Of that, the VM core's share is about 1.7 KB (`tools/vmsize.sh`
-  against `--no-float`), `runtime/floatlib` about 7.5 KB (`make
+  DIRAM. Of that, the VM core's share is about 1.8 KB (`tools/vmsize.sh`
+  against `--no-float`), `runtime/floatlib` about 7.9 KB (`make
   floatlibsize`), and the rest the soft-float routines they link. The
   board's C library (picolibc) `strtod` / `strtof` are not linked:
   ParseFloat has its own exact parser.

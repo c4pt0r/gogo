@@ -629,11 +629,12 @@ globals-selftest:
 clean:
 	rm -rf $(BUILD)
 
-# VM core size on the ESP32-S3 (-Os); fails above 64 KB, skips without the toolchain.
+# VM core size on the ESP32-S3 as linked into the firmware (firmware flags, relaxed
+# --gc-sections link from the VM's API); fails above 64 KB, skips without the toolchain.
 vmsize:
 	tools/vmsize.sh
 
-# runtime/net/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
+# runtime/net/ code size (linked, as vmsize) and fixed state on the ESP32-S3, reported apart from the VM core.
 netsize:
 	tools/vmsize.sh --net
 
@@ -641,16 +642,16 @@ netsize:
 tlssize:
 	MBEDTLS_DIR=$(MBEDTLS_DIR) tools/vmsize.sh --tls
 
-# runtime/vfs/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
+# runtime/vfs/ code size (linked, as vmsize) and fixed state on the ESP32-S3, reported apart from the VM core.
 vfssize:
 	tools/vmsize.sh --vfs
 
-# runtime/screen/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
+# runtime/screen/ code size (linked, as vmsize) and fixed state on the ESP32-S3, reported apart from the VM core.
 screensize:
 	tools/vmsize.sh --screen
 
 # runtime/floatlib/ (printing and parsing floats, gogo/math) code size on the
-# ESP32-S3 (-Os), reported apart from the VM core; no fixed state allowed.
+# ESP32-S3 (linked, as vmsize), reported apart from the VM core; no fixed state allowed.
 floatlibsize:
 	tools/vmsize.sh --floatlib
 

@@ -53,7 +53,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
 ════════════════╪═════════════════════════════════╪══════════════════════════
   TARGETS       ▼                                 ▼
  ┌────────────────────────────────────────────────────────────────────────┐
- │ runtime/vm   VM CORE  (C99, ~41 KB, all state per Vm)                  │
+ │ runtime/vm   VM CORE  (C99, ~38 KB, all state per Vm)                  │
  │ ┌──────────┐ ┌───────────┐ ┌─────────────┐ ┌──────────┐ ┌────────────┐ │
  │ │ image    │ │ interp +  │ │ actors      │ │ messages │ │ timers     │ │
  │ │ loader   │ │ scheduler │ │ heap + GC   │ │ copy     │ │ names      │ │

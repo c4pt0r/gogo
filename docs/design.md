@@ -802,7 +802,7 @@ text grid while it is open.
 - **Memory** (measured on the ESP32-S3): the stack's fixed state is
   3640 B (budget 4096 B, checked at compile time); a TCB is 56 B, a UDP
   control block 12 B, a `Port` 64 B (32-bit); the net code is about
-  11.3 KB (xtensa, -Os). The Wi-Fi driver takes about 30 KB of heap and
+  12.1 KB (`make netsize`). The Wi-Fi driver takes about 30 KB of heap and
   31.5 KB of static RAM; lwIP and esp_netif are not linked.
 - **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs}) error` starts the DHCP
   client actor, which owns `netif` (renewal at T1, rebinding at T2, the
@@ -1484,7 +1484,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   actor that hands the port over), so a UI composes with other messages.
   It declares `//gogo:optional kbd`.
 - **Switch and sizes.** Kconfig `GOGO_SCREEN` (on): the board lists the
-  driver, the requirement `screen`; `screen.Config` is image format 15.1. `runtime/screen` is 4.3 KB of code on the
+  driver, the requirement `screen`; `screen.Config` is image format 15.1. `runtime/screen` is 4.9 KB of code on the
   ESP32-S3 with no fixed state (`make screensize`); the firmware grows by
   about 5.1 KB, plus the 1760-byte shared grid allocated at the first
   open.
@@ -2154,12 +2154,27 @@ value is typed. `gogo config keys` prints it.
 - **Memory footprint test**: creates N idle actors and checks
   `actor.Info().Memory` against the 160-byte target (warning) and the
   256-byte hard limit (failure) (`tests/footprint`).
-- Size: `make vmsize` measures the VM core for the ESP32-S3 (-Os) and
-  counts its lines of C; `tools/vmsize.sh --record` appends both to
-  `docs/vmsize-history.csv` (the `lines` column is empty in rows recorded
-  before it existed); `tools/vmsize.sh --no-float` measures the core built
-  without floating point (`GOGO_FLOAT=0`), never recorded, and `make
-  floatlibsize` the float library outside it.
+- Size: `make vmsize` measures the VM core as the ESP32-S3 firmware
+  carries it: `runtime/vm/*.c` compiled with the firmware's flags, linked
+  with relaxation and `--gc-sections` from the VM's API (the exports that
+  code outside `runtime/vm` names), and `.text` + `.rodata` + `.literal`
+  of the result summed, about 38.1 KB (38149 B in November 2026), with a
+  per-file table from the linker map. It agrees with a real build: the
+  VM objects' sections in the StickS3 IDF build's `gogo.map` add up to
+  37697 B against 37750 B here without the 399 B pool of merged strings,
+  which the IDF map gives to another object (0.14 %;
+  `platform/esp32s3/vmsize.sh` reads that map). The older
+  measure, the sum of the unlinked objects' sections without the firmware
+  flags (41233 B for the same tree), overstated the core by the
+  unrelaxed long calls and charged a helper shared across files more than
+  one copied into each; `tools/vmsize.sh --objects` still prints it.
+  `make vmsize` also counts the lines of C; `tools/vmsize.sh --record`
+  appends both to `docs/vmsize-history.csv`, whose `method` column says
+  which measure a row used (`objects` or `linked`; the `lines` column is
+  empty in rows recorded before it existed); `tools/vmsize.sh --no-float`
+  measures the core built without floating point (`GOGO_FLOAT=0`), never
+  recorded, and `make netsize`, `vfssize`, `screensize` and `floatlibsize`
+  measure the other libraries the same linked way.
 - Floats: goldens (`tests/golden/float_*`, one on a gogovm built with
   `GOGO_FLOAT=0` to check the refusal), and the C tests compare
   `println` and `strconv.FormatFloat` with Go's output over the corpus
