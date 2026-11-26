@@ -640,17 +640,24 @@ static uint32_t config_get(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) 
 uint32_t strs_sprint(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
     int32_t mode;
     uint32_t off = UINT32_MAX;   /* the string, once allocated */
+    size_t len = 0;
     Out o;
     if (!arg_int(vm, a, R[rb], &mode)) return R_BAD_CODE;
     for (;;) {
         out_init(&o, vm, mode ? 1 : 0);
-        if (off != UINT32_MAX) o.dst = (char *)(a->mem + off + 2);
+        if (off != UINT32_MAX) {
+            o.dst = (char *)(a->mem + off + 2);
+            o.cap = len;
+        }
         if (!term_text(&o, vm, a, R[rb + 1])) return R_BAD_CODE;
         out_flush(&o);
-        if (mode || off != UINT32_MAX || !o.n) break;
-        if (!str_alloc(vm, a, (uint32_t)o.n, &off)) return R_OUT_OF_MEMORY;
+        if (mode || off != UINT32_MAX || !(len = o.n)) break;
+        if (!str_alloc(vm, a, (uint32_t)len, &off)) return R_OUT_OF_MEMORY;
         R = (term *)a->mem + a->fp;   /* the allocation may have moved everything */
     }
+    /* The second pass must print what the first counted; were the text
+     * ever to change between them, it stops at the string's end. */
+    if (off != UINT32_MAX && o.n != len) return R_BAD_CODE;
     R[ra] = mode ? T_NIL : off != UINT32_MAX ? term_from_ref(off) : T_EMPTYSTR;
     return R_NORMAL;
 }

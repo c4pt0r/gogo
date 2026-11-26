@@ -15,6 +15,7 @@ typedef struct Out {
     int stream;               /* 1 program output, 2 diagnostics; 0 (15.6, B_SPRINT):
                                * into dst, or only counted (n) while dst is NULL */
     char *dst;
+    size_t cap;               /* dst's room: nothing is written past it */
     int map;                  /* println (15.6): the depth of a map's entries being printed */
 } Out;
 

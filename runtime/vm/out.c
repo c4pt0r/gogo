@@ -19,7 +19,7 @@ void out_flush(Out *o) {
 
 void out_bytes(Out *o, const char *s, size_t n) {
     if (!o->stream) {                      /* into memory, or counted */
-        if (o->dst) memcpy(o->dst + o->n, s, n);
+        if (o->dst && o->n + n <= o->cap) memcpy(o->dst + o->n, s, n);
         o->n += n;
         return;
     }
