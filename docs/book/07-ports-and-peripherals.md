@@ -45,6 +45,7 @@ Drivers and their configuration types:
 | `"imu"` | `imu.Config` | 15 |
 | `"ir_tx"`, `"ir_rx"` | `ir.TX`, `ir.RX` | 15 |
 | `"mic"`, `"spk"` | `audio.Mic`, `audio.Speaker` | 16 |
+| `"screen"` | `screen.Config` | 19 |
 | ports a host program registers | `port.Host` | 18 |
 
 At most 16 ports can be open at once in the whole VM.
@@ -343,10 +344,12 @@ live actor, or `to` cannot take the port's memory charge within its limit.
 
 ## 7.5 Peripherals that are not ports
 
-The screen is not a port yet. On the boards, everything a program prints
-(standard output in white, standard error in red) appears on the LCD as a
-scrolling text console, with Chinese characters supported. A real
-`display` port, and `uart`, `i2c` and `spi` ports, are planned.
+On the boards, everything a program prints (standard output in white,
+standard error in red) appears on the LCD as a scrolling text console,
+with Chinese characters supported. The console itself is not a port; the
+`"screen"` port (chapter 19) takes the LCD over as a grid of character
+cells while it is open, and gives it back to the console when it closes.
+`uart`, `i2c` and `spi` ports are planned.
 
 ## 7.6 How ports work inside
 
