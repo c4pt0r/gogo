@@ -263,6 +263,19 @@ static void arr_fill(Actor *a, term arr, bool bytes, uint32_t from, uint32_t to,
     else for (uint32_t i = from; i < to; i++) o[2 + i] = zero;
 }
 
+/* A new array (all T_NIL or 0) for need elements when cap is too small:
+ * cap x2, at least minc and need, at most arr_max; its capacity in *ncap.
+ * False if out of memory. May GC. */
+static bool arr_grow(Vm *vm, Actor *a, bool bytes, uint32_t cap, uint32_t need, uint32_t minc, term *arr, uint32_t *ncap) {
+    uint32_t max = arr_max(bytes);
+    cap = cap > max / 2u ? max : cap * 2u;
+    if (cap < minc) cap = minc;
+    if (cap < need) cap = need;
+    if (cap > max) cap = max;
+    *ncap = cap;
+    return arr_alloc(vm, a, bytes, cap, NULL, 0, arr);
+}
+
 /* MAKE_SLICE kind, len, cap, zero. */
 static uint32_t sl_make(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
     int32_t kind, len, cap;
@@ -333,11 +346,7 @@ static uint32_t sl_append(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb, u
     uint32_t off = s.off, cap = s.cap;
     bool grow = need > s.cap;
     if (grow) {
-        cap = s.cap > arr_max(bytes) / 2u ? arr_max(bytes) : s.cap * 2u;
-        if (cap < 4u) cap = 4u;
-        if (cap < need) cap = need;
-        if (cap > arr_max(bytes)) cap = arr_max(bytes);
-        if (!arr_alloc(vm, a, bytes, cap, NULL, 0, &arr)) return R_OUT_OF_MEMORY;
+        if (!arr_grow(vm, a, bytes, s.cap, need, 4u, &arr, &cap)) return R_OUT_OF_MEMORY;
         off = 0;
     }
     term h = hdr_alloc(vm, a, &arr, off, need, cap);
@@ -492,12 +501,8 @@ static uint32_t buf_write(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
     if (n > arr_max(true) - len) return R_OUT_OF_MEMORY;
     uint32_t need = len + n;
     if (need > cap) {
-        uint32_t ncap = cap > arr_max(true) / 2u ? arr_max(true) : cap * 2u;
-        if (ncap < 16u) ncap = 16u;
-        if (ncap < need) ncap = need;
-        if (ncap > arr_max(true)) ncap = arr_max(true);
         term arr;
-        if (!arr_alloc(vm, a, true, ncap, NULL, 0, &arr)) return R_OUT_OF_MEMORY;
+        if (!arr_grow(vm, a, true, cap, need, 16u, &arr, &cap)) return R_OUT_OF_MEMORY;
         R = (term *)a->mem + a->fp;                       /* re-derive after GC */
         o = buf_obj(vm, a, R[rb], &len, &cap);
         if (len) memcpy(a->mem + term_ref_off(arr) + 2u, buf_bytes(a, o), len);
@@ -756,7 +761,7 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
     case B_STR_CONCAT:
         return str_concat(vm, a, R, ra, rb);
     case B_LEN:
-        if (str_view(vm, a, R[rb], &p, &lp) || bytes_view(vm, a, R[rb], &p, &lp)) {}
+        if (seq_bytes(vm, a, R[rb], &p, &lp)) {}
         else if (slice_view(vm, a, R[rb], &s)) lp = s.len;
         else if (!buf_obj(vm, a, R[rb], &lp, &lq)) return R_BAD_CODE;
         R[ra] = term_from_int((int32_t)lp);
