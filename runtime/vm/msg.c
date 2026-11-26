@@ -123,29 +123,15 @@ static uint32_t msg_size(uint32_t *src_mem, term t, Xm *x) {
     return n > MSG_MAX_WORDS ? UINT32_MAX : n;
 }
 
-/* A heap copy of const t appended to b if t crosses into x->tag (msg_size
- * counted it): the term to store for t. */
-static term xm_put(Buf *b, Xm *x, term t) {
-    const uint32_t *c = xm_const(x, t);
-    if (!c) return t;
-    uint32_t w = hdr_words(c[0]);
-    memcpy(b->w + b->len, c, (size_t)w * 4u);
-    t = term_from_ref(b->len);
-    b->len += w;
-    return t;
-}
-
-/* After copy_dag: xm_put on every term of the copied objects (from skip)
- * and on the root, which it returns. The const copies hold no terms. */
-static term xm_copy(Buf *b, Xm *x, uint32_t skip, term root) {
-    uint32_t end = b->len;
-    for (uint32_t scan = skip; scan < end; scan += hdr_words(b->w[scan])) {
-        uint32_t first, last;
-        heap_obj_terms(b->w + scan, &first, &last);
-        for (uint32_t i = scan + first; i < scan + last; i++) b->w[i] = xm_put(b, x, b->w[i]);
-    }
-    return xm_put(b, x, root);
-}
+/* The copy being built: b, the sender's heap, the module rules; ok false
+ * once a copy did not fit (cannot happen: sized by walk). */
+typedef struct Build {
+    Buf b;
+    uint32_t *src;
+    Xm *x;
+    Vm *vm;
+    bool ok, handles;
+} Build;
 
 /* Sharing-preserving copy. While copying, each source
  * object that has been copied gets its header overwritten with a one-word
@@ -155,27 +141,34 @@ static term xm_copy(Buf *b, Xm *x, uint32_t skip, term root) {
  * heap_obj_terms), temporarily holds the source offset instead. restore()
  * then walks the copies, puts every original header back and refills word
  * 1, so no side table is needed. This mutates the sender's heap only for
- * the duration of copy_dag; the VM runs actors on a single scheduler
+ * the duration of the copy; the VM runs actors on a single scheduler
  * thread, and nothing else reads that heap meanwhile. Every heap object is
  * at least 2 words, so word 1 always exists. */
 
-/* Returns a ref into b for the source object t refers to, copying it on
- * first visit; UINT32_MAX on failure. */
-static uint32_t copy_obj(Buf *b, uint32_t *src_mem, term t) {
-    uint32_t src = term_ref_off(t);
-    uint32_t *obj = src_mem + src;
-    if (hdr_kind(obj[0]) == K_FORWARD) return term_from_ref(hdr_words(obj[0]));
-    uint32_t words = hdr_words(obj[0]);
-    if (words > b->cap - b->len) return UINT32_MAX;   /* cannot happen: sized by walk */
-    uint32_t off = b->len;
-    memcpy(b->w + off, obj, (size_t)words * 4u);
-    b->len += words;
-    b->w[off + 1] = src;
-    obj[0] = hdr_make(off, K_FORWARD);
-    return term_from_ref(off);
+/* Replaces the source ref at p by a ref into b, copying the object on
+ * first visit. */
+static void copy_fn(void *ctx, term *p) {
+    Build *c = ctx;
+    Buf *b = &c->b;
+    uint32_t src = term_ref_off(*p);
+    uint32_t *obj = c->src + src;
+    uint32_t off = hdr_words(obj[0]);
+    if (hdr_kind(obj[0]) != K_FORWARD) {
+        uint32_t words = off;
+        if (words > b->cap - b->len) {   /* cannot happen: sized by walk */
+            c->ok = false;
+            return;
+        }
+        off = b->len;
+        memcpy(b->w + off, obj, (size_t)words * 4u);
+        b->len += words;
+        b->w[off + 1] = src;
+        obj[0] = hdr_make(off, K_FORWARD);
+    }
+    *p = term_from_ref(off);
 }
 
-/* Undoes copy_obj's marks: every copy in b names its source object. */
+/* Undoes copy_fn's marks: every copy in b names its source object. */
 static void restore(Buf *b, uint32_t *src_mem, uint32_t first) {
     for (uint32_t scan = first; scan < b->len; scan += hdr_words(b->w[scan])) {
         uint32_t src = b->w[scan + 1];
@@ -184,69 +177,55 @@ static void restore(Buf *b, uint32_t *src_mem, uint32_t first) {
     }
 }
 
-/* Cheney-style copy of t into b: objects are appended in order, and a scan
- * pointer walks the copies, replacing each source ref by a ref to its copy.
- * No recursion. Sets *root; false on failure. The source heap is restored
- * byte for byte on every path. b already holds `first` words (a reply's
- * serial) before the first object. */
-static bool copy_dag(Buf *b, uint32_t *src_mem, term t, term *root, uint32_t skip) {
-    bool ok = true;
-    *root = t;
-    if (term_is_ref(t)) {
-        *root = copy_obj(b, src_mem, t);
-        ok = *root != UINT32_MAX;
+/* After the copy, on the root and every term of the copied objects: a
+ * heap copy of const t appended to b if t crosses into x->tag (msg_size
+ * counted it; the const copies hold no terms), and one reference taken
+ * per handle. */
+static void fin_fn(void *ctx, term *p) {
+    Build *c = ctx;
+    const uint32_t *k = xm_const(c->x, *p);
+    if (k) {
+        uint32_t w = hdr_words(k[0]);
+        memcpy(c->b.w + c->b.len, k, (size_t)w * 4u);
+        *p = term_from_ref(c->b.len);
+        c->b.len += w;
     }
-    for (uint32_t scan = skip; ok && scan < b->len; ) {
-        uint32_t first, end;
-        uint32_t words = hdr_words(b->w[scan]);
-        heap_obj_terms(b->w + scan, &first, &end);
-        for (uint32_t i = scan + first; ok && i < scan + end; i++) {
-            if (!term_is_ref(b->w[i])) continue;
-            uint32_t r = copy_obj(b, src_mem, b->w[i]);   /* may move b->w */
-            if (r == UINT32_MAX) ok = false;
-            else b->w[i] = r;
-        }
-        scan += words;
-    }
-    restore(b, src_mem, skip);
-    return ok;
-}
-
-/* Calls fn on every handle term of a message: the root and the term words
- * of its objects in data[skip, words). */
-static void each_handle(Vm *vm, const uint32_t *data, uint32_t skip, uint32_t words, term root,
-                        void (*fn)(Vm *, term, void *), void *ctx) {
-    if (term_is_handle(root)) fn(vm, root, ctx);
-    for (uint32_t scan = skip; scan < words; scan += hdr_words(data[scan])) {
-        uint32_t first, end;
-        heap_obj_terms(data + scan, &first, &end);
-        for (uint32_t i = scan + first; i < scan + end; i++) {
-            if (term_is_handle(data[i])) fn(vm, data[i], ctx);
-        }
+    if (term_is_handle(*p)) {
+        bytes_msg_ref(c->vm, *p);
+        c->handles = true;
     }
 }
 
 static uint32_t msg_skip(const Msg *m) { return (m->flags & MSG_REPLY) ? MSG_REPLY_HDR : 0u; }
 
-static void ref_fn(Vm *vm, term h, void *ctx) {
-    bytes_msg_ref(vm, h);
-    *(bool *)ctx = true;
+/* Calls fn on every handle term of a message: the root and the term words
+ * of its objects (fn does not write them). */
+static void each_handle(const Msg *m, void (*fn)(void *, term *), void *ctx) {
+    uint32_t end = m->words;
+    term root = m->root;
+    heap_map_terms((uint32_t *)(uintptr_t)m->data, msg_skip(m), &end, &root, 1, TAGS_HANDLE, fn, ctx);
 }
 
-static void unref_fn(Vm *vm, term h, void *ctx) {
-    (void)ctx;
-    bytes_msg_unref(vm, h);
-}
+static void unref_fn(void *ctx, term *h) { bytes_msg_unref(ctx, *h); }
 
-static void charge_fn(Vm *vm, term h, void *ctx) { bytes_set_add(vm, ctx, h); }
+typedef struct Charge {
+    const Vm *vm;
+    BytesSet s;
+} Charge;
+
+static void charge_fn(void *ctx, term *h) {
+    Charge *c = ctx;
+    bytes_set_add(c->vm, &c->s, *h);
+}
 
 uint32_t msg_charge_words(Vm *vm, const Msg *m) {
     uint32_t w = msg_footprint_words(m->words);
     if (m->flags & MSG_HANDLES) {
-        BytesSet s;
-        bytes_set_init(&s);
-        each_handle(vm, m->data, msg_skip(m), m->words, m->root, charge_fn, &s);
-        w += bytes_words(s.bytes);
+        Charge c;
+        c.vm = vm;
+        bytes_set_init(&c.s);
+        each_handle(m, charge_fn, &c);
+        w += bytes_words(c.s.bytes);
     }
     return w;
 }
@@ -257,7 +236,10 @@ uint32_t msg_footprint_words(uint16_t words) {
 
 /* msg_build with `skip` reserved words (zeroed) before the objects: sizes
  * the copy first (checking the module rules), allocates the message once,
- * then copies into it. */
+ * then copies into it: a Cheney copy (objects appended in order, a scan
+ * replacing each source ref by a ref to its copy, no recursion), then the
+ * const copies and handle references. The source heap is restored byte
+ * for byte on every path. */
 static Msg *build_skip(Vm *vm, Actor *src, term t, uint32_t skip, uint32_t dst_mod,
                        uint32_t *why) {
     Xm x = { vm, module_tag(vm, dst_mod), 0, 0 };
@@ -268,19 +250,18 @@ static Msg *build_skip(Vm *vm, Actor *src, term t, uint32_t skip, uint32_t dst_m
     Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
     if (!m) return NULL;
     memset(m->data, 0, (size_t)skip * 4u);
-    Buf b = { m->data, words, skip };
-    term root;
-    if (!copy_dag(&b, src->mem, t, &root, skip)) {   /* cannot happen: sized by walk */
+    Build c = { { m->data, words, skip }, src->mem, &x, vm, true, false };
+    m->root = t;
+    heap_map_terms(m->data, skip, &c.b.len, &m->root, 1, TAGS_REF, copy_fn, &c);
+    restore(&c.b, src->mem, skip);
+    if (!c.ok) {                      /* cannot happen: sized by walk */
         va_free(vm, m, msg_alloc_bytes((uint16_t)words));
         return NULL;
     }
+    heap_map_terms(m->data, skip, &c.b.len, &m->root, 1, TAGS_CONST | TAGS_HANDLE, fin_fn, &c);
     m->next = NULL;
     m->words = (uint16_t)words;
-    m->flags = 0;
-    m->root = x.words ? xm_copy(&b, &x, skip, root) : root;
-    bool any = false;
-    each_handle(vm, m->data, skip, words, m->root, ref_fn, &any);
-    if (any) m->flags |= MSG_HANDLES;
+    m->flags = c.handles ? MSG_HANDLES : 0u;
     return m;
 }
 
@@ -289,46 +270,46 @@ Msg *msg_build(Vm *vm, Actor *src, term t, uint32_t dst_mod, uint32_t *why) {
 }
 
 void msg_free(Vm *vm, Msg *m) {
-    if (m->flags & MSG_HANDLES) each_handle(vm, m->data, msg_skip(m), m->words, m->root, unref_fn, NULL);
+    if (m->flags & MSG_HANDLES) each_handle(m, unref_fn, vm);
     va_free(vm, m, msg_alloc_bytes(m->words));
 }
 
-typedef struct Adopt { Actor *a; bool ok; } Adopt;
+typedef struct Adopt {
+    Vm *vm;
+    Actor *a;
+    bool ok;
+} Adopt;
 
-static void adopt_fn(Vm *vm, term h, void *ctx) {
+static void adopt_fn(void *ctx, term *h) {
     Adopt *d = ctx;
-    if (!bytes_adopt(vm, d->a, h)) d->ok = false;
+    if (!bytes_adopt(d->vm, d->a, *h)) d->ok = false;
 }
+
+static void reloc_fn(void *ctx, term *t) { *t += *(const uint32_t *)ctx; }
 
 bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out) {
     uint32_t base = 0;
     /* A reply's serial words are not copied; refs relative to data become
      * relative to the heap by adding (base - skip). */
-    uint32_t skip = (m->flags & MSG_REPLY) ? MSG_REPLY_HDR : 0u;
+    uint32_t skip = msg_skip(m);
     uint32_t n = m->words - skip;
     if (n) {
         base = heap_alloc(vm, a, n, NULL, 0);
         if (base == UINT32_MAX) return false;
         memcpy(a->mem + base, m->data + skip, (size_t)n * 4u);
-        /* Add the destination offset to every ref, object by object. */
-        for (uint32_t scan = base; scan < base + n; ) {
-            uint32_t first, end;
-            heap_obj_terms(a->mem + scan, &first, &end);
-            for (uint32_t i = scan + first; i < scan + end; i++) {
-                if (term_is_ref(a->mem[i])) a->mem[i] += term_from_ref(base) - term_from_ref(skip);
-            }
-            scan += hdr_words(a->mem[scan]);
-        }
     }
-    *out = term_is_ref(m->root) ? m->root + term_from_ref(base) - term_from_ref(skip) : m->root;
+    /* Add the destination offset to every ref, object by object. */
+    uint32_t end = base + n, delta = term_from_ref(base) - term_from_ref(skip);
+    *out = m->root;
+    heap_map_terms(a->mem, base, &end, out, 1, TAGS_REF, reloc_fn, &delta);
     if (m->flags & MSG_HANDLES) {
-        Adopt d = { a, true };
-        each_handle(vm, m->data, skip, m->words, m->root, adopt_fn, &d);
-        if (!d.ok) {                  /* list full: drop what a no longer reaches */
-            heap_gc(vm, a, 0, out, 1);
+        Adopt d = { vm, a, true };
+        for (bool again = false;; again = true) {
+            each_handle(m, adopt_fn, &d);
+            if (d.ok) break;
+            if (again) return false;
+            heap_gc(vm, a, 0, out, 1);    /* list full: drop what a no longer reaches */
             d.ok = true;
-            each_handle(vm, m->data, skip, m->words, m->root, adopt_fn, &d);
-            if (!d.ok) return false;
         }
     }
     return true;

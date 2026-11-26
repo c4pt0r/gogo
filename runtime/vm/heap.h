@@ -74,6 +74,7 @@ void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end);
  * *end), that has one of the low-4-bit tags in the set `tags` (bit n: tag
  * n); fn may rewrite the word, and *end may grow as fn appends objects. */
 #define TAGS_REF    0x1111u            /* heap refs: ..00 */
+#define TAGS_CONST  (1u << 0xA)
 #define TAGS_HANDLE (1u << 0xE)
 void heap_map_terms(uint32_t *mem, uint32_t scan, const uint32_t *end, term *roots, uint32_t n_roots,
                     uint32_t tags, void (*fn)(void *, term *), void *ctx);
