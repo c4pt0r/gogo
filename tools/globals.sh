@@ -44,7 +44,7 @@ done
 CC=${GLOBALS_CC:-${CC:-cc}}
 CFLAGS=${GLOBALS_CFLAGS:--std=c99}
 MCU=${GLOBALS_MCU_FLAGS:--DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_BYTES=163840u}
-INC="-Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/console -Iruntime/screen -Iruntime/embed -Iruntime/gpio -Iruntime/configsvc -Iruntime/board -Iplatform/unix"
+INC="-Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/console -Iruntime/screen -Iruntime/embed -Iruntime/gpio -Iruntime/configsvc -Iruntime/board -Iruntime/dist -Iplatform/unix"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 
@@ -52,7 +52,7 @@ if [ "$OBJECTS" = 1 ]; then FILES="$*"; ALLOW=/dev/null
     [ -n "$FILES" ] || { echo "globals: --objects needs files" >&2; exit 2; }
 elif [ $# -gt 0 ]; then FILES="$*"; else
     FILES=""
-    for d in vm vfs stream input net console screen embed gpio configsvc board; do
+    for d in vm vfs stream input net console screen embed gpio configsvc board dist; do
         for f in runtime/"$d"/*.c; do
             [ -f "$f" ] || continue
             [ "$f" = runtime/vm/check32.c ] && continue
