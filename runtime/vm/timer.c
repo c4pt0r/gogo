@@ -118,11 +118,14 @@ static inline Timer *timer_new(Vm *vm, uint64_t deadline, term pid, Msg *msg) {
         heap_trim(vm);
         return NULL;
     }
-    memset(t, 0, sizeof *t);
+    t->seq = 0;
     t->deadline = deadline;
+    t->serial = 0;
     t->pid = pid;
     t->msg = msg;
     t->owner = T_NIL;
+    t->charge = 0;
+    t->counted = false;
     return t;
 }
 
