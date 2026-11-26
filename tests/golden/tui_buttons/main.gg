@@ -5,19 +5,21 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/screen"
 	"gogo/tui"
 )
 
 func main() {
+	s, sok := tui.Open(screen.Config{Cols: 4, Rows: 1})
 	keys, ok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
-	if !ok {
+	if !ok || !sok {
 		println("no keys")
 		return
 	}
 	println("keyboard", keys.HasKbd, "pins", keys.PinA, keys.PinB)
 	for {
 		msg := actor.Receive()
-		k2, k, ui := tui.Event(keys, msg)
+		k2, k, ui := tui.Event(s, keys, msg)
 		keys = k2
 		if !ui {
 			println("not ui")
@@ -32,4 +34,5 @@ func main() {
 		}
 	}
 	tui.CloseKeys(keys)
+	tui.Close(s)
 }

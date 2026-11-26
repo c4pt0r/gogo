@@ -113,10 +113,18 @@ func FromKbd(e kbd.Key) Key {
 }
 
 // Event handles msg if it belongs to the UI: a key or button event of k
-// (the Key it means, KeyNone if none) or the screen port's port.Done. It
-// returns k updated and whether msg was the UI's; anything else (ok false)
-// is the caller's to handle. It never waits. Planned: k.Event(msg).
-func Event(k Keys, msg any) (Keys, Key, bool) {
+// (the Key it means, KeyNone if none) or a port.Done answering one of the
+// screen's Outs. It returns k updated and whether msg was the UI's;
+// anything else (ok false) is the caller's to handle. It never waits.
+//
+// A port.Done does not name the port that sent it (until Done carries a
+// From field): Event takes as many Dones as s has Outs unanswered (Flush
+// counts them) and hands every other Done back. A program that also uses
+// another stream port (spk, ir_tx, ...) therefore gets the right number of
+// Dones, but while both have Outs in flight one of its Dones may be taken
+// for the screen's and the screen's handed back instead, so it should
+// count its Dones rather than rely on their Seq. Planned: k.Event(s, msg).
+func Event(s Screen, k Keys, msg any) (Keys, Key, bool) {
 	switch m := msg.(type) {
 	case kbd.Key:
 		return k, FromKbd(m), true
@@ -146,7 +154,11 @@ func Event(k Keys, msg any) (Keys, Key, bool) {
 		}
 		return up, Key{Code: KeyDown}, true
 	case port.Done:
-		return k, Key{}, true
+		st := s.st
+		if len(st) > 6 && st[6] > 0 {
+			st[6]--
+			return k, Key{}, true
+		}
 	}
 	return k, Key{}, false
 }
@@ -167,14 +179,15 @@ type Handlers struct {
 func Ignore(msg any) bool { return true }
 
 // Run is an event loop for a program whose actor does nothing but its UI:
-// it receives every message, passes it through Event and calls h. It
+// it receives every message, passes it through Event and calls h (a Done
+// that is not the screen's goes to Msg). It
 // returns k (updated) when a handler returns false. Planned: s.Run(k, h).
 func Run(s Screen, k Keys, h Handlers) Keys {
 	h.Draw(NewFrame(s))
 	Flush(s)
 	for {
 		msg := actor.Receive()
-		k2, key, ui := Event(k, msg)
+		k2, key, ui := Event(s, k, msg)
 		k = k2
 		more := true
 		if ui {

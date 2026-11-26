@@ -22,7 +22,7 @@ func main() {
 	draw(s, l)
 	for {
 		msg := actor.Receive()
-		k2, k, ui := tui.Event(keys, msg)
+		k2, k, ui := tui.Event(s, keys, msg)
 		keys = k2
 		if !ui || k.Code == tui.KeyNone {
 			continue
