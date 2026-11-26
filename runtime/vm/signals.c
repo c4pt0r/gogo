@@ -417,8 +417,11 @@ void sig_demonitor(Vm *vm, Actor *a, uint64_t serial) {
     if (vm->dist) vm->dist->demonitor(vm, a, serial);
     Link **pl = node_slot(a, L_WATCHING, 0, serial);
     if (!pl) return;
-    node_remove(vm, actor_lookup(vm, (*pl)->peer), L_MONITORS, 0, serial);
-    node_remove(vm, a, L_WATCHING, 0, serial);
+    Link *l = *pl;            /* the peer's list is another: pl stays good */
+    node_remove(vm, actor_lookup(vm, l->peer), L_MONITORS, 0, serial);
+    *pl = l->next;
+    va_free(vm, l, sizeof(Monitor));
+    actor_uncharge(a, node_words(L_WATCHING));
 }
 
 /* Empties a's three lists, in this order: links, watchers, watched. Each
