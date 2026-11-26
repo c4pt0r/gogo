@@ -342,12 +342,14 @@ static void control(Vm *vm, DistState *ds, uint16_t node, uint8_t type, const ui
 
 /* GONE{pid} on l, as from node src: the actor pid of src exited, so its
  * proxies can go. */
-static void gone_to(Vm *vm, DistState *ds, Link *l, uint16_t src, term pid) {
+/* GONE: this node's pid names no live actor, for node dst (the sender of
+ * a message to it), on link l (dst's route). */
+static void gone_to(Vm *vm, DistState *ds, Link *l, uint16_t dst, uint16_t src, term pid) {
     uint8_t b[2u + HDR + 4u], *p = b;
     p = wr16(p, HDR + 4u);
     *p++ = F_GONE;
     *p++ = 0;
-    p = wr16(p, l->peer);
+    p = wr16(p, dst);
     p = wr16(p, src);
     wr32(p, pid);
     emit(vm, ds, l, b, sizeof b);
@@ -1165,12 +1167,8 @@ static void h_exited(Vm *vm, Actor *a, uint32_t code) {
             control(vm, ds, x->node, F_DEMONITOR, f, 4);
         }
     }
-    if (exported(ds, a->id)) {
-        /* Peers may hold proxies of it: tell them it is gone. */
-        for (uint32_t i = 0; i < ds->nlinks; i++) {
-            if (ds->links[i] && ds->links[i]->port) gone_to(vm, ds, ds->links[i], ds->self, a->id);
-        }
-    }
+    /* No GONE now: peers holding a proxy of it hear so when they next send
+     * to it (F_SEND), or not at all (an unused proxy ages out). */
     for (uint32_t i = 0; i < ds->nexp; i++) {
         if (ds->exports[i] == a->id) ds->exports[i] = 0;
     }
@@ -1273,15 +1271,14 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
             ds->st.bad++;
             return;
         }
+        if (dst != ds->self) {                   /* for a board: the relay passes it on */
+            Link *r = l->relay ? NULL : route(ds, dst);
+            if (r && r != l) gone_to(vm, ds, r, dst, src, rd32(f));
+            return;
+        }
         term p = proxy_find(ds, src, rd32(f));
         Proxy *x = p ? proxy_of(ds, p) : NULL;
         if (x && !proxy_watched(ds, p)) proxy_free(x);
-        if (!l->relay) {                         /* the server: tell the other boards */
-            for (uint32_t i = 0; i < ds->nlinks; i++) {
-                Link *k = ds->links[i];
-                if (k && k->port && k != l) gone_to(vm, ds, k, src, rd32(f));
-            }
-        }
         return;
     }
     if (dst != ds->self) {                       /* pass it on */
@@ -1323,6 +1320,10 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
         Actor *a = target(vm, ds, to);
         if (!a) {
             ds->st.dropped++;
+            /* Tell the sender, so its proxy goes: one GONE per node that
+             * uses a dead PID, not one to every node at every exit. */
+            Link *r = to && to != T_ZEROPID ? route(ds, src) : NULL;
+            if (r) gone_to(vm, ds, r, src, ds->self, to);
             return;
         }
         if (type == F_REPLY) call_done(ds, a->id, rd64(f + 4));

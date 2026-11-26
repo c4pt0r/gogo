@@ -29,7 +29,8 @@
  *   MONITOR, DEMONITOR   u32 watcher, u32 target, u64 serial
  *   DOWN    u32 watcher, u32 target, u64 serial, u32 code
  *   NODEDOWN   u16 node; NODEUP   u16 node, name (from the relay)
- *   GONE    u32 pid (the sender's actor exited; the relay passes it on)
+ *   GONE    u32 pid (an answer to a SEND: the sender's pid names no live
+ *           actor; for the frame's dst only, which the relay routes to)
  * Terms: a tag byte (DT_*, dist.c) and its payload; LEB128 varints, ints
  * zigzag. PIDs travel as (node id, that node's term), Refs as (node id,
  * 48-bit serial; a peer may not send this node's own). Ints, int64, bool,

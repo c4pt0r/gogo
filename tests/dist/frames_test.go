@@ -159,3 +159,47 @@ func TestCallsBeyondTable(t *testing.T) {
 	srv.kill()
 	b.waitLine("failed 12")
 }
+
+// An exported actor's exit sends nothing; a node that later sends to it
+// gets a GONE for that PID, and no other node hears of it.
+func TestGoneOnUse(t *testing.T) {
+	srv, port := startServer(t)
+	a, err := dial(t, port, "a", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := dial(t, port, "b", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := a.whereis("victim3")
+	send := func(body []byte) {
+		f := binary.LittleEndian.AppendUint32(hdr(fSend, a.server, a.self), v)
+		a.send(append(f, body...))
+	}
+	send(tStr("die"))
+	gone := func(p *peer, ms int) bool {
+		deadline := time.Now().Add(time.Duration(ms) * time.Millisecond)
+		for time.Now().Before(deadline) {
+			r := p.recv(int(time.Until(deadline)/time.Millisecond) + 1)
+			if r == nil {
+				return false
+			}
+			if r[0] == 10 && len(r) == 10 && binary.LittleEndian.Uint32(r[6:]) == v {
+				return true
+			}
+		}
+		return false
+	}
+	if gone(a, 500) {
+		t.Error("GONE at the exit")
+	}
+	send(tStr("again"))
+	if !gone(a, 2000) {
+		t.Error("no GONE after a send to the dead PID")
+	}
+	if gone(b, 500) {
+		t.Error("another node heard of it")
+	}
+	noCrash(t, srv)
+}

@@ -2533,9 +2533,11 @@ stack). The server relays board-to-board frames. `actor.Send`,
 table `{node id, the PID on its node, generation, last use}`
 (`runtime/dist/`). The table interns, so `==` is exact; an entry is freed
 (generation bumped, so its terms name nothing) when its node goes, when
-its actor exits (a GONE frame from its node, passed on by the server), or
-when the full table needs a slot (the least recently used entry that no
-link or monitor names and that is no node's door). A local PID that comes
+a message is sent to it after its actor exited (its node answers that
+sender only with GONE, passed on by the server to that node only: an
+exit costs nothing, one GONE per node that still uses the PID), or when
+the full table needs a slot (the least recently used entry that no link
+or monitor names; doors too, made again on demand). A local PID that comes
 back is the local term again. `println` shows `<pid N@node>`. A VM that
 opens a node link keeps its actor table below 0xF000 (the open fails
 otherwise; the embed API's `max_actors` bound is unchanged).
