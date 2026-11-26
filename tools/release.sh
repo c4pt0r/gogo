@@ -88,6 +88,9 @@ sums) [ $# -eq 2 ] || die "usage: tools/release.sh sums DIR"; sums "$2" ;;
 -*) die "usage: tools/release.sh [version] | firmware BOARD DIR | cli VERSION DIR | sums DIR" ;;
 *)
     v=${1:-$(git describe --tags --always --dirty)}
+    case $v in
+    ""|.*|*/*|*[!A-Za-z0-9._-]*) die "bad version \"$v\" (letters, digits, . _ -; not starting with .)" ;;
+    esac
     out=$repo/build/release/$v
     rm -rf "$out"
     mkdir -p "$out"

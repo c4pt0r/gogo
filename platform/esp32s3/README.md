@@ -84,10 +84,19 @@ darwin, linux and windows on amd64 and arm64, and `SHA256SUMS`. The
 firmware builds are the plain ones above (Kconfig defaults, every feature
 on); the IDF build directories go under `$GOGO_RELEASE_WORK` (default
 `build/release-work`). `.github/workflows/release.yml` runs the same
-steps on a `v*` tag in the `espressif/idf:v6.1.1` image and publishes the
-GitHub release. `gogo setup` downloads these assets by name (book
+steps on a `v*` tag in the `espressif/idf:v6.1.1` image and attaches the
+assets to a **draft** GitHub release (a pre-release when the tag has a
+`-`, e.g. `v1.0.0-rc1`). `gogo setup` downloads these assets by name (book
 chapter 12) and writes only the files `flasher_args.json` lists, at its
 offsets: never NVS (0x9000), never an erase, never a merged image.
+
+A draft is invisible to `gogo setup` (and to `releases/latest`) until it
+is published. Check it on both boards first, then publish:
+
+    git tag v1.2.3 && git push origin v1.2.3     # the workflow drafts the release
+    gh release download v1.2.3 -R c4pt0r/gogo -D /tmp/gogo-v1.2.3
+    /tmp/gogo-v1.2.3/gogo-darwin-arm64 setup -yes -skip-wifi -release-url /tmp/gogo-v1.2.3   # chmod +x first; each board
+    gh release edit v1.2.3 -R c4pt0r/gogo --draft=false
 
 ## PSRAM and firmware capabilities
 
