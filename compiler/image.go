@@ -63,8 +63,8 @@ var (
 		BPanic:    ifaceMinor,
 		BCmp:      ifaceMinor,
 		BSprint:   refMinor,
-		// kept for distributed actors (15.5): no gogo image uses them yet
-		BReserved58: 5, BReserved59: 5, BReserved60: 5,
+		// unused (distributed actors, 15.5, needed none): no image uses them
+		BReserved58: distMinor, BReserved59: distMinor, BReserved60: distMinor,
 	}
 	typeMinor = map[string]uint16{
 		"screen.Config":      1, // 15.1: the "screen" port

@@ -179,7 +179,7 @@ const (
 	BPanic uint32 = 56 // v -> (does not return): panic(v), exit reason R_PANIC
 	BCmp   uint32 = 57 // a, b [, x] -> -1 | 0 | 1: the order of two values (== on interfaces, structs; x for arrays)
 
-	// 58-60: kept for distributed actors.
+	// 58-60: unused (distributed actors, 15.5, need no builtin).
 	BReserved58 uint32 = 58
 	BReserved59 uint32 = 59
 	BReserved60 uint32 = 60
