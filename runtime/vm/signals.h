@@ -144,8 +144,9 @@ HeldBytes **actor_held_new(Vm *vm, Actor *a);
  * pending timers charged to a as their creator (timer.c); AX_PORTS, the
  * open ports a owns (port.c). actor_count_add allocates the extra on first
  * use; false if out of memory (nothing counted). actor_count_sub undoes
- * (never below 0); actor_count reads (0 without an extra). The names below
- * are the uses. */
+ * (a sub larger than the counter is skipped, not clamped: the counter
+ * stays; debug builds assert it never happens for AX_CHARGED).
+ * actor_count reads (0 without an extra). The names below are the uses. */
 enum { AX_CHARGED, AX_TIMERS_IN, AX_TIMERS_OUT, AX_PORTS, AX_COUNTS };
 bool actor_count_add(Vm *vm, Actor *a, uint32_t which, uint32_t n);
 void actor_count_sub(Actor *a, uint32_t which, uint32_t n);

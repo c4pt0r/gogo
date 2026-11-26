@@ -119,6 +119,9 @@ bool actor_count_add(Vm *vm, Actor *a, uint32_t which, uint32_t n) {
 
 void actor_count_sub(Actor *a, uint32_t which, uint32_t n) {
     ActorExtra *x = a->extra;
+    /* Every uncharge undoes a charge of the same amount: one that would
+     * go below 0 means the accounting is already wrong. */
+    GOGO_ASSERT(!x || x->n[which] >= n || which != AX_CHARGED);
     if (x && x->n[which] >= n) x->n[which] -= n;
 }
 
