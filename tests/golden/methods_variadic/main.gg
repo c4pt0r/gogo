@@ -1,0 +1,51 @@
+// Variadic methods: the receiver is parameter 0 and the variadic slice
+// the last one, whether called as x.M(...), through a method value or as
+// a method expression.
+package main
+
+type Joiner struct{ Sep string }
+
+func (j Joiner) Join(parts ...string) string {
+	s := ""
+	for i, p := range parts {
+		if i > 0 {
+			s += j.Sep
+		}
+		s += p
+	}
+	return s
+}
+
+// Wrap has fixed parameters before the variadic one.
+func (j Joiner) Wrap(open, close string, parts ...string) string {
+	return open + j.Join(parts...) + close
+}
+
+func (j Joiner) Count(xs ...int) (int, bool) { return len(xs), xs == nil }
+
+type Total int
+
+func (t Total) Plus(xs ...int) Total {
+	for _, x := range xs {
+		t += Total(x)
+	}
+	return t
+}
+
+func main() {
+	j := Joiner{", "}
+	println(j.Join("a", "b", "c"), j.Join() == "", j.Join("one"))
+	words := []string{"x", "y"}
+	println(j.Join(words...), Joiner{"-"}.Join(words...))
+	println(j.Wrap("[", "]"), j.Wrap("(", ")", "p", "q"), j.Wrap("<", ">", words...))
+	n, isNil := j.Count()
+	println(n, isNil)
+	n, isNil = j.Count(1, 2, 3)
+	println(n, isNil)
+	println(Total(1).Plus(), Total(1).Plus(2, 3).Plus([]int{4, 5}...))
+
+	join := Joiner{"+"}.Join
+	println(join(), join("1", "2"), join(words...))
+	wrap := Joiner.Wrap
+	println(wrap(j, "{", "}", "k", "v"), Joiner.Join(Joiner{"/"}, "usr", "lib"))
+}

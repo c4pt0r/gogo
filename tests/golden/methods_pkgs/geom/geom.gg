@@ -1,0 +1,27 @@
+// Package geom has a struct type and a named int type with methods.
+package geom
+
+import "gogo/strconv"
+
+type Point struct{ X, Y int }
+
+func (p Point) Add(q Point) Point { return Point{p.X + q.X, p.Y + q.Y} }
+
+func (p Point) String() string {
+	return "(" + strconv.Itoa(p.X) + "," + strconv.Itoa(p.Y) + ")"
+}
+
+// Check divides by p.X: zero crashes in geom.Point.Check.
+func (p Point) Check() int { return 100 / p.X }
+
+type Deg int
+
+func (d Deg) Norm() Deg {
+	for d >= 360 {
+		d -= 360
+	}
+	return d
+}
+
+// Origin calls a method in its own package.
+func Origin() string { return Point{}.String() }

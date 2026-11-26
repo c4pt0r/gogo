@@ -1,0 +1,98 @@
+// Methods with value receivers on struct types: calls on variables and
+// expressions, chained calls, several results, method expressions, and
+// value semantics (a method works on a copy of the receiver).
+package main
+
+type Point struct{ X, Y int }
+
+type Rect struct {
+	Min, Max Point
+	Tags     []string
+}
+
+func (p Point) Add(q Point) Point { return Point{p.X + q.X, p.Y + q.Y} }
+
+func (p Point) Scale(k int) Point { return Point{p.X * k, p.Y * k} }
+
+func (p Point) XY() (int, int) { return p.X, p.Y }
+
+// Clear reassigns its receiver: only the method's copy changes.
+func (p Point) Clear() Point {
+	p = Point{}
+	return p
+}
+
+func (r Rect) Area() int {
+	w, h := r.Max.Add(r.Min.Scale(-1)).XY()
+	return w * h
+}
+
+// Grow returns a grown copy; r itself is not changed.
+func (r Rect) Grow(d int) Rect {
+	return Rect{Min: r.Min, Max: r.Max.Add(Point{d, d}), Tags: r.Tags}
+}
+
+// Tag writes through the receiver's slice: the array is shared, as in Go.
+func (r Rect) Tag(i int, s string) { r.Tags[i] = s }
+
+// Origin has an unnamed receiver.
+func (Rect) Origin() Point { return Point{} }
+
+// Depth calls a method of its own type recursively.
+func (p Point) Depth() int {
+	if p.X <= 0 {
+		return 0
+	}
+	return 1 + Point{p.X - 1, p.Y}.Depth()
+}
+
+// Counter closes over its receiver.
+func (p Point) Counter() func(int) int {
+	return func(n int) int { return p.X*100 + n }
+}
+
+func mk(x int) Point { return Point{x, x} }
+
+func main() {
+	p := Point{1, 2}
+	q := p.Add(Point{10, 20})
+	println(p, q)
+	println(p.Add(q).Scale(2).Add(Point{1, 1}))
+	println(mk(3).Scale(3), Point{4, 5}.Add(mk(1)).X)
+	x, y := q.XY()
+	println(x, y)
+
+	// Value semantics.
+	c := p.Clear()
+	println(c, p)
+	r := Rect{Min: Point{0, 0}, Max: Point{2, 3}, Tags: []string{"a", "b"}}
+	g := r.Grow(2)
+	println(r.Area(), g.Area(), r.Max, g.Max)
+	r.Tag(0, "z")
+	println(r.Tags[0], g.Tags[0])
+	println(r.Origin(), Point{3, 0}.Depth())
+
+	// Method expressions: the receiver is the first argument.
+	add := Point.Add
+	println(add(p, p), Point.Scale(q, 2), Rect.Area(g))
+	println(p.Counter()(7))
+
+	// Same method name on different types.
+	println(Name{"n"}.String(), Tag(3).String(), String())
+}
+
+type Name struct{ S string }
+
+type Tag int
+
+func (n Name) String() string { return "name:" + n.S }
+
+func (t Tag) String() string {
+	s := "tag:"
+	for i := 0; i < int(t); i++ {
+		s += "#"
+	}
+	return s
+}
+
+func String() string { return "func" }

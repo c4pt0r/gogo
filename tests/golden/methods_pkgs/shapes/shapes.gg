@@ -1,0 +1,20 @@
+// Package shapes has its own Point, with methods of the same names as
+// geom's, and uses geom's methods.
+package shapes
+
+import "methods_pkgs/geom"
+
+type Point struct{ Name string }
+
+func (p Point) String() string { return "point " + p.Name }
+
+func (p Point) Add(q Point) Point { return Point{p.Name + q.Name} }
+
+type Square struct {
+	Corner geom.Point
+	Side   int
+}
+
+func (s Square) Far() geom.Point { return s.Corner.Add(geom.Point{X: s.Side, Y: s.Side}) }
+
+func (s Square) String() string { return "square at " + s.Corner.String() }
