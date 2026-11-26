@@ -751,7 +751,10 @@ static void deliver(Vm *vm, DistState *ds, Actor *to, const uint8_t *p, uint32_t
     }
     Dec d = { vm, ds, p, n, 0, NULL, skip, false, &me->img, module_tag(vm, to->mod) };
     dec(&d, 0);
-    if (d.bad || d.at != n) {
+    /* Amplification: at most DIST_WORDS_PER_BYTE words per frame byte
+     * (plus a little), checked before anything is allocated. Ordinary
+     * values stay well below it; a frame of nested empty slices does not. */
+    if (d.bad || d.at != n || d.words - skip > DIST_WORDS_PER_BYTE * n + 64u) {
         ds->st.bad++;
         return;
     }
@@ -770,7 +773,13 @@ static void deliver(Vm *vm, DistState *ds, Actor *to, const uint8_t *p, uint32_t
         m->data[0] = (uint32_t)serial;
         m->data[1] = (uint32_t)(serial >> 32);
     }
-    msg_enqueue(vm, to, m, true);   /* the receiver's quota, as a local send */
+    /* The receiver's quota applies, but a remote message over it is
+     * dropped (at most once), never the receiver killed: a peer must not
+     * be able to end a local actor by sending it data. */
+    if (!msg_try_enqueue(vm, to, m)) {
+        msg_free(vm, m);
+        ds->st.dropped++;
+    }
 }
 
 /* ---- watches ---- */
