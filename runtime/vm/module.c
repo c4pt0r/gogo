@@ -103,11 +103,16 @@ void module_config(Vm *vm) {
     char v[12];
     int32_t n = vm_config_get(vm, (const uint8_t *)"code.mem", 8, (uint8_t *)v, sizeof v);
     if (n < 0) return;
+    if (n > (int32_t)sizeof v) n = 0;            /* longer than any valid value: bad */
     uint64_t x = 0;
     int32_t i = 0;
-    while (i < n && i < (int32_t)sizeof v && v[i] >= '0' && v[i] <= '9') x = x * 10u + (uint64_t)(v[i++] - '0');
-    if (i > 0 && i + 1 == n && (v[i] | 0x20) == 'k') { x <<= 10; i++; }
-    else if (i > 0 && i + 1 == n && (v[i] | 0x20) == 'm') { x <<= 20; i++; }
+    uint32_t d;
+    while (i < n && (d = (uint8_t)v[i] - (uint32_t)'0') <= 9u) { x = x * 10u + d; i++; }
+    if (i > 0 && i + 1 == n) {
+        uint32_t c = (uint8_t)(v[i] | 0x20), sh = c == 'k' ? 10u : c == 'm' ? 20u : 0u;
+        x <<= sh;
+        i += sh != 0;
+    }
     if (i == 0 || i != n || x > 0xFFFFFFFFu) {   /* 12 bytes: no overflow before this check */
         static const char msg[] = "gogo: bad code.mem; using the default\n";
         vm_write_err(vm, msg, sizeof msg - 1u);
@@ -212,10 +217,6 @@ const Image *module_resolve(const Vm *vm, uint32_t slot, uint32_t gen) {
     return (e && vm->mod_gen[slot] == gen) ? &e->img : NULL;
 }
 
-uint32_t module_handle(const Vm *vm, uint32_t slot) {
-    return (slot << 16) | vm->mod_gen[slot];
-}
-
 int module_spawn(Vm *vm, Actor *caller, uint32_t handle, const uint8_t *entry, uint32_t len,
                  term arg, uint32_t flags, term *pid) {
     uint32_t slot = handle >> 16, f;
@@ -297,18 +298,20 @@ uint32_t module_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc,
         /* Module{H, missing} and a string for the missing name, before
          * the Bytes is read (may GC); the string is garbage unless the
          * load is Unsupported. */
-        char miss[MOD_MISSING_MAX];
         uint32_t o = heap_alloc(vm, a, 6u + MOD_MISSING_MAX / 4u, NULL, 0);
         if (o == UINT32_MAX) return R_OUT_OF_MEMORY;
         R = (term *)a->mem + a->fp;
-        err = module_load(vm, a, R[rb + 1], &handle, miss);
-        a->mem[o] = hdr_make(4, K_STRUCT);
-        a->mem[o + 1] = TYPE_CODE_MODULE;
-        a->mem[o + 2] = term_from_int(err == GOGO_E_OK ? (int32_t)handle + 1 : 0);
-        a->mem[o + 3] = err == GOGO_E_UNSUPPORTED ? term_from_ref(o + 4) : T_EMPTYSTR;
-        a->mem[o + 4] = hdr_make(2u + MOD_MISSING_MAX / 4u, K_STRING);
-        a->mem[o + 5] = err == GOGO_E_UNSUPPORTED ? handle : 0u;
-        if (err == GOGO_E_UNSUPPORTED) memcpy(&a->mem[o + 6], miss, handle);
+        uint32_t *w = a->mem + o;
+        /* module_load never allocates on a's heap: the name goes straight
+         * into the string. */
+        err = module_load(vm, a, R[rb + 1], &handle, (char *)(w + 6));
+        bool un = err == GOGO_E_UNSUPPORTED;
+        w[0] = hdr_make(4, K_STRUCT);
+        w[1] = TYPE_CODE_MODULE;
+        w[2] = term_from_int(err == GOGO_E_OK ? (int32_t)handle + 1 : 0);
+        w[3] = un ? term_from_ref(o + 4) : T_EMPTYSTR;
+        w[4] = hdr_make(2u + MOD_MISSING_MAX / 4u, K_STRING);
+        w[5] = un ? handle : 0u;
         res = term_from_ref(o);
         break;
     }

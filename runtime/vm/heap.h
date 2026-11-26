@@ -9,6 +9,7 @@
 #include "actor.h"
 #include "module.h"
 #include "opcodes.h"
+#include "signals.h"
 
 #define HEAP_MAX_WORDS 65535u
 
@@ -29,7 +30,7 @@ term heap_new_ref(Vm *vm, Actor *a);
 /* Copies everything reachable from the stack and `roots` into a new block
  * sized so that `need_words` more words fit if the limit allows (see
  * heap.c). At most two blocks of this actor exist at any time during it. */
-void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots);
+#define heap_gc(vm, a, need_words, roots, n_roots) heap_collect(vm, a, need_words, roots, n_roots, false)
 
 /* Like heap_gc, but sizes the block to exactly the live data plus
  * need_words (at least MIN_BLOCK_WORDS words), with no growth slack: for a
@@ -40,7 +41,11 @@ void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots);
  * block as it is when even that cannot fit under the limit; with 0 it
  * always resizes to the live data, which may itself exceed the limit (the
  * block never drops below what is live). */
-void heap_gc_tight(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots);
+#define heap_gc_tight(vm, a, need_words, roots, n_roots) heap_collect(vm, a, need_words, roots, n_roots, true)
+
+/* heap_gc (tight false) and heap_gc_tight (true): one entry, as they share
+ * the collect, measure and resize steps. */
+void heap_collect(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots, bool tight);
 
 /* For a non-fatal delivery (net data) refused because the receiver's
  * block, grown with slack, leaves no room under its limit: if a is waiting
@@ -56,16 +61,29 @@ bool heap_reclaim_waiting(Vm *vm, Actor *a);
 bool heap_push_frame(Vm *vm, Actor *a, uint16_t n_regs, int32_t ret_pc);
 
 /* Which words of the heap object at `obj` hold terms: [*first, *end) as
- * indexes into the object (empty range for K_STRING, K_INT, K_REF,
- * K_INT64, K_BYTEARR, K_BYTES and K_FLOAT, whose contents are raw; never word 1, which is
- * raw in every kind: type_id, func_idx, a slice's off, an array's length, a buffer's length;
- * end is always the object's size when the range is not empty). Shared by the
- * GC and by message copy/relocation so they always agree. */
+ * indexes into the object. *end is always the object's size (a kind's
+ * terms run to its last word); the range is empty (*first = *end) for
+ * K_STRING, K_INT, K_REF, K_INT64, K_BYTEARR, K_BYTES and K_FLOAT, whose
+ * contents are raw, and for a K_SLICE of fewer than 5 words. Never word 1,
+ * which is raw in every kind: type_id, func_idx, a slice's off, an array's
+ * length, a buffer's length. Shared by the GC, message copy/relocation and
+ * image validation so they always agree. */
 void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end);
 
+/* fn on every root, then on every term word of the objects in mem[scan,
+ * *end), that has one of the low-4-bit tags in the set `tags` (bit n: tag
+ * n); fn may rewrite the word, and *end may grow as fn appends objects. */
+#define TAGS_REF    0x1111u            /* heap refs: ..00 */
+#define TAGS_HANDLE (1u << 0xE)
+void heap_map_terms(uint32_t *mem, uint32_t scan, const uint32_t *end, term *roots, uint32_t n_roots,
+                    uint32_t tags, void (*fn)(void *, term *), void *ctx);
+
 /* sizeof(Actor) + its table slot + the block + its charged words (queued
- * messages, pending SendAfter timers) in bytes. */
-size_t actor_memory_bytes(const Actor *a);
+ * messages, pending SendAfter timers) in bytes. Inline: one caller. */
+static inline size_t actor_memory_bytes(const Actor *a) {
+    return sizeof(Actor) + sizeof(uintptr_t) + (size_t)a->mem_words * 4u +
+           (size_t)actor_charged_words(a) * 4u;
+}
 
 /* ---- reading terms (interp.c, port.c) ---- */
 

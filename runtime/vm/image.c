@@ -39,9 +39,6 @@ static int consts_ok(const Image *img) {
             if (image_const_start(img, off + i) != (i == 0)) return 0;
         }
         switch (kind) {
-        case K_STRING:
-            if (!string_ok(img, off)) return 0;
-            break;
         case K_INT:
             if (words != 2) return 0;
             break;
@@ -51,6 +48,7 @@ static int consts_ok(const Image *img) {
         case K_FLOAT:   /* known to every 15.2 VM, GOGO_FLOAT or not (the requirement refuses) */
             if (words != 2 && words != 3) return 0;
             break;
+        case K_STRING:    /* the walk has checked its start and extent */
         case K_BYTEARR:   /* 15.6: a package-level variable's []byte, read-only */
             if (words < 2 || obj[1] > (words - 2u) * 4u) return 0;
             break;
@@ -61,7 +59,7 @@ static int consts_ok(const Image *img) {
             /* Untagged like every image word: the VM tags them when read.
              * (A slice's offsets and an array's count are checked where
              * they are used, as on the heap.) */
-            if (words < 2 || (obj[1] & MOD_TAG_MASK)) return 0;
+            if (words < 2 || (obj[1] & MOD_TAG_MASK) || (kind == K_SLICE && words != 5)) return 0;
             uint32_t first, end;
             heap_obj_terms(obj, &first, &end);
             for (uint32_t i = first; i < end; i++) {
