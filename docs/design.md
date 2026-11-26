@@ -248,7 +248,9 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   rebuilds every struct on the path, and a promoted method is called
   (or made a method value) with the embedded value as its receiver, so
   no wrapper functions are generated. A method expression of a promoted
-  method (`Outer.M`) is rejected. For interfaces, the compiler's
+  method (`Outer.M`) is rejected, and so are the promoted methods of an
+  embedded gogo stub type (`bytes.Buffer`, `fs.File`: builtins that take
+  their own type), which are called on the field instead. For interfaces, the compiler's
   `gen.methodTable` lists a type's own and promoted methods with the
   field path to each receiver, which interface dispatch is to use. No
   opcode of its own.

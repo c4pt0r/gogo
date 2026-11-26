@@ -236,6 +236,8 @@ func TestRejects(t *testing.T) {
 		{"embed-pointer", "package main\ntype A struct{ X int }\ntype B struct {\n\t*A // ERR\n}\nfunc main() {}\n", []string{"pointer not supported"}},
 		{"embed-ambiguous-field", "package main\ntype A struct{ X int }\ntype B struct{ X int }\ntype C struct {\n\tA\n\tB\n}\nfunc main() {\n\tvar c C\n\tprintln(c.X) // ERR\n}\n", []string{"ambiguous selector c.X"}},
 		{"embed-ambiguous-method", "package main\ntype A struct{}\nfunc (A) M() {}\ntype B struct{}\nfunc (B) M() {}\ntype C struct {\n\tA\n\tB\n}\nfunc main() {\n\tvar c C\n\tc.M() // ERR\n}\n", []string{"ambiguous selector c.M"}},
+		{"embed-stub-method", "package main\nimport \"gogo/bytes\"\ntype W struct{ bytes.Buffer }\nfunc main() {\n\tw := W{bytes.NewBuffer(4)}\n\tw.WriteByte(1) // ERR\n}\n", []string{"method WriteByte of an embedded gogo/bytes type not supported: call it on the field"}},
+		{"embed-stub-method-value", "package main\nimport \"gogo/bytes\"\ntype W struct{ bytes.Buffer }\nfunc main() {\n\tw := W{bytes.NewBuffer(4)}\n\tf := w.Len // ERR\n\t_ = f\n}\n", []string{"method Len of an embedded gogo/bytes type not supported"}},
 		{"embed-method-expr", "package main\ntype A struct{}\nfunc (A) M() {}\ntype B struct{ A }\nfunc main() {\n\tf := B.M // ERR\n\t_ = f\n}\n", []string{"method expression of a promoted method not supported"}},
 		{"pointer", "package main\nfunc main() {\n\tx := 1\n\tp := &x // ERR\n\t_ = p\n}\n", []string{"pointer"}},
 		{"array-any", "package main\nfunc main() {\n\tvar a [3]int\n\tvar x any = a // ERR\n\t_ = x\n}\n", []string{"array in interface not supported"}},

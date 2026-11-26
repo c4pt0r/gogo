@@ -1266,7 +1266,10 @@ ordinary field underneath: a literal sets it by its type's name
 level. A type can embed a named struct or a named basic type
 (`type Celsius int`), from any package; not a pointer. A method
 expression of a promoted method (`Sprite.Dist`) is rejected: write a
-method value or call it on the embedded field. There are no interfaces
+method value or call it on the embedded field. The methods of an
+embedded gogo type (`bytes.Buffer`, `bytes.Bytes`, `fs.File`) are not
+promoted either (`method WriteByte of an embedded gogo/bytes type not
+supported`): call them on the field, `w.Buffer.WriteByte(b)`. There are no interfaces
 of your own yet; when they come, promoted methods will count toward
 implementing them.
 

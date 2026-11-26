@@ -1141,6 +1141,9 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 			c.args(call, 0)
 			return
 		}
+		if c.stubPromoted(fun) {
+			return
+		}
 		if c.actorFunc(call) == "" && !c.libFunc(fun) {
 			c.unsupported(call, "method call") // field calls: funcValueCall
 			return
@@ -1294,6 +1297,9 @@ func (c *checker) expr(e ast.Expr) {
 		}
 		if c.p.method(e) != nil {
 			c.methodRecv(e) // x.M, a method value, or T.M, a method expression
+			return
+		}
+		if c.stubPromoted(e) {
 			return
 		}
 		sel := c.p.Info.Selections[e]
@@ -1663,4 +1669,21 @@ func (c *checker) sliceLit(e *ast.CompositeLit, sl *types.Slice) {
 		}
 		c.expr(el)
 	}
+}
+
+// stubPromoted reports (and rejects) x.M where M is a method of a gogo
+// package type (bytes.Buffer, bytes.Bytes, fs.File) promoted from an
+// embedded field: those methods are builtins compiled for a receiver of
+// their own type only.
+func (c *checker) stubPromoted(sel *ast.SelectorExpr) bool {
+	s := c.p.Info.Selections[sel]
+	if s == nil || s.Kind() != types.MethodVal || len(s.Index()) < 2 {
+		return false
+	}
+	fn, ok := s.Obj().(*types.Func)
+	if !ok || fn.Pkg() == nil || c.p.compiled(fn.Pkg()) {
+		return false
+	}
+	c.fail(sel.Pos(), "method %s of an embedded %s type not supported: call it on the field", fn.Name(), fn.Pkg().Path())
+	return true
 }

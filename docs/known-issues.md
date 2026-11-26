@@ -334,7 +334,10 @@ rebuilt:
   Embedding `*T` is rejected with pointers. A method expression of a
   promoted method (`Outer.M` for a method of an embedded field) is
   rejected (`method expression of a promoted method not supported`).
-  *Workaround:* a method value `x.M`, or `Inner.M(x.Inner)`. Promoted
+  *Workaround:* a method value `x.M`, or `Inner.M(x.Inner)`. The methods
+  of an embedded gogo type (`bytes.Buffer`, `bytes.Bytes`, `fs.File`) are
+  not promoted (`method M of an embedded gogo/bytes type not
+  supported`): call them on the field, `w.Buffer.WriteByte(b)`. Promoted
   methods will implement interfaces once user interfaces exist.
 - **Every field write allocates.** Structs are immutable in the VM, so
   `p.X = v` builds a new struct (2 + fields words) for each struct on the
