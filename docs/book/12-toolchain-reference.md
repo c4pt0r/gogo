@@ -511,7 +511,7 @@ docs/book/examples/run.sh              # all examples
 docs/book/examples/run.sh 04-call      # one
 ```
 
-`run.sh` runs each example the way the book shows (with its `input`,
+`make test-book` does the same. `run.sh` runs each example the way the book shows (with its `input`,
 `fsroot` and `config` files) and compares the output with the
 `expected.out` and `expected.err` files next to it. An example of several
 packages keeps its program in `app/` (the build root, so its imports
@@ -540,6 +540,17 @@ tests and the size budgets, it runs:
   script, run when a `<name>.expected.out` is beside it; and a file
   `gogopath` names the example's `GOGOPATH`, relative to the example
   (`examples/packages` uses all three).
+- `make test-book`: every example in this book, through
+  `docs/book/examples/run.sh` (below).
+
+Outside `make test`: `make test-lib` (the standard library on the host
+Go toolchain, also part of `go test ./...`) and `make test-tls-asan`
+(the network and TLS tests under AddressSanitizer). The test workflow,
+`.github/workflows/test.yml`, runs all three on macOS and Linux for
+every push and pull request to main. The TLS tests need mbedTLS's
+source (ESP-IDF's `components/mbedtls/mbedtls`; `MBEDTLS_DIR` names
+another copy) and are skipped without it; the workflow fetches the
+commit ESP-IDF v6.1.1 pins.
 - `make vmsize` (and `netsize`, `vfssize`, `screensize`): the code size
   of the VM core and of each runtime part for the ESP32-S3, against
   their budgets (skipped without the ESP-IDF compiler). `vmsize` also

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -16,8 +17,15 @@ import (
 	"gogotools/tests/net/sim"
 )
 
-// realLimit bounds each VM child in real time.
-const realLimit = 10 * time.Second
+// realLimit bounds each VM child in real time: 10 s, or
+// $GOGO_NET_REAL_LIMIT seconds (sanitizer builds are many times slower:
+// make test-tls-asan sets 120).
+var realLimit = func() time.Duration {
+	if s, err := strconv.Atoi(os.Getenv("GOGO_NET_REAL_LIMIT")); err == nil && s > 0 {
+		return time.Duration(s) * time.Second
+	}
+	return 10 * time.Second
+}()
 
 // build compiles progs/<name> into an image in a temp dir.
 func build(t *testing.T, name string) string {

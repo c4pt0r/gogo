@@ -66,11 +66,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lint test-examples lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: lint test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-net-mcu vmsize netsize vfssize screensize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
 
 vm: $(BUILD)/gogovm
 
@@ -83,6 +83,13 @@ lint:
 test-examples: vm $(BUILD)/gogovm_mcu
 	go build -o $(BUILD)/gogo ./cmd/gogo
 	tools/examples.sh $(BUILD)
+
+# Every example in the book runs and prints what the book shows
+# (docs/book/examples/run.sh, which uses build/gogo and build/gogovm).
+test-book:
+	$(MAKE) BUILD=build build/gogovm
+	go build -o build/gogo ./cmd/gogo
+	docs/book/examples/run.sh
 
 $(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
@@ -419,7 +426,7 @@ test-tls-asan:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls
 	ASAN_OPTIONS=detect_leaks=0 build/asan/test_net
 	ASAN_OPTIONS=detect_leaks=0 build/asan/test_tls
-	ASAN_OPTIONS=detect_leaks=0 GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
+	ASAN_OPTIONS=detect_leaks=0 GOGO_NET_REAL_LIMIT=120 GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
 
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)

@@ -483,14 +483,14 @@ rebuilt:
   (`msg_free`, `heap_alloc`, `timer_*`, `out_*`, ...), which can clash
   with a host's own symbols. *Workaround:* link `libgogo.a` in products;
   use the debug archive only to debug.
-- **Linux: the full suite has run on arm64 only.** `make test` (the
-  embed tests, `make test-fs-host`'s Linux error paths, the ELF prelink
-  step, `tools/libsyms.sh` and `tools/globals.sh` on ELF), `make
-  test-lib` and `make test-tls-asan` pass on Ubuntu 24.04 arm64 with gcc
-  13. `make test-embed-tsan` and `make test-embed-leaks` (LeakSanitizer)
-  have not run on Linux yet, and leak checking is off in
-  `test-tls-asan` (the C suites' fixtures and gogovm's exit do not free
-  their VM).
+- **Linux: some checks have not run there yet.** `make test` (the embed
+  tests, `make test-fs-host`'s Linux error paths, the ELF prelink step,
+  `tools/libsyms.sh` and `tools/globals.sh` on ELF), `make test-lib` and
+  `make test-tls-asan` pass on Ubuntu 24.04 arm64 with gcc 13, and the
+  test workflow runs them on Ubuntu x86-64. `make test-embed-tsan` and
+  `make test-embed-leaks` (LeakSanitizer) have not run on Linux, and
+  leak checking is off in `test-tls-asan` (the C suites' fixtures and
+  gogovm's exit do not free their VM).
 
 ## ESP32-S3 boards
 
