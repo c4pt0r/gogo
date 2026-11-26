@@ -56,11 +56,13 @@ bool heap_reclaim_waiting(Vm *vm, Actor *a);
 bool heap_push_frame(Vm *vm, Actor *a, uint16_t n_regs, int32_t ret_pc);
 
 /* Which words of the heap object at `obj` hold terms: [*first, *end) as
- * indexes into the object (empty range for K_STRING, K_INT, K_REF,
- * K_INT64, K_BYTEARR, K_BYTES and K_FLOAT, whose contents are raw; never word 1, which is
- * raw in every kind: type_id, func_idx, a slice's off, an array's length, a buffer's length;
- * end is always the object's size when the range is not empty). Shared by the
- * GC and by message copy/relocation so they always agree. */
+ * indexes into the object. *end is always the object's size (a kind's
+ * terms run to its last word); the range is empty (*first = *end) for
+ * K_STRING, K_INT, K_REF, K_INT64, K_BYTEARR, K_BYTES and K_FLOAT, whose
+ * contents are raw, and for a K_SLICE of fewer than 5 words. Never word 1,
+ * which is raw in every kind: type_id, func_idx, a slice's off, an array's
+ * length, a buffer's length. Shared by the GC, message copy/relocation and
+ * image validation so they always agree. */
 void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end);
 
 /* sizeof(Actor) + its table slot + the block + its charged words (queued

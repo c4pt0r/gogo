@@ -42,19 +42,15 @@ typedef struct Copier {
 } Copier;
 
 void heap_obj_terms(const uint32_t *obj, uint32_t *first, uint32_t *end) {
-    uint32_t kind = hdr_kind(obj[0]);
-    if (kind == K_STRUCT || kind == K_CLOSURE || kind == K_ARRAY) {
-        *first = 2;
-        *end = hdr_words(obj[0]);
-    } else if (kind == K_SLICE) {
-        *first = 4;
-        *end = 5;
-    } else if (kind == K_BUF) {
-        *first = 2;
-        *end = 3;
-    } else {
-        *first = *end = 0;
-    }
+    /* A kind's terms run to its last word, so only the first varies: word
+     * 2 on for K_STRUCT, K_CLOSURE, K_ARRAY and K_BUF, word 4 for K_SLICE,
+     * none (first = end) for the raw kinds. A mask, not a switch: no jump
+     * table. */
+    uint32_t kind = hdr_kind(obj[0]), words = hdr_words(obj[0]);
+    *end = words;
+    *first = kind == K_SLICE ? 4u
+           : kind <= K_BUF && ((1u << K_STRUCT | 1u << K_CLOSURE | 1u << K_ARRAY | 1u << K_BUF) >> kind & 1u) ? 2u
+           : words;
 }
 
 /* Returns the to-space version of t, copying its object on first visit. */
