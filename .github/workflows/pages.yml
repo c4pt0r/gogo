@@ -1,5 +1,5 @@
 # Publishes the website (site/index.html and the book, built by make site
-# with mdBook) to GitHub Pages: https://c4pt0r.github.io/gogo/
+# with mdBook) to GitHub Pages: https://gogovm.dev/
 #
 # Runs on a push to main that changes the book, the landing page or the
 # tools that build them, and by hand. Unlike the test workflow it does not

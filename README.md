@@ -1,6 +1,6 @@
 # gogo
 
-Website and book: <https://c4pt0r.github.io/gogo/>
+Website and book: <https://gogovm.dev/>
 
 gogo is a small actor VM for microcontrollers and a compiler for a subset
 of Go. You write programs in Go syntax as a set of isolated actors, in the
@@ -215,7 +215,7 @@ The book chapter [Embedding gogo](docs/book/18-embedding.md) is the guide;
 
 - [Programming gogo](docs/book/README.md): the book, 20 chapters, every
   example tested. Read it online at
-  <https://c4pt0r.github.io/gogo/book/>, or build the site locally with
+  <https://gogovm.dev/book/>, or build the site locally with
   `make site` (mdBook, into `build/site`, next to the landing page).
 - [docs/design.md](docs/design.md): the design document: the VM, the
   image format, the term encoding, ports, the network stack, storage and

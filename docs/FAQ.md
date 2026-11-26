@@ -316,7 +316,7 @@ instruction encoding, type table, versioning and load-time checks) is in
 file.ggb` prints a program's bytecode.
 
 ### Can I read the book as a website?
-Yes, at <https://c4pt0r.github.io/gogo/book/>; it is rebuilt from main
+Yes, at <https://gogovm.dev/book/>; it is rebuilt from main
 whenever the book or the landing page changes (the pages workflow). To
 build it yourself, install [mdBook](https://rust-lang.github.io/mdBook/) (`brew install
 mdbook`, or a release binary from its GitHub page), run `make site`, then
