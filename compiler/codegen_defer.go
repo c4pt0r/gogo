@@ -127,7 +127,7 @@ func (f *fn) deferStmt(s *ast.DeferStmt) {
 	for _, e := range di.exprs {
 		r := di.regs[e]
 		f.exprInto(e, r)
-		if t := f.g.p.Info.TypeOf(e); isArray(t) && !freshArray(e) {
+		if t := f.g.p.Info.TypeOf(e); isArray(t) && !f.g.freshArray(e) {
 			f.cloneArray(e, arrayType(t), r, r)
 		}
 	}

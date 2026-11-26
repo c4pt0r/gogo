@@ -41,11 +41,14 @@ func isArray(t types.Type) bool { return arrayType(t) != nil }
 
 // freshArray reports whether e, of an array type, evaluates to a new array
 // that nothing else holds: a composite literal or a call (a function
-// copies the arrays it returns).
-func freshArray(e ast.Expr) bool {
-	switch ast.Unparen(e).(type) {
-	case *ast.CompositeLit, *ast.CallExpr:
+// copies the arrays it returns). A conversion is not a call: [N]T(x) of an
+// array, or of a slice (Go 1.20), would be x's own array.
+func (g *gen) freshArray(e ast.Expr) bool {
+	switch e := ast.Unparen(e).(type) {
+	case *ast.CompositeLit:
 		return true
+	case *ast.CallExpr:
+		return !g.p.Info.Types[e.Fun].IsType()
 	}
 	return false
 }
@@ -70,7 +73,7 @@ func (f *fn) arrayStep(ix *ast.IndexExpr) bool {
 // copiesArray reports whether e, going into a destination of type target,
 // must be copied: an array that is not fresh.
 func (f *fn) copiesArray(e ast.Expr, target types.Type) bool {
-	return isArray(target) && !freshArray(e) && !f.isPreset(e)
+	return isArray(target) && !f.g.freshArray(e) && !f.isPreset(e)
 }
 
 // copyArray copies the array in dst (e's value, going into a destination
