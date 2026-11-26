@@ -54,12 +54,12 @@ func SpawnLink(m Module, entry string, arg any) (actor.PID, Err)
 func SpawnOpt(m Module, entry string, arg any, opts actor.Options) (actor.PID, Err)
 func Hold(m Module) Err
 func Release(m Module)
-func Missing(m Module) int   // after Unsupported: the features the firmware lacks
+func Missing(m Module) string // after Unsupported: the driver or mount the firmware lacks
 func MemUsed() int           // bytes of module code in use (counted against code.mem)
 ```
 
 `Err` is `OK` (0), `BadImage`, `Unsupported`, `NoMemory`, `NotFound`,
-`BadArg` or `TooMany`. `arg` is copied into the new actor like a message.
+`BadArg`, `TooMany` or `BadVersion`. `arg` is copied into the new actor like a message.
 A `Module` is a plain value you can send to other actors, which can spawn
 from it too.
 
@@ -175,15 +175,30 @@ crashing. Messages inside one module are unaffected.
 
 ## 14.6 What a module may do, and what the firmware offers
 
-- **Capabilities.** The compiler records which optional features an image
-  needs (the network packages, the `kbd`, `power`, `imu`, `ir_tx`, `ir_rx`,
-  `mic`, `spk` and `tls` ports, `/sd`). Drivers that a library marks
-  `//gogo:optional` do not count for that library's own opens (chapter
-  12). Each firmware knows which it was built with. `code.Load` of a module that needs more returns `Unsupported`, and
-  `code.Missing(m)` gives the missing bits (`code.CapNet`, `CapKbd`,
-  `CapPower`, `CapSD`, `CapIMU`, `CapIRTX`, `CapIRRX`, `CapMic`, `CapSpk`,
-  `CapTLS`;
-  appendix F). The main image is checked the same way at boot.
+- **Requirements.** The compiler records, by name, the drivers and
+  mounts an image needs: the driver of every constant `port.Open` (`tcp`,
+  `kbd`, `imu`, `tls`, ...) and `/sd` for constant `/sd` paths (appendix
+  F). Drivers that a library marks `//gogo:optional` do not count for that
+  library's own opens (chapter 12). A firmware has exactly the drivers and
+  mounts it was built with. `code.Load` of a module that requires one it
+  lacks returns `Unsupported`, and `code.Missing(m)` names the first
+  missing one:
+
+  ```go
+  m, e := code.Load(b)
+  if e == code.Unsupported {
+  	println("this firmware has no", code.Missing(m)) // e.g. "kbd" or "/sd"
+  }
+  ```
+
+  The main image is checked the same way at boot (`gogo: image requires
+  kbd, which this VM lacks`).
+- **Format versions.** A module records the image format it was built for
+  (`major.minor`, 15.0 today). A firmware loads every module of its major
+  up to its own minor, so modules stored on `/flash` keep working after a
+  firmware update; a module built for a newer minor, or for another major,
+  is `BadVersion`. Rebuild it with a `gogo` that matches the firmware, or
+  update the firmware.
 - **Rights.** This version has no permissions: a module can do everything
   the main program can (ports, files, network, configuration). Signing and
   permissions are not built yet; they were meant to come with HTTPS, which

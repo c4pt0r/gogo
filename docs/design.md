@@ -111,7 +111,7 @@ own were also considered and rejected in favour of Go syntax.
    (no rune decoding). Importing a library compiles all of it into the
    image (no dead-function elimination). Libraries may import stubs and
    other libraries, without cycles. The package table, with each
-   package's kind and capability, is [lib/README.md](../lib/README.md).
+   package's kind and requirements, is [lib/README.md](../lib/README.md).
 5. **Platform layers** (`platform/`): `unix` (the host VM `gogovm`, with
    simulated peripherals) and `esp32s3` (one ESP-IDF firmware for both
    boards). RP2040 is planned.
@@ -554,13 +554,13 @@ chapter 14 explains it from the user's side.
 side is `runtime/vm/module.c`):
 
 ```go
-type Module struct{ H, Missing int }   // reserved type 34; a plain value, may be sent
-type Err int  // OK BadImage Unsupported NoMemory NotFound BadArg TooMany
+type Module struct{ H int; missing string }   // reserved type 34; a plain value, may be sent
+type Err int  // OK BadImage Unsupported NoMemory NotFound BadArg TooMany BadVersion
 func Load(b bytes.Bytes) (Module, Err)
 func Spawn(m Module, entry string, arg any) (actor.PID, Err)       // also SpawnLink, SpawnOpt
 func Hold(m Module) Err
 func Release(m Module)
-func Missing(m Module) int       // after Load returned Unsupported: the Cap* bits the firmware lacks
+func Missing(m Module) string    // after Load returned Unsupported: the first requirement the firmware lacks
 func MemUsed() int               // code bytes of loaded modules (counted in code.mem)
 ```
 
@@ -591,7 +591,7 @@ refs, closures and a module's own struct type ids carry a 3-bit slot and
 an 8-bit generation. Images hold them untagged; the VM adds the tag at
 run time (`LOADK` and the like) and checks the module table on every
 access, so a stale value is `badcode`. The bit layout, the alias bound and
-the cost are in §5.5.3. Images carry a `requires` bitmask and an export
+the cost are in §5.5.3. Images carry a requirement list and an export
 table after the constant map (§5.6).
 
 **Cross-module rules** (symmetric: the main program is not special).
@@ -608,16 +608,19 @@ unloaded module, or a message with a stale value, is `badcode`
 (`term_live`). In exit notifications across modules `Reason.Func` is
 empty. Only the actor that registered a name may unregister it.
 
-**Capabilities.** The compiler infers an image's `requires` bits (`Cap*`:
-net, kbd, power, sd, imu, ir_tx, ir_rx, mic, spk, tls) from its imports,
-the driver names of constant `port.Open` calls and constant `/sd` paths
-given to `gogo/fs` (`compiler/modinfo.go`). A driver name known only at
-run time sets the `CapAnyPort` marker and gives a build warning. The
-firmware's `platform_caps()` (`runtime/vm/platform.h`; a weak default in
-`runtime/vm/caps.c` returns 0) returns the bits it really provides, and
-`vm_caps_ok` compares. If bits are missing, `Load` returns `Unsupported`
-and `Missing` names them; the boot image is checked by the same rule
-(`gogo: image needs ...; firmware lacks ...`).
+**Requirements.** An image lists, by name, what it needs from the board:
+port drivers (`kbd`, `tcp`, `tls`, a host port's name) and mount prefixes
+(`/sd`). The compiler infers them (`Requires` in `compiler/modinfo.go`):
+the driver of every constant `port.Open`, and `/sd` for constant `/sd`
+paths given to `gogo/fs`. An import alone requires nothing; a driver name
+known only at run time requires nothing and gives a build warning. The
+loader checks each name against the VM's driver list (`port_find_driver`,
+which includes registered host ports) and its board's mount list
+(`VmBoard.mounts`). The first missing name refuses the image: `Load`
+returns `Unsupported` and `code.Missing` names it; the boot image is
+checked by the same rule (`gogo: image requires kbd, which this VM
+lacks`). A board's capabilities are exactly its port and mount lists,
+built with what its build has (§5.4.5); there is no separate bit table.
 
 **The `//gogo:optional` directive.** A library package can declare
 drivers it uses only softly: opened only when a call needs them at run
@@ -627,21 +630,20 @@ package, `//gogo:optional name...` (by convention at the end of the
 package doc comment, after an empty `//` line, as gofmt places
 directives).
 - It applies only to the declaring package's **own** constant
-  `port.Open` calls: those drivers add nothing to the image's `requires`.
+  `port.Open` calls: those drivers add nothing to the image's
+  requirements.
   Importers, other libraries and `package main` still count their own
   calls (a program that calls `port.Open("tls", ...)` itself requires
   tls).
-- Names must be drivers with a capability bit (`imu`, `ir_rx`, `ir_tx`,
-  `kbd`, `mic`, `netif`, `power`, `spk`, `tcp`, `tcp_listen`, `tls`,
-  `udp`). An unknown name, an empty list or a misspelt `//gogo:`
-  directive is a compile error, and so is the directive in
-  `package main`.
+- Any driver name is accepted, a board's or a host port's. An empty
+  list or a misspelt `//gogo:` directive is a compile error, and so is
+  the directive in `package main`.
 - `gogo/http` declares `//gogo:optional tls` (an image that uses http
   does not require tls; on a firmware without tls, https requests fail);
   `gogo/sound` declares `//gogo:optional mic spk` (without a microphone
   `Record` returns false, without a speaker `Play` does). No library path
   appears in the compiler.
-- `gogo firmware` picks features from `requires`, so it never turns soft
+- `gogo firmware` picks features from the requirements, so it never turns soft
   drivers on by itself; `tls` and audio are on by default, and building
   without them makes those calls fail at run time.
 
@@ -683,13 +685,18 @@ font.
   switched-off feature behaves as if the board lacked the hardware: its
   `port.Open` returns `ok=false`, and `gogo config scan` and the like
   answer "no network in this firmware".
-- **Capability bits.** `platform_caps()` returns the `CAP_*` bits this
-  firmware really has; an image or module whose `requires` has other bits
-  is refused at boot (`gogo: image needs ...; firmware lacks ...`) or by
-  `code.Load` (`Unsupported`).
+- **What a build provides.** `platform_esp.c` lists in `esp_ports` only
+  the drivers the build has (`#if HAS_KBD && CONFIG_GOGO_KBD`, ...) and
+  in `esp_mounts` `/flash` and, with `HAS_SD && CONFIG_GOGO_SD`, `/sd`.
+  An image or module that requires anything else is refused at boot
+  (`gogo: image requires ..., which this VM lacks`) or by `code.Load`
+  (`Unsupported`).
 - **`gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with
-  list] [-without list] files...`** reads the `requires` bits of images
-  and modules, writes an `sdkconfig.gogo` overlay and prints (with
+  list] [-without list] files...`** reads the requirement names of images
+  and modules, maps them to features (`net` builds `netif`, `udp`, `tcp`
+  and `tcp_listen`; `sd` builds `/sd`; `irtx` builds `ir_tx`; and so on;
+  `gpio` and `/flash` are always there; any other name is an error),
+  writes an `sdkconfig.gogo` overlay and prints (with
   `-build`, runs) the `idf.py` command. A needed feature cannot be
   removed, and a feature the board lacks is an error. It manages its own
   build directory and deletes an existing `sdkconfig` that disagrees with
@@ -756,8 +763,8 @@ font.
   payload) to `dir/0.imu` and `dir/1.imu`, rotating like `ringlog`, so
   the total stays within `maxBytes` plus one record; `imulog.Read(dir,
   max)` returns the newest `max` records.
-- **Switches and capabilities.** Kconfig `GOGO_IMU` and `GOGO_IR` (on by
-  default); bits `CAP_IMU`, `CAP_IR_TX`, `CAP_IR_RX`. With `GOGO_IR` off
+- **Switches.** Kconfig `GOGO_IMU` and `GOGO_IR` (on by default) build
+  the `imu`, `ir_tx` and `ir_rx` drivers. With `GOGO_IR` off
   the RMT driver is not linked. The IMU costs about 10.5 KB of flash
   (8 KB of it the configuration) and IR about 25.8 KB (mostly IDF's RMT
   driver).
@@ -826,9 +833,8 @@ font.
   capped at DAC -4 dB (`AUDIO_SPK_MAX_DB`), the Cardputer ADV's is 0 dB.
   The codec's analog reference stays on after the first open, so only
   the first `mic` open after power-up has about 1 s of zeros. With
-  `GOGO_AUDIO` off, IDF's I2S driver is not linked and `CAP_MIC` /
-  `CAP_SPK` are 0; `runtime/input/audio.c` is still linked (its ports
-  refuse to open).
+  `GOGO_AUDIO` off, IDF's I2S driver is not linked and the board lists
+  no `mic` or `spk` driver.
 - **`fs.File.WriteAt`** (`B_FS` operation 13) overwrites bytes of a file
   opened with `Write`, without extending it or moving the append
   position; the host (`pwrite`), FatFs, LittleFS and memfs backends behave
@@ -1082,7 +1088,7 @@ a heap only adds one constant to every reference in it.
 The VM holds at most `GOGO_MAX_MODULES` (8 by default, at most 8)
 modules in its module table `Vm.mods` (`runtime/vm/module.h`). The boot
 image is module 0 and takes the same load and start path as a hot-loaded
-module: `vm_boot` installs the image in slot 0 (the capability check
+module: `vm_boot` installs the image in slot 0 (the requirement check
 included), and `vm_start` starts it with `module_spawn` through its export
 `main` (without one it reports `gogo: image has no main` and exits
 non-zero). Module 0 differs only in that its code is in flash, it does
@@ -1097,7 +1103,7 @@ the slot's generation, bits 23-21 the slot.
 ```
 const ref          gggggggg sss  17-bit const-area word offset    1010
 closure word 1     gggggggg sss  21-bit function index
-struct word 1      gggggggg sss  00000  16-bit type index        (a module's own type, index >= TYPE_RESERVED_COUNT)
+struct word 1      gggggggg sss  00000  16-bit type index        (a module's own type, index >= TYPE_OWN_BASE = 128)
                    00000000 000  00000  16-bit type index        (reserved types 0..TYPE_RESERVED_COUNT-1: global, untagged)
 ```
 
@@ -1289,20 +1295,35 @@ together with `mbox_words` through `actor_charged_words`).
   macro-generated code.
 - **Image layout** (`runtime/vm/image.h`, little-endian words): an
   8-word header (magic, version, n_funcs, n_types, consts_words,
-  code_words, entry, 0), the function table (3 words each), the type
-  table (2 words each), the constant area, the code, and the constant
-  map: one bit per constant word, set where an object starts
-  (ceil(consts_words / 32) words, read in place from flash, no RAM).
-  After the map come `requires` (1 word of capability bits: Net = 1,
-  Kbd = 2, Power = 4, SD = 8, IMU = 16, IrTx = 32, IrRx = 64, Mic = 128,
-  Spk = 256, TLS = 512, any port = 1 << 31; inferred by the compiler,
-  §5.4.4) and the export table (`n_exports`, then one `{name constant
-  offset, function index}` pair per export). Every image is a module:
-  `main` is exported as `"main"`, and exported `func()` / `func(arg any)`
-  functions of package `main` are exported too. The loader checks that
-  export names are at constant object starts and rejects out-of-range
-  function indexes. Header word 7 is reserved (0). Images are
-  position-independent and run in place.
+  code_words, entry, n_reserved), the function table (3 words each), the
+  type table (2 words each: field count, name), the constant area, the
+  code, and the constant map: one bit per constant word, set where an
+  object starts (ceil(consts_words / 32) words, read in place from flash,
+  no RAM). After the map come the requirements (`n_requires`, then one
+  constant offset per name: a driver or a mount prefix, §5.4.4) and the
+  export table (`n_exports`, then one `{name constant offset, function
+  index}` pair per export). Every image is a module: `main` is exported as
+  `"main"`, and exported `func()` / `func(arg any)` functions of package
+  `main` are exported too. The loader checks that requirement and export
+  names are constant strings at object starts and rejects out-of-range
+  function indexes. Images are position-independent and run in place.
+- **Types.** The type table holds `n_reserved` reserved rows (header word
+  7), then the image's own struct types. Code names a reserved type by its
+  fixed index (`TYPE_*`) and an own type by `TYPE_OWN_BASE` (128) plus its
+  position among the own types, whatever the reserved count; the table row
+  is `t < 128 ? t : t - 128 + n_reserved`. The compiler emits reserved rows
+  only up to the highest one the program uses, so an image built by a newer
+  compiler runs on an older VM unless it uses a newer type. A VM refuses
+  `n_reserved` above its own `TYPE_RESERVED_COUNT` as a newer format.
+- **Append-only reserved fields.** A reserved type may gain fields only at
+  the end, of type int, where 0 means the default (`RepeatMs` 0 means 50,
+  `BatchMs` 0 means 200, and so on). The loader compares each reserved row's
+  field count with its own (`TYPE_NFIELDS`, a packed table in
+  `runtime/vm/opcodes.h`) and refuses a larger one as a newer format;
+  `GETFIELD` past the end of a reserved struct from an older image reads
+  int 0 (past the end of an own struct it is still `badcode`); drivers read
+  field `i` only when `i < n`. A field is never reordered or removed: a
+  deprecated one is renamed `_`.
 - **Image validation.** The loader checks the structure of every table
   and of the constant area: the map must mark exactly the object starts
   that the constant headers define, and constant refs inside constant
@@ -1314,12 +1335,26 @@ together with `mbox_words` through `actor_charged_words`).
   fake struct header inside a string's bytes, say), which would be a
   memory-safety bug, not just `badcode`. Function indexes, type ids and
   jump targets are checked when used (out of range is `badcode`).
-- **Image version** (`IMAGE_VERSION`, now **14**). Any change to opcode
-  numbers or semantics, builtin numbers, reserved types, the term
-  encoding or the image layout bumps the version; the compiler and the
-  VM move in lockstep, and the loader refuses every other version
-  (`unsupported version`). The history is in the comment at the top of
-  `runtime/vm/image.h`.
+- **Image format version** (`IMAGE_MAJOR`.`IMAGE_MINOR`, now **15.0**):
+  header word 1 is `major << 16 | minor`. A VM runs the images of its own
+  major whose minor is at most its own (one unsigned compare); any other
+  is refused (`IMG_ERR_VERSION`: `GOGO_EVERSION` in the embedding API,
+  `code.BadVersion` from `code.Load`, and gogovm, the firmware and the
+  embed layer name both formats, `unsupported image format 15.1 (this VM
+  runs 15.0 to 15.0)`). The compiler stamps each image with the lowest
+  minor its program needs: the highest minor among the opcodes, builtins
+  and reserved rows it uses, from tables in `compiler/image.go` (all 15.0
+  today). The versioning policy:
+  - **Minor (additive):** a new builtin number, opcode, reserved type, or
+    an int field appended to a reserved type (0 means the default). Old
+    images keep running; a new image runs on an old VM unless it uses the
+    addition.
+  - **Major:** a change to the term encoding, to opcode or builtin
+    semantics, or a reserved field reordered or removed. v15 is planned to
+    be the last major for a long time; the single-number versions 1 to 14
+    before it are listed at the top of `runtime/vm/image.h`.
+  - `gogo version` and the device's boot banner print the format
+    (`image format 15.0`).
 - **Builtins** (`B_*` in `runtime/vm/opcodes.h`, called with
   `OP_BUILTIN`): 0-27 actors and ports (`println`, `Spawn`, ... ,
   `port.Open` 26, `port.Close` 27), 28-45 strings, slices, `Bytes` and
@@ -1482,9 +1517,13 @@ only through two tables of function pointers that the caller hands it.
 - **The board table** (`VmBoard`, internal, `runtime/vm/host.h`): board-only
   hardware: the port drivers, the input chips (`InputHw`), the network
   interface (`NetIf`), the TLS port's hooks (`TlsHw`: allocator, clock,
-  trust anchors, random) and the capability bits the build provides. A
-  `Vm` gets `board caps & granted caps`; an embedded VM has no board
-  hardware, only the capabilities its host grants.
+  trust anchors, random) and the mount prefixes it serves (`/flash`,
+  `/sd`). The port and mount lists are also what the board provides: an
+  image's requirements are checked against them, so a board builds both
+  with `#if` from what its build has. An embedded VM has no board
+  hardware: its drivers are the host ports registered before
+  `gogo_load`, and its one mount is `/flash` when `fs_root` serves it;
+  `gogo_config.grant` can withhold names.
 - **Time.** `vm->t0` is the host clock when the VM starts, and `vm_now`
   counts from it, so every VM starts near 0 whatever the host clock reads
   (the ESP's `esp_timer` has been running since boot). Code that gets a
@@ -1497,8 +1536,8 @@ only through two tables of function pointers that the caller hands it.
   the stack it feeds, `net_rx_offer(NetState *, ...)` and
   `net_link_event(NetState *, ...)` (a single-slot handoff, not the
   ring). Both then wake that VM through its host's `wake`.
-- **Start-up order.** `vm_init` (tables, caps, limits), `vm_boot` (the
-  image becomes module 0, caps checked), then the board attaches its
+- **Start-up order.** `vm_init` (tables, limits), `vm_boot` (the
+  image becomes module 0, requirements checked), then the board attaches its
   subsystems to the instance (`net_install`, `vfs_init`,
   `input_install`), then `vm_run`. Wi-Fi frames or link events that
   arrive before `net_install` are dropped; the first link-up and DHCP
@@ -1516,7 +1555,9 @@ only through two tables of function pointers that the caller hands it.
   `port.Post` to a registered actor) with `gogo_retain` /
   `gogo_close_posts` for posting threads that outlive the owner; host
   ports (`gogo_register_port`, `gogo_port_emit`, `gogo_port_post`)
-  opened from Go as `port.Host`; a sandboxed `/flash` on a host directory
+  opened from Go as `port.Host`, registered before `gogo_load` so they
+  satisfy the image's requirements (`gogo_config.grant`, a list of names
+  or NULL for all, can withhold them); a sandboxed `/flash` on a host directory
   (`fs_dir.c`, `gogo_config.fs_root`, per-instance `fs_quota`); and the
   POSIX host (`host_posix.c`, `gogo_run_thread`). Every `gogo_*` call
   other than the posting ones runs on the thread that owns the VM.
@@ -1533,6 +1574,37 @@ only through two tables of function pointers that the caller hands it.
   internal RAM +256 to +320 B, of which 196 B is the `Vm *` in each of
   the 49 GPIO pin slots; console output and the board smoke programs are
   unchanged.
+
+### 5.12 Versioning and stability
+
+- **Releases** follow semantic versioning for the toolchain and firmware
+  together. While at 0.x a minor release may break things, only with a
+  "Breaking" section in its notes and a mechanical rewrite tool where one
+  is possible; patch releases never break anything. 1.0 freezes the stable
+  sets below.
+- **Image format:** `major.minor` in header word 1 (§5.6). A VM runs the
+  images of its major up to its own minor, and the compiler stamps the
+  lowest minor a program needs. A new builtin, opcode, reserved type or
+  appended int field (0 the default) is a minor; a term-encoding change, a
+  change in opcode or builtin semantics, or a reserved field reordered or
+  removed is a major (a deprecated field is renamed `_`, never removed).
+  Language phases still to come are planned so that at most one more major
+  is needed. Release notes state "firmware X runs images of format M.0 to
+  M.m; compiler Y emits M.k"; `gogo version` and the boot banner print the
+  format.
+- **Requirements** are names (§5.4.4), so a new driver needs no format
+  change: an image that names it is simply refused by a firmware without
+  it.
+- **C ABI** (`runtime/include/gogo.h`): within an ABI version functions
+  keep their signatures and meaning and new ones are additive; structs
+  will carry a leading `size` and grow only at the end; anything marked
+  experimental is outside these guarantees; `libgogo.a` exports only
+  `GOGO_API` symbols.
+- **Library API:** stable at v0.2: `actor`, `bytes`, `port` (its generic
+  part), `fs`, `sys`, `strings`, `strconv`, `kv`. Experimental: `net`,
+  `http`, `dns`, `dhcp`, `sntp`, `code`, `supervisor`, `imu`, `ir`,
+  `audio`, `sound`, `wav`, `imulog`, `ringlog`, `irproto`. A deprecated
+  name stays for one minor release with a compiler warning.
 
 ## 6. Status and roadmap
 

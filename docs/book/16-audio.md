@@ -357,11 +357,11 @@ fit stores what does and fails with `fs.NoSpace`, and `fs.Usage` reports
 the bytes used and the quota. `--fs-quota 0` is a full medium. The golden
 test `tests/golden/sound_diskfull` uses it.
 
-## 16.6 Capabilities and firmware
+## 16.6 Requirements and firmware
 
 The compiler records in the image that a program opens `"mic"` or `"spk"`
-itself, like the other ports; a firmware built without them refuses that
-image at boot. Importing `gogo/sound` does not require them: the library
+itself (a requirement, like the other ports); a firmware built without them
+refuses that image at boot. Importing `gogo/sound` does not require them: the library
 declares `//gogo:optional mic spk` (chapter 12), and `Record` and `Play`
 return false when the hardware is absent. A program that opens `"mic"` or
 `"spk"` with `port.Open` itself still requires them. Both are on by default and share one switch, `GOGO_AUDIO` (`gogo

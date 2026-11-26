@@ -47,13 +47,32 @@ rename them (`no .gg files, only .go files: ...`). gogo sources were `.go`
 files before; `.gg` is Go syntax, so map it to Go in your editor for
 highlighting (chapter 2, *Editor support*); gopls does not apply.
 
-### The `requires` word and `//gogo:optional`
+### Requirements and `//gogo:optional`
 
-The image also records the capabilities it needs (its `requires` word,
-appendix F): the compiler infers them from the imports, from every
-`port.Open` with a constant driver name, and from constant `/sd` paths, in
-`package main` and in every library compiled in. A firmware that lacks one
-refuses the image at boot (`code.Load` returns `Unsupported`, chapter 14).
+The image also records, by name, what it needs from the board (its
+requirements, appendix F): the driver of every `port.Open` with a constant
+driver name (`"kbd"`, `"tcp"`, a host port's `"ui"`), and the mount `/sd`
+for constant `/sd` paths, in `package main` and in every library compiled
+in. An import by itself requires nothing. A firmware that lacks a required
+driver or mount refuses the image at boot, naming it:
+
+```text
+gogo: image requires kbd, which this VM lacks
+```
+
+and `code.Load` returns `Unsupported` with `code.Missing` naming it
+(chapter 14). A driver name the compiler cannot see (a variable, a
+function call) requires nothing; the build warns
+(`port.Open with a non-constant driver name: ...`) and the open simply
+fails at run time on a board without the driver.
+
+The image format itself has a version, `major.minor` (15.0 today; `gogo
+version` prints it). A firmware runs images of its major whose minor is at
+most its own, and the compiler stamps each image with the lowest minor its
+program needs, so after a firmware update every module already on `/flash`
+keeps loading. An image of another major, or of a newer minor than the
+firmware's, is refused (`unsupported image format 15.1 (this VM runs 15.0
+to 15.0)`; `code.Load` returns `BadVersion`).
 
 A library can declare that it uses some drivers only softly: it opens them
 only when a call asks for that at run time, and reports their absence
@@ -69,15 +88,14 @@ directives):
 package http
 ```
 
-- The listed drivers add no capability **for that package's own**
+- The listed drivers add no requirement **for that package's own**
   `port.Open` calls. The same driver opened by `package main`, by a
   package that imports this one, or by any other library still counts: a
   program that calls `port.Open("tls", ...)` itself requires `tls`.
-- The names must be drivers that carry a capability (`imu ir_rx ir_tx kbd
-  mic netif power spk tcp tcp_listen tls udp`). An unknown name, an empty
-  list, a misspelt `//gogo:` directive, or the directive in `package main`
-  is a compile error, for example
-  `a.gg:3:1: gogo: //gogo:optional: unknown driver "tsl" (want one of ...)`.
+- Any driver name is accepted, a board's or a host port's. An empty list,
+  a misspelt `//gogo:` directive, or the directive in `package main` is a
+  compile error, for example
+  `a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`.
 - `gogo/http` declares `tls` (an http-only program runs on a firmware
   without TLS, where an https request fails), and `gogo/sound` declares
   `mic spk` (`Record` returns false without a microphone, `Play` without a
@@ -86,7 +104,7 @@ package http
   enforce it. A library can still hand `main` a function that opens the
   driver; that open then fails cleanly at run time (`ok=false`) on a
   firmware without the driver.
-- `gogo firmware` (below) chooses features from `requires`, so it does not
+- `gogo firmware` (below) chooses features from the requirements, so it does not
   turn a soft driver on by itself; `tls`, `mic` and `spk` are on by default,
   and `-without` makes those calls fail at run time instead.
 
@@ -99,8 +117,9 @@ gogo run [--key c=pin]... [--fs-root DIR] <dir|file.ggb>
 Runs a program on the host VM. Given a directory it builds it first (to a
 temporary image); given a `.ggb` file it runs that image. The exit status
 is the VM's: 0 when the VM ran until nothing was left to do, 1 if the
-image needs a capability the host VM lacks (for example `tls` in a VM
-built without mbedTLS), 2 if the image could not be loaded. A build error
+image requires a driver or mount the host VM lacks (for example `tls` in a
+VM built without mbedTLS), 2 if the image could not be loaded (also an
+unsupported image format). A build error
 is status 1 too.
 
 > **Note.** A crash, even of the `main` actor, does not change the exit
@@ -119,7 +138,9 @@ Options:
   The VM program `build/gogovm` also takes `--fs-quota BYTES` (tests
   only): each medium may then hold that many bytes of files, counting
   what is already there; deletes give room back, and `fs.Usage` reports
-  (used, quota). See section 16.5.
+  (used, quota). See section 16.5. And it takes `--without NAME,...`
+  (tests only): the named drivers and mounts (`kbd`, `tls`, `/sd`, ...)
+  are left out of the host board, as on a firmware built without them.
 - `--key c=pin`: in a terminal, pressing the character `c` presses the
   simulated GPIO input `pin` (the level goes to 0, then back to 1). Up to
   16 keys.
@@ -230,19 +251,23 @@ gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without 
 
 Chooses which optional parts the firmware needs to contain for a set of
 images and modules, so a build does not carry a network stack or an SD
-driver nobody uses. It reads the capabilities each file declares (the
-`requires` word that `gogo build` writes), takes their union, and writes
+driver nobody uses. It reads the requirement names each file carries
+(what `gogo build` writes), maps each to the feature that builds it, and writes
 `<dir>/sdkconfig.gogo`, a list of `CONFIG_GOGO_*` lines, then prints the
 `idf.py` command that builds with it. It never flashes.
 
 - Feature names: `net kbd power sd exfat cjk imu irtx irrx mic spk tls`.
+  The requirement names they build: `net` the drivers `netif`, `udp`,
+  `tcp` and `tcp_listen`; `kbd`, `power`, `imu`, `mic`, `spk` and `tls`
+  the driver of the same name; `irtx` and `irrx` the drivers `ir_tx` and
+  `ir_rx`; `sd` the mount `/sd` (appendix F). `gpio` and `/flash` are in
+  every firmware; any other name (a host port's, say) is an error.
   `net`, `kbd` and `power` are on only when a file requires them (or
-  `-with` adds them); a file that opens a port by a name only known at run
-  time requires every port the board has. The others are on by default on
-  boards that have them: `sd`, `imu`, `irtx`/`irrx` (the infrared sender
-  and receiver), `mic`/`spk` and `tls` (the TLS client, chapter 17) are
-  capabilities too, so a file that needs one keeps it on, while `exfat` (exFAT media) and `cjk` (the Chinese font)
-  are not. `irtx` and `irrx` share one firmware switch, as do `mic` and
+  `-with` adds them). The others are on by default on boards that have
+  them: `sd`, `imu`, `irtx`/`irrx` (the infrared sender and receiver),
+  `mic`/`spk` and `tls` (the TLS client, chapter 17) can be required too,
+  so a file that needs one keeps it on, while `exfat` (exFAT media) and
+  `cjk` (the Chinese font) are not. `irtx` and `irrx` share one firmware switch, as do `mic` and
   `spk`, so they go on and off together.
 - `-with a,b` adds features. `-without a,b` removes them; a feature that a
   file requires cannot be removed (error). `exfat` goes off with `sd`, and

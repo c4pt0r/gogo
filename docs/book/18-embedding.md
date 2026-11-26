@@ -94,8 +94,8 @@ idle memory total: 132000 B
 The program is done when every actor has exited or is blocked for good,
 as on a board: `many_idle`'s 1000 actors wait in `Receive` forever, so the
 run ends when `main` returns. Every call returns a negative `GOGO_E*` on
-error; `gogo_load`'s reasons (a bad image, a missing capability) are also
-written to the host's error stream.
+error; `gogo_load`'s reasons (a bad image, an unsupported image format, a
+missing driver) are also written to the host's error stream.
 
 `gogo_new_posix` is the ready-made host for POSIX systems: `malloc`,
 `CLOCK_MONOTONIC`, the system's wall clock (which the program may not
@@ -105,8 +105,8 @@ that host's state and frees it with the VM.
 ## 18.3 The configuration
 
 The second argument of `gogo_new` (or the only one of `gogo_new_posix`)
-is a `gogo_config`. All zero (or `NULL`) is a VM with no capabilities, no
-memory cap, no storage and no hot loading. `main.c` fills in three fields
+is a `gogo_config`. All zero (or `NULL`) is a VM that grants every name it
+has, with no memory cap, no storage and no hot loading. `main.c` fills in three fields
 from its options:
 
 ```c
@@ -117,7 +117,7 @@ from its options:
 
 | field | meaning |
 |---|---|
-| `caps` | the capability bits granted (section 18.9); 0 in this version |
+| `grant` | the requirement names the VM may serve, a `NULL`-terminated list; `NULL` = all it has (section 18.9) |
 | `mem_limit` | bytes the whole VM may allocate, on top of each actor's own limit; 0 = no cap |
 | `max_actors` | live actors at once; 0 = the build's default (16384) |
 | `fs_root` | a host directory served as `/flash`, or `NULL` for no storage (section 18.8) |
@@ -127,8 +127,7 @@ from its options:
 Over `mem_limit`, the VM's allocations fail and the actor that asked is
 stopped with `oom`, as when an actor goes over its own limit
 (chapter 6). `gogo_new` returns `NULL` for a configuration it cannot
-honour: capability bits it cannot give, a negative quota, an `fs_root`
-that is not a directory.
+honour: a negative quota, an `fs_root` that is not a directory.
 
 ## 18.4 The host table and the latched wake
 
@@ -399,10 +398,11 @@ port) and `close` (the port closed, for any reason: the owner exited,
 inside `gogo_step`. The host sends the port's owner an event with
 `gogo_port_emit` from a callback or between steps, or with
 `gogo_port_post` from any thread (queued like a post). A VM has at most
-`GOGO_MAX_HOST_PORTS` (4) host ports, registered before `gogo_start`.
+`GOGO_MAX_HOST_PORTS` (4) host ports, registered before `gogo_load`:
+an image that opens a host port by a constant name requires it (section
+18.9), and a registration after the load returns `GOGO_ESTATE`.
 
-Host ports need no capability bit: what one may do is the host's
-business. They keep the usual port rules: one owner, closed when the
+What a host port may do is the host's business. They keep the usual port rules: one owner, closed when the
 owner exits, `port.Handoff` gives one away, a stale PID is ignored. While
 posts are open an open host port keeps the VM alive, since it can still
 get events; `gogo_close_posts` ends that too.
@@ -437,27 +437,44 @@ With `fs_quota` 0 there is no quota (the host file system's own limits
 apply). The quota belongs to the VM: two VMs on two directories each have
 their own.
 
-## 18.9 Capabilities
+## 18.9 Requirements and `grant`
 
-An image records the capabilities it needs (`gogo build` infers them;
-chapter 13 lists them): `net`, `kbd`, `sd`, `imu` and so on. A VM has the
-bits its configuration grants in `caps`, and refuses an image that needs
-one it lacks. Basic I/O (`println`, actors, timers, host ports, posts,
-`/flash`) needs none.
+An image records, by name, what it needs (`gogo build` infers it; chapter
+13 lists the names): the driver of every constant `port.Open` and `/sd`
+for constant `/sd` paths. On an embedded VM the drivers are the host ports
+registered before `gogo_load`, and the one mount is `/flash` when
+`fs_root` serves it. `gogo_load` refuses an image that requires anything
+else with `GOGO_EREQUIRES` (-4) and names the first missing name on the
+error stream. Basic I/O (`println`, actors, timers, posts) needs nothing.
 
-This version's library has none of those peripherals, so it grants no
-bit: a configuration with any `GOGO_CAP_*` bit set makes `gogo_new` fail,
-and an image that needs one is refused by `gogo_load` with `GOGO_ECAPS`
-and a reason on the error stream:
+This version's library has no board peripherals, so an image that uses
+the network, say, is refused:
 
 ```sh
 build/embed-c/main netdemo.ggb
 ```
 
 ```
-gogo: image needs net; firmware lacks net
+gogo: image requires gpio, which this VM lacks
 gogo_load netdemo.ggb: error -4
 ```
+
+`grant` narrows what the VM has: a `NULL`-terminated list of names, and
+whatever is not listed is absent for this VM (an image requiring it is
+refused, `port.Open` of it fails, and `/flash` is not mounted unless
+`"/flash"` is listed). `NULL` grants everything. The list and its strings
+must stay valid while the VM exists.
+
+```
+static const char *const grant[] = { "ui", "/flash", NULL };
+gogo_config cfg = { 0 };
+cfg.grant = grant;     /* a host port "sensor" registered later stays hidden */
+```
+
+An image whose format is another major, or a newer minor than this
+library's, is refused with `GOGO_EVERSION` (-13), and both formats are
+named (`gogo: unsupported image format 15.1 (this VM runs 15.0 to
+15.0)`).
 
 ## 18.10 Hot loading: `allow_code_load`
 

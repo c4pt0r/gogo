@@ -351,7 +351,7 @@ what you read (a length, a terminator): a close at a record boundary looks
 normal, so "read until the close" cannot tell a whole stream from a cut
 one. The full contract is in the `DialTLS` comment in `lib/net/net.gg`.
 
-## 17.6 On the host, and capabilities
+## 17.6 On the host, and requirements
 
 `gogovm` built with mbedTLS (the Makefile does it when it finds the
 ESP-IDF source) has the `"tls"` port. It trusts the host's CA bundle, or
@@ -360,7 +360,7 @@ the certificates in the file named by `$GOGO_TLS_CA_FILE`. The tests in
 test CA, through the network simulator: https, wrong names, keep-alive,
 idle closes, cut-short responses and a 1 MB upload.
 
-A program that opens `"tls"` itself requires the `tls` capability, and a
+A program that opens `"tls"` itself requires the `tls` driver, and a
 firmware built without it (`gogo firmware` feature `tls`, on by default)
 refuses the image. Importing `gogo/http` does not require it: the library
 opens `"tls"` only for an https URL, and without it that request just

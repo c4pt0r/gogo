@@ -1,6 +1,6 @@
 # Known issues and limitations
 
-Open limitations of gogo as of image version 14, by area. Each entry
+Open limitations of gogo as of image format 15.0, by area. Each entry
 says what the limitation is, what it costs you and, where there is one,
 how to work around it. Hardware facts refer to the two ESP32-S3 boards,
 the M5StickS3 and the Cardputer ADV. The design is in
@@ -72,16 +72,19 @@ the M5StickS3 and the Cardputer ADV. The design is in
 
 - **No signatures and no permissions.** Any actor that can hand
   `code.Load` some bytes can run code with the same rights as the main
-  program. The `requires` bits say what the firmware must provide, not
+  program. Its requirement names say what the firmware must provide, not
   what a module may do. Function, type and jump indexes are checked when
   used (`badcode`), not when loaded. Load only images you trust.
 - **Modules live in RAM only.** There is no automatic loading from flash
   at boot and no execute-in-place from flash. *Workaround:* store the
   module with `fs.WriteFile` and load it with `fs.ReadFile` +
   `code.Load` at start.
-- **No `sys.Has`.** A program cannot ask which capabilities the firmware
-  has before loading; it learns them from `code.Missing` after
-  `Unsupported`.
+- **No `sys.Has`.** A program cannot ask which drivers and mounts the
+  firmware has before loading; it learns the first missing one from
+  `code.Missing` after `Unsupported`, and an absent driver from
+  `port.Open`'s `ok=false`.
+- **`code.Missing` names one requirement.** Only the first missing name
+  is reported, and at most 32 bytes of it.
 - **Stale module values alias after 256 loads.** A value from an
   unloaded module carries 8 generation bits; after 256 more loads into the
   same slot it resolves again, to the new module (still memory-safe, but
@@ -132,11 +135,17 @@ the M5StickS3 and the Cardputer ADV. The design is in
 - **No dead-code elimination.** Importing a library compiles all of it
   into the image (`gogo/strings` costs about 440 words, `gogo/strconv`
   about 360), which matters on boards with little flash.
-- **Capability inference is a heuristic.** A constant `"/sd"` path
-  passed to `gogo/fs` makes the image require `sd`, even if the program
-  only probes for a card; a driver name known only at run time gives a
-  build warning and is not checked at load. *Workaround:* pass the path
-  through a variable (as `examples/audiohw` does).
+- **Requirement inference is a heuristic.** A constant `"/sd"` path
+  passed to `gogo/fs` makes the image require `/sd`, even if the program
+  only probes for a card, and a constant `port.Open` in `package main`
+  requires its driver even when the program handles `ok=false` (only a
+  library can mark a driver soft, with `//gogo:optional`). A driver name
+  known only at run time gives a build warning and requires nothing.
+  *Workaround:* pass the name or path through a function or variable
+  (as `examples/audiohw` and the `port_unknown` golden do).
+- **Old images need a rebuild once.** Images of the single-number formats
+  (up to 14) do not load on a v15 VM; from 15.0 on, a VM runs every older
+  minor of its major.
 - **Some error messages are unhelpful.** An interface type gives `type
   definition other than struct or int, int64, bool, string not
   supported`.
@@ -396,8 +405,7 @@ the M5StickS3 and the Cardputer ADV. The design is in
   change is dropped.
 - **PSRAM costs internal RAM.** Enabling PSRAM on the StickS3 (for
   module code and TLS) takes about 5.3 KB of internal RAM from the VM.
-- **The GPIO port is always built in**; it has no switch and no
-  capability bit.
+- **The GPIO port is always built in**; it has no switch.
 - **Wi-Fi can come back silently.** The firmware's `CMakeLists.txt`
   always lists `esp_wifi` and `esp_event`; with `GOGO_NET=n` they drop
   out only because nothing references them. Check the map file after
@@ -435,7 +443,7 @@ the M5StickS3 and the Cardputer ADV. The design is in
   SIGHUP too (convention: 143 and 129).
 - **The tty key mode** (`gogo run --key`) reads the terminal only when
   the VM is idle, so a busy actor delays key events.
-- **Test-only VM flags** (`--caps`, `--fs-quota`, `--net-fd`,
+- **Test-only VM flags** (`--without`, `--fs-quota`, `--net-fd`,
   `--sim-clock`) are not passed through by `gogo run`. *Workaround:* run
   `build/gogovm` directly on an image built with `gogo build`.
 - **`--fs-quota` is per medium** (`/flash` and `/sd` each), counts the

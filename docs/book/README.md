@@ -20,7 +20,7 @@ and assumes no knowledge of embedded programming or Erlang.
 10. [Networking](10-networking.md): DHCP, DNS, UDP, TCP, the HTTP client and server, the wall clock (`gogo/sys`, `gogo/sntp`)
 11. [Configuration and Devices](11-configuration-and-devices.md): `gogo config`, `config.Get`, Wi-Fi, the two boards
 12. [Toolchain Reference](12-toolchain-reference.md): `gogo build`, `run`, `dis`, `flash`, `monitor`, `firmware`, `config`, `setup`
-13. [Appendices](13-appendices.md): library quick reference, exit reasons, error codes, limits, differences from Go, capabilities
+13. [Appendices](13-appendices.md): library quick reference, exit reasons, error codes, limits, differences from Go, requirement names
 14. [Hot Loading](14-hot-loading.md): loading code at run time, modules, supervised upgrades
 15. [IMU and IR](15-imu-and-ir.md): the motion sensor, infrared send and receive, streams (`Chunk`, `Out`, `Done`)
 16. [Audio](16-audio.md): the microphone and speaker, recording to WAV files, playing them back
