@@ -659,14 +659,14 @@ TEST(embed_image_info) {
     CHECK_EQ(nr, 1);
     CHECK_EQ(gogo_image_requires(im.w, im.len, NULL, 1, &nr), GOGO_EINVAL);
     CHECK_EQ(gogo_image_requires(im.w, im.len, names, 2, NULL), GOGO_EINVAL);
-    /* An older caller's smaller struct: only its fields are written. */
-    struct { gogo_image_info i; uint32_t guard; } old;
-    memset(&old, 0xEE, sizeof old);
-    old.i.size = 12;                                    /* size, format, n_requires */
-    CHECK_EQ(gogo_image_info_get(im.w, im.len, &old.i), GOGO_OK);
-    CHECK_EQ(old.i.n_requires, 1);
-    CHECK_EQ(old.i.n_exports, 0xEEEEEEEEu);
-    CHECK_EQ(old.i.size, 12);
+    /* Below the v0.2 size (one that ends before n_exports): refused, and
+     * nothing is written. */
+    gogo_image_info small;
+    memset(&small, 0xEE, sizeof small);
+    small.size = 12;
+    CHECK_EQ(gogo_image_info_get(im.w, im.len, &small), GOGO_EINVAL);
+    CHECK_EQ(small.size, 12);
+    CHECK_EQ(small.n_requires, 0xEEEEEEEEu);
     /* A newer caller's larger struct: size says what this library filled. */
     struct { gogo_image_info i; uint32_t later; } big;
     memset(&big, 0xEE, sizeof big);
@@ -893,10 +893,11 @@ TEST(embed_host_copied_and_destroyed) {
     CHECK_EQ(destroyed, 1);
 }
 
-/* A poster is a block of its own: making one can fail (out of memory),
- * and a second free of it (while its block is not reused: here the host
- * keeps freed blocks) does nothing rather than drop the VM's reference
- * twice. A GOGO_DEBUG build asserts there instead, so it is not run. */
+/* A poster is a block of its own: making one can fail (out of memory).
+ * A second free is undefined behaviour; what this checks is only what
+ * the code does while the block is not reused (the host here keeps freed
+ * blocks): it does not drop the VM's reference twice. A GOGO_DEBUG build
+ * asserts there instead, so it is not run. */
 TEST(embed_poster_alloc_and_double_free) {
     TCtx t; tctx_init(&t);
     gogo_vm *vm = new_loaded(&t, "echo", NULL);
@@ -1219,7 +1220,8 @@ TEST(embed_hostport_close_over_quota) {
 
 /* A driver below the v0.2 size or with a reserved word set is refused;
  * a newer (larger) one is taken, its NULL hooks skipped. A stats struct
- * from an older header (smaller) is filled only as far as it goes. */
+ * below the v0.2 size is refused; a larger one is filled as far as this
+ * library's fields go. */
 TEST(embed_hostport_sized) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
@@ -1249,12 +1251,16 @@ TEST(embed_hostport_sized) {
     CHECK_EQ(ctl(vm, 3), GOGO_IDLE);            /* no close hook */
     CHECK_EQ(h.commands, 0);
     CHECK_EQ(h.closes, 0);
-    struct { gogo_stats s; uint64_t guard; } old;
-    memset(&old, 0xEE, sizeof old);
-    old.s.size = (uint32_t)((const char *)&old.s.mem_used - (const char *)&old.s);
-    CHECK_EQ(gogo_get_stats(vm, &old.s), GOGO_OK);
-    CHECK_EQ(old.s.posts_delivered, 3);
-    CHECK_EQ(old.s.mem_used, 0xEEEEEEEEEEEEEEEEull);
+    gogo_stats cut;
+    memset(&cut, 0xEE, sizeof cut);
+    cut.size = 12;                                /* inside posts_delivered */
+    CHECK_EQ(gogo_get_stats(vm, &cut), GOGO_EINVAL);
+    cut.size = (uint32_t)((const char *)&cut.mem_used - (const char *)&cut);   /* before the v0.2 size */
+    CHECK_EQ(gogo_get_stats(vm, &cut), GOGO_EINVAL);
+    CHECK_EQ(cut.posts_delivered, 0xEEEEEEEEEEEEEEEEull);
+    gogo_stats exact = GOGO_STATS_INIT;
+    CHECK_EQ(gogo_get_stats(vm, &exact), GOGO_OK);
+    CHECK_EQ(exact.posts_delivered, 3);
     struct { gogo_stats s; uint64_t later; } big;
     memset(&big, 0xEE, sizeof big);
     big.s.size = sizeof big;

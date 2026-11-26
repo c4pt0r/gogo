@@ -166,10 +166,15 @@ bool embed_copy_sized(void *dst, size_t cap, const void *src, uint32_t size, siz
 #define HOST_SIZE_V1 (offsetof(gogo_host, destroy) + sizeof(void (*)(void *)))
 #define CONFIG_SIZE_V1 (offsetof(gogo_config, fs_quota) + sizeof(int64_t))
 
+/* The output structs' first sizes, which never change (v0.2). */
+#define STATS_SIZE_V1 (offsetof(gogo_stats, mem_peak) + sizeof(uint64_t))
+#define IMAGE_INFO_SIZE_V1 (offsetof(gogo_image_info, n_exports) + sizeof(uint32_t))
+
 /* An output struct's size: what the caller allows of what the library
- * fills, at least the size word and the one after it; 0 if too small. */
-static uint32_t out_size(uint32_t caller, size_t lib) {
-    if (caller < 2u * sizeof(uint32_t)) return 0;
+ * fills; 0 below the struct's v0.2 size (v1), as for input structs, so
+ * no size ends inside a field. */
+static uint32_t out_size(uint32_t caller, size_t v1, size_t lib) {
+    if (caller < v1) return 0;
     return caller < lib ? caller : (uint32_t)lib;
 }
 
@@ -186,7 +191,7 @@ static int image_check(Image *img, const void *image, size_t len) {
 /* Every field the caller's size covers is written, 0 where there is no
  * value (an error), and size says how much this library filled. */
 int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info) {
-    uint32_t n = info ? out_size(info->size, sizeof(gogo_image_info)) : 0;
+    uint32_t n = info ? out_size(info->size, IMAGE_INFO_SIZE_V1, sizeof(gogo_image_info)) : 0;
     if (!n) return GOGO_EINVAL;
     gogo_image_info r;
     memset(&r, 0, sizeof r);
@@ -472,9 +477,9 @@ static void unref(gogo_vm *g) {
 /* ---- posters: a small block of host memory holding a VM reference ---- */
 
 /* A poster's state word: live until gogo_poster_free, which marks it
- * dead before it gives the block back, so a second free of it is caught
- * (an assertion in debug builds, ignored otherwise) while the memory has
- * not been reused, instead of dropping the VM's reference twice. */
+ * dead before it gives the block back. A use after the free (a second
+ * free too) is undefined behaviour; while the block has not been reused,
+ * a debug build's assertion usually catches it. */
 #define POSTER_LIVE 0x504F5354u
 #define POSTER_DEAD 0x44454144u
 
@@ -526,7 +531,7 @@ void gogo_poster_free(gogo_poster *p) {
 }
 
 int gogo_get_stats(gogo_vm *g, gogo_stats *out) {
-    uint32_t n = out ? out_size(out->size, sizeof(gogo_stats)) : 0;
+    uint32_t n = out ? out_size(out->size, STATS_SIZE_V1, sizeof(gogo_stats)) : 0;
     if (!g || !n) return GOGO_EINVAL;
     gogo_stats st;
     memset(&st, 0, sizeof st);

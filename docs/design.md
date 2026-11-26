@@ -1734,12 +1734,12 @@ only through two tables of function pointers that the caller hands it.
   to a registered actor) and `gogo_close_posts`; for other threads a
   `gogo_poster` (`gogo_poster_post`, `_port_post`, `_close_posts`,
   `_free`): a small block from the host's `alloc` holding a reference to
-  the `gogo_vm` and a state word (a second free is caught while the block
-  is not reused, never a second unref), so a posting thread may outlive
+  the `gogo_vm` and a state word (a use after the free is undefined
+  behaviour, which a debug build often catches), so a posting thread may outlive
   the owner's `gogo_free` (posts then return
   `GOGO_ECLOSED`; the memory and the host's `destroy` wait for the last
   reference); host ports (`gogo_register_port`, `gogo_port_emit`,
-  `gogo_port_close`, which delivers the port's queued posts and then a
+  `gogo_port_close`, which delivers every queued post and then a
   `port.Closed` made at the open and queued outside the owner's quota, so
   it is never lost; a `gogo_port`
   is an opaque `uint32_t`) opened from Go as `port.Host`, registered

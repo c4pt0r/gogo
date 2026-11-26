@@ -23,7 +23,8 @@
  * appended, and a field that may be ignored is one whose 0 means what
  * the library did before it existed. A size below the struct's v0.2 size
  * (the first sized release), and a reserved word that is not 0, make
- * the call fail with GOGO_EINVAL.
+ * the call fail with GOGO_EINVAL; so does an output struct (gogo_stats,
+ * gogo_image_info) whose size is below its v0.2 size.
  *
  * Stability. Within a major version (during 0.x, a minor) functions keep
  * their signatures and meaning, and structs only grow at the end. What is
@@ -440,8 +441,9 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_register_port(gogo_vm *vm, const char *name,
 GOGO_API GOGO_EXPERIMENTAL int gogo_port_emit(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
 
 /* VM thread (a callback, or between steps): the port has ended on the
- * host's side. Posts already queued for the port (gogo_poster_port_post)
- * are delivered first, in order; then its owner gets port.Closed{From:
+ * host's side. Every post already queued is delivered first, in order
+ * (the whole inbox, as the next step would: so are the port's own
+ * gogo_poster_port_post events); then its owner gets port.Closed{From:
  * the port, Reason: reason}, which is never dropped (it was made when the
  * port opened and is queued outside the owner's quota, like an exit
  * notice); then the port is closed and the driver's close runs, as for
@@ -484,11 +486,10 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_poster_port_post(gogo_poster *p, gogo_port p
 GOGO_API void gogo_poster_close_posts(gogo_poster *p);
 
 /* Any thread: drops the poster's reference and gives its block back; p
- * is invalid after. NULL is ignored. Freeing a poster twice is a bug the
- * library catches while the block has not been reused (an assertion in a
- * GOGO_DEBUG build; otherwise the second free does nothing), never by
- * dropping the VM's reference twice. A freed poster's calls return
- * GOGO_EINVAL on the same terms. */
+ * is invalid after. NULL is ignored. Using a poster after its free,
+ * a second free included, is undefined behaviour; a GOGO_DEBUG build
+ * often catches it (an assertion on the poster's state word, while its
+ * block has not been reused). */
 GOGO_API void gogo_poster_free(gogo_poster *p);
 
 /* Counters (GOGO_EXPERIMENTAL: the fields may change). On the owning

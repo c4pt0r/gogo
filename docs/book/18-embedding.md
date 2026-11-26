@@ -218,8 +218,8 @@ the library fills in (`gogo_stats`, `gogo_image_info`) work the other way
 round: the caller sets `size`, and the library writes back how much of
 it it filled, so a host built against a newer header can tell a field
 this library lacks from one that is 0. A size smaller than the v0.2
-struct's (no host has an older one), or a reserved word that is not 0,
-is refused with `GOGO_EINVAL`, so both can be given a meaning later.
+struct's (no host has an older one), in or out, or a reserved word that
+is not 0, is refused with `GOGO_EINVAL`, so both can be given a meaning later.
 
 | hook | |
 |---|---|
@@ -430,9 +430,9 @@ The rules:
   `GOGO_ECLOSED`, and the VM is done once its actors are, as on a board.
   Without the close, `post.c`'s `gogo_run` would never return.
 - **A poster is a small object of its own.** `gogo_poster_new` can fail
-  (`NULL`: out of memory), and each poster is freed exactly once; a
-  second free is caught (an assertion in a debug build) rather than
-  dropping the VM's reference twice.
+  (`NULL`: out of memory), and each poster is freed exactly once. Using
+  one after its free, a second free included, is undefined behaviour,
+  which a debug build (`GOGO_DEBUG`) often catches.
 - **A poster outlives the free.** It holds a reference to the VM, so a
   thread may post while (or after) the owner calls `gogo_free`: its posts
   then return `GOGO_ECLOSED` instead of touching freed memory. The VM's
@@ -527,8 +527,9 @@ away, say. `gogo_port_close(vm, port, reason)` sends the owner
 nothing more), with a shared code as the reason (`GOGO_E_IO` is
 `errors.IO`; it must be positive, as 0 is a stream's Normal half-close),
 and closes the port: the driver's `close` runs, and the program's own
-`port.Close` of it later finds a stale PID and does nothing. Events
-posted to the port before the call are delivered first, and the
+`port.Close` of it later finds a stale PID and does nothing. Every post
+already queued is delivered first (the whole inbox, as the next step
+would, so the port's own events come before the end), and the
 `Closed` is never dropped, not even over the owner's mailbox quota: it
 is made when the port opens, as a stream port keeps room for its own. `port.c` ends its port when it gets a command of Kind 100, and
 `hostecho` waits for the `Closed`:
