@@ -56,8 +56,8 @@ idle) with **its own heap**, talking only by copied messages:
   touches one actor's data, not the whole program's.
 - **One model for everything.** Hardware is ports, which are actors too:
   an interrupt, a key or a TCP packet arrives as an ordinary message in the
-  same receive loop. Hot loading swaps actors' code, and the planned
-  distribution sends the same messages across devices.
+  same receive loop. Hot loading swaps actors' code, and distribution
+  (`gogo/node`) sends the same messages across devices.
 
 This is the model Erlang has used for decades in systems that must not go
 down, scaled down to a microcontroller.
@@ -494,13 +494,22 @@ and marks its experimental parts, so a host built against one release
 keeps working with the next. Rust, Go and mobile bindings are planned.
 See book chapter 18.
 
-### Will actors be able to talk across devices?
-Planned. Remote PIDs make `actor.Send` work the same whether the target is
-local, on another board, or on a server. The first step is a star: boards
-connect to a server node (gogo embedded on the server), which also relays
-board-to-board messages, with links and monitors reporting a lost node.
+### Can actors talk across devices?
+Yes, with `gogo/node` (book chapter 20). A remote PID is an ordinary
+`actor.PID`: `actor.Send`, `Call`, `Monitor` and `Link` work the same
+whether the target is local, on another board or on a server. It is a
+star: boards connect over TCP to a server node (a host VM with real
+sockets, `GOGO_NET=host gogo run ...`), which also relays board-to-board
+messages. Nodes prove a shared token (`node.token`) with HMAC-SHA-256;
+a remote node can reach only names you export with `node.Register` and
+PIDs you sent it. When a node becomes unreachable, monitors get a
+`DownMsg` and links an exit signal with reason `actor.NoConnection`.
+Messages may hold the basic values, PIDs, Refs, system structs and your
+own structs (matched by qualified name and field count), up to 4 KB;
+delivery is at most once and in order between two actors. The links are
+not encrypted yet. The snake example runs its autopilot on the server.
 Direct links between boards on the same network, with the server as
-directory and fallback relay, are a later direction.
+directory and fallback relay, are the next step.
 
 ## About the project
 

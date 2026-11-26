@@ -736,6 +736,42 @@ rebuilt:
   (`wifi: access point busy (reason 208)`); it connects about a second
   later.
 
+## Distributed actors (`gogo/node`)
+
+- **Node links are not encrypted.** The handshake proves the shared token
+  (HMAC-SHA-256 challenge-response, the token never sent), but the
+  messages then travel in plain TCP: anyone on the network path can read
+  them and could inject frames into an established link. A captured
+  handshake also allows an offline guess of a weak token. *Workaround:* a
+  trusted network and a long random token. TLS on node links needs a TLS
+  *server* port, which gogo does not have yet.
+- **A star only.** Boards reach each other through the server; there are
+  no direct board-to-board links yet, and a lost server cuts every board
+  off (monitors and links fire with `NoConnection`).
+- **The server node is a host VM** (`gogovm --host-net` / `GOGO_NET=host`):
+  an embedding program cannot be one yet, and under `GOGO_NET=host` the
+  host VM has `tcp` and `tcp_listen` only (no `udp`, DNS or DHCP), so
+  addresses are numeric.
+- **Fixed tables.** 64 remote PIDs known at once (a message that needs
+  another is dropped), 64 local PIDs given out (dead ones are reused; with
+  64 live ones a message that would give out another is dropped), 32
+  remote links and monitors (a full table answers with `NoConnection`), 8
+  links. Remote PIDs are not reclaimed while their node is connected.
+- **Not across nodes:** `actor.Kill` and `actor.SendAfter` of a remote PID
+  do nothing, `actor.Info` reports 0, a remote exit reason has no function
+  name, and the sharing of values inside one message is not kept (two
+  fields naming one slice arrive as two copies).
+- **Own structs are matched by name and field count only.** A struct of
+  the same qualified name and field count but other field types is
+  accepted, and the receiver's code then meets values of the wrong type
+  (badcode where it uses them). Share message types through one package.
+- **Drops are silent.** At most once means a message can be lost (a full
+  link queue, no route, a full table) without the sender knowing; the
+  counters (`dist_stats`) are visible to C only.
+- **Config keys.** `node.token` and `node.name` are not in `gogo config
+  keys` yet, so `gogo config set` does not check them (they work as plain
+  keys).
+
 ## Storage
 
 - **The LittleFS host test needs a firmware build first.** The

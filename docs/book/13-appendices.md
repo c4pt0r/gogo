@@ -265,6 +265,29 @@ func http.CloseClient(c Client)
 func http.Upload(url, path, contentType, token string) (status int, err errors.Code)
 ```
 
+### gogo/node
+
+```go
+type Options struct{ Name, Token string; TimeoutMs int }
+type Up struct{ Node string }       // to Subscribe-rs
+type Down struct{ Node string }
+const DefaultPort = 4370
+
+func node.Listen(port int, name string) bool     // the server node (host VM: GOGO_NET=host)
+func node.ListenOpt(port int, opts Options) bool
+func node.Connect(addr, name string) bool        // "a.b.c.d[:port]"; token: config node.token
+func node.ConnectOpt(addr string, opts Options) bool
+func node.Disconnect()
+func node.Register(name string, p actor.PID) bool  // reachable from other nodes
+func node.Unregister(name string)
+func node.Whereis(node, name string, timeoutMs int) (actor.PID, bool)
+func node.Nodes() []string
+func node.Self() string
+func node.Subscribe()
+```
+
+Chapter 20 describes it.
+
 ### gogo/sys and gogo/sntp
 
 ```go
@@ -297,8 +320,9 @@ them) are described in chapters 15 and 16.
 | 8 | `actor.BadShift` | `badshift` | negative shift count |
 | 9 | `actor.BadMsg` | `badmsg` | sent a message holding a module's own struct or closure to an actor of another module (the sender exits; chapter 14) |
 | 10 | `actor.Panic` | `panic` | `panic(v)` (which first prints `panic: v` on standard error) |
+| 11 | `actor.NoConnection` | `noconnection` | the node of a linked or monitored remote actor became unreachable (chapter 20) |
 | 12 | `actor.Nil` | `nil` | a nil pointer dereference: a field read or write, or `*p`, of a nil pointer; a write to a nil map |
-| 11..63 | | | kept for the VM |
+| 13..63 | | | kept for the VM |
 | 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus a shared code, 1..35 (appendix C); `http.ListenFailed` is 69, `actor.Failed + errors.Busy` |
 | 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)` |
 
@@ -363,10 +387,11 @@ under another name, and these codes under the same names.
 | open files | 4 | 4 |
 | off-heap `Bytes` per actor / in the VM | 16 / 64 | 16 / 64 |
 | `Bytes` shared instead of copied | over 64 bytes, from `Freeze` | same |
-| TCP connections | 4 | (no network) |
+| TCP connections | 4 | (no network; `GOGO_NET=host`: the host's sockets, up to the 16 ports) |
 | `net.Subscribe` subscribers | 4 | (no network) |
 | HTTP head / body | 2 KB / 8 KB (client body up to 64 KB with `Do`) | (no network) |
 | TLS connections | 1 (about 23 KB charged to its owner) | (no network) |
+| distributed actors: frame, links, remote PIDs, remote links and monitors | 4096 bytes, 8, 64, 32 | same (`GOGO_NET=host`) |
 | config key / value | 15 chars / 1000 bytes | same |
 | file name / path | 32 / 96 bytes | same |
 | `kv` value | 4096 bytes | same |
@@ -424,6 +449,7 @@ lacks one refuses the image at boot, naming it, and `code.Load` returns
 | `tls` | the `tls` port opened directly (`net.DialTLS`); `gogo/http` opens it for `https://` URLs but does not require it (`//gogo:optional`, chapters 12 and 17) | `tls` | `CONFIG_GOGO_TLS` (needs `CONFIG_GOGO_NET`) |
 | `screen` | the `screen` port (`gogo/screen`, `gogo/tui`; chapter 19) | `screen` | `CONFIG_GOGO_SCREEN` |
 | `float` | floating point anywhere in the image: a float value, operation or constant, a `float32` / `float64` type switch case, `gogo/math`, `strconv.FormatFloat` / `ParseFloat` (not the rest of `gogo/strconv`) | `float` | `CONFIG_GOGO_FLOAT` |
+| `node` | the `node` port opened directly; `gogo/node` opens it (and `tcp`, `tcp_listen`) but does not require it (chapter 20) | (with `net`) | `CONFIG_GOGO_DIST` (needs `CONFIG_GOGO_NET`) |
 | a host port's name | `port.Open` of a port the embedding program defines (chapter 18) | (none: an embedded VM only) | |
 
 An import alone requires nothing: `gogo/sys` (the wall clock and `Random`

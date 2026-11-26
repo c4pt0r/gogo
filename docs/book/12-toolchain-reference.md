@@ -273,6 +273,9 @@ Options:
   (used, quota). See section 16.5. And it takes `--without NAME,...`
   (tests only): the named drivers and mounts (`kbd`, `tls`, `/sd`, ...)
   are left out of the host board, as on a firmware built without them.
+  `--host-net` (or `GOGO_NET=host` in the environment, which `gogo run`
+  passes on) makes the `tcp` and `tcp_listen` ports use the host's real
+  sockets (chapters 10.1 and 20).
 - `--key c=pin`: in a terminal, pressing the character `c` presses the
   simulated GPIO input `pin` (the level goes to 0, then back to 1). Up to
   16 keys.
