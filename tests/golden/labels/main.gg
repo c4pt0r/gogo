@@ -1,0 +1,119 @@
+package main
+
+import "gogo/actor"
+
+func find(grid [][]int, want int) (int, int) {
+	r, c := -1, -1
+search:
+	for i, row := range grid {
+		for j, v := range row {
+			if v == want {
+				r, c = i, j
+				break search
+			}
+		}
+	}
+	return r, c
+}
+
+func main() {
+	// continue L in nested loops: skips the rest of the inner loop.
+outer:
+	for i := 0; i < 4; i++ {
+		for j := 0; j < 4; j++ {
+			if j > i {
+				continue outer
+			}
+			if i == 3 {
+				break outer
+			}
+			println(i, j)
+		}
+	}
+
+	grid := [][]int{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}
+	r, c := find(grid, 6)
+	println(r, c)
+	r, c = find(grid, 10)
+	println(r, c)
+
+	// Three levels; continue to the middle one, break from the innermost
+	// to the outermost.
+	n := 0
+top:
+	for a := 0; a < 3; a++ {
+	mid:
+		for b := 0; b < 3; b++ {
+			for c := 0; c < 3; c++ {
+				n++
+				if c == 1 {
+					continue mid
+				}
+				if a == 2 && b == 1 {
+					break top
+				}
+			}
+		}
+	}
+	println("n", n)
+
+	// break L leaves a loop from inside a switch (a plain break would only
+	// leave the switch).
+	k := 0
+loop:
+	for {
+		switch {
+		case k == 3:
+			break loop
+		default:
+			k++
+		}
+	}
+	println("k", k)
+
+	// A labeled switch: break L from a nested loop leaves the switch.
+sw:
+	switch k {
+	case 3:
+		for i := 0; ; i++ {
+			if i == 2 {
+				break sw
+			}
+			println("in switch", i)
+		}
+	}
+
+	// A labeled type switch inside a receive loop.
+	actor.Send(actor.Self(), 1)
+	actor.Send(actor.Self(), "stop")
+	actor.Send(actor.Self(), 2)
+recv:
+	for {
+	ts:
+		switch m := actor.Receive().(type) {
+		case int:
+			if m == 2 {
+				break ts
+			}
+			println("int", m)
+		case string:
+			println("got", m)
+			break recv
+		}
+	}
+	m, _ := actor.ReceiveTimeout(0)
+	println("left", m)
+
+	// Labeled range over a string, continue from an inner loop.
+	count := 0
+chars:
+	for _, ch := range "a,b,,c" {
+		for range 2 {
+			if ch == ',' {
+				continue chars
+			}
+			count++
+		}
+	}
+	println("count", count)
+}

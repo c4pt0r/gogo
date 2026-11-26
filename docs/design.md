@@ -155,22 +155,31 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   `cap`, indexing, element assignment and slicing; `len`, indexing and
   slicing of strings and `Bytes`.
 - Statements: `if`, `for` (three-clause, condition-only, infinite, and
-  `range` over a slice or a string), type `switch` over an `any` value,
-  `break` and `continue` (without labels), `return` with any number of
-  results (named or not), `const` and `iota`.
-- Functions with several results; func values called through `CALLV`.
+  `range` over a slice, a string or an integer), the expression `switch`
+  (tagged or not, several values per case, `fallthrough`) on integer,
+  `bool`, `string`, PID and Ref values, type `switch` over an `any`
+  value, `break` and `continue` (also labeled, on `for` and `switch`; no
+  `goto`), `return` with any number of results (named or not), `const`
+  and `iota`. The compiler lowers a switch to `EQ`/`EQ64` and `JMPT`
+  chains, and labels to jumps: no opcode of their own.
+- Functions with several results; variadic functions (the caller packs
+  the `...T` arguments into a new slice, the nil slice when there are
+  none, or passes the slice of `f(s...)` as it is); func values called
+  through `CALLV`.
+- `println` of any value of the subset except `Bytes` and `Buffer`;
+  slices print their elements, `[1 2 3]` (Go's `println` prints
+  `[len/cap]address`).
 - Programs: one `package main`, possibly in several files, plus the
   `gogo/...` libraries.
 
 **Not supported yet (planned for the "language completeness"
 milestone):** maps, methods, pointers, arrays, integer types other than
 `int`, `int64` and `byte` (`uint32` included), package-level variables,
-the expression `switch`, type assertions, `panic`, the `error` interface,
-assignment to struct fields, labeled statements, interfaces other than
-`any`, variadic functions and user packages (a program cannot import a
-package of its own). Each is rejected at compile time with a `<what> not
-supported` error (`compiler/check.go`). There is no `gogo/fmt` or
-`gogo/errors` package.
+a `switch` on an `any` or a struct value, type assertions, `panic`, the
+`error` interface, assignment to struct fields, interfaces other than
+`any` and user packages (a program cannot import a package of its own).
+Each is rejected at compile time with a `<what> not supported` error
+(`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 
 **Out of the design:** channels and `select`, the `go` statement (use
 `actor.Spawn`), generics, `defer` / `recover`, reflection, `unsafe`,

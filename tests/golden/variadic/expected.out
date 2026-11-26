@@ -1,0 +1,14 @@
+none 0 true 0
+three 3 false 6
+spread 3 false 15
+nil spread 0 true 0
+nil literal 0 true 0
+after set 99
+a 1
+int int64 string:x point 
+
+9 66
+0 3
+0 30
+w:a+b+c none:
+from actor 10

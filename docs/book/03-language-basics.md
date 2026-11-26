@@ -131,13 +131,14 @@ Go. `string(b)` and `[]byte(s)` convert between strings and byte slices
 
 ## 3.3 Control flow
 
-`if`/`else`, `for` in all its forms, `range` over slices and strings,
-`break`, `continue` and `return` work as in Go.
+`if`/`else`, `for` in all its forms, `range` over slices, strings and
+integers, `switch`, `break` and `continue` (also with labels) and `return`
+work as in Go.
 
 ```go
 // Control flow: if/else chains, the three for forms, range over slices and
-// strings, break and continue. There is no expression switch: use an
-// if/else chain (a type switch exists, see the actor chapter).
+// strings, break and continue. Switches, labels and range over an integer
+// follow in their own sections.
 package main
 
 func classify(n int) string {
@@ -214,19 +215,211 @@ o at 3
 half 12
 ```
 
-There are two things missing here that you may reach for:
+`range` over a string gives **bytes**, not runes: the subset never decodes
+UTF-8.
 
-- **No `switch` on values.** `switch x { case 1: ... }` is rejected
-  (`switch statement not supported`). Use an `if`/`else if` chain. The
-  *type* switch, `switch v := x.(type)`, is supported and is how actors
-  look at messages (chapter 4).
-- **No labels**, so no `goto`, `break outer` or `continue outer`
-  (`labeled statement not supported`). Move the inner loop into a function
-  and `return` from it.
+### Switch
 
-Also: `range` works over slices and strings, not over integers (`for i :=
-range 10` is rejected; write the three-part loop). `range` over a string
-gives **bytes**, not runes: the subset never decodes UTF-8.
+`switch` compares a value with each `case` in order and runs the first
+that matches. A case may list several values, a switch without a value
+runs the first case whose condition is true, an init statement can come
+before the value, and `fallthrough` at the end of a clause runs the next
+clause without testing it. As in Go, there is no implicit fall through, and
+a plain `break` leaves the switch.
+
+```go
+// Expression switch: a tag compared with each case, several values per
+// case, a switch with no tag, an init statement and fallthrough.
+package main
+
+type Code int
+
+const (
+	Ok Code = iota
+	Busy
+	Gone
+)
+
+func describe(c Code) string {
+	switch c {
+	case Ok:
+		return "ok"
+	case Busy, Gone:
+		return "try later"
+	default:
+		return "unknown"
+	}
+}
+
+func size(n int) string {
+	switch { // no tag: the first true case runs
+	case n < 0:
+		return "negative"
+	case n < 10:
+		return "small"
+	}
+	return "large"
+}
+
+func main() {
+	println(describe(Ok), describe(Gone), describe(7))
+	println(size(-1), size(3), size(50))
+
+	for _, cmd := range []string{"start", "stop", "jump"} {
+		switch s := cmd + "!"; s { // strings compare by content
+		case "start!":
+			println("starting")
+		case "stop!":
+			println("stopping")
+		default:
+			println("unknown", s)
+		}
+	}
+
+	// fallthrough runs the next clause's body without testing it.
+	switch level := 2; level {
+	case 2:
+		println("level 2")
+		fallthrough
+	case 1:
+		println("level 1")
+	}
+}
+```
+
+```text
+ok try later unknown
+negative small large
+starting
+stopping
+unknown jump!
+level 2
+level 1
+```
+
+The value can be an `int`, `int64`, `byte`, `bool`, `string`, a named type
+of one of them (`type Code int`), an `actor.PID` or an `actor.Ref`. A
+switch on an `any` value or on a struct is not supported yet (`switch on a
+value of type any not supported`). For messages in an `any`, use a *type*
+switch, `switch v := x.(type)`, which is how actors look at what they
+receive (chapter 4).
+
+### Labeled break and continue
+
+A label on a `for`, `range`, `switch` or type switch statement lets
+`break` and `continue` name it: `break search` leaves the labeled loop
+from inside an inner one, and `continue rows` starts its next pass.
+
+```go
+// Labeled break and continue: leave or restart an outer loop from an
+// inner one, or leave a loop from inside a switch.
+package main
+
+func main() {
+	grid := [][]int{{1, 3, 5}, {4, 5, 6}, {7, 9, 11}}
+
+	// break L leaves both loops at the first match.
+	found := false
+search:
+	for i, row := range grid {
+		for j, v := range row {
+			if v == 5 {
+				println("5 at", i, j)
+				found = true
+				break search
+			}
+		}
+	}
+	println("found", found)
+
+	// continue L goes on with the next row.
+rows:
+	for i, row := range grid {
+		for _, v := range row {
+			if v%2 == 0 {
+				println("row", i, "has an even number:", v)
+				continue rows
+			}
+		}
+		println("row", i, "is all odd")
+	}
+
+	// A plain break inside a switch leaves only the switch; break L
+	// leaves the loop.
+	n := 0
+loop:
+	for {
+		switch {
+		case n == 3:
+			break loop
+		default:
+			n++
+		}
+	}
+	println("n", n)
+}
+```
+
+```text
+5 at 0 2
+found true
+row 0 is all odd
+row 1 has an even number: 4
+row 2 is all odd
+n 3
+```
+
+`goto` is not supported (`goto statement not supported`), and neither is a
+label on any other statement.
+
+### range over an integer
+
+`for i := range n` runs `i` from 0 to `n-1`, as in Go 1.22. `n` is
+evaluated once, `i` has `n`'s type, and when `n` is zero or negative the
+body does not run.
+
+```go
+// range over an integer: for i := range n runs i from 0 to n-1.
+package main
+
+func main() {
+	for i := range 3 {
+		println("pass", i)
+	}
+
+	// No variable: just repeat.
+	dots := ""
+	for range 4 {
+		dots += "."
+	}
+	println(dots)
+
+	// n is evaluated once; zero or a negative n runs no pass.
+	n := 0
+	for range n {
+		println("never")
+	}
+	for i := range -2 {
+		println("never", i)
+	}
+
+	// i has n's type.
+	var big int64 = 3
+	var total int64
+	for i := range big {
+		total += i << 32
+	}
+	println(total)
+}
+```
+
+```text
+pass 0
+pass 1
+pass 2
+....
+12884901888
+```
 
 ## 3.4 Functions and closures
 
@@ -387,9 +580,67 @@ Similarly, a named result that a closure captures must not be set by a
 use unnamed results`).
 
 Function values have a few more limits: they cannot be compared (not even
-with `nil`), cannot be put into `any`, and variadic functions (`...T`) are
-not supported. Calling a nil function value crashes the calling actor with
-`badcode`.
+with `nil`) and cannot be put into `any`. Calling a nil function value
+crashes the calling actor with `badcode`.
+
+### Variadic functions
+
+A function's last parameter can be `...T`: inside the function it is a
+`[]T`. Callers pass any number of `T` values, which go into a new slice,
+or none (the parameter is then a nil slice), or an existing slice with
+`s...`, which the function receives as it is, sharing its array, as in Go.
+Func literals and func values can be variadic too.
+
+```go
+// Variadic functions: a final ...T parameter is a []T; callers pass
+// separate values, none at all, or a slice with s...
+package main
+
+func sum(xs ...int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+func join(sep string, parts ...string) string {
+	s := ""
+	for i, p := range parts {
+		if i > 0 {
+			s += sep
+		}
+		s += p
+	}
+	return s
+}
+
+func main() {
+	println(sum(), sum(1, 2, 3))
+	nums := []int{10, 20, 30}
+	println(sum(nums...))
+	println(join(", ", "a", "b", "c"))
+	println(join(", ") == "")
+
+	// With no values the parameter is a nil slice.
+	count := func(xs ...int) bool { return xs == nil }
+	println(count(), count(1))
+
+	// s... passes the slice itself: the function sees the same array.
+	zero := func(xs ...int) { xs[0] = 0 }
+	zero(nums...)
+	println(nums[0])
+}
+```
+
+```text
+0 6
+60
+a, b, c
+true
+true false
+0
+```
 
 ## 3.5 Structs, and why there are no methods
 
@@ -558,6 +809,44 @@ never reads or writes outside the slice. Slice literals cannot use keys
 (`[]int{2: 5}`), and three-index slices (`s[a:b:c]`) are not supported.
 Index assignment works on slices (`s[i] = v`), including through a struct
 field (`m.Items[i] = v`); strings are immutable, as in Go.
+
+### Printing slices
+
+`println` prints a slice as its elements in brackets, the way it prints a
+struct's fields in braces. A nil or empty slice prints as `[]`, and a
+`[]byte` prints its bytes as numbers.
+
+```go
+// println prints a slice's elements, like a struct's fields. Go's println
+// prints a slice as [len/cap]address instead.
+package main
+
+type Point struct{ X, Y int }
+
+func main() {
+	println([]int{1, 2, 3})
+	var none []string
+	println(none, len(none))
+	println([]string{"a", "b"}, []bool{true})
+	println([]byte("hi")) // bytes print as numbers
+	println([]Point{{1, 2}, {3, 4}})
+	println([][]int{{1}, {2, 3}})
+}
+```
+
+```text
+[1 2 3]
+[] 0
+[a b] [true]
+[104 105]
+[{1 2} {3 4}]
+[[1] [2 3]]
+```
+
+This differs from Go: Go's `println` prints any slice as its length,
+capacity and the address of its array, `[3/3]0xc000014090`; only
+`fmt.Println` prints the elements. gogo has no addresses to show, so it
+prints what `fmt.Println` would.
 
 ## 3.7 Strings, strconv and strings
 
@@ -801,10 +1090,10 @@ func main() {
 	m := map[string]int{} // map
 	p := &Sq{2}           // pointer
 	x := 1.5              // float
-	switch counter {      // expression switch
-	case 0:
-		println("zero")
+	if counter > 0 {
+		goto done // goto
 	}
+done:
 	var a [4]int // array
 	s := Sq{1}
 	s.S = 2 // field assignment
@@ -826,7 +1115,8 @@ main.gg:23:2: gogo: defer statement not supported
 main.gg:24:7: gogo: map not supported
 main.gg:25:7: gogo: pointer not supported
 main.gg:26:7: gogo: float not supported
-main.gg:27:2: gogo: switch statement not supported
+main.gg:28:3: gogo: goto statement not supported
+main.gg:30:1: gogo: label on a statement other than for or switch not supported
 main.gg:31:8: gogo: array not supported
 main.gg:33:2: gogo: field assignment not supported
 main.gg:34:10: gogo: map not supported
@@ -852,32 +1142,30 @@ The full list, with what to do instead:
 | methods | `method not supported` | functions taking the struct |
 | your own interfaces | `type definition other than struct or int, int64, bool, string not supported` | function values, or messages and a type switch |
 | `p.X = v` | `field assignment not supported` | build a new struct |
-| `switch x {...}` | `switch statement not supported` | `if`/`else if` chain |
+| `switch` on an `any` or a struct | `switch on a value of type any not supported` | a type switch; compare fields |
 | type assertion `x.(T)` | `type assertion not supported` (and `multi-value assignment not supported` for `v, ok := x.(T)`) | a type switch |
-| labels, `goto` | `labeled statement not supported` | functions and `return` |
+| `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
 | `float32/64` | `float not supported` | integers (fixed point: millivolts, percent) |
 | `uint32`, `int16`, ... | `uint32 not supported` | `int`, `int64`, `byte` |
 | generics | `generic function not supported` | write the function per type |
 | `fmt`, other std packages | `import "fmt" not supported` | `println`, `gogo/strconv` |
-| `range 10` | `range over int not supported` | `for i := 0; i < 10; i++` |
 | `struct == struct` | `comparison of main.P not supported` | compare fields |
-| `println(slice)` | `println of a slice not supported` | print the elements |
 | `func init()` | `func init not supported` | call it from `main` |
 | embedded fields | `embedded field not supported` | a named field |
-| variadic functions `f(xs ...int)` | `Ellipsis not supported` | pass a slice |
 
 > **Note.** Struct methods, maps, arrays, pointers, `uint32`,
-> package-level variables, the `error` interface, `panic`, type assertions
-> and the expression `switch` are not supported yet. They are planned for
+> package-level variables, the `error` interface, `panic` and type
+> assertions are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see
 > `docs/design.md` §5.2).
 
 ### Small surprises
 
 - `println` accepts any number of `int`, `int64`, `bool`, `string`, PID,
-  Ref and struct arguments (structs print as `{1 2}`), but not slices,
-  `Bytes` or `Buffer` (use `.String()`), and not a multi-result call
-  (`println(divmod(7, 2))` is `multiple values not supported`).
+  Ref, struct and slice arguments (structs print as `{1 2}`, slices as
+  `[1 2]`, unlike Go), but not `Bytes` or `Buffer` (use `.String()`), and
+  not a multi-result call (`println(divmod(7, 2))` is `multiple values not
+  supported`).
 - A two-result gogo builtin cannot be a statement on its own: `actor.
   Call(p, req, 100)` on a line by itself is rejected with `multiple values
   not supported`. Write `_, _ = actor.Call(p, req, 100)`. Your own

@@ -142,7 +142,7 @@ func (c *checker) typeProblem(t types.Type) string {
 	case *types.Signature:
 		// Any signature: its parameter and result types must be of the
 		// subset (a named struct referring back to itself is fine).
-		if t.Variadic() || t.TypeParams() != nil || t.Recv() != nil {
+		if t.TypeParams() != nil || t.Recv() != nil {
 			return "func type " + types.TypeString(t, pkgName)
 		}
 		for _, tup := range []*types.Tuple{t.Params(), t.Results()} {
@@ -224,6 +224,10 @@ func (c *checker) fieldList(fl *ast.FieldList) {
 		return
 	}
 	for _, f := range fl.List {
+		if ell, ok := f.Type.(*ast.Ellipsis); ok { // xs ...T: a []T parameter
+			c.typeExpr(ell.Elt)
+			continue
+		}
 		c.typeExpr(f.Type)
 	}
 }
@@ -564,9 +568,19 @@ func (c *checker) stmt(s ast.Stmt) {
 		}
 		c.block(s.Body)
 	case *ast.BranchStmt:
-		if (s.Tok != token.BREAK && s.Tok != token.CONTINUE) || s.Label != nil {
+		if s.Tok != token.BREAK && s.Tok != token.CONTINUE && s.Tok != token.FALLTHROUGH {
 			c.unsupported(s, strings.TrimSpace(s.Tok.String()+" statement"))
 		}
+	case *ast.LabeledStmt:
+		switch s.Stmt.(type) {
+		case *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt:
+			c.stmt(s.Stmt)
+		default:
+			c.unsupported(s, "label on a statement other than for or switch")
+			c.stmt(s.Stmt)
+		}
+	case *ast.SwitchStmt:
+		c.switchStmt(s)
 	case *ast.TypeSwitchStmt:
 		c.typeSwitch(s)
 	case *ast.RangeStmt:
@@ -775,6 +789,36 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 	}
 }
 
+// switchStmt checks an expression switch: tagged (`switch x { case 1, 2: }`)
+// or tagless (`switch { case x > 0: }`), with an optional init statement.
+// The tag and every case value must be comparable with ==: a switch on an
+// interface or a struct value is not supported yet.
+func (c *checker) switchStmt(s *ast.SwitchStmt) {
+	if s.Init != nil {
+		c.stmt(s.Init)
+	}
+	if s.Tag != nil {
+		if t := c.p.Info.TypeOf(s.Tag); !c.comparable(t) {
+			c.unsupported(s.Tag, "switch on a value of type "+types.TypeString(t, pkgName))
+			return
+		}
+		c.expr(s.Tag)
+	}
+	for _, cl := range s.Body.List {
+		cc := cl.(*ast.CaseClause)
+		for _, e := range cc.List {
+			if t := c.p.Info.TypeOf(e); s.Tag != nil && !c.comparable(t) {
+				c.unsupported(e, "switch case of type "+types.TypeString(t, pkgName))
+				continue
+			}
+			c.expr(e)
+		}
+		for _, b := range cc.Body {
+			c.stmt(b)
+		}
+	}
+}
+
 // caseType reports whether t is an allowed type switch case: a struct type,
 // int, int64, bool, string, actor.PID, actor.Ref or bytes.Bytes (not
 // bytes.Buffer, which has no type id).
@@ -912,8 +956,10 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 		}
 	}
 	if call.Ellipsis.IsValid() && !c.isBuiltin(call, "append") {
-		c.unsupported(call, "variadic call")
-		return
+		if sig, ok := underlying(c.p.Info.TypeOf(call.Fun)).(*types.Signature); !ok || !sig.Variadic() {
+			c.unsupported(call, "variadic call")
+			return
+		}
 	}
 	if funcValueCall(c.p.Info, call) { // f(x), s.F(x), hs[i](x), mk()(x)
 		c.expr(call.Fun)
@@ -937,10 +983,6 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 				c.noFuncInAny(a)
 				if c.multiCall(a) != nil {
 					c.unsupported(a, "multiple values") // println(f())
-					return
-				}
-				if isSlice(c.p.Info.TypeOf(a)) {
-					c.unsupported(a, "println of a slice")
 					return
 				}
 				if t := c.p.Info.TypeOf(a); isBytes(t) || isBuffer(t) {
@@ -999,11 +1041,33 @@ func (c *checker) args(call *ast.CallExpr, first int) {
 	}
 	for i := first; i < len(call.Args); i++ {
 		a := call.Args[i]
-		if sig != nil && !sig.Variadic() && i < sig.Params().Len() {
-			c.convert(sig.Params().At(i).Type(), a)
+		if t := paramType(sig, i, call.Ellipsis.IsValid()); t != nil {
+			c.convert(t, a)
 		}
 		c.expr(a)
 	}
+}
+
+// paramType is the type argument i of a call of a function of signature
+// sig goes into, or nil (sig nil, or no such parameter). The arguments of
+// a variadic function from its last parameter on are elements of that
+// parameter's slice, unless the call spreads a slice into it (spread).
+func paramType(sig *types.Signature, i int, spread bool) types.Type {
+	if sig == nil {
+		return nil
+	}
+	n := sig.Params().Len()
+	if sig.Variadic() && i >= n-1 {
+		last := sig.Params().At(n - 1).Type()
+		if spread {
+			return last
+		}
+		return sliceElem(last)
+	}
+	if i < n {
+		return sig.Params().At(i).Type()
+	}
+	return nil
 }
 
 func (c *checker) expr(e ast.Expr) {
@@ -1248,11 +1312,11 @@ func (c *checker) sliceExpr(e *ast.SliceExpr) {
 }
 
 // rangeStmt checks `for i, c := range s` (also with one variable, blanks, or
-// none) over a string or a slice. A string ranges over bytes, not runes: i
-// is the byte index and c the byte value (typed rune, an int32, as in Go;
-// gogo's rune is an int).
+// none) over a string or a slice, and `for i := range n` over an integer. A
+// string ranges over bytes, not runes: i is the byte index and c the byte
+// value (typed rune, an int32, as in Go; gogo's rune is an int).
 func (c *checker) rangeStmt(s *ast.RangeStmt) {
-	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) {
+	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) && !isInteger(xt) {
 		c.unsupported(s, "range over "+types.TypeString(c.p.Info.TypeOf(s.X), nil))
 		return
 	}
@@ -1271,6 +1335,13 @@ func (c *checker) rangeStmt(s *ast.RangeStmt) {
 	}
 	c.expr(s.X)
 	c.block(s.Body)
+}
+
+// isInteger reports whether t's underlying type is an integer type (or an
+// untyped integer constant): `for i := range n`.
+func isInteger(t types.Type) bool {
+	b, ok := underlying(t).(*types.Basic)
+	return ok && b.Info()&types.IsInteger != 0
 }
 
 // isSlice reports whether t's underlying type is a slice.

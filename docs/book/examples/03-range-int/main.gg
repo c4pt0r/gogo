@@ -1,0 +1,32 @@
+// range over an integer: for i := range n runs i from 0 to n-1.
+package main
+
+func main() {
+	for i := range 3 {
+		println("pass", i)
+	}
+
+	// No variable: just repeat.
+	dots := ""
+	for range 4 {
+		dots += "."
+	}
+	println(dots)
+
+	// n is evaluated once; zero or a negative n runs no pass.
+	n := 0
+	for range n {
+		println("never")
+	}
+	for i := range -2 {
+		println("never", i)
+	}
+
+	// i has n's type.
+	var big int64 = 3
+	var total int64
+	for i := range big {
+		total += i << 32
+	}
+	println(total)
+}
