@@ -1,0 +1,42 @@
+// The watcher monitors the server's echo, then loses the server.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/sys"
+)
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	if !node.Connect(addr, "w") {
+		println("connect failed")
+		return
+	}
+	node.Subscribe()
+	echo, _ := node.Whereis("server", "echo", 2000)
+	ref := actor.Monitor(echo)
+	actor.TrapExit(true)
+	actor.Link(echo)
+	println("w ready")
+	n := 0
+	for n < 3 {
+		m, ok := actor.ReceiveTimeout(10000)
+		if !ok {
+			println("timeout")
+			return
+		}
+		switch e := m.(type) {
+		case actor.DownMsg:
+			println("down", e.Ref == ref, e.Reason.Code)
+			n++
+		case actor.ExitMsg:
+			println("exit", e.Reason.Code)
+			n++
+		case node.Down:
+			println("node down", e.Node)
+			n++
+		}
+	}
+	println("connect again", node.Connect(addr, "w"))
+}

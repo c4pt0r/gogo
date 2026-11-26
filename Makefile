@@ -583,7 +583,7 @@ test-tls-asan:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls
 	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_net
 	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_tls
-	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/ ./tests/dist/
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)

@@ -1,0 +1,13 @@
+// Board c has the wrong token.
+package main
+
+import (
+	"gogo/node"
+	"gogo/sys"
+)
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	println("connect", node.ConnectOpt(addr, node.Options{Name: "c", Token: "not the token", TimeoutMs: 2000}))
+	println("self", node.Self() == "")
+}

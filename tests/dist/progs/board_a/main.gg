@@ -1,0 +1,115 @@
+// Board a: remote Send, Call, monitors, links, the relay to board b and
+// b's loss, and a value that may not leave the node.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/node"
+	"gogo/sys"
+)
+
+type Ping struct {
+	From actor.PID
+	N    int
+}
+
+type Pong struct {
+	N    int
+	Node string
+}
+
+// next returns the next message other than node.Up (at most 5 s).
+func next() any {
+	for {
+		m, ok := actor.ReceiveTimeout(5000)
+		if !ok {
+			println("timeout")
+			return "timeout"
+		}
+		switch m.(type) {
+		case node.Up:
+			continue
+		}
+		return m
+	}
+}
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	println("connect", node.Connect(addr, "a"), node.Self())
+	nodes := node.Nodes()
+	println("nodes", len(nodes))
+	echo, ok := node.Whereis("server", "echo", 2000)
+	println("whereis echo", ok, echo != actor.Self())
+	_, ok = node.Whereis("server", "nobody", 2000)
+	println("whereis nobody", ok)
+	r, ok := actor.Call(echo, "hi", 2000)
+	println("call", ok, r)
+	r, ok = actor.Call(echo, []int{1, 2, 3}, 2000)
+	println("call slice", ok)
+	actor.Send(echo, Ping{From: actor.Self(), N: 41})
+	switch m := next().(type) {
+	case Pong:
+		println("pong", m.N, m.Node)
+	}
+	echo2, _ := node.Whereis("server", "echo", 2000)
+	println("same pid", echo2 == echo)
+
+	v, _ := node.Whereis("server", "victim", 2000)
+	ref := actor.Monitor(v)
+	actor.Send(v, "die")
+	switch m := next().(type) {
+	case actor.DownMsg:
+		println("down", m.Ref == ref, m.From == v, m.Reason.Code)
+	}
+
+	v2, _ := node.Whereis("server", "victim2", 2000)
+	actor.TrapExit(true)
+	actor.Link(v2)
+	actor.Send(v2, "die")
+	switch m := next().(type) {
+	case actor.ExitMsg:
+		println("exit", m.From == v2, m.Reason.Code)
+	}
+
+	// A value that may not leave the node: the sender crashes with BadMsg.
+	h := actor.Spawn(func() {
+		b := bytes.NewBuffer(4)
+		actor.Send(echo, b)
+	})
+	hr := actor.Monitor(h)
+	switch m := next().(type) {
+	case actor.DownMsg:
+		println("badmsg", m.Ref == hr, m.Reason.Code == actor.BadMsg)
+	}
+
+	// Board b through the relay, then its loss.
+	node.Subscribe()
+	be, ok := node.Whereis("b", "becho", 2000)
+	println("whereis becho", ok)
+	r, ok = actor.Call(be, "hello", 2000)
+	println("relay call", ok, r)
+	bref := actor.Monitor(be)
+	println("a waiting")
+	gotDown, gotNode := false, false
+	for !gotDown || !gotNode {
+		m, ok := actor.ReceiveTimeout(10000)
+		if !ok {
+			println("timeout")
+			return
+		}
+		switch e := m.(type) {
+		case actor.DownMsg:
+			println("b down", e.Ref == bref, e.Reason.Code == actor.NoConnection)
+			gotDown = true
+		case node.Down:
+			println("node down", e.Node)
+			gotNode = true
+		}
+	}
+	println("nodes", len(node.Nodes()))
+	actor.Send(be, "lost") // a stale PID: dropped
+	node.Disconnect()
+	println("done")
+}

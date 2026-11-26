@@ -1,0 +1,214 @@
+// Package disttest runs distributed-actor scenarios (gogo/node): a server
+// node and boards as separate VMs ($GOGO_VM --host-net) talking real TCP
+// on 127.0.0.1. Each program prints what it saw; the test compares.
+package disttest
+
+import (
+	"bufio"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"gogotools/compiler"
+)
+
+const token = "a long shared test token"
+
+// node is one VM process.
+type node struct {
+	t     *testing.T
+	name  string
+	cmd   *exec.Cmd
+	mu    sync.Mutex
+	lines []string
+	more  chan struct{}
+	done  chan struct{}
+	err   error
+	errs  string // stderr (crash reports), logged on failure
+}
+
+func build(t *testing.T, prog string) string {
+	t.Helper()
+	p, err := compiler.Load(filepath.Join("progs", prog))
+	if err != nil {
+		t.Fatalf("load %s: %v", prog, err)
+	}
+	img, err := compiler.Compile(p)
+	if err != nil {
+		t.Fatalf("compile %s: %v", prog, err)
+	}
+	out := filepath.Join(t.TempDir(), prog+".ggb")
+	if err := os.WriteFile(out, img, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// start runs prog with the config lines cfg (node.token is added unless
+// cfg sets it).
+func start(t *testing.T, prog string, cfg ...string) *node {
+	t.Helper()
+	vm := os.Getenv("GOGO_VM")
+	if vm == "" {
+		t.Fatal("GOGO_VM is not set: run `make test-go`, or build the VM with `make vm` and set GOGO_VM=$PWD/build/gogovm")
+	}
+	conf := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(conf, []byte(strings.Join(append(cfg, "node.token="+token), "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n := &node{t: t, name: prog, more: make(chan struct{}, 1), done: make(chan struct{})}
+	n.cmd = exec.Command(vm, "--host-net", build(t, prog))
+	n.cmd.Env = append(os.Environ(), "GOGO_CONFIG="+conf)
+	out, err := n.cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr strings.Builder
+	n.cmd.Stderr = &stderr
+	if err := n.cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		sc := bufio.NewScanner(out)
+		for sc.Scan() {
+			n.mu.Lock()
+			n.lines = append(n.lines, sc.Text())
+			n.mu.Unlock()
+			select {
+			case n.more <- struct{}{}:
+			default:
+			}
+		}
+		n.err = n.cmd.Wait()
+		n.errs = stderr.String()
+		close(n.done)
+	}()
+	t.Cleanup(func() {
+		n.cmd.Process.Kill()
+		<-n.done
+		if t.Failed() {
+			t.Logf("--- %s ---\n%s\n--- %s stderr ---\n%s", n.name, strings.Join(n.output(), "\n"), n.name, n.errs)
+		}
+	})
+	return n
+}
+
+func (n *node) output() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]string(nil), n.lines...)
+}
+
+// waitLine waits until the node printed line.
+func (n *node) waitLine(line string) {
+	n.t.Helper()
+	deadline := time.After(15 * time.Second)
+	for {
+		for _, l := range n.output() {
+			if l == line {
+				return
+			}
+		}
+		select {
+		case <-n.more:
+		case <-n.done:
+			for _, l := range n.output() {
+				if l == line {
+					return
+				}
+			}
+			n.t.Fatalf("%s exited (%v) without printing %q", n.name, n.err, line)
+		case <-deadline:
+			n.t.Fatalf("%s: no %q within 15 s", n.name, line)
+		}
+	}
+}
+
+// finish waits for the node to exit by itself and compares its output.
+func (n *node) finish(want string) {
+	n.t.Helper()
+	select {
+	case <-n.done:
+	case <-time.After(20 * time.Second):
+		n.t.Fatalf("%s still running", n.name)
+	}
+	if got := strings.Join(n.output(), "\n") + "\n"; got != want {
+		n.t.Errorf("%s output\n--- got ---\n%s--- want ---\n%s", n.name, got, want)
+	}
+}
+
+func (n *node) kill() {
+	n.cmd.Process.Signal(syscall.SIGKILL)
+	<-n.done
+}
+
+func freePort(t *testing.T) int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// A server and three boards: remote Send and Call, own types by name, a
+// slice, Monitor and Link with the remote exit code, a value that may not
+// leave its node, the relay between boards, a refused token, and a lost
+// board.
+func TestStar(t *testing.T) {
+	port := freePort(t)
+	addr := fmt.Sprintf("test.server=127.0.0.1:%d", port)
+	srv := start(t, "server", fmt.Sprintf("test.port=%d", port))
+	srv.waitLine("listening")
+	b := start(t, "board_b", addr)
+	b.waitLine("b ready")
+	c := start(t, "board_c", addr)
+	c.finish("connect false\nself true\n")
+	a := start(t, "board_a", addr)
+	a.waitLine("a waiting")
+	b.kill()
+	a.finish(`connect true a
+nodes 2
+whereis echo true true
+whereis nobody false
+call true hi
+call slice true
+pong 42 server
+same pid true
+down true true 123
+exit true 124
+badmsg true true
+whereis becho true
+relay call true hello from b
+a waiting
+b down true true
+node down b
+nodes 1
+done
+`)
+	srv.waitLine("down a")
+	for _, l := range srv.output() {
+		if l == "up c" {
+			t.Error("the server let board c in with a wrong token")
+		}
+	}
+}
+
+// A board loses the server: its monitor and link of a server actor fire
+// with NoConnection, and node.Down names the server; it can connect again.
+func TestServerLost(t *testing.T) {
+	port := freePort(t)
+	srv := start(t, "server", fmt.Sprintf("test.port=%d", port))
+	srv.waitLine("listening")
+	w := start(t, "watcher", fmt.Sprintf("test.server=127.0.0.1:%d", port))
+	w.waitLine("w ready")
+	srv.kill()
+	w.finish("w ready\ndown true 11\nexit 11\nnode down server\nconnect again false\n")
+}

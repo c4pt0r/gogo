@@ -1,0 +1,67 @@
+// The server node of the distribution tests: echo, victim and victim2
+// are reachable by name; joins and losses are printed.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/strconv"
+	"gogo/sys"
+)
+
+// Ping and Pong cross nodes by name and field count: the boards declare
+// the same types.
+type Ping struct {
+	From actor.PID
+	N    int
+}
+
+type Pong struct {
+	N    int
+	Node string
+}
+
+func echo() {
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.Request:
+			actor.Reply(m, m.Body)
+		case Ping:
+			actor.Send(m.From, Pong{N: m.N + 1, Node: "server"})
+		}
+	}
+}
+
+// victim exits with code when it gets "die".
+func victim(code int) {
+	for {
+		switch m := actor.Receive().(type) {
+		case string:
+			if m == "die" {
+				actor.Exit(code)
+			}
+		}
+	}
+}
+
+func main() {
+	p, _ := sys.Config("test.port")
+	port, _ := strconv.Atoi(p)
+	node.Subscribe()
+	if !node.Listen(port, "server") {
+		println("listen failed")
+		return
+	}
+	node.Register("echo", actor.Spawn(echo))
+	node.Register("victim", actor.Spawn(func() { victim(123) }))
+	node.Register("victim2", actor.Spawn(func() { victim(124) }))
+	println("listening")
+	for {
+		switch m := actor.Receive().(type) {
+		case node.Up:
+			println("up", m.Node)
+		case node.Down:
+			println("down", m.Node)
+		}
+	}
+}
