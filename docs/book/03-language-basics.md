@@ -316,8 +316,8 @@ func main() {
 	println("math:", math.Sqrt(2), math.Floor(-x), math.Round(2.5), math.Pi)
 
 	s := strconv.FormatFloat(math.Pi, 'f', 3, 64)
-	v, ok := strconv.ParseFloat("6.02e23", 64)
-	println("strconv:", s, v, ok)
+	v, err := strconv.ParseFloat("6.02e23", 64)
+	println("strconv:", s, v, err == nil)
 }
 ```
 
@@ -350,8 +350,8 @@ strconv: 3.142 6.02e+23 true
   `IsInf`, `Max`, `Min` and Go's constants (`Pi`, `E`, `MaxFloat64`, ...);
   `Pow`, `Exp`, `Log` and the trigonometric functions are not there yet.
   `strconv.FormatFloat` and `strconv.ParseFloat` work as in Go, except
-  that `ParseFloat` returns `ok bool` instead of an error (`false`, with
-  `±Inf`, when the value is out of range) and `FormatFloat` has no
+  that `ParseFloat`'s error is `errors.BadFormat` or `errors.Overflow`
+  (with `±Inf`, when the value is out of range) and `FormatFloat` has no
   `'x'` format. Both are exact, on the board as on your computer.
 - **Cost.** Every float is a small heap object (8 or 12 bytes), so each
   arithmetic result allocates; keep tight loops on integers where you
@@ -444,8 +444,8 @@ func main() {
 
 	println("crc32:", crc32("hello"), strconv.FormatUint(uint64(crc32("hello")), 16))
 	println("fnv1a:", fnv1a("gogo"))
-	v, ok := strconv.ParseUint("18446744073709551615", 10, 64)
-	println("parse:", v, ok)
+	v, err := strconv.ParseUint("18446744073709551615", 10, 64)
+	println("parse:", v, err == nil)
 }
 ```
 
@@ -1639,7 +1639,9 @@ rest:
   `FormatUint`, `ParseUint`, `ParseInt` (with a bit size).
 
 All of them work on bytes. `ToLower`, `EqualFold` and `TrimSpace` know only
-ASCII. Parse functions return `(value, ok bool)` instead of an error.
+ASCII. `Atoi` has Go's signature, `(int, error)`, the error
+`errors.BadFormat` or `errors.Overflow`; `ParseInt64`, gogo's own, returns
+`(value, ok bool)`.
 
 ```go
 // Strings are immutable byte sequences. gogo/strings and gogo/strconv
@@ -1663,10 +1665,10 @@ func main() {
 	println(strings.EqualFold("Content-Length", "content-length"))
 
 	// Numbers and strings.
-	n, ok := strconv.Atoi("-1234")
-	println(n, ok)
-	_, ok = strconv.Atoi("12x")
-	println(ok)
+	n, err := strconv.Atoi("-1234")
+	println(n, err == nil)
+	_, err = strconv.Atoi("12x")
+	println(err.Error())
 	println(strconv.Itoa(99) + " bottles")
 	println(strconv.FormatInt64(255, 16), strconv.FormatInt64(-5, 2))
 	big, ok := strconv.ParseInt64("9000000000", 10)
@@ -1684,7 +1686,7 @@ GET true true true
 16 4 get
 true
 -1234 true
-false
+bad format
 99 bottles
 ff -101
 9000000000 true
@@ -1925,8 +1927,8 @@ func parsePercent(s string) (int, error) {
 	if s == "" {
 		return 0, ErrEmpty
 	}
-	n, ok := strconv.Atoi(s)
-	if !ok {
+	n, err := strconv.Atoi(s)
+	if err != nil {
 		return 0, errors.New("not a number: " + s)
 	}
 	if n < 0 || n > 100 {

@@ -3,7 +3,7 @@ GET true true true
 16 4 get
 true
 -1234 true
-false
+bad format
 99 bottles
 ff -101
 9000000000 true

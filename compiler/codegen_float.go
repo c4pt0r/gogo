@@ -40,7 +40,7 @@ var floatOps = map[string]int32{
 	"math.Abs": FloatAbs, "math.Copysign": FloatCopysign, "math.Signbit": FloatSignbit,
 	"math.Inf": FloatInf, "math.NaN": FloatNaN, "math.IsNaN": FloatIsNaN, "math.IsInf": FloatIsInf,
 	"math.Max": FloatMax, "math.Min": FloatMin,
-	"strconv.FormatFloat": FloatFormat, "strconv.ParseFloat": FloatParse,
+	"strconv.FormatFloat": FloatFormat, "strconv.parseFloat": FloatParse,
 }
 
 // floatCall compiles a call of a gogo/math function or a strconv float

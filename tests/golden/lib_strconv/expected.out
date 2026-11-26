@@ -5,29 +5,29 @@
 7fffffffffffffff -8000000000000000
 -1000000000000000000000000000000000000000000000000000000000000000
 1y2p0ij32e8e7 -1y2p0ij32e8e8 1 -1 4294967296
-atoi 0 0 true
-atoi 42 42 true
-atoi -42 -42 true
-atoi +42 42 true
-atoi 007 7 true
-atoi -0 0 true
-atoi 2147483647 2147483647 true
-atoi 2147483648 0 false
-atoi -2147483648 -2147483648 true
-atoi -2147483649 0 false
-atoi 99999999999999999999 0 false
-atoi  0 false
-atoi - 0 false
-atoi + 0 false
-atoi  1 0 false
-atoi 1  0 false
-atoi 1_000 0 false
-atoi 0x10 0 false
-atoi 12a 0 false
-atoi a12 0 false
-atoi --1 0 false
-atoi +-1 0 false
-atoi 1.5 0 false
+atoi 0 0
+atoi 42 42
+atoi -42 -42
+atoi +42 42
+atoi 007 7
+atoi -0 0
+atoi 2147483647 2147483647
+atoi 2147483648 2147483647 error: too large
+atoi -2147483648 -2147483648
+atoi -2147483649 -2147483648 error: too large
+atoi 99999999999999999999 2147483647 error: too large
+atoi  0 error: bad format
+atoi - 0 error: bad format
+atoi + 0 error: bad format
+atoi  1 0 error: bad format
+atoi 1  0 error: bad format
+atoi 1_000 0 error: bad format
+atoi 0x10 0 error: bad format
+atoi 12a 0 error: bad format
+atoi a12 0 error: bad format
+atoi --1 0 error: bad format
+atoi +-1 0 error: bad format
+atoi 1.5 0 error: bad format
 parse 9223372036854775807 10 9223372036854775807 true
 parse 9223372036854775808 10 0 false
 parse -9223372036854775808 10 -9223372036854775808 true

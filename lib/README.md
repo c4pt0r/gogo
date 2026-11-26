@@ -31,10 +31,9 @@ Two kinds of package:
   importing a system package costs nothing by itself. The marks are read
   by `marks.add` in `compiler/load.go`; they are for the `gogo/`
   libraries only.
-  A library may hold such functions too:
-  `strconv.FormatFloat` and `ParseFloat` (`lib/strconv/float.gg`) are
-  compiler intrinsics (`strconvIntrinsics` in `compiler/check.go`), never
-  compiled, so the rest of `gogo/strconv` needs no float support.
+  `gogo/strconv` is one: its `FormatFloat` and the parser under
+  `ParseFloat` (`lib/strconv/float.gg`) are `B_FLOAT` builtins, so the
+  rest of `gogo/strconv` needs no float support.
 - **library**: written in the gogo subset and compiled into every image that
   imports it (no dead-function elimination). A library may import system
   packages and other libraries, without cycles, but not a user package (a
@@ -94,7 +93,7 @@ declares `kbd`. Book chapter
 | `gogo/math` | system | | `float`, as any use of floats (the functions are `B_FLOAT`, `runtime/floatlib`; a constant used only as an integer, `int(math.MaxInt32)`, requires nothing) |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |
-| `gogo/strconv` | library | | none; `float` when `FormatFloat` or `ParseFloat` is called (compiler intrinsics: `B_FLOAT`, their bodies are never compiled). `FormatUint`, `ParseUint` and `ParseInt` (`unsigned.gg`) are compiled in only when called (`//gogo:ondemand`) and written with `int64` operations, so they never need image format 15.3 |
+| `gogo/strconv` | system | errors | none; `float` when `FormatFloat` or `ParseFloat` is called (builtins: `B_FLOAT`). `FormatUint`, `ParseUint` and `ParseInt` (`unsigned.gg`) are written with `int64` operations, so they never need the sized integers' image format 15.3 |
 | `gogo/dhcp` | library | actor, bytes, net, port, sys | `netif`, `udp` |
 | `gogo/dns` | library | actor, bytes, net, port | `udp` |
 | `gogo/http` | library | actor, bytes, dns, errors, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |

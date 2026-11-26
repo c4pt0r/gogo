@@ -366,9 +366,10 @@ the requirement `float`):
 - `gogo/math` (a stub: `Sqrt`, `Floor`, `Ceil`, `Trunc`, `Round`,
   `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
   `IsInf`, `Max`, `Min`, the constants) and `strconv.FormatFloat` /
-  `ParseFloat` (compiler intrinsics: the calls are builtins, their
-  bodies never compiled, so a program that imports strconv for `Atoi`
-  needs no float support) are the `B_FLOAT` builtin in
+  `ParseFloat` (builtins of the system package `gogo/strconv`, which is
+  compiled only where used, so a program that imports strconv for `Atoi`
+  needs no float support; `ParseFloat` is library code that turns the
+  builtin's bool into Go's error) are the `B_FLOAT` builtin in
   `runtime/floatlib`, outside the VM core, without libm and without the C
   library's conversions: `ParseFloat` parses Go's syntax (underscores
   included) and rounds exactly on the same bignum, at either width (a

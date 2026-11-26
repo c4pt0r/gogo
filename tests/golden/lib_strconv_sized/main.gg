@@ -3,14 +3,21 @@ package main
 
 import "gogo/strconv"
 
+func why(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return err.Error()
+}
+
 func pu(s string, base, bits int) {
-	n, ok := strconv.ParseUint(s, base, bits)
-	println("ParseUint", s, base, bits, n, ok)
+	n, err := strconv.ParseUint(s, base, bits)
+	println("ParseUint", s, base, bits, n, why(err))
 }
 
 func pi(s string, base, bits int) {
-	n, ok := strconv.ParseInt(s, base, bits)
-	println("ParseInt", s, base, bits, n, ok)
+	n, err := strconv.ParseInt(s, base, bits)
+	println("ParseInt", s, base, bits, n, why(err))
 }
 
 func main() {
@@ -55,14 +62,21 @@ func main() {
 	pi("+5", 10, 64)
 	pi("-", 10, 64)
 	pi("5", 10, -1)
+	pi("-9223372036854775809", 10, 64)
+	pi("99999999999999999999", 10, 64)
+	pi("-99999999999999999999", 10, 8)
+	pi("-18446744073709551488", 10, 8)
+	pi("-5", 10, 64)
+	pi("1x", 10, 64)
+	pu("99999999999999999999x", 10, 64)
 
 	// round trips
 	var v uint64 = 18446744073709551615
 	for k := 0; k < 6; k++ {
 		for base := 2; base <= 36; base += 5 {
 			s := strconv.FormatUint(v, base)
-			w, ok := strconv.ParseUint(s, base, 64)
-			if !ok || w != v {
+			w, err := strconv.ParseUint(s, base, 64)
+			if err != nil || w != v {
 				println("ROUNDTRIP FAIL", v, base, s)
 			}
 		}

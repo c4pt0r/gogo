@@ -5,6 +5,6 @@ package main
 import "gogo/strconv"
 
 func main() {
-	n, ok := strconv.Atoi("42")
-	println(strconv.Itoa(n+1), ok)
+	n, err := strconv.Atoi("42")
+	println(strconv.Itoa(n+1), err == nil)
 }

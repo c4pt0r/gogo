@@ -44,7 +44,7 @@ func Compile(p *Program) ([]byte, error) {
 				}
 				fn := p.Info.Defs[fd.Name].(*types.Func)
 				switch {
-				case p.isBuiltin(fn) || isIntrinsic(p.Info, fd):
+				case p.isBuiltin(fn):
 					continue
 				case p.system[pkg.Pkg]:
 					g.lazy[fn] = fd

@@ -75,6 +75,11 @@ rebuilt:
     `Busy`, `TooMany`, `NoMemory`): `p, ok := port.Open(...)` / `if !ok`
     becomes `p, err := port.Open(...)` / `if err != nil`. An image that
     opens a port needs firmware of format 15.4 or later.
+  - `strconv.Atoi(s)`, `ParseInt`, `ParseUint` and `ParseFloat` return
+    an `error` in place of `ok bool`: `errors.BadFormat`,
+    `errors.Overflow` (with the value clamped, as in Go, where it was 0)
+    or, for a bad base or bit size, `errors.BadArg`. `n, ok :=` / `if
+    !ok` becomes `n, err :=` / `if err != nil`.
 - **Embedding API** (`gogo.h`; hosts must be edited and rebuilt, see
   the book's chapter 18):
   - `gogo_host` and `gogo_config` begin with a `size`: start them from
@@ -442,7 +447,10 @@ rebuilt:
   `fmt.Println` prints elements).
 - **Library differences from Go.** `strconv` handles bases 2 to 36 only
   (no prefixes, no underscores), `Atoi` overflows at 32 bits, and
-  `ParseInt` / `ParseUint` with bit size 0 mean 32 bits;
+  `ParseInt` / `ParseUint` with bit size 0 mean 32 bits; their errors
+  are `errors.BadFormat`, `errors.Overflow` (with the value clamped, as
+  in Go) or `errors.BadArg` (a bad base or bit size), not
+  `*strconv.NumError`s;
   `strings.TrimSpace`, `ToLower` and `EqualFold` are ASCII-only and
   `Split(s, "")` splits into bytes; slices grow by doubling from a
   capacity of 4.
@@ -476,9 +484,10 @@ rebuilt:
   `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
   `IsInf`, `Max`, `Min` and the constants only: no `Pow`, `Exp`, `Log`,
   trigonometry, `Mod` or `Float64bits` yet.
-- **`strconv` float differences from Go.** `ParseFloat` returns `(f
-  float64, ok bool)`: `ok` is false for bad syntax (`f` 0) and for an
-  out-of-range value (`f` ±Inf, Go's `ErrRange`). `FormatFloat` has no
+- **`strconv` float differences from Go.** `ParseFloat`'s error is
+  `errors.BadFormat` for bad syntax (`f` 0) and `errors.Overflow` for an
+  out-of-range value (`f` ±Inf, Go's `ErrRange`), not a
+  `*strconv.NumError`. `FormatFloat` has no
   `'x'` / `'X'` (hexadecimal) format: it gives `%x`, as Go does for an
   unknown format. Both are exact and the same on the host and the boards
   (gogo's own code, not the C library's).

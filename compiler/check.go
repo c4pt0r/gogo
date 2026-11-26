@@ -212,9 +212,6 @@ func (c *checker) decl(d ast.Decl) {
 			c.unsupported(d, "func init") // would never be called
 			return
 		}
-		if isIntrinsic(c.p.Info, d) {
-			return // compiled as B_FLOAT at each call
-		}
 		c.fieldList(d.Type.Params)
 		c.fieldList(d.Type.Results) // any number of results, named or not
 		if d.Body == nil {
@@ -889,7 +886,7 @@ var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis":
 	"fs.Open": true, "fs.ReadFile": true, "fs.Stat": true, "fs.ReadDir": true, "fs.Usage": true,
 	"File.Read": true, "File.Size": true,
 	"code.Load": true, "code.Spawn": true, "code.SpawnLink": true, "code.SpawnOpt": true,
-	"strconv.ParseFloat": true}
+	"strconv.parseFloat": true}
 
 // twoResultCall returns the call of `a, b := actor.X(...)` or
 // `a, b = actor.X(...)` when X is a two-result builtin, else nil.
@@ -1029,7 +1026,7 @@ func (c *checker) actorFunc(call *ast.CallExpr) string {
 // stubName names a builtin function (//gogo:builtin): "Spawn" for
 // actor.Spawn, "port.Open" for port.Open; "" for any other function.
 func (p *Program) stubName(fn *types.Func) string {
-	if fn == nil || fn.Pkg() == nil || (!p.isBuiltin(fn) && !(fn.Pkg().Path() == StrconvPath && strconvIntrinsics[fn.Name()])) {
+	if fn == nil || fn.Pkg() == nil || !p.isBuiltin(fn) {
 		return ""
 	}
 	if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
@@ -1053,22 +1050,9 @@ func (p *Program) stubName(fn *types.Func) string {
 	case MathPath:
 		return "math." + fn.Name()
 	case StrconvPath:
-		if strconvIntrinsics[fn.Name()] {
-			return "strconv." + fn.Name()
-		}
+		return "strconv." + fn.Name()
 	}
 	return ""
-}
-
-// strconvIntrinsics are the gogo/strconv functions the compiler implements
-// (B_FLOAT): a call is a builtin call, like a stub function's, and the
-// declaration in lib/strconv is never checked or compiled.
-var strconvIntrinsics = map[string]bool{"FormatFloat": true, "ParseFloat": true}
-
-// isIntrinsic reports whether fd declares one of strconvIntrinsics.
-func isIntrinsic(info *types.Info, fd *ast.FuncDecl) bool {
-	fn, _ := info.Defs[fd.Name].(*types.Func)
-	return fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == StrconvPath && strconvIntrinsics[fn.Name()]
 }
 
 // fsMethod names the gogo/fs method a selector calls, as "File.Read"; ""
@@ -1368,6 +1352,10 @@ func (c *checker) expr(e ast.Expr) {
 	case *ast.SelectorExpr:
 		if obj, ok := c.p.Info.Uses[e.Sel].(*types.Const); ok && obj.Pkg() != nil && c.p.isLib(obj.Pkg()) {
 			return // actor.Normal, port.Output etc.
+		}
+		if fn, _ := c.p.Info.Uses[e.Sel].(*types.Func); fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == StrconvPath && c.p.stubName(fn) != "" {
+			c.unsupported(e, fn.Pkg().Name()+"."+fn.Name()+" as a func value")
+			return
 		}
 		if c.libFunc(e) {
 			if fn, _ := c.p.Info.Uses[e.Sel].(*types.Func); c.p.stubName(fn) != "" {

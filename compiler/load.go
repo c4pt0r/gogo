@@ -62,11 +62,11 @@ const (
 	MathPath = "gogo/math"
 )
 
-// StrconvPath is the import path of gogo/strconv, a library package whose
-// float functions (FormatFloat, ParseFloat) the compiler implements itself
-// (intrinsics; see stubName): they are B_FLOAT calls and their bodies are
-// never compiled, so a program that imports strconv without them neither
-// requires "float" nor needs the image format minor of floats.
+// StrconvPath is the import path of gogo/strconv, a system package whose
+// float builtins (FormatFloat, parseFloat under ParseFloat) are B_FLOAT
+// calls, so that a program that imports strconv without them neither
+// requires "float" nor needs the image format minor of floats; the rest
+// is compiled where used.
 const StrconvPath = "gogo/strconv"
 
 // libPrefix starts the import path of every gogo library package.

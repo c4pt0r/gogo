@@ -52,29 +52,29 @@ NaN NaN NaN
  -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf -Inf
 -Inf -Inf -Inf
 100000000000000001097906362944045541740492309677311846336810682903157585404911491537163328978494688899061249669721172515611590283743140088328307009198146046031271664502933027185697489699588559043338384466165001178426897626212945177628091195786707458122783970171784415105291802893207873272974885715430223118336
-1.5 1.5 true
--0 -0 true
-+.5e1 5 true
-5. 5 true
-1e400 +Inf false
--1e400 -Inf false
-1e-400 0 true
-0x1.8p1 3 true
-0X1P-2 0.25 true
-inf +Inf true
--Infinity -Inf true
-NaN NaN true
- 0 false
-. 0 false
-1e 0 false
-1e+ 0 false
- 1 0 false
-1_000 1000 true
--nan 0 false
-0x1 0 false
-1.7976931348623159e308 +Inf false
-4.9e-324 5e-324 true
-123456789012345678901234567890 1.2345678901234568e+29 true
-0.1 0.10000000149011612 true
-3.4028236e38 +Inf false
-1e-46 0 true
+1.5 1.5 ok
+-0 -0 ok
++.5e1 5 ok
+5. 5 ok
+1e400 +Inf too large
+-1e400 -Inf too large
+1e-400 0 ok
+0x1.8p1 3 ok
+0X1P-2 0.25 ok
+inf +Inf ok
+-Infinity -Inf ok
+NaN NaN ok
+ 0 bad format
+. 0 bad format
+1e 0 bad format
+1e+ 0 bad format
+ 1 0 bad format
+1_000 1000 ok
+-nan 0 bad format
+0x1 0 bad format
+1.7976931348623159e308 +Inf too large
+4.9e-324 5e-324 ok
+123456789012345678901234567890 1.2345678901234568e+29 ok
+0.1 0.10000000149011612 ok
+3.4028236e38 +Inf too large
+1e-46 0 ok

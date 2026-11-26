@@ -13,8 +13,8 @@ type Ready struct{ From actor.PID }
 // parse turns "n" into n, and crashes on anything else: no error handling
 // at all, the supervisor takes care of failure.
 func parse(s string) int {
-	n, ok := strconv.Atoi(s)
-	if !ok {
+	n, err := strconv.Atoi(s)
+	if err != nil {
 		actor.Exit(100) // "bad input"
 	}
 	return n

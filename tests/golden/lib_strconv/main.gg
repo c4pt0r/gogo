@@ -3,8 +3,12 @@ package main
 import "gogo/strconv"
 
 func atoi(s string) {
-	n, ok := strconv.Atoi(s)
-	println("atoi", s, n, ok)
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		println("atoi", s, n, "error:", err.Error())
+		return
+	}
+	println("atoi", s, n)
 }
 
 func parse(s string, base int) {

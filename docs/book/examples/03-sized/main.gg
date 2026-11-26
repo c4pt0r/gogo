@@ -64,6 +64,6 @@ func main() {
 
 	println("crc32:", crc32("hello"), strconv.FormatUint(uint64(crc32("hello")), 16))
 	println("fnv1a:", fnv1a("gogo"))
-	v, ok := strconv.ParseUint("18446744073709551615", 10, 64)
-	println("parse:", v, ok)
+	v, err := strconv.ParseUint("18446744073709551615", 10, 64)
+	println("parse:", v, err == nil)
 }

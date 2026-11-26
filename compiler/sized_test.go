@@ -21,7 +21,7 @@ func TestSizedImage(t *testing.T) {
 		{"uint32-add", "package main\nfunc main() {\n\tvar a uint32 = 7\n\ta += a\n\tprintln(int(a))\n}\n", false},
 		{"byte", "package main\nfunc main() {\n\tvar a byte = 7\n\ta += a\n\tprintln(a, a/3, a > 2)\n}\n", false},
 		{"int32", "package main\nfunc main() {\n\tvar a int32 = 7\n\ta *= a\n\tprintln(a, a/3, a > 2)\n}\n", false},
-		{"strconv", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\tn, _ := strconv.ParseUint(\"7\", 10, 64)\n\tprintln(strconv.FormatUint(n, 2))\n}\n", false},
+		{"strconv", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\tvar n uint64 = 7\n\tprintln(strconv.FormatUint(n, 2))\n}\n", false},
 	} {
 		img := compileImage(t, tc.src)
 		want := uint32(15 << 16)

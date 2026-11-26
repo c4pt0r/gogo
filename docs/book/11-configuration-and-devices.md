@@ -35,8 +35,8 @@ func intSetting(key string, def int) int {
 	if !ok {
 		return def
 	}
-	n, ok := strconv.Atoi(v)
-	if !ok {
+	n, err := strconv.Atoi(v)
+	if err != nil {
 		println("config:", key, "is not a number:", v)
 		return def
 	}

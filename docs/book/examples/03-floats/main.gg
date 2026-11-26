@@ -33,6 +33,6 @@ func main() {
 	println("math:", math.Sqrt(2), math.Floor(-x), math.Round(2.5), math.Pi)
 
 	s := strconv.FormatFloat(math.Pi, 'f', 3, 64)
-	v, ok := strconv.ParseFloat("6.02e23", 64)
-	println("strconv:", s, v, ok)
+	v, err := strconv.ParseFloat("6.02e23", 64)
+	println("strconv:", s, v, err == nil)
 }

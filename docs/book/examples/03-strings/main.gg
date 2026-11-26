@@ -19,10 +19,10 @@ func main() {
 	println(strings.EqualFold("Content-Length", "content-length"))
 
 	// Numbers and strings.
-	n, ok := strconv.Atoi("-1234")
-	println(n, ok)
-	_, ok = strconv.Atoi("12x")
-	println(ok)
+	n, err := strconv.Atoi("-1234")
+	println(n, err == nil)
+	_, err = strconv.Atoi("12x")
+	println(err.Error())
 	println(strconv.Itoa(99) + " bottles")
 	println(strconv.FormatInt64(255, 16), strconv.FormatInt64(-5, 2))
 	big, ok := strconv.ParseInt64("9000000000", 10)

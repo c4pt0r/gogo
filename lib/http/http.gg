@@ -293,8 +293,9 @@ func parseURL(url string) (target, bool) {
 		n = 443
 	}
 	if found {
-		n, ok = strconv.Atoi(p)
-		ok = ok && n > 0 && n < 65536
+		var err error
+		n, err = strconv.Atoi(p)
+		ok = err == nil && n > 0 && n < 65536
 	}
 	return target{secure, host, hostPort, path, n}, ok && host != "" && strings.IndexByte(hostPort, '@') < 0 &&
 		safe(hostPort, false) && safe(path, false)
@@ -319,8 +320,8 @@ func contentLength(hs []Header) int {
 	n := -1
 	for _, h := range hs {
 		if strings.EqualFold(h.Name, "Content-Length") {
-			v, ok := strconv.Atoi(h.Value)
-			if !ok || v < 0 || (n >= 0 && v != n) {
+			v, err := strconv.Atoi(h.Value)
+			if err != nil || v < 0 || (n >= 0 && v != n) {
 				return -2
 			}
 			n = v
@@ -1152,9 +1153,9 @@ func parseStatus(head string) (int, []Header, bool) {
 	if len(line) < 12 || !strings.HasPrefix(line, "HTTP/1.") || line[8] != ' ' || (len(line) > 12 && line[12] != ' ') {
 		return 0, nil, false
 	}
-	code, ok := strconv.Atoi(line[9:12])
+	code, err := strconv.Atoi(line[9:12])
 	hs, good := parseHeaders(rest)
-	return code, hs, ok && good && code >= 100
+	return code, hs, err == nil && good && code >= 100
 }
 
 // parseHeaders parses "Name: value" lines separated by CRLF.

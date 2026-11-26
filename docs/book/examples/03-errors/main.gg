@@ -24,8 +24,8 @@ func parsePercent(s string) (int, error) {
 	if s == "" {
 		return 0, ErrEmpty
 	}
-	n, ok := strconv.Atoi(s)
-	if !ok {
+	n, err := strconv.Atoi(s)
+	if err != nil {
 		return 0, errors.New("not a number: " + s)
 	}
 	if n < 0 || n > 100 {
