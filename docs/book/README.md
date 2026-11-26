@@ -1,4 +1,4 @@
-# Programming GogoLang
+# Programming Gogo
 
 A book about gogo: a tiny actor VM for microcontrollers, programmed in a
 subset of Go, with Erlang-style actors, supervisors and ports.
