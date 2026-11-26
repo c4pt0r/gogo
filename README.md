@@ -35,7 +35,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
  ┌────────────────────────────────────────────────▼─────────────────────────┐
  │ lib/   standard library (.gg, embedded in the compiler)                  │
  │  stubs → VM builtins: actor port bytes fs sys net code kbd power imu ir  │
- │                       audio screen                                       │
+ │                       audio screen gpio                                  │
  │  libraries in gogo:   supervisor strings strconv dhcp dns http sntp kv   │
  │                       ringlog wav sound irproto tui …                    │
  └────────────────────────────────────────────────┬─────────────────────────┘
@@ -57,7 +57,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
  │ ┌──────────┐ ┌───────────┐ ┌─────────────┐ ┌──────────┐ ┌────────────┐ │
  │ │ image    │ │ interp +  │ │ actors      │ │ messages │ │ timers     │ │
  │ │ loader   │ │ scheduler │ │ heap + GC   │ │ copy     │ │ names      │ │
- │ │ caps     │ │ step/dl   │ │ mem limits  │ │ quotas   │ │ links/mon  │ │
+ │ │ requires │ │ step/dl   │ │ mem limits  │ │ quotas   │ │ links/mon  │ │
  │ └──────────┘ └───────────┘ └─────────────┘ └──────────┘ └────────────┘ │
  │ ┌───────────────────────┐ ┌───────────────────────────────────────────┐│
  │ │ modules (hot loading) │ │ port layer: drivers · event ring · sources││
@@ -202,26 +202,37 @@ The book chapter [Embedding gogo](docs/book/18-embedding.md) is the guide;
 
 ## Status and roadmap
 
-Done: actors, links, monitors and supervisors; GPIO; strings, bytes and
-slices; networking (DHCP, DNS, UDP, TCP, HTTP/1.0 client and server);
-storage (`/flash`, `/sd`, `kv`, `ringlog`); keyboard and battery; hot
-loading of modules; optional firmware features; IMU and infrared; audio;
-the wall clock (`gogo/sys`) and SNTP; the repository layout; HTTPS, a
-TLS 1.2 client (the `"tls"` port, mbedTLS, sliced so actors keep
-running during a handshake), `https://` URLs in `gogo/http`, the
-keep-alive `http.Client` and streaming file upload ([book chapter 17](docs/book/17-https.md)); image v13;
-packages of your own with a `GOGOPATH` search, single-file programs and
-`#!` scripts, and `gogovm` in the releases.
+Done:
+- **Runtime:** actors, links, monitors and supervisors; per-actor memory
+  limits; hot loading of modules; image format 15 (newer images run on
+  older firmware unless they use something new, and an image names the
+  drivers and mounts it needs).
+- **Peripherals:** GPIO; keyboard and battery; IMU and infrared; audio;
+  the screen as a port plus `gogo/tui`, an ncurses-like text UI; one
+  stream protocol for every byte port.
+- **Networking:** DHCP, DNS, UDP and TCP; HTTP client and server; HTTPS
+  (a TLS 1.2 client, keep-alive client, streaming upload); SNTP and the
+  wall clock.
+- **Storage:** `/flash`, `/sd`, `kv`, `ringlog`.
+- **Language and tools:** expression `switch`, labels, `range` over int,
+  variadic functions; packages of your own with a `GOGOPATH` search;
+  single-file programs and `#!` scripts; `gogo setup`; optional firmware
+  features; releases with the CLI, `gogovm` and firmware.
+- **Embedding:** `libgogo.a` with a C API (§5.11 of the design notes).
 
 Next, in order:
 
-1. **Embed mode** (in progress, phase 1 of 5): embedding the VM in host
-   programs the way Lua is embedded.
-2. **Language completeness**: more of Go (methods, maps, arrays, type
-   assertions, ...); program arguments for scripts; later `gogo get`
-   and package versions.
-3. **Bluetooth (BLE)**: a phone app connection and Wi-Fi setup from the
-   phone.
+1. **API v0.2:** shared error codes, a versioned C ABI, CLI exit codes
+   and commands, and a platform layer that makes new boards cheap.
+2. **Distributed actors:** boards and a server node exchanging actor
+   messages directly (first through the server; direct links later).
+3. **Language completeness:** methods, field assignment, interfaces and
+   `error`, `panic`, pointers, maps, `fmt`, sized integers, floating
+   point, arrays; script arguments.
+4. **More hardware:** a `usb` port for the serial connection, the
+   Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
+5. **Embedding bindings:** Rust, Go (with an in-process compiler), iOS
+   and Android.
 
 ## License
 

@@ -376,8 +376,10 @@ microphone, network, files and screen), and any program that embeds
 `libgogo.a` (C99; Rust, Go and mobile bindings planned), which can add its
 own peripherals as host ports.
 
-**Planned:** RP2040 boards (the platform layer is being reshaped so a new
-board is mostly a small set of hardware hooks), BLE on the ESP32-S3, and
+**Planned:** the Arduino Nano ESP32 (ESP32-S3 with Wi-Fi, as a native
+board), RP2040 boards (the platform layer is being reshaped so a new
+board is mostly a small set of hardware hooks), BLE on the ESP32-S3, a
+`usb` port, and
 general-purpose `uart`, `i2c`, `spi` and display ports. Other ESP32-S3
 boards can be added by describing their pins and peripherals in
 `platform/esp32s3/main/board.h`.

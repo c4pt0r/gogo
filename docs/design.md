@@ -1740,21 +1740,32 @@ supervisors, per-actor limits, strings, slices and `Bytes`); networking
 (Ethernet to TCP, DHCP, DNS, the HTTP client and server, Wi-Fi and
 `gogo config`); storage (`/flash`, `/sd`, `kv`, `ringlog`); input
 (keyboard and battery); hot loading; optional firmware features; IMU and
-infrared; audio; the wall clock and SNTP (`gogo/sys`, `gogo/sntp`);
-HTTPS (the `tls` port, `https://` in `gogo/http`, the keep-alive client,
-streaming uploads).
+infrared; audio; the wall clock and SNTP; HTTPS; the text screen
+(`screen` port, `gogo/tui`); image format 15 with append-only reserved
+types and named requirements (§5.6); one stream protocol for every byte
+port with `port.Closed` and `From`; embed mode phase 1 (`libgogo`,
+§5.11); user packages with a `GOGOPATH` search and `#!` scripts; the
+first language additions (expression `switch`, labels, `range` over int,
+variadic functions).
 
-**Next:**
-1. **Embed mode** (in progress): embedding the VM in host programs the
-   way Lua is embedded (desktop and server programs, phone apps, test
-   tools). The C library (`libgogo`, §5.11) is done; bindings for Rust,
-   Go and the phone platforms are next.
-2. **Language completeness**: the features listed as "not supported yet"
-   in §5.2.
-3. **Bluetooth (BLE)**: a connection to a phone app, and Wi-Fi setup from
-   the phone.
+**Next, in order:**
+1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
+   structs, a poster handle), CLI exit codes and commands, and a platform
+   layer (driver instances with hardware hooks, portable LittleFS/FAT)
+   that makes new boards cheap.
+2. **Distributed actors:** remote PIDs and a `gogo/node` library; boards
+   connect to a server node that also relays board-to-board messages,
+   with direct LAN links as a later step.
+3. **Language completeness:** methods, field assignment, interfaces and
+   `error`, `panic`, pointers, maps, read-only package variables, `fmt`,
+   sized integers, `float32`/`float64`, arrays, embedded fields, static
+   `defer`; `sys.Args()` for scripts.
+4. **Hardware:** a `usb` port (the serial stream and connect events), the
+   Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
+5. **Embedding bindings:** Rust, Go (with an in-process compiler,
+   `libgogoc`), iOS and Android.
 
-RP2040 boards are planned; the board and the timing are open.
+Not planned: a JIT; USB device classes (HID, mass storage).
 
 ## 7. Design decisions
 
