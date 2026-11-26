@@ -52,7 +52,7 @@ int gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32
     s->vm = vm;
     s->index = index;
     s->gen = p->gen;
-    s->debounce_ms = deb;
+    s->debounce_ms = h->raw_edges ? 0 : deb;   /* the bounce filter's window */
     s->mode = (uint8_t)mode;
     s->edge = (uint8_t)edge;
     s->level = (uint8_t)(h->read(h->ctx, (uint32_t)pin) != 0);

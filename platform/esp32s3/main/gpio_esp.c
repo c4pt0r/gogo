@@ -83,6 +83,9 @@ static void h_release(void *ctx, uint32_t pin, int mode, bool watch) {
     gpio_reset_pin((gpio_num_t)pin);
 }
 
-static const GpioHal gpio_esp_hal = { NULL, NPINS, reserved, pins, h_config, h_write, h_read, h_release, NULL };
+static const GpioHal gpio_esp_hal = {
+    .npins = NPINS, .reserved = reserved, .pins = pins, .config = h_config, .write = h_write, .read = h_read,
+    .release = h_release,
+};
 
 const PortDriver gpio_esp_driver = GPIO_DRIVER(&gpio_esp_hal);

@@ -51,7 +51,11 @@ static bool h_live(void *ctx) {
     return input_unix_live();
 }
 
-static const GpioHal gpio_unix_hal = { NULL, GPIO_UNIX_NPINS, NULL, pins, h_config, h_write, h_read, h_release, h_live };
+/* raw_edges: a --key press is a fall and a rise in the same millisecond. */
+static const GpioHal gpio_unix_hal = {
+    .npins = GPIO_UNIX_NPINS, .pins = pins, .config = h_config, .write = h_write, .read = h_read,
+    .release = h_release, .live = h_live, .raw_edges = true,
+};
 
 const PortDriver gpio_unix_driver = GPIO_DRIVER(&gpio_unix_hal);
 

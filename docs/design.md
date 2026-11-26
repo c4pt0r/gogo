@@ -1876,7 +1876,13 @@ can serve two devices, and the table can be a board's `static const`).
   `gpio_edge(hal, pin, level, now_ms)`, which pushes to the event ring
   of the VM that opened the pin and returns whether to wake it.
   `config` may lower the debounce (unix script mode: 0) and refuses a
-  pin the chip cannot use in that mode.
+  pin the chip cannot use in that mode. `raw_edges` turns the bounce
+  filter off for a HAL whose edges are clean and may come in the same
+  millisecond (the unix `--key` presses); the port's debounce still
+  applies. `gpio_edge` must not overlap `release` of its pin: the ESP's
+  interrupt runs on the VM's core, and a board with the interrupt on
+  another core routes it to the VM's or waits out a running handler in
+  `release` (gpio.h).
 - **Input** (`runtime/input/input.h`): `KbdHal`, `PowerHal`, `ImuHal`,
   `IrTxHal`, `IrRxHal`, `MicHal`, `SpkHal`, one per device, each with a
   `ctx` and, where events can stop coming, an optional `live`. The

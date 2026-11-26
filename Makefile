@@ -70,7 +70,7 @@ endif
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
 
 vm: $(BUILD)/gogovm
 
@@ -240,6 +240,15 @@ test-screen-asan:
 $(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
+
+# The gpio driver (runtime/gpio) over a fake GpioHal on a real VM.
+GPIO_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/gpio/test/test_gpio.c
+test-gpio: $(BUILD)/test_gpio
+	$(BUILD)/test_gpio
+
+$(BUILD)/test_gpio: $(GPIO_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -o $@ $(GPIO_TEST_SRCS) $(VM_SRCS)
 
 # The gogo-config protocol (runtime/configsvc, pure C99) against an
 # in-memory store and the memfs backend as /flash.

@@ -58,7 +58,21 @@ typedef struct GpioPin {
  *    for the pin may start after it returns.
  *  - live (optional, NULL = always): false once no edge can come any more
  *    (the unix stdin script hit EOF), so an input port stops keeping the
- *    VM alive. */
+ *    VM alive.
+ *  - raw_edges: the HAL reports clean edges, both of a press possibly in
+ *    the same millisecond (the unix simulation's key presses), so the
+ *    single-edge bounce filter is off; the port's debounce (port.c) still
+ *    applies.
+ *
+ * Interrupts on more than one core: gpio_edge for a pin must not run
+ * while gpio_close releases that pin. On the ESP32-S3 the GPIO interrupt
+ * is installed from the VM task, so it runs on the VM's core and cannot
+ * overlap a close. A board whose edge interrupt may run on another core
+ * (an RP2040 with the IRQ on core 0 and the VM on core 1) must route it to
+ * the VM's core, or have release wait until a handler already running has
+ * returned ("no call may start after it returns" does not cover one in
+ * flight). An event pushed late is harmless: its generation is stale and
+ * port_drain drops it. */
 typedef struct GpioHal {
     void *ctx;
     uint32_t npins;
@@ -69,6 +83,7 @@ typedef struct GpioHal {
     int  (*read)(void *ctx, uint32_t pin);
     void (*release)(void *ctx, uint32_t pin, int mode, bool watch);
     bool (*live)(void *ctx);
+    bool raw_edges;
 } GpioHal;
 
 /* Pin `pin` of hal is now at level (0 or 1), at the host's now_ms (low 32
