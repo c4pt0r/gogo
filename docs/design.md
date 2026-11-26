@@ -1951,7 +1951,12 @@ together with `mbox_words` through `actor_charged_words`).
   `float32`, a 3-word one a `float64`), and the op computes in it; mixed
   widths are `badcode`. `CONVF` converts between floats and integers
   (modes in `runtime/vm/opcodes.h`). A VM built without `GOGO_FLOAT` has
-  none of them: the requirement check refuses the image before any runs.
+  none of them. An image that can make a float (a `K_FLOAT` constant,
+  `CONVF` of an integer, `math.Inf`, `math.NaN`, `ParseFloat`) requires
+  `float`, so such a VM refuses it before any runs; one that only handles
+  floats (the other float ops, `B_FLOAT`'s `FormatFloat`, a float case of a
+  type switch: `gogo/fmt`) needs no requirement and runs there, since no
+  float can reach that code (15.6).
 - **`OP_SETFIELD`** (15.6, 67): `a=src b=struct c=index`, the shape of
   `GETFIELD`, sharing its case in the interpreter: writes a field of a
   heap struct whose type word has `STRUCT_MUT` (a const one is in flash,

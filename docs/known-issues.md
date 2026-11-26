@@ -564,7 +564,8 @@ rebuilt:
   maths.
 - **Firmware option.** Floats need firmware built with `GOGO_FLOAT`
   (requirement `float`, image format 15.2). On a firmware without it, an
-  image that uses floats is refused at boot (`gogo: image requires float,
+  image that can make floats (a float constant, a conversion of an
+  integer, `math.Inf`, `math.NaN`, `ParseFloat`) is refused at boot (`gogo: image requires float,
   which this VM lacks`) and `code.Load` returns `Unsupported`. `gogo
   firmware` builds it in only when an image needs it (or `-with float`),
   so a module that needs floats and is loaded later needs `-with float`.
