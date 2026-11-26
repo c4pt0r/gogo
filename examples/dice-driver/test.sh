@@ -20,6 +20,8 @@ fail=0
 
 "$B/gogo" build "$D" -o "$T/dice.ggb" || { echo "FAIL build $D"; exit 1; }
 
+# No config store: the board reads vm.max_ports from it.
+GOGO_CONFIG=$T/no-config; export GOGO_CONFIG
 if "$B/dice-driver/dice-board" "$T/dice.ggb" > "$T/out" 2> "$T/err"; then
     if cmp -s "$D/driver.out" "$T/out"; then echo "ok   dice-board dice.ggb"
     else echo "FAIL dice-board dice.ggb"; diff "$D/driver.out" "$T/out" | head -20; fail=1; fi

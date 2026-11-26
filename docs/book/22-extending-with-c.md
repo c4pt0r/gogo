@@ -89,7 +89,8 @@ typedef struct PortDriver {
     const char *name;
     uint32_t cfg_type;      /* reserved type index the cfg struct must have */
     uint32_t event_type;    /* reserved type of event messages: struct of 2 ints (a, b) */
-    /* cfg: the cfg struct's int fields in order. 0 = ok, else refuse. */
+    /* cfg: the cfg struct's int fields in order. 0 = ok; a GOGO_E_* code
+     * (> 0) refuses for that reason, anything else (< 0) as busy. */
     int  (*open)(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n);
     /* A command struct of reserved type `type` whose fields are all int. */
     void (*command)(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n);
@@ -107,7 +108,7 @@ and `hw`. Every callback may be `NULL`. What each field is for:
   it.
 - **`open`** gets the config's fields, decoded to an `int32_t` array
   (at most `PORT_MAX_FIELDS`, 8, and all of them ints). It returns 0 to
-  accept the open. **`open_term`** replaces it for a config with other
+  accept the open, or refuses it with an error code (section 22.6). **`open_term`** replaces it for a config with other
   fields (a string, `Bytes`): it gets the config struct itself, read in
   place on the owner's heap.
 - **`command`** gets every message sent to the port whose fields are all
@@ -129,11 +130,17 @@ and `hw`. Every callback may be `NULL`. What each field is for:
 - **`hw`** is the driver *instance*'s hardware layer, a table the board
   fills. The VM never reads it; the driver finds it at `p->drv->hw`.
 
-Each open port is a `Port` in the VM's table of 16. Besides its driver
+Each open port is a `Port` in the VM's port table. Besides its driver
 and owner, it has four words of driver-private state (`p->state`), the
 debounce time the driver may set in `open`, and the memory the driver
 charges to the owner (section 22.5). A driver whose per-port state fits
-in 16 bytes needs nothing else.
+in 16 bytes needs nothing else. The table has a cap per VM: 16 ports by
+default on a board (`GOGO_MAX_PORTS`), 1024 on `gogovm` and in an
+embedded VM, changed with the config key `vm.max_ports` or the embedding
+config's `max_ports`, at most 2048. The first 16 `Port`s live in the
+`Vm` itself, so opening them takes no memory from the actors' arena; a
+larger table grows in chunks of 16 that never move, so a driver may keep
+a `Port *` for as long as the port is open.
 
 Every callback runs on the VM's thread, inside the scheduler, never at
 the same time as an actor. It must return quickly (section 22.12).
@@ -226,8 +233,9 @@ int gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32
 }
 ```
 
-Three things to notice. Every refusal is `return -1`: a pin out of range,
-a reserved pin, a pin already open. `p->debounce_ms` turns on the VM's
+Three things to notice. Every refusal is `return -1`, which `port.Open`
+reports as `errors.Busy` (section 22.6): a pin out of range, a reserved
+pin, a pin already open. `p->debounce_ms` turns on the VM's
 debounce for this port (section 22.5). And the per-pin slot `s` is shared
 with the interrupt handler, so the driver fills it completely, then
 publishes it with `vm_barrier()` before setting `open`.
@@ -460,17 +468,30 @@ errors before or after the driver:
 |---|---|
 | `errors.NotFound` | no driver of that name in this VM |
 | `errors.BadArg` | `cfg` is not a struct of the driver's `cfg_type` (or, for `open`, has a field that is not an int) |
-| `errors.TooMany` | the port table (16) is full |
+| `errors.TooMany` | the VM's port table is at its cap (section 22.3) |
 | `errors.NoMemory` | the owner cannot take the port, its `charge_words` or its `room_64w` |
-| `errors.Busy` | the driver's `open` returned nonzero |
+| the driver's code | the driver's `open` returned a shared error code (> 0) |
+| `errors.Busy` | the driver's `open` returned a negative value |
 
-A driver refuses by returning nonzero from `open` (or `open_term`), and
-**every refusal is `errors.Busy`**, whatever the reason: the VM sets
-`Busy` for any nonzero return. A driver cannot say "bad argument" for a
-config value it does not accept (the dice driver of section 22.10 refuses
-seed 0, and the program sees `busy`). If the distinction matters, accept
-the open and report the problem as the first event, or check the config
-in the gogo library that wraps the port.
+A driver refuses an open by returning nonzero from `open` (or
+`open_term`). A positive value is a shared error code
+(`runtime/include/gogo_errors.h`, the same numbers as `gogo/errors`), and
+`port.Open` fails with exactly that error; any negative value means
+`errors.Busy`, the generic "the resource is taken, or a config this
+driver cannot use". The TCP drivers say `Unsupported` on a VM that has no
+network at all, rather than `Busy`:
+
+```c
+    if (!ns) return GOGO_E_UNSUPPORTED;   /* a VM without a network */
+```
+
+and the dice driver of section 22.10 refuses seed 0 with
+`GOGO_E_BADARG`, so the program sees `bad argument`. Pick the code a
+caller can act on: `BadArg` for a config value the driver will never
+accept, `Busy` for a resource someone else holds now, `Unsupported` for
+hardware this board lacks, `NoMemory` for a buffer that does not fit.
+Host ports (section 22.13) cannot choose: any refusal of a host port's
+`open` is `errors.Busy`.
 
 After a refused open, the VM bumps the slot's generation, so any event
 the driver pushed during `open` is stale and dropped. A driver that did
@@ -622,7 +643,8 @@ in that style, written the way someone outside the project would write
 one. It is compiled into a test-only board and nowhere else: neither the
 firmware nor `gogovm` has it. The protocol:
 
-- `port.Open("dice", port.Host{Arg: seed})`: seed must be positive;
+- `port.Open("dice", port.Host{Arg: seed})`: seed must be positive, else
+  the open fails with `errors.BadArg`;
 - `actor.Send(p, port.Post{Kind: n})`: roll n dice (1 to 10);
 - one event `port.Post{From: p, Kind: face}` per die.
 
@@ -635,12 +657,13 @@ config with `open_term`, in place:
 
 ```c
 /* port.Open("dice", port.Host{Arg, Data}): port_open has checked that cfg
- * is a port.Host (cfg_type). A nonzero return refuses the open. */
+ * is a port.Host (cfg_type). A shared error code (> 0) refuses the open
+ * with that error; a negative return would refuse it as errors.Busy. */
 static int dice_open(struct Vm *vm, const struct Actor *owner, Port *p, uint16_t index, term cfg) {
     (void)index;
     const uint32_t *o = obj_of(vm, owner, cfg);
     int32_t seed;
-    if (hdr_words(o[0]) != 4u || !int_val(vm, owner, o[2], &seed) || seed <= 0) return -1;
+    if (hdr_words(o[0]) != 4u || !int_val(vm, owner, o[2], &seed) || seed <= 0) return GOGO_E_BADARG;
     p->state[SEED] = (uint32_t)seed;
     p->state[ROLLS] = 0;
     return 0;
@@ -751,7 +774,7 @@ func main() {
 Its output:
 
 ```text
-open with seed 0: busy
+open with seed 0: bad argument
 open with seed 42: true
 main rolls 1 5 4
 main rolls 3 1 1 1 5
@@ -762,7 +785,8 @@ a second port, same seed: true
 main rolls 1 5 4
 ```
 
-Seed 0 is refused with `busy` (section 22.6). The second port starts the
+Seed 0 is refused with `bad argument`, the code the driver returned
+(section 22.6). The second port starts the
 same sequence again, since each port has its own state. On `gogovm` the
 image does not start at all:
 
@@ -835,7 +859,10 @@ For a driver in the tree, in the order you write them:
   fails on any new one. Per-port state goes in `Port.state` or behind the
   hardware layer's `ctx`; state that must outlive a port is board storage,
   declared by the platform and passed in through the hardware layer, like
-  `gpio`'s `GpioPin pins[]`.
+  `gpio`'s `GpioPin pins[]`. Do not size a table by port index for 16
+  ports: the cap is per VM, 1024 by default on `gogovm` and in embedded
+  VMs, up to 2048 (section 22.3). Index such state by the device (a pin,
+  a channel), as `gpio` does, or keep it in the `Port`.
 - **Validate everything.** A command can come from any actor and any
   module, with any type and any values. Check the type, the field count
   and the ranges, and ignore what you do not understand.
@@ -889,8 +916,10 @@ outside this repository. Plainly:
 - **`gogo firmware` knows only its own features.** An image that requires a
   driver not in `fwFeatures` cannot be built with it; you build the
   firmware with `idf.py` yourself.
-- **A driver cannot choose its error.** Every refused open is
-  `errors.Busy`, for host ports too (section 22.6).
+- **A host port cannot choose its error.** A firmware driver refuses an
+  open with any shared code, but `libgogo` turns every refusal of a host
+  port's `open` into `errors.Busy`, whatever negative code the host
+  returned (section 22.6).
 - **Event sources are scarce.** A VM has `GOGO_MAX_SOURCES` (3) source
   slots, and the firmware already uses three while the screen port is open
   (net, input, the screen's retry). A new driver that polls needs that

@@ -3,7 +3,7 @@
  * image format change. It is compiled into the test board next to it
  * (board.c) and nowhere else: no firmware and no gogovm has it.
  *
- *   port.Open("dice", port.Host{Arg: seed})   seed > 0, else refused
+ *   port.Open("dice", port.Host{Arg: seed})   seed > 0, else errors.BadArg
  *   actor.Send(p, port.Post{Kind: n})         roll n dice (1..10; others ignored)
  *   event port.Post{From: p, Kind: face}      one per die, face 1..6
  *
@@ -12,16 +12,18 @@
 #include "port.h"
 #include "heap.h"      /* obj_of, int_val: reading the cfg and commands in place */
 #include "opcodes.h"   /* TYPE_POST */
+#include "../../runtime/include/gogo_errors.h"   /* GOGO_E_BADARG */
 
 enum { SEED, ROLLS };   /* Port.state[] */
 
 /* port.Open("dice", port.Host{Arg, Data}): port_open has checked that cfg
- * is a port.Host (cfg_type). A nonzero return refuses the open. */
+ * is a port.Host (cfg_type). A shared error code (> 0) refuses the open
+ * with that error; a negative return would refuse it as errors.Busy. */
 static int dice_open(struct Vm *vm, const struct Actor *owner, Port *p, uint16_t index, term cfg) {
     (void)index;
     const uint32_t *o = obj_of(vm, owner, cfg);
     int32_t seed;
-    if (hdr_words(o[0]) != 4u || !int_val(vm, owner, o[2], &seed) || seed <= 0) return -1;
+    if (hdr_words(o[0]) != 4u || !int_val(vm, owner, o[2], &seed) || seed <= 0) return GOGO_E_BADARG;
     p->state[SEED] = (uint32_t)seed;
     p->state[ROLLS] = 0;
     return 0;
