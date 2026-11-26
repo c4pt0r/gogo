@@ -1,0 +1,53 @@
+// gogo/tui drawing: Box with a title, Label alignments, colours and
+// attributes, a Window that clips and has its own origin, Fill, wide
+// characters, Width and Cut, Clear of a window, Scroll.
+package main
+
+import (
+	"gogo/screen"
+	"gogo/tui"
+)
+
+func main() {
+	s, ok := tui.Open(screen.Config{Cols: 30, Rows: 8})
+	if !ok {
+		println("no screen")
+		return
+	}
+	println("size", s.Cols, s.Rows, "attrs", s.Attrs)
+	f := tui.NewFrame(s)
+	tui.Box(f, 0, 0, 30, 8, "Draw")
+	tui.Label(f, 1, 1, 8, "left", tui.Left)
+	tui.Label(f, 10, 1, 8, "mid", tui.Center)
+	tui.Label(f, 20, 1, 9, "right", tui.Right)
+	tui.Color(f, screen.BrightRed, screen.Black)
+	tui.Attr(f, screen.Bold)
+	tui.PrintAt(f, 1, 2, "bold red")
+	tui.Style(f, screen.White, screen.Blue, screen.Underline)
+	tui.PrintAt(f, 12, 2, "blue")
+	tui.Style(f, screen.White, screen.Black, 0)
+	// a window at 2,3 of 10x3: its origin is its own, drawing is clipped
+	w := tui.Window(f, 2, 3, 10, 3)
+	tui.Fill(w, 0, 0, 10, 3, '.')
+	tui.PrintAt(w, 0, 0, "window text cut here")
+	tui.PrintAt(w, -3, 1, "abcdef")
+	tui.PrintAt(w, 4, 2, "你好世界")
+	tui.Fill(w, 8, -5, 9, 99, '#')
+	// another window, cleared and scrolled
+	v := tui.Window(f, 14, 3, 12, 4)
+	tui.PrintAt(v, 0, 0, "line 1")
+	tui.PrintAt(v, 0, 1, "line 2")
+	tui.PrintAt(v, 0, 2, "line 3")
+	tui.Scroll(v, 0, 0, 12, 3, 1)
+	tui.Flush(s)
+	println("width", tui.Width("ab你好"), tui.Width("─█"), "cut", tui.Cut("ab你好", 3), tui.Cut("ab你好", 4))
+	w2, h2 := tui.Size(w)
+	println("window", w2, h2)
+	f = tui.NewFrame(s)
+	tui.Clear(w)
+	tui.Flush(s)
+	// nothing drawn: no frame
+	println("flush empty", tui.Flush(s))
+	tui.Close(s)
+	println("closed")
+}

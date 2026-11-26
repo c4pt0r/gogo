@@ -1,0 +1,35 @@
+// gogo/tui keys from two buttons (a board without a keyboard: the VM runs
+// with --caps that leave kbd out, like the StickS3): A pressed is Enter, B
+// released is Down, B held for LongPressMs is Esc.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/tui"
+)
+
+func main() {
+	keys, ok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
+	if !ok {
+		println("no keys")
+		return
+	}
+	println("keyboard", keys.HasKbd, "pins", keys.PinA, keys.PinB)
+	for {
+		msg := actor.Receive()
+		k2, k, ui := tui.Event(keys, msg)
+		keys = k2
+		if !ui {
+			println("not ui")
+			continue
+		}
+		if k.Code == tui.KeyNone {
+			continue
+		}
+		println("key", k.Code)
+		if k.Code == tui.KeyEsc {
+			break
+		}
+	}
+	tui.CloseKeys(keys)
+}

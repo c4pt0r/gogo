@@ -1,0 +1,383 @@
+// Package tui is a small text user interface library on the "screen" port
+// (gogo/screen): a grid of character cells with colours and attributes,
+// drawn in frames, plus a few widgets and a key abstraction over the
+// Cardputer's keyboard and the StickS3's two buttons. It is written in the
+// gogo subset and compiled into every image that imports it.
+//
+// Screen. Open takes the display (the text console hides until Close or the
+// owner's exit) and reports its size: 40 x 11 cells on both boards and, by
+// default, on the host. Drawing goes into a Frame: NewFrame(s) starts one
+// over the whole screen, and Clear, Move, Print, PrintAt, Fill, Box, Color,
+// Attr, Cursor and Scroll append compact operations to the screen's buffer;
+// Flush(s) sends them to the port as one port.Out, which draws them at
+// once. The port answers each Out with a port.Done (Seq -1 if it was
+// refused); Event swallows them, and a program that does not use Event can
+// ignore them. Nothing in this package waits for a message: an actor keeps
+// its own receive loop and passes its messages through Event (or lets Run
+// do it), so a UI composes with timers, network events and other actors.
+//
+// Window(f, x, y, w, h) is a Frame over a sub-rectangle: its own origin
+// (0, 0 is its top-left cell) and everything drawn through it clipped to
+// it (and to its parent). Coordinates outside it are fine: what falls
+// outside is dropped.
+//
+// Frames are immediate: a program typically redraws its whole interface
+// after every event (Run does). The port compares cells, so the display
+// only redraws the rows whose cells really changed.
+//
+// Keys. OpenKeys opens the keyboard ("kbd") or, on a board without one,
+// two buttons as gpio ports (StickS3: ButtonA G11, ButtonB G12); Event
+// turns their messages into Keys. Keyboard: the arrows (on the Cardputer
+// Fn+; . , /), Enter, Esc (Fn+`), Tab, Backspace, Delete and the printable
+// characters (KeyChar with Char). Buttons: A pressed is KeyEnter; B
+// released is KeyDown, or KeyEsc when it was held at least LongPressMs.
+// List wraps around, so the two buttons reach every item.
+//
+// Widgets are value structs and functions, as the language has no methods
+// yet: a widget's state (List, Edit) is a struct that its key function
+// returns updated, and a Draw function draws it into a Frame. Each doc
+// comment notes the method form planned for when methods arrive.
+//
+// Memory: the port's grid is 4 bytes a cell (1760 bytes for 40 x 11),
+// charged to the actor that owns the screen; a frame's buffer holds its
+// operations until Flush (a full redraw of a busy screen is a few hundred
+// bytes).
+//
+// The keyboard is optional (the directive below): importing gogo/tui does
+// not make an image require kbd, so one image runs on both boards. The
+// screen is required.
+//
+//gogo:optional kbd
+package tui
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/port"
+	"gogo/screen"
+)
+
+// Screen is an open screen: the port, its size in cells, the attributes it
+// shows (a mask of screen.Bold, screen.Underline, screen.Reverse), and the
+// buffer frames draw into. Copies share the buffer (a Screen sent to
+// another actor is a separate copy that must not be used there).
+type Screen struct {
+	Port       actor.PID
+	Cols, Rows int
+	Attrs      int
+	buf        bytes.Buffer
+	st         []int // what the port has: clip x0 y0 x1 y1, colour byte, attributes
+}
+
+// Frame is a drawing target: the whole screen (NewFrame) or a window of it
+// (Window). OX, OY are its origin on the screen, X0 Y0 X1 Y1 its clip
+// (X0 <= x < X1), both in screen cells. Frames of one screen share its
+// buffer.
+type Frame struct {
+	OX, OY         int
+	X0, Y0, X1, Y1 int
+	buf            bytes.Buffer
+	st             []int
+}
+
+// opened is the opener's answer.
+type opened struct {
+	P                 actor.PID
+	Cols, Rows, Attrs int
+	OK                bool
+}
+
+// OpenTimeoutMs bounds how long Open waits for the port.
+const OpenTimeoutMs = 2000
+
+// opener opens the port for Open, so the size Chunk arrives in its own
+// mailbox, not the caller's; it hands the port over and answers.
+func opener(cfg screen.Config) {
+	switch m := actor.Receive().(type) {
+	case actor.Request:
+		p, ok := port.Open("screen", cfg)
+		if !ok {
+			actor.Reply(m, opened{})
+			return
+		}
+		for {
+			msg, got := actor.ReceiveTimeout(OpenTimeoutMs)
+			if !got {
+				port.Close(p)
+				actor.Reply(m, opened{})
+				return
+			}
+			switch c := msg.(type) {
+			case port.Chunk:
+				if c.Data.Len() < 4 || !port.Handoff(p, m.From) {
+					port.Close(p)
+					actor.Reply(m, opened{})
+					return
+				}
+				actor.Reply(m, opened{P: p, Cols: int(c.Data.At(0)), Rows: int(c.Data.At(1)), Attrs: int(c.Data.At(3)), OK: true})
+				return
+			}
+		}
+	}
+}
+
+// Open takes the display with cfg (screen.Config{} for the whole display)
+// and returns the Screen; ok is false if the board has no screen port, it
+// is taken, cfg is too big, or the caller cannot take the grid's memory.
+// The caller owns the port: it closes when the caller exits.
+func Open(cfg screen.Config) (Screen, bool) {
+	h := actor.Spawn(func() { opener(cfg) })
+	r, ok := actor.Call(h, 0, OpenTimeoutMs+1000)
+	if ok {
+		switch m := r.(type) {
+		case opened:
+			if m.OK {
+				st := []int{0, 0, m.Cols, m.Rows, screen.White<<4 | screen.Black, 0}
+				return Screen{Port: m.P, Cols: m.Cols, Rows: m.Rows, Attrs: m.Attrs, buf: bytes.NewBuffer(256), st: st}, true
+			}
+		}
+	}
+	return Screen{buf: bytes.NewBuffer(0)}, false
+}
+
+// Close closes the screen; the console shows again. Planned: s.Close().
+func Close(s Screen) { port.Close(s.Port) }
+
+// NewFrame starts drawing on the whole screen. The frame begins with the
+// cursor hidden (a frame shows it with Cursor or DrawEdit). Planned:
+// s.Frame().
+func NewFrame(s Screen) Frame {
+	f := Frame{X1: s.Cols, Y1: s.Rows, buf: s.buf, st: s.st}
+	op(f, screen.OpCursor)
+	f.buf.WriteByte(0)
+	return f
+}
+
+// Flush sends what the frames drew since the last Flush as one frame; false
+// if there was nothing. Planned: s.Flush().
+func Flush(s Screen) bool {
+	if s.buf.Len() == 0 {
+		return false
+	}
+	actor.Send(s.Port, port.Out{Data: s.buf.Freeze()})
+	return true
+}
+
+// Window returns the sub-rectangle x, y, w, h of f (in f's coordinates) as
+// a Frame with its own origin, clipped to f. Planned: f.Window(x, y, w, h).
+func Window(f Frame, x, y, w, h int) Frame {
+	ox, oy := f.OX+x, f.OY+y
+	return Frame{OX: ox, OY: oy, X0: imax(ox, f.X0), Y0: imax(oy, f.Y0), X1: imin(ox+w, f.X1), Y1: imin(oy+h, f.Y1), buf: f.buf, st: f.st}
+}
+
+// Size is the width and height of f's clip, in cells. Planned: f.Size().
+func Size(f Frame) (int, int) {
+	return imax(f.X1-f.X0, 0), imax(f.Y1-f.Y0, 0)
+}
+
+func imin(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func imax(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func op(f Frame, code int) { f.buf.WriteByte(byte(code)) }
+
+// clip makes the port's clip f's (one OpClip when it differs).
+func clip(f Frame) bool {
+	x0, y0, x1, y1 := imax(f.X0, 0), imax(f.Y0, 0), imin(f.X1, 255), imin(f.Y1, 255)
+	if x1 < x0 {
+		x1 = x0
+	}
+	if y1 < y0 {
+		y1 = y0
+	}
+	st := f.st
+	if st[0] != x0 || st[1] != y0 || st[2] != x1 || st[3] != y1 {
+		op(f, screen.OpClip)
+		f.buf.WriteByte(byte(x0))
+		f.buf.WriteByte(byte(y0))
+		f.buf.WriteByte(byte(x1 - x0))
+		f.buf.WriteByte(byte(y1 - y0))
+		st[0], st[1], st[2], st[3] = x0, y0, x1, y1
+	}
+	return x0 < x1 && y0 < y1
+}
+
+// Color sets the colours of what f draws next (0-15, the screen.Black ...
+// constants); they stay until changed, across frames. Planned:
+// f.Color(fg, bg).
+func Color(f Frame, fg, bg int) {
+	c := (fg&15)<<4 | bg&15
+	st := f.st
+	if st[4] != c {
+		op(f, screen.OpColor)
+		f.buf.WriteByte(byte(c))
+		st[4] = c
+	}
+}
+
+// Attr sets the attributes of what f draws next: a mask of screen.Bold,
+// screen.Underline and screen.Reverse (0: none). Planned: f.Attr(a).
+func Attr(f Frame, a int) {
+	a = a & (screen.Bold | screen.Underline | screen.Reverse)
+	st := f.st
+	if st[5] != a {
+		op(f, screen.OpAttr)
+		f.buf.WriteByte(byte(a))
+		st[5] = a
+	}
+}
+
+// Style sets the colours and attributes at once. Planned: f.Style(fg, bg, a).
+func Style(f Frame, fg, bg, a int) {
+	Color(f, fg, bg)
+	Attr(f, a)
+}
+
+// Clear blanks f in the current colours and moves the cursor to its
+// top-left. Planned: f.Clear().
+func Clear(f Frame) {
+	if clip(f) {
+		op(f, screen.OpClear)
+	}
+}
+
+// Move moves the cursor to x, y of f. Planned: f.Move(x, y).
+func Move(f Frame, x, y int) {
+	ax, ay := f.OX+x, f.OY+y
+	if ax < 0 || ay < 0 || ax > 255 || ay > 255 {
+		ax, ay = 255, 255 // off the screen: what follows is dropped
+	}
+	op(f, screen.OpMove)
+	f.buf.WriteByte(byte(ax))
+	f.buf.WriteByte(byte(ay))
+}
+
+// Print draws s (UTF-8) at the cursor in the current colours and
+// attributes; the cursor advances, and text does not wrap. Planned:
+// f.Print(s).
+func Print(f Frame, s string) {
+	if len(s) == 0 || !clip(f) {
+		return
+	}
+	for len(s) > 0 {
+		n := len(s)
+		if n > 255 {
+			n = 255
+			for n > 0 && s[n]&0xC0 == 0x80 { // cut between characters
+				n--
+			}
+		}
+		op(f, screen.OpText)
+		f.buf.WriteByte(byte(n))
+		f.buf.WriteString(s[:n])
+		s = s[n:]
+	}
+}
+
+// PrintAt draws s at x, y of f; columns left of the screen's edge are cut
+// off. Planned: f.PrintAt(x, y, s).
+func PrintAt(f Frame, x, y int, s string) {
+	ax := f.OX + x
+	for ax < 0 && len(s) > 0 {
+		w := RuneWidth(s)
+		ax += w
+		s = s[runeLen(s):]
+	}
+	Move(f, ax-f.OX, y)
+	Print(f, s)
+}
+
+// Fill fills the rectangle x, y, w, h of f with the character ch (a code
+// point from U+0020 to U+FFFF) in the current colours and attributes.
+// Planned: f.Fill(x, y, w, h, ch).
+func Fill(f Frame, x, y, w, h, ch int) {
+	x0, y0 := imax(f.OX+x, f.X0), imax(f.OY+y, f.Y0)
+	x1, y1 := imin(f.OX+x+w, f.X1), imin(f.OY+y+h, f.Y1)
+	if x0 >= x1 || y0 >= y1 || ch < 0x20 || ch > 0xFFFF || (ch >= 0xD800 && ch <= 0xDFFF) || !clip(f) {
+		return
+	}
+	op(f, screen.OpFill)
+	f.buf.WriteByte(byte(x0))
+	f.buf.WriteByte(byte(y0))
+	f.buf.WriteByte(byte(x1 - x0))
+	f.buf.WriteByte(byte(y1 - y0))
+	f.buf.WriteByte(byte(ch & 0xFF))
+	f.buf.WriteByte(byte(ch >> 8))
+}
+
+// Scroll moves the rectangle x, y, w, h of f up by n rows (down for a
+// negative n, -128 to 127), blanking the rows it uncovers in the current
+// colours. Planned: f.Scroll(x, y, w, h, n).
+func Scroll(f Frame, x, y, w, h, n int) {
+	x0, y0 := imax(f.OX+x, f.X0), imax(f.OY+y, f.Y0)
+	x1, y1 := imin(f.OX+x+w, f.X1), imin(f.OY+y+h, f.Y1)
+	if x0 >= x1 || y0 >= y1 || n == 0 || !clip(f) {
+		return
+	}
+	if n > 127 {
+		n = 127
+	}
+	if n < -128 {
+		n = -128
+	}
+	op(f, screen.OpScroll)
+	f.buf.WriteByte(byte(x0))
+	f.buf.WriteByte(byte(y0))
+	f.buf.WriteByte(byte(x1 - x0))
+	f.buf.WriteByte(byte(y1 - y0))
+	f.buf.WriteByte(byte(n & 0xFF))
+}
+
+// Cursor shows the cursor at x, y of f (on), or hides it. Planned:
+// f.Cursor(x, y, on).
+func Cursor(f Frame, x, y int, on bool) {
+	if on {
+		Move(f, x, y)
+	}
+	op(f, screen.OpCursor)
+	if on {
+		f.buf.WriteByte(1)
+	} else {
+		f.buf.WriteByte(0)
+	}
+}
+
+// Box characters.
+const (
+	hline = 0x2500 // ─
+	vline = 0x2502 // │
+	tl    = 0x250C // ┌
+	tr    = 0x2510 // ┐
+	bl    = 0x2514 // └
+	br    = 0x2518 // ┘
+)
+
+// Box draws a frame of lines around the rectangle x, y, w, h of f (w, h at
+// least 2), with title, if not empty, in its top line. The inside is left
+// as it is. Planned: f.Box(x, y, w, h, title).
+func Box(f Frame, x, y, w, h int, title string) {
+	if w < 2 || h < 2 {
+		return
+	}
+	Fill(f, x, y, 1, 1, tl)
+	Fill(f, x+w-1, y, 1, 1, tr)
+	Fill(f, x, y+h-1, 1, 1, bl)
+	Fill(f, x+w-1, y+h-1, 1, 1, br)
+	Fill(f, x+1, y, w-2, 1, hline)
+	Fill(f, x+1, y+h-1, w-2, 1, hline)
+	Fill(f, x, y+1, 1, h-2, vline)
+	Fill(f, x+w-1, y+1, 1, h-2, vline)
+	if title != "" && w > 4 {
+		PrintAt(f, x+1, y, " "+Cut(title, w-4)+" ")
+	}
+}

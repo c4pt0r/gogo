@@ -1,0 +1,32 @@
+// gogo/tui ProgressBar and StatusLine: bars at several values (clamped),
+// Percent, a status line with left and right texts, one cut to fit.
+package main
+
+import (
+	"gogo/screen"
+	"gogo/tui"
+)
+
+func main() {
+	s, ok := tui.Open(screen.Config{Cols: 20, Rows: 6})
+	if !ok {
+		println("no screen")
+		return
+	}
+	f := tui.NewFrame(s)
+	vals := []int{0, 37, 100, 150, -5}
+	for i, v := range vals {
+		if i == 4 {
+			break
+		}
+		tui.DrawProgress(f, 0, i, 14, v, 100)
+		tui.Label(f, 15, i, 5, tui.Percent(v, 100), tui.Right)
+	}
+	println(tui.Percent(-5, 100), tui.Percent(1, 3), tui.Percent(5, 0))
+	tui.DrawStatus(f, "status", "right side")
+	tui.Flush(s)
+	f = tui.NewFrame(s)
+	tui.DrawStatus(f, "a very long status line that is cut", "12:00")
+	tui.Flush(s)
+	tui.Close(s)
+}

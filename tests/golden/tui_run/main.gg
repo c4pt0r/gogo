@@ -1,0 +1,51 @@
+// gogo/tui Run: the event loop draws before the first message and after
+// every key or other message its handlers take; Msg gets the program's own
+// messages (timer ticks here) and ends the loop by returning false; state
+// lives in a slice the closures share. Also mcu: the screen's grid and the
+// frames fit an actor's default memory on a board.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/screen"
+	"gogo/strconv"
+	"gogo/tui"
+)
+
+type tick struct{}
+
+func main() {
+	s, ok := tui.Open(screen.Config{})
+	keys, kok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
+	if !ok || !kok {
+		println("open failed")
+		return
+	}
+	n := []int{0}
+	self := actor.Self()
+	actor.SendAfter(10, self, tick{})
+	tui.Run(s, keys, tui.Handlers{
+		Key: func(k tui.Key) bool { return true },
+		Msg: func(msg any) bool {
+			switch msg.(type) {
+			case tick:
+				n[0]++
+				if n[0] == 3 {
+					return false
+				}
+				actor.SendAfter(10, self, tick{})
+			}
+			return true
+		},
+		Draw: func(f tui.Frame) {
+			tui.Clear(f)
+			tui.Box(f, 0, 0, s.Cols, s.Rows, "Run")
+			tui.DrawProgress(f, 2, 2, 30, n[0], 3)
+			tui.PrintAt(f, 33, 2, tui.Percent(n[0], 3))
+			tui.DrawStatus(tui.Window(f, 1, 1, s.Cols-2, s.Rows-2), "ticks "+strconv.Itoa(n[0]), "")
+		},
+	})
+	tui.CloseKeys(keys)
+	tui.Close(s)
+	println("ticks", n[0], "memory ok")
+}

@@ -1,0 +1,194 @@
+package tui
+
+import (
+	"gogo/actor"
+	"gogo/kbd"
+	"gogo/port"
+)
+
+// Key is one key press: Code is a Key constant; Char is the character for
+// KeyChar (32-126), else 0.
+type Key struct{ Code, Char int }
+
+// Key codes.
+const (
+	KeyNone      = 0
+	KeyUp        = 1
+	KeyDown      = 2
+	KeyLeft      = 3
+	KeyRight     = 4
+	KeyEnter     = 5
+	KeyEsc       = 6
+	KeyTab       = 7
+	KeyBackspace = 8
+	KeyDelete    = 9
+	KeyChar      = 10
+)
+
+// The StickS3's buttons (KEY1, KEY2): the default Buttons.
+const (
+	ButtonA = 11
+	ButtonB = 12
+)
+
+// LongPressMs is how long button B must be held to be KeyEsc.
+const LongPressMs = 600
+
+// Buttons are the gpio pins of the two buttons OpenKeys uses on a board
+// without a keyboard (pressed = low, internal pull-up).
+type Buttons struct{ A, B int }
+
+// Keys is an open key source: the keyboard, or the two buttons. Event
+// returns it updated (button B's press time). Planned: methods of *Keys.
+type Keys struct {
+	HasKbd     bool
+	Kbd        actor.PID // the "kbd" port, when HasKbd
+	A, B       actor.PID // the buttons' gpio ports, otherwise
+	PinA, PinB int
+	downB      int64 // when B went down; 0: it is up
+}
+
+// OpenKeys opens the keyboard (auto-repeat on), or, if the board has none,
+// the buttons b (Buttons{ButtonA, ButtonB} on the StickS3); ok is false if
+// neither opens. The caller owns the ports.
+func OpenKeys(b Buttons) (Keys, bool) {
+	k, ok := port.Open("kbd", kbd.Config{RepeatDelayMs: 400, RepeatMs: 80})
+	if ok {
+		return Keys{HasKbd: true, Kbd: k}, true
+	}
+	a, oka := port.Open("gpio", port.GPIO{Pin: b.A, Mode: port.InputPullUp, Edge: port.Both})
+	bb, okb := port.Open("gpio", port.GPIO{Pin: b.B, Mode: port.InputPullUp, Edge: port.Both})
+	if !oka || !okb {
+		if oka {
+			port.Close(a)
+		}
+		if okb {
+			port.Close(bb)
+		}
+		return Keys{}, false
+	}
+	return Keys{A: a, B: bb, PinA: b.A, PinB: b.B}, true
+}
+
+// CloseKeys closes the key source's ports. Planned: k.Close().
+func CloseKeys(k Keys) {
+	if k.HasKbd {
+		port.Close(k.Kbd)
+		return
+	}
+	port.Close(k.A)
+	port.Close(k.B)
+}
+
+// FromKbd maps a keyboard event to a Key (KeyNone for a release, a
+// modifier or a key without a meaning here).
+func FromKbd(e kbd.Key) Key {
+	if !e.Down {
+		return Key{}
+	}
+	switch e.Code {
+	case kbd.Up:
+		return Key{Code: KeyUp}
+	case kbd.Down:
+		return Key{Code: KeyDown}
+	case kbd.Left:
+		return Key{Code: KeyLeft}
+	case kbd.Right:
+		return Key{Code: KeyRight}
+	case kbd.Enter:
+		return Key{Code: KeyEnter}
+	case kbd.Esc:
+		return Key{Code: KeyEsc}
+	case kbd.Tab:
+		return Key{Code: KeyTab}
+	case kbd.Backspace:
+		return Key{Code: KeyBackspace}
+	case kbd.Delete:
+		return Key{Code: KeyDelete}
+	}
+	if e.Char >= 32 && e.Char <= 126 && e.Mods&(kbd.ModCtrl|kbd.ModAlt|kbd.ModOpt) == 0 {
+		return Key{Code: KeyChar, Char: e.Char}
+	}
+	return Key{}
+}
+
+// Event handles msg if it belongs to the UI: a key or button event of k
+// (the Key it means, KeyNone if none) or the screen port's port.Done. It
+// returns k updated and whether msg was the UI's; anything else (ok false)
+// is the caller's to handle. It never waits. Planned: k.Event(msg).
+func Event(k Keys, msg any) (Keys, Key, bool) {
+	switch m := msg.(type) {
+	case kbd.Key:
+		return k, FromKbd(m), true
+	case port.Edge:
+		if k.HasKbd || (m.Pin != k.PinA && m.Pin != k.PinB) {
+			return k, Key{}, false
+		}
+		if m.Pin == k.PinA {
+			if m.Value == 0 {
+				return k, Key{Code: KeyEnter}, true
+			}
+			return k, Key{}, true
+		}
+		if m.Value == 0 {
+			if k.downB != 0 {
+				return k, Key{}, true // a second press edge: keep the first
+			}
+			return Keys{A: k.A, B: k.B, PinA: k.PinA, PinB: k.PinB, downB: actor.Now() + 1}, Key{}, true
+		}
+		if k.downB == 0 {
+			return k, Key{}, true // a release without a press (opened while held)
+		}
+		held := actor.Now() + 1 - k.downB
+		up := Keys{A: k.A, B: k.B, PinA: k.PinA, PinB: k.PinB}
+		if held >= LongPressMs {
+			return up, Key{Code: KeyEsc}, true
+		}
+		return up, Key{Code: KeyDown}, true
+	case port.Done:
+		return k, Key{}, true
+	}
+	return k, Key{}, false
+}
+
+// Handlers are Run's callbacks, all three required. Key gets every key;
+// Msg every message that is not the UI's (Ignore drops them); either
+// returns false to end Run. Draw draws the whole interface; Run calls it with a fresh
+// frame, and flushes, before the first message and after every Key or Msg
+// call. Keep state the callbacks change in a slice they capture (closures
+// capture by value; a slice's elements are shared).
+type Handlers struct {
+	Key  func(k Key) bool
+	Msg  func(msg any) bool
+	Draw func(f Frame)
+}
+
+// Ignore is a Handlers.Msg that drops every message and keeps running.
+func Ignore(msg any) bool { return true }
+
+// Run is an event loop for a program whose actor does nothing but its UI:
+// it receives every message, passes it through Event and calls h. It
+// returns k (updated) when a handler returns false. Planned: s.Run(k, h).
+func Run(s Screen, k Keys, h Handlers) Keys {
+	h.Draw(NewFrame(s))
+	Flush(s)
+	for {
+		msg := actor.Receive()
+		k2, key, ui := Event(k, msg)
+		k = k2
+		more := true
+		if ui {
+			if key.Code == KeyNone {
+				continue
+			}
+			more = h.Key(key)
+		} else {
+			more = h.Msg(msg)
+		}
+		if !more {
+			return k
+		}
+		h.Draw(NewFrame(s))
+		Flush(s)
+	}
+}
