@@ -322,6 +322,7 @@ func without(ps []peer, i int) []peer {
 // doorRun answers peers' whereisReq Calls for the names exported here.
 func doorRun(agentPID actor.PID) {
 	var zero actor.PID
+	actor.TrapExit(true) // a link signal must not end it
 	for {
 		switch m := actor.Receive().(type) {
 		case actor.Request:
@@ -345,7 +346,8 @@ func doorRun(agentPID actor.PID) {
 func agentRun() {
 	var zero actor.PID
 	self := actor.Self()
-	door := actor.SpawnLink(func() { doorRun(self) })
+	door := actor.Spawn(func() { doorRun(self) })
+	doorRef := actor.Monitor(door)
 	name := ""
 	selfID, nextID := 0, 2
 	server := false
@@ -511,6 +513,11 @@ func agentRun() {
 				}
 			}
 		case actor.DownMsg:
+			if m.Ref == doorRef { // a bug if ever (it traps exits): a door for later Listens and Connects
+				door = actor.Spawn(func() { doorRun(self) })
+				doorRef = actor.Monitor(door)
+				break
+			}
 			// A link actor ended: its peer, and on a board every node, is gone.
 			var keep []peer
 			lost := false

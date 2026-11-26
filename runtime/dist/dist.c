@@ -1307,8 +1307,9 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
         if (fn != 8u) break;
         term from = rd32(f), to = rd32(f + 4);
         if (!term_is_pid(from) || term_pid_slot(from) >= DIST_SLOT_BASE) break;
-        Actor *a = target(vm, ds, to);
-        term peer = proxy_intern(ds, src, from);
+        /* Never the door: its link could end it (and the node with it). */
+        Actor *a = to == 0u || to == T_ZEROPID ? NULL : target(vm, ds, to);
+        term peer = a ? proxy_intern(ds, src, from) : 0;
         if (a && peer && (watch_find(ds, W_LINK, a->id, peer, 0) ||
                           watch_new(ds, W_LINK, src, a->id, peer, 0))) return;
         uint32_t w[3] = { to, from, a ? R_NO_CONNECTION : R_NO_PROC };

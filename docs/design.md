@@ -2625,7 +2625,8 @@ serial}`: MON_OUT (a local actor monitors a proxy), MON_IN (a remote
 watcher monitors a local actor), LINK. Exits send DOWN or EXIT with the
 code (remote reasons carry no function name); `Demonitor`/`Unlink` send
 DEMONITOR/UNLINK; `Kill` sends KILL, which the target node applies as
-`sig_kill` does, to an exported actor only, never to its door. EXIT and
+`sig_kill` does, to an exported actor only, never to its door (nor LINK:
+the door traps exits, and the agent monitors it rather than linking). EXIT and
 DOWN are accepted only for a matching watch, LINK/MONITOR/KILL only for an
 exported target. A remote link's exit signal reaches a trapping actor as
 an `ExitMsg` whatever its code, as the VM's own link signals. When a link

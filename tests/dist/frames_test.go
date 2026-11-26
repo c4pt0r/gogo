@@ -105,3 +105,33 @@ func TestMonitorUnroutable(t *testing.T) {
 	}
 	noCrash(t, srv)
 }
+
+// A LINK to the door is refused: dropping the connection afterwards
+// leaves the node serving new boards.
+func TestLinkToDoorRefused(t *testing.T) {
+	srv, port := startServer(t)
+	p, err := dial(t, port, "mallory", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := hdr(3, p.server, p.self) // LINK from our PID to the door
+	f = binary.LittleEndian.AppendUint32(f, p.calledBy)
+	f = binary.LittleEndian.AppendUint32(f, 0)
+	p.send(f)
+	if r := p.recv(2000); r == nil || r[0] != 5 {
+		t.Errorf("want EXIT (refused), got %x", r)
+	}
+	p.c.Close()
+	srv.waitLine("down mallory")
+	q, err := dial(t, port, "honest", token)
+	if err != nil {
+		t.Fatalf("a new board cannot join: %v", err)
+	}
+	if q.whereis("echo") == 0 {
+		t.Error("echo not found")
+	}
+	srv.kill()
+	if strings.Contains(srv.errs, "crashed") {
+		t.Errorf("server stderr:\n%s", srv.errs)
+	}
+}

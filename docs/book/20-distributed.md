@@ -29,7 +29,7 @@ and then use it like any other:
 | `actor.Link(p)` / `Unlink` | exit signals both ways; `NoConnection` when the node is lost |
 | `==`, type switches | as for local PIDs: one remote actor has one PID value on this node |
 | `println(p)` | `<pid 5@2>`: actor slot 5 on node 2 |
-| `actor.Kill(p, code)` | an exit signal on `p`'s node, as for a local actor (`p` must have been given out by its node; a node's door cannot be killed) |
+| `actor.Kill(p, code)` | an exit signal on `p`'s node, as for a local actor (`p` must have been given out by its node; a node's door cannot be killed, nor linked to) |
 | `actor.SendAfter(ms, p, m)` | not across nodes: the sender exits with `actor.BadMsg` |
 | `actor.Info`, `actor.Register` | Info reports 0; Register refuses a remote PID |
 
