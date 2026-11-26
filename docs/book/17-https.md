@@ -378,7 +378,10 @@ networking.
 
 `examples/httpsdemo` is the whole chapter on a StickS3: DHCP, `sntp.Sync`,
 one `http.Get` of `https://example.com/`, three requests through a
-`Client`, and a connection with the wrong name that must be refused:
+`Client`, and a connection with the wrong name that must be refused. A
+run on the board printed this (the reason on the `wrong.example` line is
+edited to today's number, 23 for `TLS`; it was captured as 8, before the
+codes were shared):
 
 ```text
 sntp: ok, 50 ms unix ms 1795628156793
