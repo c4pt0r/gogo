@@ -1651,7 +1651,9 @@ overflows, then `end`. The console task writes a temporary file beside
 the target (`fs_lfs.c`; LittleFS calls take a mutex, since the VM task
 uses the file system too), reads it back, checks the length and CRC-32,
 and renames it over the target, atomically. A failure, an `abort` or a
-new `push` drops the temporary file. `set` validates against a key table
+new `push` drops the temporary file. While a push erases or compacts a
+flash block, a `/flash` call of the VM waits for the mutex, tens of ms
+at worst (no audio frames were dropped during a push on the M5StickS3). `set` validates against a key table
 in `cmd/gogo/config.go` (name, type: string, size, ip, bool or int,
 platform-owned or a library's): keys are 1-15 bytes of `[a-z0-9._]`,
 an unknown key under a reserved prefix (`wifi.`, `net.`, `fs.`,

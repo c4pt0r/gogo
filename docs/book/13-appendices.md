@@ -299,7 +299,8 @@ them) are described in chapters 15 and 16.
 The crash report is `gogo: actor <pid N> crashed: <kind>[ in <function>]`,
 on standard error. The reason `main` exits with is also the exit status of
 `gogo run` and `gogovm`: 0 for `Normal` and `Shutdown`, 4 for a VM reason
-(1..63), the code itself for 64..255, and 255 above that (chapter 12).
+(1..63) or a negative code, the code itself for 64..255, and 255 above
+that (chapter 12).
 
 ## C. Error codes
 

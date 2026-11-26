@@ -127,6 +127,12 @@ rebuilt:
 
 ## VM
 
+- **A forged crash report can set gogovm's exit status.** gogovm reads
+  main's status from the crash report on standard error, and the report
+  prints a function's name as the image has it. A hand-made image whose
+  function name holds a newline followed by a report line for `main`
+  sets the status, even if `main` then exits normally. The compiler
+  never makes such a name; escaping it would cost VM core bytes.
 - **Only `main` sets the exit status.** `gogovm` and `gogo run` exit
   with the main actor's status (book chapter 12); a crash of another
   actor, while `main` ends normally, still exits 0. *Workaround:* link
@@ -454,6 +460,11 @@ rebuilt:
   (*workaround:* `bytes.FromSlice`).
 - **Shrinking `/flash`** (`fs.flash.size` smaller than the file system)
   needs `gogo device format-flash`, which erases it.
+- **`gogo device format-flash` has not run on a board yet.** The host
+  side and the protocol are tested; the board side (the RTC flag, the
+  restart, the format at mount) was built but not run, so that a
+  board's `/flash` was not wiped. If the flag were lost, the command
+  would only restart the board without formatting.
 - **`gogo push` takes images only**, one at a time, at about 40 KB/s
   (measured on the M5StickS3: 46 KB in 1.2 s), and does not tell the
   running program. Pushing over a file the program has open replaces it

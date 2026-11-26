@@ -204,7 +204,7 @@ for `gogo build`. Arguments after the program are refused for now.
 | 1 | a usage, toolchain or build error, or the VM was not found |
 | 2 | the image could not be loaded: not an image, damaged, or a format this VM does not run |
 | 3 | the image requires a driver or mount the VM lacks (for example `tls` in a VM built without mbedTLS) |
-| 4 | `main` crashed: a VM reason such as `divzero`, `oom` or `killed` (appendix B), also when a linked actor's crash took it down |
+| 4 | `main` crashed: a VM reason such as `divzero`, `oom` or `killed` (appendix B), or a code below 64 or negative given to `actor.Exit` |
 | 64..99 | `main` exited with a library failure, `actor.Failed` plus a shared code (appendix B), as it is: `http.ListenFailed` is 69 |
 | 100..255 | `main` exited with your code, `actor.Exit(code)` with `code` from 100; a code above 255 is 255 |
 
@@ -219,9 +219,16 @@ if !ok {
 }
 ```
 
+When a linked actor's exit takes `main` down, `main` exits with that
+actor's own reason: 4 if it crashed, but 150 if it called
+`actor.Exit(150)`, 69 for a library failure.
+
 If the VM itself is killed by a signal, `gogo run` exits 128 plus the
-signal's number, as a shell does. The host VM `build/gogovm` exits with
-the same statuses (it is where they come from).
+signal's number, as a shell does (130 for Ctrl-C, 137 for `kill -9`).
+Those statuses overlap the user range 100..255, so a script that must
+tell them apart should keep its own codes below 128. The host VM
+`build/gogovm` exits with the same statuses (it is where they come
+from).
 
 Options:
 
