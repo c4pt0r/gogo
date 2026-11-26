@@ -5,6 +5,7 @@ package main
 import (
 	"gogo/actor"
 	"gogo/fmt"
+	"gogo/fs"
 )
 
 type P struct{ X, Y int }
@@ -12,6 +13,7 @@ type P struct{ X, Y int }
 var names = []string{"zero", "one", "two"}
 var table = map[string]int{"b": 2, "a": 1}
 var origin = P{1, 2}
+var data = []byte("hello from module")
 
 // Run reports to the host what it computed.
 func Run(arg any) {
@@ -23,5 +25,9 @@ func Run(arg any) {
 	m := map[string][]string{"n": names[1:]}
 	m["n"] = append(m["n"], "three")
 	s := fmt.Sprint(own, names[0], table["a"], table, *p, m, len(m["n"]))
-	actor.Send(to, s)
+	if e := fs.WriteFile("/flash/out.txt", data); e != fs.OK { // a const slice to a port
+		s += " write failed"
+	}
+	back, _ := fs.ReadFile("/flash/out.txt", 100)
+	actor.Send(to, s+" "+back.String())
 }

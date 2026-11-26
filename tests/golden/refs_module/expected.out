@@ -1,2 +1,2 @@
 load 0
-[nil one two]zero1 map[a:1 b:2] {4 4} map[n:[one two three]] 3
+[nil one two]zero1 map[a:1 b:2] {4 4} map[n:[one two three]] 3 hello from module
