@@ -84,13 +84,13 @@ func TestRunForwardsSIGTERM(t *testing.T) {
 }
 
 func TestRunKeyNeedsValue(t *testing.T) {
-	if _, err := runCmd([]string{"--key"}); err == nil || !strings.Contains(err.Error(), "--key") {
+	if _, err := runCmd([]string{"--key"}); err == nil || !strings.Contains(err.Error(), "flag needs an argument: -key") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := runCmd([]string{"--key", "a=1"}); err == nil || !strings.Contains(err.Error(), "missing program") || strings.Contains(err.Error(), "needs a value") {
+	if _, err := runCmd([]string{"--key", "a=1"}); err == nil || !strings.Contains(err.Error(), "missing program") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := runCmd([]string{"--key", "a=1", "--key"}); err == nil || !strings.Contains(err.Error(), "needs a value") {
+	if _, err := runCmd([]string{"--key", "a=1", "--key"}); err == nil || !strings.Contains(err.Error(), "needs an argument") {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := runCmd(nil); err == nil || !strings.Contains(err.Error(), "missing program") {
@@ -99,7 +99,7 @@ func TestRunKeyNeedsValue(t *testing.T) {
 }
 
 func TestRunFsRoot(t *testing.T) {
-	if _, err := runCmd([]string{"--fs-root"}); err == nil || !strings.Contains(err.Error(), "--fs-root needs") {
+	if _, err := runCmd([]string{"--fs-root"}); err == nil || !strings.Contains(err.Error(), "needs an argument: -fs-root") {
 		t.Errorf("err = %v", err)
 	}
 	work := t.TempDir()
@@ -119,6 +119,13 @@ func TestRunFsRoot(t *testing.T) {
 	b, _ := os.ReadFile(args)
 	want := "--key\na=1\n--fs-root\n/some/dir\n" + img + "\n"
 	if string(b) != want {
+		t.Errorf("vm args = %q, want %q", b, want)
+	}
+	// The same with single dashes and "=" values.
+	if code, err := runCmd([]string{"-key", "a=1", "-fs-root=/some/dir", img}); err != nil || code != 0 {
+		t.Fatalf("code %d err %v", code, err)
+	}
+	if b, _ := os.ReadFile(args); string(b) != want {
 		t.Errorf("vm args = %q, want %q", b, want)
 	}
 }

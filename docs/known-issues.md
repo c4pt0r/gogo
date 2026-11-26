@@ -97,6 +97,18 @@ rebuilt:
     needs no edit. `GOGO_ESTARTED` is `GOGO_ESTATE`, `GOGO_ESTART` is
     `GOGO_ENOTFOUND` (no `main`) or `GOGO_ENOMEM`, and the old name
     `GOGO_ECAPS` is gone.
+- **Command line.** Every `gogo` command parses its flags the same way
+  (book chapter 12): one or two dashes, flags before or after the other
+  arguments. So an argument starting with `-` is a flag even after a
+  file name: put it after `--`. The exceptions: `gogo config set` takes
+  its value as it is (`gogo config set offset -5`), and `gogo run` takes
+  its flags before the program only. A usage
+  mistake prints what is wrong before the usage.
+
+## Deprecated, removed in the next release
+
+- `gogo monitor -t seconds` is `-timeout seconds`; `-t` still works and
+  says so on standard error.
 
 ## VM
 

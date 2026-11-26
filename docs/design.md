@@ -1593,7 +1593,7 @@ gogo build ./app -o app.ggb           # compile the .gg files of ./app
 gogo run app.ggb                      # run on the host VM (simulated peripherals)
 gogo dis app.ggb                      # disassemble
 gogo flash app.ggb                    # write the image to the board's image partition (needs esptool)
-gogo monitor -reset -t 30 -until "vm exited"   # capture the serial output
+gogo monitor -reset -timeout 30 -until "vm exited"   # capture the serial output
 ```
 
 `gogo` with no arguments prints its usage. `gogo run` builds a directory
@@ -1608,7 +1608,7 @@ without reflashing it:
 . ~/esp/esp-idf/export.sh
 idf.py -C platform/esp32s3 build flash         # firmware (VM + platform + screen console)
 gogo flash app.ggb                             # image, into the gogo partition at 0x210000 (header + CRC)
-gogo monitor [-port P] [-t seconds] [-until text] [-reset]
+gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 ```
 
 `gogo flash` uses the only `/dev/cu.usbmodem*` by default. `gogo monitor`

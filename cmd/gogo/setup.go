@@ -20,7 +20,6 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -129,8 +128,7 @@ func setupCmd(args []string) error {
 
 func parseSetupArgs(args []string) (setupOpts, error) {
 	var o setupOpts
-	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlags("setup")
 	fs.StringVar(&o.port, "port", "", "")
 	fs.StringVar(&o.board, "board", "", "")
 	fs.StringVar(&o.version, "version", "", "")
@@ -141,8 +139,12 @@ func parseSetupArgs(args []string) (setupOpts, error) {
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "")
 	fs.BoolVar(&o.newLayout, "new-layout", false, "")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		return o, errors.New(setupUsage)
+	pos, err := parseFlags(fs, args, setupUsage)
+	if err != nil {
+		return o, err
+	}
+	if len(pos) != 0 {
+		return o, usageError("setup", "no arguments expected", setupUsage)
 	}
 	if o.board != "" && setupBoardTitles[o.board] == "" {
 		return o, fmt.Errorf("gogo setup: -board must be one of %s\n%s", boardNames(), setupUsage)

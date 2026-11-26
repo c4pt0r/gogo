@@ -142,26 +142,26 @@ func configCmd(args []string, out io.Writer) error {
 // if exactly one is connected, else the local file. A value of "-" is read
 // as one line from stdin (keeps a password out of the shell history).
 func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer, glob func(string) ([]string, error)) error {
-	port, local := "", false
-	for len(args) > 0 && strings.HasPrefix(args[0], "-") && args[0] != "-" {
-		switch {
-		case args[0] == "-local":
-			local = true
-			args = args[1:]
-		case args[0] == "-port" && len(args) > 1:
-			port = args[1]
-			args = args[2:]
-		default:
-			return errors.New(configUsage)
-		}
+	fs := newFlags("config")
+	port := fs.String("port", "", "")
+	local := fs.Bool("local", false, "")
+	// set's value is taken as it is, even if it starts with "-".
+	args, err := parseFlagsRaw(fs, args, configUsage, func(pos []string) bool { return len(pos) == 2 && pos[0] == "set" })
+	if err != nil {
+		return err
 	}
-	if len(args) == 0 || (port != "" && local) {
-		return errors.New(configUsage)
+	if *port != "" && *local {
+		return usageError("config", "-port and -local do not combine", configUsage)
+	}
+	if len(args) == 0 {
+		return usageError("config", "missing operation", configUsage)
 	}
 	op, args := args[0], args[1:]
 	want := map[string]int{"set": 2, "get": 1, "list": 0, "rm": 1, "scan": 0, "stats": 0}
-	if n, ok := want[op]; !ok || len(args) != n {
-		return errors.New(configUsage)
+	if n, ok := want[op]; !ok {
+		return usageError("config", fmt.Sprintf("unknown operation %q", op), configUsage)
+	} else if len(args) != n {
+		return usageError("config", fmt.Sprintf("%s takes %d argument(s)", op, n), configUsage)
 	}
 	if len(args) > 0 && !validKey(args[0]) {
 		return fmt.Errorf("gogo config: bad key %q (1-%d characters of A-Z a-z 0-9 . _ -)", args[0], configMaxKey)
@@ -180,14 +180,14 @@ func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer,
 			return err
 		}
 	}
-	if port == "" && !local && os.Getenv("GOGO_CONFIG") == "" {
+	if *port == "" && !*local && os.Getenv("GOGO_CONFIG") == "" {
 		if ports, err := glob(portGlob); err == nil && len(ports) == 1 {
-			port = ports[0]
-			fmt.Fprintf(errOut, "gogo config: board on %s (-local for this computer's store)\n", port)
+			*port = ports[0]
+			fmt.Fprintf(errOut, "gogo config: board on %s (-local for this computer's store)\n", *port)
 		}
 	}
-	if port != "" {
-		f, err := openSerial(port)
+	if *port != "" {
+		f, err := openSerial(*port)
 		if err != nil {
 			return err
 		}

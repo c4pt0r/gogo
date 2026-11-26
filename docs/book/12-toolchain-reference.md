@@ -9,22 +9,39 @@ firmware and programs, but the serial console commands (`monitor`,
 are not supported.
 
 ```text
-gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
+gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
 gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
 gogo env [-path dirs]
 gogo dis <file.ggb>
 gogo flash [-port P] [-esptool path] app.ggb
-gogo monitor [-port P] [-t seconds] [-until text] [-reset]
-gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
+gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
+gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
 gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
 gogo version
 ```
 
+**Flags** work the same in every command:
+
+- A flag is spelt with one dash or two (`-port P`, `--port P`), and its
+  value follows as the next argument or after `=` (`-o=app.ggb`).
+- Flags may come before or after the other arguments: `gogo build app -o
+  app.ggb` and `gogo build -o app.ggb app` are the same. `--` ends the
+  flags, so an argument after it that starts with `-` is not one; a lone
+  `-` is an ordinary argument. `gogo run` is the exception, as `go run`
+  is: its flags come before the program, and what follows the program
+  belongs to the program (refused for now).
+- The names are the same everywhere: `-port` (the board's serial port),
+  `-board`, `-o` (where the output goes), `-timeout` (seconds),
+  `-esptool`, `-path`, `-yes`.
+- `-h` (or `-help`) prints the command's usage and exits 0. A mistake
+  (an unknown flag, a missing value or argument) prints what is wrong and
+  the usage, and exits 1.
+
 ## gogo build
 
 ```text
-gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
+gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
 ```
 
 Compiles the `package main` in `<dir>` (all its `.gg` files), the gogo
@@ -312,12 +329,14 @@ partition.
 ## gogo monitor
 
 ```text
-gogo monitor [-port P] [-t seconds] [-until text] [-reset]
+gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 ```
 
 Copies the board's console to standard output.
 
-- `-t seconds`: stop after this long (default 10).
+- `-timeout seconds`: stop after this long (default 10; fractions such
+  as `0.5` are fine). `-t` is its old name: it still works in this
+  release, with a note on standard error, and goes away in the next.
 - `-until text`: stop after the first line containing `text`, e.g.
   `-until "gogo: vm exited"`.
 - `-reset`: reset the board first, so the capture starts at boot. Without
@@ -330,7 +349,7 @@ stop `gogo monitor` before `gogo flash` or `gogo config`.
 ## gogo firmware
 
 ```text
-gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
+gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
 ```
 
 Chooses which optional parts the firmware needs to contain for a set of
@@ -358,6 +377,11 @@ driver nobody uses. It reads the requirement names each file carries
   `tls` with `net`.
 - A required feature the board lacks is an error that names it, for example
   `kbd` or `sd` on the `sticks3`.
+- `-board` names the board. Instead, `-port P` asks the board on that
+  port: one read-only esptool command (`chip-id`; `-esptool` as for
+  `gogo flash`) reads its chip, and an ESP32-S3 with embedded PSRAM is
+  the M5StickS3, one without is the Cardputer ADV (as `gogo setup`
+  decides). The board resets afterwards and runs its program again.
 - `-o dir`: the build directory and where `sdkconfig.gogo` goes (default
   `build-fw-<board>`). `-build` runs the printed command (from the gogo
   repository root, with ESP-IDF exported, chapter 2).

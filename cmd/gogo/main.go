@@ -1,15 +1,7 @@
-// Command gogo compiles gogo programs to VM images, runs and disassembles them.
-//
-//	gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
-//	gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
-//	gogo env [-path dirs]
-//	gogo dis <file.ggb>
-//	gogo flash [-port P] [-esptool path] app.ggb
-//	gogo monitor [-port P] [-t seconds] [-until text] [-reset]
-//	gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
-//	gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
-//	gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
-//	gogo version
+// Command gogo compiles gogo programs to VM images, runs and disassembles
+// them, and puts them on a board. `gogo` without arguments prints the
+// usage of every command (the usage variable); flags.go says how every
+// command parses its flags.
 //
 // `gogo build` compiles a directory (the build root) or one .gg file. Imports
 // outside gogo/ are user packages, found in the build root and then in the
@@ -30,6 +22,7 @@ package main
 import (
 	"bufio"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -43,73 +36,101 @@ import (
 	"gogotools/compiler"
 )
 
-const usage = "usage: gogo build [-path dirs] <dir|file" + sourceExt + "> [-o out" + imageExt + "]\n       gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file" + sourceExt + "|file" + imageExt + ">\n       gogo env [-path dirs]\n       gogo dis <file" + imageExt + ">\n       gogo flash [-port P] [-esptool path] app" + imageExt + "\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats\n       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]\n       gogo version"
+// usage lists every command; each command's own usage text (buildUsage,
+// runUsage, ...) is printed with its errors.
+var usage = "usage: " + strings.Join([]string{
+	strings.TrimPrefix(buildUsage, "usage: "),
+	strings.TrimPrefix(runUsage, "usage: "),
+	strings.TrimPrefix(envUsage, "usage: "),
+	strings.TrimPrefix(disUsage, "usage: "),
+	strings.TrimPrefix(flashUsage, "usage: "),
+	strings.TrimPrefix(monitorUsage, "usage: "),
+	strings.TrimPrefix(firmwareUsage, "usage: "),
+	strings.TrimPrefix(configUsage, "usage: "),
+	strings.TrimPrefix(setupUsage, "usage: "),
+	"gogo version",
+}, "\n       ")
+
+const (
+	buildUsage = "usage: gogo build [-path dirs] [-o out" + imageExt + "] <dir|file" + sourceExt + ">"
+	envUsage   = "usage: gogo env [-path dirs]"
+	disUsage   = "usage: gogo dis <file" + imageExt + ">"
+)
 
 func main() {
+	var code int
+	var err error
 	if len(os.Args) > 1 && os.Args[1] == "run" {
-		code, err := runCmd(os.Args[2:])
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		os.Exit(code)
+		code, err = runCmd(os.Args[2:])
+	} else if err = run(os.Args[1:]); err != nil {
+		code = exitUsage
 	}
-	if err := run(os.Args[1:]); err != nil {
+	var help helpError
+	if errors.As(err, &help) {
+		fmt.Println(help.usage)
+		os.Exit(0)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
 	}
+	os.Exit(code)
 }
 
-// runCmd implements `gogo run` and returns the process exit status.
+const runUsage = "usage: gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file" + sourceExt + "|file" + imageExt + ">"
+
+// runCmd implements `gogo run` and returns the process exit status: the
+// VM's (exitcodes.go), or exitUsage for a usage, build or toolchain error.
 func runCmd(args []string) (int, error) {
-	// --key c=pin (unix tty mode) and --fs-root DIR (host directory behind
+	// -key c=pin (unix tty mode) and -fs-root DIR (host directory behind
 	// /flash and /sd) are forwarded to gogovm; -path dirs is the package
 	// search path of the build.
-	var vmArgs, buildArgs []string
-	for len(args) > 0 && (args[0] == "--key" || args[0] == "--fs-root" || args[0] == "-path" || args[0] == "--path") {
-		if len(args) < 2 {
-			switch args[0] {
-			case "--fs-root":
-				return 1, errors.New("gogo run: --fs-root needs a directory\n" + usage)
-			case "--key":
-				return 1, errors.New("gogo run: --key needs a value like c=pin\n" + usage)
-			}
-			return 1, errors.New("gogo run: -path needs a list of directories\n" + usage)
-		}
-		if args[0] == "-path" || args[0] == "--path" {
-			buildArgs = append(buildArgs, "-path", args[1])
-		} else {
-			vmArgs = append(vmArgs, args[0], args[1])
-		}
-		args = args[2:]
+	fs := newFlags("run")
+	var keys listFlag
+	fs.Var(&keys, "key", "")
+	fsRoot := fs.String("fs-root", "", "")
+	getPath := addPathFlag(fs)
+	// Everything after the program is the program's (refused for now),
+	// as for `go run`: flags come before it.
+	args, err := parseFlagsRaw(fs, args, runUsage, func(pos []string) bool { return len(pos) > 0 })
+	if err != nil {
+		return exitUsage, err
+	}
+	var vmArgs []string
+	path := getPath()
+	for _, k := range keys {
+		vmArgs = append(vmArgs, "--key", k)
+	}
+	if *fsRoot != "" {
+		vmArgs = append(vmArgs, "--fs-root", *fsRoot)
 	}
 	if len(args) == 0 {
-		return 1, errors.New("gogo run: missing program (a directory, a " + sourceExt + " file or a " + imageExt + " image)\n" + usage)
+		return exitUsage, usageError("run", "missing program (a directory, a "+sourceExt+" file or a "+imageExt+" image)", runUsage)
 	}
 	if len(args) != 1 {
-		return 1, fmt.Errorf("gogo run: arguments after the program (%s) are not supported yet\n%s", strings.Join(args[1:], " "), usage)
+		return exitUsage, usageError("run", fmt.Sprintf("arguments after the program (%s) are not supported yet", strings.Join(args[1:], " ")), runUsage)
 	}
 	target := args[0]
 	fi, err := os.Stat(target)
 	if err != nil {
-		return 1, err
+		return exitUsage, err
 	}
 	image := target
 	if fi.IsDir() || isSourceFile(target) {
 		tmp, err := os.MkdirTemp("", "gogo-run-")
 		if err != nil {
-			return 1, err
+			return exitUsage, err
 		}
 		defer os.RemoveAll(tmp)
 		image = filepath.Join(tmp, "main"+imageExt)
-		if err := build(append(buildArgs, target, "-o", image)); err != nil {
-			return 1, err
+		if _, err := buildImage(target, image, path.path()); err != nil {
+			return exitUsage, err
 		}
-	} else if len(buildArgs) > 0 {
-		return 1, errors.New("gogo run: -path is for building a directory or " + sourceExt + " file, not for an image\n" + usage)
+	} else if path.set {
+		return exitUsage, usageError("run", "-path is for building a directory or "+sourceExt+" file, not for an image", runUsage)
 	}
 	vm, _, err := findVM()
 	if err != nil {
-		return 1, err
+		return exitUsage, err
 	}
 	cmd := exec.Command(vm, append(vmArgs, image)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -120,7 +141,7 @@ func runCmd(args []string) (int, error) {
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigs)
 	if err := cmd.Start(); err != nil {
-		return 1, fmt.Errorf("gogo: running %s: %v", vm, err)
+		return exitUsage, fmt.Errorf("gogo: running %s: %v", vm, err)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -145,7 +166,7 @@ func runCmd(args []string) (int, error) {
 				return exit.ExitCode(), nil
 			}
 		}
-		return 1, fmt.Errorf("gogo: running %s: %v", vm, err)
+		return exitUsage, fmt.Errorf("gogo: running %s: %v", vm, err)
 	}
 	return 0, nil
 }
@@ -261,19 +282,7 @@ func run(args []string) error {
 	case "env":
 		return envCmd(args[1:], os.Stdout)
 	case "dis":
-		if len(args) != 2 {
-			return errors.New(usage)
-		}
-		img, err := os.ReadFile(args[1])
-		if err != nil {
-			return err
-		}
-		text, err := compiler.Disassemble(img)
-		if err != nil {
-			return err
-		}
-		fmt.Print(text)
-		return nil
+		return disCmd(args[1:], os.Stdout)
 	case "flash":
 		return defaultFlasher().flash(args[1:])
 	case "monitor":
@@ -285,13 +294,17 @@ func run(args []string) error {
 	case "setup":
 		return setupCmd(args[1:])
 	case "version":
-		if len(args) != 1 {
-			return errors.New(usage)
+		if _, err := parseFlags(newFlags("version"), args[1:], "usage: gogo version"); err != nil {
+			return err
+		} else if len(args) > 1 {
+			return usageError("version", "no arguments expected", "usage: gogo version")
 		}
 		fmt.Printf("gogo %s (image format %d.%d)\n", version, compiler.ImageMajor, compiler.ImageMinor)
 		return nil
+	case "-h", "-help", "--help", "help":
+		return helpError{usage}
 	}
-	return errors.New(usage)
+	return fmt.Errorf("gogo: unknown command %q\n%s", args[0], usage)
 }
 
 // pathFlag parses the value of -path: nil (the default search path,
@@ -308,46 +321,77 @@ func (p pathFlag) path() []string {
 	return compiler.SearchPath()
 }
 
-func build(args []string) error {
-	var dir, out string
-	var path pathFlag
-	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "-o" && i+1 < len(args):
-			out = args[i+1]
-			i++
-		case (args[i] == "-path" || args[i] == "--path") && i+1 < len(args):
-			path = pathFlag{true, compiler.SplitPath(args[i+1])}
-			i++
-		case dir == "" && !strings.HasPrefix(args[i], "-"):
-			dir = args[i]
-		default:
-			return errors.New(usage)
+// addPathFlag defines -path on fs; call get after parsing.
+func addPathFlag(fs *flag.FlagSet) (get func() pathFlag) {
+	v := fs.String("path", "", "")
+	return func() pathFlag {
+		if !flagSet(fs, "path") {
+			return pathFlag{}
 		}
+		return pathFlag{true, compiler.SplitPath(*v)}
 	}
-	if dir == "" {
-		return errors.New(usage)
+}
+
+func build(args []string) error {
+	fs := newFlags("build")
+	out := fs.String("o", "", "")
+	path := addPathFlag(fs)
+	pos, err := parseFlags(fs, args, buildUsage)
+	if err != nil {
+		return err
 	}
+	if len(pos) != 1 {
+		return usageError("build", "want one directory or "+sourceExt+" file", buildUsage)
+	}
+	_, err = buildImage(pos[0], *out, path().path())
+	return err
+}
+
+// buildImage compiles target (a directory or a source file) with search
+// path path to the image file out (default: named after target, in the
+// current directory) and returns out. Warnings go to standard error.
+func buildImage(target, out string, path []string) (string, error) {
 	if out == "" {
-		abs, err := filepath.Abs(dir)
+		abs, err := filepath.Abs(target)
 		if err != nil {
-			return err
+			return "", err
 		}
 		out = strings.TrimSuffix(filepath.Base(abs), sourceExt) + imageExt
 	}
-	prog, err := loadSource(dir, path.path())
+	prog, err := loadSource(target, path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	img, err := compiler.Compile(prog)
 	if err != nil {
-		return err
+		return "", err
 	}
 	_, warnings := compiler.Requires(prog)
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, "gogo: warning:", w)
 	}
-	return os.WriteFile(out, img, 0o644)
+	return out, os.WriteFile(out, img, 0o644)
+}
+
+// disCmd implements `gogo dis`.
+func disCmd(args []string, out io.Writer) error {
+	pos, err := parseFlags(newFlags("dis"), args, disUsage)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return usageError("dis", "want one image file", disUsage)
+	}
+	img, err := os.ReadFile(pos[0])
+	if err != nil {
+		return err
+	}
+	text, err := compiler.Disassemble(img)
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(out, text)
+	return nil
 }
 
 // isSourceFile reports whether target is a gogo source file rather than an
@@ -394,17 +438,22 @@ func loadSource(target string, path []string) (*compiler.Program, error) {
 // envCmd implements `gogo env`: the version, the package search path and
 // the VM `gogo run` would use.
 func envCmd(args []string, out io.Writer) error {
-	var path pathFlag
+	fs := newFlags("env")
+	getPath := addPathFlag(fs)
+	pos, err := parseFlags(fs, args, envUsage)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 0 {
+		return usageError("env", "no arguments expected", envUsage)
+	}
+	path := getPath()
 	from := "$GOGOPATH"
 	if _, set := os.LookupEnv("GOGOPATH"); !set {
 		from = "$HOME/gogo, GOGOPATH is unset"
 	}
-	switch {
-	case len(args) == 2 && (args[0] == "-path" || args[0] == "--path"):
-		path = pathFlag{true, compiler.SplitPath(args[1])}
+	if path.set {
 		from = "-path"
-	case len(args) != 0:
-		return errors.New(usage)
 	}
 	fmt.Fprintf(out, "version   %s (image format %d.%d)\n", version, compiler.ImageMajor, compiler.ImageMinor)
 	dirs := path.path()

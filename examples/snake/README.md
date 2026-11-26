@@ -106,7 +106,7 @@ build/gogo run --fs-root /tmp/snake examples/snake  # keeps the high score
 
 build/gogo build examples/snake -o snake.ggb
 build/gogo flash snake.ggb                        # the Cardputer ADV
-build/gogo monitor -t 60
+build/gogo monitor -timeout 60
 ```
 
 The image needs a firmware with the `screen` driver (image format 15.1 or

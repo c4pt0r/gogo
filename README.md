@@ -157,7 +157,7 @@ Once a board runs the firmware, flash programs on their own:
 ```sh
 build/gogo build docs/book/examples/02-hello -o hello.ggb
 build/gogo flash hello.ggb
-build/gogo monitor -reset -t 5
+build/gogo monitor -reset -timeout 5
 ```
 
 [Chapter 2 of the book](docs/book/02-getting-started.md) has the details,

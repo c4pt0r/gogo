@@ -62,7 +62,7 @@ not rebuild or reflash the firmware:
     go build -o build/gogo ./cmd/gogo
     build/gogo build tests/golden/hello -o hello.ggb
     build/gogo flash hello.ggb              # [-port P] [-esptool path]
-    build/gogo monitor -reset -t 5 -until "gogo: vm exited"
+    build/gogo monitor -reset -timeout 5 -until "gogo: vm exited"
 
 `gogo flash` needs `esptool` (or `esptool.py`) in `PATH` (export.sh puts it
 there) or `-esptool`; `-port` defaults to the only `/dev/cu.usbmodem*`.

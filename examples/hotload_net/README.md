@@ -39,7 +39,7 @@ gogo config set wifi.password -                         # reads stdin
 gogo config set demo.modurl https://<machine>.<tailnet>.ts.net   # base URL, no trailing /
 build/gogo build examples/hotload_net -o hotload_net.ggb
 build/gogo flash hotload_net.ggb
-build/gogo monitor -reset -t 60 -until "done"
+build/gogo monitor -reset -timeout 60 -until "done"
 ```
 
 Stop the funnel when you are done: while it runs, anyone can read the

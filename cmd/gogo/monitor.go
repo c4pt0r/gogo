@@ -2,18 +2,20 @@ package main
 
 // gogo monitor: non-interactive serial capture from the board.
 //
-//	gogo monitor [-port P] [-t seconds] [-until text] [-reset]
+//	gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 //
-// Copies the board's console to stdout for -t seconds (default 10), or
+// Copies the board's console to stdout for -timeout seconds (default 10), or
 // until a line containing -until has arrived. -reset first resets the chip
 // (RTS pulse, as esptool's hard reset does on the USB-Serial/JTAG port), so
 // the capture starts at boot. Without -reset, opening and closing the port
 // never touches the chip: the modem lines (reset/boot strap on this port)
-// are only changed by -reset. -port defaults like `gogo flash`.
+// are only changed by -reset. -port defaults like `gogo flash`. -t is the
+// old name of -timeout, kept (unlisted, with a note on stderr) for one
+// release.
 
 import (
 	"bytes"
-	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,43 +23,50 @@ import (
 	"time"
 )
 
-const monitorUsage = "usage: gogo monitor [-port P] [-t seconds] [-until text] [-reset]"
+const monitorUsage = "usage: gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]"
 
 type monitorOpts struct {
 	port  string
 	dur   time.Duration
 	until string
 	reset bool
+	oldT  bool // the deprecated -t was used
+}
+
+// secondsFlag is a positive number of seconds.
+type secondsFlag struct{ d *time.Duration }
+
+func (s secondsFlag) String() string {
+	if s.d == nil {
+		return ""
+	}
+	return s.d.String()
+}
+func (s secondsFlag) Set(v string) error {
+	secs, err := strconv.ParseFloat(v, 64)
+	if err != nil || !(secs > 0 && secs < 1e9) {
+		return fmt.Errorf("want a positive number of seconds")
+	}
+	*s.d = time.Duration(secs * float64(time.Second))
+	return nil
 }
 
 func parseMonitorArgs(args []string) (monitorOpts, error) {
 	o := monitorOpts{dur: 10 * time.Second}
-	for i := 0; i < len(args); i++ {
-		switch a := args[i]; a {
-		case "-reset":
-			o.reset = true
-		case "-port", "-t", "-until":
-			if i+1 >= len(args) {
-				return o, errors.New(monitorUsage)
-			}
-			v := args[i+1]
-			i++
-			switch a {
-			case "-port":
-				o.port = v
-			case "-until":
-				o.until = v
-			default:
-				secs, err := strconv.ParseFloat(v, 64)
-				if err != nil || secs <= 0 {
-					return o, errors.New(monitorUsage)
-				}
-				o.dur = time.Duration(secs * float64(time.Second))
-			}
-		default:
-			return o, errors.New(monitorUsage)
-		}
+	fs := newFlags("monitor")
+	fs.StringVar(&o.port, "port", "", "")
+	fs.Var(secondsFlag{&o.dur}, "timeout", "")
+	fs.Var(secondsFlag{&o.dur}, "t", "") // deprecated: -timeout
+	fs.StringVar(&o.until, "until", "", "")
+	fs.BoolVar(&o.reset, "reset", false, "")
+	pos, err := parseFlags(fs, args, monitorUsage)
+	if err != nil {
+		return o, err
 	}
+	if len(pos) != 0 {
+		return o, usageError("monitor", "no arguments expected", monitorUsage)
+	}
+	o.oldT = flagSet(fs, "t")
 	return o, nil
 }
 
@@ -125,6 +134,9 @@ func monitorCmd(args []string) error {
 	o, err := parseMonitorArgs(args)
 	if err != nil {
 		return err
+	}
+	if o.oldT {
+		fmt.Fprintln(os.Stderr, "gogo monitor: -t is deprecated, use -timeout")
 	}
 	if o.port == "" {
 		if o.port, err = detectPort(filepath.Glob); err != nil {

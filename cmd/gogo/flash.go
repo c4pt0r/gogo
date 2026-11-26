@@ -107,31 +107,19 @@ func findEsptool() (string, error) {
 	return "", errors.New("gogo flash: esptool not found in PATH; pass -esptool (e.g. after `. ~/esp/esp-idf/export.sh`)")
 }
 
-// flash implements `gogo flash`. Flags may come before or after the file.
+// flash implements `gogo flash`.
 func (f flasher) flash(args []string) error {
-	var port, esptool, file string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-port" || a == "-esptool":
-			if i+1 >= len(args) {
-				return errors.New(flashUsage)
-			}
-			if a == "-port" {
-				port = args[i+1]
-			} else {
-				esptool = args[i+1]
-			}
-			i++
-		case strings.HasPrefix(a, "-") || file != "":
-			return errors.New(flashUsage)
-		default:
-			file = a
-		}
+	fs := newFlags("flash")
+	port := fs.String("port", "", "")
+	esptool := fs.String("esptool", "", "")
+	pos, err := parseFlags(fs, args, flashUsage)
+	if err != nil {
+		return err
 	}
-	if file == "" {
-		return errors.New(flashUsage)
+	if len(pos) != 1 {
+		return usageError("flash", "want one image file", flashUsage)
 	}
+	file := pos[0]
 	img, err := os.ReadFile(file)
 	if err != nil {
 		return err
@@ -139,17 +127,17 @@ func (f flasher) flash(args []string) error {
 	if err := checkImage(img); err != nil {
 		return fmt.Errorf("gogo flash: %s: %v", file, err)
 	}
-	if port == "" {
-		if port, err = detectPort(f.glob); err != nil {
+	if *port == "" {
+		if *port, err = detectPort(f.glob); err != nil {
 			return err
 		}
 	}
-	if esptool == "" {
-		if esptool, err = findEsptool(); err != nil {
+	if *esptool == "" {
+		if *esptool, err = findEsptool(); err != nil {
 			return err
 		}
 	}
-	if err := writeImage(f.run, esptool, port, img, nil); err != nil {
+	if err := writeImage(f.run, *esptool, *port, img, nil); err != nil {
 		return fmt.Errorf("gogo flash: %v", err)
 	}
 	return nil

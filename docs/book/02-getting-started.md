@@ -209,13 +209,13 @@ Run it without arguments to see what it can do:
 
 ```text
 $ build/gogo
-usage: gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
+usage: gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
        gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
        gogo env [-path dirs]
        gogo dis <file.ggb>
        gogo flash [-port P] [-esptool path] app.ggb
-       gogo monitor [-port P] [-t seconds] [-until text] [-reset]
-       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
+       gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
+       gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
        gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
        gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
        gogo version
@@ -411,7 +411,7 @@ second, without touching the firmware.
 ```sh
 gogo build docs/book/examples/02-hello -o hello.ggb
 gogo flash hello.ggb
-gogo monitor -reset -t 5 -until "gogo: vm exited"
+gogo monitor -reset -timeout 5 -until "gogo: vm exited"
 ```
 
 - `gogo build` compiles the directory to an image file (`.ggb`; without
