@@ -1,0 +1,18 @@
+// Conversions to named integer types: a plain copy between int-based
+// types, OpConv between int and int64 underlying.
+package main
+
+type Code int
+type Err int
+type Wide int64
+
+func main() {
+	x := 7
+	c := Code(x)
+	e := Err(c)
+	var b byte = 200
+	w := Wide(x)
+	big := Wide(int64(1) << 40)
+	println(int(c), int(e), int(Code(b)), int64(w), int64(big))
+	println(int(Code(w)), int(Code(big)), Err(c) == e, Code(e) == c)
+}

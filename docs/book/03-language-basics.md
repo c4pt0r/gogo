@@ -259,8 +259,10 @@ convert: 300000000 44 5
 ```
 
 Conversions between `int`, `int64` and `byte` must be written out, as in
-Go. `string(b)` and `[]byte(s)` convert between strings and byte slices
-(each copies). Other conversions are rejected.
+Go, and so must a conversion to a named type built on `int` or `int64`
+(`Weekday(n)`, `errors.Code(e)` for an `fs.Err` e). `string(b)` and
+`[]byte(s)` convert between strings and byte slices (each copies). Other
+conversions are rejected.
 
 ## 3.3 Control flow
 
