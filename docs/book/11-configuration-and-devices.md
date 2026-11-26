@@ -86,6 +86,8 @@ gogo config [-port P | -local] set <key> <value|->
 gogo config [-port P | -local] get <key>
 gogo config [-port P | -local] list
 gogo config [-port P | -local] rm <key>
+gogo config [-port P | -local] import [-n] <file|->   # many keys at once
+gogo config [-port P | -local] export                 # the store as a file for import
 gogo config keys                 # the keys gogo itself reads (section 11.3)
 ```
 
@@ -124,11 +126,22 @@ your computer it is a text file of `key=value` lines: `$GOGO_CONFIG`, or
 
 1. `-port P`: the board on that serial port.
 2. `-local`: the local file.
-3. Neither: the local file if `$GOGO_CONFIG` is set; otherwise the board,
-   if exactly one is connected (a line on standard error says so);
-   otherwise the local file.
+3. Neither: the local file if `$GOGO_CONFIG` is set (naming the file
+   counts as choosing it); otherwise the board, if exactly one is
+   connected (a line on standard error says so).
+4. Otherwise it stops with an error and writes nothing:
 
-So with a board plugged in, `gogo config set ...` configures the board.
+```text
+$ gogo config set wifi.ssid home          # no board plugged in
+gogo config: no board found (/dev/cu.usbmodem*); connect one, pass -port, or -local for this computer's store
+$ gogo config set wifi.ssid home          # two boards plugged in
+gogo config: several boards found (/dev/cu.usbmodem1101, /dev/cu.usbmodem1201); pick one with -port, or -local for this computer's store
+```
+
+So with one board plugged in, `gogo config set ...` configures that
+board, and a setting never lands somewhere you did not mean. This
+applies to every operation that uses a store; `gogo config keys` needs
+none.
 
 A session against the local file:
 
@@ -153,10 +166,76 @@ gogo: no board found (/dev/cu.usbmodem*); connect it or pass -port
 `get` and `list` never print the Wi-Fi password or `node.token`, only
 `(set)`.
 
-> **Note.** On your computer the store is a plain text file, and `gogo
-> config set wifi.password -` writes the password into it unencrypted.
-> Set Wi-Fi credentials only on the board (with a board connected, or
-> `-port`), never with `-local`.
+> **Note.** On your computer the store is a plain text file (readable by
+> you only), and `gogo config -local set wifi.password -` writes the
+> password into it unencrypted. The tool writes a secret (`wifi.password`,
+> `node.token`) there only when you chose the local store (`-local` or
+> `$GOGO_CONFIG`), and then warns:
+> `gogo config: warning: wifi.password is kept in plain text in ...`.
+> Set Wi-Fi credentials on the board (with it connected, or `-port`).
+
+**Many settings at once: import and export.** Keep the settings in a
+file of the store's own format, one `key=value` per line; lines starting
+with `#` and blank lines are skipped, and a value runs to the end of the
+line (spaces and `=` included):
+
+```text
+# kitchen.cfg: the kitchen sensor
+wifi.ssid=home
+net.ip=192.168.1.20
+net.gw=192.168.1.1
+demo.url=http://192.168.1.10:8080/ingest?board=kitchen
+device.name=kitchen sensor
+```
+
+`import` sets every key of the file on the store `set` would use (the
+same rules, `-port` and `-local` included), in file order:
+
+```text
+$ gogo config import kitchen.cfg
+gogo config: board on /dev/cu.usbmodem1101 (-local for this computer's store)
+set wifi.ssid
+set net.ip
+set net.gw
+set demo.url
+set device.name
+imported 5 keys to board /dev/cu.usbmodem1101
+```
+
+Every line is checked as `set` checks it first, and a key may appear
+only once; if any line is wrong, nothing is written and every bad line
+is named:
+
+```text
+$ gogo config import kitchen.cfg
+gogo config: nothing imported:
+  kitchen.cfg:3: bad value for net.gw (ip): want a dotted IPv4 address like 192.168.1.20
+  kitchen.cfg:6: demo.url is set again (first on line 4)
+```
+
+`-n` (or `-dry-run`) checks the file and prints what would be set,
+writing nothing; `import -` reads the file from standard input. A
+secret in the file is shown as `set wifi.password (set)`, never with its
+value. A board takes the keys one by one: if it refuses one (its storage
+full, say), the import stops there and the error lists the keys written
+and those not written. The local store is written in one go.
+
+`export` prints the store as such a file, so one board's settings can be
+copied to another. Secrets are not exported (the board never sends the
+Wi-Fi password back); they appear as comments to fill in by hand:
+
+```text
+$ gogo config -port /dev/cu.usbmodem1101 export > kitchen.cfg
+$ cat kitchen.cfg
+# gogo config export from the board /dev/cu.usbmodem1101
+demo.url=http://192.168.1.10:8080/ingest?board=kitchen
+device.name=kitchen sensor
+net.gw=192.168.1.1
+net.ip=192.168.1.20
+# wifi.password=(set, not exported)
+wifi.ssid=home
+$ gogo config -port /dev/cu.usbmodem1201 import kitchen.cfg
+```
 
 The board talks to `gogo config` over the USB serial console, so close
 `gogo monitor` first. Program output cannot fake the board's answers.

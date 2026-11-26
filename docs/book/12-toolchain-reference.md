@@ -18,7 +18,7 @@ gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
 gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
 gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
-gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | keys | scan | stats
+gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats
 gogo device [-port P] [-yes] scan | stats | format-flash
 gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
 gogo version
@@ -522,6 +522,8 @@ gogo config [-port P | -local] set <key> <value|->
 gogo config [-port P | -local] get <key>
 gogo config [-port P | -local] list
 gogo config [-port P | -local] rm <key>
+gogo config [-port P | -local] import [-n | -dry-run] <file|->
+gogo config [-port P | -local] export
 gogo config keys
 gogo config [-port P] scan        # deprecated: gogo device scan
 gogo config [-port P] stats       # deprecated: gogo device stats
@@ -532,6 +534,25 @@ chapter 11 for how the store is chosen, the key rules and the keys gogo
 uses (`keys` prints them; `set` checks a key under a gogo prefix, and its
 value, against that table). `scan` and `stats` are `gogo device scan` and
 `gogo device stats` (below), kept here for this release.
+
+- `-port P`: the board on that serial port.
+- `-local`: the local file (`$GOGO_CONFIG`, default `~/.gogo/config`);
+  setting `$GOGO_CONFIG` chooses it too. Writing a secret (`wifi.password`,
+  `node.token`) there prints a warning that the file is plain text.
+- Neither: the one board connected. With no board, or several, the
+  command fails (every operation but `keys`), naming the ports found.
+- `import <file|->` sets every key of a `key=value` file (`#` comments and
+  blank lines skipped, the value to the end of the line; `-` is standard
+  input) after checking every line as `set` does; a bad line or a
+  repeated key is reported as `file:line` and nothing is written. It
+  prints `set <key>` per key (a secret as `(set)`) and `imported N keys
+  to ...`. On a board, a refused key stops the import and the error names
+  the keys written and not written.
+- `-n`, `-dry-run` (import only): check and print what would be set,
+  writing nothing.
+- `export` prints the store as a file `import` reads, sorted; secrets are
+  comment lines without their values (`# wifi.password=(set, not
+  exported)`).
 
 ## gogo device
 

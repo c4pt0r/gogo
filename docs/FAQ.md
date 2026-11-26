@@ -470,6 +470,19 @@ board, run `gogo setup`. It identifies the board, downloads and verifies the fir
 flashes it without touching your settings, optionally sets up Wi-Fi, and
 runs a first program. See [book chapter 2](book/02-getting-started.md).
 
+### How do I configure several boards / many settings at once?
+Put the settings in a file of `key=value` lines (`#` comments allowed)
+and run `gogo config import <file>`: every line is checked first, and
+nothing is written unless all are good; `-n` shows what would be set.
+`gogo config export > file` copies a board's settings (secrets left out,
+as comments). With two or more boards plugged in, `gogo config` (like
+`flash`, `push` and `monitor`) refuses to guess and lists the ports:
+pick one with `-port`, e.g.
+`gogo config -port /dev/cu.usbmodem1201 import kitchen.cfg`, once per
+board. With no board, it fails too, rather than writing your computer's
+store: pass `-local` (or set `$GOGO_CONFIG`) when you mean that file. See
+[book section 11.2](book/11-configuration-and-devices.md).
+
 ### Is there a UI library?
 Yes: `gogo/tui`, a small ncurses-like text UI (frames, windows, boxes,
 lists, progress bars, a status line, a line editor) on the `screen` port.

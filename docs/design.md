@@ -2118,7 +2118,12 @@ wifi.password` echoes only `(set)`. Store selection on the host: `-port`
 names a board; `-local` the local file `$GOGO_CONFIG` (default
 `~/.gogo/config`); with neither, a set `$GOGO_CONFIG` means the local
 file, otherwise exactly one connected board is used (with a note on
-stderr), otherwise the local file.
+stderr); no board or several is an error, never a silent fallback to the
+local file. A secret written to the local file warns that it is plain
+text. `import <file>` checks every `key=value` line (as `set`, and no
+repeated key) before writing any, then writes them in file order (a
+board key by key, stopping at the first refusal; the local file at
+once); `export` prints the store in that format, secrets as comments.
 
 **Pushing files (`gogo push`).** The same frames carry a file to
 `/flash`: `push <path> <len> <crc32>`, then `data <offset> <base64>`

@@ -136,6 +136,12 @@ rebuilt:
   gogo prefixes `wifi.`, `net.`, `fs.`, `code.` and `gogo.`, and checks
   the values of gogo's keys (book chapter 11). `get` and `rm` still take
   the old spelling.
+- **`gogo config` store choice.** Without `-port`, `-local` or
+  `$GOGO_CONFIG`, `gogo config` fell back to the local file
+  (`~/.gogo/config`) when no board or several boards were connected, so
+  a `set` could silently miss the board. Both cases are now errors (no
+  board found / several boards found, with the ports); pass `-local` or
+  set `$GOGO_CONFIG` to mean the local file (book chapter 11).
 - **Exit statuses** of `gogo run` and `gogovm` (book chapter 12): a
   crash of `main` exits 4 and `actor.Exit(code)` in `main` exits with
   the code (0 before). A missing driver or mount exits 3 (was 1), a bad
@@ -1089,9 +1095,13 @@ rebuilt:
   not a tampered release; there are no signatures.
 
 - **`gogo config -local` stores secrets in plain text.** `set
-  wifi.password -` is accepted for the local file (`~/.gogo/config` or
-  `$GOGO_CONFIG`), although programs never see `wifi.` keys and the host
-  has no Wi-Fi.
+  wifi.password -` (or `node.token`, or an `import` holding them) is
+  accepted for the local file (`~/.gogo/config` or `$GOGO_CONFIG`, mode
+  0600) with a warning, although programs never see `wifi.` keys and the
+  host has no Wi-Fi.
+- **`gogo config export` cannot copy secrets**: the board never sends the
+  Wi-Fi password back, so `wifi.password` and `node.token` are written
+  as comments to fill in by hand.
 - **`gogo config`'s password prompt** exits with 130 on SIGTERM and
   SIGHUP too (convention: 143 and 129).
 - **The tty key mode** (`gogo run --key`) reads the terminal only when

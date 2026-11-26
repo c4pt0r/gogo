@@ -524,7 +524,8 @@ in `cmd/gogo/flash.go`.
   settings survive reflashing.
 
 Wi-Fi setup (once per board; `gogo config` talks to the board when exactly
-one is connected and `$GOGO_CONFIG` is unset, or with `-port`):
+one is connected and `$GOGO_CONFIG` is unset, or with `-port`; with none
+or several connected it stops with an error):
 
     build/gogo device scan                      # which networks the board sees (2.4 GHz only)
     build/gogo config set wifi.ssid MyNetwork
