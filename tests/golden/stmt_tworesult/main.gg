@@ -1,0 +1,31 @@
+// A two-result builtin called as a statement runs, its results discarded.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/sys"
+)
+
+func main() {
+	actor.Send(actor.Self(), "first")
+	actor.ReceiveTimeout(0) // takes "first"
+	_, ok := actor.ReceiveTimeout(0)
+	println("mailbox empty:", !ok)
+
+	s := actor.Spawn(func() {
+		n := 0
+		for {
+			r := actor.Receive().(actor.Request)
+			n++
+			actor.Reply(r, n)
+		}
+	})
+	actor.Call(s, "count me", 100)
+	(actor.Call(s, "and me", 100))
+	n, _ := actor.Call(s, "how many?", 100)
+	println("calls:", n)
+
+	actor.Whereis("nobody")
+	sys.Config("no.such.key")
+	println("done")
+}

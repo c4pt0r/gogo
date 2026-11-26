@@ -13,6 +13,15 @@ package actor
 //gogo:builtin
 type PID struct{ _ int32 }
 
+// NoPID is the zero PID, also written actor.PID{}: what a PID variable
+// holds before it is set. It names no actor, local or remote, so a Send
+// to it is dropped, a Monitor or Link of it reports NoProc at once (a
+// DownMsg, or an exit signal), Kill and Unlink do nothing, and a Call to
+// it fails at once. Whereis of an unknown name and a failed port.Open
+// return it. Package-level variables are read-only: NoPID cannot be
+// changed.
+var NoPID = PID{}
+
 // Ref is a VM-wide unique reference value; refs compare with == and !=.
 //
 //gogo:builtin

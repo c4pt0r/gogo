@@ -118,6 +118,18 @@ time slice: every function call and every loop iteration costs one
 *reduction*, and after 1000 the actor is put at the back of the queue. So a
 busy loop cannot freeze the other actors, even `for { n++ }`.
 
+### The zero PID
+
+A PID variable that was never set holds the zero PID. You can also write
+it as `actor.PID{}` or `actor.NoPID` (a read-only package-level
+variable). It names no actor, so it is a safe "nobody yet" value: compare
+with it (`if w == actor.NoPID`) to see whether a PID was set. Using it is
+never a crash: a `Send` to it is dropped, a `Call` to it fails at once
+(4.3), and `Monitor` or `Link` of it behaves as for
+an actor that has exited (a `DownMsg` or exit signal with reason
+`actor.NoProc` arrives at once; chapter 5). `Whereis` of an unknown name
+and a failed `port.Open` return it.
+
 ## 4.2 Type switches: reading messages
 
 `Receive` returns `any`, and a type switch finds out what it holds. The

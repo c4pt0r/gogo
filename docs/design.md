@@ -606,6 +606,7 @@ type Ref struct{ /* opaque; == and != compare */ }
 type Reason struct{ Code int; Func string }   // exit reason, §5.8
 type Options struct{ MaxMemory int }          // bytes; 0 = the platform default
 type ProcInfo struct{ Memory int }
+var NoPID PID                                   // the zero PID, actor.PID{}: names no actor
 
 func Spawn(f func()) PID
 func SpawnLink(f func()) PID                    // spawn and link atomically
@@ -1585,8 +1586,9 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
 | `actor.PID` | `T_ZEROPID` = `0x6` (slot 0, generation 0: slot 0 never has generation 0 and port slots are >= `0xFFF0`, so it equals no live actor or port; slots from `0xF000` up to the first port slot are remote PIDs when the VM has node links, §5.13) | PID immediate `(gen << 20) \| (slot << 4) \| 0x6` | as is (`TYPEIS` -> `PID`) | not scanned | as is |
 | `actor.Ref` | `T_ZEROREF` = `0x42`, a special whose serial counts as 0 | a `K_REF` heap object `[hdr][serial lo][hi]`; serials start at 1 | as is (`TYPEIS` -> `Ref`, the zero value too) | a `K_REF` is copied, content not scanned; `T_ZEROREF` not scanned | `K_REF` deep-copied (same serial); `T_ZEROREF` as is |
 
-Zero PID and Ref: `Send` to the zero PID is dropped; `Link` or `Monitor`
-of the zero PID behaves as for a dead PID (`NoProc`); `CancelTimer` and
+Zero PID and Ref (`actor.PID{}` or `actor.NoPID`, a PID variable
+never set): `Send` to the zero PID is dropped; `Link` or `Monitor` of
+the zero PID behaves as for a dead PID (`NoProc`); `CancelTimer` and
 `Demonitor` of the zero Ref do nothing (`false`); zero values are equal
 to each other and to no live value; `println` prints `<pid 0>` and
 `<ref 0>`. Crash reports and `println` show only a PID's slot (`<pid

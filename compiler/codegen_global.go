@@ -276,6 +276,9 @@ func (g *gen) staticBox(n ast.Node, et types.Type, x uint32) uint32 {
 // constant slice (an array is a slice whose length is its capacity).
 func (g *gen) staticLit(e *ast.CompositeLit, env map[*types.Var]uint32) uint32 {
 	t := g.p.Info.TypeOf(e)
+	if isPID(t) { // actor.PID{} (the checker allows no fields)
+		return TermZeroPid
+	}
 	if st := structType(t); st != nil {
 		s := st.Underlying().(*types.Struct)
 		fields := make([]uint32, s.NumFields())

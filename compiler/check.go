@@ -683,7 +683,9 @@ func (c *checker) stmt(s ast.Stmt) {
 			c.unsupported(s, "expression statement")
 			return
 		}
-		c.call(call, c.multiCall(call) != nil) // results discarded
+		// results discarded: a multi-result call of a function or of a
+		// two-result builtin (actor.ReceiveTimeout(5), fs.Stat(p))
+		c.call(call, c.multiCall(call) != nil || twoResult[c.actorFunc(call)])
 	case *ast.AssignStmt:
 		c.assign(s)
 	case *ast.IncDecStmt:
@@ -1585,6 +1587,9 @@ func (c *checker) compositeLitIn(e *ast.CompositeLit, elided bool) {
 	}
 	if isBuffer(t) {
 		c.zeroBuffer(e)
+		return
+	}
+	if isPID(t) && len(e.Elts) == 0 { // actor.PID{}: the zero PID, as `var p actor.PID`
 		return
 	}
 	if isPID(t) || isRef(t) || isBytes(t) {

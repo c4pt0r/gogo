@@ -1567,6 +1567,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 			f.arrayLit(e, dst)
 			return
 		}
+		if isPID(f.g.p.Info.TypeOf(e)) { // actor.PID{} (the checker allows no fields)
+			f.zeroInto(e, f.g.p.Info.TypeOf(e), dst)
+			return
+		}
 		f.structLit(e, dst)
 	case *ast.FuncLit:
 		f.closureInto(e, dst)

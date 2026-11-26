@@ -379,11 +379,10 @@ rebuilt:
   declaration). A closure passed to `actor.Spawn` is copied into the new
   actor with what it captures, so a variable it changes there is the
   child's own (Go's goroutines would share it).
-- **Two-result builtins cannot stand alone.** `actor.Call(p, req, 100)`
-  or `actor.ReceiveTimeout(0)` as a statement fails with `multiple values
-  not supported`. *Workaround:* `_, _ = actor.Call(...)`. `println(f())`
-  with a multi-result `f` and `var a, b = f()` fail the same way; use
-  `a, b := f()`.
+- **Multi-value expressions only in assignments.** `println(f())` with a
+  multi-result `f` and `var a, b = f()` fail with `multiple values not
+  supported`; use `a, b := f()`. A multi-result call as a statement,
+  `actor.ReceiveTimeout(0)` included, is fine: its results are dropped.
 - **Pointers: no interior pointers, a copy after a send.** `&s[i]` and
   `&v.F` are rejected (`interior pointer ... not supported`), and so is a
   pointer method called on a slice element or a field (`s[i].M()`,
@@ -457,8 +456,6 @@ rebuilt:
   Go either: read the struct, write it, store it back. A field of a
   pointer's target can be written (`p.X = v`, `f().X = v` for a `f` that
   returns a pointer).
-- **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
-  zero PID.
 - **Some values cannot go into `any`.** Func values (no type id) are
   rejected. Func values cannot be compared, not even with `nil`.
   *Workaround:* wrap a func value in a struct.

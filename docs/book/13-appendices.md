@@ -19,6 +19,8 @@ type ExitMsg struct{ From PID; Reason Reason }
 type DownMsg struct{ Ref Ref; From PID; Reason Reason }
 type Request struct{ From PID; Ref Ref; Body any }
 
+var NoPID PID   // the zero PID, also actor.PID{}: names no actor (read-only)
+
 func Spawn(f func()) PID
 func SpawnLink(f func()) PID
 func SpawnOpt(f func(), opts Options) PID
