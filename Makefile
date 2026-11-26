@@ -427,7 +427,7 @@ GOBIND       = CGO_LDFLAGS="-L$(abspath $(BUILD)) $$CGO_LDFLAGS" go
 GOBIND_FLAGS = -tags libgogo -ldflags="-X=gogotools/embed.libgogoSum=$$(cksum < $(BUILD)/libgogo.a | tr -d ' ')"
 
 test-gobind: $(BUILD)/libgogo.a
-	$(GOBIND) vet -tags libgogo ./embed/...
+	$(GOBIND) vet -tags libgogo ./embed/... ./examples/embed-go
 	$(GOBIND) test $(GOBIND_FLAGS) -count=1 -timeout 120s ./embed/
 	$(GOBIND) test $(GOBIND_FLAGS) -count=1 -timeout 120s -race ./embed/
 
@@ -452,14 +452,22 @@ $(BUILD)/gogoc/test_gogoc: embed/gogoc/test/test_gogoc.c embed/gogoc/gogoc.h $(w
 test-gogoc: $(BUILD)/gogoc/test_gogoc
 	$(BUILD)/gogoc/test_gogoc examples/many_idle
 
-# examples/embed-c: host programs on libgogo.a (examples/embed-c/test.sh
-# runs them on example images and compares their output).
-EXAMPLE_EMBED_PROGS = main post port
-EXAMPLE_EMBED_BINS  = $(addprefix $(BUILD)/embed-c/,$(EXAMPLE_EMBED_PROGS))
+# examples/embed-c: host programs on libgogo.a, compile.c on libgogoc.a
+# too; examples/embed-go: a Go host (examples/embed-c/test.sh runs them
+# and compares their output).
+EXAMPLE_EMBED_PROGS = main post port compile
+EXAMPLE_EMBED_BINS  = $(addprefix $(BUILD)/embed-c/,$(EXAMPLE_EMBED_PROGS)) $(BUILD)/embed-go
 
 $(BUILD)/embed-c/%: examples/embed-c/%.c $(wildcard runtime/include/*.h) $(BUILD)/libgogo.a
 	@mkdir -p $(BUILD)/embed-c
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iruntime/include -o $@ $< $(BUILD)/libgogo.a -pthread
+
+$(BUILD)/embed-c/compile: examples/embed-c/compile.c embed/gogoc/gogoc.h $(wildcard runtime/include/*.h) $(BUILD)/libgogoc.a $(BUILD)/libgogo.a
+	@mkdir -p $(BUILD)/embed-c
+	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iembed/gogoc -Iruntime/include -o $@ $< $(BUILD)/libgogoc.a $(BUILD)/libgogo.a -pthread
+
+$(BUILD)/embed-go: $(BUILD)/libgogo.a FORCE
+	$(GOBIND) build $(GOBIND_FLAGS) -o $@ ./examples/embed-go
 
 example-embed: $(EXAMPLE_EMBED_BINS) gogo-cmd
 	examples/embed-c/test.sh $(BUILD)

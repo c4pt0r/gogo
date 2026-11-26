@@ -1,0 +1,5 @@
+GOPHER
+ACTOR
+PORT
+ticks: 100
+posts delivered: 104, dropped: 0

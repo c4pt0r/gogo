@@ -1,0 +1,43 @@
+// The program examples/embed-go runs inside a Go host.
+//
+// It registers the name "words" and opens the host's port "upper", which
+// the host defines in Go: every port.Post sent to it comes back as an
+// event with its Data in upper case. The host posts words (Kind 1), which
+// the program sends to the port and prints when they come back, and
+// ticks (Kind 2) from several goroutines, which it counts; a post of
+// Kind 0 ends it, once every word is back. On a board or under gogovm
+// there is no "upper" port, and it says so.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+)
+
+func main() {
+	actor.Register("words", actor.Self()) // before the open: the host posts after it
+	up, err := port.Open("upper", port.Host{})
+	if err != nil {
+		println("no upper port:", err.Error())
+		return
+	}
+	pending, ticks, done := 0, 0, false
+	for !done || pending > 0 {
+		switch m := actor.Receive().(type) {
+		case port.Post:
+			switch {
+			case m.From == up:
+				println(m.Data.String())
+				pending--
+			case m.Kind == 1:
+				actor.Send(up, port.Post{Kind: 1, Data: m.Data})
+				pending++
+			case m.Kind == 2:
+				ticks++
+			case m.Kind == 0:
+				done = true
+			}
+		}
+	}
+	println("ticks:", ticks)
+}

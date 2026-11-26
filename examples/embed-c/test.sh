@@ -8,8 +8,12 @@
 #   main --two A B                httpparse and many_idle stepped by one loop
 #   post greeter.ggb              greeter/embed.out
 #   port hostecho.ggb             examples/hostecho/embed.out
+#   compile examples/many_idle    compiled in process (libgogoc.a), then run
+#   compile -e SOURCE             a program given as text; and one that does not compile
+#   BUILD/embed-go                examples/embed-go/embed.out (the Go host)
 #   docs/book/18-embedding.md     every c (go) block is cut verbatim from
-#                                 examples/embed-c/*.c (the gogo programs it runs)
+#                                 examples/embed-c/*.c (the gogo programs it
+#                                 runs, and examples/embed-go/main.go)
 # Usage: examples/embed-c/test.sh BUILD   (from the repository root; needs BUILD/gogo)
 set -u
 B=${1:-build}
@@ -55,6 +59,22 @@ check "port hostecho" examples/hostecho/embed.out "$T/out"
 grep -qx "5 commands" "$T/err" || { echo "FAIL port: commands"; cat "$T/err"; fail=1; }
 grep -qx "requires echo" "$T/err" || { echo "FAIL port: requirements"; cat "$T/err"; fail=1; }
 
+"$E/compile" examples/many_idle > "$T/out" 2> "$T/err" || { echo "FAIL compile many_idle: exit status"; cat "$T/err"; fail=1; }
+check "compile examples/many_idle" examples/many_idle/expected.out "$T/out"
+
+printf 'hi 3\n' > "$T/want"
+"$E/compile" -e 'package main
+
+func main() { println("hi", 1+2) }' > "$T/out" 2> "$T/err" || { echo "FAIL compile -e: exit status"; cat "$T/err"; fail=1; }
+check "compile -e" "$T/want" "$T/out"
+if "$E/compile" -e 'package main
+func main() { x }' > "$T/out" 2> "$T/err"; then echo "FAIL compile -e: an error compiled"; fail=1
+elif grep -qx "main.gg:2:15: undefined: x" "$T/err"; then echo "ok   compile -e (an error, named main.gg:2:15)"
+else echo "FAIL compile -e error"; cat "$T/err"; fail=1; fi
+
+"$B/embed-go" > "$T/out" 2> "$T/err" || { echo "FAIL embed-go: exit status"; cat "$T/err"; fail=1; }
+check "embed-go" examples/embed-go/embed.out "$T/out"
+
 # The book chapter's snippets: each block must appear, as it is, in a source.
 snip() { # lang sources...
     lang=$1; shift
@@ -69,8 +89,8 @@ snip() { # lang sources...
         END { if (bad) exit 1; if (n == 0) { print "FAIL book: no " lang " snippets"; exit 1 }; print "ok   book " lang " snippets (" n ")" }
     ' nsrc=$# book=docs/book/18-embedding.md "$@" docs/book/18-embedding.md || fail=1
 }
-snip c examples/embed-c/main.c examples/embed-c/post.c examples/embed-c/port.c
-snip go examples/embed-c/greeter/main.gg examples/hostecho/main.gg
+snip c examples/embed-c/main.c examples/embed-c/post.c examples/embed-c/port.c examples/embed-c/compile.c
+snip go examples/embed-c/greeter/main.gg examples/hostecho/main.gg examples/embed-go/main.go examples/embed-go/app/main.gg
 
 [ $fail = 0 ] && echo "example-embed: ok"
 exit $fail
