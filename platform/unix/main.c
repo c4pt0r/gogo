@@ -1,7 +1,7 @@
 /* gogovm: runs a gogo image file.
  *
  *   gogovm [--caps HEX] [--key c=pin]... [--fs-root DIR] [--fs-quota BYTES]
- *          [--net-fd N [--sim-clock]] <file.gogo>
+ *          [--net-fd N [--sim-clock]] <file.ggb>
  *          exit 0 when the run queue empties (also after a crash), 1 when
  *          the firmware lacks a capability the image needs, 2 on a usage
  *          or load error. --caps and --fs-quota are for tests: the
@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
     }
     unix_ports[nports] = NULL;
     if (argc != 2) {
-        fprintf(stderr, "usage: gogovm [--caps <hex>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] <file.gogo>\n       gogovm --sizeof-actor | --sizeof-net\n");
+        fprintf(stderr, "usage: gogovm [--caps <hex>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] <file.ggb>\n       gogovm --sizeof-actor | --sizeof-net\n");
         return 2;
     }
     if (net_fd >= 0) {

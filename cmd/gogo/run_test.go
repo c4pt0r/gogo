@@ -23,7 +23,7 @@ func TestRunForwardsSIGTERM(t *testing.T) {
 	if err := os.Mkdir(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(prog, "main.go"), []byte("package main\n\nfunc main() { println(\"x\") }\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(prog, "main.gg"), []byte("package main\n\nfunc main() { println(\"x\") }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// A fake VM: records its pid, and on SIGTERM records it and exits 7.
@@ -108,7 +108,7 @@ func TestRunFsRoot(t *testing.T) {
 	if err := os.WriteFile(vm, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+args+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	img := filepath.Join(work, "x.gogo")
+	img := filepath.Join(work, "x.ggb")
 	if err := os.WriteFile(img, []byte("img"), 0o644); err != nil {
 		t.Fatal(err)
 	}

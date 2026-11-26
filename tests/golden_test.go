@@ -67,7 +67,7 @@ func TestGolden(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compile: %v", err)
 			}
-			imgPath := filepath.Join(t.TempDir(), filepath.Base(dir)+".gogo")
+			imgPath := filepath.Join(t.TempDir(), filepath.Base(dir)+".ggb")
 			if err := os.WriteFile(imgPath, img, 0o644); err != nil {
 				t.Fatal(err)
 			}

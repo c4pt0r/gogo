@@ -30,7 +30,7 @@ func build(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatalf("compile %s: %v", name, err)
 	}
-	p := filepath.Join(t.TempDir(), name+".gogo")
+	p := filepath.Join(t.TempDir(), name+".ggb")
 	if err := os.WriteFile(p, img, 0o644); err != nil {
 		t.Fatal(err)
 	}

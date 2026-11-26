@@ -1,6 +1,6 @@
 /* port: a port defined by the host (gogo_register_port).
  *
- *   port hostecho.gogo
+ *   port hostecho.ggb
  *
  * Registers a driver named "echo" and runs examples/hostecho on it. Its
  * open refuses a negative Arg and otherwise answers with an event (Kind =
@@ -45,7 +45,7 @@ static const gogo_port_driver echo_driver = { echo_open, echo_command, NULL };
 int main(int argc, char **argv) {
     size_t len;
     void *img = argc == 2 ? read_file(argv[1], &len) : NULL;
-    if (!img) { fprintf(stderr, "usage: %s hostecho.gogo\n", argv[0]); return 2; }
+    if (!img) { fprintf(stderr, "usage: %s hostecho.ggb\n", argv[0]); return 2; }
     int commands = 0;
     gogo_vm *vm = gogo_new_posix(NULL);
     int rc = vm ? GOGO_OK : GOGO_ENOMEM;

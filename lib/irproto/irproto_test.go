@@ -1,3 +1,9 @@
+//go:build gogohost
+
+// Host tests of irproto.gg, run by tests/lib_test.go (TestLibHost) on a
+// copy of lib/ as Go module gogo; the build tag keeps them out of the
+// repository's module, where irproto.gg is not Go source.
+
 package irproto
 
 import (

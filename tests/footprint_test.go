@@ -46,7 +46,7 @@ func TestIdleActorFootprint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	imgPath := filepath.Join(t.TempDir(), "footprint.gogo")
+	imgPath := filepath.Join(t.TempDir(), "footprint.ggb")
 	if err := os.WriteFile(imgPath, img, 0o644); err != nil {
 		t.Fatal(err)
 	}

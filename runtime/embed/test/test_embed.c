@@ -119,7 +119,7 @@ static Img image(const char *name) {
     Img r = { NULL, 0 };
     const char *dir = getenv("GOGO_EMBED_IMAGES");
     char path[512];
-    snprintf(path, sizeof path, "%s/%s.gogo", dir ? dir : "build/embed", name);
+    snprintf(path, sizeof path, "%s/%s.ggb", dir ? dir : "build/embed", name);
     FILE *f = fopen(path, "rb");
     if (!f) { printf("  cannot open %s\n", path); return r; }
     fseek(f, 0, SEEK_END);

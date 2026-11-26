@@ -53,8 +53,8 @@ func argOut(args []string) string {
 
 func TestFirmwareUnion(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", compiler.CapNet)
-	b := writeImg(t, d, "b.gogo", compiler.CapPower)
+	a := writeImg(t, d, "a.ggb", compiler.CapNet)
+	b := writeImg(t, d, "b.ggb", compiler.CapPower)
 	_, cfg, err := fwRun(t, "-board", "sticks3", "-o", d, a, b)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestFirmwareUnion(t *testing.T) {
 
 func TestFirmwareCardputerDefaults(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", 0)
+	a := writeImg(t, d, "a.ggb", 0)
 	out, cfg, err := fwRun(t, "-board", "cardputer", "-o", d, a)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 
 func TestFirmwareAnyPort(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", compiler.CapAnyPort)
+	a := writeImg(t, d, "a.ggb", compiler.CapAnyPort)
 	_, cfg, err := fwRun(t, "-board", "sticks3", "-o", d, a)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestFirmwareAnyPort(t *testing.T) {
 
 func TestFirmwareWithWithout(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", 0)
+	a := writeImg(t, d, "a.ggb", 0)
 	_, cfg, err := fwRun(t, "-board", "cardputer", "-o", d, "-with", "net,kbd", "-without", "cjk,exfat", a)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 
 func TestFirmwareRequiredRemoved(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", compiler.CapNet|compiler.CapSD)
+	a := writeImg(t, d, "a.ggb", compiler.CapNet|compiler.CapSD)
 	for _, f := range []string{"net", "sd"} {
 		_, _, err := fwRun(t, "-board", "cardputer", "-o", d, "-without", f, a)
 		if err == nil || !strings.Contains(err.Error(), f) || !strings.Contains(err.Error(), "required") {
@@ -139,13 +139,13 @@ func TestFirmwareBoardLacks(t *testing.T) {
 		bits uint32
 		name string
 	}{{compiler.CapKbd, "kbd"}, {compiler.CapSD, "sd"}} {
-		a := writeImg(t, d, "a.gogo", c.bits)
+		a := writeImg(t, d, "a.ggb", c.bits)
 		_, _, err := fwRun(t, "-board", "sticks3", "-o", d, a)
 		if err == nil || !strings.Contains(err.Error(), c.name) || !strings.Contains(err.Error(), "sticks3") {
 			t.Fatalf("%s: %v", c.name, err)
 		}
 	}
-	a := writeImg(t, d, "a.gogo", 0)
+	a := writeImg(t, d, "a.ggb", 0)
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-with", "kbd", a); err == nil || !strings.Contains(err.Error(), "kbd") {
 		t.Fatalf("-with kbd: %v", err)
 	}
@@ -153,13 +153,13 @@ func TestFirmwareBoardLacks(t *testing.T) {
 
 func TestFirmwareBadInput(t *testing.T) {
 	d := t.TempDir()
-	junk := filepath.Join(d, "junk.gogo")
+	junk := filepath.Join(d, "junk.ggb")
 	os.WriteFile(junk, []byte("this is not an image at all, no"), 0o644)
-	v8 := filepath.Join(d, "v8.gogo")
-	img, _ := os.ReadFile(writeImg(t, d, "ok.gogo", 0))
+	v8 := filepath.Join(d, "v8.ggb")
+	img, _ := os.ReadFile(writeImg(t, d, "ok.ggb", 0))
 	img[4] = 8
 	os.WriteFile(v8, img, 0o644)
-	for _, p := range []string{junk, v8, filepath.Join(d, "missing.gogo")} {
+	for _, p := range []string{junk, v8, filepath.Join(d, "missing.ggb")} {
 		_, _, err := fwRun(t, "-board", "sticks3", "-o", d, p)
 		if err == nil || !strings.Contains(err.Error(), filepath.Base(p)) {
 			t.Fatalf("%s: %v", p, err)
@@ -175,7 +175,7 @@ func TestFirmwareBadInput(t *testing.T) {
 
 func TestFirmwareArgs(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", 0)
+	a := writeImg(t, d, "a.ggb", 0)
 	for _, args := range [][]string{
 		{"-o", d, a},                                      // no board
 		{"-board", "x", "-o", d, a},                       // unknown board
@@ -190,7 +190,7 @@ func TestFirmwareArgs(t *testing.T) {
 
 func TestFirmwareBuildRuns(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", 0)
+	a := writeImg(t, d, "a.ggb", 0)
 	var got []string
 	var out bytes.Buffer
 	err := firmwareCmd([]string{"-board", "sticks3", "-o", d, "-build", a}, &out, func(name string, args ...string) error {
@@ -207,7 +207,7 @@ func TestFirmwareBuildRuns(t *testing.T) {
 
 func TestFirmwareQuotesSpaces(t *testing.T) {
 	d := filepath.Join(t.TempDir(), "my build")
-	a := writeImg(t, t.TempDir(), "a.gogo", 0)
+	a := writeImg(t, t.TempDir(), "a.ggb", 0)
 	out, _, err := fwRun(t, "-board", "cardputer", "-o", d, a)
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestFirmwareQuotesSpaces(t *testing.T) {
 
 func TestFirmwareStaleSdkconfigRemoved(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", 0)
+	a := writeImg(t, d, "a.ggb", 0)
 	sc := filepath.Join(d, "sdkconfig")
 	os.WriteFile(sc, []byte("CONFIG_FOO=1\nCONFIG_GOGO_NET=y\n# CONFIG_GOGO_KBD is not set\n"), 0o644)
 	out, _, err := fwRun(t, "-board", "sticks3", "-o", d, a) // net off by default
@@ -239,7 +239,7 @@ func TestFirmwareStaleSdkconfigRemoved(t *testing.T) {
 
 func TestFirmwareMatchingSdkconfigKept(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", 0)
+	a := writeImg(t, d, "a.ggb", 0)
 	sc := filepath.Join(d, "sdkconfig")
 	os.WriteFile(sc, []byte("CONFIG_GOGO_NET=n\n# CONFIG_GOGO_KBD is not set\nCONFIG_GOGO_SD=n\n"), 0o644)
 	out, _, err := fwRun(t, "-board", "sticks3", "-o", d, a)
@@ -256,7 +256,7 @@ func TestFirmwareMatchingSdkconfigKept(t *testing.T) {
 
 func TestFirmwareLoneDash(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", 0)
+	a := writeImg(t, d, "a.ggb", 0)
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, a, "-"); err == nil {
 		t.Fatal("no error for lone -")
 	}
@@ -267,7 +267,7 @@ func TestFirmwareLoneDash(t *testing.T) {
 
 func TestFirmwareUnknownRequiresBit(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", 1<<20)
+	a := writeImg(t, d, "a.ggb", 1<<20)
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, a); err == nil || !strings.Contains(err.Error(), "0x100000") {
 		t.Fatalf("%v", err)
 	}
@@ -275,7 +275,7 @@ func TestFirmwareUnknownRequiresBit(t *testing.T) {
 
 func TestFirmwareWithExfatWithoutSd(t *testing.T) {
 	d := t.TempDir()
-	a := writeImg(t, d, "a.gogo", 0)
+	a := writeImg(t, d, "a.ggb", 0)
 	if _, _, err := fwRun(t, "-board", "cardputer", "-o", d, "-with", "exfat", "-without", "sd", a); err == nil || !strings.Contains(err.Error(), "exfat") {
 		t.Fatalf("%v", err)
 	}
@@ -283,7 +283,7 @@ func TestFirmwareWithExfatWithoutSd(t *testing.T) {
 
 func TestImageRequiresTruncated(t *testing.T) {
 	d := t.TempDir()
-	img, _ := os.ReadFile(writeImg(t, d, "a.gogo", compiler.CapNet))
+	img, _ := os.ReadFile(writeImg(t, d, "a.ggb", compiler.CapNet))
 	for n := 0; n < len(img); n += 4 {
 		if _, err := compiler.ImageRequires(img[:n]); err == nil && n < len(img)-8 {
 			// only the full image (or one missing just the export entries) may parse
@@ -371,9 +371,9 @@ func TestFirmwareTableMatchesSources(t *testing.T) {
 
 func TestFirmwareImuIr(t *testing.T) {
 	d := t.TempDir()
-	rx := writeImg(t, d, "rx.gogo", compiler.CapIRRX)
-	tx := writeImg(t, d, "tx.gogo", compiler.CapIRTX)
-	im := writeImg(t, d, "im.gogo", compiler.CapIMU)
+	rx := writeImg(t, d, "rx.ggb", compiler.CapIRRX)
+	tx := writeImg(t, d, "tx.ggb", compiler.CapIRTX)
+	im := writeImg(t, d, "im.ggb", compiler.CapIMU)
 	// the Cardputer has no receiver
 	if _, _, err := fwRun(t, "-board", "cardputer", "-o", d, rx); err == nil || !strings.Contains(err.Error(), "irrx") {
 		t.Errorf("cardputer irrx: %v", err)
@@ -400,8 +400,8 @@ func TestFirmwareImuIr(t *testing.T) {
 
 func TestFirmwareTLS(t *testing.T) {
 	d := t.TempDir()
-	tls := writeImg(t, d, "tls.gogo", compiler.CapNet|compiler.CapTLS)
-	none := writeImg(t, d, "none.gogo", 0)
+	tls := writeImg(t, d, "tls.ggb", compiler.CapNet|compiler.CapTLS)
+	none := writeImg(t, d, "none.ggb", 0)
 	for _, board := range []string{"sticks3", "cardputer"} {
 		if _, cfg, err := fwRun(t, "-board", board, "-o", d, tls); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_NET=y\n") || !strings.Contains(cfg, "CONFIG_GOGO_TLS=y\n") {
 			t.Errorf("%s: %v\n%s", board, err, cfg)
@@ -435,9 +435,9 @@ func TestFirmwareTLS(t *testing.T) {
 
 func TestFirmwareAudio(t *testing.T) {
 	d := t.TempDir()
-	mic := writeImg(t, d, "mic.gogo", compiler.CapMic)
-	spk := writeImg(t, d, "spk.gogo", compiler.CapSpk)
-	im := writeImg(t, d, "im.gogo", compiler.CapIMU)
+	mic := writeImg(t, d, "mic.ggb", compiler.CapMic)
+	spk := writeImg(t, d, "spk.ggb", compiler.CapSpk)
+	im := writeImg(t, d, "im.ggb", compiler.CapIMU)
 	for _, board := range []string{"sticks3", "cardputer"} {
 		if _, cfg, err := fwRun(t, "-board", board, "-o", d, mic); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\n") {
 			t.Errorf("%s mic: %v\n%s", board, err, cfg)

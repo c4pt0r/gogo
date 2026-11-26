@@ -12,7 +12,7 @@ import (
 	"testing"
 	"unicode"
 
-	"gogo"
+	"gogotools/lib"
 )
 
 // goName maps a C constant to its Go twin: OP_LOADK -> OpLoadk,
@@ -95,7 +95,7 @@ func TestReasonCodesMatchC(t *testing.T) {
 		v, _ := strconv.ParseInt(m[2], 10, 64)
 		cCodes[m[1]] = v
 	}
-	pkg, err := (&loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}).Import(ActorPath)
+	pkg, err := (&loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}).Import(ActorPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func upperSnake(s string) string {
 // gogo/actor and gogo/port stubs (names, field names in order) and the
 // TYPE_* indices.
 func TestReservedTypesMatchStubs(t *testing.T) {
-	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
+	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
 	pkgs := map[string]*types.Package{}
 	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath} {
 		pkg, err := l.Import(path)
@@ -271,7 +271,7 @@ func TestConfigMatchC(t *testing.T) {
 
 // TestPortConstants pins the gogo/port constants.
 func TestPortConstants(t *testing.T) {
-	pkg, err := (&loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}).Import(PortPath)
+	pkg, err := (&loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}).Import(PortPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,7 +544,7 @@ func TestFsMatchC(t *testing.T) {
 		c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
 	}
 	// fs.Err and the modes: from the stub, by name.
-	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
+	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
 	pkg, err := l.Import(FsPath)
 	if err != nil {
 		t.Fatal(err)
@@ -631,7 +631,7 @@ func TestCodeMatchC(t *testing.T) {
 			c[m[1]] = v
 		}
 	}
-	l := &loader{fset: token.NewFileSet(), libs: gogo.StubFS, pkgs: map[string]*types.Package{}}
+	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
 	pkg, err := l.Import(CodePath)
 	if err != nil {
 		t.Fatal(err)

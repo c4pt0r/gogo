@@ -1,13 +1,13 @@
 /* embed-c: run a gogo image inside a C program (libgogo.a, gogo.h).
  *
- *   main [--flash DIR] [--quota BYTES] [--allow-load] IMAGE.gogo
+ *   main [--flash DIR] [--quota BYTES] [--allow-load] IMAGE.ggb
  *       one VM on the POSIX host, run to the end with gogo_run
- *   main --two A.gogo B.gogo
+ *   main --two A.ggb B.ggb
  *       two VMs stepped alternately by one loop on this thread, which
  *       sleeps in poll() on a wake pipe until the nearer deadline; each
  *       VM's lines are prefixed with "a| " or "b| "
  *
- * Build an image with `gogo build examples/many_idle -o many_idle.gogo`,
+ * Build an image with `gogo build examples/many_idle -o many_idle.ggb`,
  * and this program with `make example-embed` (build/embed-c/main). */
 #define _POSIX_C_SOURCE 200809L
 #include "gogo.h"
@@ -166,8 +166,8 @@ int main(int argc, char **argv) {
         else break;
     }
     if (i != argc - 1) {
-        fprintf(stderr, "usage: %s [--flash DIR] [--quota BYTES] [--allow-load] IMAGE.gogo\n"
-                        "       %s --two A.gogo B.gogo\n", argv[0], argv[0]);
+        fprintf(stderr, "usage: %s [--flash DIR] [--quota BYTES] [--allow-load] IMAGE.ggb\n"
+                        "       %s --two A.ggb B.ggb\n", argv[0], argv[0]);
         return 2;
     }
     return run_one(argv[i], &cfg);

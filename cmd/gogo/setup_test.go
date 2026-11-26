@@ -1075,7 +1075,7 @@ func TestParseSums(t *testing.T) {
 
 func TestHelloCompiles(t *testing.T) {
 	for board := range setupBoardTitles {
-		out := filepath.Join(t.TempDir(), "hello.gogo")
+		out := filepath.Join(t.TempDir(), "hello.ggb")
 		if err := writeHello(board, out); err != nil {
 			t.Fatal(err)
 		}

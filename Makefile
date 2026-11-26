@@ -208,8 +208,8 @@ $(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS
 embed-images:
 	@mkdir -p $(BUILD)/embed
 	go build -o $(BUILD)/gogo ./cmd/gogo
-	for p in $(EMBED_PROGS); do $(BUILD)/gogo build runtime/embed/test/testdata/$$p -o $(BUILD)/embed/$$p.gogo || exit 1; done
-	for p in $(EMBED_EXAMPLES); do $(BUILD)/gogo build examples/$$p -o $(BUILD)/embed/$$p.gogo || exit 1; done
+	for p in $(EMBED_PROGS); do $(BUILD)/gogo build runtime/embed/test/testdata/$$p -o $(BUILD)/embed/$$p.ggb || exit 1; done
+	for p in $(EMBED_EXAMPLES); do $(BUILD)/gogo build examples/$$p -o $(BUILD)/embed/$$p.ggb || exit 1; done
 	@mkdir -p $(BUILD)/embed/hotload-flash
 	for m in worker_v1 worker_v2; do $(BUILD)/gogo build examples/hotload/mods/$$m -o $(BUILD)/embed/hotload-flash/$$m.gmod || exit 1; done
 
@@ -289,8 +289,8 @@ $(BUILD)/libgogo_clash: runtime/embed/test/clash/main.c runtime/include/gogo.h $
 test-libgogo: $(BUILD)/libgogo_clash $(BUILD)/libgogo-debug.a
 	for s in $(CLASH_SYMS); do nm -g $(BUILD)/libgogo-debug.a | grep -Eq " T _?$$s$$" || { echo "test-libgogo: $$s is not in the library"; exit 1; }; done
 	go build -o $(BUILD)/gogo ./cmd/gogo
-	$(BUILD)/gogo build examples/many_idle -o $(BUILD)/libgogo_clash.gogo
-	$(BUILD)/libgogo_clash $(BUILD)/libgogo_clash.gogo > $(BUILD)/libgogo_clash.out
+	$(BUILD)/gogo build examples/many_idle -o $(BUILD)/libgogo_clash.ggb
+	$(BUILD)/libgogo_clash $(BUILD)/libgogo_clash.ggb > $(BUILD)/libgogo_clash.out
 	cmp $(BUILD)/libgogo_clash.out examples/many_idle/expected.out
 
 # examples/embed-c: host programs on libgogo.a (examples/embed-c/test.sh
@@ -334,14 +334,15 @@ $(BUILD)/console_ppm: runtime/console/tools/console_ppm.c $(CONSOLE_SRCS) $(wild
 console-ppm: $(BUILD)/console_ppm
 	$(BUILD)/console_ppm runtime/console/font/gogo12.font $(TEXT) $(OUT)
 
-test-go: vm $(BUILD)/gogovm_mcu test-lib
+test-go: vm $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm GOGO_VM_MCU=$(CURDIR)/$(BUILD)/gogovm_mcu go test ./...
 
-# The standard library (lib/, its own module gogo) on the host toolchain:
-# vet (stdmethods off: gogo's bytes.Buffer.WriteByte deliberately returns no
-# error) and its host tests (gogo/irproto).
+# The standard library (lib/*/*.gg) on the host toolchain, copied into a
+# temporary Go module gogo by tests/lib_test.go: vet (stdmethods off: gogo's
+# bytes.Buffer.WriteByte deliberately returns no error) and its host tests
+# (gogo/irproto, build tag gogohost). Part of test-go (go test ./...).
 test-lib:
-	cd lib && go vet -stdmethods=false ./... && go test ./...
+	go test -count=1 -run '^TestLibHost$$' ./tests/
 
 # The network scenarios (dhcp, dns, ...) on a VM with the MCU actor memory
 # limit (16 KB per actor): the library actors must fit.

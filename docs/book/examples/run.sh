@@ -26,10 +26,10 @@ pass=0; fail=0
 if [ $# -gt 0 ]; then names="$*"; else names=$(cd "$here" && ls -d */ | tr -d /); fi
 for name in $names; do
     d="$here/$name"
-    [ -f "$d/main.go" ] || continue
+    ls "$d"/*.gg >/dev/null 2>&1 || continue
     out="$tmp/$name.out"; err="$tmp/$name.err"
     if [ -f "$d/compile-fails" ]; then
-        if (cd "$d" && "$gogo" build . -o "$tmp/$name.gogo") >"$out" 2>"$err"; then
+        if (cd "$d" && "$gogo" build . -o "$tmp/$name.ggb") >"$out" 2>"$err"; then
             echo "FAIL $name: compiled, but should not"; fail=$((fail+1)); continue
         fi
         : >"$out"

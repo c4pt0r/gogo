@@ -1,6 +1,6 @@
 /* post: send messages into a running VM (gogo_post, gogo_close_posts).
  *
- *   post greeter.gogo
+ *   post greeter.ggb
  *
  * Runs examples/embed-c/greeter, which registers the name "greeter". The
  * main thread steps the VM until it is idle (the name is registered by
@@ -44,7 +44,7 @@ static void *poster(void *arg) {
 int main(int argc, char **argv) {
     size_t len;
     void *img = argc == 2 ? read_file(argv[1], &len) : NULL;
-    if (!img) { fprintf(stderr, "usage: %s greeter.gogo\n", argv[0]); return 2; }
+    if (!img) { fprintf(stderr, "usage: %s greeter.ggb\n", argv[0]); return 2; }
     gogo_vm *vm = gogo_new_posix(NULL);
     if (!vm || gogo_load(vm, img, len, GOGO_LOAD_COPY) != GOGO_OK || gogo_start(vm) != GOGO_OK) {
         fprintf(stderr, "cannot start %s\n", argv[1]);

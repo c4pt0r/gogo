@@ -29,7 +29,7 @@ const (
 	partSize    = 0x100000   // `gogo` partition size
 	partHdrSize = 16
 	portGlob    = "/dev/cu.usbmodem*"
-	flashUsage  = "usage: gogo flash [-port P] [-esptool path] app.gogo"
+	flashUsage  = "usage: gogo flash [-port P] [-esptool path] app" + imageExt
 )
 
 // checkImage reports why img cannot go into the image partition, or nil.

@@ -14,7 +14,7 @@ int bytes_new(int x) { return x + 4; }
 int port_open(int x) { return x * 5; }
 
 int main(int argc, char **argv) {
-    if (argc != 2) { fprintf(stderr, "usage: %s IMAGE.gogo\n", argv[0]); return 2; }
+    if (argc != 2) { fprintf(stderr, "usage: %s IMAGE.ggb\n", argv[0]); return 2; }
     FILE *f = fopen(argv[1], "rb");
     if (!f) { fprintf(stderr, "cannot read %s\n", argv[1]); return 1; }
     fseek(f, 0, SEEK_END);
