@@ -256,6 +256,34 @@ and that sends typed events to its owner. Ports close automatically when
 their owner exits or crashes. [Book §7.6](book/07-ports-and-peripherals.md)
 explains how they work inside.
 
+### Which platforms does gogo run on?
+Two different questions: where the **toolchain** runs, and where the **VM**
+runs.
+
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| `gogo` CLI (build, flash, monitor, config, setup) | yes | yes | flash and setup only; no Wi-Fi step or console yet |
+| `gogovm` host VM | yes | yes | no (it uses POSIX APIs) |
+| `libgogo.a` embedding | yes | yes | no |
+| Building firmware from source | yes (ESP-IDF) | yes (ESP-IDF) | ESP-IDF supports it; untested here |
+
+Release binaries of the CLI are built for macOS, Linux and Windows on
+amd64 and arm64. Development and testing happen on macOS (Apple silicon);
+Linux is expected to work but its full test run is still owed, see
+known-issues.
+
+**The VM** runs on:
+- **ESP32-S3** under ESP-IDF (v6.1.1) and FreeRTOS: the M5StickS3 and the
+  Cardputer ADV.
+- **macOS and Linux** as `gogovm`, on 64-bit x86 and ARM.
+- **Inside other programs** through `libgogo.a` on POSIX hosts.
+
+Planned: RP2040 (bare metal on the Pico SDK), iOS and Android through the
+embedding API and its bindings, and Windows for `gogovm` and embedding
+later. The VM itself is portable C99 with no OS dependencies; a platform
+supplies a small table of hooks (clock, memory, wake and wait, output) and
+its port drivers.
+
 ### What hardware does gogo support?
 **Boards** (one ESP-IDF firmware tree, `platform/esp32s3`, built per board):
 
