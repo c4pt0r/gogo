@@ -14,6 +14,9 @@
 #if CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
 #include "mbedtls/platform.h"
 #endif
+#if CONFIG_GOGO_DIST
+#include "dist.h"
+#endif
 #if CONFIG_GOGO_TLS
 #include "tls.h"
 #include "anchor.h"
@@ -425,6 +428,9 @@ static const struct PortDriver *const esp_ports[] = {
 #endif
 #if CONFIG_GOGO_TLS
     &net_tls_driver,
+#endif
+#if CONFIG_GOGO_DIST
+    &dist_node_driver,
 #endif
 #if HAS_KBD && CONFIG_GOGO_KBD
     &esp_kbd_driver,
