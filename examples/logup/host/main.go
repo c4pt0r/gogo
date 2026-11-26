@@ -65,7 +65,9 @@ type tally struct {
 	out    string
 }
 
-// emit prints one log line and appends it to that board's file. A line
+// emit prints one log line and appends it to that board's file. The file is
+// opened per line: simple, and fine for a few boards at a few lines a second;
+// a busier collector would keep one handle per board and day. A line
 // starting with "# " is the board's own status (a failed post, its
 // summary), not data: it prints indented and does not count as a log line.
 func (t *tally) emit(name, line string, at time.Time) {
@@ -139,9 +141,15 @@ func (t *tally) ingest(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "board"
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBatch))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBatch+1))
 	if err != nil {
 		http.Error(w, "read: "+err.Error()+"\n", http.StatusBadRequest)
+		return
+	}
+	if len(body) > maxBatch {
+		// Refuse rather than keep a cut batch: a 200 would tell the board
+		// that every line arrived.
+		http.Error(w, "batch over 64 KB\n", http.StatusRequestEntityTooLarge)
 		return
 	}
 	t.batch(name)
@@ -255,5 +263,15 @@ func main() {
 	if *out != "" {
 		fmt.Printf("writing %s/<board>-<date>.log\n", *out)
 	}
-	log.Fatal(http.ListenAndServe(*addr, mux))
+	// The collector listens on the LAN: a client that opens a connection and
+	// never finishes its request must not hold it forever.
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	log.Fatal(srv.ListenAndServe())
 }

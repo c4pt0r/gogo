@@ -5,17 +5,20 @@ senses into log lines and POSTs them in batches; the computer prints each
 line with the moment it landed, and can keep them in a file.
 
 ```
-computer (Linux, macOS)                     board (Cardputer ADV, M5StickS3)
----------------------                     ---------------------------------
-go run ./examples/logup/host -addr :8080 -out logs   gogo config set logup.url \
-                                             'http://<computer-ip>:8080/ingest?board=cardputer'
-                                           gogo config set wifi.ssid <name>
-                                           gogo config set wifi.password -
-                                           gogo flash examples/logup
+computer (Linux, macOS)
+-----------------------
+go run ./examples/logup/host -addr :8080 -out logs
+
+board (Cardputer ADV, M5StickS3)
+--------------------------------
+gogo config set logup.url 'http://<computer-ip>:8080/ingest?board=cardputer'
+gogo config set wifi.ssid <name>
+gogo config set wifi.password -
+gogo flash examples/logup
 ```
 
 The computer's address is its LAN address (`ip -4 addr show` on Linux,
-`ipconfig getifaddr en1` on macOS); the board must be on the same network.
+`ipconfig getifaddr en0` on macOS, usually the Wi-Fi); the board must be on the same network.
 
 No network? The board prints every line anyway, so the USB cable is the
 transport:
@@ -44,7 +47,7 @@ Upload and backlog:
 |---|---|---|
 | `logup.url` | none | collector address; unset means print only |
 | `logup.batch` | 4 | lines per POST (one keep-alive connection, one request per batch) |
-| `logup.max` | 48 | lines kept while the upload fails; the oldest are dropped and counted |
+| `logup.max` | 48 | lines kept while the upload fails; the oldest are dropped and counted (a `logup.batch` over it is lowered to it) |
 | `logup.attempts` | 3 | POSTs per batch; a `net up` gives the waiting batch its attempts back |
 | `logup.retry` | 1000 | ms before the first retry, doubling each attempt |
 | `logup.retrymax` | 30000 | the most a retry ever waits |
@@ -58,7 +61,7 @@ appended to, each line prefixed with the moment the collector received it
 (`2026-11-26 13:25:38.038 imu samples=20 ...` — the board's clock never has to
 agree with yours). Without `-out` the collector only prints. It keeps no
 rotation and no retention: point it at a directory you clean up, or run it
-under a supervisor. My run today:
+under a supervisor. After about an hour of one board:
 
 ```
 /tmp/gologs/cardputer-2026-11-26.log    880 lines, 64 KB   (appends across collector restarts)
@@ -126,7 +129,7 @@ Serial capture, no network (`gogo monitor | host -stdin`), 14 s:
 Ports this board gives a program, from a port-by-port probe: `kbd`, `mic`,
 `speaker`, `netif`, `power` open; `ir` answers `not found` (the ADV has IR
 send only, `HAS_IR_RX 0` in `board.h`); `screen` opens with its default
-grid. Two rough edges, both visible in the log rather than hidden:
+grid. Three rough edges, all visible in the log rather than hidden:
 
 - `port.Open("imu", …)` came back `busy` on **1 of 4** boots (the BMI270
   bring-up: `imu_esp.c` probes `0x69`/`0x68` and uploads its config file; a

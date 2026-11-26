@@ -230,7 +230,9 @@ func srcNet(to actor.PID) {
 		actor.Send(to, "net: no netif port (the host VM needs --net-fd)")
 		return
 	}
-	dhcp.Start(dhcp.Config{TimeoutMs: 5000})
+	if err := dhcp.Start(dhcp.Config{TimeoutMs: 5000}); err != nil {
+		actor.Send(to, "dhcp: "+err.Error()) // no address: the log should say why
+	}
 	for {
 		switch actor.Receive().(type) {
 		case net.Up:
@@ -283,6 +285,17 @@ func collector(root actor.PID) {
 	url := cfg("logup.url", "")
 	batch := cfgInt("logup.batch", 4)
 	max := cfgInt("logup.max", 48)
+	if batch < 1 {
+		batch = 1
+	}
+	if max < batch {
+		// A batch is packed only once batch lines wait, and the backlog never
+		// holds more than max: with max < batch nothing would be posted until
+		// a Finish. Say so and shrink the batch.
+		println("# logup.batch " + strconv.Itoa(batch) + " is over logup.max " +
+			strconv.Itoa(max) + ": batches of " + strconv.Itoa(max))
+		batch = max
+	}
 	attempts := cfgInt("logup.attempts", 3)
 	retryMs := cfgInt("logup.retry", 1000)
 	timeout := cfgInt("logup.timeout", 3000)
@@ -354,13 +367,15 @@ func collector(root actor.PID) {
 		case string: // a log line: print it (the serial transport) and queue it
 			println(m)
 			tail = append(tail, m)
-			for len(tail)+headN > max { // the log outpaces the link: keep the newest
+			before := dropped
+			for len(tail)+headN > max && len(tail) > 0 { // the log outpaces the link: keep the newest
 				tail = tail[1:]
 				dropped++
 			}
 			// A long run must say so while it is happening, not only in the
-			// closing tally: one status line per batch worth of losses.
-			if dropped > 0 && dropped%batch == 0 {
+			// closing tally: one status line each time the losses pass another
+			// batch worth, and only on a line that dropped some.
+			if dropped/batch > before/batch {
 				println("# backlog full: dropped " + strconv.Itoa(dropped) +
 					" lines, keeping the newest " + strconv.Itoa(max))
 			}
