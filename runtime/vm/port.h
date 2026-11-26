@@ -117,7 +117,18 @@ struct Port {
 term port_open(struct Vm *vm, struct Actor *owner, term name, term cfg);   /* port PID, or T_NIL */
 /* Opens a port of driver drv for owner with decoded cfg fields f[0..n),
  * as port_open does after decoding (a C caller: the net stack opening an
- * accepted TCP connection for its listener's owner). */
+ * accepted TCP connection for its listener's owner).
+ *
+ * After either returns T_NIL, vm->open_err says why, as a shared code
+ * (gogo_errors.h): GOGO_E_NOTFOUND (no driver of that name, or a name
+ * that is no string), GOGO_E_BADARG (cfg is not the driver's struct),
+ * GOGO_E_TOOMANY (the port table is full), GOGO_E_NOMEMORY (the owner
+ * cannot take the port's charge and room, or the port count) or
+ * GOGO_E_BUSY (the driver refused: the resource is taken, or a cfg it
+ * cannot use). port_open_with of a driver without `open`, a C caller's
+ * mistake, leaves it as it was; after a success it is meaningless. Go code
+ * still gets only port.Open's ok == false; the reason is for C callers
+ * (gogo/fs's Open) until the language has `error`. */
 term port_open_with(struct Vm *vm, struct Actor *owner, const PortDriver *drv,
                     const int32_t *f, uint32_t n);
 bool port_is(term pid);

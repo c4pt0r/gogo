@@ -325,7 +325,11 @@ btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: 
 
 - `port.Open(driver string, cfg any) (actor.PID, bool)`: the caller
   becomes the owner. An unknown driver, an invalid configuration, a busy
-  resource or a lack of memory gives `ok == false` and the zero PID.
+  resource or a lack of memory gives `ok == false` and the zero PID. The
+  VM keeps the reason as a shared error code, `vm->open_err`
+  (`NotFound`, `BadArg`, `TooMany`, `NoMemory` or `Busy`, `port.h`):
+  `fs.Open` reports it, and Go code will get it when `port.Open` returns
+  `error` (language phase B).
   `port.Close(p)` closes a port; stale or unknown PIDs are ignored.
   `port.Handoff(p, to) bool`: the owner hands the port to another live
   actor; later events go to `to`, the port closes when `to` exits, and
@@ -445,7 +449,8 @@ text grid while it is open.
   `CloseClient` keep one connection alive; `Upload` streams a file as a
   POST body (§5.4.8). The server `http.Serve(port, handler func(Request)
   Response) actor.PID` starts a listener actor linked to the caller (if
-  it cannot listen it exits with code 100, `ListenFailed`) and hands each
+  it cannot listen it exits with code 69, `ListenFailed`, `actor.Failed +
+  errors.Busy`) and hands each
   connection to a new handler actor: request head at most 2 KB, body at
   most 8 KB by `Content-Length` (no chunked bodies), 400 for a malformed
   request, 413 for a body too large, then a response with
@@ -496,7 +501,8 @@ FatFs).
   power loss `/flash` holds the old or the new content); `Stat`,
   `ReadDir`, `Mkdir` (not recursive), `Remove` (a file or an empty
   directory), `Rename`, `Usage(prefix)`. Every call returns an `fs.Err`
-  (`OK` = 0, `NotFound` ... `Closed`, numbered as `VFS_*`). Calls are
+  (`OK` = 0, `NotFound` ... `NotMounted`: the shared codes of
+  `gogo/errors`, `GOGO_E_*` in C). Calls are
   synchronous and stop every actor while they run (a flash erase takes
   tens of ms, an SD access occasionally hundreds).
 - **A File is a port.** Its PID is an ordinary port PID owned by the
@@ -525,7 +531,8 @@ FatFs).
 - **`gogo/kv`**: one file per key under `/flash/kv/`. `Get(key)
   (bytes.Bytes, fs.Err)` (a missing key is `fs.NotFound`; read errors are
   returned as they are), `Put(key, v any) fs.Err` (`string` or `Bytes`,
-  replaced atomically, at most 4096 B), `Delete(key) fs.Err`, `Keys()
+  replaced atomically, at most 4096 B: a larger value is
+  `fs.Err(errors.Overflow)`, another type `fs.Err(errors.BadArg)`), `Delete(key) fs.Err`, `Keys()
   ([]string, fs.Err)`.
 - **`gogo/ringlog`**: `Append(dir, maxBytes, line)` and `Read(dir, max)`
   over two files `0.log` and `1.log` that rotate, so the total stays
@@ -598,7 +605,7 @@ side is `runtime/vm/module.c`):
 
 ```go
 type Module struct{ H int; missing string }   // reserved type 30; a plain value, may be sent
-type Err int  // OK BadImage Unsupported NoMemory NotFound BadArg TooMany BadVersion
+type Err int  // OK BadImage Unsupported NoMemory NotFound BadArg TooMany BadVersion (gogo/errors codes)
 func Load(b bytes.Bytes) (Module, Err)
 func Spawn(m Module, entry string, arg any) (actor.PID, Err)       // also SpawnLink, SpawnOpt
 func Hold(m Module) Err
@@ -1533,7 +1540,9 @@ together with `mbox_words` through `actor_charged_words`).
 - **Exit reasons** are `actor.Reason{Code int; Func string}`. `Code` is
   `actor.Normal` (the entry function returned), `Killed`, `OutOfMemory`,
   `MailboxOverflow`, `NoProc`, `DivZero`, `BadCode`, `Shutdown`,
-  `BadShift`, `BadMsg`, or a user code (100 or more, from
+  `BadShift`, `BadMsg`, a library failure (64..99: `actor.Failed` (64)
+  plus a shared error code, such as `http.ListenFailed`; 10..63 are kept
+  for the VM), or a user code (100 or more, from
   `actor.Exit(code)` / `actor.Kill(p, code)`); `Func` is the name of the
   function where a run-time error happened, else empty.
 - On exit, linked actors get an exit signal (an `ExitMsg` if they trap
@@ -1548,6 +1557,25 @@ together with `mbox_words` through `actor_charged_words`).
   `noproc`, `divzero`, `badcode`, `badshift`, `badmsg` or `exit(<code>)`;
   `Normal` and `Shutdown` are not reported. There are no line numbers
   yet.
+- **Error codes** are one space, `gogo/errors` (`errors.Code`; the C
+  side's `GOGO_E_*` in `runtime/include/gogo_errors.h`, which a test keeps
+  equal): 0 is `OK`, 1..35 are meanings every package shares
+  (`NotFound`, `Exists`, `NoMemory`, ... `BadVersion` = 27; 28..35 are
+  free), capped so that `actor.Failed` (64) + a shared code stays a
+  library exit reason below the user codes from 100; 36..99 are reserved,
+  and each package that needs its own codes gets a block of 20 from 100
+  (`gogo/http` 100..119, `gogo/sound` 120..139). The codes are
+  compile-time constants: no opcode, builtin, reserved type or image
+  field depends on the table (the C side uses the same names). A later
+  language phase gives `Code` an `Error()` method and makes functions
+  return `error`. **Open for that phase:** whether `fs.Err`, `code.Err`
+  and the other result types become aliases of `errors.Code`, or the
+  language gets an `errors.Is`-like rule. Until one of them, an `fs.Err`
+  and an `errors.Code` of the same number are different types: they do
+  not compare today, and as Go `error` values with different dynamic
+  types they would not be equal either. Equal numbers make either step
+  possible; they do not by themselves make `err == errors.NotFound` work
+  across packages.
 - Supervision is the `gogo/supervisor` library, written in the subset:
   `Supervise(child, spec)` and `SuperviseModule(m, entry, arg, spec)`
   supervise one child each (restart types Permanent and Transient, a

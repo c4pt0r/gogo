@@ -36,6 +36,7 @@ path, and packages of your own (section 3.1.1):
 | `gogo/fs`, `gogo/kv`, `gogo/ringlog` | storage |
 | `gogo/net`, `gogo/dhcp`, `gogo/dns`, `gogo/http` | networking |
 | `gogo/sys` | the wall clock, randomness, settings from the device's configuration store |
+| `gogo/errors` | the error codes every package shares (`errors.NotFound`, ...) |
 
 Go's standard library is not available. Importing `fmt` looks for a
 package of your own called `fmt`, finds none and says where it looked:
@@ -258,8 +259,10 @@ convert: 300000000 44 5
 ```
 
 Conversions between `int`, `int64` and `byte` must be written out, as in
-Go. `string(b)` and `[]byte(s)` convert between strings and byte slices
-(each copies). Other conversions are rejected.
+Go, and so must a conversion to a named type built on `int` or `int64`
+(`Weekday(n)`, `errors.Code(e)` for an `fs.Err` e). `string(b)` and
+`[]byte(s)` convert between strings and byte slices (each copies). Other
+conversions are rejected.
 
 ## 3.3 Control flow
 

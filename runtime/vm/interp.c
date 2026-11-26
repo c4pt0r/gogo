@@ -1330,9 +1330,9 @@ int vm_start(Vm *vm) {
     /* Module 0's main starts like any module's entry (code.Spawn). */
     term pid;
     int err = module_spawn(vm, NULL, module_handle(vm, 0), (const uint8_t *)"main", 4u, T_NIL, 0, &pid);
-    if (err != CODE_OK) {
+    if (err != GOGO_E_OK) {
         vm_reserve_release(vm);
-        if (err == CODE_NOT_FOUND) write_err_lit("gogo: image has no main\n");
+        if (err == GOGO_E_NOTFOUND) write_err_lit("gogo: image has no main\n");
         else write_err_lit("gogo: cannot start main actor\n");
         return 1;
     }

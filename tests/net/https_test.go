@@ -416,6 +416,21 @@ func TestHTTPSUpload(t *testing.T) {
 	}
 }
 
+// An upload whose connection fails says why: the port.Closed reason, a
+// shared code, not a blanket IO. A host that never answers the SYN (no
+// server behind port 9) is Timeout (9) when the connect gives up; a server
+// whose certificate is for another name is BadCert (21).
+func TestHTTPSUploadReasons(t *testing.T) {
+	s := upServer(t, 1024)
+	runHTTPS(t, map[uint16]string{443: s.addr}, map[string][]byte{"rec.bin": upPattern(1024)},
+		"time UP:https://gogo.test:9/up UP:https://other.test/up",
+		"test.file=/flash/rec.bin\n",
+		"start true\ntime true\nUP https://gogo.test:9/up 0 9\nUP https://other.test/up 0 21\ndone\n")
+	if conns, _ := s.count(); conns > 1 {
+		t.Errorf("%d connections reached the server, want at most the refused handshake", conns)
+	}
+}
+
 // A server that answers 401 before reading the body: Upload stops sending
 // and returns the status.
 func TestHTTPSUploadDenied(t *testing.T) {
@@ -451,7 +466,7 @@ func TestHTTPPlainSamePath(t *testing.T) {
 			"new\n"+
 			"CGET http://gogo.test/1 true 200 8 false\n  body [hello /1]\n"+
 			"CGET http://gogo.test/2 true 200 8 false\n  body [hello /2]\n"+
-			"UP http://gogo.test/up 0 101\nCUP http://gogo.test/up 0 101\n"+
+			"UP http://gogo.test/up 0 25\nCUP http://gogo.test/up 0 25\n"+
 			"cclose\nUPNT http://gogo.test/up 200 0\ndone\n",
 		"--without", "tls") // an http image loads on a firmware without the tls driver
 	conns, reqs := s.count()

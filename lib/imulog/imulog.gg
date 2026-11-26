@@ -31,6 +31,7 @@ package imulog
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 	"gogo/fs"
 	"gogo/imu"
 	"gogo/port"
@@ -93,11 +94,11 @@ func put32(b bytes.Buffer, v int) {
 
 // Append writes one record to the log in dir; Start's actor calls it, and a
 // program may add its own markers (kind 3 and up are free). A payload over
-// 65535 bytes is fs.NoMemory.
+// 65535 bytes is errors.Overflow (as an fs.Err).
 func Append(dir string, maxBytes int, kind, a, timeMs, b int, data bytes.Bytes) fs.Err {
 	n := data.Len()
 	if n > 65535 {
-		return fs.NoMemory
+		return fs.Err(errors.Overflow)
 	}
 	buf := bytes.NewBuffer(HeaderLen + n)
 	buf.WriteByte(byte(kind))

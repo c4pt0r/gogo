@@ -61,28 +61,29 @@ declares `kbd`. Book chapter
 | `gogo/actor` | stub | | none |
 | `gogo/port` | stub | actor, bytes | none (each constant `port.Open`: its driver); also the stream protocol every byte port speaks (`Chunk`, `Out`, `Done`, `Closed`) and the host-port types |
 | `gogo/bytes` | stub | | none |
-| `gogo/net` | stub | actor, bytes | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
+| `gogo/net` | stub | actor, bytes, errors | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
 | `gogo/gpio` | stub | | none (the `gpio` port: `gpio`) |
-| `gogo/fs` | stub | actor, bytes | none (constant `/sd` paths: `/sd`) |
+| `gogo/fs` | stub | actor, bytes, errors | none (constant `/sd` paths: `/sd`) |
 | `gogo/kbd` | stub | | none (the `kbd` port: `kbd`) |
 | `gogo/power` | stub | | none (the `power` port: `power`) |
-| `gogo/code` | stub | actor, bytes | none |
+| `gogo/code` | stub | actor, bytes, errors | none |
 | `gogo/imu` | stub | | none (the `imu` port: `imu`) |
 | `gogo/ir` | stub | | none (the `ir_tx` / `ir_rx` ports: `ir_tx` / `ir_rx`) |
 | `gogo/audio` | stub | | none (the `mic` / `speaker` ports: `mic` / `speaker`) |
 | `gogo/sys` | stub | | none (the clock, randomness and `sys.Config`, the configuration store) |
 | `gogo/screen` | stub | | none (the `screen` port: `screen`) |
+| `gogo/errors` | stub | | none (the shared error codes, `errors.Code`; `GOGO_E_*` in `runtime/include/gogo_errors.h`) |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |
 | `gogo/strconv` | library | | none |
 | `gogo/dhcp` | library | actor, bytes, net, port, sys | `netif`, `udp` |
 | `gogo/dns` | library | actor, bytes, net, port | `udp` |
-| `gogo/http` | library | actor, bytes, dns, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |
+| `gogo/http` | library | actor, bytes, dns, errors, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |
 | `gogo/sntp` | library | actor, bytes, dns, net, port, sys | `udp` |
 | `gogo/kv` | library | bytes, fs | none |
 | `gogo/ringlog` | library | bytes, fs | none |
 | `gogo/imulog` | library | actor, bytes, fs, imu, port | `imu` |
 | `gogo/wav` | library | bytes, fs | none |
-| `gogo/sound` | library | actor, audio, fs, port, wav | none (opens `mic` for Record and `speaker` for Play without requiring them: `//gogo:optional mic speaker`) |
+| `gogo/sound` | library | actor, audio, errors, fs, port, wav | none (opens `mic` for Record and `speaker` for Play without requiring them: `//gogo:optional mic speaker`) |
 | `gogo/irproto` | library | bytes | none |
 | `gogo/tui` | library | actor, bytes, gpio, kbd, port, screen, strconv | `gpio`, `screen` (opens `kbd` without requiring it: `//gogo:optional kbd`) |

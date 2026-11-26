@@ -99,7 +99,7 @@ func check(n int) {
 	r, e := fs.Open("/sd/gogo/hello.txt", fs.Read)
 	if e == fs.OK {
 		w, e2 := fs.Open("/sd/gogo/Hello.txt", fs.Write)
-		println("sd: Write open under a reader err", int(e2), "(Busy=6)")
+		println("sd: Write open under a reader err", int(e2), "(Busy=5)")
 		if e2 == fs.OK {
 			w.Close()
 		}

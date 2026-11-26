@@ -1,4 +1,4 @@
-0 1 2 3 4 5 6 7 8 9 10 11 12 13
+0 1 2 16 11 4 5 12 13 14 15 3 8 7
 open missing 1
 readfile missing 1
 stat missing 1
@@ -12,66 +12,66 @@ write a 0
 write b 0
 rename onto file 2
 rename onto dir 2
-sd open 3
-sd mkdir 3
-sd writefile 3
-sd stat root 3
-sd usage 3
-flashx 3
-unknown prefix 3
-fifth open 5
+sd open 16
+sd mkdir 16
+sd writefile 16
+sd stat root 16
+sd usage 16
+flashx 16
+unknown prefix 16
+fifth open 4
 after close 0
-second writer 6
-append beside writer 6
+second writer 5
+append beside writer 5
 reader beside writer 0
-remove open 6
-rename open source 6
-rename onto open 6
-writefile over open 6
+remove open 5
+rename open source 5
+rename onto open 5
+writefile over open 5
 remove closed 0
 writefile closed 0
-relative 7
-trailing slash 7
-empty segment 7
-dot dot 7
-dot 7
-space 7
+relative 12
+trailing slash 12
+empty segment 12
+dot dot 12
+dot 12
+space 12
 fine name, absent dir 1
-33-byte name 7
+33-byte name 12
 32-byte name 1
 96-byte path 1
-97-byte path 7
-stat / 7
-empty path 7
-mkdir mount root 7
-remove mount root 7
-rename mount root 7
-writefile mount root 7
-open mount root 8
-open dir for write 8
-readfile dir 8
-writefile dir 8
-through a file 9
-mkdir through a file 9
-readdir of a file 9
+97-byte path 12
+stat / 12
+empty path 12
+mkdir mount root 12
+remove mount root 12
+rename mount root 12
+writefile mount root 12
+open mount root 13
+open dir for write 13
+readfile dir 13
+writefile dir 13
+through a file 14
+mkdir through a file 14
+readdir of a file 14
 write in d 0
-remove full dir 10
+remove full dir 15
 remove file 0
 remove empty dir 0
 write big 0
-readfile over max 11
+readfile over max 3
 readfile at max 0
 5000
-read after close 13
-size after close 13
-sync after close 13
-write after close 13
-zero file 13
-read a write file 13
-write a read file 13
-read by non-owner 13
-write by non-owner 13
-size by non-owner 13
+read after close 7
+size after close 7
+sync after close 7
+write after close 7
+zero file 7
+read a write file 7
+write a read file 7
+read by non-owner 7
+write by non-owner 7
+size by non-owner 7
 read clamps 0
 4096
-sync closed 13
+sync closed 7

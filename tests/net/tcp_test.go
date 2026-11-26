@@ -164,7 +164,7 @@ func TestTCPRetransmit(t *testing.T) {
 	if _, err := v.Advance(1); err != io.EOF {
 		t.Fatalf("advance: %v, want EOF", err)
 	}
-	finish(t, v, "dial true\nconnected\nwritten\nnot sent\nclosed 2 45100\ndial2 true\nclosed 2 47600\n")
+	finish(t, v, "dial true\nconnected\nwritten\nnot sent\nclosed 9 45100\ndial2 true\nclosed 9 47600\n")
 }
 
 // A slow reader near its quota: segments are not acknowledged until it
@@ -259,7 +259,7 @@ func TestTCPRst(t *testing.T) {
 	if _, err := v.Exchange(c.frame(sim.RST, nil)); err != io.EOF {
 		t.Fatalf("exchange: %v, want EOF", err)
 	}
-	finish(t, v, "connected\nnot sent\nclosed 1\nclosed 3\nconnected\nwritten\nclosed 1\n")
+	finish(t, v, "connected\nnot sent\nclosed 19\nclosed 18\nconnected\nwritten\nclosed 19\n")
 }
 
 // A handler that shuts down and exits leaves an orphan: the response is
@@ -500,7 +500,7 @@ func TestTCPSynFlood(t *testing.T) {
 	if s := c.segs(frames, nil); len(s) != 0 {
 		t.Fatalf("want nothing, got %s", segsStr(s))
 	}
-	finish(t, v, "listen true\naccepted\ndial true\ndial true\nclosed 2\nclosed 2\naccepted\n")
+	finish(t, v, "listen true\naccepted\ndial true\ndial true\nclosed 9\nclosed 9\naccepted\n")
 }
 
 // TIME_WAIT: the peer's resent FIN is acknowledged for 2 s, then answered
@@ -595,7 +595,7 @@ func TestTCPSlowReaderReset(t *testing.T) {
 		if _, err := v.Advance(3000); err != nil && r < 9 {
 			t.Fatalf("advance: %v", err)
 		}
-		want.WriteString("got " + strconv.Itoa(got) + " written 1 closed 1 req 100\n")
+		want.WriteString("got " + strconv.Itoa(got) + " written 1 closed 19 req 100\n")
 	}
 	if _, err := v.Sync(); err != io.EOF {
 		t.Fatalf("sync: %v, want EOF", err)

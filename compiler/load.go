@@ -86,9 +86,13 @@ const AudioPath = "gogo/audio"
 // reserved. The text UI library is gogo/tui.
 const ScreenPath = "gogo/screen"
 
+// ErrorsPath is the import path of the shared error codes (errors.Code
+// and its constants), a stub package with only a type and constants.
+const ErrorsPath = "gogo/errors"
+
 // isStub reports whether path is one of the stub packages.
 func isStub(path string) bool {
-	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == GpioPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath || path == ScreenPath
+	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == GpioPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath || path == ScreenPath || path == ErrorsPath
 }
 
 // stubDir is the directory of the library set holding stub package path:

@@ -1,6 +1,6 @@
 write 0
 read on the card 0
 flash has none 1
-cross rename 7
+cross rename 12
 usage true 0
 dir 1 note.txt 0

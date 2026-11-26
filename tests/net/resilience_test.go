@@ -60,7 +60,7 @@ func TestLinkFlap(t *testing.T) {
 	}
 	up := t0 + 500 // when the link returned
 	stop(t, v, "subscribe true\nstart true 0\nup 0\ndial true\nconnected "+itoa(t0)+"\n"+
-		"closed 5 "+itoa(t0)+"\ndown "+itoa(t0)+"\nget false "+itoa(t0)+"\nup "+itoa(up)+"\ndial true\nconnected "+itoa(up+100)+"\n")
+		"closed 20 "+itoa(t0)+"\ndown "+itoa(t0)+"\nget false "+itoa(t0)+"\nup "+itoa(up)+"\ndial true\nconnected "+itoa(up+100)+"\n")
 }
 
 // The lease runs out unrenewed: SetAddr zero gives Down, the connection
@@ -82,7 +82,7 @@ func TestLeaseLossClosesConns(t *testing.T) {
 	leaseFrom(t, v, disc, 3600)
 	redial(t, v)
 	stop(t, v, "subscribe true\nstart true 0\nup 0\ndial true\nconnected 100\n"+
-		"closed 5 20000\ndown 20000\nget false 20000\nup "+itoa(at)+"\ndial true\nconnected "+itoa(at+100)+"\n")
+		"closed 20 20000\ndown 20000\nget false 20000\nup "+itoa(at)+"\ndial true\nconnected "+itoa(at+100)+"\n")
 }
 
 // The lease runs out while the link is down: after the link returns and a

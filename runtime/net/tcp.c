@@ -80,6 +80,9 @@
 /* StreamOut.user: the held events, Connected and 1 + a Closed reason. */
 #define HELD_CONN 1u
 #define HELD_CL_SHIFT 1u
+/* A held reason + 1 must fit the 7 bits above HELD_CONN: every shared code
+ * does (C99: a negative array size fails the build otherwise). */
+typedef char tcp_held_reason_fits[((GOGO_E_SHARED_MAX + 1u) << HELD_CL_SHIFT) <= 0xFFu ? 1 : -1];
 #define EVENT_RESERVE TCP_EVENT_RESERVE
 
 /* The refusal check: an Out after Shutdown or with no connection. */
@@ -302,7 +305,7 @@ void tcp_post(Vm *vm, const TcpPcb *c, uint32_t type, int32_t reason) {
     StreamOut *o = tcp_stream(p);
     uint32_t cl = (uint32_t)o->user >> HELD_CL_SHIFT;
     if (type == TYPE_NET_CONNECTED) o->user = (uint8_t)(o->user | HELD_CONN);
-    else if (!cl || (cl == CR_NORMAL + 1u && reason != CR_NORMAL)) {   /* the first, or a terminal one after a held Normal */
+    else if (!cl || (cl == GOGO_E_OK + 1u && reason != GOGO_E_OK)) {   /* the first, or a terminal one after a held Normal */
         o->user = (uint8_t)((o->user & HELD_CONN) | (uint32_t)(reason + 1) << HELD_CL_SHIFT);
     }
     settle(vm, p);
@@ -736,7 +739,7 @@ static void syn_sent(Vm *vm, TcpPcb *c, const Seg *s, uint32_t sport) {
         return;
     }
     if (s->fl & TH_RST) {
-        if (s->fl & TH_ACK) abort_conn(vm, c, CR_REFUSED, false);
+        if (s->fl & TH_ACK) abort_conn(vm, c, GOGO_E_REFUSED, false);
         else ns->st.tcp_drop++;
         return;
     }
@@ -832,7 +835,7 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
         }
         if (c->state == TCP_SYN_RCVD || c->state == TCP_LAST_ACK || c->state == TCP_CLOSING ||
             c->state == TCP_TIME_WAIT) pcb_free(vm, c);
-        else abort_conn(vm, c, CR_RESET, false);
+        else abort_conn(vm, c, GOGO_E_RESET, false);
         return;
     }
     if (s->fl & TH_SYN) {            /* RFC 5961: challenge ACK */
@@ -890,7 +893,7 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
             ack = true;
         }
         if ((s->fl & TH_FIN) && ((c->flags & TF_UPPER) ? ns->upper->fin(vm, c) :
-                                 try_event(vm, c, TYPE_CLOSED, CR_NORMAL))) {
+                                 try_event(vm, c, TYPE_CLOSED, GOGO_E_OK))) {
             c->rcv_nxt++;
             ack = true;
             if (c->state == TCP_ESTABLISHED) {
@@ -969,7 +972,7 @@ static void fire(Vm *vm, TcpPcb *c, uint32_t now) {
     /* The connect deadline (and an upper layer's handshake's), or an
      * orphan's life: up, progress or not. */
     if ((c->flags & TF_UNTIL) && due(c->until, now)) {
-        abort_conn(vm, c, CR_TIMEOUT, c->state != TCP_SYN_SENT);
+        abort_conn(vm, c, GOGO_E_TIMEOUT, c->state != TCP_SYN_SENT);
         return;
     }
     switch (c->state) {
@@ -977,7 +980,7 @@ static void fire(Vm *vm, TcpPcb *c, uint32_t now) {
         pcb_free(vm, c);
         return;
     case TCP_FIN_WAIT_2:             /* an orphan the peer never closed */
-        if (c->flags & TF_ORPHAN) abort_conn(vm, c, CR_TIMEOUT, true);
+        if (c->flags & TF_ORPHAN) abort_conn(vm, c, GOGO_E_TIMEOUT, true);
         return;
     case TCP_SYN_SENT:
         if (c->snd_nxt == c->snd_una) {  /* the first SYN (deferred from open) */
@@ -999,7 +1002,7 @@ static void fire(Vm *vm, TcpPcb *c, uint32_t now) {
             send_rst(ns, c);
             pcb_free(vm, c);
         } else {
-            abort_conn(vm, c, CR_TIMEOUT, c->state != TCP_SYN_SENT);
+            abort_conn(vm, c, GOGO_E_TIMEOUT, c->state != TCP_SYN_SENT);
         }
         return;
     }
@@ -1073,7 +1076,7 @@ void tcp_down(Vm *vm) {
     for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) {
         TcpPcb *c = &ns->tcp[i];
         if (c->state == TCP_CLOSED) continue;
-        if (c->port && c->state != TCP_SYN_RCVD) abort_conn(vm, c, CR_NOROUTE, false);
+        if (c->port && c->state != TCP_SYN_RCVD) abort_conn(vm, c, GOGO_E_NOROUTE, false);
         else pcb_free(vm, c);
     }
 }

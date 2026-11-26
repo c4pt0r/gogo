@@ -7,27 +7,27 @@ static bool name_char(char c) {
 }
 
 int vfs_path_check(const char *p, uint32_t len, uint32_t *first) {
-    if (len < 2 || len > VFS_PATH_MAX || p[0] != '/') return VFS_BADPATH;
+    if (len < 2 || len > VFS_PATH_MAX || p[0] != '/') return GOGO_E_BADPATH;
     uint32_t i = 1;
     *first = 0;
     while (i < len) {
         uint32_t s = i;
         while (i < len && p[i] != '/') {
-            if (!name_char(p[i])) return VFS_BADPATH;
+            if (!name_char(p[i])) return GOGO_E_BADPATH;
             i++;
         }
         uint32_t n = i - s;
-        if (n == 0 || n > VFS_NAME_MAX) return VFS_BADPATH;      /* empty segment or trailing '/' */
+        if (n == 0 || n > VFS_NAME_MAX) return GOGO_E_BADPATH;      /* empty segment or trailing '/' */
         /* A name ending in '.' (this covers "." and ".."): FatFs strips
          * trailing dots, so "a.txt." would alias "a.txt" past the slot hash. */
-        if (p[i - 1] == '.') return VFS_BADPATH;
+        if (p[i - 1] == '.') return GOGO_E_BADPATH;
         if (!*first) *first = i;
         if (i < len) {
             i++;
-            if (i == len) return VFS_BADPATH;                    /* trailing '/' */
+            if (i == len) return GOGO_E_BADPATH;                    /* trailing '/' */
         }
     }
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 uint32_t vfs_path_hash(const char *p, uint32_t len, bool lower) {

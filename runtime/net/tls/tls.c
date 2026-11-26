@@ -298,7 +298,7 @@ fail:
  * one (any other reason) at most once; after the terminal one TCP posts no
  * Closed of its own (u_closed). */
 static void post_closed(Vm *vm, TlsConn *t, int32_t reason) {
-    uint16_t f = reason == CR_NORMAL ? TS_EOF : TS_CLOSED;
+    uint16_t f = reason == GOGO_E_OK ? TS_EOF : TS_CLOSED;
     if (t->flags & (f | TS_CLOSED)) return;
     t->flags |= f;
     tcp_post(vm, t->c, TYPE_CLOSED, reason);
@@ -314,9 +314,9 @@ static void fail(Vm *vm, TlsConn *t, int32_t reason) {
 
 static int32_t reason_of(const TlsConn *t, int r) {
     t->ns->tls.st.last_error = r;
-    if (r == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) return CR_BADCERT;
-    if (r == MBEDTLS_ERR_SSL_CONN_EOF) return CR_RESET;
-    return CR_TLS;
+    if (r == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) return GOGO_E_BADCERT;
+    if (r == MBEDTLS_ERR_SSL_CONN_EOF) return GOGO_E_RESET;
+    return GOGO_E_TLS;
 }
 
 static uint64_t slice_start(const TlsConn *t) { return t->hw->clock_us ? t->hw->clock_us() : 0u; }
@@ -402,7 +402,7 @@ static int pump_read(Vm *vm, TlsConn *t) {
         io_slice(t, t0);
         size_t avail = mbedtls_ssl_get_bytes_avail(&t->ssl);
         if (r == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
-            post_closed(vm, t, CR_NORMAL);
+            post_closed(vm, t, GOGO_E_OK);
             return 0;
         }
         if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return 0;
@@ -412,7 +412,7 @@ static int pump_read(Vm *vm, TlsConn *t) {
         }
         if (!avail) {
             if ((t->flags & TS_FIN) && t->rx_len == t->rx_off) {   /* EOF at a record boundary */
-                post_closed(vm, t, CR_NORMAL);
+                post_closed(vm, t, GOGO_E_OK);
                 return 0;
             }
             continue;                               /* an empty record */
@@ -432,11 +432,11 @@ static int pump_read(Vm *vm, TlsConn *t) {
         io_slice(t, t0);
         if (r != (int)n) {                          /* cannot happen */
             msg_free(vm, m);
-            fail(vm, t, CR_TLS);
+            fail(vm, t, GOGO_E_TLS);
             return -1;
         }
         if (!tcp_chunk_send(vm, t->c, m)) {         /* cannot happen: net_room said yes */
-            fail(vm, t, CR_TLS);
+            fail(vm, t, GOGO_E_TLS);
             return -1;
         }
     }
@@ -610,7 +610,7 @@ static int t_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
     if (!hw || !bind_hw(vm, hw) || hw->random(&probe, 1) != 0) return -1;   /* no secure randomness: no TLS */
     ns->upper = &upper;
     if (vm_unix_time_ms(vm) <= 0) {             /* certificates cannot be checked */
-        tcp_hold_closed(ns, p, CR_NOTIME);
+        tcp_hold_closed(ns, p, GOGO_E_NOTIME);
         return 0;
     }
     char name[HOST_MAX + 1u];

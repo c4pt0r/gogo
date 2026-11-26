@@ -8,6 +8,7 @@
 #include "host.h"
 #include "config.h"
 #include "bytes.h"
+#include "../include/gogo_errors.h"
 #include <string.h>
 
 #if (GOGO_MAX_PORTS) < 1u || (GOGO_MAX_PORTS) > 16u
@@ -92,7 +93,9 @@ static bool int_struct(const Vm *vm, const Actor *a, term t, uint32_t *type,
 static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *f, uint32_t n, term cfg) {
     uint16_t i = 0;
     while (i < GOGO_MAX_PORTS && vm->ports[i].drv) i++;
+    vm->open_err = GOGO_E_TOOMANY;
     if (i == GOGO_MAX_PORTS) return T_NIL;
+    vm->open_err = GOGO_E_NOMEMORY;   /* also the charge check's below */
     if (!actor_port_own(vm, owner)) return T_NIL;
 
     Port *p = &vm->ports[i];
@@ -102,7 +105,8 @@ static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
     p->owner = owner->id;
     p->gen = gen;
     p->id = term_make_pid((uint16_t)(PORT_SLOT_BASE + i), gen);
-    bool ok = (cfg != T_NIL ? drv->open_term(vm, owner, p, i, cfg) : drv->open(vm, p, i, f, n)) == 0;
+    int rc = cfg != T_NIL ? drv->open_term(vm, owner, p, i, cfg) : drv->open(vm, p, i, f, n);
+    bool ok = rc == 0;
     if (ok && (p->charge_words || p->room_64w)) {
         /* The driver's state for the port is the owner's; room_64w must
          * fit beside it (an event the owner could never take). */
@@ -113,6 +117,7 @@ static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
     if (!ok) {
         /* Refused. Bump the generation anyway: anything the driver pushed
          * under it is stale. */
+        if (rc) vm->open_err = GOGO_E_BUSY;
         p->drv = NULL;
         p->gen = (uint16_t)((gen + 1u) & GEN_MASK);
         actor_port_disown(owner);
@@ -124,9 +129,11 @@ static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
 term port_open(Vm *vm, Actor *owner, term name, term cfg) {
     const uint8_t *nm;
     uint32_t len;
+    vm->open_err = GOGO_E_NOTFOUND;   /* no driver of that name (or no name) */
     if (!name_bytes(vm, owner, name, &nm, &len)) return T_NIL;
     const PortDriver *drv = port_find_driver(vm, nm, len);
     if (!drv) return T_NIL;
+    vm->open_err = GOGO_E_BADARG;     /* every cfg check's below */
     if (drv->open_term) {
         const uint32_t *o = obj_of(vm, owner, cfg);
         if (!o || hdr_kind(o[0]) != K_STRUCT || o[1] != drv->cfg_type) return T_NIL;

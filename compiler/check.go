@@ -311,10 +311,18 @@ func basicKind(t types.Type) types.BasicKind {
 }
 
 // isIntConv reports whether conversion call is one the subset allows:
-// int(x), int64(x) or byte(x) where x is an int, an int64, a byte or an
-// untyped constant (or of a named type with one of those underlying).
+// int(x), int64(x) or byte(x), or T(x) for a named type T whose underlying
+// type is int or int64 (fs.Err, errors.Code), where x is an int, an int64,
+// a byte or an untyped constant (or of a named type with one of those
+// underlying).
 func (c *checker) isIntConv(call *ast.CallExpr) bool {
-	to := basicKind(c.p.Info.TypeOf(call.Fun))
+	tt := c.p.Info.TypeOf(call.Fun)
+	to := basicKind(tt)
+	if _, named := types.Unalias(tt).(*types.Named); named {
+		if k := basicKind(tt.Underlying()); k == types.Int || k == types.Int64 {
+			to = k
+		}
+	}
 	if (to != types.Int && to != types.Int64 && to != types.Uint8) || len(call.Args) != 1 {
 		return false
 	}

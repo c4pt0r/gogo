@@ -30,18 +30,15 @@
 #include "image.h"
 #include "actor.h"
 #include "config.h"
+#include "../include/gogo_errors.h"
 
-/* code.Err values (gogo/code). */
-enum {
-    CODE_OK = 0,
-    CODE_BAD_IMAGE = 1,     /* not a valid image (image_load), or unusable bytes */
-    CODE_UNSUPPORTED = 2,   /* requires a driver or mount the VM lacks */
-    CODE_NO_MEMORY = 3,
-    CODE_NOT_FOUND = 4,     /* no such module (stale handle) or entry */
-    CODE_BAD_ARG = 5,
-    CODE_TOO_MANY = 6,      /* the module table is full */
-    CODE_BAD_VERSION = 7    /* an image format this VM does not run (image_load's IMG_ERR_VERSION) */
-};
+/* code.Err values are the shared codes (gogo_errors.h): GOGO_E_OK,
+ * GOGO_E_BADIMAGE (not a valid image, or unusable bytes),
+ * GOGO_E_UNSUPPORTED (requires a driver or mount the VM lacks),
+ * GOGO_E_NOMEMORY, GOGO_E_NOTFOUND (no such module, a stale handle, or
+ * entry), GOGO_E_BADARG, GOGO_E_TOOMANY (the module table or holders are
+ * full) and GOGO_E_BADVERSION (an image format this VM does not run:
+ * image_load's IMG_ERR_VERSION). */
 
 #define MOD_HOLDERS 4u
 
@@ -96,11 +93,12 @@ struct ModEntry {
  * caller (SpawnLink). */
 #define MOD_SPAWN_LINK 0x10000u
 
-/* vm_boot results; a negative value is an IMG_ERR_* (image_err_str). */
+/* vm_boot results; a negative value is an IMG_ERR_* (image_err_str).
+ * The positive ones are the module loader's codes they stand for. */
 enum {
-    VM_BOOT_OK = 0,
-    VM_BOOT_NO_MEMORY = 1,  /* nothing written: the platform reports it */
-    VM_BOOT_REFUSED = 2     /* the refusal line is already on stderr */
+    VM_BOOT_OK = GOGO_E_OK,
+    VM_BOOT_NO_MEMORY = GOGO_E_NOMEMORY,   /* nothing written: the platform reports it */
+    VM_BOOT_REFUSED = GOGO_E_UNSUPPORTED   /* the refusal line is already on stderr */
 };
 
 /* The boot path every platform calls after vm_init: module_config, then
@@ -114,14 +112,14 @@ int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words);
  * board's mounts; for the first one missing, the refusal line "gogo: image
  * requires <name>, which this VM lacks" goes to stderr), then
  * module_install_static. Returns IMG_OK, a negative IMG_ERR_*,
- * CODE_UNSUPPORTED, CODE_NO_MEMORY or CODE_TOO_MANY (slot 0 in use). The
+ * GOGO_E_UNSUPPORTED, GOGO_E_NOMEMORY or GOGO_E_TOOMANY (slot 0 in use). The
  * words are used in place, never copied, and must outlive the VM. */
 int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words);
 
 /* Installs an already loaded image as slot 0, VM-held and not counted
  * (module_load_static's last step; tests install hand-built images with it). No
- * requirement check: that is module_load_static's. CODE_OK, CODE_TOO_MANY or
- * CODE_NO_MEMORY. */
+ * requirement check: that is module_load_static's. GOGO_E_OK, GOGO_E_TOOMANY or
+ * GOGO_E_NOMEMORY. */
 int module_install_static(Vm *vm, const Image *img);
 
 /* Reads the code memory limit, config key code.mem (bytes, optional K or M
@@ -133,27 +131,27 @@ void module_config(Vm *vm);
 /* code.Load: loads the image in Bytes `bytes` (as caller sees it: off-heap,
  * heap or const) into a free slot and makes caller a holder. Checks, in
  * order: the bytes are exactly one valid image (image_load, and no
- * trailing words) -> CODE_BAD_IMAGE, or CODE_BAD_VERSION for an image of
+ * trailing words) -> GOGO_E_BADIMAGE, or GOGO_E_BADVERSION for an image of
  * another major or a newer minor (IMG_ERR_VERSION); its requirements
- * (as module_load_static) -> CODE_UNSUPPORTED, with *handle = the length
+ * (as module_load_static) -> GOGO_E_UNSUPPORTED, with *handle = the length
  * of the first missing name (at most MOD_MISSING_MAX) and that many of its
  * bytes copied to missing (MOD_MISSING_MAX bytes, or NULL);
  * the code memory limit (Vm.mod_cap, counting the image's bytes) ->
- * CODE_NO_MEMORY; a free slot -> CODE_TOO_MANY. Unaligned bytes are
- * validated as an aligned copy (whose allocation may fail: CODE_NO_MEMORY).
- * Bytes longer than Vm.mod_cap are CODE_NO_MEMORY at once, before any
+ * GOGO_E_NOMEMORY; a free slot -> GOGO_E_TOOMANY. Unaligned bytes are
+ * validated as an aligned copy (whose allocation may fail: GOGO_E_NOMEMORY).
+ * Bytes longer than Vm.mod_cap are GOGO_E_NOMEMORY at once, before any
  * copy. Where the code then lives: host->code_alloc memory if the
  * platform gives some, aligned (a copy; unaligned bytes are validated
  * there, not copied twice); else the Bytes in place if it is a whole
  * off-heap root at an aligned address (the module keeps one reference on
  * it until it unloads: what it pins is what is counted); else a copy in VM
  * memory (heap or const Bytes, any slice). A copy is made once, counted like in-place code, and
- * the Bytes is not kept. CODE_BAD_ARG if bytes is no Bytes. On CODE_OK
+ * the Bytes is not kept. GOGO_E_BADARG if bytes is no Bytes. On GOGO_E_OK
  * *handle is the module handle; nothing is kept on any error. */
 int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle, char *missing);
 
 /* code.Hold: makes a a holder of module handle (once per actor: holding
- * again is CODE_OK). CODE_NOT_FOUND if the module is gone, CODE_TOO_MANY
+ * again is GOGO_E_OK). GOGO_E_NOTFOUND if the module is gone, GOGO_E_TOOMANY
  * if it has MOD_HOLDERS holders already. */
 int module_hold(Vm *vm, Actor *a, uint32_t handle);
 
@@ -179,14 +177,14 @@ void module_release(Vm *vm, Actor *a, uint32_t handle);
 uint32_t module_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs);
 
 /* Starts the export `entry` (len bytes) of the module `handle` in a new
- * actor of that module. CODE_BAD_IMAGE if that function's header has more
+ * actor of that module. GOGO_E_BADIMAGE if that function's header has more
  * parameters than registers (image_load does not check it; the compiler
  * never emits it). The entry takes no parameter or one (arg, copied
  * out of caller's heap like a message; with no caller it must be an
  * immediate). flags: MOD_SPAWN_LINK and a memory limit (above). Returns a
- * code.Err: CODE_NOT_FOUND (stale handle, no such export, or an export of
- * another arity), CODE_BAD_ARG (also an arg the cross-module rules refuse,
- * msg_build's R_BAD_MSG: no actor, no crash), CODE_NO_MEMORY; on CODE_OK
+ * code.Err: GOGO_E_NOTFOUND (stale handle, no such export, or an export of
+ * another arity), GOGO_E_BADARG (also an arg the cross-module rules refuse,
+ * msg_build's R_BAD_MSG: no actor, no crash), GOGO_E_NOMEMORY; on GOGO_E_OK
  * sets *pid. -R_BAD_CODE if arg names a module that is gone: the caller's
  * badcode, as everywhere a stale value is used. */
 int module_spawn(Vm *vm, Actor *caller, uint32_t handle, const uint8_t *entry, uint32_t len,

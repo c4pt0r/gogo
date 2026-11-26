@@ -30,14 +30,14 @@ static int resolve(const VfsState *st, const char *p, uint32_t len, bool root_ok
     for (uint32_t i = 0; i < st->n_mounts; i++) {
         const Mount *m = &st->mounts[i];
         if (m->plen != first || memcmp(p, m->prefix, first)) continue;
-        if (first == len && !root_ok) return VFS_BADPATH;
+        if (first == len && !root_ok) return GOGO_E_BADPATH;
         if (first == len) { rel[0] = '/'; rel[1] = 0; }
         else { memcpy(rel, p + first, len - first); rel[len - first] = 0; }
         *mi = i;
         *hash = vfs_path_hash(p, len, m->be->case_insensitive);
-        return VFS_OK;
+        return GOGO_E_OK;
     }
-    return VFS_NOTMOUNTED;
+    return GOGO_E_NOTMOUNTED;
 }
 
 /* s is open on the path of this length and hash. */
@@ -54,7 +54,7 @@ int vfs_open(VfsState *st, const char *p, uint32_t len, int mode, int *slot) {
     uint32_t mi, h;
     int e = resolve(st, p, len, true, &mi, rel, &h);
     if (e) return e;
-    if (mode < VFS_READ || mode > VFS_APPEND) return VFS_BADPATH;
+    if (mode < VFS_READ || mode > VFS_APPEND) return GOGO_E_BADPATH;
     const Mount *m = &st->mounts[mi];
     Slot *slots = st->slots;
     int s = -1;
@@ -62,9 +62,9 @@ int vfs_open(VfsState *st, const char *p, uint32_t len, int mode, int *slot) {
         if (!slots[i].used) { if (s < 0) s = (int)i; }
         else if (mode != VFS_READ && same_path(&slots[i], h, len) &&
                  (slots[i].mode != VFS_READ || (mode == VFS_WRITE && m->be->case_insensitive)))
-            return VFS_BUSY;   /* one writer; on FAT no truncate under a reader */
+            return GOGO_E_BUSY;   /* one writer; on FAT no truncate under a reader */
     }
-    if (s < 0) return VFS_TOOMANY;
+    if (s < 0) return GOGO_E_TOOMANY;
     e = m->be->open(m->ctx, &slots[s].f, rel, mode);
     if (e) return e;
     slots[s].used = 1;
@@ -73,7 +73,7 @@ int vfs_open(VfsState *st, const char *p, uint32_t len, int mode, int *slot) {
     slots[s].hash = h;
     slots[s].plen = (uint8_t)len;
     *slot = s;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 static Slot *get(VfsState *st, int s) {
@@ -85,14 +85,14 @@ static const Mount *mnt(const VfsState *st, const Slot *s) { return &st->mounts[
 
 int vfs_read(VfsState *st, int slot, uint8_t *buf, uint32_t n, uint32_t *got) {
     Slot *s = get(st, slot);
-    if (!s || s->mode != VFS_READ) return VFS_CLOSED;
+    if (!s || s->mode != VFS_READ) return GOGO_E_CLOSED;
     const Mount *m = mnt(st, s);
     return m->be->read(m->ctx, &s->f, buf, n, got);
 }
 
 int vfs_write(VfsState *st, int slot, const uint8_t *p, uint32_t n) {
     Slot *s = get(st, slot);
-    if (!s || s->mode == VFS_READ) return VFS_CLOSED;
+    if (!s || s->mode == VFS_READ) return GOGO_E_CLOSED;
     const Mount *m = mnt(st, s);
     return m->be->write(m->ctx, &s->f, p, n);
 }
@@ -100,27 +100,27 @@ int vfs_write(VfsState *st, int slot, const uint8_t *p, uint32_t n) {
 int vfs_write_at(VfsState *st, int slot, uint32_t off, const uint8_t *p, uint32_t n) {
     Slot *s = get(st, slot);
     int32_t size;
-    if (!s || s->mode != VFS_WRITE) return VFS_CLOSED;
+    if (!s || s->mode != VFS_WRITE) return GOGO_E_CLOSED;
     const Mount *m = mnt(st, s);
     const VfsBackend *b = m->be;
-    if (!b->write_at) return VFS_IO;
-    if (n == 0) return VFS_OK;
+    if (!b->write_at) return GOGO_E_IO;
+    if (n == 0) return GOGO_E_OK;
     int e = b->size(m->ctx, &s->f, &size);
     if (e) return e;
-    if (size < 0 || off > (uint32_t)size || n > (uint32_t)size - off) return VFS_BADPATH;
+    if (size < 0 || off > (uint32_t)size || n > (uint32_t)size - off) return GOGO_E_BADPATH;
     return b->write_at(m->ctx, &s->f, off, p, n);
 }
 
 int vfs_sync(VfsState *st, int slot) {
     Slot *s = get(st, slot);
-    if (!s) return VFS_CLOSED;
+    if (!s) return GOGO_E_CLOSED;
     const Mount *m = mnt(st, s);
     return m->be->sync(m->ctx, &s->f);
 }
 
 int vfs_size(VfsState *st, int slot, int32_t *out) {
     Slot *s = get(st, slot);
-    if (!s) return VFS_CLOSED;
+    if (!s) return GOGO_E_CLOSED;
     const Mount *m = mnt(st, s);
     return m->be->size(m->ctx, &s->f, out);
 }
@@ -164,7 +164,7 @@ int vfs_remove(VfsState *st, const char *p, uint32_t len) {
     uint32_t mi, h;
     int e = resolve(st, p, len, false, &mi, rel, &h);
     if (e) return e;
-    if (is_open(st, h, len)) return VFS_BUSY;
+    if (is_open(st, h, len)) return GOGO_E_BUSY;
     return st->mounts[mi].be->remove(st->mounts[mi].ctx, rel);
 }
 
@@ -175,9 +175,9 @@ static int resolve2(const VfsState *st, const char *a, uint32_t alen, const char
     int e = resolve(st, a, alen, false, mi, ra, &ha);
     if (!e) e = resolve(st, b, blen, false, &mj, rb, &hb);
     if (e) return e;
-    if (*mi != mj) return VFS_BADPATH;          /* no cross-mount rename */
-    if (is_open(st, ha, alen) || is_open(st, hb, blen)) return VFS_BUSY;
-    return VFS_OK;
+    if (*mi != mj) return GOGO_E_BADPATH;          /* no cross-mount rename */
+    if (is_open(st, ha, alen) || is_open(st, hb, blen)) return GOGO_E_BUSY;
+    return GOGO_E_OK;
 }
 
 static char fold(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
@@ -199,22 +199,22 @@ int vfs_rename(VfsState *st, const char *a, uint32_t alen, const char *b, uint32
     const VfsBackend *be = st->mounts[mi].be;
     void *c = st->mounts[mi].ctx;
     bool ci = be->case_insensitive;
-    if (blen > alen && b[alen] == '/' && same(a, b, alen, ci)) return VFS_BADPATH;   /* into its own subtree */
+    if (blen > alen && b[alen] == '/' && same(a, b, alen, ci)) return GOGO_E_BADPATH;   /* into its own subtree */
     /* A directory with any file open on this mount is Busy: slots keep only
      * the length and hash of their path, so a renamed ancestor would escape
      * the rules.
      * A missing source falls through to the backend's NotFound. */
     e = be->stat(c, ra, &sz, &d);
-    if (e == VFS_OK && d) {
+    if (e == GOGO_E_OK && d) {
         for (uint32_t i = 0; i < GOGO_FS_MAX_OPEN; i++)
-            if (st->slots[i].used && st->slots[i].mnt == mi) return VFS_BUSY;
-    } else if (e && e != VFS_NOTFOUND) return e;
+            if (st->slots[i].used && st->slots[i].mnt == mi) return GOGO_E_BUSY;
+    } else if (e && e != GOGO_E_NOTFOUND) return e;
     /* A case-only rename on a case-insensitive mount: b names a itself, so
      * skip the Exists check (FatFs renames the same object in place). */
     if (ci && blen == alen && memcmp(a, b, alen) && same(a, b, alen, true)) return be->rename(c, ra, rb, false);
     e = be->stat(c, rb, &sz, &d);
-    if (e == VFS_OK) return VFS_EXISTS;
-    return e == VFS_NOTFOUND ? be->rename(c, ra, rb, false) : e;
+    if (e == GOGO_E_OK) return GOGO_E_EXISTS;
+    return e == GOGO_E_NOTFOUND ? be->rename(c, ra, rb, false) : e;
 }
 
 int vfs_replace(VfsState *st, const char *tmp, uint32_t tlen, const char *p, uint32_t len) {
@@ -225,7 +225,7 @@ int vfs_replace(VfsState *st, const char *tmp, uint32_t tlen, const char *p, uin
     const VfsBackend *be = st->mounts[mi].be;
     void *c = st->mounts[mi].ctx;
     e = be->rename(c, ra, rb, true);
-    if (e != VFS_EXISTS) return e;
+    if (e != GOGO_E_EXISTS) return e;
     e = be->remove(c, rb);                      /* FAT-like: not atomic */
     return e ? e : be->rename(c, ra, rb, false);
 }

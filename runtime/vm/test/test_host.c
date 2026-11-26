@@ -52,7 +52,7 @@ VmBoard test_board = { unix_base_ports, NULL, &unix_netif, NULL, test_mounts };
 
 int test_vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
     if (vm_init(vm, &test_host, NULL, &test_board, table_cap) != 0) return -1;
-    if (img && module_install_static(vm, img) != CODE_OK) return -1;
+    if (img && module_install_static(vm, img) != GOGO_E_OK) return -1;
     return 0;
 }
 

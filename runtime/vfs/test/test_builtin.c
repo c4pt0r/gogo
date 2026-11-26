@@ -159,8 +159,8 @@ static void make_file(const char *path, uint32_t n) {
     static uint8_t buf[4200];
     int s;
     for (uint32_t i = 0; i < n; i++) buf[i] = (uint8_t)('0' + i % 10u);
-    CHECK_EQ(vfs_open(&vs, path, (uint32_t)strlen(path), VFS_WRITE, &s), VFS_OK);
-    CHECK_EQ(vfs_write(&vs, s, buf, n), VFS_OK);
+    CHECK_EQ(vfs_open(&vs, path, (uint32_t)strlen(path), VFS_WRITE, &s), GOGO_E_OK);
+    CHECK_EQ(vfs_write(&vs, s, buf, n), GOGO_E_OK);
     vfs_close(&vs, s);
 }
 
@@ -169,60 +169,60 @@ TEST(fs_open_write_read) {
     Actor *a = actor(0);
     uint32_t base = actor_charged_words(a);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", VFS_WRITE), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     term f = R(a)[0];
     CHECK(port_is(f));
     CHECK_EQ(actor_charged_words(a), base + CHARGE);
     CHECK_EQ(open_slots(), 1);
     CHECK_EQ(fs(a, FS_WRITE, "ts", f, "hel"), R_NORMAL);       /* string */
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_WRITE, "tB", f, "lo"), R_NORMAL);        /* Bytes */
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_WRITE, "tb", f, "!!"), R_NORMAL);        /* []byte */
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_WRITE, "tt", f, T_EMPTYBYTES), R_NORMAL);
     CHECK_EQ(fs(a, FS_WRITE, "tt", f, T_NILSLICE), R_NORMAL);
     CHECK_EQ(fs(a, FS_WRITE, "tt", f, T_EMPTYSTR), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_WRITE, "ti", f, 5), R_BAD_CODE);         /* not data */
     CHECK_EQ(fs(a, FS_SYNC, "t", f), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_SIZE, "t", f), R_NORMAL);
     CHECK_EQ(ival(R(a)[0]), 7);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_READ, "ti", f, 10), R_NORMAL);          /* write-mode file */
     CHECK_EQ(R(a)[0], T_EMPTYBYTES);
-    CHECK_EQ(ERR2(a), VFS_CLOSED);
+    CHECK_EQ(ERR2(a), GOGO_E_CLOSED);
     port_close(&vm, f);                                        /* f.Close() */
     CHECK_EQ(actor_charged_words(a), base);
     CHECK_EQ(open_slots(), 0);
 
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", VFS_READ), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     f = R(a)[0];
     CHECK_EQ(fs(a, FS_READ, "ti", f, 3), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK(bytes_is(a, R(a)[0], "hel"));
     CHECK_EQ(fs(a, FS_READ, "ti", f, 0), R_NORMAL);           /* max <= 0: empty, OK */
     CHECK_EQ(R(a)[0], T_EMPTYBYTES);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_READ, "ti", f, -5), R_NORMAL);
     CHECK_EQ(R(a)[0], T_EMPTYBYTES);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_READ, "ti", f, 100), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "lo!!"));
     CHECK_EQ(fs(a, FS_READ, "ti", f, 100), R_NORMAL);         /* end of file */
     CHECK_EQ(R(a)[0], T_EMPTYBYTES);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_WRITE, "ts", f, "x"), R_NORMAL);        /* read-mode file */
-    CHECK_EQ(ERR1(a), VFS_CLOSED);
+    CHECK_EQ(ERR1(a), GOGO_E_CLOSED);
     CHECK_EQ(fs(a, FS_SIZE, "t", f), R_NORMAL);
     CHECK_EQ(ival(R(a)[0]), 7);
     CHECK_EQ(fs(a, FS_READ, "tt", f, T_TRUE), R_BAD_CODE);    /* max not an int */
 
     /* Append adds at the end. */
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", VFS_APPEND), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     term g = R(a)[0];
     CHECK_EQ(fs(a, FS_WRITE, "ts", g, "?"), R_NORMAL);
     CHECK_EQ(fs(a, FS_SIZE, "t", g), R_NORMAL);
@@ -240,37 +240,37 @@ TEST(fs_write_at) {
     term f = R(a)[0];
     CHECK_EQ(fs(a, FS_WRITE, "ts", f, "hello"), R_NORMAL);
     CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, 1, "EL"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_WRITEAT, "tiB", f, 3, "xy"), R_NORMAL);          /* Bytes */
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, 4, "xy"), R_NORMAL);          /* past the end */
-    CHECK_EQ(ERR1(a), VFS_BADPATH);
+    CHECK_EQ(ERR1(a), GOGO_E_BADPATH);
     CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, -1, "x"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_BADPATH);
+    CHECK_EQ(ERR1(a), GOGO_E_BADPATH);
     CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, 0, ""), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_WRITEAT, "tti", f, T_TRUE, 1), R_BAD_CODE);      /* off not an int */
     CHECK_EQ(fs(a, FS_WRITEAT, "tii", f, 0, 5), R_BAD_CODE);           /* not data */
     CHECK_EQ(fs(b, FS_WRITEAT, "tis", f, 0, "x"), R_NORMAL);           /* not the owner */
-    CHECK_EQ(ERR1(b), VFS_CLOSED);
+    CHECK_EQ(ERR1(b), GOGO_E_CLOSED);
     CHECK_EQ(fs(a, FS_WRITE, "ts", f, "!"), R_NORMAL);                 /* still appends */
     CHECK_EQ(fs(a, FS_SIZE, "t", f), R_NORMAL);
     CHECK_EQ(ival(R(a)[0]), 6);
     port_close(&vm, f);
     CHECK_EQ(fs(a, FS_WRITEAT, "tis", f, 0, "x"), R_NORMAL);           /* closed */
-    CHECK_EQ(ERR1(a), VFS_CLOSED);
+    CHECK_EQ(ERR1(a), GOGO_E_CLOSED);
 
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/w", 100), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "hELxy!"));
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/w", VFS_READ), R_NORMAL);    /* Read mode */
     term r = R(a)[0];
     CHECK_EQ(fs(a, FS_WRITEAT, "tis", r, 0, "x"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_CLOSED);
+    CHECK_EQ(ERR1(a), GOGO_E_CLOSED);
     port_close(&vm, r);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/w", VFS_APPEND), R_NORMAL);  /* Append mode */
     term g = R(a)[0];
     CHECK_EQ(fs(a, FS_WRITEAT, "tis", g, 0, "x"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_CLOSED);
+    CHECK_EQ(ERR1(a), GOGO_E_CLOSED);
     done(a);
     done(b);
     CHECK_EQ(open_slots(), 0);
@@ -281,21 +281,21 @@ TEST(fs_open_errors) {
     Actor *a = actor(0);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/none", VFS_READ), R_NORMAL);
     CHECK_EQ(R(a)[0], T_ZEROPID);
-    CHECK_EQ(ERR2(a), VFS_NOTFOUND);
+    CHECK_EQ(ERR2(a), GOGO_E_NOTFOUND);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flashx/a", VFS_WRITE), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_NOTMOUNTED);
+    CHECK_EQ(ERR2(a), GOGO_E_NOTMOUNTED);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash//a", VFS_WRITE), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_BADPATH);
+    CHECK_EQ(ERR2(a), GOGO_E_BADPATH);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", 3), R_NORMAL);   /* bad mode */
-    CHECK_EQ(ERR2(a), VFS_BADPATH);
+    CHECK_EQ(ERR2(a), GOGO_E_BADPATH);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", -1), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_BADPATH);
+    CHECK_EQ(ERR2(a), GOGO_E_BADPATH);
     char longp[120] = "/flash/";
     memset(longp + 7, 'a', 100);                               /* 107 bytes */
     CHECK_EQ(fs(a, FS_OPEN, "si", longp, VFS_WRITE), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_BADPATH);
+    CHECK_EQ(ERR2(a), GOGO_E_BADPATH);
     CHECK_EQ(fs(a, FS_OPEN, "ti", T_EMPTYSTR, VFS_WRITE), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_BADPATH);
+    CHECK_EQ(ERR2(a), GOGO_E_BADPATH);
     CHECK_EQ(fs(a, FS_OPEN, "ii", 5, VFS_WRITE), R_BAD_CODE);  /* path not a string */
     CHECK_EQ(fs(a, FS_OPEN, "ss", "/flash/a", "x"), R_BAD_CODE);
     CHECK_EQ(fs(a, FS_OPEN, "s", "/flash/a"), R_BAD_CODE);     /* argument count */
@@ -303,18 +303,18 @@ TEST(fs_open_errors) {
 
     /* One writer per path; readers unrestricted. */
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", VFS_WRITE), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", VFS_APPEND), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_BUSY);
+    CHECK_EQ(ERR2(a), GOGO_E_BUSY);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", VFS_READ), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/b", VFS_WRITE), R_NORMAL);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/c", VFS_WRITE), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK_EQ(open_slots(), (int)GOGO_FS_MAX_OPEN);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/d", VFS_WRITE), R_NORMAL);
     CHECK_EQ(R(a)[0], T_ZEROPID);
-    CHECK_EQ(ERR2(a), VFS_TOOMANY);
+    CHECK_EQ(ERR2(a), GOGO_E_TOOMANY);
     done(a);
     CHECK_EQ(open_slots(), 0);
 
@@ -325,11 +325,11 @@ TEST(fs_open_errors) {
     s->max_words = (uint16_t)(s->mem_words + actor_charged_words(s) + CHARGE - 1u);
     CHECK_EQ(fs(s, FS_OPEN, "si", "/flash/keep", VFS_WRITE), R_NORMAL);
     CHECK_EQ(R(s)[0], T_ZEROPID);
-    CHECK_EQ(ERR2(s), VFS_NOMEMORY);
+    CHECK_EQ(ERR2(s), GOGO_E_NOMEMORY);
     CHECK_EQ(open_slots(), 0);
     CHECK_EQ(open_ports(), 0);
     int32_t sz; bool d;
-    CHECK_EQ(vfs_stat(&vs, "/flash/keep", 11, &sz, &d), VFS_OK);
+    CHECK_EQ(vfs_stat(&vs, "/flash/keep", 11, &sz, &d), GOGO_E_OK);
     CHECK_EQ(sz, 10);
     done(s);
 }
@@ -344,36 +344,36 @@ TEST(fs_stale_and_foreign_handles) {
     /* Another actor holding the PID: Closed for every per-file op. */
     CHECK_EQ(fs(b, FS_READ, "ti", f, 3), R_NORMAL);
     CHECK_EQ(R(b)[0], T_EMPTYBYTES);
-    CHECK_EQ(ERR2(b), VFS_CLOSED);
+    CHECK_EQ(ERR2(b), GOGO_E_CLOSED);
     CHECK_EQ(fs(b, FS_WRITE, "ts", f, "x"), R_NORMAL);
-    CHECK_EQ(ERR1(b), VFS_CLOSED);
+    CHECK_EQ(ERR1(b), GOGO_E_CLOSED);
     CHECK_EQ(fs(b, FS_SYNC, "t", f), R_NORMAL);
-    CHECK_EQ(ERR1(b), VFS_CLOSED);
+    CHECK_EQ(ERR1(b), GOGO_E_CLOSED);
     CHECK_EQ(fs(b, FS_SIZE, "t", f), R_NORMAL);
     CHECK_EQ(ival(R(b)[0]), 0);
-    CHECK_EQ(ERR2(b), VFS_CLOSED);
+    CHECK_EQ(ERR2(b), GOGO_E_CLOSED);
     /* ... but anyone holding it may close it. */
     port_close(&vm, f);
     CHECK_EQ(open_slots(), 0);
     CHECK_EQ(fs(a, FS_READ, "ti", f, 3), R_NORMAL);           /* after Close */
-    CHECK_EQ(ERR2(a), VFS_CLOSED);
+    CHECK_EQ(ERR2(a), GOGO_E_CLOSED);
     CHECK_EQ(fs(a, FS_SYNC, "t", f), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_CLOSED);
+    CHECK_EQ(ERR1(a), GOGO_E_CLOSED);
     CHECK_EQ(fs(a, FS_READ, "ti", a->id, 3), R_NORMAL);       /* an actor PID */
-    CHECK_EQ(ERR2(a), VFS_CLOSED);
+    CHECK_EQ(ERR2(a), GOGO_E_CLOSED);
     CHECK_EQ(fs(a, FS_READ, "ti", T_ZEROPID, 3), R_NORMAL);   /* the zero PID */
-    CHECK_EQ(ERR2(a), VFS_CLOSED);
+    CHECK_EQ(ERR2(a), GOGO_E_CLOSED);
     CHECK_EQ(fs(a, FS_WRITE, "ts", term_from_int(3), "x"), R_NORMAL);   /* not a PID */
-    CHECK_EQ(ERR1(a), VFS_CLOSED);
+    CHECK_EQ(ERR1(a), GOGO_E_CLOSED);
     /* A reopened file reuses the port slot under a new generation: the old
      * PID stays stale. */
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", VFS_READ), R_NORMAL);
     term g = R(a)[0];
     CHECK(g != f);
     CHECK_EQ(fs(a, FS_READ, "ti", f, 3), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_CLOSED);
+    CHECK_EQ(ERR2(a), GOGO_E_CLOSED);
     CHECK_EQ(fs(a, FS_READ, "ti", g, 3), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     /* `file` is not a platform driver: port.Open("file", ...) cannot make one. */
     for (const PortDriver *const *l = test_board.ports; l && *l; l++)
         CHECK(strcmp((*l)->name, "file") != 0);
@@ -395,9 +395,9 @@ TEST(fs_handoff) {
     CHECK_EQ(actor_charged_words(a), ba);
     CHECK_EQ(actor_charged_words(b), bb + CHARGE);
     CHECK_EQ(fs(a, FS_READ, "ti", f, 2), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_CLOSED);
+    CHECK_EQ(ERR2(a), GOGO_E_CLOSED);
     CHECK_EQ(fs(b, FS_READ, "ti", f, 2), R_NORMAL);           /* the position moved too */
-    CHECK_EQ(ERR2(b), VFS_OK);
+    CHECK_EQ(ERR2(b), GOGO_E_OK);
     CHECK(bytes_is(b, R(b)[0], "23"));
     done(a);                                                   /* no longer closes it */
     CHECK_EQ(open_slots(), 1);
@@ -415,9 +415,9 @@ TEST(fs_owner_killed_mid_write) {
     term f = R(a)[0];
     CHECK_EQ(fs(a, FS_WRITE, "ts", f, "part"), R_NORMAL);
     CHECK_EQ(fs(b, FS_OPEN, "si", "/flash/log", VFS_WRITE), R_NORMAL);
-    CHECK_EQ(ERR2(b), VFS_BUSY);
+    CHECK_EQ(ERR2(b), GOGO_E_BUSY);
     CHECK_EQ(fs(b, FS_REMOVE, "s", "/flash/log"), R_NORMAL);
-    CHECK_EQ(ERR1(b), VFS_BUSY);
+    CHECK_EQ(ERR1(b), GOGO_E_BUSY);
     term apid = a->id;
     sig_kill(&vm, b, apid, R_KILLED);                          /* actor.Kill(a, Killed) */
     uint32_t code; term fn;
@@ -429,16 +429,16 @@ TEST(fs_owner_killed_mid_write) {
     CHECK_EQ(open_slots(), 0);
     CHECK_EQ(open_ports(), 0);
     int32_t sz; bool d;
-    CHECK_EQ(vfs_stat(&vs, "/flash/log", 10, &sz, &d), VFS_OK);
+    CHECK_EQ(vfs_stat(&vs, "/flash/log", 10, &sz, &d), GOGO_E_OK);
     CHECK_EQ(sz, 4);                                           /* committed */
     uint32_t bb = actor_charged_words(b);
     CHECK_EQ(fs(b, FS_OPEN, "si", "/flash/log", VFS_APPEND), R_NORMAL);
-    CHECK_EQ(ERR2(b), VFS_OK);
+    CHECK_EQ(ERR2(b), GOGO_E_OK);
     CHECK_EQ(actor_charged_words(b), bb + CHARGE);
     CHECK_EQ(fs(b, FS_WRITE, "ts", R(b)[0], "+more"), R_NORMAL);
-    CHECK_EQ(ERR1(b), VFS_OK);
+    CHECK_EQ(ERR1(b), GOGO_E_OK);
     done(b);
-    CHECK_EQ(vfs_stat(&vs, "/flash/log", 10, &sz, &d), VFS_OK);
+    CHECK_EQ(vfs_stat(&vs, "/flash/log", 10, &sz, &d), GOGO_E_OK);
     CHECK_EQ(sz, 9);
 }
 
@@ -456,7 +456,7 @@ TEST(fs_read_limits) {
     CHECK(term_is_ref(R(a)[0]));                               /* heap K_BYTES */
     CHECK_EQ(bytes_len(a, R(a)[0]), GOGO_BYTES_INLINE);
     CHECK_EQ(fs(a, FS_READ, "tI", f, 1 << 30), R_NORMAL);      /* Read(1<<30): a boxed int */
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK(term_is_handle(R(a)[0]));                            /* off-heap */
     CHECK_EQ(bytes_len(a, R(a)[0]), VFS_READ_MAX);
     CHECK_EQ(fs(a, FS_READ, "ti", f, TERM_INT_MAX), R_NORMAL);   /* the rest */
@@ -467,15 +467,15 @@ TEST(fs_read_limits) {
     Actor *s = actor(0);
     s->max_words = (uint16_t)(s->mem_words + actor_charged_words(s) + CHARGE + 40u);
     CHECK_EQ(fs(s, FS_OPEN, "si", "/flash/big", VFS_READ), R_NORMAL);
-    CHECK_EQ(ERR2(s), VFS_OK);
+    CHECK_EQ(ERR2(s), GOGO_E_OK);
     f = R(s)[0];
     CHECK_EQ(fs(s, FS_READ, "ti", f, 1000), R_NORMAL);
     CHECK_EQ(R(s)[0], T_EMPTYBYTES);
-    CHECK_EQ(ERR2(s), VFS_NOMEMORY);
+    CHECK_EQ(ERR2(s), GOGO_E_NOMEMORY);
     uint32_t c; term fn;
     CHECK(!actor_exit_pending(s, &c, &fn));                    /* alive */
     CHECK_EQ(fs(s, FS_READ, "ti", f, 4), R_NORMAL);           /* position unchanged */
-    CHECK_EQ(ERR2(s), VFS_OK);
+    CHECK_EQ(ERR2(s), GOGO_E_OK);
     CHECK(bytes_is(s, R(s)[0], "0123"));
     done(s);
 }
@@ -484,65 +484,65 @@ TEST(fs_readfile_writefile) {
     setup();
     Actor *a = actor(0);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/flash/f", "data"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/f", 100), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK(bytes_is(a, R(a)[0], "data"));
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/f", 4), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "data"));
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/f", 3), R_NORMAL);   /* size > max */
     CHECK_EQ(R(a)[0], T_EMPTYBYTES);
-    CHECK_EQ(ERR2(a), VFS_NOMEMORY);
+    CHECK_EQ(ERR2(a), GOGO_E_NOMEMORY);
     CHECK_EQ(open_slots(), 0);
     CHECK_EQ(fs(a, FS_WRITEFILE, "sB", "/flash/f", "new!"), R_NORMAL);   /* replace, Bytes */
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/f", 100), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "new!"));
     CHECK_EQ(fs(a, FS_WRITEFILE, "sb", "/flash/e", ""), R_NORMAL);       /* empty []byte */
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/e", 0), R_NORMAL);
     CHECK_EQ(R(a)[0], T_EMPTYBYTES);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/none", 10), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_NOTFOUND);
+    CHECK_EQ(ERR2(a), GOGO_E_NOTFOUND);
     CHECK_EQ(fs(a, FS_MKDIR, "s", "/flash/d"), R_NORMAL);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/d", 10), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_ISDIR);
+    CHECK_EQ(ERR2(a), GOGO_E_ISDIR);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/flash/d", "x"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_ISDIR);
+    CHECK_EQ(ERR1(a), GOGO_E_ISDIR);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/flash/x/y", "x"), R_NORMAL);   /* no parent */
-    CHECK_EQ(ERR1(a), VFS_NOTFOUND);
+    CHECK_EQ(ERR1(a), GOGO_E_NOTFOUND);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/zz/y", "x"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_NOTMOUNTED);
+    CHECK_EQ(ERR1(a), GOGO_E_NOTMOUNTED);
     CHECK_EQ(fs(a, FS_WRITEFILE, "si", "/flash/f", 1), R_BAD_CODE);
     /* An open file: the replace is Busy, the old contents stay, no .tmp left. */
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/f", VFS_READ), R_NORMAL);
     term f = R(a)[0];
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/flash/f", "zzz"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_BUSY);
+    CHECK_EQ(ERR1(a), GOGO_E_BUSY);
     port_close(&vm, f);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/flash/f", 100), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "new!"));
     int32_t sz; bool d;
-    CHECK_EQ(vfs_stat(&vs, "/flash/f.tmp", 12, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(vfs_stat(&vs, "/flash/f.tmp", 12, &sz, &d), GOGO_E_NOTFOUND);
     /* FAT-like /sd: remove + rename. */
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/f", "one"), R_NORMAL);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/f", "two"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/sd/F", 100), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "two"));
     /* A 32-byte name: the temporary name is cut to fit. */
     const char *lp = "/flash/abcdefghijklmnopqrstuvwxyz012345";
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", lp, "L"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_READFILE, "si", lp, 10), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "L"));
     /* No space: the partial temporary file is removed. */
     memfs_set_budget(0, 30);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/flash/g", "0123456789012345678901234567890123456789"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_NOSPACE);
-    CHECK_EQ(vfs_stat(&vs, "/flash/g.tmp", 12, &sz, &d), VFS_NOTFOUND);
-    CHECK_EQ(vfs_stat(&vs, "/flash/g", 8, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(ERR1(a), GOGO_E_NOSPACE);
+    CHECK_EQ(vfs_stat(&vs, "/flash/g.tmp", 12, &sz, &d), GOGO_E_NOTFOUND);
+    CHECK_EQ(vfs_stat(&vs, "/flash/g", 8, &sz, &d), GOGO_E_NOTFOUND);
     CHECK_EQ(open_slots(), 0);
     done(a);
 }
@@ -555,26 +555,26 @@ TEST(fs_writefile_keeps_tmp_when_target_gone) {
     Actor *a = actor(0);
     int32_t sz; bool d;
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/cfg", "OLD"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
-    memfs_fail_next_rename(1, VFS_IO);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
+    memfs_fail_next_rename(1, GOGO_E_IO);
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/cfg", "NEW"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_IO);
-    CHECK_EQ(vfs_stat(&vs, "/sd/cfg", 7, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(ERR1(a), GOGO_E_IO);
+    CHECK_EQ(vfs_stat(&vs, "/sd/cfg", 7, &sz, &d), GOGO_E_NOTFOUND);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/sd/cfg.tmp", 100), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK(bytes_is(a, R(a)[0], "NEW"));
     CHECK_EQ(open_slots(), 0);
     /* the next WriteFile replaces the stale temporary and succeeds */
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/cfg", "NEWER"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
-    CHECK_EQ(vfs_stat(&vs, "/sd/cfg.tmp", 11, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
+    CHECK_EQ(vfs_stat(&vs, "/sd/cfg.tmp", 11, &sz, &d), GOGO_E_NOTFOUND);
     /* the target is still there (Busy): the temporary goes */
     CHECK_EQ(fs(a, FS_OPEN, "si", "/sd/cfg", VFS_READ), R_NORMAL);
     term f = R(a)[0];
     CHECK_EQ(fs(a, FS_WRITEFILE, "ss", "/sd/cfg", "zzz"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_BUSY);
+    CHECK_EQ(ERR1(a), GOGO_E_BUSY);
     port_close(&vm, f);
-    CHECK_EQ(vfs_stat(&vs, "/sd/cfg.tmp", 11, &sz, &d), VFS_NOTFOUND);
+    CHECK_EQ(vfs_stat(&vs, "/sd/cfg.tmp", 11, &sz, &d), GOGO_E_NOTFOUND);
     CHECK_EQ(fs(a, FS_READFILE, "si", "/sd/cfg", 100), R_NORMAL);
     CHECK(bytes_is(a, R(a)[0], "NEWER"));
     done(a);
@@ -586,7 +586,7 @@ TEST(fs_stat_readdir) {
     make_file("/flash/a", 5);
     CHECK_EQ(fs(a, FS_MKDIR, "s", "/flash/d"), R_NORMAL);
     CHECK_EQ(fs(a, FS_STAT, "s", "/flash/a"), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     const uint32_t *o = obj_of(&vm, a, R(a)[0]);
     CHECK(o && o[0] == hdr_make(4, K_STRUCT) && o[1] == TYPE_FS_INFO);
     CHECK_EQ(o[2], term_from_int(5));
@@ -595,14 +595,14 @@ TEST(fs_stat_readdir) {
     o = obj_of(&vm, a, R(a)[0]);
     CHECK(o && o[1] == TYPE_FS_INFO && o[3] == T_TRUE);
     CHECK_EQ(fs(a, FS_STAT, "s", "/flash/none"), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_NOTFOUND);
+    CHECK_EQ(ERR2(a), GOGO_E_NOTFOUND);
     o = obj_of(&vm, a, R(a)[0]);                               /* the zero Info */
     CHECK(o && o[1] == TYPE_FS_INFO && o[2] == term_from_int(0) && o[3] == T_FALSE);
     CHECK_EQ(fs(a, FS_STAT, "s", "/x/a"), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_NOTMOUNTED);
+    CHECK_EQ(ERR2(a), GOGO_E_NOTMOUNTED);
 
     CHECK_EQ(fs(a, FS_READDIR, "s", "/flash"), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     o = obj_of(&vm, a, R(a)[0]);
     CHECK(o && o[0] == hdr_make(5, K_SLICE));
     CHECK_EQ(o[1], 0u);
@@ -614,13 +614,13 @@ TEST(fs_stat_readdir) {
     CHECK(name_bytes(&vm, a, arr[2], &p, &n) && n == 1 && p[0] == 'a');
     CHECK(name_bytes(&vm, a, arr[3], &p, &n) && n == 2 && !memcmp(p, "d/", 2));
     CHECK_EQ(fs(a, FS_READDIR, "s", "/flash/d"), R_NORMAL);   /* empty */
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     CHECK_EQ(R(a)[0], T_NILSLICE);
     CHECK_EQ(fs(a, FS_READDIR, "s", "/flash/a"), R_NORMAL);
     CHECK_EQ(R(a)[0], T_NILSLICE);
-    CHECK_EQ(ERR2(a), VFS_NOTDIR);
+    CHECK_EQ(ERR2(a), GOGO_E_NOTDIR);
     CHECK_EQ(fs(a, FS_READDIR, "s", "/flash/none"), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_NOTFOUND);
+    CHECK_EQ(ERR2(a), GOGO_E_NOTFOUND);
     /* Many entries survive the GC the result's allocation may run. */
     for (int i = 0; i < 12; i++) {
         char p2[32];
@@ -641,46 +641,46 @@ TEST(fs_path_ops) {
     setup();
     Actor *a = actor(0);
     CHECK_EQ(fs(a, FS_MKDIR, "s", "/flash/d"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_MKDIR, "s", "/flash/d"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_EXISTS);
+    CHECK_EQ(ERR1(a), GOGO_E_EXISTS);
     CHECK_EQ(fs(a, FS_MKDIR, "s", "/flash"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_BADPATH);
+    CHECK_EQ(ERR1(a), GOGO_E_BADPATH);
     CHECK_EQ(fs(a, FS_MKDIR, "s", "/flash/x/y"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_NOTFOUND);
+    CHECK_EQ(ERR1(a), GOGO_E_NOTFOUND);
     make_file("/flash/d/f", 3);
     CHECK_EQ(fs(a, FS_REMOVE, "s", "/flash/d"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_NOTEMPTY);
+    CHECK_EQ(ERR1(a), GOGO_E_NOTEMPTY);
     CHECK_EQ(fs(a, FS_REMOVE, "s", "/flash/none"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_NOTFOUND);
+    CHECK_EQ(ERR1(a), GOGO_E_NOTFOUND);
     CHECK_EQ(fs(a, FS_RENAME, "ss", "/flash/d/f", "/flash/g"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     make_file("/flash/h", 1);
     CHECK_EQ(fs(a, FS_RENAME, "ss", "/flash/g", "/flash/h"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_EXISTS);
+    CHECK_EQ(ERR1(a), GOGO_E_EXISTS);
     CHECK_EQ(fs(a, FS_RENAME, "ss", "/flash/g", "/sd/g"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_BADPATH);
+    CHECK_EQ(ERR1(a), GOGO_E_BADPATH);
     CHECK_EQ(fs(a, FS_RENAME, "si", "/flash/g", 1), R_BAD_CODE);
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/g", VFS_READ), R_NORMAL);
     term g = R(a)[0];
     CHECK_EQ(fs(a, FS_RENAME, "ss", "/flash/g", "/flash/k"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_BUSY);
+    CHECK_EQ(ERR1(a), GOGO_E_BUSY);
     CHECK_EQ(fs(a, FS_REMOVE, "s", "/flash/g"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_BUSY);
+    CHECK_EQ(ERR1(a), GOGO_E_BUSY);
     port_close(&vm, g);
     CHECK_EQ(fs(a, FS_REMOVE, "s", "/flash/g"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     CHECK_EQ(fs(a, FS_REMOVE, "s", "/flash/d"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
 
     CHECK_EQ(fs(a, FS_USAGE, "s", "/flash"), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_OK);
+    CHECK_EQ(ERR2(a), GOGO_E_OK);
     const uint32_t *o = obj_of(&vm, a, R(a)[0]);
     CHECK(o && o[0] == hdr_make(4, K_STRUCT) && o[1] == TYPE_FS_SPACE);
     CHECK_EQ(o[2], term_from_int(1));                          /* /flash/h */
     CHECK_EQ(o[3], term_from_int(4000));
     CHECK_EQ(fs(a, FS_USAGE, "s", "/nope"), R_NORMAL);
-    CHECK_EQ(ERR2(a), VFS_NOTMOUNTED);
+    CHECK_EQ(ERR2(a), GOGO_E_NOTMOUNTED);
     o = obj_of(&vm, a, R(a)[0]);
     CHECK(o && o[1] == TYPE_FS_SPACE && o[2] == term_from_int(0) && o[3] == term_from_int(0));
     /* Totals beyond the small-int range come back boxed. */
@@ -698,7 +698,7 @@ TEST(fs_frame_bounds) {
     setup();
     Actor *a = actor(0);
     CHECK_EQ(fs_at(a, NREGS - 1u, FS_MKDIR, "s", "/flash/d"), R_NORMAL);   /* ra+1 outside: fine */
-    CHECK_EQ(ival(R(a)[NREGS - 1u]), VFS_OK);
+    CHECK_EQ(ival(R(a)[NREGS - 1u]), GOGO_E_OK);
     CHECK_EQ(fs_at(a, NREGS - 1u, FS_STAT, "s", "/flash/d"), R_BAD_CODE);  /* needs ra+1 */
     CHECK_EQ(fs_at(a, NREGS - 1u, FS_OPEN, "si", "/flash/q", VFS_WRITE), R_BAD_CODE);
     CHECK_EQ(open_slots(), 0);                                 /* checked before acting */
@@ -751,10 +751,10 @@ TEST(fs_interp) {
     Actor *a;
     CHECK_EQ(run_fs(FS_MKDIR, &a)[0], 0);                      /* single result in the last reg */
     CHECK(a != NULL);
-    CHECK_EQ(a->mem[a->fp + 2], term_from_int(VFS_OK));
+    CHECK_EQ(a->mem[a->fp + 2], term_from_int(GOGO_E_OK));
     actor_free(&vm, a);
     int32_t sz; bool d;
-    CHECK_EQ(vfs_stat(&vs, "/flash/d", 8, &sz, &d), VFS_OK);
+    CHECK_EQ(vfs_stat(&vs, "/flash/d", 8, &sz, &d), GOGO_E_OK);
     CHECK(d);
     CHECK(strstr(run_fs(FS_STAT, &a), "crashed: badcode") != NULL);   /* r3 missing */
     CHECK(a == NULL);
@@ -816,20 +816,20 @@ TEST(fs_two_vms_own_mounts) {
     CHECK(heap_push_frame(&vm2, b, NREGS, -1));
 
     CHECK_EQ(fs(a, FS_WRITEFILE, "sb", "/flash/only_vm", "x"), R_NORMAL);
-    CHECK_EQ(ERR1(a), VFS_OK);
+    CHECK_EQ(ERR1(a), GOGO_E_OK);
     term t;
-    CHECK_EQ(fs_on(&vm, a, FS_STAT, "/flash/only_vm", 0, &t), VFS_OK);
-    CHECK_EQ(fs_on(&vm2, b, FS_STAT, "/flash/only_vm", 0, &t), VFS_NOTFOUND);
-    CHECK_EQ(fs_on(&vm2, b, FS_STAT, "/sd/only_vm", 0, &t), VFS_NOTMOUNTED);
+    CHECK_EQ(fs_on(&vm, a, FS_STAT, "/flash/only_vm", 0, &t), GOGO_E_OK);
+    CHECK_EQ(fs_on(&vm2, b, FS_STAT, "/flash/only_vm", 0, &t), GOGO_E_NOTFOUND);
+    CHECK_EQ(fs_on(&vm2, b, FS_STAT, "/sd/only_vm", 0, &t), GOGO_E_NOTMOUNTED);
     /* A file vm2 opens for writing is in vs2's slots, not vs's. */
-    CHECK_EQ(fs_on(&vm2, b, FS_OPEN, "/flash/only_vm2", VFS_WRITE, &t), VFS_OK);
+    CHECK_EQ(fs_on(&vm2, b, FS_OPEN, "/flash/only_vm2", VFS_WRITE, &t), GOGO_E_OK);
     CHECK(port_is(t));
     CHECK_EQ(open_slots(), 0);
     int n2 = 0;
     for (int i = 0; i < (int)GOGO_FS_MAX_OPEN; i++) n2 += vfs_slot_mode(&vs2, i) >= 0;
     CHECK_EQ(n2, 1);
-    CHECK_EQ(fs_on(&vm, a, FS_STAT, "/flash/only_vm2", 0, &t), VFS_NOTFOUND);
-    CHECK_EQ(fs_on(&vm, a, FS_STAT, "/sd/only_vm2", 0, &t), VFS_OK);   /* the same medium, mounted at /sd */
+    CHECK_EQ(fs_on(&vm, a, FS_STAT, "/flash/only_vm2", 0, &t), GOGO_E_NOTFOUND);
+    CHECK_EQ(fs_on(&vm, a, FS_STAT, "/sd/only_vm2", 0, &t), GOGO_E_OK);   /* the same medium, mounted at /sd */
     /* vm2's file port closes its slot in vs2. */
     port_close_all(&vm2);
     for (int i = 0; i < (int)GOGO_FS_MAX_OPEN; i++) CHECK_EQ(vfs_slot_mode(&vs2, i), -1);

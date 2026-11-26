@@ -101,6 +101,21 @@ const (Input = 0; InputPullUp = 1; InputPullDown = 2; Output = 3)
 const (None = 0; Rising = 1; Falling = 2; Both = 3)
 ```
 
+### gogo/errors
+
+```go
+type Code int   // OK (0), a shared code (1..35), or a package's own (>= 100)
+const (OK = 0; NotFound = 1; Exists = 2; NoMemory = 3; TooMany = 4; Busy = 5; BadArg = 6;
+	Closed = 7; IO = 8; Timeout = 9; Unsupported = 10; NoSpace = 11; BadPath = 12; IsDir = 13;
+	NotDir = 14; NotEmpty = 15; NotMounted = 16; BadImage = 17; Refused = 18; Reset = 19;
+	NoRoute = 20; BadCert = 21; NoTime = 22; TLS = 23; Overflow = 24; BadURL = 25;
+	BadFormat = 26; BadVersion = 27)
+```
+
+Appendix C lists who uses which. `gogo/http`'s `Upload` and
+`ClientUpload` and `gogo/sound`'s `Recorded.Err` and `Played.Err` are
+`errors.Code`.
+
 ### gogo/bytes
 
 ```go
@@ -229,7 +244,7 @@ type http.Header struct{ Name, Value string }
 type http.Request struct{ Method, Path string; Headers []Header; Body bytes.Bytes }
 type http.Response struct{ Status int; Headers []Header; Body bytes.Bytes; Truncated bool }
 const (http.MaxBody = 8192; MaxBodyLimit = 65536; MaxHead = 2048;
-	ReadTimeoutMs = 10000; DefaultTimeoutMs = 10000; ListenFailed = 100)
+	ReadTimeoutMs = 10000; DefaultTimeoutMs = 10000; ListenFailed = 69)   // actor.Failed + errors.Busy
 func http.Get(url string, timeoutMs int) (Response, bool)
 func http.Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
 func http.Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, bool)
@@ -238,13 +253,13 @@ func http.Serve(port int, handler func(Request) Response) actor.PID
 
 // chapter 17: https://, keep-alive, upload
 type http.Client struct{ PID actor.PID }
-const (http.Failed fs.Err = 100; BadURL fs.Err = 101; TLSMemory = 26624;
+const (http.BadURL = errors.BadURL; TLSMemory = 26624;
 	UploadChunk = 4096; LingerMs = 1000; MaxQueued = 4)
 func http.NewClient() Client
 func http.ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
-func http.ClientUpload(c Client, url, path, contentType, token string) (status int, err fs.Err)
+func http.ClientUpload(c Client, url, path, contentType, token string) (status int, err errors.Code)
 func http.CloseClient(c Client)
-func http.Upload(url, path, contentType, token string) (status int, err fs.Err)
+func http.Upload(url, path, contentType, token string) (status int, err errors.Code)
 ```
 
 ### gogo/sys and gogo/sntp
@@ -277,32 +292,51 @@ them) are described in chapters 15 and 16.
 | 7 | `actor.Shutdown` | (none) | asked to stop; supervisors use it |
 | 8 | `actor.BadShift` | `badshift` | negative shift count |
 | 9 | `actor.BadMsg` | `badmsg` | sent a message holding a module's own struct or closure to an actor of another module (the sender exits; chapter 14) |
-| 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)`; `http.ListenFailed` is 100 |
+| 10..63 | | | kept for the VM |
+| 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus a shared code, 1..35 (appendix C); `http.ListenFailed` is 69, `actor.Failed + errors.Busy` |
+| 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)` |
 
 The crash report is `gogo: actor <pid N> crashed: <kind>[ in <function>]`,
 on standard error.
 
 ## C. Error codes
 
-**`fs.Err`** (also returned by `kv` and `ringlog`):
+**The shared codes** (`gogo/errors`, `GOGO_E_*` in
+`runtime/include/gogo_errors.h` on the C side): one numbering for every
+meaning the packages share.
 
-| 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 |
+| Range | Codes |
+|---|---|
+| 0 | `OK` |
+| 1..27 | `NotFound`=1 `Exists`=2 `NoMemory`=3 `TooMany`=4 `Busy`=5 `BadArg`=6 `Closed`=7 `IO`=8 `Timeout`=9 `Unsupported`=10 `NoSpace`=11 `BadPath`=12 `IsDir`=13 `NotDir`=14 `NotEmpty`=15 `NotMounted`=16 `BadImage`=17 `Refused`=18 `Reset`=19 `NoRoute`=20 `BadCert`=21 `NoTime`=22 `TLS`=23 `Overflow`=24 `BadURL`=25 `BadFormat`=26 `BadVersion`=27 |
+| 28..35 | free for later shared meanings; shared codes stop at 35 so that `actor.Failed` + a shared code stays below 100 (appendix B) |
+| 36..99 | reserved, never shared codes |
+| 100 and up | one block of 20 per package that needs its own codes: `gogo/http` 100..119, `gogo/sound` 120..139 (neither uses its block yet) |
+
+**`fs.Err`** (also returned by `kv`, `ringlog`, `imulog` and `wav`): the
+shared codes, as `fs.Err(errors.X)` under the same names. `kv.Put` also
+returns `fs.Err(errors.Overflow)` (24) for a value over 4096 bytes and
+`fs.Err(errors.BadArg)` (6) for one that is neither a string nor `Bytes`;
+`imulog.Append` returns `fs.Err(errors.Overflow)` for a payload over
+65535 bytes.
+
+| 0 | 1 | 2 | 3 | 4 | 5 | 7 | 8 | 11 | 12 | 13 | 14 | 15 | 16 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `OK` | `NotFound` | `Exists` | `NotMounted` | `NoSpace` | `TooMany` | `Busy` | `BadPath` | `IsDir` | `NotDir` | `NotEmpty` | `NoMemory` | `IO` | `Closed` |
+| `OK` | `NotFound` | `Exists` | `NoMemory` | `TooMany` | `Busy` | `Closed` | `IO` | `NoSpace` | `BadPath` | `IsDir` | `NotDir` | `NotEmpty` | `NotMounted` |
 
-**`port.Closed` reasons of `"tcp"` and `"tls"`** (the `net` constants):
+**`port.Closed` reasons of `"tcp"` and `"tls"`** (the `net` constants, plain
+`int`s): the shared codes, with `Normal` = `OK`.
 
-| 0 | 1 | 2 | 3 | 5 | 6 | 7 | 8 |
+| 0 | 9 | 18 | 19 | 20 | 21 | 22 | 23 |
 |---|---|---|---|---|---|---|---|
-| `Normal` (peer finished sending) | `Reset` | `Timeout` | `Refused` | `NoRoute` (address or link lost) | `NoTime` (the wall clock is not set) | `BadCert` (the certificate failed verification) | `TLS` (any other TLS failure) |
+| `Normal` (peer finished sending) | `Timeout` | `Refused` | `Reset` | `NoRoute` (address or link lost) | `BadCert` (the certificate failed verification) | `NoTime` (the wall clock is not set) | `TLS` (any other TLS failure) |
 
-(4 is unused: it was `Overflow`, when a third write closed the connection.)
+**`code.Err`** (the result of every `gogo/code` call): the shared codes,
+as `code.Err(errors.X)` under the same names.
 
-**`code.Err`** (the result of every `gogo/code` call):
-
-| 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| 0 | 1 | 3 | 4 | 6 | 10 | 17 | 27 |
 |---|---|---|---|---|---|---|---|
-| `OK` | `BadImage` | `Unsupported` (firmware lacks a driver or mount: see `Missing`) | `NoMemory` (over `code.mem`) | `NotFound` | `BadArg` | `TooMany` (module table or holders full) | `BadVersion` (another image format) |
+| `OK` | `NotFound` | `NoMemory` (over `code.mem`) | `TooMany` (module table or holders full) | `BadArg` | `Unsupported` (firmware lacks a driver or mount: see `Missing`) | `BadImage` | `BadVersion` (another image format) |
 
 ## D. Limits
 

@@ -1,7 +1,9 @@
 # runtime/include
 
 `gogo.h` is the embedding API: everything a program needs to run gogo
-images inside it. The book chapter
+images inside it. `gogo_errors.h` holds only constants: the error codes
+gogo programs see (`gogo/errors`, `GOGO_E_*`), for a host port that
+wants to report one; it is not part of the embedding API's results. The book chapter
 [Embedding gogo](../../docs/book/18-embedding.md) is the guide.
 
 ## libgogo.a

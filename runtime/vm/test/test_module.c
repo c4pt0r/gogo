@@ -257,7 +257,7 @@ static uint32_t load_b(Fx *f, Actor *owner) {
     CHECK(h != T_NIL);
     memcpy(data, f->b, n * 4u);
     uint32_t handle = 0;
-    CHECK_EQ(module_load(&f->vm, owner, h, &handle, NULL), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, owner, h, &handle, NULL), GOGO_E_OK);
     bytes_release(&f->vm, owner, h);         /* only the module keeps it now */
     return handle;
 }
@@ -370,7 +370,7 @@ TEST(two_modules_same_interpreter) {
     CHECK(slot != 0);
     CHECK(module_mem_used(vm) > 0u);
     term pid;
-    CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Main", 4, h->id, 0, &pid), CODE_OK);
+    CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Main", 4, h->id, 0, &pid), GOGO_E_OK);
     CHECK_EQ(vm->mods[slot]->live, 1);
     capture_start();
     run_queue(vm);
@@ -522,7 +522,7 @@ TEST(reserved_types_global) {
     CHECK(heap_push_frame(vm, h, 4, -1));
     uint32_t handle = load_b(f, h);
     term pid;
-    CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Main", 4, h->id, 0, &pid), CODE_OK);
+    CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Main", 4, h->id, 0, &pid), GOGO_E_OK);
     run_queue(vm);
     term s;
     CHECK(msg_receive(vm, h, &s));           /* the string */
@@ -539,11 +539,11 @@ TEST(spawn_errors) {
     Actor *h = actor_new(vm, 64);
     uint32_t handle = load_b(f, h);
     term pid;
-    CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Nope", 4, T_NIL, 0, &pid), CODE_NOT_FOUND);
-    CHECK_EQ(module_spawn(vm, h, handle + 1u, (const uint8_t *)"Main", 4, T_NIL, 0, &pid), CODE_NOT_FOUND);
-    CHECK_EQ(module_spawn(vm, h, 7u << 16, (const uint8_t *)"Main", 4, T_NIL, 0, &pid), CODE_NOT_FOUND);
+    CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Nope", 4, T_NIL, 0, &pid), GOGO_E_NOTFOUND);
+    CHECK_EQ(module_spawn(vm, h, handle + 1u, (const uint8_t *)"Main", 4, T_NIL, 0, &pid), GOGO_E_NOTFOUND);
+    CHECK_EQ(module_spawn(vm, h, 7u << 16, (const uint8_t *)"Main", 4, T_NIL, 0, &pid), GOGO_E_NOTFOUND);
     actor_exit(vm, h, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(module_spawn(vm, NULL, handle, (const uint8_t *)"Main", 4, T_NIL, 0, &pid), CODE_NOT_FOUND);
+    CHECK_EQ(module_spawn(vm, NULL, handle, (const uint8_t *)"Main", 4, T_NIL, 0, &pid), GOGO_E_NOTFOUND);
     free(f);
 }
 
@@ -555,8 +555,8 @@ TEST(load_bad_image) {
     term b = bytes_new(vm, h, 64, &data);
     memset(data, 0xAB, 64);
     uint32_t handle;
-    CHECK_EQ(module_load(vm, h, b, &handle, NULL), CODE_BAD_IMAGE);
-    CHECK_EQ(module_load(vm, h, term_from_int(3), &handle, NULL), CODE_BAD_ARG);
+    CHECK_EQ(module_load(vm, h, b, &handle, NULL), GOGO_E_BADIMAGE);
+    CHECK_EQ(module_load(vm, h, term_from_int(3), &handle, NULL), GOGO_E_BADARG);
     CHECK_EQ(module_mem_used(vm), 0u);
     actor_exit(vm, h, R_NORMAL, T_EMPTYSTR);
     free(f);
@@ -765,8 +765,8 @@ static term heapbytes(Actor *a, const uint32_t *w, uint32_t n) {
 static void b_main_runs(Fx *f, Actor *h, uint32_t handle) {
     term pid, s;
     int rc = module_spawn(&f->vm, h, handle, (const uint8_t *)"Main", 4, h->id, 0, &pid);
-    CHECK_EQ(rc, CODE_OK);
-    if (rc != CODE_OK) return;
+    CHECK_EQ(rc, GOGO_E_OK);
+    if (rc != GOGO_E_OK) return;
     capture_start();
     run_queue(&f->vm);
     capture_stop();
@@ -793,7 +793,7 @@ TEST(load_spawn_main_runs) {
     Actor *h = host(f);
     uint32_t n = build_b(f->b), handle;
     size_t before = va_used_bytes(&f->vm);
-    CHECK_EQ(module_load(&f->vm, h, heapbytes(h, f->b, n), &handle, NULL), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, heapbytes(h, f->b, n), &handle, NULL), GOGO_E_OK);
     CHECK_EQ(module_mem_used(&f->vm), n * 4u);
     CHECK(va_used_bytes(&f->vm) > before);
     CHECK(f->vm.mods[handle >> 16]->bytes == T_NIL);      /* its own copy */
@@ -812,11 +812,11 @@ TEST(load_main_program_image) {
     Actor *h = host(f);
     uint32_t n = build_a(f->b, true, NULL), handle;
     term b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), GOGO_E_OK);
     bytes_release(&f->vm, h, b);
     CHECK(handle >> 16 != 0);
     term pid;
-    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"main", 4, T_NIL, 0, &pid), CODE_OK);
+    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"main", 4, T_NIL, 0, &pid), GOGO_E_OK);
     CHECK_EQ(f->vm.mods[handle >> 16]->live, 1);
     capture_start();
     run_queue(&f->vm);
@@ -834,9 +834,9 @@ TEST(entry_not_found) {
     Actor *h = host(f);
     uint32_t handle = load_b(f, h);
     term pid = T_NIL;
-    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"main", 4, T_NIL, 0, &pid), CODE_NOT_FOUND);
-    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"main2", 5, T_NIL, 0, &pid), CODE_NOT_FOUND);
-    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"get", 3, T_NIL, 0, &pid), CODE_NOT_FOUND);
+    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"main", 4, T_NIL, 0, &pid), GOGO_E_NOTFOUND);
+    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"main2", 5, T_NIL, 0, &pid), GOGO_E_NOTFOUND);
+    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"get", 3, T_NIL, 0, &pid), GOGO_E_NOTFOUND);
     CHECK(pid == T_NIL);
     CHECK_EQ(f->vm.mods[handle >> 16]->live, 0);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -871,7 +871,7 @@ TEST(bad_image) {
         uint32_t handle = 12345;
         term b = offheap(f, h, w, len);
         size_t va0 = va_used_bytes(&f->vm);
-        int want = c == 3 ? CODE_BAD_VERSION : CODE_BAD_IMAGE;   /* 15.2: newer than the VM */
+        int want = c == 3 ? GOGO_E_BADVERSION : GOGO_E_BADIMAGE;   /* 15.2: newer than the VM */
         CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), want);
         CHECK_EQ(va_used_bytes(&f->vm), va0);
         bytes_release(&f->vm, h, b);
@@ -892,8 +892,8 @@ TEST(bad_image) {
     CHECK_EQ(bytes_table_used(&f->vm), 1u);                       /* only good's: nothing retained */
     /* not Bytes at all */
     uint32_t handle;
-    CHECK_EQ(module_load(&f->vm, h, term_from_int(3), &handle, NULL), CODE_BAD_ARG);
-    CHECK_EQ(module_load(&f->vm, h, T_EMPTYBYTES, &handle, NULL), CODE_BAD_IMAGE);
+    CHECK_EQ(module_load(&f->vm, h, term_from_int(3), &handle, NULL), GOGO_E_BADARG);
+    CHECK_EQ(module_load(&f->vm, h, T_EMPTYBYTES, &handle, NULL), GOGO_E_BADIMAGE);
     /* the loader still works */
     b_main_runs(f, h, good);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -933,7 +933,7 @@ TEST(cap_exceeded) {
     uint32_t n = build_b_with(f->b, NULL, 400), handle;
     CHECK(n * 4u > 1500u);
     term b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_NO_MEMORY);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), GOGO_E_NOMEMORY);
     bytes_release(&f->vm, h, b);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
     CHECK_EQ(bytes_table_used(&f->vm), 0u);
@@ -943,7 +943,7 @@ TEST(cap_exceeded) {
     n = build_b(f->b);
     if (2u * n * 4u > 1024u) {
         b = offheap(f, h, f->b, n);
-        CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_NO_MEMORY);
+        CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), GOGO_E_NOMEMORY);
         bytes_release(&f->vm, h, b);
     }
     b_main_runs(f, h, small);
@@ -977,12 +977,12 @@ TEST(unsupported) {
     uint32_t n = build_b_with(f->b, "kbd", 0), handle = 0;
     char miss[MOD_MISSING_MAX];
     term b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle, miss), CODE_UNSUPPORTED);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, miss), GOGO_E_UNSUPPORTED);
     CHECK_EQ(handle, 3u);
     CHECK(memcmp(miss, "kbd", 3) == 0);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_UNSUPPORTED);   /* no buffer: fine */
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), GOGO_E_UNSUPPORTED);   /* no buffer: fine */
     port_set_drivers(&f->vm, with_kbd);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_OK);  /* the same bytes, now supported */
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), GOGO_E_OK);  /* the same bytes, now supported */
     port_set_drivers(&f->vm, NULL);
     bytes_release(&f->vm, h, b);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -998,7 +998,7 @@ TEST(unload_after_last_actor) {
     Actor *h = host(f);
     uint32_t handle = load_b(f, h), s = handle >> 16;
     term pid;
-    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"Main", 4, h->id, 0, &pid), CODE_OK);
+    CHECK_EQ(module_spawn(&f->vm, h, handle, (const uint8_t *)"Main", 4, h->id, 0, &pid), GOGO_E_OK);
     module_release(&f->vm, h, handle);
     CHECK(f->vm.mods[s] != NULL);                           /* its actor still runs */
     CHECK(module_mem_used(&f->vm) > 0u);
@@ -1007,7 +1007,7 @@ TEST(unload_after_last_actor) {
     CHECK_EQ(module_mem_used(&f->vm), 0u);
     CHECK_EQ(bytes_table_used(&f->vm), 0u);
     module_release(&f->vm, h, handle);                      /* stale: nothing */
-    CHECK_EQ(module_hold(&f->vm, h, handle), CODE_NOT_FOUND);
+    CHECK_EQ(module_hold(&f->vm, h, handle), GOGO_E_NOTFOUND);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
     free(f);
 }
@@ -1030,8 +1030,8 @@ TEST(stale_handle_after_reuse) {
     }
     CHECK(handle != old);
     term pid = T_NIL;
-    CHECK_EQ(module_spawn(&f->vm, h, old, (const uint8_t *)"Main", 4, h->id, 0, &pid), CODE_NOT_FOUND);
-    CHECK_EQ(module_hold(&f->vm, h, old), CODE_NOT_FOUND);
+    CHECK_EQ(module_spawn(&f->vm, h, old, (const uint8_t *)"Main", 4, h->id, 0, &pid), GOGO_E_NOTFOUND);
+    CHECK_EQ(module_hold(&f->vm, h, old), GOGO_E_NOTFOUND);
     CHECK(pid == T_NIL);
     CHECK_EQ(f->vm.mods[slot]->live, 0);
     b_main_runs(f, h, handle);
@@ -1047,14 +1047,14 @@ TEST(holder_keeps_module) {
     Actor *l = actor_new(&f->vm, 64);
     uint32_t handle = load_b(f, l), s = handle >> 16;
     Actor *o = host(f);
-    CHECK_EQ(module_hold(&f->vm, o, handle), CODE_OK);
-    CHECK_EQ(module_hold(&f->vm, o, handle), CODE_OK);     /* already: still one */
+    CHECK_EQ(module_hold(&f->vm, o, handle), GOGO_E_OK);
+    CHECK_EQ(module_hold(&f->vm, o, handle), GOGO_E_OK);     /* already: still one */
     Actor *x[3];
-    for (int i = 0; i < 2; i++) { x[i] = actor_new(&f->vm, 64); CHECK_EQ(module_hold(&f->vm, x[i], handle), CODE_OK); }
+    for (int i = 0; i < 2; i++) { x[i] = actor_new(&f->vm, 64); CHECK_EQ(module_hold(&f->vm, x[i], handle), GOGO_E_OK); }
     x[2] = actor_new(&f->vm, 64);
-    CHECK_EQ(module_hold(&f->vm, x[2], handle), CODE_TOO_MANY);   /* l, o, x0, x1 */
+    CHECK_EQ(module_hold(&f->vm, x[2], handle), GOGO_E_TOOMANY);   /* l, o, x0, x1 */
     actor_exit(&f->vm, l, R_NORMAL, T_EMPTYSTR);
-    CHECK_EQ(module_hold(&f->vm, x[2], handle), CODE_OK);   /* l's hold ended with it */
+    CHECK_EQ(module_hold(&f->vm, x[2], handle), GOGO_E_OK);   /* l's hold ended with it */
     for (int i = 0; i < 3; i++) module_release(&f->vm, x[i], handle);
     CHECK(f->vm.mods[s] != NULL);
     b_main_runs(f, o, handle);
@@ -1073,10 +1073,10 @@ TEST(table_full) {
     Actor *h = host(f);
     uint32_t n = build_b(f->b), handle;
     term b = offheap(f, h, f->b, n);
-    for (uint32_t i = 1; i < GOGO_MAX_MODULES; i++) CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_OK);
+    for (uint32_t i = 1; i < GOGO_MAX_MODULES; i++) CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), GOGO_E_OK);
     uint32_t used = module_mem_used(&f->vm);
     CHECK_EQ(used, (GOGO_MAX_MODULES - 1u) * n * 4u);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_TOO_MANY);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), GOGO_E_TOOMANY);
     CHECK_EQ(module_mem_used(&f->vm), used);
     bytes_release(&f->vm, h, b);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1098,7 +1098,7 @@ TEST(unaligned_bytes_copied) {
     CHECK(sl != T_NIL);
     const uint8_t *p; uint32_t len;
     CHECK(bytes_view(&f->vm, h, sl, &p, &len) && ((uintptr_t)p & 3u) != 0);
-    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), GOGO_E_OK);
     CHECK_EQ(module_mem_used(&f->vm), n * 4u);
     const ModEntry *e = f->vm.mods[handle >> 16];
     CHECK(e->bytes == T_NIL && ((uintptr_t)e->img.funcs & 3u) == 0);
@@ -1121,7 +1121,7 @@ TEST(platform_code_memory) {
     test_host.code_alloc = plat_alloc; test_host.code_free = plat_free;
     uint32_t n = build_b(f->b), handle;
     term b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), GOGO_E_OK);
     bytes_release(&f->vm, h, b);
     CHECK_EQ(bytes_table_used(&f->vm), 0u);
     CHECK_EQ(plat_allocs, 1u);
@@ -1131,7 +1131,7 @@ TEST(platform_code_memory) {
     /* bad images and refusals give it back */
     f->b[0] ^= 1u;
     b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_BAD_IMAGE);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), GOGO_E_BADIMAGE);
     bytes_release(&f->vm, h, b);
     CHECK_EQ(plat_allocs - plat_frees, 1u);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1172,7 +1172,7 @@ TEST(code_builtin_ops) {
     term b = offheap(f, a, f->b, n);
     regs(a)[3] = b;
     CHECK_EQ(code_op(f, a, 0, CODE_OP_LOAD, 1), R_NORMAL);
-    CHECK_EQ(regs(a)[1], term_from_int(CODE_OK));
+    CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_OK));
     term m = regs(a)[0];
     int32_t H = field_h(a, m);
     CHECK(H > 0);
@@ -1187,25 +1187,25 @@ TEST(code_builtin_ops) {
     regs(a)[4] = term_from_const(0) | module_tag(&f->vm, (uint32_t)(H - 1) >> 16);   /* B's "Main" */
     regs(a)[5] = a->id;
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN, 3), R_NORMAL);
-    CHECK_EQ(regs(a)[1], term_from_int(CODE_OK));
+    CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_OK));
     CHECK(term_is_pid(regs(a)[0]) && regs(a)[0] != T_ZEROPID);
     /* NotFound: a name it does not export; the zero Module */
     regs(a)[4] = term_from_const(3);                        /* A's "f" */
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN_LINK, 3), R_NORMAL);
-    CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));
+    CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_NOTFOUND));
     CHECK_EQ(regs(a)[0], T_ZEROPID);
     term zero = forge(a, 0, T_EMPTYSTR);
     uint32_t o;
     regs(a)[3] = zero;
     regs(a)[4] = term_from_const(0);                        /* A's "main" */
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN, 3), R_NORMAL);  /* never module 0 */
-    CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));
+    CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_NOTFOUND));
     CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
-    CHECK_EQ(regs(a)[6], term_from_int(CODE_NOT_FOUND));
+    CHECK_EQ(regs(a)[6], term_from_int(GOGO_E_NOTFOUND));
     /* Hold / Release */
     regs(a)[3] = m;
     CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
-    CHECK_EQ(regs(a)[6], term_from_int(CODE_OK));
+    CHECK_EQ(regs(a)[6], term_from_int(GOGO_E_OK));
     /* SpawnOpt with Options{MaxMemory: 4096} */
     o = heap_alloc(&f->vm, a, 3, NULL, 0);
     a->mem[o] = hdr_make(3, K_STRUCT); a->mem[o + 1] = TYPE_OPTIONS; a->mem[o + 2] = term_from_int(4096);
@@ -1214,7 +1214,7 @@ TEST(code_builtin_ops) {
     regs(a)[5] = a->id;
     regs(a)[6] = term_from_ref(o);
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN_OPT, 4), R_NORMAL);
-    CHECK_EQ(regs(a)[1], term_from_int(CODE_OK));
+    CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_OK));
     Actor *c = actor_lookup(&f->vm, regs(a)[0]);
     CHECK(c && c->max_words == 1024u);
     regs(a)[6] = term_from_int(1);                          /* not Options */
@@ -1227,12 +1227,12 @@ TEST(code_builtin_ops) {
     regs(a)[3] = m;
     regs(a)[4] = term_from_const(0);                        /* (B's "Main" is gone with B) */
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN, 3), R_NORMAL);
-    CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));   /* stale */
+    CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_NOTFOUND));   /* stale */
     /* Unsupported: Module{H: 0, missing: the name} */
     b = offheap(f, a, f->b, build_b_with(f->b, "/cd", 0));
     regs(a)[3] = b;
     CHECK_EQ(code_op(f, a, 0, CODE_OP_LOAD, 1), R_NORMAL);
-    CHECK_EQ(regs(a)[1], term_from_int(CODE_UNSUPPORTED));
+    CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_UNSUPPORTED));
     CHECK_EQ(field_h(a, regs(a)[0]), 0);
     regs(a)[3] = regs(a)[0];
     CHECK_EQ(code_op(f, a, 6, CODE_OP_MISSING, 1), R_NORMAL);
@@ -1242,7 +1242,7 @@ TEST(code_builtin_ops) {
         CHECK(name_bytes(&f->vm, a, regs(a)[6], &p, &len) && len == 3 && memcmp(p, "/cd", 3) == 0);
     }
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN, 3), R_NORMAL);
-    CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));
+    CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_NOTFOUND));
     /* badcode: unknown op, wrong arity, not a Module, no room for 2 results */
     CHECK_EQ(code_op(f, a, 0, 99, 0), R_BAD_CODE);
     CHECK_EQ(code_op(f, a, 0, CODE_OP_LOAD, 2), R_BAD_CODE);
@@ -1270,8 +1270,8 @@ TEST(module_handle_range_ends) {
     f->vm.mod_gen[GOGO_MAX_MODULES - 1u] = 0xFFFFu;
     CHECK_EQ(load_b(f, a), ((GOGO_MAX_MODULES - 1u) << 16) | 0xFFFFu);
     const struct { int32_t h; int32_t want; } cases[] = {
-        { 0x10000, CODE_NOT_FOUND }, { 0x10001, CODE_OK },
-        { (int32_t)(GOGO_MAX_MODULES << 16), CODE_OK }, { (int32_t)(GOGO_MAX_MODULES << 16) + 1, CODE_NOT_FOUND },
+        { 0x10000, GOGO_E_NOTFOUND }, { 0x10001, GOGO_E_OK },
+        { (int32_t)(GOGO_MAX_MODULES << 16), GOGO_E_OK }, { (int32_t)(GOGO_MAX_MODULES << 16) + 1, GOGO_E_NOTFOUND },
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         regs(a)[3] = forge(a, cases[i].h, T_EMPTYSTR);
@@ -1302,10 +1302,10 @@ TEST(forged_module_values_safe) {
         term m = forge(a, hs[i], T_EMPTYSTR);
         regs(a)[3] = m; regs(a)[4] = term_from_const(0); regs(a)[5] = T_NIL;
         CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN, 3), R_NORMAL);
-        CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));
+        CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_NOTFOUND));
         regs(a)[3] = m;
         CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
-        CHECK_EQ(regs(a)[6], term_from_int(CODE_NOT_FOUND));
+        CHECK_EQ(regs(a)[6], term_from_int(GOGO_E_NOTFOUND));
         regs(a)[3] = m;
         CHECK_EQ(code_op(f, a, 6, CODE_OP_RELEASE, 1), R_NORMAL);
         regs(a)[3] = m;
@@ -1321,13 +1321,13 @@ TEST(forged_module_values_safe) {
     term ok = forge(a, (int32_t)live + 1, T_EMPTYSTR);
     regs(a)[3] = ok;
     CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
-    CHECK_EQ(regs(a)[6], term_from_int(CODE_OK));
+    CHECK_EQ(regs(a)[6], term_from_int(GOGO_E_OK));
     /* the probe: a requirement name longer than MOD_MISSING_MAX */
     static const char longname[] = "a-driver-name-that-is-longer-than-32-bytes";
     term b = offheap(f, a, f->b, build_b_with(f->b, longname, 0));
     regs(a)[3] = b;
     CHECK_EQ(code_op(f, a, 0, CODE_OP_LOAD, 1), R_NORMAL);
-    CHECK_EQ(regs(a)[1], term_from_int(CODE_UNSUPPORTED));
+    CHECK_EQ(regs(a)[1], term_from_int(GOGO_E_UNSUPPORTED));
     term m = regs(a)[0];
     CHECK_EQ(field_h(a, m), 0);
     regs(a)[3] = m;
@@ -1340,7 +1340,7 @@ TEST(forged_module_values_safe) {
     }
     regs(a)[3] = m;
     CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
-    CHECK_EQ(regs(a)[6], term_from_int(CODE_NOT_FOUND));
+    CHECK_EQ(regs(a)[6], term_from_int(GOGO_E_NOTFOUND));
     CHECK_EQ(f->vm.mods[0]->holders[0], MOD_NO_HOLDER);
     actor_exit(&f->vm, a, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
@@ -1363,7 +1363,7 @@ TEST(slice_not_pinned) {
     term sl = bytes_sub(&f->vm, h, big, 1024, n * 4u);
     CHECK(sl != T_NIL);
     size_t va0 = va_used_bytes(&f->vm);
-    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), GOGO_E_OK);
     CHECK(va_used_bytes(&f->vm) - va0 < 8u * 1024u);              /* about the slice, not the root */
     CHECK(f->vm.mods[handle >> 16]->bytes == T_NIL);
     CHECK_EQ(module_mem_used(&f->vm), n * 4u);
@@ -1373,7 +1373,7 @@ TEST(slice_not_pinned) {
     b_main_runs(f, h, handle);
     /* a whole root: in place */
     term r = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, r, &handle, NULL), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, r, &handle, NULL), GOGO_E_OK);
     CHECK(f->vm.mods[handle >> 16]->bytes == r);
     bytes_release(&f->vm, h, r);
     /* over the cap: NoMemory before validating (no copy of the unaligned bytes) */
@@ -1381,7 +1381,7 @@ TEST(slice_not_pinned) {
     term u = bytes_new(&f->vm, h, 4001, &data);
     term us = bytes_sub(&f->vm, h, u, 1, 4000);
     va0 = va_used_bytes(&f->vm);
-    CHECK_EQ(module_load(&f->vm, h, us, &handle, NULL), CODE_NO_MEMORY);
+    CHECK_EQ(module_load(&f->vm, h, us, &handle, NULL), GOGO_E_NOMEMORY);
     CHECK_EQ(va_used_bytes(&f->vm), va0);
     bytes_release(&f->vm, h, u);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1404,14 +1404,14 @@ TEST(platform_memory_single_copy) {
     plat_on = true; plat_allocs = plat_frees = 0;
     test_host.code_alloc = plat_alloc; test_host.code_free = plat_free;
     size_t va0 = va_used_bytes(&f->vm);
-    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), GOGO_E_OK);
     CHECK_EQ(plat_allocs, 1u);
     CHECK(va_used_bytes(&f->vm) - va0 <= sizeof(ModEntry) + 8u); /* the entry only */
     b_main_runs(f, h, handle);
     module_release(&f->vm, h, handle);
     CHECK_EQ(plat_frees, 1u);
     plat_misalign = true;
-    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), GOGO_E_OK);
     CHECK_EQ(plat_frees, 2u);                               /* the bad block went back */
     CHECK(f->vm.mods[handle >> 16]->flags & MOD_OWN_COPY);
     b_main_runs(f, h, handle);
@@ -1527,7 +1527,7 @@ TEST(xmod_module_struct_badmsg) {
     actor_exit(vm, m2, R_NORMAL, T_EMPTYSTR);
 
     term pid;
-    CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Bad", 3, h->id, 0, &pid), CODE_OK);
+    CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Bad", 3, h->id, 0, &pid), GOGO_E_OK);
     capture_start();
     run_queue(vm);
     capture_stop();
@@ -1600,15 +1600,15 @@ TEST(xmod_spawn_arg_badarg) {
     uint32_t handle = load_b(f, h), slot = handle >> 16;
     term pid = T_NIL;
     CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Main", 4,
-                          plant(h, K_STRUCT, T_MOD, 1, T_NIL), 0, &pid), CODE_BAD_ARG);
+                          plant(h, K_STRUCT, T_MOD, 1, T_NIL), 0, &pid), GOGO_E_BADARG);
     CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Main", 4,
-                          plant(h, K_CLOSURE, F_FIELD, 1, T_NIL), 0, &pid), CODE_BAD_ARG);
+                          plant(h, K_CLOSURE, F_FIELD, 1, T_NIL), 0, &pid), GOGO_E_BADARG);
     CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Main", 4,
                           term_from_const(6) | STALE_TAG, 0, &pid), -(int)R_BAD_CODE);
     CHECK(pid == T_NIL);
     CHECK_EQ(vm->mods[slot]->live, 0);
     CHECK_EQ(module_spawn(vm, h, handle, (const uint8_t *)"Main", 4, term_from_const(6), 0, &pid),
-             CODE_OK);
+             GOGO_E_OK);
     Actor *c = actor_lookup(vm, pid);
     CHECK(c && term_is_ref(c->mem[c->fp]) && is_str(vm, c, c->mem[c->fp], "AAAA"));
     capture_start();

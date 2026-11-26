@@ -1,6 +1,6 @@
 // sound_diskfull: the medium fills up while recording (the test-only VM
 // flag --fs-quota 5000 in vmargs: 5000 bytes may be written in all). The
-// recorder must finish the file, report fs.NoSpace in Recorded.Err, end
+// recorder must finish the file, report errors.NoSpace in Recorded.Err, end
 // (normal exit) and delete nothing. File: 44 bytes of header, 3 whole
 // frames of 1600 bytes, then the 156 bytes of the 4th frame that still
 // fitted: 5000 bytes. The rewrite of the header needs room too, so it
@@ -11,6 +11,7 @@ package main
 import (
 	"gogo/actor"
 	"gogo/audio"
+	"gogo/errors"
 	"gogo/fs"
 	"gogo/sound"
 	"gogo/wav"
@@ -23,7 +24,7 @@ func main() {
 	for n := 0; n < 2; {
 		switch m := actor.Receive().(type) {
 		case sound.Recorded:
-			println("recorded", m.Path, "ms", m.Ms, "dropped", m.Dropped, "err", int(m.Err), "nospace", m.Err == fs.NoSpace)
+			println("recorded", m.Path, "ms", m.Ms, "dropped", m.Dropped, "err", int(m.Err), "nospace", m.Err == errors.NoSpace)
 			n++
 		case actor.DownMsg:
 			println("recorder ended, reason", m.Reason.Code)

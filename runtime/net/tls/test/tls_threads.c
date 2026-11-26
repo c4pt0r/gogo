@@ -378,7 +378,7 @@ static void *run(void *arg) {
     pe->board = (VmBoard){ drivers, NULL, &pe->nif, &hw, NULL };
     if (image_load(&pe->img, w, img_seal(w)) != IMG_OK ||
         vm_init(&pe->vm, &host, NULL, &pe->board, 16) != 0 ||
-        module_install_static(&pe->vm, &pe->img) != CODE_OK) {
+        module_install_static(&pe->vm, &pe->img) != GOGO_E_OK) {
         gate();
         return NULL;
     }
@@ -460,6 +460,6 @@ int main(int argc, char **argv) {
         else if (peers[i].result == 2) printf("vm%d closed %d\n", i, (int)peers[i].reason);
         else printf("vm%d none\n", i);
     }
-    bool ok = peers[0].result == 1 && peers[1].result == 2 && peers[1].reason == CR_BADCERT;
+    bool ok = peers[0].result == 1 && peers[1].result == 2 && peers[1].reason == GOGO_E_BADCERT;
     return ok ? 0 : 1;
 }

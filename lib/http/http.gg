@@ -61,6 +61,7 @@ import (
 	"gogo/actor"
 	"gogo/bytes"
 	"gogo/dns"
+	"gogo/errors"
 	"gogo/fs"
 	"gogo/net"
 	"gogo/port"
@@ -103,9 +104,10 @@ const (
 	// DefaultTimeoutMs is the client's timeout for timeoutMs <= 0.
 	DefaultTimeoutMs = 10000
 	// ListenFailed is the exit code of a Serve listener that could not
-	// listen (no network, port taken, or both listen slots in use); it
-	// reaches the linked caller as an exit signal.
-	ListenFailed = 100
+	// listen (no network, port taken, or both listen slots in use):
+	// actor.Failed + errors.Busy, in the exit codes kept for library
+	// failures (gogo/actor). It reaches the linked caller as an exit signal.
+	ListenFailed = actor.Failed + int(errors.Busy)
 )
 
 // target is a parsed URL: http:// or https:// (Secure), the host, the
@@ -139,7 +141,7 @@ type result struct {
 // upResult is the uploader's reply.
 type upResult struct {
 	Status int
-	Err    fs.Err
+	Err    errors.Code
 }
 
 // closeReq asks a Client to end.
@@ -151,16 +153,10 @@ type Client struct {
 	PID actor.PID
 }
 
-// Errors of Upload beside the fs ones.
-const (
-	// Failed: no usable response (the host did not resolve, the
-	// connection failed, closed or timed out, the response was malformed
-	// or cut short).
-	Failed fs.Err = 100
-	// BadURL: the URL is not http:// or https://, or the content type
-	// or token has bytes that cannot go in a header.
-	BadURL fs.Err = 101
-)
+// BadURL is Upload's error for a URL that is not http:// or https://,
+// or a content type or token with bytes that cannot go in a header: the
+// shared errors.BadURL.
+const BadURL = errors.BadURL
 
 // TLSMemory is what a "tls" connection charges its owner (the TLS state
 // and room for one Data): the actor that opens one is spawned with this
@@ -719,12 +715,12 @@ func client(creator actor.PID) {
 			switch b := r.Body.(type) {
 			case job:
 				var resp Response
-				e := fs.OK
+				e := errors.OK
 				resp, e, conn, open, key, queue = clientFetch(b, conn, open, key, queue)
 				if b.File != "" {
 					actor.Reply(r, upResult{resp.Status, e})
 				} else {
-					actor.Reply(r, result{resp, e == fs.OK})
+					actor.Reply(r, result{resp, e == errors.OK})
 				}
 				if creatorDown(queue) { // the creator ended meanwhile: the
 					// requests queued behind it fail now, unsent
@@ -776,7 +772,7 @@ func clientEnd(conn actor.PID, open bool, key string, queue []any) {
 	for _, m := range queue {
 		switch r := m.(type) {
 		case actor.Request:
-			refuse(r)
+			refuse(r, errors.Closed)
 		}
 	}
 }
@@ -792,7 +788,7 @@ func keepMsg(queue []any, m any) []any {
 			return append(queue, m)
 		}
 		if len(queue) >= MaxQueued {
-			refuse(r)
+			refuse(r, errors.Busy)
 			return queue
 		}
 		return append(queue, m)
@@ -802,12 +798,12 @@ func keepMsg(queue []any, m any) []any {
 	return queue
 }
 
-// refuse answers a Client request with a failure.
-func refuse(r actor.Request) {
+// refuse answers a Client request with a failure: e for an upload.
+func refuse(r actor.Request, e errors.Code) {
 	switch b := r.Body.(type) {
 	case job:
 		if b.File != "" {
-			actor.Reply(r, upResult{0, Failed})
+			actor.Reply(r, upResult{0, e})
 			return
 		}
 	}
@@ -827,18 +823,19 @@ func flush(queue []any) []any {
 }
 
 // clientFetch makes request j on the Client's connection (opening one if
-// it has none for j's host) and returns the response with fs.OK (or why
-// not) and the new state. Nothing is sent once j's caller has given up.
-func clientFetch(j job, conn actor.PID, open bool, key string, queue []any) (Response, fs.Err, actor.PID, bool, string, []any) {
+// it has none for j's host) and returns the response with errors.OK (or
+// why not) and the new state. Nothing is sent once j's caller has given
+// up.
+func clientFetch(j job, conn actor.PID, open bool, key string, queue []any) (Response, errors.Code, actor.PID, bool, string, []any) {
 	if j.Deadline <= actor.Now() {
-		return Response{}, Failed, conn, open, key, queue
+		return Response{}, errors.Timeout, conn, open, key, queue
 	}
 	var f fs.File
 	size := 0
 	if j.File != "" {
-		var e fs.Err
+		var e errors.Code
 		f, size, e = openFile(j.File)
-		if e != fs.OK {
+		if e != errors.OK {
 			return Response{}, e, conn, open, key, queue
 		}
 	}
@@ -878,7 +875,7 @@ func clientFetch(j job, conn actor.PID, open bool, key string, queue []any) (Res
 			if j.File != "" {
 				f.Close()
 			}
-			return Response{}, Failed, conn, false, "", queue
+			return Response{}, failure(j.Deadline), conn, false, "", queue
 		}
 		conn, open, key = c, true, k
 	}
@@ -888,14 +885,14 @@ func clientFetch(j job, conn actor.PID, open bool, key string, queue []any) (Res
 		if j.File != "" {
 			f.Close()
 		}
-		return Response{}, Failed, conn, open, key, queue
+		return Response{}, failure(j.Deadline), conn, open, key, queue
 	}
 	resp, how, e, q := exchange(conn, j, f, size, queue)
 	if j.File != "" {
 		f.Close()
 	}
 	if how == reuse {
-		return resp, fs.OK, conn, true, key, q
+		return resp, errors.OK, conn, true, key, q
 	}
 	q = finish(conn, how, j.URL.Secure, lingerUntil(j.Deadline), q)
 	return resp, e, conn, false, "", flush(q)
@@ -903,49 +900,64 @@ func clientFetch(j job, conn actor.PID, open bool, key string, queue []any) (Res
 
 // exchange sends j on c, its body from j.Body or (j.File != "") size
 // bytes of the open file f, and reads the response: the outcome (finish
-// it), and fs.OK, Failed or the file's error.
-func exchange(c actor.PID, j job, f fs.File, size int, queue []any) (Response, int, fs.Err, []any) {
+// it), and errors.OK, the failure (failure) or the file's error.
+func exchange(c actor.PID, j job, f fs.File, size int, queue []any) (Response, int, errors.Code, []any) {
 	if j.File == "" {
 		sendRequest(c, j)
 		var none bytes.Bytes
 		resp, how, q := readResponse(c, j, none, queue)
 		if how == failed {
-			return resp, how, Failed, q
+			return resp, how, failure(j.Deadline), q
 		}
-		return resp, how, fs.OK, q
+		return resp, how, errors.OK, q
 	}
 	early, sent, e, q := sendFile(c, j, f, size, queue)
-	if e != fs.OK {
+	if e != errors.OK {
 		return Response{}, failed, e, q
 	}
+	wait := waitUntil(j.Deadline)
 	resp, how, q := readResponse(c, job{Method: j.Method, URL: j.URL, MaxBody: j.MaxBody, V11: j.V11, Keep: j.Keep,
-		Deadline: waitUntil(j.Deadline)}, early, q)
+		Deadline: wait}, early, q)
 	if sent < size && how != failed {
 		how = cutShort // the server answered before the body was all sent: reset
 	}
 	if how == failed {
-		return resp, how, Failed, q
+		return resp, how, failure(wait), q
 	}
-	return resp, how, fs.OK, q
+	return resp, how, errors.OK, q
+}
+
+// failure is the error of an exchange that got no usable response:
+// Timeout once its deadline has passed, else IO (the host did not
+// resolve, the connection failed or closed, the response was malformed
+// or cut short).
+func failure(deadline int64) errors.Code {
+	if actor.Now() >= deadline {
+		return errors.Timeout
+	}
+	return errors.IO
 }
 
 // sendFile writes j's head and size bytes of f to c, UploadChunk at a
 // time with at most 2 writes in flight. It stops early when the response
-// begins (early: its first bytes); sent is what was written; fs.OK,
-// Failed (the connection closed, a wait timed out, or a DownMsg came: the
-// actor followed ended; it is kept in queue) or the file's error.
-func sendFile(c actor.PID, j job, f fs.File, size int, queue []any) (bytes.Bytes, int, fs.Err, []any) {
+// begins (early: its first bytes); sent is what was written; errors.OK,
+// Timeout (a wait timed out), the connection's Closed reason (Timeout,
+// Refused, Reset, NoRoute, BadCert, NoTime, TLS: a shared code), IO (the
+// peer closed normally before the response, or a DownMsg came: the actor
+// followed ended; it is kept in queue) or the file's error.
+func sendFile(c actor.PID, j job, f fs.File, size int, queue []any) (bytes.Bytes, int, errors.Code, []any) {
 	actor.Send(c, port.Out{Data: requestHead(j, size)})
 	sent, inflight := 0, 1
+	lost := false // an Out came back not sent: wait for the Closed that says why
 	var early bytes.Bytes
-	for (sent < size || inflight > 0) && early.Len() == 0 {
-		for inflight < 2 && sent < size {
+	for (sent < size || inflight > 0 || lost) && early.Len() == 0 {
+		for inflight < 2 && sent < size && !lost {
 			d, e := f.Read(UploadChunk)
 			if e == fs.OK && d.Len() == 0 {
 				e = fs.IO // the file shrank
 			}
 			if e != fs.OK {
-				return early, sent, e, queue
+				return early, sent, errors.Code(e), queue
 			}
 			if d.Len() > size-sent {
 				d = d.Slice(0, size-sent) // the file grew: send what Content-Length says
@@ -956,29 +968,30 @@ func sendFile(c actor.PID, j job, f fs.File, size int, queue []any) (bytes.Bytes
 		}
 		wait := int(waitUntil(j.Deadline) - actor.Now())
 		if wait <= 0 {
-			return early, sent, Failed, queue
+			return early, sent, errors.Timeout, queue
 		}
 		m, got := actor.ReceiveTimeout(wait)
 		if !got {
-			return early, sent, Failed, queue
+			return early, sent, errors.Timeout, queue
 		}
 		switch x := m.(type) {
 		case port.Done:
 			inflight--
-			if x.Seq < 0 { // not sent: the connection is gone
-				return early, sent, Failed, queue
-			}
+			lost = lost || x.Seq < 0 // not sent: the connection is gone
 		case port.Chunk:
 			early = x.Data
 		case port.Closed:
-			return early, sent, Failed, queue
+			if x.Reason != net.Normal {
+				return early, sent, errors.Code(x.Reason), queue
+			}
+			return early, sent, errors.IO, queue
 		case actor.DownMsg:
-			return early, sent, Failed, keepMsg(queue, m)
+			return early, sent, errors.IO, keepMsg(queue, m)
 		default:
 			queue = keepMsg(queue, m)
 		}
 	}
-	return early, sent, fs.OK, queue
+	return early, sent, errors.OK, queue
 }
 
 // waitUntil is the end of one wait of an upload: DefaultTimeoutMs from
@@ -992,16 +1005,16 @@ func waitUntil(deadline int64) int64 {
 }
 
 // openFile opens path for reading and returns its size.
-func openFile(path string) (fs.File, int, fs.Err) {
+func openFile(path string) (fs.File, int, errors.Code) {
 	f, e := fs.Open(path, fs.Read)
 	if e != fs.OK {
-		return f, 0, e
+		return f, 0, errors.Code(e)
 	}
 	size, e := f.Size()
 	if e != fs.OK {
 		f.Close()
 	}
-	return f, size, e
+	return f, size, errors.Code(e)
 }
 
 // Upload sends the file at path to url as the body of a POST with
@@ -1016,13 +1029,18 @@ func openFile(path string) (fs.File, int, fs.Err) {
 // it on a Client's kept connection).
 //
 // It returns the response status (anything the server answers, 2xx or
-// not) with fs.OK; or 0 and the fs error of the file (opening, reading;
-// a file that shrinks while it is sent is fs.IO), Failed (no usable
-// response) or BadURL. A server that answers before it has read the whole
+// not) with errors.OK; or 0 and the error: the file's (opening, reading:
+// the gogo/fs codes, which are the shared ones; a file that shrinks while
+// it is sent is errors.IO), BadURL, or for no usable response: why the
+// connection ended while the request was sent (its port.Closed reason:
+// Timeout for a host that does not answer, Refused, Reset, NoRoute,
+// BadCert, NoTime, TLS), Timeout (a wait or the whole upload ran out of
+// time) or IO (the host did not resolve, the peer closed, the response
+// was malformed or cut short). A server that answers before it has read the whole
 // body (401, 413) stops the upload and its status is returned. Each wait
 // (connecting, a write, the response) is bounded by DefaultTimeoutMs, and
 // the upload as a whole by 3*DefaultTimeoutMs plus 1 ms per byte: a link
-// slower than about 1 KB/s fails (Failed).
+// slower than about 1 KB/s fails (Timeout).
 //
 // It runs in an actor of its own, spawned with what it needs
 // (uploadMemory: 46 KB for https); the caller's own limit is not
@@ -1030,9 +1048,9 @@ func openFile(path string) (fs.File, int, fs.Err) {
 // a supervisor's kill) before the upload ends, it stops sending, resets
 // the connection (freeing the one TLS connection for a restarted caller's
 // retry) and ends.
-func Upload(url, path, contentType, token string) (int, fs.Err) {
+func Upload(url, path, contentType, token string) (int, errors.Code) {
 	j, ms, e := uploadJob(url, path, contentType, token, false)
-	if e != fs.OK {
+	if e != errors.OK {
 		return 0, e
 	}
 	w := actor.SpawnOpt(uploader, actor.Options{MaxMemory: uploadMemory(j.URL.Secure)})
@@ -1044,14 +1062,14 @@ func Upload(url, path, contentType, token string) (int, fs.Err) {
 		}
 	}
 	actor.Kill(w, actor.Shutdown)
-	return 0, Failed
+	return 0, errors.Timeout
 }
 
 // ClientUpload is Upload on c's kept connection (HTTP/1.1, the connection
 // kept after the response, as ClientDo).
-func ClientUpload(c Client, url, path, contentType, token string) (int, fs.Err) {
+func ClientUpload(c Client, url, path, contentType, token string) (int, errors.Code) {
 	j, ms, e := uploadJob(url, path, contentType, token, true)
-	if e != fs.OK {
+	if e != errors.OK {
 		return 0, e
 	}
 	r, ok := actor.Call(c.PID, j, ms+replySlackMs)
@@ -1061,22 +1079,22 @@ func ClientUpload(c Client, url, path, contentType, token string) (int, fs.Err) 
 			return x.Status, x.Err
 		}
 	}
-	return 0, Failed
+	return 0, errors.Timeout
 }
 
 // uploadJob checks an upload's arguments and makes its job, with its
 // deadline: 3 waits, plus 1 ms per byte (1 KB/s at the least), ms from now.
-func uploadJob(url, path, contentType, token string, keep bool) (job, int, fs.Err) {
+func uploadJob(url, path, contentType, token string, keep bool) (job, int, errors.Code) {
 	u, ok := parseURL(url)
 	if !ok || !safe(contentType, true) || !safe(token, false) || (token != "" && !u.Secure) {
 		return job{}, 0, BadURL
 	}
 	info, e := fs.Stat(path)
 	if e != fs.OK {
-		return job{}, 0, e
+		return job{}, 0, errors.Code(e)
 	}
 	if info.IsDir {
-		return job{}, 0, fs.IsDir
+		return job{}, 0, errors.IsDir
 	}
 	ms := info.Size
 	if ms > 2000000000 {
@@ -1084,7 +1102,7 @@ func uploadJob(url, path, contentType, token string, keep bool) (job, int, fs.Er
 	}
 	ms += 3 * DefaultTimeoutMs
 	return job{Method: "POST", ContentType: contentType, Token: token, URL: u, V11: true, Keep: keep,
-		MaxBody: uploadMaxBody, File: path, Deadline: actor.Now() + int64(ms)}, ms, fs.OK
+		MaxBody: uploadMaxBody, File: path, Deadline: actor.Now() + int64(ms)}, ms, errors.OK
 }
 
 // uploadMemory is the uploader's memory limit: the response (memFor of a
@@ -1108,23 +1126,24 @@ func uploader() {
 }
 
 // upload performs Upload's job j on a connection of its own.
-func upload(j job) (int, fs.Err) {
+func upload(j job) (int, errors.Code) {
 	f, size, e := openFile(j.File)
-	if e != fs.OK {
+	if e != errors.OK {
 		return 0, e
 	}
-	c, ok := dial(j.URL, waitUntil(j.Deadline))
+	wait := waitUntil(j.Deadline)
+	c, ok := dial(j.URL, wait)
 	if !ok {
 		f.Close()
-		return 0, Failed
+		return 0, failure(wait)
 	}
 	resp, how, e, _ := exchange(c, j, f, size, nil)
 	f.Close()
 	finish(c, how, j.URL.Secure, lingerUntil(j.Deadline), nil)
-	if e != fs.OK {
+	if e != errors.OK {
 		return 0, e
 	}
-	return resp.Status, fs.OK
+	return resp.Status, errors.OK
 }
 
 // parseStatus parses a response head: "HTTP/1.x NNN reason" and headers.

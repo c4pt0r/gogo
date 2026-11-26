@@ -30,7 +30,7 @@ func TestTLSThreads(t *testing.T) {
 		cmd := exec.Command(bin, port, p.caFile, "gogo.test")
 		out, err := cmd.CombinedOutput()
 		got := string(out)
-		if err != nil || !strings.Contains(got, "vm0 connected\n") || !strings.Contains(got, "vm1 closed 7\n") {
+		if err != nil || !strings.Contains(got, "vm0 connected\n") || !strings.Contains(got, "vm1 closed 21\n") {
 			t.Fatalf("round %d: %v\n%s", round, err, got)
 		}
 	}

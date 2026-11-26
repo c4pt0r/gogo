@@ -22,6 +22,7 @@ package kv
 
 import (
 	"gogo/bytes"
+	"gogo/errors"
 	"gogo/fs"
 )
 
@@ -58,8 +59,9 @@ func Get(key string) (bytes.Bytes, fs.Err) {
 	return b, e
 }
 
-// Put stores v (a string or a bytes.Bytes; anything else is fs.BadPath)
-// under key. A bad key is fs.BadPath, a value over 4096 bytes fs.NoMemory.
+// Put stores v (a string or a bytes.Bytes; anything else is
+// errors.BadArg, as an fs.Err) under key. A bad key is fs.BadPath, a value
+// over 4096 bytes errors.Overflow (as an fs.Err).
 func Put(key string, v any) fs.Err {
 	if !validKey(key) {
 		return fs.BadPath
@@ -71,10 +73,10 @@ func Put(key string, v any) fs.Err {
 	case bytes.Bytes:
 		n = x.Len()
 	default:
-		return fs.BadPath // a []byte cannot be size-checked here
+		return fs.Err(errors.BadArg) // a []byte cannot be size-checked here
 	}
 	if n > MaxValue {
-		return fs.NoMemory
+		return fs.Err(errors.Overflow)
 	}
 	fs.Mkdir(dir) // Exists is fine; a real failure shows in WriteFile
 	return fs.WriteFile(dir+"/"+key, v)

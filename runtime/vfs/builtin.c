@@ -180,9 +180,9 @@ static int read_dir(Vm *vm, Actor *a, const char *p, uint32_t len, term *out) {
     int e = vfs_readdir(vm->vfs, p, len, dir_count, &d);
     if (e || d.n == 0) return e;
     d.words += d.n;
-    if (d.words > HEAP_MAX_WORDS) return VFS_NOMEMORY;
+    if (d.words > HEAP_MAX_WORDS) return GOGO_E_NOMEMORY;
     uint32_t o = heap_alloc(vm, a, d.words, NULL, 0);
-    if (o == UINT32_MAX) return VFS_NOMEMORY;
+    if (o == UINT32_MAX) return GOGO_E_NOMEMORY;
     uint32_t *m = a->mem + o;
     d.cap = d.n;
     d.n = 0;
@@ -201,7 +201,7 @@ static int read_dir(Vm *vm, Actor *a, const char *p, uint32_t len, term *out) {
     if (e) return e;
     m[2] = m[3] = d.n;
     *out = term_from_ref(o);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 /* Reads exactly n bytes from slot into d: IO on a short read. */
@@ -210,19 +210,19 @@ static int read_full(VfsState *st, int slot, uint8_t *d, uint32_t n) {
     while (done < n) {
         int e = vfs_read(st, slot, d + done, n - done, &got);
         if (e) return e;
-        if (got == 0) return VFS_IO;
+        if (got == 0) return GOGO_E_IO;
         done += got;
     }
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 /* Bytes of n (>= 0) bytes read from slot into *out, Err. */
 static int read_bytes(Vm *vm, Actor *a, int slot, uint32_t n, term *out) {
     uint8_t *d;
     *out = T_EMPTYBYTES;
-    if (n == 0) return VFS_OK;
+    if (n == 0) return GOGO_E_OK;
     term t;
-    if (!new_bytes(vm, a, n, &t, &d)) return VFS_NOMEMORY;
+    if (!new_bytes(vm, a, n, &t, &d)) return GOGO_E_NOMEMORY;
     int e = read_full(vm->vfs, slot, d, n);
     if (!e) *out = t;
     return e;
@@ -239,8 +239,8 @@ static int write_file(VfsState *st, const char *p, uint32_t len, const uint8_t *
     bool dir;
     int e = vfs_path_check(p, len, &first), s;
     if (e) return e;
-    if (first == len) return VFS_BADPATH;                /* a mount root */
-    if (!vfs_stat(st, p, len, &sz, &dir) && dir) return VFS_ISDIR;
+    if (first == len) return GOGO_E_BADPATH;                /* a mount root */
+    if (!vfs_stat(st, p, len, &sz, &dir) && dir) return GOGO_E_ISDIR;
     while (p[slash - 1u] != '/') slash--;
     k = len - slash;
     /* <name>.tmp is the file itself when the name ends in ".tmp" and was
@@ -249,7 +249,7 @@ static int write_file(VfsState *st, const char *p, uint32_t len, const uint8_t *
     if (slash + k + 4u > VFS_PATH_MAX) k = slash + 4u > VFS_PATH_MAX ? 0u : VFS_PATH_MAX - 4u - slash;
     if (slash + k + 4u == len && vfs_path_hash(p + len - 4u, 4, true) == vfs_path_hash(".tmp", 4, true))
         k--;
-    if (k > VFS_NAME_MAX || slash + k + 4u > VFS_PATH_MAX) return VFS_BADPATH;   /* no room */
+    if (k > VFS_NAME_MAX || slash + k + 4u > VFS_PATH_MAX) return GOGO_E_BADPATH;   /* no room */
     memcpy(tmp, p, slash + k);
     memcpy(tmp + slash + k, ".tmp", 4);
     uint32_t tl = slash + k + 4u;
@@ -262,7 +262,7 @@ static int write_file(VfsState *st, const char *p, uint32_t len, const uint8_t *
         e = vfs_replace(st, tmp, tl, p, len);
         /* A failed replace with the target gone (FAT: removed, then the
          * rename failed): the temporary is the only copy, keep it (§5.6). */
-        if (e && vfs_stat(st, p, len, &sz, &dir) != VFS_OK) return e;
+        if (e && vfs_stat(st, p, len, &sz, &dir) != GOGO_E_OK) return e;
     }
     if (e) vfs_remove(st, tmp, tl);
     return e;
@@ -283,7 +283,7 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
     const uint8_t *data = NULL;
     Port *f = NULL;
     term x = R[rb + 1], y = rc > 2u ? R[rb + 2] : T_NIL, res = T_NIL;
-    int e = VFS_OK;
+    int e = GOGO_E_OK;
 
     /* Decode. */
     switch (op) {
@@ -292,7 +292,7 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
         if (op == FS_READ && !int_val(vm, a, y, &i)) return R_BAD_CODE;
         if (op == FS_WRITE && !arg_data(vm, a, y, &data, &n)) return R_BAD_CODE;
         if (op == FS_WRITEAT && (!int_val(vm, a, y, &i) || !arg_data(vm, a, R[rb + 3], &data, &n))) return R_BAD_CODE;
-        if (!f) e = VFS_CLOSED;
+        if (!f) e = GOGO_E_CLOSED;
         break;
     default:
         if (!arg_path(vm, a, x, pa, &la)) return R_BAD_CODE;
@@ -309,23 +309,23 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
         uint32_t k = 0;
         while (k < GOGO_MAX_PORTS && vm->ports[k].drv) k++;
         res = T_ZEROPID;
-        if (k == GOGO_MAX_PORTS) e = VFS_TOOMANY;
+        if (k == GOGO_MAX_PORTS) e = GOGO_E_TOOMANY;
         else if ((uint32_t)a->mem_words + actor_charged_words(a) + CHARGE_WORDS > actor_max_words(a))
-            e = VFS_NOMEMORY;
+            e = GOGO_E_NOMEMORY;
         else if (!(e = vfs_open(st, pa, la, i, &slot))) {
             int32_t c = slot;
             res = port_open_with(vm, a, &file_drv, &c, 1);   /* no GC */
             if (res == T_NIL) {
                 vfs_close(st, slot);
                 res = T_ZEROPID;
-                e = VFS_TOOMANY;
+                e = vm->open_err;               /* the port layer's reason (port.h) */
             }
         }
         break;
     }
     case FS_READ:
         res = T_EMPTYBYTES;
-        if (e || vfs_slot_mode(st, slot) != VFS_READ) { e = VFS_CLOSED; break; }
+        if (e || vfs_slot_mode(st, slot) != VFS_READ) { e = GOGO_E_CLOSED; break; }
         if (i <= 0) break;
         if (i > VFS_READ_MAX) i = VFS_READ_MAX;
         if ((e = vfs_size(st, slot, &v))) break;
@@ -338,7 +338,7 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
         if (!e) e = vfs_write(st, slot, data, n);
         break;
     case FS_WRITEAT:
-        if (!e) e = i < 0 ? VFS_BADPATH : vfs_write_at(st, slot, (uint32_t)i, data, n);
+        if (!e) e = i < 0 ? GOGO_E_BADPATH : vfs_write_at(st, slot, (uint32_t)i, data, n);
         break;
     case FS_SYNC:
         if (!e) e = vfs_sync(st, slot);
@@ -356,7 +356,7 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
         res = T_EMPTYBYTES;
         if ((e = vfs_open(st, pa, la, VFS_READ, &slot))) break;
         e = vfs_size(st, slot, &v);
-        if (!e && v > i) e = VFS_NOMEMORY;
+        if (!e && v > i) e = GOGO_E_NOMEMORY;
         if (!e) e = read_bytes(vm, a, slot, (uint32_t)v, &res);   /* may GC */
         vfs_close(st, slot);
         break;

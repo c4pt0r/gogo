@@ -124,7 +124,7 @@ type Client struct{ PID actor.PID }
 
 func NewClient() Client
 func ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
-func ClientUpload(c Client, url, path, contentType, token string) (status int, err fs.Err)
+func ClientUpload(c Client, url, path, contentType, token string) (status int, err errors.Code)
 func CloseClient(c Client)
 ```
 
@@ -220,7 +220,7 @@ The rules:
 ## 17.4 Uploading a file: `http.Upload`
 
 ```go
-func Upload(url, path, contentType, token string) (status int, err fs.Err)
+func Upload(url, path, contentType, token string) (status int, err errors.Code)
 ```
 
 `Upload` sends the file at `path` as the body of a POST, with its
@@ -243,15 +243,18 @@ gogo config set upload.url https://myhost.example.ts.net/upload
 gogo config set upload.token -       # type it; it is not echoed back
 ```
 
-The result is the server's status with `fs.OK` when the server answered,
-whatever the status (201, 401, 413...); check it. Otherwise `status` is 0
-and `err` says why:
+The error is an `errors.Code`, the shared codes of `gogo/errors`
+(appendix C). The result is the server's status with `errors.OK` when the
+server answered, whatever the status (201, 401, 413...); check it.
+Otherwise `status` is 0 and `err` says why:
 
 | `err` | meaning |
 |---|---|
-| an `fs` error | the file: `fs.NotFound`, `fs.IsDir`, `fs.IO` (also: the file got shorter while it was sent) |
-| `http.Failed` (100) | no usable answer: DNS, connection, certificate, timeout, or a malformed or cut-short response |
-| `http.BadURL` (101) | not an `http://` or `https://` URL, a content type or token that cannot go in a header, or a token with an `http://` URL |
+| a storage error | the file, with the same number as in `gogo/fs`: `errors.NotFound`, `errors.IsDir`, `errors.IO` (also: the file got shorter while it was sent) |
+| a connection's `Closed` reason | the connection ended while the request was sent: `errors.Timeout` (9, a host that does not answer), `Refused`, `Reset`, `NoRoute`, `BadCert` (21, the certificate failed), `NoTime`, `TLS` |
+| `errors.Timeout` (9) | no usable answer in time: a wait or the whole upload ran out |
+| `errors.IO` (8) | no usable answer otherwise: DNS, the peer closed, or a malformed or cut-short response |
+| `http.BadURL` (25, `errors.BadURL`) | not an `http://` or `https://` URL, a content type or token that cannot go in a header, or a token with an `http://` URL |
 
 A server that answers before it has read the whole body (a 401 for a bad
 token, a 413 for a file too large) stops the upload, and you get its status
@@ -274,6 +277,7 @@ package main
 
 import (
 	"gogo/bytes"
+	"gogo/errors"
 	"gogo/fs"
 	"gogo/http"
 	"gogo/sys"
@@ -291,15 +295,15 @@ func main() {
 	println("write:", int(fs.WriteFile("/flash/rec.bin", b.Freeze())))
 
 	status, err := http.Upload(url, "/flash/missing.bin", "audio/wav", token)
-	println("missing file:", status, int(err), err == fs.NotFound)
+	println("missing file:", status, int(err), err == errors.NotFound)
 
 	status, err = http.Upload("ftp://myhost/upload", "/flash/rec.bin", "audio/wav", token)
 	println("bad URL:", status, int(err), err == http.BadURL)
 
-	// No network on the host: Failed. On a board, the server's status
-	// (201, 401, ...) with fs.OK.
+	// No network on the host: IO. On a board, the server's status
+	// (201, 401, ...) with errors.OK.
 	status, err = http.Upload(url, "/flash/rec.bin", "audio/wav", token)
-	println("upload:", status, int(err), err == http.Failed)
+	println("upload:", status, int(err), err == errors.IO)
 }
 ```
 
@@ -310,9 +314,9 @@ network):
 ```text
 write: 0
 missing file: 0 1 true
-bad URL: 0 101 true
+bad URL: 0 25 true
 dns: net.Subscribe failed (no network or 4 subscribers): retrying on each lookup
-upload: 0 100 true
+upload: 0 8 true
 ```
 
 `Upload` runs in an actor of its own that follows the caller: if the
@@ -374,7 +378,10 @@ networking.
 
 `examples/httpsdemo` is the whole chapter on a StickS3: DHCP, `sntp.Sync`,
 one `http.Get` of `https://example.com/`, three requests through a
-`Client`, and a connection with the wrong name that must be refused:
+`Client`, and a connection with the wrong name that must be refused. A
+run on the board printed this (the reason on the `wrong.example` line is
+edited to today's number, 23 for `TLS`; it was captured as 8, before the
+codes were shared):
 
 ```text
 sntp: ok, 50 ms unix ms 1795628156793
@@ -383,7 +390,7 @@ Get HTTP 200 body 577 B, 2790 ms
 Client 1 HTTP 200 body 577 B, 2887 ms
 Client 2 HTTP 200 body 577 B, 316 ms
 Client 3 HTTP 200 body 577 B, 312 ms
-wrong.example: closed 8 , 1085 ms
+wrong.example: closed 23 , 1085 ms
 httpsdemo: done
 ```
 
@@ -404,8 +411,8 @@ What the numbers say:
   to SD, say) should not start an https request while it is busy. Making
   this step sliced too is on the list (`docs/known-issues.md`).
 - **The wrong name is refused.** Here the server itself refuses a name it
-  does not serve (`Closed{TLS}`, reason 8); a server that answers with its
-  certificate anyway gets `Closed{BadCert}` (7) from the name check.
+  does not serve (`Closed{TLS}`, reason 23); a server that answers with its
+  certificate anyway gets `Closed{BadCert}` (21) from the name check.
 
 The TLS memory comes from PSRAM on the StickS3 (about 35 KB at its peak,
 during the handshake), so the internal RAM the VM uses is not touched;

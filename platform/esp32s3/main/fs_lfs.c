@@ -92,15 +92,15 @@ static int bd_sync(const struct lfs_config *c) { (void)c; return 0; }
 /* ---- backend ---- */
 
 static int map_err(int e) {
-    if (e >= 0) return VFS_OK;
+    if (e >= 0) return GOGO_E_OK;
     switch (e) {
-    case LFS_ERR_NOENT: return VFS_NOTFOUND;
-    case LFS_ERR_EXIST: return VFS_EXISTS;
-    case LFS_ERR_NOSPC: return VFS_NOSPACE;
-    case LFS_ERR_ISDIR: return VFS_ISDIR;
-    case LFS_ERR_NOTDIR: return VFS_NOTDIR;
-    case LFS_ERR_NOTEMPTY: return VFS_NOTEMPTY;
-    default: return VFS_IO;
+    case LFS_ERR_NOENT: return GOGO_E_NOTFOUND;
+    case LFS_ERR_EXIST: return GOGO_E_EXISTS;
+    case LFS_ERR_NOSPC: return GOGO_E_NOSPACE;
+    case LFS_ERR_ISDIR: return GOGO_E_ISDIR;
+    case LFS_ERR_NOTDIR: return GOGO_E_NOTDIR;
+    case LFS_ERR_NOTEMPTY: return GOGO_E_NOTEMPTY;
+    default: return GOGO_E_IO;
     }
 }
 
@@ -127,13 +127,13 @@ static int l_read(void *c, void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
     lfs_ssize_t k = lfs_file_read(&L.lfs, &((Lf *)f)->f, buf, n);
     if (k < 0) return map_err((int)k);
     *got = (uint32_t)k;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int l_write(void *c, void *f, const uint8_t *buf, uint32_t n) {
     (void)c;
     lfs_ssize_t k = lfs_file_write(&L.lfs, &((Lf *)f)->f, buf, n);
     if (k < 0) return map_err((int)k);
-    return (uint32_t)k == n ? VFS_OK : VFS_NOSPACE;
+    return (uint32_t)k == n ? GOGO_E_OK : GOGO_E_NOSPACE;
 }
 /* Overwrites inside the file (vfs checked the bounds), then goes back to
  * the end so the next write appends. */
@@ -145,9 +145,9 @@ static int l_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32
     lfs_soff_t at = lfs_file_seek(&L.lfs, lf, (lfs_soff_t)off, LFS_SEEK_SET);
     if (at < 0) return map_err((int)at);
     lfs_ssize_t k = lfs_file_write(&L.lfs, lf, buf, n);
-    int e = k < 0 ? map_err((int)k) : (uint32_t)k == n ? VFS_OK : VFS_NOSPACE;
+    int e = k < 0 ? map_err((int)k) : (uint32_t)k == n ? GOGO_E_OK : GOGO_E_NOSPACE;
     lfs_soff_t back = lfs_file_seek(&L.lfs, lf, end, LFS_SEEK_SET);
-    return e ? e : back < 0 ? map_err((int)back) : VFS_OK;
+    return e ? e : back < 0 ? map_err((int)back) : GOGO_E_OK;
 }
 static int l_sync(void *c, void *f) { (void)c; return map_err(lfs_file_sync(&L.lfs, &((Lf *)f)->f)); }
 static int l_size(void *c, void *f, int32_t *out) {
@@ -155,7 +155,7 @@ static int l_size(void *c, void *f, int32_t *out) {
     lfs_soff_t s = lfs_file_size(&L.lfs, &((Lf *)f)->f);
     if (s < 0) return map_err((int)s);
     *out = clamp32((uint32_t)s);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int l_close(void *c, void *f) { (void)c; return map_err(lfs_file_close(&L.lfs, &((Lf *)f)->f)); }
 
@@ -166,7 +166,7 @@ static int l_stat(void *c, const char *rel, int32_t *size, bool *is_dir) {
     if (e < 0) return map_err(e);
     *is_dir = in.type == LFS_TYPE_DIR;
     *size = *is_dir ? 0 : clamp32(in.size);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int l_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) {
     (void)c;
@@ -188,7 +188,7 @@ static int l_rename(void *c, const char *from, const char *to, bool replace) {
     struct lfs_info in;
     if (!replace) {
         int e = lfs_stat(&L.lfs, to, &in);
-        if (e == 0) return VFS_EXISTS;
+        if (e == 0) return GOGO_E_EXISTS;
         if (e != LFS_ERR_NOENT) return map_err(e);
     }
     return map_err(lfs_rename(&L.lfs, from, to));   /* replaces atomically */
@@ -199,7 +199,7 @@ static int l_usage(void *c, int32_t *used, int32_t *total) {
     if (n < 0) return map_err((int)n);
     *used = clamp32((uint32_t)n * BLOCK);
     *total = clamp32(cur_blocks() * BLOCK);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 static const VfsBackend backend = {

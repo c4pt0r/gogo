@@ -37,24 +37,26 @@ PC that breaks the rules is still listed by `ReadDir`, but cannot be opened.
 ## 9.2 Errors
 
 Every call returns an `fs.Err`; `fs.OK` (0) means success. Storage errors
-never crash the caller.
+never crash the caller. The values are the shared codes of `gogo/errors`
+(appendix C), so `fs.NotFound` is `fs.Err(errors.NotFound)`, the same
+number `gogo/code` and the other packages use for it.
 
 | Value | Name | Meaning |
 |---|---|---|
 | 0 | `OK` | success |
 | 1 | `NotFound` | no such file or directory |
 | 2 | `Exists` | the target of `Mkdir` or `Rename` exists |
-| 3 | `NotMounted` | unknown prefix, or `/sd` has no working card |
-| 4 | `NoSpace` | the medium is full |
-| 5 | `TooMany` | 4 files are open already |
-| 6 | `Busy` | the path is in use (see 9.4) |
-| 7 | `BadPath` | the path breaks the rules |
-| 8 | `IsDir` | a file operation on a directory |
-| 9 | `NotDir` | a segment before the last is not a directory (`/sd` says `NotFound`) |
-| 10 | `NotEmpty` | `Remove` of a directory with entries |
-| 11 | `NoMemory` | the result does not fit the caller's memory limit (it is not killed) |
-| 12 | `IO` | a medium error (card removed, ...) |
-| 13 | `Closed` | the file is closed, or not owned by the caller |
+| 3 | `NoMemory` | the result does not fit the caller's memory limit (it is not killed) |
+| 4 | `TooMany` | 4 files are open already |
+| 5 | `Busy` | the path is in use (see 9.4) |
+| 7 | `Closed` | the file is closed, or not owned by the caller |
+| 8 | `IO` | a medium error (card removed, ...) |
+| 11 | `NoSpace` | the medium is full |
+| 12 | `BadPath` | the path breaks the rules |
+| 13 | `IsDir` | a file operation on a directory |
+| 14 | `NotDir` | a segment before the last is not a directory (`/sd` says `NotFound`) |
+| 15 | `NotEmpty` | `Remove` of a directory with entries |
+| 16 | `NotMounted` | unknown prefix, or `/sd` has no working card |
 
 ```go
 // Storage errors are values, never crashes: every call returns an fs.Err.
@@ -108,14 +110,14 @@ func main() {
 
 ```text
 missing file: 1 true
-bad name: 7
-relative path: 7
-no such mount: 3
-no card (/sd): 3
-remove non-empty dir: 10
-max 0: 11
+bad name: 12
+relative path: 12
+no such mount: 16
+no card (/sd): 16
+remove non-empty dir: 15
+max 0: 3
 wrote
-remove while open: 6
+remove while open: 5
 writer down: true
 after the crash: 0 25 bytes
 remove now: 0
@@ -355,8 +357,11 @@ func Delete(key string) fs.Err
 func Keys() ([]string, fs.Err)
 ```
 
-A key follows the file name rules (and must not end in `.tmp`). `Put`
-replaces the value atomically. A `[]byte` must go through
+A key follows the file name rules (and must not end in `.tmp`); a bad
+key is `fs.BadPath`. `Put` replaces the value atomically. A value over
+4096 bytes is the shared code `errors.Overflow` and a value of another
+type `errors.BadArg`, both as an `fs.Err` (compare with
+`fs.Err(errors.Overflow)`). A `[]byte` must go through
 `bytes.FromSlice` first.
 
 The classic use is a boot counter:

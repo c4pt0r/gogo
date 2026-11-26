@@ -106,8 +106,8 @@ func TestReasonCodesMatchC(t *testing.T) {
 			goCodes[upperSnake(name)] = v
 		}
 	}
-	if len(goCodes) != 10 {
-		t.Errorf("gogo/actor has %d constants, want the 10 reason codes", len(goCodes))
+	if len(goCodes) != 11 {
+		t.Errorf("gogo/actor has %d constants, want the 10 reason codes and Failed", len(goCodes))
 	}
 	for n, v := range goCodes {
 		if cv, ok := cCodes[n]; !ok || cv != v {
@@ -578,8 +578,10 @@ func TestImageEmptyFuncRejected(t *testing.T) {
 	}
 }
 
-// TestFsMatchC cross-checks the fs.Err values (the gogo/fs stub) and the
-// B_FS op codes and open modes of the compiler with runtime/vfs/vfs.h.
+// TestFsMatchC cross-checks gogo/fs with C and gogo/errors: every fs.Err
+// constant is the gogo/errors code of the same name (whose GOGO_E_* twin
+// tests/errors_test.go checks), and the B_FS op codes and open modes of
+// the compiler match runtime/vfs/vfs.h.
 func TestFsMatchC(t *testing.T) {
 	src, err := os.ReadFile("../runtime/vfs/vfs.h")
 	if err != nil {
@@ -589,39 +591,23 @@ func TestFsMatchC(t *testing.T) {
 	for _, m := range regexp.MustCompile(`\b((?:VFS|FS)_[A-Z]+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
 		c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
 	}
-	// fs.Err and the modes: from the stub, by name.
 	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
 	pkg, err := l.Import(FsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	errs := map[string]string{"OK": "VFS_OK", "NotFound": "VFS_NOTFOUND", "Exists": "VFS_EXISTS", "NotMounted": "VFS_NOTMOUNTED",
-		"NoSpace": "VFS_NOSPACE", "TooMany": "VFS_TOOMANY", "Busy": "VFS_BUSY", "BadPath": "VFS_BADPATH", "IsDir": "VFS_ISDIR",
-		"NotDir": "VFS_NOTDIR", "NotEmpty": "VFS_NOTEMPTY", "NoMemory": "VFS_NOMEMORY", "IO": "VFS_IO", "Closed": "VFS_CLOSED",
-		"Read": "VFS_READ", "Write": "VFS_WRITE", "Append": "VFS_APPEND"}
-	for name, cname := range errs {
+	if n := sharedCodes(t, l, pkg, "Err"); n != 14 {
+		t.Errorf("fs has %d Err constants, want 14", n)
+	}
+	for name, cname := range map[string]string{"Read": "VFS_READ", "Write": "VFS_WRITE", "Append": "VFS_APPEND"} {
 		k, ok := pkg.Scope().Lookup(name).(*types.Const)
 		if !ok {
 			t.Errorf("fs.%s missing from the stub", name)
 			continue
 		}
 		v, _ := constant.Int64Val(k.Val())
-		cv, ok := c[cname]
-		if !ok || cv != v {
+		if cv, ok := c[cname]; !ok || cv != v {
 			t.Errorf("fs.%s = %d, %s = %d (present=%v)", name, v, cname, cv, ok)
-		}
-	}
-	// Every VFS_ error (not the modes) has a stub constant.
-	for cname := range c {
-		if !strings.HasPrefix(cname, "VFS_") {
-			continue
-		}
-		found := false
-		for _, v := range errs {
-			found = found || v == cname
-		}
-		if !found {
-			t.Errorf("%s has no fs constant", cname)
 		}
 	}
 	// The op codes of the compiler.
@@ -655,8 +641,9 @@ func TestFsMatchC(t *testing.T) {
 	}
 }
 
-// TestCodeMatchC cross-checks gogo/code with C: code.Err with CODE_* and
-// the B_CODE op codes with CODE_OP_* (runtime/vm/module.h).
+// TestCodeMatchC cross-checks gogo/code with C and gogo/errors: every
+// code.Err constant is the gogo/errors code of the same name, and the
+// B_CODE op codes match CODE_OP_* (runtime/vm/module.h).
 func TestCodeMatchC(t *testing.T) {
 	c := map[string]int64{}
 	src, err := os.ReadFile("../runtime/vm/module.h")
@@ -671,28 +658,8 @@ func TestCodeMatchC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stub := map[string]string{"OK": "CODE_OK", "BadImage": "CODE_BAD_IMAGE", "Unsupported": "CODE_UNSUPPORTED",
-		"NoMemory": "CODE_NO_MEMORY", "NotFound": "CODE_NOT_FOUND", "BadArg": "CODE_BAD_ARG", "TooMany": "CODE_TOO_MANY",
-		"BadVersion": "CODE_BAD_VERSION"}
-	for name, cname := range stub {
-		k, ok := pkg.Scope().Lookup(name).(*types.Const)
-		if !ok {
-			t.Errorf("code.%s missing from the stub", name)
-			continue
-		}
-		v, _ := constant.Int64Val(k.Val())
-		if cv, ok := c[cname]; !ok || cv != v {
-			t.Errorf("code.%s = %d, %s = %d (present=%v)", name, v, cname, cv, ok)
-		}
-	}
-	nErr := 0
-	for name := range c {
-		if strings.HasPrefix(name, "CODE_") && !strings.HasPrefix(name, "CODE_OP_") {
-			nErr++
-		}
-	}
-	if nErr != 8 {
-		t.Errorf("%d CODE_ errors in module.h, the stub has 8", nErr)
+	if n := sharedCodes(t, l, pkg, "Err"); n != 8 {
+		t.Errorf("code has %d Err constants, want 8", n)
 	}
 	ops := map[string]int32{"CODE_OP_LOAD": CodeLoad, "CODE_OP_SPAWN": CodeSpawn, "CODE_OP_SPAWN_LINK": CodeSpawnLink,
 		"CODE_OP_SPAWN_OPT": CodeSpawnOpt, "CODE_OP_HOLD": CodeHold, "CODE_OP_RELEASE": CodeRelease,
@@ -719,4 +686,36 @@ func TestCodeMatchC(t *testing.T) {
 			}
 		}
 	}
+}
+
+// sharedCodes checks that every constant of pkg's type typeName equals
+// the gogo/errors constant of the same name, and returns how many there
+// are.
+func sharedCodes(t *testing.T, l *loader, pkg *types.Package, typeName string) int {
+	t.Helper()
+	ep, err := l.Import(ErrorsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, name := range pkg.Scope().Names() {
+		k, ok := pkg.Scope().Lookup(name).(*types.Const)
+		if !ok {
+			continue
+		}
+		if nt, ok := k.Type().(*types.Named); !ok || nt.Obj().Name() != typeName || nt.Obj().Pkg() != pkg {
+			continue
+		}
+		n++
+		v, _ := constant.Int64Val(k.Val())
+		e, ok := ep.Scope().Lookup(name).(*types.Const)
+		if !ok {
+			t.Errorf("%s.%s has no errors.%s", pkg.Name(), name, name)
+			continue
+		}
+		if ev, _ := constant.Int64Val(e.Val()); ev != v {
+			t.Errorf("%s.%s = %d, errors.%s = %d", pkg.Name(), name, v, name, ev)
+		}
+	}
+	return n
 }

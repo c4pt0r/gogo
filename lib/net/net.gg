@@ -83,6 +83,7 @@ package net
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 )
 
 // IfConfig configures the "netif" port.
@@ -206,14 +207,15 @@ type Accepted struct {
 	Conn actor.PID
 }
 
-// The Reason of a "tcp" or "tls" port's port.Closed (4 is unused).
+// The Reason of a "tcp" or "tls" port's port.Closed: the shared codes of
+// gogo/errors (Normal is errors.OK), as plain ints like the field.
 const (
-	Normal  = 0
-	Reset   = 1
-	Timeout = 2
-	Refused = 3
-	NoRoute = 5
-	NoTime  = 6 // tls: the wall clock is not set (gogo/sntp, gogo/sys)
-	BadCert = 7 // tls: the server's certificate is untrusted, expired or not for Host
-	TLS     = 8 // tls: any other TLS failure (an alert, a bad record, out of memory)
+	Normal  = int(errors.OK)
+	Timeout = int(errors.Timeout)
+	Refused = int(errors.Refused)
+	Reset   = int(errors.Reset)
+	NoRoute = int(errors.NoRoute)
+	BadCert = int(errors.BadCert) // tls: the server's certificate is untrusted, expired or not for Host
+	NoTime  = int(errors.NoTime)  // tls: the wall clock is not set (gogo/sntp, gogo/sys)
+	TLS     = int(errors.TLS)     // tls: any other TLS failure (an alert, a bad record, out of memory)
 )
