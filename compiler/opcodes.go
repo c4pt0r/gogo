@@ -85,7 +85,7 @@ const (
 	OpShru64 uint8 = 66 // logical
 
 	// References (15.6: refMinor).
-	OpSetfield uint8 = 67 // ra.fields[b] = rc, in place: a heap struct of a mutable type (StructMut)
+	OpSetfield uint8 = 67 // rb.fields[c] = ra, in place: a heap struct of a mutable type (StructMut)
 )
 
 // OP_CONV c operands.

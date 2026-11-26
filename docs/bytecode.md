@@ -99,7 +99,7 @@ ids and jump targets (absolute code word indexes) are checked when used, and an 
 | 64 | `OP_LTU64` | `a=dst b=lhs c=rhs` |  | `ra = rb < rc` | uint64 less-than. |
 | 65 | `OP_LEU64` | `a=dst b=lhs c=rhs` |  | `ra = rb <= rc` | uint64 less-or-equal. |
 | 66 | `OP_SHRU64` | `a=dst b=value c=count` |  | `ra = rb >> rc` | uint64 logical right shift (count as SHR: a count >= 64 gives 0). |
-| 67 | `OP_SETFIELD` | `a=struct b=index c=src` |  | `ra.fields[b] = rc` | Write a field of a heap struct of a mutable type (a pointer's target, a map header); nil crashes with R_NIL, anything else (a const or immutable struct, past the end) is badcode. |
+| 67 | `OP_SETFIELD` | `a=src b=struct c=index` |  | `rb.fields[c] = ra` | Write a field of a heap struct of a mutable type (a pointer's target, a map header); nil crashes with R_NIL, anything else (a const or immutable struct, past the end) is badcode. |
 
 ## Builtins
 

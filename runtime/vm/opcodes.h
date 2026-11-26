@@ -118,7 +118,7 @@ enum Op {
     /* References (15.6): pointers and maps are structs of a type whose
      * row is flagged mutable (STRUCT_MUT, term.h); only those are
      * written in place. */
-    OP_SETFIELD  = 67   /*! a=struct b=index c=src | ra.fields[b] = rc | Write a field of a heap struct of a mutable type (a pointer's target, a map header); nil crashes with R_NIL, anything else (a const or immutable struct, past the end) is badcode. */
+    OP_SETFIELD  = 67   /*! a=src b=struct c=index | rb.fields[c] = ra | Write a field of a heap struct of a mutable type (a pointer's target, a map header); nil crashes with R_NIL, anything else (a const or immutable struct, past the end) is badcode. */
 };
 
 enum Builtin {
