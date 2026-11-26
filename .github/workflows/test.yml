@@ -1,5 +1,5 @@
-# Test: on every push and pull request to main, run the test suite on
-# macOS and Linux: make test (C and Go tests, lint, the examples and the
+# Test: once a day and when started by hand (Actions > test > Run
+# workflow), run the test suite on macOS and Linux: make test (C and Go tests, lint, the examples and the
 # book's examples, the size checks where the ESP-IDF compiler is present,
 # which it is not here), make test-lib and make test-tls-asan.
 #
@@ -14,19 +14,17 @@
 name: test
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 10 * * *" # daily, 10:00 UTC
 
 permissions:
   contents: read
 
-# A newer push to a pull request cancels its older run; every push to main
-# is tested.
+# One run at a time; a run started while another is going waits for it.
 concurrency:
   group: test-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 env:
   MBEDTLS_REPO: https://github.com/espressif/mbedtls.git

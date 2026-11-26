@@ -171,9 +171,9 @@ tests (compiler, golden outputs, network simulator), the size checks,
 installed), `make test-examples` (every example builds; those with an
 expected output run) and every example in the book (`make test-book`,
 `docs/book/examples/run.sh`). The test workflow
-(`.github/workflows/test.yml`) is set up to run it, `make test-lib` and
-`make test-tls-asan` on macOS and Linux for every push and pull request
-to main.
+(`.github/workflows/test.yml`) runs it, `make test-lib` and
+`make test-tls-asan` on macOS and Linux once a day and when started by
+hand; it has passed on both.
 
 ## Embedding
 

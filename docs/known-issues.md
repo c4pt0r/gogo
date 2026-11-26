@@ -487,7 +487,8 @@ rebuilt:
   tests, `make test-fs-host`'s Linux error paths, the ELF prelink step,
   `tools/libsyms.sh` and `tools/globals.sh` on ELF), `make test-lib` and
   `make test-tls-asan` pass on Ubuntu 24.04 arm64 with gcc 13, and the
-  test workflow is set up to run them on Ubuntu x86-64 and macOS.
+  test workflow runs them daily on Ubuntu x86-64 and macOS, where they
+  have passed.
   `make test-embed-tsan` and `make test-embed-leaks` (LeakSanitizer) have
   not run on Linux.
 - **No leak checking of the net and TLS C code.** `make test-tls-asan`

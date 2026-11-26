@@ -551,8 +551,9 @@ tests, it runs:
 Outside `make test`: `make test-lib` (the standard library on the host
 Go toolchain, also part of `go test ./...`) and `make test-tls-asan`
 (the network and TLS tests under AddressSanitizer). The test workflow,
-`.github/workflows/test.yml`, is set up to run all three on macOS and
-Linux (x86-64) for every push and pull request to main. The TLS tests need mbedTLS's
+`.github/workflows/test.yml`, runs all three on macOS and Linux
+(x86-64) once a day and when started by hand (Actions > test > Run
+workflow). The TLS tests need mbedTLS's
 source (ESP-IDF's `components/mbedtls/mbedtls`; `MBEDTLS_DIR` names
 another copy) and are skipped without it; the workflow fetches the
 commit ESP-IDF v6.1.1 pins.
