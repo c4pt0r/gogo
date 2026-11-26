@@ -616,7 +616,7 @@ func parseStats(t *testing.T, stderr string) map[string]int64 {
 
 // Before the wall clock is set a Dial gets Closed{NoTime}: nothing is sent.
 func TestTLSNoTime(t *testing.T) {
-	r := runTLS(t, nil, "dial", "", "dial true\nclosed 6\ndone\n")
+	r := runTLS(t, nil, "dial", "", "dial true\nclosed 22\ndone\n")
 	if r.stats["opens"] != 0 || len(r.b.all) != 0 {
 		t.Errorf("a connection was made: %v", r.stats)
 	}
@@ -798,10 +798,10 @@ func TestTLSBundleAnchor(t *testing.T) {
 		want    string
 	}{
 		{"subject and key", [][2][]byte{filler, right}, 0, "connected"},
-		{"subject, other key", [][2][]byte{{cc.rootSubject, cc.otherSPKI}}, 0, "closed 7"},
-		{"key, other subject", [][2][]byte{{cc.otherCASubj, cc.rootSPKI}}, 0, "closed 7"},
-		{"entry cut short", [][2][]byte{right}, 1, "closed 7"},
-		{"only the cross-signer", [][2][]byte{{cc.otherCASubj, cc.otherCASPKI}}, 0, "closed 7"},
+		{"subject, other key", [][2][]byte{{cc.rootSubject, cc.otherSPKI}}, 0, "closed 21"},
+		{"key, other subject", [][2][]byte{{cc.otherCASubj, cc.rootSPKI}}, 0, "closed 21"},
+		{"entry cut short", [][2][]byte{right}, 1, "closed 21"},
+		{"only the cross-signer", [][2][]byte{{cc.otherCASubj, cc.otherCASPKI}}, 0, "closed 21"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -828,7 +828,7 @@ func TestTLSBundleAnchorFlags(t *testing.T) {
 		cc := makeCrossChainAt(t, time.Now().Add(-24*time.Hour))
 		srv := startServer(t, &cc.cert, echoHandler)
 		t.Setenv("GOGO_TLS_BUNDLE_FILE", espBundle(t, [][2][]byte{{cc.rootSubject, cc.rootSPKI}}))
-		runTLS(t, srv, "time sleep:100 dial close", "", "time true\ndial true\nclosed 7\nclosed port\ndone\n")
+		runTLS(t, srv, "time sleep:100 dial close", "", "time true\ndial true\nclosed 21\nclosed port\ndone\n")
 	})
 	t.Run("leaf in bundle, wrong name", func(t *testing.T) {
 		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -846,7 +846,7 @@ func TestTLSBundleAnchorFlags(t *testing.T) {
 		cert := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: k}
 		srv := startServer(t, &cert, echoHandler)
 		t.Setenv("GOGO_TLS_BUNDLE_FILE", espBundle(t, [][2][]byte{{leaf.RawSubject, leaf.RawSubjectPublicKeyInfo}}))
-		runTLS(t, srv, "time sleep:100 dial close", "", "time true\ndial true\nclosed 7\nclosed port\ndone\n")
+		runTLS(t, srv, "time sleep:100 dial close", "", "time true\ndial true\nclosed 21\nclosed port\ndone\n")
 	})
 }
 
@@ -880,7 +880,7 @@ func TestTLSBadCert(t *testing.T) {
 			cert := p.leaf(t, tc.opts)
 			srv := startServer(t, &cert, echoHandler)
 			r := runTLS(t, srv, "time sleep:100 dial close", tc.extra,
-				"time true\ndial true\nclosed 7\nclosed port\ndone\n")
+				"time true\ndial true\nclosed 21\nclosed port\ndone\n")
 			if r.stats["handshakes"] != 0 {
 				t.Errorf("handshake completed: %v", r.stats)
 			}
@@ -896,7 +896,7 @@ func TestTLSPeerClosesMidHandshake(t *testing.T) {
 		n, err := io.ReadAtLeast(c, b, 5)
 		s.logf("read %d %v", n, err)
 	})
-	runTLS(t, srv, "time sleep:100 dial close", "", "time true\ndial true\nclosed 1\nclosed port\ndone\n")
+	runTLS(t, srv, "time sleep:100 dial close", "", "time true\ndial true\nclosed 19\nclosed port\ndone\n")
 }
 
 // A server that accepts TCP but never answers: TimeoutMs bounds the
@@ -904,7 +904,7 @@ func TestTLSPeerClosesMidHandshake(t *testing.T) {
 func TestTLSHandshakeTimeout(t *testing.T) {
 	srv := startServer(t, nil, func(s *tlsServer, c net.Conn) { io.Copy(io.Discard, c) })
 	runTLS(t, srv, "time sleep:100 dial close", "test.timeout=2000\n",
-		"time true\ndial true\nclosed 2\nclosed port\ndone\n")
+		"time true\ndial true\nclosed 9\nclosed port\ndone\n")
 }
 
 // The owner exits in the middle of the handshake (the server is slow to
@@ -990,7 +990,7 @@ func TestTLSReconnect(t *testing.T) {
 		echoHandler(s, c)
 	})
 	runTLS(t, srv, "time sleep:100 dial send:one echo:3 recvall sleep:100 send:again close dial send:two echo:3 shut close", "",
-		"time true\ndial true\nconnected\nwritten\necho one\nrecvall 0 closed 0\nnot sent\nclosed 1\nclosed port\n"+
+		"time true\ndial true\nconnected\nwritten\necho one\nrecvall 0 closed 0\nnot sent\nclosed 19\nclosed port\n"+
 			"dial true\nconnected\nwritten\necho two\nclosed 0\nclosed port\ndone\n")
 }
 

@@ -460,6 +460,6 @@ int main(int argc, char **argv) {
         else if (peers[i].result == 2) printf("vm%d closed %d\n", i, (int)peers[i].reason);
         else printf("vm%d none\n", i);
     }
-    bool ok = peers[0].result == 1 && peers[1].result == 2 && peers[1].reason == CR_BADCERT;
+    bool ok = peers[0].result == 1 && peers[1].result == 2 && peers[1].reason == GOGO_E_BADCERT;
     return ok ? 0 : 1;
 }

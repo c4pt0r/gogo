@@ -383,7 +383,7 @@ Get HTTP 200 body 577 B, 2790 ms
 Client 1 HTTP 200 body 577 B, 2887 ms
 Client 2 HTTP 200 body 577 B, 316 ms
 Client 3 HTTP 200 body 577 B, 312 ms
-wrong.example: closed 8 , 1085 ms
+wrong.example: closed 23 , 1085 ms
 httpsdemo: done
 ```
 
@@ -404,8 +404,8 @@ What the numbers say:
   to SD, say) should not start an https request while it is busy. Making
   this step sliced too is on the list (`docs/known-issues.md`).
 - **The wrong name is refused.** Here the server itself refuses a name it
-  does not serve (`Closed{TLS}`, reason 8); a server that answers with its
-  certificate anyway gets `Closed{BadCert}` (7) from the name check.
+  does not serve (`Closed{TLS}`, reason 23); a server that answers with its
+  certificate anyway gets `Closed{BadCert}` (21) from the name check.
 
 The TLS memory comes from PSRAM on the StickS3 (about 35 KB at its peak,
 during the handshake), so the internal RAM the VM uses is not touched;

@@ -10,6 +10,7 @@
 #include "msg.h"
 #include "stream.h"
 #include "tls/tls.h"
+#include "../include/gogo_errors.h"
 
 #if (GOGO_NET_RX_BUFS) != 1u
 #error "GOGO_NET_RX_BUFS: only 1 is implemented"
@@ -237,12 +238,9 @@ bool tcp_any_orphan(const NetState *ns);
 /* The interface went down: every connection ends (Closed{NoRoute}). */
 void tcp_down(struct Vm *vm);
 
-/* Close reasons (net.Normal ...; NoTime, BadCert and TLS are the tls
- * port's). 4 is unused (it was Overflow). */
-enum {
-    CR_NORMAL = 0, CR_RESET = 1, CR_TIMEOUT = 2, CR_REFUSED = 3, CR_NOROUTE = 5,
-    CR_NOTIME = 6, CR_BADCERT = 7, CR_TLS = 8
-};
+/* Close reasons (net.Normal ...) are the shared codes (gogo_errors.h):
+ * GOGO_E_OK (Normal), _RESET, _TIMEOUT, _REFUSED and _NOROUTE; GOGO_E_NOTIME,
+ * _BADCERT and _TLS are the tls port's. */
 /* Headroom a Chunk delivery leaves for control events: two Dones, two
  * Closed (each a 4-word struct; a Seq from 2^30 up takes a 2-word box
  * more, and such an event is then held and retried instead). */

@@ -61,7 +61,7 @@ declares `kbd`. Book chapter
 | `gogo/actor` | stub | | none |
 | `gogo/port` | stub | actor, bytes | none (each constant `port.Open`: its driver); also the stream protocol every byte port speaks (`Chunk`, `Out`, `Done`, `Closed`) and the host-port types |
 | `gogo/bytes` | stub | | none |
-| `gogo/net` | stub | actor, bytes | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
+| `gogo/net` | stub | actor, bytes, errors | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
 | `gogo/gpio` | stub | | none (the `gpio` port: `gpio`) |
 | `gogo/fs` | stub | actor, bytes, errors | none (constant `/sd` paths: `/sd`) |
 | `gogo/kbd` | stub | | none (the `kbd` port: `kbd`) |

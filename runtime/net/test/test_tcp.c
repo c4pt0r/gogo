@@ -380,7 +380,7 @@ typedef struct Row {
 static const Row rows[] = {
     { TCP_SYN_SENT, IN_SYNACK, F_A, TCP_ESTABLISHED, TYPE_NET_CONNECTED, -1 },
     { TCP_SYN_SENT, IN_SYNACK_BAD, F_R, TCP_SYN_SENT, 0, -1 },
-    { TCP_SYN_SENT, IN_RSTACK, 0, TCP_CLOSED, TYPE_CLOSED, 3 },
+    { TCP_SYN_SENT, IN_RSTACK, 0, TCP_CLOSED, TYPE_CLOSED, GOGO_E_REFUSED },
     { TCP_SYN_SENT, IN_RST, 0, TCP_SYN_SENT, 0, -1 },
     { TCP_SYN_SENT, IN_ACK_BAD, F_R, TCP_SYN_SENT, 0, -1 },
     { TCP_SYN_SENT, IN_SYN, 0, TCP_SYN_SENT, 0, -1 },          /* no simultaneous open */
@@ -389,8 +389,8 @@ static const Row rows[] = {
     { TCP_SYN_RCVD, IN_RST, 0, TCP_CLOSED, 0, -1 },
     { TCP_SYN_RCVD, IN_SYN_DUP, F_SA, TCP_SYN_RCVD, 0, -1 },
     { TCP_ESTABLISHED, IN_DATA, F_A, TCP_ESTABLISHED, TYPE_CHUNK, -1 },
-    { TCP_ESTABLISHED, IN_FIN, F_A, TCP_CLOSE_WAIT, TYPE_CLOSED, 0 },
-    { TCP_ESTABLISHED, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, 1 },
+    { TCP_ESTABLISHED, IN_FIN, F_A, TCP_CLOSE_WAIT, TYPE_CLOSED, GOGO_E_OK },
+    { TCP_ESTABLISHED, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, GOGO_E_RESET },
     { TCP_ESTABLISHED, IN_RST_OFF, F_A, TCP_ESTABLISHED, 0, -1 },  /* RFC 5961 challenge ACK */
     { TCP_ESTABLISHED, IN_ACK_FAR, 0, TCP_ESTABLISHED, 0, -1 },    /* past a refused 1460 B + FIN */
     { TCP_ESTABLISHED, IN_SYN, F_A, TCP_ESTABLISHED, 0, -1 },  /* challenge ACK */
@@ -399,15 +399,15 @@ static const Row rows[] = {
     { TCP_ESTABLISHED, IN_ACK, 0, TCP_ESTABLISHED, 0, -1 },
     { TCP_FIN_WAIT_1, IN_ACK, 0, TCP_FIN_WAIT_2, 0, -1 },
     { TCP_FIN_WAIT_1, IN_ACK_NONE, 0, TCP_FIN_WAIT_1, 0, -1 },
-    { TCP_FIN_WAIT_1, IN_FIN, F_A, TCP_CLOSING, TYPE_CLOSED, 0 },
-    { TCP_FIN_WAIT_1, IN_FINACK, F_A, TCP_TIME_WAIT, TYPE_CLOSED, 0 },
+    { TCP_FIN_WAIT_1, IN_FIN, F_A, TCP_CLOSING, TYPE_CLOSED, GOGO_E_OK },
+    { TCP_FIN_WAIT_1, IN_FINACK, F_A, TCP_TIME_WAIT, TYPE_CLOSED, GOGO_E_OK },
     { TCP_FIN_WAIT_1, IN_DATA, F_A, TCP_FIN_WAIT_1, TYPE_CHUNK, -1 },
-    { TCP_FIN_WAIT_1, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, 1 },
-    { TCP_FIN_WAIT_2, IN_FIN, F_A, TCP_TIME_WAIT, TYPE_CLOSED, 0 },
+    { TCP_FIN_WAIT_1, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, GOGO_E_RESET },
+    { TCP_FIN_WAIT_2, IN_FIN, F_A, TCP_TIME_WAIT, TYPE_CLOSED, GOGO_E_OK },
     { TCP_FIN_WAIT_2, IN_DATA, F_A, TCP_FIN_WAIT_2, TYPE_CHUNK, -1 },
-    { TCP_FIN_WAIT_2, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, 1 },
+    { TCP_FIN_WAIT_2, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, GOGO_E_RESET },
     { TCP_CLOSE_WAIT, IN_DATA, F_A, TCP_CLOSE_WAIT, 0, -1 },   /* after the FIN: dropped */
-    { TCP_CLOSE_WAIT, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, 1 },
+    { TCP_CLOSE_WAIT, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, GOGO_E_RESET },
     { TCP_CLOSE_WAIT, IN_ACK, 0, TCP_CLOSE_WAIT, 0, -1 },
     { TCP_LAST_ACK, IN_ACK, 0, TCP_CLOSED, 0, -1 },
     { TCP_LAST_ACK, IN_ACK_NONE, 0, TCP_LAST_ACK, 0, -1 },
@@ -535,7 +535,7 @@ TEST(tcp_retransmit_timer) {
     CHECK_EQ(event_of(k.o, &f), TYPE_DONE);   /* the Out in flight, not sent */
     CHECK_EQ(f, -1);
     CHECK_EQ(event_of(k.o, &f), TYPE_CLOSED);
-    CHECK_EQ(f, 2);
+    CHECK_EQ(f, GOGO_E_TIMEOUT);
     CHECK_EQ(nst.st.tcp_retx, 6u);
     CHECK(k.c->state == TCP_CLOSED);
     write_str(k.o, k.port, "late");         /* the port has no connection: refused */
@@ -561,7 +561,7 @@ TEST(tcp_other_timers) {
     advance(1);
     int32_t f;
     CHECK_EQ(event_of(o, &f), TYPE_CLOSED);
-    CHECK_EQ(f, 2);
+    CHECK_EQ(f, GOGO_E_TIMEOUT);
     CHECK_EQ(tx.n, 2);                     /* no RST for a SYN never answered */
     teardown();
 
@@ -709,7 +709,7 @@ TEST(tcp_link_down) {
     drain();
     int32_t f;
     CHECK_EQ(event_of(k.o, &f), TYPE_CLOSED);
-    CHECK_EQ(f, 5);
+    CHECK_EQ(f, GOGO_E_NOROUTE);
     CHECK(k.c->state == TCP_CLOSED);
     CHECK_EQ(tx.n, 0);
     /* While it is down a Dial fails at once (no route). */
@@ -791,12 +791,12 @@ TEST(tcp_slow_reader_never_killed) {
         int32_t f = -1;
         for (uint32_t t; (t = event_of(k.o, &f)) != 0; n++) {
             if (t == TYPE_DONE) written++;
-            if (t == TYPE_CLOSED) { closed++; CHECK_EQ(f, 1); }
+            if (t == TYPE_CLOSED) { closed++; CHECK_EQ(f, GOGO_E_RESET); }
         }
         advance(1000);                       /* retried events, if any were held */
         for (uint32_t t; (t = event_of(k.o, &f)) != 0; n++) {
             if (t == TYPE_DONE) written++;
-            if (t == TYPE_CLOSED) { closed++; CHECK_EQ(f, 1); }
+            if (t == TYPE_CLOSED) { closed++; CHECK_EQ(f, GOGO_E_RESET); }
         }
         CHECK_EQ(written, 1);
         CHECK_EQ(closed, 1);
@@ -821,7 +821,7 @@ TEST(tcp_event_retry) {
     int32_t f = -1;
     CHECK_EQ(event_of(k.o, NULL), TYPE_DONE);
     CHECK_EQ(event_of(k.o, &f), TYPE_CLOSED);
-    CHECK_EQ(f, 1);
+    CHECK_EQ(f, GOGO_E_RESET);
     CHECK_EQ(event_of(k.o, NULL), 0);
     teardown();
 }
@@ -877,7 +877,7 @@ TEST(tcp_address_change) {
     port_command(&vm, netif_owner, n, heap_struct(netif_owner, TYPE_NET_SETADDR, f, 4));
     int32_t r;
     CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
-    CHECK_EQ(r, 5);
+    CHECK_EQ(r, GOGO_E_NOROUTE);
     CHECK(k.c->state == TCP_CLOSED);
     CHECK_EQ(actor_charged_words(k.o), 0);
     teardown();
@@ -1039,7 +1039,7 @@ static bool up_fin(Vm *v, TcpPcb *c) {
     up.fins++;
     if (up.fin_post >= 0) {
         tcp_post(v, c, TYPE_CLOSED, up.fin_post);
-        if (up.fin_post != CR_NORMAL) up.closed = true;
+        if (up.fin_post != GOGO_E_OK) up.closed = true;
     }
     return !up.refuse_fin;
 }
@@ -1176,7 +1176,7 @@ TEST(tcp_upper_layer) {
     CHECK_EQ(up.ended, 1);
     int32_t r = -1;
     CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
-    CHECK_EQ(r, 1);
+    CHECK_EQ(r, GOGO_E_RESET);
     CHECK(k.c->state == TCP_CLOSED);
     CHECK_EQ(actor_charged_words(k.o), 0);
     teardown();
@@ -1196,7 +1196,7 @@ TEST(tcp_upper_deadline) {
     CHECK_EQ(out_at(0).fl, F_RA);
     int32_t r = -1;
     CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
-    CHECK_EQ(r, 2);
+    CHECK_EQ(r, GOGO_E_TIMEOUT);
     CHECK_EQ(up.ended, 1);
     teardown();
     setup();
@@ -1212,7 +1212,7 @@ TEST(tcp_upper_deadline) {
  * (net.NoTime: the tls port's Dial before the clock is set). */
 static int nc_open(Vm *v, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index; (void)cfg; (void)n;
-    tcp_hold_closed(v->net, p, CR_NOTIME);
+    tcp_hold_closed(v->net, p, GOGO_E_NOTIME);
     return 0;
 }
 static const PortDriver nc_driver = {
@@ -1233,7 +1233,7 @@ TEST(tcp_hold_closed_without_connection) {
     drain();
     int32_t r = -1;
     CHECK_EQ(event_of(o, &r), TYPE_CLOSED);
-    CHECK_EQ(r, CR_NOTIME);
+    CHECK_EQ(r, GOGO_E_NOTIME);
     CHECK(!port_any_live(&vm));
     port_close(&vm, p);
     teardown();
@@ -1245,14 +1245,14 @@ TEST(tcp_hold_closed_without_connection) {
 TEST(tcp_upper_one_terminal_closed) {
     setup();
     Conn k = up_dial(0);
-    up.fin_post = CR_TLS;
+    up.fin_post = GOGO_E_TLS;
     seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
     k.peer++;
     seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);   /* then the peer resets */
     CHECK(k.c->state == TCP_CLOSED);
     int32_t r = -1;
     CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
-    CHECK_EQ(r, CR_TLS);
+    CHECK_EQ(r, GOGO_E_TLS);
     CHECK_EQ(event_of(k.o, NULL), 0);          /* no second Closed */
     teardown();
 }
@@ -1263,19 +1263,19 @@ TEST(tcp_upper_one_terminal_closed) {
 TEST(tcp_upper_terminal_after_normal) {
     setup();
     Conn k = up_dial(0);
-    up.fin_post = CR_NORMAL;
+    up.fin_post = GOGO_E_OK;
     seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
     k.peer++;
     seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);
     int32_t r = -1;
     CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
-    CHECK_EQ(r, CR_NORMAL);
+    CHECK_EQ(r, GOGO_E_OK);
     CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
-    CHECK_EQ(r, CR_RESET);
+    CHECK_EQ(r, GOGO_E_RESET);
     teardown();
     setup();
     k = up_dial(0);
-    up.fin_post = CR_NORMAL;
+    up.fin_post = GOGO_E_OK;
     k.o->max_words = (uint16_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room: Normal held */
     seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
     k.peer++;
@@ -1285,7 +1285,7 @@ TEST(tcp_upper_terminal_after_normal) {
     advance(100);
     r = -1;
     CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
-    CHECK_EQ(r, CR_RESET);
+    CHECK_EQ(r, GOGO_E_RESET);
     CHECK_EQ(event_of(k.o, NULL), 0);
     teardown();
 }

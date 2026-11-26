@@ -36,14 +36,16 @@ rebuilt:
   `//gogo:optional` and as a `gogo firmware` feature (`-without spk` is
   now `-without speaker`).
 - **Error codes** are one space, `gogo/errors` (book appendix C), and
-  the numbers changed inside format 15: `fs.Err` and `code.Err` keep
+  the numbers changed inside format 15. `fs.Err` and `code.Err` keep
   their names, but besides `OK` only `fs.NotFound`, `fs.Exists` and
   `code.NoMemory` keep their values (`fs.NotMounted` was 3 and is 16,
-  `code.NotFound` was 4 and is 1, ...). Source that uses the names needs no edit; source or
-  tools that compare with numbers do. An image built before this change
-  still runs on new firmware, but the codes it compiled into its own
-  comparisons are the old ones while the firmware returns the new ones:
-  rebuild it.
+  `code.NotFound` was 4 and is 1, ...). The `port.Closed` reasons of tcp
+  and tls (`net.Reset` ... `net.TLS`) are the shared codes too
+  (`net.Timeout` was 2 and is 9, ...; `Normal` stays 0). Source that uses
+  the names needs no edit; source or tools that compare with numbers do.
+  An image built before this change still runs on new firmware, but the
+  codes it compiled into its own comparisons are the old ones while the
+  firmware returns the new ones: rebuild it.
 
 ## VM
 

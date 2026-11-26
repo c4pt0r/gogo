@@ -63,7 +63,8 @@ type Done struct {
 
 // Closed is a stream event: the port ended by itself (the peer closed or
 // reset a connection, a timeout, the hardware failed). From is the port;
-// Reason says why (the net package's reasons for tcp and tls). Normal (0)
+// Reason says why: a shared code of gogo/errors (the net package names
+// the ones tcp and tls send), or Normal (0, errors.OK). Normal (0)
 // from tcp or tls means only that the peer finished sending: Outs still
 // work until another Closed. After any other reason the port does nothing
 // more: close it. A port sends at most one Normal and one terminal Closed.

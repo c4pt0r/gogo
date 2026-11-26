@@ -316,13 +316,12 @@ meaning the packages share.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `OK` | `NotFound` | `Exists` | `NoMemory` | `TooMany` | `Busy` | `Closed` | `IO` | `NoSpace` | `BadPath` | `IsDir` | `NotDir` | `NotEmpty` | `NotMounted` |
 
-**`port.Closed` reasons of `"tcp"` and `"tls"`** (the `net` constants):
+**`port.Closed` reasons of `"tcp"` and `"tls"`** (the `net` constants, plain
+`int`s): the shared codes, with `Normal` = `OK`.
 
-| 0 | 1 | 2 | 3 | 5 | 6 | 7 | 8 |
+| 0 | 9 | 18 | 19 | 20 | 21 | 22 | 23 |
 |---|---|---|---|---|---|---|---|
-| `Normal` (peer finished sending) | `Reset` | `Timeout` | `Refused` | `NoRoute` (address or link lost) | `NoTime` (the wall clock is not set) | `BadCert` (the certificate failed verification) | `TLS` (any other TLS failure) |
-
-(4 is unused: it was `Overflow`, when a third write closed the connection.)
+| `Normal` (peer finished sending) | `Timeout` | `Refused` | `Reset` | `NoRoute` (address or link lost) | `BadCert` (the certificate failed verification) | `NoTime` (the wall clock is not set) | `TLS` (any other TLS failure) |
 
 **`code.Err`** (the result of every `gogo/code` call): the shared codes,
 as `code.Err(errors.X)` under the same names.
