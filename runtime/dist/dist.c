@@ -295,6 +295,11 @@ static void chunk_send(Vm *vm, DistState *ds, Link *l, Msg *m, uint8_t *d, uint3
     /* [len][number][body][MAC]: the number goes between the prefix and the
      * body; a frame lost after it was numbered is a gap, which the peer
      * accepts (it refuses only numbers that do not count up). */
+    if (l->tx == UINT32_MAX) {        /* numbers spent: the peer ends the link (take_frame) */
+        chunk_drop(vm, m);
+        ds->st.dropped++;
+        return;
+    }
     memmove(d + 2u + NUM, d + 2u, n - 2u);
     wr16(d, n - 2u + NUM + TAG);
     wr32(d + 2u, ++l->tx);
@@ -1447,7 +1452,10 @@ static bool take_frame(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_
     }
     l->rx_last = num;
     frame_in(vm, ds, l, b + NUM, n);
-    return true;
+    /* The last number: nothing can follow, so the link ends (both ends
+     * see it go and a new connection makes a new key), never a link that
+     * stays up refusing everything. */
+    return num != UINT32_MAX;
 }
 
 /* Takes n bytes of the link's stream; false if it broke. */

@@ -2606,7 +2606,10 @@ hop's, never the header's src) and the body (`runtime/dist/hmac.c`). Each
 side numbers its frames from 1 up; the receiver accepts any number above
 the last one it accepted, so a frame dropped after it was numbered (a
 full queue) is only a gap, while a replayed or reordered frame is
-refused (counted as bad, the link stays). A wrong MAC ends the link. Frames:
+refused (counted as bad, the link stays). The last number, 0xFFFFFFFF,
+ends the link once its frame is taken (a sender at it drops further
+frames), so a link that has sent 2^32 - 1 frames goes down and the board
+connects again with a new key. A wrong MAC ends the link. Frames:
 SEND (u32 dst PID, 0 = the door; term), REPLY (u32 dst PID, u64 Ref
 serial; term), LINK/UNLINK (u32 from, u32 to), EXIT and KILL (from, to,
 u32 code), MONITOR/DEMONITOR (u32 watcher, u32 target, u64 serial), DOWN

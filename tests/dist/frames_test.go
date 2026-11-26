@@ -203,3 +203,18 @@ func TestGoneOnUse(t *testing.T) {
 	}
 	noCrash(t, srv)
 }
+
+// The last frame number (0xFFFFFFFF) is taken, then the link ends: it
+// never stays up refusing every later frame.
+func TestLastFrameNumberEndsLink(t *testing.T) {
+	srv, port := startServer(t)
+	p, err := dial(t, port, "spent", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.whereis("echo")
+	body := binary.LittleEndian.AppendUint32(hdr(fSend, p.server, p.self), 0)
+	p.sendNum(0xFFFFFFFF, append(body, tNil))
+	srv.waitLine("down spent")
+	noCrash(t, srv)
+}
