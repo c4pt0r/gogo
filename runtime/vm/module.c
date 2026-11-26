@@ -103,10 +103,11 @@ void module_config(Vm *vm) {
     char v[12];
     int32_t n = vm_config_get(vm, (const uint8_t *)"code.mem", 8, (uint8_t *)v, sizeof v);
     if (n < 0) return;
+    if (n > (int32_t)sizeof v) n = 0;            /* longer than any valid value: bad */
     uint64_t x = 0;
     int32_t i = 0;
     uint32_t d;
-    while (i < n && i < (int32_t)sizeof v && (d = (uint8_t)v[i] - (uint32_t)'0') <= 9u) { x = x * 10u + d; i++; }
+    while (i < n && (d = (uint8_t)v[i] - (uint32_t)'0') <= 9u) { x = x * 10u + d; i++; }
     if (i > 0 && i + 1 == n) {
         uint32_t c = (uint8_t)(v[i] | 0x20), sh = c == 'k' ? 10u : c == 'm' ? 20u : 0u;
         x <<= sh;
