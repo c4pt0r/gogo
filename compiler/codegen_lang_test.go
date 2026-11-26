@@ -6,6 +6,62 @@ import (
 	"testing"
 )
 
+// TestDeferInlined: deferred calls are compiled at each return, last
+// deferred first; a defer at the top level of the body needs no flag, one
+// in a nested block is tested (JMPF) at the returns outside its block;
+// a return before a defer does not run it.
+func TestDeferInlined(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+func a() {}
+func b() {}
+func c() {}
+
+func f(n int) int {
+	if n == 0 {
+		return 0 // nothing deferred yet
+	}
+	defer a()
+	if n > 1 {
+		defer b()
+		if n > 2 {
+			return 2 // a and b, unconditionally
+		}
+	}
+	defer c()
+	return 1 // c, b if its flag is set, a
+}
+
+func g() {
+	defer a()
+	println("g") // the implicit return at the end runs a
+}
+
+func main() { println(f(3)); g() }
+`)
+	_, body := funcDis(t, dis, "f")
+	code := parseIns(t, body)
+	var calls []string
+	for _, in := range code {
+		switch in.op {
+		case "CALL":
+			calls = append(calls, in.args[strings.LastIndex(in.args, " ")+1:])
+		case "RET":
+			calls = append(calls, "|")
+		}
+	}
+	if got, want := strings.Join(calls, " "), "| b a | c b a |"; got != want {
+		t.Errorf("f: calls and returns %q, want %q\n%s", got, want, strings.Join(body, "\n"))
+	}
+	if n := countOp(code, "JMPF", ""); n != 4 { // 3 ifs, 1 flag test
+		t.Errorf("f: %d JMPF, want 4\n%s", n, strings.Join(body, "\n"))
+	}
+	_, body = funcDis(t, dis, "g")
+	if n := countOp(parseIns(t, body), "CALL", "a"); n != 1 {
+		t.Errorf("g: %d calls of a, want 1\n%s", n, strings.Join(body, "\n"))
+	}
+}
+
 // TestArrayCopies: an array value is copied (MAKE_SLICE + COPY) when it
 // goes into a variable, an argument or a result, unless it is fresh (a
 // literal or a call result); a = b copies into a's own array.

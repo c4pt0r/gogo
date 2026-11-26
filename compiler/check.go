@@ -50,6 +50,7 @@ type checker struct {
 	p       *Program
 	errs    []posErr
 	results *types.Tuple // results of the function being checked
+	loops   int          // loops around the statement being checked, in its function
 	seen    map[string]bool
 	okNil   map[*ast.Ident]bool // nil idents that stand for a nil slice
 }
@@ -568,6 +569,8 @@ func (c *checker) stmt(s ast.Stmt) {
 			return
 		}
 		c.decl(gd)
+	case *ast.DeferStmt:
+		c.deferStmt(s)
 	case *ast.ReturnStmt:
 		if c.results != nil && c.results.Len() > 1 && len(s.Results) == 1 {
 			// return g() of a multi-result g
@@ -605,7 +608,9 @@ func (c *checker) stmt(s ast.Stmt) {
 		if s.Post != nil {
 			c.stmt(s.Post)
 		}
+		c.loops++
 		c.block(s.Body)
+		c.loops--
 	case *ast.BranchStmt:
 		if s.Tok != token.BREAK && s.Tok != token.CONTINUE && s.Tok != token.FALLTHROUGH {
 			c.unsupported(s, strings.TrimSpace(s.Tok.String()+" statement"))
@@ -623,7 +628,9 @@ func (c *checker) stmt(s ast.Stmt) {
 	case *ast.TypeSwitchStmt:
 		c.typeSwitch(s)
 	case *ast.RangeStmt:
+		c.loops++
 		c.rangeStmt(s)
+		c.loops--
 	default:
 		c.unsupported(s, kindName(s))
 	}
@@ -648,6 +655,7 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 	if len(captured) == 0 {
 		return
 	}
+	results := namedResults(c.p.Info, body, sig)
 	write := func(e ast.Expr) {
 		// A field assignment x.F = v writes x, and so does an element
 		// assignment x[i] = v to an array x (but s[i].F = v writes the
@@ -667,7 +675,9 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 		// Uses, not Defs: the variables a := declares are not writes.
 		if id, ok := x.(*ast.Ident); ok {
 			if v, ok := c.p.Info.Uses[id].(*types.Var); ok && captured[v] {
-				if elem {
+				if results[v] {
+					c.fail(e.Pos(), "captured named result must not be changed: closures capture by value (a deferred func literal cannot set a result)")
+				} else if elem {
 					c.fail(e.Pos(), "captured variable must not be changed by element assignment")
 				} else if field {
 					c.fail(e.Pos(), "captured variable must not be changed by field assignment")
@@ -1254,10 +1264,10 @@ func (c *checker) expr(e ast.Expr) {
 	case *ast.ParenExpr:
 		c.expr(e.X)
 	case *ast.FuncLit: // its type was checked above
-		saved := c.results
-		c.results = c.p.Info.TypeOf(e).(*types.Signature).Results()
+		saved, loops := c.results, c.loops
+		c.results, c.loops = c.p.Info.TypeOf(e).(*types.Signature).Results(), 0
 		c.block(e.Body)
-		c.results = saved
+		c.results, c.loops = saved, loops
 	case *ast.CompositeLit:
 		c.compositeLit(e)
 	case *ast.SelectorExpr:

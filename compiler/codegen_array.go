@@ -70,7 +70,7 @@ func (f *fn) arrayStep(ix *ast.IndexExpr) bool {
 // copiesArray reports whether e, going into a destination of type target,
 // must be copied: an array that is not fresh.
 func (f *fn) copiesArray(e ast.Expr, target types.Type) bool {
-	return isArray(target) && !freshArray(e)
+	return isArray(target) && !freshArray(e) && !f.isPreset(e)
 }
 
 // copyArray copies the array in dst (e's value, going into a destination

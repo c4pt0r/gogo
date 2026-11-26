@@ -20,7 +20,7 @@ func Max[T int | int64](a, b T) T { // generics
 func main() {
 	ch := make(chan int) // channel
 	go func() { ch <- 1 }()
-	defer println("bye")
+	defer recover()       // recover
 	m := map[string]int{} // map
 	p := &Sq{2}           // pointer
 	x := 1.5i             // complex

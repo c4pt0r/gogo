@@ -875,6 +875,108 @@ true false
 0
 ```
 
+### Defer
+
+`defer f(args)` runs the call when the function returns, as in Go:
+deferred calls run last deferred first, at every `return` and at the end
+of the function, and the function value, the receiver and the arguments
+are evaluated at the `defer` statement. A method value (`defer c.Close()`)
+and a func literal (`defer func() { ... }()`) work too:
+
+```go
+// defer: the deferred calls run when the function returns, last deferred
+// first; their arguments are evaluated at the defer statement.
+package main
+
+type Conn struct{ Name string }
+
+func (c Conn) Close() { println("close", c.Name) }
+
+func open(name string) Conn {
+	println("open", name)
+	return Conn{name}
+}
+
+// copyAll returns early on a bad item: every return runs the deferred
+// calls registered before it.
+func copyAll(items []int) (n int) {
+	src := open("src")
+	defer src.Close()
+	dst := open("dst")
+	defer dst.Close()
+	for _, it := range items {
+		if it < 0 {
+			println("bad item", it)
+			return n
+		}
+		n++
+	}
+	return n
+}
+
+func count() {
+	x := 1
+	defer println("deferred x =", x) // x is evaluated now: 1
+	x = 2
+	if x > 1 {
+		defer println("only when x > 1")
+	}
+	defer func() {
+		println("func literal, last deferred, runs first")
+	}()
+	println("x =", x)
+}
+
+func main() {
+	println("copied", copyAll([]int{1, 2, 3}))
+	println("copied", copyAll([]int{1, -2, 3}))
+	count()
+}
+```
+
+```text
+open src
+open dst
+close dst
+close src
+copied 3
+open src
+open dst
+bad item -2
+close dst
+close src
+copied 1
+x = 2
+func literal, last deferred, runs first
+only when x > 1
+deferred x = 1
+```
+
+gogo's `defer` is **static**: a `defer` statement may not be inside a
+loop (`defer inside a loop not supported`), so each one runs at most once
+per call and the compiler knows them all. It compiles the deferred calls
+at each return, in order; there is no run-time list of deferred calls and
+no cost when none was registered. A `defer` inside an `if` or a `switch`
+clause is fine (a flag records whether it ran). To defer in a loop, move
+the loop body into a function (a func literal is a function of its own,
+so a `defer` in a literal called in a loop is allowed).
+
+Two differences from Go:
+
+- **Deferred calls run on normal returns only.** A crash (division by
+  zero, an index out of range, `badcode`) and `actor.Exit` end the actor
+  without running them. There is no `recover`: the actor ends, and its
+  ports and files are closed for it (section 5.7), so `defer f.Close()` is
+  for actors that live on, not a safety net.
+- **A deferred func literal cannot change the results.** With named
+  results, `return x` sets them before the deferred calls run, as in Go,
+  but a func literal captures by value (section 3.4), so the Go idiom
+  `defer func() { err = wrap(err) }()` is rejected (`captured named result
+  must not be changed`). Compute the result before returning instead.
+
+A deferred call whose single argument is a call with several results,
+`defer f(g())`, is rejected; assign the results to variables first.
+
 ## 3.5 Structs and methods
 
 Structs work as in Go: literals with or without field names, nested
@@ -1633,7 +1735,7 @@ func Max[T int | int64](a, b T) T { // generics
 func main() {
 	ch := make(chan int) // channel
 	go func() { ch <- 1 }()
-	defer println("bye")
+	defer recover()       // recover
 	m := map[string]int{} // map
 	p := &Sq{2}           // pointer
 	x := 1.5i             // complex
@@ -1658,7 +1760,7 @@ main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
-main.gg:23:2: gogo: defer statement not supported
+main.gg:23:8: gogo: builtin recover not supported
 main.gg:24:7: gogo: map not supported
 main.gg:25:7: gogo: pointer not supported
 main.gg:26:7: gogo: complex not supported
@@ -1678,7 +1780,8 @@ The full list, with what to do instead:
 |---|---|---|
 | `go f()` | `go statement not supported` | `actor.Spawn(f)` |
 | channels, `select`, `<-` | `channel not supported`, `operator <- not supported` | messages: `actor.Send`, `actor.Receive` |
-| `defer`, `recover` | `defer statement not supported` | let the actor exit; ports and files close automatically |
+| `defer` in a loop | `defer inside a loop not supported: deferred calls are static (move the loop body into a function)` | a function per iteration |
+| `recover` | `builtin recover not supported` | let the actor exit; a supervisor restarts it; ports and files close automatically |
 | `panic(v)` | `builtin panic not supported` | `actor.Exit(code)` |
 | `error` | `error not supported` | `bool` or an `int` code type |
 | package-level `var` | `global variable not supported` | `const`, or state in an actor |

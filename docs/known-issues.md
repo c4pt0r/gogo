@@ -267,8 +267,8 @@ rebuilt:
   and interfaces other than `any` ("interface
   types are not supported yet": methods are called on concrete types
   only). `goto` is rejected (labeled `break` and
-  `continue` cover its uses). Channels, `go`, `select`, generics, `defer`
-  and `recover` are outside the design. "Language completeness" is a
+  `continue` cover its uses). Channels, `go`, `select`, generics and
+  `recover` are outside the design. "Language completeness" is a
   planned milestone. *Workarounds:* a type switch for assertions and for
   values in an `any`, slices of structs searched linearly for maps.
 - **No `gogo/fmt` or `gogo/errors`.** Printing is `println`; to build a
@@ -320,6 +320,16 @@ rebuilt:
   structs on its path, so it costs O(N) rather than O(1). Like a slice,
   `println(a)` prints the elements (`[1 2 3]`; Go's `println` rejects
   arrays).
+- **`defer` is static and runs on normal returns only.** A `defer`
+  inside a loop is rejected (`defer inside a loop not supported`): move
+  the loop body into a function. A crash or `actor.Exit` ends the actor
+  without running the deferred calls (its ports and files are closed
+  anyway). A deferred func literal cannot set a named result (`captured
+  named result must not be changed`), so `defer func() { err = ... }()`
+  has no gogo equivalent: compute the result before returning. `defer
+  f(g())` with a multi-value `g` is rejected. Each `return` compiles the
+  deferred calls again, so many returns after many defers make the
+  function's code larger.
 - **Embedded fields: no pointers, no promoted method expressions.**
   Embedding `*T` is rejected with pointers. A method expression of a
   promoted method (`Outer.M` for a method of an embedded field) is

@@ -1,0 +1,38 @@
+enter order
+work 0
+work 1
+work 2
+third
+second
+leave order
+x = 2 c
+close b
+log b msg 2
+close a
+deferred x = 1
+args -> 20
+zero
+always 0
+-1
+always 1
+1
+always 3
+3
+past big
+big 7
+always 7
+57
+big 12
+always 12
+100
+show 1 2 3
+literal
+99 s
+promoted body changed
+log w direct 1
+close w
+nothing
+closure 7
+closure done
+closure 7
+closure done

@@ -383,7 +383,8 @@ as `code.Err(errors.X)` under the same names.
 | `switch` on an interface or a struct value, `goto` | type switch, compare fields; labeled `break`/`continue` |
 | type assertions `x.(T)` | type switch |
 | generics | none |
-| `error`, `panic`, `recover`, `defer` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |
+| `error`, `panic`, `recover` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |
+| `defer` anywhere, run on panics too | `defer` outside loops only, run on normal returns only |
 | package-level `var`, `init` | `const`; state in actors |
 | multiple packages, the standard library | one `package main`; `gogo/...` packages only |
 | `fmt.Println` | `println` (prints slices' elements; Go's `println` prints an address) |

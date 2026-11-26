@@ -398,6 +398,8 @@ type fn struct {
 	labelDirty map[Label]int // dirty at the jumps to each label, merged
 	boundAt    int           // code position of the last label bound (-1: none)
 	lastClear  int           // code position of the last CLEAR emitted (-1: none)
+
+	defers *deferState // the function's defer statements, nil if none (codegen_defer.go)
 }
 
 // declParams lists the parameters of a declared function; unnamed ones are
@@ -465,8 +467,12 @@ func (g *gen) compileFunc(info *funcInfo, params []*types.Var, results *types.Tu
 		}
 		f.clearDead()
 	}
+	f.setupDefers(body)
 	f.stmts(body.List)
 	if n := len(body.List); n == 0 || !isReturn(body.List[n-1]) {
+		if len(f.results) == 0 { // else the end is unreachable
+			f.runDefers()
+		}
 		f.retNil()
 	}
 	code, aerr := f.asm.Finish()
@@ -646,7 +652,9 @@ func (f *fn) stmts(list []ast.Stmt) {
 // block compiles statements in a new scope: its locals die at its end.
 func (f *fn) block(list []ast.Stmt) {
 	mark := f.next
+	f.scopeIn()
 	f.stmts(list)
+	f.scopeOut()
 	f.next = mark
 }
 
@@ -698,14 +706,21 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		f.next = mark
 	case *ast.DeclStmt:
 		f.declStmt(s.Decl.(*ast.GenDecl))
+	case *ast.DeferStmt:
+		f.deferStmt(s)
 	case *ast.ReturnStmt:
 		k := len(f.results)
 		switch {
 		case len(s.Results) == 0 && f.named >= 0: // bare return of named results
+			f.runDefers()
 			f.retNamed(s, k)
 			return
 		case len(s.Results) == 0:
+			f.runDefers()
 			f.retNil()
+			return
+		case f.named >= 0 && f.defers != nil:
+			f.retToNamed(s) // the results are set before the deferred calls run
 			return
 		case k > 1:
 			// return a, b (each converted to its result type) or return
@@ -720,19 +735,22 @@ func (f *fn) stmtCode(s ast.Stmt) {
 					f.valueInto(res, f.results[i], base+uint8(i))
 				}
 			}
+			f.runDefers()
 			f.ret(base, k)
 			f.next = mark
 			return
 		}
 		mark := f.next
 		res := s.Results[0]
+		var r uint8
 		if f.boxes(res, f.result) || f.copiesArray(res, f.result) {
-			r := f.alloc(res)
+			r = f.alloc(res)
 			f.valueInto(res, f.result, r)
-			f.asm.Emit(OpRet, r, 0, 0)
 		} else {
-			f.asm.Emit(OpRet, f.operand(res), 0, 0)
+			r = f.operand(res)
 		}
+		f.runDefers()
+		f.asm.Emit(OpRet, r, 0, 0)
 		f.next = mark
 	case *ast.IfStmt:
 		f.ifStmt(s)
@@ -1077,6 +1095,9 @@ func (f *fn) operand(e ast.Expr) uint8 {
 
 // localReg returns the register of the local variable e names, if it is one.
 func (f *fn) localReg(e ast.Expr) (uint8, bool) {
+	if r, ok := f.preset(e); ok {
+		return r, true
+	}
 	if id, ok := ast.Unparen(e).(*ast.Ident); ok {
 		if v, ok := f.g.p.Info.Uses[id].(*types.Var); ok {
 			if r, ok := f.locals[v]; ok {
@@ -1155,6 +1176,12 @@ var binaryOps = map[token.Token]uint8{
 func (f *fn) exprInto(e ast.Expr, dst uint8) {
 	if tv := f.g.p.Info.Types[e]; tv.Value != nil {
 		f.constInto(e, tv.Value, dst)
+		return
+	}
+	if r, ok := f.preset(e); ok { // evaluated at its defer statement
+		if r != dst {
+			f.asm.Emit(OpMove, dst, r, 0)
+		}
 		return
 	}
 	mark := f.next
