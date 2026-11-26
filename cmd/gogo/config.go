@@ -633,7 +633,8 @@ func (c *boardConn) request(op string, args []string, timeout time.Duration) (kv
 }
 
 // boardConfig runs one config operation on the board and prints its
-// result. The board never sends the Wi-Fi password back.
+// result. The board never sends the Wi-Fi password back; other secrets
+// (configSecrets: node.token) it does, so they are hidden here.
 func boardConfig(rw io.ReadWriter, op string, args []string, out io.Writer, timeout time.Duration) error {
 	c := newBoardConn(rw)
 	defer c.close()
@@ -647,12 +648,17 @@ func boardConfig(rw io.ReadWriter, op string, args []string, out io.Writer, time
 	}
 	if op == "list" {
 		sort.Strings(kvs)
+		for i, kv := range kvs {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				kvs[i] = k + "=" + shown(k, v)
+			}
+		}
 	}
 	for _, kv := range kvs {
 		fmt.Fprintln(out, kv)
 	}
 	if op == "get" {
-		fmt.Fprintln(out, text)
+		fmt.Fprintln(out, shown(args[0], text))
 	}
 	return nil
 }

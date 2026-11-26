@@ -262,6 +262,16 @@ func TestConfigNodeTokenHidden(t *testing.T) {
 	if _, ok := findCfgKey("node.token"); !ok {
 		t.Error("node.token is not in the key table")
 	}
+	// The firmware sends node.token back; get and list hide it.
+	c := newConfigBench(t, 1)
+	c.boards[c.ports[0]].store["node.token"] = "hunter2"
+	c.boards[c.ports[0]].store["node.name"] = "kitchen"
+	if out, _, err := c.run("", "get", "node.token"); err != nil || out != "(set)\n" {
+		t.Errorf("board get node.token: %q %v", out, err)
+	}
+	if out, _, err := c.run("", "list"); err != nil || out != "node.name=kitchen\nnode.token=(set)\n" {
+		t.Errorf("board list: %q %v", out, err)
+	}
 }
 
 // storeBoard is a board's console that answers config frames from a map,
@@ -273,18 +283,31 @@ type storeBoard struct {
 	sets   []string // keys set, in order
 	failOn string
 	frames []string
-	pr     *io.PipeReader
 	pw     *io.PipeWriter
 	in     []byte
 }
 
 func newStoreBoard() *storeBoard {
-	pr, pw := io.Pipe()
-	return &storeBoard{store: map[string]string{}, pr: pr, pw: pw}
+	return &storeBoard{store: map[string]string{}}
 }
 
-func (b *storeBoard) Read(p []byte) (int, error) { return b.pr.Read(p) }
-func (b *storeBoard) Close() error               { b.pr.Close(); return b.pw.Close() }
+// storeConn is one opening of a storeBoard's port.
+type storeConn struct {
+	*storeBoard
+	pr *io.PipeReader
+}
+
+// open opens the port anew; the store stays.
+func (b *storeBoard) open() io.ReadWriteCloser {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	pr, pw := io.Pipe()
+	b.pw, b.in = pw, nil
+	return storeConn{b, pr}
+}
+
+func (c storeConn) Read(p []byte) (int, error) { return c.pr.Read(p) }
+func (c storeConn) Close() error               { c.pr.Close(); return nil }
 func (b *storeBoard) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -374,7 +397,7 @@ func (c *configBench) run(stdin string, args ...string) (out, errOut string, err
 			if !ok {
 				return nil, errors.New("no such port " + p)
 			}
-			return b, nil
+			return b.open(), nil
 		}}
 	err = configExec(args, env)
 	return o.String(), e.String(), err
