@@ -678,8 +678,8 @@ func TestNodeTypesMinor(t *testing.T) {
 	if v := words(img)[1]; v != 15<<16|distMinor {
 		t.Errorf("version %s, want 15.%d", VersionString(v), distMinor)
 	}
-	if got := imageTypes(t, img); len(got) < 48 || got[TypeNetNodelink] != "net.NodeLink/4" {
-		t.Errorf("rows %v: want net.NodeLink/4 at %d", got, TypeNetNodelink)
+	if got := imageTypes(t, img); len(got) < 48 || got[TypeNetNodelink] != "net.NodeLink/6" {
+		t.Errorf("rows %v: want net.NodeLink/6 at %d", got, TypeNetNodelink)
 	}
 	other := "package main\nimport (\n\t\"gogo/net\"\n\t\"gogo/port\"\n)\nfunc main() {\n\t_, _ = port.Open(\"tcp\", net.Dial{IP: 1, Port: 2})\n}\n"
 	if v := words(compileImage(t, other))[1]; v >= 15<<16|distMinor {

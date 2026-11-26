@@ -271,8 +271,8 @@ enum Builtin {
 #define TYPE_ERRORS_CODE        45   /* the box of an errors.Code (an int) in an interface */
 #define TYPE_ERRORS_ERRORSTRING 46   /* s string: errors.New's error */
 /* Then (15.5) the "node" port's types (lib/net/net.gg, runtime/dist/). */
-#define TYPE_NET_NODELINK  47   /* Self, Peer, Relay int; Agent PID: port.Open("node") */
-#define TYPE_NET_NODEEVENT 48   /* From PID; Kind, Node int; Agent PID: node port event */
+#define TYPE_NET_NODELINK  47   /* Self, Peer, Relay int; Agent PID; Name string; Key Bytes: port.Open("node") */
+#define TYPE_NET_NODEEVENT 48   /* From PID; Kind, Node int; Agent PID; Name string: node port event */
 /* How many reserved types this VM knows (0 .. TYPE_RESERVED_COUNT - 1):
  * they are global across modules. The one constant to bump with a new
  * reserved type (compiler: len(reservedTypes)); a new one is an image
@@ -316,8 +316,8 @@ enum Builtin {
     TYPE_NF2(2, 4), /* 40 audio.Speaker, net.DialTLS */ \
     TYPE_NF2(2, 3), /* 42 port.Host, port.Post */ \
     TYPE_NF2(2, 1), /* 44 screen.Config (15.1), errors.Code (15.4) */ \
-    TYPE_NF2(1, 4), /* 46 errors.errorString (15.4), net.NodeLink (15.5) */ \
-    TYPE_NF2(4, 0), /* 48 net.NodeEvent (15.5) */ \
+    TYPE_NF2(1, 6), /* 46 errors.errorString (15.4), net.NodeLink (15.5) */ \
+    TYPE_NF2(5, 0), /* 48 net.NodeEvent (15.5) */ \
 }
 /* The first own type: an image names its own struct types from here up
  * (image.h), whatever reserved types it or the VM knows, and a struct of

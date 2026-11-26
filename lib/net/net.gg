@@ -247,28 +247,34 @@ type Accepted struct {
 // by the server node, which is 1); Relay 1 makes the link the route to
 // every node without a link of its own (a board's link to the server).
 // Agent is the local actor that messages to a node's zero PID reach (the
-// node agent). Frames from the peer go to the port as port.Out commands
-// (from the port's owner only); frames for the peer come out as port.Chunk
-// events, one frame each. The port is charged nothing; it fails to open
-// with a bad id, when 8 links are open, or when the VM's actor table
-// reaches into the remote PID range (more than 61440 actors).
+// node's door: it answers name lookups only). Name is the peer's name. Key
+// is the link's session key (32 bytes, from the handshake): every frame
+// carries a MAC under it, and a frame whose MAC fails ends the link.
+// Frames from the peer go to the port as port.Out commands (from the
+// port's owner only); frames for the peer come out as port.Chunk events.
+// The port is charged nothing; it fails to open with a bad id or key, when
+// 8 links are open, or when the VM's actor table reaches into the remote
+// PID range (more than 61440 actors).
 //
 //gogo:reserved 47
 type NodeLink struct {
 	Self, Peer, Relay int
 	Agent             actor.PID
+	Name              string
+	Key               bytes.Bytes
 }
 
-// NodeEvent is an event of a "node" port. Kind NodeUp comes once, when
-// the port opens: Node is the peer's id and Agent the peer's agent (a
-// remote PID). Kind NodeDown: the server reported that node Node is gone
-// (its PIDs are stale now).
+// NodeEvent is an event of a "node" port: Kind NodeUp when the port opens
+// (Node, Name: the peer; Agent: the peer's door, a remote PID) and, on a
+// board's link to the server, when another board joins; Kind NodeDown when
+// the server reports node Node gone (its PIDs are stale now).
 //
 //gogo:reserved 48
 type NodeEvent struct {
 	From       actor.PID
 	Kind, Node int
 	Agent      actor.PID
+	Name       string
 }
 
 // NodeEvent kinds.

@@ -12,15 +12,17 @@
 #include "out.h"
 #include "host.h"
 #include "stream.h"
+#include "hmac.h"
 #include <string.h>
 
 /* Frame types. */
 enum {
     F_SEND = 1, F_REPLY = 2, F_LINK = 3, F_UNLINK = 4, F_EXIT = 5,
     F_MONITOR = 6, F_DEMONITOR = 7, F_DOWN = 8, F_NODEDOWN = 9, F_GONE = 10,
-    F_KILL = 11
+    F_KILL = 11, F_NODEUP = 12
 };
 #define HDR 6u              /* type, flags, dst, src */
+#define TAG 16u             /* a frame's MAC: HMAC-SHA-256 truncated */
 
 /* Term tags. */
 enum {
@@ -47,6 +49,10 @@ typedef struct Link {
     uint16_t rx_need, rx_have;   /* a frame body being reassembled in rx */
     uint8_t *rx;
     uint32_t seq;            /* Seq of the last Chunk made */
+    uint64_t tx, rx_n;       /* frames sent and received: each MAC covers its number */
+    HmacKey key;             /* the session key from the handshake */
+    uint8_t name_len;
+    uint8_t name[DIST_NAME_MAX];   /* the peer's name (NODEUP) */
 } Link;
 
 typedef struct Proxy {
@@ -236,15 +242,29 @@ static Link *route(DistState *ds, uint16_t node) {
     return relay;
 }
 
-/* A Chunk of n frame bytes for l's owner, the bytes left for the caller
- * to write at *data; NULL if it cannot be made. */
-static Msg *chunk_new(Vm *vm, Link *l, uint32_t n, uint8_t **data) {
-    l->seq = l->seq >= 0x7FFFFFFFu ? 1u : l->seq + 1u;
-    return stream_chunk_new(vm, l->port->id, l->seq, (uint32_t)vm_now(vm), 0, n, data);
+/* A frame's MAC: HMAC(key, number (u64) || sender id (u16) || body). */
+static void frame_mac(const HmacKey *k, uint64_t num, uint16_t sender, const uint8_t *body, uint32_t n,
+                      uint8_t out[32]) {
+    uint8_t pre[10];
+    wr16(wr64(pre, num), sender);
+    hmac_mac(k, pre, sizeof pre, body, n, out);
 }
 
-/* Queues m on l's owner; counted as sent, or dropped (m freed). */
-static void chunk_send(Vm *vm, DistState *ds, Link *l, Msg *m) {
+/* A Chunk for one frame of n bytes (its length prefix included, its MAC
+ * not) for l's owner; the caller writes the frame at *data, then sends it
+ * with chunk_send. NULL if it cannot be made. */
+static Msg *chunk_new(Vm *vm, Link *l, uint32_t n, uint8_t **data) {
+    l->seq = l->seq >= 0x7FFFFFFFu ? 1u : l->seq + 1u;
+    return stream_chunk_new(vm, l->port->id, l->seq, (uint32_t)vm_now(vm), 0, n + TAG, data);
+}
+
+/* MACs the frame d[0..n) (as chunk_new made it) and queues m on l's
+ * owner; counted as sent, or dropped (m freed). */
+static void chunk_send(Vm *vm, DistState *ds, Link *l, Msg *m, uint8_t *d, uint32_t n) {
+    uint8_t mac[32];
+    wr16(d, n - 2u + TAG);
+    frame_mac(&l->key, l->tx++, ds->self, d + 2, n - 2u, mac);
+    memcpy(d + n, mac, TAG);
     Actor *o = port_owner(vm, l->port);
     if (o && msg_try_enqueue(vm, o, m)) {
         ds->st.sent++;
@@ -263,7 +283,7 @@ static void emit(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t n) {
         return;
     }
     memcpy(d, b, n);
-    chunk_send(vm, ds, l, m);
+    chunk_send(vm, ds, l, m, d, n);
 }
 
 /* A control frame (no term) to node: type, then the words w[0..nw) as u32
@@ -961,7 +981,7 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
     Enc e = { vm, from, ds, NULL, 0, 0 };
     enc(&e, msg, 0);
     uint32_t len = HDR + 4u + (serial ? 8u : 0u) + e.n;
-    if (!e.why && 2u + len > DIST_FRAME_MAX) e.why = R_BAD_MSG;
+    if (!e.why && 2u + len + TAG > DIST_FRAME_MAX) e.why = R_BAD_MSG;
     if (e.why && e.why != WHY_DROP) return -(int)e.why;
     Link *l = x ? route(ds, x->node) : NULL;
     if (!l) {                       /* stale, or no route: as a dead local PID */
@@ -969,12 +989,13 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
         return 1;
     }
     x->used = ++ds->tick;
-    uint8_t *p;
+    uint8_t *p, *start;
     Msg *m = !e.why ? chunk_new(vm, l, 2u + len, &p) : NULL;
     if (!m) {
         ds->st.dropped++;
         return 0;
     }
+    start = p;
     p = wr16(p, len);
     *p++ = serial ? F_REPLY : F_SEND;
     *p++ = 0;
@@ -989,7 +1010,7 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
         ds->st.dropped++;
         return 0;
     }
-    chunk_send(vm, ds, l, m);
+    chunk_send(vm, ds, l, m, start, 2u + len);
     if (!serial) call_note(vm, ds, from, msg, x->node);
     return 0;
 }
@@ -1096,17 +1117,40 @@ static void h_print(Out *o, const Vm *vm, term pid) {
 
 /* NodeEvent{From: the port, Kind, Node, Agent} to p's owner (dropped if
  * it has no room: the agent learns of a lost node from its peers too). */
-static void node_event(Vm *vm, const Port *p, int32_t kind, int32_t node, term agent) {
+static void node_event(Vm *vm, const Port *p, int32_t kind, int32_t node, term agent, const uint8_t *name,
+                       uint32_t nl) {
     Actor *o = port_owner(vm, p);
-    Msg *m = o ? note_new(vm, 6) : NULL;
+    uint32_t sw = nl ? 2u + (nl + 3u) / 4u : 0u;
+    Msg *m = o ? note_new(vm, 7u + sw) : NULL;
     if (!m) return;
-    m->data[0] = hdr_make(6, K_STRUCT);
+    m->data[0] = hdr_make(7, K_STRUCT);
     m->data[1] = TYPE_NET_NODEEVENT;
     m->data[2] = p->id;
     m->data[3] = term_from_int(kind);
     m->data[4] = term_from_int(node);
     m->data[5] = agent;
+    m->data[6] = T_EMPTYSTR;
+    if (nl) {
+        m->data[6] = term_from_ref(7);
+        m->data[7] = hdr_make(sw, K_STRING);
+        m->data[8] = nl;
+        m->data[6u + sw] = 0;              /* padding */
+        memcpy(&m->data[9], name, nl);
+    }
     if (!msg_try_enqueue(vm, o, m)) msg_free(vm, m);
+}
+
+/* NODEUP{node, name} on l: a board learns of another board (server). */
+static void nodeup_to(Vm *vm, DistState *ds, Link *l, const Link *of) {
+    uint8_t b[2u + HDR + 2u + DIST_NAME_MAX], *p = b;
+    p = wr16(p, HDR + 2u + of->name_len);
+    *p++ = F_NODEUP;
+    *p++ = 0;
+    p = wr16(p, l->peer);
+    p = wr16(p, ds->self);
+    p = wr16(p, of->peer);
+    memcpy(p, of->name, of->name_len);
+    emit(vm, ds, l, b, (uint32_t)(p - b) + of->name_len);
 }
 
 /* ---- frames from a link ---- */
@@ -1123,10 +1167,17 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
         ds->st.bad++;
         return;
     }
+    if (type == F_NODEUP) {                      /* another board joined (from the server) */
+        uint16_t nd = fn >= 2u ? rd16(f) : 0;
+        term up = l->relay && nd && nd != ds->self && fn - 2u <= DIST_NAME_MAX ? proxy_intern(ds, nd, T_ZEROPID) : 0;
+        if (up) node_event(vm, l->port, 1, nd, up, f + 2, fn - 2u);
+        else ds->st.bad++;
+        return;
+    }
     if (type == F_NODEDOWN) {
         if (l->relay && fn == 2u && rd16(f) != ds->self) {
             node_gone(vm, ds, rd16(f));
-            node_event(vm, l->port, 2, rd16(f), T_ZEROPID);
+            node_event(vm, l->port, 2, rd16(f), T_ZEROPID, NULL, 0);
         } else {
             ds->st.bad++;
         }
@@ -1154,9 +1205,9 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
             uint8_t *p;
             Msg *m = chunk_new(vm, r, 2u + n, &p);
             if (m) {
-                memcpy(wr16(p, n), b, n);
+                memcpy(p + 2, b, n);
                 ds->st.relayed++;
-                chunk_send(vm, ds, r, m);
+                chunk_send(vm, ds, r, m, p, 2u + n);
                 return;
             }
         }
@@ -1289,15 +1340,31 @@ static void link_broken(Vm *vm, Port *p) {
     port_close(vm, p->id);
 }
 
+/* Checks the MAC of frame b[0..len) (body, then TAG bytes) from l and
+ * handles it; false if the MAC is wrong (the link is not to be trusted
+ * any more). */
+static bool take_frame(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t len) {
+    uint8_t mac[32], diff = 0;
+    uint32_t n = len - TAG;
+    frame_mac(&l->key, l->rx_n++, l->peer, b, n, mac);
+    for (uint32_t i = 0; i < TAG; i++) diff |= (uint8_t)(mac[i] ^ b[n + i]);
+    if (diff) {
+        ds->st.bad++;
+        return false;
+    }
+    frame_in(vm, ds, l, b, n);
+    return true;
+}
+
 /* Takes n bytes of the link's stream; false if it broke. */
 static bool feed(Vm *vm, DistState *ds, Link *l, const uint8_t *d, uint32_t n) {
     while (n) {
         if (!l->rx) {
             if (!l->hb_n && n >= 2u) {
                 uint32_t len = rd16(d);
-                if (len < HDR || len + 2u > DIST_FRAME_MAX) return false;
+                if (len < HDR + TAG || len + 2u > DIST_FRAME_MAX) return false;
                 if (n >= 2u + len) {             /* whole: in place */
-                    frame_in(vm, ds, l, d + 2, len);
+                    if (!take_frame(vm, ds, l, d + 2, len)) return false;
                     if (!l->port) return true;   /* closed meanwhile */
                     d += 2u + len;
                     n -= 2u + len;
@@ -1310,7 +1377,7 @@ static bool feed(Vm *vm, DistState *ds, Link *l, const uint8_t *d, uint32_t n) {
             }
             if (l->hb_n < 2u) return true;
             uint32_t len = rd16(l->hb);
-            if (len < HDR || len + 2u > DIST_FRAME_MAX) return false;
+            if (len < HDR + TAG || len + 2u > DIST_FRAME_MAX) return false;
             l->rx = va_alloc(vm, len);
             if (!l->rx) return false;
             l->rx_need = (uint16_t)len;
@@ -1327,8 +1394,9 @@ static bool feed(Vm *vm, DistState *ds, Link *l, const uint8_t *d, uint32_t n) {
             uint32_t len = l->rx_need;
             l->rx = NULL;
             l->hb_n = 0;
-            frame_in(vm, ds, l, rx, len);
+            bool ok = take_frame(vm, ds, l, rx, len);
             va_free(vm, rx, len);
+            if (!ok) return false;
             if (!l->port) return true;
         }
     }
@@ -1353,13 +1421,16 @@ static DistState *state_new(Vm *vm) {
     return ds;
 }
 
-/* NodeLink{Self, Peer, Relay int; Agent PID}. */
+/* NodeLink{Self, Peer, Relay int; Agent PID; Name string; Key Bytes}. */
 static int n_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg) {
     (void)index;
     const uint32_t *o = obj_of(vm, owner, cfg);
     int32_t self, peer, relay;
-    if (!o || hdr_words(o[0]) != 6u || !int_val(vm, owner, o[2], &self) || !int_val(vm, owner, o[3], &peer) ||
-        !int_val(vm, owner, o[4], &relay) || !term_is_pid(o[5]))
+    const uint8_t *name, *key;
+    uint32_t nl, kl;
+    if (!o || hdr_words(o[0]) != 8u || !int_val(vm, owner, o[2], &self) || !int_val(vm, owner, o[3], &peer) ||
+        !int_val(vm, owner, o[4], &relay) || !term_is_pid(o[5]) || !name_bytes(vm, owner, o[6], &name, &nl) ||
+        nl > DIST_NAME_MAX || !bytes_view(vm, owner, o[7], &key, &kl) || kl != 32u)
         return -1;
     term agent = o[5];
     if (self < 1 || self > 0xFFFF || peer < 1 || peer > 0xFFFF || self == peer ||
@@ -1384,12 +1455,22 @@ static int n_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
     l->port = p;
     l->peer = (uint16_t)peer;
     l->relay = relay != 0;
+    hmac_key(&l->key, key, kl);
+    l->name_len = (uint8_t)nl;
+    if (nl) memcpy(l->name, name, nl);
     ds->self = (uint16_t)self;
     if (agent != T_ZEROPID && actor_lookup(vm, agent)) ds->agent = agent;
-    /* NodeEvent{Kind: Up, Node: peer, Agent: the peer's agent}. The port
-     * charges nothing, so the open cannot fail after this. p->owner is set
-     * already (port_open), so it goes to the owner. */
-    node_event(vm, p, 1, peer, up);
+    /* NodeEvent{Kind: Up, Node: peer, Agent: the peer's door, Name}. The
+     * port charges nothing, so the open cannot fail after this. p->owner is
+     * set already (port_open), so it goes to the owner. */
+    node_event(vm, p, 1, peer, up, l->name, l->name_len);
+    /* A server tells the new board about the others, and them about it. */
+    for (uint32_t i = 0; !l->relay && i < DIST_LINKS; i++) {
+        Link *k = &ds->links[i];
+        if (!k->port || k == l || k->relay) continue;
+        nodeup_to(vm, ds, l, k);
+        nodeup_to(vm, ds, k, l);
+    }
     return 0;
 }
 

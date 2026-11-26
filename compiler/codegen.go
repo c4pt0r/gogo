@@ -332,8 +332,8 @@ var reservedTypes = []struct {
 	// the box an interface holds it in, of one field.
 	{ErrorsPath, "Code", []string{"value"}},
 	{ErrorsPath, "errorString", []string{"s"}},
-	{NetPath, "NodeLink", []string{"Self", "Peer", "Relay", "Agent"}}, // 15.5
-	{NetPath, "NodeEvent", []string{"From", "Kind", "Node", "Agent"}}, // 15.5
+	{NetPath, "NodeLink", []string{"Self", "Peer", "Relay", "Agent", "Name", "Key"}}, // 15.5
+	{NetPath, "NodeEvent", []string{"From", "Kind", "Node", "Agent", "Name"}},        // 15.5
 }
 
 // reservedName is the image name of reserved type i: the bare name for

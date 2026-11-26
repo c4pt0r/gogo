@@ -43,6 +43,7 @@ struct Vm;
 
 #define DIST_FRAME_MAX 4096u   /* bytes of a frame, its length prefix included */
 #define DIST_LINKS     8u      /* node ports open at once */
+#define DIST_NAME_MAX  32u     /* bytes of a node name */
 #define DIST_PROXIES   64u     /* remote PIDs known at once */
 #define DIST_EXPORTS   64u     /* local PIDs given out (reachable by peers) */
 #define DIST_WATCHES   32u     /* remote links and monitors, both directions */

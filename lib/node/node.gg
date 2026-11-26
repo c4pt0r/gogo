@@ -81,8 +81,13 @@ type selfReq struct{}
 type subscribeReq struct{ PID actor.PID }
 type disconnectReq struct{}
 
-// Between nodes: a remote agent's Call, and the server's news.
+// Between nodes: the one request a node's door answers.
 type whereisReq struct{ Name string }
+
+// From the door to the agent (local only).
+type lookupReq struct{ Name string }
+
+// From a link actor to the agent: the server reported another board.
 type nodeUp struct {
 	Name  string
 	ID    int
@@ -282,7 +287,15 @@ func configured(o Options) Options {
 	return Options{Name: name, Token: token, TimeoutMs: o.TimeoutMs}
 }
 
-// ---- the agent ----
+// ---- the agent and the door ----
+//
+// Two actors per node. The agent (registered locally as "node") holds
+// the node table, the exported names and the subscribers, and serves the
+// calls of this package; its PID never leaves the node, so no peer can
+// reach it. The door is the actor a peer reaches at a node's zero PID
+// (NodeLink.Agent): it answers whereisReq only, asking the agent, and
+// ignores everything else. Node news comes from the links (net.NodeEvent,
+// made by the node port in C), not from peers' messages.
 
 func notify(subs []actor.PID, msg any) {
 	for _, s := range subs {
@@ -300,11 +313,33 @@ func without(ps []peer, i int) []peer {
 	return out
 }
 
-// agentRun is the node agent: the node table, the exported names, the
-// subscribers; the server's listener and ids. Registered locally as "node".
+// doorRun answers peers' whereisReq Calls for the names exported here.
+func doorRun(agentPID actor.PID) {
+	var zero actor.PID
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.Request:
+			switch r := m.Body.(type) {
+			case whereisReq:
+				pid := zero
+				v, ok := actor.Call(agentPID, lookupReq{Name: r.Name}, 1000)
+				if ok {
+					switch p := v.(type) {
+					case actor.PID:
+						pid = p
+					}
+				}
+				actor.Reply(m, pid)
+			}
+		}
+	}
+}
+
+// agentRun is the node agent; see above.
 func agentRun() {
 	var zero actor.PID
 	self := actor.Self()
+	door := actor.SpawnLink(func() { doorRun(self) })
 	name := ""
 	selfID, nextID := 0, 2
 	server := false
@@ -328,7 +363,7 @@ func agentRun() {
 				if o.TimeoutMs > 0 {
 					ms = o.TimeoutMs
 				}
-				if !startListener(self, r.Port, o.Token, o.Name, ms) {
+				if !startListener(ends{Agent: self, Door: door}, r.Port, o.Token, o.Name, ms) {
 					actor.Reply(m, false)
 					break
 				}
@@ -341,7 +376,7 @@ func agentRun() {
 					break
 				}
 				name = o.Name
-				startDial(self, r.IP, r.Port, o.Token, o.Name, o.TimeoutMs)
+				startDial(ends{Agent: self, Door: door}, r.IP, r.Port, o.Token, o.Name, o.TimeoutMs)
 				pending, waiting = m, true
 			case disconnectReq:
 				for _, p := range peers {
@@ -373,6 +408,14 @@ func agentRun() {
 				}
 				names, namePIDs = n2, p2
 				actor.Reply(m, true)
+			case lookupReq: // from the door
+				pid := zero
+				for i, n := range names {
+					if n == r.Name {
+						pid = namePIDs[i]
+					}
+				}
+				actor.Reply(m, pid)
 			case peerReq:
 				ans := peerAns{}
 				if r.Node == name && name != "" {
@@ -389,14 +432,6 @@ func agentRun() {
 					}
 				}
 				actor.Reply(m, ans)
-			case whereisReq: // from another node's agent
-				pid := zero
-				for i, n := range names {
-					if n == r.Name {
-						pid = namePIDs[i]
-					}
-				}
-				actor.Reply(m, pid)
 			case nodesReq:
 				var l []string
 				for _, p := range peers {
@@ -438,15 +473,7 @@ func agentRun() {
 				selfID = m.Self
 			}
 			ref := actor.Monitor(m.Link)
-			np := peer{Name: m.Name, ID: m.ID, Agent: m.Agent, Link: m.Link, Ref: ref}
-			if server {
-				// Tell the new board about the others and the others about it.
-				for _, p := range peers {
-					actor.Send(m.Agent, nodeUp{Name: p.Name, ID: p.ID, Agent: p.Agent})
-					actor.Send(p.Agent, nodeUp{Name: m.Name, ID: m.ID, Agent: m.Agent})
-				}
-			}
-			peers = append(peers, np)
+			peers = append(peers, peer{Name: m.Name, ID: m.ID, Agent: m.Agent, Link: m.Link, Ref: ref})
 			notify(subs, Up{Node: m.Name})
 			if waiting {
 				actor.Reply(pending, true)
@@ -458,18 +485,16 @@ func agentRun() {
 				waiting = false
 				name = ""
 			}
-		case nodeUp: // a board: another board joined
-			if !server && m.ID != selfID {
-				known := false
-				for _, p := range peers {
-					if p.ID == m.ID {
-						known = true
-					}
+		case nodeUp: // a board: the server reported another board
+			known := m.ID == selfID
+			for _, p := range peers {
+				if p.ID == m.ID {
+					known = true
 				}
-				if !known {
-					peers = append(peers, peer{Name: m.Name, ID: m.ID, Agent: m.Agent})
-					notify(subs, Up{Node: m.Name})
-				}
+			}
+			if !server && !known {
+				peers = append(peers, peer{Name: m.Name, ID: m.ID, Agent: m.Agent})
+				notify(subs, Up{Node: m.Name})
 			}
 		case nodeGone: // the server reported a node gone
 			for i, p := range peers {
@@ -519,38 +544,84 @@ func agentRun() {
 // kick asks a link actor to drop its connection.
 type kick struct{}
 
+// ends are the local actors a link actor works for: the agent (its
+// reports) and the door (the node port's Agent).
+type ends struct {
+	Agent, Door actor.PID
+}
+
 // startDial starts a board's link actor, which reports linkUp or linkFail
 // to the agent.
-func startDial(agentPID actor.PID, ip, p int, token, name string, ms int) {
+func startDial(e ends, ip, p int, token, name string, ms int) {
 	actor.SpawnOpt(func() {
 		conn, err := port.Open("tcp", net.Dial{IP: ip, Port: p, TimeoutMs: ms})
 		if err != nil {
-			actor.Send(agentPID, linkFail{Why: "dial"})
+			actor.Send(e.Agent, linkFail{Why: "dial"})
 			return
 		}
-		clientLink(agentPID, conn, token, name, ms)
+		clientLink(e, conn, token, name, ms)
 	}, actor.Options{MaxMemory: linkMemory})
+}
+
+// hsDone tells the listener that a link actor's handshake ended.
+type hsDone struct{ Link actor.PID }
+
+// maxHandshakes is how many connections may be in their handshake at
+// once; more are closed at once (an unauthenticated peer holds a port and
+// a link actor until its handshake ends or times out).
+const maxHandshakes = 2
+
+// forget drops the link actor w, or the one monitored by r, from the
+// handshakes in progress.
+func forget(ws []actor.PID, rs []actor.Ref, w actor.PID, r actor.Ref) ([]actor.PID, []actor.Ref) {
+	var w2 []actor.PID
+	var r2 []actor.Ref
+	for i, x := range ws {
+		if x == w || rs[i] == r {
+			actor.Demonitor(rs[i])
+		} else {
+			w2 = append(w2, x)
+			r2 = append(r2, rs[i])
+		}
+	}
+	return w2, r2
 }
 
 // startListener opens the listening port and hands it to a listener
 // actor, which hands every connection to a new server link actor.
-func startListener(agentPID actor.PID, p int, token, name string, ms int) bool {
+func startListener(e ends, p int, token, name string, ms int) bool {
 	lp, err := port.Open("tcp_listen", net.Listen{Port: p})
 	if err != nil {
 		return false
 	}
 	l := actor.Spawn(func() {
+		me := actor.Self()
+		var shaking []actor.PID // the link actors in their handshake
+		var refs []actor.Ref    // and the listener's monitors on them
 		for {
-			switch e := actor.Receive().(type) {
+			switch m := actor.Receive().(type) {
 			case net.Accepted:
-				conn := e.Conn
+				conn := m.Conn
+				if len(shaking) >= maxHandshakes {
+					port.Close(conn)
+					break
+				}
 				w := actor.SpawnOpt(func() {
-					serverLink(agentPID, conn, token, name, ms)
+					serverLink(e, me, conn, token, name, ms)
 				}, actor.Options{MaxMemory: linkMemory})
 				if !port.Handoff(conn, w) {
 					port.Close(conn)
 					actor.Kill(w, actor.Killed)
+					break
 				}
+				shaking = append(shaking, w)
+				refs = append(refs, actor.Monitor(w))
+			case hsDone: // a handshake ended: it no longer counts
+				var zr actor.Ref
+				shaking, refs = forget(shaking, refs, m.Link, zr)
+			case actor.DownMsg: // a link actor ended during its handshake
+				var zw actor.PID
+				shaking, refs = forget(shaking, refs, zw, m.Ref)
 			}
 		}
 	})
