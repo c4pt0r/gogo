@@ -165,4 +165,4 @@ const char *image_func_name(const Image *img, uint32_t f, uint32_t *len) {
 
 uint32_t image_func_name_off(const Image *img, uint32_t f) { return img->funcs[f * 3u + 2u]; }
 
-uint32_t image_type_nfields(const Image *img, uint32_t r) { return img->types[r * 2u]; }
+uint32_t image_type_nfields(const Image *img, uint32_t r) { return img->types[r * 2u] & ~STRUCT_FLAGS; }

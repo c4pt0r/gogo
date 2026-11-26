@@ -37,6 +37,8 @@
  *   v15.6 references: OP_SETFIELD, exit reason R_NIL (12), the type
  *       flags (bits 16-18 of an own row's field-count word and of a
  *       struct's type word: STRUCT_MUT, STRUCT_MAP, STRUCT_BOX, term.h).
+ *       A GETFIELD of nil, badcode before, is R_NIL in an image of any
+ *       minor; a valid older image never reads a field of nil.
  *
  * Reserved encodings (term.h): heap kinds 13-15, the specials from 0x72
  * up, the TYPEIS ids 0x10009-0x100FF and bits 19-20 of a struct's type
@@ -146,7 +148,7 @@ uint16_t image_func_nregs(const Image *img, uint32_t f);
 const char *image_func_name(const Image *img, uint32_t f, uint32_t *len);
 /* Const-area word offset of the function's name (a K_STRING). */
 uint32_t image_func_name_off(const Image *img, uint32_t f);
-/* Field count of type-table row r (r < n_types). */
+/* Field count of type-table row r (r < n_types), without its flags. */
 uint32_t image_type_nfields(const Image *img, uint32_t r);
 
 /* The type-table row of type t (a reserved TYPE_* index, or TYPE_OWN_BASE

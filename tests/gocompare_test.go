@@ -103,6 +103,7 @@ func TestGoldenMatchesGo(t *testing.T) {
 			cmd.Dir = mod
 			cmd.Stdout = &out
 			cmd.Stderr = &out
+			cmd.Env = env
 			if err := cmd.Run(); err != nil {
 				t.Fatalf("the Go program: %v\n--- output ---\n%s", err, out.Bytes())
 			}
