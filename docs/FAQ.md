@@ -10,6 +10,33 @@ why source files end in `.gg` and compiled images in `.ggb`. See
 [book chapter 3](book/03-language-basics.md) for the subset and §3.10 for
 what is missing.
 
+### What is gogo for?
+Small connected devices that do several things at once and must keep
+running: a handheld or sensor node that samples an IMU, records audio to
+SD, talks to a server over Wi-Fi/TLS and drives a small screen, all as
+separate actors, so one failing part crashes alone and its supervisor
+restarts it while the rest keeps going. Typical uses:
+
+- **Connected gadgets and sensor nodes** (the M5StickS3, the Cardputer ADV):
+  logging, recorders, remotes (IR), dashboards and tools with a text UI.
+- **Devices that are updated in the field**: hot loading replaces modules
+  without reflashing firmware or losing the rest of the running program.
+- **Fast iteration on hardware**: write Go-like code, test it on your
+  computer with simulated hardware (`gogovm`), then run the same image on
+  the board.
+- **Scripting inside other programs**: embed the VM (`libgogo.a`) in a
+  desktop, server or mobile app to run untrusted or user-written logic in a
+  sandbox (memory limits, capabilities, a jailed `/flash`).
+- **Device-to-server systems** (planned): actors on boards and on a server
+  sending each other messages directly.
+
+What it is not for: hard real-time work with sub-millisecond deadlines
+(code is interpreted, actors have garbage-collected heaps and a TLS
+handshake can pause everything for about 200 ms), heavy number crunching or
+signal processing (no floats, an interpreter; do such work in C drivers),
+and the very smallest microcontrollers (the VM core alone is about 37 KB of
+code and needs tens of KB of RAM).
+
 ### Is gogo compiled or interpreted?
 Both, in two steps. `gogo build` compiles `.gg` source ahead of time, on your
 computer, into a `.ggb` bytecode image: parsing, type checking and code
