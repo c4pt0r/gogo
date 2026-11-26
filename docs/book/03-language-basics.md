@@ -161,12 +161,12 @@ directory when you build. The rules, as in Go:
   main`. A module loaded with `code.Load` (chapter 14) compiles its own
   copy of every package it imports, so even when the program and the
   module import the same package, its struct types cannot be sent from
-  one to the other (the send fails with `BadMsg`).
+  one to the other (the send fails with `BadMsg`). Each package's
+  `//gogo:optional` covers its own opens only, and the image requires the
+  drivers your packages open (chapter 12).
 - In crash reports, `gogo dis` and `actor.Reason.Func`, a function of
   your package is named by its import path, `app/shapes.Area`; a gogo
-  library's by its package name, `strings.Index`. Each
-  package's `//gogo:optional` covers its own opens only, and the image
-  requires the drivers your packages open (chapter 12).
+  library's by its package name, `strings.Index`.
 
 A module built for hot loading (chapter 14) finds its packages the same
 way, from its own directory. `gogo run file.gg` builds a single file, with

@@ -112,12 +112,13 @@ vm_cc() {
     esac
 }
 
-# vm DIR [OS/ARCH...]
+# vm DIR [OS/ARCH...]: returns 1 on any failure (callers may run it with
+# set -e off, as the full release does, so each step checks its status).
 vm() {
     out=$1; shift
     # shellcheck disable=SC2086 # one target per word
     [ $# -gt 0 ] || set -- $VM_TARGETS
-    mkdir -p "$out"
+    mkdir -p "$out" || return 1
     for t in "$@"; do
         os=${t%/*} arch=${t#*/}
         case " $VM_TARGETS " in *" $t "*) ;; *) die "no gogovm for $t (targets: $VM_TARGETS)" ;; esac
@@ -127,10 +128,10 @@ vm() {
         flags="-g0 -Wno-error"
         [ "$os" = linux ] && flags="$flags -static"
         work=${GOGO_RELEASE_WORK:-$repo/build/release-work}/vm-$os-$arch
-        rm -rf "$work"
+        rm -rf "$work" || return 1
         # MBEDTLS_DIR points nowhere: no tls port (above).
-        make -s BUILD="$work" CC="$cc" EXTRA_CFLAGS="$flags" MBEDTLS_DIR=/nonexistent "$work/gogovm"
-        cp "$work/gogovm" "$out/gogovm-$os-$arch"
+        make -s BUILD="$work" CC="$cc" EXTRA_CFLAGS="$flags" MBEDTLS_DIR=/nonexistent "$work/gogovm" || return 1
+        cp "$work/gogovm" "$out/gogovm-$os-$arch" || return 1
         echo "vm gogovm-$os-$arch"
     done
 }

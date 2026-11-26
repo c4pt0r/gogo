@@ -63,7 +63,9 @@ jobs:
       - name: Test
         run: go vet ./cmd/gogo && go test ./cmd/gogo
       - name: Build
-        run: tools/release.sh cli "$GITHUB_REF_NAME" out
+        shell: bash
+        # A dispatched run on a branch like fix/x gets the version fix-x.
+        run: tools/release.sh cli "${GITHUB_REF_NAME//\//-}" out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli
@@ -102,22 +104,37 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user-static
       - name: Build
+        id: build
         shell: bash
         env:
           CC_linux_arm64: aarch64-linux-gnu-gcc
           VM_TARGETS: ${{ matrix.targets }}
+        # Each target on its own: one that fails does not lose the others.
         run: |
           read -ra targets <<< "$VM_TARGETS"
-          GOGO_RELEASE_WORK="$RUNNER_TEMP/work" tools/release.sh vm out "${targets[@]}"
-          file out/*
+          failed=
+          for t in "${targets[@]}"; do
+            if ! GOGO_RELEASE_WORK="$RUNNER_TEMP/work" tools/release.sh vm out "$t"; then
+              echo "::error::gogovm for $t did not build"
+              failed="$failed $t"
+            fi
+          done
+          file out/* || true
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
       - name: Smoke test
+        id: smoke
         shell: bash
         env:
           NATIVE: ${{ matrix.native }}
+        # A VM that fails is moved out of out/, so the ones that pass are
+        # still uploaded; the job fails at the end.
         run: |
           go build -o "$RUNNER_TEMP/gogo" ./cmd/gogo
           "$RUNNER_TEMP/gogo" build tests/golden/pkgs -o "$RUNNER_TEMP/pkgs.ggb"
+          mkdir -p "$RUNNER_TEMP/failed"
+          failed=
           for vm in out/gogovm-*; do
+            [ -e "$vm" ] || continue
             case "$vm" in
             *linux-arm64) run=(qemu-aarch64-static "$vm") ;;
             *darwin-amd64)
@@ -128,20 +145,39 @@ jobs:
               run=(arch -x86_64 "$vm") ;;
             *) run=("$vm") ;;
             esac
-            "${run[@]}" "$RUNNER_TEMP/pkgs.ggb" > "$RUNNER_TEMP/got"
-            diff tests/golden/pkgs/expected.out "$RUNNER_TEMP/got"
-            echo "ran $vm"
+            if "${run[@]}" "$RUNNER_TEMP/pkgs.ggb" > "$RUNNER_TEMP/got" &&
+              diff tests/golden/pkgs/expected.out "$RUNNER_TEMP/got"; then
+              echo "ran $vm"
+            else
+              echo "::error::$vm failed its smoke test"
+              failed="$failed $vm"
+              mv "$vm" "$RUNNER_TEMP/failed/"
+            fi
           done
           # gogo run finds the VM next to itself.
-          cp "out/gogovm-$NATIVE" "$RUNNER_TEMP/gogovm"
-          "$RUNNER_TEMP/gogo" env
-          "$RUNNER_TEMP/gogo" run tests/golden/pkgs > "$RUNNER_TEMP/got"
-          diff tests/golden/pkgs/expected.out "$RUNNER_TEMP/got"
+          if [ -f "out/gogovm-$NATIVE" ]; then
+            cp "out/gogovm-$NATIVE" "$RUNNER_TEMP/gogovm"
+            "$RUNNER_TEMP/gogo" env
+            if ! "$RUNNER_TEMP/gogo" run tests/golden/pkgs > "$RUNNER_TEMP/got" ||
+              ! diff tests/golden/pkgs/expected.out "$RUNNER_TEMP/got"; then
+              echo "::error::gogo run with gogovm-$NATIVE next to it failed"
+              failed="$failed gogo-run"
+            fi
+          fi
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vm-${{ matrix.name }}
           path: out/
-          if-no-files-found: error
+          if-no-files-found: warn
+      - name: Fail if a VM failed
+        if: steps.build.outputs.failed != '' || steps.smoke.outputs.failed != ''
+        env:
+          BUILD_FAILED: ${{ steps.build.outputs.failed }}
+          SMOKE_FAILED: ${{ steps.smoke.outputs.failed }}
+        run: |
+          echo "not built:$BUILD_FAILED; failed to run:$SMOKE_FAILED"
+          exit 1
 
   release:
     needs: [firmware, cli, vm]
