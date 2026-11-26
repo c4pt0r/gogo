@@ -4,12 +4,14 @@ package main
 //
 //	gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z]
 //	           [-release-url URL|DIR] [-esptool path] [-offline]
-//	           [-skip-wifi] [-new-layout] [-yes] [-dry-run]
+//	           [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]
 //
 // Steps: check esptool and find the board's serial port; identify the
 // board; get its firmware (a GitHub release, checked against its
 // SHA256SUMS, or a local ESP-IDF build); flash it without touching the
-// NVS partition (setup_flash.go); set up Wi-Fi; run a first program.
+// NVS partition (setup_flash.go), unless the board already runs that very
+// firmware (its `info` answer, flashDecision; -reflash flashes anyway);
+// set up Wi-Fi; run a first program.
 // Each step says what it does; a failure says how to fix it and stops.
 //
 // -dry-run still runs the steps that only read (esptool's chip check,
@@ -36,7 +38,7 @@ import (
 	"gogotools/compiler"
 )
 
-const setupUsage = "usage: gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]"
+const setupUsage = "usage: gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]"
 
 // version is this gogo's release version, set at link time by
 // tools/release.sh (-ldflags "-X main.version=v1.2.3").
@@ -57,7 +59,7 @@ var setupBoardTitles = map[string]string{"sticks3": "M5StickS3", "cardputer": "C
 type setupOpts struct {
 	port, board, version, releaseURL, esptool string
 	offline, skipWifi, yes, dryRun            bool
-	newLayout                                 bool
+	newLayout, reflash                        bool
 }
 
 // setupEnv holds the side effects of gogo setup, replaced in tests.
@@ -76,6 +78,8 @@ type setupEnv struct {
 	runIdf   func(lb localBuild, args []string) error
 	// retryDelay is the wait between attempts to open the port.
 	retryDelay time.Duration
+	// infoTimeout is how long one `info` request waits for the board.
+	infoTimeout time.Duration
 }
 
 func defaultSetupEnv() (*setupEnv, error) {
@@ -97,7 +101,8 @@ func defaultSetupEnv() (*setupEnv, error) {
 		repoDir:  findSourceRepo,
 		runIdf:   runIdfLocal(os.Stdout),
 
-		retryDelay: 500 * time.Millisecond,
+		retryDelay:  500 * time.Millisecond,
+		infoTimeout: 1500 * time.Millisecond,
 	}, nil
 }
 
@@ -139,6 +144,7 @@ func parseSetupArgs(args []string) (setupOpts, error) {
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "")
 	fs.BoolVar(&o.newLayout, "new-layout", false, "")
+	fs.BoolVar(&o.reflash, "reflash", false, "")
 	pos, err := parseFlags(fs, args, setupUsage)
 	if err != nil {
 		return o, err
@@ -513,9 +519,24 @@ func (s *setup) getFirmware() (*firmwareSet, error) {
 }
 
 // flashFirmware writes the firmware's files at their flasher_args.json
-// offsets (checked by planFirmware), never NVS.
+// offsets (checked by planFirmware), never NVS; or nothing, when the board
+// already runs this firmware (flashDecision).
 func (s *setup) flashFirmware(fw *firmwareSet) error {
 	fmt.Fprintf(s.env.out, "  firmware: %s\n", fw.source)
+	if s.o.reflash {
+		fmt.Fprintln(s.env.out, "  flashing it whatever the board runs (-reflash)")
+	} else {
+		want := ""
+		if fw.plan != nil {
+			want = fw.plan.version
+		}
+		info, why := s.boardFirmware()
+		skip, line := flashDecision(info, why, want, s.board)
+		fmt.Fprintln(s.env.out, line)
+		if skip {
+			return nil
+		}
+	}
 	if fw.plan == nil { // dry run of a local build: nothing built to flash
 		fmt.Fprintf(s.env.out, "  would flash the files of flasher_args.json after the build, then reset with a watchdog reset\n")
 		return nil
@@ -556,6 +577,88 @@ func (s *setup) flashFirmware(fw *firmwareSet) error {
 		return setupFail("check the cable and that nothing else uses the port, then run gogo setup again", "flashing failed: %v", err)
 	}
 	return nil
+}
+
+// boardFirmware asks the firmware on the board what it is (the `info`
+// config command: fw, board, image, provides), over its console as the
+// Wi-Fi step talks to it, retrying while the board comes back from the
+// reset that ended the last esptool command. nil and why if it cannot be
+// known: no serial console here, no answer (download mode, not gogo), or
+// an error answer (a firmware older than info answers `err bad key`).
+func (s *setup) boardFirmware() (map[string]string, string) {
+	if !serialSupported(s.env.goos) {
+		return nil, "gogo cannot read the serial console on " + s.env.goos
+	}
+	for try := 0; try < 4; try++ {
+		if try > 0 {
+			time.Sleep(s.env.retryDelay)
+		}
+		c, err := s.openBoard()
+		if err != nil {
+			return nil, fmt.Sprintf("cannot open %s: %v", s.port, err)
+		}
+		_, text, err := c.request("info", nil, s.env.infoTimeout)
+		c.Close()
+		var be errBoard
+		if errors.As(err, &be) {
+			if be.reason == "bad key" || strings.HasPrefix(be.reason, "usage:") {
+				return nil, "its firmware is older than the info command"
+			}
+			return nil, "the board answered: " + be.reason
+		}
+		if err == nil {
+			return parseBoardInfo(text), ""
+		}
+	}
+	return nil, "no answer on its console"
+}
+
+// parseBoardInfo splits an `info` answer (key=value fields, space
+// separated) into a map.
+func parseBoardInfo(text string) map[string]string {
+	m := map[string]string{}
+	for _, f := range strings.Fields(text) {
+		if k, v, ok := strings.Cut(f, "="); ok && k != "" {
+			m[k] = v
+		}
+	}
+	return m
+}
+
+// comparableVersion reports whether a firmware version names one build:
+// a release tag or the `git describe` of a clean commit, not "dev" (no
+// git) or a build of uncommitted changes ("-dirty").
+func comparableVersion(v string) bool {
+	return v != "" && v != "dev" && !strings.HasSuffix(v, "-dirty")
+}
+
+// flashDecision says whether flashing can be skipped, and the line that
+// says why: only when the board answered info with the very version about
+// to be flashed (want, from the app's descriptor) and the same board.
+// Anything unknown flashes.
+func flashDecision(info map[string]string, why, want, board string) (skip bool, line string) {
+	if info == nil {
+		return false, fmt.Sprintf("  board firmware unknown (%s); flashing it", why)
+	}
+	have, hb := info["fw"], info["board"]
+	if hb == "" {
+		hb = "board not given"
+	}
+	switch {
+	case have == "":
+		return false, "  board firmware unknown (its info has no version); flashing it"
+	case !comparableVersion(have):
+		return false, fmt.Sprintf("  board firmware unknown (a development build, %s); flashing it", have)
+	case want == "":
+		return false, fmt.Sprintf("  board runs gogo %s (%s), flashing a firmware whose version is unknown", have, hb)
+	case !comparableVersion(want):
+		return false, fmt.Sprintf("  board runs gogo %s (%s), flashing %s (a development build: always flashed)", have, hb, want)
+	case hb != board:
+		return false, fmt.Sprintf("  board runs gogo %s (%s), flashing gogo %s (%s)", have, hb, want, board)
+	case have != want:
+		return false, fmt.Sprintf("  board runs gogo %s (%s), flashing gogo %s", have, hb, want)
+	}
+	return true, fmt.Sprintf("  the board already runs gogo %s (%s); not reflashing (-reflash to flash it anyway)", have, hb)
 }
 
 // sameRanges reports whether two partition lists cover the same ranges.

@@ -308,6 +308,14 @@ type setupBench struct {
 	// rejectPassword makes the board refuse wifi.password.
 	rejectPassword bool
 	opens          int
+	// fwVersion is the version in the app descriptor of the firmware
+	// files written (writeRelease, localBench).
+	fwVersion string
+	// info is the board's answer to info: its fields ("fw=... board=..."),
+	// or "" for an old firmware's error; infoSilent: no answer at all.
+	info       string
+	infoSilent bool
+	infos      int // info requests seen
 }
 
 func newSetupBench(t *testing.T, chip string, stdin string) *setupBench {
@@ -351,7 +359,8 @@ func newSetupBench(t *testing.T, chip string, stdin string) *setupBench {
 		cacheDir: filepath.Join(dir, "cache"),
 		repoDir:  func() (string, bool) { return "", false },
 
-		retryDelay: time.Millisecond,
+		retryDelay:  time.Millisecond,
+		infoTimeout: 20 * time.Millisecond,
 		runIdf: func(localBuild, []string) error {
 			t.Fatal("unexpected local build")
 			return nil
@@ -359,6 +368,7 @@ func newSetupBench(t *testing.T, chip string, stdin string) *setupBench {
 	}
 	f.env.in = bufio.NewReader(f.env.stdin)
 	f.store = map[string]string{}
+	f.fwVersion = "v0.2.0"
 	f.boot = []string{"gogo vtest: image 1556 bytes, arena 163840 bytes, free RAM 190000 (largest 180000)", "hello from gogo on the board!"}
 	return f
 }
@@ -435,6 +445,15 @@ func (c *fakeConsole) answer(cmd string) string {
 			return "\x02ok\ngogo: wifi settings changed, reconnecting\ngogo: wifi connected (" + value + ", ch 6, -50 dBm)\n"
 		}
 		return "more output\x02ok\n"
+	case "info":
+		b.infos++
+		switch {
+		case b.infoSilent:
+			return ""
+		case b.info == "":
+			return "\x02err bad key\n" // a firmware older than info (v0.1.0)
+		}
+		return "busy program output\x02ok " + b.info + "\n"
 	case "rm":
 		if _, ok := b.store[key]; !ok {
 			return "\x02err not set\n"
@@ -461,15 +480,25 @@ const flasherArgsJSON = `{
 }
 `
 
+// appImage is an app image of n bytes whose descriptor holds version.
+func appImage(version string, n int) []byte {
+	b := bytes.Repeat([]byte{0xE9}, n)
+	binary.LittleEndian.PutUint32(b[appDescAt:], appDescMagic)
+	v := make([]byte, appVersionLen)
+	copy(v, version)
+	copy(b[appVersionAt:], v)
+	return b
+}
+
 // firmwareFiles writes a build directory's firmware files into dir, named
-// by name(file in flasher_args.json).
-func firmwareFiles(t *testing.T, dir string, name func(string) string) {
+// by name(file in flasher_args.json), the app's version being version.
+func firmwareFiles(t *testing.T, dir string, name func(string) string, version string) {
 	t.Helper()
 	files := map[string][]byte{
 		"flasher_args.json":                   []byte(flasherArgsJSON),
 		"bootloader/bootloader.bin":           bytes.Repeat([]byte{0xE9}, 0x5000),
 		"partition_table/partition-table.bin": ptBytes(gogoParts),
-		"gogo.bin":                            bytes.Repeat([]byte{0xE9}, 0x100000),
+		"gogo.bin":                            appImage(version, 0x100000),
 	}
 	for f, b := range files {
 		p := filepath.Join(dir, name(f))
@@ -484,7 +513,7 @@ func firmwareFiles(t *testing.T, dir string, name func(string) string) {
 func (f *setupBench) writeRelease() {
 	os.MkdirAll(f.release, 0o755)
 	for _, board := range []string{"sticks3", "cardputer"} {
-		firmwareFiles(f.t, f.release, func(n string) string { return releaseAssetName(board, n) })
+		firmwareFiles(f.t, f.release, func(n string) string { return releaseAssetName(board, n) }, f.fwVersion)
 	}
 	f.writeSums()
 }
@@ -950,7 +979,7 @@ func localBench(t *testing.T, f *setupBench) *[]string {
 		calls = append(calls, strings.Join(args, " "))
 		for i, a := range args {
 			if a == "-B" {
-				firmwareFiles(t, args[i+1], func(n string) string { return n })
+				firmwareFiles(t, args[i+1], func(n string) string { return n }, f.fwVersion)
 			}
 		}
 		return nil
@@ -1278,5 +1307,174 @@ func TestSetupWindowsSkipsConsole(t *testing.T) {
 	}
 	if f.opens != 0 || len(f.writeFlashLines()) != 2 || !strings.Contains(f.out.String(), "Wi-Fi from macOS or Linux") {
 		t.Fatalf("opens %d, writes %q:\n%s", f.opens, f.writeFlashLines(), f.out)
+	}
+}
+
+// firmwareWrites returns the logged write-flash commands of the firmware
+// (the app at 0x10000), not of the first program.
+func (f *setupBench) firmwareWrites() []string {
+	var out []string
+	for _, l := range f.writeFlashLines() {
+		if strings.Contains(l, " 0x10000 ") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// TestSetupSkipsTheSameFirmware: the board answers info with the version
+// and board of the firmware about to be flashed, so it is not flashed;
+// the first program still is.
+func TestSetupSkipsTheSameFirmware(t *testing.T) {
+	f := newSetupBench(t, chipStickS3, "")
+	f.info = "fw=v0.2.0 board=sticks3 image=15.6 provides=gpio,udp,/flash"
+	f.writeRelease()
+	if err := f.run("-yes", "-skip-wifi", "-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if w := f.firmwareWrites(); len(w) != 0 {
+		t.Fatalf("firmware flashed: %q", w)
+	}
+	out := f.out.String()
+	for _, want := range []string{
+		"[4/6] Flashing the firmware",
+		"  the board already runs gogo v0.2.0 (sticks3); not reflashing (-reflash to flash it anyway)\n",
+		"write-flash 0x210000 ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Flash this firmware") {
+		t.Errorf("asked to flash:\n%s", out)
+	}
+}
+
+// TestSetupFlashesUnlessTheSame: every case that is not the very same
+// firmware on the same board flashes, and says why.
+func TestSetupFlashesUnlessTheSame(t *testing.T) {
+	cases := []struct {
+		name, info string
+		silent     bool
+		fw         string // the release's version
+		args       []string
+		want       string
+	}{
+		{name: "other version", info: "fw=v0.1.9 board=sticks3", want: "  board runs gogo v0.1.9 (sticks3), flashing gogo v0.2.0\n"},
+		{name: "no answer", silent: true, want: "  board firmware unknown (no answer on its console); flashing it\n"},
+		{name: "old firmware", want: "  board firmware unknown (its firmware is older than the info command); flashing it\n"},
+		{name: "dev board", info: "fw=dev board=sticks3", want: "  board firmware unknown (a development build, dev); flashing it\n"},
+		{name: "dirty board", info: "fw=v0.2.0-dirty board=sticks3", want: "  board firmware unknown (a development build, v0.2.0-dirty); flashing it\n"},
+		{name: "other board", info: "fw=v0.2.0 board=cardputer", want: "  board runs gogo v0.2.0 (cardputer), flashing gogo v0.2.0 (sticks3)\n"},
+		{name: "dirty release", info: "fw=v0.2.0-dirty board=sticks3", fw: "v0.2.0-dirty", want: "board firmware unknown"},
+		{name: "unversioned firmware", info: "fw=v0.2.0 board=sticks3", fw: "-", want: "  board runs gogo v0.2.0 (sticks3), flashing a firmware whose version is unknown\n"},
+		{name: "reflash", info: "fw=v0.2.0 board=sticks3", args: []string{"-reflash"}, want: "  flashing it whatever the board runs (-reflash)\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newSetupBench(t, chipStickS3, "")
+			f.info, f.infoSilent = c.info, c.silent
+			if c.fw == "-" {
+				f.fwVersion = ""
+			} else if c.fw != "" {
+				f.fwVersion = c.fw
+			}
+			f.writeRelease()
+			if err := f.run(append([]string{"-yes", "-skip-wifi", "-release-url", f.release}, c.args...)...); err != nil {
+				t.Fatalf("%v\n%s", err, f.out)
+			}
+			if w := f.firmwareWrites(); len(w) != 1 {
+				t.Fatalf("firmware writes %q\n%s", w, f.out)
+			}
+			if !strings.Contains(f.out.String(), c.want) {
+				t.Errorf("output lacks %q:\n%s", c.want, f.out)
+			}
+			if c.name == "reflash" && f.infos != 0 {
+				t.Errorf("-reflash asked the board %d times", f.infos)
+			}
+			checkNoNVSWrite(t, f.writeFlashLines())
+		})
+	}
+}
+
+// TestSetupLocalDirtyBuildFlashes: a local build of uncommitted changes
+// is always flashed, whatever the board says.
+func TestSetupLocalDirtyBuildFlashes(t *testing.T) {
+	f := newSetupBench(t, chipStickS3, "")
+	localBench(t, f)
+	f.fwVersion = "v0.2.0-3-gabc1234-dirty"
+	f.info = "fw=v0.2.0-3-gabc1234-dirty board=sticks3"
+	if err := f.run("-yes", "-skip-wifi", "-offline"); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if w := f.firmwareWrites(); len(w) != 1 {
+		t.Fatalf("firmware writes %q", w)
+	}
+	// a clean local build of the commit the board runs is skipped
+	g := newSetupBench(t, chipStickS3, "")
+	localBench(t, g)
+	g.fwVersion = "v0.2.0-3-gabc1234"
+	g.info = "fw=v0.2.0-3-gabc1234 board=sticks3"
+	if err := g.run("-yes", "-skip-wifi", "-offline"); err != nil {
+		t.Fatalf("%v\n%s", err, g.out)
+	}
+	if w := g.firmwareWrites(); len(w) != 0 {
+		t.Fatalf("firmware writes %q", w)
+	}
+}
+
+// TestSetupDryRunSaysWhetherItFlashes: -dry-run asks the board (a read)
+// and reports a skip, or the command it would run.
+func TestSetupDryRunSaysWhetherItFlashes(t *testing.T) {
+	f := newSetupBench(t, chipCardputer, "")
+	f.info = "fw=v0.2.0 board=cardputer"
+	f.writeRelease()
+	if err := f.run("-yes", "-dry-run", "-skip-wifi", "-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	out := f.out.String()
+	if !strings.Contains(out, "the board already runs gogo v0.2.0 (cardputer); not reflashing") ||
+		strings.Contains(out, "write-flash --flash-mode") {
+		t.Errorf("dry run of the same firmware:\n%s", out)
+	}
+	g := newSetupBench(t, chipCardputer, "")
+	g.info = "fw=v0.1.0 board=cardputer"
+	g.writeRelease()
+	if err := g.run("-yes", "-dry-run", "-skip-wifi", "-release-url", g.release); err != nil {
+		t.Fatalf("%v\n%s", err, g.out)
+	}
+	out = g.out.String()
+	if !strings.Contains(out, "board runs gogo v0.1.0 (cardputer), flashing gogo v0.2.0") ||
+		!strings.Contains(out, "would run: ") || !strings.Contains(out, "write-flash --flash-mode dio") {
+		t.Errorf("dry run of another firmware:\n%s", out)
+	}
+	if len(f.writeFlashLines())+len(g.writeFlashLines()) != 0 {
+		t.Error("dry run wrote")
+	}
+}
+
+func TestAppVersion(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, b []byte) string {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, b, 0o644)
+		return p
+	}
+	if v := appVersion(write("ok.bin", appImage("v1.2.3", 4096))); v != "v1.2.3" {
+		t.Errorf("version %q", v)
+	}
+	full := appImage(strings.Repeat("x", appVersionLen), 4096) // no NUL: may be cut short
+	for name, b := range map[string][]byte{
+		"blank":    bytes.Repeat([]byte{0xE9}, 4096),
+		"short":    appImage("v1", 4096)[:40],
+		"full":     full,
+		"no magic": append([]byte{0}, appImage("v1", 4096)[1:]...),
+	} {
+		if v := appVersion(write(name, b)); v != "" {
+			t.Errorf("%s: version %q", name, v)
+		}
+	}
+	if v := appVersion(filepath.Join(dir, "missing")); v != "" {
+		t.Errorf("missing: %q", v)
 	}
 }
