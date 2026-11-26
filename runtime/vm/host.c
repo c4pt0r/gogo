@@ -34,10 +34,13 @@ uint32_t vm_random(Vm *vm) {
     return vm->rand_x = x;
 }
 
-/* Without an RTC: unix ms = wall_offset + host_ms. */
+/* Without an RTC: unix ms = wall_offset + host_ms, added in uint64 (a
+ * time set near the int64 limit would overflow) and held at INT64_MAX. */
 int64_t vm_unix_time_ms(const Vm *vm) {
     if (vm->host->unix_time_ms) return vm->host->unix_time_ms(vm->host_ctx);
-    return vm->wall_known ? vm->wall_offset + (int64_t)host_ms(vm) : 0;
+    if (!vm->wall_known) return 0;
+    uint64_t t = (uint64_t)vm->wall_offset + host_ms(vm);
+    return t > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)t;
 }
 
 int vm_set_unix_time_ms(Vm *vm, int64_t ms) {

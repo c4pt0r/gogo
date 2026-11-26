@@ -93,7 +93,8 @@ uint32_t vm_random(struct Vm *vm);
  *
  * vm_unix_time_ms(vm) returns the current Unix time in ms, or 0 when the
  * time is unknown. It never returns a negative number; a time that is known
- * is always > 0. vm_set_unix_time_ms(vm, ms) makes ms the current time from
+ * is always > 0; it stops at INT64_MAX (a time set near the limit does not
+ * wrap). vm_set_unix_time_ms(vm, ms) makes ms the current time from
  * now on and returns 1; ms < GOGO_BUILD_UNIX_MS (other than ms <= 0) changes
  * nothing and returns 0; ms <= 0 forgets the time (unknown) and returns 1.
  * With a host clock, 1 if the host's set returned 0 (gogo.h's hook
