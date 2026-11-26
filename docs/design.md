@@ -1822,8 +1822,9 @@ objects.
 
 **The extra record** (allocated only when used): `struct ActorExtra` in
 `runtime/vm/signals.c`: a pending exit's reason code and function name,
-links, monitors (of this actor), watching (monitors this actor set up),
-and `charged_words` (the words of pending `SendAfter`s it created, its
+three lists of one node type (links, monitors of this actor, and watching:
+monitors this actor set up; a monitor node adds the Ref serial), and
+`charged_words` (the words of pending `SendAfter`s it created, its
 monitors (entries at both ends plus a reserved `DownMsg`) and its side of
 links (entry plus a reserved `ExitMsg`), which count against its limit
 together with `mbox_words` through `actor_charged_words`).

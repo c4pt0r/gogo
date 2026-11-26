@@ -11,32 +11,31 @@
 #include "bytes.h"
 #include <string.h>
 
-/* One side of a link: a's entry for its peer holds the ExitMsg a sends the
- * peer when a exits, allocated when the link is made. */
+/* One side of a link or of a monitor: a node on one of the three lists of
+ * an actor's extra. L_LINKS (peer = the linked actor) holds the ExitMsg
+ * the actor sends the peer when it exits, allocated when the link is made.
+ * L_MONITORS (peer = the watcher) holds the DownMsg the monitored actor
+ * sends when it exits, allocated when the monitor is made. L_WATCHING
+ * (peer = the monitored actor) holds no message: the node lets Demonitor,
+ * and the watcher's own exit, find the other side. The two monitor lists
+ * hold Monitors, keyed by the Ref serial; links are keyed by the peer. */
 typedef struct Link {
     struct Link *next;
-    term peer;                /* PID of the linked actor */
-    Msg *note;                /* preallocated ExitMsg for peer */
+    term peer;
+    Msg *note;                /* preallocated notice, or NULL (L_WATCHING) */
 } Link;
 
-/* One side of a monitor, keyed by the Ref serial. On the monitored actor's
- * list `monitors` (peer = the watcher) it holds the DownMsg the actor sends
- * when it exits, allocated when the monitor is made. On the watcher's list
- * `watching` (peer = the monitored actor) there is no message: the entry
- * lets Demonitor, and the watcher's own exit, find the other side. */
 typedef struct Monitor {
-    struct Monitor *next;
+    Link l;
     uint64_t serial;
-    term peer;
-    Msg *note;                /* preallocated DownMsg, or NULL on the watcher side */
 } Monitor;
+
+enum { L_LINKS, L_MONITORS, L_WATCHING, L_LISTS };
 
 struct ActorExtra {
     uint32_t exit_code;       /* valid while AF_EXIT_PENDING is set */
     term exit_func;           /* likewise: function name or T_EMPTYSTR */
-    Link *links;
-    Monitor *monitors;        /* watchers of this actor */
-    Monitor *watching;        /* actors this one watches */
+    Link *list[L_LISTS];      /* links, its watchers (monitors), the actors it watches */
     /* Words charged to this actor besides its heap block and mailbox:
      * pending SendAfter timers it created, its monitors (both entries +
      * the preallocated DownMsg) and its side of each link (entry +
@@ -185,20 +184,7 @@ void actor_uncharge(Actor *a, uint32_t words) {
     if (x) x->charged_words -= words;
 }
 
-static void link_free(Vm *vm, Link *l) {
-    if (!l) return;
-    if (l->note) msg_free(vm, l->note);
-    va_free(vm, l, sizeof *l);
-}
-
-static void monitor_free(Vm *vm, Monitor *m) {
-    if (m->note) msg_free(vm, m->note);
-    va_free(vm, m, sizeof *m);
-}
-
-static void drop_watching(Vm *vm, Actor *a);
-static void drop_watchers(Vm *vm, Actor *a);
-static void drop_links(Vm *vm, Actor *a);
+static void unwind(Vm *vm, Actor *a, uint32_t code, term func_name, bool notify);
 
 void actor_extra_free(Vm *vm, Actor *a) {
     ActorExtra *x = a->extra;
@@ -206,53 +192,53 @@ void actor_extra_free(Vm *vm, Actor *a) {
     /* After actor_exit the lists are empty. An actor freed without exiting
      * (never ran) may still hold some: unwind them so no peer keeps an
      * entry naming it or a charge for it. */
-    drop_watchers(vm, a);
-    drop_watching(vm, a);
-    drop_links(vm, a);
+    unwind(vm, a, 0, T_EMPTYSTR, false);
     bytes_actor_exit(vm, a);
     va_free(vm, x, sizeof(ActorExtra));
     a->extra = NULL;
 }
 
-/* ---- ExitMsg blocks ---- */
+/* ---- notices ---- */
 
-/* An ExitMsg as a message block, laid out as msg_build would copy it, refs
- * relative to data: [0..3] ExitMsg{From, Reason → 4}; [4..7] Reason{Code,
- * Func}; [8..9] a K_INT box Code points at when the code does not fit a
- * small int (unused otherwise). Fixed size, so it can be preallocated. */
+/* An ExitMsg or a DownMsg as a message block, laid out as msg_build would
+ * copy it, refs relative to data; `at` is the struct's size and tells
+ * them apart. ExitMsg (at 4, NOTE_WORDS): [0..3] ExitMsg{From, Reason ->
+ * 4}. DownMsg (at 5, DOWN_WORDS): [0..4] DownMsg{Ref -> 11, From, Reason
+ * -> 5}, [11..13] the K_REF. Both: [at..at+3] Reason{Code, Func},
+ * [at+4..at+5] a K_INT box Code points at when the code does not fit a
+ * small int (unused otherwise). Fixed size, so it can be preallocated;
+ * From, the Reason and the Ref are filled in when it is sent. */
+#define AT_EXIT 4u
+#define AT_DOWN 5u
 #define NOTE_WORDS 10u
+#define DOWN_WORDS 14u
 
-/* The Reason sub-block shared by ExitMsg and DownMsg blocks, at d[at..at+5]:
- * [at..at+3] Reason{Code, Func}, [at+4..at+5] a K_INT box Code points at
- * when the code does not fit a small int (unused otherwise). */
-static void reason_init(uint32_t *d, uint32_t at) {
-    d[at] = hdr_make(4, K_STRUCT);
-    d[at + 1] = TYPE_REASON;
-    d[at + 2] = term_from_int(0);
-    d[at + 3] = T_EMPTYSTR;
-    d[at + 4] = hdr_make(2, K_INT);
-    d[at + 5] = 0;
-}
-
-static void reason_set(uint32_t *d, uint32_t at, uint32_t code, term func_name) {
-    int32_t c = (int32_t)code;
-    d[at + 2] = term_int_fits(c) ? term_from_int(c) : term_from_ref(at + 4);
-    d[at + 3] = func_name;
-    d[at + 5] = code;
-}
-
-static Msg *note_new(Vm *vm) {
-    Msg *m = va_alloc(vm, msg_alloc_bytes(NOTE_WORDS));
+static inline Msg *note_new(Vm *vm, uint32_t at) {
+    uint32_t words = at == AT_EXIT ? NOTE_WORDS : DOWN_WORDS;
+    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
     if (!m) return NULL;
     m->next = NULL;
-    m->words = NOTE_WORDS;
+    m->words = (uint16_t)words;
     m->flags = 0;
     m->root = term_from_ref(0);
-    m->data[0] = hdr_make(4, K_STRUCT);
-    m->data[1] = TYPE_EXITMSG;
-    m->data[2] = T_NIL;
-    m->data[3] = term_from_ref(4);
-    reason_init(m->data, 4);
+    uint32_t *d = m->data, *r = d + at;
+    d[0] = hdr_make(at, K_STRUCT);
+    if (at == AT_EXIT) {
+        d[1] = TYPE_EXITMSG;
+        d[2] = T_NIL;
+    } else {
+        d[1] = TYPE_DOWNMSG;
+        d[2] = term_from_ref(11);
+        d[3] = T_NIL;
+        d[11] = hdr_make(3, K_REF);
+    }
+    r[-1] = term_from_ref(at);
+    r[0] = hdr_make(4, K_STRUCT);
+    r[1] = TYPE_REASON;
+    r[2] = term_from_int(0);
+    r[3] = T_EMPTYSTR;
+    r[4] = hdr_make(2, K_INT);
+    r[5] = 0;
     return m;
 }
 
@@ -264,59 +250,38 @@ static term func_for(const Vm *vm, const Actor *to, term f) {
     return term_is_const(f) && (f & MOD_TAG_MASK) != module_tag(vm, to->mod) ? T_EMPTYSTR : f;
 }
 
-static void note_fill(Msg *m, term from, uint32_t code, term func_name) {
-    m->data[2] = from;
-    reason_set(m->data, 4, code, func_name);
+/* Fills notice m (From, Reason) and queues it for `to`: with quota as an
+ * ordinary message, without as a preallocated one (guaranteed). */
+static void note_send(Vm *vm, Actor *to, Msg *m, uint32_t at, term from, uint32_t code, term func_name,
+                      bool quota) {
+    uint32_t *d = m->data;
+    int32_t c = (int32_t)code;
+    d[at - 2] = from;
+    d[at + 2] = term_int_fits(c) ? term_from_int(c) : term_from_ref(at + 4);
+    d[at + 3] = func_for(vm, to, func_name);
+    d[at + 5] = code;
+    msg_enqueue(vm, to, m, quota);
 }
 
-/* A DownMsg as a message block, same style: [0..4] DownMsg{Ref → 11, From,
- * Reason → 5}; [5..8] Reason{Code, Func}; [9..10] the K_INT box for a code
- * that does not fit a small int; [11..13] the K_REF. Fixed size. */
-#define DOWN_WORDS 14u
-
-static Msg *down_new(Vm *vm) {
-    Msg *m = va_alloc(vm, msg_alloc_bytes(DOWN_WORDS));
-    if (!m) return NULL;
-    m->next = NULL;
-    m->words = DOWN_WORDS;
-    m->flags = 0;
-    m->root = term_from_ref(0);
-    m->data[0] = hdr_make(5, K_STRUCT);
-    m->data[1] = TYPE_DOWNMSG;
-    m->data[2] = term_from_ref(11);
-    m->data[3] = T_NIL;
-    m->data[4] = term_from_ref(5);
-    reason_init(m->data, 5);
-    m->data[11] = hdr_make(3, K_REF);
-    m->data[12] = 0;
-    m->data[13] = 0;
-    return m;
-}
-
-/* The parts of a DownMsg known when the monitor is made. */
-static void down_set_ref(Msg *m, uint64_t serial, term from) {
-    m->data[3] = from;
+/* The Ref of a DownMsg, known when the monitor is made. */
+static void down_set_ref(Msg *m, uint64_t serial) {
     m->data[12] = (uint32_t)serial;
     m->data[13] = (uint32_t)(serial >> 32);
 }
 
-static void down_set_reason(Msg *m, uint32_t code, term func_name) {
-    reason_set(m->data, 5, code, func_name);
-}
-
 /* ---- charges ---- */
 
-/* What one link side costs its owner: the entry and the preallocated
- * ExitMsg it holds. */
-static uint32_t link_words(void) {
-    return WORDS_OF(Link) + msg_footprint_words(NOTE_WORDS);
-}
-
-/* What one monitor costs the watcher: both entries and the preallocated
- * DownMsg (all made for the watcher's benefit). */
-static uint32_t monitor_words(void) {
-    return 2u * WORDS_OF(Monitor) + msg_footprint_words(DOWN_WORDS);
-}
+/* What a node on list `which` is charged to the list's actor. A link side
+ * costs its owner the node and the preallocated ExitMsg it holds; a
+ * monitor costs the watcher both nodes and the preallocated DownMsg (all
+ * made for the watcher's benefit), charged with its L_WATCHING node. */
+#define FOOTPRINT(w) ((uint32_t)((sizeof(Msg) + (w) * 4u + 3u) / 4u))   /* msg_footprint_words */
+static const uint8_t node_words_of[L_LISTS] = {
+    WORDS_OF(Link) + FOOTPRINT(NOTE_WORDS), 0u, 2u * WORDS_OF(Monitor) + FOOTPRINT(DOWN_WORDS)
+};
+static const uint8_t node_size_of[L_LISTS] = { sizeof(Link), sizeof(Monitor), sizeof(Monitor) };
+#define node_words(which) ((uint32_t)node_words_of[which])
+#define node_size(which) ((size_t)node_size_of[which])
 
 /* ---- crash report ---- */
 
@@ -371,56 +336,93 @@ static void report_crash(const Vm *vm, const Actor *a, uint32_t code, term func_
     out_flush(&o);
 }
 
-/* ---- links ---- */
+/* ---- links and monitors ---- */
 
-/* The link in a's list naming pid, as the pointer that holds it. */
-static Link **link_slot(const Actor *a, term pid) {
-    ActorExtra *x = a->extra;
+/* The node of a's list `which` for pid (links) or serial (monitors), as
+ * the pointer that holds it; NULL if there is none (or a is NULL). */
+static inline Link **node_slot(const Actor *a, uint32_t which, term pid, uint64_t serial) {
+    ActorExtra *x = a ? a->extra : NULL;
     if (!x) return NULL;
-    Link **pl = &x->links;
-    while (*pl && (*pl)->peer != pid) pl = &(*pl)->next;
-    return *pl ? pl : NULL;
+    for (Link **pl = &x->list[which]; *pl; pl = &(*pl)->next) {
+        if (which == L_LINKS ? (*pl)->peer == pid : ((Monitor *)*pl)->serial == serial) return pl;
+    }
+    return NULL;
 }
 
-/* Removes a's link to pid, freeing its entry and preallocated message,
- * and releases a's charge for it. */
-static void link_remove(Vm *vm, Actor *a, term pid) {
-    Link **pl = link_slot(a, pid);
+static inline void node_free(Vm *vm, Link *l, uint32_t which) {
+    if (!l) return;
+    if (l->note) msg_free(vm, l->note);
+    va_free(vm, l, node_size(which));
+}
+
+/* Removes that node, freeing it and its preallocated message, and
+ * releases a's charge for it. Nothing if there is none (or a is NULL). */
+static void node_remove(Vm *vm, Actor *a, uint32_t which, term pid, uint64_t serial) {
+    Link **pl = node_slot(a, which, pid, serial);
     if (!pl) return;
     Link *l = *pl;
     *pl = l->next;
-    link_free(vm, l);
-    actor_uncharge(a, link_words());
+    node_free(vm, l, which);
+    actor_uncharge(a, node_words(which));
 }
 
-bool sig_is_linked(const Actor *a, term pid) {
-    return link_slot(a, pid) != NULL;
-}
-
-static Link *link_new(Vm *vm, term peer) {
-    Link *l = va_alloc(vm, sizeof *l);
+/* A node for list `which`, with its preallocated notice if the list holds
+ * one (a DownMsg gets its Ref now). NULL if out of memory. */
+static inline Link *node_new(Vm *vm, uint32_t which, term peer, uint64_t serial) {
+    Link *l = va_alloc(vm, node_size(which));
     if (!l) return NULL;
     l->next = NULL;
     l->peer = peer;
-    l->note = note_new(vm);
-    if (!l->note) {
-        va_free(vm, l, sizeof *l);
-        return NULL;
+    l->note = NULL;
+    if (which != L_LINKS) ((Monitor *)l)->serial = serial;
+    if (which != L_WATCHING) {
+        l->note = note_new(vm, which == L_LINKS ? AT_EXIT : AT_DOWN);
+        if (!l->note) {
+            va_free(vm, l, node_size(which));
+            return NULL;
+        }
+        if (which == L_MONITORS) down_set_ref(l->note, serial);
     }
     return l;
+}
+
+static inline void node_push(ActorExtra *x, uint32_t which, Link *l) {
+    l->next = x->list[which];
+    x->list[which] = l;
+    x->charged_words += node_words(which);
+}
+
+bool sig_is_linked(const Actor *a, term pid) {
+    return node_slot(a, L_LINKS, pid, 0) != NULL;
 }
 
 /* Exit signal `code` (no function name) from `from` reaching t. */
 static bool exit_signal(Vm *vm, Actor *t, term from, uint32_t code) {
     if (t->flags & AF_EXIT_PENDING) return true;
     if ((t->flags & AF_TRAP_EXIT) && code != R_KILLED) {
-        Msg *m = note_new(vm);
+        Msg *m = note_new(vm, AT_EXIT);
         if (!m) return false;
-        note_fill(m, from, code, T_EMPTYSTR);
-        msg_enqueue(vm, t, m, true);
+        note_send(vm, t, m, AT_EXIT, from, code, T_EMPTYSTR, true);
         return true;
     }
     actor_mark_exit(vm, t, code, T_EMPTYSTR);
+    return true;
+}
+
+/* Makes the pair of nodes that is a link or a monitor: wa on a's list
+ * (charged to a, which must fit it), wp on p's. False, with nothing made
+ * or charged, if out of memory or over a's limit. */
+static bool pair_new(Vm *vm, Actor *a, uint32_t wa, Actor *p, uint32_t wp, uint64_t serial) {
+    if (!charge_fits(a, node_words(wa))) return false;
+    Link *la = node_new(vm, wa, p->id, serial), *lp = node_new(vm, wp, a->id, serial);
+    ActorExtra *xa = extra_get(vm, a, false), *xp = extra_get(vm, p, false);
+    if (!la || !lp || !xa || !xp) {
+        node_free(vm, la, wa);
+        node_free(vm, lp, wp);
+        return false;     /* an extra allocated here stays; freed with its actor */
+    }
+    node_push(xa, wa, la);
+    node_push(xp, wp, lp);   /* a link: even past p's limit, see signals.h */
     return true;
 }
 
@@ -430,27 +432,13 @@ bool sig_link(Vm *vm, Actor *a, term pid) {
     const VmDist *d = p ? NULL : vm_dist_of(vm, pid);
     if (d) return d->link(vm, a, pid, true);
     if (!p || p->state == A_EXITED) return exit_signal(vm, a, pid, R_NO_PROC);
-    if (!charge_fits(a, link_words())) return false;
-    Link *la = link_new(vm, pid), *lp = link_new(vm, a->id);
-    ActorExtra *xa = extra_get(vm, a, false), *xp = extra_get(vm, p, false);
-    if (!la || !lp || !xa || !xp) {
-        link_free(vm, la);
-        link_free(vm, lp);
-        return false;     /* an extra allocated here stays; freed with its actor */
-    }
-    la->next = xa->links;
-    xa->links = la;
-    lp->next = xp->links;
-    xp->links = lp;
-    xa->charged_words += link_words();
-    xp->charged_words += link_words();   /* even past p's limit: see signals.h */
-    return true;
+    return pair_new(vm, a, L_LINKS, p, L_LINKS, 0);
 }
 
 void sig_unlink(Vm *vm, Actor *a, term pid) {
-    link_remove(vm, a, pid);
+    node_remove(vm, a, L_LINKS, pid, 0);
     Actor *p = actor_lookup(vm, pid);
-    if (p) link_remove(vm, p, a->id);
+    if (p) node_remove(vm, p, L_LINKS, a->id, 0);
     else if (vm_dist_of(vm, pid)) vm->dist->link(vm, a, pid, false);
 }
 
@@ -468,44 +456,6 @@ void sig_set_trap(Actor *a, bool on) {
     else a->flags = (uint8_t)(a->flags & ~AF_TRAP_EXIT);
 }
 
-/* ---- monitors ---- */
-
-/* The entry for `serial` in a list, as the pointer that holds it. */
-static Monitor **monitor_slot(Monitor **head, uint64_t serial) {
-    Monitor **pm = head;
-    while (*pm && (*pm)->serial != serial) pm = &(*pm)->next;
-    return *pm ? pm : NULL;
-}
-
-/* Removes and frees the entry for `serial` (and its message, if any).
- * False if there was none. */
-static bool monitor_remove(Vm *vm, Monitor **head, uint64_t serial) {
-    Monitor **pm = monitor_slot(head, serial);
-    if (!pm) return false;
-    Monitor *m = *pm;
-    *pm = m->next;
-    monitor_free(vm, m);
-    return true;
-}
-
-/* Drops w's watching entry for `serial` and, if it had one, releases the
- * monitor's charge (w is the watcher, found by a generation-checked
- * lookup, or NULL). */
-static void watcher_forget(Vm *vm, Actor *w, uint64_t serial) {
-    if (w && w->extra && monitor_remove(vm, &((ActorExtra *)w->extra)->watching, serial))
-        actor_uncharge(w, monitor_words());
-}
-
-static Monitor *monitor_new(Vm *vm, term peer, uint64_t serial, Msg *note) {
-    Monitor *m = va_alloc(vm, sizeof *m);
-    if (!m) return NULL;
-    m->next = NULL;
-    m->serial = serial;
-    m->peer = peer;
-    m->note = note;
-    return m;
-}
-
 term sig_monitor(Vm *vm, Actor *a, term pid) {
     uint64_t serial = vm->next_ref;
     term ref = heap_new_ref(vm, a);
@@ -515,146 +465,64 @@ term sig_monitor(Vm *vm, Actor *a, term pid) {
     const VmDist *d = t ? NULL : vm_dist_of(vm, pid);
     if (d) return d->monitor(vm, a, pid, serial) ? ref : T_NIL;
     if (!t || t->state == A_EXITED) {
-        Msg *m = down_new(vm);
+        Msg *m = note_new(vm, AT_DOWN);
         if (!m) return T_NIL;
-        down_set_ref(m, serial, pid);
-        down_set_reason(m, R_NO_PROC, T_EMPTYSTR);
+        down_set_ref(m, serial);
         if (a->flags & AF_EXIT_PENDING) msg_free(vm, m);
-        else msg_enqueue(vm, a, m, true);
+        else note_send(vm, a, m, AT_DOWN, pid, R_NO_PROC, T_EMPTYSTR, true);
         return ref;
     }
-    if (!charge_fits(a, monitor_words())) return T_NIL;
-    Msg *note = down_new(vm);
-    Monitor *mt = note ? monitor_new(vm, a->id, serial, note) : NULL;
-    Monitor *mw = monitor_new(vm, pid, serial, NULL);
-    ActorExtra *xa = extra_get(vm, a, false), *xt = extra_get(vm, t, false);
-    if (!mt || !mw || !xa || !xt) {
-        if (mt) monitor_free(vm, mt);
-        else if (note) msg_free(vm, note);
-        if (mw) monitor_free(vm, mw);
-        return T_NIL;     /* an extra allocated here stays; freed with its actor */
-    }
-    down_set_ref(note, serial, pid);
-    mt->next = xt->monitors;
-    xt->monitors = mt;
-    mw->next = xa->watching;
-    xa->watching = mw;
-    xa->charged_words += monitor_words();
-    return ref;
+    return pair_new(vm, a, L_WATCHING, t, L_MONITORS, serial) ? ref : T_NIL;
 }
 
 void sig_demonitor(Vm *vm, Actor *a, uint64_t serial) {
     if (vm->dist) vm->dist->demonitor(vm, a, serial);
+    Link **pl = node_slot(a, L_WATCHING, 0, serial);
+    if (!pl) return;
+    node_remove(vm, actor_lookup(vm, (*pl)->peer), L_MONITORS, 0, serial);
+    node_remove(vm, a, L_WATCHING, 0, serial);
+}
+
+/* Empties a's three lists, in this order: links, watchers, watched. Each
+ * peer's own node for a goes first, so no list ever names a dead actor,
+ * and both sides' charges end. With notify (a is exiting with
+ * code/func_name): a linked actor that traps exits gets its preallocated
+ * ExitMsg, any other is marked to exit too (unless code is Normal); every
+ * watcher gets its preallocated DownMsg (whatever the code, never
+ * cascading; several monitors deliver newest first). A peer already
+ * marked for exit gets nothing. Without notify (a goes away without
+ * exiting, actor_extra_free) nothing is sent. Every preallocated block is
+ * queued or freed here exactly once. */
+static void unwind(Vm *vm, Actor *a, uint32_t code, term func_name, bool notify) {
     ActorExtra *x = a->extra;
     if (!x) return;
-    Monitor **pm = monitor_slot(&x->watching, serial);
-    if (!pm) return;
-    Actor *t = actor_lookup(vm, (*pm)->peer);
-    if (t && t->extra) monitor_remove(vm, &((ActorExtra *)t->extra)->monitors, serial);
-    monitor_remove(vm, &x->watching, serial);
-    actor_uncharge(a, monitor_words());
-}
-
-/* a is exiting with code/func_name: hand each watcher its preallocated
- * DownMsg (whatever the code, never cascading), dropping the watcher's own
- * entry first. A watcher already marked for exit gets nothing. Every block
- * is queued or freed here exactly once. */
-static void signal_monitors(Vm *vm, Actor *a, uint32_t code, term func_name) {
-    ActorExtra *x = a->extra;
-    Monitor *m = x ? x->monitors : NULL;
-    if (x) x->monitors = NULL;
-    while (m) {
-        Monitor *next = m->next;
-        Msg *note = m->note;
-        Actor *w = actor_lookup(vm, m->peer);
-        watcher_forget(vm, w, m->serial);      /* the charge ends here */
-        va_free(vm, m, sizeof *m);
-        if (w && !(w->flags & AF_EXIT_PENDING)) {
-            down_set_reason(note, code, func_for(vm, w, func_name));
-            msg_enqueue(vm, w, note, false);   /* guaranteed: no quota */
-        } else {
-            msg_free(vm, note);
+    for (uint32_t which = 0; which < L_LISTS; which++) {
+        /* The list on the peer that holds the other side. */
+        uint32_t other = which == L_LINKS ? L_LINKS : which ^ (L_MONITORS ^ L_WATCHING);
+        Link *l = x->list[which];
+        x->list[which] = NULL;
+        while (l) {
+            Link *next = l->next;
+            Msg *note = l->note;
+            Actor *p = actor_lookup(vm, l->peer);
+            node_remove(vm, p, other, a->id, which == L_LINKS ? 0 : ((Monitor *)l)->serial);
+            va_free(vm, l, node_size(which));
+            actor_uncharge(a, node_words(which));
+            bool cascade = which == L_LINKS && !(p && (p->flags & AF_TRAP_EXIT));
+            if (note && notify && p && !cascade && !(p->flags & AF_EXIT_PENDING)) {
+                note_send(vm, p, note, which == L_LINKS ? AT_EXIT : AT_DOWN, a->id, code, func_name, false);
+            } else {
+                if (note) msg_free(vm, note);
+                /* The cascade keeps a's func_name, possibly of another module
+                 * than p's (M-6, intended): it only travels on as a tagged
+                 * const. p's crash report reads it through the module table
+                 * (no name once that module is gone), and p's own notices
+                 * pass it through func_for per receiver, so it never reaches
+                 * an actor of another module. */
+                if (cascade && notify && p && code != R_NORMAL) actor_mark_exit(vm, p, code, func_name);
+            }
+            l = next;
         }
-        m = next;
-    }
-}
-
-/* a is exiting: it no longer watches anyone, so remove each monitored
- * actor's entry (and free its message). */
-static void drop_watching(Vm *vm, Actor *a) {
-    ActorExtra *x = a->extra;
-    Monitor *m = x ? x->watching : NULL;
-    if (x) x->watching = NULL;
-    while (m) {
-        Monitor *next = m->next;
-        Actor *t = actor_lookup(vm, m->peer);
-        if (t && t->extra) monitor_remove(vm, &((ActorExtra *)t->extra)->monitors, m->serial);
-        va_free(vm, m, sizeof *m);
-        actor_uncharge(a, monitor_words());
-        m = next;
-    }
-}
-
-/* a goes away without exiting (actor_extra_free): its watchers' entries
- * and charges go, and no DownMsg is sent. */
-static void drop_watchers(Vm *vm, Actor *a) {
-    ActorExtra *x = a->extra;
-    Monitor *m = x ? x->monitors : NULL;
-    if (x) x->monitors = NULL;
-    while (m) {
-        Monitor *next = m->next;
-        watcher_forget(vm, actor_lookup(vm, m->peer), m->serial);
-        monitor_free(vm, m);
-        m = next;
-    }
-}
-
-/* a goes away without exiting: each peer's entry for a (and its charge)
- * goes, a's own entries are freed, and no signal is sent. */
-static void drop_links(Vm *vm, Actor *a) {
-    ActorExtra *x = a->extra;
-    Link *l = x ? x->links : NULL;
-    if (x) x->links = NULL;
-    while (l) {
-        Link *next = l->next;
-        Actor *p = actor_lookup(vm, l->peer);
-        if (p) link_remove(vm, p, a->id);
-        link_free(vm, l);
-        actor_uncharge(a, link_words());
-        l = next;
-    }
-}
-
-/* a is exiting with code/func_name: hand each linked actor its
- * preallocated ExitMsg if it traps exits, else mark it to exit too (unless
- * code is Normal). Each peer's own entry for a goes first, so no list ever
- * names a dead actor. Every preallocated block is either queued or freed
- * here exactly once. */
-static void signal_links(Vm *vm, Actor *a, uint32_t code, term func_name) {
-    ActorExtra *x = a->extra;
-    Link *l = x ? x->links : NULL;
-    if (x) x->links = NULL;
-    while (l) {
-        Link *next = l->next;
-        Msg *note = l->note;
-        Actor *p = actor_lookup(vm, l->peer);
-        va_free(vm, l, sizeof *l);
-        actor_uncharge(a, link_words());
-        if (p) link_remove(vm, p, a->id);      /* releases p's charge */
-        if (p && (p->flags & AF_TRAP_EXIT) && !(p->flags & AF_EXIT_PENDING)) {
-            note_fill(note, a->id, code, func_for(vm, p, func_name));
-            msg_enqueue(vm, p, note, false);   /* guaranteed: no quota */
-        } else {
-            msg_free(vm, note);
-            /* The cascade keeps a's func_name, possibly of another module
-             * than p's (M-6, intended): it only travels on as a tagged
-             * const. p's crash report reads it through the module table
-             * (no name once that module is gone), and p's own notices
-             * pass it through func_for per receiver, so it never reaches
-             * an actor of another module. */
-            if (p && code != R_NORMAL) actor_mark_exit(vm, p, code, func_name);
-        }
-        l = next;
     }
 }
 
@@ -664,9 +532,7 @@ void actor_exit(Vm *vm, Actor *a, uint32_t code, term func_name) {
     if (code != R_NORMAL && code != R_SHUTDOWN) report_crash(vm, a, code, func_name);
     a->state = A_EXITED;
     port_close_owned(vm, a->id);       /* before any notification goes out */
-    signal_links(vm, a, code, func_name);
-    signal_monitors(vm, a, code, func_name);
-    drop_watching(vm, a);
+    unwind(vm, a, code, func_name, true);
     if (vm->dist) vm->dist->exited(vm, a, code);   /* its remote links and monitors */
     names_drop_actor(vm, a->id);       /* frees only; cannot fail */
     timer_cancel_actor(vm, a);         /* its wakeup and SendAfters to it */
