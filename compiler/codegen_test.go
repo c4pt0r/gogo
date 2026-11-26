@@ -582,24 +582,30 @@ func TestCompileReservedTypes(t *testing.T) {
 		t.Errorf("no TYPEIS with type id %d", TypeOwnBase)
 	}
 	// Using actor types emits the reserved rows up to the highest used
-	// (Reason, 1), at their fixed indices, before the own types.
+	// (Reason, 1), at their fixed indices, before the own types; a row
+	// the program does not use (ProcInfo) has 0 fields.
 	img = compileImage(t, "package main\nimport \"gogo/actor\"\ntype U struct{ A int }\nfunc main() {\n\tu := U{1}\n\tvar r actor.Reason\n\tprintln(u, r)\n}\n")
-	if got := imageTypes(t, img); strings.Join(got, " ") != "ProcInfo/1 Reason/2 U/1" {
-		t.Fatalf("types %v, want ProcInfo/1 Reason/2 U/1", got)
+	if got := imageTypes(t, img); strings.Join(got, " ") != "ProcInfo/0 Reason/2 U/1" {
+		t.Fatalf("types %v, want ProcInfo/0 Reason/2 U/1", got)
 	}
 	if w := words(img); w[7] != 2 {
 		t.Errorf("n_reserved %d, want 2", w[7])
 	}
-	// The last reserved type brings every row.
+	// The last reserved type brings every row, the others with 0 fields.
 	img = compileImage(t, "package main\nimport \"gogo/port\"\nfunc main() {\n\tvar p port.Post\n\tprintln(p.Kind)\n}\n")
-	if got := imageTypes(t, img); strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("types %v, want %v", got, want)
+	var empty []string
+	for _, w := range want[:len(want)-1] {
+		empty = append(empty, w[:strings.Index(w, "/")]+"/0")
+	}
+	if got := imageTypes(t, img); strings.Join(got, " ") != strings.Join(append(empty, "port.Post/2"), " ") {
+		t.Fatalf("types %v, want %v then port.Post/2", got, empty)
 	}
 }
 
 // TestImageMinorStamp: an image is stamped with the highest minor among
-// what it uses (opcodes, builtins, reserved rows), 0 when nothing newer
-// than 15.0 is used.
+// what it uses (opcodes, builtins, reserved types), 0 when nothing newer
+// than 15.0 is used. A reserved row it carries but does not use counts
+// for nothing.
 func TestImageMinorStamp(t *testing.T) {
 	src := "package main\nimport \"gogo/sys\"\nfunc main() {\n\tprintln(sys.Random())\n}\n"
 	if v := words(compileImage(t, src))[1]; v != 15<<16 {
@@ -616,8 +622,28 @@ func TestImageMinorStamp(t *testing.T) {
 		t.Errorf("version %s, want 15.0 (no reserved row)", VersionString(v))
 	}
 	src = "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar o actor.Options\n\tprintln(o.MaxMemory)\n}\n"
+	if v := words(compileImage(t, src))[1]; v != 15<<16 {
+		t.Errorf("version %s, want 15.0 (the Reason row comes with Options, unused)", VersionString(v))
+	}
+	typeMinor["Options"] = 1
 	if v := words(compileImage(t, src))[1]; v != 15<<16|1 {
-		t.Errorf("version %s, want 15.1 (the Reason row comes with Options)", VersionString(v))
+		t.Errorf("version %s, want 15.1 (Options used)", VersionString(v))
+	}
+	clear(typeMinor)
+	// The review's case: a program that uses only port.Done, after a
+	// pretend field was appended to a lower reserved type (kbd.Config).
+	done := "package main\nimport (\n\t\"gogo/actor\"\n\t\"gogo/port\"\n)\nfunc main() {\n\tswitch m := actor.Receive().(type) {\n\tcase port.Done:\n\t\tprintln(m.Seq)\n\t}\n}\n"
+	typeMinor["kbd.Config"] = 1
+	img := compileImage(t, done)
+	if v := words(img)[1]; v != 15<<16 {
+		t.Errorf("version %s, want 15.0 (kbd.Config not used)", VersionString(v))
+	}
+	if got := imageTypes(t, img); got[TypeKbdConfig] != "kbd.Config/0" || got[TypeDone] != "port.Done/1" {
+		t.Errorf("rows %v: want kbd.Config/0 and port.Done/1", got)
+	}
+	typeMinor["port.Done"] = 2
+	if v := words(compileImage(t, done))[1]; v != 15<<16|2 {
+		t.Errorf("version %s, want 15.2 (port.Done used)", VersionString(v))
 	}
 	clear(typeMinor)
 	opMinor[OpGetfield] = 3
@@ -1164,7 +1190,7 @@ func Idle() {}
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1"
+	want := "ProcInfo/0 Reason/0 ExitMsg/0 DownMsg/0 Request/0 Options/1"
 	if got := strings.Join(imageTypes(t, img), " "); !strings.HasPrefix(got, want+" ") || !strings.Contains(got, "lib.Spec/1") || !strings.Contains(got, "P/1") {
 		t.Fatalf("types %s, want %s then P/1 and lib.Spec/1", got, want)
 	}
@@ -1295,7 +1321,7 @@ func main() {
 }
 `
 	img := compileImage(t, src)
-	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1 port.GPIO/4 port.Write/1 port.Edge/2"
+	want := "ProcInfo/0 Reason/0 ExitMsg/0 DownMsg/0 Request/0 Options/0 port.GPIO/4 port.Write/1 port.Edge/2"
 	if got := strings.Join(imageTypes(t, img), " "); got != want {
 		t.Fatalf("types %s, want %s", got, want)
 	}

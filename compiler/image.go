@@ -86,9 +86,11 @@ type ImageBuilder struct {
 	// reserved holds a row for every reserved type (AddReservedType, in
 	// index order); only the first nReserved are written, where
 	// nReserved is one more than the highest reserved type the program
-	// uses (UseType, or named by a NEWSTRUCT or TYPEIS in the code).
+	// uses (UseType, or named by a NEWSTRUCT, TYPEIS or const struct).
+	// A row the program does not use is written with 0 fields, so it
+	// asks nothing of the VM (see scan).
 	reserved []imgType
-	used     int // highest reserved index UseType marked, plus 1
+	used     map[uint32]bool // reserved indexes UseType marked
 	types    []imgType // own types: index TypeOwnBase + position
 	entry    uint32
 	// The trailer: requirement names (const offsets), and the exported
@@ -164,10 +166,14 @@ func (b *ImageBuilder) AddReservedType(name string, nFields uint32) uint32 {
 }
 
 // UseType marks type idx as used by the program: a reserved type then
-// gets its row (and every lower one) in the image.
+// gets its row with its fields (and every lower one, with none) in the
+// image, and its minor counts.
 func (b *ImageBuilder) UseType(idx uint32) {
-	if idx < TypeOwnBase && int(idx) >= b.used {
-		b.used = int(idx) + 1
+	if idx < TypeOwnBase {
+		if b.used == nil {
+			b.used = map[uint32]bool{}
+		}
+		b.used[idx] = true
 	}
 }
 
@@ -221,11 +227,19 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 		funcWords = append(funcWords, uint32(len(code)), uint32(f.nParams)|uint32(f.nRegs)<<16, f.name)
 		code = append(code, reloc...)
 	}
-	nRes, minor, err := b.scan(code)
+	used, minor, err := b.scan(code)
 	if err != nil {
 		return nil, err
 	}
-	rows := append(append([]imgType(nil), b.reserved[:nRes]...), b.types...)
+	nRes := len(used)
+	var rows []imgType
+	for i, t := range b.reserved[:nRes] {
+		if !used[i] {
+			t.nFields = 0 // not used: any VM that knows the type accepts it
+		}
+		rows = append(rows, t)
+	}
+	rows = append(rows, b.types...)
 	words := []uint32{imageMagic, imageMajor<<16 | uint32(minor), uint32(len(b.funcs)), uint32(len(rows)),
 		uint32(len(b.consts)), uint32(len(code)), b.entry, uint32(nRes)}
 	words = append(words, funcWords...)
@@ -248,14 +262,22 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 	return out, nil
 }
 
-// scan finds the reserved rows the image needs (those UseType marked, and
-// those a NEWSTRUCT or TYPEIS or a const struct names) and the lowest
-// format minor that runs it.
-func (b *ImageBuilder) scan(code []uint32) (nRes int, minor uint16, err error) {
-	nRes = b.used
+// scan finds the reserved types the program uses (those UseType marked,
+// and those a NEWSTRUCT, TYPEIS or const struct names): used[i] for every
+// reserved row the image carries (len(used) is n_reserved). And the lowest
+// format minor that runs the image: the highest among its opcodes,
+// builtins and used reserved types. A row it carries but does not use is
+// written with 0 fields and adds no minor: no VM reads it (NEWSTRUCT and
+// const structs mark their type; TYPEIS and GETFIELD read no row), and
+// the loader accepts any count up to its own.
+func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, err error) {
+	marked := map[uint32]bool{}
+	for t := range b.used {
+		marked[t] = true
+	}
 	mark := func(t uint32) {
-		if t < TypeOwnBase && int(t) >= nRes {
-			nRes = int(t) + 1
+		if t < TypeOwnBase {
+			marked[t] = true
 		}
 	}
 	for pc := 0; pc < len(code); pc++ {
@@ -277,13 +299,19 @@ func (b *ImageBuilder) scan(code []uint32) (nRes int, minor uint16, err error) {
 			mark(b.consts[off+1])
 		}
 	}
+	nRes := 0
+	for t := range marked {
+		nRes = max(nRes, int(t)+1)
+	}
 	if nRes > len(b.reserved) {
-		return 0, 0, fmt.Errorf("image: reserved type %d used but not declared", nRes-1)
+		return nil, 0, fmt.Errorf("image: reserved type %d used but not declared", nRes-1)
 	}
-	for _, t := range b.reserved[:nRes] {
-		minor = max(minor, typeMinor[t.goName])
+	used = make([]bool, nRes)
+	for t := range marked {
+		used[t] = true
+		minor = max(minor, typeMinor[b.reserved[t].goName])
 	}
-	return nRes, minor, nil
+	return used, minor, nil
 }
 
 // constMap is the v7 const map: one bit per const word (bit i%32 of word
