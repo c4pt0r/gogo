@@ -1,0 +1,262 @@
+screen 1 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│> Start     │ Job gogo                │| eRRRRRRRRRRR.e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Reset     │ ░░░░░░░░░░░░░░░░░░░   0%│| e............e.aaaaaaaaaaaaaaaaaaa.....e
+|│  Rename    │                         │| e............e.........................e
+|│  About     │ ticks 0                 │| e............e.........................e
+|│  Quit      │ state stopped           │| e............e.........................e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| arrows Enter Esc                 ready | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+screen 2 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│> Pause     │                         │| eRRRRRRRRRRR.e.........................e
+|│  Reset     │ ░░░░░░░░░░░░░░░░░░░   0%│| e............e.aaaaaaaaaaaaaaaaaaa.....e
+|│  Rename    │                         │| e............e.........................e
+|│  About     │ ticks 0                 │| e............e.........................e
+|│  Quit      │ state stopped           │| e............e.........................e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| arrows Enter Esc                 ready | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+screen 3 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│> Reset     │ ░░░░░░░░░░░░░░░░░░░   0%│| eRRRRRRRRRRR.e.aaaaaaaaaaaaaaaaaaa.....e
+|│  Rename    │                         │| e............e.........................e
+|│  About     │ ticks 0                 │| e............e.........................e
+|│  Quit      │ state stopped           │| e............e.........................e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| arrows Enter Esc                 ready | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+screen 4 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Reset     │ ░░░░░░░░░░░░░░░░░░░   0%│| e............e.aaaaaaaaaaaaaaaaaaa.....e
+|│> Rename    │                         │| eRRRRRRRRRRR.e.........................e
+|│  About     │ ticks 0                 │| e............e.........................e
+|│  Quit      │ state stopped           │| e............e.........................e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| arrows Enter Esc                 ready | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+screen 5 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Res┌ Rename ──────────────────┐   0%│| e.....############################.....e
+|│> Ren│ Name: gogo               │     │| eRRRRR########UUUUUUUUUUUUUUUUU###.....e
+|│  Abo│                          │     │| e.....############################.....e
+|│  Qui└──────────────────────────┘     │| e.....############################.....e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:save Esc:cancel          editing | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+cursor 18 4
+screen 6 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Res┌ Rename ──────────────────┐   0%│| e.....############################.....e
+|│> Ren│ Name: gog                │     │| eRRRRR########UUUUUUUUUUUUUUUUU###.....e
+|│  Abo│                          │     │| e.....############################.....e
+|│  Qui└──────────────────────────┘     │| e.....############################.....e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:save Esc:cancel          editing | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+cursor 17 4
+screen 7 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Res┌ Rename ──────────────────┐   0%│| e.....############################.....e
+|│> Ren│ Name: go                 │     │| eRRRRR########UUUUUUUUUUUUUUUUU###.....e
+|│  Abo│                          │     │| e.....############################.....e
+|│  Qui└──────────────────────────┘     │| e.....############################.....e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:save Esc:cancel          editing | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+cursor 16 4
+screen 8 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Res┌ Rename ──────────────────┐   0%│| e.....############################.....e
+|│> Ren│ Name: g                  │     │| eRRRRR########UUUUUUUUUUUUUUUUU###.....e
+|│  Abo│                          │     │| e.....############################.....e
+|│  Qui└──────────────────────────┘     │| e.....############################.....e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:save Esc:cancel          editing | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+cursor 15 4
+screen 9 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Res┌ Rename ──────────────────┐   0%│| e.....############################.....e
+|│> Ren│ Name:                    │     │| eRRRRR########UUUUUUUUUUUUUUUUU###.....e
+|│  Abo│                          │     │| e.....############################.....e
+|│  Qui└──────────────────────────┘     │| e.....############################.....e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:save Esc:cancel          editing | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+cursor 14 4
+screen 10 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Res┌ Rename ──────────────────┐   0%│| e.....############################.....e
+|│> Ren│ Name: c                  │     │| eRRRRR########UUUUUUUUUUUUUUUUU###.....e
+|│  Abo│                          │     │| e.....############################.....e
+|│  Qui└──────────────────────────┘     │| e.....############################.....e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:save Esc:cancel          editing | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+cursor 15 4
+screen 11 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Res┌ Rename ──────────────────┐   0%│| e.....############################.....e
+|│> Ren│ Name: ce                 │     │| eRRRRR########UUUUUUUUUUUUUUUUU###.....e
+|│  Abo│                          │     │| e.....############################.....e
+|│  Qui└──────────────────────────┘     │| e.....############################.....e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:save Esc:cancel          editing | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+cursor 16 4
+screen 12 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Res┌ Rename ──────────────────┐   0%│| e.....############################.....e
+|│> Ren│ Name: cel                │     │| eRRRRR########UUUUUUUUUUUUUUUUU###.....e
+|│  Abo│                          │     │| e.....############################.....e
+|│  Qui└──────────────────────────┘     │| e.....############################.....e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:save Esc:cancel          editing | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+cursor 17 4
+screen 13 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job gogo                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Res┌ Rename ──────────────────┐   0%│| e.....############################.....e
+|│> Ren│ Name: cell               │     │| eRRRRR########UUUUUUUUUUUUUUUUU###.....e
+|│  Abo│                          │     │| e.....############################.....e
+|│  Qui└──────────────────────────┘     │| e.....############################.....e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:save Esc:cancel          editing | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+cursor 18 4
+screen 14 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job cell                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Reset     │ ░░░░░░░░░░░░░░░░░░░   0%│| e............e.aaaaaaaaaaaaaaaaaaa.....e
+|│> Rename    │                         │| eRRRRRRRRRRR.e.........................e
+|│  About     │ ticks 0                 │| e............e.........................e
+|│  Quit      │ state stopped           │| e............e.........................e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| arrows Enter Esc               renamed | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+screen 15 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job cell                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Reset     │ ░░░░░░░░░░░░░░░░░░░   0%│| e............e.aaaaaaaaaaaaaaaaaaa.....e
+|│  Rename    │                         │| e............e.........................e
+|│> About     │ ticks 0                 │| eRRRRRRRRRRR.e.........................e
+|│  Quit      │ state stopped           │| e............e.........................e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| arrows Enter Esc               renamed | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+screen 16 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job cell                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pa┌ About ─────────────────────┐    │| e....##############################....e
+|│  Re│                            │  0%│| e....##############################....e
+|│  Re│gogo/tui on the screen port │    │| e....##############################....e
+|│> Ab│ 40 x 11 cells, 16 colours  │    │| eRRRR##############################....e
+|│  Qu│                            │    │| e....##############################....e
+|│    └────────────────────────────┘    │| e....##############################....e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| Enter:back                     renamed | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+screen 17 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job cell                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Reset     │ ░░░░░░░░░░░░░░░░░░░   0%│| e............e.aaaaaaaaaaaaaaaaaaa.....e
+|│  Rename    │                         │| e............e.........................e
+|│> About     │ ticks 0                 │| eRRRRRRRRRRR.e.........................e
+|│  Quit      │ state stopped           │| e............e.........................e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| arrows Enter Esc               renamed | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+screen 18 40x11
++----------------------------------------+
+|┌ gogo tuidemo ────────────────────────┐| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+|│  Start     │ Job cell                │| e............e.BBBBBBBBBBBBBBBBBBBBBBBBe
+|│  Pause     │                         │| e............e.........................e
+|│  Reset     │ ░░░░░░░░░░░░░░░░░░░   0%│| e............e.aaaaaaaaaaaaaaaaaaa.....e
+|│  Rename    │                         │| e............e.........................e
+|│  About     │ ticks 0                 │| e............e.........................e
+|│> Quit      │ state stopped           │| eRRRRRRRRRRR.e.........................e
+|│            │                         │| e............e.........................e
+|│            │                         │| e............e.........................e
+|└──────────────────────────────────────┘| eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+| arrows Enter Esc               renamed | RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
++----------------------------------------+
+tuidemo: bye, cell
