@@ -17,15 +17,19 @@ $(FLAGS_STAMP): FORCE
 .PHONY: FORCE
 FORCE:
 
-TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/vm/test/test_term.c runtime/vm/test/test_alloc.c runtime/vm/test/test_image.c runtime/vm/test/test_heap.c runtime/vm/test/test_msg.c runtime/vm/test/test_interp.c runtime/vm/test/test_signals.c runtime/vm/test/test_timer.c runtime/vm/test/test_call.c runtime/vm/test/test_names.c runtime/vm/test/test_out.c runtime/vm/test/test_evq.c runtime/vm/test/test_port.c runtime/vm/test/test_strs.c runtime/vm/test/test_slices.c runtime/vm/test/test_bytes.c runtime/vm/test/test_netlink.c runtime/vm/test/test_module.c runtime/vm/test/test_walltime.c runtime/vm/test/test_step.c
+TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/vm/test/test_term.c runtime/vm/test/test_alloc.c runtime/vm/test/test_image.c runtime/vm/test/test_heap.c runtime/vm/test/test_msg.c runtime/vm/test/test_interp.c runtime/vm/test/test_signals.c runtime/vm/test/test_timer.c runtime/vm/test/test_call.c runtime/vm/test/test_names.c runtime/vm/test/test_out.c runtime/vm/test/test_evq.c runtime/vm/test/test_port.c runtime/vm/test/test_strs.c runtime/vm/test/test_slices.c runtime/vm/test/test_bytes.c runtime/vm/test/test_netlink.c runtime/vm/test/test_module.c runtime/vm/test/test_walltime.c runtime/vm/test/test_step.c runtime/vm/test/test_float.c
 # The net stack (pure C99, chip-independent): linked into every
 # unix build (platform_unix.c lists its drivers and feeds it frames).
 NET_SRCS  = $(wildcard runtime/net/*.c)
 # runtime/stream/ (pure C99): the stream protocol (Chunk / Out / Done) of every byte port.
 STREAM_SRCS = $(wildcard runtime/stream/*.c)
 NET_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/net/test/*.c)
+# runtime/floatlib/ (C99): the float library (gogo/math, strconv.FormatFloat
+# and ParseFloat), linked wherever the VM core is (it is not VM core: `make
+# vmsize` does not count it). Empty when built with -DGOGO_FLOAT=0.
+FLOATLIB_SRCS = $(wildcard runtime/floatlib/*.c)
 # VM core + unix platform + net stack and the stream protocol it speaks, without the unix main (shared with the C tests).
-VM_SRCS   = $(wildcard runtime/vm/*.c) platform/unix/platform_unix.c runtime/gpio/gpio.c platform/unix/gpio_unix.c platform/unix/input_unix.c $(NET_SRCS) $(STREAM_SRCS)
+VM_SRCS   = $(wildcard runtime/vm/*.c) $(FLOATLIB_SRCS) platform/unix/platform_unix.c runtime/gpio/gpio.c platform/unix/gpio_unix.c platform/unix/input_unix.c $(NET_SRCS) $(STREAM_SRCS)
 VM_SRCS  := $(filter-out runtime/vm/check32.c,$(VM_SRCS))
 VM_CORE_SRCS = $(filter-out runtime/vm/check32.c,$(wildcard runtime/vm/*.c))
 # runtime/screen/ (pure C99): the "screen" port's grid and driver; render.c
@@ -66,11 +70,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: float-corpus lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize floatlibsize
 
 vm: $(BUILD)/gogovm
 
@@ -320,9 +324,9 @@ EMBED_PROGS = $(notdir $(wildcard runtime/embed/test/testdata/*))
 EMBED_EXAMPLES = hostecho many_idle httpparse hotload
 EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vfs -Iruntime/vm -Iruntime/vm/test
 
-$(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS) $(wildcard runtime/embed/*.h) $(wildcard runtime/include/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vm/test/*.h)
+$(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(FLOATLIB_SRCS) $(VFS_SRCS) $(wildcard runtime/embed/*.h) $(wildcard runtime/include/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vm/test/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -DGOGO_EMBED $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS)
+	$(CC) $(CFLAGS) -DGOGO_EMBED $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS) $(FLOATLIB_SRCS) $(VFS_SRCS)
 
 embed-images: gogo-cmd
 	@mkdir -p $(BUILD)/embed
@@ -360,7 +364,7 @@ endif
 # prelinked object's debug info lives in build/lib/*.o (ld -r keeps a debug
 # map, not the DWARF), so a library copied elsewhere for debugging is that
 # one; its internal symbols are not hidden.
-LIB_SRCS   = $(VM_CORE_SRCS) $(VFS_SRCS) $(STREAM_SRCS) $(EMBED_SRCS)
+LIB_SRCS   = $(VM_CORE_SRCS) $(FLOATLIB_SRCS) $(VFS_SRCS) $(STREAM_SRCS) $(EMBED_SRCS)
 LIB_OBJS   = $(foreach f,$(LIB_SRCS),$(BUILD)/lib/$(subst /,_,$(patsubst runtime/%.c,%,$(f))).o)
 LIB_CFLAGS = -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g -fvisibility=hidden -DGOGO_EMBED -DGOGO_BUILD_UNIX_MS=$(BUILD_UNIX_MS)LL $(EXTRA_CFLAGS) \
              -Iruntime/include -Iruntime/embed -Iruntime/vm -Iruntime/vfs -Iruntime/stream
@@ -459,8 +463,20 @@ console-ppm: $(BUILD)/console_ppm
 bytecode-doc:
 	go run ./tools/bcdoc
 
-test-go: vm $(BUILD)/gogovm_mcu
-	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm GOGO_VM_MCU=$(CURDIR)/$(BUILD)/gogovm_mcu go test ./...
+# runtime/vm/test/float_corpus.h: Go's FormatFloat / println output for a
+# corpus of floats (tools/floatcorpus), which test_float.c checks gogo
+# against; go test ./... (test-go) fails when it is stale.
+float-corpus:
+	go run ./tools/floatcorpus
+
+test-go: vm $(BUILD)/gogovm_mcu $(BUILD)/gogovm_nofloat
+	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm GOGO_VM_MCU=$(CURDIR)/$(BUILD)/gogovm_mcu GOGO_VM_NOFLOAT=$(CURDIR)/$(BUILD)/gogovm_nofloat go test ./...
+
+# gogovm without floating point (-DGOGO_FLOAT=0): the goldens marked
+# `nofloat` run on it (an image that uses floats is refused at load).
+$(BUILD)/gogovm_nofloat: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DGOGO_FLOAT=0 -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
 
 # The standard library (lib/*/*.gg) on the host toolchain, copied into a
 # temporary Go module gogo by tests/lib_test.go: vet (stdmethods off: gogo's
@@ -506,6 +522,9 @@ $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard r
 # Compile-check the core headers for a 32-bit target (no linking).
 check32:
 	for f in runtime/vm/check32.c $(VM_CORE_SRCS); do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
+	done
+	for f in $(FLOATLIB_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
 	done
 	for f in $(NET_SRCS); do \
@@ -563,8 +582,13 @@ vfssize:
 screensize:
 	tools/vmsize.sh --screen
 
+# runtime/floatlib/ (printing and parsing floats, gogo/math) code size on the
+# ESP32-S3 (-Os), reported apart from the VM core; no fixed state allowed.
+floatlibsize:
+	tools/vmsize.sh --floatlib
+
 # Everything built with CFLAGS / EXTRA_CFLAGS: rebuilt when they change.
-STAMPED = $(addprefix $(BUILD)/,gogovm gogovm_mcu test_c test_c_mcu test_net test_net_mcu test_tls \
+STAMPED = $(addprefix $(BUILD)/,gogovm gogovm_mcu gogovm_nofloat test_c test_c_mcu test_net test_net_mcu test_tls \
           test_tls_threads test_vfs test_vfs_mcu test_input test_input_mcu test_stream test_stream_mcu \
           test_screen test_screen_mcu test_fs_host test_embed test_console test_console_ascii \
           console_ppm libgogo_clash) $(LIB_OBJS) $(MBEDTLS_OBJS)

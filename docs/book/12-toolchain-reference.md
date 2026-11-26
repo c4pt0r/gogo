@@ -112,7 +112,10 @@ The image also records, by name, what it needs from the board (its
 requirements, appendix F): the driver of every `port.Open` with a constant
 driver name (`"kbd"`, `"tcp"`, a host port's `"ui"`), and the mount `/sd`
 for constant `/sd` paths, in `package main` and in every library compiled
-in. An import by itself requires nothing. A firmware that lacks a required
+in. An image that uses floating point (a float value, operation,
+constant or type switch case, `gogo/math`, `strconv.FormatFloat` or
+`ParseFloat`) also requires `float`, the firmware option `GOGO_FLOAT`. An
+import by itself requires nothing. A firmware that lacks a required
 driver or mount refuses the image at boot, naming it:
 
 ```text
@@ -137,8 +140,9 @@ version` prints the full one). A firmware runs images of its major whose
 minor is at most its own, and the compiler stamps each image with the
 lowest minor its program needs, so after a firmware update every module
 already on `/flash` keeps loading. An image of another major, or of a newer minor than the
-firmware's, is refused (`unsupported image format 15.1 (this VM runs 15.0
-to 15.0)`; `code.Load` returns `BadVersion`).
+firmware's, is refused (`unsupported image format 15.2 (this VM runs 15.0
+to 15.1)`; `code.Load` returns `BadVersion`). The minors so far: 15.1
+added `screen.Config`, 15.2 floating point.
 
 A package, a library or `package main`, can declare that it uses some
 drivers only softly: it opens them only when a call asks for that at run
@@ -318,7 +322,7 @@ Prints the version, the package search path (where it comes from:
 
 ```text
 $ gogo env
-version   v0.4.0 (image format 15.1)
+version   v0.4.0 (image format 15.2)
 GOGOPATH  /home/you/gogo ($HOME/gogo, GOGOPATH is unset)
 search    1. the build root (imports starting with its directory's name)
           2. /home/you/gogo
@@ -463,13 +467,14 @@ driver nobody uses. It reads the requirement names each file carries
 `<dir>/sdkconfig.gogo`, a list of `CONFIG_GOGO_*` lines, then prints the
 `idf.py` command that builds with it. It never flashes.
 
-- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen`.
+- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen float`.
   The requirement names they build: `net` the drivers `netif`, `udp`,
   `tcp` and `tcp_listen`; `kbd`, `power`, `imu`, `mic`, `speaker`, `tls` and
   `screen` the driver of the same name; `irtx` and `irrx` the drivers `ir_tx` and
-  `ir_rx`; `sd` the mount `/sd` (appendix F). `gpio` and `/flash` are in
-  every firmware; any other name (a host port's, say) is an error.
-  `net`, `kbd` and `power` are on only when a file requires them (or
+  `ir_rx`; `sd` the mount `/sd` (appendix F); `float` the requirement
+  `float` (floating point in the VM and `gogo/math`). `gpio` and `/flash`
+  are in every firmware; any other name (a host port's, say) is an error.
+  `net`, `kbd`, `power` and `float` are on only when a file requires them (or
   `-with` adds them). The others are on by default on boards that have
   them: `sd`, `imu`, `irtx`/`irrx` (the infrared sender and receiver),
   `mic`/`speaker` and `tls` (the TLS client, chapter 17) can be required too,
@@ -704,11 +709,12 @@ tests, it runs:
   (`examples/packages` uses all three).
 - `make test-book`: every example in this book, through
   `docs/book/examples/run.sh` (above).
-- `make vmsize` (and `netsize`, `vfssize`, `screensize`): the code size
+- `make vmsize` (and `netsize`, `vfssize`, `screensize`, `floatlibsize`): the code size
   of the VM core and of each runtime part for the ESP32-S3, against
   their budgets (skipped without the ESP-IDF compiler). `vmsize` also
   prints the VM core's lines of C; `tools/vmsize.sh --record` appends
-  the size and the line count to `docs/vmsize-history.csv`.
+  the size and the line count to `docs/vmsize-history.csv`, and
+  `tools/vmsize.sh --no-float` measures the core without floating point.
 
 Outside `make test`: `make test-lib` (the standard library on the host
 Go toolchain, also part of `go test ./...`) and `make test-tls-asan`

@@ -1,0 +1,51 @@
+// Float fields with ++, -- and compound assignment (also nested and in
+// slice elements), and methods on a named float type. The program is Go
+// as well; expected.out is what Go 1.27 prints.
+package main
+
+type Celsius float64
+
+func (c Celsius) F() float64 { return float64(c)*9/5 + 32 }
+
+func (c Celsius) Warmer(d float64) Celsius { return c + Celsius(d) }
+
+type Gain float32
+
+func (g Gain) Apply(x float32) float32 { return x * float32(g) }
+
+type Inner struct {
+	F   float64
+	F32 float32
+}
+
+type Outer struct {
+	N  int
+	In Inner
+}
+
+func main() {
+	s := Inner{F: 1.5, F32: 0.25}
+	s.F++
+	s.F32 += 1
+	s.F32--
+	s.F *= 2
+	println(s.F, s.F32)
+
+	a := Outer{N: 1, In: Inner{F: 10}}
+	a.In.F -= 0.5
+	a.In.F32++
+	a.In.F /= 4
+	println(a.N, a.In.F, a.In.F32)
+
+	list := []Inner{{F: 1}, {F: 2, F32: 0.1}}
+	list[0].F++
+	list[1].F32 += 0.2
+	list[1].F--
+	println(list[0].F, list[1].F, list[1].F32)
+
+	c := Celsius(21.5)
+	println(c.F(), c.Warmer(0.5).F(), Celsius(-40).F())
+	f := c.F
+	println(f())
+	println(Gain(0.5).Apply(3))
+}

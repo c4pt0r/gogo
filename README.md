@@ -53,7 +53,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
 ════════════════╪═════════════════════════════════╪══════════════════════════
   TARGETS       ▼                                 ▼
  ┌────────────────────────────────────────────────────────────────────────┐
- │ runtime/vm   VM CORE  (C99, ~37 KB, all state per Vm)                  │
+ │ runtime/vm   VM CORE  (C99, ~39 KB, all state per Vm)                  │
  │ ┌──────────┐ ┌───────────┐ ┌─────────────┐ ┌──────────┐ ┌────────────┐ │
  │ │ image    │ │ interp +  │ │ actors      │ │ messages │ │ timers     │ │
  │ │ loader   │ │ scheduler │ │ heap + GC   │ │ copy     │ │ names      │ │
@@ -94,7 +94,8 @@ the boards, in the host VM, and inside other programs through
 
 | Path | What |
 |---|---|
-| `runtime/vm/` | the VM core: interpreter, actors, scheduler, GC, ports, modules |
+| `runtime/vm/` | the VM core: interpreter, actors, scheduler, GC, ports, modules, floats |
+| `runtime/floatlib/` | `gogo/math` and `strconv.FormatFloat` / `ParseFloat` (pure C, no libm; built with the `GOGO_FLOAT` option) |
 | `runtime/net/` | the TCP/IP stack (Ethernet, ARP, IPv4, ICMP, UDP, TCP), pure C; `runtime/net/tls/`, the TLS client port over it (mbedTLS) |
 | `runtime/vfs/`, `runtime/stream/`, `runtime/input/`, `runtime/console/`, `runtime/screen/` | file systems, the stream protocol of every byte port (`Chunk`/`Out`/`Done`/`Closed`), input and audio ports, the screen console and fonts, the `screen` port (a text grid; `gogo/tui` builds on it) |
 | `platform/unix/` | the host VM (`build/gogovm`) and its simulated hardware |
@@ -233,7 +234,8 @@ Done:
   wall clock.
 - **Storage:** `/flash`, `/sd`, `kv`, `ringlog`.
 - **Language and tools:** expression `switch`, labels, `range` over int,
-  variadic functions; packages of your own with a `GOGOPATH` search;
+  variadic functions; floating point (`float32`, `float64`, `gogo/math`);
+  packages of your own with a `GOGOPATH` search;
   single-file programs and `#!` scripts; `gogo setup`; optional firmware
   features; releases with the CLI, `gogovm` and firmware.
 - **Embedding:** `libgogo.a` with a C API (§5.11 of the design notes).
@@ -245,8 +247,8 @@ Next, in order:
 2. **Distributed actors:** boards and a server node exchanging actor
    messages directly (first through the server; direct links later).
 3. **Language completeness:** pointer receivers, interfaces and
-   `error`, `panic`, pointers, maps, `fmt`, sized integers, floating
-   point, arrays; script arguments.
+   `error`, `panic`, pointers, maps, `fmt`, sized integers, arrays;
+   script arguments.
 4. **More hardware:** a `usb` port for the serial connection, the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler), iOS

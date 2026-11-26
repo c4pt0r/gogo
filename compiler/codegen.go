@@ -33,7 +33,7 @@ func Compile(p *Program) ([]byte, error) {
 	for _, pkg := range p.packages() {
 		for _, f := range pkg.Files {
 			for _, d := range f.Decls {
-				if fd, ok := d.(*ast.FuncDecl); ok {
+				if fd, ok := d.(*ast.FuncDecl); ok && !isIntrinsic(p.Info, fd) {
 					fn := p.Info.Defs[fd.Name].(*types.Func)
 					g.funcIdx[fn] = uint32(len(g.funcs))
 					g.funcs = append(g.funcs, &funcInfo{name: g.qualified(fn.Pkg(), funcName(fn))})
@@ -691,12 +691,8 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		}
 		x := f.localOf(s.X)
 		mark := f.next
-		one := f.allocScalar(s) // the constant 1: an immediate
-		if isInt64(f.g.p.Info.TypeOf(s.X)) {
-			f.int64Into(1, one)
-		} else {
-			f.asm.EmitExt(OpLoadk, one, 0, 0, TermInt(1))
-		}
+		one := f.allocScalar(s)
+		f.oneInto(s.X, one)
 		f.asm.Emit(f.typedOp(op, s.X), x, x, one)
 		f.truncByte(s.X, x)
 		f.next = mark
@@ -1126,9 +1122,13 @@ var int64Ops = map[uint8]uint8{
 	OpNeg: OpNeg64, OpEq: OpEq64, OpNe: OpNe64, OpLt: OpLt64, OpLe: OpLe64,
 }
 
-// typedOp returns op, or its int64 twin when operand x has static type
-// int64 (or a named type of it): the generic ops are int-only.
+// typedOp returns op, or its int64 or float twin when operand x has
+// static type int64 or float32 / float64 (or a named type of one): the
+// generic ops are int-only.
 func (f *fn) typedOp(op uint8, x ast.Expr) uint8 {
+	if opf, ok := floatOpsOf[op]; ok && isFloat(f.g.p.Info.TypeOf(x)) {
+		return opf
+	}
 	if op64, ok := int64Ops[op]; ok && isInt64(f.g.p.Info.TypeOf(x)) {
 		return op64
 	}
@@ -1274,6 +1274,13 @@ func (f *fn) truncByte(e ast.Expr, r uint8) {
 
 // constInto loads the constant v (of e's type) into dst.
 func (f *fn) constInto(e ast.Expr, v constant.Value, dst uint8) {
+	if t := f.g.p.Info.TypeOf(e); isFloat(t) {
+		f.floatInto(v, t, dst)
+		return
+	}
+	if v.Kind() == constant.Float { // an integral float constant of an integer type
+		v = constant.ToInt(v)
+	}
 	switch v.Kind() {
 	case constant.Bool:
 		t := TermFalse
@@ -1342,6 +1349,10 @@ func (f *fn) conversion(call *ast.CallExpr, dst uint8) {
 		f.seqCall(call, dst, BBytesliceFrom, f.into(call.Args[0]))
 		return
 	}
+	if isFloat(to) || isFloat(from) {
+		f.floatConversion(call, to, from, dst)
+		return
+	}
 	var c uint8
 	switch {
 	case isByte(to) && !isByte(from):
@@ -1387,6 +1398,8 @@ func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 	}
 	b, ok := t.Underlying().(*types.Basic)
 	switch {
+	case ok && b.Info()&types.IsFloat != 0: // a const-area 0.0 of t's width
+		f.floatInto(constant.MakeInt64(0), t, dst)
 	case ok && b.Kind() == types.Int64:
 		f.int64Into(0, dst)
 	case ok && b.Info()&types.IsInteger != 0:
@@ -1583,6 +1596,10 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			}
 			if _, isCode := codeOps[name]; isCode {
 				f.codeCall(call, name, dst)
+				return
+			}
+			if _, isFloat := floatOps[name]; isFloat {
+				f.floatCall(call, name, dst)
 				return
 			}
 			f.actorCall(call, name, dst)

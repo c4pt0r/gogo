@@ -101,7 +101,8 @@ func (c *checker) typeProblem(t types.Type) string {
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		switch t.Kind() {
-		case types.Int, types.Int64, types.Uint8, types.Bool, types.String, types.UntypedInt, types.UntypedBool, types.UntypedString, types.UntypedRune:
+		case types.Int, types.Int64, types.Uint8, types.Bool, types.String, types.UntypedInt, types.UntypedBool, types.UntypedString, types.UntypedRune,
+			types.Float32, types.Float64, types.UntypedFloat:
 			// Uint8 is byte; rune (below) and 'x' literals behave as int.
 			return ""
 		case types.Int32:
@@ -109,8 +110,6 @@ func (c *checker) typeProblem(t types.Type) string {
 				return ""
 			}
 			return t.Name()
-		case types.Float32, types.Float64, types.UntypedFloat:
-			return "float"
 		case types.Complex64, types.Complex128, types.UntypedComplex:
 			return "complex"
 		case types.UntypedNil:
@@ -200,6 +199,9 @@ func (c *checker) decl(d ast.Decl) {
 			c.unsupported(d, "func init") // would never be called
 			return
 		}
+		if isIntrinsic(c.p.Info, d) {
+			return // compiled as B_FLOAT at each call
+		}
 		c.fieldList(d.Type.Params)
 		c.fieldList(d.Type.Results) // any number of results, named or not
 		if d.Body == nil {
@@ -269,7 +271,7 @@ func (c *checker) typeSpec(s *ast.TypeSpec) {
 			c.typeExpr(s.Type) // a named basic type: type C int
 			return
 		}
-		c.unsupported(s, "type definition other than struct or int, int64, bool, string")
+		c.unsupported(s, "type definition other than struct or int, int64, float32, float64, bool, string")
 		return
 	}
 	for _, f := range st.Fields.List {
@@ -318,10 +320,12 @@ func underlying(t types.Type) types.Type {
 	return t.Underlying()
 }
 
-// isBasic reports whether t's underlying type is int, int64, bool or string.
+// isBasic reports whether t's underlying type is int, int64, float32,
+// float64, bool or string.
 func isBasic(t types.Type) bool {
 	b, ok := underlying(t).(*types.Basic)
-	return ok && (b.Kind() == types.Int || b.Kind() == types.Int64 || b.Kind() == types.Bool || b.Kind() == types.String)
+	return ok && (b.Kind() == types.Int || b.Kind() == types.Int64 || b.Kind() == types.Bool || b.Kind() == types.String ||
+		b.Kind() == types.Float32 || b.Kind() == types.Float64)
 }
 
 // basicKind is t's kind if t is an unnamed basic type, else types.Invalid.
@@ -332,20 +336,26 @@ func basicKind(t types.Type) types.BasicKind {
 	return types.Invalid
 }
 
-// isIntConv reports whether conversion call is one the subset allows:
-// int(x), int64(x) or byte(x), or T(x) for a named type T whose underlying
-// type is int or int64 (fs.Err, errors.Code), where x is an int, an int64,
-// a byte or an untyped constant (or of a named type with one of those
-// underlying).
+// isIntConv reports whether conversion call is one the subset allows
+// between numbers: int(x), int64(x), byte(x), float32(x) or float64(x),
+// or T(x) for a named type T whose underlying type is int, int64, float32
+// or float64 (fs.Err, errors.Code), where x is an int, an int64, a byte, a
+// float32, a float64 or an untyped constant (or of a named type with one
+// of those underlying).
 func (c *checker) isIntConv(call *ast.CallExpr) bool {
 	tt := c.p.Info.TypeOf(call.Fun)
 	to := basicKind(tt)
 	if _, named := types.Unalias(tt).(*types.Named); named {
-		if k := basicKind(tt.Underlying()); k == types.Int || k == types.Int64 {
+		if k := basicKind(tt.Underlying()); k == types.Int || k == types.Int64 || k == types.Float32 || k == types.Float64 {
 			to = k
 		}
 	}
-	if (to != types.Int && to != types.Int64 && to != types.Uint8) || len(call.Args) != 1 {
+	switch to {
+	case types.Int, types.Int64, types.Uint8, types.Float32, types.Float64:
+	default:
+		return false
+	}
+	if len(call.Args) != 1 {
 		return false
 	}
 	from := c.p.Info.TypeOf(call.Args[0])
@@ -353,7 +363,8 @@ func (c *checker) isIntConv(call *ast.CallExpr) bool {
 		from = from.Underlying() // a named int (fs.Err) converts too
 	}
 	switch basicKind(from) {
-	case types.Int, types.Int64, types.Uint8, types.UntypedInt, types.Int32, types.UntypedRune:
+	case types.Int, types.Int64, types.Uint8, types.UntypedInt, types.Int32, types.UntypedRune,
+		types.Float32, types.Float64, types.UntypedFloat:
 		return true
 	}
 	return false
@@ -807,7 +818,8 @@ func (c *checker) assign(s *ast.AssignStmt) {
 var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true, "sys.Config": true,
 	"fs.Open": true, "fs.ReadFile": true, "fs.Stat": true, "fs.ReadDir": true, "fs.Usage": true,
 	"File.Read": true, "File.Size": true,
-	"code.Load": true, "code.Spawn": true, "code.SpawnLink": true, "code.SpawnOpt": true}
+	"code.Load": true, "code.Spawn": true, "code.SpawnLink": true, "code.SpawnOpt": true,
+	"strconv.ParseFloat": true}
 
 // twoResultCall returns the call of `a, b := actor.X(...)` or
 // `a, b = actor.X(...)` when X is a two-result builtin, else nil.
@@ -847,7 +859,7 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 			if isFsFile(c.p.Info.TypeOf(t)) {
 				c.unsupported(t, "type switch case fs.File not supported; wrap it in a struct")
 			} else if !c.caseType(t) {
-				c.unsupported(t, "type switch case other than a struct, int, int64, bool, string, actor.PID, actor.Ref or bytes.Bytes")
+				c.unsupported(t, "type switch case other than a struct, int, int64, float32, float64, bool, string, actor.PID, actor.Ref or bytes.Bytes")
 			}
 		}
 		for _, b := range cc.Body {
@@ -952,8 +964,25 @@ func stubName(fn *types.Func) string {
 		return "fs." + fn.Name()
 	case CodePath:
 		return "code." + fn.Name()
+	case MathPath:
+		return "math." + fn.Name()
+	case StrconvPath:
+		if strconvIntrinsics[fn.Name()] {
+			return "strconv." + fn.Name()
+		}
 	}
 	return ""
+}
+
+// strconvIntrinsics are the gogo/strconv functions the compiler implements
+// (B_FLOAT): a call is a builtin call, like a stub function's, and the
+// declaration in lib/strconv is never checked or compiled.
+var strconvIntrinsics = map[string]bool{"FormatFloat": true, "ParseFloat": true}
+
+// isIntrinsic reports whether fd declares one of strconvIntrinsics.
+func isIntrinsic(info *types.Info, fd *ast.FuncDecl) bool {
+	fn, _ := info.Defs[fd.Name].(*types.Func)
+	return fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == StrconvPath && strconvIntrinsics[fn.Name()]
 }
 
 // fsMethod names the gogo/fs method a selector calls, as "File.Read"; ""
@@ -1201,9 +1230,7 @@ func (c *checker) expr(e ast.Expr) {
 		}
 	case *ast.BasicLit:
 		switch e.Kind {
-		case token.INT, token.STRING, token.CHAR:
-		case token.FLOAT:
-			c.unsupported(e, "float literal")
+		case token.INT, token.STRING, token.CHAR, token.FLOAT:
 		default:
 			c.unsupported(e, strings.ToLower(e.Kind.String())+" literal")
 		}
@@ -1221,6 +1248,9 @@ func (c *checker) expr(e ast.Expr) {
 			return // actor.Normal, port.Output etc.
 		}
 		if c.libFunc(e) {
+			if fn, _ := c.p.Info.Uses[e.Sel].(*types.Func); stubName(fn) != "" {
+				c.unsupported(e, fn.Pkg().Name()+"."+fn.Name()+" as a func value")
+			}
 			return // lib.F as a func value; its type was checked above
 		}
 		if c.p.method(e) != nil {
@@ -1337,7 +1367,7 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 			if isString(xt) && (e.Op == token.ADD || e.Op == token.LSS || e.Op == token.LEQ || e.Op == token.GTR || e.Op == token.GEQ) {
 				break // concatenation and ordering of strings
 			}
-			if b, ok := underlying(xt).(*types.Basic); !ok || b.Info()&types.IsInteger == 0 {
+			if b, ok := underlying(xt).(*types.Basic); !ok || b.Info()&(types.IsInteger|types.IsFloat) == 0 {
 				c.unsupported(e, "operator "+e.Op.String()+" on "+types.TypeString(xt, nil))
 				return
 			}
@@ -1347,14 +1377,15 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 	c.expr(e.Y)
 }
 
-// comparable reports whether == is allowed on t: int, int64, bool, string (or a named
-// type of them), actor.PID, fs.File or actor.Ref.
+// comparable reports whether == is allowed on t: int, int64, float32,
+// float64, bool, string (or a named type of them), actor.PID, fs.File or
+// actor.Ref.
 func (c *checker) comparable(t types.Type) bool {
 	if isPID(t) || isRef(t) {
 		return true
 	}
 	b, ok := underlying(t).(*types.Basic)
-	return ok && b.Info()&(types.IsInteger|types.IsBoolean|types.IsString) != 0
+	return ok && b.Info()&(types.IsInteger|types.IsFloat|types.IsBoolean|types.IsString) != 0
 }
 
 func (c *checker) errList() []error {

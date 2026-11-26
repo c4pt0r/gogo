@@ -6,6 +6,12 @@
 #                              same files; exit 1 above the limit
 #   tools/vmsize.sh --record   also append "date,commit,bytes,lines" to docs/vmsize-history.csv
 #                              (lines: of those .c files, a trend only, no limit)
+#   tools/vmsize.sh --floatlib the float library (runtime/floatlib/*.c, not VM core): its
+#                              code size, and fixed state (limit 0)
+#   tools/vmsize.sh --no-float the VM core built without floating point (-DGOGO_FLOAT=0,
+#                              runtime/vm/config.h): the size of firmware without the
+#                              "float" requirement (never recorded; the record and the
+#                              limit are for the default build, floats on)
 #   tools/vmsize.sh --net      the net stack instead (runtime/net/*.c, not VM core): code
 #                              size and its fixed state (sizeof(NetState), the
 #                              board's storage, plus any .bss + .data); exit 1 if
@@ -102,6 +108,24 @@ if [ "$1" = "--screen" ]; then
     if [ "$fixed" -gt 0 ]; then echo "screensize: runtime/screen has fixed state"; exit 1; fi
     exit 0
 fi
+if [ "$1" = "--floatlib" ]; then
+    total=0; fixed=0; lines=""
+    for f in runtime/floatlib/*.c; do
+        o="$OUT/$(basename "$f" .c).o"
+        "$GCC" -std=c99 -Os -mlongcalls -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_BYTES=163840u \
+            -Iruntime/vm -Iruntime/vm/test/stub -c "$f" -o "$o"
+        n=$("$SIZE" -A "$o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
+        b=$("$SIZE" -A "$o" | awk '/^\.(bss|data)/ {s += $2} END {print s + 0}')
+        total=$((total + n)); fixed=$((fixed + b))
+        lines="$lines$(printf '%7d  %s' "$n" "$f")
+"
+    done
+    printf '%s' "$lines" | sort -rn
+    printf '%7d  floatlib code total (text+rodata+literal; not VM core)\n' "$total"
+    printf '%7d  floatlib fixed state (bss+data)\n' "$fixed"
+    if [ "$fixed" -gt 0 ]; then echo "floatlibsize: runtime/floatlib has fixed state"; exit 1; fi
+    exit 0
+fi
 if [ "$1" = "--vfs" ]; then
     total=0; fixed=0; lines=""
     for f in runtime/vfs/*.c; do
@@ -129,17 +153,20 @@ if [ "$1" = "--vfs" ]; then
 fi
 total=0
 lines=""
+FLOAT=1
+[ "${1:-}" = "--no-float" ] && FLOAT=0
 for f in runtime/vm/*.c; do
     [ "$f" = runtime/vm/check32.c ] && continue
     o="$OUT/$(basename "$f" .c).o"
     "$GCC" -std=c99 -Os -mlongcalls -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u \
-        -DGOGO_ARENA_BYTES=163840u -Iruntime/vm -Iruntime/vm/test/stub -c "$f" -o "$o"
+        -DGOGO_ARENA_BYTES=163840u -DGOGO_FLOAT=$FLOAT -Iruntime/vm -Iruntime/vm/test/stub -c "$f" -o "$o"
     n=$("$SIZE" -A "$o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
     total=$((total + n))
     lines="$lines$(printf '%7d  %s' "$n" "$f")
 "
 done
 printf '%s' "$lines" | sort -rn
+[ "$FLOAT" = 0 ] && echo "(built with -DGOGO_FLOAT=0: no floating point)"
 printf '%7d  total (limit %d, %d%%)\n' "$total" "$LIMIT" $((total * 100 / LIMIT))
 # Lines of C of the same files (runtime/vm/*.c without check32.c; tests are elsewhere).
 loc=$(for f in runtime/vm/*.c; do [ "$f" = runtime/vm/check32.c ] || cat "$f"; done | wc -l | tr -d ' ')

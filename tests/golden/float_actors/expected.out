@@ -1,0 +1,8 @@
+{t0 21.5 1.25 [0.5 -0.25]} [0.1 0.001] [[1] [2.5 3]]
+got t0 21.5 1.25 [0.5 -0.25]
+got float64 2.25
+got float32 0.1
+got float64 -0
+call 29.375 true
+done 29.375
+captured 1.5

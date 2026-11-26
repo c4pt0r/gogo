@@ -59,6 +59,7 @@
 #include "strs.h"
 #include "bytes.h"
 #include "module.h"
+#include "floats.h"
 #include <string.h>
 
 #define REDUCTIONS     1000u
@@ -387,6 +388,10 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
         out_str(o, "<func>");
     } else if (kind == K_BUF) {
         out_str(o, "<buffer>");
+#if GOGO_FLOAT
+    } else if (kind == K_FLOAT) {
+        floatlib_print(o, obj);
+#endif
     } else if (kind == K_REF && hdr_words(obj[0]) == 3u) {
         out_str(o, "<ref ");
         out_dec(o, obj[1], false);
@@ -676,6 +681,16 @@ int interp_run(Vm *vm, Actor *a) {
             break;
         }
 
+#if GOGO_FLOAT
+        case OP_ADDF: case OP_SUBF: case OP_MULF: case OP_DIVF: case OP_NEGF:
+        case OP_EQF: case OP_NEF: case OP_LTF: case OP_LEF: case OP_CONVF: {
+            uint32_t why = float_exec(vm, a, w, nregs);   /* may GC */
+            RELOAD();
+            if (why != R_NORMAL) CRASH(why);
+            break;
+        }
+#endif
+
         case OP_BOX64: {
             REG(ra); REG(rb);
             int64_t x;
@@ -912,6 +927,9 @@ int interp_run(Vm *vm, Actor *a) {
                 else if (kind == K_REF) ty = TY_REF;
                 else if (kind == K_INT64) ty = TY_INT64;
                 else if (kind == K_BYTES) ty = TY_BYTES;
+#if GOGO_FLOAT
+                else if (kind == K_FLOAT) ty = float_type(obj);
+#endif
             }
             /* ext names a type of this module's image: its own struct
              * types are tagged like its structs. */
@@ -1265,6 +1283,15 @@ int interp_run(Vm *vm, Actor *a) {
                 if (err != R_NORMAL) CRASH(err);
                 break;
             }
+#if GOGO_FLOAT
+            case B_FLOAT: {
+                /* Checks ra+1 itself (two-result ops only). */
+                uint32_t err = float_lib(vm, a, ra, rb, rc, nregs);
+                RELOAD();      /* may GC */
+                if (err != R_NORMAL) CRASH(err);
+                break;
+            }
+#endif
             default:
                 /* Unknown builtin id. */
                 CRASH(R_BAD_CODE);

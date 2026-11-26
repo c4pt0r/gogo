@@ -7,13 +7,13 @@ This is the per-opcode reference for the gogo VM, generated from the single sour
 `runtime/vm/opcodes.h` (the Go compiler parses the same file, `compiler/opcodes.go` mirrors it and
 `TestOpcodesMatchC` keeps the two equal). The design behind it is in [design.md](design.md) §5.6
 (bytecode, image layout, versioning) and §5.5 (value representation); `gogo dis file.ggb` prints a
-program's bytecode. Image format 15.1.
+program's bytecode. Image format 15.2.
 
 ## Contents
 
 - [Instruction encoding](#instruction-encoding)
-- [Opcodes](#opcodes) (52)
-- [Builtins](#builtins) (54)
+- [Opcodes](#opcodes) (62)
+- [Builtins](#builtins) (55)
 - [Type ids and reserved types](#type-ids-and-reserved-types)
 - [Exit reasons](#exit-reasons)
 - [Image file layout](#image-file-layout)
@@ -84,6 +84,16 @@ ids and jump targets (absolute code word indexes) are checked when used, and an 
 | 49 | `OP_ANDNOT64` | `a=dst b=lhs c=rhs` |  | `ra = rb &^ rc` | int64 bit clear. |
 | 50 | `OP_SHL64` | `a=dst b=value c=count` |  | `ra = rb << rc` | int64 left shift (count as SHL; the count may be either representation). |
 | 51 | `OP_SHR64` | `a=dst b=value c=count` |  | `ra = rb >> rc` | int64 arithmetic right shift (count as SHR). |
+| 52 | `OP_ADDF` | `a=dst b=lhs c=rhs` |  | `ra = rb + rc` | float addition. |
+| 53 | `OP_SUBF` | `a=dst b=lhs c=rhs` |  | `ra = rb - rc` | float subtraction. |
+| 54 | `OP_MULF` | `a=dst b=lhs c=rhs` |  | `ra = rb * rc` | float multiplication. |
+| 55 | `OP_DIVF` | `a=dst b=lhs c=rhs` |  | `ra = rb / rc` | float division; a zero divisor gives +Inf, -Inf or NaN. |
+| 56 | `OP_NEGF` | `a=dst b=src` |  | `ra = -rb` | float negation (flips the sign bit: -0 from 0). |
+| 57 | `OP_EQF` | `a=dst b=lhs c=rhs` |  | `ra = rb == rc` | float equality (NaN equals nothing; -0 == 0). |
+| 58 | `OP_NEF` | `a=dst b=lhs c=rhs` |  | `ra = rb != rc` | float inequality (true if either is NaN). |
+| 59 | `OP_LTF` | `a=dst b=lhs c=rhs` |  | `ra = rb < rc` | float less-than (false if either is NaN). |
+| 60 | `OP_LEF` | `a=dst b=lhs c=rhs` |  | `ra = rb <= rc` | float less-or-equal (false if either is NaN). |
+| 61 | `OP_CONVF` | `a=dst b=src c=mode` |  | `ra = conv_c(rb)` | Float conversion: c=0 float64(rb), c=1 float32(rb) of an int or int64; c=2 int(rb), c=3 int64(rb) of a float, truncated toward zero, NaN giving 0 and out of range the nearest end; c=4 float64(rb), c=5 float32(rb) of a float (rounded to nearest even). |
 
 ## Builtins
 
@@ -146,6 +156,7 @@ the registers `rb ..`; a builtin with two results writes `ra` and `ra+1`.
 | 51 | `B_UNIX_TIME` | - | `int64` | sys.Time: Unix milliseconds, vm_unix_time_ms (0: unknown). |
 | 52 | `B_SET_UNIX_TIME` | `ms int64` | `bool` | sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor). |
 | 53 | `B_RANDOM` | - | `int` | sys.Random: an int in [0, 2^30), vm_random. |
+| 54 | `B_FLOAT` | `op int, args...` | `result(s)` | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). |
 
 ## Type ids and reserved types
 
@@ -163,6 +174,8 @@ end, and only with `int` fields.
 | `0x10004u` | `TY_REF` |  |
 | `0x10005u` | `TY_INT64` |  |
 | `0x10006u` | `TY_BYTES` | heap K_BYTES, off-heap handle, T_EMPTYBYTES |
+| `0x10007u` | `TY_FLOAT32` | (15.2) a 2-word K_FLOAT |
+| `0x10008u` | `TY_FLOAT64` | (15.2) a 3-word K_FLOAT |
 
 | Index | Name | Fields |
 |---|---|---|

@@ -48,6 +48,9 @@ static int consts_ok(const Image *img) {
         case K_INT64:
             if (words != 3) return 0;
             break;
+        case K_FLOAT:   /* known to every 15.2 VM, GOGO_FLOAT or not (the requirement refuses) */
+            if (words != 2 && words != 3) return 0;
+            break;
         case K_STRUCT:
         case K_CLOSURE: {
             /* Untagged like every image word: the VM tags them when read. */

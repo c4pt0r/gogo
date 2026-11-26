@@ -23,7 +23,7 @@ func main() {
 	defer println("bye")
 	m := map[string]int{} // map
 	p := &Sq{2}           // pointer
-	x := 1.5              // float
+	x := 1.5i             // complex
 	if counter > 0 {
 		goto done // goto
 	}

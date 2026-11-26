@@ -377,7 +377,7 @@ as `code.Err(errors.X)` under the same names.
 | sending a slice shares it | `Send` deep-copies (large frozen `Bytes` are shared, read-only) |
 | closures capture variables by reference | closures copy captured values; captured variables must not be reassigned |
 | `int` is 64 bits on most machines | `int` is always 32 bits |
-| floats, complex, `uint`, `int8/16/32`, `uint16/32/64`, `uintptr` | none; `int`, `int64`, `byte` |
+| complex, `uint`, `int8/16/32`, `uint16/32/64`, `uintptr` | none; `int`, `int64`, `byte`, `float32`, `float64` |
 | arrays, maps, pointers | slices only |
 | methods, interfaces | functions; type switches over `any` |
 | `switch` on an interface or a struct value, `goto` | type switch, compare fields; labeled `break`/`continue` |
@@ -394,7 +394,8 @@ as `code.Err(errors.X)` under the same names.
 ## F. Requirement names
 
 The compiler records in every image and module, by name, the drivers and
-mounts it needs from the firmware (its requirements); a firmware that
+mounts it needs from the firmware, and `float` when it uses floating
+point (its requirements); a firmware that
 lacks one refuses the image at boot, naming it, and `code.Load` returns
 `Unsupported` with `code.Missing` naming it (chapter 14). `gogo firmware`
 (chapter 12) picks the firmware switches from the names.
@@ -414,6 +415,7 @@ lacks one refuses the image at boot, naming it, and `code.Load` returns
 | `speaker` | the `speaker` port opened directly; `gogo/sound` opens it for `Play` but does not require it | `speaker` | `CONFIG_GOGO_AUDIO` |
 | `tls` | the `tls` port opened directly (`net.DialTLS`); `gogo/http` opens it for `https://` URLs but does not require it (`//gogo:optional`, chapters 12 and 17) | `tls` | `CONFIG_GOGO_TLS` (needs `CONFIG_GOGO_NET`) |
 | `screen` | the `screen` port (`gogo/screen`, `gogo/tui`; chapter 19) | `screen` | `CONFIG_GOGO_SCREEN` |
+| `float` | floating point anywhere in the image: a float value, operation or constant, a `float32` / `float64` type switch case, `gogo/math`, `strconv.FormatFloat` / `ParseFloat` (not the rest of `gogo/strconv`) | `float` | `CONFIG_GOGO_FLOAT` |
 | a host port's name | `port.Open` of a port the embedding program defines (chapter 18) | (none: an embedded VM only) | |
 
 An import alone requires nothing: `gogo/sys` (the wall clock and `Random`

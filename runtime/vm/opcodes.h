@@ -88,7 +88,23 @@ enum Op {
     OP_XOR64     = 48,  /*! a=dst b=lhs c=rhs | ra = rb ^ rc | int64 bitwise xor. */
     OP_ANDNOT64  = 49,  /*! a=dst b=lhs c=rhs | ra = rb &^ rc | int64 bit clear. */
     OP_SHL64     = 50,  /*! a=dst b=value c=count | ra = rb << rc | int64 left shift (count as SHL; the count may be either representation). */
-    OP_SHR64     = 51   /*! a=dst b=value c=count | ra = rb >> rc | int64 arithmetic right shift (count as SHR). */
+    OP_SHR64     = 51,  /*! a=dst b=value c=count | ra = rb >> rc | int64 arithmetic right shift (count as SHR). */
+    /* Floating point (15.2, GOGO_FLOAT; floats.h). Operands are K_FLOAT
+     * boxes (heap or const area) of one width, float32 or float64: the op
+     * computes in that width (IEEE 754, round to nearest even, as Go) and
+     * boxes the result; mixed widths or a non-float are badcode. Division
+     * by zero gives an infinity or NaN, never a crash. A VM built without
+     * GOGO_FLOAT refuses images that use them (requirement "float"). */
+    OP_ADDF      = 52,  /*! a=dst b=lhs c=rhs | ra = rb + rc | float addition. */
+    OP_SUBF      = 53,  /*! a=dst b=lhs c=rhs | ra = rb - rc | float subtraction. */
+    OP_MULF      = 54,  /*! a=dst b=lhs c=rhs | ra = rb * rc | float multiplication. */
+    OP_DIVF      = 55,  /*! a=dst b=lhs c=rhs | ra = rb / rc | float division; a zero divisor gives +Inf, -Inf or NaN. */
+    OP_NEGF      = 56,  /*! a=dst b=src | ra = -rb | float negation (flips the sign bit: -0 from 0). */
+    OP_EQF       = 57,  /*! a=dst b=lhs c=rhs | ra = rb == rc | float equality (NaN equals nothing; -0 == 0). */
+    OP_NEF       = 58,  /*! a=dst b=lhs c=rhs | ra = rb != rc | float inequality (true if either is NaN). */
+    OP_LTF       = 59,  /*! a=dst b=lhs c=rhs | ra = rb < rc | float less-than (false if either is NaN). */
+    OP_LEF       = 60,  /*! a=dst b=lhs c=rhs | ra = rb <= rc | float less-or-equal (false if either is NaN). */
+    OP_CONVF     = 61   /*! a=dst b=src c=mode | ra = conv_c(rb) | Float conversion: c=0 float64(rb), c=1 float32(rb) of an int or int64; c=2 int(rb), c=3 int64(rb) of a float, truncated toward zero, NaN giving 0 and out of range the nearest end; c=4 float64(rb), c=5 float32(rb) of a float (rounded to nearest even). */
 };
 
 enum Builtin {
@@ -150,7 +166,8 @@ enum Builtin {
     B_CODE            = 50,  /*! op int, args... -> result(s) | gogo/code (module_builtin, module.h; CODE_OP_*). */
     B_UNIX_TIME       = 51,  /*! -> int64 | sys.Time: Unix milliseconds, vm_unix_time_ms (0: unknown). */
     B_SET_UNIX_TIME   = 52,  /*! ms int64 -> bool | sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor). */
-    B_RANDOM          = 53   /*! -> int | sys.Random: an int in [0, 2^30), vm_random. */
+    B_RANDOM          = 53,  /*! -> int | sys.Random: an int in [0, 2^30), vm_random. */
+    B_FLOAT           = 54   /*! op int, args... -> result(s) | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -161,7 +178,9 @@ enum Builtin {
 #define TY_REF    0x10004u
 #define TY_INT64  0x10005u
 #define TY_BYTES  0x10006u   /* heap K_BYTES, off-heap handle, T_EMPTYBYTES */
-/* 0x10007 - 0x100FF: reserved for later basic types (term.h). */
+#define TY_FLOAT32 0x10007u  /* (15.2) a 2-word K_FLOAT */
+#define TY_FLOAT64 0x10008u  /* (15.2) a 3-word K_FLOAT */
+/* 0x10009 - 0x100FF: reserved for later basic types (term.h). */
 
 /* Reserved type-table indices: the compiler always emits the gogo/actor
  * struct types first, in this order (fields as in lib/actor/actor.gg). */

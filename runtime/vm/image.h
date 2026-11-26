@@ -25,9 +25,12 @@
  *       reserved table renumbered (44 types); the term tags the later
  *       language phases need reserved (below).
  *   v15.1 reserved type 44, screen.Config (the "screen" port).
+ *   v15.2 floating point: heap kind 12 (K_FLOAT, also in the const area),
+ *       the TYPEIS ids TY_FLOAT32 and TY_FLOAT64, OP_ADDF .. OP_CONVF and
+ *       B_FLOAT. An image that uses any of them also requires "float".
  *
- * Reserved encodings (term.h): heap kinds 12-15, the specials from 0x72
- * up, the TYPEIS ids 0x10007-0x100FF and bits 16-20 of a struct's type
+ * Reserved encodings (term.h): heap kinds 13-15, the specials from 0x72
+ * up, the TYPEIS ids 0x10009-0x100FF and bits 16-20 of a struct's type
  * word are kept free for interface values, pointers and maps. Nothing in
  * a v15 compiler or VM produces them (image_load refuses an unknown heap
  * kind; it does not check the others). Giving one a meaning is a minor:
@@ -56,7 +59,8 @@
  *
  * Requirements: what the image needs from the board, by name: a port
  * driver ("kbd", "tcp", a host port's name) or a mount prefix ("/sd",
- * starting with '/'). The loader refuses an image whose requirement the
+ * starting with '/'), or "float" (the VM is built with GOGO_FLOAT). The
+ * loader refuses an image whose requirement the
  * VM lacks (module.h), naming the first one missing. */
 #ifndef GOGO_IMAGE_H
 #define GOGO_IMAGE_H
@@ -67,7 +71,7 @@
 
 #define IMAGE_MAGIC   0x4F474F47u
 #define IMAGE_MAJOR   15u
-#define IMAGE_MINOR   1u
+#define IMAGE_MINOR   2u
 #define IMAGE_VERSION (IMAGE_MAJOR << 16 | IMAGE_MINOR)   /* the newest this VM runs */
 #define IMAGE_HEADER_WORDS 8u
 

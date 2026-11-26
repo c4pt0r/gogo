@@ -33,8 +33,8 @@ restarts it while the rest keeps going. Typical uses:
 What it is not for: hard real-time work with sub-millisecond deadlines
 (code is interpreted, actors have garbage-collected heaps and a TLS
 handshake can pause everything for about 200 ms), heavy number crunching or
-signal processing (an interpreter, and no floats yet; do such work in C drivers),
-and the very smallest microcontrollers (the VM core alone is about 37 KB of
+signal processing (an interpreter with boxed floats; do such work in C drivers),
+and the very smallest microcontrollers (the VM core alone is about 39 KB of
 code and needs tens of KB of RAM).
 
 ### Why actors?
@@ -73,7 +73,7 @@ the device: goroutines and channels share memory between threads, which
 would break actor isolation (actors and messages replace them); reflection
 and a full runtime would not fit the memory budget. What remains is
 the part that maps cleanly onto isolated actors and a small VM. The subset
-grows where that holds (methods with value receivers are in; interfaces, maps, floats and more are planned; see
+grows where that holds (methods with value receivers and floats are in; interfaces, maps and more are planned; see
 above), and where gogo differs from Go it says so.
 
 Dynamic languages (Lua, MicroPython) find type errors only at run time and
@@ -81,7 +81,7 @@ are harder to keep small and isolated per task; Rust or C give no isolation
 between tasks, no hot loading and a slower edit-test loop on hardware.
 
 ### Why is gogo so small?
-The VM core is about 37 KB of code, an idle actor about 150 bytes, and a
+The VM core is about 39 KB of code (37.6 KB built without floats), an idle actor about 150 bytes, and a
 "hello" image about 1 KB, because size was a constraint from the first
 line, not an afterthought:
 
@@ -128,8 +128,8 @@ but they make opposite choices in several places:
 | Memory | Per-actor heaps and limits, small collections | One heap and one collector for everything |
 | Hardware | Ports (actors that send events) | Python classes and callbacks (`machine.Pin`, IRQ handlers) |
 | Updating code | Hot loading of modules with isolation | Copy new `.py` files and restart |
-| Size | VM core about 37 KB of code | Larger: it carries the compiler and a big runtime (typically a few hundred KB) |
-| Floats, big library, many boards | No floats yet (planned); a small library; two boards | Floats, a large library and ecosystem, many boards |
+| Size | VM core about 39 KB of code | Larger: it carries the compiler and a big runtime (typically a few hundred KB) |
+| Floats, big library, many boards | `float32` and `float64` (boxed; `float32` on the ESP32-S3's FPU), a small `gogo/math`; a small library; two boards | Floats with a full `math` module, a large library and ecosystem, many boards |
 | Maturity | Young | Over a decade old, widely used |
 
 Choose MicroPython for interactive exploration at a REPL, quick scripts,
@@ -223,13 +223,14 @@ messages, are therefore Go's.
 ### Which Go features are missing, and are they coming?
 Expression `switch`, labeled `break`/`continue`, `range` over an int,
 variadic functions, packages of your own, methods with value receivers
-(`func (p Point) Add(q Point) Point`, called statically) and field
-assignment (`p.X = v`, `s[i].X += 1`) are supported.
+(`func (p Point) Add(q Point) Point`, called statically), field
+assignment (`p.X = v`, `s[i].X += 1`) and floating point (`float32` and
+`float64`, with `gogo/math` and `strconv.FormatFloat` / `ParseFloat`) are
+supported.
 Planned, in this order: `panic`, type assertions,
 interfaces and `error`; then pointers (boxed, copied when sent) and pointer receivers, maps (a
 library, deterministic order), read-only package variables and `fmt`; then
-sized integers, floating point (`float32` and `float64`), arrays, embedded
-fields and a static `defer`. Not planned: `goto`, `recover`, per-actor
+sized integers, arrays, embedded fields and a static `defer`. Not planned: `goto`, `recover`, per-actor
 mutable globals, channels, `go` statements. Generics are deferred.
 
 ### Can I import packages?
@@ -245,7 +246,7 @@ mutable globals, channels, `go` statements. Generics are deferred.
   (`gogo get`) and versioning come later.
 - **Ordinary Go packages, no.** gogo is a subset of Go, and most Go
   packages use features it does not have (goroutines, reflection, and for
-  now maps and floats). Libraries have to be written for gogo.
+  now maps and methods). Libraries have to be written for gogo.
 
 At run time, separately built modules can also be combined with hot
 loading (book chapter 14). A module compiles its own copy of the packages
@@ -292,7 +293,7 @@ file.ggb` prints a program's bytecode.
 A register-based bytecode with fixed 32-bit instructions, interpreted by a
 `switch` loop. Actors are preempted by counting reductions (1000 per time
 slice, counted on backward jumps), so a busy loop cannot starve other
-actors. The VM core is about 37 KB of a 64 KB budget.
+actors. The VM core is about 39 KB of a 64 KB budget.
 
 ### Will there be a JIT?
 Not planned. On the ESP32-S3 a JIT would need executable internal RAM (which

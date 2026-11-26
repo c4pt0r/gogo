@@ -164,11 +164,7 @@ func (f *fn) opInto(e ast.Expr, op uint8, v uint8, rhs ast.Expr, pre int) {
 	switch {
 	case rhs == nil:
 		one := f.allocScalar(e)
-		if isInt64(f.g.p.Info.TypeOf(e)) {
-			f.int64Into(1, one)
-		} else {
-			f.asm.EmitExt(OpLoadk, one, 0, 0, TermInt(1))
-		}
+		f.oneInto(e, one)
 		f.asm.Emit(f.typedOp(op, e), v, v, one)
 	case op == OpAdd && isString(f.g.p.Info.TypeOf(e)):
 		y := f.into(rhs)

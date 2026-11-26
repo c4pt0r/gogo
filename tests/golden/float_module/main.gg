@@ -1,0 +1,35 @@
+// Floats across module boundaries (hot loading): the main program's float
+// constants and heap floats reach a module's actor, and its constants come
+// back, as copies.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/code"
+	"gogo/fs"
+)
+
+func main() {
+	b, e := fs.ReadFile("/flash/calc.ggb", 100000)
+	if e != fs.OK {
+		println("read", int(e))
+		return
+	}
+	m, ce := code.Load(b)
+	if ce != code.OK {
+		println("load", int(ce))
+		return
+	}
+	p, ce := code.Spawn(m, "Calc", actor.Self())
+	if ce != code.OK {
+		println("spawn", int(ce))
+		return
+	}
+	x := 1.25
+	actor.Send(p, 3.5) // a constant of this image
+	actor.Send(p, x*x) // a heap float
+	actor.Send(p, float32(2.5))
+	for i := 0; i < 5; i++ {
+		println(actor.Receive())
+	}
+}

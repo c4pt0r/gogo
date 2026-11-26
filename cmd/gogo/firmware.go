@@ -66,6 +66,9 @@ var fwFeatures = []fwFeature{
 	// screen is the text grid port on the LCD (runtime/screen); small, so on
 	// by default.
 	{name: "screen", kconf: "CONFIG_GOGO_SCREEN", provides: []string{"screen"}, onBy: true},
+	// float is floating point in the VM and the float library (requirement
+	// "float"): like net, built only when an image needs it (or -with).
+	{name: "float", kconf: "CONFIG_GOGO_FLOAT", provides: []string{"float"}},
 }
 
 // fwBase lists the requirement names every firmware provides, whatever
@@ -98,8 +101,8 @@ func fwHas(names ...string) map[string]bool {
 }
 
 var fwBoards = map[string]fwBoard{
-	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "speaker", "tls", "screen")},
-	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "speaker", "tls", "screen")},
+	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "speaker", "tls", "screen", "float")},
+	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "speaker", "tls", "screen", "float")},
 }
 
 func fwLookup(name string) (fwFeature, bool) {

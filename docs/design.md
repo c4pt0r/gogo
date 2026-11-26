@@ -45,8 +45,8 @@ features.
 
 **Non-goals**
 - Full Go compatibility: channels, generics, reflection, `defer` /
-  `recover`, method calls through user-defined interfaces, floating point
-  and shared memory between goroutines are out.
+  `recover`, method calls through user-defined interfaces and shared
+  memory between goroutines are out.
 - Distribution, multi-core scheduling, JIT.
 - Go standard library compatibility; gogo has a small library of its own.
 
@@ -166,9 +166,12 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   Go); `int64`; `byte` (`uint8`); `string` (immutable bytes); `rune`
   only as the type of character literals (`range` over a string gives
   its bytes, 0..255, with no UTF-8 decoding: the loop variable keeps Go's
-  static type `rune`, but its values are bytes); slices; structs; `any`;
-  func values and func literals (closures, any signature); named types
-  of `int`, `int64`, `bool` and `string` (`type Code int`); `bytes.Bytes` and `bytes.Buffer`.
+  static type `rune`, but its values are bytes); `float32` and `float64`
+  (IEEE 754 as in Go, untyped float constants folded exactly at compile
+  time and defaulting to `float64`; see Floating point below); slices;
+  structs; `any`; func values and func literals (closures, any
+  signature); named types of `int`, `int64`, `float32`, `float64`, `bool`
+  and `string` (`type Code int`); `bytes.Bytes` and `bytes.Buffer`.
 - Operators: arithmetic and comparison; string concatenation and
   comparison; bitwise `&`, `|`, `^`, `&^`, `<<`, `>>`, unary `^` and the
   compound assignments `&=`, `|=`, `^=`, `&^=`, `<<=`, `>>=`, on `int`,
@@ -183,7 +186,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
 - Statements: `if`, `for` (three-clause, condition-only, infinite, and
   `range` over a slice, a string or an integer), the expression `switch`
   (tagged or not, several values per case, `fallthrough`) on integer,
-  `bool`, `string`, PID and Ref values, type `switch` over an `any`
+  float, `bool`, `string`, PID and Ref values, type `switch` over an `any`
   value, `break` and `continue` (also labeled, on `for` and `switch`; no
   `goto`), `return` with any number of results (named or not), `const`
   and `iota`. The compiler lowers a switch to `EQ`/`EQ64` and `JMPT`
@@ -239,7 +242,54 @@ Each is rejected at compile time with a `<what> not supported` error
 
 **Out of the design:** channels and `select`, the `go` statement (use
 `actor.Spawn`), generics, `defer` / `recover`, reflection, `unsafe`,
-floating point.
+complex numbers.
+
+**Floating point** (image format 15.2, the firmware option `GOGO_FLOAT`,
+the requirement `float`):
+- Go semantics: `+ - * /`, comparisons and negation, `++`, `--` and the
+  compound assignments, IEEE 754 round to nearest even, NaN unordered
+  (`NaN != NaN`), `-0 == 0`. Division by zero gives `+Inf`, `-Inf` or
+  `NaN`, never a crash. `float32` arithmetic is rounded to `float32` after
+  each operation, as in Go.
+- Conversions: `float32(x)` and `float64(x)` of any integer or float;
+  `int(f)`, `int64(f)` and `byte(f)` truncate toward zero. Where Go leaves
+  the result to the implementation (NaN, or out of the target's range),
+  gogo does what Go does on arm64: NaN gives 0, and a value out of range
+  the nearest end (`int(1e10)` is 2147483647: `int` is 32 bits). `byte(f)`
+  is the low 8 bits of that saturated `int` (`byte(300.7)` is 44,
+  `byte(-1.5)` 255, `byte(1e10)` 255), which also matches arm64 Go.
+- Constants: go/types' exact arithmetic folds constant expressions
+  (`1.0/3`, `math.Pi * 2`); a typed `float32` constant is rounded once.
+- `println` prints a float as Go 1.27's `println` does:
+  `strconv.FormatFloat(v, 'g', -1, width)` at the value's own width, the
+  shortest digits that read back as the same value (`1.5`, `0.1` for
+  `float32(0.1)`, `1e+21`, `5e-324`, `-0`, `NaN`, `+Inf`). Older Go
+  releases printed `+1.500000e+000`; gogo follows the current format.
+  The conversion is exact (a small bignum, no libc `printf`) and lives in
+  `runtime/floatlib` with the rest of the decimal code: the VM core only
+  calls `floatlib_print` from `println`. It is checked against Go over a
+  generated corpus (`tools/floatcorpus`).
+- `gogo/math` (a stub: `Sqrt`, `Floor`, `Ceil`, `Trunc`, `Round`,
+  `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
+  `IsInf`, `Max`, `Min`, the constants) and `strconv.FormatFloat` /
+  `ParseFloat` (compiler intrinsics: the calls are builtins, their
+  bodies never compiled, so a program that imports strconv for `Atoi`
+  needs no float support) are the `B_FLOAT` builtin in
+  `runtime/floatlib`, outside the VM core, without libm and without the C
+  library's conversions: `ParseFloat` parses Go's syntax (underscores
+  included) and rounds exactly on the same bignum, at either width (a
+  libc `strtof` need not: the boards' picolibc keeps 9 significant digits
+  and can round a longer `float32` input the wrong way).
+- Stack: `println` of a float takes about 0.9 KB of C stack (the
+  shortest-digit bignums), `FormatFloat` with a precision about 1.6 KB
+  (an 800-byte digit buffer besides), `ParseFloat` about 1 KB (two
+  3.7-kbit bignums); the VM task's stack on the ESP32-S3 is 16 KB.
+- Speed: values are boxed (every result allocates a 2- or 3-word heap
+  object). `float32` arithmetic uses the ESP32-S3's single-precision FPU
+  (`OP_ADDF` .. `OP_DIVF` on two `float32` boxes never widen to double);
+  `float64` is software there (libgcc). The interpreter and the boxing
+  dominate both: on the StickS3 a loop of 20000 `x = x*0.999 + 0.25` takes 313 ms in `float32`, 409 ms in `float64` and 226 ms as the same loop on `int`s, so a `float64` operation costs about twice a
+  `float32` one. On an RP2040 (no FPU) both are software.
 
 **Closures capture by value.** A func literal copies each captured
 variable into the closure when it is created (the capture slots of its
@@ -787,8 +837,10 @@ font.
   (depends on `GOGO_NET`), `GOGO_SD` (the Cardputer's `/sd`),
   `GOGO_FS_EXFAT` (depends on `GOGO_SD`), `GOGO_FONT_CJK` (off: a 1.5 KB
   ASCII font is built in and CJK characters are drawn as boxes),
-  `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR`, `GOGO_AUDIO` and
-  `GOGO_SCREEN`. A
+  `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR`, `GOGO_AUDIO`,
+  `GOGO_SCREEN` and `GOGO_FLOAT` (floating point: the VM's float code and
+  `runtime/floatlib`; off, the VM lacks the requirement `float` and
+  refuses an image that uses floats). A
   switched-off feature behaves as if the board lacked the hardware: its
   `port.Open` returns `ok=false`, and `gogo device scan` and the like
   answer "no network in this firmware".
@@ -1194,6 +1246,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
 |---|---|---|---|---|---|
 | `int` | small int 0 | small-int immediate within 31 bits; a `K_INT` heap box beyond | as is (`TYPEIS` -> `int`) | immediates not scanned; a `K_INT` box is copied, its content not scanned | immediates as is; boxes deep-copied |
 | `int64` | small int 0 | immediate within 31 bits; a `K_INT64` box (heap or constant area) beyond | always `BOX64` to a `K_INT64` box (constants boxed at compile time in the constant area), to tell it from `int` | as `int` | as `int`; constant-area boxes as is |
+| `float32`, `float64` (15.2) | a constant-area `K_FLOAT` 0 of the width | always a `K_FLOAT` box, heap or constant area: `[hdr][bits]` (2 words, `float32`) or `[hdr][lo][hi]` (3 words, `float64`); never an immediate, so every arithmetic result allocates | as is (`TYPEIS` -> `float32` / `float64` by the box size) | copied, content not scanned | heap boxes deep-copied; constant-area boxes as is (copied when crossing modules) |
 | `bool` | `T_FALSE` | the specials `T_FALSE` / `T_TRUE` | as is | not scanned | as is |
 | `string` | `T_EMPTYSTR` | a `K_STRING` heap object or a constant-area ref | as is | heap strings copied (bytes not scanned); constant refs untouched | heap strings deep-copied; constant strings as is |
 | `byte` (`uint8`) | small int 0 | small-int immediate 0..255; `byte` arithmetic is truncated after each operation | not allowed (indistinguishable from `int` at run time; rejected at compile time) | not scanned | as is |
@@ -1527,11 +1580,14 @@ together with `mbox_words` through `actor_charged_words`).
   major whose minor is at most its own (one unsigned compare); any other
   is refused (`IMG_ERR_VERSION`: `GOGO_EVERSION` in the embedding API,
   `code.BadVersion` from `code.Load`, and gogovm, the firmware and the
-  embed layer name both formats, `unsupported image format 15.1 (this VM
-  runs 15.0 to 15.0)`). The compiler stamps each image with the lowest
+  embed layer name both formats, `unsupported image format 15.3 (this VM
+  runs 15.0 to 15.2)`). The compiler stamps each image with the lowest
   minor its program needs: the highest minor among the opcodes, builtins
   and reserved rows it uses, from tables in `compiler/image.go` (everything
-  in 15.0 except the additions listed there, such as `screen.Config`).
+  in 15.0 except the additions listed there: 15.1 `screen.Config`; 15.2
+  floating point, the float ops, `B_FLOAT`, `K_FLOAT` constants and the
+  `TYPEIS` ids of `float32` and `float64`, which also make the image
+  require `float`).
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old
@@ -1545,9 +1601,10 @@ together with `mbox_words` through `actor_charged_words`).
     (`image format 15.<minor>`).
   - **Reserved term encodings.** So that interfaces, pointers and maps
     (the language phases still to come) need only a minor, v15 keeps
-    encodings free for them (`runtime/vm/term.h`): heap kinds 12-15, the
-    special immediates from `0x72` up, the `TYPEIS` ids `0x10007` to
-    `0x100FF` beside `TY_*`, and bits 16-20 of a struct's type word
+    encodings free for them (`runtime/vm/term.h`): heap kinds 13-15 (15.2
+    gave 12 to `K_FLOAT`), the special immediates from `0x72` up, the
+    `TYPEIS` ids `0x10009` to `0x100FF` beside `TY_*` (15.2 gave `0x10007`
+    and `0x10008` to `float32` and `float64`), and bits 16-20 of a struct's type word
     (always 0 in a v15 image). Nothing in a v15 compiler or VM produces
     them; `image_load` refuses a constant object of an unknown kind but
     does not check the others. What keeps them from an older VM is the
@@ -1559,7 +1616,14 @@ together with `mbox_words` through `actor_charged_words`).
   `port.Open` 26, `port.Close` 27), 28-45 strings, slices, `Bytes` and
   `Buffer`, 46 `port.Handoff`, 47 `net.Subscribe`, 48 `sys.Config`, 49
   `B_FS` (gogo/fs), 50 `B_CODE` (gogo/code), 51-53 `sys.Time`,
-  `sys.SetTime`, `sys.Random`.
+  `sys.SetTime`, `sys.Random`, 54 `B_FLOAT` (15.2: gogo/math and
+  `strconv.FormatFloat` / `ParseFloat`, `runtime/floatlib`).
+- **Float ops** (15.2, `OP_ADDF` .. `OP_CONVF`, 52-61): one set for both
+  widths. The operands' boxes carry the width (a 2-word `K_FLOAT` is a
+  `float32`, a 3-word one a `float64`), and the op computes in it; mixed
+  widths are `badcode`. `CONVF` converts between floats and integers
+  (modes in `runtime/vm/opcodes.h`). A VM built without `GOGO_FLOAT` has
+  none of them: the requirement check refuses the image before any runs.
 - **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 45 of them,
   0..44): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
   `Request`, `Options`), 6-8 `gpio.Config`, `gpio.Write`, `gpio.Edge`,
@@ -1733,7 +1797,14 @@ value is typed. `gogo config keys` prints it.
 - Size: `make vmsize` measures the VM core for the ESP32-S3 (-Os) and
   counts its lines of C; `tools/vmsize.sh --record` appends both to
   `docs/vmsize-history.csv` (the `lines` column is empty in rows recorded
-  before it existed).
+  before it existed); `tools/vmsize.sh --no-float` measures the core built
+  without floating point (`GOGO_FLOAT=0`), never recorded, and `make
+  floatlibsize` the float library outside it.
+- Floats: goldens (`tests/golden/float_*`, one on a gogovm built with
+  `GOGO_FLOAT=0` to check the refusal), and the C tests compare
+  `println` and `strconv.FormatFloat` with Go's output over the corpus
+  `runtime/vm/test/float_corpus.h` (`tools/floatcorpus`, `make
+  float-corpus`; a Go test fails when it is stale).
 
 ### 5.11 Runtime architecture: instances, host and board tables
 
@@ -2044,7 +2115,9 @@ types and named requirements (§5.6); one stream protocol for every byte
 port with `port.Closed` and `From`; embed mode phase 1 (`libgogo`,
 §5.11); user packages with a `GOGOPATH` search and `#!` scripts; the
 first language additions (expression `switch`, labels, `range` over int,
-variadic functions, methods with value receivers).
+variadic functions, methods with value receivers); floating point
+(`float32`, `float64`, `gogo/math`, `strconv.FormatFloat` /
+`ParseFloat`; image format 15.2).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
@@ -2056,8 +2129,8 @@ variadic functions, methods with value receivers).
    with direct LAN links as a later step.
 3. **Language completeness:** pointer receivers, interfaces and
    `error`, `panic`, pointers, maps, read-only package variables, `fmt`,
-   sized integers, `float32`/`float64`, arrays, embedded fields, static
-   `defer`.
+   sized integers, arrays, embedded fields, static `defer`
+   (`float32`/`float64` are done).
 4. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler,

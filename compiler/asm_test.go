@@ -67,7 +67,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpShr64)+1 || len(builtinNames) != int(BRandom)+1 {
+	if len(opNames) != int(OpConvf)+1 || len(builtinNames) != int(BFloat)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -228,7 +228,7 @@ func TestTermsMatchC(t *testing.T) {
 	wantK := map[string]uint32{"K_STRUCT": KStruct, "K_STRING": KString, "K_INT": KInt,
 		"K_CLOSURE": KClosure, "K_REF": KRef, "K_INT64": KInt64, "K_SLICE": KSlice,
 		"K_ARRAY": KArray, "K_BYTEARR": KBytearr, "K_BYTES": KBytes, "K_BUF": KBuf,
-		"K_FORWARD": KForward}
+		"K_FLOAT": KFloat, "K_FORWARD": KForward}
 	if len(kinds) != len(wantK) {
 		t.Errorf("runtime/vm/term.h defines kinds %v, want the twins of %v", kinds, wantK)
 	}
@@ -247,8 +247,8 @@ func TestTermsMatchC(t *testing.T) {
 			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
 		}
 	}
-	if imageMajor != 15 || imageMinor != 1 {
-		t.Errorf("image format %d.%d, want 15.1", imageMajor, imageMinor)
+	if imageMajor != 15 || imageMinor != floatMinor {
+		t.Errorf("image format %d.%d, want 15.%d (floating point is the newest minor)", imageMajor, imageMinor, floatMinor)
 	}
 }
 

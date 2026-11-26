@@ -59,7 +59,7 @@ func TestFirmwareUnion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_FLOAT=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -72,7 +72,7 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\n"
+	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_FLOAT=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -105,7 +105,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_FLOAT=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -470,5 +470,25 @@ func TestFirmwarePlanSharedIRSwitch(t *testing.T) {
 	on, err := fwPlan("sticks3", nil, nil, []string{"irtx"})
 	if err != nil || on["irtx"] || on["irrx"] {
 		t.Errorf("-without irtx alone: %v %v", on, err)
+	}
+}
+
+// An image that uses floats requires "float": the firmware gets
+// GOGO_FLOAT, which cannot then be removed; without such an image it is
+// off unless asked for.
+func TestFirmwareFloat(t *testing.T) {
+	d := t.TempDir()
+	f := writeImg(t, d, "f.ggb", "float")
+	plain := writeImg(t, d, "p.ggb")
+	for _, board := range []string{"sticks3", "cardputer"} {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, f); err != nil || !strings.HasSuffix(cfg, "CONFIG_GOGO_FLOAT=y\n") {
+			t.Errorf("%s: %v\n%s", board, err, cfg)
+		}
+		if _, _, err := fwRun(t, "-board", board, "-o", d, "-without", "float", f); err == nil || !strings.Contains(err.Error(), "cannot remove float") {
+			t.Errorf("%s: -without float of a float image: %v", board, err)
+		}
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "float", plain); err != nil || !strings.HasSuffix(cfg, "CONFIG_GOGO_FLOAT=y\n") {
+			t.Errorf("%s: -with float: %v\n%s", board, err, cfg)
+		}
 	}
 }
