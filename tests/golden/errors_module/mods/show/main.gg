@@ -1,0 +1,12 @@
+// A module that knows only the type error, not gogo/errors: the errors
+// it is sent are of reserved types, which its error dispatcher knows.
+package main
+
+// Show prints the error it is given.
+func Show(arg any) {
+	if e, ok := arg.(error); ok {
+		println("module:", e.Error(), e == arg)
+		return
+	}
+	println("module: not an error")
+}

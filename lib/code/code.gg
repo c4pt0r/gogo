@@ -54,11 +54,14 @@ type Module struct {
 	missing string
 }
 
-// Err is the result of every call; OK is 0.
-type Err int
+// Err is the result of every call, OK (0) or why it failed: another name
+// for errors.Code, so an Err is an error (its Error says what happened)
+// and compares with the codes of every package: code.NotFound ==
+// errors.NotFound.
+type Err = errors.Code
 
 // Error values: the shared codes of gogo/errors (GOGO_E_* in
-// runtime/include/gogo_errors.h), so code.NotFound == code.Err(errors.NotFound).
+// runtime/include/gogo_errors.h) under the names this package uses.
 const (
 	OK          = Err(errors.OK)
 	NotFound    = Err(errors.NotFound)    // no such module (unloaded, or the zero Module) or entry

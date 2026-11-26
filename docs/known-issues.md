@@ -59,6 +59,14 @@ rebuilt:
   start at 100. An image built before this change still runs on new
   firmware, but the codes it compiled into its own comparisons are the
   old ones while the firmware returns the new ones: rebuild it.
+- **`fs.Err` and `code.Err` are `errors.Code`** (type aliases, with
+  interfaces and `error` in format 15.4): every package's error codes are
+  one type, so `err == errors.NotFound` holds for an error from any of
+  them, and `fs.NotFound`, `code.BadImage` ... are the same constants as
+  `errors.NotFound`, `errors.BadImage`. Conversions between them still
+  compile (they do nothing now); a type switch or a switch that names
+  both `fs.Err` and `errors.Code` (or `code.Err`) as separate cases no
+  longer compiles (duplicate case): keep one.
 - **Embedding API** (`gogo.h`; hosts must be edited and rebuilt, see
   the book's chapter 18):
   - `gogo_host` and `gogo_config` begin with a `size`: start them from

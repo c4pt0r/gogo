@@ -267,7 +267,7 @@ convert: 300000000 44 5
 
 Conversions between the integer types must be written out, as in Go, and
 so must a conversion to a named type built on one (`Weekday(n)`,
-`errors.Code(e)` for an `fs.Err` e). `string(b)` and
+`errors.Code(n)`). `string(b)` and
 `[]byte(s)` convert between strings and byte slices (each copies). Other
 conversions are rejected.
 

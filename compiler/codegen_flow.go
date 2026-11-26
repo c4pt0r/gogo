@@ -105,7 +105,7 @@ func (f *fn) switchStmt(s *ast.SwitchStmt) {
 				if convertsToIface(tt, ct) {
 					f.toIface(e, tt, r)
 				}
-				f.valueInto(e, ct, r+1)
+				f.comparedInto(e, ct, r+1)
 				f.cmpRegs(e, r, OpEq, r)
 				f.jump(OpJmpt, r, bodyL[i])
 			} else {

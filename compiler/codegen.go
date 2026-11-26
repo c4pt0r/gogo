@@ -484,7 +484,8 @@ type fn struct {
 	boundAt    int           // code position of the last label bound (-1: none)
 	lastClear  int           // code position of the last CLEAR emitted (-1: none)
 
-	defers *deferState // the function's defer statements, nil if none (codegen_defer.go)
+	defers   *deferState // the function's defer statements, nil if none (codegen_defer.go)
+	compared bool        // the value being compiled is only compared (constBox)
 }
 
 // declParams lists the parameters of a declared function; unnamed ones are

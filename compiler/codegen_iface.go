@@ -130,9 +130,17 @@ func convertsToIface(src, target types.Type) bool {
 }
 
 // constBox loads the boxed constant e (of a boxed type with constant
-// value v) into dst: a struct in the const area, so no allocation.
+// value v) into dst: a struct in the const area, so no allocation. A box
+// of a reserved type (an errors.Code) is built on the heap instead unless
+// it is only compared (f.compared): a message may carry it to another
+// module, which takes no struct out of this image's const area.
 func (f *fn) constBox(e ast.Expr, v constant.Value, dst uint8) {
 	t := f.g.p.Info.TypeOf(e)
+	if idx := f.g.boxIndex(t); idx < TypeOwnBase && !f.compared {
+		f.constInto(e, v, dst)
+		f.asm.EmitExt(OpNewstruct, dst, dst, 1, idx)
+		return
+	}
 	var field uint32
 	switch v.Kind() {
 	case constant.Bool:
@@ -299,10 +307,18 @@ func (f *fn) cmpInto(x, y ast.Expr, t types.Type, op uint8, dst uint8) {
 	}
 	mark := f.next
 	base := f.allocN(x, 2)
-	f.valueInto(x, t, base)
-	f.valueInto(y, t, base+1)
+	f.comparedInto(x, t, base)
+	f.comparedInto(y, t, base+1)
 	f.cmpRegs(x, base, op, dst)
 	f.next = mark
+}
+
+// comparedInto is valueInto for an operand of == that goes nowhere else:
+// a boxed constant stays in the const area (constBox).
+func (f *fn) comparedInto(e ast.Expr, t types.Type, dst uint8) {
+	f.compared = f.g.p.Info.Types[e].Value != nil
+	f.valueInto(e, t, dst)
+	f.compared = false
 }
 
 // cmpRegs emits dst = r == r+1 (op OpEq) or != (OpNe) by B_CMP, on two

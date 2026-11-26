@@ -1872,14 +1872,11 @@ together with `mbox_words` through `actor_charged_words`).
   `New`'s `errorString` are reserved types 45 and 46, so these errors
   cross modules, and every program that uses `error` loads `gogo/errors`
   (a system package: only what it uses is compiled) so that its
-  dispatchers know them. **Open for that phase:** whether `fs.Err`, `code.Err`
-  and the other result types become aliases of `errors.Code`, or the
-  language gets an `errors.Is`-like rule. Until one of them, an `fs.Err`
-  and an `errors.Code` of the same number are different types: they do
-  not compare today, and as Go `error` values with different dynamic
-  types they would not be equal either. Equal numbers make either step
-  possible; they do not by themselves make `err == errors.NotFound` work
-  across packages.
+  dispatchers know them. `fs.Err` and `code.Err` are type aliases of
+  `errors.Code` (`type Err = errors.Code`; the language decision of 15.4
+  over an `errors.Is`-like rule): one type, so `err == errors.NotFound`
+  holds for an error from any package, as a `Code` or as an `error`, and
+  `fs.NotFound` stays a constant of it.
 - Supervision is the `gogo/supervisor` library, written in the subset:
   `Supervise(child, spec)` and `SuperviseModule(m, entry, arg, spec)`
   supervise one child each (restart types Permanent and Transient, a

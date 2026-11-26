@@ -1,0 +1,6 @@
+load 0
+module: not found true
+module: error 130 true
+module: made here true
+module: not an error
+refused: bad argument true

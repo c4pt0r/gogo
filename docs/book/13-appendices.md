@@ -182,7 +182,7 @@ type power.Read struct{}
 
 ```go
 type fs.File actor.PID
-type fs.Err int
+type fs.Err = errors.Code
 type fs.Info struct{ Size int; IsDir bool }
 type fs.Space struct{ Used, Total int }
 const (fs.Read = 0; fs.Write = 1; fs.Append = 2)
@@ -323,12 +323,12 @@ found"`, `"busy"`, ...), and `"error N"` for a code without one.
 | 36..99 | reserved, never shared codes |
 | 100 and up | one block of 20 per package that needs its own codes: `gogo/http` 100..119, `gogo/sound` 120..139 (neither uses its block yet) |
 
-**`fs.Err`** (also returned by `kv`, `ringlog`, `imulog` and `wav`): the
-shared codes, as `fs.Err(errors.X)` under the same names. `kv.Put` also
-returns `fs.Err(errors.Overflow)` (24) for a value over 4096 bytes and
-`fs.Err(errors.BadArg)` (6) for one that is neither a string nor `Bytes`;
-`imulog.Append` returns `fs.Err(errors.Overflow)` for a payload over
-65535 bytes.
+**`fs.Err`** (also returned by `kv`, `ringlog`, `imulog` and `wav`):
+`errors.Code` under another name, and these codes under the same names.
+`kv.Put` also returns `errors.Overflow` (24) for a value over 4096 bytes
+and `errors.BadArg` (6) for one that is neither a string nor `Bytes`;
+`imulog.Append` returns `errors.Overflow` for a payload over 65535
+bytes.
 
 | 0 | 1 | 2 | 3 | 4 | 5 | 7 | 8 | 11 | 12 | 13 | 14 | 15 | 16 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -341,8 +341,8 @@ returns `fs.Err(errors.Overflow)` (24) for a value over 4096 bytes and
 |---|---|---|---|---|---|---|---|
 | `Normal` (peer finished sending) | `Timeout` | `Refused` | `Reset` | `NoRoute` (address or link lost) | `BadCert` (the certificate failed verification) | `NoTime` (the wall clock is not set) | `TLS` (any other TLS failure) |
 
-**`code.Err`** (the result of every `gogo/code` call): the shared codes,
-as `code.Err(errors.X)` under the same names.
+**`code.Err`** (the result of every `gogo/code` call): `errors.Code`
+under another name, and these codes under the same names.
 
 | 0 | 1 | 3 | 4 | 6 | 10 | 17 | 27 |
 |---|---|---|---|---|---|---|---|

@@ -703,13 +703,18 @@ func sharedCodes(t *testing.T, l *loader, pkg *types.Package, typeName string) i
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The package's typeName is an alias of errors.Code: its constants
+	// of that type are Codes.
+	if a, ok := pkg.Scope().Lookup(typeName).(*types.TypeName); !ok || !a.IsAlias() || types.Unalias(a.Type()) != ep.Scope().Lookup("Code").Type() {
+		t.Fatalf("%s.%s is not an alias of errors.Code", pkg.Name(), typeName)
+	}
 	n := 0
 	for _, name := range pkg.Scope().Names() {
 		k, ok := pkg.Scope().Lookup(name).(*types.Const)
 		if !ok {
 			continue
 		}
-		if nt, ok := k.Type().(*types.Named); !ok || nt.Obj().Name() != typeName || nt.Obj().Pkg() != pkg {
+		if nt, ok := types.Unalias(k.Type()).(*types.Named); !ok || nt.Obj() != ep.Scope().Lookup("Code") {
 			continue
 		}
 		n++
