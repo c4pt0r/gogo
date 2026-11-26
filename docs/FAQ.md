@@ -70,10 +70,10 @@ highlighting and a language many people already read.
 
 It is a subset because some of Go conflicts with the design or does not fit
 the device: goroutines and channels share memory between threads, which
-would break actor isolation (actors and messages replace them); reflection,
-floats and a full runtime would not fit the memory budget. What remains is
+would break actor isolation (actors and messages replace them); reflection
+and a full runtime would not fit the memory budget. What remains is
 the part that maps cleanly onto isolated actors and a small VM. The subset
-grows where that holds (methods, interfaces, maps and more are planned; see
+grows where that holds (methods, interfaces, maps, floats and more are planned; see
 above), and where gogo differs from Go it says so.
 
 Dynamic languages (Lua, MicroPython) find type errors only at run time and
