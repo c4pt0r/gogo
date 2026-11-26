@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -160,9 +163,11 @@ func TestConfigStoreChoice(t *testing.T) {
 	if err := configMain([]string{"-local", "scan"}, &out, nil, &errOut, board); err == nil || !strings.Contains(err.Error(), "needs a board") {
 		t.Fatalf("local scan: %v", err)
 	}
-	// No GOGO_CONFIG, one board: it is used (and opening this one fails).
-	if err := configMain([]string{"list"}, &out, nil, &errOut, board); err == nil || !strings.Contains(errOut.String(), "board on /dev/cu.usbmodem-none") {
-		t.Fatalf("auto board: %v %q", err, errOut.String())
+	// No GOGO_CONFIG, one board: it is used.
+	c := newConfigBench(t, 1)
+	c.boards[c.ports[0]].store["k"] = "on the board"
+	if o, e, err := c.run("", "get", "k"); err != nil || o != "on the board\n" || !strings.Contains(e, "board on /dev/cu.usbmodemA") {
+		t.Fatalf("auto board: %v %q %q", err, o, e)
 	}
 	if err := configMain([]string{"-port", "p", "-local", "list"}, &out, nil, &errOut, board); err == nil || !strings.Contains(err.Error(), "usage") {
 		t.Fatalf("both: %v", err)
@@ -256,5 +261,261 @@ func TestConfigNodeTokenHidden(t *testing.T) {
 	}
 	if _, ok := findCfgKey("node.token"); !ok {
 		t.Error("node.token is not in the key table")
+	}
+}
+
+// storeBoard is a board's console that answers config frames from a map,
+// like platform/esp32s3/main/config_esp.c; failOn makes a set of that key
+// fail.
+type storeBoard struct {
+	mu     sync.Mutex
+	store  map[string]string
+	sets   []string // keys set, in order
+	failOn string
+	frames []string
+	pr     *io.PipeReader
+	pw     *io.PipeWriter
+	in     []byte
+}
+
+func newStoreBoard() *storeBoard {
+	pr, pw := io.Pipe()
+	return &storeBoard{store: map[string]string{}, pr: pr, pw: pw}
+}
+
+func (b *storeBoard) Read(p []byte) (int, error) { return b.pr.Read(p) }
+func (b *storeBoard) Close() error               { b.pr.Close(); return b.pw.Close() }
+func (b *storeBoard) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.in = append(b.in, p...)
+	for {
+		i := bytes.IndexByte(b.in, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		frame := strings.TrimPrefix(string(b.in[:i]), "\x02gogo-config ")
+		b.in = b.in[i+1:]
+		b.frames = append(b.frames, frame)
+		go io.WriteString(b.pw, "output\n"+b.answer(frame))
+	}
+}
+
+func (b *storeBoard) answer(frame string) string {
+	op, rest, _ := strings.Cut(frame, " ")
+	key, value, _ := strings.Cut(rest, " ")
+	switch op {
+	case "set":
+		if key == b.failOn {
+			return "\x02err ESP_ERR_NVS_NOT_ENOUGH_SPACE\n"
+		}
+		b.store[key] = value
+		b.sets = append(b.sets, key)
+		return "\x02ok\n"
+	case "get":
+		v, ok := b.store[key]
+		if !ok {
+			return "\x02err not set\n"
+		}
+		if key == "wifi.password" {
+			v = "(set)"
+		}
+		return "\x02ok " + v + "\n"
+	case "rm":
+		if _, ok := b.store[key]; !ok {
+			return "\x02err not set\n"
+		}
+		delete(b.store, key)
+		return "\x02ok\n"
+	case "list":
+		var s string
+		for k, v := range b.store {
+			if k == "wifi.password" { // the firmware hides only this one
+				v = "(set)"
+			}
+			s += "\x02kv " + k + "=" + v + "\n"
+		}
+		return s + "\x02ok\n"
+	}
+	return "\x02err usage\n"
+}
+
+// configBench runs gogo config with n boards connected (fake ports
+// /dev/cu.usbmodemA, B, ...; each a storeBoard) and stdin.
+type configBench struct {
+	t      *testing.T
+	boards map[string]*storeBoard
+	ports  []string
+	opened []string
+}
+
+func newConfigBench(t *testing.T, n int) *configBench {
+	c := &configBench{t: t, boards: map[string]*storeBoard{}}
+	for i := 0; i < n; i++ {
+		p := "/dev/cu.usbmodem" + string(rune('A'+i))
+		c.ports = append(c.ports, p)
+		c.boards[p] = newStoreBoard()
+	}
+	return c
+}
+
+func (c *configBench) run(stdin string, args ...string) (out, errOut string, err error) {
+	var o, e bytes.Buffer
+	env := configEnv{out: &o, errOut: &e, in: strings.NewReader(stdin),
+		glob: func(pat string) ([]string, error) {
+			if pat != portGlob {
+				c.t.Fatalf("glob %q", pat)
+			}
+			return c.ports, nil
+		},
+		open: func(p string) (io.ReadWriteCloser, error) {
+			c.opened = append(c.opened, p)
+			b, ok := c.boards[p]
+			if !ok {
+				return nil, errors.New("no such port " + p)
+			}
+			return b, nil
+		}}
+	err = configExec(args, env)
+	return o.String(), e.String(), err
+}
+
+// The store: -port, -local and $GOGO_CONFIG choose it; otherwise exactly
+// one board must be connected (none or several is an error, never a
+// silent write to this computer's file).
+func TestConfigTarget(t *testing.T) {
+	ops := [][]string{{"set", "blink.ms", "5"}, {"rm", "blink.ms"}, {"get", "blink.ms"}, {"list"}}
+	for _, op := range ops {
+		for _, n := range []int{0, 1, 2} {
+			for _, mode := range []string{"", "-port", "-local", "GOGO_CONFIG"} {
+				name := fmt.Sprintf("%s/%d boards/%s", op[0], n, mode)
+				home := t.TempDir()
+				t.Setenv("HOME", home)
+				envPath := filepath.Join(t.TempDir(), "cfg")
+				t.Setenv("GOGO_CONFIG", "")
+				local := filepath.Join(home, ".gogo", "config")
+				if mode == "GOGO_CONFIG" {
+					t.Setenv("GOGO_CONFIG", envPath)
+					local = envPath
+				}
+				os.MkdirAll(filepath.Dir(local), 0o700)
+				os.WriteFile(local, []byte("blink.ms=1\n"), 0o600)
+				c := newConfigBench(t, n)
+				for _, b := range c.boards {
+					b.store["blink.ms"] = "1"
+				}
+				args := append([]string(nil), op...)
+				switch mode {
+				case "-port":
+					args = append(args, "-port", "/dev/cu.usbmodemB")
+				case "-local":
+					args = append([]string{"-local"}, args...)
+				}
+				_, errOut, err := c.run("", args...)
+				switch {
+				case mode == "-port":
+					// The port is used as given, connected or not.
+					if len(c.opened) != 1 || c.opened[0] != "/dev/cu.usbmodemB" {
+						t.Errorf("%s: opened %q", name, c.opened)
+					}
+					if n == 2 && err != nil {
+						t.Errorf("%s: %v", name, err)
+					}
+				case mode == "-local" || mode == "GOGO_CONFIG":
+					if err != nil || len(c.opened) != 0 {
+						t.Errorf("%s: %v, opened %q", name, err, c.opened)
+					}
+					data, _ := os.ReadFile(local)
+					want := map[string]string{"set": "blink.ms=5\n", "rm": ""}[op[0]]
+					if op[0] == "get" || op[0] == "list" {
+						want = "blink.ms=1\n"
+					}
+					if string(data) != want {
+						t.Errorf("%s: local file %q, want %q", name, data, want)
+					}
+				case n == 0:
+					if err == nil || err.Error() != "gogo config: no board found (/dev/cu.usbmodem*); connect one, pass -port, or -local for this computer's store" {
+						t.Errorf("%s: %v", name, err)
+					}
+				case n == 1:
+					if err != nil || len(c.opened) != 1 || !strings.Contains(errOut, "board on /dev/cu.usbmodemA") {
+						t.Errorf("%s: %v, opened %q, %q", name, err, c.opened, errOut)
+					}
+				case n == 2:
+					if err == nil || err.Error() != "gogo config: several boards found (/dev/cu.usbmodemA, /dev/cu.usbmodemB); pick one with -port, or -local for this computer's store" {
+						t.Errorf("%s: %v", name, err)
+					}
+				}
+				if mode == "" && n != 1 {
+					if len(c.opened) != 0 {
+						t.Errorf("%s: opened %q", name, c.opened)
+					}
+					if data, _ := os.ReadFile(local); string(data) != "blink.ms=1\n" {
+						t.Errorf("%s: the local file changed: %q", name, data)
+					}
+				}
+			}
+		}
+	}
+	// A bad value is reported as such, whatever the boards.
+	for _, n := range []int{0, 2} {
+		t.Setenv("GOGO_CONFIG", "")
+		if _, _, err := newConfigBench(t, n).run("", "set", "fs.flash.size", "64KB"); err == nil || !strings.Contains(err.Error(), "bad value for fs.flash.size") {
+			t.Errorf("bad value with %d boards: %v", n, err)
+		}
+	}
+	// keys needs no store: it works with no board, and with several.
+	for _, n := range []int{0, 2} {
+		t.Setenv("GOGO_CONFIG", "")
+		if out, _, err := newConfigBench(t, n).run("", "keys"); err != nil || !strings.Contains(out, "wifi.ssid") {
+			t.Errorf("keys with %d boards: %v", n, err)
+		}
+	}
+}
+
+// A secret goes to a board as it is; to the local store (chosen with
+// -local or $GOGO_CONFIG) with a warning that the file is plain text. Its
+// value never appears in the output. With no board and no choice nothing
+// is written and the value is not even read.
+func TestConfigSecretTarget(t *testing.T) {
+	for _, key := range configSecrets {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("GOGO_CONFIG", "")
+		c := newConfigBench(t, 0)
+		stdin := strings.NewReader("hunter2\n")
+		var o, e bytes.Buffer
+		err := configExec([]string{"set", key, "-"}, configEnv{out: &o, errOut: &e, in: stdin, glob: func(string) ([]string, error) { return nil, nil }, open: nil})
+		if err == nil || !strings.Contains(err.Error(), "no board found") || stdin.Len() != len("hunter2\n") {
+			t.Errorf("%s, no board: %v (stdin left %d)", key, err, stdin.Len())
+		}
+		for _, mode := range []string{"-local", "GOGO_CONFIG"} {
+			path := filepath.Join(os.Getenv("HOME"), ".gogo", "config")
+			args := []string{"set", key, "-"}
+			if mode == "-local" {
+				args = append(args, "-local")
+			} else {
+				path = filepath.Join(t.TempDir(), "cfg")
+				t.Setenv("GOGO_CONFIG", path)
+			}
+			out, errOut, err := c.run("hunter2\n", args...)
+			if err != nil || !strings.Contains(errOut, "warning: "+key+" is kept in plain text in "+path) {
+				t.Errorf("%s %s: %v %q", key, mode, err, errOut)
+			}
+			if strings.Contains(out+errOut, "hunter2") {
+				t.Errorf("%s %s: the secret is in the output: %q %q", key, mode, out, errOut)
+			}
+			if data, _ := os.ReadFile(path); string(data) != key+"=hunter2\n" {
+				t.Errorf("%s %s: file %q", key, mode, data)
+			}
+			t.Setenv("GOGO_CONFIG", "")
+		}
+		c = newConfigBench(t, 1)
+		out, errOut, err := c.run("", "set", key, "hunter2")
+		if err != nil || strings.Contains(errOut, "warning") || c.boards[c.ports[0]].store[key] != "hunter2" {
+			t.Errorf("%s on a board: %v %q", key, err, errOut)
+		}
+		if strings.Contains(out+errOut, "hunter2") {
+			t.Errorf("%s on a board: the secret is in the output: %q %q", key, out, errOut)
+		}
 	}
 }

@@ -22,7 +22,9 @@ import (
 // sys.Config reads. On this computer: $GOGO_CONFIG, else ~/.gogo/config,
 // one key=value per line (the first line of a key wins). On the board:
 // its NVS store, over the serial console (boardConfig; `scan` lists the
-// Wi-Fi networks the board sees, `stats` its net stack's counters). See configMain for which one is used.
+// Wi-Fi networks the board sees, `stats` its net stack's counters). See
+// configTargetFor for which one is used: the local file only when asked
+// for (-local or $GOGO_CONFIG).
 //
 // set checks the key and the value against the key table (cfgKeys): a key
 // is 1-15 bytes of [a-z0-9._] (15 is the ESP32's NVS limit, so a
@@ -329,12 +331,76 @@ func configCmd(args []string, out io.Writer) error {
 	return configMain(args, out, os.Stdin, os.Stderr, filepath.Glob)
 }
 
-// configMain: `gogo config [-port P | -local] <op> ...`. The store is the
-// board's (over its serial console) with -port, the local file with
-// -local; otherwise the local file if $GOGO_CONFIG is set, else the board
-// if exactly one is connected, else the local file. A value of "-" is read
-// as one line from stdin (keeps a password out of the shell history).
+// configEnv holds the side effects of gogo config, replaced in tests.
+type configEnv struct {
+	out, errOut io.Writer
+	in          io.Reader
+	glob        func(string) ([]string, error)
+	open        func(string) (io.ReadWriteCloser, error)
+}
+
 func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer, glob func(string) ([]string, error)) error {
+	return configExec(args, configEnv{out: out, errOut: errOut, in: stdin, glob: glob,
+		open: func(p string) (io.ReadWriteCloser, error) { return openSerial(p) }})
+}
+
+// configTarget is the store an operation uses: the board on port, or the
+// local file path (chosen with -local or $GOGO_CONFIG).
+type configTarget struct {
+	port string
+	path string
+}
+
+func (t configTarget) String() string {
+	if t.port != "" {
+		return "board " + t.port
+	}
+	return "local store " + t.path
+}
+
+// configTargetFor picks the store: the board with -port, the local file
+// with -local or $GOGO_CONFIG; otherwise the board if exactly one is
+// connected, and an error if none or several are (the local file is never
+// used unless asked for, so a write never lands somewhere unexpected).
+func configTargetFor(port string, local bool, env configEnv) (configTarget, error) {
+	if port != "" {
+		return configTarget{port: port}, nil
+	}
+	path, err := configPath()
+	if err != nil {
+		return configTarget{}, err
+	}
+	if local || os.Getenv("GOGO_CONFIG") != "" {
+		return configTarget{path: path}, nil
+	}
+	ports, err := env.glob(portGlob)
+	if err != nil {
+		return configTarget{}, fmt.Errorf("gogo config: %v", err)
+	}
+	switch len(ports) {
+	case 0:
+		return configTarget{}, fmt.Errorf("gogo config: no board found (%s); connect one, pass -port, or -local for this computer's store", portGlob)
+	case 1:
+		fmt.Fprintf(env.errOut, "gogo config: board on %s (-local for this computer's store)\n", ports[0])
+		return configTarget{port: ports[0]}, nil
+	}
+	return configTarget{}, fmt.Errorf("gogo config: several boards found (%s); pick one with -port, or -local for this computer's store", strings.Join(ports, ", "))
+}
+
+func isSecret(key string) bool { return slices.Contains(configSecrets, key) }
+
+// warnSecret notes on errOut that a secret written to the local store is
+// kept in plain text (readable by the user only).
+func warnSecret(t configTarget, key string, errOut io.Writer) {
+	if t.port == "" && isSecret(key) {
+		fmt.Fprintf(errOut, "gogo config: warning: %s is kept in plain text in %s (mode 0600)\n", key, t.path)
+	}
+}
+
+// configExec: `gogo config [-port P | -local] <op> ...`; configTargetFor
+// says which store. A value of "-" is read as one line from stdin (keeps
+// a password out of the shell history), after the store is chosen.
+func configExec(args []string, env configEnv) error {
 	fs := newFlags("config")
 	port := fs.String("port", "", "")
 	local := fs.Bool("local", false, "")
@@ -364,18 +430,32 @@ func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer,
 		return fmt.Errorf("gogo config: bad key %q (1-%d characters of a-z 0-9 . _)", args[0], configMaxKey)
 	}
 	if op == "keys" {
-		writeCfgKeys(out)
+		writeCfgKeys(env.out)
 		return nil
 	}
 	switch {
 	case op == "scan" || op == "stats":
-		fmt.Fprintf(errOut, "gogo config: %s is deprecated, use gogo device %s\n", op, op)
+		fmt.Fprintf(env.errOut, "gogo config: %s is deprecated, use gogo device %s\n", op, op)
 	case op == "set" && args[0] == "fs.flash.format":
-		fmt.Fprintln(errOut, "gogo config: fs.flash.format is deprecated, use gogo device format-flash")
+		fmt.Fprintln(env.errOut, "gogo config: fs.flash.format is deprecated, use gogo device format-flash")
+	}
+	// A value given on the command line is checked before the store is
+	// chosen, so a typo is reported as such with no board connected too.
+	if op == "set" && args[1] != "-" {
+		if err := checkSetting(args[0], args[1]); err != nil {
+			return err
+		}
+	}
+	target, err := configTargetFor(*port, *local, env)
+	if err != nil {
+		return err
+	}
+	if target.port == "" && (op == "scan" || op == "stats") {
+		return fmt.Errorf("gogo config: %s needs a board (-port)", op)
 	}
 	if op == "set" && args[1] == "-" {
-		restore := noEcho(stdin, errOut, args[0])
-		v, err := bufio.NewReader(stdin).ReadString('\n')
+		restore := noEcho(env.in, env.errOut, args[0])
+		v, err := bufio.NewReader(env.in).ReadString('\n')
 		restore()
 		if err != nil && err != io.EOF {
 			return err
@@ -386,15 +466,10 @@ func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer,
 		if err := checkSetting(args[0], args[1]); err != nil {
 			return err
 		}
+		warnSecret(target, args[0], env.errOut)
 	}
-	if *port == "" && !*local && os.Getenv("GOGO_CONFIG") == "" {
-		if ports, err := glob(portGlob); err == nil && len(ports) == 1 {
-			*port = ports[0]
-			fmt.Fprintf(errOut, "gogo config: board on %s (-local for this computer's store)\n", *port)
-		}
-	}
-	if *port != "" {
-		f, err := openSerial(*port)
+	if target.port != "" {
+		f, err := env.open(target.port)
 		if err != nil {
 			return err
 		}
@@ -403,20 +478,13 @@ func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer,
 		if op == "scan" {
 			timeout = 20 * time.Second
 		}
-		return boardConfig(f, op, args, out, timeout)
+		return boardConfig(f, op, args, env.out, timeout)
 	}
-	if op == "scan" || op == "stats" {
-		return fmt.Errorf("gogo config: %s needs a board (-port)", op)
-	}
-	return fileConfig(op, args, out)
+	return fileConfig(target.path, op, args, env.out)
 }
 
 // fileConfig runs op on the local store.
-func fileConfig(op string, args []string, out io.Writer) error {
-	path, err := configPath()
-	if err != nil {
-		return err
-	}
+func fileConfig(path, op string, args []string, out io.Writer) error {
 	lines, err := readConfig(path)
 	if err != nil {
 		return err
