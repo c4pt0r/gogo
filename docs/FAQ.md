@@ -402,10 +402,14 @@ chapter of the book ([chapter 19](book/19-text-ui.md)).
 
 ### Can I embed gogo in my own program?
 Yes. `make lib` builds `libgogo.a`, a C99 library with one header
-(`runtime/include/gogo.h`): create VMs, load images, run or step them from
-your own event loop, post messages from any thread, register your own ports,
-and give a VM a sandboxed `/flash` directory. Rust, Go and mobile bindings
-are planned. See book chapter 18.
+(`runtime/include/gogo.h`, plus `gogo_posix.h` for the ready-made POSIX
+host): create VMs, load images, run or step them from your own event
+loop, post messages from any thread (through a `gogo_poster`), register
+your own ports, and give a VM a sandboxed `/flash` directory. From v0.2
+the API is versioned (`gogo_version`, size-first structs that only grow)
+and marks its experimental parts, so a host built against one release
+keeps working with the next. Rust, Go and mobile bindings are planned.
+See book chapter 18.
 
 ### Will actors be able to talk across devices?
 Planned. Remote PIDs make `actor.Send` work the same whether the target is

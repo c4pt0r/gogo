@@ -9,7 +9,7 @@
  * GOGO_EMBED_MULTI_N sets the number of rounds (default 2). */
 #define _POSIX_C_SOURCE 200809L
 #include "test.h"
-#include "gogo.h"
+#include "gogo_posix.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>

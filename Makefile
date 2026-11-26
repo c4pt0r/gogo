@@ -327,7 +327,7 @@ endif
 $(BUILD)/libgogo.a: $(BUILD)/libgogo.o runtime/include/gogo.h runtime/include/libgogo.syms
 	@rm -f $@
 	ar rcs $@ $(BUILD)/libgogo.o
-	tools/libsyms.sh $@ runtime/include/libgogo.syms runtime/include/gogo.h || { rm -f $@; exit 1; }
+	tools/libsyms.sh $@ runtime/include/libgogo.syms runtime/include/gogo.h runtime/include/gogo_posix.h || { rm -f $@; exit 1; }
 	tools/globals.sh --objects $@ || { rm -f $@; exit 1; }
 
 $(BUILD)/libgogo-debug.a: $(LIB_OBJS)
@@ -344,11 +344,13 @@ $(foreach f,$(LIB_SRCS),$(eval $(call LIB_OBJ_RULE,$(f))))
 
 # A host defining functions named like libgogo's internal ones links
 # against libgogo.a and runs an image (the names must exist in the library,
-# else the test proves nothing).
+# else the test proves nothing). It uses only the stable API: compiled with
+# GOGO_EXPERIMENTAL as a deprecation, any experimental use would fail it.
 CLASH_SYMS = msg_free heap_alloc vm_step bytes_new port_open
 
 $(BUILD)/libgogo_clash: runtime/embed/test/clash/main.c $(wildcard runtime/include/*.h) $(BUILD)/libgogo.a
-	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 $(EXTRA_CFLAGS) -Iruntime/include -o $@ $< $(BUILD)/libgogo.a -pthread
+	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 $(EXTRA_CFLAGS) -Iruntime/include \
+		'-DGOGO_EXPERIMENTAL=__attribute__((deprecated("experimental")))' -o $@ $< $(BUILD)/libgogo.a -pthread
 
 test-libgogo: $(BUILD)/libgogo_clash $(BUILD)/libgogo-debug.a gogo-cmd
 	for s in $(CLASH_SYMS); do nm -g $(BUILD)/libgogo-debug.a | grep -Eq " T _?$$s$$" || { echo "test-libgogo: $$s is not in the library"; exit 1; }; done

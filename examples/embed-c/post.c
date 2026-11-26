@@ -8,7 +8,7 @@
  * two more and closes posts; meanwhile the main thread runs the VM to the
  * end with gogo_run. */
 #define _POSIX_C_SOURCE 200809L
-#include "gogo.h"
+#include "gogo_posix.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>

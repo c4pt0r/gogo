@@ -10,7 +10,7 @@
  * Build an image with `gogo build examples/many_idle -o many_idle.ggb`,
  * and this program with `make example-embed` (build/embed-c/main). */
 #define _POSIX_C_SOURCE 200809L
-#include "gogo.h"
+#include "gogo_posix.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>

@@ -1743,7 +1743,8 @@ only through two tables of function pointers that the caller hands it.
   satisfy the image's requirements (`gogo_config.grant`, a list of names
   or NULL for all, can withhold them); a sandboxed `/flash` on a host directory
   (`fs_dir.c`, `gogo_config.fs_root`, per-instance `fs_quota`); and the
-  POSIX host (`host_posix.c`, `gogo_run_thread`). Every call that takes a
+  POSIX host (`host_posix.c`, `gogo_run_thread`, declared apart in
+  `gogo_posix.h` so that `gogo.h` stays free of threads). Every call that takes a
   `gogo_vm` runs on the thread that owns the VM; the poster's calls run
   on any thread, so the two handle types carry the threading rule (in
   Rust, `Send` and `Send + Sync`). A post and `gogo_free` meet in a
@@ -1792,7 +1793,12 @@ only through two tables of function pointers that the caller hands it.
   fields it knows, an older struct's missing fields take their defaults,
   and a newer one's extra fields are ignored, so a field may be appended
   only if its 0 keeps the old behaviour; anything marked experimental is
-  outside these guarantees; `libgogo.a` exports only `GOGO_API` symbols,
+  outside these guarantees (`GOGO_EXPERIMENTAL` on the declaration, a
+  macro that is empty unless the host makes it a deprecation; the book's
+  18.12 has the table: host ports, `grant`, `fs_root`, `fs_quota`, the
+  code-load flag, stats, image inspection, `gogo_run_thread`);
+  `gogo.h` is C99 without threads and `gogo_posix.h` adds the POSIX host
+  and `gogo_run_thread`; `libgogo.a` exports only `GOGO_API` symbols,
   the reviewed list in `runtime/include/libgogo.syms`
   (`tools/libsyms.sh`). `gogo_version()` gives the library's version and
   `gogo_image_format()` the image formats it loads; `gogo_image_info_get`

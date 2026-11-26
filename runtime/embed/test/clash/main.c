@@ -3,7 +3,7 @@
  * against libgogo.a, which exports only the gogo_* API, and run an image;
  * each side must keep calling its own functions. make test-libgogo builds
  * it (outside test_embed, which links the runtime's sources directly). */
-#include "gogo.h"
+#include "gogo_posix.h"
 #include <stdio.h>
 #include <stdlib.h>
 

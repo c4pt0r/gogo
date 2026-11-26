@@ -9,7 +9,7 @@
 #define _DARWIN_C_SOURCE
 #endif
 #include "test.h"
-#include "gogo.h"
+#include "gogo_posix.h"
 #include <pthread.h>
 #include <sched.h>
 #include <stdbool.h>

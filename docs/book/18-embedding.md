@@ -7,8 +7,11 @@ desktop or server program, a phone app, a test tool. The program (the
 messages, and gives it ports of its own. Any number of VMs can live in one
 process, on any threads; they share nothing.
 
-The API is one C header, [`runtime/include/gogo.h`](../../runtime/include/gogo.h),
-and one library, `libgogo.a`. This chapter walks through it with the
+The API is one C header, [`runtime/include/gogo.h`](../../runtime/include/gogo.h)
+(C99, no threads), with
+[`gogo_posix.h`](../../runtime/include/gogo_posix.h) for the POSIX host
+and a VM on a thread of its own, and one library, `libgogo.a`. This
+chapter walks through it with the
 programs in [`examples/embed-c/`](../../examples/embed-c/). Every C snippet
 here is cut from them, and `make example-embed` builds them and checks
 their output.
@@ -32,8 +35,10 @@ embedding layer, compiled as strict C99. Link it with `-pthread`:
 cc -std=c99 -Iruntime/include -o host host.c build/libgogo.a -pthread
 ```
 
-The library exports only the `gogo_*` functions: everything else in it is
-local, so your program may use any other names. `make lib` also builds
+The examples include `gogo_posix.h`, which includes `gogo.h`; a host
+with a table of its own and no POSIX threads (an RTOS, say) needs only
+`gogo.h`. The library exports only the `gogo_*` functions: everything
+else in it is local, so your program may use any other names. `make lib` also builds
 `build/libgogo-debug.a`, the same code as separate objects, for debugging
 on a machine other than the one that built it
 ([`runtime/include/README.md`](../../runtime/include/README.md) explains
@@ -650,7 +655,35 @@ library has no global state (`make lib` checks its objects with
 `tools/globals.sh --objects`), so VMs can run side by side on one thread,
 as in `main.c --two`, or on many threads, as in the stress test.
 
-## 18.12 Limits
+## 18.12 What is stable
+
+From v0.2 the API has a compatibility promise: within a major version
+(during 0.x, within a minor) functions keep their signatures and
+meaning, and the size-first structs only grow at the end. A part still
+taking shape is marked `GOGO_EXPERIMENTAL` in the headers and may change
+in any minor release:
+
+| stable | experimental |
+|---|---|
+| `gogo_new`, `gogo_load`, `gogo_start`, `gogo_step`, `gogo_next_deadline`, `gogo_run`, `gogo_free` | host ports: `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`, `gogo_poster_port_post`, `gogo_port_driver` |
+| the host table, `gogo_host_posix`, `gogo_new_posix` | the configuration's `flags` (code loading), `grant`, `fs_root` and `fs_quota` |
+| the configuration's `size`, `mem_limit`, `max_actors` | `gogo_get_stats` and its fields |
+| the error codes, `gogo_strerror`, `gogo_version`, `gogo_image_format` | `gogo_image_info_get`, `gogo_image_require` |
+| `gogo_post`, `gogo_close_posts` and the poster (`gogo_poster_new`, `_post`, `_close_posts`, `_free`) | `gogo_run_thread`, `gogo_join` |
+
+`GOGO_EXPERIMENTAL` expands to nothing. To see every place a program
+leans on the experimental part, define it before the include as a
+deprecation:
+
+```
+#define GOGO_EXPERIMENTAL __attribute__((deprecated("experimental")))
+#include "gogo_posix.h"
+```
+
+The compiler then warns at each use (`make test-libgogo` builds its
+host this way with `-Werror`, to keep it on the stable part).
+
+## 18.13 Limits
 
 - No network, TLS or board peripherals in the library yet; host ports are
   the way to give a program access to the host's own devices.

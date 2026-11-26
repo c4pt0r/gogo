@@ -1,13 +1,16 @@
 /* gogo embedding API: run gogo images inside a host program, the way Lua is
  * embedded. Any number of VMs may live in one process; they share nothing.
+ * This header is C99 and needs no threads; gogo_posix.h adds the POSIX
+ * host and a VM on a thread of its own.
  *
  * A host
  *  1. fills a gogo_host table (starting from GOGO_HOST_INIT, or takes
- *     gogo_host_posix()) and a gogo_config (GOGO_CONFIG_INIT), and makes a
- *     VM with gogo_new;
+ *     gogo_posix.h's gogo_host_posix()) and a gogo_config
+ *     (GOGO_CONFIG_INIT), and makes a VM with gogo_new;
  *  2. gives it an image (`gogo build` output) with gogo_load and starts its
  *     main with gogo_start;
- *  3. either calls gogo_run (or gogo_run_thread), or steps the VM itself:
+ *  3. either calls gogo_run (or gogo_posix.h's gogo_run_thread), or steps
+ *     the VM itself:
  *     gogo_step until GOGO_DONE, waiting between steps while it returns
  *     GOGO_IDLE until gogo_next_deadline or a wake;
  *  4. frees it with gogo_free.
@@ -19,6 +22,16 @@
  * header lacks take their defaults (0, NULL). Fields are only ever
  * appended, and a field that may be ignored is one whose 0 means what
  * the library did before it existed.
+ *
+ * Stability. Within a major version (during 0.x, a minor) functions keep
+ * their signatures and meaning, and structs only grow at the end. What is
+ * marked GOGO_EXPERIMENTAL is outside that promise and may change in any
+ * minor release: host ports, the fs_root, fs_quota, grant and code-load
+ * settings, gogo_get_stats, image inspection, and gogo_posix.h's
+ * threads. GOGO_EXPERIMENTAL expands to nothing unless the host defines
+ * it before including this header, for example as
+ * __attribute__((deprecated("experimental"))), to have the compiler point
+ * out every use.
  *
  * Threads. A VM is single-threaded: every call that takes a gogo_vm runs
  * on the thread that owns the VM. Other threads reach it only through a
@@ -67,6 +80,10 @@
 #else
 #define GOGO_API
 #endif
+#endif
+
+#ifndef GOGO_EXPERIMENTAL
+#define GOGO_EXPERIMENTAL
 #endif
 
 #ifdef __cplusplus
@@ -140,7 +157,7 @@ typedef struct gogo_host {
  * memory cap, the default actor table, no storage, no hot loading. */
 typedef struct gogo_config {
     uint32_t size;            /* sizeof(gogo_config) as the host was compiled (GOGO_CONFIG_INIT) */
-    uint32_t flags;           /* GOGO_CONFIG_* bits; an unknown bit makes gogo_new fail */
+    GOGO_EXPERIMENTAL uint32_t flags;   /* GOGO_CONFIG_* bits; an unknown bit makes gogo_new fail */
     uint64_t mem_limit;       /* bytes the whole VM may allocate, over every actor's own limit; 0 = none.
                                * Queued posts are outside it (host memory, at most
                                * GOGO_POST_MAX of them) until delivered. */
@@ -152,7 +169,7 @@ typedef struct gogo_config {
      * ("/flash"). Whatever is not listed is absent for this VM: an image
      * requiring it is refused (GOGO_EREQUIRES), port.Open of it fails, and
      * /flash is not mounted. */
-    const char *const *grant;
+    GOGO_EXPERIMENTAL const char *const *grant;
     /* An existing host directory served as /flash, or NULL: no storage, every gogo/fs call is
      * NotMounted. The program is confined to it: paths are walked from the
      * directory without following symlinks (a symlink, FIFO or device is
@@ -164,7 +181,7 @@ typedef struct gogo_config {
      * their files in), and the roots of VMs running at the same time must
      * not nest (an outer program moving a directory out of an inner root
      * during the inner VM's walk would take that walk outside). */
-    const char *fs_root;
+    GOGO_EXPERIMENTAL const char *fs_root;
     /* 0 = no quota (the host file system's own limits; fs.Usage reports
      * its usage). Else the bytes the regular files under fs_root may hold:
      * what is there is counted when the VM is made (a walk of the whole
@@ -173,7 +190,7 @@ typedef struct gogo_config {
      * stores what fits and is NoSpace, and fs.Usage reports (used,
      * fs_quota). Changes made by others (the host, another VM on the same
      * directory) are not seen. Negative: gogo_new fails. */
-    int64_t  fs_quota;
+    GOGO_EXPERIMENTAL int64_t fs_quota;
     /* Fields are appended here, never inserted. */
 } gogo_config;
 
@@ -260,7 +277,7 @@ GOGO_API int gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg
  * GOGO_ESTATE (already loaded). After a failure the VM may load again. */
 GOGO_API int gogo_load(gogo_vm *vm, const void *image, size_t len, int flags);
 
-/* ---- inspecting an image, without a VM ----
+/* ---- inspecting an image, without a VM (GOGO_EXPERIMENTAL) ----
  *
  * Pure functions, any thread: they read the image (len bytes, 4-byte
  * aligned) and keep nothing. Each validates the whole image as gogo_load
@@ -276,14 +293,14 @@ typedef struct gogo_image_info {
      * first size bytes it knows. */
 } gogo_image_info;
 #define GOGO_IMAGE_INFO_INIT { .size = sizeof(gogo_image_info) }
-GOGO_API int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info);
+GOGO_API GOGO_EXPERIMENTAL int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info);
 
 /* Requirement i (< n_requires, else GOGO_EINVAL) of the image: a port
  * driver's name ("ui", a host port's, "tcp") or a mount prefix ("/flash",
  * "/sd"), as gogo_load checks them. *name points into the image (valid
  * while it is; not NUL-terminated) and *name_len is its length. A host
  * may read them to register exactly the host ports an image needs. */
-GOGO_API int gogo_image_require(const void *image, size_t len, uint32_t i, const char **name, size_t *name_len);
+GOGO_API GOGO_EXPERIMENTAL int gogo_image_require(const void *image, size_t len, uint32_t i, const char **name, size_t *name_len);
 
 /* Starts the image's main. GOGO_ESTATE without an image or if started
  * before; GOGO_ENOTFOUND if the image has no main, GOGO_ENOMEM if main
@@ -323,19 +340,12 @@ GOGO_API void gogo_close_posts(gogo_vm *vm);
 /* Starts the VM if it is not yet started, then steps it, waiting in
  * host->wait while it is idle, until it is done. 0 when the program has
  * finished; GOGO_EINVAL without a wait hook; GOGO_ECLOSED if gogo_free
- * stopped it (gogo_run_thread); a gogo_start error. */
+ * stopped it (gogo_run_thread, gogo_posix.h); a gogo_start error. */
 GOGO_API int gogo_run(gogo_vm *vm);
 
-/* gogo_run on a new thread (POSIX threads): the VM then belongs to that
- * thread until gogo_join, which returns gogo_run's result. Meanwhile the
- * thread that started it may only call gogo_poster_new, gogo_join and
- * gogo_free (which stops the thread at its next step, joins it and frees
- * the VM); other threads post through posters. GOGO_EINVAL without
- * wait, GOGO_ESTATE if a thread is already running, GOGO_ENOMEM. */
-GOGO_API int gogo_run_thread(gogo_vm *vm);
-GOGO_API int gogo_join(gogo_vm *vm);
-
 /* ---- host ports: the embedder's own extension surface ----
+ *
+ * GOGO_EXPERIMENTAL: everything in this section.
  *
  * A host defines ports of its own, which Go code opens by name like any
  * port: port.Open("ui", port.Host{Arg: 1, Data: cfg}) calls the driver's
@@ -399,7 +409,7 @@ typedef struct gogo_port_driver {
  * GOGO_ESTATE (an image is loaded),
  * GOGO_EBUSY. A port registered under a name the config's grant leaves
  * out is accepted but never visible to the program. */
-GOGO_API int gogo_register_port(gogo_vm *vm, const char *name, size_t name_len, const gogo_port_driver *drv,
+GOGO_API GOGO_EXPERIMENTAL int gogo_register_port(gogo_vm *vm, const char *name, size_t name_len, const gogo_port_driver *drv,
                                 void *ctx);
 
 /* VM thread (a callback, or between steps): sends the port's owner
@@ -408,7 +418,7 @@ GOGO_API int gogo_register_port(gogo_vm *vm, const char *name, size_t name_len, 
  * owner's mailbox quota or Bytes limit: dropped, the owner is not
  * killed), GOGO_ENOMEM,
  * GOGO_E2BIG (over GOGO_POST_DATA_MAX), GOGO_EINVAL. */
-GOGO_API int gogo_port_emit(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
+GOGO_API GOGO_EXPERIMENTAL int gogo_port_emit(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
 
 /* VM thread (a callback, or between steps): the port has ended on the
  * host's side. Its owner gets port.Closed{From: the port, Reason: reason}
@@ -419,7 +429,7 @@ GOGO_API int gogo_port_emit(gogo_vm *vm, gogo_port port, int32_t kind, const voi
  * closed all the same); GOGO_ECLOSED (the port is closed or closing, or
  * its owner is exiting); GOGO_EBUSY (from the port's own open: refuse the
  * open instead); GOGO_EINVAL. */
-GOGO_API int gogo_port_close(gogo_vm *vm, gogo_port port, int32_t reason);
+GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int32_t reason);
 
 /* ---- posting from other threads ----
  *
@@ -446,7 +456,7 @@ GOGO_API int gogo_poster_post(gogo_poster *p, const char *name, size_t name_len,
  * once posts are closed). A post the port can no longer take when it is
  * delivered (closed since, its owner exiting, over quota) is dropped and
  * counted in posts_dropped. */
-GOGO_API int gogo_poster_port_post(gogo_poster *p, gogo_port port, int32_t kind, const void *data, size_t len);
+GOGO_API GOGO_EXPERIMENTAL int gogo_poster_port_post(gogo_poster *p, gogo_port port, int32_t kind, const void *data, size_t len);
 
 /* Any thread: gogo_close_posts. */
 GOGO_API void gogo_poster_close_posts(gogo_poster *p);
@@ -455,8 +465,8 @@ GOGO_API void gogo_poster_close_posts(gogo_poster *p);
  * ignored. */
 GOGO_API void gogo_poster_free(gogo_poster *p);
 
-/* Counters. On the owning thread: with gogo_run_thread, after gogo_join
- * (or from a hook). The caller sets out->size (GOGO_STATS_INIT); the
+/* Counters (GOGO_EXPERIMENTAL: the fields may change). On the owning
+ * thread: with gogo_run_thread, after gogo_join (or from a hook). The caller sets out->size (GOGO_STATS_INIT); the
  * library fills the fields it knows within it. 0, or GOGO_EINVAL. */
 typedef struct gogo_stats {
     uint32_t size;             /* set by the caller: sizeof(gogo_stats) */
@@ -469,7 +479,7 @@ typedef struct gogo_stats {
     /* Fields are appended here, never inserted. */
 } gogo_stats;
 #define GOGO_STATS_INIT { .size = sizeof(gogo_stats) }
-GOGO_API int gogo_get_stats(gogo_vm *vm, gogo_stats *out);
+GOGO_API GOGO_EXPERIMENTAL int gogo_get_stats(gogo_vm *vm, gogo_stats *out);
 
 /* Closes posts (gogo_close_posts) and the program's ports and returns
  * every byte the VM took from its host (pending posts included); a VM running in gogo_run_thread is
@@ -477,17 +487,6 @@ GOGO_API int gogo_get_stats(gogo_vm *vm, gogo_stats *out);
  * reference: vm is invalid after it (posters keep their own). NULL is
  * ignored. */
 GOGO_API void gogo_free(gogo_vm *vm);
-
-/* The POSIX default host: malloc, CLOCK_MONOTONIC, CLOCK_REALTIME as the
- * wall clock (setting it is refused), getentropy (random aborts if it
- * fails), stdout/stderr, and a latched condition-variable wait and wake.
- * Its state lives in a context: gogo_posix_ctx_new, or gogo_new_posix,
- * which makes a VM that owns one (freed with the VM's last reference, as
- * a destroy hook would). */
-GOGO_API const gogo_host *gogo_host_posix(void);
-GOGO_API void *gogo_posix_ctx_new(void);         /* NULL if out of memory */
-GOGO_API void gogo_posix_ctx_free(void *ctx);
-GOGO_API int gogo_new_posix(const gogo_config *cfg, gogo_vm **out);   /* as gogo_new */
 
 #ifdef __cplusplus
 }

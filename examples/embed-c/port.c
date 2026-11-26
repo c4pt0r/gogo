@@ -9,7 +9,7 @@
  * as an event with Kind + 1 and the same Data, except Kind 100, which
  * ends the port from the host's side. */
 #define _POSIX_C_SOURCE 200809L
-#include "gogo.h"
+#include "gogo_posix.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

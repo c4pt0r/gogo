@@ -1,7 +1,8 @@
 # runtime/include
 
 `gogo.h` is the embedding API: everything a program needs to run gogo
-images inside it. `gogo_errors.h`, which it includes, holds only
+images inside it, in C99 and without threads. `gogo_posix.h` adds the
+POSIX host (`gogo_new_posix`, `gogo_host_posix`) and `gogo_run_thread`. `gogo_errors.h`, which it includes, holds only
 constants: the error codes gogo programs see (`gogo/errors`,
 `GOGO_E_*`). The API's results are those codes negated (`GOGO_EINVAL`
 is `-GOGO_E_BADARG`), and `gogo_strerror` describes both. The book chapter
@@ -22,12 +23,13 @@ are not in it: its only drivers are the host ports a program registers,
 and its only mount is `/flash` on a host directory. It has no mutable global state
 (`tools/globals.sh --objects`), so any number of VMs can run in one
 process, on any threads. It needs POSIX threads and clocks for
-`gogo_host_posix`, `gogo_new_posix` and `gogo_run_thread`.
+`gogo_posix.h`'s functions only.
 
 ## Symbols
 
 The library exports exactly the `gogo_*` functions declared in `gogo.h`
-(marked `GOGO_API`), which are the list in `libgogo.syms`. `make lib` compiles the sources with
+and `gogo_posix.h` (marked `GOGO_API`), which are the list in
+`libgogo.syms`. `make lib` compiles the sources with
 `-fvisibility=hidden` and prelinks them into one relocatable object
 (`ld -r`) in which every other function is local: an export list on
 Darwin, `objcopy -w --keep-global-symbol='gogo_*'` on ELF (set `LIB_LD`

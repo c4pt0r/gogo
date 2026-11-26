@@ -74,6 +74,9 @@ rebuilt:
     refuse (it returned 1 and 0).
   - `gogo_config.allow_code_load` is the flag `GOGO_CONFIG_CODE_LOAD` in
     `flags`; `mem_limit` is a `uint64_t` and `max_actors` a `uint32_t`.
+  - The POSIX host and `gogo_run_thread` / `gogo_join` moved to
+    `gogo_posix.h` (which includes `gogo.h`): a host that uses them
+    includes that header instead.
   - Other threads post through a `gogo_poster` (`gogo_poster_new` on
     the owner's thread, then `gogo_poster_post`, `gogo_poster_port_post`,
     `gogo_poster_close_posts`, `gogo_poster_free`): `gogo_retain`,

@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../include/gogo.h"
+#include "../include/gogo_posix.h"   /* and gogo.h */
 #include "actor.h"
 #include "inbox.h"
 #include "vfs_int.h"
