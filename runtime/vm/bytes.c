@@ -304,6 +304,7 @@ term bytes_make(Vm *vm, Actor *a, uint32_t len, uint8_t **data) {
 
 term bytes_sub(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len) {
     uint8_t *d;
+    if (h == T_NIL) return T_NIL; /* as before make_entry: nil has no bytes to share */
     return make_entry(vm, a, h, lo, len, &d);
 }
 

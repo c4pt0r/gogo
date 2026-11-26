@@ -724,7 +724,11 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, in
 }
 
 /* strs_builtin's argc table covers builtins 28..45, in this order. */
-typedef char strs_argc_ok[(B_STR_CONCAT == 28 && B_APPEND == 34 && B_BYTES_COPYTO == 45) ? 1 : -1];
+typedef char strs_argc_ok[(B_STR_CONCAT == 28 && B_LEN == 29 && B_INDEX == 30 &&
+    B_SETINDEX == 31 && B_SLICE == 32 && B_MAKE_SLICE == 33 && B_APPEND == 34 &&
+    B_COPY == 35 && B_CAP == 36 && B_STR_FROM == 37 && B_BYTESLICE_FROM == 38 &&
+    B_STR_CMP == 39 && B_BUF_NEW == 40 && B_BUF_WRITE == 41 && B_BUF_FREEZE == 42 &&
+    B_BYTES_FROM == 43 && B_BYTES_EQUAL == 44 && B_BYTES_COPYTO == 45) ? 1 : -1];
 
 uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc) {
     if (id == B_CMP) {
