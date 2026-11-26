@@ -239,18 +239,18 @@ type net.Addr struct{ IP, Port int }
 func net.Subscribe() (ok bool)
 
 type dhcp.Config struct{ TimeoutMs int }
-func dhcp.Start(cfg Config) bool
+func dhcp.Start(cfg Config) error
 
-func dns.Lookup(name string, timeoutMs int) (int, bool)
+func dns.Lookup(name string, timeoutMs int) (int, error)
 
 type http.Header struct{ Name, Value string }
 type http.Request struct{ Method, Path string; Headers []Header; Body bytes.Bytes }
 type http.Response struct{ Status int; Headers []Header; Body bytes.Bytes; Truncated bool }
 const (http.MaxBody = 8192; MaxBodyLimit = 65536; MaxHead = 2048;
 	ReadTimeoutMs = 10000; DefaultTimeoutMs = 10000; ListenFailed = 69)   // actor.Failed + errors.Busy
-func http.Get(url string, timeoutMs int) (Response, bool)
-func http.Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
-func http.Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, bool)
+func http.Get(url string, timeoutMs int) (Response, error)
+func http.Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, error)
+func http.Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, error)
 func http.HeaderValue(h []Header, name string) (string, bool)
 func http.Serve(port int, handler func(Request) Response) actor.PID
 
@@ -259,7 +259,7 @@ type http.Client struct{ PID actor.PID }
 const (http.BadURL = errors.BadURL; TLSMemory = 26624;
 	UploadChunk = 4096; LingerMs = 1000; MaxQueued = 4)
 func http.NewClient() Client
-func http.ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
+func http.ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, error)
 func http.ClientUpload(c Client, url, path, contentType, token string) (status int, err errors.Code)
 func http.CloseClient(c Client)
 func http.Upload(url, path, contentType, token string) (status int, err errors.Code)
@@ -274,7 +274,7 @@ func sys.Time() int64           // Unix time in ms (UTC); 0: unknown
 func sys.SetTime(ms int64) bool // false: earlier than the build, refused; ms <= 0 forgets
 func sys.Random() int           // 30 random bits
 
-func sntp.Sync(server string, timeoutMs int) bool // sets sys's clock; timeoutMs <= 0: 5000
+func sntp.Sync(server string, timeoutMs int) error // sets sys's clock; timeoutMs <= 0: 5000
 func sntp.Now() int64                             // sys.Time()
 ```
 

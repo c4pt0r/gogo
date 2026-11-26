@@ -43,7 +43,7 @@ func echo(conn actor.PID) {
 }
 
 func main() {
-	if !dhcp.Start(dhcp.Config{}) {
+	if dhcp.Start(dhcp.Config{}) != nil {
 		println("no network")
 		return
 	}

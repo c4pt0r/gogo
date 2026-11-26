@@ -20,12 +20,12 @@ func fetch(port, maxBody int) {
 		ballast[i] = i
 	}
 	var none bytes.Bytes
-	r, ok := http.Do("GET", "http://10.0.0.1:"+strconv.Itoa(port)+"/big", "", none, maxBody, 3000)
-	println("got", ok, r.Body.Len(), r.Truncated, ballast[1499])
+	r, err := http.Do("GET", "http://10.0.0.1:"+strconv.Itoa(port)+"/big", "", none, maxBody, 3000)
+	println("got", err == nil, r.Body.Len(), r.Truncated, ballast[1499])
 }
 
 func main() {
-	println("start", dhcp.Start(dhcp.Config{}))
+	println("start", dhcp.Start(dhcp.Config{}) == nil)
 	actor.Sleep(100)
 	cases := [][]int{{80, 16384, 0}, {81, 16384, 2048}, {82, 32768, 0}}
 	for _, c := range cases {

@@ -80,6 +80,11 @@ rebuilt:
     `errors.Overflow` (with the value clamped, as in Go, where it was 0)
     or, for a bad base or bit size, `errors.BadArg`. `n, ok :=` / `if
     !ok` becomes `n, err :=` / `if err != nil`.
+  - `http.Get`, `Post`, `Do` and `ClientDo` return `(Response, error)`
+    (`errors.BadURL`, `Timeout` or `IO`), `dns.Lookup` returns `(int,
+    error)` (`NotFound`, `NoRoute`, `Timeout`, `BadArg`), `sntp.Sync` and
+    `dhcp.Start` return an `error` instead of a `bool`: `if
+    !dhcp.Start(cfg)` becomes `if dhcp.Start(cfg) != nil`.
 - **Embedding API** (`gogo.h`; hosts must be edited and rebuilt, see
   the book's chapter 18):
   - `gogo_host` and `gogo_config` begin with a `size`: start them from

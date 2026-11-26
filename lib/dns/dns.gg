@@ -16,6 +16,7 @@ package dns
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 	"gogo/net"
 	"gogo/port"
 )
@@ -27,22 +28,24 @@ type query struct {
 	Deadline int64
 }
 
-// answer is the resolver's reply.
+// answer is the resolver's reply: nil Err, or why not.
 type answer struct {
-	IP int
-	OK bool
+	IP  int
+	Err error
 }
 
 // cacheSize is the number of cached answers.
 const cacheSize = 4
 
 // Lookup returns the IPv4 address of name (a.b.c.d as a<<24|b<<16|c<<8|d),
-// or false if it cannot be resolved within timeoutMs (<= 0: 5000): no
-// network or DNS server, no such name, no A record, or no answer after 3
-// tries. A dotted IPv4 address is returned as it is.
-func Lookup(name string, timeoutMs int) (int, bool) {
+// or an error (an errors.Code) if it cannot be resolved within timeoutMs
+// (<= 0: 5000): errors.NoRoute for no network or DNS server (or one that
+// changed meanwhile), errors.NotFound for no such name or no A record,
+// errors.Timeout for no answer after 3 tries, errors.BadArg for a name
+// that cannot be asked. A dotted IPv4 address is returned as it is.
+func Lookup(name string, timeoutMs int) (int, error) {
 	if ip, ok := parseIP(name); ok {
-		return ip, true
+		return ip, nil
 	}
 	if timeoutMs <= 0 {
 		timeoutMs = 5000
@@ -61,9 +64,11 @@ func Lookup(name string, timeoutMs int) (int, bool) {
 	r, ok := actor.Call(pid, query{Name: name, Deadline: actor.Now() + int64(timeoutMs)}, timeoutMs)
 	switch a := r.(type) {
 	case answer:
-		return a.IP, ok && a.OK
+		if ok {
+			return a.IP, a.Err
+		}
 	}
-	return 0, false
+	return 0, errors.Timeout
 }
 
 // resolver is the "dns" actor.
@@ -103,7 +108,8 @@ func resolver() {
 			m = actor.Receive()
 		}
 		ip, ttl, done := 0, -2, false
-		if busy && !got { // no answer in time
+		var why error = errors.Timeout // of a query done without an address
+		if busy && !got {              // no answer in time
 			done = tries == 3 || actor.Now() >= deadline
 		}
 		switch m := m.(type) {
@@ -111,11 +117,13 @@ func resolver() {
 			if m.DNS != server {
 				flush(expires)
 				done = busy // the old server's answer no longer counts
+				why = errors.NoRoute
 			}
 			server = m.DNS
 		case net.Down:
 			flush(expires)
 			done = busy
+			why = errors.NoRoute
 			server = 0
 		case actor.Request:
 			if !subscribed {
@@ -126,13 +134,17 @@ func resolver() {
 			if busy && m.From.IP == server && m.From.Port == 53 {
 				ip, ttl = parse(m.Data, id, name)
 				done = ttl != -1
+				why = errors.NotFound
 			}
 		}
 		if done {
 			if ttl > 0 {
 				put(names, ips, expires, name, ip, ttl)
 			}
-			actor.Reply(cur, answer{IP: ip, OK: ttl >= 0})
+			if ttl >= 0 {
+				why = nil
+			}
+			actor.Reply(cur, answer{IP: ip, Err: why})
 			port.Close(u)
 			busy = false
 		}
@@ -146,17 +158,23 @@ func resolver() {
 			id = (id + 1) & 0xFFFF
 			tries = 0
 			ip, ok := cached(names, ips, expires, name)
+			var err error
 			if !ok {
 				data, ok = encode(name, id)
-				if ok && server != 0 && actor.Now() < deadline {
-					var err error
+				switch {
+				case !ok:
+					err = errors.BadArg
+				case server == 0:
+					err = errors.NoRoute
+				case actor.Now() >= deadline:
+					err = errors.Timeout
+				default:
 					u, err = port.Open("udp", net.UDP{})
 					busy = err == nil
 				}
-				ok = false
 			}
 			if !busy {
-				actor.Reply(cur, answer{IP: ip, OK: ok})
+				actor.Reply(cur, answer{IP: ip, Err: err})
 			}
 		}
 		if busy && (!got || tries == 0) {

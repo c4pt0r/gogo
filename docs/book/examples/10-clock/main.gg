@@ -47,7 +47,7 @@ func main() {
 	if !ok {
 		server = "pool.ntp.org"
 	}
-	if dhcp.Start(dhcp.Config{}) && sntp.Sync(server, 5000) {
+	if dhcp.Start(dhcp.Config{}) == nil && sntp.Sync(server, 5000) == nil {
 		println("synced with", server, "->", date(sys.Time()), "UTC")
 	} else {
 		println("not synced: no network or no answer")

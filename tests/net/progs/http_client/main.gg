@@ -25,7 +25,7 @@ func atoi(key string, def int) int {
 }
 
 func main() {
-	println("start", dhcp.Start(dhcp.Config{}))
+	println("start", dhcp.Start(dhcp.Config{}) == nil)
 	script, _ := sys.Config("test.script")
 	text, _ := sys.Config("test.body")
 	timeout := atoi("test.timeout", 3000)
@@ -43,8 +43,8 @@ func main() {
 			if op == "POST" {
 				body, ctype = bytes.FromString(text), "text/plain"
 			}
-			r, ok := http.Do(op, arg, ctype, body, max, timeout)
-			println(op, arg, ok, r.Status, r.Body.Len(), r.Truncated, actor.Now())
+			r, err := http.Do(op, arg, ctype, body, max, timeout)
+			println(op, arg, err == nil, r.Status, r.Body.Len(), r.Truncated, actor.Now())
 			for _, h := range r.Headers {
 				println("  " + h.Name + ": " + h.Value)
 			}

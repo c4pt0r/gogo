@@ -25,7 +25,7 @@ until it does every https request fails. Set the clock once the network is
 up, with `gogo/sntp` (chapter 10):
 
 ```go
-if !sntp.Sync("pool.ntp.org", 5000) {
+if sntp.Sync("pool.ntp.org", 5000) != nil {
 	println("no time: https would fail")
 	return
 }
@@ -62,19 +62,19 @@ func main() {
 	if !ok {
 		url = "https://example.com/"
 	}
-	if !dhcp.Start(dhcp.Config{}) {
+	if dhcp.Start(dhcp.Config{}) != nil {
 		println("no network")
 		return
 	}
-	if !sntp.Sync("pool.ntp.org", 5000) {
+	if sntp.Sync("pool.ntp.org", 5000) != nil {
 		println("no time: https would fail")
 		return
 	}
 	// The request runs in an actor of its own with room for the TLS
 	// state (about 23 KB); this actor only needs room for the body.
-	r, ok := http.Get(url, 15000)
-	if !ok {
-		println("GET", url, "failed (DNS, connect, certificate or timeout)")
+	r, err := http.Get(url, 15000)
+	if err != nil {
+		println("GET", url, "failed:", err.Error())
 		return
 	}
 	println("GET", url, "->", r.Status, r.Body.Len(), "bytes")
@@ -88,7 +88,7 @@ no network
 ```
 
 The port is 443 unless the URL names another. A failed certificate check
-is an ordinary failure: `ok` is false, as for a refused connection or a
+is an ordinary failure, an error, as for a refused connection or a
 timeout. The TLS handshake takes a while on a microcontroller (the
 signature checks are spread over many short slices, so other actors keep
 running), so give an https request a longer timeout than a plain one.
@@ -154,17 +154,17 @@ func main() {
 	if !ok {
 		url = "https://example.com/status"
 	}
-	if !dhcp.Start(dhcp.Config{}) || !sntp.Sync("pool.ntp.org", 5000) {
+	if dhcp.Start(dhcp.Config{}) != nil || sntp.Sync("pool.ntp.org", 5000) != nil {
 		println("no network")
 		return
 	}
 	c := http.NewClient()
 	var none bytes.Bytes
 	for i := 0; i < 5; i++ {
-		r, ok := http.ClientDo(c, "GET", url, "", none, 5000)
+		r, err := http.ClientDo(c, "GET", url, "", none, 5000)
 		// A failed request (the server went away mid-request) is not
 		// retried for you; the next one reconnects.
-		println(i, ok, r.Status, r.Body.Len())
+		println(i, err == nil, r.Status, r.Body.Len())
 		actor.Sleep(1000)
 	}
 	http.CloseClient(c)

@@ -17,14 +17,15 @@
 // SNTP is unauthenticated. The nonce (the transmit timestamp, 60 random bits
 // from sys.Random) stops an off-path attacker from guessing a reply, but an
 // on-path attacker can set any time the build-time floor allows (see
-// gogo/sys); there is no defence against that here. Sync returns false if
-// the floor refuses the time.
+// gogo/sys); there is no defence against that here. Sync fails if the
+// floor refuses the time.
 package sntp
 
 import (
 	"gogo/actor"
 	"gogo/bytes"
 	"gogo/dns"
+	"gogo/errors"
 	"gogo/net"
 	"gogo/port"
 	"gogo/sys"
@@ -44,43 +45,49 @@ type job struct {
 }
 
 // result is the helper's reply: the Unix time in ms at the moment of the
-// reply, if OK.
+// reply, if Err is nil.
 type result struct {
-	OK bool
-	Ms int64
+	Err error
+	Ms  int64
 }
 
 // Sync asks server (a name, resolved with gogo/dns, or a dotted IPv4
-// address) for the time and sets the wall clock (sys.SetTime). It returns
-// false, leaving the clock alone, if the server cannot be resolved, gives
-// a time before the build-time floor, or gives no valid reply within timeoutMs (<= 0: 5000); the request is sent up to 3
-// times, sharing the time left after the lookup.
-func Sync(server string, timeoutMs int) bool {
+// address) for the time and sets the wall clock (sys.SetTime). It fails,
+// leaving the clock alone, with dns.Lookup's error if the server cannot be
+// resolved, errors.Timeout if no valid reply comes within timeoutMs (<= 0:
+// 5000), errors.BadArg if the time is before the build-time floor, or the
+// error of opening the "udp" port; the request is sent up to 3 times,
+// sharing the time left after the lookup.
+func Sync(server string, timeoutMs int) error {
 	if timeoutMs <= 0 {
 		timeoutMs = 5000
 	}
 	deadline := actor.Now() + int64(timeoutMs)
-	ip, ok := dns.Lookup(server, timeoutMs)
-	if !ok {
-		return false
+	ip, err := dns.Lookup(server, timeoutMs)
+	if err != nil {
+		return err
 	}
 	left := int(deadline - actor.Now())
 	if left <= 0 {
-		return false
+		return errors.Timeout
 	}
 	pid := actor.Spawn(worker)
 	r, got := actor.Call(pid, job{IP: ip, Deadline: deadline}, left+100)
 	if !got {
 		actor.Kill(pid, actor.Shutdown)
-		return false
+		return errors.Timeout
 	}
 	switch a := r.(type) {
 	case result:
-		if a.OK {
-			return sys.SetTime(a.Ms)
+		if a.Err != nil {
+			return a.Err
 		}
+		if !sys.SetTime(a.Ms) {
+			return errors.BadArg
+		}
+		return nil
 	}
-	return false
+	return errors.Timeout
 }
 
 // Now returns the wall clock, Unix time in ms, or 0 if it is not set (see
@@ -96,22 +103,25 @@ func worker() {
 	case actor.Request:
 		switch j := q.Body.(type) {
 		case job:
-			ms, ok := exchange(j.IP, j.Deadline)
-			actor.Reply(q, result{OK: ok, Ms: ms})
+			ms, err := exchange(j.IP, j.Deadline)
+			actor.Reply(q, result{Err: err, Ms: ms})
 		}
 	}
 }
 
 // exchange sends the request to ip:123 (up to 3 times before deadline) and
-// returns the time from the first valid reply.
-func exchange(ip int, deadline int64) (int64, bool) {
+// returns the time from the first valid reply, or why not.
+func exchange(ip int, deadline int64) (int64, error) {
 	u, err := port.Open("udp", net.UDP{})
 	if err != nil {
-		return 0, false
+		return 0, err
 	}
 	ms, ok := try(u, ip, deadline)
 	port.Close(u)
-	return ms, ok
+	if !ok {
+		return 0, errors.Timeout
+	}
+	return ms, nil
 }
 
 // try is exchange on the open port u.

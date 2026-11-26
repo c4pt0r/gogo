@@ -118,17 +118,17 @@ func main() {
 			http.CloseClient(c)
 			println("cclose")
 		} else if op == "GET" {
-			r, ok := http.Get(arg, timeout)
-			show(op, arg, r, ok)
+			r, err := http.Get(arg, timeout)
+			show(op, arg, r, err == nil)
 		} else if op == "POST" {
-			r, ok := http.Post(arg, "text/plain", bytes.FromString(text), timeout)
-			show(op, arg, r, ok)
+			r, err := http.Post(arg, "text/plain", bytes.FromString(text), timeout)
+			show(op, arg, r, err == nil)
 		} else if op == "CGET" {
-			r, ok := http.ClientDo(c, "GET", arg, "", none, timeout)
-			show(op, arg, r, ok)
+			r, err := http.ClientDo(c, "GET", arg, "", none, timeout)
+			show(op, arg, r, err == nil)
 		} else if op == "CPOST" {
-			r, ok := http.ClientDo(c, "POST", arg, "text/plain", bytes.FromString(text), timeout)
-			show(op, arg, r, ok)
+			r, err := http.ClientDo(c, "POST", arg, "text/plain", bytes.FromString(text), timeout)
+			show(op, arg, r, err == nil)
 		} else if op == "UP" || op == "UPMISS" || op == "UPNT" || op == "CUP" {
 			path, _ := sys.Config("test.file")
 			if op == "UPMISS" {
@@ -149,20 +149,20 @@ func main() {
 			me, cl, slow := actor.Self(), c, arg
 			actor.Spawn(func() {
 				var none bytes.Bytes
-				r, ok := http.ClientDo(cl, "GET", slow, "", none, 2000)
-				show("CGET", slow, r, ok)
+				r, err := http.ClientDo(cl, "GET", slow, "", none, 2000)
+				show("CGET", slow, r, err == nil)
 				actor.Send(me, "slow done")
 			})
 			actor.Sleep(50)
-			r, ok := http.ClientDo(c, "POST", "https://gogo.test/stale", "text/plain", bytes.FromString(text), 300)
-			show("CPOST", "https://gogo.test/stale", r, ok)
+			r, err := http.ClientDo(c, "POST", "https://gogo.test/stale", "text/plain", bytes.FromString(text), 300)
+			show("CPOST", "https://gogo.test/stale", r, err == nil)
 			println(actor.Receive())
 		} else if op == "QFULL" {
 			me, cl, slow := actor.Self(), c, arg
 			actor.Spawn(func() {
 				var none bytes.Bytes
-				r, ok := http.ClientDo(cl, "GET", slow, "", none, 3000)
-				show("CGET", slow, r, ok)
+				r, err := http.ClientDo(cl, "GET", slow, "", none, 3000)
+				show("CGET", slow, r, err == nil)
 				actor.Send(me, "done")
 			})
 			actor.Sleep(50)
@@ -174,8 +174,8 @@ func main() {
 			}
 			actor.Sleep(1000) // the client is surely waiting on the connect by now
 			t0 := actor.Now()
-			_, ok := http.ClientDo(c, "POST", "https://gogo.test/over", "text/plain", bytes.FromString(text), 1000)
-			println("over", ok, actor.Now()-t0 < 100)
+			_, err := http.ClientDo(c, "POST", "https://gogo.test/over", "text/plain", bytes.FromString(text), 1000)
+			println("over", err == nil, actor.Now()-t0 < 100)
 			for i := 0; i <= http.MaxQueued; i++ {
 				actor.Receive()
 			}
@@ -190,16 +190,16 @@ func main() {
 					status, err := http.Upload(u, path, "application/octet-stream", token)
 					println("UP", u, status, int(err))
 				} else {
-					r, ok := http.Get(u, timeout)
-					show("GET", u, r, ok)
+					r, err := http.Get(u, timeout)
+					show("GET", u, r, err == nil)
 				}
 			})
 			actor.Monitor(p)
 			caller = p
 		} else if op == "WAIT" {
 			for i := 0; i < 300; i++ {
-				r, ok := http.Get(arg, timeout)
-				if ok && r.Body.String() == "yes" {
+				r, err := http.Get(arg, timeout)
+				if err == nil && r.Body.String() == "yes" {
 					break
 				}
 				actor.Sleep(100)
@@ -233,8 +233,8 @@ func main() {
 			for i := 0; i < 2; i++ {
 				actor.Spawn(func() {
 					var none bytes.Bytes
-					_, ok := http.ClientDo(cl, "GET", "https://gogo.test/queued", "", none, 5000)
-					actor.Send(me, qres{ok, actor.Now()})
+					_, err := http.ClientDo(cl, "GET", "https://gogo.test/queued", "", none, 5000)
+					actor.Send(me, qres{err == nil, actor.Now()})
 				})
 			}
 			actor.Sleep(50) // both are in the Client's mailbox
@@ -266,8 +266,8 @@ func main() {
 				cl := http.NewClient()
 				actor.Send(me, cl)
 				var none bytes.Bytes
-				r, ok := http.ClientDo(cl, "GET", u, "", none, 5000)
-				show("CGET", u, r, ok)
+				r, err := http.ClientDo(cl, "GET", u, "", none, 5000)
+				show("CGET", u, r, err == nil)
 				actor.Exit(100)
 			})
 			var cl http.Client

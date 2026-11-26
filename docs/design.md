@@ -667,18 +667,20 @@ text grid while it is open.
   control block 12 B, a `Port` 64 B (32-bit); the net code is about
   11.3 KB (xtensa, -Os). The Wi-Fi driver takes about 30 KB of heap and
   31.5 KB of static RAM; lwIP and esp_netif are not linked.
-- **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs})` starts the DHCP
+- **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs}) error` starts the DHCP
   client actor, which owns `netif` (renewal at T1, rebinding at T2, the
   address cleared at expiry). With the configuration keys `net.ip`,
   `net.mask`, `net.gw` and `net.dns` it sets a static address instead.
-- **`gogo/dns`**: `dns.Lookup(name, timeoutMs) (int, bool)`, served by a
+- **`gogo/dns`**: `dns.Lookup(name, timeoutMs) (int, error)` (`NotFound`,
+  `NoRoute`, `Timeout`, `BadArg`), served by a
   resolver actor registered as `dns`: A records, 2 retries, a cache of 4
   entries by TTL, cleared when the network goes down or the DNS server
   changes.
 - **`gogo/http`**: the client `http.Get`, `http.Post` and
   `http.Do(method, url, contentType, body, maxBody, timeoutMs)` take
   `http://` (HTTP/1.0) or `https://` (HTTP/1.1, through the `tls` port)
-  URLs, both with `Connection: close`. Each request runs in a temporary
+  URLs, both with `Connection: close`, and return `(Response, error)`
+  (`BadURL`, `Timeout`, `IO`). Each request runs in a temporary
   actor; the caller waits as with `Call`. The response body is limited
   (`MaxBody`, 8 KB by default; `Do` up to `MaxBodyLimit`, 64 KB), cut
   there and marked `Truncated`, and charged to the caller, whose default
@@ -728,7 +730,7 @@ text grid while it is open.
   (`runtime/vm/platform.h`; `runtime/vm/walltime.c` has weak defaults: an
   offset from the monotonic clock, unknown at boot). There is no
   permission model: any code may set the time, and the floor is the only
-  protection. `sntp.Sync(server, timeoutMs) bool` does one SNTP exchange
+  protection. `sntp.Sync(server, timeoutMs) error` does one SNTP exchange
   in a helper actor (up to 3 sends, 60 random bits as a nonce, source and
   fields checked, half the round trip added) and calls `sys.SetTime` on
   success. On Unix the wall clock starts from the host clock or from
