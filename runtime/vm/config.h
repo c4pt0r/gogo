@@ -70,7 +70,9 @@
 /* 1: debug build (the sanitizer test builds, host only). GOGO_ASSERT checks
  * internal invariants and aborts with the failed expression on stderr;
  * va_alloc keeps each block's size in front of it for va_free to check.
- * 0 (every other build): GOGO_ASSERT compiles to nothing. */
+ * 0 (every other build): GOGO_ASSERT compiles to nothing. Host config only:
+ * the 8-byte size header on every block does not fit the MCU arena
+ * (GOGO_ARENA_BYTES; test_c_mcu's timer_heap_order runs out of memory). */
 #ifndef GOGO_DEBUG
 #define GOGO_DEBUG 0
 #endif

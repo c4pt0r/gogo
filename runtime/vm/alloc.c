@@ -23,7 +23,7 @@ void *va_alloc(Vm *vm, size_t bytes) {
             h->free_list[cls] = h->free_list[cls]->next;
         } else {
             if ((size_t)(h->chunk_end - h->chunk_cur) < size + VA_HDR) {
-                /* Tail of the old chunk is abandoned; at most 248 bytes. */
+                /* Tail of the old chunk is abandoned; at most 248 bytes (256 with VA_HDR). */
                 char *c = vm_chunk_alloc(vm, VA_CHUNK);
                 if (!c) return NULL;
                 h->chunk_cur = c;
