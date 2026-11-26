@@ -80,6 +80,9 @@
 /* StreamOut.user: the held events, Connected and 1 + a Closed reason. */
 #define HELD_CONN 1u
 #define HELD_CL_SHIFT 1u
+/* A held reason + 1 must fit the 7 bits above HELD_CONN: every shared code
+ * does (C99: a negative array size fails the build otherwise). */
+typedef char tcp_held_reason_fits[((GOGO_E_SHARED_MAX + 1u) << HELD_CL_SHIFT) <= 0xFFu ? 1 : -1];
 #define EVENT_RESERVE TCP_EVENT_RESERVE
 
 /* The refusal check: an Out after Shutdown or with no connection. */

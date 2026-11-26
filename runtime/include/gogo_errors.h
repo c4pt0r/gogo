@@ -12,6 +12,9 @@
 #ifndef GOGO_ERRORS_H
 #define GOGO_ERRORS_H
 
+/* The largest shared code (actor.Failed + it < 100). */
+#define GOGO_E_SHARED_MAX 35
+
 enum {
     GOGO_E_OK = 0,
     GOGO_E_NOTFOUND = 1,

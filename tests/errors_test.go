@@ -57,6 +57,9 @@ func TestErrorCodes(t *testing.T) {
 		}
 		c[string(m[1])] = v
 	}
+	if m := regexp.MustCompile(`#define GOGO_E_SHARED_MAX\s+(\d+)`).FindSubmatch(hdr); m == nil || string(m[1]) != strconv.Itoa(maxShared) {
+		t.Errorf("gogo_errors.h: GOGO_E_SHARED_MAX is not %d", maxShared)
+	}
 	if n := len(regexp.MustCompile(`\bGOGO_E_[A-Z0-9]+\s*=`).FindAll(hdr, -1)); n != len(c) {
 		t.Errorf("gogo_errors.h has %d GOGO_E_* values, %d of them decimal or hex numbers", n, len(c))
 	}
