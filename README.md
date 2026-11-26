@@ -24,6 +24,75 @@ third-party libraries. An idle actor costs about 150 bytes.
 Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
 `GOGO_BOARD`. RP2040 boards are planned.
 
+## Architecture
+
+```
+                           ┌────────────────────────────────────────────┐
+  DEVELOPER HOST           │  gogo program  (*.gg, Go subset)           │
+  (macOS / Linux)          │  actors · messages · ports · supervisors   │
+                           └──────────────────────┬─────────────────────┘
+                                                  │ import "gogo/..."
+ ┌────────────────────────────────────────────────▼─────────────────────────┐
+ │ lib/   standard library (.gg, embedded in the compiler)                  │
+ │  stubs → VM builtins: actor port bytes fs sys net code kbd power imu ir  │
+ │                       audio                                              │
+ │  libraries in gogo:   supervisor strings strconv dhcp dns http sntp kv   │
+ │                       ringlog wav sound irproto …                        │
+ └────────────────────────────────────────────────┬─────────────────────────┘
+ ┌────────────────────────────────────────────────▼─────────────────────────┐
+ │ compiler/  (Go, module gogotools)                                        │
+ │  load ─► go/types check ─► subset check ─► codegen ─► assembler ─► image │
+ │  capability inference · //gogo:optional                                  │
+ └────────────────────────────────────────────────┬─────────────────────────┘
+ ┌──────────────────────────────┐                 │
+ │ cmd/gogo  CLI                │       *.ggb  bytecode image
+ │ build run dis flash monitor  │       (header · consts · code · types ·
+ │ firmware config setup        │        requires · exports)
+ └──────────────┬───────────────┘                 │
+                │ esptool / USB serial            │
+════════════════╪═════════════════════════════════╪══════════════════════════
+  TARGETS       ▼                                 ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │ runtime/vm   VM CORE  (C99, ~37 KB, all state per Vm)                  │
+ │ ┌──────────┐ ┌───────────┐ ┌─────────────┐ ┌──────────┐ ┌────────────┐ │
+ │ │ image    │ │ interp +  │ │ actors      │ │ messages │ │ timers     │ │
+ │ │ loader   │ │ scheduler │ │ heap + GC   │ │ copy     │ │ names      │ │
+ │ │ caps     │ │ step/dl   │ │ mem limits  │ │ quotas   │ │ links/mon  │ │
+ │ └──────────┘ └───────────┘ └─────────────┘ └──────────┘ └────────────┘ │
+ │ ┌───────────────────────┐ ┌───────────────────────────────────────────┐│
+ │ │ modules (hot loading) │ │ port layer: drivers · event ring · sources││
+ │ └───────────────────────┘ └───────────────────────────────────────────┘│
+ └─────────────────────────────────────┬──────────────────────────────────┘
+                                       │ PortDriver / PortSource
+ ┌──────────┬──────────┬───────────┬───┴──────┬──────────────┬────────────┐
+ │ net      │ net/tls  │ vfs       │ stream   │ input        │ console    │
+ │ eth arp  │ mbedTLS  │ /flash    │ Chunk    │ kbd power    │ text +     │
+ │ ip udp   │ cert     │ /sd       │ Out      │ imu ir       │ CJK font   │
+ │ tcp      │ bundle   │ sandbox   │ Done     │ mic spk      │            │
+ └──────────┴──────────┴───────────┴──────────┴──────────────┴────────────┘
+                                       │ gogo_host + VmBoard tables
+          ┌────────────────────────────┼─────────────────────────────┐
+ ┌────────▼───────────────┐ ┌──────────▼───────────┐ ┌───────────────▼─────────┐
+ │ platform/esp32s3       │ │ platform/unix        │ │ runtime/embed           │
+ │ ESP-IDF · FreeRTOS     │ │ gogovm (host VM)     │ │ libgogo.a + gogo.h      │
+ │ M5StickS3   Cardputer  │ │ sim net / gpio / mic │ │ gogo_step · gogo_post   │
+ │ Wi-Fi LCD I2S IR IMU   │ │ --fs-root --caps     │ │ host ports · sandbox fs │
+ │ LittleFS FAT NVS PSRAM │ │                      │ │ → C, Rust, Go, Swift    │
+ └────────────────────────┘ └──────────────────────┘ └─────────────────────────┘
+
+ Release:  git tag vX.Y.Z ─► GitHub Actions ─► draft release
+           (firmware per board · gogo CLI per OS · SHA256SUMS · licenses)
+           └─► gogo setup: detect board → verify → flash → Wi-Fi → hello
+```
+
+Above the double line runs on your computer: programs import the
+standard library, whose stub packages compile to VM builtins and whose
+other packages are ordinary gogo code; the compiler turns them into a
+`.ggb` image. Below it runs on the target: the VM core schedules actors
+and reaches every peripheral through ports, and the same core runs on
+the boards, in the host VM, and inside other programs through
+`libgogo.a`, each supplying its own `gogo_host` and `VmBoard` tables.
+
 ## Repository layout
 
 | Path | What |
