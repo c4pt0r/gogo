@@ -1,3 +1,3 @@
-panic: interface conversion: any is not main.Celsius
+panic: interface conversion: interface {} is not main.Celsius
 gogo: actor <pid 1> crashed: panic in main.main.func1
 gogo: actor <pid 0> crashed: panic in main

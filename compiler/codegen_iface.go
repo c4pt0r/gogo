@@ -185,10 +185,16 @@ func (f *fn) constBox(e ast.Expr, v constant.Value, dst uint8) {
 	f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddStruct(f.g.boxIndex(t), []uint32{field})))
 }
 
-// assertMsg is the panic value of a failed x.(T).
+// assertMsg is the panic value of a failed x.(T): Go's text without the
+// dynamic type, which only the run time knows ("interface {} is int, not
+// string" in Go).
 func (f *fn) assertMsg(e *ast.TypeAssertExpr) string {
 	q := func(p *types.Package) string { return pkgPrefix(p) }
-	return "interface conversion: " + types.TypeString(f.g.p.Info.TypeOf(e.X), q) + " is not " + types.TypeString(f.g.p.Info.TypeOf(e.Type), q)
+	from := types.TypeString(f.g.p.Info.TypeOf(e.X), q)
+	if isAny(f.g.p.Info.TypeOf(e.X)) {
+		from = "interface {}" // as Go names it
+	}
+	return "interface conversion: " + from + " is not " + types.TypeString(f.g.p.Info.TypeOf(e.Type), q)
 }
 
 // typeTest emits t = (the interface value in register x has type T), T
