@@ -239,6 +239,15 @@ Not planned: `goto`, `recover`, `defer` inside loops,
 per-actor mutable globals, channels, `go` statements. Generics are
 deferred.
 
+### Why does my function that returns `error` fail on success?
+Probably it returns an `errors.Code` from `gogo/fs` or `gogo/code`
+(`fs.Err`, `code.Err`): their success is `errors.OK`, the code 0, which
+in an `error` is not `nil` (as a typed nil pointer is not in Go). The
+compiler rejects `return fs.WriteFile(p, b)` in such a function; for a
+code you hold in a variable, check it first: `if c != fs.OK { return c
+}; return nil`. Functions that return `error` themselves (`port.Open`,
+`strconv.Atoi`, `http.Get`, ...) return a true `nil`.
+
 ### Can I import packages?
 - **The standard library, yes:** `gogo/actor`, `gogo/http`, `gogo/strconv`,
   `gogo/tui` and the rest are built into the compiler.

@@ -418,7 +418,29 @@ func (c *checker) convert(target types.Type, e ast.Expr) {
 		return
 	}
 	c.noFuncInAny(e)
+	c.codeAsError(target, e)
 	c.convertType(target, c.p.Info.TypeOf(e), e.Pos())
+}
+
+// codeAsError rejects the result of a call that returns an errors.Code
+// (fs.WriteFile, code.Load's ...: fs.Err and code.Err are aliases) used
+// directly as an error, as in `return fs.WriteFile(p, b)` in a function
+// that returns error: errors.OK in an error is not nil, so success would
+// read as a failure. A Code held in a variable, checked against OK first,
+// converts as any value does.
+func (c *checker) codeAsError(target types.Type, e ast.Expr) {
+	call, ok := ast.Unparen(e).(*ast.CallExpr)
+	if !ok || c.p.Info.Types[call.Fun].IsType() || !types.Identical(target, errorType) || !isErrorsCode(c.p.Info.TypeOf(call)) {
+		return // not a call, a conversion, or not a Code into an error
+	}
+	c.fail(e.Pos(), "errors.Code result used as an error: OK would be a non-nil error; check it against OK first")
+}
+
+// isErrorsCode reports whether t is gogo/errors' Code (fs.Err and code.Err
+// included: they are aliases).
+func isErrorsCode(t types.Type) bool {
+	n, ok := types.Unalias(t).(*types.Named)
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == ErrorsPath && n.Obj().Name() == "Code"
 }
 
 // convertType checks the implicit conversion of a value of type src (one

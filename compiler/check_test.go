@@ -313,6 +313,8 @@ func TestRejects(t *testing.T) {
 		{"iface-vm-arg", "package main\nimport \"gogo/bytes\"\ntype S interface{ String() string }\nfunc f(s S) {}\nfunc main() {\n\tf(bytes.FromString(\"a\")) // ERR\n}\n", []string{"bytes.Bytes as a main.S not supported"}},
 		{"iface-vm-embedded", "package main\nimport \"gogo/bytes\"\ntype W interface{ WriteByte(c byte) }\ntype B struct{ bytes.Buffer }\nfunc main() {\n\tvar w W = B{} // ERR\n\t_ = w\n}\n", []string{"main.B as a main.W not supported"}},
 		{"iface-vm-conv", "package main\nimport \"gogo/bytes\"\ntype L interface{ Len() int }\nfunc main() {\n\tl := L(bytes.FromString(\"a\")) // ERR\n\t_ = l\n}\n", []string{"bytes.Bytes as a main.L not supported"}},
+		{"code-as-error", "package main\nimport \"gogo/fs\"\nfunc save() error {\n\treturn fs.Remove(\"/a\") // ERR\n}\nfunc main() { println(save() == nil) }\n", []string{"errors.Code result used as an error"}},
+		{"code-as-error-arg", "package main\nimport \"gogo/fs\"\nfunc f(err error) {}\nfunc main() {\n\tf(fs.Remove(\"/a\")) // ERR\n}\n", []string{"errors.Code result used as an error"}},
 		{"iface-typeset", "package main\ntype N interface{ ~int } // ERR\nfunc main() {}\n", []string{"interface with a type set not supported"}},
 		{"alias-generic", "package main\ntype L[T any] = []T // ERR\nfunc main() {}\n", []string{"generic type not supported"}},
 		{"alias-map", "package main\ntype M = map[int]int // ERR\nfunc main() {}\n", []string{"map not supported"}},

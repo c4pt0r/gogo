@@ -429,6 +429,16 @@ rebuilt:
   program that has the method, in declaration order, before calling it;
   a program with many such types pays for the chain (and its image holds
   one dispatcher per interface method called).
+- **`errors.OK` in an `error` is not `nil`.** `gogo/fs` and `gogo/code`
+  return an `errors.Code` (`fs.Err`, `code.Err`), whose success is
+  `errors.OK`, the code 0; converted to `error` it is a non-nil value,
+  like a typed nil pointer in Go, so `return fs.WriteFile(p, b)` in a
+  function that returns `error` would turn every success into a failure.
+  The compiler rejects a call's `errors.Code` result used directly as an
+  `error` (`errors.Code result used as an error`), but not a `Code`
+  variable converted later. *Workaround:* `if c != fs.OK { return c };
+  return nil`. The library functions that return `error` return `nil`
+  on success.
 - **The VM's own types do not implement your interfaces.** The methods
   of `bytes.Bytes`, `bytes.Buffer` and `fs.File` are builtins, which a
   dispatcher cannot call: putting one (or a struct that embeds one) into

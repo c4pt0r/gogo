@@ -1971,6 +1971,26 @@ with `errors.Is` when it may be wrapped; a type switch or `err.(T)` gets
 at an error type's details. Unlike Go, two errors from `errors.New` with
 the same text are equal: an error is a value, compared by what it holds.
 
+> **Warning.** `gogo/fs` and `gogo/code` still return an `errors.Code`
+> (`fs.Err`, `code.Err`), not an `error`, and their success is
+> `errors.OK`, the code 0. Put into an `error`, `errors.OK` is a
+> non-nil error, like a typed nil pointer in Go: `return
+> fs.WriteFile(p, b)` in a function that returns `error` would report
+> every success as a failure. The compiler rejects that form
+> (`errors.Code result used as an error`); check the code first:
+>
+> ```go
+> func save(p string, b bytes.Bytes) error {
+> 	if c := fs.WriteFile(p, b); c != fs.OK {
+> 		return c
+> 	}
+> 	return nil
+> }
+> ```
+>
+> The functions that return `error` (`port.Open`, `strconv.Atoi`,
+> `http.Get`, ...) return a true `nil` on success.
+
 For failures you do not expect and cannot handle, gogo's answer is
 different: let the actor crash, and let a supervisor restart it. That is
 the subject of chapter 5. `panic(v)` crashes the current actor on
