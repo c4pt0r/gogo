@@ -114,9 +114,9 @@ static bool term_live(const Vm *vm, const Actor *a, term t) {
  * can grow as width^depth for a value of a few hundred words. A heap value
  * without such sharing cannot reach the limit: every visit but the first
  * reads a distinct word of the actor's heap (at most HEAP_MAX_WORDS), or
- * of a constant area (the image's constant structs, few and small). The
- * println walk (out_term) visits the same terms in the same order under
- * the same limit, so it never prints what was not checked. */
+ * of a constant area (the image's constant structs, few and small). It is
+ * the println walk (out_term) printing nothing, so println never prints
+ * what was not checked. */
 #define WALK_BUDGET 65536
 
 /* deep_live's verdicts besides "live" (the budget left, >= 0). */
@@ -132,26 +132,9 @@ static bool term_live(const Vm *vm, const Actor *a, term t) {
  * a silently refused open or ignored command, and so is a value too
  * entangled to check within the budget. println's is "not WALK_STALE": it
  * cuts what it prints at the same point. */
+static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth, int32_t left);
 static int32_t deep_live(const Vm *vm, const Actor *a, term t, int depth, int32_t left) {
-    if (left <= 0) return WALK_CUT;
-    left--;
-    if (!term_live(vm, a, t)) return WALK_STALE;
-    if (depth >= PRINT_MAX_DEPTH) return left;
-    const uint32_t *obj = obj_of(vm, a, t);
-    uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
-    if (kind == K_STRUCT) {
-        for (uint32_t i = 2; left >= 0 && i < hdr_words(obj[0]); i++)
-            left = deep_live(vm, a, field_term(t, obj[i]), depth + 1, left);
-    } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
-        term at = field_term(t, obj[4]);   /* a const array (15.6) */
-        const uint32_t *arr = obj_of(vm, a, at);
-        uint32_t off = obj[1], len = obj[2];
-        if (arr && hdr_kind(arr[0]) == K_ARRAY && len && off <= arr[1] && len <= arr[1] - off) {
-            for (uint32_t i = 0; left >= 0 && i < len; i++)
-                left = deep_live(vm, a, field_term(at, arr[2 + off + i]), depth + 1, left);
-        }
-    }
-    return left;
+    return out_term(NULL, vm, a, t, depth, left);   /* the walk, printing nothing */
 }
 
 /* ---- ints ---- */
@@ -318,47 +301,73 @@ static uint32_t arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
 
 /* ---- println ---- */
 
-static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth, int32_t left);
+/* out_str, unless only checking (o is NULL: deep_live). */
+static void put(Out *o, const char *s) {
+    if (o) out_str(o, s);
+}
 
 /* A slice, bare or inside a printed struct: [e0 e1 ...] (Go's println
  * prints [len/cap]address instead); a map header's entries (15.6: keys
  * and values alternate, the header printed "map" and set o->map to their
  * depth) as [k0:v0 k1:v1 ...]. out_slice and
  * out_term spend left as deep_live does and return what is left; once it
- * is spent the rest of the value is " ..." and no more (then -1). */
+ * is spent the rest of the value is " ..." and no more (then -1). With o
+ * NULL (deep_live) only a K_ARRAY's elements are walked. */
 static int32_t out_slice(Out *o, const Vm *vm, const Actor *a, term t, const uint32_t *h, int depth,
                          int32_t left) {
     uint32_t off = h[1], len = h[2];
-    bool map = o->map == depth;   /* a map's entries */
+    bool map = o && o->map == depth;   /* a map's entries */
     term at = field_term(t, h[4]);   /* a const array (15.6) */
     const uint32_t *arr = obj_of(vm, a, at);
-    if (depth >= PRINT_MAX_DEPTH) { out_str(o, "[...]"); return left; }
-    out_str(o, "[");
+    if (depth >= PRINT_MAX_DEPTH) { put(o, "[...]"); return left; }
+    put(o, "[");
     if (arr && len && off <= arr[1] && len <= arr[1] - off) {
         bool bytes = hdr_kind(arr[0]) == K_BYTEARR;
-        for (uint32_t i = 0; i < len && left >= 0; i++) {
-            if (i && left > 0) out_str(o, map && i & 1u ? ":" : " ");
+        for (uint32_t i = 0; i < len && left >= 0 && (o || hdr_kind(arr[0]) == K_ARRAY); i++) {
+            if (i && left > 0) put(o, map && i & 1u ? ":" : " ");
             if (bytes) out_int(o, ((const uint8_t *)(arr + 2))[off + i]);
             else left = out_term(o, vm, a, field_term(at, arr[2 + off + i]), depth + 1, left);
         }
     }
-    if (left >= 0) out_str(o, "]");
+    if (left >= 0) put(o, "]");
     return left;
 }
 
+/* The text of t into o. With o NULL, deep_live: the same walk printing
+ * nothing, term_live of every term visited, WALK_STALE at the first that
+ * is not. */
 static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth, int32_t left) {
     if (left <= 0) {
-        if (!left) out_str(o, " ...");
+        if (!left) put(o, " ...");
         return -1;
     }
     left--;
+    if (!o && !term_live(vm, a, t)) return WALK_STALE;
     int32_t v;
     int64_t v64;
     const uint8_t *bp;
     uint32_t blen;
     const uint32_t *obj = obj_of(vm, a, t);
     uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
-    if (int_val(vm, a, t, &v)) out_int(o, v);
+    /* structs and slices first (no leaf below is one): deep_live walks them too */
+    if (kind == K_STRUCT) {
+        /* 15.6: a pointer's target after "&", a box as its one field, a
+         * map as "map" and its entries slice (out_slice: o->map) */
+        uint32_t fl = obj[1], box = fl & (STRUCT_BOX | STRUCT_MAP);
+        if (fl & STRUCT_MAP) put(o, "map");
+        else if (fl & STRUCT_MUT) put(o, "&");
+        if (o) o->map = fl & STRUCT_MAP ? depth + 1 : -1;
+        if (depth >= PRINT_MAX_DEPTH) { put(o, box ? "..." : "{...}"); return left; }
+        if (!box) put(o, "{");
+        for (uint32_t i = 2; i < hdr_words(obj[0]) && left >= 0; i++) {
+            if (i > 2 && left > 0) put(o, " ");
+            left = out_term(o, vm, a, field_term(t, obj[i]), depth + 1, left);
+        }
+        if (left >= 0 && !box) put(o, "}");
+    } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
+        left = out_slice(o, vm, a, t, obj, depth, left);
+    } else if (!o) { }   /* deep_live: a leaf */
+    else if (int_val(vm, a, t, &v)) out_int(o, v);
     else if (int64_val(vm, a, t, &v64)) out_int64(o, v64);
     else if (t == T_TRUE) out_str(o, "true");
     else if (t == T_FALSE) out_str(o, "false");
@@ -374,22 +383,6 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
         out_str(o, ">");
     } else if (kind == K_STRING && obj[1] <= (hdr_words(obj[0]) - 2u) * 4u) {
         out_bytes(o, (const char *)(obj + 2), obj[1]);
-    } else if (kind == K_STRUCT) {
-        /* 15.6: a pointer's target after "&", a box as its one field, a
-         * map as "map" and its entries slice (out_slice: o->map) */
-        uint32_t fl = obj[1], box = fl & (STRUCT_BOX | STRUCT_MAP);
-        if (fl & STRUCT_MAP) out_str(o, "map");
-        else if (fl & STRUCT_MUT) out_str(o, "&");
-        o->map = fl & STRUCT_MAP ? depth + 1 : -1;
-        if (depth >= PRINT_MAX_DEPTH) { out_str(o, box ? "..." : "{...}"); return left; }
-        if (!box) out_str(o, "{");
-        for (uint32_t i = 2; i < hdr_words(obj[0]) && left >= 0; i++) {
-            if (i > 2 && left > 0) out_str(o, " ");
-            left = out_term(o, vm, a, field_term(t, obj[i]), depth + 1, left);
-        }
-        if (left >= 0 && !box) out_str(o, "}");
-    } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
-        left = out_slice(o, vm, a, t, obj, depth, left);
     } else if (kind == K_CLOSURE) {
         out_str(o, "<func>");
     } else if (kind == K_BUF) {
