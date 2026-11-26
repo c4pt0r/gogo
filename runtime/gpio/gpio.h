@@ -13,10 +13,17 @@
  * reads a simulation's input). gpio_edge keeps the pin's last level, and
  * for a change that matches the configured edge pushes a PortEvent to the
  * event ring of the VM that opened the pin; the caller then wakes that VM.
- * It never locks or allocates. The VM debounces (port.c); for a
- * single-edge pin gpio_edge also drops an edge that follows the previous
- * level change by less than the debounce time, so the bounce of a key's
- * release (rise, fall, rise) is not taken for a new press. */
+ * It never locks or allocates. For a single-edge pin gpio_edge also drops
+ * an edge that follows the previous level change by less than the
+ * debounce time, so the bounce of a key's release (rise, fall, rise) is
+ * not taken for a new press.
+ *
+ * The driver also debounces the port's events on the scheduler thread
+ * (gpio_event, its PortDriver.event hook): an edge inside the debounce
+ * window after the last delivery is held, and only the latest is
+ * delivered when the window ends, if its level changed (gpio.c). The
+ * window ends are an event source of the driver's (port_add_source: one
+ * of GOGO_MAX_SOURCES, from the first value a VM's gpio port holds). */
 #ifndef GOGO_GPIO_H
 #define GOGO_GPIO_H
 
@@ -61,8 +68,8 @@ typedef struct GpioPin {
  *    VM alive.
  *  - raw_edges: the HAL reports clean edges, both of a press possibly in
  *    the same millisecond (the unix simulation's key presses), so the
- *    single-edge bounce filter is off; the port's debounce (port.c) still
- *    applies.
+ *    single-edge bounce filter is off; the port's debounce (gpio_event)
+ *    still applies.
  *
  * Interrupts on more than one core: gpio_edge for a pin must not run
  * while gpio_close releases that pin. On the ESP32-S3 the GPIO interrupt
@@ -96,11 +103,13 @@ int  gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint3
 void gpio_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n);
 void gpio_close(struct Vm *vm, Port *p);
 bool gpio_can_event(const struct Vm *vm, const Port *p);
+void gpio_event(struct Vm *vm, Port *p, const PortEvent *e, uint64_t now);
 
 /* A board's gpio driver instance over its HAL:
  *   const PortDriver my_gpio_driver = GPIO_DRIVER(&my_gpio_hal); */
 #define GPIO_DRIVER(hal) \
     { .name = PORT_NAME_GPIO, .cfg_type = TYPE_GPIO_CONFIG, .event_type = TYPE_GPIO_EDGE, .open = gpio_open, \
-      .command = gpio_command, .close = gpio_close, .can_event = gpio_can_event, .hw = (hal) }
+      .command = gpio_command, .close = gpio_close, .can_event = gpio_can_event, .hw = (hal), \
+      .event = gpio_event }
 
 #endif

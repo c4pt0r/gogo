@@ -383,7 +383,7 @@ same.
  │                  │                      │                               │     frames, DMA
  │                  │                      │  ┌─────────────────────────┐  │
  │  receive event ◄─┼── mailbox (quota) ◄──┼──│ event delivery          │◄─┼─┐
- │  (typed struct)  │                      │  │ debounce, coalesce      │  │ │
+ │  (typed struct)  │                      │  │ driver hook (debounce)  │  │ │
  └──────────────────┘                      │  └─────────────────────────┘  │ │
                                            │      ▲                ▲       │ │
                                            │      │ drain          │ drain │ │

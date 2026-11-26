@@ -98,8 +98,8 @@ typedef struct PortDriver {
     bool (*can_event)(const struct Vm *vm, const Port *p);   /* may still produce events */
 ```
 
-followed by four optional fields: `handoff`, `command_term`, `open_term`
-and `hw`. Every callback may be `NULL`. What each field is for:
+followed by five optional fields: `handoff`, `command_term`, `open_term`,
+`hw` and `event`. Every callback may be `NULL`. What each field is for:
 
 - **`name`** is what gogo code passes to `port.Open`, and the requirement
   name the compiler records.
@@ -129,11 +129,13 @@ and `hw`. Every callback may be `NULL`. What each field is for:
   (the TCP driver uses it to resume an accepted connection).
 - **`hw`** is the driver *instance*'s hardware layer, a table the board
   fills. The VM never reads it; the driver finds it at `p->drv->hw`.
+- **`event`** takes the driver's events from the event ring (section 22.5)
+  instead of the VM delivering each one as it is; the driver delivers
+  with `port_deliver` when it wants (`gpio` debounces there).
 
 Each open port is a `Port` in the VM's port table. Besides its driver
-and owner, it has four words of driver-private state (`p->state`), the
-debounce time the driver may set in `open`, and the memory the driver
-charges to the owner (section 22.5). A driver whose per-port state fits
+and owner, it has four words of driver-private state (`p->state`) and
+the memory the driver charges to the owner (section 22.5). A driver whose per-port state fits
 in 16 bytes needs nothing else. The table has a cap per VM: 16 ports by
 default on a board (`GOGO_MAX_PORTS`), 1024 on `gogovm` and in an
 embedded VM, changed with the config key `vm.max_ports` or the embedding
@@ -147,8 +149,9 @@ the same time as an actor. It must return quickly (section 22.12).
 
 ## 22.4 A real driver: `gpio`
 
-The `gpio` driver (`runtime/gpio/gpio.c`, 86 lines) is the smallest driver
-that has a config, a command and events from an interrupt. It is written
+The `gpio` driver (`runtime/gpio/gpio.c`, 211 lines) is the smallest driver
+that has a config, a command and events from an interrupt; about half of
+it is the debounce of its events (below). It is written
 once, in the runtime, and each board gives it a hardware layer.
 
 ### The gogo side
@@ -191,7 +194,8 @@ instance over its own hardware layer in one line:
  *   const PortDriver my_gpio_driver = GPIO_DRIVER(&my_gpio_hal); */
 #define GPIO_DRIVER(hal) \
     { .name = PORT_NAME_GPIO, .cfg_type = TYPE_GPIO_CONFIG, .event_type = TYPE_GPIO_EDGE, .open = gpio_open, \
-      .command = gpio_command, .close = gpio_close, .can_event = gpio_can_event, .hw = (hal) }
+      .command = gpio_command, .close = gpio_close, .can_event = gpio_can_event, .hw = (hal), \
+      .event = gpio_event }
 ```
 
 The name comes from `runtime/vm/port_names.h`, the list of every runtime
@@ -215,10 +219,8 @@ int gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32
     bool watch = watched((uint32_t)mode, (uint32_t)edge);
     uint16_t deb = (uint16_t)(cfg[3] > 0 ? (cfg[3] > 65535 ? 65535 : cfg[3]) : 20);
     if (h->config(h->ctx, (uint32_t)pin, mode, watch, &deb) != 0) return -1;
-    p->debounce_ms = deb;
-    p->state[0] = (uint32_t)pin;
-    p->state[1] = (uint32_t)mode;
-    p->state[2] = (uint32_t)edge;
+    p->state[0] = (uint32_t)pin | (uint32_t)mode << 8 | (uint32_t)edge << 16;
+    p->state[1] = (uint32_t)deb << 16;   /* the port's debounce (gpio_event) */
     s->vm = vm;
     s->index = index;
     s->gen = p->gen;
@@ -235,8 +237,9 @@ int gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32
 
 Three things to notice. Every refusal is `return -1`, which `port.Open`
 reports as `errors.Busy` (section 22.6): a pin out of range, a reserved
-pin, a pin already open. `p->debounce_ms` turns on the VM's
-debounce for this port (section 22.5). And the per-pin slot `s` is shared
+pin, a pin already open. The port's state words keep the pin, mode and
+edge (`PIN(p)`, `MODE(p)`, `EDGE(p)` read them back) and the debounce
+window (below). And the per-pin slot `s` is shared
 with the interrupt handler, so the driver fills it completely, then
 publishes it with `vm_barrier()` before setting `open`.
 
@@ -246,29 +249,32 @@ publishes it with `vm_barrier()` before setting `open`.
 void gpio_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) {
     (void)vm;
     const GpioHal *h = hal_of(p);
-    if (type != TYPE_GPIO_WRITE || n != 1 || p->state[1] != GPIO_OUTPUT) return;
-    h->write(h->ctx, p->state[0], f[0] != 0);
+    if (type != TYPE_GPIO_WRITE || n != 1 || MODE(p) != GPIO_OUTPUT) return;
+    h->write(h->ctx, PIN(p), f[0] != 0);
 }
+```
 
+```c
 void gpio_close(struct Vm *vm, Port *p) {
-    (void)vm;
     const GpioHal *h = hal_of(p);
-    uint32_t pin = p->state[0];
+    uint32_t pin = PIN(p);
     GpioPin *s = &h->pins[pin];
     s->open = 0;
     vm_barrier();
-    h->release(h->ctx, pin, (int)p->state[1], watched(p->state[1], p->state[2]));
-}
+    h->release(h->ctx, pin, (int)MODE(p), watched(MODE(p), EDGE(p)));
+```
 
+```c
 bool gpio_can_event(const struct Vm *vm, const Port *p) {
     (void)vm;
     const GpioHal *h = hal_of(p);
-    return watched(p->state[1], p->state[2]) && (!h->live || h->live(h->ctx));
+    return watched(MODE(p), EDGE(p)) && (!h->live || h->live(h->ctx));
 }
 ```
 
 A command of the wrong type, or a `Write` to an input pin, is ignored: a
-driver never crashes the sender. `gpio_can_event` is true for a watched
+driver never crashes the sender. `gpio_close` goes on with the debounce's
+bookkeeping (below): a value held for the port is dropped. `gpio_can_event` is true for a watched
 input while the hardware can still produce edges, so a program waiting
 for a button press keeps the VM alive.
 
@@ -306,7 +312,43 @@ The event names the port by index and generation: if the port was closed
 in the meantime, the VM finds a stale generation and drops the event. The
 scheduler turns each event into the driver's `event_type` struct with the
 two ints `{a, b}`, here `gpio.Edge{Pin: a, Value: b}`, and queues it on the
-owner.
+owner; but `gpio` has an `event` hook, so the scheduler hands it each
+event first.
+
+### Debounce
+
+A button bounces: one press can be a burst of edges within a few
+milliseconds. `gpio_edge` already drops, on a single-edge pin, an edge
+that follows the last level change too closely. The rest is done on the
+VM thread, in the driver's `event` hook, per port, with the `DebounceMs`
+of its config: an edge that comes at least that long after the last
+delivery is delivered at once; one inside the window is held (the latest
+wins), and when the window ends the held level is delivered if it
+differs from the last one delivered:
+
+```c
+void gpio_event(struct Vm *vm, Port *p, const PortEvent *e, uint64_t now) {
+    uint32_t deb = DEB(p);
+    if (!deb) {
+        port_deliver(vm, p, e->a, e->b);
+        return;
+    }
+    uint64_t t = event_time(e->time_ms - (uint32_t)vm->t0, now);
+    flush_due(vm, p, t);
+    if (!(p->state[1] & DB_DELIVERED) || t >= last_t(p) + deb) {
+        deliver_at(vm, p, e->b, t);
+        return;
+    }
+```
+
+`port_deliver` is what the scheduler does for a driver without the hook.
+The end of a window is a deadline, so the driver registers an event
+source (section 22.5) the first time it holds a value in a VM: its
+`next_deadline` is the earliest window end, its `pending` is true once
+that time has come, and its `drain` delivers what is due. The source's
+context is the number of ports holding a value (no memory to allocate or
+free), so a VM with nothing held pays one test per scheduler pass, and
+the source stays registered for the VM's life.
 
 ### Two hardware layers
 
@@ -350,9 +392,8 @@ owner's mailbox is full.
 **The event ring** (`evq_push`, `runtime/vm/evq.h`), as `gpio` does. It is
 the only way in from an interrupt handler. Its events are two ints, made
 into the driver's `event_type` struct (which must therefore be a struct
-of two ints), with the per-port debounce applied if the driver set
-`p->debounce_ms`: an event inside the window is held, and only the latest
-one is delivered when the window ends, if its `b` changed. The ring holds
+of two ints), unless the driver takes them itself through its `event`
+hook (as `gpio` does to debounce, section 22.4). The ring holds
 `GOGO_EVQ_CAP` (64) events per VM; when it is full, new events are
 dropped and counted. The ring has **one writer**: on the ESP32-S3 every
 GPIO interrupt runs on the VM's core, so they never overlap. A second
@@ -852,8 +893,8 @@ For a driver in the tree, in the order you write them:
   for a port goes in `charge_words` or held `Bytes`; event messages come
   from the VM. Prefer delivery that drops (`port_deliver_ints`, the stream
   helpers) over the event ring when events can come faster than an actor
-  reads them, or set a debounce: a flood of ring events ends a slow owner
-  with `mailbox_overflow`.
+  reads them, or thin them out in an `event` hook (as `gpio`'s debounce
+  does): a flood of ring events ends a slow owner with `mailbox_overflow`.
 - **Keep state per VM.** Several VMs can run in one process (chapter 18), so
   `runtime/` has no mutable globals; `make globals` (`tools/globals.sh`)
   fails on any new one. Per-port state goes in `Port.state` or behind the
@@ -920,11 +961,11 @@ outside this repository. Plainly:
   open with any shared code, but `libgogo` turns every refusal of a host
   port's `open` into `errors.Busy`, whatever negative code the host
   returned (section 22.6).
-- **Event sources are scarce.** A VM has `GOGO_MAX_SOURCES` (3) source
-  slots, and the firmware already uses three while the screen port is open
-  (net, input, the screen's retry). A new driver that polls needs that
-  limit raised (it is a compile-time setting) or must join an existing
-  source.
+- **Event sources are scarce.** A VM has `GOGO_MAX_SOURCES` (4) source
+  slots, and the firmware can use all four (net, input, the screen's retry
+  while the screen port is open, `gpio`'s debounce while a pin holds a
+  value). A new driver that polls needs that limit raised (it is a
+  compile-time setting) or must join an existing source.
 - **The event ring is for two-int events from one writer.** A driver with
   generic types cannot use it (a `port.Post` is not two ints), and a
   second interrupt source must not push to it concurrently with `gpio`.

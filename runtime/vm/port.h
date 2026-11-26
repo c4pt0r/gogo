@@ -12,16 +12,13 @@
  * command structs into an int32 array, and a driver reports input by
  * pushing PortEvent{index, gen, a, b, time_ms} to the VM's event ring (evq.h)
  * and waking it (the board's wake, or vm_wake). time_ms is the low 32 bits
- * of the host's clock (host->now_ms, not vm_now: port_drain converts). The scheduler drains the ring (port_drain)
- * and sends the owner an `event_type` struct {a, b} as an ordinary message,
- * subject to its mailbox quota. Events whose (index, gen) no longer names
- * an open port are dropped.
- *
- * Debounce (per port, debounce_ms set by the driver in open, 0 = off): an
- * event at least debounce_ms after the last delivery is delivered at once;
- * one inside the window is held as the pending trailing value (the latest
- * wins). When the window ends, the pending value is delivered if its b
- * differs from the last delivered b, and that delivery opens a new window.
+ * of the host's clock (host->now_ms, not vm_now: a driver's event hook
+ * converts, if it needs the time). The scheduler drains the ring
+ * (port_drain) and sends the owner an `event_type` struct {a, b} as an
+ * ordinary message, subject to its mailbox quota (port_deliver), or hands
+ * the event to the driver's `event` hook if it has one (the gpio driver
+ * debounces there, runtime/gpio/). Events whose (index, gen) no longer
+ * names an open port are dropped.
  *
  * M5 additions:
  *  - Charges: a driver sets Port.charge_words in open for the state it
@@ -51,6 +48,7 @@
 #include <stdbool.h>
 #include "term.h"
 #include "port_names.h"
+#include "evq.h"
 
 struct Vm;
 struct Actor;
@@ -101,6 +99,13 @@ typedef struct PortDriver {
      * (p->drv->hw), so one driver serves every board without a copy.
      * The VM never reads it. */
     const void *hw;
+    /* Optional (NULL = deliver it): called, on the scheduler thread, for
+     * each event of the driver's ring (in ring order, a stale one already
+     * dropped) instead of delivering it as {a, b}; now is port_drain's.
+     * The driver delivers with port_deliver when it wants (the gpio
+     * driver's debounce holds a trailing value, flushed from its event
+     * source). */
+    void (*event)(struct Vm *vm, Port *p, const PortEvent *e, uint64_t now);
 } PortDriver;
 
 /* Most off-heap Bytes one port pins for its owner (a TCP connection holds
@@ -108,23 +113,17 @@ typedef struct PortDriver {
  * StreamOut port uses both for its running and queued Out). */
 #define PORT_MAX_HELD 2u
 
-/* Port.flags bits (VM-private debounce bookkeeping). */
-enum { PORT_DELIVERED = 1, PORT_PENDING = 2 };
-
 struct Port {
     const PortDriver *drv;  /* NULL: free slot */
     term owner, id;
-    uint16_t gen, debounce_ms;   /* driver sets debounce_ms in open (0 = off) */
-    uint32_t state[4];      /* driver-private */
-    /* debounce bookkeeping: last delivered b and time, pending trailing value */
-    uint64_t last_t;        /* ms of the last delivery (valid with PORT_DELIVERED) */
-    int32_t last_b;
-    int32_t pend_a, pend_b; /* valid with PORT_PENDING */
-    uint8_t flags;
+    uint16_t gen;
     uint8_t room_64w;       /* driver sets in open: words the owner must have free besides
                              * the charge (one stream Chunk), in 64-word units rounded up
                              * (fits the padding); checked at open, not charged */
+    uint8_t pad8;
+    uint32_t state[4];      /* driver-private */
     uint16_t charge_words;  /* driver sets in open: words charged to the owner */
+    uint16_t pad16;
     term held[PORT_MAX_HELD];   /* Bytes pinned for the owner; 0 = free (never a handle) */
 };
 
@@ -160,8 +159,8 @@ void port_command(struct Vm *vm, const struct Actor *from, term pid, term msg);
 void port_close(struct Vm *vm, term pid);                /* stale ignored */
 void port_close_owned(struct Vm *vm, term owner);        /* O(1) when owner has no ports */
 void port_close_all(struct Vm *vm);                      /* VM shutdown: close every open port */
-void port_drain(struct Vm *vm, uint64_t now);            /* ring -> messages, debounce */
-bool port_next_deadline(const struct Vm *vm, uint64_t *deadline);   /* pending trailing debounce */
+void port_drain(struct Vm *vm, uint64_t now);            /* ring -> messages, then the sources */
+bool port_next_deadline(const struct Vm *vm, uint64_t *deadline);   /* the sources' earliest */
 bool port_any_live(const struct Vm *vm);
 /* port_set_drivers(vm, list): NULL = board->ports; after vm_init. Inline in actor.h. */
 /* The driver named name (len bytes) in the Vm's driver list, or NULL:
@@ -244,18 +243,21 @@ void port_remove_source(struct Vm *vm, const PortSource *s);   /* unknown is ign
 bool port_deliver_ints(struct Vm *vm, const Port *p, uint32_t type, const int32_t *v,
                        uint32_t n, uint32_t raw_mask);
 
+/* What port_drain does with a ring event: p's owner gets the event_type
+ * struct {a, b}; dropped if the owner is gone or memory is out, fatal over
+ * its quota (msg_enqueue: R_MAILBOX_OVERFLOW). On the scheduler thread
+ * (a driver's event hook or its source's drain). */
+void port_deliver(struct Vm *vm, const Port *p, int32_t a, int32_t b);
+
 /* net.Subscribe through the source; false without one. */
 bool port_subscribe(struct Vm *vm, struct Actor *a);
 
-/* True when port_drain has work: a queued event, a pending trailing
- * debounce value, or a pending source. */
-bool port_work_pending(const struct Vm *vm);
-
 /* True when port_drain has work due NOW: a queued event or a pending
- * source. Unlike port_work_pending it leaves out the trailing debounce
- * values, which are due only at their deadline (port_next_deadline): the
- * scheduler checks this before it sleeps, so a held trailing value does not
- * keep it spinning through the debounce window. */
+ * source. Work that waits for time (a source's next_deadline) is left
+ * out: the scheduler checks this before it sleeps, so it does not spin
+ * until then. port_work_pending is the same test (once it also counted
+ * the VM's own debounce values, which moved to the gpio driver). */
 bool port_due_now(const struct Vm *vm);
+#define port_work_pending(vm) port_due_now(vm)
 
 #endif

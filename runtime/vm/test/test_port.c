@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 /* Port layer: the port table, PIDs, the driver interface (a fake driver
- * installed with port_set_drivers), event delivery, debounce, owner exit,
+ * installed with port_set_drivers), event delivery, owner exit,
  * and the builtins that reach it. */
 #include "test.h"
 #include "test_host.h"
@@ -33,7 +33,6 @@ static struct {
     int opens, closes, cmds, refuse, handoffs;
     uint16_t charge;       /* charge_words the driver sets in open */
     uint8_t room;          /* room_64w the driver sets in open */
-    uint16_t debounce;     /* debounce_ms the driver sets in open */
     bool live;             /* can_event result */
     uint16_t index;        /* last open */
     uint32_t n;
@@ -54,7 +53,6 @@ static int fk_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, u
     fk.index = index;
     fk.n = n;
     for (uint32_t i = 0; i < n && i < 8u; i++) fk.cfg[i] = cfg[i];
-    p->debounce_ms = fk.debounce;
     p->charge_words = fk.charge;
     p->room_64w = fk.room;
     fk.last = p;
@@ -404,105 +402,7 @@ TEST(port_command_any_sender) {
     teardown();
 }
 
-TEST(port_debounce_burst) {
-    uint32_t w[MINI_WORDS]; Image img; Vm vm;
-    setup(w, &img, &vm);
-    fk.debounce = 20;
-    Actor *a = waiting_actor(&vm);
-    term p = open_fake(&vm, a, 1);
-    uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE), gen = term_pid_gen(p);
-    uint64_t d;
-    CHECK(!port_next_deadline(&vm, &d));
-    /* 5 edges within 20 ms: first delivered at once. */
-    push(idx, gen, 1, 1, 0);
-    push(idx, gen, 1, 0, 4);
-    push(idx, gen, 1, 1, 8);
-    push(idx, gen, 1, 1, 12);
-    push(idx, gen, 1, 0, 16);
-    port_drain(&vm, 16);
-    CHECK_EQ(mbox_len(a), 1);
-    CHECK_EQ(evt_field(a, 0, 1), 1);
-    CHECK(port_next_deadline(&vm, &d));
-    CHECK_EQ(d, 20);
-    port_drain(&vm, 19);
-    CHECK_EQ(mbox_len(a), 1);
-    /* The final level, which differs, is delivered once when the window ends. */
-    port_drain(&vm, 20);
-    CHECK_EQ(mbox_len(a), 2);
-    CHECK_EQ(evt_field(a, 1, 1), 0);
-    CHECK(!port_next_deadline(&vm, &d));
-    port_drain(&vm, 100);
-    CHECK_EQ(mbox_len(a), 2);
-    /* A burst ending on the delivered level sends nothing more. */
-    push(idx, gen, 1, 1, 200);
-    push(idx, gen, 1, 0, 205);
-    push(idx, gen, 1, 1, 210);
-    port_drain(&vm, 210);
-    CHECK_EQ(mbox_len(a), 3);
-    CHECK(port_next_deadline(&vm, &d));
-    CHECK_EQ(d, 220);
-    port_drain(&vm, 230);
-    CHECK_EQ(mbox_len(a), 3);
-    CHECK(!port_next_deadline(&vm, &d));
-    /* A pending trailing value is flushed before a later event in the ring. */
-    push(idx, gen, 1, 0, 300);
-    push(idx, gen, 1, 1, 310);
-    push(idx, gen, 1, 0, 400);
-    port_drain(&vm, 400);
-    CHECK_EQ(mbox_len(a), 6);
-    CHECK_EQ(evt_field(a, 3, 1), 0);
-    CHECK_EQ(evt_field(a, 4, 1), 1);
-    CHECK_EQ(evt_field(a, 5, 1), 0);
-    /* Close drops the pending trailing value. */
-    push(idx, gen, 1, 1, 500);
-    push(idx, gen, 1, 0, 505);
-    port_drain(&vm, 505);
-    CHECK(port_next_deadline(&vm, &d));
-    port_close(&vm, p);
-    CHECK(!port_next_deadline(&vm, &d));
-    clear_runq(&vm);
-    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
-    teardown();
-}
-
-/* A host clock ahead of VM time (t0 != 0, as on ESP after bring-up): event
- * stamps are host time and get -t0 exactly once; the debounce window and the
- * deadline port_next_deadline reports are VM time. */
-TEST(port_debounce_t0) {
-    uint32_t w[MINI_WORDS]; Image img; Vm vm;
-    setup(w, &img, &vm);
-    vm.t0 = 5000;
-    fk.debounce = 20;
-    Actor *a = waiting_actor(&vm);
-    term p = open_fake(&vm, a, 1);
-    uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE), gen = term_pid_gen(p);
-    uint64_t d;
-    push(idx, gen, 1, 1, 5100);                 /* VM time 100 */
-    push(idx, gen, 1, 0, 5104);                 /* VM time 104: trailing */
-    port_drain(&vm, 104);
-    CHECK_EQ(mbox_len(a), 1);
-    CHECK(port_next_deadline(&vm, &d));
-    CHECK_EQ(d, 120);                           /* 100 + 20, not 104 + 20 (no offset) */
-    port_drain(&vm, 119);
-    CHECK_EQ(mbox_len(a), 1);
-    port_drain(&vm, 120);
-    CHECK_EQ(mbox_len(a), 2);
-    CHECK_EQ(evt_field(a, 1, 1), 0);
-    /* An edge after the window is delivered at once. */
-    push(idx, gen, 1, 1, 5200);
-    port_drain(&vm, 200);
-    CHECK_EQ(mbox_len(a), 3);
-    push(idx, gen, 1, 0, 5210);                 /* inside the window again */
-    port_drain(&vm, 210);
-    CHECK(port_next_deadline(&vm, &d));
-    CHECK_EQ(d, 220);
-    port_close(&vm, p);
-    clear_runq(&vm);
-    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
-    teardown();
-}
-
-TEST(port_debounce_off) {
+TEST(port_events_in_order) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
     Actor *a = waiting_actor(&vm);
@@ -667,22 +567,24 @@ TEST(port_drain_bounded) {
 /* An input pin with Edge None can never produce events: not live. */
 TEST(gpio_unix_edge_none_not_live) {
     Port p;
+    Vm vm;
+    CHECK_EQ(test_vm_init(&vm, NULL, 16), 0);
     int32_t none[4] = { 5, 1, 0, 0 }, both[4] = { 6, 1, 3, 0 }, out[4] = { 7, 3, 0, 0 };
     memset(&p, 0, sizeof p);
     p.drv = &gpio_unix_driver;
-    CHECK_EQ(gpio_unix_driver.open(NULL, &p, 0, none, 4), 0);
-    CHECK(!gpio_unix_driver.can_event(NULL, &p));
-    gpio_unix_driver.close(NULL, &p);
+    CHECK_EQ(gpio_unix_driver.open(&vm, &p, 0, none, 4), 0);
+    CHECK(!gpio_unix_driver.can_event(&vm, &p));
+    gpio_unix_driver.close(&vm, &p);
     memset(&p, 0, sizeof p);
     p.drv = &gpio_unix_driver;
-    CHECK_EQ(gpio_unix_driver.open(NULL, &p, 0, both, 4), 0);
-    CHECK(gpio_unix_driver.can_event(NULL, &p));
-    gpio_unix_driver.close(NULL, &p);
+    CHECK_EQ(gpio_unix_driver.open(&vm, &p, 0, both, 4), 0);
+    CHECK(gpio_unix_driver.can_event(&vm, &p));
+    gpio_unix_driver.close(&vm, &p);
     memset(&p, 0, sizeof p);
     p.drv = &gpio_unix_driver;
-    CHECK_EQ(gpio_unix_driver.open(NULL, &p, 0, out, 4), 0);
-    CHECK(!gpio_unix_driver.can_event(NULL, &p));
-    gpio_unix_driver.close(NULL, &p);
+    CHECK_EQ(gpio_unix_driver.open(&vm, &p, 0, out, 4), 0);
+    CHECK(!gpio_unix_driver.can_event(&vm, &p));
+    gpio_unix_driver.close(&vm, &p);
 }
 
 /* ---- Handoff, port-held Bytes, extra sources (M5) ---- */
@@ -905,52 +807,6 @@ TEST(port_source_busy) {
     teardown();
 }
 
-/* A debounced port holding a trailing value is due only at the end of its
- * window: an idle scheduler sleeps until then (port_next_deadline) instead
- * of spinning. The clock is read a few times per scheduler pass, so the
- * reads bound the passes: a handful, against millions when the pre-sleep
- * check counted the held value as work due now. */
-static unsigned db_reads;
-static uint64_t db_clock(void);
-static uint64_t db_clock(void) {            /* the real clock, counted */
-    db_reads++;
-    test_host_set_clock(NULL);
-    uint64_t t = test_host_now();
-    test_host_set_clock(db_clock);
-    return t;
-}
-
-TEST(port_debounce_idle_no_spin) {
-    uint32_t w[MINI_WORDS + 2]; Image img; Vm vm;
-    setup(w, &img, &vm);
-    CHECK_EQ(image_load(&img, w, img_seal_main(w)), IMG_OK);    /* main returns at once */
-    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
-    port_set_drivers(&vm, fake_list);
-    fk.debounce = 100;
-    Actor *a = waiting_actor(&vm);
-    (void)open_fake(&vm, a, 1);
-    Port *p = fk.last;
-    Actor *gone = waiting_actor(&vm);
-    term gone_id = gone->id;
-    gone->state = A_RUNNABLE;
-    actor_exit(&vm, gone, R_NORMAL, T_EMPTYSTR);
-    p->owner = gone_id;                      /* the flushed value is dropped, nothing runs */
-    p->flags |= PORT_DELIVERED | PORT_PENDING;
-    p->last_t = 0;
-    p->pend_a = 1;
-    p->pend_b = 1;
-    p->last_b = 0;
-    vm.ports_pending = 1;
-    db_reads = 0;
-    test_host_set_clock(db_clock);
-    int rc = vm_run(&vm);
-    test_host_set_clock(NULL);
-    CHECK_EQ(rc, 0);
-    CHECK_EQ(vm.ports_pending, 0u);          /* flushed at the window's end */
-    CHECK(db_reads < 30u);
-    teardown();
-}
-
 TEST(port_source_hook) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
@@ -973,20 +829,8 @@ TEST(port_source_hook) {
     src.dl = 500;
     CHECK(port_next_deadline(&vm, &dl));
     CHECK_EQ(dl, 500u);
-    /* A nearer debounce deadline wins. */
-    fk.debounce = 50;
-    Actor *a = waiting_actor(&vm);
-    term p = open_fake(&vm, a, 1);
-    uint16_t idx = (uint16_t)(term_pid_slot(p) - PORT_SLOT_BASE);
-    push(idx, term_pid_gen(p), 1, 1, 100);
-    push(idx, term_pid_gen(p), 1, 0, 110);
-    port_drain(&vm, 110);
-    CHECK(port_next_deadline(&vm, &dl));
-    CHECK_EQ(dl, 150u);
     port_remove_source(&vm, &test_src);
     CHECK(!port_any_live(&vm));
-    clear_runq(&vm);
-    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     teardown();
 }
 
@@ -1083,6 +927,7 @@ static bool s3_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return false
 static void s3_drain(Vm *vm, void *ctx, uint64_t now) { (void)vm; (void)ctx; (void)now; }
 static const PortSource src3 = { s3_pending, s3_drain, s3_live, NULL, NULL };
 static const PortSource src4 = { s3_pending, s3_drain, s3_live, NULL, NULL };
+static const PortSource src5 = { s3_pending, s3_drain, s3_live, NULL, NULL };
 
 TEST(two_sources_both_drain) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
@@ -1115,21 +960,23 @@ TEST(two_sources_both_drain) {
     teardown();
 }
 
-TEST(fourth_source_refused) {
+TEST(fifth_source_refused) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
-    CHECK_EQ(GOGO_MAX_SOURCES, 3u);
+    CHECK_EQ(GOGO_MAX_SOURCES, 4u);
     CHECK(port_add_source(&vm, &test_src, NULL));
     CHECK(port_add_source(&vm, &src2, NULL));
     CHECK(port_add_source(&vm, &src3, NULL));
-    CHECK(!port_add_source(&vm, &src4, NULL));
-    port_remove_source(&vm, &src4);                /* unknown: ignored */
-    CHECK(!port_add_source(&vm, &src4, NULL));
-    port_remove_source(&vm, &test_src);
     CHECK(port_add_source(&vm, &src4, NULL));
+    CHECK(!port_add_source(&vm, &src5, NULL));
+    port_remove_source(&vm, &src5);                /* unknown: ignored */
+    CHECK(!port_add_source(&vm, &src5, NULL));
+    port_remove_source(&vm, &test_src);
+    CHECK(port_add_source(&vm, &src5, NULL));
     port_remove_source(&vm, &src2);
     port_remove_source(&vm, &src3);
     port_remove_source(&vm, &src4);
+    port_remove_source(&vm, &src5);
     teardown();
 }
 

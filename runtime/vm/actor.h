@@ -117,7 +117,6 @@ typedef struct Vm {
     void *reserve;            /* emergency reserve (signals.h), NULL while used up */
     bool reserve_wanted;      /* between vm_reserve_init and _release */
     bool wall_known;          /* wall clock set (walltime.c) */
-    uint16_t ports_pending;   /* ports holding a trailing debounce value */
     uint8_t run_state;        /* vm_start / vm_step / vm_stop: VM_ST_* (interp.h) */
     int64_t wall_offset;      /* unix ms - host->now_ms at the last set (no RTC) */
     /* Event ring indices (evq.h): head producer-only (ISR), tail consumer-only. */

@@ -190,15 +190,6 @@ void port_command(Vm *vm, const Actor *from, term pid, term msg) {
     p->drv->command(vm, p, type, f, n);
 }
 
-#if GOGO_DEBUG
-/* The ports holding a pending debounce value: what ports_pending counts. */
-static uint32_t pending_ports(const Vm *vm) {
-    uint32_t n = 0;
-    for (uint32_t i = 0; i < vm->port_n; i++) n += (port_at(vm, i)->flags & PORT_PENDING) != 0;
-    return n;
-}
-#endif
-
 /* Takes from o (NULL: gone) what it holds as p's owner: the first k
  * pinned Bytes, the charge and the port count. */
 static void owner_drop(Vm *vm, const Port *p, Actor *o, uint32_t k) {
@@ -218,9 +209,6 @@ void port_close(Vm *vm, term pid) {
      * its handles go (signals.c). */
     owner_drop(vm, p, actor_lookup(vm, p->owner), PORT_MAX_HELD);
     memset(p->held, 0, sizeof p->held);
-    if (p->flags & PORT_PENDING) vm->ports_pending--;
-    p->flags = 0;
-    GOGO_ASSERT(vm->ports_pending == pending_ports(vm));
     p->drv = NULL;
     p->gen = (uint16_t)((p->gen + 1u) & GEN_MASK);
 }
@@ -252,10 +240,6 @@ bool port_any_live(const Vm *vm) {
     return false;
 }
 
-bool port_work_pending(const Vm *vm) {
-    return vm->ports_pending || port_due_now(vm);
-}
-
 bool port_due_now(const Vm *vm) {
     if (!evq_empty(vm)) return true;
     SOURCES_EACH(vm, q) {
@@ -268,11 +252,6 @@ bool port_next_deadline(const Vm *vm, uint64_t *deadline) {
     uint64_t best = UINT64_MAX, d;
     SOURCES_EACH(vm, q) {
         if (q->s->next_deadline && q->s->next_deadline(vm, q->ctx, &d) && d < best) best = d;
-    }
-    for (uint32_t i = 0; vm->ports_pending && i < vm->port_n; i++) {
-        const Port *p = port_at(vm, i);
-        d = p->last_t + p->debounce_ms;
-        if ((p->flags & PORT_PENDING) && d < best) best = d;
     }
     *deadline = best;                        /* meaningful only when true */
     return best != UINT64_MAX;
@@ -320,39 +299,11 @@ bool port_deliver_ints(Vm *vm, const Port *p, uint32_t type, const int32_t *v, u
     return false;
 }
 
-/* The event_type struct {a, b} to the owner; dropped if the owner is gone
- * or out of memory, fatal over its quota (msg_enqueue). */
-static void deliver(Vm *vm, const Port *p, int32_t a, int32_t b) {
+void port_deliver(Vm *vm, const Port *p, int32_t a, int32_t b) {
     Actor *o = port_owner(vm, p);
     int32_t v[2] = { a, b };
     Msg *m = o ? ints_msg(vm, p->drv->event_type, v, 2, 0) : NULL;
     if (m) msg_enqueue(vm, o, m, true);
-}
-
-static void deliver_at(Vm *vm, Port *p, int32_t a, int32_t b, uint64_t t) {
-    p->flags |= PORT_DELIVERED;
-    p->last_b = b;
-    p->last_t = t;
-    deliver(vm, p, a, b);
-}
-
-/* Ends p's debounce window if it is over by time t: the pending value goes
- * out if it differs from the last delivered one. */
-static void flush_due(Vm *vm, Port *p, uint64_t t) {
-    if (!(p->flags & PORT_PENDING)) return;
-    uint64_t end = p->last_t + p->debounce_ms;
-    if (end > t) return;
-    p->flags &= (uint8_t)~PORT_PENDING;
-    vm->ports_pending--;
-    if (p->pend_b != p->last_b) deliver_at(vm, p, p->pend_a, p->pend_b, end);
-}
-
-/* The event's 32-bit timestamp (made vm_now time by the caller) as a vm_now value, taking it to be
- * at most ~24 days before now (a timestamp after now counts as now). */
-static uint64_t event_time(uint32_t ms, uint64_t now) {
-    uint32_t back = (uint32_t)now - ms;
-    if ((int32_t)back < 0) return now;
-    return back > now ? 0u : now - back;
 }
 
 /* Pops at most GOGO_EVQ_CAP events per call, so a producer that keeps the ring
@@ -364,27 +315,9 @@ void port_drain(Vm *vm, uint64_t now) {
         if (e.port >= vm->port_n) continue;
         Port *p = port_at(vm, e.port);
         if (!p->drv || p->gen != e.gen) continue;   /* closed since: stale */
-        if (!p->debounce_ms) {
-            deliver(vm, p, e.a, e.b);
-            continue;
-        }
-        uint64_t t = event_time(e.time_ms - (uint32_t)vm->t0, now);
-        flush_due(vm, p, t);
-        if (!(p->flags & PORT_DELIVERED) || t >= p->last_t + p->debounce_ms) {
-            deliver_at(vm, p, e.a, e.b, t);
-        } else {
-            if (!(p->flags & PORT_PENDING)) {
-                p->flags |= PORT_PENDING;
-                vm->ports_pending++;
-            }
-            p->pend_a = e.a;
-            p->pend_b = e.b;
-        }
+        if (p->drv->event) p->drv->event(vm, p, &e, now);
+        else port_deliver(vm, p, e.a, e.b);
     }
-    if (vm->ports_pending) {
-        for (uint32_t i = 0; i < vm->port_n; i++) flush_due(vm, port_at(vm, i), now);
-    }
-    GOGO_ASSERT(vm->ports_pending == pending_ports(vm));
     SOURCES_EACH(vm, q) {
         if (q->s->pending(vm, q->ctx)) q->s->drain(vm, q->ctx, now);
     }

@@ -28,9 +28,10 @@
  * pass a larger one (the Makefile: 1024). The table grows as ports open. */
 #define GOGO_MAX_PORTS 16u
 #endif
-/* Extra event sources (net, input, the screen port's Done retry) the port layer folds in. */
+/* Extra event sources (net, input, the screen port's Done retry, the gpio
+ * driver's debounce) the port layer folds in. */
 #ifndef GOGO_MAX_SOURCES
-#define GOGO_MAX_SOURCES 3u
+#define GOGO_MAX_SOURCES 4u
 #endif
 #ifndef GOGO_EVQ_CAP
 #define GOGO_EVQ_CAP 64u

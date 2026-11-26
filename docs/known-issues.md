@@ -938,7 +938,7 @@ rebuilt:
   change.
 - **Dones can be late.** A `port.Done` the owner has no mailbox room for
   is owed and retried every 10 ms by the port's own event source (a third
-  slot, `GOGO_MAX_SOURCES` 3); with 8 owed, a further `Out` is not drawn
+  slot, `GOGO_MAX_SOURCES` 4); with 8 owed, a further `Out` is not drawn
   and gets `Done{-1}`. Wait for a Done with a timeout. A host whose
   event-source slots are all taken retries only at the next `Out`.
 - **Hidden console.** While a screen is open on a board, println output

@@ -16,5 +16,5 @@ _Static_assert(sizeof(Actor) == 48, "Actor must be 48 bytes on 32-bit");
 /* Module table entry (module.h): 48 B Image + 16 B; allocated per loaded
  * module, the boot image's included. */
 _Static_assert(sizeof(ModEntry) == 64, "ModEntry is 64 bytes on 32-bit");
-/* Port table entry (port.h): room_64w lives in the padding after flags. */
-_Static_assert(sizeof(Port) == 64, "Port is 64 bytes on 32-bit");
+/* Port table entry (port.h). */
+_Static_assert(sizeof(Port) == 44, "Port is 44 bytes on 32-bit");

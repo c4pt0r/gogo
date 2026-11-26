@@ -745,6 +745,17 @@ btn, err := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge:
   the same on every board) drops an edge in the same direction that
   arrives within `DebounceMs` after an unreported opposite change
   (release bounce).
+- Debounce, every board: the gpio driver debounces each port's events on
+  the scheduler thread, in its `PortDriver.event` hook (`gpio_event`;
+  the port layer hands a driver with that hook its ring events instead of
+  delivering them): an edge at least `DebounceMs` after the last delivery
+  is delivered at once, one inside the window is held (the latest wins),
+  and when the window ends the held level is delivered if it differs from
+  the last one, which opens a new window. The window ends are the
+  driver's event source, registered in a VM when a first value is held
+  and kept (its context is the count of ports holding a value). The VM
+  core has no debounce of its own (it had, in the port layer, for this
+  one driver).
 
 Not yet: `uart`, `i2c` and `spi`. The board's screen is a console that
 mirrors stdout and stderr; the `screen` port (§5.4.9) takes it over as a
@@ -804,7 +815,7 @@ text grid while it is open.
   every connection with `NoRoute`; so does the exit of the `netif` owner.
 - **Memory** (measured on the ESP32-S3): the stack's fixed state is
   3640 B (budget 4096 B, checked at compile time); a TCB is 56 B, a UDP
-  control block 12 B, a `Port` 64 B (32-bit); the net code is about
+  control block 12 B, a `Port` 44 B (32-bit); the net code is about
   11.8 KB (`make netsize`). The Wi-Fi driver takes about 30 KB of heap and
   31.5 KB of static RAM; lwIP and esp_netif are not linked.
 - **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs}) error` starts the DHCP
@@ -1459,7 +1470,8 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   data read in place on the sender's heap (no copy, no held Bytes), and
   answered with `port.Done` (-1: malformed, nothing applied). A Done that
   does not fit the mailbox is owed and retried every 10 ms by the port's
-  event source (GOGO_MAX_SOURCES is 3 for it: the boards already use two),
+  event source (GOGO_MAX_SOURCES is 4: the boards also use net, input and
+  the gpio driver's debounce),
   after collecting a waiting owner's heap slack as stream/ does; with 8
   owed, further Outs get Done{-1}, counted, so every Out gets its Done. Every operation is
   clipped to the clip rectangle, which is always inside the grid, so no
@@ -2382,8 +2394,8 @@ can serve two devices, and the table can be a board's `static const`).
   `config` may lower the debounce (unix script mode: 0) and refuses a
   pin the chip cannot use in that mode. `raw_edges` turns the bounce
   filter off for a HAL whose edges are clean and may come in the same
-  millisecond (the unix `--key` presses); the port's debounce still
-  applies. `gpio_edge` must not overlap `release` of its pin: the ESP's
+  millisecond (the unix `--key` presses); the driver's debounce
+  (`gpio_event`) still applies. `gpio_edge` must not overlap `release` of its pin: the ESP's
   interrupt runs on the VM's core, and a board with the interrupt on
   another core routes it to the VM's or waits out a running handler in
   `release` (gpio.h).
