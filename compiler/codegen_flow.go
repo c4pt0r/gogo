@@ -186,6 +186,7 @@ func (f *fn) rangeInt(s *ast.RangeStmt) {
 	f.next = mark
 	if hasKey {
 		f.asm.Emit(OpMove, key, idx, 0)
+		f.boxVar(s, f.rangeVar(s.Key), key) // a fresh box each pass (Go 1.22)
 	}
 	f.breakTo = append(f.breakTo, endL)
 	f.continueTo = append(f.continueTo, contL)

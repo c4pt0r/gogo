@@ -152,7 +152,7 @@ func (f *fn) addrInto(e *ast.UnaryExpr, dst uint8) {
 	case *ast.Ident:
 		v, _ := f.g.p.Info.Uses[x].(*types.Var)
 		r, ok := f.locals[v]
-		if !ok || !f.g.boxed[v] {
+		if !ok || !f.g.boxed[v] || !f.inBox[v] {
 			f.fail(e, "internal error: &%s of a variable without a box", x.Name)
 		}
 		if r != dst {
@@ -203,7 +203,29 @@ func (f *fn) isBoxedVar(e ast.Expr) (*types.Var, bool) {
 func (f *fn) boxVar(n ast.Node, v *types.Var, r uint8) {
 	if v != nil && f.g.boxed[v] {
 		f.newPtrInto(n, varPtr(v), r, r)
+		f.markBoxed(v)
 	}
+}
+
+// markBoxed records that v's register holds its box (boxVar, or a
+// closure's capture of it): localOf refuses a boxed variable that was not
+// put into one, an internal error rather than a GETFIELD on a plain value.
+func (f *fn) markBoxed(v *types.Var) {
+	if f.inBox == nil {
+		f.inBox = map[*types.Var]bool{}
+	}
+	f.inBox[v] = true
+}
+
+// rangeVar is the variable a range clause's key or value expression e
+// declares, or nil.
+func (f *fn) rangeVar(e ast.Expr) *types.Var {
+	id, _ := e.(*ast.Ident)
+	if id == nil {
+		return nil
+	}
+	v, _ := f.g.p.Info.Defs[id].(*types.Var)
+	return v
 }
 
 // boxedLoad loads the value of boxed variable v (its box in register box)

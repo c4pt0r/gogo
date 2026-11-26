@@ -492,8 +492,9 @@ type fn struct {
 	boundAt    int           // code position of the last label bound (-1: none)
 	lastClear  int           // code position of the last CLEAR emitted (-1: none)
 
-	defers   *deferState // the function's defer statements, nil if none (codegen_defer.go)
-	compared bool        // the value being compiled is only compared (constBox)
+	defers   *deferState         // the function's defer statements, nil if none (codegen_defer.go)
+	inBox    map[*types.Var]bool // boxed variables bound to their box (markBoxed)
+	compared bool                // the value being compiled is only compared (constBox)
 }
 
 // declParams lists the parameters of a declared function; unnamed ones are
@@ -554,6 +555,8 @@ func (g *gen) compileFunc(info *funcInfo, params []*types.Var, ncaps int, result
 	for i, v := range params {
 		if i >= ncaps {
 			f.boxVar(body, v, uint8(i))
+		} else if v != nil && g.boxed[v] {
+			f.markBoxed(v) // a capture of a boxed variable is its box
 		}
 	}
 	if results != nil && results.Len() > 0 && results.At(0).Name() != "" {
@@ -980,6 +983,9 @@ func (f *fn) localOf(e ast.Expr) uint8 {
 	r, found := f.locals[v]
 	if !ok || !found {
 		f.fail(e, "internal error: unknown variable %s", id.Name)
+	}
+	if f.g.boxed[v] && !f.inBox[v] {
+		f.fail(e, "internal error: variable %s lives in a box, but its binding made none", id.Name)
 	}
 	return r
 }

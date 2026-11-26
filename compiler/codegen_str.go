@@ -140,10 +140,12 @@ func (f *fn) rangeStmt(s *ast.RangeStmt) {
 	f.next = mark
 	if hasKey {
 		f.asm.Emit(OpMove, key, idx, 0)
+		f.boxVar(s, f.rangeVar(s.Key), key) // a fresh box each pass (Go 1.22)
 	}
 	if hasVal {
 		f.seqCall(s, val, BIndex, f.moveFrom(str), f.moveFrom(idx))
 		f.rangeElem(s, val)
+		f.boxVar(s, f.rangeVar(s.Value), val)
 	}
 	f.breakTo = append(f.breakTo, endL)
 	f.continueTo = append(f.continueTo, contL)

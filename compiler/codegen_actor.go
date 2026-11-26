@@ -327,6 +327,7 @@ func (f *fn) caseBody(cc *ast.CaseClause, m uint8, endL Label) {
 		if len(cc.List) == 1 && !isIface(v.Type()) && f.uses(cc.Body, v) {
 			f.unbox(cc, v.Type(), m)
 		}
+		f.boxVar(cc, v, m) // in place: the clauses are exclusive
 	}
 	f.breakTo = append(f.breakTo, endL)
 	f.block(cc.Body)
