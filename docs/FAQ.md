@@ -182,6 +182,33 @@ actors as messages. In short: the RTOS gives deterministic tasks and
 interrupts; gogo adds isolated, supervised, hot-loadable application logic
 above them.
 
+### Does gogo have I/O threads?
+Not inside the VM. The VM is single-threaded: every actor, every port
+driver's commands and every file operation run on one scheduler thread.
+I/O that takes time is moved off that thread by the hardware and the
+platform, not by VM threads:
+
+- **Interrupts and DMA.** GPIO edges and the keyboard's interrupt line push
+  events into a lock-free ring; audio (I2S) and IR (RMT) run on DMA and
+  their interrupts hand finished buffers over. The VM only collects the
+  results.
+- **Platform tasks** on the ESP32-S3, beside the VM's own FreeRTOS task:
+  ESP-IDF's Wi-Fi task delivers frames to gogo's network stack, a renderer
+  task (`gogo_lcd`) pushes the screen to the LCD over SPI, and a
+  configuration task (`gogo_cfg`) serves `gogo config` on USB serial.
+- **One poll loop on the host.** `gogovm` waits on its inputs (simulator
+  link, stdin script, wake pipe) with one `poll`; an embedded VM is driven
+  from whatever thread its host program uses.
+
+Some operations still run synchronously on the scheduler thread and pause
+all actors while they last: file reads and writes (a flash write can take
+milliseconds), I2C reads of the keyboard and IMU, and the unsliced step of
+a TLS handshake (about 200 ms). This keeps the VM small and free of locks;
+the cost is that a long blocking operation is felt by every actor. Host
+network ports for embedded VMs are planned with an I/O thread that only
+reports readiness, so the reads and writes themselves stay on the VM
+thread.
+
 ### Does the compiler use Go's parser?
 Yes. The front end is Go's standard library: `go/parser` for parsing,
 `go/ast` and `go/token`, `go/types` for type checking (configured for a
