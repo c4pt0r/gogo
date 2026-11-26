@@ -1,8 +1,8 @@
 get a 1 
 keys 0 0
-get a 9 
-keys 0 9
-put over file 9
+get a 14 
+keys 0 14
+put over file 14
 delete missing 1
 put a 0
 put b 0
@@ -19,22 +19,22 @@ overwrite 0
 get a 0 uno
 empty 0
 get e 0 
-badkey empty 7
-badkey slash 7
-badkey dot 7
-badkey space 7
-badkey tmp 7
-badkey trailing dot 7
-badkey long 7
-badkey delete 7
-badkey get 7
+badkey empty 12
+badkey slash 12
+badkey dot 12
+badkey space 12
+badkey tmp 12
+badkey trailing dot 12
+badkey long 12
+badkey delete 12
+badkey get 12
 max value 0
 big 0 4096
-oversize 11
+oversize 3
 big kept 0 4096
-oversize bytes 11
+oversize bytes 3
 get big2 1 
-small actor get big 11 0
+small actor get big 3 0
 delete big 0
 delete a 0
 delete again 1

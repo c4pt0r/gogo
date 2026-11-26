@@ -378,7 +378,7 @@ static void *run(void *arg) {
     pe->board = (VmBoard){ drivers, NULL, &pe->nif, &hw, NULL };
     if (image_load(&pe->img, w, img_seal(w)) != IMG_OK ||
         vm_init(&pe->vm, &host, NULL, &pe->board, 16) != 0 ||
-        module_install_static(&pe->vm, &pe->img) != CODE_OK) {
+        module_install_static(&pe->vm, &pe->img) != GOGO_E_OK) {
         gate();
         return NULL;
     }

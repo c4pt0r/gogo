@@ -229,36 +229,36 @@ static void unmount(void) {
     F.mounted = false;
 }
 
-/* A card is there and mounted: VFS_OK, else VFS_NOTMOUNTED. */
+/* A card is there and mounted: GOGO_E_OK, else GOGO_E_NOTMOUNTED. */
 static int ready(void) {
     if (F.mounted) {
-        if (sdmmc_get_status(&F.card) == ESP_OK) return VFS_OK;
+        if (sdmmc_get_status(&F.card) == ESP_OK) return GOGO_E_OK;
         unmount();
     }
-    if (!bus_up()) return VFS_NOTMOUNTED;
+    if (!bus_up()) return GOGO_E_NOTMOUNTED;
     int m = try_mount(FAST_KHZ);
     if (m == 1) m = try_mount(SDMMC_FREQ_PROBING);
-    if (m != 0) return VFS_NOTMOUNTED;
+    if (m != 0) return GOGO_E_NOTMOUNTED;
     F.mounted = true;
     F.said_nofs = false;
     platform_esp_log("gogo: /sd mounted (%s, %lu MB, %d kHz)", F.fs.fs_type == FS_EXFAT ? "exFAT" : "FAT",
                      (unsigned long)((uint64_t)F.card.csd.capacity * SECTOR >> 20), F.card.real_freq_khz);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 /* ---- backend ---- */
 
 static int map_err(FRESULT r) {
     switch (r) {
-    case FR_OK: return VFS_OK;
-    case FR_NO_FILE: case FR_NO_PATH: return VFS_NOTFOUND;
-    case FR_EXIST: return VFS_EXISTS;
-    case FR_INVALID_NAME: return VFS_BADPATH;
-    case FR_NOT_ENABLED: case FR_NO_FILESYSTEM: return VFS_NOTMOUNTED;
+    case FR_OK: return GOGO_E_OK;
+    case FR_NO_FILE: case FR_NO_PATH: return GOGO_E_NOTFOUND;
+    case FR_EXIST: return GOGO_E_EXISTS;
+    case FR_INVALID_NAME: return GOGO_E_BADPATH;
+    case FR_NOT_ENABLED: case FR_NO_FILESYSTEM: return GOGO_E_NOTMOUNTED;
     case FR_DISK_ERR: case FR_NOT_READY:
         unmount();                                 /* the next call remounts */
-        return VFS_IO;
-    default: return VFS_IO;
+        return GOGO_E_IO;
+    default: return GOGO_E_IO;
     }
 }
 
@@ -276,18 +276,18 @@ static int t_open(void *c, void *f, const char *rel, int mode) {
     (void)c;
     int e = ready();
     if (e) return e;
-    if (is_root(rel)) return VFS_ISDIR;
+    if (is_root(rel)) return GOGO_E_ISDIR;
     BYTE fl = mode == VFS_READ ? (FA_READ | FA_OPEN_EXISTING)
             : mode == VFS_WRITE ? (FA_WRITE | FA_CREATE_ALWAYS)
             : (FA_WRITE | FA_OPEN_APPEND);
     memset(f, 0, sizeof(FIL));
     FRESULT r = f_open(f, rel, fl);
     if (r == FR_NO_FILE || r == FR_DENIED) {
-        if (is_dir(rel)) return VFS_ISDIR;
+        if (is_dir(rel)) return GOGO_E_ISDIR;
         if (r == FR_DENIED) {
             FILINFO fi;
             /* an existing (read-only) file: IO; else the directory is full */
-            return f_stat(rel, &fi) == FR_OK ? VFS_IO : VFS_NOSPACE;
+            return f_stat(rel, &fi) == FR_OK ? GOGO_E_IO : GOGO_E_NOSPACE;
         }
     }
     return map_err(r);
@@ -298,14 +298,14 @@ static int t_read(void *c, void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
     int e = map_err(f_read(f, buf, n, &br));
     if (e) return e;
     *got = br;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int t_write(void *c, void *f, const uint8_t *buf, uint32_t n) {
     (void)c;
     UINT bw = 0;
     int e = map_err(f_write(f, buf, n, &bw));
     if (e) return e;
-    return bw == n ? VFS_OK : VFS_NOSPACE;
+    return bw == n ? GOGO_E_OK : GOGO_E_NOSPACE;
 }
 /* Overwrites inside the file (vfs checked the bounds), then goes back to
  * the end so the next write appends. FAT patches the clusters in place. */
@@ -317,7 +317,7 @@ static int t_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32
     UINT bw = 0;
     if (!e) {
         e = map_err(f_write(fp, buf, n, &bw));
-        if (!e && bw != n) e = VFS_NOSPACE;
+        if (!e && bw != n) e = GOGO_E_NOSPACE;
     }
     int e2 = map_err(f_lseek(fp, end));
     return e ? e : e2;
@@ -326,7 +326,7 @@ static int t_sync(void *c, void *f) { (void)c; return map_err(f_sync(f)); }
 static int t_size(void *c, void *f, int32_t *out) {
     (void)c;
     *out = clamp32(f_size((FIL *)f));
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int t_close(void *c, void *f) { (void)c; return map_err(f_close(f)); }
 
@@ -334,13 +334,13 @@ static int t_stat(void *c, const char *rel, int32_t *size, bool *dir) {
     (void)c;
     int e = ready();
     if (e) return e;
-    if (is_root(rel)) { *dir = true; *size = 0; return VFS_OK; }
+    if (is_root(rel)) { *dir = true; *size = 0; return GOGO_E_OK; }
     FILINFO fi;
     e = map_err(f_stat(rel, &fi));
     if (e) return e;
     *dir = (fi.fattrib & AM_DIR) != 0;
     *size = *dir ? 0 : clamp32(fi.fsize);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int t_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) {
     (void)c;
@@ -351,7 +351,7 @@ static int t_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) {
     FRESULT r = f_opendir(&d, rel);
     if (r == FR_NO_PATH || r == FR_NO_FILE) {
         FILINFO x;
-        if (f_stat(rel, &x) == FR_OK) return VFS_NOTDIR;   /* a file */
+        if (f_stat(rel, &x) == FR_OK) return GOGO_E_NOTDIR;   /* a file */
     }
     if (r != FR_OK) return map_err(r);
     while ((r = f_readdir(&d, &fi)) == FR_OK && fi.fname[0]) {
@@ -366,14 +366,14 @@ static int t_mkdir(void *c, const char *rel) {
     int e = ready();
     if (e) return e;
     FRESULT r = f_mkdir(rel);
-    return r == FR_DENIED ? VFS_NOSPACE : map_err(r);   /* FatFs: no space / directory full */
+    return r == FR_DENIED ? GOGO_E_NOSPACE : map_err(r);   /* FatFs: no space / directory full */
 }
 static int t_remove(void *c, const char *rel) {
     (void)c;
     int e = ready();
     if (e) return e;
     FRESULT r = f_unlink(rel);
-    if (r == FR_DENIED) return is_dir(rel) ? VFS_NOTEMPTY : VFS_IO;   /* else read-only */
+    if (r == FR_DENIED) return is_dir(rel) ? GOGO_E_NOTEMPTY : GOGO_E_IO;   /* else read-only */
     return map_err(r);
 }
 static int t_rename(void *c, const char *from, const char *to, bool replace) {
@@ -394,7 +394,7 @@ static int t_usage(void *c, int32_t *used, int32_t *total) {
     uint64_t clust = (uint64_t)fs->csize * SECTOR, all = (uint64_t)(fs->n_fatent - 2u) * clust;
     *total = clamp32(all);
     *used = clamp32(all - (uint64_t)nfree * clust);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 static const VfsBackend backend = {

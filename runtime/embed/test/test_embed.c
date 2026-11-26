@@ -511,8 +511,8 @@ TEST(embed_code_load_switch) {
         gogo_vm *vm = new_loaded(&t, "codeload", &cfg);
         CHECK_EQ(gogo_start(vm), GOGO_OK);
         CHECK_EQ(settle(vm), GOGO_DONE);
-        /* refused: NoMemory (3); allowed: the bytes are BadImage (1) */
-        CHECK(strcmp(t.out, allow ? "load 1\n" : "load 3\n") == 0);
+        /* refused: NoMemory (3); allowed: the bytes are BadImage (17) */
+        CHECK(strcmp(t.out, allow ? "load 17\n" : "load 3\n") == 0);
         gogo_free(vm);
         tctx_done(&t);
     }
@@ -1145,9 +1145,9 @@ TEST(embed_fs_root_quota_per_vm) {
     CHECK_EQ(sb, GOGO_DONE);
     /* a.txt holds 5 bytes; big gets the whole 100-byte chunks that fit
      * and then the rest of the room. */
-    static const char want_a[] = "write 0\nread hello 0\nstat 0\nmkdir 0\nreaddir 0\nbig 900 4\n"
+    static const char want_a[] = "write 0\nread hello 0\nstat 0\nmkdir 0\nreaddir 0\nbig 900 11\n"
                                  "usage 1000 1000 0\nrename 0\nremove 0\n";
-    static const char want_b[] = "write 0\nread hello 0\nstat 0\nmkdir 0\nreaddir 0\nbig 2400 4\n"
+    static const char want_b[] = "write 0\nread hello 0\nstat 0\nmkdir 0\nreaddir 0\nbig 2400 11\n"
                                  "usage 2500 2500 0\nrename 0\nremove 0\n";
     CHECK(strcmp(ta.out, want_a) == 0);
     CHECK(strcmp(tb.out, want_b) == 0);
@@ -1171,8 +1171,8 @@ TEST(embed_fs_none_is_not_mounted) {
     gogo_vm *vm = new_loaded(&t, "fsuse", NULL);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_DONE);
-    static const char want[] = "write 3\nread  3\nstat 3\nmkdir 3\nreaddir 3\nbig 0 3\n"
-                               "usage 0 0 3\nrename 3\nremove 3\n";
+    static const char want[] = "write 16\nread  16\nstat 16\nmkdir 16\nreaddir 16\nbig 0 16\n"
+                               "usage 0 0 16\nrename 16\nremove 16\n";
     CHECK(strcmp(t.out, want) == 0);
     if (strcmp(t.out, want)) printf("  out:\n%s  err:\n%s", t.out, t.err);
     CHECK_EQ(t.err_len, 0);
@@ -1181,7 +1181,7 @@ TEST(embed_fs_none_is_not_mounted) {
 }
 
 /* Through the VM: /flash/d is a symlink to a directory outside the
- * root. Mkdir sees it exists, Rename into it is BadPath (7), and nothing
+ * root. Mkdir sees it exists, Rename into it is BadPath (12), and nothing
  * outside changes. WriteFile of /flash/a.txt, a symlink to an outside
  * file, replaces the link (rename over it), never the target. */
 TEST(embed_fs_root_symlink_refused) {
@@ -1204,7 +1204,7 @@ TEST(embed_fs_root_symlink_refused) {
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_DONE);
     CHECK(strncmp(t.out, "write 0\nread hello 0\nstat 0\nmkdir 2\n", 36) == 0);
-    CHECK(strstr(t.out, "rename 7\n") != NULL);
+    CHECK(strstr(t.out, "rename 12\n") != NULL);
     CHECK_EQ(file_size(base, "secret"), 6);
     CHECK_EQ(file_size(base, "a.txt"), -1);
     CHECK_EQ(file_size(root, "a.txt"), 5);   /* a file now, in the root */

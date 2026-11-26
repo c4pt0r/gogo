@@ -1,16 +1,16 @@
 first 0 true true
-empty 1 true true
-short 1 true true
-truncated 1 true true
-odd 1 true true
-magic 1 true true
-version 7 true true
-exports 1 true true
-trailing 1 true true
-unaligned truncated 1 true true
-kbd 2 true true 0 true
-spawn unsupported 4 4
+empty 17 true true
+short 17 true true
+truncated 17 true true
+odd 17 true true
+magic 17 true true
+version 27 true true
+exports 17 true true
+trailing 17 true true
+unaligned truncated 17 true true
+kbd 10 true true 0 true
+spawn unsupported 1 1
 over cap 3 true true
-empty buffer 1 true true
+empty buffer 17 true true
 longer than cap 3 true true
 end 0

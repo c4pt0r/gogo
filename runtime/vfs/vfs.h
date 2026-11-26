@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "../include/gogo_errors.h"
 
 #ifndef GOGO_FS_MAX_OPEN
 #define GOGO_FS_MAX_OPEN 4u
@@ -17,14 +18,6 @@
 #define VFS_MAX_MOUNTS 2u
 #define VFS_PATH_MAX 96u
 #define VFS_NAME_MAX 32u
-
-/* Same numbers as fs.Err. */
-typedef enum {
-    VFS_OK = 0, VFS_NOTFOUND = 1, VFS_EXISTS = 2, VFS_NOTMOUNTED = 3,
-    VFS_NOSPACE = 4, VFS_TOOMANY = 5, VFS_BUSY = 6, VFS_BADPATH = 7,
-    VFS_ISDIR = 8, VFS_NOTDIR = 9, VFS_NOTEMPTY = 10, VFS_NOMEMORY = 11,
-    VFS_IO = 12, VFS_CLOSED = 13
-} VfsErr;
 
 enum { VFS_READ = 0, VFS_WRITE = 1, VFS_APPEND = 2 };
 
@@ -40,21 +33,22 @@ enum {
 
 typedef int (*VfsDirCb)(void *ctx, const char *name, bool is_dir);
 
-/* Every function returns a VfsErr; `ctx` is the be_ctx given to vfs_mount
+/* Every function returns an error code: GOGO_E_OK or another shared code
+ * (gogo_errors.h; fs.Err has the same numbers); `ctx` is the be_ctx given to vfs_mount
  * (one backend table can serve several media). `rel` is the path after the mount
  * prefix ("/" for the root, NUL-terminated); `f` points at the slot's
  * pointer-aligned GOGO_FS_SLOT_BYTES of storage. open leaves f unused on
- * failure. rename(replace=true) may return VFS_EXISTS when the medium
+ * failure. rename(replace=true) may return GOGO_E_EXISTS when the medium
  * cannot replace atomically; vfs then removes the target and retries.
  *
  * Contract every backend (LittleFS, FatFs, unix directory, memfs) obeys:
  *  - readdir: names only, never "." or ".."; when the callback returns
- *    non-zero the walk stops and readdir still returns VFS_OK.
+ *    non-zero the walk stops and readdir still returns GOGO_E_OK.
  *  - size(f) describes the open handle (fstat on the fd), not the path.
- *  - rename(from, to, replace=false) returns VFS_EXISTS if `to` exists
+ *  - rename(from, to, replace=false) returns GOGO_E_EXISTS if `to` exists
  *    (POSIX rename replaces, so check first); replace=true replaces.
- *  - remove of a non-empty directory returns VFS_NOTEMPTY (rmdir
- *    semantics); remove of a file or an empty directory returns VFS_OK.
+ *  - remove of a non-empty directory returns GOGO_E_NOTEMPTY (rmdir
+ *    semantics); remove of a file or an empty directory returns GOGO_E_OK.
  *  - write_at(f, off, buf, n) overwrites bytes already in the file (vfs
  *    checked off + n <= size and the Write mode): it never extends the
  *    file, and it leaves the position where the next write() goes (the end
@@ -98,9 +92,9 @@ void vfs_reset(VfsState *st);                              /* drop mounts and sl
 int vfs_open(VfsState *st, const char *p, uint32_t len, int mode, int *slot);
 int vfs_read(VfsState *st, int slot, uint8_t *buf, uint32_t n, uint32_t *got);
 int vfs_write(VfsState *st, int slot, const uint8_t *p, uint32_t n);
-/* Overwrites n bytes at off in a file opened VFS_WRITE (VFS_CLOSED for a
- * Read or Append open or a free slot); VFS_BADPATH if off + n is past the
- * end of the file (it is never extended); VFS_IO if the backend has no
+/* Overwrites n bytes at off in a file opened VFS_WRITE (GOGO_E_CLOSED for a
+ * Read or Append open or a free slot); GOGO_E_BADPATH if off + n is past the
+ * end of the file (it is never extended); GOGO_E_IO if the backend has no
  * write_at. */
 int vfs_write_at(VfsState *st, int slot, uint32_t off, const uint8_t *p, uint32_t n);
 int vfs_sync(VfsState *st, int slot);

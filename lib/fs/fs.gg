@@ -79,6 +79,7 @@ package fs
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 )
 
 // File is an open file: the PID of a "file" port.
@@ -87,22 +88,23 @@ type File actor.PID
 // Err is the result of every call; OK is 0.
 type Err int
 
-// Error values (same numbers as VFS_* in runtime/vfs/vfs.h).
+// Error values: the shared codes of gogo/errors (GOGO_E_* in
+// runtime/include/gogo_errors.h), so fs.NotFound == fs.Err(errors.NotFound).
 const (
-	OK         Err = 0
-	NotFound   Err = 1  // the file or directory does not exist
-	Exists     Err = 2  // the target of Mkdir or Rename exists
-	NotMounted Err = 3  // unknown prefix, or /sd has no (working) card
-	NoSpace    Err = 4  // the medium is full
-	TooMany    Err = 5  // 4 files are open already
-	Busy       Err = 6  // see Busy above
-	BadPath    Err = 7  // a path or name that breaks the rules
-	IsDir      Err = 8  // a file operation on a directory
-	NotDir     Err = 9  // a path segment before the last is not a directory (/sd: NotFound)
-	NotEmpty   Err = 10 // Remove of a directory that has entries
-	NoMemory   Err = 11 // the result does not fit the caller's quota (it is not killed)
-	IO         Err = 12 // medium error (card removed, ...)
-	Closed     Err = 13 // closed, not owned by the caller, or not a file
+	OK         = Err(errors.OK)
+	NotFound   = Err(errors.NotFound)   // the file or directory does not exist
+	Exists     = Err(errors.Exists)     // the target of Mkdir or Rename exists
+	NoMemory   = Err(errors.NoMemory)   // the result does not fit the caller's quota (it is not killed)
+	TooMany    = Err(errors.TooMany)    // 4 files are open already
+	Busy       = Err(errors.Busy)       // see Busy above
+	Closed     = Err(errors.Closed)     // closed, not owned by the caller, or not a file
+	IO         = Err(errors.IO)         // medium error (card removed, ...)
+	NoSpace    = Err(errors.NoSpace)    // the medium is full
+	BadPath    = Err(errors.BadPath)    // a path or name that breaks the rules
+	IsDir      = Err(errors.IsDir)      // a file operation on a directory
+	NotDir     = Err(errors.NotDir)     // a path segment before the last is not a directory (/sd: NotFound)
+	NotEmpty   = Err(errors.NotEmpty)   // Remove of a directory that has entries
+	NotMounted = Err(errors.NotMounted) // unknown prefix, or /sd has no (working) card
 )
 
 // Open modes. Write creates the file or truncates it, Append creates it or

@@ -37,6 +37,7 @@ package code
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 )
 
 // Module is a loaded module, or none (the zero Module). It is a plain value:
@@ -54,16 +55,17 @@ type Module struct {
 // Err is the result of every call; OK is 0.
 type Err int
 
-// Error values (same numbers as CODE_* in runtime/vm/module.h).
+// Error values: the shared codes of gogo/errors (GOGO_E_* in
+// runtime/include/gogo_errors.h), so code.NotFound == code.Err(errors.NotFound).
 const (
-	OK          Err = 0
-	BadImage    Err = 1 // not exactly one valid image of this VM's format
-	Unsupported Err = 2 // requires a driver or mount this firmware lacks: see Missing
-	NoMemory    Err = 3 // over code.mem, or out of memory
-	NotFound    Err = 4 // no such module (unloaded, or the zero Module) or entry
-	BadArg      Err = 5 // an argument that cannot be passed
-	TooMany     Err = 6 // the module table (8, the main program included) or the holders (4) are full
-	BadVersion  Err = 7 // built for another image format: another major, or a newer minor than this firmware runs
+	OK          = Err(errors.OK)
+	NotFound    = Err(errors.NotFound)    // no such module (unloaded, or the zero Module) or entry
+	NoMemory    = Err(errors.NoMemory)    // over code.mem, or out of memory
+	TooMany     = Err(errors.TooMany)     // the module table (8, the main program included) or the holders (4) are full
+	BadArg      = Err(errors.BadArg)      // an argument that cannot be passed
+	Unsupported = Err(errors.Unsupported) // requires a driver or mount this firmware lacks: see Missing
+	BadImage    = Err(errors.BadImage)    // not exactly one valid image of this VM's format
+	BadVersion  = Err(errors.BadVersion)  // built for another image format: another major, or a newer minor than this firmware runs
 )
 
 // Load checks b and loads it as a module held by the caller. The checks, in

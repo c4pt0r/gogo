@@ -13,7 +13,7 @@ void memfs_init(int i, bool case_insensitive, bool atomic_replace, int32_t budge
 void memfs_set_budget(int i, int32_t budget);
 int memfs_rename_calls(int i);          /* count of rename(replace=true) attempts */
 void memfs_set_stat_err(int i, int err); /* nonzero: every stat returns err */
-void memfs_set_close_fails(int i, bool fails);   /* close returns VFS_IO */
+void memfs_set_close_fails(int i, bool fails);   /* close returns GOGO_E_IO */
 void memfs_fail_next_rename(int i, int err);   /* next rename(replace=false) returns err, once */
 int memfs_name(int i, const char *rel, char *out, uint32_t cap);   /* stored name of rel */
 #endif

@@ -44,14 +44,14 @@ typedef char h_fits[sizeof(H) <= GOGO_FS_SLOT_BYTES ? 1 : -1];
 
 static int map_errno(int e) {
     switch (e) {
-    case ENOENT: return VFS_NOTFOUND;
-    case EEXIST: return VFS_EXISTS;
-    case ENOSPC: return VFS_NOSPACE;
-    case EISDIR: return VFS_ISDIR;
-    case ENOTDIR: return VFS_NOTDIR;
-    case ENOTEMPTY: return VFS_NOTEMPTY;
-    case ELOOP: case ENAMETOOLONG: return VFS_BADPATH;   /* a symlink (O_NOFOLLOW) */
-    default: return VFS_IO;
+    case ENOENT: return GOGO_E_NOTFOUND;
+    case EEXIST: return GOGO_E_EXISTS;
+    case ENOSPC: return GOGO_E_NOSPACE;
+    case EISDIR: return GOGO_E_ISDIR;
+    case ENOTDIR: return GOGO_E_NOTDIR;
+    case ENOTEMPTY: return GOGO_E_NOTEMPTY;
+    case ELOOP: case ENAMETOOLONG: return GOGO_E_BADPATH;   /* a symlink (O_NOFOLLOW) */
+    default: return GOGO_E_IO;
     }
 }
 
@@ -60,7 +60,7 @@ static int map_errno(int e) {
 static int open_err(int fd, const char *name, int e) {
     struct stat st;
     if ((e == ENOTDIR || e == ELOOP) && fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISLNK(st.st_mode))
-        return VFS_BADPATH;
+        return GOGO_E_BADPATH;
     return map_errno(e);
 }
 
@@ -82,17 +82,17 @@ static void put_dir(const FsDir *d, int fd) {
  * an fd for put_dir) and *leaf the last name in buf ("" for the root). */
 static int walk(const FsDir *d, const char *rel, char *buf, int *dir, const char **leaf) {
     size_t n = strlen(rel);
-    if (rel[0] != '/' || n > VFS_PATH_MAX) return VFS_BADPATH;
+    if (rel[0] != '/' || n > VFS_PATH_MAX) return GOGO_E_BADPATH;
     *dir = d->root;
     *leaf = buf + 1;
     if (n == 1u) {
         buf[1] = 0;
-        return VFS_OK;
+        return GOGO_E_OK;
     }
     /* Every component is checked before the first is opened. */
     for (const char *q = rel + 1;;) {
         size_t k = strcspn(q, "/");
-        if (k == 0 || (q[0] == '.' && (k == 1 || (k == 2 && q[1] == '.')))) return VFS_BADPATH;
+        if (k == 0 || (q[0] == '.' && (k == 1 || (k == 2 && q[1] == '.')))) return GOGO_E_BADPATH;
         if (!q[k]) break;
         q += k + 1;
     }
@@ -115,7 +115,7 @@ static int walk(const FsDir *d, const char *rel, char *buf, int *dir, const char
     }
     *dir = fd;
     *leaf = p;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 /* Writes n bytes at the position; *done = what was written. */
@@ -129,7 +129,7 @@ static int write_all(int fd, const uint8_t *buf, uint32_t n, uint32_t *done) {
         }
         *done += (uint32_t)k;
     }
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 static int h_open(void *c, void *f, const char *rel, int mode) {
@@ -139,13 +139,13 @@ static int h_open(void *c, void *f, const char *rel, int mode) {
     int dir;
     int e = walk(d, rel, buf, &dir, &leaf);
     if (e) return e;
-    if (!*leaf) return VFS_ISDIR;
+    if (!*leaf) return GOGO_E_ISDIR;
     /* Look before opening: a device, FIFO or socket is refused unopened
      * (opening one can have side effects). */
     struct stat pre, st;
     bool existed = fstatat(dir, leaf, &pre, AT_SYMLINK_NOFOLLOW) == 0;
-    if (existed && S_ISDIR(pre.st_mode)) e = VFS_ISDIR;
-    else if (existed && !S_ISREG(pre.st_mode)) e = VFS_BADPATH;
+    if (existed && S_ISDIR(pre.st_mode)) e = GOGO_E_ISDIR;
+    else if (existed && !S_ISREG(pre.st_mode)) e = GOGO_E_BADPATH;
     if (e) {
         put_dir(d, dir);
         return e;
@@ -160,9 +160,9 @@ static int h_open(void *c, void *f, const char *rel, int mode) {
     put_dir(d, dir);
     if (e) return e;
     if (fstat(fd, &st) != 0) e = map_errno(errno);
-    else if (S_ISDIR(st.st_mode)) e = VFS_ISDIR;
+    else if (S_ISDIR(st.st_mode)) e = GOGO_E_ISDIR;
     else if (!S_ISREG(st.st_mode) || (existed && (st.st_dev != pre.st_dev || st.st_ino != pre.st_ino)) ||
-             (mode != VFS_READ && st.st_nlink > 1)) e = VFS_BADPATH;
+             (mode != VFS_READ && st.st_nlink > 1)) e = GOGO_E_BADPATH;
     else if (fcntl(fd, F_SETFL, fl & O_APPEND) != 0) e = map_errno(errno);   /* drops O_NONBLOCK */
     else if (mode == VFS_WRITE && st.st_size > 0) {
         if (ftruncate(fd, 0) != 0) e = map_errno(errno);
@@ -174,7 +174,7 @@ static int h_open(void *c, void *f, const char *rel, int mode) {
     }
     ((H *)f)->fd = fd;
     ((H *)f)->append = mode == VFS_APPEND;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 static int h_read(void *c, void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
@@ -183,7 +183,7 @@ static int h_read(void *c, void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
     do k = read(((H *)f)->fd, buf, n); while (k < 0 && errno == EINTR);
     if (k < 0) return map_errno(errno);
     *got = (uint32_t)k;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 /* The quota is charged by how much a write grows the file, measured
@@ -205,7 +205,7 @@ static int h_write(void *c, void *f, const uint8_t *buf, uint32_t n) {
     uint32_t k = fit >= (int64_t)n ? n : fit > 0 ? (uint32_t)fit : 0u;
     int e = write_all(h->fd, buf, k, &done);
     if (fstat(h->fd, &after) == 0 && after.st_size > before.st_size) d->used += after.st_size - before.st_size;
-    return e ? e : k < n ? VFS_NOSPACE : VFS_OK;
+    return e ? e : k < n ? GOGO_E_NOSPACE : GOGO_E_OK;
 }
 
 static int h_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
@@ -216,7 +216,7 @@ static int h_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32
     if (d->quota >= 0) {
         if (fstat(((H *)f)->fd, &st) != 0) return map_errno(errno);
         int64_t grow = (int64_t)off + n - (int64_t)st.st_size;
-        if (grow > room(d)) return VFS_NOSPACE;
+        if (grow > room(d)) return GOGO_E_NOSPACE;
         if (grow > 0) d->used += grow;
     }
     while (n > 0) {
@@ -229,17 +229,17 @@ static int h_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32
         off += (uint32_t)k;
         n -= (uint32_t)k;
     }
-    return VFS_OK;
+    return GOGO_E_OK;
 }
-static int h_sync(void *c, void *f) { (void)c; return fsync(((H *)f)->fd) == 0 ? VFS_OK : map_errno(errno); }
+static int h_sync(void *c, void *f) { (void)c; return fsync(((H *)f)->fd) == 0 ? GOGO_E_OK : map_errno(errno); }
 static int h_size(void *c, void *f, int32_t *out) {
     (void)c;
     struct stat st;
     if (fstat(((H *)f)->fd, &st) != 0) return map_errno(errno);
     *out = clamp32(st.st_size);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
-static int h_close(void *c, void *f) { (void)c; return close(((H *)f)->fd) == 0 ? VFS_OK : map_errno(errno); }
+static int h_close(void *c, void *f) { (void)c; return close(((H *)f)->fd) == 0 ? GOGO_E_OK : map_errno(errno); }
 
 static int h_stat(void *c, const char *rel, int32_t *size, bool *is_dir) {
     FsDir *d = c;
@@ -252,10 +252,10 @@ static int h_stat(void *c, const char *rel, int32_t *size, bool *is_dir) {
     if (!*leaf ? fstat(dir, &st) != 0 : fstatat(dir, leaf, &st, AT_SYMLINK_NOFOLLOW) != 0) e = map_errno(errno);
     put_dir(d, dir);
     if (e) return e;
-    if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) return VFS_BADPATH;
+    if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) return GOGO_E_BADPATH;
     *is_dir = S_ISDIR(st.st_mode);
     *size = *is_dir ? 0 : clamp32(st.st_size);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 static int h_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) {
@@ -287,7 +287,7 @@ static int h_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) {
         if (cb(ctx, ent->d_name, S_ISDIR(st.st_mode)) != 0) break;
     }
     closedir(dp);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 static int h_mkdir(void *c, const char *rel) {
@@ -297,7 +297,7 @@ static int h_mkdir(void *c, const char *rel) {
     int dir;
     int e = walk(d, rel, buf, &dir, &leaf);
     if (e) return e;
-    if (!*leaf) return VFS_EXISTS;
+    if (!*leaf) return GOGO_E_EXISTS;
     if (mkdirat(dir, leaf, 0777) != 0) e = map_errno(errno);
     put_dir(d, dir);
     return e;
@@ -311,7 +311,7 @@ static int h_remove(void *c, const char *rel) {
     struct stat st;
     int e = walk(d, rel, buf, &dir, &leaf);
     if (e) return e;
-    if (!*leaf) return VFS_BADPATH;
+    if (!*leaf) return GOGO_E_BADPATH;
     if (fstatat(dir, leaf, &st, AT_SYMLINK_NOFOLLOW) != 0 ||
         unlinkat(dir, leaf, S_ISDIR(st.st_mode) ? AT_REMOVEDIR : 0) != 0) e = map_errno(errno);
     else if (S_ISREG(st.st_mode) && st.st_nlink == 1) refund(d, st.st_size);
@@ -333,9 +333,9 @@ static int h_rename(void *c, const char *from, const char *to, bool replace) {
         return e;
     }
     bool had = false;
-    if (!*la || !*lb) e = VFS_BADPATH;
+    if (!*la || !*lb) e = GOGO_E_BADPATH;
     else if (fstatat(da, la, &sa, AT_SYMLINK_NOFOLLOW) != 0) e = map_errno(errno);
-    else if ((had = fstatat(db, lb, &sb, AT_SYMLINK_NOFOLLOW) == 0) && !replace) e = VFS_EXISTS;
+    else if ((had = fstatat(db, lb, &sb, AT_SYMLINK_NOFOLLOW) == 0) && !replace) e = GOGO_E_EXISTS;
     else if (renameat(da, la, db, lb) != 0) e = map_errno(errno);
     else if (had && S_ISREG(sb.st_mode) && sb.st_nlink == 1 && !(sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino))
         refund(d, sb.st_size);   /* the replaced file's bytes */
@@ -349,7 +349,7 @@ static int h_usage(void *c, int32_t *used, int32_t *total) {
     if (d->quota >= 0) {
         *total = clamp32(d->quota);
         *used = clamp32(d->used);
-        return VFS_OK;
+        return GOGO_E_OK;
     }
     struct statvfs sv;
     if (fstatvfs(d->root, &sv) != 0) return map_errno(errno);
@@ -357,7 +357,7 @@ static int h_usage(void *c, int32_t *used, int32_t *total) {
     unsigned long long t = fr * sv.f_blocks, u = t - fr * sv.f_bfree;
     *total = t > INT32_MAX ? INT32_MAX : (int32_t)t;
     *used = u > INT32_MAX ? INT32_MAX : (int32_t)u;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 const VfsBackend fs_dir_backend = { false, h_open, h_read, h_write, h_sync, h_size, h_close, h_stat, h_readdir,

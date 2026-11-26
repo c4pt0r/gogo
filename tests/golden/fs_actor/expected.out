@@ -3,22 +3,22 @@ crasher write 0
 after crash: written before the crash
 reopen for write 0
 rewritten: second
-four after crashes 0 0 0 0 fifth 5
-while held 6
+four after crashes 0 0 0 0 fifth 4
+while held 5
 after kill: kept
-stale file 13
-stale write 13
+stale file 7
+stale write 7
 reopen after kill 0
 handoff true
-old owner write 13
-old owner size 13
-old owner sync 13
+old owner write 7
+old owner size 7
+old owner sync 7
 after heir exit: parent;
 busy gone 0
 heir write 0
 heir size 5 0
-owner now the worker: 13
+owner now the worker: 7
 after close: heir;
-non-file read 13
-non-file write 13
+non-file read 7
+non-file write 7
 still alive

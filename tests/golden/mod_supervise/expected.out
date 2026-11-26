@@ -3,10 +3,10 @@ v1 msg 1
 restarted true
 v1 msg 1
 code mem before upgrade true
-bad upgrade 4
+bad upgrade 1
 v1 msg 1
 code mem after failed upgrade true
-same module 5
+same module 6
 upgrade 0
 v2
 code mem after upgrade true

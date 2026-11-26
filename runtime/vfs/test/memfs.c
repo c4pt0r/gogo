@@ -12,7 +12,7 @@ typedef struct {
     int32_t budget, used;
     int rename_calls;
     int stat_err;          /* nonzero: stat returns it */
-    bool close_fails;      /* close returns VFS_IO (after closing) */
+    bool close_fails;      /* close returns GOGO_E_IO (after closing) */
     int rename_fail;       /* nonzero: the next rename(replace=false) returns it */
 } Mem;
 typedef struct { Mem *m; Node *nd; uint32_t pos; int mode; } H;
@@ -35,10 +35,10 @@ static int parent_ok(Mem *m, const char *p) {
     size_t n = strlen(p);
     memcpy(b, p, n + 1);
     while (n > 0 && b[n - 1] != '/') n--;
-    if (n <= 1) return VFS_OK;
+    if (n <= 1) return GOGO_E_OK;
     b[n - 1] = 0;
     Node *d = find(m, b);
-    return !d ? VFS_NOTFOUND : d->dir ? VFS_OK : VFS_NOTDIR;
+    return !d ? GOGO_E_NOTFOUND : d->dir ? GOGO_E_OK : GOGO_E_NOTDIR;
 }
 static Node *alloc(Mem *m, const char *p, bool dir) {
     for (int i = 0; i < NODES; i++)
@@ -56,20 +56,20 @@ static bool is_root(const char *p) { return p[0] == '/' && !p[1]; }
 static int m_open(Mem *m, void *f, const char *rel, int mode) {
     H *h = f;
     Node *nd = find(m, rel);
-    if (is_root(rel)) return VFS_ISDIR;
-    if (nd && nd->dir) return VFS_ISDIR;
+    if (is_root(rel)) return GOGO_E_ISDIR;
+    if (nd && nd->dir) return GOGO_E_ISDIR;
     if (!nd) {
-        if (mode == VFS_READ) return VFS_NOTFOUND;
+        if (mode == VFS_READ) return GOGO_E_NOTFOUND;
         int e = parent_ok(m, rel);
         if (e) return e;
-        if (!(nd = alloc(m, rel, false))) return VFS_NOMEMORY;
+        if (!(nd = alloc(m, rel, false))) return GOGO_E_NOMEMORY;
     } else if (mode == VFS_WRITE) {
         m->used -= (int32_t)nd->size;
         nd->size = 0;
     }
     h->m = m; h->nd = nd; h->mode = mode;
     h->pos = mode == VFS_APPEND ? nd->size : 0;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int m_read(void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
     H *h = f;
@@ -78,34 +78,34 @@ static int m_read(void *f, uint8_t *buf, uint32_t n, uint32_t *got) {
     memcpy(buf, h->nd->data + h->pos, k);
     h->pos += k;
     *got = k;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int m_write(void *f, const uint8_t *buf, uint32_t n) {
     H *h = f;
     uint32_t end = h->nd->size + n;                 /* append-only writes */
-    if (end > DATA) return VFS_NOSPACE;
-    if (h->m->budget >= 0 && h->m->used + (int32_t)n > h->m->budget) return VFS_NOSPACE;
+    if (end > DATA) return GOGO_E_NOSPACE;
+    if (h->m->budget >= 0 && h->m->used + (int32_t)n > h->m->budget) return GOGO_E_NOSPACE;
     memcpy(h->nd->data + h->nd->size, buf, n);
     h->nd->size = end;
     h->m->used += (int32_t)n;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int m_write_at(void *f, uint32_t off, const uint8_t *buf, uint32_t n) {
     H *h = f;
     memcpy(h->nd->data + off, buf, n);              /* vfs checked the bounds */
-    return VFS_OK;
+    return GOGO_E_OK;
 }
-static int m_ok(void *f) { (void)f; return VFS_OK; }
-static int m_close(void *f) { return ((H *)f)->m->close_fails ? VFS_IO : VFS_OK; }
-static int m_size(void *f, int32_t *out) { *out = (int32_t)((H *)f)->nd->size; return VFS_OK; }
+static int m_ok(void *f) { (void)f; return GOGO_E_OK; }
+static int m_close(void *f) { return ((H *)f)->m->close_fails ? GOGO_E_IO : GOGO_E_OK; }
+static int m_size(void *f, int32_t *out) { *out = (int32_t)((H *)f)->nd->size; return GOGO_E_OK; }
 static int m_stat(Mem *m, const char *rel, int32_t *size, bool *is_dir) {
     if (m->stat_err) return m->stat_err;
-    if (is_root(rel)) { *size = 0; *is_dir = true; return VFS_OK; }
+    if (is_root(rel)) { *size = 0; *is_dir = true; return GOGO_E_OK; }
     Node *nd = find(m, rel);
-    if (!nd) return VFS_NOTFOUND;
+    if (!nd) return GOGO_E_NOTFOUND;
     *size = (int32_t)nd->size;
     *is_dir = nd->dir;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static bool child_of(const Mem *m, const char *dir, const char *path, const char **name) {
     size_t n = is_root(dir) ? 0 : strlen(dir);
@@ -117,55 +117,55 @@ static bool child_of(const Mem *m, const char *dir, const char *path, const char
 static int m_readdir(Mem *m, const char *rel, VfsDirCb cb, void *ctx) {
     if (!is_root(rel)) {
         Node *d = find(m, rel);
-        if (!d) return VFS_NOTFOUND;
-        if (!d->dir) return VFS_NOTDIR;
+        if (!d) return GOGO_E_NOTFOUND;
+        if (!d->dir) return GOGO_E_NOTDIR;
     }
     for (int i = 0; i < NODES; i++) {
         const char *name;
         if (m->n[i].used && child_of(m, rel, m->n[i].path, &name) && !strchr(name, '/'))
             if (cb(ctx, name, m->n[i].dir)) break;
     }
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int m_mkdir(Mem *m, const char *rel) {
-    if (find(m, rel)) return VFS_EXISTS;
+    if (find(m, rel)) return GOGO_E_EXISTS;
     int e = parent_ok(m, rel);
     if (e) return e;
-    return alloc(m, rel, true) ? VFS_OK : VFS_NOMEMORY;
+    return alloc(m, rel, true) ? GOGO_E_OK : GOGO_E_NOMEMORY;
 }
 static int m_remove(Mem *m, const char *rel) {
     Node *nd = find(m, rel);
-    if (!nd) return VFS_NOTFOUND;
+    if (!nd) return GOGO_E_NOTFOUND;
     if (nd->dir)
         for (int i = 0; i < NODES; i++) {
             const char *name;
-            if (m->n[i].used && child_of(m, rel, m->n[i].path, &name)) return VFS_NOTEMPTY;
+            if (m->n[i].used && child_of(m, rel, m->n[i].path, &name)) return GOGO_E_NOTEMPTY;
         }
     m->used -= (int32_t)nd->size;
     nd->used = false;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int m_rename(Mem *m, const char *a, const char *b, bool replace) {
     Node *src = find(m, a), *dst = find(m, b);
     if (replace) m->rename_calls++;
     if (!replace && m->rename_fail) { int e = m->rename_fail; m->rename_fail = 0; return e; }
-    if (!src) return VFS_NOTFOUND;
-    if (dst == src) { strcpy(src->path, b); return VFS_OK; }   /* case-only, like FatFs */
+    if (!src) return GOGO_E_NOTFOUND;
+    if (dst == src) { strcpy(src->path, b); return GOGO_E_OK; }   /* case-only, like FatFs */
     if (dst) {
-        if (!replace || !m->atomic) return VFS_EXISTS;
-        if (dst->dir) return VFS_ISDIR;
+        if (!replace || !m->atomic) return GOGO_E_EXISTS;
+        if (dst->dir) return GOGO_E_ISDIR;
         m->used -= (int32_t)dst->size;
         dst->used = false;
     }
     int e = parent_ok(m, b);
     if (e) return e;
     strcpy(src->path, b);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 static int m_usage(Mem *m, int32_t *used, int32_t *total) {
     *used = m->used;
     *total = m->budget;
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 static int open_(void *c, void *f, const char *r, int mo) { return m_open(c, f, r, mo); }
@@ -196,10 +196,10 @@ void memfs_set_close_fails(int i, bool fails) { mem[i].close_fails = fails; }
 
 int memfs_name(int i, const char *rel, char *out, uint32_t cap) {
     Node *nd = find(&mem[i], rel);
-    if (!nd) return VFS_NOTFOUND;
-    if (strlen(nd->path) >= cap) return VFS_IO;
+    if (!nd) return GOGO_E_NOTFOUND;
+    if (strlen(nd->path) >= cap) return GOGO_E_IO;
     strcpy(out, nd->path);
-    return VFS_OK;
+    return GOGO_E_OK;
 }
 
 void memfs_fail_next_rename(int i, int err) { mem[i].rename_fail = err; }

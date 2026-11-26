@@ -74,8 +74,8 @@ static uint32_t missing_req(const Vm *vm, const Image *img) {
 }
 
 int module_install_static(Vm *vm, const Image *img) {
-    if (vm->mods[0]) return CODE_TOO_MANY;
-    return install(vm, 0, img, MOD_VM_HELD) ? CODE_OK : CODE_NO_MEMORY;
+    if (vm->mods[0]) return GOGO_E_TOOMANY;
+    return install(vm, 0, img, MOD_VM_HELD) ? GOGO_E_OK : GOGO_E_NOMEMORY;
 }
 
 int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words) {
@@ -90,7 +90,7 @@ int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words) {
         vm_write_err(vm, a, sizeof a - 1u);
         vm_write_err(vm, (const char *)&img.consts[off + 2], n);
         vm_write_err(vm, b, sizeof b - 1u);
-        return CODE_UNSUPPORTED;
+        return GOGO_E_UNSUPPORTED;
     }
     return module_install_static(vm, &img);
 }
@@ -115,13 +115,13 @@ void module_config(Vm *vm) {
 int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words) {
     module_config(vm);
     int rc = module_load_static(vm, words, n_words);
-    if (rc == CODE_OK) return VM_BOOT_OK;
+    if (rc == GOGO_E_OK) return VM_BOOT_OK;
     /* Refused: give back the actor table, so a caller may boot again. */
     va_free(vm, vm->table, (size_t)vm->table_cap * sizeof(uintptr_t));
     vm->table = NULL;
     vm->table_cap = 0;
     if (rc < 0) return rc;
-    return rc == CODE_UNSUPPORTED ? VM_BOOT_REFUSED : VM_BOOT_NO_MEMORY;
+    return rc == GOGO_E_UNSUPPORTED ? VM_BOOT_REFUSED : VM_BOOT_NO_MEMORY;
 }
 
 /* A copy of len bytes of src as module code: in platform memory if the
@@ -142,43 +142,43 @@ static uint32_t *copy_code(Vm *vm, const uint8_t *src, uint32_t len, bool vm_too
 int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle, char *missing) {
     const uint8_t *data;
     uint32_t len;
-    if (!caller || !bytes_view(vm, caller, bytes, &data, &len)) return CODE_BAD_ARG;
-    if (len > vm->mod_cap) return CODE_NO_MEMORY;           /* can never fit: before any copy */
+    if (!caller || !bytes_view(vm, caller, bytes, &data, &len)) return GOGO_E_BADARG;
+    if (len > vm->mod_cap) return GOGO_E_NOMEMORY;           /* can never fit: before any copy */
     /* In place only from a whole off-heap root: what it keeps alive is
      * what is counted (a slice would pin its whole root). */
     bool in_place = !((uintptr_t)data & 3u) && bytes_pinned_len(vm, bytes) == len;
     const uint32_t *words = (const uint32_t *)(const void *)data;
     uint8_t flags = MOD_COUNTED;
     /* Unaligned: validate an aligned copy, made where the code will live. */
-    if (((uintptr_t)data & 3u) && !(words = copy_code(vm, data, len, true, &flags))) return CODE_NO_MEMORY;
+    if (((uintptr_t)data & 3u) && !(words = copy_code(vm, data, len, true, &flags))) return GOGO_E_NOMEMORY;
     Image img;
     uint32_t off, s = vm->mod_next, tries = 0;
-    int rc = CODE_BAD_IMAGE;
+    int rc = GOGO_E_BADIMAGE;
     if (len & 3u) goto fail;
     int ir = image_load(&img, words, len / 4u);
     if (ir != IMG_OK || image_words(&img) != len / 4u) {            /* exactly one image */
-        rc = ir == IMG_ERR_VERSION ? CODE_BAD_VERSION : CODE_BAD_IMAGE;
+        rc = ir == IMG_ERR_VERSION ? GOGO_E_BADVERSION : GOGO_E_BADIMAGE;
         goto fail;
     }
     if ((off = missing_req(vm, &img)) != UINT32_MAX) {
         uint32_t n = img.consts[off + 1] < MOD_MISSING_MAX ? img.consts[off + 1] : MOD_MISSING_MAX;
         if (missing) memcpy(missing, &img.consts[off + 2], n);
         *handle = n;
-        rc = CODE_UNSUPPORTED;
+        rc = GOGO_E_UNSUPPORTED;
         goto fail;
     }
-    rc = CODE_NO_MEMORY;
+    rc = GOGO_E_NOMEMORY;
     if (vm->mod_mem > vm->mod_cap - len) goto fail;
     /* Round-robin from the slot after the last one used: reloads spread
      * over every slot, so a stale tag needs 256 loads into its own slot
      * to alias (term.h). */
     while (tries < GOGO_MAX_MODULES && vm->mods[s % GOGO_MAX_MODULES]) { s++; tries++; }
-    rc = CODE_TOO_MANY;
+    rc = GOGO_E_TOOMANY;
     if (tries == GOGO_MAX_MODULES) goto fail;
     s %= GOGO_MAX_MODULES;
     /* Where the code lives: platform memory (PSRAM) if given, else the
      * Bytes in place, else a VM copy. */
-    rc = CODE_NO_MEMORY;
+    rc = GOGO_E_NOMEMORY;
     if (!(flags & (MOD_OWN_COPY | MOD_OWN_PLATFORM))) {
         uint32_t *d = copy_code(vm, data, len, !in_place, &flags);
         if (d) {
@@ -197,7 +197,7 @@ int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle, char *missi
     }
     e->holders[0] = term_pid_slot(caller->id);
     *handle = module_handle(vm, s);
-    return CODE_OK;
+    return GOGO_E_OK;
 fail:
     free_code(vm, words, len, flags);
     return rc;
@@ -217,14 +217,14 @@ int module_spawn(Vm *vm, Actor *caller, uint32_t handle, const uint8_t *entry, u
     uint32_t slot = handle >> 16, f;
     const Image *img = module_resolve(vm, slot, handle & 0xFFFFu);
     if (!img || !image_export_find(img, entry, len, &f) || image_func_nparams(img, f) > 1u)
-        return CODE_NOT_FOUND;
-    if (!caller && (term_is_ref(arg) || term_is_handle(arg))) return CODE_BAD_ARG;
-    if (image_func_nparams(img, f) > image_func_nregs(img, f)) return CODE_BAD_IMAGE;
+        return GOGO_E_NOTFOUND;
+    if (!caller && (term_is_ref(arg) || term_is_handle(arg))) return GOGO_E_BADARG;
+    if (image_func_nparams(img, f) > image_func_nregs(img, f)) return GOGO_E_BADIMAGE;
     uint32_t r = vm_spawn_fn(vm, caller, (uint8_t)slot, f, arg, false, (uint16_t)(flags & 0xFFFFu),
                              caller && (flags & MOD_SPAWN_LINK), pid);
-    if (r == R_NORMAL) return CODE_OK;
-    if (r == R_BAD_MSG) return CODE_BAD_ARG;
-    return r == R_OUT_OF_MEMORY ? CODE_NO_MEMORY : -(int)r;   /* R_BAD_CODE: a stale arg */
+    if (r == R_NORMAL) return GOGO_E_OK;
+    if (r == R_BAD_MSG) return GOGO_E_BADARG;
+    return r == R_OUT_OF_MEMORY ? GOGO_E_NOMEMORY : -(int)r;   /* R_BAD_CODE: a stale arg */
 }
 
 void module_actor_exit(Vm *vm, Actor *a) {
@@ -238,16 +238,16 @@ void module_actor_exit(Vm *vm, Actor *a) {
 
 int module_hold(Vm *vm, Actor *a, uint32_t handle) {
     uint32_t s = handle >> 16, k = MOD_HOLDERS;
-    if (!module_resolve(vm, s, handle & 0xFFFFu)) return CODE_NOT_FOUND;
+    if (!module_resolve(vm, s, handle & 0xFFFFu)) return GOGO_E_NOTFOUND;
     ModEntry *e = vm->mods[s];
     uint16_t me = term_pid_slot(a->id);
     for (uint32_t i = 0; i < MOD_HOLDERS; i++) {
-        if (e->holders[i] == me) return CODE_OK;
+        if (e->holders[i] == me) return GOGO_E_OK;
         if (e->holders[i] == MOD_NO_HOLDER) k = i;
     }
-    if (k == MOD_HOLDERS) return CODE_TOO_MANY;
+    if (k == MOD_HOLDERS) return GOGO_E_TOOMANY;
     e->holders[k] = me;
-    return CODE_OK;
+    return GOGO_E_OK;
 }
 
 void module_release(Vm *vm, Actor *a, uint32_t handle) {
@@ -287,7 +287,7 @@ uint32_t module_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc,
     if (op != CODE_OP_LOAD && op != CODE_OP_MEM_USED && !(m = module_obj(vm, a, R[rb + 1]))) return R_BAD_CODE;
     uint32_t handle = m ? handle_of(vm, a, m[2]) : 0u;
     term res = T_NIL;
-    int err = CODE_OK;
+    int err = GOGO_E_OK;
     switch (op) {
     case CODE_OP_LOAD: {
         /* Module{H, missing} and a string for the missing name, before
@@ -300,11 +300,11 @@ uint32_t module_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc,
         err = module_load(vm, a, R[rb + 1], &handle, miss);
         a->mem[o] = hdr_make(4, K_STRUCT);
         a->mem[o + 1] = TYPE_CODE_MODULE;
-        a->mem[o + 2] = term_from_int(err == CODE_OK ? (int32_t)handle + 1 : 0);
-        a->mem[o + 3] = err == CODE_UNSUPPORTED ? term_from_ref(o + 4) : T_EMPTYSTR;
+        a->mem[o + 2] = term_from_int(err == GOGO_E_OK ? (int32_t)handle + 1 : 0);
+        a->mem[o + 3] = err == GOGO_E_UNSUPPORTED ? term_from_ref(o + 4) : T_EMPTYSTR;
         a->mem[o + 4] = hdr_make(2u + MOD_MISSING_MAX / 4u, K_STRING);
-        a->mem[o + 5] = err == CODE_UNSUPPORTED ? handle : 0u;
-        if (err == CODE_UNSUPPORTED) memcpy(&a->mem[o + 6], miss, handle);
+        a->mem[o + 5] = err == GOGO_E_UNSUPPORTED ? handle : 0u;
+        if (err == GOGO_E_UNSUPPORTED) memcpy(&a->mem[o + 6], miss, handle);
         res = term_from_ref(o);
         break;
     }

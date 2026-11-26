@@ -63,7 +63,8 @@ func MemUsed() int           // bytes of module code in use (counted against cod
 ```
 
 `Err` is `OK` (0), `BadImage`, `Unsupported`, `NoMemory`, `NotFound`,
-`BadArg`, `TooMany` or `BadVersion`. `arg` is copied into the new actor like a message.
+`BadArg`, `TooMany` or `BadVersion`, with the numbers of the shared codes
+in `gogo/errors` (appendix C): `code.NotFound` is 1, as `fs.NotFound` is. `arg` is copied into the new actor like a message.
 A `Module` is a plain value you can send to other actors, which can spawn
 from it too.
 
@@ -86,9 +87,9 @@ running it):
 load: 0 code mem in use: true
 spawn Greet: 0 true
 hello from a module
-spawn greet: 4 NotFound is 4
+spawn greet: 1 NotFound is 1
 code mem in use after release: 0
-spawn after unload: 4
+spawn after unload: 1
 ```
 
 A wrong entry name (`greet` is not `Greet`) is `NotFound`, not a crash. A

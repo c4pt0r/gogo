@@ -309,11 +309,12 @@ meaning the packages share.
 | 64..99 | reserved |
 | 100 and up | one block of 20 per package that needs its own codes: `gogo/http` 100..119, `gogo/sound` 120..139 (neither uses its block yet) |
 
-**`fs.Err`** (also returned by `kv` and `ringlog`):
+**`fs.Err`** (also returned by `kv` and `ringlog`): the shared codes, as
+`fs.Err(errors.X)` under the same names.
 
-| 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 |
+| 0 | 1 | 2 | 3 | 4 | 5 | 7 | 8 | 11 | 12 | 13 | 14 | 15 | 16 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `OK` | `NotFound` | `Exists` | `NotMounted` | `NoSpace` | `TooMany` | `Busy` | `BadPath` | `IsDir` | `NotDir` | `NotEmpty` | `NoMemory` | `IO` | `Closed` |
+| `OK` | `NotFound` | `Exists` | `NoMemory` | `TooMany` | `Busy` | `Closed` | `IO` | `NoSpace` | `BadPath` | `IsDir` | `NotDir` | `NotEmpty` | `NotMounted` |
 
 **`port.Closed` reasons of `"tcp"` and `"tls"`** (the `net` constants):
 
@@ -323,11 +324,12 @@ meaning the packages share.
 
 (4 is unused: it was `Overflow`, when a third write closed the connection.)
 
-**`code.Err`** (the result of every `gogo/code` call):
+**`code.Err`** (the result of every `gogo/code` call): the shared codes,
+as `code.Err(errors.X)` under the same names.
 
-| 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| 0 | 1 | 3 | 4 | 6 | 10 | 17 | 27 |
 |---|---|---|---|---|---|---|---|
-| `OK` | `BadImage` | `Unsupported` (firmware lacks a driver or mount: see `Missing`) | `NoMemory` (over `code.mem`) | `NotFound` | `BadArg` | `TooMany` (module table or holders full) | `BadVersion` (another image format) |
+| `OK` | `NotFound` | `NoMemory` (over `code.mem`) | `TooMany` (module table or holders full) | `BadArg` | `Unsupported` (firmware lacks a driver or mount: see `Missing`) | `BadImage` | `BadVersion` (another image format) |
 
 ## D. Limits
 

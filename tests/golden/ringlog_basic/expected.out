@@ -22,8 +22,8 @@ zero 0 0
 bytes 0
 xy
 
-bad 7
-busy writer 6
+bad 12
+busy writer 5
 size 2
-busy rotate 6 5
+busy rotate 5 5
 rotate retried 0 -1 7

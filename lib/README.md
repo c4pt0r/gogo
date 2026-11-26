@@ -63,10 +63,10 @@ declares `kbd`. Book chapter
 | `gogo/bytes` | stub | | none |
 | `gogo/net` | stub | actor, bytes | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
 | `gogo/gpio` | stub | | none (the `gpio` port: `gpio`) |
-| `gogo/fs` | stub | actor, bytes | none (constant `/sd` paths: `/sd`) |
+| `gogo/fs` | stub | actor, bytes, errors | none (constant `/sd` paths: `/sd`) |
 | `gogo/kbd` | stub | | none (the `kbd` port: `kbd`) |
 | `gogo/power` | stub | | none (the `power` port: `power`) |
-| `gogo/code` | stub | actor, bytes | none |
+| `gogo/code` | stub | actor, bytes, errors | none |
 | `gogo/imu` | stub | | none (the `imu` port: `imu`) |
 | `gogo/ir` | stub | | none (the `ir_tx` / `ir_rx` ports: `ir_tx` / `ir_rx`) |
 | `gogo/audio` | stub | | none (the `mic` / `speaker` ports: `mic` / `speaker`) |

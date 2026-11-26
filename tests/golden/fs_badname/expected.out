@@ -1,8 +1,8 @@
 readdir 2 0
 listed My File.TXT true
 listed ok.txt true
-open 7
-readfile 7
-stat 7
-remove 7
+open 12
+readfile 12
+stat 12
+remove 12
 ok.txt seed 0

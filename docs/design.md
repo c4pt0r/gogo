@@ -496,7 +496,8 @@ FatFs).
   power loss `/flash` holds the old or the new content); `Stat`,
   `ReadDir`, `Mkdir` (not recursive), `Remove` (a file or an empty
   directory), `Rename`, `Usage(prefix)`. Every call returns an `fs.Err`
-  (`OK` = 0, `NotFound` ... `Closed`, numbered as `VFS_*`). Calls are
+  (`OK` = 0, `NotFound` ... `NotMounted`: the shared codes of
+  `gogo/errors`, `GOGO_E_*` in C). Calls are
   synchronous and stop every actor while they run (a flash erase takes
   tens of ms, an SD access occasionally hundreds).
 - **A File is a port.** Its PID is an ordinary port PID owned by the
@@ -598,7 +599,7 @@ side is `runtime/vm/module.c`):
 
 ```go
 type Module struct{ H int; missing string }   // reserved type 30; a plain value, may be sent
-type Err int  // OK BadImage Unsupported NoMemory NotFound BadArg TooMany BadVersion
+type Err int  // OK BadImage Unsupported NoMemory NotFound BadArg TooMany BadVersion (gogo/errors codes)
 func Load(b bytes.Bytes) (Module, Err)
 func Spawn(m Module, entry string, arg any) (actor.PID, Err)       // also SpawnLink, SpawnOpt
 func Hold(m Module) Err
