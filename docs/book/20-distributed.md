@@ -167,7 +167,11 @@ as locally.
 
 `actor.Call` to a PID whose node is gone returns `(nil, false)` at once,
 as a Call to a dead local actor does, and so does a Call waiting for its
-reply when the node goes. A node tracks a limited number of remote Calls
+reply when the node goes. A Call to a remote actor that has exited on a
+node that is still up is different: the first one waits for its timeout
+(its node answers that the PID is gone, which removes it here), and the
+ones after it return `(nil, false)` at once. Monitor a remote actor whose
+end you want to hear of at once. A node tracks a limited number of remote Calls
 in flight (20.9); a Call beyond that returns `(nil, false)` at once
 rather than risk waiting out its timeout.
 
