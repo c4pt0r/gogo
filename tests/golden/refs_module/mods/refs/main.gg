@@ -1,0 +1,27 @@
+// A hot-loaded module (module slot 1, so its constants carry a tag) using
+// read-only package-level slices and maps, pointers, maps and fmt.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/fmt"
+)
+
+type P struct{ X, Y int }
+
+var names = []string{"zero", "one", "two"}
+var table = map[string]int{"b": 2, "a": 1}
+var origin = P{1, 2}
+
+// Run reports to the host what it computed.
+func Run(arg any) {
+	to := arg.(actor.PID)
+	own := append([]string{}, names...) // copied out of the constant array
+	own[0] = "nil"
+	p := &P{3, 4}
+	p.X += origin.X
+	m := map[string][]string{"n": names[1:]}
+	m["n"] = append(m["n"], "three")
+	s := fmt.Sprint(own, names[0], table["a"], table, *p, m, len(m["n"]))
+	actor.Send(to, s)
+}

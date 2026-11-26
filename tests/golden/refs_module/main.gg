@@ -1,0 +1,24 @@
+// A module's read-only package-level slices and maps, its pointers, maps
+// and fmt work from its own slot, whose constants carry the module's tag.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/code"
+	"gogo/fs"
+)
+
+func main() {
+	b, e := fs.ReadFile("/flash/refs.ggb", 100000)
+	if e != fs.OK {
+		println("read", int(e))
+		return
+	}
+	m, ce := code.Load(b)
+	println("load", int(ce))
+	if _, e := code.Spawn(m, "Run", actor.Self()); e != code.OK {
+		println("spawn", int(e))
+		return
+	}
+	println(actor.Receive().(string))
+}
