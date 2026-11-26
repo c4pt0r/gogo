@@ -753,6 +753,10 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, in
         cmp_key(vm, a, x, &kx);
         cmp_key(vm, a, y, &ky);
         uint32_t u = kx.ty, v = ky.ty;
+        /* total (maps): a func, a Buffer or a mutable struct (a pointer, a
+         * map), at any depth, is unordered (-2): its identity moves */
+        if (total && (u == K_CLOSURE || u == K_BUF || u == K_STRUCT || v == K_CLOSURE || v == K_BUF || v == K_STRUCT))
+            return -2;
         if (u == v) {
             if (u == K_STRING || u == K_BYTES || u == K_BYTEARR) return strs_order(kx.p, kx.n, ky.p, ky.n);
 #if GOGO_FLOAT
@@ -786,17 +790,6 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, in
     }
 }
 
-/* A map key B_CMP cannot order (15.6): a func, a Buffer or a mutable
- * struct (a pointer, a map: identity, which the GC moves), or with mode 2
- * (an interface key) a slice. */
-static bool unordered(const Vm *vm, const Actor *a, term t, bool mode2) {
-    SliceV s;
-    const uint32_t *o = obj_of(vm, a, t);
-    uint32_t k = o ? hdr_kind(o[0]) : 0u;
-    return k == K_CLOSURE || k == K_BUF || (k == K_STRUCT && (o[1] & STRUCT_MUT)) ||
-           (mode2 && slice_view(vm, a, t, &s));
-}
-
 uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc) {
     if (id == B_CMP) {
         term *T = (term *)a->mem + a->fp;
@@ -806,12 +799,12 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
          * top is one in an interface, which equals nothing (Go: false for
          * slices of two types, a panic for one type). Three: arrays. Four
          * (15.6, gogo/maps): arrays, in a total order in which a NaN
-         * equals a NaN; a first operand it cannot order gives 2 (mode 2:
-         * a slice too). */
+         * equals a NaN; a func, a Buffer, a pointer or a map at any depth
+         * is unordered, 2, and so with mode 2 is a slice at the top. */
         bool total = rc == 4u;
         int c = rc - 2u > 2u ? R_BAD_CODE
-              : rc == 2u && (slice_view(vm, a, T[rb], &s) || slice_view(vm, a, T[rb + 1], &s)) ? 1
-              : total && unordered(vm, a, T[rb], T[rb + 3] == term_from_int(2)) ? -2
+              : (rc == 2u || (total && T[rb + 3] == term_from_int(2))) &&
+                (slice_view(vm, a, T[rb], &s) || slice_view(vm, a, T[rb + 1], &s)) ? 1 - 3 * total
               : cmp_terms(vm, a, T[rb], T[rb + 1], 0, &left, total);
         if (c > 1) return (uint32_t)c;
         T[ra] = term_from_int(c == -2 ? 2 : c);

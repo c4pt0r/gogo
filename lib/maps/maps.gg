@@ -40,8 +40,9 @@ func compare(a, b, arrays any, mode int) int { panic("gogo only") }
 //gogo:builtin
 func equal(a, b, arrays any) int { panic("gogo only") }
 
-// check ends the actor with a panic, as Go does, if k cannot be a key
-// (gogo cannot order a pointer either). It reports whether k never
+// check ends the actor with a panic, as Go does, if k cannot be a key: it
+// holds a func or a map, or (which gogo cannot order) a pointer, at any
+// depth, or with mode 2 it is a slice. It reports whether k never
 // equals itself (a NaN, or a struct or array holding one): such a key is
 // never found, and each one is a new entry, as in Go.
 func check(k any, mode int) bool {

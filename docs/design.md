@@ -334,9 +334,11 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   entries, a slice of keys and values alternating, sorted by key in
   `B_CMP`'s total order (`maps.compare` is `B_CMP` with its array
   argument and a mode: array keys compare element by element, a NaN
-  equals a NaN and sorts before the other floats, and a func, a pointer,
-  a map, or for an interface key type a slice, is unordered, which the
-  library turns into Go's panic, `hash of unhashable type`). A key that
+  equals a NaN and sorts before the other floats, and a func, a pointer
+  or a map at any depth of a key, or for an interface key type a slice
+  at its top, is unordered, which the library turns into Go's panic,
+  `hash of unhashable type`; a slice deeper in a key compares element by
+  element, as an array). A key that
   is not equal to itself under Go's `==` (a NaN, or a struct holding one)
   is never found and each insert adds an entry after the equal ones, as
   in Go; `range` steps to the first key above the last one, so it ends. A lookup is a binary search;
