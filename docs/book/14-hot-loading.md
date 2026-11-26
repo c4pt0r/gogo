@@ -206,7 +206,7 @@ may carry only:
 - basic values, strings and `Bytes` (constants are copied to the heap, so
   the receiver never points into the sender's code),
 - PIDs, Refs and `Module` handles,
-- the reserved struct types of the stub packages (`actor.Request`,
+- the reserved struct types of the system packages (`actor.Request`,
   `net.Up`, `fs.Info`, ...), which have the same type index in every
   image.
 

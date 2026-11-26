@@ -32,7 +32,7 @@ func (g *gen) nameLits(decls []*ast.FuncDecl) {
 	}
 }
 
-// actorBuiltins maps each stub function (by stubName: gogo/actor and
+// actorBuiltins maps each builtin function (by stubName: gogo/actor and
 // gogo/port) to its BUILTIN id. The arguments go into consecutive
 // registers; the two-result builtins (ReceiveTimeout, Call, Whereis,
 // port.Open, sys.Config) write dst and dst+1, so they are only compiled by assign,
@@ -77,7 +77,7 @@ func (f *fn) bytesMethodCall(call *ast.CallExpr, sel *ast.SelectorExpr, name str
 	f.next = mark
 }
 
-// actorCall compiles a call of the stub function called name (stubName)
+// actorCall compiles a call of the builtin function called name (stubName)
 // into dst.
 func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 	switch name {
@@ -86,7 +86,7 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 		if st == nil {
 			f.fail(call, "internal error: actor.Info result is not a struct")
 		}
-		idx, ok := f.g.typeIdx[st.Obj()]
+		idx, ok := f.g.typeIndex(st)
 		if !ok {
 			f.fail(call, "internal error: ProcInfo has no type index")
 		}
@@ -98,7 +98,7 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 	default:
 		id, ok := actorBuiltins[name]
 		if !ok {
-			f.fail(call, "internal error: unexpected stub function %s", name)
+			f.fail(call, "internal error: unexpected builtin function %s", name)
 		}
 		if twoResult[name] {
 			f.fail(call, "internal error: %s outside a two-value assignment", name)
@@ -164,7 +164,7 @@ func (f *fn) closureInto(lit *ast.FuncLit, dst uint8) {
 // funcValueInto compiles the top-level function fn (of any signature) used
 // as a value into dst: a closure without captures.
 func (f *fn) funcValueInto(n ast.Node, fn *types.Func, dst uint8) {
-	idx, ok := f.g.funcIdx[fn]
+	idx, ok := f.g.funcIndex(fn)
 	if !ok {
 		f.fail(n, "internal error: unknown function %s", fn.Name())
 	}
@@ -174,7 +174,7 @@ func (f *fn) funcValueInto(n ast.Node, fn *types.Func, dst uint8) {
 // methodIdx returns the function index of method m (declared in a
 // compiled package, so indexed by Compile).
 func (f *fn) methodIdx(n ast.Node, m *types.Func) uint32 {
-	idx, ok := f.g.funcIdx[m]
+	idx, ok := f.g.funcIndex(m)
 	if !ok {
 		f.fail(n, "internal error: unknown method %s", funcName(m))
 	}
@@ -329,7 +329,7 @@ func (f *fn) typeID(te ast.Expr) uint32 {
 		}
 	}
 	if st := structType(t); st != nil {
-		if idx, ok := f.g.typeIdx[st.Obj()]; ok {
+		if idx, ok := f.g.typeIndex(st); ok {
 			return idx
 		}
 	}

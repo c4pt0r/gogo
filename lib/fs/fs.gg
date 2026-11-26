@@ -1,5 +1,5 @@
 // Package fs is the gogo storage API: files and directories on /flash (the
-// internal flash) and /sd (an SD card, if the board has one). It is a stub
+// internal flash) and /sd (an SD card, if the board has one). It is a system
 // package like gogo/actor: the compiler replaces every call with the VM
 // builtin B_FS (File.Close with the port close builtin), so the bodies are
 // never executed. The C side is runtime/vfs/.
@@ -83,6 +83,8 @@ import (
 )
 
 // File is an open file: the PID of a "file" port.
+//
+//gogo:builtin
 type File actor.PID
 
 // Err is the result of every call; OK is 0.
@@ -116,16 +118,22 @@ const (
 )
 
 // Info is what Stat returns: Size is 0 for a directory.
+//
+//gogo:reserved 23
 type Info struct {
 	Size  int
 	IsDir bool
 }
 
 // Space is what Usage returns, in bytes.
+//
+//gogo:reserved 24
 type Space struct{ Used, Total int }
 
 // Open opens path in mode (Read, Write or Append). On error the File is
 // the zero File, which is Closed for every call.
+//
+//gogo:builtin
 func Open(path string, mode int) (File, Err) { panic("gogo only") }
 
 // Read returns up to max bytes from the current position and advances it.
@@ -133,10 +141,14 @@ func Open(path string, mode int) (File, Err) { panic("gogo only") }
 // with OK is the end of the file. If the data does not fit the caller's
 // memory quota the result is an empty Bytes and NoMemory, and the position
 // does not advance.
+//
+//gogo:builtin
 func (f File) Read(max int) (bytes.Bytes, Err) { panic("gogo only") }
 
 // Write appends all of data (a string, a bytes.Bytes or a []byte; any other
 // type crashes the caller) at the current position, or returns an error.
+//
+//gogo:builtin
 func (f File) Write(data any) Err { panic("gogo only") }
 
 // WriteAt overwrites len(data) bytes at byte offset off of a file opened
@@ -149,48 +161,72 @@ func (f File) Write(data any) Err { panic("gogo only") }
 // full card; on /flash (copy-on-write) it needs one free block, and is IO
 // or NoSpace without. Like Write, the data is not on the medium until
 // Sync or Close.
+//
+//gogo:builtin
 func (f File) WriteAt(off int, data any) Err { panic("gogo only") }
 
 // Sync commits what was written, without closing the file, and reports a
 // failed commit (IO, NoSpace).
+//
+//gogo:builtin
 func (f File) Sync() Err { panic("gogo only") }
 
 // Size is the current size of the file, including what is written so far.
+//
+//gogo:builtin
 func (f File) Size() (int, Err) { panic("gogo only") }
 
 // Close closes the file, committing what was written. Close has no result:
 // a failed commit is not reported, so a writer that cares calls Sync first
 // (WriteFile and ringlog.Append do). Closing a closed or foreign File is
 // ignored.
+//
+//gogo:builtin
 func (f File) Close() { panic("gogo only") }
 
 // ReadFile returns the whole file; NoMemory if it is larger than max (or
 // does not fit the quota), with nothing read.
+//
+//gogo:builtin
 func ReadFile(path string, max int) (bytes.Bytes, Err) { panic("gogo only") }
 
 // WriteFile replaces the file with data (a string, a bytes.Bytes or a
 // []byte); see "WriteFile replaces" above for atomicity.
+//
+//gogo:builtin
 func WriteFile(path string, data any) Err { panic("gogo only") }
 
 // Stat describes path; "/flash" and "/sd" themselves are directories.
+//
+//gogo:builtin
 func Stat(path string) (Info, Err) { panic("gogo only") }
 
 // ReadDir lists the names in directory path in no particular order,
 // directories with a trailing "/", never "." or "..". Every name on the
 // medium is listed, also those that break the name rules.
+//
+//gogo:builtin
 func ReadDir(path string) ([]string, Err) { panic("gogo only") }
 
 // Mkdir creates one directory (not recursive).
+//
+//gogo:builtin
 func Mkdir(path string) Err { panic("gogo only") }
 
 // Remove deletes a file or an empty directory.
+//
+//gogo:builtin
 func Remove(path string) Err { panic("gogo only") }
 
 // Rename renames within one medium; Exists if to exists, BadPath if to
 // lies inside from, Busy for a directory while any file is open on
 // that medium (see Rulings and Busy above).
+//
+//gogo:builtin
 func Rename(from, to string) Err { panic("gogo only") }
 
 // Usage returns the used and total bytes of the medium; prefix is "/flash"
 // or "/sd".
+//
+//gogo:builtin
 func Usage(prefix string) (Space, Err) { panic("gogo only") }

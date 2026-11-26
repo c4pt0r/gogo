@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"encoding/binary"
+	"go/ast"
 	"go/constant"
 	"go/token"
 	"go/types"
@@ -95,7 +96,7 @@ func TestReasonCodesMatchC(t *testing.T) {
 		v, _ := strconv.ParseInt(m[2], 10, 64)
 		cCodes[m[1]] = v
 	}
-	pkg, err := (&loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}).Import(ActorPath)
+	pkg, err := testLoader().lib(ActorPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,10 +138,10 @@ func upperSnake(s string) string {
 // gogo/actor and gogo/port stubs (names, field names in order) and the
 // TYPE_* indices.
 func TestReservedTypesMatchStubs(t *testing.T) {
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
+	l := testLoader()
 	pkgs := map[string]*types.Package{}
 	for _, path := range []string{ActorPath, PortPath, GpioPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath, ScreenPath} {
-		pkg, err := l.Import(path)
+		pkg, err := l.lib(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,8 +278,8 @@ func TestConfigMatchC(t *testing.T) {
 
 // TestGpioConstants pins the gogo/gpio constants (gogo/port has none).
 func TestGpioConstants(t *testing.T) {
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
-	if p, err := l.Import(PortPath); err != nil || len(p.Scope().Names()) == 0 {
+	l := testLoader()
+	if p, err := l.lib(PortPath); err != nil || len(p.Scope().Names()) == 0 {
 		t.Fatalf("gogo/port: %v", err)
 	} else {
 		for _, name := range p.Scope().Names() {
@@ -287,7 +288,7 @@ func TestGpioConstants(t *testing.T) {
 			}
 		}
 	}
-	pkg, err := l.Import(GpioPath)
+	pkg, err := l.lib(GpioPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -591,8 +592,8 @@ func TestFsMatchC(t *testing.T) {
 	for _, m := range regexp.MustCompile(`\b((?:VFS|FS)_[A-Z]+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
 		c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
 	}
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
-	pkg, err := l.Import(FsPath)
+	l := testLoader()
+	pkg, err := l.lib(FsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,8 +654,8 @@ func TestCodeMatchC(t *testing.T) {
 	for _, m := range regexp.MustCompile(`\b(CODE_\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
 		c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
 	}
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
-	pkg, err := l.Import(CodePath)
+	l := testLoader()
+	pkg, err := l.lib(CodePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -693,7 +694,7 @@ func TestCodeMatchC(t *testing.T) {
 // are.
 func sharedCodes(t *testing.T, l *loader, pkg *types.Package, typeName string) int {
 	t.Helper()
-	ep, err := l.Import(ErrorsPath)
+	ep, err := l.lib(ErrorsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,4 +719,20 @@ func sharedCodes(t *testing.T, l *loader, pkg *types.Package, typeName string) i
 		}
 	}
 	return n
+}
+
+// testLoader is a loader of the embedded libraries, for the tests that
+// read a library's declarations (lib).
+func testLoader() *loader {
+	return &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{},
+		info: &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{},
+			Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}, Implicits: map[ast.Node]types.Object{}}}
+}
+
+// lib loads library path (and what it imports) and returns it.
+func (l *loader) lib(path string) (*types.Package, error) {
+	if err := l.loadPkg(path, nil, token.NoPos); err != nil {
+		return nil, err
+	}
+	return l.pkgs[path], nil
 }

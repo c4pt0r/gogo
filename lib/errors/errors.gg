@@ -1,7 +1,7 @@
 // Package errors is gogo's one error code space: every package that
 // reports why a call failed uses these numbers for the meanings they
 // share, so a program that imports several of them can compare and switch
-// on one set of codes. It is a stub package with only a type and
+// on one set of codes. It is a library with only a type and
 // constants. The C side defines the same numbers once, as GOGO_E_* in
 // runtime/include/gogo_errors.h (tests/errors_test.go keeps the two
 // equal).

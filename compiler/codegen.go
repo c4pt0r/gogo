@@ -28,38 +28,53 @@ func Compile(p *Program) ([]byte, error) {
 	}
 
 	// Index every top-level function of every package first so calls to
-	// later ones resolve; a //gogo:ondemand file's only if used.
+	// later ones resolve: all but the builtins, those of the system
+	// packages, which get an index when first used (funcIndex), and a
+	// //gogo:ondemand file's, which are compiled only if used.
 	used := onDemandUsed(p)
-	var decls []*ast.FuncDecl
+	var decls, all []*ast.FuncDecl
+	g.lazy = map[*types.Func]*ast.FuncDecl{}
 	for _, pkg := range p.packages() {
 		for _, f := range pkg.Files {
 			onDemand := isOnDemand(f)
 			for _, d := range f.Decls {
-				if fd, ok := d.(*ast.FuncDecl); ok && !isIntrinsic(p.Info, fd) &&
-					(!onDemand || used[p.Info.Defs[fd.Name].(*types.Func)]) {
-					fn := p.Info.Defs[fd.Name].(*types.Func)
-					g.funcIdx[fn] = uint32(len(g.funcs))
-					g.funcs = append(g.funcs, &funcInfo{name: g.qualified(fn.Pkg(), funcName(fn))})
+				fd, ok := d.(*ast.FuncDecl)
+				if !ok {
+					continue
+				}
+				fn := p.Info.Defs[fd.Name].(*types.Func)
+				switch {
+				case p.isBuiltin(fn) || isIntrinsic(p.Info, fd):
+					continue
+				case p.system[pkg.Pkg]:
+					g.lazy[fn] = fd
+				case onDemand && !used[fn]:
+				default:
+					g.addFunc(fn)
 					decls = append(decls, fd)
 				}
+				all = append(all, fd)
 			}
 		}
 	}
-	g.nameLits(decls)
+	g.nameLits(all)
 	var errs []error
 	for _, fd := range decls {
-		fn := p.Info.Defs[fd.Name].(*types.Func)
-		params := g.declParams(fd.Type)
-		if fd.Recv != nil { // the receiver is parameter 0
-			params = append(g.fieldVars(fd.Recv), params...)
-		}
-		if err := g.compileFunc(g.funcs[g.funcIdx[fn]], params, fn.Type().(*types.Signature).Results(), fd.Body); err != nil {
+		if err := g.compileDecl(fd); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	// Func literals, queued as they are compiled; compiling one may queue
-	// more (nested literals).
-	for len(g.pending) > 0 {
+	// Func literals and the system packages' functions in use, queued as
+	// they are compiled; compiling one may queue more.
+	for len(g.pending) > 0 || len(g.used) > 0 {
+		if len(g.used) > 0 {
+			fd := g.used[0]
+			g.used = g.used[1:]
+			if err := g.compileDecl(fd); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
 		c := g.pending[0]
 		g.pending = g.pending[1:]
 		// The captures are the leading parameters, the literal's own
@@ -112,6 +127,45 @@ type gen struct {
 
 	litNames map[*ast.FuncLit]string // hidden function name of each func literal
 	pending  []closure               // closures still to compile
+
+	// lazy holds the functions of the system packages (marks), indexed
+	// and compiled only once used; used queues those indexed but not yet
+	// compiled.
+	lazy map[*types.Func]*ast.FuncDecl
+	used []*ast.FuncDecl
+}
+
+// addFunc gives declared function fn the next function index.
+func (g *gen) addFunc(fn *types.Func) uint32 {
+	idx := uint32(len(g.funcs))
+	g.funcIdx[fn] = idx
+	g.funcs = append(g.funcs, &funcInfo{name: g.qualified(fn.Pkg(), funcName(fn))})
+	return idx
+}
+
+// funcIndex returns the function index of declared function fn (not a
+// builtin). A function of a system package gets its index, and is queued
+// for compilation, here, when first used.
+func (g *gen) funcIndex(fn *types.Func) (uint32, bool) {
+	if idx, ok := g.funcIdx[fn]; ok {
+		return idx, true
+	}
+	fd, ok := g.lazy[fn]
+	if !ok {
+		return 0, false
+	}
+	g.used = append(g.used, fd)
+	return g.addFunc(fn), true
+}
+
+// compileDecl compiles declared function fd (indexed already).
+func (g *gen) compileDecl(fd *ast.FuncDecl) error {
+	fn := g.p.Info.Defs[fd.Name].(*types.Func)
+	params := g.declParams(fd.Type)
+	if fd.Recv != nil { // the receiver is parameter 0
+		params = append(g.fieldVars(fd.Recv), params...)
+	}
+	return g.compileFunc(g.funcs[g.funcIdx[fn]], params, fn.Type().(*types.Signature).Results(), fd.Body)
 }
 
 // qualified names a function or type of package pkg in the image: plain
@@ -147,7 +201,7 @@ func pkgPrefix(pkg *types.Package) string {
 }
 
 // structType returns the named struct type behind t, or nil. actor.PID,
-// actor.Ref, bytes.Bytes and bytes.Buffer are structs in the stubs but
+// actor.Ref, bytes.Bytes and bytes.Buffer are structs in the system packages but
 // tagged terms and opaque heap objects in the VM, so they are not.
 func structType(t types.Type) *types.Named {
 	n, ok := types.Unalias(t).(*types.Named)
@@ -301,24 +355,26 @@ func reservedName(i int) string {
 // appearance in the package sources (libraries, then main; declarations
 // and uses alike).
 func (g *gen) collectTypes() error {
-	stubs := map[string]*types.Package{} // whichever package imports them
-	for _, pkg := range g.p.packages() {
-		for _, imp := range pkg.Pkg.Imports() {
-			if isStub(imp.Path()) {
-				stubs[imp.Path()] = imp
-			}
+	byIdx := map[int]*types.TypeName{}
+	for tn, i := range g.p.reserved {
+		if i >= len(reservedTypes) || reservedTypes[i].pkg != tn.Pkg().Path() || reservedTypes[i].name != tn.Name() {
+			return fmt.Errorf("gogo: internal error: %s.%s is //gogo:reserved %d, which the compiler does not know as that", tn.Pkg().Path(), tn.Name(), i)
 		}
+		byIdx[i] = tn
+	}
+	loaded := map[string]*types.Package{}
+	for _, pkg := range g.p.Libs {
+		loaded[pkg.Pkg.Path()] = pkg.Pkg
 	}
 	for i, rt := range reservedTypes {
 		name := reservedName(i)
 		idx := g.b.AddReservedType(name, uint32(len(rt.fields)))
-		stub := stubs[rt.pkg]
-		if stub == nil {
+		tn := byIdx[i]
+		if tn == nil {
+			if pkg := loaded[rt.pkg]; pkg != nil && pkg.Scope().Lookup(rt.name) != nil {
+				return fmt.Errorf("gogo: internal error: %s is not marked //gogo:reserved %d", name, i)
+			}
 			continue
-		}
-		tn, ok := stub.Scope().Lookup(rt.name).(*types.TypeName)
-		if !ok {
-			return fmt.Errorf("gogo: internal error: %s missing", name)
 		}
 		if st, ok := tn.Type().Underlying().(*types.Struct); !ok || st.NumFields() != len(rt.fields) {
 			return fmt.Errorf("gogo: internal error: %s does not match the reserved layout", name)
@@ -326,18 +382,14 @@ func (g *gen) collectTypes() error {
 		g.typeIdx[tn] = idx
 	}
 	add := func(t types.Type) {
-		n := structType(t)
-		if n == nil {
-			return
-		}
-		if idx, ok := g.typeIdx[n.Obj()]; ok {
-			g.b.UseType(idx) // a reserved type the program names gets its row
-		} else {
-			name := g.qualified(n.Obj().Pkg(), n.Obj().Name())
-			g.typeIdx[n.Obj()] = g.b.AddType(name, uint32(n.Underlying().(*types.Struct).NumFields()))
+		if n := structType(t); n != nil {
+			g.typeIndex(n)
 		}
 	}
 	for _, pkg := range g.p.packages() {
+		if g.p.system[pkg.Pkg] {
+			continue // its types count where the program uses them
+		}
 		for _, f := range pkg.Files {
 			ast.Inspect(f, func(node ast.Node) bool {
 				if id, ok := node.(*ast.Ident); ok {
@@ -355,6 +407,23 @@ func (g *gen) collectTypes() error {
 		}
 	}
 	return nil
+}
+
+// typeIndex returns the image type index of named struct type n, giving
+// an own type the next index when first seen (collectTypes sees them in
+// source order; a system package's are added as its code uses them). A
+// reserved type it returns gets its row in the image.
+func (g *gen) typeIndex(n *types.Named) (uint32, bool) {
+	if idx, ok := g.typeIdx[n.Obj()]; ok {
+		g.b.UseType(idx)
+		return idx, true
+	}
+	if _, ok := n.Underlying().(*types.Struct); !ok {
+		return 0, false
+	}
+	idx := g.b.AddType(g.qualified(n.Obj().Pkg(), n.Obj().Name()), uint32(n.Underlying().(*types.Struct).NumFields()))
+	g.typeIdx[n.Obj()] = idx
+	return idx, true
 }
 
 // genError aborts the compilation of one function; compileFunc recovers it.
@@ -831,11 +900,11 @@ func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
 	}
 }
 
-// stubOf returns the stubName of the stub function call invokes, or "".
+// stubOf returns the stubName of the builtin function call invokes, or "".
 func (f *fn) stubOf(call *ast.CallExpr) string {
 	if sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr); ok {
 		obj, _ := f.g.p.Info.Uses[sel.Sel].(*types.Func)
-		if name := stubName(obj); name != "" {
+		if name := f.g.p.stubName(obj); name != "" {
 			return name
 		}
 		return fsMethod(f.g.p.Info, sel)
@@ -1463,7 +1532,7 @@ func (f *fn) newStruct(n ast.Node, st *types.Named, vals []fieldVal, dst uint8) 
 	if nf > maxRegs {
 		f.fail(n, "struct %s has too many fields", st.Obj().Name())
 	}
-	idx, ok := f.g.typeIdx[st.Obj()]
+	idx, ok := f.g.typeIndex(st)
 	if !ok {
 		f.fail(n, "internal error: struct type %s has no index", st.Obj().Name())
 	}
@@ -1583,7 +1652,7 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			f.asm.EmitExt(OpBuiltin, dst, base, n, BPrintln)
 			return
 		case *types.Func:
-			idx, ok := f.g.funcIdx[obj]
+			idx, ok := f.g.funcIndex(obj)
 			if !ok {
 				f.fail(call, "internal error: unknown function %s", obj.Name())
 			}
@@ -1605,7 +1674,7 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			return
 		}
 		obj, ok := f.g.p.Info.Uses[fun.Sel].(*types.Func)
-		if name := stubName(obj); ok && name != "" {
+		if name := f.g.p.stubName(obj); ok && name != "" {
 			if _, isFs := fsOps[name]; isFs {
 				f.fsCall(call, name, dst)
 				return
@@ -1621,7 +1690,7 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			f.actorCall(call, name, dst)
 			return
 		}
-		if idx, found := f.g.funcIdx[obj]; ok && found { // lib.F(...)
+		if idx, found := f.g.funcIndex(obj); ok && found { // lib.F(...)
 			base, n := f.args(call)
 			f.asm.EmitExt(OpCall, dst, base, n, idx)
 			return

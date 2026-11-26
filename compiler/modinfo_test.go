@@ -205,9 +205,14 @@ func TestOptionalDirectiveErrors(t *testing.T) {
 	}
 	tests := []struct{ name, src, directive, want string }{
 		{"no driver", useLib, "//gogo:optional", `a/a.gg:3:1: gogo: //gogo:optional names no driver`},
-		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional or //gogo:ondemand)`},
+		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional, //gogo:ondemand, //gogo:builtin or //gogo:reserved)`},
 		{"glued name", useLib, "//gogo:optionaltls", `unknown directive //gogo:optionaltls`},
 		{"empty in main", "package main\n\n//gogo:optional\n\nfunc main() {}\n", "", `main.gg:3:1: gogo: //gogo:optional names no driver`},
+		{"builtin apart", useLib, "//gogo:builtin", `a/a.gg:3:1: gogo: //gogo:builtin must be the last line of a declaration's doc comment`},
+		{"builtin in main", "package main\n\n//gogo:builtin\nfunc main() {}\n", "", `main.gg:3:1: gogo: //gogo:builtin is for the gogo/ libraries only`},
+		{"reserved on a func", useLib, "//gogo:reserved 3\nfunc G() {}", `a/a.gg:3:1: gogo: bad directive //gogo:reserved 3`},
+		{"reserved without index", useLib, "//gogo:reserved\ntype T struct{}", `a/a.gg:3:1: gogo: bad directive //gogo:reserved`},
+		{"builtin with argument", useLib, "//gogo:builtin B_X\nfunc G() {}", `a/a.gg:3:1: gogo: bad directive //gogo:builtin B_X`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,5 +221,58 @@ func TestOptionalDirectiveErrors(t *testing.T) {
 				t.Errorf("Load error %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestReservedMarkMismatch: a //gogo:reserved index the compiler does not
+// know for that type fails the compilation.
+func TestReservedMarkMismatch(t *testing.T) {
+	libs := fakeLibs(t, map[string]string{"a/a.gg": "package a\n\n//gogo:reserved 3\ntype T struct{ X int }\n"})
+	prog, err := LoadWith(writeProg(t, "package main\nimport \"gogo/a\"\nfunc main() { println(a.T{}.X) }\n"), libs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compile(prog); err == nil || !strings.Contains(err.Error(), "gogo/a.T is //gogo:reserved 3, which the compiler does not know as that") {
+		t.Fatalf("Compile error %v", err)
+	}
+}
+
+// TestSystemPackageCode: a system package (one with //gogo: marks) may
+// hold library code, compiled only where the program uses it.
+func TestSystemPackageCode(t *testing.T) {
+	libs := fakeLibs(t, map[string]string{"a/a.gg": `package a
+
+// B is a VM object.
+//
+//gogo:builtin
+type B struct{ _ int32 }
+
+// Used is compiled: the program calls it.
+func Used() int { return helper() + 1 }
+
+func helper() int { return 41 }
+
+// Unused is not.
+func Unused() int { return 2 }
+`})
+	prog, err := LoadWith(writeProg(t, "package main\nimport \"gogo/a\"\nfunc main() { println(a.Used()) }\n"), libs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := Compile(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dis, err := Disassemble(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.Used", "a.helper"} {
+		if !strings.Contains(dis, "func "+name) {
+			t.Errorf("%s missing:\n%s", name, dis)
+		}
+	}
+	if strings.Contains(dis, "a.Unused") {
+		t.Errorf("a.Unused compiled:\n%s", dis)
 	}
 }

@@ -1,5 +1,5 @@
 // Package math is the gogo math library: a subset of Go's math for
-// float64. It is a stub package like gogo/sys: the compiler replaces every
+// float64. It is a system package like gogo/sys: the compiler replaces every
 // call with the B_FLOAT builtin (runtime/floatlib, outside the VM core),
 // so the bodies are never executed, and a program that calls none of them
 // pays nothing. Using floats at all makes an image require "float"
@@ -50,49 +50,79 @@ const (
 
 // Sqrt returns the square root of x: Sqrt(+Inf) = +Inf, Sqrt(±0) = ±0,
 // Sqrt(x < 0) = NaN, Sqrt(NaN) = NaN.
+//
+//gogo:builtin
 func Sqrt(x float64) float64 { panic("gogo only") }
 
 // Floor returns the greatest integer value less than or equal to x.
+//
+//gogo:builtin
 func Floor(x float64) float64 { panic("gogo only") }
 
 // Ceil returns the least integer value greater than or equal to x.
+//
+//gogo:builtin
 func Ceil(x float64) float64 { panic("gogo only") }
 
 // Trunc returns the integer value of x (toward zero).
+//
+//gogo:builtin
 func Trunc(x float64) float64 { panic("gogo only") }
 
 // Round returns the nearest integer, rounding half away from zero.
+//
+//gogo:builtin
 func Round(x float64) float64 { panic("gogo only") }
 
 // RoundToEven returns the nearest integer, rounding ties to even.
+//
+//gogo:builtin
 func RoundToEven(x float64) float64 { panic("gogo only") }
 
 // Abs returns the absolute value of x.
+//
+//gogo:builtin
 func Abs(x float64) float64 { panic("gogo only") }
 
 // Copysign returns a value with the magnitude of f and the sign of sign.
+//
+//gogo:builtin
 func Copysign(f, sign float64) float64 { panic("gogo only") }
 
 // Signbit reports whether x is negative or negative zero.
+//
+//gogo:builtin
 func Signbit(x float64) bool { panic("gogo only") }
 
 // Inf returns positive infinity if sign >= 0, negative infinity if sign < 0.
+//
+//gogo:builtin
 func Inf(sign int) float64 { panic("gogo only") }
 
 // NaN returns an IEEE 754 "not-a-number" value.
+//
+//gogo:builtin
 func NaN() float64 { panic("gogo only") }
 
 // IsNaN reports whether f is a NaN.
+//
+//gogo:builtin
 func IsNaN(f float64) (is bool) { panic("gogo only") }
 
 // IsInf reports whether f is an infinity, according to sign: sign > 0,
 // f = +Inf; sign < 0, f = -Inf; sign == 0, either.
+//
+//gogo:builtin
 func IsInf(f float64, sign int) bool { panic("gogo only") }
 
 // Max returns the larger of x or y: Max(x, +Inf) = +Inf, Max(x, NaN) =
 // NaN, Max(+0, -0) = +0.
+//
+//gogo:builtin
 func Max(x, y float64) float64 { panic("gogo only") }
 
 // Min returns the smaller of x or y: Min(x, -Inf) = -Inf, Min(x, NaN) =
 // NaN, Min(-0, +0) = -0.
+//
+//gogo:builtin
 func Min(x, y float64) float64 { panic("gogo only") }

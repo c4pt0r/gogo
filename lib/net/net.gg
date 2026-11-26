@@ -1,7 +1,7 @@
 // Package net is the gogo network API (import path gogo/net; the C stack is
-// runtime/net/). These stubs exist only so programs type-check; the gogo
-// compiler replaces every call with VM instructions, so the bodies are never
-// executed.
+// runtime/net/). Its function (marked //gogo:builtin) exists only so
+// programs type-check; the gogo compiler replaces every call with VM
+// instructions, so its body is never executed.
 //
 // The struct types below have fixed type indices 9-22 (and 41, DialTLS) in every image
 // (TYPE_NET_* in runtime/vm/opcodes.h); keep their field order in sync with
@@ -87,40 +87,56 @@ import (
 )
 
 // IfConfig configures the "netif" port.
+//
+//gogo:reserved 9
 type IfConfig struct{}
 
 // SetAddr is a command to the "netif" port (owner only).
+//
+//gogo:reserved 10
 type SetAddr struct {
 	IP, Mask, Gateway, DNS int
 }
 
 // Up is sent to subscribers when the interface is up (link up and an
 // address set), and again when its address changes.
+//
+//gogo:reserved 11
 type Up struct {
 	IP, Gateway, DNS int
 }
 
 // Down is sent to subscribers when the interface goes down (link lost or
 // address cleared).
+//
+//gogo:reserved 12
 type Down struct{}
 
 // Addr is an IPv4 address and port.
+//
+//gogo:reserved 13
 type Addr struct {
 	IP, Port int
 }
 
 // UDP configures a "udp" port.
+//
+//gogo:reserved 14
 type UDP struct {
 	Port int
 }
 
 // SendTo is a command to a "udp" port: send Data to Addr.
+//
+//gogo:reserved 15
 type SendTo struct {
 	Addr Addr
 	Data bytes.Bytes
 }
 
 // Datagram is an event of a "udp" port: Data arrived from From.
+//
+//gogo:reserved 16
 type Datagram struct {
 	From Addr
 	Data bytes.Bytes
@@ -132,10 +148,14 @@ type Datagram struct {
 // the same as once; a subscriber's exit ends it. An Up or Down never
 // kills a subscriber: one that does not fit its memory limit is resent,
 // with the state current then, once it has room.
+//
+//gogo:builtin
 func Subscribe() (ok bool) { panic("gogo only") }
 
 // Dial configures a "tcp" port: connect to IP:Port. TimeoutMs bounds the
 // connection attempt (0: until the retransmission limit, about 39 s).
+//
+//gogo:reserved 17
 type Dial struct {
 	IP, Port, TimeoutMs int
 }
@@ -176,12 +196,16 @@ type Dial struct {
 // Closed: at most one Normal, then at most one terminal Closed (any other
 // reason; a graceful close ends with Normal alone) per connection; the Outs
 // still in flight get Done{-1} before a terminal one.
+//
+//gogo:reserved 41
 type DialTLS struct {
 	IP, Port, TimeoutMs int
 	Host                string
 }
 
 // Listen configures a "tcp_listen" port on local Port.
+//
+//gogo:reserved 18
 type Listen struct {
 	Port int
 }
@@ -192,17 +216,25 @@ type Listen struct {
 // orphan; but the netif owner's exit discards it, see above). An orphan
 // lives at most 20 s (GOGO_NET_ORPHAN_MS) from the close, then is reset
 // whatever its progress.
+//
+//gogo:reserved 19
 type Shutdown struct{}
 
 // Resume is a command to an accepted "tcp" port: start delivering Chunks
 // (port.Handoff does the same).
+//
+//gogo:reserved 20
 type Resume struct{}
 
 // Connected is sent to a "tcp" port's owner when the connection is up.
+//
+//gogo:reserved 21
 type Connected struct{}
 
 // Accepted is an event of a "tcp_listen" port: Conn is a new connection's
 // "tcp" port, owned by the listener's owner and paused.
+//
+//gogo:reserved 22
 type Accepted struct {
 	Conn actor.PID
 }

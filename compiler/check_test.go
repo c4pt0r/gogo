@@ -866,8 +866,14 @@ func TestMainImportsSupervisor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(prog.Libs) != 1 || prog.Libs[0].Pkg.Path() != "gogo/supervisor" {
-		t.Fatalf("Libs = %v, want gogo/supervisor", prog.Libs)
+	var libs []string
+	for _, l := range prog.Libs {
+		if !prog.system[l.Pkg] {
+			libs = append(libs, l.Pkg.Path())
+		}
+	}
+	if len(libs) == 0 || libs[len(libs)-1] != "gogo/supervisor" {
+		t.Fatalf("Libs = %v (system packages aside), want gogo/supervisor last", libs)
 	}
 	if errs := Check(prog); len(errs) != 0 {
 		t.Fatalf("Check: %v", errs)

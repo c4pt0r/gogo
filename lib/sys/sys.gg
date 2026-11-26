@@ -1,5 +1,5 @@
 // Package sys is the gogo system API: the wall clock, randomness, the
-// platform configuration store and the program's arguments. It is a stub package like gogo/actor: the
+// platform configuration store and the program's arguments. It is a system package like gogo/actor: the
 // compiler replaces every call with a VM builtin (B_UNIX_TIME,
 // B_SET_UNIX_TIME, B_RANDOM, B_CONFIG_GET), so the bodies are never
 // executed. The C side is vm_unix_time_ms, vm_set_unix_time_ms, vm_random
@@ -23,17 +23,23 @@ package sys
 // Time returns the Unix time in milliseconds (UTC), or 0 if it is not known:
 // nothing set it yet and the platform has no clock of its own. Once known it
 // keeps advancing by itself.
+//
+//gogo:builtin
 func Time() int64 { panic("gogo only") }
 
 // SetTime makes ms (Unix time, milliseconds) the current time from now on
 // and returns true. It returns false and changes nothing if ms is earlier
 // than the build-time floor (see above). ms <= 0 forgets the time (Time
 // returns 0 again) and returns true.
+//
+//gogo:builtin
 func SetTime(ms int64) bool { panic("gogo only") }
 
 // Random returns 30 random bits (0 <= n < 1<<30) from the platform's entropy
 // source (the hardware generator on the board, getentropy on unix). It is
 // meant for protocol nonces, not as a key generator on its own.
+//
+//gogo:builtin
 func Random() int { panic("gogo only") }
 
 // Args returns the program's arguments: what follows the program on the
@@ -45,6 +51,8 @@ func Random() int { panic("gogo only") }
 // does not change what the next call returns. (The compiler expands the
 // call inline over sys.Config, so it needs no VM support and no newer image
 // format.)
+//
+//gogo:builtin
 func Args() []string { panic("gogo only") }
 
 // Config returns the value of key in the platform configuration store; ok
@@ -56,4 +64,6 @@ func Args() []string { panic("gogo only") }
 // (`gogo config keys` lists its keys, and `gogo config set` checks their
 // values); other keys are the program's. Keys starting with "wifi." (Wi-Fi
 // credentials) belong to the platform and are never visible to programs.
+//
+//gogo:builtin
 func Config(key string) (value string, ok bool) { panic("gogo only") }

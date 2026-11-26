@@ -1,15 +1,12 @@
 package compiler
 
 import (
-	"go/token"
 	"go/types"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
-
-	"gogotools/lib"
 )
 
 // TestFloatOpsMatchC cross-checks the B_FLOAT op codes with FLOAT_OP_* in
@@ -41,8 +38,7 @@ func TestFloatOpsMatchC(t *testing.T) {
 			t.Errorf("%s: compiler %d, %s = %d (present %v)", name, op, cname, v, ok)
 		}
 	}
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
-	pkg, err := l.Import(MathPath)
+	pkg, err := testLoader().lib(MathPath)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -103,7 +103,7 @@ own were also considered and rejected in favour of Go syntax.
    a first line starting with `#!` reads as an empty line, for
    executable scripts. The loader (`compiler/load.go`) parses package
    main from the build root, then loads each import depth first: the
-   stub packages and the `gogo/X` libraries from the embedded `lib/`,
+   `gogo/X` libraries (system packages included) from the embedded `lib/`,
    and user packages, every other import path, from disk. A user package
    is found in the build root when the path's first element is the root
    directory's name (`app/util` is `<root>/util/`), else in each
@@ -121,12 +121,15 @@ own were also considered and rejected in favour of Go syntax.
 2. **The VM** (`runtime/vm/`, C): image loader, interpreter, scheduler,
    per-actor heaps and GC, mailboxes, timers, the port (peripheral driver)
    layer and the module table.
-3. **Stub packages** (`gogo/actor`, `gogo/port`, `gogo/bytes`,
-   `gogo/net`, `gogo/fs`, `gogo/code`, `gogo/sys`, ...): gogo sources that
-   hold only signatures and types (bodies are `panic("gogo only")`), for
-   `go/types`. The compiler turns every call into a VM
-   instruction or builtin, and their struct types have fixed reserved
-   type ids.
+3. **System packages** (`gogo/actor`, `gogo/port`, `gogo/bytes`,
+   `gogo/net`, `gogo/fs`, `gogo/code`, `gogo/sys`, ...): gogo sources
+   whose declarations the VM implements, each marked in its doc comment:
+   `//gogo:builtin` on a function, method or type (bodies are
+   `panic("gogo only")`, for `go/types` and the host toolchain; the
+   compiler turns every call into a VM instruction or builtin) and
+   `//gogo:reserved N` on a struct type with fixed reserved type id N.
+   A system package may hold library code beside them (functions with
+   real bodies), compiled into an image only where the program uses it.
 4. **Libraries**, written in the gogo subset and compiled into every image
    that imports them: `gogo/supervisor`, `gogo/strings`, `gogo/strconv`,
    `gogo/dhcp`, `gogo/dns`, `gogo/http`, `gogo/sntp`, `gogo/kv`,
@@ -134,8 +137,8 @@ own were also considered and rejected in favour of Go syntax.
    `gogo/irproto`. All import paths are under `gogo/`, never a Go
    standard library path. `gogo/strings` and `gogo/strconv` work on bytes
    (no rune decoding). Importing a library compiles all of it into the
-   image (no dead-function elimination). Libraries may import stubs and
-   other libraries, without cycles. The package table, with each
+   image (no dead-function elimination). Libraries may import system
+   packages and other libraries, without cycles. The package table, with each
    package's kind and requirements, is [lib/README.md](../lib/README.md).
 5. **Platform layers** (`platform/`): `unix` (the host VM `gogovm`, with
    simulated peripherals) and `esp32s3` (one ESP-IDF firmware for both
@@ -572,7 +575,7 @@ text grid while it is open.
   `runtime/net/netif.h`. Above it are the ports `netif`, `udp`, `tcp`,
   `tcp_listen` and `tls`, and above those the libraries `gogo/dhcp`,
   `gogo/dns`, `gogo/http` and `gogo/sntp`, written in the subset. The
-  stub package `gogo/net` (`lib/net/`) holds the port types (reserved
+  system package `gogo/net` (`lib/net/`) holds the port types (reserved
   types 9-22 and 41).
 - **Ports.** `netif` (`net.IfConfig{}`, one owner for the whole machine;
   command `net.SetAddr{IP, Mask, Gateway, DNS}`). `udp` (`net.UDP{Port}`;
@@ -698,7 +701,7 @@ FatFs).
   table, the backend interface `VfsBackend`) plus backends: LittleFS
   (`runtime/vfs/lfs/`, over a board's `BlockDev`) and FatFs
   (`runtime/vfs/fat/`, over a `DiskHal`) on the ESP32-S3; a host directory on Unix (`gogo run --fs-root
-  <dir>`; without it every path is `NotMounted`). `gogo/fs` is a stub
+  <dir>`; without it every path is `NotMounted`). `gogo/fs` is a system
   package: the compiler turns its calls into `B_FS` (builtin 49, first
   argument the operation number); `File.Close` is a port close.
   `fs.Info` and `fs.Space` are reserved types 23 and 24.
@@ -810,7 +813,7 @@ functions in new actors by name. Code is never replaced in place: an
 upgrade is a supervisor restarting a child with the new module. Book
 chapter 14 explains it from the user's side.
 
-**API** (stub package `gogo/code`, compiled to builtin 50 `B_CODE`; the C
+**API** (system package `gogo/code`, compiled to builtin 50 `B_CODE`; the C
 side is `runtime/vm/module.c`):
 
 ```go
@@ -858,7 +861,7 @@ table after the constant map (§5.6).
 When sender and receiver belong to different modules, constant strings,
 bytes and boxed `int64`s in the message are copied to the heap; only
 basic values, `Bytes`, PIDs, Refs, `Module` values and reserved types
-(the structs of the `gogo` stub packages) may cross. A message that
+(the reserved structs of the `gogo` system packages) may cross. A message that
 contains a module's own struct type or a closure makes the **sender**
 exit with `BadMsg`, for its supervisor to handle; `code.Spawn`'s `arg`
 follows the same rule but returns `BadArg`. The check runs when the

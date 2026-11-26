@@ -277,7 +277,7 @@ rebuilt:
   your own or a `gogo/` library such as `gogo/http`, each compile their own
   copy of it, so its struct types are different types in each. Sending
   one across modules fails with `BadMsg` at run time, not at compile time
-  (book 14.6). Only the stub packages' reserved types (`actor.Request`,
+  (book 14.6). Only the system packages' reserved types (`actor.Request`,
   `net.Up`, `fs.Info`, ...) cross. *Workaround:* send basic values,
   strings or `Bytes`, and rebuild the struct in the receiver.
 - **`sys.Args()` has no program name.** It returns only the arguments

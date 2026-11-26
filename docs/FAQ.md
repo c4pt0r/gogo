@@ -100,7 +100,7 @@ line, not an afterthought:
 - **Small heaps, simple GC.** Each actor has its own small heap collected by
   a copying collector, which is little code and needs no global
   bookkeeping.
-- **The library is mostly gogo, not C.** Only the stub packages map to VM
+- **The library is mostly gogo, not C.** Only the system packages map to VM
   builtins; HTTP, DNS, supervisors, WAV files, the text UI and the rest are
   ordinary gogo code that lives in the program image, so a program only
   pays for what it imports.

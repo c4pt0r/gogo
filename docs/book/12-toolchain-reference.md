@@ -175,7 +175,11 @@ package http
 
 - Any driver name is accepted, a board's or a host port's. An empty list
   or a misspelt `//gogo:` directive is a compile error, for example
-  `a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`.
+  `a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional,
+  //gogo:builtin or //gogo:reserved)`. The other two mark declarations of
+  the standard library's system packages (a function the VM implements, a
+  struct type with a fixed type index; `lib/README.md`); a program cannot
+  use them.
 - `gogo/http` declares `tls` (an http-only program runs on a firmware
   without TLS, where an https request fails), and `gogo/sound` declares
   `mic speaker` (`Record` returns false without a microphone, `Play` without a

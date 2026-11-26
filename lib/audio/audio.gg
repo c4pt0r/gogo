@@ -1,9 +1,9 @@
 // Package audio is the gogo audio API: the "mic" and "speaker" ports. It is a
-// stub package like gogo/imu: the compiler type-checks against it and the
-// bodies (there are none) are never run. The C side is the common audio
+// system package like gogo/imu: its types are reserved (the VM builds and
+// reads them by fixed index). The C side is the common audio
 // driver (runtime/input/audio.c) on top of the board's codec. Recording to WAV files
 // and playing them back are in the library gogo/sound, which imports this
-// package (a stub package cannot also hold library code).
+// package.
 //
 // Open the microphone with port.Open("mic", audio.Mic{RateHz: 16000,
 // FrameMs: 100}); each frame arrives as one port.Chunk of 16-bit little-endian mono
@@ -33,12 +33,16 @@ package audio
 // that is heap + 4044 words (a word is 4 bytes), more than the 4096-word
 // default on a board, so a recorder is spawned with
 // actor.Options{MaxMemory}. Dropped counts whole frames lost.
+//
+//gogo:reserved 39
 type Mic struct{ RateHz, FrameMs, GainDb int }
 
 // Speaker configures the speaker: RateHz is 8000 or 16000 samples per
 // second, VolumePct is 0 (mute) to 100: 1 to 100 runs from 40 dB below the board's
 // loudest level up to it (the StickS3 caps that at -4 dB of the codec's
 // range; see the platform README).
+//
+//gogo:reserved 40
 type Speaker struct{ RateHz, VolumePct int }
 
 // The sample rates both ports accept.

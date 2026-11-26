@@ -118,7 +118,7 @@ func (c *checker) typeProblem(t types.Type) string {
 		if obj.Pkg() == nil {
 			return obj.Name() // error, comparable
 		}
-		if c.p.compiled(obj.Pkg()) || isStub(obj.Pkg().Path()) {
+		if c.p.compiled(obj.Pkg()) {
 			return ""
 		}
 		return obj.Name()
@@ -188,6 +188,9 @@ func (c *checker) decl(d ast.Decl) {
 			c.unsupported(d, kindName(d))
 		}
 	case *ast.FuncDecl:
+		if c.p.isBuiltin(c.p.Info.Defs[d.Name]) {
+			return // the VM's: its body is never compiled
+		}
 		if d.Recv != nil && !c.recv(d.Recv) {
 			return
 		}
@@ -253,6 +256,9 @@ func (c *checker) fieldList(fl *ast.FieldList) {
 }
 
 func (c *checker) typeSpec(s *ast.TypeSpec) {
+	if c.p.isBuiltin(c.p.Info.Defs[s.Name]) {
+		return // a VM object (actor.PID, bytes.Bytes ...)
+	}
 	if s.Assign.IsValid() {
 		c.unsupported(s, "type alias")
 		return
@@ -291,7 +297,7 @@ func isFunc(t types.Type) bool {
 // funcValueCall reports whether call calls a func value: a variable or
 // parameter, a struct field, an element, a call result or a literal of
 // func type (compiled to CALLV), rather than a declared function, a
-// builtin, a stub function, a gogo/bytes method or a conversion.
+// builtin, a builtin function, a gogo/bytes method or a conversion.
 func funcValueCall(info *types.Info, call *ast.CallExpr) bool {
 	fun := ast.Unparen(call.Fun)
 	if tv, ok := info.Types[fun]; ok && tv.IsType() {
@@ -439,7 +445,7 @@ func (c *checker) multiCall(e ast.Expr) *ast.CallExpr {
 	default:
 		return nil
 	}
-	if fn, ok := c.p.Info.Uses[id].(*types.Func); !ok || !c.p.compiled(fn.Pkg()) {
+	if fn, ok := c.p.Info.Uses[id].(*types.Func); !ok || !c.p.compiled(fn.Pkg()) || c.p.isBuiltin(fn) {
 		return nil
 	}
 	return call
@@ -835,7 +841,7 @@ func (c *checker) assign(s *ast.AssignStmt) {
 	}
 }
 
-// twoResult lists the stub functions that return two values (by stubName).
+// twoResult lists the builtin functions that return two values (by stubName).
 var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true, "sys.Config": true,
 	"fs.Open": true, "fs.ReadFile": true, "fs.Stat": true, "fs.ReadDir": true, "fs.Usage": true,
 	"File.Read": true, "File.Size": true,
@@ -946,7 +952,7 @@ func (c *checker) caseType(t ast.Expr) bool {
 	return false
 }
 
-// actorFunc returns the stubName of the stub function (gogo/actor, port,
+// actorFunc returns the stubName of the builtin function (gogo/actor, port,
 // bytes, net, config or fs) a call invokes, or the fsMethod name of a
 // gogo/fs method call, or "".
 func (c *checker) actorFunc(call *ast.CallExpr) string {
@@ -958,13 +964,13 @@ func (c *checker) actorFunc(call *ast.CallExpr) string {
 		return fsMethod(c.p.Info, sel)
 	}
 	fn, _ := c.p.Info.Uses[sel.Sel].(*types.Func)
-	return stubName(fn)
+	return c.p.stubName(fn)
 }
 
-// stubName names a stub function: "Spawn" for actor.Spawn, "port.Open" for
-// port.Open; "" for any other function.
-func stubName(fn *types.Func) string {
-	if fn == nil || fn.Pkg() == nil {
+// stubName names a builtin function (//gogo:builtin): "Spawn" for
+// actor.Spawn, "port.Open" for port.Open; "" for any other function.
+func (p *Program) stubName(fn *types.Func) string {
+	if fn == nil || fn.Pkg() == nil || (!p.isBuiltin(fn) && !(fn.Pkg().Path() == StrconvPath && strconvIntrinsics[fn.Name()])) {
 		return ""
 	}
 	if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
@@ -1110,7 +1116,7 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 				}
 			}
 		case *types.Func:
-			if !c.p.compiled(obj.Pkg()) {
+			if !c.p.compiled(obj.Pkg()) || c.p.isBuiltin(obj) {
 				c.unsupported(call, "call of "+obj.Name())
 				return
 			}
@@ -1149,16 +1155,16 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 }
 
 // method returns the method sel names, as x.M (a method value or call)
-// or T.M (a method expression), if it is declared in a compiled package,
-// else nil. The methods of the stub packages (gogo/bytes, gogo/fs) are
-// builtins: see bytesMethod and fsMethod.
+// or T.M (a method expression), if it is declared in a compiled package
+// and not a builtin, else nil. The builtin methods (gogo/bytes, gogo/fs)
+// are compiled by bytesMethod and fsMethod.
 func (p *Program) method(sel *ast.SelectorExpr) *types.Func {
 	s := p.Info.Selections[sel]
 	if s == nil || (s.Kind() != types.MethodVal && s.Kind() != types.MethodExpr) {
 		return nil
 	}
 	fn, ok := s.Obj().(*types.Func)
-	if !ok || !p.compiled(fn.Pkg()) {
+	if !ok || !p.compiled(fn.Pkg()) || p.isBuiltin(fn) {
 		return nil
 	}
 	return fn
@@ -1184,7 +1190,7 @@ func (c *checker) methodRecv(sel *ast.SelectorExpr) {
 // package (lib.F).
 func (c *checker) libFunc(sel *ast.SelectorExpr) bool {
 	fn, ok := c.p.Info.Uses[sel.Sel].(*types.Func)
-	return ok && c.p.Info.Selections[sel] == nil && c.p.isLib(fn.Pkg())
+	return ok && c.p.Info.Selections[sel] == nil && c.p.isLib(fn.Pkg()) && !c.p.isBuiltin(fn)
 }
 
 // args checks the arguments of a call of a declared function from index
@@ -1279,11 +1285,11 @@ func (c *checker) expr(e ast.Expr) {
 	case *ast.CompositeLit:
 		c.compositeLit(e)
 	case *ast.SelectorExpr:
-		if obj, ok := c.p.Info.Uses[e.Sel].(*types.Const); ok && obj.Pkg() != nil && (isStub(obj.Pkg().Path()) || c.p.isLib(obj.Pkg())) {
+		if obj, ok := c.p.Info.Uses[e.Sel].(*types.Const); ok && obj.Pkg() != nil && c.p.isLib(obj.Pkg()) {
 			return // actor.Normal, port.Output etc.
 		}
 		if c.libFunc(e) {
-			if fn, _ := c.p.Info.Uses[e.Sel].(*types.Func); stubName(fn) != "" {
+			if fn, _ := c.p.Info.Uses[e.Sel].(*types.Func); c.p.stubName(fn) != "" {
 				c.unsupported(e, fn.Pkg().Name()+"."+fn.Name()+" as a func value")
 			}
 			return // lib.F as a func value; its type was checked above
@@ -1676,7 +1682,7 @@ func (c *checker) stubPromoted(sel *ast.SelectorExpr) bool {
 		return false
 	}
 	fn, ok := s.Obj().(*types.Func)
-	if !ok || fn.Pkg() == nil || c.p.compiled(fn.Pkg()) {
+	if !ok || fn.Pkg() == nil || !c.p.isBuiltin(fn) {
 		return false
 	}
 	c.fail(sel.Pos(), "method %s of an embedded %s type not supported: call it on the field", fn.Name(), fn.Pkg().Path())
