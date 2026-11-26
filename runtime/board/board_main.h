@@ -31,6 +31,12 @@ typedef struct BoardRun {
      *  - ready: every subsystem attached, before the run;
      *  - run: runs the VM, returns its result (NULL: vm_run). */
     void (*booting)(struct Vm *vm, void *ctx);
+    /* The VM's caps on open ports and on node links (distribution): set
+     * (a command-line flag) wins; else the config keys vm.max_ports and
+     * node.max_links; else the board's default (0: the build's,
+     * GOGO_MAX_PORTS and DIST_LINKS). A refused value is reported and the
+     * default kept. */
+    uint16_t max_ports, max_links, default_ports, default_links;
     void (*ready)(struct Vm *vm, void *ctx);
     int (*run)(struct Vm *vm, void *ctx);
     void *ctx;
