@@ -107,8 +107,10 @@ rebuilt:
   millisecond on the host: `println` then ends the value with ` ...`,
   and a port command or `port.Open` ends the actor with `badcode`. A
   value without shared parts never reaches the limit (an actor's heap
-  holds fewer words). *Workaround:* send ports flat values; print the
-  parts of a shared structure separately.
+  holds fewer words), but moderate sharing in a large value can: 5000
+  elements that each hold the same 16-element slice take about 85000
+  visits. *Workaround:* send ports flat values; print the parts of a
+  shared structure separately.
 
 ### Hot loading
 
