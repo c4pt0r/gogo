@@ -53,7 +53,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
 ════════════════╪═════════════════════════════════╪══════════════════════════
   TARGETS       ▼                                 ▼
  ┌────────────────────────────────────────────────────────────────────────┐
- │ runtime/vm   VM CORE  (C99, ~39 KB, all state per Vm)                  │
+ │ runtime/vm   VM CORE  (C99, ~41 KB, all state per Vm)                  │
  │ ┌──────────┐ ┌───────────┐ ┌─────────────┐ ┌──────────┐ ┌────────────┐ │
  │ │ image    │ │ interp +  │ │ actors      │ │ messages │ │ timers     │ │
  │ │ loader   │ │ scheduler │ │ heap + GC   │ │ copy     │ │ names      │ │
@@ -246,19 +246,22 @@ Done:
   packages of your own with a `GOGOPATH` search;
   single-file programs and `#!` scripts; `gogo setup`; optional firmware
   features; releases with the CLI, `gogovm` and firmware.
+- **API v0.2:** shared error codes across the libraries and the C side,
+  a versioned C ABI, CLI exit codes and commands (`push`, `info`,
+  `device`), and a platform layer (HALs, one boot path) that makes new
+  boards cheap.
 - **Embedding:** `libgogo.a` with a C API (§5.11 of the design notes);
   a Go binding, and in-process compilation for Go and C hosts
   (`libgogoc.a`).
 
 Next, in order:
 
-1. **API v0.2:** shared error codes, a versioned C ABI, CLI exit codes
-   and commands, and a platform layer that makes new boards cheap.
-2. **Distributed actors:** boards and a server node exchanging actor
-   messages directly (first through the server; direct links later).
-3. **More hardware:** a `usb` port for the serial connection, the
-   Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
-4. **Embedding bindings:** Rust, iOS and Android.
+1. **Distributed actors** (in progress): boards and a server node
+   exchanging actor messages, first through the server; direct links
+   between boards later.
+2. **More hardware:** the Arduino Nano ESP32, RP2040 boards, Bluetooth
+   (BLE); a `usb` port for the serial connection later.
+3. **Embedding bindings:** Rust, iOS and Android.
 
 ## License
 
