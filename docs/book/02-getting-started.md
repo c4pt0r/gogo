@@ -1,9 +1,151 @@
 # 2. Getting Started
 
-This chapter builds the tools, runs a first program on your computer, and
-then puts it on a board.
+This chapter puts gogo on a board with one command, then builds the tools
+from source, runs a first program on your computer, and shows the manual
+way to flash a board.
 
-## 2.1 What you need
+## 2.1 The quick way: `gogo setup`
+
+`gogo setup` takes a new M5StickS3 or Cardputer ADV to a running program:
+it identifies the board, downloads the matching firmware, flashes it, sets
+up Wi-Fi and runs a first program. You need:
+
+- the board and a USB-C **data** cable (some cables only charge);
+- the **`gogo` command**, prebuilt for your system;
+- **esptool** 5 or newer, the ESP32 flashing tool:
+  `pip install esptool` or `brew install esptool`.
+
+You do not need Go, a C compiler or ESP-IDF.
+
+### Install `gogo`
+
+Each gogo release on GitHub has the command for macOS, Linux and Windows,
+on amd64 and arm64: `gogo-darwin-arm64`, `gogo-darwin-amd64`,
+`gogo-linux-amd64`, `gogo-linux-arm64`, `gogo-windows-amd64.exe` and
+`gogo-windows-arm64.exe`. For example, on an Apple silicon Mac:
+
+```sh
+curl -L -o gogo https://github.com/c4pt0r/gogo/releases/latest/download/gogo-darwin-arm64
+chmod +x gogo
+sudo mv gogo /usr/local/bin/     # or anywhere on your PATH
+gogo version
+```
+
+> **Note.** The gogo repository is private for now, so these downloads
+> need a GitHub login. Until it is public, download a release with the
+> GitHub CLI, `gh release download -R c4pt0r/gogo -D gogo-release`, and
+> point `gogo setup` at that directory with `-release-url gogo-release`
+> (below). A file downloaded with a browser on macOS may need
+> `xattr -d com.apple.quarantine gogo` before it runs.
+
+### Run it
+
+Connect the board and run:
+
+```sh
+gogo setup
+```
+
+It works in six steps, says what each one does, and asks before it writes
+to the board:
+
+```text
+[1/6] Checking the environment
+  esptool 5.6.0 (/usr/local/bin/esptool)
+  port /dev/cu.usbmodem5101
+
+[2/6] Identifying the board
+  $ esptool --chip esp32s3 --port /dev/cu.usbmodem5101 --after watchdog-reset read-flash 0x8000 3072 ...
+  chip: ESP32-S3-PICO-1 (LGA56) (revision v0.2), embedded PSRAM
+  This looks like the M5StickS3. Right? [Y/n]
+
+[3/6] Getting the firmware
+  release: https://github.com/c4pt0r/gogo/releases/latest/download
+  sticks3-flasher_args.json (899 bytes, sha256 ok)
+  sticks3-bootloader.bin (18880 bytes, sha256 ok)
+  sticks3-partition-table.bin (3072 bytes, sha256 ok)
+  sticks3-gogo.bin (1093072 bytes, sha256 ok)
+
+[4/6] Flashing the firmware
+  0x00000000  bootloader.bin (18880 bytes)
+  0x00008000  partition-table.bin (3072 bytes)
+  0x00010000  gogo.bin (1093072 bytes)
+  not written: NVS 0x9000..0xf000 (settings such as Wi-Fi stay)
+  Flash this firmware to the M5StickS3 on /dev/cu.usbmodem5101? [Y/n]
+
+[5/6] Setting up Wi-Fi
+  Set up Wi-Fi now? [Y/n]
+  scanning for networks on the board...
+  1) Home Net                         ch 6 -50 dBm
+  2) another network (type its name)
+  Which network? [1]
+  Wi-Fi password (not shown):
+  saved on the board: wifi.ssid=Home Net, wifi.password=(set)
+  waiting for the board to join...
+  | gogo: wifi connected (Home Net, ch 6, -50 dBm)
+  Wi-Fi works
+
+[6/6] Running a first program
+  hello program: 1552 bytes, to the image partition at 0x210000
+  ...
+  | gogo <version>: image 1552 bytes, arena 163840 bytes, free RAM <F> (largest <L>)
+  | hello from gogo on the M5StickS3!
+```
+
+1. **Environment.** It finds esptool and the board's serial port
+   (`/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux). With several
+   ports it asks which one; on Windows, pass `-port COM5`.
+2. **Board.** esptool reports the chip. Both boards are ESP32-S3s; the
+   StickS3 has embedded PSRAM and the Cardputer ADV has none, so that is
+   the guess, which you confirm. Any other chip is refused.
+3. **Firmware.** It downloads the board's firmware from the gogo release
+   that matches your `gogo` (or the latest one), checks every file
+   against the release's `SHA256SUMS`, and keeps them in your user cache
+   directory (`~/Library/Caches/gogo` on macOS, `~/.cache/gogo` on
+   Linux), so a second run downloads nothing.
+4. **Flash.** It writes the bootloader, the partition table and the
+   firmware at the offsets the firmware build lists. It never erases the
+   chip and never writes the NVS partition, where the board keeps its
+   settings, so a Wi-Fi setup from before survives.
+5. **Wi-Fi.** The board scans for networks and you pick one. The
+   password is read without echo and sent only to the board; gogo never
+   prints or stores it. You can skip this step and use `gogo config`
+   later (chapter 11).
+6. **First program.** A small program is flashed to the program
+   partition; the board shows its greeting on the screen and on the
+   console, where `gogo setup` waits for it.
+
+When something fails, `gogo setup` prints what went wrong and a line
+starting `fix:` that says what to do, then stops. Running it again is
+always safe.
+
+### Options
+
+| Option | Effect |
+|---|---|
+| `-port P` | the board's serial port |
+| `-board sticks3\|cardputer` | skip the board question |
+| `-version vX.Y.Z` | that release instead of the one matching `gogo` |
+| `-release-url URL\|DIR` | the files of one release from another place: an `http(s)` URL or a local directory (also `GOGO_RELEASE_URL`) |
+| `-offline` | build the firmware locally instead of downloading it |
+| `-skip-wifi` | leave the Wi-Fi settings as they are |
+| `-yes` | accept every default without asking (Wi-Fi is then skipped) |
+| `-dry-run` | read the board and download, but only print the commands that would write to it |
+| `-esptool path` | the esptool to run |
+
+Without a release to download (no network, or no such release),
+`gogo setup` offers to build the firmware with ESP-IDF instead, if it is
+installed (`idf.py` on `PATH`, `$IDF_PATH` or `~/esp/esp-idf`) and you run
+it inside the gogo source tree. Section 2.6 has the manual commands.
+
+The prebuilt `gogo` also compiles and flashes your own programs (section
+2.5). To run programs on your computer, as most of this book does, build
+gogo from source.
+
+## 2.2 Building the tools from source
+
+To write programs and run them on your computer, build gogo from source.
+### What you need
 
 On your computer (macOS or Linux):
 
@@ -13,10 +155,11 @@ On your computer (macOS or Linux):
   programs on your computer. Any C99 compiler works (`cc`, `clang`, `gcc`).
 - **The gogo source tree.**
 
-For a board you also need ESP-IDF, covered in section 2.5. You do not need
-it to follow most of this book: every example runs on your computer.
+To flash firmware by hand you also need ESP-IDF, covered in section 2.6.
+You do not need it to follow most of this book: every example runs on your
+computer.
 
-## 2.2 Building the tools
+### Building
 
 From the root of the gogo source tree:
 
@@ -41,6 +184,8 @@ usage: gogo build <dir> [-o out.gogo]
        gogo monitor [-port P] [-t seconds] [-until text] [-reset]
        gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
        gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
+       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-yes] [-dry-run]
+       gogo version
 ```
 
 The rest of this book writes `gogo` for `build/gogo`. Put it on your `PATH`
@@ -169,13 +314,60 @@ compiled and run by `gogo`, never by `go run`.
 ## 2.5 Running on a board
 
 Programs and firmware are separate on the board. The **firmware** (the VM,
-drivers, Wi-Fi, file systems and the screen console) is built with ESP-IDF
-and flashed once. Your **program image** goes into its own flash partition
-and can be replaced in a second, without rebuilding the firmware.
+drivers, Wi-Fi, file systems and the screen console) is flashed once, by
+`gogo setup` (section 2.1) or by hand (section 2.6). Your **program
+image** goes into its own flash partition and can be replaced in a
+second, without touching the firmware.
 
-### Install ESP-IDF and flash the firmware (once)
+### Build, flash and watch a program
 
-gogo uses ESP-IDF v6.1.1:
+```sh
+gogo build docs/book/examples/02-hello -o hello.gogo
+gogo flash hello.gogo
+gogo monitor -reset -t 5 -until "gogo: vm exited"
+```
+
+- `gogo build` compiles the directory to an image file.
+- `gogo flash` writes the image to the board's program partition. It needs
+  `esptool` on your `PATH` (the one you installed for `gogo setup`, or
+  ESP-IDF's, which its `export.sh` puts there) and uses
+  the only `/dev/cu.usbmodem*` port it finds; pass `-port` if there are
+  several.
+- `gogo monitor` copies the board's console to your terminal. `-reset`
+  restarts the board first, so you see the program from the beginning;
+  `-t 5` stops after 5 seconds; `-until` stops at the first line containing
+  that text.
+
+The board prints a boot line, runs the program, and prints a line when the
+VM exits:
+
+```text
+gogo <version>: image <N> bytes, arena <cap> bytes, free RAM <F> (largest <L>)
+hello, gogo 42 true
+gogo: vm exited (<code>), arena used <bytes>
+```
+
+Everything the program prints also appears on the board's screen; crash
+reports (standard error) are shown in red.
+
+> **Note.** Only one program can use the serial port at a time. Close
+> `gogo monitor` (or any other serial terminal) before `gogo flash` or
+> `gogo config`.
+
+> **Note.** The image format has a version. When you update gogo and the
+> version changes, reflash the firmware too (run `gogo setup` again, or
+> section 2.6): an older firmware
+> refuses a newer image with `gogo: bad image (unsupported version)`.
+
+You now have the whole loop: edit, `gogo run` on the computer, then `gogo
+build` and `gogo flash` for the board. The next chapter looks at the
+language itself.
+
+## 2.6 Flashing the firmware by hand
+
+`gogo setup` is the easy way to flash the firmware. To build it yourself,
+for example after changing the firmware, install ESP-IDF and use
+`idf.py` from the gogo tree. gogo uses ESP-IDF v6.1.1:
 
 ```sh
 mkdir -p ~/esp && cd ~/esp
@@ -205,44 +397,7 @@ Make sure you flash the right firmware to the right board (`esptool
 chip-id` reports embedded PSRAM on the StickS3 and none on the Cardputer
 ADV). Chapter 11 says more about the two boards.
 
-### Build, flash and watch a program
-
-```sh
-gogo build docs/book/examples/02-hello -o hello.gogo
-gogo flash hello.gogo
-gogo monitor -reset -t 5 -until "gogo: vm exited"
-```
-
-- `gogo build` compiles the directory to an image file.
-- `gogo flash` writes the image to the board's program partition. It needs
-  `esptool` on your `PATH` (the ESP-IDF `export.sh` puts it there) and uses
-  the only `/dev/cu.usbmodem*` port it finds; pass `-port` if there are
-  several.
-- `gogo monitor` copies the board's console to your terminal. `-reset`
-  restarts the board first, so you see the program from the beginning;
-  `-t 5` stops after 5 seconds; `-until` stops at the first line containing
-  that text.
-
-The board prints a boot line, runs the program, and prints a line when the
-VM exits:
-
-```text
-gogo <version>: image <N> bytes, arena <cap> bytes, free RAM <F> (largest <L>)
-hello, gogo 42 true
-gogo: vm exited (<code>), arena used <bytes>
-```
-
-Everything the program prints also appears on the board's screen; crash
-reports (standard error) are shown in red.
-
-> **Note.** Only one program can use the serial port at a time. Close
-> `gogo monitor` (or any other serial terminal) before `gogo flash` or
-> `gogo config`.
-
-> **Note.** The image format has a version. When you update the gogo tree
-> and the version changes, reflash the firmware too: an older firmware
-> refuses a newer image with `gogo: bad image (unsupported version)`.
-
-You now have the whole loop: edit, `gogo run` on the computer, then `gogo
-build` and `gogo flash` for the board. The next chapter looks at the
-language itself.
+`idf.py flash` writes the same three files as `gogo setup` and, like it,
+leaves the NVS partition (and so the Wi-Fi settings) alone.
+`gogo firmware` (chapter 12) builds a firmware with only the parts your
+programs need.

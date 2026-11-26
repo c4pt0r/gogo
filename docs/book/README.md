@@ -9,7 +9,7 @@ and assumes no knowledge of embedded programming or Erlang.
 ## Contents
 
 1. [Preface](01-preface.md): what gogo is, what it is good for, and what it is not
-2. [Getting Started](02-getting-started.md): build the tools, run a program, flash a board
+2. [Getting Started](02-getting-started.md): `gogo setup`, build the tools, run a program, flash a board
 3. [Language Basics](03-language-basics.md): the Go subset, what it leaves out, and what to write instead
 4. [Actors](04-actors.md): Spawn, Send, Receive, type switches, Call/Reply, names, timers
 5. [Failure and Recovery](05-failure-and-recovery.md): exit reasons, links, monitors, TrapExit, supervisors, "let it crash"
@@ -19,7 +19,7 @@ and assumes no knowledge of embedded programming or Erlang.
 9. [Storage](09-storage.md): `/flash` and `/sd`, `gogo/fs`, `gogo/kv`, `gogo/ringlog`
 10. [Networking](10-networking.md): DHCP, DNS, UDP, TCP, the HTTP client and server, the wall clock (`gogo/sys`, `gogo/sntp`)
 11. [Configuration and Devices](11-configuration-and-devices.md): `gogo config`, `config.Get`, Wi-Fi, the two boards
-12. [Toolchain Reference](12-toolchain-reference.md): `gogo build`, `run`, `dis`, `flash`, `monitor`, `config`
+12. [Toolchain Reference](12-toolchain-reference.md): `gogo build`, `run`, `dis`, `flash`, `monitor`, `firmware`, `config`, `setup`
 13. [Appendices](13-appendices.md): library quick reference, exit reasons, error codes, limits, differences from Go, capabilities
 14. [Hot Loading](14-hot-loading.md): loading code at run time, modules, supervised upgrades
 15. [IMU and IR](15-imu-and-ir.md): the motion sensor, infrared send and receive, streams (`Chunk`, `Out`, `Done`)

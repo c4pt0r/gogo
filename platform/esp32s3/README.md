@@ -74,6 +74,21 @@ CLOCAL, no HUPCL, both lines idle in one ioctl) and never resets the chip
 unless `-reset` is given. Only one program can use the serial port at a
 time.
 
+## Releases
+
+`tools/release.sh [version]` builds the release assets into
+`build/release/<version>/`: per board the default firmware's
+`bootloader.bin`, `partition-table.bin`, `gogo.bin` and `flasher_args.json`
+(named `<board>-<file>`, e.g. `cardputer-gogo.bin`), the `gogo` command for
+darwin, linux and windows on amd64 and arm64, and `SHA256SUMS`. The
+firmware builds are the plain ones above (Kconfig defaults, every feature
+on); the IDF build directories go under `$GOGO_RELEASE_WORK` (default
+`build/release-work`). `.github/workflows/release.yml` runs the same
+steps on a `v*` tag in the `espressif/idf:v6.1.1` image and publishes the
+GitHub release. `gogo setup` downloads these assets by name (book
+chapter 12) and writes only the files `flasher_args.json` lists, at its
+offsets: never NVS (0x9000), never an erase, never a merged image.
+
 ## PSRAM and firmware capabilities
 
 **PSRAM (StickS3 only).** The ESP32-S3-PICO-1-N8R8 has 8 MB octal PSRAM

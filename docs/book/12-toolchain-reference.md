@@ -1,7 +1,11 @@
 # 12. Toolchain Reference
 
-Everything is done with one command, `gogo`, built with `go build -o
-build/gogo ./cmd/gogo`. It runs on macOS and Linux.
+Everything is done with one command, `gogo`: prebuilt in each release
+(`gogo-<os>-<arch>`, chapter 2), or built with `go build -o build/gogo
+./cmd/gogo`. It runs on macOS and Linux; on Windows, `setup` flashes the
+firmware and programs, but the serial console commands (`monitor`,
+`config` on a board, and the Wi-Fi and first-program steps of `setup`)
+are not supported.
 
 ```text
 gogo build <dir> [-o out.gogo]
@@ -11,6 +15,8 @@ gogo flash [-port P] [-esptool path] app.gogo
 gogo monitor [-port P] [-t seconds] [-until text] [-reset]
 gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
+gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-yes] [-dry-run]
+gogo version
 ```
 
 ## gogo build
@@ -265,6 +271,93 @@ uses. `scan` lists the 2.4 GHz networks the board sees; `stats` prints the
 board's network counters and free memory (on a firmware built without
 `net`, only the memory figures). Both need a board.
 
+## gogo setup
+
+```text
+gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR]
+           [-esptool path] [-offline] [-skip-wifi] [-yes] [-dry-run]
+```
+
+Takes a board from new to running a program, in six steps (chapter 2
+shows a run):
+
+1. finds esptool (version 5 or newer) and the board's serial port
+   (`/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux; with several,
+   it asks);
+2. identifies the board with esptool: an ESP32-S3 with embedded PSRAM is
+   the M5StickS3, one without is the Cardputer ADV; you confirm, and any
+   other chip is refused;
+3. gets the board's firmware: downloads it from a release, checks every
+   file against the release's `SHA256SUMS` (a mismatch stops setup), and
+   caches it in the user cache directory (`gogo/release/<sha256>`); without
+   a release it builds the firmware locally (below);
+4. flashes the bootloader, partition table and app at the offsets in the
+   firmware's `flasher_args.json`, then resets the board with a watchdog
+   reset (the Cardputer ADV does not come back from esptool's default
+   reset);
+5. scans for Wi-Fi networks on the board, and writes the chosen network
+   and the password (read without echo) like `gogo config set`;
+6. flashes a small hello program like `gogo flash` and watches the
+   console until it prints.
+
+**What it never does.** It never erases the chip and never writes a merged
+image. Every write must lie in the bootloader area, on the partition table
+sector or inside an app partition of the partition table being written,
+and no write, rounded out to whole 4 KB flash sectors, may touch the NVS
+partition, where the board keeps its settings (Wi-Fi included); setup
+checks this before it runs esptool. The Wi-Fi password is never printed,
+logged or stored on the computer.
+
+**Which release.** `-release-url` (or `$GOGO_RELEASE_URL`) names the files
+of one release: an `http(s)` URL or a local directory, such as one filled
+by `gh release download` or `tools/release.sh`. Otherwise `-version vX.Y.Z`
+picks a GitHub release of `c4pt0r/gogo`; otherwise the release matching
+this `gogo` (`gogo version`) if it is a release build, else the latest.
+The assets setup reads are:
+
+| Asset | What |
+|---|---|
+| `SHA256SUMS` | the SHA-256 of every other asset |
+| `<board>-flasher_args.json` | ESP-IDF's list of files and offsets for the board (`sticks3`, `cardputer`) |
+| `<board>-bootloader.bin`, `<board>-partition-table.bin`, `<board>-gogo.bin` | the files it lists, named `<board>-<file name>` |
+| `gogo-<os>-<arch>[.exe]` | the gogo command, for `darwin`, `linux`, `windows` on `amd64`, `arm64` |
+
+To try a release layout before publishing it, point setup at the
+directory, or serve it over HTTP:
+
+```sh
+tools/release.sh v0.1.0                 # build/release/v0.1.0/
+gogo setup -release-url build/release/v0.1.0
+python3 -m http.server -d build/release 8765 &
+gogo setup -release-url http://127.0.0.1:8765/v0.1.0
+```
+
+**Local firmware build.** With `-offline`, or when the release cannot be
+downloaded (and you agree), setup builds the board's default firmware
+with `gogo firmware -build` and every feature the board has, into
+`build/setup-<board>` of the gogo source tree. It needs to run inside the
+gogo source tree and ESP-IDF v6.1.1 (`idf.py` on `PATH`, else
+`$IDF_PATH/export.sh` or `~/esp/esp-idf/export.sh`, which it sources).
+
+Options:
+
+- `-port P`, `-esptool path`: as for `gogo flash`.
+- `-board sticks3|cardputer`: skip the board question.
+- `-skip-wifi`: leave the board's Wi-Fi settings as they are.
+- `-yes`: take the default answer to every question, without asking;
+  the Wi-Fi step is then skipped.
+- `-dry-run`: run only what reads (esptool's chip check, the download,
+  the Wi-Fi scan) and print the esptool commands and settings that would
+  be written, without writing anything.
+
+On failure setup prints the problem and a `fix:` line, and stops; it is
+safe to run again.
+
+## gogo version
+
+Prints the version of `gogo` (`dev` unless built by `tools/release.sh`)
+and the image format version it writes.
+
 ## Building the firmware
 
 The firmware is an ESP-IDF project in `platform/esp32s3`, built with
@@ -274,6 +367,7 @@ The firmware is an ESP-IDF project in `platform/esp32s3`, built with
 `BATTERY`, `SD`, `FS_EXFAT`, `FONT_CJK`, `IMU`, `IR`, `AUDIO`, `TLS`) and hardware
 details. To choose the
 switches from what your programs need, use `gogo firmware` (above).
+`gogo setup` flashes a prebuilt firmware from a release instead.
 
 ## Running the book's examples
 
