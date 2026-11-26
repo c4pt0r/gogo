@@ -425,14 +425,16 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_register_port(gogo_vm *vm, const char *name,
 GOGO_API GOGO_EXPERIMENTAL int gogo_port_emit(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
 
 /* VM thread (a callback, or between steps): the port has ended on the
- * host's side. Its owner gets port.Closed{From: the port, Reason: reason}
- * (a shared code of gogo_errors.h, such as GOGO_E_IO; the program then
- * knows the port does nothing more), then the port is closed and the
- * driver's close runs, as for port.Close. 0; GOGO_EFULL or GOGO_ENOMEM if
- * the Closed could not be queued (over the owner's quota: the port is
- * closed all the same); GOGO_ECLOSED (the port is closed or closing, or
- * its owner is exiting); GOGO_EBUSY (from the port's own open: refuse the
- * open instead); GOGO_EINVAL. */
+ * host's side. Posts already queued for the port (gogo_poster_port_post)
+ * are delivered first, in order; then its owner gets port.Closed{From:
+ * the port, Reason: reason}, which is never dropped (it was made when the
+ * port opened and is queued outside the owner's quota, like an exit
+ * notice); then the port is closed and the driver's close runs, as for
+ * port.Close. reason is a positive code, a shared one of gogo_errors.h
+ * such as GOGO_E_IO (0 would be stream Normal, "the peer finished
+ * sending"). 0; GOGO_ECLOSED (the port is closed or closing, or its owner
+ * is exiting); GOGO_EBUSY (from the port's own open: refuse the open
+ * instead); GOGO_EINVAL (a reason <= 0 or over 2^30 - 1, a bad port). */
 GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int32_t reason);
 
 /* ---- posting from other threads ----

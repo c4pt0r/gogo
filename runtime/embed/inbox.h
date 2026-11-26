@@ -44,8 +44,14 @@ int inbox_push(Inbox *in, const gogo_host *h, void *hctx, const char *name, size
  * inline; NULL if memory is out. VM thread. */
 struct Msg *embed_post_msg(struct Vm *vm, term from, int32_t kind, const uint8_t *data, uint32_t len, term h);
 
-/* port.Closed{from, reason} as a message block; NULL if memory is out. */
-struct Msg *embed_closed_msg(struct Vm *vm, term from, int32_t reason);
+/* port.Closed{from, Reason 0} as a message block, its reason (word 3, an
+ * immediate int) to be set when it is sent; NULL if memory is out. */
+struct Msg *embed_closed_msg(struct Vm *vm, term from);
+
+/* Delivers every queued post now, oldest first, as the VM's next step
+ * would. VM thread. */
+struct gogo_vm;
+void embed_inbox_drain(struct gogo_vm *g);
 
 /* Queues m (NULL: out of memory) on `to` without ever marking it: 0, or
  * GOGO_ENOMEM, or GOGO_EFULL (over its quota, or exiting: m is freed). */

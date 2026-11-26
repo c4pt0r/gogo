@@ -68,6 +68,9 @@ struct gogo_vm {
      * events emitted during its open wait in held (oldest first) until the
      * open succeeds; during its close, emit is refused. */
     Port *opening, *closing;
+    /* Each open host port's Closed message, made at the open so
+     * gogo_port_close never fails to send it (by port index), or NULL. */
+    Msg *closed_msg[GOGO_MAX_PORTS];
     Msg *held_head, *held_tail;
     /* Atomics (__atomic builtins): state, the shell's references (the
      * owner's plus one per gogo_poster) and posts in progress. */
@@ -96,6 +99,9 @@ void embed_ports_install(gogo_vm *g);
 /* hostport.c: sends host port `port` (an inbox node's encoding) a post as
  * gogo_port_emit does: 0, or a GOGO_E* error. VM thread. */
 int embed_port_send(gogo_vm *g, uint32_t port, int32_t kind, const uint8_t *data, uint32_t len);
+/* gogo_port_close's largest reason: an immediate int. */
+#define EMBED_REASON_MAX TERM_INT_MAX
+
 /* hostport.c: whether port can name a port slot at all (nonzero, its
  * index in range). */
 bool embed_port_valid(gogo_port port);

@@ -45,12 +45,22 @@ static int hp_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg
     uint32_t len;
     if (hdr_words(o[0]) != 4u || !int_val(vm, owner, o[2], &arg) || !bytes_view(vm, owner, o[3], &d, &len))
         return -1;
-    if (!hp->pub.open) return 0;
-    g->opening = p;
-    int r = hp->pub.open(hp->ctx, g, port_val(vm, p), arg, d, len) ? -1 : 0;   /* any nonzero refuses */
-    g->opening = NULL;
-    /* A host port has no charge or room: open_in accepts it when r is 0. */
-    flush_held(g, actor_lookup(vm, owner->id), r == 0);
+    /* The port's Closed is made now, so gogo_port_close can always send
+     * it (a stream port's terminal Closed is never lost either). */
+    Msg **closed = &g->closed_msg[p - vm->ports];
+    if (!(*closed = embed_closed_msg(vm, p->id))) return -1;
+    int r = 0;
+    if (hp->pub.open) {
+        g->opening = p;
+        r = hp->pub.open(hp->ctx, g, port_val(vm, p), arg, d, len) ? -1 : 0;   /* any nonzero refuses */
+        g->opening = NULL;
+        /* A host port has no charge or room: open_in accepts it when r is 0. */
+        flush_held(g, actor_lookup(vm, owner->id), r == 0);
+    }
+    if (r) {
+        msg_free(vm, *closed);
+        *closed = NULL;
+    }
     return r;
 }
 
@@ -69,6 +79,9 @@ static void hp_command(Vm *vm, const Actor *from, Port *p, term msg) {
 static void hp_close(Vm *vm, Port *p) {
     gogo_vm *g = vm->host_ctx;
     const HostPort *hp = host_of(p);
+    Msg **closed = &g->closed_msg[p - vm->ports];
+    if (*closed) msg_free(vm, *closed);   /* not sent: an ordinary close */
+    *closed = NULL;
     if (!hp->pub.close) return;
     g->closing = p;
     hp->pub.close(hp->ctx, g, port_val(vm, p));
@@ -194,20 +207,29 @@ int gogo_port_emit(gogo_vm *g, gogo_port port, int32_t kind, const void *data, s
     return embed_port_send(g, port, kind, data, (uint32_t)len);
 }
 
-/* Closed{From, Reason} to the owner, then the ordinary close (the
- * driver's close runs, the owner's charges go back, the PID goes stale:
- * the program's own port.Close of it later does nothing). */
+/* Posts queued for the port first (delivered in order, as the next step
+ * would), then Closed{From, Reason} to the owner from the message made
+ * at the open, outside its quota (as an exit notice: it cannot be
+ * dropped), then the ordinary close (the driver's close runs, the owner's
+ * charges go back, the PID goes stale: the program's own port.Close of it
+ * later does nothing). */
 int gogo_port_close(gogo_vm *g, gogo_port port, int32_t reason) {
-    if (!g || !embed_port_valid(port)) return GOGO_EINVAL;
+    if (!g || !embed_port_valid(port) || reason <= 0 || reason > EMBED_REASON_MAX) return GOGO_EINVAL;
     Vm *vm = &g->vm;
     Port *p = host_port(g, port);
     if (p && p == g->opening) return GOGO_EBUSY;
-    Actor *o = p && p != g->closing ? port_owner(vm, p) : NULL;
-    if (!o) return GOGO_ECLOSED;
-    int rc = embed_enqueue_post(vm, o, embed_closed_msg(vm, p->id, reason));
+    if (!p || p == g->closing || !port_owner(vm, p)) return GOGO_ECLOSED;
+    embed_inbox_drain(g);
+    Actor *o = port_owner(vm, p);    /* the drain may have ended it (a mailbox overflow) */
+    if (o) {
+        Msg *m = g->closed_msg[p - vm->ports];
+        g->closed_msg[p - vm->ports] = NULL;
+        m->data[3] = term_from_int(reason);
+        msg_enqueue(vm, o, m, false);
+    }
     bool was = g->stepping;
     g->stepping = true;              /* the driver's close is a hook */
     port_close(vm, p->id);
     g->stepping = was;
-    return rc;
+    return GOGO_OK;
 }

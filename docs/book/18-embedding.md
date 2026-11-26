@@ -516,9 +516,12 @@ requires it (section 18.9), and a registration after the load returns
 away, say. `gogo_port_close(vm, port, reason)` sends the owner
 `port.Closed{From, Reason}` (chapter 7's stream event: the port does
 nothing more), with a shared code as the reason (`GOGO_E_IO` is
-`errors.IO`), and closes the port: the driver's `close` runs, and the
-program's own `port.Close` of it later finds a stale PID and does
-nothing. `port.c` ends its port when it gets a command of Kind 100, and
+`errors.IO`; it must be positive, as 0 is a stream's Normal half-close),
+and closes the port: the driver's `close` runs, and the program's own
+`port.Close` of it later finds a stale PID and does nothing. Events
+posted to the port before the call are delivered first, and the
+`Closed` is never dropped, not even over the owner's mailbox quota: it
+is made when the port opens, as a stream port keeps room for its own. `port.c` ends its port when it gets a command of Kind 100, and
 `hostecho` waits for the `Closed`:
 
 ```go

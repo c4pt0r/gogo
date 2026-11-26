@@ -1168,15 +1168,45 @@ TEST(embed_hostport_close) {
     CHECK_EQ(h.emit_rc, GOGO_OK);
     CHECK_EQ(h.closes, 2);
     CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
-    CHECK_EQ(gogo_port_close(vm, h.port, 2000000000), GOGO_OK);
+    /* A reason is a positive code that fits an int term. */
+    CHECK_EQ(gogo_port_close(vm, h.port, 0), GOGO_EINVAL);           /* Normal means half-closed */
+    CHECK_EQ(gogo_port_close(vm, h.port, -GOGO_E_IO), GOGO_EINVAL);
+    CHECK_EQ(gogo_port_close(vm, h.port, 2000000000), GOGO_EINVAL);
+    /* Posts queued for the port before the close come before the Closed. */
+    gogo_poster *ps = gogo_poster_new(vm);
+    CHECK_EQ(gogo_poster_port_post(ps, h.port, 1001, "a", 1), GOGO_OK);
+    CHECK_EQ(gogo_poster_port_post(ps, h.port, 1002, "bc", 2), GOGO_OK);
+    gogo_poster_free(ps);
+    CHECK_EQ(gogo_port_close(vm, h.port, 1000000), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
-    CHECK(strcmp(t.out, "ready\nopen true\nended true 8\nclosed\nopen true\nended true 8\nopen true\n"
-                        "ended true 2000000000\n") == 0);
-    if (strcmp(t.out, "ready\nopen true\nended true 8\nclosed\nopen true\nended true 8\nopen true\n"
-                      "ended true 2000000000\n"))
-        printf("  out:\n%s", t.out);
+    static const char want[] = "ready\nopen true\nended true 8\nclosed\nopen true\nended true 8\nopen true\n"
+                               "event 1001 1\nevent 1002 2\nended true 1000000\n";
+    CHECK(strcmp(t.out, want) == 0);
+    if (strcmp(t.out, want)) printf("  out:\n%s", t.out);
     gogo_free(vm);
     CHECK_EQ(h.closes, 3);
+    tctx_done(&t);
+}
+
+/* The Closed is never dropped: here the owner's mailbox is over its quota
+ * (events emitted until one is refused), and the Closed still comes,
+ * after the events it did take. */
+TEST(embed_hostport_close_over_quota) {
+    TCtx t; tctx_init(&t);
+    HCtx h;
+    gogo_vm *vm = new_hostport(&t, &h);
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    static uint8_t big[4000];
+    int n = 0, r;
+    while ((r = gogo_port_emit(vm, h.port, 1000, big, sizeof big)) == GOGO_OK && n < 10000) n++;
+    CHECK_EQ(r, GOGO_EFULL);
+    CHECK(n > 0);
+    CHECK_EQ(gogo_port_close(vm, h.port, GOGO_E_IO), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(__atomic_load_n(&t.lines, __ATOMIC_ACQUIRE), 2 + n + 1);   /* ready, open, the events, ended */
+    CHECK(strstr(t.out, "ended true 8\n") != NULL || t.out_len >= sizeof t.out - 1);
+    CHECK_EQ(h.closes, 1);
+    gogo_free(vm);
     tctx_done(&t);
 }
 

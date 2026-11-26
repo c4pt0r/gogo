@@ -1739,7 +1739,9 @@ only through two tables of function pointers that the caller hands it.
   the owner's `gogo_free` (posts then return
   `GOGO_ECLOSED`; the memory and the host's `destroy` wait for the last
   reference); host ports (`gogo_register_port`, `gogo_port_emit`,
-  `gogo_port_close`, which sends the owner `port.Closed`; a `gogo_port`
+  `gogo_port_close`, which delivers the port's queued posts and then a
+  `port.Closed` made at the open and queued outside the owner's quota, so
+  it is never lost; a `gogo_port`
   is an opaque `uint32_t`) opened from Go as `port.Host`, registered
   before `gogo_load` so they
   satisfy the image's requirements (`gogo_config.grant`, a list of names
