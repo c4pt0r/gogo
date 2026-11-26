@@ -74,6 +74,34 @@ CLOCAL, no HUPCL, both lines idle in one ioctl) and never resets the chip
 unless `-reset` is given. Only one program can use the serial port at a
 time.
 
+## Releases
+
+`tools/release.sh [version]` builds the release assets into
+`build/release/<version>/`: per board the default firmware's
+`bootloader.bin`, `partition-table.bin`, `gogo.bin` and `flasher_args.json`
+(named `<board>-<file>`, e.g. `cardputer-gogo.bin`), the `gogo` command for
+darwin, linux and windows on amd64 and arm64, the license files that
+must travel with these binaries (`LICENSE`, `THIRD_PARTY_NOTICES.md`,
+`font-licenses.zip` with the console font's OFL texts, and
+`LICENSE-APACHE-2.0.txt` for ESP-IDF, mbedTLS and the Wi-Fi libraries,
+copied from the ESP-IDF tree), and `SHA256SUMS` over all of them. The
+firmware builds are the plain ones above (Kconfig defaults, every feature
+on); the IDF build directories go under `$GOGO_RELEASE_WORK` (default
+`build/release-work`). `.github/workflows/release.yml` runs the same
+steps on a `v*` tag in the `espressif/idf:v6.1.1` image and attaches the
+assets to a **draft** GitHub release (a pre-release when the tag has a
+`-`, e.g. `v1.0.0-rc1`). `gogo setup` downloads these assets by name (book
+chapter 12) and writes only the files `flasher_args.json` lists, at its
+offsets: never NVS (0x9000), never an erase, never a merged image.
+
+A draft is invisible to `gogo setup` (and to `releases/latest`) until it
+is published. Check it on both boards first, then publish:
+
+    git tag v1.2.3 && git push origin v1.2.3     # the workflow drafts the release
+    gh release download v1.2.3 -R c4pt0r/gogo -D /tmp/gogo-v1.2.3
+    /tmp/gogo-v1.2.3/gogo-darwin-arm64 setup -yes -skip-wifi -release-url /tmp/gogo-v1.2.3   # chmod +x first; each board
+    gh release edit v1.2.3 -R c4pt0r/gogo --draft=false
+
 ## PSRAM and firmware capabilities
 
 **PSRAM (StickS3 only).** The ESP32-S3-PICO-1-N8R8 has 8 MB octal PSRAM

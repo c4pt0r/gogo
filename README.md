@@ -40,7 +40,23 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
 
 ## Quick start
 
-You need Go 1.27 or newer, a C99 compiler and `make`.
+**On a board, in one command.** Install the `gogo` command from a
+[release](https://github.com/c4pt0r/gogo/releases) (`gogo-<os>-<arch>`)
+and esptool (`pip install esptool` or `brew install esptool`), connect an
+M5StickS3 or Cardputer ADV over USB, and run:
+
+```sh
+gogo setup
+```
+
+It identifies the board, downloads and checks the matching firmware,
+flashes it (keeping the board's settings), sets up Wi-Fi and runs a first
+program. While the repository is private, the release download needs a
+GitHub login: fetch a release with `gh release download -R c4pt0r/gogo
+-D gogo-release` and run `gogo setup -release-url gogo-release`.
+
+**From source, on your computer.** You need Go 1.27 or newer, a C99
+compiler and `make`.
 
 ```sh
 make vm                               # build/gogovm, the host VM
@@ -56,22 +72,20 @@ go run ./cmd/gogo run hello.gogo
 ```
 
 `gogo` with no arguments prints its commands: `build`, `run`, `dis`,
-`flash`, `monitor`, `firmware` and `config`.
+`flash`, `monitor`, `firmware`, `config`, `setup` and `version`.
 
-To run on a board, build and flash the firmware once with ESP-IDF v6.1.1,
-then flash programs on their own:
+Once a board runs the firmware, flash programs on their own:
 
 ```sh
-. ~/esp/esp-idf/export.sh
-idf.py -C platform/esp32s3 build                       # M5StickS3 firmware
-idf.py -C platform/esp32s3 -p /dev/cu.usbmodemXXXX flash
 build/gogo build docs/book/examples/02-hello -o hello.gogo
 build/gogo flash hello.gogo
 build/gogo monitor -reset -t 5
 ```
 
 [Chapter 2 of the book](docs/book/02-getting-started.md) has the details,
-including the Cardputer ADV firmware build and editor support.
+including building and flashing the firmware by hand with ESP-IDF v6.1.1,
+and editor support. Releases are built by `tools/release.sh` (and the
+release workflow on a `v*` tag).
 
 Tests: `make test` runs the C tests (host and MCU configurations), the Go
 tests (compiler, golden outputs, network simulator) and the size checks.
