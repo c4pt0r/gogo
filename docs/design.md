@@ -825,8 +825,10 @@ font.
   (depends on `GOGO_NET`), `GOGO_SD` (the Cardputer's `/sd`),
   `GOGO_FS_EXFAT` (depends on `GOGO_SD`), `GOGO_FONT_CJK` (off: a 1.5 KB
   ASCII font is built in and CJK characters are drawn as boxes),
-  `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR`, `GOGO_AUDIO` and
-  `GOGO_SCREEN`. A
+  `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR`, `GOGO_AUDIO`,
+  `GOGO_SCREEN` and `GOGO_FLOAT` (floating point: the VM's float code and
+  `runtime/floatlib`; off, the VM lacks the requirement `float` and
+  refuses an image that uses floats). A
   switched-off feature behaves as if the board lacked the hardware: its
   `port.Open` returns `ok=false`, and `gogo device scan` and the like
   answer "no network in this firmware".

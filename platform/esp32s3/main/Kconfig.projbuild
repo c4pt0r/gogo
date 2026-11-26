@@ -105,6 +105,18 @@ menu "gogo"
             requires "screen" is refused), port.Open("screen") returns ok=false and
             the LCD only shows the text console.
 
+    config GOGO_FLOAT
+        bool "Floating point (float32, float64)"
+        default y
+        help
+            Build float32 and float64 into the VM (runtime/vm/floats.c:
+            the float ops, float println) and the float library
+            (runtime/floatlib/: gogo/math, strconv.FormatFloat and
+            ParseFloat). float32 runs on the ESP32-S3's FPU, float64 in
+            software. When off, the VM lacks the requirement "float" and
+            refuses an image that uses floats ("image requires float,
+            which this VM lacks"); code.Load reports it as Missing.
+
     config GOGO_FONT_CJK
         bool "Chinese console font (GB 2312)"
         default y

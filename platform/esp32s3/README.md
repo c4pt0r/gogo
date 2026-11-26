@@ -209,7 +209,8 @@ drivers and mounts this build really has: `gpio` always; `netif`, `udp`,
 see "TLS" below); `kbd` (Cardputer with `GOGO_KBD`); `power`
 (`GOGO_BATTERY`); `imu` (`GOGO_IMU`); `ir_tx` (`GOGO_IR`); `ir_rx` (StickS3
 with `GOGO_IR`); `mic` and `speaker` (`GOGO_AUDIO`); `screen` (`GOGO_SCREEN`, in builds with
-the console task); the mounts `/flash` always
+the console task); the requirement `float` (`GOGO_FLOAT`, checked by the VM
+itself, not a driver); the mounts `/flash` always
 and `/sd` (Cardputer with `GOGO_SD`). An image or module that requires
 another name is refused at boot (`gogo: image requires <name>, which this
 VM lacks`) or by `code.Load` (`Unsupported`, `code.Missing` names it). `code.mem` (default
@@ -731,6 +732,19 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   1098224 B `gogo.bin` (+5168), Cardputer ADV 1128352 -> 1133440 (+5088);
   a 1760-byte grid is allocated from internal RAM at the first open and
   kept.
+- `GOGO_FLOAT` (default y): floating point, `float32` and `float64`
+  (`runtime/vm/floats.c` built with `GOGO_FLOAT=1`, and
+  `runtime/floatlib/` for `gogo/math` and `strconv.FormatFloat` /
+  `ParseFloat`). Off: the VM lacks the requirement `float`, so an image
+  that uses floats is refused at boot (`gogo: image requires float, which
+  this VM lacks`) and `code.Load` returns `Unsupported`. `float32`
+  arithmetic uses the chip's single-precision FPU, `float64` libgcc's
+  software routines. Cost (ESP-IDF 6.1.1, the same tree with
+  `CONFIG_GOGO_FLOAT=n`): StickS3 1099104 -> 1110336 B `gogo.bin`
+  (+11232), Cardputer ADV 1134288 -> 1145488 (+11200), +104 B static
+  DIRAM. Of that, the VM core's share is about 3.7 KB (`tools/vmsize.sh`
+  against `--no-float`), `runtime/floatlib` about 4.3 KB, and the rest
+  newlib's `strtod` / `strtof` and the soft-float routines it links.
 - `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `runtime/net/*.c`
   are not built, the drivers `netif`, `udp`, `tcp` and `tcp_listen` are not
   listed (an image that requires one is refused at boot, naming it), `port.Open` of `netif`, `udp`,
@@ -820,14 +834,15 @@ firmware` does this for its own directory, see below.)
 `gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list]
 [-without list] files...` reads the `requires` word of the given images and
 modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
-`_BATTERY`, `_SD`, `_FS_EXFAT`, `_FONT_CJK`, `_IMU`, `_IR`, `_AUDIO`), then prints (or, with
+`_BATTERY`, `_SD`, `_FS_EXFAT`, `_FONT_CJK`, `_IMU`, `_IR`, `_AUDIO`, `_TLS`,
+`_SCREEN`, `_FLOAT`), then prints (or, with
 `-build`, runs) the matching build:
 
     idf.py -C platform/esp32s3 -B <dir> -DGOGO_BOARD=<board> -DSDKCONFIG=<dir>/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;<board overlay>;<dir>/sdkconfig.gogo" build
 
-Feature names are `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen`; `net`, `kbd`,
-`power` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
+Feature names are `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen float`; `net`, `kbd`,
+`power` and `float` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
 `imu`, `irtx`, `irrx`, `mic`, `speaker`, `tls` are on by default and `-without` turns them off
 (`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `speaker` are one, `GOGO_AUDIO`; `tls` needs `net`, `GOGO_TLS` depends on `GOGO_NET`). A required feature cannot be removed,
 and one the board lacks (`kbd`, `sd` on the StickS3) is an error. A feature

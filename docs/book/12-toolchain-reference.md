@@ -467,13 +467,14 @@ driver nobody uses. It reads the requirement names each file carries
 `<dir>/sdkconfig.gogo`, a list of `CONFIG_GOGO_*` lines, then prints the
 `idf.py` command that builds with it. It never flashes.
 
-- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen`.
+- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen float`.
   The requirement names they build: `net` the drivers `netif`, `udp`,
   `tcp` and `tcp_listen`; `kbd`, `power`, `imu`, `mic`, `speaker`, `tls` and
   `screen` the driver of the same name; `irtx` and `irrx` the drivers `ir_tx` and
-  `ir_rx`; `sd` the mount `/sd` (appendix F). `gpio` and `/flash` are in
-  every firmware; any other name (a host port's, say) is an error.
-  `net`, `kbd` and `power` are on only when a file requires them (or
+  `ir_rx`; `sd` the mount `/sd` (appendix F); `float` the requirement
+  `float` (floating point in the VM and `gogo/math`). `gpio` and `/flash`
+  are in every firmware; any other name (a host port's, say) is an error.
+  `net`, `kbd`, `power` and `float` are on only when a file requires them (or
   `-with` adds them). The others are on by default on boards that have
   them: `sd`, `imu`, `irtx`/`irrx` (the infrared sender and receiver),
   `mic`/`speaker` and `tls` (the TLS client, chapter 17) can be required too,
