@@ -334,8 +334,8 @@ func main() {
 	for _, k := range []string{"door", "fan", "door", "window", "door"} {
 		actor.Send(shardFor(k, shards), Incr{k})
 	}
-	n, ok := get("door", shards)
-	println("door:", n, ok)
+	n, err := get("door", shards)
+	println("door:", n, err == nil)
 }
 ```
 
@@ -362,17 +362,21 @@ the same way: handlers live for one request, the count lives in an actor.
 
 **Problem.** An actor waits forever, or two actors wait for each other.
 
-**Rule.** Every `Call` has a timeout, and the caller handles `ok ==
-false`. Requests flow in one direction: if A calls B, B never calls A.
+**Rule.** Every `Call` has a timeout, and the caller checks its error:
+`r, err := actor.Call(p, req, ms); if err != nil { ... }`. Requests flow
+in one direction: if A calls B, B never calls A.
 
 **Why.** `Call` waits only for its own reply and leaves every other
-message in the mailbox (section 4.3). It does not notice that the server
-died: it waits out the whole timeout (monitor the server to know sooner).
-A reply that comes after the timeout stays in the caller's mailbox,
-counted against its limit, until the next `Receive` or `Call` scans past
-it. So treat `ok == false` as "no answer, maybe dead", and keep timeouts
-short enough that a dead server costs little. A server on another board
-adds lost nodes and lost messages; sections
+message in the mailbox (section 4.3). Its error says why no reply came:
+`errors.NoProc` (the server was already gone: it fails at once),
+`errors.NoConnection` (the server's node is gone: at once too), or
+`errors.Timeout`. A server that dies while you wait is not noticed: the
+Call waits out the whole timeout and says `errors.Timeout` (monitor the
+server to know sooner). A reply that comes after the timeout stays in
+the caller's mailbox, counted against its limit, until the next
+`Receive` or `Call` scans past it. So treat `errors.Timeout` as "no
+answer, maybe dead", and keep timeouts short enough that a dead server
+costs little. A server on another board adds lost messages; sections
 [20.5](20-distributed.md#205-when-a-node-goes-away) and
 [20.6](20-distributed.md#206-delivery) say when such a Call fails at once
 and when it waits out its timeout.
@@ -389,9 +393,9 @@ func sensor(boss actor.PID) {
 			switch b := r.Body.(type) {
 			case Read:
 				// Calls up the hierarchy: a cycle with the controller.
-				scale, ok := actor.Call(boss, GetScale{}, 200)
-				if !ok {
-					println("  sensor: GetScale timed out")
+				scale, err := actor.Call(boss, GetScale{}, 200)
+				if err != nil {
+					println("  sensor: GetScale:", err.Error())
 					scale = 0
 				}
 				actor.Reply(r, 42*scale.(int))
@@ -407,7 +411,7 @@ The controller calls the sensor with a `Read` (in the first run) or a
 `ReadWith{Scale: 10}` (in the second); the program measures each:
 
 ```text
-  sensor: GetScale timed out
+  sensor: GetScale: timed out
 cycle: 0 true slow: true
 fixed: 420 true slow: false
 ```
@@ -1214,7 +1218,7 @@ Review a design against these:
 
 - Can any producer outrun its consumer? Is there a window, a `Call`, a
   pull, or a reduction at the source?
-- Does every `Call` have a timeout, and is `ok == false` handled?
+- Does every `Call` have a timeout, and is its error handled?
 - Do requests flow one way, with no `Call` cycles?
 - Does each actor handle every message type it can receive, in every
   state, including late answers and messages from other senders?

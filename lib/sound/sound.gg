@@ -217,13 +217,8 @@ func Record(dir string, cfg audio.Mic, maxSec int) (actor.PID, bool) {
 	// The recorder opens the mic itself, so the port's charge and room
 	// check count against its MaxMemory, not the caller's limit; it
 	// answers this Call with whether the open worked.
-	rep, ok := actor.Call(r, 0, openTimeoutMs)
-	opened := false
-	switch b := rep.(type) {
-	case bool:
-		opened = b
-	}
-	if !ok || !opened {
+	rep, _ := actor.Call(r, 0, openTimeoutMs)
+	if opened, _ := rep.(bool); !opened { // rep is nil if the Call failed
 		actor.Kill(r, actor.Killed)
 		return actor.Self(), false
 	}

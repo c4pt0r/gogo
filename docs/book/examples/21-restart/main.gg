@@ -6,6 +6,7 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/errors"
 	"gogo/fs"
 	"gogo/kv"
 	"gogo/strconv"
@@ -54,15 +55,14 @@ func counter() {
 }
 
 // call finds the counter by name, waiting for a restart if needed.
-func call(req any) (any, bool) {
+func call(req any) (any, error) {
 	for i := 0; i < 10; i++ {
 		if p, ok := actor.Whereis("counter"); ok {
-			v, ok := actor.Call(p, req, 100)
-			return v, ok
+			return actor.Call(p, req, 100)
 		}
 		actor.Sleep(10)
 	}
-	return nil, false
+	return nil, errors.NotFound
 }
 
 func main() {
@@ -71,6 +71,6 @@ func main() {
 		call(Incr{})
 	}
 	call(Crash{})
-	v, ok := call(Incr{})
-	println("after the crash:", v, ok)
+	v, err := call(Incr{})
+	println("after the crash:", v, err == nil)
 }

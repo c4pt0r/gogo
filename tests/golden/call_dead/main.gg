@@ -1,13 +1,16 @@
 package main
 
-import "gogo/actor"
+import (
+	"gogo/actor"
+	"gogo/errors"
+)
 
+// A Call to an actor that has exited fails at once with errors.NoProc.
 func main() {
 	dead := actor.Spawn(func() {})
 	actor.Sleep(10)
 	t0 := actor.Now()
-	reply, ok := actor.Call(dead, 1, 5000)
-	println(ok)
+	reply, err := actor.Call(dead, 1, 5000)
+	println(reply, err == errors.NoProc, err.Error())
 	println(actor.Now()-t0 < 1000)
-	_ = reply
 }

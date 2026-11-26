@@ -31,8 +31,8 @@ func Struct(arg any) {
 
 // Caller calls the host server, which answers with a host struct.
 func Caller(arg any) {
-	_, ok := actor.Call(pid(arg), 1, 200)
-	println("module call ok", ok)
+	_, err := actor.Call(pid(arg), 1, 200)
+	println("module call ok", err == nil)
 }
 
 // Echo prints what it is given.

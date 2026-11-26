@@ -1,7 +1,7 @@
 // Package actor is the gogo actor API. Its functions (marked
 // //gogo:builtin) exist only so programs type-check with the standard Go
 // toolchain; the gogo compiler replaces every call with VM instructions, so
-// the bodies are never executed. The functions with a body (Fail) are
+// the bodies are never executed. The functions with a body (Call, Fail) are
 // ordinary library code.
 //
 // The struct types ProcInfo, Reason, ExitMsg, DownMsg, Request and Options
@@ -210,12 +210,40 @@ func Sleep(ms int) { panic("gogo only") }
 func Now() int64 { panic("gogo only") }
 
 // Call sends a Request with body req to to and waits at most timeoutMs
-// milliseconds for the reply; ok is false on timeout. If the server dies
-// while the call is pending, Call does not return early: the caller waits
-// until the timeout (monitor the server to notice its death sooner).
+// milliseconds for the reply (other messages stay in the mailbox). err is
+// nil if the reply came, else an errors.Code that says why it did not:
+//
+//	errors.Timeout       no reply within timeoutMs (timeoutMs <= 0: none yet)
+//	errors.NoProc        to is no live local actor: it has exited, never
+//	                     existed, is the zero PID or a port; at once
+//	errors.NoConnection  to is a remote PID (gogo/node) this node cannot
+//	                     reach: its node is not connected or went away
+//	                     (also while Call waited), or the PID names
+//	                     nothing here any more, or the node's table of
+//	                     remote Calls in flight is full; at once
+//
+// reply is nil then. If a local server dies while the call is pending,
+// Call does not return early: it fails with errors.Timeout when the time
+// is up (monitor the server to notice its death sooner). So does the first
+// Call to a remote actor that has exited on a node that is still up (its
+// node drops the request and tells this one, so later Calls to that PID
+// fail at once with errors.NoConnection, as a Monitor of it reports
+// NoConnection).
+// req is checked as Send checks a message: one that cannot be sent ends
+// the caller (actor.BadMsg).
+func Call(to PID, req any, timeoutMs int) (reply any, err error) {
+	reply, code := call(to, req, timeoutMs)
+	if code != 0 {
+		return nil, errors.Code(code)
+	}
+	return reply, nil
+}
+
+// call is Call with the shared error code in place of the error (builtin
+// B_CALL_ERR, image format 15.7).
 //
 //gogo:builtin
-func Call(to PID, req any, timeoutMs int) (reply any, ok bool) { panic("gogo only") }
+func call(to PID, req any, timeoutMs int) (any, int) { panic("gogo only") }
 
 // Reply answers a Request.
 //

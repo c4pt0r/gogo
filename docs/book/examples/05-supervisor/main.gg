@@ -59,13 +59,13 @@ func main() {
 				w = r.From
 			}
 		}
-		reply, ok := actor.Call(w, in, 100)
-		if ok {
-			println(in, "->", reply)
-		} else {
-			println(in, "-> no answer (worker crashed)")
+		reply, err := actor.Call(w, in, 100)
+		if err != nil {
+			println(in, "-> no answer (the worker crashed):", err.Error())
 			w = none
+			continue
 		}
+		println(in, "->", reply)
 	}
 	// main returns: the supervisor shuts the worker down and exits too.
 }

@@ -2,7 +2,10 @@
 // actor builtin given it behaves as for an actor that has exited.
 package main
 
-import "gogo/actor"
+import (
+	"gogo/actor"
+	"gogo/errors"
+)
 
 var none = actor.PID{} // a package-level zero PID
 
@@ -11,8 +14,8 @@ func main() {
 	println("equal:", p == actor.PID{}, p == none, p == actor.NoPID, p == actor.Self())
 	actor.Send(p, "lost") // dropped
 	t0 := actor.Now()
-	r, ok := actor.Call(p, "hello?", 1000)
-	println("call:", r, ok, actor.Now()-t0 < 500) // at once, not after the timeout
+	r, err := actor.Call(p, "hello?", 1000)
+	println("call:", r, err == errors.NoProc, actor.Now()-t0 < 500) // at once, not after the timeout
 	ref := actor.Monitor(p)
 	switch m := actor.Receive().(type) {
 	case actor.DownMsg:
@@ -31,6 +34,6 @@ func main() {
 	println("cancel:", actor.CancelTimer(t))
 	println("register:", actor.Register("nobody", p))
 	println("memory:", actor.Info(p).Memory)
-	_, ok = actor.ReceiveTimeout(0)
+	_, ok := actor.ReceiveTimeout(0)
 	println("mailbox empty:", !ok)
 }

@@ -155,10 +155,10 @@ func run() string {
 	if why != "" {
 		return why
 	}
-	r, ok := actor.Call(sup, supervisor.Upgrade{Module: v2}, 5000)
+	r, err := actor.Call(sup, supervisor.Upgrade{Module: v2}, 5000)
 	code.Release(v2)
-	if !ok {
-		return "upgrade: no reply from the supervisor"
+	if err != nil {
+		return "upgrade: no reply from the supervisor: " + err.Error()
 	}
 	println("upgrade result (0 is ok):", r)
 	switch n := r.(type) {

@@ -3,11 +3,12 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/errors"
 	"gogo/node"
 	"gogo/sys"
 )
 
-type callResult struct{ OK, Fast bool }
+type callResult struct{ Lost, Fast bool }
 
 func main() {
 	addr, _ := sys.Config("test.server")
@@ -20,11 +21,11 @@ func main() {
 	slow, _ := node.Whereis("server", "slow", 2000)
 	ref := actor.Monitor(echo)
 	self := actor.Self()
-	// A Call in flight when the server goes fails at once.
+	// A Call in flight when the server goes fails at once, NoConnection.
 	actor.Spawn(func() {
 		t0 := actor.Now()
-		_, ok := actor.Call(slow, "hello", 10000)
-		actor.Send(self, callResult{OK: ok, Fast: actor.Now()-t0 < 5000})
+		_, err := actor.Call(slow, "hello", 10000)
+		actor.Send(self, callResult{Lost: err == errors.NoConnection, Fast: actor.Now()-t0 < 5000})
 	})
 	actor.TrapExit(true)
 	actor.Link(echo)
@@ -47,13 +48,13 @@ func main() {
 			println("node down", e.Node)
 			n++
 		case callResult:
-			println("call in flight", e.OK, e.Fast)
+			println("call in flight lost", e.Lost, e.Fast)
 			n++
 		}
 	}
-	// A Call to a PID of a node that is gone fails at once.
+	// A Call to a PID of a node that is gone fails at once, NoConnection.
 	t0 := actor.Now()
-	_, ok := actor.Call(echo, "hi", 5000)
-	println("call to lost node", ok, actor.Now()-t0 < 1000)
+	_, err := actor.Call(echo, "hi", 5000)
+	println("call to lost node", err == errors.NoConnection, actor.Now()-t0 < 1000)
 	println("connect again", node.Connect(addr, "w") == nil)
 }

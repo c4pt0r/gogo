@@ -49,6 +49,11 @@ func TestMinorBaseline(t *testing.T) {
 		{"package main\nfunc main() {\n\tu := uint64(7)\n\tvar x any = u / 2\n\tprintln(x)\n}\n", sizedMinor},
 		{"package main\nimport \"gogo/errors\"\nfunc main() {\n\tvar x any = uint16(5)\n\tvar e error = errors.New(\"e\")\n\tprintln(x, e.Error())\n}\n", ifaceMinor},
 		{"package main\nfunc main() {\n\tvar x any = byte(5)\n\tp := &x\n\tprintln(*p)\n}\n", refMinor},
+		// actor.Call (B_CALL_ERR) needs 15.7; the rest of gogo/actor, and
+		// importing it, does not.
+		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tp := actor.Spawn(func() {})\n\tactor.Send(p, 1)\n\tq, _ := actor.Whereis(\"x\")\n\tactor.SendAfter(q, 2, 5)\n\tprintln(actor.Receive(), actor.NoPID)\n}\n", 0},
+		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\t_, err := actor.Call(actor.Self(), 1, 0)\n\tprintln(err != nil)\n}\n", actorMinor},
+		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Call(actor.Self(), 1, 0)\n}\n", actorMinor},
 	} {
 		w := words(compileImage(t, tc.src))
 		if w[1] != 15<<16|tc.minor {

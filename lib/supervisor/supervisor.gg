@@ -73,16 +73,12 @@ type Upgrade struct{ Module code.Module }
 func SuperviseModule(m code.Module, entry string, arg any, spec Spec) actor.PID {
 	parent := actor.Self()
 	sup := actor.SpawnLink(func() { run(parent, m, entry, arg, func() {}, spec) })
-	var none actor.PID
-	r, ok := actor.Call(sup, 0, helloWaitMs)
-	if !ok {
-		return none
+	r, err := actor.Call(sup, 0, helloWaitMs)
+	if err != nil {
+		return actor.NoPID
 	}
-	switch e := r.(type) {
-	case int:
-		if e != int(code.OK) {
-			return none
-		}
+	if e, ok := r.(int); ok && e != int(code.OK) {
+		return actor.NoPID
 	}
 	return sup
 }

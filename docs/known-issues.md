@@ -13,6 +13,20 @@ the M5StickS3 and the Cardputer ADV. The design is in
 Programs written for v0.1.0 need these edits, and every image must be
 rebuilt:
 
+- **`actor.Call`** returns `(reply any, err error)` instead of `(reply
+  any, ok bool)`: `err` is `nil`, `errors.Timeout`, `errors.NoProc` (no
+  live local actor) or `errors.NoConnection` (a remote PID's node is
+  gone), book 4.3. `r, ok := actor.Call(...); if !ok {` becomes `r, err
+  := actor.Call(...); if err != nil {`; a program that only checked `ok`
+  needs no other change, and the compiler rejects an `ok` still used as
+  a `bool` (`!ok`, `if ok`). A program that calls `actor.Call`, itself or through a
+  library (`gogo/node`, `gogo/http`, `gogo/dns`, `gogo/dhcp`,
+  `gogo/sntp`, `gogo/sound`, `gogo/supervisor`, `gogo/tui`), is image
+  format 15.7 and needs firmware that runs 15.7; images built before
+  keep running on the new firmware. `gogo/errors` gained the shared codes
+  `NoProc` (28) and `NoConnection` (29); `node.Whereis` and the other
+  `gogo/node` calls now return the Call's error (`NoConnection` when the
+  node goes during the call) where they returned `errors.Timeout`.
 - **`actor.SendAfter`** takes its arguments in `Send`'s order with the
   delay last, as `Call` does: `actor.SendAfter(ms, p, msg)` is
   `actor.SendAfter(p, msg, ms)`. Every old call fails to compile (an
@@ -193,8 +207,10 @@ rebuilt:
   the actors whose failure must fail the run to `main` (or have `main`
   monitor them and `actor.Exit` with a code).
 - **`actor.Call` does not notice that the server died.** It waits out
-  the whole timeout. *Workaround:* monitor the server and keep timeouts
-  short; treat `ok == false` as "maybe dead".
+  the whole timeout and fails with `errors.Timeout` (only a server that
+  was already gone gives `errors.NoProc`, at once). *Workaround:* monitor
+  the server and keep timeouts short; treat `errors.Timeout` as "maybe
+  dead".
 - **Timers outlive their creator.** A `SendAfter` aimed at another actor
   still fires after its creator exits and is then charged to nobody, so a
   child that is restarted over and over and sets a long timer each time
@@ -776,7 +792,8 @@ rebuilt:
   (and at most 4096 minus the port cap: remote PIDs live between 0xF000
   and the port PIDs), 48 + 2*L* local PIDs given out (dead ones are
   reused), 16 + 2*L* remote links and monitors (a full table answers with
-  `NoConnection`), 8 + *L* remote Calls in flight (one more fails at once);
+  `NoConnection`), 8 + *L* remote Calls in flight (one more fails at once
+  with `errors.NoConnection`);
   on a board (*L* = 8) 64, 64, 32 and 16. A full remote-PID table evicts
   the least recently used entry that no link or monitor names: a remote
   PID kept without a monitor then goes stale (sends to it are dropped,

@@ -125,7 +125,7 @@ it as `actor.PID{}` or `actor.NoPID` (a read-only package-level
 variable). It names no actor, so it is a safe "nobody yet" value: compare
 with it (`if w == actor.NoPID`) to see whether a PID was set. Using it is
 never a crash: a `Send` to it is dropped, a `Call` to it fails at once
-(4.3), and `Monitor` or `Link` of it behaves as for
+with `errors.NoProc` (4.3), and `Monitor` or `Link` of it behaves as for
 an actor that has exited (a `DownMsg` or exit signal with reason
 `actor.NoProc` arrives at once; chapter 5). `Whereis` of an unknown name
 and a failed `port.Open` return it.
@@ -212,7 +212,7 @@ Asking a question and waiting for the answer is so common that gogo has
 it built in:
 
 ```go
-func Call(to PID, req any, timeoutMs int) (reply any, ok bool)
+func Call(to PID, req any, timeoutMs int) (reply any, err error)
 func Reply(req Request, reply any)
 
 type Request struct{ From PID; Ref Ref; Body any }
@@ -221,10 +221,19 @@ type Request struct{ From PID; Ref Ref; Body any }
 `Call` wraps `req` in an `actor.Request` with a fresh unique `Ref`, sends
 it, and waits for a reply carrying that `Ref`, at most `timeoutMs`
 milliseconds. Other messages that arrive meanwhile stay in the mailbox.
-A Call to an actor that has exited returns `(nil, false)` at once; its
-`req` is still checked as a `Send`'s message is, so one that cannot be
-sent (a closure, a port's PID to another node, ...) stops the caller
-with `actor.BadMsg`.
+`err` is `nil` when the reply came; otherwise `reply` is `nil` and `err`
+is a `gogo/errors` code that says why:
+
+| `err` | Why | When |
+|---|---|---|
+| `errors.Timeout` | no reply within `timeoutMs` | after the timeout (at once for `timeoutMs <= 0` with no reply yet) |
+| `errors.NoProc` | `to` is no live actor: it has exited, never existed, is the zero PID or a port | at once |
+| `errors.NoConnection` | `to` is on another node that is not connected, or went away while you waited (4.8, chapter 20) | at once |
+
+Compare with `==` (`err == errors.Timeout`) or print `err.Error()`. The
+`req` of a failed Call is still checked as a `Send`'s message is, so one
+that cannot be sent (a closure, a port's PID to another node, ...) stops
+the caller with `actor.BadMsg`.
 The server receives an `actor.Request`, looks at its `Body`, and answers
 with `actor.Reply`:
 
@@ -232,7 +241,10 @@ with `actor.Reply`:
 // Call and Reply: a request-reply server holding a small key-value table.
 package main
 
-import "gogo/actor"
+import (
+	"gogo/actor"
+	"gogo/errors"
+)
 
 type Put struct {
 	Key   string
@@ -288,51 +300,54 @@ func get(tbl []entry, k string) (int, bool) {
 }
 
 // lookup wraps the Call in a function with a typed result.
-func lookup(s actor.PID, k string) (int, bool) {
-	reply, ok := actor.Call(s, Lookup{k}, 100)
-	if !ok {
-		return 0, false // timeout
+func lookup(s actor.PID, k string) (value int, found bool, err error) {
+	reply, err := actor.Call(s, Lookup{k}, 100)
+	if err != nil {
+		return 0, false, err // errors.Timeout, errors.NoProc, ...
 	}
-	switch f := reply.(type) {
-	case Found:
-		return f.Value, f.OK
-	}
-	return 0, false
+	f, _ := reply.(Found)
+	return f.Value, f.OK, nil
 }
 
 func main() {
 	s := actor.Spawn(store)
-	_, ok := actor.Call(s, Put{"led", 1}, 100)
-	println("put led:", ok)
-	_, ok = actor.Call(s, Put{"fan", 0}, 100)
-	println("put fan:", ok)
-	v, found := lookup(s, "led")
+	if _, err := actor.Call(s, Put{"led", 1}, 100); err != nil {
+		println("put led:", err.Error())
+	}
+	if _, err := actor.Call(s, Put{"fan", 0}, 100); err != nil {
+		println("put fan:", err.Error())
+	}
+	v, found, _ := lookup(s, "led")
 	println("led", v, found)
-	v, found = lookup(s, "door")
+	v, found, _ = lookup(s, "door")
 	println("door", v, found)
 
 	// A message sent to main before a Call stays in the mailbox: Call
 	// waits only for its own reply.
 	actor.Send(actor.Self(), "kept for later")
-	v, found = lookup(s, "fan")
+	v, found, _ = lookup(s, "fan")
 	println("fan", v, found)
 	println(actor.Receive())
 
 	// A Call to an actor that never answers times out.
 	silent := actor.Spawn(func() { actor.Receive() })
-	_, ok = actor.Call(silent, Lookup{"x"}, 50)
-	println("silent answered:", ok)
+	_, err := actor.Call(silent, Lookup{"x"}, 50)
+	println("silent:", err.Error())
+
+	// A Call to an actor that has exited fails at once.
+	actor.Kill(silent, actor.Killed)
+	_, _, err = lookup(silent, "x")
+	println("killed:", err == errors.NoProc, err.Error())
 }
 ```
 
 ```text
-put led: true
-put fan: true
 led 1 true
 door 0 false
 fan 0 true
 kept for later
-silent answered: false
+silent: timed out
+killed: true no such actor
 ```
 
 It is good style to hide each `Call` behind a small function with a typed
@@ -340,9 +355,10 @@ result, like `lookup` here, so that the rest of the program never sees
 `any`.
 
 > **Note.** If the server dies while you wait, `Call` does not return
-> early: it waits until the timeout. Monitor the server (chapter 5) if you
-> need to know sooner. (For a server on another board, see 4.8 and 20.5:
-> a Call returns at once when the server's node goes away.)
+> early: it waits until the timeout and fails with `errors.Timeout`.
+> Monitor the server (chapter 5) if you need to know sooner. (For a
+> server on another board, see 4.8 and 20.5: a Call fails at once with
+> `errors.NoConnection` when the server's node goes away.)
 
 ## 4.4 Registered names
 
@@ -591,7 +607,7 @@ node, finding its exported counter and calling it:
 	println("client: found counter", counter)
 	ref := actor.Monitor(counter)
 	for i := 1; i <= 5; i++ {
-		total, ok := actor.Call(counter, Add{N: i}, 2000)
+		total, err := actor.Call(counter, Add{N: i}, 2000)
 ```
 
 The counter on the server is an ordinary `Call` server like the one in

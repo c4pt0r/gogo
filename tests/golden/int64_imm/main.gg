@@ -95,9 +95,9 @@ func main() {
 			}
 		}
 	})
-	reply, ok := actor.Call(srv, a, 1000)
+	reply, err := actor.Call(srv, a, 1000)
 	show(reply)
-	println(ok)
+	println(err == nil)
 
 	// Now() is an immediate; the clock moves.
 	t0 := actor.Now()

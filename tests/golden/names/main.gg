@@ -25,8 +25,8 @@ func main() {
 
 	p, ok := actor.Whereis("svc")
 	println(ok, p == srv)
-	reply, ok := actor.Call(p, 1, 100)
-	println(reply, ok)
+	reply, err := actor.Call(p, 1, 100)
+	println(reply, err == nil)
 
 	// An unknown name.
 	_, ok = actor.Whereis("nope")

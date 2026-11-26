@@ -144,15 +144,14 @@ func main() {
 	println("capture MaxMemory", captureMemory(), "writer MaxMemory", writerMemory())
 	w := actor.SpawnOpt(func() { writer("/flash/rec.pcm") }, actor.Options{MaxMemory: writerMemory()})
 	c := actor.SpawnOpt(func() { capture(w) }, actor.Options{MaxMemory: captureMemory()})
-	r, ok := actor.Call(c, 0, 1000)
-	opened, _ := r.(bool)
-	if !ok || !opened {
+	r, _ := actor.Call(c, 0, 1000)
+	if opened, _ := r.(bool); !opened { // r is nil if the Call failed
 		println("no mic")
 		return
 	}
 	actor.Sleep(1900) // the last tone line is read at 1500 ms
-	if _, ok = actor.Call(c, Stop{}, 1000); !ok {
-		println("capture did not answer")
+	if _, err := actor.Call(c, Stop{}, 1000); err != nil {
+		println("capture did not answer:", err.Error())
 		return
 	}
 	switch s := actor.Receive().(type) {

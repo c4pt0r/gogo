@@ -233,8 +233,8 @@ LED's PID to several actors and let each of them `Send` it `gpio.Write`s.
 count against its memory limit like any message. An owner that does not
 read its events will eventually exit with `MailboxOverflow`.
 
-You cannot link to or monitor a port; `SendAfter` and `Call` to a port are
-ignored.
+You cannot link to or monitor a port; a `SendAfter` to a port is ignored,
+and a `Call` to one fails at once with `errors.NoProc`.
 
 ### Ports close with their owner
 

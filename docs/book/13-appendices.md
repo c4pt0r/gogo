@@ -28,7 +28,7 @@ func Self() PID
 func Send(to PID, msg any)
 func Receive() any
 func ReceiveTimeout(ms int) (msg any, ok bool)
-func Call(to PID, req any, timeoutMs int) (reply any, ok bool)
+func Call(to PID, req any, timeoutMs int) (reply any, err error) // Timeout, NoProc, NoConnection
 func Reply(req Request, reply any)
 func Link(p PID)
 func Unlink(p PID)
@@ -112,7 +112,7 @@ const (OK = 0; NotFound = 1; Exists = 2; NoMemory = 3; TooMany = 4; Busy = 5; Ba
 	Closed = 7; IO = 8; Timeout = 9; Unsupported = 10; NoSpace = 11; BadPath = 12; IsDir = 13;
 	NotDir = 14; NotEmpty = 15; NotMounted = 16; BadImage = 17; Refused = 18; Reset = 19;
 	NoRoute = 20; BadCert = 21; NoTime = 22; TLS = 23; Overflow = 24; BadURL = 25;
-	BadFormat = 26; BadVersion = 27)
+	BadFormat = 26; BadVersion = 27; NoProc = 28; NoConnection = 29)
 ```
 
 Appendix C lists who uses which. `gogo/http`'s `Upload` and
@@ -346,8 +346,8 @@ found"`, `"busy"`, ...), and `"error N"` for a code without one.
 | Range | Codes |
 |---|---|
 | 0 | `OK` |
-| 1..27 | `NotFound`=1 `Exists`=2 `NoMemory`=3 `TooMany`=4 `Busy`=5 `BadArg`=6 `Closed`=7 `IO`=8 `Timeout`=9 `Unsupported`=10 `NoSpace`=11 `BadPath`=12 `IsDir`=13 `NotDir`=14 `NotEmpty`=15 `NotMounted`=16 `BadImage`=17 `Refused`=18 `Reset`=19 `NoRoute`=20 `BadCert`=21 `NoTime`=22 `TLS`=23 `Overflow`=24 `BadURL`=25 `BadFormat`=26 `BadVersion`=27 |
-| 28..35 | free for later shared meanings; shared codes stop at 35 so that `actor.Failed` + a shared code stays below 100 (appendix B) |
+| 1..29 | `NotFound`=1 `Exists`=2 `NoMemory`=3 `TooMany`=4 `Busy`=5 `BadArg`=6 `Closed`=7 `IO`=8 `Timeout`=9 `Unsupported`=10 `NoSpace`=11 `BadPath`=12 `IsDir`=13 `NotDir`=14 `NotEmpty`=15 `NotMounted`=16 `BadImage`=17 `Refused`=18 `Reset`=19 `NoRoute`=20 `BadCert`=21 `NoTime`=22 `TLS`=23 `Overflow`=24 `BadURL`=25 `BadFormat`=26 `BadVersion`=27 `NoProc`=28 `NoConnection`=29 |
+| 30..35 | free for later shared meanings; shared codes stop at 35 so that `actor.Failed` + a shared code stays below 100 (appendix B) |
 | 36..99 | reserved, never shared codes |
 | 100 and up | one block of 20 per package that needs its own codes: `gogo/http` 100..119, `gogo/sound` 120..139 (neither uses its block yet) |
 
@@ -375,6 +375,12 @@ under another name, and these codes under the same names.
 | 0 | 1 | 3 | 4 | 6 | 10 | 17 | 27 |
 |---|---|---|---|---|---|---|---|
 | `OK` | `NotFound` | `NoMemory` (over `code.mem`) | `TooMany` (module table or holders full) | `BadArg` | `Unsupported` (firmware lacks a driver or mount: see `Missing`) | `BadImage` | `BadVersion` (another image format) |
+
+**`actor.Call`'s error** (chapter 4.3; remote PIDs, chapter 20.5):
+
+| 9 | 28 | 29 |
+|---|---|---|
+| `Timeout` (no reply in time) | `NoProc` (no live local actor: exited, never existed, the zero PID, a port) | `NoConnection` (a remote PID this node cannot reach: its node is gone, or the PID names nothing here any more) |
 
 ## D. Limits
 

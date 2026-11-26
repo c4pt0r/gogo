@@ -1,5 +1,5 @@
 equal: true true true false
-call: nil false true
+call: nil true true
 down: true true true
 exit: true true
 cancel: false

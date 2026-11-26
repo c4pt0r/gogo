@@ -46,17 +46,14 @@ func Start(cfg Config) error {
 	if t <= 0 {
 		t = 10000
 	}
-	r, ok := actor.Call(actor.SpawnLink(run), waitAddr{}, t)
-	switch e := r.(type) {
-	case errors.Code:
-		if ok && e != errors.OK {
-			return e
-		}
-		if ok {
-			return nil
-		}
+	r, err := actor.Call(actor.SpawnLink(run), waitAddr{}, t)
+	if err != nil {
+		return err // errors.Timeout
 	}
-	return errors.Timeout
+	if e, ok := r.(errors.Code); ok && e != errors.OK {
+		return e
+	}
+	return nil
 }
 
 // The client's state is an []int and an []int64 indexed by these

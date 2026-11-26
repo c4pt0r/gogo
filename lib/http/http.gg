@@ -242,13 +242,10 @@ func Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs in
 	}
 	w := actor.SpawnOpt(worker, actor.Options{MaxMemory: connMemory(u.Secure, maxBody)})
 	// https: HTTP/1.1, so the body is framed (see the package doc).
-	r, ok := actor.Call(w, job{Method: method, ContentType: contentType, URL: u, MaxBody: maxBody, Body: body,
+	r, _ := actor.Call(w, job{Method: method, ContentType: contentType, URL: u, MaxBody: maxBody, Body: body,
 		Deadline: actor.Now() + int64(timeoutMs), V11: u.Secure}, timeoutMs+replySlackMs)
-	switch x := r.(type) {
-	case result:
-		if ok {
-			return x.Resp, errOf(x.Err)
-		}
+	if x, ok := r.(result); ok { // r is nil if the Call failed
+		return x.Resp, errOf(x.Err)
 	}
 	actor.Kill(w, actor.Shutdown) // its connection, if any, is reset
 	return Response{}, errors.Timeout
@@ -693,13 +690,10 @@ func ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeo
 	if timeoutMs <= 0 {
 		timeoutMs = DefaultTimeoutMs
 	}
-	r, ok := actor.Call(c.PID, job{Method: method, ContentType: contentType, URL: u, MaxBody: MaxBody, Body: body,
+	r, _ := actor.Call(c.PID, job{Method: method, ContentType: contentType, URL: u, MaxBody: MaxBody, Body: body,
 		Deadline: actor.Now() + int64(timeoutMs), V11: true, Keep: true}, timeoutMs+replySlackMs)
-	switch x := r.(type) {
-	case result:
-		if ok {
-			return x.Resp, errOf(x.Err)
-		}
+	if x, ok := r.(result); ok { // r is nil if the Call failed
+		return x.Resp, errOf(x.Err)
 	}
 	return Response{}, errors.Timeout
 }
@@ -707,7 +701,7 @@ func ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeo
 // CloseClient closes c's connection gracefully and ends it. Requests still
 // waiting for it fail.
 func CloseClient(c Client) {
-	if _, ok := actor.Call(c.PID, closeReq{}, DefaultTimeoutMs); !ok {
+	if _, err := actor.Call(c.PID, closeReq{}, DefaultTimeoutMs); err != nil {
 		actor.Kill(c.PID, actor.Shutdown)
 	}
 }
@@ -1071,12 +1065,9 @@ func Upload(url, path, contentType, token string) (int, errors.Code) {
 		return 0, e
 	}
 	w := actor.SpawnOpt(uploader, actor.Options{MaxMemory: uploadMemory(j.URL.Secure)})
-	r, ok := actor.Call(w, j, ms+replySlackMs)
-	switch x := r.(type) {
-	case upResult:
-		if ok {
-			return x.Status, x.Err
-		}
+	r, _ := actor.Call(w, j, ms+replySlackMs)
+	if x, ok := r.(upResult); ok { // r is nil if the Call failed
+		return x.Status, x.Err
 	}
 	actor.Kill(w, actor.Shutdown)
 	return 0, errors.Timeout
@@ -1089,12 +1080,9 @@ func ClientUpload(c Client, url, path, contentType, token string) (int, errors.C
 	if e != errors.OK {
 		return 0, e
 	}
-	r, ok := actor.Call(c.PID, j, ms+replySlackMs)
-	switch x := r.(type) {
-	case upResult:
-		if ok {
-			return x.Status, x.Err
-		}
+	r, _ := actor.Call(c.PID, j, ms+replySlackMs)
+	if x, ok := r.(upResult); ok { // r is nil if the Call failed
+		return x.Status, x.Err
 	}
 	return 0, errors.Timeout
 }

@@ -135,12 +135,12 @@ func TestVersions(t *testing.T) {
 	if ImageFormat()>>16 == 0 {
 		t.Errorf("image format %#x", ImageFormat())
 	}
-	if CodeBadVersion != sharedLast {
-		t.Errorf("the Code list ends at %d, gogo_errors.h at %d", CodeBadVersion, sharedLast)
+	if CodeNoConnection != sharedLast {
+		t.Errorf("the Code list ends at %d, gogo_errors.h at %d", CodeNoConnection, sharedLast)
 	}
 	// Every shared code has a message of its own.
-	if CodeBadVersion.String() == ErrState.Error() || CodeBadVersion.String() == "unknown error" {
-		t.Errorf("CodeBadVersion: %q", CodeBadVersion.String())
+	if CodeNoConnection.String() == ErrState.Error() || CodeNoConnection.String() == "unknown error" {
+		t.Errorf("CodeNoConnection: %q", CodeNoConnection.String())
 	}
 }
 

@@ -128,15 +128,10 @@ func opener(cfg screen.Config) {
 // The caller owns the port: it closes when the caller exits.
 func Open(cfg screen.Config) (Screen, bool) {
 	h := actor.Spawn(func() { opener(cfg) })
-	r, ok := actor.Call(h, 0, OpenTimeoutMs+1000)
-	if ok {
-		switch m := r.(type) {
-		case opened:
-			if m.OK {
-				st := []int{0, 0, m.Cols, m.Rows, screen.White<<4 | screen.Black, 0}
-				return Screen{Port: m.P, Cols: m.Cols, Rows: m.Rows, Attrs: m.Attrs, buf: bytes.NewBuffer(256), st: st}, true
-			}
-		}
+	r, _ := actor.Call(h, 0, OpenTimeoutMs+1000)
+	if m, ok := r.(opened); ok && m.OK { // r is nil if the Call failed
+		st := []int{0, 0, m.Cols, m.Rows, screen.White<<4 | screen.Black, 0}
+		return Screen{Port: m.P, Cols: m.Cols, Rows: m.Rows, Attrs: m.Attrs, buf: bytes.NewBuffer(256), st: st}, true
 	}
 	return Screen{buf: bytes.NewBuffer(0)}, false
 }

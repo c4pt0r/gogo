@@ -49,8 +49,8 @@ func main() {
 	actor.Send(w, 2.25)
 	actor.Send(w, float32(0.1))
 	actor.Send(w, -z) // negative zero survives the copy
-	reply, ok := actor.Call(w, "sum?", 1000)
-	println("call", reply, ok)
+	reply, err := actor.Call(w, "sum?", 1000)
+	println("call", reply, err == nil)
 	actor.Send(w, Done{})
 	println("done", actor.Receive())
 	// A float captured by a spawned closure.

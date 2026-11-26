@@ -266,7 +266,8 @@ Done:
 - **Distributed actors, step one:** `gogo/node`: boards join a server node
   (a host VM with real sockets) that relays between them; remote PIDs
   work with `Send`, `Call`, `Monitor` and `Link`, and a lost node fires
-  monitors and links with `NoConnection` (book chapter 20). Frames are
+  monitors and links with `NoConnection` and fails Calls with
+  `errors.NoConnection` (book chapter 20). Frames are
   authenticated, not encrypted: trusted networks only.
 
 Next, in order:

@@ -23,11 +23,11 @@ const (
 	imageMajor = 15
 	// imageMinor is the newest feature minor. Renumbering a feature's
 	// minor touches its constant here (floatMinor, sizedMinor, ifaceMinor,
-	// distMinor, refMinor),
+	// distMinor, refMinor, actorMinor),
 	// IMAGE_MINOR in runtime/vm/image.h when it is the newest
 	// (TestTermsMatchC checks both), and the "15.N" in docs and opcodes.h
 	// comments.
-	imageMinor = max(floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor)
+	imageMinor = max(floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor, actorMinor)
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -46,7 +46,8 @@ const (
 // and the new CONV modes: sizedMinor); 15.4 the builtins and reserved
 // types of panic, interfaces and equality (ifaceMinor); 15.5 the "node"
 // port's reserved types (distMinor); 15.6 references
-// (refMinor: SETFIELD and the type-row flags, which scan counts apart).
+// (refMinor: SETFIELD and the type-row flags, which scan counts apart);
+// 15.7 the actor API's error results (actorMinor: B_CALL_ERR).
 // A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
@@ -63,8 +64,9 @@ var (
 		BPanic:    ifaceMinor,
 		BCmp:      ifaceMinor,
 		BSprint:   refMinor,
+		BCallErr:  actorMinor,
 		// unused (distributed actors, 15.5, needed none): no image uses them
-		BReserved58: distMinor, BReserved59: distMinor, BReserved60: distMinor,
+		BReserved59: distMinor, BReserved60: distMinor,
 	}
 	typeMinor = map[string]uint16{
 		"screen.Config":      1, // 15.1: the "screen" port
@@ -100,6 +102,11 @@ const refMinor = 6
 // distMinor is the minor of distributed actors (15.5): the reserved types
 // net.NodeLink and net.NodeEvent of the "node" port (gogo/node).
 const distMinor = 5
+
+// actorMinor is the minor of the actor API's error results (15.7):
+// B_CALL_ERR, under actor.Call's (reply, error). Only an image that
+// calls actor.Call needs it; one that does not keeps its minor.
+const actorMinor = 7
 
 // convMinor is the minor of an OP_CONV with mode c (op): the modes 0-2
 // are 15.0's.

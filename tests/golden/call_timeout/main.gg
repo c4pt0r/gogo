@@ -1,6 +1,9 @@
 package main
 
-import "gogo/actor"
+import (
+	"gogo/actor"
+	"gogo/errors"
+)
 
 func main() {
 	me := actor.Self()
@@ -15,8 +18,8 @@ func main() {
 		}
 	})
 
-	reply, ok := actor.Call(srv, 5, 20)
-	println(reply, ok)
+	reply, err := actor.Call(srv, 5, 20)
+	println(reply, err == errors.Timeout, err.Error())
 
 	// The late reply is invisible to Receive/ReceiveTimeout; only "done" shows.
 	m, ok := actor.ReceiveTimeout(500)

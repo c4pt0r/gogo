@@ -3,7 +3,7 @@
  * errors.NotFound is GOGO_E_NOTFOUND. tests/errors_test.go keeps the two
  * equal. Constants only: no functions, no types.
  *
- * 0 is OK; 1..35 are the shared meanings (28..35 free for later ones), so
+ * 0 is OK; 1..35 are the shared meanings (30..35 free for later ones), so
  * that actor.Failed (64) + a shared code is an exit reason below 100;
  * 36..99 are reserved; codes >= 100 belong to one package each, in blocks
  * of 20 (gogo/errors lists them). These are the codes gogo
@@ -18,7 +18,7 @@
 #define GOGO_E_SHARED_MAX 35
 /* The highest shared code in use now: raised with each new one
  * (tests/errors_test.go checks it; gogo_strerror's table follows it). */
-#define GOGO_E_SHARED_LAST 27
+#define GOGO_E_SHARED_LAST 29
 
 enum {
     GOGO_E_OK = 0,
@@ -48,7 +48,9 @@ enum {
     GOGO_E_OVERFLOW = 24,
     GOGO_E_BADURL = 25,
     GOGO_E_BADFORMAT = 26,
-    GOGO_E_BADVERSION = 27
+    GOGO_E_BADVERSION = 27,
+    GOGO_E_NOPROC = 28,         /* no such actor: it does not exist or has exited */
+    GOGO_E_NOCONNECTION = 29    /* the node of a remote actor is not connected */
 };
 
 #endif

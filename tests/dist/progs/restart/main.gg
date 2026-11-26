@@ -25,9 +25,8 @@ func main() {
 	println("connect again", node.Connect(addr, "phoenix") == nil)
 	echo, err = node.Whereis("server", "echo", 2000)
 	println("whereis again", err == nil)
-	r, ok := actor.Call(echo, "hi", 2000)
-	switch s := r.(type) {
-	case string:
-		println("call", ok, s)
+	r, err := actor.Call(echo, "hi", 2000)
+	if s, ok := r.(string); ok {
+		println("call", err == nil, s)
 	}
 }

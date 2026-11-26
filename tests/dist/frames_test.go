@@ -136,8 +136,9 @@ func TestLinkToDoorRefused(t *testing.T) {
 	}
 }
 
-// A named int and floats in interfaces cross both ways, from a 15.5 and a
-// 15.6 image (whose interface boxes are flagged).
+// A named int and floats in interfaces cross both ways, from an image
+// with pointers and one without. (boxer5 was a 15.5 image, its boxes
+// unflagged, until gogo/node's actor.Call made every node program 15.7.)
 func TestBoxesAndFloats(t *testing.T) {
 	for _, prog := range []string{"boxer5", "boxer"} {
 		srv, port := startServer(t)
@@ -151,13 +152,13 @@ func TestBoxesAndFloats(t *testing.T) {
 }
 
 // More Calls than the board's table: none waits for its timeout when the
-// server goes.
+// server goes: each fails with errors.NoConnection.
 func TestCallsBeyondTable(t *testing.T) {
 	srv, port := startServer(t)
 	b := startVM(t, "caller", []string{"--max-links", "1"}, fmt.Sprintf("test.server=127.0.0.1:%d", port))
 	b.waitLine("calling")
 	srv.kill()
-	b.waitLine("failed 12")
+	b.waitLine("lost 12")
 }
 
 // An exported actor's exit sends nothing; a node that later sends to it

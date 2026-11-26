@@ -55,10 +55,10 @@ func main() {
 	_, werr = node.Whereis("nonode", "echo", 2000)
 	println("whereis nonode", werr == errors.NotFound)
 	println("register twice", node.Register("x", actor.Self()) == nil, node.Register("x", actor.Self()) == errors.Exists)
-	r, ok := actor.Call(echo, "hi", 2000)
-	println("call", ok, r)
-	r, ok = actor.Call(echo, []int{1, 2, 3}, 2000)
-	println("call slice", ok)
+	r, err := actor.Call(echo, "hi", 2000)
+	println("call", err == nil, r)
+	_, err = actor.Call(echo, []int{1, 2, 3}, 2000)
+	println("call slice", err == nil)
 	actor.Send(echo, Ping{From: actor.Self(), N: 41})
 	switch m := next().(type) {
 	case Pong:
@@ -113,8 +113,8 @@ func main() {
 	// A struct of the same name and field count but other field kinds is
 	// dropped by the receiver: the Call times out.
 	sh, _ := node.Whereis("server", "shape", 2000)
-	_, ok = actor.Call(sh, Shape{A: 1, B: 2}, 500)
-	println("shape mismatch answered", ok)
+	_, err = actor.Call(sh, Shape{A: 1, B: 2}, 500)
+	println("shape mismatch timed out", err == errors.Timeout)
 
 	// A value that may not leave the node: the sender crashes with BadMsg.
 	h := actor.Spawn(func() {
@@ -131,8 +131,8 @@ func main() {
 	node.Subscribe()
 	be, werr := node.Whereis("b", "becho", 2000)
 	println("whereis becho", werr == nil)
-	r, ok = actor.Call(be, "hello", 2000)
-	println("relay call", ok, r)
+	r, err = actor.Call(be, "hello", 2000)
+	println("relay call", err == nil, r)
 	bref := actor.Monitor(be)
 	println("a waiting")
 	gotDown, gotNode := false, false

@@ -1,7 +1,10 @@
 // Call and Reply: a request-reply server holding a small key-value table.
 package main
 
-import "gogo/actor"
+import (
+	"gogo/actor"
+	"gogo/errors"
+)
 
 type Put struct {
 	Key   string
@@ -57,38 +60,42 @@ func get(tbl []entry, k string) (int, bool) {
 }
 
 // lookup wraps the Call in a function with a typed result.
-func lookup(s actor.PID, k string) (int, bool) {
-	reply, ok := actor.Call(s, Lookup{k}, 100)
-	if !ok {
-		return 0, false // timeout
+func lookup(s actor.PID, k string) (value int, found bool, err error) {
+	reply, err := actor.Call(s, Lookup{k}, 100)
+	if err != nil {
+		return 0, false, err // errors.Timeout, errors.NoProc, ...
 	}
-	switch f := reply.(type) {
-	case Found:
-		return f.Value, f.OK
-	}
-	return 0, false
+	f, _ := reply.(Found)
+	return f.Value, f.OK, nil
 }
 
 func main() {
 	s := actor.Spawn(store)
-	_, ok := actor.Call(s, Put{"led", 1}, 100)
-	println("put led:", ok)
-	_, ok = actor.Call(s, Put{"fan", 0}, 100)
-	println("put fan:", ok)
-	v, found := lookup(s, "led")
+	if _, err := actor.Call(s, Put{"led", 1}, 100); err != nil {
+		println("put led:", err.Error())
+	}
+	if _, err := actor.Call(s, Put{"fan", 0}, 100); err != nil {
+		println("put fan:", err.Error())
+	}
+	v, found, _ := lookup(s, "led")
 	println("led", v, found)
-	v, found = lookup(s, "door")
+	v, found, _ = lookup(s, "door")
 	println("door", v, found)
 
 	// A message sent to main before a Call stays in the mailbox: Call
 	// waits only for its own reply.
 	actor.Send(actor.Self(), "kept for later")
-	v, found = lookup(s, "fan")
+	v, found, _ = lookup(s, "fan")
 	println("fan", v, found)
 	println(actor.Receive())
 
 	// A Call to an actor that never answers times out.
 	silent := actor.Spawn(func() { actor.Receive() })
-	_, ok = actor.Call(silent, Lookup{"x"}, 50)
-	println("silent answered:", ok)
+	_, err := actor.Call(silent, Lookup{"x"}, 50)
+	println("silent:", err.Error())
+
+	// A Call to an actor that has exited fails at once.
+	actor.Kill(silent, actor.Killed)
+	_, _, err = lookup(silent, "x")
+	println("killed:", err == errors.NoProc, err.Error())
 }

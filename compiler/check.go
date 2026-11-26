@@ -923,7 +923,7 @@ func commaOk(lhs, rhs []ast.Expr) *ast.TypeAssertExpr {
 }
 
 // twoResult lists the builtin functions that return two values (by stubName).
-var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.open": true, "sys.Config": true,
+var twoResult = map[string]bool{"ReceiveTimeout": true, "call": true, "Whereis": true, "port.open": true, "sys.Config": true,
 	"fs.Open": true, "fs.ReadFile": true, "fs.Stat": true, "fs.ReadDir": true, "fs.Usage": true,
 	"File.Read": true, "File.Size": true,
 	"code.Load": true, "code.Spawn": true, "code.SpawnLink": true, "code.SpawnOpt": true,

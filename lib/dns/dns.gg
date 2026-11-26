@@ -61,12 +61,9 @@ func Lookup(name string, timeoutMs int) (int, error) {
 			pid, _ = actor.Whereis("dns")
 		}
 	}
-	r, ok := actor.Call(pid, query{Name: name, Deadline: actor.Now() + int64(timeoutMs)}, timeoutMs)
-	switch a := r.(type) {
-	case answer:
-		if ok {
-			return a.IP, a.Err
-		}
+	r, _ := actor.Call(pid, query{Name: name, Deadline: actor.Now() + int64(timeoutMs)}, timeoutMs)
+	if a, ok := r.(answer); ok { // r is nil if the Call failed
+		return a.IP, a.Err
 	}
 	return 0, errors.Timeout
 }

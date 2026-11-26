@@ -76,13 +76,13 @@ func shardFor(key string, shards []actor.PID) actor.PID {
 }
 
 // get asks the key's owner, with a timeout.
-func get(key string, shards []actor.PID) (int, bool) {
-	v, ok := actor.Call(shardFor(key, shards), Get{key}, 100)
-	if !ok {
-		return 0, false
+func get(key string, shards []actor.PID) (int, error) {
+	v, err := actor.Call(shardFor(key, shards), Get{key}, 100)
+	if err != nil {
+		return 0, err
 	}
-	n, isInt := v.(int)
-	return n, isInt
+	n, _ := v.(int)
+	return n, nil
 }
 
 func display() {
@@ -107,6 +107,6 @@ func main() {
 	for _, k := range []string{"door", "fan", "door", "window", "door"} {
 		actor.Send(shardFor(k, shards), Incr{k})
 	}
-	n, ok := get("door", shards)
-	println("door:", n, ok)
+	n, err := get("door", shards)
+	println("door:", n, err == nil)
 }

@@ -72,8 +72,8 @@ func Sync(server string, timeoutMs int) error {
 		return errors.Timeout
 	}
 	pid := actor.Spawn(worker)
-	r, got := actor.Call(pid, job{IP: ip, Deadline: deadline}, left+100)
-	if !got {
+	r, err := actor.Call(pid, job{IP: ip, Deadline: deadline}, left+100)
+	if err != nil {
 		actor.Kill(pid, actor.Shutdown)
 		return errors.Timeout
 	}

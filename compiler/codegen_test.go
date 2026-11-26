@@ -755,7 +755,10 @@ func main() {
 func TestCompileTwoResultTargets(t *testing.T) {
 	dis := compileSrc(t, `package main
 
-import "gogo/actor"
+import (
+	"gogo/actor"
+	"gogo/sys"
+)
 
 func main() {
 	var x any
@@ -763,16 +766,17 @@ func main() {
 	_, _ = actor.ReceiveTimeout(2)
 	p := actor.Self()
 	p, ok := actor.Whereis("a")
+	k := "b"
 	{
-		p, ok := actor.Call(p, 3, 4)
-		println(p, ok)
+		k, ok := sys.Config(k)
+		println(k, ok)
 	}
-	println(x, p, ok)
+	println(x, p, ok, k)
 }
 `)
 	_, body := funcDis(t, dis, "main")
 	code := parseIns(t, body)
-	// Locals: x=r0, p=r1, ok=r2; the inner p=r3, ok=r4.
+	// Locals: x=r0, p=r1, ok=r2, k=r3; the inner k=r4, ok=r5.
 	type want struct {
 		name    string
 		first   int      // lowest register the results may use
@@ -782,7 +786,7 @@ func main() {
 	cases := []want{
 		{"RECEIVE_TIMEOUT", 1, []string{"r0", "r0"}, ""},
 		{"WHEREIS", 3, []string{"r1", "r2"}, ""},
-		{"CALL", 5, []string{"r3", "r4"}, "r1"},
+		{"CONFIG_GET", 6, []string{"r4", "r5"}, "r3"},
 	}
 	seen := map[string]int{}
 	for i, in := range code {
@@ -812,7 +816,7 @@ func main() {
 				}
 			}
 			if c.argFrom != "" {
-				// The call's first argument is the outer p (r1), copied into
+				// The call's first argument is the outer k (r3), copied into
 				// the argument register before the BUILTIN.
 				base, _ := strconv.Atoi(m[2])
 				found := false
@@ -822,12 +826,12 @@ func main() {
 					}
 				}
 				if !found {
-					t.Errorf("%s does not read the outer p from %s:\n%s", c.name, c.argFrom, dis)
+					t.Errorf("%s does not read the outer k from %s:\n%s", c.name, c.argFrom, dis)
 				}
 			}
 		}
 	}
-	if seen["RECEIVE_TIMEOUT"] != 2 || seen["WHEREIS"] != 1 || seen["CALL"] != 1 {
+	if seen["RECEIVE_TIMEOUT"] != 2 || seen["WHEREIS"] != 1 || seen["CONFIG_GET"] != 1 {
 		t.Errorf("builtins seen %v:\n%s", seen, dis)
 	}
 }
@@ -847,7 +851,7 @@ func TestCompileActorBuiltins(t *testing.T) {
 		"println(actor.SendAfter(actor.Self(), 2, 1))":            "SEND_AFTER",
 		"println(actor.CancelTimer(actor.MakeRef()))":             "CANCEL_TIMER",
 		"actor.Sleep(3)":                                          "SLEEP",
-		"a, b := actor.Call(actor.Self(), 1, 2)\n\tprintln(a, b)": "CALL",
+		"a, b := actor.Call(actor.Self(), 1, 2)\n\tprintln(a, b)": "CALL_ERR",
 		"actor.Reply(actor.Request{}, 1)":                         "REPLY",
 		"println(actor.Register(\"n\", actor.Self()))":            "REGISTER",
 		"a, b := actor.Whereis(\"n\")\n\tprintln(a, b)":           "WHEREIS",

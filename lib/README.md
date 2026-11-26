@@ -75,7 +75,7 @@ declares `kbd`, `gogo/node` declares `tcp tcp_listen node`. Book chapter
 
 | package | kind | imports | requires |
 |---------|------|---------|------------|
-| `gogo/actor` | system | | none |
+| `gogo/actor` | system | errors | none (`Call`, `Fail`: library code, compiled only where used) |
 | `gogo/port` | system | actor, bytes | none (each constant `port.Open`: its driver); also the stream protocol every byte port speaks (`Chunk`, `Out`, `Done`, `Closed`) and the host-port types |
 | `gogo/bytes` | system | | none |
 | `gogo/net` | system | actor, bytes, errors | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`, `node`) |

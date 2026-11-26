@@ -41,6 +41,8 @@
  *       struct's type word: STRUCT_MUT, STRUCT_MAP, STRUCT_BOX, term.h).
  *       A GETFIELD of nil, badcode before, is R_NIL in an image of any
  *       minor; a valid older image never reads a field of nil.
+ *   v15.7 the actor API's error results: builtin 58 B_CALL_ERR (actor.Call
+ *       with a shared error code; B_CALL stays for older images).
  *
  * Reserved encodings (term.h): heap kinds 13-15, the specials from 0x72
  * up, the TYPEIS ids 0x10009-0x100FF and bits 19-20 of a struct's type
@@ -87,7 +89,7 @@
 
 #define IMAGE_MAGIC   0x4F474F47u
 #define IMAGE_MAJOR   15u
-#define IMAGE_MINOR   6u
+#define IMAGE_MINOR   7u
 #define IMAGE_VERSION (IMAGE_MAJOR << 16 | IMAGE_MINOR)   /* the newest this VM runs */
 #define IMAGE_HEADER_WORDS 8u
 
