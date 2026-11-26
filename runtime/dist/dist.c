@@ -1674,29 +1674,32 @@ static void n_close(Vm *vm, Port *p) {
     DistState *ds = state(vm);
     Link *l = link_of(ds, p);
     if (!l) return;
-    /* The nodes reached through l: its peer and, for the relay, every node
-     * of a proxy or watch whose route is l. */
-    uint32_t cap = l->relay ? 1u + ds->nprox + ds->nwatch : 1u, ng = 0;
-    uint16_t one, *gone = cap > 1u ? va_alloc(vm, cap * sizeof *gone) : NULL;
-    if (!gone) {
-        gone = &one;
-        cap = 1;
-    }
-    gone[ng++] = l->peer;
-    for (uint32_t i = 0; cap > 1u && i < ds->nprox; i++) {
-        uint16_t nd = ds->proxies[i].node;
-        if (nd && route(ds, nd) == l) gone[ng++] = nd;
-    }
-    for (uint32_t i = 0; cap > 1u && i < ds->nwatch; i++) {
-        uint16_t nd = ds->watches[i].node;
-        if (ds->watches[i].kind != W_FREE && route(ds, nd) == l) gone[ng++] = nd;
-    }
     if (l->rx) va_free(vm, l->rx, l->rx_need);
     if (l->carried) vm->board->dist_carrier->release(vm, l->cctx);
     uint16_t peer = l->peer;
     memset(l, 0, sizeof *l);
-    for (uint32_t i = 0; i < ng; i++) node_gone(vm, ds, gone[i]);
-    if (gone != &one) va_free(vm, gone, cap * sizeof *gone);
+    /* The nodes reached through l are gone: its peer, and every node of a
+     * proxy or watch that no link routes to any more (the relay's). No
+     * list, so nothing to allocate: node_gone frees that node's entries,
+     * and the scan starts over until none is left. */
+    node_gone(vm, ds, peer);
+    for (bool more = true; more;) {
+        more = false;
+        for (uint32_t i = 0; i < ds->nprox && !more; i++) {
+            uint16_t nd = ds->proxies[i].node;
+            if (nd && !route(ds, nd)) {
+                node_gone(vm, ds, nd);
+                more = true;
+            }
+        }
+        for (uint32_t i = 0; i < ds->nwatch && !more; i++) {
+            uint16_t nd = ds->watches[i].node;
+            if (ds->watches[i].kind != W_FREE && nd && nd != ds->self && !route(ds, nd)) {
+                node_gone(vm, ds, nd);
+                more = true;
+            }
+        }
+    }
     for (uint32_t i = 0; i < ds->nlinks; i++) {
         Link *k = ds->links[i];
         if (!k || !k->port) continue;
