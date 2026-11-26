@@ -603,7 +603,7 @@ FatFs).
   `/flash` and `/sd` (SPI at 20 MHz, falling back to 400 kHz). The build
   picks the board with `GOGO_BOARD=sticks3|cardputer`. The fixed state
   (the vfs table plus LittleFS and FatFs static state) is outside the VM
-  core: 1104 B on the StickS3, 2416 B on the Cardputer (budget 3072 B,
+  core: 1112 B on the StickS3, 2424 B on the Cardputer (budget 3072 B,
   asserted at compile time); details in
   [platform/esp32s3/README.md](../platform/esp32s3/README.md).
 

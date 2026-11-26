@@ -580,11 +580,11 @@ writes that partition, so files survive reflashing (the whole-flash erase
   unused VFS wrapper does not compile with it.) `CONFIG_LITTLEFS_ASSERTS=n`:
   an internal assert on a corrupt partition would abort at every boot.
 - Fixed state (logged at boot as `gogo: fs state N bytes`, at most 3072,
-  checked at compile time in `fs_lfs.c`): 1104 bytes = vfs tables 708 (4
+  checked at compile time in `fs_lfs.c`): 1112 bytes = vfs tables 708 (4
   slots of 168: an `lfs_file_t`, its `lfs_file_config` and cache, plus slot
-  header; the mount table) + LittleFS 396 (the `LfsVol`: `lfs_t`,
+  header; the mount table) + LittleFS 404 (the `LfsVol`: `lfs_t`,
   `lfs_config`, two 64-byte caches, the 16-byte lookahead, the block
-  device and options pointers and the mounted flag; the 28-byte `BlockDev`). An open file charges its owner
+  device and options pointers and the mounted flag; the 36-byte `BlockDev`). An open file charges its owner
   160 bytes.
 - Size: config `fs.flash.size` (bytes, `K` or `M` suffix, rounded down to
   4 KB, clamped to 64 KB .. the partition; unset = the whole partition,
@@ -659,7 +659,7 @@ at 400 kHz. Details are in the file's top comment; in short:
   reader). `Usage` is clamped to 2 GB - 1 on bigger cards, and its first call on an
   exFAT card (or FAT32 without FSINFO) scans the allocation map.
 - Fixed state (Cardputer build, logged as `gogo: fs state N bytes`, checked
-  at compile time in `fs_fat.c`): 2416 bytes = vfs 708 + LittleFS 396 +
+  at compile time in `fs_fat.c`): 2424 bytes = vfs 708 + LittleFS 404 +
   `/sd` 1312 (the `FatVol` 588: `FATFS` 572 with its 512-byte window and
   the volume's fields; `sdmmc_card_t` 204, the 512-byte bounce sector). A `FIL` is 80 bytes (slot 160).
 
