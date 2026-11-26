@@ -1358,14 +1358,15 @@ crash:
 #define write_err_lit(s) vm_write_err(vm, (s), sizeof(s) - 1u)
 
 /* Scheduler hooks into the port layer.
- *  sched_drain:    delivers the event ring and any due trailing debounce
- *                  values and drains the extra sources (net RX/link slots,
+ *  sched_drain:    delivers the event ring (or hands it to a driver's
+ *                  event hook) and drains the extra sources (net RX/link
+ *                  slots, the gpio debounce's window ends,
  *                  port_add_source); run at the top of every scheduler
  *                  pass. Reads the clock only when there is something to
- *                  do (port_work_pending).
+ *                  do (port_work_pending, which is port_due_now).
  *  sched_any_live: true while some open port could still produce events;
  *                  the VM does not finish while it holds.
- * port_next_deadline (the earliest pending debounce or source deadline)
+ * port_next_deadline (the earliest source deadline, a held gpio value's)
  * is folded into vm_next_deadline; a deadline already due is serviced by
  * the next sched_drain. */
 static void sched_drain(Vm *vm) {
@@ -1446,9 +1447,9 @@ int vm_step(Vm *vm, uint32_t budget) {
             /* Still work now, not idle: port_drain stops after
              * GOGO_EVQ_CAP events (more are waiting); a source whose drain
              * left work behind (a sliced TLS handshake step) drains again
-             * now, not at the next unrelated wakeup; a timer is due. Not
-             * port_work_pending: a held debounce value is due only at its
-             * deadline, which is in next (no spinning until then). */
+             * now, not at the next unrelated wakeup; a timer is due. Work
+             * that waits for time (a held gpio debounce value) is a
+             * source's deadline, in next (no spinning until then). */
             if (!port_due_now(vm) && (!have || next > vm_now(vm))) return VM_IDLE;
             if (spent) return VM_RUNNABLE;
         }
