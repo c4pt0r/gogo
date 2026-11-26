@@ -1091,6 +1091,11 @@ int interp_run(Vm *vm, Actor *a) {
                     obj[3] = roots[0];
                     obj[4] = R[rb + 1];
                     if ((r = msg_send(vm, a, pid, term_from_ref(off))) < 0) CRASH((uint32_t)-r);
+                    if (r == 1) {   /* a remote PID with no route: as a dead local one */
+                        R[ra] = T_NIL;
+                        R[ra + 1] = T_FALSE;
+                        break;
+                    }
                     R[ra] = roots[0];
                     CHECK(ref_serial(vm, a, R[ra], &serial));
                     if (ms > 0) {
@@ -1115,8 +1120,8 @@ int interp_run(Vm *vm, Actor *a) {
                 timer_cancel_wakeup(vm, a);
                 a->flags &= (uint8_t)~AF_CALL_PENDING;
                 RELOAD();
-                R[ra] = got ? t : T_NIL;
-                R[ra + 1] = term_from_bool(got != 0);
+                R[ra] = got == 1 ? t : T_NIL;   /* 2: failed (its node is gone) */
+                R[ra + 1] = term_from_bool(got == 1);
                 break;
             }
             case B_REPLY: {

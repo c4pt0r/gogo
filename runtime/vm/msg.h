@@ -22,6 +22,10 @@
 /* Msg.flags bit: the block carries off-heap Bytes handles and holds one
  * reference per occurrence until msg_free (bytes.h). */
 #define MSG_HANDLES 2u
+/* Msg.flags bit, with MSG_REPLY: the Call cannot be answered (its remote
+ * node is gone, runtime/dist/): the Call returns (nil, false) at once.
+ * The block holds only the serial. */
+#define MSG_FAILED 4u
 
 struct Msg {
     Msg *next;
@@ -114,7 +118,8 @@ bool msg_receive(Vm *vm, Actor *a, term *out);
 int msg_send_reply(Vm *vm, Actor *from, term to_pid, uint64_t serial, term body);
 
 /* Takes the reply with this Ref serial out of a's mailbox into a's heap,
- * stores the body in *out and returns 1. Ordinary messages stay queued. Any
+ * stores the body in *out and returns 1 (2, nothing stored: a MSG_FAILED
+ * block, the Call failed). Ordinary messages stay queued. Any
  * other reply block met on the way is stale (a Call blocks, so only one is
  * outstanding) and is freed. 0 if no such reply is queued; -1 if it is but
  * the heap cannot hold it (it stays queued). May GC. */

@@ -68,6 +68,16 @@ typedef struct Watch {
     uint64_t serial;         /* monitors: MON_OUT the local Ref's, MON_IN the watcher's */
 } Watch;
 
+/* A Call to a remote PID waiting for its reply: when its node goes, the
+ * caller gets a failed reply block (MSG_FAILED) and the Call returns at
+ * once. An actor waits for one Call at a time. */
+typedef struct Pending {
+    term caller;             /* 0: free */
+    uint16_t node;
+    uint16_t pad;
+    uint64_t serial;
+} Pending;
+
 typedef struct DistState {
     VmDist hooks;            /* first: vm->dist points here */
     uint16_t self;           /* this node's id */
@@ -78,6 +88,7 @@ typedef struct DistState {
     Proxy proxies[DIST_PROXIES];
     term exports[DIST_EXPORTS];
     Watch watches[DIST_WATCHES];
+    Pending calls[DIST_CALLS];
 } DistState;
 
 static const uint8_t nfields[(TYPE_RESERVED_COUNT + 1u) / 2u] = TYPE_NFIELDS;
@@ -875,6 +886,8 @@ static Actor *target(Vm *vm, DistState *ds, term pid) {
     return a && a->state != A_EXITED && !(a->flags & AF_EXIT_PENDING) ? a : NULL;
 }
 
+static void calls_fail(Vm *vm, DistState *ds, uint16_t node);
+
 /* Node `node` is unreachable: its monitors fire, its links signal, its
  * other watches and its proxies go. */
 static void node_gone(Vm *vm, DistState *ds, uint16_t node) {
@@ -888,6 +901,56 @@ static void node_gone(Vm *vm, DistState *ds, uint16_t node) {
         else if (w.kind == W_LINK) exit_to(vm, a, w.peer, R_NO_CONNECTION);
     }
     proxies_drop(ds, node);
+    calls_fail(vm, ds, node);
+}
+
+/* ---- Calls in flight ---- */
+
+/* msg was just sent by from to node: if it is a Call's Request (From is
+ * the sender, a Ref), remember the Call. */
+static void call_note(Vm *vm, DistState *ds, const Actor *from, term msg, uint16_t node) {
+    const uint32_t *o = obj_of(vm, from, msg);
+    if (!o || hdr_kind(o[0]) != K_STRUCT || o[1] != TYPE_REQUEST || hdr_words(o[0]) != 5u || o[2] != from->id)
+        return;
+    const uint32_t *r = obj_of(vm, from, o[3]);
+    if (!r || hdr_kind(r[0]) != K_REF || hdr_words(r[0]) != 3u) return;
+    Pending *slot = &ds->calls[0];
+    for (uint32_t i = 0; i < DIST_CALLS; i++) {
+        Pending *c = &ds->calls[i];
+        if (c->caller == from->id || !c->caller) {
+            slot = c;
+            if (c->caller == from->id) break;
+        }
+    }
+    slot->caller = from->id;
+    slot->node = node;
+    slot->serial = (uint64_t)r[1] | (uint64_t)r[2] << 32;
+}
+
+/* The reply for caller's Call serial arrived: forget the Call. */
+static void call_done(DistState *ds, term caller, uint64_t serial) {
+    for (uint32_t i = 0; i < DIST_CALLS; i++) {
+        Pending *c = &ds->calls[i];
+        if (c->caller == caller && c->serial == serial) c->caller = 0;
+    }
+}
+
+/* node is gone: its Calls in flight fail at once. A block for a Call that
+ * already returned is a stale reply, dropped unseen. */
+static void calls_fail(Vm *vm, DistState *ds, uint16_t node) {
+    for (uint32_t i = 0; i < DIST_CALLS; i++) {
+        Pending *c = &ds->calls[i];
+        if (!c->caller || c->node != node) continue;
+        Actor *a = actor_lookup(vm, c->caller);
+        c->caller = 0;
+        Msg *m = a ? note_new(vm, MSG_REPLY_HDR) : NULL;
+        if (!m) continue;
+        m->flags = MSG_REPLY | MSG_FAILED;
+        m->root = T_NIL;
+        m->data[0] = (uint32_t)c->serial;
+        m->data[1] = (uint32_t)(c->serial >> 32);
+        note_send(vm, a, m);
+    }
 }
 
 /* ---- the hooks (VmDist) ---- */
@@ -901,9 +964,13 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
     if (!e.why && 2u + len > DIST_FRAME_MAX) e.why = R_BAD_MSG;
     if (e.why && e.why != WHY_DROP) return -(int)e.why;
     Link *l = x ? route(ds, x->node) : NULL;
-    if (x) x->used = ++ds->tick;
+    if (!l) {                       /* stale, or no route: as a dead local PID */
+        ds->st.dropped++;
+        return 1;
+    }
+    x->used = ++ds->tick;
     uint8_t *p;
-    Msg *m = l && !e.why ? chunk_new(vm, l, 2u + len, &p) : NULL;
+    Msg *m = !e.why ? chunk_new(vm, l, 2u + len, &p) : NULL;
     if (!m) {
         ds->st.dropped++;
         return 0;
@@ -923,6 +990,7 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
         return 0;
     }
     chunk_send(vm, ds, l, m);
+    if (!serial) call_note(vm, ds, from, msg, x->node);
     return 0;
 }
 
@@ -1121,6 +1189,7 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
             ds->st.dropped++;
             return;
         }
+        if (type == F_REPLY) call_done(ds, a->id, rd64(f + 4));
         deliver(vm, ds, a, f + k, fn - k, type == F_REPLY, type == F_REPLY ? rd64(f + 4) : 0u);
         return;
     }

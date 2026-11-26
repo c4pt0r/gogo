@@ -465,12 +465,17 @@ int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out) {
         if (!(m->flags & MSG_REPLY)) {
             prev = m;
         } else if (((uint64_t)m->data[0] | ((uint64_t)m->data[1] << 32)) == serial) {
-            if (!take(vm, a, m, out)) return -1;
+            if (m->flags & MSG_FAILED) {
+                a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(vm, m));
+            } else if (!take(vm, a, m, out)) {
+                return -1;
+            }
             /* unpack may GC but never touches the queue; unlink m. */
             if (prev) prev->next = next; else a->mbox_head = next;
             if (!next) a->mbox_tail = prev;
+            int got = (m->flags & MSG_FAILED) ? 2 : 1;
             msg_free(vm, m);
-            return 1;
+            return got;
         } else {   /* a stale reply of an earlier, timed-out Call */
             if (prev) prev->next = next; else a->mbox_head = next;
             if (!next) a->mbox_tail = prev;

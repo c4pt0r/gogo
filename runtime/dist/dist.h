@@ -46,6 +46,7 @@ struct Vm;
 #define DIST_PROXIES   64u     /* remote PIDs known at once */
 #define DIST_EXPORTS   64u     /* local PIDs given out (reachable by peers) */
 #define DIST_WATCHES   32u     /* remote links and monitors, both directions */
+#define DIST_CALLS     16u     /* Calls to remote PIDs waiting at once (a lost node fails them) */
 #define DIST_DEPTH     16u     /* nesting of a term on the wire */
 #define DIST_WORDS_PER_BYTE 2u /* most heap words a received term may take per frame byte */
 
