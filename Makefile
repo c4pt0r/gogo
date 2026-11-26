@@ -419,15 +419,20 @@ test-net-mcu: $(BUILD)/gogovm_mcu
 # GOGO_DEBUG=1 (runtime/vm/config.h): the sanitizer builds also check
 # the runtime's internal invariants (GOGO_ASSERT).
 ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer -DGOGO_DEBUG=1
-# Leak checking is off (LeakSanitizer runs on Linux only): the C suites'
-# fixtures and gogovm's exit do not free their Vm; test-embed-leaks checks
-# the embedding API for leaks.
+# ASAN_OPTIONS (the caller's, then these):
+# - detect_leaks=0: LeakSanitizer (Linux only) would report the C suites'
+#   fixtures and gogovm's exit, which do not free their Vm; test-embed-leaks
+#   checks the embedding API for leaks.
+# - detect_stack_use_after_return=0: with gcc's ASan it is on, and its fake
+#   stack frames make mbedTLS's many small calls about 60 times slower (1 MB
+#   over TLS: 0.18 s without, 10.6 s with, on Linux arm64), past the net
+#   tests' 10 s limit. clang's ASan on macOS leaves it off too.
+TLS_ASAN_OPTIONS = $${ASAN_OPTIONS:+$$ASAN_OPTIONS:}detect_leaks=0:detect_stack_use_after_return=0
 test-tls-asan:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls
-	ASAN_OPTIONS=detect_leaks=0 build/asan/test_net
-	ASAN_OPTIONS=detect_leaks=0 build/asan/test_tls
-	ASAN_OPTIONS=detect_leaks=0 GOGO_NET_REAL_LIMIT=120 GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
-
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_net
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_tls
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)

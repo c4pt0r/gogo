@@ -487,10 +487,16 @@ rebuilt:
   tests, `make test-fs-host`'s Linux error paths, the ELF prelink step,
   `tools/libsyms.sh` and `tools/globals.sh` on ELF), `make test-lib` and
   `make test-tls-asan` pass on Ubuntu 24.04 arm64 with gcc 13, and the
-  test workflow runs them on Ubuntu x86-64. `make test-embed-tsan` and
-  `make test-embed-leaks` (LeakSanitizer) have not run on Linux, and
-  leak checking is off in `test-tls-asan` (the C suites' fixtures and
-  gogovm's exit do not free their VM).
+  test workflow is set up to run them on Ubuntu x86-64 and macOS.
+  `make test-embed-tsan` and `make test-embed-leaks` (LeakSanitizer) have
+  not run on Linux.
+- **No leak checking of the net and TLS C code.** `make test-tls-asan`
+  turns LeakSanitizer off, because the C suites' fixtures and gogovm's
+  exit do not free their VM, so a leak in the net stack or the TLS port
+  (an mbedTLS context not freed on close, say) would go unseen; macOS's
+  ASan has no leak checking at all. *Planned:* free the VM at gogovm's
+  exit (under `GOGO_DEBUG`) and in the fixtures' teardown, then turn
+  `detect_leaks` back on.
 
 ## ESP32-S3 boards
 
