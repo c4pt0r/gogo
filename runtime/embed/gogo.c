@@ -247,6 +247,7 @@ static uint32_t embed_max_ports(const gogo_config *c) {
 static int vm_setup(gogo_vm *g) {
     uint16_t cap = g->cfg.max_actors ? (uint16_t)g->cfg.max_actors : (uint16_t)GOGO_TABLE_CAP;
     g->closed_msg = NULL;            /* vm_init starts the allocator over */
+    g->closed_n = 0;
     if (vm_init(&g->vm, &g->fwd, g, g->fs ? &embed_board_flash : &embed_board, cap) != 0 ||
         vm_set_max_ports(&g->vm, embed_max_ports(&g->cfg)) != 0)
         return -1;

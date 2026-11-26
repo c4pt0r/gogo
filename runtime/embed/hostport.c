@@ -51,12 +51,20 @@ static int hp_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg
         return -1;
     /* The port's Closed is made now, so gogo_port_close can always send
      * it (a stream port's terminal Closed is never lost either). */
-    if (!g->closed_msg) {
-        g->closed_msg = va_alloc(vm, vm->port_max * sizeof *g->closed_msg);
-        if (!g->closed_msg) return -1;
-        memset(g->closed_msg, 0, vm->port_max * sizeof *g->closed_msg);
+    uint32_t i = port_index(vm, p);
+    if (i >= g->closed_n) {          /* grown with the port table, not at its cap */
+        uint32_t n = vm->port_n;
+        Msg **a = va_alloc(vm, n * sizeof *a);
+        if (!a) return -1;
+        memset(a, 0, n * sizeof *a);
+        if (g->closed_n) {
+            memcpy(a, g->closed_msg, g->closed_n * sizeof *a);
+            va_free(vm, g->closed_msg, g->closed_n * sizeof *a);
+        }
+        g->closed_msg = a;
+        g->closed_n = (uint16_t)n;
     }
-    Msg **closed = &g->closed_msg[port_index(vm, p)];
+    Msg **closed = &g->closed_msg[i];
     if (!(*closed = embed_closed_msg(vm, p->id))) return -1;
     int r = 0;
     if (hp->pub.open) {
