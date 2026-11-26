@@ -1,0 +1,22 @@
+// Printing a value whose shared subvalues are reachable by very many paths
+// (a chain of levels, each a slice of 16 copies of the level below) stops
+// after a bounded number of terms with " ...": the actor goes on.
+package main
+
+type tree struct {
+	kids []tree
+	n    int
+}
+
+func main() {
+	level := tree{n: 0}
+	for i := 0; i < 11; i++ {
+		ks := make([]tree, 16)
+		for j := 0; j < 16; j++ {
+			ks[j] = level
+		}
+		level = tree{kids: ks, n: i + 1}
+	}
+	println(level.n, level)
+	println("survived")
+}

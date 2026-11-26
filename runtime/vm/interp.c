@@ -120,28 +120,48 @@ static bool term_live(const Vm *vm, const Actor *a, term t) {
     return true;
 }
 
+/* deep_live's limit on the terms it visits. It walks without marking what
+ * it has seen (a mark set would cost RAM), so a value that reaches the same
+ * subvalue by many paths is walked once per path, and the number of paths
+ * can grow as width^depth for a value of a few hundred words. A value
+ * without such sharing cannot reach the limit: every visit but the first
+ * reads a distinct word of the actor's heap (at most HEAP_MAX_WORDS). The
+ * println walk (out_term) visits the same terms in the same order under
+ * the same limit, so it never prints what was not checked. */
+#define WALK_BUDGET 65536
+
+/* deep_live's verdicts besides "live" (the budget left, >= 0). */
+#define WALK_CUT   (-1)
+#define WALK_STALE (-2)
+
 /* term_live for everything println would print: t and, as out_term walks
- * them, struct fields and slice elements (to the same depth). Also the
- * gate for what a port reads in place (port.Open's name and cfg, a port
- * command): a stale value there is badcode for the actor too, for every
- * driver, rather than a silently refused open or ignored command. */
-static bool deep_live(const Vm *vm, const Actor *a, term t, int depth) {
-    if (!term_live(vm, a, t)) return false;
-    if (depth >= PRINT_MAX_DEPTH) return true;
+ * them, struct fields and slice elements (to the same depth), each visit
+ * spending one of left (WALK_BUDGET at depth 0). Returns what is left,
+ * WALK_CUT once it is spent or WALK_STALE. The gate for what a port reads
+ * in place (port.Open's name and cfg, a port command) is ">= 0": a stale
+ * value there is badcode for the actor too, for every driver, rather than
+ * a silently refused open or ignored command, and so is a value too
+ * entangled to check within the budget. println's is "not WALK_STALE": it
+ * cuts what it prints at the same point. */
+static int32_t deep_live(const Vm *vm, const Actor *a, term t, int depth, int32_t left) {
+    if (left <= 0) return WALK_CUT;
+    left--;
+    if (!term_live(vm, a, t)) return WALK_STALE;
+    if (depth >= PRINT_MAX_DEPTH) return left;
     const uint32_t *obj = obj_of(vm, a, t);
     uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
     if (kind == K_STRUCT) {
-        for (uint32_t i = 2; i < hdr_words(obj[0]); i++)
-            if (!deep_live(vm, a, field_term(t, obj[i]), depth + 1)) return false;
+        for (uint32_t i = 2; left >= 0 && i < hdr_words(obj[0]); i++)
+            left = deep_live(vm, a, field_term(t, obj[i]), depth + 1, left);
     } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
         const uint32_t *arr = obj_of(vm, a, obj[4]);
         uint32_t off = obj[1], len = obj[2];
         if (arr && hdr_kind(arr[0]) == K_ARRAY && len && off <= arr[1] && len <= arr[1] - off) {
-            for (uint32_t i = 0; i < len; i++)
-                if (!deep_live(vm, a, arr[2 + off + i], depth + 1)) return false;
+            for (uint32_t i = 0; left >= 0 && i < len; i++)
+                left = deep_live(vm, a, arr[2 + off + i], depth + 1, left);
         }
     }
-    return true;
+    return left;
 }
 
 /* ---- ints ---- */
@@ -300,63 +320,68 @@ static uint32_t arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
 
 /* ---- println ---- */
 
-static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth);
+static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth, int32_t left);
 
 /* A slice, bare or inside a printed struct: [e0 e1 ...] (Go's println
- * prints [len/cap]address instead). */
-static void out_slice(Out *o, const Vm *vm, const Actor *a, const uint32_t *h, int depth) {
+ * prints [len/cap]address instead). out_slice and out_term spend left as
+ * deep_live does and return what is left; once it is spent the rest of
+ * the value is " ..." and no more (then -1). */
+static int32_t out_slice(Out *o, const Vm *vm, const Actor *a, const uint32_t *h, int depth,
+                         int32_t left) {
     uint32_t off = h[1], len = h[2];
     const uint32_t *arr = obj_of(vm, a, h[4]);
-    if (depth >= PRINT_MAX_DEPTH) { out_str(o, "[...]"); return; }
+    if (depth >= PRINT_MAX_DEPTH) { out_str(o, "[...]"); return left; }
     out_str(o, "[");
     if (arr && len && off <= arr[1] && len <= arr[1] - off) {
         bool bytes = hdr_kind(arr[0]) == K_BYTEARR;
-        for (uint32_t i = 0; i < len; i++) {
-            if (i) out_str(o, " ");
+        for (uint32_t i = 0; i < len && left >= 0; i++) {
+            if (i && left > 0) out_str(o, " ");
             if (bytes) out_int(o, ((const uint8_t *)(arr + 2))[off + i]);
-            else out_term(o, vm, a, arr[2 + off + i], depth + 1);
+            else left = out_term(o, vm, a, arr[2 + off + i], depth + 1, left);
         }
     }
-    out_str(o, "]");
+    if (left >= 0) out_str(o, "]");
+    return left;
 }
 
-static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
+static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth, int32_t left) {
+    if (left <= 0) {
+        if (!left) out_str(o, " ...");
+        return -1;
+    }
+    left--;
     int32_t v;
     int64_t v64;
-    if (int_val(vm, a, t, &v)) { out_int(o, v); return; }
-    if (int64_val(vm, a, t, &v64)) { out_int64(o, v64); return; }
-    if (t == T_TRUE) { out_str(o, "true"); return; }
-    if (t == T_FALSE) { out_str(o, "false"); return; }
-    if (t == T_NIL) { out_str(o, "nil"); return; }
-    if (t == T_EMPTYSTR) return;
-    if (t == T_ZEROREF) { out_str(o, "<ref 0>"); return; }
-    if (t == T_NILSLICE) { out_str(o, "[]"); return; }
     const uint8_t *bp;
     uint32_t blen;
-    if (bytes_view(vm, a, t, &bp, &blen)) {     /* a Bytes prints as its text */
+    const uint32_t *obj = obj_of(vm, a, t);
+    uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
+    if (int_val(vm, a, t, &v)) out_int(o, v);
+    else if (int64_val(vm, a, t, &v64)) out_int64(o, v64);
+    else if (t == T_TRUE) out_str(o, "true");
+    else if (t == T_FALSE) out_str(o, "false");
+    else if (t == T_NIL) out_str(o, "nil");
+    else if (t == T_EMPTYSTR) { }
+    else if (t == T_ZEROREF) out_str(o, "<ref 0>");
+    else if (t == T_NILSLICE) out_str(o, "[]");
+    else if (bytes_view(vm, a, t, &bp, &blen)) {     /* a Bytes prints as its text */
         if (blen) out_bytes(o, (const char *)bp, blen);
-        return;
-    }
-    if (term_is_pid(t)) {
+    } else if (term_is_pid(t)) {
         out_str(o, "<pid ");
         out_int(o, term_pid_slot(t));
         out_str(o, ">");
-        return;
-    }
-    const uint32_t *obj = obj_of(vm, a, t);
-    uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
-    if (kind == K_STRING && obj[1] <= (hdr_words(obj[0]) - 2u) * 4u) {
+    } else if (kind == K_STRING && obj[1] <= (hdr_words(obj[0]) - 2u) * 4u) {
         out_bytes(o, (const char *)(obj + 2), obj[1]);
     } else if (kind == K_STRUCT) {
-        if (depth >= PRINT_MAX_DEPTH) { out_str(o, "{...}"); return; }
+        if (depth >= PRINT_MAX_DEPTH) { out_str(o, "{...}"); return left; }
         out_str(o, "{");
-        for (uint32_t i = 2; i < hdr_words(obj[0]); i++) {
-            if (i > 2) out_str(o, " ");
-            out_term(o, vm, a, field_term(t, obj[i]), depth + 1);
+        for (uint32_t i = 2; i < hdr_words(obj[0]) && left >= 0; i++) {
+            if (i > 2 && left > 0) out_str(o, " ");
+            left = out_term(o, vm, a, field_term(t, obj[i]), depth + 1, left);
         }
-        out_str(o, "}");
+        if (left >= 0) out_str(o, "}");
     } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
-        out_slice(o, vm, a, obj, depth);
+        left = out_slice(o, vm, a, obj, depth, left);
     } else if (kind == K_CLOSURE) {
         out_str(o, "<func>");
     } else if (kind == K_BUF) {
@@ -368,6 +393,7 @@ static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth) {
     } else {
         out_str(o, "?");
     }
+    return left;
 }
 
 static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n) {
@@ -375,7 +401,7 @@ static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t 
     out_init(&o, vm, 1);
     for (uint32_t i = 0; i < n; i++) {
         if (i) out_str(&o, " ");
-        out_term(&o, vm, a, args[i], 0);
+        out_term(&o, vm, a, args[i], 0, WALK_BUDGET);
     }
     out_str(&o, "\n");
     out_flush(&o);
@@ -898,7 +924,7 @@ int interp_run(Vm *vm, Actor *a) {
             switch (ext) {
             case B_PRINTLN:
                 /* Anything printed that names a gone module is badcode. */
-                for (uint32_t i = 0; i < rc; i++) CHECK(deep_live(vm, a, R[rb + i], 0));
+                for (uint32_t i = 0; i < rc; i++) CHECK(deep_live(vm, a, R[rb + i], 0, WALK_BUDGET) != WALK_STALE);
                 do_println(vm, a, R + rb, rc);
                 R[ra] = T_NIL;
                 break;
@@ -920,7 +946,7 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 2);
                 if (port_is(R[rb])) {
                     /* A command: handed to the driver in place, for any sender. */
-                    CHECK(deep_live(vm, a, R[rb + 1], 0));
+                    CHECK(deep_live(vm, a, R[rb + 1], 0, WALK_BUDGET) >= 0);
                     port_command(vm, a, R[rb], R[rb + 1]);
                     R[ra] = T_NIL;
                     break;
@@ -1172,7 +1198,8 @@ int interp_run(Vm *vm, Actor *a) {
             case B_PORT_OPEN: {
                 CHECK(rc == 2);
                 REGS(ra, 2);
-                CHECK(deep_live(vm, a, R[rb], 0) && deep_live(vm, a, R[rb + 1], 0));
+                CHECK(deep_live(vm, a, R[rb], 0, WALK_BUDGET) >= 0 &&
+                      deep_live(vm, a, R[rb + 1], 0, WALK_BUDGET) >= 0);
                 term pid = port_open(vm, a, R[rb], R[rb + 1]);   /* no GC */
                 R[ra] = pid != T_NIL ? pid : T_ZEROPID;   /* failed: the zero PID */
                 R[ra + 1] = term_from_bool(pid != T_NIL);

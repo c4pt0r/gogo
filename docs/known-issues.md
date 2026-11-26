@@ -99,9 +99,16 @@ rebuilt:
 - **`gogo/supervisor` supervises one child.** There is no multi-child
   `one_for_one` strategy. *Workaround:* one supervisor per child.
 - **Small costs on hot paths.** Sending to a dead or stale PID walks the
-  message once (to check it). Every port command and `port.Open`
-  validates its whole value without a visited set, so a large shared
-  structure is walked once per path to it.
+  message once (to check it).
+- **Values with heavily shared parts.** `println`, every port command and
+  `port.Open` walk the whole value (to depth 16) without a visited set,
+  so a part reachable by many paths is walked once per path. The walk
+  stops after 65536 terms, so it takes at most a fraction of a
+  millisecond on the host: `println` then ends the value with ` ...`,
+  and a port command or `port.Open` ends the actor with `badcode`. A
+  value without shared parts never reaches the limit (an actor's heap
+  holds fewer words). *Workaround:* send ports flat values; print the
+  parts of a shared structure separately.
 
 ### Hot loading
 
