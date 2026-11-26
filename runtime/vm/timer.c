@@ -111,7 +111,7 @@ static Timer *heap_remove(Vm *vm, uint32_t i) {
 
 /* A new entry (serial 0, no owner), with room made for it in the heap.
  * NULL if out of memory (nothing changes; msg stays the caller's). */
-static Timer *timer_new(Vm *vm, uint64_t deadline, term pid, Msg *msg) {
+static inline Timer *timer_new(Vm *vm, uint64_t deadline, term pid, Msg *msg) {
     if (!heap_reserve(vm)) return NULL;
     Timer *t = va_alloc(vm, sizeof *t);
     if (!t) {
@@ -127,7 +127,7 @@ static Timer *timer_new(Vm *vm, uint64_t deadline, term pid, Msg *msg) {
 }
 
 /* Cancels the timer with this serial, or with serial 0 pid's wakeup. */
-static bool cancel(Vm *vm, uint64_t serial, term pid) {
+static inline bool cancel(Vm *vm, uint64_t serial, term pid) {
     for (uint32_t i = 0; i < vm->ntimers; i++) {
         const Timer *t = vm->timers[i];
         if (serial ? t->serial == serial : t->pid == pid && t->msg == NULL) {
