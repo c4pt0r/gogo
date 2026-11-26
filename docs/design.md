@@ -92,7 +92,25 @@ own were also considered and rejected in favour of Go syntax.
    `cmd/gogo/`; Go standard library only): `go/parser` -> `go/types`
    (32-bit sizes) -> subset check (`compiler/check.go`) -> code
    generation -> a bytecode image (`.ggb`). Sources are the `.gg` files
-   of a directory (`compiler.SourceExt`).
+   of a directory (`compiler.SourceExt`), or one file (`gogo run x.gg`);
+   a first line starting with `#!` reads as an empty line, for
+   executable scripts. The loader (`compiler/load.go`) parses package
+   main from the build root, then loads each import depth first: the
+   stub packages and the `gogo/X` libraries from the embedded `lib/`,
+   and user packages, every other import path, from disk. A user package
+   is found in the build root when the path's first element is the root
+   directory's name (`app/util` is `<root>/util/`), else in each
+   directory of the search path in turn (`compiler.Config.Path`:
+   `-path`, `$GOGOPATH`, or `$HOME/gogo`); the first directory with `.gg`
+   files wins, and more than one is a warning (`Program.Warnings`). User
+   packages compile exactly like libraries (they join `Program.Libs`, in
+   dependency order), so their types are the image's own module types,
+   their constant opens count for the requirements and their
+   `//gogo:optional` covers their own opens. Their package clause must
+   be the directory's name and `main` is only the root's; cycles and
+   missing packages are errors naming the chain or every place
+   searched. A program that imports no user package compiles exactly as
+   before.
 2. **The VM** (`runtime/vm/`, C): image loader, interpreter, scheduler,
    per-actor heaps and GC, mailboxes, timers, the port (peripheral driver)
    layer and the module table.
@@ -169,15 +187,19 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
 - `println` of any value of the subset except `Bytes` and `Buffer`;
   slices print their elements, `[1 2 3]` (Go's `println` prints
   `[len/cap]address`).
-- Programs: one `package main`, possibly in several files, plus the
-  `gogo/...` libraries.
+- Programs: one `package main` (the build root), possibly in several
+  files, plus the `gogo/...` libraries and user packages: any other
+  import path, found in the build root (`app/util` is `<root>/util/`)
+  and then in the search path (`$GOGOPATH`, default `$HOME/gogo`;
+  `gogo build -path`), first match wins. No `go.mod`, no versions; a
+  package's name is its directory's name (§5.1, the loader).
 
 **Not supported yet (planned for the "language completeness"
 milestone):** maps, methods, pointers, arrays, integer types other than
 `int`, `int64` and `byte` (`uint32` included), package-level variables,
 a `switch` on an `any` or a struct value, type assertions, `panic`, the
-`error` interface, assignment to struct fields, interfaces other than
-`any` and user packages (a program cannot import a package of its own).
+`error` interface, assignment to struct fields and interfaces other than
+`any`.
 Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 

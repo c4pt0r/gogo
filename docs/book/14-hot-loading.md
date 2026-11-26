@@ -22,7 +22,10 @@ same format and are built the same way:
 gogo build ./greeter -o greeter.gmod     # the extension is only a habit
 ```
 
-A module is an ordinary gogo `package main`. Its **entries** are the
+A module is an ordinary gogo `package main`, and may have packages of its
+own: built from `greeter/`, `import "greeter/words"` is `greeter/words/`,
+then the search path, exactly as for a program (section 3.1.1); they are
+compiled into the module. Its **entries** are the
 exported functions with the signature `func()` or `func(arg any)`, found by
 name (case-sensitive). `func main()` is exported as the entry `main`. At
 boot the firmware loads the flashed image as module 0 and starts its

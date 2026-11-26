@@ -151,8 +151,9 @@ board never needs the compiler, and an image is portable, so the same
 
 ### What is gogovm?
 The gogo VM built for your computer (macOS or Linux): the same C runtime
-that runs on the boards, compiled as a command-line program,
-`build/gogovm` (`make vm`). It runs `.ggb` images with simulated hardware:
+that runs on the boards, compiled as a command-line program: built from
+source as `build/gogovm` (`make vm`), or downloaded from a release
+(`gogovm-<os>-<arch>`, to put next to `gogo`). It runs `.ggb` images with simulated hardware:
 GPIO, keyboard, IMU, IR and the microphone are driven by script lines on
 standard input, the network can be simulated or connected, `/flash` and
 `/sd` map to host directories (`--fs-root`), and the screen renders in the
@@ -214,14 +215,15 @@ Yes. The front end is Go's standard library: `go/parser` for parsing,
 `go/ast` and `go/token`, `go/types` for type checking (configured for a
 32-bit target, so `int` has the size it has on the device) and
 `go/constant`. gogo's own code then rejects what the subset does not
-support, resolves `gogo/...` imports and requirements, generates bytecode
+support, resolves imports (`gogo/...` and your own packages) and
+requirements, generates bytecode
 and writes the image. Syntax and type rules, and the shape of error
 messages, are therefore Go's.
 
 ### Which Go features are missing, and are they coming?
-Expression `switch`, labeled `break`/`continue`, `range` over an int and
-variadic functions are supported. Planned, in this order: methods, field
-assignment and user packages (compiler only); then `panic`, type assertions,
+Expression `switch`, labeled `break`/`continue`, `range` over an int,
+variadic functions and packages of your own are supported. Planned, in
+this order: methods and field assignment (compiler only); then `panic`, type assertions,
 interfaces and `error`; then pointers (boxed, copied when sent), maps (a
 library, deterministic order), read-only package variables and `fmt`; then
 sized integers, floating point (`float32` and `float64`), arrays, embedded
@@ -231,21 +233,24 @@ mutable globals, channels, `go` statements. Generics are deferred.
 ### Can I import packages?
 - **The standard library, yes:** `gogo/actor`, `gogo/http`, `gogo/strconv`,
   `gogo/tui` and the rest are built into the compiler.
-- **Your own packages, soon.** Today a program is one directory, and
-  `import "app/util"` is refused. Coming next: imports outside `gogo/`
-  resolve first inside the directory you build (`gogo build app` maps
-  `app/util` to `app/util/`), then in each directory of `$GOGOPATH`
-  (colon-separated, `;` on Windows; `$HOME/gogo` when unset), first match
-  wins, with a warning when the same path exists in more than one place.
-  No `go.mod` is needed. `gogo env` will print the search path and
-  `gogo build -path` will override it. Fetching packages from the network
+- **Your own packages, yes.** An import outside `gogo/` is resolved first
+  inside the directory you build (`gogo build app` maps `app/util` to
+  `app/util/`), then in each directory of `$GOGOPATH` (colon-separated,
+  `;` on Windows; `$HOME/gogo` when unset). The first match wins, with a
+  warning when the same path exists in more than one place. No `go.mod`
+  is needed. `gogo env` prints the search path and `gogo build -path`
+  overrides it (book, section 3.1.1). Fetching packages from the network
   (`gogo get`) and versioning come later.
 - **Ordinary Go packages, no.** gogo is a subset of Go, and most Go
   packages use features it does not have (goroutines, reflection, and for
   now maps and floats). Libraries have to be written for gogo.
 
-At run time, separately built modules can also be combined with hot
-loading (book chapter 14).
+### Can I write scripts?
+Yes, on your computer. `gogo run hello.gg` compiles and runs one file, and
+a file starting with `#!/usr/bin/env -S gogo run` runs directly after
+`chmod +x` (the compiler ignores a first `#!` line). A script can import
+packages next to it and from `$GOGOPATH`. It cannot read command-line
+arguments yet. See the book, chapter 2.
 
 ### Can I compile on the device?
 No. The compiler is written in Go and needs the Go runtime, which does not

@@ -137,9 +137,7 @@ rebuilt:
   pointers, arrays, integer types other than `int`, `int64` and `byte`
   (`uint32` included), floats, package-level `var`s, a `switch` on an
   `any` or a struct value, type assertions, `panic`, the `error` type,
-  assignment to struct fields, interfaces other than `any` and packages
-  of your own (only `package main`, possibly in several files, plus the
-  `gogo/...` libraries). `goto` is rejected (labeled `break` and
+  assignment to struct fields and interfaces other than `any`. `goto` is rejected (labeled `break` and
   `continue` cover its uses). Channels, `go`, `select`, generics, `defer`
   and `recover` are outside the design. "Language completeness" is a
   planned milestone. *Workarounds:* a type switch for assertions and for

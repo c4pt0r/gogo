@@ -1,0 +1,15 @@
+// Package banner frames titles; it imports a gogo library like any
+// package.
+package banner
+
+import "gogo/strings"
+
+// Title frames s between two lines of dashes.
+func Title(s string) string {
+	s = strings.TrimSpace(s)
+	line := ""
+	for i := 0; i < len(s)+4; i++ {
+		line += "-"
+	}
+	return line + "\n| " + s + " |\n" + line
+}

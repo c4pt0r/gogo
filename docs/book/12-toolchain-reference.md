@@ -2,14 +2,16 @@
 
 Everything is done with one command, `gogo`: prebuilt in each release
 (`gogo-<os>-<arch>`, chapter 2), or built with `go build -o build/gogo
-./cmd/gogo`. It runs on macOS and Linux; on Windows, `setup` flashes the
+./cmd/gogo`. `gogo run` also needs the host VM, `gogovm` (released as
+`gogovm-<os>-<arch>` for macOS and Linux, or built with `make vm`). It runs on macOS and Linux; on Windows, `setup` flashes the
 firmware and programs, but the serial console commands (`monitor`,
 `config` on a board, and the Wi-Fi and first-program steps of `setup`)
 are not supported.
 
 ```text
-gogo build <dir> [-o out.ggb]
-gogo run [--key c=pin]... [--fs-root DIR] <dir|file.ggb>
+gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
+gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
+gogo env [-path dirs]
 gogo dis <file.ggb>
 gogo flash [-port P] [-esptool path] app.ggb
 gogo monitor [-port P] [-t seconds] [-until text] [-reset]
@@ -22,12 +24,14 @@ gogo version
 ## gogo build
 
 ```text
-gogo build <dir> [-o out.ggb]
+gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
 ```
 
-Compiles the `package main` in `<dir>` (all its `.gg` files) and the gogo
-libraries it imports into one image file. Without `-o` the image is named
-after the directory, `<dir>.ggb`, in the current directory. The image contains bytecode and constants and runs unchanged on
+Compiles the `package main` in `<dir>` (all its `.gg` files), the gogo
+libraries and the packages of your own it imports into one image file.
+Without `-o` the image is named after the directory, `<dir>.ggb`, in the
+current directory. Given a `.gg` file instead (or a file starting with
+`#!`), it compiles that file alone as `package main`, into `<name>.ggb`. The image contains bytecode and constants and runs unchanged on
 the host VM and on any board.
 
 Errors are printed as `file:line:col: message` and the exit status is 1.
@@ -40,6 +44,34 @@ main.gg:9:2: gogo: captured variable must not be reassigned
 
 Type errors are reported first; subset errors appear once the program
 type-checks. Chapter 3 lists the subset errors.
+
+### Packages and the search path
+
+An import that does not start with `gogo/` names a package of your own
+(section 3.1.1). `<dir>` (or the directory of the single file) is the
+*build root*, and the import is looked up, first match wins:
+
+1. in the build root, when its first element is the root directory's
+   name: `import "app/util"` while building `app/` is `app/util/`;
+2. in each directory of the search path, in order: `import "lib/ring"`
+   is `<dir>/lib/ring/`.
+
+A match is a directory holding `.gg` files. The search path is `-path
+dirs` if given, else `$GOGOPATH` (directories separated by `:`, or `;`
+on Windows; empty elements are skipped), else `$HOME/gogo` when
+`GOGOPATH` is unset. A path found in more than one place is a warning
+naming every location; a path found nowhere is an error listing them:
+
+```text
+main.gg:3:8: gogo: import "app/nope": package not found; searched:
+	app/nope (build root: no such directory)
+	/home/you/gogo/app/nope (search path: no such directory)
+```
+
+A package's name must be its directory's name, only the build root may be
+`package main`, and import cycles are errors that show the chain. A module
+built for hot loading resolves its packages in the same way, from its own
+directory.
 
 Only `.gg` files are read: `.go` files in the directory are ignored, and a
 directory with `.go` files but no `.gg` file is an error that says to
@@ -125,11 +157,16 @@ package http
 ## gogo run
 
 ```text
-gogo run [--key c=pin]... [--fs-root DIR] <dir|file.ggb>
+gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
 ```
 
 Runs a program on the host VM. Given a directory it builds it first (to a
-temporary image); given a `.ggb` file it runs that image. The exit status
+temporary image), all of its `.gg` files together; given a `.gg` file, or
+any file starting with `#!`, it builds that file alone, with its directory
+as the build root for packages (an executable script with the first line
+`#!/usr/bin/env -S gogo run` runs this way, chapter 2); given a `.ggb`
+file it runs that image. `-path dirs` is the search path of the build, as
+for `gogo build`. Arguments after the program are refused for now. The exit status
 is the VM's: 0 when the VM ran until nothing was left to do, 1 if the
 image requires a driver or mount the host VM lacks (for example `tls` in a
 VM built without mbedTLS), 2 if the image could not be loaded (also an
@@ -186,14 +223,42 @@ Options:
 **Output.** `println` writes to standard output. Crash reports and the
 simulated GPIO outputs (`gpio: pin 5 = 1`) go to standard error.
 
-**Environment.** `GOGO_VM` names the VM to use (default: `build/gogovm` of
-the gogo tree). `GOGO_CONFIG` names the configuration file that
+**The VM.** `gogo run` uses the first of: `$GOGO_VM`; `gogovm` (or the
+release asset name `gogovm-<os>-<arch>`) in the directory of the `gogo`
+executable, symlinks resolved; `build/gogovm` in the gogo source tree
+around the `gogo` executable or the current directory. If none is found
+it says so and what to do. `gogo env` prints the one it would use.
+
+**Environment.** `GOGO_VM` names the VM to use (above). `GOGOPATH` is the
+package search path of the build. `GOGO_CONFIG` names the configuration file that
 `sys.Config` reads (default `~/.gogo/config`). `GOGO_UNIX_TIME_MS` starts
 the wall clock (`sys.Time`, chapter 10.8) at that Unix time in ms instead of
 the computer's clock; `0`, or a time earlier than the VM's build, starts it
 unknown, as on a board.
 
 There is no network on the host (chapter 10).
+
+## gogo env
+
+```text
+gogo env [-path dirs]
+```
+
+Prints the version, the package search path (where it comes from:
+`$GOGOPATH`, `$HOME/gogo` when `GOGOPATH` is unset, or `-path`) and the VM
+`gogo run` would use, with where it was found:
+
+```text
+$ gogo env
+version   v0.4.0 (image format 15.1)
+GOGOPATH  /home/you/gogo ($HOME/gogo, GOGOPATH is unset)
+search    1. the build root (imports starting with its directory's name)
+          2. /home/you/gogo
+gogovm    /usr/local/bin/gogovm (next to gogo)
+```
+
+A VM that cannot be found is reported on the `gogovm` line, and the exit
+status is still 0.
 
 ## gogo dis
 
@@ -439,4 +504,7 @@ docs/book/examples/run.sh 04-call      # one
 
 `run.sh` runs each example the way the book shows (with its `input`,
 `fsroot` and `config` files) and compares the output with the
-`expected.out` and `expected.err` files next to it.
+`expected.out` and `expected.err` files next to it. An example of several
+packages keeps its program in `app/` (the build root, so its imports
+start with `app/`); `run.sh` runs it from there, with an empty search
+path.

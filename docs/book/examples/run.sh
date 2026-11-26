@@ -12,6 +12,9 @@
 #   config         used as the config store ($GOGO_CONFIG)
 #   compile-fails  present: the program must NOT compile; the compiler's
 #                  message is compared with expected.err
+#   app/           a program of several packages: built and run from app/
+#                  (the build root, so its imports start with app/) when the
+#                  example directory itself has no .gg files
 #
 # Usage: docs/book/examples/run.sh [name...]   (from anywhere in the repo)
 # Needs build/gogo and build/gogovm (make vm; go build -o build/gogo ./cmd/gogo).
@@ -26,10 +29,12 @@ pass=0; fail=0
 if [ $# -gt 0 ]; then names="$*"; else names=$(cd "$here" && ls -d */ | tr -d /); fi
 for name in $names; do
     d="$here/$name"
-    ls "$d"/*.gg >/dev/null 2>&1 || continue
+    src="$d"
+    ls "$d"/*.gg >/dev/null 2>&1 || src="$d/app"
+    ls "$src"/*.gg >/dev/null 2>&1 || continue
     out="$tmp/$name.out"; err="$tmp/$name.err"
     if [ -f "$d/compile-fails" ]; then
-        if (cd "$d" && "$gogo" build . -o "$tmp/$name.ggb") >"$out" 2>"$err"; then
+        if (cd "$src" && "$gogo" build . -o "$tmp/$name.ggb") >"$out" 2>"$err"; then
             echo "FAIL $name: compiled, but should not"; fail=$((fail+1)); continue
         fi
         : >"$out"
@@ -51,7 +56,7 @@ for name in $names; do
         [ -f "$d/config" ] && cfg="$d/config"
         stdin=/dev/null
         [ -f "$d/input" ] && stdin="$d/input"
-        (cd "$d" && GOGO_CONFIG="$cfg" "$gogo" run $args . <"$stdin" >"$out" 2>"$err")
+        (cd "$src" && GOGO_CONFIG="$cfg" GOGOPATH= "$gogo" run $args . <"$stdin" >"$out" 2>"$err")
         code=$?
         if [ $code -ne 0 ]; then
             echo "FAIL $name: exit status $code"; cat "$err"; fail=$((fail+1)); continue

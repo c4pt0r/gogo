@@ -25,7 +25,9 @@ Two kinds of package:
   `isStub` in `compiler/load.go`.
 - **library**: written in the gogo subset and compiled into every image that
   imports it (no dead-function elimination). A library may import stubs and
-  other libraries, without cycles.
+  other libraries, without cycles, but not a user package (a program's own,
+  any import path outside `gogo/`). User packages compile like libraries
+  and may import both.
 
 The requirements column lists the names the compiler records in the
 image when a package is compiled in (`compiler/modinfo.go`): the driver of

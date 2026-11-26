@@ -19,10 +19,11 @@ so you will never get a program that silently behaves differently from Go.
 
 ## 3.1 Programs and packages
 
-A program is one directory with `package main` and `func main()`. It can be
-split over several `.gg` files (gogo source files; other files in the
-directory, `.go` files included, are not read). Your program
-can import only gogo's own packages, all under the `gogo/` path:
+A program is a directory with `package main` and `func main()`, the
+*build root*. `package main` can be split over several `.gg` files (gogo
+source files; other files in the directory, `.go` files included, are not
+read). A program can import gogo's own packages, all under the `gogo/`
+path, and packages of your own (section 3.1.1):
 
 | Package | What it is |
 |---|---|
@@ -36,15 +37,121 @@ can import only gogo's own packages, all under the `gogo/` path:
 | `gogo/net`, `gogo/dhcp`, `gogo/dns`, `gogo/http` | networking |
 | `gogo/sys` | the wall clock, randomness, settings from the device's configuration store |
 
-Importing anything else, including Go's standard library, fails:
+Go's standard library is not available. Importing `fmt` looks for a
+package of your own called `fmt`, finds none and says where it looked:
 
 ```text
-main.gg:2:8: gogo: import "fmt" not supported
+main.gg:2:8: gogo: import "fmt": package not found; searched:
+	. (build root: serves only imports starting with "app/")
+	/home/you/gogo/fmt (search path: no such directory)
 ```
 
-You cannot write your own packages yet; split a large program over several
-files of `package main` instead. Renamed imports (`import s "gogo/strings"`)
-are rejected too.
+Renamed imports (`import s "gogo/strings"`) are rejected.
+
+### 3.1.1 Packages of your own
+
+Any import that does not start with `gogo/` is a package of your own: a
+directory of `.gg` files, all with the same `package` clause. Inside the
+build root, the import path starts with the root directory's name. For a
+program in `app/`:
+
+```text
+app/
+  main.gg              package main: import "app/shapes", "app/text/banner"
+  shapes/
+    shapes.gg          package shapes
+    square.gg          package shapes
+  text/banner/
+    banner.gg          package banner
+```
+
+```go
+// A program of three packages: package main here, app/shapes and the
+// nested app/text/banner. The imports start with app/, the name of this
+// directory (the build root).
+package main
+
+import (
+	"app/shapes"
+	"app/text/banner"
+)
+
+func main() {
+	r := shapes.Rect{W: 3, H: 4}
+	println(banner.Title("shapes"))
+	println("area", shapes.Area(r), "perimeter", shapes.Perimeter(r))
+	sq := shapes.Square(5)
+	println("square", sq.W, sq.H, shapes.Area(sq))
+}
+```
+
+```go
+// Package shapes measures rectangles. Its name is its directory's name.
+package shapes
+
+// Rect is a W by H rectangle.
+type Rect struct{ W, H int }
+
+// Area is W times H.
+func Area(r Rect) int { return r.W * r.H }
+
+// Perimeter is the length around r.
+func Perimeter(r Rect) int { return 2 * (r.W + r.H) }
+```
+
+```text
+$ gogo run docs/book/examples/03-packages/app
+----------
+| shapes |
+----------
+area 12 perimeter 14
+square 5 5 25
+```
+
+An import is looked up in this order, and the first directory that holds
+`.gg` files wins:
+
+1. **The build root.** `import "app/shapes"` in a program built from
+   `app/` is `app/shapes/`; `app/text/banner` is `app/text/banner/`.
+2. **The search path**, for packages shared between programs: each
+   directory of `$GOGOPATH` in turn (separated by `:`, `;` on Windows),
+   where `import "lib/ring"` is `<dir>/lib/ring/`. When `GOGOPATH` is
+   unset the search path is `$HOME/gogo`. `gogo build -path dirs` and
+   `gogo run -path dirs` replace it for one build, and `gogo env` prints
+   it (chapter 12).
+
+If the same import path is found in more than one place, the first is
+used and the build warns, naming them all:
+
+```text
+gogo: warning: package "app/util" is in 2 places; using the first: app/util, /home/you/gogo/app/util
+```
+
+There is no `go.mod` and no version: a package is whatever is in its
+directory when you build. The rules, as in Go:
+
+- A package's name (its `package` clause) is its directory's name, the
+  last element of its import path, so the name you use in code is always
+  the last element of the import. `package utils` in `app/util/` is an
+  error.
+- Only the build root is `package main`; a `package main` below it is an
+  error. The root itself cannot be imported.
+- Imports must not form a cycle; the error shows it:
+  `b/b.gg:3:8: gogo: import cycle app/a -> app/b -> app/a`.
+- A package that cannot be found is an error listing every place
+  searched.
+- Your packages may import `gogo/` packages and each other. They follow
+  the same subset rules as `package main`, and are compiled into the image
+  like the `gogo/` libraries: there is no separate linking step, and
+  importing a package compiles all of it.
+- A package's struct types are the image's own, like those of `package
+  main` (a module loaded with `code.Load` has its own, chapter 14). Each
+  package's `//gogo:optional` covers its own opens only, and the image
+  requires the drivers your packages open (chapter 12).
+
+A module built for hot loading (chapter 14) finds its packages the same
+way, from its own directory. `gogo run file.gg` builds a single file, with
+its directory as the build root (chapter 2, *Scripts*).
 
 > **Note.** There is no `gogo/fmt` or `gogo/errors` package. Print with
 > `println`, and report errors as shown in section 3.9.
@@ -1148,7 +1255,7 @@ The full list, with what to do instead:
 | `float32/64` | `float not supported` | integers (fixed point: millivolts, percent) |
 | `uint32`, `int16`, ... | `uint32 not supported` | `int`, `int64`, `byte` |
 | generics | `generic function not supported` | write the function per type |
-| `fmt`, other std packages | `import "fmt" not supported` | `println`, `gogo/strconv` |
+| `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
 | `struct == struct` | `comparison of main.P not supported` | compare fields |
 | `func init()` | `func init not supported` | call it from `main` |
 | embedded fields | `embedded field not supported` | a named field |
