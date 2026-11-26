@@ -113,13 +113,13 @@ package http
   `a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`.
 - `gogo/http` declares `tls` (an http-only program runs on a firmware
   without TLS, where an https request fails), and `gogo/sound` declares
-  `mic spk` (`Record` returns false without a microphone, `Play` without a
+  `mic speaker` (`Record` returns false without a microphone, `Play` without a
   speaker).
 - The directive is a promise the compiler does not check. A library can still hand `main` a function that opens the
   driver; that open then fails cleanly at run time (`ok=false`) on a
   firmware without the driver.
 - `gogo firmware` (below) chooses features from the requirements, so it does not
-  turn a soft driver on by itself; `tls`, `mic` and `spk` are on by default,
+  turn a soft driver on by itself; `tls`, `mic` and `speaker` are on by default,
   and `-without` makes those calls fail at run time instead.
 
 ## gogo run
@@ -188,7 +188,7 @@ simulated GPIO outputs (`gpio: pin 5 = 1`) go to standard error.
 
 **Environment.** `GOGO_VM` names the VM to use (default: `build/gogovm` of
 the gogo tree). `GOGO_CONFIG` names the configuration file that
-`config.Get` reads (default `~/.gogo/config`). `GOGO_UNIX_TIME_MS` starts
+`sys.Config` reads (default `~/.gogo/config`). `GOGO_UNIX_TIME_MS` starts
 the wall clock (`sys.Time`, chapter 10.8) at that Unix time in ms instead of
 the computer's clock; `0`, or a time earlier than the VM's build, starts it
 unknown, as on a board.
@@ -270,19 +270,19 @@ driver nobody uses. It reads the requirement names each file carries
 `<dir>/sdkconfig.gogo`, a list of `CONFIG_GOGO_*` lines, then prints the
 `idf.py` command that builds with it. It never flashes.
 
-- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic spk tls screen`.
+- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen`.
   The requirement names they build: `net` the drivers `netif`, `udp`,
-  `tcp` and `tcp_listen`; `kbd`, `power`, `imu`, `mic`, `spk`, `tls` and
+  `tcp` and `tcp_listen`; `kbd`, `power`, `imu`, `mic`, `speaker`, `tls` and
   `screen` the driver of the same name; `irtx` and `irrx` the drivers `ir_tx` and
   `ir_rx`; `sd` the mount `/sd` (appendix F). `gpio` and `/flash` are in
   every firmware; any other name (a host port's, say) is an error.
   `net`, `kbd` and `power` are on only when a file requires them (or
   `-with` adds them). The others are on by default on boards that have
   them: `sd`, `imu`, `irtx`/`irrx` (the infrared sender and receiver),
-  `mic`/`spk` and `tls` (the TLS client, chapter 17) can be required too,
+  `mic`/`speaker` and `tls` (the TLS client, chapter 17) can be required too,
   so a file that needs one keeps it on, while `exfat` (exFAT media) and
   `cjk` (the Chinese font) are not. `irtx` and `irrx` share one firmware switch, as do `mic` and
-  `spk`, so they go on and off together.
+  `speaker`, so they go on and off together.
 - `-with a,b` adds features. `-without a,b` removes them; a feature that a
   file requires cannot be removed (error). `exfat` goes off with `sd`, and
   `tls` with `net`.

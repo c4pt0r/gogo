@@ -163,8 +163,8 @@ const (
 	TyBytes  uint32 = 0x10006 // bytes.Bytes: heap, off-heap or empty
 )
 
-// Reserved type-table indices of the gogo/actor and gogo/port struct types
-// (see reservedTypes).
+// Reserved type-table indices of the system packages' struct types (see
+// reservedTypes).
 const (
 	TypeProcinfo uint32 = 0
 	TypeReason   uint32 = 1
@@ -172,9 +172,10 @@ const (
 	TypeDownmsg  uint32 = 3
 	TypeRequest  uint32 = 4
 	TypeOptions  uint32 = 5
-	TypeGpio     uint32 = 6
-	TypeWrite    uint32 = 7
-	TypeEdge     uint32 = 8
+	// gogo/gpio
+	TypeGpioConfig uint32 = 6
+	TypeGpioWrite  uint32 = 7
+	TypeGpioEdge   uint32 = 8
 	// gogo/net
 	TypeNetIfconfig  uint32 = 9
 	TypeNetSetaddr   uint32 = 10
@@ -186,47 +187,45 @@ const (
 	TypeNetDatagram  uint32 = 16
 	TypeNetDial      uint32 = 17
 	TypeNetListen    uint32 = 18
-	TypeNetWrite     uint32 = 19
-	TypeNetShutdown  uint32 = 20
-	TypeNetResume    uint32 = 21
-	TypeNetConnected uint32 = 22
-	TypeNetData      uint32 = 23
-	TypeNetWritten   uint32 = 24
-	TypeNetClosed    uint32 = 25
-	TypeNetAccepted  uint32 = 26
+	TypeNetShutdown  uint32 = 19
+	TypeNetResume    uint32 = 20
+	TypeNetConnected uint32 = 21
+	TypeNetAccepted  uint32 = 22
 	// gogo/fs
-	TypeFsInfo  uint32 = 27
-	TypeFsSpace uint32 = 28
+	TypeFsInfo  uint32 = 23
+	TypeFsSpace uint32 = 24
 	// gogo/kbd, gogo/power
-	TypeKbdConfig    uint32 = 29
-	TypeKbdKey       uint32 = 30
-	TypePowerConfig  uint32 = 31
-	TypePowerBattery uint32 = 32
-	TypePowerRead    uint32 = 33
+	TypeKbdConfig    uint32 = 25
+	TypeKbdKey       uint32 = 26
+	TypePowerConfig  uint32 = 27
+	TypePowerBattery uint32 = 28
+	TypePowerRead    uint32 = 29
 	// gogo/code
-	TypeCodeModule uint32 = 34
-	// gogo/port streams, gogo/imu, gogo/ir (v10)
-	TypeChunk      uint32 = 35
-	TypeOut        uint32 = 36
-	TypeDone       uint32 = 37
-	TypeImuConfig  uint32 = 38
-	TypeImuGesture uint32 = 39
-	TypeIrTx       uint32 = 40
-	TypeIrRx       uint32 = 41
-	// gogo/audio (v11)
-	TypeAudioMic     uint32 = 42
-	TypeAudioSpeaker uint32 = 43
-	// net.DialTLS (v13): cfg of the "tls" port
-	TypeNetDialtls uint32 = 44
-	// port.Host, port.Post (v14): host-defined ports and host posts
-	TypeHost uint32 = 45
-	TypePost uint32 = 46
+	TypeCodeModule uint32 = 30
+	// gogo/port: the stream protocol
+	TypeChunk  uint32 = 31
+	TypeOut    uint32 = 32
+	TypeDone   uint32 = 33
+	TypeClosed uint32 = 34
+	// gogo/imu, gogo/ir
+	TypeImuConfig  uint32 = 35
+	TypeImuGesture uint32 = 36
+	TypeIrTx       uint32 = 37
+	TypeIrRx       uint32 = 38
+	// gogo/audio
+	TypeAudioMic     uint32 = 39
+	TypeAudioSpeaker uint32 = 40
+	// net.DialTLS: cfg of the "tls" port
+	TypeNetDialtls uint32 = 41
+	// port.Host, port.Post: host-defined ports and host posts
+	TypeHost uint32 = 42
+	TypePost uint32 = 43
 	// screen.Config (15.1): cfg of the "screen" port
-	TypeScreenConfig uint32 = 47
+	TypeScreenConfig uint32 = 44
 	// TypeReservedCount is how many reserved types there are
 	// (TYPE_RESERVED_COUNT in runtime/vm/opcodes.h; TestReservedTypeCount
 	// checks len(reservedTypes)).
-	TypeReservedCount uint32 = 48
+	TypeReservedCount uint32 = 45
 	// TypeOwnBase is the index of an image's first own struct type
 	// (TYPE_OWN_BASE): fixed, whatever the reserved count.
 	TypeOwnBase uint32 = 128
@@ -351,15 +350,16 @@ var goConstants = map[string]uint32{
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
 	"TypeDownmsg": TypeDownmsg, "TypeRequest": TypeRequest, "TypeOptions": TypeOptions,
-	"TypeGpio": TypeGpio, "TypeWrite": TypeWrite, "TypeEdge": TypeEdge,
+	"TypeGpioConfig": TypeGpioConfig, "TypeGpioWrite": TypeGpioWrite, "TypeGpioEdge": TypeGpioEdge,
 	"TypeNetIfconfig": TypeNetIfconfig, "TypeNetSetaddr": TypeNetSetaddr, "TypeNetUp": TypeNetUp,
 	"TypeNetDown": TypeNetDown, "TypeNetAddr": TypeNetAddr, "TypeNetUdp": TypeNetUdp,
 	"TypeNetSendto": TypeNetSendto, "TypeNetDatagram": TypeNetDatagram,
-	"TypeNetDial": TypeNetDial, "TypeNetListen": TypeNetListen, "TypeNetWrite": TypeNetWrite, "TypeNetShutdown": TypeNetShutdown, "TypeNetResume": TypeNetResume, "TypeNetConnected": TypeNetConnected, "TypeNetData": TypeNetData, "TypeNetWritten": TypeNetWritten, "TypeNetClosed": TypeNetClosed, "TypeNetAccepted": TypeNetAccepted,
+	"TypeNetDial": TypeNetDial, "TypeNetListen": TypeNetListen, "TypeNetShutdown": TypeNetShutdown,
+	"TypeNetResume": TypeNetResume, "TypeNetConnected": TypeNetConnected, "TypeNetAccepted": TypeNetAccepted,
 	"TypeFsInfo": TypeFsInfo, "TypeFsSpace": TypeFsSpace,
 	"TypeKbdConfig": TypeKbdConfig, "TypeKbdKey": TypeKbdKey, "TypePowerConfig": TypePowerConfig, "TypePowerBattery": TypePowerBattery, "TypePowerRead": TypePowerRead,
 	"TypeCodeModule": TypeCodeModule,
-	"TypeChunk":      TypeChunk, "TypeOut": TypeOut, "TypeDone": TypeDone,
+	"TypeChunk": TypeChunk, "TypeOut": TypeOut, "TypeDone": TypeDone, "TypeClosed": TypeClosed,
 	"TypeImuConfig": TypeImuConfig, "TypeImuGesture": TypeImuGesture, "TypeIrTx": TypeIrTx, "TypeIrRx": TypeIrRx,
 	"TypeAudioMic": TypeAudioMic, "TypeAudioSpeaker": TypeAudioSpeaker, "TypeNetDialtls": TypeNetDialtls,
 	"TypeHost": TypeHost, "TypePost": TypePost, "TypeScreenConfig": TypeScreenConfig,

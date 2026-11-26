@@ -6,18 +6,27 @@ infrared receiver. Three ports give programs this hardware: `"imu"`
 (package `gogo/imu`), `"ir_tx"` and `"ir_rx"` (package `gogo/ir`), with
 `gogo/irproto` for the common NEC remote-control protocol.
 
-These ports move more data than a key press, so they use gogo's two
-**stream** messages, defined in `gogo/port` and shared by every streaming
-port:
+These ports move more data than a key press, so they speak gogo's
+**stream protocol** (section 7.6), defined in `gogo/port` and shared by
+every port that moves bytes (TCP and TLS, the microphone and speaker, the
+screen):
 
 ```go
 type Chunk struct {
+	From                 actor.PID
 	Seq, TimeMs, Dropped int
 	Data                 bytes.Bytes
 }
 type Out struct{ Data bytes.Bytes }
-type Done struct{ Seq int }
+type Done struct {
+	From actor.PID
+	Seq  int
+}
 ```
+
+`From` is the port that sent the event, so an actor that owns several
+stream ports (the IR transmitter and the speaker, say) can tell their
+events apart.
 
 - An input stream sends the owner `port.Chunk` messages. `Seq` counts from
   1, including Chunks that were lost, so a gap in the numbers means
@@ -30,7 +39,7 @@ type Done struct{ Seq int }
   be sent. A port holds at most **two Outs at a time** (one being sent, one
   waiting); a third is refused at once. Send the next `Out` when a `Done`
   comes back, and you never lose one. (One caveat: a refusal is itself a
-`Done{-1}`, and when 16 Dones are already owed and unread, an owner that
+`Done{-1}`, and when 8 Dones are already owed and unread, an owner that
 reads nothing while someone floods it with Outs, further refusals are
 dropped. Accepted Outs always get theirs.)
 
@@ -404,7 +413,7 @@ receiver and the LED at least 30 cm apart when you try this on a board.
   it was already on). **While an IR port is open, the Grove and Hat 5 V pins
   are outputs: do not feed 5 V into them then.** While `ir_rx` is open the
   speaker amplifier is held off, because the receiver does not work with it
-  on: opening `"spk"` then fails, and a speaker already playing goes silent
+  on: opening `"speaker"` then fails, and a speaker already playing goes silent
   until `ir_rx` closes.
 - The G42, G44 and G46 pins are reserved for IR: the `gpio` port refuses
   them.

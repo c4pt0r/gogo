@@ -128,7 +128,7 @@ func TestHarnessLinkClosed(t *testing.T) {
 	}
 }
 
-// TestMain points the configuration store (config.Get) at a file that
+// TestMain points the configuration store (sys.Config) at a file that
 // does not exist, never ~/.gogo/config; tests that need one set their own.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "gogo-nettest-")

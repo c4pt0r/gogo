@@ -38,10 +38,11 @@ extern const PortSource inbox_source;
 int inbox_push(Inbox *in, const gogo_host *h, void *hctx, const char *name, size_t name_len,
                uint32_t port, int32_t kind, const void *data, size_t len);
 
-/* port.Post{kind, Data} as a message block, Data being the handle h (the
+/* port.Post{from, kind, Data} as a message block (from: the sending port,
+ * T_ZEROPID for a gogo_post), Data being the handle h (the
  * block takes a reference of its own) or, for T_NIL, data[0..len) copied
  * inline; NULL if memory is out. VM thread. */
-struct Msg *embed_post_msg(struct Vm *vm, int32_t kind, const uint8_t *data, uint32_t len, term h);
+struct Msg *embed_post_msg(struct Vm *vm, term from, int32_t kind, const uint8_t *data, uint32_t len, term h);
 
 /* Queues m (NULL: out of memory) on `to` without ever marking it: 0, or
  * GOGO_ENOMEM, or GOGO_EFULL (over its quota, or exiting: m is freed). */

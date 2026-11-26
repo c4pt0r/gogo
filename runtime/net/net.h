@@ -109,7 +109,7 @@ typedef struct NetStats {
     uint32_t tx_fail;       /* NetIf.send failed */
     uint32_t tx_arp_miss;   /* dropped: next hop not resolved (ARP sent) */
     uint32_t tx_noroute;    /* dropped: no address, no gateway, not allowed */
-    uint32_t tx_bad;        /* malformed SendTo/Write/Shutdown, too large */
+    uint32_t tx_bad;        /* malformed SendTo or tcp command, too large */
     uint32_t tcp_bad;       /* short, header length, checksum */
     uint32_t tcp_noconn;    /* no connection or listener: RST sent (or none for a RST) */
     uint32_t tcp_drop;      /* out of order, old, duplicate, unacceptable */

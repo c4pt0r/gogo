@@ -10,14 +10,14 @@ package main
 
 import (
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/fs"
 	"gogo/http"
+	"gogo/sys"
 )
 
 func main() {
-	url, _ := config.Get("upload.url")
-	token, _ := config.Get("upload.token") // sent as "Authorization: Bearer <token>"; never print it
+	url, _ := sys.Config("upload.url")
+	token, _ := sys.Config("upload.token") // sent as "Authorization: Bearer <token>"; never print it
 
 	// A 10 KB file to send.
 	b := bytes.NewBuffer(10240)

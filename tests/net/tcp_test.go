@@ -18,7 +18,7 @@ func alpha(n int) string {
 }
 
 // Active open, segmentation by the peer's MSS, one segment in flight,
-// Written per Write, FIN after the writes, duplicate and out-of-order
+// Done per Out, FIN after the writes, duplicate and out-of-order
 // segments re-acknowledged and not delivered, active close.
 func TestTCPDial(t *testing.T) {
 	v := startTCP(t, "tcp_dial")
@@ -144,7 +144,7 @@ func TestTCPRetransmit(t *testing.T) {
 	expectRetx(t, c.segs(v.Advance(1000)), x)
 	expectRetx(t, c.segs(v.Advance(2000)), x)
 	c.ack += 3
-	x = c.expect(c.send(sim.ACK, nil), sim.PSH|sim.ACK, "def") // Written, then "def"
+	x = c.expect(c.send(sim.ACK, nil), sim.PSH|sim.ACK, "def") // Done, then "def"
 	for _, ms := range []uint32{1000, 2000, 4000, 8000, 8000, 8000} {
 		none(ms - 1)
 		expectRetx(t, c.segs(v.Advance(1)), x)
@@ -164,7 +164,7 @@ func TestTCPRetransmit(t *testing.T) {
 	if _, err := v.Advance(1); err != io.EOF {
 		t.Fatalf("advance: %v, want EOF", err)
 	}
-	finish(t, v, "dial true\nconnected\nwritten\nclosed 2 45100\ndial2 true\nclosed 2 47600\n")
+	finish(t, v, "dial true\nconnected\nwritten\nnot sent\nclosed 2 45100\ndial2 true\nclosed 2 47600\n")
 }
 
 // A slow reader near its quota: segments are not acknowledged until it
@@ -255,11 +255,11 @@ func TestTCPRst(t *testing.T) {
 	c.seq += 50000 // out of window: ignored
 	none(t)(v.Exchange(c.frame(sim.RST, nil)))
 	c.seq -= 50000
-	none(t)(v.Exchange(c.frame(sim.ACK, nil))) // Written: still connected
+	none(t)(v.Exchange(c.frame(sim.ACK, nil))) // Done: still connected
 	if _, err := v.Exchange(c.frame(sim.RST, nil)); err != io.EOF {
 		t.Fatalf("exchange: %v, want EOF", err)
 	}
-	finish(t, v, "connected\nclosed 1\nclosed 3\nconnected\nwritten\nclosed 1\n")
+	finish(t, v, "connected\nnot sent\nclosed 1\nclosed 3\nconnected\nwritten\nclosed 1\n")
 }
 
 // A handler that shuts down and exits leaves an orphan: the response is
@@ -563,7 +563,7 @@ func TestTCPTimeWaitReclaim(t *testing.T) {
 }
 
 // Slow readers whose mailboxes are full to the last byte still get
-// Written and the peer's reset, and are not killed (spec §9.1: control
+// Done and the peer's reset, and are not killed (spec §9.1: control
 // events never overflow them).
 func TestTCPSlowReaderReset(t *testing.T) {
 	v := startTCP(t, "tcp_slow_reader_reset")
@@ -590,7 +590,7 @@ func TestTCPSlowReaderReset(t *testing.T) {
 			}
 		}
 		c.ack += 100
-		none(t)(v.Exchange(c.frame(sim.ACK, nil))) // Written
+		none(t)(v.Exchange(c.frame(sim.ACK, nil))) // Done
 		none(t)(v.Exchange(c.frame(sim.RST, nil))) // Closed{Reset}
 		if _, err := v.Advance(3000); err != nil && r < 9 {
 			t.Fatalf("advance: %v", err)

@@ -57,9 +57,9 @@ var fwFeatures = []fwFeature{
 	// drivers; the board's HAS_IR_RX says whether it has a receiver).
 	{name: "irtx", kconf: "CONFIG_GOGO_IR", provides: []string{"ir_tx"}, onBy: true, hasH: "HAS_IR_TX"},
 	{name: "irrx", kconf: "CONFIG_GOGO_IR", provides: []string{"ir_rx"}, onBy: true, hasH: "HAS_IR_RX"},
-	// mic and spk likewise share GOGO_AUDIO (one codec and I2S bus, half duplex).
+	// mic and speaker likewise share GOGO_AUDIO (one codec and I2S bus, half duplex).
 	{name: "mic", kconf: "CONFIG_GOGO_AUDIO", provides: []string{"mic"}, onBy: true, hasH: "HAS_MIC"},
-	{name: "spk", kconf: "CONFIG_GOGO_AUDIO", provides: []string{"spk"}, onBy: true, hasH: "HAS_SPK"},
+	{name: "speaker", kconf: "CONFIG_GOGO_AUDIO", provides: []string{"speaker"}, onBy: true, hasH: "HAS_SPK"},
 	// tls is the TLS client over the net stack (mbedTLS): it depends on net.
 	// Its mbedTLS settings (-O2, the PSRAM allocator, restartable ECC) would
 	// otherwise also apply to Wi-Fi's WPA crypto: sdkconfig.tls-off undoes them.
@@ -99,8 +99,8 @@ func fwHas(names ...string) map[string]bool {
 }
 
 var fwBoards = map[string]fwBoard{
-	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "spk", "tls", "screen")},
-	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "spk", "tls", "screen")},
+	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "speaker", "tls", "screen")},
+	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "speaker", "tls", "screen")},
 }
 
 func fwLookup(name string) (fwFeature, bool) {

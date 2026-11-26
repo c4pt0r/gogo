@@ -17,7 +17,7 @@ import (
 )
 
 // `gogo config set|get|list|rm` edits the store that
-// config.Get reads. On this computer: $GOGO_CONFIG, else ~/.gogo/config,
+// sys.Config reads. On this computer: $GOGO_CONFIG, else ~/.gogo/config,
 // one key=value per line (the first line of a key wins). On the board:
 // its NVS store, over the serial console (boardConfig; `scan` lists the
 // Wi-Fi networks the board sees, `stats` its net stack's counters). See configMain for which one is used.

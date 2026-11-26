@@ -1,34 +1,35 @@
 # 16. Audio
 
 Both boards have a microphone and a speaker, on one codec and one I2S bus.
-Two ports give programs this hardware, `"mic"` and `"spk"` (types in
+Two ports give programs this hardware, `"mic"` and `"speaker"` (types in
 package `gogo/audio`), and two small libraries built on them record to
 WAV files and play WAV files back: `gogo/wav` and `gogo/sound`.
 
-The ports are **streams** (chapter 15): the microphone sends `port.Chunk`
-messages, the speaker takes `port.Out` commands and answers each with
-`port.Done`. The sound is 16-bit little-endian mono PCM at 8000 or 16000
+The ports speak the **stream protocol** (section 7.6, chapter 15): the
+microphone sends `port.Chunk` messages, the speaker takes `port.Out`
+commands and answers each with `port.Done`; both name themselves in the
+events' `From`. The sound is 16-bit little-endian mono PCM at 8000 or 16000
 samples per second.
 
 ## 16.1 The ports
 
 ```go
-type Mic struct{ Rate, FrameMs, Gain int }
-type Speaker struct{ Rate, Volume int }
+type Mic struct{ RateHz, FrameMs, GainDb int }
+type Speaker struct{ RateHz, VolumePct int }
 ```
 
 ```go
-mic, ok := port.Open("mic", audio.Mic{Rate: 16000, FrameMs: 100})
-spk, ok := port.Open("spk", audio.Speaker{Rate: 16000, Volume: 60})
+mic, ok := port.Open("mic", audio.Mic{RateHz: 16000, FrameMs: 100})
+spk, ok := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 60})
 ```
 
-- `Mic.Rate` is 8000 or 16000. `FrameMs` is how much sound one `Chunk`
-  holds (0 means 100; 20 to 500). `Gain` is extra gain, 0 to 24 dB in
+- `Mic.RateHz` is 8000 or 16000. `FrameMs` is how much sound one `Chunk`
+  holds (0 means 100; 20 to 500). `GainDb` is extra gain, 0 to 24 dB in
   steps of 6, above the board's normal microphone level: 0 is normal
   (speech at arm's length is clearly above the noise floor and does not
   clip). Each platform maps it to its own codec gain.
   Frames are whole: a half frame left when you close the port is dropped.
-- `Speaker.Volume` is 0 (mute) to 100: 1 to 100 runs from 40 dB below
+- `Speaker.VolumePct` is 0 (mute) to 100: 1 to 100 runs from 40 dB below
   the board's loudest level up to it. Send `port.Out{Data: pcm}` (an even,
   non-empty number of bytes). Each `Out` is answered with `Done` once it
   has played. **Keep two `Out`s in flight**: send two, then one more for each
@@ -44,8 +45,8 @@ spk, ok := port.Open("spk", audio.Speaker{Rate: 16000, Volume: 60})
 ### Memory for a recorder
 
 The mic port charges its owner for its frame buffer (`F` words, where
-`F = Rate * FrameMs / 2000`; a word is 4 bytes) and for every `Chunk`
-waiting in the mailbox (`F + 10` words). An actor that stalls for 300 ms
+`F = RateHz * FrameMs / 2000`; a word is 4 bytes) and for every `Chunk`
+waiting in the mailbox (`F + 11` words). An actor that stalls for 300 ms
 on an SD write finds 3 more frames waiting. At 16 kHz and 100 ms frames
 that is about 4000 words, which a board's default per-actor limit (4096
 words, chapter 6) does not leave room for. A program that writes
@@ -116,7 +117,7 @@ func main() {
 	fs.Mkdir("/flash/rec")
 	fs.WriteFile("/flash/rec/0007.wav", "x")
 	fs.WriteFile("/flash/rec/notes.txt", "x")
-	r, ok := sound.Record("/flash/rec", audio.Mic{Rate: 8000, FrameMs: 100}, 1)
+	r, ok := sound.Record("/flash/rec", audio.Mic{RateHz: 8000, FrameMs: 100}, 1)
 	if !ok {
 		println("no mic")
 		return
@@ -336,7 +337,7 @@ On the host VM the microphone and speaker are simulated, like the keyboard:
 
 | line | effect |
 |---|---|
-| `mic tone <hz> <ms>` | a sine wave (amplitude 1000, doubled every 6 dB of `Gain`) |
+| `mic tone <hz> <ms>` | a sine wave (amplitude 1000, doubled every 6 dB of `GainDb`) |
 | `mic silence <ms>` | zeros |
 | `sleep <ms>` | wait before the next line |
 
@@ -359,26 +360,26 @@ test `tests/golden/sound_diskfull` uses it.
 
 ## 16.6 Requirements and firmware
 
-The compiler records in the image that a program opens `"mic"` or `"spk"`
+The compiler records in the image that a program opens `"mic"` or `"speaker"`
 itself (a requirement, like the other ports); a firmware built without them
 refuses that image at boot. Importing `gogo/sound` does not require them: the library
-declares `//gogo:optional mic spk` (chapter 12), and `Record` and `Play`
+declares `//gogo:optional mic speaker` (chapter 12), and `Record` and `Play`
 return false when the hardware is absent. A program that opens `"mic"` or
-`"spk"` with `port.Open` itself still requires them. Both are on by default and share one switch, `GOGO_AUDIO` (`gogo
-firmware` names them `mic` and `spk`). A board without the hardware
+`"speaker"` with `port.Open` itself still requires them. Both are on by default and share one switch, `GOGO_AUDIO` (`gogo
+firmware` names them `mic` and `speaker`). A board without the hardware
 refuses `port.Open` (`ok == false`). The codec's I2S pins are reserved: the
 `gpio` port refuses G14 to G18 on the StickS3 and G41, G42, G43 and G46 on
 the Cardputer ADV.
 
 On both boards the microphone and speaker are an ES8311 codec on I2S:
 
-- `Gain` 0 is 54 dB of codec gain (30 dB analog, 24 dB in the ADC);
-  `Gain` adds digital gain on top.
-- `Volume` 1 to 100 is the codec's DAC volume from 40 dB below the ceiling
+- `GainDb` 0 is 54 dB of codec gain (30 dB analog, 24 dB in the ADC);
+  `GainDb` adds digital gain on top.
+- `VolumePct` 1 to 100 is the codec's DAC volume from 40 dB below the ceiling
   to the ceiling, in 0.4 dB steps. The ceiling is 0 dB on the Cardputer
   ADV and -4 dB on the StickS3: at full codec level its USB console once
   stopped answering (probably a supply dip from the amplifier).
-- The codec's analog reference is switched on by the first `mic` or `spk`
+- The codec's analog reference is switched on by the first `mic` or `speaker`
   open and **stays on until the board resets**. Powering it down at every
   close made each later open start with about a second of silence. The
   first `mic` open after power-up still has that silence: a first

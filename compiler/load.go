@@ -36,9 +36,10 @@ const BytesPath = "gogo/bytes"
 // lib/net/.
 const NetPath = "gogo/net"
 
-// ConfigPath is the import path of the configuration store API
-// (config.Get), a stub package like gogo/actor.
-const ConfigPath = "gogo/config"
+// GpioPath is the import path of the GPIO port types (gpio.Config,
+// gpio.Write, gpio.Edge) and their mode and edge constants, a stub package
+// with only types and constants; the types are reserved.
+const GpioPath = "gogo/gpio"
 
 // FsPath is the import path of the storage API (fs.Open, fs.ReadFile, ...,
 // fs.File's methods), a stub package like gogo/actor: calls become B_FS,
@@ -68,9 +69,9 @@ const (
 	IrPath  = "gogo/ir"
 )
 
-// SysPath is the import path of the system API (sys.Time, sys.SetTime: the
-// wall clock), a stub package like gogo/config: calls become B_UNIX_TIME and
-// B_SET_UNIX_TIME.
+// SysPath is the import path of the system API (sys.Time, sys.SetTime,
+// sys.Random, sys.Config), a stub package like gogo/actor: calls become
+// B_UNIX_TIME, B_SET_UNIX_TIME, B_RANDOM and B_CONFIG_GET.
 const SysPath = "gogo/sys"
 
 // AudioPath is the import path of the audio port types (audio.Mic,
@@ -85,7 +86,7 @@ const ScreenPath = "gogo/screen"
 
 // isStub reports whether path is one of the stub packages.
 func isStub(path string) bool {
-	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath || path == ScreenPath
+	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == GpioPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath || path == ScreenPath
 }
 
 // stubDir is the directory of the library set holding stub package path:

@@ -8,7 +8,7 @@
 // and release. A Key that would take the owner past its memory limit is
 // dropped (the owner is not killed).
 //
-// The struct types Config and Key have fixed type indices 29 and 30 in every
+// The struct types Config and Key have fixed type indices 25 and 26 in every
 // image (TYPE_KBD_CONFIG, TYPE_KBD_KEY in runtime/vm/opcodes.h); keep their field
 // order in sync with compiler.reservedTypes.
 package kbd

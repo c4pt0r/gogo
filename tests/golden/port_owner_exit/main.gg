@@ -5,6 +5,7 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 	"gogo/supervisor"
 )
@@ -19,7 +20,7 @@ type Num struct{ N int }
 type Done struct{}
 
 func worker(boss actor.PID) {
-	_, ok := port.Open("gpio", port.GPIO{Pin: 11, Mode: port.InputPullUp, Edge: port.Falling})
+	_, ok := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 	actor.Send(boss, Hello{actor.Self(), ok})
 	n := 0
 	switch m := actor.Receive().(type) {
@@ -27,7 +28,7 @@ func worker(boss actor.PID) {
 		n = m.N
 	}
 	switch actor.Receive().(type) {
-	case port.Edge:
+	case gpio.Edge:
 		if n == 1 {
 			zero := 0
 			println(1 / zero)

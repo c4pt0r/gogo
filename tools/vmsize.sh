@@ -31,7 +31,7 @@ if [ "$1" = "--net" ]; then
     for f in runtime/net/*.c; do
         o="$OUT/$(basename "$f" .c).o"
         "$GCC" -std=c99 -Os -mlongcalls -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u \
-            -DGOGO_ARENA_BYTES=163840u -Iruntime/vm -Iruntime/net -Iruntime/vm/test/stub -c "$f" -o "$o"
+            -DGOGO_ARENA_BYTES=163840u -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test/stub -c "$f" -o "$o"
         n=$("$SIZE" -A "$o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
         b=$("$SIZE" -A "$o" | awk '/^\.(bss|data)/ {s += $2} END {print s + 0}')
         total=$((total + n)); fixed=$((fixed + b))
@@ -42,7 +42,7 @@ if [ "$1" = "--net" ]; then
     # .bss of one object of that type, built for the target.
     printf '#include "net_int.h"\nNetState net_size_probe;\n' > "$OUT/probe.c"
     "$GCC" -std=c99 -Os -mlongcalls -fno-common -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u \
-        -DGOGO_ARENA_BYTES=163840u -Iruntime/vm -Iruntime/net -Iruntime/vm/test/stub -c "$OUT/probe.c" -o "$OUT/probe.o"
+        -DGOGO_ARENA_BYTES=163840u -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test/stub -c "$OUT/probe.c" -o "$OUT/probe.o"
     state=$("$SIZE" -A "$OUT/probe.o" | awk '/^\.bss/ {s += $2} END {print s + 0}')
     printf '%s' "$lines" | sort -rn
     printf '%7d  net code total (text+rodata+literal; not VM core)\n' "$total"
@@ -69,7 +69,7 @@ if [ "$1" = "--tls" ]; then
     # shellcheck disable=SC2086
     # The port itself with warnings on (32-bit target), unlike mbedTLS.
     "$GCC" ${FLAGS%-w} -Wall -Wextra -Werror $INC -DMBEDTLS_CONFIG_FILE='"gogo_mbedtls_config.h"' -DTF_PSA_CRYPTO_CONFIG_FILE='"gogo_crypto_config.h"' \
-        -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_BYTES=163840u -Iruntime/net/tls -Iruntime/vm -Iruntime/net -Iruntime/vm/test/stub \
+        -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_BYTES=163840u -Iruntime/net/tls -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test/stub \
         -c runtime/net/tls/tls.c -o "$OUT/tls.o"
     "$GCC" -nostdlib -Wl,--gc-sections -Wl,-u,net_tls_driver -Wl,-e,0 -Wl,--unresolved-symbols=ignore-all \
         -o "$OUT/tls.elf" "$OUT/tls.o" "$OUT"/mb_*.o

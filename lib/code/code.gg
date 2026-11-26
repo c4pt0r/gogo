@@ -29,7 +29,7 @@
 // There are no permissions in this version: a module can do everything the
 // main program can. Arguments are copied into the new actor like a message.
 //
-// The struct type Module has the fixed type index 34 in every image
+// The struct type Module has the fixed type index 30 in every image
 // (TYPE_CODE_MODULE in runtime/vm/opcodes.h); keep its fields in sync with
 // compiler.reservedTypes.
 package code

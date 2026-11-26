@@ -3,14 +3,15 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 func main() {
-	p, ok := port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	p, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
 	println(ok)
-	actor.Send(p, port.Write{Value: 1})
-	actor.Send(p, port.Write{Value: 0})
+	actor.Send(p, gpio.Write{Value: 1})
+	actor.Send(p, gpio.Write{Value: 0})
 	port.Close(p)
 	println("done")
 }

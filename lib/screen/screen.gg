@@ -21,8 +21,8 @@
 // in order, but not always at once: an owner whose memory is nearly full
 // gets it when it has room again (the port retries every 10 ms), and with
 // 8 Dones waiting a further Out is refused. So wait for a Done with a
-// timeout (actor.ReceiveTimeout). A port.Done does not say which port sent
-// it: a program with several stream ports must keep count.
+// timeout (actor.ReceiveTimeout). A Done's From is the screen port's PID,
+// which tells it apart from other ports' Dones.
 //
 // Operations (each an Op byte followed by its argument bytes; coordinates are
 // cells, 0-based, the top-left cell 0, 0):
@@ -44,7 +44,7 @@
 // previous one left. The grid starts blank, colours White on Black, no
 // attributes, the clip the whole screen, the cursor hidden at 0, 0.
 //
-// The struct type Config is reserved type 47 (TYPE_SCREEN_CONFIG in
+// The struct type Config is reserved type 44 (TYPE_SCREEN_CONFIG in
 // runtime/vm/opcodes.h), added in image format 15.1: an image that uses it
 // is stamped 15.1 and needs a VM of 15.1 or later. Keep its field order in
 // sync with compiler.reservedTypes; fields are only ever appended.

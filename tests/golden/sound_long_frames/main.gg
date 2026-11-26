@@ -15,16 +15,16 @@ import (
 )
 
 func main() {
-	cfgs := []audio.Mic{{Rate: 16000, FrameMs: 250}, {Rate: 16000, FrameMs: 500}, {Rate: 8000, FrameMs: 500}}
+	cfgs := []audio.Mic{{RateHz: 16000, FrameMs: 250}, {RateHz: 16000, FrameMs: 500}, {RateHz: 8000, FrameMs: 500}}
 	for i, c := range cfgs {
 		r, ok := sound.Record("/flash/r"+"abc"[i:i+1], c, 0)
-		println("record", c.Rate, c.FrameMs, ok)
+		println("record", c.RateHz, c.FrameMs, ok)
 		if ok {
 			actor.Send(r, sound.Stop{})
 			wait()
 		}
 	}
-	r, ok := sound.Record("/flash/long", audio.Mic{Rate: 16000, FrameMs: 500}, 1)
+	r, ok := sound.Record("/flash/long", audio.Mic{RateHz: 16000, FrameMs: 500}, 1)
 	println("record long", ok)
 	if !ok {
 		return

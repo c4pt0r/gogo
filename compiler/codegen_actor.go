@@ -35,7 +35,7 @@ func (g *gen) nameLits(decls []*ast.FuncDecl) {
 // actorBuiltins maps each stub function (by stubName: gogo/actor and
 // gogo/port) to its BUILTIN id. The arguments go into consecutive
 // registers; the two-result builtins (ReceiveTimeout, Call, Whereis,
-// port.Open, config.Get) write dst and dst+1, so they are only compiled by assign,
+// port.Open, sys.Config) write dst and dst+1, so they are only compiled by assign,
 // which passes two fresh temporaries.
 var actorBuiltins = map[string]uint32{
 	"Spawn": BSpawn, "SpawnLink": BSpawnLink, "SpawnOpt": BSpawnOpt,
@@ -47,7 +47,7 @@ var actorBuiltins = map[string]uint32{
 	"Now": BNow, "Call": BCall, "Reply": BReply, "Register": BRegister,
 	"Whereis": BWhereis, "Unregister": BUnregister,
 	"port.Open": BPortOpen, "port.Close": BPortClose, "port.Handoff": BPortHandoff,
-	"net.Subscribe": BNetSubscribe, "config.Get": BConfigGet,
+	"net.Subscribe": BNetSubscribe, "sys.Config": BConfigGet,
 	"sys.Time": BUnixTime, "sys.SetTime": BSetUnixTime, "sys.Random": BRandom,
 	"bytes.NewBuffer": BBufNew, "bytes.FromString": BBytesFrom, "bytes.FromSlice": BBytesFrom,
 }
@@ -107,7 +107,7 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 }
 
 // twoResultCall compiles a two-result builtin call (ReceiveTimeout, Call,
-// Whereis, port.Open, config.Get and the gogo/fs ones) whose results go to dst and dst+1, two fresh
+// Whereis, port.Open, sys.Config and the gogo/fs ones) whose results go to dst and dst+1, two fresh
 // temporaries.
 func (f *fn) twoResultCall(call *ast.CallExpr, dst uint8) {
 	name := f.stubOf(call)

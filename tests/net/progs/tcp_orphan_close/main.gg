@@ -13,8 +13,8 @@ import (
 
 func handler(conn actor.PID) {
 	switch actor.Receive().(type) {
-	case net.Data:
-		actor.Send(conn, net.Write{Data: bytes.FromString("response")})
+	case port.Chunk:
+		actor.Send(conn, port.Out{Data: bytes.FromString("response")})
 		actor.Send(conn, net.Shutdown{})
 	}
 }

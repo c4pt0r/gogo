@@ -6,11 +6,11 @@
  *    second screen port in the same Vm or a display the hook says is busy.
  *    The grid (4 bytes per cell) and the port's state come from the VM
  *    allocator and are charged to the owner. The owner is then sent one
- *    port.Chunk{Data: cols, rows, 16, attrs}; the display shows the blank
+ *    port.Chunk{From, Data: cols, rows, 16, attrs}; the display shows the blank
  *    grid at once.
  *  - Commands: every port.Out{Data} is a frame of operations (screen.h).
  *    It is checked whole and applied at once, the rows it changed are
- *    handed to the display, and the owner gets port.Done{Seq} (Seq counts
+ *    handed to the display, and the owner gets port.Done{From, Seq} (Seq counts
  *    the frames drawn, from 1); a malformed or empty frame is not drawn and
  *    gets Done{-1}. The data is read in place: nothing is copied or held.
  *    A Done the owner has no mailbox room for is owed and retried every

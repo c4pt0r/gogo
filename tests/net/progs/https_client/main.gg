@@ -9,7 +9,7 @@
 //	CPOST:url    http.ClientDo(c, "POST", ...) with body test.body
 //	cclose       http.CloseClient(c)
 //	UP:url       http.Upload(url, test.file, "application/octet-stream",
-//	             the token config.Get("upload.token"))
+//	             the token sys.Config("upload.token"))
 //	UPMISS:url   http.Upload of /flash/missing.bin (no such file)
 //	UPNT:url     http.Upload of test.file without a token
 //	CUP:url      http.ClientUpload(c, ...) as UP
@@ -47,7 +47,6 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/http"
 	"gogo/net"
 	"gogo/port"
@@ -73,7 +72,7 @@ func recvClient() http.Client {
 }
 
 func atoi(key string, def int) int {
-	if s, ok := config.Get(key); ok {
+	if s, ok := sys.Config(key); ok {
 		n, _ := strconv.Atoi(s)
 		return n
 	}
@@ -97,8 +96,8 @@ func main() {
 	nif, ok := port.Open("netif", net.IfConfig{})
 	actor.Send(nif, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1, DNS: 10<<24 | 1})
 	println("start", ok)
-	script, _ := config.Get("test.script")
-	text, _ := config.Get("test.body")
+	script, _ := sys.Config("test.script")
+	text, _ := sys.Config("test.body")
 	timeout := atoi("test.timeout", 5000)
 	var c http.Client
 	var caller actor.PID
@@ -130,11 +129,11 @@ func main() {
 			r, ok := http.ClientDo(c, "POST", arg, "text/plain", bytes.FromString(text), timeout)
 			show(op, arg, r, ok)
 		} else if op == "UP" || op == "UPMISS" || op == "UPNT" || op == "CUP" {
-			path, _ := config.Get("test.file")
+			path, _ := sys.Config("test.file")
 			if op == "UPMISS" {
 				path = "/flash/missing.bin"
 			}
-			token, _ := config.Get("upload.token")
+			token, _ := sys.Config("upload.token")
 			if op == "UPNT" {
 				token = ""
 			}
@@ -182,8 +181,8 @@ func main() {
 			println("qfull done")
 		} else if op == "UPCRASH" || op == "GETCRASH" {
 			u := arg
-			path, _ := config.Get("test.file")
-			token, _ := config.Get("upload.token")
+			path, _ := sys.Config("test.file")
+			token, _ := sys.Config("upload.token")
 			up := op == "UPCRASH"
 			p := actor.Spawn(func() {
 				if up {

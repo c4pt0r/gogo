@@ -1,8 +1,10 @@
-// Package sys is the gogo system API: the wall clock and randomness. It is a
-// stub package like gogo/config: the compiler replaces every call with a VM
-// builtin (B_UNIX_TIME, B_SET_UNIX_TIME, B_RANDOM), so the bodies are never
-// executed. The C side is vm_unix_time_ms, vm_set_unix_time_ms and
-// vm_random (runtime/vm/host.h), over the host's optional RTC and random hooks.
+// Package sys is the gogo system API: the wall clock, randomness and the
+// platform configuration store. It is a stub package like gogo/actor: the
+// compiler replaces every call with a VM builtin (B_UNIX_TIME,
+// B_SET_UNIX_TIME, B_RANDOM, B_CONFIG_GET), so the bodies are never
+// executed. The C side is vm_unix_time_ms, vm_set_unix_time_ms, vm_random
+// and vm_config_get (runtime/vm/host.h), over the host's optional RTC,
+// random and config hooks.
 //
 // The wall clock is separate from actor.Now (milliseconds since the VM
 // started): it can be unknown. gogo/sntp sets it from the network; a TLS
@@ -32,3 +34,11 @@ func SetTime(ms int64) bool { panic("gogo only") }
 // source (the hardware generator on the board, getentropy on unix). It is
 // meant for protocol nonces, not as a key generator on its own.
 func Random() int { panic("gogo only") }
+
+// Config returns the value of key in the platform configuration store; ok
+// is false if key is not set, or starts with "wifi.". The store holds
+// string keys and values, set with `gogo config set key value`: on unix
+// the file $GOGO_CONFIG (default ~/.gogo/config), on the board its NVS,
+// where a key is at most 15 bytes. Keys starting with "wifi." (Wi-Fi
+// credentials) belong to the platform and are never visible to programs.
+func Config(key string) (value string, ok bool) { panic("gogo only") }

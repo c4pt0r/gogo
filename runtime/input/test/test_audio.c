@@ -50,7 +50,7 @@ static void mini_image(void) {
 
 static const PortDriver *const drivers[] = {
     &input_kbd_driver, &input_power_driver, &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
-    &input_mic_driver, &input_spk_driver, NULL
+    &input_mic_driver, &input_speaker_driver, NULL
 };
 
 static void setup(void) {
@@ -114,7 +114,7 @@ static term open_mic(Actor *a, int rate, int frame_ms, int gain) {
 
 static term open_spk(Actor *a, int rate, int volume) {
     a->hp = 0;
-    term name = heap_str(a, "spk");
+    term name = heap_str(a, "speaker");
     term f[2] = { term_from_int(rate), term_from_int(volume) };
     return port_open(&vm, a, name, heap_struct(a, TYPE_AUDIO_SPEAKER, 2, f));
 }
@@ -151,17 +151,19 @@ static void collect(Actor *a) {
         Ev *e = &got[ngot < 64 ? ngot : 63];
         memset(e, 0, sizeof *e);
         if (m->data[1] == TYPE_DONE) {
-            CHECK_EQ(m->data[0], hdr_make(3, K_STRUCT));
+            CHECK_EQ(m->data[0], hdr_make(4, K_STRUCT));
+            CHECK(term_is_pid(m->data[2]));   /* From */
             e->len = -1;
-            e->seq = word_int(m, m->data[2]);
+            e->seq = word_int(m, m->data[3]);
         } else {
-            CHECK_EQ(m->data[0], hdr_make(6, K_STRUCT));
+            CHECK_EQ(m->data[0], hdr_make(7, K_STRUCT));
             CHECK_EQ(m->data[1], TYPE_CHUNK);
-            e->seq = word_int(m, m->data[2]);
-            e->time = word_int(m, m->data[3]);
-            e->dropped = word_int(m, m->data[4]);
-            CHECK(m->data[5] != T_EMPTYBYTES);
-            const uint32_t *b = &m->data[term_ref_off(m->data[5])];
+            CHECK(term_is_pid(m->data[2]));   /* From */
+            e->seq = word_int(m, m->data[3]);
+            e->time = word_int(m, m->data[4]);
+            e->dropped = word_int(m, m->data[5]);
+            CHECK(m->data[6] != T_EMPTYBYTES);
+            const uint32_t *b = &m->data[term_ref_off(m->data[6])];
             const uint8_t *s = (const uint8_t *)&b[2];
             e->len = (int)b[1];
             e->first = (uint16_t)(s[0] | s[1] << 8);
@@ -588,9 +590,9 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     CHECK(port_is(s));
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));                 /* idle: no poll */
-    CHECK(!input_spk_driver.can_event(&vm, port_of(s)));
+    CHECK(!input_speaker_driver.can_event(&vm, port_of(s)));
     send_out(owner, s, 6000, 7);
-    CHECK(input_spk_driver.can_event(&vm, port_of(s)));
+    CHECK(input_speaker_driver.can_event(&vm, port_of(s)));
     CHECK(port_next_deadline(&vm, &d));
     CHECK_EQ(d, 0u);                                     /* started at once */
     step(0);
@@ -622,7 +624,7 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     for (uint32_t i = 0; i < 6000; i++) same = same && w[i] == (uint8_t)(i + 7);
     CHECK(same);
     CHECK(!port_next_deadline(&vm, &d));
-    CHECK(!input_spk_driver.can_event(&vm, port_of(s)));
+    CHECK(!input_speaker_driver.can_event(&vm, port_of(s)));
     teardown();
 }
 
@@ -766,7 +768,7 @@ TEST(spk_close_while_playing) {
     fake_spk_set_idle();
     step(120);
     CHECK(owner->mbox_head == NULL);                     /* owed */
-    CHECK(input_spk_driver.can_event(&vm, port_of(s)));
+    CHECK(input_speaker_driver.can_event(&vm, port_of(s)));
     port_close(&vm, s);
     owner->max_words = ROOMY;
     step(130);

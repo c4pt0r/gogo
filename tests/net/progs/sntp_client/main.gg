@@ -6,7 +6,6 @@ package main
 
 import (
 	"gogo/actor"
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/sntp"
 	"gogo/strconv"
@@ -16,9 +15,9 @@ import (
 
 func main() {
 	println("start", dhcp.Start(dhcp.Config{}))
-	script, _ := config.Get("test.script")
+	script, _ := sys.Config("test.script")
 	timeout := 3000
-	if s, ok := config.Get("test.timeout"); ok {
+	if s, ok := sys.Config("test.timeout"); ok {
 		timeout, _ = strconv.Atoi(s)
 	}
 	for _, step := range strings.Split(script, " ") {

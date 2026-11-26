@@ -11,13 +11,17 @@ import (
 func handler(conn actor.PID, main actor.PID) {
 	for {
 		switch m := actor.Receive().(type) {
-		case net.Data:
+		case port.Chunk:
 			println("got", m.Data.String())
-			actor.Send(conn, net.Write{Data: m.Data})
+			actor.Send(conn, port.Out{Data: m.Data})
 			actor.Send(conn, net.Shutdown{})
-		case net.Written:
-			println("written")
-		case net.Closed:
+		case port.Done:
+			if m.Seq < 0 {
+				println("not sent")
+			} else {
+				println("written")
+			}
+		case port.Closed:
 			println("closed", m.Reason)
 			actor.Send(main, 1)
 			return

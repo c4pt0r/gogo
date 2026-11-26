@@ -23,7 +23,7 @@
 
 #define HOST_MAX 253u
 #define RX_CAP TCP_MSS           /* ciphertext buffer: one segment (our window) */
-#define DATA_MAX TCP_MSS         /* plaintext per Data event */
+#define DATA_MAX TCP_MSS         /* plaintext per Chunk */
 #define RETRY_MS 50u
 /* The record buffers mbedTLS allocates: content plus header, IV, MAC and
  * padding (MBEDTLS_SSL_*_BUFFER_LEN, internal to mbedTLS; an upper bound). */
@@ -38,7 +38,7 @@ enum {
     TS_SHUT = 16,       /* Shutdown asked: close_notify after the writes */
     TS_SHUT_DONE = 32,  /* close_notify acknowledged, FIN queued */
     TS_DEAD = 64,       /* failed: reset at the next drain */
-    TS_RETRY = 128,     /* a Data waits for the owner's room until retry_at */
+    TS_RETRY = 128,     /* a Chunk or a Done waits for the owner's room until retry_at */
     TS_EOF = 256        /* Closed{Normal} posted (the peer finished sending) */
 };
 
@@ -66,8 +66,9 @@ typedef struct TlsConn TlsConn;
 #define TLS_CHARGE_BYTES (sizeof(TlsConn) + MBEDTLS_SSL_IN_CONTENT_LEN + MBEDTLS_SSL_OUT_CONTENT_LEN + \
                           2u * RECORD_SLACK)
 #define TLS_CHARGE_WORDS ((uint16_t)((TLS_CHARGE_BYTES + 3u) / 4u))
-/* Room for one Data (DATA_MAX bytes) and the control events after it. */
-#define DATA_WORDS (3u + 2u + (DATA_MAX + 3u) / 4u)
+/* Room for one Chunk (DATA_MAX bytes; Seq and TimeMs may need boxes) and
+ * the control events after it. */
+#define DATA_WORDS (7u + 4u + 2u + (DATA_MAX + 3u) / 4u)
 #define ROOM_64W ((uint8_t)((msg_footprint_words(DATA_WORDS) + TCP_EVENT_RESERVE + 63u) / 64u))
 
 /* mbedTLS's platform hooks are process-global and get no context: the
@@ -295,12 +296,13 @@ static void post_closed(Vm *vm, TlsConn *t, int32_t reason) {
     uint16_t f = reason == CR_NORMAL ? TS_EOF : TS_CLOSED;
     if (t->flags & (f | TS_CLOSED)) return;
     t->flags |= f;
-    tcp_post(vm, t->c, TYPE_NET_CLOSED, reason);
+    tcp_post(vm, t->c, TYPE_CLOSED, reason);
 }
 
 /* A failure: Closed{reason} now, the reset at the next drain (callers
  * inside TCP's input must not end the connection). */
 static void fail(Vm *vm, TlsConn *t, int32_t reason) {
+    tcp_fail_outs(vm, t->c);                    /* their Dones before the Closed */
     post_closed(vm, t, reason);
     t->flags |= TS_DEAD | TS_KICK;
 }
@@ -356,13 +358,16 @@ static void handshake(Vm *vm, TlsConn *t) {
     tcp_post(vm, t->c, TYPE_NET_CONNECTED, -1);
 }
 
-/* The Writes in order, a record (at most OUT_CONTENT_LEN) at a time; a
- * Write is Written once its last record is acknowledged. */
-static void pump_write(Vm *vm, TlsConn *t) {
+/* The Outs in order, a record (at most OUT_CONTENT_LEN) at a time; an
+ * Out is Done once its last record is acknowledged. 1: blocked (events
+ * held before the Dones: retried), else 0. */
+static int pump_write(Vm *vm, TlsConn *t) {
     TcpPcb *c = t->c;
-    while (c->wr[0] && !(t->flags & TS_DEAD)) {
+    StreamOut *o = tcp_stream(c->port);
+    if (o->n && !tcp_flush(vm, c->port)) return 1;     /* Connected before any Done */
+    while (o->n && !(t->flags & TS_DEAD)) {
         uint32_t len = 0;
-        const uint8_t *d = bytes_data(vm, c->wr[0], &len);
+        const uint8_t *d = stream_out_head(vm, o, &len);
         if (!d || c->wr_off >= len) {
             tcp_write_done(vm, c);
             continue;
@@ -372,13 +377,14 @@ static void pump_write(Vm *vm, TlsConn *t) {
         uint64_t t0 = slice_start(t);
         int r = mbedtls_ssl_write(&t->ssl, d + c->wr_off, n);   /* the same call again after WANT_WRITE */
         io_slice(t, t0);
-        if (r == MBEDTLS_ERR_SSL_WANT_WRITE || r == MBEDTLS_ERR_SSL_WANT_READ) return;
+        if (r == MBEDTLS_ERR_SSL_WANT_WRITE || r == MBEDTLS_ERR_SSL_WANT_READ) return 0;
         if (r < 0) {
             fail(vm, t, reason_of(t, r));
-            return;
+            return 0;
         }
         c->wr_off += (uint32_t)r;
     }
+    return 0;
 }
 
 /* Decrypted data to the owner while it has room. 0: nothing more for now;
@@ -407,27 +413,24 @@ static int pump_read(Vm *vm, TlsConn *t) {
             continue;                               /* an empty record */
         }
         uint32_t n = avail < DATA_MAX ? (uint32_t)avail : DATA_MAX;
-        uint32_t bw = 2u + (n + 3u) / 4u;
         Actor *o = port_owner(vm, p);
         if (!o) return 0;                           /* exiting: its close frees us */
-        Msg *m = tcp_flush(vm, p) ? net_msg_new(vm, 3u + bw) : NULL;
+        uint8_t *w;
+        Msg *m = tcp_chunk_new(vm, t->c, n, &w);
         if (!m) return 1;
         if (!net_room(vm, o, msg_charge_words(vm, m), TCP_EVENT_RESERVE)) {
             msg_free(vm, m);
             return 1;
         }
-        uint32_t *d = m->data;
-        d[0] = hdr_make(3, K_STRUCT);
-        d[1] = TYPE_NET_DATA;
-        d[2] = term_from_ref(3);
-        d[3] = hdr_make(bw, K_BYTES);
-        d[4] = n;
-        d[3u + bw - 1u] = 0;                        /* padding */
         t0 = slice_start(t);
-        r = mbedtls_ssl_read(&t->ssl, (unsigned char *)&d[5], n);
+        r = mbedtls_ssl_read(&t->ssl, w, n);
         io_slice(t, t0);
-        if (r != (int)n || !net_deliver(vm, o, m, TCP_EVENT_RESERVE)) {   /* cannot happen */
+        if (r != (int)n) {                          /* cannot happen */
             msg_free(vm, m);
+            fail(vm, t, CR_TLS);
+            return -1;
+        }
+        if (!tcp_chunk_send(vm, t->c, m)) {         /* cannot happen: net_room said yes */
             fail(vm, t, CR_TLS);
             return -1;
         }
@@ -442,12 +445,12 @@ static void drive(Vm *vm, TlsConn *t) {
         if (!(t->flags & TS_HS_DONE)) {
             handshake(vm, t);
         } else {
-            pump_write(vm, t);
-            if (pump_read(vm, t) > 0) {
+            int blocked = pump_write(vm, t);
+            if (pump_read(vm, t) > 0 || blocked) {
                 t->flags |= TS_RETRY;
                 t->retry_at = (uint32_t)vm_now(vm) + RETRY_MS;
             }
-            if ((t->flags & (TS_SHUT | TS_SHUT_DONE | TS_DEAD)) == TS_SHUT && !c->wr[0]) {
+            if ((t->flags & (TS_SHUT | TS_SHUT_DONE | TS_DEAD)) == TS_SHUT && !tcp_stream(c->port)->n) {
                 int r = mbedtls_ssl_close_notify(&t->ssl);
                 if (r == 0) {
                     t->flags |= TS_SHUT_DONE;
@@ -639,21 +642,22 @@ static void t_close(Vm *vm, Port *p) {
     tcp_close_port(vm, p);
 }
 
-/* Write{Data} and Shutdown{}. */
+/* Out{Data} and Shutdown{}. */
 static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
     TcpPcb *c = tcp_pcb_of(vm->net, p);
     const uint32_t *o = obj_of(vm, from, msg);
     TlsConn *t = vm->net->tls.conn;
-    if (!c || !t || t->c != c) return;          /* the connection has ended */
+    bool live = c && t && t->c == c;
     if (!o || hdr_kind(o[0]) != K_STRUCT) {
         vm->net->st.tx_bad++;
         return;
     }
-    switch (o[1]) {
-    case TYPE_NET_WRITE:
-        if (t->flags & TS_SHUT) break;
-        if (tcp_write_cmd(vm, from, p, c, o)) t->flags |= TS_KICK;   /* else it may have ended */
+    if (o[1] == TYPE_OUT) {                     /* refused (Done{-1}) once ended or after Shutdown */
+        if (tcp_out(vm, from, p, live && !(t->flags & TS_SHUT) ? c : NULL, msg)) t->flags |= TS_KICK;
         return;
+    }
+    if (!live) return;                          /* the connection has ended */
+    switch (o[1]) {
     case TYPE_NET_SHUTDOWN:
         if (hdr_words(o[0]) != 2u) break;
         t->flags |= TS_SHUT | TS_KICK;
@@ -665,5 +669,5 @@ static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
 }
 
 const PortDriver net_tls_driver = {
-    "tls", TYPE_NET_DIALTLS, TYPE_NET_DATA, NULL, NULL, t_close, tcp_port_can_event, NULL, t_command, t_open
+    "tls", TYPE_NET_DIALTLS, TYPE_CHUNK, NULL, NULL, t_close, tcp_port_can_event, NULL, t_command, t_open
 };

@@ -26,6 +26,17 @@
  * bit for bit the image ref. Every read through a tagged word checks the
  * slot's current generation (module_of_tag); a mismatch is `badcode`.
  *
+ * Reserved for the language phases still to come (interfaces, pointers,
+ * maps), so that they need an image format minor, not a major (image.h):
+ *   - heap kinds 12-15 (K_*, below; image_load refuses a const object of
+ *     an unknown kind);
+ *   - the specials from 0x72 up (T_*: only 0x02-0x62 are given);
+ *   - the TYPEIS ids 0x10007-0x100FF beside TY_* (opcodes.h);
+ *   - bits 16-20 of a K_STRUCT's type word (0 in every v15 image), for
+ *     per-type flags.
+ * Nothing in a v15 compiler or VM produces any of them; the image
+ * version check, not the loader, keeps them from an older VM.
+ *
  * Residual alias bound: a tag carries 8 generation bits, so a stale term
  * resolves again (to whatever module then sits in its slot) only after
  * exactly 256 more loads into that same slot while the term survives.
@@ -65,6 +76,7 @@ typedef uint32_t term;
 #define T_NILSLICE ((term)0x52)
 /* The empty bytes.Bytes, its zero value: length 0, never allocated. */
 #define T_EMPTYBYTES ((term)0x62)
+/* Specials from 0x72 up: reserved (top). */
 
 /* Heap object kinds. */
 enum {
@@ -82,6 +94,7 @@ enum {
                       * a heap bytes.Bytes (any size) */
     K_BUF     = 11,  /* [hdr][len][array]: a bytes.Buffer; raw len, array a
                       * K_BYTEARR ref (its capacity), T_NIL when cap is 0 */
+    /* 12-15: reserved for interface values, pointers and maps (top). */
     K_FORWARD = 63
 };
 

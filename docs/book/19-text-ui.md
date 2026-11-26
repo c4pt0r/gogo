@@ -204,14 +204,11 @@ a button edge, or a `port.Done` answering one of the screen's frames.
 Everything else is yours to handle: timers, network events, messages from
 other actors. A UI never blocks the rest of a program.
 
-A `port.Done` does not say which port sent it. `Event` takes as many
-`Done`s as the screen has frames unanswered (`Flush` counts them) and
-hands any others back. A program that also drives another stream port,
-the speaker for instance, gets the right number of `Done`s back, but while
-both ports have messages in flight one of its `Done`s may be taken for the
-screen's and the screen's handed back instead: count them, do not rely on
-their `Seq`. (A later version of `port.Done` will carry its sender, and
-this will become exact.)
+Every `port.Done` names the port that sent it in `From`. `Event` takes
+exactly the `Done`s whose `From` is the screen's port (`s.Port`) and hands
+every other one back, so a program that also drives another stream port,
+the speaker or a TCP connection, gets each of its own `Done`s, with its
+`Seq`, untouched.
 
 ```go
 func main() {
@@ -365,7 +362,7 @@ done -1
   arrives once the owner has room (waiting in `Receive` usually frees
   it). With 8 `Done`s waiting, a further `Out` is not drawn and gets
   `Done{-1}`. So, as `waitDone` above does, never wait for a `Done`
-  without a timeout. A `port.Done` does not say which port sent it.
+  without a timeout. Its `From` is the screen port's PID.
 - **Memory.** The grid is 4 bytes a cell (1760 bytes for 40 x 11). It is
   allocated when the port opens and charged to the owner. The frame's data
   is read in place, never copied. A frame that changes nothing draws

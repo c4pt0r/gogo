@@ -153,7 +153,7 @@ static const gogo_host pipe_host = {
 | `unix_time_ms`, `set_unix_time_ms` | a wall clock (an RTC); `NULL`: the VM keeps its own, unknown until a program sets it |
 | `random(ctx)` | 32 random bits; `NULL`: the VM's own clock-seeded mixer (not for secrets) |
 | `random_bytes(ctx, buf, n)` | cryptographic random bytes, for TLS; optional, with no fallback (the library has no TLS yet) |
-| `config_get` | the values `config.Get` reads; `NULL`: nothing is set |
+| `config_get` | the values `sys.Config` reads; `NULL`: nothing is set |
 | `code_alloc`, `code_free` | special memory for hot-loaded code; `NULL`: ordinary memory |
 
 The hooks run on the VM's thread, inside `gogo_step`, except `wake` (and
@@ -268,7 +268,8 @@ thousands of times), and so does `post.c` in the next section.
 
 The host sends an actor a message with `gogo_post(vm, name, kind, data,
 len)`. The actor must have registered `name` (`actor.Register`, chapter
-4), and gets a `port.Post{Kind, Data}`:
+4), and gets a `port.Post{From, Kind, Data}` (`From` is the zero PID; a
+host port's events carry the port's PID there instead):
 
 ```go
 func main() {

@@ -1,19 +1,26 @@
-/* Unified data streams (spec input2 §1): the one place every streaming
- * driver (IMU samples, IR frames, later audio) builds its messages.
+/* The stream protocol: the one place every byte port (IMU samples, IR
+ * frames, audio, TCP and TLS) builds its messages. Every event carries
+ * From, the port's PID.
  *
- *  - Input: port.Chunk{Seq, TimeMs, Dropped int; Data bytes.Bytes} to the
- *    port's owner, Data an inline heap K_BYTES in the message block (as
- *    net/udp.c's Datagram). Delivery is non-fatal: a Chunk over the owner's
- *    quota (or to an owner that is gone) is dropped and counted, never
- *    killing anyone. Seq counts every Chunk made, from 1, delivered or not;
- *    Dropped is how many were lost since the last delivered one.
+ *  - Input: port.Chunk{From PID; Seq, TimeMs, Dropped int; Data
+ *    bytes.Bytes} to the port's owner, Data an inline heap K_BYTES in the
+ *    message block (as net/udp.c's Datagram). stream_deliver_chunk is
+ *    non-fatal: a Chunk over the owner's quota (or to an owner that is
+ *    gone) is dropped and counted, never killing anyone. Seq counts every
+ *    Chunk made, from 1, delivered or not; Dropped is how many were lost
+ *    since the last delivered one. A port that must not lose data (TCP:
+ *    it refuses the segment instead, and the peer resends) builds its
+ *    Chunk with stream_chunk_new and queues it under its own rule.
  *  - Output: port.Out{Data bytes.Bytes} commands, at most STREAM_OUT_MAX in
  *    flight per port (the head is running, one more is queued). Each
- *    accepted Out gets exactly one port.Done{Seq} when it finishes, Seq
+ *    accepted Out gets exactly one port.Done{From, Seq} when it finishes, Seq
  *    counting the Outs finished successfully from 1; a refused one (a
  *    third in flight, malformed, empty, or data the driver's check
  *    rejects) and one the driver could not send (stream_out_fail) get
- *    Done{Seq: -1} and are not counted. Dones come in the Outs' order.
+ *    Done{Seq: -1} and are not counted. The Dones of accepted Outs (a
+ *    failure's Done{-1} included) come in the Outs' order; a refused Out
+ *    is answered at once, so its Done{-1} may come before the Dones of
+ *    Outs still in flight.
  *  - Dones are never lost to a full mailbox: one the owner has no room for
  *    is owed (StreamOut.owed_*) and sent, in order, by a later
  *    stream_out_flush (the driver calls it from its poll), accept or done;
@@ -23,7 +30,10 @@
  *    than STREAM_OUT_MAX Outs outstanding. At most STREAM_OWED_MAX Dones
  *    are owed, room for the in-flight Outs' own always kept; a refusal
  *    beyond that (a sender flooding Outs at an owner that reads nothing)
- *    is dropped. Close discards what is owed.
+ *    is dropped. Close discards what is owed. While StreamOut.user is not
+ *    0 (the driver holds events of its own that must go first: tcp's
+ *    Connected) every Done is owed, never sent directly; the driver sends
+ *    them with stream_out_flush once its own are out.
  *
  * The Out's Data is held for the port: a handle is pinned
  * (port_bytes_retain), a heap or const K_BYTES is copied into a new
@@ -66,20 +76,29 @@ typedef struct {
 bool stream_deliver_chunk(struct Vm *vm, const Port *p, StreamIn *s, uint32_t time_ms,
                           const uint8_t *data, uint32_t len);
 
+/* A Chunk{From: from, Seq, TimeMs: the low 31 bits of time_ms, Dropped}
+ * message block with room for len Data bytes, which the caller writes at
+ * *data (NULL when len is 0: the empty Bytes), or NULL (too big for a
+ * message, out of memory). Seq and dropped must be at most 2^31 - 1. The
+ * caller queues it (msg_try_enqueue) or frees it. */
+struct Msg *stream_chunk_new(struct Vm *vm, term from, uint32_t seq, uint32_t time_ms, uint32_t dropped,
+                             uint32_t len, uint8_t **data);
+
 /* ---- output: Out / Done ---- */
 
 #define STREAM_OUT_MAX 2u
-#define STREAM_OWED_MAX 16u      /* bits in owed_bits */
+#define STREAM_OWED_MAX 8u       /* bits in owed_bits */
 
 /* 16 bytes (it fits Port.state). Zero it in open; stream_out_close zeroes
- * it again. */
+ * it again, `user` included. */
 typedef struct {
     term held[STREAM_OUT_MAX];   /* [0] the head (running), [1] queued; 0 = none */
     uint32_t next_seq;           /* Seq of the last finished Out (its Done sent or owed) */
     uint8_t n;                   /* Outs running or queued */
     uint8_t owed_n;              /* Dones owed, oldest first */
-    uint16_t owed_bits;          /* bit k: owed Done k is an accepted Out's (else Done{-1});
+    uint8_t owed_bits;           /* bit k: owed Done k is an accepted Out's (else Done{-1});
                                   * the accepted ones are the last Seqs up to next_seq */
+    uint8_t user;                /* the driver's own (tcp: its held events); not 0: Dones are owed */
 } StreamOut;
 
 /* A data check for stream_out_accept (NULL: any non-empty data); p for

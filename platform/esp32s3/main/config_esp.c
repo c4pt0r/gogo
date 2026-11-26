@@ -1,5 +1,5 @@
 /* The device configuration store: NVS namespace "gogo", one
- * blob per key, read by config.Get (esp_host.config_get; the VM never asks
+ * blob per key, read by sys.Config (esp_host.config_get; the VM never asks
  * for "wifi." keys) and by the Wi-Fi bring-up (wifi.ssid, wifi.password).
  *
  * `gogo config` reaches it over the USB-Serial/JTAG console: a task reads

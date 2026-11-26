@@ -737,7 +737,7 @@ func (c *checker) assign(s *ast.AssignStmt) {
 }
 
 // twoResult lists the stub functions that return two values (by stubName).
-var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true, "config.Get": true,
+var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true, "sys.Config": true,
 	"fs.Open": true, "fs.ReadFile": true, "fs.Stat": true, "fs.ReadDir": true, "fs.Usage": true,
 	"File.Read": true, "File.Size": true,
 	"code.Load": true, "code.Spawn": true, "code.SpawnLink": true, "code.SpawnOpt": true}
@@ -879,8 +879,6 @@ func stubName(fn *types.Func) string {
 		return "bytes." + fn.Name()
 	case NetPath:
 		return "net." + fn.Name()
-	case ConfigPath:
-		return "config." + fn.Name()
 	case SysPath:
 		return "sys." + fn.Name()
 	case FsPath:

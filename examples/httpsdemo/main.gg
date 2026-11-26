@@ -62,7 +62,7 @@ func wrongHost(ip int) {
 			println("wrong.example: 竟然连上了 / CONNECTED (wrong!),", ms(t0))
 			port.Close(p)
 			return
-		case net.Closed:
+		case port.Closed:
 			if m.Reason == net.BadCert {
 				println("wrong.example: 拒绝 / refused, Closed{BadCert},", ms(t0))
 			} else {

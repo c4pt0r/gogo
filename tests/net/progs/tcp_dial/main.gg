@@ -24,14 +24,18 @@ func main() {
 		switch m := actor.Receive().(type) {
 		case net.Connected:
 			println("connected")
-			actor.Send(c, net.Write{Data: big})
-			actor.Send(c, net.Write{Data: bytes.FromString("world")})
+			actor.Send(c, port.Out{Data: big})
+			actor.Send(c, port.Out{Data: bytes.FromString("world")})
 			actor.Send(c, net.Shutdown{})
-		case net.Written:
-			println("written")
-		case net.Data:
+		case port.Done:
+			if m.Seq < 0 {
+				println("not sent")
+			} else {
+				println("written")
+			}
+		case port.Chunk:
 			println("data", m.Data.String())
-		case net.Closed:
+		case port.Closed:
 			println("closed", m.Reason)
 			port.Close(c)
 			return

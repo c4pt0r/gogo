@@ -19,8 +19,20 @@
  * port.Post.
  *   v15.0 own types from TYPE_OWN_BASE (128) with the reserved count in
  *       header word 7; major.minor versions; append-only reserved fields;
- *       named requirements instead of the capability bits.
- *   v15.1 reserved type 47, screen.Config (the "screen" port).
+ *       named requirements instead of the capability bits; one stream
+ *       protocol (port.Chunk, Out, Done, Closed, with From on the events
+ *       and on port.Post) for every byte port, gogo/gpio's types, the
+ *       reserved table renumbered (44 types); the term tags the later
+ *       language phases need reserved (below).
+ *   v15.1 reserved type 44, screen.Config (the "screen" port).
+ *
+ * Reserved encodings (term.h): heap kinds 12-15, the specials from 0x72
+ * up, the TYPEIS ids 0x10007-0x100FF and bits 16-20 of a struct's type
+ * word are kept free for interface values, pointers and maps. Nothing in
+ * a v15 compiler or VM produces them (image_load refuses an unknown heap
+ * kind; it does not check the others). Giving one a meaning is a minor:
+ * an image that uses it is stamped with that minor, and the version
+ * check makes older VMs refuse it.
  *
  * Types: an image's type table holds n_reserved reserved rows (header
  * word 7; at most TYPE_RESERVED_COUNT, else IMG_ERR_VERSION: the image

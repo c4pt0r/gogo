@@ -217,7 +217,7 @@ TEST(strs_concat_gc_and_oom) {
     actor_free(&f.vm, f.a);
 }
 
-/* config.Get through the unix store: a temp $GOGO_CONFIG of key=value
+/* sys.Config through the unix store: a temp $GOGO_CONFIG of key=value
  * lines; "wifi." keys hidden; missing keys and files; the empty value; a
  * value bigger than the heap. */
 TEST(strs_config_get) {

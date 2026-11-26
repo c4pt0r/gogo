@@ -1,15 +1,15 @@
-// config.Get reads the store ($GOGO_CONFIG = this directory's config file
+// sys.Config reads the store ($GOGO_CONFIG = this directory's config file
 // under the golden runner): set keys, the empty value, missing keys, and
 // "wifi." keys hidden from programs.
 package main
 
 import (
 	"gogo/actor"
-	"gogo/config"
+	"gogo/sys"
 )
 
 func show(key string) {
-	v, ok := config.Get(key)
+	v, ok := sys.Config(key)
 	println(key, "=", "["+v+"]", ok)
 }
 
@@ -24,7 +24,7 @@ func main() {
 	// Another actor reads the same store.
 	done := actor.Self()
 	actor.Spawn(func() {
-		v, ok := config.Get("greeting")
+		v, ok := sys.Config("greeting")
 		println("child", v, ok)
 		actor.Send(done, true)
 	})

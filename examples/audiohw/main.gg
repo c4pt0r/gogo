@@ -55,14 +55,14 @@ func main() {
 }
 
 func halfDuplex() {
-	m, ok := port.Open("mic", audio.Mic{Rate: 16000})
-	_, ok2 := port.Open("spk", audio.Speaker{Rate: 16000, Volume: 50})
+	m, ok := port.Open("mic", audio.Mic{RateHz: 16000})
+	_, ok2 := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 50})
 	println("mic open", ok, "spk while mic", ok2)
 	if ok {
 		port.Close(m)
 	}
-	s, ok := port.Open("spk", audio.Speaker{Rate: 16000, Volume: 50})
-	_, ok2 = port.Open("mic", audio.Mic{Rate: 16000})
+	s, ok := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 50})
+	_, ok2 = port.Open("mic", audio.Mic{RateHz: 16000})
 	println("spk open", ok, "mic while spk", ok2)
 	if ok {
 		port.Close(s)
@@ -73,7 +73,7 @@ func halfDuplex() {
 // it returns its path ("" if none). The recorder runs with no file limit
 // and is stopped after secs seconds (and 150 ms).
 func record(dir string, rate, secs int) string {
-	r, ok := sound.Record(dir, audio.Mic{Rate: rate, FrameMs: 100}, 0)
+	r, ok := sound.Record(dir, audio.Mic{RateHz: rate, FrameMs: 100}, 0)
 	if !ok {
 		println("record", rate, "failed")
 		return ""
@@ -176,7 +176,7 @@ func analyse(path string, rate int) {
 
 // tone plays 0.5 s of a sine at rate and times it.
 func tone(rate int) {
-	p, ok := port.Open("spk", audio.Speaker{Rate: rate, Volume: 50})
+	p, ok := port.Open("speaker", audio.Speaker{RateHz: rate, VolumePct: 50})
 	if !ok {
 		println("tone", rate, "spk failed")
 		return

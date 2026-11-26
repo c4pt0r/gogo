@@ -333,14 +333,14 @@ static void net_wait(uint32_t ms) {
     net_poll(-1);
 }
 
-/* The kbd, power, imu, ir, mic and spk drivers (runtime/input/) are linked
+/* The kbd, power, imu, ir, mic and speaker drivers (runtime/input/) are linked
  * into gogovm only, not into the C test builds that share this file:
  * main.c's board lists them after these. */
 const PortDriver *const unix_base_ports[] = {
     &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver, &net_tcp_listen_driver, NULL
 };
 
-/* config.Get: the file $GOGO_CONFIG, else ~/.gogo/config,
+/* sys.Config: the file $GOGO_CONFIG, else ~/.gogo/config,
  * of key=value lines, which `gogo config set|get|list|rm` edits. Read on
  * every call; the first line for the key wins; lines that are too long
  * (UNIX_CONFIG_LINE) are skipped. */

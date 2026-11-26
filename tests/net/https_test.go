@@ -409,7 +409,7 @@ func TestHTTPSUpload(t *testing.T) {
 		}
 		peaks[size] = r.stats["vm_peak"]
 	}
-	// The two may differ by a chunk or two (when a Written comes
+	// The two may differ by a chunk or two (when a Done comes
 	// relative to the next Read), not by the file.
 	if d := peaks[1<<20] - peaks[16<<10]; d > 8192 {
 		t.Errorf("VM heap peak %d B for 1 MB, %d B for 16 KB: grows with the file", peaks[1<<20], peaks[16<<10])

@@ -3,7 +3,7 @@
  *
  * cfg {Pin, Mode, Edge, DebounceMs}: modes Input=0 InputPullUp=1
  * InputPullDown=2 Output=3; edges None=0 Rising=1 Falling=2 Both=3;
- * DebounceMs <= 0 means 20. Command TYPE_WRITE {Value} drives an output
+ * DebounceMs <= 0 means 20. Command TYPE_GPIO_WRITE {Value} drives an output
  * pin. Events {a = pin, b = level after the edge}.
  *
  * Inputs: an any-edge GPIO interrupt; the ISR reads the level, and for a
@@ -131,7 +131,7 @@ static int g_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
 }
 
 static void g_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm;
-    if (type != TYPE_WRITE || n != 1 || p->state[1] != M_OUTPUT) return;
+    if (type != TYPE_GPIO_WRITE || n != 1 || p->state[1] != M_OUTPUT) return;
     gpio_set_level((gpio_num_t)p->state[0], f[0] != 0);
 }
 
@@ -150,5 +150,5 @@ static void g_close(struct Vm *vm, Port *p) {
 static bool g_can_event(const struct Vm *vm, const Port *p) { (void)vm; return p->state[1] != M_OUTPUT && p->state[2] != E_NONE; }
 
 const PortDriver gpio_esp_driver = {
-    "gpio", TYPE_GPIO, TYPE_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL, NULL
+    "gpio", TYPE_GPIO_CONFIG, TYPE_GPIO_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL, NULL
 };

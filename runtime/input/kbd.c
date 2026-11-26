@@ -34,8 +34,8 @@ static Held *find(Kbd *k, uint8_t raw) {
 
 static void send(Vm *vm, uint8_t code, uint32_t mods, bool down) {
     InputState *in = vm->input;
-    int32_t v[4] = { code, input_key_char(mod_of(code) ? 0 : code, mods), (int32_t)mods, down };
-    if (!port_deliver_ints(vm, in->kbd.port, TYPE_KBD_KEY, v, 4, 8u)) in->dropped++;
+    int32_t v[4] = { code, input_key_char(mod_of(code) ? 0 : code, mods), (int32_t)mods, PORT_BOOL(down) };
+    if (!port_deliver_ints(vm, in->kbd.port, TYPE_KBD_KEY, v, 4, PORT_RAW(3))) in->dropped++;
 }
 
 static void key_event(Vm *vm, const KbdKey *tab, uint16_t raw, bool down, uint64_t now) {

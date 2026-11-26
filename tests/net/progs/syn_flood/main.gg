@@ -32,7 +32,7 @@ func main() {
 	println("dial", ok)
 	for done := 0; done < 2; {
 		switch m := actor.Receive().(type) {
-		case net.Closed:
+		case port.Closed:
 			println("closed", m.Reason)
 			done++
 		}

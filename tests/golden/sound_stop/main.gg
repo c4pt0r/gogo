@@ -14,12 +14,12 @@ import (
 )
 
 func main() {
-	r, ok := sound.Record("/flash/a", audio.Mic{Rate: 8000, FrameMs: 100}, 0)
+	r, ok := sound.Record("/flash/a", audio.Mic{RateHz: 8000, FrameMs: 100}, 0)
 	println("record a", ok)
 	actor.Send(r, sound.Stop{})
 	wait()
 
-	r, ok = sound.Record("/flash/b", audio.Mic{Rate: 8000, FrameMs: 100}, 1)
+	r, ok = sound.Record("/flash/b", audio.Mic{RateHz: 8000, FrameMs: 100}, 1)
 	println("record b", ok)
 	wait() // the full file
 	actor.Send(r, sound.Stop{})

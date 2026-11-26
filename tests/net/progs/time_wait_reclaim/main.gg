@@ -17,7 +17,7 @@ func closed(c actor.PID) {
 		switch m := actor.Receive().(type) {
 		case net.Connected:
 			actor.Send(c, net.Shutdown{})
-		case net.Closed:
+		case port.Closed:
 			println("closed", m.Reason)
 			port.Close(c)
 			return

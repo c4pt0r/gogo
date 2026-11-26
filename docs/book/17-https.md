@@ -51,14 +51,14 @@ Nothing changes in the calls; the URL decides:
 package main
 
 import (
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/http"
 	"gogo/sntp"
+	"gogo/sys"
 )
 
 func main() {
-	url, ok := config.Get("fetch.url")
+	url, ok := sys.Config("fetch.url")
 	if !ok {
 		url = "https://example.com/"
 	}
@@ -143,14 +143,14 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/http"
 	"gogo/sntp"
+	"gogo/sys"
 )
 
 func main() {
-	url, ok := config.Get("poll.url")
+	url, ok := sys.Config("poll.url")
 	if !ok {
 		url = "https://example.com/status"
 	}
@@ -233,7 +233,7 @@ can be called from any actor.
 
 If `token` is not empty, the request carries `Authorization: Bearer
 <token>`. **Keep the token out of your source code**: store it on the
-device with `gogo config` and read it with `config.Get`. `gogo/http` never
+device with `gogo config` and read it with `sys.Config`. `gogo/http` never
 prints it, and neither should you. A token goes over **https only**: with
 an `http://` URL, `Upload` refuses at once with `http.BadURL`, so a mistyped
 URL cannot send the token in the clear.
@@ -274,14 +274,14 @@ package main
 
 import (
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/fs"
 	"gogo/http"
+	"gogo/sys"
 )
 
 func main() {
-	url, _ := config.Get("upload.url")
-	token, _ := config.Get("upload.token") // sent as "Authorization: Bearer <token>"; never print it
+	url, _ := sys.Config("upload.url")
+	token, _ := sys.Config("upload.token") // sent as "Authorization: Bearer <token>"; never print it
 
 	// A 10 KB file to send.
 	b := bytes.NewBuffer(10240)
@@ -333,8 +333,9 @@ the connection for the next request.
 
 `gogo/http` sits on a port you can also use directly, for a protocol of
 your own over TLS. It is the `"tcp"` port with TLS in between, and has the
-same messages (`Connected`, `Write`, `Written`, `Data`, `Shutdown`,
-`Closed`); only its config differs:
+same messages (`Connected`, `Shutdown` and the stream protocol's
+`port.Out`, `Done`, `Chunk` and `Closed`, section 7.6); only its config
+differs:
 
 ```go
 c, ok := port.Open("tls", net.DialTLS{IP: ip, Port: 443, TimeoutMs: 15000, Host: "myhost.example.ts.net"})
@@ -345,7 +346,7 @@ server, SNI). `Connected` comes after the handshake. `Closed` has three
 more reasons: `net.NoTime` (the clock is not set; nothing was sent),
 `net.BadCert` (the certificate is untrusted, expired or for another name)
 and `net.TLS` (any other TLS failure). The owner needs about 23 KB plus
-room for one `Data` beyond its own heap, or the open fails: spawn it with
+room for one `Chunk` beyond its own heap, or the open fails: spawn it with
 `actor.SpawnOpt` and a larger `MaxMemory`, as `gogo/http` does. And frame
 what you read (a length, a terminator): a close at a record boundary looks
 normal, so "read until the close" cannot tell a whole stream from a cut

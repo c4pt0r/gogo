@@ -6,16 +6,17 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 func main() {
-	p11, ok1 := port.Open("gpio", port.GPIO{Pin: 11, Mode: port.InputPullUp, Edge: port.Falling})
-	p12, ok2 := port.Open("gpio", port.GPIO{Pin: 12, Mode: port.Input, Edge: port.Rising})
+	p11, ok1 := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+	p12, ok2 := port.Open("gpio", gpio.Config{Pin: 12, Mode: gpio.Input, Edge: gpio.Rising})
 	println(ok1, ok2)
 	for n := 0; n < 3; n++ {
 		switch e := actor.Receive().(type) {
-		case port.Edge:
+		case gpio.Edge:
 			println("edge", e.Pin, e.Value)
 		}
 	}

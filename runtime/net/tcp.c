@@ -16,15 +16,22 @@
  * lifetime), reported to the scheduler through the port source's
  * next_deadline and fired from its drain (tcp_poll). Not the VM timer heap.
  *
- * Write data is pinned on the owner's behalf (a handle) or copied into a
- * port-held handle (heap or const Bytes) and sent from there, the first
- * time and on every retransmission. Closing a port after Shutdown (also by
- * its owner's exit) leaves an orphan that finishes the close: it holds its
- * unacknowledged data by message references (bytes_msg_ref), charged to
- * no one, until acknowledged, for at most GOGO_NET_ORPHAN_MS from the
- * close: then it is reset (RST) whatever its progress, so a peer that
- * acknowledges a byte at a time cannot keep it alive. Closing
- * it otherwise sends RST.
+ * The port speaks the stream protocol (runtime/stream/stream.h): received
+ * bytes go to the owner as port.Chunk{From, Seq, TimeMs, Dropped 0, Data},
+ * port.Out{Data} sends, each Out answered by port.Done{From, Seq} once the
+ * peer acknowledged all of it, and port.Closed{From, Reason} ends it. The
+ * Outs live in the port's StreamOut (Port.state[0..3]): pinned on the
+ * owner's behalf (a handle) or copied into a port-held handle (heap or
+ * const Bytes), at most two in flight (a third, or one after Shutdown or
+ * once the connection is gone, gets Done{-1}), and sent from there, the
+ * first time and on every retransmission. When the connection ends, the
+ * Outs still in flight get Done{-1} before the Closed. Closing a port
+ * after Shutdown (also by its owner's exit) leaves an orphan that
+ * finishes the close: it holds its unacknowledged data by message
+ * references (bytes_msg_ref, in TcpPcb.wr), charged to no one, until
+ * acknowledged, for at most GOGO_NET_ORPHAN_MS from the close: then it is
+ * reset (RST) whatever its progress, so a peer that acknowledges a byte
+ * at a time cannot keep it alive. Closing it otherwise sends RST.
  *
  * Nothing TCP sends its owner can kill it: every event goes
  * through msg_try_enqueue. Data is refused (and not acknowledged) unless
@@ -32,15 +39,20 @@
  * is first collected without growth slack, heap_reclaim_waiting, since it
  * cannot collect itself until a message comes) for the control events that
  * may follow it; a control event that still does not fit is held in the
- * port (Port.state[1]: Connected, a count of Written, a Closed reason),
- * delivered in order before anything else and retried every
- * HELD_RETRY_MS until the owner has room. */
+ * port (Connected and a Closed reason in StreamOut.user, Dones owed in
+ * the StreamOut), delivered in order (Connected, Dones, Closed) before
+ * anything else and retried every HELD_RETRY_MS until the owner has room.
+ * While Connected or a Closed is held (StreamOut.user) the stream owes
+ * every Done instead of sending it, and no data goes out while Connected
+ * is held, so no Done overtakes the Connected. A refusal is answered at
+ * once, so its Done{-1} may come before the Dones of Outs in flight. */
 #include "net_int.h"
 #include "heap.h"
 #include "bytes.h"
 #include "opcodes.h"
 #include "host.h"
 #include "signals.h"
+#include "stream.h"
 #include <string.h>
 
 #define TH_FIN 0x01u
@@ -65,12 +77,13 @@
 #define DEFAULT_MSS 536u
 #define EPH_FIRST 49152u
 #define HELD_RETRY_MS 50u
-/* Port.state[1]: held events. */
+/* StreamOut.user: the held events, Connected and 1 + a Closed reason. */
 #define HELD_CONN 1u
-#define HELD_WR_ONE 2u
-#define HELD_WR_MASK 6u
-#define HELD_CL_SHIFT 4u
+#define HELD_CL_SHIFT 1u
 #define EVENT_RESERVE TCP_EVENT_RESERVE
+
+/* The refusal check: an Out after Shutdown or with no connection. */
+static bool refuse(const Port *p, const uint8_t *d, uint32_t len) { (void)p; (void)d; (void)len; return false; }
 
 /* A received segment. */
 typedef struct Seg {
@@ -156,12 +169,24 @@ static void seg_out(NetState *ns, const TcpPcb *c, uint32_t seq, uint8_t fl, con
 static void send_ack(NetState *ns, const TcpPcb *c) { seg_out(ns, c, c->snd_nxt, TH_ACK, NULL, 0); }
 static void send_rst(NetState *ns, const TcpPcb *c) { seg_out(ns, c, c->snd_nxt, TH_RST | TH_ACK, NULL, 0); }
 
-/* The bytes to send: wr[0] from wr_off, or the upper layer's. */
+/* The Out being sent (*len bytes) and how many are in flight: an orphan's
+ * from wr[], else the port's StreamOut. */
+static const uint8_t *head(Vm *vm, const TcpPcb *c, uint32_t *len, uint32_t *n_out) {
+    *len = 0;
+    if (c->flags & TF_ORPHAN) {
+        *n_out = (c->wr[0] ? 1u : 0u) + (c->wr[1] ? 1u : 0u);
+        return c->wr[0] ? bytes_data(vm, c->wr[0], len) : NULL;
+    }
+    *n_out = c->port ? tcp_stream(c->port)->n : 0u;
+    return c->port ? stream_out_head(vm, tcp_stream(c->port), len) : NULL;
+}
+
+/* The bytes to send: the head Out from wr_off, or the upper layer's. */
 static const uint8_t *tx_view(Vm *vm, const TcpPcb *c, uint32_t *len) {
     const NetState *ns = vm->net;
     if (c->flags & TF_UPPER) return ns->upper->tx(ns, c, len);
-    uint32_t n = 0;
-    const uint8_t *d = c->wr[0] ? bytes_data(vm, c->wr[0], &n) : NULL;
+    uint32_t n, k;
+    const uint8_t *d = head(vm, c, &n, &k);
     if (!d || c->wr_off > n) {
         *len = 0;
         return NULL;
@@ -204,12 +229,14 @@ static void xmit(Vm *vm, const TcpPcb *c) {
 static void output(Vm *vm, TcpPcb *c) {
     const NetState *ns = vm->net;
     if (c->snd_nxt != c->snd_una || (c->state != TCP_ESTABLISHED && c->state != TCP_CLOSE_WAIT)) return;
-    uint32_t left;
+    if (!(c->flags & TF_UPPER) && c->port && (tcp_stream(c->port)->user & HELD_CONN)) return;   /* Connected first */
+    uint32_t left, hl, k = 0;
     (void)tx_view(vm, c, &left);
+    if (!(c->flags & TF_UPPER)) (void)head(vm, c, &hl, &k);
     uint32_t n = left;
     if (n > c->mss) n = c->mss;
     if (n > c->wnd) n = c->wnd ? c->wnd : 1u;    /* zero window: a 1-byte probe */
-    bool fin = (c->flags & TF_SHUT) && n == left && ((c->flags & TF_UPPER) || !c->wr[1]);
+    bool fin = (c->flags & TF_SHUT) && n == left && k <= 1u;   /* nothing queued behind */
     if (!n && !fin) return;
     c->seg = (uint16_t)n;
     if (fin) {
@@ -226,46 +253,33 @@ static void output(Vm *vm, TcpPcb *c) {
 
 static Actor *owner(Vm *vm, const TcpPcb *c) { return c->port ? port_owner(vm, c->port) : NULL; }
 
-/* A struct event of `type` with no field, or with int field `reason` >= 0. */
-static Msg *event_new(Vm *vm, uint32_t type, int32_t reason) {
-    uint32_t words = reason >= 0 ? 3u : 2u;
-    Msg *m = net_msg_new(vm, words);
-    if (!m) return NULL;
-    m->data[0] = hdr_make(words, K_STRUCT);
-    m->data[1] = type;
-    if (reason >= 0) m->data[2] = term_from_int(reason);
-    return m;
-}
-
 void tcp_output(Vm *vm, TcpPcb *c) { output(vm, c); }
 
-/* Queues an event on p's owner if it fits (never fatal). */
+/* Queues Connected{} (type TYPE_NET_CONNECTED) or Closed{From, Reason} on
+ * p's owner if it fits (never fatal). */
 static bool post(Vm *vm, const Port *p, uint32_t type, int32_t reason) {
-    Actor *o = port_owner(vm, p);
-    Msg *m = o ? event_new(vm, type, reason) : NULL;
-    if (!m) return false;
-    if (msg_try_enqueue(vm, o, m)) return true;
-    msg_free(vm, m);
-    return false;
+    int32_t v[2] = { (int32_t)p->id, reason };
+    return port_deliver_ints(vm, p, type, v, type == TYPE_CLOSED ? 2u : 0u, PORT_RAW(0));
 }
 
 /* Delivers p's held events in order; true when none is left. */
 static bool flush(Vm *vm, Port *p) {
-    uint32_t *e = &p->state[1];
-    if (!*e) return true;
-    if (*e & HELD_CONN) {
-        if (!post(vm, p, TYPE_NET_CONNECTED, -1)) return false;
-        *e &= ~HELD_CONN;
+    StreamOut *o = tcp_stream(p);
+    if (o->user & HELD_CONN) {
+        if (!post(vm, p, TYPE_NET_CONNECTED, 0)) return false;
+        o->user = (uint8_t)(o->user & ~HELD_CONN);
     }
-    while (*e & HELD_WR_MASK) {
-        if (!post(vm, p, TYPE_NET_WRITTEN, -1)) return false;
-        *e -= HELD_WR_ONE;
-    }
-    if (*e >> HELD_CL_SHIFT) {
-        if (!post(vm, p, TYPE_NET_CLOSED, (int32_t)(*e >> HELD_CL_SHIFT) - 1)) return false;
-        *e = 0;
+    if (!stream_out_flush(vm, p, o)) return false;
+    if (o->user >> HELD_CL_SHIFT) {
+        if (!post(vm, p, TYPE_CLOSED, (int32_t)(o->user >> HELD_CL_SHIFT) - 1)) return false;
+        o->user = 0;
     }
     return true;
+}
+
+static bool held(const Port *p) {
+    const StreamOut *o = (const StreamOut *)(const void *)p->state;
+    return o->user || o->owed_n;
 }
 
 bool tcp_flush(Vm *vm, Port *p) { return flush(vm, p); }
@@ -275,19 +289,23 @@ static void retry_later(NetState *ns) {
     ns->held_at = now32(ns) + HELD_RETRY_MS;
 }
 
-/* Control events (Connected, Written, Closed other than the peer's FIN):
- * held in the port, after any already held, and delivered when they fit. */
+/* Delivers p's held events now, else retries them later. */
+static void settle(Vm *vm, Port *p) {
+    if (!flush(vm, p)) retry_later(vm->net);
+}
+
+/* Control events (Connected, Closed other than the peer's FIN): held in
+ * the port, after any already held, and delivered when they fit. */
 void tcp_post(Vm *vm, const TcpPcb *c, uint32_t type, int32_t reason) {
     Port *p = c->port;
     if (!p) return;
-    uint32_t *e = &p->state[1];
-    if (type == TYPE_NET_CONNECTED) *e |= HELD_CONN;
-    else if (type == TYPE_NET_WRITTEN) { if ((*e & HELD_WR_MASK) != HELD_WR_MASK) *e += HELD_WR_ONE; }  /* full: t_command prevents it */
-    else if (!(*e >> HELD_CL_SHIFT) ||    /* the first, or a terminal one after a held Normal */
-             ((*e >> HELD_CL_SHIFT) == CR_NORMAL + 1u && reason != CR_NORMAL)) {
-        *e = (*e & ((1u << HELD_CL_SHIFT) - 1u)) | (uint32_t)(reason + 1) << HELD_CL_SHIFT;
+    StreamOut *o = tcp_stream(p);
+    uint32_t cl = (uint32_t)o->user >> HELD_CL_SHIFT;
+    if (type == TYPE_NET_CONNECTED) o->user = (uint8_t)(o->user | HELD_CONN);
+    else if (!cl || (cl == CR_NORMAL + 1u && reason != CR_NORMAL)) {   /* the first, or a terminal one after a held Normal */
+        o->user = (uint8_t)((o->user & HELD_CONN) | (uint32_t)(reason + 1) << HELD_CL_SHIFT);
     }
-    if (!flush(vm, p)) retry_later(vm->net);
+    settle(vm, p);
 }
 
 /* An upper layer's connection: Connected is the layer's to send, and its
@@ -299,14 +317,13 @@ static void event(Vm *vm, TcpPcb *c, uint32_t type, int32_t reason) {
             ns->upper->connected(vm, c);
             return;
         }
-        if (type == TYPE_NET_CLOSED && ns->upper->closed && ns->upper->closed(ns, c)) return;
+        if (type == TYPE_CLOSED && ns->upper->closed && ns->upper->closed(ns, c)) return;
     }
     tcp_post(vm, c, type, reason);
 }
 
 void tcp_hold_closed(NetState *ns, Port *p, int32_t reason) {
-    p->state[0] = GOGO_NET_MAX_TCP;              /* no connection */
-    p->state[1] = (uint32_t)(reason + 1) << HELD_CL_SHIFT;
+    tcp_stream(p)->user = (uint8_t)((uint32_t)(reason + 1) << HELD_CL_SHIFT);   /* and no connection */
     ns->tcp_held = 1;
     ns->held_at = now32(ns);
 }
@@ -318,43 +335,57 @@ static bool try_event(Vm *vm, const TcpPcb *c, uint32_t type, int32_t reason) {
     return flush(vm, c->port) && post(vm, c->port, type, reason);
 }
 
-/* Data{Data}: the payload as a heap K_BYTES in the block. An
+static uint32_t next_seq(const TcpPcb *c) { return c->rx_seq >= 0x7FFFFFFFu ? 1u : c->rx_seq + 1u; }
+
+Msg *tcp_chunk_new(Vm *vm, const TcpPcb *c, uint32_t n, uint8_t **data) {
+    return owner(vm, c) && flush(vm, c->port) ?
+        stream_chunk_new(vm, c->port->id, next_seq(c), (uint32_t)vm_now(vm), 0, n, data) : NULL;
+}
+
+bool tcp_chunk_send(Vm *vm, TcpPcb *c, Msg *m) {
+    Actor *o = owner(vm, c);
+    if (o && net_deliver(vm, o, m, EVENT_RESERVE)) {
+        c->rx_seq = next_seq(c);
+        return true;
+    }
+    msg_free(vm, m);
+    return false;
+}
+
+/* The payload as a Chunk (its Data a heap K_BYTES in the block). An
  * orphan discards it. */
 static bool deliver(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n) {
     if (!c->port) return true;
     if (c->flags & TF_UPPER) return vm->net->upper->rx(vm, c, p, n);
-    Actor *o = owner(vm, c);
-    uint32_t bw = 2u + (n + 3u) / 4u;
-    Msg *m = o && flush(vm, c->port) ? net_msg_new(vm, 3u + bw) : NULL;
+    uint8_t *w;
+    Msg *m = tcp_chunk_new(vm, c, n, &w);
     if (!m) return false;
-    uint32_t *d = m->data;
-    d[0] = hdr_make(3, K_STRUCT);
-    d[1] = TYPE_NET_DATA;
-    d[2] = term_from_ref(3);
-    d[3] = hdr_make(bw, K_BYTES);
-    d[4] = n;
-    d[3u + bw - 1u] = 0;             /* padding */
-    memcpy(&d[5], p, n);
-    if (net_deliver(vm, o, m, EVENT_RESERVE)) return true;
-    msg_free(vm, m);
-    return false;
+    memcpy(w, p, n);
+    return tcp_chunk_send(vm, c, m);
 }
 
 /* ---- control blocks ---- */
 
 TcpPcb *tcp_pcb_of(const NetState *ns, const Port *p) {
-    uint32_t i = p->state[0];
-    return i < GOGO_NET_MAX_TCP && ns->tcp[i].state != TCP_CLOSED && ns->tcp[i].port == p ?
-        (TcpPcb *)&ns->tcp[i] : NULL;
+    for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) {
+        if (ns->tcp[i].state != TCP_CLOSED && ns->tcp[i].port == p) return (TcpPcb *)&ns->tcp[i];
+    }
+    return NULL;
 }
 
-/* Releases wr[k]: the port's pin, or an orphan's message reference. */
+/* Releases an orphan's wr[k] (its message reference). */
 static void drop_data(Vm *vm, TcpPcb *c, uint32_t k) {
     term h = c->wr[k];
     c->wr[k] = 0;
-    if (!term_is_handle(h)) return;  /* none, or an empty Write */
-    if (c->flags & TF_ORPHAN) bytes_msg_unref(vm, h);
-    else if (c->port) port_bytes_release(vm, c->port, h);
+    if (term_is_handle(h)) bytes_msg_unref(vm, h);
+}
+
+void tcp_fail_outs(Vm *vm, const TcpPcb *c) {
+    if (!c->port) return;
+    StreamOut *o = tcp_stream(c->port);
+    if (!o->n) return;
+    while (stream_out_fail(vm, c->port, o)) {}
+    settle(vm, c->port);
 }
 
 /* Releases c's data and detaches its port, which stays open with no
@@ -364,6 +395,7 @@ static void detach(Vm *vm, TcpPcb *c) {
         c->flags &= (uint8_t)~TF_UPPER;
         vm->net->upper->ended(vm->net, c);
     }
+    tcp_fail_outs(vm, c);
     drop_data(vm, c, 0);
     drop_data(vm, c, 1);
     if (c->port) {
@@ -383,7 +415,8 @@ static void pcb_free(Vm *vm, TcpPcb *c) {
 /* Ends the connection: RST if asked, Closed{reason} to the owner. */
 static void abort_conn(Vm *vm, TcpPcb *c, int32_t reason, bool rst) {
     if (rst) send_rst(vm->net, c);
-    if (reason >= 0) event(vm, c, TYPE_NET_CLOSED, reason);
+    tcp_fail_outs(vm, c);            /* their Dones before the Closed */
+    if (reason >= 0) event(vm, c, TYPE_CLOSED, reason);
     pcb_free(vm, c);
 }
 
@@ -458,7 +491,6 @@ TcpPcb *tcp_dial(NetState *ns, Port *p, const int32_t *cfg, uint32_t n) {
     c->snd_nxt = c->snd_una;     /* the SYN goes out at the next poll, */
     timer_set(ns, c, 0);             /* once the port layer has accepted the open */
     c->port = p;
-    p->state[0] = (uint32_t)(c - ns->tcp);
     p->charge_words = TCP_PCB_WORDS;
     return c;
 }
@@ -472,7 +504,6 @@ static int t_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
     if (!ns || !ns->accepting) return -1;
     TcpPcb *c = &ns->tcp[ns->accepting - 1u];
     c->port = p;
-    p->state[0] = (uint32_t)(c - ns->tcp);
     p->charge_words = TCP_PCB_WORDS;
     return 0;
 }
@@ -489,9 +520,14 @@ void tcp_close_port(Vm *vm, Port *p) {
     case TCP_ESTABLISHED: case TCP_CLOSE_WAIT: case TCP_FIN_WAIT_1:
     case TCP_FIN_WAIT_2: case TCP_CLOSING: case TCP_LAST_ACK:
         if (c->flags & TF_SHUT) {
-            /* Orphan: it finishes the FIN exchange alone. */
-            if (c->wr[0]) bytes_msg_ref(vm, c->wr[0]);
-            if (c->wr[1]) bytes_msg_ref(vm, c->wr[1]);
+            /* Orphan: it finishes the FIN exchange alone, holding the
+             * Outs left by message references (the port layer releases
+             * its pins after this). */
+            const StreamOut *o = tcp_stream(p);
+            for (uint32_t k = 0; k < o->n; k++) {
+                c->wr[k] = o->held[k];
+                bytes_msg_ref(vm, c->wr[k]);
+            }
             c->flags = (uint8_t)((c->flags | TF_ORPHAN | TF_UNTIL) & ~TF_PAUSED);
             c->port = NULL;
             c->until = now32(ns) + GOGO_NET_ORPHAN_MS;
@@ -504,10 +540,10 @@ void tcp_close_port(Vm *vm, Port *p) {
     default:
         break;
     }
-    memset(c, 0, sizeof *c);         /* the port layer releases wr[] */
+    memset(c, 0, sizeof *c);         /* the port layer releases the Outs' data */
 }
 
-bool tcp_port_can_event(const struct Vm *vm, const Port *p) { return tcp_pcb_of(vm->net, p) != NULL || p->state[1] != 0; }
+bool tcp_port_can_event(const struct Vm *vm, const Port *p) { return tcp_pcb_of(vm->net, p) != NULL || held(p); }
 
 static void unpause(NetState *ns, TcpPcb *c) {
     if (!(c->flags & TF_PAUSED)) return;
@@ -521,59 +557,24 @@ static void t_handoff(Vm *vm, Port *p) {
     if (c) unpause(ns, c);
 }
 
-static void written(Vm *vm, const TcpPcb *c) { tcp_post(vm, c, TYPE_NET_WRITTEN, -1); }
-
 void tcp_write_done(Vm *vm, TcpPcb *c) {
-    do {                             /* this Write, and empty ones queued after it */
+    c->wr_off = 0;
+    if (c->flags & TF_ORPHAN) {
         drop_data(vm, c, 0);
         c->wr[0] = c->wr[1];
         c->wr[1] = 0;
-        c->wr_off = 0;
-        written(vm, c);
-    } while (c->wr[0] == T_EMPTYBYTES);
+    } else if (c->port) {
+        (void)stream_out_done(vm, c->port, tcp_stream(c->port));
+        settle(vm, c->port);
+    }
 }
 
-/* Write{Data} (o, a struct of type TYPE_NET_WRITE): pinned into wr[]. */
-bool tcp_write_cmd(Vm *vm, const Actor *from, Port *p, TcpPcb *c, const uint32_t *o) {
-    NetState *ns = vm->net;
-    const uint8_t *d;
-    uint32_t len;
-    if (hdr_words(o[0]) != 3u || !bytes_view(vm, from, o[2], &d, &len) || (c->flags & TF_SHUT) ||
-        (c->state != TCP_SYN_SENT && c->state != TCP_ESTABLISHED && c->state != TCP_CLOSE_WAIT)) {
-        ns->st.tx_bad++;
-        return false;
-    }
-    /* Held Written events plus Writes in progress: at most 3 (what
-     * Port.state[1] counts). More means the owner keeps writing
-     * without reading its Written (more than 2 outstanding). */
-    uint32_t owed = (p->state[1] & HELD_WR_MASK) / HELD_WR_ONE + (c->wr[0] ? 1u : 0u) + (c->wr[1] ? 1u : 0u);
-    if (owed >= 3u) {
-        abort_conn(vm, c, CR_OVERFLOW, c->state != TCP_SYN_SENT);
-        return false;
-    }
-    if (!len && !c->wr[0]) {
-        written(vm, c);
-        return true;
-    }
-    uint32_t k = !c->wr[0] ? 0u : !c->wr[1] ? 1u : 2u;
-    term h = T_NIL;
-    if (k < 2u && !len) {
-        h = T_EMPTYBYTES;        /* Written in turn, after the one before */
-    } else if (k < 2u) {
-        if (term_is_handle(o[2])) {
-            if (port_bytes_retain(vm, p, o[2])) h = o[2];
-        } else {
-            uint8_t *w;
-            h = port_bytes_new(vm, p, len, &w);
-            if (h != T_NIL) memcpy(w, d, len);
-        }
-    }
-    if (h == T_NIL) {            /* a third Write, or no room to hold it */
-        abort_conn(vm, c, CR_OVERFLOW, c->state != TCP_SYN_SENT);
-        return false;
-    }
-    c->wr[k] = h;
-    return true;
+bool tcp_out(Vm *vm, const Actor *from, Port *p, const TcpPcb *c, term msg) {
+    bool ok = c && !(c->flags & TF_SHUT) &&
+              (c->state == TCP_SYN_SENT || c->state == TCP_ESTABLISHED || c->state == TCP_CLOSE_WAIT);
+    int r = stream_out_accept(vm, from, p, tcp_stream(p), msg, ok ? NULL : refuse);
+    settle(vm, p);
+    return r >= 0;
 }
 
 void tcp_shutdown(Vm *vm, TcpPcb *c) {
@@ -581,20 +582,21 @@ void tcp_shutdown(Vm *vm, TcpPcb *c) {
     output(vm, c);
 }
 
-/* Write{Data}, Shutdown{}, Resume{}. */
+/* Out{Data}, Shutdown{}, Resume{}. */
 static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
     NetState *ns = vm->net;
     TcpPcb *c = tcp_pcb_of(ns, p);
     const uint32_t *o = obj_of(vm, from, msg);
-    if (!c) return;                  /* the connection has ended */
     if (!o || hdr_kind(o[0]) != K_STRUCT) {
         ns->st.tx_bad++;
         return;
     }
-    switch (o[1]) {
-    case TYPE_NET_WRITE:
-        if (tcp_write_cmd(vm, from, p, c, o)) output(vm, c);
+    if (o[1] == TYPE_OUT) {          /* refused (Done{-1}) once the connection has ended */
+        if (tcp_out(vm, from, p, c, msg) && c) output(vm, c);
         return;
+    }
+    if (!c) return;                  /* the connection has ended */
+    switch (o[1]) {
     case TYPE_NET_SHUTDOWN:
         if (hdr_words(o[0]) != 2u) break;
         tcp_shutdown(vm, c);
@@ -610,7 +612,7 @@ static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
 }
 
 const PortDriver net_tcp_driver = {
-    "tcp", TYPE_NET_DIAL, TYPE_NET_DATA, t_open, NULL, tcp_close_port, tcp_port_can_event, t_handoff, t_command, NULL
+    "tcp", TYPE_NET_DIAL, TYPE_CHUNK, t_open, NULL, tcp_close_port, tcp_port_can_event, t_handoff, t_command, NULL
 };
 
 /* ---- the "tcp_listen" port ---- */
@@ -771,12 +773,12 @@ static bool ack_in(Vm *vm, TcpPcb *c, const Seg *s) {
     c->retries = 0;
     uint32_t d = acked < c->seg ? acked : c->seg;
     c->seg = (uint16_t)(c->seg - d);
-    uint32_t len = 0;
     if (c->flags & TF_UPPER) {
         if (d) ns->upper->acked(vm, c, d);
     } else {
+        uint32_t len, k;
         c->wr_off += d;
-        if (c->wr[0] && !c->seg && bytes_data(vm, c->wr[0], &len) && c->wr_off >= len) tcp_write_done(vm, c);
+        if (head(vm, c, &len, &k) && !c->seg && c->wr_off >= len) tcp_write_done(vm, c);
     }
     if (c->snd_una == c->snd_nxt) timer_stop(c);
     else timer_set(ns, c, rto(c));
@@ -888,7 +890,7 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
             ack = true;
         }
         if ((s->fl & TH_FIN) && ((c->flags & TF_UPPER) ? ns->upper->fin(vm, c) :
-                                 try_event(vm, c, TYPE_NET_CLOSED, CR_NORMAL))) {
+                                 try_event(vm, c, TYPE_CLOSED, CR_NORMAL))) {
             c->rcv_nxt++;
             ack = true;
             if (c->state == TCP_ESTABLISHED) {
@@ -1029,7 +1031,7 @@ void tcp_poll(Vm *vm) {
         for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
             Port *p = &vm->ports[i];
             bool ours = p->drv == &net_tcp_driver || (ns->upper && p->drv == ns->upper->drv);
-            if (ours && p->state[1] && !flush(vm, p)) retry_later(ns);
+            if (ours && held(p) && !flush(vm, p)) retry_later(ns);
         }
     }
     for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) {

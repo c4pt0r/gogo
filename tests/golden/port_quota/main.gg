@@ -2,12 +2,15 @@
 // receives overflows its mailbox and exits, and main (monitoring) lives on.
 package main
 
-import "gogo/actor"
-import "gogo/port"
+import (
+	"gogo/actor"
+	"gogo/gpio"
+	"gogo/port"
+)
 
 func main() {
 	owner := actor.SpawnOpt(func() {
-		_, ok := port.Open("gpio", port.GPIO{Pin: 11, Mode: port.InputPullUp, Edge: port.Both})
+		_, ok := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Both})
 		if !ok {
 			println("open failed")
 		}

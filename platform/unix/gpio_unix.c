@@ -46,7 +46,7 @@ static int g_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
 
 static void g_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm;
     char b[48];
-    if (type != TYPE_WRITE || n != 1 || p->state[1] != M_OUTPUT) return;
+    if (type != TYPE_GPIO_WRITE || n != 1 || p->state[1] != M_OUTPUT) return;
     int len = snprintf(b, sizeof b, "gpio: pin %u = %d\n", (unsigned)p->state[0], f[0] != 0);
     if (len > 0) platform_write_err(b, (size_t)len);
 }
@@ -61,7 +61,7 @@ static void g_close(struct Vm *vm, Port *p) {
 static bool g_can_event(const struct Vm *vm, const Port *p) { (void)vm; return p->state[1] != M_OUTPUT && p->state[2] != E_NONE && input_unix_live(); }
 
 const PortDriver gpio_unix_driver = {
-    "gpio", TYPE_GPIO, TYPE_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL, NULL
+    "gpio", TYPE_GPIO_CONFIG, TYPE_GPIO_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL, NULL
 };
 
 /* ---- input (the shared reader, input_unix.c, calls this) ---- */

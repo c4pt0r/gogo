@@ -587,7 +587,7 @@ static uint32_t bytes_copyto(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb
     return R_NORMAL;
 }
 
-/* CONFIG_GET key: config.Get. "wifi." keys are never looked up. The value
+/* CONFIG_GET key: sys.Config. "wifi." keys are never looked up. The value
  * is copied straight into a new heap string: one lookup for its length,
  * one into the string; a value whose length changed in between (the store
  * written meanwhile) reads as unset. */

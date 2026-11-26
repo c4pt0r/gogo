@@ -4,16 +4,16 @@ package main
 
 import (
 	"gogo/actor"
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/net"
 	"gogo/strconv"
+	"gogo/sys"
 )
 
 func main() {
 	println("subscribe", net.Subscribe())
 	timeout := 30000
-	if s, ok := config.Get("test.timeout"); ok {
+	if s, ok := sys.Config("test.timeout"); ok {
 		timeout, _ = strconv.Atoi(s)
 	}
 	println("start", dhcp.Start(dhcp.Config{TimeoutMs: timeout}), actor.Now())

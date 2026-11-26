@@ -104,12 +104,14 @@ int screen_port_open(struct Vm *vm, Port *p, const int32_t *cfg, uint32_t n, con
     return 0;
 }
 
-/* Delivers Done{seq}; once more after collecting a waiting owner's heap
- * slack (stream/'s rule). */
+/* Delivers Done{From: p, Seq: seq}; once more after collecting a waiting
+ * owner's heap slack (stream/'s rule). */
 static bool send_done(struct Vm *vm, Port *p, int32_t seq) {
-    if (port_deliver_ints(vm, p, TYPE_DONE, &seq, 1, 0)) return true;
+    int32_t v[2] = { (int32_t)p->id, seq };
+    if (port_deliver_ints(vm, p, TYPE_DONE, v, 2, PORT_RAW(0))) return true;
     struct Actor *o = port_owner(vm, p);
-    return o && o->state == A_WAITING && heap_reclaim_waiting(vm, o) && port_deliver_ints(vm, p, TYPE_DONE, &seq, 1, 0);
+    return o && o->state == A_WAITING && heap_reclaim_waiting(vm, o) &&
+           port_deliver_ints(vm, p, TYPE_DONE, v, 2, PORT_RAW(0));
 }
 
 /* Sends the owed Dones, oldest first, until one does not fit; true when

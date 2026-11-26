@@ -551,15 +551,15 @@ func compileImage(t *testing.T, src string) []byte {
 
 func TestCompileReservedTypes(t *testing.T) {
 	want := []string{"ProcInfo/1", "Reason/2", "ExitMsg/2", "DownMsg/3", "Request/3", "Options/1",
-		"port.GPIO/4", "port.Write/1", "port.Edge/2",
+		"gpio.Config/4", "gpio.Write/1", "gpio.Edge/2",
 		"net.IfConfig/0", "net.SetAddr/4", "net.Up/3", "net.Down/0", "net.Addr/2", "net.UDP/1",
-		"net.SendTo/2", "net.Datagram/2", "net.Dial/3", "net.Listen/1", "net.Write/1", "net.Shutdown/0",
-		"net.Resume/0", "net.Connected/0", "net.Data/1", "net.Written/0", "net.Closed/1", "net.Accepted/1",
+		"net.SendTo/2", "net.Datagram/2", "net.Dial/3", "net.Listen/1", "net.Shutdown/0",
+		"net.Resume/0", "net.Connected/0", "net.Accepted/1",
 		"fs.Info/2", "fs.Space/2",
 		"kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4", "power.Read/0", "code.Module/2",
-		"port.Chunk/4", "port.Out/1", "port.Done/1", "imu.Config/3", "imu.Gesture/2", "ir.TX/2", "ir.RX/1",
+		"port.Chunk/5", "port.Out/1", "port.Done/2", "port.Closed/2", "imu.Config/3", "imu.Gesture/2", "ir.TX/2", "ir.RX/1",
 		"audio.Mic/3", "audio.Speaker/2", "net.DialTLS/4",
-		"port.Host/2", "port.Post/2"}
+		"port.Host/2", "port.Post/3"}
 	// A program that names no reserved type carries no reserved row: its
 	// own types are numbered from TypeOwnBase.
 	img := compileImage(t, "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tvar a any = P{1, 2}\n\tswitch a.(type) {\n\tcase P:\n\t\tprintln(1)\n\t}\n}\n")
@@ -597,8 +597,8 @@ func TestCompileReservedTypes(t *testing.T) {
 	for _, w := range want[:len(want)-1] {
 		empty = append(empty, w[:strings.Index(w, "/")]+"/0")
 	}
-	if got := imageTypes(t, img); strings.Join(got, " ") != strings.Join(append(empty, "port.Post/2"), " ") {
-		t.Fatalf("types %v, want %v then port.Post/2", got, empty)
+	if got := imageTypes(t, img); strings.Join(got, " ") != strings.Join(append(empty, "port.Post/3"), " ") {
+		t.Fatalf("types %v, want %v then port.Post/3", got, empty)
 	}
 }
 
@@ -638,8 +638,8 @@ func TestImageMinorStamp(t *testing.T) {
 	if v := words(img)[1]; v != 15<<16 {
 		t.Errorf("version %s, want 15.0 (kbd.Config not used)", VersionString(v))
 	}
-	if got := imageTypes(t, img); got[TypeKbdConfig] != "kbd.Config/0" || got[TypeDone] != "port.Done/1" {
-		t.Errorf("rows %v: want kbd.Config/0 and port.Done/1", got)
+	if got := imageTypes(t, img); got[TypeKbdConfig] != "kbd.Config/0" || got[TypeDone] != "port.Done/2" {
+		t.Errorf("rows %v: want kbd.Config/0 and port.Done/2", got)
 	}
 	typeMinor["port.Done"] = 2
 	if v := words(compileImage(t, done))[1]; v != 15<<16|2 {
@@ -652,7 +652,7 @@ func TestImageMinorStamp(t *testing.T) {
 	}
 }
 
-// TestScreenConfigMinor: screen.Config is reserved type 47 of 15.1; a
+// TestScreenConfigMinor: screen.Config is reserved type 44 of 15.1; a
 // program that uses it is stamped 15.1, one that does not stays 15.0.
 func TestScreenConfigMinor(t *testing.T) {
 	use := "package main\nimport (\n\t\"gogo/port\"\n\t\"gogo/screen\"\n)\nfunc main() {\n\t_, _ = port.Open(\"screen\", screen.Config{})\n}\n"
@@ -660,7 +660,7 @@ func TestScreenConfigMinor(t *testing.T) {
 	if v := words(img)[1]; v != 15<<16|1 {
 		t.Errorf("version %s, want 15.1", VersionString(v))
 	}
-	if got := imageTypes(t, img); len(got) < 48 || got[TypeScreenConfig] != "screen.Config/2" {
+	if got := imageTypes(t, img); len(got) < 45 || got[TypeScreenConfig] != "screen.Config/2" {
 		t.Errorf("rows %v: want screen.Config/2 at %d", got, TypeScreenConfig)
 	}
 	other := "package main\nimport \"gogo/screen\"\nfunc main() {\n\tprintln(screen.OpText)\n}\n"
@@ -1234,17 +1234,17 @@ func Idle() {}
 	}
 }
 
-// gogo/config: config.Get is a two-result builtin, usable from libraries.
+// sys.Config is a two-result builtin, usable from libraries.
 func TestCompileConfig(t *testing.T) {
 	src := `package main
 
 import (
-	"gogo/config"
 	"gogo/strings"
+	"gogo/sys"
 )
 
 func main() {
-	v, ok := config.Get("net.ip")
+	v, ok := sys.Config("net.ip")
 	println(v, ok, strings.HasPrefix(v, "10."))
 }
 `
@@ -1318,19 +1318,20 @@ func TestCompilePort(t *testing.T) {
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 func main() {
-	p, ok := port.Open("gpio", port.GPIO{Pin: 25, Mode: port.Output, Edge: port.None, DebounceMs: 20})
+	p, ok := port.Open("gpio", gpio.Config{Pin: 25, Mode: gpio.Output, Edge: gpio.None, DebounceMs: 20})
 	if !ok {
 		return
 	}
 	var q actor.PID
-	q, ok = port.Open("gpio", port.GPIO{Pin: 0, Mode: port.InputPullUp, Edge: port.Both})
-	actor.Send(p, port.Write{Value: 1})
+	q, ok = port.Open("gpio", gpio.Config{Pin: 0, Mode: gpio.InputPullUp, Edge: gpio.Both})
+	actor.Send(p, gpio.Write{Value: 1})
 	switch m := actor.Receive().(type) {
-	case port.Edge:
+	case gpio.Edge:
 		println(m.Pin, m.Value, ok)
 	}
 	port.Close(p)
@@ -1338,7 +1339,7 @@ func main() {
 }
 `
 	img := compileImage(t, src)
-	want := "ProcInfo/0 Reason/0 ExitMsg/0 DownMsg/0 Request/0 Options/0 port.GPIO/4 port.Write/1 port.Edge/2"
+	want := "ProcInfo/0 Reason/0 ExitMsg/0 DownMsg/0 Request/0 Options/0 gpio.Config/4 gpio.Write/1 gpio.Edge/2"
 	if got := strings.Join(imageTypes(t, img), " "); got != want {
 		t.Fatalf("types %s, want %s", got, want)
 	}
@@ -1347,10 +1348,10 @@ func main() {
 		t.Fatal(err)
 	}
 	for _, re := range []string{
-		`NEWSTRUCT r\d+, r\d+, 4, port\.GPIO\n`,
+		`NEWSTRUCT r\d+, r\d+, 4, gpio\.Config\n`,
 		`BUILTIN r\d+, r\d+, 2, PORT_OPEN\n`,
-		`NEWSTRUCT r\d+, r\d+, 1, port\.Write\n`,
-		`TYPEIS r\d+, r\d+, port\.Edge\n`,
+		`NEWSTRUCT r\d+, r\d+, 1, gpio\.Write\n`,
+		`TYPEIS r\d+, r\d+, gpio\.Edge\n`,
 		`BUILTIN r\d+, r\d+, 1, PORT_CLOSE\n`,
 	} {
 		if !regexp.MustCompile(re).MatchString(dis) {
@@ -1360,15 +1361,15 @@ func main() {
 	if strings.Count(dis, "PORT_OPEN") != 2 {
 		t.Errorf("want two PORT_OPEN:\n%s", dis)
 	}
-	// The literal is NEWSTRUCT with type id 6 (TYPE_GPIO).
+	// The literal is NEWSTRUCT with type id 6 (TYPE_GPIO_CONFIG).
 	code := words(img)
 	found := false
 	for i := 0; i+1 < len(code); i++ {
-		if code[i]&0xFF == uint32(OpNewstruct) && code[i]>>24 == 4 && code[i+1] == TypeGpio {
+		if code[i]&0xFF == uint32(OpNewstruct) && code[i]>>24 == 4 && code[i+1] == TypeGpioConfig {
 			found = true
 		}
 	}
-	if !found || TypeGpio != 6 {
+	if !found || TypeGpioConfig != 6 {
 		t.Error("no NEWSTRUCT with type id 6")
 	}
 }
@@ -2101,7 +2102,7 @@ func main() {
 	case kbd.Key:
 		println(m.Code, m.Char, m.Mods, m.Down)
 	case power.Battery:
-		println(m.MilliVolts, m.Percent, m.Charging, m.External)
+		println(m.MilliVolts, m.Pct, m.Charging, m.External)
 	}
 }
 `)
@@ -2115,8 +2116,8 @@ func main() {
 			seen[code[i+1]] = true
 		}
 	}
-	if !seen[30] || !seen[32] {
-		t.Errorf("TYPEIS operands %v, want 30 and 32", seen)
+	if !seen[TypeKbdKey] || !seen[TypePowerBattery] || TypeKbdKey != 26 || TypePowerBattery != 28 {
+		t.Errorf("TYPEIS operands %v, want 26 and 28", seen)
 	}
 }
 

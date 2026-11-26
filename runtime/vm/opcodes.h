@@ -146,7 +146,7 @@ enum Builtin {
     B_BYTES_COPYTO    = 45,  /* Bytes, []byte -> n copied */
     B_PORT_HANDOFF    = 46,  /* port pid, to pid -> bool (port.h port_handoff) */
     B_NET_SUBSCRIBE   = 47,  /* -> bool: net.Subscribe (port.h port_subscribe) */
-    B_CONFIG_GET      = 48,  /* key string -> value string, ok bool: config.Get
+    B_CONFIG_GET      = 48,  /* key string -> value string, ok bool: sys.Config
                               * (host->config_get; "wifi." keys hidden) */
     B_FS              = 49,  /* op int, args... -> result(s): gogo/fs, run by
                               * the Vm's fs_builtin hook (actor.h; vfs/builtin.c) */
@@ -165,6 +165,7 @@ enum Builtin {
 #define TY_REF    0x10004u
 #define TY_INT64  0x10005u
 #define TY_BYTES  0x10006u   /* heap K_BYTES, off-heap handle, T_EMPTYBYTES */
+/* 0x10007 - 0x100FF: reserved for later basic types (term.h). */
 
 /* Reserved type-table indices: the compiler always emits the gogo/actor
  * struct types first, in this order (fields as in lib/actor/actor.gg). */
@@ -174,13 +175,12 @@ enum Builtin {
 #define TYPE_DOWNMSG  3   /* Ref Ref, From PID, Reason Reason */
 #define TYPE_REQUEST  4   /* From PID, Ref Ref, Body any */
 #define TYPE_OPTIONS  5   /* MaxMemory int */
-/* Then the gogo/port struct types (fields as in lib/port/port.gg), always
- * emitted too, whether the program imports gogo/port or not. */
-#define TYPE_GPIO     6   /* Pin, Mode, Edge, DebounceMs int */
-#define TYPE_WRITE    7   /* Value int */
-#define TYPE_EDGE     8   /* Pin int, Value int */
-/* Then the gogo/net struct types (fields as in lib/net/net.gg), always
- * emitted too. IPv4 addresses are ints (a.b.c.d = a<<24|b<<16|c<<8|d). */
+/* Then the gogo/gpio struct types (fields as in lib/gpio/gpio.gg). */
+#define TYPE_GPIO_CONFIG 6   /* Pin, Mode, Edge, DebounceMs int: cfg of the "gpio" port */
+#define TYPE_GPIO_WRITE  7   /* Value int: gpio command */
+#define TYPE_GPIO_EDGE   8   /* Pin int, Value int: gpio event */
+/* Then the gogo/net struct types (fields as in lib/net/net.gg). IPv4
+ * addresses are ints (a.b.c.d = a<<24|b<<16|c<<8|d). */
 #define TYPE_NET_IFCONFIG  9   /* (no fields): cfg of the "netif" port */
 #define TYPE_NET_SETADDR  10   /* IP, Mask, Gateway, DNS int */
 #define TYPE_NET_UP       11   /* IP, Gateway, DNS int */
@@ -191,48 +191,47 @@ enum Builtin {
 #define TYPE_NET_DATAGRAM 16   /* From Addr, Data bytes.Bytes */
 #define TYPE_NET_DIAL      17   /* IP, Port, TimeoutMs int: cfg of the "tcp" port */
 #define TYPE_NET_LISTEN    18   /* Port int: cfg of the "tcp_listen" port */
-#define TYPE_NET_WRITE     19   /* Data bytes.Bytes: tcp command */
-#define TYPE_NET_SHUTDOWN  20   /* (no fields): tcp command, send FIN */
-#define TYPE_NET_RESUME    21   /* (no fields): tcp command, unpause an accepted connection */
-#define TYPE_NET_CONNECTED 22   /* (no fields): tcp event */
-#define TYPE_NET_DATA      23   /* Data bytes.Bytes: tcp event */
-#define TYPE_NET_WRITTEN   24   /* (no fields): tcp event, a Write was acknowledged */
-#define TYPE_NET_CLOSED    25   /* Reason int: tcp event */
-#define TYPE_NET_ACCEPTED  26   /* Conn PID: tcp_listen event */
-/* Then the gogo/fs struct types (fields as in lib/fs/fs.gg), always emitted. */
-#define TYPE_FS_INFO  27   /* Size int, IsDir bool: fs.Stat */
-#define TYPE_FS_SPACE 28   /* Used, Total int: fs.Usage */
+#define TYPE_NET_SHUTDOWN  19   /* (no fields): tcp command, send FIN */
+#define TYPE_NET_RESUME    20   /* (no fields): tcp command, unpause an accepted connection */
+#define TYPE_NET_CONNECTED 21   /* (no fields): tcp event */
+#define TYPE_NET_ACCEPTED  22   /* Conn PID: tcp_listen event */
+/* Then the gogo/fs struct types (fields as in lib/fs/fs.gg). */
+#define TYPE_FS_INFO  23   /* Size int, IsDir bool: fs.Stat */
+#define TYPE_FS_SPACE 24   /* Used, Total int: fs.Usage */
 /* Then the gogo/kbd and gogo/power struct types (lib/kbd/kbd.gg, lib/power/power.gg). */
-#define TYPE_KBD_CONFIG    29   /* RepeatDelayMs, RepeatMs int: port.Open("kbd") */
-#define TYPE_KBD_KEY       30   /* Code, Char, Mods int; Down bool: key event */
-#define TYPE_POWER_CONFIG  31   /* PeriodMs int: port.Open("power") */
-#define TYPE_POWER_BATTERY 32   /* MilliVolts, Percent, Charging, External int */
-#define TYPE_POWER_READ    33   /* (no fields): ask for a Battery now */
+#define TYPE_KBD_CONFIG    25   /* RepeatDelayMs, RepeatMs int: port.Open("kbd") */
+#define TYPE_KBD_KEY       26   /* Code, Char, Mods int; Down bool: key event */
+#define TYPE_POWER_CONFIG  27   /* PeriodMs int: port.Open("power") */
+#define TYPE_POWER_BATTERY 28   /* MilliVolts, Pct, Charging, External int */
+#define TYPE_POWER_READ    29   /* (no fields): ask for a Battery now */
 /* Then the gogo/code struct type (lib/code/code.gg). */
-#define TYPE_CODE_MODULE   34   /* H int, missing string: a module handle (module_builtin) */
-/* Then (v10) the port stream types and the gogo/imu and gogo/ir types. */
-#define TYPE_CHUNK       35   /* Seq, TimeMs, Dropped int; Data bytes.Bytes: stream event */
-#define TYPE_OUT         36   /* Data bytes.Bytes: stream command */
-#define TYPE_DONE        37   /* Seq int: stream event, an Out finished */
-#define TYPE_IMU_CONFIG  38   /* RateHz, Gestures, BatchMs int: port.Open("imu") */
-#define TYPE_IMU_GESTURE 39   /* Kind, Value int: gesture event */
-#define TYPE_IR_TX       40   /* CarrierHz, DutyPct int: port.Open("ir_tx") */
-#define TYPE_IR_RX       41   /* GapUs int: port.Open("ir_rx") */
-/* Then (v11) the gogo/audio types. */
-#define TYPE_AUDIO_MIC     42   /* Rate, FrameMs, Gain int: port.Open("mic") */
-#define TYPE_AUDIO_SPEAKER 43   /* Rate, Volume int: port.Open("spk") */
-/* Then (v13) the tls port config. */
-#define TYPE_NET_DIALTLS   44   /* IP, Port, TimeoutMs int, Host string: cfg of the "tls" port */
-/* Then (v14) the embedding types (lib/port/port.gg). */
-#define TYPE_HOST          45   /* Arg int, Data bytes.Bytes: cfg of a host-defined port */
-#define TYPE_POST          46   /* Kind int, Data bytes.Bytes: a host post, host-port command or event */
+#define TYPE_CODE_MODULE   30   /* H int, missing string: a module handle (module_builtin) */
+/* Then the byte-stream protocol of every port that streams (lib/port/port.gg):
+ * From is the port's PID. */
+#define TYPE_CHUNK       31   /* From PID; Seq, TimeMs, Dropped int; Data bytes.Bytes: input */
+#define TYPE_OUT         32   /* Data bytes.Bytes: output command */
+#define TYPE_DONE        33   /* From PID, Seq int: an Out finished */
+#define TYPE_CLOSED      34   /* From PID, Reason int: the port ended by itself */
+/* Then the gogo/imu and gogo/ir types. */
+#define TYPE_IMU_CONFIG  35   /* RateHz, Gestures, BatchMs int: port.Open("imu") */
+#define TYPE_IMU_GESTURE 36   /* Kind, Value int: gesture event */
+#define TYPE_IR_TX       37   /* CarrierHz, DutyPct int: port.Open("ir_tx") */
+#define TYPE_IR_RX       38   /* GapUs int: port.Open("ir_rx") */
+/* Then the gogo/audio types. */
+#define TYPE_AUDIO_MIC     39   /* RateHz, FrameMs, GainDb int: port.Open("mic") */
+#define TYPE_AUDIO_SPEAKER 40   /* RateHz, VolumePct int: port.Open("speaker") */
+/* Then the tls port config. */
+#define TYPE_NET_DIALTLS   41   /* IP, Port, TimeoutMs int, Host string: cfg of the "tls" port */
+/* Then the embedding types (lib/port/port.gg). */
+#define TYPE_HOST          42   /* Arg int, Data bytes.Bytes: cfg of a host-defined port */
+#define TYPE_POST          43   /* From PID, Kind int, Data bytes.Bytes: a host post, host-port command or event */
 /* Then (15.1) the gogo/screen type (lib/screen/screen.gg). */
-#define TYPE_SCREEN_CONFIG 47   /* Cols, Rows int: port.Open("screen") */
+#define TYPE_SCREEN_CONFIG 44   /* Cols, Rows int: port.Open("screen") */
 /* How many reserved types this VM knows (0 .. TYPE_RESERVED_COUNT - 1):
  * they are global across modules. The one constant to bump with a new
  * reserved type (compiler: len(reservedTypes)); a new one is an image
  * format minor (image.h). */
-#define TYPE_RESERVED_COUNT 48u
+#define TYPE_RESERVED_COUNT 45u
 /* Field counts of the reserved types this VM knows, in index order, two
  * per byte (TYPE_NF2(even, odd)). An image's reserved row may declare at
  * most this many (image_load): fields are only ever appended, of type
@@ -251,27 +250,26 @@ enum Builtin {
     TYPE_NF2(1, 2), /* 0 ProcInfo, Reason */ \
     TYPE_NF2(2, 3), /* 2 ExitMsg, DownMsg */ \
     TYPE_NF2(3, 1), /* 4 Request, Options */ \
-    TYPE_NF2(4, 1), /* 6 port.GPIO, port.Write */ \
-    TYPE_NF2(2, 0), /* 8 port.Edge, net.IfConfig */ \
+    TYPE_NF2(4, 1), /* 6 gpio.Config, gpio.Write */ \
+    TYPE_NF2(2, 0), /* 8 gpio.Edge, net.IfConfig */ \
     TYPE_NF2(4, 3), /* 10 net.SetAddr, net.Up */ \
     TYPE_NF2(0, 2), /* 12 net.Down, net.Addr */ \
     TYPE_NF2(1, 2), /* 14 net.UDP, net.SendTo */ \
     TYPE_NF2(2, 3), /* 16 net.Datagram, net.Dial */ \
-    TYPE_NF2(1, 1), /* 18 net.Listen, net.Write */ \
-    TYPE_NF2(0, 0), /* 20 net.Shutdown, net.Resume */ \
-    TYPE_NF2(0, 1), /* 22 net.Connected, net.Data */ \
-    TYPE_NF2(0, 1), /* 24 net.Written, net.Closed */ \
-    TYPE_NF2(1, 2), /* 26 net.Accepted, fs.Info */ \
-    TYPE_NF2(2, 2), /* 28 fs.Space, kbd.Config */ \
-    TYPE_NF2(4, 1), /* 30 kbd.Key, power.Config */ \
-    TYPE_NF2(4, 0), /* 32 power.Battery, power.Read */ \
-    TYPE_NF2(2, 4), /* 34 code.Module, port.Chunk */ \
-    TYPE_NF2(1, 1), /* 36 port.Out, port.Done */ \
-    TYPE_NF2(3, 2), /* 38 imu.Config, imu.Gesture */ \
-    TYPE_NF2(2, 1), /* 40 ir.TX, ir.RX */ \
-    TYPE_NF2(3, 2), /* 42 audio.Mic, audio.Speaker */ \
-    TYPE_NF2(4, 2), /* 44 net.DialTLS, port.Host */ \
-    TYPE_NF2(2, 2), /* 46 port.Post, screen.Config (15.1) */ \
+    TYPE_NF2(1, 0), /* 18 net.Listen, net.Shutdown */ \
+    TYPE_NF2(0, 0), /* 20 net.Resume, net.Connected */ \
+    TYPE_NF2(1, 2), /* 22 net.Accepted, fs.Info */ \
+    TYPE_NF2(2, 2), /* 24 fs.Space, kbd.Config */ \
+    TYPE_NF2(4, 1), /* 26 kbd.Key, power.Config */ \
+    TYPE_NF2(4, 0), /* 28 power.Battery, power.Read */ \
+    TYPE_NF2(2, 5), /* 30 code.Module, port.Chunk */ \
+    TYPE_NF2(1, 2), /* 32 port.Out, port.Done */ \
+    TYPE_NF2(2, 3), /* 34 port.Closed, imu.Config */ \
+    TYPE_NF2(2, 2), /* 36 imu.Gesture, ir.TX */ \
+    TYPE_NF2(1, 3), /* 38 ir.RX, audio.Mic */ \
+    TYPE_NF2(2, 4), /* 40 audio.Speaker, net.DialTLS */ \
+    TYPE_NF2(2, 3), /* 42 port.Host, port.Post */ \
+    TYPE_NF2(2, 0), /* 44 screen.Config (15.1) */ \
 }
 /* The first own type: an image names its own struct types from here up
  * (image.h), whatever reserved types it or the VM knows, and a struct of

@@ -20,11 +20,15 @@ func main() {
 		switch m := actor.Receive().(type) {
 		case net.Connected:
 			println("connected")
-			actor.Send(c, net.Write{Data: bytes.FromString("abc")})
-		case net.Written:
-			println("written")
-			actor.Send(c, net.Write{Data: bytes.FromString("def")})
-		case net.Closed:
+			actor.Send(c, port.Out{Data: bytes.FromString("abc")})
+		case port.Done:
+			if m.Seq < 0 {
+				println("not sent")
+			} else {
+				println("written")
+				actor.Send(c, port.Out{Data: bytes.FromString("def")})
+			}
+		case port.Closed:
 			println("closed", m.Reason, actor.Now())
 			port.Close(c)
 			done = true
@@ -33,7 +37,7 @@ func main() {
 	c, ok = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 81, TimeoutMs: 2500})
 	println("dial2", ok)
 	switch m := actor.Receive().(type) {
-	case net.Closed:
+	case port.Closed:
 		println("closed", m.Reason, actor.Now())
 	}
 }

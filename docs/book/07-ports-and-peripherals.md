@@ -26,6 +26,11 @@ func Close(p actor.PID)
 func Handoff(p actor.PID, to actor.PID) (ok bool)
 ```
 
+`gogo/port` holds only what every port shares: these three functions,
+the stream messages (section 7.6) and the host-port types (chapter 18).
+Each device's configuration, commands and events live in a package of its
+own (`gogo/gpio`, `gogo/kbd`, `gogo/power`, `gogo/imu`, ...).
+
 `Open` fails (`ok == false`, and `p` is the zero PID) if the driver is
 unknown or not on this board, if the configuration is invalid, if the
 resource is already taken, or if memory runs out. `Close` closes a port;
@@ -36,7 +41,7 @@ Drivers and their configuration types:
 
 | Driver | Config | Chapter |
 |---|---|---|
-| `"gpio"` | `port.GPIO` | this one |
+| `"gpio"` | `gpio.Config` | this one |
 | `"kbd"` | `kbd.Config` | 8 |
 | `"power"` | `power.Config` | 8 |
 | files | `fs.Open` (not `port.Open`) | 9 |
@@ -44,7 +49,7 @@ Drivers and their configuration types:
 | `"tls"` | `net.DialTLS` | 17 |
 | `"imu"` | `imu.Config` | 15 |
 | `"ir_tx"`, `"ir_rx"` | `ir.TX`, `ir.RX` | 15 |
-| `"mic"`, `"spk"` | `audio.Mic`, `audio.Speaker` | 16 |
+| `"mic"`, `"speaker"` | `audio.Mic`, `audio.Speaker` | 16 |
 | `"screen"` | `screen.Config` | 19 |
 | ports a host program registers | `port.Host` | 18 |
 
@@ -52,13 +57,15 @@ At most 16 ports can be open at once in the whole VM.
 
 ## 7.2 GPIO
 
-A `"gpio"` port is one pin:
+A `"gpio"` port is one pin. Its types and constants are in `gogo/gpio`:
 
 ```go
-type GPIO struct {
+package gpio
+
+type Config struct {
 	Pin        int
-	Mode       int // port.Input, InputPullUp, InputPullDown, Output
-	Edge       int // port.None, Rising, Falling, Both (inputs only)
+	Mode       int // gpio.Input, InputPullUp, InputPullDown, Output
+	Edge       int // gpio.None, Rising, Falling, Both (inputs only)
 	DebounceMs int // input debounce; <= 0 means the default, 20 ms
 }
 
@@ -68,7 +75,7 @@ type Edge struct{ Pin, Value int } // event: the level changed; Value is the new
 
 ### Output
 
-Open the pin with `Mode: port.Output` and send it `port.Write` commands:
+Open the pin with `Mode: gpio.Output` and send it `gpio.Write` commands:
 
 ```go
 // Drive an output pin: blink an LED three times. On the host a Write
@@ -77,21 +84,22 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 const ledPin = 5
 
 func main() {
-	led, ok := port.Open("gpio", port.GPIO{Pin: ledPin, Mode: port.Output})
+	led, ok := port.Open("gpio", gpio.Config{Pin: ledPin, Mode: gpio.Output})
 	if !ok {
 		println("cannot open the LED pin")
 		return
 	}
 	for i := 0; i < 3; i++ {
-		actor.Send(led, port.Write{Value: 1})
+		actor.Send(led, gpio.Write{Value: 1})
 		actor.Sleep(100)
-		actor.Send(led, port.Write{Value: 0})
+		actor.Send(led, gpio.Write{Value: 0})
 		actor.Sleep(100)
 	}
 	port.Close(led)
@@ -119,7 +127,7 @@ blinked 3 times
 
 ### Input and edges
 
-An input pin reports level changes as `port.Edge` events, filtered by
+An input pin reports level changes as `gpio.Edge` events, filtered by
 `Edge`: `Rising` (0 to 1), `Falling` (1 to 0) or `Both`. The buttons on the
 M5StickS3 (KEY1 on G11, KEY2 on G12) connect the pin to ground when
 pressed, so they are opened with `InputPullUp` and `Falling`: one event per
@@ -128,19 +136,20 @@ press.
 ```go
 // Count button presses. KEY1 on the M5StickS3 is G11, active low: open it
 // with a pull-up and ask for falling edges. Each press arrives as a
-// port.Edge message. On the host the presses come from the stdin script
+// gpio.Edge message. On the host the presses come from the stdin script
 // in the file "input" ("11 0" = pin 11 goes low).
 package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 const key1 = 11
 
 func main() {
-	_, ok := port.Open("gpio", port.GPIO{Pin: key1, Mode: port.InputPullUp, Edge: port.Falling})
+	_, ok := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 	if !ok {
 		println("cannot open KEY1")
 		return
@@ -148,7 +157,7 @@ func main() {
 	presses := 0
 	for presses < 3 {
 		switch e := actor.Receive().(type) {
-		case port.Edge:
+		case gpio.Edge:
 			presses++
 			println("press", presses, "pin", e.Pin, "level", e.Value)
 		}
@@ -215,7 +224,7 @@ button on the Cardputer ADV (active low).
 ## 7.3 Owners, commands and events
 
 **Commands** can come from any actor that has the PID. You can hand an
-LED's PID to several actors and let each of them `Send` it `Write`s.
+LED's PID to several actors and let each of them `Send` it `gpio.Write`s.
 
 **Events** go only to the owner, as ordinary messages in its mailbox, and
 count against its memory limit like any message. An owner that does not
@@ -234,11 +243,12 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 func worker(boss actor.PID, crash bool) {
-	_, ok := port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	_, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
 	actor.Send(boss, ok)
 	if crash {
 		zero := 0
@@ -255,8 +265,8 @@ func main() {
 	println("second worker opened pin 5:", actor.Receive())
 
 	// While someone owns it, nobody else can open it.
-	_, ok := port.Open("gpio", port.GPIO{Pin: 7, Mode: port.Output})
-	_, again := port.Open("gpio", port.GPIO{Pin: 7, Mode: port.Output})
+	_, ok := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
+	_, again := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
 	println("pin 7 first open:", ok, "second open:", again)
 }
 ```
@@ -292,6 +302,7 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
@@ -299,7 +310,7 @@ func keyHandler(boss actor.PID) {
 	n := 0
 	for n < 2 {
 		switch e := actor.Receive().(type) {
-		case port.Edge:
+		case gpio.Edge:
 			n++
 			println("handler: edge on pin", e.Pin)
 		}
@@ -308,7 +319,7 @@ func keyHandler(boss actor.PID) {
 }
 
 func main() {
-	btn, ok := port.Open("gpio", port.GPIO{Pin: 12, Mode: port.InputPullUp, Edge: port.Falling})
+	btn, ok := port.Open("gpio", gpio.Config{Pin: 12, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 	println("open", ok)
 	me := actor.Self()
 	h := actor.Spawn(func() { keyHandler(me) })
@@ -415,17 +426,55 @@ events and counts what it dropped (a debounced pin keeps only its latest
 level; a `Chunk` reports `Dropped`), so a slow actor costs itself data but
 never stalls the driver or other actors.
 
-**Streams.** Ports that move bytes over time share one protocol
-(`port.Out`, `port.Done`, `port.Chunk`): writes are `Out{Data}` messages,
-each answered with `Done{Seq}` when it has been sent or played; at most
-two may be in flight and a third is answered at once with `Done{-1}`;
-input arrives as `Chunk{Seq, TimeMs, Dropped, Data}`. IR, the microphone
-and the speaker use it (chapters 15 and 16). The `"screen"` port (chapter
-19) takes `Out`s and answers with `Done`s too, by a different rule: it
-draws each `Out` at once, so none waits in flight; a `Done` its owner has
-no room for is owed (up to 8, retried until delivered), and an `Out`
-arriving with 8 owed is not drawn and gets `Done{-1}`. The network ports still use
-their own `net.Write` / `net.Written` / `net.Data` messages (chapter 10).
+**Streams.** Every port that moves bytes speaks one protocol, four
+messages in `gogo/port`:
+
+```go
+type Chunk struct {           // event: the next block of input
+	From                 actor.PID
+	Seq, TimeMs, Dropped int
+	Data                 bytes.Bytes
+}
+type Out struct{ Data bytes.Bytes }                 // command: send Data
+type Done struct{ From actor.PID; Seq int }         // event: an Out finished
+type Closed struct{ From actor.PID; Reason int }    // event: the port ended by itself
+```
+
+- Writes are `Out{Data}` messages, each answered with `Done{Seq}` when it
+  has been sent or played. At most two may be in flight; a third is
+  answered at once with `Done{-1}`, and the port carries on. `Seq` counts
+  the Outs that went out, from 1; `-1` means this one did not (refused,
+  bad data, or the hardware or connection failed before it went out).
+- A `Done` the owner has no mailbox room for is owed and delivered later,
+  in order; an Out whose Done is still owed keeps its place among the two
+  in flight. Every accepted Out gets exactly one Done, in the Outs'
+  order; a refusal is answered at once, so its `Done{-1}` may come before
+  the Dones of Outs still in flight. Count Dones; `Seq` numbers only the
+  Outs that went out.
+- Input arrives as `Chunk{Seq, TimeMs, Dropped, Data}`. A gap in `Seq`
+  means chunks were lost, and `Dropped` says how many; a port that loses
+  nothing (TCP and TLS make the peer resend instead) always says 0.
+- `Closed{Reason}` says the port ended by itself: the peer closed or reset
+  a connection, a timeout, a failure. TCP and TLS send it (chapter 10);
+  their reasons are the `net` constants. After a `Closed` other than
+  `Normal` the port does nothing more: close it.
+- Every event carries `From`, the port's PID, so one actor can own several
+  stream ports and still tell their events apart.
+
+TCP and TLS (chapters 10 and 17), IR (chapter 15), the microphone and the
+speaker (chapter 16) all use it. The `"screen"` port (chapter 19) takes
+`Out`s and answers with `Done`s too, with one difference: it draws each
+`Out` at once, so none waits in flight; a `Done` its owner has no room for
+is owed (up to 8, retried until delivered), and an `Out` arriving with 8
+owed is not drawn and gets `Done{-1}`.
+
+**Shapes.** The messages of every port follow the same conventions, so a
+new port reads like the old ones: the config type is named for its driver
+(`"speaker"` takes `audio.Speaker`); commands are imperative nouns (`Out`,
+`Write`, `Read`); events are past participles or nouns (`Done`, `Chunk`,
+`Closed`, `Key`); every acknowledgement is a `Done` and every terminal
+event a `Closed`; quantities carry their unit (`RateHz`, `VolumePct`,
+`TimeoutMs`).
 
 **Ownership.** A port belongs to the actor that opened it until it is
 handed off (section 7.4). When the owner exits or crashes, the VM closes

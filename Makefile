@@ -8,18 +8,18 @@ TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/vm/t
 # The net stack (pure C99, chip-independent): linked into every
 # unix build (platform_unix.c lists its drivers and feeds it frames).
 NET_SRCS  = $(wildcard runtime/net/*.c)
+# runtime/stream/ (pure C99): the stream protocol (Chunk / Out / Done) of every byte port.
+STREAM_SRCS = $(wildcard runtime/stream/*.c)
 NET_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/net/test/*.c)
-# VM core + unix platform + net stack, without the unix main (shared with the C tests).
-VM_SRCS   = $(wildcard runtime/vm/*.c) platform/unix/platform_unix.c platform/unix/gpio_unix.c platform/unix/input_unix.c $(NET_SRCS)
+# VM core + unix platform + net stack and the stream protocol it speaks, without the unix main (shared with the C tests).
+VM_SRCS   = $(wildcard runtime/vm/*.c) platform/unix/platform_unix.c platform/unix/gpio_unix.c platform/unix/input_unix.c $(NET_SRCS) $(STREAM_SRCS)
 VM_SRCS  := $(filter-out runtime/vm/check32.c,$(VM_SRCS))
 VM_CORE_SRCS = $(filter-out runtime/vm/check32.c,$(wildcard runtime/vm/*.c))
-# runtime/stream/ (pure C99): Chunk / Out / Done for every streaming driver (spec input2 §1).
-STREAM_SRCS = $(wildcard runtime/stream/*.c)
 # runtime/screen/ (pure C99): the "screen" port's grid and driver; render.c
 # (pixels, for the LCD) is not in gogovm, which draws on the terminal
 # (platform/unix/screen_unix.c). The grid's width rule is the console's.
 SCREEN_SRCS = runtime/screen/screen.c runtime/screen/screen_port.c runtime/console/console.c runtime/console/font.c
-MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(STREAM_SRCS) $(SCREEN_SRCS)
+MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS)
 PLAT_HDRS = $(wildcard platform/unix/*.h) runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
 
 # The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
@@ -76,7 +76,7 @@ test-c-mcu: $(BUILD)/test_c_mcu
 
 $(BUILD)/test_c_mcu: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
 
 # Net stack C tests (parsers, malformed frames, ports), host and MCU config.
 test-net-c: $(BUILD)/test_net $(BUILD)/test_net_mcu
@@ -85,7 +85,7 @@ test-net-c: $(BUILD)/test_net $(BUILD)/test_net_mcu
 
 $(BUILD)/test_net: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
 
 # The "tls" port's per-stack state (two Vms, two connections), against the
 # mbedTLS library; skipped without the mbedTLS source tree.
@@ -112,15 +112,15 @@ endif
 
 $(BUILD)/test_tls_threads: runtime/net/tls/test/tls_threads.c $(VM_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix -o $@ runtime/net/tls/test/tls_threads.c $(VM_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -o $@ runtime/net/tls/test/tls_threads.c $(VM_SRCS) $(TLS_LINK)
 
 $(BUILD)/test_tls: $(TLS_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix -o $@ $(TLS_TEST_SRCS) $(VM_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -o $@ $(TLS_TEST_SRCS) $(VM_SRCS) $(TLS_LINK)
 
 $(BUILD)/test_net_mcu: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
 
 # vfs (pure C99): path rules, slot table, rules, and the B_FS builtin
 # (builtin.c, the only file that sees VM types), against the memfs fake on
@@ -128,7 +128,7 @@ $(BUILD)/test_net_mcu: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(
 # (the ESP32-S3 LittleFS slot, platform/esp32s3/main/CMakeLists.txt) and -Os.
 VFS_SRCS = $(wildcard runtime/vfs/*.c)
 VFS_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/vfs/test/*.c)
-VFS_INC = -Iruntime/vfs -Iruntime/vfs/test -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
+VFS_INC = -Iruntime/vfs -Iruntime/vfs/test -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix
 VFS_DEPS = $(VFS_SRCS) $(VFS_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vfs/test/*.h) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
 
 test-vfs: $(BUILD)/test_vfs $(BUILD)/test_vfs_mcu
@@ -148,7 +148,7 @@ $(BUILD)/test_vfs_mcu: $(VFS_DEPS)
 INPUT_SRCS = $(wildcard runtime/input/*.c)
 INPUT_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/input/test/*.c)
 INPUT_INC = -Iruntime/input -Iruntime/input/test -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
-INPUT_DEPS = $(INPUT_SRCS) $(STREAM_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/input/*.h) $(wildcard runtime/input/test/*.h) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
+INPUT_DEPS = $(INPUT_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/input/*.h) $(wildcard runtime/input/test/*.h) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
 
 test-input: $(BUILD)/test_input $(BUILD)/test_input_mcu
 	$(BUILD)/test_input
@@ -156,18 +156,18 @@ test-input: $(BUILD)/test_input $(BUILD)/test_input_mcu
 
 $(BUILD)/test_input: $(INPUT_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(INPUT_INC) -o $@ $(INPUT_SRCS) $(STREAM_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(INPUT_INC) -o $@ $(INPUT_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS)
 
 $(BUILD)/test_input_mcu: $(INPUT_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(INPUT_INC) -o $@ $(INPUT_SRCS) $(STREAM_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(INPUT_INC) -o $@ $(INPUT_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS)
 
 # stream (pure C99): Chunk delivery and Out bookkeeping against a fake "st"
 # port on a real VM (and the port-send gate through the interpreter), in the
 # host and MCU VM configs.
 STREAM_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/stream/test/*.c)
 STREAM_INC = -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
-STREAM_DEPS = $(STREAM_SRCS) $(STREAM_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/stream/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
+STREAM_DEPS = $(STREAM_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/stream/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 
 test-stream: $(BUILD)/test_stream $(BUILD)/test_stream_mcu
 	$(BUILD)/test_stream
@@ -175,11 +175,11 @@ test-stream: $(BUILD)/test_stream $(BUILD)/test_stream_mcu
 
 $(BUILD)/test_stream: $(STREAM_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(STREAM_INC) -o $@ $(STREAM_SRCS) $(STREAM_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(STREAM_INC) -o $@ $(STREAM_TEST_SRCS) $(VM_SRCS)
 
 $(BUILD)/test_stream_mcu: $(STREAM_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(STREAM_INC) -o $@ $(STREAM_SRCS) $(STREAM_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(STREAM_INC) -o $@ $(STREAM_TEST_SRCS) $(VM_SRCS)
 
 # screen (pure C99): the grid's operations, malformed and random sequences
 # against guard words, the LCD renderer, and the "screen" port on a real VM
@@ -187,7 +187,7 @@ $(BUILD)/test_stream_mcu: $(STREAM_DEPS)
 SCREEN_ALL_SRCS = $(wildcard runtime/screen/*.c) runtime/console/console.c runtime/console/font.c
 SCREEN_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/screen/test/*.c)
 SCREEN_INC = -Iruntime/screen -Iruntime/console -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
-SCREEN_DEPS = $(SCREEN_ALL_SRCS) $(STREAM_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
+SCREEN_DEPS = $(SCREEN_ALL_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 
 test-screen: $(BUILD)/test_screen $(BUILD)/test_screen_mcu
 	$(BUILD)/test_screen
@@ -195,7 +195,7 @@ test-screen: $(BUILD)/test_screen $(BUILD)/test_screen_mcu
 
 $(BUILD)/test_screen: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(STREAM_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
 
 # The same tests under AddressSanitizer and UBSan (build/asan).
 test-screen-asan:
@@ -204,7 +204,7 @@ test-screen-asan:
 
 $(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(STREAM_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
 
 # The host-directory backend (runtime/embed/fs_dir.c) against a temp dir:
 # the vfs contract and the sandbox (symlinks, hard links, a swapped path).
@@ -395,7 +395,7 @@ test-tls-asan:
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
 
 # Compile-check the core headers for a 32-bit target (no linking).
 check32:
@@ -403,7 +403,7 @@ check32:
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
 	done
 	for f in $(NET_SRCS); do \
-		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vm -Iruntime/net -Iruntime/vm/test/stub $$f || exit 1; \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test/stub $$f || exit 1; \
 	done
 	for f in $(STREAM_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/stream -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \

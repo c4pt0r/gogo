@@ -148,7 +148,7 @@ typedef struct InputHw {
 /* A board gives its InputHw in VmBoard.input (host.h); NULL = none. */
 
 extern const PortDriver input_kbd_driver, input_power_driver, input_imu_driver, input_ir_tx_driver,
-    input_ir_rx_driver, input_mic_driver, input_spk_driver;
+    input_ir_rx_driver, input_mic_driver, input_speaker_driver;
 
 /* One Vm's input state (input_int.h). */
 typedef struct InputState InputState;

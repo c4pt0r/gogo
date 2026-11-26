@@ -11,8 +11,9 @@
 //	            time the open took (the simulator advances it only while
 //	            the VM is idle)
 //	dial2       a second open while one is open: print "dial2 ok"
-//	send:TEXT   Write TEXT, print "written" when acknowledged
-//	upload:N    Write N pattern bytes (byte(i % 251)) in 4096-byte Writes,
+//	send:TEXT   Out TEXT, print "written" when acknowledged ("not sent"
+//	            for Done{-1}, then wait for the Closed)
+//	upload:N    Out N pattern bytes (byte(i % 251)) in 4096-byte Outs,
 //	            two in flight; print "uploaded N"
 //	recv:N      receive N bytes; print "recv N bad B" (B: bytes not
 //	            matching the pattern) or the Closed that came first
@@ -32,7 +33,6 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/net"
 	"gogo/port"
 	"gogo/strconv"
@@ -41,7 +41,7 @@ import (
 )
 
 func cfg(key string, def int) int {
-	if s, ok := config.Get(key); ok {
+	if s, ok := sys.Config(key); ok {
 		n, _ := strconv.Atoi(s)
 		return n
 	}
@@ -49,7 +49,7 @@ func cfg(key string, def int) int {
 }
 
 func dialCfg() net.DialTLS {
-	host, _ := config.Get("test.host")
+	host, _ := sys.Config("test.host")
 	return net.DialTLS{IP: 10<<24 | 1, Port: 443, TimeoutMs: cfg("test.timeout", 0), Host: host}
 }
 
@@ -60,7 +60,7 @@ func connect() {
 		case net.Connected:
 			println("connected")
 			return
-		case net.Closed:
+		case port.Closed:
 			println("closed", m.Reason)
 			return
 		}
@@ -83,14 +83,14 @@ func upload(c actor.PID, total int) {
 			if n > 4096 {
 				n = 4096
 			}
-			actor.Send(c, net.Write{Data: pattern(n, sent)})
+			actor.Send(c, port.Out{Data: pattern(n, sent)})
 			sent += n
 			inflight++
 		}
 		switch m := actor.Receive().(type) {
-		case net.Written:
+		case port.Done:
 			inflight--
-		case net.Closed:
+		case port.Closed:
 			println("closed", m.Reason)
 			return
 		}
@@ -104,7 +104,7 @@ func recv(pos, total int) int {
 	got, bad := 0, 0
 	for got < total {
 		switch m := actor.Receive().(type) {
-		case net.Data:
+		case port.Chunk:
 			for i := 0; i < m.Data.Len(); i++ {
 				if int(m.Data.At(i)) != (pos+i)%251 {
 					bad++
@@ -112,7 +112,7 @@ func recv(pos, total int) int {
 			}
 			pos += m.Data.Len()
 			got += m.Data.Len()
-		case net.Closed:
+		case port.Closed:
 			println("recv", got, "closed", m.Reason)
 			return pos
 		}
@@ -125,9 +125,9 @@ func echo(total int) {
 	text := ""
 	for len(text) < total {
 		switch m := actor.Receive().(type) {
-		case net.Data:
+		case port.Chunk:
 			text += m.Data.String()
-		case net.Closed:
+		case port.Closed:
 			println("echo", text, "closed", m.Reason)
 			return
 		}
@@ -139,23 +139,27 @@ func recvall() {
 	got := 0
 	for {
 		switch m := actor.Receive().(type) {
-		case net.Data:
+		case port.Chunk:
 			got += m.Data.Len()
-		case net.Closed:
+		case port.Closed:
 			println("recvall", got, "closed", m.Reason)
 			return
 		}
 	}
 }
 
-// waitFor waits for Written (true) or Closed (false, printed).
+// waitWritten waits for Done (printed) or Closed (printed); after a
+// Done{-1} (not sent) it waits on for the Closed.
 func waitWritten() {
 	for {
 		switch m := actor.Receive().(type) {
-		case net.Written:
-			println("written")
-			return
-		case net.Closed:
+		case port.Done:
+			if m.Seq > 0 {
+				println("written")
+				return
+			}
+			println("not sent")
+		case port.Closed:
 			println("closed", m.Reason)
 			return
 		}
@@ -165,7 +169,7 @@ func waitWritten() {
 func waitClosed() {
 	for {
 		switch m := actor.Receive().(type) {
-		case net.Closed:
+		case port.Closed:
 			println("closed", m.Reason)
 			return
 		}
@@ -173,7 +177,7 @@ func waitClosed() {
 }
 
 func run() {
-	script, _ := config.Get("test.script")
+	script, _ := sys.Config("test.script")
 	c, _ := port.Open("none", net.IfConfig{}) // a PID that names nothing yet
 	pos := 0
 	for _, step := range strings.Split(script, " ") {
@@ -204,7 +208,7 @@ func run() {
 				port.Close(p)
 			}
 		} else if strings.HasPrefix(step, "send:") {
-			actor.Send(c, net.Write{Data: bytes.FromString(step[5:])})
+			actor.Send(c, port.Out{Data: bytes.FromString(step[5:])})
 			waitWritten()
 		} else if strings.HasPrefix(step, "upload:") {
 			n, _ := strconv.Atoi(step[7:])
@@ -237,7 +241,7 @@ func run() {
 func main() {
 	n, _ := port.Open("netif", net.IfConfig{})
 	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
-	script, _ := config.Get("test.script")
+	script, _ := sys.Config("test.script")
 	var a actor.PID
 	if strings.HasPrefix(script, "small") {
 		a = actor.SpawnOpt(func() {

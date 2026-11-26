@@ -18,11 +18,11 @@ func wait() {
 		switch actor.Receive().(type) {
 		case net.Connected:
 			return
-		case net.Closed:
+		case port.Closed:
 			return
 		case net.Accepted:
 			return
-		case net.Written:
+		case port.Done:
 			return
 		}
 	}
@@ -50,7 +50,7 @@ func owner(kind int) {
 	} else if kind == 5 { // FIN_WAIT_1 after Shutdown, data unacknowledged
 		c := dial(1005)
 		wait()
-		actor.Send(c, net.Write{Data: bytes.FromString("bye")})
+		actor.Send(c, port.Out{Data: bytes.FromString("bye")})
 		actor.Send(c, net.Shutdown{})
 	} else if kind == 6 { // FIN_WAIT_2 after Shutdown
 		c := dial(1006)
@@ -86,7 +86,7 @@ func main() {
 		}
 	}
 	actor.Sleep(5000)
-	actor.Send(sv, net.Write{Data: bytes.FromString("alive")})
+	actor.Send(sv, port.Out{Data: bytes.FromString("alive")})
 	wait()
 	println("survivor written")
 	for p := 3001; p <= 3003; p++ {

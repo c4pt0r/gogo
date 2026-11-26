@@ -835,8 +835,9 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_NEWSTRUCT: case OP_MKCLOSURE: {
             REG(ra); REGS(rb, rc);
             if (op == OP_NEWSTRUCT) {
-                uint32_t row = image_type_row(img, ext);
-                CHECK(row < img->n_types && image_type_nfields(img, row) == rc);
+                /* image_type_row, unrolled: a reserved row, or an own one */
+                uint32_t own = ext - TYPE_OWN_BASE, row = ext < img->n_reserved ? ext : own + img->n_reserved;
+                CHECK((ext < img->n_reserved || own < img->n_types - img->n_reserved) && img->types[row * 2u] == rc);
             }
             else CHECK(ext < img->n_funcs);
             uint32_t words = 2u + rc;

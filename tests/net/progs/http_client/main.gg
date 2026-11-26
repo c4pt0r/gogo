@@ -9,15 +9,15 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/http"
 	"gogo/strconv"
 	"gogo/strings"
+	"gogo/sys"
 )
 
 func atoi(key string, def int) int {
-	if s, ok := config.Get(key); ok {
+	if s, ok := sys.Config(key); ok {
 		n, _ := strconv.Atoi(s)
 		return n
 	}
@@ -26,8 +26,8 @@ func atoi(key string, def int) int {
 
 func main() {
 	println("start", dhcp.Start(dhcp.Config{}))
-	script, _ := config.Get("test.script")
-	text, _ := config.Get("test.body")
+	script, _ := sys.Config("test.script")
+	text, _ := sys.Config("test.body")
 	timeout := atoi("test.timeout", 3000)
 	max := 0
 	for _, step := range strings.Split(script, " ") {

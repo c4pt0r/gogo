@@ -166,9 +166,9 @@ func isBytes(t types.Type) bool { return isBytesType(t, "Bytes") }
 
 func isBuffer(t types.Type) bool { return isBytesType(t, "Buffer") }
 
-// reservedTypes are the gogo/actor, gogo/port, gogo/net, gogo/fs, gogo/kbd,
-// gogo/power, gogo/code, gogo/imu, gogo/ir, gogo/audio and gogo/net DialTLS struct types (and the
-// later port.Chunk, Out, Done, Host and Post). The VM builds and recognizes
+// reservedTypes are the struct types of the system packages (gogo/actor,
+// gogo/gpio, gogo/net, gogo/fs, gogo/kbd, gogo/power, gogo/code, gogo/port,
+// gogo/imu, gogo/ir, gogo/audio, gogo/screen). The VM builds and recognizes
 // these structs by fixed index, their position here (TYPE_* in
 // runtime/vm/opcodes.h, field counts in TYPE_NFIELDS there). An image's
 // type table starts with them, in this order, up to the highest one the
@@ -191,9 +191,9 @@ var reservedTypes = []struct {
 	{ActorPath, "DownMsg", []string{"Ref", "From", "Reason"}},
 	{ActorPath, "Request", []string{"From", "Ref", "Body"}},
 	{ActorPath, "Options", []string{"MaxMemory"}},
-	{PortPath, "GPIO", []string{"Pin", "Mode", "Edge", "DebounceMs"}},
-	{PortPath, "Write", []string{"Value"}},
-	{PortPath, "Edge", []string{"Pin", "Value"}},
+	{GpioPath, "Config", []string{"Pin", "Mode", "Edge", "DebounceMs"}},
+	{GpioPath, "Write", []string{"Value"}},
+	{GpioPath, "Edge", []string{"Pin", "Value"}},
 	{NetPath, "IfConfig", nil},
 	{NetPath, "SetAddr", []string{"IP", "Mask", "Gateway", "DNS"}},
 	{NetPath, "Up", []string{"IP", "Gateway", "DNS"}},
@@ -204,34 +204,31 @@ var reservedTypes = []struct {
 	{NetPath, "Datagram", []string{"From", "Data"}},
 	{NetPath, "Dial", []string{"IP", "Port", "TimeoutMs"}},
 	{NetPath, "Listen", []string{"Port"}},
-	{NetPath, "Write", []string{"Data"}},
 	{NetPath, "Shutdown", nil},
 	{NetPath, "Resume", nil},
 	{NetPath, "Connected", nil},
-	{NetPath, "Data", []string{"Data"}},
-	{NetPath, "Written", nil},
-	{NetPath, "Closed", []string{"Reason"}},
 	{NetPath, "Accepted", []string{"Conn"}},
 	{FsPath, "Info", []string{"Size", "IsDir"}},
 	{FsPath, "Space", []string{"Used", "Total"}},
 	{KbdPath, "Config", []string{"RepeatDelayMs", "RepeatMs"}},
 	{KbdPath, "Key", []string{"Code", "Char", "Mods", "Down"}},
 	{PowerPath, "Config", []string{"PeriodMs"}},
-	{PowerPath, "Battery", []string{"MilliVolts", "Percent", "Charging", "External"}},
+	{PowerPath, "Battery", []string{"MilliVolts", "Pct", "Charging", "External"}},
 	{PowerPath, "Read", nil},
 	{CodePath, "Module", []string{"H", "missing"}},
-	{PortPath, "Chunk", []string{"Seq", "TimeMs", "Dropped", "Data"}},
+	{PortPath, "Chunk", []string{"From", "Seq", "TimeMs", "Dropped", "Data"}},
 	{PortPath, "Out", []string{"Data"}},
-	{PortPath, "Done", []string{"Seq"}},
+	{PortPath, "Done", []string{"From", "Seq"}},
+	{PortPath, "Closed", []string{"From", "Reason"}},
 	{ImuPath, "Config", []string{"RateHz", "Gestures", "BatchMs"}},
 	{ImuPath, "Gesture", []string{"Kind", "Value"}},
 	{IrPath, "TX", []string{"CarrierHz", "DutyPct"}},
 	{IrPath, "RX", []string{"GapUs"}},
-	{AudioPath, "Mic", []string{"Rate", "FrameMs", "Gain"}},
-	{AudioPath, "Speaker", []string{"Rate", "Volume"}},
+	{AudioPath, "Mic", []string{"RateHz", "FrameMs", "GainDb"}},
+	{AudioPath, "Speaker", []string{"RateHz", "VolumePct"}},
 	{NetPath, "DialTLS", []string{"IP", "Port", "TimeoutMs", "Host"}},
 	{PortPath, "Host", []string{"Arg", "Data"}},
-	{PortPath, "Post", []string{"Kind", "Data"}},
+	{PortPath, "Post", []string{"From", "Kind", "Data"}},
 	{ScreenPath, "Config", []string{"Cols", "Rows"}}, // 15.1
 }
 
@@ -245,6 +242,8 @@ func reservedName(i int) string {
 		return rt.name
 	case PortPath:
 		return "port." + rt.name
+	case GpioPath:
+		return "gpio." + rt.name
 	case NetPath:
 		return "net." + rt.name
 	case FsPath:

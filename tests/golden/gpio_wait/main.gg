@@ -4,15 +4,16 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 func main() {
-	_, ok := port.Open("gpio", port.GPIO{Pin: 11, Mode: port.InputPullUp, Edge: port.Both})
+	_, ok := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Both})
 	println(ok)
 	for {
 		switch e := actor.Receive().(type) {
-		case port.Edge:
+		case gpio.Edge:
 			println("edge", e.Pin, e.Value)
 		}
 	}

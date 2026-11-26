@@ -16,6 +16,7 @@ import (
 	"gogo/actor"
 	"gogo/bytes"
 	"gogo/fs"
+	"gogo/gpio"
 	"gogo/port"
 	"gogo/strconv"
 )
@@ -114,7 +115,7 @@ func check(n int) {
 func main() {
 	n := 1
 	check(n)
-	if _, ok := port.Open("gpio", port.GPIO{Pin: g0, Mode: port.InputPullUp, Edge: port.Falling}); !ok {
+	if _, ok := port.Open("gpio", gpio.Config{Pin: g0, Mode: gpio.InputPullUp, Edge: gpio.Falling}); !ok {
 		println("sd: G0 unavailable")
 	}
 	last := fs.OK
@@ -122,7 +123,7 @@ func main() {
 		m, ok := actor.ReceiveTimeout(2000)
 		if ok {
 			switch m.(type) {
-			case port.Edge:
+			case gpio.Edge:
 				println("sd: G0 pressed")
 				n++
 				check(n)

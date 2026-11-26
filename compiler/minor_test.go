@@ -22,13 +22,13 @@ const (
 // baselineTypes are the reserved types of 15.0, with their field counts.
 var baselineTypes = []string{
 	"ProcInfo/1", "Reason/2", "ExitMsg/2", "DownMsg/3", "Request/3", "Options/1",
-	"port.GPIO/4", "port.Write/1", "port.Edge/2", "net.IfConfig/0", "net.SetAddr/4", "net.Up/3",
+	"gpio.Config/4", "gpio.Write/1", "gpio.Edge/2", "net.IfConfig/0", "net.SetAddr/4", "net.Up/3",
 	"net.Down/0", "net.Addr/2", "net.UDP/1", "net.SendTo/2", "net.Datagram/2", "net.Dial/3",
-	"net.Listen/1", "net.Write/1", "net.Shutdown/0", "net.Resume/0", "net.Connected/0", "net.Data/1",
-	"net.Written/0", "net.Closed/1", "net.Accepted/1", "fs.Info/2", "fs.Space/2", "kbd.Config/2",
-	"kbd.Key/4", "power.Config/1", "power.Battery/4", "power.Read/0", "code.Module/2", "port.Chunk/4",
-	"port.Out/1", "port.Done/1", "imu.Config/3", "imu.Gesture/2", "ir.TX/2", "ir.RX/1",
-	"audio.Mic/3", "audio.Speaker/2", "net.DialTLS/4", "port.Host/2", "port.Post/2",
+	"net.Listen/1", "net.Shutdown/0", "net.Resume/0", "net.Connected/0", "net.Accepted/1",
+	"fs.Info/2", "fs.Space/2", "kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4",
+	"power.Read/0", "code.Module/2", "port.Chunk/5", "port.Out/1", "port.Done/2", "port.Closed/2",
+	"imu.Config/3", "imu.Gesture/2", "ir.TX/2", "ir.RX/1", "audio.Mic/3", "audio.Speaker/2",
+	"net.DialTLS/4", "port.Host/2", "port.Post/3",
 }
 
 func TestMinorBaseline(t *testing.T) {
@@ -66,11 +66,11 @@ func TestMinorBaselineCatches(t *testing.T) {
 		pkg    string
 		name   string
 		fields []string
-	}{PortPath, "Closed", []string{"From", "Reason"}})
+	}{PortPath, "Extra", []string{"From", "Reason"}})
 	if len(minorBaselineErrors()) == 0 {
 		t.Error("a new reserved type without a minor passed")
 	}
-	typeMinor["port.Closed"] = 1
+	typeMinor["port.Extra"] = 1
 	if errs := minorBaselineErrors(); imageMinor >= 1 && len(errs) != 0 || imageMinor < 1 && len(errs) == 0 {
 		t.Errorf("with typeMinor 1 and imageMinor %d: %v", imageMinor, errs)
 	}

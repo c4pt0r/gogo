@@ -1,12 +1,12 @@
-/* The mic and spk ports (spec audio §1, §3): chip-independent audio on top
+/* The mic and speaker ports (spec audio §1, §3): chip-independent audio on top
  * of the board's hooks (InputHw mic_* / spk_*), on the scheduler thread.
- * PCM is 16-bit little-endian mono at Rate 8000 or 16000.
+ * PCM is 16-bit little-endian mono at RateHz 8000 or 16000.
  *
- *  - mic: audio.Mic{Rate, FrameMs, Gain}. FrameMs 0 is 100, else clamped
- *    to 20..500; Gain (dB) is clamped to 0..24 and rounded down to a 6 dB
+ *  - mic: audio.Mic{RateHz, FrameMs, GainDb}. FrameMs 0 is 100, else
+ *    clamped to 20..500; GainDb is clamped to 0..24 and rounded down to a 6 dB
  *    step. mic_read is polled every min(FrameMs, 50) ms, read until it
  *    returns 0 (at most MIC_READS_PER_POLL reads), and what it gives is
- *    gathered into frames of Rate * FrameMs / 1000 * 2 bytes; each full
+ *    gathered into frames of RateHz * FrameMs / 1000 * 2 bytes; each full
  *    frame is one port.Chunk (stream_deliver_chunk). A late poll (the
  *    scheduler held up by an SD write) catches up from the hardware buffer
  *    and loses nothing. Dropped counts whole frames lost: Chunks over the
@@ -27,24 +27,24 @@
  *    frame no Chunk of which could ever be delivered is ok=false, not
  *    silence. To ride out a stall of S ms the owner needs its heap +
  *    F + (ceil(S / FrameMs) + 1) * (F + MIC_CHUNK_EXTRA) words: at 16 kHz
- *    and 100 ms (F = 800) a 300 ms stall is heap + 4040 words, which a
+ *    and 100 ms (F = 800) a 300 ms stall is heap + 4044 words, which a
  *    recorder with a real heap does not have under the MCU default limit
  *    (4096 words), so gogo/sound's recorder spawns with MaxMemory.
- *  - spk: audio.Speaker{Rate, Volume}, Volume clamped to 0..100. Every
+ *  - speaker: audio.Speaker{RateHz, VolumePct}, VolumePct clamped to 0..100. Every
  *    command is a port.Out of PCM (stream_out_accept: even, non-empty
  *    length; a bad one, or a third in flight, is Done{-1}). The Outs in
  *    flight are written with spk_write in order, as much as the hardware
  *    takes per call, the queued one right after the head (no gap between
  *    them); a running total of bytes written gives each Out its end mark,
  *    and an Out has played once written - spk_queued() reaches it: then
- *    stream_out_done sends (or owes) Done{Seq}. A write error fails that
+ *    stream_out_done sends (or owes) Done{From, Seq}. A write error fails that
  *    Out (Done{-1}, in order). Polled every SPK_POLL_MS while an Out is in
  *    flight or a Done is owed (stream_out_flush on every poll), so a
  *    program that keeps two Outs in flight and sends the next on each Done
  *    plays without gaps given a hardware buffer above SPK_POLL_MS. Closing
  *    cuts at once: it forgets what is in flight (stream_out_close, no Done)
  *    and spk_close stops the hardware and switches the amplifier off.
- *  - Half duplex: one mic or one spk port at a time, never both; a second
+ *  - Half duplex: one mic or one speaker port at a time, never both; a second
  *    open is refused before any hook is called, so the open one keeps
  *    running untouched.
  *
@@ -57,7 +57,7 @@
 
 enum { RATE_8K = 8000, RATE_16K = 16000, DEF_FRAME_MS = 100, MIN_FRAME_MS = 20, MAX_FRAME_MS = 500,
        MAX_GAIN = 24, GAIN_STEP = 6, MAX_VOLUME = 100, MIC_MAX_POLL = 50, MIC_READS_PER_POLL = 64,
-       MIC_CHUNK_EXTRA = 10,   /* a Chunk's words beside its data: struct, an int box, the Bytes header */
+       MIC_CHUNK_EXTRA = 11,   /* a Chunk's words beside its data: struct, an int box, the Bytes header */
        SPK_POLL_MS = 10, SPK_WRITES_PER_POLL = 16 };
 
 typedef InputAudio Audio;
@@ -128,7 +128,7 @@ const PortDriver input_mic_driver = {
     "mic", TYPE_AUDIO_MIC, TYPE_CHUNK, mic_open, mic_command, mic_close, mic_can_event, NULL, NULL, NULL
 };
 
-/* ---- spk ---- */
+/* ---- speaker ---- */
 
 static bool pcm_ok(const Port *p, const uint8_t *d, uint32_t len) { (void)p; (void)d; return len % 2u == 0; }
 
@@ -175,8 +175,8 @@ static bool spk_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     return o->n || o->owed_n;                  /* Dones are coming */
 }
 
-const PortDriver input_spk_driver = {
-    "spk", TYPE_AUDIO_SPEAKER, TYPE_DONE, spk_open, NULL, spk_close, spk_can_event, NULL, spk_command, NULL
+const PortDriver input_speaker_driver = {
+    "speaker", TYPE_AUDIO_SPEAKER, TYPE_DONE, spk_open, NULL, spk_close, spk_can_event, NULL, spk_command, NULL
 };
 
 /* ---- scheduler side ---- */

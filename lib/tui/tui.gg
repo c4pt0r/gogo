@@ -11,9 +11,9 @@
 // Attr, Cursor and Scroll append compact operations to the screen's buffer;
 // Flush(s) sends them to the port as one port.Out, which draws them at
 // once. The port answers each Out with a port.Done (Seq -1 if it was
-// refused). Event takes as many Dones as Flush sent Outs, as the screen's,
-// and hands any others back; a program that does not use Event can ignore
-// them (see Event for the limit). Nothing in this package waits for a message: an actor keeps
+// refused). Event takes the Dones whose From is the screen's port and
+// hands any others back; a program that does not use Event can ignore
+// them. Nothing in this package waits for a message: an actor keeps
 // its own receive loop and passes its messages through Event (or lets Run
 // do it), so a UI composes with timers, network events and other actors.
 //
@@ -67,7 +67,7 @@ type Screen struct {
 	Cols, Rows int
 	Attrs      int
 	buf        bytes.Buffer
-	st         []int // what the port has: clip x0 y0 x1 y1, colour byte, attributes; then Outs not yet answered
+	st         []int // what the port has: clip x0 y0 x1 y1, colour byte, attributes
 }
 
 // Frame is a drawing target: the whole screen (NewFrame) or a window of it
@@ -133,7 +133,7 @@ func Open(cfg screen.Config) (Screen, bool) {
 		switch m := r.(type) {
 		case opened:
 			if m.OK {
-				st := []int{0, 0, m.Cols, m.Rows, screen.White<<4 | screen.Black, 0, 0}
+				st := []int{0, 0, m.Cols, m.Rows, screen.White<<4 | screen.Black, 0}
 				return Screen{Port: m.P, Cols: m.Cols, Rows: m.Rows, Attrs: m.Attrs, buf: bytes.NewBuffer(256), st: st}, true
 			}
 		}
@@ -141,16 +141,8 @@ func Open(cfg screen.Config) (Screen, bool) {
 	return Screen{buf: bytes.NewBuffer(0)}, false
 }
 
-// Close closes the screen; the console shows again. The screen's count of
-// unanswered Outs is reset, so a stale copy of s never takes another
-// port's Dones in Event. Planned: s.Close().
-func Close(s Screen) {
-	port.Close(s.Port)
-	st := s.st
-	if len(st) > 6 {
-		st[6] = 0
-	}
-}
+// Close closes the screen; the console shows again. Planned: s.Close().
+func Close(s Screen) { port.Close(s.Port) }
 
 // NewFrame starts drawing on the whole screen. The frame begins with the
 // cursor hidden (a frame shows it with Cursor or DrawEdit). Planned:
@@ -169,8 +161,6 @@ func Flush(s Screen) bool {
 		return false
 	}
 	actor.Send(s.Port, port.Out{Data: s.buf.Freeze()})
-	st := s.st
-	st[6]++ // Event takes this many Dones as the screen's
 	return true
 }
 

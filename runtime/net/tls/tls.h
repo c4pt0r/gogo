@@ -2,8 +2,8 @@
  * in shared C on the scheduler thread, using mbedTLS (4.x, TF-PSA-Crypto).
  *
  * Port "tls", cfg net.DialTLS{IP, Port, TimeoutMs, Host}: the same messages
- * and flow as "tcp" (Connected, Write, Written, Data, Shutdown, Closed), the
- * bytes being the TLS plaintext.
+ * and flow as "tcp" (Connected, port.Out / Done / Chunk / Closed,
+ * Shutdown), the bytes being the TLS plaintext.
  *
  * Design: a mode of the tcp driver, not a second stack. Open makes an
  * ordinary "tcp" connection (tcp_dial) and marks it TF_UPPER, so TCP hands
@@ -13,7 +13,7 @@
  * by TCP straight from mbedTLS's own output buffer (no copy: the bio send
  * callback reports bytes as sent only once TCP has them acknowledged, so
  * they stay put for retransmission). Every control event, held-event
- * retry, Write rule (two outstanding, Overflow) and timer is TCP's own; the
+ * retry, Out rule (the port's StreamOut: two in flight) and timer is TCP's own; the
  * owner sees exactly the "tcp" port's semantics.
  *
  *  - The handshake runs from the stack's drain, one mbedtls_ssl_handshake_step
@@ -44,8 +44,8 @@
  *    made); a certificate that fails gives Closed{BadCert}; any other TLS
  *    failure (an alert, a malformed record, memory) Closed{TLS}; the peer
  *    closing during the handshake Closed{Reset}.
- *  - Data: one Data per at most TCP_MSS plaintext bytes, delivered only when
- *    the owner has room (as "tcp": Data leaves headroom for the control
+ *  - Chunk: one per at most TCP_MSS plaintext bytes, delivered only when
+ *    the owner has room (as "tcp": a Chunk leaves headroom for the control
  *    events, a blocked delivery is retried every 50 ms, the owner is never
  *    killed). close_notify, or the peer's FIN at a record boundary (as Go's
  *    crypto/tls treats it), gives Closed{Normal}. TRUNCATION: a FIN at a
@@ -53,23 +53,24 @@
  *    short there undetected at this layer; a protocol on top must frame its
  *    data (gogo/http: Content-Length or the chunked terminator, a short
  *    body is an error; never read-until-close over TLS).
- *  - Closed: at most one Normal, then exactly one terminal Closed (any other
- *    reason) per connection, from this layer (its failures) or from TCP
+ *  - Closed: at most one Normal, then at most one terminal Closed (any
+ *    other reason; a graceful close ends with Normal alone) per connection, from this layer (its failures) or from TCP
  *    (reset, timeout, no route), never both (TcpUpper.closed); a terminal
- *    one replaces a Normal still held for a full mailbox. A Write still
- *    pending at the terminal Closed gets no Written (as on "tcp").
- *  - Write: up to MBEDTLS_SSL_OUT_CONTENT_LEN bytes per record; Written once
- *    all of a Write's records are acknowledged by the peer's TCP.
+ *    one replaces a Normal still held for a full mailbox. An Out still
+ *    in flight when the connection ends gets Done{-1} (as on "tcp").
+ *  - Out: up to MBEDTLS_SSL_OUT_CONTENT_LEN bytes per record; Done once
+ *    all of an Out's records are acknowledged by the peer's TCP. No Done
+ *    goes out while Connected is held for a full mailbox.
  *  - Shutdown: close_notify after the pending writes, then the TCP FIN.
  *    Closing the port (or the owner's exit) before that went out resets the
  *    connection; after it, TCP finishes the close as an orphan.
  *  - Memory: the TLS state (mbedTLS context, record buffers 16 KB in and
  *    4 KB out, the ciphertext buffer) comes from TlsHw.alloc and is
  *    charged to the owner: about 23 KB (TLS_CHARGE_WORDS) on top of the TCP
- *    control block, plus room for one Data beside it. An owner whose limit
+ *    control block, plus room for one Chunk beside it. An owner whose limit
  *    cannot fit that is refused at open (ok=false): with the MCU default
  *    of 16 KB per actor, the owner must be spawned with a larger MaxMemory
- *    (about 23 KB + one Data + its own heap). The measured peak per
+ *    (about 23 KB + one Chunk + its own heap). The measured peak per
  *    connection is about 34 KB: the other ~11 KB are handshake temporaries
  *    (the peer's chain, ECDHE keys, PSA operations), freed when the
  *    handshake ends and not charged (they are bounded: one connection at

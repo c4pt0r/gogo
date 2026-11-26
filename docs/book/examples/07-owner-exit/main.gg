@@ -5,11 +5,12 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 func worker(boss actor.PID, crash bool) {
-	_, ok := port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	_, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
 	actor.Send(boss, ok)
 	if crash {
 		zero := 0
@@ -26,7 +27,7 @@ func main() {
 	println("second worker opened pin 5:", actor.Receive())
 
 	// While someone owns it, nobody else can open it.
-	_, ok := port.Open("gpio", port.GPIO{Pin: 7, Mode: port.Output})
-	_, again := port.Open("gpio", port.GPIO{Pin: 7, Mode: port.Output})
+	_, ok := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
+	_, again := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
 	println("pin 7 first open:", ok, "second open:", again)
 }

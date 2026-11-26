@@ -279,13 +279,17 @@ actor's heap.
 
 A peripheral is a **port**: a special actor implemented by a C driver.
 It has a PID, takes command messages and sends event messages to its
-owner. The API is `lib/port/port.gg`.
+owner. The API is `lib/port/port.gg`: `Open`, `Close`, `Handoff`, the
+stream protocol (`Chunk`, `Out`, `Done`, `Closed`) and the host-port
+types (`Host`, `Post`). Each device's types are in its own package
+(`gogo/gpio`, `gogo/kbd`, `gogo/power`, `gogo/imu`, `gogo/ir`,
+`gogo/audio`, `gogo/screen`, `gogo/net`).
 
 ```go
-led, ok := port.Open("gpio", port.GPIO{Pin: 25, Mode: port.Output})
-actor.Send(led, port.Write{Value: 1})
-btn, ok := port.Open("gpio", port.GPIO{Pin: 15, Mode: port.InputPullUp, Edge: port.Falling})
-// the owner then receives port.Edge{Pin, Value} messages
+led, ok := port.Open("gpio", gpio.Config{Pin: 25, Mode: gpio.Output})
+actor.Send(led, gpio.Write{Value: 1})
+btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+// the owner then receives gpio.Edge{Pin, Value} messages
 ```
 
 - `port.Open(driver string, cfg any) (actor.PID, bool)`: the caller
@@ -304,7 +308,7 @@ btn, ok := port.Open("gpio", port.GPIO{Pin: 15, Mode: port.InputPullUp, Edge: po
   when its owner exits, and the VM closes every open port when it ends.
   `Kill` on a port is `Close`. Ports cannot be linked or monitored;
   `SendAfter` and `Call` to a port are silently ignored.
-- `port.GPIO{Pin, Mode, Edge, DebounceMs}`: Mode is `Input`,
+- `gpio.Config{Pin, Mode, Edge, DebounceMs}`: Mode is `Input`,
   `InputPullUp`, `InputPullDown` or `Output`; Edge is `None`, `Rising`,
   `Falling` or `Both`; `DebounceMs <= 0` means 20 ms. Pins the platform
   uses itself (the screen, the PM1, PSRAM, USB, the SD card, the
@@ -342,7 +346,7 @@ text grid while it is open.
   `tcp_listen` and `tls`, and above those the libraries `gogo/dhcp`,
   `gogo/dns`, `gogo/http` and `gogo/sntp`, written in the subset. The
   stub package `gogo/net` (`lib/net/`) holds the port types (reserved
-  types 9-26 and 44).
+  types 9-22 and 41).
 - **Ports.** `netif` (`net.IfConfig{}`, one owner for the whole machine;
   command `net.SetAddr{IP, Mask, Gateway, DNS}`). `udp` (`net.UDP{Port}`;
   command `net.SendTo{Addr, Data}`; event `net.Datagram{From, Data}`, the
@@ -350,9 +354,9 @@ text grid while it is open.
   receiver's quota are dropped and counted, never killing it).
   `net.Subscribe()` (a builtin) makes the caller receive `net.Up{IP,
   Gateway, DNS}` and `net.Down{}`. `tcp` (`net.Dial{IP, Port,
-  TimeoutMs}`; commands `net.Write{Data}`, `net.Shutdown{}`,
-  `net.Resume{}`; events `net.Connected{}`, `net.Data{Data}`,
-  `net.Written{}`, `net.Closed{Reason}`) and `tcp_listen`
+  TimeoutMs}`; commands `port.Out{Data}`, `net.Shutdown{}`,
+  `net.Resume{}`; events `net.Connected{}` and the stream protocol's
+  `port.Chunk`, `port.Done` and `port.Closed{From, Reason}`, §5.4.6) and `tcp_listen`
   (`net.Listen{Port}`; event `net.Accepted{Conn}`: the new connection
   belongs to the listener and stays paused until `port.Handoff` or
   `Resume`).
@@ -367,13 +371,19 @@ text grid while it is open.
 - **TCP.** Windows of one segment each way; only in-order segments are
   accepted. A segment is ACKed only after its payload was delivered into
   the owner's mailbox; a full mailbox means no ACK and the peer resends.
-  `Data` leaves room for control events (`Written`, `Closed`), so a slow
-  reader cannot be choked by them. RTO 1 s, doubling to 8 s, 6
-  retransmissions; TIME_WAIT 2 s. A connection takes one `Write` in
-  flight and one queued; a third before `Written` closes it with
-  `Closed{Overflow}`. TCP keeps one deadline per connection and reports
-  it to the scheduler through its event source rather than using VM
-  timers.
+  A `Chunk` (Seq counted per connection, `Dropped` always 0) leaves room
+  for control events (two `Done`, two `Closed`), so a slow reader cannot
+  be choked by them; one that still does not fit is held in the port
+  (`Connected` and the `Closed` reason in `StreamOut.user`, `Done`s owed
+  in the `StreamOut`) and retried every 50 ms, in order, and no data goes
+  out while `Connected` is held. RTO 1 s, doubling to 8 s, 6
+  retransmissions; TIME_WAIT 2 s. The `Out`s live in the port's
+  `StreamOut` (`runtime/stream`): one in flight and one queued, a third
+  answered with `Done{-1}` and the connection carries on; one `Done` per
+  `Out` once the peer acknowledged all of it; the `Out`s still in flight
+  when the connection ends get `Done{-1}` before its `Closed`. TCP keeps
+  one deadline per connection and reports it to the scheduler through
+  its event source rather than using VM timers.
 - **Orphan close.** Closing the port after `Shutdown`, or the owner
   exiting, leaves an orphan connection that finishes the close (FIN
   exchange, retransmissions) on its own, for at most
@@ -414,7 +424,7 @@ text grid while it is open.
   GC copies the heap. When an allocation fails against the limit, the VM
   retries once after a tight GC (block = live data + the request, no
   growth slack).
-- **`gogo/config`**: `config.Get(key) (string, bool)` (builtin 48) reads
+- **`sys.Config`**: `sys.Config(key) (string, bool)` (builtin 48) reads
   the device configuration store; `wifi.` keys are invisible to programs.
   On Unix the store is `$GOGO_CONFIG` (default `~/.gogo/config`, lines
   `key=value`), edited with `gogo config set|get|list|rm` (§5.9).
@@ -447,7 +457,7 @@ FatFs).
   <dir>`; without it every path is `NotMounted`). `gogo/fs` is a stub
   package: the compiler turns its calls into `B_FS` (builtin 49, first
   argument the operation number); `File.Close` is a port close.
-  `fs.Info` and `fs.Space` are reserved types 27 and 28.
+  `fs.Info` and `fs.Space` are reserved types 23 and 24.
 - **API.** `Open(path, mode) (File, Err)` (`Read`, `Write`, `Append`);
   `File.Read(max) (bytes.Bytes, Err)`, `Write(data any) Err`,
   `WriteAt`, `Sync`, `Size`, `Close`; `ReadFile(path, max)`,
@@ -514,9 +524,9 @@ FatFs).
   RepeatMs})`, events `kbd.Key{Code, Char, Mods, Down}` (`Code` is the USB
   HID usage, Fn is 0xF0; presses and repeats have `Down` true, releases
   false). `gogo/power`: `power.Config{PeriodMs}`, events
-  `power.Battery{MilliVolts, Percent, Charging, External}`, command
+  `power.Battery{MilliVolts, Pct, Charging, External}`, command
   `power.Read{}`; `Charging` and `External` are 0 or 1, -1 when unknown.
-  `MilliVolts` is the average of the last 4 good samples; `Percent` is
+  `MilliVolts` is the average of the last 4 good samples; `Pct` is
   linear from 3300 to 4100 mV. There is no power-button event.
 - **Platform hooks.** `runtime/input/` is chip-independent C (key codes
   to characters, modifiers, auto-repeat, battery sampling and backoff).
@@ -555,7 +565,7 @@ chapter 14 explains it from the user's side.
 side is `runtime/vm/module.c`):
 
 ```go
-type Module struct{ H int; missing string }   // reserved type 34; a plain value, may be sent
+type Module struct{ H int; missing string }   // reserved type 30; a plain value, may be sent
 type Err int  // OK BadImage Unsupported NoMemory NotFound BadArg TooMany BadVersion
 func Load(b bytes.Bytes) (Module, Err)
 func Spawn(m Module, entry string, arg any) (actor.PID, Err)       // also SpawnLink, SpawnOpt
@@ -644,7 +654,7 @@ directives).
   name: ...`), pointing to `//gogo:optional` as the intended way.
 - `gogo/http` declares `//gogo:optional tls` (an image that uses http
   does not require tls; on a firmware without tls, https requests fail);
-  `gogo/sound` declares `//gogo:optional mic spk` (without a microphone
+  `gogo/sound` declares `//gogo:optional mic speaker` (without a microphone
   `Record` returns false, without a speaker `Play` does). No library path
   appears in the compiler.
 - `gogo firmware` picks features from the requirements, so it never turns soft
@@ -716,16 +726,29 @@ font.
 
 ### 5.4.6 IMU, infrared and streams
 
-- **Streams** (`runtime/stream/`, plain C). Input streams deliver
-  `port.Chunk{Seq, TimeMs, Dropped, Data}` (`Seq` counts dropped chunks
-  too; a chunk that does not fit the mailbox is dropped and counted, never
-  killing the receiver). Output streams take `port.Out{Data}` commands;
-  every accepted `Out` is answered with a `port.Done{Seq}` (sent ones
-  numbered from 1; refused or failed ones -1; a refusal `Done{-1}` may be
-  dropped when the receiver reads nothing and already owes 16). At most 2
-  `Out`s per port are in flight; a third gets `Done{-1}` at once. A
-  `Done` that does not fit the mailbox is owed and delivered later, in
-  order. Reserved types 35-41.
+- **The stream protocol** (`runtime/stream/`, plain C), spoken by every
+  port that moves bytes: tcp, tls, imu, ir, mic, speaker and (with its
+  own owed rule) screen. Every event carries `From`, the port's PID, so
+  one actor can own several such ports. Input streams deliver
+  `port.Chunk{From, Seq, TimeMs, Dropped, Data}` (`Seq` counts dropped
+  chunks too; a chunk that does not fit the mailbox is dropped and
+  counted, never killing the receiver; tcp and tls build theirs with
+  `stream_chunk_new` and refuse the segment instead, so they never drop).
+  Output streams take `port.Out{Data}` commands; every accepted `Out` is
+  answered with a `port.Done{From, Seq}` (sent ones numbered from 1;
+  refused or failed ones -1; a refusal `Done{-1}` may be dropped when the
+  receiver reads nothing and already owes `STREAM_OWED_MAX`, 8, as many as the screen port). At most
+  2 `Out`s per port are in flight, an `Out` whose `Done` is owed
+  included; a third gets `Done{-1}` at once. A `Done` that does not fit
+  the mailbox is owed and delivered later, in order: the one owed rule of
+  every acknowledging port. The Dones of accepted Outs come in the Outs'
+  order; a refusal is answered at once and may come before the Dones of
+  Outs still in flight. While the driver holds events of its own
+  (`StreamOut.user`: tcp's held `Connected` or `Closed`) every `Done` is
+  owed, so none overtakes them. A port that ends by itself sends
+  `port.Closed{From, Reason}` (tcp and tls today, with the `net`
+  reasons; a host port and a failing microphone are meant to, later).
+  Reserved types 31-34.
 - **`imu` port** (`gogo/imu`): `imu.Config{RateHz, Gestures, BatchMs}`.
   `RateHz` is 0, 25, 50, 100 or 200; a sample is 12 bytes `gx gy gz ax ay
   az` (int16 LE, +-2000 dps and +-8 g, the chip's own axes), collected
@@ -774,30 +797,30 @@ font.
   (8 KB of it the configuration) and IR about 25.8 KB (mostly IDF's RMT
   driver).
 
-### 5.4.7 Audio (the `mic` and `spk` ports)
+### 5.4.7 Audio (the `mic` and `speaker` ports)
 
-- **Ports** (`gogo/audio`, reserved types 42-43). PCM is always 16-bit
-  little-endian mono; `Rate` is 8000 or 16000. `mic`: `audio.Mic{Rate,
-  FrameMs, Gain}`; `FrameMs` 0 means 100, otherwise it is clamped to
-  20..500. Each full frame (`Rate * FrameMs / 1000 * 2` bytes) is sent as
+- **Ports** (`gogo/audio`, reserved types 39-40). PCM is always 16-bit
+  little-endian mono; `RateHz` is 8000 or 16000. `mic`: `audio.Mic{RateHz,
+  FrameMs, GainDb}`; `FrameMs` 0 means 100, otherwise it is clamped to
+  20..500. Each full frame (`RateHz * FrameMs / 1000 * 2` bytes) is sent as
   a `port.Chunk` whose `TimeMs` is the frame's nominal start (the open
   time plus `FrameMs` per earlier frame, dropped ones included).
   `Dropped` counts whole frames: chunks that did not fit the mailbox, and
   bytes lost to a hardware overflow (rounded up to frames). On an
   overflow the partial frame before it and the data after it up to the
   next frame boundary are discarded, so every `Chunk` is contiguous and
-  its `TimeMs` exact. `spk`: `audio.Speaker{Rate, Volume}`; the commands
+  its `TimeMs` exact. `speaker`: `audio.Speaker{RateHz, VolumePct}`; the commands
   are `port.Out`s holding PCM, and each `Done` comes when its `Out` has
   really been played (not merely written to a hardware buffer). With two
   `Out`s in flight the second follows the first without a gap. Closing
   (or the owner's exit) cuts playback at once, without `Done`.
-- **Half-duplex.** One `mic` or one `spk` at a time; a second open is
+- **Half-duplex.** One `mic` or one `speaker` at a time; a second open is
   refused before any hook is called, and the open one is unaffected. Both
   boards have one ES8311 codec on one I2S bus.
-- **Gain and Volume** are relative to the platform, not codec values.
-  `Gain` (dB, clamped to 0..24, rounded down to 6 dB steps) is added to
+- **GainDb and VolumePct** are relative to the platform, not codec values.
+  `GainDb` (clamped to 0..24, rounded down to 6 dB steps) is added to
   the platform's "normal" microphone level, at which speech at arm's
-  length is well above the noise floor without clipping. `Volume` 0 is
+  length is well above the noise floor without clipping. `VolumePct` 0 is
   mute; 1..100 runs from 40 dB below the platform's maximum level to the
   maximum. A different codec later needs no program change.
 - **Memory.** The frame buffer is allocated from the VM allocator at open
@@ -828,18 +851,18 @@ font.
   simplex, created at open and deleted at close; the codec is clocked by
   BCLK. `mic` uses 11 DMA buffers of 30 ms (960 B at 16 kHz, internal RAM,
   allocated at open), which survives a 300 ms stall; the first 2 buffers
-  are discarded. `spk` uses 4 DMA buffers of 10 ms plus an 8 KB ring, for
+  are discarded. `speaker` uses 4 DMA buffers of 10 ms plus an 8 KB ring, for
   at most 40 ms of latency. `GOGO_AUDIO` selects
   `CONFIG_I2S_ISR_IRAM_SAFE` (callbacks in IRAM); otherwise during a
   `/flash` write the GDMA reports only the last finished buffer and data
   is lost or replayed. The StickS3's amplifier (AW8737, PM1 GPIO3) is
-  turned on last at open and muted then turned off first at close; `spk`
+  turned on last at open and muted then turned off first at close; `speaker`
   cannot open while `ir_rx` is open. The StickS3's maximum level is
   capped at DAC -4 dB (`AUDIO_SPK_MAX_DB`), the Cardputer ADV's is 0 dB.
   The codec's analog reference stays on after the first open, so only
   the first `mic` open after power-up has about 1 s of zeros. With
   `GOGO_AUDIO` off, IDF's I2S driver is not linked and the board lists
-  no `mic` or `spk` driver.
+  no `mic` or `speaker` driver.
 - **`fs.File.WriteAt`** (`B_FS` operation 13) overwrites bytes of a file
   opened with `Write`, without extending it or moving the append
   position; the host (`pwrite`), FatFs, LittleFS and memfs backends behave
@@ -857,10 +880,10 @@ font.
   `sound.Recorded` per file; `sound.Stop{}` ends it, followed by exactly
   one last `Recorded`. On a write error or a full disk it closes the file
   properly, reports the error in `Err` and ends, deleting nothing.
-  `sound.Play(path)` opens `spk`, keeps two 4096-byte `Out`s in flight
+  `sound.Play(path)` opens `speaker`, keeps two 4096-byte `Out`s in flight
   and answers with a `sound.Played` at the end. Both actors close their
   port before their last message, so the caller can open the other
-  direction at once. `gogo/sound` declares `//gogo:optional mic spk`.
+  direction at once. `gogo/sound` declares `//gogo:optional mic speaker`.
 
 ### 5.4.8 TLS (the `tls` port) and HTTPS
 
@@ -868,9 +891,9 @@ The contract is at the top of `runtime/net/tls/tls.h`; book chapter 17
 explains it from the user's side.
 
 - **Port.** `tls`, configured with `net.DialTLS{IP, Port, TimeoutMs,
-  Host}` (reserved type 44). Its messages are exactly those of `tcp`
-  (`Connected`, `Write`, `Written`, `Data`, `Shutdown`, `Closed`), with
-  TLS plaintext as the bytes. It is a mode of the `tcp` driver (a
+  Host}` (reserved type 41). Its messages are exactly those of `tcp`
+  (`Connected`, `Shutdown` and the stream protocol's `Out`, `Done`,
+  `Chunk`, `Closed`), with TLS plaintext as the bytes. It is a mode of the `tcp` driver (a
   `TcpUpper`), not a second stack: TCP's events, retries, write rules and
   deadlines all apply, and the owner sees `tcp`'s semantics. TLS 1.2
   client only (mbedTLS 4.x's TLS 1.3 key exchange cannot be sliced), with
@@ -976,7 +999,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   (the console's width rule; box drawing and block elements are narrow);
   overwriting either half blanks the other.
 - **Port.** `screen`, configured with `screen.Config{Cols, Rows}`
-  (reserved type 47, format 15.1; 0 = the whole display). One per Vm, refused when the
+  (reserved type 44, format 15.1; 0 = the whole display). One per Vm, refused when the
   board's hook says the display is busy. The grid is allocated at open and
   charged to the owner. The owner first gets a `port.Chunk` (cols, rows,
   colours, attributes). Every `port.Out` is a frame of byte-coded
@@ -1166,6 +1189,10 @@ closure word 1     gggggggg sss  21-bit function index
 struct word 1      gggggggg sss  00000  16-bit type index        (a module's own type, index >= TYPE_OWN_BASE = 128)
                    00000000 000  00000  16-bit type index        (reserved types 0..TYPE_RESERVED_COUNT-1: global, untagged)
 ```
+
+The five bits between the slot and a struct's type index are reserved
+for per-type flags (pointers, a later phase) and 0 in every v15 image
+(see the reserved term encodings under the image format, §5.6).
 
 - **Images hold no tags.** The compiler emits `offset << 4 | 0xA` as
   before, so the image format is unchanged except that offsets are
@@ -1415,20 +1442,32 @@ together with `mbox_words` through `actor_charged_words`).
     before it are listed at the top of `runtime/vm/image.h`.
   - `gogo version` and the device's boot banner print the format
     (`image format 15.0`).
+  - **Reserved term encodings.** So that interfaces, pointers and maps
+    (the language phases still to come) need only a minor, v15 keeps
+    encodings free for them (`runtime/vm/term.h`): heap kinds 12-15, the
+    special immediates from `0x72` up, the `TYPEIS` ids `0x10007` to
+    `0x100FF` beside `TY_*`, and bits 16-20 of a struct's type word
+    (always 0 in a v15 image). Nothing in a v15 compiler or VM produces
+    them; `image_load` refuses a constant object of an unknown kind but
+    does not check the others. What keeps them from an older VM is the
+    version check: an image that uses one is stamped with the minor that
+    gave it a meaning, so an older VM refuses it rather than misreading
+    it.
 - **Builtins** (`B_*` in `runtime/vm/opcodes.h`, called with
   `OP_BUILTIN`): 0-27 actors and ports (`println`, `Spawn`, ... ,
   `port.Open` 26, `port.Close` 27), 28-45 strings, slices, `Bytes` and
-  `Buffer`, 46 `port.Handoff`, 47 `net.Subscribe`, 48 `config.Get`, 49
+  `Buffer`, 46 `port.Handoff`, 47 `net.Subscribe`, 48 `sys.Config`, 49
   `B_FS` (gogo/fs), 50 `B_CODE` (gogo/code), 51-53 `sys.Time`,
   `sys.SetTime`, `sys.Random`.
-- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 48 of them,
-  0..47): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
-  `Request`, `Options`), 6-8 `port.GPIO`, `port.Write`, `port.Edge`, 9-26
-  `gogo/net`, 27-28 `fs.Info`, `fs.Space`, 29-33 `gogo/kbd` and
-  `gogo/power`, 34 `code.Module`, 35-37 `port.Chunk`, `port.Out`,
-  `port.Done`, 38-39 `gogo/imu`, 40-41 `gogo/ir`, 42-43 `gogo/audio`, 44
-  `net.DialTLS`, 45-46 `port.Host`, `port.Post` (embed mode), 47
-  `screen.Config` (15.1).
+- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 45 of them,
+  0..44): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
+  `Request`, `Options`), 6-8 `gpio.Config`, `gpio.Write`, `gpio.Edge`,
+  9-22 `gogo/net`, 23-24 `fs.Info`, `fs.Space`, 25-29 `gogo/kbd` and
+  `gogo/power`, 30 `code.Module`, 31-34 `port.Chunk`, `port.Out`,
+  `port.Done`, `port.Closed` (the stream protocol), 35-36 `gogo/imu`,
+  37-38 `gogo/ir`, 39-40 `gogo/audio`, 41 `net.DialTLS`, 42-43
+  `port.Host`, `port.Post` (embed mode), 44 `screen.Config` (15.1). The
+  15.0 table (0..43) is frozen by `TestMinorBaseline` in `compiler/`.
 
 ### 5.7 Scheduling
 
@@ -1515,7 +1554,7 @@ shell history). On the device the store is the firmware's NVS
 (namespace `gogo`; reflashing the firmware or the image does not clear
 it), reached over the USB serial port with `\x02gogo-config ...` frames;
 `\x02` in a program's own output is written as `?`, so a program cannot
-forge a reply. `wifi.` keys are invisible to `config.Get`, and `get
+forge a reply. `wifi.` keys are invisible to `sys.Config`, and `get
 wifi.password` echoes only `(set)`. Store selection on the host: `-port`
 names a board; `-local` the local file `$GOGO_CONFIG` (default
 `~/.gogo/config`); with neither, a set `$GOGO_CONFIG` means the local
