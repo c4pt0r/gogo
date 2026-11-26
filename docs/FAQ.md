@@ -81,7 +81,7 @@ are harder to keep small and isolated per task; Rust or C give no isolation
 between tasks, no hot loading and a slower edit-test loop on hardware.
 
 ### Why is gogo so small?
-The VM core is about 36 KB of code (34.5 KB built without floats), an idle actor about 150 bytes, and a
+The VM core is about 34 KB of code (32.4 KB built without floats), an idle actor about 150 bytes, and a
 "hello" image about 1 KB, because size was a constraint from the first
 line, not an afterthought:
 
@@ -353,7 +353,7 @@ ends with a checklist to review a design against.
 A register-based bytecode with fixed 32-bit instructions, interpreted by a
 `switch` loop. Actors are preempted by counting reductions (1000 per time
 slice, counted on backward jumps), so a busy loop cannot starve other
-actors. The VM core is about 36 KB of a 64 KB budget.
+actors. The VM core is about 34 KB of a 64 KB budget.
 
 ### Will there be a JIT?
 Not planned. On the ESP32-S3 a JIT would need executable internal RAM (which
