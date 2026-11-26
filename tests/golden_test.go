@@ -17,10 +17,11 @@ import (
 )
 
 // TestGolden compiles every tests/golden/*/ program (and every
-// examples/*/ with an expected.out), runs it on the VM named
+// examples/*/ with an expected.out or expected.tail), runs it on the VM named
 // by $GOGO_VM (30s timeout) and requires exit status 0 and stdout equal
 // byte-for-byte to expected.out (or, for a program whose output is too
-// long to keep, ending with expected.tail instead); if expected.err exists, each of its
+// long to keep, ending with expected.tail instead, and at most 1 MiB long);
+// if expected.err exists, each of its
 // non-empty lines must be a substring of stderr, and no non-empty line of
 // forbidden.err may be. An `input` file is fed to stdin; a `config` file
 // is the config store ($GOGO_CONFIG). A file `fsroot` runs the VM with
@@ -40,11 +41,16 @@ func TestGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// ../examples/*/ that ship an expected.out are goldens too.
+	// ../examples/*/ that ship an expected.out or expected.tail are goldens too.
 	exs, err := filepath.Glob(filepath.Join("..", "examples", "*", "expected.out"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	tails, err := filepath.Glob(filepath.Join("..", "examples", "*", "expected.tail"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exs = append(exs, tails...)
 	for _, e := range exs {
 		dirs = append(dirs, filepath.Dir(e))
 	}
@@ -164,6 +170,9 @@ func TestGolden(t *testing.T) {
 					t.Errorf("VM failed: %v (want exit status 0)\n--- stderr ---\n%s", runErr, stderr.Bytes())
 				}
 				if tail {
+					if stdout.Len() > 1<<20 {
+						t.Errorf("stdout is %d bytes, over the 1 MiB an expected.tail golden may print", stdout.Len())
+					}
 					if !bytes.HasSuffix(stdout.Bytes(), want) {
 						got := stdout.Bytes()
 						if len(got) > 2*len(want)+200 {
