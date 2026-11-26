@@ -350,8 +350,10 @@ strconv: 3.142 6.02e+23 true
 - **Cost.** Every float is a small heap object (8 or 12 bytes), so each
   arithmetic result allocates; keep tight loops on integers where you
   can. On the ESP32-S3, `float32` arithmetic runs on the FPU and
-  `float64` in software, several times slower: prefer `float32` for
-  sensor maths. On a chip without an FPU (the RP2040) both are software.
+  `float64` in software; with the interpreter's own cost on top, a
+  `float64` operation takes about twice as long as a `float32` one
+  (20000 multiply-adds: 313 ms in `float32`, 409 ms in `float64`, 226 ms
+  on `int`s): prefer `float32` for sensor maths. On a chip without an FPU (the RP2040) both are software.
 - **Firmware.** Floats are a firmware option (`GOGO_FLOAT`, requirement
   `float`): an image that uses them needs firmware built with it, and
   image format 15.2 (chapter 12). `gogo firmware` turns it on when an

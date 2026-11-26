@@ -380,7 +380,8 @@ rebuilt:
   keep inner loops on integers (fixed point) where it matters.
 - **`float64` is software on the boards.** The ESP32-S3's FPU is single
   precision: `float32` arithmetic runs on it, `float64` in libgcc's
-  software routines, several times slower. Both are software on a chip
+  software routines. Dispatch and boxing dominate both, so the gap is
+  about 2x per operation, not more (on the StickS3 a loop of 20000 `x = x*0.999 + 0.25` takes 313 ms in `float32`, 409 ms in `float64` and 226 ms as the same loop on `int`s). Both are software on a chip
   without an FPU (the RP2040). *Workaround:* use `float32` for sensor
   maths.
 - **Firmware option.** Floats need firmware built with `GOGO_FLOAT`

@@ -114,6 +114,19 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs) {
     double x, y, r;
     bool is32, y32, b;
     term t;
+    if (op >= OP_ADDF && op <= OP_DIVF) {
+        /* float32 arithmetic in single precision without going through
+         * double (each conversion is a software call on the ESP32-S3). */
+        const uint32_t *p = obj_of(vm, a, R[rb]), *q = obj_of(vm, a, R[rc]);
+        if (p && q && p[0] == hdr_make(2, K_FLOAT) && q[0] == p[0]) {
+            float fx, fy, fr;
+            memcpy(&fx, &p[1], sizeof fx);
+            memcpy(&fy, &q[1], sizeof fy);
+            fr = arith_f32(op, fx, fy);
+            if (!box_raw(vm, a, K_FLOAT, 2u, f32_bits(fr), &t)) return R_OUT_OF_MEMORY;
+            goto store;
+        }
+    }
     if (op == OP_CONVF && rc <= 1u) {        /* float64 (c=0) / float32 (c=1) of an int or int64 */
         int32_t v;
         int64_t i;
@@ -142,7 +155,7 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs) {
     } else {
         if (!float_val(vm, a, R[rc], &y, &y32) || y32 != is32) return R_BAD_CODE;
         if (op < OP_EQF) {
-            r = is32 ? (double)arith_f32(op, (float)x, (float)y) : arith_f64(op, x, y);
+            r = arith_f64(op, x, y);         /* float32 operands took the path above */
             goto box;
         }
         int c = fcmp(x, y);

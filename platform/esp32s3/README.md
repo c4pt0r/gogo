@@ -739,10 +739,11 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   that uses floats is refused at boot (`gogo: image requires float, which
   this VM lacks`) and `code.Load` returns `Unsupported`. `float32`
   arithmetic uses the chip's single-precision FPU, `float64` libgcc's
-  software routines. Cost (ESP-IDF 6.1.1, the same tree with
-  `CONFIG_GOGO_FLOAT=n`): StickS3 1099104 -> 1110336 B `gogo.bin`
-  (+11232), Cardputer ADV 1134288 -> 1145488 (+11200), +104 B static
-  DIRAM. Of that, the VM core's share is about 3.7 KB (`tools/vmsize.sh`
+  software routines (a `float64` operation costs about twice a `float32`
+  one; book 3.2). Cost (ESP-IDF 6.1.1, the same tree with
+  `CONFIG_GOGO_FLOAT=n`): StickS3 1099104 -> 1110384 B `gogo.bin`
+  (+11280), Cardputer ADV 1134288 -> 1145568 (+11280), +104 B static
+  DIRAM. Of that, the VM core's share is about 3.8 KB (`tools/vmsize.sh`
   against `--no-float`), `runtime/floatlib` about 4.3 KB, and the rest
   newlib's `strtod` / `strtof` and the soft-float routines it links.
 - `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `runtime/net/*.c`

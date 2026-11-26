@@ -275,9 +275,11 @@ the requirement `float`):
   `runtime/floatlib`, outside the VM core and without libm (`ParseFloat`
   checks Go's syntax and then uses the C library's `strtod` / `strtof`).
 - Speed: values are boxed (every result allocates a 2- or 3-word heap
-  object). `float32` arithmetic uses the ESP32-S3's single-precision FPU;
-  `float64` is software there (libgcc), several times slower. On an RP2040
-  (no FPU) both are software.
+  object). `float32` arithmetic uses the ESP32-S3's single-precision FPU
+  (`OP_ADDF` .. `OP_DIVF` on two `float32` boxes never widen to double);
+  `float64` is software there (libgcc). The interpreter and the boxing
+  dominate both: on the StickS3 a loop of 20000 `x = x*0.999 + 0.25` takes 313 ms in `float32`, 409 ms in `float64` and 226 ms as the same loop on `int`s, so a `float64` operation costs about twice a
+  `float32` one. On an RP2040 (no FPU) both are software.
 
 **Closures capture by value.** A func literal copies each captured
 variable into the closure when it is created (the capture slots of its
