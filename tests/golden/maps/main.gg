@@ -11,6 +11,8 @@ type Point struct{ X, Y int }
 
 type Color int
 
+type ID int64
+
 const (
 	Red Color = iota
 	Green
@@ -102,6 +104,26 @@ func main() {
 	big := map[int64]int{1 << 40: 1, -5: 2, 3: 3}
 	big[1<<40] *= 7
 	println(big[1<<40], big[-5], big[4], len(big))
+	ksum := int64(0)
+	for k, v := range big {
+		ksum += k / 2 * int64(v)
+	}
+	println(ksum)
+	um := map[uint64]int{1: 1, 1 << 63: 2}
+	n2, top := 0, 0
+	for k, v := range um {
+		n2 += v
+		if k == 1<<63 {
+			top = v
+		}
+	}
+	println(n2, top)
+	im64 := map[ID]string{3: "a", 1 << 40: "b"}
+	for k, v := range im64 {
+		if k == 3 {
+			println(v, k+1)
+		}
+	}
 	cm := map[Color]string{Red: "red", Blue: "blue"}
 	println(cm[Blue], cm[Green] == "", len(cm))
 	ak := map[[2]int]int{{1, 2}: 12}

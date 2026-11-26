@@ -270,8 +270,10 @@ func (f *fn) rangeMap(s *ast.RangeStmt) {
 	f.asm.Emit(OpMove, st+2, res+1, 0)
 	if hasKey {
 		f.asm.Emit(OpMove, key, res+1, 0)
-		if isWide(mt.Key()) {
-			f.unbox(s, mt.Key(), key) // the plain representation outside the map
+		if isWide(mt.Key()) { // the plain representation outside the map (not a box's field: unbox would take a named or unsigned type for one)
+			z := f.allocScalar(s)
+			f.asm.EmitExt(OpLoadi32, z, 0, 0, 0)
+			f.asm.Emit(OpAdd64, key, key, z)
 		} else if at := arrayType(mt.Key()); at != nil {
 			f.cloneArray(s, at, key, key)
 		}
