@@ -170,6 +170,7 @@ func (f *fn) funcValueInto(n ast.Node, fn *types.Func, dst uint8) {
 // clause; each case is a TYPEIS/JMPF test, and default runs when no case
 // matched.
 func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
+	label := f.takeLabel()
 	var x ast.Expr
 	switch a := s.Assign.(type) {
 	case *ast.ExprStmt:
@@ -182,6 +183,8 @@ func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 	f.exprInto(x, m)
 
 	endL := f.asm.NewLabel()
+	f.setLabel(label, endL)
+	defer f.dropLabel(label)
 	var def *ast.CaseClause
 	for _, stmt := range s.Body.List {
 		cc := stmt.(*ast.CaseClause)

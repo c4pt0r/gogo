@@ -85,10 +85,16 @@ func (f *fn) sliceInto(e *ast.SliceExpr, dst uint8) {
 	f.seqCall(e, dst, BSlice, f.into(e.X), lo, hi)
 }
 
-// rangeStmt compiles `for i, c := range s` over a string's bytes. The
-// string is copied into a hidden register and the byte index kept in
-// another, so the body may reassign s, i and c without changing the loop.
+// rangeStmt compiles `for i, c := range s` over a string's bytes (or a
+// slice's elements; over an integer: rangeInt). The string is copied into
+// a hidden register and the byte index kept in another, so the body may
+// reassign s, i and c without changing the loop.
 func (f *fn) rangeStmt(s *ast.RangeStmt) {
+	if isInteger(f.g.p.Info.TypeOf(s.X)) {
+		f.rangeInt(s)
+		return
+	}
+	label := f.takeLabel()
 	scope := f.next
 	str := f.alloc(s)
 	f.exprInto(s.X, str)
@@ -135,9 +141,11 @@ func (f *fn) rangeStmt(s *ast.RangeStmt) {
 	}
 	f.breakTo = append(f.breakTo, endL)
 	f.continueTo = append(f.continueTo, contL)
+	f.setLabel(label, endL, contL)
 	f.block(s.Body.List)
 	f.breakTo = f.breakTo[:len(f.breakTo)-1]
 	f.continueTo = f.continueTo[:len(f.continueTo)-1]
+	f.dropLabel(label)
 	f.bind(contL)
 	one := f.allocScalar(s)
 	f.asm.EmitExt(OpLoadk, one, 0, 0, TermInt(1))

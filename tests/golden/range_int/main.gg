@@ -1,0 +1,81 @@
+package main
+
+type Count int
+
+func count(n int) int {
+	c := 0
+	for range n {
+		c++
+	}
+	return c
+}
+
+func main() {
+	for i := range 3 {
+		println("i", i)
+	}
+	// Over 0 and a negative n: no pass.
+	println(count(0), count(-1), count(-100), count(5))
+	for i := range 0 {
+		println("never", i)
+	}
+	neg := -3
+	for i := range neg {
+		println("never", i)
+	}
+
+	// n is evaluated once; changing n or i in the body does not change
+	// the loop.
+	n := 3
+	for i := range n {
+		n = 10
+		i += 100
+		println("pass", i)
+	}
+	println("n", n)
+
+	// The variable has n's type: int64, byte, a named int.
+	var big int64 = 3
+	var sum int64
+	for i := range big {
+		sum += i << 40
+	}
+	println("sum", sum)
+	var b byte = 3
+	for i := range b {
+		println("byte", i*200) // byte arithmetic wraps
+	}
+	var c Count = 2
+	for i := range c {
+		println("count", int(i))
+	}
+	for i := range int64(2) {
+		println("int64 const", i)
+	}
+
+	// break and continue.
+	for i := range 10 {
+		if i%2 == 1 {
+			continue
+		}
+		if i > 6 {
+			break
+		}
+		println("even", i)
+	}
+
+	// Locals of the body die each pass; values built in the loop survive.
+	var parts []string
+	for i := range 4 {
+		s := string([]byte{byte('a' + i)})
+		parts = append(parts, s)
+	}
+	println(len(parts), parts[0], parts[3])
+
+	// Many passes: many time slices.
+	total := 0
+	for i := range 100000 {
+		total += i & 1
+	}
+	println("total", total)
+}

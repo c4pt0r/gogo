@@ -3,9 +3,62 @@ package compiler
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 )
 
-// Control flow: expression switches.
+// Control flow: expression switches, labeled statements and range over an
+// integer.
+
+// jumpTargets are the labels a labeled statement's break and continue jump
+// to; a switch has no continue target.
+type jumpTargets struct {
+	brk, cont Label
+	loop      bool
+}
+
+// takeLabel returns the label of the statement being compiled ("" if
+// none) and clears it, so the statements inside do not see it.
+func (f *fn) takeLabel() string {
+	l := f.label
+	f.label = ""
+	return l
+}
+
+// setLabel records the break target (and, for a loop, the continue
+// target) of the statement labeled label; nothing if label is "".
+func (f *fn) setLabel(label string, brk Label, cont ...Label) {
+	if label == "" {
+		return
+	}
+	if f.labeled == nil {
+		f.labeled = map[string]jumpTargets{}
+	}
+	t := jumpTargets{brk: brk}
+	if len(cont) > 0 {
+		t.cont, t.loop = cont[0], true
+	}
+	f.labeled[label] = t
+}
+
+// dropLabel forgets label once its statement is compiled.
+func (f *fn) dropLabel(label string) {
+	if label != "" {
+		delete(f.labeled, label)
+	}
+}
+
+// labeledBranch compiles `break L` and `continue L`.
+func (f *fn) labeledBranch(s *ast.BranchStmt) {
+	t, ok := f.labeled[s.Label.Name]
+	if !ok || (s.Tok == token.CONTINUE && !t.loop) {
+		f.fail(s, "internal error: %s %s has no target", s.Tok, s.Label.Name)
+	}
+	l := t.brk
+	if s.Tok == token.CONTINUE {
+		l = t.cont
+	}
+	f.jump(OpJmp, 0, l)
+}
 
 // switchStmt compiles an expression switch. The tag (if any) is evaluated
 // once; then each case value, in source order, is compared with it (EQ, or
@@ -14,6 +67,7 @@ import (
 // body runs, or the switch ends. The bodies follow in source order, so a
 // fallthrough at the end of one simply runs into the next.
 func (f *fn) switchStmt(s *ast.SwitchStmt) {
+	label := f.takeLabel()
 	scope := f.next
 	if s.Init != nil {
 		f.stmt(s.Init)
@@ -58,6 +112,7 @@ func (f *fn) switchStmt(s *ast.SwitchStmt) {
 	f.next = tagMark // the tag is dead in the bodies
 
 	f.breakTo = append(f.breakTo, endL)
+	f.setLabel(label, endL)
 	for i, cl := range clauses {
 		cc := cl.(*ast.CaseClause)
 		f.bind(bodyL[i])
@@ -74,6 +129,70 @@ func (f *fn) switchStmt(s *ast.SwitchStmt) {
 		}
 	}
 	f.breakTo = f.breakTo[:len(f.breakTo)-1]
+	f.dropLabel(label)
+	f.bindEnd(endL)
+	f.next = scope
+}
+
+// rangeInt compiles `for i := range n` over an integer n: i runs from 0 to
+// n-1 (no pass when n <= 0). n is evaluated once and the count kept in a
+// hidden register, so the body may reassign n and i without changing the
+// loop; i is a fresh variable, set at the top of each pass.
+func (f *fn) rangeInt(s *ast.RangeStmt) {
+	label := f.takeLabel()
+	scope := f.next
+	xt := f.g.p.Info.TypeOf(s.X)
+	wide := isInt64(xt)
+	n := f.alloc(s)
+	f.exprInto(s.X, n)
+	idx := f.alloc(s)
+	loadInt := func(v int32, r uint8) {
+		if wide {
+			f.int64Into(int64(v), r)
+		} else {
+			f.asm.EmitExt(OpLoadk, r, 0, 0, TermInt(v))
+		}
+	}
+	loadInt(0, idx)
+	lt, add := OpLt, OpAdd
+	if wide {
+		lt, add = OpLt64, OpAdd64
+	}
+	var key uint8
+	hasKey := false
+	if id, _ := s.Key.(*ast.Ident); id != nil && id.Name != "_" {
+		v, ok := f.g.p.Info.Defs[id].(*types.Var)
+		if !ok {
+			f.fail(id, "internal error: range variable %s is not a definition", id.Name)
+		}
+		key, hasKey = f.alloc(id), true
+		f.locals[v] = key
+	}
+
+	topL, contL, endL := f.asm.NewLabel(), f.asm.NewLabel(), f.asm.NewLabel()
+	f.bind(topL)
+	mark := f.next
+	more := f.allocScalar(s)
+	f.asm.Emit(lt, more, idx, n)
+	f.jump(OpJmpf, more, endL)
+	f.next = mark
+	if hasKey {
+		f.asm.Emit(OpMove, key, idx, 0)
+	}
+	f.breakTo = append(f.breakTo, endL)
+	f.continueTo = append(f.continueTo, contL)
+	f.setLabel(label, endL, contL)
+	f.block(s.Body.List)
+	f.breakTo = f.breakTo[:len(f.breakTo)-1]
+	f.continueTo = f.continueTo[:len(f.continueTo)-1]
+	f.dropLabel(label)
+	f.bind(contL)
+	one := f.allocScalar(s)
+	loadInt(1, one)
+	f.asm.Emit(add, idx, idx, one)
+	f.next = mark
+	f.clearDead() // the body's locals die before the next iteration
+	f.jump(OpJmp, 0, topL)
 	f.bindEnd(endL)
 	f.next = scope
 }

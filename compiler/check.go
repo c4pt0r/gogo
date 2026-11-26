@@ -564,8 +564,16 @@ func (c *checker) stmt(s ast.Stmt) {
 		}
 		c.block(s.Body)
 	case *ast.BranchStmt:
-		if (s.Tok != token.BREAK && s.Tok != token.CONTINUE && s.Tok != token.FALLTHROUGH) || s.Label != nil {
+		if s.Tok != token.BREAK && s.Tok != token.CONTINUE && s.Tok != token.FALLTHROUGH {
 			c.unsupported(s, strings.TrimSpace(s.Tok.String()+" statement"))
+		}
+	case *ast.LabeledStmt:
+		switch s.Stmt.(type) {
+		case *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt:
+			c.stmt(s.Stmt)
+		default:
+			c.unsupported(s, "label on a statement other than for or switch")
+			c.stmt(s.Stmt)
 		}
 	case *ast.SwitchStmt:
 		c.switchStmt(s)
@@ -1280,11 +1288,11 @@ func (c *checker) sliceExpr(e *ast.SliceExpr) {
 }
 
 // rangeStmt checks `for i, c := range s` (also with one variable, blanks, or
-// none) over a string or a slice. A string ranges over bytes, not runes: i
-// is the byte index and c the byte value (typed rune, an int32, as in Go;
-// gogo's rune is an int).
+// none) over a string or a slice, and `for i := range n` over an integer. A
+// string ranges over bytes, not runes: i is the byte index and c the byte
+// value (typed rune, an int32, as in Go; gogo's rune is an int).
 func (c *checker) rangeStmt(s *ast.RangeStmt) {
-	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) {
+	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) && !isInteger(xt) {
 		c.unsupported(s, "range over "+types.TypeString(c.p.Info.TypeOf(s.X), nil))
 		return
 	}
@@ -1303,6 +1311,13 @@ func (c *checker) rangeStmt(s *ast.RangeStmt) {
 	}
 	c.expr(s.X)
 	c.block(s.Body)
+}
+
+// isInteger reports whether t's underlying type is an integer type (or an
+// untyped integer constant): `for i := range n`.
+func isInteger(t types.Type) bool {
+	b, ok := underlying(t).(*types.Basic)
+	return ok && b.Info()&types.IsInteger != 0
 }
 
 // isSlice reports whether t's underlying type is a slice.

@@ -341,6 +341,8 @@ type fn struct {
 
 	breakTo    []Label // innermost last
 	continueTo []Label
+	label      string                 // the label of the statement about to be compiled, "" if none
+	labeled    map[string]jumpTargets // the labeled statements being compiled, by label
 
 	dirty      int           // see the type comment
 	labelDirty map[Label]int // dirty at the jumps to each label, merged
@@ -681,6 +683,10 @@ func (f *fn) stmtCode(s ast.Stmt) {
 	case *ast.ForStmt:
 		f.forStmt(s)
 	case *ast.BranchStmt:
+		if s.Label != nil {
+			f.labeledBranch(s)
+			return
+		}
 		if s.Tok == token.FALLTHROUGH {
 			f.fail(s, "internal error: fallthrough outside a switch clause end")
 		}
@@ -692,6 +698,10 @@ func (f *fn) stmtCode(s ast.Stmt) {
 			f.fail(s, "%s outside a loop", s.Tok)
 		}
 		f.jump(OpJmp, 0, targets[len(targets)-1])
+	case *ast.LabeledStmt:
+		f.label = s.Label.Name
+		f.stmtCode(s.Stmt)
+		f.label = ""
 	case *ast.SwitchStmt:
 		f.switchStmt(s)
 	case *ast.TypeSwitchStmt:
@@ -940,6 +950,7 @@ func (f *fn) ifStmt(s *ast.IfStmt) {
 }
 
 func (f *fn) forStmt(s *ast.ForStmt) {
+	label := f.takeLabel()
 	scope := f.next
 	if s.Init != nil {
 		f.stmt(s.Init)
@@ -953,9 +964,11 @@ func (f *fn) forStmt(s *ast.ForStmt) {
 	}
 	f.breakTo = append(f.breakTo, endL)
 	f.continueTo = append(f.continueTo, contL)
+	f.setLabel(label, endL, contL)
 	f.block(s.Body.List)
 	f.breakTo = f.breakTo[:len(f.breakTo)-1]
 	f.continueTo = f.continueTo[:len(f.continueTo)-1]
+	f.dropLabel(label)
 	if s.Post != nil {
 		f.bind(contL)
 		f.stmt(s.Post)
