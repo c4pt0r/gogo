@@ -570,7 +570,7 @@ TEST(embed_lifecycle_errors) {
     CHECK_EQ(gogo_load(vm, im.w, im.len, 0), GOGO_OK);
     CHECK_EQ(gogo_load(vm, im.w, im.len, 0), GOGO_ESTATE);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
-    CHECK_EQ(gogo_start(vm), GOGO_ESTARTED);
+    CHECK_EQ(gogo_start(vm), GOGO_ESTATE);              /* a VM runs once */
     CHECK_EQ(settle(vm), GOGO_IDLE);
     gogo_free(vm);
     free(im.w);
@@ -600,6 +600,36 @@ TEST(embed_image_version) {
     tctx_done(&t);
 }
 
+/* Versions, and one description per result: the API's codes are the
+ * shared ones negated. */
+TEST(embed_versions_and_errors) {
+    CHECK_EQ(gogo_version(), GOGO_VERSION);
+    CHECK_EQ(gogo_version() >> 16, GOGO_VERSION_MAJOR);
+    CHECK_EQ(gogo_image_format() >> 16, 15u);
+    Img im = image("echo");
+    CHECK(im.w != NULL);
+    if (im.w) {
+        CHECK(im.w[1] >> 16 == gogo_image_format() >> 16 && (im.w[1] & 0xFFFFu) <= (gogo_image_format() & 0xFFFFu));
+        free(im.w);
+    }
+    static const int codes[] = { GOGO_OK, GOGO_ENOTFOUND, GOGO_EEXIST, GOGO_ENOMEM, GOGO_EFULL, GOGO_EBUSY,
+                                 GOGO_EINVAL, GOGO_ECLOSED, GOGO_EREQUIRES, GOGO_EIMAGE, GOGO_E2BIG,
+                                 GOGO_EVERSION, GOGO_ESTATE };
+    for (size_t i = 0; i < sizeof codes / sizeof codes[0]; i++) {
+        CHECK(codes[i] <= 0);
+        CHECK(strcmp(gogo_strerror(codes[i]), "unknown error") != 0);
+        if (codes[i] != GOGO_ESTATE) CHECK(strcmp(gogo_strerror(codes[i]), gogo_strerror(-codes[i])) == 0);
+        for (size_t k = 0; k < i; k++) CHECK(codes[k] != codes[i]);
+    }
+    CHECK(strcmp(gogo_strerror(GOGO_EINVAL), "bad argument") == 0);
+    CHECK_EQ(GOGO_EINVAL, -GOGO_E_BADARG);
+    CHECK_EQ(GOGO_EVERSION, -GOGO_E_BADVERSION);
+    CHECK(strcmp(gogo_strerror(GOGO_E_RESET), "connection reset") == 0);   /* a port.Closed reason */
+    CHECK(strcmp(gogo_strerror(-1000), "unknown error") == 0);
+    CHECK(strcmp(gogo_strerror(36), "unknown error") == 0);              /* only GOGO_ESTATE is */
+    CHECK(strcmp(gogo_strerror(GOGO_E_SHARED_MAX), "unknown error") == 0);
+}
+
 TEST(embed_no_main) {
     TCtx t; tctx_init(&t);
     /* codeload's image with its only export renamed: no "main". */
@@ -612,9 +642,9 @@ TEST(embed_no_main) {
     gogo_vm *vm = new_vm(&thost, &t, NULL);
     int r = gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY);
     if (r == GOGO_OK) {
-        CHECK_EQ(gogo_start(vm), GOGO_ESTART);
+        CHECK_EQ(gogo_start(vm), GOGO_ENOTFOUND);
         CHECK(strstr(t.err, "no main") != NULL);
-        CHECK_EQ(gogo_start(vm), GOGO_ESTART);   /* still new: the same refusal */
+        CHECK_EQ(gogo_start(vm), GOGO_ENOTFOUND);   /* still new: the same refusal */
     }
     gogo_free(vm);
     free(im.w);

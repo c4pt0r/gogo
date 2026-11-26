@@ -51,6 +51,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "gogo_errors.h"
 
 /* Marks the API functions. libgogo.a is built with -fvisibility=hidden
  * and exports exactly these (its internal functions are local to the
@@ -181,23 +182,46 @@ typedef struct gogo_vm gogo_vm;
 
 /* gogo_step results; every call returns a negative GOGO_E* on error. */
 enum { GOGO_RUNNABLE = 0, GOGO_IDLE = 1, GOGO_DONE = 2 };
+
+/* Errors. Each is a shared code of gogo_errors.h (the codes gogo programs
+ * see, gogo/errors) negated, so one table describes both (gogo_strerror);
+ * GOGO_ESTATE alone is the API's own, from 36..99, which are never
+ * shared codes. */
 enum {
-    GOGO_OK = 0,
-    GOGO_EINVAL = -1,     /* a bad argument */
-    GOGO_ENOMEM = -2,     /* out of memory (or over mem_limit) */
-    GOGO_EIMAGE = -3,     /* not a valid image of this VM's format */
-    GOGO_EREQUIRES = -4,  /* the image requires a driver or mount the VM lacks (named on stream 2) */
-    GOGO_ECAPS = GOGO_EREQUIRES,   /* the old name, for one release */
-    GOGO_ESTATE = -5,     /* out of order: no image loaded, loaded twice, not started */
-    GOGO_ESTARTED = -6,   /* gogo_start again: a VM runs once */
-    GOGO_ESTART = -7,     /* main could not start: no main export, out of memory */
-    GOGO_EBUSY = -8,      /* called from a hook while the VM is stepping */
-    GOGO_EFULL = -9,      /* the inbox holds GOGO_POST_MAX posts */
-    GOGO_E2BIG = -10,     /* a post's name or data is too long */
-    GOGO_ECLOSED = -11,   /* the VM is being freed, or was freed; a host port is closed */
-    GOGO_EEXIST = -12,    /* gogo_register_port: the name is taken */
-    GOGO_EVERSION = -13   /* the image's format is another major, or a newer minor than this VM runs */
+    GOGO_OK = GOGO_E_OK,
+    GOGO_ENOTFOUND = -GOGO_E_NOTFOUND,    /* gogo_start: the image has no main */
+    GOGO_EEXIST = -GOGO_E_EXISTS,         /* gogo_register_port: the name is taken */
+    GOGO_ENOMEM = -GOGO_E_NOMEMORY,       /* out of memory (or over mem_limit) */
+    GOGO_EFULL = -GOGO_E_TOOMANY,         /* a fixed table is full: GOGO_POST_MAX posts queued, the host ports */
+    GOGO_EBUSY = -GOGO_E_BUSY,            /* called from a hook while the VM is stepping */
+    GOGO_EINVAL = -GOGO_E_BADARG,         /* a bad argument */
+    GOGO_ECLOSED = -GOGO_E_CLOSED,        /* the VM is being freed, or was freed; posts are closed; a host port is closed */
+    GOGO_EREQUIRES = -GOGO_E_UNSUPPORTED, /* the image requires a driver or mount the VM lacks (named on stream 2) */
+    GOGO_EIMAGE = -GOGO_E_BADIMAGE,       /* not a valid image */
+    GOGO_E2BIG = -GOGO_E_OVERFLOW,        /* a name or data is too long */
+    GOGO_EVERSION = -GOGO_E_BADVERSION,   /* the image's format is another major, or a newer minor than this VM runs */
+    GOGO_ESTATE = -36                     /* out of order: no image loaded, loaded twice, not started, started twice */
 };
+
+/* A short description of a result: a GOGO_E* (or a shared code from
+ * gogo_errors.h, such as a port.Closed reason, as is). A static string,
+ * "unknown error" for a code without one. */
+GOGO_API const char *gogo_strerror(int rc);
+
+/* The library's version, (major << 16) | (minor << 8) | patch: what
+ * GOGO_VERSION was when it was built. A host compiled against this
+ * header needs a library of the same major, during 0.x the same minor,
+ * at least as new: gogo_version() >= GOGO_VERSION. */
+#define GOGO_VERSION_MAJOR 0
+#define GOGO_VERSION_MINOR 2
+#define GOGO_VERSION_PATCH 0
+#define GOGO_VERSION ((GOGO_VERSION_MAJOR << 16) | (GOGO_VERSION_MINOR << 8) | GOGO_VERSION_PATCH)
+GOGO_API uint32_t gogo_version(void);
+
+/* The image formats this library loads: (major << 16) | newest minor.
+ * An image of format M.m (header word 1, M << 16 | m) loads if M is this
+ * major and m is at most this minor; others are GOGO_EVERSION. */
+GOGO_API uint32_t gogo_image_format(void);
 #define GOGO_NEVER (-1)
 
 /* Posts queued and not yet delivered, at most. */
@@ -231,9 +255,9 @@ GOGO_API int gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg
  * GOGO_ESTATE (already loaded). After a failure the VM may load again. */
 GOGO_API int gogo_load(gogo_vm *vm, const void *image, size_t len, int flags);
 
-/* Starts the image's main. GOGO_ESTATE without an image, GOGO_ESTARTED if
- * started before, GOGO_ESTART if main cannot start (the reason is on
- * stream 2). */
+/* Starts the image's main. GOGO_ESTATE without an image or if started
+ * before; GOGO_ENOTFOUND if the image has no main, GOGO_ENOMEM if main
+ * cannot start for want of memory (both also on stream 2). */
 GOGO_API int gogo_start(gogo_vm *vm);
 
 /* Runs at most budget scheduler passes (each delivers posts and events,

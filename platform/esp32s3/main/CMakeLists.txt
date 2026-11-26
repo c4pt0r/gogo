@@ -157,11 +157,11 @@ endif()
 execute_process(
     COMMAND git describe --always --dirty
     WORKING_DIRECTORY "${GOGO_ROOT}"
-    OUTPUT_VARIABLE GOGO_VERSION
+    OUTPUT_VARIABLE GOGO_FIRMWARE_VERSION
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET)
-if(NOT GOGO_VERSION)
-    set(GOGO_VERSION "dev")
+if(NOT GOGO_FIRMWARE_VERSION)
+    set(GOGO_FIRMWARE_VERSION "dev")
 endif()
 
 # The wall-clock floor (runtime/vm/host.h): the build time, Unix ms.
@@ -189,7 +189,8 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     console_write=gogo_console_write
     GOGO_ESP_CONSOLE=${GOGO_CONSOLE}
     GOGO_ESP_CONSOLE_VERBOSE=${GOGO_CONSOLE_VERBOSE}
-    GOGO_VERSION="${GOGO_VERSION}"
+    # (not GOGO_VERSION: that is gogo.h's numeric API version)
+    GOGO_FIRMWARE_VERSION="${GOGO_FIRMWARE_VERSION}"
     ${GOGO_BOARD_DEF})
 # IDF already passes -Os -Wall -Wextra -Werror but relaxes some of them;
 # hold our sources to the host build's -Wall -Wextra -Werror.

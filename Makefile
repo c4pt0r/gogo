@@ -265,7 +265,7 @@ EMBED_PROGS = $(notdir $(wildcard runtime/embed/test/testdata/*))
 EMBED_EXAMPLES = hostecho many_idle httpparse hotload
 EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vfs -Iruntime/vm -Iruntime/vm/test
 
-$(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS) $(wildcard runtime/embed/*.h) runtime/include/gogo.h $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vm/test/*.h)
+$(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS) $(wildcard runtime/embed/*.h) $(wildcard runtime/include/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vm/test/*.h)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -DGOGO_EMBED $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS)
 
@@ -299,7 +299,8 @@ endif
 # The objects are prelinked into one relocatable object (ld -r) that keeps
 # only the gogo_* API global (an export list on Darwin, objcopy on ELF), so
 # the library's internal functions never clash with the host's;
-# tools/libsyms.sh checks that its globals are exactly gogo.h's functions.
+# tools/libsyms.sh checks that its globals are exactly the list in
+# runtime/include/libgogo.syms, which must also be gogo.h's functions.
 # libgogo-debug.a is the same objects archived as they are: on macOS the
 # prelinked object's debug info lives in build/lib/*.o (ld -r keeps a debug
 # map, not the DWARF), so a library copied elsewhere for debugging is that
@@ -308,7 +309,7 @@ LIB_SRCS   = $(VM_CORE_SRCS) $(VFS_SRCS) $(STREAM_SRCS) $(EMBED_SRCS)
 LIB_OBJS   = $(foreach f,$(LIB_SRCS),$(BUILD)/lib/$(subst /,_,$(patsubst runtime/%.c,%,$(f))).o)
 LIB_CFLAGS = -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g -fvisibility=hidden -DGOGO_EMBED -DGOGO_BUILD_UNIX_MS=$(BUILD_UNIX_MS)LL $(EXTRA_CFLAGS) \
              -Iruntime/include -Iruntime/embed -Iruntime/vm -Iruntime/vfs -Iruntime/stream
-LIB_HDRS   = runtime/include/gogo.h $(wildcard runtime/embed/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/stream/*.h)
+LIB_HDRS   = $(wildcard runtime/include/*.h) $(wildcard runtime/embed/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/stream/*.h)
 LIB_LD      ?= ld
 LIB_OBJCOPY ?= objcopy
 
@@ -323,10 +324,10 @@ else
 	$(LIB_OBJCOPY) -w --keep-global-symbol='gogo_*' $@
 endif
 
-$(BUILD)/libgogo.a: $(BUILD)/libgogo.o runtime/include/gogo.h
+$(BUILD)/libgogo.a: $(BUILD)/libgogo.o runtime/include/gogo.h runtime/include/libgogo.syms
 	@rm -f $@
 	ar rcs $@ $(BUILD)/libgogo.o
-	tools/libsyms.sh $@ runtime/include/gogo.h
+	tools/libsyms.sh $@ runtime/include/libgogo.syms runtime/include/gogo.h
 	tools/globals.sh --objects $@
 
 $(BUILD)/libgogo-debug.a: $(LIB_OBJS)
@@ -346,7 +347,7 @@ $(foreach f,$(LIB_SRCS),$(eval $(call LIB_OBJ_RULE,$(f))))
 # else the test proves nothing).
 CLASH_SYMS = msg_free heap_alloc vm_step bytes_new port_open
 
-$(BUILD)/libgogo_clash: runtime/embed/test/clash/main.c runtime/include/gogo.h $(BUILD)/libgogo.a
+$(BUILD)/libgogo_clash: runtime/embed/test/clash/main.c $(wildcard runtime/include/*.h) $(BUILD)/libgogo.a
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 $(EXTRA_CFLAGS) -Iruntime/include -o $@ $< $(BUILD)/libgogo.a -pthread
 
 test-libgogo: $(BUILD)/libgogo_clash $(BUILD)/libgogo-debug.a gogo-cmd
@@ -360,7 +361,7 @@ test-libgogo: $(BUILD)/libgogo_clash $(BUILD)/libgogo-debug.a gogo-cmd
 EXAMPLE_EMBED_PROGS = main post port
 EXAMPLE_EMBED_BINS  = $(addprefix $(BUILD)/embed-c/,$(EXAMPLE_EMBED_PROGS))
 
-$(BUILD)/embed-c/%: examples/embed-c/%.c runtime/include/gogo.h $(BUILD)/libgogo.a
+$(BUILD)/embed-c/%: examples/embed-c/%.c $(wildcard runtime/include/*.h) $(BUILD)/libgogo.a
 	@mkdir -p $(BUILD)/embed-c
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iruntime/include -o $@ $< $(BUILD)/libgogo.a -pthread
 

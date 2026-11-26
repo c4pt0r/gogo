@@ -74,6 +74,12 @@ rebuilt:
     refuse (it returned 1 and 0).
   - `gogo_config.allow_code_load` is the flag `GOGO_CONFIG_CODE_LOAD` in
     `flags`; `mem_limit` is a `uint64_t` and `max_actors` a `uint32_t`.
+  - The `GOGO_E*` results are the shared error codes negated, so their
+    numbers changed (`GOGO_EINVAL` -1 is -6, `GOGO_EREQUIRES` -4 is
+    -10, `GOGO_EVERSION` -13 is -27, ...); code that uses the names
+    needs no edit. `GOGO_ESTARTED` is `GOGO_ESTATE`, `GOGO_ESTART` is
+    `GOGO_ENOTFOUND` (no `main`) or `GOGO_ENOMEM`, and the old name
+    `GOGO_ECAPS` is gone.
 
 ## VM
 

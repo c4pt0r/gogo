@@ -7,8 +7,10 @@
  * that actor.Failed (64) + a shared code is an exit reason below 100;
  * 36..99 are reserved; codes >= 100 belong to one package each, in blocks
  * of 20 (gogo/errors lists them). These are the codes gogo
- * programs see. They are not the embedding API's results: gogo.h's GOGO_EINVAL,
- * GOGO_EBUSY ... are negative and unrelated. */
+ * programs see. The embedding API's results (gogo.h, which includes this
+ * header) are the same codes negated: GOGO_EINVAL is -GOGO_E_BADARG. Its
+ * one result of its own, GOGO_ESTATE, is -36: 36..99 are never shared
+ * codes. */
 #ifndef GOGO_ERRORS_H
 #define GOGO_ERRORS_H
 

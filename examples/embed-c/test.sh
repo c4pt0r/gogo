@@ -38,7 +38,7 @@ check "main --flash --allow-load hotload" examples/hotload/expected.out "$T/out"
 check "main --flash hotload (code.Load refused)" examples/embed-c/hotload-refused.out "$T/out"
 
 if "$E/main" "$T/img/netdemo.ggb" > "$T/out" 2> "$T/err"; then echo "FAIL main netdemo: ran without its drivers"; fail=1
-elif grep -q "image requires gpio" "$T/err" && grep -q "error -4" "$T/err"; then echo "ok   main netdemo (refused: requires gpio)"
+elif grep -q "image requires gpio" "$T/err" && grep -q "unsupported: a driver or mount is missing (-10)" "$T/err"; then echo "ok   main netdemo (refused: requires gpio)"
 else echo "FAIL main netdemo"; cat "$T/err"; fail=1; fi
 
 "$E/main" --two "$T/img/httpparse.ggb" "$T/img/many_idle.ggb" > "$T/out" 2> "$T/err" || { echo "FAIL main --two: exit status"; fail=1; }

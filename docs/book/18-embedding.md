@@ -47,11 +47,11 @@ the POSIX host and loads the image:
 ```c
     gogo_vm *vm;
     int rc = h ? gogo_new(h, ctx, cfg, &vm) : gogo_new_posix(cfg, &vm);
-    if (rc != GOGO_OK) { fprintf(stderr, "gogo_new: error %d\n", rc); free(img); return NULL; }
+    if (rc != GOGO_OK) { fprintf(stderr, "gogo_new: %s\n", gogo_strerror(rc)); free(img); return NULL; }
     rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);   /* copied: img can go */
     free(img);
     if (rc != GOGO_OK) {
-        fprintf(stderr, "gogo_load %s: error %d\n", path, rc);
+        fprintf(stderr, "gogo_load %s: %s (%d)\n", path, gogo_strerror(rc), rc);
         gogo_free(vm);
         return NULL;
     }
@@ -95,8 +95,38 @@ idle memory total: 132000 B
 The program is done when every actor has exited or is blocked for good,
 as on a board: `many_idle`'s 1000 actors wait in `Receive` forever, so the
 run ends when `main` returns. Every call returns a negative `GOGO_E*` on
-error; `gogo_load`'s reasons (a bad image, an unsupported image format, a
-missing driver) are also written to the host's error stream.
+error, and `gogo_strerror` describes one; `gogo_load`'s reasons (a bad
+image, an unsupported image format, a missing driver) are also written to
+the host's error stream, with the names involved.
+
+The error codes are the shared codes of gogo programs (`gogo/errors`,
+appendix C; `GOGO_E_*` in `gogo_errors.h`, which `gogo.h` includes),
+negated: `GOGO_EINVAL` is `-GOGO_E_BADARG`, `GOGO_ENOMEM` is
+`-GOGO_E_NOMEMORY`, `GOGO_EREQUIRES` is `-GOGO_E_UNSUPPORTED`, as
+`code.Load` says for the same refusal. One table of meanings covers both
+sides, so `gogo_strerror` also describes a code a program hands the host
+(a host port's `port.Closed` reason, say). Only `GOGO_ESTATE`, a call
+out of order, is the API's own (-36; 36 to 99 are never shared codes).
+
+| result | | from |
+|---|---|---|
+| `GOGO_EINVAL` | a bad argument, table or configuration | every call |
+| `GOGO_ENOMEM` | out of memory, or over `mem_limit` | every call that allocates |
+| `GOGO_ESTATE` | out of order: no image, loaded twice, started twice | `gogo_load`, `gogo_start`, `gogo_step`, ... |
+| `GOGO_EBUSY` | called from a hook while the VM steps | `gogo_step`, `gogo_run`, `gogo_load`, `gogo_start`, ... |
+| `GOGO_EIMAGE` | not an image | `gogo_load` |
+| `GOGO_EVERSION` | an image format this library does not run | `gogo_load` |
+| `GOGO_EREQUIRES` | the image requires a driver or mount the VM lacks | `gogo_load` |
+| `GOGO_ENOTFOUND` | the image has no `main` | `gogo_start` |
+| `GOGO_EFULL`, `GOGO_E2BIG` | a queue or table is full; a name or data is too long | posts, host ports |
+| `GOGO_ECLOSED`, `GOGO_EEXIST` | posts are closed or the VM is gone; a name is taken | posts, host ports |
+
+**Versions.** `gogo_version()` is the library's version,
+`(major << 16) | (minor << 8) | patch`, and `GOGO_VERSION` the header's
+(0.2.0 here). A host checks at start that it runs on a library at least
+as new as the header it was compiled with, of the same major (during
+0.x, the same minor). `gogo_image_format()` says which images the
+library loads, `(major << 16) | newest minor`.
 
 `gogo_new_posix` is the ready-made host for POSIX systems: `malloc`,
 `CLOCK_MONOTONIC`, the system's wall clock (which the program may not
@@ -482,7 +512,7 @@ An image records, by name, what it needs (`gogo build` infers it; chapter
 for constant `/sd` paths. On an embedded VM the drivers are the host ports
 registered before `gogo_load`, and the one mount is `/flash` when
 `fs_root` serves it. `gogo_load` refuses an image that requires anything
-else with `GOGO_EREQUIRES` (-4) and names the first missing name on the
+else with `GOGO_EREQUIRES` (-10) and names the first missing name on the
 error stream. Basic I/O (`println`, actors, timers, posts) needs nothing.
 
 This version's library has no board peripherals, so an image that uses
@@ -496,7 +526,7 @@ build/embed-c/main netdemo.ggb
 
 ```
 gogo: image requires gpio, which this VM lacks
-gogo_load netdemo.ggb: error -4
+gogo_load netdemo.ggb: unsupported: a driver or mount is missing (-10)
 ```
 
 `grant` narrows what the VM has: a `NULL`-terminated list of names, and
@@ -507,14 +537,14 @@ must stay valid while the VM exists.
 
 ```
 static const char *const grant[] = { "ui", "/flash", NULL };
-gogo_config cfg = { 0 };
+gogo_config cfg = GOGO_CONFIG_INIT;
 cfg.grant = grant;     /* a host port "sensor" registered later stays hidden */
 ```
 
 An image whose format is another major, or a newer minor than this
-library's, is refused with `GOGO_EVERSION` (-13), and both formats are
-named (`gogo: unsupported image format 15.1 (this VM runs 15.0 to
-15.0)`).
+library's, is refused with `GOGO_EVERSION` (-27), and both formats are
+named (`gogo: unsupported image format 15.2 (this VM runs 15.0 to
+15.1)`).
 
 ## 18.10 Hot loading: `GOGO_CONFIG_CODE_LOAD`
 

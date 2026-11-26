@@ -1,0 +1,27 @@
+# The functions libgogo.a exports: exactly these, and exactly the
+# GOGO_API declarations of gogo.h (tools/libsyms.sh checks both).
+# Sorted (LC_ALL=C); an API change edits this list in the same commit.
+gogo_close_posts
+gogo_free
+gogo_get_stats
+gogo_host_posix
+gogo_image_format
+gogo_join
+gogo_load
+gogo_new
+gogo_new_posix
+gogo_next_deadline
+gogo_port_emit
+gogo_port_post
+gogo_posix_ctx_free
+gogo_posix_ctx_new
+gogo_post
+gogo_register_port
+gogo_release
+gogo_retain
+gogo_run
+gogo_run_thread
+gogo_start
+gogo_step
+gogo_strerror
+gogo_version

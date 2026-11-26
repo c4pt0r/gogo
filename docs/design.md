@@ -1780,7 +1780,14 @@ only through two tables of function pointers that the caller hands it.
   fields it knows, an older struct's missing fields take their defaults,
   and a newer one's extra fields are ignored, so a field may be appended
   only if its 0 keeps the old behaviour; anything marked experimental is
-  outside these guarantees; `libgogo.a` exports only `GOGO_API` symbols.
+  outside these guarantees; `libgogo.a` exports only `GOGO_API` symbols,
+  the reviewed list in `runtime/include/libgogo.syms`
+  (`tools/libsyms.sh`). `gogo_version()` gives the library's version and
+  `gogo_image_format()` the image formats it loads. The API's error
+  results are the shared error codes negated (`GOGO_EINVAL` is
+  `-GOGO_E_BADARG`), so one table describes them (`gogo_strerror`); only
+  `GOGO_ESTATE` (-36) is the API's own, from the range 36..99 that is
+  never a shared code.
 - **Library API:** stable at v0.2: `actor`, `bytes`, `port` (its generic
   part), `fs`, `sys`, `strings`, `strconv`, `kv`. Experimental: `net`,
   `http`, `dns`, `dhcp`, `sntp`, `code`, `supervisor`, `imu`, `ir`,

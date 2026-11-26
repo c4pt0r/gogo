@@ -47,11 +47,11 @@ static gogo_vm *load_vm(const gogo_host *h, void *ctx, const gogo_config *cfg, c
     if (!img) { fprintf(stderr, "cannot read %s\n", path); return NULL; }
     gogo_vm *vm;
     int rc = h ? gogo_new(h, ctx, cfg, &vm) : gogo_new_posix(cfg, &vm);
-    if (rc != GOGO_OK) { fprintf(stderr, "gogo_new: error %d\n", rc); free(img); return NULL; }
+    if (rc != GOGO_OK) { fprintf(stderr, "gogo_new: %s\n", gogo_strerror(rc)); free(img); return NULL; }
     rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);   /* copied: img can go */
     free(img);
     if (rc != GOGO_OK) {
-        fprintf(stderr, "gogo_load %s: error %d\n", path, rc);
+        fprintf(stderr, "gogo_load %s: %s (%d)\n", path, gogo_strerror(rc), rc);
         gogo_free(vm);
         return NULL;
     }
