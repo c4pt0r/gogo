@@ -386,13 +386,13 @@ under another name, and these codes under the same names.
 | `int` is 64 bits on most machines | `int` is always 32 bits |
 | `uint` is 64 bits on most machines | `uint` is 32 bits, like `int`; `int8` .. `uint64` as in Go, but not in an `any` |
 | complex, `uintptr` | none |
-| maps, pointers | slices of structs, searched |
-| methods with pointer receivers | value receivers that return the new value |
+| maps, random iteration order | maps in key order; sorted slices underneath (O(n) insert); copied when sent |
+| pointers, `&s[i]` | pointers copied (with what they point to) when sent; no pointers into slices or fields |
 | `goto` | labeled `break`/`continue` |
 | generics | none |
 | `error`, `panic`, `recover` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |
 | `defer` anywhere, run on panics too | `defer` outside loops only, run on normal returns only |
-| package-level `var`, `init` | `const`; state in actors |
+| package-level `var`, `init` | read-only package-level `var`s, set at build time; state in actors; no `init` |
 | multiple packages, the standard library | one `package main`; `gogo/...` packages only |
 | `fmt.Println` | `println` (prints slices' elements; Go's `println` prints an address) |
 | UTF-8 aware `range` over strings | bytes |

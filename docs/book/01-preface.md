@@ -70,11 +70,12 @@ device down.**
 
 ## What gogo is not good for
 
-- **Existing Go code.** gogo compiles a *subset* of Go, and the subset is
-  strict: no maps, no pointers (methods take value receivers only), no
-  interfaces of your own, no `switch` on an `any` or a struct value, no
-  package-level variables, no channels or goroutines. Most Go libraries
-  will not compile. Chapter 3 lists exactly what is in and what is out.
+- **Existing Go code.** gogo compiles a *subset* of Go: no channels or
+  goroutines (actors instead), no generics, no `recover`, no `unsafe` or
+  reflection, package-level variables are read-only, and pointers, maps
+  and `fmt` behave a little differently (copied when sent, maps in key
+  order, no reflection in `fmt`). Most Go libraries will not compile as
+  they are. Chapter 3 lists exactly what is in and what is out.
 - **Number crunching.** The VM is an interpreter, and every float is a
   small heap object: `float32` and `float64` work, but heavy maths
   belongs in C drivers.

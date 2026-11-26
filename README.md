@@ -235,7 +235,9 @@ Done:
 - **Storage:** `/flash`, `/sd`, `kv`, `ringlog`.
 - **Language and tools:** expression `switch`, labels, `range` over int,
   variadic functions; floating point (`float32`, `float64`, `gogo/math`);
-  sized integers (`int8` .. `uint64`);
+  sized integers (`int8` .. `uint64`); methods, interfaces and `error`,
+  `panic`; pointers, maps (in key order), closures that share what they
+  capture, read-only package-level variables, `gogo/fmt`;
   packages of your own with a `GOGOPATH` search;
   single-file programs and `#!` scripts; `gogo setup`; optional firmware
   features; releases with the CLI, `gogovm` and firmware.
@@ -247,12 +249,9 @@ Next, in order:
    and commands, and a platform layer that makes new boards cheap.
 2. **Distributed actors:** boards and a server node exchanging actor
    messages directly (first through the server; direct links later).
-3. **Language completeness:** pointer receivers, interfaces and
-   `error`, `panic`, pointers, maps, `fmt`; script
-   arguments.
-4. **More hardware:** a `usb` port for the serial connection, the
+3. **More hardware:** a `usb` port for the serial connection, the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
-5. **Embedding bindings:** Rust, Go (with an in-process compiler), iOS
+4. **Embedding bindings:** Rust, Go (with an in-process compiler), iOS
    and Android.
 
 ## License

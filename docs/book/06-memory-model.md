@@ -361,9 +361,11 @@ The file, network and HTTP APIs all take and return `bytes.Bytes`.
 
 The program image stays in flash and runs in place. String constants and
 other constant data are read from flash and never copied into RAM, and
-sending a constant string sends a reference. This is one reason gogo has no
-package-level variables: data that is the same for every actor belongs in
-a `const`, and data that changes belongs to an actor.
+sending a constant string sends a reference. Package-level variables live
+there too (chapter 3): they are read-only, set when the program is built,
+so data that is the same for every actor costs no RAM, and data that
+changes belongs to an actor. A slice or map of one stays read-only
+wherever it goes, sent in a message included.
 
 ## 6.7 Summary
 

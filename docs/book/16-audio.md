@@ -325,8 +325,8 @@ func Close(w Writer) fs.Err
 func Info(header bytes.Bytes) (Header, bool)
 ```
 
-The subset has no pointers, so a `Writer` is a value and each
-call returns the new one: `w, e = wav.Write(w, pcm)`. `planned` is the
+A `Writer` is a value (the package was written before gogo had
+pointers), and each call returns the new one: `w, e = wav.Write(w, pcm)`. `planned` is the
 number of PCM bytes you expect (0 if you do not know: `Close` then always
 patches the header). `Info` parses the 44-byte header (`ok` is false for anything
 but canonical RIFF/WAVE, PCM, mono, 16-bit); `Header.Data` is the size

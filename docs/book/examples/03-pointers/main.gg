@@ -1,0 +1,51 @@
+// Pointers: &T{}, new, *p, fields through a pointer, pointer receivers,
+// a linked list, and *T in an interface.
+package main
+
+type Counter struct {
+	name string
+	n    int
+}
+
+// Inc has a pointer receiver: it changes the caller's Counter.
+func (c *Counter) Inc() { c.n++ }
+
+// Get has a value receiver: it works on a copy, as before.
+func (c Counter) Get() int { return c.n }
+
+type Getter interface{ Get() int }
+
+type Node struct {
+	Val  int
+	Next *Node
+}
+
+func main() {
+	p := &Counter{name: "hits"}
+	q := p // q and p point to one Counter
+	q.Inc()
+	p.Inc()
+	println(p.n, q.Get())
+
+	var c Counter // a variable: c.Inc() takes &c
+	c.Inc()
+	snapshot := c // a copy: a value, as always
+	c.Inc()
+	println(c.n, snapshot.n)
+
+	var g Getter = p // *Counter has Get too
+	println(g.Get())
+
+	var list *Node
+	for i := 1; i <= 3; i++ {
+		list = &Node{i, list}
+	}
+	for n := list; n != nil; n = n.Next {
+		println(n.Val)
+	}
+
+	x := new(int)
+	*x += 41
+	*x++
+	println(*x)
+}

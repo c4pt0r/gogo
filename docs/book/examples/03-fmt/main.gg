@@ -1,0 +1,27 @@
+// gogo/fmt: Println, Printf with verbs, widths and precisions, Sprintf,
+// Stringer and error operands, and Errorf with %w.
+package main
+
+import (
+	"gogo/errors"
+	"gogo/fmt"
+)
+
+type Celsius int
+
+// String makes Celsius a fmt.Stringer.
+func (c Celsius) String() string { return fmt.Sprintf("%d°C", int(c)) }
+
+type Point struct{ X, Y int }
+
+var errClosed = errors.New("closed")
+
+func main() {
+	fmt.Println("temp", Celsius(21), true, 2.5)
+	fmt.Println(Point{1, 2}, []int{1, 2}, map[string]int{"b": 2, "a": 1})
+	fmt.Printf("%-6s|%5d|%05.1f|%x|%q\n", "go", 42, 3.14159, 255, "hi")
+	s := fmt.Sprintf("%v and %v", Celsius(-3), &Point{3, 4})
+	fmt.Println(s, len(s))
+	err := fmt.Errorf("read %s: %w", "sensor", errClosed)
+	fmt.Println(err, errors.Is(err, errClosed))
+}

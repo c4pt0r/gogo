@@ -1,0 +1,5 @@
+temp 21°C true 2.5
+{1 2} [1 2] map[a:1 b:2]
+go    |   42|003.1|ff|"hi"
+-3°C and &{3 4} 16
+read sensor: closed true

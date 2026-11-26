@@ -1,0 +1,39 @@
+// Package-level variables: read-only, set when the program is built,
+// kept in flash.
+package main
+
+import "gogo/errors"
+
+type Note struct {
+	Name string
+	Hz   int
+}
+
+var (
+	scale     = []Note{{"A", 440}, {"B", 494}, {"C", 523}}
+	ErrNoNote = errors.New("no such note")
+	sizes     = map[string]int{"S": 1, "M": 2, "L": 3}
+	greeting  = "hello"
+)
+
+func find(name string) (Note, error) {
+	for _, n := range scale {
+		if n.Name == name {
+			return n, nil
+		}
+	}
+	return Note{}, ErrNoNote
+}
+
+func main() {
+	n, err := find("B")
+	println(n.Hz, err == nil)
+	_, err = find("H")
+	println(err == ErrNoNote, err.Error())
+	println(sizes["M"], len(scale), greeting)
+
+	// A copy is yours to change; the variable itself is read-only.
+	mine := append([]Note{}, scale...)
+	mine[0].Hz = 432
+	println(mine[0].Hz, scale[0].Hz)
+}

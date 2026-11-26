@@ -1,33 +1,5 @@
 // Slices: literals, make, append, copy, slicing and sharing, nil slices.
-// Slices are the main collection: arrays are fixed, and there are no maps.
 package main
-
-type Entry struct {
-	Key   string
-	Value int
-}
-
-// lookup is a linear search over a slice of pairs, the usual stand-in for
-// a small map.
-func lookup(tbl []Entry, key string) (int, bool) {
-	for _, e := range tbl {
-		if e.Key == key {
-			return e.Value, true
-		}
-	}
-	return 0, false
-}
-
-// set returns tbl with key set to v.
-func set(tbl []Entry, key string, v int) []Entry {
-	for i, e := range tbl {
-		if e.Key == key {
-			tbl[i] = Entry{key, v}
-			return tbl
-		}
-	}
-	return append(tbl, Entry{key, v})
-}
 
 func main() {
 	var s []int // nil
@@ -51,15 +23,6 @@ func main() {
 	b := []byte("gogo")
 	b[0] = 'G'
 	println(string(b))
-
-	var tbl []Entry
-	tbl = set(tbl, "apples", 3)
-	tbl = set(tbl, "pears", 5)
-	tbl = set(tbl, "apples", 4)
-	v, ok := lookup(tbl, "apples")
-	println("apples", v, ok, len(tbl))
-	_, ok = lookup(tbl, "plums")
-	println("plums", ok)
 
 	// Swapping elements with a tuple assignment works.
 	s[0], s[4] = s[4], s[0]

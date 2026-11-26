@@ -44,9 +44,9 @@ features.
   growth stays visible (section 5.10).
 
 **Non-goals**
-- Full Go compatibility: channels, generics, reflection, `recover`
-  (and `defer` beyond its static form), method calls through
-  user-defined interfaces and shared memory between goroutines are out.
+- Full Go compatibility: channels, generics, reflection, `unsafe`,
+  `recover` (and `defer` beyond its static form) and shared memory
+  between goroutines are out.
 - Distribution, multi-core scheduling, JIT.
 - Go standard library compatibility; gogo has a small library of its own.
 
@@ -2462,7 +2462,9 @@ arrays, static `defer`); floating point (`float32`, `float64`,
 sized integers (`int8` .. `uint64`, `strconv.FormatUint` / `ParseUint` /
 `ParseInt`; image format 15.3); `panic`, type assertions, interfaces and
 `error`, `==` on structs, arrays and interfaces, and the library's Go
-signatures (image format 15.4).
+signatures (image format 15.4); pointers and pointer receivers, closures
+that share what they capture, read-only package-level variables, maps
+and `gogo/fmt`, which complete the language plan (image format 15.6).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
@@ -2472,12 +2474,9 @@ signatures (image format 15.4).
 2. **Distributed actors:** remote PIDs and a `gogo/node` library; boards
    connect to a server node that also relays board-to-board messages,
    with direct LAN links as a later step.
-3. **Language completeness:** pointer receivers, pointers, maps,
-   read-only package variables, `fmt` (floating point, sized integers,
-   interfaces, `error` and `panic` are done).
-4. **Hardware:** a `usb` port (the serial stream and connect events), the
+3. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
-5. **Embedding bindings:** Rust, Go (with an in-process compiler,
+4. **Embedding bindings:** Rust, Go (with an in-process compiler,
    `libgogoc`), iOS and Android.
 
 Not planned: a JIT; USB device classes (HID, mass storage).
