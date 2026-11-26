@@ -416,7 +416,10 @@ itself, and how to configure, write, read and release a pin; for the
 keyboard: its key table and how to read the chip), and lists a driver
 *instance* that points at that table. So the rules you met in 7.2 (which
 pins are refused, the bounce filter, the 20 ms default) behave the same
-on every board, and the simulator runs the very code the device does.
+on every board, and the simulator runs the very code the device does. The
+file systems work the same way: LittleFS and FatFs run over a board's
+block device or SD card, and the board's table of mounts says which
+prefixes (`/flash`, `/sd`) it serves.
 
 **Two ways in for events.** A driver that is told about hardware by an
 interrupt (a GPIO edge, the keyboard's INT line) pushes a small record

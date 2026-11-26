@@ -245,8 +245,9 @@ in `cmd/gogo/flash.go`.
 
 - `platform_esp.c`: the board's `gogo_host` (`esp_host`) and `VmBoard`
   (`esp_board`: port drivers, among them the `gpio` and input driver
-  instances over this board's hardware layers, the Wi-Fi netif, mounts), see
-  `runtime/vm/host.h`. Output to the USB-Serial/JTAG console
+  instances over this board's hardware layers, the Wi-Fi netif, and the
+  mounts `esp_flash_mount` / `esp_sd_mount`), see `runtime/vm/host.h` and
+  design.md 5.11.1. Output to the USB-Serial/JTAG console
   (stdout line-buffered, flushed before each stderr write). Chunks from the
   internal-RAM heap, capped at `GOGO_ARENA_BYTES`. `now_ms` from
   `esp_timer_get_time()` (`platform_esp_ms`; the VM counts from its own
@@ -549,7 +550,10 @@ The receive path drops frames while the single RX slot is full
 
 ## `/flash` (LittleFS)
 
-`fs_lfs.c` is the `vfs` backend for `/flash`: LittleFS from the
+`/flash` is LittleFS through the portable backend
+`runtime/vfs/lfs/lfs_be.c` (the `vfs` backend, the mount policy below);
+`fs_lfs.c` is this board's part: the `gogofs` partition as a `BlockDev`,
+the volume's static storage and the `fs.flash.*` settings. LittleFS is from the
 `joltwallet/littlefs` component (pinned `==1.23.3` in
 `main/idf_component.yml`, bundling littlefs v2.11), used only through its
 raw `lfs.h` API (`CONFIG_LITTLEFS_EXPOSE_RAW_API=y`), never its ESP-IDF VFS
@@ -562,16 +566,17 @@ writes that partition, so files survive reflashing (the whole-flash erase
   read / prog caches and lookahead buffer are static and each open file's
   64-byte cache is in its vfs slot (`lfs_file_opencfg`). Enforced at build
   time (`platform/esp32s3/CMakeLists.txt`): `lfs.c` alone is compiled with
-  `LFS_NO_MALLOC` and with `malloc` / `free` renamed to `fs_lfs.c`'s
+  `LFS_NO_MALLOC` and with `malloc` / `free` renamed to `lfs_be.c`'s
   NULL-returning stubs, so its object imports no `malloc` / `free`. (The
   component's `CONFIG_LITTLEFS_MALLOC_STRATEGY_DISABLE` cannot be used: its
   unused VFS wrapper does not compile with it.) `CONFIG_LITTLEFS_ASSERTS=n`:
   an internal assert on a corrupt partition would abort at every boot.
 - Fixed state (logged at boot as `gogo: fs state N bytes`, at most 3072,
-  checked at compile time in `fs_lfs.c`): 1060 bytes = vfs tables 700 (4
+  checked at compile time in `fs_lfs.c`): 1104 bytes = vfs tables 708 (4
   slots of 168: an `lfs_file_t`, its `lfs_file_config` and cache, plus slot
-  header) + LittleFS 360 (`lfs_t`, `lfs_config`, two 64-byte caches, the
-  16-byte lookahead, the partition pointer). An open file charges its owner
+  header; the mount table) + LittleFS 396 (the `LfsVol`: `lfs_t`,
+  `lfs_config`, two 64-byte caches, the 16-byte lookahead, the block
+  device and options pointers and the mounted flag; the 28-byte `BlockDev`). An open file charges its owner
   160 bytes.
 - Size: config `fs.flash.size` (bytes, `K` or `M` suffix, rounded down to
   4 KB, clamped to 64 KB .. the partition; unset = the whole partition,
@@ -609,7 +614,10 @@ writes that partition, so files survive reflashing (the whole-flash erase
 
 ## `/sd` (FAT, Cardputer ADV)
 
-`fs_fat.c` is the `vfs` backend for `/sd` on boards with an SD slot: FatFs
+`/sd` is FatFs through the portable backend `runtime/vfs/fat/fat_be.c`
+(the `vfs` backend, the lazy mount); `fs_fat.c` is this board's part on
+boards with an SD slot: the card as a `DiskHal`, FatFs's disk layer
+hooked to it, the volume's static storage. FatFs
 (ESP-IDF's `fatfs` component, its `f_*` API only, never `esp_vfs_fat_*`;
 FAT12/16/32 and exFAT, from the vendored copy in `components/fatfs` with
 `FF_FS_EXFAT 1`, see its README)
@@ -643,9 +651,9 @@ at 400 kHz. Details are in the file's top comment; in short:
   reader). `Usage` is clamped to 2 GB - 1 on bigger cards, and its first call on an
   exFAT card (or FAT32 without FSINFO) scans the allocation map.
 - Fixed state (Cardputer build, logged as `gogo: fs state N bytes`, checked
-  at compile time in `fs_fat.c`): 2356 bytes = vfs 700 + LittleFS 360 +
-  `fs_fat.c` 1296 (`FATFS` 572 with its 512-byte window, `sdmmc_card_t`
-  204, the 512-byte bounce sector). A `FIL` is 80 bytes (slot 160).
+  at compile time in `fs_fat.c`): 2416 bytes = vfs 708 + LittleFS 396 +
+  `/sd` 1312 (the `FatVol` 588: `FATFS` 572 with its 512-byte window and
+  the volume's fields; `sdmmc_card_t` 204, the 512-byte bounce sector). A `FIL` is 80 bytes (slot 160).
 
 Firmware cost of storage (vfs + B_FS + LittleFS + `fs_lfs.c`): `gogo.bin`
 844272 -> 866880 bytes (+22.1 KB, LittleFS asserts off); free internal

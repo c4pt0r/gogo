@@ -116,13 +116,14 @@ rebuilt:
   image still 2, and a `gogovm` usage error 1 (was 2).
 - **Board code** (C, `platform/`; boards outside this repository must be
   edited): a generic driver is now an instance over the board's hardware
-  layer (`PortDriver.hw`). `PortDriver` gained a last member `hw`, so a
-  positional initializer needs one more `NULL`. `VmBoard.input` and
-  `InputHw` are gone: list `INPUT_KBD_DRIVER(&hal)`,
+  layer (`PortDriver.hw`, design §5.11.1). `PortDriver` gained a last
+  member `hw`, so a positional initializer needs one more `NULL`.
+  `VmBoard.input` and `InputHw` are gone: list `INPUT_KBD_DRIVER(&hal)`,
   `INPUT_POWER_DRIVER(&hal)`, ... over `KbdHal`, `PowerHal`, `ImuHal`,
   `IrTxHal`, `IrRxHal`, `MicHal`, `SpkHal`, whose hooks take a `ctx`
   first. The `gpio` driver is `GPIO_DRIVER(&hal)` over a `GpioHal`.
-  Write `VmBoard` with designated initializers.
+  `VmBoard.mounts` lists `VmMount{prefix, be, ctx}` entries, not
+  strings. Write `VmBoard` with designated initializers.
 
 ## Deprecated, removed in the next release
 
@@ -465,6 +466,15 @@ rebuilt:
   later.
 
 ## Storage
+
+- **The LittleFS and FatFs backends have no host tests.** They are built
+  by the firmware builds only (the repository does not carry LittleFS),
+  so `make test` does not run them; the board smoke does.
+- **A `/flash` that failed to mount is still listed.** The board keeps
+  it in its mounts and every call under it is `NotMounted`, as before;
+  only the order of checks differs (a `Write` open of a path already
+  open, or a fifth open, reports `Busy` or `TooMany` before
+  `NotMounted`).
 
 - **Storage calls are synchronous.** Every `gogo/fs` call stops all
   actors until it finishes (see "Some operations cannot be preempted").

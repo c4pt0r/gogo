@@ -16,23 +16,38 @@ struct Vm;
 struct PortDriver;
 struct NetIf;
 struct TlsHw;
+struct VfsBackend;
 
 /* Board-only hardware, a static const table per board. Any field may be
  * NULL (no such hardware). ports: the port drivers, NULL-terminated (a
  * generic driver's instance carries its hardware layer, PortDriver.hw:
  * the gpio pins, each input device); netif: the network interface (netif.h);
  * tls: the "tls" port's hooks (TlsHw, net/tls/tls.h); mounts: the file
- * system prefixes the board serves ("/flash", "/sd"), NULL-terminated.
+ * systems the board serves ("/flash", "/sd"), NULL-terminated.
  *
  * The port and mount lists are also what the board provides: an image's
  * requirements (image.h) are driver names and mount prefixes, each checked
  * against them at load (module.h). A board builds both lists with what its
  * build really has (#if), never more. */
+/* A file system of the board: its prefix ("/flash"), its vfs backend
+ * (vfs.h) and the backend's ctx (the volume). vfs_init mounts every entry
+ * that has a backend; an entry without one (be NULL) is a medium the
+ * board has but serves some other way, or not in this run: it still
+ * satisfies a requirement, and with nothing mounted there every path under
+ * it is NotMounted. A backend whose volume failed to come up answers
+ * NotMounted itself. The prefix is the first member, as a PortDriver's
+ * name is (port_name_find). */
+typedef struct VmMount {
+    const char *prefix;
+    const struct VfsBackend *be;
+    void *ctx;
+} VmMount;
+
 typedef struct VmBoard {
     const struct PortDriver *const *ports;
     const struct NetIf *netif;
     const struct TlsHw *tls;
-    const char *const *mounts;
+    const VmMount *const *mounts;
 } VmBoard;
 
 /* ---- wrappers (host.c): the only callers of the host's hooks ---- */

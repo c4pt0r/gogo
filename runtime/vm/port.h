@@ -154,8 +154,8 @@ void port_set_drivers(struct Vm *vm, const PortDriver *const *list);   /* NULL =
  * what port.Open finds, and what a requirement name is checked against. */
 const PortDriver *port_find_driver(const struct Vm *vm, const uint8_t *name, uint32_t len);
 /* The entry of the NULL-terminated list (NULL: empty) named name (len
- * bytes), or NULL: a list of C strings (a board's mounts), or with drv a
- * list of PortDrivers, whose name is their first member. Both lists are
+ * bytes), or NULL: a list of C strings, or with drv a list of structs
+ * whose name is their first member (PortDrivers, a board's VmMounts). Both lists are
  * read through const void *: the function stores nothing, and void *
  * aliases every pointer type in GCC's and Clang's alias analysis. */
 const void *port_name_find(const void *const *list, bool drv, const uint8_t *name, uint32_t len);

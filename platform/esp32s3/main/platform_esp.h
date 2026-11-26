@@ -104,13 +104,15 @@ void lcd_backlight(int on);
  * RGB565 pixels, DMA-capable memory). Blocks until sent. 0 on success. */
 int lcd_write_rows(int y, int h, const uint16_t *px);
 
-struct VfsState;
+struct VmMount;
 /* /flash (fs_lfs.c): mounts LittleFS on the `gogofs` partition (size from
- * fs.flash.size, grow / format / first-boot format) and registers it with
- * vfs state vs. Needs config_esp_init first. 0 on success; failures are said on the
- * console and leave /flash unmounted (NotMounted). fs_lfs_state_bytes is
- * the storage fixed state: vfs tables + LittleFS state and buffers. */
-int fs_lfs_mount(struct VfsState *vs);
+ * fs.flash.size, grow / format / first-boot format). esp_flash_mount is
+ * the board's entry for it (vfs_init mounts it). Needs config_esp_init
+ * first. 0 on success; failures are said on the console and leave /flash
+ * unmounted (every call NotMounted). fs_lfs_state_bytes is the storage
+ * fixed state: vfs tables + LittleFS state and buffers. */
+extern const struct VmMount esp_flash_mount;
+int fs_lfs_mount(void);
 uint32_t fs_lfs_state_bytes(void);
 /* `gogo device format-flash`: the next mount (after esp_restart, and
  * only then) formats /flash. */
@@ -128,13 +130,14 @@ void fs_lfs_push_abort(void);
 /* Bound on fs_lfs.c's own state (asserted there), so fs_fat.c can check
  * the whole storage fixed state (vfs + LittleFS + FatFs <= 3072) at
  * compile time. */
-#define FS_LFS_STATE_MAX 384u
+#define FS_LFS_STATE_MAX 416u
 
-/* /sd (fs_fat.c, boards with HAS_SD): registers /sd with vfs; the card is
- * mounted lazily by the first call (NotMounted without a card). 0 on
- * success. fs_fat_state_bytes is its static state (FATFS, card, bounce
- * sector). */
-int fs_fat_init(struct VfsState *vs);
+/* /sd (fs_fat.c, boards with HAS_SD): esp_sd_mount is the board's entry
+ * for it; fs_fat_init sets the volume up, and the card is mounted lazily
+ * by the first call (NotMounted without a card). fs_fat_state_bytes is its
+ * static state (FATFS, card, bounce sector). */
+extern const struct VmMount esp_sd_mount;
+void fs_fat_init(void);
 uint32_t fs_fat_state_bytes(void);
 
 struct PortDriver;

@@ -14,7 +14,8 @@ typedef char steps_match[((int)GOGO_RUNNABLE == (int)VM_RUNNABLE && (int)GOGO_ID
 
 /* No board hardware: ports, input and network come from the host. The
  * mounts are /flash when fs_root serves it (and the grant has it). */
-static const char *const flash_mount[] = { "/flash", NULL };
+static const VmMount flash = { "/flash", NULL, NULL };   /* mounted by gogo_new (fs_dir) */
+static const VmMount *const flash_mount[] = { &flash, NULL };
 static const VmBoard embed_board = { 0 };
 static const VmBoard embed_board_flash = { .mounts = flash_mount };
 

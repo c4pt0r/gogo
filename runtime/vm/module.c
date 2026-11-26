@@ -67,7 +67,7 @@ static uint32_t missing_req(const Vm *vm, const Image *img) {
     for (uint32_t i = 1; i <= r[0]; i++) {
         const uint32_t *s = img->consts + r[i];
         const uint8_t *n = (const uint8_t *)(s + 2);
-        if (!port_name_find((const void *const *)vm->board->mounts, false, n, s[1]) && !port_find_driver(vm, n, s[1]))
+        if (!port_name_find((const void *const *)vm->board->mounts, true, n, s[1]) && !port_find_driver(vm, n, s[1]))
             return r[i];
     }
     return UINT32_MAX;

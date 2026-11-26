@@ -55,11 +55,12 @@ static void vm_task(void *arg) {
     wifi_esp_start();
 #endif
     /* Storage: /flash (LittleFS on `gogofs`; formats on first boot) and
-     * the B_FS builtin. Without /flash every fs path is NotMounted. */
-    (void)fs_lfs_mount(&vfs_state);
+     * the B_FS builtin; vfs_init below mounts the board's file systems.
+     * Without /flash every fs path under it is NotMounted. */
+    (void)fs_lfs_mount();
 #if HAS_SD && CONFIG_GOGO_SD
     /* /sd (FatFs on the microSD card): mounted by the first call. */
-    (void)fs_fat_init(&vfs_state);
+    fs_fat_init();
     platform_esp_log("gogo: fs state %lu bytes", (unsigned long)(fs_lfs_state_bytes() + fs_fat_state_bytes()));
 #else
     platform_esp_log("gogo: fs state %lu bytes", (unsigned long)fs_lfs_state_bytes());

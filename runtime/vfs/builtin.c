@@ -394,4 +394,6 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
 void vfs_init(Vm *vm, VfsState *st) {
     vm->vfs = st;
     vm->fs_builtin = fs_builtin;
+    for (const VmMount *const *m = vm->board ? vm->board->mounts : NULL; m && *m; m++)
+        if ((*m)->be) vfs_mount(st, (*m)->prefix, (*m)->be, (*m)->ctx);
 }

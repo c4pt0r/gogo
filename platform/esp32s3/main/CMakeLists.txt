@@ -24,8 +24,13 @@ if(CONFIG_GOGO_TLS)
     set(GOGO_TLS_SRCS "${GOGO_ROOT}/runtime/net/tls/tls.c" "${GOGO_ROOT}/runtime/net/tls/anchor.c")
 endif()
 # Storage (spec storage §5): the vfs core and the B_FS builtin (pure C99),
-# with fs_lfs.c (/flash on LittleFS) as the backend.
+# with LittleFS (runtime/vfs/lfs) on the partition fs_lfs.c describes as
+# /flash.
 file(GLOB GOGO_VFS_SRCS "${GOGO_ROOT}/runtime/vfs/*.c")
+# The LittleFS and FatFs backends (runtime/vfs/lfs, runtime/vfs/fat: C99,
+# but compiled with IDF's flags, since lfs.h and ff.h pull in IDF headers
+# that are not C99): LittleFS over a BlockDev (fs_lfs.c is the partition's).
+set(GOGO_FSBE_SRCS "${GOGO_ROOT}/runtime/vfs/lfs/lfs_be.c")
 # The `gpio` port driver (pure C99); gpio_esp.c is its GpioHal.
 set(GOGO_GPIO_SRCS "${GOGO_ROOT}/runtime/gpio/gpio.c")
 # Input (spec input): the kbd and power drivers and event source (pure C99);
@@ -74,6 +79,8 @@ elseif(GOGO_BOARD STREQUAL "cardputer")
     set(GOGO_BOARD_SRCS "")
     if(CONFIG_GOGO_SD)
         set(GOGO_BOARD_SRCS fs_fat.c)
+        # FatFs as a vfs backend over a DiskHal (fs_fat.c is the card's).
+        list(APPEND GOGO_FSBE_SRCS "${GOGO_ROOT}/runtime/vfs/fat/fat_be.c")
     endif()
     set(GOGO_BOARD_DEF GOGO_BOARD_CARDPUTER)
 else()
@@ -120,8 +127,8 @@ idf_component_register(
     SRCS main.c platform_esp.c gpio_esp.c image_part.c console_task.c lcd_st7789.c
          ${GOGO_WIFI_SRCS} config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
          ${GOGO_IMU_SRCS} ${GOGO_IR_SRCS} ${GOGO_AUDIO_SRCS}
-         ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_GPIO_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_SCREEN_SRCS} ${GOGO_COMMON_SRCS}
-    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/runtime/vm" "${GOGO_ROOT}/runtime/net" "${GOGO_ROOT}/runtime/net/tls" "${GOGO_ROOT}/runtime/vfs" "${GOGO_ROOT}/runtime/gpio" "${GOGO_ROOT}/runtime/input" "${GOGO_ROOT}/runtime/stream" "${GOGO_ROOT}/runtime/screen" "${GOGO_ROOT}/runtime/console"
+         ${GOGO_VM_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_GPIO_SRCS} ${GOGO_VFS_SRCS} ${GOGO_FSBE_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_SCREEN_SRCS} ${GOGO_COMMON_SRCS}
+    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/runtime/vm" "${GOGO_ROOT}/runtime/net" "${GOGO_ROOT}/runtime/net/tls" "${GOGO_ROOT}/runtime/vfs" "${GOGO_ROOT}/runtime/vfs/lfs" "${GOGO_ROOT}/runtime/vfs/fat" "${GOGO_ROOT}/runtime/gpio" "${GOGO_ROOT}/runtime/input" "${GOGO_ROOT}/runtime/stream" "${GOGO_ROOT}/runtime/screen" "${GOGO_ROOT}/runtime/console"
     EMBED_FILES "${GOGO_ROOT}/runtime/console/font/${GOGO_FONT_FILE}"
     LDFRAGMENTS linker.lf
     PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c esp_adc
@@ -181,9 +188,9 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GOGO_MAX_PORTS=16u
     GOGO_EVQ_CAP=64u
     GOGO_ARENA_BYTES=163840u
-    # vfs: 4 open files; a slot holds fs_lfs.c's Lf (lfs_file_t 84 +
+    # vfs: 4 open files; a slot holds lfs_be.c's Lf (lfs_file_t 84 +
     # lfs_file_config 12 + 64-byte cache = 160, checked there) or, on the
-    # Cardputer, a FatFs FIL (smaller, checked in fs_fat.c).
+    # Cardputer, a FatFs FIL (smaller, checked in fat_be.c).
     GOGO_FS_MAX_OPEN=4u
     GOGO_FS_SLOT_BYTES=160u
     # IDF's esp_stdio exports a global console_write (stdio_vfs.c); rename

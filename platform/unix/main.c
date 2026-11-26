@@ -197,9 +197,12 @@ static const PortDriver *const unix_ports_all[] = {
 #endif
 };
 #define UNIX_PORTS_ALL (sizeof unix_ports_all / sizeof unix_ports_all[0])
-static const char *const unix_mounts_all[] = { "/flash", "/sd" };
+/* /flash and /sd: served from --fs-root's flash/ and sd/ (main fills in
+ * the backend), else listed with none (NotMounted). */
+static VmMount unix_flash = { "/flash", NULL, NULL }, unix_sd = { "/sd", NULL, NULL };
+static VmMount *const unix_mounts_all[] = { &unix_flash, &unix_sd };
 static const PortDriver *unix_ports[UNIX_PORTS_ALL + 1u];   /* filled by main: NULL-terminated */
-static const char *unix_mounts[3];                           /* likewise */
+static const VmMount *unix_mounts[3];                        /* likewise */
 static const VmBoard unix_board = {
     .ports = unix_ports,
     .netif = &unix_netif,
@@ -319,7 +322,7 @@ int main(int argc, char **argv) {
     }
     unix_ports[nports] = NULL;
     for (size_t i = 0; i < 2; i++) {
-        if (!listed(without, unix_mounts_all[i])) unix_mounts[nmounts++] = unix_mounts_all[i];
+        if (!listed(without, unix_mounts_all[i]->prefix)) unix_mounts[nmounts++] = unix_mounts_all[i];
     }
     unix_mounts[nmounts] = NULL;
     if (argc < 2) {
@@ -351,11 +354,15 @@ int main(int argc, char **argv) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot open flash directory\n", fs_root);
             return EXIT_USAGE;
         }
-        if (!listed(without, "/flash")) vfs_mount(&vfs_state, "/flash", fs_dir_vfs(fs_flash), fs_flash);
+        unix_flash.be = fs_dir_vfs(fs_flash);
+        unix_flash.ctx = fs_flash;
         if (!listed(without, "/sd") && snprintf(dir, sizeof dir, "%s/sd", fs_root) < (int)sizeof dir &&
             stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) {
             fs_sd = fs_dir_open(&unix_host, NULL, dir, fs_quota, NULL);
-            if (fs_sd) vfs_mount(&vfs_state, "/sd", fs_dir_vfs(fs_sd), fs_sd);
+            if (fs_sd) {
+                unix_sd.be = fs_dir_vfs(fs_sd);
+                unix_sd.ctx = fs_sd;
+            }
         }
     }
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -399,7 +406,8 @@ int main(int argc, char **argv) {
         }
         return EXIT_MISSING;         /* VM_BOOT_REFUSED: the line is written */
     }
-    /* After vm_init: it starts the Vm's source list and fs hook empty. */
+    /* After vm_init: it starts the Vm's source list and fs hook empty.
+     * vfs_init mounts the board's /flash and /sd that have a backend. */
     if (net_fd >= 0) net_install(&vm, &net_state);
     vfs_init(&vm, &vfs_state);
     input_install(&vm, &input_state);

@@ -453,10 +453,10 @@ static const struct PortDriver *const esp_ports[] = {
     NULL
 };
 
-static const char *const esp_mounts[] = {
-    "/flash",
+static const VmMount *const esp_mounts[] = {
+    &esp_flash_mount,
 #if HAS_SD && CONFIG_GOGO_SD
-    "/sd",
+    &esp_sd_mount,
 #endif
     NULL
 };
