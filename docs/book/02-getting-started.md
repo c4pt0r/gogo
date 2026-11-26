@@ -62,7 +62,7 @@ to the board:
   port /dev/cu.usbmodem5101
 
 [2/6] Identifying the board
-  $ esptool --chip esp32s3 --port /dev/cu.usbmodem5101 --after watchdog-reset read-flash 0x8000 3072 ...
+  $ esptool --port /dev/cu.usbmodem5101 --after watchdog-reset read-flash 0x8000 3072 ...
   chip: ESP32-S3-PICO-1 (LGA56) (revision v0.2), embedded PSRAM
   This looks like the M5StickS3. Right? [Y/n]
 
@@ -119,8 +119,10 @@ to the board:
    chip and never writes the NVS partition, where the board keeps its
    settings, so a Wi-Fi setup from before survives. If the firmware now
    on the board keeps its settings somewhere else (a board straight from
-   the factory may), setup stops and says so; `-new-layout` flashes
-   anyway, still without writing either settings area.
+   the factory may), or its partition table cannot be read, setup stops
+   and says so; `-new-layout` flashes anyway, still without writing
+   either settings area. The old settings are then not used, and later
+   firmware or programs may reuse the space where they were.
 5. **Wi-Fi.** The board scans for networks and you pick one. The
    password is read without echo and sent only to the board; gogo never
    prints or stores it. You can skip this step and use `gogo config`
@@ -143,7 +145,7 @@ always safe.
 | `-release-url URL\|DIR` | the files of one release from another place: an `http(s)` URL or a local directory (also `GOGO_RELEASE_URL`) |
 | `-offline` | build the firmware locally instead of downloading it |
 | `-skip-wifi` | leave the Wi-Fi settings as they are |
-| `-new-layout` | flash even though the board keeps its settings elsewhere than the new firmware (they are then not used) |
+| `-new-layout` | flash even though the board keeps its settings elsewhere than the new firmware, or its partition table cannot be read (the old settings are then not used, and their space may be reused later) |
 | `-yes` | accept every default without asking (Wi-Fi is then skipped) |
 | `-dry-run` | read the board and download, but only print the commands that would write to it |
 | `-esptool path` | the esptool to run |

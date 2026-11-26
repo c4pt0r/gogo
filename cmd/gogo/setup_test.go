@@ -781,6 +781,26 @@ func TestSetupBlankBoard(t *testing.T) {
 	checkNoNVSWrite(t, f.writeFlashLines())
 }
 
+func TestSetupForeignPartitionData(t *testing.T) {
+	// The sector at 0x8000 holds something that is not a partition table.
+	f := newSetupBench(t, chipStickS3, "")
+	junk := bytes.Repeat([]byte{0xFF}, partTableBytes)
+	copy(junk, "not a partition table")
+	os.WriteFile(os.Getenv("FAKE_ESPTOOL_PT"), junk, 0o644)
+	f.writeRelease()
+	err := f.run("-yes", "-skip-wifi", "-release-url", f.release)
+	if err == nil || !strings.Contains(err.Error(), "cannot read") || !strings.Contains(err.Error(), "-new-layout") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.writeFlashLines()) != 0 {
+		t.Fatal("flashed over foreign partition data")
+	}
+	if err := f.run("-yes", "-skip-wifi", "-new-layout", "-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	checkNoNVSWrite(t, f.writeFlashLines())
+}
+
 func TestSetupHostileFlasherArgs(t *testing.T) {
 	for name, c := range map[string]struct {
 		args string

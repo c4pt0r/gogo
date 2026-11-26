@@ -60,6 +60,7 @@ firmware() {
     files=$(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["flash_files"].values()))' "$fa")
     [ -n "$files" ] || die "$fa names no files"
     cp "$fa" "$out/$board-flasher_args.json"
+    [ -n "${IDF_PATH:-}" ] || die "IDF_PATH is not set after sourcing ESP-IDF's export.sh (needed for its LICENSE)"
     cp "$IDF_PATH/LICENSE" "$out/LICENSE-APACHE-2.0.txt"
     grep -q "Apache License" "$out/LICENSE-APACHE-2.0.txt" || die "$IDF_PATH/LICENSE is not the Apache License"
     for f in $files; do

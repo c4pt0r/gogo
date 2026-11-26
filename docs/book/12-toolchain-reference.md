@@ -311,7 +311,8 @@ partition (where the board keeps its settings, Wi-Fi included) of the
 table being written, of the table now on the board, and of the gogo
 partition table (0x9000..0xF000), all three. Setup checks this before it
 runs esptool. If the board's table puts NVS elsewhere than the new one,
-setup stops unless `-new-layout` is given. The Wi-Fi password is never
+or the partition table sector holds data that is not a readable table
+(blank flash is fine), setup stops unless `-new-layout` is given. The Wi-Fi password is never
 printed, logged or stored on the computer.
 
 **Which release.** `-release-url` (or `$GOGO_RELEASE_URL`) names the files
@@ -355,8 +356,9 @@ Options:
 - `-board sticks3|cardputer`: skip the board question.
 - `-skip-wifi`: leave the board's Wi-Fi settings as they are.
 - `-new-layout`: flash although the board's partition table keeps NVS
-  elsewhere than the new firmware's (the old settings are then not used;
-  neither NVS area is written).
+  elsewhere than the new firmware's, or cannot be read. Neither NVS area
+  is written, but the old settings are then not used, and the new
+  firmware (or a later one) may reuse the space where they were.
 - `-yes`: take the default answer to every question, without asking;
   the Wi-Fi step is then skipped, and a board esptool cannot tell apart
   needs `-board`.

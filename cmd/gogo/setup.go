@@ -18,6 +18,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -168,7 +169,10 @@ type setup struct {
 	// boardNVS is the NVS of the partition table on the board before
 	// flashing; nil if it could not be read.
 	boardNVS []partition
-	stepN    int
+	// foreignTable: the partition table sector holds data that is not a
+	// partition table setup can read.
+	foreignTable bool
+	stepN        int
 }
 
 // setupFail is an error with the fix to print under it.
@@ -453,6 +457,9 @@ func (s *setup) identify() error {
 	if parts, err := parsePartitions(b); err == nil {
 		s.boardNVS = nvsParts(parts)
 	} else {
+		// Blank flash (all 0xFF) is a new board; anything else is a layout
+		// setup cannot read, so where its settings are is unknown.
+		s.foreignTable = len(b) > 0 && len(bytes.Trim(b, "\xff")) > 0
 		fmt.Fprintf(s.env.out, "  the board has no readable partition table (%v); NVS at %#x..%#x stays protected\n", err, defaultNVS[0].offset, defaultNVS[0].end())
 	}
 	s.nvs = protectedRanges(s.boardNVS)
@@ -512,6 +519,13 @@ func (s *setup) flashFirmware(fw *firmwareSet) error {
 	}
 	s.nvs = fw.plan.protect
 	newNVS := nvsParts(fw.plan.parts)
+	if s.foreignTable {
+		if !s.o.newLayout {
+			return setupFail("to flash it anyway (whatever settings the old firmware kept are then not used), run gogo setup again with -new-layout",
+				"the board's partition table sector (%#x) holds data setup cannot read, so where the board keeps its settings is unknown", partTableAt)
+		}
+		fmt.Fprintf(s.env.out, "  new layout (-new-layout): the board's unreadable partition table is replaced\n")
+	}
 	if len(s.boardNVS) > 0 && !sameRanges(s.boardNVS, newNVS) {
 		if !s.o.newLayout {
 			return setupFail("to flash it anyway (the board's old settings are then not used), run gogo setup again with -new-layout; neither NVS area is written either way",
