@@ -336,6 +336,17 @@ func (l *loader) loadPkg(path string, stack []string, at token.Pos) error {
 	return nil
 }
 
+// usesError reports whether a checked package names the type error.
+func usesError(info *types.Info) bool {
+	e := types.Universe.Lookup("error")
+	for _, obj := range info.Uses {
+		if obj == e {
+			return true
+		}
+	}
+	return false
+}
+
 // where is the "file:line:col: " prefix of an error at pos, or "".
 func (l *loader) where(pos token.Pos) string {
 	if !pos.IsValid() {
@@ -893,6 +904,14 @@ func (c Config) load(dir string, names []string, goFiles int) (*Program, error) 
 	pkg, err := l.check("main", files)
 	if err != nil {
 		return nil, err
+	}
+	// A program that uses error loads gogo/errors (nothing of it is
+	// compiled unless used): an error it receives may be one of the
+	// errors' reserved types, whose methods its dispatchers must know.
+	if l.pkgs[ErrorsPath] == nil && usesError(l.info) {
+		if err := l.loadPkg(ErrorsPath, nil, token.NoPos); err != nil {
+			return nil, err
+		}
 	}
 	// main is optional (every image is a module); when present it is func main().
 	if obj := pkg.Scope().Lookup("main"); obj != nil {

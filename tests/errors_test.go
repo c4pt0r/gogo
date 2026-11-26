@@ -122,3 +122,60 @@ func actorFailed(t *testing.T) int64 {
 	v, _ := strconv.ParseInt(string(m[1]), 10, 64)
 	return v
 }
+
+// TestErrorTexts keeps errors.Code.Error's texts (lib/errors) equal to
+// gogo_strerror's (runtime/embed/gogo.c, code_text), code by code.
+func TestErrorTexts(t *testing.T) {
+	src, err := os.ReadFile("../runtime/embed/gogo.c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?s)code_text\[\] = \{(.*?)\};`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("code_text not found in runtime/embed/gogo.c")
+	}
+	var c []string
+	for _, s := range regexp.MustCompile(`"([^"]*)"`).FindAllSubmatch(m[1], -1) {
+		c = append(c, string(s[1]))
+	}
+	gg, err := os.ReadFile("../lib/errors/errors.gg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "errors.gg", gg, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := (&types.Config{}).Check("gogo/errors", fset, []*ast.File{f}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := map[int64]string{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		cc, ok := n.(*ast.CaseClause)
+		if !ok || len(cc.List) != 1 || len(cc.Body) != 1 {
+			return true
+		}
+		id, ok := cc.List[0].(*ast.Ident)
+		ret, ok2 := cc.Body[0].(*ast.ReturnStmt)
+		if !ok || !ok2 || len(ret.Results) != 1 {
+			return true
+		}
+		k, ok := pkg.Scope().Lookup(id.Name).(*types.Const)
+		lit, ok2 := ret.Results[0].(*ast.BasicLit)
+		if ok && ok2 {
+			v, _ := constant.Int64Val(k.Val())
+			texts[v], _ = strconv.Unquote(lit.Value)
+		}
+		return true
+	})
+	if len(texts) != len(c) {
+		t.Errorf("Code.Error has %d texts, gogo_strerror %d", len(texts), len(c))
+	}
+	for i, s := range c {
+		if texts[int64(i)] != s {
+			t.Errorf("code %d: Code.Error %q, gogo_strerror %q", i, texts[int64(i)], s)
+		}
+	}
+}

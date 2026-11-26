@@ -320,6 +320,10 @@ var reservedTypes = []struct {
 	{PortPath, "Host", []string{"Arg", "Data"}},
 	{PortPath, "Post", []string{"From", "Kind", "Data"}},
 	{ScreenPath, "Config", []string{"Cols", "Rows"}}, // 15.1
+	// 15.4: the errors that may cross modules. Code is an int: its row is
+	// the box an interface holds it in, of one field.
+	{ErrorsPath, "Code", []string{"value"}},
+	{ErrorsPath, "errorString", []string{"s"}},
 }
 
 // reservedName is the image name of reserved type i: the bare name for
@@ -352,6 +356,8 @@ func reservedName(i int) string {
 		return "audio." + rt.name
 	case ScreenPath:
 		return "screen." + rt.name
+	case ErrorsPath:
+		return "errors." + rt.name
 	}
 	panic("reservedName: package " + rt.pkg)
 }
@@ -382,7 +388,8 @@ func (g *gen) collectTypes() error {
 			}
 			continue
 		}
-		if st, ok := tn.Type().Underlying().(*types.Struct); !ok || st.NumFields() != len(rt.fields) {
+		_, box := tn.Type().Underlying().(*types.Basic) // the box of a named basic type: one field
+		if st, ok := tn.Type().Underlying().(*types.Struct); (!ok || st.NumFields() != len(rt.fields)) && !(box && len(rt.fields) == 1) {
 			return fmt.Errorf("gogo: internal error: %s does not match the reserved layout", name)
 		}
 		g.typeIdx[tn] = idx

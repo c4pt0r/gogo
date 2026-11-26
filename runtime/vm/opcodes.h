@@ -256,11 +256,15 @@ enum Builtin {
 #define TYPE_POST          43   /* From PID, Kind int, Data bytes.Bytes: a host post, host-port command or event */
 /* Then (15.1) the gogo/screen type (lib/screen/screen.gg). */
 #define TYPE_SCREEN_CONFIG 44   /* Cols, Rows int: port.Open("screen") */
+/* Then (15.4) the gogo/errors types (lib/errors/errors.gg): the errors
+ * that may cross modules. */
+#define TYPE_ERRORS_CODE        45   /* the box of an errors.Code (an int) in an interface */
+#define TYPE_ERRORS_ERRORSTRING 46   /* s string: errors.New's error */
 /* How many reserved types this VM knows (0 .. TYPE_RESERVED_COUNT - 1):
  * they are global across modules. The one constant to bump with a new
  * reserved type (compiler: len(reservedTypes)); a new one is an image
  * format minor (image.h). */
-#define TYPE_RESERVED_COUNT 45u
+#define TYPE_RESERVED_COUNT 47u
 /* Field counts of the reserved types this VM knows, in index order, two
  * per byte (TYPE_NF2(even, odd)). An image's reserved row may declare at
  * most this many (image_load): fields are only ever appended, of type
@@ -298,7 +302,8 @@ enum Builtin {
     TYPE_NF2(1, 3), /* 38 ir.RX, audio.Mic */ \
     TYPE_NF2(2, 4), /* 40 audio.Speaker, net.DialTLS */ \
     TYPE_NF2(2, 3), /* 42 port.Host, port.Post */ \
-    TYPE_NF2(2, 0), /* 44 screen.Config (15.1) */ \
+    TYPE_NF2(2, 1), /* 44 screen.Config (15.1), errors.Code (15.4) */ \
+    TYPE_NF2(1, 0), /* 46 errors.errorString (15.4) */ \
 }
 /* The first own type: an image names its own struct types from here up
  * (image.h), whatever reserved types it or the VM knows, and a struct of

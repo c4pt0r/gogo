@@ -267,10 +267,13 @@ const (
 	TypePost uint32 = 43
 	// screen.Config (15.1): cfg of the "screen" port
 	TypeScreenConfig uint32 = 44
+	// gogo/errors (15.4): the box of an errors.Code, errors.New's error
+	TypeErrorsCode        uint32 = 45
+	TypeErrorsErrorstring uint32 = 46
 	// TypeReservedCount is how many reserved types there are
 	// (TYPE_RESERVED_COUNT in runtime/vm/opcodes.h; TestReservedTypeCount
 	// checks len(reservedTypes)).
-	TypeReservedCount uint32 = 45
+	TypeReservedCount uint32 = 47
 	// TypeOwnBase is the index of an image's first own struct type
 	// (TYPE_OWN_BASE): fixed, whatever the reserved count.
 	TypeOwnBase uint32 = 128
@@ -416,5 +419,6 @@ var goConstants = map[string]uint32{
 	"TypeImuConfig": TypeImuConfig, "TypeImuGesture": TypeImuGesture, "TypeIrTx": TypeIrTx, "TypeIrRx": TypeIrRx,
 	"TypeAudioMic": TypeAudioMic, "TypeAudioSpeaker": TypeAudioSpeaker, "TypeNetDialtls": TypeNetDialtls,
 	"TypeHost": TypeHost, "TypePost": TypePost, "TypeScreenConfig": TypeScreenConfig,
+	"TypeErrorsCode": TypeErrorsCode, "TypeErrorsErrorstring": TypeErrorsErrorstring,
 	"TypeReservedCount": TypeReservedCount, "TypeOwnBase": TypeOwnBase,
 }

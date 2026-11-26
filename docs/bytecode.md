@@ -232,6 +232,8 @@ end, and only with `int` fields.
 | 42 | `TYPE_HOST` | Arg int, Data bytes.Bytes: cfg of a host-defined port |
 | 43 | `TYPE_POST` | From PID, Kind int, Data bytes.Bytes: a host post, host-port command or event |
 | 44 | `TYPE_SCREEN_CONFIG` | Cols, Rows int: port.Open("screen") |
+| 45 | `TYPE_ERRORS_CODE` | the box of an errors.Code (an int) in an interface |
+| 46 | `TYPE_ERRORS_ERRORSTRING` | s string: errors.New's error |
 
 ## Exit reasons
 

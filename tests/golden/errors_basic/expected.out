@@ -1,0 +1,10 @@
+not found true false true
+error 120 error -3 ok
+[] bad argument: bad argument
+[a] ok
+[lost] is not found: open lost: not found true
+[b] no b true
+not found
+an error plain
+1 true
+true false true

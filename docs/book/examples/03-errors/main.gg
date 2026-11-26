@@ -1,53 +1,51 @@
-// There is no error type in the subset. Report failure with a bool, or
-// with a named int type of error codes, as gogo/fs does with fs.Err.
+// Errors are values of the interface error. gogo/errors has Go's New, Is
+// and Unwrap, and Code, the shared error codes, which are errors too.
 package main
 
-import "gogo/strconv"
-
-// ParseErr is a small set of error codes; 0 means success.
-type ParseErr int
-
-const (
-	OK ParseErr = iota
-	Empty
-	BadNumber
-	OutOfRange
+import (
+	"gogo/errors"
+	"gogo/strconv"
 )
 
-// describe names a code for messages.
-func describe(e ParseErr) string {
-	if e == OK {
-		return "ok"
-	} else if e == Empty {
-		return "empty input"
-	} else if e == BadNumber {
-		return "not a number"
-	}
-	return "out of range"
+// ErrEmpty is a sentinel error, compared with ==.
+const ErrEmpty = errors.BadArg
+
+// RangeError is an error type of our own, with the details.
+type RangeError struct {
+	N   int
+	Err error // what it wraps
 }
 
+func (e RangeError) Error() string { return strconv.Itoa(e.N) + " is out of range" }
+func (e RangeError) Unwrap() error { return e.Err }
+
 // parsePercent parses "0".."100".
-func parsePercent(s string) (int, ParseErr) {
+func parsePercent(s string) (int, error) {
 	if s == "" {
-		return 0, Empty
+		return 0, ErrEmpty
 	}
 	n, ok := strconv.Atoi(s)
 	if !ok {
-		return 0, BadNumber
+		return 0, errors.New("not a number: " + s)
 	}
 	if n < 0 || n > 100 {
-		return 0, OutOfRange
+		return 0, RangeError{n, errors.Overflow}
 	}
-	return n, OK
+	return n, nil
 }
 
 func main() {
 	for _, s := range []string{"42", "", "x1", "250"} {
 		n, err := parsePercent(s)
-		if err != OK {
-			println("["+s+"]", "error:", describe(err), int(err))
-			continue
+		switch {
+		case err == nil:
+			println("["+s+"]", "=", n)
+		case err == ErrEmpty:
+			println("["+s+"]", "empty:", err.Error())
+		case errors.Is(err, errors.Overflow):
+			println("["+s+"]", "too big:", err.Error())
+		default:
+			println("["+s+"]", "error:", err.Error())
 		}
-		println("["+s+"]", "=", n)
 	}
 }

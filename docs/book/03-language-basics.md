@@ -36,7 +36,7 @@ path, and packages of your own (section 3.1.1):
 | `gogo/fs`, `gogo/kv`, `gogo/ringlog` | storage |
 | `gogo/net`, `gogo/dhcp`, `gogo/dns`, `gogo/http` | networking |
 | `gogo/sys` | the wall clock, randomness, settings from the device's configuration store |
-| `gogo/errors` | the error codes every package shares (`errors.NotFound`, ...) |
+| `gogo/errors` | `New`, `Is`, `Unwrap`, and the error codes every package shares (`errors.NotFound`, ...) |
 
 Go's standard library is not available. Importing `fmt` looks for a
 package of your own called `fmt`, finds none and says where it looked:
@@ -179,8 +179,8 @@ A module built for hot loading (chapter 14) finds its packages the same
 way, from its own directory. `gogo run file.gg` builds a single file, with
 its directory as the build root (chapter 2, *Scripts*).
 
-> **Note.** There is no `gogo/fmt` or `gogo/errors` package. Print with
-> `println`, and report errors as shown in section 3.10.
+> **Note.** There is no `gogo/fmt` package. Print with `println`, and
+> report errors as shown in section 3.10.
 
 ## 3.2 Types and values
 
@@ -1882,77 +1882,87 @@ of your program is your module's own (chapter 14): a value of it, in an
 interface or not, cannot be sent to a hot-loaded module, and the module's
 types cannot be sent to you.
 
-## 3.10 Errors without `error`
+## 3.10 Errors
 
-Your own types can implement `error` (section 3.9), but the gogo
-libraries do not return `error` yet. They report failure in one of two
-ways:
+As in Go, a function that can fail returns an `error` as its last result,
+`nil` for success. `error` is the predefined interface `interface{ Error()
+string }`, so any type with that method is one (section 3.9), and
+`gogo/errors` has what Go's `errors` has (but `As`):
 
-- a `bool` result, like `strconv.Atoi` or `actor.Whereis`;
-- a named `int` type of error codes, where 0 means success, like `fs.Err`.
+- `errors.New(text)` makes an error whose `Error()` is `text`;
+- `errors.Is(err, target)` reports whether `err`, or an error it wraps
+  (through `Unwrap() error` methods), is `target`; `errors.Unwrap(err)`
+  takes one layer off;
+- `errors.Code` is gogo's one set of error codes, shared by every
+  package (`errors.NotFound`, `errors.Busy`, ...; appendix C). A `Code`
+  is an `error`: its `Error()` says what it means (`"not found"`), and
+  `err == errors.NotFound` works whichever package returned `err`.
 
 ```go
-// There is no error type in the subset. Report failure with a bool, or
-// with a named int type of error codes, as gogo/fs does with fs.Err.
+// Errors are values of the interface error. gogo/errors has Go's New, Is
+// and Unwrap, and Code, the shared error codes, which are errors too.
 package main
 
-import "gogo/strconv"
-
-// ParseErr is a small set of error codes; 0 means success.
-type ParseErr int
-
-const (
-	OK ParseErr = iota
-	Empty
-	BadNumber
-	OutOfRange
+import (
+	"gogo/errors"
+	"gogo/strconv"
 )
 
-// describe names a code for messages.
-func describe(e ParseErr) string {
-	if e == OK {
-		return "ok"
-	} else if e == Empty {
-		return "empty input"
-	} else if e == BadNumber {
-		return "not a number"
-	}
-	return "out of range"
+// ErrEmpty is a sentinel error, compared with ==.
+const ErrEmpty = errors.BadArg
+
+// RangeError is an error type of our own, with the details.
+type RangeError struct {
+	N   int
+	Err error // what it wraps
 }
 
+func (e RangeError) Error() string { return strconv.Itoa(e.N) + " is out of range" }
+func (e RangeError) Unwrap() error { return e.Err }
+
 // parsePercent parses "0".."100".
-func parsePercent(s string) (int, ParseErr) {
+func parsePercent(s string) (int, error) {
 	if s == "" {
-		return 0, Empty
+		return 0, ErrEmpty
 	}
 	n, ok := strconv.Atoi(s)
 	if !ok {
-		return 0, BadNumber
+		return 0, errors.New("not a number: " + s)
 	}
 	if n < 0 || n > 100 {
-		return 0, OutOfRange
+		return 0, RangeError{n, errors.Overflow}
 	}
-	return n, OK
+	return n, nil
 }
 
 func main() {
 	for _, s := range []string{"42", "", "x1", "250"} {
 		n, err := parsePercent(s)
-		if err != OK {
-			println("["+s+"]", "error:", describe(err), int(err))
-			continue
+		switch {
+		case err == nil:
+			println("["+s+"]", "=", n)
+		case err == ErrEmpty:
+			println("["+s+"]", "empty:", err.Error())
+		case errors.Is(err, errors.Overflow):
+			println("["+s+"]", "too big:", err.Error())
+		default:
+			println("["+s+"]", "error:", err.Error())
 		}
-		println("["+s+"]", "=", n)
 	}
 }
 ```
 
 ```text
 [42] = 42
-[] error: empty input 1
-[x1] error: not a number 2
-[250] error: out of range 3
+[] empty: bad argument
+[x1] error: not a number: x1
+[250] too big: 250 is out of range
 ```
+
+Compare an error with a sentinel by `==` (`err == errors.NotFound`), or
+with `errors.Is` when it may be wrapped; a type switch or `err.(T)` gets
+at an error type's details. Unlike Go, two errors from `errors.New` with
+the same text are equal: an error is a value, compared by what it holds.
 
 For failures you do not expect and cannot handle, gogo's answer is
 different: let the actor crash, and let a supervisor restart it. That is
@@ -2020,7 +2030,6 @@ main.gg:26:7: gogo: complex not supported
 main.gg:28:3: gogo: goto statement not supported
 main.gg:30:1: gogo: label on a statement other than for or switch not supported
 main.gg:31:14: gogo: array in interface not supported: use a slice or a struct with an array field
-main.gg:32:7: gogo: conversion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
 main.gg:34:16: gogo: complex not supported

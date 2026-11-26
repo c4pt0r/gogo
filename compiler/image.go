@@ -59,7 +59,9 @@ var (
 		BCmp:      ifaceMinor,
 	}
 	typeMinor = map[string]uint16{
-		"screen.Config": 1, // 15.1: the "screen" port
+		"screen.Config":      1, // 15.1: the "screen" port
+		"errors.Code":        ifaceMinor,
+		"errors.errorString": ifaceMinor,
 	}
 )
 
@@ -256,12 +258,22 @@ func (b *ImageBuilder) AddType(name string, nFields uint32) uint32 {
 
 // AddReservedType declares the next reserved type (index order) and
 // returns its index. Its row is written only if the program uses it or a
-// later reserved type.
+// later reserved type. The names of the types up to screen.Config go into
+// the const area here, whether written or not (images have always held
+// them, first); those of later types only with their row (see Bytes), so
+// that a new reserved type changes no image that does not carry it.
 func (b *ImageBuilder) AddReservedType(name string, nFields uint32) uint32 {
-	n := b.AddString(name)
-	b.reserved = append(b.reserved, imgType{name: n, nFields: nFields, goName: name})
+	t := imgType{nFields: nFields, goName: name, name: noName}
+	if len(b.reserved) <= int(TypeScreenConfig) {
+		t.name = b.AddString(name)
+	}
+	b.reserved = append(b.reserved, t)
 	return uint32(len(b.reserved) - 1)
 }
+
+// noName marks a reserved row whose name string is added only when the
+// row is written (AddReservedType).
+const noName = ^uint32(0)
 
 // UseType marks type idx as used by the program: a reserved type then
 // gets its row with its fields (and every lower one, with none) in the
@@ -338,7 +350,13 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 		if !used[i] {
 			t.nFields = 0 // not used: any VM that knows the type accepts it
 		}
+		if t.name == noName {
+			t.name = b.AddString(t.goName)
+		}
 		rows = append(rows, t)
+	}
+	if len(b.consts) > MaxConstWords { // the names just added
+		return nil, fmt.Errorf("image: const area is %d words, over the %d-word limit (strings and int64 constants)", len(b.consts), MaxConstWords)
 	}
 	rows = append(rows, b.types...)
 	words := []uint32{imageMagic, imageMajor<<16 | uint32(minor), uint32(len(b.funcs)), uint32(len(rows)),

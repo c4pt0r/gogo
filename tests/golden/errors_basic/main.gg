@@ -1,0 +1,65 @@
+// gogo/errors: Code is an error (its Error is gogo_strerror's text),
+// New's errors compare by text, Is follows Unwrap chains, and an error
+// value switches and compares like any interface value.
+package main
+
+import "gogo/errors"
+
+// Wrapped is an error that wraps another.
+type Wrapped struct {
+	Op  string
+	Err error
+}
+
+func (w Wrapped) Error() string { return w.Op + ": " + w.Err.Error() }
+func (w Wrapped) Unwrap() error { return w.Err }
+
+func find(name string) error {
+	switch name {
+	case "":
+		return errors.BadArg
+	case "a":
+		return nil
+	case "lost":
+		return Wrapped{"open " + name, errors.NotFound}
+	}
+	return errors.New("no " + name)
+}
+
+func main() {
+	var err error = errors.NotFound
+	println(err.Error(), err == errors.NotFound, err == errors.Busy, err != nil)
+	println(errors.Code(120).Error(), errors.Code(-3).Error(), errors.OK.Error())
+
+	for _, name := range []string{"", "a", "lost", "b"} {
+		err := find(name)
+		switch {
+		case err == nil:
+			println("["+name+"]", "ok")
+		case err == errors.BadArg:
+			println("["+name+"]", "bad argument:", err.Error())
+		case errors.Is(err, errors.NotFound):
+			println("["+name+"]", "is not found:", err.Error(), errors.Unwrap(err) == errors.NotFound)
+		default:
+			println("["+name+"]", err.Error(), err == errors.New("no b"))
+		}
+	}
+
+	// A switch on an error, and a type switch.
+	switch err {
+	case errors.Busy:
+		println("busy")
+	case errors.NotFound:
+		println("not found")
+	}
+	var x any = errors.New("plain")
+	switch e := x.(type) {
+	case errors.Code:
+		println("a code", int(e))
+	case error:
+		println("an error", e.Error())
+	}
+	code, ok := err.(errors.Code)
+	println(int(code), ok)
+	println(errors.Is(nil, nil), errors.Is(err, nil), errors.Unwrap(err) == nil)
+}

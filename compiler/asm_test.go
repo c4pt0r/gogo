@@ -140,7 +140,7 @@ func upperSnake(s string) string {
 func TestReservedTypesMatchStubs(t *testing.T) {
 	l := testLoader()
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath, GpioPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath, ScreenPath} {
+	for _, path := range []string{ActorPath, PortPath, GpioPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath, ScreenPath, ErrorsPath} {
 		pkg, err := l.lib(path)
 		if err != nil {
 			t.Fatal(err)
@@ -176,6 +176,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			prefix = "TypeAudio"
 		case ScreenPath:
 			prefix = "TypeScreen"
+		case ErrorsPath:
+			prefix = "TypeErrors"
 		}
 		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
 			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
@@ -185,17 +187,20 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s missing from the stubs", rt.pkg, rt.name)
 			continue
 		}
-		st := obj.Type().Underlying().(*types.Struct)
 		var names []string
-		for j := 0; j < st.NumFields(); j++ {
-			names = append(names, st.Field(j).Name())
+		if st, ok := obj.Type().Underlying().(*types.Struct); ok {
+			for j := 0; j < st.NumFields(); j++ {
+				names = append(names, st.Field(j).Name())
+			}
+		} else {
+			names = []string{"value"} // the box of a named basic type
 		}
 		if strings.Join(names, " ") != strings.Join(rt.fields, " ") {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 45 {
-		t.Errorf("%d reserved types, want 45", len(reservedTypes))
+	if len(reservedTypes) != 47 {
+		t.Errorf("%d reserved types, want 47", len(reservedTypes))
 	}
 }
 

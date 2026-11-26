@@ -1796,15 +1796,19 @@ together with `mbox_words` through `actor_charged_words`).
   holding the bits; `uint32` uses the `int64` ops on widened values
   (Sized integers, §5.2). `OP_CONV` gained modes 3-6 (`uint16`, `int8`,
   `int16`, and `int64` of a `uint32`).
-- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 45 of them,
+- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 47 of them,
   0..44): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
   `Request`, `Options`), 6-8 `gpio.Config`, `gpio.Write`, `gpio.Edge`,
   9-22 `gogo/net`, 23-24 `fs.Info`, `fs.Space`, 25-29 `gogo/kbd` and
   `gogo/power`, 30 `code.Module`, 31-34 `port.Chunk`, `port.Out`,
   `port.Done`, `port.Closed` (the stream protocol), 35-36 `gogo/imu`,
   37-38 `gogo/ir`, 39-40 `gogo/audio`, 41 `net.DialTLS`, 42-43
-  `port.Host`, `port.Post` (embed mode), 44 `screen.Config` (15.1). The
-  15.0 table (0..43) is frozen by `TestMinorBaseline` in `compiler/`.
+  `port.Host`, `port.Post` (embed mode), 44 `screen.Config` (15.1), 45-46
+  `errors.Code` (the box an error holds it in) and `errors.errorString`
+  (15.4). The 15.0 table (0..43) is frozen by `TestMinorBaseline` in
+  `compiler/`. The names of the types after 44 go into an image's
+  constant area only with their row, so a new one changes no image that
+  does not use it.
 
 ### 5.7 Scheduling
 
@@ -1862,9 +1866,13 @@ together with `mbox_words` through `actor_charged_words`).
   and each package that needs its own codes gets a block of 20 from 100
   (`gogo/http` 100..119, `gogo/sound` 120..139). The codes are
   compile-time constants: no opcode, builtin, reserved type or image
-  field depends on the table (the C side uses the same names). A later
-  language phase gives `Code` an `Error()` method and makes functions
-  return `error`. **Open for that phase:** whether `fs.Err`, `code.Err`
+  field depends on the table (the C side uses the same names). `Code` is
+  an `error` (15.4): `gogo/errors` has `Code.Error` (the texts of
+  `gogo_strerror`), `New`, `Is` and `Unwrap`. `Code`'s interface box and
+  `New`'s `errorString` are reserved types 45 and 46, so these errors
+  cross modules, and every program that uses `error` loads `gogo/errors`
+  (a system package: only what it uses is compiled) so that its
+  dispatchers know them. **Open for that phase:** whether `fs.Err`, `code.Err`
   and the other result types become aliases of `errors.Code`, or the
   language gets an `errors.Is`-like rule. Until one of them, an `fs.Err`
   and an `errors.Code` of the same number are different types: they do

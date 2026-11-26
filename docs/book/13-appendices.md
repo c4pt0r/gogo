@@ -311,7 +311,9 @@ that (chapter 12).
 
 **The shared codes** (`gogo/errors`, `GOGO_E_*` in
 `runtime/include/gogo_errors.h` on the C side): one numbering for every
-meaning the packages share.
+meaning the packages share. An `errors.Code` is an `error`; its `Error()`
+is the text `gogo_strerror` gives the same code on the C side (`"not
+found"`, `"busy"`, ...), and `"error N"` for a code without one.
 
 | Range | Codes |
 |---|---|

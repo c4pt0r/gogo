@@ -1,10 +1,17 @@
-// Package errors is gogo's one error code space: every package that
-// reports why a call failed uses these numbers for the meanings they
-// share, so a program that imports several of them can compare and switch
-// on one set of codes. It is a library with only a type and
-// constants. The C side defines the same numbers once, as GOGO_E_* in
+// Package errors is gogo's errors: Go's New, Is and Unwrap, and one error
+// code space, Code, whose values are errors too (Code has an Error
+// method). Every package that reports why a call failed uses these
+// numbers for the meanings they share, so a program that imports several
+// of them can compare and switch on one set of codes: fs.Err and code.Err
+// are Code, and err == errors.NotFound holds for an error from any of
+// them. The C side defines the same numbers once, as GOGO_E_* in
 // runtime/include/gogo_errors.h (tests/errors_test.go keeps the two
-// equal).
+// equal, and Error's texts equal to gogo_strerror's).
+//
+// Code and the type New returns are reserved types: an error made of
+// them can be sent to another module (a hot-loaded one), where it is the
+// same error. The method calls and the equality work there too, whether
+// that module imports gogo/errors or not.
 //
 // The space:
 //
@@ -27,8 +34,125 @@
 // at 35: 64 + 35 = 99 stays below the user exit codes from 100.
 package errors
 
-// Code is an error code: OK (0), a shared code, or a package's own.
+// Code is an error code: OK (0), a shared code, or a package's own. In an
+// interface (an error) it is boxed in its reserved type.
+//
+//gogo:reserved 45
 type Code int
+
+// Error describes the code, in the words of the C side's gogo_strerror:
+// "not found", "busy", ...; "error 120" for a code it does not know.
+func (c Code) Error() string {
+	switch c {
+	case OK:
+		return "ok"
+	case NotFound:
+		return "not found"
+	case Exists:
+		return "exists already"
+	case NoMemory:
+		return "out of memory"
+	case TooMany:
+		return "too many: a fixed table is full"
+	case Busy:
+		return "busy"
+	case BadArg:
+		return "bad argument"
+	case Closed:
+		return "closed"
+	case IO:
+		return "I/O error"
+	case Timeout:
+		return "timed out"
+	case Unsupported:
+		return "unsupported: a driver or mount is missing"
+	case NoSpace:
+		return "no space left"
+	case BadPath:
+		return "bad path"
+	case IsDir:
+		return "is a directory"
+	case NotDir:
+		return "not a directory"
+	case NotEmpty:
+		return "directory not empty"
+	case NotMounted:
+		return "not mounted"
+	case BadImage:
+		return "bad image"
+	case Refused:
+		return "connection refused"
+	case Reset:
+		return "connection reset"
+	case NoRoute:
+		return "no route"
+	case BadCert:
+		return "bad certificate"
+	case NoTime:
+		return "wall clock not set"
+	case TLS:
+		return "TLS error"
+	case Overflow:
+		return "too large"
+	case BadURL:
+		return "bad URL"
+	case BadFormat:
+		return "bad format"
+	case BadVersion:
+		return "unsupported image format version"
+	}
+	n, s := int(c), ""
+	if n < 0 {
+		n = -n
+	}
+	for {
+		s = string([]byte{byte('0' + n%10)}) + s
+		n /= 10
+		if n == 0 {
+			break
+		}
+	}
+	if c < 0 {
+		s = "-" + s
+	}
+	return "error " + s
+}
+
+// New returns an error whose Error is text. Two errors from New with the
+// same text are equal (they are values, compared by their text), unlike
+// Go's, which are equal only to themselves.
+func New(text string) error { return errorString{text} }
+
+// errorString is New's error.
+//
+//gogo:reserved 46
+type errorString struct{ s string }
+
+func (e errorString) Error() string { return e.s }
+
+// Is reports whether err, or an error it wraps (its Unwrap() error, then
+// that one's ...), equals target.
+func Is(err, target error) bool {
+	if err == nil || target == nil {
+		return err == target
+	}
+	for err != nil {
+		if err == target {
+			return true
+		}
+		err = Unwrap(err)
+	}
+	return false
+}
+
+// Unwrap returns the error err wraps: the result of its Unwrap() error
+// method, or nil if it has none.
+func Unwrap(err error) error {
+	if u, ok := err.(interface{ Unwrap() error }); ok {
+		return u.Unwrap()
+	}
+	return nil
+}
 
 // The codes.
 const (

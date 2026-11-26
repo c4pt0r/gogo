@@ -266,8 +266,12 @@ rebuilt:
   `recover` are outside the design. "Language completeness" is a
   planned milestone. *Workarounds:* a type switch for assertions and for
   values in an `any`, slices of structs searched linearly for maps.
-- **No `gogo/fmt` or `gogo/errors`.** Printing is `println`; to build a
-  string use `gogo/strconv` and `+`.
+- **No `gogo/fmt`.** Printing is `println`; to build a string use
+  `gogo/strconv` and `+`.
+- **`gogo/errors` differs from Go's.** Two errors from `errors.New` with
+  the same text are equal (errors are values, compared by what they
+  hold; Go's are equal only to themselves). There is no `errors.As`
+  (no reflection) and no `errors.Join`.
 - **A shared package's struct types cannot cross modules.** A program
   and a hot-loaded module (or two modules) that import the same package,
   your own or a `gogo/` library such as `gogo/http`, each compile their own
