@@ -967,10 +967,15 @@ int interp_run(Vm *vm, Actor *a) {
             uint32_t *obj = (uint32_t *)obj_of(vm, a, R[rb]);
             bool set = op == OP_SETFIELD;
             /* Past the end only of a reserved struct from an older image:
-             * the fields appended since are ints, 0 the default (opcodes.h). */
+             * the fields appended since are ints, 0 the default (opcodes.h).
+             * Its type is live: a const struct that obj_of resolved is of
+             * its module's image, which is loaded; a heap struct's type
+             * word may carry flags, but only an own type has any (a
+             * flagged reserved row is refused at load) and they leave the
+             * tag bits alone. */
             if (!(obj && hdr_kind(obj[0]) == K_STRUCT && (2u + rc < hdr_words(obj[0]) || (!set && obj[1] < TYPE_OWN_BASE)) &&
                   (!set || (term_is_ref(R[rb]) && (obj[1] & STRUCT_MUT))) &&
-                  type_live(vm, tag, struct_type(R[rb], obj)))) CRASH(R[rb] == T_NIL ? R_NIL : R_BAD_CODE);
+                  (term_is_const(R[rb]) || type_live(vm, tag, obj[1])))) CRASH(R[rb] == T_NIL ? R_NIL : R_BAD_CODE);
             if (set) obj[2 + rc] = R[ra];
             else R[ra] = 2u + rc < hdr_words(obj[0]) ? field_term(R[rb], obj[2 + rc]) : term_from_int(0);
             break;
