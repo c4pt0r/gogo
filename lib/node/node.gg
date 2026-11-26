@@ -88,7 +88,12 @@ type peerAns struct {
 // From Whereis to a link actor: node ID's door (a remote PID made on
 // demand, so a board in a big star holds proxies only for the nodes it
 // talks to), or the zero PID if the node cannot be reached.
-type doorReq struct{ ID int }
+// Until is the Whereis's deadline (actor.Now): past it nobody waits, and
+// the link actor forgets the request even if no answer came.
+type doorReq struct {
+	ID    int
+	Until int64
+}
 type nodesReq struct{}
 type selfReq struct{}
 type subscribeReq struct{ PID actor.PID }
@@ -232,7 +237,7 @@ func Whereis(node, name string, timeoutMs int) (actor.PID, error) {
 		if left <= 0 {
 			return zero, errors.Timeout
 		}
-		d, ok := actor.Call(a.PID, doorReq{ID: a.ID}, left)
+		d, ok := actor.Call(a.PID, doorReq{ID: a.ID, Until: deadline}, left)
 		if !ok {
 			return zero, errors.Timeout
 		}

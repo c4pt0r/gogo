@@ -155,6 +155,22 @@ func codeOf(err error) errors.Code {
 	return errors.IO
 }
 
+// expire drops the door lookups whose Whereis no longer waits (past its
+// deadline), so an answer the port could not deliver costs nothing.
+func expire(doors []actor.Request) []actor.Request {
+	now := actor.Now()
+	var keep []actor.Request
+	for _, r := range doors {
+		switch d := r.Body.(type) {
+		case doorReq:
+			if d.Until > now {
+				keep = append(keep, r)
+			}
+		}
+	}
+	return keep
+}
+
 // sessionKey is a link's MAC key, from the token and both nonces: both
 // ends compute it after a successful handshake.
 func sessionKey(key, ns, nc []byte, clientID, serverID int, serverName, clientName string) bytes.Bytes {
@@ -324,7 +340,8 @@ func pump(e ends, conn, np actor.PID, rest []byte, peerName string, peerID, self
 		case actor.Request:
 			switch d := m.Body.(type) {
 			case doorReq:
-				if len(doors) < 64 { // more wait for their timeout
+				doors = expire(doors) // a lost answer leaves nothing behind
+				if len(doors) < 64 {  // more wait for their timeout
 					doors = append(doors, m)
 					actor.Send(np, net.NodeEvent{Kind: net.NodeDoor, Node: d.ID})
 				}
