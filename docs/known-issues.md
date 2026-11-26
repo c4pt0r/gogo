@@ -1003,13 +1003,6 @@ rebuilt:
 
 ## Tooling
 
-- **Release downloads need a GitHub login while the repository is
-  private.** `gogo setup` downloads anonymously, so it gets a 404 from
-  `github.com/c4pt0r/gogo/releases` until the repository is public.
-  *Workaround:* `gh release download <tag> -R c4pt0r/gogo -D gogo-release`
-  (with an authorized `gh`), then `gogo setup -release-url gogo-release`;
-  or build the firmware locally with `gogo setup -offline` inside the
-  source tree.
 - **`gogo setup` on Windows** needs `-port COMn` (it cannot list serial
   ports there). It flashes the firmware and the first program, but skips
   the Wi-Fi step and does not watch the program print: `gogo` cannot use

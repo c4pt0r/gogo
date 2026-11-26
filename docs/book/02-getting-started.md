@@ -31,19 +31,8 @@ sudo mv gogo /usr/local/bin/     # or anywhere on your PATH
 gogo version
 ```
 
-> **Note.** The gogo repository is private for now, so the `curl`
-> download above fails (404) without a GitHub login. Until it is public,
-> download a whole release with the GitHub CLI, take `gogo` from it and
-> point `gogo setup` at the same directory:
->
-> ```sh
-> gh release download -R c4pt0r/gogo -D gogo-release
-> cp gogo-release/gogo-darwin-arm64 gogo && chmod +x gogo
-> ./gogo setup -release-url gogo-release
-> ```
->
-> A file downloaded with a browser on macOS may need
-> `xattr -d com.apple.quarantine gogo` before it runs.
+A file downloaded with a browser on macOS may need
+`xattr -d com.apple.quarantine gogo` before it runs.
 
 ### Run it
 

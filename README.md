@@ -119,9 +119,7 @@ gogo setup
 
 It identifies the board, downloads and checks the matching firmware,
 flashes it (keeping the board's settings), sets up Wi-Fi and runs a first
-program. While the repository is private, the release download needs a
-GitHub login: fetch a release with `gh release download -R c4pt0r/gogo
--D gogo-release` and run `gogo setup -release-url gogo-release`.
+program.
 
 **From source, on your computer.** You need Go 1.27 or newer, a C99
 compiler and `make`.
