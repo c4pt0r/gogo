@@ -22,9 +22,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels its older run; every push to main
+# is tested.
 concurrency:
   group: test-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   MBEDTLS_REPO: https://github.com/espressif/mbedtls.git
