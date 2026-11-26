@@ -131,6 +131,10 @@ The chapters build on each other:
 | 17. HTTPS | `https://` URLs, the clock, keep-alive `http.Client`, streaming uploads, the `"tls"` port |
 | 18. Embedding gogo | Running images inside a C program: `libgogo.a`, the host table, stepping, posts, host ports |
 
+Actors need not share a board: chapter 20, Distributed Actors, lets a PID
+name an actor on another board or a server, with the same Send, Call,
+links and monitors.
+
 Every example in the book is a complete program in
 [`docs/book/examples/`](examples/), and the output shown is the real output
 of running it on the host VM. You can run all of them with

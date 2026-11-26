@@ -329,7 +329,8 @@ result, like `lookup` here, so that the rest of the program never sees
 
 > **Note.** If the server dies while you wait, `Call` does not return
 > early: it waits until the timeout. Monitor the server (chapter 5) if you
-> need to know sooner.
+> need to know sooner. (For a server on another board, see 4.8 and 20.5:
+> a Call returns at once when the server's node goes away.)
 
 ## 4.4 Registered names
 
@@ -549,3 +550,39 @@ A few habits make actor programs easy to follow:
 - **Do not handle every error.** If an actor gets into a state it does not
   understand, let it exit and let a supervisor start a fresh one. The next
   chapter shows how.
+
+## 4.8 Actors on other boards
+
+Everything in this chapter also works between boards. With `gogo/node`
+(chapter 20), a PID can name an actor on another board or on a server, and
+`Send`, `Call`/`Reply`, `Monitor` and `Link` work on it unchanged. A
+message to a remote actor is copied over the network as a local one is
+copied into the receiver's heap, with a few limits on what may cross
+(20.4): no func values, pointers, maps or `bytes.Buffer`, and at most
+about 4 KB encoded. When an actor's whole node goes away, its links and
+monitors fire with the reason `actor.NoConnection` (chapter 5, 20.5).
+
+This is the client of
+[examples/nodehello](../../examples/nodehello/main.gg) joining a server
+node, finding its exported counter and calling it:
+
+```go
+	if err := node.Connect(addr, "client"); err != nil {
+		println("connect:", err.Error())
+		return
+	}
+	counter, err := node.Whereis("server", "counter", 2000)
+	if err != nil {
+		println("whereis:", err.Error())
+		return
+	}
+	println("client: found counter", counter)
+	ref := actor.Monitor(counter)
+	for i := 1; i <= 5; i++ {
+		total, ok := actor.Call(counter, Add{N: i}, 2000)
+```
+
+The counter on the server is an ordinary `Call` server like the one in
+4.3; `tests/dist` runs the program as a server and clients on separate
+host VMs. Chapter 20 shows how to set up the server node and the shared
+token, and covers delivery, limits and security.

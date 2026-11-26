@@ -11,7 +11,7 @@ and assumes no knowledge of embedded programming or Erlang.
 1. [Preface](01-preface.md): what gogo is, what it is good for, and what it is not
 2. [Getting Started](02-getting-started.md): `gogo setup`, build the tools, run a program, flash a board
 3. [Language Basics](03-language-basics.md): the Go subset, what it leaves out, and what to write instead
-4. [Actors](04-actors.md): Spawn, Send, Receive, type switches, Call/Reply, names, timers
+4. [Actors](04-actors.md): Spawn, Send, Receive, type switches, Call/Reply, names, timers, actors on other boards (with chapter 20)
 5. [Failure and Recovery](05-failure-and-recovery.md): exit reasons, links, monitors, TrapExit, supervisors, "let it crash"
 6. [Memory Model](06-memory-model.md): per-actor heaps and limits, copied messages, mailbox quotas, Bytes and Buffer
 7. [Ports and Peripherals](07-ports-and-peripherals.md): ports, GPIO, events, debouncing, owners, Handoff

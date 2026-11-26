@@ -2,7 +2,9 @@
 
 An actor on one board can talk to an actor on another board, or on a
 server, with the same `actor.Send`, `actor.Call`, `actor.Monitor` and
-`actor.Link` it uses at home. The library is `gogo/node`.
+`actor.Link` it uses at home. The library is `gogo/node`. This chapter
+builds on chapter 4 (actors, `Call`) and chapter 5 (links, monitors, exit
+reasons).
 
 The shape is a **star**: one **server node** (a gogo VM on a computer,
 with real sockets) and any number of **boards** that connect to it over

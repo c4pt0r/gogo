@@ -371,7 +371,11 @@ died: it waits out the whole timeout (monitor the server to know sooner).
 A reply that comes after the timeout stays in the caller's mailbox,
 counted against its limit, until the next `Receive` or `Call` scans past
 it. So treat `ok == false` as "no answer, maybe dead", and keep timeouts
-short enough that a dead server costs little.
+short enough that a dead server costs little. A server on another board
+adds lost nodes and lost messages; sections
+[20.5](20-distributed.md#205-when-a-node-goes-away) and
+[20.6](20-distributed.md#206-delivery) say when such a Call fails at once
+and when it waits out its timeout.
 
 A cycle is worse. If A calls B and B, while handling that request, calls
 A, then A is waiting in `Call` for B's reply, and B's request sits in A's

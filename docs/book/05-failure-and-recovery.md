@@ -92,7 +92,8 @@ type Reason struct {
 | 8 | `actor.BadShift` | a negative shift count | `badshift` |
 | 9 | `actor.BadMsg` | sent a module's own value to another module (chapter 14) | `badmsg` |
 | 10 | `actor.Panic` | `panic(v)`, a failed type assertion, a method call on a nil interface | `panic`, after `panic: v` |
-| 12 | `actor.Nil` | a nil pointer dereference, a write to a nil map (11 is kept for later) | `nil` |
+| 11 | `actor.NoConnection` | linked to an actor on another node that became unreachable ([20.5](20-distributed.md#205-when-a-node-goes-away)) | `noconnection` |
+| 12 | `actor.Nil` | a nil pointer dereference, a write to a nil map | `nil` |
 | ≥ 100 | your own | `actor.Exit(code)` or `actor.Kill(p, code)` | `exit(<code>)` |
 
 `Normal` and `Shutdown` are the two "expected" endings; everything else
@@ -265,6 +266,11 @@ which is why `c` survives. `SpawnLink` links before the child runs, so
 there is no window in which the child could die unnoticed; `Spawn` followed
 by `Link` has such a window. Linking to an actor that has already exited
 delivers a `NoProc` signal at once.
+
+Links (and the monitors of 5.5) work the same on an actor on another
+board (4.8). If that actor's whole node becomes unreachable, the signal
+carries the reason `actor.NoConnection` (11) instead of the actor's own;
+see [20.5](20-distributed.md#205-when-a-node-goes-away).
 
 ## 5.4 Trapping exits
 
@@ -444,7 +450,9 @@ gogo: actor <pid 1> crashed: divzero in server
 Monitoring an actor that does not exist (any more) delivers a `DownMsg`
 with `NoProc` straight away, so there is no race between looking up a PID
 and monitoring it. `Demonitor` cancels a monitor; no `DownMsg` arrives
-afterwards.
+afterwards. A monitor of an actor on another board delivers a `DownMsg`
+with `actor.NoConnection` when that board, or the server between, goes
+away ([20.5](20-distributed.md#205-when-a-node-goes-away)).
 
 > **Good to know.** The `ExitMsg` or `DownMsg` an exit will need is
 > reserved when you create the link or monitor, and charged to the actor
