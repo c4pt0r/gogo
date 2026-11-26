@@ -23,6 +23,7 @@ enum {
 };
 #define HDR 6u              /* type, flags, dst, src */
 #define TAG 16u             /* a frame's MAC: HMAC-SHA-256 truncated */
+#define NUM 4u              /* a frame's number (u32), before its body */
 
 /* Term tags. */
 enum {
@@ -50,7 +51,9 @@ typedef struct Link {
     uint16_t rx_need, rx_have;   /* a frame body being reassembled in rx */
     uint8_t *rx;
     uint32_t seq;            /* Seq of the last Chunk made */
-    uint64_t tx, rx_n;       /* frames sent and received: each MAC covers its number */
+    uint32_t tx;             /* the number of the last frame sent (each frame carries one) */
+    uint32_t rx_last;        /* the highest number received (frames must count up) */
+    uint16_t self;           /* this node's id on the link: every MAC's sender */
     HmacKey key;             /* the session key from the handshake */
     uint8_t name_len;
     uint8_t carried;         /* the board's carrier has the connection (cctx) */
@@ -255,11 +258,13 @@ static Link *route(DistState *ds, uint16_t node) {
     return relay;
 }
 
-/* A frame's MAC: HMAC(key, number (u64) || sender id (u16) || body). */
-static void frame_mac(const HmacKey *k, uint64_t num, uint16_t sender, const uint8_t *body, uint32_t n,
+/* A frame's MAC: HMAC(key, number (u32) || sender id (u16) || body): the
+ * frame's own number, and the sender's id on the link. */
+static void frame_mac(const HmacKey *k, const uint8_t num[NUM], uint16_t sender, const uint8_t *body, uint32_t n,
                       uint8_t out[32]) {
-    uint8_t pre[10];
-    wr16(wr64(pre, num), sender);
+    uint8_t pre[NUM + 2u];
+    memcpy(pre, num, NUM);
+    wr16(pre + NUM, sender);
     hmac_mac(k, pre, sizeof pre, body, n, out);
 }
 
@@ -272,10 +277,10 @@ static void frame_mac(const HmacKey *k, uint64_t num, uint16_t sender, const uin
 static Msg *chunk_new(Vm *vm, DistState *ds, Link *l, uint32_t n, uint8_t **data) {
     if (l->carried) {
         *data = ds->scratch;
-        return n + TAG <= DIST_FRAME_MAX ? CARRIED : NULL;
+        return n + NUM + TAG <= DIST_FRAME_MAX ? CARRIED : NULL;
     }
     l->seq = l->seq >= 0x7FFFFFFFu ? 1u : l->seq + 1u;
-    return stream_chunk_new(vm, l->port->id, l->seq, (uint32_t)vm_now(vm), 0, n + TAG, data);
+    return stream_chunk_new(vm, l->port->id, l->seq, (uint32_t)vm_now(vm), 0, n + NUM + TAG, data);
 }
 
 static void chunk_drop(Vm *vm, Msg *m) {
@@ -286,9 +291,15 @@ static void chunk_drop(Vm *vm, Msg *m) {
  * owner, or writes it to l's carrier; counted as sent, or dropped. */
 static void chunk_send(Vm *vm, DistState *ds, Link *l, Msg *m, uint8_t *d, uint32_t n) {
     uint8_t mac[32];
-    wr16(d, n - 2u + TAG);
-    frame_mac(&l->key, l->tx++, ds->self, d + 2, n - 2u, mac);
-    memcpy(d + n, mac, TAG);
+    /* [len][number][body][MAC]: the number goes between the prefix and the
+     * body; a frame lost after it was numbered is a gap, which the peer
+     * accepts (it refuses only numbers that do not count up). */
+    memmove(d + 2u + NUM, d + 2u, n - 2u);
+    wr16(d, n - 2u + NUM + TAG);
+    wr32(d + 2u, ++l->tx);
+    frame_mac(&l->key, d + 2u, l->self, d + 2u + NUM, n - 2u, mac);
+    memcpy(d + n + NUM, mac, TAG);
+    n += NUM;
     if (m == CARRIED) {
         if (vm->board->dist_carrier->write(vm, l->cctx, d, n + TAG)) ds->st.sent++;
         else ds->st.dropped++;
@@ -1029,7 +1040,7 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
     Enc e = { vm, from, ds, NULL, 0, 0 };
     enc(&e, msg, 0);
     uint32_t len = HDR + 4u + (serial ? 8u : 0u) + e.n;
-    if (!e.why && 2u + len + TAG > DIST_FRAME_MAX) e.why = R_BAD_MSG;
+    if (!e.why && 2u + NUM + len + TAG > DIST_FRAME_MAX) e.why = R_BAD_MSG;
     if (e.why && e.why != WHY_DROP) return -(int)e.why;
     Link *l = x ? route(ds, x->node) : NULL;
     if (!l) {                       /* stale, or no route: as a dead local PID */
@@ -1395,14 +1406,19 @@ static void link_broken(Vm *vm, Port *p) { link_ended(vm, p, GOGO_E_BADARG); }
  * any more). */
 static bool take_frame(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t len) {
     uint8_t mac[32], diff = 0;
-    uint32_t n = len - TAG;
-    frame_mac(&l->key, l->rx_n++, l->peer, b, n, mac);
-    for (uint32_t i = 0; i < TAG; i++) diff |= (uint8_t)(mac[i] ^ b[n + i]);
+    uint32_t n = len - NUM - TAG, num = rd32(b);
+    frame_mac(&l->key, b, l->peer, b + NUM, n, mac);
+    for (uint32_t i = 0; i < TAG; i++) diff |= (uint8_t)(mac[i] ^ b[NUM + n + i]);
     if (diff) {
         ds->st.bad++;
         return false;
     }
-    frame_in(vm, ds, l, b, n);
+    if (num <= l->rx_last) {          /* a replay or a reorder: refused, the link stays */
+        ds->st.bad++;
+        return true;
+    }
+    l->rx_last = num;
+    frame_in(vm, ds, l, b + NUM, n);
     return true;
 }
 
@@ -1412,7 +1428,7 @@ static bool feed(Vm *vm, DistState *ds, Link *l, const uint8_t *d, uint32_t n) {
         if (!l->rx) {
             if (!l->hb_n && n >= 2u) {
                 uint32_t len = rd16(d);
-                if (len < HDR + TAG || len + 2u > DIST_FRAME_MAX) return false;
+                if (len < NUM + HDR + TAG || len + 2u > DIST_FRAME_MAX) return false;
                 if (n >= 2u + len) {             /* whole: in place */
                     if (!take_frame(vm, ds, l, d + 2, len)) return false;
                     if (!l->port) return true;   /* closed meanwhile */
@@ -1427,7 +1443,7 @@ static bool feed(Vm *vm, DistState *ds, Link *l, const uint8_t *d, uint32_t n) {
             }
             if (l->hb_n < 2u) return true;
             uint32_t len = rd16(l->hb);
-            if (len < HDR + TAG || len + 2u > DIST_FRAME_MAX) return false;
+            if (len < NUM + HDR + TAG || len + 2u > DIST_FRAME_MAX) return false;
             l->rx = va_alloc(vm, len);
             if (!l->rx) return false;
             l->rx_need = (uint16_t)len;
@@ -1558,6 +1574,7 @@ static int n_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
     l->peer = (uint16_t)peer;
     l->relay = relay != 0;
     hmac_key(&l->key, key, kl);
+    l->self = (uint16_t)self;
     l->name_len = (uint8_t)nl;
     if (nl) memcpy(l->name, name, nl);
     ds->self = (uint16_t)self;

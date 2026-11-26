@@ -36,7 +36,7 @@ type peer struct {
 	key      []byte
 	self     uint16
 	server   uint16
-	tx, rx   uint64
+	tx, rx   uint32 // the last frame number sent; the highest received
 	buf      []byte
 	serial   uint64
 	calledBy uint32 // the PID term replies come to
@@ -107,13 +107,18 @@ func dial(t *testing.T, port int, name, token string) (*peer, error) {
 	return p, nil
 }
 
-// send sends one frame body (header included), MACed.
+// send sends one frame body (header included), numbered and MACed.
 func (p *peer) send(body []byte) {
-	num := make([]byte, 8)
-	binary.LittleEndian.PutUint64(num, p.tx)
 	p.tx++
-	tag := mac(p.key, num, le16(int(p.self)), body)[:tagLen]
-	f := append(le16(len(body)+tagLen), body...)
+	p.sendNum(p.tx, body)
+}
+
+// sendNum sends body as frame number num.
+func (p *peer) sendNum(num uint32, body []byte) {
+	n := binary.LittleEndian.AppendUint32(nil, num)
+	tag := mac(p.key, n, le16(int(p.self)), body)[:tagLen]
+	f := append(le16(4+len(body)+tagLen), n...)
+	f = append(f, body...)
 	p.c.Write(append(f, tag...))
 }
 
@@ -126,14 +131,24 @@ func (p *peer) recv(ms int) []byte {
 	if f == nil {
 		return nil
 	}
-	body, tag := f[:len(f)-tagLen], f[len(f)-tagLen:]
-	num := make([]byte, 8)
-	binary.LittleEndian.PutUint64(num, p.rx)
-	p.rx++
-	if !hmac.Equal(tag, mac(p.key, num, le16(int(p.server)), body)[:tagLen]) {
-		p.t.Fatalf("bad MAC from the server")
+	body, ok := p.check(f)
+	if !ok {
+		p.t.Fatalf("bad frame from the server")
 	}
 	return body
+}
+
+// check verifies frame f (number, body, MAC) from the server: its MAC
+// under the server's id, and a number above the last one.
+func (p *peer) check(f []byte) ([]byte, bool) {
+	if len(f) < 4+tagLen {
+		return nil, false
+	}
+	num, body, tag := f[:4], f[4:len(f)-tagLen], f[len(f)-tagLen:]
+	n := binary.LittleEndian.Uint32(num)
+	ok := hmac.Equal(tag, mac(p.key, num, le16(int(p.server)), body)[:tagLen]) && n > p.rx
+	p.rx = n
+	return body, ok
 }
 
 func hdr(typ byte, dst, src uint16) []byte {
@@ -463,7 +478,8 @@ func TestBadMACEndsLink(t *testing.T) {
 	p.whereis("echo")
 	body := binary.LittleEndian.AppendUint32(hdr(fSend, p.server, p.self), 0)
 	body = append(body, tNil)
-	f := append(le16(len(body)+tagLen), body...)
+	f := append(le16(4+len(body)+tagLen), 1, 0, 0, 0)
+	f = append(f, body...)
 	p.c.Write(append(f, make([]byte, tagLen)...))
 	p.c.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if _, err := io.ReadAll(p.c); err != nil {

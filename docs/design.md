@@ -2570,10 +2570,14 @@ destination, else the link opened with `Relay` (a board's link to the
 server).
 
 **Wire format.** Frames are `u16 length` (little-endian, at most
-`DIST_FRAME_MAX`, 4096 bytes in all) + `u8 type, u8 flags, u16 dst node,
-u16 src node` + fields + a 16-byte MAC: HMAC-SHA-256 under the link's
-session key over the frame's number on the link (u64), its sender's id
-and its body (`runtime/dist/hmac.c`); a wrong MAC ends the link. Frames:
+`DIST_FRAME_MAX`, 4096 bytes in all) + `u32 number` + `u8 type, u8 flags,
+u16 dst node, u16 src node` + fields + a 16-byte MAC: HMAC-SHA-256 under
+the link's session key over the number, the sender's id on the link (the
+hop's, never the header's src) and the body (`runtime/dist/hmac.c`). Each
+side numbers its frames from 1 up; the receiver accepts any number above
+the last one it accepted, so a frame dropped after it was numbered (a
+full queue) is only a gap, while a replayed or reordered frame is
+refused (counted as bad, the link stays). A wrong MAC ends the link. Frames:
 SEND (u32 dst PID, 0 = the door; term), REPLY (u32 dst PID, u64 Ref
 serial; term), LINK/UNLINK (u32 from, u32 to), EXIT and KILL (from, to,
 u32 code), MONITOR/DEMONITOR (u32 watcher, u32 target, u64 serial), DOWN
