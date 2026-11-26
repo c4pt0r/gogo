@@ -31,11 +31,18 @@ sudo mv gogo /usr/local/bin/     # or anywhere on your PATH
 gogo version
 ```
 
-> **Note.** The gogo repository is private for now, so these downloads
-> need a GitHub login. Until it is public, download a release with the
-> GitHub CLI, `gh release download -R c4pt0r/gogo -D gogo-release`, and
-> point `gogo setup` at that directory with `-release-url gogo-release`
-> (below). A file downloaded with a browser on macOS may need
+> **Note.** The gogo repository is private for now, so the `curl`
+> download above fails (404) without a GitHub login. Until it is public,
+> download a whole release with the GitHub CLI, take `gogo` from it and
+> point `gogo setup` at the same directory:
+>
+> ```sh
+> gh release download -R c4pt0r/gogo -D gogo-release
+> cp gogo-release/gogo-darwin-arm64 gogo && chmod +x gogo
+> ./gogo setup -release-url gogo-release
+> ```
+>
+> A file downloaded with a browser on macOS may need
 > `xattr -d com.apple.quarantine gogo` before it runs.
 
 ### Run it
@@ -94,19 +101,26 @@ to the board:
 
 1. **Environment.** It finds esptool and the board's serial port
    (`/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux). With several
-   ports it asks which one; on Windows, pass `-port COM5`.
+   ports it asks which one. On Windows, pass `-port COM5`; there setup
+   flashes the firmware and the first program but skips the Wi-Fi step
+   and does not watch the board's console (gogo cannot use the serial
+   console on Windows).
 2. **Board.** esptool reports the chip. Both boards are ESP32-S3s; the
    StickS3 has embedded PSRAM and the Cardputer ADV has none, so that is
-   the guess, which you confirm. Any other chip is refused.
+   the guess, which you confirm (if esptool does not say, setup asks).
+   Any other chip is refused.
 3. **Firmware.** It downloads the board's firmware from the gogo release
    that matches your `gogo` (or the latest one), checks every file
    against the release's `SHA256SUMS`, and keeps them in your user cache
    directory (`~/Library/Caches/gogo` on macOS, `~/.cache/gogo` on
-   Linux), so a second run downloads nothing.
+   Linux), so a second run downloads only `SHA256SUMS` again.
 4. **Flash.** It writes the bootloader, the partition table and the
    firmware at the offsets the firmware build lists. It never erases the
    chip and never writes the NVS partition, where the board keeps its
-   settings, so a Wi-Fi setup from before survives.
+   settings, so a Wi-Fi setup from before survives. If the firmware now
+   on the board keeps its settings somewhere else (a board straight from
+   the factory may), setup stops and says so; `-new-layout` flashes
+   anyway, still without writing either settings area.
 5. **Wi-Fi.** The board scans for networks and you pick one. The
    password is read without echo and sent only to the board; gogo never
    prints or stores it. You can skip this step and use `gogo config`
@@ -129,6 +143,7 @@ always safe.
 | `-release-url URL\|DIR` | the files of one release from another place: an `http(s)` URL or a local directory (also `GOGO_RELEASE_URL`) |
 | `-offline` | build the firmware locally instead of downloading it |
 | `-skip-wifi` | leave the Wi-Fi settings as they are |
+| `-new-layout` | flash even though the board keeps its settings elsewhere than the new firmware (they are then not used) |
 | `-yes` | accept every default without asking (Wi-Fi is then skipped) |
 | `-dry-run` | read the board and download, but only print the commands that would write to it |
 | `-esptool path` | the esptool to run |
@@ -184,7 +199,7 @@ usage: gogo build <dir> [-o out.gogo]
        gogo monitor [-port P] [-t seconds] [-until text] [-reset]
        gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
        gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
-       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-yes] [-dry-run]
+       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
        gogo version
 ```
 

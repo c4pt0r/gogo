@@ -15,7 +15,7 @@ gogo flash [-port P] [-esptool path] app.gogo
 gogo monitor [-port P] [-t seconds] [-until text] [-reset]
 gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
-gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-yes] [-dry-run]
+gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
 gogo version
 ```
 
@@ -275,7 +275,7 @@ board's network counters and free memory (on a firmware built without
 
 ```text
 gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR]
-           [-esptool path] [-offline] [-skip-wifi] [-yes] [-dry-run]
+           [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
 ```
 
 Takes a board from new to running a program, in six steps (chapter 2
@@ -284,9 +284,10 @@ shows a run):
 1. finds esptool (version 5 or newer) and the board's serial port
    (`/dev/cu.usbmodem*` on macOS, `/dev/ttyACM*` on Linux; with several,
    it asks);
-2. identifies the board with esptool: an ESP32-S3 with embedded PSRAM is
-   the M5StickS3, one without is the Cardputer ADV; you confirm, and any
-   other chip is refused;
+2. identifies the board with esptool (letting it detect the chip, and
+   reading the partition table now on the board): an ESP32-S3 with
+   embedded PSRAM is the M5StickS3, one without is the Cardputer ADV; you
+   confirm, and any other chip is refused;
 3. gets the board's firmware: downloads it from a release, checks every
    file against the release's `SHA256SUMS` (a mismatch stops setup), and
    caches it in the user cache directory (`gogo/release/<sha256>`); without
@@ -301,18 +302,26 @@ shows a run):
    console until it prints.
 
 **What it never does.** It never erases the chip and never writes a merged
-image. Every write must lie in the bootloader area, on the partition table
-sector or inside an app partition of the partition table being written,
-and no write, rounded out to whole 4 KB flash sectors, may touch the NVS
-partition, where the board keeps its settings (Wi-Fi included); setup
-checks this before it runs esptool. The Wi-Fi password is never printed,
-logged or stored on the computer.
+image: esptool only ever runs `read-flash`, `write-flash` and `version`.
+The partition table must be at 0x8000. Every write must lie in the
+bootloader area (below 0x8000), on the partition table sector or inside an
+app partition of the partition table being written, and no write, rounded
+out to whole 4 KB flash sectors, may touch a protected range: the NVS
+partition (where the board keeps its settings, Wi-Fi included) of the
+table being written, of the table now on the board, and of the gogo
+partition table (0x9000..0xF000), all three. Setup checks this before it
+runs esptool. If the board's table puts NVS elsewhere than the new one,
+setup stops unless `-new-layout` is given. The Wi-Fi password is never
+printed, logged or stored on the computer.
 
 **Which release.** `-release-url` (or `$GOGO_RELEASE_URL`) names the files
 of one release: an `http(s)` URL or a local directory, such as one filled
 by `gh release download` or `tools/release.sh`. Otherwise `-version vX.Y.Z`
 picks a GitHub release of `c4pt0r/gogo`; otherwise the release matching
-this `gogo` (`gogo version`) if it is a release build, else the latest.
+this `gogo` (`gogo version`) if that is a release tag (`vX.Y.Z`, or with
+`-rcN`, `-beta.N`, `-alpha.N`), else the latest, pinned to its tag on the
+first request so every file comes from one release. Drafts are not
+visible to setup until published (`platform/esp32s3/README.md`).
 The assets setup reads are:
 
 | Asset | What |
@@ -321,6 +330,7 @@ The assets setup reads are:
 | `<board>-flasher_args.json` | ESP-IDF's list of files and offsets for the board (`sticks3`, `cardputer`) |
 | `<board>-bootloader.bin`, `<board>-partition-table.bin`, `<board>-gogo.bin` | the files it lists, named `<board>-<file name>` |
 | `gogo-<os>-<arch>[.exe]` | the gogo command, for `darwin`, `linux`, `windows` on `amd64`, `arm64` |
+| `LICENSE`, `THIRD_PARTY_NOTICES.md`, `font-licenses.zip`, `LICENSE-APACHE-2.0.txt` | the licenses that go with the binaries (setup does not read them) |
 
 To try a release layout before publishing it, point setup at the
 directory, or serve it over HTTP:
@@ -344,8 +354,12 @@ Options:
 - `-port P`, `-esptool path`: as for `gogo flash`.
 - `-board sticks3|cardputer`: skip the board question.
 - `-skip-wifi`: leave the board's Wi-Fi settings as they are.
+- `-new-layout`: flash although the board's partition table keeps NVS
+  elsewhere than the new firmware's (the old settings are then not used;
+  neither NVS area is written).
 - `-yes`: take the default answer to every question, without asking;
-  the Wi-Fi step is then skipped.
+  the Wi-Fi step is then skipped, and a board esptool cannot tell apart
+  needs `-board`.
 - `-dry-run`: run only what reads (esptool's chip check, the download,
   the Wi-Fi scan) and print the esptool commands and settings that would
   be written, without writing anything.
