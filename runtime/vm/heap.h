@@ -29,7 +29,7 @@ term heap_new_ref(Vm *vm, Actor *a);
 /* Copies everything reachable from the stack and `roots` into a new block
  * sized so that `need_words` more words fit if the limit allows (see
  * heap.c). At most two blocks of this actor exist at any time during it. */
-void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots);
+#define heap_gc(vm, a, need_words, roots, n_roots) heap_collect(vm, a, need_words, roots, n_roots, false)
 
 /* Like heap_gc, but sizes the block to exactly the live data plus
  * need_words (at least MIN_BLOCK_WORDS words), with no growth slack: for a
@@ -40,7 +40,11 @@ void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots);
  * block as it is when even that cannot fit under the limit; with 0 it
  * always resizes to the live data, which may itself exceed the limit (the
  * block never drops below what is live). */
-void heap_gc_tight(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots);
+#define heap_gc_tight(vm, a, need_words, roots, n_roots) heap_collect(vm, a, need_words, roots, n_roots, true)
+
+/* heap_gc (tight false) and heap_gc_tight (true): one entry, as they share
+ * the collect, measure and resize steps. */
+void heap_collect(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots, bool tight);
 
 /* For a non-fatal delivery (net data) refused because the receiver's
  * block, grown with slack, leaves no room under its limit: if a is waiting

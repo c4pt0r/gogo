@@ -159,36 +159,33 @@ static bool copy_into(Vm *vm, Actor *a, uint32_t new_words, term *roots, int n_r
  * garbage) copy into a block of the same size, which always holds the live
  * data, and only then, knowing the exact live size, resize if the policy
  * says so. The resize allocates after the old block is freed, so this path
- * also never holds more than two blocks. */
-void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots) {
-    (void)vm;
+ * also never holds more than two blocks. A tight collection (heap_gc_tight)
+ * always takes the same-size path and sizes the block to live + need. */
+void heap_collect(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots, bool tight) {
     uint32_t old_words = a->mem_words;
     uint32_t stack_words = old_words - a->sp;
-    uint32_t used = (uint32_t)a->hp + stack_words;
     uint32_t cap = block_cap(a);
-    uint32_t target = policy_words(old_words, used, need_words, cap);
-
-    bool grow_certain = target > old_words && stack_words + need_words > old_words &&
-                        used <= cap && need_words <= cap - used;  /* target >= used + need */
-    if (grow_certain || target < old_words) {
-        if (copy_into(vm, a, target, roots, n_roots, true)) return;
+    if (!tight) {
+        uint32_t used = (uint32_t)a->hp + stack_words;
+        uint32_t target = policy_words(old_words, used, need_words, cap);
+        bool grow_certain = target > old_words && stack_words + need_words > old_words &&
+                            used <= cap && need_words <= cap - used;  /* target >= used + need */
+        if (grow_certain || target < old_words) {
+            if (copy_into(vm, a, target, roots, n_roots, true)) return;
+        }
     }
     if (!copy_into(vm, a, old_words, roots, n_roots, true)) return;  /* no memory to collect with */
 
     uint32_t live = (uint32_t)a->hp + stack_words;
-    uint32_t new_words = policy_words(old_words, live, need_words, cap);
-    if (new_words != old_words) copy_into(vm, a, new_words, NULL, 0, false);
-}
-
-void heap_gc_tight(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots) {
-    (void)vm;
-    uint32_t old_words = a->mem_words;
-    if (!copy_into(vm, a, old_words, roots, n_roots, true)) return;  /* no memory to collect with */
-    uint32_t live = (uint32_t)a->hp + (old_words - a->sp);
-    uint32_t cap = block_cap(a);                 /* after the sweep released Bytes */
-    uint32_t want = live + need_words;           /* <= 2 * 65535, no overflow */
-    if (need_words && want > cap) return;        /* cannot fit: keep the compacted block */
-    if (want < MIN_BLOCK_WORDS && MIN_BLOCK_WORDS <= old_words) want = MIN_BLOCK_WORDS;
+    uint32_t want;
+    if (tight) {
+        cap = block_cap(a);                      /* after the sweep released Bytes */
+        want = live + need_words;                /* <= 2 * 65535, no overflow */
+        if (need_words && want > cap) return;    /* cannot fit: keep the compacted block */
+        if (want < MIN_BLOCK_WORDS && MIN_BLOCK_WORDS <= old_words) want = MIN_BLOCK_WORDS;
+    } else {
+        want = policy_words(old_words, live, need_words, cap);
+    }
     if (want != old_words) copy_into(vm, a, want, NULL, 0, false);
 }
 
