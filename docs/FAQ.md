@@ -370,7 +370,25 @@ speaker, sockets, TLS, the screen, ports a host program registers) is a
 port: an actor-like endpoint with a PID that you open, send commands to,
 and that sends typed events to its owner. Ports close automatically when
 their owner exits or crashes. [Book §7.6](book/07-ports-and-peripherals.md)
-explains how they work inside.
+explains how they work inside, and [chapter 22](book/22-extending-with-c.md)
+how to write one in C.
+
+### Can gogo call C functions (FFI)?
+No, on purpose. gogo code never calls a C function directly; the only
+bridge to C is a port. A C function called from an actor could write
+anywhere and break the isolation between actors' heaps, could not be
+preempted and would stall every other actor while it ran, and would tie
+the image to one platform's symbols, while one image runs on every board,
+on `gogovm` and inside embedding programs, and can be hot-loaded. A port
+keeps all of that: its driver is C, but gogo code reaches it only with
+`port.Open` and messages, and the image names the drivers it needs, so a
+firmware without one refuses it at load. There are two ways to add C: a
+driver compiled into the firmware (or `gogovm`), or a host port registered
+by a program that embeds `libgogo`. A driver that uses only the generic
+`port.Host` and `port.Post` types needs no change to the compiler or the
+image format. [Book chapter 22](book/22-extending-with-c.md) explains both,
+walks through a real driver, and lists what is still missing for drivers
+written outside the repository.
 
 ### Which platforms does gogo run on?
 Two different questions: where the **toolchain** runs, and where the **VM**
