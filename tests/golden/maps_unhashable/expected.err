@@ -1,0 +1,6 @@
+panic: runtime error: hash of unhashable type
+gogo: actor <pid 1> crashed: panic in maps.check
+panic: runtime error: hash of unhashable type
+gogo: actor <pid 1> crashed: panic in maps.check
+panic: runtime error: hash of unhashable type
+gogo: actor <pid 1> crashed: panic in maps.check

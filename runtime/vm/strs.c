@@ -739,7 +739,7 @@ static void cmp_key(const Vm *vm, const Actor *a, term t, CmpKey *k) {
  * Unlike println's walk it does not check for a gone module's values: a
  * module's own values never reach another module, and the errors that do
  * are of reserved types. */
-static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, int32_t *left) {
+static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, int32_t *left, bool total) {
     for (;;) {
         if (--*left < 0) return R_BAD_CODE;
         CmpKey kx, ky;
@@ -750,7 +750,10 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, in
             if (u == K_STRING || u == K_BYTES || u == K_BYTEARR) return strs_order(kx.p, kx.n, ky.p, ky.n);
 #if GOGO_FLOAT
             if (u == K_FLOAT || u == K_FLOAT + 32u) {   /* a NaN (2) equals nothing */
-                int c = float_order((const uint32_t *)(const void *)kx.p, (const uint32_t *)(const void *)ky.p);
+                const uint32_t *fx = (const uint32_t *)(const void *)kx.p, *fy = (const uint32_t *)(const void *)ky.p;
+                int c = float_order(fx, fy);
+                /* total (maps, 15.6): NaNs equal, before every other float */
+                if (c > 1 && total) return (float_order(fy, fy) > 1) - (float_order(fx, fx) > 1);
                 return c > 1 ? 1 : c;
             }
 #endif
@@ -763,7 +766,7 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, in
                 if (u == v && u) {
                     if (depth > CMP_DEPTH) return R_BAD_CODE;
                     for (uint32_t i = 0; i + 1u < u; i++) {
-                        int c = cmp_terms(vm, a, field_term(x, kx.e[i]), field_term(y, ky.e[i]), depth + 1, left);
+                        int c = cmp_terms(vm, a, field_term(x, kx.e[i]), field_term(y, ky.e[i]), depth + 1, left, total);
                         if (c) return c;
                     }
                     x = field_term(x, kx.e[u - 1u]);
@@ -776,19 +779,34 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, in
     }
 }
 
+/* A map key B_CMP cannot order (15.6): a func, a Buffer or a mutable
+ * struct (a pointer, a map: identity, which the GC moves), or with mode 2
+ * (an interface key) a slice. */
+static bool unordered(const Vm *vm, const Actor *a, term t, int32_t mode) {
+    SliceV s;
+    const uint32_t *o = obj_of(vm, a, t);
+    uint32_t k = o ? hdr_kind(o[0]) : 0u;
+    return k == K_CLOSURE || k == K_BUF || (k == K_STRUCT && (o[1] & STRUCT_MUT)) ||
+           (mode == 2 && slice_view(vm, a, t, &s));
+}
+
 uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc) {
     if (id == B_CMP) {
         term *T = (term *)a->mem + a->fp;
-        int32_t left = CMP_BUDGET;
+        int32_t left = CMP_BUDGET, mode = 0;
         SliceV s;
         /* Two arguments: interface values or structs, so a slice at the
          * top is one in an interface, which equals nothing (Go: false for
-         * slices of two types, a panic for one type). Three: arrays. */
-        int c = rc - 2u > 1u ? R_BAD_CODE
+         * slices of two types, a panic for one type). Three: arrays. Four
+         * (15.6, gogo/maps): arrays, and the total order of a mode, 1 or
+         * 2, in which a NaN equals a NaN; an unordered key is 2. */
+        if (rc == 4u && (!arg_int(vm, a, T[rb + 3], &mode) || (uint32_t)mode - 1u > 1u)) return R_BAD_CODE;
+        int c = rc - 2u > 2u ? R_BAD_CODE
               : rc == 2u && (slice_view(vm, a, T[rb], &s) || slice_view(vm, a, T[rb + 1], &s)) ? 1
-              : cmp_terms(vm, a, T[rb], T[rb + 1], 0, &left);
+              : mode && (unordered(vm, a, T[rb], mode) || unordered(vm, a, T[rb + 1], mode)) ? -2
+              : cmp_terms(vm, a, T[rb], T[rb + 1], 0, &left, mode != 0);
         if (c > 1) return (uint32_t)c;
-        T[ra] = term_from_int(c);
+        T[ra] = term_from_int(c == -2 ? 2 : c);
         return R_NORMAL;
     }
     term *R = (term *)a->mem + a->fp;

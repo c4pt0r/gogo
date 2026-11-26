@@ -332,8 +332,14 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   a map value is a reference to a header, a struct of a type of the map
   type's own, flagged `STRUCT_MUT | STRUCT_MAP`, whose one field is the
   entries, a slice of keys and values alternating, sorted by key in
-  `B_CMP`'s order (`maps.compare` is `B_CMP` with its array argument, so
-  array keys compare element by element). A lookup is a binary search;
+  `B_CMP`'s total order (`maps.compare` is `B_CMP` with its array
+  argument and a mode: array keys compare element by element, a NaN
+  equals a NaN and sorts before the other floats, and a func, a pointer,
+  a map, or for an interface key type a slice, is unordered, which the
+  library turns into Go's panic, `hash of unhashable type`). A key that
+  is not equal to itself under Go's `==` (a NaN, or a struct holding one)
+  is never found and each insert adds an entry after the equal ones, as
+  in Go; `range` steps to the first key above the last one, so it ends. A lookup is a binary search;
   an insert or a delete moves the entries after it with `B_COPY`, O(n),
   and writes the header with `SETFIELD`. The compiler lowers each
   operation to a call (`compiler/codegen_map.go`), passing keys and values

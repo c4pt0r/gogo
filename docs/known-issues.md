@@ -297,8 +297,10 @@ rebuilt:
   O(log n), but an insert or a delete moves the entries after it, O(n),
   and a large map is slower than Go's hash map (see `gogo/maps`). Keys
   may not hold pointers, maps or funcs (`map with key type ...: a pointer
-  key`); an interface key holding one is not caught, and its entry may
-  not be found again after a garbage collection moves it. A map sent to
+  key`); an interface key holding a pointer ends the actor with a panic
+  (`hash of unhashable type`, as Go does for a slice, a map or a func: Go
+  accepts the pointer). NaN keys behave as in Go (each insert adds an
+  entry, a lookup never finds one); they range first. A map sent to
   another actor is copied with its entries (Go would share it). A nil map
   reads as empty and a write to it ends the actor with `actor.Nil`, not a
   `panic`. A nil map or a nil pointer in an interface is the nil

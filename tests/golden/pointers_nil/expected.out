@@ -5,4 +5,4 @@ true main.main.func3
 true main.main.func4
 true main.main.func5
 0 0
-true maps.find
+true maps.set

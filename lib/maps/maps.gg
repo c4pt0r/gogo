@@ -22,50 +22,81 @@ type Map struct {
 	e []any
 }
 
-// compare is B_CMP with its array argument: the order of a and b, -1, 0
-// or 1; two arrays compare element by element.
+// The compiler passes each operation the mode of its map type first: 2
+// if the key type is an interface, else 1.
+
+// compare is B_CMP with its array argument and a mode, 1 or 2 (2: the
+// map's key type is an interface): the total order of a and b, -1, 0 or
+// 1, in which two arrays compare element by element and a NaN equals a
+// NaN and sorts before the other floats; 2 if either is a key it cannot
+// order (a func, a pointer, a map, or with mode 2 a slice).
 //
 //gogo:builtin
-func compare(a, b, arrays any) int { panic("gogo only") }
+func compare(a, b, arrays any, mode int) int { panic("gogo only") }
 
-// find returns the index of key k's entry in m (counted in entries, not
-// in slice elements) and true, or the index where it would go and false.
-// m is not nil.
-func find(m *Map, k any) (int, bool) {
+// equal is B_CMP with its array argument and no mode: Go's ==, where a
+// NaN equals nothing and two arrays compare element by element.
+//
+//gogo:builtin
+func equal(a, b, arrays any) int { panic("gogo only") }
+
+// check ends the actor with a panic, as Go does, if k cannot be a key
+// (gogo cannot order a pointer either). It reports whether k never
+// equals itself (a NaN, or a struct or array holding one): such a key is
+// never found, and each one is a new entry, as in Go.
+func check(k any, mode int) bool {
+	if compare(k, k, nil, mode) > 1 {
+		panic("runtime error: hash of unhashable type")
+	}
+	return equal(k, k, nil) != 0
+}
+
+// find returns the index of the first entry of m (counted in entries, not
+// in slice elements) whose key is at or above k, and whether it is k. m
+// is not nil.
+func find(m *Map, k any, mode int) (int, bool) {
 	lo, hi := 0, len(m.e)/2
 	for lo < hi {
 		mid := (lo + hi) / 2
-		c := compare(m.e[2*mid], k, nil)
-		if c == 0 {
-			return mid, true
-		}
-		if c < 0 {
+		if compare(m.e[2*mid], k, nil, mode) < 0 {
 			lo = mid + 1
 		} else {
 			hi = mid
 		}
 	}
-	return lo, false
+	return lo, lo < len(m.e)/2 && compare(m.e[2*lo], k, nil, mode) == 0
+}
+
+// after returns the index of the first entry of m whose key is above k.
+func after(m *Map, k any, mode int) int {
+	i, _ := find(m, k, mode)
+	for i < len(m.e)/2 && compare(m.e[2*i], k, nil, mode) == 0 {
+		i++
+	}
+	return i
 }
 
 // get is m[k]: the value and true, or nil and false (the compiler gives
 // the zero value instead). A nil map has no entries.
-func get(m *Map, k any) (any, bool) {
-	if m == nil {
+func get(mode int, m *Map, k any) (any, bool) {
+	if check(k, mode) || m == nil {
 		return nil, false
 	}
-	i, ok := find(m, k)
+	i, ok := find(m, k, mode)
 	if !ok {
 		return nil, false
 	}
 	return m.e[2*i+1], true
 }
 
-// set is m[k] = v. A nil map ends the actor with reason actor.Nil (the
-// first read of its header).
-func set(m *Map, k, v any) {
-	i, ok := find(m, k)
-	if ok {
+// set is m[k] = v. A nil map ends the actor with reason actor.Nil.
+func set(mode int, m *Map, k, v any) {
+	nan := check(k, mode)
+	_ = m.e // a nil map: actor.Nil, here
+	i, ok := find(m, k, mode)
+	if nan {
+		i = after(m, k, mode) // a new entry after the equal ones
+	} else if ok {
 		m.e[2*i+1] = v
 		return
 	}
@@ -76,11 +107,11 @@ func set(m *Map, k, v any) {
 }
 
 // del is delete(m, k).
-func del(m *Map, k any) {
-	if m == nil {
+func del(mode int, m *Map, k any) {
+	if check(k, mode) || m == nil {
 		return
 	}
-	i, ok := find(m, k)
+	i, ok := find(m, k, mode)
 	if !ok {
 		return
 	}
@@ -109,21 +140,17 @@ func clearAll(m *Map) {
 // next steps a range over m: given the entry index i where the previous
 // step left (0 to start) and the key it gave, it returns the index after
 // the next entry, that entry's key and value, or -1 when there are no
-// more. The next entry is the first whose key is above prev, so the loop
-// body may insert and delete: a deleted entry not yet reached is not
-// produced, and an inserted one is if its key comes later, as Go allows.
-func next(m *Map, i int, prev any) (int, any, any) {
+// more. If the entry before i no longer has key prev (the body inserted
+// or deleted), the next entry is the first whose key is above prev, so a
+// deleted entry not yet reached is not produced, and an inserted one is if
+// its key comes later, as Go allows; keys only grow, so the range ends.
+func next(mode int, m *Map, i int, prev any) (int, any, any) {
 	if m == nil {
 		return -1, nil, nil
 	}
 	n := len(m.e) / 2
-	if i > 0 && (i > n || compare(m.e[2*i-2], prev, nil) != 0) {
-		// the entries moved: find the first key above prev
-		j, ok := find(m, prev)
-		if ok {
-			j++
-		}
-		i = j
+	if i > 0 && (i > n || compare(m.e[2*i-2], prev, nil, mode) != 0) {
+		i = after(m, prev, mode)
 	}
 	if i >= n {
 		return -1, nil, nil

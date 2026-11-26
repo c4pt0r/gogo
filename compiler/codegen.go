@@ -1066,9 +1066,13 @@ func (f *fn) assign(s *ast.AssignStmt) {
 			continue
 		}
 		if ix, ok := ast.Unparen(l).(*ast.IndexExpr); ok {
+			mt := mapOf(f.g.p.Info.TypeOf(ix.X))
+			if mt != nil { // m[k]: [mode, m, k, v], set's arguments
+				f.mapModeInto(l, mt)
+			}
 			blk := f.allocN(l, 3)
 			f.exprInto(ix.X, blk)
-			if mt := mapOf(f.g.p.Info.TypeOf(ix.X)); mt != nil { // m[k]: set's arguments
+			if mt != nil {
 				f.mapKeyInto(ix.Index, mt, blk+1)
 			} else {
 				f.exprInto(ix.Index, blk+1)
@@ -1106,7 +1110,7 @@ func (f *fn) assign(s *ast.AssignStmt) {
 				f.asm.Emit(OpMove, blk+2, r, 0)
 			}
 			if isMap(f.g.p.Info.TypeOf(ast.Unparen(s.Lhs[i]).(*ast.IndexExpr).X)) {
-				f.mapCall(s, "set", blk, blk, 3)
+				f.mapCall(s, "set", blk, blk-1, 4)
 				break
 			}
 			f.asm.EmitExt(OpBuiltin, blk, blk, 3, BSetindex)

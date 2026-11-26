@@ -115,7 +115,7 @@ func TestGoldenMatchesGo(t *testing.T) {
 
 // goImports maps the gogo packages that a gocompare golden may import to
 // the Go packages they mirror.
-var goImports = map[string]string{"gogo/errors": "errors", "gogo/fmt": "fmt", "gogo/strconv": "strconv", "gogo/strings": "strings"}
+var goImports = map[string]string{"gogo/errors": "errors", "gogo/fmt": "fmt", "gogo/strconv": "strconv", "gogo/strings": "strings", "gogo/math": "math"}
 
 // unsupportedMarks are the golden files TestGolden acts on that a Go run
 // cannot reproduce.

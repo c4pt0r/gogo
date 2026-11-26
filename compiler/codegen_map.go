@@ -79,6 +79,24 @@ func (f *fn) mapKeyInto(e ast.Expr, mt *types.Map, dst uint8) {
 	}
 }
 
+// mapMode is the mode gogo/maps' operations take for map type mt: 2 if
+// its key type is an interface (a slice key is then unhashable), else 1.
+func mapMode(mt *types.Map) int32 {
+	if isIface(mt.Key()) {
+		return 2
+	}
+	return 1
+}
+
+// mapModeInto allocates a register for mt's mode and loads it: the first
+// argument of get, set, del and next, so the caller allocates the others
+// right after it.
+func (f *fn) mapModeInto(n ast.Node, mt *types.Map) uint8 {
+	r := f.allocScalar(n)
+	f.asm.EmitExt(OpLoadk, r, 0, 0, TermInt(mapMode(mt)))
+	return r
+}
+
 // mapCall emits a call of gogo/maps' function name with the arguments in
 // args.. (consecutive registers), its results into dst...
 func (f *fn) mapCall(n ast.Node, name string, dst, args, nargs uint8) {
@@ -90,10 +108,11 @@ func (f *fn) mapCall(n ast.Node, name string, dst, args, nargs uint8) {
 func (f *fn) mapGetInto(ix *ast.IndexExpr, base uint8) {
 	mt := mapOf(f.g.p.Info.TypeOf(ix.X))
 	mark := f.next
+	mode := f.mapModeInto(ix, mt)
 	args := f.allocN(ix, 2)
 	f.exprInto(ix.X, args)
 	f.mapKeyInto(ix.Index, mt, args+1)
-	f.mapCall(ix, "get", base, args, 2)
+	f.mapCall(ix, "get", base, mode, 3)
 	f.next = mark
 	okL, endL := f.asm.NewLabel(), f.asm.NewLabel()
 	f.jump(OpJmpt, base+1, okL)
@@ -121,7 +140,8 @@ func (f *fn) mapIndexInto(ix *ast.IndexExpr, dst uint8) {
 func (f *fn) mapOpAssign(ix *ast.IndexExpr, op uint8, rhs ast.Expr) {
 	mt := mapOf(f.g.p.Info.TypeOf(ix.X))
 	mark := f.next
-	blk := f.allocN(ix, 3) // [m, k, v]: set's arguments
+	mode := f.mapModeInto(ix, mt)
+	blk := f.allocN(ix, 3) // [mode, m, k, v]: set's arguments
 	f.exprInto(ix.X, blk)
 	f.mapKeyInto(ix.Index, mt, blk+1)
 	pre := -1
@@ -129,14 +149,14 @@ func (f *fn) mapOpAssign(ix *ast.IndexExpr, op uint8, rhs ast.Expr) {
 		pre = int(f.rhsOperand(op, rhs))
 	}
 	res := f.allocN(ix, 2)
-	f.mapCall(ix, "get", res, blk, 2)
+	f.mapCall(ix, "get", res, mode, 3)
 	okL := f.asm.NewLabel()
 	f.jump(OpJmpt, res+1, okL)
 	f.zeroInto(ix, mt.Elem(), res)
 	f.bind(okL)
 	f.asm.Emit(OpMove, blk+2, res, 0)
 	f.opInto(ix, op, blk+2, rhs, pre)
-	f.mapCall(ix, "set", res, blk, 3)
+	f.mapCall(ix, "set", res, mode, 4)
 	f.next = mark
 }
 
@@ -158,14 +178,15 @@ func (f *fn) makeMapInto(call *ast.CallExpr, mt *types.Map, dst uint8) {
 func (f *fn) mapLitInto(e *ast.CompositeLit, dst uint8) {
 	mt := mapOf(f.g.p.Info.TypeOf(e))
 	mark := f.next
-	blk := f.allocN(e, 4) // [m, k, v, result]
+	mode := f.mapModeInto(e, mt)
+	blk := f.allocN(e, 4) // [mode, m, k, v, result]
 	f.asm.EmitExt(OpLoadk, blk, 0, 0, TermNilSlice)
 	f.asm.EmitExt(OpNewstruct, blk, blk, 1, f.g.mapIndex(mt))
 	for _, el := range e.Elts {
 		kv := el.(*ast.KeyValueExpr)
 		f.mapKeyInto(kv.Key, mt, blk+1)
 		f.valueInto(kv.Value, mt.Elem(), blk+2)
-		f.mapCall(e, "set", blk+3, blk, 3)
+		f.mapCall(e, "set", blk+3, mode, 4)
 	}
 	f.asm.Emit(OpMove, dst, blk, 0)
 	f.next = mark
@@ -190,10 +211,11 @@ func (f *fn) mapBuiltin(call *ast.CallExpr, name string, dst uint8) bool {
 		}
 		f.mapCall(call, fn, dst, r, 1)
 	case "delete":
+		mode := f.mapModeInto(call, mt)
 		r := f.allocN(call, 2)
 		f.exprInto(call.Args[0], r)
 		f.mapKeyInto(call.Args[1], mt, r+1)
-		f.mapCall(call, "del", dst, r, 2)
+		f.mapCall(call, "del", dst, mode, 3)
 	default:
 		return false
 	}
@@ -208,7 +230,8 @@ func (f *fn) rangeMap(s *ast.RangeStmt) {
 	label := f.takeLabel()
 	scope := f.next
 	mt := mapOf(f.g.p.Info.TypeOf(s.X))
-	st := f.allocN(s, 3) // [m, i, prev]: next's arguments
+	mode := f.mapModeInto(s, mt)
+	st := f.allocN(s, 3) // [mode, m, i, prev]: next's arguments
 	f.exprInto(s.X, st)
 	f.asm.EmitExt(OpLoadk, st+1, 0, 0, TermInt(0))
 	f.asm.EmitExt(OpLoadk, st+2, 0, 0, TermNil)
@@ -238,7 +261,7 @@ func (f *fn) rangeMap(s *ast.RangeStmt) {
 	f.bind(topL)
 	mark := f.next
 	res := f.allocN(s, 3) // [i, k, v]
-	f.mapCall(s, "next", res, st, 3)
+	f.mapCall(s, "next", res, mode, 4)
 	zero := f.allocScalar(s)
 	f.asm.EmitExt(OpLoadk, zero, 0, 0, TermInt(0))
 	f.asm.Emit(OpLt, zero, res, zero)
