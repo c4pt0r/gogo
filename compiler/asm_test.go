@@ -507,6 +507,36 @@ func TestReservedTypeCount(t *testing.T) {
 	}
 }
 
+// TestReservedFieldsMatchC: the VM's field counts of the reserved types
+// (TYPE_NFIELDS in runtime/vm/opcodes.h, which image_load checks every
+// reserved row against) match reservedTypes.
+func TestReservedFieldsMatchC(t *testing.T) {
+	src, err := os.ReadFile("../runtime/vm/opcodes.h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c []int
+	for _, m := range regexp.MustCompile(`TYPE_NF2\((\d+), (\d+)\),`).FindAllStringSubmatch(string(src), -1) {
+		a, _ := strconv.Atoi(m[1])
+		b, _ := strconv.Atoi(m[2])
+		c = append(c, a, b)
+	}
+	if len(c) != (len(reservedTypes)+1)/2*2 {
+		t.Fatalf("TYPE_NFIELDS has %d entries, reservedTypes %d", len(c), len(reservedTypes))
+	}
+	for i, rt := range reservedTypes {
+		if c[i] != len(rt.fields) {
+			t.Errorf("reserved type %d (%s): TYPE_NFIELDS %d, reservedTypes %d", i, rt.name, c[i], len(rt.fields))
+		}
+		if len(rt.fields) > 15 {
+			t.Errorf("reserved type %d (%s): %d fields, TYPE_NFIELDS packs at most 15", i, rt.name, len(rt.fields))
+		}
+	}
+	if len(reservedTypes)%2 == 1 && c[len(c)-1] != 0 {
+		t.Errorf("TYPE_NFIELDS pad entry %d, want 0", c[len(c)-1])
+	}
+}
+
 // TestImageConstAreaLimit: a const ref carries a 17-bit word offset (the
 // top bits of the runtime term are the module tag, runtime/vm/term.h), so a const
 // area past 1<<17 words is a compile error, not an image the VM rejects.

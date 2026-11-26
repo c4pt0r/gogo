@@ -18,7 +18,7 @@
  * ir; v11 audio; v12 gogo/sys builtins; v13 net.DialTLS; v14 port.Host,
  * port.Post.
  *   v15.0 own types from TYPE_OWN_BASE (128) with the reserved count in
- *       header word 7; major.minor versions.
+ *       header word 7; major.minor versions; append-only reserved fields.
  *
  * Types: an image's type table holds n_reserved reserved rows (header
  * word 7; at most TYPE_RESERVED_COUNT, else IMG_ERR_VERSION: the image
@@ -26,7 +26,10 @@
  * names a reserved type by its fixed index (TYPE_* in opcodes.h) and an
  * own type by TYPE_OWN_BASE + its position after the reserved rows; row
  * image_type_row(). The compiler emits only the reserved rows up to the
- * highest one the program uses.
+ * highest one the program uses. Reserved types only grow, at the end: a
+ * row may declare at most the fields this VM knows for it (TYPE_NFIELDS,
+ * else IMG_ERR_VERSION), appended fields are ints with 0 as the default,
+ * and GETFIELD past the end of an older image's reserved struct reads 0.
  *
  * Layout (little-endian words): header (8: magic, version, n_funcs,
  * n_types, consts_words, code_words, entry, n_reserved), funcs (3 words

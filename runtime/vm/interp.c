@@ -856,9 +856,11 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_GETFIELD: {
             REG(ra); REG(rb);
             const uint32_t *obj = obj_of(vm, a, R[rb]);
-            CHECK(obj && hdr_kind(obj[0]) == K_STRUCT && 2u + rc < hdr_words(obj[0]) &&
+            /* Past the end only of a reserved struct from an older image:
+             * the fields appended since are ints, 0 the default (opcodes.h). */
+            CHECK(obj && hdr_kind(obj[0]) == K_STRUCT && (2u + rc < hdr_words(obj[0]) || obj[1] < TYPE_OWN_BASE) &&
                   type_live(vm, tag, struct_type(R[rb], obj)));
-            R[ra] = field_term(R[rb], obj[2 + rc]);
+            R[ra] = 2u + rc < hdr_words(obj[0]) ? field_term(R[rb], obj[2 + rc]) : term_from_int(0);
             break;
         }
 

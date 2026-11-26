@@ -103,6 +103,26 @@ TEST(image_n_reserved) {
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_BOUNDS);
 }
 
+/* A reserved row may declare up to the fields this VM knows for that
+ * type (fields are only appended): fewer loads, more is a newer VM's. */
+TEST(image_reserved_fields) {
+    /* the image_type_nfields layout: one type row, here reserved type 0
+     * (ProcInfo, 1 field: Memory) */
+    Image img;
+    uint32_t v[20];
+    for (uint32_t nf = 0; nf <= 2; nf++) {
+        memset(v, 0, sizeof v);
+        v[0] = IMAGE_MAGIC; v[1] = IMAGE_VERSION; v[2] = 1; v[3] = 1; v[4] = 3; v[5] = 1; v[7] = 1;
+        v[11] = nf; v[12] = 0;
+        v[13] = hdr_make(3, K_STRING); v[14] = 4; memcpy(&v[15], "main", 4);
+        v[16] = OP_NOP;
+        v[17] = 1u;
+        CHECK_EQ(image_load(&img, v, 20), nf <= 1 ? IMG_OK : IMG_ERR_VERSION);
+    }
+    v[7] = 0;                                    /* the same row as an own type: any count */
+    CHECK_EQ(image_load(&img, v, 20), IMG_OK);
+}
+
 /* Own types are named from TYPE_OWN_BASE whatever the reserved count. */
 TEST(image_type_rows) {
     Image img;

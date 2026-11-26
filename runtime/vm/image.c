@@ -70,6 +70,9 @@ static int consts_ok(const Image *img) {
     return 1;
 }
 
+/* Field counts of the reserved types (opcodes.h), two per byte. */
+static const uint8_t vm_nfields[(TYPE_RESERVED_COUNT + 1u) / 2u] = TYPE_NFIELDS;
+
 int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     if (n_words < IMAGE_HEADER_WORDS) return IMG_ERR_TRUNCATED;
     if (w[0] != IMAGE_MAGIC) return IMG_ERR_MAGIC;
@@ -110,6 +113,9 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     }
     for (uint32_t i = 0; i < img->n_types; i++) {
         if (!string_ok(img, img->types[(size_t)i * 2u + 1u])) return IMG_ERR_BOUNDS;
+        /* A reserved row with more fields than this VM knows: built for a newer VM. */
+        if (i < img->n_reserved && img->types[(size_t)i * 2u] > ((vm_nfields[i >> 1] >> ((i & 1u) * 4u)) & 15u))
+            return IMG_ERR_VERSION;
     }
     if (!consts_ok(img)) return IMG_ERR_BOUNDS;
     for (uint32_t i = 0; i < img->n_exports; i++) {

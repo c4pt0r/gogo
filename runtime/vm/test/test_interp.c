@@ -873,3 +873,53 @@ TEST(bitops_int64) {
     CHECK(strstr(run_bit(OP_XOR64, (BOp){0, BSTR}, I(1), &t, &v), "crashed: badcode") != NULL);
     CHECK(strstr(run_bit(OP_SHR64, I(1), (BOp){0, BSTR}, &t, &v), "crashed: badcode") != NULL);
 }
+
+/* Append-only reserved fields. An image whose reserved rows declare
+ * fewer fields than this VM knows (here every row 0 .. TYPE_OPTIONS has
+ * none) loads, and GETFIELD past the end of such a struct reads int 0;
+ * past the end of an own struct it is badcode. Code (main, 5 regs):
+ *   NEWSTRUCT r0, ty, 0; GETFIELD r1, r0, 0; LOADK r2, 0; EQ r3, r1, r2
+ *   JMPT r3, @10; DIV r4, r2, r2 (divzero unless r1 == 0); RET r0; RET r0 */
+#define AF_TYPES (TYPE_OPTIONS + 2u)                 /* rows 0 .. Options, one own type */
+#define AF_WORDS (8u + 3u + AF_TYPES * 2u + 3u + 11u + 1u + 2u)
+static void build_appended(uint32_t *w, uint32_t ty) {
+    memset(w, 0, AF_WORDS * sizeof(uint32_t));
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = AF_TYPES;
+    w[4] = 3; w[5] = 11; w[6] = 0; w[7] = AF_TYPES - 1u;
+    w[8] = 0; w[9] = 5u << 16; w[10] = 0;            /* main, 5 regs */
+    /* every type row: 0 fields, named "main" (const 0) */
+    uint32_t *c = w + 11 + AF_TYPES * 2u;
+    c[0] = hdr_make(3, K_STRING); c[1] = 4; memcpy(&c[2], "main", 4);
+    uint32_t *k = c + 3;
+    k[0] = OP_MAKE(OP_NEWSTRUCT, 0, 0, 0); k[1] = ty;
+    k[2] = OP_MAKE(OP_GETFIELD, 1, 0, 0);
+    k[3] = OP_MAKE(OP_LOADK, 2, 0, 0); k[4] = term_from_int(0);
+    k[5] = OP_MAKE(OP_EQ, 3, 1, 2);
+    k[6] = OP_MAKE(OP_JMPT, 3, 0, 0); k[7] = 10;
+    k[8] = OP_MAKE(OP_DIV, 4, 2, 2);
+    k[9] = OP_MAKE(OP_RET, 0, 0, 0);
+    k[10] = OP_MAKE(OP_RET, 0, 0, 0);
+}
+
+static const char *run_appended(uint32_t ty) {
+    uint32_t w[AF_WORDS]; Image img; Vm vm;
+    va_reset(&vm);
+    build_appended(w, ty);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
+    Actor *r = actor_new(&vm, 64);
+    CHECK(r != NULL);
+    CHECK(heap_push_frame(&vm, r, 5, -1));
+    r->pc = img.code;
+    err_len = 0; err_buf[0] = 0;
+    platform_unix_err_hook = capture_err;
+    CHECK_EQ(interp_run(&vm, r), RUN_EXIT);
+    platform_unix_err_hook = NULL;
+    CHECK_EQ(vm.live, 0);
+    return err_buf;
+}
+
+TEST(getfield_past_reserved_fields_reads_zero) {
+    CHECK_EQ(run_appended(TYPE_OPTIONS)[0], 0);                               /* no crash: read 0 */
+    CHECK(strstr(run_appended(TYPE_OWN_BASE), "crashed: badcode") != NULL);   /* own type: no default */
+}

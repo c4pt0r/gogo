@@ -231,6 +231,40 @@ enum Builtin {
  * reserved type (compiler: len(reservedTypes)); a new one is an image
  * format minor (image.h). */
 #define TYPE_RESERVED_COUNT 47u
+/* Field counts of the reserved types this VM knows, in index order, two
+ * per byte (TYPE_NF2(even, odd)). An image's reserved row may declare at
+ * most this many (image_load): fields are only ever appended, of type
+ * int, 0 meaning the default, so a struct of an older image has a prefix
+ * of the fields, and GETFIELD past its end reads int 0. A new reserved
+ * type or an appended field is an image format minor (image.h).
+ * TestReservedFieldsMatchC checks this table against compiler.reservedTypes. */
+#define TYPE_NF2(a, b) ((uint8_t)((a) | (b) << 4))
+#define TYPE_NFIELDS { \
+    TYPE_NF2(1, 2), /* 0 ProcInfo, Reason */ \
+    TYPE_NF2(2, 3), /* 2 ExitMsg, DownMsg */ \
+    TYPE_NF2(3, 1), /* 4 Request, Options */ \
+    TYPE_NF2(4, 1), /* 6 port.GPIO, port.Write */ \
+    TYPE_NF2(2, 0), /* 8 port.Edge, net.IfConfig */ \
+    TYPE_NF2(4, 3), /* 10 net.SetAddr, net.Up */ \
+    TYPE_NF2(0, 2), /* 12 net.Down, net.Addr */ \
+    TYPE_NF2(1, 2), /* 14 net.UDP, net.SendTo */ \
+    TYPE_NF2(2, 3), /* 16 net.Datagram, net.Dial */ \
+    TYPE_NF2(1, 1), /* 18 net.Listen, net.Write */ \
+    TYPE_NF2(0, 0), /* 20 net.Shutdown, net.Resume */ \
+    TYPE_NF2(0, 1), /* 22 net.Connected, net.Data */ \
+    TYPE_NF2(0, 1), /* 24 net.Written, net.Closed */ \
+    TYPE_NF2(1, 2), /* 26 net.Accepted, fs.Info */ \
+    TYPE_NF2(2, 2), /* 28 fs.Space, kbd.Config */ \
+    TYPE_NF2(4, 1), /* 30 kbd.Key, power.Config */ \
+    TYPE_NF2(4, 0), /* 32 power.Battery, power.Read */ \
+    TYPE_NF2(2, 4), /* 34 code.Module, port.Chunk */ \
+    TYPE_NF2(1, 1), /* 36 port.Out, port.Done */ \
+    TYPE_NF2(3, 2), /* 38 imu.Config, imu.Gesture */ \
+    TYPE_NF2(2, 1), /* 40 ir.TX, ir.RX */ \
+    TYPE_NF2(3, 2), /* 42 audio.Mic, audio.Speaker */ \
+    TYPE_NF2(4, 2), /* 44 net.DialTLS, port.Host */ \
+    TYPE_NF2(2, 0), /* 46 port.Post */ \
+}
 /* The first own type: an image names its own struct types from here up
  * (image.h), whatever reserved types it or the VM knows, and a struct of
  * an own type carries its module tag in its type word (term.h). Fixed
