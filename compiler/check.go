@@ -2025,6 +2025,16 @@ func holdsUnsigned(t types.Type, seen map[types.Type]bool) bool {
 		if k := intKindOf(u.Elem()); k.unsigned && k.bits >= 32 || holdsUnsigned(u.Elem(), seen) {
 			return true
 		}
+	case *types.Pointer: // println prints the target (15.6)
+		if k := intKindOf(u.Elem()); k.unsigned && k.bits >= 32 || holdsUnsigned(u.Elem(), seen) {
+			return true
+		}
+	case *types.Map:
+		for _, x := range []types.Type{u.Key(), u.Elem()} {
+			if k := intKindOf(x); k.unsigned && k.bits >= 32 || holdsUnsigned(x, seen) {
+				return true
+			}
+		}
 	}
 	return false
 }
