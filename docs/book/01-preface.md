@@ -72,9 +72,10 @@ device down.**
 
 - **Existing Go code.** gogo compiles a *subset* of Go, and the subset is
   strict: no maps, no pointers (methods take value receivers only), no
-  interfaces of your own, no floats, no `switch` on values, no
-  package-level variables, no channels or goroutines. Most Go libraries will not compile. Chapter 3 lists exactly
-  what is in and what is out.
+  interfaces of your own, no floats, no `switch` on an `any` or a struct
+  value, no package-level variables, no channels or goroutines. Most Go
+  libraries will not compile. Chapter 3 lists exactly what is in and
+  what is out.
 - **Number crunching.** There is no floating point, and the VM is an
   interpreter.
 - **Hard real-time work.** The scheduler is preemptive but not real-time,
