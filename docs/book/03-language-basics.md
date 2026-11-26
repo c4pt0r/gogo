@@ -2317,7 +2317,6 @@ The full list, with what to do instead:
 | channels, `select`, `<-` | `channel not supported`, `operator <- not supported` | messages: `actor.Send`, `actor.Receive` |
 | `defer` in a loop | `defer inside a loop not supported: deferred calls are static (move the loop body into a function)` | a function per iteration |
 | `recover()` | `recover (a panic ends the actor: let its supervisor restart it) not supported` | let the actor exit; a supervisor restarts it (chapter 5); ports and files close automatically |
-| `error` | `error not supported` | `bool` or an `int` code type |
 | writing a package-level `var` | `package-level variable counter is read-only` | state in an actor |
 | a map with pointer keys | `map with key type *T: a pointer key (no pointer keys: pointers move) not supported` | a key the pointer's target identifies |
 | a pointer into a slice element or a field, `&s[i]`, `&v.F` | `interior pointer &s[i] not supported` | a `[]*T` or a `*T` field, or `s[i].F = v` |
