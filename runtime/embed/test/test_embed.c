@@ -905,13 +905,17 @@ TEST(embed_hostport_handoff) {
     tctx_done(&t);
 }
 
-/* Registration: duplicates, the limit, after the load, and from a hook
- * (open's re-entry attempts). The embed board has no drivers, so no name
- * is a board driver's here (test_hostport.c gives a VM a board that has). */
+/* Registration: the runtime's driver names, duplicates, the limit, after
+ * the load, and from a hook (open's re-entry attempts). The embed board
+ * has no drivers (test_hostport.c gives a VM a board that has). */
 TEST(embed_hostport_register) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
     gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    CHECK_EQ(gogo_register_port(vm, "gpio", &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "tcp", &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "screen", &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "file", &hdrv, &h), GOGO_EEXIST);
     CHECK_EQ(gogo_register_port(vm, NULL, &hdrv, &h), GOGO_EINVAL);
     CHECK_EQ(gogo_register_port(vm, "", &hdrv, &h), GOGO_EINVAL);
     CHECK_EQ(gogo_register_port(vm, "x", NULL, &h), GOGO_EINVAL);

@@ -300,8 +300,8 @@ typedef struct gogo_port_driver {
 /* Registers a host port driver as name (NUL-terminated; both are copied),
  * its callbacks getting ctx. Before gogo_load (a registered port
  * satisfies an image's requirement of its name). 0, or GOGO_EEXIST (a
- * port of this name exists, or it names one of the board's drivers; the
- * library's own board has none), GOGO_EFULL (GOGO_MAX_HOST_PORTS already), GOGO_E2BIG (the name),
+ * port of this name exists, or it names one of the runtime's drivers,
+ * "gpio", "tcp", "screen", ..., or one of the board's), GOGO_EFULL (GOGO_MAX_HOST_PORTS already), GOGO_E2BIG (the name),
  * GOGO_EINVAL (no name or driver), GOGO_ESTATE (an image is loaded),
  * GOGO_EBUSY. A port registered under a name the config's grant leaves
  * out is accepted but never visible to the program. */

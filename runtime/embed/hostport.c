@@ -98,10 +98,17 @@ void embed_ports_install(gogo_vm *g) {
     port_set_drivers(&g->vm, g->port_list);
 }
 
-/* A host port may not take the name of one of the board's drivers (granted
- * or not), so a program that opens one never gets the host's port instead;
- * nor that of another host port. */
+/* The runtime's own driver names (port_names.h), reserved on every board:
+ * an image that requires one is refused at load where the board lacks it,
+ * rather than loading against a host port whose cfg it cannot use. */
+static const char *const reserved_names[] = { PORT_RESERVED_NAMES, NULL };
+
+/* A host port may not take a reserved name, the name of one of the
+ * board's drivers (granted or not), so a program that opens one never gets
+ * the host's port instead, or that of another host port. */
 static bool name_taken(const gogo_vm *g, const char *name) {
+    for (const char *const *r = reserved_names; *r; r++)
+        if (!strcmp(*r, name)) return true;
     for (const PortDriver *const *b = g->vm.board->ports; b && *b; b++)
         if (!strcmp((*b)->name, name)) return true;
     for (uint32_t k = 0; k < g->n_host_ports; k++)

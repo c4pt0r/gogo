@@ -49,6 +49,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "term.h"
+#include "port_names.h"
 
 struct Vm;
 struct Actor;

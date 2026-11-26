@@ -674,5 +674,5 @@ static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
 }
 
 const PortDriver net_tls_driver = {
-    "tls", TYPE_NET_DIALTLS, TYPE_CHUNK, NULL, NULL, t_close, tcp_port_can_event, NULL, t_command, t_open
+    PORT_NAME_TLS, TYPE_NET_DIALTLS, TYPE_CHUNK, NULL, NULL, t_close, tcp_port_can_event, NULL, t_command, t_open
 };
