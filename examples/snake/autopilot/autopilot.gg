@@ -1,0 +1,226 @@
+// Package autopilot plays snake: Run is an actor that answers every
+// board.View with a board.Move. It keeps no state between Views, so
+// restarting it loses nothing.
+package autopilot
+
+import (
+	"snake/board"
+
+	"gogo/actor"
+)
+
+// Stop asks Run to return.
+type Stop struct{}
+
+// Run is the autopilot actor: it answers every View with a Move until it
+// gets a Stop.
+func Run() {
+	for {
+		switch v := actor.Receive().(type) {
+		case board.View:
+			d, _ := Choose(v)
+			actor.Send(v.Game, board.Move{Seq: v.Seq, Dir: d})
+		case Stop:
+			return
+		}
+	}
+}
+
+// The autopilot searches a copy of the field with a wall around it: cell
+// x, y is (y+1)*stride + x+1 with stride = w+2, so a cell's neighbours are
+// c+offs[d] for the four directions, with no bounds checks.
+//
+// The searches know that the snake moves. Body cell i (0 is the tail) is
+// left behind after i+1 steps, so a path may enter it from step i+1 on. A
+// search that saw the body as a fixed wall would miss every way out of a
+// knot the snake has tied itself into, and the snake would follow its
+// tail round the knot forever.
+
+// Why Choose chose a move.
+const (
+	ToFood   = 0 // the food path, safe
+	Starving = 1 // the food path, unsafe, but the snake ran out of patience
+	ToTail   = 2 // a move that keeps the tail in reach
+	ToRoom   = 3 // the move with the most room (or none is safe)
+)
+
+// Choose picks the next direction for the snake in v, and says why:
+//
+//  1. the shortest path to the food, if after eating the snake can still
+//     reach its tail or has room for its length (so it does not shut
+//     itself in);
+//  2. otherwise a move that keeps its tail in reach, which keeps a way out;
+//  3. otherwise the move into the largest free area.
+//
+// As a last guard against going round in circles, once the snake has gone
+// hungry for more than v.Patience steps (the game uses twice the number of
+// cells) it takes the food path even if it is unsafe: the worst case is a
+// game over.
+//
+// Choose is written for clarity, not thrift: every search makes fresh
+// slices, about 20 a call and some 30 KB of garbage for a long snake on
+// the 40 x 10 field. The actor's collector takes it back after each View,
+// so the autopilot runs with a 64 KB memory limit (see startPilot).
+func Choose(v board.View) (int, int) {
+	stride := v.W + 2
+	offs := []int{-stride, 1, stride, -1} // by direction: up, right, down, left
+	body := make([]int, len(v.Body))
+	for i, c := range v.Body {
+		body[i] = (c/v.W+1)*stride + c%v.W + 1
+	}
+	head := body[len(body)-1]
+	food := (v.Food/v.W+1)*stride + v.Food%v.W + 1
+	free := freeAt(stride, v.H, body)
+	prev, _ := search(free, offs, head, food, len(free))
+	if prev[food] != 0 {
+		path := pathTo(prev, head, food)
+		if safeAfter(stride, v.H, offs, body, path) {
+			return dirTo(offs, head, path[0]), ToFood
+		}
+		if v.Hungry > v.Patience {
+			return dirTo(offs, head, path[0]), Starving
+		}
+	}
+	if d := chaseTail(stride, v.H, offs, body, food); d >= 0 {
+		return d, ToTail
+	}
+	return roomiest(v.Dir, free, offs, head, len(body)), ToRoom
+}
+
+// chaseTail is the move after which the snake can still reach its tail,
+// by the longest of the shortest paths (-1 if there is none). Taking the
+// long way round stretches the snake out, which opens it up for the food
+// later; always taking the short way would make it circle in a knot.
+func chaseTail(stride, h int, offs, body []int, food int) int {
+	head := body[len(body)-1]
+	free := freeAt(stride, h, body)
+	best, far := -1, -1
+	for d, o := range offs {
+		n := head + o
+		if free[n] > 1 {
+			continue
+		}
+		// The snake after this move; onto the food it grows, so the tail
+		// stays.
+		moved := append(append([]int{}, body[1:]...), n)
+		if n == food {
+			moved = append(append([]int{}, body...), n)
+		}
+		tail := moved[0]
+		prev, _ := search(freeAt(stride, h, moved), offs, n, tail, len(free))
+		if prev[tail] == 0 {
+			continue
+		}
+		if dist := len(pathTo(prev, n, tail)); dist > far {
+			best, far = d, dist
+		}
+	}
+	return best
+}
+
+// wall is the freeAt of a wall cell: never.
+const wall = 1 << 30
+
+// freeAt maps each cell of a w x h field (stride = w+2) to the first step
+// a path may enter it: 0 for a free cell, i+1 for body cell i, wall for
+// the wall around the field.
+func freeAt(stride, h int, body []int) []int {
+	n := stride * (h + 2)
+	m := make([]int, n)
+	for x := 0; x < stride; x++ {
+		m[x] = wall
+		m[n-1-x] = wall
+	}
+	for y := 1; y <= h; y++ {
+		m[y*stride] = wall
+		m[y*stride+stride-1] = wall
+	}
+	for i, c := range body {
+		m[c] = i + 1
+	}
+	return m
+}
+
+// search is a breadth-first search from start: a cell reached at step k
+// is entered only if free[cell] <= k. It stops when it reaches target or
+// has reached limit cells. prev[c] is 1 + the cell c was reached from, 0
+// for a cell not reached (so the zeroed slice from make needs no setup);
+// the count is the cells reached.
+func search(free, offs []int, start, target, limit int) ([]int, int) {
+	prev := make([]int, len(free))
+	steps := make([]int, len(free))
+	prev[start] = start + 1
+	queue := make([]int, 0, 64)
+	queue = append(queue, start)
+	for i := 0; i < len(queue) && len(queue) < limit; i++ {
+		c := queue[i]
+		k := steps[c] + 1
+		for _, o := range offs {
+			n := c + o
+			if free[n] <= k && prev[n] == 0 {
+				prev[n] = c + 1
+				steps[n] = k
+				if n == target {
+					return prev, len(queue) + 1
+				}
+				queue = append(queue, n)
+			}
+		}
+	}
+	return prev, len(queue)
+}
+
+// pathTo is the path search found from `from` to `to`, without `from`.
+func pathTo(prev []int, from, to int) []int {
+	n := 0
+	for c := to; c != from; c = prev[c] - 1 {
+		n++
+	}
+	path := make([]int, n)
+	for c := to; c != from; c = prev[c] - 1 {
+		n--
+		path[n] = c
+	}
+	return path
+}
+
+// safeAfter reports whether the snake, after following path to the food
+// and eating it, could still reach its tail, or at least has more room
+// around its head than its own length.
+func safeAfter(stride, h int, offs, body, path []int) bool {
+	// The snake after the walk: the path appended, and as many cells as it
+	// moved, less one for the food, dropped from the tail.
+	after := append(append([]int{}, body...), path...)
+	after = after[len(path)-1:]
+	head, tail := after[len(after)-1], after[0]
+	free := freeAt(stride, h, after)
+	prev, room := search(free, offs, head, tail, len(free))
+	return prev[tail] != 0 || room > len(after)
+}
+
+// roomiest is the direction whose cell leads into the largest area
+// (counting up to the snake's length, which is room enough); the current
+// direction if every move is fatal.
+func roomiest(dir int, free, offs []int, head, length int) int {
+	best, most := dir, -1
+	for d, o := range offs {
+		n := head + o
+		if free[n] > 1 {
+			continue
+		}
+		if _, room := search(free, offs, n, -1, length+1); room > most {
+			best, most = d, room
+		}
+	}
+	return best
+}
+
+// dirTo is the direction from cell a to its neighbour b.
+func dirTo(offs []int, a, b int) int {
+	for d, o := range offs {
+		if a+o == b {
+			return d
+		}
+	}
+	return 0
+}

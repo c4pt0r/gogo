@@ -1,0 +1,69 @@
+package main
+
+import (
+	"snake/autopilot"
+	"snake/board"
+)
+
+// simulate plays steps steps of autopilot games on a w x h field without a
+// screen or actors, starting from the random state seed, with the given
+// patience (see autopilot.Choose). It prints what happened: the games
+// played, the food eaten, the best score, the most steps the snake went
+// without food, and how often each of Choose's rules picked the move. It
+// returns that most hungry stretch and how often the starvation fallback
+// fired.
+func simulate(seed, steps, w, h, patience int) (int, int) {
+	g := board.NewGame(w, h, seed)
+	games, food, best, hungriest := 1, 0, 0, 0
+	why := []int{0, 0, 0, 0} // by autopilot.ToFood, Starving, ToTail, ToRoom
+	for i := 0; i < steps; i++ {
+		d, r := autopilot.Choose(board.ViewOf(g, i, w, h, patience))
+		why[r]++
+		g = board.Step(board.Turn(g, d), w, h)
+		if g.Hungry > hungriest {
+			hungriest = g.Hungry
+		}
+		if g.Hungry == 0 {
+			food++
+		}
+		if g.Over {
+			if g.Score > best {
+				best = g.Score
+			}
+			g = board.NewGame(w, h, g.Rng)
+			games++
+		}
+	}
+	if g.Score > best {
+		best = g.Score
+	}
+	println("seed", seed, "games", games, "food", food, "best", best, "hungriest", hungriest)
+	println("  moves: food", why[autopilot.ToFood], "starving", why[autopilot.Starving],
+		"tail", why[autopilot.ToTail], "room", why[autopilot.ToRoom])
+	return hungriest, why[autopilot.Starving]
+}
+
+// simulateAll is the example's test (the config key snake.sim, see main).
+//
+// First the game's field, 40 x 10, for the seeds 1 to n: the snake must
+// never go a field's worth of steps without food. This is where the
+// moving-body search and the long way round the tail matter; a run long
+// enough to catch a snake circling in a knot takes thousands of steps per
+// seed (snake.sim=20000 and snake.seeds=20 take about 100 s on the host).
+//
+// Then a 12 x 6 field, which fills up within the run: near the end the food
+// is often unsafe for good, and only the starvation fallback, with the
+// game's patience, keeps the snake going. It must fire, and the snake must
+// never wait longer than the patience plus a path across the field.
+func simulateAll(n, steps int) {
+	stuck := 0
+	for seed := 1; seed <= n; seed++ {
+		if hungriest, _ := simulate(seed, steps, 40, 10, 2*40*10); hungriest > 40*10 {
+			stuck++
+		}
+	}
+	println("40x10:", n, "seeds of", steps, "steps,", stuck, "stuck")
+	w, h := 12, 6
+	hungriest, fired := simulate(1, 2*steps, w, h, 2*w*h)
+	println("12x6: starvation fallback fired:", fired > 0, "bounded:", hungriest <= 3*w*h)
+}
