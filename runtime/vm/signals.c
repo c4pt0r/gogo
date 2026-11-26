@@ -456,6 +456,8 @@ void sig_unlink(Vm *vm, Actor *a, term pid) {
 
 bool sig_kill(Vm *vm, Actor *from, term pid, uint32_t code) {
     Actor *t = actor_lookup(vm, pid);
+    const VmDist *d = t ? NULL : vm_dist_of(vm, pid);
+    if (d) return d->kill(vm, from, pid, code);
     if (!t || t->state == A_EXITED) return true;
     if (code == R_NORMAL && t != from && !(t->flags & AF_TRAP_EXIT)) return true;
     return exit_signal(vm, t, from->id, code);

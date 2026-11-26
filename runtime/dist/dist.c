@@ -17,7 +17,8 @@
 /* Frame types. */
 enum {
     F_SEND = 1, F_REPLY = 2, F_LINK = 3, F_UNLINK = 4, F_EXIT = 5,
-    F_MONITOR = 6, F_DEMONITOR = 7, F_DOWN = 8, F_NODEDOWN = 9, F_GONE = 10
+    F_MONITOR = 6, F_DEMONITOR = 7, F_DOWN = 8, F_NODEDOWN = 9, F_GONE = 10,
+    F_KILL = 11
 };
 #define HDR 6u              /* type, flags, dst, src */
 
@@ -1004,6 +1005,16 @@ static void h_exited(Vm *vm, Actor *a, uint32_t code) {
     if (ds->agent == a->id) ds->agent = 0;
 }
 
+static bool h_kill(Vm *vm, Actor *from, term pid, uint32_t code) {
+    DistState *ds = state(vm);
+    Proxy *x = proxy_of(ds, pid);
+    if (x && route(ds, x->node) && x->remote != T_ZEROPID) {   /* a node's agent cannot be killed */
+        uint32_t f[3] = { from->id, x->remote, code };
+        control(vm, ds, x->node, F_KILL, f, 3);
+    }
+    return true;   /* a stale or unreachable PID: as for a dead local one */
+}
+
 static void h_print(Out *o, const Vm *vm, term pid) {
     Proxy *x = proxy_of(state(vm), pid);
     if (!x) {
@@ -1139,6 +1150,24 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
         if (type == F_EXIT) exit_to(vm, a, peer, rd32(f + 8));
         return;
     }
+    case F_KILL: {
+        /* actor.Kill from a remote actor: an exit signal, as sig_kill
+         * gives (an exported target only, never the agent). */
+        if (fn != 12u) break;
+        term from = rd32(f), to = rd32(f + 4);
+        uint32_t code = wire_code(rd32(f + 8));
+        if (!term_is_pid(from) || term_pid_slot(from) >= DIST_SLOT_BASE || to == 0u || to == T_ZEROPID) break;
+        Actor *a = target(vm, ds, to);
+        if (!a || a->id == ds->agent) {
+            ds->st.dropped++;
+            return;
+        }
+        if (code == R_NORMAL && !(a->flags & AF_TRAP_EXIT)) return;
+        term peer = proxy_intern(ds, src, from);
+        if ((a->flags & AF_TRAP_EXIT) && code != R_KILLED) exit_to(vm, a, peer ? peer : T_ZEROPID, code);
+        else actor_mark_exit(vm, a, code, T_EMPTYSTR);
+        return;
+    }
     case F_MONITOR: {
         if (fn != 16u) break;
         term watcher = rd32(f), tgt = rd32(f + 4);
@@ -1250,6 +1279,7 @@ static DistState *state_new(Vm *vm) {
     ds->hooks.demonitor = h_demonitor;
     ds->hooks.exited = h_exited;
     ds->hooks.print = h_print;
+    ds->hooks.kill = h_kill;
     vm->dist = &ds->hooks;
     return ds;
 }

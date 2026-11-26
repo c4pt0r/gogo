@@ -67,7 +67,9 @@ struct Out;
  *  - link: link (on) or unlink a and remote pid (false: out of memory).
  *  - demonitor: a dropped monitor `serial` (any serial; unknown ignored).
  *  - exited: a is exiting with code (its remote links and monitors).
- *  - print: writes a proxy PID's number (println, "<pid N@node>"). */
+ *  - print: writes a proxy PID's number (println, "<pid N@node>").
+ *  - kill: actor.Kill of a remote pid by `from` (false: out of memory).
+ * SendAfter to a remote PID is BadMsg (no remote timers). */
 typedef struct VmDist {
     int  (*send)(struct Vm *vm, struct Actor *from, term to, uint64_t serial, term msg);
     bool (*monitor)(struct Vm *vm, struct Actor *a, term pid, uint64_t serial);
@@ -75,6 +77,7 @@ typedef struct VmDist {
     void (*demonitor)(struct Vm *vm, struct Actor *a, uint64_t serial);
     void (*exited)(struct Vm *vm, struct Actor *a, uint32_t code);
     void (*print)(struct Out *o, const struct Vm *vm, term pid);
+    bool (*kill)(struct Vm *vm, struct Actor *from, term pid, uint32_t code);
 } VmDist;
 
 /* vm->dist if pid is a remote (proxy) PID and the VM has distribution,

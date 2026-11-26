@@ -1134,6 +1134,7 @@ int interp_run(Vm *vm, Actor *a) {
             }
             case B_SEND_AFTER: {
                 CHECK(rc == 3);   /* like Send, a non-PID target just drops it */
+                if (vm_dist_of(vm, R[rb + 1])) CRASH(R_BAD_MSG);   /* no timers to remote PIDs yet */
                 int32_t ms;
                 CHECK(int_val(vm, a, R[rb], &ms));
                 uint64_t deadline = vm_now(vm) + (ms > 0 ? (uint32_t)ms : 0u);
