@@ -1,0 +1,302 @@
+package node
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/net"
+	"gogo/port"
+	"gogo/sys"
+)
+
+// A link actor owns one TCP connection to a peer node: it runs the
+// handshake, then opens the "node" port and pumps bytes between the two.
+//
+// Handshake frames (u16 length, little-endian, then the body; the client
+// proves the token first):
+//
+//	S -> C  challenge  0x40, version, Ns (16 bytes)
+//	C -> S  hello      0x41, version, Nc (16), HMAC(token, "gogo-node-c" Ns Nc name), name
+//	S -> C  welcome    0x42, version, server id (u16), your id (u16),
+//	                   HMAC(token, "gogo-node-s" Nc Ns yourID serverID serverName name), server name
+//	        or reject  0x43, version; then the server closes
+const (
+	protoVersion = 1
+	hsChallenge  = 0x40
+	hsHello      = 0x41
+	hsWelcome    = 0x42
+	hsReject     = 0x43
+	hsMax        = 512 // longest handshake frame
+
+	linkMemory = 40 * 1024 // a link actor's memory limit
+	queueMax   = 8 * 1024  // frames waiting for TCP; more are dropped (at most once)
+	outMax     = 1400      // frames are packed into Outs of up to this
+)
+
+func frameOut(conn actor.PID, body []byte) {
+	b := make([]byte, 0, len(body)+2)
+	b = append(b, byte(len(body)), byte(len(body)>>8))
+	b = append(b, body...)
+	actor.Send(conn, port.Out{Data: bytes.FromSlice(b)})
+}
+
+func appendBytes(buf []byte, d bytes.Bytes) []byte {
+	tmp := make([]byte, d.Len())
+	d.CopyTo(tmp)
+	return append(buf, tmp...)
+}
+
+func u16(b []byte) int { return int(b[0]) | int(b[1])<<8 }
+
+func put16(b []byte, v int) []byte { return append(b, byte(v), byte(v>>8)) }
+
+func nonce() []byte {
+	n := make([]byte, 16)
+	for i := range n {
+		n[i] = byte(sys.Random())
+	}
+	return n
+}
+
+func cat(parts ...[]byte) []byte {
+	var out []byte
+	for _, p := range parts {
+		out = append(out, p...)
+	}
+	return out
+}
+
+func ids(a, b int) []byte { return put16(put16(nil, a), b) }
+
+// waitFor reads conn until it has a whole frame in buf (or deadline, or
+// the connection ends): the frame's body and the bytes after it.
+func waitFor(conn actor.PID, buf []byte, deadline int64) ([]byte, []byte, bool) {
+	for {
+		if len(buf) >= 2 {
+			n := u16(buf)
+			if n > hsMax {
+				return nil, nil, false
+			}
+			if len(buf) >= 2+n {
+				return buf[2 : 2+n], buf[2+n:], true
+			}
+		}
+		left := int(deadline - actor.Now())
+		if left <= 0 {
+			return nil, nil, false
+		}
+		m, ok := actor.ReceiveTimeout(left)
+		if !ok {
+			return nil, nil, false
+		}
+		switch e := m.(type) {
+		case port.Chunk:
+			if e.From == conn {
+				buf = appendBytes(buf, e.Data)
+			}
+		case port.Closed:
+			if e.From == conn {
+				return nil, nil, false
+			}
+		case kick:
+			return nil, nil, false
+		}
+	}
+}
+
+// waitConnected waits for a dialed connection to come up.
+func waitConnected(conn actor.PID, deadline int64) bool {
+	for {
+		left := int(deadline - actor.Now())
+		if left <= 0 {
+			return false
+		}
+		m, ok := actor.ReceiveTimeout(left)
+		if !ok {
+			return false
+		}
+		switch e := m.(type) {
+		case net.Connected:
+			return true
+		case port.Closed:
+			if e.From == conn {
+				return false
+			}
+		case kick:
+			return false
+		}
+	}
+}
+
+// clientLink is a board's side of a new connection to the server.
+func clientLink(agentPID, conn actor.PID, token, name string, ms int) {
+	fail := linkFail{Why: "handshake"}
+	deadline := actor.Now() + int64(ms)
+	if !waitConnected(conn, deadline) {
+		actor.Send(agentPID, linkFail{Why: "connect"})
+		return
+	}
+	body, rest, ok := waitFor(conn, nil, deadline)
+	if !ok || len(body) != 18 || body[0] != hsChallenge || body[1] != protoVersion {
+		actor.Send(agentPID, fail)
+		return
+	}
+	ns := body[2:18]
+	nc := nonce()
+	key := []byte(token)
+	hello := cat([]byte{hsHello, protoVersion}, nc, hmac256(key, cat([]byte("gogo-node-c"), ns, nc, []byte(name))), []byte(name))
+	frameOut(conn, hello)
+	body, rest, ok = waitFor(conn, rest, deadline)
+	if !ok || len(body) < 38 || body[0] != hsWelcome || body[1] != protoVersion {
+		actor.Send(agentPID, linkFail{Why: "refused"})
+		return
+	}
+	serverID, selfID := u16(body[2:4]), u16(body[4:6])
+	sname := string(body[38:])
+	want := hmac256(key, cat([]byte("gogo-node-s"), nc, ns, ids(selfID, serverID), []byte(sname), []byte(name)))
+	if !equalMAC(body[6:38], want) {
+		actor.Send(agentPID, linkFail{Why: "server"})
+		return
+	}
+	np, err := port.Open("node", net.NodeLink{Self: selfID, Peer: serverID, Relay: 1, Agent: agentPID})
+	if err != nil {
+		actor.Send(agentPID, fail)
+		return
+	}
+	pump(agentPID, conn, np, rest, sname, serverID, selfID)
+}
+
+// reject tells a client no, and closes once that went out.
+func reject(conn actor.PID) {
+	frameOut(conn, []byte{hsReject, protoVersion})
+	actor.Send(conn, net.Shutdown{})
+	deadline := actor.Now() + 500
+	for {
+		left := int(deadline - actor.Now())
+		if left <= 0 {
+			break
+		}
+		m, ok := actor.ReceiveTimeout(left)
+		if !ok {
+			break
+		}
+		switch e := m.(type) {
+		case port.Done:
+			if e.From == conn {
+				left = 0
+			}
+		}
+		if left == 0 {
+			break
+		}
+	}
+	port.Close(conn)
+}
+
+// serverLink is the server's side of a board's new connection.
+func serverLink(agentPID, conn actor.PID, token, name string, ms int) {
+	deadline := actor.Now() + int64(ms)
+	ns := nonce()
+	frameOut(conn, cat([]byte{hsChallenge, protoVersion}, ns))
+	body, rest, ok := waitFor(conn, nil, deadline)
+	if !ok || len(body) < 51 || body[0] != hsHello || body[1] != protoVersion {
+		reject(conn)
+		return
+	}
+	nc := body[2:18]
+	cname := string(body[50:])
+	key := []byte(token)
+	if !equalMAC(body[18:50], hmac256(key, cat([]byte("gogo-node-c"), ns, nc, []byte(cname)))) {
+		reject(conn)
+		return
+	}
+	r, ok := actor.Call(agentPID, assignReq{Name: cname, Link: actor.Self()}, 2000)
+	id := 0
+	switch v := r.(type) {
+	case int:
+		id = v
+	}
+	if !ok || id == 0 {
+		reject(conn)
+		return
+	}
+	mac := hmac256(key, cat([]byte("gogo-node-s"), nc, ns, ids(id, 1), []byte(name), []byte(cname)))
+	frameOut(conn, cat([]byte{hsWelcome, protoVersion}, ids(1, id), mac, []byte(name)))
+	np, err := port.Open("node", net.NodeLink{Self: 1, Peer: id, Relay: 0, Agent: agentPID})
+	if err != nil {
+		port.Close(conn)
+		return
+	}
+	pump(agentPID, conn, np, rest, cname, id, 1)
+}
+
+// flush hands queued frames to TCP, packed into Outs of up to outMax
+// bytes, while fewer than two Outs are in flight.
+func flush(conn actor.PID, q []bytes.Bytes, qb, inflight int) ([]bytes.Bytes, int, int) {
+	for inflight < 2 && len(q) > 0 {
+		n, size := 0, 0
+		for n < len(q) && (n == 0 || size+q[n].Len() <= outMax) {
+			size += q[n].Len()
+			n++
+		}
+		data := q[0]
+		if n > 1 {
+			b := bytes.NewBuffer(size)
+			for i := 0; i < n; i++ {
+				b.WriteBytes(q[i])
+			}
+			data = b.Freeze()
+		}
+		actor.Send(conn, port.Out{Data: data})
+		inflight++
+		qb -= size
+		q = q[n:]
+	}
+	return q, qb, inflight
+}
+
+// pump moves bytes between the TCP connection and the node port until
+// either ends (or the agent kicks it): the peer's bytes go to the port,
+// the port's frames to TCP. Closing the node port fires the remote
+// monitors and links; the agent sees this actor's exit.
+func pump(agentPID, conn, np actor.PID, rest []byte, peerName string, peerID, selfID int) {
+	if len(rest) > 0 {
+		actor.Send(np, port.Out{Data: bytes.FromSlice(rest)})
+	}
+	var q []bytes.Bytes
+	qb, inflight := 0, 0
+	for {
+		switch e := actor.Receive().(type) {
+		case port.Chunk:
+			if e.From == conn {
+				actor.Send(np, port.Out{Data: e.Data})
+			} else if e.From == np {
+				if qb+e.Data.Len() <= queueMax {
+					q = append(q, e.Data)
+					qb += e.Data.Len()
+				}
+				q, qb, inflight = flush(conn, q, qb, inflight)
+			}
+		case port.Done:
+			if e.From == conn {
+				inflight--
+				q, qb, inflight = flush(conn, q, qb, inflight)
+			}
+		case port.Closed:
+			if e.From == conn || e.From == np {
+				port.Close(np)
+				port.Close(conn)
+				return
+			}
+		case net.NodeEvent:
+			if e.Kind == net.NodeUp {
+				actor.Send(agentPID, linkUp{Name: peerName, ID: peerID, Self: selfID, Agent: e.Agent, Link: actor.Self()})
+			} else if e.Kind == net.NodeDown {
+				actor.Send(agentPID, nodeGone{ID: e.Node})
+			}
+		case kick:
+			port.Close(np)
+			port.Close(conn)
+			return
+		}
+	}
+}
