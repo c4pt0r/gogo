@@ -1,6 +1,7 @@
 # Known issues and limitations
 
-Open limitations of gogo as of image format 15.0, by area. Each entry
+Open limitations of gogo at image format 15 (the current minor is in
+`runtime/vm/image.h`; `gogo version` prints it), by area. Each entry
 says what the limitation is, what it costs you and, where there is one,
 how to work around it. Hardware facts refer to the two ESP32-S3 boards,
 the M5StickS3 and the Cardputer ADV. The design is in
@@ -90,7 +91,9 @@ rebuilt:
   the table is full, the VM first collects the holders; if that frees
   nothing, the allocation fails (`OutOfMemory`) and ports that need a
   handle refuse (a stream `Out` gets `Done{-1}`). *Workaround:*
-  do not keep many large frozen `Bytes` alive in one program.
+  do not keep many large frozen `Bytes` alive in one program; on a
+  board, `gogo config stats` shows the table's use (`bytes=N/64`, with
+  `ports=N/16` and `subs=N/4` for the port and `net.Subscribe` tables).
 - **Host and board memory limits differ by 16x.** An actor spawned
   without `SpawnOpt` may use 256 KB on the host and 16 KB on a board, so
   a program that passes under `gogo run` can die with `oom` on the board.
@@ -118,7 +121,12 @@ rebuilt:
   `code.Load` some bytes can run code with the same rights as the main
   program. Its requirement names say what the firmware must provide, not
   what a module may do. Function, type and jump indexes are checked when
-  used (`badcode`), not when loaded. Load only images you trust.
+  used (`badcode`), not when loaded. *Workaround:* load only images you
+  trust, fetched over an authenticated channel (`https://` from a server
+  you control, as `examples/hotload_net` does; never plain `http://`).
+  *Planned:* signed images: an Ed25519 signature over the image, checked
+  by `code.Load` against a public key in the firmware, with the PSA
+  crypto the TLS port already links (`TlsHw`).
 - **Modules live in RAM only.** There is no automatic loading from flash
   at boot and no execute-in-place from flash. *Workaround:* store the
   module with `fs.WriteFile` and load it with `fs.ReadFile` +
@@ -475,12 +483,20 @@ rebuilt:
   (`msg_free`, `heap_alloc`, `timer_*`, `out_*`, ...), which can clash
   with a host's own symbols. *Workaround:* link `libgogo.a` in products;
   use the debug archive only to debug.
-- **Not yet run on Linux.** The embed tests (`make test-embed`, the
-  multi-VM and TSan tests), `make test-fs-host` (the sandbox's Linux
-  error paths: `ENOTDIR` for a symlinked directory, `ENXIO` for a FIFO),
-  the ELF prelink step (`ld -r` + `objcopy --keep-global-symbol`) and
-  `tools/libsyms.sh` / `tools/globals.sh --objects` on ELF have only run
-  on macOS; they are checked by reading only.
+- **Linux: some checks have not run there yet.** `make test` (the embed
+  tests, `make test-fs-host`'s Linux error paths, the ELF prelink step,
+  `tools/libsyms.sh` and `tools/globals.sh` on ELF), `make test-lib` and
+  `make test-tls-asan` pass on Ubuntu 24.04 arm64 with gcc 13, and the
+  test workflow is set up to run them on Ubuntu x86-64 and macOS.
+  `make test-embed-tsan` and `make test-embed-leaks` (LeakSanitizer) have
+  not run on Linux.
+- **No leak checking of the net and TLS C code.** `make test-tls-asan`
+  turns LeakSanitizer off, because the C suites' fixtures and gogovm's
+  exit do not free their VM, so a leak in the net stack or the TLS port
+  (an mbedTLS context not freed on close, say) would go unseen; macOS's
+  ASan has no leak checking at all. *Planned:* free the VM at gogovm's
+  exit (under `GOGO_DEBUG`) and in the fixtures' teardown, then turn
+  `detect_leaks` back on.
 
 ## ESP32-S3 boards
 

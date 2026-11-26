@@ -1,0 +1,77 @@
+# Test: on every push and pull request to main, run the test suite on
+# macOS and Linux: make test (C and Go tests, lint, the examples and the
+# book's examples, the size checks where the ESP-IDF compiler is present,
+# which it is not here), make test-lib and make test-tls-asan.
+#
+# The "tls" port is built from mbedTLS's source, which the build takes
+# from ESP-IDF (components/mbedtls/mbedtls). Rather than install ESP-IDF,
+# each run fetches that tree at the commit ESP-IDF v6.1.1 pins (the
+# version platform/esp32s3 is built with), so the TLS tests run here too.
+# When ESP-IDF's version changes, change MBEDTLS_COMMIT to its
+# components/mbedtls/mbedtls commit.
+#
+# The firmware is not built here; the release workflow builds it.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels its older run; every push to main
+# is tested.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  MBEDTLS_REPO: https://github.com/espressif/mbedtls.git
+  MBEDTLS_COMMIT: ce3f3485a121c100f58f36d700cb35b060f6e866 # ESP-IDF v6.1.1
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+      # clang for make check32 (a 32-bit ARM syntax check), shellcheck for
+      # make lint; both come with macOS's tools or are skipped there.
+      - name: Tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang shellcheck
+      - name: mbedTLS source
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/mbedtls"
+          git init -q "$d"
+          git -C "$d" fetch -q --depth 1 "$MBEDTLS_REPO" "$MBEDTLS_COMMIT"
+          git -C "$d" checkout -q FETCH_HEAD
+          test -f "$d/library/ssl_tls.c"
+          echo "MBEDTLS_DIR=$d" >> "$GITHUB_ENV"
+      - name: Tools
+        run: |
+          cc --version
+          go version
+          command -v shellcheck || echo "no shellcheck: make lint skips it"
+      - name: make test
+        run: make test
+      - name: make test-lib
+        run: make test-lib
+      - name: make test-tls-asan
+        run: make test-tls-asan

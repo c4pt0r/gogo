@@ -1,0 +1,27 @@
+// Package sensors is part of this program: it lives in the build root
+// (app/) and is imported as "app/sensors". It uses the shared packages
+// units/temp and units/stats from GOGOPATH.
+package sensors
+
+import (
+	"units/stats"
+	"units/temp"
+)
+
+// Reading is one sensor's samples. Its field types come from units/temp.
+type Reading struct {
+	Name    string
+	Samples []temp.Deci
+}
+
+// Simulated returns two sensors' readings (a board would read them from
+// a port).
+func Simulated() []Reading {
+	return []Reading{
+		{Name: "desk", Samples: []temp.Deci{212, 215, 219, 214}},
+		{Name: "window", Samples: []temp.Deci{-15, 3, 21, 8}},
+	}
+}
+
+// Summary is the Range of r's samples.
+func Summary(r Reading) temp.Range { return stats.Span(r.Samples) }

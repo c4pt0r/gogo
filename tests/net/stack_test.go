@@ -182,6 +182,14 @@ func TestUDPQuota(t *testing.T) {
 	if _, err := v.Exchange(sim.UDPFrame(gwHost, vmHost, sim.UDP{SrcPort: 9000, DstPort: 9, Payload: payload[:33]})); err != io.EOF {
 		t.Fatalf("exchange: %v, want EOF", err)
 	}
+	// The link closed, but the last lines may still be in the stdout pipe:
+	// read the output once the VM has exited.
+	if !v.Closed() {
+		t.Error("VM still running (link open)")
+	}
+	if err := v.Wait(); err != nil {
+		t.Errorf("VM: %v (want exit status 0)", err)
+	}
 	out := v.Stdout.String()
 	lines := strings.Split(out, "\n")
 	if len(lines) != 5 || lines[0] != "udp true" || lines[2] != "after 33" || lines[3] != "done" {
@@ -192,7 +200,6 @@ func TestUDPQuota(t *testing.T) {
 		t.Fatalf("%q: want some but not all of %d datagrams", lines[1], sent)
 	}
 	t.Logf("delivered %d of %d", got, sent)
-	finish(t, v, out)
 }
 
 // Without an address only DHCP traffic passes, replies only for our MAC.

@@ -27,7 +27,7 @@ func main() {
 	println(a, a*3, -a)
 
 	m := int64(-9223372036854775807) - 1
-	println(m / -1, int64(7) % -1)
+	println(m/-1, int64(7)%-1)
 	one := int64(-1)
 	println(m/one, m%one, -m, m-1)
 

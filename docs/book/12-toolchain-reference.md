@@ -110,11 +110,11 @@ gogo: warning: main.gg:12:9: port.Open with a non-constant driver name: the imag
 To open a driver that may be absent, name it and mark it soft with
 `//gogo:optional` (below), which works in `package main` too.
 
-The image format itself has a version, `major.minor` (15.0 today; `gogo
-version` prints it). A firmware runs images of its major whose minor is at
-most its own, and the compiler stamps each image with the lowest minor its
-program needs, so after a firmware update every module already on `/flash`
-keeps loading. An image of another major, or of a newer minor than the
+The image format itself has a version, `major.minor` (major 15; `gogo
+version` prints the full one). A firmware runs images of its major whose
+minor is at most its own, and the compiler stamps each image with the
+lowest minor its program needs, so after a firmware update every module
+already on `/flash` keeps loading. An image of another major, or of a newer minor than the
 firmware's, is refused (`unsupported image format 15.1 (this VM runs 15.0
 to 15.0)`; `code.Load` returns `BadVersion`).
 
@@ -382,8 +382,12 @@ gogo config [-port P] stats
 Edits the configuration store on the board or in the local file. See
 chapter 11 for how the store is chosen, the key rules and the keys gogo
 uses. `scan` lists the 2.4 GHz networks the board sees; `stats` prints the
-board's network counters and free memory (on a firmware built without
-`net`, only the memory figures). Both need a board.
+board's network counters, free memory and how full the VM's fixed tables
+are, as used/capacity: `bytes=N/64` (off-heap `bytes.Bytes` handles),
+`ports=N/16` (open ports) and `subs=N/4` (`net.Subscribe` slots). When a
+port open fails or a tcp write gets `Done{-1}`, these show whether a
+table is full. A firmware built without `net` prints no network counters
+and no `subs`. Both need a board.
 
 ## gogo setup
 
@@ -507,9 +511,48 @@ docs/book/examples/run.sh              # all examples
 docs/book/examples/run.sh 04-call      # one
 ```
 
-`run.sh` runs each example the way the book shows (with its `input`,
+`make test-book` does the same. `run.sh` runs each example the way the book shows (with its `input`,
 `fsroot` and `config` files) and compares the output with the
 `expected.out` and `expected.err` files next to it. An example of several
 packages keeps its program in `app/` (the build root, so its imports
 start with `app/`); `run.sh` runs it from there, with an empty search
 path.
+
+## Checking a change to gogo
+
+`make test` is the full check before a commit. Besides the C and Go
+tests, it runs:
+
+- `make lint`: `gofmt` on every `.go` file and on every `.gg` file
+  (gogo source is Go syntax, but `gofmt` reads only `.go`, so
+  `tools/lint.sh` checks a `.go` copy of each), `go vet ./...`, and
+  `shellcheck` on `tools/*.sh` when it is installed. To format a `.gg`
+  file, format a `.go` copy (or use `gofmt` on standard input:
+  `gofmt < f.gg > f.tmp && mv f.tmp f.gg`).
+- `make test-examples`: every program in `examples/` and
+  `platform/esp32s3/examples/` must build (the board-only ones too:
+  building needs no board), and the ones with an `expected.out` run with
+  `gogo run` and must print it (`tools/examples.sh`, which reads the
+  same `input`, `config`, `fsroot`, `mods/` and `expected.err` files as
+  the golden tests). A new example without an `expected.out` is still
+  built on every run. An example of several packages keeps its program
+  in `app/` (with `app/expected.out`); a `.gg` file beside `app/` is a
+  script, run when a `<name>.expected.out` is beside it; and a file
+  `gogopath` names the example's `GOGOPATH`, relative to the example
+  (`examples/packages` uses all three).
+- `make test-book`: every example in this book, through
+  `docs/book/examples/run.sh` (above).
+- `make vmsize` (and `netsize`, `vfssize`, `screensize`): the code size
+  of the VM core and of each runtime part for the ESP32-S3, against
+  their budgets (skipped without the ESP-IDF compiler). `vmsize` also
+  prints the VM core's lines of C; `tools/vmsize.sh --record` appends
+  the size and the line count to `docs/vmsize-history.csv`.
+
+Outside `make test`: `make test-lib` (the standard library on the host
+Go toolchain, also part of `go test ./...`) and `make test-tls-asan`
+(the network and TLS tests under AddressSanitizer). The test workflow,
+`.github/workflows/test.yml`, is set up to run all three on macOS and
+Linux (x86-64) for every push and pull request to main. The TLS tests need mbedTLS's
+source (ESP-IDF's `components/mbedtls/mbedtls`; `MBEDTLS_DIR` names
+another copy) and are skipped without it; the workflow fetches the
+commit ESP-IDF v6.1.1 pins.

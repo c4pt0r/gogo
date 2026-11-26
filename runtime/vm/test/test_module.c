@@ -1,7 +1,7 @@
 /* The module table (module.h): boot as module 0, a second module in the
  * same interpreter, module-tagged const refs / closures / structs and what
  * happens to them once their module is gone. */
-#define _POSIX_C_SOURCE 200112L   /* setenv, mkstemp */
+#define _POSIX_C_SOURCE 200809L   /* setenv, mkstemp, strdup */
 #include "test.h"
 #include "test_host.h"
 #include "actor.h"
@@ -384,7 +384,7 @@ TEST(two_modules_same_interpreter) {
     CHECK(term_is_ref(s));                   /* a heap copy, not B's const */
     h->mem[h->fp + 1] = s;
     /* the same offset untagged is A's */
-    const uint8_t *p; uint32_t len;
+    const uint8_t *p = NULL; uint32_t len = 0;
     CHECK(name_bytes(vm, h, term_from_const(6), &p, &len));
     CHECK(len == 4 && memcmp(p, "AAAA", 4) == 0);
 

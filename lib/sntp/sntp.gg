@@ -157,7 +157,7 @@ func request(nonce int64) bytes.Bytes {
 	b := make([]byte, 48)
 	b[0] = 0x23
 	for i := 0; i < 8; i++ {
-		b[40+i] = byte(nonce >> (56-8*i))
+		b[40+i] = byte(nonce >> (56 - 8*i))
 	}
 	return bytes.FromSlice(b)
 }

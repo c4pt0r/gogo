@@ -33,6 +33,14 @@ static InputState input_state;
 NetState esp_net_state;        /* shared with wifi.c and config_esp.c (platform_esp.h) */
 #endif
 
+void main_esp_usage(uint32_t *bytes_used, uint32_t *ports_used) {
+    const volatile Vm *v = &vm;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) n += v->ports[i].drv != NULL;
+    *bytes_used = v->bytes_used;
+    *ports_used = n;
+}
+
 static void vm_task(void *arg) {
     (void)arg;
     platform_esp_init();

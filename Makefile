@@ -66,13 +66,34 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize screensize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
 
 vm: $(BUILD)/gogovm
+
+# gofmt on .go and .gg files, go vet, shellcheck on tools/*.sh when installed (tools/lint.sh).
+lint:
+	tools/lint.sh
+
+# Every examples/*/ and platform/esp32s3/examples/*/ program builds; the ones
+# with an expected.out run with gogo run and print it (tools/examples.sh).
+test-examples: vm $(BUILD)/gogovm_mcu gogo-cmd
+	tools/examples.sh $(BUILD)
+
+# Every example in the book runs and prints what the book shows
+# (docs/book/examples/run.sh, with this build's gogo and gogovm).
+test-book: vm gogo-cmd
+	GOGO_CMD=$(CURDIR)/$(BUILD)/gogo GOGO_VM=$(CURDIR)/$(BUILD)/gogovm docs/book/examples/run.sh
+
+# The gogo command, one rule for every target that needs it, so that
+# targets run in parallel (make -j) do not write it at the same time
+# (go build itself decides whether it is stale).
+gogo-cmd:
+	@mkdir -p $(BUILD)
+	go build -o $(BUILD)/gogo ./cmd/gogo
 
 $(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
@@ -248,9 +269,8 @@ $(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -DGOGO_EMBED $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS) $(VFS_SRCS)
 
-embed-images:
+embed-images: gogo-cmd
 	@mkdir -p $(BUILD)/embed
-	go build -o $(BUILD)/gogo ./cmd/gogo
 	for p in $(EMBED_PROGS); do $(BUILD)/gogo build runtime/embed/test/testdata/$$p -o $(BUILD)/embed/$$p.ggb || exit 1; done
 	for p in $(EMBED_EXAMPLES); do $(BUILD)/gogo build examples/$$p -o $(BUILD)/embed/$$p.ggb || exit 1; done
 	@mkdir -p $(BUILD)/embed/hotload-flash
@@ -329,9 +349,8 @@ CLASH_SYMS = msg_free heap_alloc vm_step bytes_new port_open
 $(BUILD)/libgogo_clash: runtime/embed/test/clash/main.c runtime/include/gogo.h $(BUILD)/libgogo.a
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 $(EXTRA_CFLAGS) -Iruntime/include -o $@ $< $(BUILD)/libgogo.a -pthread
 
-test-libgogo: $(BUILD)/libgogo_clash $(BUILD)/libgogo-debug.a
+test-libgogo: $(BUILD)/libgogo_clash $(BUILD)/libgogo-debug.a gogo-cmd
 	for s in $(CLASH_SYMS); do nm -g $(BUILD)/libgogo-debug.a | grep -Eq " T _?$$s$$" || { echo "test-libgogo: $$s is not in the library"; exit 1; }; done
-	go build -o $(BUILD)/gogo ./cmd/gogo
 	$(BUILD)/gogo build examples/many_idle -o $(BUILD)/libgogo_clash.ggb
 	$(BUILD)/libgogo_clash $(BUILD)/libgogo_clash.ggb > $(BUILD)/libgogo_clash.out
 	cmp $(BUILD)/libgogo_clash.out examples/many_idle/expected.out
@@ -345,8 +364,7 @@ $(BUILD)/embed-c/%: examples/embed-c/%.c runtime/include/gogo.h $(BUILD)/libgogo
 	@mkdir -p $(BUILD)/embed-c
 	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iruntime/include -o $@ $< $(BUILD)/libgogo.a -pthread
 
-example-embed: $(EXAMPLE_EMBED_BINS)
-	go build -o $(BUILD)/gogo ./cmd/gogo
+example-embed: $(EXAMPLE_EMBED_BINS) gogo-cmd
 	examples/embed-c/test.sh $(BUILD)
 
 # Console text grid + font lookup (runtime/console), host build.
@@ -402,12 +420,20 @@ test-net-mcu: $(BUILD)/gogovm_mcu
 # GOGO_DEBUG=1 (runtime/vm/config.h): the sanitizer builds also check
 # the runtime's internal invariants (GOGO_ASSERT).
 ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer -DGOGO_DEBUG=1
+# ASAN_OPTIONS (the caller's, then these):
+# - detect_leaks=0: LeakSanitizer (Linux only) would report the C suites'
+#   fixtures and gogovm's exit, which do not free their Vm; test-embed-leaks
+#   checks the embedding API for leaks.
+# - detect_stack_use_after_return=0: with gcc's ASan it is on, and its fake
+#   stack frames make mbedTLS's many small calls about 60 times slower (1 MB
+#   over TLS: 0.18 s without, 10.6 s with, on Linux arm64), past the net
+#   tests' 10 s limit. clang's ASan on macOS leaves it off too.
+TLS_ASAN_OPTIONS = $${ASAN_OPTIONS:+$$ASAN_OPTIONS:}detect_leaks=0:detect_stack_use_after_return=0
 test-tls-asan:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls
-	build/asan/test_net
-	build/asan/test_tls
-	GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
-
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_net
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_tls
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
@@ -440,8 +466,9 @@ globals:
 	GLOBALS_CC='$(CC)' GLOBALS_CFLAGS='$(CFLAGS)' GLOBALS_MCU_FLAGS='$(MCU_FLAGS)' tools/globals.sh
 
 # The guard must flag exactly the mutable symbols of its fixture (and no const ones).
+# gcc on ELF names the function-local static ?.cnt (globals.sh), clang fx_fn.cnt.
 globals-selftest:
-	GLOBALS_CC='$(CC)' GLOBALS_CFLAGS='$(CFLAGS)' GLOBALS_MCU_FLAGS='$(MCU_FLAGS)' tools/globals.sh --print tools/selftest/globals_fixture.c | diff - tools/selftest/globals_fixture.expect
+	GLOBALS_CC='$(CC)' GLOBALS_CFLAGS='$(CFLAGS)' GLOBALS_MCU_FLAGS='$(MCU_FLAGS)' tools/globals.sh --print tools/selftest/globals_fixture.c | sed 's/ ?\.cnt$$/ fx_fn.cnt/' | LC_ALL=C sort | diff - tools/selftest/globals_fixture.expect
 
 clean:
 	rm -rf $(BUILD)

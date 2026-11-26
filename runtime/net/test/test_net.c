@@ -768,8 +768,10 @@ static int32_t up_field(const Actor *a, int nth, int i) {
 TEST(net_subscribe_up_down) {
     setup();
     Actor *a = new_actor(), *s = new_actor(), *s2 = new_actor();
+    CHECK_EQ(net_subs_used(&nst), 0u);
     CHECK(port_subscribe(&vm, s));
     CHECK(port_subscribe(&vm, s));           /* twice = once */
+    CHECK_EQ(net_subs_used(&nst), 1u);
     term n = open_netif(a);
     set_addr(a, n, IP4(100, 64, 0, 2), MASK, IP4(100, 64, 0, 1), IP4(10, 0, 0, 53));
     CHECK_EQ(mbox_len(s), 1);
@@ -849,8 +851,11 @@ TEST(net_subscribe_up_down) {
         ok += port_subscribe(&vm, x[i]);
     }
     CHECK_EQ(ok, GOGO_NET_MAX_SUBS - 2u);
+    CHECK_EQ(net_subs_used(&nst), GOGO_NET_MAX_SUBS);
     x[0]->flags |= AF_EXIT_PENDING;
+    CHECK_EQ(net_subs_used(&nst), GOGO_NET_MAX_SUBS);   /* counted until the stack looks */
     CHECK(port_subscribe(&vm, x[GOGO_NET_MAX_SUBS - 1]));
+    CHECK_EQ(net_subs_used(&nst), GOGO_NET_MAX_SUBS);   /* its slot reused */
     teardown();
 }
 

@@ -1,0 +1,19 @@
+// Package stats summarizes readings. A shared package that imports
+// another shared package (units/temp), found through GOGOPATH the same way.
+package stats
+
+import "units/temp"
+
+// Span returns the Range of ds; ds must not be empty.
+func Span(ds []temp.Deci) temp.Range {
+	lo, hi := ds[0], ds[0]
+	for _, d := range ds {
+		if d < lo {
+			lo = d
+		}
+		if d > hi {
+			hi = d
+		}
+	}
+	return temp.Range{Lo: lo, Hi: hi}
+}

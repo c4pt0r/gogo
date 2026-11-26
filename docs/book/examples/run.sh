@@ -17,12 +17,13 @@
 #                  example directory itself has no .gg files
 #
 # Usage: docs/book/examples/run.sh [name...]   (from anywhere in the repo)
-# Needs build/gogo and build/gogovm (make vm; go build -o build/gogo ./cmd/gogo).
+# Needs build/gogo and build/gogovm (make vm; go build -o build/gogo ./cmd/gogo),
+# or the gogo named by $GOGO_CMD (make test-book passes its build's).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
-gogo="$repo/build/gogo"
-[ -x "$gogo" ] || { echo "build/gogo missing: go build -o build/gogo ./cmd/gogo" >&2; exit 2; }
+gogo="${GOGO_CMD:-$repo/build/gogo}"
+[ -x "$gogo" ] || { echo "$gogo missing: go build -o build/gogo ./cmd/gogo" >&2; exit 2; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 pass=0; fail=0

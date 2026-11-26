@@ -2,8 +2,10 @@
 # VM core size: compiles runtime/vm/*.c (except check32.c) for the ESP32-S3 with -Os
 # and sums .text/.rodata/.literal — the same measure as the M3 budget
 # (platform/esp32s3/vmsize.sh, which reads the IDF build instead).
-#   tools/vmsize.sh            print the per-file table and the total; exit 1 above the limit
-#   tools/vmsize.sh --record   also append "date,commit,bytes" to docs/vmsize-history.csv
+#   tools/vmsize.sh            print the per-file table, the total and the line count of the
+#                              same files; exit 1 above the limit
+#   tools/vmsize.sh --record   also append "date,commit,bytes,lines" to docs/vmsize-history.csv
+#                              (lines: of those .c files, a trend only, no limit)
 #   tools/vmsize.sh --net      the net stack instead (runtime/net/*.c, not VM core): code
 #                              size and its fixed state (sizeof(NetState), the
 #                              board's storage, plus any .bss + .data); exit 1 if
@@ -21,6 +23,7 @@
 set -e
 LIMIT=65536
 cd "$(dirname "$0")/.."
+# shellcheck disable=SC2012 # the first match of a glob
 GCC=$(command -v xtensa-esp32s3-elf-gcc 2>/dev/null || ls "$HOME"/.espressif/tools/xtensa-esp-elf/*/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc 2>/dev/null | head -1 || true)
 if [ -z "$GCC" ]; then echo "vmsize: skipped (xtensa-esp32s3-elf-gcc not found)"; exit 0; fi
 SIZE=${GCC%gcc}size
@@ -138,9 +141,12 @@ for f in runtime/vm/*.c; do
 done
 printf '%s' "$lines" | sort -rn
 printf '%7d  total (limit %d, %d%%)\n' "$total" "$LIMIT" $((total * 100 / LIMIT))
-if [ "$1" = "--record" ]; then
+# Lines of C of the same files (runtime/vm/*.c without check32.c; tests are elsewhere).
+loc=$(for f in runtime/vm/*.c; do [ "$f" = runtime/vm/check32.c ] || cat "$f"; done | wc -l | tr -d ' ')
+printf '%7d  lines of C in these files\n' "$loc"
+if [ "${1:-}" = "--record" ]; then
     rev=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
-    [ -f docs/vmsize-history.csv ] || echo "date,commit,bytes" > docs/vmsize-history.csv
-    echo "$(date +%Y-%m-%d),$rev,$total" >> docs/vmsize-history.csv
+    [ -f docs/vmsize-history.csv ] || echo "date,commit,bytes,lines" > docs/vmsize-history.csv
+    echo "$(date +%Y-%m-%d),$rev,$total,$loc" >> docs/vmsize-history.csv
 fi
 if [ "$total" -gt "$LIMIT" ]; then echo "vmsize: VM core exceeds $LIMIT bytes"; exit 1; fi

@@ -1,6 +1,6 @@
 readdir 2 0
-listed My File.TXT
-listed ok.txt
+listed My File.TXT true
+listed ok.txt true
 open 7
 readfile 7
 stat 7

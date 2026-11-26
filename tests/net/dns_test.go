@@ -138,11 +138,15 @@ func TestDNSCacheTTL(t *testing.T) {
 	fr = answer(fr, "b.test", 100) // replaces c.test
 	fr = answer(fr, "c.test", 200)
 	none(t)(fr, nil)
+	// Read the output once the VM has exited: until then its last lines
+	// may still be on their way through the pipe.
+	if err := v.Wait(); err != nil {
+		t.Errorf("VM: %v", err)
+	}
 	out := v.Stdout.String()
 	if n := strings.Count(out, "\n"); n != 14 || !strings.HasSuffix(out, "done\n") {
 		t.Fatalf("%d lines:\n%s", n, out)
 	}
-	stop(t, v, out)
 }
 
 // Unanswered queries are sent 3 times within the timeout, then Lookup

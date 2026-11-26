@@ -1,5 +1,5 @@
 /* String builtins, called directly on an actor with a 8-register frame. */
-#define _POSIX_C_SOURCE 200112L   /* setenv, mkstemp */
+#define _POSIX_C_SOURCE 200809L   /* setenv, mkstemp, strdup */
 #include "test.h"
 #include "test_host.h"
 #include "actor.h"

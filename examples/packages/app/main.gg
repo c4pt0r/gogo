@@ -1,0 +1,18 @@
+// A program that uses its own package (app/sensors, in the build root) and
+// shared ones (units/temp and units/stats, through GOGOPATH):
+//
+//	GOGOPATH=examples/packages/gopath gogo run examples/packages/app
+package main
+
+import (
+	"app/sensors"
+	"units/temp"
+)
+
+func main() {
+	for _, r := range sensors.Simulated() {
+		s := sensors.Summary(r) // a temp.Range built in units/stats
+		println(r.Name+":", len(r.Samples), "samples,", temp.String(s.Lo), "to", temp.String(s.Hi)+";",
+			"max", temp.Fahrenheit(s.Hi)/10, "F")
+	}
+}

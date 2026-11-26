@@ -495,7 +495,8 @@ in `cmd/gogo/flash.go`.
   `\x02gogo-config <op> [<key> [<value>]]\n` with `\x02kv <text>` lines and
   then `\x02ok[ <text>]` or `\x02err <reason>`; ops `set get rm list`
   plus `scan` (nearby networks) and `stats` (net counters, `heap_free`,
-  `heap_min`, `arena_used`). The password is never sent back (`(set)`).
+  `heap_min`, `arena_used`, and the fixed tables in use as
+  `bytes=N/64`, `ports=N/16`, `subs=N/4`). The password is never sent back (`(set)`).
   Program output never carries `\x02` on serial (written as `?`), so a
   program cannot fake a reply; buffers that held a frame are zeroed after
   each command, and `get wifi.password` reads only the value's length.
