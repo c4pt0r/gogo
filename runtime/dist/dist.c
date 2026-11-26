@@ -17,7 +17,7 @@
 /* Frame types. */
 enum {
     F_SEND = 1, F_REPLY = 2, F_LINK = 3, F_UNLINK = 4, F_EXIT = 5,
-    F_MONITOR = 6, F_DEMONITOR = 7, F_DOWN = 8, F_NODEDOWN = 9
+    F_MONITOR = 6, F_DEMONITOR = 7, F_DOWN = 8, F_NODEDOWN = 9, F_GONE = 10
 };
 #define HDR 6u              /* type, flags, dst, src */
 
@@ -52,6 +52,8 @@ typedef struct Proxy {
     uint16_t node;           /* 0: free */
     uint16_t gen;            /* the generation of the entry's PID terms */
     term remote;             /* the PID on its node (T_ZEROPID: the node's agent) */
+    uint16_t used;           /* DistState.tick at its last use (eviction) */
+    uint16_t pad;
 } Proxy;
 
 /* A remote link or monitor. MON_OUT: local monitors a remote PID (peer, a
@@ -68,6 +70,7 @@ typedef struct Watch {
 typedef struct DistState {
     VmDist hooks;            /* first: vm->dist points here */
     uint16_t self;           /* this node's id */
+    uint16_t tick;           /* proxy use clock (least recently used goes first) */
     term agent;              /* the local actor a SEND to PID 0 reaches */
     DistStats st;
     Link links[DIST_LINKS];
@@ -119,17 +122,48 @@ static term proxy_term(const DistState *ds, const Proxy *x) {
     return term_make_pid((uint16_t)(DIST_SLOT_BASE + (uint32_t)(x - ds->proxies)), x->gen);
 }
 
-/* The proxy of (node, remote), made if new; 0 if the table is full. */
+/* Frees entry x: its PID terms name nothing from now on (a send to one
+ * is dropped, as to a dead local PID). */
+static void proxy_free(Proxy *x) {
+    x->node = 0;
+    x->gen = (uint16_t)((x->gen + 1u) & 0xFFFu);
+}
+
+/* True if a remote link or monitor names proxy p. */
+static bool proxy_watched(const DistState *ds, term p) {
+    for (uint32_t i = 0; i < DIST_WATCHES; i++) {
+        const Watch *w = &ds->watches[i];
+        if ((w->kind == W_MON_OUT || w->kind == W_LINK) && w->peer == p) return true;
+    }
+    return false;
+}
+
+/* The proxy of (node, remote), made if new. A full table gives up its
+ * least recently used entry that no link or monitor names and that is no
+ * node's agent; 0 if there is none. */
 static term proxy_intern(DistState *ds, uint16_t node, term remote) {
-    Proxy *free = NULL;
+    Proxy *free = NULL, *old = NULL;
     for (uint32_t i = 0; i < DIST_PROXIES; i++) {
         Proxy *x = &ds->proxies[i];
-        if (x->node == node && x->remote == remote) return proxy_term(ds, x);
+        if (x->node == node && x->remote == remote) {
+            x->used = ++ds->tick;
+            return proxy_term(ds, x);
+        }
         if (!x->node && !free) free = x;
+    }
+    for (uint32_t i = 0; !free && i < DIST_PROXIES; i++) {
+        Proxy *x = &ds->proxies[i];
+        if (x->remote == T_ZEROPID || proxy_watched(ds, proxy_term(ds, x))) continue;
+        if (!old || (uint16_t)(ds->tick - x->used) > (uint16_t)(ds->tick - old->used)) old = x;
+    }
+    if (!free && old) {
+        proxy_free(old);
+        free = old;
     }
     if (!free) return 0;
     free->node = node;
     free->remote = remote;
+    free->used = ++ds->tick;
     return proxy_term(ds, free);
 }
 
@@ -145,10 +179,7 @@ static term proxy_find(DistState *ds, uint16_t node, term remote) {
 static void proxies_drop(DistState *ds, uint16_t node) {
     for (uint32_t i = 0; i < DIST_PROXIES; i++) {
         Proxy *x = &ds->proxies[i];
-        if (x->node == node) {
-            x->node = 0;
-            x->gen = (uint16_t)((x->gen + 1u) & 0xFFFu);
-        }
+        if (x->node == node) proxy_free(x);
     }
 }
 
@@ -234,6 +265,19 @@ static void control(Vm *vm, DistState *ds, uint16_t node, uint8_t type, const ui
     p = wr16(p, ds->self);
     for (uint32_t i = 0; i < nw; i++) p = wr32(p, w[i]);
     emit(vm, ds, route(ds, node), b, (uint32_t)(p - b));
+}
+
+/* GONE{pid} on l, as from node src: the actor pid of src exited, so its
+ * proxies can go. */
+static void gone_to(Vm *vm, DistState *ds, Link *l, uint16_t src, term pid) {
+    uint8_t b[2u + HDR + 4u], *p = b;
+    p = wr16(p, HDR + 4u);
+    *p++ = F_GONE;
+    *p++ = 0;
+    p = wr16(p, l->peer);
+    p = wr16(p, src);
+    wr32(p, pid);
+    emit(vm, ds, l, b, sizeof b);
 }
 
 /* ---- local deliveries ---- */
@@ -718,6 +762,14 @@ static term dec(Dec *d, uint32_t depth) {
             if (term_pid_slot(t) >= d->vm->table_cap) d->bad = true;
             return t;
         }
+        /* A node this one has no route to is refused; the proxy is made
+         * only when writing, after the whole term was checked, so a bad
+         * message takes no slot. */
+        if (!route(d->ds, node)) {
+            d->bad = true;
+            return T_NIL;
+        }
+        if (!d->w) return T_NIL;
         t = proxy_intern(d->ds, node, t);
         if (!t) d->bad = true;
         return t;
@@ -769,6 +821,11 @@ static void deliver(Vm *vm, DistState *ds, Actor *to, const uint8_t *p, uint32_t
     m->flags = reply ? MSG_REPLY : 0u;
     Dec w = { vm, ds, p, n, 0, m->data, skip, false, &me->img, module_tag(vm, to->mod) };
     m->root = dec(&w, 0);
+    if (w.bad) {                    /* no proxy slot for a PID in it */
+        msg_free(vm, m);
+        ds->st.dropped++;
+        return;
+    }
     if (reply) {
         m->data[0] = (uint32_t)serial;
         m->data[1] = (uint32_t)(serial >> 32);
@@ -843,6 +900,7 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
     if (!e.why && 2u + len > DIST_FRAME_MAX) e.why = R_BAD_MSG;
     if (e.why && e.why != WHY_DROP) return -(int)e.why;
     Link *l = x ? route(ds, x->node) : NULL;
+    if (x) x->used = ++ds->tick;
     uint8_t *p;
     Msg *m = l && !e.why ? chunk_new(vm, l, 2u + len, &p) : NULL;
     if (!m) {
@@ -934,6 +992,12 @@ static void h_exited(Vm *vm, Actor *a, uint32_t code) {
             control(vm, ds, x->node, F_DEMONITOR, f, 4);
         }
     }
+    if (exported(ds, a->id)) {
+        /* Peers may hold proxies of it: tell them it is gone. */
+        for (uint32_t i = 0; i < DIST_LINKS; i++) {
+            if (ds->links[i].port) gone_to(vm, ds, &ds->links[i], ds->self, a->id);
+        }
+    }
     for (uint32_t i = 0; i < DIST_EXPORTS; i++) {
         if (ds->exports[i] == a->id) ds->exports[i] = 0;
     }
@@ -986,6 +1050,22 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
             node_event(vm, l->port, 2, rd16(f), T_ZEROPID);
         } else {
             ds->st.bad++;
+        }
+        return;
+    }
+    if (type == F_GONE) {                        /* src's actor pid exited */
+        if (fn != 4u) {
+            ds->st.bad++;
+            return;
+        }
+        term p = proxy_find(ds, src, rd32(f));
+        Proxy *x = p ? proxy_of(ds, p) : NULL;
+        if (x && !proxy_watched(ds, p)) proxy_free(x);
+        if (!l->relay) {                         /* the server: tell the other boards */
+            for (uint32_t i = 0; i < DIST_LINKS; i++) {
+                Link *k = &ds->links[i];
+                if (k->port && k != l) gone_to(vm, ds, k, src, rd32(f));
+            }
         }
         return;
     }
