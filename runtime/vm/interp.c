@@ -660,6 +660,8 @@ int interp_run(Vm *vm, Actor *a) {
         uint32_t w = code[pc];
         uint32_t op = OP_OP(w), ra = OP_A(w), rb = OP_B(w), rc = OP_C(w);
         uint32_t ext = 0, next = pc + 1u, info;
+        int64_t ires;      /* put_int: an integer result for ra, */
+        bool wide;         /* an int64 (else an int: ires fits 32 bits) */
         CHECK(op < sizeof op_info);
         info = op_info[op];
         if (info & OPF_EXT) {
@@ -695,13 +697,10 @@ int interp_run(Vm *vm, Actor *a) {
             R[ra] = term_is_const(ext) ? ext | tag : ext;
             break;
 
-        case OP_LOADI32: {
-            term t;
-            if (!make_int(vm, a, (int32_t)ext, &t)) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
-        }
+        case OP_LOADI32:
+            ires = (int32_t)ext;
+            wide = false;
+            goto put_int;
 
         case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REM: case OP_NEG:
         case OP_AND: case OP_OR: case OP_XOR: case OP_ANDNOT: case OP_SHL: case OP_SHR:
@@ -712,11 +711,11 @@ int interp_run(Vm *vm, Actor *a) {
              * 32 bits (arith32); the int64 ops (OPF_W) take int64s in
              * either representation (arith64). A shift count (OPF_SH)
              * may be any integer; NEG has no rc. */
-            bool wide = (info & OPF_W) != 0;
-            int64_t x, y = 0, r;
+            int64_t x, y = 0;
             int32_t n, r32;
             uint32_t why;
             term t;
+            wide = (info & OPF_W) != 0;
             /* a small int is the same value for both: no call */
             if (term_is_int(R[rb])) x = term_to_int(R[rb]);
             else CHECK(int_operand(vm, a, R[rb], wide, &x));
@@ -727,10 +726,11 @@ int interp_run(Vm *vm, Actor *a) {
                 if (term_is_int(R[rc])) y = term_to_int(R[rc]);
                 else CHECK(int_operand(vm, a, R[rc], wide, &y));
             }
-            if (wide) why = arith64(op, x, y, &r);
-            else { why = arith32(op, (int32_t)x, (int32_t)y, &r32); r = r32; }
+            if (wide) why = arith64(op, x, y, &ires);
+            else { why = arith32(op, (int32_t)x, (int32_t)y, &r32); ires = r32; }
             if (why != 0) CRASH(why);
-            if (!(wide ? make_int64(vm, a, r, &t) : make_int(vm, a, (int32_t)r, &t))) CRASH(R_OUT_OF_MEMORY);
+        put_int:   /* LOADI32, CONV, the int-valued builtins */
+            if (!(wide ? make_int64(vm, a, ires, &t) : make_int(vm, a, (int32_t)ires, &t))) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
             break;
@@ -781,37 +781,22 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_CONV: {
             /* c=0: int(rb) of an int64, truncating to the low 32 bits;
              * c=1: int64(rb) of an int, sign-extending; c=6: the same
-             * zero-extending (of a uint32). An immediate is the same term
-             * in both types (its value fits either way), except a
-             * negative one for c=6. c=2..5: uint8, uint16, int8, int16
-             * of an int or int64 (either representation): the low 8
-             * (even c) or 16 bits, zero- (c < 4) or sign-extended: always
-             * an immediate. */
-            CHECK(rc <= 6u);
+             * zero-extending (of a uint32). c=2..5: uint8, uint16, int8,
+             * int16 of an int or int64 (either representation): the low 8
+             * (even c) or 16 bits, zero- (c < 4) or sign-extended. An
+             * immediate operand whose value fits gives the same term
+             * back (make_int, make_int64). */
             int32_t x;
             int64_t x64;
-            term t;
-            bool ok;
-            if (rc >= 2u && rc <= 5u) {
-                if (int_val(vm, a, R[rb], &x)) x64 = x;
-                else CHECK(int64_val(vm, a, R[rb], &x64));
-                uint32_t sh = rc & 1u ? 16u : 24u, u = (uint32_t)(uint64_t)x64 << sh;
-                R[ra] = term_from_int(rc >= 4u ? wrap(u) >> sh : (int32_t)(u >> sh));
-                break;
-            }
-            if (rc == 0u) {
-                CHECK(int64_val(vm, a, R[rb], &x64));
-                if (term_is_int(R[rb])) { R[ra] = R[rb]; break; }
-                ok = make_int(vm, a, wrap((uint32_t)(uint64_t)x64), &t);
-            } else {
-                CHECK(int_val(vm, a, R[rb], &x));
-                if (term_is_int(R[rb]) && (rc == 1u || x >= 0)) { R[ra] = R[rb]; break; }
-                ok = make_int64(vm, a, rc == 6u ? (int64_t)(uint32_t)x : x, &t);
-            }
-            if (!ok) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
+            bool box64 = !int_val(vm, a, R[rb], &x);   /* not an int: a K_INT64 */
+            if (box64) CHECK(int64_val(vm, a, R[rb], &x64));
+            else x64 = x;
+            uint32_t u = (uint32_t)(uint64_t)x64, sh = rc & 1u ? 16u : 24u;
+            CHECK(rc <= 6u && (rc == 0u ? box64 || term_is_int(R[rb]) : rc - 2u < 4u || !box64));
+            wide = rc == 1u || rc == 6u;
+            ires = rc == 6u ? (int64_t)u : rc == 1u ? x64 : rc == 0u ? wrap(u)
+                 : rc >= 4u ? wrap(u << sh) >> sh : (int32_t)((u << sh) >> sh);
+            goto put_int;
         }
 
         case OP_EQ: case OP_NE: {
@@ -1190,23 +1175,20 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = term_from_bool(serial != 0 && timer_cancel(vm, serial));   /* zero Ref: false */
                 break;
             }
-            case B_NOW: {
+            /* NOW, MEMORY and UNIX_TIME end in put_int: they cannot
+             * mark the running actor, so the exit check below has
+             * nothing to see. */
+            case B_NOW:
                 /* An immediate (no allocation) for the first ~12 days. */
-                term t;
-                if (!make_int64(vm, a, (int64_t)vm_now(vm), &t)) CRASH(R_OUT_OF_MEMORY);
-                RELOAD();
-                R[ra] = t;
-                break;
-            }
+                ires = (int64_t)vm_now(vm);
+                wide = true;
+                goto put_int;
             case B_MEMORY: {
                 /* The caller's own state (mem, mem_words) is current in a. */
                 const Actor *p = actor_lookup(vm, R[rb]);
-                size_t bytes = p ? actor_memory_bytes(p) : 0u;
-                term t;
-                if (!make_int(vm, a, (int32_t)bytes, &t)) CRASH(R_OUT_OF_MEMORY);
-                RELOAD();
-                R[ra] = t;
-                break;
+                ires = (int32_t)(p ? actor_memory_bytes(p) : 0u);
+                wide = false;
+                goto put_int;
             }
             case B_MAKE_REF: {
                 term ref = heap_new_ref(vm, a);
@@ -1300,13 +1282,10 @@ int interp_run(Vm *vm, Actor *a) {
             case B_NET_SUBSCRIBE:
                 R[ra] = term_from_bool(port_subscribe(vm, a));   /* no GC */
                 break;
-            case B_UNIX_TIME: {
-                term t;
-                if (!make_int64(vm, a, vm_unix_time_ms(vm), &t)) CRASH(R_OUT_OF_MEMORY);
-                RELOAD();
-                R[ra] = t;
-                break;
-            }
+            case B_UNIX_TIME:
+                ires = vm_unix_time_ms(vm);
+                wide = true;
+                goto put_int;
             case B_SET_UNIX_TIME: {
                 int64_t ms;
                 CHECK(int64_val(vm, a, R[rb], &ms));
