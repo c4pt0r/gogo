@@ -7,6 +7,15 @@
 #include "heap.h"
 #include "opcodes.h"
 
+/* d = the bits of s (same size). The firmware builds with
+ * -fno-builtin-memcpy, so a plain memcpy here is a library call; the
+ * builtin is a register move. */
+#if defined(__GNUC__)
+#define BITS(d, s) __builtin_memcpy(&(d), &(s), sizeof (d))
+#else
+#define BITS(d, s) memcpy(&(d), &(s), sizeof (d))
+#endif
+
 /* ---- values ---- */
 
 /* The raw bits of K_FLOAT object o (a float32's in the low half). */
@@ -54,9 +63,9 @@ static uint64_t widen(uint32_t u) {
     float f;
     double d;
     uint64_t r;
-    memcpy(&f, &u, sizeof f);
+    BITS(f, u);
     d = f;
-    memcpy(&r, &d, sizeof r);
+    BITS(r, d);
     return r;
 }
 
@@ -94,11 +103,11 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs) {
         if (is32) {                          /* directly: through double could round twice */
             float f = (float)i;
             uint32_t u;
-            memcpy(&u, &f, sizeof u);
+            BITS(u, f);
             r = u;
         } else {
             double d = (double)i;
-            memcpy(&r, &d, sizeof r);
+            BITS(r, d);
         }
         goto box;
     }
@@ -121,10 +130,10 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs) {
         if (is32) r = widen((uint32_t)x);
         else {
             double d;
-            memcpy(&d, &x, sizeof d);
+            BITS(d, x);
             float f = (float)d;
             uint32_t u;
-            memcpy(&u, &f, sizeof u);
+            BITS(u, f);
             r = u;
         }
         is32 = !is32;
@@ -145,27 +154,27 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs) {
     if (is32) {                              /* single precision: the ESP32-S3's FPU */
         float fx, fy, fr;
         uint32_t ux = (uint32_t)x, uy = (uint32_t)y, ur;
-        memcpy(&fx, &ux, sizeof fx);
-        memcpy(&fy, &uy, sizeof fy);
+        BITS(fx, ux);
+        BITS(fy, uy);
         switch (op) {
         case OP_ADDF: fr = fx + fy; break;
         case OP_SUBF: fr = fx - fy; break;
         case OP_MULF: fr = fx * fy; break;
         default:      fr = fx / fy; break;
         }
-        memcpy(&ur, &fr, sizeof ur);
+        BITS(ur, fr);
         r = ur;
     } else {
         double dx, dy, dr;
-        memcpy(&dx, &x, sizeof dx);
-        memcpy(&dy, &y, sizeof dy);
+        BITS(dx, x);
+        BITS(dy, y);
         switch (op) {
         case OP_ADDF: dr = dx + dy; break;
         case OP_SUBF: dr = dx - dy; break;
         case OP_MULF: dr = dx * dy; break;
         default:      dr = dx / dy; break;
         }
-        memcpy(&r, &dr, sizeof r);
+        BITS(r, dr);
     }
 box:
     if (!heap_box(vm, a, K_FLOAT, is32 ? 2u : 3u, r, &t)) return R_OUT_OF_MEMORY;
