@@ -197,12 +197,21 @@ its types alone does not require a keyboard either; a constant
 `port.Open("kbd", ...)` in your own code still does.)
 
 Nothing in `gogo/tui` waits for a message on its own. Your actor keeps its
-receive loop and hands each message to `tui.Event`, which returns the
-updated key state, the key (`KeyNone` if the message meant none) and
-whether the message was the UI's at all. A UI message is a key, a button
-edge, or one of the port's `port.Done` replies, which `Event` swallows.
+receive loop and hands each message to `tui.Event(s, keys, msg)`, which
+returns the updated key state, the key (`KeyNone` if the message meant
+none) and whether the message was the UI's at all. A UI message is a key,
+a button edge, or a `port.Done` answering one of the screen's frames.
 Everything else is yours to handle: timers, network events, messages from
 other actors. A UI never blocks the rest of a program.
+
+A `port.Done` does not say which port sent it. `Event` takes as many
+`Done`s as the screen has frames unanswered (`Flush` counts them) and
+hands any others back. A program that also drives another stream port,
+the speaker for instance, gets the right number of `Done`s back, but while
+both ports have messages in flight one of its `Done`s may be taken for the
+screen's and the screen's handed back instead: count them, do not rely on
+their `Seq`. (A later version of `port.Done` will carry its sender, and
+this will become exact.)
 
 ```go
 func main() {
@@ -377,6 +386,12 @@ needs a firmware of 15.1 or later.
   Multilingual Plane are shown as a box.
 - On the host, in a terminal, `println` output lands on top of the grid.
   Use the text dump, or print nothing while the screen is open.
-- The StickS3 has no way to move up: lists wrap around instead.
+- The StickS3 has no way to move up: lists wrap around instead. Esc
+  (holding B) fires when B is released, with no sign on the screen when
+  the 600 ms have passed.
+- While the screen is open on a board, the console is hidden: crash
+  reports of other actors (and anything printed) show only when the
+  screen closes, or on the serial console. Watch the serial console
+  (`gogo monitor`) while developing a UI.
 
 See [Known issues](../known-issues.md) for the rest.

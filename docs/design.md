@@ -984,7 +984,10 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   cursor; `lib/screen/screen.gg`): checked whole, then applied at once, the
   data read in place on the sender's heap (no copy, no held Bytes), and
   answered with `port.Done` (-1: malformed, nothing applied). A Done that
-  does not fit the mailbox is owed until the next Out. Every operation is
+  does not fit the mailbox is owed and retried every 10 ms by the port's
+  event source (GOGO_MAX_SOURCES is 3 for it: the boards already use two),
+  after collecting a waiting owner's heap slack as stream/ does; with 8
+  owed, further Outs get Done{-1}, counted, so every Out gets its Done. Every operation is
   clipped to the clip rectangle, which is always inside the grid, so no
   sequence, malformed or not, writes outside the cell array (fuzzed in
   `make test-screen`). Only the rows whose cells differ at the end of a
@@ -992,7 +995,8 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   row hash, so a clear-and-redraw costs nothing on the LCD).
 - **Display hooks.** A board passes a `ScreenHw` (open, present the dirty
   rows, close) through its own open function (`SCREEN_PORT_DRIVER`); the
-  VM core is unchanged. ESP32-S3 (`console_task.c`): `present` copies the
+  VM core only gains the reserved type, the capability name and the
+  third event-source slot. ESP32-S3 (`console_task.c`): `present` copies the
   changed rows into a grid shared with the console's render task, under
   the console's spinlock, one row per hold; the render task draws them
   with `screen_render_row` (RGB565, box drawing and blocks drawn as lines
@@ -1005,7 +1009,8 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   (an origin and a clip), widgets as value structs and functions (Label,
   Box, List, progress bar, status line, Edit), and `tui.Key` over the
   keyboard or two buttons. It never receives on its own (`Event` maps a
-  message the caller received; `Open` reads the size Chunk in a helper
+  message the caller received and takes only as many Dones as the screen
+  has Outs unanswered; `Open` reads the size Chunk in a helper
   actor that hands the port over), so a UI composes with other messages.
   It declares `//gogo:optional kbd`.
 - **Switch and sizes.** Kconfig `GOGO_SCREEN` (on): the board lists the
