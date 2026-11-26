@@ -256,9 +256,34 @@ and that sends typed events to its owner. Ports close automatically when
 their owner exits or crashes. [Book §7.6](book/07-ports-and-peripherals.md)
 explains how they work inside.
 
-### Which boards are supported?
-The M5StickS3 and the M5Stack Cardputer ADV (ESP32-S3), plus the host VM on
-macOS and Linux and embedding in other programs. RP2040 boards are planned.
+### What hardware does gogo support?
+**Boards** (one ESP-IDF firmware tree, `platform/esp32s3`, built per board):
+
+| | M5StickS3 | M5Stack Cardputer ADV |
+|---|---|---|
+| Chip | ESP32-S3, 8 MB PSRAM | ESP32-S3, no PSRAM |
+| Screen | LCD, text console and `screen` port (40×11 cells) | same |
+| Input | 2 buttons (GPIO) | 56-key keyboard |
+| Battery | gauge through the PM1 power chip | voltage through an ADC divider |
+| IMU | BMI270: samples and gestures | same |
+| Infrared | send and receive | send |
+| Audio | ES8311 codec: microphone and speaker | same |
+| Storage | `/flash` (LittleFS) | `/flash` and `/sd` (FAT and exFAT) |
+| Network | Wi-Fi, TCP/UDP, TLS | same |
+
+Each peripheral is a port and a named requirement, and each can be left
+out of a firmware build with a compile-time switch (`gogo firmware`).
+
+**Hosts:** `gogovm` on macOS and Linux (with simulated GPIO, keys, IMU, IR,
+microphone, network, files and screen), and any program that embeds
+`libgogo.a` (C99; Rust, Go and mobile bindings planned), which can add its
+own peripherals as host ports.
+
+**Planned:** RP2040 boards (the platform layer is being reshaped so a new
+board is mostly a small set of hardware hooks), BLE on the ESP32-S3, and
+general-purpose `uart`, `i2c`, `spi` and display ports. Other ESP32-S3
+boards can be added by describing their pins and peripherals in
+`platform/esp32s3/main/board.h`.
 
 ### How do I get started on a board?
 Install the `gogo` binary and `esptool`, connect the board, run
