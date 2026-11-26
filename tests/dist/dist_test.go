@@ -71,7 +71,17 @@ func startVM(t *testing.T, prog string, flags []string, cfg ...string) *node {
 // startArgs is startVM with the program's arguments (sys.Args).
 func startArgs(t *testing.T, prog string, flags, args []string, cfg ...string) *node {
 	t.Helper()
-	vm := os.Getenv("GOGO_VM")
+	return startOn(t, "GOGO_VM", prog, flags, args, cfg...)
+}
+
+// startOn is startArgs on the VM named by the environment variable env
+// (GOGO_VM, or GOGO_VM_MCU: the board configuration; skipped if unset).
+func startOn(t *testing.T, env, prog string, flags, args []string, cfg ...string) *node {
+	t.Helper()
+	vm := os.Getenv(env)
+	if vm == "" && env != "GOGO_VM" {
+		t.Skipf("%s is not set", env)
+	}
 	if vm == "" {
 		t.Fatal("GOGO_VM is not set: run `make test-go`, or build the VM with `make vm` and set GOGO_VM=$PWD/build/gogovm")
 	}

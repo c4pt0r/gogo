@@ -303,9 +303,18 @@ func pump(e ends, conn, np actor.PID, rest []byte, peerName string, peerID, self
 		actor.Send(np, port.Out{Data: bytes.FromSlice(rest)})
 	}
 	var q []bytes.Bytes
+	var doors []actor.Request // Whereis lookups waiting for a door (doorReq)
 	qb, inflight := 0, 0
 	for {
 		switch m := actor.Receive().(type) {
+		case actor.Request:
+			switch d := m.Body.(type) {
+			case doorReq:
+				if len(doors) < 64 { // more wait for their timeout
+					doors = append(doors, m)
+					actor.Send(np, net.NodeEvent{Kind: net.NodeDoor, Node: d.ID})
+				}
+			}
 		case port.Chunk:
 			if m.From == conn {
 				actor.Send(np, port.Out{Data: m.Data})
@@ -329,9 +338,25 @@ func pump(e ends, conn, np actor.PID, rest []byte, peerName string, peerID, self
 			}
 		case net.NodeEvent:
 			if m.Kind == net.NodeUp && m.Node == peerID {
-				actor.Send(e.Agent, linkUp{Name: peerName, ID: peerID, Self: selfID, Agent: m.Agent, Link: actor.Self()})
+				actor.Send(e.Agent, linkUp{Name: peerName, ID: peerID, Self: selfID, Link: actor.Self()})
 			} else if m.Kind == net.NodeUp {
-				actor.Send(e.Agent, nodeUp{Name: m.Name, ID: m.Node, Agent: m.Agent})
+				actor.Send(e.Agent, nodeUp{Name: m.Name, ID: m.Node})
+			} else if m.Kind == net.NodeDoor {
+				// The door asked for: answer every Whereis waiting for it.
+				var keep []actor.Request
+				for _, r := range doors {
+					want := 0
+					switch d := r.Body.(type) {
+					case doorReq:
+						want = d.ID
+					}
+					if want == m.Node {
+						actor.Reply(r, m.Agent)
+					} else {
+						keep = append(keep, r)
+					}
+				}
+				doors = keep
 			} else if m.Kind == net.NodeDown {
 				actor.Send(e.Agent, nodeGone{ID: m.Node})
 			} else if m.Kind == net.NodeCarried {

@@ -263,8 +263,13 @@ the defaults (1024 ports, 512 links) leave room for the program's own
 ports; raise both, up to 2048, for more. The tables above are allocated at
 the first link, about 100 bytes per link of the cap (some 50 KB at 512),
 plus about 300 bytes per open link and its link actor's heap (at most
-40 KB, usually a few). A board joins one server, so its 8 links are
-plenty.
+40 KB, usually a few).
+
+**A board in a big star.** A board's 8 links are enough whatever the size
+of the star: it joins one server. Its 64 remote PIDs hold the PIDs it
+uses, not one per node: a node's door is made when `node.Whereis` first
+needs it and may be evicted like any other. `tests/dist` runs a board
+with the board's caps in a star of 70 nodes.
 
 **Full tables.** When the remote-PID table is full, the least recently
 used entry that no link or monitor names makes room. A remote PID that an

@@ -291,6 +291,11 @@ const (
 	NodeUp      = 1
 	NodeDown    = 2
 	NodeCarried = 3 // the node port took Conn over (NodeLink)
+	// NodeDoor: sent to the node port, NodeEvent{Kind: NodeDoor, Node: id}
+	// asks for node id's door; the port answers with the same Kind and the
+	// door as Agent (the zero PID if no link reaches the node). A door is
+	// a remote PID like any other, made on demand.
+	NodeDoor = 4
 )
 
 // The Reason of a "tcp" or "tls" port's port.Closed: the shared codes of

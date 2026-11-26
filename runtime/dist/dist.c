@@ -66,9 +66,8 @@ typedef struct Link {
 typedef struct Proxy {
     uint16_t node;           /* 0: free */
     uint16_t gen;            /* the generation of the entry's PID terms */
-    term remote;             /* the PID on its node (T_ZEROPID: the node's agent) */
-    uint16_t used;           /* DistState.tick at its last use (eviction) */
-    uint16_t pad;
+    term remote;             /* the PID on its node (T_ZEROPID: the node's door) */
+    uint32_t used;           /* DistState.tick at its last use (eviction) */
 } Proxy;
 
 /* A remote link or monitor. MON_OUT: local monitors a remote PID (peer, a
@@ -95,7 +94,7 @@ typedef struct Pending {
 typedef struct DistState {
     VmDist hooks;            /* first: vm->dist points here */
     uint16_t self;           /* this node's id */
-    uint16_t tick;           /* proxy use clock (least recently used goes first) */
+    uint32_t tick;           /* proxy use clock (least recently used goes first) */
     term agent;              /* the local actor a SEND to PID 0 reaches */
     DistStats st;
     /* The tables, sized at the first open from the VM's link cap
@@ -189,8 +188,8 @@ static term proxy_intern(DistState *ds, uint16_t node, term remote) {
     }
     for (uint32_t i = 0; !free && i < ds->nprox; i++) {
         Proxy *x = &ds->proxies[i];
-        if (x->remote == T_ZEROPID || proxy_watched(ds, proxy_term(ds, x))) continue;
-        if (!old || (uint16_t)(ds->tick - x->used) > (uint16_t)(ds->tick - old->used)) old = x;
+        if (proxy_watched(ds, proxy_term(ds, x))) continue;   /* doors too: made again on demand */
+        if (!old || ds->tick - x->used > ds->tick - old->used) old = x;
     }
     if (!free && old) {
         proxy_free(old);
@@ -1253,8 +1252,10 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
     }
     if (type == F_NODEUP) {                      /* another board joined (from the server) */
         uint16_t nd = fn >= 2u ? rd16(f) : 0;
-        term up = l->relay && nd && nd != ds->self && fn - 2u <= DIST_NAME_MAX ? proxy_intern(ds, nd, T_ZEROPID) : 0;
-        if (up) node_event(vm, l->port, 1, nd, up, f + 2, fn - 2u);
+        /* No door proxy yet: the owner asks for one when it needs it
+         * (NodeDoor), so a board in a big star holds only those it uses. */
+        if (l->relay && nd && nd != ds->self && fn - 2u <= DIST_NAME_MAX)
+            node_event(vm, l->port, 1, nd, T_ZEROPID, f + 2, fn - 2u);
         else ds->st.bad++;
         return;
     }
@@ -1593,8 +1594,6 @@ static int n_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
         if (ds->links[i] && !ds->links[i]->port) l = ds->links[i];
     }
     if (!l) return -1;
-    term up = proxy_intern(ds, (uint16_t)peer, T_ZEROPID);
-    if (!up) return -1;
     memset(l, 0, sizeof *l);
     l->port = p;
     l->peer = (uint16_t)peer;
@@ -1614,8 +1613,8 @@ static int n_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
     /* NodeEvent{Kind: Up, Node: peer, Agent: the peer's door, Name}. The
      * port charges nothing, so the open cannot fail after this. p->owner is
      * set already (port_open), so it goes to the owner. */
-    node_event(vm, p, 1, peer, up, l->name, l->name_len);
-    if (l->carried) node_event(vm, p, 3, peer, up, NULL, 0);   /* NodeCarried */
+    node_event(vm, p, 1, peer, T_ZEROPID, l->name, l->name_len);
+    if (l->carried) node_event(vm, p, 3, peer, T_ZEROPID, NULL, 0);   /* NodeCarried */
     /* A server tells the new board about the others, and them about it. */
     for (uint32_t i = 0; !l->relay && i < ds->nlinks; i++) {
         Link *k = ds->links[i];
@@ -1636,6 +1635,15 @@ static void n_command(Vm *vm, const Actor *from, Port *p, term msg) {
     if (!l || from->id != p->owner || !o || hdr_kind(o[0]) != K_STRUCT) return;
     if (o[1] == TYPE_NET_RESUME) {                /* the owner forwarded conn's last Chunks */
         if (l->carried) vm->board->dist_carrier->resume(vm, l->cctx);
+        return;
+    }
+    if (o[1] == TYPE_NET_NODEEVENT) {             /* NodeDoor{Node}: that node's door, if routed */
+        int32_t kind, nd;
+        if (hdr_words(o[0]) != 7u || !int_val(vm, from, o[3], &kind) || kind != 4 || !int_val(vm, from, o[4], &nd))
+            return;
+        term door = nd > 0 && nd <= 0xFFFF && nd != ds->self && route(ds, (uint16_t)nd)
+                        ? proxy_intern(ds, (uint16_t)nd, T_ZEROPID) : 0;
+        node_event(vm, p, 4, nd, door ? door : T_ZEROPID, NULL, 0);
         return;
     }
     if (o[1] != TYPE_OUT || hdr_words(o[0]) != 3u || !bytes_view(vm, from, o[2], &d, &n)) return;

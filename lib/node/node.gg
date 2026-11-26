@@ -80,9 +80,15 @@ type unregisterReq struct{ Name string }
 type peerReq struct{ Node, Name string }
 type peerAns struct {
 	Local bool      // PID is the local actor of the name
-	PID   actor.PID // else the node's door
+	PID   actor.PID // else the link actor that reaches node ID (doorReq)
+	ID    int
 	Err   errors.Code
 }
+
+// From Whereis to a link actor: node ID's door (a remote PID made on
+// demand, so a board in a big star holds proxies only for the nodes it
+// talks to), or the zero PID if the node cannot be reached.
+type doorReq struct{ ID int }
 type nodesReq struct{}
 type selfReq struct{}
 type subscribeReq struct{ PID actor.PID }
@@ -96,18 +102,16 @@ type lookupReq struct{ Name string }
 
 // From a link actor to the agent: the server reported another board.
 type nodeUp struct {
-	Name  string
-	ID    int
-	Agent actor.PID
+	Name string
+	ID   int
 }
 
 // From link actors to the agent.
 type linkUp struct {
-	Name  string // the peer's name
-	ID    int    // the peer's id
-	Self  int    // this node's id
-	Agent actor.PID
-	Link  actor.PID
+	Name string // the peer's name
+	ID   int    // the peer's id
+	Self int    // this node's id
+	Link actor.PID
 }
 type linkFail struct{ Err errors.Code }
 type assignReq struct {
@@ -118,11 +122,10 @@ type nodeGone struct{ ID int }
 
 // peer is a node the agent knows.
 type peer struct {
-	Name  string
-	ID    int
-	Agent actor.PID // its agent (a remote PID)
-	Link  actor.PID // the local link actor to it, or the zero PID (through the relay)
-	Ref   actor.Ref // the monitor on Link
+	Name string
+	ID   int
+	Link actor.PID // the local link actor to it, or the zero PID (through the relay)
+	Ref  actor.Ref // the monitor on Link
 }
 
 // agent returns the node agent, starting it on first use.
@@ -202,6 +205,7 @@ func Unregister(name string) { call(unregisterReq{Name: name}, 2000) }
 // the name is not known, Timeout if the answer did not come in time.
 func Whereis(node, name string, timeoutMs int) (actor.PID, error) {
 	var zero actor.PID
+	deadline := actor.Now() + int64(timeoutMs) // the whole lookup, all its steps
 	r, ok := call(peerReq{Node: node, Name: name}, timeoutMs)
 	if !ok {
 		return zero, errors.Timeout
@@ -214,7 +218,27 @@ func Whereis(node, name string, timeoutMs int) (actor.PID, error) {
 		if a.Local {
 			return a.PID, nil
 		}
-		r2, ok := actor.Call(a.PID, whereisReq{Name: name}, timeoutMs)
+		left := int(deadline - actor.Now())
+		if left <= 0 {
+			return zero, errors.Timeout
+		}
+		d, ok := actor.Call(a.PID, doorReq{ID: a.ID}, left)
+		if !ok {
+			return zero, errors.Timeout
+		}
+		door := zero
+		switch p := d.(type) {
+		case actor.PID:
+			door = p
+		}
+		if door == zero {
+			return zero, errors.NotFound // gone meanwhile
+		}
+		left = int(deadline - actor.Now())
+		if left <= 0 {
+			return zero, errors.Timeout
+		}
+		r2, ok := actor.Call(door, whereisReq{Name: name}, left)
 		if !ok {
 			return zero, errors.Timeout
 		}
@@ -382,6 +406,7 @@ func agentRun() {
 	server := false
 	ms := 5000
 	var peers []peer
+	var relay actor.PID // a board: its link actor to the server
 	var names []string
 	var namePIDs []actor.PID
 	var subs []actor.PID
@@ -466,7 +491,11 @@ func agentRun() {
 				} else {
 					for _, p := range peers {
 						if p.Name == r.Node {
-							ans = peerAns{PID: p.Agent}
+							via := p.Link // a board reaches every node through its server link
+							if via == zero {
+								via = relay
+							}
+							ans = peerAns{PID: via, ID: p.ID}
 						}
 					}
 				}
@@ -527,7 +556,10 @@ func agentRun() {
 				}
 			}
 			ref := actor.Monitor(m.Link)
-			peers = append(peers, peer{Name: m.Name, ID: m.ID, Agent: m.Agent, Link: m.Link, Ref: ref})
+			peers = append(peers, peer{Name: m.Name, ID: m.ID, Link: m.Link, Ref: ref})
+			if !server {
+				relay = m.Link
+			}
 			notify(subs, Up{Node: m.Name})
 			if waiting {
 				actor.Reply(pending, errors.OK)
@@ -547,7 +579,7 @@ func agentRun() {
 				}
 			}
 			if !server && !known {
-				peers = append(peers, peer{Name: m.Name, ID: m.ID, Agent: m.Agent})
+				peers = append(peers, peer{Name: m.Name, ID: m.ID})
 				notify(subs, Up{Node: m.Name})
 			}
 		case nodeGone: // the server reported a node gone
