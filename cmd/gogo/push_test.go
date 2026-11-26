@@ -166,6 +166,7 @@ func TestPush(t *testing.T) {
 		{[]string{app, "/flash/../x.ggb"}, "not a path under /flash/"},
 		{[]string{app, "/flash/a b.ggb"}, "bad name"},
 		{[]string{app, "/flash/x."}, "bad name"},
+		{[]string{app, "/flash/mods/.gogo-push"}, "pick another"},
 		{[]string{app, "/flash/" + strings.Repeat("n", 33)}, "bad name"},
 		{[]string{}, "usage: gogo push"},
 		{[]string{app, "/flash/a", "/flash/b"}, "usage: gogo push"},

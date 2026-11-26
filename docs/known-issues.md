@@ -459,7 +459,8 @@ rebuilt:
   running program. Pushing over a file the program has open replaces it
   under the program, whose handle may then fail or read the old data.
   *Workaround:* push to a new name, or move other files over HTTP or
-  the SD card.
+  the SD card. A push cut off (the cable pulled) leaves its temporary
+  file `.gogo-push` in the target's directory until the next push there.
 
 ## Input, audio, IMU and IR
 

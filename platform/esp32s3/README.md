@@ -572,7 +572,7 @@ writes that partition, so files survive reflashing (the whole-flash erase
   partition). At boot the size is read from the superblock; a larger
   setting grows the file system in place (`lfs_fs_grow`, files kept); a
   smaller one keeps the current size and prints `gogo: /flash shrink needs
-  format (fs.flash.format=yes)`. `gogo device format-flash` formats it:
+  format (gogo device format-flash)`. `gogo device format-flash` formats it:
   the board answers, sets a flag in RTC memory and restarts, and the
   next mount sees the flag (only after that software restart; it is
   cleared at once) and formats at the set size (`gogo: formatting /flash

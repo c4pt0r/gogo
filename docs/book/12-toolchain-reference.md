@@ -392,7 +392,11 @@ path given (its directory must exist; names as in chapter 9). The board
 writes it under a temporary name, reads it back, checks its length and
 CRC-32, and only then renames it over the target, so the target is
 either the old file or the whole new one. Any failure, a refused chunk,
-a mismatch, the cable pulled, leaves the target as it was.
+a mismatch, the cable pulled, leaves the target as it was. The temporary
+file is `.gogo-push` in the target's directory (which is why that name
+cannot be a target); a push cut off by a pulled cable leaves it there,
+taking space and listed by `fs.ReadDir`, until the next push into that
+directory.
 
 - `-port P`: as for `gogo flash`.
 - `-timeout seconds`: how long to wait for each answer of the board
@@ -504,6 +508,8 @@ Operations on the board itself, over its serial console:
   (`net.Subscribe` slots). When a port open fails or a tcp write gets
   `Done{-1}`, these show whether a table is full. A firmware built
   without `net` prints no network counters and no `subs`.
+  `console_stack_free=N/4096` is the least stack the console task (which
+  answers these commands and writes `gogo push` files) has had free.
 - `format-flash` erases every file on `/flash`: the board restarts and
   formats its `/flash` partition at the size `fs.flash.size` sets
   (chapter 9). Nothing else is touched: not the configuration store

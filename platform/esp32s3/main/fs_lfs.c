@@ -24,9 +24,12 @@
  *
  * A format can also be asked for without the config store:
  * fs_lfs_request_format (`gogo device format-flash`, config_esp.c) sets a
- * flag in RTC memory, which survives the software restart that follows
- * and nothing else (a power-on or any other reset clears it), so the
- * next mount formats exactly once. fs.flash.format = yes still works
+ * flag in RTC_NOINIT memory, which keeps its contents over the software
+ * restart that follows. That memory is not cleared by any reset (after a
+ * power-on it holds whatever it powered up with), so the flag counts only
+ * if both words match (a magic and its complement) and the reset reason
+ * is a software restart; the first mount clears it whatever it found,
+ * so it formats at most once. fs.flash.format = yes still works
  * (deprecated).
  *
  * Contract: see the VfsBackend comment in runtime/vfs/vfs.h. The VM task
@@ -273,8 +276,8 @@ static uint32_t wanted_blocks(uint32_t part_blocks) {
     return b > part_blocks ? part_blocks : (uint32_t)b;
 }
 
-/* fs_lfs_request_format's flag: RTC memory, kept over a software restart
- * only. Two words, so stray contents after power-on cannot look like it. */
+/* fs_lfs_request_format's flag, in RTC_NOINIT memory (see the top): two
+ * words, so stray contents after a power-on cannot look like it. */
 #define FORMAT_MAGIC 0x464D5447u   /* "GTMF" */
 static RTC_NOINIT_ATTR uint32_t format_flag[2];
 
@@ -352,7 +355,7 @@ int fs_lfs_mount(VfsState *vs) {
         e = format_mount(want);
     } else if (e == 0 && (cur = cur_blocks()) > part_blocks) {
         lfs_unmount(&L.lfs);
-        platform_esp_say("gogo: /flash (%lu KB) is bigger than its partition; not mounted (fs.flash.format=yes formats)",
+        platform_esp_say("gogo: /flash (%lu KB) is bigger than its partition; not mounted (gogo device format-flash formats)",
                          (unsigned long)cur * 4u);
         return -1;
     } else if (e == 0 && want > cur) {
@@ -363,7 +366,7 @@ int fs_lfs_mount(VfsState *vs) {
             e = lfs_mount(&L.lfs, &L.cfg);
         }
     } else if (e == 0 && want < cur) {
-        platform_esp_say("gogo: /flash shrink needs format (fs.flash.format=yes)");
+        platform_esp_say("gogo: /flash shrink needs format (gogo device format-flash)");
     }
     if (e < 0) {
         platform_esp_say("gogo: /flash mount failed (%d); not mounted", e);

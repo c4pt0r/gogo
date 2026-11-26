@@ -66,6 +66,7 @@
 #define CFG_SECRET    "wifi.password"
 #define CFG_LINE_MAX  (12u + 5u + CFG_KEY_MAX + CFG_VALUE_MAX + 4u)
 #define CFG_PUSH_CHUNK 128u    /* as cmd/gogo/push.go */
+#define CFG_STACK     4096u    /* bytes; gogo device stats shows the least free */
 
 static nvs_handle_t cfg_nvs;
 static bool cfg_ok;
@@ -299,6 +300,9 @@ static void cmd_stats(void) {
 #if CONFIG_GOGO_TLS
     stats_tls();
 #endif
+    /* This task's stack: the least ever free (it runs LittleFS for gogo push). */
+    n = snprintf(line, sizeof line, "console_stack_free=%u/%u", (unsigned)uxTaskGetStackHighWaterMark(NULL), (unsigned)CFG_STACK);
+    reply("kv", line, (size_t)n);
     reply_s("ok", NULL);
 }
 
@@ -377,7 +381,8 @@ static void cmd_push(char *p, char *end) {
     uint32_t first;
     static const char pre[] = "/flash/";
     if (pn <= sizeof pre - 1u || memcmp(path, pre, sizeof pre - 1u) != 0 || vfs_path_check(path, (uint32_t)pn, &first) != GOGO_E_OK ||
-        !parse_u32(ls, le, 10, &push_len) || !parse_u32(cs, end, 16, &push_crc)) {
+        !parse_u32(ls, le, 10, &push_len) || !parse_u32(cs, end, 16, &push_crc) ||
+        (pn >= 11u && memcmp(path + pn - 11u, "/.gogo-push", 11) == 0)) {   /* the temporary file itself */
         fs_lfs_push_abort();
         reply_s("err", "usage: push </flash/path> <len> <crc32 hex>");
         return;
@@ -500,5 +505,5 @@ void config_esp_start_serial(void) {
     fflush(stdout);
     fflush(stderr);
     usb_serial_jtag_vfs_use_driver();
-    xTaskCreatePinnedToCore(config_task, "gogo_cfg", 4096, NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(config_task, "gogo_cfg", CFG_STACK, NULL, 2, NULL, 0);
 }

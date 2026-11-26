@@ -10,7 +10,8 @@ package main
 // chunks of pushChunk bytes, each answered before the next goes out; then
 // it reads the file back, checks its length and CRC-32 against the ones
 // announced, and only then renames it over the target. A failure leaves
-// the target as it was.
+// the target as it was. A push cut off (the cable pulled) leaves the
+// temporary file, pushTmp, until the next push into that directory.
 
 import (
 	"encoding/base64"
@@ -33,6 +34,10 @@ const pushUsage = "usage: gogo push [-port P] [-timeout seconds] <file" + imageE
 // a frame stays under the board's 256-byte console input buffer.
 const pushChunk = 128
 
+// pushTmp is the temporary file a push is written to, in the target's
+// directory (PUSH_TMP in fs_lfs.c); it cannot be a target.
+const pushTmp = ".gogo-push"
+
 // pushEnv holds the side effects of gogo push, replaced in tests.
 type pushEnv struct {
 	out  io.Writer
@@ -53,6 +58,9 @@ func pushTarget(file, dest string) (string, error) {
 	}
 	if !strings.HasPrefix(dest, "/flash/") || path.Clean(dest) != dest || len(dest) > 96 {
 		return "", fmt.Errorf("gogo push: %s is not a path under /flash/", dest)
+	}
+	if path.Base(dest) == pushTmp {
+		return "", fmt.Errorf("gogo push: %s is the name the board writes a push to first; pick another", pushTmp)
 	}
 	for _, name := range strings.Split(dest[1:], "/") {
 		if name == "" || len(name) > 32 || strings.HasSuffix(name, ".") || strings.Trim(name, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-") != "" {
