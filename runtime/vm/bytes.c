@@ -225,45 +225,40 @@ uint32_t bytes_held_count(const Actor *a) {
 
 /* ---- making entries ---- */
 
-/* One attempt at a new root of len bytes held by a. */
-static term try_new(Vm *vm, Actor *a, uint32_t len, bool pin, uint8_t **data) {
-    if (!room_for(vm, a, NO_PARENT, len)) return T_NIL;
+/* One attempt at a new entry held by a: a root of len bytes (h is T_NIL;
+ * pinned if pin; *data its block), or the slice [lo, lo + len) of the
+ * live handle h. */
+static term try_entry(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len, bool pin, uint8_t **data) {
+    uint32_t i = 0, r = NO_PARENT;
+    uint8_t *d;
+    if (h != T_NIL) {
+        i = term_handle_idx(h);
+        r = root_of(vm, i);
+    }
+    if (!room_for(vm, a, r, r == NO_PARENT ? len : vm->bytes_tab[r].len)) return T_NIL;
     int32_t s = slot_find(vm);
     if (s < 0) return T_NIL;
-    uint8_t *d = va_alloc(vm, block_bytes(len));
-    if (!d) return T_NIL;
+    if (r == NO_PARENT) {
+        d = va_alloc(vm, block_bytes(len));
+        if (!d) return T_NIL;
+        lo = 0;
+    } else {
+        d = vm->bytes_tab[r].data;
+        lo += vm->bytes_tab[i].off;
+        vm->bytes_tab[r].refcnt++;
+    }
     Entry *e = &vm->bytes_tab[s];
-    e->refcnt = 0;
-    e->off = 0;
+    e->off = lo;
     e->len = len;
-    e->parent = NO_PARENT;
+    e->parent = (uint16_t)r;
     e->data = d;
-    vm->bytes_used++;
     e->refcnt = 1;                        /* while held_add runs */
+    vm->bytes_used++;
     bool ok = held_add(vm, a, (uint32_t)s, pin, !pin);
     entry_unref(vm, (uint32_t)s);             /* the list's reference stays, if any */
     if (!ok) return T_NIL;
     *data = d;
     return term_from_handle((uint32_t)s);
-}
-
-/* One attempt at the slice [lo, lo + len) of the live handle h. */
-static term try_sub(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len) {
-    uint32_t i = term_handle_idx(h), r = root_of(vm, i);
-    if (!room_for(vm, a, r, vm->bytes_tab[r].len)) return T_NIL;
-    int32_t s = slot_find(vm);
-    if (s < 0) return T_NIL;              /* the table is live: h is in it */
-    Entry *e = &vm->bytes_tab[s];
-    e->off = vm->bytes_tab[i].off + lo;
-    e->len = len;
-    e->parent = (uint16_t)r;
-    e->data = vm->bytes_tab[r].data;
-    e->refcnt = 1;                        /* while held_add runs */
-    vm->bytes_used++;
-    vm->bytes_tab[r].refcnt++;
-    bool ok = held_add(vm, a, (uint32_t)s, false, true);
-    entry_unref(vm, (uint32_t)s);
-    return ok ? term_from_handle((uint32_t)s) : T_NIL;
 }
 
 /* The table is full: collects every other actor that holds handles, so
@@ -288,39 +283,36 @@ static void gc_holders(Vm *vm, Actor *a) {
 
 static bool tab_full(const Vm *vm) { return vm->bytes_tab && vm->bytes_used >= GOGO_BYTES_HANDLES; }
 
+/* try_entry, collecting a's heap (it drops what a no longer reaches, and
+ * the slack) and then, if the table is full, the other holders' before
+ * trying again. h, when given, is in a register of a, which holds it: it
+ * stays. */
+static term make_entry(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len, uint8_t **data) {
+    for (int k = 0; ; k++) {
+        if (h != T_NIL && !bytes_valid(vm, h)) return T_NIL;
+        term s = try_entry(vm, a, h, lo, len, false, data);
+        if (s != T_NIL || k == 2) return s;
+        if (k == 0) heap_gc_tight(vm, a, 0, NULL, 0);
+        else if (tab_full(vm)) gc_holders(vm, a);
+        else return s;
+    }
+}
+
 term bytes_make(Vm *vm, Actor *a, uint32_t len, uint8_t **data) {
-    term h = try_new(vm, a, len, false, data);
-    if (h == T_NIL) {
-        heap_gc_tight(vm, a, 0, NULL, 0); /* drops what a no longer reaches, and the slack */
-        h = try_new(vm, a, len, false, data);
-    }
-    if (h == T_NIL && tab_full(vm)) {
-        gc_holders(vm, a);
-        h = try_new(vm, a, len, false, data);
-    }
-    return h;
+    return make_entry(vm, a, T_NIL, 0, len, data);
 }
 
 term bytes_sub(Vm *vm, Actor *a, term h, uint32_t lo, uint32_t len) {
-    if (!bytes_valid(vm, h)) return T_NIL;
-    term s = try_sub(vm, a, h, lo, len);
-    if (s == T_NIL) {
-        heap_gc_tight(vm, a, 0, NULL, 0); /* h is in a register: it stays */
-        if (!bytes_valid(vm, h)) return T_NIL;
-        s = try_sub(vm, a, h, lo, len);
-    }
-    if (s == T_NIL && tab_full(vm)) {
-        gc_holders(vm, a);                /* a holds h: it stays */
-        s = try_sub(vm, a, h, lo, len);
-    }
-    return s;
+    uint8_t *d;
+    if (h == T_NIL) return T_NIL; /* as before make_entry: nil has no bytes to share */
+    return make_entry(vm, a, h, lo, len, &d);
 }
 
 /* ---- C API ---- */
 
 term bytes_new(Vm *vm, Actor *owner, uint32_t len, uint8_t **data) {
     uint8_t *d;
-    term h = try_new(vm, owner, len, true, &d);
+    term h = try_entry(vm, owner, T_NIL, 0, len, true, &d);
     if (h == T_NIL) return T_NIL;
     memset(d, 0, len);
     *data = d;

@@ -260,3 +260,56 @@ term heap_new_ref(Vm *vm, Actor *a) {
     vm->next_ref++;
     return term_from_ref(off);
 }
+
+bool heap_box(Vm *vm, Actor *a, uint32_t kind, uint32_t words, uint64_t v, term *out) {
+    uint32_t off = heap_alloc(vm, a, words, NULL, 0);
+    if (off == UINT32_MAX) return false;
+    a->mem[off] = hdr_make(words, kind);
+    a->mem[off + 1] = (uint32_t)v;
+    if (words == 3u) a->mem[off + 2] = (uint32_t)(v >> 32);
+    *out = term_from_ref(off);
+    return true;
+}
+
+/* ---- reading terms (heap.h) ---- */
+
+const uint32_t *obj_of(const Vm *vm, const Actor *a, term t) {
+    if (term_is_const(t)) return const_obj_of(vm, t);
+    if (!term_is_ref(t)) return NULL;
+    uint32_t off = term_ref_off(t), limit = a->hp;
+    /* Every object has at least two words and lies wholly inside the heap. */
+    if (off >= limit || limit - off < 2u) return NULL;
+    uint32_t words = hdr_words(a->mem[off]);
+    if (words < 2u || words > limit - off) return NULL;
+    return a->mem + off;
+}
+
+term field_term(term t, term f) {
+    return (term_is_const(t) && term_is_const(f)) ? f | (t & MOD_TAG_MASK) : f;
+}
+
+bool name_bytes(const Vm *vm, const Actor *a, term t, const uint8_t **p, uint32_t *len) {
+    if (t == T_EMPTYSTR) {
+        *p = NULL;
+        *len = 0;
+        return true;
+    }
+    const uint32_t *o = obj_of(vm, a, t);
+    if (!o || hdr_kind(o[0]) != K_STRING || o[1] > (hdr_words(o[0]) - 2u) * 4u) return false;
+    *p = (const uint8_t *)(o + 2);
+    *len = o[1];
+    return true;
+}
+
+bool int_val(const Vm *vm, const Actor *a, term t, int32_t *out) {
+    if (term_is_int(t)) {
+        *out = term_to_int(t);
+        return true;
+    }
+    const uint32_t *o = obj_of(vm, a, t);
+    if (o && hdr_kind(o[0]) == K_INT) {
+        *out = (int32_t)o[1];
+        return true;
+    }
+    return false;
+}
