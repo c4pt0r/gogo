@@ -23,10 +23,10 @@ static void check_board_names(const gogo_config *cfg) {
     const VmBoard *own = g->vm.board;
     g->vm.board = &board;
     for (const PortDriver *const *b = board.ports; *b; b++)
-        CHECK_EQ(gogo_register_port(g, (*b)->name, &none, NULL), GOGO_EEXIST);
+        CHECK_EQ(gogo_register_port(g, (*b)->name, strlen((*b)->name), &none, NULL), GOGO_EEXIST);
     CHECK_EQ(g->n_host_ports, 0);
-    CHECK_EQ(gogo_register_port(g, "dns", &none, NULL), GOGO_OK);
-    CHECK_EQ(gogo_register_port(g, "dns", &none, NULL), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(g, "dns", 3, &none, NULL), GOGO_OK);
+    CHECK_EQ(gogo_register_port(g, "dns", 3, &none, NULL), GOGO_EEXIST);
     g->vm.board = own;
     gogo_free(g);
 }
@@ -40,6 +40,6 @@ TEST(hostport_board_names_refused) {
     /* On the library's own board, a name only that board had is free. */
     gogo_vm *g = NULL;
     CHECK_EQ(gogo_new_posix(NULL, &g), GOGO_OK);
-    CHECK_EQ(gogo_register_port(g, "board_only", &none, NULL), GOGO_OK);
+    CHECK_EQ(gogo_register_port(g, "board_only", 10, &none, NULL), GOGO_OK);
     gogo_free(g);
 }

@@ -1729,17 +1729,26 @@ only through two tables of function pointers that the caller hands it.
   slept through.
 - **The embed layer** (`runtime/embed/`): `gogo_new` / `gogo_load` /
   `gogo_start` / `gogo_step` / `gogo_run` / `gogo_free` around a `Vm`;
-  `gogo_post` (any thread, lock-free multi-producer inbox, delivered as
-  `port.Post` to a registered actor) with `gogo_retain` /
-  `gogo_close_posts` for posting threads that outlive the owner; host
-  ports (`gogo_register_port`, `gogo_port_emit`, `gogo_port_post`)
+  `gogo_post` (lock-free multi-producer inbox, delivered as `port.Post`
+  to a registered actor) and `gogo_close_posts`; for other threads a
+  `gogo_poster` (`gogo_poster_post`, `_port_post`, `_close_posts`,
+  `_free`), which is the `gogo_vm` holding a reference of its own, so a
+  posting thread may outlive the owner's `gogo_free` (posts then return
+  `GOGO_ECLOSED`; the memory and the host's `destroy` wait for the last
+  reference); host ports (`gogo_register_port`, `gogo_port_emit`)
   opened from Go as `port.Host`, registered before `gogo_load` so they
   satisfy the image's requirements (`gogo_config.grant`, a list of names
   or NULL for all, can withhold them); a sandboxed `/flash` on a host directory
   (`fs_dir.c`, `gogo_config.fs_root`, per-instance `fs_quota`); and the
-  POSIX host (`host_posix.c`, `gogo_run_thread`). Every `gogo_*` call
-  other than the posting ones runs on the thread that owns the VM.
-  Several VMs in one process share nothing.
+  POSIX host (`host_posix.c`, `gogo_run_thread`). Every call that takes a
+  `gogo_vm` runs on the thread that owns the VM; the poster's calls run
+  on any thread, so the two handle types carry the threading rule (in
+  Rust, `Send` and `Send + Sync`). A post and `gogo_free` meet in a
+  store-buffering handshake (the poster counts itself in with seq_cst,
+  then reads the state; the free raises the state, then waits for the
+  count to drain), so either the post sees the close or the free waits
+  for it. Names are a pointer and a length throughout. Several VMs in one
+  process share nothing.
 - **`libgogo`.** `make lib` builds `build/libgogo.a`: the VM core, vfs,
   stream and the embed layer, strict C99 with `-DGOGO_EMBED`, no board,
   input, net or TLS code. The objects are prelinked into one relocatable

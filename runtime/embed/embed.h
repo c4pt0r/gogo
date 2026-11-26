@@ -67,7 +67,7 @@ struct gogo_vm {
     Port *opening, *closing;
     Msg *held_head, *held_tail;
     /* Atomics (__atomic builtins): state, the shell's references (the
-     * owner's plus gogo_retain's) and gogo_post calls in progress. */
+     * owner's plus one per gogo_poster) and posts in progress. */
     int state;
     int refs;
     int posting;

@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
     gogo_vm *vm = NULL;
     int rc = gogo_new_posix(NULL, &vm);
     if (rc == GOGO_OK && requires(img, len, "echo"))
-        rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before load */
+        rc = gogo_register_port(vm, "echo", 4, &echo_driver, &commands);   /* before load */
     if (rc == GOGO_OK) rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);
     free(img);
     if (rc == GOGO_OK) rc = gogo_run(vm);

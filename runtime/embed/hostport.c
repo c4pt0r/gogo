@@ -78,7 +78,7 @@ static void hp_close(Vm *vm, Port *p) {
     g->closing = NULL;
 }
 
-/* Events may still come while posts are open (gogo_port_post). */
+/* Events may still come while posts are open (gogo_poster_port_post). */
 static bool hp_live(const Vm *vm, const Port *p) {
     (void)p;
     return embed_state(vm->host_ctx) == EMBED_LIVE;
@@ -122,17 +122,19 @@ static uint32_t board_count(const gogo_vm *g) {
     return n;
 }
 
-int gogo_register_port(gogo_vm *g, const char *name, const gogo_port_driver *drv, void *ctx) {
-    if (!g || !name || !*name || !drv) return GOGO_EINVAL;
+int gogo_register_port(gogo_vm *g, const char *name, size_t nl, const gogo_port_driver *drv, void *ctx) {
+    if (!g || !name || !nl || memchr(name, 0, nl) || !drv) return GOGO_EINVAL;
     if (g->stepping) return GOGO_EBUSY;
     if (g->loaded) return GOGO_ESTATE;    /* registered ports count as the image's requirements */
-    size_t nl = strlen(name);
     if (nl > GOGO_PORT_NAME_MAX) return GOGO_E2BIG;
-    if (name_taken(g, name)) return GOGO_EEXIST;
+    char z[GOGO_PORT_NAME_MAX + 1u];      /* the name as a C string, as drivers' names are */
+    memcpy(z, name, nl);
+    z[nl] = 0;
+    if (name_taken(g, z)) return GOGO_EEXIST;
     if (g->n_host_ports == GOGO_MAX_HOST_PORTS || board_count(g) > EMBED_BOARD_PORTS_MAX) return GOGO_EFULL;
     HostPort *hp = &g->host_ports[g->n_host_ports++];
     memset(hp, 0, sizeof *hp);
-    memcpy(hp->name, name, nl + 1u);
+    memcpy(hp->name, z, nl + 1u);
     hp->pub = *drv;
     hp->ctx = ctx;
     hp->base.name = hp->name;

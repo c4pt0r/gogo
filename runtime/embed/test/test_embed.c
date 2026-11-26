@@ -180,9 +180,9 @@ static bool await_lines(TCtx *t, long want) {
     return true;
 }
 
-static int post_retry(gogo_vm *vm, const char *name, int32_t kind, const void *d, size_t n) {
+static int post_retry(gogo_poster *ps, const char *name, int32_t kind, const void *d, size_t n) {
     int r;
-    while ((r = gogo_post(vm, name, kind, d, n)) == GOGO_EFULL) sched_yield();
+    while ((r = gogo_poster_post(ps, name, strlen(name), kind, d, n)) == GOGO_EFULL) sched_yield();
     return r;
 }
 
@@ -195,12 +195,12 @@ TEST(embed_post_roundtrip) {
     CHECK_EQ(settle(vm), GOGO_IDLE);
     CHECK_EQ(gogo_next_deadline(vm), GOGO_NEVER);
     CHECK(strcmp(t.out, "ready\n") == 0);
-    CHECK_EQ(gogo_post(vm, "echo", 7, "hello", 5), GOGO_OK);
-    CHECK_EQ(gogo_post(vm, "echo", -5, NULL, 0), GOGO_OK);
-    CHECK_EQ(gogo_post(vm, "echo", 2000000000, "x", 1), GOGO_OK);   /* a boxed Kind */
+    CHECK_EQ(gogo_post(vm, "echo", 4, 7, "hello", 5), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, -5, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 2000000000, "x", 1), GOGO_OK);   /* a boxed Kind */
     static uint8_t big[10000];
     for (size_t i = 0; i < sizeof big; i++) big[i] = (uint8_t)i;
-    CHECK_EQ(gogo_post(vm, "echo", 3, big, sizeof big), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 3, big, sizeof big), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     CHECK(strcmp(t.out, "ready\npost 7 5 hello\npost -5 0 \npost 2000000000 1 x\npost 3 10000 0 15\n") == 0);
     gogo_stats st;
@@ -209,15 +209,16 @@ TEST(embed_post_roundtrip) {
     CHECK_EQ(st.posts_dropped, 0);
     CHECK(st.mem_used > 0 && st.mem_peak >= st.mem_used);
     /* Limits. */
-    CHECK_EQ(gogo_post(vm, "echo", 1, big, GOGO_POST_DATA_MAX + 1u), GOGO_E2BIG);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 1, big, GOGO_POST_DATA_MAX + 1u), GOGO_E2BIG);
     char longname[GOGO_POST_NAME_MAX + 2];
     memset(longname, 'n', sizeof longname - 1);
     longname[sizeof longname - 1] = 0;
-    CHECK_EQ(gogo_post(vm, longname, 1, NULL, 0), GOGO_E2BIG);
-    CHECK_EQ(gogo_post(vm, NULL, 1, NULL, 0), GOGO_EINVAL);
-    CHECK_EQ(gogo_post(vm, "echo", 1, NULL, 3), GOGO_EINVAL);
+    CHECK_EQ(gogo_post(vm, longname, strlen(longname), 1, NULL, 0), GOGO_E2BIG);
+    CHECK_EQ(gogo_post(vm, longname, GOGO_POST_NAME_MAX, 1, NULL, 0), GOGO_OK);   /* a length, no NUL needed */
+    CHECK_EQ(gogo_post(vm, NULL, 0, 1, NULL, 0), GOGO_EINVAL);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 1, NULL, 3), GOGO_EINVAL);
     /* The name keeps the VM alive; Kind -1 ends main and the VM. */
-    CHECK_EQ(gogo_post(vm, "echo", -1, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, -1, NULL, 0), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_DONE);
     CHECK_EQ(gogo_step(vm, 0), GOGO_DONE);
     CHECK(strstr(t.out, "bye\n") != NULL);
@@ -230,9 +231,9 @@ TEST(embed_post_unknown_name) {
     gogo_vm *vm = new_loaded(&t, "echo", NULL);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
-    CHECK_EQ(gogo_post(vm, "nobody", 1, "x", 1), GOGO_OK);
-    CHECK_EQ(gogo_post(vm, "", 2, NULL, 0), GOGO_OK);
-    CHECK_EQ(gogo_post(vm, "echo", 3, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "nobody", 6, 1, "x", 1), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "", 0, 2, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 3, NULL, 0), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     gogo_stats st;
     gogo_get_stats(vm, &st);
@@ -247,7 +248,7 @@ TEST(embed_post_unknown_name) {
 TEST(embed_post_before_register) {
     TCtx t; tctx_init(&t);
     gogo_vm *vm = new_loaded(&t, "echo", NULL);
-    CHECK_EQ(gogo_post(vm, "echo", 1, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 1, NULL, 0), GOGO_OK);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     gogo_stats st;
@@ -261,9 +262,9 @@ TEST(embed_post_before_register) {
 TEST(embed_inbox_full) {
     TCtx t; tctx_init(&t);
     gogo_vm *vm = new_loaded(&t, "echo", NULL);   /* not started: nothing drains */
-    for (int i = 0; i < GOGO_POST_MAX; i++) CHECK_EQ(gogo_post(vm, "echo", i, "abc", 3), GOGO_OK);
-    CHECK_EQ(gogo_post(vm, "echo", 999, NULL, 0), GOGO_EFULL);
-    CHECK_EQ(gogo_post(vm, "echo", 999, NULL, 0), GOGO_EFULL);
+    for (int i = 0; i < GOGO_POST_MAX; i++) CHECK_EQ(gogo_post(vm, "echo", 4, i, "abc", 3), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 999, NULL, 0), GOGO_EFULL);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 999, NULL, 0), GOGO_EFULL);
     gogo_free(vm);   /* frees the queued posts too */
     tctx_done(&t);
 }
@@ -273,10 +274,10 @@ TEST(embed_inbox_full_then_drains) {
     gogo_vm *vm = new_loaded(&t, "echo", NULL);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
-    for (int i = 0; i < GOGO_POST_MAX; i++) CHECK_EQ(gogo_post(vm, "echo", i, NULL, 0), GOGO_OK);
-    CHECK_EQ(gogo_post(vm, "echo", 999, NULL, 0), GOGO_EFULL);
+    for (int i = 0; i < GOGO_POST_MAX; i++) CHECK_EQ(gogo_post(vm, "echo", 4, i, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 999, NULL, 0), GOGO_EFULL);
     CHECK_EQ(settle(vm), GOGO_IDLE);
-    CHECK_EQ(gogo_post(vm, "echo", 999, NULL, 0), GOGO_OK);   /* room again */
+    CHECK_EQ(gogo_post(vm, "echo", 4, 999, NULL, 0), GOGO_OK);   /* room again */
     CHECK_EQ(settle(vm), GOGO_IDLE);
     CHECK_EQ(__atomic_load_n(&t.lines, __ATOMIC_ACQUIRE), 1 + GOGO_POST_MAX + 1);
     gogo_free(vm);
@@ -287,7 +288,7 @@ TEST(embed_inbox_full_then_drains) {
 
 typedef struct Producer {
     pthread_t th;
-    gogo_vm *vm;
+    gogo_poster *ps;
     int id, n;
     int ok, closed;
 } Producer;
@@ -295,7 +296,7 @@ typedef struct Producer {
 static void *produce(void *arg) {
     Producer *p = arg;
     for (int s = 1; s <= p->n; s++) {
-        int r = post_retry(p->vm, "count", p->id * 1000000 + s, NULL, 0);
+        int r = post_retry(p->ps, "count", p->id * 1000000 + s, NULL, 0);
         if (r == GOGO_OK) p->ok++;
         else if (r == GOGO_ECLOSED) { p->closed++; break; }
     }
@@ -311,14 +312,15 @@ TEST(embed_post_threads) {
     CHECK(await_lines(&t, 1));
     Producer p[4];
     for (int i = 0; i < 4; i++) {
-        p[i] = (Producer){ .vm = vm, .id = i, .n = 25000 };
+        p[i] = (Producer){ .ps = gogo_poster_new(vm), .id = i, .n = 25000 };
         pthread_create(&p[i].th, NULL, produce, &p[i]);
     }
     for (int i = 0; i < 4; i++) {
         pthread_join(p[i].th, NULL);
         CHECK_EQ(p[i].ok, 25000);
     }
-    CHECK_EQ(post_retry(vm, "count", -1, NULL, 0), GOGO_OK);
+    CHECK_EQ(post_retry(p[0].ps, "count", -1, NULL, 0), GOGO_OK);
+    for (int i = 0; i < 4; i++) gogo_poster_free(p[i].ps);
     CHECK_EQ(gogo_join(vm), GOGO_OK);
     gogo_stats st;
     gogo_get_stats(vm, &st);
@@ -341,6 +343,7 @@ TEST(embed_wake_race) {
     const char *e = getenv("GOGO_EMBED_RACE_N");
     long n = e ? atol(e) : 100000;
     gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    gogo_poster *ps = gogo_poster_new(vm);
     CHECK_EQ(gogo_run_thread(vm), GOGO_OK);
     CHECK(await_lines(&t, 1));
     uint32_t rnd = 7;
@@ -348,18 +351,19 @@ TEST(embed_wake_race) {
     for (i = 1; i <= n; i++) {
         rnd = rnd * 1103515245u + 12345u;
         for (uint32_t k = (rnd >> 16) % 8u; k; k--) sched_yield();
-        if (gogo_post(vm, "echo", (int32_t)i, NULL, 0) != GOGO_OK || !await_lines(&t, i + 1)) break;
+        if (gogo_poster_post(ps, "echo", 4, (int32_t)i, NULL, 0) != GOGO_OK || !await_lines(&t, i + 1)) break;
     }
     CHECK_EQ(i, n + 1);
-    CHECK_EQ(gogo_post(vm, "echo", -1, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_poster_post(ps, "echo", 4, -1, NULL, 0), GOGO_OK);
+    gogo_poster_free(ps);
     CHECK_EQ(gogo_join(vm), GOGO_OK);
     gogo_free(vm);
     tctx_done(&t);
 }
 
-/* Producers holding a reference post while the owner frees the VM: no
- * crash, later posts get GOGO_ECLOSED, and every byte comes back once the
- * last reference goes. */
+/* Producers with posters post while the owner frees the VM: no crash,
+ * later posts get GOGO_ECLOSED, and every byte comes back once the last
+ * poster goes (destroy runs then, not before). */
 TEST(embed_post_while_freeing) {
     for (int round = 0; round < 20; round++) {
         TCtx t; tctx_init(&t);
@@ -368,8 +372,7 @@ TEST(embed_post_while_freeing) {
         CHECK(await_lines(&t, 1));
         Producer p[4];
         for (int i = 0; i < 4; i++) {
-            gogo_retain(vm);
-            p[i] = (Producer){ .vm = vm, .id = i, .n = 1000000 };
+            p[i] = (Producer){ .ps = gogo_poster_new(vm), .id = i, .n = 1000000 };
             pthread_create(&p[i].th, NULL, produce, &p[i]);
         }
         struct timespec d = { 0, (long)(round % 5) * 200000L };
@@ -378,8 +381,8 @@ TEST(embed_post_while_freeing) {
         for (int i = 0; i < 4; i++) {
             pthread_join(p[i].th, NULL);
             CHECK_EQ(p[i].closed, 1);
-            CHECK_EQ(gogo_post(vm, "count", 1, NULL, 0), GOGO_ECLOSED);
-            gogo_release(vm);
+            CHECK_EQ(gogo_poster_post(p[i].ps, "count", 5, 1, NULL, 0), GOGO_ECLOSED);
+            gogo_poster_free(p[i].ps);
         }
         tctx_done(&t);
     }
@@ -389,14 +392,14 @@ TEST(embed_post_while_freeing) {
  * mutex orders the free against the posts; only the post handshake does.
  * Many short rounds, the free landing at varying points of a post. */
 typedef struct Hammer {
-    gogo_vm *vm;
+    gogo_poster *ps;
     long ok, closed;
 } Hammer;
 
 static void *hammer(void *arg) {
     Hammer *h = arg;
     for (;;) {
-        int r = gogo_post(h->vm, "echo", 1, "abcd", 4);
+        int r = gogo_poster_post(h->ps, "echo", 4, 1, "abcd", 4);
         if (r == GOGO_OK) __atomic_fetch_add(&h->ok, 1, __ATOMIC_RELEASE);
         else if (r == GOGO_ECLOSED) { h->closed++; break; }
         else sched_yield();   /* full */
@@ -414,9 +417,8 @@ TEST(embed_post_while_freeing_stepped) {
         gogo_vm *vm = new_loaded(&t, "echo", &cfg);
         CHECK_EQ(gogo_start(vm), GOGO_OK);
         CHECK_EQ(settle(vm), GOGO_IDLE);
-        Hammer h = { vm, 0, 0 };
+        Hammer h = { gogo_poster_new(vm), 0, 0 };
         pthread_t th;
-        gogo_retain(vm);
         pthread_create(&th, NULL, hammer, &h);
         long want = round % 4;   /* free before, right at, or after the first posts */
         while (__atomic_load_n(&h.ok, __ATOMIC_ACQUIRE) < want) sched_yield();
@@ -424,21 +426,22 @@ TEST(embed_post_while_freeing_stepped) {
         gogo_free(vm);
         pthread_join(th, NULL);
         CHECK_EQ(h.closed, 1);
-        CHECK_EQ(gogo_post(vm, "echo", 1, NULL, 0), GOGO_ECLOSED);
-        gogo_release(vm);
+        CHECK_EQ(gogo_poster_post(h.ps, "echo", 4, 1, NULL, 0), GOGO_ECLOSED);
+        gogo_poster_free(h.ps);
         tctx_done(&t);
     }
 }
 
-/* gogo_close_posts from another thread ends gogo_run on the owner thread,
+/* Closing posts from another thread ends gogo_run on the owner thread,
  * though the program's actor holds a name and waits for posts. */
 static void *close_later(void *arg) {
-    gogo_vm *vm = arg;
+    gogo_poster *ps = arg;
     struct timespec d = { 0, 20000000L };
     nanosleep(&d, NULL);
-    CHECK_EQ(gogo_post(vm, "echo", 5, NULL, 0), GOGO_OK);
-    gogo_close_posts(vm);
-    CHECK_EQ(gogo_post(vm, "echo", 6, NULL, 0), GOGO_ECLOSED);
+    CHECK_EQ(gogo_poster_post(ps, "echo", 4, 5, NULL, 0), GOGO_OK);
+    gogo_poster_close_posts(ps);
+    CHECK_EQ(gogo_poster_post(ps, "echo", 4, 6, NULL, 0), GOGO_ECLOSED);
+    gogo_poster_free(ps);
     return NULL;
 }
 
@@ -446,12 +449,12 @@ TEST(embed_close_posts_ends_run) {
     TCtx t; tctx_init(&t);
     gogo_vm *vm = new_loaded(&t, "echo", NULL);
     pthread_t th;
-    pthread_create(&th, NULL, close_later, vm);
+    pthread_create(&th, NULL, close_later, gogo_poster_new(vm));
     CHECK_EQ(gogo_run(vm), GOGO_OK);       /* returns: posts closed, main blocked */
     pthread_join(th, NULL);
     /* The post sent before the close was still delivered. */
     CHECK(strcmp(t.out, "ready\npost 5 0 \n") == 0);
-    CHECK_EQ(gogo_post(vm, "echo", 7, NULL, 0), GOGO_ECLOSED);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 7, NULL, 0), GOGO_ECLOSED);
     long wakes = __atomic_load_n(&t.wakes, __ATOMIC_RELAXED);
     gogo_close_posts(vm);                  /* again: no effect, no wake */
     CHECK_EQ(__atomic_load_n(&t.wakes, __ATOMIC_RELAXED), wakes);
@@ -466,9 +469,9 @@ TEST(embed_post_after_done_refused) {
     gogo_vm *vm = new_loaded(&t, "echo", NULL);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
-    CHECK_EQ(gogo_post(vm, "echo", -1, NULL, 0), GOGO_OK);
+    CHECK_EQ(gogo_post(vm, "echo", 4, -1, NULL, 0), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_DONE);
-    CHECK_EQ(gogo_post(vm, "echo", 4, "x", 1), GOGO_ECLOSED);
+    CHECK_EQ(gogo_post(vm, "echo", 4, 4, "x", 1), GOGO_ECLOSED);
     CHECK_EQ(gogo_step(vm, 0), GOGO_DONE);
     gogo_stats st;
     gogo_get_stats(vm, &st);
@@ -847,12 +850,18 @@ TEST(embed_host_copied_and_destroyed) {
     d.now_ms = gogo_host_posix()->now_ms;
     d.destroy = t_destroy;
     vm = new_vm(&d, &destroyed, NULL);
-    gogo_retain(vm);
+    gogo_poster *ps = gogo_poster_new(vm), *ps2 = gogo_poster_new(vm);
     gogo_free(vm);
     CHECK_EQ(destroyed, 0);
-    CHECK_EQ(gogo_post(vm, "x", 1, NULL, 0), GOGO_ECLOSED);
-    gogo_release(vm);
+    CHECK_EQ(gogo_poster_post(ps, "x", 1, 1, NULL, 0), GOGO_ECLOSED);
+    gogo_poster_close_posts(ps);              /* harmless after the free */
+    gogo_poster_free(ps);
+    CHECK_EQ(destroyed, 0);
+    gogo_poster_free(ps2);
     CHECK_EQ(destroyed, 1);
+    gogo_poster_free(NULL);
+    CHECK(gogo_poster_new(NULL) == NULL);
+    CHECK_EQ(gogo_poster_post(NULL, "x", 1, 1, NULL, 0), GOGO_EINVAL);
     /* Not when gogo_new fails: the ctx stays the host's. */
     gogo_config c = GOGO_CONFIG_INIT;
     c.fs_quota = -1;
@@ -921,7 +930,7 @@ static int h_open(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uin
     if (h->vm) {
         static const gogo_port_driver none = { NULL, NULL, NULL };
         h->reenter_step = gogo_step(h->vm, 1);
-        h->reenter_reg = gogo_register_port(h->vm, "late", &none, NULL);
+        h->reenter_reg = gogo_register_port(h->vm, "late", 4, &none, NULL);
         h->reenter_start = gogo_start(h->vm);
     }
     if (h->echo) h->emit_rc = gogo_port_emit(vm, port, arg, data, len);
@@ -954,7 +963,7 @@ static gogo_vm *new_hostport(TCtx *t, HCtx *h) {
     memset(h, 0, sizeof *h);
     gogo_vm *vm = new_vm(&thost, t, NULL);
     CHECK(vm != NULL);
-    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &hdrv, h), GOGO_OK);
     Img im = image("hostport");
     CHECK(im.w != NULL);
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
@@ -965,7 +974,7 @@ static gogo_vm *new_hostport(TCtx *t, HCtx *h) {
 }
 
 static int ctl(gogo_vm *vm, int32_t kind) {
-    int r = gogo_post(vm, "ctl", kind, NULL, 0);
+    int r = gogo_post(vm, "ctl", 3, kind, NULL, 0);
     return r ? r : settle(vm);
 }
 
@@ -976,7 +985,7 @@ TEST(embed_hostecho_golden) {
     HCtx h; memset(&h, 0, sizeof h);
     h.echo = 1;
     gogo_vm *vm = new_vm(&thost, &t, NULL);
-    CHECK_EQ(gogo_register_port(vm, "echo", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "echo", 4, &hdrv, &h), GOGO_OK);
     Img im = image("hostecho");
     CHECK(im.w != NULL);
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
@@ -1026,7 +1035,9 @@ TEST(embed_hostport_echo) {
     CHECK_EQ(gogo_port_emit(vm, h.port, 1, big, GOGO_POST_DATA_MAX + 1u), GOGO_E2BIG);
     gogo_port bad = { 99, 0 };
     CHECK_EQ(gogo_port_emit(vm, bad, 1, NULL, 0), GOGO_EINVAL);
-    CHECK_EQ(gogo_port_post(vm, bad, 1, NULL, 0), GOGO_EINVAL);
+    gogo_poster *ps = gogo_poster_new(vm);
+    CHECK_EQ(gogo_poster_port_post(ps, bad, 1, NULL, 0), GOGO_EINVAL);
+    gogo_poster_free(ps);
     gogo_port other = { (uint16_t)(h.port.index + 1u), 0 };   /* no port there */
     CHECK_EQ(gogo_port_emit(vm, other, 1, NULL, 0), GOGO_ECLOSED);
     CHECK_EQ(h.closes, 0);
@@ -1050,7 +1061,9 @@ TEST(embed_hostport_stale) {
     CHECK_EQ(h.close_emit_rc, GOGO_ECLOSED);   /* no event after the close */
     CHECK_EQ(h.commands, 0);
     CHECK_EQ(gogo_port_emit(vm, old, 1000, NULL, 0), GOGO_ECLOSED);
-    CHECK_EQ(gogo_port_post(vm, old, 1000, NULL, 0), GOGO_OK);   /* dropped when delivered */
+    gogo_poster *ps = gogo_poster_new(vm);
+    CHECK_EQ(gogo_poster_port_post(ps, old, 1000, NULL, 0), GOGO_OK);   /* dropped when delivered */
+    gogo_poster_free(ps);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     gogo_stats st;
     gogo_get_stats(vm, &st);
@@ -1093,7 +1106,9 @@ TEST(embed_hostport_handoff) {
     CHECK_EQ(gogo_port_emit(vm, h.port, 1000, "x", 1), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     CHECK_EQ(h.closes, 0);
-    CHECK_EQ(gogo_port_post(vm, h.port, 1999, "end", 3), GOGO_OK);
+    gogo_poster *ps = gogo_poster_new(vm);
+    CHECK_EQ(gogo_poster_port_post(ps, h.port, 1999, "end", 3), GOGO_OK);
+    gogo_poster_free(ps);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     CHECK_EQ(h.closes, 1);
     CHECK(strcmp(t.out, "ready\nopen true\nhandoff true\nkid event 1000 x\nkid event 1999 end\n") == 0);
@@ -1109,33 +1124,34 @@ TEST(embed_hostport_register) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
     gogo_vm *vm = new_vm(&thost, &t, NULL);
-    CHECK_EQ(gogo_register_port(vm, "gpio", &hdrv, &h), GOGO_EEXIST);
-    CHECK_EQ(gogo_register_port(vm, "tcp", &hdrv, &h), GOGO_EEXIST);
-    CHECK_EQ(gogo_register_port(vm, "screen", &hdrv, &h), GOGO_EEXIST);
-    CHECK_EQ(gogo_register_port(vm, "file", &hdrv, &h), GOGO_EEXIST);
-    CHECK_EQ(gogo_register_port(vm, NULL, &hdrv, &h), GOGO_EINVAL);
-    CHECK_EQ(gogo_register_port(vm, "", &hdrv, &h), GOGO_EINVAL);
-    CHECK_EQ(gogo_register_port(vm, "x", NULL, &h), GOGO_EINVAL);
+    CHECK_EQ(gogo_register_port(vm, "gpio", 4, &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "tcp", 3, &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "screen", 6, &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "file", 4, &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, NULL, 2, &hdrv, &h), GOGO_EINVAL);
+    CHECK_EQ(gogo_register_port(vm, "h\0p", 3, &hdrv, &h), GOGO_EINVAL);   /* a NUL inside */
+    CHECK_EQ(gogo_register_port(vm, "", 0, &hdrv, &h), GOGO_EINVAL);
+    CHECK_EQ(gogo_register_port(vm, "x", 1, NULL, &h), GOGO_EINVAL);
     char longname[GOGO_PORT_NAME_MAX + 2];
     memset(longname, 'n', sizeof longname - 1);
     longname[sizeof longname - 1] = 0;
-    CHECK_EQ(gogo_register_port(vm, longname, &hdrv, &h), GOGO_E2BIG);
+    CHECK_EQ(gogo_register_port(vm, longname, strlen(longname), &hdrv, &h), GOGO_E2BIG);
     longname[GOGO_PORT_NAME_MAX] = 0;
-    CHECK_EQ(gogo_register_port(vm, longname, &hdrv, &h), GOGO_OK);
-    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
-    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_EEXIST);
-    CHECK_EQ(gogo_register_port(vm, "c", &hdrv, &h), GOGO_OK);
-    CHECK_EQ(gogo_register_port(vm, "d", &hdrv, &h), GOGO_OK);
-    CHECK_EQ(gogo_register_port(vm, "e", &hdrv, &h), GOGO_EFULL);
+    CHECK_EQ(gogo_register_port(vm, longname, strlen(longname), &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &hdrv, &h), GOGO_EEXIST);
+    CHECK_EQ(gogo_register_port(vm, "c", 1, &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "d", 1, &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "e", 1, &hdrv, &h), GOGO_EFULL);
     /* A failed load keeps the registrations. */
     uint32_t junk[4] = { 1, 2, 3, 4 };
     CHECK_EQ(gogo_load(vm, junk, sizeof junk, 0), GOGO_EIMAGE);
     Img im = image("hostport");
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
     free(im.w);
-    CHECK_EQ(gogo_register_port(vm, "f", &hdrv, &h), GOGO_ESTATE);    /* after the load */
+    CHECK_EQ(gogo_register_port(vm, "f", 1, &hdrv, &h), GOGO_ESTATE);    /* after the load */
     CHECK_EQ(gogo_start(vm), GOGO_OK);
-    CHECK_EQ(gogo_register_port(vm, "e", &hdrv, &h), GOGO_ESTATE);
+    CHECK_EQ(gogo_register_port(vm, "e", 1, &hdrv, &h), GOGO_ESTATE);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     h.vm = vm;
     CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
@@ -1155,7 +1171,9 @@ TEST(embed_hostport_close_posts) {
     gogo_vm *vm = new_hostport(&t, &h);
     CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
     gogo_close_posts(vm);
-    CHECK_EQ(gogo_port_post(vm, h.port, 1000, NULL, 0), GOGO_ECLOSED);
+    gogo_poster *ps = gogo_poster_new(vm);
+    CHECK_EQ(gogo_poster_port_post(ps, h.port, 1000, NULL, 0), GOGO_ECLOSED);
+    gogo_poster_free(ps);
     CHECK_EQ(settle(vm), GOGO_DONE);
     CHECK_EQ(h.closes, 1);
     gogo_free(vm);
@@ -1173,7 +1191,7 @@ TEST(embed_hostport_requirement) {
     gogo_vm *vm = new_vm(&thost, &t, NULL);
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EREQUIRES);
     CHECK(strstr(t.err, "gogo: image requires hp, which this VM lacks\n") != NULL);
-    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &hdrv, &h), GOGO_OK);
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
     gogo_free(vm);
     static const char *const only_ui[] = { "ui", NULL };
@@ -1181,12 +1199,12 @@ TEST(embed_hostport_requirement) {
     gogo_config cfg = GOGO_CONFIG_INIT;
     cfg.grant = only_ui;
     vm = new_vm(&thost, &t, &cfg);
-    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &hdrv, &h), GOGO_OK);
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EREQUIRES);
     gogo_free(vm);
     cfg.grant = with_hp;
     vm = new_vm(&thost, &t, &cfg);
-    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &hdrv, &h), GOGO_OK);
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
@@ -1199,7 +1217,7 @@ TEST(embed_hostport_requirement) {
 
 typedef struct PortProducer {
     pthread_t th;
-    gogo_vm *vm;
+    gogo_poster *ps;
     gogo_port port;
     int n, ok;                     /* ok: atomic */
 } PortProducer;
@@ -1208,7 +1226,7 @@ static void *port_produce(void *arg) {
     PortProducer *p = arg;
     for (int s = 0; s < p->n; s++) {
         int r;
-        while ((r = gogo_port_post(p->vm, p->port, 1000 + s, "data", 4)) == GOGO_EFULL) sched_yield();
+        while ((r = gogo_poster_port_post(p->ps, p->port, 1000 + s, "data", 4)) == GOGO_EFULL) sched_yield();
         if (r == GOGO_OK) __atomic_fetch_add(&p->ok, 1, __ATOMIC_RELEASE);
     }
     return NULL;
@@ -1221,26 +1239,29 @@ TEST(embed_hostport_post_threads) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
     gogo_vm *vm = new_vm(&thost, &t, NULL);
-    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &hdrv, &h), GOGO_OK);
     Img im = image("hostport");
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
     free(im.w);
+    gogo_poster *ps = gogo_poster_new(vm);
     CHECK_EQ(gogo_run_thread(vm), GOGO_OK);
     CHECK(await_lines(&t, 1));
-    CHECK_EQ(post_retry(vm, "ctl", 1, NULL, 0), GOGO_OK);
+    CHECK_EQ(post_retry(ps, "ctl", 1, NULL, 0), GOGO_OK);
     CHECK(await_lines(&t, 2));                 /* "open true": the port is known */
     CHECK_EQ(__atomic_load_n(&h.opens, __ATOMIC_ACQUIRE), 1);
-    PortProducer p = { .vm = vm, .port = h.port, .n = 3000 };
+    PortProducer p = { .ps = gogo_poster_new(vm), .port = h.port, .n = 3000 };
     pthread_create(&p.th, NULL, port_produce, &p);
     while (__atomic_load_n(&p.ok, __ATOMIC_ACQUIRE) < 1000) sched_yield();
-    CHECK_EQ(post_retry(vm, "ctl", 3, NULL, 0), GOGO_OK);   /* closes mid-stream */
+    CHECK_EQ(post_retry(ps, "ctl", 3, NULL, 0), GOGO_OK);   /* closes mid-stream */
     pthread_join(p.th, NULL);
     CHECK_EQ(p.ok, 3000);
     uint64_t end = mono_ms() + 20000u;
     while (__atomic_load_n(&h.closes, __ATOMIC_ACQUIRE) < 1 && mono_ms() < end) sched_yield();
     CHECK_EQ(__atomic_load_n(&h.closes, __ATOMIC_ACQUIRE), 1);
-    for (int i = 0; i < 20; i++) CHECK_EQ(gogo_port_post(vm, h.port, 3, NULL, 0), GOGO_OK);
-    CHECK_EQ(post_retry(vm, "ctl", -1, NULL, 0), GOGO_OK);
+    for (int i = 0; i < 20; i++) CHECK_EQ(gogo_poster_port_post(p.ps, h.port, 3, NULL, 0), GOGO_OK);
+    CHECK_EQ(post_retry(ps, "ctl", -1, NULL, 0), GOGO_OK);
+    gogo_poster_free(p.ps);
+    gogo_poster_free(ps);
     CHECK_EQ(gogo_join(vm), GOGO_OK);
     gogo_stats st;
     gogo_get_stats(vm, &st);
@@ -1289,7 +1310,7 @@ TEST(embed_hostport_register_after_load) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
     gogo_vm *vm = new_loaded(&t, "echo", NULL);
-    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_ESTATE);
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &hdrv, &h), GOGO_ESTATE);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     gogo_free(vm);

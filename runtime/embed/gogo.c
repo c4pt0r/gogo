@@ -414,17 +414,14 @@ static int post(gogo_vm *g, const char *name, size_t nl, uint32_t port, int32_t 
     return r;
 }
 
-int gogo_post(gogo_vm *g, const char *name, int32_t kind, const void *data, size_t len) {
+static int post_name(gogo_vm *g, const char *name, size_t nl, int32_t kind, const void *data, size_t len) {
     if (!g || !name || (len && !data)) return GOGO_EINVAL;
-    size_t nl = strlen(name);
     if (nl > GOGO_POST_NAME_MAX || len > GOGO_POST_DATA_MAX) return GOGO_E2BIG;
     return post(g, name, nl, 0, kind, data, len);
 }
 
-int gogo_port_post(gogo_vm *g, gogo_port port, int32_t kind, const void *data, size_t len) {
-    if (!g || (len && !data) || port.index >= GOGO_MAX_PORTS) return GOGO_EINVAL;
-    if (len > GOGO_POST_DATA_MAX) return GOGO_E2BIG;
-    return post(g, "", 0, embed_port_enc(port), kind, data, len);
+int gogo_post(gogo_vm *g, const char *name, size_t name_len, int32_t kind, const void *data, size_t len) {
+    return post_name(g, name, name_len, kind, data, len);
 }
 
 void gogo_close_posts(gogo_vm *g) {
@@ -434,15 +431,42 @@ void gogo_close_posts(gogo_vm *g) {
     if (embed_set_state(g, EMBED_CLOSED) < EMBED_CLOSED && g->uh.wake) g->uh.wake(g->uctx);
 }
 
-void gogo_retain(gogo_vm *g) { __atomic_fetch_add(&g->refs, 1, __ATOMIC_RELAXED); }
-
-void gogo_release(gogo_vm *g) {
+/* Drops a reference (the owner's at gogo_free, a poster's): the last one
+ * gives the gogo_vm back and runs the host's destroy. */
+static void unref(gogo_vm *g) {
     if (__atomic_fetch_sub(&g->refs, 1, __ATOMIC_ACQ_REL) != 1) return;
     void (*hfree)(void *, void *, size_t) = g->uh.free;
     void (*destroy)(void *) = g->uh.destroy;
     void *ctx = g->uctx;
     hfree(ctx, g, sizeof *g);
     if (destroy) destroy(ctx);
+}
+
+/* ---- posters: a gogo_poster is its gogo_vm, holding a reference ---- */
+
+static gogo_vm *vm_of(gogo_poster *p) { return (gogo_vm *)(void *)p; }
+
+gogo_poster *gogo_poster_new(gogo_vm *g) {
+    if (!g) return NULL;
+    __atomic_fetch_add(&g->refs, 1, __ATOMIC_RELAXED);   /* the caller holds the owner's */
+    return (gogo_poster *)(void *)g;
+}
+
+int gogo_poster_post(gogo_poster *p, const char *name, size_t name_len, int32_t kind, const void *data, size_t len) {
+    return post_name(vm_of(p), name, name_len, kind, data, len);
+}
+
+int gogo_poster_port_post(gogo_poster *p, gogo_port port, int32_t kind, const void *data, size_t len) {
+    gogo_vm *g = vm_of(p);
+    if (!g || (len && !data) || port.index >= GOGO_MAX_PORTS) return GOGO_EINVAL;
+    if (len > GOGO_POST_DATA_MAX) return GOGO_E2BIG;
+    return post(g, "", 0, embed_port_enc(port), kind, data, len);
+}
+
+void gogo_poster_close_posts(gogo_poster *p) { gogo_close_posts(vm_of(p)); }
+
+void gogo_poster_free(gogo_poster *p) {
+    if (p) unref(vm_of(p));
 }
 
 void gogo_get_stats(gogo_vm *g, gogo_stats *out) {
@@ -475,5 +499,5 @@ void gogo_free(gogo_vm *g) {
     blk_free_all(g, &g->blocks, g->uh.free);
     if (g->image_copy) g->uh.free(g->uctx, g->image_copy, g->image_bytes);
     g->image_copy = NULL;
-    gogo_release(g);
+    unref(g);
 }

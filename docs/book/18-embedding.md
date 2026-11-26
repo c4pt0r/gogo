@@ -266,8 +266,9 @@ it sleeps (no posts, no host ports, no other threads).
 `gogo_run` is the simple way: it steps the VM, waits in the host's `wait`
 while the VM is idle, and returns when the program is done.
 `gogo_run_thread` does the same on a new thread; the VM then belongs to
-that thread, the host only posts to it, and `gogo_join` returns the
-result (`gogo_free` stops the thread and joins it first).
+that thread, the host only posts to it (through posters, section 18.6),
+and `gogo_join` returns the result (`gogo_free` stops the thread and
+joins it first).
 
 A host with its own event loop (a GUI, a game, a server) steps the VM
 itself:
@@ -321,9 +322,9 @@ b| spawned 1000
 b| idle memory total: 132000 B
 ```
 
-A VM is single-threaded: every call on it happens on the thread that owns
-it, except `gogo_post`, `gogo_port_post`, `gogo_close_posts`,
-`gogo_retain` and `gogo_release`, which any thread may call. Different VMs
+A VM is single-threaded: every call that takes a `gogo_vm` happens on the
+thread that owns it. Other threads get a `gogo_poster` (section 18.6),
+whose calls any thread may make: the type says which is which. Different VMs
 may run on different threads at once; the embed tests run 8 VMs on 4
 threads, each thread stepping two of them as above
 (`runtime/embed/test/test_multi.c`). In `--two` nothing wakes the loop
@@ -333,10 +334,12 @@ thousands of times), and so does `post.c` in the next section.
 
 ## 18.6 Posts: messages from the host
 
-The host sends an actor a message with `gogo_post(vm, name, kind, data,
-len)`. The actor must have registered `name` (`actor.Register`, chapter
-4), and gets a `port.Post{From, Kind, Data}` (`From` is the zero PID; a
-host port's events carry the port's PID there instead):
+The host sends an actor a message with `gogo_post(vm, name, name_len,
+kind, data, len)`. The actor must have registered `name`
+(`actor.Register`, chapter 4), and gets a `port.Post{From, Kind, Data}`
+(`From` is the zero PID; a host port's events carry the port's PID there
+instead). Like every name the API takes, `name` is a pointer and a
+length, and need not end in a NUL:
 
 ```go
 func main() {
@@ -358,19 +361,27 @@ func main() {
     while (gogo_step(vm, 0) == GOGO_RUNNABLE) {}
     greet(vm, "Ada");
     greet(vm, "Grace");
-    gogo_post(vm, "greeter", 2, "Alan", 4);
+    gogo_post(vm, "greeter", 7, 2, "Alan", 4);
 ```
 
-Then a second thread posts two more and **closes posts**, while the main
-thread runs the VM with `gogo_run`:
+`gogo_post` belongs to the VM's own thread, like every call on a
+`gogo_vm`. Another thread posts through a **poster**: a handle made on the
+owner's thread with `gogo_poster_new` and handed over. Here a second
+thread posts two more names and **closes posts**, while the main thread
+runs the VM with `gogo_run`:
+
+```c
+    gogo_poster *p = gogo_poster_new(vm);   /* made here, used and freed there */
+    int started = pthread_create(&t, NULL, poster, p) == 0;
+```
 
 ```c
 static void *poster(void *arg) {
-    gogo_vm *vm = arg;
-    greet(vm, "Edsger");
-    greet(vm, "Barbara");
-    gogo_close_posts(vm);   /* no more posts: the VM ends when its actors do */
-    gogo_release(vm);
+    gogo_poster *p = arg;
+    gogo_poster_post(p, "greeter", 7, 1, "Edsger", 6);
+    gogo_poster_post(p, "greeter", 7, 1, "Barbara", 7);
+    gogo_poster_close_posts(p);   /* no more posts: the VM ends when its actors do */
+    gogo_poster_free(p);
     return NULL;
 }
 ```
@@ -388,7 +399,7 @@ posts delivered: 5, dropped: 0
 The rules:
 
 - **Posts are queued**, in a lock-free inbox, and delivered at the VM's
-  next step, in order per posting thread. `gogo_post` copies the data and
+  next step, in order per posting thread. A post copies the data and
   wakes the host. At most `GOGO_POST_MAX` (256) wait at once
   (`GOGO_EFULL` beyond).
 - **A post to a name nobody holds is dropped** when it is delivered, and
@@ -400,10 +411,12 @@ The rules:
   `gogo_run` waits. `gogo_close_posts` ends that: later posts return
   `GOGO_ECLOSED`, and the VM is done once its actors are, as on a board.
   Without the close, `post.c`'s `gogo_run` would never return.
-- **Another thread needs a reference.** A thread that may post while (or
-  after) the owner frees the VM holds one from `gogo_retain` and gives it
-  back with `gogo_release`. After `gogo_free` its posts return
-  `GOGO_ECLOSED` instead of touching freed memory.
+- **A poster outlives the free.** It holds a reference to the VM, so a
+  thread may post while (or after) the owner calls `gogo_free`: its posts
+  then return `GOGO_ECLOSED` instead of touching freed memory. The VM's
+  last bytes go back, and the host's `destroy` runs, at the last of
+  `gogo_free` and the `gogo_poster_free`s. In Rust terms, a `gogo_vm` is
+  `Send` but not `Sync`, and a `gogo_poster` is both.
 
 ## 18.7 Host ports
 
@@ -434,7 +447,7 @@ and registers it before the program starts:
 
 ```c
     if (rc == GOGO_OK && requires(img, len, "echo"))
-        rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before load */
+        rc = gogo_register_port(vm, "echo", 4, &echo_driver, &commands);   /* before load */
 ```
 
 (`requires` reads the image's requirements, section 18.9.)
@@ -468,7 +481,7 @@ port) and `close` (the port closed, for any reason: the owner exited,
 `port.Close`, `actor.Kill`, `gogo_free`). They run on the VM's thread
 inside `gogo_step`. The host sends the port's owner an event with
 `gogo_port_emit` from a callback or between steps, or with
-`gogo_port_post` from any thread (queued like a post). A VM has at most
+`gogo_poster_port_post` from any thread (queued like a post). A VM has at most
 `GOGO_MAX_HOST_PORTS` (4) host ports, registered before `gogo_load`:
 an image that opens a host port by a constant name requires it (section
 18.9), and a registration after the load returns `GOGO_ESTATE`.

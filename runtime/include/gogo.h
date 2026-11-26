@@ -20,23 +20,28 @@
  * appended, and a field that may be ignored is one whose 0 means what
  * the library did before it existed.
  *
- * Threads. A VM is single-threaded: every gogo_* call runs on the thread
- * that owns the VM, except gogo_post, gogo_port_post, gogo_close_posts,
- * gogo_retain and gogo_release, which any thread holding a reference may
- * call at any time.
- * Hooks run on the owning thread unless noted.
+ * Threads. A VM is single-threaded: every call that takes a gogo_vm runs
+ * on the thread that owns the VM. Other threads reach it only through a
+ * gogo_poster (gogo_poster_new), whose calls any thread may make at any
+ * time, also while or after the owner frees the VM: the type says which
+ * calls are which. Hooks run on the owning thread unless noted.
  *
  * Re-entrancy. Hooks run inside gogo_step. A hook must not call gogo_step,
  * gogo_run, gogo_load or gogo_start (they return GOGO_EBUSY) nor gogo_free
  * (undefined); gogo_post is fine.
  *
+ * Names. Every name the API takes is a pointer and a length (it need not
+ * be NUL-terminated), except the config's paths and grant list. A name
+ * the API gives back is the same pair.
+ *
  * Hook results. A hook that can fail returns 0 for success and a negative
  * GOGO_E* for failure; a hook that returns a value (a length, a time)
  * documents its own.
  *
- * Messages from the host. gogo_post(vm, "name", kind, data, len) sends the
- * actor registered under "name" (actor.Register) a port.Post{From, Kind,
- * Data} message, From the zero PID. Posts are queued in a lock-free inbox and delivered in order per
+ * Messages from the host. gogo_post(vm, "name", 4, kind, data, len) (or
+ * gogo_poster_post from another thread) sends the actor registered under
+ * "name" (actor.Register) a port.Post{From, Kind, Data} message, From the
+ * zero PID. Posts are queued in a lock-free inbox and delivered in order per
  * posting thread at the VM's next step, as ordinary messages under the
  * receiver's mailbox quota. A post whose name is not registered when it is
  * delivered is dropped and counted (gogo_get_stats): in particular posts
@@ -119,8 +124,8 @@ typedef struct gogo_host {
     void    *(*code_alloc)(void *ctx, size_t n);
     void     (*code_free)(void *ctx, void *p, size_t n);
     /* Called once, with the ctx, after the VM's last reference is gone
-     * (gogo_free, and the posting references of gogo_retain), on the
-     * thread that dropped it: the host frees its context here. No other
+     * (gogo_free, and every gogo_poster_free), on the thread that dropped
+     * it: the host frees its context here. No other
      * hook runs after it. NULL: nothing. Not called when gogo_new fails
      * (the ctx stays the host's). */
     void     (*destroy)(void *ctx);
@@ -299,27 +304,21 @@ GOGO_API int gogo_step(gogo_vm *vm, uint32_t budget);
  * (it may already have passed: step at once), or GOGO_NEVER. */
 GOGO_API int64_t gogo_next_deadline(gogo_vm *vm);
 
-/* Any thread: queues port.Post{kind, data[0..len)} for the actor registered
- * as name (NUL-terminated) and wakes the host. The data is copied. 0, or
- * GOGO_EFULL, GOGO_E2BIG, GOGO_ENOMEM, GOGO_EINVAL, GOGO_ECLOSED (posts
- * closed, the program finished, or the VM is being freed). The caller must hold a reference: the
- * owner thread its own; any other thread that may post while or after the
- * owner frees the VM must hold one from gogo_retain. */
-GOGO_API int gogo_post(gogo_vm *vm, const char *name, int32_t kind, const void *data, size_t len);
+/* Owner thread: queues port.Post{kind, data[0..len)} for the actor
+ * registered as name (name_len bytes) and wakes the host. The data is
+ * copied. 0, or GOGO_EFULL, GOGO_E2BIG, GOGO_ENOMEM, GOGO_EINVAL,
+ * GOGO_ECLOSED (posts closed, or the program finished). Other threads post
+ * with gogo_poster_post. */
+GOGO_API int gogo_post(gogo_vm *vm, const char *name, size_t name_len, int32_t kind, const void *data, size_t len);
 
-/* Any thread (holding a reference): later posts return GOGO_ECLOSED,
- * registered names no longer keep the VM alive, and the host is woken, so
- * a VM whose actors only wait for posts ends (gogo_run returns 0). Posts
- * already queued are still delivered. A post concurrent with the close
- * may return 0 and still be discarded (the VM finished first); it is
- * counted in posts_dropped. gogo_free implies it. */
+/* Owner thread: later posts return GOGO_ECLOSED, registered names no
+ * longer keep the VM alive, and the host is woken, so a VM whose actors
+ * only wait for posts ends (gogo_run returns 0). Posts already queued are
+ * still delivered. A post concurrent with the close may return 0 and
+ * still be discarded (the VM finished first); it is counted in
+ * posts_dropped. gogo_free implies it. gogo_poster_close_posts is the
+ * same from another thread. */
 GOGO_API void gogo_close_posts(gogo_vm *vm);
-
-/* Any thread: keeps the handle valid for gogo_post (which then returns
- * GOGO_ECLOSED) after gogo_free, until the matching gogo_release. Call it
- * while holding a reference already. */
-GOGO_API void gogo_retain(gogo_vm *vm);
-GOGO_API void gogo_release(gogo_vm *vm);
 
 /* Starts the VM if it is not yet started, then steps it, waiting in
  * host->wait while it is idle, until it is done. 0 when the program has
@@ -328,9 +327,10 @@ GOGO_API void gogo_release(gogo_vm *vm);
 GOGO_API int gogo_run(gogo_vm *vm);
 
 /* gogo_run on a new thread (POSIX threads): the VM then belongs to that
- * thread until gogo_join, which returns gogo_run's result. Meanwhile other
- * threads may only post, retain, release, or gogo_free (which stops the
- * thread at its next step, joins it and frees the VM). GOGO_EINVAL without
+ * thread until gogo_join, which returns gogo_run's result. Meanwhile the
+ * thread that started it may only call gogo_poster_new, gogo_join and
+ * gogo_free (which stops the thread at its next step, joins it and frees
+ * the VM); other threads post through posters. GOGO_EINVAL without
  * wait, GOGO_ESTATE if a thread is already running, GOGO_ENOMEM. */
 GOGO_API int gogo_run_thread(gogo_vm *vm);
 GOGO_API int gogo_join(gogo_vm *vm);
@@ -341,8 +341,7 @@ GOGO_API int gogo_join(gogo_vm *vm);
  * port: port.Open("ui", port.Host{Arg: 1, Data: cfg}) calls the driver's
  * open; actor.Send(p, port.Post{Kind: k, Data: d}) calls its command; the
  * port's events reach its owner as port.Post{From, Kind, Data}, From the
- * port's PID (gogo_port_emit,
- * gogo_port_post). Ports keep their usual rules: the owner's exit,
+ * port's PID (gogo_port_emit, gogo_poster_port_post). Ports keep their usual rules: the owner's exit,
  * port.Close or actor.Kill closes one (the driver's close runs once),
  * port.Handoff gives it to another actor, a stale PID is ignored. What a
  * host port may do is the host's own business. An image that opens a host
@@ -381,7 +380,8 @@ typedef struct gogo_port_driver {
 #define GOGO_MAX_HOST_PORTS 4
 #define GOGO_PORT_NAME_MAX 31u
 
-/* Registers a host port driver as name (NUL-terminated; both are copied),
+/* Registers a host port driver as name (name_len bytes, no NUL among
+ * them; both are copied),
  * its callbacks getting ctx. Before gogo_load (a registered port
  * satisfies an image's requirement of its name). 0, or GOGO_EEXIST (a
  * port of this name exists, or it names one of the runtime's drivers,
@@ -389,7 +389,8 @@ typedef struct gogo_port_driver {
  * GOGO_EINVAL (no name or driver), GOGO_ESTATE (an image is loaded),
  * GOGO_EBUSY. A port registered under a name the config's grant leaves
  * out is accepted but never visible to the program. */
-GOGO_API int gogo_register_port(gogo_vm *vm, const char *name, const gogo_port_driver *drv, void *ctx);
+GOGO_API int gogo_register_port(gogo_vm *vm, const char *name, size_t name_len, const gogo_port_driver *drv,
+                                void *ctx);
 
 /* VM thread (a callback, or between steps): sends the port's owner
  * port.Post{kind, data[0..len)} (copied) now. 0, or GOGO_ECLOSED (the port
@@ -399,12 +400,39 @@ GOGO_API int gogo_register_port(gogo_vm *vm, const char *name, const gogo_port_d
  * GOGO_E2BIG (over GOGO_POST_DATA_MAX), GOGO_EINVAL. */
 GOGO_API int gogo_port_emit(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
 
-/* Any thread: gogo_port_emit through the inbox, as gogo_post: queued,
- * wakes the host, delivered at the VM's next step. Returns as gogo_post
- * does (GOGO_ECLOSED once posts are closed). A post the port can no longer
- * take when it is delivered (closed since, its owner exiting, over quota)
- * is dropped and counted in posts_dropped. */
-GOGO_API int gogo_port_post(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
+/* ---- posting from other threads ----
+ *
+ * A gogo_poster is a handle any thread may use to post to the VM. It
+ * holds a reference: the VM's memory (not its program, which gogo_free
+ * stops) stays until the owner's gogo_free and every gogo_poster_free,
+ * whichever comes last; then the host's destroy hook runs. After
+ * gogo_free a poster's posts return GOGO_ECLOSED. Posts from one thread
+ * are delivered in the order it made them. */
+typedef struct gogo_poster gogo_poster;
+
+/* A new poster for vm, or NULL if vm is NULL. Where gogo_free may be
+ * called: the owner thread, or, while gogo_run_thread runs the VM, the
+ * thread that started it. Hand it to another thread before that thread
+ * posts; free it there (or anywhere) when done. */
+GOGO_API gogo_poster *gogo_poster_new(gogo_vm *vm);
+
+/* Any thread: gogo_post, as the owner would. */
+GOGO_API int gogo_poster_post(gogo_poster *p, const char *name, size_t name_len, int32_t kind, const void *data,
+                              size_t len);
+
+/* Any thread: gogo_port_emit through the inbox: queued, wakes the host,
+ * delivered at the VM's next step. Returns as gogo_post does (GOGO_ECLOSED
+ * once posts are closed). A post the port can no longer take when it is
+ * delivered (closed since, its owner exiting, over quota) is dropped and
+ * counted in posts_dropped. */
+GOGO_API int gogo_poster_port_post(gogo_poster *p, gogo_port port, int32_t kind, const void *data, size_t len);
+
+/* Any thread: gogo_close_posts. */
+GOGO_API void gogo_poster_close_posts(gogo_poster *p);
+
+/* Any thread: drops the poster's reference; p is invalid after. NULL is
+ * ignored. */
+GOGO_API void gogo_poster_free(gogo_poster *p);
 
 /* Counters. On the owning thread: with gogo_run_thread, after gogo_join
  * (or from a hook). */
@@ -419,8 +447,9 @@ GOGO_API void gogo_get_stats(gogo_vm *vm, gogo_stats *out);
 
 /* Closes posts (gogo_close_posts) and the program's ports and returns
  * every byte the VM took from its host (pending posts included); a VM running in gogo_run_thread is
- * stopped and joined first. Never from a hook. The handle stays valid for
- * gogo_post / gogo_release while retained. NULL is ignored. */
+ * stopped and joined first. Never from a hook. Drops the owner's
+ * reference: vm is invalid after it (posters keep their own). NULL is
+ * ignored. */
 GOGO_API void gogo_free(gogo_vm *vm);
 
 /* The POSIX default host: malloc, CLOCK_MONOTONIC, CLOCK_REALTIME as the

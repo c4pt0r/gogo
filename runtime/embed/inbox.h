@@ -2,7 +2,7 @@
  * Producers (any thread) push with a CAS; the VM thread takes the whole
  * stack with one exchange, reverses it (oldest first) and delivers each
  * post as port.Post{Kind, Data} to the actor registered under its name
- * (gogo_post) or to a host port's owner (gogo_port_post).
+ * (gogo_post) or to a host port's owner (gogo_poster_port_post).
  * The inbox is one of the Vm's event sources (port.h PortSource), so the
  * scheduler drains it before it goes idle, and a push after its last
  * check wakes the host (latched). */

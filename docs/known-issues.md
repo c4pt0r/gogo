@@ -74,6 +74,13 @@ rebuilt:
     refuse (it returned 1 and 0).
   - `gogo_config.allow_code_load` is the flag `GOGO_CONFIG_CODE_LOAD` in
     `flags`; `mem_limit` is a `uint64_t` and `max_actors` a `uint32_t`.
+  - Other threads post through a `gogo_poster` (`gogo_poster_new` on
+    the owner's thread, then `gogo_poster_post`, `gogo_poster_port_post`,
+    `gogo_poster_close_posts`, `gogo_poster_free`): `gogo_retain`,
+    `gogo_release` and `gogo_port_post` are gone, and `gogo_post` and
+    `gogo_close_posts` are for the VM's own thread.
+  - Names take a length: `gogo_post(vm, name, name_len, kind, data,
+    len)` and `gogo_register_port(vm, name, name_len, drv, ctx)`.
   - The `GOGO_E*` results are the shared error codes negated, so their
     numbers changed (`GOGO_EINVAL` -1 is -6, `GOGO_EREQUIRES` -4 is
     -10, `GOGO_EVERSION` -13 is -27, ...); code that uses the names
@@ -496,16 +503,17 @@ rebuilt:
 
 ## Embedding (`libgogo`)
 
-- **Posts racing a close are lost quietly.** A `gogo_post` concurrent
-  with `gogo_close_posts` (or with the program finishing) may return 0 and
-  still be discarded; it shows only in `gogo_stats.posts_dropped`. A
-  thread that may post while or after the owner calls `gogo_free` must
-  hold its own reference (`gogo_retain`); without one the handle can be
-  freed under it. Queued posts (up to `GOGO_POST_MAX`, 256) are host
-  memory outside `mem_limit` until delivered.
+- **Posts racing a close are lost quietly.** A post concurrent with
+  closing posts (or with the program finishing) may return 0 and still
+  be discarded; it shows only in `gogo_stats.posts_dropped`. A thread
+  other than the owner posts only through a `gogo_poster`, which keeps
+  the handle valid; posting on a bare `gogo_vm` from another thread is
+  not checked, and the VM can be freed under it. Queued posts (up to
+  `GOGO_POST_MAX`, 256) are host memory outside `mem_limit` until
+  delivered.
 - **Host port handles have a 12-bit generation.** A `gogo_port` is a slot
   index plus a generation bumped at each close of that slot, so after 4096
-  more closes of the same slot a stale handle (or a `gogo_port_post` still
+  more closes of the same slot a stale handle (or a `gogo_poster_port_post` still
   queued for it) names whatever port then holds the slot, as with port
   PIDs.
 - **`code.Load` refused reads as `NoMemory`.** With
