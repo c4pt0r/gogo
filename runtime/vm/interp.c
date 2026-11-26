@@ -368,7 +368,9 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
         if (blen) out_bytes(o, (const char *)bp, blen);
     } else if (term_is_pid(t)) {
         out_str(o, "<pid ");
-        out_int(o, term_pid_slot(t));
+        const VmDist *d = vm_dist_of(vm, t);
+        if (d) d->print(o, vm, t);   /* <pid N@node> */
+        else out_int(o, term_pid_slot(t));
         out_str(o, ">");
     } else if (kind == K_STRING && obj[1] <= (hdr_words(obj[0]) - 2u) * 4u) {
         out_bytes(o, (const char *)(obj + 2), obj[1]);
@@ -1067,7 +1069,8 @@ int interp_run(Vm *vm, Actor *a) {
                     CHECK(int_val(vm, a, R[rb + 2], &ms));
                     term pid = R[rb];
                     const Actor *to = actor_lookup(vm, pid);
-                    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) {
+                    if ((!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) &&
+                        !(!to && vm_dist_of(vm, pid))) {   /* a remote PID: sent below */
                         R[ra] = T_NIL;
                         R[ra + 1] = T_FALSE;
                         break;

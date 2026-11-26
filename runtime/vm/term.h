@@ -126,6 +126,16 @@ static inline term term_make_pid(uint16_t slot, uint16_t gen) {
 static inline uint16_t term_pid_slot(term t) { return (uint16_t)((t >> 4) & 0xFFFFu); }
 static inline uint16_t term_pid_gen(term t) { return (uint16_t)(t >> 20); }
 
+/* Remote PIDs (distribution, runtime/dist/): slots DIST_SLOT_BASE up to
+ * the ports' (port.h, 0xFFF0) name entries of the VM's proxy table. Only
+ * meaningful while vm->dist is set: a VM that opens a node link keeps its
+ * actor table below DIST_SLOT_BASE, and every check looks up a local actor
+ * first. */
+#define DIST_SLOT_BASE 0xF000u
+static inline bool term_is_proxy(term t) {
+    return term_is_pid(t) && (uint32_t)(term_pid_slot(t) - DIST_SLOT_BASE) < 0xFF0u;
+}
+
 /* Module tags (see the top of this file). */
 #define MOD_TAG_SHIFT 21u
 #define MOD_TAG_MASK  0xFFE00000u

@@ -89,6 +89,10 @@ void actor_free(Vm *vm, Actor *a) {
     vm->live--;
 }
 
+const VmDist *vm_dist_of(const Vm *vm, term pid) {
+    return term_is_proxy(pid) ? vm->dist : NULL;
+}
+
 Actor *actor_lookup(Vm *vm, term pid) {
     if (!term_is_pid(pid)) return NULL;
     uint16_t slot = term_pid_slot(pid);

@@ -256,8 +256,9 @@ codes are >= 100.
 | 6 | `R_BAD_CODE` |  |
 | 7 | `R_SHUTDOWN` |  |
 | 8 | `R_BAD_SHIFT` |  |
-| 9 | `R_BAD_MSG` | a value that may not cross modules (msg.h) |
+| 9 | `R_BAD_MSG` | a value that may not cross modules or nodes (msg.h, runtime/dist/) |
 | 10 | `R_PANIC` | panic(v), a failed type assertion, a method call on a nil interface (15.4) |
+| 11 | `R_NO_CONNECTION` | the node of a linked or monitored remote actor became unreachable (15.5) |
 | 12 | `R_NIL` | a nil pointer dereference, a write to a nil map: GETFIELD or SETFIELD of nil (15.6) |
 | 64 | `R_FAILED` | + a GOGO_E_* code: a library failure (no VM code uses it) |
 

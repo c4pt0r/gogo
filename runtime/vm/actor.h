@@ -54,6 +54,33 @@ enum {
     AF_CALL_PENDING = 16  /* a Call sent its request and awaits the reply (interp.c) */
 };
 
+struct Out;
+
+/* Distribution hooks (runtime/dist/, design.md §5.13): set by the "node"
+ * port driver when a program opens its first node link, NULL before (and
+ * always in builds without it). The core calls them only for a proxy PID
+ * (term_is_proxy) that names no local actor, and on every actor exit.
+ *  - send: Send (serial 0) or a Call reply (serial: the Ref's) to a remote
+ *    PID; returns as msg_send (0 sent or dropped, or a negated exit reason
+ *    of the sender: R_BAD_MSG for a value that may not leave the node).
+ *  - monitor: a's monitor `serial` of remote pid (false: out of memory).
+ *  - link: link (on) or unlink a and remote pid (false: out of memory).
+ *  - demonitor: a dropped monitor `serial` (any serial; unknown ignored).
+ *  - exited: a is exiting with code (its remote links and monitors).
+ *  - print: writes a proxy PID's number (println, "<pid N@node>"). */
+typedef struct VmDist {
+    int  (*send)(struct Vm *vm, struct Actor *from, term to, uint64_t serial, term msg);
+    bool (*monitor)(struct Vm *vm, struct Actor *a, term pid, uint64_t serial);
+    bool (*link)(struct Vm *vm, struct Actor *a, term pid, bool on);
+    void (*demonitor)(struct Vm *vm, struct Actor *a, uint64_t serial);
+    void (*exited)(struct Vm *vm, struct Actor *a, uint32_t code);
+    void (*print)(struct Out *o, const struct Vm *vm, term pid);
+} VmDist;
+
+/* vm->dist if pid is a remote (proxy) PID and the VM has distribution,
+ * else NULL: the one test before every hook call but exited (actor.c). */
+const VmDist *vm_dist_of(const struct Vm *vm, term pid);
+
 /* PID table: a live slot holds its Actor*; a free slot holds
  * (gen << 1) | 1, where gen is the 12-bit generation the next actor in
  * that slot will get. Actor pointers are aligned, so bit 0 tells them apart. */
@@ -99,6 +126,7 @@ typedef struct Vm {
     struct VfsState *vfs;     /* vfs mounts and open files (vfs_init); NULL = none */
     struct InputState *input; /* input port state (input_install); NULL = none */
     struct NetState *net;     /* the net stack (net_install, runtime/net/); NULL = none */
+    const VmDist *dist;       /* distribution hooks (runtime/dist/); NULL = none */
     VaHeap va;                /* allocator (alloc.h): scalars, then its free lists */
     Port ports[GOGO_MAX_PORTS];   /* port table (port.h) */
     PortEvent evq_slots[GOGO_EVQ_CAP];   /* event ring storage (evq.h), last: large */

@@ -333,6 +333,7 @@ static const char *kind_name(uint32_t code) {
     case R_BAD_MSG:          return "badmsg";
     case R_PANIC:            return "panic";
     case R_NIL:              return "nil";
+    case R_NO_CONNECTION:    return "noconnection";
     default:                 return NULL;
     }
 }
@@ -426,6 +427,8 @@ static bool exit_signal(Vm *vm, Actor *t, term from, uint32_t code) {
 bool sig_link(Vm *vm, Actor *a, term pid) {
     if (pid == a->id || sig_is_linked(a, pid)) return true;
     Actor *p = actor_lookup(vm, pid);
+    const VmDist *d = p ? NULL : vm_dist_of(vm, pid);
+    if (d) return d->link(vm, a, pid, true);
     if (!p || p->state == A_EXITED) return exit_signal(vm, a, pid, R_NO_PROC);
     if (!charge_fits(a, link_words())) return false;
     Link *la = link_new(vm, pid), *lp = link_new(vm, a->id);
@@ -448,6 +451,7 @@ void sig_unlink(Vm *vm, Actor *a, term pid) {
     link_remove(vm, a, pid);
     Actor *p = actor_lookup(vm, pid);
     if (p) link_remove(vm, p, a->id);
+    else if (vm_dist_of(vm, pid)) vm->dist->link(vm, a, pid, false);
 }
 
 bool sig_kill(Vm *vm, Actor *from, term pid, uint32_t code) {
@@ -506,6 +510,8 @@ term sig_monitor(Vm *vm, Actor *a, term pid) {
     if (ref == T_NIL) return T_NIL;
     Actor *t = actor_lookup(vm, pid);
     if (t == a) return ref;
+    const VmDist *d = t ? NULL : vm_dist_of(vm, pid);
+    if (d) return d->monitor(vm, a, pid, serial) ? ref : T_NIL;
     if (!t || t->state == A_EXITED) {
         Msg *m = down_new(vm);
         if (!m) return T_NIL;
@@ -536,6 +542,7 @@ term sig_monitor(Vm *vm, Actor *a, term pid) {
 }
 
 void sig_demonitor(Vm *vm, Actor *a, uint64_t serial) {
+    if (vm->dist) vm->dist->demonitor(vm, a, serial);
     ActorExtra *x = a->extra;
     if (!x) return;
     Monitor **pm = monitor_slot(&x->watching, serial);
@@ -658,6 +665,7 @@ void actor_exit(Vm *vm, Actor *a, uint32_t code, term func_name) {
     signal_links(vm, a, code, func_name);
     signal_monitors(vm, a, code, func_name);
     drop_watching(vm, a);
+    if (vm->dist) vm->dist->exited(vm, a, code);   /* its remote links and monitors */
     names_drop_actor(vm, a->id);       /* frees only; cannot fail */
     timer_cancel_actor(vm, a);         /* its wakeup and SendAfters to it */
     actor_free(vm, a);                 /* mailbox, extra, block, slot */

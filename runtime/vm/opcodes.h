@@ -335,9 +335,9 @@ enum Reason {
     R_BAD_CODE         = 6,
     R_SHUTDOWN         = 7,
     R_BAD_SHIFT        = 8,
-    R_BAD_MSG          = 9,   /* a value that may not cross modules (msg.h) */
+    R_BAD_MSG          = 9,   /* a value that may not cross modules or nodes (msg.h, runtime/dist/) */
     R_PANIC            = 10,  /* panic(v), a failed type assertion, a method call on a nil interface (15.4) */
-    /* 11: kept for distributed actors. */
+    R_NO_CONNECTION    = 11,  /* the node of a linked or monitored remote actor became unreachable (15.5) */
     R_NIL              = 12,  /* a nil pointer dereference, a write to a nil map: GETFIELD or SETFIELD of nil (15.6) */
     R_FAILED           = 64   /* + a GOGO_E_* code: a library failure (no VM code uses it) */
 };
