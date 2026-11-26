@@ -240,12 +240,6 @@ bool heap_push_frame(Vm *vm, Actor *a, uint16_t n_regs, int32_t ret_pc) {
     return true;
 }
 
-size_t actor_memory_bytes(const Actor *a) {
-    /* Queued messages and pending SendAfter timers it created. */
-    return sizeof(Actor) + sizeof(uintptr_t) + (size_t)a->mem_words * 4u +
-           (size_t)actor_charged_words(a) * 4u;
-}
-
 term heap_new_ref(Vm *vm, Actor *a) {
     uint32_t off = heap_alloc(vm, a, 3, NULL, 0);
     if (off == UINT32_MAX) return T_NIL;

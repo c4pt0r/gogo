@@ -9,6 +9,7 @@
 #include "actor.h"
 #include "module.h"
 #include "opcodes.h"
+#include "signals.h"
 
 #define HEAP_MAX_WORDS 65535u
 
@@ -78,8 +79,11 @@ void heap_map_terms(uint32_t *mem, uint32_t scan, const uint32_t *end, term *roo
                     uint32_t tags, void (*fn)(void *, term *), void *ctx);
 
 /* sizeof(Actor) + its table slot + the block + its charged words (queued
- * messages, pending SendAfter timers) in bytes. */
-size_t actor_memory_bytes(const Actor *a);
+ * messages, pending SendAfter timers) in bytes. Inline: one caller. */
+static inline size_t actor_memory_bytes(const Actor *a) {
+    return sizeof(Actor) + sizeof(uintptr_t) + (size_t)a->mem_words * 4u +
+           (size_t)actor_charged_words(a) * 4u;
+}
 
 /* ---- reading terms (interp.c, port.c) ---- */
 
