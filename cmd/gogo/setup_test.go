@@ -50,6 +50,12 @@ Connected to ESP32 on /dev/ttyUSB0:
 Chip type:          ESP32-D0WD-V3 (revision v3.1)
 Features:           Wi-Fi, BT, Dual Core + LP Core, 240MHz, Vref calibration in eFuse, Coding Scheme None
 `
+	// a banner without the Features line
+	chipNoFeatures = `esptool v5.6.0
+Connecting...
+Detecting chip type... ESP32-S3
+Chip type:          ESP32-S3 (QFN56) (revision v0.2)
+`
 	// esptool v4 wording
 	chipV4 = `esptool.py v4.8.1
 Connecting...
@@ -70,6 +76,7 @@ func TestParseChip(t *testing.T) {
 		{chipCardputer, true, false, "cardputer"},
 		{chipESP32, false, false, "cardputer"},
 		{chipV4, true, true, "sticks3"},
+		{chipNoFeatures, true, false, ""},
 	} {
 		ci, err := parseChip(c.out)
 		if err != nil {
@@ -146,26 +153,65 @@ func TestCheckWrites(t *testing.T) {
 	w := func(off, size uint32) flashWrite {
 		return flashWrite{offset: off, name: fmt.Sprintf("f%#x", off), size: size}
 	}
+	protect := protectedRanges(nvsParts(gogoParts))
 	good := []flashWrite{w(0x0, 0x5000), w(0x8000, 0xC00), w(0x10000, 0x110000)}
-	if err := checkWrites(good, gogoParts, 0x8000); err != nil {
+	if err := checkWrites(good, gogoParts, 0x8000, protect); err != nil {
 		t.Fatal(err)
+	}
+	// Edges: the bootloader may fill 0x0..0x8000 exactly; an app may start
+	// right after NVS ends (0xF000) when an app partition is there.
+	edge := append([]partition{}, gogoParts...)
+	edge[1] = partition{"factory", partTypeApp, 0, 0xF000, 0x201000}
+	if err := checkWrites([]flashWrite{w(0x0, 0x8000), w(0x8000, 0xC00), w(0xF000, 0x1000)}, edge, 0x8000, protect); err != nil {
+		t.Fatalf("edges: %v", err)
 	}
 	for name, ws := range map[string][]flashWrite{
 		"write at NVS":           {w(0x9000, 0x100)},
 		"write ends in NVS":      {w(0x8000, 0x1001)},
 		"write starts in NVS":    {w(0xE000, 0x2000)},
+		"last NVS byte":          {w(0xEFFF, 1)},
 		"bootloader too big":     {w(0x0, 0x8001)},
 		"outside app partitions": {w(0x210000, 0x100)},
 		"into the file system":   {w(0x310000, 0x1000)},
 		"overlapping writes":     {w(0x10000, 0x2000), w(0x11000, 0x100)},
 		"app past its partition": {w(0x10000, 0x200001)},
+		"past the flash":         {w(0xFFFFF000, 0x2000)},
 	} {
-		if err := checkWrites(ws, gogoParts, 0x8000); err == nil {
+		if err := checkWrites(ws, gogoParts, 0x8000, protect); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if err := checkWrites(good, gogoParts[1:], 0x8000); err == nil {
+	if err := checkWrites(good, gogoParts[1:], 0x8000, protect); err == nil {
 		t.Error("no NVS partition: accepted")
+	}
+	// A table that moves NVS away and puts an app partition over 0x9000:
+	// the default NVS range (and the board's) stays protected.
+	moved := []partition{
+		{"factory", partTypeApp, 0, 0x9000, 0x200000},
+		{"nvs", partTypeData, partSubNVS, 0x310000, 0x6000},
+		{"gogo", partTypeData, partSubImage, 0x210000, 0x100000},
+	}
+	if err := checkWrites([]flashWrite{w(0x9000, 0x1000)}, moved, 0x8000, protectedRanges(nvsParts(moved))); err == nil {
+		t.Error("app write over the default NVS range accepted")
+	}
+	boardNVS := []partition{{"nvs", partTypeData, partSubNVS, 0x20000, 0x5000}}
+	if err := checkWrites([]flashWrite{w(0x20000, 0x1000)}, moved, 0x8000, protectedRanges(nvsParts(moved), boardNVS)); err == nil {
+		t.Error("write over the board's NVS accepted")
+	}
+	if err := checkWrites([]flashWrite{w(0x0, 0xF000)}, moved, 0x10000, protect); err == nil {
+		t.Error("partition table away from 0x8000 accepted")
+	}
+}
+
+func TestParsePartitionsRejectsBadRanges(t *testing.T) {
+	for _, p := range []partition{
+		{"all", partTypeApp, 0, 0x0, 0xFFFFFFFF},
+		{"odd", partTypeApp, 0, 0x10800, 0x1000},
+		{"empty", partTypeApp, 0, 0x10000, 0},
+	} {
+		if _, err := parsePartitions(ptBytes([]partition{gogoParts[0], p})); err == nil {
+			t.Errorf("%s accepted", p.label)
+		}
 	}
 }
 
@@ -175,11 +221,15 @@ func TestCheckEsptoolArgs(t *testing.T) {
 	os.WriteFile(small, make([]byte, 100), 0o644)
 	big := filepath.Join(dir, "big.bin")
 	os.WriteFile(big, make([]byte, 0x1001), 0o644)
+	ptSize := filepath.Join(dir, "pt.bin")
+	os.WriteFile(ptSize, make([]byte, 0xC00), 0o644)
 	base := []string{"--chip", "esp32s3", "--port", "/dev/x", "--after", "watchdog-reset"}
 	ok := [][]string{
-		append(base, "read-flash", "0x8000", "3072", small),
-		append(base, "write-flash", "--flash-mode", "dio", "--flash-freq", "80m", "--flash-size", "8MB", "0x0", small, "0x8000", small, "0x10000", big),
+		{"--port", "/dev/x", "--after", "watchdog-reset", "read-flash", "0x8000", "3072", small},
+		append(base, "write-flash", "--flash-mode", "dio", "--flash-freq", "80m", "--flash-size", "8MB", "0x0", small, "0x8000", ptSize, "0x10000", big),
 		append(base, "write-flash", "0x210000", small),
+		append(base, "write-flash", "0xF000", big), // starts right after NVS
+		{"version"},
 	}
 	for _, a := range ok {
 		if err := checkEsptoolArgs(a, defaultNVS); err != nil {
@@ -190,6 +240,7 @@ func TestCheckEsptoolArgs(t *testing.T) {
 		append(base, "erase-flash"),
 		append(base, "erase_flash"),
 		append(base, "erase-region", "0x9000", "0x6000"),
+		append(base, "write-flash-status", "--non-volatile", "0"),
 		append(base, "write-flash", "--erase-all", "0x0", small),
 		append(base, "write-flash", "-e", "0x0", small),
 		append(base, "merge-bin", "-o", "x.bin", "0x0", small),
@@ -198,6 +249,10 @@ func TestCheckEsptoolArgs(t *testing.T) {
 		append(base, "write-flash", "0x8000", big), // reaches the NVS sector
 		append(base, "write-flash", "0x0", small, "0xE000", small),
 		append(base, "write-flash", "0x0"),
+		append(base, "write-flash", "0x0", filepath.Join(dir, "missing.bin")),
+		append(base, "read-flash", "0x0", "0x1000", small, "--extra"),
+		append(base, "--trace", "read-flash", "0x0", "0x1000", small),
+		base,
 	}
 	for _, a := range bad {
 		if err := checkEsptoolArgs(a, defaultNVS); err == nil {
@@ -209,10 +264,24 @@ func TestCheckEsptoolArgs(t *testing.T) {
 	}
 }
 
+// fakeEsptool mimics esptool: the v5 banner (or v4's, by
+// FAKE_ESPTOOL_VERSION), the chip from $FAKE_ESPTOOL_CHIP, and with a
+// --chip that names another chip it fails as the real tool does.
 const fakeEsptool = `#!/bin/sh
 echo "$*" >> "$FAKE_ESPTOOL_LOG"
-if [ "$1" = version ]; then echo "esptool v${FAKE_ESPTOOL_VERSION:-5.6.0}"; exit 0; fi
-for a; do last="$a"; done
+ver=${FAKE_ESPTOOL_VERSION:-5.6.0}
+case $ver in 4.*) name=esptool.py ;; *) name=esptool ;; esac
+if [ "$1" = version ]; then echo "$name v$ver"; echo "$ver"; exit 0; fi
+chip=$(sed -n 's/^Detecting chip type[. ]*//p' "$FAKE_ESPTOOL_CHIP" | head -n 1)
+want=$FAKE_ESPTOOL_FORCE_CHIP prev= last=
+for a; do
+	[ "$prev" = --chip ] && want=$a
+	prev=$a last=$a
+done
+if [ -n "$want" ] && [ "$want" != auto ] && [ "$want" != esp32s3 -o "$chip" != ESP32-S3 ]; then
+	printf '%s v%s\nConnecting....\n\nA fatal error occurred: This chip is %s, not ESP32-S3. Wrong --chip argument?\n' "$name" "$ver" "$chip"
+	exit 2
+fi
 case " $* " in
 *" read-flash "*) cat "$FAKE_ESPTOOL_CHIP"; cp "$FAKE_ESPTOOL_PT" "$last" ;;
 *" write-flash "*) cat "$FAKE_ESPTOOL_CHIP"; echo "Hard resetting with a watchdog..." ;;
@@ -236,7 +305,9 @@ type setupBench struct {
 	sets      []string          // keys set, in order
 	scans     int
 	scanFails int // the first scanFails scans fail
-	opens     int
+	// rejectPassword makes the board refuse wifi.password.
+	rejectPassword bool
+	opens          int
 }
 
 func newSetupBench(t *testing.T, chip string, stdin string) *setupBench {
@@ -347,6 +418,9 @@ func (c *fakeConsole) answer(cmd string) string {
 			"\x02kv " + fmt.Sprintf("%-32s ch %2d %4d dBm open", "Cafe", 11, -70) + "\n" +
 			"\x02kv " + fmt.Sprintf("%-32s ch %2d %4d dBm secured", "Home Net", 1, -80) + "\n\x02ok\n"
 	case "set":
+		if key == "wifi.password" && b.rejectPassword {
+			return "\x02err ESP_ERR_NVS_NOT_ENOUGH_SPACE\n"
+		}
 		b.store[key] = value
 		b.sets = append(b.sets, key)
 		if key == "wifi.ssid" {
@@ -457,8 +531,17 @@ func (f *setupBench) run(args ...string) error {
 // the NVS partition of the table written.
 func checkNoNVSWrite(t *testing.T, lines []string) {
 	t.Helper()
+	stand := filepath.Join(t.TempDir(), "sector.bin") // for removed temp files: one sector
+	os.WriteFile(stand, make([]byte, flashSector), 0o644)
 	for _, l := range lines {
 		fields := strings.Fields(l)
+		for i, f := range fields {
+			if strings.HasPrefix(f, "/") {
+				if _, err := os.Stat(f); err != nil {
+					fields[i] = stand
+				}
+			}
+		}
 		if err := checkEsptoolArgs(fields, nvsParts(gogoParts)); err != nil {
 			t.Errorf("logged command fails the NVS check: %v\n%s", err, l)
 		}
@@ -569,6 +652,210 @@ func TestSetupRefusesOtherChips(t *testing.T) {
 	}
 	if len(f.writeFlashLines()) != 0 {
 		t.Fatal("flashed a non-S3 chip")
+	}
+	if strings.Contains(f.esptoolLog(), "--chip") {
+		t.Errorf("identify forced the chip type:\n%s", f.esptoolLog())
+	}
+	// esptool's own refusal of a wrong --chip says the same.
+	g := newSetupBench(t, chipESP32, "")
+	t.Setenv("FAKE_ESPTOOL_FORCE_CHIP", "esp32s3")
+	err = g.run("-yes", "-skip-wifi", "-release-url", g.release)
+	if err == nil || !strings.Contains(err.Error(), "is ESP32, not an ESP32-S3") || strings.Contains(err.Error(), "boot button") {
+		t.Fatalf("wrong --chip: err = %v", err)
+	}
+}
+
+func TestSetupUnknownPSRAM(t *testing.T) {
+	f := newSetupBench(t, chipNoFeatures, "")
+	f.writeRelease()
+	if err := f.run("-yes", "-skip-wifi", "-release-url", f.release); err == nil || !strings.Contains(err.Error(), "-board") {
+		t.Fatalf("err = %v", err)
+	}
+	if err := f.run("-yes", "-skip-wifi", "-board", "sticks3", "-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	g := newSetupBench(t, chipNoFeatures, "2\ny\n") // asked which board, no guess offered
+	g.writeRelease()
+	if err := g.run("-skip-wifi", "-release-url", g.release); err != nil {
+		t.Fatalf("%v\n%s", err, g.out)
+	}
+	if strings.Contains(g.out.String(), "looks like") || !strings.Contains(g.out.String(), "to the Cardputer ADV") {
+		t.Errorf("output:\n%s", g.out)
+	}
+}
+
+// replaceAsset rewrites one release file and the sums.
+func (f *setupBench) replaceAsset(name string, b []byte) {
+	if err := os.WriteFile(filepath.Join(f.release, name), b, 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	f.writeSums()
+}
+
+// A release whose own partition table moves NVS cannot make setup write
+// over the NVS the board has (the review's probe, as a test).
+func TestSetupNeverWritesNVSWhateverTheRelease(t *testing.T) {
+	moved := ptBytes([]partition{
+		{"factory", partTypeApp, 0, 0x9000, 0x200000},
+		{"gogo", partTypeData, partSubImage, 0x210000, 0x100000},
+		{"nvs", partTypeData, partSubNVS, 0x310000, 0x6000},
+	})
+	appAt9000 := strings.Replace(flasherArgsJSON, `"0x10000" : "gogo.bin"`, `"0x9000" : "gogo.bin"`, 1)
+	ptAway := strings.NewReplacer(`"0x8000" : "partition_table`, `"0x10000" : "partition_table`,
+		`"offset" : "0x8000"`, `"offset" : "0x10000"`, `"0x10000" : "gogo.bin"`, `"0x20000" : "gogo.bin"`).Replace(flasherArgsJSON)
+	for name, c := range map[string]struct {
+		pt   []byte
+		args string
+		want string
+	}{
+		"app over 0x9000":            {moved, appAt9000, "would overwrite the NVS partition"},
+		"partition table at 0x10000": {moved, ptAway, "partition table at"},
+		"bootloader into NVS":        {nil, strings.Replace(flasherArgsJSON, `"0x10000" : "gogo.bin"`, `"0x5000" : "gogo.bin"`, 1), "NVS"},
+	} {
+		f := newSetupBench(t, chipStickS3, "")
+		f.writeRelease()
+		if c.pt != nil {
+			f.replaceAsset("sticks3-partition-table.bin", c.pt)
+		}
+		f.replaceAsset("sticks3-flasher_args.json", []byte(c.args))
+		err := f.run("-yes", "-skip-wifi", "-new-layout", "-release-url", f.release)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+		if l := f.writeFlashLines(); len(l) != 0 {
+			t.Errorf("%s: flashed %q", name, l)
+		}
+	}
+}
+
+func TestSetupRefusesNewLayout(t *testing.T) {
+	// The board keeps NVS at 0x9000..0xE000 (an Arduino-style table); the
+	// release at 0x9000..0xF000.
+	board := ptBytes([]partition{
+		{"nvs", partTypeData, partSubNVS, 0x9000, 0x5000},
+		{"otadata", partTypeData, 0x00, 0xE000, 0x2000},
+		{"app0", partTypeApp, 0x10, 0x10000, 0x140000},
+	})
+	f := newSetupBench(t, chipStickS3, "")
+	os.WriteFile(os.Getenv("FAKE_ESPTOOL_PT"), board, 0o644)
+	f.writeRelease()
+	err := f.run("-yes", "-skip-wifi", "-release-url", f.release)
+	if err == nil || !strings.Contains(err.Error(), "0x9000..0xe000") || !strings.Contains(err.Error(), "-new-layout") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.writeFlashLines()) != 0 {
+		t.Fatal("flashed over a different layout")
+	}
+	f.out.Reset()
+	if err := f.run("-yes", "-skip-wifi", "-new-layout", "-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if !strings.Contains(f.out.String(), "not written: NVS 0x9000..0xe000, 0x9000..0xf000") {
+		t.Errorf("protected ranges:\n%s", f.out)
+	}
+	checkNoNVSWrite(t, f.writeFlashLines())
+
+	// A board whose layout puts NVS where the new app goes cannot be
+	// flashed by gogo setup at all.
+	g := newSetupBench(t, chipStickS3, "")
+	os.WriteFile(os.Getenv("FAKE_ESPTOOL_PT"), ptBytes([]partition{{"nvs", partTypeData, partSubNVS, 0x20000, 0x6000}}), 0o644)
+	g.writeRelease()
+	if err := g.run("-yes", "-skip-wifi", "-new-layout", "-release-url", g.release); err == nil || !strings.Contains(err.Error(), "would overwrite the NVS partition") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(g.writeFlashLines()) != 0 {
+		t.Fatal("flashed over the board's NVS")
+	}
+}
+
+func TestSetupBlankBoard(t *testing.T) {
+	f := newSetupBench(t, chipStickS3, "")
+	os.WriteFile(os.Getenv("FAKE_ESPTOOL_PT"), bytes.Repeat([]byte{0xFF}, partTableBytes), 0o644)
+	f.writeRelease()
+	if err := f.run("-yes", "-skip-wifi", "-release-url", f.release); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if !strings.Contains(f.out.String(), "no readable partition table") {
+		t.Errorf("output:\n%s", f.out)
+	}
+	checkNoNVSWrite(t, f.writeFlashLines())
+}
+
+func TestSetupHostileFlasherArgs(t *testing.T) {
+	for name, c := range map[string]struct {
+		args string
+		want string // in the error; "" means it must succeed
+	}{
+		"flag in flash_mode":        {strings.Replace(flasherArgsJSON, `"flash_mode": "dio"`, `"flash_mode": "dio --erase-all"`, 1), "bad flash setting"},
+		"path out of the cache":     {strings.Replace(flasherArgsJSON, `"0x10000" : "gogo.bin"`, `"0x10000" : "../../../etc/passwd"`, 1), "no firmware"},
+		"erase in write_flash_args": {strings.Replace(flasherArgsJSON, `"--flash-mode", "dio"`, `"--erase-all", "--flash-mode", "dio"`, 1), ""},
+		"other chip":                {strings.Replace(flasherArgsJSON, `"chip" : "esp32s3"`, `"chip" : "esp32"`, 1), "not esp32s3"},
+	} {
+		f := newSetupBench(t, chipStickS3, "")
+		f.writeRelease()
+		f.replaceAsset("sticks3-flasher_args.json", []byte(c.args))
+		err := f.run("-yes", "-skip-wifi", "-release-url", f.release)
+		if c.want == "" {
+			if err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+			if strings.Contains(f.esptoolLog(), "erase") {
+				t.Errorf("%s: erase reached esptool", name)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+		if len(f.writeFlashLines()) != 0 {
+			t.Errorf("%s: flashed", name)
+		}
+	}
+}
+
+func TestSetupPinsTheLatestRelease(t *testing.T) {
+	// /latest/download redirects to the newest tag, which changes after
+	// the first request: every file must still come from the first one.
+	f := newSetupBench(t, chipStickS3, "")
+	f.writeRelease()
+	old := f.release
+	newer := filepath.Join(f.dir, "newer")
+	os.MkdirAll(newer, 0o755)
+	g := &setupBench{t: t, release: newer}
+	g.writeRelease()
+	g.replaceAsset("sticks3-gogo.bin", []byte("a newer app"))
+	var latest atomic.Value
+	latest.Store("v1.0.0")
+	files := map[string]http.Handler{"v1.0.0": http.FileServer(http.Dir(old)), "v1.1.0": http.FileServer(http.Dir(newer))}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if name, ok := strings.CutPrefix(r.URL.Path, "/releases/latest/download/"); ok {
+			http.Redirect(w, r, "/releases/download/"+latest.Load().(string)+"/"+name, http.StatusFound)
+			latest.Store("v1.1.0") // published meanwhile
+			return
+		}
+		rest, _ := strings.CutPrefix(r.URL.Path, "/releases/download/")
+		tag, name, _ := strings.Cut(rest, "/")
+		r.URL.Path = "/" + name
+		files[tag].ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	if err := f.run("-yes", "-skip-wifi", "-release-url", srv.URL+"/releases/latest/download"); err != nil {
+		t.Fatalf("%v\n%s", err, f.out)
+	}
+	if !strings.Contains(f.out.String(), "that is "+srv.URL+"/releases/download/v1.0.0") {
+		t.Errorf("not pinned:\n%s", f.out)
+	}
+}
+
+func TestSetupNotAChecksumList(t *testing.T) {
+	f := newSetupBench(t, chipStickS3, "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "<html>Sign in to the guest network</html>")
+	}))
+	defer srv.Close()
+	err := f.run("-yes", "-skip-wifi", "-release-url", srv.URL)
+	if err == nil || !strings.Contains(err.Error(), "release is not available") || strings.Contains(err.Error(), "broken") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -722,6 +1009,17 @@ func TestReleaseBase(t *testing.T) {
 	if got := releaseBase("", ""); got != releaseRepo+"/download/v0.3.0" {
 		t.Error(got)
 	}
+	for _, v := range []string{"v0.3.0-4-gabcdef1", "v0.1.0-local", "v0.3.0-dirty"} {
+		version = v
+		if got := releaseBase("", ""); got != releaseRepo+"/latest/download" {
+			t.Errorf("%s: %s", v, got)
+		}
+	}
+	for _, v := range []string{"v1.2.3", "v1.2.3-rc1", "v1.2.3-rc.2", "v1.2.3-beta.1"} {
+		if !isReleaseVersion(v) {
+			t.Errorf("%s not a release version", v)
+		}
+	}
 	t.Setenv("GOGO_RELEASE_URL", "http://127.0.0.1:1/r")
 	if got := releaseBase("", ""); got != "http://127.0.0.1:1/r" {
 		t.Error(got)
@@ -829,6 +1127,20 @@ func checkNoSecret(t *testing.T, f *setupBench) {
 		}
 		return nil
 	})
+}
+
+func TestSetupWifiPasswordRefused(t *testing.T) {
+	f := newSetupBench(t, chipStickS3, "y\ny\ny\n1\n"+testPassword+"\n")
+	f.rejectPassword = true
+	f.writeRelease()
+	err := f.run("-release-url", f.release)
+	if err == nil || !strings.Contains(err.Error(), "cannot write the Wi-Fi password") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), testPassword) {
+		t.Error("password in the error")
+	}
+	checkNoSecret(t, f)
 }
 
 func TestSetupWifiDryRun(t *testing.T) {

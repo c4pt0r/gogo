@@ -369,6 +369,7 @@ func noEcho(stdin io.Reader, errOut io.Writer, key string) func() {
 	}
 	fmt.Fprintf(errOut, "%s: ", key)
 	if stty("-echo") != nil {
+		fmt.Fprint(errOut, "(cannot turn echo off: what you type will show) ")
 		return func() {}
 	}
 	// Ctrl-C (or a kill) at the prompt must not leave the terminal

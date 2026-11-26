@@ -61,7 +61,11 @@ func releaseBase(flagURL, flagVersion string) string {
 	return releaseRepo + "/latest/download"
 }
 
-var releaseVersionRe = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`)
+// releaseVersionRe matches the tags of releases: v1.2.3, v1.2.3-rc1,
+// v1.2.3-beta.2. A `git describe` version such as v1.2.3-4-gabcdef or a
+// local name like v1.2.3-local is not one: such a gogo uses the latest
+// release.
+var releaseVersionRe = regexp.MustCompile(`^v\d+\.\d+\.\d+(-(alpha|beta|rc)\.?\d+)?$`)
 
 func isReleaseVersion(v string) bool { return releaseVersionRe.MatchString(v) }
 
@@ -72,14 +76,41 @@ type releaseSource struct {
 	client *http.Client
 }
 
+// latestSuffix ends the URL of GitHub's latest release, which redirects
+// each asset to /download/<tag>/<asset>.
+const latestSuffix = "/latest/download"
+
 func (r releaseSource) isHTTP() bool {
 	return strings.HasPrefix(r.base, "http://") || strings.HasPrefix(r.base, "https://")
 }
 
-func (r releaseSource) get(name string) ([]byte, error) {
+// get reads one asset. For the latest release, the first request pins the
+// release: r.base becomes the /download/<tag> it redirects to, so every
+// file comes from the same release even if a new one is published
+// meanwhile.
+func (r *releaseSource) get(name string) ([]byte, error) {
 	if r.isHTTP() {
 		u := strings.TrimSuffix(r.base, "/") + "/" + url.PathEscape(name)
-		resp, err := r.client.Get(u)
+		client := *r.client
+		var pinned string
+		if strings.HasSuffix(strings.TrimSuffix(r.base, "/"), latestSuffix) {
+			client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+				if len(via) == 1 && strings.Contains(req.URL.Path, "/download/") && path.Base(req.URL.Path) == name {
+					d := *req.URL
+					d.Path = path.Dir(d.Path)
+					d.RawQuery = ""
+					pinned = d.String()
+				}
+				if r.client.CheckRedirect != nil {
+					return r.client.CheckRedirect(req, via)
+				}
+				if len(via) >= 10 {
+					return errors.New("too many redirects")
+				}
+				return nil
+			}
+		}
+		resp, err := client.Get(u)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", errUnavailable, err)
 		}
@@ -93,6 +124,9 @@ func (r releaseSource) get(name string) ([]byte, error) {
 		}
 		if len(b) > maxAssetBytes {
 			return nil, fmt.Errorf("%s: larger than %d bytes", u, maxAssetBytes)
+		}
+		if pinned != "" {
+			r.base = pinned
 		}
 		return b, nil
 	}
@@ -141,7 +175,7 @@ type firmwareSet struct {
 // fetchAsset returns the cached file for name, downloading and checking
 // it against sums first if it is not cached yet. The cache is keyed by
 // the checksum, so a file in it is never stale.
-func (s *setup) fetchAsset(src releaseSource, sums map[string]string, name string) (string, error) {
+func (s *setup) fetchAsset(src *releaseSource, sums map[string]string, name string) (string, error) {
 	want, ok := sums[name]
 	if !ok {
 		return "", fmt.Errorf("%w: %s is not in %s", errUnavailable, name, releaseSums)
@@ -188,15 +222,19 @@ func sha256hex(b []byte) string {
 
 // releaseFirmware downloads and checks board's firmware from the release.
 func (s *setup) releaseFirmware(board string) (*firmwareSet, error) {
-	src := releaseSource{base: releaseBase(s.o.releaseURL, s.o.version), client: s.env.client}
+	src := &releaseSource{base: releaseBase(s.o.releaseURL, s.o.version), client: s.env.client}
 	fmt.Fprintf(s.env.out, "  release: %s\n", src.base)
 	b, err := src.get(releaseSums)
 	if err != nil {
 		return nil, err
 	}
+	if base := releaseBase(s.o.releaseURL, s.o.version); src.base != base {
+		fmt.Fprintf(s.env.out, "  that is %s\n", src.base)
+	}
 	sums, err := parseSums(b)
 	if err != nil {
-		return nil, err
+		// e.g. a captive portal's page instead of the file
+		return nil, fmt.Errorf("%w: %s/%s is not a checksum list (%v)", errUnavailable, src.base, releaseSums, err)
 	}
 	faFile, err := s.fetchAsset(src, sums, board+"-flasher_args.json")
 	if err != nil {
@@ -219,7 +257,7 @@ func (s *setup) releaseFirmware(board string) (*firmwareSet, error) {
 		files[name] = f
 	}
 	p := func(name string) string { return files[name] }
-	plan, err := planFirmware(fa, p)
+	plan, err := planFirmware(fa, p, s.boardNVS)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +342,7 @@ func (s *setup) localFirmware(board string, lb localBuild) (*firmwareSet, error)
 	if err != nil {
 		return nil, err
 	}
-	if fs.plan, err = planFirmware(fa, p); err != nil {
+	if fs.plan, err = planFirmware(fa, p, s.boardNVS); err != nil {
 		return nil, err
 	}
 	return fs, nil

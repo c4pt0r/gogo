@@ -4,7 +4,7 @@ package main
 //
 //	gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z]
 //	           [-release-url URL|DIR] [-esptool path] [-offline]
-//	           [-skip-wifi] [-yes] [-dry-run]
+//	           [-skip-wifi] [-new-layout] [-yes] [-dry-run]
 //
 // Steps: check esptool and find the board's serial port; identify the
 // board; get its firmware (a GitHub release, checked against its
@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ import (
 	"gogotools/compiler"
 )
 
-const setupUsage = "usage: gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-yes] [-dry-run]"
+const setupUsage = "usage: gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]"
 
 // version is this gogo's release version, set at link time by
 // tools/release.sh (-ldflags "-X main.version=v1.2.3").
@@ -55,6 +56,7 @@ var setupBoardTitles = map[string]string{"sticks3": "M5StickS3", "cardputer": "C
 type setupOpts struct {
 	port, board, version, releaseURL, esptool string
 	offline, skipWifi, yes, dryRun            bool
+	newLayout                                 bool
 }
 
 // setupEnv holds the side effects of gogo setup, replaced in tests.
@@ -136,6 +138,7 @@ func parseSetupArgs(args []string) (setupOpts, error) {
 	fs.BoolVar(&o.skipWifi, "skip-wifi", false, "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "")
+	fs.BoolVar(&o.newLayout, "new-layout", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		return o, errors.New(setupUsage)
 	}
@@ -161,8 +164,11 @@ type setup struct {
 	esptool string
 	port    string
 	board   string
-	nvs     []partition // NVS partitions no write may touch
-	stepN   int
+	nvs     []partition // ranges no write may touch (protectedRanges)
+	// boardNVS is the NVS of the partition table on the board before
+	// flashing; nil if it could not be read.
+	boardNVS []partition
+	stepN    int
 }
 
 // setupFail is an error with the fix to print under it.
@@ -187,8 +193,7 @@ func setupMain(args []string, env *setupEnv) error {
 		return err
 	}
 	s.step("Identifying the board")
-	oldParts, err := s.identify()
-	if err != nil {
+	if err := s.identify(); err != nil {
 		return err
 	}
 	s.step("Getting the firmware")
@@ -197,7 +202,7 @@ func setupMain(args []string, env *setupEnv) error {
 		return err
 	}
 	s.step("Flashing the firmware")
-	if err := s.flashFirmware(fw, oldParts); err != nil {
+	if err := s.flashFirmware(fw); err != nil {
 		return err
 	}
 	s.step("Setting up Wi-Fi")
@@ -372,69 +377,86 @@ func (s *setup) runEsptool(args []string, writes bool) error {
 }
 
 // identify reads the chip banner and the partition table now on the board
-// (one read-only esptool command), and settles the board.
-func (s *setup) identify() ([]partition, error) {
+// (one read-only esptool command, letting esptool detect the chip), and
+// settles the board.
+func (s *setup) identify() error {
 	tmp, err := os.MkdirTemp("", "gogo-setup-")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer os.RemoveAll(tmp)
 	ptFile := filepath.Join(tmp, "partitions.bin")
-	args := append(s.esptoolArgs(), "read-flash", "0x8000", strconv.Itoa(partTableBytes), ptFile)
+	args := []string{"--port", s.port, "--after", "watchdog-reset", "read-flash", fmt.Sprintf("%#x", partTableAt), strconv.Itoa(partTableBytes), ptFile}
 	if err := checkEsptoolArgs(args, s.nvs); err != nil {
-		return nil, err
+		return err
 	}
 	fmt.Fprintf(s.env.out, "  $ %s %s\n", s.esptool, strings.Join(args, " "))
 	out, err := exec.Command(s.esptool, args...).CombinedOutput()
+	notS3 := func(chip string) error {
+		return setupFail("gogo supports the M5StickS3 and the Cardputer ADV (both ESP32-S3); connect one of them",
+			"the chip on %s is %s, not an ESP32-S3", s.port, chip)
+	}
 	if err != nil {
+		if m := wrongChipRe.FindStringSubmatch(string(out)); m != nil {
+			return notS3(m[1])
+		}
 		tail := strings.TrimSpace(string(out))
 		if i := strings.LastIndex(tail, "\n"); i >= 0 && len(tail)-i < 300 {
 			tail = tail[i+1:]
 		}
-		return nil, setupFail("hold the board's boot button (G0) while plugging it in to force download mode, close any serial monitor using the port, and run gogo setup again",
+		return setupFail("hold the board's boot button (G0) while plugging it in to force download mode, close any serial monitor using the port, and run gogo setup again",
 			"esptool cannot talk to the board on %s: %s", s.port, tail)
 	}
 	chip, err := parseChip(string(out))
 	if err != nil {
-		return nil, setupFail("update esptool (`pip install --upgrade esptool`)", "%v", err)
+		return setupFail("update esptool (`pip install --upgrade esptool`)", "%v", err)
 	}
 	if !chip.isS3() {
-		return nil, setupFail("gogo supports the M5StickS3 and the Cardputer ADV (both ESP32-S3); connect one of them",
-			"the chip on %s is %s, not an ESP32-S3", s.port, chip.chip)
+		return notS3(chip.chip)
 	}
-	psram := "no PSRAM"
-	if chip.psram {
+	psram := "PSRAM unknown"
+	switch {
+	case chip.features && chip.psram:
 		psram = "embedded PSRAM"
+	case chip.features:
+		psram = "no PSRAM"
 	}
 	fmt.Fprintf(s.env.out, "  chip: %s, %s\n", chip.chip, psram)
-	if s.o.board != "" {
+	guess := chip.guessBoard()
+	switch {
+	case s.o.board != "":
 		s.board = s.o.board
 		fmt.Fprintf(s.env.out, "  board: %s (-board)\n", setupBoardTitles[s.board])
-		if s.board != chip.guessBoard() {
-			fmt.Fprintf(s.env.out, "  note: a chip with %s looks like the %s\n", psram, setupBoardTitles[chip.guessBoard()])
+		if guess != "" && s.board != guess {
+			fmt.Fprintf(s.env.out, "  note: a chip with %s looks like the %s\n", psram, setupBoardTitles[guess])
 		}
-	} else {
-		guess := chip.guessBoard()
-		ok, err := s.confirm(fmt.Sprintf("  This looks like the %s. Right?", setupBoardTitles[guess]))
-		if err != nil {
-			return nil, err
+	case guess == "" && s.o.yes:
+		return setupFail("pass -board sticks3 or -board cardputer", "esptool did not say whether the chip has PSRAM, so the board is unknown")
+	default:
+		ok := false
+		if guess != "" {
+			if ok, err = s.confirm(fmt.Sprintf("  This looks like the %s. Right?", setupBoardTitles[guess])); err != nil {
+				return err
+			}
 		}
 		if ok {
 			s.board = guess
 		} else {
 			n, err := s.choose("Which board is it?", []string{"M5StickS3", "Cardputer ADV"}, 1)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			s.board = []string{"sticks3", "cardputer"}[n-1]
 		}
 	}
-	b, err := os.ReadFile(ptFile)
-	if err != nil {
-		return nil, nil // nothing read: the board's layout is unknown
+	b, _ := os.ReadFile(ptFile)
+	if parts, err := parsePartitions(b); err == nil {
+		s.boardNVS = nvsParts(parts)
+	} else {
+		fmt.Fprintf(s.env.out, "  the board has no readable partition table (%v); NVS at %#x..%#x stays protected\n", err, defaultNVS[0].offset, defaultNVS[0].end())
 	}
-	parts, _ := parsePartitions(b)
-	return parts, nil
+	s.nvs = protectedRanges(s.boardNVS)
+	return nil
 }
 
 // getFirmware downloads the release firmware for the board, or builds it
@@ -482,22 +504,25 @@ func (s *setup) getFirmware() (*firmwareSet, error) {
 
 // flashFirmware writes the firmware's files at their flasher_args.json
 // offsets (checked by planFirmware), never NVS.
-func (s *setup) flashFirmware(fw *firmwareSet, oldParts []partition) error {
+func (s *setup) flashFirmware(fw *firmwareSet) error {
 	fmt.Fprintf(s.env.out, "  firmware: %s\n", fw.source)
 	if fw.plan == nil { // dry run of a local build: nothing built to flash
 		fmt.Fprintf(s.env.out, "  would flash the files of flasher_args.json after the build, then reset with a watchdog reset\n")
 		return nil
 	}
-	s.nvs = nvsParts(fw.plan.parts)
+	s.nvs = fw.plan.protect
+	newNVS := nvsParts(fw.plan.parts)
+	if len(s.boardNVS) > 0 && !sameRanges(s.boardNVS, newNVS) {
+		if !s.o.newLayout {
+			return setupFail("to flash it anyway (the board's old settings are then not used), run gogo setup again with -new-layout; neither NVS area is written either way",
+				"the board keeps its settings (NVS) at %s, the new firmware at %s", rangeList(s.boardNVS), rangeList(newNVS))
+		}
+		fmt.Fprintf(s.env.out, "  new layout (-new-layout): settings move from %s to %s; the old ones are not used\n", rangeList(s.boardNVS), rangeList(newNVS))
+	}
 	for _, w := range fw.plan.writes {
 		fmt.Fprintf(s.env.out, "  %#08x  %s (%d bytes)\n", w.offset, filepath.Base(w.name), w.size)
 	}
-	for _, p := range s.nvs {
-		fmt.Fprintf(s.env.out, "  not written: NVS %#x..%#x (settings such as Wi-Fi stay)\n", p.offset, p.end())
-	}
-	if len(oldParts) > 0 && !sameNVS(oldParts, fw.plan.parts) {
-		fmt.Fprintf(s.env.out, "  note: the board's current partition table puts NVS elsewhere; settings stored by the old firmware will not carry over\n")
-	}
+	fmt.Fprintf(s.env.out, "  not written: NVS %s (settings such as Wi-Fi stay)\n", rangeList(s.nvs))
 	ok, err := s.confirm(fmt.Sprintf("  Flash this firmware to the %s on %s?", setupBoardTitles[s.board], s.port))
 	if err != nil {
 		return err
@@ -516,18 +541,22 @@ func (s *setup) flashFirmware(fw *firmwareSet, oldParts []partition) error {
 	return nil
 }
 
-// sameNVS reports whether two partition tables place NVS identically.
-func sameNVS(a, b []partition) bool {
-	na, nb := nvsParts(a), nvsParts(b)
-	if len(na) != len(nb) {
-		return false
-	}
-	for i := range na {
-		if na[i].offset != nb[i].offset || na[i].size != nb[i].size {
-			return false
+// sameRanges reports whether two partition lists cover the same ranges.
+func sameRanges(a, b []partition) bool { return rangeList(a) == rangeList(b) }
+
+// rangeList shows the distinct ranges of parts, sorted.
+func rangeList(parts []partition) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range parts {
+		r := fmt.Sprintf("%#x..%#x", p.offset, p.end())
+		if !seen[r] {
+			seen[r] = true
+			out = append(out, r)
 		}
 	}
-	return true
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }
 
 // helloSource is the first program gogo setup runs on the board: a

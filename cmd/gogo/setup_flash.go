@@ -5,14 +5,19 @@ package main
 // every write away from the NVS partition (where the Wi-Fi settings live).
 //
 // The rules, enforced here and nowhere else:
-//   - the chip is never erased as a whole (no erase-flash, erase-region,
-//     --erase-all), and no merged image is ever written (its gap fill
-//     would overwrite NVS);
-//   - every firmware write lies in the bootloader area (below the
-//     partition table), on the partition table sector, or inside an app
-//     partition of the partition table being written;
+//   - esptool only ever runs read-flash, write-flash or version: the chip
+//     is never erased (no erase-flash, erase-region, --erase-all), and no
+//     merged image is ever written (its gap fill would overwrite NVS);
+//   - the partition table is at 0x8000, where the ESP32-S3 bootloader
+//     looks for it;
+//   - every firmware write lies in the bootloader area (below 0x8000), on
+//     the partition table sector, or inside an app partition of the
+//     partition table being written;
 //   - no write, rounded out to whole 4 KB flash sectors (esptool erases
-//     whole sectors before writing), overlaps an NVS partition.
+//     whole sectors before writing), overlaps a protected range: the NVS
+//     partitions of the table being written, of the table now on the board,
+//     and of platform/esp32s3/partitions.csv. The downloaded table alone
+//     is never trusted to say where the settings are.
 
 import (
 	"encoding/binary"
@@ -35,6 +40,8 @@ const (
 	partSubNVS     = 0x02
 	partSubImage   = 0x40 // the `gogo` image partition (partitions.csv)
 	partTableBytes = 0xC00
+	partTableAt    = 0x8000   // CONFIG_PARTITION_TABLE_OFFSET of the gogo firmware
+	maxFlashBytes  = 16 << 20 // the largest ESP32-S3 flash
 )
 
 // partition is one entry of a binary ESP-IDF partition table.
@@ -44,7 +51,7 @@ type partition struct {
 	offset, size uint32
 }
 
-func (p partition) end() uint32 { return p.offset + p.size }
+func (p partition) end() uint64 { return uint64(p.offset) + uint64(p.size) }
 
 // parsePartitions decodes a binary partition table (32-byte entries
 // starting 0xAA 0x50, then an optional MD5 entry starting 0xEB 0xEB, then
@@ -59,13 +66,17 @@ func parsePartitions(b []byte) ([]partition, error) {
 			if j := strings.IndexByte(label, 0); j >= 0 {
 				label = label[:j]
 			}
-			parts = append(parts, partition{
+			p := partition{
 				label:   label,
 				typ:     e[2],
 				subtype: e[3],
 				offset:  binary.LittleEndian.Uint32(e[4:]),
 				size:    binary.LittleEndian.Uint32(e[8:]),
-			})
+			}
+			if p.offset%flashSector != 0 || p.size == 0 || p.end() > maxFlashBytes {
+				return nil, fmt.Errorf("partition %q at %#x size %#x is not a sector-aligned range of the flash", p.label, p.offset, p.size)
+			}
+			parts = append(parts, p)
 		case e[0] == 0xEB && e[1] == 0xEB, e[0] == 0xFF && e[1] == 0xFF:
 			if len(parts) == 0 {
 				return nil, errors.New("empty partition table")
@@ -92,8 +103,8 @@ func nvsParts(parts []partition) []partition {
 	return out
 }
 
-// defaultNVS is the NVS partition of platform/esp32s3/partitions.csv, used
-// when no partition table has been read yet.
+// defaultNVS is the NVS partition of platform/esp32s3/partitions.csv. It
+// is always protected, whatever the partition tables say.
 var defaultNVS = []partition{{label: "nvs", typ: partTypeData, subtype: partSubNVS, offset: 0x9000, size: 0x6000}}
 
 // flasherArgs is the part of ESP-IDF's build/flasher_args.json that gogo
@@ -125,6 +136,9 @@ func parseFlasherArgs(b []byte) (*flasherArgs, error) {
 	if len(fa.FlashFiles) == 0 || fa.PartitionTable.File == "" {
 		return nil, errors.New("flasher_args.json: no flash files or no partition table")
 	}
+	if off, err := parseOffset(fa.PartitionTable.Offset); err != nil || off != partTableAt {
+		return nil, fmt.Errorf("flasher_args.json: partition table at %q, the gogo firmware keeps it at %#x", fa.PartitionTable.Offset, partTableAt)
+	}
 	word := regexp.MustCompile(`^[A-Za-z0-9]+$`)
 	for _, v := range []string{fa.FlashSettings.Mode, fa.FlashSettings.Size, fa.FlashSettings.Freq} {
 		if !word.MatchString(v) {
@@ -152,17 +166,22 @@ type flashWrite struct {
 
 // firmwarePlan is what flashing one firmware writes, checked.
 type firmwarePlan struct {
-	args   *flasherArgs
-	writes []flashWrite // sorted by offset
-	parts  []partition  // the partition table being written
+	args    *flasherArgs
+	writes  []flashWrite // sorted by offset
+	parts   []partition  // the partition table being written
+	protect []partition  // ranges no write may touch
 }
 
 // planFirmware turns flasher_args.json into a checked write list. path
-// maps a file named in flasher_args.json to the file on this computer.
-func planFirmware(fa *flasherArgs, path func(string) string) (*firmwarePlan, error) {
+// maps a file named in flasher_args.json to the file on this computer;
+// boardNVS is the NVS of the table now on the board (nil if unknown).
+func planFirmware(fa *flasherArgs, path func(string) string, boardNVS []partition) (*firmwarePlan, error) {
 	ptOff, err := parseOffset(fa.PartitionTable.Offset)
 	if err != nil {
 		return nil, err
+	}
+	if ptOff != partTableAt {
+		return nil, fmt.Errorf("flasher_args.json: partition table at %#x, the gogo firmware keeps it at %#x", ptOff, partTableAt)
 	}
 	var writes []flashWrite
 	ptListed := false
@@ -175,7 +194,7 @@ func planFirmware(fa *flasherArgs, path func(string) string) (*firmwarePlan, err
 		if err != nil {
 			return nil, err
 		}
-		if fi.Size() == 0 || fi.Size() > 16<<20 {
+		if fi.Size() == 0 || fi.Size() > maxFlashBytes {
 			return nil, fmt.Errorf("%s: unexpected size %d", name, fi.Size())
 		}
 		if o == ptOff && name == fa.PartitionTable.File {
@@ -198,10 +217,20 @@ func planFirmware(fa *flasherArgs, path func(string) string) (*firmwarePlan, err
 	if err := checkPartitions(parts); err != nil {
 		return nil, err
 	}
-	if err := checkWrites(writes, parts, ptOff); err != nil {
+	protect := protectedRanges(nvsParts(parts), boardNVS)
+	if err := checkWrites(writes, parts, ptOff, protect); err != nil {
 		return nil, err
 	}
-	return &firmwarePlan{args: fa, writes: writes, parts: parts}, nil
+	return &firmwarePlan{args: fa, writes: writes, parts: parts, protect: protect}, nil
+}
+
+// protectedRanges is defaultNVS plus the given NVS partitions.
+func protectedRanges(nvs ...[]partition) []partition {
+	out := append([]partition{}, defaultNVS...)
+	for _, n := range nvs {
+		out = append(out, n...)
+	}
+	return out
 }
 
 // checkPartitions checks the table has the NVS and image partitions gogo
@@ -224,32 +253,42 @@ func checkPartitions(parts []partition) error {
 
 // sectorSpan is the range of whole flash sectors that writing size bytes
 // at offset erases.
-func sectorSpan(offset, size uint32) (uint32, uint32) {
-	start := offset &^ (flashSector - 1)
+func sectorSpan(offset, size uint32) (uint64, uint64) {
+	start := uint64(offset) &^ (flashSector - 1)
 	end := (uint64(offset) + uint64(size) + flashSector - 1) &^ (flashSector - 1)
-	if end > 1<<32-1 {
-		end = 1<<32 - flashSector
-	}
-	return start, uint32(end)
+	return start, end
 }
 
-func overlaps(aStart, aEnd, bStart, bEnd uint32) bool { return aStart < bEnd && bStart < aEnd }
+func overlaps(aStart, aEnd, bStart, bEnd uint64) bool { return aStart < bEnd && bStart < aEnd }
+
+// touches returns the protected range the span overlaps, if any.
+func touches(start, end uint64, protect []partition) (partition, bool) {
+	for _, p := range protect {
+		if overlaps(start, end, uint64(p.offset), p.end()) {
+			return p, true
+		}
+	}
+	return partition{}, false
+}
 
 // checkWrites enforces the rules at the top of this file for a firmware
 // write list against the partition table being written (ptOff: its
-// offset).
-func checkWrites(writes []flashWrite, parts []partition, ptOff uint32) error {
-	nvs := nvsParts(parts)
-	if len(nvs) == 0 {
+// offset) and the protected ranges.
+func checkWrites(writes []flashWrite, parts []partition, ptOff uint32, protect []partition) error {
+	if len(nvsParts(parts)) == 0 {
 		return errors.New("no NVS partition in the partition table: refusing to flash")
+	}
+	if ptOff != partTableAt {
+		return fmt.Errorf("refusing to flash: partition table at %#x, not %#x", ptOff, partTableAt)
 	}
 	for i, w := range writes {
 		start, end := sectorSpan(w.offset, w.size)
-		for _, p := range nvs {
-			if overlaps(start, end, p.offset, p.end()) {
-				return fmt.Errorf("refusing to flash: %s at %#x..%#x would overwrite the NVS partition %q (%#x..%#x)",
-					w.name, start, end, p.label, p.offset, p.end())
-			}
+		if end > maxFlashBytes {
+			return fmt.Errorf("refusing to flash: %s at %#x runs past the end of the flash", w.name, w.offset)
+		}
+		if p, ok := touches(start, end, protect); ok {
+			return fmt.Errorf("refusing to flash: %s at %#x..%#x would overwrite the NVS partition %q (%#x..%#x), where the board keeps its settings",
+				w.name, start, end, p.label, p.offset, p.end())
 		}
 		for _, v := range writes[:i] {
 			vs, ve := sectorSpan(v.offset, v.size)
@@ -257,9 +296,9 @@ func checkWrites(writes []flashWrite, parts []partition, ptOff uint32) error {
 				return fmt.Errorf("refusing to flash: %s and %s overlap", v.name, w.name)
 			}
 		}
-		ok := end <= ptOff || (w.offset == ptOff && w.size <= partTableBytes)
+		ok := end <= uint64(ptOff) || (w.offset == ptOff && w.size <= partTableBytes)
 		for _, p := range parts {
-			if p.typ == partTypeApp && start >= p.offset && end <= p.end() {
+			if p.typ == partTypeApp && start >= uint64(p.offset) && end <= p.end() {
 				ok = true
 			}
 		}
@@ -270,35 +309,52 @@ func checkWrites(writes []flashWrite, parts []partition, ptOff uint32) error {
 	return nil
 }
 
-// checkEsptoolArgs is the last check before esptool runs: never an erase
-// or a merged image, and every write-flash file clear of the NVS
-// partitions nvs.
-func checkEsptoolArgs(args []string, nvs []partition) error {
-	if len(nvs) == 0 {
-		return errors.New("refusing to run esptool: NVS partition unknown")
+// checkEsptoolArgs is the last check before esptool runs: only the
+// commands read-flash, write-flash and version, only the options gogo
+// setup itself passes, and every write-flash file clear of the protected
+// ranges.
+func checkEsptoolArgs(args []string, protect []partition) error {
+	if len(protect) == 0 {
+		return errors.New("refusing to run esptool: protected ranges unknown")
 	}
 	cmd := -1
-	for i, a := range args {
-		switch strings.ReplaceAll(a, "_", "-") {
-		case "erase-flash", "erase-region", "--erase-all", "-e", "merge-bin", "write-mem", "write-efuse", "burn-efuse":
-			return fmt.Errorf("refusing to run esptool %s", a)
-		case "write-flash":
-			if cmd < 0 {
-				cmd = i
-			}
+	for i := 0; i < len(args) && cmd < 0; i++ {
+		switch args[i] {
+		case "--chip", "--port", "--after", "--before", "--baud":
+			i++
+		case "read-flash", "write-flash", "version":
+			cmd = i
+		default:
+			return fmt.Errorf("refusing to run esptool: unexpected argument %s", args[i])
 		}
 	}
 	if cmd < 0 {
-		return nil
+		return errors.New("refusing to run esptool: no command")
 	}
 	rest := args[cmd+1:]
+	switch args[cmd] {
+	case "version":
+		if len(rest) != 0 {
+			return errors.New("refusing to run esptool: arguments after version")
+		}
+		return nil
+	case "read-flash":
+		for _, a := range rest {
+			if strings.HasPrefix(a, "-") {
+				return fmt.Errorf("refusing to run esptool: unexpected read-flash option %s", a)
+			}
+		}
+		if len(rest) != 3 {
+			return errors.New("refusing to run esptool: read-flash takes an offset, a size and a file")
+		}
+		return nil
+	}
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
 		if strings.HasPrefix(a, "-") {
 			switch a {
-			case "--flash-mode", "--flash-freq", "--flash-size", "-fm", "-ff", "-fs":
+			case "--flash-mode", "--flash-freq", "--flash-size":
 				i++
-			case "--compress", "-z", "--no-progress":
 			default:
 				return fmt.Errorf("refusing to run esptool: unexpected write-flash option %s", a)
 			}
@@ -311,15 +367,19 @@ func checkEsptoolArgs(args []string, nvs []partition) error {
 		if err != nil {
 			return fmt.Errorf("refusing to run esptool: %v", err)
 		}
-		size := uint32(flashSector)
-		if fi, err := os.Stat(rest[i+1]); err == nil {
-			size = uint32(fi.Size())
+		fi, err := os.Stat(rest[i+1])
+		if err != nil {
+			return fmt.Errorf("refusing to run esptool: %v", err)
 		}
-		start, end := sectorSpan(off, size)
-		for _, p := range nvs {
-			if overlaps(start, end, p.offset, p.end()) {
-				return fmt.Errorf("refusing to run esptool: the write at %#x would overwrite the NVS partition", off)
-			}
+		if fi.Size() > maxFlashBytes {
+			return fmt.Errorf("refusing to run esptool: %s is too big", rest[i+1])
+		}
+		start, end := sectorSpan(off, uint32(fi.Size()))
+		if end > maxFlashBytes {
+			return fmt.Errorf("refusing to run esptool: the write at %#x runs past the end of the flash", off)
+		}
+		if _, ok := touches(start, end, protect); ok {
+			return fmt.Errorf("refusing to run esptool: the write at %#x would overwrite the NVS partition", off)
 		}
 		i++
 	}
@@ -328,8 +388,9 @@ func checkEsptoolArgs(args []string, nvs []partition) error {
 
 // chipInfo is what esptool reports about the chip.
 type chipInfo struct {
-	chip  string // e.g. "ESP32-S3-PICO-1 (LGA56) (revision v0.2)"
-	psram bool
+	chip     string // e.g. "ESP32-S3-PICO-1 (LGA56) (revision v0.2)"
+	psram    bool
+	features bool // esptool listed the chip's features (so psram is known)
 }
 
 var (
@@ -353,6 +414,7 @@ func parseChip(out string) (chipInfo, error) {
 		return c, errors.New("esptool did not report the chip type")
 	}
 	if m := featuresRe.FindStringSubmatch(out); m != nil {
+		c.features = true
 		c.psram = strings.Contains(m[1], "PSRAM")
 	}
 	return c, nil
@@ -362,10 +424,18 @@ func parseChip(out string) (chipInfo, error) {
 func (c chipInfo) isS3() bool { return strings.HasPrefix(strings.ToUpper(c.chip), "ESP32-S3") }
 
 // guessBoard: of the two supported boards, the StickS3 (ESP32-S3-PICO-1-N8R8)
-// has embedded PSRAM and the Cardputer ADV (ESP32-S3FN8) has none.
+// has embedded PSRAM and the Cardputer ADV (ESP32-S3FN8) has none. ""
+// when esptool did not list the features.
 func (c chipInfo) guessBoard() string {
+	if !c.features {
+		return ""
+	}
 	if c.psram {
 		return "sticks3"
 	}
 	return "cardputer"
 }
+
+// wrongChipRe matches esptool's refusal when --chip names another chip
+// ("This chip is ESP32, not ESP32-S3. Wrong --chip argument?").
+var wrongChipRe = regexp.MustCompile(`This chip is (\S+?),? not`)

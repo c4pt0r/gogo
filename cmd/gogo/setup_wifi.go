@@ -7,6 +7,8 @@ package main
 //
 // The Wi-Fi password is only ever sent to the board: it is never printed,
 // logged, cached or put on a command line. The board never sends it back.
+// It is not wiped from this process's memory (Go strings cannot be); the
+// process ends right after setup.
 
 import (
 	"bytes"
@@ -266,7 +268,6 @@ func (s *setup) setupWifi() error {
 	} else if err := rw.config("set", []string{"wifi.password", password}, io.Discard, 5*time.Second); err != nil {
 		return setupFail(later, "cannot write the Wi-Fi password: %v", err)
 	}
-	password = ""
 	if err := rw.config("set", []string{"wifi.ssid", net.ssid}, io.Discard, 5*time.Second); err != nil {
 		return setupFail(later, "cannot write the Wi-Fi network name: %v", err)
 	}
@@ -410,13 +411,13 @@ func (s *setup) nextSteps() {
 	if s.board == "cardputer" {
 		monitor = "gogo monitor -t 10" // no -reset: the Cardputer ADV does not come back from its RTS reset
 	}
-	fmt.Fprintf(s.env.out, `
-Your %s runs gogo. Next:
-  gogo build myapp -o myapp.gogo    compile a program (a directory with package main)
-  gogo flash myapp.gogo             put it on the board (the firmware stays)
-  %-33s watch what it prints
-  gogo config list                  see the board's settings (Wi-Fi and more)
-The gogo book, docs/book in the gogo repository, starts at chapter 2 (Getting Started):
-  https://github.com/c4pt0r/gogo/blob/main/docs/book/02-getting-started.md
-`, setupBoardTitles[s.board], monitor)
+	fmt.Fprintf(s.env.out, "\nYour %s runs gogo. Next:\n", setupBoardTitles[s.board])
+	fmt.Fprintf(s.env.out, "  gogo build myapp -o myapp%s    compile a program (a directory with package main)\n", imageExt)
+	fmt.Fprintf(s.env.out, "  gogo flash myapp%s             put it on the board (the firmware stays)\n", imageExt)
+	if serialSupported(s.env.goos) {
+		fmt.Fprintf(s.env.out, "  %-33s watch what it prints\n", monitor)
+		fmt.Fprintln(s.env.out, "  gogo config list                  see the board's settings (Wi-Fi and more)")
+	}
+	fmt.Fprintln(s.env.out, "The gogo book, docs/book in the gogo repository, starts at chapter 2 (Getting Started):")
+	fmt.Fprintln(s.env.out, "  https://github.com/c4pt0r/gogo/blob/main/docs/book/02-getting-started.md")
 }
