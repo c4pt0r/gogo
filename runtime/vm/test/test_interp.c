@@ -523,6 +523,51 @@ TEST(clear_out_of_range_is_badcode) {
     CHECK(a == NULL);
 }
 
+/* Every operand that names a register (or a register range) is checked
+ * against the frame's register count: one past the end is badcode for
+ * every op that reads or writes it (opcodes.h names the operands). Each
+ * row is an instruction with one operand out of range, the others valid. */
+TEST(register_operands_out_of_range_are_badcode) {
+    static const uint32_t bad[] = {
+        /* a single register past the last (r4 of 4) */
+        OP_MAKE(OP_MOVE, 4, 0, 0), OP_MAKE(OP_MOVE, 0, 4, 0),
+        OP_MAKE(OP_LOADK, 4, 0, 0), OP_MAKE(OP_LOADI32, 4, 0, 0),
+        OP_MAKE(OP_ADD, 4, 0, 0), OP_MAKE(OP_SUB, 0, 4, 0), OP_MAKE(OP_SHL, 0, 0, 4),
+        OP_MAKE(OP_NEG, 4, 0, 0), OP_MAKE(OP_NEG, 0, 4, 0),
+        OP_MAKE(OP_EQ, 4, 0, 0), OP_MAKE(OP_NE, 0, 4, 0), OP_MAKE(OP_LT, 0, 0, 4), OP_MAKE(OP_LE, 0, 4, 0),
+        OP_MAKE(OP_NOT, 4, 0, 0), OP_MAKE(OP_NOT, 0, 4, 0),
+        OP_MAKE(OP_JMPF, 4, 0, 0), OP_MAKE(OP_JMPT, 4, 0, 0),
+        OP_MAKE(OP_CALL, 4, 0, 0), OP_MAKE(OP_RET, 4, 0, 0),
+        OP_MAKE(OP_NEWSTRUCT, 4, 0, 1), OP_MAKE(OP_MKCLOSURE, 4, 0, 0),
+        OP_MAKE(OP_GETFIELD, 4, 0, 0), OP_MAKE(OP_GETFIELD, 0, 4, 0),
+        OP_MAKE(OP_SETFIELD, 4, 0, 0), OP_MAKE(OP_SETFIELD, 0, 4, 0),
+        OP_MAKE(OP_TYPEIS, 4, 0, 0), OP_MAKE(OP_TYPEIS, 0, 4, 0),
+        OP_MAKE(OP_BUILTIN, 4, 0, 0), OP_MAKE(OP_CONV, 4, 0, 1), OP_MAKE(OP_CONV, 0, 4, 1),
+        OP_MAKE(OP_ADD64, 4, 0, 0), OP_MAKE(OP_MUL64, 0, 4, 0), OP_MAKE(OP_SHRU64, 0, 0, 4),
+        OP_MAKE(OP_NEG64, 4, 0, 0), OP_MAKE(OP_NEG64, 0, 4, 0),
+        OP_MAKE(OP_EQ64, 4, 0, 0), OP_MAKE(OP_LEU64, 0, 0, 4),
+        OP_MAKE(OP_BOX64, 4, 0, 0), OP_MAKE(OP_BOX64, 0, 4, 0),
+        OP_MAKE(OP_CALLV, 4, 0, 0), OP_MAKE(OP_CALLV, 0, 4, 0),
+        OP_MAKE(OP_AND, 4, 0, 0), OP_MAKE(OP_ANDNOT64, 0, 0, 4),
+        /* a range that runs one past the end */
+        OP_MAKE(OP_CLEAR, 1, 4, 0), OP_MAKE(OP_RETN, 1, 4, 0),
+        OP_MAKE(OP_CALL, 0, 1, 4), OP_MAKE(OP_NEWSTRUCT, 0, 1, 4), OP_MAKE(OP_MKCLOSURE, 0, 1, 4),
+        OP_MAKE(OP_BUILTIN, 0, 1, 4), OP_MAKE(OP_CALLV, 0, 1, 3),
+    };
+    for (uint32_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        Vm vm; Image img; Actor *a;
+        test_host_arena_forget();   /* one Vm per row, as one per test */
+        /* ext 0 where the op has one: int 0, func 0, type 0, builtin PRINTLN */
+        const uint32_t code[] = { bad[i], 0, OP_MAKE(OP_BUILTIN, 0, 0, 0), B_RECEIVE };
+        const char *err = run_code(code, 4, 4, &vm, &img, &a);
+        if (!strstr(err, "crashed: badcode")) {
+            printf("    instruction %u (op %u): %s\n", i, OP_OP(bad[i]), err);
+            CHECK(0);
+        }
+        if (a) actor_free(&vm, a);
+    }
+}
+
 /* Zero PID and zero Ref: typed, equal to themselves only, harmless as
  * builtin arguments, printed as <pid 0> / <ref 0>. */
 TEST(zero_pid_and_ref) {

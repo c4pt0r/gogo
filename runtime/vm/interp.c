@@ -14,7 +14,8 @@
  * Safety on malformed images: image_load proves the tables and the const
  * area well-formed, and that every const ref inside a const object (and
  * every func/type name) names an object start in the const map. Here
- * register indices are checked against the current function's n_regs, the
+ * register indices are checked against the current function's n_regs (by
+ * the decoder, from the op's row of op_info, before its case runs), the
  * pc against the code area, LOADK operands against the term kinds an image
  * may contain and, for const refs, against the const map (LOADK operands
  * are checked when executed, not at load: a jump may land on an ext word),
@@ -529,6 +530,41 @@ static int timed_wait(Vm *vm, Actor *a, int32_t ms) {
 
 /* ---- interpreter ---- */
 
+/* What the decoder checks for each op before its case runs: whether an
+ * ext word follows (OPF_EXT, as op_has_ext in opcodes.h) and which
+ * operands name registers of the current frame (opcodes.h, the operand
+ * column). The float ops check their own (float_exec); CALLV its
+ * argument range rb+1 .. rb+c. */
+#define OPF_EXT 1u     /* followed by an ext word */
+#define OPF_A   2u     /* ra is a register */
+#define OPF_B   4u     /* rb is a register */
+#define OPF_C   8u     /* rc is a register */
+#define OPF_BC  16u    /* rb .. rb+c-1 are registers */
+#define OPF_AB  32u    /* ra .. ra+b-1 are registers */
+#define OPF_AB_ (OPF_A | OPF_B)
+#define OPF_ABC (OPF_A | OPF_B | OPF_C)
+static const uint8_t op_info[] = {
+    [OP_NOP] = 0, [OP_MOVE] = OPF_AB_, [OP_LOADK] = OPF_EXT | OPF_A, [OP_LOADI32] = OPF_EXT | OPF_A,
+    [OP_ADD] = OPF_ABC, [OP_SUB] = OPF_ABC, [OP_MUL] = OPF_ABC, [OP_DIV] = OPF_ABC, [OP_REM] = OPF_ABC,
+    [OP_NEG] = OPF_AB_, [OP_EQ] = OPF_ABC, [OP_NE] = OPF_ABC, [OP_LT] = OPF_ABC, [OP_LE] = OPF_ABC,
+    [OP_NOT] = OPF_AB_, [OP_JMP] = OPF_EXT, [OP_JMPF] = OPF_EXT | OPF_A, [OP_JMPT] = OPF_EXT | OPF_A,
+    [OP_CALL] = OPF_EXT | OPF_A | OPF_BC, [OP_RET] = OPF_A, [OP_NEWSTRUCT] = OPF_EXT | OPF_A | OPF_BC,
+    [OP_GETFIELD] = OPF_AB_, [OP_MKCLOSURE] = OPF_EXT | OPF_A | OPF_BC, [OP_TYPEIS] = OPF_EXT | OPF_AB_,
+    [OP_BUILTIN] = OPF_EXT | OPF_A | OPF_BC, [OP_CONV] = OPF_AB_,
+    [OP_ADD64] = OPF_ABC, [OP_SUB64] = OPF_ABC, [OP_MUL64] = OPF_ABC, [OP_DIV64] = OPF_ABC, [OP_REM64] = OPF_ABC,
+    [OP_NEG64] = OPF_AB_, [OP_EQ64] = OPF_ABC, [OP_NE64] = OPF_ABC, [OP_LT64] = OPF_ABC, [OP_LE64] = OPF_ABC,
+    [OP_BOX64] = OPF_AB_, [OP_CLEAR] = OPF_AB, [OP_RETN] = OPF_AB, [OP_CALLV] = OPF_AB_,
+    [OP_AND] = OPF_ABC, [OP_OR] = OPF_ABC, [OP_XOR] = OPF_ABC, [OP_ANDNOT] = OPF_ABC,
+    [OP_SHL] = OPF_ABC, [OP_SHR] = OPF_ABC,
+    [OP_AND64] = OPF_ABC, [OP_OR64] = OPF_ABC, [OP_XOR64] = OPF_ABC, [OP_ANDNOT64] = OPF_ABC,
+    [OP_SHL64] = OPF_ABC, [OP_SHR64] = OPF_ABC,
+    [OP_ADDF] = 0, [OP_SUBF] = 0, [OP_MULF] = 0, [OP_DIVF] = 0, [OP_NEGF] = 0,
+    [OP_EQF] = 0, [OP_NEF] = 0, [OP_LTF] = 0, [OP_LEF] = 0, [OP_CONVF] = 0,
+    [OP_DIVU64] = OPF_ABC, [OP_REMU64] = OPF_ABC, [OP_LTU64] = OPF_ABC, [OP_LEU64] = OPF_ABC,
+    [OP_SHRU64] = OPF_ABC, [OP_SETFIELD] = OPF_AB_,
+};
+typedef char op_info_complete[sizeof op_info == OP_SETFIELD + 1u ? 1 : -1];
+
 int interp_run(Vm *vm, Actor *a) {
     /* The actor's module is loaded while it lives (its live count). */
     const ModEntry *me = a->mod < GOGO_MAX_MODULES ? vm->mods[a->mod] : NULL;
@@ -551,7 +587,6 @@ int interp_run(Vm *vm, Actor *a) {
 #define RELOAD() (R = (term *)a->mem + a->fp)
 #define CRASH(r) do { reason = (r); goto crash; } while (0)
 #define CHECK(cond) do { if (!(cond)) CRASH(R_BAD_CODE); } while (0)
-#define REG(r) do { if ((uint32_t)(r) >= nregs) CRASH(R_BAD_CODE); } while (0)
 /* Registers r..r+n-1 all exist (n may be 0). */
 #define REGS(r, n) do { if ((uint32_t)(r) + (uint32_t)(n) > nregs) CRASH(R_BAD_CODE); } while (0)
 
@@ -576,24 +611,31 @@ int interp_run(Vm *vm, Actor *a) {
         CHECK(pc < img->code_words);
         uint32_t w = code[pc];
         uint32_t op = OP_OP(w), ra = OP_A(w), rb = OP_B(w), rc = OP_C(w);
-        uint32_t ext = 0;
-        if (op_has_ext(op)) {
-            CHECK(pc + 1u < img->code_words);
-            ext = code[pc + 1u];
+        uint32_t ext = 0, next = pc + 1u, info;
+        CHECK(op < sizeof op_info);
+        info = op_info[op];
+        if (info & OPF_EXT) {
+            CHECK(next < img->code_words);
+            ext = code[next++];
         }
-        uint32_t next = pc + (op_has_ext(op) ? 2u : 1u);
+        {
+            /* One past the highest register the operands name, from the a
+             * side and the b/c side, against nregs: one compare, few
+             * branches (an unknown op past the table never gets here). */
+            uint32_t hi = info & OPF_A ? ra + 1u : info & OPF_AB ? ra + rb : 0u;
+            uint32_t hb = info & OPF_B ? (info & OPF_C && rc > rb ? rc : rb) + 1u : info & OPF_BC ? rb + rc : 0u;
+            CHECK((hi > hb ? hi : hb) <= nregs);
+        }
 
         switch (op) {
         case OP_NOP:
             break;
 
         case OP_MOVE:
-            REG(ra); REG(rb);
             R[ra] = R[rb];
             break;
 
         case OP_LOADK:
-            REG(ra);
             /* An image may hold small ints, specials and untagged const refs
              * to an object start (image_const_start); never heap refs (they
              * would point into a random heap). A const ref gets the
@@ -606,7 +648,6 @@ int interp_run(Vm *vm, Actor *a) {
             break;
 
         case OP_LOADI32: {
-            REG(ra);
             term t;
             if (!make_int(vm, a, (int32_t)ext, &t)) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
@@ -618,7 +659,6 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_AND: case OP_OR: case OP_XOR: case OP_ANDNOT: case OP_SHL: case OP_SHR: {
             /* ints only (an int64 box is badcode; see the *64 ops), except
              * a shift count, which may be any integer. */
-            REG(ra); REG(rb); REG(rc);
             int32_t x, y, r;
             uint32_t why;
             term t;
@@ -633,7 +673,6 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_NEG: {
-            REG(ra); REG(rb);
             int32_t x;
             term t;
             CHECK(int_val(vm, a, R[rb], &x));
@@ -646,7 +685,6 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_ADD64: case OP_SUB64: case OP_MUL64: case OP_DIV64: case OP_REM64:
         case OP_AND64: case OP_OR64: case OP_XOR64: case OP_ANDNOT64:
         case OP_SHL64: case OP_SHR64: case OP_DIVU64: case OP_REMU64: case OP_SHRU64: {
-            REG(ra); REG(rb); REG(rc);
             int64_t x, y, r;
             int32_t n;
             uint32_t why;
@@ -666,7 +704,6 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_NEG64: {
-            REG(ra); REG(rb);
             int64_t x;
             term t;
             CHECK(int64_val(vm, a, R[rb], &x));
@@ -679,7 +716,6 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_EQ64: case OP_NE64: case OP_LT64: case OP_LE64: case OP_LTU64: case OP_LEU64: {
             /* By value, whatever the representations. Unsigned: the
              * signed compare with both sign bits flipped. */
-            REG(ra); REG(rb); REG(rc);
             int64_t x, y;
             bool r;
             CHECK(int64_val(vm, a, R[rb], &x) && int64_val(vm, a, R[rc], &y));
@@ -709,7 +745,6 @@ int interp_run(Vm *vm, Actor *a) {
 #endif
 
         case OP_BOX64: {
-            REG(ra); REG(rb);
             int64_t x;
             term t;
             CHECK(int64_val(vm, a, R[rb], &x));
@@ -729,7 +764,6 @@ int interp_run(Vm *vm, Actor *a) {
              * of an int or int64 (either representation): the low 8
              * (even c) or 16 bits, zero- (c < 4) or sign-extended: always
              * an immediate. */
-            REG(ra); REG(rb);
             CHECK(rc <= 6u);
             int32_t x;
             int64_t x64;
@@ -758,7 +792,6 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_EQ: case OP_NE: {
-            REG(ra); REG(rb); REG(rc);
             /* ints, bools, PIDs, Refs; an int64 box is badcode (EQ64). */
             int32_t x, y;
             bool eq;
@@ -774,7 +807,6 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_LT: case OP_LE: {
-            REG(ra); REG(rb); REG(rc);
             int32_t x, y;
             CHECK(int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y));
             R[ra] = term_from_bool(op == OP_LT ? x < y : x <= y);
@@ -782,12 +814,10 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_CLEAR:
-            REGS(ra, rb);
             for (uint32_t i = 0; i < rb; i++) R[ra + i] = T_NIL;
             break;
 
         case OP_NOT:
-            REG(ra); REG(rb);
             CHECK(R[rb] == T_TRUE || R[rb] == T_FALSE);
             R[ra] = term_from_bool(R[rb] == T_FALSE);
             break;
@@ -795,7 +825,6 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_JMP: case OP_JMPF: case OP_JMPT: {
             bool take = true;
             if (op != OP_JMP) {
-                REG(ra);
                 CHECK(R[ra] == T_TRUE || R[ra] == T_FALSE);
                 take = (R[ra] == T_TRUE) == (op == OP_JMPT);
             }
@@ -808,7 +837,6 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_CALL: {
-            REG(ra); REGS(rb, rc);
             CHECK(ext < img->n_funcs);
             uint32_t callee_regs = image_func_nregs(img, ext);
             CHECK(image_func_nparams(img, ext) == rc && rc <= callee_regs);
@@ -830,7 +858,7 @@ int interp_run(Vm *vm, Actor *a) {
             /* Closure in rb, args rb+1..rb+c. The callee's parameters are
              * the closure's captures followed by the args. A nil (or any
              * non-closure) value is badcode. */
-            REG(rb); REGS(rb + 1u, rc);
+            REGS(rb + 1u, rc);
             /* Only a closure of this module: another module's code cannot
              * run on this actor's frames (and a gone module's is stale). */
             const uint32_t *obj = obj_of(vm, a, R[rb]);
@@ -841,7 +869,6 @@ int interp_run(Vm *vm, Actor *a) {
             CHECK(f < img->n_funcs);
             uint32_t callee_regs = image_func_nregs(img, f);
             CHECK(image_func_nparams(img, f) == ncaps + rc && ncaps + rc <= callee_regs);
-            REG(ra);
             /* As for CALL; the closure is re-read through its register,
              * a GC root, after the push. */
             uint32_t caller_top = (uint32_t)a->mem_words - a->fp;
@@ -865,7 +892,6 @@ int interp_run(Vm *vm, Actor *a) {
              * they lie below the caller's frame, so the ranges are
              * disjoint. */
             uint32_t n = op == OP_RET ? 1u : rb;
-            REGS(ra, n);
             uint32_t fp = a->fp;
             CHECK(term_is_int(R[nregs]) && term_is_int(R[nregs + 1]));
             int32_t saved = term_to_int(R[nregs]);
@@ -891,12 +917,11 @@ int interp_run(Vm *vm, Actor *a) {
             nregs = caller_regs;
             RELOAD();
             for (uint32_t i = 0; i < n; i++) R[dst + i] = a->mem[fp + ra + i];
-            next = (uint32_t)ret + (op_has_ext(OP_OP(code[ret])) ? 2u : 1u);
+            next = (uint32_t)ret + (OP_OP(code[ret]) == OP_CALL ? 2u : 1u);   /* CALL has an ext word, CALLV none */
             break;
         }
 
         case OP_NEWSTRUCT: case OP_MKCLOSURE: {
-            REG(ra); REGS(rb, rc);
             uint32_t fl = 0;
             if (op == OP_NEWSTRUCT) {
                 /* image_type_row, unrolled: a reserved row, or an own one;
@@ -926,7 +951,6 @@ int interp_run(Vm *vm, Actor *a) {
             /* SETFIELD (15.6) writes in place, only a heap struct of a
              * mutable type: a const one is read-only (flash), an immutable
              * one may be shared. */
-            REG(ra); REG(rb);
             uint32_t *obj = (uint32_t *)obj_of(vm, a, R[rb]);
             bool set = op == OP_SETFIELD;
             /* Past the end only of a reserved struct from an older image:
@@ -940,7 +964,6 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_TYPEIS: {
-            REG(ra); REG(rb);
             term t = R[rb];
             uint32_t ty = UINT32_MAX;
             CHECK(term_live(vm, a, t));
@@ -971,7 +994,6 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_BUILTIN:
-            REG(ra); REGS(rb, rc);
             switch (ext) {
             case B_PRINTLN: case B_PRINTLNU: {
                 /* Anything printed that names a gone module is badcode.
@@ -1363,7 +1385,6 @@ crash:
 #undef RELOAD
 #undef CRASH
 #undef CHECK
-#undef REG
 #undef REGS
 }
 
