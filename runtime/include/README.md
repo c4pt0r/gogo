@@ -22,8 +22,9 @@ The archive holds the VM core (`runtime/vm`), the file system layer
 are not in it: its only drivers are the host ports a program registers,
 and its only mount is `/flash` on a host directory. It has no mutable global state
 (`tools/globals.sh --objects`), so any number of VMs can run in one
-process, on any threads. It needs POSIX threads and clocks for
-`gogo_posix.h`'s functions only.
+process, on any threads. Whichever header a host includes, the library
+needs POSIX threads (`pthread_create`, `pthread_join`, mutexes and condition variables), `getentropy`, `clock_gettime`, the `*at` file calls with `open`, `fdopendir`, `readdir`, `fstatvfs` and `fsync` (for `/flash` on a host directory), and the C library (`malloc`, `snprintf`, string functions). `gogo.h` is free of threads; the library is not yet: a
+build for a system without POSIX is still to come.
 
 ## Symbols
 

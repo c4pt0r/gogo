@@ -539,6 +539,11 @@ rebuilt:
   changes. *Workaround:* a host that runs untrusted programs also limits
   the directory with the host's own means (a disk quota, a size-limited
   file system).
+- **`libgogo.a` needs POSIX.** `gogo.h` is free of threads, but the
+  library is one prelinked object that calls pthreads, `getentropy`,
+  `clock_gettime` and the `*at` file calls whichever header a host
+  includes, so it does not link on an RTOS without POSIX. *Planned:* a
+  library build without the POSIX host and the host-directory `/flash`.
 - **Internal symbols in the debug archive.** `libgogo.a` exports only
   the `gogo_*` functions, but `libgogo-debug.a` (the same objects, not
   prelinked, for debuggers on macOS) exports every internal name

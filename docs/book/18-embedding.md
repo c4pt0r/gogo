@@ -36,8 +36,14 @@ cc -std=c99 -Iruntime/include -o host host.c build/libgogo.a -pthread
 ```
 
 The examples include `gogo_posix.h`, which includes `gogo.h`; a host
-with a table of its own and no POSIX threads (an RTOS, say) needs only
-`gogo.h`. The library exports only the `gogo_*` functions: everything
+with a table of its own needs only `gogo.h`. That split is in the headers
+only: `libgogo.a` is one prelinked object, and it needs
+POSIX threads (`pthread_create`, `pthread_join`, mutexes and condition
+variables), `getentropy`, `clock_gettime`, the `*at` file calls with
+`open`, `fdopendir`, `readdir`, `fstatvfs` and `fsync` (for `/flash` on a
+host directory), and the C library (`malloc`, `snprintf`, string
+functions), whichever header the host includes. A library build for an
+RTOS without POSIX is still to come. The library exports only the `gogo_*` functions: everything
 else in it is local, so your program may use any other names. `make lib` also builds
 `build/libgogo-debug.a`, the same code as separate objects, for debugging
 on a machine other than the one that built it
@@ -444,7 +450,7 @@ port (chapter 7). `examples/embed-c/port.c` defines one called `"echo"`:
  * owner once the open succeeds. */
 static int echo_open(void *ctx, gogo_vm *vm, gogo_port p, int32_t arg, const uint8_t *data, size_t len) {
     (void)ctx;
-    if (arg < 0) return -1;   /* refused: Open's ok is false */
+    if (arg < 0) return GOGO_EINVAL;   /* refused: Open's ok is false */
     gogo_port_emit(vm, p, arg, data, len);
     return 0;
 }

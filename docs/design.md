@@ -1806,7 +1806,9 @@ only through two tables of function pointers that the caller hands it.
   18.12 has the table: host ports, `grant`, `fs_root`, `fs_quota`, the
   code-load flag (the `flags` field itself is stable), stats, image inspection, `gogo_run_thread`);
   `gogo.h` is C99 without threads and `gogo_posix.h` adds the POSIX host
-  and `gogo_run_thread`; `libgogo.a` exports only `GOGO_API` symbols,
+  and `gogo_run_thread` (a split of the headers only: the prelinked
+  `libgogo.a` still needs pthreads, `getentropy`, `clock_gettime` and the
+  `*at` file calls); `libgogo.a` exports only `GOGO_API` symbols,
   the reviewed list in `runtime/include/libgogo.syms`
   (`tools/libsyms.sh`). `gogo_version()` gives the library's version and
   `gogo_image_format()` the image formats it loads; `gogo_image_info_get`

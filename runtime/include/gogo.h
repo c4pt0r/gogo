@@ -102,8 +102,8 @@ typedef struct gogo_host {
     void     (*write)(void *ctx, int stream /*1 out, 2 err*/, const char *s, size_t n);
     /* Raw memory: n bytes (any alignment malloc gives), NULL = refuse (the
      * VM sees out of memory). free gets the same n back. Required. Also
-     * called from gogo_post's thread (the inbox), so they must be
-     * thread-safe when other threads post. */
+     * called from posters' threads (the inbox, and the poster's own
+     * block), so they must be thread-safe when other threads post. */
     void    *(*alloc)(void *ctx, size_t n);
     void     (*free)(void *ctx, void *p, size_t n);
     /* Monotonic milliseconds, any epoch (the VM counts from its start).
@@ -394,8 +394,8 @@ typedef uint32_t gogo_port;
 typedef struct gogo_port_driver {
     uint32_t size;          /* sizeof(gogo_port_driver) as the host was compiled (GOGO_PORT_DRIVER_INIT) */
     uint32_t reserved;      /* 0 */
-    /* port.Open: 0 to accept, a negative GOGO_E* to refuse (Open's ok is
-     * false). NULL accepts every open. Events it emits (gogo_port_emit
+    /* port.Open: 0 to accept, a negative GOGO_E* to refuse (any nonzero
+     * value refuses; Open's ok is false). NULL accepts every open. Events it emits (gogo_port_emit
      * returns 0) are queued on the owner once the open succeeds, then
      * subject to its quota like any event (over it, dropped); if it
      * refuses, they are discarded. */

@@ -45,7 +45,7 @@ static int requires(const void *img, size_t len, const char *want) {
  * owner once the open succeeds. */
 static int echo_open(void *ctx, gogo_vm *vm, gogo_port p, int32_t arg, const uint8_t *data, size_t len) {
     (void)ctx;
-    if (arg < 0) return -1;   /* refused: Open's ok is false */
+    if (arg < 0) return GOGO_EINVAL;   /* refused: Open's ok is false */
     gogo_port_emit(vm, p, arg, data, len);
     return 0;
 }

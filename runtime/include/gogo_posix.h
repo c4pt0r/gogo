@@ -1,9 +1,11 @@
 /* gogo_posix.h: the parts of the embedding API that need POSIX: the
  * default host (malloc, clocks, getentropy, stdout and stderr, a latched
  * condition-variable wait) and a VM run on a thread of its own. Include
- * it instead of, or after, gogo.h; libgogo.a has both. A host on an RTOS
- * or other system without POSIX uses gogo.h alone with a host table of
- * its own. */
+ * it instead of, or after, gogo.h; libgogo.a has both. The split is in
+ * the headers only: a host that includes gogo.h alone still links a
+ * libgogo.a that needs POSIX (pthreads, getentropy, clock_gettime and
+ * the *at file calls), since the library is one prelinked object. A
+ * build of the library for a system without POSIX is still to come. */
 #ifndef GOGO_POSIX_H
 #define GOGO_POSIX_H
 
