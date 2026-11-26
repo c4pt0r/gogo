@@ -22,8 +22,9 @@ func main() {
 	t.N = 2
 	println("n", t.N)
 	addr, _ := sys.Config("test.server")
-	println("connect", node.Connect(addr, "boxer"))
-	echo, ok := node.Whereis("server", "echo", 2000)
+	println("connect", node.Connect(addr, "boxer") == nil)
+	echo, werr := node.Whereis("server", "echo", 2000)
+	ok := werr == nil
 	println("echo", ok)
 	var v any = Dir(3)
 	r, ok := actor.Call(echo, v, 2000)

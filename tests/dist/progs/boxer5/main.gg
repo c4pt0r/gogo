@@ -20,8 +20,9 @@ type F struct {
 func main() {
 
 	addr, _ := sys.Config("test.server")
-	println("connect", node.Connect(addr, "boxer5"))
-	echo, ok := node.Whereis("server", "echo", 2000)
+	println("connect", node.Connect(addr, "boxer5") == nil)
+	echo, werr := node.Whereis("server", "echo", 2000)
+	ok := werr == nil
 	println("echo", ok)
 	var v any = Dir(3)
 	r, ok := actor.Call(echo, v, 2000)

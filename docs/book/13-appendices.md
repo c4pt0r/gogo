@@ -273,14 +273,14 @@ type Up struct{ Node string }       // to Subscribe-rs
 type Down struct{ Node string }
 const DefaultPort = 4370
 
-func node.Listen(port int, name string) bool     // the server node (host VM: GOGO_NET=host)
-func node.ListenOpt(port int, opts Options) bool
-func node.Connect(addr, name string) bool        // "a.b.c.d[:port]"; token: config node.token
-func node.ConnectOpt(addr string, opts Options) bool
+func node.Listen(port int, name string) error    // the server node (host VM: GOGO_NET=host)
+func node.ListenOpt(port int, opts Options) error
+func node.Connect(addr, name string) error       // "a.b.c.d[:port]"; token: config node.token
+func node.ConnectOpt(addr string, opts Options) error
 func node.Disconnect()
-func node.Register(name string, p actor.PID) bool  // reachable from other nodes
+func node.Register(name string, p actor.PID) error // reachable from other nodes; errors.Exists
 func node.Unregister(name string)
-func node.Whereis(node, name string, timeoutMs int) (actor.PID, bool)
+func node.Whereis(node, name string, timeoutMs int) (actor.PID, error) // NotFound, Closed, Timeout
 func node.Nodes() []string
 func node.Self() string
 func node.Subscribe()

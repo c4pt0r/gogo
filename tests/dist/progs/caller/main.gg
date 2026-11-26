@@ -16,8 +16,9 @@ func call(slow actor.PID, i int, done actor.PID) {
 
 func main() {
 	addr, _ := sys.Config("test.server")
-	println("connect", node.Connect(addr, "caller"))
-	slow, ok := node.Whereis("server", "slow", 2000)
+	println("connect", node.Connect(addr, "caller") == nil)
+	slow, werr := node.Whereis("server", "slow", 2000)
+	ok := werr == nil
 	println("slow", ok)
 	self := actor.Self()
 	for i := 0; i < 12; i++ {

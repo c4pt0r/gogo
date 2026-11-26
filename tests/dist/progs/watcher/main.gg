@@ -11,7 +11,7 @@ type callResult struct{ OK, Fast bool }
 
 func main() {
 	addr, _ := sys.Config("test.server")
-	if !node.Connect(addr, "w") {
+	if node.Connect(addr, "w") != nil {
 		println("connect failed")
 		return
 	}
@@ -55,5 +55,5 @@ func main() {
 	t0 := actor.Now()
 	_, ok := actor.Call(echo, "hi", 5000)
 	println("call to lost node", ok, actor.Now()-t0 < 1000)
-	println("connect again", node.Connect(addr, "w"))
+	println("connect again", node.Connect(addr, "w") == nil)
 }

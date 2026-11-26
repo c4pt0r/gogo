@@ -186,14 +186,16 @@ func TestStar(t *testing.T) {
 	b := start(t, "board_b", addr)
 	b.waitLine("b ready")
 	c := start(t, "board_c", addr)
-	c.finish("connect false\nself true\n")
+	c.finish("connect refused true\nwhereis closed true\nself true\n")
 	a := start(t, "board_a", addr)
 	a.waitLine("a waiting")
 	b.kill()
 	a.finish(`connect true a
 nodes 2
 whereis echo true true
-whereis nobody false
+whereis nobody true
+whereis nonode true
+register twice true true
 call true hi
 call slice true
 pong 42 server

@@ -149,8 +149,8 @@ func joiner(game actor.PID, addr, token string) {
 	node.Subscribe()
 	name := boardName()
 	for {
-		if node.ConnectOpt(addr, node.Options{Name: name, Token: token, TimeoutMs: 3000}) {
-			if p, ok := node.Whereis(serverNode, pilotName, 2000); ok {
+		if node.ConnectOpt(addr, node.Options{Name: name, Token: token, TimeoutMs: 3000}) == nil {
+			if p, err := node.Whereis(serverNode, pilotName, 2000); err == nil {
 				println("snake: joined", addr)
 				actor.Send(game, remotePilot{PID: p})
 				waitDown()
@@ -193,8 +193,9 @@ func waitDown() {
 // serve is the server node: it keeps an autopilot registered for the
 // boards, restarting it when it dies.
 func serve(port int, token string) {
-	if !node.ListenOpt(port, node.Options{Name: serverNode, Token: token}) {
-		println("snake: cannot serve on port", port, "(node.token set? GOGO_NET=host?)")
+	if err := node.ListenOpt(port, node.Options{Name: serverNode, Token: token}); err != nil {
+		// BadArg: no node.token; Unsupported: no host network (GOGO_NET=host)
+		println("snake: cannot serve on port", port, "("+err.Error()+")")
 		return
 	}
 	println("snake: autopilot server on port", port)

@@ -11,8 +11,9 @@ import (
 func main() {
 	addr, _ := sys.Config("test.server")
 	node.Subscribe()
-	println("connect", node.Connect(addr, "burst"))
-	slow, ok := node.Whereis("server", "slow", 2000)
+	println("connect", node.Connect(addr, "burst") == nil)
+	slow, werr := node.Whereis("server", "slow", 2000)
+	ok := werr == nil
 	println("slow", ok)
 	b := make([]byte, 3500)
 	for i := range b {
@@ -23,7 +24,8 @@ func main() {
 		actor.Send(slow, big)
 	}
 	actor.Sleep(500)
-	_, ok = node.Whereis("server", "echo", 2000)
+	_, werr = node.Whereis("server", "echo", 2000)
+	ok = werr == nil
 	println("echo after burst", ok)
 	for {
 		m, ok := actor.ReceiveTimeout(1000)

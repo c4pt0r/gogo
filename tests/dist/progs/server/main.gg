@@ -89,7 +89,7 @@ func main() {
 	p, _ := sys.Config("test.port")
 	port, _ := strconv.Atoi(p)
 	node.Subscribe()
-	if !node.Listen(port, "server") {
+	if node.Listen(port, "server") != nil {
 		println("listen failed")
 		return
 	}

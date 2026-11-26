@@ -21,7 +21,7 @@ func becho() {
 
 func main() {
 	addr, _ := sys.Config("test.server")
-	if !node.Connect(addr, "b") {
+	if node.Connect(addr, "b") != nil {
 		println("b connect failed")
 		return
 	}

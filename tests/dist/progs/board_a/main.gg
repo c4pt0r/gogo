@@ -5,6 +5,7 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 	"gogo/node"
 	"gogo/sys"
 )
@@ -43,13 +44,17 @@ func next() any {
 
 func main() {
 	addr, _ := sys.Config("test.server")
-	println("connect", node.Connect(addr, "a"), node.Self())
+	println("connect", node.Connect(addr, "a") == nil, node.Self())
 	nodes := node.Nodes()
 	println("nodes", len(nodes))
-	echo, ok := node.Whereis("server", "echo", 2000)
+	echo, werr := node.Whereis("server", "echo", 2000)
+	ok := werr == nil
 	println("whereis echo", ok, echo != actor.Self())
-	_, ok = node.Whereis("server", "nobody", 2000)
-	println("whereis nobody", ok)
+	_, werr = node.Whereis("server", "nobody", 2000)
+	println("whereis nobody", werr == errors.NotFound)
+	_, werr = node.Whereis("nonode", "echo", 2000)
+	println("whereis nonode", werr == errors.NotFound)
+	println("register twice", node.Register("x", actor.Self()) == nil, node.Register("x", actor.Self()) == errors.Exists)
 	r, ok := actor.Call(echo, "hi", 2000)
 	println("call", ok, r)
 	r, ok = actor.Call(echo, []int{1, 2, 3}, 2000)
@@ -124,8 +129,8 @@ func main() {
 
 	// Board b through the relay, then its loss.
 	node.Subscribe()
-	be, ok := node.Whereis("b", "becho", 2000)
-	println("whereis becho", ok)
+	be, werr := node.Whereis("b", "becho", 2000)
+	println("whereis becho", werr == nil)
 	r, ok = actor.Call(be, "hello", 2000)
 	println("relay call", ok, r)
 	bref := actor.Monitor(be)

@@ -2,12 +2,16 @@
 package main
 
 import (
+	"gogo/errors"
 	"gogo/node"
 	"gogo/sys"
 )
 
 func main() {
 	addr, _ := sys.Config("test.server")
-	println("connect", node.ConnectOpt(addr, node.Options{Name: "c", Token: "not the token", TimeoutMs: 2000}))
+	err := node.ConnectOpt(addr, node.Options{Name: "c", Token: "not the token", TimeoutMs: 2000})
+	println("connect refused", err == errors.Refused)
+	_, err = node.Whereis("server", "echo", 500)
+	println("whereis closed", err == errors.Closed)
 	println("self", node.Self() == "")
 }

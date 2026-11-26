@@ -505,7 +505,10 @@ and every frame then carries a MAC under a session key, so frames cannot
 be changed or injected (they are not encrypted, though: use a trusted
 network). A peer reaches a node's door, which answers lookups of names
 exported with `node.Register`, and the PIDs the node has given out in
-messages; never its agent, or a PID it did not give out. When a node
+messages; never its agent, or a PID it did not give out. `node.Listen`,
+`Connect`, `Register` and `Whereis` return an `error` with the shared
+`gogo/errors` codes (`Refused`, `Timeout`, `NotFound`, ...), as
+`port.Open` does. When a node
 becomes unreachable, monitors get a `DownMsg` and links an exit signal
 with reason `actor.NoConnection`, and Calls to it fail at once. Messages
 may hold the basic values, PIDs, Refs, system structs and your own

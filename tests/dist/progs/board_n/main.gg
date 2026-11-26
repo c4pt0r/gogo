@@ -27,7 +27,7 @@ func main() {
 	next, _ := sys.Config("test.next")
 	c, _ := sys.Config("test.count")
 	count, _ := strconv.Atoi(c)
-	if !node.Connect(addr, name) {
+	if node.Connect(addr, name) != nil {
 		println(name, "connect failed")
 		return
 	}
@@ -39,7 +39,8 @@ func main() {
 		println(name, "sees", len(node.Nodes()), "nodes")
 		return
 	}
-	p, ok := node.Whereis(next, "echo", 3000)
+	p, werr := node.Whereis(next, "echo", 3000)
+	ok := werr == nil
 	if !ok {
 		println(name, "no echo on", next)
 		return

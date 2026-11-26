@@ -4,10 +4,10 @@
 // actor.Send, Call, Reply, Monitor, Link and == work on it as on a local
 // one (docs/design.md §5.13, the book's chapter 20).
 //
-//	node.Listen(4370, "server")          // on the host: gogovm --host-net
-//	node.Connect("192.168.1.10:4370", "cardputer")   // on a board
-//	node.Register("autopilot", actor.Self())         // reachable by name
-//	pid, ok := node.Whereis("server", "autopilot", 2000)
+//	err := node.Listen(4370, "server")           // on the host: gogovm --host-net
+//	err := node.Connect("192.168.1.10:4370", "cardputer")   // on a board
+//	err := node.Register("autopilot", actor.Self())         // reachable by name
+//	pid, err := node.Whereis("server", "autopilot", 2000)
 //
 // Both ends need the same shared token: the config key node.token (or
 // Options.Token). A node without one refuses to listen or connect. The
@@ -32,13 +32,14 @@
 //
 // Drivers: "tcp", "tcp_listen" and "node", opened without requiring them,
 // so a program that only may join a node runs on a firmware without
-// networking (Listen and Connect then return false).
+// networking (Listen and Connect then return errors.Unsupported).
 //
 //gogo:optional tcp tcp_listen node
 package node
 
 import (
 	"gogo/actor"
+	"gogo/errors"
 	"gogo/net"
 	"gogo/port"
 	"gogo/strconv"
@@ -78,9 +79,9 @@ type registerReq struct {
 type unregisterReq struct{ Name string }
 type peerReq struct{ Node, Name string }
 type peerAns struct {
-	Local bool      // PID is the local actor of the name (OK: found)
-	PID   actor.PID // else the node's agent
-	OK    bool
+	Local bool      // PID is the local actor of the name
+	PID   actor.PID // else the node's door
+	Err   errors.Code
 }
 type nodesReq struct{}
 type selfReq struct{}
@@ -108,7 +109,7 @@ type linkUp struct {
 	Agent actor.PID
 	Link  actor.PID
 }
-type linkFail struct{ Why string }
+type linkFail struct{ Err errors.Code }
 type assignReq struct {
 	Name string
 	Link actor.PID
@@ -144,77 +145,88 @@ func call(req any, ms int) (any, bool) {
 }
 
 // Listen makes this VM the server node name, accepting boards on TCP port.
-// The token is the config key node.token. False without a token, if the
-// port cannot be opened, or if this VM is a node already.
-func Listen(port int, name string) bool { return ListenOpt(port, Options{Name: name}) }
+// The token is the config key node.token. The errors (gogo/errors):
+// BadArg without a token or a name, Busy if this VM is a node already,
+// and port.Open's for the listening port (Unsupported without a host
+// network, Busy if the port is taken).
+func Listen(port int, name string) error { return ListenOpt(port, Options{Name: name}) }
 
 // ListenOpt is Listen with Options (TimeoutMs bounds each handshake).
-func ListenOpt(port int, opts Options) bool {
+func ListenOpt(port int, opts Options) error {
 	r, ok := call(listenReq{Port: port, Opts: opts}, 5000)
-	return ok && isTrue(r)
+	return asError(r, ok)
 }
 
 // Connect makes this VM the node name of the server at addr ("a.b.c.d:port";
-// the port defaults to DefaultPort). It returns once the handshake is done:
-// false if the token is missing or refused, the server cannot be reached
-// within the timeout, or this VM is a node already. If the connection is
-// lost later, Down events say so (Subscribe); Connect again to rejoin.
-func Connect(addr, name string) bool { return ConnectOpt(addr, Options{Name: name}) }
+// the port defaults to DefaultPort). It returns once the handshake is done,
+// or the error (gogo/errors): BadArg without a token or a name or for a
+// bad addr, Busy if this VM is a node already, Unsupported without a
+// network, the tcp port's reason if the server cannot be reached
+// (Refused, NoRoute, Timeout, ...), Refused if the server rejects the
+// handshake (another token), Timeout if it does not finish in time. If
+// the connection is lost later, Down events say so (Subscribe); Connect
+// again to rejoin.
+func Connect(addr, name string) error { return ConnectOpt(addr, Options{Name: name}) }
 
 // ConnectOpt is Connect with Options.
-func ConnectOpt(addr string, opts Options) bool {
+func ConnectOpt(addr string, opts Options) error {
 	ip, p, ok := parseAddr(addr)
 	if !ok {
-		return false
+		return errors.BadArg
 	}
 	ms := opts.TimeoutMs
 	if ms <= 0 {
 		ms = 5000
 	}
 	r, ok := call(connectReq{IP: ip, Port: p, Opts: Options{Name: opts.Name, Token: opts.Token, TimeoutMs: ms}}, ms+1000)
-	return ok && isTrue(r)
+	return asError(r, ok)
 }
 
 // Disconnect drops this board's link to the server (a server keeps
 // listening). Its remote monitors and links fire with NoConnection.
 func Disconnect() { call(disconnectReq{}, 2000) }
 
-// Register makes p reachable from other nodes as name (node.Whereis); false
-// if the name is taken. actor.Register names stay local.
-func Register(name string, p actor.PID) bool {
+// Register makes p reachable from other nodes as name (node.Whereis);
+// errors.Exists if the name is taken. actor.Register names stay local.
+func Register(name string, p actor.PID) error {
 	r, ok := call(registerReq{Name: name, PID: p}, 2000)
-	return ok && isTrue(r)
+	return asError(r, ok)
 }
 
 // Unregister removes a name Register made.
 func Unregister(name string) { call(unregisterReq{Name: name}, 2000) }
 
 // Whereis finds the actor registered as name on node (this node's own name
-// included), waiting at most timeoutMs for the answer.
-func Whereis(node, name string, timeoutMs int) (actor.PID, bool) {
+// included), waiting at most timeoutMs for the answer. The errors
+// (gogo/errors): Closed if this VM is not a node, NotFound if the node or
+// the name is not known, Timeout if the answer did not come in time.
+func Whereis(node, name string, timeoutMs int) (actor.PID, error) {
 	var zero actor.PID
 	r, ok := call(peerReq{Node: node, Name: name}, timeoutMs)
 	if !ok {
-		return zero, false
+		return zero, errors.Timeout
 	}
 	switch a := r.(type) {
 	case peerAns:
-		if !a.OK {
-			return zero, false
+		if a.Err != errors.OK {
+			return zero, a.Err
 		}
 		if a.Local {
-			return a.PID, true
+			return a.PID, nil
 		}
 		r2, ok := actor.Call(a.PID, whereisReq{Name: name}, timeoutMs)
 		if !ok {
-			return zero, false
+			return zero, errors.Timeout
 		}
 		switch p := r2.(type) {
 		case actor.PID:
-			return p, p != zero
+			if p == zero {
+				return zero, errors.NotFound
+			}
+			return p, nil
 		}
 	}
-	return zero, false
+	return zero, errors.Timeout
 }
 
 // Nodes lists the nodes this one can reach (itself not included).
@@ -243,13 +255,30 @@ func Self() string {
 // or goes (until it exits).
 func Subscribe() { call(subscribeReq{PID: actor.Self()}, 2000) }
 
-// isTrue reports whether v is the bool true.
-func isTrue(v any) bool {
-	switch b := v.(type) {
-	case bool:
-		return b
+// asError is the agent's answer (an errors.Code) as an error: nil for OK,
+// Timeout if it did not answer.
+func asError(r any, ok bool) error {
+	switch c := r.(type) {
+	case errors.Code:
+		if ok && c == errors.OK {
+			return nil
+		}
+		if ok {
+			return c
+		}
 	}
-	return false
+	return errors.Timeout
+}
+
+// canStart is why Listen or Connect cannot start (errors.OK if it can).
+func canStart(selfID int, waiting bool, o Options) errors.Code {
+	if o.Token == "" || o.Name == "" {
+		return errors.BadArg
+	}
+	if selfID != 0 || waiting {
+		return errors.Busy
+	}
+	return errors.OK
 }
 
 // parseAddr reads "a.b.c.d[:port]".
@@ -364,23 +393,23 @@ func agentRun() {
 			switch r := m.Body.(type) {
 			case listenReq:
 				o := configured(r.Opts)
-				if selfID != 0 || waiting || o.Token == "" || o.Name == "" {
-					actor.Reply(m, false)
+				if c := canStart(selfID, waiting, o); c != errors.OK {
+					actor.Reply(m, c)
 					break
 				}
 				if o.TimeoutMs > 0 {
 					ms = o.TimeoutMs
 				}
-				if !startListener(ends{Agent: self, Door: door}, r.Port, o.Token, o.Name, ms) {
-					actor.Reply(m, false)
+				if c := startListener(ends{Agent: self, Door: door}, r.Port, o.Token, o.Name, ms); c != errors.OK {
+					actor.Reply(m, c)
 					break
 				}
 				name, selfID, server = o.Name, 1, true
-				actor.Reply(m, true)
+				actor.Reply(m, errors.OK)
 			case connectReq:
 				o := configured(r.Opts)
-				if selfID != 0 || waiting || o.Token == "" || o.Name == "" {
-					actor.Reply(m, false)
+				if c := canStart(selfID, waiting, o); c != errors.OK {
+					actor.Reply(m, c)
 					break
 				}
 				name = o.Name
@@ -394,17 +423,17 @@ func agentRun() {
 				}
 				actor.Reply(m, true)
 			case registerReq:
-				ok := true
+				c := errors.OK
 				for _, n := range names {
 					if n == r.Name {
-						ok = false
+						c = errors.Exists
 					}
 				}
-				if ok {
+				if c == errors.OK {
 					names = append(names, r.Name)
 					namePIDs = append(namePIDs, r.PID)
 				}
-				actor.Reply(m, ok)
+				actor.Reply(m, c)
 			case unregisterReq:
 				var n2 []string
 				var p2 []actor.PID
@@ -425,17 +454,19 @@ func agentRun() {
 				}
 				actor.Reply(m, pid)
 			case peerReq:
-				ans := peerAns{}
-				if r.Node == name && name != "" {
+				ans := peerAns{Err: errors.NotFound}
+				if selfID == 0 {
+					ans.Err = errors.Closed // not a node
+				} else if r.Node == name {
 					for i, n := range names {
 						if n == r.Name {
-							ans = peerAns{Local: true, PID: namePIDs[i], OK: true}
+							ans = peerAns{Local: true, PID: namePIDs[i]}
 						}
 					}
 				} else {
 					for _, p := range peers {
 						if p.Name == r.Node {
-							ans = peerAns{PID: p.Agent, OK: true}
+							ans = peerAns{PID: p.Agent}
 						}
 					}
 				}
@@ -499,12 +530,12 @@ func agentRun() {
 			peers = append(peers, peer{Name: m.Name, ID: m.ID, Agent: m.Agent, Link: m.Link, Ref: ref})
 			notify(subs, Up{Node: m.Name})
 			if waiting {
-				actor.Reply(pending, true)
+				actor.Reply(pending, errors.OK)
 				waiting = false
 			}
 		case linkFail:
 			if waiting {
-				actor.Reply(pending, false)
+				actor.Reply(pending, m.Err)
 				waiting = false
 				name = ""
 			}
@@ -584,7 +615,7 @@ func startDial(e ends, ip, p int, token, name string, ms int) {
 	actor.SpawnOpt(func() {
 		conn, err := port.Open("tcp", net.Dial{IP: ip, Port: p, TimeoutMs: ms})
 		if err != nil {
-			actor.Send(e.Agent, linkFail{Why: "dial"})
+			actor.Send(e.Agent, linkFail{Err: codeOf(err)})
 			return
 		}
 		clientLink(e, conn, token, name, ms)
@@ -617,10 +648,10 @@ func forget(ws []actor.PID, rs []actor.Ref, w actor.PID, r actor.Ref) ([]actor.P
 
 // startListener opens the listening port and hands it to a listener
 // actor, which hands every connection to a new server link actor.
-func startListener(e ends, p int, token, name string, ms int) bool {
+func startListener(e ends, p int, token, name string, ms int) errors.Code {
 	lp, err := port.Open("tcp_listen", net.Listen{Port: p})
 	if err != nil {
-		return false
+		return codeOf(err)
 	}
 	l := actor.Spawn(func() {
 		me := actor.Self()
@@ -656,7 +687,7 @@ func startListener(e ends, p int, token, name string, ms int) bool {
 	if !port.Handoff(lp, l) {
 		port.Close(lp)
 		actor.Kill(l, actor.Killed)
-		return false
+		return errors.Busy
 	}
-	return true
+	return errors.OK
 }

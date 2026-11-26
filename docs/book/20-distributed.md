@@ -48,8 +48,8 @@ in a shell profile: every `gogo run` would get real sockets.
 
 ```go
 func main() {
-	if !node.Listen(4370, "server") {
-		println("cannot listen (node.token set? GOGO_NET=host?)")
+	if err := node.Listen(4370, "server"); err != nil {
+		println("cannot listen:", err.Error())
 		return
 	}
 	node.Register("echo", actor.Spawn(echo))
@@ -63,9 +63,13 @@ GOGO_NET=host build/gogo run server/
 ```
 
 `node.Listen(port, name)` starts the node and returns at once; boards may
-join from then on. `node.Register(name, pid)` makes an actor reachable
+join from then on. Its error tells why not, in the codes of `gogo/errors`
+(3.10, appendix C): `errors.BadArg` without a token, `errors.Unsupported`
+without the host network, `errors.Busy` if the port is taken or the VM is
+a node already. `node.Register(name, pid)` makes an actor reachable
 from other nodes under a name. Names registered with `actor.Register` stay
-local: another node can find only what you `node.Register`.
+local: another node can find only what you `node.Register` (which
+returns `errors.Exists` for a name already taken).
 
 ## 20.3 Joining from a board
 
@@ -73,24 +77,39 @@ A board needs an address first (`gogo/dhcp`), then joins:
 
 ```go
 dhcp.Start(dhcp.Config{})
-if !node.Connect("192.168.1.10:4370", "kitchen") {
-	println("no server")
+if err := node.Connect("192.168.1.10:4370", "kitchen"); err != nil {
+	println("no server:", err.Error())
 	return
 }
-echo, ok := node.Whereis("server", "echo", 2000)
+echo, err := node.Whereis("server", "echo", 2000)
+if err != nil {
+	return
+}
 r, ok := actor.Call(echo, "hi", 2000)
 ```
 
 `node.Connect(addr, name)` dials the server (a numeric `a.b.c.d:port`; the
 port defaults to `node.DefaultPort`, 4370), proves the shared token, and
-returns `true` once the board is a node. `node.Whereis(node, name,
-timeoutMs)` asks that node for an exported name; it works for the server,
-for other boards (through the relay), and for the board itself.
+returns `nil` once the board is a node. Otherwise its error says why:
+
+| Error | Why |
+|---|---|
+| `errors.BadArg` | no token or name, or `addr` is not `a.b.c.d[:port]` |
+| `errors.Busy` | this VM is a node already |
+| `errors.Unsupported` | the firmware has no network |
+| `errors.Refused`, `errors.NoRoute`, `errors.Timeout`, ... | the TCP connection failed (the `tcp` port's reason) |
+| `errors.Refused` | the server rejected the handshake (another token) |
+| `errors.Timeout` | the handshake did not finish in time |
+
+`node.Whereis(node, name, timeoutMs)` asks that node for an exported
+name; it works for the server, for other boards (through the relay), and
+for the board itself. It fails with `errors.NotFound` (no such node or
+name), `errors.Closed` (this VM is not a node) or `errors.Timeout`.
 
 Both ends need the same **token**: the config key `node.token` (`gogo
 config set node.token ...`), or `node.Options{Token: ...}` with
 `ConnectOpt` / `ListenOpt`. Without one, `Connect` and `Listen` return
-`false`. `node.name` in the config can give the node's name too.
+`errors.BadArg`. `node.name` in the config can give the node's name too.
 
 `node.Nodes()` lists the nodes this one can reach and `node.Self()` is its
 own name. `node.Disconnect()` drops a board's link.
@@ -154,7 +173,7 @@ to stay joined connects again after a `Down` of the server:
 ```go
 node.Subscribe()
 for {
-	if node.Connect(addr, "kitchen") {
+	if node.Connect(addr, "kitchen") == nil {
 		waitForServerDown()
 	}
 	actor.Sleep(3000)
