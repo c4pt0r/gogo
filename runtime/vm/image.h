@@ -1,59 +1,57 @@
 /* Image loader. The image is used in place and never copied.
  *
- * Versioning rule: any change to opcode numbers or semantics, builtin
- * numbers, reserved types or the term encoding bumps IMAGE_VERSION (here
- * and imageVersion in compiler/image.go); the compiler and the VM move in
- * lockstep and the loader rejects every other version (IMG_ERR_VERSION).
- *   v1  M1/M2.
- *   v2  M3: generic arithmetic is int-only, *64 ops and BOX64, OP_CLEAR,
- *       typed zero PID/Ref (T_ZEROPID, T_ZEROREF), port builtins/types.
- *   v3  M4: OP_RETN (multi-result return), OP_CONV c=2 (byte).
- *   v4  M5: OP_CALLV (calling a func value).
- *   v5  bitwise ops AND..SHR64 (40-51), R_BAD_SHIFT.
- *   v6  storage: B_FS (49), reserved types fs.Info (27), fs.Space (28).
- *   v7  const map after the code: one bit per const word, set where an
- *       object starts; every const ref must name a marked start (const
- *       object fields and func/type names checked at load, LOADK operands
- *       when executed).
- *   v8  input: reserved types kbd.Config (29), kbd.Key (30), power.Config (31),
- *       power.Battery (32), power.Read (33).
- *   v9  hot loading: requires bitmask and exports table after the const map
- *       (every image is a module; main exported as "main"); B_CODE (50)
- *       and the reserved type code.Module (34). Runtime const
- *       refs, closure and struct type words carry a module tag (term.h);
- *       images keep them untagged, so const offsets are 17 bits, function
- *       indexes 21 and type indexes 16.
- *   v10 streams: reserved types port.Chunk (35), port.Out (36), port.Done
- *       (37), imu.Config (38), imu.Gesture (39), ir.Tx (40), ir.Rx (41);
- *       requires bits imu, ir_tx and ir_rx.
- *   v11 audio: reserved types audio.Mic (42), audio.Speaker (43);
- *       requires bits mic and spk.
- *   v12 sys: builtins B_UNIX_TIME (51), B_SET_UNIX_TIME (52), B_RANDOM (53)
- *       (gogo/sys: wall clock and randomness).
- *   v13 https: reserved type net.DialTLS (44); requires bit tls.
- *   v14 embedding: reserved types port.Host (45), port.Post (46).
+ * Versioning (docs/design.md, Image format): header word 1 is
+ * major << 16 | minor. The loader accepts an image of the same major and a
+ * minor up to its own (IMAGE_MINOR); anything else is IMG_ERR_VERSION.
+ *   Minor (additive, old images keep running): a new builtin number,
+ *   opcode, reserved type, or an int field appended to a reserved type
+ *   (0 means its default). The compiler stamps the lowest minor the
+ *   program needs (compiler/image.go), so it runs on every VM that has
+ *   what it uses.
+ *   Major: a change to the term encoding, to opcode or builtin semantics,
+ *   or a reserved field reordered or removed. Bump IMAGE_MAJOR here and
+ *   imageMajor in compiler/image.go together, and reset both minors to 0.
+ * History before v15 (one number, every change a break): v1 M1/M2; v2
+ * int-only arithmetic, *64 ops; v3 RETN; v4 CALLV; v5 bitwise ops; v6
+ * B_FS and the fs types; v7 the const map; v8 kbd and power types; v9
+ * hot loading (requires and exports trailer, B_CODE); v10 streams, imu,
+ * ir; v11 audio; v12 gogo/sys builtins; v13 net.DialTLS; v14 port.Host,
+ * port.Post.
+ *   v15.0 own types from TYPE_OWN_BASE (128) with the reserved count in
+ *       header word 7; major.minor versions.
+ *
+ * Types: an image's type table holds n_reserved reserved rows (header
+ * word 7; at most TYPE_RESERVED_COUNT, else IMG_ERR_VERSION: the image
+ * uses a reserved type this VM does not know), then its own types. Code
+ * names a reserved type by its fixed index (TYPE_* in opcodes.h) and an
+ * own type by TYPE_OWN_BASE + its position after the reserved rows; row
+ * image_type_row(). The compiler emits only the reserved rows up to the
+ * highest one the program uses.
  *
  * Layout (little-endian words): header (8: magic, version, n_funcs,
- * n_types, consts_words, code_words, entry, 0), funcs (3 words each),
- * types (2 each), consts, code, const map (ceil(consts_words / 32) words,
- * bit i of word i / 32 for const word i; used in place, no RAM), requires
- * (1 word: capability bits), n_exports (1 word), then n_exports pairs
- * {name_const_off, func_index}. Each export name is a const string at a
- * marked object start; func_index < n_funcs. Header word 7 is reserved (0). */
+ * n_types, consts_words, code_words, entry, n_reserved), funcs (3 words
+ * each), types (2 each: nfields, name), consts, code, const map
+ * (ceil(consts_words / 32) words, bit i of word i / 32 for const word i;
+ * used in place, no RAM), requires (1 word: capability bits), n_exports
+ * (1 word), then n_exports pairs {name_const_off, func_index}. Each export
+ * name is a const string at a marked object start; func_index < n_funcs. */
 #ifndef GOGO_IMAGE_H
 #define GOGO_IMAGE_H
 
 #include <stdint.h>
 #include <stddef.h>
+#include "opcodes.h"
 
 #define IMAGE_MAGIC   0x4F474F47u
-#define IMAGE_VERSION 14u
+#define IMAGE_MAJOR   15u
+#define IMAGE_MINOR   0u
+#define IMAGE_VERSION (IMAGE_MAJOR << 16 | IMAGE_MINOR)   /* the newest this VM runs */
 #define IMAGE_HEADER_WORDS 8u
 
 typedef struct Image {
     const uint32_t *funcs, *types, *consts, *code, *cmap, *exports;
     uint32_t n_funcs, n_types, consts_words, code_words;
-    uint32_t requires, n_exports;   /* header word 6 (entry) is only validated: boot starts the "main" export */
+    uint32_t n_reserved, n_exports; /* header word 6 (entry) is only validated: boot starts the "main" export */
 } Image;
 
 enum {
@@ -103,6 +101,16 @@ uint16_t image_func_nregs(const Image *img, uint32_t f);
 const char *image_func_name(const Image *img, uint32_t f, uint32_t *len);
 /* Const-area word offset of the function's name (a K_STRING). */
 uint32_t image_func_name_off(const Image *img, uint32_t f);
-uint32_t image_type_nfields(const Image *img, uint32_t t);
+/* Field count of type-table row r (r < n_types). */
+uint32_t image_type_nfields(const Image *img, uint32_t r);
+
+/* The type-table row of type t (a reserved TYPE_* index, or TYPE_OWN_BASE
+ * plus the position of an own type), or img->n_types if the image has no
+ * such row. */
+static inline uint32_t image_type_row(const Image *img, uint32_t t) {
+    if (t < TYPE_OWN_BASE) return t < img->n_reserved ? t : img->n_types;
+    t -= TYPE_OWN_BASE;
+    return t < img->n_types - img->n_reserved ? t + img->n_reserved : img->n_types;
+}
 
 #endif

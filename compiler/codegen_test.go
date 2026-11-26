@@ -560,27 +560,82 @@ func TestCompileReservedTypes(t *testing.T) {
 		"port.Chunk/4", "port.Out/1", "port.Done/1", "imu.Config/3", "imu.Gesture/2", "ir.TX/2", "ir.RX/1",
 		"audio.Mic/3", "audio.Speaker/2", "net.DialTLS/4",
 		"port.Host/2", "port.Post/2"}
-	// Emitted even when the program imports none of gogo/actor, gogo/port, gogo/net and gogo/fs.
+	// A program that names no reserved type carries no reserved row: its
+	// own types are numbered from TypeOwnBase.
 	img := compileImage(t, "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tvar a any = P{1, 2}\n\tswitch a.(type) {\n\tcase P:\n\t\tprintln(1)\n\t}\n}\n")
 	got := imageTypes(t, img)
-	if strings.Join(got, " ") != strings.Join(append(want, "P/2"), " ") {
-		t.Fatalf("types %v, want %v then P/2", got, want)
+	if strings.Join(got, " ") != "P/2" {
+		t.Fatalf("types %v, want P/2", got)
 	}
-	// TYPEIS P names index 47, the first after the reserved ones.
+	if w := words(img); w[7] != 0 {
+		t.Errorf("n_reserved %d, want 0", w[7])
+	}
+	// TYPEIS P names TypeOwnBase, the first own type.
 	code := words(img)
 	found := false
 	for i := 0; i+1 < len(code); i++ {
-		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == TypeReservedCount {
+		if code[i]&0xFF == uint32(OpTypeis) && code[i+1] == TypeOwnBase {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("no TYPEIS with type id 47")
+		t.Errorf("no TYPEIS with type id %d", TypeOwnBase)
 	}
-	// Using the actor types keeps them at their reserved indices.
-	img = compileImage(t, "package main\nimport \"gogo/actor\"\ntype U struct{ A int }\nfunc main() {\n\tu := U{1}\n\tvar o actor.Options\n\tvar r actor.Reason\n\tprintln(u, o, r, actor.Info(actor.Self()).Memory)\n}\n")
-	if got := imageTypes(t, img); strings.Join(got, " ") != strings.Join(append(want, "U/1"), " ") {
-		t.Fatalf("types %v, want %v then U/1", got, want)
+	// Using actor types emits the reserved rows up to the highest used
+	// (Reason, 1), at their fixed indices, before the own types.
+	img = compileImage(t, "package main\nimport \"gogo/actor\"\ntype U struct{ A int }\nfunc main() {\n\tu := U{1}\n\tvar r actor.Reason\n\tprintln(u, r)\n}\n")
+	if got := imageTypes(t, img); strings.Join(got, " ") != "ProcInfo/1 Reason/2 U/1" {
+		t.Fatalf("types %v, want ProcInfo/1 Reason/2 U/1", got)
+	}
+	if w := words(img); w[7] != 2 {
+		t.Errorf("n_reserved %d, want 2", w[7])
+	}
+	// The last reserved type brings every row.
+	img = compileImage(t, "package main\nimport \"gogo/port\"\nfunc main() {\n\tvar p port.Post\n\tprintln(p.Kind)\n}\n")
+	if got := imageTypes(t, img); strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("types %v, want %v", got, want)
+	}
+}
+
+// TestImageMinorStamp: an image is stamped with the highest minor among
+// what it uses (opcodes, builtins, reserved rows), 0 when nothing newer
+// than 15.0 is used.
+func TestImageMinorStamp(t *testing.T) {
+	src := "package main\nimport \"gogo/sys\"\nfunc main() {\n\tprintln(sys.Random())\n}\n"
+	if v := words(compileImage(t, src))[1]; v != 15<<16 {
+		t.Fatalf("version %#x, want 15.0", v)
+	}
+	defer func() { clear(builtinMinor); clear(typeMinor); clear(opMinor) }()
+	builtinMinor[BRandom] = 2
+	if v := words(compileImage(t, src))[1]; v != 15<<16|2 {
+		t.Errorf("version %s, want 15.2 (B_RANDOM)", VersionString(v))
+	}
+	clear(builtinMinor)
+	typeMinor["Reason"] = 1
+	if v := words(compileImage(t, src))[1]; v != 15<<16 {
+		t.Errorf("version %s, want 15.0 (no reserved row)", VersionString(v))
+	}
+	src = "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar o actor.Options\n\tprintln(o.MaxMemory)\n}\n"
+	if v := words(compileImage(t, src))[1]; v != 15<<16|1 {
+		t.Errorf("version %s, want 15.1 (the Reason row comes with Options)", VersionString(v))
+	}
+	clear(typeMinor)
+	opMinor[OpGetfield] = 3
+	if v := words(compileImage(t, src))[1]; v != 15<<16|3 {
+		t.Errorf("version %s, want 15.3 (GETFIELD)", VersionString(v))
+	}
+}
+
+func TestCheckVersion(t *testing.T) {
+	for _, v := range []uint32{15 << 16} {
+		if err := CheckVersion(v); err != nil {
+			t.Errorf("%s: %v", VersionString(v), err)
+		}
+	}
+	for _, v := range []uint32{14, 15, 14 << 16, 15<<16 | 1, 16 << 16} {
+		if err := CheckVersion(v); err == nil {
+			t.Errorf("%s accepted", VersionString(v))
+		}
 	}
 }
 
@@ -1109,7 +1164,7 @@ func Idle() {}
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1 port.GPIO/4 port.Write/1 port.Edge/2"
+	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1"
 	if got := strings.Join(imageTypes(t, img), " "); !strings.HasPrefix(got, want+" ") || !strings.Contains(got, "lib.Spec/1") || !strings.Contains(got, "P/1") {
 		t.Fatalf("types %s, want %s then P/1 and lib.Spec/1", got, want)
 	}
@@ -1240,12 +1295,7 @@ func main() {
 }
 `
 	img := compileImage(t, src)
-	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1 port.GPIO/4 port.Write/1 port.Edge/2" +
-		" net.IfConfig/0 net.SetAddr/4 net.Up/3 net.Down/0 net.Addr/2 net.UDP/1 net.SendTo/2 net.Datagram/2" +
-		" net.Dial/3 net.Listen/1 net.Write/1 net.Shutdown/0 net.Resume/0 net.Connected/0 net.Data/1" +
-		" net.Written/0 net.Closed/1 net.Accepted/1 fs.Info/2 fs.Space/2" +
-		" kbd.Config/2 kbd.Key/4 power.Config/1 power.Battery/4 power.Read/0 code.Module/2" +
-		" port.Chunk/4 port.Out/1 port.Done/1 imu.Config/3 imu.Gesture/2 ir.TX/2 ir.RX/1 audio.Mic/3 audio.Speaker/2 net.DialTLS/4 port.Host/2 port.Post/2"
+	want := "ProcInfo/1 Reason/2 ExitMsg/2 DownMsg/3 Request/3 Options/1 port.GPIO/4 port.Write/1 port.Edge/2"
 	if got := strings.Join(imageTypes(t, img), " "); got != want {
 		t.Fatalf("types %s, want %s", got, want)
 	}
@@ -2012,8 +2062,8 @@ func main() {
 	}
 }
 `)
-	if v := binary.LittleEndian.Uint32(img[4:]); v != 14 {
-		t.Errorf("image version %d, want 14", v)
+	if v := binary.LittleEndian.Uint32(img[4:]); v != 15<<16 {
+		t.Errorf("image version %s, want 15.0", VersionString(v))
 	}
 	seen := map[uint32]bool{}
 	code := words(img)

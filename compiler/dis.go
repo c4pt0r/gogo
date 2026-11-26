@@ -15,9 +15,13 @@ func Disassemble(img []byte) (string, error) {
 	for i := range w {
 		w[i] = binary.LittleEndian.Uint32(img[i*4:])
 	}
-	if w[0] != imageMagic || w[1] != imageVersion {
-		return "", fmt.Errorf("dis: bad magic/version")
+	if w[0] != imageMagic {
+		return "", fmt.Errorf("dis: bad magic")
 	}
+	if err := CheckVersion(w[1]); err != nil {
+		return "", fmt.Errorf("dis: %v", err)
+	}
+	nRes := w[7]
 	nf, nt, nc, ncode := int(w[2]), int(w[3]), int(w[4]), int(w[5])
 	if 8+nf*3+nt*2+nc+ncode > len(w) {
 		return "", fmt.Errorf("dis: truncated image")
@@ -66,8 +70,14 @@ func Disassemble(img []byte) (string, error) {
 		case TyBytes:
 			return "TyBytes"
 		}
-		if int(id) < nt {
-			if s, err := str(types[id*2+1]); err == nil {
+		row := id // a reserved type's row is its index; own types follow them
+		if id >= TypeOwnBase {
+			row = id - TypeOwnBase + nRes
+		} else if id >= nRes {
+			row = uint32(nt)
+		}
+		if int(row) < nt {
+			if s, err := str(types[row*2+1]); err == nil {
 				return s
 			}
 		}

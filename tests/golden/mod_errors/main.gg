@@ -1,4 +1,4 @@
-// Load errors, checked in order: BadImage, Unsupported, NoMemory. Runs
+// Load errors, checked in order: BadImage (BadVersion), Unsupported, NoMemory. Runs
 // with code.mem=2K (one hello module fits, two do not) and no firmware
 // capabilities (vmargs --caps 0); a failed Load never counts anything.
 package main

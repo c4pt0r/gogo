@@ -60,8 +60,8 @@ static void vm_task(void *arg) {
 
     /* Internal RAM left for the arena once the console (font tables) and
      * the Wi-Fi driver are up. */
-    platform_esp_say("gogo %s: image %lu bytes, arena %lu bytes, free RAM %lu (largest %lu)", GOGO_VERSION,
-                     (unsigned long)nwords * 4u, (unsigned long)platform_esp_arena_cap(),
+    platform_esp_say("gogo %s (image format %u.%u): image %lu bytes, arena %lu bytes, free RAM %lu (largest %lu)",
+                     GOGO_VERSION, IMAGE_MAJOR, IMAGE_MINOR, (unsigned long)nwords * 4u, (unsigned long)platform_esp_arena_cap(),
                      (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     /* The unified boot (module.h): the image becomes module 0 (caps check
@@ -69,6 +69,12 @@ static void vm_task(void *arg) {
     int rc = VM_BOOT_NO_MEMORY;
     if (vm_init(&vm, &esp_host, NULL, &esp_board, UINT32_MAX, (uint16_t)GOGO_TABLE_CAP) == 0) {
         rc = vm_boot(&vm, words, nwords);
+    }
+    if (rc == IMG_ERR_VERSION) {
+        platform_esp_say("gogo: unsupported image format %u.%u (this firmware runs %u.0 to %u.%u)",
+                         (unsigned)(words[1] >> 16), (unsigned)(words[1] & 0xFFFFu), IMAGE_MAJOR, IMAGE_MAJOR,
+                         IMAGE_MINOR);
+        platform_esp_idle();
     }
     if (rc < 0) {
         platform_esp_say("gogo: bad image (%s)", image_err_str(rc));

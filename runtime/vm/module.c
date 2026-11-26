@@ -60,7 +60,7 @@ static void drop(Vm *vm, uint32_t s, uint16_t who) {
 
 /* The capability check of every load (boot included). */
 static bool caps_ok(const Vm *vm, const Image *img, uint32_t *missing) {
-    return vm_caps_ok(img->requires, vm->caps, missing) != 0;
+    return vm_caps_ok(img->exports[-2], vm->caps, missing) != 0;   /* the word before n_exports */
 }
 
 int module_install_static(Vm *vm, const Image *img) {
@@ -75,7 +75,7 @@ int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words) {
     uint32_t missing;
     if (!caps_ok(vm, &img, &missing)) {
         char msg[VM_CAPS_MSG_MAX];
-        vm_write_err(vm, msg, vm_caps_explain(msg, img.requires, missing));
+        vm_write_err(vm, msg, vm_caps_explain(msg, img.exports[-2], missing));
         return CODE_UNSUPPORTED;
     }
     return module_install_static(vm, &img);
@@ -140,8 +140,10 @@ int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle) {
     Image img;
     uint32_t missing, s = vm->mod_next, tries = 0;
     int rc = CODE_BAD_IMAGE;
-    if ((len & 3u) || image_load(&img, words, len / 4u) != IMG_OK) goto fail;
-    if (image_words(&img) != len / 4u) goto fail;          /* exactly one image */
+    if (len & 3u) goto fail;
+    int ir = image_load(&img, words, len / 4u);
+    if (ir == IMG_ERR_VERSION) rc = CODE_BAD_VERSION;
+    if (ir != IMG_OK || image_words(&img) != len / 4u) goto fail;   /* exactly one image */
     if (!caps_ok(vm, &img, &missing)) {
         *handle = missing;
         rc = CODE_UNSUPPORTED;

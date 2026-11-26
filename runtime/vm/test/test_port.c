@@ -560,7 +560,7 @@ TEST(port_builtins) {
     memset(&fk, 0, sizeof fk);
     memset(w, 0, sizeof w);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 2;
-    w[4] = 12; w[5] = 23; w[6] = 0; w[7] = 0;
+    w[4] = 12; w[5] = 23; w[6] = 0; w[7] = 2;                 /* both rows reserved: types 0, 1 */
     w[8] = 0; w[9] = 0 | (9u << 16); w[10] = 0;              /* main, 9 regs */
     w[11] = 1; w[12] = 6; w[13] = 1; w[14] = 9;               /* Cfg/1, Cmd/1 */
     w[15] = hdr_make(3, K_STRING); w[16] = 4; memcpy(&w[17], "main", 4);

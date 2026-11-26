@@ -60,6 +60,7 @@ const (
 	NotFound    Err = 4 // no such module (unloaded, or the zero Module) or entry
 	BadArg      Err = 5 // an argument that cannot be passed
 	TooMany     Err = 6 // the module table (8, the main program included) or the holders (4) are full
+	BadVersion  Err = 7 // built for another image format: another major, or a newer minor than this firmware runs
 )
 
 // Capability bits (Missing; CAP_* in runtime/vm/host.h).
@@ -78,7 +79,7 @@ const (
 )
 
 // Load checks b and loads it as a module held by the caller. The checks, in
-// order: BadImage, Unsupported, NoMemory, TooMany. On error the Module is
+// order: BadImage or BadVersion, Unsupported, NoMemory, TooMany. On error the Module is
 // none; after Unsupported, Missing tells what the firmware lacks.
 func Load(b bytes.Bytes) (Module, Err) { panic("gogo only") }
 

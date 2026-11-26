@@ -40,7 +40,7 @@ typedef struct TFunc {
 } TFunc;
 
 #define TYPES (TYPE_RESERVED_COUNT + 1u)   /* the reserved types + one module type */
-#define T_MOD TYPE_RESERVED_COUNT          /* the module's own type */
+#define T_MOD TYPE_OWN_BASE                /* the module's own type (row TYPE_RESERVED_COUNT) */
 #define MAXW 1024u
 
 /* A 4-byte K_STRING (3 words) at c[off]. */
@@ -61,7 +61,7 @@ static uint32_t build(uint32_t *w, const TFunc *f, uint32_t nf, const uint32_t *
     uint32_t ncode = 0;
     for (uint32_t i = 0; i < nf; i++) ncode += f[i].ncode;
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = nf; w[3] = TYPES;
-    w[4] = nc; w[5] = ncode; w[6] = 0; w[7] = 0;
+    w[4] = nc; w[5] = ncode; w[6] = 0; w[7] = TYPE_RESERVED_COUNT;
     uint32_t p = 8, off = 0;
     for (uint32_t i = 0; i < nf; i++) {
         w[p++] = off;
@@ -70,7 +70,7 @@ static uint32_t build(uint32_t *w, const TFunc *f, uint32_t nf, const uint32_t *
         off += f[i].ncode;
     }
     for (uint32_t t = 0; t < TYPES; t++) {
-        w[p++] = t == TYPE_CODE_MODULE ? 2u : (t == TYPE_OPTIONS || t == T_MOD) ? 1u : 0u;
+        w[p++] = t == TYPE_CODE_MODULE ? 2u : (t == TYPE_OPTIONS || t == TYPE_RESERVED_COUNT) ? 1u : 0u;
         w[p++] = 0;
     }
     memcpy(&w[p], c, nc * 4u);
@@ -574,9 +574,10 @@ TEST(offset_limit_checked) {
 }
 
 /* Struct type indexes are bounded too (16 bits: TYPEIS's basic types are
- * 0x10000 up). An image with 0x10001 well-formed types is refused. */
+ * 0x10000 up). Own types are named from TYPE_OWN_BASE, so an image with
+ * one own type more than fits below 0x10000 is refused. */
 TEST(type_limit_checked) {
-    uint32_t nt = TYPE_MAX + 1u, total = 8u + 3u + nt * 2u + 3u + 1u + 1u + 2u;
+    uint32_t nt = TYPE_MAX - TYPE_OWN_BASE + 1u, total = 8u + 3u + nt * 2u + 3u + 1u + 1u + 2u;
     uint32_t *w = calloc(total, 4u);
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = nt;
     w[4] = 3; w[5] = 1; w[6] = 0; w[7] = 0;
@@ -586,8 +587,8 @@ TEST(type_limit_checked) {
     c[3] = OP_MAKE(OP_RET, 0, 0, 0);
     Image img;
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_ERR_BOUNDS);
-    w[3] = TYPE_MAX;                         /* the limit itself loads */
-    c = w + 11 + TYPE_MAX * 2u;
+    w[3] = nt - 1u;                          /* the limit itself loads */
+    c = w + 11 + (nt - 1u) * 2u;
     put_str(c, 0, "main");
     c[3] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
@@ -849,7 +850,8 @@ TEST(bad_image) {
         uint32_t handle = 12345;
         term b = offheap(f, h, w, len);
         size_t va0 = va_used_bytes(&f->vm);
-        CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_BAD_IMAGE);
+        int want = c == 3 ? CODE_BAD_VERSION : CODE_BAD_IMAGE;   /* 15.1: newer than the VM */
+        CHECK_EQ(module_load(&f->vm, h, b, &handle), want);
         CHECK_EQ(va_used_bytes(&f->vm), va0);
         bytes_release(&f->vm, h, b);
         CHECK_EQ(handle, 12345u);
@@ -860,7 +862,7 @@ TEST(bad_image) {
         term sl = bytes_sub(&f->vm, h, r, 1, len * 4u);
         CHECK(sl != T_NIL);
         va0 = va_used_bytes(&f->vm);
-        CHECK_EQ(module_load(&f->vm, h, sl, &handle), CODE_BAD_IMAGE);
+        CHECK_EQ(module_load(&f->vm, h, sl, &handle), want);
         CHECK_EQ(va_used_bytes(&f->vm), va0);                     /* the copy is freed */
         bytes_release(&f->vm, h, r);
         heap_gc(&f->vm, h, 0, NULL, 0);

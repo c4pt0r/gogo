@@ -563,6 +563,29 @@ TEST(embed_lifecycle_errors) {
     tctx_done(&t);
 }
 
+/* The image format: the same major with a minor up to the VM's loads;
+ * an older major or a newer minor is GOGO_EVERSION, naming both formats,
+ * and the VM stays loadable. */
+TEST(embed_image_version) {
+    TCtx t; tctx_init(&t);
+    Img im = image("echo");
+    CHECK_EQ(im.w[1], 15u << 16);                    /* stamped 15.0 */
+    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    im.w[1] = 15u << 16 | 1u;
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EVERSION);
+    CHECK(strstr(t.err, "gogo: unsupported image format 15.1 (this VM runs 15.0 to 15.0)") != NULL);
+    im.w[1] = 14u;
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EVERSION);
+    CHECK(strstr(t.err, "image format 0.14 ") != NULL);
+    im.w[1] = 15u << 16;
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    gogo_free(vm);
+    free(im.w);
+    tctx_done(&t);
+}
+
 TEST(embed_no_main) {
     TCtx t; tctx_init(&t);
     /* codeload's image with its only export renamed: no "main". */

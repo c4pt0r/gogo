@@ -39,7 +39,8 @@ enum {
     CODE_NO_MEMORY = 3,
     CODE_NOT_FOUND = 4,     /* no such module (stale handle) or entry */
     CODE_BAD_ARG = 5,
-    CODE_TOO_MANY = 6       /* the module table is full */
+    CODE_TOO_MANY = 6,      /* the module table is full */
+    CODE_BAD_VERSION = 7    /* an image format this VM does not run (image_load's IMG_ERR_VERSION) */
 };
 
 #define MOD_HOLDERS 4u
@@ -126,7 +127,8 @@ void module_config(Vm *vm);
 /* code.Load: loads the image in Bytes `bytes` (as caller sees it: off-heap,
  * heap or const) into a free slot and makes caller a holder. Checks, in
  * order: the bytes are exactly one valid image (image_load, and no
- * trailing words) -> CODE_BAD_IMAGE; its requires word against
+ * trailing words) -> CODE_BAD_IMAGE, or CODE_BAD_VERSION for an image of
+ * another major or a newer minor (IMG_ERR_VERSION); its requires word against
  * vm->caps -> CODE_UNSUPPORTED, with *handle = the missing CAP_* bits;
  * the code memory limit (Vm.mod_cap, counting the image's bytes) ->
  * CODE_NO_MEMORY; a free slot -> CODE_TOO_MANY. Unaligned bytes are

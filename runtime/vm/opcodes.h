@@ -226,11 +226,16 @@ enum Builtin {
 /* Then (v14) the embedding types (lib/port/port.gg). */
 #define TYPE_HOST          45   /* Arg int, Data bytes.Bytes: cfg of a host-defined port */
 #define TYPE_POST          46   /* Kind int, Data bytes.Bytes: a host post, host-port command or event */
-/* How many reserved types there are (0 .. TYPE_RESERVED_COUNT - 1): they are
- * global across modules; every index from here up is a module's own type
- * and carries its module tag in a struct's type word (term.h). The one
- * constant to bump with a new reserved type (compiler: len(reservedTypes)). */
+/* How many reserved types this VM knows (0 .. TYPE_RESERVED_COUNT - 1):
+ * they are global across modules. The one constant to bump with a new
+ * reserved type (compiler: len(reservedTypes)); a new one is an image
+ * format minor (image.h). */
 #define TYPE_RESERVED_COUNT 47u
+/* The first own type: an image names its own struct types from here up
+ * (image.h), whatever reserved types it or the VM knows, and a struct of
+ * an own type carries its module tag in its type word (term.h). Fixed
+ * forever: reserved types stay below it. */
+#define TYPE_OWN_BASE 128u
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

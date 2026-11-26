@@ -142,6 +142,36 @@ gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg) {
     return g;
 }
 
+static char *put_u(char *p, uint32_t v) {
+    char d[10];
+    int n = 0;
+    do d[n++] = (char)('0' + v % 10u); while ((v /= 10u) != 0);
+    while (n) *p++ = d[--n];
+    return p;
+}
+
+static char *put_s(char *p, const char *s) {
+    while (*s) *p++ = *s++;
+    return p;
+}
+
+/* "gogo: unsupported image format M.m (this VM runs 15.0 to 15.x)\n" for
+ * an image with version word ver; returns its length (buf: 80 bytes). */
+static size_t version_msg(char *buf, uint32_t ver) {
+    char *p = put_s(buf, "gogo: unsupported image format ");
+    p = put_u(p, ver >> 16);
+    *p++ = '.';
+    p = put_u(p, ver & 0xFFFFu);
+    p = put_s(p, " (this VM runs ");
+    p = put_u(p, IMAGE_MAJOR);
+    p = put_s(p, ".0 to ");
+    p = put_u(p, IMAGE_MAJOR);
+    *p++ = '.';
+    p = put_u(p, IMAGE_MINOR);
+    p = put_s(p, ")\n");
+    return (size_t)(p - buf);
+}
+
 int gogo_load(gogo_vm *g, const void *image, size_t len, int flags) {
     if (!g || !image) return GOGO_EINVAL;
     if (g->stepping) return GOGO_EBUSY;
@@ -162,7 +192,11 @@ int gogo_load(gogo_vm *g, const void *image, size_t len, int flags) {
         if (!g->cfg.allow_code_load) g->vm.mod_cap = 0;   /* every code.Load is NoMemory */
         return GOGO_OK;
     }
-    if (rc < 0) {
+    if (rc == IMG_ERR_VERSION) {
+        char msg[80];
+        size_t n = version_msg(msg, ((const uint32_t *)words)[1]);
+        g->uh->write(g->uctx, 2, msg, n);
+    } else if (rc < 0) {
         static const char pre[] = "gogo: bad image: ";
         const char *why = image_err_str(rc);
         g->uh->write(g->uctx, 2, pre, sizeof pre - 1u);
@@ -176,7 +210,7 @@ int gogo_load(gogo_vm *g, const void *image, size_t len, int flags) {
     /* Start over with a clean Vm (vm_boot gave its table back). */
     blk_free_all(g, &g->blocks, g->uh->free);
     if (vm_setup(g) != 0) g->vm.table = NULL;
-    return rc < 0 ? GOGO_EIMAGE : rc == VM_BOOT_REFUSED ? GOGO_ECAPS : GOGO_ENOMEM;
+    return rc == IMG_ERR_VERSION ? GOGO_EVERSION : rc < 0 ? GOGO_EIMAGE : rc == VM_BOOT_REFUSED ? GOGO_ECAPS : GOGO_ENOMEM;
 }
 
 int gogo_start(gogo_vm *g) {

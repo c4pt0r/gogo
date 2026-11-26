@@ -59,7 +59,7 @@ static const uint32_t *xm_const(Xm *x, term t) {
  * copies its terms need. */
 static void xm_obj(Xm *x, const uint32_t *o) {
     uint32_t k = hdr_kind(o[0]), first, end;
-    if ((k == K_CLOSURE || (k == K_STRUCT && o[1] >= TYPE_RESERVED_COUNT)) &&
+    if ((k == K_CLOSURE || (k == K_STRUCT && o[1] >= TYPE_OWN_BASE)) &&
         (o[1] & MOD_TAG_MASK) != x->tag)
         xm_fail(x, module_of_tag(x->vm, o[1]) ? R_BAD_MSG : R_BAD_CODE);
     heap_obj_terms(o, &first, &end);

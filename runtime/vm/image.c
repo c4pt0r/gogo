@@ -73,7 +73,8 @@ static int consts_ok(const Image *img) {
 int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     if (n_words < IMAGE_HEADER_WORDS) return IMG_ERR_TRUNCATED;
     if (w[0] != IMAGE_MAGIC) return IMG_ERR_MAGIC;
-    if (w[1] != IMAGE_VERSION) return IMG_ERR_VERSION;
+    /* Same major, minor up to ours: one compare (a lower major wraps). */
+    if (w[1] - (IMAGE_MAJOR << 16) > IMAGE_MINOR || w[7] > TYPE_RESERVED_COUNT) return IMG_ERR_VERSION;
 
     uint64_t total = (uint64_t)IMAGE_HEADER_WORDS + (uint64_t)w[2] * 3u +
                      (uint64_t)w[3] * 2u + (uint64_t)w[4] + (uint64_t)w[5] +
@@ -82,7 +83,8 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     uint32_t n_exp = w[total + 1u];
     if (total + 2u + (uint64_t)n_exp * 2u > n_words) return IMG_ERR_TRUNCATED;
     /* The index ranges a module tag leaves (term.h). */
-    if (w[2] > FUNC_MAX || w[3] > TYPE_MAX || w[4] > CONST_MAX_WORDS) return IMG_ERR_BOUNDS;
+    if (w[2] > FUNC_MAX || w[3] < w[7] || w[3] - w[7] > TYPE_MAX - TYPE_OWN_BASE || w[4] > CONST_MAX_WORDS)
+        return IMG_ERR_BOUNDS;
 
     img->n_funcs = w[2];
     img->n_types = w[3];
@@ -93,7 +95,7 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     img->consts = img->types + (size_t)img->n_types * 2u;
     img->code = img->consts + img->consts_words;
     img->cmap = img->code + img->code_words;
-    img->requires = w[total];
+    img->n_reserved = w[7];
     img->n_exports = n_exp;
     img->exports = w + total + 2u;
 
@@ -141,4 +143,4 @@ const char *image_func_name(const Image *img, uint32_t f, uint32_t *len) {
 
 uint32_t image_func_name_off(const Image *img, uint32_t f) { return img->funcs[f * 3u + 2u]; }
 
-uint32_t image_type_nfields(const Image *img, uint32_t t) { return img->types[t * 2u]; }
+uint32_t image_type_nfields(const Image *img, uint32_t r) { return img->types[r * 2u]; }

@@ -168,7 +168,7 @@ func TestFirmwareBadInput(t *testing.T) {
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, junk); !strings.Contains(err.Error(), "not a gogo image") {
 		t.Fatal(err)
 	}
-	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, v8); !strings.Contains(err.Error(), "version 8") {
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, v8); !strings.Contains(err.Error(), "image format 15.8") {
 		t.Fatal(err)
 	}
 }

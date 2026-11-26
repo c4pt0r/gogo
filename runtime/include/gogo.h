@@ -172,7 +172,8 @@ enum {
     GOGO_EFULL = -9,      /* the inbox holds GOGO_POST_MAX posts */
     GOGO_E2BIG = -10,     /* a post's name or data is too long */
     GOGO_ECLOSED = -11,   /* the VM is being freed, or was freed; a host port is closed */
-    GOGO_EEXIST = -12     /* gogo_register_port: the name is taken */
+    GOGO_EEXIST = -12,    /* gogo_register_port: the name is taken */
+    GOGO_EVERSION = -13   /* the image's format is another major, or a newer minor than this VM runs */
 };
 #define GOGO_NEVER (-1)
 
@@ -197,8 +198,8 @@ enum {
 GOGO_API gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg);
 
 /* Loads the image (len bytes, little-endian words) as the VM's program.
- * Once, before gogo_start. GOGO_EIMAGE, GOGO_ECAPS (the reason is on
- * stream 2), GOGO_ENOMEM, GOGO_EINVAL (borrowed and unaligned),
+ * Once, before gogo_start. GOGO_EIMAGE, GOGO_EVERSION (both formats are
+ * named on stream 2), GOGO_ECAPS (the reason is on stream 2), GOGO_ENOMEM, GOGO_EINVAL (borrowed and unaligned),
  * GOGO_ESTATE (already loaded). After a failure the VM may load again. */
 GOGO_API int gogo_load(gogo_vm *vm, const void *image, size_t len, int flags);
 

@@ -237,12 +237,14 @@ func TestTermsMatchC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := regexp.MustCompile(`#define\s+IMAGE_VERSION\s+(\d+)u`).FindStringSubmatch(string(src))
-	if m == nil || m[1] != strconv.Itoa(imageVersion) {
-		t.Errorf("IMAGE_VERSION in runtime/vm/image.h %v, Go imageVersion %d", m, imageVersion)
+	for name, v := range map[string]int{"IMAGE_MAJOR": imageMajor, "IMAGE_MINOR": imageMinor} {
+		m := regexp.MustCompile(`#define\s+` + name + `\s+(\d+)u`).FindStringSubmatch(string(src))
+		if m == nil || m[1] != strconv.Itoa(v) {
+			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
+		}
 	}
-	if imageVersion != 14 {
-		t.Errorf("imageVersion %d, want 14", imageVersion)
+	if imageMajor != 15 || imageMinor != 0 {
+		t.Errorf("image format %d.%d, want 15.0", imageMajor, imageMinor)
 	}
 }
 
@@ -340,7 +342,7 @@ func TestImageLayout(t *testing.T) {
 	}
 	w := words(raw)
 	// "main": 2 hdr words + 1 payload = 3; "P": 3.
-	want := []uint32{0x4F474F47, imageVersion, 1, 1, 6, 1, 0, 0}
+	want := []uint32{0x4F474F47, 15 << 16, 1, 1, 6, 1, 0, 0}
 	for i, v := range want {
 		if w[i] != v {
 			t.Fatalf("header word %d = %#x, want %#x", i, w[i], v)
@@ -638,6 +640,7 @@ func TestCodeMatchC(t *testing.T) {
 	}
 	stub := map[string]string{"OK": "CODE_OK", "BadImage": "CODE_BAD_IMAGE", "Unsupported": "CODE_UNSUPPORTED",
 		"NoMemory": "CODE_NO_MEMORY", "NotFound": "CODE_NOT_FOUND", "BadArg": "CODE_BAD_ARG", "TooMany": "CODE_TOO_MANY",
+		"BadVersion": "CODE_BAD_VERSION",
 		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapIMU": "CAP_IMU", "CapIRTX": "CAP_IR_TX", "CapIRRX": "CAP_IR_RX", "CapMic": "CAP_MIC", "CapSpk": "CAP_SPK", "CapTLS": "CAP_TLS", "CapAnyPort": "CAP_ANYPORT"}
 	for name, cname := range stub {
 		k, ok := pkg.Scope().Lookup(name).(*types.Const)
@@ -661,8 +664,8 @@ func TestCodeMatchC(t *testing.T) {
 			nErr++
 		}
 	}
-	if nErr != 7 {
-		t.Errorf("%d CODE_ errors in module.h, the stub has 7", nErr)
+	if nErr != 8 {
+		t.Errorf("%d CODE_ errors in module.h, the stub has 8", nErr)
 	}
 	ops := map[string]int32{"CODE_OP_LOAD": CodeLoad, "CODE_OP_SPAWN": CodeSpawn, "CODE_OP_SPAWN_LINK": CodeSpawnLink,
 		"CODE_OP_SPAWN_OPT": CodeSpawnOpt, "CODE_OP_HOLD": CodeHold, "CODE_OP_RELEASE": CodeRelease,

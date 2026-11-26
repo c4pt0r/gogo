@@ -15,7 +15,7 @@
  *   const ref        gen:8 | slot:3 | offset:17 | 1010
  *   K_CLOSURE word 1 gen:8 | slot:3 | func index:21
  *   K_STRUCT word 1  gen:8 | slot:3 | 0:5 | type index:16 for a module's own
- *                    types (index >= TYPE_RESERVED_COUNT); a reserved type
+ *                    types (index >= TYPE_OWN_BASE); a reserved type
  *                    (system packages, opcodes.h) is its bare index: global,
  *                    the same in every module
  * Images hold untagged refs (tag 0: offset < CONST_MAX_WORDS, as before);

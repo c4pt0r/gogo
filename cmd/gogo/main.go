@@ -226,7 +226,7 @@ func run(args []string) error {
 		if len(args) != 1 {
 			return errors.New(usage)
 		}
-		fmt.Printf("gogo %s (image version %d)\n", version, compiler.ImageVersion)
+		fmt.Printf("gogo %s (image format %d.%d)\n", version, compiler.ImageMajor, compiler.ImageMinor)
 		return nil
 	}
 	return errors.New(usage)

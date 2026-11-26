@@ -64,37 +64,61 @@ TEST(image_bad_magic) {
 
 TEST(image_bad_version) {
     uint32_t w[IMG_WORDS]; Image img;
-    CHECK_EQ(IMAGE_VERSION, 14u);
-    build(w); w[1] = 1;        /* M1/M2 images: opcode semantics changed in M3 */
+    CHECK_EQ(IMAGE_VERSION, 15u << 16);       /* 15.0 */
+    /* Every single-number version before 15 is another major. */
+    for (uint32_t v = 1; v <= 14; v++) {
+        build(w); w[1] = v;
+        CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    }
+    build(w); w[1] = 15u << 16 | 1u;          /* 15.1: a minor newer than this VM */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 2;        /* M3 images: RETN, CONV c=2 and builtins added in M4 */
+    build(w); w[1] = 16u << 16;               /* 16.0: another major */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 3;        /* M4 images: CALLV added in M5 */
+    build(w); w[1] = 14u << 16;
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 4;        /* M5 images: bitwise ops added in v5 */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 5;        /* v5 images: B_FS and the fs reserved types added in v6 */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 6;        /* v6 images: no const map (added in v7) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 7;        /* v7 images: kbd and power reserved types added in v8 */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 8;        /* v8 images: no requires/exports trailer (added in v9) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 9;        /* v9 images: no port stream / imu / ir reserved types (added in v10) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 10;       /* v10 images: no audio reserved types (added in v11) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 11;       /* v11 images: no gogo/sys builtins 51-53 (added in v12) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 12;       /* v12 images: no net.DialTLS reserved type (added in v13) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 13;       /* v13 images: no port.Host / port.Post reserved types (added in v14) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 15;
+    build(w); w[1] = 15u;                     /* not 15.0: the major is the high half */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w);
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+}
+
+/* A VM accepts every minor up to its own, of its major. */
+TEST(image_minor_window) {
+    uint32_t w[IMG_WORDS]; Image img;
+    for (uint32_t m = 0; m <= IMAGE_MINOR; m++) {
+        build(w); w[1] = IMAGE_MAJOR << 16 | m;
+        CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    }
+    build(w); w[1] = IMAGE_MAJOR << 16 | (IMAGE_MINOR + 1u);
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+}
+
+/* Header word 7 is the reserved row count: up to TYPE_RESERVED_COUNT,
+ * and never more rows than the table has. */
+TEST(image_n_reserved) {
+    uint32_t w[IMG_WORDS]; Image img;
+    build(w); w[7] = TYPE_RESERVED_COUNT + 1u;   /* a reserved type this VM does not know */
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    build(w); w[7] = 1;                          /* more reserved rows than types (0) */
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_BOUNDS);
+}
+
+/* Own types are named from TYPE_OWN_BASE whatever the reserved count. */
+TEST(image_type_rows) {
+    Image img;
+    memset(&img, 0, sizeof img);
+    img.n_types = 5; img.n_reserved = 3;
+    CHECK_EQ(image_type_row(&img, 0), 0);
+    CHECK_EQ(image_type_row(&img, 2), 2);
+    CHECK_EQ(image_type_row(&img, 3), 5);                    /* not in this image */
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE - 1u), 5);
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE), 3);
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE + 1u), 4);
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE + 2u), 5);
+    CHECK_EQ(image_type_row(&img, UINT32_MAX), 5);
+    img.n_reserved = 0;
+    CHECK_EQ(image_type_row(&img, 0), 5);
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE + 4u), 4);
 }
 
 TEST(image_truncated) {
@@ -387,7 +411,7 @@ TEST(v9_exports_load) {
     uint32_t w[EXP_WORDS]; Image img; uint32_t f = 99;
     build_exp(w);
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_OK);
-    CHECK_EQ(img.requires, 5);
+    CHECK_EQ(img.exports[-2], 5);
     CHECK_EQ(img.n_exports, 2);
     CHECK(img.exports == &w[22]);
     CHECK_EQ(image_export_find(&img, (const uint8_t *)"main", 4, &f), 1);

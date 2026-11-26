@@ -251,7 +251,13 @@ int main(int argc, char **argv) {
         rc = vm_boot(&vm, words, (uint32_t)(size / 4));
     }
     if (rc != VM_BOOT_OK) {
+        uint32_t ver = size >= 8 ? words[1] : 0u;
         free(words);
+        if (rc == IMG_ERR_VERSION) {
+            fprintf(stderr, "gogovm: %s: unsupported image format %u.%u (this VM runs %u.0 to %u.%u)\n", path,
+                    (unsigned)(ver >> 16), (unsigned)(ver & 0xFFFFu), IMAGE_MAJOR, IMAGE_MAJOR, IMAGE_MINOR);
+            return 2;
+        }
         if (rc < 0) return load_error(path, image_err_str(rc));
         if (rc == VM_BOOT_NO_MEMORY) fprintf(stderr, "gogovm: out of memory\n");
         return 1;                    /* VM_BOOT_REFUSED: the line is written */

@@ -41,9 +41,8 @@ func checkImage(img []byte) error {
 		return errors.New("not a gogo image (size is not a multiple of 4)")
 	case len(img) < 8:
 		return errors.New("not a gogo image (truncated header)")
-	case binary.LittleEndian.Uint32(img[4:]) != compiler.ImageVersion:
-		return fmt.Errorf("image version %d, this gogo writes version %d: rebuild it with `gogo build`",
-			binary.LittleEndian.Uint32(img[4:]), compiler.ImageVersion)
+	case compiler.CheckVersion(binary.LittleEndian.Uint32(img[4:])) != nil:
+		return compiler.CheckVersion(binary.LittleEndian.Uint32(img[4:]))
 	case len(img) > partSize-partHdrSize:
 		return fmt.Errorf("image is %d bytes, the partition holds at most %d", len(img), partSize-partHdrSize)
 	}
