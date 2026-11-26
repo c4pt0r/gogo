@@ -79,7 +79,9 @@ func main() {
 
 	// Same method name on different types.
 	println(Name{"n"}.String(), Tag(3).String(), String())
-	println(Name{"i"}.init())
+	println(Name{"i"}.init(), (Point).Add(p, p), (Tag).String(1))
+	sc := (Point).Scale
+	println(sc(p, 3))
 }
 
 type Name struct{ S string }

@@ -1029,7 +1029,7 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 		}
 	case *ast.SelectorExpr:
 		if c.p.method(fun) != nil { // x.M(args), T.M(x, args)
-			c.expr(fun.X)
+			c.methodRecv(fun)
 			c.args(call, 0)
 			return
 		}
@@ -1068,6 +1068,15 @@ func (p *Program) method(sel *ast.SelectorExpr) *types.Func {
 		return nil
 	}
 	return fn
+}
+
+// methodRecv checks the operand of a method selector: the receiver
+// expression of x.M. The type T of a method expression T.M or (T).M was
+// checked at the method's declaration.
+func (c *checker) methodRecv(sel *ast.SelectorExpr) {
+	if c.p.Info.Selections[sel].Kind() == types.MethodVal {
+		c.expr(sel.X)
+	}
 }
 
 // libFunc reports whether sel names a function of a compiled library
@@ -1178,7 +1187,7 @@ func (c *checker) expr(e ast.Expr) {
 			return // lib.F as a func value; its type was checked above
 		}
 		if c.p.method(e) != nil {
-			c.expr(e.X) // x.M, a method value, or T.M, a method expression
+			c.methodRecv(e) // x.M, a method value, or T.M, a method expression
 			return
 		}
 		sel := c.p.Info.Selections[e]

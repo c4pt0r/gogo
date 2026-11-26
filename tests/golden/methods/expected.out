@@ -9,4 +9,5 @@ z z
 {2 4} {22 44} 20
 107
 name:n tag:### func
-init:i
+init:i {2 4} tag:#
+{3 6}
