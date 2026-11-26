@@ -12,6 +12,9 @@
 // executable script, counts as one too) to a temporary image first, then
 // runs the VM and exits with its status. The VM is found by findVM.
 //
+// `gogo info` prints an image's format, size, requirements and entries
+// (see info.go).
+//
 // `gogo flash` writes an image to the ESP32-S3 image partition with an
 // external esptool (see flash.go); `gogo monitor` captures the board's
 // serial console (see monitor.go). `gogo config` edits the configuration
@@ -43,6 +46,7 @@ var usage = "usage: " + strings.Join([]string{
 	strings.TrimPrefix(runUsage, "usage: "),
 	strings.TrimPrefix(envUsage, "usage: "),
 	strings.TrimPrefix(disUsage, "usage: "),
+	strings.TrimPrefix(infoUsage, "usage: "),
 	strings.TrimPrefix(flashUsage, "usage: "),
 	strings.TrimPrefix(monitorUsage, "usage: "),
 	strings.TrimPrefix(firmwareUsage, "usage: "),
@@ -283,6 +287,8 @@ func run(args []string) error {
 		return envCmd(args[1:], os.Stdout)
 	case "dis":
 		return disCmd(args[1:], os.Stdout)
+	case "info":
+		return infoCmd(args[1:], os.Stdout)
 	case "flash":
 		return defaultFlasher().flash(args[1:])
 	case "monitor":

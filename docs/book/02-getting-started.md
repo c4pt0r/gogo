@@ -213,6 +213,7 @@ usage: gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
        gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
        gogo env [-path dirs]
        gogo dis <file.ggb>
+       gogo info [-path dirs] <file.ggb|dir|file.gg>
        gogo flash [-port P] [-esptool path] app.ggb
        gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
        gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...

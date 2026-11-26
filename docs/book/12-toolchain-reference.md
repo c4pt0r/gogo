@@ -13,6 +13,7 @@ gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
 gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
 gogo env [-path dirs]
 gogo dis <file.ggb>
+gogo info [-path dirs] <file.ggb|dir|file.gg>
 gogo flash [-port P] [-esptool path] app.ggb
 gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
@@ -325,6 +326,35 @@ func main (params=0 regs=4):
 
 The VM is register based: each function has a fixed number of registers,
 which live in a stack frame in the actor's memory.
+
+## gogo info
+
+```text
+gogo info [-path dirs] <file.ggb|dir|file.gg>
+```
+
+Says what an image is and what it needs, read from the image file: its
+format version (`major.minor`, the lowest the program needs, so the
+oldest firmware that runs it), its size, the drivers and mounts it
+requires (what a firmware must have to boot it, or to `code.Load` it as
+a module), and its entries (the exported functions `code.Spawn` starts by
+name; `(boot)` marks the one a board starts):
+
+```text
+$ gogo info examples/netdemo
+format     15.0
+size       46112 bytes: 94 functions, 58 types, 9605 code words, 1462 constant words
+requires   gpio, netif, tcp, tcp_listen, udp
+optional   tls (gogo/http)
+entries    main (boot)
+```
+
+Given a directory or a `.gg` file, it builds it in memory first (`-path`
+as for `gogo build`) and adds the `optional` line: the drivers the
+program's packages mark `//gogo:optional` (with the packages that do),
+which the image does not record because a firmware without them runs it
+anyway. A file that is not a gogo image, is damaged, or has a format
+this `gogo` does not know is an error.
 
 ## gogo flash
 

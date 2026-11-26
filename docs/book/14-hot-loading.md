@@ -30,7 +30,16 @@ compiled into the module, and their struct types are the module's own
 exported functions with the signature `func()` or `func(arg any)`, found by
 name (case-sensitive). `func main()` is exported as the entry `main`. At
 boot the firmware loads the flashed image as module 0 and starts its
-`main` the same way `code.Spawn` would.
+`main` the same way `code.Spawn` would. `gogo info` lists a module's
+entries, its format version and what it requires (chapter 12):
+
+```text
+$ gogo info greeter.ggb
+format     15.0
+size       1088 bytes: 2 functions, 0 types, 18 code words, 226 constant words
+requires   none
+entries    Greet, main (boot)
+```
 
 ```go
 // mods/greeter/main.gg

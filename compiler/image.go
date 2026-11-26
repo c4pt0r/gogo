@@ -3,6 +3,8 @@ package compiler
 import (
 	"encoding/binary"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 const (
@@ -327,39 +329,103 @@ func constMap(consts []uint32) []uint32 {
 	return m
 }
 
-// ImageRequires returns the requirement names of an image or module
-// file: the trailer after the const map, see Bytes.
-func ImageRequires(img []byte) ([]string, error) {
+// ImageInfo describes an image or module file, as read back from its
+// bytes by ReadImageInfo (what `gogo info` prints).
+type ImageInfo struct {
+	Version    uint32 // the header's version word: major<<16 | minor (VersionString)
+	Size       int    // bytes
+	Funcs      int    // functions
+	Types      int    // type rows: the reserved ones it carries, then its own
+	ConstWords int    // words of constants
+	CodeWords  int    // words of code
+	Entry      string // the entry function's name
+	// Requires are the drivers and mounts the image needs (see Requires;
+	// soft //gogo:optional ones are not recorded), Exports the entries a
+	// host or code.Spawn starts by name, both in image order.
+	Requires []string
+	Exports  []string
+}
+
+// ReadImageInfo reads the header and trailer of an image or module file.
+// It checks the magic, the format version and the layout, not the code.
+func ReadImageInfo(img []byte) (ImageInfo, error) {
+	var info ImageInfo
 	if len(img) < 32 || len(img)%4 != 0 {
-		return nil, fmt.Errorf("not a gogo image (size %d)", len(img))
+		return info, fmt.Errorf("not a gogo image (size %d)", len(img))
 	}
 	w := func(i uint64) uint32 { return binary.LittleEndian.Uint32(img[i*4:]) }
 	n := uint64(len(img) / 4)
 	if w(0) != imageMagic {
-		return nil, fmt.Errorf("not a gogo image (bad magic)")
+		return info, fmt.Errorf("not a gogo image (bad magic)")
 	}
 	if err := CheckVersion(w(1)); err != nil {
-		return nil, err
+		return info, err
 	}
 	// uint64 so huge counts cannot wrap
 	nf, nt, nc, ncode := uint64(w(2)), uint64(w(3)), uint64(w(4)), uint64(w(5))
 	cbase := 8 + nf*3 + nt*2
 	at := cbase + nc + ncode + (nc+31)/32
 	if at+1 > n || at+1+uint64(w(at)) > n || cbase+nc > n {
-		return nil, fmt.Errorf("truncated gogo image")
+		return info, fmt.Errorf("truncated gogo image")
 	}
-	var names []string
-	for i := uint64(0); i < uint64(w(at)); i++ {
-		off := uint64(w(at + 1 + i))
+	str := func(off uint64, what string, i uint64) (string, error) {
 		if off+2 > nc {
-			return nil, fmt.Errorf("bad gogo image (requirement %d)", i)
+			return "", fmt.Errorf("bad gogo image (%s %d)", what, i)
 		}
 		l := uint64(w(cbase + off + 1))
 		if off+2+(l+3)/4 > nc {
-			return nil, fmt.Errorf("bad gogo image (requirement %d)", i)
+			return "", fmt.Errorf("bad gogo image (%s %d)", what, i)
 		}
 		start := (cbase + off + 2) * 4
-		names = append(names, string(img[start:start+l]))
+		return string(img[start : start+l]), nil
 	}
-	return names, nil
+	info = ImageInfo{Version: w(1), Size: len(img), Funcs: int(nf), Types: int(nt), ConstWords: int(nc), CodeWords: int(ncode)}
+	for i := uint64(0); i < uint64(w(at)); i++ {
+		s, err := str(uint64(w(at+1+i)), "requirement", i)
+		if err != nil {
+			return info, err
+		}
+		info.Requires = append(info.Requires, s)
+	}
+	at += 1 + uint64(w(at))
+	if at+1 > n || at+1+2*uint64(w(at)) > n {
+		return info, fmt.Errorf("truncated gogo image (exports)")
+	}
+	for i := uint64(0); i < uint64(w(at)); i++ {
+		s, err := str(uint64(w(at+1+2*i)), "export", i)
+		if err != nil {
+			return info, err
+		}
+		info.Exports = append(info.Exports, s)
+	}
+	if e := uint64(w(6)); e < nf {
+		info.Entry, _ = str(uint64(w(8+e*3+2)), "function", e)
+	}
+	return info, nil
+}
+
+// ImageRequires returns the requirement names of an image or module
+// file: the trailer after the const map, see Bytes.
+func ImageRequires(img []byte) ([]string, error) {
+	info, err := ReadImageInfo(img)
+	return info.Requires, err
+}
+
+// OptionalDrivers lists the drivers the program's packages name in their
+// //gogo:optional directives, each as "name (package, ...)", sorted;
+// those are soft, so the image does not record them.
+func OptionalDrivers(p *Program) []string {
+	by := map[string][]string{}
+	for _, pkg := range p.packages() {
+		for d := range pkg.Optional {
+			by[d] = append(by[d], pkg.Pkg.Path())
+		}
+	}
+	var out []string
+	for d, pkgs := range by {
+		sort.Strings(pkgs)
+		out = append(out, d+" ("+strings.Join(pkgs, ", ")+")")
+	}
+	sort.Strings(out)
+	return out
 }
