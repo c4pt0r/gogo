@@ -139,7 +139,7 @@ func upperSnake(s string) string {
 func TestReservedTypesMatchStubs(t *testing.T) {
 	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath} {
+	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath, ScreenPath} {
 		pkg, err := l.Import(path)
 		if err != nil {
 			t.Fatal(err)
@@ -171,6 +171,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			prefix = "TypeIr"
 		case AudioPath:
 			prefix = "TypeAudio"
+		case ScreenPath:
+			prefix = "TypeScreen"
 		}
 		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
 			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
@@ -189,8 +191,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 47 {
-		t.Errorf("%d reserved types, want 47", len(reservedTypes))
+	if len(reservedTypes) != 48 {
+		t.Errorf("%d reserved types, want 48", len(reservedTypes))
 	}
 }
 
@@ -243,8 +245,8 @@ func TestTermsMatchC(t *testing.T) {
 			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
 		}
 	}
-	if imageMajor != 15 || imageMinor != 0 {
-		t.Errorf("image format %d.%d, want 15.0", imageMajor, imageMinor)
+	if imageMajor != 15 || imageMinor != 1 {
+		t.Errorf("image format %d.%d, want 15.1", imageMajor, imageMinor)
 	}
 }
 

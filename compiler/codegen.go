@@ -232,6 +232,7 @@ var reservedTypes = []struct {
 	{NetPath, "DialTLS", []string{"IP", "Port", "TimeoutMs", "Host"}},
 	{PortPath, "Host", []string{"Arg", "Data"}},
 	{PortPath, "Post", []string{"Kind", "Data"}},
+	{ScreenPath, "Config", []string{"Cols", "Rows"}}, // 15.1
 }
 
 // reservedName is the image name of reserved type i: the bare name for
@@ -260,6 +261,8 @@ func reservedName(i int) string {
 		return "ir." + rt.name
 	case AudioPath:
 		return "audio." + rt.name
+	case ScreenPath:
+		return "screen." + rt.name
 	}
 	panic("reservedName: package " + rt.pkg)
 }

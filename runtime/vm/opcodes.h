@@ -226,11 +226,13 @@ enum Builtin {
 /* Then (v14) the embedding types (lib/port/port.gg). */
 #define TYPE_HOST          45   /* Arg int, Data bytes.Bytes: cfg of a host-defined port */
 #define TYPE_POST          46   /* Kind int, Data bytes.Bytes: a host post, host-port command or event */
+/* Then (15.1) the gogo/screen type (lib/screen/screen.gg). */
+#define TYPE_SCREEN_CONFIG 47   /* Cols, Rows int: port.Open("screen") */
 /* How many reserved types this VM knows (0 .. TYPE_RESERVED_COUNT - 1):
  * they are global across modules. The one constant to bump with a new
  * reserved type (compiler: len(reservedTypes)); a new one is an image
  * format minor (image.h). */
-#define TYPE_RESERVED_COUNT 47u
+#define TYPE_RESERVED_COUNT 48u
 /* Field counts of the reserved types this VM knows, in index order, two
  * per byte (TYPE_NF2(even, odd)). An image's reserved row may declare at
  * most this many (image_load): fields are only ever appended, of type
@@ -269,7 +271,7 @@ enum Builtin {
     TYPE_NF2(2, 1), /* 40 ir.TX, ir.RX */ \
     TYPE_NF2(3, 2), /* 42 audio.Mic, audio.Speaker */ \
     TYPE_NF2(4, 2), /* 44 net.DialTLS, port.Host */ \
-    TYPE_NF2(2, 0), /* 46 port.Post */ \
+    TYPE_NF2(2, 2), /* 46 port.Post, screen.Config (15.1) */ \
 }
 /* The first own type: an image names its own struct types from here up
  * (image.h), whatever reserved types it or the VM knows, and a struct of

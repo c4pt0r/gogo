@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"maps"
 	"testing"
 )
 
@@ -43,7 +44,8 @@ func TestMinorBaseline(t *testing.T) {
 // minor and passes once the minor table has it.
 func TestMinorBaselineCatches(t *testing.T) {
 	saved := reservedTypes
-	defer func() { reservedTypes = saved; clear(typeMinor) }()
+	restore := saveMinors()
+	defer func() { reservedTypes = saved; restore() }()
 	reservedTypes = append([]struct {
 		pkg    string
 		name   string
@@ -83,8 +85,23 @@ func TestMinorBaselineCatches(t *testing.T) {
 		t.Error("a minor for a 15.0 opcode passed")
 	}
 	clear(opMinor)
+	restore()
 	if errs := minorBaselineErrors(); len(errs) != 0 {
 		t.Errorf("restored: %v", errs)
+	}
+}
+
+// saveMinors returns a func that puts the minor tables back as they are
+// now (tests change them).
+func saveMinors() func() {
+	o, b, ty := maps.Clone(opMinor), maps.Clone(builtinMinor), maps.Clone(typeMinor)
+	return func() {
+		clear(opMinor)
+		maps.Copy(opMinor, o)
+		clear(builtinMinor)
+		maps.Copy(builtinMinor, b)
+		clear(typeMinor)
+		maps.Copy(typeMinor, ty)
 	}
 }
 

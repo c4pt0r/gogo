@@ -78,9 +78,14 @@ const SysPath = "gogo/sys"
 // are reserved. The recording and playback library is gogo/sound.
 const AudioPath = "gogo/audio"
 
+// ScreenPath is the import path of the text screen port types
+// (screen.Config) and its operation constants, a stub package; the type is
+// reserved. The text UI library is gogo/tui.
+const ScreenPath = "gogo/screen"
+
 // isStub reports whether path is one of the stub packages.
 func isStub(path string) bool {
-	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath
+	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == ConfigPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath || path == ScreenPath
 }
 
 // stubDir is the directory of the library set holding stub package path:

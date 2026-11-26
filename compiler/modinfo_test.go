@@ -94,6 +94,7 @@ func TestRequiresInference(t *testing.T) {
 		{"kbd driver no import", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"kbd\", 1) }\n", "kbd", 0},
 		{"power driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"power\", 1) }\n", "power", 0},
 		{"tls driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"tls\", 1) }\n", "tls", 0},
+		{"screen driver", "package main\nimport (\n\"gogo/port\"\n\"gogo/screen\"\n)\nfunc main() { _, _ = port.Open(\"screen\", screen.Config{}) }\n", "screen", 0},
 		// Any name: a host port's, or one no board has (the load then fails).
 		{"host port", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"ui\", port.Host{}) }\n", "ui", 0},
 		{"two and a repeat", "package main\nimport \"gogo/port\"\nfunc main() {\n\t_, _ = port.Open(\"spk\", 1)\n\t_, _ = port.Open(\"gpio\", 1)\n\t_, _ = port.Open(\"spk\", 2)\n}\n", "gpio spk", 0},

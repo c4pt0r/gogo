@@ -1,0 +1,98 @@
+// Package screen is the gogo text screen API: the "screen" port. It is a
+// stub package like gogo/imu: the compiler type-checks against it and the
+// bodies (there are none) are never run. The C side is runtime/screen/ and
+// the board's display hook. Most programs use gogo/tui, which builds on it.
+//
+// The screen is a grid of character cells. Each cell holds one character, a
+// foreground and a background colour (0-15, the Color constants) and the
+// attributes Bold, Underline and Reverse. A wide (CJK) character takes two
+// cells.
+//
+// Open it with port.Open("screen", screen.Config{}). One actor owns the
+// screen at a time (a second Open fails); while it is open the board's text
+// console (println) is hidden, and closing the port (or the owner exiting)
+// shows the console again. The port first sends its owner one port.Chunk
+// describing the grid (Data: cols, rows, colours, attributes, one byte each,
+// the attribute byte a mask of Bold | Underline | Reverse). Draw with
+// port.Out{Data} commands: Data is a sequence of draw operations (the Op
+// constants below), applied together as one frame, and every Out is answered
+// with a port.Done (Seq -1: the Out was refused, a malformed operation
+// anywhere in it, and nothing of it was drawn). Every Out gets its Done,
+// in order, but not always at once: an owner whose memory is nearly full
+// gets it when it has room again (the port retries every 10 ms), and with
+// 8 Dones waiting a further Out is refused. So wait for a Done with a
+// timeout (actor.ReceiveTimeout). A port.Done does not say which port sent
+// it: a program with several stream ports must keep count.
+//
+// Operations (each an Op byte followed by its argument bytes; coordinates are
+// cells, 0-based, the top-left cell 0, 0):
+//
+//	OpClear                    blank the clip rectangle in the current colours; cursor to its top-left
+//	OpMove x y                 move the cursor (any position; drawing outside the clip is dropped)
+//	OpText n bytes[n]          n (1-255) bytes of UTF-8 text at the cursor, which advances; no wrapping
+//	OpColor c                  colours: foreground c>>4, background c&15
+//	OpAttr a                   attributes: a mask of Bold, Underline, Reverse (other bits: malformed)
+//	OpFill x y w h lo hi       fill a rectangle with the character lo | hi<<8 (U+0020 and up, no surrogates)
+//	OpClip x y w h             the clip rectangle, cut to the screen; every operation draws only inside it
+//	OpScroll x y w h n         scroll a rectangle (cut to the clip) up n rows, n a signed byte (negative: down)
+//	OpCursor on                show (1) the cursor at the cursor position (it stays there until the next OpCursor), or hide (0) it
+//
+// The cells of a wide character stay together: drawing over either half
+// blanks the other half, even when that half is outside the clip.
+//
+// A frame starts with the colours, attributes, clip and cursor position the
+// previous one left. The grid starts blank, colours White on Black, no
+// attributes, the clip the whole screen, the cursor hidden at 0, 0.
+//
+// The struct type Config is reserved type 47 (TYPE_SCREEN_CONFIG in
+// runtime/vm/opcodes.h), added in image format 15.1: an image that uses it
+// is stamped 15.1 and needs a VM of 15.1 or later. Keep its field order in
+// sync with compiler.reservedTypes; fields are only ever appended.
+package screen
+
+// Config configures the port. Cols and Rows ask for a grid of that size; 0
+// means the whole display (40 x 11 on both boards and, by default, on the
+// host). A board refuses a grid larger than its display; the host takes up
+// to 255 columns and 32 rows.
+type Config struct{ Cols, Rows int }
+
+// Operations (see the package comment).
+const (
+	OpClear  = 1
+	OpMove   = 2
+	OpText   = 3
+	OpColor  = 4
+	OpAttr   = 5
+	OpFill   = 6
+	OpClip   = 7
+	OpScroll = 8
+	OpCursor = 9
+)
+
+// Attributes (OpAttr).
+const (
+	Bold      = 1
+	Underline = 2
+	Reverse   = 4
+)
+
+// Colours: the 16-colour palette (RGB565 on a board's LCD, the ANSI colours
+// on a terminal).
+const (
+	Black         = 0
+	Red           = 1
+	Green         = 2
+	Yellow        = 3
+	Blue          = 4
+	Magenta       = 5
+	Cyan          = 6
+	White         = 7
+	Gray          = 8
+	BrightRed     = 9
+	BrightGreen   = 10
+	BrightYellow  = 11
+	BrightBlue    = 12
+	BrightMagenta = 13
+	BrightCyan    = 14
+	BrightWhite   = 15
+)

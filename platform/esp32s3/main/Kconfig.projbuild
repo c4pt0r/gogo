@@ -94,6 +94,17 @@ menu "gogo"
             the certificate bundle. When off, tls.c is not built, CAP_TLS is
             absent and port.Open("tls") returns ok=false.
 
+    config GOGO_SCREEN
+        bool "Text screen port (screen)"
+        default y
+        help
+            Build the "screen" port (runtime/screen/): a 40 x 11 grid of
+            character cells with colours and attributes, drawn on the LCD
+            by the console's render task (gogo/screen, gogo/tui). When off,
+            the board does not list the driver (an image that
+            requires "screen" is refused), port.Open("screen") returns ok=false and
+            the LCD only shows the text console.
+
     config GOGO_FONT_CJK
         bool "Chinese console font (GB 2312)"
         default y
