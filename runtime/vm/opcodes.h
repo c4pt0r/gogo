@@ -130,7 +130,7 @@ enum Builtin {
     B_SELF    = 2,  /*! -> pid | The calling actor's PID. */
     B_SEND    = 3,  /*! pid, msg -> nil | Copy msg into the target's mailbox (a value that may not cross modules is R_BAD_MSG). */
     B_RECEIVE = 4,  /*! -> msg | Block until a message arrives and take it. */
-    B_MEMORY  = 5,  /*! -> ProcInfo | The calling actor's memory figures (actor.ProcInfo). */
+    B_MEMORY  = 5,  /*! pid -> int | The memory the local actor pid holds, in bytes (the actor, its table slot, its block, its queued messages and timers); 0 for anything else. actor.Info puts it in a ProcInfo. */
     /* Two-result builtins write ra and ra+1. */
     B_SPAWN_LINK      = 6,   /*! closure -> pid | Spawn and link atomically. */
     B_SPAWN_OPT       = 7,   /*! closure, Options struct -> pid | Spawn with actor.Options (MaxMemory). */

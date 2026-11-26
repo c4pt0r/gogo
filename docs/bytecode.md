@@ -113,7 +113,7 @@ the registers `rb ..`; a builtin with two results writes `ra` and `ra+1`.
 | 2 | `B_SELF` | - | `pid` | The calling actor's PID. |
 | 3 | `B_SEND` | `pid, msg` | `nil` | Copy msg into the target's mailbox (a value that may not cross modules is R_BAD_MSG). |
 | 4 | `B_RECEIVE` | - | `msg` | Block until a message arrives and take it. |
-| 5 | `B_MEMORY` | - | `ProcInfo` | The calling actor's memory figures (actor.ProcInfo). |
+| 5 | `B_MEMORY` | `pid` | `int` | The memory the local actor pid holds, in bytes (the actor, its table slot, its block, its queued messages and timers); 0 for anything else. actor.Info puts it in a ProcInfo. |
 | 6 | `B_SPAWN_LINK` | `closure` | `pid` | Spawn and link atomically. |
 | 7 | `B_SPAWN_OPT` | `closure, Options struct` | `pid` | Spawn with actor.Options (MaxMemory). |
 | 8 | `B_LINK` | `pid` | `nil` | Link to another actor. |
