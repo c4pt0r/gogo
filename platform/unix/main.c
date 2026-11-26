@@ -73,6 +73,7 @@
 #include "screen_unix.h"
 #include "board_main.h"
 #include "hostnet.h"
+#include "dist.h"
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -212,7 +213,7 @@ static const PortDriver unix_speaker = INPUT_SPEAKER_DRIVER(&input_unix_spk);
 static const PortDriver *const unix_ports_all[] = {
     &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver,
     &net_tcp_listen_driver, &unix_kbd, &unix_power, &unix_imu, &unix_ir_tx, &unix_ir_rx,
-    &unix_mic, &unix_speaker, &screen_unix_driver,
+    &unix_mic, &unix_speaker, &screen_unix_driver, &dist_node_driver,
 #ifdef GOGO_TLS
     &net_tls_driver,
 #endif
