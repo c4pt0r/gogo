@@ -258,7 +258,9 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   embedded gogo stub type (`bytes.Buffer`, `fs.File`: builtins that take
   their own type), which are called on the field instead. For interfaces, the compiler's
   `gen.methodTable` lists a type's own and promoted methods with the
-  field path to each receiver, which interface dispatch uses. No
+  field path to each receiver, which interface dispatch uses; a method
+  promoted from an embedded interface is that interface's, called
+  through its dispatcher on the field's value (`gen.methodFunc`). No
   opcode of its own.
 - Static `defer`: `defer f(args)` anywhere but inside a loop (within its
   own function: a func literal is a function of its own), so each defer

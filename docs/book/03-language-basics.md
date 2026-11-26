@@ -1383,15 +1383,16 @@ same depth make the selector ambiguous, a compile error (`ambiguous
 selector c.X`) unless you write the path. An embedded field is an
 ordinary field underneath: a literal sets it by its type's name
 (`Player{Sprite: s}`), and a promoted field costs one `GETFIELD` per
-level. A type can embed a named struct or a named basic type
-(`type Celsius int`), from any package; not a pointer. A method
+level. A type can embed a named struct, a named basic type
+(`type Celsius int`) or an interface, from any package; not a pointer. A method
 expression of a promoted method (`Sprite.Dist`) is rejected: write a
 method value or call it on the embedded field. The methods of an
 embedded gogo type (`bytes.Buffer`, `bytes.Bytes`, `fs.File`) are not
 promoted either (`method WriteByte of an embedded gogo/bytes type not
-supported`): call them on the field, `w.Buffer.WriteByte(b)`. There are no interfaces
-of your own yet; when they come, promoted methods will count toward
-implementing them.
+supported`): call them on the field, `w.Buffer.WriteByte(b)`. Promoted
+methods count toward implementing an interface (section 3.9), and the
+methods of an embedded interface are promoted too: `struct { Namer; K
+int }` is a `Namer`, and its `Name()` calls the field's.
 
 ## 3.6 Slices and arrays
 
@@ -1851,8 +1852,9 @@ true true false
 true
 ```
 
-- **Satisfying an interface** needs the methods, with value receivers.
-  Interfaces can embed other interfaces (`type ReadWriter interface {
+- **Satisfying an interface** needs the methods, with value receivers,
+  a type's own or promoted from an embedded field (an embedded
+  interface's included). Interfaces can embed other interfaces (`type ReadWriter interface {
   Reader; Writer }`), and one interface value can be assigned to another
   interface whose methods it has.
 - **`any`** (the empty interface) holds any value. Inside one, a value

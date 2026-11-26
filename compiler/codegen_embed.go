@@ -69,8 +69,11 @@ func (g *gen) methodTable(t *types.Named) []promotedMethod {
 	for i := 0; i < ms.Len(); i++ {
 		sel := ms.At(i)
 		fn, ok := sel.Obj().(*types.Func)
-		if !ok || !g.p.compiled(fn.Pkg()) || sel.Indirect() {
+		if !ok || !g.p.compiled(fn.Pkg()) {
 			continue
+		}
+		if _, ptr := fn.Type().(*types.Signature).Recv().Type().(*types.Pointer); ptr {
+			continue // (Indirect is also true for a method of an embedded interface)
 		}
 		idx := sel.Index()
 		out = append(out, promotedMethod{name: fn.Name(), fn: fn, path: embedPath(t, idx[:len(idx)-1])})

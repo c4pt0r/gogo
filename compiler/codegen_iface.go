@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/types"
@@ -417,6 +418,16 @@ func (g *gen) ifaceName(t types.Type, name string) string {
 	return types.TypeString(t, func(p *types.Package) string { return pkgPrefix(p) }) + "." + name
 }
 
+// methodFunc returns the function index that calls method m with its
+// receiver: m's own, or, for a method promoted from an embedded field of
+// interface type (m is the interface's method), its dispatcher.
+func (g *gen) methodFunc(m *types.Func) (uint32, bool) {
+	if recv := m.Type().(*types.Signature).Recv(); recv != nil && isIface(recv.Type()) {
+		return g.dispatcher(m), true
+	}
+	return g.funcIndex(m)
+}
+
 // nilDeref is the panic of a method call on a nil interface value.
 const nilDeref = "runtime error: invalid memory address or nil pointer dereference"
 
@@ -447,9 +458,9 @@ func (g *gen) dispatcher(m *types.Func) uint32 {
 			continue
 		}
 		id, ok := g.typeID(ct)
-		fi, found := g.funcIndex(pm.fn)
+		fi, found := g.methodFunc(pm.fn)
 		if !ok || !found {
-			continue
+			panic(genError{fmt.Errorf("gogo: internal error: %s: no type id or function for %s's %s", info.name, types.TypeString(ct, pkgName), m.Name())})
 		}
 		next := a.NewLabel()
 		a.EmitExt(OpTypeis, t, 0, 0, id)

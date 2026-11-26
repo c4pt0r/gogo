@@ -174,7 +174,7 @@ func (f *fn) funcValueInto(n ast.Node, fn *types.Func, dst uint8) {
 // methodIdx returns the function index of method m (declared in a
 // compiled package, so indexed by Compile).
 func (f *fn) methodIdx(n ast.Node, m *types.Func) uint32 {
-	idx, ok := f.g.funcIndex(m)
+	idx, ok := f.g.methodFunc(m)
 	if !ok {
 		f.fail(n, "internal error: unknown method %s", funcName(m))
 	}
