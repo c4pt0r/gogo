@@ -167,7 +167,7 @@ static uint32_t arp_frame(uint8_t *b, uint16_t op, const uint8_t *sha, uint32_t 
                           const uint8_t *tha, uint32_t tpa, const uint8_t *dst);
 static term configure(Actor *owner) {
     term n = open_netif(owner);
-    CHECK(port_is(n));
+    CHECK(test_port_is(n));
     set_addr(owner, n, MY_IP, MASK, PEER_IP, IP4(10, 0, 0, 53));
     CHECK_EQ(tx.n, 1);                       /* the gateway pre-resolution */
     uint8_t b[64];
@@ -360,7 +360,7 @@ TEST(net_netif_single_owner) {
     setup();
     Actor *a = new_actor(), *b = new_actor();
     term n = open_netif(a);
-    CHECK(port_is(n));
+    CHECK(test_port_is(n));
     CHECK(open_netif(b) == T_NIL);           /* one owner at a time */
     set_addr(b, n, MY_IP, MASK, PEER_IP, 0); /* not the owner: ignored */
     CHECK(!ip_configured(&nst));
@@ -368,7 +368,7 @@ TEST(net_netif_single_owner) {
     CHECK_EQ(nst.ip, MY_IP);
     port_close(&vm, n);                      /* the address goes with it */
     CHECK(!ip_configured(&nst));
-    CHECK(port_is(open_netif(b)));
+    CHECK(test_port_is(open_netif(b)));
     teardown();
 }
 
@@ -476,7 +476,7 @@ TEST(net_udp_deliver) {
     Actor *a = new_actor(), *o = new_actor();
     configure(a);
     term u = open_udp(o, 7);
-    CHECK(port_is(u));
+    CHECK(test_port_is(u));
     CHECK(open_udp(a, 7) == T_NIL);          /* port taken */
     uint8_t b[1600], data[300];
     for (int i = 0; i < 300; i++) data[i] = (uint8_t)i;
@@ -523,7 +523,7 @@ TEST(net_udp_deliver) {
     /* the owner is charged the control block; close frees the pcb */
     CHECK_EQ(actor_charged_words(o) >= UDP_PCB_WORDS, 1);
     port_close(&vm, u);
-    CHECK(port_is(open_udp(a, 7)));
+    CHECK(test_port_is(open_udp(a, 7)));
     teardown();
 }
 
@@ -532,7 +532,7 @@ TEST(net_udp_send) {
     Actor *a = new_actor();
     configure(a);
     term u = open_udp(a, 0);                 /* ephemeral */
-    CHECK(port_is(u));
+    CHECK(test_port_is(u));
     uint8_t data[200];
     for (int i = 0; i < 200; i++) data[i] = (uint8_t)(255 - i);
     send_to(a, u, PEER_IP, 9000, data, 200);
@@ -627,7 +627,7 @@ TEST(net_udp_fill_leaves_up_room) {
         Actor *a = new_actor(), *o = new_actor();
         term n = configure(a);
         term u = open_udp(o, 5000);
-        CHECK(port_is(u));
+        CHECK(test_port_is(u));
         CHECK(port_subscribe(&vm, o));
         while (o->mbox_head) pop(o);         /* the initial Up */
         o->max_words = (uint16_t)(o->mem_words + actor_charged_words(o) + slack);
@@ -654,7 +654,7 @@ TEST(net_udp_reclaims_waiting_slack) {
     Actor *a = new_actor(), *o = new_actor();
     configure(a);
     term u = open_udp(o, 7);
-    CHECK(port_is(u));
+    CHECK(test_port_is(u));
     o->hp = 0;                               /* nothing live: the 256-word block is slack */
     o->max_words = (uint16_t)(o->mem_words + actor_charged_words(o) + 20u);
     uint8_t b[1600], data[400];
@@ -672,7 +672,7 @@ TEST(net_unconfigured_dhcp_only) {
     Actor *a = new_actor();
     term n = open_netif(a);
     term c = open_udp(a, 68), s = open_udp(a, 7);
-    CHECK(port_is(n) && port_is(c) && port_is(s));
+    CHECK(test_port_is(n) && test_port_is(c) && test_port_is(s));
     uint8_t data[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
     send_to(a, c, IP_BCAST, 67, data, 8);    /* DHCP discover: allowed */
     CHECK_EQ(tx.n, 1);
@@ -714,7 +714,7 @@ TEST(net_dhcp_chaddr) {
     Actor *a = new_actor();
     term n = open_netif(a);
     term c = open_udp(a, 68);
-    CHECK(port_is(n) && port_is(c));
+    CHECK(test_port_is(n) && test_port_is(c));
     uint8_t req[244] = { 1, 1, 6 };
     memset(req + 28, 0xEE, 16);
     send_to(a, c, IP_BCAST, 67, req, sizeof req);
@@ -997,7 +997,7 @@ TEST(net_two_stacks_do_not_cross) {
     CHECK(a2 != NULL && o2 != NULL);
     a2->state = o2->state = A_WAITING;
     term n2 = open_on(&vm2, a2, "netif", TYPE_NET_IFCONFIG, NULL, 0);
-    CHECK(port_is(n2));
+    CHECK(test_port_is(n2));
     a2->hp = 0;
     uint32_t off = heap_alloc(&vm2, a2, 6, NULL, 0);
     a2->mem[off] = hdr_make(6, K_STRUCT);
@@ -1010,8 +1010,8 @@ TEST(net_two_stacks_do_not_cross) {
     CHECK_EQ(nst2.ip, MY_IP2);
     CHECK_EQ(nst.ip, MY_IP);
     term f7 = term_from_int(7);
-    CHECK(port_is(open_udp(o, 7)));
-    CHECK(port_is(open_on(&vm2, o2, "udp", TYPE_NET_UDP, &f7, 1)));
+    CHECK(test_port_is(open_udp(o, 7)));
+    CHECK(test_port_is(open_on(&vm2, o2, "udp", TYPE_NET_UDP, &f7, 1)));
     tx.n = 0;
     uint32_t frames = nst.st.rx_frames;
 

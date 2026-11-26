@@ -12,6 +12,7 @@
 #include "bytes.h"
 #include "msg.h"
 #include "opcodes.h"
+#include "alloc.h"
 #include <string.h>
 
 /* gogo_port_driver's first size (v0.2), which never changes. */
@@ -20,7 +21,7 @@
 /* A gogo_port (and an inbox node's port): index and generation, never 0. */
 #define PORT_ENC(i, g) (0x80000000u | (uint32_t)(i) << 16 | (uint32_t)(g))
 
-static gogo_port port_val(const Vm *vm, const Port *p) { return PORT_ENC(p - vm->ports, p->gen); }
+static gogo_port port_val(const Vm *vm, const Port *p) { return PORT_ENC(port_index(vm, p), p->gen); }
 
 static const HostPort *host_of(const Port *p) { return (const HostPort *)(const void *)p->drv; }
 
@@ -50,7 +51,12 @@ static int hp_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg
         return -1;
     /* The port's Closed is made now, so gogo_port_close can always send
      * it (a stream port's terminal Closed is never lost either). */
-    Msg **closed = &g->closed_msg[p - vm->ports];
+    if (!g->closed_msg) {
+        g->closed_msg = va_alloc(vm, vm->port_max * sizeof *g->closed_msg);
+        if (!g->closed_msg) return -1;
+        memset(g->closed_msg, 0, vm->port_max * sizeof *g->closed_msg);
+    }
+    Msg **closed = &g->closed_msg[port_index(vm, p)];
     if (!(*closed = embed_closed_msg(vm, p->id))) return -1;
     int r = 0;
     if (hp->pub.open) {
@@ -82,7 +88,7 @@ static void hp_command(Vm *vm, const Actor *from, Port *p, term msg) {
 static void hp_close(Vm *vm, Port *p) {
     gogo_vm *g = vm->host_ctx;
     const HostPort *hp = host_of(p);
-    Msg **closed = &g->closed_msg[p - vm->ports];
+    Msg **closed = &g->closed_msg[port_index(vm, p)];
     if (*closed) msg_free(vm, *closed);   /* not sent: an ordinary close */
     *closed = NULL;
     if (!hp->pub.close) return;
@@ -163,12 +169,12 @@ int gogo_register_port(gogo_vm *g, const char *name, size_t nl, const gogo_port_
     return GOGO_OK;
 }
 
-bool embed_port_valid(gogo_port port) { return (port & 0x80000000u) && (port >> 16 & 0x7FFFu) < GOGO_MAX_PORTS; }
+bool embed_port_valid(gogo_port port) { return (port & 0x80000000u) && (port >> 16 & 0x7FFFu) < PORT_MAX_CEILING; }
 
 /* The open host port a gogo_port names, or NULL. */
 static Port *host_port(gogo_vm *g, gogo_port port) {
-    if (!embed_port_valid(port)) return NULL;
-    Port *p = &g->vm.ports[port >> 16 & 0x7FFFu];
+    if (!embed_port_valid(port) || (port >> 16 & 0x7FFFu) >= g->vm.port_n) return NULL;
+    Port *p = port_at(&g->vm, port >> 16 & 0x7FFFu);
     for (uint32_t k = 0; k < g->n_host_ports; k++)
         if (p->drv == &g->host_ports[k].base) return p->gen == (port & 0xFFFFu) ? p : NULL;
     return NULL;
@@ -227,8 +233,8 @@ int gogo_port_close(gogo_vm *g, gogo_port port, int32_t reason) {
     embed_inbox_drain(g);
     Actor *o = port_owner(vm, p);    /* the drain may have ended it (a mailbox overflow) */
     if (o) {
-        Msg *m = g->closed_msg[p - vm->ports];
-        g->closed_msg[p - vm->ports] = NULL;
+        Msg *m = g->closed_msg[port_index(vm, p)];
+        g->closed_msg[port_index(vm, p)] = NULL;
         m->data[3] = term_from_int(reason);
         msg_enqueue(vm, o, m, false);
     }

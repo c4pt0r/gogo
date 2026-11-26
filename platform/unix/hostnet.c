@@ -27,6 +27,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -55,11 +56,35 @@ typedef struct HConn {
     StreamOut so;
 } HConn;
 
-static HConn conns[GOGO_MAX_PORTS];
+/* One HConn per port index (the Vm's port table grows; so does this). */
+static HConn *conns;
+static uint32_t nconns;
+static struct pollfd *pfds;       /* poll_now's scratch, nconns long */
+static uint32_t *pidx;
 static Vm *hvm;
+
+/* Room for port index i; false if out of memory. */
+static bool conns_reach(uint32_t i) {
+    if (i < nconns) return true;
+    uint32_t n = nconns ? nconns : 16u;
+    while (n <= i) n *= 2u;
+    HConn *c = realloc(conns, n * sizeof *c);
+    struct pollfd *f = realloc(pfds, n * sizeof *f);
+    uint32_t *x = realloc(pidx, n * sizeof *x);
+    if (c) conns = c;
+    if (f) pfds = f;
+    if (x) pidx = x;
+    if (!c || !f || !x) return false;
+    for (uint32_t k = nconns; k < n; k++) {
+        memset(&conns[k], 0, sizeof conns[k]);
+        conns[k].fd = -1;
+    }
+    nconns = n;
+    return true;
+}
 static int accept_fd = -1;   /* the socket the next tcp open takes (accept) */
 
-static HConn *conn_of(const Vm *vm, const Port *p) { return &conns[p - vm->ports]; }
+static HConn *conn_of(const Vm *vm, const Port *p) { return &conns[port_index(vm, p)]; }
 
 static bool event_new(Vm *vm, const Port *p, uint32_t type, term a, bool with_reason, int32_t reason) {
     Actor *o = port_owner(vm, p);
@@ -102,6 +127,7 @@ static void end(Vm *vm, Port *p, HConn *c, int32_t reason) {
 /* ---- tcp ---- */
 
 static int t_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    if (!conns_reach(index)) return -1;
     HConn *c = &conns[index];
     memset(c, 0, sizeof *c);
     c->fd = -1;
@@ -138,7 +164,7 @@ static int t_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
 }
 
 static void t_close(struct Vm *vm, Port *p) {
-    HConn *c = &conns[p - (vm ? vm->ports : hvm->ports)];
+    HConn *c = conn_of(vm ? vm : hvm, p);
     if (c->fd >= 0) {
         if (c->shut != 2) {            /* no Shutdown: reset, as the MCU stack */
             struct linger l = { 1, 0 };
@@ -273,6 +299,7 @@ static void conn_step(Vm *vm, Port *p, HConn *c, uint64_t now) {
 
 static int l_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)vm; (void)p;
+    if (!conns_reach(index)) return -1;
     HConn *c = &conns[index];
     memset(c, 0, sizeof *c);
     c->fd = -1;
@@ -297,7 +324,7 @@ static int l_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
 }
 
 static void l_close(struct Vm *vm, Port *p) {
-    HConn *c = &conns[p - (vm ? vm->ports : hvm->ports)];
+    HConn *c = conn_of(vm ? vm : hvm, p);
     if (c->fd >= 0) close(c->fd);
     memset(c, 0, sizeof *c);
     c->fd = -1;
@@ -340,8 +367,11 @@ const PortDriver hostnet_listen_driver = {
 
 /* ---- the event source ---- */
 
+/* The port indexes hostnet may have a socket at. */
+static uint32_t lim(const Vm *vm) { return nconns < vm->port_n ? nconns : vm->port_n; }
+
 static short interest(const Vm *vm, uint32_t i, uint64_t now) {
-    const Port *p = &vm->ports[i];
+    const Port *p = port_at(vm, i);
     const HConn *c = &conns[i];
     if (!p->drv || c->fd < 0 || (p->drv != &hostnet_tcp_driver && p->drv != &hostnet_listen_driver)) return 0;
     if (now < c->retry_at) return 0;
@@ -356,10 +386,10 @@ static short interest(const Vm *vm, uint32_t i, uint64_t now) {
 
 /* Polls the sockets (no wait); true if any is ready. */
 static bool poll_now(const Vm *vm) {
-    struct pollfd p[GOGO_MAX_PORTS];
-    uint32_t idx[GOGO_MAX_PORTS], n = 0;
+    struct pollfd *p = pfds;
+    uint32_t *idx = pidx, n = 0;
     uint64_t now = vm_now(vm);
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
+    for (uint32_t i = 0; i < lim(vm); i++) {
         short e = interest(vm, i, now);
         if (!e) continue;
         p[n].fd = conns[i].fd;
@@ -377,7 +407,7 @@ static bool poll_now(const Vm *vm) {
 }
 
 static bool owes(const Vm *vm, uint32_t i, uint64_t now) {
-    const Port *p = &vm->ports[i];
+    const Port *p = port_at(vm, i);
     const HConn *c = &conns[i];
     if (!p->drv || p->drv != &hostnet_tcp_driver || now < c->retry_at) return false;
     return c->connected_owed || (c->closed_owed && !c->paused) || c->revents ||
@@ -387,7 +417,7 @@ static bool owes(const Vm *vm, uint32_t i, uint64_t now) {
 static bool s_pending(const Vm *vm, void *ctx) {
     (void)ctx;
     uint64_t now = vm_now(vm);
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
+    for (uint32_t i = 0; i < lim(vm); i++) {
         if (owes(vm, i, now) || (conns[i].kind == K_LISTEN && conns[i].revents)) return true;
     }
     return poll_now(vm);
@@ -395,8 +425,8 @@ static bool s_pending(const Vm *vm, void *ctx) {
 
 static void s_drain(Vm *vm, void *ctx, uint64_t now) {
     (void)ctx;
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
-        Port *p = &vm->ports[i];
+    for (uint32_t i = 0; i < lim(vm); i++) {
+        Port *p = port_at(vm, i);
         HConn *c = &conns[i];
         if (!p->drv || c->fd < 0) continue;
         if (p->drv == &hostnet_tcp_driver) conn_step(vm, p, c, now);
@@ -409,8 +439,8 @@ static bool s_any_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return fa
 static bool s_next_deadline(const Vm *vm, void *ctx, uint64_t *deadline) {
     (void)ctx;
     bool have = false;
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
-        const Port *p = &vm->ports[i];
+    for (uint32_t i = 0; i < lim(vm); i++) {
+        const Port *p = port_at(vm, i);
         const HConn *c = &conns[i];
         if (!p->drv || c->fd < 0 || (p->drv != &hostnet_tcp_driver && p->drv != &hostnet_listen_driver)) continue;
         uint64_t d = 0;
@@ -426,14 +456,19 @@ static bool s_next_deadline(const Vm *vm, void *ctx, uint64_t *deadline) {
 
 static const PortSource hostnet_source = { s_pending, s_drain, s_any_live, s_next_deadline, NULL };
 
-/* platform_wait's extra fds: every socket with something to wait for. */
+/* platform_wait's extra fds: every socket with something to wait for
+ * (p NULL: how many there are). */
 static int extra_fds(struct pollfd *p, int max) {
     int n = 0;
     if (!hvm) return 0;
     uint64_t now = vm_now(hvm);
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS && n < max; i++) {
+    for (uint32_t i = 0; i < lim(hvm) && (!p || n < max); i++) {
         short e = interest(hvm, i, now);
         if (!e) continue;
+        if (!p) {
+            n++;
+            continue;
+        }
         p[n].fd = conns[i].fd;
         p[n].events = e;
         p[n].revents = 0;
@@ -443,7 +478,6 @@ static int extra_fds(struct pollfd *p, int max) {
 }
 
 void hostnet_install(Vm *vm) {
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) conns[i].fd = -1;
     hvm = vm;
     platform_unix_extra_fds = extra_fds;
     (void)port_add_source(vm, &hostnet_source, NULL);

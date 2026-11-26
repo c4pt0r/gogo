@@ -1000,7 +1000,7 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             case B_SEND:
                 CHECK(rc == 2);
-                if (port_is(R[rb])) {
+                if (port_is(vm, R[rb])) {
                     /* A command: handed to the driver in place, for any sender. */
                     CHECK(deep_live(vm, a, R[rb + 1], 0, WALK_BUDGET) >= 0);
                     port_command(vm, a, R[rb], R[rb + 1]);
@@ -1218,7 +1218,7 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 2 && term_is_pid(R[rb]));
                 int32_t c;
                 CHECK(int_val(vm, a, R[rb + 1], &c));
-                if (port_is(R[rb])) port_close(vm, R[rb]);   /* any caller, any code */
+                if (port_is(vm, R[rb])) port_close(vm, R[rb]);   /* any caller, any code */
                 else if (!sig_kill(vm, a, R[rb], (uint32_t)c)) CRASH(R_OUT_OF_MEMORY);
                 R[ra] = T_NIL;
                 break;

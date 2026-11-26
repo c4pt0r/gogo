@@ -57,10 +57,10 @@ static const PortDriver file_drv = {
 
 /* The open file t names if a owns it, else NULL (Closed). */
 static Port *file_of(Vm *vm, const Actor *a, term t) {
-    if (!port_is(t)) return NULL;
-    uint32_t i = term_pid_slot(t) - PORT_SLOT_BASE;
-    if (i >= GOGO_MAX_PORTS) return NULL;
-    Port *p = &vm->ports[i];
+    if (!port_is(vm, t)) return NULL;
+    uint32_t i = term_pid_slot(t) - vm->port_base;
+    if (i >= vm->port_n) return NULL;
+    Port *p = port_at(vm, i);
     return p->drv == &file_drv && p->id == t && p->owner == a->id ? p : NULL;
 }
 
@@ -310,9 +310,9 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
     switch (op) {
     case FS_OPEN: {
         uint32_t k = 0;
-        while (k < GOGO_MAX_PORTS && vm->ports[k].drv) k++;
+        while (k < vm->port_n && port_at(vm, k)->drv) k++;
         res = T_ZEROPID;
-        if (k == GOGO_MAX_PORTS) e = GOGO_E_TOOMANY;
+        if (k >= vm->port_max) e = GOGO_E_TOOMANY;
         else if ((uint32_t)a->mem_words + actor_charged_words(a) + CHARGE_WORDS > actor_max_words(a))
             e = GOGO_E_NOMEMORY;
         else if (!(e = vfs_open(st, pa, la, i, &slot))) {

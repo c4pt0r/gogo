@@ -139,7 +139,7 @@ static uint64_t polls(uint64_t t, int n) {
 TEST(power_open_without_hw_fails) {
     setup();
     fake_no_power();
-    CHECK(!port_is(open_power(owner, 0)));
+    CHECK(!test_port_is(open_power(owner, 0)));
     teardown();
 }
 
@@ -148,16 +148,16 @@ TEST(power_second_owner_fails) {
     Actor *b = actor_new(&vm, 256);
     b->state = A_WAITING;
     term pp = open_power(owner, 0);
-    CHECK(port_is(pp));
-    CHECK(!port_is(open_power(b, 0)));
+    CHECK(test_port_is(pp));
+    CHECK(!test_port_is(open_power(b, 0)));
     port_close(&vm, pp);
-    CHECK(port_is(open_power(b, 0)));
+    CHECK(test_port_is(open_power(b, 0)));
     teardown();
 }
 
 TEST(power_period_clamp) {
     setup();
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     CHECK_EQ(fake_power_reads(), 1);
     step(9999);
@@ -169,7 +169,7 @@ TEST(power_period_clamp) {
     CHECK_EQ(d, 20000);
     port_close_all(&vm);
     fake_reset();
-    CHECK(port_is(open_power(owner, 200)));
+    CHECK(test_port_is(open_power(owner, 200)));
     step(100000);
     CHECK_EQ(fake_power_reads(), 1);
     step(100999);
@@ -182,7 +182,7 @@ TEST(power_period_clamp) {
 TEST(power_open_reports_now) {
     setup();
     fake_power_set(3700, 1, 1);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     CHECK(port_work_pending(&vm));
     step(0);
     collect(owner);
@@ -194,7 +194,7 @@ TEST(power_open_reports_now) {
 TEST(power_percent_clamp) {
     setup();
     fake_power_set(3200, 0, 0);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -210,7 +210,7 @@ TEST(power_percent_clamp) {
 TEST(power_smoothing) {
     setup();
     term pp = open_power(owner, 0);
-    CHECK(port_is(pp));
+    CHECK(test_port_is(pp));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -229,7 +229,7 @@ TEST(power_smoothing) {
 
 TEST(power_threshold) {
     setup();
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -247,7 +247,7 @@ TEST(power_threshold) {
 
 TEST(power_flap_no_storm) {
     setup();
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     uint64_t t = 0;
     for (int i = 0; i < 100; i++, t += 10000) {
         fake_power_set(i % 2 ? 3701 : 3699, 0, 0);
@@ -261,7 +261,7 @@ TEST(power_flap_no_storm) {
 TEST(power_state_change_immediate) {
     setup();
     fake_power_set(3700, 1, 1);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -284,7 +284,7 @@ TEST(power_state_change_immediate) {
 TEST(power_read_command) {
     setup();
     term pp = open_power(owner, 0);
-    CHECK(port_is(pp));
+    CHECK(test_port_is(pp));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -303,7 +303,7 @@ TEST(power_read_command) {
 TEST(power_unknown_states) {
     setup();
     fake_power_set(3700, -1, -1);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -316,7 +316,7 @@ TEST(power_unknown_states) {
 TEST(power_failed_read_is_no_sample) {
     setup();
     fake_power_fail(true);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 0);
@@ -339,7 +339,7 @@ TEST(power_failed_read_is_no_sample) {
 /* R2: power_pending true = sample now instead of waiting for the period. */
 TEST(power_pending_samples_early) {
     setup();
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -364,7 +364,7 @@ TEST(power_pending_samples_early) {
 
 TEST(power_full_mailbox_drops) {
     setup();
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
     uint32_t d0 = input_dropped(&vm);
     step(0);
@@ -385,7 +385,7 @@ TEST(power_close_reopen_state) {
     collect(owner);
     CHECK_EQ(ngot, 0);
     fake_power_set(3500, 0, 0);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(10001);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -396,7 +396,7 @@ TEST(power_close_reopen_state) {
 /* A failed read leaves the platform's flag set: no spin, retry at the period. */
 TEST(power_pending_stuck_with_failing_read_no_spin) {
     setup();
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -426,7 +426,7 @@ TEST(power_pending_stuck_with_failing_read_no_spin) {
 TEST(power_failed_read_without_flag_samples_on_flag) {
     setup();
     fake_power_fail(true);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     CHECK_EQ(fake_power_reads(), 1);
     CHECK(!port_work_pending(&vm));
@@ -445,7 +445,7 @@ TEST(power_failed_read_without_flag_samples_on_flag) {
 TEST(power_can_event_follows_live) {
     setup();
     fake_live_hook(true);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     CHECK_EQ(fake_power_enabled(), 1);
     Port p, k;
     memset(&p, 0, sizeof p);
@@ -479,10 +479,10 @@ TEST(power_install_without_slot_disables_port) {
     int n = 0;
     while (n < 8 && port_add_source(&vm, &filler, NULL)) n++;   /* the same source twice is only for the test */
     input_install(&vm, vm.input);
-    CHECK(!port_is(open_power(owner, 0)));
+    CHECK(!test_port_is(open_power(owner, 0)));
     for (int i = 0; i < n; i++) port_remove_source(&vm, &filler);
     input_install(&vm, vm.input);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     teardown();
 }
 
@@ -491,7 +491,7 @@ TEST(power_install_without_slot_disables_port) {
 TEST(power_event_driven_no_periodic_samples) {
     setup();
     fake_event_driven(true);
-    CHECK(port_is(open_power(owner, 0)));
+    CHECK(test_port_is(open_power(owner, 0)));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);
@@ -519,7 +519,7 @@ TEST(power_event_driven_read_before_first_value) {
     fake_event_driven(true);
     fake_power_fail(true);
     term pp = open_power(owner, 0);
-    CHECK(port_is(pp));
+    CHECK(test_port_is(pp));
     step(0);
     send_read(owner, pp);
     step(10);
@@ -594,7 +594,7 @@ TEST(power_event_driven_drop_recovers) {
     setup();
     fake_event_driven(true);
     term pp = open_power(owner, 0);
-    CHECK(port_is(pp));
+    CHECK(test_port_is(pp));
     step(0);
     collect(owner);
     CHECK_EQ(ngot, 1);

@@ -69,7 +69,7 @@ enum {
     CODE_OP_MEM_USED = 7    /* -> int */
 };
 
-#define MOD_NO_HOLDER 0xFFFFu   /* above every actor slot (PORT_SLOT_BASE) */
+#define MOD_NO_HOLDER 0xFFFFu   /* above every actor slot (vm->port_base) */
 
 /* One loaded module, allocated (va_alloc) when it loads, freed when it
  * unloads: 64 B on 32-bit (check32.c), 48 of them the Image, kept whole

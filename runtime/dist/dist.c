@@ -134,7 +134,7 @@ static const uint8_t *type_name(const Image *img, uint32_t r, uint32_t *len, uin
 /* ---- proxies and exports ---- */
 
 static Proxy *proxy_of(DistState *ds, term pid) {
-    if (!term_is_proxy(pid)) return NULL;
+    if (!term_is_pid(pid) || term_pid_slot(pid) < DIST_SLOT_BASE) return NULL;
     uint32_t i = term_pid_slot(pid) - DIST_SLOT_BASE;
     if (i >= DIST_PROXIES) return NULL;
     Proxy *x = &ds->proxies[i];
@@ -444,7 +444,7 @@ static term field(term c, term f) {
 
 static void enc_pid(Enc *e, term t) {
     uint16_t slot = term_pid_slot(t);
-    if (term_is_proxy(t)) {
+    if (slot >= DIST_SLOT_BASE && slot < e->vm->port_base) {
         Proxy *x = proxy_of(e->ds, t);
         if (!x) {                       /* a PID of a node gone: names nothing */
             put(e, DT_ZEROPID);

@@ -1033,8 +1033,8 @@ void tcp_poll(Vm *vm) {
     uint32_t now = now32(ns);
     if (ns->tcp_held && due(ns->held_at, now)) {
         ns->tcp_held = 0;
-        for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
-            Port *p = &vm->ports[i];
+        for (uint32_t i = 0; i < vm->port_n; i++) {
+            Port *p = port_at(vm, i);
             bool ours = p->drv == &net_tcp_driver || (ns->upper && p->drv == ns->upper->drv);
             if (ours && held(p) && !flush(vm, p)) retry_later(ns);
         }

@@ -182,7 +182,7 @@ static void collect(Actor *a) {
     }
 }
 
-static Port *port_of(term pid) { return &vm.ports[term_pid_slot(pid) - PORT_SLOT_BASE]; }
+static Port *port_of(term pid) { return port_at(&vm, term_pid_slot(pid) - PORT_SLOT_BASE); }
 
 /* ---- mic ---- */
 
@@ -190,16 +190,16 @@ TEST(audio_open_without_hw_fails) {
     setup();
     fake_no_mic();
     fake_no_spk();
-    CHECK(!port_is(open_mic(owner, 16000, 100, 0)));
-    CHECK(!port_is(open_spk(owner, 16000, 60)));
+    CHECK(!test_port_is(open_mic(owner, 16000, 100, 0)));
+    CHECK(!test_port_is(open_spk(owner, 16000, 60)));
     teardown();
 }
 
 TEST(mic_config_rate_and_frame_size) {
     setup();
-    CHECK(!port_is(open_mic(owner, 0, 100, 0)));         /* Rate 8000 or 16000 only */
-    CHECK(!port_is(open_mic(owner, 44100, 100, 0)));
-    CHECK(!port_is(open_mic(owner, 12000, 100, 0)));
+    CHECK(!test_port_is(open_mic(owner, 0, 100, 0)));         /* Rate 8000 or 16000 only */
+    CHECK(!test_port_is(open_mic(owner, 44100, 100, 0)));
+    CHECK(!test_port_is(open_mic(owner, 12000, 100, 0)));
     CHECK_EQ(fake_mic_opens(), 0);
     static const struct { int rate, ms; uint32_t bytes; } c[] = {
         { 16000, 0, 3200 },      /* FrameMs 0: 100 */
@@ -213,7 +213,7 @@ TEST(mic_config_rate_and_frame_size) {
         uint32_t charged = actor_charged_words(owner);
         size_t used = va_used_bytes(&vm);
         term m = open_mic(owner, c[i].rate, c[i].ms, 0);
-        CHECK(port_is(m));
+        CHECK(test_port_is(m));
         CHECK_EQ(fake_mic_rate(), (uint32_t)c[i].rate);
         CHECK_EQ(actor_charged_words(owner), charged + c[i].bytes / 4u);   /* the frame buffer */
         CHECK(va_used_bytes(&vm) >= used + c[i].bytes);
@@ -226,7 +226,7 @@ TEST(mic_config_rate_and_frame_size) {
 
 TEST(mic_frame_size_is_the_chunk_size) {
     setup();
-    CHECK(port_is(open_mic(owner, 8000, 20, 0)));
+    CHECK(test_port_is(open_mic(owner, 8000, 20, 0)));
     step(20);
     step(40);
     collect(owner);
@@ -243,7 +243,7 @@ TEST(mic_gain_clamped_to_6db_steps) {
     static const int want[] = { 0, 0, 0, 6, 12, 18, 18, 24, 24, 24 };
     for (unsigned i = 0; i < sizeof in / sizeof in[0]; i++) {
         term m = open_mic(owner, 16000, 100, in[i]);
-        CHECK(port_is(m));
+        CHECK(test_port_is(m));
         CHECK_EQ(fake_mic_gain(), want[i]);
         port_close(&vm, m);
     }
@@ -252,22 +252,23 @@ TEST(mic_gain_clamped_to_6db_steps) {
 
 TEST(mic_open_failure_leaves_nothing) {
     setup();
+    port_close(&vm, open_mic(owner, 16000, 100, 0));     /* the port table's first chunk stays */
     fake_mic_open_fail(true);
     uint32_t charged = actor_charged_words(owner);
     size_t used = va_used_bytes(&vm);
-    CHECK(!port_is(open_mic(owner, 16000, 100, 0)));
+    CHECK(!test_port_is(open_mic(owner, 16000, 100, 0)));
     CHECK_EQ(actor_charged_words(owner), charged);
     CHECK(va_used_bytes(&vm) <= used + 64);
     fake_mic_open_fail(false);
-    CHECK(port_is(open_mic(owner, 16000, 100, 0)));     /* not left half open */
+    CHECK(test_port_is(open_mic(owner, 16000, 100, 0)));     /* not left half open */
     teardown();
 }
 
 TEST(mic_frames_in_order) {
     setup();
     term m = open_mic(owner, 16000, 100, 0);
-    CHECK(port_is(m));
-    CHECK(!port_is(open_mic(owner, 16000, 100, 0)));     /* one owner */
+    CHECK(test_port_is(m));
+    CHECK(!test_port_is(open_mic(owner, 16000, 100, 0)));     /* one owner */
     uint64_t d;
     CHECK(port_next_deadline(&vm, &d));
     CHECK_EQ(d, 50u);                                     /* polled every min(FrameMs, 50) ms */
@@ -302,7 +303,7 @@ static void stall_case(uint32_t read_max) {
     setup();
     fake_mic_buffer(9600);                               /* 300 ms at 16 kHz */
     fake_mic_read_max(read_max);
-    CHECK(port_is(open_mic(owner, 16000, 100, 0)));
+    CHECK(test_port_is(open_mic(owner, 16000, 100, 0)));
     for (uint64_t t = 50; t <= 200; t += 50) step(t);
     step(500);                                           /* 300 ms with no poll */
     collect(owner);
@@ -340,7 +341,7 @@ TEST(mic_stall_with_one_dma_buffer_per_read) { stall_case(960); }
 TEST(mic_lost_bytes_round_up_to_frames) {
     setup();
     fake_mic_buffer(9600);
-    CHECK(port_is(open_mic(owner, 16000, 100, 0)));
+    CHECK(test_port_is(open_mic(owner, 16000, 100, 0)));
     step(50);
     step(400);                                           /* 50 ms over: 1600 bytes lost */
     collect(owner);
@@ -360,7 +361,7 @@ static void mid_frame_gap_case(uint32_t read_max) {
     setup();
     fake_mic_buffer(9600);
     fake_mic_read_max(read_max);
-    CHECK(port_is(open_mic(owner, 16000, 100, 0)));
+    CHECK(test_port_is(open_mic(owner, 16000, 100, 0)));
     step(50);                                            /* 1600 bytes in the frame */
     step(380);                                           /* 30 ms over: 960 bytes lost */
     for (uint64_t t = 430; t <= 600; t += 50) step(t);
@@ -390,12 +391,12 @@ TEST(mic_defaults_fit_the_mcu_limit) {
     CHECK(a != NULL);
     a->state = A_WAITING;
     a->max_words = 4096;
-    CHECK(!port_is(open_mic(a, 16000, 500, 0)));         /* 4000 + 4010 words: never deliverable */
-    CHECK(!port_is(open_mic(a, 16000, 250, 0)));
+    CHECK(!test_port_is(open_mic(a, 16000, 500, 0)));         /* 4000 + 4010 words: never deliverable */
+    CHECK(!test_port_is(open_mic(a, 16000, 250, 0)));
     CHECK_EQ(fake_mic_opens(), 2);
     CHECK_EQ(fake_mic_closes(), 2);                      /* undone */
     term m = open_mic(a, 16000, 0, 0);
-    CHECK(port_is(m));
+    CHECK(test_port_is(m));
     step(50);
     step(100);
     collect(a);
@@ -425,7 +426,7 @@ TEST(mic_defaults_fit_the_mcu_limit) {
 /* A Chunk over the owner's quota is dropped and counted, never killing it. */
 TEST(mic_over_quota_counts_dropped) {
     setup();
-    CHECK(port_is(open_mic(owner, 16000, 100, 0)));
+    CHECK(test_port_is(open_mic(owner, 16000, 100, 0)));
     owner->state = A_RUNNABLE;                           /* no slack to reclaim */
     owner->max_words = (uint16_t)(actor_charged_words(owner) + 1u);   /* no room for a Chunk */
     step(50);
@@ -471,7 +472,7 @@ TEST(mic_close_with_partial_frame) {
     collect(owner);
     CHECK_EQ(ngot, 0);
     m = open_mic(owner, 16000, 100, 0);
-    CHECK(port_is(m));
+    CHECK(test_port_is(m));
     step(1050);
     step(1100);
     collect(owner);
@@ -487,7 +488,7 @@ TEST(mic_close_with_partial_frame) {
 
 TEST(mic_read_error_retried) {
     setup();
-    CHECK(port_is(open_mic(owner, 16000, 100, 0)));
+    CHECK(test_port_is(open_mic(owner, 16000, 100, 0)));
     fake_mic_fail(true);
     step(50);
     step(100);
@@ -528,9 +529,9 @@ TEST(mic_deadline_after_eof) {
 TEST(spk_refused_while_mic_open_mic_keeps_running) {
     setup();
     term m = open_mic(owner, 16000, 100, 0);
-    CHECK(port_is(m));
+    CHECK(test_port_is(m));
     step(50);
-    CHECK(!port_is(open_spk(owner, 16000, 60)));
+    CHECK(!test_port_is(open_spk(owner, 16000, 60)));
     CHECK_EQ(fake_spk_opens(), 0);                       /* the hardware is not touched */
     CHECK(!fake_spk_amp());
     CHECK(fake_mic_on());
@@ -543,15 +544,15 @@ TEST(spk_refused_while_mic_open_mic_keeps_running) {
     CHECK_EQ(got[1].first, 1600);
     CHECK(got[1].counts_up);
     Actor *b = actor_new(&vm, 256);                      /* nor for another actor */
-    CHECK(!port_is(open_spk(b, 16000, 60)));
+    CHECK(!test_port_is(open_spk(b, 16000, 60)));
     port_close(&vm, m);
     term s = open_spk(owner, 16000, 60);
-    CHECK(port_is(s));
-    CHECK(!port_is(open_mic(owner, 16000, 100, 0)));     /* and the other way round */
+    CHECK(test_port_is(s));
+    CHECK(!test_port_is(open_mic(owner, 16000, 100, 0)));     /* and the other way round */
     CHECK_EQ(fake_mic_opens(), 1);
     CHECK(fake_spk_amp());
     port_close(&vm, s);
-    CHECK(port_is(open_mic(owner, 16000, 100, 0)));
+    CHECK(test_port_is(open_mic(owner, 16000, 100, 0)));
     teardown();
 }
 
@@ -559,23 +560,23 @@ TEST(spk_refused_while_mic_open_mic_keeps_running) {
 
 TEST(spk_config) {
     setup();
-    CHECK(!port_is(open_spk(owner, 0, 60)));
-    CHECK(!port_is(open_spk(owner, 22050, 60)));
+    CHECK(!test_port_is(open_spk(owner, 0, 60)));
+    CHECK(!test_port_is(open_spk(owner, 22050, 60)));
     static const int in[] = { -3, 0, 60, 100, 150 };
     static const int want[] = { 0, 0, 60, 100, 100 };
     for (unsigned i = 0; i < sizeof in / sizeof in[0]; i++) {
         term s = open_spk(owner, 8000, in[i]);
-        CHECK(port_is(s));
+        CHECK(test_port_is(s));
         CHECK_EQ(fake_spk_rate(), 8000u);
         CHECK_EQ(fake_spk_volume(), want[i]);
-        CHECK(!port_is(open_spk(owner, 8000, 50)));      /* one at a time */
+        CHECK(!test_port_is(open_spk(owner, 8000, 50)));      /* one at a time */
         port_close(&vm, s);
         CHECK(!fake_spk_amp());
     }
     fake_spk_open_fail(true);
-    CHECK(!port_is(open_spk(owner, 16000, 60)));
+    CHECK(!test_port_is(open_spk(owner, 16000, 60)));
     fake_spk_open_fail(false);
-    CHECK(port_is(open_spk(owner, 16000, 60)));
+    CHECK(test_port_is(open_spk(owner, 16000, 60)));
     teardown();
 }
 
@@ -587,7 +588,7 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     fake_spk_accept(1000);                               /* per spk_write */
     fake_spk_size(2500);                                 /* the hardware buffer */
     term s = open_spk(owner, 16000, 60);
-    CHECK(port_is(s));
+    CHECK(test_port_is(s));
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));                 /* idle: no poll */
     CHECK(!input_speaker_driver.can_event(&vm, port_of(s)));
@@ -726,7 +727,7 @@ TEST(spk_queue_refusals_and_write_errors) {
     port_close(&vm, s);
     fake_no_spk_queued();                                /* optional: played once taken */
     s = open_spk(owner, 16000, 60);
-    CHECK(port_is(s));
+    CHECK(test_port_is(s));
     send_out(owner, s, 400, 0);
     step(70);
     collect(owner);

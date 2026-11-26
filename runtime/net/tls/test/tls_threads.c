@@ -403,7 +403,7 @@ static void *run(void *arg) {
     a->hp = 0;
     term d[4] = { term_from_int((int32_t)PEER_IP), term_from_int((int32_t)PEER_PORT),
                   term_from_int((int32_t)LIMIT_MS), str_at(vm, a, host_name) };
-    if (!port_is(port_open(vm, a, str_at(vm, a, "tls"), struct_at(vm, a, TYPE_NET_DIALTLS, d, 4)))) return NULL;
+    if (!test_port_is(port_open(vm, a, str_at(vm, a, "tls"), struct_at(vm, a, TYPE_NET_DIALTLS, d, 4)))) return NULL;
     uint64_t end = mono_ms() + LIMIT_MS + 5000u;
     while (!pe->result && mono_ms() < end) {
         drain_vm(pe);

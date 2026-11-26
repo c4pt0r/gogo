@@ -55,4 +55,11 @@ static inline uint32_t img_seal_main(uint32_t *w) {
     return n + 2u;
 }
 
+/* Port PIDs of a Vm with the default cap (GOGO_MAX_PORTS): the tests'
+ * own (vm_set_max_ports moves the slots). */
+#include "port.h"
+#include "config.h"
+#define PORT_SLOT_BASE (PORT_SLOT_TOP - GOGO_MAX_PORTS)
+static inline bool test_port_is(term pid) { return term_is_pid(pid) && term_pid_slot(pid) >= PORT_SLOT_BASE; }
+
 #endif

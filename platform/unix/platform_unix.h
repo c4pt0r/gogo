@@ -39,8 +39,9 @@ int64_t platform_unix_wall_start(void);
 
 /* Extra fds platform_wait polls besides the wake pipe and the tty (the
  * --host-net sockets, hostnet.c): fills up to max pollfds (events set) and
- * returns how many; NULL = none. Its readiness only ends the wait: the
- * owner's event source handles it. */
+ * returns how many; with p NULL, returns how many there are. NULL hook =
+ * none. Its readiness only ends the wait: the owner's event source handles
+ * it. */
 struct pollfd;
 extern int (*platform_unix_extra_fds)(struct pollfd *p, int max);
 

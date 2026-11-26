@@ -168,7 +168,8 @@ typedef struct gogo_config {
     uint64_t mem_limit;       /* bytes the whole VM may allocate, over every actor's own limit; 0 = none.
                                * Queued posts are outside it (host memory, at most
                                * GOGO_POST_MAX of them) until delivered. */
-    uint32_t max_actors;      /* live actors at once; 0 = the build's default (16384), at most 65520 */
+    uint32_t max_actors;      /* live actors at once; 0 = the build's default (16384), at most 65536 - max_ports
+                               * (65520 with 16 ports) */
     uint32_t reserved;        /* 0 */
     /* The requirement names the VM may serve (NULL-terminated; strings
      * and array must stay valid while the VM exists), or NULL: all it has.
@@ -198,6 +199,14 @@ typedef struct gogo_config {
      * fs_quota). Changes made by others (the host, another VM on the same
      * directory) are not seen. Negative: gogo_new fails. */
     GOGO_EXPERIMENTAL int64_t fs_quota;
+    /* Ports open at once (the table grows as they open); 0 = the library's
+     * default, 1024, or fewer when max_actors leaves less room: actor and
+     * port PIDs share 65536 slots, so max_actors + max_ports may be at most
+     * 65536. At most 2048 (gogo_new fails above). */
+    uint32_t max_ports;
+    /* Node links of distributed actors (a host port VM has none today:
+     * kept for a server node in an embedding host); 0 = the default. */
+    uint32_t max_links;
     /* Fields are appended here, never inserted. */
 } gogo_config;
 

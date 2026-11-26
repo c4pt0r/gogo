@@ -282,11 +282,11 @@ FAT_TEST_SRCS = runtime/vfs/fat/test/test_fat.c runtime/vm/test/test_main.c runt
 test-fat: $(BUILD)/test_fat
 	$(BUILD)/test_fat
 
-$(BUILD)/test_fat: $(FAT_TEST_SRCS) $(FATFS_DIR)/ff.c $(FATFS_DIR)/ffunicode.c $(wildcard runtime/vfs/fat/*.h) $(wildcard runtime/vfs/*.h)
+$(BUILD)/test_fat: $(FAT_TEST_SRCS) $(FATFS_DIR)/ff.c $(FATFS_DIR)/ffunicode.c $(wildcard runtime/vfs/fat/*.h) $(wildcard runtime/vfs/*.h) runtime/vm/test/test.h
 	@mkdir -p $(BUILD)/fatfs
 	$(CC) -std=gnu99 -O2 -g -w $(EXTRA_CFLAGS) -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -c $(FATFS_DIR)/ff.c -o $(BUILD)/fatfs/ff.o
 	$(CC) -std=gnu99 -O2 -g -w $(EXTRA_CFLAGS) -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -c $(FATFS_DIR)/ffunicode.c -o $(BUILD)/fatfs/ffunicode.o
-	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/fat -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -Iruntime/vfs -Iruntime/vm/test -o $@ $(FAT_TEST_SRCS) $(BUILD)/fatfs/ff.o $(BUILD)/fatfs/ffunicode.o
+	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/fat -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -Iruntime/vfs -Iruntime/vm/test -Iruntime/vm -o $@ $(FAT_TEST_SRCS) $(BUILD)/fatfs/ff.o $(BUILD)/fatfs/ffunicode.o
 
 # The LittleFS backend (runtime/vfs/lfs) over a RAM block device, with
 # the LittleFS that the firmware build fetches (joltwallet/littlefs, a
@@ -299,11 +299,11 @@ LFS_TEST_SRCS = runtime/vfs/lfs/test/test_lfs.c runtime/vm/test/test_main.c runt
 test-lfs: $(BUILD)/test_lfs
 	$(BUILD)/test_lfs
 
-$(BUILD)/test_lfs: $(LFS_TEST_SRCS) $(LFS_DIR)/lfs.c $(LFS_DIR)/lfs_util.c $(wildcard runtime/vfs/lfs/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/configsvc/*.h)
+$(BUILD)/test_lfs: $(LFS_TEST_SRCS) $(LFS_DIR)/lfs.c $(LFS_DIR)/lfs_util.c $(wildcard runtime/vfs/lfs/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/configsvc/*.h) runtime/vm/test/test.h
 	@mkdir -p $(BUILD)/lfs
 	$(CC) -std=c99 -O2 -g -w $(EXTRA_CFLAGS) -DLFS_NO_MALLOC -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR -Dmalloc=gogo_lfs_malloc -Dfree=gogo_lfs_free -I$(LFS_DIR) -c $(LFS_DIR)/lfs.c -o $(BUILD)/lfs/lfs.o
 	$(CC) -std=c99 -O2 -g -w $(EXTRA_CFLAGS) -I$(LFS_DIR) -c $(LFS_DIR)/lfs_util.c -o $(BUILD)/lfs/lfs_util.o
-	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/lfs -I$(LFS_DIR) -Iruntime/vfs -Iruntime/configsvc -Iruntime/vm/test -o $@ $(LFS_TEST_SRCS) $(BUILD)/lfs/lfs.o $(BUILD)/lfs/lfs_util.o
+	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/lfs -I$(LFS_DIR) -Iruntime/vfs -Iruntime/configsvc -Iruntime/vm/test -Iruntime/vm -o $@ $(LFS_TEST_SRCS) $(BUILD)/lfs/lfs.o $(BUILD)/lfs/lfs_util.o
 else
 test-lfs:
 	@echo "test-lfs: skipped (no LittleFS at $(LFS_DIR); a firmware build fetches it)"
@@ -507,14 +507,14 @@ test-console: $(BUILD)/test_console $(BUILD)/test_console_ascii
 	$(BUILD)/test_console
 	$(BUILD)/test_console_ascii
 
-$(BUILD)/test_console: runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS) $(wildcard runtime/console/*.h) runtime/console/font/gogo12.font
+$(BUILD)/test_console: runtime/console/test/test_console.c runtime/vm/test/test_main.c runtime/vm/test/test.h $(CONSOLE_SRCS) $(wildcard runtime/console/*.h) runtime/console/font/gogo12.font
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Iruntime/console -Iruntime/vm/test -o $@ runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS)
+	$(CC) $(CFLAGS) -Iruntime/console -Iruntime/vm/test -Iruntime/vm -o $@ runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS)
 
 # The same tests against the ASCII-only font (GOGO_FONT_CJK=n firmware).
-$(BUILD)/test_console_ascii: runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS) $(wildcard runtime/console/*.h) runtime/console/font/gogo12-ascii.font
+$(BUILD)/test_console_ascii: runtime/console/test/test_console.c runtime/vm/test/test_main.c runtime/vm/test/test.h $(CONSOLE_SRCS) $(wildcard runtime/console/*.h) runtime/console/font/gogo12-ascii.font
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -DFONT_ASCII -DFONT_PATH='"runtime/console/font/gogo12-ascii.font"' -Iruntime/console -Iruntime/vm/test -o $@ runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS)
+	$(CC) $(CFLAGS) -DFONT_ASCII -DFONT_PATH='"runtime/console/font/gogo12-ascii.font"' -Iruntime/console -Iruntime/vm/test -Iruntime/vm -o $@ runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS)
 
 # Render a text file through the console grid and font into a PPM:
 #   make console-ppm TEXT=runtime/console/font/sample.txt OUT=build/sample.ppm

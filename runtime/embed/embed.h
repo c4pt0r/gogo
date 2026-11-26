@@ -69,8 +69,9 @@ struct gogo_vm {
      * open succeeds; during its close, emit is refused. */
     Port *opening, *closing;
     /* Each open host port's Closed message, made at the open so
-     * gogo_port_close never fails to send it (by port index), or NULL. */
-    Msg *closed_msg[GOGO_MAX_PORTS];
+     * gogo_port_close never fails to send it (by port index), or NULL; the
+     * array (vm.port_max entries) is made at the first host port's open. */
+    Msg **closed_msg;
     Msg *held_head, *held_tail;
     /* Atomics (__atomic builtins): state, the shell's references (the
      * owner's plus one per gogo_poster) and posts in progress. */

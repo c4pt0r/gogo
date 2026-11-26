@@ -134,7 +134,7 @@ static void release(uint16_t raw) { fake_push(raw, false); }
 TEST(kbd_open_without_keyboard_fails) {
     setup();
     fake_no_keyboard();
-    CHECK(!port_is(open_kbd(owner, 0, 0)));
+    CHECK(!test_port_is(open_kbd(owner, 0, 0)));
     CHECK_EQ(fake_opens(), 0);
     teardown();
 }
@@ -144,18 +144,18 @@ TEST(kbd_second_owner_fails) {
     Actor *b = actor_new(&vm, 256);
     b->state = A_WAITING;
     kp = open_kbd(owner, 0, 0);
-    CHECK(port_is(kp));
-    CHECK(!port_is(open_kbd(b, 0, 0)));
+    CHECK(test_port_is(kp));
+    CHECK(!test_port_is(open_kbd(b, 0, 0)));
     CHECK_EQ(fake_opens(), 1);
     port_close(&vm, kp);
     CHECK_EQ(fake_closes(), 1);
-    CHECK(port_is(open_kbd(b, 0, 0)));          /* free again */
+    CHECK(test_port_is(open_kbd(b, 0, 0)));          /* free again */
     teardown();
 }
 
 TEST(kbd_plain_char) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     press(R_A); release(R_A);
     step(1);
     collect(owner);
@@ -167,7 +167,7 @@ TEST(kbd_plain_char) {
 
 TEST(kbd_shift_char) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     press(R_SHIFT); press(R_1); release(R_1); release(R_SHIFT);
     step(1);
     collect(owner);
@@ -181,7 +181,7 @@ TEST(kbd_shift_char) {
 
 TEST(kbd_ctrl_c) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     press(R_CTRL); press(R_C);
     step(1);
     collect(owner);
@@ -193,7 +193,7 @@ TEST(kbd_ctrl_c) {
 
 TEST(kbd_fn_layer) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     press(R_FN); press(R_SEMI); release(R_SEMI); press(R_A); press(R_1);
     step(1);
     collect(owner);
@@ -208,7 +208,7 @@ TEST(kbd_fn_layer) {
 
 TEST(kbd_release_keeps_press_code) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     press(R_FN); press(R_SEMI); release(R_FN); release(R_SEMI);
     step(1);
     collect(owner);
@@ -220,7 +220,7 @@ TEST(kbd_release_keeps_press_code) {
 
 TEST(kbd_nine_held_ninth_ignored) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     uint16_t ks[9] = { R_A, R_B, R_C, R_D, R_E, R_F, R_G, R_H, R_I };
     for (int i = 0; i < 9; i++) press(ks[i]);
     step(1);
@@ -237,7 +237,7 @@ TEST(kbd_nine_held_ninth_ignored) {
 
 TEST(kbd_repeat) {
     setup();
-    CHECK(port_is(open_kbd(owner, 400, 50)));
+    CHECK(test_port_is(open_kbd(owner, 400, 50)));
     press(R_A);
     int times[8], n = 0;
     for (uint64_t t = 0; t <= 520; t += 10) {
@@ -267,7 +267,7 @@ TEST(kbd_repeat) {
 
 TEST(kbd_repeat_last_key_only_and_no_catch_up) {
     setup();
-    CHECK(port_is(open_kbd(owner, 100, 0)));        /* period <= 0: 50 */
+    CHECK(test_port_is(open_kbd(owner, 100, 0)));        /* period <= 0: 50 */
     press(R_A); press(R_SHIFT); press(R_B);
     step(0);
     collect(owner);
@@ -296,7 +296,7 @@ TEST(kbd_repeat_last_key_only_and_no_catch_up) {
 
 TEST(kbd_repeat_uses_current_mods) {
     setup();
-    CHECK(port_is(open_kbd(owner, 100, 50)));
+    CHECK(test_port_is(open_kbd(owner, 100, 50)));
     press(R_SHIFT); press(R_B);
     step(0);
     collect(owner);
@@ -314,7 +314,7 @@ TEST(kbd_repeat_uses_current_mods) {
 
 TEST(kbd_no_repeat_with_zero_delay) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 50)));
+    CHECK(test_port_is(open_kbd(owner, 0, 50)));
     press(R_A);
     step(0);
     step(10000);
@@ -328,7 +328,7 @@ TEST(kbd_no_repeat_with_zero_delay) {
 TEST(kbd_close_stops_repeat_and_clears) {
     setup();
     kp = open_kbd(owner, 100, 50);
-    CHECK(port_is(kp));
+    CHECK(test_port_is(kp));
     press(R_SHIFT); press(R_A);
     step(0);
     step(100);
@@ -340,7 +340,7 @@ TEST(kbd_close_stops_repeat_and_clears) {
     CHECK_EQ(ngot, 0);
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));
-    CHECK(port_is(open_kbd(owner, 100, 50)));       /* reopen: queue flushed, state clear */
+    CHECK(test_port_is(open_kbd(owner, 100, 50)));       /* reopen: queue flushed, state clear */
     step(400);
     collect(owner);
     CHECK_EQ(ngot, 0);
@@ -354,7 +354,7 @@ TEST(kbd_close_stops_repeat_and_clears) {
 
 TEST(kbd_full_mailbox_drops) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner) + 20u);
     uint32_t d0 = input_dropped(&vm);
     int sent = 0;
@@ -382,7 +382,7 @@ TEST(kbd_full_mailbox_drops) {
 
 TEST(kbd_read_error_ends_drain) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     uint32_t e0 = input_read_errors(&vm);
     fake_fail_next_read();
     press(R_A);
@@ -399,7 +399,7 @@ TEST(kbd_read_error_ends_drain) {
 /* kbd_pending is a pure read: asking before the drain must not lose events. */
 TEST(kbd_pending_is_pure_read) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     press(R_A); press(R_B);
     CHECK(port_work_pending(&vm));
     CHECK(port_work_pending(&vm));
@@ -412,7 +412,7 @@ TEST(kbd_pending_is_pure_read) {
 
 TEST(kbd_error_mid_drain_recovers) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     uint32_t e0 = input_read_errors(&vm);
     press(R_A); press(R_B); press(R_C);
     fake_fail_read_after(1);                         /* first read ok, second fails */
@@ -432,7 +432,7 @@ TEST(kbd_error_mid_drain_recovers) {
 /* M3: a persistent read failure backs off instead of spinning. */
 TEST(kbd_persistent_error_backs_off) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     press(R_A);
     fake_fail_all_reads(true);
     step(1);                                         /* 1st failure: retry at once */
@@ -485,7 +485,7 @@ static int sched_passes(uint64_t t0, uint64_t t1, int max) {
  * keys come through. */
 TEST(kbd_stuck_int_backs_off) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     step(0);                                         /* the open's look: empty */
     fake_kbd_stuck(true);
     int passes = sched_passes(1, 2001, 1000);
@@ -516,7 +516,7 @@ TEST(kbd_repeat_across_32bit_wrap) {
     setup();
     uint64_t t0 = 0xFFFFFF00ull;
     now = t0;
-    CHECK(port_is(open_kbd(owner, 400, 50)));
+    CHECK(test_port_is(open_kbd(owner, 400, 50)));
     press(R_A);
     step(t0);
     collect(owner);
@@ -549,16 +549,16 @@ TEST(kbd_install_without_slot_disables_port) {
     int n = 0;
     while (n < 8 && port_add_source(&vm, &k_filler, NULL)) n++;
     input_install(&vm, vm.input);
-    CHECK(!port_is(open_kbd(owner, 0, 0)));
+    CHECK(!test_port_is(open_kbd(owner, 0, 0)));
     for (int i = 0; i < n; i++) port_remove_source(&vm, &k_filler);
     input_install(&vm, vm.input);
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     teardown();
 }
 
 TEST(kbd_owner_exit_closes) {
     setup();
-    CHECK(port_is(open_kbd(owner, 0, 0)));
+    CHECK(test_port_is(open_kbd(owner, 0, 0)));
     port_close_owned(&vm, owner->id);
     CHECK_EQ(fake_closes(), 1);
     press(R_A);

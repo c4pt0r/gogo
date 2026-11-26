@@ -23,6 +23,9 @@
 
 /* Port table size and event queue capacity (used by the port layer). */
 #ifndef GOGO_MAX_PORTS
+/* The default most ports open at once per Vm (a Vm may set its own,
+ * vm_set_max_ports, at most PORT_MAX_CEILING): 16 on a board; host builds
+ * pass a larger one (the Makefile: 1024). The table grows as ports open. */
 #define GOGO_MAX_PORTS 16u
 #endif
 /* Extra event sources (net, input, the screen port's Done retry) the port layer folds in. */

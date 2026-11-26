@@ -117,7 +117,7 @@ typedef struct Vm {
     void *reserve;            /* emergency reserve (signals.h), NULL while used up */
     bool reserve_wanted;      /* between vm_reserve_init and _release */
     bool wall_known;          /* wall clock set (walltime.c) */
-    uint8_t ports_pending;    /* ports holding a trailing debounce value */
+    uint16_t ports_pending;   /* ports holding a trailing debounce value */
     uint8_t run_state;        /* vm_start / vm_step / vm_stop: VM_ST_* (interp.h) */
     int64_t wall_offset;      /* unix ms - host->now_ms at the last set (no RTC) */
     /* Event ring indices (evq.h): head producer-only (ISR), tail consumer-only. */
@@ -131,9 +131,20 @@ typedef struct Vm {
     struct NetState *net;     /* the net stack (net_install, runtime/net/); NULL = none */
     const VmDist *dist;       /* distribution hooks (runtime/dist/); NULL = none */
     VaHeap va;                /* allocator (alloc.h): scalars, then its free lists */
-    Port ports[GOGO_MAX_PORTS];   /* port table (port.h) */
+    /* The port table (port.h), in chunks of PORT_CHUNK that never move
+     * (drivers keep Port pointers): port_n ports exist (none until the
+     * first open), at most port_max; index i is slot port_base + i. */
+    Port **port_chunk;
+    uint16_t port_n, port_max, port_base;
+    uint16_t max_links;       /* node links of distribution (runtime/dist); 0 = its default */
     PortEvent evq_slots[GOGO_EVQ_CAP];   /* event ring storage (evq.h), last: large */
 } Vm;
+
+/* Port i (i < vm->port_n) and the index of port p. */
+static inline Port *port_at(const Vm *vm, uint32_t i) {
+    return &vm->port_chunk[i / PORT_CHUNK][i % PORT_CHUNK];
+}
+static inline uint32_t port_index(const Vm *vm, const Port *p) { return term_pid_slot(p->id) - vm->port_base; }
 
 /* Clears vm and ties it to its host (host_ctx goes to every hook) and
  * board (NULL = no board hardware). Then allocates the PID table. Returns 0, or

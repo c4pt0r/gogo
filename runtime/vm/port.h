@@ -54,7 +54,14 @@
 struct Vm;
 struct Actor;
 
-#define PORT_SLOT_BASE 0xFFF0u
+/* Port PIDs use the top slots: index i of a Vm whose cap is max_ports is
+ * slot 0x10000 - max_ports + i (vm->port_base + i; with 16 ports,
+ * 0xFFF0..0xFFFF as always). The cap may be at most PORT_MAX_CEILING, so
+ * port slots never reach below 0xF800 and the remote PIDs of distribution
+ * keep 0xF000 up to vm->port_base (term.h). */
+#define PORT_SLOT_TOP     0x10000u
+#define PORT_MAX_CEILING  2048u
+#define PORT_CHUNK        16u        /* the table grows by this many ports */
 
 /* Most int fields the VM decodes from a cfg or command struct. */
 #define PORT_MAX_FIELDS 8u
@@ -136,7 +143,11 @@ term port_open(struct Vm *vm, struct Actor *owner, term name, term cfg);   /* po
  * (gogo/fs's Open) until the language has `error`. */
 term port_open_with(struct Vm *vm, struct Actor *owner, const PortDriver *drv,
                     const int32_t *f, uint32_t n);
-bool port_is(term pid);
+bool port_is(const struct Vm *vm, term pid);
+/* Sets vm's most ports open at once (0: GOGO_MAX_PORTS): before any port
+ * opens. -1 if n is above PORT_MAX_CEILING, a port was opened already, or
+ * the actor table reaches into the slots the ports would take. */
+int vm_set_max_ports(struct Vm *vm, uint32_t n);
 /* Hands the struct msg (read in place on `from`'s heap: no copy, no
  * mailbox, no quota) to the port's driver: raw to command_term if the
  * driver has one, else decoded; a message that is not a struct of at most
