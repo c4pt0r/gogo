@@ -70,11 +70,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: float-corpus lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: float-corpus lint gogo-cmd test-examples test-book lib test-libgogo test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize floatlibsize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gobind example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize floatlibsize
 
 vm: $(BUILD)/gogovm
 
@@ -417,6 +417,19 @@ test-libgogo: $(BUILD)/libgogo_clash $(BUILD)/libgogo-debug.a gogo-cmd
 	$(BUILD)/gogo build examples/many_idle -o $(BUILD)/libgogo_clash.ggb
 	$(BUILD)/libgogo_clash $(BUILD)/libgogo_clash.ggb > $(BUILD)/libgogo_clash.out
 	cmp $(BUILD)/libgogo_clash.out examples/many_idle/expected.out
+
+# gogotools/embed, the Go binding over libgogo.a (build tag libgogo):
+# vet, its tests, and the tests again under the race detector. cgo links
+# $(BUILD)/libgogo.a (put ahead of the caller's CGO_LDFLAGS); go does not
+# hash a C archive, so the archive's checksum goes into a link flag
+# (GOBIND_FLAGS) to make go relink what it built against an older one.
+GOBIND       = CGO_LDFLAGS="-L$(abspath $(BUILD)) $$CGO_LDFLAGS" go
+GOBIND_FLAGS = -tags libgogo -ldflags="-X=gogotools/embed.libgogoSum=$$(cksum < $(BUILD)/libgogo.a | tr -d ' ')"
+
+test-gobind: $(BUILD)/libgogo.a
+	$(GOBIND) vet -tags libgogo ./embed/...
+	$(GOBIND) test $(GOBIND_FLAGS) -count=1 -timeout 120s ./embed/
+	$(GOBIND) test $(GOBIND_FLAGS) -count=1 -timeout 120s -race ./embed/
 
 # examples/embed-c: host programs on libgogo.a (examples/embed-c/test.sh
 # runs them on example images and compares their output).
