@@ -265,18 +265,45 @@ func Move(f Frame, x, y int) {
 	f.buf.WriteByte(byte(ay))
 }
 
+// clean returns s with every byte that does not start a well-formed UTF-8
+// character replaced by '?' (s itself when there is none).
+func clean(s string) string {
+	bad := false
+	for i := 0; i < len(s) && !bad; {
+		cp, n := decode(s[i:])
+		bad = n == 1 && cp == 0xFFFD
+		i += n
+	}
+	if !bad {
+		return s
+	}
+	out := ""
+	for i := 0; i < len(s); {
+		cp, n := decode(s[i:])
+		if n == 1 && cp == 0xFFFD {
+			out = out + "?"
+		} else {
+			out = out + s[i:i+n]
+		}
+		i += n
+	}
+	return out
+}
+
 // Print draws s (UTF-8) at the cursor in the current colours and
-// attributes; the cursor advances, and text does not wrap. Planned:
+// attributes; the cursor advances, and text does not wrap. A byte that is
+// not part of a well-formed UTF-8 character is drawn as '?'. Planned:
 // f.Print(s).
 func Print(f Frame, s string) {
 	if len(s) == 0 || !clip(f) {
 		return
 	}
+	s = clean(s)
 	for len(s) > 0 {
 		n := len(s)
 		if n > 255 {
 			n = 255
-			for n > 0 && s[n]&0xC0 == 0x80 { // cut between characters
+			for s[n]&0xC0 == 0x80 { // cut between characters (s is well-formed: at most 3 back)
 				n--
 			}
 		}
