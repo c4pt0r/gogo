@@ -16,7 +16,7 @@
 // size (gogo/sound does) play it fine.
 //
 // Writer is a value: every call returns the new state, as the subset has
-// no methods or pointers.
+// no pointers.
 package wav
 
 import (

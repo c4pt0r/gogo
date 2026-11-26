@@ -1,5 +1,5 @@
-// Structs are values. There are no methods and no field assignment: write
-// functions that take a struct and return a new one.
+// Structs are values. There is no field assignment: write functions that
+// take a struct and return a new one.
 package main
 
 type Point struct{ X, Y int }
@@ -9,7 +9,7 @@ type Rect struct {
 	Name     string
 }
 
-// move is what would be a method in Go: it returns a moved copy.
+// move returns a moved copy.
 func move(p Point, dx, dy int) Point {
 	return Point{p.X + dx, p.Y + dy}
 }

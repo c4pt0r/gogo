@@ -192,6 +192,19 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   the `...T` arguments into a new slice, the nil slice when there are
   none, or passes the slice of `f(s...)` as it is); func values called
   through `CALLV`.
+- Methods with value receivers on named struct types and named basic
+  types (`type Celsius int`), in any package of the image; calls
+  `x.M(args)`, method values `f := x.M` and method expressions `T.M`.
+  Dispatch is static: a method is a function whose parameter 0 is the
+  receiver, named `Type.Method` in the image (`app/geom.Point.Add` for a
+  user package, `strings.T.M` for a library), so `gogo dis`, crash reports
+  and `actor.Reason.Func` show it. `x.M(args)` passes `x` in the register
+  right below the arguments; `x.M` is a closure that captured a copy of
+  `x` (`MKCLOSURE`); `T.M` is the function itself. Structs are immutable
+  values, so a method works on its own copy of the receiver, as in Go. No
+  opcode of their own. Pointer receivers and interface types are rejected
+  ("pointer receivers are not supported yet", "interface types are not
+  supported yet").
 - `println` of any value of the subset except `Bytes` and `Buffer`;
   slices print their elements, `[1 2 3]` (Go's `println` prints
   `[len/cap]address`). Nesting deeper than 16 prints as `{...}` /
@@ -204,7 +217,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   package's name is its directory's name (§5.1, the loader).
 
 **Not supported yet (planned for the "language completeness"
-milestone):** maps, methods, pointers, arrays, integer types other than
+milestone):** maps, pointers (and pointer receivers), arrays, integer types other than
 `int`, `int64` and `byte` (`uint32` included), package-level variables,
 a `switch` on an `any` or a struct value, type assertions, `panic`, the
 `error` interface, assignment to struct fields and interfaces other than
@@ -1840,7 +1853,7 @@ types and named requirements (§5.6); one stream protocol for every byte
 port with `port.Closed` and `From`; embed mode phase 1 (`libgogo`,
 §5.11); user packages with a `GOGOPATH` search and `#!` scripts; the
 first language additions (expression `switch`, labels, `range` over int,
-variadic functions).
+variadic functions, methods with value receivers).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
@@ -1850,7 +1863,7 @@ variadic functions).
 2. **Distributed actors:** remote PIDs and a `gogo/node` library; boards
    connect to a server node that also relays board-to-board messages,
    with direct LAN links as a later step.
-3. **Language completeness:** methods, field assignment, interfaces and
+3. **Language completeness:** pointer receivers, field assignment, interfaces and
    `error`, `panic`, pointers, maps, read-only package variables, `fmt`,
    sized integers, `float32`/`float64`, arrays, embedded fields, static
    `defer`; `sys.Args()` for scripts.
