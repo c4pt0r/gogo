@@ -46,11 +46,22 @@ func TestMinorBaselineCatches(t *testing.T) {
 	saved := reservedTypes
 	restore := saveMinors()
 	defer func() { reservedTypes = saved; restore() }()
-	reservedTypes = append([]struct {
-		pkg    string
-		name   string
-		fields []string
-	}(nil), saved...)
+	// Every negative check starts from a clean baseline (the real tables,
+	// screen.Config's minor included), so it fails because of its own
+	// change only.
+	clean := func(what string) {
+		t.Helper()
+		restore()
+		reservedTypes = append([]struct {
+			pkg    string
+			name   string
+			fields []string
+		}(nil), saved...)
+		if errs := minorBaselineErrors(); len(errs) != 0 {
+			t.Fatalf("before %s: the baseline already fails: %v", what, errs)
+		}
+	}
+	clean("a new reserved type")
 	reservedTypes = append(reservedTypes, struct {
 		pkg    string
 		name   string
@@ -63,32 +74,28 @@ func TestMinorBaselineCatches(t *testing.T) {
 	if errs := minorBaselineErrors(); imageMinor >= 1 && len(errs) != 0 || imageMinor < 1 && len(errs) == 0 {
 		t.Errorf("with typeMinor 1 and imageMinor %d: %v", imageMinor, errs)
 	}
-	clear(typeMinor)
+	clean("an appended field")
 	kbd := reservedTypes[TypeKbdConfig]
 	reservedTypes[TypeKbdConfig].fields = append(append([]string(nil), kbd.fields...), "Extra")
-	reservedTypes = reservedTypes[:len(saved)]
 	if len(minorBaselineErrors()) == 0 {
 		t.Error("a field appended without a minor passed")
 	}
+	clean("a removed field")
 	reservedTypes[TypeKbdConfig].fields = kbd.fields[:1]
 	if len(minorBaselineErrors()) == 0 {
 		t.Error("a removed field passed")
 	}
-	reservedTypes[TypeKbdConfig] = kbd
+	clean("a misspelt key")
 	typeMinor["kbd.Confg"] = 1
 	if len(minorBaselineErrors()) == 0 {
 		t.Error("a misspelt typeMinor key passed")
 	}
-	clear(typeMinor)
+	clean("a 15.0 opcode")
 	opMinor[OpAdd] = 1
 	if len(minorBaselineErrors()) == 0 {
 		t.Error("a minor for a 15.0 opcode passed")
 	}
-	clear(opMinor)
-	restore()
-	if errs := minorBaselineErrors(); len(errs) != 0 {
-		t.Errorf("restored: %v", errs)
-	}
+	clean("the end")
 }
 
 // saveMinors returns a func that puts the minor tables back as they are

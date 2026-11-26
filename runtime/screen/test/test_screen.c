@@ -408,6 +408,11 @@ static int t_open(struct Vm *vm, Port *p, uint16_t i, const int32_t *cfg, uint32
 static const PortDriver drv = SCREEN_PORT_DRIVER(t_open);
 static const PortDriver *const drivers[] = { &drv, NULL };
 
+static bool f_pending(const struct Vm *v, void *c) { (void)v; (void)c; return false; }
+static void f_drain(struct Vm *v, void *c, uint64_t now) { (void)v; (void)c; (void)now; }
+static bool f_live(const struct Vm *v, void *c) { (void)v; (void)c; return false; }
+static const PortSource filler = { f_pending, f_drain, f_live, NULL, NULL };
+
 static Vm vm;
 static Actor *owner;
 
@@ -526,6 +531,17 @@ TEST(screen_port_open_info) {
     CHECK_EQ(open_screen(0, 2), T_NIL);
     busy = 1;   /* the display is another Vm's */
     CHECK_EQ(open_screen(0, 0), T_NIL);
+    busy = 0;
+    /* no free event-source slot (for the Done retry): refused */
+    int filled = 0;
+    while (filled < 8 && port_add_source(&vm, &filler, NULL)) filled++;
+    int o = opens;
+    CHECK_EQ(open_screen(0, 0), T_NIL);
+    CHECK_EQ(opens, o);   /* refused before taking the display */
+    port_remove_source(&vm, &filler);
+    p = open_screen(0, 0);
+    CHECK(p != T_NIL);
+    port_close(&vm, p);
 }
 
 TEST(screen_port_out_done) {

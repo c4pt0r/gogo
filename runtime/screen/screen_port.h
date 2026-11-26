@@ -18,8 +18,8 @@
  *    does), in order, by the port's own event source, so every Out gets
  *    its Done eventually; owed Dones keep the VM running. With
  *    SCREEN_OWED_MAX owed, a further Out is not drawn and gets Done{-1}
- *    (counted, never lost). Without a free event-source slot the retry
- *    happens only at the next Out. Other commands are ignored.
+ *    (counted, never lost). The open is refused when no event-source slot
+ *    is free (GOGO_MAX_SOURCES). Other commands are ignored.
  *  - Close (or the owner's exit): the display is handed back (the text
  *    console shows again) and the memory freed.
  *

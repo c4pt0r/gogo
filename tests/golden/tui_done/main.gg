@@ -36,6 +36,14 @@ func main() {
 		}
 	}
 	println("screen's", mine, "others'", theirs)
-	tui.CloseKeys(keys)
+	// An Out whose Done was not read yet, then Close: the stale Screen
+	// takes no other port's Done afterwards.
+	tui.PrintAt(tui.NewFrame(s), 0, 0, "two")
+	tui.Flush(s)
 	tui.Close(s)
+	actor.Receive() // the screen's Done for "two"
+	actor.Send(actor.Self(), port.Done{Seq: 88})
+	_, _, ui := tui.Event(s, keys, actor.Receive())
+	println("after Close, Done taken:", ui)
+	tui.CloseKeys(keys)
 }

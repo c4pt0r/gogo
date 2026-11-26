@@ -420,7 +420,11 @@ never stalls the driver or other actors.
 each answered with `Done{Seq}` when it has been sent or played; at most
 two may be in flight and a third is answered at once with `Done{-1}`;
 input arrives as `Chunk{Seq, TimeMs, Dropped, Data}`. IR, the microphone
-and the speaker use it (chapters 15 and 16). The network ports still use
+and the speaker use it (chapters 15 and 16). The `"screen"` port (chapter
+19) takes `Out`s and answers with `Done`s too, by a different rule: it
+draws each `Out` at once, so none waits in flight; a `Done` its owner has
+no room for is owed (up to 8, retried until delivered), and an `Out`
+arriving with 8 owed is not drawn and gets `Done{-1}`. The network ports still use
 their own `net.Write` / `net.Written` / `net.Data` messages (chapter 10).
 
 **Ownership.** A port belongs to the actor that opened it until it is

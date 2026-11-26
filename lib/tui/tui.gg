@@ -141,8 +141,16 @@ func Open(cfg screen.Config) (Screen, bool) {
 	return Screen{buf: bytes.NewBuffer(0)}, false
 }
 
-// Close closes the screen; the console shows again. Planned: s.Close().
-func Close(s Screen) { port.Close(s.Port) }
+// Close closes the screen; the console shows again. The screen's count of
+// unanswered Outs is reset, so a stale copy of s never takes another
+// port's Dones in Event. Planned: s.Close().
+func Close(s Screen) {
+	port.Close(s.Port)
+	st := s.st
+	if len(st) > 6 {
+		st[6] = 0
+	}
+}
 
 // NewFrame starts drawing on the whole screen. The frame begins with the
 // cursor hidden (a frame shows it with Cursor or DrawEdit). Planned:

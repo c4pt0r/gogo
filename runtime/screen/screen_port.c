@@ -21,7 +21,6 @@ typedef struct ScreenPort {
     uint32_t refused;                 /* ... then this many Done{-1} */
     uint64_t retry_at;                /* vm_now of the next try while owed */
     uint8_t owed_n;
-    bool source;                      /* the retry source is registered */
     uint32_t bytes;                   /* this allocation, for va_free */
     uint32_t cells[];
 } ScreenPort;
@@ -85,13 +84,19 @@ int screen_port_open(struct Vm *vm, Port *p, const int32_t *cfg, uint32_t n, con
     s->hw = hw;
     s->bytes = bytes;
     screen_init(&s->g, s->cells, (uint8_t)cols, (uint8_t)rows);
+    /* Without the retry source an owed Done would wait for the next Out
+     * (a program waiting for it would hang): no slot, no screen. */
+    if (!port_add_source(vm, &retry_source, p)) {
+        va_free(vm, s, bytes);
+        return -1;
+    }
     if (hw->open && hw->open((uint8_t)cols, (uint8_t)rows) != 0) {
+        port_remove_source(vm, &retry_source);
         va_free(vm, s, bytes);
         return -1;
     }
     memcpy(p->state, &s, sizeof s);
     p->charge_words = (uint16_t)((bytes + 3u) / 4u);   /* <= 8 KWords: fits */
-    s->source = port_add_source(vm, &retry_source, p);
     hw->present(&s->g, screen_take_dirty(&s->g));
     uint8_t info[4] = { (uint8_t)cols, (uint8_t)rows, 16, (uint8_t)(hw->attrs & SCREEN_A_ALL) };
     StreamIn in = { 0, 0 };
@@ -156,7 +161,7 @@ void screen_port_command(struct Vm *vm, const struct Actor *from, Port *p, term 
 void screen_port_close(struct Vm *vm, Port *p) {
     ScreenPort *s = sp(p);
     if (!s) return;
-    if (s->source) port_remove_source(vm, &retry_source);
+    port_remove_source(vm, &retry_source);
     if (s->hw->close) s->hw->close();
     memset(p->state, 0, sizeof p->state);
     va_free(vm, s, s->bytes);
