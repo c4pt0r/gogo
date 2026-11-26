@@ -21,14 +21,16 @@
  * appends are ignored by an older library, and fields that an older
  * header lacks take their defaults (0, NULL). Fields are only ever
  * appended, and a field that may be ignored is one whose 0 means what
- * the library did before it existed.
+ * the library did before it existed. A size below the struct's v0.2 size
+ * (the first sized release), and a reserved word that is not 0, make
+ * the call fail with GOGO_EINVAL.
  *
  * Stability. Within a major version (during 0.x, a minor) functions keep
  * their signatures and meaning, and structs only grow at the end. What is
  * marked GOGO_EXPERIMENTAL is outside that promise and may change in any
- * minor release: host ports, the fs_root, fs_quota, grant and code-load
- * settings, gogo_get_stats, image inspection, and gogo_posix.h's
- * threads. GOGO_EXPERIMENTAL expands to nothing unless the host defines
+ * minor release: host ports, the fs_root, fs_quota and grant settings,
+ * the GOGO_CONFIG_CODE_LOAD flag, gogo_get_stats, image inspection, and
+ * gogo_posix.h's threads. GOGO_EXPERIMENTAL expands to nothing unless the host defines
  * it before including this header, for example as
  * __attribute__((deprecated("experimental"))), to have the compiler point
  * out every use.
@@ -157,7 +159,7 @@ typedef struct gogo_host {
  * memory cap, the default actor table, no storage, no hot loading. */
 typedef struct gogo_config {
     uint32_t size;            /* sizeof(gogo_config) as the host was compiled (GOGO_CONFIG_INIT) */
-    GOGO_EXPERIMENTAL uint32_t flags;   /* GOGO_CONFIG_* bits; an unknown bit makes gogo_new fail */
+    uint32_t flags;           /* GOGO_CONFIG_* bits; an unknown bit makes gogo_new fail */
     uint64_t mem_limit;       /* bytes the whole VM may allocate, over every actor's own limit; 0 = none.
                                * Queued posts are outside it (host memory, at most
                                * GOGO_POST_MAX of them) until delivered. */
@@ -197,7 +199,8 @@ typedef struct gogo_config {
 #define GOGO_CONFIG_INIT { .size = sizeof(gogo_config) }
 
 /* gogo_config.flags: code.Load may load modules. Without it every
- * code.Load returns NoMemory (bundled images only). */
+ * code.Load returns NoMemory (bundled images only). GOGO_EXPERIMENTAL
+ * (a flag, so only this comment carries the tag). */
 #define GOGO_CONFIG_CODE_LOAD 1u
 
 typedef struct gogo_vm gogo_vm;

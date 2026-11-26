@@ -210,7 +210,9 @@ the stack; the `ctx` must stay valid until the VM is gone. The structs
 the library fills in (`gogo_stats`, `gogo_image_info`) work the other way
 round: the caller sets `size`, and the library writes back how much of
 it it filled, so a host built against a newer header can tell a field
-this library lacks from one that is 0.
+this library lacks from one that is 0. A size smaller than the v0.2
+struct's (no host has an older one), or a reserved word that is not 0,
+is refused with `GOGO_EINVAL`, so both can be given a meaning later.
 
 | hook | |
 |---|---|
@@ -677,8 +679,8 @@ in any minor release:
 | stable | experimental |
 |---|---|
 | `gogo_new`, `gogo_load`, `gogo_start`, `gogo_step`, `gogo_next_deadline`, `gogo_run`, `gogo_free` | host ports: `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`, `gogo_poster_port_post`, `gogo_port_driver` |
-| the host table, `gogo_host_posix`, `gogo_new_posix` | the configuration's `flags` (code loading), `grant`, `fs_root` and `fs_quota` |
-| the configuration's `size`, `mem_limit`, `max_actors` | `gogo_get_stats` and its fields |
+| the host table, `gogo_host_posix`, `gogo_new_posix` | the flag `GOGO_CONFIG_CODE_LOAD`; the configuration's `grant`, `fs_root` and `fs_quota` |
+| the configuration's `size`, `flags`, `mem_limit`, `max_actors` | `gogo_get_stats` and its fields |
 | the error codes, `gogo_strerror`, `gogo_version`, `gogo_image_format` | `gogo_image_info_get`, `gogo_image_require` |
 | `gogo_post`, `gogo_close_posts` and the poster (`gogo_poster_new`, `_post`, `_close_posts`, `_free`) | `gogo_run_thread`, `gogo_join` |
 

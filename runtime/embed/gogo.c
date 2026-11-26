@@ -148,15 +148,20 @@ const char *gogo_strerror(int rc) {
 }
 
 /* *dst = the first size bytes of src (a struct of the host's), the rest
- * zero: a smaller struct gets the defaults, a larger one's extra fields
- * are ignored. False if size cannot hold even the size word and the one
- * after it. */
-static bool copy_sized(void *dst, size_t cap, const void *src, uint32_t size) {
+ * zero: a larger struct's extra fields are ignored, and a struct of a
+ * later size than the first one's would get the defaults for the fields
+ * it lacks. False below min, the struct's first (v0.2) size: a size that
+ * ends inside a field is never accepted. */
+bool embed_copy_sized(void *dst, size_t cap, const void *src, uint32_t size, size_t min) {
     memset(dst, 0, cap);
-    if (size < 2u * sizeof(uint32_t)) return false;
+    if (size < min) return false;
     memcpy(dst, src, size < cap ? size : cap);
     return true;
 }
+
+/* The first sizes, which never change: up to the last field of v0.2. */
+#define HOST_SIZE_V1 (offsetof(gogo_host, destroy) + sizeof(void (*)(void *)))
+#define CONFIG_SIZE_V1 (offsetof(gogo_config, fs_quota) + sizeof(int64_t))
 
 /* An output struct's size: what the caller allows of what the library
  * fills, at least the size word and the one after it; 0 if too small. */
@@ -230,10 +235,12 @@ int gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg, gogo_vm
     gogo_config c;
     if (!out) return GOGO_EINVAL;
     *out = NULL;
-    if (!h || !copy_sized(&uh, sizeof uh, h, h->size) || !host_ok(&uh)) return GOGO_EINVAL;
+    if (!h || !embed_copy_sized(&uh, sizeof uh, h, h->size, HOST_SIZE_V1) || uh.reserved || !host_ok(&uh))
+        return GOGO_EINVAL;
     if (!cfg) {
         memset(&c, 0, sizeof c);
-    } else if (!copy_sized(&c, sizeof c, cfg, cfg->size) || (c.flags & ~GOGO_CONFIG_CODE_LOAD) ||
+    } else if (!embed_copy_sized(&c, sizeof c, cfg, cfg->size, CONFIG_SIZE_V1) || c.reserved ||
+               (c.flags & ~GOGO_CONFIG_CODE_LOAD) ||
                c.max_actors > PORT_SLOT_BASE || c.fs_quota < 0) {
         return GOGO_EINVAL;
     }

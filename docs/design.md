@@ -1796,13 +1796,15 @@ only through two tables of function pointers that the caller hands it.
   their `GOGO_*_INIT`, and grow only at the end: the library reads the
   fields it knows, an older struct's missing fields take their defaults,
   and a newer one's extra fields are ignored, so a field may be appended
-  only if its 0 keeps the old behaviour; in the structs the library fills
+  only if its 0 keeps the old behaviour; a size below the v0.2 struct's
+  and a nonzero reserved word are refused (`GOGO_EINVAL`), so no size
+  ends inside a field and the reserved words stay free to use; in the structs the library fills
   (`gogo_stats`, `gogo_image_info`) it writes back in `size` how much it
   filled, and every field within that is written, 0 on an error; anything marked experimental is
   outside these guarantees (`GOGO_EXPERIMENTAL` on the declaration, a
   macro that is empty unless the host makes it a deprecation; the book's
   18.12 has the table: host ports, `grant`, `fs_root`, `fs_quota`, the
-  code-load flag, stats, image inspection, `gogo_run_thread`);
+  code-load flag (the `flags` field itself is stable), stats, image inspection, `gogo_run_thread`);
   `gogo.h` is C99 without threads and `gogo_posix.h` adds the POSIX host
   and `gogo_run_thread`; `libgogo.a` exports only `GOGO_API` symbols,
   the reviewed list in `runtime/include/libgogo.syms`

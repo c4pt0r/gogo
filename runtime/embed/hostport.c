@@ -14,6 +14,9 @@
 #include "opcodes.h"
 #include <string.h>
 
+/* gogo_port_driver's first size (v0.2), which never changes. */
+#define DRIVER_SIZE_V1 (offsetof(gogo_port_driver, close) + sizeof(void (*)(void)))
+
 /* A gogo_port (and an inbox node's port): index and generation, never 0. */
 #define PORT_ENC(i, g) (0x80000000u | (uint32_t)(i) << 16 | (uint32_t)(g))
 
@@ -133,7 +136,9 @@ static uint32_t board_count(const gogo_vm *g) {
 }
 
 int gogo_register_port(gogo_vm *g, const char *name, size_t nl, const gogo_port_driver *drv, void *ctx) {
-    if (!g || !name || !nl || memchr(name, 0, nl) || !drv || drv->size < 2u * sizeof(uint32_t)) return GOGO_EINVAL;
+    if (!g || !name || !nl || memchr(name, 0, nl) || !drv) return GOGO_EINVAL;
+    gogo_port_driver d;
+    if (!embed_copy_sized(&d, sizeof d, drv, drv->size, DRIVER_SIZE_V1) || d.reserved) return GOGO_EINVAL;
     if (g->stepping) return GOGO_EBUSY;
     if (g->loaded) return GOGO_ESTATE;    /* registered ports count as the image's requirements */
     if (nl > GOGO_PORT_NAME_MAX) return GOGO_E2BIG;
@@ -145,7 +150,7 @@ int gogo_register_port(gogo_vm *g, const char *name, size_t nl, const gogo_port_
     HostPort *hp = &g->host_ports[g->n_host_ports++];
     memset(hp, 0, sizeof *hp);
     memcpy(hp->name, z, nl + 1u);
-    memcpy(&hp->pub, drv, drv->size < sizeof hp->pub ? drv->size : sizeof hp->pub);   /* the rest stays NULL */
+    hp->pub = d;
     hp->ctx = ctx;
     hp->base.name = hp->name;
     hp->base.cfg_type = TYPE_HOST;

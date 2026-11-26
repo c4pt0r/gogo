@@ -793,13 +793,16 @@ typedef struct BigConfig { gogo_config c; uint64_t later[4]; } BigConfig;
 TEST(embed_sized_structs) {
     TCtx t; tctx_init(&t);
     gogo_vm *vm = NULL;
-    /* An older host: no hooks after now_ms (no wake, wait, ...). */
+    /* No size before the first (v0.2) one is taken: one that ends inside
+     * a field (half of wake) or before the last field is refused. */
     gogo_host h = thost;
-    h.size = (uint32_t)((const char *)&h.wake - (const char *)&h);
-    h.wait = t_wait;                           /* past its size: not seen */
-    CHECK_EQ(gogo_new(&h, &t, NULL, &vm), GOGO_OK);
-    CHECK_EQ(gogo_run(vm), GOGO_EINVAL);       /* no wait hook */
-    gogo_free(vm);
+    h.size = (uint32_t)((const char *)&h.wake - (const char *)&h) + 4u;
+    CHECK_EQ(gogo_new(&h, &t, NULL, &vm), GOGO_EINVAL);
+    h.size = (uint32_t)((const char *)&h.destroy - (const char *)&h);
+    CHECK_EQ(gogo_new(&h, &t, NULL, &vm), GOGO_EINVAL);
+    h = thost;
+    h.reserved = 1;                            /* reserved words must be 0 */
+    CHECK_EQ(gogo_new(&h, &t, NULL, &vm), GOGO_EINVAL);
     /* A newer one: its extra fields are not read. */
     BigHost bh;
     memset(&bh, 0xA5, sizeof bh);
@@ -816,14 +819,12 @@ TEST(embed_sized_structs) {
     vm = new_vm(&thost, &t, &bc.c);
     CHECK(vm != NULL);
     gogo_free(vm);
-    /* An older config: only up to max_actors. */
     gogo_config c = GOGO_CONFIG_INIT;
-    c.max_actors = 16;
-    c.fs_root = "/nonexistent-gogo-root";      /* past its size: not seen */
-    c.size = (uint32_t)((const char *)&c.reserved - (const char *)&c);
-    vm = new_vm(&thost, &t, &c);
-    CHECK(vm != NULL);
-    gogo_free(vm);
+    c.size = 12;                               /* inside mem_limit */
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
+    c = (gogo_config)GOGO_CONFIG_INIT;
+    c.reserved = 1;
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
     c = (gogo_config)GOGO_CONFIG_INIT;
     c.size = 0;                                /* not from GOGO_CONFIG_INIT */
     CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
@@ -1210,8 +1211,9 @@ TEST(embed_hostport_close_over_quota) {
     tctx_done(&t);
 }
 
-/* A driver and stats struct from an older header (smaller): what they
- * lack is NULL or left alone; without a size, refused. */
+/* A driver below the v0.2 size or with a reserved word set is refused;
+ * a newer (larger) one is taken, its NULL hooks skipped. A stats struct
+ * from an older header (smaller) is filled only as far as it goes. */
 TEST(embed_hostport_sized) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
@@ -1219,8 +1221,17 @@ TEST(embed_hostport_sized) {
     gogo_port_driver d = hdrv;
     d.size = 0;
     CHECK_EQ(gogo_register_port(vm, "hp", 2, &d, &h), GOGO_EINVAL);
-    d.size = (uint32_t)((const char *)&d.command - (const char *)&d);   /* open only */
-    CHECK_EQ(gogo_register_port(vm, "hp", 2, &d, &h), GOGO_OK);
+    d.size = (uint32_t)((const char *)&d.command - (const char *)&d);   /* before the v0.2 size */
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &d, &h), GOGO_EINVAL);
+    d.size = sizeof d;
+    d.reserved = 7;
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &d, &h), GOGO_EINVAL);
+    struct { gogo_port_driver d; void (*later)(void); } bd;   /* a newer driver: open only */
+    memset(&bd, 0, sizeof bd);
+    bd.d.size = sizeof bd;
+    bd.d.open = h_open;
+    bd.later = (void (*)(void))abort;         /* not this library's: never called */
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &bd.d, &h), GOGO_OK);
     Img im = image("hostport");
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
     free(im.w);

@@ -81,6 +81,10 @@ struct gogo_vm {
     bool stepping;               /* inside gogo_step (re-entry guard) */
 };
 
+/* *dst = the host's struct src of the given size: its first min(size,
+ * cap) bytes, the rest zero; false (dst zeroed) if size < min (gogo.c). */
+bool embed_copy_sized(void *dst, size_t cap, const void *src, uint32_t size, size_t min);
+
 /* True if the config's grant has name (or there is no grant: all). */
 bool embed_granted(const gogo_vm *g, const char *name);
 
