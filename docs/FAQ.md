@@ -161,6 +161,27 @@ you develop and test without a board; all the golden tests and book examples
 run this way. `build/gogovm_mcu` is the same VM with the boards' memory
 limits, to check that a program fits.
 
+### Is gogo (or gogovm) an RTOS?
+No. gogo is a virtual machine that runs **on top of** an operating system,
+not instead of one:
+
+- On the ESP32-S3 boards it runs on ESP-IDF's FreeRTOS: the whole VM is one
+  FreeRTOS task pinned to the second core, while Wi-Fi, the LCD renderer and
+  the configuration service are ordinary FreeRTOS tasks beside it.
+- `gogovm` is a normal macOS or Linux process; an embedded VM runs inside
+  whatever thread its host program gives it.
+
+Inside the VM, gogo has its own scheduler for actors. It is preemptive (each
+actor runs for a budget of reductions before the next one gets a turn), but
+it is not a real-time scheduler: actors have no priorities or deadlines,
+interpretation and garbage collection add jitter, and a TLS handshake can
+pause other actors for about 200 ms. Work with hard timing requirements
+belongs in C, under the RTOS: interrupt handlers, DMA and drivers (audio
+I2S, IR timing, the LCD) do the time-critical part and hand results to
+actors as messages. In short: the RTOS gives deterministic tasks and
+interrupts; gogo adds isolated, supervised, hot-loadable application logic
+above them.
+
 ### Does the compiler use Go's parser?
 Yes. The front end is Go's standard library: `go/parser` for parsing,
 `go/ast` and `go/token`, `go/types` for type checking (configured for a
