@@ -1061,7 +1061,11 @@ handler ended, reason 0
 
 The three answers went out in two `Out`s (the second carried two lines);
 the unfinished `bye` was never answered, because no newline ended it. On a
-board, `main` starts the listener under a supervisor instead.
+board, `main` starts the listener under a supervisor instead. The real
+listener and port path is tested too: `tests/net` runs this example on the
+simulated network (`TestBookLineServer`), with two clients at once, lines
+split over segments, the close, and a line over `MaxLine` that resets only
+its own connection.
 
 Limits that shape a server:
 
