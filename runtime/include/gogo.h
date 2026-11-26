@@ -445,10 +445,11 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int3
  * are delivered in the order it made them. */
 typedef struct gogo_poster gogo_poster;
 
-/* A new poster for vm, or NULL if vm is NULL. Where gogo_free may be
- * called: the owner thread, or, while gogo_run_thread runs the VM, the
- * thread that started it. Hand it to another thread before that thread
- * posts; free it there (or anywhere) when done. */
+/* A new poster for vm (a small block from the host's alloc), or NULL if
+ * vm is NULL or memory runs out. Where gogo_free may be called: the
+ * owner thread, or, while gogo_run_thread runs the VM, the thread that
+ * started it. Hand it to another thread before that thread posts; free
+ * it there (or anywhere) when done, once. */
 GOGO_API gogo_poster *gogo_poster_new(gogo_vm *vm);
 
 /* Any thread: gogo_post, as the owner would. */
@@ -465,8 +466,12 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_poster_port_post(gogo_poster *p, gogo_port p
 /* Any thread: gogo_close_posts. */
 GOGO_API void gogo_poster_close_posts(gogo_poster *p);
 
-/* Any thread: drops the poster's reference; p is invalid after. NULL is
- * ignored. */
+/* Any thread: drops the poster's reference and gives its block back; p
+ * is invalid after. NULL is ignored. Freeing a poster twice is a bug the
+ * library catches while the block has not been reused (an assertion in a
+ * GOGO_DEBUG build; otherwise the second free does nothing), never by
+ * dropping the VM's reference twice. A freed poster's calls return
+ * GOGO_EINVAL on the same terms. */
 GOGO_API void gogo_poster_free(gogo_poster *p);
 
 /* Counters (GOGO_EXPERIMENTAL: the fields may change). On the owning

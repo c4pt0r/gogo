@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
 
     pthread_t t;
     gogo_poster *p = gogo_poster_new(vm);   /* made here, used and freed there */
-    int started = pthread_create(&t, NULL, poster, p) == 0;
+    int started = p && pthread_create(&t, NULL, poster, p) == 0;
     if (!started) {
         gogo_poster_free(p);
         gogo_close_posts(vm);

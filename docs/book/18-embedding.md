@@ -381,7 +381,7 @@ runs the VM with `gogo_run`:
 
 ```c
     gogo_poster *p = gogo_poster_new(vm);   /* made here, used and freed there */
-    int started = pthread_create(&t, NULL, poster, p) == 0;
+    int started = p && pthread_create(&t, NULL, poster, p) == 0;
 ```
 
 ```c
@@ -420,6 +420,10 @@ The rules:
   `gogo_run` waits. `gogo_close_posts` ends that: later posts return
   `GOGO_ECLOSED`, and the VM is done once its actors are, as on a board.
   Without the close, `post.c`'s `gogo_run` would never return.
+- **A poster is a small object of its own.** `gogo_poster_new` can fail
+  (`NULL`: out of memory), and each poster is freed exactly once; a
+  second free is caught (an assertion in a debug build) rather than
+  dropping the VM's reference twice.
 - **A poster outlives the free.** It holds a reference to the VM, so a
   thread may post while (or after) the owner calls `gogo_free`: its posts
   then return `GOGO_ECLOSED` instead of touching freed memory. The VM's

@@ -446,7 +446,9 @@ void gogo_close_posts(gogo_vm *g) {
 /* Drops a reference (the owner's at gogo_free, a poster's): the last one
  * gives the gogo_vm back and runs the host's destroy. */
 static void unref(gogo_vm *g) {
-    if (__atomic_fetch_sub(&g->refs, 1, __ATOMIC_ACQ_REL) != 1) return;
+    int old = __atomic_fetch_sub(&g->refs, 1, __ATOMIC_ACQ_REL);
+    GOGO_ASSERT(old > 0);
+    if (old != 1) return;
     void (*hfree)(void *, void *, size_t) = g->uh.free;
     void (*destroy)(void *) = g->uh.destroy;
     void *ctx = g->uctx;
@@ -454,14 +456,36 @@ static void unref(gogo_vm *g) {
     if (destroy) destroy(ctx);
 }
 
-/* ---- posters: a gogo_poster is its gogo_vm, holding a reference ---- */
+/* ---- posters: a small block of host memory holding a VM reference ---- */
 
-static gogo_vm *vm_of(gogo_poster *p) { return (gogo_vm *)(void *)p; }
+/* A poster's state word: live until gogo_poster_free, which marks it
+ * dead before it gives the block back, so a second free of it is caught
+ * (an assertion in debug builds, ignored otherwise) while the memory has
+ * not been reused, instead of dropping the VM's reference twice. */
+#define POSTER_LIVE 0x504F5354u
+#define POSTER_DEAD 0x44454144u
+
+struct gogo_poster {
+    uint32_t state;              /* atomic: POSTER_LIVE, then POSTER_DEAD */
+    gogo_vm *vm;
+};
+
+/* The poster's VM, or NULL for no poster or a freed one. */
+static gogo_vm *vm_of(gogo_poster *p) {
+    if (!p) return NULL;
+    bool live = __atomic_load_n(&p->state, __ATOMIC_ACQUIRE) == POSTER_LIVE;
+    GOGO_ASSERT(live);
+    return live ? p->vm : NULL;
+}
 
 gogo_poster *gogo_poster_new(gogo_vm *g) {
     if (!g) return NULL;
+    gogo_poster *p = g->uh.alloc(g->uctx, sizeof *p);
+    if (!p) return NULL;
+    p->vm = g;
+    __atomic_store_n(&p->state, POSTER_LIVE, __ATOMIC_RELEASE);
     __atomic_fetch_add(&g->refs, 1, __ATOMIC_RELAXED);   /* the caller holds the owner's */
-    return (gogo_poster *)(void *)g;
+    return p;
 }
 
 int gogo_poster_post(gogo_poster *p, const char *name, size_t name_len, int32_t kind, const void *data, size_t len) {
@@ -478,7 +502,14 @@ int gogo_poster_port_post(gogo_poster *p, gogo_port port, int32_t kind, const vo
 void gogo_poster_close_posts(gogo_poster *p) { gogo_close_posts(vm_of(p)); }
 
 void gogo_poster_free(gogo_poster *p) {
-    if (p) unref(vm_of(p));
+    if (!p) return;
+    uint32_t live = POSTER_LIVE;
+    bool first = __atomic_compare_exchange_n(&p->state, &live, POSTER_DEAD, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    GOGO_ASSERT(first);          /* freed twice */
+    if (!first) return;
+    gogo_vm *g = p->vm;
+    g->uh.free(g->uctx, p, sizeof *p);   /* the VM's reference keeps uh and uctx */
+    unref(g);
 }
 
 int gogo_get_stats(gogo_vm *g, gogo_stats *out) {

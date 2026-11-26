@@ -39,6 +39,9 @@ typedef struct TCtx {
     gogo_vm *reenter;       /* write steps this VM again (the re-entry test) */
     int reenter_rc;
     long wakes;             /* atomic: wake calls */
+    int keep;               /* free keeps the blocks (in kept[]) until the test lets them go */
+    void *kept[64];
+    int n_kept;
 } TCtx;
 
 static const gogo_host *px(void) { return gogo_host_posix(); }
@@ -73,7 +76,8 @@ static void t_free(void *c, void *p, size_t n) {
     TCtx *t = c;
     __atomic_fetch_sub(&t->bytes, (long)n, __ATOMIC_RELAXED);
     __atomic_fetch_sub(&t->blocks, 1, __ATOMIC_RELAXED);
-    free(p);
+    if (t->keep && t->n_kept < 64) t->kept[t->n_kept++] = p;
+    else free(p);
 }
 
 static uint64_t t_now(void *c) { return px()->now_ms(((TCtx *)c)->px); }
@@ -880,6 +884,34 @@ TEST(embed_host_copied_and_destroyed) {
     c.fs_quota = -1;
     CHECK_EQ(gogo_new(&d, &destroyed, &c, &vm), GOGO_EINVAL);
     CHECK_EQ(destroyed, 1);
+}
+
+/* A poster is a block of its own: making one can fail (out of memory),
+ * and a second free of it (while its block is not reused: here the host
+ * keeps freed blocks) does nothing rather than drop the VM's reference
+ * twice. A GOGO_DEBUG build asserts there instead, so it is not run. */
+TEST(embed_poster_alloc_and_double_free) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    t.fail_after = 0;
+    CHECK(gogo_poster_new(vm) == NULL);
+    t.fail_after = -1;
+#if !GOGO_DEBUG
+    t.keep = 1;
+    gogo_poster *a = gogo_poster_new(vm), *b = gogo_poster_new(vm);
+    CHECK(a != NULL && b != NULL && a != b);
+    gogo_poster_free(a);
+    gogo_poster_free(a);                       /* caught: no second unref */
+    CHECK_EQ(gogo_poster_post(a, "echo", 4, 1, NULL, 0), GOGO_EINVAL);
+    gogo_free(vm);                             /* b still holds the VM */
+    CHECK_EQ(gogo_poster_post(b, "echo", 4, 1, NULL, 0), GOGO_ECLOSED);
+    gogo_poster_free(b);
+    t.keep = 0;
+    for (int i = 0; i < t.n_kept; i++) free(t.kept[i]);
+#else
+    gogo_free(vm);
+#endif
+    tctx_done(&t);
 }
 
 /* The default host on its own: a VM that owns its POSIX context. */

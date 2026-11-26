@@ -1733,8 +1733,10 @@ only through two tables of function pointers that the caller hands it.
   `gogo_post` (lock-free multi-producer inbox, delivered as `port.Post`
   to a registered actor) and `gogo_close_posts`; for other threads a
   `gogo_poster` (`gogo_poster_post`, `_port_post`, `_close_posts`,
-  `_free`), which is the `gogo_vm` holding a reference of its own, so a
-  posting thread may outlive the owner's `gogo_free` (posts then return
+  `_free`): a small block from the host's `alloc` holding a reference to
+  the `gogo_vm` and a state word (a second free is caught while the block
+  is not reused, never a second unref), so a posting thread may outlive
+  the owner's `gogo_free` (posts then return
   `GOGO_ECLOSED`; the memory and the host's `destroy` wait for the last
   reference); host ports (`gogo_register_port`, `gogo_port_emit`,
   `gogo_port_close`, which sends the owner `port.Closed`; a `gogo_port`
