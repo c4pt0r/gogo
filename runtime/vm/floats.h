@@ -33,6 +33,10 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs);
 /* TYPEIS id of heap object o, a K_FLOAT: TY_FLOAT32 or TY_FLOAT64. */
 uint32_t float_type(const uint32_t *o);
 
+/* The order of K_FLOAT objects x and y of one width, as OP_LTF and OP_EQF
+ * see it: -1, 0 or 1, 2 if either is a NaN; -0 == 0 (B_CMP). */
+int float_order(const uint32_t *x, const uint32_t *y);
+
 /* Prints the K_FLOAT object obj as Go 1.27's println does:
  * strconv.FormatFloat(v, 'g', -1, width) at its own width (1.5, 1e+21,
  * -0, NaN, +Inf). In runtime/floatlib (floatlib.c); about 0.9 KB of stack

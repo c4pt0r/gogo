@@ -33,6 +33,7 @@
  * allocated; pointers into the heap and views of the arguments are
  * re-derived after each allocation, never held across it. */
 #include "strs.h"
+#include "floats.h"
 #include "heap.h"
 #include "opcodes.h"
 #include "bytes.h"
@@ -630,9 +631,9 @@ static int strs_order(const uint8_t *p, uint32_t lp, const uint8_t *q, uint32_t 
  * float32) for a float, 64 + the type word for a struct, 0 for the other
  * immediates (bools, PIDs, nil, the zero Ref: by term). Then what orders
  * it within its rank: hi:lo (an int with its sign bit flipped, an int64,
- * a Ref serial, a float's bits as one unsigned order, a term), bytes p, n
- * (strings, Bytes, byte arrays), or the terms e, n (a struct's fields, an
- * array's elements). Values of different gogo types never share a rank
+ * a Ref serial, a term), bytes p, n (strings, Bytes, byte arrays), the
+ * object p (a float: float_order), or the terms e, n (a struct's fields,
+ * an array's elements). Values of different gogo types never share a rank
  * and a value: an int64 is boxed in an interface and in its plain
  * representation outside one. */
 typedef struct CmpKey {
@@ -671,18 +672,9 @@ static void cmp_key(const Vm *vm, const Actor *a, term t, CmpKey *k) {
         }
     }
 #if GOGO_FLOAT
-    else if (kind == K_FLOAT) {
-        /* By value: NaN equals nothing (n), -0 == 0. The bits, sign and
-         * magnitude made one unsigned order, go to hi:lo; a float32 is
-         * its own rank. */
-        bool f64 = hdr_words(o[0]) == 3u;
-        uint64_t u = f64 ? (uint64_t)o[2] << 32 | o[1] : (uint64_t)o[1] << 32;
-        k->n = (u << 1) > (f64 ? 0xFFE0000000000000u : 0xFF00000000000000u);
-        k->ty = f64 ? K_FLOAT : K_FLOAT + 32u;
-        if (!(u << 1)) u = 0;
-        u = (u >> 63) ? ~u : u | (uint64_t)1 << 63;
-        k->hi = (int32_t)((uint32_t)(u >> 32) ^ 0x80000000u);
-        k->lo = (uint32_t)u;
+    else if (kind == K_FLOAT) {   /* by value (float_order); a float32 is its own rank */
+        k->ty = hdr_words(o[0]) == 3u ? K_FLOAT : K_FLOAT + 32u;
+        k->p = (const uint8_t *)o;
     }
 #endif
 }
@@ -702,7 +694,10 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth) {
         if (u == v) {
             if (u == K_STRING || u == K_BYTES || u == K_BYTEARR) return strs_order(kx.p, kx.n, ky.p, ky.n);
 #if GOGO_FLOAT
-            if ((u == K_FLOAT || u == K_FLOAT + 32u) && (kx.n || ky.n)) return 1;   /* NaN */
+            if (u == K_FLOAT || u == K_FLOAT + 32u) {   /* a NaN (2) equals nothing */
+                int c = float_order((const uint32_t *)(const void *)kx.p, (const uint32_t *)(const void *)ky.p);
+                return c > 1 ? 1 : c;
+            }
 #endif
             if (kx.hi != ky.hi) return kx.hi < ky.hi ? -1 : 1;
             u = kx.lo;
