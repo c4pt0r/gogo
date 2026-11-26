@@ -330,10 +330,11 @@ $(BUILD)/libgogo.a: $(BUILD)/libgogo.o runtime/include/gogo.h runtime/include/li
 	tools/libsyms.sh $@ runtime/include/libgogo.syms runtime/include/gogo.h runtime/include/gogo_posix.h || { rm -f $@; exit 1; }
 	tools/globals.sh --objects $@ || { rm -f $@; exit 1; }
 
-$(BUILD)/libgogo-debug.a: $(LIB_OBJS)
+$(BUILD)/libgogo-debug.a: $(LIB_OBJS) runtime/include/libgogo.syms
 	@rm -f $@
 	ar rcs $@ $(LIB_OBJS)
-	tools/globals.sh --objects $@
+	tools/libsyms.sh --subset $@ runtime/include/libgogo.syms || { rm -f $@; exit 1; }
+	tools/globals.sh --objects $@ || { rm -f $@; exit 1; }
 
 define LIB_OBJ_RULE
 $(BUILD)/lib/$(subst /,_,$(patsubst runtime/%.c,%,$(1))).o: $(1) $(LIB_HDRS)

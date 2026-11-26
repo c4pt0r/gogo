@@ -38,7 +38,8 @@ any name, `msg_free` or `vm_step` included; `make test-libgogo` links
 such a host. `tools/libsyms.sh` fails the build if the archive's global
 symbols, or the header's `GOGO_API` functions, are not exactly the names
 in `libgogo.syms`: a change to the API is always a reviewed change to
-that list.
+that list. It also checks that `libgogo-debug.a` defines every
+listed function.
 
 `build/libgogo-debug.a` holds the same objects archived as they are. On
 macOS `ld -r` keeps a debug map that points at `build/lib/*.o` rather
