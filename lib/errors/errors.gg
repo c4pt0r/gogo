@@ -17,8 +17,13 @@
 //
 // gogo/fs's fs.Err, gogo/code's code.Err and the Reason of a "tcp" or
 // "tls" port's port.Closed (gogo/net's Normal ... TLS) take their values
-// from this table. A package's own codes, when it needs some, go in its
-// block, never in 1..99.
+// from this table; gogo/http (Upload, ClientUpload) and gogo/sound
+// (Recorded.Err, Played.Err) return Code. A package's own codes, when it
+// needs some, go in its block, never in 1..99.
+//
+// An actor that ends because of one of these failures exits with
+// actor.Failed + the code (gogo/actor's exit reasons 64..99):
+// gogo/http's ListenFailed is actor.Failed + int(Busy).
 package errors
 
 // Code is an error code: OK (0), a shared code, or a package's own.

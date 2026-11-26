@@ -43,9 +43,18 @@ rebuilt:
   and tls (`net.Reset` ... `net.TLS`) are the shared codes too
   (`net.Timeout` was 2 and is 9, ...; `Normal` stays 0). Source that uses
   the names needs no edit; source or tools that compare with numbers do.
-  An image built before this change still runs on new firmware, but the
-  codes it compiled into its own comparisons are the old ones while the
-  firmware returns the new ones: rebuild it.
+  `gogo/http` and `gogo/sound` no longer borrow `fs.Err`: `Upload`,
+  `ClientUpload`, `Recorded.Err` and `Played.Err` are `errors.Code`, so
+  compare them with `errors.NoSpace` and the like, not `fs.NoSpace` (now
+  a type mismatch). `http.Failed` (100) is `errors.IO` or
+  `errors.Timeout`, `http.BadURL` is `errors.BadURL` (25),
+  `sound.SpkFailed` is `errors.IO`, and `sound.BadWav`, which nothing
+  returned, is gone (`errors.BadFormat` is the shared code for it).
+  `http.ListenFailed` is 69 instead of 100: exit codes 64..99 are library
+  failures now (`actor.Failed` plus a shared code); user codes still
+  start at 100. An image built before this change still runs on new
+  firmware, but the codes it compiled into its own comparisons are the
+  old ones while the firmware returns the new ones: rebuild it.
 
 ## VM
 
@@ -289,7 +298,8 @@ rebuilt:
   yet (uploads stream). Request actors run with 2 x body limit + 6 KB
   (22 KB by default; about 134 KB with a 64 KB body limit). `http.Serve`
   has no error result: if it cannot listen it kills the linked caller
-  with exit code 100.
+  with exit code 69, `http.ListenFailed` (`actor.Failed + errors.Busy`),
+  whatever the cause.
 - **TLS is 1.2 only.** mbedTLS's TLS 1.3 key exchange cannot be sliced.
   A server that requires 1.3 gives `Closed{TLS}`.
 - **One TLS connection at a time** (`GOGO_TLS_MAX` is 1). An

@@ -66,7 +66,7 @@ type Recorded struct {
 	Path    string
 	Ms      int
 	Dropped int
-	Err     fs.Err
+	Err     errors.Code
 }
 ```
 
@@ -199,7 +199,8 @@ board.
 A failed write, a full card or a removed card **stops the recorder**. It
 finishes the file (the header covers the whole frames written before the
 failure), gives the microphone back, sends a `Recorded` whose `Err` is the
-`fs.Err` (`fs.NoSpace`, `fs.IO`, ...) and exits normally. It never
+storage error as a shared `errors.Code` (`errors.NoSpace`, `errors.IO`,
+...: the same numbers as `fs.NoSpace`, `fs.IO`) and exits normally. It never
 deletes anything to make room: that is the program's decision (it can
 remove old files and call `Record` again, and the numbering carries on).
 Monitor the recorder (`actor.Monitor`) if you want to see it end. After a
@@ -231,7 +232,7 @@ type Played struct {
 	Path  string
 	Bytes int
 	Dones int
-	Err   fs.Err
+	Err   errors.Code
 }
 ```
 
@@ -239,8 +240,8 @@ type Played struct {
 a player actor, which reads the file in 4096-byte pieces and keeps two
 `Out`s in flight (section 16.1). When it is over (or after `sound.Stop{}`)
 the caller gets one `sound.Played`: `Bytes` of PCM handed to the speaker,
-`Dones` the `Out`s that completed, `Err` is `fs.OK`, a read error or
-`sound.SpkFailed`. `ok` is false, and nothing starts, if the file is
+`Dones` the `Out`s that completed, `Err` is `errors.OK`, a read error or
+`errors.IO` (the speaker refused or failed an `Out`). `ok` is false, and nothing starts, if the file is
 missing, is not a canonical 16-bit mono PCM WAV at 8000 or 16000 Hz (the
 files `Record` writes are), or the speaker does not open (the mic is open,
 no speaker). The size of the file is the truth, not the header: the file

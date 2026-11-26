@@ -334,7 +334,7 @@ func TestHTTPServe(t *testing.T) {
 	if want := "HTTP/1.0 201 Created\r\nContent-Length: 8192\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\n" + body; resp != want {
 		t.Fatalf("response of %d bytes, want %d", len(resp), len(want))
 	}
-	stop(t, v, "start true\nexit 100\nreq GET /hi 2 sim/1 0 0\nreq POST /echo 1  3000 0\nreq POST /max 1  8192 0\n")
+	stop(t, v, "start true\nexit 69\nreq GET /hi 2 sim/1 0 0\nreq POST /echo 1  3000 0\nreq POST /max 1  8192 0\n")
 }
 
 const badRequest = "HTTP/1.0 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -374,7 +374,7 @@ func TestHTTPServeMalformed(t *testing.T) {
 		t.Fatal("peer closed first: want FIN")
 	}
 	none(t)(v.Exchange(c.frame(sim.ACK, nil)))
-	stop(t, v, "start true\nexit 100\n")
+	stop(t, v, "start true\nexit 69\n")
 }
 
 // A handler that crashes resets its connection; the listener and later
@@ -387,7 +387,7 @@ func TestHTTPServeHandlerCrash(t *testing.T) {
 	if resp := b.fetch("GET /after HTTP/1.0\r\n\r\n"); !strings.HasSuffix(resp, "\r\n\r\nhello /after") {
 		t.Fatalf("response %q", resp)
 	}
-	stop(t, v, "start true\nexit 100\nreq GET /crash 0  0 0\nreq GET /after 0  0 0\n")
+	stop(t, v, "start true\nexit 69\nreq GET /crash 0  0 0\nreq GET /after 0  0 0\n")
 	if !strings.Contains(v.Stderr.String(), "divzero") {
 		t.Errorf("stderr %q, want the crash report", v.Stderr.String())
 	}
@@ -424,7 +424,7 @@ func TestHTTPServeTwoBrowsers(t *testing.T) {
 		t.Fatalf("browser a: response %q, want %q", resp, want)
 	}
 	a.expect(a.mine(a.send(sim.FIN|sim.ACK, nil)), sim.ACK, "")
-	stop(t, v, "start true\nexit 100\nreq GET /proxy 0  0 0\nreq GET /b 0  0 0\nproxy true 200 0\n")
+	stop(t, v, "start true\nexit 69\nreq GET /proxy 0  0 0\nreq GET /b 0  0 0\nproxy true 200 0\n")
 }
 
 // Responses the client rejects (the connection reset): chunked (not
@@ -479,7 +479,7 @@ func TestHTTPServeHeadAndSplitting(t *testing.T) {
 	if resp := c.fetch("GET /badheader HTTP/1.0\r\n\r\n"); resp != "HTTP/1.0 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" {
 		t.Fatalf("bad header: response %q", resp)
 	}
-	stop(t, v, "start true\nexit 100\nreq HEAD /h 0  0 0\nreq GET /badheader 0  0 0\n")
+	stop(t, v, "start true\nexit 69\nreq HEAD /h 0  0 0\nreq GET /badheader 0  0 0\n")
 }
 
 // serveBody answers c's request with a body of n bytes (Content-Length n)

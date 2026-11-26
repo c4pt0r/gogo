@@ -106,8 +106,8 @@ func TestReasonCodesMatchC(t *testing.T) {
 			goCodes[upperSnake(name)] = v
 		}
 	}
-	if len(goCodes) != 10 {
-		t.Errorf("gogo/actor has %d constants, want the 10 reason codes", len(goCodes))
+	if len(goCodes) != 11 {
+		t.Errorf("gogo/actor has %d constants, want the 10 reason codes and Failed", len(goCodes))
 	}
 	for n, v := range goCodes {
 		if cv, ok := cCodes[n]; !ok || cv != v {

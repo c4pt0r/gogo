@@ -47,6 +47,7 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 	"gogo/http"
 	"gogo/net"
 	"gogo/port"
@@ -137,7 +138,7 @@ func main() {
 			if op == "UPNT" {
 				token = ""
 			}
-			status, err := 0, http.Failed
+			status, err := 0, errors.IO
 			if op == "CUP" {
 				status, err = http.ClientUpload(c, arg, path, "application/octet-stream", token)
 			} else {

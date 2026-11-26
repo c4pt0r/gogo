@@ -277,7 +277,10 @@ enum Builtin {
  * forever: reserved types stay below it. */
 #define TYPE_OWN_BASE 128u
 
-/* Exit reason codes (actor.Normal ...); user codes are >= 100. */
+/* Exit reason codes (actor.Normal ...). 10..63 are kept for the VM;
+ * 64..99 are library failures, actor.Failed (64) + a GOGO_E_* code
+ * (gogo_errors.h), which the VM treats like user codes; user codes are
+ * >= 100. */
 enum Reason {
     R_NORMAL           = 0,
     R_KILLED           = 1,
@@ -288,7 +291,8 @@ enum Reason {
     R_BAD_CODE         = 6,
     R_SHUTDOWN         = 7,
     R_BAD_SHIFT        = 8,
-    R_BAD_MSG          = 9    /* a value that may not cross modules (msg.h) */
+    R_BAD_MSG          = 9,   /* a value that may not cross modules (msg.h) */
+    R_FAILED           = 64   /* + a GOGO_E_* code: a library failure (no VM code uses it) */
 };
 
 /* Instruction decoders. */

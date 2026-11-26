@@ -239,8 +239,9 @@ Limits: the request line and headers at most 2 KB, the body at most 8 KB
 (by `Content-Length`; chunked bodies are not supported). Bad requests get
 400 and too-large bodies 413 without calling the handler. A connection
 that does not send a complete request within 10 s is closed. If the
-listener cannot listen (the port is taken), it exits with code 100,
-`http.ListenFailed`; trap exits to see that.
+listener cannot listen (the port is taken), it exits with code 69,
+`http.ListenFailed` (`actor.Failed + errors.Busy`: library failures are
+exit codes 64..99, appendix B); trap exits to see that.
 
 Since the handler is an ordinary function, you can call it directly to
 test it, which is what this example does on the host:

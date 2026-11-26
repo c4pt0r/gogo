@@ -10,6 +10,7 @@ package main
 
 import (
 	"gogo/bytes"
+	"gogo/errors"
 	"gogo/fs"
 	"gogo/http"
 	"gogo/sys"
@@ -27,13 +28,13 @@ func main() {
 	println("write:", int(fs.WriteFile("/flash/rec.bin", b.Freeze())))
 
 	status, err := http.Upload(url, "/flash/missing.bin", "audio/wav", token)
-	println("missing file:", status, int(err), err == fs.NotFound)
+	println("missing file:", status, int(err), err == errors.NotFound)
 
 	status, err = http.Upload("ftp://myhost/upload", "/flash/rec.bin", "audio/wav", token)
 	println("bad URL:", status, int(err), err == http.BadURL)
 
-	// No network on the host: Failed. On a board, the server's status
-	// (201, 401, ...) with fs.OK.
+	// No network on the host: IO. On a board, the server's status
+	// (201, 401, ...) with errors.OK.
 	status, err = http.Upload(url, "/flash/rec.bin", "audio/wav", token)
-	println("upload:", status, int(err), err == http.Failed)
+	println("upload:", status, int(err), err == errors.IO)
 }

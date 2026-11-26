@@ -451,7 +451,7 @@ func TestHTTPPlainSamePath(t *testing.T) {
 			"new\n"+
 			"CGET http://gogo.test/1 true 200 8 false\n  body [hello /1]\n"+
 			"CGET http://gogo.test/2 true 200 8 false\n  body [hello /2]\n"+
-			"UP http://gogo.test/up 0 101\nCUP http://gogo.test/up 0 101\n"+
+			"UP http://gogo.test/up 0 25\nCUP http://gogo.test/up 0 25\n"+
 			"cclose\nUPNT http://gogo.test/up 200 0\ndone\n",
 		"--without", "tls") // an http image loads on a firmware without the tls driver
 	conns, reqs := s.count()

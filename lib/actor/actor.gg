@@ -18,7 +18,7 @@ type ProcInfo struct{ Memory int }
 
 // Reason is why an actor exited.
 type Reason struct {
-	Code int    // one of the reason codes below, or a user code >= 100
+	Code int    // one of the reason codes below, a library failure (64..99), or a user code >= 100
 	Func string // function a runtime error happened in, else ""
 }
 
@@ -47,7 +47,10 @@ type Options struct {
 	MaxMemory int // bytes; 0 means the platform default
 }
 
-// Reason codes (R_* in runtime/vm/opcodes.h). User codes start at 100.
+// Reason codes (R_* in runtime/vm/opcodes.h). 10..63 are kept for the VM.
+// 64..99 are failures a library reports as an exit: Failed plus a shared
+// code of gogo/errors (Failed + int(errors.Busy) is 69; gogo/http's
+// ListenFailed is one). User codes start at 100.
 const (
 	Normal          = 0
 	Killed          = 1
@@ -58,7 +61,8 @@ const (
 	BadCode         = 6
 	Shutdown        = 7
 	BadShift        = 8
-	BadMsg          = 9 // sent a value that may not cross modules (a module's own struct, a func value)
+	BadMsg          = 9  // sent a value that may not cross modules (a module's own struct, a func value)
+	Failed          = 64 // the base of library failures: Failed + a shared error code (1..35)
 )
 
 // Spawn starts a new actor running f and returns its PID.

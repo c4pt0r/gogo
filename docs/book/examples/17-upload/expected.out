@@ -1,5 +1,5 @@
 write: 0
 missing file: 0 1 true
-bad URL: 0 101 true
+bad URL: 0 25 true
 dns: net.Subscribe failed (no network or 4 subscribers): retrying on each lookup
-upload: 0 100 true
+upload: 0 8 true

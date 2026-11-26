@@ -112,7 +112,9 @@ const (OK = 0; NotFound = 1; Exists = 2; NoMemory = 3; TooMany = 4; Busy = 5; Ba
 	BadFormat = 26; BadVersion = 27)
 ```
 
-Appendix C lists who uses which.
+Appendix C lists who uses which. `gogo/http`'s `Upload` and
+`ClientUpload` and `gogo/sound`'s `Recorded.Err` and `Played.Err` are
+`errors.Code`.
 
 ### gogo/bytes
 
@@ -242,7 +244,7 @@ type http.Header struct{ Name, Value string }
 type http.Request struct{ Method, Path string; Headers []Header; Body bytes.Bytes }
 type http.Response struct{ Status int; Headers []Header; Body bytes.Bytes; Truncated bool }
 const (http.MaxBody = 8192; MaxBodyLimit = 65536; MaxHead = 2048;
-	ReadTimeoutMs = 10000; DefaultTimeoutMs = 10000; ListenFailed = 100)
+	ReadTimeoutMs = 10000; DefaultTimeoutMs = 10000; ListenFailed = 69)   // actor.Failed + errors.Busy
 func http.Get(url string, timeoutMs int) (Response, bool)
 func http.Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
 func http.Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, bool)
@@ -251,13 +253,13 @@ func http.Serve(port int, handler func(Request) Response) actor.PID
 
 // chapter 17: https://, keep-alive, upload
 type http.Client struct{ PID actor.PID }
-const (http.Failed fs.Err = 100; BadURL fs.Err = 101; TLSMemory = 26624;
+const (http.BadURL = errors.BadURL; TLSMemory = 26624;
 	UploadChunk = 4096; LingerMs = 1000; MaxQueued = 4)
 func http.NewClient() Client
 func http.ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
-func http.ClientUpload(c Client, url, path, contentType, token string) (status int, err fs.Err)
+func http.ClientUpload(c Client, url, path, contentType, token string) (status int, err errors.Code)
 func http.CloseClient(c Client)
-func http.Upload(url, path, contentType, token string) (status int, err fs.Err)
+func http.Upload(url, path, contentType, token string) (status int, err errors.Code)
 ```
 
 ### gogo/sys and gogo/sntp
@@ -290,7 +292,9 @@ them) are described in chapters 15 and 16.
 | 7 | `actor.Shutdown` | (none) | asked to stop; supervisors use it |
 | 8 | `actor.BadShift` | `badshift` | negative shift count |
 | 9 | `actor.BadMsg` | `badmsg` | sent a message holding a module's own struct or closure to an actor of another module (the sender exits; chapter 14) |
-| 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)`; `http.ListenFailed` is 100 |
+| 10..63 | | | kept for the VM |
+| 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus an `errors.Code` (appendix C); `http.ListenFailed` is 69, `actor.Failed + errors.Busy` |
+| 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)` |
 
 The crash report is `gogo: actor <pid N> crashed: <kind>[ in <function>]`,
 on standard error.

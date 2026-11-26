@@ -445,7 +445,8 @@ text grid while it is open.
   `CloseClient` keep one connection alive; `Upload` streams a file as a
   POST body (§5.4.8). The server `http.Serve(port, handler func(Request)
   Response) actor.PID` starts a listener actor linked to the caller (if
-  it cannot listen it exits with code 100, `ListenFailed`) and hands each
+  it cannot listen it exits with code 69, `ListenFailed`, `actor.Failed +
+  errors.Busy`) and hands each
   connection to a new handler actor: request head at most 2 KB, body at
   most 8 KB by `Content-Length` (no chunked bodies), 400 for a malformed
   request, 413 for a body too large, then a response with
@@ -1534,7 +1535,9 @@ together with `mbox_words` through `actor_charged_words`).
 - **Exit reasons** are `actor.Reason{Code int; Func string}`. `Code` is
   `actor.Normal` (the entry function returned), `Killed`, `OutOfMemory`,
   `MailboxOverflow`, `NoProc`, `DivZero`, `BadCode`, `Shutdown`,
-  `BadShift`, `BadMsg`, or a user code (100 or more, from
+  `BadShift`, `BadMsg`, a library failure (64..99: `actor.Failed` (64)
+  plus a shared error code, such as `http.ListenFailed`; 10..63 are kept
+  for the VM), or a user code (100 or more, from
   `actor.Exit(code)` / `actor.Kill(p, code)`); `Func` is the name of the
   function where a run-time error happened, else empty.
 - On exit, linked actors get an exit signal (an `ExitMsg` if they trap

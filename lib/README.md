@@ -78,12 +78,12 @@ declares `kbd`. Book chapter
 | `gogo/strconv` | library | | none |
 | `gogo/dhcp` | library | actor, bytes, net, port, sys | `netif`, `udp` |
 | `gogo/dns` | library | actor, bytes, net, port | `udp` |
-| `gogo/http` | library | actor, bytes, dns, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |
+| `gogo/http` | library | actor, bytes, dns, errors, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |
 | `gogo/sntp` | library | actor, bytes, dns, net, port, sys | `udp` |
 | `gogo/kv` | library | bytes, fs | none |
 | `gogo/ringlog` | library | bytes, fs | none |
 | `gogo/imulog` | library | actor, bytes, fs, imu, port | `imu` |
 | `gogo/wav` | library | bytes, fs | none |
-| `gogo/sound` | library | actor, audio, fs, port, wav | none (opens `mic` for Record and `speaker` for Play without requiring them: `//gogo:optional mic speaker`) |
+| `gogo/sound` | library | actor, audio, errors, fs, port, wav | none (opens `mic` for Record and `speaker` for Play without requiring them: `//gogo:optional mic speaker`) |
 | `gogo/irproto` | library | bytes | none |
 | `gogo/tui` | library | actor, bytes, gpio, kbd, port, screen, strconv | `gpio`, `screen` (opens `kbd` without requiring it: `//gogo:optional kbd`) |

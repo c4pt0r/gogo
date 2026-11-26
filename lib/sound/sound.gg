@@ -46,6 +46,7 @@ package sound
 import (
 	"gogo/actor"
 	"gogo/audio"
+	"gogo/errors"
 	"gogo/fs"
 	"gogo/port"
 	"gogo/wav"
@@ -56,7 +57,8 @@ type Stop struct{}
 
 // Recorded reports one finished recording file: Ms of sound in it,
 // Dropped frames the mic lost in it (their time is not in the file), Err
-// fs.OK, or why the recorder ended. The final Recorded after a Stop that
+// errors.OK, or why the recorder ended (a gogo/fs error, as the shared
+// code it is). The final Recorded after a Stop that
 // came while no file was open (right after a file filled up, or before the
 // first Chunk) has Path "" and Ms 0: nothing was written since the last
 // Recorded.
@@ -64,24 +66,19 @@ type Recorded struct {
 	Path    string
 	Ms      int
 	Dropped int
-	Err     fs.Err
+	Err     errors.Code
 }
 
 // Played reports the end of a playback: Bytes of PCM handed to the speaker
 // (also the Outs a Stop cut off: only Dones counts those that completed), Dones the Outs
-// that completed, Err fs.OK, a read error, or SpkFailed.
+// that completed, Err errors.OK, a read error (a gogo/fs error), or
+// errors.IO when the speaker refused or failed an Out.
 type Played struct {
 	Path  string
 	Bytes int
 	Dones int
-	Err   fs.Err
+	Err   errors.Code
 }
-
-// Errors beside the fs ones.
-const (
-	BadWav    fs.Err = 100 // not a canonical 16-bit mono PCM WAV at 8000 or 16000 Hz
-	SpkFailed fs.Err = 101 // the speaker refused or failed an Out
-)
 
 // DefaultMaxSec is the length of a recording file when maxSec is 0.
 const DefaultMaxSec = 600
@@ -258,7 +255,7 @@ func record(parent actor.PID, cfg audio.Mic, dir string, next, rate, frameMs, fr
 	for {
 		m := actor.Receive()
 		stop := false
-		var err fs.Err
+		var err errors.Code
 		switch c := m.(type) {
 		case port.Chunk:
 			if !open {
@@ -266,7 +263,7 @@ func record(parent actor.PID, cfg audio.Mic, dir string, next, rate, frameMs, fr
 				nw, e := wav.Create(path, rate, planned)
 				if e != fs.OK {
 					port.Close(mic)
-					actor.Send(parent, Recorded{Path: path, Err: e})
+					actor.Send(parent, Recorded{Path: path, Err: errors.Code(e)})
 					return
 				}
 				w = nw
@@ -278,7 +275,7 @@ func record(parent actor.PID, cfg audio.Mic, dir string, next, rate, frameMs, fr
 			nw, e := wav.Write(w, c.Data)
 			w = nw
 			if e != fs.OK {
-				err = e
+				err = errors.Code(e)
 				stop = true
 			} else {
 				n++
@@ -288,8 +285,8 @@ func record(parent actor.PID, cfg audio.Mic, dir string, next, rate, frameMs, fr
 		}
 		if open && (stop || n >= frames) {
 			e := wav.Close(w)
-			if err == fs.OK {
-				err = e
+			if err == errors.OK {
+				err = errors.Code(e)
 			}
 			open = false
 			if !stop {
@@ -354,7 +351,7 @@ func Play(path string) (actor.PID, bool) {
 // play is the player actor. It owns the file and the speaker.
 func play(parent actor.PID, path string, f fs.File, sp actor.PID, left int) {
 	sent, dones := 0, 0
-	var err fs.Err
+	var err errors.Code
 	inflight := 0
 	eof := false
 	for {
@@ -369,7 +366,7 @@ func play(parent actor.PID, path string, f fs.File, sp actor.PID, left int) {
 			}
 			b, e := f.Read(n)
 			if e != fs.OK {
-				err = e
+				err = errors.Code(e)
 				eof = true
 				break
 			}
@@ -392,7 +389,7 @@ func play(parent actor.PID, path string, f fs.File, sp actor.PID, left int) {
 		case port.Done:
 			inflight--
 			if d.Seq < 0 {
-				err = SpkFailed
+				err = errors.IO
 				eof = true
 			} else {
 				dones++
