@@ -19,16 +19,33 @@ You do not need Go, a C compiler or ESP-IDF.
 
 ### Install `gogo`
 
-Each gogo release on GitHub has the command for macOS, Linux and Windows,
-on amd64 and arm64: `gogo-darwin-arm64`, `gogo-darwin-amd64`,
+On macOS and Linux, one command installs it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/c4pt0r/gogo/main/install.sh | sh
+gogo version
+```
+
+The script (`install.sh` in the repository) picks the file for your
+system and CPU (amd64 or arm64), checks it against the release's
+`SHA256SUMS`, and installs `gogo` in `/usr/local/bin`, or in `~/.local/bin`
+when `/usr/local/bin` is not writable (it tells you if that directory is
+not on your `PATH`). It also installs `gogovm` when the release has one.
+`GOGO_VERSION=v0.1.0` installs a given release and `GOGO_INSTALL_DIR=dir`
+chooses the directory, for example
+`curl -fsSL .../install.sh | GOGO_INSTALL_DIR=~/bin sh`.
+
+Each release on GitHub has the command for macOS, Linux and Windows, on
+amd64 and arm64: `gogo-darwin-arm64`, `gogo-darwin-amd64`,
 `gogo-linux-amd64`, `gogo-linux-arm64`, `gogo-windows-amd64.exe` and
-`gogo-windows-arm64.exe`. For example, on an Apple silicon Mac:
+`gogo-windows-arm64.exe`. On Windows, or to install by hand, download the
+file for your system from the release page and put it on your `PATH` as
+`gogo` (`gogo.exe` on Windows). By hand on an Apple silicon Mac:
 
 ```sh
 curl -L -o gogo https://github.com/c4pt0r/gogo/releases/latest/download/gogo-darwin-arm64
 chmod +x gogo
-sudo mv gogo /usr/local/bin/     # or anywhere on your PATH
-gogo version
+sudo mv gogo /usr/local/bin/
 ```
 
 A file downloaded with a browser on macOS may need

@@ -4,7 +4,7 @@
 #             but gofmt only reads .go: each is copied as .go into a temp
 #             dir and checked there); the files listed must be formatted
 #   go vet    ./...
-#   tools/*.sh checked by shellcheck, when it is installed (skipped otherwise)
+#   tools/*.sh and install.sh checked by shellcheck, when it is installed (skipped otherwise)
 # The files are the ones git knows (tracked or untracked, not ignored), so
 # build output and nested worktrees are left out; outside a git checkout,
 # every file under the repo except build/ and dot directories. So untracked
@@ -53,8 +53,8 @@ echo "lint: gofmt checked $(files go | wc -l | tr -d ' ') .go and $(wc -l < "$tm
 go vet ./... || status=1
 
 if command -v shellcheck >/dev/null 2>&1; then
-    shellcheck tools/*.sh || status=1
-    echo "lint: shellcheck checked tools/*.sh"
+    shellcheck tools/*.sh install.sh || status=1
+    echo "lint: shellcheck checked tools/*.sh and install.sh"
 else
     echo "lint: shellcheck skipped (not installed)"
 fi

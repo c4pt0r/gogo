@@ -432,8 +432,10 @@ boards can be added by describing their pins and peripherals in
 `platform/esp32s3/main/board.h`.
 
 ### How do I get started on a board?
-Install the `gogo` binary and `esptool`, connect the board, run
-`gogo setup`. It identifies the board, downloads and verifies the firmware,
+Install the `gogo` binary (on macOS and Linux,
+`curl -fsSL https://raw.githubusercontent.com/c4pt0r/gogo/main/install.sh | sh`
+picks the file for your system and checks it) and `esptool`, connect the
+board, run `gogo setup`. It identifies the board, downloads and verifies the firmware,
 flashes it without touching your settings, optionally sets up Wi-Fi, and
 runs a first program. See [book chapter 2](book/02-getting-started.md).
 

@@ -332,9 +332,12 @@ server gone, reason 11</pre>
 
   <section class="shell" id="start">
     <h2>Start</h2>
-    <p class="tagline">One command on a board, three from source.</p>
+    <p class="tagline">Two commands to a board, three from source.</p>
     <div class="body">
-<pre><span class="c"># a board over USB: identify, flash, set up Wi-Fi, run a first program</span>
+<pre><span class="c"># install gogo (macOS, Linux): picks your OS and CPU, checks SHA256SUMS</span>
+<span class="p">$ </span><span class="cmd">curl -fsSL https://raw.githubusercontent.com/c4pt0r/gogo/main/install.sh | sh</span>
+
+<span class="c"># a board over USB: identify, flash, set up Wi-Fi, run a first program</span>
 <span class="p">$ </span><span class="cmd">gogo setup</span>
 
 <span class="c"># from source: Go 1.27+, a C99 compiler, make</span>

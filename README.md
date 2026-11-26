@@ -108,12 +108,14 @@ the boards, in the host VM, and inside other programs through
 
 ## Quick start
 
-**On a board, in one command.** Install the `gogo` command from a
-[release](https://github.com/c4pt0r/gogo/releases) (`gogo-<os>-<arch>`)
-and esptool (`pip install esptool` or `brew install esptool`), connect an
-M5StickS3 or Cardputer ADV over USB, and run:
+**On a board, in one command.** Install the `gogo` command (macOS and
+Linux; on Windows, take `gogo-windows-<arch>.exe` from a
+[release](https://github.com/c4pt0r/gogo/releases)) and esptool
+(`pip install esptool` or `brew install esptool`), connect an M5StickS3
+or Cardputer ADV over USB, and run `gogo setup`:
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/c4pt0r/gogo/main/install.sh | sh
 gogo setup
 ```
 
