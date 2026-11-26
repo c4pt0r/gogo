@@ -86,9 +86,12 @@ body::before {
 .nav-links a { transition: color .2s; }
 .nav-links a:hover { color: var(--accent); }
 
-/* The mascot with its clear space: 1/5 of its height on every side. */
+/* The mascot beside the headline, at the column's right edge, with its
+   clear space (1/5 of its height on every side) kept by the gap. */
 .hero { padding: 88px 0 24px; }
-.hero-mark { width: 104px; height: auto; margin: 0 0 40px; }
+.hero-head { display: flex; align-items: center; justify-content: space-between; gap: 48px; }
+.hero-head h1 { flex: 1 1 auto; min-width: 0; max-width: 560px; }
+.hero-mark { flex: none; width: 112px; height: auto; }
 .hero h1 { font: 700 clamp(26px, 4.2vw, 36px)/1.2 var(--sans); letter-spacing: -0.025em; margin: 0; text-wrap: balance; }
 p { max-width: 600px; color: var(--muted); line-height: 1.7; margin: 0; }
 .hero p { margin-top: 20px; font-size: 16px; }
@@ -149,7 +152,8 @@ footer span { color: var(--muted); font-size: 13px; }
 
 @media (max-width: 620px) {
   .hero { padding: 48px 0 12px; }
-  .hero-mark { width: 88px; margin-bottom: 32px; }
+  .hero-head { gap: 20px; }
+  .hero-mark { width: 64px; }
   section { padding-top: 72px; }
   .nav-links { gap: 14px; font-size: 13px; }
   pre.diagram { font-size: 10px; }
@@ -182,8 +186,10 @@ footer span { color: var(--muted); font-size: 13px; }
   </nav>
 
   <header class="hero shell" id="top">
-    <img class="hero-mark" src="logos/gogo-octopus-color.svg" alt="The gogo mascot, a friendly octopus" width="104" height="101">
-    <h1>Go syntax. Erlang actors. Small enough for a microcontroller.</h1>
+    <div class="hero-head">
+      <h1>Go syntax. Erlang actors. Small enough for a microcontroller.</h1>
+      <img class="hero-mark" src="logos/gogo-octopus-color.svg" alt="The gogo mascot, a friendly octopus" width="112" height="109">
+    </div>
     <p>gogo is an actor VM for microcontrollers and a compiler for a subset of Go. You write a program as a set of isolated actors. Each one has its own heap and memory limit, they talk only by copied messages, and supervisors restart the ones that crash.</p>
     <p>The VM is plain C99 with no third-party libraries.</p>
     <dl class="facts">
