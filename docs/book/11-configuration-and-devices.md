@@ -217,7 +217,7 @@ At boot the firmware checks the program image and prints one of:
   all is well; the program runs.
 - `gogo: no image`: nothing was flashed with `gogo flash`.
 - `gogo: bad image (<reason>)`: a damaged image.
-- `gogo: unsupported image format 16.0 (this firmware runs 15.0 to 15.2)`:
+- `gogo: unsupported image format 16.0 (this firmware runs 15.0 to 15.3)`:
   the image was built for another major, or a newer minor than the
   firmware's: update the firmware (or build with a matching `gogo`).
 - `gogo: image requires kbd, which this VM lacks`: the program opens a

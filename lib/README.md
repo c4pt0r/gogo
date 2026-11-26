@@ -40,6 +40,12 @@ firmware refuses an image that requires a driver or mount it lacks
 (`code.Missing` names it). Packages built only on others inherit their
 names (for example `gogo/http` via `gogo/dns`).
 
+A file of a library can carry the directive line `//gogo:ondemand`
+(conventionally right after the package clause's comment): its functions
+(no methods) are compiled into an image only when the program uses them,
+directly or through another such function. Everything else in a library
+is compiled in whole.
+
 A library whose port drivers are soft (opened only when a call asks for
 them at run time, their absence reported as that call's failure) names
 them in a directive line, conventionally the last line of its package doc
@@ -79,7 +85,7 @@ declares `kbd`. Book chapter
 | `gogo/math` | stub | | `float`, as any use of floats (the functions are `B_FLOAT`, `runtime/floatlib`; a constant used only as an integer, `int(math.MaxInt32)`, requires nothing) |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |
-| `gogo/strconv` | library | | none; `float` when `FormatFloat` or `ParseFloat` is called (compiler intrinsics: `B_FLOAT`, their bodies are never compiled) |
+| `gogo/strconv` | library | | none; `float` when `FormatFloat` or `ParseFloat` is called (compiler intrinsics: `B_FLOAT`, their bodies are never compiled). `FormatUint`, `ParseUint` and `ParseInt` (`unsigned.gg`) are compiled in only when called (`//gogo:ondemand`) and written with `int64` operations, so they never need image format 15.3 |
 | `gogo/dhcp` | library | actor, bytes, net, port, sys | `netif`, `udp` |
 | `gogo/dns` | library | actor, bytes, net, port | `udp` |
 | `gogo/http` | library | actor, bytes, dns, errors, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |

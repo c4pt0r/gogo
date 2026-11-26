@@ -103,8 +103,11 @@ func (g *gen) floatConst(v constant.Value, t types.Type) uint32 {
 }
 
 // floatConversion compiles a conversion to or from a float type (the
-// checker admits int, int64, byte, float32 and float64 on either side)
-// into dst.
+// checker admits any integer or float type on either side) into dst. A
+// uint32 is converted through its int64 value, a uint64 by
+// uint64ToFloat; to a type narrower than 32 bits through int (as Go on
+// arm64: byte(300.7) is 44), to uint32 through int64 (uint32(-1.0) is
+// 4294967295, uint32(1e10) 1410065408), to uint64 by floatToUint64.
 func (f *fn) floatConversion(call *ast.CallExpr, to, from types.Type, dst uint8) {
 	var c uint8
 	switch {
@@ -122,15 +125,30 @@ func (f *fn) floatConversion(call *ast.CallExpr, to, from types.Type, dst uint8)
 		if isFloat32(to) {
 			c = ConvF32Int
 		}
-	case isInt64(to):
+	case isWide(to), isUint32(to):
 		c = ConvInt64F
-	default: // int, byte
+	default: // int and the narrower types
 		c = ConvIntF
 	}
 	mark := f.next
-	f.asm.Emit(OpConvf, dst, f.operand(call.Args[0]), c)
+	x := f.operand(call.Args[0])
+	switch {
+	case isUint64(from) && isFloat(to):
+		f.uint64ToFloat(call, c, dst, x)
+	case isUint64(to):
+		f.floatToUint64(call, from, dst, x)
+	case isUint32(from) && isFloat(to):
+		w := f.alloc(call)
+		f.asm.Emit(OpConv, w, x, ConvUint64)
+		f.asm.Emit(OpConvf, dst, w, c)
+	default:
+		f.asm.Emit(OpConvf, dst, x, c)
+		if isUint32(to) {
+			f.asm.Emit(OpConv, dst, dst, ConvInt) // the low 32 bits
+		}
+	}
 	f.next = mark
-	f.truncByte(call, dst) // byte(f): int(f), then the low 8 bits
+	f.trunc(call, dst) // a narrow type: int(f), then its low bits
 }
 
 // oneInto loads the constant 1 of e's type (int, int64, byte or a float
@@ -140,7 +158,7 @@ func (f *fn) oneInto(e ast.Expr, dst uint8) {
 	switch t := f.g.p.Info.TypeOf(e); {
 	case isFloat(t):
 		f.floatInto(constant.MakeInt64(1), t, dst)
-	case isInt64(t):
+	case isWide(t):
 		f.int64Into(1, dst)
 	default:
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermInt(1))

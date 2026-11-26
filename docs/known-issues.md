@@ -261,8 +261,7 @@ rebuilt:
 ## Compiler and language
 
 - **Not supported yet (planned).** The compiler rejects maps, pointer
-  receivers ("pointer receivers are not supported yet"), pointers, integer types other than `int`, `int64` and `byte`
-  (`uint32` included), package-level `var`s, a `switch` on an
+  receivers ("pointer receivers are not supported yet"), pointers, package-level `var`s, a `switch` on an
   `any` or a struct value, type assertions, `panic`, the `error` type
   and interfaces other than `any` ("interface
   types are not supported yet": methods are called on concrete types
@@ -364,17 +363,21 @@ rebuilt:
   pointers are not supported yet; `f().X = v` is not valid Go either.
 - **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
   zero PID.
-- **Some values cannot go into `any`.** `byte`, `rune`, named basic types
-  (`type C int`) and func values are rejected, because at run time they
-  are indistinguishable from `int` (or have no type id). Func values
-  cannot be compared, not even with `nil`. `type B byte` is rejected.
+- **Some values cannot go into `any`.** `byte`, `rune` and the other
+  sized integers, named basic types (`type C int`) and func values are
+  rejected, because at run time they are indistinguishable from `int` or
+  `int64` (or have no type id). Func values cannot be compared, not even
+  with `nil`.
   *Workaround:* convert to `int` first; wrap a func value in a struct.
 - **`fs.File` and `actor.PID` share a type tag.** `fs.File` cannot be a
   type switch case, and an `fs.File` in an `any` is seen as a PID.
   *Workaround:* wrap it in a struct.
 - **No dead-code elimination.** Importing a library compiles all of it
   into the image (`gogo/strings` costs about 440 words, `gogo/strconv`
-  about 360), which matters on boards with little flash.
+  about 360), which matters on boards with little flash. The exception
+  is a file marked `//gogo:ondemand`, whose functions are compiled in only
+  when the program uses them: strconv's `FormatUint` (about 130 words) and
+  `ParseUint` / `ParseInt` (about 430 together) are in one.
 - **Requirement inference is a heuristic.** A constant `"/sd"` path
   passed to `gogo/fs` makes the image require `/sd`, even if the program
   only probes for a card (there is no directive for mounts). *Workaround:*
@@ -393,13 +396,14 @@ rebuilt:
   (up to 14) do not load on a v15 VM; from 15.0 on, a VM runs every older
   minor of its major.
 - **Some error messages are unhelpful.** An interface type gives `type
-  definition other than struct or int, int64, float32, float64, bool,
-  string not supported`.
+  definition other than struct or an integer, float, bool or string type
+  not supported`.
 - **`println` of a slice differs from Go.** gogo prints the elements,
   `[1 2 3]`; Go's `println` prints `[len/cap]address` (only
   `fmt.Println` prints elements).
 - **Library differences from Go.** `strconv` handles bases 2 to 36 only
-  (no prefixes, no underscores) and `Atoi` overflows at 32 bits;
+  (no prefixes, no underscores), `Atoi` overflows at 32 bits, and
+  `ParseInt` / `ParseUint` with bit size 0 mean 32 bits;
   `strings.TrimSpace`, `ToLower` and `EqualFold` are ASCII-only and
   `Split(s, "")` splits into bytes; slices grow by doubling from a
   capacity of 4.
@@ -432,7 +436,7 @@ rebuilt:
 - **A small `gogo/math`.** `Sqrt`, `Floor`, `Ceil`, `Trunc`, `Round`,
   `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
   `IsInf`, `Max`, `Min` and the constants only: no `Pow`, `Exp`, `Log`,
-  trigonometry, `Mod` or `Float64bits` (there is no `uint64`) yet.
+  trigonometry, `Mod` or `Float64bits` yet.
 - **`strconv` float differences from Go.** `ParseFloat` returns `(f
   float64, ok bool)`: `ok` is false for bad syntax (`f` 0) and for an
   out-of-range value (`f` ±Inf, Go's `ErrRange`). `FormatFloat` has no
@@ -441,6 +445,46 @@ rebuilt:
   (gogo's own code, not the C library's).
 - **Float equality in `switch` and `==` follows IEEE 754.** A `case`
   with `NaN` never matches, and `-0` matches `0`, as in Go.
+
+## Sized integers
+
+- **Not in `any`.** `int8`, `int16`, `int32` (`rune`), `uint8` (`byte`),
+  `uint16`, `uint32`, `uint` and `uint64` values cannot go into an
+  interface on their own (`uint32 in interface not supported`), so not
+  into `actor.Send` either: inside `any` they would be `int` or `int64`
+  terms that a type switch could not tell apart. *Workaround:* put them in
+  a struct field (messages copy those like any value) or convert to `int`
+  / `int64`. The planned boxing of named non-struct types will lift this.
+- **`println` of a struct, slice or array holding unsigned 32- or 64-bit
+  values is rejected.** `println` prints bare unsigned values correctly,
+  but inside a composite value the static type is gone and they would
+  print as their signed bit patterns. *Workaround:* print the fields or
+  elements one by one. The check is static: a struct with such fields
+  inside an `any` (`var v any = Q{0xFFFFFFFF}`) is printed, signed
+  (`{-1}`). A `println` with a `uint64` argument after the 30th is
+  rejected too (`B_PRINTLNU`'s mask has 30 bits).
+- **`uint32` division, ordering and `>>` cost more than `int`'s.** They
+  widen both operands to 64 bits and use the `int64` ops (two or three
+  more instructions, and an allocation for values from 2^30 up, which
+  are heap boxes as large `int`s are); `+ - * & | ^ <<` and `==` cost the
+  same as on `int`. `uint64` costs what `int64` does. *Workaround:* in a
+  hot loop on values below 2^31, `int` is cheaper.
+- **No `uint64` or `int64` index.** Indexes and slice bounds may be any
+  integer of up to 32 bits; convert a 64-bit one with `int(i)`.
+- **Image format 15.3.** Division, remainder, ordering or `>>` on a
+  `uint64`, arithmetic on `int8`, `int16` or `uint16`, the `uint32` ops
+  above and `println` of an unsigned value need firmware of image format
+  15.3 or later; `byte` and `int32` arithmetic and `uint32` `+ - * & | ^
+  <<` do not. `gogo/strconv`'s `FormatUint` / `ParseUint` / `ParseInt`
+  are written without them, so importing it does not raise an image's
+  format.
+- **Float conversions out of range** follow Go on arm64: `uint64(f)` is 0
+  for NaN and negative values and 2^64-1 from 2^64 up; `uint32(f)` is the
+  low 32 bits of `int64(f)` (4294967295 for `f` = -1.0, 1410065408 for
+  1e10); `int8`, `int16` and `uint16` are the low bits of `int(f)`,
+  like `byte`.
+- **`uint` is 32 bits**, as `int` is; Go code that assumes a 64-bit `uint`
+  overflows sooner.
 
 ## Networking, TLS and HTTP
 

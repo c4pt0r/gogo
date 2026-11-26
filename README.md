@@ -235,6 +235,7 @@ Done:
 - **Storage:** `/flash`, `/sd`, `kv`, `ringlog`.
 - **Language and tools:** expression `switch`, labels, `range` over int,
   variadic functions; floating point (`float32`, `float64`, `gogo/math`);
+  sized integers (`int8` .. `uint64`);
   packages of your own with a `GOGOPATH` search;
   single-file programs and `#!` scripts; `gogo setup`; optional firmware
   features; releases with the CLI, `gogovm` and firmware.
@@ -247,7 +248,7 @@ Next, in order:
 2. **Distributed actors:** boards and a server node exchanging actor
    messages directly (first through the server; direct links later).
 3. **Language completeness:** pointer receivers, interfaces and
-   `error`, `panic`, pointers, maps, `fmt`, sized integers; script
+   `error`, `panic`, pointers, maps, `fmt`; script
    arguments.
 4. **More hardware:** a `usb` port for the serial connection, the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).

@@ -28,6 +28,8 @@
  *   v15.2 floating point: heap kind 12 (K_FLOAT, also in the const area),
  *       the TYPEIS ids TY_FLOAT32 and TY_FLOAT64, OP_ADDF .. OP_CONVF and
  *       B_FLOAT. An image that uses any of them also requires "float".
+ *   v15.3 sized integers: OP_DIVU64 .. OP_SHRU64, OP_CONV modes 3-6 and
+ *       B_PRINTLNU.
  *
  * Reserved encodings (term.h): heap kinds 13-15, the specials from 0x72
  * up, the TYPEIS ids 0x10009-0x100FF and bits 16-20 of a struct's type
@@ -71,7 +73,7 @@
 
 #define IMAGE_MAGIC   0x4F474F47u
 #define IMAGE_MAJOR   15u
-#define IMAGE_MINOR   2u
+#define IMAGE_MINOR   3u
 #define IMAGE_VERSION (IMAGE_MAJOR << 16 | IMAGE_MINOR)   /* the newest this VM runs */
 #define IMAGE_HEADER_WORDS 8u
 

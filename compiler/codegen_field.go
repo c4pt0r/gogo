@@ -179,7 +179,7 @@ func (f *fn) fieldOpAssign(l ast.Expr, op uint8, rhs ast.Expr) {
 	t := f.fieldTargetOf(l)
 	pre := -1
 	if rhs != nil && t.elem >= 0 && !f.inert(rhs) {
-		pre = int(f.operand(rhs))
+		pre = int(f.rhsOperand(op, rhs))
 	}
 	f.storeField(l, t, func(v, holder uint8) {
 		f.loadStep(l, t.path[len(t.path)-1], holder, v)
@@ -197,7 +197,7 @@ func (f *fn) opInto(e ast.Expr, op uint8, v uint8, rhs ast.Expr, pre int) {
 	case rhs == nil:
 		one := f.allocScalar(e)
 		f.oneInto(e, one)
-		f.asm.Emit(f.typedOp(op, e), v, v, one)
+		f.arith(e, op, v, v, one)
 	case op == OpAdd && isString(f.g.p.Info.TypeOf(e)):
 		y := f.into(rhs)
 		if pre >= 0 {
@@ -207,11 +207,10 @@ func (f *fn) opInto(e ast.Expr, op uint8, v uint8, rhs ast.Expr, pre int) {
 	default:
 		r := uint8(pre)
 		if pre < 0 {
-			r = f.operand(rhs)
+			r = f.rhsOperand(op, rhs)
 		}
-		f.asm.Emit(f.typedOp(op, e), v, v, r)
+		f.arith(e, op, v, v, r)
 	}
-	f.truncByteOp(e, v, op)
 	f.next = mark
 }
 

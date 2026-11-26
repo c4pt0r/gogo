@@ -158,6 +158,9 @@ func strconv.Itoa(i int) string
 func strconv.Atoi(s string) (n int, ok bool)
 func strconv.FormatInt64(i int64, base int) string        // "" for a bad base
 func strconv.ParseInt64(s string, base int) (n int64, ok bool) // no base 0, no _
+func strconv.FormatUint(i uint64, base int) string          // "" for a bad base
+func strconv.ParseUint(s string, base, bitSize int) (n uint64, ok bool) // bitSize 0: 32
+func strconv.ParseInt(s string, base, bitSize int) (n int64, ok bool)   // bitSize 0: 32
 ```
 
 ### gogo/kbd and gogo/power
@@ -377,7 +380,8 @@ as `code.Err(errors.X)` under the same names.
 | sending a slice shares it | `Send` deep-copies (large frozen `Bytes` are shared, read-only) |
 | closures capture variables by reference | closures copy captured values; captured variables must not be reassigned |
 | `int` is 64 bits on most machines | `int` is always 32 bits |
-| complex, `uint`, `int8/16/32`, `uint16/32/64`, `uintptr` | none; `int`, `int64`, `byte`, `float32`, `float64` |
+| `uint` is 64 bits on most machines | `uint` is 32 bits, like `int`; `int8` .. `uint64` as in Go, but not in an `any` |
+| complex, `uintptr` | none |
 | maps, pointers | slices of structs, searched |
 | methods, interfaces | functions; type switches over `any` |
 | `switch` on an interface or a struct value, `goto` | type switch, compare fields; labeled `break`/`continue` |

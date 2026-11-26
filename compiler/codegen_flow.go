@@ -142,7 +142,7 @@ func (f *fn) rangeInt(s *ast.RangeStmt) {
 	label := f.takeLabel()
 	scope := f.next
 	xt := f.g.p.Info.TypeOf(s.X)
-	wide := isInt64(xt)
+	wide := isWide(xt)
 	n := f.alloc(s)
 	f.exprInto(s.X, n)
 	idx := f.alloc(s)
@@ -154,10 +154,6 @@ func (f *fn) rangeInt(s *ast.RangeStmt) {
 		}
 	}
 	loadInt(0, idx)
-	lt, add := OpLt, OpAdd
-	if wide {
-		lt, add = OpLt64, OpAdd64
-	}
 	var key uint8
 	hasKey := false
 	if id, _ := s.Key.(*ast.Ident); id != nil && id.Name != "_" {
@@ -173,7 +169,7 @@ func (f *fn) rangeInt(s *ast.RangeStmt) {
 	f.bind(topL)
 	mark := f.next
 	more := f.allocScalar(s)
-	f.asm.Emit(lt, more, idx, n)
+	f.arith(s.X, OpLt, more, idx, n) // unsigned for an unsigned n
 	f.jump(OpJmpf, more, endL)
 	f.next = mark
 	if hasKey {
@@ -189,7 +185,7 @@ func (f *fn) rangeInt(s *ast.RangeStmt) {
 	f.bind(contL)
 	one := f.allocScalar(s)
 	loadInt(1, one)
-	f.asm.Emit(add, idx, idx, one)
+	f.asm.Emit(f.typedOp(OpAdd, s.X), idx, idx, one) // below n: never leaves the type's range
 	f.next = mark
 	f.clearDead() // the body's locals die before the next iteration
 	f.jump(OpJmp, 0, topL)

@@ -309,6 +309,14 @@ static uint32_t arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
         if (y < 0) return R_BAD_SHIFT;
         *r = x >> (y > 63 ? 63 : y);
         return 0;
+    case OP_SHRU64:
+        if (y < 0) return R_BAD_SHIFT;
+        *r = y > 63 ? 0 : wrap64((uint64_t)x >> y);
+        return 0;
+    case OP_DIVU64: case OP_REMU64:
+        if (y == 0) return R_DIV_ZERO;
+        *r = wrap64(op == OP_DIVU64 ? (uint64_t)x / (uint64_t)y : (uint64_t)x % (uint64_t)y);
+        return 0;
     case OP_DIV64:
         if (y == 0) return R_DIV_ZERO;
         *r = (x == INT64_MIN && y == -1) ? INT64_MIN : x / y;
@@ -402,12 +410,15 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
     return left;
 }
 
-static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n) {
+/* Bit i of mask: args[i] is a uint64 (an int64's bits), printed unsigned. */
+static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n, uint32_t mask) {
     Out o;
+    int64_t v;
     out_init(&o, vm, 1);
     for (uint32_t i = 0; i < n; i++) {
         if (i) out_str(&o, " ");
-        out_term(&o, vm, a, args[i], 0, WALK_BUDGET);
+        if (i < 30u && mask >> i & 1u && int64_val(vm, a, args[i], &v)) out_dec(&o, (uint64_t)v, false);
+        else out_term(&o, vm, a, args[i], 0, WALK_BUDGET);
     }
     out_str(&o, "\n");
     out_flush(&o);
@@ -634,14 +645,14 @@ int interp_run(Vm *vm, Actor *a) {
 
         case OP_ADD64: case OP_SUB64: case OP_MUL64: case OP_DIV64: case OP_REM64:
         case OP_AND64: case OP_OR64: case OP_XOR64: case OP_ANDNOT64:
-        case OP_SHL64: case OP_SHR64: {
+        case OP_SHL64: case OP_SHR64: case OP_DIVU64: case OP_REMU64: case OP_SHRU64: {
             REG(ra); REG(rb); REG(rc);
             int64_t x, y, r;
             int32_t n;
             uint32_t why;
             term t;
             CHECK(int64_val(vm, a, R[rb], &x));
-            if (op == OP_SHL64 || op == OP_SHR64) {     /* the count may be an int */
+            if (op == OP_SHL64 || op == OP_SHR64 || op == OP_SHRU64) {     /* the count may be an int */
                 CHECK(count_val(vm, a, R[rc], &n));
                 y = n;
             } else {
@@ -665,12 +676,18 @@ int interp_run(Vm *vm, Actor *a) {
             break;
         }
 
-        case OP_EQ64: case OP_NE64: case OP_LT64: case OP_LE64: {
-            /* By value, whatever the representations. */
+        case OP_EQ64: case OP_NE64: case OP_LT64: case OP_LE64: case OP_LTU64: case OP_LEU64: {
+            /* By value, whatever the representations. Unsigned: the
+             * signed compare with both sign bits flipped. */
             REG(ra); REG(rb); REG(rc);
             int64_t x, y;
             bool r;
             CHECK(int64_val(vm, a, R[rb], &x) && int64_val(vm, a, R[rc], &y));
+            if (op >= OP_LTU64) {
+                x = wrap64((uint64_t)x ^ (uint64_t)INT64_MIN);
+                y = wrap64((uint64_t)y ^ (uint64_t)INT64_MIN);
+                op -= OP_LTU64 - OP_LT64;
+            }
             switch (op) {
             case OP_EQ64: r = x == y; break;
             case OP_NE64: r = x != y; break;
@@ -705,20 +722,24 @@ int interp_run(Vm *vm, Actor *a) {
 
         case OP_CONV: {
             /* c=0: int(rb) of an int64, truncating to the low 32 bits;
-             * c=1: int64(rb) of an int, sign-extending. An immediate is
-             * the same term in both types (its value fits either way).
-             * c=2: byte(rb) of an int or int64 (either representation),
-             * the low 8 bits: always an immediate. */
+             * c=1: int64(rb) of an int, sign-extending; c=6: the same
+             * zero-extending (of a uint32). An immediate is the same term
+             * in both types (its value fits either way), except a
+             * negative one for c=6. c=2..5: uint8, uint16, int8, int16
+             * of an int or int64 (either representation): the low 8
+             * (even c) or 16 bits, zero- (c < 4) or sign-extended: always
+             * an immediate. */
             REG(ra); REG(rb);
-            CHECK(rc <= 2u);
+            CHECK(rc <= 6u);
             int32_t x;
             int64_t x64;
             term t;
             bool ok;
-            if (rc == 2u) {
+            if (rc >= 2u && rc <= 5u) {
                 if (int_val(vm, a, R[rb], &x)) x64 = x;
                 else CHECK(int64_val(vm, a, R[rb], &x64));
-                R[ra] = term_from_int((int32_t)((uint64_t)x64 & 0xFFu));
+                uint32_t sh = rc & 1u ? 16u : 24u, u = (uint32_t)(uint64_t)x64 << sh;
+                R[ra] = term_from_int(rc >= 4u ? wrap(u) >> sh : (int32_t)(u >> sh));
                 break;
             }
             if (rc == 0u) {
@@ -727,8 +748,8 @@ int interp_run(Vm *vm, Actor *a) {
                 ok = make_int(vm, a, wrap((uint32_t)(uint64_t)x64), &t);
             } else {
                 CHECK(int_val(vm, a, R[rb], &x));
-                if (term_is_int(R[rb])) { R[ra] = R[rb]; break; }
-                ok = make_int64(vm, a, x, &t);
+                if (term_is_int(R[rb]) && (rc == 1u || x >= 0)) { R[ra] = R[rb]; break; }
+                ok = make_int64(vm, a, rc == 6u ? (int64_t)(uint32_t)x : x, &t);
             }
             if (!ok) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
@@ -941,12 +962,17 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_BUILTIN:
             REG(ra); REGS(rb, rc);
             switch (ext) {
-            case B_PRINTLN:
-                /* Anything printed that names a gone module is badcode. */
-                for (uint32_t i = 0; i < rc; i++) CHECK(deep_live(vm, a, R[rb + i], 0, WALK_BUDGET) != WALK_STALE);
-                do_println(vm, a, R + rb, rc);
+            case B_PRINTLN: case B_PRINTLNU: {
+                /* Anything printed that names a gone module is badcode.
+                 * B_PRINTLNU: rb is the mask of the uint64 values after it. */
+                int32_t mask = 0;
+                uint32_t first = ext == B_PRINTLNU;
+                if (first) CHECK(rc && int_val(vm, a, R[rb], &mask));
+                for (uint32_t i = first; i < rc; i++) CHECK(deep_live(vm, a, R[rb + i], 0, WALK_BUDGET) != WALK_STALE);
+                do_println(vm, a, R + rb + first, rc - first, (uint32_t)mask);
                 R[ra] = T_NIL;
                 break;
+            }
             case B_SPAWN: case B_SPAWN_LINK: case B_SPAWN_OPT: {
                 CHECK(rc == (ext == B_SPAWN_OPT ? 2u : 1u));
                 uint16_t max_words = 0;

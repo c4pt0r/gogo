@@ -163,23 +163,27 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
 - Types: `bool`; `int` (always 32 bits: the compiler type-checks with
   `types.StdSizes{WordSize: 4, MaxAlign: 4}`, so constant overflow is a
   compile error, and run-time overflow wraps in two's complement as in
-  Go); `int64`; `byte` (`uint8`); `string` (immutable bytes); `rune`
-  only as the type of character literals (`range` over a string gives
+  Go); `int64`; the sized integers `int8`, `int16`, `int32`, `uint8`
+  (`byte`), `uint16`, `uint32`, `uint64` and `uint` (32 bits, like `int`;
+  see Sized integers below); `string` (immutable bytes); `rune` (`int32`),
+  the type of character literals (`range` over a string gives
   its bytes, 0..255, with no UTF-8 decoding: the loop variable keeps Go's
   static type `rune`, but its values are bytes); `float32` and `float64`
   (IEEE 754 as in Go, untyped float constants folded exactly at compile
   time and defaulting to `float64`; see Floating point below); slices;
   structs; `any`; func values and func literals (closures, any
-  signature); named types of `int`, `int64`, `float32`, `float64`, `bool`
-  and `string` (`type Code int`); `bytes.Bytes` and `bytes.Buffer`.
+  signature); named types of any integer or float type, `bool` and
+  `string` (`type Code int`, `type Reg uint32`); `bytes.Bytes` and
+  `bytes.Buffer`.
 - Operators: arithmetic and comparison; string concatenation and
   comparison; bitwise `&`, `|`, `^`, `&^`, `<<`, `>>`, unary `^` and the
-  compound assignments `&=`, `|=`, `^=`, `&^=`, `<<=`, `>>=`, on `int`,
-  `int64` and `byte`. Shifts follow Go: the count may be any integer
+  compound assignments `&=`, `|=`, `^=`, `&^=`, `<<=`, `>>=`, on every
+  integer type. Shifts follow Go: the count may be any integer
   type, a count at or above the width gives 0 for `<<` and 0 or -1 for
   `>>`, a negative count ends the actor with `badshift`; `>>` is
-  arithmetic (there are no unsigned types except `byte`), and `byte`
-  results are truncated after each operation.
+  arithmetic on a signed type and logical on an unsigned one, and the
+  results of a type narrower than 32 bits are truncated after each
+  operation.
 - Slices: `make`, `append` (also `append(a, b...)`), `copy`, `len`,
   `cap`, indexing, element assignment and slicing; `len`, indexing and
   slicing of strings and `Bytes`.
@@ -284,8 +288,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   package's name is its directory's name (§5.1, the loader).
 
 **Not supported yet (planned for the "language completeness"
-milestone):** maps, pointers (and pointer receivers), integer types other than
-`int`, `int64` and `byte` (`uint32` included), package-level variables,
+milestone):** maps, pointers (and pointer receivers), package-level variables,
 a `switch` on an `any` or a struct value, type assertions, `panic`, the
 `error` interface and interfaces other than `any`.
 Each is rejected at compile time with a `<what> not supported` error
@@ -293,7 +296,7 @@ Each is rejected at compile time with a `<what> not supported` error
 
 **Out of the design:** channels and `select`, the `go` statement (use
 `actor.Spawn`), generics, `recover`, a `defer` inside a loop,
-reflection, `unsafe`, complex numbers.
+reflection, `unsafe`, complex numbers, `uintptr`.
 
 **Floating point** (image format 15.2, the firmware option `GOGO_FLOAT`,
 the requirement `float`):
@@ -341,6 +344,62 @@ the requirement `float`):
   `float64` is software there (libgcc). The interpreter and the boxing
   dominate both: on the StickS3 a loop of 20000 `x = x*0.999 + 0.25` takes 313 ms in `float32`, 409 ms in `float64` and 226 ms as the same loop on `int`s, so a `float64` operation costs about twice a
   `float32` one. On an RP2040 (no FPU) both are software.
+
+**Sized integers** (image format 15.3 for what they add to the VM):
+- Go semantics for `int8`, `int16`, `int32`, `uint8`, `uint16`, `uint32`,
+  `uint64` and `uint`: wraparound at the type's width after every
+  operation, truncating signed division (`MinInt8 / -1` is `MinInt8`),
+  unsigned division, remainder, ordering and `>>`, shift counts of any
+  integer type (an unsigned count is never negative), division by zero
+  ending the actor with `divzero`, constant overflow a compile error
+  (go/types folds constants with 32-bit `int` and `uint`).
+- Representation: two, as before. A type of at most 32 bits is an `int`
+  term (a 31-bit immediate, a `K_INT` box beyond), a 64-bit one an `int64`
+  term (immediate or `K_INT64` box). An unsigned value is stored as the
+  bit pattern of the signed type of its width: `uint32(1<<32 - 1)` is the
+  `int` -1, `uint64(1<<64 - 1)` the `int64` -1. So equality, `+ - * & | ^
+  &^ <<` and negation are the signed ops at every width. A type narrower
+  than 32 bits always holds an in-range value (an immediate): after an
+  operation that can leave the range, `OP_CONV` modes 2-5 cut the result
+  back (`uint8`, `uint16`, `int8`, `int16`; `& | ^ &^ >>` cannot leave it,
+  nor can an unsigned `/` or `%`).
+- Unsigned ops: `uint64` has `OP_DIVU64`, `OP_REMU64`, `OP_LTU64`,
+  `OP_LEU64` and `OP_SHRU64`. `uint32` (and `uint`) has no ops of its own:
+  for `/`, `%`, ordering and `>>` the compiler widens both operands to
+  `int64` (`OP_CONV` c=6, zero-extending: exact, and on 0 .. 2^32-1 the
+  signed `int64` op is the unsigned one), uses the `int64` op and takes the
+  low 32 bits back (`OP_CONV` c=0). That costs two or three extra
+  instructions for those operators on `uint32`, in exchange for about 150
+  bytes of VM core.
+- Conversions: within the `int` representation the bits stay, except into
+  a narrower type, which cuts them; into `int64`/`uint64` a 32-bit value is
+  sign-extended (`OP_CONV` c=1) or zero-extended (c=6, from `uint32`);
+  out of it, the low 32 bits (c=0). With floats: `uint32` goes through its
+  `int64` value both ways (`uint32(f)` is the low 32 bits of `int64(f)`,
+  as Go on arm64 does), a narrow type through `int` (as `byte` did);
+  `uint64` to a float and back is a short compiled sequence over the
+  signed conversions (halving above 2^63 with a sticky bit, so it rounds
+  once; NaN and negative values give 0, values from 2^64 the maximum, as
+  Go on arm64).
+- `println` prints unsigned values unsigned: a `uint32` argument is
+  widened to its `int64` value, and a `uint64` one is marked in the mask
+  that `B_PRINTLNU` takes before the values (bit i, i < 30). Inside a
+  struct, slice or array the static type is lost, so `println` of a value
+  holding a `uint32`, `uint` or `uint64` is rejected.
+- Not in `any`: inside an interface a sized integer would be an `int` or
+  `int64` that `TYPEIS` could not tell apart (rejected like `byte` and
+  named basic types; the planned boxing of named non-struct types would
+  lift it). As struct fields, slice and array elements they go anywhere,
+  messages included. Indexes may be any integer of up to 32 bits.
+- `gogo/strconv` gains `FormatUint`, `ParseUint` and `ParseInt` (with a
+  bit size), in `lib/strconv/unsigned.gg`, a `//gogo:ondemand` file: the
+  compiler emits its functions only when the program refers to them
+  (`onDemandUsed`: a walk over the other files' identifiers, then over the
+  bodies of the functions found), so an image that imports strconv for
+  `Itoa` is unchanged. They are written with `int64` operations on the
+  `uint64`'s bits, so even a caller stays at 15.0 unless it uses unsigned
+  ops itself. This is per-file inclusion, not dead-code elimination: an
+  ordinary library function is still compiled in whether used or not.
 
 **Closures capture by value.** A func literal copies each captured
 variable into the closure when it is created (the capture slots of its
@@ -823,6 +882,14 @@ checked by the same rule (`gogo: image requires kbd, which this VM
 lacks`). A board's capabilities are exactly its port and mount lists,
 built with what its build has (§5.4.5); there is no separate bit table.
 
+**The `//gogo:ondemand` directive.** A comment line `//gogo:ondemand`
+in a file (meant for libraries) makes the compiler emit that file's
+top-level functions only when the rest of the program refers to them,
+directly or through another such function (`onDemandUsed` in
+`compiler/codegen.go`); the file may declare no methods. It is per-file
+inclusion, not dead-code elimination: every other function of a
+compiled package is still in the image. `lib/strconv/unsigned.gg` uses it.
+
 **The `//gogo:optional` directive.** A package (a library or `package
 main`) can declare drivers it uses only softly: opened only when a call needs them at run
 time, and their absence (`port.Open` returning `ok=false`) reported as
@@ -1297,6 +1364,9 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
 |---|---|---|---|---|---|
 | `int` | small int 0 | small-int immediate within 31 bits; a `K_INT` heap box beyond | as is (`TYPEIS` -> `int`) | immediates not scanned; a `K_INT` box is copied, its content not scanned | immediates as is; boxes deep-copied |
 | `int64` | small int 0 | immediate within 31 bits; a `K_INT64` box (heap or constant area) beyond | always `BOX64` to a `K_INT64` box (constants boxed at compile time in the constant area), to tell it from `int` | as `int` | as `int`; constant-area boxes as is |
+| `int8`, `int16`, `int32`, `uint8`, `uint16` | small int 0 | always a small-int immediate (the value, cut back to the type's range after each operation) | not allowed (only `int` and `int64` go into `any`) | not scanned | as is |
+| `uint32`, `uint` | small int 0 | as `int`, holding the bit pattern (`uint32(1<<32-1)` is the immediate -1; values whose signed reading needs more than 31 bits are `K_INT` boxes) | not allowed | as `int` | as `int` |
+| `uint64` | small int 0 | as `int64`, holding the bit pattern | not allowed | as `int` | as `int64` |
 | `float32`, `float64` (15.2) | a constant-area `K_FLOAT` 0 of the width | always a `K_FLOAT` box, heap or constant area: `[hdr][bits]` (2 words, `float32`) or `[hdr][lo][hi]` (3 words, `float64`); never an immediate, so every arithmetic result allocates | as is (`TYPEIS` -> `float32` / `float64` by the box size) | copied, content not scanned | heap boxes deep-copied; constant-area boxes as is (copied when crossing modules) |
 | `bool` | `T_FALSE` | the specials `T_FALSE` / `T_TRUE` | as is | not scanned | as is |
 | `string` | `T_EMPTYSTR` | a `K_STRING` heap object or a constant-area ref | as is | heap strings copied (bytes not scanned); constant refs untouched | heap strings deep-copied; constant strings as is |
@@ -1631,14 +1701,16 @@ together with `mbox_words` through `actor_charged_words`).
   major whose minor is at most its own (one unsigned compare); any other
   is refused (`IMG_ERR_VERSION`: `GOGO_EVERSION` in the embedding API,
   `code.BadVersion` from `code.Load`, and gogovm, the firmware and the
-  embed layer name both formats, `unsupported image format 15.3 (this VM
-  runs 15.0 to 15.2)`). The compiler stamps each image with the lowest
+  embed layer name both formats, `unsupported image format 15.4 (this VM
+  runs 15.0 to 15.3)`). The compiler stamps each image with the lowest
   minor its program needs: the highest minor among the opcodes, builtins
   and reserved rows it uses, from tables in `compiler/image.go` (everything
   in 15.0 except the additions listed there: 15.1 `screen.Config`; 15.2
   floating point, the float ops, `B_FLOAT`, `K_FLOAT` constants and the
   `TYPEIS` ids of `float32` and `float64`, which also make the image
-  require `float`).
+  require `float`; 15.3 sized integers, the unsigned `uint64` ops,
+  `B_PRINTLNU` and `OP_CONV` modes 3-6 (`sizedMinor`, which the scan
+  reads off each `OP_CONV`'s mode).
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old
@@ -1668,13 +1740,19 @@ together with `mbox_words` through `actor_charged_words`).
   `Buffer`, 46 `port.Handoff`, 47 `net.Subscribe`, 48 `sys.Config`, 49
   `B_FS` (gogo/fs), 50 `B_CODE` (gogo/code), 51-53 `sys.Time`,
   `sys.SetTime`, `sys.Random`, 54 `B_FLOAT` (15.2: gogo/math and
-  `strconv.FormatFloat` / `ParseFloat`, `runtime/floatlib`).
+  `strconv.FormatFloat` / `ParseFloat`, `runtime/floatlib`), 55
+  `B_PRINTLNU` (15.3: `println` with `uint64` values).
 - **Float ops** (15.2, `OP_ADDF` .. `OP_CONVF`, 52-61): one set for both
   widths. The operands' boxes carry the width (a 2-word `K_FLOAT` is a
   `float32`, a 3-word one a `float64`), and the op computes in it; mixed
   widths are `badcode`. `CONVF` converts between floats and integers
   (modes in `runtime/vm/opcodes.h`). A VM built without `GOGO_FLOAT` has
   none of them: the requirement check refuses the image before any runs.
+- **Unsigned ops** (15.3, `OP_DIVU64` .. `OP_SHRU64`, 62-66): `uint64`
+  division, remainder, `<`, `<=` and logical `>>` on `int64` terms
+  holding the bits; `uint32` uses the `int64` ops on widened values
+  (Sized integers, §5.2). `OP_CONV` gained modes 3-6 (`uint16`, `int8`,
+  `int16`, and `int64` of a `uint32`).
 - **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 45 of them,
   0..44): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
   `Request`, `Options`), 6-8 `gpio.Config`, `gpio.Write`, `gpio.Edge`,
@@ -2168,7 +2246,9 @@ port with `port.Closed` and `From`; embed mode phase 1 (`libgogo`,
 first language additions (expression `switch`, labels, `range` over int,
 variadic functions, methods with value receivers, embedded fields,
 arrays, static `defer`); floating point (`float32`, `float64`,
-`gogo/math`, `strconv.FormatFloat` / `ParseFloat`; image format 15.2).
+`gogo/math`, `strconv.FormatFloat` / `ParseFloat`; image format 15.2);
+sized integers (`int8` .. `uint64`, `strconv.FormatUint` / `ParseUint` /
+`ParseInt`; image format 15.3).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
@@ -2179,8 +2259,8 @@ arrays, static `defer`); floating point (`float32`, `float64`,
    connect to a server node that also relays board-to-board messages,
    with direct LAN links as a later step.
 3. **Language completeness:** pointer receivers, interfaces and
-   `error`, `panic`, pointers, maps, read-only package variables, `fmt`,
-   sized integers (`float32`/`float64` are done).
+   `error`, `panic`, pointers, maps, read-only package variables, `fmt`
+   (floating point and sized integers are done).
 4. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler,

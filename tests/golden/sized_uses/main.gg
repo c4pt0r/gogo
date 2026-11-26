@@ -1,0 +1,147 @@
+// Sized integers where Go's int and uint widths matter (32 bits in gogo),
+// and in the rest of the language: struct fields, slices, arrays, field
+// and element op-assignment, indexing and ranging with sized indices,
+// switch, named types, constants and messages between actors.
+package main
+
+import "gogo/actor"
+
+type Packet struct {
+	Seq   uint16
+	Flags uint8
+	Delta int8
+	Addr  uint32
+	Stamp uint64
+	Temp  int16
+}
+
+type Sum struct {
+	Total uint64
+	Last  uint32
+	Count int
+}
+
+type Mask uint32
+
+const (
+	A Mask = 1 << iota
+	B
+	C
+	All Mask = 0xFFFFFFFF
+)
+
+func (m Mask) Has(x Mask) bool { return m&x != 0 }
+
+func worker(parent actor.PID) {
+	var s Sum
+	for {
+		switch m := actor.Receive().(type) {
+		case Packet:
+			s.Total += m.Stamp + uint64(m.Addr)
+			s.Last = m.Addr
+			s.Count++
+			println("got", m.Seq, m.Flags, m.Delta, m.Addr, m.Stamp, m.Temp)
+		case int:
+			actor.Send(parent, s)
+			return
+		}
+	}
+}
+
+func main() {
+	// int and uint are 32 bits
+	var u uint = 4294967295
+	u++
+	var zero uint
+	println("uint", u, uint(1)<<31, ^uint(0), zero-1)
+	var i int = 2147483647
+	i++
+	var all uint32 = 4294967295
+	var m1 int32 = -1
+	println("int", i, int(all), uint32(m1), uint(i))
+	var x uint32 = 3000000000
+	println(int(x), int64(x), uint64(x)*2, x+x)
+
+	// fields, slices, arrays
+	p := Packet{Seq: 65535, Flags: 0x80, Delta: -128, Addr: 0xC0A80001, Stamp: 1 << 63, Temp: -300}
+	p.Seq++
+	p.Flags <<= 1
+	p.Delta--
+	p.Addr >>= 8
+	p.Stamp *= 2
+	p.Temp *= 200
+	println(p.Seq, p.Flags, p.Delta, p.Addr, p.Stamp, p.Temp)
+	regs := []uint32{0xFFFFFFFF, 0x80000000, 7}
+	regs[0]++
+	regs[1] >>= 31
+	regs[2] -= 8
+	println(regs[0], regs[1], regs[2])
+	var arr [4]int8
+	arr[1] = 127
+	arr[1]++
+	arr[2] -= 1
+	println(arr[0], arr[1], arr[2], len(arr))
+	var wide [2]uint64
+	wide[0]--
+	println(wide[0], wide[1])
+	bs := []uint8{250, 251}
+	bs[0] += 10
+	println(bs[0], bs[1])
+
+	// sized indices and ranges
+	s := []string{"a", "b", "c", "d"}
+	var i8 int8 = 2
+	var u16 uint16 = 3
+	var u32 uint32 = 1
+	println(s[i8], s[u16], s[u32], s[u32:u16])
+	tot := uint32(0)
+	for k, v := range regs {
+		tot += v + uint32(k)
+	}
+	println("range", tot)
+	var n uint32 = 4
+	for j := range n {
+		print2(j, n-j)
+	}
+	cnt := 0
+	for j := uint8(250); j != 4; j++ {
+		cnt++
+	}
+	println("wrapped", cnt)
+
+	// switch on sized values
+	for _, v := range []uint32{0, 4294967295, 2147483648} {
+		switch v {
+		case 4294967295:
+			println("max")
+		case 1 << 31:
+			println("top bit")
+		default:
+			println("other", v)
+		}
+	}
+	var big uint64 = 18446744073709551615
+	switch big {
+	case 1<<64 - 1:
+		println("uint64 max")
+	}
+
+	// named types and typed constants
+	m := A | C
+	println(m, m.Has(B), m.Has(C), All, All&^m, Mask(1)<<31)
+	const k uint64 = 1<<64 - 2
+	println(k, k+1, uint32(k>>40))
+
+	// messages
+	me := actor.Self()
+	wp := actor.Spawn(func() { worker(me) })
+	actor.Send(wp, Packet{Seq: 1, Flags: 255, Delta: -1, Addr: 4294967295, Stamp: 18446744073709551615, Temp: -32768})
+	actor.Send(wp, Packet{Seq: 65535, Addr: 2147483648, Stamp: 9223372036854775808})
+	actor.Send(wp, 0)
+	switch r := actor.Receive().(type) {
+	case Sum:
+		println("sum", r.Total, r.Last, r.Count)
+	}
+}
+
+func print2(a, b uint32) { println("pair", a, b) }

@@ -1,0 +1,72 @@
+// strconv.FormatUint, ParseUint and ParseInt with a bit size.
+package main
+
+import "gogo/strconv"
+
+func pu(s string, base, bits int) {
+	n, ok := strconv.ParseUint(s, base, bits)
+	println("ParseUint", s, base, bits, n, ok)
+}
+
+func pi(s string, base, bits int) {
+	n, ok := strconv.ParseInt(s, base, bits)
+	println("ParseInt", s, base, bits, n, ok)
+}
+
+func main() {
+	println(strconv.FormatUint(0, 10), strconv.FormatUint(18446744073709551615, 10), strconv.FormatUint(18446744073709551615, 16))
+	println(strconv.FormatUint(18446744073709551615, 2))
+	println(strconv.FormatUint(9223372036854775808, 36), strconv.FormatUint(255, 2), strconv.FormatUint(35, 36), strconv.FormatUint(1, 37) == "")
+	var u32 uint32 = 4294967295
+	println(strconv.FormatUint(uint64(u32), 10))
+
+	pu("18446744073709551615", 10, 64)
+	pu("18446744073709551616", 10, 64)
+	pu("ffffffffffffffff", 16, 64)
+	pu("FFFFFFFFFFFFFFFF0", 16, 64)
+	pu("4294967295", 10, 32)
+	pu("4294967296", 10, 32)
+	pu("4294967295", 10, 0)
+	pu("255", 10, 8)
+	pu("256", 10, 8)
+	pu("65535", 10, 16)
+	pu("11111111", 2, 8)
+	pu("111111111", 2, 8)
+	pu("3w5e11264sgsf", 36, 64)
+	pu("-1", 10, 64)
+	pu("+1", 10, 64)
+	pu("", 10, 64)
+	pu("12", 10, 65)
+	pu("12", 1, 64)
+	pu("1z", 10, 64)
+
+	pi("127", 10, 8)
+	pi("128", 10, 8)
+	pi("-128", 10, 8)
+	pi("-129", 10, 8)
+	pi("2147483647", 10, 0)
+	pi("2147483648", 10, 0)
+	pi("-2147483648", 10, 32)
+	pi("-7fff", 16, 16)
+	pi("8000", 16, 16)
+	pi("9223372036854775807", 10, 64)
+	pi("-9223372036854775808", 10, 64)
+	pi("9223372036854775808", 10, 64)
+	pi("+5", 10, 64)
+	pi("-", 10, 64)
+	pi("5", 10, -1)
+
+	// round trips
+	var v uint64 = 18446744073709551615
+	for k := 0; k < 6; k++ {
+		for base := 2; base <= 36; base += 5 {
+			s := strconv.FormatUint(v, base)
+			w, ok := strconv.ParseUint(s, base, 64)
+			if !ok || w != v {
+				println("ROUNDTRIP FAIL", v, base, s)
+			}
+		}
+		v = v/7 + 3
+	}
+	println("done")
+}

@@ -140,9 +140,11 @@ version` prints the full one). A firmware runs images of its major whose
 minor is at most its own, and the compiler stamps each image with the
 lowest minor its program needs, so after a firmware update every module
 already on `/flash` keeps loading. An image of another major, or of a newer minor than the
-firmware's, is refused (`unsupported image format 15.2 (this VM runs 15.0
-to 15.1)`; `code.Load` returns `BadVersion`). The minors so far: 15.1
-added `screen.Config`, 15.2 floating point.
+firmware's, is refused (`unsupported image format 15.3 (this VM runs 15.0
+to 15.2)`; `code.Load` returns `BadVersion`). The minors so far: 15.1
+added `screen.Config`, 15.2 floating point, 15.3 sized integers (only a
+program that divides, compares or shifts `uint32`/`uint64` values, uses
+`int8`/`int16`/`uint16` arithmetic or prints an unsigned value needs it).
 
 A package, a library or `package main`, can declare that it uses some
 drivers only softly: it opens them only when a call asks for that at run
@@ -322,7 +324,7 @@ Prints the version, the package search path (where it comes from:
 
 ```text
 $ gogo env
-version   v0.4.0 (image format 15.2)
+version   v0.4.0 (image format 15.3)
 GOGOPATH  /home/you/gogo ($HOME/gogo, GOGOPATH is unset)
 search    1. the build root (imports starting with its directory's name)
           2. /home/you/gogo

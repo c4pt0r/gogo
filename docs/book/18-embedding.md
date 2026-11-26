@@ -644,8 +644,8 @@ cfg.grant = grant;     /* a host port "sensor" registered later stays hidden */
 
 An image whose format is another major, or a newer minor than this
 library's, is refused with `GOGO_EVERSION` (-27), and both formats are
-named (`gogo: unsupported image format 15.3 (this VM runs 15.0 to
-15.2)`).
+named (`gogo: unsupported image format 15.4 (this VM runs 15.0 to
+15.3)`).
 
 ## 18.10 Hot loading: `GOGO_CONFIG_CODE_LOAD`
 

@@ -102,15 +102,11 @@ func (c *checker) typeProblem(t types.Type) string {
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		switch t.Kind() {
-		case types.Int, types.Int64, types.Uint8, types.Bool, types.String, types.UntypedInt, types.UntypedBool, types.UntypedString, types.UntypedRune,
-			types.Float32, types.Float64, types.UntypedFloat:
-			// Uint8 is byte; rune (below) and 'x' literals behave as int.
+		case types.Int, types.Int64, types.Bool, types.String, types.UntypedInt, types.UntypedBool, types.UntypedString, types.UntypedRune,
+			types.Float32, types.Float64, types.UntypedFloat,
+			types.Int8, types.Int16, types.Int32, types.Uint, types.Uint8, types.Uint16, types.Uint32, types.Uint64:
+			// Uint8 is byte, Int32 rune; 'x' literals behave as int.
 			return ""
-		case types.Int32:
-			if t.Name() == "rune" { // the alias, not int32 itself
-				return ""
-			}
-			return t.Name()
 		case types.Complex64, types.Complex128, types.UntypedComplex:
 			return "complex"
 		case types.UntypedNil:
@@ -275,7 +271,7 @@ func (c *checker) typeSpec(s *ast.TypeSpec) {
 			c.typeExpr(s.Type) // a named basic type: type C int
 			return
 		}
-		c.unsupported(s, "type definition other than struct or int, int64, float32, float64, bool, string")
+		c.unsupported(s, "type definition other than struct or an integer, float, bool or string type")
 		return
 	}
 	for _, f := range st.Fields.List {
@@ -320,9 +316,19 @@ func underlying(t types.Type) types.Type {
 	return t.Underlying()
 }
 
-// isBasic reports whether t's underlying type is int, int64, float32,
-// float64, bool or string.
+// isBasic reports whether t's underlying type is an integer type (of
+// the subset: not uintptr), float32, float64, bool or string: what a
+// named basic type may be.
 func isBasic(t types.Type) bool {
+	b, ok := underlying(t).(*types.Basic)
+	return ok && (intKindOf(b).bits != 0 || b.Kind() == types.Bool || b.Kind() == types.String ||
+		b.Kind() == types.Float32 || b.Kind() == types.Float64)
+}
+
+// isCaseBasic reports whether t's underlying type is a type switch case
+// type that TYPEIS tells apart: int, int64, float32, float64, bool or
+// string (a narrower or unsigned integer cannot be in an interface).
+func isCaseBasic(t types.Type) bool {
 	b, ok := underlying(t).(*types.Basic)
 	return ok && (b.Kind() == types.Int || b.Kind() == types.Int64 || b.Kind() == types.Bool || b.Kind() == types.String ||
 		b.Kind() == types.Float32 || b.Kind() == types.Float64)
@@ -337,37 +343,21 @@ func basicKind(t types.Type) types.BasicKind {
 }
 
 // isIntConv reports whether conversion call is one the subset allows
-// between numbers: int(x), int64(x), byte(x), float32(x) or float64(x),
-// or T(x) for a named type T whose underlying type is int, int64, float32
-// or float64 (fs.Err, errors.Code), where x is an int, an int64, a byte, a
-// float32, a float64 or an untyped constant (or of a named type with one
-// of those underlying).
+// between numbers: T(x) for an integer or float type T (or a named type of
+// one: fs.Err, errors.Code), where x is an integer, a float or an untyped
+// constant (or of a named type of one).
 func (c *checker) isIntConv(call *ast.CallExpr) bool {
-	tt := c.p.Info.TypeOf(call.Fun)
-	to := basicKind(tt)
-	if _, named := types.Unalias(tt).(*types.Named); named {
-		if k := basicKind(tt.Underlying()); k == types.Int || k == types.Int64 || k == types.Float32 || k == types.Float64 {
-			to = k
-		}
-	}
-	switch to {
-	case types.Int, types.Int64, types.Uint8, types.Float32, types.Float64:
-	default:
-		return false
-	}
 	if len(call.Args) != 1 {
 		return false
 	}
-	from := c.p.Info.TypeOf(call.Args[0])
-	if _, named := types.Unalias(from).(*types.Named); named {
-		from = from.Underlying() // a named int (fs.Err) converts too
+	number := func(t types.Type) bool {
+		switch basicKind(t.Underlying()) {
+		case types.Float32, types.Float64, types.UntypedFloat:
+			return true
+		}
+		return intKindOf(t).bits != 0
 	}
-	switch basicKind(from) {
-	case types.Int, types.Int64, types.Uint8, types.UntypedInt, types.Int32, types.UntypedRune,
-		types.Float32, types.Float64, types.UntypedFloat:
-		return true
-	}
-	return false
+	return number(c.p.Info.TypeOf(call.Fun)) && number(c.p.Info.TypeOf(call.Args[0]))
 }
 
 // isByte reports whether t is byte (uint8), unnamed.
@@ -410,11 +400,10 @@ func (c *checker) convertType(target, src types.Type, pos token.Pos) {
 	if isArray(src) {
 		c.fail(pos, "array in interface not supported: use a slice or a struct with an array field")
 	}
-	if isByte(src) {
-		c.fail(pos, "byte in interface not supported")
-	}
-	if basicKind(src) == types.Int32 || basicKind(src) == types.UntypedRune {
-		c.fail(pos, "rune in interface not supported")
+	if k := basicKind(src); k != types.Int && k != types.Int64 && k != types.UntypedInt && k != types.Invalid && intKindOf(src).bits != 0 {
+		// A sized integer would be an int or int64 inside: TYPEIS could
+		// not tell it apart.
+		c.fail(pos, "%s in interface not supported", types.TypeString(src, pkgName))
 	}
 	if n, ok := types.Unalias(src).(*types.Named); ok {
 		if _, basic := n.Underlying().(*types.Basic); basic {
@@ -940,7 +929,7 @@ func (c *checker) caseType(t ast.Expr) bool {
 	}
 	switch ty := types.Unalias(tv.Type).(type) {
 	case *types.Basic:
-		return isBasic(ty)
+		return isCaseBasic(ty)
 	case *types.Named:
 		if isFsFile(ty) {
 			return false // the same term tag as actor.PID: the case would match every PID
@@ -1113,6 +1102,10 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 				}
 				if t := c.p.Info.TypeOf(a); isBytes(t) || isBuffer(t) {
 					c.unsupported(a, "println of "+types.TypeString(t, pkgName)+" (use String())")
+					return
+				}
+				if t := c.p.Info.TypeOf(a); holdsUnsigned(t, nil) {
+					c.fail(a.Pos(), "println of %s not supported: it holds uint32 or uint64 values, which would print signed; print them one by one", types.TypeString(t, pkgName))
 					return
 				}
 			}
@@ -1455,11 +1448,13 @@ func isString(t types.Type) bool {
 	return ok && b.Info()&types.IsString != 0
 }
 
-// indexArg checks an index or slice bound: an int, a byte or an untyped
-// integer constant (an int64 may not fit the VM's small-int index).
+// indexArg checks an index or slice bound: an integer of at most 32
+// bits or an untyped integer constant (an int64 or uint64 may not fit the
+// VM's int index; a uint32 from 2^31 is a negative int there, out of
+// range as in Go).
 func (c *checker) indexArg(e ast.Expr) {
-	switch basicKind(c.p.Info.TypeOf(e)) {
-	case types.Int, types.Uint8, types.UntypedInt, types.Int32, types.UntypedRune:
+	switch t := c.p.Info.TypeOf(e); {
+	case intKindOf(t).bits != 0 && intKindOf(t).bits <= 32:
 		c.expr(e)
 	default:
 		c.unsupported(e, "index of type "+types.TypeString(c.p.Info.TypeOf(e), nil))
@@ -1686,4 +1681,37 @@ func (c *checker) stubPromoted(sel *ast.SelectorExpr) bool {
 	}
 	c.fail(sel.Pos(), "method %s of an embedded %s type not supported: call it on the field", fn.Name(), fn.Pkg().Path())
 	return true
+}
+
+// holdsUnsigned reports whether t is a struct, slice or array type with a
+// uint32, uint or uint64 inside (at any depth): println prints such a
+// value's fields and elements without their static types, so these would
+// print as their signed bit patterns. (A bare one is printed unsigned:
+// printlnUnsigned.)
+func holdsUnsigned(t types.Type, seen map[types.Type]bool) bool {
+	if seen[t] {
+		return false
+	}
+	if seen == nil {
+		seen = map[types.Type]bool{}
+	}
+	seen[t] = true
+	switch u := t.Underlying().(type) {
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			ft := u.Field(i).Type()
+			if k := intKindOf(ft); k.unsigned && k.bits >= 32 || holdsUnsigned(ft, seen) {
+				return true
+			}
+		}
+	case *types.Slice:
+		if k := intKindOf(u.Elem()); k.unsigned && k.bits >= 32 || holdsUnsigned(u.Elem(), seen) {
+			return true
+		}
+	case *types.Array:
+		if k := intKindOf(u.Elem()); k.unsigned && k.bits >= 32 || holdsUnsigned(u.Elem(), seen) {
+			return true
+		}
+	}
+	return false
 }
