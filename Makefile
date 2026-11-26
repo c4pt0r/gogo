@@ -66,7 +66,7 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
@@ -398,6 +398,11 @@ $(BUILD)/console_ppm: runtime/console/tools/console_ppm.c $(CONSOLE_SRCS) $(wild
 
 console-ppm: $(BUILD)/console_ppm
 	$(BUILD)/console_ppm runtime/console/font/gogo12.font $(TEXT) $(OUT)
+
+# docs/bytecode.md from the structured comments in runtime/vm/opcodes.h
+# (tools/bcdoc); go test ./... (test-go) fails when it is stale.
+bytecode-doc:
+	go run ./tools/bcdoc
 
 test-go: vm $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm GOGO_VM_MCU=$(CURDIR)/$(BUILD)/gogovm_mcu go test ./...
