@@ -229,3 +229,16 @@ func TestConfigSchema(t *testing.T) {
 		t.Errorf("set net.bogus -: %v", err)
 	}
 }
+
+// The forms gogo device replaces still work, with a note.
+func TestConfigDeprecatedForms(t *testing.T) {
+	t.Setenv("GOGO_CONFIG", filepath.Join(t.TempDir(), "cfg"))
+	var out, errOut bytes.Buffer
+	if err := configMain([]string{"-local", "set", "fs.flash.format", "yes"}, &out, nil, &errOut, nil); err != nil || !strings.Contains(errOut.String(), "use gogo device format-flash") {
+		t.Errorf("fs.flash.format: %v %q", err, errOut.String())
+	}
+	errOut.Reset()
+	if err := configMain([]string{"-local", "stats"}, &out, nil, &errOut, nil); err == nil || !strings.Contains(errOut.String(), "stats is deprecated, use gogo device stats") {
+		t.Errorf("stats: %v %q", err, errOut.String())
+	}
+}

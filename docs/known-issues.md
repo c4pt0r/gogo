@@ -118,6 +118,12 @@ rebuilt:
 
 - `gogo monitor -t seconds` is `-timeout seconds`; `-t` still works and
   says so on standard error.
+- `gogo config scan` and `gogo config stats` are `gogo device scan` and
+  `gogo device stats`; the old forms still work, with a note.
+- `gogo config set fs.flash.format yes` (format `/flash` at the next
+  boot) is `gogo device format-flash`, which formats at once (the board
+  restarts) and writes nothing to the configuration store. The key still
+  works, with a note.
 
 ## VM
 
@@ -175,7 +181,7 @@ rebuilt:
   nothing, the allocation fails (`OutOfMemory`) and ports that need a
   handle refuse (a stream `Out` gets `Done{-1}`). *Workaround:*
   do not keep many large frozen `Bytes` alive in one program; on a
-  board, `gogo config stats` shows the table's use (`bytes=N/64`, with
+  board, `gogo device stats` shows the table's use (`bytes=N/64`, with
   `ports=N/16` and `subs=N/4` for the port and `net.Subscribe` tables).
 - **Host and board memory limits differ by 16x.** An actor spawned
   without `SpawnOpt` may use 256 KB on the host and 16 KB on a board, so
@@ -447,7 +453,7 @@ rebuilt:
   a `string` or `Bytes` only; a `[]byte` gives `BadPath`
   (*workaround:* `bytes.FromSlice`).
 - **Shrinking `/flash`** (`fs.flash.size` smaller than the file system)
-  needs `fs.flash.format=yes`, which erases it.
+  needs `gogo device format-flash`, which erases it.
 - **`gogo push` takes images only**, one at a time, at about 10 KB/s,
   and does not tell the running program. Pushing over a file the
   program has open (a log it is appending to) replaces it under the

@@ -496,14 +496,20 @@ change that:
 
 ```sh
 gogo config set fs.flash.size 1M        # bytes, K or M suffix; at least 64K
-gogo config set fs.flash.format yes     # format once at the next boot (erases /flash!)
 gogo config rm fs.flash.size            # back to the whole partition
 ```
 
 A larger size grows the file system in place at the next boot, keeping
-files. A smaller one needs `fs.flash.format=yes`, which erases everything
-on `/flash` and is removed after it ran. Reflashing firmware or a program
-does not touch `/flash`; only `idf.py erase-flash` wipes it.
+files. A smaller one needs a format, which erases everything on `/flash`:
+
+```sh
+gogo device format-flash                # asks first; restarts the board and formats /flash
+```
+
+It formats the `/flash` partition only: the configuration store, the
+program and the firmware stay. (It was `gogo config set fs.flash.format
+yes` before, which still works in this release.) Reflashing firmware or a
+program does not touch `/flash`; only `idf.py erase-flash` wipes it.
 
 To put a file on a board's `/flash` from your computer, `gogo push`
 copies an image there (chapter 14); other files go through a program

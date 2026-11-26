@@ -19,6 +19,7 @@ gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
 gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | keys | scan | stats
+gogo device [-port P] [-yes] scan | stats | format-flash
 gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
 gogo version
 ```
@@ -476,20 +477,44 @@ gogo config [-port P | -local] get <key>
 gogo config [-port P | -local] list
 gogo config [-port P | -local] rm <key>
 gogo config keys
-gogo config [-port P] scan
-gogo config [-port P] stats
+gogo config [-port P] scan        # deprecated: gogo device scan
+gogo config [-port P] stats       # deprecated: gogo device stats
 ```
 
 Edits the configuration store on the board or in the local file. See
 chapter 11 for how the store is chosen, the key rules and the keys gogo
 uses (`keys` prints them; `set` checks a key under a gogo prefix, and its
-value, against that table). `scan` lists the 2.4 GHz networks the board sees; `stats` prints the
-board's network counters, free memory and how full the VM's fixed tables
-are, as used/capacity: `bytes=N/64` (off-heap `bytes.Bytes` handles),
-`ports=N/16` (open ports) and `subs=N/4` (`net.Subscribe` slots). When a
-port open fails or a tcp write gets `Done{-1}`, these show whether a
-table is full. A firmware built without `net` prints no network counters
-and no `subs`. Both need a board.
+value, against that table). `scan` and `stats` are `gogo device scan` and
+`gogo device stats` (below), kept here for this release.
+
+## gogo device
+
+```text
+gogo device [-port P] scan
+gogo device [-port P] stats
+gogo device [-port P] [-yes] format-flash
+```
+
+Operations on the board itself, over its serial console:
+
+- `scan` lists the 2.4 GHz networks the board sees.
+- `stats` prints the board's network counters, free memory and how full
+  the VM's fixed tables are, as used/capacity: `bytes=N/64` (off-heap
+  `bytes.Bytes` handles), `ports=N/16` (open ports) and `subs=N/4`
+  (`net.Subscribe` slots). When a port open fails or a tcp write gets
+  `Done{-1}`, these show whether a table is full. A firmware built
+  without `net` prints no network counters and no `subs`.
+- `format-flash` erases every file on `/flash`: the board restarts and
+  formats its `/flash` partition at the size `fs.flash.size` sets
+  (chapter 9). Nothing else is touched: not the configuration store
+  (Wi-Fi settings stay), not the program, not the firmware; the chip is
+  never erased. It asks you to type `yes` first; `-yes` skips the
+  question.
+
+`-port` as for `gogo flash`. `scan` and `stats` were `gogo config scan`
+and `gogo config stats`, and `format-flash` was `gogo config set
+fs.flash.format yes` and a restart; the old forms still work in this
+release, with a note, and go away in the next.
 
 ## gogo setup
 

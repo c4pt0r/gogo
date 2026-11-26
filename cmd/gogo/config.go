@@ -117,7 +117,7 @@ var cfgKeys = []cfgKey{
 	{name: "net.gw", typ: cfgIP, about: "its gateway"},
 	{name: "net.dns", typ: cfgIP, about: "its DNS server"},
 	{name: "fs.flash.size", typ: cfgSize, platform: true, about: "the size of /flash"},
-	{name: "fs.flash.format", typ: cfgString, platform: true, values: []string{"yes"}, about: "yes: format /flash at the next boot"},
+	{name: "fs.flash.format", typ: cfgString, platform: true, values: []string{"yes"}, about: "deprecated: gogo device format-flash"},
 	{name: "code.mem", typ: cfgSize, platform: true, about: "the budget for loaded module code"},
 }
 
@@ -361,7 +361,12 @@ func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer,
 		writeCfgKeys(out)
 		return nil
 	}
-
+	switch {
+	case op == "scan" || op == "stats":
+		fmt.Fprintf(errOut, "gogo config: %s is deprecated, use gogo device %s\n", op, op)
+	case op == "set" && args[0] == "fs.flash.format":
+		fmt.Fprintln(errOut, "gogo config: fs.flash.format is deprecated, use gogo device format-flash")
+	}
 	if op == "set" && args[1] == "-" {
 		restore := noEcho(stdin, errOut, args[0])
 		v, err := bufio.NewReader(stdin).ReadString('\n')

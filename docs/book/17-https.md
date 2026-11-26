@@ -418,7 +418,7 @@ The TLS memory comes from PSRAM on the StickS3 (about 35 KB at its peak,
 during the handshake), so the internal RAM the VM uses is not touched;
 on the Cardputer ADV, which has no PSRAM, it comes from internal RAM. The
 board keeps the trust anchors in flash: ESP-IDF's certificate bundle.
-`gogo config stats` shows the TLS counters (`tls_*`), the longest slice
+`gogo device stats` shows the TLS counters (`tls_*`), the longest slice
 (`tls_max_step_us`) and the TLS memory (`mbedtls_mem_peak`).
 
 ## 17.8 Limits

@@ -323,7 +323,7 @@ runs.
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
-| `gogo` CLI (build, flash, push, monitor, config, setup) | yes | yes | flash and setup only; no Wi-Fi step or console yet |
+| `gogo` CLI (build, flash, push, monitor, config, device, setup) | yes | yes | flash and setup only; no Wi-Fi step or console yet |
 | `gogovm` host VM | yes | yes | no (it uses POSIX APIs) |
 | `libgogo.a` embedding | yes | yes | no |
 | Building firmware from source | yes (ESP-IDF) | yes (ESP-IDF) | ESP-IDF supports it; untested here |

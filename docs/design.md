@@ -541,8 +541,10 @@ FatFs).
   bytes with an optional K or M suffix, rounded to 4 KB, at least 64 KB;
   unset = the whole partition): a size larger than the current file
   system grows it in place at boot; a smaller one is not applied (a
-  message says so); `fs.flash.format=yes` reformats once at the set size
-  and deletes the key. A first mount that fails formats. The partition
+  message says so); `gogo device format-flash` reformats once at the set
+  size (an RTC-memory flag set before a software restart; NVS is not
+  written), as the deprecated key `fs.flash.format=yes` still does (and
+  deletes the key). A first mount that fails formats. The partition
   `gogofs` is at `0x310000`, size `0x4F0000`.
 - **`/sd` file systems**: FAT12/16/32 and **exFAT** (ESP-IDF's `fatfs`
   component is overridden with `FF_FS_EXFAT 1`, in the Cardputer build
@@ -740,7 +742,7 @@ font.
   `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR`, `GOGO_AUDIO` and
   `GOGO_SCREEN`. A
   switched-off feature behaves as if the board lacked the hardware: its
-  `port.Open` returns `ok=false`, and `gogo config scan` and the like
+  `port.Open` returns `ok=false`, and `gogo device scan` and the like
   answer "no network in this firmware".
 - **What a build provides.** `platform_esp.c` lists in `esp_ports` only
   the drivers the build has (`#if HAS_KBD && CONFIG_GOGO_KBD`, ...) and
@@ -997,7 +999,7 @@ explains it from the user's side.
     first installs the `platform_tls_alloc` allocator, which prefers PSRAM
     on the StickS3 (a handshake leaves internal RAM untouched; about
     35 KB of PSRAM at the peak) and uses internal RAM on the Cardputer.
-    `gogo config stats` shows `mbedtls_mem`, `mbedtls_mem_peak`,
+    `gogo device stats` shows `mbedtls_mem`, `mbedtls_mem_peak`,
     `psram_*` and `tls_*`.
   - **Time:** the wall clock is the system clock (`settimeofday` /
     `gettimeofday`), which mbedTLS reads with `time()`, consistent with
@@ -1625,8 +1627,10 @@ messages and the partition table are described in
 [platform/esp32s3/README.md](../platform/esp32s3/README.md).
 
 **Device configuration (`gogo config`).** `gogo config set|get|rm|list
-<key> [value]`, plus `scan` (the 2.4 GHz networks the board sees) and
-`stats` (network counters, heap). A value of `-` reads one line from
+<key> [value]`; `gogo device scan` (the 2.4 GHz networks the board sees),
+`gogo device stats` (network counters, heap) and `gogo device
+format-flash` use the same channel (`gogo config scan|stats` still work,
+deprecated). A value of `-` reads one line from
 stdin (`gogo config set wifi.password -` keeps the password out of the
 shell history). On the device the store is the firmware's NVS
 (namespace `gogo`; reflashing the firmware or the image does not clear

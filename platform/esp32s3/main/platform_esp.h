@@ -112,6 +112,9 @@ struct VfsState;
  * the storage fixed state: vfs tables + LittleFS state and buffers. */
 int fs_lfs_mount(struct VfsState *vs);
 uint32_t fs_lfs_state_bytes(void);
+/* `gogo device format-flash`: the next mount (after esp_restart, and
+ * only then) formats /flash. */
+void fs_lfs_request_format(void);
 /* `gogo push`, from the console task (fs_lfs.c locks against the VM):
  * begin opens a temporary file beside rel (a path inside /flash, without
  * the leading "/flash/"), write appends to it (*total: bytes so far), end

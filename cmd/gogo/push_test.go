@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
@@ -176,6 +177,46 @@ func TestPush(t *testing.T) {
 		if len(b.frames) != 0 {
 			t.Errorf("push %q sent %q", c.args, b.frames)
 		}
+	}
+}
+
+func deviceRun(t *testing.T, b *simBoard, stdin string, args ...string) (string, string, error) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	err := deviceMain(args, deviceEnv{out: &out, errOut: &errOut, in: strings.NewReader(stdin), glob: globOf("/dev/cu.usbmodem1"),
+		open: func(string) (io.ReadWriteCloser, error) { return b.conn(), nil }})
+	return out.String(), errOut.String(), err
+}
+
+func TestDevice(t *testing.T) {
+	b := &simBoard{}
+	if out, _, err := deviceRun(t, b, "", "stats"); err != nil || out != "heap_free=1\n" {
+		t.Errorf("stats: %q %v", out, err)
+	}
+	// format-flash asks first; anything but "yes" sends nothing.
+	for _, answer := range []string{"", "y\n", "no\n", "YES please\n"} {
+		b := &simBoard{}
+		if _, prompt, err := deviceRun(t, b, answer, "format-flash"); err == nil || !strings.Contains(prompt, "deletes every file on /flash") || len(b.frames) != 0 {
+			t.Errorf("answer %q: err %v, frames %q, prompt %q", answer, err, b.frames, prompt)
+		}
+	}
+	b = &simBoard{}
+	if out, _, err := deviceRun(t, b, "yes\n", "format-flash"); err != nil || b.formats != 1 || !strings.Contains(out, "restarts and formats /flash") {
+		t.Errorf("format-flash: %q %v (%d formats)", out, err, b.formats)
+	}
+	b = &simBoard{}
+	if _, prompt, err := deviceRun(t, b, "", "format-flash", "-yes"); err != nil || b.formats != 1 || prompt != "" {
+		t.Errorf("format-flash -yes: %v %q", err, prompt)
+	}
+	if fmt.Sprint(b.frames) != "[format-flash]" {
+		t.Errorf("frames %q: only the format command may be sent", b.frames)
+	}
+	b = &simBoard{oldFirm: true}
+	if _, _, err := deviceRun(t, b, "", "-yes", "format-flash"); err == nil || !strings.Contains(err.Error(), "no format-flash (update it)") {
+		t.Errorf("old firmware: %v", err)
+	}
+	if _, _, err := deviceRun(t, &simBoard{}, "", "erase"); err == nil || !strings.Contains(err.Error(), "unknown operation") {
+		t.Errorf("erase: %v", err)
 	}
 }
 

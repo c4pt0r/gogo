@@ -22,6 +22,13 @@
  * boot) is formatted; any other mount error (IO), or a file system bigger
  * than the partition, leaves /flash unmounted and its data untouched.
  *
+ * A format can also be asked for without the config store:
+ * fs_lfs_request_format (`gogo device format-flash`, config_esp.c) sets a
+ * flag in RTC memory, which survives the software restart that follows
+ * and nothing else (a power-on or any other reset clears it), so the
+ * next mount formats exactly once. fs.flash.format = yes still works
+ * (deprecated).
+ *
  * Contract: see the VfsBackend comment in runtime/vfs/vfs.h. The VM task
  * calls in through the backend, and the console task through the push
  * functions (`gogo push`), so every LittleFS call holds `lock`. */
@@ -35,7 +42,9 @@
 #include <string.h>
 
 #include "esp_partition.h"
+#include "esp_attr.h"
 #include "esp_rom_crc.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -264,6 +273,24 @@ static uint32_t wanted_blocks(uint32_t part_blocks) {
     return b > part_blocks ? part_blocks : (uint32_t)b;
 }
 
+/* fs_lfs_request_format's flag: RTC memory, kept over a software restart
+ * only. Two words, so stray contents after power-on cannot look like it. */
+#define FORMAT_MAGIC 0x464D5447u   /* "GTMF" */
+static RTC_NOINIT_ATTR uint32_t format_flag[2];
+
+void fs_lfs_request_format(void) {
+    format_flag[0] = FORMAT_MAGIC;
+    format_flag[1] = ~FORMAT_MAGIC;
+}
+
+/* The RTC flag (cleared here: it formats once), after a software restart. */
+static bool format_flagged(void) {
+    bool on = format_flag[0] == FORMAT_MAGIC && format_flag[1] == ~FORMAT_MAGIC && esp_reset_reason() == ESP_RST_SW;
+    format_flag[0] = format_flag[1] = 0;
+    return on;
+}
+
+/* The deprecated config key fs.flash.format = yes. */
 static bool format_requested(void) {
     char v[4];
     return config_esp_get("fs.flash.format", (uint8_t *)v, sizeof v) == 3 && !memcmp(v, "yes", 3);
@@ -279,6 +306,7 @@ static int format_mount(uint32_t blocks) {
 
 int fs_lfs_mount(VfsState *vs) {
     lock = xSemaphoreCreateMutexStatic(&lock_buf);
+    bool flagged = format_flagged();
     L.part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_LITTLEFS, "gogofs");
     if (!L.part) {
         platform_esp_say("gogo: /flash unavailable (no gogofs partition; flash the partition table)");
@@ -304,7 +332,10 @@ int fs_lfs_mount(VfsState *vs) {
 
     int e;
     uint32_t cur = 0;
-    if (format_requested()) {
+    if (flagged) {
+        platform_esp_say("gogo: formatting /flash (gogo device format-flash)");
+        e = format_mount(want);
+    } else if (format_requested()) {
         /* Clear the request first: if that fails, formatting now would
          * wipe /flash again at every boot, so do not format at all. */
         if (config_esp_erase("fs.flash.format") != 0) {

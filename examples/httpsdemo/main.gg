@@ -12,10 +12,10 @@
 // example.com's address with Host "wrong.example", which must be refused
 // (Closed{BadCert}, or Closed{TLS} when the server itself rejects the name,
 // as Cloudflare, example.com's host, does). Each step prints its status, body length and time;
-// then the program idles silently. `gogo config stats` shows the handshake
+// then the program idles silently. `gogo device stats` shows the handshake
 // slices (tls_max_step_us, tls_last_hs_us) and the TLS memory
 // (mbedtls_mem_peak, psram_min). It pauses 15 s before the TLS work (and
-// prints nothing then), so `gogo config stats` can take the "before"
+// prints nothing then), so `gogo device stats` can take the "before"
 // figures.
 package main
 

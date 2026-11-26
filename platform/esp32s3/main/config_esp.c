@@ -11,6 +11,7 @@
  *     \x02gogo-config list\n
  *     \x02gogo-config scan\n                 (nearby Wi-Fi networks)
  *     \x02gogo-config stats\n                (net counters, memory, fixed tables in use)
+ *     \x02gogo-config format-flash\n         (format /flash: restarts the board)
  *     \x02gogo-config push <path> <len> <crc32>\n   (gogo push: write a file
  *     \x02gogo-config data <offset> <base64>\n       to /flash, in chunks; push
  *     \x02gogo-config end\n                          and data answer ok <bytes
@@ -29,7 +30,9 @@
  * <offset> the count sent before it), each answered before the next is
  * sent, so the console's small input buffer never overflows; end checks
  * the stored file against <len> and <crc32> and only then renames it over
- * <path>. A failure, abort or a new push drops the temporary file. */
+ * <path>. A failure, abort or a new push drops the temporary file.
+ * format-flash answers ok, then restarts the board, whose next mount
+ * formats /flash (fs_lfs_request_format): NVS is not touched. */
 #include "sdkconfig.h"
 #include "host.h"
 #include "config.h"
@@ -53,6 +56,8 @@
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_heap_caps.h"
+#include "esp_partition.h"
+#include "esp_system.h"
 #include "vfs_int.h"
 
 #define CFG_NS        "gogo"
@@ -307,7 +312,7 @@ static void cmd_scan(void) {
 #endif
 }
 
-/* ---- gogo push ---- */
+/* ---- gogo push and format-flash ---- */
 
 static const char *err_text(int e) {
     switch (e) {
@@ -414,6 +419,17 @@ static void cmd_end(void) {
     reply_s("ok", NULL);
 }
 
+static void cmd_format_flash(void) {
+    if (!esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_LITTLEFS, "gogofs")) {
+        reply_s("err", "no gogofs partition");
+        return;
+    }
+    reply_s("ok", "restarting to format /flash");
+    vTaskDelay(pdMS_TO_TICKS(200));   /* let the reply leave */
+    fs_lfs_request_format();
+    esp_restart();
+}
+
 /* line: the frame after \x02, without the \n. */
 static void handle(char *line, size_t n) {
     static const char magic[] = "gogo-config ";
@@ -428,6 +444,7 @@ static void handle(char *line, size_t n) {
     if (opn == 4 && memcmp(op, "push", 4) == 0) { cmd_push(p, end); return; }
     if (opn == 3 && memcmp(op, "end", 3) == 0 && p >= end) { cmd_end(); return; }
     if (opn == 5 && memcmp(op, "abort", 5) == 0 && p >= end) { fs_lfs_push_abort(); reply_s("ok", NULL); return; }
+    if (opn == 12 && memcmp(op, "format-flash", 12) == 0 && p >= end) { cmd_format_flash(); return; }
     if (!cfg_ok) { reply_s("err", "config store unavailable"); return; }
     if (opn == 4 && memcmp(op, "list", 4) == 0 && p >= end) { cmd_list(); return; }
     if (opn == 4 && memcmp(op, "scan", 4) == 0 && p >= end) { cmd_scan(); return; }

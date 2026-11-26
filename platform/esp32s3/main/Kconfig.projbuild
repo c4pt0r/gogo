@@ -26,7 +26,7 @@ menu "gogo"
             tcp, tcp_listen ports). When off, the capability "net" is absent
             (an image that needs it is refused at boot), port.Open of those
             ports returns ok=false, net.Subscribe returns false, and
-            `gogo config scan` answers "no network in this firmware" and `stats`
+            `gogo device scan` answers "no network in this firmware" and `stats`
             prints only the memory figures.
             esp_wifi, wpa_supplicant, libnet80211, libpp and libphy are not linked.
 

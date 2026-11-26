@@ -21,7 +21,8 @@
 // external esptool (see flash.go); `gogo monitor` captures the board's
 // serial console (see monitor.go). `gogo config` edits the configuration
 // store that sys.Config reads, on the board or locally (see config.go).
-// `gogo setup` takes a new board to a running program (see setup.go).
+// `gogo device` scans, shows the counters of and formats /flash on the
+// board (see device.go). `gogo setup` takes a new board to a running program (see setup.go).
 package main
 
 import (
@@ -54,6 +55,7 @@ var usage = "usage: " + strings.Join([]string{
 	strings.TrimPrefix(monitorUsage, "usage: "),
 	strings.TrimPrefix(firmwareUsage, "usage: "),
 	strings.TrimPrefix(configUsage, "usage: "),
+	strings.TrimPrefix(deviceUsage, "usage: "),
 	strings.TrimPrefix(setupUsage, "usage: "),
 	"gogo version",
 }, "\n       ")
@@ -300,6 +302,8 @@ func run(args []string) error {
 		return monitorCmd(args[1:])
 	case "config":
 		return configCmd(args[1:], os.Stdout)
+	case "device":
+		return deviceCmd(args[1:])
 	case "firmware":
 		return firmwareCmd(args[1:], os.Stdout, runIdfInRepo)
 	case "setup":

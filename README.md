@@ -151,7 +151,7 @@ Linux).
 
 `gogo` with no arguments prints its commands: `build`, `run`, `env`,
 `dis`, `info`, `flash`, `push`, `monitor`, `firmware`, `config`,
-`setup` and `version`. Flags take one dash or two and may follow
+`device`, `setup` and `version`. Flags take one dash or two and may follow
 the arguments (`gogo build app -o app.ggb`). `gogo run` exits with the
 status of the program's `main` (0, 4 if it crashed, or its
 `actor.Exit` code).
@@ -164,6 +164,7 @@ loading:
 build/gogo flash docs/book/examples/02-hello
 build/gogo monitor -reset -timeout 5
 build/gogo push greeter.ggb               # to /flash/greeter.ggb, for code.Load
+build/gogo device stats                   # the board's counters and memory
 ```
 
 [Chapter 2 of the book](docs/book/02-getting-started.md) has the details,

@@ -81,8 +81,13 @@ gogo config [-port P | -local] get <key>
 gogo config [-port P | -local] list
 gogo config [-port P | -local] rm <key>
 gogo config keys                 # the keys gogo itself reads (section 11.3)
-gogo config [-port P] scan       # Wi-Fi networks the board sees (2.4 GHz)
-gogo config [-port P] stats      # network counters and free memory on the board
+```
+
+Two board commands go with it (chapter 12):
+
+```text
+gogo device [-port P] scan       # Wi-Fi networks the board sees (2.4 GHz)
+gogo device [-port P] stats      # network counters and free memory on the board
 ```
 
 Keys are 1 to 15 characters of `a-z 0-9 . _` (15 is the limit of the
@@ -135,8 +140,8 @@ gogo config: nope is not set
 $ gogo config rm blink.ms
 $ gogo config list
 device.name=kitchen sensor
-$ gogo config scan
-gogo config: scan needs a board (-port)
+$ gogo device scan
+gogo: no board found (/dev/cu.usbmodem*); connect it or pass -port
 ```
 
 `get` and `list` never print the Wi-Fi password, only `(set)`.
@@ -156,7 +161,7 @@ The board talks to `gogo config` over the USB serial console, so close
 | `wifi.ssid`, `wifi.password` | string (at most 32 and 64 bytes) | firmware | the Wi-Fi network; the board reconnects at once when they change |
 | `net.ip`, `net.mask`, `net.gw`, `net.dns` | ip (`a.b.c.d`) | `gogo/dhcp` | a static address instead of DHCP (`net.mask` defaults to 255.255.255.0) |
 | `fs.flash.size` | size | firmware | size of `/flash` (chapter 9) |
-| `fs.flash.format` | `yes` | firmware | format `/flash` once at the next boot |
+| `fs.flash.format` | `yes` | firmware | deprecated: format `/flash` once at the next boot; use `gogo device format-flash` |
 | `code.mem` | size | VM (`gogo/code`) | budget for loaded module code, default 64 KB (chapter 14) |
 
 A size is a number of bytes with an optional `K` or `M` suffix (`65536`,
