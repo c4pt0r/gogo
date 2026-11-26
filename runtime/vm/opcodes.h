@@ -20,7 +20,9 @@
  * ones above a member, are ignored. Whether an op takes an extension word
  * comes from op_has_ext below, not from the comment. Adding an op: pick
  * the next number, add the member with its comment, add it to op_has_ext
- * if it takes ext, run `make bytecode-doc`.
+ * if it takes ext, move OP_LAST, give it a row in interp.c's op_info (its
+ * ext word and register operands), run `make bytecode-doc`. Adding a
+ * builtin: the same with B_LAST and a row in interp.c's builtin_info.
  */
 #ifndef GOGO_OPCODES_H
 #define GOGO_OPCODES_H
@@ -120,6 +122,7 @@ enum Op {
      * written in place. */
     OP_SETFIELD  = 67   /*! a=src b=struct c=index | rb.fields[c] = ra | Write a field of a heap struct of a mutable type (a pointer's target, a map header); nil crashes with R_NIL, anything else (a const or immutable struct, past the end) is badcode. */
 };
+#define OP_LAST OP_SETFIELD   /* the highest op: interp.c's op_info has a row for each up to it */
 
 enum Builtin {
     B_PRINTLN = 0,  /*! values... -> nil | Print the values, space-separated, with a newline, to the console. */
@@ -127,7 +130,7 @@ enum Builtin {
     B_SELF    = 2,  /*! -> pid | The calling actor's PID. */
     B_SEND    = 3,  /*! pid, msg -> nil | Copy msg into the target's mailbox (a value that may not cross modules is R_BAD_MSG). */
     B_RECEIVE = 4,  /*! -> msg | Block until a message arrives and take it. */
-    B_MEMORY  = 5,  /*! -> ProcInfo | The calling actor's memory figures (actor.ProcInfo). */
+    B_MEMORY  = 5,  /*! pid -> int | The memory the local actor pid holds, in bytes (the actor, its table slot, its block, its queued messages and timers); 0 for anything else. actor.Info puts it in a ProcInfo. */
     /* Two-result builtins write ra and ra+1. */
     B_SPAWN_LINK      = 6,   /*! closure -> pid | Spawn and link atomically. */
     B_SPAWN_OPT       = 7,   /*! closure, Options struct -> pid | Spawn with actor.Options (MaxMemory). */
@@ -195,6 +198,7 @@ enum Builtin {
     /* Since 15.6 (references, gogo/fmt). */
     B_SPRINT          = 61   /*! mode, v -> string | nil | The text println prints for v, without the newline (a box as its value, a pointer's target after &, a map as map[k:v ...]): mode 0 returns it as a new string, mode 1 writes it to the console (gogo/fmt). */
 };
+#define B_LAST B_SPRINT   /* the highest builtin: interp.c's builtin_info has a row for each up to it */
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
 #define TY_INT    0x10000u

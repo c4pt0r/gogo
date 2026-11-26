@@ -49,6 +49,23 @@ TEST(walltime_floor) {
     test_host_set_clock(NULL);
 }
 
+/* A time set near the int64 limit stops there as the clock runs on; it
+ * never wraps negative (and the sum is not signed overflow). */
+TEST(walltime_saturates) {
+    test_host_set_clock(fake_clock);
+    fake_now = 500;
+    CHECK_EQ(vm_set_unix_time_ms(&wv, INT64_MAX - 1000), 1);
+    CHECK(vm_unix_time_ms(&wv) == INT64_MAX - 1000);
+    fake_now = 1499;
+    CHECK(vm_unix_time_ms(&wv) == INT64_MAX - 1);
+    fake_now = 1500;
+    CHECK(vm_unix_time_ms(&wv) == INT64_MAX);
+    fake_now = 1000000;
+    CHECK(vm_unix_time_ms(&wv) == INT64_MAX);
+    vm_set_unix_time_ms(&wv, 0);
+    test_host_set_clock(NULL);
+}
+
 /* Each Vm keeps its own clock; vm_init starts it unknown. */
 TEST(walltime_per_vm) {
     static Vm other;

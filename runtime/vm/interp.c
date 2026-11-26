@@ -14,7 +14,8 @@
  * Safety on malformed images: image_load proves the tables and the const
  * area well-formed, and that every const ref inside a const object (and
  * every func/type name) names an object start in the const map. Here
- * register indices are checked against the current function's n_regs, the
+ * register indices are checked against the current function's n_regs (by
+ * the decoder, from the op's row of op_info, before its case runs), the
  * pc against the code area, LOADK operands against the term kinds an image
  * may contain and, for const refs, against the const map (LOADK operands
  * are checked when executed, not at load: a jump may land on an ext word),
@@ -220,12 +221,24 @@ static bool count_val(const Vm *vm, const Actor *a, term t, int32_t *out) {
     return true;
 }
 
-/* x op y for the binary arithmetic ops with Go semantics (wrapping; MinInt
+/* An integer operand: of an int64 op (wide) an int64 in either
+ * representation, of an int op an int (a small int or a K_INT box; an
+ * int64 box is badcode), sign-extended. False for anything else. */
+static bool int_operand(const Vm *vm, const Actor *a, term t, bool wide, int64_t *out) {
+    int32_t v;
+    if (wide) return int64_val(vm, a, t, out);
+    if (!int_val(vm, a, t, &v)) return false;
+    *out = v;
+    return true;
+}
+
+/* x op y for the int arithmetic ops with Go semantics (wrapping; MinInt
  * / -1 == MinInt; x % -1 == 0; shifts take a count from count_val, >> is
- * arithmetic). Returns 0 or the crash reason (division by zero, negative
- * shift count). */
+ * arithmetic; NEG ignores y). Returns 0 or the crash reason (division by
+ * zero, negative shift count). */
 static uint32_t arith32(uint32_t op, int32_t x, int32_t y, int32_t *r) {
     switch (op) {
+    case OP_NEG: *r = wrap(0u - (uint32_t)x); return 0;
     case OP_ADD: *r = wrap((uint32_t)x + (uint32_t)y); return 0;
     case OP_SUB: *r = wrap((uint32_t)x - (uint32_t)y); return 0;
     case OP_MUL: *r = wrap((uint32_t)x * (uint32_t)y); return 0;
@@ -252,8 +265,10 @@ static uint32_t arith32(uint32_t op, int32_t x, int32_t y, int32_t *r) {
     }
 }
 
+/* The same for the int64 ops. */
 static uint32_t arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
     switch (op) {
+    case OP_NEG64: *r = wrap64(0u - (uint64_t)x); return 0;
     case OP_ADD64: *r = wrap64((uint64_t)x + (uint64_t)y); return 0;
     case OP_SUB64: *r = wrap64((uint64_t)x - (uint64_t)y); return 0;
     case OP_MUL64: *r = wrap64((uint64_t)x * (uint64_t)y); return 0;
@@ -417,9 +432,9 @@ bool term_text(Out *o, const Vm *vm, const Actor *a, term t) {
 }
 
 /* B_PANIC v: prints "panic: v" on stderr; returns the reason to crash
- * with, R_PANIC (R_BAD_CODE for a stale value or another count). */
-static uint32_t do_panic(const Vm *vm, const Actor *a, const term *v, uint32_t n) {
-    if (n != 1u || deep_live(vm, a, v[0], 0, WALK_BUDGET) == WALK_STALE) return R_BAD_CODE;
+ * with, R_PANIC (R_BAD_CODE for a stale value). */
+static uint32_t do_panic(const Vm *vm, const Actor *a, const term *v) {
+    if (deep_live(vm, a, v[0], 0, WALK_BUDGET) == WALK_STALE) return R_BAD_CODE;
     do_println(vm, a, v, 1, 0, 2);
     return R_PANIC;
 }
@@ -529,6 +544,75 @@ static int timed_wait(Vm *vm, Actor *a, int32_t ms) {
 
 /* ---- interpreter ---- */
 
+/* What the decoder checks for each op before its case runs: whether an
+ * ext word follows (OPF_EXT, as op_has_ext in opcodes.h) and which
+ * operands name registers of the current frame (opcodes.h, the operand
+ * column). The float ops check their own (float_exec); CALLV its
+ * argument range rb+1 .. rb+c. */
+#define OPF_EXT 1u     /* followed by an ext word */
+#define OPF_A   2u     /* ra is a register */
+#define OPF_B   4u     /* rb is a register */
+#define OPF_C   8u     /* rc is a register */
+#define OPF_BC  16u    /* rb .. rb+c-1 are registers */
+#define OPF_AB  32u    /* ra .. ra+b-1 are registers */
+#define OPF_W   64u    /* an int64 arithmetic op (the int ones run in 32 bits) */
+#define OPF_SH  128u   /* rc is a shift count: any integer (count_val) */
+#define OPF_AB_ (OPF_A | OPF_B)
+#define OPF_ABC (OPF_A | OPF_B | OPF_C)
+static const uint8_t op_info[] = {
+    [OP_NOP] = 0, [OP_MOVE] = OPF_AB_, [OP_LOADK] = OPF_EXT | OPF_A, [OP_LOADI32] = OPF_EXT | OPF_A,
+    [OP_ADD] = OPF_ABC, [OP_SUB] = OPF_ABC, [OP_MUL] = OPF_ABC, [OP_DIV] = OPF_ABC, [OP_REM] = OPF_ABC,
+    [OP_NEG] = OPF_AB_, [OP_EQ] = OPF_ABC, [OP_NE] = OPF_ABC, [OP_LT] = OPF_ABC, [OP_LE] = OPF_ABC,
+    [OP_NOT] = OPF_AB_, [OP_JMP] = OPF_EXT, [OP_JMPF] = OPF_EXT | OPF_A, [OP_JMPT] = OPF_EXT | OPF_A,
+    [OP_CALL] = OPF_EXT | OPF_A | OPF_BC, [OP_RET] = OPF_A, [OP_NEWSTRUCT] = OPF_EXT | OPF_A | OPF_BC,
+    [OP_GETFIELD] = OPF_AB_, [OP_MKCLOSURE] = OPF_EXT | OPF_A | OPF_BC, [OP_TYPEIS] = OPF_EXT | OPF_AB_,
+    [OP_BUILTIN] = OPF_EXT | OPF_A | OPF_BC, [OP_CONV] = OPF_AB_,
+    [OP_ADD64] = OPF_ABC | OPF_W, [OP_SUB64] = OPF_ABC | OPF_W, [OP_MUL64] = OPF_ABC | OPF_W, [OP_DIV64] = OPF_ABC | OPF_W, [OP_REM64] = OPF_ABC | OPF_W,
+    [OP_NEG64] = OPF_AB_ | OPF_W, [OP_EQ64] = OPF_ABC, [OP_NE64] = OPF_ABC, [OP_LT64] = OPF_ABC, [OP_LE64] = OPF_ABC,
+    [OP_BOX64] = OPF_AB_, [OP_CLEAR] = OPF_AB, [OP_RETN] = OPF_AB, [OP_CALLV] = OPF_AB_,
+    [OP_AND] = OPF_ABC, [OP_OR] = OPF_ABC, [OP_XOR] = OPF_ABC, [OP_ANDNOT] = OPF_ABC,
+    [OP_SHL] = OPF_ABC | OPF_SH, [OP_SHR] = OPF_ABC | OPF_SH,
+    [OP_AND64] = OPF_ABC | OPF_W, [OP_OR64] = OPF_ABC | OPF_W, [OP_XOR64] = OPF_ABC | OPF_W, [OP_ANDNOT64] = OPF_ABC | OPF_W,
+    [OP_SHL64] = OPF_ABC | OPF_W | OPF_SH, [OP_SHR64] = OPF_ABC | OPF_W | OPF_SH,
+    [OP_ADDF] = 0, [OP_SUBF] = 0, [OP_MULF] = 0, [OP_DIVF] = 0, [OP_NEGF] = 0,
+    [OP_EQF] = 0, [OP_NEF] = 0, [OP_LTF] = 0, [OP_LEF] = 0, [OP_CONVF] = 0,
+    [OP_DIVU64] = OPF_ABC | OPF_W, [OP_REMU64] = OPF_ABC | OPF_W, [OP_LTU64] = OPF_ABC, [OP_LEU64] = OPF_ABC,
+    [OP_SHRU64] = OPF_ABC | OPF_W | OPF_SH, [OP_SETFIELD] = OPF_AB_,
+};
+typedef char op_info_complete[sizeof op_info == OP_LAST + 1u ? 1 : -1];
+
+/* What OP_BUILTIN checks for each builtin before its case runs. The low
+ * three bits: BI(n), exactly n arguments; BI_VAR, the builtin checks its
+ * own count; 0, not a builtin (an id this VM does not have, B_FLOAT
+ * without floats, the reserved ids), so an id left out of the table is
+ * badcode, never "no arguments". BI_TWO: two results, ra+1 is a register
+ * too. BI_PID: the first argument is a PID. BI_INT: the first argument is
+ * an int, its value in iarg. */
+#define BI(n)   ((n) + 1u)
+#define BI_VAR  7u
+#define BI_TWO  8u
+#define BI_PID  16u
+#define BI_INT  32u
+static const uint8_t builtin_info[] = {
+    [B_PRINTLN] = BI_VAR, [B_SPAWN] = BI(1), [B_SELF] = BI(0), [B_SEND] = BI(2), [B_RECEIVE] = BI(0),
+    [B_MEMORY] = BI(1), [B_SPAWN_LINK] = BI(1), [B_SPAWN_OPT] = BI(2), [B_LINK] = BI(1) | BI_PID,
+    [B_UNLINK] = BI(1) | BI_PID, [B_TRAP_EXIT] = BI(1), [B_EXIT] = BI(1) | BI_INT, [B_KILL] = BI(2) | BI_PID,
+    [B_MONITOR] = BI(1) | BI_PID, [B_DEMONITOR] = BI(1), [B_MAKE_REF] = BI(0),
+    [B_RECEIVE_TIMEOUT] = BI(1) | BI_INT | BI_TWO, [B_SEND_AFTER] = BI(3), [B_CANCEL_TIMER] = BI(1),
+    [B_SLEEP] = BI(1) | BI_INT, [B_NOW] = BI(0), [B_CALL] = BI_VAR, [B_REPLY] = BI(2), [B_REGISTER] = BI(2),
+    [B_WHEREIS] = BI(1) | BI_TWO, [B_UNREGISTER] = BI(1), [B_PORT_OPEN] = BI(2) | BI_TWO, [B_PORT_CLOSE] = BI(1),
+    /* 28 .. 45, B_CONFIG_GET, B_CMP and B_SPRINT: strs_builtin checks their counts */
+    [B_STR_CONCAT] = BI_VAR, [B_LEN] = BI_VAR, [B_INDEX] = BI_VAR, [B_SETINDEX] = BI_VAR, [B_SLICE] = BI_VAR,
+    [B_MAKE_SLICE] = BI_VAR, [B_APPEND] = BI_VAR, [B_COPY] = BI_VAR, [B_CAP] = BI_VAR, [B_STR_FROM] = BI_VAR,
+    [B_BYTESLICE_FROM] = BI_VAR, [B_STR_CMP] = BI_VAR, [B_BUF_NEW] = BI_VAR, [B_BUF_WRITE] = BI_VAR,
+    [B_BUF_FREEZE] = BI_VAR, [B_BYTES_FROM] = BI_VAR, [B_BYTES_EQUAL] = BI_VAR, [B_BYTES_COPYTO] = BI_VAR,
+    [B_PORT_HANDOFF] = BI(2), [B_NET_SUBSCRIBE] = BI(0), [B_CONFIG_GET] = BI_VAR | BI_TWO,
+    [B_FS] = BI_VAR, [B_CODE] = BI_VAR, [B_UNIX_TIME] = BI(0), [B_SET_UNIX_TIME] = BI(1), [B_RANDOM] = BI(0),
+    [B_FLOAT] = GOGO_FLOAT ? BI_VAR : 0u, [B_PRINTLNU] = BI_VAR, [B_PANIC] = BI(1), [B_CMP] = BI_VAR,
+    [B_RESERVED_58] = 0, [B_RESERVED_59] = 0, [B_RESERVED_60] = 0, [B_SPRINT] = BI_VAR,
+};
+typedef char builtin_info_complete[sizeof builtin_info == B_LAST + 1u ? 1 : -1];
+
 int interp_run(Vm *vm, Actor *a) {
     /* The actor's module is loaded while it lives (its live count). */
     const ModEntry *me = a->mod < GOGO_MAX_MODULES ? vm->mods[a->mod] : NULL;
@@ -551,7 +635,6 @@ int interp_run(Vm *vm, Actor *a) {
 #define RELOAD() (R = (term *)a->mem + a->fp)
 #define CRASH(r) do { reason = (r); goto crash; } while (0)
 #define CHECK(cond) do { if (!(cond)) CRASH(R_BAD_CODE); } while (0)
-#define REG(r) do { if ((uint32_t)(r) >= nregs) CRASH(R_BAD_CODE); } while (0)
 /* Registers r..r+n-1 all exist (n may be 0). */
 #define REGS(r, n) do { if ((uint32_t)(r) + (uint32_t)(n) > nregs) CRASH(R_BAD_CODE); } while (0)
 
@@ -567,110 +650,91 @@ int interp_run(Vm *vm, Actor *a) {
     {
         uint32_t top = (uint32_t)a->fp + nregs + 2u;
         CHECK(top <= a->mem_words && term_is_int(R[nregs]) && term_is_int(R[nregs + 1]));
+        /* saved is the words above the frame (top <= mem_words, so a
+         * negative one never matches); 0 only for the entry frame */
         int32_t saved = term_to_int(R[nregs]);
-        if (saved == 0) CHECK(top == a->mem_words && term_to_int(R[nregs + 1]) == -1);
-        else CHECK(saved > 0 && (uint32_t)saved <= a->mem_words &&
-                   a->mem_words - (uint32_t)saved == top);
+        CHECK((uint32_t)saved == a->mem_words - top && (saved != 0 || term_to_int(R[nregs + 1]) == -1));
     }
     for (;;) {
         CHECK(pc < img->code_words);
         uint32_t w = code[pc];
         uint32_t op = OP_OP(w), ra = OP_A(w), rb = OP_B(w), rc = OP_C(w);
-        uint32_t ext = 0;
-        if (op_has_ext(op)) {
-            CHECK(pc + 1u < img->code_words);
-            ext = code[pc + 1u];
+        uint32_t ext = 0, next = pc + 1u, info;
+        int64_t ires;      /* put_int: an integer result for ra, */
+        bool wide;         /* an int64 (else an int: ires fits 32 bits) */
+        CHECK(op < sizeof op_info);
+        info = op_info[op];
+        GOGO_ASSERT(((info & OPF_EXT) != 0) == op_has_ext(op));   /* the compiler's view */
+        if (info & OPF_EXT) {
+            CHECK(next < img->code_words);
+            ext = code[next++];
         }
-        uint32_t next = pc + (op_has_ext(op) ? 2u : 1u);
+        {
+            /* One past the highest register the operands name, from the a
+             * side and the b/c side, against nregs: one compare, few
+             * branches (an unknown op past the table never gets here). */
+            uint32_t hi = info & OPF_A ? ra + 1u : info & OPF_AB ? ra + rb : 0u;
+            uint32_t hb = info & OPF_B ? (info & OPF_C && rc > rb ? rc : rb) + 1u : info & OPF_BC ? rb + rc : 0u;
+            CHECK((hi > hb ? hi : hb) <= nregs);
+        }
 
         switch (op) {
         case OP_NOP:
             break;
 
         case OP_MOVE:
-            REG(ra); REG(rb);
             R[ra] = R[rb];
             break;
 
         case OP_LOADK:
-            REG(ra);
             /* An image may hold small ints, specials and untagged const refs
              * to an object start (image_const_start); never heap refs (they
              * would point into a random heap). A const ref gets the
              * module's tag (term.h). */
-            CHECK(term_is_int(ext) || ext == T_NIL || ext == T_TRUE || ext == T_FALSE ||
-                  ext == T_EMPTYSTR || ext == T_ZEROPID || ext == T_ZEROREF || ext == T_NILSLICE ||
-                  ext == T_EMPTYBYTES ||
-                  (term_is_const(ext) && !(ext & MOD_TAG_MASK) && image_const_start(img, term_const_off(ext))));
-            R[ra] = term_is_const(ext) ? ext | tag : ext;
+            if (term_is_const(ext)) {
+                CHECK(!(ext & MOD_TAG_MASK) && image_const_start(img, term_const_off(ext)));
+                ext |= tag;
+            } else {
+                /* the specials are T_NIL 0x02, 0x12, .. T_EMPTYBYTES 0x62 (term.h) */
+                CHECK(term_is_int(ext) || ext == T_ZEROPID || ((ext & 0xFu) == 2u && ext <= T_EMPTYBYTES));
+            }
+            R[ra] = ext;
             break;
 
-        case OP_LOADI32: {
-            REG(ra);
-            term t;
-            if (!make_int(vm, a, (int32_t)ext, &t)) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
-        }
+        case OP_LOADI32:
+            ires = (int32_t)ext;
+            wide = false;
+            goto put_int;
 
-        case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REM:
-        case OP_AND: case OP_OR: case OP_XOR: case OP_ANDNOT: case OP_SHL: case OP_SHR: {
-            /* ints only (an int64 box is badcode; see the *64 ops), except
-             * a shift count, which may be any integer. */
-            REG(ra); REG(rb); REG(rc);
-            int32_t x, y, r;
-            uint32_t why;
-            term t;
-            CHECK(int_val(vm, a, R[rb], &x));
-            CHECK((op == OP_SHL || op == OP_SHR) ? count_val(vm, a, R[rc], &y)
-                                                 : int_val(vm, a, R[rc], &y));
-            if ((why = arith32(op, x, y, &r)) != 0) CRASH(why);
-            if (!make_int(vm, a, r, &t)) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
-        }
-
-        case OP_NEG: {
-            REG(ra); REG(rb);
-            int32_t x;
-            term t;
-            CHECK(int_val(vm, a, R[rb], &x));
-            if (!make_int(vm, a, wrap(0u - (uint32_t)x), &t)) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
-        }
-
-        case OP_ADD64: case OP_SUB64: case OP_MUL64: case OP_DIV64: case OP_REM64:
+        case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: case OP_REM: case OP_NEG:
+        case OP_AND: case OP_OR: case OP_XOR: case OP_ANDNOT: case OP_SHL: case OP_SHR:
+        case OP_ADD64: case OP_SUB64: case OP_MUL64: case OP_DIV64: case OP_REM64: case OP_NEG64:
         case OP_AND64: case OP_OR64: case OP_XOR64: case OP_ANDNOT64:
         case OP_SHL64: case OP_SHR64: case OP_DIVU64: case OP_REMU64: case OP_SHRU64: {
-            REG(ra); REG(rb); REG(rc);
-            int64_t x, y, r;
-            int32_t n;
+            /* The int ops take ints (an int64 box is badcode) and run in
+             * 32 bits (arith32); the int64 ops (OPF_W) take int64s in
+             * either representation (arith64). A shift count (OPF_SH)
+             * may be any integer; NEG has no rc. */
+            int64_t x, y = 0;
+            int32_t n, r32;
             uint32_t why;
             term t;
-            CHECK(int64_val(vm, a, R[rb], &x));
-            if (op == OP_SHL64 || op == OP_SHR64 || op == OP_SHRU64) {     /* the count may be an int */
+            wide = (info & OPF_W) != 0;
+            /* a small int is the same value for both: no call */
+            if (term_is_int(R[rb])) x = term_to_int(R[rb]);
+            else CHECK(int_operand(vm, a, R[rb], wide, &x));
+            if (info & OPF_SH) {
                 CHECK(count_val(vm, a, R[rc], &n));
                 y = n;
-            } else {
-                CHECK(int64_val(vm, a, R[rc], &y));
+            } else if (info & OPF_C) {
+                if (term_is_int(R[rc])) y = term_to_int(R[rc]);
+                else CHECK(int_operand(vm, a, R[rc], wide, &y));
             }
-            if ((why = arith64(op, x, y, &r)) != 0) CRASH(why);
-            if (!make_int64(vm, a, r, &t)) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
-        }
-
-        case OP_NEG64: {
-            REG(ra); REG(rb);
-            int64_t x;
-            term t;
-            CHECK(int64_val(vm, a, R[rb], &x));
-            if (!make_int64(vm, a, wrap64(0u - (uint64_t)x), &t)) CRASH(R_OUT_OF_MEMORY);
+            if (wide) why = arith64(op, x, y, &ires);
+            else { why = arith32(op, (int32_t)x, (int32_t)y, &r32); ires = r32; }
+            if (why != 0) CRASH(why);
+        put_int:   /* LOADI32, CONV, NOW, MEMORY, UNIX_TIME (see B_NOW) */
+            if (!(wide ? make_int64(vm, a, ires, &t) : make_int(vm, a, (int32_t)ires, &t))) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
             break;
@@ -679,7 +743,6 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_EQ64: case OP_NE64: case OP_LT64: case OP_LE64: case OP_LTU64: case OP_LEU64: {
             /* By value, whatever the representations. Unsigned: the
              * signed compare with both sign bits flipped. */
-            REG(ra); REG(rb); REG(rc);
             int64_t x, y;
             bool r;
             CHECK(int64_val(vm, a, R[rb], &x) && int64_val(vm, a, R[rc], &y));
@@ -709,7 +772,6 @@ int interp_run(Vm *vm, Actor *a) {
 #endif
 
         case OP_BOX64: {
-            REG(ra); REG(rb);
             int64_t x;
             term t;
             CHECK(int64_val(vm, a, R[rb], &x));
@@ -723,42 +785,25 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_CONV: {
             /* c=0: int(rb) of an int64, truncating to the low 32 bits;
              * c=1: int64(rb) of an int, sign-extending; c=6: the same
-             * zero-extending (of a uint32). An immediate is the same term
-             * in both types (its value fits either way), except a
-             * negative one for c=6. c=2..5: uint8, uint16, int8, int16
-             * of an int or int64 (either representation): the low 8
-             * (even c) or 16 bits, zero- (c < 4) or sign-extended: always
-             * an immediate. */
-            REG(ra); REG(rb);
-            CHECK(rc <= 6u);
+             * zero-extending (of a uint32). c=2..5: uint8, uint16, int8,
+             * int16 of an int or int64 (either representation): the low 8
+             * (even c) or 16 bits, zero- (c < 4) or sign-extended. An
+             * immediate operand whose value fits gives the same term
+             * back (make_int, make_int64). */
             int32_t x;
             int64_t x64;
-            term t;
-            bool ok;
-            if (rc >= 2u && rc <= 5u) {
-                if (int_val(vm, a, R[rb], &x)) x64 = x;
-                else CHECK(int64_val(vm, a, R[rb], &x64));
-                uint32_t sh = rc & 1u ? 16u : 24u, u = (uint32_t)(uint64_t)x64 << sh;
-                R[ra] = term_from_int(rc >= 4u ? wrap(u) >> sh : (int32_t)(u >> sh));
-                break;
-            }
-            if (rc == 0u) {
-                CHECK(int64_val(vm, a, R[rb], &x64));
-                if (term_is_int(R[rb])) { R[ra] = R[rb]; break; }
-                ok = make_int(vm, a, wrap((uint32_t)(uint64_t)x64), &t);
-            } else {
-                CHECK(int_val(vm, a, R[rb], &x));
-                if (term_is_int(R[rb]) && (rc == 1u || x >= 0)) { R[ra] = R[rb]; break; }
-                ok = make_int64(vm, a, rc == 6u ? (int64_t)(uint32_t)x : x, &t);
-            }
-            if (!ok) CRASH(R_OUT_OF_MEMORY);
-            RELOAD();
-            R[ra] = t;
-            break;
+            bool box64 = !int_val(vm, a, R[rb], &x);   /* not an int: a K_INT64 */
+            if (box64) CHECK(int64_val(vm, a, R[rb], &x64));
+            else x64 = x;
+            uint32_t u = (uint32_t)(uint64_t)x64, sh = rc & 1u ? 16u : 24u;
+            CHECK(rc <= 6u && (rc == 0u ? box64 || term_is_int(R[rb]) : rc - 2u < 4u || !box64));
+            wide = rc == 1u || rc == 6u;
+            ires = rc == 6u ? (int64_t)u : rc == 1u ? x64 : rc == 0u ? wrap(u)
+                 : rc >= 4u ? wrap(u << sh) >> sh : (int32_t)((u << sh) >> sh);
+            goto put_int;
         }
 
         case OP_EQ: case OP_NE: {
-            REG(ra); REG(rb); REG(rc);
             /* ints, bools, PIDs, Refs; an int64 box is badcode (EQ64). */
             int32_t x, y;
             bool eq;
@@ -774,7 +819,6 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_LT: case OP_LE: {
-            REG(ra); REG(rb); REG(rc);
             int32_t x, y;
             CHECK(int_val(vm, a, R[rb], &x) && int_val(vm, a, R[rc], &y));
             R[ra] = term_from_bool(op == OP_LT ? x < y : x <= y);
@@ -782,12 +826,10 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_CLEAR:
-            REGS(ra, rb);
             for (uint32_t i = 0; i < rb; i++) R[ra + i] = T_NIL;
             break;
 
         case OP_NOT:
-            REG(ra); REG(rb);
             CHECK(R[rb] == T_TRUE || R[rb] == T_FALSE);
             R[ra] = term_from_bool(R[rb] == T_FALSE);
             break;
@@ -795,7 +837,6 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_JMP: case OP_JMPF: case OP_JMPT: {
             bool take = true;
             if (op != OP_JMP) {
-                REG(ra);
                 CHECK(R[ra] == T_TRUE || R[ra] == T_FALSE);
                 take = (R[ra] == T_TRUE) == (op == OP_JMPT);
             }
@@ -808,7 +849,6 @@ int interp_run(Vm *vm, Actor *a) {
         }
 
         case OP_CALL: {
-            REG(ra); REGS(rb, rc);
             CHECK(ext < img->n_funcs);
             uint32_t callee_regs = image_func_nregs(img, ext);
             CHECK(image_func_nparams(img, ext) == rc && rc <= callee_regs);
@@ -830,7 +870,7 @@ int interp_run(Vm *vm, Actor *a) {
             /* Closure in rb, args rb+1..rb+c. The callee's parameters are
              * the closure's captures followed by the args. A nil (or any
              * non-closure) value is badcode. */
-            REG(rb); REGS(rb + 1u, rc);
+            REGS(rb + 1u, rc);
             /* Only a closure of this module: another module's code cannot
              * run on this actor's frames (and a gone module's is stale). */
             const uint32_t *obj = obj_of(vm, a, R[rb]);
@@ -841,7 +881,6 @@ int interp_run(Vm *vm, Actor *a) {
             CHECK(f < img->n_funcs);
             uint32_t callee_regs = image_func_nregs(img, f);
             CHECK(image_func_nparams(img, f) == ncaps + rc && ncaps + rc <= callee_regs);
-            REG(ra);
             /* As for CALL; the closure is re-read through its register,
              * a GC root, after the push. */
             uint32_t caller_top = (uint32_t)a->mem_words - a->fp;
@@ -865,7 +904,6 @@ int interp_run(Vm *vm, Actor *a) {
              * they lie below the caller's frame, so the ranges are
              * disjoint. */
             uint32_t n = op == OP_RET ? 1u : rb;
-            REGS(ra, n);
             uint32_t fp = a->fp;
             CHECK(term_is_int(R[nregs]) && term_is_int(R[nregs + 1]));
             int32_t saved = term_to_int(R[nregs]);
@@ -875,9 +913,11 @@ int interp_run(Vm *vm, Actor *a) {
                 actor_exit(vm, a, R_NORMAL, T_EMPTYSTR);
                 return RUN_EXIT;
             }
-            /* The caller's frame sits directly above ours. */
-            CHECK(saved > 0 && (uint32_t)saved <= a->mem_words &&
-                  a->mem_words - (uint32_t)saved == a->sp);
+            /* The caller's frame sits directly above ours: saved is the
+             * words above it (sp <= mem_words; a negative saved never
+             * matches, and 0 leaves no room for the caller's frame,
+             * which the check of caller_fp below refuses). */
+            CHECK((uint32_t)saved == (uint32_t)(a->mem_words - a->sp));
             CHECK(ret >= 0 && (uint32_t)ret + 1u < img->code_words &&
                   (OP_OP(code[ret]) == OP_CALL || OP_OP(code[ret]) == OP_CALLV));
             uint32_t caller = func_of_pc(img, (uint32_t)ret);
@@ -891,12 +931,11 @@ int interp_run(Vm *vm, Actor *a) {
             nregs = caller_regs;
             RELOAD();
             for (uint32_t i = 0; i < n; i++) R[dst + i] = a->mem[fp + ra + i];
-            next = (uint32_t)ret + (op_has_ext(OP_OP(code[ret])) ? 2u : 1u);
+            next = (uint32_t)ret + (OP_OP(code[ret]) == OP_CALL ? 2u : 1u);   /* CALL has an ext word, CALLV none */
             break;
         }
 
         case OP_NEWSTRUCT: case OP_MKCLOSURE: {
-            REG(ra); REGS(rb, rc);
             uint32_t fl = 0;
             if (op == OP_NEWSTRUCT) {
                 /* image_type_row, unrolled: a reserved row, or an own one;
@@ -926,21 +965,24 @@ int interp_run(Vm *vm, Actor *a) {
             /* SETFIELD (15.6) writes in place, only a heap struct of a
              * mutable type: a const one is read-only (flash), an immutable
              * one may be shared. */
-            REG(ra); REG(rb);
             uint32_t *obj = (uint32_t *)obj_of(vm, a, R[rb]);
             bool set = op == OP_SETFIELD;
             /* Past the end only of a reserved struct from an older image:
-             * the fields appended since are ints, 0 the default (opcodes.h). */
+             * the fields appended since are ints, 0 the default (opcodes.h).
+             * Its type is live: a const struct that obj_of resolved is of
+             * its module's image, which is loaded; a heap struct's type
+             * word may carry flags, but only an own type has any (a
+             * flagged reserved row is refused at load) and they leave the
+             * tag bits alone. */
             if (!(obj && hdr_kind(obj[0]) == K_STRUCT && (2u + rc < hdr_words(obj[0]) || (!set && obj[1] < TYPE_OWN_BASE)) &&
                   (!set || (term_is_ref(R[rb]) && (obj[1] & STRUCT_MUT))) &&
-                  type_live(vm, tag, struct_type(R[rb], obj)))) CRASH(R[rb] == T_NIL ? R_NIL : R_BAD_CODE);
+                  (term_is_const(R[rb]) || type_live(vm, tag, obj[1])))) CRASH(R[rb] == T_NIL ? R_NIL : R_BAD_CODE);
             if (set) obj[2 + rc] = R[ra];
             else R[ra] = 2u + rc < hdr_words(obj[0]) ? field_term(R[rb], obj[2 + rc]) : term_from_int(0);
             break;
         }
 
         case OP_TYPEIS: {
-            REG(ra); REG(rb);
             term t = R[rb];
             uint32_t ty = UINT32_MAX;
             CHECK(term_live(vm, a, t));
@@ -970,8 +1012,16 @@ int interp_run(Vm *vm, Actor *a) {
             break;
         }
 
-        case OP_BUILTIN:
-            REG(ra); REGS(rb, rc);
+        case OP_BUILTIN: {
+            uint32_t bi = ext < sizeof builtin_info ? builtin_info[ext] : 0u;
+            int32_t iarg = 0;
+            term val;          /* two: the results of a two-result builtin */
+            bool ok;
+            /* BI(n): rc == n; BI_VAR: any; 0 (bi - 1 wraps): none */
+            CHECK((bi & 7u) == BI_VAR || (bi & 7u) - 1u == rc);
+            if (bi & BI_TWO) CHECK(ra + 2u <= nregs);
+            if (bi & BI_PID) CHECK(term_is_pid(R[rb]));
+            if (bi & BI_INT) CHECK(int_val(vm, a, R[rb], &iarg));
             switch (ext) {
             case B_PRINTLN: case B_PRINTLNU: {
                 /* Anything printed that names a gone module is badcode.
@@ -985,7 +1035,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_SPAWN: case B_SPAWN_LINK: case B_SPAWN_OPT: {
-                CHECK(rc == (ext == B_SPAWN_OPT ? 2u : 1u));
                 uint16_t max_words = 0;
                 if (ext == B_SPAWN_OPT) CHECK(vm_spawn_opt_words(vm, a, R[rb + 1], &max_words));
                 term pid;
@@ -995,11 +1044,9 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_SELF:
-                CHECK(rc == 0);
                 R[ra] = a->id;
                 break;
             case B_SEND:
-                CHECK(rc == 2);
                 if (port_is(vm, R[rb])) {
                     /* A command: handed to the driver in place, for any sender. */
                     CHECK(deep_live(vm, a, R[rb + 1], 0, WALK_BUDGET) >= 0);
@@ -1014,7 +1061,6 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = T_NIL;
                 break;
             case B_RECEIVE: {
-                CHECK(rc == 0);
                 term t;
                 if (!msg_receive(vm, a, &t)) {
                     if (a->mbox_head) CRASH(R_OUT_OF_MEMORY);   /* message does not fit */
@@ -1025,34 +1071,22 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = t;
                 break;
             }
-            case B_RECEIVE_TIMEOUT: {
-                CHECK(rc == 1);
-                REGS(ra, 2);
-                int32_t ms;
-                CHECK(int_val(vm, a, R[rb], &ms));
-                term t;
-                if (msg_receive(vm, a, &t)) {
+            case B_RECEIVE_TIMEOUT:
+                if ((ok = msg_receive(vm, a, &val))) {
                     timer_cancel_wakeup(vm, a);
                     RELOAD();
-                    R[ra] = t;
-                    R[ra + 1] = T_TRUE;
-                    break;
+                    goto two;
                 }
                 if (a->mbox_head) CRASH(R_OUT_OF_MEMORY);   /* message does not fit */
-                switch (timed_wait(vm, a, ms)) {
+                switch (timed_wait(vm, a, iarg)) {
                 case WAIT_OOM: CRASH(R_OUT_OF_MEMORY);
                 case WAIT_BLOCK: a->pc = code + pc; return RUN_WAIT;   /* retry when woken */
                 default: break;                                        /* timed out, or ms <= 0 */
                 }
-                R[ra] = T_NIL;
-                R[ra + 1] = T_FALSE;
-                break;
-            }
+                val = T_NIL;
+                goto two;
             case B_SLEEP: {
-                CHECK(rc == 1);
-                int32_t ms;
-                CHECK(int_val(vm, a, R[rb], &ms));
-                switch (timed_wait(vm, a, ms)) {
+                switch (timed_wait(vm, a, iarg)) {
                 case WAIT_OOM: CRASH(R_OUT_OF_MEMORY);
                 case WAIT_BLOCK: a->pc = code + pc; return RUN_WAIT;   /* also after a message */
                 default: break;
@@ -1085,9 +1119,9 @@ int interp_run(Vm *vm, Actor *a) {
                     obj[4] = R[rb + 1];
                     if ((r = msg_send(vm, a, pid, term_from_ref(off))) < 0) CRASH((uint32_t)-r);
                     if (r == 1) {   /* no live target (a dead local actor, a remote one with no route) */
-                        R[ra] = T_NIL;
-                        R[ra + 1] = T_FALSE;
-                        break;
+                        val = T_NIL;
+                        ok = false;
+                        goto two;
                     }
                     R[ra] = roots[0];
                     CHECK(ref_serial(vm, a, R[ra], &serial));
@@ -1113,12 +1147,11 @@ int interp_run(Vm *vm, Actor *a) {
                 timer_cancel_wakeup(vm, a);
                 a->flags &= (uint8_t)~AF_CALL_PENDING;
                 RELOAD();
-                R[ra] = got == 1 ? t : T_NIL;   /* 2: failed (its node is gone) */
-                R[ra + 1] = term_from_bool(got == 1);
-                break;
+                val = got == 1 ? t : T_NIL;   /* 2: failed (its node is gone) */
+                ok = got == 1;
+                goto two;
             }
             case B_REPLY: {
-                CHECK(rc == 2);
                 const uint32_t *req = obj_of(vm, a, R[rb]);
                 CHECK(req && hdr_kind(req[0]) == K_STRUCT && req[1] == TYPE_REQUEST &&
                       hdr_words(req[0]) == 5u);
@@ -1131,11 +1164,12 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_SEND_AFTER: {
-                CHECK(rc == 3);   /* like Send, a non-PID target just drops it */
+                /* like Send, a non-PID target just drops it; ms is checked
+                 * after the remote-PID refusal (not BI_INT), whose reason
+                 * comes first */
                 if (vm_dist_of(vm, R[rb + 1])) CRASH(R_BAD_MSG);   /* no timers to remote PIDs yet */
-                int32_t ms;
-                CHECK(int_val(vm, a, R[rb], &ms));
-                uint64_t deadline = vm_now(vm) + (ms > 0 ? (uint32_t)ms : 0u);
+                CHECK(int_val(vm, a, R[rb], &iarg));
+                uint64_t deadline = vm_now(vm) + (iarg > 0 ? (uint32_t)iarg : 0u);
                 uint32_t why;
                 term ref = timer_add_send(vm, a, deadline, R[rb + 1], R[rb + 2], &why);
                 if (ref == T_NIL) CRASH(why);
@@ -1145,32 +1179,28 @@ int interp_run(Vm *vm, Actor *a) {
             }
             case B_CANCEL_TIMER: {
                 uint64_t serial;
-                CHECK(rc == 1 && ref_serial(vm, a, R[rb], &serial));
+                CHECK(ref_serial(vm, a, R[rb], &serial));
                 R[ra] = term_from_bool(serial != 0 && timer_cancel(vm, serial));   /* zero Ref: false */
                 break;
             }
-            case B_NOW: {
-                CHECK(rc == 0);
+            /* NOW, MEMORY and UNIX_TIME end in put_int, whose break
+             * skips the pending-exit check after this switch. That is
+             * only right for a builtin that cannot mark the running
+             * actor (actor_mark_exit: a send over its quota, a kill or
+             * link of itself); one that can must end in break. */
+            case B_NOW:
                 /* An immediate (no allocation) for the first ~12 days. */
-                term t;
-                if (!make_int64(vm, a, (int64_t)vm_now(vm), &t)) CRASH(R_OUT_OF_MEMORY);
-                RELOAD();
-                R[ra] = t;
-                break;
-            }
+                ires = (int64_t)vm_now(vm);
+                wide = true;
+                goto put_int;
             case B_MEMORY: {
-                CHECK(rc == 1);
                 /* The caller's own state (mem, mem_words) is current in a. */
                 const Actor *p = actor_lookup(vm, R[rb]);
-                size_t bytes = p ? actor_memory_bytes(p) : 0u;
-                term t;
-                if (!make_int(vm, a, (int32_t)bytes, &t)) CRASH(R_OUT_OF_MEMORY);
-                RELOAD();
-                R[ra] = t;
-                break;
+                ires = (int32_t)(p ? actor_memory_bytes(p) : 0u);
+                wide = false;
+                goto put_int;
             }
             case B_MAKE_REF: {
-                CHECK(rc == 0);
                 term ref = heap_new_ref(vm, a);
                 if (ref == T_NIL) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
@@ -1178,7 +1208,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_MONITOR: {
-                CHECK(rc == 1 && term_is_pid(R[rb]));
                 term ref = sig_monitor(vm, a, R[rb]);
                 if (ref == T_NIL) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
@@ -1187,28 +1216,25 @@ int interp_run(Vm *vm, Actor *a) {
             }
             case B_DEMONITOR: {
                 uint64_t serial;
-                CHECK(rc == 1 && ref_serial(vm, a, R[rb], &serial));
+                CHECK(ref_serial(vm, a, R[rb], &serial));
                 if (serial != 0) sig_demonitor(vm, a, serial);   /* zero Ref: nothing */
                 R[ra] = T_NIL;
                 break;
             }
             case B_LINK:
-                CHECK(rc == 1 && term_is_pid(R[rb]));
                 if (!sig_link(vm, a, R[rb])) CRASH(R_OUT_OF_MEMORY);
                 R[ra] = T_NIL;
                 break;
             case B_UNLINK:
-                CHECK(rc == 1 && term_is_pid(R[rb]));
                 sig_unlink(vm, a, R[rb]);
                 R[ra] = T_NIL;
                 break;
             case B_TRAP_EXIT:
-                CHECK(rc == 1 && (R[rb] == T_TRUE || R[rb] == T_FALSE));
+                CHECK(R[rb] == T_TRUE || R[rb] == T_FALSE);
                 sig_set_trap(a, R[rb] == T_TRUE);
                 R[ra] = T_NIL;
                 break;
             case B_KILL: {
-                CHECK(rc == 2 && term_is_pid(R[rb]));
                 int32_t c;
                 CHECK(int_val(vm, a, R[rb + 1], &c));
                 if (port_is(vm, R[rb])) port_close(vm, R[rb]);   /* any caller, any code */
@@ -1216,15 +1242,11 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = T_NIL;
                 break;
             }
-            case B_EXIT: {
-                CHECK(rc == 1);
-                int32_t c;
-                CHECK(int_val(vm, a, R[rb], &c));
-                actor_exit(vm, a, (uint32_t)c, T_EMPTYSTR);
+            case B_EXIT:
+                actor_exit(vm, a, (uint32_t)iarg, T_EMPTYSTR);
                 return RUN_EXIT;
-            }
             case B_REGISTER: {
-                CHECK(rc == 2 && term_is_pid(R[rb + 1]));
+                CHECK(term_is_pid(R[rb + 1]));
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
@@ -1234,19 +1256,16 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_WHEREIS: {
-                CHECK(rc == 1);
-                REGS(ra, 2);
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
-                term pid;
-                bool found = names_whereis(vm, name, len, &pid);
-                R[ra] = found ? pid : T_ZEROPID;
-                R[ra + 1] = term_from_bool(found);
+                if (!(ok = names_whereis(vm, name, len, &val))) val = T_ZEROPID;
+            two:   /* ra, ra+1 = val, ok */
+                R[ra] = val;
+                R[ra + 1] = term_from_bool(ok);
                 break;
             }
             case B_UNREGISTER: {
-                CHECK(rc == 1);
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
@@ -1255,85 +1274,52 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_PORT_OPEN: {
-                CHECK(rc == 2);
-                REGS(ra, 2);
                 CHECK(deep_live(vm, a, R[rb], 0, WALK_BUDGET) >= 0 &&
                       deep_live(vm, a, R[rb + 1], 0, WALK_BUDGET) >= 0);
-                term pid = port_open(vm, a, R[rb], R[rb + 1]);   /* no GC */
-                R[ra] = pid != T_NIL ? pid : T_ZEROPID;   /* failed: the zero PID */
-                R[ra + 1] = term_from_bool(pid != T_NIL);
-                break;
+                val = port_open(vm, a, R[rb], R[rb + 1]);   /* no GC */
+                if (!(ok = val != T_NIL)) val = T_ZEROPID;   /* failed: the zero PID */
+                goto two;
             }
             case B_PORT_CLOSE:
-                CHECK(rc == 1);
                 port_close(vm, R[rb]);    /* anything but an open port's PID
                                            * (e.g. from a failed Open): nothing */
                 R[ra] = T_NIL;
                 break;
             case B_PORT_HANDOFF:
-                CHECK(rc == 2);
                 R[ra] = term_from_bool(port_handoff(vm, a, R[rb], R[rb + 1]));   /* no GC */
                 break;
             case B_NET_SUBSCRIBE:
-                CHECK(rc == 0);
                 R[ra] = term_from_bool(port_subscribe(vm, a));   /* no GC */
                 break;
-            case B_STR_CONCAT: case B_LEN: case B_INDEX: case B_SETINDEX: case B_SLICE:
-            case B_MAKE_SLICE: case B_APPEND: case B_COPY: case B_CAP: case B_STR_FROM:
-            case B_BYTESLICE_FROM: case B_STR_CMP: case B_BUF_NEW: case B_BUF_WRITE:
-            case B_BUF_FREEZE: case B_BYTES_FROM: case B_BYTES_EQUAL: case B_BYTES_COPYTO:
-            case B_CMP: case B_SPRINT: {
-                uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
-                RELOAD();
-                if (err != R_NORMAL) CRASH(err);
-                break;
-            }
-            case B_CONFIG_GET: {
-                REGS(ra, 2);   /* two results: value, ok */
-                uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
-                RELOAD();
-                if (err != R_NORMAL) CRASH(err);
-                break;
-            }
-            case B_UNIX_TIME: {
-                CHECK(rc == 0);
-                term t;
-                if (!make_int64(vm, a, vm_unix_time_ms(vm), &t)) CRASH(R_OUT_OF_MEMORY);
-                RELOAD();
-                R[ra] = t;
-                break;
-            }
+            case B_UNIX_TIME:
+                ires = vm_unix_time_ms(vm);
+                wide = true;
+                goto put_int;
             case B_SET_UNIX_TIME: {
                 int64_t ms;
-                CHECK(rc == 1 && int64_val(vm, a, R[rb], &ms));
+                CHECK(int64_val(vm, a, R[rb], &ms));
                 R[ra] = term_from_bool(vm_set_unix_time_ms(vm, ms) != 0);
                 break;
             }
             case B_RANDOM:
-                CHECK(rc == 0);
                 R[ra] = term_from_int((int32_t)(vm_random(vm) & 0x3FFFFFFFu));
                 break;
-            case B_FS: case B_CODE: case B_PANIC: {
-                /* Both check ra+1 themselves (two-result ops only). */
-                uint32_t err = ext == B_PANIC ? do_panic(vm, a, R + rb, rc)
+            default: {
+                /* The library builtins (strs.c, module.c, the fs hook,
+                 * floatlib) and panic: each checks what the table does
+                 * not (strs_builtin, module_builtin, fs_builtin and
+                 * float_lib their argument counts). May GC. */
+                uint32_t err = ext == B_PANIC ? do_panic(vm, a, R + rb)
                              : ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
-                             : vm->fs_builtin ? vm->fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
-                RELOAD();      /* may GC */
-                if (err != R_NORMAL) CRASH(err);
-                break;
-            }
+                             : ext == B_FS ? (vm->fs_builtin ? vm->fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE)
 #if GOGO_FLOAT
-            case B_FLOAT: {
-                /* Checks ra+1 itself (two-result ops only). */
-                uint32_t err = float_lib(vm, a, ra, rb, rc, nregs);
-                RELOAD();      /* may GC */
+                             : ext == B_FLOAT ? float_lib(vm, a, ra, rb, rc, nregs)
+#endif
+                             : strs_builtin(vm, a, ext, ra, rb, rc);
+                RELOAD();
                 if (err != R_NORMAL) CRASH(err);
                 break;
             }
-#endif
-            default:
-                /* Unknown builtin id. */
-                CRASH(R_BAD_CODE);
             }
             /* A builtin may have marked the running actor itself (a send
              * to itself over its quota, Kill of itself, Link of a dead pid):
@@ -1343,6 +1329,7 @@ int interp_run(Vm *vm, Actor *a) {
                 return RUN_EXIT;
             }
             break;
+        }
 
         default:
             CRASH(R_BAD_CODE);
@@ -1363,7 +1350,6 @@ crash:
 #undef RELOAD
 #undef CRASH
 #undef CHECK
-#undef REG
 #undef REGS
 }
 
