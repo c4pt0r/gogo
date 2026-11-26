@@ -293,18 +293,20 @@ uint32_t module_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc,
         /* Module{H, missing} and a string for the missing name, before
          * the Bytes is read (may GC); the string is garbage unless the
          * load is Unsupported. */
-        char miss[MOD_MISSING_MAX];
         uint32_t o = heap_alloc(vm, a, 6u + MOD_MISSING_MAX / 4u, NULL, 0);
         if (o == UINT32_MAX) return R_OUT_OF_MEMORY;
         R = (term *)a->mem + a->fp;
-        err = module_load(vm, a, R[rb + 1], &handle, miss);
-        a->mem[o] = hdr_make(4, K_STRUCT);
-        a->mem[o + 1] = TYPE_CODE_MODULE;
-        a->mem[o + 2] = term_from_int(err == GOGO_E_OK ? (int32_t)handle + 1 : 0);
-        a->mem[o + 3] = err == GOGO_E_UNSUPPORTED ? term_from_ref(o + 4) : T_EMPTYSTR;
-        a->mem[o + 4] = hdr_make(2u + MOD_MISSING_MAX / 4u, K_STRING);
-        a->mem[o + 5] = err == GOGO_E_UNSUPPORTED ? handle : 0u;
-        if (err == GOGO_E_UNSUPPORTED) memcpy(&a->mem[o + 6], miss, handle);
+        uint32_t *w = a->mem + o;
+        /* module_load never allocates on a's heap: the name goes straight
+         * into the string. */
+        err = module_load(vm, a, R[rb + 1], &handle, (char *)(w + 6));
+        bool un = err == GOGO_E_UNSUPPORTED;
+        w[0] = hdr_make(4, K_STRUCT);
+        w[1] = TYPE_CODE_MODULE;
+        w[2] = term_from_int(err == GOGO_E_OK ? (int32_t)handle + 1 : 0);
+        w[3] = un ? term_from_ref(o + 4) : T_EMPTYSTR;
+        w[4] = hdr_make(2u + MOD_MISSING_MAX / 4u, K_STRING);
+        w[5] = un ? handle : 0u;
         res = term_from_ref(o);
         break;
     }

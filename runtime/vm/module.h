@@ -147,7 +147,9 @@ void module_config(Vm *vm);
  * it until it unloads: what it pins is what is counted); else a copy in VM
  * memory (heap or const Bytes, any slice). A copy is made once, counted like in-place code, and
  * the Bytes is not kept. GOGO_E_BADARG if bytes is no Bytes. On GOGO_E_OK
- * *handle is the module handle; nothing is kept on any error. */
+ * *handle is the module handle; nothing is kept on any error. Never
+ * allocates on caller's heap (B_CODE writes missing straight into a heap
+ * string). */
 int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle, char *missing);
 
 /* code.Hold: makes a a holder of module handle (once per actor: holding
