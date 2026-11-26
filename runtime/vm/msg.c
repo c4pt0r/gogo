@@ -93,12 +93,14 @@ static uint32_t walk(uint32_t *mem, term root, Xm *x) {
                     if ((k == K_CLOSURE || (k == K_STRUCT && o[1] >= TYPE_OWN_BASE)) &&
                         (o[1] & MOD_TAG_MASK) != x->tag)
                         xm_fail(x, module_of_tag(x->vm, o[1]) ? R_BAD_MSG : R_BAD_CODE);
+                    /* Its fields before its children (the first reason
+                     * found is the sender's: R_BAD_CODE or R_BAD_MSG). */
+                    for (uint32_t j = i; j < end; j++) xm_term(x, o[j]);
                     total += hdr_words(o[0]);
                     o[0] |= WALK_MARK;
                 }
                 continue;
             }
-            if (x) xm_term(x, t);
             i++;
         }
         if (up == WALK_TOP) return total;

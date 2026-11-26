@@ -1639,6 +1639,37 @@ TEST(xmod_sendafter_checked_at_call) {
     free(f);
 }
 
+/* A message refused for two reasons gives the first one the size walk
+ * meets, and an object's own fields are checked before its children:
+ * Reason{Code: a closure of loaded module B (badmsg into module 0), Func:
+ * a const of a module that is gone (badcode)} is badcode, as it was before
+ * the walk and the const check were merged (slim-rt review, I-1). */
+TEST(xmod_two_reasons_fields_first) {
+    Fx *f = fx_new();
+    Vm *vm = &f->vm;
+    Actor *l = host(f), *h = host(f), *s = host(f);
+    uint32_t slot = load_b(f, l) >> 16;
+    term clo = plant(s, K_CLOSURE, 1u | module_tag(vm, slot), 0, T_NIL);
+    term msg = plant(s, K_STRUCT, TYPE_REASON, 2, T_NIL);
+    s->mem[term_ref_off(msg) + 2] = clo;
+    s->mem[term_ref_off(msg) + 3] = term_from_const(6) | STALE_TAG;
+    uint32_t before[8];
+    memcpy(before, s->mem, sizeof before);
+    CHECK_EQ(msg_send(vm, s, h->id, msg), -(int)R_BAD_CODE);
+    CHECK(memcmp(before, s->mem, sizeof before) == 0);   /* no mark left behind */
+    CHECK(h->mbox_head == NULL);
+    /* Each reason alone. */
+    s->mem[term_ref_off(msg) + 3] = T_EMPTYSTR;
+    CHECK_EQ(msg_send(vm, s, h->id, msg), -(int)R_BAD_MSG);
+    s->mem[term_ref_off(msg) + 2] = term_from_int(1);
+    s->mem[term_ref_off(msg) + 3] = term_from_const(6) | STALE_TAG;
+    CHECK_EQ(msg_send(vm, s, h->id, msg), -(int)R_BAD_CODE);
+    actor_exit(vm, s, R_NORMAL, T_EMPTYSTR);
+    actor_exit(vm, h, R_NORMAL, T_EMPTYSTR);
+    actor_exit(vm, l, R_NORMAL, T_EMPTYSTR);
+    free(f);
+}
+
 /* The ExitMsg / DownMsg of a B actor that crashed in B's
  * "get" carry Func "" for host watchers, the name for a B watcher; the
  * crash report names it. Read after B unloaded. */
