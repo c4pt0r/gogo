@@ -67,12 +67,34 @@ func parseFlagsRaw(fs *flag.FlagSet, args []string, usage string, raw func(pos [
 		if len(rest) == 0 {
 			return pos, nil
 		}
-		if len(args) > len(rest) && args[len(args)-len(rest)-1] == "--" {
+		if endedFlags(fs, args[:len(args)-len(rest)]) {
 			return append(pos, rest...), nil
 		}
 		pos = append(pos, rest[0])
 		args = rest[1:]
 	}
+}
+
+// endedFlags reports whether fs.Parse, having consumed the arguments
+// used, stopped at a "--" of its own rather than at a positional
+// argument: a "--" that is a flag's value (-o --) does not count.
+func endedFlags(fs *flag.FlagSet, used []string) bool {
+	for i := 0; i < len(used); i++ {
+		a := used[i]
+		if a == "--" {
+			return true
+		}
+		name := strings.TrimLeft(a, "-")
+		if strings.Contains(name, "=") {
+			continue
+		}
+		if f := fs.Lookup(name); f != nil {
+			if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
+				i++ // its value is the next argument
+			}
+		}
+	}
+	return false
 }
 
 // listFlag is a flag that may be given several times (run's --key).

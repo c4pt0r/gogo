@@ -23,6 +23,8 @@ func TestParseFlags(t *testing.T) {
 		{[]string{"a", "-o", "x"}, "x", false, []string{"a"}},
 		{[]string{"a", "--o=x", "b", "-v"}, "x", true, []string{"a", "b"}},
 		{[]string{"-v", "--", "-o", "x"}, "", true, []string{"-o", "x"}},
+		{[]string{"-o", "--", "a", "-v"}, "--", true, []string{"a"}},
+		{[]string{"-o=--", "--", "-v"}, "--", false, []string{"-v"}},
 		{[]string{"a", "-", "b"}, "", false, []string{"a", "-", "b"}},
 		{nil, "", false, nil},
 	}
