@@ -42,7 +42,11 @@ struct Actor;
  * open: the display is now the grid's (cols x rows); 0 ok, -1 busy (another
  * Vm has it). present: rows `dirty` of g changed (and the cursor, when
  * g->cursor_on); copy what is needed before returning, g changes
- * afterwards. close: give the display back. */
+ * afterwards. close: give the display back.
+ *
+ * A charge the owner cannot take is found by port.c after open returns:
+ * the open is then undone (close), but the owner has already been sent the
+ * size Chunk and the display has shown the blank grid for a moment. */
 typedef struct ScreenHw {
     uint8_t def_cols, def_rows;   /* the size for Config{0, 0} */
     uint8_t max_cols, max_rows;   /* the largest grid (<= SCREEN_MAX_COLS / _ROWS) */

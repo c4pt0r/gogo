@@ -71,9 +71,13 @@ static void at_exit(void) {
     screen_unix_restore();
 }
 
+static int taken;               /* a grid has the display (one Vm per process uses it) */
+
 static int u_open(uint8_t cols, uint8_t rows) {
     (void)cols;
     (void)rows;
+    if (taken) return -1;
+    taken = 1;
     if (mode < 0) mode = isatty(STDOUT_FILENO) ? SCREEN_UNIX_ANSI : SCREEN_UNIX_TEXT;
     fresh = 1;
     if (mode == SCREEN_UNIX_ANSI) {
@@ -154,6 +158,7 @@ static void u_present(const ScreenGrid *g, uint32_t dirty) {
 }
 
 static void u_close(void) {
+    taken = 0;
     if (mode == SCREEN_UNIX_ANSI) {
         fflush(stdout);
         screen_unix_restore();

@@ -298,6 +298,74 @@ TEST(screen_fuzz) {
     }
 }
 
+/* Long-lived grids (state carried across frames, up to 255 x 32), with
+ * sequences biased towards CJK text, wide fills, edge coordinates and
+ * signed scrolls: still nothing outside the cells, whole wide pairs, a
+ * clip inside the grid, and the renderer and the text dump stay inside
+ * their buffers. */
+static uint32_t big[255 * 32 + 2];
+static uint16_t bigpx[255 * 6 * 12];
+
+TEST(screen_fuzz_long) {
+    static const uint8_t sizes[][2] = { {255, 32}, {40, 11}, {1, 1}, {3, 32}, {255, 1} };
+    uint32_t x = 777;
+#define RND() (x ^= x << 13, x ^= x >> 17, x ^= x << 5, x)
+    for (unsigned si = 0; si < sizeof sizes / sizeof sizes[0]; si++) {
+        uint8_t cols = sizes[si][0], rows = sizes[si][1];
+        size_t n = (size_t)cols * rows;
+        big[0] = GUARD;
+        big[1 + n] = GUARD;
+        ScreenGrid gg;
+        screen_init(&gg, big + 1, cols, rows);
+        for (int frame = 0; frame < 3000; frame++) {
+            uint8_t d[96];
+            uint32_t len = 0;
+            while (len < sizeof d - 16) {
+                uint8_t edge[] = { 0, 1, (uint8_t)(cols - 1), cols, (uint8_t)(cols + 2), 254, 255, (uint8_t)RND() };
+                uint8_t c0 = edge[RND() % 8], c1 = edge[RND() % 8];
+                switch (RND() % 9) {
+                case 0: d[len++] = SCREEN_OP_MOVE; d[len++] = c0; d[len++] = (uint8_t)(RND() % (rows + 3)); break;
+                case 1: {   /* CJK and box text */
+                    unsigned k = 1 + RND() % 4;
+                    d[len++] = SCREEN_OP_TEXT; d[len++] = (uint8_t)(3 * k);
+                    for (unsigned i = 0; i < k; i++) {
+                        bool box = RND() % 3 == 0;
+                        d[len++] = 0xE4 + (box ? -2 : 0); d[len++] = box ? 0x94 : 0xBD; d[len++] = 0x80 + RND() % 64;
+                    }
+                    break;
+                }
+                case 2: d[len++] = SCREEN_OP_FILL; d[len++] = c0; d[len++] = (uint8_t)(RND() % (rows + 2));
+                        d[len++] = c1; d[len++] = (uint8_t)(RND() % 40); d[len++] = 0x60; d[len++] = RND() % 2 ? 0x4F : 0x25; break;
+                case 3: d[len++] = SCREEN_OP_CLIP; d[len++] = c0; d[len++] = (uint8_t)(RND() % (rows + 2));
+                        d[len++] = c1; d[len++] = (uint8_t)RND(); break;
+                case 4: d[len++] = SCREEN_OP_SCROLL; d[len++] = c0; d[len++] = 0; d[len++] = c1;
+                        d[len++] = (uint8_t)RND(); d[len++] = (uint8_t)RND(); break;
+                case 5: d[len++] = SCREEN_OP_CLEAR; break;
+                case 6: d[len++] = SCREEN_OP_CURSOR; d[len++] = RND() % 2; break;
+                case 7: d[len++] = SCREEN_OP_COLOR; d[len++] = (uint8_t)RND(); break;
+                default: d[len++] = (uint8_t)RND(); break;   /* noise: often malformed */
+                }
+            }
+            screen_ops_apply(&gg, d, len);
+            CHECK(big[0] == GUARD && big[1 + n] == GUARD);
+            CHECK(gg.x0 <= gg.x1 && gg.x1 <= cols && gg.y0 <= gg.y1 && gg.y1 <= rows);
+            if (frame % 100 == 0) {
+                for (int yy = 0; yy < rows; yy++)
+                    for (int xx = 0; xx < cols; xx++) {
+                        uint32_t c = screen_cell(&gg, xx, yy);
+                        if (c & SCREEN_F_WIDE) CHECK(xx + 1 < cols && (screen_cell(&gg, xx + 1, yy) & SCREEN_F_CONT));
+                        if (c & SCREEN_F_CONT) CHECK(xx > 0 && (screen_cell(&gg, xx - 1, yy) & SCREEN_F_WIDE));
+                    }
+                int r = (int)(RND() % rows);
+                screen_render_row(&gg, NULL, r, bigpx);
+                char txt[255 * 3 + 1];
+                CHECK(screen_row_utf8(&gg, r, txt, sizeof txt) < sizeof txt);
+            }
+        }
+    }
+#undef RND
+}
+
 TEST(screen_render) {
     reset(4, 1);
     RUN(SCREEN_OP_COLOR, 0xF1, SCREEN_OP_TEXT, 3, 0xE2, 0x96, 0x88, SCREEN_OP_COLOR, 0x70, SCREEN_OP_ATTR, SCREEN_A_UNDERLINE,

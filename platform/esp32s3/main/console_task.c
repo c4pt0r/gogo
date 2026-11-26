@@ -315,7 +315,7 @@ void console_esp_report(void) {
 
 #if CONFIG_GOGO_SCREEN
 static int scr_open(uint8_t cols, uint8_t rows) {
-    if (!started) return -1;   /* no LCD */
+    if (!started || scr_on) return -1;   /* no LCD, or another Vm has it */
     if (!scr_cells) {
         scr_cells = heap_caps_malloc(SCR_COLS * SCR_ROWS * sizeof(uint32_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         if (!scr_cells) return -1;

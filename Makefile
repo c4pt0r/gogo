@@ -53,7 +53,7 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
@@ -196,6 +196,11 @@ test-screen: $(BUILD)/test_screen $(BUILD)/test_screen_mcu
 $(BUILD)/test_screen: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(STREAM_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
+
+# The same tests under AddressSanitizer and UBSan (build/asan).
+test-screen-asan:
+	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" build/asan/test_screen
+	build/asan/test_screen
 
 $(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
