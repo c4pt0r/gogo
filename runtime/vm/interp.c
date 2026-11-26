@@ -650,10 +650,10 @@ int interp_run(Vm *vm, Actor *a) {
     {
         uint32_t top = (uint32_t)a->fp + nregs + 2u;
         CHECK(top <= a->mem_words && term_is_int(R[nregs]) && term_is_int(R[nregs + 1]));
+        /* saved is the words above the frame (top <= mem_words, so a
+         * negative one never matches); 0 only for the entry frame */
         int32_t saved = term_to_int(R[nregs]);
-        if (saved == 0) CHECK(top == a->mem_words && term_to_int(R[nregs + 1]) == -1);
-        else CHECK(saved > 0 && (uint32_t)saved <= a->mem_words &&
-                   a->mem_words - (uint32_t)saved == top);
+        CHECK((uint32_t)saved == a->mem_words - top && (saved != 0 || term_to_int(R[nregs + 1]) == -1));
     }
     for (;;) {
         CHECK(pc < img->code_words);
@@ -909,9 +909,11 @@ int interp_run(Vm *vm, Actor *a) {
                 actor_exit(vm, a, R_NORMAL, T_EMPTYSTR);
                 return RUN_EXIT;
             }
-            /* The caller's frame sits directly above ours. */
-            CHECK(saved > 0 && (uint32_t)saved <= a->mem_words &&
-                  a->mem_words - (uint32_t)saved == a->sp);
+            /* The caller's frame sits directly above ours: saved is the
+             * words above it (sp <= mem_words; a negative saved never
+             * matches, and 0 leaves no room for the caller's frame,
+             * which the check of caller_fp below refuses). */
+            CHECK((uint32_t)saved == (uint32_t)(a->mem_words - a->sp));
             CHECK(ret >= 0 && (uint32_t)ret + 1u < img->code_words &&
                   (OP_OP(code[ret]) == OP_CALL || OP_OP(code[ret]) == OP_CALLV));
             uint32_t caller = func_of_pc(img, (uint32_t)ret);
