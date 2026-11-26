@@ -238,7 +238,8 @@ GOGO_API const char *gogo_strerror(int rc);
 /* The library's version, (major << 16) | (minor << 8) | patch: what
  * GOGO_VERSION was when it was built. A host compiled against this
  * header needs a library of the same major, during 0.x the same minor,
- * at least as new: gogo_version() >= GOGO_VERSION. */
+ * at least as new: gogo_version() >= GOGO_VERSION. tools/release.sh
+ * refuses a release tag vX.Y.Z that differs from these. */
 #define GOGO_VERSION_MAJOR 0
 #define GOGO_VERSION_MINOR 2
 #define GOGO_VERSION_PATCH 0

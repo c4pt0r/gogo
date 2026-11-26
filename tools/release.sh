@@ -137,6 +137,17 @@ vm() {
     done
 }
 
+# api_version VERSION: a release tag vX.Y.Z must be the embedding API's
+# version in runtime/include/gogo.h (GOGO_VERSION_MAJOR, _MINOR, _PATCH),
+# which gogo_version() reports; other versions (git describe output) are
+# not checked.
+api_version() {
+    case $1 in v[0-9]*.[0-9]*.[0-9]*) ;; *) return 0 ;; esac
+    case $1 in *[!v0-9.]*) return 0 ;; esac
+    h=$(awk '/^#define GOGO_VERSION_(MAJOR|MINOR|PATCH) / { v = v sep $3; sep = "." } END { print v }' runtime/include/gogo.h)
+    [ "v$h" = "$1" ] || die "release $1, but runtime/include/gogo.h says GOGO_VERSION $h: set GOGO_VERSION_MAJOR/MINOR/PATCH"
+}
+
 # notices DIR
 notices() {
     mkdir -p "$1"
@@ -169,6 +180,7 @@ sums) [ $# -eq 2 ] || die "usage: tools/release.sh sums DIR"; sums "$2" ;;
     case $v in
     ""|.*|*/*|*[!A-Za-z0-9._-]*) die "bad version \"$v\" (letters, digits, . _ -; not starting with .)" ;;
     esac
+    api_version "$v"
     out=$repo/build/release/$v
     rm -rf "$out"
     mkdir -p "$out"
