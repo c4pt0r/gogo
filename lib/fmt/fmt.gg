@@ -10,8 +10,11 @@
 //
 // Differences from Go: inside a struct, slice or map, a field's String
 // or Error method is not called, and a uint32 or uint64 prints as its
-// signed bit pattern; %s, %q and %x of a []byte print its elements, as
-// %v does (convert it with string(b)); the # flag of %g is ignored; a pointer prints as & and its target at any depth
+// signed bit pattern; %s of a []byte prints its elements, as %v does,
+// and %q %x %X of one, or %x of a named integer type, are bad verbs
+// (convert it); %+v and %#v print no field or type names; Sprint spaces
+// a named string type's operand as a non-string; the # flag of %g is
+// ignored; a pointer prints as & and its target at any depth
 // (Go prints an address below the top), and %p is not supported; %T is
 // not supported (no reflection) and a bad verb or extra argument names
 // only a basic type ("?" for others); a nil pointer or map in an

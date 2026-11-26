@@ -327,9 +327,15 @@ rebuilt:
   and a `uint32` or `uint64` prints signed; a pointer below the top
   prints `&` and its target (Go prints an address); `%p` and `%T` are not
   supported (`%!p(...)`), and a bad verb or an extra operand names only a
-  basic type (`?` otherwise); `%s`, `%q` and `%x` of a `[]byte` print its
-  elements (convert with `string(b)`); width and precision count bytes of
-  a string; `Errorf`'s error is a value (two with the same text and
+  basic type (`?` otherwise); `%s` of a `[]byte` prints its elements and
+  `%q`, `%x` and `%X` of one print `%!x(?=[104 105])` (convert with
+  `string(b)`), and `%x` of a value of a named integer type prints
+  `%!x(?=5)` (convert it to its integer type); `%+v` and `%#v` print a
+  struct as `%v` does, `{1 2}`, without field or type names (Go:
+  `{X:1 Y:2}`, `main.P{X:1, Y:2}`); `Sprint` puts a space between an
+  operand of a named string type (`type S string`) and its neighbour,
+  where Go puts none (it sees the string kind); width and precision count
+  bytes of a string; `Errorf`'s error is a value (two with the same text and
   wrapped error are equal) and an error it wraps with `%w` cannot be sent
   to another module (its type is gogo/fmt's own). `Scan` and the `Fprint`
   family are missing (no `io`). Formatting costs code: a program that
