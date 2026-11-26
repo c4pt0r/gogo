@@ -188,9 +188,12 @@ static void c_mounted(void *ctx, bool exfat) {
                      (unsigned long)((uint64_t)F.card.csd.capacity * SECTOR >> 20), F.card.real_freq_khz);
 }
 
-static const DiskHal sd_hal = { NULL, c_attach, c_check, c_read, c_write, c_sectors, c_mounted };
+static const DiskHal sd_hal = {
+    .attach = c_attach, .check = c_check, .read = c_read, .write = c_write, .sectors = c_sectors,
+    .mounted = c_mounted,
+};
 
 /* The board's /sd (platform_esp.c lists it; vfs_init mounts it). */
-const VmMount esp_sd_mount = { "/sd", &fat_be_backend, &sd_vol };
+const VmMount esp_sd_mount = { .prefix = "/sd", .be = &fat_be_backend, .ctx = &sd_vol };
 
 void fs_fat_init(void) { fat_be_init(&sd_vol, &sd_hal, "/sd", platform_esp_say); }

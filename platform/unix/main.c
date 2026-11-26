@@ -207,7 +207,7 @@ static const PortDriver *const unix_ports_all[] = {
 #define UNIX_PORTS_ALL (sizeof unix_ports_all / sizeof unix_ports_all[0])
 /* /flash and /sd: served from --fs-root's flash/ and sd/ (main fills in
  * the backend), else listed with none (NotMounted). */
-static VmMount unix_flash = { "/flash", NULL, NULL }, unix_sd = { "/sd", NULL, NULL };
+static VmMount unix_flash = { .prefix = "/flash" }, unix_sd = { .prefix = "/sd" };
 static VmMount *const unix_mounts_all[] = { &unix_flash, &unix_sd };
 static const PortDriver *unix_ports[UNIX_PORTS_ALL + 1u];   /* filled by main: NULL-terminated */
 static const VmMount *unix_mounts[3];                        /* likewise */

@@ -77,7 +77,8 @@ static bool fk_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p
 static void fk_handoff(Vm *vm, Port *p) { (void)vm; (void)p; fk.handoffs++; }
 
 static const PortDriver fake = {
-    "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event, fk_handoff, NULL, NULL, NULL
+    .name = "fake", .cfg_type = CFG_TYPE, .event_type = EVT_TYPE, .open = fk_open, .command = fk_command,
+    .close = fk_close, .can_event = fk_can_event, .handoff = fk_handoff
 };
 static const PortDriver *const fake_list[] = { &fake, NULL };
 
@@ -987,7 +988,8 @@ TEST(port_command_term_and_subscribe) {
     setup(w, &img, &vm);
     memset(&rawk, 0, sizeof rawk);
     static const PortDriver raw = {
-        "fake", CFG_TYPE, EVT_TYPE, fk_open, fk_command, fk_close, fk_can_event, NULL, rk_command_term, NULL, NULL
+        .name = "fake", .cfg_type = CFG_TYPE, .event_type = EVT_TYPE, .open = fk_open, .command = fk_command,
+        .close = fk_close, .can_event = fk_can_event, .command_term = rk_command_term
     };
     static const PortDriver *const raw_list[] = { &raw, NULL };
     port_set_drivers(&vm, raw_list);
@@ -1259,7 +1261,8 @@ TEST(port_open_term) {
     setup(w, &img, &vm);
     memset(&otk, 0, sizeof otk);
     static const PortDriver ot = {
-        "fake", CFG_TYPE, EVT_TYPE, NULL, fk_command, fk_close, fk_can_event, NULL, NULL, ot_open_term, NULL
+        .name = "fake", .cfg_type = CFG_TYPE, .event_type = EVT_TYPE, .command = fk_command,
+        .close = fk_close, .can_event = fk_can_event, .open_term = ot_open_term
     };
     static const PortDriver *const ot_list[] = { &ot, NULL };
     port_set_drivers(&vm, ot_list);

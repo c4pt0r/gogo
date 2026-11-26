@@ -49,7 +49,7 @@ static const char *m_each(void *ctx, void (*cb)(void *, const char *), void *c) 
     for (int i = 0; i < NKEYS; i++) if (store[i].used) cb(c, store[i].k);
     return NULL;
 }
-static const KvHal kv = { NULL, m_get, m_set, m_rm, m_each };
+static const KvHal kv = { .get = m_get, .set = m_set, .rm = m_rm, .each = m_each };
 
 /* ---- the board: output into a buffer ---- */
 
@@ -70,7 +70,7 @@ static void b_stats(ConfigSvc *s) {
     configsvc_kv(s, "heap_free=1", 11);
     configsvc_reply(s, "ok", NULL, 0);
 }
-static const ConfigBoard board = { NULL, b_write, b_changed, NULL, b_stats, NULL };
+static const ConfigBoard board = { .write = b_write, .changed = b_changed, .stats = b_stats };
 
 static ConfigSvc svc;
 

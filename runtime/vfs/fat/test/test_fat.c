@@ -41,7 +41,9 @@ static int d_write(void *ctx, uint32_t s, const uint8_t *buf, uint32_t n) {
     return 0;
 }
 static uint32_t d_sectors(void *ctx) { (void)ctx; return SECTORS; }
-static const DiskHal hal = { NULL, d_attach, d_check, d_read, d_write, d_sectors, NULL };
+static const DiskHal hal = {
+    .attach = d_attach, .check = d_check, .read = d_read, .write = d_write, .sectors = d_sectors,
+};
 
 static void say(const char *fmt, ...) {
     va_list ap;

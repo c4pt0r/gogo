@@ -54,7 +54,9 @@ static void say(const char *fmt, ...) {
     va_end(ap);
     says++;
 }
-static const LfsOpts opts = { "/flash", "gogo device format-flash", say, lock };
+static const LfsOpts opts = {
+    .name = "/flash", .format_hint = "gogo device format-flash", .say = say, .lock = lock,
+};
 
 static LfsVol vol;
 static BlockDev bd;

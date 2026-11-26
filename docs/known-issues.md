@@ -117,7 +117,9 @@ rebuilt:
 - **Board code** (C, `platform/`; boards outside this repository must be
   edited): a generic driver is now an instance over the board's hardware
   layer (`PortDriver.hw`, design §5.11.1). `PortDriver` gained a last
-  member `hw`, so a positional initializer needs one more `NULL`.
+  member `hw`: write driver tables with designated initializers (as
+  every table in the repository now is), or add one more `NULL` to a
+  positional one.
   `VmBoard.input` and `InputHw` are gone: list `INPUT_KBD_DRIVER(&hal)`,
   `INPUT_POWER_DRIVER(&hal)`, ... over `KbdHal`, `PowerHal`, `ImuHal`,
   `IrTxHal`, `IrRxHal`, `MicHal`, `SpkHal`, whose hooks take a `ctx`

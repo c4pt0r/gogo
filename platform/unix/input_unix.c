@@ -553,13 +553,23 @@ static bool live(void *ctx) {
     return input_unix_live();
 }
 
-const KbdHal input_unix_kbd = { NULL, keytab, 256, k_open, k_close, k_pending, k_read, live };
-const PowerHal input_unix_power = { NULL, p_read, p_pending, p_enable, live, true };
-const ImuHal input_unix_imu = { NULL, i_open, i_close, i_read_fifo, i_read_gestures, live };
-const IrTxHal input_unix_ir_tx = { NULL, NULL, NULL, ir_start, ir_busy };   /* no open / close */
-const IrRxHal input_unix_ir_rx = { NULL, ir_rx_open, ir_rx_read, ir_rx_close, live };
-const MicHal input_unix_mic = { NULL, m_open, m_read, m_close, live };
-const SpkHal input_unix_spk = { NULL, s_open, s_write, s_queued, s_close };
+const KbdHal input_unix_kbd = {
+    .keys = keytab, .nkeys = 256, .open = k_open, .close = k_close, .pending = k_pending, .read = k_read,
+    .live = live,
+};
+const PowerHal input_unix_power = {
+    .read = p_read, .pending = p_pending, .enable = p_enable, .live = live, .event_driven = true,
+};
+const ImuHal input_unix_imu = {
+    .open = i_open, .close = i_close, .read_fifo = i_read_fifo, .read_gestures = i_read_gestures,
+    .live = live,
+};
+const IrTxHal input_unix_ir_tx = { .start = ir_start, .busy = ir_busy };   /* no open / close */
+const IrRxHal input_unix_ir_rx = {
+    .open = ir_rx_open, .read = ir_rx_read, .close = ir_rx_close, .live = live,
+};
+const MicHal input_unix_mic = { .open = m_open, .read = m_read, .close = m_close, .live = live };
+const SpkHal input_unix_spk = { .open = s_open, .write = s_write, .queued = s_queued, .close = s_close };
 
 /* ---- script ---- */
 

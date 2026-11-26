@@ -54,7 +54,7 @@ gogo_host test_host = {
     .config_get = t_config_get,
 };
 
-static const VmMount test_flash = { "/flash", NULL, NULL }, test_sd = { "/sd", NULL, NULL };
+static const VmMount test_flash = { .prefix = "/flash" }, test_sd = { .prefix = "/sd" };
 static const VmMount *const test_mounts[] = { &test_flash, &test_sd, NULL };
 
 VmBoard test_board = { .ports = unix_base_ports, .netif = &unix_netif, .mounts = test_mounts };

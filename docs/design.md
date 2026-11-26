@@ -1860,6 +1860,12 @@ A board does not copy runtime code: every generic driver lives once in
 of functions, each with a `ctx` its hooks get first (so one set of hooks
 can serve two devices, and the table can be a board's `static const`).
 
+- **Tables are designated.** Every driver table (`PortDriver`, the
+  `GPIO_DRIVER` / `INPUT_*_DRIVER` / `SCREEN_PORT_DRIVER` macros), hardware
+  layer and `VmBoard` is written with designated initializers, and a
+  table only grows at its end, NULL meaning absent; so a new field
+  (`hw`) breaks no table, and a driver left without a hardware layer
+  refuses to open.
 - **Driver instances.** `PortDriver.hw` (`runtime/vm/port.h`) is the
   instance's hardware layer; the VM never reads it. A board lists
   `GPIO_DRIVER(&my_gpio)`, `INPUT_KBD_DRIVER(&my_kbd)`, ... among its

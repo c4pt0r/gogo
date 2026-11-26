@@ -222,26 +222,28 @@ void input_no_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, u
  *   static const KbdHal my_kbd = { ... };
  *   const PortDriver my_kbd_driver = INPUT_KBD_DRIVER(&my_kbd); */
 #define INPUT_KBD_DRIVER(hal) \
-    { PORT_NAME_KBD, TYPE_KBD_CONFIG, TYPE_KBD_KEY, input_kbd_open, NULL, input_kbd_close, input_kbd_can_event, \
-      NULL, NULL, NULL, (hal) }
+    { .name = PORT_NAME_KBD, .cfg_type = TYPE_KBD_CONFIG, .event_type = TYPE_KBD_KEY, .open = input_kbd_open, \
+      .close = input_kbd_close, .can_event = input_kbd_can_event, .hw = (hal) }
 #define INPUT_POWER_DRIVER(hal) \
-    { PORT_NAME_POWER, TYPE_POWER_CONFIG, TYPE_POWER_BATTERY, input_power_open, input_power_command, \
-      input_power_close, input_power_can_event, NULL, NULL, NULL, (hal) }
+    { .name = PORT_NAME_POWER, .cfg_type = TYPE_POWER_CONFIG, .event_type = TYPE_POWER_BATTERY, \
+      .open = input_power_open, .command = input_power_command, .close = input_power_close, \
+      .can_event = input_power_can_event, .hw = (hal) }
 #define INPUT_IMU_DRIVER(hal) \
-    { PORT_NAME_IMU, TYPE_IMU_CONFIG, TYPE_IMU_GESTURE, input_imu_open, input_no_command, input_imu_close, \
-      input_imu_can_event, NULL, NULL, NULL, (hal) }
+    { .name = PORT_NAME_IMU, .cfg_type = TYPE_IMU_CONFIG, .event_type = TYPE_IMU_GESTURE, .open = input_imu_open, \
+      .command = input_no_command, .close = input_imu_close, .can_event = input_imu_can_event, .hw = (hal) }
 #define INPUT_IR_TX_DRIVER(hal) \
-    { PORT_NAME_IR_TX, TYPE_IR_TX, TYPE_DONE, input_ir_tx_open, NULL, input_ir_tx_close, input_ir_tx_can_event, \
-      NULL, input_ir_tx_command, NULL, (hal) }
+    { .name = PORT_NAME_IR_TX, .cfg_type = TYPE_IR_TX, .event_type = TYPE_DONE, .open = input_ir_tx_open, \
+      .close = input_ir_tx_close, .can_event = input_ir_tx_can_event, .command_term = input_ir_tx_command, \
+      .hw = (hal) }
 #define INPUT_IR_RX_DRIVER(hal) \
-    { PORT_NAME_IR_RX, TYPE_IR_RX, TYPE_CHUNK, input_ir_rx_open, input_no_command, input_ir_rx_close, \
-      input_ir_rx_can_event, NULL, NULL, NULL, (hal) }
+    { .name = PORT_NAME_IR_RX, .cfg_type = TYPE_IR_RX, .event_type = TYPE_CHUNK, .open = input_ir_rx_open, \
+      .command = input_no_command, .close = input_ir_rx_close, .can_event = input_ir_rx_can_event, .hw = (hal) }
 #define INPUT_MIC_DRIVER(hal) \
-    { PORT_NAME_MIC, TYPE_AUDIO_MIC, TYPE_CHUNK, input_mic_open, input_no_command, input_mic_close, \
-      input_mic_can_event, NULL, NULL, NULL, (hal) }
+    { .name = PORT_NAME_MIC, .cfg_type = TYPE_AUDIO_MIC, .event_type = TYPE_CHUNK, .open = input_mic_open, \
+      .command = input_no_command, .close = input_mic_close, .can_event = input_mic_can_event, .hw = (hal) }
 #define INPUT_SPEAKER_DRIVER(hal) \
-    { PORT_NAME_SPEAKER, TYPE_AUDIO_SPEAKER, TYPE_DONE, input_spk_open, NULL, input_spk_close, \
-      input_spk_can_event, NULL, input_spk_command, NULL, (hal) }
+    { .name = PORT_NAME_SPEAKER, .cfg_type = TYPE_AUDIO_SPEAKER, .event_type = TYPE_DONE, .open = input_spk_open, \
+      .close = input_spk_close, .can_event = input_spk_can_event, .command_term = input_spk_command, .hw = (hal) }
 
 /* One Vm's input state (input_int.h). */
 typedef struct InputState InputState;

@@ -100,7 +100,7 @@ bool gpio_can_event(const struct Vm *vm, const Port *p);
 /* A board's gpio driver instance over its HAL:
  *   const PortDriver my_gpio_driver = GPIO_DRIVER(&my_gpio_hal); */
 #define GPIO_DRIVER(hal) \
-    { PORT_NAME_GPIO, TYPE_GPIO_CONFIG, TYPE_GPIO_EDGE, gpio_open, gpio_command, gpio_close, gpio_can_event, \
-      NULL, NULL, NULL, (hal) }
+    { .name = PORT_NAME_GPIO, .cfg_type = TYPE_GPIO_CONFIG, .event_type = TYPE_GPIO_EDGE, .open = gpio_open, \
+      .command = gpio_command, .close = gpio_close, .can_event = gpio_can_event, .hw = (hal) }
 
 #endif

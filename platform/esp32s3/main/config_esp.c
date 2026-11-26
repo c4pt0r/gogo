@@ -129,7 +129,7 @@ static const char *kv_each(void *ctx, void (*cb)(void *cb_ctx, const char *key),
     return NULL;
 }
 
-static const KvHal nvs_kv = { NULL, kv_get, kv_set, kv_rm, kv_each };
+static const KvHal nvs_kv = { .get = kv_get, .set = kv_set, .rm = kv_rm, .each = kv_each };
 
 int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uint32_t cap) {
     return configsvc_vm_get(cfg_ok ? &nvs_kv : NULL, key, klen, buf, cap);
@@ -277,13 +277,13 @@ static void cmd_format_flash(ConfigSvc *s) {
 }
 
 static const ConfigBoard esp_cfg_board = {
-    NULL, out_line, changed,
+    .write = out_line,
+    .changed = changed,
 #if CONFIG_GOGO_NET
-    cmd_scan,
-#else
-    NULL,
+    .scan = cmd_scan,
 #endif
-    cmd_stats, cmd_format_flash
+    .stats = cmd_stats,
+    .format_flash = cmd_format_flash,
 };
 
 static void config_task(void *arg) {

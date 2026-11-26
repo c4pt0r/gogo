@@ -73,7 +73,9 @@ static void vol_lock(bool take) {
     else xSemaphoreGive(lock);
 }
 
-static const LfsOpts flash_opts = { "/flash", "gogo device format-flash", platform_esp_say, vol_lock };
+static const LfsOpts flash_opts = {
+    .name = "/flash", .format_hint = "gogo device format-flash", .say = platform_esp_say, .lock = vol_lock,
+};
 
 /* ---- the partition as a BlockDev ---- */
 
@@ -144,7 +146,7 @@ static bool format_requested(void) {
 /* ---- mount ---- */
 
 /* The board's /flash (platform_esp.c lists it; vfs_init mounts it). */
-const VmMount esp_flash_mount = { "/flash", &lfs_be_backend, &flash_vol };
+const VmMount esp_flash_mount = { .prefix = "/flash", .be = &lfs_be_backend, .ctx = &flash_vol };
 
 int fs_lfs_mount(void) {
     lock = xSemaphoreCreateMutexStatic(&lock_buf);

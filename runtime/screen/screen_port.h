@@ -71,8 +71,9 @@ bool screen_port_can_event(const struct Vm *vm, const Port *p);
 void screen_port_ignore(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n);
 
 #define SCREEN_PORT_DRIVER(open_fn) \
-    { PORT_NAME_SCREEN, TYPE_SCREEN_CONFIG, TYPE_DONE, (open_fn), screen_port_ignore, screen_port_close, \
-      screen_port_can_event, NULL, screen_port_command, NULL, NULL }
+    { .name = PORT_NAME_SCREEN, .cfg_type = TYPE_SCREEN_CONFIG, .event_type = TYPE_DONE, .open = (open_fn), \
+      .command = screen_port_ignore, .close = screen_port_close, .can_event = screen_port_can_event, \
+      .command_term = screen_port_command }
 
 /* Tests: the grid of an open screen port, NULL if p is not one. */
 const ScreenGrid *screen_port_grid(const Port *p);
