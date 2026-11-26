@@ -53,7 +53,7 @@ typedef struct VmBoard {
     const struct DistCarrier *dist_carrier;
 } VmBoard;
 
-/* ---- wrappers (host.c): the only callers of the host's hooks ---- */
+/* ---- wrappers (host.c; two one-liners inline in actor.h): the only callers of the host's hooks ---- */
 
 /* Milliseconds since the VM's time base (vm->t0: set by vm_start). */
 uint64_t vm_now(const struct Vm *vm);
@@ -63,14 +63,14 @@ void vm_out(const struct Vm *vm, int stream, const char *s, size_t n);
 #define vm_write_err(vm, s, n) vm_out((vm), 2, (s), (n))
 /* host->alloc / free: the allocator's raw memory. */
 void *vm_chunk_alloc(struct Vm *vm, size_t n);
-void vm_chunk_free(struct Vm *vm, void *p, size_t n);
+/* vm_chunk_free: inline in actor.h (after Vm). */
 /* host->config_get, -1 (unset) without one. */
 int32_t vm_config_get(const struct Vm *vm, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap);
 /* host->code_alloc / code_free; NULL / nothing without them. */
 void *vm_code_alloc(struct Vm *vm, size_t n);
 void vm_code_free(struct Vm *vm, void *p, size_t n);
 /* host->wake (any thread or ISR) and host->wait (the run loop). */
-void vm_wake(const struct Vm *vm);
+/* vm_wake: inline in actor.h (after Vm). */
 void vm_wait(const struct Vm *vm, uint32_t timeout_ms);
 /* host->random, else a clock-seeded xorshift kept in the Vm. */
 uint32_t vm_random(struct Vm *vm);

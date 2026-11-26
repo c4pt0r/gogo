@@ -151,6 +151,16 @@ static inline Port *port_at(const Vm *vm, uint32_t i) {
 }
 static inline uint32_t port_index(const Vm *vm, const Port *p) { return term_pid_slot(p->id) - vm->port_base; }
 
+/* One-line accessors, inline (smaller than a call); declared here, after
+ * Vm, though they belong to evq.h, host.h and port.h. */
+static inline bool evq_empty(const Vm *vm) { return vm->evq_tail == vm->evq_head; }
+static inline uint32_t evq_dropped(const Vm *vm) { return vm->evq_dropped; }
+static inline void vm_chunk_free(Vm *vm, void *p, size_t n) { vm->host->free(vm->host_ctx, p, n); }   /* p never NULL */
+static inline void port_set_drivers(Vm *vm, const PortDriver *const *list) { vm->drivers = list; }
+static inline void vm_wake(const Vm *vm) {
+    if (vm->host->wake) vm->host->wake(vm->host_ctx);
+}
+
 /* Clears vm and ties it to its host (host_ctx goes to every hook) and
  * board (NULL = no board hardware). Then allocates the PID table. Returns 0, or
  * -1 if the table cannot be allocated or table_cap exceeds the default

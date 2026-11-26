@@ -34,10 +34,6 @@ bool evq_pop(Vm *vm, PortEvent *out) {
     return true;
 }
 
-bool evq_empty(const Vm *vm) { return vm->evq_tail == vm->evq_head; }
-
-uint32_t evq_dropped(const Vm *vm) { return vm->evq_dropped; }
-
 void evq_reset(Vm *vm) {
     vm->evq_head = 0; vm->evq_tail = 0; vm->evq_dropped = 0;
 }

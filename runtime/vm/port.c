@@ -19,8 +19,6 @@
 
 #define SOURCES_EACH(vm, q) for (const PortSrcSlot *q = (vm)->sources; q->s; q++)
 
-void port_set_drivers(Vm *vm, const PortDriver *const *list) { vm->drivers = list; }
-
 bool port_add_source(Vm *vm, const PortSource *s, void *ctx) {
     PortSrcSlot *q = vm->sources;
     while (q->s) q++;

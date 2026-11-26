@@ -7,7 +7,6 @@
 void vm_out(const Vm *vm, int stream, const char *s, size_t n) { vm->host->write(vm->host_ctx, stream, s, n); }
 
 void *vm_chunk_alloc(Vm *vm, size_t n) { return vm->host->alloc(vm->host_ctx, n); }
-void vm_chunk_free(Vm *vm, void *p, size_t n) { vm->host->free(vm->host_ctx, p, n); }   /* p never NULL */
 
 int32_t vm_config_get(const Vm *vm, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
     return vm->host->config_get ? vm->host->config_get(vm->host_ctx, k, kl, buf, cap) : -1;
@@ -16,7 +15,6 @@ int32_t vm_config_get(const Vm *vm, const uint8_t *k, uint32_t kl, uint8_t *buf,
 void *vm_code_alloc(Vm *vm, size_t n) { return vm->host->code_alloc ? vm->host->code_alloc(vm->host_ctx, n) : NULL; }
 void vm_code_free(Vm *vm, void *p, size_t n) { if (vm->host->code_free) vm->host->code_free(vm->host_ctx, p, n); }
 
-void vm_wake(const Vm *vm) { if (vm->host->wake) vm->host->wake(vm->host_ctx); }
 void vm_wait(const Vm *vm, uint32_t ms) { vm->host->wait(vm->host_ctx, ms); }
 
 /* The host's raw monotonic clock: the wall clock's base (not vm_now, so a

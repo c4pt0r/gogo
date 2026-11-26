@@ -398,11 +398,6 @@ bool sig_kill(Vm *vm, Actor *from, term pid, uint32_t code) {
     return exit_signal(vm, t, from->id, code);
 }
 
-void sig_set_trap(Actor *a, bool on) {
-    if (on) a->flags |= AF_TRAP_EXIT;
-    else a->flags = (uint8_t)(a->flags & ~AF_TRAP_EXIT);
-}
-
 term sig_monitor(Vm *vm, Actor *a, term pid) {
     uint64_t serial = vm->next_ref;
     term ref = heap_new_ref(vm, a);

@@ -88,10 +88,14 @@ bool timer_cancel(Vm *vm, uint64_t serial);
 void timer_cancel_actor(Vm *vm, const Actor *a);
 
 /* Number of pending timers. */
-uint32_t timer_pending(const Vm *vm);
+static inline uint32_t timer_pending(const Vm *vm) { return vm->ntimers; }
 
 /* The earliest deadline; false if no timer is pending. */
-bool timer_next(const Vm *vm, uint64_t *deadline);
+static inline bool timer_next(const Vm *vm, uint64_t *deadline) {
+    if (!vm->ntimers) return false;
+    *deadline = vm->timers[0]->deadline;
+    return true;
+}
 
 /* Fires, in deadline order, every timer due at `now` (deadline <= now).
  * A SendAfter message goes through the receiver's quota (msg_enqueue); a

@@ -114,7 +114,9 @@ term sig_monitor(Vm *vm, Actor *a, term pid);
 void sig_demonitor(Vm *vm, Actor *a, uint64_t serial);
 
 /* TrapExit: turns exit signals other than Killed into ExitMsg messages. */
-void sig_set_trap(Actor *a, bool on);
+static inline void sig_set_trap(Actor *a, bool on) {
+    a->flags = (uint8_t)((a->flags & ~AF_TRAP_EXIT) | (on ? AF_TRAP_EXIT : 0));
+}
 
 /* Words charged to a besides its heap block: its queued messages
  * (mbox_words, including the off-heap Bytes they carry) plus

@@ -29,8 +29,8 @@ struct Vm;
 
 bool evq_push(struct Vm *vm, const PortEvent *e);   /* producer (ISR-safe); false + dropped++ when full */
 bool evq_pop(struct Vm *vm, PortEvent *out);        /* consumer (scheduler) */
-bool evq_empty(const struct Vm *vm);                /* consumer: nothing to pop right now */
-uint32_t evq_dropped(const struct Vm *vm);
+/* evq_empty (consumer: nothing to pop right now) and evq_dropped are
+ * inline in actor.h, after Vm. */
 void evq_reset(struct Vm *vm);                      /* tests and vm start; not concurrent-safe */
 
 #endif

@@ -123,8 +123,6 @@ static Timer *heap_remove(Vm *vm, uint32_t i) {
     return t;
 }
 
-uint32_t timer_pending(const Vm *vm) { return vm->ntimers; }
-
 bool timer_add_wakeup(Vm *vm, Actor *a, uint64_t deadline) {
     if (a->flags & AF_WAKEUP_ARMED) return true;   /* at most one per actor */
     if (!heap_reserve(vm)) return false;
@@ -241,12 +239,6 @@ void timer_cancel_actor(Vm *vm, const Actor *a) {
     vm->ntimers = j;
     for (uint32_t i = j / 2u; i-- > 0;) sift_down(h, j, i);
     heap_trim(vm);
-}
-
-bool timer_next(const Vm *vm, uint64_t *deadline) {
-    if (!vm->ntimers) return false;
-    *deadline = vm->timers[0]->deadline;
-    return true;
 }
 
 /* Wakes the actor t targets, if it is still alive. */
