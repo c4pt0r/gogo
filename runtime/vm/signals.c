@@ -306,7 +306,7 @@ static void node_remove(Vm *vm, Actor *a, uint32_t which, term pid, uint64_t ser
     Link *l = *pl;
     *pl = l->next;
     node_free(vm, l, which);
-    actor_uncharge(a, node_words(which));
+    if (which != L_MONITORS) actor_uncharge(a, node_words(which));   /* L_MONITORS: 0 */
 }
 
 /* A node for list `which`, with its preallocated notice if the list holds
