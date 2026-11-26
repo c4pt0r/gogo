@@ -55,6 +55,11 @@ func build(t *testing.T, prog string) string {
 // start runs prog with the config lines cfg (node.token is added unless
 // cfg sets it).
 func start(t *testing.T, prog string, cfg ...string) *node {
+	return startVM(t, prog, nil, cfg...)
+}
+
+// startVM is start with extra VM flags.
+func startVM(t *testing.T, prog string, flags []string, cfg ...string) *node {
 	t.Helper()
 	vm := os.Getenv("GOGO_VM")
 	if vm == "" {
@@ -65,7 +70,7 @@ func start(t *testing.T, prog string, cfg ...string) *node {
 		t.Fatal(err)
 	}
 	n := &node{t: t, name: prog, more: make(chan struct{}, 1), done: make(chan struct{})}
-	n.cmd = exec.Command(vm, "--host-net", build(t, prog))
+	n.cmd = exec.Command(vm, append(append([]string{"--host-net"}, flags...), build(t, prog))...)
 	n.cmd.Env = append(os.Environ(), "GOGO_CONFIG="+conf)
 	out, err := n.cmd.StdoutPipe()
 	if err != nil {
