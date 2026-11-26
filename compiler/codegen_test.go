@@ -2115,3 +2115,41 @@ func main() {
 		}
 	}
 }
+
+// TestCompileControlFlow: an expression switch is an EQ (EQ64 for int64)
+// and JMPT per case value, a local tag is compared in place, and the
+// bodies follow in source order (fallthrough emits no jump).
+func TestCompileControlFlow(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+func main() {
+	x := 2
+	switch x {
+	case 1, 2:
+		println("a")
+		fallthrough
+	case 3:
+		println("b")
+	}
+	var w int64 = 3
+	switch w {
+	case 3:
+		println("c")
+	}
+}
+`)
+	_, body := funcDis(t, dis, "main")
+	code := parseIns(t, body)
+	if countOp(code, "EQ", "r1, r0, ") != 3 || countOp(code, "JMPT", "") != 4 {
+		t.Errorf("want 3 EQ on the tag in place and 4 JMPT:\n%s", dis)
+	}
+	if countOp(code, "EQ64", "") != 1 {
+		t.Errorf("want EQ64 for the int64 switch:\n%s", dis)
+	}
+	if countOp(code, "MOVE", "r0") != 0 {
+		t.Errorf("the local tag should not be copied:\n%s", dis)
+	}
+	if countOp(code, "JMP", "") != 2 { // after the tests of each switch; none for the fallthrough or the last body
+		t.Errorf("want 2 JMP:\n%s", dis)
+	}
+}

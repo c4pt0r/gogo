@@ -1,0 +1,161 @@
+package main
+
+import "gogo/actor"
+
+type Code int
+
+const (
+	Ok Code = iota
+	Busy
+	Gone
+)
+
+type Msg struct{ N int }
+
+func codeName(c Code) string {
+	switch c {
+	case Ok:
+		return "ok"
+	case Busy, Gone: // several values in one case
+		return "not ok"
+	}
+	return "unknown"
+}
+
+func classify(n int) string {
+	switch { // no tag: the first true case wins
+	case n < 0:
+		return "negative"
+	case n == 0:
+		return "zero"
+	case n < 10:
+		return "small"
+	default:
+		return "large"
+	}
+}
+
+// grade: default in the middle, reached by fallthrough and by no match.
+func grade(n int) {
+	switch n {
+	case 1:
+		println(n, "one")
+		fallthrough
+	default:
+		println(n, "default")
+	case 2:
+		println(n, "two")
+		fallthrough
+	case 3:
+		println(n, "three")
+		fallthrough
+	case 4:
+		println(n, "four")
+	}
+}
+
+func side(tag string, v int) int {
+	println("eval", tag)
+	return v
+}
+
+func main() {
+	println(codeName(Ok), codeName(Busy), codeName(Gone), codeName(9))
+	println(classify(-5), classify(0), classify(7), classify(100))
+	grade(1)
+	grade(2)
+	grade(5)
+
+	// Strings compare by content; an init statement scopes its variable.
+	for _, w := range []string{"go", "stop", "", "pause"} {
+		switch cmd := w + "!"; cmd {
+		case "go!":
+			println("start")
+		case "stop!", "halt!":
+			println("stop")
+		case "!":
+			println("empty")
+		default:
+			println("unknown", cmd)
+		}
+	}
+
+	// The tag is evaluated once; case values in order, until one matches.
+	switch side("tag", 2) {
+	case side("a", 1), side("b", 2), side("c", 3):
+		println("matched")
+	}
+
+	// int64, byte, bool, PID.
+	var big int64 = 1 << 40
+	switch big {
+	case 1 << 39:
+		println("no")
+	case 1 << 40:
+		println("2^40")
+	}
+	b := []byte("x")[0]
+	switch b {
+	case 'x':
+		println("byte x")
+	}
+	switch true {
+	case 1 > 2:
+		println("no")
+	case 2 > 1:
+		println("bool true")
+	}
+	me := actor.Self()
+	switch me {
+	case actor.Self():
+		println("self")
+	}
+
+	// break leaves the switch; continue goes to the enclosing loop.
+	for i := 0; i < 4; i++ {
+		switch i {
+		case 1:
+			continue
+		case 2:
+			if i == 2 {
+				break
+			}
+			println("unreachable")
+		}
+		println("after switch", i)
+	}
+
+	// A switch with only default, and an empty one.
+	switch {
+	default:
+		println("only default")
+	}
+	switch side("empty", 0) {
+	}
+
+	// Inside an actor, with values from messages.
+	done := actor.Self()
+	pid := actor.Spawn(func() {
+		for {
+			var n int
+			switch m := actor.Receive().(type) {
+			case Msg:
+				n = m.N
+			}
+			switch n % 3 {
+			case 0:
+				println("fizz", n)
+			case 1, 2:
+				println("plain", n)
+			}
+			if n == 3 {
+				actor.Send(done, Msg{0})
+				return
+			}
+		}
+	})
+	for i := 1; i <= 3; i++ {
+		actor.Send(pid, Msg{i})
+	}
+	actor.Receive()
+}

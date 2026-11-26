@@ -681,6 +681,9 @@ func (f *fn) stmtCode(s ast.Stmt) {
 	case *ast.ForStmt:
 		f.forStmt(s)
 	case *ast.BranchStmt:
+		if s.Tok == token.FALLTHROUGH {
+			f.fail(s, "internal error: fallthrough outside a switch clause end")
+		}
 		targets := f.breakTo
 		if s.Tok == token.CONTINUE {
 			targets = f.continueTo
@@ -689,6 +692,8 @@ func (f *fn) stmtCode(s ast.Stmt) {
 			f.fail(s, "%s outside a loop", s.Tok)
 		}
 		f.jump(OpJmp, 0, targets[len(targets)-1])
+	case *ast.SwitchStmt:
+		f.switchStmt(s)
 	case *ast.TypeSwitchStmt:
 		f.typeSwitch(s)
 	case *ast.RangeStmt:

@@ -564,9 +564,11 @@ func (c *checker) stmt(s ast.Stmt) {
 		}
 		c.block(s.Body)
 	case *ast.BranchStmt:
-		if (s.Tok != token.BREAK && s.Tok != token.CONTINUE) || s.Label != nil {
+		if (s.Tok != token.BREAK && s.Tok != token.CONTINUE && s.Tok != token.FALLTHROUGH) || s.Label != nil {
 			c.unsupported(s, strings.TrimSpace(s.Tok.String()+" statement"))
 		}
+	case *ast.SwitchStmt:
+		c.switchStmt(s)
 	case *ast.TypeSwitchStmt:
 		c.typeSwitch(s)
 	case *ast.RangeStmt:
@@ -768,6 +770,36 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 			} else if !c.caseType(t) {
 				c.unsupported(t, "type switch case other than a struct, int, int64, bool, string, actor.PID, actor.Ref or bytes.Bytes")
 			}
+		}
+		for _, b := range cc.Body {
+			c.stmt(b)
+		}
+	}
+}
+
+// switchStmt checks an expression switch: tagged (`switch x { case 1, 2: }`)
+// or tagless (`switch { case x > 0: }`), with an optional init statement.
+// The tag and every case value must be comparable with ==: a switch on an
+// interface or a struct value is not supported yet.
+func (c *checker) switchStmt(s *ast.SwitchStmt) {
+	if s.Init != nil {
+		c.stmt(s.Init)
+	}
+	if s.Tag != nil {
+		if t := c.p.Info.TypeOf(s.Tag); !c.comparable(t) {
+			c.unsupported(s.Tag, "switch on a value of type "+types.TypeString(t, pkgName))
+			return
+		}
+		c.expr(s.Tag)
+	}
+	for _, cl := range s.Body.List {
+		cc := cl.(*ast.CaseClause)
+		for _, e := range cc.List {
+			if t := c.p.Info.TypeOf(e); s.Tag != nil && !c.comparable(t) {
+				c.unsupported(e, "switch case of type "+types.TypeString(t, pkgName))
+				continue
+			}
+			c.expr(e)
 		}
 		for _, b := range cc.Body {
 			c.stmt(b)

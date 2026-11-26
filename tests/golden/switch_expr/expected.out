@@ -1,0 +1,28 @@
+ok not ok not ok unknown
+negative zero small large
+1 one
+1 default
+2 two
+2 three
+2 four
+5 default
+start
+stop
+empty
+unknown pause!
+eval tag
+eval a
+eval b
+matched
+2^40
+byte x
+bool true
+self
+after switch 0
+after switch 2
+after switch 3
+only default
+eval empty
+plain 1
+plain 2
+fizz 3
