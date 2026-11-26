@@ -1,13 +1,11 @@
-/* The input event source (spec input §5.1): reads the keyboard chip and samples
- * the power chip on the scheduler thread and delivers
+/* The input event source (spec input §5.1): reads the keyboard chip, samples
+ * the power chip and polls the other devices (through the HAL of each open
+ * port's driver instance) on the scheduler thread, and delivers
  * straight to the port owners; it never touches the event ring. */
 #include "input_int.h"
 #include "host.h"
 #include <stdio.h>
 #include <string.h>
-
-static const InputHw none;   /* no hardware */
-const InputHw *input_hw(const Vm *vm) { return vm->board->input ? vm->board->input : &none; }
 
 /* Any input port open (no clock read for programs without input). */
 static bool any_open(const InputState *in) {
@@ -35,16 +33,13 @@ static bool src_any_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return 
 static bool src_next_deadline(const Vm *vm, void *ctx, uint64_t *d) {
     (void)ctx;
     if (!any_open(vm->input)) return false;
-    /* Dead hardware (live false): no repeat, sample or receive poll is
-     * coming; an IR frame being sent still finishes (its Done). */
-    bool live = !input_hw(vm)->live || input_hw(vm)->live();
     uint64_t now = vm_now(vm), t;
     bool any = false;
-    if (live && kbd_next_deadline(vm, now, &t)) { *d = t; any = true; }
-    if (live && power_next_deadline(vm, now, &t) && (!any || t < *d)) { *d = t; any = true; }
-    if (live && imu_next_deadline(vm, now, &t) && (!any || t < *d)) { *d = t; any = true; }
-    if (ir_next_deadline(vm, now, live, &t) && (!any || t < *d)) { *d = t; any = true; }
-    if (audio_next_deadline(vm, now, live, &t) && (!any || t < *d)) { *d = t; any = true; }
+    if (kbd_next_deadline(vm, now, &t)) { *d = t; any = true; }
+    if (power_next_deadline(vm, now, &t) && (!any || t < *d)) { *d = t; any = true; }
+    if (imu_next_deadline(vm, now, &t) && (!any || t < *d)) { *d = t; any = true; }
+    if (ir_next_deadline(vm, now, &t) && (!any || t < *d)) { *d = t; any = true; }
+    if (audio_next_deadline(vm, now, &t) && (!any || t < *d)) { *d = t; any = true; }
     return any;
 }
 

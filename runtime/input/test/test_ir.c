@@ -1,4 +1,4 @@
-/* The ir_tx and ir_rx ports against a fake InputHw on a real VM: Config
+/* The ir_tx and ir_rx ports against the fake devices (fakehw.c) on a real VM: Config
  * validation and defaults, one owner, Out -> start -> busy -> Done, the
  * queue and the third Out, bad timings, waiting for an idle transmitter,
  * a failed start, close with a frame in flight, the busy-poll deadline
@@ -529,6 +529,7 @@ TEST(ir_rx_can_event_follows_live) {
     fake_live_hook(true);
     Port p;
     memset(&p, 0, sizeof p);
+    p.drv = &input_ir_rx_driver;
     CHECK(input_ir_rx_driver.can_event(&vm, &p));
     fake_set_live(false);
     CHECK(!input_ir_rx_driver.can_event(&vm, &p));

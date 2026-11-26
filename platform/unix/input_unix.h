@@ -1,5 +1,5 @@
 /* unix input simulation: the one reader of stdin shared by the gpio, kbd and
- * power ports, and the unix InputHw (spec input §5.6). Used by gpio_unix.c,
+ * power ports, and the unix input devices' HALs (spec input §5.6). Used by gpio_unix.c,
  * platform_unix.c and main.c. */
 #ifndef GOGO_INPUT_UNIX_H
 #define GOGO_INPUT_UNIX_H
@@ -8,15 +8,22 @@
 #include <stdbool.h>
 #include "input.h"
 
-/* The unix keyboard and battery; main.c's board lists it (VmBoard.input). */
-extern const InputHw input_unix_hw;
+/* The simulated keyboard, battery, motion sensor, infrared and audio;
+ * main.c's board lists a driver instance over each (INPUT_*_DRIVER). */
+extern const KbdHal input_unix_kbd;
+extern const PowerHal input_unix_power;
+extern const ImuHal input_unix_imu;
+extern const IrTxHal input_unix_ir_tx;
+extern const IrRxHal input_unix_ir_rx;
+extern const MicHal input_unix_mic;
+extern const SpkHal input_unix_spk;
 
 /* --key <c>=<pin> (tty mode): sends character c to gpio pin only; false when
  * the table is full or the pin invalid. */
 int input_unix_add_key(char c, int pin);
 
 /* A port that can produce events opened / closed (gpio input; kbd and power
- * through the InputHw hooks). While any is open stdin is read; in tty mode
+ * through their HAL hooks). While any is open stdin is read; in tty mode
  * the terminal is in raw mode. */
 void input_unix_attach(void);
 void input_unix_detach(void);

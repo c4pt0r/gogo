@@ -378,8 +378,8 @@ btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: 
   keyboard, ...) fail to open.
 - A driver is a table of C functions (open, command, close, and optional
   hooks such as `command_term` for structured commands, `handoff`); new
-  peripherals need no change to the VM core. A generic driver (`gpio`)
-  is one runtime implementation; a board lists an
+  peripherals need no change to the VM core. A generic driver (`gpio`,
+  the input ports) is one runtime implementation; a board lists an
   instance of it over its hardware layer (`PortDriver.hw`).
   The port table has a fixed
   size (`GOGO_MAX_PORTS`, 16 by default).
@@ -618,14 +618,14 @@ FatFs).
   linear from 3300 to 4100 mV. There is no power-button event.
 - **Platform hooks.** `runtime/input/` is chip-independent C (key codes
   to characters, modifiers, auto-repeat, battery sampling and backoff).
-  The platform provides one `InputHw` (`runtime/input/input.h`): the key
-  table, `kbd_open/close/pending/read`, `power_read`, and the optional
-  `power_pending`, `live`, `power_enable` and `power_event_driven`.
-  `platform_input()` has a weak default (no hardware); a platform's strong
-  definition must be in an object file that is always linked (on the ESP,
-  `platform_esp.c`). `kbd_pending` only reads; the ISR only sets a flag
-  and calls `platform_notify()`; every I2C and ADC access happens on the
-  scheduler thread (or before the VM starts).
+  The platform describes each device with a table
+  (`runtime/input/input.h`): `KbdHal` (the key table,
+  `open/close/pending/read`, optional `live`) and `PowerHal` (`read`,
+  and the optional `pending`, `enable`, `live` and `event_driven`), and
+  lists `INPUT_KBD_DRIVER(&hal)` and `INPUT_POWER_DRIVER(&hal)` among its
+  ports. `KbdHal.pending` only reads; the ISR only sets a flag and calls
+  `platform_notify()`; every I2C and ADC access happens on the scheduler
+  thread (or before the VM starts).
 - **Event source.** `input_install()` registers a `PortSource`; each
   round the scheduler calls `pending` then `drain`. Keys go straight to
   the port's owner, not through the event ring. Power is polled every
@@ -859,11 +859,10 @@ font.
   DutyPct}` takes `Out`s; `ir.RX{GapUs}` delivers one `Chunk` per frame,
   and a frame that is too long is cut and counted in `Dropped`.
   `gogo/irproto` encodes and decodes NEC.
-- **Platform hooks.** `InputHw` adds `imu_open/close/read_fifo/
-  read_gestures`, `ir_tx_start/tx_busy/rx_open/rx_read/rx_close`, and the
-  optional `ir_tx_open/ir_tx_close` (called when a transmit port opens or
-  closes; the ESP uses them to reference-count the StickS3's EXT_5V; NULL
-  on Unix). Signatures and contracts are in `runtime/input/input.h`.
+- **Platform hooks.** `ImuHal` (`open/close/read_fifo/read_gestures`),
+  `IrTxHal` (`start/busy` and the optional `open/close`, called when a
+  transmit port opens or closes; the ESP uses them to reference-count the
+  StickS3's EXT_5V; NULL on Unix) and `IrRxHal` (`open/read/close`). Signatures and contracts are in `runtime/input/input.h`.
   Unix simulates them from the stdin script (`imu sample`, `imu
   gesture`, `ir rx`); `ir_tx` prints to stderr.
 - **ESP32-S3.** Both boards have a BMI270 on the shared I2C bus (probed at
@@ -926,13 +925,13 @@ font.
   stall needs heap + 4040 words, more than the default 4096-word limit on
   a board, so `gogo/sound`'s recorder starts with `actor.Options{MaxMemory}`
   and opens `mic` itself.
-- **Platform hooks.** `InputHw` adds `mic_open/mic_read/mic_close` and
-  `spk_open/spk_write/spk_queued/spk_close` (contracts in
-  `runtime/input/input.h`), all optional (`mic_open`/`mic_read` or
-  `spk_open`/`spk_write` NULL means no such hardware) and all called on
-  the scheduler thread. `mic_read` may return a single DMA buffer, fewer
-  bytes than asked, and reports bytes lost to a full buffer in `*lost`;
-  `spk_write` does not block, and `spk_queued` returns the bytes written
+- **Platform hooks.** `MicHal` (`open/read/close`) and `SpkHal`
+  (`open/write/queued/close`) (contracts in `runtime/input/input.h`;
+  `close` and `queued` optional; a board without the device lists no
+  driver for it), all called on the scheduler thread. `MicHal.read` may
+  return a single DMA buffer, fewer bytes than asked, and reports bytes
+  lost to a full buffer in `*lost`; `SpkHal.write` does not block, and
+  `queued` returns the bytes written
   but not yet played, from which the common code knows when an `Out` has
   finished. The common driver is `runtime/input/audio.c`, and all data
   goes through `runtime/stream/`. Unix simulates the ports from the stdin

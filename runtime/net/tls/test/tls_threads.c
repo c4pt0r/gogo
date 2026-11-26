@@ -375,7 +375,7 @@ static void *run(void *arg) {
     w[18] = hdr_make(3, K_STRING); w[19] = 3; memcpy(&w[20], "Cfg", 3);
     w[21] = OP_MAKE(OP_RET, 0, 0, 0);
     pe->nif = (NetIf){ nif_mac, nif_send, nif_link_up, nif_report, pe };
-    pe->board = (VmBoard){ drivers, NULL, &pe->nif, &hw, NULL };
+    pe->board = (VmBoard){ .ports = drivers, .netif = &pe->nif, .tls = &hw };
     if (image_load(&pe->img, w, img_seal(w)) != IMG_OK ||
         vm_init(&pe->vm, &host, NULL, &pe->board, 16) != 0 ||
         module_install_static(&pe->vm, &pe->img) != GOGO_E_OK) {

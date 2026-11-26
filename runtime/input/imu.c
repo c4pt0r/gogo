@@ -23,17 +23,17 @@ enum { SAMPLE = 12, IMU_BATCH_MAX = 2400, DEF_BATCH = 200, MIN_BATCH = 50, MAX_B
 
 typedef InputImu Imu;
 
-static int imu_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+int input_imu_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
-    const InputHw *hw = input_hw(vm);
-    if (input_failed(vm)) return -1;
+    const ImuHal *hw = PORT_HAL(ImuHal, p);
+    if (input_failed(vm) || !hw) return -1;
     Imu *m = &vm->input->imu;
-    if (m->port || !hw->imu_open || n < 3) return -1;
+    if (m->port || !hw->open || n < 3) return -1;
     int32_t rate = cfg[0], mask = cfg[1], batch = cfg[2];
     if (rate != 0 && rate != 25 && rate != 50 && rate != 100 && rate != 200) return -1;
     if (mask < 0 || mask > GESTURE_ALL) return -1;
-    if (rate && !hw->imu_read_fifo) return -1;
-    if (mask && !hw->imu_read_gestures) return -1;
+    if (rate && !hw->read_fifo) return -1;
+    if (mask && !hw->read_gestures) return -1;
     batch = batch <= 0 ? DEF_BATCH : batch < MIN_BATCH ? MIN_BATCH : batch > MAX_BATCH ? MAX_BATCH : batch;
     uint32_t cap = (uint32_t)batch * (uint32_t)rate * SAMPLE / 1000u;
     if (cap > IMU_BATCH_MAX) cap = IMU_BATCH_MAX;
@@ -44,7 +44,7 @@ static int imu_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, 
         m->buf = va_alloc(vm, cap);
         if (!m->buf) return -1;
     }
-    if (hw->imu_open((uint16_t)rate, (uint8_t)mask) != 0) {
+    if (hw->open(hw->ctx, (uint16_t)rate, (uint8_t)mask) != 0) {
         if (m->buf) va_free(vm, m->buf, cap);
         memset(m, 0, sizeof *m);
         return -1;
@@ -61,26 +61,20 @@ static int imu_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, 
     return 0;
 }
 
-static void imu_close(struct Vm *vm, Port *p) {
+void input_imu_close(struct Vm *vm, Port *p) {
     Imu *m = vm->input ? &vm->input->imu : NULL;
     if (!m || m->port != p) return;                      /* a refused open's cleanup */
-    const InputHw *hw = input_hw(vm);
-    if (hw->imu_close) hw->imu_close();
+    const ImuHal *hw = PORT_HAL(ImuHal, p);
+    if (hw->close) hw->close(hw->ctx);
     if (m->buf) va_free(vm, m->buf, m->cap);
     memset(m, 0, sizeof *m);
 }
 
-static void imu_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm; (void)p; (void)type; (void)f; (void)n; }
-
-static bool imu_can_event(const struct Vm *vm, const Port *p) { (void)vm;
-    (void)p;
-    const InputHw *hw = input_hw(vm);
-    return !hw->live || hw->live();
+bool input_imu_can_event(const struct Vm *vm, const Port *p) {
+    (void)vm;
+    const ImuHal *hw = PORT_HAL(ImuHal, p);
+    return hal_live(hw->live, hw->ctx);
 }
-
-const PortDriver input_imu_driver = {
-    PORT_NAME_IMU, TYPE_IMU_CONFIG, TYPE_IMU_GESTURE, imu_open, imu_command, imu_close, imu_can_event, NULL, NULL, NULL, NULL
-};
 
 /* ---- scheduler side ---- */
 
@@ -90,7 +84,7 @@ bool imu_work(const Vm *vm, uint64_t now) {
 
 bool imu_next_deadline(const Vm *vm, uint64_t now, uint64_t *d) {
     const Imu *m = &vm->input->imu;
-    if (!m->port || (!m->rate && !m->mask)) return false;     /* nothing to poll */
+    if (!m->port || (!m->rate && !m->mask) || !input_imu_can_event(vm, m->port)) return false;   /* nothing to poll */
     *d = deadline_abs(now, m->next_poll);
     return true;
 }
@@ -107,7 +101,9 @@ static void send_batch(Vm *vm, uint64_t now) {
 static void gestures(Vm *vm) {
     const Imu *m = &vm->input->imu;
     ImuGestures g;
-    if (!m->mask || input_hw(vm)->imu_read_gestures(&g) != 0) return;
+    if (!m->mask) return;
+    const ImuHal *hw = PORT_HAL(ImuHal, m->port);
+    if (hw->read_gestures(hw->ctx, &g) != 0) return;
     uint8_t bits = (uint8_t)(g.bits & m->mask);
     for (uint8_t k = 1; bits; k = (uint8_t)(k << 1)) {
         if (!(bits & k)) continue;
@@ -121,10 +117,10 @@ void imu_drain(Vm *vm, uint64_t now) {
     if (!imu_work(vm, now)) return;
     Imu *m = &vm->input->imu;
     m->next_poll = (uint32_t)now + m->poll_ms;
-    const InputHw *hw = input_hw(vm);
-    while (m->rate) {                              /* RateHz 0: imu_read_fifo is never called */
+    const ImuHal *hw = PORT_HAL(ImuHal, m->port);
+    while (m->rate) {                              /* RateHz 0: read_fifo is never called */
         uint32_t room = (uint32_t)(m->cap - m->fill);
-        int r = hw->imu_read_fifo(m->buf + m->fill, room);
+        int r = hw->read_fifo(hw->ctx, m->buf + m->fill, room);
         if (r <= 0) break;                        /* empty, or an error: the next poll retries */
         r -= r % SAMPLE;
         if ((uint32_t)r > room) break;            /* a hook that broke its contract */

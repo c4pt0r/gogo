@@ -11,14 +11,17 @@ enum { AVG = INPUT_PWR_AVG, DEF_PERIOD = 10000, MIN_PERIOD = 1000 };
 
 typedef InputPower Power;
 
+/* The chip flagged a new value (PowerHal.pending). */
+static bool flagged(const PowerHal *hw) { return hw->pending && hw->pending(hw->ctx); }
+
 static bool power_due(const Vm *vm, uint64_t now) {
-    const InputHw *hw = input_hw(vm);
     Power *w = &vm->input->pwr;
     if (!w->port) return false;
-    bool pend = hw->power_pending && hw->power_pending();
+    const PowerHal *hw = PORT_HAL(PowerHal, w->port);
+    bool pend = flagged(hw);
     if (w->backoff && !w->fail_pend && pend) w->backoff = false;   /* the flag rose again: a new value */
     if (w->start) return true;
-    if (!hw->power_event_driven && reached(now, w->next_at)) return true;
+    if (!hw->event_driven && reached(now, w->next_at)) return true;
     return !w->backoff && (w->read_req || pend);
 }
 
@@ -28,28 +31,30 @@ static int percent(uint32_t mv) {
     return (int)(p > 100u ? 100u : p);
 }
 
-static int power_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+int input_power_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
-    if (input_failed(vm)) return -1;
+    const PowerHal *hw = PORT_HAL(PowerHal, p);
+    if (input_failed(vm) || !hw) return -1;
     Power *w = &vm->input->pwr;
-    if (w->port || !input_hw(vm)->power_read) return -1;
+    if (w->port || !hw->read) return -1;
     memset(w, 0, sizeof *w);
     int32_t per = n > 0 ? cfg[0] : 0;
     w->period = (uint16_t)(per <= 0 ? DEF_PERIOD : per < MIN_PERIOD ? MIN_PERIOD : per > 65535 ? 65535 : per);
     w->port = p;                /* next_at = 0: the first sample is due now */
     w->start = true;
-    if (input_hw(vm)->power_enable) input_hw(vm)->power_enable(true);
+    if (hw->enable) hw->enable(hw->ctx, true);
     return 0;
 }
 
-static void power_close(struct Vm *vm, Port *p) {
+void input_power_close(struct Vm *vm, Port *p) {
     Power *w = vm->input ? &vm->input->pwr : NULL;
     if (!w || w->port != p) return;                /* a refused open's cleanup */
     memset(w, 0, sizeof *w);
-    if (input_hw(vm)->power_enable) input_hw(vm)->power_enable(false);
+    const PowerHal *hw = PORT_HAL(PowerHal, p);
+    if (hw->enable) hw->enable(hw->ctx, false);
 }
 
-static void power_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) {
+void input_power_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) {
     (void)f; (void)n;
     Power *w = &vm->input->pwr;
     if (w->port != p || type != TYPE_POWER_READ) return;
@@ -60,15 +65,11 @@ static void power_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *
     w->backoff = false;
 }
 
-static bool power_can_event(const struct Vm *vm, const Port *p) { (void)vm;
-    (void)p;
-    const InputHw *hw = input_hw(vm);
-    return !hw->live || hw->live();
+bool input_power_can_event(const struct Vm *vm, const Port *p) {
+    (void)vm;
+    const PowerHal *hw = PORT_HAL(PowerHal, p);
+    return hal_live(hw->live, hw->ctx);
 }
-
-const PortDriver input_power_driver = {
-    PORT_NAME_POWER, TYPE_POWER_CONFIG, TYPE_POWER_BATTERY, power_open, power_command, power_close, power_can_event, NULL, NULL, NULL, NULL
-};
 
 /* ---- scheduler side ---- */
 
@@ -76,7 +77,7 @@ bool power_work(const Vm *vm, uint64_t now) { return power_due(vm, now); }
 
 bool power_next_deadline(const Vm *vm, uint64_t now, uint64_t *d) {
     const Power *w = &vm->input->pwr;
-    if (!w->port || input_hw(vm)->power_event_driven) return false;
+    if (!w->port || PORT_HAL(PowerHal, w->port)->event_driven || !input_power_can_event(vm, w->port)) return false;
     *d = w->start ? now : deadline_abs(now, w->next_at);
     return true;
 }
@@ -90,13 +91,13 @@ void power_drain(Vm *vm, uint64_t now) {
     w->next_at = (uint32_t)now + w->period;           /* a failure or drop retries then, not sooner */
     w->backoff = true;
     w->start = false;
-    const InputHw *hw = input_hw(vm);
+    const PowerHal *hw = PORT_HAL(PowerHal, w->port);
     w->fail_pend = true;                           /* until proven otherwise (a drop below) */
-    if (hw->power_read(&mv, &ch, &ext) != 0) {
+    if (hw->read(hw->ctx, &mv, &ch, &ext) != 0) {
         /* Retry at the period, or earlier when the flag rises again. A flag
          * that was already set stays stuck (a failed read does not consume
          * it), so it must not retry at once: that would spin. */
-        w->fail_pend = hw->power_pending && hw->power_pending();
+        w->fail_pend = flagged(hw);
         return;
     }
     uint16_t s = (uint16_t)(mv < 0 ? 0 : mv > 65535 ? 65535 : mv);
@@ -117,7 +118,7 @@ void power_drain(Vm *vm, uint64_t now) {
     int32_t v[4] = { (int32_t)avg, pct, ch, ext };
     if (!port_deliver_ints(vm, w->port, TYPE_POWER_BATTERY, v, 4, 0)) {
         dropped_inc(vm);                            /* not reported: the next sample tries again */
-        w->fail_pend = hw->power_pending && hw->power_pending();   /* the read consumed the flag: a new one ends the backoff */
+        w->fail_pend = flagged(hw);   /* the read consumed the flag: a new one ends the backoff */
         return;
     }
     w->backoff = false;

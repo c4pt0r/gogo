@@ -139,34 +139,38 @@ uint32_t fs_fat_state_bytes(void);
 
 struct PortDriver;
 extern const struct PortDriver gpio_esp_driver;
+/* The input driver instances (input_esp.c), each defined only when the
+ * build has the device. */
+extern const struct PortDriver esp_kbd_driver, esp_power_driver, esp_imu_driver, esp_ir_tx_driver,
+    esp_ir_rx_driver, esp_mic_driver, esp_speaker_driver;
 
 /* BMI270 motion sensor (imu_esp.c, built with CONFIG_GOGO_IMU on a board
- * with HAS_IMU): the InputHw imu_* hooks, contracts in runtime/input/input.h. */
-int imu_esp_open(uint16_t rate_hz, uint8_t gestures);
-void imu_esp_close(void);
-int imu_esp_read_fifo(uint8_t *buf, uint32_t cap);
-int imu_esp_read_gestures(ImuGestures *g);
+ * with HAS_IMU): the ImuHal hooks, contracts in runtime/input/input.h. */
+int imu_esp_open(void *ctx, uint16_t rate_hz, uint8_t gestures);
+void imu_esp_close(void *ctx);
+int imu_esp_read_fifo(void *ctx, uint8_t *buf, uint32_t cap);
+int imu_esp_read_gestures(void *ctx, ImuGestures *g);
 
-/* Infrared on the RMT (ir_esp.c, built with CONFIG_GOGO_IR): the InputHw
- * ir_* hooks, contracts in runtime/input/input.h. The receiver hooks exist only on
+/* Infrared on the RMT (ir_esp.c, built with CONFIG_GOGO_IR): the IrTxHal
+ * and IrRxHal hooks, contracts in runtime/input/input.h. The receiver hooks exist only on
  * a board with HAS_IR_RX. */
-int ir_esp_tx_open(uint32_t carrier_hz, uint8_t duty_pct);
-void ir_esp_tx_close(void);
-int ir_esp_tx_start(const uint8_t *timings, uint32_t n, uint32_t carrier_hz, uint8_t duty_pct);
-bool ir_esp_tx_busy(void);
-int ir_esp_rx_open(uint32_t gap_us);
-int ir_esp_rx_read(uint16_t *buf, uint32_t cap, uint32_t *start_ms);
-void ir_esp_rx_close(void);
+int ir_esp_tx_open(void *ctx, uint32_t carrier_hz, uint8_t duty_pct);
+void ir_esp_tx_close(void *ctx);
+int ir_esp_tx_start(void *ctx, const uint8_t *timings, uint32_t n, uint32_t carrier_hz, uint8_t duty_pct);
+bool ir_esp_tx_busy(void *ctx);
+int ir_esp_rx_open(void *ctx, uint32_t gap_us);
+int ir_esp_rx_read(void *ctx, uint16_t *buf, uint32_t cap, uint32_t *start_ms);
+void ir_esp_rx_close(void *ctx);
 
 /* Audio on the ES8311 codec (audio_esp.c, built with CONFIG_GOGO_AUDIO):
- * the InputHw mic_* and spk_* hooks, contracts in runtime/input/input.h. */
-int audio_esp_mic_open(uint32_t rate, uint8_t gain_db);
-int audio_esp_mic_read(uint8_t *buf, uint32_t cap, uint32_t *lost);
-void audio_esp_mic_close(void);
-int audio_esp_spk_open(uint32_t rate, uint8_t volume);
-int audio_esp_spk_write(const uint8_t *data, uint32_t len);
-uint32_t audio_esp_spk_queued(void);
-void audio_esp_spk_close(void);
+ * the MicHal and SpkHal hooks, contracts in runtime/input/input.h. */
+int audio_esp_mic_open(void *ctx, uint32_t rate, uint8_t gain_db);
+int audio_esp_mic_read(void *ctx, uint8_t *buf, uint32_t cap, uint32_t *lost);
+void audio_esp_mic_close(void *ctx);
+int audio_esp_spk_open(void *ctx, uint32_t rate, uint8_t volume);
+int audio_esp_spk_write(void *ctx, const uint8_t *data, uint32_t len);
+uint32_t audio_esp_spk_queued(void *ctx);
+void audio_esp_spk_close(void *ctx);
 
 /* Config store (config_esp.c): NVS namespace "gogo". config_esp_init
  * opens it (0 on success); config_esp_get reads key into buf (at most cap

@@ -14,13 +14,13 @@
 
 struct Vm;
 struct PortDriver;
-struct InputHw;
 struct NetIf;
 struct TlsHw;
 
 /* Board-only hardware, a static const table per board. Any field may be
- * NULL (no such hardware). ports: the port drivers, NULL-terminated;
- * input: the input chips (input.h); netif: the network interface (netif.h);
+ * NULL (no such hardware). ports: the port drivers, NULL-terminated (a
+ * generic driver's instance carries its hardware layer, PortDriver.hw:
+ * the gpio pins, each input device); netif: the network interface (netif.h);
  * tls: the "tls" port's hooks (TlsHw, net/tls/tls.h); mounts: the file
  * system prefixes the board serves ("/flash", "/sd"), NULL-terminated.
  *
@@ -30,7 +30,6 @@ struct TlsHw;
  * build really has (#if), never more. */
 typedef struct VmBoard {
     const struct PortDriver *const *ports;
-    const struct InputHw *input;
     const struct NetIf *netif;
     const struct TlsHw *tls;
     const char *const *mounts;

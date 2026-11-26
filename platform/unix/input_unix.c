@@ -186,20 +186,23 @@ static void key_push(unsigned code, bool down) {
     platform_notify();
 }
 
-static int k_open(void) {
+static int k_open(void *ctx) {
+    (void)ctx;
     keytab_init();
     qh = qt = 0;
     kbd_on = true;
     input_unix_attach();
     return 0;
 }
-static void k_close(void) {
+static void k_close(void *ctx) {
+    (void)ctx;
     if (!kbd_on) return;
     kbd_on = false;
     input_unix_detach();
 }
-static bool k_pending(void) { return qh != qt; }
-static int k_read(uint16_t *raw, bool *down) {
+static bool k_pending(void *ctx) { (void)ctx; return qh != qt; }
+static int k_read(void *ctx, uint16_t *raw, bool *down) {
+    (void)ctx;
     if (qh == qt) return 0;
     *raw = q[qh % QLEN].code;
     *down = q[qh % QLEN].down;
@@ -260,18 +263,20 @@ static unsigned char_code(unsigned char c, bool *shift) {
 
 static struct { int32_t mv; int8_t charging, external; bool have, pend; } bat;
 
-static void p_enable(bool on) {
+static void p_enable(void *ctx, bool on) {
+    (void)ctx;
     if (on == power_on) return;
     power_on = on;
     if (on) input_unix_attach(); else input_unix_detach();
 }
-static int p_read(int32_t *mv, int8_t *ch, int8_t *ext) {
+static int p_read(void *ctx, int32_t *mv, int8_t *ch, int8_t *ext) {
+    (void)ctx;
     if (!bat.have) return -1;
     *mv = bat.mv; *ch = bat.charging; *ext = bat.external;
     bat.pend = false;
     return 0;
 }
-static bool p_pending(void) { return bat.pend; }
+static bool p_pending(void *ctx) { (void)ctx; return bat.pend; }
 
 /* ---- the motion sensor ---- */
 
@@ -290,7 +295,8 @@ static struct {
     ImuGestures g;
 } imu;
 
-static int i_open(uint16_t rate, uint8_t mask) {
+static int i_open(void *ctx, uint16_t rate, uint8_t mask) {
+    (void)ctx;
     memset(&imu, 0, sizeof imu);
     imu.on = true;
     imu.rate = rate;
@@ -298,12 +304,14 @@ static int i_open(uint16_t rate, uint8_t mask) {
     input_unix_attach();
     return 0;
 }
-static void i_close(void) {
+static void i_close(void *ctx) {
+    (void)ctx;
     if (!imu.on) return;
     imu.on = false;
     input_unix_detach();
 }
-static int i_read_fifo(uint8_t *buf, uint32_t cap) {
+static int i_read_fifo(void *ctx, uint8_t *buf, uint32_t cap) {
+    (void)ctx;
     uint32_t n = 0;
     while (imu.qh != imu.qt && n + IMU_SAMPLE <= cap) {
         memcpy(buf + n, imu.q[imu.qh % IMU_QLEN], IMU_SAMPLE);
@@ -312,7 +320,8 @@ static int i_read_fifo(uint8_t *buf, uint32_t cap) {
     }
     return (int)n;
 }
-static int i_read_gestures(ImuGestures *g) {
+static int i_read_gestures(void *ctx, ImuGestures *g) {
+    (void)ctx;
     *g = imu.g;
     imu.g.bits = 0;
     return 0;
@@ -358,7 +367,8 @@ static struct {
     uint64_t tx_end;           /* ms: the frame being sent ends */
 } irs;
 
-static int ir_start(const uint8_t *t, uint32_t n, uint32_t carrier, uint8_t duty) {
+static int ir_start(void *ctx, const uint8_t *t, uint32_t n, uint32_t carrier, uint8_t duty) {
+    (void)ctx;
     (void)carrier; (void)duty;
     uint64_t us = 0;
     for (uint32_t i = 0; i < n; i++) us += (uint32_t)t[2 * i] | (uint32_t)t[2 * i + 1] << 8;
@@ -368,20 +378,23 @@ static int ir_start(const uint8_t *t, uint32_t n, uint32_t carrier, uint8_t duty
     if (k > 0) platform_write_err(b, (size_t)k);
     return 0;
 }
-static bool ir_busy(void) { return platform_now_ms() < irs.tx_end; }
-static int ir_rx_open(uint32_t gap_us) {
+static bool ir_busy(void *ctx) { (void)ctx; return platform_now_ms() < irs.tx_end; }
+static int ir_rx_open(void *ctx, uint32_t gap_us) {
+    (void)ctx;
     (void)gap_us;
     irs.h = irs.t = 0;
     irs.rx_on = true;
     input_unix_attach();
     return 0;
 }
-static void ir_rx_close(void) {
+static void ir_rx_close(void *ctx) {
+    (void)ctx;
     if (!irs.rx_on) return;
     irs.rx_on = false;
     input_unix_detach();
 }
-static int ir_rx_read(uint16_t *buf, uint32_t cap, uint32_t *start_ms) {
+static int ir_rx_read(void *ctx, uint16_t *buf, uint32_t cap, uint32_t *start_ms) {
+    (void)ctx;
     if (irs.h == irs.t) return 0;
     unsigned k = irs.h++ % IR_SIM_FRAMES;
     uint32_t n = irs.n[k];
@@ -444,7 +457,8 @@ static int32_t sine(uint32_t phase) {
     return (i & 128u) ? -v : v;
 }
 
-static int m_open(uint32_t rate, uint8_t gain_db) {
+static int m_open(void *ctx, uint32_t rate, uint8_t gain_db) {
+    (void)ctx;
     memset(&mics, 0, sizeof mics);
     mics.on = true;
     mics.rate = rate;
@@ -452,12 +466,14 @@ static int m_open(uint32_t rate, uint8_t gain_db) {
     input_unix_attach();
     return 0;
 }
-static void m_close(void) {
+static void m_close(void *ctx) {
+    (void)ctx;
     if (!mics.on) return;
     mics.on = false;
     input_unix_detach();
 }
-static int m_read(uint8_t *buf, uint32_t cap, uint32_t *lost) {
+static int m_read(void *ctx, uint8_t *buf, uint32_t cap, uint32_t *lost) {
+    (void)ctx;
     *lost = mics.lost;
     mics.lost = 0;
     uint32_t n = 0;
@@ -508,13 +524,15 @@ static uint64_t s_played(void) {
     uint64_t can = spks.base + (platform_now_ms() - spks.start) * spks.rate / 1000u;
     return can < spks.written ? can : spks.written;
 }
-static int s_open(uint32_t rate, uint8_t volume) {
+static int s_open(void *ctx, uint32_t rate, uint8_t volume) {
+    (void)ctx;
     (void)volume;
     memset(&spks, 0, sizeof spks);
     spks.rate = rate;
     return 0;
 }
-static int s_write(const uint8_t *d, uint32_t len) {
+static int s_write(void *ctx, const uint8_t *d, uint32_t len) {
+    (void)ctx;
     (void)d;
     uint32_t n = len < SPK_SIM_WRITE ? len : SPK_SIM_WRITE;
     if (s_played() == spks.written) {          /* idle: starts playing now */
@@ -527,15 +545,21 @@ static int s_write(const uint8_t *d, uint32_t len) {
     if (k > 0) platform_write_err(b, (size_t)k);
     return (int)n;
 }
-static uint32_t s_queued(void) { return (uint32_t)((spks.written - s_played()) * 2u); }
-static void s_close(void) { memset(&spks, 0, sizeof spks); }
+static uint32_t s_queued(void *ctx) { (void)ctx; return (uint32_t)((spks.written - s_played()) * 2u); }
+static void s_close(void *ctx) { (void)ctx; memset(&spks, 0, sizeof spks); }
 
-const InputHw input_unix_hw = {
-    keytab, 256, k_open, k_close, k_pending, k_read, p_read, p_pending, input_unix_live, p_enable, true,
-    i_open, i_close, i_read_fifo, i_read_gestures,
-    ir_start, ir_busy, ir_rx_open, ir_rx_read, ir_rx_close, NULL, NULL,   /* no ir_tx_open / ir_tx_close */
-    m_open, m_read, m_close, s_open, s_write, s_queued, s_close,
-};
+static bool live(void *ctx) {
+    (void)ctx;
+    return input_unix_live();
+}
+
+const KbdHal input_unix_kbd = { NULL, keytab, 256, k_open, k_close, k_pending, k_read, live };
+const PowerHal input_unix_power = { NULL, p_read, p_pending, p_enable, live, true };
+const ImuHal input_unix_imu = { NULL, i_open, i_close, i_read_fifo, i_read_gestures, live };
+const IrTxHal input_unix_ir_tx = { NULL, NULL, NULL, ir_start, ir_busy };   /* no open / close */
+const IrRxHal input_unix_ir_rx = { NULL, ir_rx_open, ir_rx_read, ir_rx_close, live };
+const MicHal input_unix_mic = { NULL, m_open, m_read, m_close, live };
+const SpkHal input_unix_spk = { NULL, s_open, s_write, s_queued, s_close };
 
 /* ---- script ---- */
 

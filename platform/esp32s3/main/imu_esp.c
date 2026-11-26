@@ -1,4 +1,4 @@
-/* BMI270 motion sensor (spec input2 §2, §4): the InputHw imu_* hooks for
+/* BMI270 motion sensor (spec input2 §2, §4): the ImuHal hooks for
  * runtime/input/imu.c. Both boards have it on their shared I2C bus (i2c_bus.c):
  * StickS3 G47/G48 (rail L1 of the M5PM1), Cardputer ADV G8/G9. Address
  * 0x69 is tried first, then 0x68 (as M5Unified IMU_Class.inl:79-83; the
@@ -172,7 +172,8 @@ static int features(uint8_t g) {
 
 static uint8_t odr_code(uint16_t hz) { return hz <= 25 ? 0x06 : hz <= 50 ? 0x07 : hz <= 100 ? 0x08 : 0x09; }
 
-int imu_esp_open(uint16_t rate_hz, uint8_t gestures) {
+int imu_esp_open(void *ctx, uint16_t rate_hz, uint8_t gestures) {
+    (void)ctx;
 #if HAS_PM1
     if (pm1_imu_power_on() != 0) return -1;
 #endif
@@ -209,7 +210,8 @@ fail:
     return -1;
 }
 
-void imu_esp_close(void) {
+void imu_esp_close(void *ctx) {
+    (void)ctx;
     fifo_on = false;
     if (wr(R_PWR_CTRL, 0x00) != 0 || wr(R_FIFO_CONFIG_1, 0x00) != 0) loaded = false;
 }
@@ -218,7 +220,8 @@ static bool dummy(const uint8_t *h) {
     return (h[0] == 0x01 || h[0] == 0x02) && h[1] == 0x7F && h[2] == 0x00 && h[3] == 0x80;
 }
 
-int imu_esp_read_fifo(uint8_t *buf, uint32_t cap) {
+int imu_esp_read_fifo(void *ctx, uint8_t *buf, uint32_t cap) {
+    (void)ctx;
     if (!fifo_on) return 0;
     uint8_t l[2];
     if (rd(R_FIFO_LENGTH_0, l, 2) != 0) return -1;
@@ -243,7 +246,8 @@ int imu_esp_read_fifo(uint8_t *buf, uint32_t cap) {
     return (int)k;
 }
 
-int imu_esp_read_gestures(ImuGestures *g) {
+int imu_esp_read_gestures(void *ctx, ImuGestures *g) {
+    (void)ctx;
     uint8_t st;
     memset(g, 0, sizeof *g);
     if (rd(R_INT_STATUS_0, &st, 1) != 0) return -1;

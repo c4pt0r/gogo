@@ -244,7 +244,8 @@ in `cmd/gogo/flash.go`.
 ## Platform layer (`main/`)
 
 - `platform_esp.c`: the board's `gogo_host` (`esp_host`) and `VmBoard`
-  (`esp_board`: port drivers, `input_esp_hw`, the Wi-Fi netif, mounts), see
+  (`esp_board`: port drivers, among them the `gpio` and input driver
+  instances over this board's hardware layers, the Wi-Fi netif, mounts), see
   `runtime/vm/host.h`. Output to the USB-Serial/JTAG console
   (stdout line-buffered, flushed before each stderr write). Chunks from the
   internal-RAM heap, capped at `GOGO_ARENA_BYTES`. `now_ms` from
@@ -278,8 +279,11 @@ in `cmd/gogo/flash.go`.
   (before the VM starts, or on the scheduler thread; never in an ISR):
   Cardputer ADV port 0, SDA G8, SCL G9 (TCA8418 keyboard, BMI270, ES8311); StickS3
   port 1, SDA G47, SCL G48 (M5PM1, BMI270, ES8311). Internal pull-ups on.
-- `input_esp.c`: the `InputHw` for `runtime/input/` (the `kbd` and `power` ports,
-  design.md 5.4.3); `esp_board` in `platform_esp.c` lists it.
+- `input_esp.c`: the `KbdHal` and `PowerHal` for `runtime/input/` (the `kbd`
+  and `power` ports, design.md 5.4.3), and every input driver instance
+  (`esp_kbd_driver`, `esp_power_driver`, `esp_imu_driver`, ...), each
+  defined only when the build has the device; `esp_board` in
+  `platform_esp.c` lists them.
   - Cardputer ADV keyboard: TCA8418 at 0x34, 400 kHz. Init: KP_GPIO1 (0x1D)
     = 0x7F, KP_GPIO2 (0x1E) = 0xFF, KP_GPIO3 (0x1F) = 0x00, CFG (0x01) |=
     0x03; flush KEY_EVENT_A (0x04) until 0, then INT_STAT (0x02) = 0x1F
@@ -303,7 +307,7 @@ in `cmd/gogo/flash.go`.
     (0x16) bits[1:0] to 00 (GPIO function) and switches GPIO0 to an input
     (GPIO_MODE 0x10 bit0 cleared), each only if it reads otherwise. No keyboard: opening `kbd` fails. There is no
     power-button event (the PM1 acts on clicks itself).
-- `imu_esp.c` (`GOGO_IMU`, both boards): the IMU hooks of `InputHw` for
+- `imu_esp.c` (`GOGO_IMU`, both boards): the `ImuHal` hooks for
   `runtime/input/imu.c` (design.md 5.4.6), a Bosch BMI270 on the shared I2C bus at
   400 kHz, probed at 0x69 then 0x68 (CHIP_ID 0x24; three rounds 10 ms
   apart). Both boards answer at 0x69 (bus scan on the Cardputer ADV: 0x18
@@ -395,8 +399,8 @@ in `cmd/gogo/flash.go`.
     sleep), once per boot.
   - Pins G42, G46 (StickS3) and G44 (Cardputer, also U0RXD; the console is
     USB-Serial/JTAG) are reserved: the gpio port refuses them.
-- `audio_esp.c` (`GOGO_AUDIO`, both boards): the `mic_*` / `spk_*` hooks
-  of `InputHw` for `runtime/input/audio.c`, on the ES8311 codec (I2C 0x18 on the
+- `audio_esp.c` (`GOGO_AUDIO`, both boards): the `MicHal` / `SpkHal` hooks
+  for `runtime/input/audio.c`, on the ES8311 codec (I2C 0x18 on the
   shared bus, 100 kHz) and I2S. Pins (`board.h`, from M5Unified
   `_begin_audio`): StickS3 BCLK G17, WS G15, DOUT G14, DIN G16 (G18, the
   codec's MCLK, is not driven); Cardputer ADV BCLK G41, WS G43, DOUT G42,

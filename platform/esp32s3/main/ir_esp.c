@@ -1,5 +1,5 @@
-/* Infrared on the RMT peripheral (spec input2 §3, §4): the InputHw ir_*
- * hooks for runtime/input/ir.c. Pins in board.h: StickS3 TX G46, RX G42; Cardputer
+/* Infrared on the RMT peripheral (spec input2 §3, §4): the IrTxHal and
+ * IrRxHal hooks for runtime/input/ir.c. Pins in board.h: StickS3 TX G46, RX G42; Cardputer
  * ADV TX G44 (an LED on the pin through 22 ohms, no receiver). Every hook
  * runs on the scheduler thread; only the RMT callbacks run in an ISR.
  *
@@ -132,7 +132,8 @@ static int tx_carrier_set(uint32_t carrier_hz, uint8_t duty_pct) {
     return 0;
 }
 
-int ir_esp_tx_open(uint32_t carrier_hz, uint8_t duty_pct) {
+int ir_esp_tx_open(void *ctx, uint32_t carrier_hz, uint8_t duty_pct) {
+    (void)ctx;
     if (tx_chan || ir_power_get() != 0) return -1;
     tx_syms = heap_caps_malloc(IR_FRAME_MAX / 2 * sizeof(rmt_symbol_word_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     rmt_tx_channel_config_t tc = {
@@ -165,14 +166,16 @@ fail:
     return -1;
 }
 
-void ir_esp_tx_close(void) {
+void ir_esp_tx_close(void *ctx) {
+    (void)ctx;
     if (!tx_chan) return;
     if (tx_busy) rmt_tx_wait_all_done(tx_chan, 100);   /* finish a short frame; a longer one is cut */
     tx_free();
     ir_power_put();
 }
 
-int ir_esp_tx_start(const uint8_t *timings, uint32_t n, uint32_t carrier_hz, uint8_t duty_pct) {
+int ir_esp_tx_start(void *ctx, const uint8_t *timings, uint32_t n, uint32_t carrier_hz, uint8_t duty_pct) {
+    (void)ctx;
     if (n == 0 || n > IR_FRAME_MAX || tx_busy || !tx_chan) return -1;
     if ((carrier_hz != tx_carrier || duty_pct != tx_duty) && tx_carrier_set(carrier_hz, duty_pct) != 0) return -1;
     uint32_t ns = (n + 1) / 2;
@@ -192,7 +195,7 @@ int ir_esp_tx_start(const uint8_t *timings, uint32_t n, uint32_t carrier_hz, uin
     return 0;
 }
 
-bool ir_esp_tx_busy(void) { return tx_busy; }
+bool ir_esp_tx_busy(void *ctx) { (void)ctx; return tx_busy; }
 
 /* ---- receiver ---- */
 
@@ -246,7 +249,8 @@ static void rx_free(void) {
     rx_mem = NULL;
 }
 
-int ir_esp_rx_open(uint32_t gap_us) {
+int ir_esp_rx_open(void *ctx, uint32_t gap_us) {
+    (void)ctx;
     if (rx_chan || ir_power_get() != 0) return -1;
 #if HAS_PM1
     if (pm1_spk_amp_block(true) != 0) {
@@ -294,7 +298,8 @@ fail:
     return -1;
 }
 
-void ir_esp_rx_close(void) {
+void ir_esp_rx_close(void *ctx) {
+    (void)ctx;
     portENTER_CRITICAL(&rx_mux);
     rx_stop = true;
     portEXIT_CRITICAL(&rx_mux);
@@ -336,7 +341,8 @@ done:
     return n;
 }
 
-int ir_esp_rx_read(uint16_t *buf, uint32_t cap, uint32_t *start_ms) {
+int ir_esp_rx_read(void *ctx, uint16_t *buf, uint32_t cap, uint32_t *start_ms) {
+    (void)ctx;
     if (!rx_chan) return -1;
     for (;;) {
         portENTER_CRITICAL(&rx_mux);

@@ -115,11 +115,14 @@ rebuilt:
   the code (0 before). A missing driver or mount exits 3 (was 1), a bad
   image still 2, and a `gogovm` usage error 1 (was 2).
 - **Board code** (C, `platform/`; boards outside this repository must be
-  edited): the `gpio` driver is now one runtime driver over the board's
-  hardware layer: list `GPIO_DRIVER(&hal)` over a `GpioHal`
-  (`runtime/gpio/gpio.h`). `PortDriver` gained a last member `hw` (the
-  instance's hardware layer), so a positional initializer needs one more
-  `NULL`.
+  edited): a generic driver is now an instance over the board's hardware
+  layer (`PortDriver.hw`). `PortDriver` gained a last member `hw`, so a
+  positional initializer needs one more `NULL`. `VmBoard.input` and
+  `InputHw` are gone: list `INPUT_KBD_DRIVER(&hal)`,
+  `INPUT_POWER_DRIVER(&hal)`, ... over `KbdHal`, `PowerHal`, `ImuHal`,
+  `IrTxHal`, `IrRxHal`, `MicHal`, `SpkHal`, whose hooks take a `ctx`
+  first. The `gpio` driver is `GPIO_DRIVER(&hal)` over a `GpioHal`.
+  Write `VmBoard` with designated initializers.
 
 ## Deprecated, removed in the next release
 

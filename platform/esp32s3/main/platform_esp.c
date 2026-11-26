@@ -427,25 +427,25 @@ static const struct PortDriver *const esp_ports[] = {
     &net_tls_driver,
 #endif
 #if HAS_KBD && CONFIG_GOGO_KBD
-    &input_kbd_driver,
+    &esp_kbd_driver,
 #endif
 #if CONFIG_GOGO_BATTERY
-    &input_power_driver,
+    &esp_power_driver,
 #endif
 #if HAS_IMU && CONFIG_GOGO_IMU
-    &input_imu_driver,
+    &esp_imu_driver,
 #endif
 #if HAS_IR_TX && CONFIG_GOGO_IR
-    &input_ir_tx_driver,
+    &esp_ir_tx_driver,
 #endif
 #if HAS_IR_RX && CONFIG_GOGO_IR
-    &input_ir_rx_driver,
+    &esp_ir_rx_driver,
 #endif
 #if HAS_MIC && CONFIG_GOGO_AUDIO
-    &input_mic_driver,
+    &esp_mic_driver,
 #endif
 #if HAS_SPK && CONFIG_GOGO_AUDIO
-    &input_speaker_driver,
+    &esp_speaker_driver,
 #endif
 #if CONFIG_GOGO_SCREEN && GOGO_ESP_CONSOLE   /* the console task draws the grid */
     &esp_screen_driver,
@@ -461,19 +461,13 @@ static const char *const esp_mounts[] = {
     NULL
 };
 
-extern const InputHw input_esp_hw;
-
 const VmBoard esp_board = {
-    esp_ports, &input_esp_hw,
+    .ports = esp_ports,
 #if CONFIG_GOGO_NET
-    &wifi_esp_netif,
-#else
-    NULL,
+    .netif = &wifi_esp_netif,
 #endif
 #if CONFIG_GOGO_TLS
-    &esp_tls_hw,
-#else
-    NULL,
+    .tls = &esp_tls_hw,
 #endif
-    esp_mounts
+    .mounts = esp_mounts,
 };

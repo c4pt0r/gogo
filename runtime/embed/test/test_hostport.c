@@ -12,7 +12,7 @@ static const PortDriver d_screen = { .name = "screen" };
 static const PortDriver d_kbd = { .name = "kbd" };
 static const PortDriver d_extra = { .name = "board_only" };   /* not a runtime name */
 static const PortDriver *const board_ports[] = { &d_gpio, &d_tcp, &d_screen, &d_kbd, &d_extra, NULL };
-static const VmBoard board = { board_ports, NULL, NULL, NULL, NULL };
+static const VmBoard board = { .ports = board_ports };
 
 static const gogo_port_driver none = GOGO_PORT_DRIVER_INIT;
 

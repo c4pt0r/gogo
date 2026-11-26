@@ -1,5 +1,7 @@
-/* A scripted InputHw for the input tests: a board with a few keys, a
- * queue of raw events the kbd_read hook returns, and call counters. */
+/* Scripted input devices for the input tests: a board with a few keys, a
+ * queue of raw events the keyboard's read hook returns, and call counters.
+ * Its driver instances (each over its fake HAL table) are what the tests
+ * list as ports. */
 #ifndef GOGO_FAKEHW_H
 #define GOGO_FAKEHW_H
 
@@ -10,6 +12,9 @@ enum {
     R_A, R_SEMI, R_1, R_C, R_SHIFT, R_CTRL, R_FN, R_OPT,
     R_B, R_D, R_E, R_F, R_G, R_H, R_I, R_J, R_COUNT
 };
+
+extern const PortDriver input_kbd_driver, input_power_driver, input_imu_driver, input_ir_tx_driver,
+    input_ir_rx_driver, input_mic_driver, input_speaker_driver;
 
 void fake_reset(void);                 /* clears the queue and counters, installs a keyboard */
 void fake_no_keyboard(void);           /* keys == NULL */

@@ -1,4 +1,4 @@
-/* The kbd port and the input source against a fake InputHw, on a real VM:
+/* The kbd port and the input source against the fake devices (fakehw.c), on a real VM:
  * open rules, characters and modifiers, the Fn layer, the press Code kept
  * for the release, the 8-key limit, auto-repeat, close/reopen state, a full
  * mailbox, and the US keymap. Time is the fake clock `now`; each step

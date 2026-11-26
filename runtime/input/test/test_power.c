@@ -1,4 +1,4 @@
-/* The power port against a fake InputHw on a real VM: open rules, the
+/* The power port against the fake devices (fakehw.c) on a real VM: open rules, the
  * period, percent and smoothing, the report rules (open, Read, state
  * change, 2-point threshold), failed reads, and power_pending. Time is the
  * fake clock; each step runs port_drain, as the scheduler does. */
@@ -447,13 +447,16 @@ TEST(power_can_event_follows_live) {
     fake_live_hook(true);
     CHECK(port_is(open_power(owner, 0)));
     CHECK_EQ(fake_power_enabled(), 1);
-    Port p;
+    Port p, k;
     memset(&p, 0, sizeof p);
+    memset(&k, 0, sizeof k);
+    p.drv = &input_power_driver;
+    k.drv = &input_kbd_driver;
     CHECK(input_power_driver.can_event(&vm, &p));
-    CHECK(input_kbd_driver.can_event(&vm, &p));
+    CHECK(input_kbd_driver.can_event(&vm, &k));
     fake_set_live(false);
     CHECK(!input_power_driver.can_event(&vm, &p));
-    CHECK(!input_kbd_driver.can_event(&vm, &p));
+    CHECK(!input_kbd_driver.can_event(&vm, &k));
     uint64_t d;
     fake_set_live(true);
     CHECK(port_next_deadline(&vm, &d));    /* the next sample keeps a timer-less VM waiting... */

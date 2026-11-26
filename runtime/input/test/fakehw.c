@@ -17,10 +17,10 @@ static bool fail_read, flag;      /* flag: the ISR flag, an edge: set by an even
 static int fail_after = -1, kreads;
 static bool fail_all, stuck;      /* stuck: INT held low, an empty read leaves the flag set */
 
-static int kopen(void) { opens++; qh = qt = 0; flag = false; return 0; }   /* flushes the FIFO */
-static void kclose(void) { closes++; }
-static bool kpending(void) { return flag; }
-static int kread(uint16_t *raw, bool *down) {
+static int kopen(void *ctx) { (void)ctx; opens++; qh = qt = 0; flag = false; return 0; }   /* flushes the FIFO */
+static void kclose(void *ctx) { (void)ctx; closes++; }
+static bool kpending(void *ctx) { (void)ctx; return flag; }
+static int kread(void *ctx, uint16_t *raw, bool *down) { (void)ctx;
     kreads++;
     if (fail_all) return -1;
     if (fail_read || fail_after == 0) { fail_read = false; fail_after = -1; return -1; }
@@ -37,28 +37,28 @@ static int8_t p_ch, p_ext;
 static bool p_fail, p_flag;
 static int p_reads;
 
-static int pread(int32_t *mv, int8_t *ch, int8_t *ext) {
+static int pread(void *ctx, int32_t *mv, int8_t *ch, int8_t *ext) { (void)ctx;
     p_reads++;
     if (p_fail) return -1;
     p_flag = false;
     *mv = p_mv; *ch = p_ch; *ext = p_ext;
     return 0;
 }
-static bool ppending(void) { return p_flag; }
+static bool ppending(void *ctx) { (void)ctx; return p_flag; }
 
 static struct { uint8_t b[12 * 512]; unsigned h, t; } imu_q;     /* byte ring: h and t count bytes */
 static int imu_opens, imu_closes, imu_rate, imu_mask, imu_freads, imu_greads;
 static bool imu_fifo_fail, imu_open_fail;
 static ImuGestures imu_g;
 
-static int iopen(uint16_t rate, uint8_t mask) {
+static int iopen(void *ctx, uint16_t rate, uint8_t mask) { (void)ctx;
     if (imu_open_fail) return -1;
     imu_opens++; imu_rate = rate; imu_mask = mask;
     imu_q.h = imu_q.t = 0;
     return 0;
 }
-static void iclose(void) { imu_closes++; }
-static int iread(uint8_t *buf, uint32_t cap) {
+static void iclose(void *ctx) { (void)ctx; imu_closes++; }
+static int iread(void *ctx, uint8_t *buf, uint32_t cap) { (void)ctx;
     imu_freads++;
     if (imu_fifo_fail) return -1;
     uint32_t n = imu_q.t - imu_q.h;
@@ -67,7 +67,7 @@ static int iread(uint8_t *buf, uint32_t cap) {
     imu_q.h += n;
     return (int)n;
 }
-static int igest(ImuGestures *g) { imu_greads++; *g = imu_g; imu_g.bits = 0; return 0; }
+static int igest(void *ctx, ImuGestures *g) { (void)ctx; imu_greads++; *g = imu_g; imu_g.bits = 0; return 0; }
 
 static struct {
     int starts, fails, n, duty, rx_opens, rx_closes, rx_reads;
@@ -86,15 +86,15 @@ static struct {
 } fir;
 
 static void irlog(char c) { if (fir.nlog < 63) fir.log[fir.nlog++] = c; }
-static int irtopen(uint32_t carrier, uint8_t duty) {
+static int irtopen(void *ctx, uint32_t carrier, uint8_t duty) { (void)ctx;
     if (fir.tx_open_fail) return -1;
     irlog('O');
     fir.open_carrier = carrier;
     fir.open_duty = duty;
     return 0;
 }
-static void irtclose(void) { irlog('C'); }
-static int irstart(const uint8_t *t, uint32_t n, uint32_t carrier, uint8_t duty) {
+static void irtclose(void *ctx) { (void)ctx; irlog('C'); }
+static int irstart(void *ctx, const uint8_t *t, uint32_t n, uint32_t carrier, uint8_t duty) { (void)ctx;
     if (fir.busy) fir.while_busy = true;
     if (fir.fail) { fir.fails++; return -1; }
     irlog('S');
@@ -105,15 +105,15 @@ static int irstart(const uint8_t *t, uint32_t n, uint32_t carrier, uint8_t duty)
     fir.duty = duty;
     return 0;
 }
-static bool irbusy(void) { return fir.busy; }
-static int irropen(uint32_t gap) {
+static bool irbusy(void *ctx) { (void)ctx; return fir.busy; }
+static int irropen(void *ctx, uint32_t gap) { (void)ctx;
     if (fir.rx_open_fail) return -1;
     fir.rx_opens++;
     fir.gap = gap;
     fir.qh = fir.qt = 0;
     return 0;
 }
-static int irread(uint16_t *buf, uint32_t cap, uint32_t *start_ms) {
+static int irread(void *ctx, uint16_t *buf, uint32_t cap, uint32_t *start_ms) { (void)ctx;
     fir.rx_reads++;
     if (fir.rx_fail) return -1;
     if (fir.qh == fir.qt) return 0;
@@ -123,7 +123,7 @@ static int irread(uint16_t *buf, uint32_t cap, uint32_t *start_ms) {
     fir.qh++;
     return n;
 }
-static void irrclose(void) { fir.rx_closes++; }
+static void irrclose(void *ctx) { (void)ctx; fir.rx_closes++; }
 
 static struct {
     uint32_t buffer, rate, gain, read_max;
@@ -132,13 +132,13 @@ static struct {
     int opens, closes, reads;
 } fm;
 
-static int mopen(uint32_t rate, uint8_t gain) {
+static int mopen(void *ctx, uint32_t rate, uint8_t gain) { (void)ctx;
     if (fm.open_fail) return -1;
     fm.opens++; fm.on = true; fm.rate = rate; fm.gain = gain;
     fm.t0 = test_host_now(); fm.taken = 0;
     return 0;
 }
-static int mread(uint8_t *buf, uint32_t cap, uint32_t *lost) {
+static int mread(void *ctx, uint8_t *buf, uint32_t cap, uint32_t *lost) { (void)ctx;
     fm.reads++;
     if (fm.fail) return -1;
     uint64_t made = (test_host_now() - fm.t0) * fm.rate / 1000u, room = fm.buffer / 2u;
@@ -154,7 +154,7 @@ static int mread(uint8_t *buf, uint32_t cap, uint32_t *lost) {
     fm.taken += n;
     return (int)(n * 2u);
 }
-static void mclose(void) { fm.closes++; fm.on = false; }
+static void mclose(void *ctx) { (void)ctx; fm.closes++; fm.on = false; }
 
 /* The speaker: written - played bytes are queued in a buffer of `size`;
  * played moves by fake_spk_play / fake_spk_set_idle, or in real time on
@@ -177,13 +177,13 @@ static void sadvance(void) {
     }
     fs.last_ms = t;
 }
-static int sopen(uint32_t rate, uint8_t volume) {
+static int sopen(void *ctx, uint32_t rate, uint8_t volume) { (void)ctx;
     if (fs.open_fail) return -1;
     fs.opens++; fs.amp = true; fs.rate = rate; fs.volume = volume;
     fs.written = fs.played = 0; fs.dry = false; fs.last_ms = test_host_now();
     return 0;
 }
-static int swrite(const uint8_t *d, uint32_t len) {
+static int swrite(void *ctx, const uint8_t *d, uint32_t len) { (void)ctx;
     fs.writes++;
     sadvance();
     if (fs.fail) return -1;
@@ -195,16 +195,35 @@ static int swrite(const uint8_t *d, uint32_t len) {
     fs.written += n;
     return (int)n;
 }
-static uint32_t squeued(void) { sadvance(); return (uint32_t)(fs.written - fs.played); }
-static void sclose(void) { fs.closes++; fs.amp = false; }
+static uint32_t squeued(void *ctx) { (void)ctx; sadvance(); return (uint32_t)(fs.written - fs.played); }
+static void sclose(void *ctx) { (void)ctx; fs.closes++; fs.amp = false; }
 
-static InputHw hw;
+/* The fake board's devices: one HAL table each, changed by the fake_no_*
+ * calls, and the driver instances over them that the tests list. */
+static KbdHal kbd_hal;
+static PowerHal power_hal;
+static ImuHal imu_hal;
+static IrTxHal ir_tx_hal;
+static IrRxHal ir_rx_hal;
+static MicHal mic_hal;
+static SpkHal spk_hal;
+const PortDriver input_kbd_driver = INPUT_KBD_DRIVER(&kbd_hal);
+const PortDriver input_power_driver = INPUT_POWER_DRIVER(&power_hal);
+const PortDriver input_imu_driver = INPUT_IMU_DRIVER(&imu_hal);
+const PortDriver input_ir_tx_driver = INPUT_IR_TX_DRIVER(&ir_tx_hal);
+const PortDriver input_ir_rx_driver = INPUT_IR_RX_DRIVER(&ir_rx_hal);
+const PortDriver input_mic_driver = INPUT_MIC_DRIVER(&mic_hal);
+const PortDriver input_speaker_driver = INPUT_SPEAKER_DRIVER(&spk_hal);
 
 void fake_reset(void) {
     qh = qt = 0; opens = closes = 0; fail_read = flag = false; fail_after = -1; fail_all = stuck = false; kreads = 0;
-    hw = (InputHw){ keys, R_COUNT, kopen, kclose, kpending, kread, pread, ppending, 0, 0, false, iopen, iclose, iread, igest,
-                    irstart, irbusy, irropen, irread, irrclose, irtopen, irtclose,
-                    mopen, mread, mclose, sopen, swrite, squeued, sclose };
+    kbd_hal = (KbdHal){ NULL, keys, R_COUNT, kopen, kclose, kpending, kread, NULL };
+    power_hal = (PowerHal){ NULL, pread, ppending, NULL, NULL, false };
+    imu_hal = (ImuHal){ NULL, iopen, iclose, iread, igest, NULL };
+    ir_tx_hal = (IrTxHal){ NULL, irtopen, irtclose, irstart, irbusy };
+    ir_rx_hal = (IrRxHal){ NULL, irropen, irread, irrclose, NULL };
+    mic_hal = (MicHal){ NULL, mopen, mread, mclose, NULL };
+    spk_hal = (SpkHal){ NULL, sopen, swrite, squeued, sclose };
     memset(&fm, 0, sizeof fm);
     fm.buffer = 9600;
     fm.read_max = UINT32_MAX;
@@ -215,7 +234,7 @@ void fake_reset(void) {
     imu_fifo_fail = imu_open_fail = false; imu_g = (ImuGestures){ 0, 0, 0 };
     p_mv = 3700; p_ch = p_ext = 0; p_fail = p_flag = false; p_reads = 0;
 }
-void fake_no_keyboard(void) { hw.keys = 0; hw.nkeys = 0; }
+void fake_no_keyboard(void) { kbd_hal.keys = 0; kbd_hal.nkeys = 0; }
 void fake_push(uint16_t raw, bool down) { q[qt % 64].raw = raw; q[qt % 64].down = down; qt++; flag = true; }
 void fake_fail_next_read(void) { fail_read = true; }
 void fake_fail_all_reads(bool on) { fail_all = on; }
@@ -226,14 +245,10 @@ int fake_opens(void) { return opens; }
 int fake_closes(void) { return closes; }
 
 
-/* once per Vm: no duplicate check in port_add_source. The Vm's board is
- * test_board, whose input the fake becomes for good. */
+/* once per Vm: no duplicate check in port_add_source. */
 static InputState fake_state;   /* the fake board's storage, as a board keeps it */
-void fake_install(struct Vm *vm) {
-    test_board.input = &hw;
-    input_install(vm, &fake_state);
-}
-void fake_no_power(void) { hw.power_read = 0; hw.power_pending = 0; }
+void fake_install(struct Vm *vm) { input_install(vm, &fake_state); }
+void fake_no_power(void) { power_hal.read = 0; power_hal.pending = 0; }
 void fake_power_set(int32_t mv, int8_t charging, int8_t external) { p_mv = mv; p_ch = charging; p_ext = external; }
 void fake_power_fail(bool fail) { p_fail = fail; }
 void fake_power_new(void) { p_flag = true; }
@@ -241,14 +256,19 @@ int fake_power_reads(void) { return p_reads; }
 
 static bool is_live = true;
 static int p_enabled;
-static bool live_cb(void) { return is_live; }
-static void enable_cb(bool on) { p_enabled += on ? 1 : -1; }
-void fake_live_hook(bool live) { hw.live = live_cb; hw.power_enable = enable_cb; is_live = live; p_enabled = 0; }
+static bool live_cb(void *ctx) { (void)ctx; return is_live; }
+static void enable_cb(void *ctx, bool on) { (void)ctx; p_enabled += on ? 1 : -1; }
+void fake_live_hook(bool live) {
+    kbd_hal.live = power_hal.live = imu_hal.live = ir_rx_hal.live = mic_hal.live = live_cb;
+    power_hal.enable = enable_cb;
+    is_live = live;
+    p_enabled = 0;
+}
 void fake_set_live(bool live) { is_live = live; }
 int fake_power_enabled(void) { return p_enabled; }
-void fake_event_driven(bool on) { hw.power_event_driven = on; }
+void fake_event_driven(bool on) { power_hal.event_driven = on; }
 
-void fake_no_imu(void) { hw.imu_open = 0; hw.imu_close = 0; hw.imu_read_fifo = 0; hw.imu_read_gestures = 0; }
+void fake_no_imu(void) { imu_hal.open = 0; imu_hal.close = 0; imu_hal.read_fifo = 0; imu_hal.read_gestures = 0; }
 void fake_imu_push(int n, int16_t first) {
     for (int i = 0; i < n; i++) {
         for (int k = 0; k < 6; k++) {
@@ -268,18 +288,18 @@ int fake_imu_opens(void) { return imu_opens; }
 int fake_imu_closes(void) { return imu_closes; }
 int fake_imu_rate(void) { return imu_rate; }
 int fake_imu_mask(void) { return imu_mask; }
-void fake_imu_no_fifo(void) { hw.imu_read_fifo = 0; }
+void fake_imu_no_fifo(void) { imu_hal.read_fifo = 0; }
 
 void fake_no_ir(void) {
-    hw.ir_tx_start = 0; hw.ir_tx_busy = 0; hw.ir_rx_open = 0; hw.ir_rx_read = 0; hw.ir_rx_close = 0;
-    hw.ir_tx_open = 0; hw.ir_tx_close = 0;
+    ir_tx_hal.start = 0; ir_tx_hal.busy = 0; ir_rx_hal.open = 0; ir_rx_hal.read = 0; ir_rx_hal.close = 0;
+    ir_tx_hal.open = 0; ir_tx_hal.close = 0;
 }
-void fake_no_ir_tx_open_close(void) { hw.ir_tx_open = 0; hw.ir_tx_close = 0; }
+void fake_no_ir_tx_open_close(void) { ir_tx_hal.open = 0; ir_tx_hal.close = 0; }
 void fake_ir_tx_open_fail(bool on) { fir.tx_open_fail = on; }
 const char *fake_ir_tx_log(void) { fir.log[fir.nlog] = 0; return fir.log; }
 uint32_t fake_ir_tx_open_carrier(void) { return fir.open_carrier; }
 int fake_ir_tx_open_duty(void) { return fir.open_duty; }
-void fake_no_ir_rx_close(void) { hw.ir_rx_close = 0; }
+void fake_no_ir_rx_close(void) { ir_rx_hal.close = 0; }
 int fake_ir_tx_starts(void) { return fir.starts; }
 int fake_ir_tx_n(void) { return fir.n; }
 uint16_t fake_ir_tx_value(int i) { return fir.v[i]; }
@@ -302,9 +322,9 @@ int fake_ir_rx_reads(void) { return fir.rx_reads; }
 uint32_t fake_ir_rx_gap(void) { return fir.gap; }
 int fake_ir_tx_fails(void) { return fir.fails; }
 
-void fake_no_mic(void) { hw.mic_open = 0; hw.mic_read = 0; hw.mic_close = 0; }
-void fake_no_spk(void) { hw.spk_open = 0; hw.spk_write = 0; hw.spk_queued = 0; hw.spk_close = 0; }
-void fake_no_spk_queued(void) { hw.spk_queued = 0; }
+void fake_no_mic(void) { mic_hal.open = 0; mic_hal.read = 0; mic_hal.close = 0; }
+void fake_no_spk(void) { spk_hal.open = 0; spk_hal.write = 0; spk_hal.queued = 0; spk_hal.close = 0; }
+void fake_no_spk_queued(void) { spk_hal.queued = 0; }
 void fake_mic_buffer(uint32_t bytes) { fm.buffer = bytes; }
 void fake_mic_read_max(uint32_t bytes) { fm.read_max = bytes; }
 void fake_mic_fail(bool on) { fm.fail = on; }

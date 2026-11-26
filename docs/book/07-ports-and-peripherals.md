@@ -408,10 +408,12 @@ callbacks: open, command, close, and a few helpers for handoff and
 backpressure. A driver turns commands into hardware actions and hardware
 state into events. It never runs actors or allocates in their heaps.
 
-**One driver, many boards.** The GPIO driver is written once, in the
+**One driver, many boards.** The drivers for GPIO, the keyboard, the
+battery, the motion sensor, infrared and audio are written once, in the
 runtime. A board does not copy them: it describes its hardware in a small
-table of functions (how many pins, which ones it keeps for itself,
-and how to configure, write, read and release a pin), and lists a driver
+table of functions (for GPIO: how many pins, which ones it keeps for
+itself, and how to configure, write, read and release a pin; for the
+keyboard: its key table and how to read the chip), and lists a driver
 *instance* that points at that table. So the rules you met in 7.2 (which
 pins are refused, the bounce filter, the 20 ms default) behave the same
 on every board, and the simulator runs the very code the device does.

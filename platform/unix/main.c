@@ -181,11 +181,17 @@ static int run_main(Vm *vm) {
  * names out of both lists, so it models a firmware without them: an image
  * requiring one is refused, and port.Open of an absent driver returns
  * ok=false, as on that firmware. */
+static const PortDriver unix_kbd = INPUT_KBD_DRIVER(&input_unix_kbd);
+static const PortDriver unix_power = INPUT_POWER_DRIVER(&input_unix_power);
+static const PortDriver unix_imu = INPUT_IMU_DRIVER(&input_unix_imu);
+static const PortDriver unix_ir_tx = INPUT_IR_TX_DRIVER(&input_unix_ir_tx);
+static const PortDriver unix_ir_rx = INPUT_IR_RX_DRIVER(&input_unix_ir_rx);
+static const PortDriver unix_mic = INPUT_MIC_DRIVER(&input_unix_mic);
+static const PortDriver unix_speaker = INPUT_SPEAKER_DRIVER(&input_unix_spk);
 static const PortDriver *const unix_ports_all[] = {
     &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver,
-    &net_tcp_listen_driver, &input_kbd_driver, &input_power_driver,
-    &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
-    &input_mic_driver, &input_speaker_driver, &screen_unix_driver,
+    &net_tcp_listen_driver, &unix_kbd, &unix_power, &unix_imu, &unix_ir_tx, &unix_ir_rx,
+    &unix_mic, &unix_speaker, &screen_unix_driver,
 #ifdef GOGO_TLS
     &net_tls_driver,
 #endif
@@ -195,13 +201,12 @@ static const char *const unix_mounts_all[] = { "/flash", "/sd" };
 static const PortDriver *unix_ports[UNIX_PORTS_ALL + 1u];   /* filled by main: NULL-terminated */
 static const char *unix_mounts[3];                           /* likewise */
 static const VmBoard unix_board = {
-    unix_ports, &input_unix_hw, &unix_netif,
+    .ports = unix_ports,
+    .netif = &unix_netif,
 #ifdef GOGO_TLS
-    &unix_tls_hw,
-#else
-    NULL,
+    .tls = &unix_tls_hw,
 #endif
-    unix_mounts
+    .mounts = unix_mounts,
 };
 
 /* True if name is one of the comma-separated names in list (NULL: none). */
