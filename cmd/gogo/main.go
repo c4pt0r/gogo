@@ -86,10 +86,7 @@ func runCmd(args []string) (int, error) {
 		return 1, errors.New("gogo run: missing program (a directory, a " + sourceExt + " file or a " + imageExt + " image)\n" + usage)
 	}
 	if len(args) != 1 {
-		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
-			return 1, fmt.Errorf("gogo run: arguments after the program (%s) are not supported yet\n%s", strings.Join(args[1:], " "), usage)
-		}
-		return 1, errors.New(usage)
+		return 1, fmt.Errorf("gogo run: arguments after the program (%s) are not supported yet\n%s", strings.Join(args[1:], " "), usage)
 	}
 	target := args[0]
 	fi, err := os.Stat(target)
@@ -217,7 +214,11 @@ func lookVM(exeDir, wd string) (string, string, error) {
 	if exeDir != "" {
 		where = "in " + exeDir
 	}
-	return "", "", fmt.Errorf("gogo: cannot find the VM: no $GOGO_VM, no %s or %s %s, and not inside the gogo repository; download %s from the release into the directory of gogo (renamed %s), or set GOGO_VM", vmName, vmAsset, where, vmAsset, vmName)
+	fix := "download " + vmAsset + " from a release into the directory of gogo (under that name, or renamed " + vmName + "), or set GOGO_VM"
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		fix = "releases have gogovm for macOS and Linux only: build it (make vm) and set GOGO_VM"
+	}
+	return "", "", fmt.Errorf("gogo: cannot find the VM: no $GOGO_VM, no %s or %s %s, and not inside the gogo repository; %s", vmName, vmAsset, where, fix)
 }
 
 // findRepo walks up from dir to the directory whose go.mod says `module gogotools`.

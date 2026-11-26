@@ -193,8 +193,10 @@ func TestRunSources(t *testing.T) {
 		t.Errorf("gogo run s: %v %q", err, errs)
 	}
 	// Arguments after the program are refused for now.
-	if _, errs, err := run(nil, filepath.Join(work, "s", "hello.gg"), "x"); err == nil || !strings.Contains(errs, "not supported yet") {
-		t.Errorf("gogo run hello.gg x: %v %q", err, errs)
+	for _, arg := range []string{"x", "-v"} {
+		if _, errs, err := run(nil, filepath.Join(work, "s", "hello.gg"), arg); err == nil || !strings.Contains(errs, "("+arg+") are not supported yet") {
+			t.Errorf("gogo run hello.gg %s: %v %q", arg, err, errs)
+		}
 	}
 	// gogo build of a .gg file writes <name>.ggb.
 	cmd := exec.Command(gogo, "build", filepath.Join(work, "s", "hello.gg"))
