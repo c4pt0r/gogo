@@ -378,7 +378,7 @@ as `code.Err(errors.X)` under the same names.
 | closures capture variables by reference | closures copy captured values; captured variables must not be reassigned |
 | `int` is 64 bits on most machines | `int` is always 32 bits |
 | complex, `uint`, `int8/16/32`, `uint16/32/64`, `uintptr` | none; `int`, `int64`, `byte`, `float32`, `float64` |
-| arrays, maps, pointers | slices only |
+| maps, pointers | slices of structs, searched |
 | methods, interfaces | functions; type switches over `any` |
 | `switch` on an interface or a struct value, `goto` | type switch, compare fields; labeled `break`/`continue` |
 | type assertions `x.(T)` | type switch |

@@ -28,9 +28,9 @@ func main() {
 		goto done // goto
 	}
 done:
-	var a [4]int      // array
-	y := any(1).(int) // type assertion
+	var a any = [4]int{} // array in an interface
+	y := any(1).(int)    // type assertion
 	_ = y
-	println(m, p, x, a[0])
+	println(m, p, x, a)
 	panic("boom")
 }

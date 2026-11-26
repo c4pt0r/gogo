@@ -133,7 +133,10 @@ func (c *checker) typeProblem(t types.Type) string {
 		}
 		return ""
 	case *types.Array:
-		return "array"
+		if msg := c.typeProblem(t.Elem()); msg != "" {
+			return "array of " + msg
+		}
+		return ""
 	case *types.Map:
 		return "map"
 	case *types.Chan:
@@ -403,6 +406,9 @@ func (c *checker) convertType(target, src types.Type, pos token.Pos) {
 	if isFunc(src) {
 		c.fail(pos, "func value in interface not supported")
 	}
+	if isArray(src) {
+		c.fail(pos, "array in interface not supported: use a slice or a struct with an array field")
+	}
 	if isByte(src) {
 		c.fail(pos, "byte in interface not supported")
 	}
@@ -479,11 +485,7 @@ func (c *checker) typeExpr(e ast.Expr) {
 	switch e := e.(type) {
 	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType: // FuncType: its signature was checked above
 	case *ast.ArrayType:
-		if e.Len != nil {
-			c.unsupported(e, "array")
-			return
-		}
-		c.typeExpr(e.Elt) // []T
+		c.typeExpr(e.Elt) // []T, [N]T, [...]T
 	default:
 		c.unsupported(e, kindName(e))
 	}
@@ -647,10 +649,15 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 		return
 	}
 	write := func(e ast.Expr) {
-		// A field assignment x.F = v writes x (but s[i].F = v writes
-		// the slice's shared array, not s).
-		x, field := ast.Unparen(e), false
+		// A field assignment x.F = v writes x, and so does an element
+		// assignment x[i] = v to an array x (but s[i].F = v writes the
+		// slice's shared array, not s).
+		x, field, elem := ast.Unparen(e), false, false
 		for {
+			if ix, ok := x.(*ast.IndexExpr); ok && isArray(c.p.Info.TypeOf(ix.X)) {
+				x, elem = ast.Unparen(ix.X), true
+				continue
+			}
 			sel, ok := x.(*ast.SelectorExpr)
 			if !ok || c.p.Info.Selections[sel] == nil {
 				break
@@ -660,7 +667,9 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 		// Uses, not Defs: the variables a := declares are not writes.
 		if id, ok := x.(*ast.Ident); ok {
 			if v, ok := c.p.Info.Uses[id].(*types.Var); ok && captured[v] {
-				if field {
+				if elem {
+					c.fail(e.Pos(), "captured variable must not be changed by element assignment")
+				} else if field {
 					c.fail(e.Pos(), "captured variable must not be changed by field assignment")
 				} else {
 					c.fail(id.Pos(), "captured variable must not be reassigned")
@@ -730,6 +739,11 @@ func (c *checker) lhs(e ast.Expr) {
 	case *ast.SelectorExpr:
 		c.fieldLhs(e)
 	case *ast.IndexExpr:
+		if isArray(c.p.Info.TypeOf(e.X)) { // a[i], p.A[i], s[j][i]: x is a variable or on a path
+			c.arrayLhs(e.X)
+			c.indexArg(e.Index)
+			return
+		}
 		if !isSlice(c.p.Info.TypeOf(e.X)) {
 			c.unsupported(e, "index assignment to "+types.TypeString(c.p.Info.TypeOf(e.X), nil))
 			return
@@ -1307,6 +1321,10 @@ func (c *checker) compositeLitIn(e *ast.CompositeLit, elided bool) {
 		c.sliceLit(e, sl)
 		return
 	}
+	if at := arrayType(t); at != nil {
+		c.arrayLit(e, at)
+		return
+	}
 	if isBuffer(t) {
 		c.zeroBuffer(e)
 		return
@@ -1355,6 +1373,10 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 		switch e.Op {
 		case token.EQL, token.NEQ:
 			if c.nilCompare(e) {
+				return
+			}
+			if isArray(xt) {
+				c.fail(e.Pos(), "comparison of arrays not supported yet: compare the elements")
 				return
 			}
 			// Both sides: Go converts a non-interface operand to the other
@@ -1416,9 +1438,9 @@ func (c *checker) indexArg(e ast.Expr) {
 	}
 }
 
-// indexExpr checks s[i] on a string (a byte) or a slice.
+// indexExpr checks s[i] on a string (a byte), a slice or an array.
 func (c *checker) indexExpr(e *ast.IndexExpr) {
-	if xt := c.p.Info.TypeOf(e.X); !isString(xt) && !isSlice(xt) {
+	if xt := c.p.Info.TypeOf(e.X); !isString(xt) && !isSlice(xt) && !isArray(xt) {
 		c.unsupported(e, "index of "+types.TypeString(xt, nil))
 		return
 	}
@@ -1426,9 +1448,13 @@ func (c *checker) indexExpr(e *ast.IndexExpr) {
 	c.indexArg(e.Index)
 }
 
-// sliceExpr checks s[a:b], s[a:] and s[:b] on a string or a slice.
+// sliceExpr checks s[a:b], s[a:] and s[:b] on a string, a slice or an
+// array variable.
 func (c *checker) sliceExpr(e *ast.SliceExpr) {
-	if xt := c.p.Info.TypeOf(e.X); !isString(xt) && !isSlice(xt) {
+	if isArray(c.p.Info.TypeOf(e.X)) && !c.arraySlice(e) {
+		return
+	}
+	if xt := c.p.Info.TypeOf(e.X); !isString(xt) && !isSlice(xt) && !isArray(xt) {
 		c.unsupported(e, "slice of "+types.TypeString(xt, nil))
 		return
 	}
@@ -1449,7 +1475,7 @@ func (c *checker) sliceExpr(e *ast.SliceExpr) {
 // string ranges over bytes, not runes: i is the byte index and c the byte
 // value (typed rune, an int32, as in Go; gogo's rune is an int).
 func (c *checker) rangeStmt(s *ast.RangeStmt) {
-	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) && !isInteger(xt) {
+	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) && !isArray(xt) && !isInteger(xt) {
 		c.unsupported(s, "range over "+types.TypeString(c.p.Info.TypeOf(s.X), nil))
 		return
 	}
@@ -1557,14 +1583,14 @@ func (c *checker) seqBuiltin(call *ast.CallExpr, name string) {
 	argType := func(i int) types.Type { return c.p.Info.TypeOf(call.Args[i]) }
 	switch name {
 	case "len":
-		if len(call.Args) != 1 || (!isString(argType(0)) && !isSlice(argType(0))) {
-			c.unsupported(call, "len of anything but a string or a slice")
+		if len(call.Args) != 1 || (!isString(argType(0)) && !isSlice(argType(0)) && !isArray(argType(0))) {
+			c.unsupported(call, "len of anything but a string, a slice or an array")
 			return
 		}
 		c.expr(call.Args[0])
 	case "cap":
-		if len(call.Args) != 1 || !isSlice(argType(0)) {
-			c.unsupported(call, "cap of anything but a slice")
+		if len(call.Args) != 1 || (!isSlice(argType(0)) && !isArray(argType(0))) {
+			c.unsupported(call, "cap of anything but a slice or an array")
 			return
 		}
 		c.expr(call.Args[0])

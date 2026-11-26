@@ -12,10 +12,13 @@ import (
 // or a slice element s[i]; an element is read with INDEX and written back
 // with SETINDEX (the slice's array is shared, as in Go).
 
-// fieldStep is one field selection on a field assignment path.
+// fieldStep is one step on a field assignment path: a field selection, or
+// an element of an array the path goes through (codegen_array.go).
 type fieldStep struct {
-	st  *types.Named // the struct type the field is selected from
+	st  *types.Named // the struct type the field is selected from; nil for an element step
 	idx int          // the field's index
+	arr *types.Array // element step: the array's type
+	ix  uint8        // element step: the register holding the index
 }
 
 // fieldTarget is a field assignment target whose operands have been
@@ -27,38 +30,50 @@ type fieldTarget struct {
 	typ   types.Type // the type of the last field
 }
 
-// isFieldTarget reports whether assignment target e is a field selector.
+// isFieldTarget reports whether assignment target e is a field selector,
+// or an element of an array that is not a local variable (p.A[i], a[i][j]:
+// a path written by rebuilding, see arrayStep).
 func (f *fn) isFieldTarget(e ast.Expr) bool {
-	sel, ok := ast.Unparen(e).(*ast.SelectorExpr)
-	if !ok {
-		return false
+	switch e := ast.Unparen(e).(type) {
+	case *ast.SelectorExpr:
+		s := f.g.p.Info.Selections[e]
+		return s != nil && s.Kind() == types.FieldVal
+	case *ast.IndexExpr:
+		return f.arrayStep(e)
 	}
-	s := f.g.p.Info.Selections[sel]
-	return s != nil && s.Kind() == types.FieldVal
+	return false
 }
 
 // fieldTargetOf evaluates the operands of field assignment target e, as Go
 // does before any assignment: an element root's slice and index go into a
 // fresh block [s, i, v] (released by the caller); a variable root needs
-// nothing. A promoted field is a path down the embedded fields.
+// nothing; then the indices of the arrays on the path, in source order.
+// A promoted field is a path down the embedded fields.
 func (f *fn) fieldTargetOf(e ast.Expr) fieldTarget {
 	t := fieldTarget{local: -1, elem: -1, typ: f.g.p.Info.TypeOf(e)}
 	x := ast.Unparen(e)
+	var indices []ast.Expr // of the element steps, outermost first
 	for {
-		sel, ok := x.(*ast.SelectorExpr)
-		if !ok {
-			break
+		if sel, ok := x.(*ast.SelectorExpr); ok {
+			s := f.g.p.Info.Selections[sel]
+			if s == nil || s.Kind() != types.FieldVal || s.Indirect() {
+				f.fail(sel, "internal error: unexpected field assignment target")
+			}
+			steps := embedPath(f.g.p.Info.TypeOf(sel.X), s.Index())
+			if steps == nil {
+				f.fail(sel, "internal error: unexpected field assignment target")
+			}
+			t.path = append(steps, t.path...)
+			x = ast.Unparen(sel.X)
+			continue
 		}
-		s := f.g.p.Info.Selections[sel]
-		if s == nil || s.Kind() != types.FieldVal || s.Indirect() {
-			f.fail(sel, "internal error: unexpected field assignment target")
+		if ix, ok := x.(*ast.IndexExpr); ok && f.arrayStep(ix) {
+			t.path = append([]fieldStep{{arr: arrayType(f.g.p.Info.TypeOf(ix.X))}}, t.path...)
+			indices = append(indices, ix.Index)
+			x = ast.Unparen(ix.X)
+			continue
 		}
-		steps := embedPath(f.g.p.Info.TypeOf(sel.X), s.Index()) // promoted: down the embedded fields
-		if steps == nil {
-			f.fail(sel, "internal error: unexpected field assignment target")
-		}
-		t.path = append(steps, t.path...)
-		x = ast.Unparen(sel.X)
+		break
 	}
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -70,6 +85,15 @@ func (f *fn) fieldTargetOf(e ast.Expr) fieldTarget {
 		t.elem = int(blk)
 	default:
 		f.fail(x, "internal error: unexpected field assignment root %T", x)
+	}
+	k := len(indices) - 1 // innermost first: source order
+	for i := range t.path {
+		if t.path[i].arr != nil {
+			r := f.allocScalar(indices[k])
+			f.exprInto(indices[k], r)
+			t.path[i].ix = r
+			k--
+		}
 	}
 	return t
 }
@@ -95,9 +119,14 @@ func (f *fn) storeField(n ast.Node, t fieldTarget, fill func(dst, holder uint8))
 
 // rebuild builds into dst a copy of the struct in src with the field
 // path[0] replaced: by fill's value if it is the last step, else by the
-// rebuilt struct of the rest of the path. dst may be src.
+// rebuilt struct of the rest of the path. dst may be src. An element step
+// copies the array instead (rebuildElem).
 func (f *fn) rebuild(n ast.Node, path []fieldStep, src, dst uint8, fill func(dst, holder uint8)) {
 	step := path[0]
+	if step.arr != nil {
+		f.rebuildElem(n, path, src, dst, fill)
+		return
+	}
 	nf := step.st.Underlying().(*types.Struct).NumFields()
 	if nf > maxRegs {
 		f.fail(n, "struct %s has too many fields", step.st.Obj().Name())
@@ -117,7 +146,7 @@ func (f *fn) rebuild(n ast.Node, path []fieldStep, src, dst uint8, fill func(dst
 	if len(path) == 1 {
 		fill(slot, src)
 	} else {
-		f.asm.Emit(OpGetfield, slot, src, uint8(step.idx))
+		f.loadStep(n, step, src, slot)
 		f.rebuild(n, path[1:], slot, slot, fill)
 	}
 	f.asm.EmitExt(OpNewstruct, dst, base, uint8(nf), idx)
@@ -153,7 +182,7 @@ func (f *fn) fieldOpAssign(l ast.Expr, op uint8, rhs ast.Expr) {
 		pre = int(f.operand(rhs))
 	}
 	f.storeField(l, t, func(v, holder uint8) {
-		f.asm.Emit(OpGetfield, v, holder, uint8(t.path[len(t.path)-1].idx))
+		f.loadStep(l, t.path[len(t.path)-1], holder, v)
 		f.opInto(l, op, v, rhs, pre)
 	})
 	f.next = mark

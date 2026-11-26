@@ -98,6 +98,7 @@ func (f *fn) rangeStmt(s *ast.RangeStmt) {
 	scope := f.next
 	str := f.alloc(s)
 	f.exprInto(s.X, str)
+	f.rangeArray(s, str)
 	n := f.allocScalar(s)
 	f.seqCall(s, n, BLen, f.moveFrom(str))
 	idx := f.allocScalar(s)
@@ -138,6 +139,7 @@ func (f *fn) rangeStmt(s *ast.RangeStmt) {
 	}
 	if hasVal {
 		f.seqCall(s, val, BIndex, f.moveFrom(str), f.moveFrom(idx))
+		f.rangeElem(s, val)
 	}
 	f.breakTo = append(f.breakTo, endL)
 	f.continueTo = append(f.continueTo, contL)

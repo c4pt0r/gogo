@@ -1,0 +1,55 @@
+// Arrays are values: assigning, passing or returning one copies it. A
+// slice of an array variable shares it, as in Go.
+package main
+
+type Point struct{ X, Y int }
+
+// Board holds its cells in an array field: copying a Board copies them.
+type Board struct {
+	Cells [3][3]byte
+	Moves int
+}
+
+// play returns the board with one more move: b is play's own copy.
+func play(b Board, row, col int, who byte) Board {
+	b.Cells[row][col] = who
+	b.Moves++
+	return b
+}
+
+func sum(a [4]int) int {
+	t := 0
+	for _, v := range a {
+		t += v
+	}
+	return t
+}
+
+func main() {
+	var a [4]int // the zero value: four zeros
+	a[1] = 5
+	a[3] += 2
+	b := a // a copy
+	b[0] = 9
+	println(a[0], b[0], len(a), sum(a))
+
+	// Literals: [...] counts the elements; keys set given indices.
+	primes := [...]int{2, 3, 5, 7, 11}
+	flags := [8]bool{1: true, 6: true}
+	println(len(primes), primes[4], flags[1], flags[2])
+
+	// a[:] shares the variable's array; a = b copies b into it.
+	s := a[:]
+	s[0] = -1
+	println(a[0])
+	a = b
+	println(s[0])
+
+	// Arrays of structs, and arrays in struct fields.
+	pts := [2]Point{{1, 2}, {3, 4}}
+	pts[1].X = 30
+	var empty Board
+	game := play(empty, 1, 1, 'x')
+	game = play(game, 0, 2, 'o')
+	println(pts[1].X, empty.Moves, game.Moves, game.Cells[1][1], game.Cells[0][2])
+}

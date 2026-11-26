@@ -225,13 +225,13 @@ Expression `switch`, labeled `break`/`continue`, `range` over an int,
 variadic functions, packages of your own, methods with value receivers
 (`func (p Point) Add(q Point) Point`, called statically), field
 assignment (`p.X = v`, `s[i].X += 1`), embedded fields (promoted
-fields and methods) and floating point (`float32` and
-`float64`, with `gogo/math` and `strconv.FormatFloat` / `ParseFloat`) are
-supported.
+fields and methods), arrays (`[N]T`, values as in Go, but no `==` yet
+and not in an `any`) and floating point (`float32` and `float64`, with
+`gogo/math` and `strconv.FormatFloat` / `ParseFloat`) are supported.
 Planned, in this order: `panic`, type assertions,
 interfaces and `error`; then pointers (boxed, copied when sent) and pointer receivers, maps (a
 library, deterministic order), read-only package variables and `fmt`; then
-sized integers, arrays and a static `defer`. Not planned: `goto`, `recover`, per-actor
+sized integers and a static `defer`. Not planned: `goto`, `recover`, per-actor
 mutable globals, channels, `go` statements. Generics are deferred.
 
 ### Can I import packages?

@@ -1,0 +1,88 @@
+package main
+
+type P struct{ X, Y int }
+
+type Board struct {
+	Cells [3]P
+	Tags  [2]string
+}
+
+func (b Board) Moved() Board {
+	b.Cells[0].X += 100
+	return b
+}
+
+func (b Board) First() [3]P { return b.Cells }
+
+func total(xs ...[2]int) int {
+	t := 0
+	for _, x := range xs {
+		t += x[0] + x[1]
+	}
+	return t
+}
+
+func fill() (a [3]int) {
+	for i := range a {
+		a[i] = i + 1
+	}
+	return
+}
+
+const n = len([4]int{})
+
+func main() {
+	var e [0]int
+	println(len(e), n)
+	var names [3]string
+	names[1] = "b"
+	println(names[0] == "", names[1], len(names[2]))
+
+	a, b := [2]int{1, 2}, [2]int{3, 4}
+	a, b = b, a
+	println(a[0], b[0])
+	a[0], a[1] = a[1], a[0]
+	println(a[0], a[1])
+	println(total(a, b, [2]int{5, 5}))
+
+	var bd Board
+	bd.Cells[2].Y = 7
+	bd.Tags[0] = "t"
+	m := bd.Moved()
+	println(bd.Cells[0].X, m.Cells[0].X, m.Cells[2].Y, m.Tags[0])
+	f := bd.First()
+	f[2].Y = 0
+	println(bd.Cells[2].Y, f[2].Y)
+	for i := range bd.Cells {
+		bd.Cells[i].X++
+	}
+	println(bd.Cells[0].X, bd.Cells[1].X, bd.Cells[2].X)
+
+	r := fill()
+	println(r[0], r[1], r[2])
+
+	k := [...]int{5: 1}
+	println(len(k), k[5])
+
+	apply := func(x [2]int) [2]int {
+		x[0] = -x[0]
+		return x
+	}
+	c := apply(a)
+	println(a[0], c[0])
+
+	bs := [3]byte{'a', 'b', 'c'}
+	sl := bs[1:]
+	sl[0] = 'B'
+	println(string(bs[:]))
+
+	grid := [2][2]P{{{1, 1}, {2, 2}}, {{3, 3}, {4, 4}}}
+	grid[1][0].Y = 30
+	g2 := grid
+	g2[1][0].X = -3
+	println(grid[1][0].X, grid[1][0].Y, g2[1][0].X, g2[1][0].Y)
+	idx := 0
+	next := func() int { idx2 := idx; return idx2 + 1 }
+	grid[next()][next()].X = 99
+	println(grid[1][1].X)
+}

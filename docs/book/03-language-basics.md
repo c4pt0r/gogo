@@ -195,14 +195,14 @@ The supported types are:
 - `bool` and `string`. A string is an immutable sequence of bytes.
 - `rune` only as the type of character literals and of the value in
   `range` over a string.
-- Slices (`[]T`), structs, function values and `any`.
+- Slices (`[]T`), arrays (`[N]T`), structs, function values and `any`.
 - Named types whose underlying type is `int`, `int64`, `float32`,
   `float64`, `bool` or `string` (`type Weekday int`), and named structs.
 - `const` with `iota`.
 - The gogo types `actor.PID`, `actor.Ref`, `bytes.Bytes`, `bytes.Buffer`
   and the struct types of the gogo packages.
 
-There are **no** unsigned types except `byte`, no `int8/16/32`, no arrays,
+There are **no** unsigned types except `byte`, no `int8/16/32`,
 no maps, no pointers, no channels, no complex numbers.
 
 ```go
@@ -1162,9 +1162,9 @@ method value or call it on the embedded field. There are no interfaces
 of your own yet; when they come, promoted methods will count toward
 implementing them.
 
-## 3.6 Slices, the only collection
+## 3.6 Slices and arrays
 
-Without arrays and maps, slices do all the work. `make`, `append` (also
+Without maps, slices do most of the work. `make`, `append` (also
 `append(a, b...)`), `copy`, `len`, `cap` and slice expressions `s[i:j]`
 behave as in Go, including sharing: two slices of one array see each
 other's writes. A small table of key/value pairs searched in a loop stands
@@ -1172,7 +1172,7 @@ in for a map:
 
 ```go
 // Slices: literals, make, append, copy, slicing and sharing, nil slices.
-// Slices are the only collection: there are no arrays and no maps.
+// Slices are the main collection: arrays are fixed, and there are no maps.
 package main
 
 type Entry struct {
@@ -1294,6 +1294,106 @@ This differs from Go: Go's `println` prints any slice as its length,
 capacity and the address of its array, `[3/3]0xc000014090`; only
 `fmt.Println` prints the elements. gogo has no addresses to show, so it
 prints what `fmt.Println` would.
+
+### Arrays
+
+An array `[N]T` has a fixed length that is part of its type, and it is a
+**value**, as in Go: assigning it, passing it, returning it or storing it
+in a field or an element copies it. Indexing (checked, like a slice's),
+`len`, `cap`, `range`, element and field assignment through it
+(`a[i] = v`, `pts[i].X = v`, `b.Cells[r][c] = v`), literals with `[...]`
+and index keys, arrays of structs and arrays in struct fields all work as
+in Go:
+
+```go
+// Arrays are values: assigning, passing or returning one copies it. A
+// slice of an array variable shares it, as in Go.
+package main
+
+type Point struct{ X, Y int }
+
+// Board holds its cells in an array field: copying a Board copies them.
+type Board struct {
+	Cells [3][3]byte
+	Moves int
+}
+
+// play returns the board with one more move: b is play's own copy.
+func play(b Board, row, col int, who byte) Board {
+	b.Cells[row][col] = who
+	b.Moves++
+	return b
+}
+
+func sum(a [4]int) int {
+	t := 0
+	for _, v := range a {
+		t += v
+	}
+	return t
+}
+
+func main() {
+	var a [4]int // the zero value: four zeros
+	a[1] = 5
+	a[3] += 2
+	b := a // a copy
+	b[0] = 9
+	println(a[0], b[0], len(a), sum(a))
+
+	// Literals: [...] counts the elements; keys set given indices.
+	primes := [...]int{2, 3, 5, 7, 11}
+	flags := [8]bool{1: true, 6: true}
+	println(len(primes), primes[4], flags[1], flags[2])
+
+	// a[:] shares the variable's array; a = b copies b into it.
+	s := a[:]
+	s[0] = -1
+	println(a[0])
+	a = b
+	println(s[0])
+
+	// Arrays of structs, and arrays in struct fields.
+	pts := [2]Point{{1, 2}, {3, 4}}
+	pts[1].X = 30
+	var empty Board
+	game := play(empty, 1, 1, 'x')
+	game = play(game, 0, 2, 'o')
+	println(pts[1].X, empty.Moves, game.Moves, game.Cells[1][1], game.Cells[0][2])
+}
+```
+
+```text
+0 9 4 7
+5 11 true false
+-1
+9
+30 0 2 120 111
+```
+
+Inside the VM an array is a slice of length and capacity N, so it prints
+like one (`println(a)` gives `[0 5 0 2]`) and `a[:]` is an ordinary slice
+of it. Some things to know:
+
+- **Copies are real copies.** `b := a`, `f(a)`, `return a` and `p.Cells = c`
+  each allocate a new array of N elements (an array literal or a call
+  result is not copied again). Pass a slice, `a[:]`, when a function only
+  reads or should write the caller's array.
+- **Only an array variable can be sliced.** `a[:]` shares `a`, and
+  `a = b` copies `b`'s elements into that shared array, as in Go. An array
+  in a field or an element is not changed in place (a write through it
+  copies it), so `p.Cells[:]` is rejected (`slice of an array that is not
+  a variable not supported`): copy it first, `c := p.Cells; c[:]`.
+- **No `==` yet.** Comparing arrays (`comparison of arrays not supported
+  yet`), and a `switch` on one, wait for the comparison of composite values
+  (with interfaces); compare the elements.
+- **Not in `any`.** An array cannot go into an interface, so it cannot be
+  a message on its own (`array in interface not supported`): send a slice,
+  or a struct with the array as a field, which is copied with the message.
+- A variable a closure captures cannot have its elements assigned
+  (`captured variable must not be changed by element assignment`), for the
+  reason its fields cannot (section 3.4). Named array types
+  (`type Grid [9]int`) are not supported.
 
 ## 3.7 Strings, strconv and strings
 
@@ -1541,10 +1641,10 @@ func main() {
 		goto done // goto
 	}
 done:
-	var a [4]int      // array
-	y := any(1).(int) // type assertion
+	var a any = [4]int{} // array in an interface
+	y := any(1).(int)    // type assertion
 	_ = y
-	println(m, p, x, a[0])
+	println(m, p, x, a)
 	panic("boom")
 }
 ```
@@ -1564,12 +1664,11 @@ main.gg:25:7: gogo: pointer not supported
 main.gg:26:7: gogo: complex not supported
 main.gg:28:3: gogo: goto statement not supported
 main.gg:30:1: gogo: label on a statement other than for or switch not supported
-main.gg:31:8: gogo: array not supported
+main.gg:31:14: gogo: array in interface not supported: use a slice or a struct with an array field
 main.gg:32:7: gogo: type assertion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
 main.gg:34:16: gogo: complex not supported
-main.gg:34:19: gogo: index of [4]int not supported
 main.gg:35:2: gogo: builtin panic not supported
 ```
 
@@ -1584,7 +1683,6 @@ The full list, with what to do instead:
 | `error` | `error not supported` | `bool` or an `int` code type |
 | package-level `var` | `global variable not supported` | `const`, or state in an actor |
 | maps | `map not supported` | a slice of key/value structs |
-| arrays `[N]T` | `array not supported` | slices |
 | pointers, `&x`, `*p` | `pointer not supported` | values; state in actors |
 | pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
 | your own interfaces | `interface types are not supported yet: call methods on the concrete type` | function values (method values too), or messages and a type switch |
@@ -1596,9 +1694,11 @@ The full list, with what to do instead:
 | generics | `generic function not supported` | write the function per type |
 | `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
 | `struct == struct` | `comparison of main.P not supported` | compare fields |
+| `array == array` | `comparison of arrays not supported yet` | compare elements |
+| an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
 
-> **Note.** Pointer receivers, maps, arrays, pointers, `uint32`,
+> **Note.** Pointer receivers, maps, pointers, `uint32`,
 > package-level variables, the `error` interface, `panic` and type
 > assertions are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see

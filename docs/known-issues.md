@@ -261,7 +261,7 @@ rebuilt:
 ## Compiler and language
 
 - **Not supported yet (planned).** The compiler rejects maps, pointer
-  receivers ("pointer receivers are not supported yet"), pointers, arrays, integer types other than `int`, `int64` and `byte`
+  receivers ("pointer receivers are not supported yet"), pointers, integer types other than `int`, `int64` and `byte`
   (`uint32` included), package-level `var`s, a `switch` on an
   `any` or a struct value, type assertions, `panic`, the `error` type
   and interfaces other than `any` ("interface
@@ -305,6 +305,21 @@ rebuilt:
   other than a struct or a basic type (`type L []int`) cannot be declared,
   so it has no methods either. The methods of a type in a hot-loaded module
   are that module's own, like its types.
+- **Arrays: no `==`, not in `any`, hidden copies.** `a == b` on arrays
+  is rejected until composite values can be compared (`comparison of
+  arrays not supported yet`): compare the elements. An array cannot go
+  into an `any` (`array in interface not supported`), so it is not a
+  message on its own: send a slice or a struct with an array field. Only
+  an array variable can be sliced (`p.A[:]` is rejected: copy the array
+  into a variable first). Named array types (`type G [9]int`) are not
+  supported. Like Go, gogo copies an array on every assignment, argument,
+  result and field or element store, which allocates N elements each time
+  (a literal or a call result is not copied again); pass `a[:]` to avoid
+  it. A write through an array in a field or an element
+  (`p.A[i] = v`, `m[i][j] = v`) also copies that array, and rebuilds the
+  structs on its path, so it costs O(N) rather than O(1). Like a slice,
+  `println(a)` prints the elements (`[1 2 3]`; Go's `println` rejects
+  arrays).
 - **Embedded fields: no pointers, no promoted method expressions.**
   Embedding `*T` is rejected with pointers. A method expression of a
   promoted method (`Outer.M` for a method of an embedded field) is

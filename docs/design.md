@@ -183,6 +183,25 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
 - Slices: `make`, `append` (also `append(a, b...)`), `copy`, `len`,
   `cap`, indexing, element assignment and slicing; `len`, indexing and
   slicing of strings and `Bytes`.
+- Arrays `[N]T`, values as in Go: literals (`[...]T`, index keys),
+  indexing, `len`, `cap`, `range`, element and field assignment through
+  them, arrays of structs and in struct fields. An array is a slice of
+  length and capacity N (`MAKE_SLICE`). The compiler keeps them values:
+  a local variable's array is written in place (`SETINDEX`), `a[:]`
+  shares it and `a = b` copies `b`'s elements into it (`COPY`), so its
+  slices see the change as in Go; every other array (in a field or an
+  element) is never written in place: a write through it copies it and
+  stores the copy back along the path, as a field write rebuilds a
+  struct, so copies of a struct or of an array of arrays may share inner
+  arrays. An array value is copied (`MAKE_SLICE` + `COPY`) whenever it
+  goes into a variable, an argument, a result, a field or an element,
+  unless it is a literal or a call result; `range` with a value variable
+  over an array variable ranges over a copy. Rejected: slicing an array
+  that is not a variable ("slice of an array that is not a variable"),
+  arrays in an interface (so not a message on their own), `==` on arrays
+  (it needs the comparison builtin planned with interfaces), named array
+  types, and element writes to a captured array variable. No opcode of
+  their own.
 - Statements: `if`, `for` (three-clause, condition-only, infinite, and
   `range` over a slice, a string or an integer), the expression `switch`
   (tagged or not, several values per case, `fallthrough`) on integer,
@@ -245,7 +264,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   package's name is its directory's name (§5.1, the loader).
 
 **Not supported yet (planned for the "language completeness"
-milestone):** maps, pointers (and pointer receivers), arrays, integer types other than
+milestone):** maps, pointers (and pointer receivers), integer types other than
 `int`, `int64` and `byte` (`uint32` included), package-level variables,
 a `switch` on an `any` or a struct value, type assertions, `panic`, the
 `error` interface and interfaces other than `any`.
@@ -2127,9 +2146,9 @@ types and named requirements (§5.6); one stream protocol for every byte
 port with `port.Closed` and `From`; embed mode phase 1 (`libgogo`,
 §5.11); user packages with a `GOGOPATH` search and `#!` scripts; the
 first language additions (expression `switch`, labels, `range` over int,
-variadic functions, methods with value receivers, embedded fields);
-floating point (`float32`, `float64`, `gogo/math`, `strconv.FormatFloat`
-/ `ParseFloat`; image format 15.2).
+variadic functions, methods with value receivers, embedded fields,
+arrays); floating point (`float32`, `float64`, `gogo/math`,
+`strconv.FormatFloat` / `ParseFloat`; image format 15.2).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
@@ -2141,8 +2160,7 @@ floating point (`float32`, `float64`, `gogo/math`, `strconv.FormatFloat`
    with direct LAN links as a later step.
 3. **Language completeness:** pointer receivers, interfaces and
    `error`, `panic`, pointers, maps, read-only package variables, `fmt`,
-   sized integers, arrays, static `defer` (`float32`/`float64` are
-   done).
+   sized integers, static `defer` (`float32`/`float64` are done).
 4. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler,
