@@ -103,7 +103,7 @@ func main() {
 	}
 
 	// SendAfter to a remote PID: BadMsg.
-	sa := actor.Spawn(func() { actor.SendAfter(10, echo, "late") })
+	sa := actor.Spawn(func() { actor.SendAfter(echo, "late", 10) })
 	sar := actor.Monitor(sa)
 	switch m := next().(type) {
 	case actor.DownMsg:

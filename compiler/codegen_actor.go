@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 )
 
@@ -104,9 +105,83 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 		if twoResult[name] {
 			f.fail(call, "internal error: %s outside a two-value assignment", name)
 		}
-		base, n := f.args(call)
+		var base, n uint8
+		if name == "SendAfter" {
+			base, n = f.sendAfterArgs(call)
+		} else {
+			base, n = f.args(call)
+		}
 		f.asm.EmitExt(OpBuiltin, dst, base, n, id)
 	}
+}
+
+// sendAfterArgs puts the arguments of actor.SendAfter(to, msg, ms) into
+// consecutive registers in B_SEND_AFTER's order, ms, to, msg (the order
+// of the gogo/actor API before v0.2.0, which the builtin keeps). They are
+// evaluated in that order too, ms first, which compiles a call written in
+// the old order to the same code, unless that could differ from Go's
+// left-to-right order: when ms may call a function and to or msg is not
+// stable (a function it calls could change what to or msg reads), they
+// are evaluated left to right.
+func (f *fn) sendAfterArgs(call *ast.CallExpr) (base uint8, n uint8) {
+	sig := f.g.p.Info.TypeOf(call.Fun).(*types.Signature)
+	if len(call.Args) == 1 { // SendAfter(g()): g's results, moved into place
+		t := f.allocN(call, 3)
+		f.multiCallInto(call.Args[0], t, tupleTypes(sig.Params()))
+		base = f.allocN(call, 3)
+		f.asm.Emit(OpMove, base, t+2, 0)
+		f.asm.Emit(OpMove, base+1, t, 0)
+		f.asm.Emit(OpMove, base+2, t+1, 0)
+		return base, 3
+	}
+	to, msg, ms := call.Args[0], call.Args[1], call.Args[2]
+	base = uint8(f.next)
+	for _, a := range []ast.Expr{ms, to, msg} {
+		f.allocFor(a)
+	}
+	order := []int{2, 0, 1} // argument indexes, evaluated in this order
+	if !f.stable(ms) && (!f.stable(to) || !f.stable(msg)) {
+		order = []int{0, 1, 2}
+	}
+	reg := [3]uint8{base + 1, base + 2, base} // argument index -> register
+	for _, i := range order {
+		f.valueInto(call.Args[i], sig.Params().At(i).Type(), reg[i])
+	}
+	return base, 3
+}
+
+// stable reports whether e's value cannot depend on when it is evaluated
+// among other expressions: e calls no function (conversions and
+// actor.Self() aside) and reads nothing a call could change, only
+// constants, package-level variables (read-only), local variables that
+// do not live in a box, and literals and field selections of those.
+func (f *fn) stable(e ast.Expr) bool {
+	ok := true
+	ast.Inspect(e, func(n ast.Node) bool {
+		if !ok {
+			return false
+		}
+		switch x := n.(type) {
+		case nil, *ast.BasicLit, *ast.CompositeLit, *ast.KeyValueExpr, *ast.ParenExpr, *ast.BinaryExpr:
+		case *ast.UnaryExpr:
+			ok = x.Op != token.AND && x.Op != token.ARROW
+		case *ast.Ident:
+			if v, isVar := f.g.p.Info.ObjectOf(x).(*types.Var); isVar && !v.IsField() && globalVar(f.g.p.Info, x) == nil {
+				_, boxed := f.isBoxedVar(x)
+				ok = !boxed
+			}
+		case *ast.SelectorExpr: // a field of a value (not through a pointer), or pkg.Name
+			if s := f.g.p.Info.Selections[x]; s != nil && (s.Kind() != types.FieldVal || isPointer(f.g.p.Info.TypeOf(x.X))) {
+				ok = false
+			}
+		case *ast.CallExpr:
+			ok = f.g.p.Info.Types[x.Fun].IsType() || f.stubOf(x) == "Self"
+		default:
+			ok = false
+		}
+		return ok
+	})
+	return ok
 }
 
 // twoResultCall compiles a two-result builtin call (ReceiveTimeout, Call,

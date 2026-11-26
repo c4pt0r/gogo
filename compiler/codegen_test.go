@@ -844,7 +844,7 @@ func TestCompileActorBuiltins(t *testing.T) {
 		"println(actor.Monitor(actor.Self()))":                    "MONITOR",
 		"actor.Demonitor(actor.MakeRef())":                        "DEMONITOR",
 		"println(actor.MakeRef())":                                "MAKE_REF",
-		"println(actor.SendAfter(1, actor.Self(), 2))":            "SEND_AFTER",
+		"println(actor.SendAfter(actor.Self(), 2, 1))":            "SEND_AFTER",
 		"println(actor.CancelTimer(actor.MakeRef()))":             "CANCEL_TIMER",
 		"actor.Sleep(3)":                                          "SLEEP",
 		"a, b := actor.Call(actor.Self(), 1, 2)\n\tprintln(a, b)": "CALL",
@@ -1103,7 +1103,7 @@ func main() {
 	s := S{i64, i64}
 	s = S{V: i64}
 	actor.Send(actor.Self(), i64)
-	actor.SendAfter(1, actor.Self(), i64)
+	actor.SendAfter(actor.Self(), i64, 1)
 	r, _ := actor.Call(actor.Self(), i64, 0)
 	println(x, s.N, r, i64, keep(i64))
 	var c any = int64(7)
@@ -2464,5 +2464,21 @@ func main() {
 	}
 	if strings.Contains(compileSrc(t, "package main\ntype R struct{ W int }\nfunc (r R) Area() int { return r.W }\nfunc main() { println(R{1}.Area()) }\n"), "(is)") {
 		t.Error("a program without interfaces got a generated test")
+	}
+}
+
+// TestSendAfterOrder: actor.SendAfter(to, msg, ms) puts its arguments in
+// B_SEND_AFTER's registers ms, to, msg. With stable arguments ms is
+// evaluated first, the code SendAfter(ms, to, msg) compiled to before
+// v0.2.0; when ms calls a function and msg may depend on it, the
+// arguments are evaluated left to right.
+func TestSendAfterOrder(t *testing.T) {
+	dis := compileSrc(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tme := actor.Self()\n\tactor.SendAfter(me, \"x\", 10)\n}\n")
+	if !regexp.MustCompile(`LOADK r2, 10\n.*MOVE r3, r0\n.*LOADK r4, "x"\n.*BUILTIN r1, r2, 3, SEND_AFTER\n`).MatchString(dis) {
+		t.Errorf("stable arguments: want ms, to, msg loaded in that order into r2..r4:\n%s", dis)
+	}
+	dis = compileSrc(t, "package main\nimport \"gogo/actor\"\nfunc f() int { return 1 }\nfunc main() {\n\tvar s []int\n\tactor.SendAfter(actor.Self(), s[0], f())\n}\n")
+	if !regexp.MustCompile(`(?s)SELF.*INDEX.*CALL.*SEND_AFTER`).MatchString(dis) {
+		t.Errorf("ms calls a function: want to, msg, ms evaluated in source order:\n%s", dis)
 	}
 }

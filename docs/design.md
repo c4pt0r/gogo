@@ -626,7 +626,7 @@ func MakeRef() Ref
 func Register(name string, p PID) bool          // false if taken or p has exited
 func Whereis(name string) (PID, bool)
 func Unregister(name string)                    // only the registering actor may
-func SendAfter(ms int, to PID, msg any) Ref; func CancelTimer(r Ref) bool
+func SendAfter(to PID, msg any, ms int) Ref; func CancelTimer(r Ref) bool
 func Sleep(ms int); func Now() int64            // ms since the VM started
 func Info(p PID) ProcInfo
 

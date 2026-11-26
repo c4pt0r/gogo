@@ -26,7 +26,7 @@ func main() {
 	}
 	actor.Unlink(p)
 	actor.Kill(p, actor.Killed) // nothing to kill
-	t := actor.SendAfter(5, p, "late")
+	t := actor.SendAfter(p, "late", 5)
 	actor.Sleep(10)
 	println("cancel:", actor.CancelTimer(t))
 	println("register:", actor.Register("nobody", p))

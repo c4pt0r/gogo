@@ -13,6 +13,13 @@ the M5StickS3 and the Cardputer ADV. The design is in
 Programs written for v0.1.0 need these edits, and every image must be
 rebuilt:
 
+- **`actor.SendAfter`** takes its arguments in `Send`'s order with the
+  delay last, as `Call` does: `actor.SendAfter(ms, p, msg)` is
+  `actor.SendAfter(p, msg, ms)`. Every old call fails to compile (an
+  `int` where the PID goes), so none is missed. The VM builtin is
+  unchanged: old images run as before, and a rewritten call compiles to
+  the same code.
+
 - **Images.** The reserved type numbers changed inside format 15.0, so an
   image built by an older compiler, including one built between the
   image format 15 change and this one, loads but misreads types. Rebuild

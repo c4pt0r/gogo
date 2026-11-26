@@ -177,10 +177,12 @@ func Demonitor(r Ref) { panic("gogo only") }
 //gogo:builtin
 func MakeRef() Ref { panic("gogo only") }
 
-// SendAfter sends msg to to after ms milliseconds.
+// SendAfter sends msg to to after ms milliseconds (ms <= 0: at once,
+// through the timer queue). The Ref cancels it (CancelTimer). The
+// arguments are in Send's order, the delay last as in Call.
 //
 //gogo:builtin
-func SendAfter(ms int, to PID, msg any) Ref { panic("gogo only") }
+func SendAfter(to PID, msg any, ms int) Ref { panic("gogo only") }
 
 // CancelTimer cancels a SendAfter timer; false if it already fired.
 //

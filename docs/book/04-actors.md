@@ -433,7 +433,7 @@ names.
 func Now() int64                               // ms since the VM started
 func Sleep(ms int)
 func ReceiveTimeout(ms int) (msg any, ok bool) // ms == 0: only look
-func SendAfter(ms int, to PID, msg any) Ref
+func SendAfter(to PID, msg any, ms int) Ref    // Send's arguments, then the delay
 func CancelTimer(r Ref) bool                   // false if it already fired
 ```
 
@@ -461,15 +461,15 @@ func main() {
 
 	// SendAfter delivers a message later; timers fire in deadline order.
 	me := actor.Self()
-	actor.SendAfter(40, me, "late")
-	actor.SendAfter(10, me, "early")
-	t := actor.SendAfter(20, me, "cancelled")
+	actor.SendAfter(me, "late", 40)
+	actor.SendAfter(me, "early", 10)
+	t := actor.SendAfter(me, "cancelled", 20)
 	println("cancel:", actor.CancelTimer(t))
 	println(actor.Receive())
 	println(actor.Receive())
 
 	// A periodic tick: re-arm the timer each time it fires.
-	actor.SendAfter(10, me, Tick{1})
+	actor.SendAfter(me, Tick{1}, 10)
 	last := 0
 	for last < 3 {
 		switch m := actor.Receive().(type) {
@@ -477,7 +477,7 @@ func main() {
 			println("tick", m.N)
 			last = m.N
 			if m.N < 3 {
-				actor.SendAfter(10, me, Tick{m.N + 1})
+				actor.SendAfter(me, Tick{m.N + 1}, 10)
 			}
 		}
 	}

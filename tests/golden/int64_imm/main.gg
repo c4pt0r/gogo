@@ -84,7 +84,7 @@ func main() {
 		show(x.V)
 		println(x.N, x.N == -1)
 	}
-	actor.SendAfter(1, actor.Self(), d)
+	actor.SendAfter(actor.Self(), d, 1)
 	show(actor.Receive())
 	srv := actor.Spawn(func() {
 		switch r := actor.Receive().(type) {

@@ -125,7 +125,7 @@ func main() {
 
 	// SendAfter is checked when it is called.
 	q := actor.Spawn(func() {
-		actor.SendAfter(1000, p2, Host{2})
+		actor.SendAfter(p2, Host{2}, 1000)
 		println("never")
 	})
 	println("sendafter", down(q) == actor.BadMsg)

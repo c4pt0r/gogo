@@ -41,7 +41,7 @@ func MakeRef() Ref
 func Register(name string, p PID) bool
 func Whereis(name string) (PID, bool)
 func Unregister(name string)
-func SendAfter(ms int, to PID, msg any) Ref
+func SendAfter(to PID, msg any, ms int) Ref
 func CancelTimer(r Ref) bool
 func Sleep(ms int)
 func Now() int64

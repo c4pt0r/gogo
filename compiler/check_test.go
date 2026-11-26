@@ -568,7 +568,7 @@ func main() {
 	actor.Kill(child, actor.Killed)
 	r := actor.Monitor(child)
 	actor.Demonitor(r)
-	t := actor.SendAfter(5, child, b)
+	t := actor.SendAfter(child, b, 5)
 	println(actor.CancelTimer(t))
 	actor.Sleep(1)
 	actor.Reply(actor.Request{From: child, Ref: r, Body: a}, 1)

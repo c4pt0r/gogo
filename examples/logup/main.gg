@@ -439,7 +439,7 @@ func collector(root actor.PID) {
 						delay = retryMax
 					}
 					nextTry = actor.Now() + int64(delay)
-					actor.SendAfter(delay, actor.Self(), Retry{})
+					actor.SendAfter(actor.Self(), Retry{}, delay)
 				}
 			}
 			closeLog()

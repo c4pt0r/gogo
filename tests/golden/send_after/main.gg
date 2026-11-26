@@ -4,9 +4,9 @@ import "gogo/actor"
 
 func main() {
 	me := actor.Self()
-	actor.SendAfter(30, me, "B")
-	actor.SendAfter(10, me, "A")
-	c := actor.SendAfter(20, me, "C")
+	actor.SendAfter(me, "B", 30)
+	actor.SendAfter(me, "A", 10)
+	c := actor.SendAfter(me, "C", 20)
 	println(actor.CancelTimer(c)) // pending: cancelled
 	println(actor.CancelTimer(c)) // already gone
 
@@ -21,4 +21,16 @@ func main() {
 	} else {
 		println("unexpected", m)
 	}
+
+	// The arguments are evaluated left to right: msg before ms.
+	n := 0
+	next := func() int { n++; return n }
+	t0 := actor.Now()
+	actor.SendAfter(me, next(), next()*10)
+	println("got", actor.Receive(), "after at least 20 ms:", actor.Now()-t0 >= 20)
+
+	// SendAfter(g()) of a function with SendAfter's three results.
+	args := func() (actor.PID, any, int) { return me, "from g", 1 }
+	actor.SendAfter(args())
+	println(actor.Receive())
 }
