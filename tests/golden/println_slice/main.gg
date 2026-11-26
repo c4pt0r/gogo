@@ -1,0 +1,21 @@
+package main
+
+import "gogo/actor"
+
+type Point struct{ X, Y int }
+
+func main() {
+	println([]int{1, 2, 3})
+	var none []int
+	println(none, len(none))
+	println([]int{}, []string{"a", "b c"}, []bool{true, false})
+	println([]byte("hi"), []byte{})
+	println([]Point{{1, 2}, {3, 4}})
+	println([][]int{{1}, {2, 3}, nil})
+	var big int64 = 1 << 40
+	println([]any{1, "x", big, Point{5, 6}, []int{7}})
+	println([]actor.PID{actor.Self()}[0] == actor.Self())
+	s := []int{0, 1, 2, 3, 4}
+	println(s[1:3], s[:0], s[4:])
+	println("mixed", s[2:], 9)
+}

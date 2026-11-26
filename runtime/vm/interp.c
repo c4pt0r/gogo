@@ -302,8 +302,8 @@ static uint32_t arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
 
 static void out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth);
 
-/* A slice inside a printed struct: [e0 e1 ...] (println rejects a bare
- * slice, as Go's prints an address). */
+/* A slice, bare or inside a printed struct: [e0 e1 ...] (Go's println
+ * prints [len/cap]address instead). */
 static void out_slice(Out *o, const Vm *vm, const Actor *a, const uint32_t *h, int depth) {
     uint32_t off = h[1], len = h[2];
     const uint32_t *arr = obj_of(vm, a, h[4]);

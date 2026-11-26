@@ -1380,10 +1380,44 @@ func (f *fn) newStruct(n ast.Node, st *types.Named, vals []fieldVal, dst uint8) 
 // boxed): user and library functions and the gogo/actor builtins alike.
 func (f *fn) args(call *ast.CallExpr) (base uint8, n uint8) {
 	var params *types.Tuple
-	if sig, ok := f.g.p.Info.TypeOf(call.Fun).(*types.Signature); ok && !sig.Variadic() {
+	if sig, ok := f.g.p.Info.TypeOf(call.Fun).(*types.Signature); ok {
+		if sig.Variadic() {
+			return f.variadicArgs(call, sig)
+		}
 		params = sig.Params()
 	}
 	return f.argsAs(call, params)
+}
+
+// variadicArgs is args for a call of a variadic function: the fixed
+// arguments go into consecutive fresh registers, as args does, and the
+// last register gets the variadic parameter's slice. The caller builds it
+// from the remaining arguments (a new slice, or the nil slice when there
+// are none), or passes the slice of f(s...) as it is, as Go does.
+func (f *fn) variadicArgs(call *ast.CallExpr, sig *types.Signature) (base uint8, n uint8) {
+	np := sig.Params().Len()
+	if np > maxRegs || len(call.Args) > maxRegs {
+		f.fail(call, "too many arguments")
+	}
+	fixed := call.Args[:np-1]
+	base = uint8(f.next)
+	for _, a := range fixed {
+		f.allocFor(a)
+	}
+	last := f.alloc(call)
+	for i, a := range fixed {
+		f.valueInto(a, sig.Params().At(i).Type(), base+uint8(i))
+	}
+	rest := call.Args[np-1:]
+	switch {
+	case call.Ellipsis.IsValid(): // f(xs, s...)
+		f.exprInto(rest[0], last)
+	case len(rest) == 0:
+		f.asm.EmitExt(OpLoadk, last, 0, 0, TermNilSlice)
+	default:
+		f.sliceOf(call, sliceElem(sig.Params().At(np-1).Type()), rest, last)
+	}
+	return base, uint8(np)
 }
 
 // argsAs is args with the parameter types given (nil: no conversions).

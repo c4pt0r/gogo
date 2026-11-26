@@ -142,7 +142,7 @@ func (c *checker) typeProblem(t types.Type) string {
 	case *types.Signature:
 		// Any signature: its parameter and result types must be of the
 		// subset (a named struct referring back to itself is fine).
-		if t.Variadic() || t.TypeParams() != nil || t.Recv() != nil {
+		if t.TypeParams() != nil || t.Recv() != nil {
 			return "func type " + types.TypeString(t, pkgName)
 		}
 		for _, tup := range []*types.Tuple{t.Params(), t.Results()} {
@@ -224,6 +224,10 @@ func (c *checker) fieldList(fl *ast.FieldList) {
 		return
 	}
 	for _, f := range fl.List {
+		if ell, ok := f.Type.(*ast.Ellipsis); ok { // xs ...T: a []T parameter
+			c.typeExpr(ell.Elt)
+			continue
+		}
 		c.typeExpr(f.Type)
 	}
 }
@@ -952,8 +956,10 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 		}
 	}
 	if call.Ellipsis.IsValid() && !c.isBuiltin(call, "append") {
-		c.unsupported(call, "variadic call")
-		return
+		if sig, ok := underlying(c.p.Info.TypeOf(call.Fun)).(*types.Signature); !ok || !sig.Variadic() {
+			c.unsupported(call, "variadic call")
+			return
+		}
 	}
 	if funcValueCall(c.p.Info, call) { // f(x), s.F(x), hs[i](x), mk()(x)
 		c.expr(call.Fun)
@@ -977,10 +983,6 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 				c.noFuncInAny(a)
 				if c.multiCall(a) != nil {
 					c.unsupported(a, "multiple values") // println(f())
-					return
-				}
-				if isSlice(c.p.Info.TypeOf(a)) {
-					c.unsupported(a, "println of a slice")
 					return
 				}
 				if t := c.p.Info.TypeOf(a); isBytes(t) || isBuffer(t) {
@@ -1039,11 +1041,33 @@ func (c *checker) args(call *ast.CallExpr, first int) {
 	}
 	for i := first; i < len(call.Args); i++ {
 		a := call.Args[i]
-		if sig != nil && !sig.Variadic() && i < sig.Params().Len() {
-			c.convert(sig.Params().At(i).Type(), a)
+		if t := paramType(sig, i, call.Ellipsis.IsValid()); t != nil {
+			c.convert(t, a)
 		}
 		c.expr(a)
 	}
+}
+
+// paramType is the type argument i of a call of a function of signature
+// sig goes into, or nil (sig nil, or no such parameter). The arguments of
+// a variadic function from its last parameter on are elements of that
+// parameter's slice, unless the call spreads a slice into it (spread).
+func paramType(sig *types.Signature, i int, spread bool) types.Type {
+	if sig == nil {
+		return nil
+	}
+	n := sig.Params().Len()
+	if sig.Variadic() && i >= n-1 {
+		last := sig.Params().At(n - 1).Type()
+		if spread {
+			return last
+		}
+		return sliceElem(last)
+	}
+	if i < n {
+		return sig.Params().At(i).Type()
+	}
+	return nil
 }
 
 func (c *checker) expr(e ast.Expr) {

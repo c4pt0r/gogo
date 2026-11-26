@@ -2118,9 +2118,12 @@ func main() {
 
 // TestCompileControlFlow: an expression switch is an EQ (EQ64 for int64)
 // and JMPT per case value, a local tag is compared in place, and the
-// bodies follow in source order (fallthrough emits no jump).
+// bodies follow in source order (fallthrough emits no jump); a variadic
+// call with no variadic argument passes the nil slice.
 func TestCompileControlFlow(t *testing.T) {
 	dis := compileSrc(t, `package main
+
+func n(xs ...int) int { return len(xs) }
 
 func main() {
 	x := 2
@@ -2136,6 +2139,7 @@ func main() {
 	case 3:
 		println("c")
 	}
+	println(n())
 }
 `)
 	_, body := funcDis(t, dis, "main")
@@ -2151,5 +2155,8 @@ func main() {
 	}
 	if countOp(code, "JMP", "") != 2 { // after the tests of each switch; none for the fallthrough or the last body
 		t.Errorf("want 2 JMP:\n%s", dis)
+	}
+	if countOp(code, "LOADK", "nilslice") != 1 {
+		t.Errorf("want n() to pass the nil slice:\n%s", dis)
 	}
 }

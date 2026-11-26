@@ -62,15 +62,20 @@ func (f *fn) makeInto(call *ast.CallExpr, dst uint8) {
 // one SETINDEX per element, in a temporary moved to dst at the end (dst
 // may be a variable the elements read).
 func (f *fn) sliceLit(e *ast.CompositeLit, dst uint8) {
-	elem := sliceElem(f.g.p.Info.TypeOf(e))
-	n := int32(len(e.Elts))
+	f.sliceOf(e, sliceElem(f.g.p.Info.TypeOf(e)), e.Elts, dst)
+}
+
+// sliceOf builds a new slice of elem holding the values elts into dst, as
+// a slice literal does (e is the node blamed for errors).
+func (f *fn) sliceOf(e ast.Node, elem types.Type, elts []ast.Expr, dst uint8) {
+	n := int32(len(elts))
 	mark := f.next
 	tmp := f.alloc(e)
 	nilF := func(r uint8) { f.asm.EmitExt(OpLoadk, r, 0, 0, TermNil) } // every slot is set below
 	f.seqCall(e, tmp, BMakeSlice, f.loadInt(elemKind(elem)), f.loadInt(n), f.loadInt(n), nilF)
 	if n > 0 {
 		blk := f.allocN(e, 3)
-		for i, el := range e.Elts {
+		for i, el := range elts {
 			f.asm.Emit(OpMove, blk, tmp, 0)
 			f.asm.EmitExt(OpLoadk, blk+1, 0, 0, TermInt(int32(i)))
 			f.valueInto(el, elem, blk+2)

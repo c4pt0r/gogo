@@ -1,0 +1,91 @@
+package main
+
+import "gogo/actor"
+
+type Point struct{ X, Y int }
+
+func sum(xs ...int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+// info reports what the variadic parameter holds.
+func info(tag string, xs ...int) {
+	println(tag, len(xs), xs == nil, sum(xs...))
+}
+
+func describe(vals ...any) string {
+	s := ""
+	for _, v := range vals {
+		switch x := v.(type) {
+		case int:
+			s += "int "
+		case int64:
+			s += "int64 "
+		case string:
+			s += "string:" + x + " "
+		case Point:
+			s += "point "
+		}
+	}
+	return s
+}
+
+func bytesOf(bs ...byte) int { return len(bs) + int(bs[0]) }
+
+func first(def Point, ps ...Point) Point {
+	if len(ps) == 0 {
+		return def
+	}
+	return ps[0]
+}
+
+func main() {
+	// Zero arguments: a nil slice, as in Go.
+	info("none")
+	info("three", 1, 2, 3)
+	s := []int{4, 5, 6}
+	info("spread", s...)
+	var empty []int
+	info("nil spread", empty...)
+	info("nil literal", nil...)
+
+	// f(s...) passes the slice itself: the callee sees the caller's array.
+	set := func(xs ...int) { xs[0] = 99 }
+	set(s...)
+	println("after set", s[0])
+	// Separate arguments build a new slice each call.
+	a, b := 1, 2
+	set(a, b)
+	println("a", a)
+
+	var big int64 = 1 << 40
+	println(describe(1, big, "x", Point{1, 2}))
+	println(describe())
+	println(bytesOf(7, 8), bytesOf([]byte("A")...))
+	println(first(Point{0, 0}).X, first(Point{0, 0}, Point{3, 4}, Point{5, 6}).X)
+
+	// Func values of a variadic type, and literals.
+	f := sum
+	println(f(), f(10, 20))
+	g := func(prefix string, words ...string) string {
+		for i, w := range words {
+			if i > 0 {
+				prefix += "+"
+			}
+			prefix += w
+		}
+		return prefix
+	}
+	println(g("w:", "a", "b", "c"), g("none:"))
+
+	// Across actors: a variadic closure spawned.
+	done := actor.Self()
+	actor.Spawn(func() {
+		actor.Send(done, sum(1, 2, 3, 4))
+	})
+	println("from actor", actor.Receive())
+}
