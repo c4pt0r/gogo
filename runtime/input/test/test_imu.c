@@ -1,4 +1,4 @@
-/* The imu port against a fake InputHw on a real VM: Config validation,
+/* The imu port against the fake devices (fakehw.c) on a real VM: Config validation,
  * batching (size and timing), the gesture mask and values, RateHz 0 (no
  * FIFO reads), a slow consumer, one owner, close and reopen. Time is the
  * fake clock; each step runs port_drain, as the scheduler does. */
@@ -433,6 +433,7 @@ TEST(imu_can_event_follows_live) {
     fake_live_hook(true);
     Port p;
     memset(&p, 0, sizeof p);
+    p.drv = &input_imu_driver;
     CHECK(input_imu_driver.can_event(&vm, &p));
     fake_set_live(false);
     CHECK(!input_imu_driver.can_event(&vm, &p));

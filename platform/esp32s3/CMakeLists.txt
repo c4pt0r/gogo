@@ -15,9 +15,9 @@ endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(gogo)
 
-# No malloc in LittleFS (main/fs_lfs.c passes every buffer in): lfs.c alone
+# No malloc in LittleFS (runtime/vfs/lfs/lfs_be.c passes every buffer in): lfs.c alone
 # (not the component's VFS wrapper, which needs malloc and is not linked)
-# gets LFS_NO_MALLOC and malloc / free renamed to fs_lfs.c's NULL-returning
+# gets LFS_NO_MALLOC and malloc / free renamed to lfs_be.c's NULL-returning
 # stubs, so it cannot reach the heap. Checked: lfs.c.obj imports
 # gogo_lfs_malloc / gogo_lfs_free and no malloc / free.
 idf_component_get_property(lfs_dir joltwallet__littlefs COMPONENT_DIR)

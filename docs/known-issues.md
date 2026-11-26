@@ -114,6 +114,20 @@ rebuilt:
   crash of `main` exits 4 and `actor.Exit(code)` in `main` exits with
   the code (0 before). A missing driver or mount exits 3 (was 1), a bad
   image still 2, and a `gogovm` usage error 1 (was 2).
+- **Board code** (C, `platform/`; boards outside this repository must be
+  edited): a generic driver is now an instance over the board's hardware
+  layer (`PortDriver.hw`, design §5.11.1). `PortDriver` gained a last
+  member `hw`: write driver tables with designated initializers (as
+  every table in the repository now is), or add one more `NULL` to a
+  positional one.
+  `VmBoard.input` and `InputHw` are gone: list `INPUT_KBD_DRIVER(&hal)`,
+  `INPUT_POWER_DRIVER(&hal)`, ... over `KbdHal`, `PowerHal`, `ImuHal`,
+  `IrTxHal`, `IrRxHal`, `MicHal`, `SpkHal`, whose hooks take a `ctx`
+  first. The `gpio` driver is `GPIO_DRIVER(&hal)` over a `GpioHal`.
+  `VmBoard.mounts` lists `VmMount{prefix, be, ctx}` entries, not
+  strings. Write `VmBoard` with designated initializers. A board boots
+  its image with `gogo_board_main` (`runtime/board/board_main.h`) and
+  speaks `gogo config` through `runtime/configsvc` over its own `KvHal`.
 
 ## Deprecated, removed in the next release
 
@@ -456,6 +470,15 @@ rebuilt:
   later.
 
 ## Storage
+
+- **The LittleFS host test needs a firmware build first.** The
+  repository does not carry LittleFS; `make test-lfs` uses the copy the
+  ESP build fetches and is skipped (with a note) until one has run.
+- **A `/flash` that failed to mount is still listed.** The board keeps
+  it in its mounts and every call under it is `NotMounted`, as before;
+  only the order of checks differs (a `Write` open of a path already
+  open, or a fifth open, reports `Busy` or `TooMany` before
+  `NotMounted`).
 
 - **Storage calls are synchronous.** Every `gogo/fs` call stops all
   actors until it finishes (see "Some operations cannot be preempted").

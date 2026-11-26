@@ -69,13 +69,12 @@ static void reset(Kbd *k, const Port *p) {
     k->port = p;
 }
 
-static int kbd_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
-    const InputHw *hw = input_hw(vm);
+int input_kbd_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+    const KbdHal *hw = PORT_HAL(KbdHal, p);
     (void)index;
-    if (input_failed(vm)) return -1;
+    if (input_failed(vm) || !hw) return -1;
     Kbd *k = &vm->input->kbd;
-    if (k->port || !hw->keys || !hw->kbd_open || !hw->kbd_pending || !hw->kbd_read ||
-        hw->kbd_open() != 0) return -1;
+    if (k->port || !hw->keys || !hw->open || !hw->pending || !hw->read || hw->open(hw->ctx) != 0) return -1;
     reset(k, p);
     int32_t d = n > 0 ? cfg[0] : 0, r = n > 1 ? cfg[1] : 0;
     k->delay = (uint16_t)(d < 0 ? 0 : d > 65535 ? 65535 : d);
@@ -83,23 +82,19 @@ static int kbd_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, 
     return 0;
 }
 
-static void kbd_close(struct Vm *vm, Port *p) {
+void input_kbd_close(struct Vm *vm, Port *p) {
     Kbd *k = vm->input ? &vm->input->kbd : NULL;
     if (!k || k->port != p) return;                      /* a refused open's cleanup */
-    const InputHw *hw = input_hw(vm);
-    if (hw->kbd_close) hw->kbd_close();
+    const KbdHal *hw = PORT_HAL(KbdHal, p);
+    if (hw->close) hw->close(hw->ctx);
     reset(k, NULL);
 }
 
-static bool kbd_can_event(const struct Vm *vm, const Port *p) { (void)vm;
-    (void)p;
-    const InputHw *hw = input_hw(vm);
-    return !hw->live || hw->live();
+bool input_kbd_can_event(const struct Vm *vm, const Port *p) {
+    (void)vm;
+    const KbdHal *hw = PORT_HAL(KbdHal, p);
+    return hal_live(hw->live, hw->ctx);
 }
-
-const PortDriver input_kbd_driver = {
-    PORT_NAME_KBD, TYPE_KBD_CONFIG, TYPE_KBD_KEY, kbd_open, NULL, kbd_close, kbd_can_event, NULL, NULL, NULL
-};
 
 /* ---- scheduler side ---- */
 
@@ -114,17 +109,22 @@ static void strike(Kbd *k, uint64_t now) {
     if (k->errs >= 2) k->retry_at = (uint32_t)now + (10u << (k->errs - 2 > 6 ? 6 : k->errs - 2));
 }
 
+static bool chip_pending(const Kbd *k) {
+    const KbdHal *hw = PORT_HAL(KbdHal, k->port);
+    return hw->pending(hw->ctx);
+}
+
 bool kbd_work(const Vm *vm, uint64_t now) {
     const Kbd *k = &vm->input->kbd;
-    return k->port && ((input_hw(vm)->kbd_pending() && !backing_off(k, now)) || rep_due(k, now));
+    return k->port && ((chip_pending(k) && !backing_off(k, now)) || rep_due(k, now));
 }
 
 bool kbd_next_deadline(const Vm *vm, uint64_t now, uint64_t *d) {
     const Kbd *k = &vm->input->kbd;
-    if (!k->port) return false;
+    if (!k->port || !input_kbd_can_event(vm, k->port)) return false;
     bool have = false;
     if (k->rep_on) { *d = deadline_abs(now, k->rep_at); have = true; }
-    if (backing_off(k, now) && input_hw(vm)->kbd_pending()) {   /* wake for the retry */
+    if (backing_off(k, now) && chip_pending(k)) {   /* wake for the retry */
         uint64_t r = deadline_abs(now, k->retry_at);
         if (!have || r < *d) *d = r;
         have = true;
@@ -135,13 +135,13 @@ bool kbd_next_deadline(const Vm *vm, uint64_t now, uint64_t *d) {
 void kbd_drain(Vm *vm, uint64_t now) {
     InputState *in = vm->input;
     Kbd *k = &in->kbd;
-    const InputHw *hw = input_hw(vm);
     uint16_t raw;
     bool down;
     if (!k->port) return;
-    if (hw->kbd_pending() && !backing_off(k, now)) {
+    const KbdHal *hw = PORT_HAL(KbdHal, k->port);
+    if (hw->pending(hw->ctx) && !backing_off(k, now)) {
         for (uint32_t i = 0; i < 32u; i++) {      /* the chip's FIFO holds 10 */
-            int r = hw->kbd_read(&raw, &down);
+            int r = hw->read(hw->ctx, &raw, &down);
             if (r < 0) {
                 in->read_errors++;
                 strike(k, now);
@@ -154,7 +154,7 @@ void kbd_drain(Vm *vm, uint64_t now) {
                  * read and the clear: the next read gets it); twice in a
                  * row is a stuck line, which backs off like an error
                  * instead of spinning the scheduler (PortSource rule). */
-                if (i == 0 && hw->kbd_pending()) {
+                if (i == 0 && hw->pending(hw->ctx)) {
                     if (k->errs >= 1) in->read_errors++;
                     strike(k, now);
                 } else {

@@ -408,6 +408,19 @@ callbacks: open, command, close, and a few helpers for handoff and
 backpressure. A driver turns commands into hardware actions and hardware
 state into events. It never runs actors or allocates in their heaps.
 
+**One driver, many boards.** The drivers for GPIO, the keyboard, the
+battery, the motion sensor, infrared and audio are written once, in the
+runtime. A board does not copy them: it describes its hardware in a small
+table of functions (for GPIO: how many pins, which ones it keeps for
+itself, and how to configure, write, read and release a pin; for the
+keyboard: its key table and how to read the chip), and lists a driver
+*instance* that points at that table. So the rules you met in 7.2 (which
+pins are refused, the bounce filter, the 20 ms default) behave the same
+on every board, and the simulator runs the very code the device does. The
+file systems work the same way: LittleFS and FatFs run over a board's
+block device or SD card, and the board's table of mounts says which
+prefixes (`/flash`, `/sd`) it serves.
+
 **Two ways in for events.** A driver that is told about hardware by an
 interrupt (a GPIO edge, the keyboard's INT line) pushes a small record
 into an *event ring* from the interrupt handler and wakes the VM; the ring

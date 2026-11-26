@@ -14,6 +14,7 @@
 #endif
 #include "vfs_int.h"
 #include "input_int.h"
+#include "board_main.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -41,6 +42,17 @@ void main_esp_usage(uint32_t *bytes_used, uint32_t *ports_used) {
     *ports_used = n;
 }
 
+#if CONFIG_GOGO_NET
+/* Everything attached, before the run: the Wi-Fi driver's heap and the
+ * stack's fixed state, on the serial log. */
+static void ready(Vm *v, void *ctx) {
+    (void)v;
+    (void)ctx;
+    wifi_esp_report_heap();
+    platform_esp_log("gogo: net stack fixed state %lu bytes", (unsigned long)net_fixed_bytes());
+}
+#endif
+
 static void vm_task(void *arg) {
     (void)arg;
     platform_esp_init();
@@ -50,16 +62,18 @@ static void vm_task(void *arg) {
     config_esp_start_serial();
     const uint32_t *words;
     uint32_t nwords;
+    int run_rc = 0;
     /* Wi-Fi (driver only, no esp_netif/lwIP) and gogo's net stack. */
 #if CONFIG_GOGO_NET
     wifi_esp_start();
 #endif
     /* Storage: /flash (LittleFS on `gogofs`; formats on first boot) and
-     * the B_FS builtin. Without /flash every fs path is NotMounted. */
-    (void)fs_lfs_mount(&vfs_state);
+     * the B_FS builtin; vfs_init below mounts the board's file systems.
+     * Without /flash every fs path under it is NotMounted. */
+    (void)fs_lfs_mount();
 #if HAS_SD && CONFIG_GOGO_SD
     /* /sd (FatFs on the microSD card): mounted by the first call. */
-    (void)fs_fat_init(&vfs_state);
+    fs_fat_init();
     platform_esp_log("gogo: fs state %lu bytes", (unsigned long)(fs_lfs_state_bytes() + fs_fat_state_bytes()));
 #else
     platform_esp_log("gogo: fs state %lu bytes", (unsigned long)fs_lfs_state_bytes());
@@ -72,12 +86,16 @@ static void vm_task(void *arg) {
                      GOGO_FIRMWARE_VERSION, IMAGE_MAJOR, IMAGE_MINOR, (unsigned long)nwords * 4u, (unsigned long)platform_esp_arena_cap(),
                      (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    /* The unified boot (module.h): the image becomes module 0 (requirement
-     * check included), then vm_run starts its "main" export. */
-    int rc = VM_BOOT_NO_MEMORY;
-    if (vm_init(&vm, &esp_host, NULL, &esp_board, (uint16_t)GOGO_TABLE_CAP) == 0) {
-        rc = vm_boot(&vm, words, nwords);
-    }
+    /* The one boot path (runtime/board): vm_init, vm_boot (the image is
+     * module 0, its requirements checked), the net stack, the file
+     * systems and the input source, then vm_run. */
+    BoardRun run = {
+        .vm = &vm, .table_cap = (uint16_t)GOGO_TABLE_CAP, .vfs = &vfs_state, .input = &input_state,
+#if CONFIG_GOGO_NET
+        .net = &esp_net_state, .net_install = net_install, .ready = ready,
+#endif
+    };
+    int rc = gogo_board_main(&esp_board, &esp_host, &run, words, nwords, &run_rc);
     if (rc == IMG_ERR_VERSION) {
         platform_esp_say("gogo: unsupported image format %u.%u (this firmware runs %u.0 to %u.%u)",
                          (unsigned)(words[1] >> 16), (unsigned)(words[1] & 0xFFFFu), IMAGE_MAJOR, IMAGE_MAJOR,
@@ -93,17 +111,7 @@ static void vm_task(void *arg) {
         platform_esp_say("gogo: out of memory");
         platform_esp_idle();
     }
-    /* After vm_init: it starts the Vm's source list and fs hook empty. */
-#if CONFIG_GOGO_NET
-    net_install(&vm, &esp_net_state);
-#endif
-    vfs_init(&vm, &vfs_state);
-    input_install(&vm, &input_state);   /* kbd + power source */
-#if CONFIG_GOGO_NET
-    wifi_esp_report_heap();
-    platform_esp_log("gogo: net stack fixed state %lu bytes", (unsigned long)net_fixed_bytes());
-#endif
-    rc = vm_run(&vm);
+    rc = run_rc;
     console_esp_report();
     platform_esp_report_refusal();
     platform_esp_say("gogo: vm exited (%d), arena used %lu", rc, (unsigned long)platform_esp_arena_used());

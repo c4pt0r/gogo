@@ -615,7 +615,8 @@ static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
 }
 
 const PortDriver net_tcp_driver = {
-    PORT_NAME_TCP, TYPE_NET_DIAL, TYPE_CHUNK, t_open, NULL, tcp_close_port, tcp_port_can_event, t_handoff, t_command, NULL
+    .name = PORT_NAME_TCP, .cfg_type = TYPE_NET_DIAL, .event_type = TYPE_CHUNK, .open = t_open,
+    .close = tcp_close_port, .can_event = tcp_port_can_event, .handoff = t_handoff, .command_term = t_command
 };
 
 /* ---- the "tcp_listen" port ---- */
@@ -657,7 +658,8 @@ static void l_close(struct Vm *vm, Port *p) {
 static bool l_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return true; }
 
 const PortDriver net_tcp_listen_driver = {
-    PORT_NAME_TCP_LISTEN, TYPE_NET_LISTEN, TYPE_NET_ACCEPTED, l_open, NULL, l_close, l_can_event, NULL, NULL, NULL
+    .name = PORT_NAME_TCP_LISTEN, .cfg_type = TYPE_NET_LISTEN, .event_type = TYPE_NET_ACCEPTED,
+    .open = l_open, .close = l_close, .can_event = l_can_event
 };
 
 /* The handshake completed: opens a paused "tcp" port for the listener's

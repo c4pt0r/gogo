@@ -1,5 +1,5 @@
-/* Audio on the ES8311 codec over I2S (spec audio §3): the InputHw mic_* and
- * spk_* hooks for runtime/input/audio.c, on both boards (pins and amplifier in
+/* Audio on the ES8311 codec over I2S (spec audio §3): the MicHal and SpkHal
+ * hooks for runtime/input/audio.c, on both boards (pins and amplifier in
  * board.h). Built with CONFIG_GOGO_AUDIO only. Every hook runs on the
  * scheduler thread; only the I2S DMA callbacks run in an ISR.
  *
@@ -254,7 +254,8 @@ static void mic_stop(void) {
     if (es) es_seq(off, sizeof off);
 }
 
-int audio_esp_mic_open(uint32_t rate, uint8_t gain_db) {
+int audio_esp_mic_open(void *ctx, uint32_t rate, uint8_t gain_db) {
+    (void)ctx;
     if (ch) return -1;
     const uint8_t adc[] = {
         0x0D, 0x01,                     /* analog power up */
@@ -283,7 +284,8 @@ fail:
     return -1;
 }
 
-int audio_esp_mic_read(uint8_t *buf, uint32_t cap, uint32_t *lost) {
+int audio_esp_mic_read(void *ctx, uint8_t *buf, uint32_t cap, uint32_t *lost) {
+    (void)ctx;
     if (!ch) return -1;
     uint32_t l = rx_lost;               /* one aligned word, written by the ISR only */
     *lost = l - rx_lost_seen;
@@ -310,7 +312,7 @@ int audio_esp_mic_read(uint8_t *buf, uint32_t cap, uint32_t *lost) {
     return (int)k;
 }
 
-void audio_esp_mic_close(void) { mic_stop(); }
+void audio_esp_mic_close(void *ctx) { (void)ctx; mic_stop(); }
 
 /* ---- spk ---- */
 
@@ -360,7 +362,8 @@ static void spk_stop(void) {
     if (es) es_seq(off, sizeof off);
 }
 
-int audio_esp_spk_open(uint32_t rate, uint8_t volume) {
+int audio_esp_spk_open(void *ctx, uint32_t rate, uint8_t volume) {
+    (void)ctx;
     if (ch) return -1;
 #if HAS_PM1
     if (pm1_spk_amp_blocked()) return -1;   /* the IR receiver is open */
@@ -393,7 +396,8 @@ fail:
     return -1;
 }
 
-int audio_esp_spk_write(const uint8_t *data, uint32_t len) {
+int audio_esp_spk_write(void *ctx, const uint8_t *data, uint32_t len) {
+    (void)ctx;
     if (!ch) return -1;
     uint32_t h = head, room = SPK_RING - (h - tail);
     __sync_synchronize();               /* tail before reusing the space it gave back */
@@ -404,6 +408,6 @@ int audio_esp_spk_write(const uint8_t *data, uint32_t len) {
     return (int)n;
 }
 
-uint32_t audio_esp_spk_queued(void) { return head - played; }
+uint32_t audio_esp_spk_queued(void *ctx) { (void)ctx; return head - played; }
 
-void audio_esp_spk_close(void) { spk_stop(); }
+void audio_esp_spk_close(void *ctx) { (void)ctx; spk_stop(); }

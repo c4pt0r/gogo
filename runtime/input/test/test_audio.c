@@ -1,4 +1,4 @@
-/* The mic and spk ports against a fake InputHw on a real VM: Config
+/* The mic and spk ports against the fake devices (fakehw.c) on a real VM: Config
  * validation and clamping
  * (Rate, FrameMs, Gain, Volume), frame sizing and the charged frame
  * buffer, frames in order, a 300 ms poll stall absorbed by the hardware

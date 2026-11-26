@@ -12,6 +12,9 @@
 #ifndef GOGO_BOARD_H
 #define GOGO_BOARD_H
 
+/* Bit n of a 64-bit pin mask (BOARD_RESERVED_MASK). */
+#define BOARD_PIN(n) (1ull << (n))
+
 #if defined(GOGO_BOARD_CARDPUTER)
 
 /* M5Stack Cardputer ADV (M5Stamp S3A: ESP32-S3FN8, 8 MB flash, no PSRAM).
@@ -62,7 +65,10 @@
  * (26-32), the LCD (33-38), the SD card (12, 14, 39, 40), the I2C bus
  * (8, 9), the keyboard INT (11), the battery ADC (10), the IR LED (44) and
  * the codec's I2S (41, 42, 43, 46). */
-#define BOARD_RESERVED_PINS {8, 9, 10, 11, 12, 14, 19, 20, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46}
+#define BOARD_RESERVED_MASK (BOARD_PIN(8) | BOARD_PIN(9) | BOARD_PIN(10) | BOARD_PIN(11) | BOARD_PIN(12) | BOARD_PIN(14) | BOARD_PIN(19) | \
+    BOARD_PIN(20) | BOARD_PIN(26) | BOARD_PIN(27) | BOARD_PIN(28) | BOARD_PIN(29) | BOARD_PIN(30) | BOARD_PIN(31) | BOARD_PIN(32) | BOARD_PIN(33) | \
+    BOARD_PIN(34) | BOARD_PIN(35) | BOARD_PIN(36) | BOARD_PIN(37) | BOARD_PIN(38) | BOARD_PIN(39) | BOARD_PIN(40) | BOARD_PIN(41) | BOARD_PIN(42) | \
+    BOARD_PIN(43) | BOARD_PIN(44) | BOARD_PIN(46))
 
 #elif defined(GOGO_BOARD_STICKS3)
 
@@ -110,7 +116,10 @@
 /* Refused by the gpio port: USB D-/D+ (19, 20), the in-package flash and
  * PSRAM (26-37, see gpio_esp.c), the LCD (21, 38-41, 45), the M5PM1 I2C
  * bus (47, 48), IR (42, 46) and the codec's I2S (14-18). */
-#define BOARD_RESERVED_PINS {14, 15, 16, 17, 18, 19, 20, 21, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 47, 48}
+#define BOARD_RESERVED_MASK (BOARD_PIN(14) | BOARD_PIN(15) | BOARD_PIN(16) | BOARD_PIN(17) | BOARD_PIN(18) | BOARD_PIN(19) | BOARD_PIN(20) | \
+    BOARD_PIN(21) | BOARD_PIN(26) | BOARD_PIN(27) | BOARD_PIN(28) | BOARD_PIN(29) | BOARD_PIN(30) | BOARD_PIN(31) | BOARD_PIN(32) | BOARD_PIN(33) | \
+    BOARD_PIN(34) | BOARD_PIN(35) | BOARD_PIN(36) | BOARD_PIN(37) | BOARD_PIN(38) | BOARD_PIN(39) | BOARD_PIN(40) | BOARD_PIN(41) | BOARD_PIN(42) | \
+    BOARD_PIN(45) | BOARD_PIN(46) | BOARD_PIN(47) | BOARD_PIN(48))
 
 #else
 #error "define GOGO_BOARD_STICKS3 or GOGO_BOARD_CARDPUTER (CMake GOGO_BOARD)"

@@ -378,7 +378,10 @@ btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: 
   keyboard, ...) fail to open.
 - A driver is a table of C functions (open, command, close, and optional
   hooks such as `command_term` for structured commands, `handoff`); new
-  peripherals need no change to the VM core. The port table has a fixed
+  peripherals need no change to the VM core. A generic driver (`gpio`,
+  the input ports) is one runtime implementation; a board lists an
+  instance of it over its hardware layer (`PortDriver.hw`, §5.11.1).
+  The port table has a fixed
   size (`GOGO_MAX_PORTS`, 16 by default).
 - Interrupt and input events go through a lock-free single-producer ring
   (`GOGO_EVQ_CAP`): an ISR only writes the ring, without locks or
@@ -393,8 +396,9 @@ btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: 
   is a terminal mode that maps keys to pins; Ctrl-C and SIGTERM restore
   the terminal first; Ctrl-D ends input. Outputs are printed.
 - ESP32-S3: `gpio` uses GPIO interrupts (StickS3: KEY1 = G11, KEY2 =
-  G12). On a single-edge pin, the ISR drops an edge in the same direction
-  that arrives within `DebounceMs` after an unreported opposite change
+  G12). On a single-edge pin, the driver (`gpio_edge`, `runtime/gpio/`,
+  the same on every board) drops an edge in the same direction that
+  arrives within `DebounceMs` after an unreported opposite change
   (release bounce).
 
 Not yet: `uart`, `i2c` and `spi`. The board's screen is a console that
@@ -531,8 +535,9 @@ One file API over `/flash` (on-chip flash, LittleFS) and `/sd` (SD card,
 FatFs).
 
 - **Implementation.** `runtime/vfs/` (plain C: path rules, the open-file
-  table, the backend interface `VfsBackend`) plus backends: LittleFS and
-  FatFs on the ESP32-S3; a host directory on Unix (`gogo run --fs-root
+  table, the backend interface `VfsBackend`) plus backends: LittleFS
+  (`runtime/vfs/lfs/`, over a board's `BlockDev`) and FatFs
+  (`runtime/vfs/fat/`, over a `DiskHal`) on the ESP32-S3; a host directory on Unix (`gogo run --fs-root
   <dir>`; without it every path is `NotMounted`). `gogo/fs` is a stub
   package: the compiler turns its calls into `B_FS` (builtin 49, first
   argument the operation number); `File.Close` is a port close.
@@ -598,7 +603,7 @@ FatFs).
   `/flash` and `/sd` (SPI at 20 MHz, falling back to 400 kHz). The build
   picks the board with `GOGO_BOARD=sticks3|cardputer`. The fixed state
   (the vfs table plus LittleFS and FatFs static state) is outside the VM
-  core: 1060 B on the StickS3, 2356 B on the Cardputer (budget 3072 B,
+  core: 1112 B on the StickS3, 2424 B on the Cardputer (budget 3072 B,
   asserted at compile time); details in
   [platform/esp32s3/README.md](../platform/esp32s3/README.md).
 
@@ -614,14 +619,14 @@ FatFs).
   linear from 3300 to 4100 mV. There is no power-button event.
 - **Platform hooks.** `runtime/input/` is chip-independent C (key codes
   to characters, modifiers, auto-repeat, battery sampling and backoff).
-  The platform provides one `InputHw` (`runtime/input/input.h`): the key
-  table, `kbd_open/close/pending/read`, `power_read`, and the optional
-  `power_pending`, `live`, `power_enable` and `power_event_driven`.
-  `platform_input()` has a weak default (no hardware); a platform's strong
-  definition must be in an object file that is always linked (on the ESP,
-  `platform_esp.c`). `kbd_pending` only reads; the ISR only sets a flag
-  and calls `platform_notify()`; every I2C and ADC access happens on the
-  scheduler thread (or before the VM starts).
+  The platform describes each device with a table
+  (`runtime/input/input.h`, §5.11.1): `KbdHal` (the key table,
+  `open/close/pending/read`, optional `live`) and `PowerHal` (`read`,
+  and the optional `pending`, `enable`, `live` and `event_driven`), and
+  lists `INPUT_KBD_DRIVER(&hal)` and `INPUT_POWER_DRIVER(&hal)` among its
+  ports. `KbdHal.pending` only reads; the ISR only sets a flag and calls
+  `platform_notify()`; every I2C and ADC access happens on the scheduler
+  thread (or before the VM starts).
 - **Event source.** `input_install()` registers a `PortSource`; each
   round the scheduler calls `pending` then `drain`. Keys go straight to
   the port's owner, not through the event ring. Power is polled every
@@ -855,11 +860,11 @@ font.
   DutyPct}` takes `Out`s; `ir.RX{GapUs}` delivers one `Chunk` per frame,
   and a frame that is too long is cut and counted in `Dropped`.
   `gogo/irproto` encodes and decodes NEC.
-- **Platform hooks.** `InputHw` adds `imu_open/close/read_fifo/
-  read_gestures`, `ir_tx_start/tx_busy/rx_open/rx_read/rx_close`, and the
-  optional `ir_tx_open/ir_tx_close` (called when a transmit port opens or
-  closes; the ESP uses them to reference-count the StickS3's EXT_5V; NULL
-  on Unix). Signatures and contracts are in `runtime/input/input.h`.
+- **Platform hooks.** `ImuHal` (`open/close/read_fifo/read_gestures`),
+  `IrTxHal` (`start/busy` and the optional `open/close`, called when a
+  transmit port opens or closes; the ESP uses them to reference-count the
+  StickS3's EXT_5V; NULL on Unix) and `IrRxHal` (`open/read/close`).
+  Signatures and contracts are in `runtime/input/input.h`.
   Unix simulates them from the stdin script (`imu sample`, `imu
   gesture`, `ir rx`); `ir_tx` prints to stderr.
 - **ESP32-S3.** Both boards have a BMI270 on the shared I2C bus (probed at
@@ -922,13 +927,13 @@ font.
   stall needs heap + 4040 words, more than the default 4096-word limit on
   a board, so `gogo/sound`'s recorder starts with `actor.Options{MaxMemory}`
   and opens `mic` itself.
-- **Platform hooks.** `InputHw` adds `mic_open/mic_read/mic_close` and
-  `spk_open/spk_write/spk_queued/spk_close` (contracts in
-  `runtime/input/input.h`), all optional (`mic_open`/`mic_read` or
-  `spk_open`/`spk_write` NULL means no such hardware) and all called on
-  the scheduler thread. `mic_read` may return a single DMA buffer, fewer
-  bytes than asked, and reports bytes lost to a full buffer in `*lost`;
-  `spk_write` does not block, and `spk_queued` returns the bytes written
+- **Platform hooks.** `MicHal` (`open/read/close`) and `SpkHal`
+  (`open/write/queued/close`) (contracts in `runtime/input/input.h`;
+  `close` and `queued` optional; a board without the device lists no
+  driver for it), all called on the scheduler thread. `MicHal.read` may
+  return a single DMA buffer, fewer bytes than asked, and reports bytes
+  lost to a full buffer in `*lost`; `SpkHal.write` does not block, and
+  `queued` returns the bytes written
   but not yet played, from which the common code knows when an `Out` has
   finished. The common driver is `runtime/input/audio.c`, and all data
   goes through `runtime/stream/`. Unix simulates the ports from the stdin
@@ -1770,10 +1775,11 @@ only through two tables of function pointers that the caller hands it.
   `gogo_new` copies an embedder's table into the `gogo_vm` (the first
   `size` bytes, the rest `NULL`), so the embedder's copy may go at once.
 - **The board table** (`VmBoard`, internal, `runtime/vm/host.h`): board-only
-  hardware: the port drivers, the input chips (`InputHw`), the network
-  interface (`NetIf`), the TLS port's hooks (`TlsHw`: allocator, clock,
-  trust anchors, random) and the mount prefixes it serves (`/flash`,
-  `/sd`). The port and mount lists are also what the board provides: an
+  hardware: the port drivers (each generic driver an instance over the
+  board's hardware layer, §5.11.1), the network interface (`NetIf`), the
+  TLS port's hooks (`TlsHw`: allocator, clock, trust anchors, random) and
+  the file systems it serves (`VmMount`: `/flash`, `/sd`, each with its
+  backend). The port and mount lists are also what the board provides: an
   image's requirements are checked against them, so a board builds both
   with `#if` from what its build has. An embedded VM has no board
   hardware: its drivers are the host ports registered before
@@ -1794,7 +1800,8 @@ only through two tables of function pointers that the caller hands it.
 - **Start-up order.** `vm_init` (tables, limits), `vm_boot` (the
   image becomes module 0, requirements checked), then the board attaches its
   subsystems to the instance (`net_install`, `vfs_init`,
-  `input_install`), then `vm_run`. Wi-Fi frames or link events that
+  `input_install`), then `vm_run`. Both boards go through one function
+  for this, `gogo_board_main` (§5.11.1). Wi-Fi frames or link events that
   arrive before `net_install` are dropped; the first link-up and DHCP
   after boot work unchanged (checked on the StickS3 in E12).
 - **Run loop.** `vm_run` is a loop over `vm_step` (scheduler passes until
@@ -1845,6 +1852,130 @@ only through two tables of function pointers that the caller hands it.
   internal RAM +256 to +320 B, of which 196 B is the `Vm *` in each of
   the 49 GPIO pin slots; console output and the board smoke programs are
   unchanged.
+
+### 5.11.1 The platform layer: driver instances and hardware layers
+
+A board does not copy runtime code: every generic driver lives once in
+`runtime/`, and the board describes its hardware to it in small tables
+of functions, each with a `ctx` its hooks get first (so one set of hooks
+can serve two devices, and the table can be a board's `static const`).
+
+- **Tables are designated.** Every driver table (`PortDriver`, the
+  `GPIO_DRIVER` / `INPUT_*_DRIVER` / `SCREEN_PORT_DRIVER` macros), hardware
+  layer and `VmBoard` is written with designated initializers, and a
+  table only grows at its end, NULL meaning absent; so a new field
+  (`hw`) breaks no table, and a driver left without a hardware layer
+  refuses to open.
+- **Driver instances.** `PortDriver.hw` (`runtime/vm/port.h`) is the
+  instance's hardware layer; the VM never reads it. A board lists
+  `GPIO_DRIVER(&my_gpio)`, `INPUT_KBD_DRIVER(&my_kbd)`, ... among its
+  ports, and the driver finds its table at `p->drv->hw` in every
+  callback, and through the open port in the event source's polls. An
+  absent device is a driver the board does not list (`port.Open` fails,
+  and an image that requires it is refused).
+- **GPIO** (`runtime/gpio/gpio.c`, `GpioHal`): `npins`, a bitmap of
+  reserved pins, the per-pin slots (`GpioPin`, board storage: `runtime/`
+  keeps no state of its own) and `config` / `write` / `read` / `release`
+  (+ optional `live`). Validation, the reserved pins, the edge match and
+  the single-edge bounce filter are in the runtime once; the board's
+  interrupt handler (or the unix stdin reader) reads the level and calls
+  `gpio_edge(hal, pin, level, now_ms)`, which pushes to the event ring
+  of the VM that opened the pin and returns whether to wake it.
+  `config` may lower the debounce (unix script mode: 0) and refuses a
+  pin the chip cannot use in that mode. `raw_edges` turns the bounce
+  filter off for a HAL whose edges are clean and may come in the same
+  millisecond (the unix `--key` presses); the port's debounce still
+  applies. `gpio_edge` must not overlap `release` of its pin: the ESP's
+  interrupt runs on the VM's core, and a board with the interrupt on
+  another core routes it to the VM's or waits out a running handler in
+  `release` (gpio.h).
+- **Input** (`runtime/input/input.h`): `KbdHal`, `PowerHal`, `ImuHal`,
+  `IrTxHal`, `IrRxHal`, `MicHal`, `SpkHal`, one per device, each with a
+  `ctx` and, where events can stop coming, an optional `live`. The
+  drivers' logic (key mapping, auto-repeat, battery averaging, batching,
+  streams) is unchanged; `InputState` still holds one port of each kind
+  per VM.
+- **Storage** (`runtime/vfs/lfs/`, `runtime/vfs/fat/`): LittleFS over a
+  `BlockDev` (`read` / `prog` / `erase` / `sync` on blocks, its
+  geometry), with the mount policy (first-boot format, grow in place,
+  refuse a shrink or a file system larger than the device) in
+  `lfs_be_mount`; FatFs over a `DiskHal` (`attach` at two speeds,
+  `check`, sector `read` / `write`, `sectors`), with the lazy mount and
+  remount in the backend and FatFs's disk layer as `fat_be_disk_*` for
+  the board's FatFs glue. The volume state (`LfsVol`, `FatVol`) is board
+  storage. `lfs_be` checks every block number and offset against the
+  `BlockDev` before calling it and refuses a file system bigger than the
+  device in every mount mode, so a corrupt superblock cannot reach past
+  the device (raw flash, on a board without partitions); the read and
+  program sizes come from the `BlockDev`. Neither backend is in gogovm or
+  libgogo: `make test-fat` runs FatFs over a RAM disk (the vendored
+  FatFs, built for the host with the Cardputer's options) and `make
+  test-lfs` LittleFS over a RAM block device (the copy a firmware build
+  fetches; skipped before one).
+- **Mounts** (`VmMount{prefix, be, ctx}` in `VmBoard.mounts`):
+  `vfs_init` mounts every entry with a backend; an entry without one
+  still satisfies a requirement (unix without `--fs-root`, the embed
+  layer's `/flash`, which `gogo_new` mounts itself). A volume that failed
+  to come up stays listed and answers `NotMounted`.
+- **Configuration** (`runtime/configsvc/`): the `\x02gogo-config`
+  protocol (`gogo config`, `gogo device`, `gogo push`) once, over a
+  board's `KvHal` (`get` / `set` / `rm` / `each`), its console output
+  (whole lines), its `/flash` backend for push, and optional board
+  requests (`scan`, `stats`, `format-flash`). The board's console reader
+  feeds it bytes; `configsvc_vm_get` is `sys.Config`'s lookup (no
+  `wifi.` keys). The ESP's store is NVS (`config_esp.c`). The unix VM has
+  no console protocol: `gogo config` edits its file directly.
+- **One boot path** (`runtime/board/board_main.c`):
+  `gogo_board_main(board, host, run, words, nwords, &run_rc)` does
+  `vm_init`, `vm_boot`, `net_install`, `vfs_init`, `input_install` in
+  that order and runs the VM, for the ESP firmware and the unix VM alike.
+  The board's state (the `Vm`, `VfsState`, `InputState`, `NetState`) is
+  in the `BoardRun` it fills, with hooks for its own steps (unix: the
+  wall clock after `vm_init`, its own run loop for exit statuses; ESP:
+  the Wi-Fi heap report before the run); `net_install` is a pointer
+  there, so a build without the network links none of it. The platform
+  reports a boot error its own way (unix exit statuses, the ESP console
+  line and idle).
+- **Not libgogo.** The boards do not boot through the embedding API.
+  `gogo.h` is the stable surface for hosts that bring only a `gogo_host`
+  and host ports; a board needs what that API hides on purpose (the
+  `VmBoard` with its driver instances and mounts, the net stack's
+  `NetState`, the input source, a `Vm` in static storage) and would have
+  to widen it to reach them. libgogo stays dogfooded by its own tests and
+  `examples/embed-c`; `gogo_board_main` is the boards' shared path
+  instead.
+- **Atomics.** The VM core uses only a fence (`vm_barrier`); keep
+  compare-and-swap out of it. The embed layer's post inbox and
+  `embed_set_state` use `__atomic` compare-and-swap, which a Cortex-M0+
+  (RP2040: no LDREX/STREX) does not have across its two cores; libgogo
+  on such a chip needs a lock hook (a hardware spinlock) in place of
+  those operations. Not implemented.
+
+**What a new board writes** (an RP2040 board, say; about 600 lines and
+no runtime copies):
+
+1. A `gogo_host`: output, memory, `now_ms` (`time_us_64() / 1000`),
+   `wait` / `wake` (WFE / SEV: the latched wake), `random`
+   (`get_rand_32`), `config_get` (`configsvc_vm_get` over its `KvHal`).
+2. A `GpioHal`: `npins` 30, the reserved bitmap (flash QSPI, the
+   board's own pins), `GpioPin pins[30]` in static storage, `config` /
+   `write` / `read` / `release` over the SDK, and an edge interrupt that
+   calls `gpio_edge` and wakes the VM; listed as `GPIO_DRIVER(&hal)`.
+3. Storage: a `BlockDev` over the flash region after the image (erase
+   and program run from RAM with interrupts off, the other core parked),
+   a static `LfsVol`, and at boot `lfs_be_mount`; its `VmMount{"/flash",
+   &lfs_be_backend, &vol}` in the board's mounts. With an SD slot: a
+   `DiskHal` over the SPI card, a static `FatVol`, FatFs's `disk_*`
+   calling `fat_be_disk_*`, and `VmMount{"/sd", &fat_be_backend, &vol}`.
+4. Input devices it has: one `*Hal` each and its `INPUT_*_DRIVER`.
+5. A `NetIf` for the CYW43 on a Pico W (net/netif.h), optionally `TlsHw`.
+6. Configuration: a `KvHal` over a flash sector, a static `ConfigSvc`,
+   and a console reader that feeds it (`configsvc_feed`).
+7. Its `VmBoard` (designated initializers), a `main` that maps the image
+   and calls `gogo_board_main` with a static `Vm` and its states, and
+   the build lines for `runtime/vm`, `runtime/board`,
+   `runtime/gpio`, `runtime/vfs` (+ `lfs/`), `runtime/input`,
+   `runtime/stream`, `runtime/configsvc` and `runtime/net`.
 
 ### 5.12 Versioning and stability
 

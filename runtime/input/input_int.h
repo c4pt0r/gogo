@@ -108,7 +108,13 @@ struct InputState {
 
 /* Ports open only after input_install found a slot (vm->input set, not failed). */
 bool input_failed(const Vm *vm);
-const InputHw *input_hw(const Vm *vm);       /* the board's input chips; never NULL (fields NULL when absent) */
+/* A device's live hook (NULL = always live). */
+static inline bool hal_live(bool (*live)(void *ctx), void *ctx) { return !live || live(ctx); }
+/* The HAL table of the driver instance p was opened with (PortDriver.hw). */
+#define PORT_HAL(type, p) ((const type *)(p)->drv->hw)
+/* Each *_next_deadline gives nothing while its device's hardware is dead
+ * (live false: no repeat, sample or receive poll is coming); an IR frame
+ * being sent and the speaker's queue still finish (their Dones). */
 bool kbd_work(const Vm *vm, uint64_t now);                 /* a raw event waits, or a repeat is due */
 bool kbd_next_deadline(const Vm *vm, uint64_t now, uint64_t *d);   /* the next auto-repeat or error retry */
 void kbd_drain(Vm *vm, uint64_t now);
@@ -120,10 +126,10 @@ bool imu_work(const Vm *vm, uint64_t now);                  /* a poll is due */
 bool imu_next_deadline(const Vm *vm, uint64_t now, uint64_t *d);        /* the next poll */
 void imu_drain(Vm *vm, uint64_t now);
 bool ir_work(const Vm *vm, uint64_t now);                   /* a Done, a start or a receive poll is due */
-bool ir_next_deadline(const Vm *vm, uint64_t now, bool live, uint64_t *d);   /* the next of those (receive polls only if live) */
+bool ir_next_deadline(const Vm *vm, uint64_t now, uint64_t *d);   /* the next of those (receive polls only if live) */
 void ir_drain(Vm *vm, uint64_t now);
 bool audio_work(const Vm *vm, uint64_t now);                /* a mic or spk poll is due */
-bool audio_next_deadline(const Vm *vm, uint64_t now, bool live, uint64_t *d);   /* the next poll (mic only while data may come) */
+bool audio_next_deadline(const Vm *vm, uint64_t now, uint64_t *d);   /* the next poll (mic only while data may come) */
 void audio_drain(Vm *vm, uint64_t now);
 static inline void dropped_inc(Vm *vm) { vm->input->dropped++; }   /* an event dropped, for input_dropped() */
 

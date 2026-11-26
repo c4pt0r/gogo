@@ -104,69 +104,66 @@ void lcd_backlight(int on);
  * RGB565 pixels, DMA-capable memory). Blocks until sent. 0 on success. */
 int lcd_write_rows(int y, int h, const uint16_t *px);
 
-struct VfsState;
+struct VmMount;
 /* /flash (fs_lfs.c): mounts LittleFS on the `gogofs` partition (size from
- * fs.flash.size, grow / format / first-boot format) and registers it with
- * vfs state vs. Needs config_esp_init first. 0 on success; failures are said on the
- * console and leave /flash unmounted (NotMounted). fs_lfs_state_bytes is
- * the storage fixed state: vfs tables + LittleFS state and buffers. */
-int fs_lfs_mount(struct VfsState *vs);
+ * fs.flash.size, grow / format / first-boot format). esp_flash_mount is
+ * the board's entry for it (vfs_init mounts it). Needs config_esp_init
+ * first. 0 on success; failures are said on the console and leave /flash
+ * unmounted (every call NotMounted). fs_lfs_state_bytes is the storage
+ * fixed state: vfs tables + LittleFS state and buffers. */
+extern const struct VmMount esp_flash_mount;
+int fs_lfs_mount(void);
 uint32_t fs_lfs_state_bytes(void);
 /* `gogo device format-flash`: the next mount (after esp_restart, and
  * only then) formats /flash. */
 void fs_lfs_request_format(void);
-/* `gogo push`, from the console task (fs_lfs.c locks against the VM):
- * begin opens a temporary file beside rel (a path inside /flash, without
- * the leading "/flash/"), write appends to it (*total: bytes so far), end
- * checks the stored file's length and CRC-32 against len and crc and
- * renames it over rel, abort drops it. GOGO_E_* results; any failure
- * drops the temporary file. */
-int fs_lfs_push_begin(const char *rel);
-int fs_lfs_push_write(const uint8_t *buf, uint32_t n, uint32_t *total);
-int fs_lfs_push_end(const char *rel, uint32_t len, uint32_t crc);
-void fs_lfs_push_abort(void);
 /* Bound on fs_lfs.c's own state (asserted there), so fs_fat.c can check
  * the whole storage fixed state (vfs + LittleFS + FatFs <= 3072) at
  * compile time. */
-#define FS_LFS_STATE_MAX 384u
+#define FS_LFS_STATE_MAX 416u
 
-/* /sd (fs_fat.c, boards with HAS_SD): registers /sd with vfs; the card is
- * mounted lazily by the first call (NotMounted without a card). 0 on
- * success. fs_fat_state_bytes is its static state (FATFS, card, bounce
- * sector). */
-int fs_fat_init(struct VfsState *vs);
+/* /sd (fs_fat.c, boards with HAS_SD): esp_sd_mount is the board's entry
+ * for it; fs_fat_init sets the volume up, and the card is mounted lazily
+ * by the first call (NotMounted without a card). fs_fat_state_bytes is its
+ * static state (FATFS, card, bounce sector). */
+extern const struct VmMount esp_sd_mount;
+void fs_fat_init(void);
 uint32_t fs_fat_state_bytes(void);
 
 struct PortDriver;
 extern const struct PortDriver gpio_esp_driver;
+/* The input driver instances (input_esp.c), each defined only when the
+ * build has the device. */
+extern const struct PortDriver esp_kbd_driver, esp_power_driver, esp_imu_driver, esp_ir_tx_driver,
+    esp_ir_rx_driver, esp_mic_driver, esp_speaker_driver;
 
 /* BMI270 motion sensor (imu_esp.c, built with CONFIG_GOGO_IMU on a board
- * with HAS_IMU): the InputHw imu_* hooks, contracts in runtime/input/input.h. */
-int imu_esp_open(uint16_t rate_hz, uint8_t gestures);
-void imu_esp_close(void);
-int imu_esp_read_fifo(uint8_t *buf, uint32_t cap);
-int imu_esp_read_gestures(ImuGestures *g);
+ * with HAS_IMU): the ImuHal hooks, contracts in runtime/input/input.h. */
+int imu_esp_open(void *ctx, uint16_t rate_hz, uint8_t gestures);
+void imu_esp_close(void *ctx);
+int imu_esp_read_fifo(void *ctx, uint8_t *buf, uint32_t cap);
+int imu_esp_read_gestures(void *ctx, ImuGestures *g);
 
-/* Infrared on the RMT (ir_esp.c, built with CONFIG_GOGO_IR): the InputHw
- * ir_* hooks, contracts in runtime/input/input.h. The receiver hooks exist only on
+/* Infrared on the RMT (ir_esp.c, built with CONFIG_GOGO_IR): the IrTxHal
+ * and IrRxHal hooks, contracts in runtime/input/input.h. The receiver hooks exist only on
  * a board with HAS_IR_RX. */
-int ir_esp_tx_open(uint32_t carrier_hz, uint8_t duty_pct);
-void ir_esp_tx_close(void);
-int ir_esp_tx_start(const uint8_t *timings, uint32_t n, uint32_t carrier_hz, uint8_t duty_pct);
-bool ir_esp_tx_busy(void);
-int ir_esp_rx_open(uint32_t gap_us);
-int ir_esp_rx_read(uint16_t *buf, uint32_t cap, uint32_t *start_ms);
-void ir_esp_rx_close(void);
+int ir_esp_tx_open(void *ctx, uint32_t carrier_hz, uint8_t duty_pct);
+void ir_esp_tx_close(void *ctx);
+int ir_esp_tx_start(void *ctx, const uint8_t *timings, uint32_t n, uint32_t carrier_hz, uint8_t duty_pct);
+bool ir_esp_tx_busy(void *ctx);
+int ir_esp_rx_open(void *ctx, uint32_t gap_us);
+int ir_esp_rx_read(void *ctx, uint16_t *buf, uint32_t cap, uint32_t *start_ms);
+void ir_esp_rx_close(void *ctx);
 
 /* Audio on the ES8311 codec (audio_esp.c, built with CONFIG_GOGO_AUDIO):
- * the InputHw mic_* and spk_* hooks, contracts in runtime/input/input.h. */
-int audio_esp_mic_open(uint32_t rate, uint8_t gain_db);
-int audio_esp_mic_read(uint8_t *buf, uint32_t cap, uint32_t *lost);
-void audio_esp_mic_close(void);
-int audio_esp_spk_open(uint32_t rate, uint8_t volume);
-int audio_esp_spk_write(const uint8_t *data, uint32_t len);
-uint32_t audio_esp_spk_queued(void);
-void audio_esp_spk_close(void);
+ * the MicHal and SpkHal hooks, contracts in runtime/input/input.h. */
+int audio_esp_mic_open(void *ctx, uint32_t rate, uint8_t gain_db);
+int audio_esp_mic_read(void *ctx, uint8_t *buf, uint32_t cap, uint32_t *lost);
+void audio_esp_mic_close(void *ctx);
+int audio_esp_spk_open(void *ctx, uint32_t rate, uint8_t volume);
+int audio_esp_spk_write(void *ctx, const uint8_t *data, uint32_t len);
+uint32_t audio_esp_spk_queued(void *ctx);
+void audio_esp_spk_close(void *ctx);
 
 /* Config store (config_esp.c): NVS namespace "gogo". config_esp_init
  * opens it (0 on success); config_esp_get reads key into buf (at most cap

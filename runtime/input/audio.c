@@ -1,10 +1,10 @@
 /* The mic and speaker ports (spec audio §1, §3): chip-independent audio on top
- * of the board's hooks (InputHw mic_* / spk_*), on the scheduler thread.
+ * of the board's MicHal and SpkHal, on the scheduler thread.
  * PCM is 16-bit little-endian mono at RateHz 8000 or 16000.
  *
  *  - mic: audio.Mic{RateHz, FrameMs, GainDb}. FrameMs 0 is 100, else
  *    clamped to 20..500; GainDb is clamped to 0..24 and rounded down to a 6 dB
- *    step. mic_read is polled every min(FrameMs, 50) ms, read until it
+ *    step. MicHal.read is polled every min(FrameMs, 50) ms, read until it
  *    returns 0 (at most MIC_READS_PER_POLL reads), and what it gives is
  *    gathered into frames of RateHz * FrameMs / 1000 * 2 bytes; each full
  *    frame is one port.Chunk (stream_deliver_chunk). A late poll (the
@@ -33,17 +33,17 @@
  *  - speaker: audio.Speaker{RateHz, VolumePct}, VolumePct clamped to 0..100. Every
  *    command is a port.Out of PCM (stream_out_accept: even, non-empty
  *    length; a bad one, or a third in flight, is Done{-1}). The Outs in
- *    flight are written with spk_write in order, as much as the hardware
+ *    flight are written with SpkHal.write in order, as much as the hardware
  *    takes per call, the queued one right after the head (no gap between
  *    them); a running total of bytes written gives each Out its end mark,
- *    and an Out has played once written - spk_queued() reaches it: then
+ *    and an Out has played once written - queued() reaches it: then
  *    stream_out_done sends (or owes) Done{From, Seq}. A write error fails that
  *    Out (Done{-1}, in order). Polled every SPK_POLL_MS while an Out is in
  *    flight or a Done is owed (stream_out_flush on every poll), so a
  *    program that keeps two Outs in flight and sends the next on each Done
  *    plays without gaps given a hardware buffer above SPK_POLL_MS. Closing
  *    cuts at once: it forgets what is in flight (stream_out_close, no Done)
- *    and spk_close stops the hardware and switches the amplifier off.
+ *    and SpkHal.close stops the hardware and switches the amplifier off.
  *  - Half duplex: one mic or one speaker port at a time, never both; a second
  *    open is refused before any hook is called, so the open one keeps
  *    running untouched.
@@ -68,12 +68,12 @@ static bool rate_ok(int32_t r) { return r == RATE_8K || r == RATE_16K; }
 
 /* ---- mic ---- */
 
-static int mic_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+int input_mic_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
-    const InputHw *hw = input_hw(vm);
-    if (input_failed(vm)) return -1;
+    const MicHal *hw = PORT_HAL(MicHal, p);
+    if (input_failed(vm) || !hw) return -1;
     Audio *au = &vm->input->au;
-    if (au->mic || au->spk || !hw->mic_open || !hw->mic_read || n < 3) return -1;
+    if (au->mic || au->spk || !hw->open || !hw->read || n < 3) return -1;
     int32_t rate = cfg[0], ms = cfg[1], gain = cfg[2];
     if (!rate_ok(rate)) return -1;
     ms = ms == 0 ? DEF_FRAME_MS : ms < MIN_FRAME_MS ? MIN_FRAME_MS : ms > MAX_FRAME_MS ? MAX_FRAME_MS : ms;
@@ -81,7 +81,7 @@ static int mic_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, 
     uint32_t cap = (uint32_t)rate * (uint32_t)ms / 1000u * 2u;   /* at most 16000 */
     uint8_t *buf = va_alloc(vm, cap);
     if (!buf) return -1;
-    if (hw->mic_open((uint32_t)rate, (uint8_t)gain) != 0) {
+    if (hw->open(hw->ctx, (uint32_t)rate, (uint8_t)gain) != 0) {
         va_free(vm, buf, cap);
         return -1;
     }
@@ -102,31 +102,28 @@ static int mic_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, 
     return 0;
 }
 
-static void mic_close(struct Vm *vm, Port *p) {
+void input_mic_close(struct Vm *vm, Port *p) {
     Audio *au = vm->input ? &vm->input->au : NULL;
     if (!au || au->mic != p) return;                   /* a refused open's cleanup */
-    const InputHw *hw = input_hw(vm);
-    if (hw->mic_close) hw->mic_close();
+    const MicHal *hw = PORT_HAL(MicHal, p);
+    if (hw->close) hw->close(hw->ctx);
     va_free(vm, au->buf, au->cap);
     au->buf = NULL;
     au->mic = NULL;
 }
 
-static void mic_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm; (void)p; (void)type; (void)f; (void)n; }
-
-static bool hw_live(const Vm *vm) {
-    const InputHw *hw = input_hw(vm);
-    return !hw->live || hw->live();
+void input_no_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) {
+    (void)vm; (void)p; (void)type; (void)f; (void)n;
 }
 
-static bool mic_can_event(const struct Vm *vm, const Port *p) {
-    (void)p;
-    return hw_live(vm) || vm->input->au.more;               /* dead hardware may still hold captured data */
+static bool mic_live(const Port *p) {
+    const MicHal *hw = PORT_HAL(MicHal, p);
+    return hal_live(hw->live, hw->ctx);
 }
 
-const PortDriver input_mic_driver = {
-    PORT_NAME_MIC, TYPE_AUDIO_MIC, TYPE_CHUNK, mic_open, mic_command, mic_close, mic_can_event, NULL, NULL, NULL
-};
+bool input_mic_can_event(const struct Vm *vm, const Port *p) {
+    return mic_live(p) || vm->input->au.more;               /* dead hardware may still hold captured data */
+}
 
 /* ---- speaker ---- */
 
@@ -137,47 +134,44 @@ static void spk_reset(Audio *au) {
     au->wi = au->bad = 0;
 }
 
-static int spk_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
+int input_spk_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)index;
-    const InputHw *hw = input_hw(vm);
-    if (input_failed(vm)) return -1;
+    const SpkHal *hw = PORT_HAL(SpkHal, p);
+    if (input_failed(vm) || !hw) return -1;
     Audio *au = &vm->input->au;
-    if (au->mic || au->spk || !hw->spk_open || !hw->spk_write || n < 2) return -1;
+    if (au->mic || au->spk || !hw->open || !hw->write || n < 2) return -1;
     int32_t rate = cfg[0], vol = cfg[1];
     if (!rate_ok(rate)) return -1;
     vol = vol < 0 ? 0 : vol > MAX_VOLUME ? MAX_VOLUME : vol;
-    if (hw->spk_open((uint32_t)rate, (uint8_t)vol) != 0) return -1;
+    if (hw->open(hw->ctx, (uint32_t)rate, (uint8_t)vol) != 0) return -1;
     memset(out_of(p), 0, sizeof(StreamOut));
     au->spk = p;
     spk_reset(au);
     return 0;
 }
 
-static void spk_close(struct Vm *vm, Port *p) {
+void input_spk_close(struct Vm *vm, Port *p) {
     Audio *au = vm->input ? &vm->input->au : NULL;
     if (!au || au->spk != p) return;                   /* a refused open's cleanup */
     stream_out_close(NULL, p, out_of(p));      /* port_close releases the held data */
     au->spk = NULL;
     spk_reset(au);
-    const InputHw *hw = input_hw(vm);
-    if (hw->spk_close) hw->spk_close();
+    const SpkHal *hw = PORT_HAL(SpkHal, p);
+    if (hw->close) hw->close(hw->ctx);
 }
 
-static void spk_command(Vm *vm, const Actor *from, Port *p, term msg) {
+void input_spk_command(Vm *vm, const Actor *from, Port *p, term msg) {
     Audio *au = &vm->input->au;
     if (au->spk != p) return;
     stream_out_accept(vm, from, p, out_of(p), msg, pcm_ok);
     au->spk_next = (uint32_t)vm_now(vm);   /* write it (or flush a Done{-1}) at once */
 }
 
-static bool spk_can_event(const struct Vm *vm, const Port *p) { (void)vm;
+bool input_spk_can_event(const struct Vm *vm, const Port *p) {
+    (void)vm;
     const StreamOut *o = (const StreamOut *)(const void *)p->state;
     return o->n || o->owed_n;                  /* Dones are coming */
 }
-
-const PortDriver input_speaker_driver = {
-    PORT_NAME_SPEAKER, TYPE_AUDIO_SPEAKER, TYPE_DONE, spk_open, NULL, spk_close, spk_can_event, NULL, spk_command, NULL
-};
 
 /* ---- scheduler side ---- */
 
@@ -191,10 +185,10 @@ bool audio_work(const Vm *vm, uint64_t now) {
     return (au->mic && reached(now, au->mic_next)) || (spk_waits(au) && reached(now, au->spk_next));
 }
 
-bool audio_next_deadline(const Vm *vm, uint64_t now, bool live, uint64_t *d) {
+bool audio_next_deadline(const Vm *vm, uint64_t now, uint64_t *d) {
     const Audio *au = &vm->input->au;
     bool any = false;
-    if (au->mic && (live || au->more)) { *d = deadline_abs(now, au->mic_next); any = true; }
+    if (au->mic && (mic_live(au->mic) || au->more)) { *d = deadline_abs(now, au->mic_next); any = true; }
     if (spk_waits(au)) {                         /* playing finishes on dead hardware too */
         uint64_t t = deadline_abs(now, au->spk_next);
         if (!any || t < *d) *d = t;
@@ -205,12 +199,12 @@ bool audio_next_deadline(const Vm *vm, uint64_t now, bool live, uint64_t *d) {
 
 static void mic_drain(Vm *vm, uint64_t now) {
     Audio *au = &vm->input->au;
-    const InputHw *hw = input_hw(vm);
+    const MicHal *hw = PORT_HAL(MicHal, au->mic);
     au->mic_next = (uint32_t)now + au->poll_ms;
     bool got = false;
     for (int k = 0; k < MIC_READS_PER_POLL; k++) {
         uint32_t at = au->fill, room = (uint32_t)(au->cap - at), lost = 0;
-        int r = hw->mic_read(au->buf + at, room, &lost);
+        int r = hw->read(hw->ctx, au->buf + at, room, &lost);
         if (lost) {                            /* a gap before this read's bytes */
             /* The partly filled frame goes with it (a Chunk never spans a
              * gap), and so does the rest of the last frame the gap reaches,
@@ -249,8 +243,8 @@ static void spk_shift(Audio *au) {
 /* Finishes the heads that failed or have played. */
 static void spk_retire(Vm *vm, Port *p, StreamOut *o) {
     Audio *au = &vm->input->au;
-    const InputHw *hw = input_hw(vm);
-    uint32_t played = au->written - (hw->spk_queued ? hw->spk_queued() : 0u);
+    const SpkHal *hw = PORT_HAL(SpkHal, p);
+    uint32_t played = au->written - (hw->queued ? hw->queued(hw->ctx) : 0u);
     while (o->n && au->wi > 0) {                /* the head is all written */
         if (au->bad & 1u) stream_out_fail(vm, p, o);
         else if ((int32_t)(played - au->end[0]) >= 0) stream_out_done(vm, p, o);
@@ -263,11 +257,11 @@ static void spk_retire(Vm *vm, Port *p, StreamOut *o) {
  * takes them. */
 static void spk_write_ahead(Vm *vm, Port *p, StreamOut *o) {
     Audio *au = &vm->input->au;
-    const InputHw *hw = input_hw(vm);
+    const SpkHal *hw = PORT_HAL(SpkHal, p);
     for (int writes = 0; au->wi < o->n && writes < SPK_WRITES_PER_POLL; writes++) {
         uint32_t len;
         const uint8_t *d = stream_out_at(vm, o, au->wi, &len);
-        int r = hw->spk_write(d + au->cur, len - au->cur);
+        int r = hw->write(hw->ctx, d + au->cur, len - au->cur);
         if (r == 0) return;                    /* its buffer is full: the next poll */
         if (r < 0 || (uint32_t)r > len - au->cur) {   /* an error (or a broken hook): not played */
             au->cur = 0;

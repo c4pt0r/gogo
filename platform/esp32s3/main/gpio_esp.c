@@ -1,21 +1,11 @@
-/* `gpio` port driver for the ESP32-S3: same semantics as the unix driver
- * (platform/unix/gpio_unix.c).
+/* The ESP32-S3's GpioHal: the `gpio` port is runtime/gpio/gpio.c over it.
  *
- * cfg {Pin, Mode, Edge, DebounceMs}: modes Input=0 InputPullUp=1
- * InputPullDown=2 Output=3; edges None=0 Rising=1 Falling=2 Both=3;
- * DebounceMs <= 0 means 20. Command TYPE_GPIO_WRITE {Value} drives an output
- * pin. Events {a = pin, b = level after the edge}.
+ * A watched input gets an any-edge GPIO interrupt; the handler reads the
+ * level and hands it to gpio_edge (timestamped with esp_host.now_ms,
+ * platform_esp_ms), then notifies the VM task when an event was pushed.
+ * The handler never locks or allocates.
  *
- * Inputs: an any-edge GPIO interrupt; the ISR reads the level, and for a
- * change that matches the configured edge pushes a PortEvent (timestamped
- * with esp_host.now_ms, platform_esp_ms) to the event ring of the VM that opened the
- * pin (PinSlot.vm, the handler argument) and notifies the VM task.
- * The ISR never locks or allocates. The VM debounces (port.c); for a
- * single-edge pin the ISR also drops an edge that follows the previous
- * level change by less than the debounce time, so the bounce of a key's
- * release (rise, fall, rise) is not taken for a new press.
- *
- * Pins the platform uses are refused (board.h BOARD_RESERVED_PINS). On the
+ * Pins the platform uses are refused (board.h BOARD_RESERVED_MASK). On the
  * StickS3: USB D-/D+ (19, 20), the in-package flash and PSRAM, the LCD
  * (21, 38-41, 45) and the M5PM1 I2C bus (47, 48); on the Cardputer ADV:
  * USB, the flash (26-32), the LCD (33-38) and the SD card (12, 14, 39, 40).
@@ -24,131 +14,78 @@
  * "Embedded PSRAM 8MB (AP_3v3)"). The ESP32-S3-PICO-1 datasheet's block
  * diagram wires the flash and PSRAM to SPICS1/SPIHD/SPIWP/SPICS0/SPICLK/
  * SPIQ/SPID (GPIO26-32) and the octal PSRAM's SPIIO4-7/SPIDQS to GPIO33-37,
- * so 26-37 are all refused. */
-#include "port.h"
-#include "evq.h"
-#include "opcodes.h"
-#include "host.h"
+ * so 26-37 are all refused. A pin the chip cannot use in the mode asked
+ * (an input-only pin as an output) is refused by config. */
+#include "gpio.h"
 #include "platform_esp.h"
 #include "board.h"
+
+#include <stdint.h>
 
 #include "driver/gpio.h"
 #include "esp_err.h"
 
-enum { M_INPUT = 0, M_PULLUP = 1, M_PULLDOWN = 2, M_OUTPUT = 3 };
-enum { E_NONE = 0, E_RISING = 1, E_FALLING = 2, E_BOTH = 3 };
-
 #define NPINS 49
 
-static const uint8_t reserved[] = BOARD_RESERVED_PINS;
+static const uint32_t reserved[2] = { (uint32_t)(BOARD_RESERVED_MASK), (uint32_t)((BOARD_RESERVED_MASK) >> 32) };
 
-/* Per-pin state shared with the ISR (its handler argument). The VM task
- * fills the config fields (vm: whose event ring gets the pin's events)
- * before the handler is added and clears `open` after it is removed; the
- * ISR alone writes level and changed_ms while the pin is open. */
-typedef struct {
-    struct Vm *vm;
-    uint16_t index, gen;
-    uint16_t debounce_ms;
-    uint8_t open, mode, edge;
-    volatile uint8_t level;
-    volatile uint32_t changed_ms;
-} PinSlot;
-
-static PinSlot pins[NPINS];
+static const GpioHal gpio_esp_hal;
+static GpioPin pins[NPINS];     /* the driver's per-pin state (gpio.h) */
 static bool isr_service;
 
-static bool pin_reserved(int32_t pin) {
-    for (unsigned i = 0; i < sizeof reserved; i++) {
-        if (reserved[i] == pin) return true;
-    }
-    return false;
-}
-
 static void gpio_isr(void *arg) {
-    PinSlot *s = arg;
-    int pin = (int)(s - pins);
-    uint8_t level = (uint8_t)gpio_get_level((gpio_num_t)pin);
-    if (level == s->level) return;
-    s->level = level;
-    uint32_t now = (uint32_t)platform_esp_ms();
-    uint32_t since = now - s->changed_ms;
-    s->changed_ms = now;
-    if (!(s->edge == E_BOTH || s->edge == (level ? E_RISING : E_FALLING))) return;
-    if (s->edge != E_BOTH && since < s->debounce_ms) return;
-    PortEvent e;
-    e.port = s->index;
-    e.gen = s->gen;
-    e.a = pin;
-    e.b = level;
-    e.time_ms = now;
-    evq_push(s->vm, &e);
-    platform_notify();
+    uint32_t pin = (uint32_t)(uintptr_t)arg;
+    int level = gpio_get_level((gpio_num_t)pin);
+    if (gpio_edge(&gpio_esp_hal, pin, level, (uint32_t)platform_esp_ms())) platform_notify();
 }
 
-static int g_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
-    if (n != 4) return -1;
-    int32_t pin = cfg[0], mode = cfg[1], edge = cfg[2];
-    if (pin < 0 || pin >= NPINS || mode < M_INPUT || mode > M_OUTPUT || edge < E_NONE || edge > E_BOTH) return -1;
-    if (pin_reserved(pin) || pins[pin].open) return -1;
-    if (mode == M_OUTPUT ? !GPIO_IS_VALID_OUTPUT_GPIO(pin) : !GPIO_IS_VALID_GPIO(pin)) return -1;
-    bool irq = mode != M_OUTPUT && edge != E_NONE;
-    if (irq && !isr_service) {
+static int h_config(void *ctx, uint32_t pin, int mode, bool watch, uint16_t *debounce_ms) {
+    (void)ctx;
+    (void)debounce_ms;
+    if (mode == GPIO_OUTPUT ? !GPIO_IS_VALID_OUTPUT_GPIO((int)pin) : !GPIO_IS_VALID_GPIO((int)pin)) return -1;
+    if (watch && !isr_service) {
         esp_err_t err = gpio_install_isr_service(0);
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return -1;
         isr_service = true;
     }
-    p->debounce_ms = (uint16_t)(cfg[3] > 0 ? (cfg[3] > 65535 ? 65535 : cfg[3]) : 20);
-    p->state[0] = (uint32_t)pin;
-    p->state[1] = (uint32_t)mode;
-    p->state[2] = (uint32_t)edge;
-
     gpio_config_t c = {
         .pin_bit_mask = 1ULL << pin,
-        .mode = mode == M_OUTPUT ? GPIO_MODE_OUTPUT : GPIO_MODE_INPUT,
-        .pull_up_en = mode == M_PULLUP ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
-        .pull_down_en = mode == M_PULLDOWN ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE,
-        .intr_type = irq ? GPIO_INTR_ANYEDGE : GPIO_INTR_DISABLE,
+        .mode = mode == GPIO_OUTPUT ? GPIO_MODE_OUTPUT : GPIO_MODE_INPUT,
+        .pull_up_en = mode == GPIO_PULLUP ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
+        .pull_down_en = mode == GPIO_PULLDOWN ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE,
+        .intr_type = watch ? GPIO_INTR_ANYEDGE : GPIO_INTR_DISABLE,
     };
     if (gpio_config(&c) != ESP_OK) return -1;
-
-    PinSlot *s = &pins[pin];
-    s->vm = vm;
-    s->index = index;
-    s->gen = p->gen;
-    s->debounce_ms = p->debounce_ms;
-    s->mode = (uint8_t)mode;
-    s->edge = (uint8_t)edge;
-    s->level = (uint8_t)gpio_get_level((gpio_num_t)pin);
-    s->changed_ms = (uint32_t)platform_esp_ms() - s->debounce_ms;   /* stable since "long ago" */
-    s->open = 1;
-    if (irq && gpio_isr_handler_add((gpio_num_t)pin, gpio_isr, s) != ESP_OK) {
-        s->open = 0;
+    if (watch && gpio_isr_handler_add((gpio_num_t)pin, gpio_isr, (void *)(uintptr_t)pin) != ESP_OK) {
         gpio_reset_pin((gpio_num_t)pin);
         return -1;
     }
     return 0;
 }
 
-static void g_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n) { (void)vm;
-    if (type != TYPE_GPIO_WRITE || n != 1 || p->state[1] != M_OUTPUT) return;
-    gpio_set_level((gpio_num_t)p->state[0], f[0] != 0);
+static void h_write(void *ctx, uint32_t pin, int level) {
+    (void)ctx;
+    gpio_set_level((gpio_num_t)pin, level != 0);
 }
 
-static void g_close(struct Vm *vm, Port *p) {
-    (void)vm;
-    gpio_num_t pin = (gpio_num_t)p->state[0];
-    PinSlot *s = &pins[pin];
-    if (s->mode != M_OUTPUT && s->edge != E_NONE) {
-        gpio_intr_disable(pin);
-        gpio_isr_handler_remove(pin);
+static int h_read(void *ctx, uint32_t pin) {
+    (void)ctx;
+    return gpio_get_level((gpio_num_t)pin);
+}
+
+static void h_release(void *ctx, uint32_t pin, int mode, bool watch) {
+    (void)ctx;
+    (void)mode;
+    if (watch) {
+        gpio_intr_disable((gpio_num_t)pin);
+        gpio_isr_handler_remove((gpio_num_t)pin);
     }
-    gpio_reset_pin(pin);
-    s->open = 0;
+    gpio_reset_pin((gpio_num_t)pin);
 }
 
-static bool g_can_event(const struct Vm *vm, const Port *p) { (void)vm; return p->state[1] != M_OUTPUT && p->state[2] != E_NONE; }
-
-const PortDriver gpio_esp_driver = {
-    PORT_NAME_GPIO, TYPE_GPIO_CONFIG, TYPE_GPIO_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL, NULL
+static const GpioHal gpio_esp_hal = {
+    .npins = NPINS, .reserved = reserved, .pins = pins, .config = h_config, .write = h_write, .read = h_read,
+    .release = h_release,
 };
+
+const PortDriver gpio_esp_driver = GPIO_DRIVER(&gpio_esp_hal);

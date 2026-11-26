@@ -1,6 +1,7 @@
 #!/bin/sh
 # Global-state guard (embed mode): no mutable globals in runtime/.
-# Compiles runtime/{vm,vfs,stream,input,net,console,screen,embed}/*.c (not check32.c,
+# Compiles runtime/{vm,vfs,stream,input,net,console,screen,embed,gpio,configsvc,board}/*.c (not check32.c,
+# plus the vfs/fat and vfs/lfs backends when their headers are there,
 # not test/) at -O0 with -fno-common, in three configurations (host default,
 # MCU flags, -DGOGO_EMBED), and lists every symbol that lives in a mutable data
 # section: .bss*, .data* (not .data.rel.ro*), .sbss*, .sdata*, .tbss, .tdata,
@@ -43,7 +44,7 @@ done
 CC=${GLOBALS_CC:-${CC:-cc}}
 CFLAGS=${GLOBALS_CFLAGS:--std=c99}
 MCU=${GLOBALS_MCU_FLAGS:--DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_BYTES=163840u}
-INC="-Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/console -Iruntime/screen -Iruntime/embed -Iplatform/unix"
+INC="-Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/console -Iruntime/screen -Iruntime/embed -Iruntime/gpio -Iruntime/configsvc -Iruntime/board -Iplatform/unix"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 
@@ -51,7 +52,7 @@ if [ "$OBJECTS" = 1 ]; then FILES="$*"; ALLOW=/dev/null
     [ -n "$FILES" ] || { echo "globals: --objects needs files" >&2; exit 2; }
 elif [ $# -gt 0 ]; then FILES="$*"; else
     FILES=""
-    for d in vm vfs stream input net console screen embed; do
+    for d in vm vfs stream input net console screen embed gpio configsvc board; do
         for f in runtime/"$d"/*.c; do
             [ -f "$f" ] || continue
             [ "$f" = runtime/vm/check32.c ] && continue
@@ -62,6 +63,16 @@ elif [ $# -gt 0 ]; then FILES="$*"; else
         for f in runtime/net/tls/*.c; do TLS_FILES="$TLS_FILES $f"; done
     fi
 fi
+# The file-system backends need their library's header: FatFs is vendored
+# (with the test's sdkconfig stub); LittleFS only after a firmware build
+# fetched it (GLOBALS_LFS_DIR overrides), else lfs_be.c is not scanned.
+BE_FILES=""
+if [ $# -eq 0 ] && [ "$OBJECTS" = 0 ]; then
+    BE_FILES="runtime/vfs/fat/fat_be.c"
+    LFS_DIR=${GLOBALS_LFS_DIR:-platform/esp32s3/managed_components/joltwallet__littlefs/src/littlefs}
+    [ -f "$LFS_DIR/lfs.h" ] && BE_FILES="$BE_FILES runtime/vfs/lfs/lfs_be.c"
+fi
+BE_INC="-Iruntime/vfs/fat -Iruntime/vfs/fat/test/stub -Iplatform/esp32s3/components/fatfs/src -Iruntime/vfs/lfs -I${LFS_DIR:-.} -DGOGO_FS_SLOT_BYTES=192u"
 
 # GNU/LLVM nm (needs --format=sysv) for ELF objects.
 elf_nm() {
@@ -123,6 +134,10 @@ for f in $FILES; do
     # shellcheck disable=SC2086 # $MCU is a list of flags
     scan "$f" $MCU
     scan "$f" -DGOGO_EMBED
+done
+for f in $BE_FILES; do
+    # shellcheck disable=SC2086
+    scan "$f" $BE_INC
 done
 for f in $TLS_FILES; do
     # eval: the flags carry shell quoting (-DMBEDTLS_CONFIG_FILE='"..."').

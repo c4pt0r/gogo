@@ -54,9 +54,10 @@ gogo_host test_host = {
     .config_get = t_config_get,
 };
 
-static const char *const test_mounts[] = { "/flash", "/sd", NULL };
+static const VmMount test_flash = { .prefix = "/flash" }, test_sd = { .prefix = "/sd" };
+static const VmMount *const test_mounts[] = { &test_flash, &test_sd, NULL };
 
-VmBoard test_board = { unix_base_ports, NULL, &unix_netif, NULL, test_mounts };
+VmBoard test_board = { .ports = unix_base_ports, .netif = &unix_netif, .mounts = test_mounts };
 
 int test_vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
     if (vm_init(vm, &test_host, NULL, &test_board, table_cap) != 0) return -1;

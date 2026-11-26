@@ -191,5 +191,6 @@ void udp_rx(NetState *ns, uint32_t src, uint32_t dst, const uint8_t *p, uint32_t
 }
 
 const PortDriver net_udp_driver = {
-    PORT_NAME_UDP, TYPE_NET_UDP, TYPE_NET_DATAGRAM, u_open, NULL, u_close, u_can_event, NULL, u_command, NULL
+    .name = PORT_NAME_UDP, .cfg_type = TYPE_NET_UDP, .event_type = TYPE_NET_DATAGRAM, .open = u_open,
+    .close = u_close, .can_event = u_can_event, .command_term = u_command
 };

@@ -1,5 +1,6 @@
-/* ESP32-S3 input hardware (spec input §5.6, input2 §4): the InputHw the
- * chip-independent runtime/input/ code drives. The IMU hooks are in imu_esp.c
+/* ESP32-S3 input hardware (spec input §5.6, input2 §4): the HAL tables
+ * the chip-independent runtime/input/ drivers run over, and the driver
+ * instances. The IMU hooks are in imu_esp.c
  * (BMI270), the IR hooks in ir_esp.c (RMT), the audio hooks in audio_esp.c
  * (ES8311 + I2S).
  *
@@ -123,7 +124,8 @@ static void kbd_isr(void *arg) {
     platform_notify();
 }
 
-static int kbd_open(void) {
+static int kbd_open(void *ctx) {
+    (void)ctx;
     if (!tca) {
         i2c_master_bus_handle_t bus = i2c_bus_get();
         if (!bus) return -1;
@@ -171,7 +173,8 @@ static int kbd_open(void) {
     return 0;
 }
 
-static void kbd_close(void) {
+static void kbd_close(void *ctx) {
+    (void)ctx;
     gpio_intr_disable(KBD_PIN_INT);
     if (isr_added) {
         gpio_isr_handler_remove(KBD_PIN_INT);
@@ -180,9 +183,10 @@ static void kbd_close(void) {
     kbd_flag = false;
 }
 
-static bool kbd_pending(void) { return kbd_flag; }
+static bool kbd_pending(void *ctx) { (void)ctx; return kbd_flag; }
 
-static int kbd_read(uint16_t *raw, bool *down) {
+static int kbd_read(void *ctx, uint16_t *raw, bool *down) {
+    (void)ctx;
     uint8_t ev;
     if (tca_rd(TCA_KEY_EVENT_A, &ev) != 0) return -1;   /* flag stays set: retried next pass */
     if (ev != 0) {
@@ -242,7 +246,8 @@ static int adc_setup(void) {
 #define BAT_MV_MAX 4500
 
 /* The battery sits behind a 1:2 divider on G10. */
-static int power_read(int32_t *mv, int8_t *charging, int8_t *external) {
+static int power_read(void *ctx, int32_t *mv, int8_t *charging, int8_t *external) {
+    (void)ctx;
     if (adc_setup() != 0) return -1;
     int sum = 0;
     for (int i = 0; i < 8; i++) {
@@ -271,7 +276,8 @@ static int power_read(int32_t *mv, int8_t *charging, int8_t *external) {
 #define BAT_MV_MAX 4500
 static bool gpio0_ready;
 
-static int power_read(int32_t *mv, int8_t *charging, int8_t *external) {
+static int power_read(void *ctx, int32_t *mv, int8_t *charging, int8_t *external) {
+    (void)ctx;
     uint8_t v;
     if (!gpio0_ready) {
         /* No I2C idle sleep, or the chip NACKs after a pause (pm1_wake; the
@@ -298,46 +304,46 @@ static int power_read(int32_t *mv, int8_t *charging, int8_t *external) {
 
 #endif
 
-const InputHw input_esp_hw = {
+/* The driver instances platform_esp.c lists, one per device this build
+ * has, each over its HAL (contracts in runtime/input/input.h). */
 #if WITH_KBD
-    .keys = keys,
-    .nkeys = 70,
-    .kbd_open = kbd_open,
-    .kbd_close = kbd_close,
-    .kbd_pending = kbd_pending,
-    .kbd_read = kbd_read,
+static const KbdHal kbd_hal = {
+    .keys = keys, .nkeys = 70, .open = kbd_open, .close = kbd_close, .pending = kbd_pending,
+    .read = kbd_read,
+};
+const PortDriver esp_kbd_driver = INPUT_KBD_DRIVER(&kbd_hal);
 #endif
 #if WITH_BATTERY
-    .power_read = power_read,
+static const PowerHal power_hal = { .read = power_read };
+const PortDriver esp_power_driver = INPUT_POWER_DRIVER(&power_hal);
 #endif
 #if WITH_IMU
-    .imu_open = imu_esp_open,
-    .imu_close = imu_esp_close,
-    .imu_read_fifo = imu_esp_read_fifo,
-    .imu_read_gestures = imu_esp_read_gestures,
+static const ImuHal imu_hal = {
+    .open = imu_esp_open, .close = imu_esp_close, .read_fifo = imu_esp_read_fifo,
+    .read_gestures = imu_esp_read_gestures,
+};
+const PortDriver esp_imu_driver = INPUT_IMU_DRIVER(&imu_hal);
 #endif
 #if WITH_IR_TX
-    .ir_tx_start = ir_esp_tx_start,
-    .ir_tx_busy = ir_esp_tx_busy,
+static const IrTxHal ir_tx_hal = {
+    .open = ir_esp_tx_open, .close = ir_esp_tx_close, .start = ir_esp_tx_start, .busy = ir_esp_tx_busy,
+};
+const PortDriver esp_ir_tx_driver = INPUT_IR_TX_DRIVER(&ir_tx_hal);
 #endif
 #if WITH_IR_RX
-    .ir_rx_open = ir_esp_rx_open,
-    .ir_rx_read = ir_esp_rx_read,
-    .ir_rx_close = ir_esp_rx_close,
-#endif
-#if WITH_IR_TX
-    .ir_tx_open = ir_esp_tx_open,
-    .ir_tx_close = ir_esp_tx_close,
+static const IrRxHal ir_rx_hal = { .open = ir_esp_rx_open, .read = ir_esp_rx_read, .close = ir_esp_rx_close };
+const PortDriver esp_ir_rx_driver = INPUT_IR_RX_DRIVER(&ir_rx_hal);
 #endif
 #if WITH_MIC
-    .mic_open = audio_esp_mic_open,
-    .mic_read = audio_esp_mic_read,
-    .mic_close = audio_esp_mic_close,
+static const MicHal mic_hal = {
+    .open = audio_esp_mic_open, .read = audio_esp_mic_read, .close = audio_esp_mic_close,
+};
+const PortDriver esp_mic_driver = INPUT_MIC_DRIVER(&mic_hal);
 #endif
 #if WITH_SPK
-    .spk_open = audio_esp_spk_open,
-    .spk_write = audio_esp_spk_write,
-    .spk_queued = audio_esp_spk_queued,
-    .spk_close = audio_esp_spk_close,
-#endif
+static const SpkHal spk_hal = {
+    .open = audio_esp_spk_open, .write = audio_esp_spk_write, .queued = audio_esp_spk_queued,
+    .close = audio_esp_spk_close,
 };
+const PortDriver esp_speaker_driver = INPUT_SPEAKER_DRIVER(&spk_hal);
+#endif

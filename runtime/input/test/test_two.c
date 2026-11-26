@@ -1,5 +1,6 @@
-/* Two VMs in one process, each with its own board InputHw and InputState:
- * key events, power samples, open ports and the drop counters never cross. */
+/* Two VMs in one process, each with its own board (driver instances over
+ * HAL tables whose ctx is that board's chips) and InputState: key events,
+ * power samples, open ports and the drop counters never cross. */
 #include "test.h"
 #include "test_host.h"
 #include "input_int.h"
@@ -25,23 +26,34 @@ static Hw hw[2];
 
 static const KbdKey keys[2] = { { 0x04, 0 }, { 0x05, 0 } };   /* raw 0 = 'a', raw 1 = 'b' */
 
-#define HOOKS(I)                                                                          \
-    static int kopen##I(void) { hw[I].opens++; return 0; }                                 \
-    static void kclose##I(void) { hw[I].closes++; }                                         \
-    static bool kpend##I(void) { return hw[I].qh != hw[I].qt; }                            \
-    static int kread##I(uint16_t *raw, bool *down) {                                       \
-        if (hw[I].qh == hw[I].qt) return 0;                                                \
-        *raw = hw[I].q[hw[I].qh % 8].raw; *down = hw[I].q[hw[I].qh % 8].down; hw[I].qh++;  \
-        return 1;                                                                          \
-    }                                                                                      \
-    static int pread##I(int32_t *mv, int8_t *ch, int8_t *ext) {                            \
-        *mv = hw[I].mv; *ch = 0; *ext = 0; return 0;                                       \
-    }
-HOOKS(0)
-HOOKS(1)
+/* One set of hooks; ctx says which board's chips. */
+static int kopen(void *ctx) { ((Hw *)ctx)->opens++; return 0; }
+static void kclose(void *ctx) { ((Hw *)ctx)->closes++; }
+static bool kpend(void *ctx) { const Hw *h = ctx; return h->qh != h->qt; }
+static int kread(void *ctx, uint16_t *raw, bool *down) {
+    Hw *h = ctx;
+    if (h->qh == h->qt) return 0;
+    *raw = h->q[h->qh % 8].raw; *down = h->q[h->qh % 8].down; h->qh++;
+    return 1;
+}
+static int pread(void *ctx, int32_t *mv, int8_t *ch, int8_t *ext) {
+    *mv = ((Hw *)ctx)->mv; *ch = 0; *ext = 0; return 0;
+}
 
-static InputHw hw_tab[2];
-static VmBoard board[2];
+static const KbdHal kbd_hal[2] = {
+    { &hw[0], keys, 2, kopen, kclose, kpend, kread, NULL },
+    { &hw[1], keys, 2, kopen, kclose, kpend, kread, NULL },
+};
+static const PowerHal power_hal[2] = {
+    { &hw[0], pread, NULL, NULL, NULL, false },
+    { &hw[1], pread, NULL, NULL, NULL, false },
+};
+static const PortDriver kbd_drv[2] = { INPUT_KBD_DRIVER(&kbd_hal[0]), INPUT_KBD_DRIVER(&kbd_hal[1]) };
+static const PortDriver power_drv[2] = { INPUT_POWER_DRIVER(&power_hal[0]), INPUT_POWER_DRIVER(&power_hal[1]) };
+static const PortDriver *const drivers[2][3] = {
+    { &kbd_drv[0], &power_drv[0], NULL },
+    { &kbd_drv[1], &power_drv[1], NULL },
+};
 static InputState st[2];
 static Vm vm[2];
 
@@ -69,8 +81,6 @@ static void mini_image(void) {
     w[21] = OP_MAKE(OP_RET, 0, 0, 0);
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
 }
-
-static const PortDriver *const drivers[] = { &input_kbd_driver, &input_power_driver, NULL };
 
 static uint64_t now;
 static uint64_t clock_fn(void) { return now; }
@@ -124,20 +134,13 @@ TEST(input_two_vms_do_not_cross) {
     memset(hw, 0, sizeof hw);
     hw[0].mv = 3700;
     hw[1].mv = 4100;
-    hw_tab[0] = (InputHw){ .keys = keys, .nkeys = 2, .kbd_open = kopen0, .kbd_close = kclose0,
-                           .kbd_pending = kpend0, .kbd_read = kread0, .power_read = pread0 };
-    hw_tab[1] = (InputHw){ .keys = keys, .nkeys = 2, .kbd_open = kopen1, .kbd_close = kclose1,
-                           .kbd_pending = kpend1, .kbd_read = kread1, .power_read = pread1 };
     Actor *own[2];
     term kbd[2], pwr[2];
     for (int i = 0; i < 2; i++) {
         va_reset(&vm[i]);
         bytes_reset(&vm[i]);
         CHECK_EQ(test_vm_init(&vm[i], &img, 16), 0);
-        board[i] = test_board;
-        board[i].input = &hw_tab[i];
-        vm[i].board = &board[i];
-        port_set_drivers(&vm[i], drivers);
+        port_set_drivers(&vm[i], drivers[i]);
         input_install(&vm[i], &st[i]);
         CHECK(vm[i].input == &st[i]);
         own[i] = actor_new(&vm[i], 256);
@@ -192,7 +195,7 @@ TEST(input_two_vms_do_not_cross) {
     va_reset(&bare);
     bytes_reset(&bare);
     CHECK_EQ(test_vm_init(&bare, &img, 16), 0);
-    port_set_drivers(&bare, drivers);
+    port_set_drivers(&bare, drivers[0]);
     Actor *b = actor_new(&bare, 256);
     CHECK(b != NULL);
     CHECK(!port_is(open_port(&bare, b, "kbd", TYPE_KBD_CONFIG)));

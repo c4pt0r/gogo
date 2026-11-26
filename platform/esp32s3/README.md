@@ -244,8 +244,10 @@ in `cmd/gogo/flash.go`.
 ## Platform layer (`main/`)
 
 - `platform_esp.c`: the board's `gogo_host` (`esp_host`) and `VmBoard`
-  (`esp_board`: port drivers, `input_esp_hw`, the Wi-Fi netif, mounts), see
-  `runtime/vm/host.h`. Output to the USB-Serial/JTAG console
+  (`esp_board`: port drivers, among them the `gpio` and input driver
+  instances over this board's hardware layers, the Wi-Fi netif, and the
+  mounts `esp_flash_mount` / `esp_sd_mount`), see `runtime/vm/host.h` and
+  design.md 5.11.1. Output to the USB-Serial/JTAG console
   (stdout line-buffered, flushed before each stderr write). Chunks from the
   internal-RAM heap, capped at `GOGO_ARENA_BYTES`. `now_ms` from
   `esp_timer_get_time()` (`platform_esp_ms`; the VM counts from its own
@@ -259,13 +261,16 @@ in `cmd/gogo/flash.go`.
   `esp_host`'s `unix_time_ms` / `set_unix_time_ms`: unknown at every boot
   until `gogo/sntp` or `sys.SetTime` sets it, with the build time
   (`GOGO_BUILD_UNIX_MS`, from `main/CMakeLists.txt`) as the floor.
-- `gpio_esp.c`: the `gpio` port driver, same semantics as unix (cfg
-  `{Pin, Mode, Edge, DebounceMs}`, default debounce 20 ms, `Write{Value}` on
-  outputs, events `{pin, level}`). Inputs use an any-edge interrupt; the ISR
-  pushes to the event ring and notifies, never locking or allocating. For a
-  single-edge pin it also drops an edge that comes less than the debounce
-  time after the previous level change (a key release's bounce). Refused
-  pins (`board.h`): StickS3 19-20 (USB), 26-37 (in-package flash and octal
+- `gpio_esp.c`: the `GpioHal` under the `gpio` port driver
+  (`runtime/gpio/gpio.c`: cfg `{Pin, Mode, Edge, DebounceMs}`, default
+  debounce 20 ms, `Write{Value}` on outputs, events `{pin, level}`, the
+  same code as on unix). A watched input uses an any-edge interrupt; the
+  handler reads the level and calls `gpio_edge`, which pushes to the event
+  ring, then notifies, never locking or allocating. For a single-edge pin
+  `gpio_edge` also drops an edge that comes less than the debounce time
+  after the previous level change (a key release's bounce). The 49 pin
+  slots (`GpioPin`, 20 B each) are this file's static storage. Refused
+  pins (`board.h` `BOARD_RESERVED_MASK`): StickS3 19-20 (USB), 26-37 (in-package flash and octal
   PSRAM of the ESP32-S3-PICO-1-N8R8), 21, 38-41, 45 (LCD), 47-48 (M5PM1
   I2C), 42 and 46 (IR), 14-18 (codec I2S); Cardputer ADV 19-20 (USB), 26-32
   (flash), 33-38 (LCD), 12, 14, 39, 40 (SD card), 8-9 (I2C bus), 10 (battery
@@ -275,8 +280,11 @@ in `cmd/gogo/flash.go`.
   (before the VM starts, or on the scheduler thread; never in an ISR):
   Cardputer ADV port 0, SDA G8, SCL G9 (TCA8418 keyboard, BMI270, ES8311); StickS3
   port 1, SDA G47, SCL G48 (M5PM1, BMI270, ES8311). Internal pull-ups on.
-- `input_esp.c`: the `InputHw` for `runtime/input/` (the `kbd` and `power` ports,
-  design.md 5.4.3); `esp_board` in `platform_esp.c` lists it.
+- `input_esp.c`: the `KbdHal` and `PowerHal` for `runtime/input/` (the `kbd`
+  and `power` ports, design.md 5.4.3), and every input driver instance
+  (`esp_kbd_driver`, `esp_power_driver`, `esp_imu_driver`, ...), each
+  defined only when the build has the device; `esp_board` in
+  `platform_esp.c` lists them.
   - Cardputer ADV keyboard: TCA8418 at 0x34, 400 kHz. Init: KP_GPIO1 (0x1D)
     = 0x7F, KP_GPIO2 (0x1E) = 0xFF, KP_GPIO3 (0x1F) = 0x00, CFG (0x01) |=
     0x03; flush KEY_EVENT_A (0x04) until 0, then INT_STAT (0x02) = 0x1F
@@ -300,7 +308,7 @@ in `cmd/gogo/flash.go`.
     (0x16) bits[1:0] to 00 (GPIO function) and switches GPIO0 to an input
     (GPIO_MODE 0x10 bit0 cleared), each only if it reads otherwise. No keyboard: opening `kbd` fails. There is no
     power-button event (the PM1 acts on clicks itself).
-- `imu_esp.c` (`GOGO_IMU`, both boards): the IMU hooks of `InputHw` for
+- `imu_esp.c` (`GOGO_IMU`, both boards): the `ImuHal` hooks for
   `runtime/input/imu.c` (design.md 5.4.6), a Bosch BMI270 on the shared I2C bus at
   400 kHz, probed at 0x69 then 0x68 (CHIP_ID 0x24; three rounds 10 ms
   apart). Both boards answer at 0x69 (bus scan on the Cardputer ADV: 0x18
@@ -392,8 +400,8 @@ in `cmd/gogo/flash.go`.
     sleep), once per boot.
   - Pins G42, G46 (StickS3) and G44 (Cardputer, also U0RXD; the console is
     USB-Serial/JTAG) are reserved: the gpio port refuses them.
-- `audio_esp.c` (`GOGO_AUDIO`, both boards): the `mic_*` / `spk_*` hooks
-  of `InputHw` for `runtime/input/audio.c`, on the ES8311 codec (I2C 0x18 on the
+- `audio_esp.c` (`GOGO_AUDIO`, both boards): the `MicHal` / `SpkHal` hooks
+  for `runtime/input/audio.c`, on the ES8311 codec (I2C 0x18 on the
   shared bus, 100 kHz) and I2S. Pins (`board.h`, from M5Unified
   `_begin_audio`): StickS3 BCLK G17, WS G15, DOUT G14, DIN G16 (G18, the
   codec's MCLK, is not driven); Cardputer ADV BCLK G41, WS G43, DOUT G42,
@@ -442,7 +450,11 @@ in `cmd/gogo/flash.go`.
     open. Cost of audio (2026-11-25): StickS3 +18720 B firmware, +592 B
     static DIRAM; Cardputer ADV +19680 B, +820 B.
 - `image_part.c`: the partition check and mmap above.
-- `main.c`: the VM runs in a FreeRTOS task pinned to CPU1.
+- `main.c`: the VM runs in a FreeRTOS task pinned to CPU1. It brings the board up
+  (console, config service, Wi-Fi, `/flash` and `/sd`), maps the image and
+  boots it through `gogo_board_main` (`runtime/board`, the boot path the
+  unix VM uses too), with the `Vm`, `VfsState`, `InputState` and
+  `NetState` in static storage.
 - Screen (debug console, mirror of stdout/stderr):
   - `pm1.c` (StickS3 only): M5PM1 (I2C G47/G48, 0x6E): I2C idle sleep and watchdog off,
     PM1 GPIO2 high = LCD rail, 200 ms settle (M5GFX/M5Unified StickS3
@@ -489,12 +501,16 @@ in `cmd/gogo/flash.go`.
   retrying` (first failure only), `gogo: ip <a.b.c.d> (gateway <g>)` when
   the stack goes up (`wifi_esp_netif.report`) and `gogo: network down`.
 - `config_esp.c`: the config store (NVS namespace `gogo`, one blob per key;
-  `sys.Config` reads it, `wifi.` keys hidden) and the `gogo config` command
-  handler: a task (CPU0) reads the USB-Serial/JTAG input (driver installed,
-  stdio switched to it) and answers frames
+  `sys.Config` reads it, `wifi.` keys hidden) as the `KvHal` of the
+  `gogo config` service (`runtime/configsvc`, which implements the
+  protocol for every board), and the board's side of it: a task (CPU0)
+  reads the USB-Serial/JTAG input (driver installed, stdio switched to it)
+  and feeds it to the service, which answers frames
   `\x02gogo-config <op> [<key> [<value>]]\n` with `\x02kv <text>` lines and
-  then `\x02ok[ <text>]` or `\x02err <reason>`; ops `set get rm list`
-  plus `scan` (nearby networks) and `stats` (net counters, `heap_free`,
+  then `\x02ok[ <text>]` or `\x02err <reason>`; ops `set get rm list`,
+  `push data end abort` (`gogo push`, into `/flash` through its backend,
+  which takes the volume's lock) and `format-flash`, plus the board's
+  `scan` (nearby networks) and `stats` (net counters, `heap_free`,
   `heap_min`, `arena_used`, and the fixed tables in use as
   `bytes=N/64`, `ports=N/16`, `subs=N/4`). The password is never sent back (`(set)`).
   Program output never carries `\x02` on serial (written as `?`), so a
@@ -542,7 +558,10 @@ The receive path drops frames while the single RX slot is full
 
 ## `/flash` (LittleFS)
 
-`fs_lfs.c` is the `vfs` backend for `/flash`: LittleFS from the
+`/flash` is LittleFS through the portable backend
+`runtime/vfs/lfs/lfs_be.c` (the `vfs` backend, the mount policy below);
+`fs_lfs.c` is this board's part: the `gogofs` partition as a `BlockDev`,
+the volume's static storage and the `fs.flash.*` settings. LittleFS is from the
 `joltwallet/littlefs` component (pinned `==1.23.3` in
 `main/idf_component.yml`, bundling littlefs v2.11), used only through its
 raw `lfs.h` API (`CONFIG_LITTLEFS_EXPOSE_RAW_API=y`), never its ESP-IDF VFS
@@ -555,16 +574,17 @@ writes that partition, so files survive reflashing (the whole-flash erase
   read / prog caches and lookahead buffer are static and each open file's
   64-byte cache is in its vfs slot (`lfs_file_opencfg`). Enforced at build
   time (`platform/esp32s3/CMakeLists.txt`): `lfs.c` alone is compiled with
-  `LFS_NO_MALLOC` and with `malloc` / `free` renamed to `fs_lfs.c`'s
+  `LFS_NO_MALLOC` and with `malloc` / `free` renamed to `lfs_be.c`'s
   NULL-returning stubs, so its object imports no `malloc` / `free`. (The
   component's `CONFIG_LITTLEFS_MALLOC_STRATEGY_DISABLE` cannot be used: its
   unused VFS wrapper does not compile with it.) `CONFIG_LITTLEFS_ASSERTS=n`:
   an internal assert on a corrupt partition would abort at every boot.
 - Fixed state (logged at boot as `gogo: fs state N bytes`, at most 3072,
-  checked at compile time in `fs_lfs.c`): 1060 bytes = vfs tables 700 (4
+  checked at compile time in `fs_lfs.c`): 1112 bytes = vfs tables 708 (4
   slots of 168: an `lfs_file_t`, its `lfs_file_config` and cache, plus slot
-  header) + LittleFS 360 (`lfs_t`, `lfs_config`, two 64-byte caches, the
-  16-byte lookahead, the partition pointer). An open file charges its owner
+  header; the mount table) + LittleFS 404 (the `LfsVol`: `lfs_t`,
+  `lfs_config`, two 64-byte caches, the 16-byte lookahead, the block
+  device and options pointers and the mounted flag; the 36-byte `BlockDev`). An open file charges its owner
   160 bytes.
 - Size: config `fs.flash.size` (bytes, `K` or `M` suffix, rounded down to
   4 KB, clamped to 64 KB .. the partition; unset = the whole partition,
@@ -602,7 +622,10 @@ writes that partition, so files survive reflashing (the whole-flash erase
 
 ## `/sd` (FAT, Cardputer ADV)
 
-`fs_fat.c` is the `vfs` backend for `/sd` on boards with an SD slot: FatFs
+`/sd` is FatFs through the portable backend `runtime/vfs/fat/fat_be.c`
+(the `vfs` backend, the lazy mount); `fs_fat.c` is this board's part on
+boards with an SD slot: the card as a `DiskHal`, FatFs's disk layer
+hooked to it, the volume's static storage. FatFs
 (ESP-IDF's `fatfs` component, its `f_*` API only, never `esp_vfs_fat_*`;
 FAT12/16/32 and exFAT, from the vendored copy in `components/fatfs` with
 `FF_FS_EXFAT 1`, see its README)
@@ -636,9 +659,9 @@ at 400 kHz. Details are in the file's top comment; in short:
   reader). `Usage` is clamped to 2 GB - 1 on bigger cards, and its first call on an
   exFAT card (or FAT32 without FSINFO) scans the allocation map.
 - Fixed state (Cardputer build, logged as `gogo: fs state N bytes`, checked
-  at compile time in `fs_fat.c`): 2356 bytes = vfs 700 + LittleFS 360 +
-  `fs_fat.c` 1296 (`FATFS` 572 with its 512-byte window, `sdmmc_card_t`
-  204, the 512-byte bounce sector). A `FIL` is 80 bytes (slot 160).
+  at compile time in `fs_fat.c`): 2424 bytes = vfs 708 + LittleFS 404 +
+  `/sd` 1312 (the `FatVol` 588: `FATFS` 572 with its 512-byte window and
+  the volume's fields; `sdmmc_card_t` 204, the 512-byte bounce sector). A `FIL` is 80 bytes (slot 160).
 
 Firmware cost of storage (vfs + B_FS + LittleFS + `fs_lfs.c`): `gogo.bin`
 844272 -> 866880 bytes (+22.1 KB, LittleFS asserts off); free internal

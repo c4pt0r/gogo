@@ -1,9 +1,10 @@
-/* unix gpio simulation. Used by platform_unix.c and main.c. */
+/* unix gpio simulation: the GpioHal of the `gpio` port (runtime/gpio).
+ * Used by platform_unix.c and main.c. */
 #ifndef GOGO_GPIO_UNIX_H
 #define GOGO_GPIO_UNIX_H
 
 #include <stdint.h>
-#include "port.h"
+#include "gpio.h"
 
 extern const PortDriver gpio_unix_driver;
 

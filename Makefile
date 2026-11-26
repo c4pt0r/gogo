@@ -25,15 +25,15 @@ NET_SRCS  = $(wildcard runtime/net/*.c)
 STREAM_SRCS = $(wildcard runtime/stream/*.c)
 NET_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/net/test/*.c)
 # VM core + unix platform + net stack and the stream protocol it speaks, without the unix main (shared with the C tests).
-VM_SRCS   = $(wildcard runtime/vm/*.c) platform/unix/platform_unix.c platform/unix/gpio_unix.c platform/unix/input_unix.c $(NET_SRCS) $(STREAM_SRCS)
+VM_SRCS   = $(wildcard runtime/vm/*.c) platform/unix/platform_unix.c runtime/gpio/gpio.c platform/unix/gpio_unix.c platform/unix/input_unix.c $(NET_SRCS) $(STREAM_SRCS)
 VM_SRCS  := $(filter-out runtime/vm/check32.c,$(VM_SRCS))
 VM_CORE_SRCS = $(filter-out runtime/vm/check32.c,$(wildcard runtime/vm/*.c))
 # runtime/screen/ (pure C99): the "screen" port's grid and driver; render.c
 # (pixels, for the LCD) is not in gogovm, which draws on the terminal
 # (platform/unix/screen_unix.c). The grid's width rule is the console's.
 SCREEN_SRCS = runtime/screen/screen.c runtime/screen/screen_port.c runtime/console/console.c runtime/console/font.c
-MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS)
-PLAT_HDRS = $(wildcard platform/unix/*.h) runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
+MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c runtime/board/board_main.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS)
+PLAT_HDRS = $(wildcard platform/unix/*.h) runtime/gpio/gpio.h runtime/board/board_main.h runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
 
 # The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
 # built here with runtime/net/tls/config (gogo_*_config.h) into its own static library,
@@ -66,11 +66,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
 
 vm: $(BUILD)/gogovm
 
@@ -97,7 +97,7 @@ gogo-cmd:
 
 $(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-c: $(BUILD)/test_c
 	$(BUILD)/test_c
@@ -110,7 +110,7 @@ test-c-mcu: $(BUILD)/test_c_mcu
 
 $(BUILD)/test_c_mcu: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
 
 # Net stack C tests (parsers, malformed frames, ports), host and MCU config.
 test-net-c: $(BUILD)/test_net $(BUILD)/test_net_mcu
@@ -119,7 +119,7 @@ test-net-c: $(BUILD)/test_net $(BUILD)/test_net_mcu
 
 $(BUILD)/test_net: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
 
 # The "tls" port's per-stack state (two Vms, two connections), against the
 # mbedTLS library; skipped without the mbedTLS source tree.
@@ -146,15 +146,15 @@ endif
 
 $(BUILD)/test_tls_threads: runtime/net/tls/test/tls_threads.c $(VM_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -o $@ runtime/net/tls/test/tls_threads.c $(VM_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -o $@ runtime/net/tls/test/tls_threads.c $(VM_SRCS) $(TLS_LINK)
 
 $(BUILD)/test_tls: $(TLS_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -o $@ $(TLS_TEST_SRCS) $(VM_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -o $@ $(TLS_TEST_SRCS) $(VM_SRCS) $(TLS_LINK)
 
 $(BUILD)/test_net_mcu: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -o $@ $(NET_TEST_SRCS) $(VM_SRCS)
 
 # vfs (pure C99): path rules, slot table, rules, and the B_FS builtin
 # (builtin.c, the only file that sees VM types), against the memfs fake on
@@ -162,7 +162,7 @@ $(BUILD)/test_net_mcu: $(NET_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(
 # (the ESP32-S3 LittleFS slot, platform/esp32s3/main/CMakeLists.txt) and -Os.
 VFS_SRCS = $(wildcard runtime/vfs/*.c)
 VFS_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/vfs/test/*.c)
-VFS_INC = -Iruntime/vfs -Iruntime/vfs/test -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix
+VFS_INC = -Iruntime/vfs -Iruntime/vfs/test -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix
 VFS_DEPS = $(VFS_SRCS) $(VFS_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vfs/test/*.h) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
 
 test-vfs: $(BUILD)/test_vfs $(BUILD)/test_vfs_mcu
@@ -181,7 +181,7 @@ $(BUILD)/test_vfs_mcu: $(VFS_DEPS)
 # (runtime/input/test/fakehw.c) on a real VM, in the host and MCU VM configs.
 INPUT_SRCS = $(wildcard runtime/input/*.c)
 INPUT_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/input/test/*.c)
-INPUT_INC = -Iruntime/input -Iruntime/input/test -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
+INPUT_INC = -Iruntime/input -Iruntime/input/test -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix
 INPUT_DEPS = $(INPUT_SRCS) $(INPUT_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/input/*.h) $(wildcard runtime/input/test/*.h) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
 
 test-input: $(BUILD)/test_input $(BUILD)/test_input_mcu
@@ -200,7 +200,7 @@ $(BUILD)/test_input_mcu: $(INPUT_DEPS)
 # port on a real VM (and the port-send gate through the interpreter), in the
 # host and MCU VM configs.
 STREAM_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/stream/test/*.c)
-STREAM_INC = -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
+STREAM_INC = -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix
 STREAM_DEPS = $(STREAM_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/stream/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 
 test-stream: $(BUILD)/test_stream $(BUILD)/test_stream_mcu
@@ -220,7 +220,7 @@ $(BUILD)/test_stream_mcu: $(STREAM_DEPS)
 # (fake ScreenHw), in the host and MCU VM configs.
 SCREEN_ALL_SRCS = $(wildcard runtime/screen/*.c) runtime/console/console.c runtime/console/font.c
 SCREEN_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/screen/test/*.c)
-SCREEN_INC = -Iruntime/screen -Iruntime/console -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
+SCREEN_INC = -Iruntime/screen -Iruntime/console -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix
 SCREEN_DEPS = $(SCREEN_ALL_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 
 test-screen: $(BUILD)/test_screen $(BUILD)/test_screen_mcu
@@ -240,6 +240,61 @@ test-screen-asan:
 $(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
+
+# The FatFs backend (runtime/vfs/fat) over a RAM disk, with the vendored
+# FatFs (platform/esp32s3/components/fatfs) built for the host with the
+# Cardputer's options (runtime/vfs/fat/test/stub); host slots are 192
+# bytes (64-bit pointers in FIL).
+FATFS_DIR = platform/esp32s3/components/fatfs/src
+FAT_TEST_SRCS = runtime/vfs/fat/test/test_fat.c runtime/vm/test/test_main.c runtime/vfs/fat/fat_be.c runtime/vfs/vfs.c runtime/vfs/path.c
+test-fat: $(BUILD)/test_fat
+	$(BUILD)/test_fat
+
+$(BUILD)/test_fat: $(FAT_TEST_SRCS) $(FATFS_DIR)/ff.c $(FATFS_DIR)/ffunicode.c $(wildcard runtime/vfs/fat/*.h) $(wildcard runtime/vfs/*.h)
+	@mkdir -p $(BUILD)/fatfs
+	$(CC) -std=gnu99 -O2 -g -w $(EXTRA_CFLAGS) -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -c $(FATFS_DIR)/ff.c -o $(BUILD)/fatfs/ff.o
+	$(CC) -std=gnu99 -O2 -g -w $(EXTRA_CFLAGS) -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -c $(FATFS_DIR)/ffunicode.c -o $(BUILD)/fatfs/ffunicode.o
+	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/fat -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -Iruntime/vfs -Iruntime/vm/test -o $@ $(FAT_TEST_SRCS) $(BUILD)/fatfs/ff.o $(BUILD)/fatfs/ffunicode.o
+
+# The LittleFS backend (runtime/vfs/lfs) over a RAM block device, with
+# the LittleFS that the firmware build fetches (joltwallet/littlefs, a
+# managed component; the repo does not carry it). Without it (no firmware
+# built in this checkout yet) the test is skipped. Host slots are 192
+# bytes (sizeof(Lf) with 64-bit pointers; 160 on the ESP32-S3).
+LFS_DIR ?= platform/esp32s3/managed_components/joltwallet__littlefs/src/littlefs
+ifneq ($(wildcard $(LFS_DIR)/lfs.c),)
+LFS_TEST_SRCS = runtime/vfs/lfs/test/test_lfs.c runtime/vm/test/test_main.c runtime/vfs/lfs/lfs_be.c runtime/vfs/vfs.c runtime/vfs/path.c runtime/configsvc/configsvc.c
+test-lfs: $(BUILD)/test_lfs
+	$(BUILD)/test_lfs
+
+$(BUILD)/test_lfs: $(LFS_TEST_SRCS) $(LFS_DIR)/lfs.c $(LFS_DIR)/lfs_util.c $(wildcard runtime/vfs/lfs/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/configsvc/*.h)
+	@mkdir -p $(BUILD)/lfs
+	$(CC) -std=c99 -O2 -g -w $(EXTRA_CFLAGS) -DLFS_NO_MALLOC -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR -Dmalloc=gogo_lfs_malloc -Dfree=gogo_lfs_free -I$(LFS_DIR) -c $(LFS_DIR)/lfs.c -o $(BUILD)/lfs/lfs.o
+	$(CC) -std=c99 -O2 -g -w $(EXTRA_CFLAGS) -I$(LFS_DIR) -c $(LFS_DIR)/lfs_util.c -o $(BUILD)/lfs/lfs_util.o
+	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/lfs -I$(LFS_DIR) -Iruntime/vfs -Iruntime/configsvc -Iruntime/vm/test -o $@ $(LFS_TEST_SRCS) $(BUILD)/lfs/lfs.o $(BUILD)/lfs/lfs_util.o
+else
+test-lfs:
+	@echo "test-lfs: skipped (no LittleFS at $(LFS_DIR); a firmware build fetches it)"
+endif
+
+# The gpio driver (runtime/gpio) over a fake GpioHal on a real VM.
+GPIO_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/gpio/test/test_gpio.c
+test-gpio: $(BUILD)/test_gpio
+	$(BUILD)/test_gpio
+
+$(BUILD)/test_gpio: $(GPIO_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -o $@ $(GPIO_TEST_SRCS) $(VM_SRCS)
+
+# The gogo-config protocol (runtime/configsvc, pure C99) against an
+# in-memory store and the memfs backend as /flash.
+CONFIGSVC_SRCS = runtime/configsvc/configsvc.c runtime/vfs/path.c runtime/vfs/test/memfs.c
+test-configsvc: $(BUILD)/test_configsvc
+	$(BUILD)/test_configsvc
+
+$(BUILD)/test_configsvc: $(CONFIGSVC_SRCS) runtime/configsvc/test/test_configsvc.c runtime/vm/test/test_main.c $(wildcard runtime/configsvc/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vfs/test/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iruntime/configsvc -Iruntime/vfs -Iruntime/vfs/test -Iruntime/vm -Iruntime/vm/test -o $@ runtime/configsvc/test/test_configsvc.c runtime/vm/test/test_main.c $(CONFIGSVC_SRCS)
 
 # The host-directory backend (runtime/embed/fs_dir.c) against a temp dir:
 # the vfs contract and the sandbox (symlinks, hard links, a swapped path).
@@ -418,7 +473,7 @@ test-lib:
 # limit (16 KB per actor): the library actors must fit.
 $(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-net-mcu: $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/
@@ -446,7 +501,7 @@ test-tls-asan:
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
 
 # Compile-check the core headers for a 32-bit target (no linking).
 check32:
@@ -461,6 +516,12 @@ check32:
 	done
 	for f in $(VFS_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vfs -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
+	done
+	for f in runtime/configsvc/*.c; do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/configsvc -Iruntime/vfs -Iruntime/configsvc/test/stub $$f || exit 1; \
+	done
+	for f in runtime/gpio/*.c; do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/gpio -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
 	done
 	for f in runtime/screen/*.c; do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/screen -Iruntime/console -Iruntime/stream -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
