@@ -26,6 +26,7 @@ type fieldStep struct {
 type fieldTarget struct {
 	local int // the root variable's register, or -1
 	elem  int // first register of the root element's [s, i, v] block, or -1
+	ptr   int // the register of the root pointer (its target's first field is path[0]), or -1
 	path  []fieldStep
 	typ   types.Type // the type of the last field
 }
@@ -50,21 +51,34 @@ func (f *fn) isFieldTarget(e ast.Expr) bool {
 // nothing; then the indices of the arrays on the path, in source order.
 // A promoted field is a path down the embedded fields.
 func (f *fn) fieldTargetOf(e ast.Expr) fieldTarget {
-	t := fieldTarget{local: -1, elem: -1, typ: f.g.p.Info.TypeOf(e)}
+	t := fieldTarget{local: -1, elem: -1, ptr: -1, typ: f.g.p.Info.TypeOf(e)}
 	x := ast.Unparen(e)
 	var indices []ast.Expr // of the element steps, outermost first
+	var ptrRoot ast.Expr   // a pointer the path starts from: p of p.X, (*p).X
 	for {
 		if sel, ok := x.(*ast.SelectorExpr); ok {
 			s := f.g.p.Info.Selections[sel]
-			if s == nil || s.Kind() != types.FieldVal || s.Indirect() {
+			xt := f.g.p.Info.TypeOf(sel.X)
+			if pt := pointerOf(xt); pt != nil {
+				xt = pt.Elem()
+			}
+			if s == nil || s.Kind() != types.FieldVal || (s.Indirect() && !isPointer(f.g.p.Info.TypeOf(sel.X))) {
 				f.fail(sel, "internal error: unexpected field assignment target")
 			}
-			steps := embedPath(f.g.p.Info.TypeOf(sel.X), s.Index())
+			steps := embedPath(xt, s.Index())
 			if steps == nil {
 				f.fail(sel, "internal error: unexpected field assignment target")
 			}
 			t.path = append(steps, t.path...)
 			x = ast.Unparen(sel.X)
+			if isPointer(f.g.p.Info.TypeOf(sel.X)) { // written in place: SETFIELD
+				ptrRoot = x
+				break
+			}
+			if st, ok := x.(*ast.StarExpr); ok { // (*p).X
+				ptrRoot = st.X
+				break
+			}
 			continue
 		}
 		if ix, ok := x.(*ast.IndexExpr); ok && f.arrayStep(ix) {
@@ -76,15 +90,32 @@ func (f *fn) fieldTargetOf(e ast.Expr) fieldTarget {
 		break
 	}
 	switch x := x.(type) {
+	case nil:
 	case *ast.Ident:
-		t.local = int(f.localOf(x))
+		if _, boxed := f.isBoxedVar(x); boxed && ptrRoot == nil { // a variable in a box: through it
+			t.ptr = int(f.localOf(x))
+			break
+		}
+		if ptrRoot == nil {
+			t.local = int(f.localOf(x))
+		}
 	case *ast.IndexExpr:
+		if ptrRoot != nil {
+			break
+		}
 		blk := f.allocN(x, 3)
 		f.exprInto(x.X, blk)
 		f.exprInto(x.Index, blk+1)
 		t.elem = int(blk)
 	default:
-		f.fail(x, "internal error: unexpected field assignment root %T", x)
+		if ptrRoot == nil {
+			f.fail(x, "internal error: unexpected field assignment root %T", x)
+		}
+	}
+	if ptrRoot != nil { // evaluated now, as Go does
+		r := f.alloc(ptrRoot)
+		f.exprInto(ptrRoot, r)
+		t.ptr = int(r)
 	}
 	k := len(indices) - 1 // innermost first: source order
 	for i := range t.path {
@@ -103,6 +134,19 @@ func (f *fn) fieldTargetOf(e ast.Expr) fieldTarget {
 // the old value).
 func (f *fn) storeField(n ast.Node, t fieldTarget, fill func(dst, holder uint8)) {
 	mark := f.next
+	if t.ptr >= 0 { // the pointer's target is written in place: SETFIELD
+		ptr, step := uint8(t.ptr), t.path[0]
+		v := f.alloc(n)
+		if len(t.path) == 1 {
+			fill(v, ptr)
+		} else {
+			f.loadStep(n, step, ptr, v)
+			f.rebuild(n, t.path[1:], v, v, fill)
+		}
+		f.asm.Emit(OpSetfield, v, ptr, uint8(step.idx))
+		f.next = mark
+		return
+	}
 	root := uint8(t.local)
 	if t.elem >= 0 {
 		blk := uint8(t.elem)
@@ -178,7 +222,7 @@ func (f *fn) fieldOpAssign(l ast.Expr, op uint8, rhs ast.Expr) {
 	mark := f.next
 	t := f.fieldTargetOf(l)
 	pre := -1
-	if rhs != nil && t.elem >= 0 && !f.inert(rhs) {
+	if rhs != nil && t.local < 0 && !f.inert(rhs) {
 		pre = int(f.rhsOperand(op, rhs))
 	}
 	f.storeField(l, t, func(v, holder uint8) {

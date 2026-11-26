@@ -231,8 +231,8 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   right below the arguments; `x.M` is a closure that captured a copy of
   `x` (`MKCLOSURE`); `T.M` is the function itself. Structs are immutable
   values, so a method works on its own copy of the receiver, as in Go. No
-  opcode of their own. Pointer receivers are rejected ("pointer
-  receivers are not supported yet").
+  opcode of their own. Pointer receivers (15.6) are below, under
+  Pointers.
 - Field assignment: `p.X = v`, `s[i].X = v`, `a.b.c = v`,
   `m.Items[i].X = v`, `op=` and `++`/`--` on a field, and fields in
   multi-assignments (index operands and right-hand sides first, then the
@@ -247,7 +247,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   ("captured variable must not be changed by field assignment"). No
   opcode of its own.
 - Embedded fields: a struct may embed a named struct or a named basic
-  type (not a pointer). It is an ordinary field named after its type;
+  type (not a pointer: "embedded pointer field not supported"). It is an ordinary field named after its type;
   go/types resolves a promoted selector to a path of field indices with
   Go's depth and ambiguity rules (an ambiguous selector is a type
   error). A promoted field read is one `GETFIELD` per level, a write
@@ -262,6 +262,40 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   promoted from an embedded interface is that interface's, called
   through its dispatcher on the field's value (`gen.methodFunc`). No
   opcode of its own.
+- Pointers (image format 15.6): `&T{...}`, `&x` of a local variable,
+  `new(T)`, `*p`, `p.X` (read and written), `*p = v`, `==` (identity) and
+  `nil`, pointer receivers with Go's method sets (`x.M()` of a pointer
+  method on a variable `x` takes `&x`; `p.M()` of a value method copies
+  `*p`), `*T` in interfaces, type switches and assertions, and pointers to
+  any type of the subset but arrays. A pointer is a reference to a
+  mutable struct of a type of its own, one per pointer type, whose type
+  row carries the flag `STRUCT_MUT` (term.h): the only structs `OP_SETFIELD`
+  (67) writes in place. A pointer to a struct type `T` has `T`'s fields
+  (the type `*T` is laid out as `T`), so `p.X` is one `GETFIELD` and
+  `p.X = v` one `SETFIELD` on the pointer, and `*p` copies the fields into
+  a new `T` (`NEWSTRUCT`): `T` stays a value, and a copy taken before a
+  write through `p` keeps its fields (as `v := *p` does in Go). A pointer
+  to any other type is a box of one field (`STRUCT_MUT | STRUCT_BOX`). A
+  write below the pointer (`p.A.X = v`) rebuilds the value structs on the
+  path, as a field write does, then stores the result with one
+  `SETFIELD`. `GETFIELD` or `SETFIELD` of nil ends the actor with the
+  reason `actor.Nil` (12, crash kind `nil`). Pointers compare by identity:
+  `EQ` on the term, and `B_CMP` compares a mutable struct by identity
+  (inside a struct or an interface). A send copies the target with the
+  message, as a slice's array is copied, so the receiver gets its own
+  target; pointers to one target within one message stay one target.
+  Rejected: interior pointers (`&s[i]`, `&v.F`, and a pointer method
+  called on a slice element or a field, or promoted from an embedded
+  field: "interior pointer ... not supported", "needs a pointer to it"),
+  pointers to arrays, embedded pointer fields, the method expression
+  `(*T).M` of a value method, and `&` of a package-level variable. A
+  local variable whose address is taken (`&x`, or implicitly by a pointer
+  method) lives in such a box for its whole life (`findBoxed`): its
+  register holds the box, and a read is a `GETFIELD` (or a copy of a
+  struct). A three-clause `for` loop's boxed variable gets a new box,
+  a copy, before each post statement, so each iteration has its own
+  variable as in Go 1.22. A pointer to struct costs one object of 2 +
+  fields words; a write through it allocates nothing.
 - Static `defer`: `defer f(args)` anywhere but inside a loop (within its
   own function: a func literal is a function of its own), so each defer
   statement runs at most once per call. The function value, receiver
@@ -342,8 +376,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   package's name is its directory's name (§5.1, the loader).
 
 **Not supported yet (planned for the "language completeness"
-milestone):** maps, pointers (and pointer receivers) and package-level
-variables. Each is rejected at compile time with a `<what> not supported` error
+milestone):** maps and package-level variables. Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 
 **Out of the design:** channels and `select`, the `go` statement (use
@@ -1435,6 +1468,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
 | `bytes.Bytes` | `T_EMPTYBYTES` = `0x62` | a heap `K_BYTES` `[hdr][nbytes][bytes]` (immutable, not scanned; `Freeze` results up to 64 bytes and the results of `FromString` / `FromSlice`), or, for a larger `Freeze` result, an off-heap handle with tag `1110`: `(index << 4) \| 0xE` into the VM-wide reference-counted table | as is (`case bytes.Bytes` matches `TY_BYTES`) | heap bytes not scanned; handles' holders recomputed at GC, released when unreachable | heap ones deep-copied; handles passed by reference (count + 1), the receiver charged their full size (queued ones in the mailbox) |
 | `bytes.Buffer` | not usable (methods on the zero value are `badcode`; use `NewBuffer`) | a `K_BUF` `[hdr][len][array]` with raw `len`; `array` is a `K_BYTEARR` (its capacity), `T_NIL` at capacity 0; `Freeze` copies once and empties it | as is | array bytes not scanned | deep copy |
 | struct (the reserved `actor.*`, `port.*`, ... types included) | a `K_STRUCT` with each field's zero value | `K_STRUCT` heap object `[hdr][type id][fields...]`; a module's own type ids carry the module tag, reserved types do not (§5.5.3) | as is (`TYPEIS` compares the type id) | fields scanned | deep copy preserving sharing and cycles |
+| `*T` (15.6) | `T_NIL` | a `K_STRUCT` heap object of the type `*T`, whose row and type word carry `STRUCT_MUT`: `T`'s fields for a struct `T` (written in place by `SETFIELD`), else one field (`STRUCT_BOX`) | as is (`TYPEIS` -> the type `*T`) | fields scanned | deep copy (a copy of the target; aliases within one message preserved) |
 | `any` | `T_NIL` | the term of the dynamic value | - | by the dynamic value | by the dynamic value |
 | func value (any signature) | `T_NIL` (`Spawn` and calls are `badcode`) | a `K_CLOSURE` heap object `[hdr][module tag \| function index][captures...]`; `CALLV` passes the captures as leading arguments, then the arguments | not allowed (rejected at compile time) | captures scanned | deep copy |
 | `actor.PID` | `T_ZEROPID` = `0x6` (slot 0, generation 0: slot 0 never has generation 0 and port slots are >= `0xFFF0`, so it equals no live actor or port) | PID immediate `(gen << 20) \| (slot << 4) \| 0x6` | as is (`TYPEIS` -> `PID`) | not scanned | as is |
@@ -1516,9 +1550,14 @@ struct word 1      gggggggg sss  00000  16-bit type index        (a module's own
                    00000000 000  00000  16-bit type index        (reserved types 0..TYPE_RESERVED_COUNT-1: global, untagged)
 ```
 
-The five bits between the slot and a struct's type index are reserved
-for per-type flags (pointers, a later phase) and 0 in every v15 image
-(see the reserved term encodings under the image format, §5.6).
+The five bits between the slot and a struct's type index are per-type
+flags (15.6), copied by `NEWSTRUCT` from bits 16-18 of the type row's
+field-count word: `STRUCT_MUT` (16, a pointer's target or a map header:
+`SETFIELD` writes it, `B_CMP` compares it by identity), `STRUCT_MAP` (17,
+a map header) and `STRUCT_BOX` (18, a box: `println` prints its field).
+A reserved row has none (the loader compares its count whole); bits 19-20
+are free (see the reserved term encodings under the image format, §5.6).
+`struct_type()` leaves the flags out.
 
 - **Images hold no tags.** The compiler emits `offset << 4 | 0xA` as
   before, so the image format is unchanged except that offsets are
@@ -1770,7 +1809,10 @@ together with `mbox_words` through `actor_charged_words`).
   require `float`; 15.3 sized integers, the unsigned `uint64` ops,
   `B_PRINTLNU` and `OP_CONV` modes 3-6 (`sizedMinor`, which the scan
   reads off each `OP_CONV`'s mode); 15.4 the language's abstraction
-  phase, `panic` and the interface and equality builtins (`ifaceMinor`).
+  phase, `panic` and the interface and equality builtins (`ifaceMinor`);
+  15.5 is kept for distributed actors; 15.6 the reference phase
+  (`refMinor`): `OP_SETFIELD`, the type flags (a type row or a constant
+  struct with any) and the reason `actor.Nil`.
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old
@@ -1782,14 +1824,13 @@ together with `mbox_words` through `actor_charged_words`).
     before it are listed at the top of `runtime/vm/image.h`.
   - `gogo version` and the device's boot banner print the format
     (`image format 15.<minor>`).
-  - **Reserved term encodings.** So that interfaces, pointers and maps
-    (the language phases still to come) need only a minor, v15 keeps
-    encodings free for them (`runtime/vm/term.h`): heap kinds 13-15 (15.2
-    gave 12 to `K_FLOAT`), the special immediates from `0x72` up, the
+  - **Reserved term encodings.** So that later additions need only a
+    minor, v15 keeps encodings free (`runtime/vm/term.h`): heap kinds 13-15
+    (15.2 gave 12 to `K_FLOAT`), the special immediates from `0x72` up, the
     `TYPEIS` ids `0x10009` to `0x100FF` beside `TY_*` (15.2 gave `0x10007`
-    and `0x10008` to `float32` and `float64`), and bits 16-20 of a struct's type word
-    (always 0 in a v15 image). Nothing in a v15 compiler or VM produces
-    them; `image_load` refuses a constant object of an unknown kind but
+    and `0x10008` to `float32` and `float64`), and bits 19-20 of a struct's
+    type word (15.6 gave bits 16-18 to the type flags). Nothing in a v15
+    compiler or VM produces the free ones; `image_load` refuses a constant object of an unknown kind but
     does not check the others. What keeps them from an older VM is the
     version check: an image that uses one is stamped with the minor that
     gave it a meaning, so an older VM refuses it rather than misreading
@@ -1809,6 +1850,11 @@ together with `mbox_words` through `actor_charged_words`).
   widths are `badcode`. `CONVF` converts between floats and integers
   (modes in `runtime/vm/opcodes.h`). A VM built without `GOGO_FLOAT` has
   none of them: the requirement check refuses the image before any runs.
+- **`OP_SETFIELD`** (15.6, 67): `a=src b=struct c=index`, the shape of
+  `GETFIELD`, sharing its case in the interpreter: writes a field of a
+  heap struct whose type word has `STRUCT_MUT` (a const one is in flash,
+  an immutable one may be shared); nil is `R_NIL`, anything else
+  `badcode`.
 - **Unsigned ops** (15.3, `OP_DIVU64` .. `OP_SHRU64`, 62-66): `uint64`
   division, remainder, `<`, `<=` and logical `>>` on `int64` terms
   holding the bits; `uint32` uses the `int64` ops on widened values
@@ -1852,7 +1898,8 @@ together with `mbox_words` through `actor_charged_words`).
 - **Exit reasons** are `actor.Reason{Code int; Func string}`. `Code` is
   `actor.Normal` (the entry function returned), `Killed`, `OutOfMemory`,
   `MailboxOverflow`, `NoProc`, `DivZero`, `BadCode`, `Shutdown`,
-  `BadShift`, `BadMsg`, `Panic` (10), a library failure (64..99:
+  `BadShift`, `BadMsg`, `Panic` (10), `Nil` (12, 15.6: a nil pointer or
+  map dereference; 11 is kept for distributed actors), a library failure (64..99:
   `actor.Failed` (64) plus a shared error code, such as
   `http.ListenFailed`; 11..63 are kept for the VM), or a user code (100
   or more, from
@@ -1867,7 +1914,7 @@ together with `mbox_words` through `actor_charged_words`).
   trapped.
 - Crash reports go to stderr: `gogo: actor <pid N> crashed: <kind>[ in
   <func>]`, where `<kind>` is `killed`, `oom`, `mailbox_overflow`,
-  `noproc`, `divzero`, `badcode`, `badshift`, `badmsg`, `panic` or
+  `noproc`, `divzero`, `badcode`, `badshift`, `badmsg`, `panic`, `nil` or
   `exit(<code>)`; `Normal` and `Shutdown` are not reported. There are no
   line numbers yet.
 - **`panic(v)`** (builtin 56 `B_PANIC`, 15.4) prints `panic: ` and `v`

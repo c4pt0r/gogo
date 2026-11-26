@@ -904,7 +904,7 @@ func TestCodegenTwoResultBuiltinStmt(t *testing.T) {
 	}
 	g.nameLits([]*ast.FuncDecl{fd})
 	info := &funcInfo{name: "main"}
-	if err := g.compileFunc(info, nil, nil, fd.Body); err != nil {
+	if err := g.compileFunc(info, nil, 0, nil, fd.Body); err != nil {
 		t.Fatal(err)
 	}
 	found := false

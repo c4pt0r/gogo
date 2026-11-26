@@ -22,11 +22,12 @@ const (
 	// 14 came before: see runtime/vm/image.h).
 	imageMajor = 15
 	// imageMinor is the newest feature minor. Renumbering a feature's
-	// minor touches its constant here (floatMinor, sizedMinor, ifaceMinor),
+	// minor touches its constant here (floatMinor, sizedMinor, ifaceMinor,
+	// refMinor),
 	// IMAGE_MINOR in runtime/vm/image.h when it is the newest
 	// (TestTermsMatchC checks both), and the "15.N" in docs and opcodes.h
 	// comments.
-	imageMinor = max(floatMinor, sizedMinor, ifaceMinor)
+	imageMinor = max(floatMinor, sizedMinor, ifaceMinor, refMinor)
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -43,7 +44,9 @@ const (
 // B_FLOAT, and the K_FLOAT constants and TYPEIS ids, which scan counts
 // apart: floatMinor); 15.3 sized integers (the unsigned ops, B_PRINTLNU
 // and the new CONV modes: sizedMinor); 15.4 the builtins and reserved
-// types of panic, interfaces and equality (ifaceMinor). A reserved type is keyed by its image name ("port.Chunk"); its
+// types of panic, interfaces and equality (ifaceMinor); 15.6 references
+// (refMinor: SETFIELD and the type-row flags, which scan counts apart).
+// A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
 var (
@@ -51,6 +54,7 @@ var (
 		OpAddf: floatMinor, OpSubf: floatMinor, OpMulf: floatMinor, OpDivf: floatMinor, OpNegf: floatMinor,
 		OpEqf: floatMinor, OpNef: floatMinor, OpLtf: floatMinor, OpLef: floatMinor, OpConvf: floatMinor,
 		OpDivu64: sizedMinor, OpRemu64: sizedMinor, OpLtu64: sizedMinor, OpLeu64: sizedMinor, OpShru64: sizedMinor,
+		OpSetfield: refMinor,
 	}
 	builtinMinor = map[uint32]uint16{
 		BFloat:    floatMinor,
@@ -79,6 +83,13 @@ const sizedMinor = 3
 // panic, interfaces, equality): every builtin and reserved type it added
 // is stamped with it.
 const ifaceMinor = 4
+
+// refMinor is the minor of the language's reference phase (15.6:
+// pointers, maps, read-only globals, fmt): SETFIELD, the per-type flags
+// of a type row and a const struct (StructMut, StructMap, StructBox), the
+// const slices and arrays, and B_SPRINT. 15.5 belongs to distributed
+// actors.
+const refMinor = 6
 
 // convMinor is the minor of an OP_CONV with mode c (op): the modes 0-2
 // are 15.0's.
@@ -251,9 +262,23 @@ func (b *ImageBuilder) SetFuncCode(f uint32, code []uint32) { b.funcs[f].code = 
 // AddType declares an own struct type and returns its index (TypeOwnBase
 // and up, in declaration order).
 func (b *ImageBuilder) AddType(name string, nFields uint32) uint32 {
+	return b.AddTypeFlags(name, nFields, 0)
+}
+
+// AddTypeFlags is AddType for a type with flags (StructMut, StructMap,
+// StructBox: 15.6), kept in its row's field-count word.
+func (b *ImageBuilder) AddTypeFlags(name string, nFields, flags uint32) uint32 {
 	n := b.AddString(name)
-	b.types = append(b.types, imgType{name: n, nFields: nFields, goName: name})
+	b.types = append(b.types, imgType{name: n, nFields: nFields | flags, goName: name})
 	return TypeOwnBase + uint32(len(b.types)-1)
+}
+
+// TypeFlags returns the flags of own type idx (0 for a reserved one).
+func (b *ImageBuilder) TypeFlags(idx uint32) uint32 {
+	if idx < TypeOwnBase {
+		return 0
+	}
+	return b.types[idx-TypeOwnBase].nFields &^ 0xFFFF
 }
 
 // AddReservedType declares the next reserved type (index order) and
@@ -420,10 +445,18 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 			usesFloat = usesFloat || code[pc] == BFloat
 		}
 	}
+	for _, t := range b.types {
+		if t.nFields > 0xFFFF { // a row with flags
+			minor = max(minor, refMinor)
+		}
+	}
 	for off := 0; off < len(b.consts); off += int(b.consts[off] >> 6) {
 		switch b.consts[off] & 63 {
 		case KStruct:
-			mark(b.consts[off+1])
+			mark(b.consts[off+1] & 0xFFFF)
+			if b.consts[off+1] > 0xFFFF { // a type word with flags
+				minor = max(minor, refMinor)
+			}
 		case KFloat:
 			usesFloat = true
 		}

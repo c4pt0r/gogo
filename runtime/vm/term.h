@@ -14,10 +14,11 @@
  * 31..24, slot in 23..21.
  *   const ref        gen:8 | slot:3 | offset:17 | 1010
  *   K_CLOSURE word 1 gen:8 | slot:3 | func index:21
- *   K_STRUCT word 1  gen:8 | slot:3 | 0:5 | type index:16 for a module's own
- *                    types (index >= TYPE_OWN_BASE); a reserved type
+ *   K_STRUCT word 1  gen:8 | slot:3 | flags:5 | type index:16 for a module's
+ *                    own types (index >= TYPE_OWN_BASE); a reserved type
  *                    (system packages, opcodes.h) is its bare index: global,
- *                    the same in every module
+ *                    the same in every module. The flags (15.6, STRUCT_*
+ *                    below) are copied from the type's row by NEWSTRUCT
  * Images hold untagged refs (tag 0: offset < CONST_MAX_WORDS, as before);
  * the VM ORs the module's tag in where an image word becomes a runtime term
  * (LOADK, MKCLOSURE, NEWSTRUCT, a crash's function name, a field read out of
@@ -33,8 +34,9 @@
  *   - the specials from 0x72 up (T_*: only 0x02-0x62 are given);
  *   - the TYPEIS ids 0x10009-0x100FF beside TY_* (opcodes.h; 15.2 gave
  *     0x10007 and 0x10008 to float32 and float64);
- *   - bits 16-20 of a K_STRUCT's type word (0 in every v15 image), for
- *     per-type flags.
+ *   - bits 16-20 of a K_STRUCT's type word (0 in every image before
+ *     15.6), for per-type flags: 15.6 gave bits 16-18 to STRUCT_MUT,
+ *     STRUCT_MAP and STRUCT_BOX.
  * Nothing in a v15 compiler or VM produces any of them; the image
  * version check, not the loader, keeps them from an older VM.
  *
@@ -155,6 +157,18 @@ static inline term term_from_handle(uint32_t idx) { return (idx << 4) | 0xEu; }
 static inline uint32_t term_handle_idx(term t) { return t >> 4; }
 
 static inline term term_from_bool(bool b) { return b ? T_TRUE : T_FALSE; }
+
+/* Per-type flags (15.6) in bits 16-18 of a struct's type word, copied by
+ * NEWSTRUCT from the same bits of its type-table row's field-count word
+ * (image.h): STRUCT_MUT, a reference (a pointer's target, a map header):
+ * SETFIELD writes it in place, B_CMP compares it by identity; STRUCT_MAP,
+ * a map header (with STRUCT_MUT), printed as map[k:v ...]; STRUCT_BOX, the
+ * box of a value in an interface or of a pointer's non-struct target,
+ * printed as its one field. struct_type() leaves them out. */
+#define STRUCT_MUT   0x10000u
+#define STRUCT_MAP   0x20000u
+#define STRUCT_BOX   0x40000u
+#define STRUCT_FLAGS 0x1F0000u
 
 /* Object header: (total_words << 6) | kind; total_words includes the header. */
 static inline uint32_t hdr_make(uint32_t words, uint32_t kind) { return (words << 6) | kind; }

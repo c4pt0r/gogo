@@ -2017,7 +2017,7 @@ type Shape interface{ Area() int } // fine: interfaces are supported
 
 type Sq struct{ S int }
 
-func (s *Sq) Area() int { return s.S * s.S } // pointer receiver
+func (s *Sq) Area() int { return s.S * s.S } // fine: pointer receivers are supported
 
 func Max[T int | int64](a, b T) T { // generics
 	if a > b {
@@ -2029,9 +2029,10 @@ func Max[T int | int64](a, b T) T { // generics
 func main() {
 	ch := make(chan int) // channel
 	go func() { ch <- 1 }()
+	sq := []Sq{{2}}
 	defer recover()       // recover
 	m := map[string]int{} // map
-	p := &Sq{2}           // pointer
+	p := &sq[0]           // a pointer into a slice
 	x := 1.5i             // complex
 	if counter > 0 {
 		goto done // goto
@@ -2049,21 +2050,19 @@ done:
 
 ```text
 main.gg:5:1: gogo: global variable not supported
-main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
-main.gg:23:8: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
-main.gg:24:7: gogo: map not supported
-main.gg:25:7: gogo: pointer not supported
-main.gg:26:7: gogo: complex not supported
-main.gg:28:3: gogo: goto statement not supported
-main.gg:30:1: gogo: label on a statement other than for or switch not supported
-main.gg:31:14: gogo: array in interface not supported: use a slice or a struct with an array field
-main.gg:34:10: gogo: map not supported
-main.gg:34:13: gogo: pointer not supported
-main.gg:34:16: gogo: complex not supported
-main.gg:35:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
+main.gg:24:8: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
+main.gg:25:7: gogo: map not supported
+main.gg:26:7: gogo: interior pointer &sq[0] not supported: gogo has no pointers into a slice element or a struct field; use a []*T or a *T field, or s[i].F = v
+main.gg:27:7: gogo: complex not supported
+main.gg:29:3: gogo: goto statement not supported
+main.gg:31:1: gogo: label on a statement other than for or switch not supported
+main.gg:32:14: gogo: array in interface not supported: use a slice or a struct with an array field
+main.gg:35:10: gogo: map not supported
+main.gg:35:16: gogo: complex not supported
+main.gg:36:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
 ```
 
 The full list, with what to do instead:
@@ -2077,8 +2076,7 @@ The full list, with what to do instead:
 | `error` | `error not supported` | `bool` or an `int` code type |
 | package-level `var` | `global variable not supported` | `const`, or state in an actor |
 | maps | `map not supported` | a slice of key/value structs |
-| pointers, `&x`, `*p` | `pointer not supported` | values; state in actors |
-| pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
+| a pointer into a slice element or a field, `&s[i]`, `&v.F` | `interior pointer &s[i] not supported` | a `[]*T` or a `*T` field, or `s[i].F = v` |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
 | `complex64/128` | `complex not supported` | two floats |
 | `uintptr` | `uintptr not supported` | `uint32` |
@@ -2087,8 +2085,7 @@ The full list, with what to do instead:
 | an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
 
-> **Note.** Pointer receivers, maps, pointers and
-> package-level variables are not supported yet. They are planned for
+> **Note.** Maps and package-level variables are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see
 > `docs/design.md` §5.2).
 

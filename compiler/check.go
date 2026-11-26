@@ -125,8 +125,14 @@ func (c *checker) typeProblem(t types.Type) string {
 			return ""
 		}
 		return obj.Name()
-	case *types.Pointer:
-		return "pointer"
+	case *types.Pointer: // 15.6: to any type of the subset but an array
+		if isArray(t.Elem()) {
+			return "pointer to an array"
+		}
+		if msg := c.typeProblem(t.Elem()); msg != "" {
+			return "pointer to " + msg
+		}
+		return ""
 	case *types.Slice:
 		if msg := c.typeProblem(t.Elem()); msg != "" {
 			return "slice of " + msg
@@ -235,11 +241,11 @@ func (c *checker) decl(d ast.Decl) {
 // compiled.
 func (c *checker) recv(fl *ast.FieldList) bool {
 	f := fl.List[0]
-	if _, ptr := ast.Unparen(f.Type).(*ast.StarExpr); ptr {
-		c.fail(f.Type.Pos(), "pointer receivers are not supported yet")
-		return false
+	rt := c.p.Info.TypeOf(f.Type)
+	if pt := pointerOf(rt); pt != nil { // a pointer receiver (15.6)
+		rt = pt.Elem()
 	}
-	n, ok := types.Unalias(c.p.Info.TypeOf(f.Type)).(*types.Named)
+	n, ok := types.Unalias(rt).(*types.Named)
 	if !ok || n.TypeArgs().Len() > 0 {
 		c.unsupported(f.Type, "receiver of type "+types.TypeString(c.p.Info.TypeOf(f.Type), pkgName))
 		return false
@@ -290,6 +296,10 @@ func (c *checker) typeSpec(s *ast.TypeSpec) {
 		return
 	}
 	for _, f := range st.Fields.List {
+		if _, ptr := f.Type.(*ast.StarExpr); ptr && len(f.Names) == 0 {
+			c.unsupported(f.Type, "embedded pointer field") // promoted fields would need a nil check per step
+			continue
+		}
 		c.typeExpr(f.Type) // an embedded field too: a field named after its type
 	}
 }
@@ -411,8 +421,8 @@ func isAny(t types.Type) bool {
 // assignment, argument, result or field value). A func value cannot go
 // into an interface (it has no type id).
 func (c *checker) convert(target types.Type, e ast.Expr) {
-	if isSlice(target) || isIface(target) {
-		c.nilSlice(e) // the nil slice, the nil interface value
+	if isSlice(target) || isIface(target) || isPointer(target) {
+		c.nilSlice(e) // the nil slice, the nil interface value, the nil pointer
 	}
 	if !isIface(target) {
 		return
@@ -459,6 +469,16 @@ func (c *checker) convertType(target, src types.Type, pos token.Pos) {
 		c.fail(pos, "array in interface not supported: use a slice or a struct with an array field")
 	}
 	c.vmMethods(target, src, pos)
+	if it, ok := underlying(target).(*types.Interface); ok && isPointer(src) {
+		ms := types.NewMethodSet(src)
+		for i := 0; i < it.NumMethods(); i++ {
+			m := it.Method(i)
+			if sel := ms.Lookup(m.Pkg(), m.Name()); sel != nil && len(sel.Index()) > 1 && isPointer(sel.Obj().Type().(*types.Signature).Recv().Type()) {
+				c.fail(pos, "%s as a %s not supported: its method %s has a pointer receiver and is promoted from an embedded field (no pointers into fields)",
+					types.TypeString(src, pkgName), types.TypeString(target, pkgName), m.Name())
+			}
+		}
+	}
 }
 
 // vmMethods rejects a value of concrete type src going into interface
@@ -578,6 +598,10 @@ func (c *checker) typeExpr(e ast.Expr) {
 	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType, *ast.InterfaceType: // their signatures were checked above
 	case *ast.ArrayType:
 		c.typeExpr(e.Elt) // []T, [N]T, [...]T
+	case *ast.StarExpr:
+		c.typeExpr(e.X) // *T
+	case *ast.ParenExpr:
+		c.typeExpr(e.X)
 	default:
 		c.unsupported(e, kindName(e))
 	}
@@ -777,6 +801,9 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 			if !ok || c.p.Info.Selections[sel] == nil {
 				break
 			}
+			if isPointer(c.p.Info.TypeOf(sel.X)) {
+				return // p.X = v writes p's target, not p
+			}
 			x, field = ast.Unparen(sel.X), true
 		}
 		// Uses, not Defs: the variables a := declares are not writes.
@@ -871,8 +898,8 @@ func (c *checker) lhs(e ast.Expr) {
 		c.indexArg(e.Index)
 	case *ast.IndexListExpr:
 		c.unsupported(e, "index assignment")
-	case *ast.StarExpr:
-		c.unsupported(e, "pointer assignment")
+	case *ast.StarExpr: // *p = v (15.6)
+		c.expr(e.X)
 	default:
 		c.unsupported(e, kindName(e))
 	}
@@ -886,11 +913,17 @@ func (c *checker) fieldLhs(e *ast.SelectorExpr) {
 		c.unsupported(e, "assignment to "+types.ExprString(e))
 		return
 	}
+	if pt := pointerOf(c.p.Info.TypeOf(e.X)); pt != nil && structType(pt.Elem()) != nil {
+		c.expr(e.X) // p.X = v through a pointer, any expression (15.6)
+		return
+	}
 	if t := c.p.Info.TypeOf(e.X); structType(t) == nil {
 		c.unsupported(e, "field assignment on "+types.TypeString(t, pkgName))
 		return
 	}
 	switch x := ast.Unparen(e.X).(type) {
+	case *ast.StarExpr: // (*p).X = v
+		c.expr(x.X)
 	case *ast.Ident:
 	case *ast.SelectorExpr:
 		c.fieldLhs(x)
@@ -1009,7 +1042,7 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 			if isFsFile(c.p.Info.TypeOf(t)) {
 				c.unsupported(t, "type switch case fs.File not supported; wrap it in a struct")
 			} else if !c.caseType(t) && !c.ifaceCase(t) {
-				c.unsupported(t, "type switch case other than a struct, int, int64, byte, float32, float64, bool, string, a named type of those, actor.PID, actor.Ref or bytes.Bytes")
+				c.unsupported(t, "type switch case other than a struct, int, int64, byte, float32, float64, bool, string, a named type of those, a pointer, actor.PID, actor.Ref or bytes.Bytes")
 			}
 		}
 		for _, b := range cc.Body {
@@ -1063,6 +1096,8 @@ func (c *checker) caseType(t ast.Expr) bool {
 		return false
 	}
 	switch ty := types.Unalias(tv.Type).(type) {
+	case *types.Pointer: // *T (15.6)
+		return c.typeProblem(ty) == ""
 	case *types.Basic:
 		return isCaseBasic(ty) || intKindOf(ty).bits != 0 // a sized integer is boxed
 	case *types.Named:
@@ -1224,6 +1259,12 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 			case "len", "cap", "append", "make", "copy":
 				c.seqBuiltin(call, obj.Name())
 				return
+			case "new": // new(T) (15.6)
+				c.typeExpr(call.Args[0])
+				if isArray(c.p.Info.TypeOf(call.Args[0])) {
+					c.unsupported(call, "pointer to an array")
+				}
+				return
 			case "panic": // panic(v): v goes into an any
 				c.convert(anyType, call.Args[0])
 				c.expr(call.Args[0])
@@ -1320,15 +1361,71 @@ func (p *Program) ifaceMethod(sel *ast.SelectorExpr) bool {
 // its own that takes a B: it is rejected, and so is I.M of an interface I.
 func (c *checker) methodRecv(sel *ast.SelectorExpr) {
 	s := c.p.Info.Selections[sel]
+	fn, _ := s.Obj().(*types.Func)
+	ptrRecv := fn != nil && isPointer(fn.Type().(*types.Signature).Recv().Type())
 	if s.Kind() == types.MethodVal {
 		c.expr(sel.X)
+		if !ptrRecv || isIface(s.Recv()) {
+			return
+		}
+		// A pointer method: on a pointer, or on a local variable (&x). A
+		// slice element, a field or a promoted method would need a
+		// pointer into it (no interior pointers).
+		_, isVar := ast.Unparen(sel.X).(*ast.Ident)
+		switch {
+		case len(s.Index()) > 1:
+			c.fail(sel.Pos(), "method %s with a pointer receiver promoted from an embedded field not supported: it needs a pointer to the field (no interior pointers); call it on the field of a pointer, or embed a value whose methods have value receivers", fn.Name())
+		case !isPointer(c.p.Info.TypeOf(sel.X)) && (!isVar || c.isGlobal(sel.X)):
+			c.fail(sel.Pos(), "method %s has a pointer receiver: %s needs a pointer to it (no interior pointers: &s[i], &v.F); use a pointer (a []*T, a *T field) or a local variable", fn.Name(), types.ExprString(sel.X))
+		}
 		return
 	}
 	if isIface(s.Recv()) {
 		c.unsupported(sel, "method expression on an interface type")
 	} else if len(s.Index()) > 1 {
 		c.unsupported(sel, "method expression of a promoted method")
+	} else if isPointer(s.Recv()) && !ptrRecv {
+		c.unsupported(sel, "method expression (*T).M of a value method")
 	}
+}
+
+// addrOf checks &x (15.6): &T{...} of a composite literal (not an array),
+// or &v of a local variable (not an array), which then lives in a box. An
+// interior pointer, &s[i] or &v.F, is rejected: it would point into a
+// slice's array or a struct field.
+func (c *checker) addrOf(e *ast.UnaryExpr) {
+	switch x := ast.Unparen(e.X).(type) {
+	case *ast.CompositeLit:
+		if isArray(c.p.Info.TypeOf(x)) {
+			c.unsupported(e, "pointer to an array")
+			return
+		}
+		c.compositeLit(x)
+		return
+	case *ast.Ident:
+		v, ok := c.p.Info.Uses[x].(*types.Var)
+		switch {
+		case !ok:
+		case c.isGlobal(x):
+			c.fail(e.Pos(), "address of package-level variable %s not supported: package-level variables are read-only", x.Name)
+		case isArray(v.Type()):
+			c.unsupported(e, "pointer to an array")
+		default:
+			c.expr(x)
+		}
+		return
+	}
+	c.fail(e.Pos(), "interior pointer %s not supported: gogo has no pointers into a slice element or a struct field; use a []*T or a *T field, or s[i].F = v", types.ExprString(e))
+}
+
+// isGlobal reports whether e names a package-level variable.
+func (c *checker) isGlobal(e ast.Expr) bool {
+	id, ok := ast.Unparen(e).(*ast.Ident)
+	if !ok {
+		return false
+	}
+	v, ok := c.p.Info.Uses[id].(*types.Var)
+	return ok && !v.IsField() && v.Pkg() != nil && v.Parent() == v.Pkg().Scope()
 }
 
 // libFunc reports whether sel names a function of a compiled library
@@ -1459,10 +1556,16 @@ func (c *checker) expr(e ast.Expr) {
 	case *ast.CallExpr:
 		c.call(e, false)
 	case *ast.UnaryExpr:
+		if e.Op == token.AND {
+			c.addrOf(e)
+			return
+		}
 		if e.Op != token.SUB && e.Op != token.NOT && e.Op != token.XOR {
 			c.unsupported(e, "operator "+e.Op.String())
 			return
 		}
+		c.expr(e.X)
+	case *ast.StarExpr: // *p (15.6)
 		c.expr(e.X)
 	case *ast.BinaryExpr:
 		c.binary(e)
@@ -1610,7 +1713,7 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 // struct whose fields are all comparable (go/types has rejected slices and funcs; a Bytes field
 // compares by content; a Buffer does not compare).
 func (c *checker) comparable(t types.Type) bool {
-	if isPID(t) || isRef(t) || isIface(t) {
+	if isPID(t) || isRef(t) || isIface(t) || isPointer(t) { // a pointer by identity
 		return true
 	}
 	if a := arrayType(t); a != nil { // element by element
@@ -1764,7 +1867,7 @@ func (c *checker) nilCompare(e *ast.BinaryExpr) bool {
 	if isNil(x) {
 		x, y = y, x
 	}
-	if !isNil(y) || (!isSlice(c.p.Info.TypeOf(x)) && !isIface(c.p.Info.TypeOf(x))) {
+	if !isNil(y) || (!isSlice(c.p.Info.TypeOf(x)) && !isIface(c.p.Info.TypeOf(x)) && !isPointer(c.p.Info.TypeOf(x))) {
 		return false
 	}
 	c.nilSlice(y)

@@ -33,10 +33,14 @@
  *   v15.4 the language's abstraction phase: builtins 56 B_PANIC and 57
  *       B_CMP, exit reason R_PANIC (10), reserved types 45 errors.Code
  *       (the box an error holds it in) and 46 errors.errorString.
+ *   v15.5 kept for distributed actors.
+ *   v15.6 references: OP_SETFIELD, exit reason R_NIL (12), the type
+ *       flags (bits 16-18 of an own row's field-count word and of a
+ *       struct's type word: STRUCT_MUT, STRUCT_MAP, STRUCT_BOX, term.h).
  *
  * Reserved encodings (term.h): heap kinds 13-15, the specials from 0x72
- * up, the TYPEIS ids 0x10009-0x100FF and bits 16-20 of a struct's type
- * word are kept free for interface values, pointers and maps. Nothing in
+ * up, the TYPEIS ids 0x10009-0x100FF and bits 19-20 of a struct's type
+ * word are kept free (15.6 gave bits 16-18 to the type flags). Nothing in
  * a v15 compiler or VM produces them (image_load refuses an unknown heap
  * kind; it does not check the others). Giving one a meaning is a minor:
  * an image that uses it is stamped with that minor, and the version
@@ -44,7 +48,10 @@
  *
  * Types: an image's type table holds n_reserved reserved rows (header
  * word 7; at most TYPE_RESERVED_COUNT, else IMG_ERR_VERSION: the image
- * uses a reserved type this VM does not know), then its own types. Code
+ * uses a reserved type this VM does not know), then its own types. A
+ * row's first word is its field count; from 15.6 an own row's bits 16-18
+ * are its flags (STRUCT_*, term.h), which NEWSTRUCT copies into the
+ * struct (a reserved row has none: its count is checked whole). Code
  * names a reserved type by its fixed index (TYPE_* in opcodes.h) and an
  * own type by TYPE_OWN_BASE + its position after the reserved rows; row
  * image_type_row(). The compiler emits only the reserved rows up to the
@@ -76,7 +83,7 @@
 
 #define IMAGE_MAGIC   0x4F474F47u
 #define IMAGE_MAJOR   15u
-#define IMAGE_MINOR   4u
+#define IMAGE_MINOR   6u
 #define IMAGE_VERSION (IMAGE_MAJOR << 16 | IMAGE_MINOR)   /* the newest this VM runs */
 #define IMAGE_HEADER_WORDS 8u
 

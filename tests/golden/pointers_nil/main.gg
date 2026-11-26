@@ -1,0 +1,29 @@
+// A nil pointer dereference ends the actor with reason actor.Nil (crash
+// kind "nil"): reading or writing a field of nil, *p of nil, a method of
+// a nil *T whose receiver is copied.
+package main
+
+import "gogo/actor"
+
+type T struct{ X int }
+
+func (t T) Get() int { return t.X }
+
+func watch(f func()) {
+	p := actor.Spawn(f)
+	actor.Monitor(p)
+	d := actor.Receive().(actor.DownMsg)
+	println(d.Reason.Code == actor.Nil, d.Reason.Func)
+}
+
+func main() {
+	var p *T
+	println(p == nil)
+	watch(func() { println(p.X) })
+	watch(func() { p.X = 1 })
+	watch(func() { println((*p).X) })
+	watch(func() { println(p.Get()) })
+	var n *int
+	watch(func() { *n = 2 })
+	println(p.X) // main too: the run fails
+}

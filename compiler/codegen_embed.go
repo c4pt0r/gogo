@@ -63,8 +63,18 @@ type promotedMethod struct {
 // M on t calls fn with the receiver loaded along path (fieldPathInto), so
 // promoted methods need no wrapper functions. Methods of packages that are
 // not compiled (the stubs) are left out.
-func (g *gen) methodTable(t *types.Named) []promotedMethod {
+//
+// For a pointer type *T (15.6) the table holds T's methods of both
+// receiver kinds and those promoted through embedded fields (the path
+// starts at the pointer's target, laid out as T), except a promoted
+// method with a pointer receiver, which would need a pointer into a
+// field: no candidate (the checker rejects such a *T in an interface).
+func (g *gen) methodTable(t types.Type) []promotedMethod {
 	ms := types.NewMethodSet(t)
+	elem := t
+	if pt := pointerOf(t); pt != nil {
+		elem = pt.Elem()
+	}
 	var out []promotedMethod
 	for i := 0; i < ms.Len(); i++ {
 		sel := ms.At(i)
@@ -72,11 +82,11 @@ func (g *gen) methodTable(t *types.Named) []promotedMethod {
 		if !ok || !g.p.compiled(fn.Pkg()) {
 			continue
 		}
-		if _, ptr := fn.Type().(*types.Signature).Recv().Type().(*types.Pointer); ptr {
+		idx := sel.Index()
+		if _, ptr := fn.Type().(*types.Signature).Recv().Type().(*types.Pointer); ptr && (!isPointer(t) || len(idx) > 1) {
 			continue // (Indirect is also true for a method of an embedded interface)
 		}
-		idx := sel.Index()
-		out = append(out, promotedMethod{name: fn.Name(), fn: fn, path: embedPath(t, idx[:len(idx)-1])})
+		out = append(out, promotedMethod{name: fn.Name(), fn: fn, path: embedPath(elem, idx[:len(idx)-1])})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out

@@ -286,8 +286,7 @@ rebuilt:
 
 ## Compiler and language
 
-- **Not supported yet (planned).** The compiler rejects maps, pointer
-  receivers ("pointer receivers are not supported yet"), pointers and package-level `var`s. `goto` is rejected (labeled `break` and
+- **Not supported yet (planned).** The compiler rejects maps and package-level `var`s. `goto` is rejected (labeled `break` and
   `continue` cover its uses). Channels, `go`, `select`, generics and
   `recover` are outside the design. "Language completeness" is a
   planned milestone. *Workaround:* slices of structs searched linearly
@@ -324,12 +323,25 @@ rebuilt:
   not supported`. *Workaround:* `_, _ = actor.Call(...)`. `println(f())`
   with a multi-result `f` and `var a, b = f()` fail the same way; use
   `a, b := f()`.
-- **Methods: value receivers only.** A method with a value
-  receiver works on a copy, so it cannot change its caller's value: return
-  the new value instead (`p = p.Moved(1, 0)`). A named type
-  other than a struct or a basic type (`type L []int`) cannot be declared,
-  so it has no methods either. The methods of a type in a hot-loaded module
-  are that module's own, like its types.
+- **Pointers: no interior pointers, a copy after a send.** `&s[i]` and
+  `&v.F` are rejected (`interior pointer ... not supported`), and so is a
+  pointer method called on a slice element or a field (`s[i].M()`,
+  `v.F.M()`: it would need `&s[i]`), or promoted from an embedded field.
+  *Workaround:* keep pointers in the slice or field (`[]*T`, a `*T`
+  field), or write the element's field directly, `s[i].X = v`. Pointers
+  to arrays (`&a`, `*[N]T`) and embedded pointer fields are rejected too.
+  A pointer sent to another actor (in a message, or captured by a spawned
+  closure) is copied with its target, as a slice's array is: the receiver
+  gets its own target, so a write there is not seen by the sender (Go's
+  goroutines would share it). A nil pointer dereference ends the actor
+  with the reason `actor.Nil` (crash kind `nil`), not a `panic`, and
+  there is no `recover`. `println(p)` prints the target after `&`
+  (`&{1 2}`, `&5`), not an address. A local variable whose address is
+  taken lives in a box (one allocation at its declaration), and `*p` of a
+  pointer to a struct copies the struct (one allocation). A named type
+  other than a struct or a basic type (`type L []int`) cannot be
+  declared, so it has no methods. The methods of a type in a hot-loaded
+  module are that module's own, like its types.
 - **Arrays: no `==`, not in `any`, hidden copies.** `a == b` on arrays
   is rejected until composite values can be compared (`comparison of
   arrays not supported yet`): compare the elements. An array cannot go
@@ -357,7 +369,7 @@ rebuilt:
   deferred calls again, so many returns after many defers make the
   function's code larger.
 - **Embedded fields: no pointers, no promoted method expressions.**
-  Embedding `*T` is rejected with pointers. A method expression of a
+  Embedding `*T` is rejected (`embedded pointer field not supported`). A method expression of a
   promoted method (`Outer.M` for a method of an embedded field) is
   rejected (`method expression of a promoted method not supported`).
   *Workaround:* a method value `x.M`, or `Inner.M(x.Inner)`. The methods
@@ -367,7 +379,8 @@ rebuilt:
   promoted methods count toward implementing an interface, an embedded
   interface's included; those of an embedded gogo type do not.
 - **Every field write allocates.** Structs are immutable in the VM, so
-  `p.X = v` builds a new struct (2 + fields words) for each struct on the
+  `v.X = v` on a struct variable (not through a pointer, whose target is
+  written in place) builds a new struct (2 + fields words) for each struct on the
   path (`a.b.c = v` builds three) and the old one becomes garbage: the
   same cost as rebuilding it with a literal by hand. On the host a write
   to a 3-field struct in a tight loop costs about 30 ns more than an `int`
@@ -387,8 +400,9 @@ rebuilt:
   of a captured slice's element (`s[i].X = v`) is allowed: it changes the
   shared array, as in Go. *Workaround:* copy first, `q := p`, and write
   `q`'s fields.
-- **No field assignment through a map index or a pointer.** Maps and
-  pointers are not supported yet; `f().X = v` is not valid Go either.
+- **No field assignment through a map index.** Maps are not supported
+  yet. A field of a pointer's target can be written (`p.X = v`, `f().X =
+  v` for a `f` that returns a pointer).
 - **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
   zero PID.
 - **Some values cannot go into `any`.** Func values (no type id) are

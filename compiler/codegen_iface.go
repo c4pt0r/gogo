@@ -88,6 +88,8 @@ func (g *gen) typeID(t types.Type) (uint32, bool) {
 		return TyBytes, true
 	case boxed(t):
 		return g.boxIndex(t), true
+	case isPointer(t):
+		return g.ptrIndex(pointerOf(t)), true
 	}
 	if b, ok := types.Unalias(t).(*types.Basic); ok {
 		switch b.Kind() {
@@ -369,6 +371,12 @@ func (g *gen) concreteTypes() []types.Type {
 		return g.concrete
 	}
 	g.concrete = []types.Type{}
+	used := map[string]bool{} // the pointer types of the program, by ptrName
+	for _, tv := range g.p.Info.Types {
+		if pt, ok := tv.Type.(*types.Pointer); ok {
+			used[g.ptrName(pt)] = true
+		}
+	}
 	for _, pkg := range g.p.packages() {
 		for _, f := range pkg.Files {
 			for _, d := range f.Decls {
@@ -388,6 +396,10 @@ func (g *gen) concreteTypes() []types.Type {
 					if types.NewMethodSet(tn.Type()).Len() > 0 {
 						g.concrete = append(g.concrete, tn.Type())
 					}
+					// *T, when the program has such pointers (15.6)
+					if pt := types.NewPointer(tn.Type()); used[g.ptrName(pt)] && types.NewMethodSet(pt).Len() > 0 {
+						g.concrete = append(g.concrete, pt)
+					}
 				}
 			}
 		}
@@ -400,11 +412,10 @@ func (g *gen) concreteTypes() []types.Type {
 // signature), its own or promoted from an embedded field (methodTable:
 // with the field path to its receiver), or nil.
 func (g *gen) impl(t types.Type, m *types.Func) *promotedMethod {
-	n, ok := types.Unalias(t).(*types.Named)
-	if !ok {
+	if _, ok := types.Unalias(t).(*types.Named); !ok && !isPointer(t) {
 		return nil
 	}
-	for _, e := range g.methodTable(n) {
+	for _, e := range g.methodTable(t) {
 		if e.fn.Id() == m.Id() && types.Identical(e.fn.Type(), m.Type()) {
 			return &e
 		}
@@ -457,6 +468,7 @@ func (g *gen) dispatcher(m *types.Func) uint32 {
 	np := 1 + sig.Params().Len()
 	k := sig.Results().Len()
 	t := uint8(np) // a scratch register for TYPEIS
+	extra := 0     // registers above it for a copy of a pointer's target
 	var a Asm
 	for _, ct := range g.concreteTypes() {
 		pm := g.impl(ct, m)
@@ -474,6 +486,20 @@ func (g *gen) dispatcher(m *types.Func) uint32 {
 		if boxed(ct) {
 			a.Emit(OpGetfield, 0, 0, 0)
 		}
+		if pt := pointerOf(ct); pt != nil && len(pm.path) == 0 && !isPointer(pm.fn.Type().(*types.Signature).Recv().Type()) {
+			// a value method of *T: a copy of the target (derefInto)
+			if st := ptrStruct(pt); st == nil {
+				a.Emit(OpGetfield, 0, 0, 0)
+			} else {
+				nf := st.Underlying().(*types.Struct).NumFields()
+				tidx, _ := g.typeIndex(st)
+				for i := 0; i < nf; i++ {
+					a.Emit(OpGetfield, uint8(np+1+i), 0, uint8(i))
+				}
+				a.EmitExt(OpNewstruct, 0, uint8(np+1), uint8(nf), tidx)
+				extra = max(extra, nf)
+			}
+		}
 		for _, step := range pm.path { // a promoted method: its embedded receiver
 			a.Emit(OpGetfield, 0, 0, uint8(step.idx))
 		}
@@ -488,7 +514,7 @@ func (g *gen) dispatcher(m *types.Func) uint32 {
 	a.EmitExt(OpLoadk, t, 0, 0, TermConst(g.b.AddString(nilDeref)))
 	a.EmitExt(OpBuiltin, t, t, 1, BPanic)
 	a.Emit(OpRet, t, 0, 0)
-	g.finishGenerated(info, &a, np, max(np+1, k))
+	g.finishGenerated(info, &a, np, max(np+1+extra, k))
 	return idx
 }
 

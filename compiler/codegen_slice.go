@@ -24,6 +24,8 @@ func (f *fn) seqBuiltin(call *ast.CallExpr, name string, dst uint8) bool {
 		f.makeInto(call, dst)
 	case "append":
 		f.appendInto(call, dst)
+	case "new":
+		f.newInto(call, dst)
 	default:
 		return false
 	}

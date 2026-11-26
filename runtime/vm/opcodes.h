@@ -49,8 +49,8 @@ enum Op {
     OP_JMPT      = 17,  /*! a=cond ext=target | if ra: pc = code + ext | Jump if ra is true. */
     OP_CALL      = 18,  /*! a=dst b=args c=nargs ext=func | ra = func ext(rb .. rb+c-1) | Call a function by index; c must equal its parameter count. The result returns into ra via RET or RETN. */
     OP_RET       = 19,  /*! a=src | return ra | Return one value into the caller's CALL or CALLV destination register. */
-    OP_NEWSTRUCT = 20,  /*! a=dst b=fields c=nfields ext=type | ra = struct ext{rb .. rb+c-1} | Allocate a struct of type ext (reserved index or TYPE_OWN_BASE + n); c must equal the type's field count. */
-    OP_GETFIELD  = 21,  /*! a=dst b=struct c=index | ra = rb.fields[c] | Read a field; past the end of an older image's reserved struct it reads int 0, of an own struct it is badcode. */
+    OP_NEWSTRUCT = 20,  /*! a=dst b=fields c=nfields ext=type | ra = struct ext{rb .. rb+c-1} | Allocate a struct of type ext (reserved index or TYPE_OWN_BASE + n); c must equal the type's field count. The struct's type word carries its row's flags (15.6: mutable, map, box; term.h). */
+    OP_GETFIELD  = 21,  /*! a=dst b=struct c=index | ra = rb.fields[c] | Read a field; past the end of an older image's reserved struct it reads int 0, of an own struct it is badcode; nil crashes with R_NIL (15.6). */
     OP_MKCLOSURE = 22,  /*! a=dst b=captures c=ncaptures ext=func | ra = closure func ext{rb .. rb+c-1} | Allocate a closure of function ext capturing registers rb .. rb+c-1. */
     OP_TYPEIS    = 23,  /*! a=dst b=value ext=type | ra = (dynamic type of rb == ext) | Type test: ext is a TY_* id or a struct type id. */
     OP_BUILTIN   = 24,  /*! a=dst b=args c=nargs ext=builtin | ra = builtin ext(rb .. rb+c-1) | Call a builtin (B_*). Two-result builtins also write ra+1. */
@@ -114,7 +114,11 @@ enum Op {
     OP_REMU64    = 63,  /*! a=dst b=lhs c=rhs | ra = rb % rc | uint64 remainder; a zero divisor crashes with R_DIV_ZERO. */
     OP_LTU64     = 64,  /*! a=dst b=lhs c=rhs | ra = rb < rc | uint64 less-than. */
     OP_LEU64     = 65,  /*! a=dst b=lhs c=rhs | ra = rb <= rc | uint64 less-or-equal. */
-    OP_SHRU64    = 66   /*! a=dst b=value c=count | ra = rb >> rc | uint64 logical right shift (count as SHR: a count >= 64 gives 0). */
+    OP_SHRU64    = 66,  /*! a=dst b=value c=count | ra = rb >> rc | uint64 logical right shift (count as SHR: a count >= 64 gives 0). */
+    /* References (15.6): pointers and maps are structs of a type whose
+     * row is flagged mutable (STRUCT_MUT, term.h); only those are
+     * written in place. */
+    OP_SETFIELD  = 67   /*! a=struct b=index c=src | ra.fields[b] = rc | Write a field of a heap struct of a mutable type (a pointer's target, a map header); nil crashes with R_NIL, anything else (a const or immutable struct, past the end) is badcode. */
 };
 
 enum Builtin {
@@ -181,7 +185,7 @@ enum Builtin {
     B_PRINTLNU        = 55,  /*! mask, values... -> nil | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. */
     /* Since 15.4 (the language's abstraction phase). */
     B_PANIC           = 56,  /*! v -> (does not return) | panic(v): print "panic: " and v (as println prints it) to stderr, then end the calling actor with R_PANIC. Deferred calls do not run. */
-    B_CMP             = 57   /*! a, b [, x] -> -1 | 0 | 1 | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field, arrays (slices) element by element, anything else by term identity (a func, a Buffer). A third argument (its value unused) says a and b are arrays; without it a slice at the top, one held by an interface, equals nothing, itself included. Nesting past 64 levels, other than through a struct's last field or an array's last element, is badcode, and so is a compare that visits more than 65536 terms (values sharing subvalues). Does not preempt. */
+    B_CMP             = 57   /*! a, b [, x] -> -1 | 0 | 1 | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field (a struct of a mutable type, a pointer or a map, by identity: 15.6), arrays (slices) element by element, anything else by term identity (a func, a Buffer). A third argument (its value unused) says a and b are arrays; without it a slice at the top, one held by an interface, equals nothing, itself included. Nesting past 64 levels, other than through a struct's last field or an array's last element, is badcode, and so is a compare that visits more than 65536 terms (values sharing subvalues). Does not preempt. */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -327,6 +331,8 @@ enum Reason {
     R_BAD_SHIFT        = 8,
     R_BAD_MSG          = 9,   /* a value that may not cross modules (msg.h) */
     R_PANIC            = 10,  /* panic(v), a failed type assertion, a method call on a nil interface (15.4) */
+    /* 11: kept for distributed actors. */
+    R_NIL              = 12,  /* a nil pointer dereference: GETFIELD or SETFIELD of nil (15.6) */
     R_FAILED           = 64   /* + a GOGO_E_* code: a library failure (no VM code uses it) */
 };
 

@@ -1,0 +1,185 @@
+// Pointers (15.6): &T{}, &x, new(T), *p, p.X, pointer receivers and
+// method sets, *T in interfaces and type switches, aliasing through one
+// target, and copies of the target staying values. Valid Go: `go run`
+// prints the same.
+package main
+
+type Point struct{ X, Y int }
+
+type Counter struct {
+	n    int
+	name string
+}
+
+func (c *Counter) Inc()    { c.n++ }
+func (c Counter) Get() int { return c.n }
+
+type Getter interface{ Get() int }
+
+type Shape interface {
+	Area() int
+	Scale(k int)
+}
+
+type Rect struct{ W, H int }
+
+func (r Rect) Area() int    { return r.W * r.H }
+func (r *Rect) Scale(k int) { r.W *= k; r.H *= k }
+
+type Node struct {
+	val  int
+	next *Node
+}
+
+type Inner struct{ A int }
+
+func (i Inner) Twice() int { return i.A * 2 }
+
+type Outer struct {
+	Inner
+	B    int
+	Tags []string
+	P    *Inner
+}
+
+type Stack struct{ items []int }
+
+func (s *Stack) Push(v int) { s.items = append(s.items, v) }
+func (s *Stack) Pop() int {
+	v := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return v
+}
+func (s *Stack) Len() int { return len(s.items) }
+
+type Celsius int
+
+func (c *Celsius) Warm(d int) { *c += Celsius(d) }
+func (c Celsius) Get() int    { return int(c) }
+
+func describe(x any) string {
+	switch v := x.(type) {
+	case *Rect:
+		return "*Rect"
+	case Rect:
+		return "Rect"
+	case *Stack:
+		if v.Len() > 0 {
+			return "*Stack, not empty"
+		}
+		return "*Stack, empty"
+	case *int:
+		return "*int"
+	}
+	return "other"
+}
+
+type pair struct{ a, b *Point }
+
+func swap(a, b *int) { *a, *b = *b, *a }
+
+func newPoint(x, y int) *Point { return &Point{x, y} }
+
+func main() {
+	// aliasing: two pointers, one target
+	p := &Point{1, 2}
+	q := p
+	q.X = 10
+	println(p.X, p.Y, q.X)
+	// *p is a copy: later writes through p do not show in it
+	v := *p
+	p.Y = 20
+	println(v.X, v.Y, p.Y)
+	*p = Point{7, 8}
+	println(p.X, p.Y, q.X, q.Y)
+
+	// pointer receivers on a variable (&c is taken implicitly)
+	var c Counter
+	c.Inc()
+	c.Inc()
+	println(c.Get(), c.n)
+	cp := &c
+	cp.Inc()
+	println(c.n, cp.Get())
+
+	// *T in an interface: its own and T's methods
+	var g Getter = cp
+	println(g.Get())
+	r := &Rect{2, 3}
+	var s Shape = r
+	s.Scale(2)
+	println(s.Area(), r.W, r.H)
+	rv := Rect{1, 1}
+	rv.Scale(5)
+	println(rv.Area())
+
+	// a linked list
+	var head *Node
+	for i := 0; i < 4; i++ {
+		head = &Node{i, head}
+	}
+	sum := 0
+	for n := head; n != nil; n = n.next {
+		sum = sum*10 + n.val
+	}
+	println(sum, head.next.next.val)
+	head.next.val = 9
+	println(head.next.val)
+
+	// fields through pointers, promoted fields, a pointer field
+	o := &Outer{Inner{3}, 4, nil, nil}
+	o.A = 7
+	o.Inner.A++
+	println(o.Twice(), o.A, o.B)
+	o.Tags = append(o.Tags, "x")
+	println(len(o.Tags))
+	o.P = &Inner{1}
+	o.P.A += 10
+	println(o.P.A)
+
+	// a stack behind a pointer, a method value of a pointer method
+	st := &Stack{}
+	for i := 0; i < 4; i++ {
+		st.Push(i * i)
+	}
+	println(st.Pop(), st.Len())
+	push := st.Push
+	push(42)
+	println(st.Len(), st.Pop())
+
+	// type switches and assertions
+	n := 5
+	println(describe(r), describe(rv), describe(st), describe(&Stack{}), describe(&n), describe(1))
+	if pr, ok := any(r).(*Rect); ok {
+		println(pr.W)
+	}
+
+	// pointers to basic types and to named basic types
+	a, b := 1, 2
+	swap(&a, &b)
+	println(a, b)
+	px := &n
+	*px = 7
+	*px++
+	println(n)
+	t := Celsius(20)
+	t.Warm(5)
+	var tg Getter = &t
+	println(int(t), tg.Get())
+	np := new(Point)
+	np.X += 3
+	println(np.X, np.Y)
+	ip := new(int)
+	*ip = 4
+	println(*ip)
+	pp := &p
+	(*pp).X = 100
+	println(p.X)
+
+	// identity: == compares pointers, not targets
+	p1, p2 := newPoint(1, 1), newPoint(1, 1)
+	println(p1 == p2, *p1 == *p2, p1 == p1, p1 != nil)
+	println(pair{p1, p2} == pair{p1, p2}, pair{p1, p2} == pair{p2, p1})
+	var e1, e2 any = p1, p2
+	println(e1 == e2, e1 == any(p1))
+}

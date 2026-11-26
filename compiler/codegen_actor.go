@@ -212,13 +212,31 @@ func (f *fn) methodCall(call *ast.CallExpr, sel *ast.SelectorExpr, m *types.Func
 // change the caller's copy.
 func (f *fn) receiver(sel *ast.SelectorExpr) uint8 {
 	s := f.g.p.Info.Selections[sel]
-	if s.Indirect() {
-		f.fail(sel, "internal error: indirect method")
-	}
 	recv := f.allocFor(sel.X)
-	f.exprInto(sel.X, recv)
-	if idx := s.Index(); !isIface(s.Recv()) { // an interface's method set is flat: no field path
-		f.fieldPathInto(sel, idx[:len(idx)-1], recv, recv) // a promoted method: its embedded receiver
+	if isIface(s.Recv()) { // an interface's method set is flat: no field path
+		f.exprInto(sel.X, recv)
+		return recv
+	}
+	idx := s.Index()
+	path := idx[:len(idx)-1] // a promoted method: its embedded receiver
+	xt := f.g.p.Info.TypeOf(sel.X)
+	m := s.Obj().(*types.Func)
+	switch ptrRecv := isPointer(m.Type().(*types.Signature).Recv().Type()); {
+	case ptrRecv && !isPointer(xt): // x.M() of a pointer method: &x, x's box
+		if _, ok := f.isBoxedVar(sel.X); !ok || len(path) > 0 {
+			f.fail(sel, "internal error: pointer method on a value without a box")
+		}
+		f.asm.Emit(OpMove, recv, f.localOf(sel.X), 0)
+	case isPointer(xt) && !ptrRecv && len(path) == 0: // p.M() of a value method: a copy of *p
+		mark := f.next
+		p := f.operand(sel.X)
+		f.derefInto(sel, pointerOf(xt), p, recv)
+		f.next = mark
+	default: // the pointer itself (a pointer method), or the value; down the
+		// embedded fields, also from a pointer (its target is laid out as
+		// the struct)
+		f.exprInto(sel.X, recv)
+		f.fieldPathInto(sel, path, recv, recv)
 	}
 	return recv
 }

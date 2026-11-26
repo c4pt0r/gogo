@@ -320,21 +320,22 @@ static uint32_t arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
 static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth, int32_t left);
 
 /* A slice, bare or inside a printed struct: [e0 e1 ...] (Go's println
- * prints [len/cap]address instead). out_slice and out_term spend left as
- * deep_live does and return what is left; once it is spent the rest of
- * the value is " ..." and no more (then -1). */
-static int32_t out_slice(Out *o, const Vm *vm, const Actor *a, const uint32_t *h, int depth,
-                         int32_t left) {
+ * prints [len/cap]address instead); with map, a map header's entries
+ * (15.6: keys and values alternate), map[k0:v0 k1:v1 ...]. out_slice and
+ * out_term spend left as deep_live does and return what is left; once it
+ * is spent the rest of the value is " ..." and no more (then -1). */
+static int32_t out_slice(Out *o, const Vm *vm, const Actor *a, term t, const uint32_t *h, int depth,
+                         int32_t left, bool map) {
     uint32_t off = h[1], len = h[2];
-    const uint32_t *arr = obj_of(vm, a, h[4]);
+    const uint32_t *arr = obj_of(vm, a, field_term(t, h[4]));
     if (depth >= PRINT_MAX_DEPTH) { out_str(o, "[...]"); return left; }
     out_str(o, "[");
     if (arr && len && off <= arr[1] && len <= arr[1] - off) {
         bool bytes = hdr_kind(arr[0]) == K_BYTEARR;
         for (uint32_t i = 0; i < len && left >= 0; i++) {
-            if (i && left > 0) out_str(o, " ");
+            if (i && left > 0) out_str(o, map && i & 1u ? ":" : " ");
             if (bytes) out_int(o, ((const uint8_t *)(arr + 2))[off + i]);
-            else left = out_term(o, vm, a, arr[2 + off + i], depth + 1, left);
+            else left = out_term(o, vm, a, field_term(t, arr[2 + off + i]), depth + 1, left);
         }
     }
     if (left >= 0) out_str(o, "]");
@@ -342,17 +343,30 @@ static int32_t out_slice(Out *o, const Vm *vm, const Actor *a, const uint32_t *h
 }
 
 static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth, int32_t left) {
+    int32_t v;
+    int64_t v64;
+    const uint8_t *bp;
+    uint32_t blen;
+    bool map = false;
+    const uint32_t *obj;
+    uint32_t kind;
+again:
     if (left <= 0) {
         if (!left) out_str(o, " ...");
         return -1;
     }
     left--;
-    int32_t v;
-    int64_t v64;
-    const uint8_t *bp;
-    uint32_t blen;
-    const uint32_t *obj = obj_of(vm, a, t);
-    uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
+    obj = obj_of(vm, a, t);
+    kind = obj ? hdr_kind(obj[0]) : 0;
+    if (kind == K_STRUCT && obj[1] & STRUCT_MAP && hdr_words(obj[0]) == 3u && !map) {
+        /* A map header (15.6): its entries, a slice one level down (where
+         * deep_live walks it), map[k0:v0 k1:v1 ...]. */
+        out_str(o, "map");
+        map = true;
+        depth++;
+        t = field_term(t, obj[2]);
+        goto again;
+    }
     if (int_val(vm, a, t, &v)) out_int(o, v);
     else if (int64_val(vm, a, t, &v64)) out_int64(o, v64);
     else if (t == T_TRUE) out_str(o, "true");
@@ -370,15 +384,18 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
     } else if (kind == K_STRING && obj[1] <= (hdr_words(obj[0]) - 2u) * 4u) {
         out_bytes(o, (const char *)(obj + 2), obj[1]);
     } else if (kind == K_STRUCT) {
-        if (depth >= PRINT_MAX_DEPTH) { out_str(o, "{...}"); return left; }
-        out_str(o, "{");
+        /* 15.6: a pointer's target after "&", a box as its one field */
+        uint32_t box = obj[1] & STRUCT_BOX && hdr_words(obj[0]) == 3u;
+        if (obj[1] & STRUCT_MUT) out_str(o, "&");
+        if (depth >= PRINT_MAX_DEPTH) { out_str(o, box ? "..." : "{...}"); return left; }
+        if (!box) out_str(o, "{");
         for (uint32_t i = 2; i < hdr_words(obj[0]) && left >= 0; i++) {
             if (i > 2 && left > 0) out_str(o, " ");
             left = out_term(o, vm, a, field_term(t, obj[i]), depth + 1, left);
         }
-        if (left >= 0) out_str(o, "}");
+        if (left >= 0 && !box) out_str(o, "}");
     } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
-        left = out_slice(o, vm, a, obj, depth, left);
+        left = out_slice(o, vm, a, t, obj, depth, left, map);
     } else if (kind == K_CLOSURE) {
         out_str(o, "<func>");
     } else if (kind == K_BUF) {
@@ -896,9 +913,12 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_NEWSTRUCT: case OP_MKCLOSURE: {
             REG(ra); REGS(rb, rc);
             if (op == OP_NEWSTRUCT) {
-                /* image_type_row, unrolled: a reserved row, or an own one */
+                /* image_type_row, unrolled: a reserved row, or an own one;
+                 * its word is the field count and the type's flags (term.h;
+                 * image_load refuses a flagged reserved row) */
                 uint32_t own = ext - TYPE_OWN_BASE, row = ext < img->n_reserved ? ext : own + img->n_reserved;
-                CHECK((ext < img->n_reserved || own < img->n_types - img->n_reserved) && img->types[row * 2u] == rc);
+                CHECK((ext < img->n_reserved || own < img->n_types - img->n_reserved) &&
+                      (img->types[row * 2u] & ~STRUCT_FLAGS) == rc);
             }
             else CHECK(ext < img->n_funcs);
             uint32_t words = 2u + rc;
@@ -909,20 +929,27 @@ int interp_run(Vm *vm, Actor *a) {
             obj[0] = hdr_make(words, op == OP_NEWSTRUCT ? K_STRUCT : K_CLOSURE);
             /* The module's tag on its functions and its own types; a
              * reserved type stays bare (global). */
-            obj[1] = (op == OP_MKCLOSURE || ext >= TYPE_OWN_BASE) ? ext | tag : ext;
+            obj[1] = op == OP_MKCLOSURE ? ext | tag : ext < TYPE_OWN_BASE ? ext
+                   : ext | tag | (img->types[(ext - TYPE_OWN_BASE + img->n_reserved) * 2u] & STRUCT_FLAGS);
             for (uint32_t i = 0; i < rc; i++) obj[2 + i] = R[rb + i];
             R[ra] = term_from_ref(off);
             break;
         }
 
-        case OP_GETFIELD: {
+        case OP_GETFIELD: case OP_SETFIELD: {
+            /* SETFIELD (15.6) writes in place, only a heap struct of a
+             * mutable type: a const one is read-only (flash), an immutable
+             * one may be shared. */
             REG(ra); REG(rb);
-            const uint32_t *obj = obj_of(vm, a, R[rb]);
+            uint32_t *obj = (uint32_t *)obj_of(vm, a, R[rb]);
+            bool set = op == OP_SETFIELD;
             /* Past the end only of a reserved struct from an older image:
              * the fields appended since are ints, 0 the default (opcodes.h). */
-            CHECK(obj && hdr_kind(obj[0]) == K_STRUCT && (2u + rc < hdr_words(obj[0]) || obj[1] < TYPE_OWN_BASE) &&
-                  type_live(vm, tag, struct_type(R[rb], obj)));
-            R[ra] = 2u + rc < hdr_words(obj[0]) ? field_term(R[rb], obj[2 + rc]) : term_from_int(0);
+            if (!(obj && hdr_kind(obj[0]) == K_STRUCT && (2u + rc < hdr_words(obj[0]) || (!set && obj[1] < TYPE_OWN_BASE)) &&
+                  (!set || (term_is_ref(R[rb]) && (obj[1] & STRUCT_MUT))) &&
+                  type_live(vm, tag, struct_type(R[rb], obj)))) CRASH(R[rb] == T_NIL ? R_NIL : R_BAD_CODE);
+            if (set) obj[2 + rc] = R[ra];
+            else R[ra] = 2u + rc < hdr_words(obj[0]) ? field_term(R[rb], obj[2 + rc]) : term_from_int(0);
             break;
         }
 

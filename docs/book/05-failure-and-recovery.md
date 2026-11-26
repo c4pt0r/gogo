@@ -92,6 +92,7 @@ type Reason struct {
 | 8 | `actor.BadShift` | a negative shift count | `badshift` |
 | 9 | `actor.BadMsg` | sent a module's own value to another module (chapter 14) | `badmsg` |
 | 10 | `actor.Panic` | `panic(v)`, a failed type assertion, a method call on a nil interface | `panic`, after `panic: v` |
+| 12 | `actor.Nil` | a nil pointer dereference (11 is kept for later) | `nil` |
 | ≥ 100 | your own | `actor.Exit(code)` or `actor.Kill(p, code)` | `exit(<code>)` |
 
 `Normal` and `Shutdown` are the two "expected" endings; everything else

@@ -222,11 +222,11 @@ func (f *fn) copyElems(n ast.Node, dst, src uint8) {
 // retNamed returns the k named results (a bare return). An array result
 // is copied: the variable's array may be shared by a slice of it.
 func (f *fn) retNamed(n ast.Node, k int) {
-	arrays := false
-	for _, t := range f.results {
-		arrays = arrays || isArray(t)
+	copies := false
+	for i, t := range f.results {
+		copies = copies || isArray(t) || f.namedBoxed(i) != nil
 	}
-	if !arrays {
+	if !copies {
 		f.ret(uint8(f.named), k)
 		return
 	}
@@ -236,12 +236,31 @@ func (f *fn) retNamed(n ast.Node, k int) {
 		r := uint8(f.named + i)
 		if at := arrayType(t); at != nil {
 			f.cloneArray(n, at, r, base+uint8(i))
+		} else if v := f.namedBoxed(i); v != nil { // a named result in a box (D7)
+			f.boxedLoad(n, v, r, base+uint8(i))
 		} else {
 			f.asm.Emit(OpMove, base+uint8(i), r, 0)
 		}
 	}
 	f.ret(base, k)
 	f.next = mark
+}
+
+// namedBoxed returns named result i if it lives in a box, else nil.
+func (f *fn) namedBoxed(i int) *types.Var {
+	for v, r := range f.locals {
+		if int(r) == f.named+i && f.g.boxed[v] && f.isResult(v) {
+			return v
+		}
+	}
+	return nil
+}
+
+// isResult reports whether v is a named result of the function being
+// compiled.
+func (f *fn) isResult(v *types.Var) bool {
+	r, ok := f.locals[v]
+	return ok && f.named >= 0 && int(r) >= f.named && int(r) < f.named+len(f.results)
 }
 
 // rangeArray prepares a range over an array: when the loop has a value

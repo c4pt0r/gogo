@@ -659,7 +659,7 @@ static void cmp_key(const Vm *vm, const Actor *a, term t, CmpKey *k) {
         k->hi = (int32_t)o[2];
         k->lo = o[1];
     } else if (seq_bytes(vm, a, t, &k->p, &k->n)) k->ty = t == T_EMPTYSTR || kind == K_STRING ? K_STRING : K_BYTES;
-    else if (kind == K_STRUCT) {
+    else if (kind == K_STRUCT && !(o[1] & STRUCT_MUT)) {   /* a mutable one: by identity (15.6) */
         k->ty = struct_type(t, o) + 64u;
         k->e = o + 2;
         k->n = hdr_words(o[0]) - 2u;
