@@ -1,0 +1,53 @@
+// A value whose shared subvalues are reachable by very many paths: a chain
+// of levels, each a slice of 16 copies of the level below. Its heap is
+// small, but the paths to its leaves number 16^8 at print depth. Sending
+// it to a port checks it before the driver sees it; that check is bounded,
+// so the sender exits with badcode at once instead of stalling the VM.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/gpio"
+	"gogo/port"
+)
+
+type tree struct {
+	kids []tree
+	n    int
+}
+
+func main() {
+	me := actor.Self()
+	start := actor.Now()
+	sender := actor.Spawn(func() {
+		p, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
+		if !ok {
+			return
+		}
+		level := tree{n: 0}
+		for i := 0; i < 11; i++ {
+			ks := make([]tree, 16)
+			for j := 0; j < 16; j++ {
+				ks[j] = level
+			}
+			level = tree{kids: ks, n: i + 1}
+		}
+		actor.Send(p, level)
+		actor.Send(me, "sent")
+	})
+	actor.Monitor(sender)
+	for {
+		switch m := actor.Receive().(type) {
+		case string:
+			println(m)
+		case actor.DownMsg:
+			if actor.Now()-start < 100 {
+				println("fast")
+			} else {
+				println("slow")
+			}
+			println("down", m.Reason.Code == actor.BadCode)
+			return
+		}
+	}
+}

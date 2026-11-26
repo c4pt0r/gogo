@@ -71,6 +71,7 @@ typedef struct Vm {
     uint64_t t0;              /* host->now_ms at the time base; vm_now counts from it */
     uintptr_t *table;
     uint16_t table_cap;
+    uint16_t next_free;       /* every slot below it is taken: actor_new_in scans from it */
     Actor *runq_head, *runq_tail;
     uint32_t live;            /* actors currently allocated */
     uint64_t next_ref;        /* serial of the next Ref, from 1 */

@@ -180,8 +180,9 @@ typedef struct TlsHw {
 
 /* The process-global mbedTLS / PSA state, set up once (psa_crypto_init and
  * the hooks above); never torn down by the port. mbedTLS's hooks have no
- * context, so the TlsHw of the first successful call serves them for the
- * whole process. The first open calls it with its Vm's board->tls; a board
+ * context, so the TlsHw of the first call serves them for the whole
+ * process, even if PSA failed then (a later call with the same hw tries
+ * PSA again). The first open calls it with its Vm's board->tls; a board
  * may call it at boot. Idempotent for the same hw; false if PSA failed or
  * hw is not the TlsHw already bound (every Vm of a process must use the
  * same one). */

@@ -40,9 +40,12 @@ static int resolve(const VfsState *st, const char *p, uint32_t len, bool root_ok
     return VFS_NOTMOUNTED;
 }
 
-static bool is_open(const VfsState *st, uint32_t hash) {
+/* s is open on the path of this length and hash. */
+static bool same_path(const Slot *s, uint32_t hash, uint32_t len) { return s->hash == hash && s->plen == len; }
+
+static bool is_open(const VfsState *st, uint32_t hash, uint32_t len) {
     for (uint32_t i = 0; i < GOGO_FS_MAX_OPEN; i++)
-        if (st->slots[i].used && st->slots[i].hash == hash) return true;
+        if (st->slots[i].used && same_path(&st->slots[i], hash, len)) return true;
     return false;
 }
 
@@ -57,7 +60,7 @@ int vfs_open(VfsState *st, const char *p, uint32_t len, int mode, int *slot) {
     int s = -1;
     for (uint32_t i = 0; i < GOGO_FS_MAX_OPEN; i++) {
         if (!slots[i].used) { if (s < 0) s = (int)i; }
-        else if (mode != VFS_READ && slots[i].hash == h &&
+        else if (mode != VFS_READ && same_path(&slots[i], h, len) &&
                  (slots[i].mode != VFS_READ || (mode == VFS_WRITE && m->be->case_insensitive)))
             return VFS_BUSY;   /* one writer; on FAT no truncate under a reader */
     }
@@ -68,6 +71,7 @@ int vfs_open(VfsState *st, const char *p, uint32_t len, int mode, int *slot) {
     slots[s].mode = (uint8_t)mode;
     slots[s].mnt = (uint8_t)mi;
     slots[s].hash = h;
+    slots[s].plen = (uint8_t)len;
     *slot = s;
     return VFS_OK;
 }
@@ -160,7 +164,7 @@ int vfs_remove(VfsState *st, const char *p, uint32_t len) {
     uint32_t mi, h;
     int e = resolve(st, p, len, false, &mi, rel, &h);
     if (e) return e;
-    if (is_open(st, h)) return VFS_BUSY;
+    if (is_open(st, h, len)) return VFS_BUSY;
     return st->mounts[mi].be->remove(st->mounts[mi].ctx, rel);
 }
 
@@ -172,7 +176,7 @@ static int resolve2(const VfsState *st, const char *a, uint32_t alen, const char
     if (!e) e = resolve(st, b, blen, false, &mj, rb, &hb);
     if (e) return e;
     if (*mi != mj) return VFS_BADPATH;          /* no cross-mount rename */
-    if (is_open(st, ha) || is_open(st, hb)) return VFS_BUSY;
+    if (is_open(st, ha, alen) || is_open(st, hb, blen)) return VFS_BUSY;
     return VFS_OK;
 }
 
@@ -197,7 +201,8 @@ int vfs_rename(VfsState *st, const char *a, uint32_t alen, const char *b, uint32
     bool ci = be->case_insensitive;
     if (blen > alen && b[alen] == '/' && same(a, b, alen, ci)) return VFS_BADPATH;   /* into its own subtree */
     /* A directory with any file open on this mount is Busy: slots keep only
-     * the hash of their path, so a renamed ancestor would escape the rules.
+     * the length and hash of their path, so a renamed ancestor would escape
+     * the rules.
      * A missing source falls through to the backend's NotFound. */
     e = be->stat(c, ra, &sz, &d);
     if (e == VFS_OK && d) {

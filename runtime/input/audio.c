@@ -125,7 +125,7 @@ static bool mic_can_event(const struct Vm *vm, const Port *p) {
 }
 
 const PortDriver input_mic_driver = {
-    "mic", TYPE_AUDIO_MIC, TYPE_CHUNK, mic_open, mic_command, mic_close, mic_can_event, NULL, NULL, NULL
+    PORT_NAME_MIC, TYPE_AUDIO_MIC, TYPE_CHUNK, mic_open, mic_command, mic_close, mic_can_event, NULL, NULL, NULL
 };
 
 /* ---- speaker ---- */
@@ -176,7 +176,7 @@ static bool spk_can_event(const struct Vm *vm, const Port *p) { (void)vm;
 }
 
 const PortDriver input_speaker_driver = {
-    "speaker", TYPE_AUDIO_SPEAKER, TYPE_DONE, spk_open, NULL, spk_close, spk_can_event, NULL, spk_command, NULL
+    PORT_NAME_SPEAKER, TYPE_AUDIO_SPEAKER, TYPE_DONE, spk_open, NULL, spk_close, spk_can_event, NULL, spk_command, NULL
 };
 
 /* ---- scheduler side ---- */

@@ -42,8 +42,9 @@ int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board,
 Actor *actor_new(Vm *vm, uint16_t initial_words) { return actor_new_in(vm, initial_words, 0); }
 
 Actor *actor_new_in(Vm *vm, uint16_t initial_words, uint8_t mod) {
-    uint16_t slot = 0;
+    uint16_t slot = vm->next_free;     /* the lowest free slot, as a scan from 0 finds */
     while (slot < vm->table_cap && !slot_is_free(vm->table[slot])) slot++;
+    vm->next_free = slot;
     if (slot == vm->table_cap) return NULL;
 
     Actor *a = va_alloc(vm, sizeof(Actor));
@@ -81,6 +82,7 @@ void actor_free(Vm *vm, Actor *a) {
     actor_extra_free(vm, a);
     uint16_t slot = term_pid_slot(a->id);
     vm->table[slot] = free_slot(next_gen(slot, term_pid_gen(a->id)));
+    if (slot < vm->next_free) vm->next_free = slot;
     va_free(vm, a->mem, (size_t)a->mem_words * 4u);
     module_actor_exit(vm, a);              /* may unload its module */
     va_free(vm, a, sizeof(Actor));

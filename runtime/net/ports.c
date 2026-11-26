@@ -312,5 +312,5 @@ static void n_command(Vm *vm, const Actor *from, Port *p, term msg) {
 }
 
 const PortDriver net_netif_driver = {
-    "netif", TYPE_NET_IFCONFIG, TYPE_NET_UP, n_open, NULL, n_close, n_can_event, NULL, n_command, NULL
+    PORT_NAME_NETIF, TYPE_NET_IFCONFIG, TYPE_NET_UP, n_open, NULL, n_close, n_can_event, NULL, n_command, NULL
 };

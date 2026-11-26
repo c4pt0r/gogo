@@ -157,6 +157,15 @@ void port_command(Vm *vm, const Actor *from, term pid, term msg) {
     p->drv->command(vm, p, type, f, n);
 }
 
+#if GOGO_DEBUG
+/* The ports holding a pending debounce value: what ports_pending counts. */
+static uint32_t pending_ports(const Vm *vm) {
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) n += (vm->ports[i].flags & PORT_PENDING) != 0;
+    return n;
+}
+#endif
+
 void port_close(Vm *vm, term pid) {
     Port *p = port_of(vm, pid);
     if (!p) return;
@@ -174,6 +183,7 @@ void port_close(Vm *vm, term pid) {
     memset(p->held, 0, sizeof p->held);
     if (p->flags & PORT_PENDING) vm->ports_pending--;
     p->flags = 0;
+    GOGO_ASSERT(vm->ports_pending == pending_ports(vm));
     p->drv = NULL;
     p->gen = (uint16_t)((p->gen + 1u) & GEN_MASK);
 }
@@ -341,6 +351,7 @@ void port_drain(Vm *vm, uint64_t now) {
     if (vm->ports_pending) {
         for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) flush_due(vm, &vm->ports[i], now);
     }
+    GOGO_ASSERT(vm->ports_pending == pending_ports(vm));
     SOURCES_EACH(vm, q) {
         if (q->s->pending(vm, q->ctx)) q->s->drain(vm, q->ctx, now);
     }

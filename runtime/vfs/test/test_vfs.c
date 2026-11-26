@@ -2,6 +2,7 @@
  * table, Busy/Exists/replace rules, NoSpace recovery. */
 #include "test.h"
 #include "vfs.h"
+#include "vfs_int.h"
 #include "memfs.h"
 #include <string.h>
 #include <stdio.h>
@@ -187,6 +188,26 @@ TEST(vfs_single_writer) {
     CHECK_EQ(vfs_open(&vs, S("/flash/a"), VFS_READ, &r), VFS_OK);
     CHECK_EQ(vfs_open(&vs, S("/flash/a"), VFS_WRITE, &w), VFS_OK);
     vfs_close(&vs, r); vfs_close(&vs, w);
+}
+
+/* Paths are the same when their length and hash both match. Two paths
+ * whose 32-bit hashes collide but whose lengths differ are told apart;
+ * a same-length collision is still taken for one path (Busy). */
+TEST(vfs_hash_collision) {
+    setup_default();
+    static const char a[] = "/flash/h5wuja", b[] = "/flash/tgaaaaa";   /* lengths 13, 14 */
+    static const char c[] = "/flash/btmaea", d[] = "/flash/7e09ja";    /* both 13 */
+    CHECK_EQ(vfs_path_hash(S(a), false), vfs_path_hash(S(b), false));
+    CHECK_EQ(vfs_path_hash(S(c), false), vfs_path_hash(S(d), false));
+    int wa, wb, wc, wd;
+    CHECK_EQ(vfs_open(&vs, S(a), VFS_WRITE, &wa), VFS_OK);
+    CHECK_EQ(vfs_open(&vs, S(b), VFS_WRITE, &wb), VFS_OK);
+    vfs_close(&vs, wb);
+    CHECK_EQ(vfs_remove(&vs, S(b)), VFS_OK);                           /* a is open, not b */
+    vfs_close(&vs, wa);
+    CHECK_EQ(vfs_open(&vs, S(c), VFS_WRITE, &wc), VFS_OK);
+    CHECK_EQ(vfs_open(&vs, S(d), VFS_WRITE, &wd), VFS_BUSY);           /* the remaining risk */
+    vfs_close(&vs, wc);
 }
 
 TEST(vfs_busy_ops) {

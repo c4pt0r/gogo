@@ -1256,6 +1256,34 @@ TEST(code_builtin_ops) {
     free(f);
 }
 
+/* The range of H that can name a module, at both ends: 0x10001 (slot 1,
+ * generation 0) and GOGO_MAX_MODULES << 16 (the last slot, generation
+ * 0xFFFF) name their modules; 0x10000 (slot 0, generation 0xFFFF) and
+ * one past the top never do, even when slot 0 has that generation. */
+TEST(module_handle_range_ends) {
+    Fx *f = fx_new();
+    Actor *a = actor_new(&f->vm, 1024);
+    CHECK(heap_push_frame(&f->vm, a, 8, -1));
+    f->vm.mod_gen[0] = 0xFFFFu;
+    CHECK_EQ(load_b(f, a), 0x10000u);                         /* slot 1, generation 0 */
+    f->vm.mod_next = GOGO_MAX_MODULES - 1u;
+    f->vm.mod_gen[GOGO_MAX_MODULES - 1u] = 0xFFFFu;
+    CHECK_EQ(load_b(f, a), ((GOGO_MAX_MODULES - 1u) << 16) | 0xFFFFu);
+    const struct { int32_t h; int32_t want; } cases[] = {
+        { 0x10000, CODE_NOT_FOUND }, { 0x10001, CODE_OK },
+        { (int32_t)(GOGO_MAX_MODULES << 16), CODE_OK }, { (int32_t)(GOGO_MAX_MODULES << 16) + 1, CODE_NOT_FOUND },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        regs(a)[3] = forge(a, cases[i].h, T_EMPTYSTR);
+        CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
+        CHECK_EQ(regs(a)[6], term_from_int(cases[i].want));
+    }
+    CHECK_EQ(f->vm.mods[0]->holders[0], MOD_NO_HOLDER);
+    actor_exit(&f->vm, a, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(module_mem_used(&f->vm), 0u);
+    free(f);
+}
+
 /* I1: whatever H a program forges, B_CODE gives NotFound / nothing,
  * never module 0, never UB (run under UBSan); Missing of a forged Module
  * is its field as it is. An Unsupported
@@ -1518,12 +1546,11 @@ TEST(xmod_host_struct_badmsg) {
     Actor *h = host(f);
     uint32_t slot = load_b(f, h) >> 16;
     Actor *m = mod_actor(f, slot);
-    term ref = plant(h, K_REF, 5, 1, 0);
     term st = plant(h, K_STRUCT, T_MOD, 1, term_from_int(1));
-    CHECK_EQ(msg_send_reply(vm, h, m->id, ref, st), -(int)R_BAD_MSG);
+    CHECK_EQ(msg_send_reply(vm, h, m->id, 5, st), -(int)R_BAD_MSG);
     CHECK_EQ(msg_send(vm, h, m->id, st), -(int)R_BAD_MSG);
     CHECK_EQ(mbox_n(m), 0);
-    CHECK_EQ(msg_send_reply(vm, h, m->id, ref, term_from_int(1)), 0);
+    CHECK_EQ(msg_send_reply(vm, h, m->id, 5, term_from_int(1)), 0);
     CHECK_EQ(mbox_n(m), 1);
     actor_exit(vm, m, R_NORMAL, T_EMPTYSTR);
     actor_exit(vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1705,19 +1732,18 @@ TEST(stale_send_to_dead_badcode) {
     term dead = d->id;
     actor_exit(vm, d, R_NORMAL, T_EMPTYSTR);
     term sc = term_from_const(6) | STALE_TAG;
-    term ref = plant(h, K_REF, 5, 1, 0);
     CHECK_EQ(msg_send(vm, h, dead, sc), -(int)R_BAD_CODE);
     CHECK_EQ(msg_send(vm, h, term_from_int(3), plant(h, K_STRUCT, T_MOD | STALE_TAG, 1, T_NIL)),
              -(int)R_BAD_CODE);
-    CHECK_EQ(msg_send_reply(vm, h, dead, ref, sc), -(int)R_BAD_CODE);
-    CHECK_EQ(msg_send_reply(vm, h, h->id, term_from_int(1), sc), -(int)R_BAD_CODE);
+    CHECK_EQ(msg_send_reply(vm, h, dead, 5, sc), -(int)R_BAD_CODE);
+    CHECK_EQ(msg_send_reply(vm, h, h->id, 0, sc), -(int)R_BAD_CODE);
     uint32_t why = 0;
     CHECK(timer_add_send(vm, h, 5, dead, sc, &why) == T_NIL);
     CHECK_EQ(why, R_BAD_CODE);
     /* live values to nobody: dropped, no crash */
     CHECK_EQ(msg_send(vm, h, dead, term_from_const(6)), 1);
     CHECK_EQ(msg_send(vm, h, dead, plant(h, K_STRUCT, T_MOD, 1, T_NIL)), 1);
-    CHECK_EQ(msg_send_reply(vm, h, dead, ref, term_from_int(1)), 1);
+    CHECK_EQ(msg_send_reply(vm, h, dead, 5, term_from_int(1)), 1);
     CHECK_EQ(mbox_n(h), 0);
     /* through the interpreter: the sender exits badcode */
     Actor *s = a_actor(f, F_SEND, T_NIL);

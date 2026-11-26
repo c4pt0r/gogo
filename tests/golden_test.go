@@ -17,10 +17,13 @@ import (
 )
 
 // TestGolden compiles every tests/golden/*/ program (and every
-// examples/*/ with an expected.out), with an empty package search path
-// (its packages are its own subdirectories, never $GOGOPATH's), runs it on the VM named
+// examples/*/ with an expected.out or expected.tail), with an empty package
+// search path (its packages are its own subdirectories, never $GOGOPATH's),
+// runs it on the VM named
 // by $GOGO_VM (30s timeout) and requires exit status 0 and stdout equal
-// byte-for-byte to expected.out; if expected.err exists, each of its
+// byte-for-byte to expected.out (or, for a program whose output is too
+// long to keep, ending with expected.tail instead, and at most 1 MiB long);
+// if expected.err exists, each of its
 // non-empty lines must be a substring of stderr, and no non-empty line of
 // forbidden.err may be. An `input` file is fed to stdin; a `config` file
 // is the config store ($GOGO_CONFIG). A file `fsroot` runs the VM with
@@ -40,11 +43,16 @@ func TestGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// ../examples/*/ that ship an expected.out are goldens too.
+	// ../examples/*/ that ship an expected.out or expected.tail are goldens too.
 	exs, err := filepath.Glob(filepath.Join("..", "examples", "*", "expected.out"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	tails, err := filepath.Glob(filepath.Join("..", "examples", "*", "expected.tail"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exs = append(exs, tails...)
 	for _, e := range exs {
 		dirs = append(dirs, filepath.Dir(e))
 	}
@@ -57,6 +65,11 @@ func TestGolden(t *testing.T) {
 		}
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			want, err := os.ReadFile(filepath.Join(dir, "expected.out"))
+			tail := false
+			if os.IsNotExist(err) {
+				want, err = os.ReadFile(filepath.Join(dir, "expected.tail"))
+				tail = true
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -158,7 +171,19 @@ func TestGolden(t *testing.T) {
 				} else if runErr != nil {
 					t.Errorf("VM failed: %v (want exit status 0)\n--- stderr ---\n%s", runErr, stderr.Bytes())
 				}
-				if !bytes.Equal(stdout.Bytes(), want) {
+				if tail {
+					if stdout.Len() > 1<<20 {
+						t.Errorf("stdout is %d bytes, over the 1 MiB an expected.tail golden may print", stdout.Len())
+					}
+					if !bytes.HasSuffix(stdout.Bytes(), want) {
+						got := stdout.Bytes()
+						if len(got) > 2*len(want)+200 {
+							got = got[len(got)-2*len(want)-200:]
+						}
+						t.Errorf("stdout does not end with expected.tail\n--- got (end) ---\n%s\n--- want ---\n%s\n--- stderr ---\n%s",
+							got, want, stderr.Bytes())
+					}
+				} else if !bytes.Equal(stdout.Bytes(), want) {
 					t.Errorf("stdout mismatch\n--- got ---\n%s\n--- want ---\n%s\n--- stderr ---\n%s",
 						stdout.Bytes(), want, stderr.Bytes())
 				}

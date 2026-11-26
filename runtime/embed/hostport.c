@@ -14,16 +14,6 @@
 #include "opcodes.h"
 #include <string.h>
 
-/* Driver names a board may provide: a host port may not take them, so a
- * program that opens one never gets the host's port instead. Kept by hand:
- * whoever adds a port driver (runtime/input, runtime/net, runtime/vfs,
- * platform/{unix,esp32s3} gpio) adds its name here. "dns" is reserved for
- * the host network ports planned beside tcp and udp. */
-static const char *const board_names[] = {
-    "gpio", "kbd", "power", "imu", "ir_tx", "ir_rx", "mic", "speaker",
-    "netif", "tcp", "tcp_listen", "udp", "dns", "tls", "file", NULL
-};
-
 /* An inbox node's port: index and generation, never 0. */
 #define PORT_ENC(i, g) (0x80000000u | (uint32_t)(i) << 16 | (uint32_t)(g))
 
@@ -108,8 +98,16 @@ void embed_ports_install(gogo_vm *g) {
     port_set_drivers(&g->vm, g->port_list);
 }
 
+/* The runtime's own driver names (port_names.h), reserved on every board:
+ * an image that requires one is refused at load where the board lacks it,
+ * rather than loading against a host port whose cfg it cannot use. */
+static const char *const reserved_names[] = { PORT_RESERVED_NAMES, NULL };
+
+/* A host port may not take a reserved name, the name of one of the
+ * board's drivers (granted or not), so a program that opens one never gets
+ * the host's port instead, or that of another host port. */
 static bool name_taken(const gogo_vm *g, const char *name) {
-    for (const char *const *r = board_names; *r; r++)
+    for (const char *const *r = reserved_names; *r; r++)
         if (!strcmp(*r, name)) return true;
     for (const PortDriver *const *b = g->vm.board->ports; b && *b; b++)
         if (!strcmp((*b)->name, name)) return true;

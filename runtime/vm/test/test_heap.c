@@ -274,6 +274,32 @@ TEST(actor_table_full) {
     actor_free(&vm, b);
 }
 
+/* A new actor takes the lowest free slot, also after slots below the
+ * scan hint free up; a full table is still refused after a free. */
+TEST(actor_lowest_free_slot) {
+    Vm vm;
+    va_reset(&vm);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
+    Actor *t[4];
+    for (int i = 0; i < 4; i++) {
+        t[i] = actor_new(&vm, 24);
+        CHECK(t[i] != NULL);
+        CHECK_EQ(term_pid_slot(t[i]->id), i);
+    }
+    CHECK(actor_new(&vm, 24) == NULL);
+    actor_free(&vm, t[2]);
+    actor_free(&vm, t[1]);
+    t[1] = actor_new(&vm, 24);
+    CHECK_EQ(term_pid_slot(t[1]->id), 1);
+    t[2] = actor_new(&vm, 24);
+    CHECK_EQ(term_pid_slot(t[2]->id), 2);
+    CHECK(actor_new(&vm, 24) == NULL);
+    actor_free(&vm, t[0]);
+    t[0] = actor_new(&vm, 24);
+    CHECK_EQ(term_pid_slot(t[0]->id), 0);
+    for (int i = 0; i < 4; i++) actor_free(&vm, t[i]);
+}
+
 TEST(runq_fifo) {
     Vm vm;
     va_reset(&vm);

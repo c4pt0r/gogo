@@ -74,15 +74,20 @@ typedef struct TlsConn TlsConn;
 /* mbedTLS's platform hooks are process-global and get no context: the
  * state the port keeps outside the Vm (tls.h: every Vm of a process shares
  * one TlsHw).
- *   hw:   the TlsHw the hooks use (tls_init's; NULL until it succeeds);
+ *   hw:   the TlsHw the hooks use (the first tls_init's; NULL before).
+ *         Kept when PSA fails: the hooks stay installed, and PSA may have
+ *         memory from hw already. A later tls_init with hw tries PSA again;
+ *   ready: psa_crypto_init succeeded;
  *   said: a refused tls_init (another TlsHw) was logged;
  *   mu:   serializes tls_init and said (Vms on several threads may open
  *         tls at once).
  * said and mu only where gogo installs the hooks (a firmware has one
- * board, one TlsHw, one Vm task). hw is written only under mu, and every
- * reader (the hooks, an open) runs after its own thread's tls_init. */
+ * board, one TlsHw, one Vm task). hw and ready are written only under mu,
+ * and every reader (the hooks, an open) runs after its own thread's
+ * tls_init. */
 static struct {
     const TlsHw *hw;
+    bool ready;
 #if GOGO_TLS_MBEDTLS_HOOKS
     bool said;
     pthread_mutex_t mu;
@@ -155,18 +160,18 @@ psa_status_t mbedtls_psa_external_get_random(mbedtls_psa_external_random_context
 #endif
 
 static bool init_locked(const TlsHw *hw) {
-    if (!hw) return false;
-    if (glue.hw) return glue.hw == hw;   /* one TlsHw per process */
-    glue.hw = hw;               /* before psa_crypto_init, which allocates and draws */
+    if (!hw || (glue.hw && glue.hw != hw)) return false;   /* one TlsHw per process */
+    if (glue.ready) return true;
+    if (!glue.hw) {
+        glue.hw = hw;           /* before psa_crypto_init, which allocates and draws */
 #if GOGO_TLS_MBEDTLS_HOOKS
-    mbedtls_platform_set_calloc_free(tls_calloc, tls_free);
-    mbedtls_platform_set_time(tls_time);
+        mbedtls_platform_set_calloc_free(tls_calloc, tls_free);
+        mbedtls_platform_set_time(tls_time);
 #endif
-    if (psa_crypto_init() != PSA_SUCCESS) {
-        glue.hw = NULL;
-        return false;
     }
+    if (psa_crypto_init() != PSA_SUCCESS) return false;   /* hw stays bound: a retry may work */
     psa_interruptible_set_max_ops(GOGO_TLS_MAX_OPS);   /* process-wide too */
+    glue.ready = true;
     return true;
 }
 
@@ -669,5 +674,5 @@ static void t_command(Vm *vm, const Actor *from, Port *p, term msg) {
 }
 
 const PortDriver net_tls_driver = {
-    "tls", TYPE_NET_DIALTLS, TYPE_CHUNK, NULL, NULL, t_close, tcp_port_can_event, NULL, t_command, t_open
+    PORT_NAME_TLS, TYPE_NET_DIALTLS, TYPE_CHUNK, NULL, NULL, t_close, tcp_port_can_event, NULL, t_command, t_open
 };

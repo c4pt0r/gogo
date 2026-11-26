@@ -51,7 +51,7 @@ static void f_close(struct Vm *vm, Port *p) { vfs_close(vm->vfs, (int)p->state[0
 static bool f_can_event(const struct Vm *vm, const Port *p) { (void)vm; (void)p; return false; }
 
 static const PortDriver file_drv = {
-    "file", UINT32_MAX, UINT32_MAX, f_open, NULL, f_close, f_can_event, NULL, NULL, NULL
+    PORT_PRIVATE_FILE, UINT32_MAX, UINT32_MAX, f_open, NULL, f_close, f_can_event, NULL, NULL, NULL
 };
 
 /* The open file t names if a owns it, else NULL (Closed). */

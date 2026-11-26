@@ -67,7 +67,7 @@ static bool power_can_event(const struct Vm *vm, const Port *p) { (void)vm;
 }
 
 const PortDriver input_power_driver = {
-    "power", TYPE_POWER_CONFIG, TYPE_POWER_BATTERY, power_open, power_command, power_close, power_can_event, NULL, NULL, NULL
+    PORT_NAME_POWER, TYPE_POWER_CONFIG, TYPE_POWER_BATTERY, power_open, power_command, power_close, power_can_event, NULL, NULL, NULL
 };
 
 /* ---- scheduler side ---- */

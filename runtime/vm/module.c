@@ -266,9 +266,11 @@ static const uint32_t *module_obj(const Vm *vm, const Actor *a, term t) {
     return o && o[0] == hdr_make(4, K_STRUCT) && o[1] == TYPE_CODE_MODULE ? o : NULL;
 }
 
-/* The handle a Module's H names: H - 1 for H in 1 .. 2^19 that is not slot
- * 0 (the boot image is never named through gogo/code); UINT32_MAX (no
- * module: NotFound) for every other int, boxed ones included. */
+/* The handle a Module's H names: H - 1 (slot << 16 | generation) for H in
+ * 0x10001 .. GOGO_MAX_MODULES << 16, which are the handles of slots 1 and
+ * up (slot 0, the boot image, is never named through gogo/code);
+ * UINT32_MAX (no module: NotFound) for every other int, boxed ones
+ * included. */
 static uint32_t handle_of(const Vm *vm, const Actor *a, term t) {
     int32_t h;
     if (!int_val(vm, a, t, &h) || h <= 0x10000 || h > (int32_t)(GOGO_MAX_MODULES << 16)) return UINT32_MAX;

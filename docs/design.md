@@ -186,7 +186,8 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   through `CALLV`.
 - `println` of any value of the subset except `Bytes` and `Buffer`;
   slices print their elements, `[1 2 3]` (Go's `println` prints
-  `[len/cap]address`).
+  `[len/cap]address`). Nesting deeper than 16 prints as `{...}` /
+  `[...]`, and a value prints at most 65536 terms, then ` ...`.
 - Programs: one `package main` (the build root), possibly in several
   files, plus the `gogo/...` libraries and user packages: any other
   import path, found in the build root (`app/util` is `<root>/util/`)
@@ -511,7 +512,8 @@ FatFs).
   of a path with an open file are `Busy`; on `/sd`, opening a file that
   is being read with `Write` (which truncates) is `Busy` too, `Append` is
   allowed. A reader may open a file that is being written; what it sees
-  is not specified.
+  is not specified. An open file's slot keeps its path's length and
+  32-bit hash, not the path; two paths are the same when both match.
 - **`gogo/kv`**: one file per key under `/flash/kv/`. `Get(key)
   (bytes.Bytes, fs.Err)` (a missing key is `fs.NotFound`; read errors are
   returned as they are), `Put(key, v any) fs.Err` (`string` or `Bytes`,
@@ -1247,7 +1249,10 @@ for per-type flags (pointers, a later phase) and 0 in every v15 image
   `println` (struct fields and slice elements included) that meet a value
   of an unloaded module (a constant ref, closure or struct) are `badcode`
   too, rather than "not equal", "not this type" or `?`: they share one
-  check, `term_live`.
+  check, `term_live`. `println`, port commands and `port.Open` apply it to
+  the whole value, to the depth `println` prints and for at most 65536
+  terms (`WALK_BUDGET`); a port command or `port.Open` whose value needs
+  more is `badcode` as well.
 - **Alias bound.** A tag holds 8 generation bits, so a stale term
   resolves again (to whatever module then occupies the slot) only after
   256 more loads into the **same slot**. `module_load` picks free slots

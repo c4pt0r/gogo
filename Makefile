@@ -1,8 +1,21 @@
 CC      ?= cc
 # The wall-clock floor (runtime/vm/host.h): the time of this make run.
 BUILD_UNIX_MS := $(shell date +%s)000
-CFLAGS  = -Iruntime/input -std=c99 -Wall -Wextra -Werror -O2 -g -DGOGO_BUILD_UNIX_MS=$(BUILD_UNIX_MS)LL $(EXTRA_CFLAGS)
+CFLAGS_BASE = -Iruntime/input -std=c99 -Wall -Wextra -Werror -O2 -g
+CFLAGS  = $(CFLAGS_BASE) -DGOGO_BUILD_UNIX_MS=$(BUILD_UNIX_MS)LL $(EXTRA_CFLAGS)
 BUILD   = build
+
+# $(BUILD)/.cflags holds the compiler and flags the build dir was built
+# with (the wall-clock floor aside); it is rewritten when they change, and
+# every binary and object depends on it (STAMPED, below), so switching
+# EXTRA_CFLAGS on a build dir (build/asan, build/tsan, ...) rebuilds it.
+FLAGS_STAMP = $(BUILD)/.cflags
+FLAGS_NOW = $(CC) $(CFLAGS_BASE) $(EXTRA_CFLAGS)
+$(FLAGS_STAMP): FORCE
+	@mkdir -p $(BUILD)
+	@if [ "$$(cat $@ 2>/dev/null)" != '$(FLAGS_NOW)' ]; then echo '$(FLAGS_NOW)' > $@; fi
+.PHONY: FORCE
+FORCE:
 
 TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/vm/test/test_term.c runtime/vm/test/test_alloc.c runtime/vm/test/test_image.c runtime/vm/test/test_heap.c runtime/vm/test/test_msg.c runtime/vm/test/test_interp.c runtime/vm/test/test_signals.c runtime/vm/test/test_timer.c runtime/vm/test/test_call.c runtime/vm/test/test_names.c runtime/vm/test/test_out.c runtime/vm/test/test_evq.c runtime/vm/test/test_port.c runtime/vm/test/test_strs.c runtime/vm/test/test_slices.c runtime/vm/test/test_bytes.c runtime/vm/test/test_netlink.c runtime/vm/test/test_module.c runtime/vm/test/test_walltime.c runtime/vm/test/test_step.c
 # The net stack (pure C99, chip-independent): linked into every
@@ -197,10 +210,11 @@ $(BUILD)/test_screen: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
 
-# The same tests under AddressSanitizer and UBSan (build/asan).
+# The same tests under AddressSanitizer and UBSan (build/asan-ub: its own
+# flags, so it does not rebuild build/asan's).
 test-screen-asan:
-	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" build/asan/test_screen
-	build/asan/test_screen
+	$(MAKE) BUILD=build/asan-ub EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -DGOGO_DEBUG=1" build/asan-ub/test_screen
+	build/asan-ub/test_screen
 
 $(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
@@ -385,7 +399,9 @@ test-net-mcu: $(BUILD)/gogovm_mcu
 # The net and tls scenarios on a gogovm (and its mbedTLS) built with
 # AddressSanitizer (build/asan). On macOS leaks are not reported (no
 # LeakSanitizer); the tls tests check the TLS heap returns to 0 instead.
-ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer
+# GOGO_DEBUG=1 (runtime/vm/config.h): the sanitizer builds also check
+# the runtime's internal invariants (GOGO_ASSERT).
+ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer -DGOGO_DEBUG=1
 test-tls-asan:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls
 	build/asan/test_net
@@ -449,3 +465,10 @@ vfssize:
 # runtime/screen/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
 screensize:
 	tools/vmsize.sh --screen
+
+# Everything built with CFLAGS / EXTRA_CFLAGS: rebuilt when they change.
+STAMPED = $(addprefix $(BUILD)/,gogovm gogovm_mcu test_c test_c_mcu test_net test_net_mcu test_tls \
+          test_tls_threads test_vfs test_vfs_mcu test_input test_input_mcu test_stream test_stream_mcu \
+          test_screen test_screen_mcu test_fs_host test_embed test_console test_console_ascii \
+          console_ppm libgogo_clash) $(LIB_OBJS) $(MBEDTLS_OBJS)
+$(STAMPED): $(FLAGS_STAMP)

@@ -150,5 +150,5 @@ static void g_close(struct Vm *vm, Port *p) {
 static bool g_can_event(const struct Vm *vm, const Port *p) { (void)vm; return p->state[1] != M_OUTPUT && p->state[2] != E_NONE; }
 
 const PortDriver gpio_esp_driver = {
-    "gpio", TYPE_GPIO_CONFIG, TYPE_GPIO_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL, NULL
+    PORT_NAME_GPIO, TYPE_GPIO_CONFIG, TYPE_GPIO_EDGE, g_open, g_command, g_close, g_can_event, NULL, NULL, NULL
 };

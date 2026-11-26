@@ -215,10 +215,12 @@ bool heap_reclaim_waiting(Vm *vm, Actor *a) {
  * if that fails against the limit, a tight one (a request near the limit
  * fits once the slack is gone). */
 static bool make_room(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots) {
+    GOGO_ASSERT(a->hp <= a->sp && a->sp <= a->mem_words && a->fp >= a->sp);
     if ((uint32_t)(a->sp - a->hp) >= words) return true;
     heap_gc(vm, a, words, roots, n_roots);
     if ((uint32_t)(a->sp - a->hp) >= words) return true;
     heap_gc_tight(vm, a, words, roots, n_roots);
+    GOGO_ASSERT(a->hp <= a->sp && a->sp <= a->mem_words);
     return (uint32_t)(a->sp - a->hp) >= words;
 }
 

@@ -6,8 +6,11 @@
  * its fixed-state budget (VFS_STATE_BYTES: the mounts, their count and the
  * slots). */
 typedef struct { const char *prefix; uint32_t plen; const VfsBackend *be; void *ctx; } VfsMount;
+/* A slot names its file by the length and the hash of its whole path:
+ * two paths are "the same" (Busy, Remove, Rename) when both match. */
 typedef struct {
     uint8_t used, mode, mnt;
+    uint8_t plen;                /* path length (<= VFS_PATH_MAX) */
     uint32_t hash;
     union { void *p; uint32_t u; uint8_t b[GOGO_FS_SLOT_BYTES]; } f;
 } VfsSlot;
@@ -17,6 +20,7 @@ struct VfsState {
     VfsSlot slots[GOGO_FS_MAX_OPEN];
 };
 #define VFS_STATE_BYTES (sizeof(VfsState))
+typedef char vfs_plen_fits[VFS_PATH_MAX <= 255u ? 1 : -1];
 
 /* path.c */
 /* 0 if p is a valid absolute path (>= 1 segment); *first = length of the first segment incl. '/' */
