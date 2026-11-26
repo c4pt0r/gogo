@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="gogo: an actor VM for microcontrollers and a compiler for a subset of Go.">
+<title>gogo</title>
+<style>
+/* The landing page (make site copies it to build/site/index.html, next to
+   the book in build/site/book). Standalone: no scripts, no other files. */
+/* One narrow monospace column, black on white, plain text; sections are a
+   heading, a muted tagline and a few paragraphs, like a README read aloud. */
+:root {
+  --ink: #000000;
+  --text: #1a1a1a;
+  --muted: #6b6b6b;
+  --faint: #a3a3a3;
+  --paper: #ffffff;
+  --line: #e6e6e6;
+  --code-bg: #f6f6f6;
+  --mono: Menlo, "DejaVu Sans Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #ffffff; --text: #e8e8e8; --muted: #9a9a9a; --faint: #5e5e5e;
+    --paper: #000000; --line: #333333; --code-bg: #000000; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ink: #ffffff; --text: #e8e8e8; --muted: #9a9a9a; --faint: #5e5e5e;
+  --paper: #000000; --line: #333333; --code-bg: #000000; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; background: var(--paper); }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--mono);
+  font-size: 13px; margin: 0; -webkit-font-smoothing: antialiased;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+a { color: inherit; text-decoration: none; }
+a:focus-visible { outline: 1px solid var(--ink); outline-offset: 3px; }
+.shell { width: min(760px, 100%); margin-inline: auto; }
+
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; z-index: 10;
+  height: env(safe-area-inset-top, 0px); background: var(--paper);
+}
+.nav {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; height: 68px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand b { font-weight: 400; }
+.cursor { display: inline-block; width: 7px; height: 13px; background: var(--ink); vertical-align: -2px; animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.nav-links { display: flex; gap: 20px; color: var(--muted); }
+.nav-links a:hover { color: var(--ink); }
+
+.hero { padding: 104px 0 24px; }
+.hero h1 { font: 400 clamp(18px, 2.4vw, 22px)/1.35 var(--mono); letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+p { max-width: 600px; color: var(--muted); line-height: 1.75; margin: 0; }
+.hero p { margin-top: 20px; }
+.key { color: var(--ink); }
+
+section { padding-top: 104px; }
+h2 { font: 400 15px/1.4 var(--mono); margin: 0; }
+.tagline { margin-top: 8px; line-height: 1.6; }
+.body { margin-top: 36px; display: grid; gap: 20px; }
+
+pre {
+  margin: 0; padding: 18px 20px; overflow-x: auto; max-width: 100%;
+  background: var(--code-bg); border: 1px solid var(--line);
+  color: var(--text); font: 400 12px/1.7 var(--mono);
+}
+pre .c { color: var(--faint); font-style: italic; }
+pre .p { color: var(--faint); user-select: none; }
+/* monochrome highlighting: contrast and weight instead of hue */
+pre.go { color: var(--muted); }
+pre .k { color: var(--ink); font-weight: 700; }
+pre .f { color: var(--ink); }
+pre .t { color: var(--text); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+pre .s { color: var(--text); }
+pre .n { color: var(--ink); }
+pre .cmd { color: var(--ink); }
+
+pre.diagram { font-size: 12px; line-height: 1.4; color: var(--text); background: transparent; }
+.faq { gap: 28px; }
+.qa h3 { font: 400 13px/1.5 var(--mono); color: var(--ink); margin: 0 0 6px; }
+.qa p { margin: 0; }
+.sub { font: 400 13px/1.5 var(--mono); color: var(--ink); margin: 16px 0 0; }
+#language .body + .body { margin-top: 44px; }
+pre.msgs { white-space: pre; }
+dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 10px 28px; max-width: 600px; }
+dt { color: var(--ink); }
+dd { margin: 0; color: var(--muted); line-height: 1.6; min-width: 0; }
+.num { font-variant-numeric: tabular-nums; }
+
+.status { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; font-size: 10px; letter-spacing: 0.06em; color: var(--text); }
+.status::before { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--ink); margin-right: 7px; vertical-align: 1px; }
+
+.links { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 22px; }
+.links a { color: var(--ink); border-bottom: 1px solid var(--line); padding-bottom: 1px; transition: border-color .2s; }
+.links a:hover { border-color: var(--ink); }
+
+footer { margin-top: 104px; border-top: 1px solid var(--line); padding: 28px 0 40px; display: flex; justify-content: space-between; gap: 20px; align-items: center; }
+footer span { color: var(--faint); font-size: 12px; }
+
+@media (max-width: 620px) {
+  .hero { padding: 60px 0 12px; }
+  section { padding-top: 72px; }
+  .nav-links { gap: 12px; font-size: 12px; }
+  pre.diagram { font-size: 10px; }
+  .nav-links a.wide { display: none; }
+  dl { grid-template-columns: 1fr; gap: 2px 0; }
+  dd { margin-bottom: 10px; }
+  footer { flex-direction: column; align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .cursor { animation: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <nav class="nav shell" aria-label="Primary navigation">
+    <a class="brand" href="#top"><b>gogo</b><span class="cursor" aria-hidden="true"></span></a>
+    <div class="nav-links">
+      <a class="wide" href="#language">language</a>
+      <a class="wide" href="#architecture">architecture</a>
+      <a href="#faq">faq</a>
+      <a href="#start">start</a>
+      <a href="book/index.html">book</a>
+      <a class="wide" href="https://github.com/c4pt0r/gogo" target="_blank" rel="noopener noreferrer">github</a>
+    </div>
+  </nav>
+
+  <header class="hero shell" id="top">
+    <h1>Go syntax. Erlang actors. Small enough for a microcontroller.</h1>
+    <p>gogo is an actor VM for microcontrollers and a compiler for a subset of Go. You write a program as a set of isolated actors. Each one has its own heap and memory limit, they talk only by copied messages, and supervisors restart the ones that crash.</p>
+    <p>The VM is plain C99 with no third-party libraries. <span class="key">An idle actor costs about 150 bytes.</span></p>
+    <div class="links">
+      <a href="book/index.html">Read the book</a>
+      <a href="https://github.com/c4pt0r/gogo" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </div>
+  </header>
+
+  <section class="shell" id="actors">
+    <h2>Actors</h2>
+    <p class="tagline">Isolation first. A crash stays where it happened.</p>
+    <div class="body">
+      <p>Actors share nothing. A message is copied into the receiver's heap, so a misbehaving actor can run out of its own memory but not anyone else's. Links, monitors and supervisors work the way they do in Erlang: when an actor dies, the actors watching it are told why, and a supervisor starts a fresh one.</p>
+<pre class="go"><span class="c">// a counter actor, and a call to it</span>
+<span class="k">func</span> <span class="f">counter</span>() {
+	total := <span class="n">0</span>
+	<span class="k">for</span> {
+		<span class="k">switch</span> m := actor.<span class="f">Receive</span>().(<span class="k">type</span>) {
+		<span class="k">case</span> actor.<span class="t">Request</span>:
+			total += m.Body.(<span class="t">int</span>)
+			actor.<span class="f">Reply</span>(m, total)
+		}
+	}
+}
+
+<span class="k">func</span> <span class="f">main</span>() {
+	c := actor.<span class="f">Spawn</span>(counter)
+	r, _ := actor.<span class="f">Call</span>(c, <span class="n">5</span>, <span class="n">1000</span>)
+	<span class="f">println</span>(<span class="s">"total"</span>, r.(<span class="t">int</span>))
+}</pre>
+    </div>
+  </section>
+
+  <section class="shell" id="ports">
+    <h2>Ports</h2>
+    <p class="tagline">Every peripheral is an actor you send messages to.</p>
+    <div class="body">
+      <p>GPIO, the keyboard, files, sockets, the IMU, infrared, audio and the screen are ports: actors that take commands and send typed events back. A button press arrives in the mailbox like any other message. <span class="key">Byte ports, from TCP to the SD card, share one stream protocol.</span></p>
+      <p>On top of the ports sit libraries written in gogo itself: DHCP, DNS, HTTP and HTTPS, SNTP, a key-value store, a ring log, WAV playback and an ncurses-like text UI.</p>
+    </div>
+  </section>
+
+  <section class="shell" id="language">
+    <h2>A subset of Go</h2>
+    <p class="tagline">Go's syntax and type checker. Actors where Go has goroutines.</p>
+    <div class="body">
+      <p>A gogo program is Go source. The compiler parses it with Go's own parser and checks it with go/types, so a type error is found on your computer, never on the device. Then a second pass checks the subset: every feature it rejects comes with the gogo way to do it instead.</p>
+      <dl>
+        <dt>types</dt><dd>int8 .. uint64, float32, float64, bool, string, slices, arrays, maps, structs, pointers</dd>
+        <dt>code</dt><dd>functions, closures, methods, interfaces, embedding, type switches, labeled break and continue, range over int</dd>
+        <dt>errors</dt><dd>error values, panic, defer</dd>
+        <dt>programs</dt><dd>packages of your own, a GOGOPATH search, single-file programs and #! scripts</dd>
+        <dt>library</dt><dd>gogo/fmt, strings, strconv, errors, math, and the actor and device packages</dd>
+      </dl>
+    </div>
+    <div class="body">
+      <h3 class="sub">What actors replace</h3>
+      <p>The parts of Go that share memory between threads would break isolation, so the actor model takes their place.</p>
+      <dl>
+        <dt>go f()</dt><dd>actor.Spawn(f): a new actor with its own heap</dd>
+        <dt>chan, select</dt><dd>actor.Send and actor.Receive: copied messages to a mailbox</dd>
+        <dt>recover()</dt><dd>the actor ends and its supervisor starts a fresh one</dd>
+        <dt>global state</dt><dd>package-level variables are read-only, kept in flash; state lives in an actor</dd>
+      </dl>
+    </div>
+    <div class="body">
+      <h3 class="sub">What is left out</h3>
+      <p>Generics, goto, complex numbers, uintptr, init functions, pointers into a slice element or a field, and Go's standard packages by their Go paths. Reflection and a full runtime do not fit the memory budget. The compiler says so, and says what to write:</p>
+<pre class="msgs"><span class="c">$ </span><span class="cmd">gogo build .</span>
+<span class="c">main.gg:13:1:</span> <span class="k">gogo:</span> generic function not supported
+<span class="c">main.gg:21:8:</span> <span class="k">gogo:</span> channel not supported
+<span class="c">main.gg:22:2:</span> <span class="k">gogo:</span> go statement not supported
+<span class="c">main.gg:24:8:</span> <span class="k">gogo:</span> recover (a panic ends the actor: let its supervisor restart it) not supported
+<span class="c">main.gg:31:2:</span> <span class="k">gogo:</span> package-level variable counter is read-only</pre>
+    </div>
+    <div class="body">
+      <h3 class="sub">Small differences</h3>
+      <dl>
+        <dt>int</dt><dd>32 bits, on the board and on your computer; int64 when you need more</dd>
+        <dt>maps</dt><dd>range visits keys in order, the same order every time</dd>
+        <dt>println</dt><dd>prints structs, slices and the value inside an interface, where Go prints addresses</dd>
+      </dl>
+      <p>The full list, with workarounds, is in the book and the known-issues document.</p>
+    </div>
+  </section>
+
+  <section class="shell" id="run">
+    <h2>One image, everywhere</h2>
+    <p class="tagline">Develop on your computer. Run the same bytes on the board.</p>
+    <div class="body">
+      <p>The gogo tool compiles a directory of .gg files to one compact bytecode image, a .ggb file. The same image runs on the board, in the host VM on macOS and Linux, and inside other programs. An image names the drivers and mounts it needs, and older firmware refuses an image that uses something it lacks, instead of failing halfway.</p>
+      <dl>
+        <dt>M5StickS3</dt><dd>ESP32-S3, buttons, battery, IMU, IR send and receive, mic and speaker, Wi-Fi</dd>
+        <dt>Cardputer ADV</dt><dd>ESP32-S3, 56-key keyboard, SD card, IMU, IR send, mic and speaker, Wi-Fi</dd>
+        <dt>host VM</dt><dd>macOS and Linux, with simulated network, GPIO and microphone for tests</dd>
+        <dt>embedded</dt><dd>libgogo.a with one C header; a Go binding; the compiler as a C library</dd>
+      </dl>
+      <p>Modules load at run time: copy a .ggb to the board's flash and <span class="key">code.Load</span> starts it, with no reflash and no reboot.</p>
+    </div>
+  </section>
+
+  <section class="shell" id="architecture">
+    <h2>Architecture</h2>
+    <p class="tagline">Above the double line runs on your computer. Below it runs on the target.</p>
+    <div class="body">
+<pre class="diagram" aria-label="gogo architecture: the compiler on the developer host turns a gogo program and the standard library into a .ggb image; on the target, the VM core schedules actors and reaches peripherals through ports, on ESP32-S3 boards, the host VM, or inside other programs through libgogo.a">  YOUR COMPUTER
+  ┌────────────────────────────────────────────────┐
+  │ program.gg  +  gogo/... standard library       │
+  └────────────────────────┬───────────────────────┘
+                           │  gogo build
+                           ▼
+                        app.ggb   one image for every target
+  ═════════════════════════╪════════════════════════
+  TARGET                   ▼
+  ┌────────────────────────┴───────────────────────┐
+  │ VM core   C99, ~41 KB                          │
+  │ actors · scheduler · GC · messages · modules   │
+  ├────────────────────────────────────────────────┤
+  │ ports     gpio · keys · files · tcp/tls · imu  │
+  │           ir · audio · screen                  │
+  └────────────────────────┬───────────────────────┘
+         ┌─────────────────┼─────────────────┐
+         ▼                 ▼                 ▼
+  ESP32-S3 boards       host VM          libgogo.a
+    (FreeRTOS)      (macOS, Linux)     (in your app)</pre>
+      <p>Programs import the standard library: its system packages compile to VM builtins, the rest is ordinary gogo code. The compiler turns both into one .ggb image. On the target, the VM core schedules actors and reaches every peripheral through ports, and <span class="key">the same core runs on the boards, in the host VM and inside other programs</span>, each supplying its own host and board tables.</p>
+    </div>
+  </section>
+
+  <section class="shell" id="size">
+    <h2>Size</h2>
+    <p class="tagline">Measured after every change.</p>
+    <div class="body">
+      <dl class="num">
+        <dt>VM core</dt><dd>about 41 KB of code, against a 64 KB budget</dd>
+        <dt>idle actor</dt><dd>about 150 bytes</dd>
+        <dt>state</dt><dd>all of it per VM; any number of VMs share one process</dd>
+      </dl>
+    </div>
+  </section>
+
+  <section class="shell" id="next">
+    <h2>Distributed actors</h2>
+    <p class="tagline">Send to an actor on another board the way you send to one at home.</p>
+    <div class="body">
+      <div><span class="status">IN PROGRESS</span></div>
+      <p>Boards join a server node over TCP. A remote PID is an ordinary PID: Send, Call, Monitor and Link work unchanged, and a node that goes away sends its watchers a DownMsg with the reason NoConnection. The server can be a computer, serving many boards.</p>
+<pre><span class="p">$ </span><span class="cmd">gogo run nodehello client</span>
+client: found counter &lt;pid 4@1&gt;
+added 1 total 1
+added 2 total 3
+<span class="c">... the server stops ...</span>
+server gone, reason 11</pre>
+    </div>
+  </section>
+
+  <section class="shell" id="faq">
+    <h2>FAQ</h2>
+    <p class="tagline">Short answers. The full list is in the repository.</p>
+    <div class="body faq">
+        <div class="qa">
+          <h3>Is gogo Go?</h3>
+          <p>No. Programs are written in a subset of Go syntax and checked by Go's own type checker, but they compile to gogo bytecode for gogo's actor VM, not to native code, and some Go features are not supported. That is why source files end in .gg and images in .ggb.</p>
+        </div>
+        <div class="qa">
+          <h3>Is it compiled or interpreted?</h3>
+          <p>Both, in two steps. gogo build compiles source ahead of time on your computer, so type errors are found before anything runs. The VM on the device interprets the bytecode. This is the model of Java or Erlang, not of Go or Python. The board never needs the compiler, and the same image runs everywhere.</p>
+        </div>
+        <div class="qa">
+          <h3>How is it different from MicroPython?</h3>
+          <p>MicroPython compiles on the device, gives you a REPL and has a large library and many boards. gogo compiles on your computer, catches type errors before the code ships, isolates each activity in an actor with its own heap, restarts what crashes, hot-loads modules without a restart, and keeps the VM core around 41 KB.</p>
+        </div>
+        <div class="qa">
+          <h3>Is gogo an RTOS?</h3>
+          <p>No. It runs on top of one. On the ESP32-S3 the VM is one FreeRTOS task, and gogovm is a normal macOS or Linux process. Inside, gogo has its own preemptive scheduler for actors, but not a real-time one: time-critical work stays in C drivers, which hand results to actors as messages.</p>
+        </div>
+        <div class="qa">
+          <h3>Will there be a JIT?</h3>
+          <p>Not planned. On the ESP32-S3 a JIT would need scarce executable RAM and an Xtensa code generator within the memory budget. If speed becomes a problem the plan is benchmarks first, then cheaper dispatch and more C builtins.</p>
+        </div>
+        <div class="qa">
+          <h3>Is gogo vibe-coded AI slop?</h3>
+          <p>Vibe-coded, yes. Slop, no. Most of the code was written by AI coding agents directed by its author. Every change is reviewed against a written plan by a separate pass, tested with golden tests, C unit tests, sanitizers and fuzzing, run on real boards, and held to a 64 KB VM budget. What does not work yet is written down.</p>
+        </div>
+      <div class="links">
+        <a href="https://github.com/c4pt0r/gogo/blob/main/docs/FAQ.md" target="_blank" rel="noopener noreferrer">All questions</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="shell" id="start">
+    <h2>Start</h2>
+    <p class="tagline">One command on a board, three from source.</p>
+    <div class="body">
+<pre><span class="c"># a board over USB: identify, flash, set up Wi-Fi, run a first program</span>
+<span class="p">$ </span><span class="cmd">gogo setup</span>
+
+<span class="c"># from source: Go 1.27+, a C99 compiler, make</span>
+<span class="p">$ </span><span class="cmd">make vm</span>
+<span class="p">$ </span><span class="cmd">go build -o build/gogo ./cmd/gogo</span>
+<span class="p">$ </span><span class="cmd">build/gogo run docs/book/examples/02-hello</span></pre>
+      <p>The book, Programming gogo, walks through the language, the actors and every port, and every example in it is tested.</p>
+      <div class="links">
+        <a href="https://github.com/c4pt0r/gogo" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="book/index.html">The book</a>
+        <a href="https://github.com/c4pt0r/gogo/blob/main/docs/FAQ.md" target="_blank" rel="noopener noreferrer">FAQ</a>
+      </div>
+    </div>
+  </section>
+
+  <footer class="shell">
+    <a class="brand" href="#top"><b>gogo</b></a>
+    <span>actors for microcontrollers</span>
+  </footer>
+</main>
+</body>
+</html>

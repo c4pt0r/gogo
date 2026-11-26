@@ -1,7 +1,8 @@
 # Test: once a day and when started by hand (Actions > test > Run
 # workflow), run the test suite on macOS and Linux: make test (C and Go tests, lint, the examples and the
-# book's examples, the size checks where the ESP-IDF compiler is present,
-# which it is not here), make test-lib and make test-tls-asan.
+# book's examples, the book's website (make site-check), the size checks
+# where the ESP-IDF compiler is present, which it is not here), make
+# test-lib and make test-tls-asan.
 #
 # The "tls" port is built from mbedTLS's source, which the build takes
 # from ESP-IDF (components/mbedtls/mbedtls). Rather than install ESP-IDF,
@@ -29,6 +30,8 @@ concurrency:
 env:
   MBEDTLS_REPO: https://github.com/espressif/mbedtls.git
   MBEDTLS_COMMIT: ce3f3485a121c100f58f36d700cb35b060f6e866 # ESP-IDF v6.1.1
+  MDBOOK_VERSION: 0.5.4
+  MDBOOK_SHA256: 3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7 # x86_64-unknown-linux-gnu
 
 jobs:
   test:
@@ -53,6 +56,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang shellcheck
+      # mdBook for make site-check (part of make test), which builds the
+      # book as a website and checks its links; it is skipped without it.
+      # Linux: the pinned release binary, checked against its SHA-256.
+      - name: mdBook (macOS)
+        if: runner.os == 'macOS'
+        run: brew install mdbook
+      - name: mdBook (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          d="$RUNNER_TEMP/mdbook"
+          mkdir -p "$d"
+          curl -fsSL -o "$d/mdbook.tar.gz" "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "$MDBOOK_SHA256  $d/mdbook.tar.gz" | sha256sum -c -
+          tar -xzf "$d/mdbook.tar.gz" -C "$d" mdbook
+          echo "$d" >> "$GITHUB_PATH"
       - name: mbedTLS source
         shell: bash
         run: |
@@ -67,6 +86,7 @@ jobs:
           cc --version
           go version
           command -v shellcheck || echo "no shellcheck: make lint skips it"
+          mdbook --version
       - name: make test
         run: make test
       - name: make test-lib

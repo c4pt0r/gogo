@@ -70,11 +70,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: float-corpus lint gogo-cmd test-examples test-book lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize floatlibsize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize
 
 vm: $(BUILD)/gogovm
 
@@ -91,6 +91,31 @@ test-examples: vm $(BUILD)/gogovm_mcu gogo-cmd
 # (docs/book/examples/run.sh, with this build's gogo and gogovm).
 test-book: vm gogo-cmd
 	GOGO_CMD=$(CURDIR)/$(BUILD)/gogo GOGO_VM=$(CURDIR)/$(BUILD)/gogovm docs/book/examples/run.sh
+
+# The website, plain files with relative links: the landing page
+# (site/index.html) as $(BUILD)/site/index.html and the book built by
+# mdBook (docs/book/book.toml, SUMMARY.md, theme/) in $(BUILD)/site/book.
+# mdBook copies every non-markdown file of docs/book; the example programs
+# and book.toml are removed again (the book links examples/ on GitHub).
+MDBOOK ?= mdbook
+SITE = $(BUILD)/site
+MDBOOK_HINT = install mdBook 0.5: brew install mdbook, or a release binary from https://github.com/rust-lang/mdBook/releases
+site:
+	@command -v $(MDBOOK) >/dev/null 2>&1 || { echo "make site: $(MDBOOK) not found; $(MDBOOK_HINT)" >&2; exit 1; }
+	rm -rf $(SITE)
+	$(MDBOOK) build docs/book -d $(CURDIR)/$(SITE)/book
+	rm -rf $(SITE)/book/examples $(SITE)/book/book.toml
+	cp site/index.html $(SITE)/index.html
+	@echo "site: open $(SITE)/index.html"
+
+# make site, then every relative link and #anchor of the site resolves and
+# no markdown is left unconverted (tools/sitecheck); skipped without mdbook.
+site-check:
+	@if command -v $(MDBOOK) >/dev/null 2>&1; then \
+	    $(MAKE) --no-print-directory site && go run ./tools/sitecheck $(SITE); \
+	else \
+	    echo "site-check: skipped: mdbook not installed ($(MDBOOK_HINT))"; \
+	fi
 
 # The gogo command, one rule for every target that needs it, so that
 # targets run in parallel (make -j) do not write it at the same time
