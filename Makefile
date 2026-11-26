@@ -73,7 +73,7 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
@@ -584,6 +584,14 @@ test-tls-asan:
 	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_net
 	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_tls
 	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/ ./tests/dist/
+# Distributed actors under AddressSanitizer and UndefinedBehaviorSanitizer
+# (build/san): tests/dist, its Go peer sending malformed and random frames
+# ($GOGO_DIST_FUZZ of them) at the node port's codec.
+SAN_FLAGS = -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -DGOGO_DEBUG=1
+test-dist-san:
+	$(MAKE) BUILD=build/san EXTRA_CFLAGS="$(SAN_FLAGS)" build/san/gogovm
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" GOGO_DIST_FUZZ=$${GOGO_DIST_FUZZ:-20000} GOGO_VM=$(CURDIR)/build/san/gogovm go test -count=1 ./tests/dist/
+
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
