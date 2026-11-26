@@ -201,6 +201,8 @@ The supported types are:
 - Slices (`[]T`), arrays (`[N]T`), structs, function values and `any`.
 - Named types whose underlying type is an integer or float type, `bool`
   or `string` (`type Weekday int`, `type Reg uint32`), and named structs.
+- Type aliases, another name for a type of the subset (`type Millis =
+  int64`, `type Err = errors.Code`): the two names are interchangeable.
 - `const` with `iota`.
 - The gogo types `actor.PID`, `actor.Ref`, `bytes.Bytes`, `bytes.Buffer`
   and the struct types of the gogo packages.

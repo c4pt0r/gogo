@@ -259,12 +259,12 @@ func (c *checker) typeSpec(s *ast.TypeSpec) {
 	if c.p.isBuiltin(c.p.Info.Defs[s.Name]) {
 		return // a VM object (actor.PID, bytes.Bytes ...)
 	}
-	if s.Assign.IsValid() {
-		c.unsupported(s, "type alias")
-		return
-	}
 	if s.TypeParams != nil {
 		c.unsupported(s, "generic type")
+		return
+	}
+	if s.Assign.IsValid() { // type A = T: another name for T, any type of the subset
+		c.typeExpr(s.Type)
 		return
 	}
 	if _, ok := s.Type.(*ast.InterfaceType); ok {

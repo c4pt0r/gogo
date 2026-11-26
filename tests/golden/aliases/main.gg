@@ -1,0 +1,49 @@
+// Type aliases: another name for a type of the subset, interchangeable
+// with it (a named type of the program or a library's, a basic type, a
+// slice or a func type).
+package main
+
+import (
+	"gogo/actor"
+	"gogo/errors"
+)
+
+type Point struct{ X, Y int }
+
+type P = Point
+type Code = errors.Code
+type Num = int
+type Nums = []Num
+type Handler = func(int) int
+
+func (p Point) Sum() int { return p.X + p.Y }
+
+func twice(h Handler, n Num) int { return h(h(n)) }
+
+func pick(c Code) string {
+	switch c {
+	case errors.NotFound:
+		return "not found"
+	case errors.Busy:
+		return "busy"
+	}
+	return "other"
+}
+
+func main() {
+	var p P = Point{1, 2}
+	q := P{X: 3}
+	println(p.Sum(), q.Sum(), p.X == Point{1, 2}.X)
+	var c Code = errors.Busy
+	println(pick(c), pick(errors.NotFound), pick(7), int(c))
+	ns := Nums{1, 2, 3}
+	ns = append(ns, 4)
+	println(len(ns), ns[3], twice(func(n int) int { return n * 3 }, 2))
+	var m any = q
+	switch v := m.(type) {
+	case P:
+		println("a P", v.X)
+	}
+	var id actor.PID = actor.Self()
+	println(id == actor.Self())
+}

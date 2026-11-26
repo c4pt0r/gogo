@@ -339,6 +339,8 @@ func TestRejects(t *testing.T) {
 		{"bytes-println", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.FromString(\"a\")\n\tprintln(x) // ERR\n}\n", []string{"println of bytes.Bytes"}},
 		{"bytes-compare", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.FromString(\"a\")\n\tprintln(x == x) // ERR\n}\n", []string{"comparison of"}},
 		{"bytes-methodvalue", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.FromString(\"a\")\n\tf := x.Len // ERR\n\t_ = f\n}\n", []string{"not supported"}},
+		{"alias-generic", "package main\ntype L[T any] = []T // ERR\nfunc main() {}\n", []string{"generic type not supported"}},
+		{"alias-map", "package main\ntype M = map[int]int // ERR\nfunc main() {}\n", []string{"map not supported"}},
 		{"port-renamed", "package main\nimport p \"gogo/port\" // ERR\nfunc main() { p.Close(p.Edge{}) }\n", []string{`import p "gogo/port" not supported`}},
 	}
 	for _, tc := range tests {
