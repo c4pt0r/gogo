@@ -1,6 +1,13 @@
-# gogo
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logos/gogo-octopus-white.svg">
+    <img src="logos/gogo-octopus-color.svg" alt="The gogo mascot, a friendly octopus" width="144">
+  </picture>
+</p>
 
-Website and book: <https://gogovm.dev/>
+<h1 align="center">gogo</h1>
+
+<p align="center">Website and book: <a href="https://gogovm.dev/">gogovm.dev</a></p>
 
 gogo is a small actor VM for microcontrollers and a compiler for a subset
 of Go. You write programs in Go syntax as a set of isolated actors, in the
