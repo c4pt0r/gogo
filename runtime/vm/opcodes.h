@@ -237,7 +237,13 @@ enum Builtin {
  * int, 0 meaning the default, so a struct of an older image has a prefix
  * of the fields, and GETFIELD past its end reads int 0. A new reserved
  * type or an appended field is an image format minor (image.h).
- * TestReservedFieldsMatchC checks this table against compiler.reservedTypes. */
+ * TestReservedFieldsMatchC checks this table against compiler.reservedTypes.
+ * These readers check a struct's exact size today; when their type gains a
+ * field, relax each to "at least" and read the new field only when present:
+ * net.SendTo and net.Addr (net/udp.c), port.Out (stream/stream.c),
+ * port.Post (embed/hostport.c), net.SetAddr (net/ports.c), actor.Options
+ * (vm_spawn_opt_words, interp.c), actor.Request (B_REPLY, interp.c) and
+ * code.Module (module_obj, module.c). */
 #define TYPE_NF2(a, b) ((uint8_t)((a) | (b) << 4))
 #define TYPE_NFIELDS { \
     TYPE_NF2(1, 2), /* 0 ProcInfo, Reason */ \
