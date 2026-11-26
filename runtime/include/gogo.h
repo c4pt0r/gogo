@@ -37,7 +37,11 @@
  * out every use.
  *
  * Threads. A VM is single-threaded: every call that takes a gogo_vm runs
- * on the thread that owns the VM. Other threads reach it only through a
+ * on the thread that owns the VM. Ownership may pass from thread to
+ * thread: the library keeps no thread identity, so what it needs is that
+ * those calls never overlap and that each happens before the next (a
+ * hand-off through a mutex or a queue, as a Go goroutine moving between
+ * OS threads gets). Other threads reach it only through a
  * gogo_poster (gogo_poster_new), whose calls any thread may make at any
  * time, also while or after the owner frees the VM: the type says which
  * calls are which. Hooks run on the owning thread unless noted.
@@ -397,7 +401,7 @@ typedef struct gogo_port_driver {
     uint32_t size;          /* sizeof(gogo_port_driver) as the host was compiled (GOGO_PORT_DRIVER_INIT) */
     uint32_t reserved;      /* 0 */
     /* port.Open: 0 to accept, a negative GOGO_E* to refuse (any nonzero
-     * value refuses; Open's ok is false). NULL accepts every open. Events it emits (gogo_port_emit
+     * value refuses; port.Open returns an error). NULL accepts every open. Events it emits (gogo_port_emit
      * returns 0) are queued on the owner once the open succeeds, then
      * subject to its quota like any event (over it, dropped); if it
      * refuses, they are discarded. */
