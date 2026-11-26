@@ -81,7 +81,7 @@ are harder to keep small and isolated per task; Rust or C give no isolation
 between tasks, no hot loading and a slower edit-test loop on hardware.
 
 ### Why is gogo so small?
-The VM core is about 36 KB of code (34.8 KB built without floats), an idle actor about 150 bytes, and a
+The VM core is about 36 KB of code (34.5 KB built without floats), an idle actor about 150 bytes, and a
 "hello" image about 1 KB, because size was a constraint from the first
 line, not an afterthought:
 
