@@ -287,12 +287,14 @@ image to the board (`gogo flash`), or copy modules to its `/flash`
 14).
 
 ### Can a program that embeds gogo compile source at run time?
-Not yet; `libgogo.a` only loads compiled images. Planned: the compiler as a
-separate C library (`libgogoc.a`, built with Go's c-archive mode, a few MB
-because it carries the Go runtime) with one call that turns source files
-into an image plus structured errors, and the Go binding importing the
-compiler directly. A host that only runs precompiled images will not need
-it.
+Yes. A Go program calls `embed.Compile` (package `gogotools/embed`), which
+runs the compiler in process and returns the image to load. A C program
+links `libgogoc.a` (`make libgogoc`, header `embed/gogoc/gogoc.h`) and
+calls `gogoc_compile` on a directory or a source string; the library is
+built with Go's c-archive mode, so it carries the Go runtime (it adds
+about 5 MB to a program, and a process can hold only one Go c-archive).
+A host that only runs precompiled images needs neither. See the book,
+sections 18.12 and 18.13.
 
 ### Where is the bytecode documented?
 [bytecode.md](bytecode.md) is the per-opcode reference: every opcode with its

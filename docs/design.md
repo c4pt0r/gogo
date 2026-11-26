@@ -2278,6 +2278,42 @@ only through two tables of function pointers that the caller hands it.
   (`tools/libsyms.sh` checks it); `libgogo-debug.a` is the same objects
   unprelinked. The book's chapter 18 (Embedding gogo) is the user guide;
   `examples/embed-c` is the smallest host.
+- **The Go binding** (`gogotools/embed`, build tag `libgogo`): cgo over
+  `libgogo.a`, one Go call per C call. The host table's hooks are C
+  functions in `embed/bind.c`: memory is `malloc`, counted per VM in the
+  host context (atomically: posters allocate on their threads), and the
+  default clocks and entropy are the OS's; the rest call exported Go
+  functions with the context's `cgo.Handle`, never a Go pointer. A VM
+  carries the gogo.h threading rule as Go's "not safe for concurrent
+  use": calls must not overlap, but may come from any OS thread, which
+  the library does not check. There is no `wait` hook: `Run(ctx)` steps
+  the VM and waits in Go on a one-slot channel that the `wake` hook fills
+  (the latch, drained before each step), the next deadline's timer and
+  the context, with a step budget so that a spinning actor cannot keep
+  it from seeing the context end. `Poster` wraps a `gogo_poster` with a
+  read-write lock, so a Go caller cannot use it after its free. Host
+  ports are a `PortDriver` interface behind one static C driver whose
+  context is the Go driver's handle. A VM call made from a hook is
+  refused in Go (`ErrBusy`) before it reaches C, which keeps `Close`
+  refused for the whole outer call. A panic in a hook is recovered at
+  the C boundary and raised again when the outermost library call
+  returns (a panic must not unwind C frames); `Close` forgets the
+  `gogo_vm` before freeing it, so a panic from a driver's close leaves
+  no dangling handle. Hooks and drivers must not block: `Run` sees its
+  context only between steps. Without the tag the package holds only
+  the compiler, so `go build ./...` and `go vet ./...` need no C.
+- **In-process compilation.** `embed.Compile` calls the compiler
+  package; since the loader reads a build root on disk (it resolves user
+  packages with `os.Stat` and `os.SameFile`), `Compile` and `CompileFS`
+  write the sources into a temporary root and strip its path from
+  messages, which leaves the compiler unchanged. `libgogoc.a`
+  (`embed/gogoc`, `gogoc.h`) is that call built with Go's c-archive
+  mode, for C hosts: `gogoc_compile` (a path, or the text of one file)
+  gives an image from `malloc` and the warnings or the error message.
+  `tools/libgogoc.sh` prelinks the archive like `libgogo.a`, so its only
+  globals are the `gogoc_*` functions; the Go runtime it carries (one per
+  process, so one Go c-archive per program) is the price, which a host
+  that runs only precompiled images does not pay.
 - **Cost on the boards** (E12, measured against the pre-embed tree): VM
   core +644 B (`tools/vmsize.sh`), firmware +1.9 to +2.9 KB, static
   internal RAM +256 to +320 B, of which 196 B is the `Vm *` in each of
@@ -2441,7 +2477,7 @@ no runtime copies):
   filled, and every field within that is written, 0 on an error; anything marked experimental is
   outside these guarantees (`GOGO_EXPERIMENTAL` on the declaration, a
   macro that is empty unless the host makes it a deprecation; the book's
-  18.12 has the table: host ports, `grant`, `fs_root`, `fs_quota`, the
+  18.14 has the table: host ports, `grant`, `fs_root`, `fs_quota`, the
   code-load flag (the `flags` field itself is stable), stats, image inspection, `gogo_run_thread`);
   `gogo.h` is C99 without threads and `gogo_posix.h` adds the POSIX host
   and `gogo_run_thread` (a split of the headers only: the prelinked
@@ -2473,7 +2509,8 @@ infrared; audio; the wall clock and SNTP; HTTPS; the text screen
 (`screen` port, `gogo/tui`); image format 15 with append-only reserved
 types and named requirements (§5.6); one stream protocol for every byte
 port with `port.Closed` and `From`; embed mode phase 1 (`libgogo`,
-§5.11); user packages with a `GOGOPATH` search and `#!` scripts; the
+§5.11) and the Go binding with in-process compilation (`gogotools/embed`,
+`libgogoc`); user packages with a `GOGOPATH` search and `#!` scripts; the
 first language additions (expression `switch`, labels, `range` over int,
 variadic functions, methods with value receivers, embedded fields,
 arrays, static `defer`); floating point (`float32`, `float64`,
@@ -2495,8 +2532,7 @@ and `gogo/fmt`, which complete the language plan (image format 15.6).
    with direct LAN links as a later step.
 3. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
-4. **Embedding bindings:** Rust, Go (with an in-process compiler,
-   `libgogoc`), iOS and Android.
+4. **Embedding bindings:** Rust, iOS and Android (Go is done).
 
 Not planned: a JIT; USB device classes (HID, mass storage).
 

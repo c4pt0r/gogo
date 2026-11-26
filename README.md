@@ -200,8 +200,13 @@ if (gogo_new_posix(NULL, &vm) == GOGO_OK && gogo_load(vm, image, len, GOGO_LOAD_
 gogo_free(vm);
 ```
 
+Go programs use the binding `gogotools/embed` (build tag `libgogo`),
+which can also compile source in process (`embed.Compile`); C programs
+compile at run time with `libgogoc.a` (`make libgogoc`, `gogoc.h`).
+
 The book chapter [Embedding gogo](docs/book/18-embedding.md) is the guide;
-[`examples/embed-c/`](examples/embed-c/) has the example hosts
+[`examples/embed-c/`](examples/embed-c/) and
+[`examples/embed-go/`](examples/embed-go/) have the example hosts
 (`make example-embed`).
 
 ## Documentation
@@ -241,7 +246,9 @@ Done:
   packages of your own with a `GOGOPATH` search;
   single-file programs and `#!` scripts; `gogo setup`; optional firmware
   features; releases with the CLI, `gogovm` and firmware.
-- **Embedding:** `libgogo.a` with a C API (§5.11 of the design notes).
+- **Embedding:** `libgogo.a` with a C API (§5.11 of the design notes);
+  a Go binding, and in-process compilation for Go and C hosts
+  (`libgogoc.a`).
 
 Next, in order:
 
@@ -251,8 +258,7 @@ Next, in order:
    messages directly (first through the server; direct links later).
 3. **More hardware:** a `usb` port for the serial connection, the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
-4. **Embedding bindings:** Rust, Go (with an in-process compiler), iOS
-   and Android.
+4. **Embedding bindings:** Rust, iOS and Android.
 
 ## License
 
