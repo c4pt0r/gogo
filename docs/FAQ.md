@@ -341,6 +341,18 @@ later. The VM itself is portable C99 with no OS dependencies; a platform
 supplies a small table of hooks (clock, memory, wake and wait, output) and
 its port drivers.
 
+### Can a program use the USB connection?
+Not yet. On the ESP32-S3 boards the USB port is the chip's built-in
+USB-serial device, and the platform uses it for `println` output,
+`gogo config` and flashing; a program cannot read what the computer sends
+or tell whether a computer is attached (on the StickS3, `power.Battery`'s
+`External` only says that external power is present). Planned: a `usb`
+port that gives programs the serial stream (bytes from the computer as
+`port.Chunk`, bytes to it with `port.Out`) and `Connected` /
+`Disconnected` events, sharing the line with the console and the
+configuration protocol. Acting as a USB keyboard, mouse or drive would
+need the chip's other USB controller and is not planned for now.
+
 ### What hardware does gogo support?
 **Boards** (one ESP-IDF firmware tree, `platform/esp32s3`, built per board):
 
