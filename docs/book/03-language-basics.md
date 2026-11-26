@@ -1856,7 +1856,10 @@ true
   a type's own or promoted from an embedded field (an embedded
   interface's included). Interfaces can embed other interfaces (`type ReadWriter interface {
   Reader; Writer }`), and one interface value can be assigned to another
-  interface whose methods it has.
+  interface whose methods it has. The methods of gogo's own types
+  (`bytes.Bytes`, `bytes.Buffer`, `fs.File`) are builtins of the VM and
+  do not count: `var s Stringer = b` for a `Bytes` b is a compile
+  error; wrap it in a struct of your own.
 - **`any`** (the empty interface) holds any value. Inside one, a value
   keeps its type: an `int64` is not an `int`, a `Celsius` (`type Celsius
   int`) is neither, and a `byte` or a `uint32` is not an `int` either.

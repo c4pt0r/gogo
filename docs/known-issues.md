@@ -428,9 +428,14 @@ rebuilt:
   an interface value tests the value's type against each type of the
   program that has the method, in declaration order, before calling it;
   a program with many such types pays for the chain (and its image holds
-  one dispatcher per interface method called). The VM's own types
-  (`bytes.Bytes`, `bytes.Buffer`, `fs.File`) do not satisfy your
-  interfaces: their methods are builtins.
+  one dispatcher per interface method called).
+- **The VM's own types do not implement your interfaces.** The methods
+  of `bytes.Bytes`, `bytes.Buffer` and `fs.File` are builtins, which a
+  dispatcher cannot call: putting one (or a struct that embeds one) into
+  an interface whose methods it would provide is a compile error (`bytes.Bytes as a
+  main.Stringer not supported`), and `x.(Stringer)` on an `any` holding
+  a `Bytes` is false, where Go says true. *Workaround:* wrap the value
+  in a struct of your own with the methods.
 - **Interface values of your types stay in your module.** A hot-loaded
   module and its loader dispatch only over their own types (the closed
   world that makes dispatch work), so a value of your type, inside an

@@ -435,6 +435,48 @@ func (c *checker) convertType(target, src types.Type, pos token.Pos) {
 	if isArray(src) {
 		c.fail(pos, "array in interface not supported: use a slice or a struct with an array field")
 	}
+	c.vmMethods(target, src, pos)
+}
+
+// vmMethods rejects a value of concrete type src going into interface
+// type target when one of the methods that implement target is a builtin
+// of the VM's (bytes.Bytes, bytes.Buffer, fs.File and a struct embedding
+// one): dispatch calls only compiled functions, so the value would not
+// implement target at run time.
+func (c *checker) vmMethods(target, src types.Type, pos token.Pos) {
+	it, ok := underlying(target).(*types.Interface)
+	if !ok || src == nil || isIface(src) || it.Empty() {
+		return
+	}
+	ms := types.NewMethodSet(src)
+	for i := 0; i < it.NumMethods(); i++ {
+		m := it.Method(i)
+		sel := ms.Lookup(m.Pkg(), m.Name())
+		if sel == nil {
+			continue
+		}
+		fn, _ := sel.Obj().(*types.Func)
+		if fn == nil || !c.p.vmMethod(fn) {
+			continue
+		}
+		c.fail(pos, "%s as a %s not supported: its method %s is a builtin of the VM, which interfaces cannot call",
+			types.TypeString(src, pkgName), types.TypeString(target, pkgName), m.Name())
+		return
+	}
+}
+
+// vmMethod reports whether method fn is a builtin: marked itself, or a
+// method of a type the VM implements.
+func (p *Program) vmMethod(fn *types.Func) bool {
+	if p.isBuiltin(fn) {
+		return true
+	}
+	recv := fn.Type().(*types.Signature).Recv()
+	if recv == nil {
+		return false
+	}
+	n, ok := types.Unalias(recv.Type()).(*types.Named)
+	return ok && p.isBuiltin(n.Obj())
 }
 
 // multiCall returns e as a call of a compiled (main or library) function

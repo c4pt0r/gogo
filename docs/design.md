@@ -296,7 +296,10 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   interface values and `I(x)` conversions work; method expressions
   `I.M` do not. `panic` of an error prints its `Error()`. No opcode of
   their own; the VM's own types (`Bytes`, `Buffer`, `fs.File`) are not
-  candidates, as their methods are builtins.
+  candidates, as their methods are builtins: the checker rejects such a
+  value (or a struct embedding one) going into an interface whose
+  methods it would provide (`checker.vmMethods`), so a call never
+  reaches a dispatcher without its case.
 - Interface values (`any`): a value is its own term; an `int64` goes in
   as a `K_INT64` box (`BOX64`), a sized integer (`byte`, `rune`,
   `uint32`, `uint64`, ...: box type `byte`, `int32`, ...) and a value of a named
