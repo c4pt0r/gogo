@@ -27,7 +27,7 @@ a flash file system (`gogo run` without `--fs-root`) it lasts for the run.
 ```text
 examples/snake/
   main.gg                 package main: the screen, the keys, the timer, supervision
-  sim.gg                  package main: the headless autopilot check (see Test)
+  sim.gg                  package main: the headless autopilot check (see Checking the autopilot)
   board/board.gg          snake/board: the game as values, and the View and Move messages
   autopilot/autopilot.gg  snake/autopilot: the autopilot actor and its search
 ```
@@ -76,23 +76,20 @@ high score, frames sent, frames the screen port dropped and the game
 actor's memory) and when the autopilot
 is restarted. While the screen is open, only `gogo monitor` shows them.
 
-## Test
+## Checking the autopilot
 
-With the config key `snake.sim` (steps) set, and optionally `snake.seeds`,
-the program runs the autopilot without a screen or actors (`sim.gg`) and
-prints, per seed, the games, the food, the best score, the longest wait for
-food and how often each of the autopilot's rules picked the move:
+This is a demo, so it is not part of `make test`. With the config key
+`snake.sim` (steps) set, and optionally `snake.seeds`, the program runs the
+autopilot without a screen or actors (`sim.gg`) and prints, per seed, the
+games, the food, the best score, the longest wait for food and how often
+each of the autopilot's rules picked the move:
 
 - on the 40 x 10 field, for each seed, the snake must never go 400 steps
   without food (`stuck` counts the seeds that did);
 - on a 12 x 6 field, which fills up, the starvation fallback must fire and
   keep the waits bounded.
 
-The golden test (`make test-go`, or `go test ./tests -run
-TestGolden/snake` with `GOGO_VM` set) runs it with the `config` file of
-this directory (3 seeds of 2000 steps, about 1.5 s) and compares the
-output with `expected.out`. A snake circling in a knot shows only after
-thousands of steps; for a long check:
+A snake circling in a knot shows only after thousands of steps:
 
 ```sh
 printf 'snake.sim=20000\nsnake.seeds=20\n' > /tmp/snake.cfg
