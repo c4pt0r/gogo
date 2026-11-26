@@ -535,7 +535,11 @@ tests and the size budgets, it runs:
   `gogo run` and must print it (`tools/examples.sh`, which reads the
   same `input`, `config`, `fsroot`, `mods/` and `expected.err` files as
   the golden tests). A new example without an `expected.out` is still
-  built on every run.
+  built on every run. An example of several packages keeps its program
+  in `app/` (with `app/expected.out`); a `.gg` file beside `app/` is a
+  script, run when a `<name>.expected.out` is beside it; and a file
+  `gogopath` names the example's `GOGOPATH`, relative to the example
+  (`examples/packages` uses all three).
 - `make vmsize` (and `netsize`, `vfssize`, `screensize`): the code size
   of the VM core and of each runtime part for the ESP32-S3, against
   their budgets (skipped without the ESP-IDF compiler). `vmsize` also

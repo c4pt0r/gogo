@@ -1,0 +1,13 @@
+#!/usr/bin/env -S gogo run
+// A script: one file that runs by itself after chmod +x, and still imports
+// a shared package from GOGOPATH:
+//
+//	GOGOPATH=examples/packages/gopath examples/packages/hello.gg
+package main
+
+import "units/temp"
+
+func main() {
+	var room temp.Deci = 215
+	println("hello from a script; room", temp.String(room))
+}

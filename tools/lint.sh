@@ -23,7 +23,7 @@ files() { # files PATTERN: repo files matching *.PATTERN, one per line
     fi
 }
 
-bad=$(files go | xargs gofmt -l)
+bad=$(files go | xargs gofmt -l) || status=1   # a file gofmt cannot parse: its error is printed
 if [ -n "$bad" ]; then
     echo "lint: gofmt wants to reformat (gofmt -w <file>):"; echo "$bad" | sed 's/^/  /'
     status=1
@@ -33,9 +33,11 @@ files gg > "$tmp/gg.list"
 while IFS= read -r f; do
     [ -f "$f" ] || continue
     mkdir -p "$tmp/gg/$(dirname "$f")"
-    cp "$f" "$tmp/gg/${f%.gg}.go"
+    # A script's "#!" first line is not Go: checked as a comment line.
+    sed '1s|^#!|// #!|' "$f" > "$tmp/gg/${f%.gg}.go"
 done < "$tmp/gg.list"
-bad=$(cd "$tmp/gg" && gofmt -l . | sed 's/\.go$/.gg/')
+bad=$(cd "$tmp/gg" && gofmt -l .) || status=1
+bad=$(echo "$bad" | sed 's/\.go$/.gg/; /^$/d')
 if [ -n "$bad" ]; then
     echo "lint: gofmt wants to reformat these .gg files (gofmt reads .go: format a .go copy):"
     echo "$bad" | sed 's/^/  /'

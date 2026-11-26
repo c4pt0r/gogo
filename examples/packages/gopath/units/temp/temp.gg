@@ -1,0 +1,29 @@
+// Package temp holds temperatures in tenths of a degree Celsius (gogo has
+// no floats yet). It is a shared package: it lives in a GOGOPATH
+// directory, not in any one program, and is imported as "units/temp".
+package temp
+
+import "gogo/strconv"
+
+// Deci is a temperature in tenths of a degree Celsius: 215 is 21.5 C.
+type Deci int
+
+// Range is the lowest and highest of some temperatures. An exported
+// struct: other packages build and read it.
+type Range struct {
+	Lo, Hi Deci
+}
+
+// String formats d as "21.5C".
+func String(d Deci) string {
+	n := int(d)
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
+	return sign + strconv.Itoa(n/10) + "." + strconv.Itoa(n%10) + "C"
+}
+
+// Fahrenheit converts d to tenths of a degree Fahrenheit.
+func Fahrenheit(d Deci) int { return int(d)*9/5 + 320 }

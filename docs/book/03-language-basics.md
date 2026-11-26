@@ -120,6 +120,12 @@ An import is looked up in this order, and the first directory that holds
    `gogo run -path dirs` replace it for one build, and `gogo env` prints
    it (chapter 12).
 
+`examples/packages` in the repository uses both: a package of its own
+(`app/sensors`) and shared packages from a `GOGOPATH` directory
+(`units/temp`, `units/stats`, one importing the other, with a struct type
+passed between packages), plus a `#!` script that imports a shared
+package. Its README has the commands and what `gogo env` prints.
+
 If the same import path is found in more than one place, the first is
 used and the build warns, naming them all:
 
