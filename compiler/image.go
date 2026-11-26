@@ -41,10 +41,10 @@ const (
 // raises it.
 var (
 	opMinor = map[uint8]uint16{
-		OpAddf: 2, OpSubf: 2, OpMulf: 2, OpDivf: 2, OpNegf: 2,
-		OpEqf: 2, OpNef: 2, OpLtf: 2, OpLef: 2, OpConvf: 2,
+		OpAddf: floatMinor, OpSubf: floatMinor, OpMulf: floatMinor, OpDivf: floatMinor, OpNegf: floatMinor,
+		OpEqf: floatMinor, OpNef: floatMinor, OpLtf: floatMinor, OpLef: floatMinor, OpConvf: floatMinor,
 	}
-	builtinMinor = map[uint32]uint16{BFloat: 2}
+	builtinMinor = map[uint32]uint16{BFloat: floatMinor}
 	typeMinor    = map[string]uint16{
 		"screen.Config": 1, // 15.1: the "screen" port
 	}

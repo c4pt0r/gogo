@@ -247,8 +247,8 @@ func TestTermsMatchC(t *testing.T) {
 			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
 		}
 	}
-	if imageMajor != 15 || imageMinor != 2 {
-		t.Errorf("image format %d.%d, want 15.2", imageMajor, imageMinor)
+	if imageMajor != 15 || imageMinor != floatMinor {
+		t.Errorf("image format %d.%d, want 15.%d (floating point is the newest minor)", imageMajor, imageMinor, floatMinor)
 	}
 }
 

@@ -71,7 +71,7 @@ func TestFloatImage(t *testing.T) {
 		img := compileImage(t, tc.src)
 		minor := uint32(0)
 		if tc.req != "" {
-			minor = 2
+			minor = floatMinor
 		}
 		if v := words(img)[1]; v != 15<<16|minor {
 			t.Errorf("%s: version %s, want 15.%d", tc.name, VersionString(v), minor)

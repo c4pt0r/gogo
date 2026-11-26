@@ -64,13 +64,13 @@ TEST(image_bad_magic) {
 
 TEST(image_bad_version) {
     uint32_t w[IMG_WORDS]; Image img;
-    CHECK_EQ(IMAGE_VERSION, 15u << 16 | 2u);  /* 15.2 */
+    CHECK_EQ(IMAGE_VERSION >> 16, 15u);       /* major 15, minor IMAGE_MINOR */
     /* Every single-number version before 15 is another major. */
     for (uint32_t v = 1; v <= 14; v++) {
         build(w); w[1] = v;
         CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     }
-    build(w); w[1] = 15u << 16 | 3u;          /* 15.3: a minor newer than this VM */
+    build(w); w[1] = 15u << 16 | (IMAGE_MINOR + 1u);   /* a minor newer than this VM */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w); w[1] = 16u << 16;               /* 16.0: another major */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
