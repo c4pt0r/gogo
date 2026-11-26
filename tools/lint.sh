@@ -7,7 +7,10 @@
 #   tools/*.sh checked by shellcheck, when it is installed (skipped otherwise)
 # The files are the ones git knows (tracked or untracked, not ignored), so
 # build output and nested worktrees are left out; outside a git checkout,
-# every file under the repo except build/ and dot directories.
+# every file under the repo except build/ and dot directories. So untracked
+# work in progress is checked too, and every .gg file must parse: a future
+# test of a syntax error would need an exclusion here. shellcheck covers
+# only tools/*.sh.
 # Exit 1 on any finding.
 set -u
 cd "$(dirname "$0")/.." || exit 2
@@ -36,8 +39,10 @@ while IFS= read -r f; do
     # A script's "#!" first line is not Go: checked as a comment line.
     sed '1s|^#!|// #!|' "$f" > "$tmp/gg/${f%.gg}.go"
 done < "$tmp/gg.list"
-bad=$(cd "$tmp/gg" && gofmt -l .) || status=1
-bad=$(echo "$bad" | sed 's/\.go$/.gg/; /^$/d')
+# Errors (a file gofmt cannot parse) name the .gg file, not the copy.
+bad=$(cd "$tmp/gg" && gofmt -l . 2>"$tmp/gg.err") || status=1
+sed 's|^\./||; s|\.go:|.gg:|' "$tmp/gg.err" >&2
+bad=$(echo "$bad" | sed 's|^\./||; s/\.go$/.gg/; /^$/d')
 if [ -n "$bad" ]; then
     echo "lint: gofmt wants to reformat these .gg files (gofmt reads .go: format a .go copy):"
     echo "$bad" | sed 's/^/  /'
