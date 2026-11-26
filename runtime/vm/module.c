@@ -66,9 +66,9 @@ static uint32_t missing_req(const Vm *vm, const Image *img) {
     const uint32_t *r = image_requires(img);
     for (uint32_t i = 1; i <= r[0]; i++) {
         const uint32_t *s = img->consts + r[i];
-        const char *const *m = vm->board->mounts;
-        while (m && *m && (strlen(*m) != s[1] || memcmp(*m, s + 2, s[1]))) m++;
-        if (!(m && *m) && !port_find_driver(vm, (const uint8_t *)(s + 2), s[1])) return r[i];
+        const uint8_t *n = (const uint8_t *)(s + 2);
+        if (!port_name_find((const void *const *)vm->board->mounts, false, n, s[1]) && !port_find_driver(vm, n, s[1]))
+            return r[i];
     }
     return UINT32_MAX;
 }
@@ -156,8 +156,10 @@ int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle, char *missi
     int rc = CODE_BAD_IMAGE;
     if (len & 3u) goto fail;
     int ir = image_load(&img, words, len / 4u);
-    if (ir == IMG_ERR_VERSION) rc = CODE_BAD_VERSION;
-    if (ir != IMG_OK || image_words(&img) != len / 4u) goto fail;   /* exactly one image */
+    if (ir != IMG_OK || image_words(&img) != len / 4u) {            /* exactly one image */
+        rc = ir == IMG_ERR_VERSION ? CODE_BAD_VERSION : CODE_BAD_IMAGE;
+        goto fail;
+    }
     if ((off = missing_req(vm, &img)) != UINT32_MAX) {
         uint32_t n = img.consts[off + 1] < MOD_MISSING_MAX ? img.consts[off + 1] : MOD_MISSING_MAX;
         if (missing) memcpy(missing, &img.consts[off + 2], n);

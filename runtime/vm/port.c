@@ -59,12 +59,16 @@ static Port *port_of(Vm *vm, term pid) {
     return p->drv && p->id == pid ? p : NULL;
 }
 
-const PortDriver *port_find_driver(const Vm *vm, const uint8_t *name, uint32_t len) {
-    const PortDriver *const *l = vm->drivers ? vm->drivers : vm->board->ports;
-    for (; l && *l; l++) {
-        if (strlen((*l)->name) == len && (len == 0 || memcmp((*l)->name, name, len) == 0)) return *l;
+const void *port_name_find(const void *const *list, bool drv, const uint8_t *name, uint32_t len) {
+    for (; list && *list; list++) {
+        const char *n = drv ? *(const char *const *)*list : (const char *)*list;
+        if (strlen(n) == len && (len == 0 || memcmp(n, name, len) == 0)) return *list;
     }
     return NULL;
+}
+
+const PortDriver *port_find_driver(const Vm *vm, const uint8_t *name, uint32_t len) {
+    return port_name_find((const void *const *)(vm->drivers ? vm->drivers : vm->board->ports), true, name, len);
 }
 
 /* Decodes struct t (on a's heap or in the consts) into its type and int
