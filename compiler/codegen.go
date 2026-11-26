@@ -133,6 +133,8 @@ type gen struct {
 	// compiled.
 	lazy map[*types.Func]*ast.FuncDecl
 	used []*ast.FuncDecl
+
+	boxIdx map[string]uint32 // own box types (boxIndex), by image name
 }
 
 // addFunc gives declared function fn the next function index.
@@ -883,6 +885,13 @@ func tupleLen(t types.Type) int {
 // local. Result i is converted to targets[i] (nil, or a nil entry: no
 // conversion): an int64 going into any is boxed.
 func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
+	if ta, ok := ast.Unparen(e).(*ast.TypeAssertExpr); ok { // v, ok := x.(T)
+		f.assertOkInto(ta, base)
+		if len(targets) > 0 && convertsToIface(f.g.p.Info.TypeOf(ta.Type), targets[0]) {
+			f.toIface(e, f.g.p.Info.TypeOf(ta.Type), base)
+		}
+		return
+	}
 	call, ok := ast.Unparen(e).(*ast.CallExpr)
 	if !ok {
 		f.fail(e, "internal error: multi-value expression is not a call")
@@ -894,8 +903,8 @@ func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
 	}
 	tup := f.g.p.Info.TypeOf(call).(*types.Tuple)
 	for i := 0; i < tup.Len() && i < len(targets); i++ {
-		if targets[i] != nil && isAny(targets[i]) && isWide(tup.At(i).Type()) {
-			f.asm.Emit(OpBox64, base+uint8(i), base+uint8(i), 0)
+		if convertsToIface(tup.At(i).Type(), targets[i]) {
+			f.toIface(call, tup.At(i).Type(), base+uint8(i))
 		}
 	}
 }
@@ -1178,23 +1187,39 @@ func (f *fn) localReg(e ast.Expr) (uint8, bool) {
 	return 0, false
 }
 
-// boxes reports whether e, going into a destination of type target, is an
-// int64 converted to an interface. Small int64 values are immediates that
-// the VM cannot tell from ints, so every such conversion boxes the value
-// (BOX64): inside `any` an int64 is always a K_INT64 box. Named int64 types
-// cannot go into an interface (the checker rejects them).
+// boxes reports whether e, going into a destination of type target, is
+// converted to an interface value: an int64 (small int64 values are
+// immediates the VM cannot tell from ints, so inside an interface an int64
+// is always a K_INT64 box, BOX64), a named non-struct value or a byte
+// (boxed in a struct of their type, see codegen_iface.go).
 func (f *fn) boxes(e ast.Expr, target types.Type) bool {
-	return isAny(target) && isWide(f.g.p.Info.TypeOf(e))
+	return convertsToIface(f.g.p.Info.TypeOf(e), target)
 }
 
 // valueInto compiles e into dst as a value of type target (the type of the
 // variable, parameter, result or field it is assigned to; nil if unknown,
-// e.g. the blank identifier), boxing an int64 that goes into an interface.
-// A constant is boxed at compile time, in the const area.
+// e.g. the blank identifier), converting a value that goes into an
+// interface (boxes). A constant is boxed at compile time, in the const
+// area.
 func (f *fn) valueInto(e ast.Expr, target types.Type, dst uint8) {
+	if target != nil && isIface(target) && f.g.p.Info.Types[e].IsNil() { // the nil interface value
+		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNil)
+		return
+	}
 	if !f.boxes(e, target) {
 		f.exprInto(e, dst)
 		f.copyArray(e, target, dst)
+		return
+	}
+	if t := f.g.p.Info.TypeOf(e); boxed(t) {
+		if tv := f.g.p.Info.Types[e]; tv.Value != nil {
+			f.constBox(e, tv.Value, dst)
+			return
+		}
+		mark := f.next
+		r := f.operand(e) // a local in place, else a temporary
+		f.asm.EmitExt(OpNewstruct, dst, r, 1, f.g.boxIndex(t))
+		f.next = mark
 		return
 	}
 	if tv := f.g.p.Info.Types[e]; tv.Value != nil {
@@ -1330,6 +1355,8 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 		f.closureInto(e, dst)
 	case *ast.CallExpr:
 		f.call(e, dst)
+	case *ast.TypeAssertExpr:
+		f.assertInto(e, dst)
 	default:
 		f.fail(e, "internal error: unexpected expression %T", e)
 	}
@@ -1419,12 +1446,27 @@ func (f *fn) int64Into(n int64, dst uint8) {
 	f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddInt64(n)))
 }
 
+// isBool reports whether t's underlying type is bool (or untyped bool).
+func isBool(t types.Type) bool {
+	b, ok := underlying(t).(*types.Basic)
+	return ok && b.Info()&types.IsBoolean != 0
+}
+
+// isInt64 reports whether t's underlying type is int64.
+func isInt64(t types.Type) bool {
+	b, ok := underlying(t).(*types.Basic)
+	return ok && b.Kind() == types.Int64
+}
+
 // conversion compiles a conversion between numeric types, string(b) or
 // []byte(s) (the only conversions the checker allows) into dst.
 func (f *fn) conversion(call *ast.CallExpr, dst uint8) {
 	to, from := f.g.p.Info.TypeOf(call.Fun), f.g.p.Info.TypeOf(call.Args[0])
 	switch {
 	case isPID(to): // actor.PID <-> fs.File: the same term
+		f.exprInto(call.Args[0], dst)
+		return
+	case isString(to) && isString(from), isBool(to): // Name(s), string(n), Flag(b): the same value
 		f.exprInto(call.Args[0], dst)
 		return
 	case isString(to): // string(b []byte)

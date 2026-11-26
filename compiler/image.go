@@ -134,6 +134,7 @@ type ImageBuilder struct {
 	int64s   map[int64]uint32
 	floats   map[uint64]uint32 // float64 constants by bits
 	floats32 map[uint32]uint32 // float32 constants by bits
+	structs  map[string]uint32 // const structs by type and fields
 	funcs    []imgFunc
 	// reserved holds a row for every reserved type (AddReservedType, in
 	// index order); only the first nReserved are written, where
@@ -212,6 +213,24 @@ func (b *ImageBuilder) AddFloat32(v float32) uint32 {
 	off := uint32(len(b.consts))
 	b.consts = append(b.consts, HdrMake(2, KFloat), u)
 	b.floats32[u] = off
+	return off
+}
+
+// AddStruct adds a K_STRUCT constant of type typ (an image type index)
+// with the given field terms (immediates or const refs), deduplicated,
+// and returns its word offset.
+func (b *ImageBuilder) AddStruct(typ uint32, fields []uint32) uint32 {
+	key := fmt.Sprint(typ, fields)
+	if off, ok := b.structs[key]; ok {
+		return off
+	}
+	off := uint32(len(b.consts))
+	b.consts = append(b.consts, HdrMake(uint32(2+len(fields)), KStruct), typ)
+	b.consts = append(b.consts, fields...)
+	if b.structs == nil {
+		b.structs = map[string]uint32{}
+	}
+	b.structs[key] = off
 	return off
 }
 

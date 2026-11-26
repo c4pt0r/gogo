@@ -469,10 +469,9 @@ parse: 18446744073709551615 true
   `uint64(f)` is 0).
 - They work everywhere an `int` does: struct fields, slices, arrays,
   `switch`, indexes (any integer of up to 32 bits; not `int64` or
-  `uint64`), `range` over a sized count, and messages (as struct fields).
-  They cannot go into `any` on their own (`uint32 in interface not
-  supported`): inside an interface the VM could not tell a `uint32` from an
-  `int`. Put the value in a struct, or convert it.
+  `uint64`), `range` over a sized count, `any` and messages. In an
+  interface a sized value keeps its type, as in Go: `any(uint32(1))` is
+  not `any(1)`, and a type switch tells them apart.
 - `println` prints an unsigned value as unsigned. A struct, slice or array
   holding a `uint32`, `uint` or `uint64` cannot be printed whole (`println
   of main.P not supported`): print its fields one by one.
@@ -897,9 +896,7 @@ to another actor or used to start one: it carries its data with it.
 
 To make sure the two models never give different answers, gogo rejects any
 assignment to a captured variable after its declaration, inside or outside
-the closure, and writing one of its fields (`p.X = v` changes `p`). It
-also rejects giving `any` a `byte`, because at run time a
-byte cannot be told apart from an `int`:
+the closure, and writing one of its fields (`p.X = v` changes `p`):
 
 ```go
 // This program does NOT compile. Closures copy what they capture when they
@@ -912,9 +909,6 @@ func main() {
 	show := func() { println(n) }
 	n = 5
 	show()
-	var b byte = 7
-	var v any = b // a byte cannot go into any
-	println(v)
 }
 ```
 
@@ -924,7 +918,6 @@ $ gogo build docs/book/examples/03-capture
 
 ```text
 main.gg:9:2: gogo: captured variable must not be reassigned
-main.gg:12:14: gogo: byte in interface not supported
 ```
 
 The fix is to give the closure its own variable that never changes: pass
@@ -1885,7 +1878,7 @@ func main() {
 	}
 done:
 	var a any = [4]int{} // array in an interface
-	y := any(1).(int)    // type assertion
+	y := any(1).(int)    // fine: type assertions are supported
 	_ = y
 	println(m, p, x, a)
 	println(recover())
@@ -1901,14 +1894,14 @@ main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
-main.gg:23:8: gogo: builtin recover not supported
+main.gg:23:8: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
 main.gg:24:7: gogo: map not supported
 main.gg:25:7: gogo: pointer not supported
 main.gg:26:7: gogo: complex not supported
 main.gg:28:3: gogo: goto statement not supported
 main.gg:30:1: gogo: label on a statement other than for or switch not supported
 main.gg:31:14: gogo: array in interface not supported: use a slice or a struct with an array field
-main.gg:32:7: gogo: type assertion not supported
+main.gg:32:7: gogo: conversion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
 main.gg:34:16: gogo: complex not supported
@@ -1930,11 +1923,9 @@ The full list, with what to do instead:
 | pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
 | your own interfaces | `interface types are not supported yet: call methods on the concrete type` | function values (method values too), or messages and a type switch |
 | `switch` on an `any` or a struct | `switch on a value of type any not supported` | a type switch; compare fields |
-| type assertion `x.(T)` | `type assertion not supported` (and `multi-value assignment not supported` for `v, ok := x.(T)`) | a type switch |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
 | `complex64/128` | `complex not supported` | two floats |
 | `uintptr` | `uintptr not supported` | `uint32` |
-| a sized integer in `any` | `uint32 in interface not supported` | a struct holding it, or `int` / `int64` |
 | generics | `generic function not supported` | write the function per type |
 | `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
 | `struct == struct` | `comparison of main.P not supported` | compare fields |
@@ -1943,8 +1934,8 @@ The full list, with what to do instead:
 | `func init()` | `func init not supported` | call it from `main` |
 
 > **Note.** Pointer receivers, maps, pointers,
-> package-level variables, the `error` interface and type
-> assertions are not supported yet. They are planned for
+> package-level variables and the `error` interface are not supported
+> yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see
 > `docs/design.md` §5.2).
 

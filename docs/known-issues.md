@@ -262,7 +262,7 @@ rebuilt:
 
 - **Not supported yet (planned).** The compiler rejects maps, pointer
   receivers ("pointer receivers are not supported yet"), pointers, package-level `var`s, a `switch` on an
-  `any` or a struct value, type assertions, the `error` type
+  `any` or a struct value, the `error` type
   and interfaces other than `any` ("interface
   types are not supported yet": methods are called on concrete types
   only). `goto` is rejected (labeled `break` and
@@ -363,12 +363,15 @@ rebuilt:
   pointers are not supported yet; `f().X = v` is not valid Go either.
 - **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
   zero PID.
-- **Some values cannot go into `any`.** `byte`, `rune` and the other
-  sized integers, named basic types (`type C int`) and func values are
-  rejected, because at run time they are indistinguishable from `int` or
-  `int64` (or have no type id). Func values cannot be compared, not even
-  with `nil`.
-  *Workaround:* convert to `int` first; wrap a func value in a struct.
+- **Some values cannot go into `any`.** Func values (no type id) are
+  rejected. Func values cannot be compared, not even with `nil`.
+  *Workaround:* wrap a func value in a struct.
+- **Boxed values cost an allocation.** A sized integer (`byte`, `rune`,
+  `uint32`, ...) or a named basic value (`type Celsius int`) put into an
+  interface is boxed in a one-field struct (a constant one is not), and
+  an `int64` in a `K_INT64`; taking it out unboxes it. The box of your
+  own named type is a type of your module, so like your structs it
+  cannot be sent to another module.
 - **`fs.File` and `actor.PID` share a type tag.** `fs.File` cannot be a
   type switch case, and an `fs.File` in an `any` is seen as a PID.
   *Workaround:* wrap it in a struct.
@@ -452,13 +455,11 @@ rebuilt:
 
 ## Sized integers
 
-- **Not in `any`.** `int8`, `int16`, `int32` (`rune`), `uint8` (`byte`),
-  `uint16`, `uint32`, `uint` and `uint64` values cannot go into an
-  interface on their own (`uint32 in interface not supported`), so not
-  into `actor.Send` either: inside `any` they would be `int` or `int64`
-  terms that a type switch could not tell apart. *Workaround:* put them in
-  a struct field (messages copy those like any value) or convert to `int`
-  / `int64`. The planned boxing of named non-struct types will lift this.
+- **Boxed in `any`.** An `int8`, `int16`, `int32` (`rune`), `uint8`
+  (`byte`), `uint16`, `uint32`, `uint` or `uint64` value in an interface
+  (and so in `actor.Send`) is a one-field struct of its own type, an
+  allocation unless it is a constant (see "Boxed values cost an
+  allocation").
 - **`println` of a struct, slice or array holding unsigned 32- or 64-bit
   values is rejected.** `println` prints bare unsigned values correctly,
   but inside a composite value the static type is gone and they would

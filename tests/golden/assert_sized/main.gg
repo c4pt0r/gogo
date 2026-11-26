@@ -1,0 +1,58 @@
+// Sized integers in any: each keeps its own type (a uint32 is not an
+// int, a rune is an int32, a uint64 keeps all 64 bits), in type
+// switches, assertions and ==. Valid Go: `go run` prints the same
+// (gocompare).
+package main
+
+type Reg uint32
+
+func kind(x any) string {
+	switch v := x.(type) {
+	case int:
+		return "int"
+	case int8:
+		return "int8"
+	case int16:
+		return "int16"
+	case int32:
+		if v == 'a' {
+			return "int32 a"
+		}
+		return "int32"
+	case uint8:
+		return "uint8"
+	case uint16:
+		return "uint16"
+	case uint32:
+		if v == 4000000000 {
+			return "uint32 big"
+		}
+		return "uint32"
+	case uint64:
+		if v == 18000000000000000000 {
+			return "uint64 big"
+		}
+		return "uint64"
+	case Reg:
+		return "Reg"
+	}
+	return "other"
+}
+
+func main() {
+	var u32 uint32 = 4000000000
+	var u64 uint64 = 18000000000000000000
+	var r Reg = 7
+	vals := []any{1, int8(-3), int16(300), 'a', byte(200), uint16(65000), u32, uint32(5), u64, uint64(1), r}
+	for _, v := range vals {
+		println(kind(v))
+	}
+	if x, ok := vals[6].(uint32); ok {
+		println(x/1000, x%7)
+	}
+	if x, ok := vals[8].(uint64); ok {
+		println(x/1000000000, x > 9000000000000000000)
+	}
+	_, ok := vals[6].(int)
+	println(ok)
+}

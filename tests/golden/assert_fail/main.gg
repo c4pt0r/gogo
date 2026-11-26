@@ -1,0 +1,18 @@
+// A failed type assertion x.(T) panics: the actor ends with reason
+// actor.Panic, after "panic: interface conversion: ..." on stderr.
+package main
+
+import "gogo/actor"
+
+type Celsius int
+
+func main() {
+	var x any = byte(7)
+	p := actor.Spawn(func() { println(x.(Celsius)) })
+	actor.Monitor(p)
+	switch d := actor.Receive().(type) {
+	case actor.DownMsg:
+		println("down", d.Reason.Code == actor.Panic, d.Reason.Func)
+	}
+	println(x.(Celsius)) // main panics too: the run fails
+}

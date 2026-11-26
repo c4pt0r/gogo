@@ -1,0 +1,14 @@
+int
+int8
+int16
+int32 a
+uint8
+uint16
+uint32 big
+uint32
+uint64 big
+uint64
+Reg
+4000000 3
+18000000000 true
+false

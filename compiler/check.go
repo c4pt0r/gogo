@@ -52,7 +52,7 @@ type checker struct {
 	results *types.Tuple // results of the function being checked
 	loops   int          // loops around the statement being checked, in its function
 	seen    map[string]bool
-	okNil   map[*ast.Ident]bool // nil idents that stand for a nil slice
+	okNil   map[*ast.Ident]bool // nil idents that stand for a nil slice or a nil interface value
 }
 
 func (c *checker) fail(pos token.Pos, format string, args ...any) {
@@ -366,6 +366,23 @@ func (c *checker) isIntConv(call *ast.CallExpr) bool {
 	return number(c.p.Info.TypeOf(call.Fun)) && number(c.p.Info.TypeOf(call.Args[0]))
 }
 
+// isSameBasicConv reports whether conversion call is between a bool or
+// string type and another of the same underlying type (type Name string:
+// Name(s), string(n)): the value is the same.
+func (c *checker) isSameBasicConv(call *ast.CallExpr) bool {
+	if len(call.Args) != 1 {
+		return false
+	}
+	to, from := underlying(c.p.Info.TypeOf(call.Fun)), underlying(c.p.Info.TypeOf(call.Args[0]))
+	tb, ok1 := to.(*types.Basic)
+	fb, ok2 := from.(*types.Basic)
+	if !ok1 || !ok2 {
+		return false
+	}
+	both := func(info types.BasicInfo) bool { return tb.Info()&info != 0 && fb.Info()&info != 0 }
+	return both(types.IsBoolean) || (both(types.IsString) && basicKind(from) != types.UntypedRune && fb.Info()&types.IsInteger == 0)
+}
+
 // isByte reports whether t is byte (uint8), unnamed.
 func isByte(t types.Type) bool { return basicKind(t) == types.Uint8 }
 
@@ -382,12 +399,11 @@ func isAny(t types.Type) bool {
 }
 
 // convert checks the implicit conversion of e to type target (an
-// assignment, argument, result or field value). A value of a named basic
-// type cannot go into an interface: at run time it is indistinguishable
-// from its underlying type. Nor can a func value.
+// assignment, argument, result or field value). A func value cannot go
+// into an interface (it has no type id).
 func (c *checker) convert(target types.Type, e ast.Expr) {
-	if isSlice(target) {
-		c.nilSlice(e)
+	if isSlice(target) || isIface(target) {
+		c.nilSlice(e) // the nil slice, the nil interface value
 	}
 	if !isAny(target) {
 		return
@@ -397,8 +413,9 @@ func (c *checker) convert(target types.Type, e ast.Expr) {
 }
 
 // convertType checks the implicit conversion of a value of type src (one
-// result of a multi-result call, or e in convert) to type target. A byte
-// cannot go into an interface either: at run time it is a small int.
+// result of a multi-result call, or e in convert) to type target. A named
+// basic value and a sized integer (byte, rune, uint32, ...) are boxed
+// (codegen_iface.go).
 func (c *checker) convertType(target, src types.Type, pos token.Pos) {
 	if !isAny(target) {
 		return
@@ -408,16 +425,6 @@ func (c *checker) convertType(target, src types.Type, pos token.Pos) {
 	}
 	if isArray(src) {
 		c.fail(pos, "array in interface not supported: use a slice or a struct with an array field")
-	}
-	if k := basicKind(src); k != types.Int && k != types.Int64 && k != types.UntypedInt && k != types.Invalid && intKindOf(src).bits != 0 {
-		// A sized integer would be an int or int64 inside: TYPEIS could
-		// not tell it apart.
-		c.fail(pos, "%s in interface not supported", types.TypeString(src, pkgName))
-	}
-	if n, ok := types.Unalias(src).(*types.Named); ok {
-		if _, basic := n.Underlying().(*types.Basic); basic {
-			c.fail(pos, "named basic type in interface not supported")
-		}
 	}
 }
 
@@ -491,6 +498,10 @@ func (c *checker) typeExpr(e ast.Expr) {
 }
 
 func (c *checker) valueSpec(s *ast.ValueSpec) {
+	if len(s.Values) == 1 && len(s.Names) > 1 {
+		c.unsupported(s.Values[0], "multiple values") // var a, b = f(): use a, b := f()
+		return
+	}
 	if s.Type != nil {
 		c.typeExpr(s.Type)
 		if len(s.Values) == 0 && isBuffer(c.p.Info.TypeOf(s.Type)) {
@@ -817,6 +828,14 @@ func (c *checker) assign(s *ast.AssignStmt) {
 		c.call(call, true)
 		return
 	}
+	if ta := commaOk(s.Lhs, s.Rhs); ta != nil && (s.Tok == token.ASSIGN || s.Tok == token.DEFINE) { // v, ok := x.(T)
+		for _, l := range s.Lhs {
+			c.lhs(l)
+		}
+		c.convertType(c.p.Info.TypeOf(s.Lhs[0]), c.p.Info.TypeOf(ta.Type), ta.Pos())
+		c.typeAssert(ta)
+		return
+	}
 	if len(s.Lhs) > 1 && len(s.Rhs) == 1 && (s.Tok == token.ASSIGN || s.Tok == token.DEFINE) {
 		if call := c.multiCall(s.Rhs[0]); call != nil { // a, b := f()
 			targets := make([]types.Type, len(s.Lhs))
@@ -842,6 +861,15 @@ func (c *checker) assign(s *ast.AssignStmt) {
 		}
 		c.expr(r)
 	}
+}
+
+// commaOk returns x.(T) if lhs, rhs is `v, ok = x.(T)`, else nil.
+func commaOk(lhs, rhs []ast.Expr) *ast.TypeAssertExpr {
+	if len(lhs) != 2 || len(rhs) != 1 {
+		return nil
+	}
+	ta, _ := ast.Unparen(rhs[0]).(*ast.TypeAssertExpr)
+	return ta
 }
 
 // twoResult lists the builtin functions that return two values (by stubName).
@@ -889,7 +917,7 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 			if isFsFile(c.p.Info.TypeOf(t)) {
 				c.unsupported(t, "type switch case fs.File not supported; wrap it in a struct")
 			} else if !c.caseType(t) {
-				c.unsupported(t, "type switch case other than a struct, int, int64, float32, float64, bool, string, actor.PID, actor.Ref or bytes.Bytes")
+				c.unsupported(t, "type switch case other than a struct, int, int64, byte, float32, float64, bool, string, a named type of those, actor.PID, actor.Ref or bytes.Bytes")
 			}
 		}
 		for _, b := range cc.Body {
@@ -928,9 +956,10 @@ func (c *checker) switchStmt(s *ast.SwitchStmt) {
 	}
 }
 
-// caseType reports whether t is an allowed type switch case: a struct type,
-// int, int64, bool, string, actor.PID, actor.Ref or bytes.Bytes (not
-// bytes.Buffer, which has no type id).
+// caseType reports whether t is an allowed type switch case or type
+// assertion type: a struct type, int, int64, byte, bool, string, a named
+// type of those, actor.PID, actor.Ref or bytes.Bytes (not bytes.Buffer,
+// which has no type id).
 func (c *checker) caseType(t ast.Expr) bool {
 	tv, ok := c.p.Info.Types[t]
 	if !ok || !tv.IsType() {
@@ -938,7 +967,7 @@ func (c *checker) caseType(t ast.Expr) bool {
 	}
 	switch ty := types.Unalias(tv.Type).(type) {
 	case *types.Basic:
-		return isCaseBasic(ty)
+		return isCaseBasic(ty) || intKindOf(ty).bits != 0 // a sized integer is boxed
 	case *types.Named:
 		if isFsFile(ty) {
 			return false // the same term tag as actor.PID: the case would match every PID
@@ -949,8 +978,11 @@ func (c *checker) caseType(t ast.Expr) bool {
 		if isBuffer(ty) {
 			return false
 		}
-		_, isStruct := ty.Underlying().(*types.Struct)
-		return isStruct && c.typeProblem(ty) == ""
+		switch ty.Underlying().(type) {
+		case *types.Struct, *types.Basic:
+			return c.typeProblem(ty) == ""
+		}
+		return false
 	}
 	return false
 }
@@ -1066,7 +1098,7 @@ func tupleTypes(t *types.Tuple) []types.Type {
 // has checked the context around it.
 func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 	if tv, ok := c.p.Info.Types[call.Fun]; ok && tv.IsType() {
-		if !c.isIntConv(call) && !c.isBytesConv(call) && !isPIDConv(c.p.Info, call) {
+		if !c.isIntConv(call) && !c.isBytesConv(call) && !isPIDConv(c.p.Info, call) && !c.isSameBasicConv(call) {
 			c.unsupported(call, "conversion")
 			return
 		}
@@ -1331,9 +1363,29 @@ func (c *checker) expr(e ast.Expr) {
 		c.indexExpr(e)
 	case *ast.SliceExpr:
 		c.sliceExpr(e)
+	case *ast.TypeAssertExpr:
+		c.typeAssert(e)
 	default:
 		c.unsupported(e, kindName(e))
 	}
+}
+
+// typeAssert checks x.(T): x an interface value, T a type a type switch
+// may name.
+func (c *checker) typeAssert(e *ast.TypeAssertExpr) {
+	if e.Type == nil {
+		c.unsupported(e, "x.(type) outside a type switch")
+		return
+	}
+	if isFsFile(c.p.Info.TypeOf(e.Type)) {
+		c.unsupported(e.Type, "type assertion to fs.File; wrap it in a struct")
+		return
+	}
+	if !c.caseType(e.Type) {
+		c.unsupported(e.Type, "type assertion to "+types.TypeString(c.p.Info.TypeOf(e.Type), pkgName))
+		return
+	}
+	c.expr(e.X)
 }
 
 func (c *checker) compositeLit(e *ast.CompositeLit) {
@@ -1559,8 +1611,8 @@ func sliceElem(t types.Type) types.Type {
 // isByteSlice reports whether t is a slice of bytes.
 func isByteSlice(t types.Type) bool { return isByte(sliceElem(t)) }
 
-// nilSlice admits e if it is nil going into a slice-typed destination: the
-// nil slice.
+// nilSlice admits e if it is nil going into a slice-typed or
+// interface-typed destination: the nil slice, the nil interface value.
 func (c *checker) nilSlice(e ast.Expr) {
 	if id, ok := ast.Unparen(e).(*ast.Ident); ok {
 		if _, isNil := c.p.Info.Uses[id].(*types.Nil); isNil {

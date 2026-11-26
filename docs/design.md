@@ -292,7 +292,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
 
 **Not supported yet (planned for the "language completeness"
 milestone):** maps, pointers (and pointer receivers), package-level variables,
-a `switch` on an `any` or a struct value, type assertions, `panic`, the
+a `switch` on an `any` or a struct value, the
 `error` interface and interfaces other than `any`.
 Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.

@@ -269,7 +269,7 @@ func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 		mark := f.next
 		t := f.allocScalar(cc) // TYPEIS results are bools
 		for i, te := range cc.List {
-			f.asm.EmitExt(OpTypeis, t, m, 0, f.typeID(te))
+			f.typeTest(te, m, t)
 			if i == len(cc.List)-1 {
 				f.jump(OpJmpf, t, nextL)
 			} else {
@@ -290,51 +290,32 @@ func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 }
 
 // caseBody compiles a clause with its binder (if any) on register m;
-// break leaves the switch.
+// break leaves the switch. In a clause of one concrete type the binder has
+// that type: m is unboxed in place (no later clause tests it).
 func (f *fn) caseBody(cc *ast.CaseClause, m uint8, endL Label) {
 	if v, ok := f.g.p.Info.Implicits[cc].(*types.Var); ok {
 		f.locals[v] = m
+		if len(cc.List) == 1 && !isIface(v.Type()) && f.uses(cc.Body, v) {
+			f.unbox(cc, v.Type(), m)
+		}
 	}
 	f.breakTo = append(f.breakTo, endL)
 	f.block(cc.Body)
 	f.breakTo = f.breakTo[:len(f.breakTo)-1]
 }
 
-// typeID is the TYPEIS operand for case type te.
-func (f *fn) typeID(te ast.Expr) uint32 {
-	t := f.g.p.Info.TypeOf(te)
-	if isPID(t) {
-		return TyPid
+// uses reports whether the statements body refer to variable v.
+func (f *fn) uses(body []ast.Stmt, v *types.Var) bool {
+	found := false
+	for _, s := range body {
+		ast.Inspect(s, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && f.g.p.Info.Uses[id] == v {
+				found = true
+			}
+			return !found
+		})
 	}
-	if isRef(t) {
-		return TyRef
-	}
-	if isBytes(t) {
-		return TyBytes
-	}
-	if b, ok := types.Unalias(t).(*types.Basic); ok {
-		switch b.Kind() {
-		case types.Int:
-			return TyInt
-		case types.Int64:
-			return TyInt64
-		case types.Float32:
-			return TyFloat32
-		case types.Float64:
-			return TyFloat64
-		case types.Bool:
-			return TyBool
-		case types.String:
-			return TyString
-		}
-	}
-	if st := structType(t); st != nil {
-		if idx, ok := f.g.typeIndex(st); ok {
-			return idx
-		}
-	}
-	f.fail(te, "internal error: unexpected type switch case %s", types.TypeString(t, nil))
-	return 0
+	return found
 }
 
 // ArgsKey is the configuration key under which a host serves the program's
