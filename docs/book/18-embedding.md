@@ -110,7 +110,8 @@ negated: `GOGO_EINVAL` is `-GOGO_E_BADARG`, `GOGO_ENOMEM` is
 `-GOGO_E_NOMEMORY`, `GOGO_EREQUIRES` is `-GOGO_E_UNSUPPORTED`, as
 `code.Load` says for the same refusal. One table of meanings covers both
 sides, so `gogo_strerror` also describes a code a program hands the host
-(a host port's `port.Closed` reason, say). Only `GOGO_ESTATE`, a call
+(a `port.Closed` reason, say), negated: `gogo_strerror(-reason)`.
+`gogo_step`'s `GOGO_IDLE` and `GOGO_DONE` are not errors, and it says so. Only `GOGO_ESTATE`, a call
 out of order, is the API's own (-36; 36 to 99 are never shared codes).
 
 | result | | from |

@@ -16,6 +16,9 @@
 
 /* The largest shared code (actor.Failed + it < 100). */
 #define GOGO_E_SHARED_MAX 35
+/* The highest shared code in use now: raised with each new one
+ * (tests/errors_test.go checks it; gogo_strerror's table follows it). */
+#define GOGO_E_SHARED_LAST 27
 
 enum {
     GOGO_E_OK = 0,

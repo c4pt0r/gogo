@@ -106,7 +106,7 @@ uint32_t gogo_version(void) { return GOGO_VERSION; }
 uint32_t gogo_image_format(void) { return IMAGE_VERSION; }
 
 /* gogo.h's results are the shared codes negated (gogo_errors.h). */
-typedef char shared_codes_end[GOGO_E_BADVERSION == 27 && GOGO_E_SHARED_MAX < 36 ? 1 : -1];
+typedef char shared_codes_end[GOGO_E_SHARED_LAST <= GOGO_E_SHARED_MAX && GOGO_E_SHARED_MAX < 36 ? 1 : -1];
 
 /* By code: the shared meanings (lib/errors/errors.gg), then the API's own. */
 static const char *const code_text[] = {
@@ -139,11 +139,14 @@ static const char *const code_text[] = {
     "bad format",
     "unsupported image format version",
 };
-typedef char code_text_complete[sizeof code_text / sizeof code_text[0] == GOGO_E_BADVERSION + 1 ? 1 : -1];
+typedef char code_text_complete[sizeof code_text / sizeof code_text[0] == GOGO_E_SHARED_LAST + 1 ? 1 : -1];
 
 const char *gogo_strerror(int rc) {
     if (rc == GOGO_ESTATE) return "called out of order";
-    unsigned c = rc < 0 ? 0u - (unsigned)rc : (unsigned)rc;
+    if (rc == GOGO_IDLE) return "idle: nothing to do until a deadline or a wake";
+    if (rc == GOGO_DONE) return "done: the program has finished";
+    if (rc > 0) return "unknown error";
+    unsigned c = 0u - (unsigned)rc;
     return c < sizeof code_text / sizeof code_text[0] ? code_text[c] : "unknown error";
 }
 

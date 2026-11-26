@@ -625,16 +625,18 @@ TEST(embed_versions_and_errors) {
     for (size_t i = 0; i < sizeof codes / sizeof codes[0]; i++) {
         CHECK(codes[i] <= 0);
         CHECK(strcmp(gogo_strerror(codes[i]), "unknown error") != 0);
-        if (codes[i] != GOGO_ESTATE) CHECK(strcmp(gogo_strerror(codes[i]), gogo_strerror(-codes[i])) == 0);
         for (size_t k = 0; k < i; k++) CHECK(codes[k] != codes[i]);
     }
     CHECK(strcmp(gogo_strerror(GOGO_EINVAL), "bad argument") == 0);
     CHECK_EQ(GOGO_EINVAL, -GOGO_E_BADARG);
     CHECK_EQ(GOGO_EVERSION, -GOGO_E_BADVERSION);
-    CHECK(strcmp(gogo_strerror(GOGO_E_RESET), "connection reset") == 0);   /* a port.Closed reason */
+    CHECK(strcmp(gogo_strerror(-GOGO_E_RESET), "connection reset") == 0);   /* a port.Closed reason */
+    for (int c = 1; c <= GOGO_E_SHARED_LAST; c++) CHECK(strcmp(gogo_strerror(-c), "unknown error") != 0);
+    CHECK(strcmp(gogo_strerror(GOGO_IDLE), "idle: nothing to do until a deadline or a wake") == 0);
+    CHECK(strcmp(gogo_strerror(GOGO_DONE), "done: the program has finished") == 0);
+    CHECK(strcmp(gogo_strerror(GOGO_E_IO), "unknown error") == 0);       /* positive: not a result */
     CHECK(strcmp(gogo_strerror(-1000), "unknown error") == 0);
-    CHECK(strcmp(gogo_strerror(36), "unknown error") == 0);              /* only GOGO_ESTATE is */
-    CHECK(strcmp(gogo_strerror(GOGO_E_SHARED_MAX), "unknown error") == 0);
+    CHECK(strcmp(gogo_strerror(-(GOGO_E_SHARED_LAST + 1)), "unknown error") == 0);
 }
 
 /* Inspecting an image without a VM: its format, requirements and

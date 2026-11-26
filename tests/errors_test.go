@@ -80,6 +80,13 @@ func TestErrorCodes(t *testing.T) {
 			t.Errorf("errors.%s = %d, GOGO_E_%s = %d", name, v, strings.ToUpper(name), cv)
 		}
 	}
+	var last int64
+	for _, v := range gogo {
+		last = max(last, v)
+	}
+	if m := regexp.MustCompile(`#define GOGO_E_SHARED_LAST\s+(\d+)`).FindSubmatch(hdr); m == nil || string(m[1]) != strconv.FormatInt(last, 10) {
+		t.Errorf("gogo_errors.h: GOGO_E_SHARED_LAST is not %d, the highest code in gogo/errors", last)
+	}
 	failed := actorFailed(t)
 	if failed+maxShared >= 100 {
 		t.Errorf("actor.Failed %d + %d reaches the user exit codes", failed, maxShared)

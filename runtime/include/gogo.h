@@ -228,9 +228,11 @@ enum {
     GOGO_ESTATE = -36                     /* out of order: no image loaded, loaded twice, not started, started twice */
 };
 
-/* A short description of a result: a GOGO_E* (or a shared code from
- * gogo_errors.h, such as a port.Closed reason, as is). A static string,
- * "unknown error" for a code without one. */
+/* A short description of a result: GOGO_OK, a GOGO_E*, or one of
+ * gogo_step's GOGO_IDLE and GOGO_DONE (which are not errors). A shared
+ * code from gogo_errors.h, such as a port.Closed reason, is described
+ * negated: gogo_strerror(-reason). A static string, "unknown error" for
+ * any other value. */
 GOGO_API const char *gogo_strerror(int rc);
 
 /* The library's version, (major << 16) | (minor << 8) | patch: what
