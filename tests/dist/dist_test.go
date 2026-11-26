@@ -308,3 +308,12 @@ func TestServerRestartable(t *testing.T) {
 		t.Error("echo not found")
 	}
 }
+
+// The agent killed during a Connect's handshake: the link actor ends with
+// it, and the next Connect succeeds, every time.
+func TestAgentDiesInHandshake(t *testing.T) {
+	srv, port := startServer(t)
+	b := start(t, "zombie", fmt.Sprintf("test.server=127.0.0.1:%d", port))
+	b.waitLine("fails 0")
+	noCrash(t, srv)
+}

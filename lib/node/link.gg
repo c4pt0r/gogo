@@ -69,8 +69,9 @@ func cat(parts ...[]byte) []byte {
 func ids(a, b int) []byte { return put16(put16(nil, a), b) }
 
 // waitFor reads conn until it has a whole frame in buf (or deadline, or
-// the connection ends): the frame's body and the bytes after it.
-func waitFor(conn actor.PID, buf []byte, deadline int64) ([]byte, []byte, bool) {
+// the connection ends, or the node's agent dies): the frame's body and
+// the bytes after it.
+func waitFor(conn, agent actor.PID, buf []byte, deadline int64) ([]byte, []byte, bool) {
 	for {
 		if len(buf) >= 2 {
 			n := u16(buf)
@@ -98,6 +99,10 @@ func waitFor(conn actor.PID, buf []byte, deadline int64) ([]byte, []byte, bool) 
 			if e.From == conn {
 				return nil, nil, false
 			}
+		case actor.DownMsg:
+			if e.From == agent { // the node is gone: no handshake for it
+				return nil, nil, false
+			}
 		case kick:
 			return nil, nil, false
 		}
@@ -105,8 +110,9 @@ func waitFor(conn actor.PID, buf []byte, deadline int64) ([]byte, []byte, bool) 
 }
 
 // waitConnected waits for a dialed connection to come up: errors.OK, or
-// why not (the tcp port's reason: Refused, NoRoute, Timeout, ...).
-func waitConnected(conn actor.PID, deadline int64) errors.Code {
+// why not (the tcp port's reason: Refused, NoRoute, Timeout, ...; Closed
+// if the node's agent died meanwhile).
+func waitConnected(conn, agent actor.PID, deadline int64) errors.Code {
 	for {
 		left := int(deadline - actor.Now())
 		if left <= 0 {
@@ -125,6 +131,10 @@ func waitConnected(conn actor.PID, deadline int64) errors.Code {
 					return errors.Closed
 				}
 				return errors.Code(e.Reason)
+			}
+		case actor.DownMsg:
+			if e.From == agent {
+				return errors.Closed
 			}
 		case kick:
 			return errors.Closed
@@ -155,11 +165,11 @@ func sessionKey(key, ns, nc []byte, clientID, serverID int, serverName, clientNa
 func clientLink(e ends, conn actor.PID, token, name string, ms int) {
 	fail := linkFail{Err: errors.Refused} // the server said no, or not as it should
 	deadline := actor.Now() + int64(ms)
-	if c := waitConnected(conn, deadline); c != errors.OK {
+	if c := waitConnected(conn, e.Agent, deadline); c != errors.OK {
 		actor.Send(e.Agent, linkFail{Err: c})
 		return
 	}
-	body, rest, ok := waitFor(conn, nil, deadline)
+	body, rest, ok := waitFor(conn, e.Agent, nil, deadline)
 	if !ok || len(body) != 18 || body[0] != hsChallenge || body[1] != protoVersion {
 		if actor.Now() >= deadline {
 			fail = linkFail{Err: errors.Timeout}
@@ -172,7 +182,7 @@ func clientLink(e ends, conn actor.PID, token, name string, ms int) {
 	key := []byte(token)
 	hello := cat([]byte{hsHello, protoVersion}, nc, hmac256(key, cat([]byte("gogo-node-c"), ns, nc, []byte(name))), []byte(name))
 	frameOut(conn, hello)
-	body, rest, ok = waitFor(conn, rest, deadline)
+	body, rest, ok = waitFor(conn, e.Agent, rest, deadline)
 	if !ok || len(body) < 38 || body[0] != hsWelcome || body[1] != protoVersion {
 		if actor.Now() >= deadline {
 			fail = linkFail{Err: errors.Timeout}
@@ -239,7 +249,7 @@ func serverHandshake(e ends, listener, conn actor.PID, token, name string, ms in
 	deadline := actor.Now() + int64(ms)
 	ns := nonce()
 	frameOut(conn, cat([]byte{hsChallenge, protoVersion}, ns))
-	body, rest, ok := waitFor(conn, nil, deadline)
+	body, rest, ok := waitFor(conn, e.Agent, nil, deadline)
 	if !ok || len(body) < 51 || body[0] != hsHello || body[1] != protoVersion {
 		return false
 	}
