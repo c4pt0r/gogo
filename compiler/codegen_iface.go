@@ -460,8 +460,8 @@ func (g *gen) dispatcher(m *types.Func) uint32 {
 	var a Asm
 	for _, ct := range g.concreteTypes() {
 		pm := g.impl(ct, m)
-		if pm == nil {
-			continue
+		if pm == nil || g.p.vmMethod(pm.fn) {
+			continue // a VM builtin (an embedded bytes.Buffer's Len) is not a candidate
 		}
 		id, ok := g.typeID(ct)
 		fi, found := g.methodFunc(pm.fn)
@@ -519,7 +519,7 @@ func (g *gen) implements(it types.Type) uint32 {
 	}
 	yes := a.NewLabel()
 	for _, ct := range g.concreteTypes() {
-		if !types.Implements(ct, iface) {
+		if !types.Implements(ct, iface) || g.p.vmImplements(ct, iface) {
 			continue
 		}
 		if id, ok := g.typeID(ct); ok {

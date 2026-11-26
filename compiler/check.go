@@ -470,21 +470,33 @@ func (c *checker) vmMethods(target, src types.Type, pos token.Pos) {
 	if !ok || src == nil || isIface(src) || it.Empty() {
 		return
 	}
+	if m := c.p.vmMethodFor(src, it); m != "" {
+		c.fail(pos, "%s as a %s not supported: its method %s is a builtin of the VM, which interfaces cannot call",
+			types.TypeString(src, pkgName), types.TypeString(target, pkgName), m)
+	}
+}
+
+// vmMethodFor returns the name of a method of interface it that concrete
+// type src gets from a VM builtin (its own, or promoted from an embedded
+// bytes.Buffer, ...), or "".
+func (p *Program) vmMethodFor(src types.Type, it *types.Interface) string {
 	ms := types.NewMethodSet(src)
 	for i := 0; i < it.NumMethods(); i++ {
 		m := it.Method(i)
-		sel := ms.Lookup(m.Pkg(), m.Name())
-		if sel == nil {
-			continue
+		if sel := ms.Lookup(m.Pkg(), m.Name()); sel != nil {
+			if fn, _ := sel.Obj().(*types.Func); fn != nil && p.vmMethod(fn) {
+				return m.Name()
+			}
 		}
-		fn, _ := sel.Obj().(*types.Func)
-		if fn == nil || !c.p.vmMethod(fn) {
-			continue
-		}
-		c.fail(pos, "%s as a %s not supported: its method %s is a builtin of the VM, which interfaces cannot call",
-			types.TypeString(src, pkgName), types.TypeString(target, pkgName), m.Name())
-		return
 	}
+	return ""
+}
+
+// vmImplements reports whether concrete type src implements interface it
+// only through a VM builtin method: at run time it does not (the checker
+// keeps such values out of it; a type switch or an assertion says no).
+func (p *Program) vmImplements(src types.Type, it *types.Interface) bool {
+	return p.vmMethodFor(src, it) != ""
 }
 
 // vmMethod reports whether method fn is a builtin: marked itself, or a

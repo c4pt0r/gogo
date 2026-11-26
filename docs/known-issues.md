@@ -363,8 +363,9 @@ rebuilt:
   *Workaround:* a method value `x.M`, or `Inner.M(x.Inner)`. The methods
   of an embedded gogo type (`bytes.Buffer`, `bytes.Bytes`, `fs.File`) are
   not promoted (`method M of an embedded gogo/bytes type not
-  supported`): call them on the field, `w.Buffer.WriteByte(b)`. Promoted
-  methods will implement interfaces once user interfaces exist.
+  supported`): call them on the field, `w.Buffer.WriteByte(b)`. Other
+  promoted methods count toward implementing an interface, an embedded
+  interface's included; those of an embedded gogo type do not.
 - **Every field write allocates.** Structs are immutable in the VM, so
   `p.X = v` builds a new struct (2 + fields words) for each struct on the
   path (`a.b.c = v` builds three) and the old one becomes garbage: the
@@ -444,8 +445,9 @@ rebuilt:
   of `bytes.Bytes`, `bytes.Buffer` and `fs.File` are builtins, which a
   dispatcher cannot call: putting one (or a struct that embeds one) into
   an interface whose methods it would provide is a compile error (`bytes.Bytes as a
-  main.Stringer not supported`), and `x.(Stringer)` on an `any` holding
-  a `Bytes` is false, where Go says true. *Workaround:* wrap the value
+  main.Stringer not supported`), and `x.(Stringer)` (or a type switch
+  case `Stringer`) on an `any` holding a `Bytes`, or a struct that
+  embeds a `bytes.Buffer`, is false, where Go says true. *Workaround:* wrap the value
   in a struct of your own with the methods.
 - **Interface values of your types stay in your module.** A hot-loaded
   module and its loader dispatch only over their own types (the closed
