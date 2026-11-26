@@ -1,0 +1,76 @@
+# Release: on a tag v*, build the firmware for both boards and the gogo
+# command for every OS and CPU with tools/release.sh, and publish them with
+# SHA256SUMS as the tag's GitHub release. `gogo setup` downloads these
+# assets by name (cmd/gogo/setup_release.go).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    # ESP-IDF v6.1.1, the version platform/esp32s3 is built with.
+    container: espressif/idf:v6.1.1@sha256:2b4f966c37eaedc19542b0637a5f850b2eff9478d8e858192aa0073d92c2dc91
+    strategy:
+      matrix:
+        board: [sticks3, cardputer]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # git describe gives the firmware its version
+      - name: Build
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . "$IDF_PATH/export.sh"
+          GOGO_RELEASE_WORK="$RUNNER_TEMP/work" tools/release.sh firmware "${{ matrix.board }}" out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: firmware-${{ matrix.board }}
+          path: out/
+          if-no-files-found: error
+
+  cli:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Test
+        run: go vet ./cmd/gogo && go test ./cmd/gogo
+      - name: Build
+        run: tools/release.sh cli "$GITHUB_REF_NAME" out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli
+          path: out/
+          if-no-files-found: error
+
+  release:
+    needs: [firmware, cli]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: out
+          merge-multiple: true
+      - name: Checksums
+        run: tools/release.sh sums out && cat out/SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --title "gogo $GITHUB_REF_NAME" \
+            --notes "Install: download gogo for your system, install esptool, run \`gogo setup\`. See docs/book/02-getting-started.md." \
+            --verify-tag
