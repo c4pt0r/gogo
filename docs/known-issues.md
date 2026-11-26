@@ -346,6 +346,40 @@ the M5StickS3 and the Cardputer ADV. The design is in
   ports just refuse to open. Pins reserved for a switched-off feature
   stay reserved.
 
+## Text screen (`screen` port, `gogo/tui`)
+
+- **One grid size per board.** Both boards show 40 x 11 cells in
+  landscape; there is no portrait mode on the StickS3 and no other font
+  size. A smaller `screen.Config` uses the top-left corner.
+- **Cells only.** No pixel drawing, no images. Characters outside the
+  Basic Multilingual Plane are stored and shown as a box.
+- **Row comparison by hash.** A frame hands the display only the rows
+  whose 64-bit hash changed; two different contents of one row with the
+  same hash (about 1 in 2^64) would leave that row stale until its next
+  change.
+- **Dones can be late.** A `port.Done` the owner has no mailbox room for
+  is owed and retried every 10 ms by the port's own event source (a third
+  slot, `GOGO_MAX_SOURCES` 3); with 8 owed, a further `Out` is not drawn
+  and gets `Done{-1}`. Wait for a Done with a timeout. A host whose
+  event-source slots are all taken retries only at the next `Out`.
+- **Dones do not name their port.** `tui.Event` takes as many Dones as
+  the screen has Outs unanswered; with another stream port in flight the
+  two ports' Dones can be swapped (counts stay right, Seqs may not) until
+  `port.Done` carries its sender.
+- **Hidden console.** While a screen is open on a board, println output
+  and crash reports go to the hidden console (and serial) and show only
+  after the screen closes.
+- **Refused charge.** If the owner cannot take the grid's memory, the open
+  is undone after the size Chunk was sent and the LCD briefly showed a
+  blank grid.
+- **StickS3 navigation.** Two buttons give Enter, Down and (long press)
+  Esc; there is no Up, so lists wrap around. Esc fires on B's release,
+  without a cue at the threshold. `tui.Edit` needs a keyboard and edits
+  printable ASCII only (`NewEdit` turns other bytes into '?').
+- **Terminal mode.** In a terminal, `println` output is drawn over the
+  grid (the console and the grid are kept apart only on the boards).
+  `gogo run` has no `--screen` option; `build/gogovm --screen` has.
+
 ## Embedding (`libgogo`)
 
 - **Posts racing a close are lost quietly.** A `gogo_post` concurrent

@@ -1,0 +1,26 @@
+package main
+
+import (
+	"gogo/screen"
+	"gogo/tui"
+)
+
+func main() {
+	s, ok := tui.Open(screen.Config{Cols: 24, Rows: 5})
+	if !ok {
+		println("no screen")
+		return
+	}
+	f := tui.NewFrame(s)
+	tui.Box(f, 0, 0, 24, 5, "Hello")
+	tui.Color(f, screen.BrightYellow, screen.Black)
+	tui.PrintAt(f, 2, 1, "gogo on a screen")
+	tui.Color(f, screen.BrightGreen, screen.Black)
+	tui.DrawProgress(f, 2, 2, 15, 2, 3)
+	tui.Color(f, screen.White, screen.Black)
+	tui.PrintAt(f, 18, 2, tui.Percent(2, 3))
+	tui.DrawStatus(tui.Window(f, 1, 1, 22, 3), "status", "ok")
+	tui.Flush(s)
+	tui.Close(s)
+	println("back to the console")
+}

@@ -20,6 +20,7 @@
  *   v15.0 own types from TYPE_OWN_BASE (128) with the reserved count in
  *       header word 7; major.minor versions; append-only reserved fields;
  *       named requirements instead of the capability bits.
+ *   v15.1 reserved type 47, screen.Config (the "screen" port).
  *
  * Types: an image's type table holds n_reserved reserved rows (header
  * word 7; at most TYPE_RESERVED_COUNT, else IMG_ERR_VERSION: the image
@@ -54,7 +55,7 @@
 
 #define IMAGE_MAGIC   0x4F474F47u
 #define IMAGE_MAJOR   15u
-#define IMAGE_MINOR   0u
+#define IMAGE_MINOR   1u
 #define IMAGE_VERSION (IMAGE_MAJOR << 16 | IMAGE_MINOR)   /* the newest this VM runs */
 #define IMAGE_HEADER_WORDS 8u
 

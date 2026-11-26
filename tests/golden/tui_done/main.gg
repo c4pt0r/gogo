@@ -1,0 +1,49 @@
+// tui.Event takes only as many port.Dones as the screen has Outs
+// unanswered: a Done of another port (here one the program sends itself,
+// standing in for a speaker's) is handed back to the caller.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+	"gogo/screen"
+	"gogo/tui"
+)
+
+func main() {
+	s, ok := tui.Open(screen.Config{Cols: 8, Rows: 1})
+	keys, kok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
+	if !ok || !kok {
+		println("open failed")
+		return
+	}
+	tui.PrintAt(tui.NewFrame(s), 0, 0, "one")
+	tui.Flush(s)
+	actor.Send(actor.Self(), port.Done{Seq: 77}) // not the screen's
+	mine, theirs := 0, 0
+	for i := 0; i < 2; i++ {
+		msg := actor.Receive()
+		k2, _, ui := tui.Event(s, keys, msg)
+		keys = k2
+		if ui {
+			mine++
+			continue
+		}
+		switch m := msg.(type) {
+		case port.Done:
+			theirs++
+			println("handed back: Done", m.Seq)
+		}
+	}
+	println("screen's", mine, "others'", theirs)
+	// An Out whose Done was not read yet, then Close: the stale Screen
+	// takes no other port's Done afterwards.
+	tui.PrintAt(tui.NewFrame(s), 0, 0, "two")
+	tui.Flush(s)
+	tui.Close(s)
+	actor.Receive() // the screen's Done for "two"
+	actor.Send(actor.Self(), port.Done{Seq: 88})
+	_, _, ui := tui.Event(s, keys, actor.Receive())
+	println("after Close, Done taken:", ui)
+	tui.CloseKeys(keys)
+}

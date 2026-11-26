@@ -1,0 +1,30 @@
+// tui.Width must agree with the screen port's width rule (the console's,
+// box drawing and blocks narrow): each row prints a character then "|",
+// and the "|" lands where the port put it; the numbers are tui.Width.
+// Also NewEdit turns non-ASCII text into '?'.
+package main
+
+import (
+	"gogo/screen"
+	"gogo/strconv"
+	"gogo/tui"
+)
+
+func main() {
+	s, ok := tui.Open(screen.Config{Cols: 8, Rows: 8})
+	if !ok {
+		println("no screen")
+		return
+	}
+	chars := []string{"a", "·", "Α", "Ж", "─", "█", "\xEF\xBF\xBD", "你"}
+	f := tui.NewFrame(s)
+	line := ""
+	for i, c := range chars {
+		tui.PrintAt(f, 0, i, c+"|")
+		line = line + " " + strconv.Itoa(tui.Width(c))
+	}
+	tui.Flush(s)
+	println("widths" + line)
+	println("edit", tui.NewEdit("ab你\x01", 10).Text)
+	tui.Close(s)
+}

@@ -611,7 +611,7 @@ func TestImageMinorStamp(t *testing.T) {
 	if v := words(compileImage(t, src))[1]; v != 15<<16 {
 		t.Fatalf("version %#x, want 15.0", v)
 	}
-	defer func() { clear(builtinMinor); clear(typeMinor); clear(opMinor) }()
+	defer saveMinors()()
 	builtinMinor[BRandom] = 2
 	if v := words(compileImage(t, src))[1]; v != 15<<16|2 {
 		t.Errorf("version %s, want 15.2 (B_RANDOM)", VersionString(v))
@@ -652,13 +652,30 @@ func TestImageMinorStamp(t *testing.T) {
 	}
 }
 
+// TestScreenConfigMinor: screen.Config is reserved type 47 of 15.1; a
+// program that uses it is stamped 15.1, one that does not stays 15.0.
+func TestScreenConfigMinor(t *testing.T) {
+	use := "package main\nimport (\n\t\"gogo/port\"\n\t\"gogo/screen\"\n)\nfunc main() {\n\t_, _ = port.Open(\"screen\", screen.Config{})\n}\n"
+	img := compileImage(t, use)
+	if v := words(img)[1]; v != 15<<16|1 {
+		t.Errorf("version %s, want 15.1", VersionString(v))
+	}
+	if got := imageTypes(t, img); len(got) < 48 || got[TypeScreenConfig] != "screen.Config/2" {
+		t.Errorf("rows %v: want screen.Config/2 at %d", got, TypeScreenConfig)
+	}
+	other := "package main\nimport \"gogo/screen\"\nfunc main() {\n\tprintln(screen.OpText)\n}\n"
+	if v := words(compileImage(t, other))[1]; v != 15<<16 {
+		t.Errorf("version %s, want 15.0 (constants only)", VersionString(v))
+	}
+}
+
 func TestCheckVersion(t *testing.T) {
-	for _, v := range []uint32{15 << 16} {
+	for _, v := range []uint32{15 << 16, 15<<16 | 1} {
 		if err := CheckVersion(v); err != nil {
 			t.Errorf("%s: %v", VersionString(v), err)
 		}
 	}
-	for _, v := range []uint32{14, 15, 14 << 16, 15<<16 | 1, 16 << 16} {
+	for _, v := range []uint32{14, 15, 14 << 16, 15<<16 | 2, 16 << 16} {
 		if err := CheckVersion(v); err == nil {
 			t.Errorf("%s accepted", VersionString(v))
 		}

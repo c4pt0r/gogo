@@ -1,0 +1,103 @@
+screen 1 12x2
++------------+
+|>hi         | .UUUUUU
+|hi          |
++------------+
+cursor 3 0
+screen 2 12x2
++------------+
+|>hi         | .UUUUUU
+|hi          |
++------------+
+cursor 4 0
+screen 3 12x2
++------------+
+|>hi t       | .UUUUUU
+|hi t        |
++------------+
+cursor 5 0
+screen 4 12x2
++------------+
+|>hi th      | .UUUUUU
+|hi th       |
++------------+
+cursor 6 0
+screen 5 12x2
++------------+
+|>i the      | .UUUUUU
+|hi the      |
++------------+
+cursor 6 0
+screen 6 12x2
++------------+
+|> ther      | .UUUUUU
+|hi ther     |
++------------+
+cursor 6 0
+screen 7 12x2
++------------+
+|>there      | .UUUUUU
+|hi there    |
++------------+
+cursor 6 0
+screen 8 12x2
++------------+
+|>there      | .UUUUUU
+|hi there    |
++------------+
+cursor 5 0
+screen 9 12x2
++------------+
+|>there      | .UUUUUU
+|hi there    |
++------------+
+cursor 4 0
+screen 10 12x2
++------------+
+|>there      | .UUUUUU
+|hi there    |
++------------+
+cursor 3 0
+screen 11 12x2
++------------+
+|>tere       | .UUUUUU
+|hi tere     |
++------------+
+cursor 2 0
+screen 12 12x2
++------------+
+|>tre        | .UUUUUU
+|hi tre      |
++------------+
+cursor 2 0
+screen 13 12x2
++------------+
+|>tre        | .UUUUUU
+|hi tre      |
++------------+
+cursor 3 0
+screen 14 12x2
++------------+
+|>tr1e       | .UUUUUU
+|hi tr1e     |
++------------+
+cursor 4 0
+screen 15 12x2
++------------+
+|>tr12e      | .UUUUUU
+|hi tr12e    |
++------------+
+cursor 5 0
+screen 16 12x2
++------------+
+|>tr123e     | .UUUUUU
+|hi tr123e   |
++------------+
+cursor 6 0
+screen 17 12x2
++------------+
+|>r1234e     | .UUUUUU
+|hi tr1234e  |
++------------+
+cursor 6 0
+edit 2 text hi tr1234e

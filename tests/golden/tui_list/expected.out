@@ -1,0 +1,83 @@
+keyboard true
+screen 1 16x5
++----------------+
+|> one           | RRRRRRRRRRRRRRR
+|  two           |
+|  three         |
+|  four         v|
+|sel 0      top 0| RRRRRRRRRRRRRRRR
++----------------+
+screen 2 16x5
++----------------+
+|  one           |
+|> two           | RRRRRRRRRRRRRRR
+|  three         |
+|  four         v|
+|sel 1      top 0| RRRRRRRRRRRRRRRR
++----------------+
+screen 3 16x5
++----------------+
+|  one           |
+|  two           |
+|> three         | RRRRRRRRRRRRRRR
+|  four         v|
+|sel 2      top 0| RRRRRRRRRRRRRRRR
++----------------+
+screen 4 16x5
++----------------+
+|  one           |
+|  two           |
+|  three         |
+|> four         v| RRRRRRRRRRRRRRR
+|sel 3      top 0| RRRRRRRRRRRRRRRR
++----------------+
+screen 5 16x5
++----------------+
+|  two          ^|
+|  three         |
+|  four          |
+|> five         v| RRRRRRRRRRRRRRR
+|sel 4      top 1| RRRRRRRRRRRRRRRR
++----------------+
+chosen 4 five
+screen 6 16x5
++----------------+
+|  three        ^|
+|  four          |
+|  five          |
+|> six           | RRRRRRRRRRRRRRR
+|sel 5      top 2| RRRRRRRRRRRRRRRR
++----------------+
+screen 7 16x5
++----------------+
+|> one           | RRRRRRRRRRRRRRR
+|  two           |
+|  three         |
+|  four         v|
+|sel 0      top 0| RRRRRRRRRRRRRRRR
++----------------+
+screen 8 16x5
++----------------+
+|  three        ^|
+|  four          |
+|  five          |
+|> six           | RRRRRRRRRRRRRRR
+|sel 5      top 2| RRRRRRRRRRRRRRRR
++----------------+
+screen 9 16x5
++----------------+
+|  three        ^|
+|  four          |
+|> five          | RRRRRRRRRRRRRRR
+|  six           |
+|sel 4      top 2| RRRRRRRRRRRRRRRR
++----------------+
+screen 10 16x5
++----------------+
+|  three        ^|
+|> four          | RRRRRRRRRRRRRRR
+|  five          |
+|  six           |
+|sel 3      top 2| RRRRRRRRRRRRRRRR
++----------------+
+chosen 3 four

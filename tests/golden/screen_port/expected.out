@@ -1,0 +1,21 @@
+open true
+chunk 1 4 10 2 16 7
+second open false
+screen 1 10x2
++----------+
+|abc       | ###
+|██████████| ##########
++----------+
+cursor 3 0
+done 1
+done -1
+done -1
+screen 2 10x2
++----------+
+|abc       | ###
+|██████████| ##########
++----------+
+done 2
+too big false
+reopen true
+chunk 1 4 40 11 16 7

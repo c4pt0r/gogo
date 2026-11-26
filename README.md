@@ -35,9 +35,9 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
  ┌────────────────────────────────────────────────▼─────────────────────────┐
  │ lib/   standard library (.gg, embedded in the compiler)                  │
  │  stubs → VM builtins: actor port bytes fs sys net code kbd power imu ir  │
- │                       audio                                              │
+ │                       audio screen                                       │
  │  libraries in gogo:   supervisor strings strconv dhcp dns http sntp kv   │
- │                       ringlog wav sound irproto …                        │
+ │                       ringlog wav sound irproto tui …                    │
  └────────────────────────────────────────────────┬─────────────────────────┘
  ┌────────────────────────────────────────────────▼─────────────────────────┐
  │ compiler/  (Go, module gogotools)                                        │
@@ -64,12 +64,12 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
  │ └───────────────────────┘ └───────────────────────────────────────────┘│
  └─────────────────────────────────────┬──────────────────────────────────┘
                                        │ PortDriver / PortSource
- ┌──────────┬──────────┬───────────┬───┴──────┬──────────────┬────────────┐
- │ net      │ net/tls  │ vfs       │ stream   │ input        │ console    │
- │ eth arp  │ mbedTLS  │ /flash    │ Chunk    │ kbd power    │ text +     │
- │ ip udp   │ cert     │ /sd       │ Out      │ imu ir       │ CJK font   │
- │ tcp      │ bundle   │ sandbox   │ Done     │ mic spk      │            │
- └──────────┴──────────┴───────────┴──────────┴──────────────┴────────────┘
+ ┌────────┬─────────┬─────────┬────────┴┬───────────┬──────────┬──────────┐
+ │ net    │ net/tls │ vfs     │ stream  │ input     │ console  │ screen   │
+ │ eth arp│ mbedTLS │ /flash  │ Chunk   │ kbd power │ text +   │ (tui)    │
+ │ ip udp │ cert    │ /sd     │ Out     │ imu ir    │ CJK font │ cells    │
+ │ tcp    │ bundle  │ sandbox │ Done    │ mic spk   │          │ LCD ANSI │
+ └────────┴─────────┴─────────┴─────────┴───────────┴──────────┴──────────┘
                                        │ gogo_host + VmBoard tables
           ┌────────────────────────────┼─────────────────────────────┐
  ┌────────▼───────────────┐ ┌──────────▼───────────┐ ┌───────────────▼─────────┐
@@ -99,7 +99,7 @@ the boards, in the host VM, and inside other programs through
 |---|---|
 | `runtime/vm/` | the VM core: interpreter, actors, scheduler, GC, ports, modules |
 | `runtime/net/` | the TCP/IP stack (Ethernet, ARP, IPv4, ICMP, UDP, TCP), pure C; `runtime/net/tls/`, the TLS client port over it (mbedTLS) |
-| `runtime/vfs/`, `runtime/stream/`, `runtime/input/`, `runtime/console/` | file systems, streams (`Chunk`/`Out`/`Done`), input and audio ports, the screen console and fonts |
+| `runtime/vfs/`, `runtime/stream/`, `runtime/input/`, `runtime/console/`, `runtime/screen/` | file systems, streams (`Chunk`/`Out`/`Done`), input and audio ports, the screen console and fonts, the `screen` port (a text grid; `gogo/tui` builds on it) |
 | `platform/unix/` | the host VM (`build/gogovm`) and its simulated hardware |
 | `platform/esp32s3/` | the ESP-IDF firmware for both boards ([README](platform/esp32s3/README.md)) |
 | `compiler/`, `cmd/gogo/` | the compiler and the `gogo` command (Go module `gogotools`, the repository root) |

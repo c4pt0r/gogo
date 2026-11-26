@@ -1,0 +1,236 @@
+// tuidemo: a menu-driven text UI on the screen port (gogo/tui). A menu on
+// the left, a job panel on the right (a progress bar that fills while the
+// job runs, the name, the ticks), a status line at the bottom.
+//
+// Keys: on the Cardputer (and in a terminal) the arrows move (Fn+; and
+// Fn+. on the Cardputer), Enter selects, Esc goes back or quits; "Rename"
+// opens a line editor. On the StickS3, A (KEY1) selects, B (KEY2) moves
+// down (the menu wraps around), B held for 0.6 s goes back; "Rename" picks
+// the next name of a list.
+//
+// The job ticks every 200 ms while it runs, 5 % a tick. Quit (or Esc in the
+// menu) closes the screen, and the console shows again.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/screen"
+	"gogo/strconv"
+	"gogo/tui"
+)
+
+// The menu items.
+const (
+	itemStart  = 0
+	itemPause  = 1
+	itemReset  = 2
+	itemRename = 3
+	itemAbout  = 4
+	itemQuit   = 5
+)
+
+// The modes.
+const (
+	modeMenu  = 0
+	modeEdit  = 1
+	modeAbout = 2
+)
+
+type tick struct{}
+
+// State is the whole application state, kept in a one-element slice the
+// handlers share.
+type State struct {
+	Menu     tui.List
+	Mode     int
+	Running  bool
+	Progress int // 0..100
+	Ticks    int
+	Name     string
+	Names    int // the next preset name (no keyboard)
+	Edit     tui.Edit
+	Status   string
+	Kbd      bool
+}
+
+// preset is the i-th name "Rename" picks without a keyboard.
+func preset(i int) string {
+	switch i % 4 {
+	case 1:
+		return "actor"
+	case 2:
+		return "screen"
+	case 3:
+		return "cell"
+	}
+	return "gogo"
+}
+
+func main() {
+	s, ok := tui.Open(screen.Config{})
+	if !ok {
+		println("tuidemo: no screen")
+		return
+	}
+	keys, ok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
+	if !ok {
+		tui.Close(s)
+		println("tuidemo: no keys")
+		return
+	}
+	items := []string{"Start", "Pause", "Reset", "Rename", "About", "Quit"}
+	st := []State{{Menu: tui.NewList(items, len(items)), Name: "gogo", Status: "ready", Kbd: keys.HasKbd}}
+	self := actor.Self()
+	actor.SendAfter(200, self, tick{})
+	keys = tui.Run(s, keys, tui.Handlers{
+		Key: func(k tui.Key) bool {
+			n, more := onKey(st[0], k)
+			st[0] = n
+			return more
+		},
+		Msg: func(msg any) bool {
+			switch msg.(type) {
+			case tick:
+				st[0] = onTick(st[0])
+				actor.SendAfter(200, self, tick{})
+			}
+			return true
+		},
+		Draw: func(f tui.Frame) {
+			draw(f, s, st[0])
+		},
+	})
+	tui.CloseKeys(keys)
+	tui.Close(s)
+	println("tuidemo: bye,", st[0].Name)
+}
+
+// with returns st with the given fields changed (no field assignment yet).
+func withMenu(st State, m tui.List) State {
+	return State{Menu: m, Mode: st.Mode, Running: st.Running, Progress: st.Progress, Ticks: st.Ticks, Name: st.Name,
+		Names: st.Names, Edit: st.Edit, Status: st.Status, Kbd: st.Kbd}
+}
+
+func withJob(st State, running bool, progress, ticks int, status string) State {
+	return State{Menu: st.Menu, Mode: st.Mode, Running: running, Progress: progress, Ticks: ticks, Name: st.Name,
+		Names: st.Names, Edit: st.Edit, Status: status, Kbd: st.Kbd}
+}
+
+func withMode(st State, mode int, e tui.Edit, name string, n int, status string) State {
+	return State{Menu: st.Menu, Mode: mode, Running: st.Running, Progress: st.Progress, Ticks: st.Ticks, Name: name,
+		Names: n, Edit: e, Status: status, Kbd: st.Kbd}
+}
+
+func onTick(st State) State {
+	if !st.Running {
+		return st
+	}
+	p := st.Progress + 5
+	if p >= 100 {
+		return withJob(st, false, 100, st.Ticks+1, "job done")
+	}
+	return withJob(st, true, p, st.Ticks+1, "running")
+}
+
+// onKey applies k; false quits.
+func onKey(st State, k tui.Key) (State, bool) {
+	switch st.Mode {
+	case modeEdit:
+		e, what := tui.EditKey(st.Edit, k)
+		switch what {
+		case tui.EditDone:
+			if e.Text == "" {
+				return withMode(st, modeMenu, e, st.Name, st.Names, "name unchanged"), true
+			}
+			return withMode(st, modeMenu, e, e.Text, st.Names, "renamed"), true
+		case tui.EditCancel:
+			return withMode(st, modeMenu, e, st.Name, st.Names, "rename cancelled"), true
+		}
+		return withMode(st, modeEdit, e, st.Name, st.Names, st.Status), true
+	case modeAbout:
+		if k.Code == tui.KeyEnter || k.Code == tui.KeyEsc {
+			return withMode(st, modeMenu, st.Edit, st.Name, st.Names, st.Status), true
+		}
+		return st, true
+	}
+	if k.Code == tui.KeyEsc {
+		return st, false
+	}
+	m, chosen := tui.ListKey(st.Menu, k)
+	st = withMenu(st, m)
+	switch chosen {
+	case itemStart:
+		if st.Progress >= 100 {
+			return withJob(st, true, 0, st.Ticks, "running"), true
+		}
+		return withJob(st, true, st.Progress, st.Ticks, "running"), true
+	case itemPause:
+		return withJob(st, false, st.Progress, st.Ticks, "paused"), true
+	case itemReset:
+		return withJob(st, false, 0, 0, "reset"), true
+	case itemRename:
+		if st.Kbd {
+			return withMode(st, modeEdit, tui.NewEdit(st.Name, 16), st.Name, st.Names, "editing"), true
+		}
+		n := st.Names + 1
+		return withMode(st, modeMenu, st.Edit, preset(n), n, "renamed"), true
+	case itemAbout:
+		return withMode(st, modeAbout, st.Edit, st.Name, st.Names, st.Status), true
+	case itemQuit:
+		return st, false
+	}
+	return st, true
+}
+
+func draw(f tui.Frame, s tui.Screen, st State) {
+	tui.Style(f, screen.White, screen.Black, 0)
+	tui.Clear(f)
+	tui.Color(f, screen.BrightCyan, screen.Black)
+	tui.Box(f, 0, 0, s.Cols, s.Rows-1, "gogo tuidemo")
+	tui.Color(f, screen.White, screen.Black)
+	menu := tui.Window(f, 1, 1, 12, s.Rows-3)
+	tui.DrawList(menu, st.Menu, 0, 0, 12)
+	tui.Color(f, screen.BrightCyan, screen.Black)
+	tui.Fill(f, 13, 1, 1, s.Rows-3, 0x2502) // │ between the panels
+	panel := tui.Window(f, 15, 1, s.Cols-16, s.Rows-3)
+	pw, _ := tui.Size(panel)
+	tui.Color(panel, screen.BrightYellow, screen.Black)
+	tui.Attr(panel, screen.Bold)
+	tui.Label(panel, 0, 0, pw, "Job "+st.Name, tui.Left)
+	tui.Style(panel, screen.BrightGreen, screen.Black, 0)
+	tui.DrawProgress(panel, 0, 2, pw-5, st.Progress, 100)
+	tui.Color(panel, screen.White, screen.Black)
+	tui.Label(panel, pw-4, 2, 4, tui.Percent(st.Progress, 100), tui.Right)
+	tui.Label(panel, 0, 4, pw, "ticks "+strconv.Itoa(st.Ticks), tui.Left)
+	state := "stopped"
+	if st.Running {
+		state = "running"
+	}
+	tui.Label(panel, 0, 5, pw, "state "+state, tui.Left)
+	help := "A:select B:next"
+	if st.Kbd {
+		help = "arrows Enter Esc"
+	}
+	switch st.Mode {
+	case modeEdit:
+		dlg := tui.Window(f, 6, 3, 28, 4)
+		tui.Clear(dlg)
+		tui.Color(dlg, screen.BrightWhite, screen.Blue)
+		tui.Clear(dlg)
+		tui.Box(dlg, 0, 0, 28, 4, "Rename")
+		tui.Style(dlg, screen.BrightWhite, screen.Blue, 0)
+		tui.PrintAt(dlg, 2, 1, "Name:")
+		tui.DrawEdit(dlg, st.Edit, 8, 1, 17, true)
+		help = "Enter:save Esc:cancel"
+	case modeAbout:
+		dlg := tui.Window(f, 5, 2, 30, 6)
+		tui.Color(dlg, screen.Black, screen.White)
+		tui.Clear(dlg)
+		tui.Box(dlg, 0, 0, 30, 6, "About")
+		tui.Label(dlg, 1, 2, 28, "gogo/tui on the screen port", tui.Center)
+		tui.Label(dlg, 1, 3, 28, "40 x 11 cells, 16 colours", tui.Center)
+		help = "Enter:back"
+	}
+	tui.Style(f, screen.White, screen.Black, 0)
+	tui.DrawStatus(f, " "+help, st.Status+" ")
+}

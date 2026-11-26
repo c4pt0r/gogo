@@ -1,0 +1,15 @@
+screen 1 14x4
++--------------+
+|> Tea         | RRRRRRRRRRRRR
+|  Coffee      |
+|  Water       |
+|Enter: pick   | RRRRRRRRRRRRRR
++--------------+
+screen 2 14x4
++--------------+
+|  Tea         |
+|> Coffee      | RRRRRRRRRRRRR
+|  Water       |
+|Enter: pick   | RRRRRRRRRRRRRR
++--------------+
+chose Coffee

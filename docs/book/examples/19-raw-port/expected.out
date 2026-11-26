@@ -1,0 +1,8 @@
+grid 12 x 2 colours 16
+screen 1 12x2
++------------+
+| hello      | .RRRRR
+|────────────|
++------------+
+done 1
+done -1

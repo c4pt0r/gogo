@@ -1,0 +1,45 @@
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/port"
+	"gogo/screen"
+)
+
+// waitDone waits up to a second for the port's Done and returns its Seq
+// (0: none came). A Done can come late when memory is short: never wait
+// for one without a timeout.
+func waitDone() int {
+	for {
+		msg, ok := actor.ReceiveTimeout(1000)
+		if !ok {
+			return 0
+		}
+		switch m := msg.(type) {
+		case port.Done:
+			return m.Seq
+		}
+	}
+}
+
+func main() {
+	p, ok := port.Open("screen", screen.Config{Cols: 12, Rows: 2})
+	if !ok {
+		println("no screen")
+		return
+	}
+	switch m := actor.Receive().(type) {
+	case port.Chunk: // the grid: cols, rows, colours, attributes
+		println("grid", m.Data.At(0), "x", m.Data.At(1), "colours", m.Data.At(2))
+	}
+	b := bytes.NewBuffer(32)
+	b.Write([]byte{screen.OpMove, 1, 0, screen.OpAttr, screen.Reverse, screen.OpText, 5})
+	b.WriteString("hello")
+	b.Write([]byte{screen.OpAttr, 0, screen.OpFill, 0, 1, 12, 1, 0x00, 0x25}) // ─ is U+2500
+	actor.Send(p, port.Out{Data: b.Freeze()})
+	println("done", waitDone())
+	actor.Send(p, port.Out{Data: bytes.FromSlice([]byte{42})}) // not an operation
+	println("done", waitDone())
+	port.Close(p)
+}

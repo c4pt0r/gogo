@@ -18,7 +18,7 @@ const (
 	// and resets imageMinor and the tables (single-number versions 1 to
 	// 14 came before: see runtime/vm/image.h).
 	imageMajor = 15
-	imageMinor = 0
+	imageMinor = 1
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -31,13 +31,15 @@ const (
 // The image format minor in which each addition after 15.0 appeared: an
 // image's minor is the highest one among the opcodes, builtins and
 // reserved types it uses (and every reserved row it carries). Empty at
-// 15.0. A reserved type is keyed by its image name ("port.Chunk"); its
+// 15.0; 15.1 added screen.Config. A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
 var (
 	opMinor      = map[uint8]uint16{}
 	builtinMinor = map[uint32]uint16{}
-	typeMinor    = map[string]uint16{}
+	typeMinor    = map[string]uint16{
+		"screen.Config": 1, // 15.1: the "screen" port
+	}
 )
 
 // VersionString renders an image version word as "major.minor".

@@ -64,6 +64,9 @@ var fwFeatures = []fwFeature{
 	// Its mbedTLS settings (-O2, the PSRAM allocator, restartable ECC) would
 	// otherwise also apply to Wi-Fi's WPA crypto: sdkconfig.tls-off undoes them.
 	{name: "tls", kconf: "CONFIG_GOGO_TLS", provides: []string{"tls"}, onBy: true, needs: "net", offDefaults: "sdkconfig.tls-off"},
+	// screen is the text grid port on the LCD (runtime/screen); small, so on
+	// by default.
+	{name: "screen", kconf: "CONFIG_GOGO_SCREEN", provides: []string{"screen"}, onBy: true},
 }
 
 // fwBase lists the requirement names every firmware provides, whatever
@@ -96,8 +99,8 @@ func fwHas(names ...string) map[string]bool {
 }
 
 var fwBoards = map[string]fwBoard{
-	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "spk", "tls")},
-	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "spk", "tls")},
+	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "spk", "tls", "screen")},
+	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "spk", "tls", "screen")},
 }
 
 func fwLookup(name string) (fwFeature, bool) {

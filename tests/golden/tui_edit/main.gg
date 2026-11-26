@@ -1,0 +1,48 @@
+// gogo/tui Edit: typing, Backspace, Delete, Left, Right, the Max length,
+// Enter; the screen cursor follows the edit position; horizontal scroll.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/screen"
+	"gogo/tui"
+)
+
+func main() {
+	s, ok := tui.Open(screen.Config{Cols: 12, Rows: 2})
+	keys, kok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
+	if !ok || !kok {
+		println("open failed")
+		return
+	}
+	e := tui.NewEdit("hi", 10)
+	e = draw(s, e)
+	for {
+		msg := actor.Receive()
+		k2, k, ui := tui.Event(s, keys, msg)
+		keys = k2
+		if !ui || k.Code == tui.KeyNone {
+			continue
+		}
+		e2, what := tui.EditKey(e, k)
+		e = e2
+		if what == tui.EditDone || what == tui.EditCancel {
+			println("edit", what, "text", e.Text)
+			break
+		}
+		e = draw(s, e)
+	}
+	tui.CloseKeys(keys)
+	tui.Close(s)
+}
+
+// draw shows the editor (6 columns) and, below it, the whole text; it
+// returns the editor with its scroll offset, kept for the next frame.
+func draw(s tui.Screen, e tui.Edit) tui.Edit {
+	f := tui.NewFrame(s)
+	tui.PrintAt(f, 0, 0, ">")
+	tui.Label(f, 0, 1, 12, e.Text, tui.Left)
+	e = tui.DrawEdit(f, e, 1, 0, 6, true)
+	tui.Flush(s)
+	return e
+}

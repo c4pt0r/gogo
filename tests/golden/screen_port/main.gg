@@ -1,0 +1,48 @@
+// The "screen" port without gogo/tui: the size Chunk, a frame and its Done,
+// a malformed frame (Done -1, nothing drawn), a second Open refused, a
+// Config too big refused, close and open again, other commands ignored.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/port"
+	"gogo/screen"
+)
+
+func next() {
+	switch m := actor.Receive().(type) {
+	case port.Chunk:
+		println("chunk", m.Seq, m.Data.Len(), m.Data.At(0), m.Data.At(1), m.Data.At(2), m.Data.At(3))
+	case port.Done:
+		println("done", m.Seq)
+	}
+}
+
+func main() {
+	p, ok := port.Open("screen", screen.Config{Cols: 10, Rows: 2})
+	println("open", ok)
+	next()
+	_, ok2 := port.Open("screen", screen.Config{})
+	println("second open", ok2)
+	b := bytes.NewBuffer(32)
+	b.Write([]byte{screen.OpColor, 0x2F, screen.OpText, 3})
+	b.WriteString("abc")
+	b.Write([]byte{screen.OpFill, 0, 1, 10, 1, 0x88, 0x25, screen.OpMove, 3, 0, screen.OpCursor, 1})
+	actor.Send(p, port.Out{Data: b.Freeze()})
+	next()
+	actor.Send(p, port.Out{Data: bytes.FromSlice([]byte{screen.OpText, 1, 'X', 0})})
+	next()
+	actor.Send(p, port.Out{Data: bytes.FromSlice([]byte{})})
+	next()
+	actor.Send(p, port.Write{Value: 1})
+	actor.Send(p, port.Out{Data: bytes.FromSlice([]byte{screen.OpCursor, 0})})
+	next()
+	port.Close(p)
+	_, ok3 := port.Open("screen", screen.Config{Cols: 256, Rows: 1})
+	println("too big", ok3)
+	p, ok = port.Open("screen", screen.Config{})
+	println("reopen", ok)
+	next()
+	port.Close(p)
+}

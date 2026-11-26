@@ -1,0 +1,387 @@
+package tui
+
+import (
+	"gogo/screen"
+	"gogo/strconv"
+)
+
+// Alignments for Label.
+const (
+	Left   = 0
+	Center = 1
+	Right  = 2
+)
+
+// decode returns the first character of s (a non-empty string) and its
+// length in bytes; a malformed sequence is U+FFFD, one byte long.
+// (Ranging over a string gives bytes in gogo, not runes.)
+func decode(s string) (int, int) {
+	c := int(s[0])
+	n, cp, min := 1, c, 0
+	switch {
+	case c < 0x80:
+		return c, 1
+	case c >= 0xC2 && c <= 0xDF:
+		n, cp, min = 2, c&0x1F, 0x80
+	case c >= 0xE0 && c <= 0xEF:
+		n, cp, min = 3, c&0x0F, 0x800
+	case c >= 0xF0 && c <= 0xF4:
+		n, cp, min = 4, c&0x07, 0x10000
+	default:
+		return 0xFFFD, 1
+	}
+	if n > len(s) {
+		return 0xFFFD, 1
+	}
+	for i := 1; i < n; i++ {
+		b := int(s[i])
+		if b&0xC0 != 0x80 {
+			return 0xFFFD, 1
+		}
+		cp = cp<<6 | b&0x3F
+	}
+	if cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+		return 0xFFFD, 1
+	}
+	return cp, n
+}
+
+// runeLen is the byte length of the first character of s.
+func runeLen(s string) int {
+	_, n := decode(s)
+	return n
+}
+
+// RuneWidth is the number of columns the first character of s takes (the
+// screen port's rule: CJK and other wide characters 2, the rest 1).
+func RuneWidth(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+	cp, _ := decode(s)
+	return cpWidth(cp)
+}
+
+func cpWidth(cp int) int {
+	switch {
+	case cp < 0x80:
+		return 1
+	case cp >= 0xA0 && cp <= 0x2FF:
+		if cp == 0xB7 {
+			return 2
+		}
+		return 1
+	case cp >= 0x391 && cp <= 0x3C9, cp >= 0x401 && cp <= 0x451, cp == 0x2032, cp == 0x2033:
+		return 1
+	case cp >= 0x2500 && cp <= 0x259F, cp == 0xFFFD, cp > 0xFFFF:
+		return 1 // the port shows a non-BMP character as one box
+	}
+	return 2
+}
+
+// Width is the number of columns s takes on the screen.
+func Width(s string) int {
+	n := 0
+	for len(s) > 0 {
+		cp, k := decode(s)
+		n += cpWidth(cp)
+		s = s[k:]
+	}
+	return n
+}
+
+// Cut returns the longest prefix of s that fits in w columns.
+func Cut(s string, w int) string {
+	n, i := 0, 0
+	for i < len(s) {
+		cw := RuneWidth(s[i:])
+		if n+cw > w {
+			break
+		}
+		n += cw
+		i += runeLen(s[i:])
+	}
+	return s[:i]
+}
+
+func spaces(n int) string {
+	s := ""
+	for n >= 8 {
+		s = s + "        "
+		n -= 8
+	}
+	return s + "        "[:imax(n, 0)]
+}
+
+// Label draws text in w columns at x, y of f, cut to fit and padded with
+// spaces to w, aligned Left, Center or Right. Planned: f.Label(...).
+func Label(f Frame, x, y, w int, text string, align int) {
+	if w <= 0 {
+		return
+	}
+	t := Cut(text, w)
+	pad := w - Width(t)
+	switch align {
+	case Center:
+		PrintAt(f, x, y, spaces(pad/2)+t+spaces(pad-pad/2))
+	case Right:
+		PrintAt(f, x, y, spaces(pad)+t)
+	default:
+		PrintAt(f, x, y, t+spaces(pad))
+	}
+}
+
+// List is a selectable list (a menu): Items, the selected index Sel, the
+// first visible item Top and the number of visible Rows. Planned: methods
+// of *List.
+type List struct {
+	Items          []string
+	Sel, Top, Rows int
+}
+
+// NewList makes a list of items showing rows of them, the first selected.
+func NewList(items []string, rows int) List {
+	return List{Items: items, Rows: imax(rows, 1)}
+}
+
+// ListSelect returns l with item i selected (clamped) and scrolled into
+// view. Planned: l.Select(i).
+func ListSelect(l List, i int) List {
+	n := len(l.Items)
+	if n == 0 {
+		return List{Items: l.Items, Rows: l.Rows}
+	}
+	if i < 0 {
+		i = 0
+	}
+	if i >= n {
+		i = n - 1
+	}
+	top := l.Top
+	if i < top {
+		top = i
+	}
+	if i >= top+l.Rows {
+		top = i - l.Rows + 1
+	}
+	return List{Items: l.Items, Sel: i, Top: top, Rows: l.Rows}
+}
+
+// ListKey handles k: Up and Down move the selection (wrapping around at
+// the ends, so one button reaches everything), Enter chooses it. It
+// returns the list and the chosen index (Enter), else -1. Planned:
+// l.Key(k).
+func ListKey(l List, k Key) (List, int) {
+	n := len(l.Items)
+	if n == 0 {
+		return l, -1
+	}
+	switch k.Code {
+	case KeyUp:
+		if l.Sel == 0 {
+			return ListSelect(l, n-1), -1
+		}
+		return ListSelect(l, l.Sel-1), -1
+	case KeyDown:
+		if l.Sel == n-1 {
+			return ListSelect(l, 0), -1
+		}
+		return ListSelect(l, l.Sel+1), -1
+	case KeyEnter:
+		return l, l.Sel
+	}
+	return l, -1
+}
+
+// DrawList draws l in w columns at x, y of f (l.Rows rows): the selected
+// item in reverse video with a ">" marker, and "^" / "v" in the last
+// column when items are hidden above or below. Planned: l.Draw(f, x, y, w).
+func DrawList(f Frame, l List, x, y, w int) {
+	for r := 0; r < l.Rows; r++ {
+		i := l.Top + r
+		text := ""
+		if i < len(l.Items) {
+			text = l.Items[i]
+		}
+		mark := "  "
+		if i == l.Sel && i < len(l.Items) {
+			mark = "> "
+			Attr(f, screen.Reverse)
+		}
+		Label(f, x, y+r, w-1, mark+text, Left)
+		Attr(f, 0)
+		more := " "
+		if r == 0 && l.Top > 0 {
+			more = "^"
+		}
+		if r == l.Rows-1 && l.Top+l.Rows < len(l.Items) {
+			more = "v"
+		}
+		PrintAt(f, x+w-1, y+r, more)
+	}
+}
+
+// Percent is value as a percentage of max (0 to 100), as "42%".
+func Percent(value, max int) string {
+	return strconv.Itoa(fraction(value, max, 100)) + "%"
+}
+
+func fraction(value, max, n int) int {
+	if max <= 0 || value <= 0 {
+		return 0
+	}
+	if value >= max {
+		return n
+	}
+	return value * n / max
+}
+
+// DrawProgress draws a progress bar of w columns at x, y of f: value out of
+// max filled with full blocks, the rest light shade. Planned:
+// f.Progress(x, y, w, value, max).
+func DrawProgress(f Frame, x, y, w, value, max int) {
+	done := fraction(value, max, w)
+	if done > 0 {
+		Fill(f, x, y, done, 1, 0x2588) // █
+	}
+	if done < w {
+		Fill(f, x+done, y, w-done, 1, 0x2591) // ░
+	}
+}
+
+// DrawStatus draws a status line on f's last row: left and right texts in
+// reverse video across the whole width. Planned: f.Status(left, right).
+func DrawStatus(f Frame, left, right string) {
+	w, h := Size(f)
+	if h == 0 {
+		return
+	}
+	y := f.Y1 - f.OY - 1
+	x := f.X0 - f.OX
+	Attr(f, screen.Reverse)
+	rw := Width(right)
+	if rw > w {
+		right, rw = Cut(right, w), Width(Cut(right, w))
+	}
+	Label(f, x, y, w-rw, left, Left)
+	if rw > 0 {
+		PrintAt(f, x+w-rw, y, right)
+	}
+	Attr(f, 0)
+}
+
+// Edit is a one-line text editor's state: Text, the cursor Pos (a byte
+// offset), the first shown byte Off and the longest Text, Max bytes. It
+// edits printable ASCII. Planned: methods of *Edit.
+type Edit struct {
+	Text          string
+	Pos, Off, Max int
+}
+
+// What EditKey did.
+const (
+	EditNone    = 0
+	EditChanged = 1
+	EditDone    = 2 // Enter
+	EditCancel  = 3 // Esc
+)
+
+// NewEdit makes an editor holding text (cut to max bytes), the cursor at
+// its end. Edit works on printable ASCII: any other byte of text becomes
+// '?'.
+func NewEdit(text string, max int) Edit {
+	if len(text) > max {
+		text = text[:max]
+	}
+	t := ""
+	for i := 0; i < len(text); i++ {
+		c := int(text[i])
+		if c < 32 || c > 126 {
+			c = '?'
+		}
+		t = t + printable[c-32:c-31]
+	}
+	text = t
+	return Edit{Text: text, Pos: len(text), Max: max}
+}
+
+// EditKey applies k: a character is inserted at the cursor, Backspace and
+// Delete remove, Left and Right move, Enter and Esc finish. It returns the
+// editor and what happened (EditNone ... EditCancel). Planned: e.Key(k).
+func EditKey(e Edit, k Key) (Edit, int) {
+	t, p := e.Text, e.Pos
+	switch k.Code {
+	case KeyChar:
+		if len(t) >= e.Max {
+			return e, EditNone
+		}
+		c := "x"
+		if k.Char >= 32 && k.Char <= 126 {
+			c = printable[k.Char-32 : k.Char-31]
+		}
+		return Edit{Text: t[:p] + c + t[p:], Pos: p + 1, Off: e.Off, Max: e.Max}, EditChanged
+	case KeyBackspace:
+		if p == 0 {
+			return e, EditNone
+		}
+		return Edit{Text: t[:p-1] + t[p:], Pos: p - 1, Off: e.Off, Max: e.Max}, EditChanged
+	case KeyDelete:
+		if p >= len(t) {
+			return e, EditNone
+		}
+		return Edit{Text: t[:p] + t[p+1:], Pos: p, Off: e.Off, Max: e.Max}, EditChanged
+	case KeyLeft:
+		if p > 0 {
+			return Edit{Text: t, Pos: p - 1, Off: e.Off, Max: e.Max}, EditNone
+		}
+	case KeyRight:
+		if p < len(t) {
+			return Edit{Text: t, Pos: p + 1, Off: e.Off, Max: e.Max}, EditNone
+		}
+	case KeyEnter:
+		return e, EditDone
+	case KeyEsc:
+		return e, EditCancel
+	}
+	return e, EditNone
+}
+
+// printable holds the ASCII characters 32-126.
+const printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+
+// editOff is the first byte to show so that the cursor fits in w columns.
+func editOff(e Edit, w int) int {
+	off := e.Off
+	if e.Pos < off {
+		off = e.Pos
+	}
+	if e.Pos >= off+w {
+		off = e.Pos - w + 1
+	}
+	if off > len(e.Text) {
+		off = len(e.Text)
+	}
+	return imax(off, 0)
+}
+
+// DrawEdit draws e in w columns at x, y of f, underlined, scrolled so the
+// cursor shows; with focus it shows the screen's cursor there. It returns
+// e with its scroll offset updated (keep it for the next frame). Planned:
+// e.Draw(f, x, y, w, focus).
+func DrawEdit(f Frame, e Edit, x, y, w int, focus bool) Edit {
+	if w <= 0 {
+		return e
+	}
+	off := editOff(e, w)
+	shown := e.Text[off:]
+	if len(shown) > w {
+		shown = shown[:w]
+	}
+	Attr(f, screen.Underline)
+	Label(f, x, y, w, shown, Left)
+	Attr(f, 0)
+	if focus {
+		Cursor(f, x+e.Pos-off, y, true)
+	}
+	return Edit{Text: e.Text, Pos: e.Pos, Off: off, Max: e.Max}
+}

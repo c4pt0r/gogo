@@ -330,8 +330,9 @@ btn, ok := port.Open("gpio", port.GPIO{Pin: 15, Mode: port.InputPullUp, Edge: po
   that arrives within `DebounceMs` after an unreported opposite change
   (release bounce).
 
-Not yet: `uart`, `i2c`, `spi` and a display port. The board's screen is
-a console that mirrors stdout and stderr, not a port.
+Not yet: `uart`, `i2c` and `spi`. The board's screen is a console that
+mirrors stdout and stderr; the `screen` port (§5.4.9) takes it over as a
+text grid while it is open.
 
 ### 5.4.1 The network stack
 
@@ -684,7 +685,8 @@ font.
   (depends on `GOGO_NET`), `GOGO_SD` (the Cardputer's `/sd`),
   `GOGO_FS_EXFAT` (depends on `GOGO_SD`), `GOGO_FONT_CJK` (off: a 1.5 KB
   ASCII font is built in and CJK characters are drawn as boxes),
-  `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR` and `GOGO_AUDIO`. A
+  `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR`, `GOGO_AUDIO` and
+  `GOGO_SCREEN`. A
   switched-off feature behaves as if the board lacked the hardware: its
   `port.Open` returns `ok=false`, and `gogo config scan` and the like
   answer "no network in this firmware".
@@ -961,6 +963,61 @@ explains it from the user's side.
   50 ms; the unsliced ECDHE step (X25519) takes 204 ms (about 300 ms with
   P-256). A keep-alive `http.Client` handshakes once and later requests
   take about 0.3 s.
+
+### 5.4.9 The text screen (the `screen` port, `gogo/tui`)
+
+Book chapter 19 is the user's side; `runtime/screen/screen.h` and
+`screen_port.h` hold the contracts.
+
+- **Model.** A grid of cells, like ncurses, not pixels: each cell a BMP
+  code point, a 16-colour foreground and background and the attributes
+  bold, underline and reverse, in one `uint32_t` (1760 bytes for the
+  boards' 40 x 11 of 6 x 12 pixel cells). A wide character takes two cells
+  (the console's width rule; box drawing and block elements are narrow);
+  overwriting either half blanks the other.
+- **Port.** `screen`, configured with `screen.Config{Cols, Rows}`
+  (reserved type 47, format 15.1; 0 = the whole display). One per Vm, refused when the
+  board's hook says the display is busy. The grid is allocated at open and
+  charged to the owner. The owner first gets a `port.Chunk` (cols, rows,
+  colours, attributes). Every `port.Out` is a frame of byte-coded
+  operations (clear, move, text, colour, attributes, fill, clip, scroll,
+  cursor; `lib/screen/screen.gg`): checked whole, then applied at once, the
+  data read in place on the sender's heap (no copy, no held Bytes), and
+  answered with `port.Done` (-1: malformed, nothing applied). A Done that
+  does not fit the mailbox is owed and retried every 10 ms by the port's
+  event source (GOGO_MAX_SOURCES is 3 for it: the boards already use two),
+  after collecting a waiting owner's heap slack as stream/ does; with 8
+  owed, further Outs get Done{-1}, counted, so every Out gets its Done. Every operation is
+  clipped to the clip rectangle, which is always inside the grid, so no
+  sequence, malformed or not, writes outside the cell array (fuzzed in
+  `make test-screen`). Only the rows whose cells differ at the end of a
+  frame from its start are handed to the display (compared by a 64-bit
+  row hash, so a clear-and-redraw costs nothing on the LCD).
+- **Display hooks.** A board passes a `ScreenHw` (open, present the dirty
+  rows, close) through its own open function (`SCREEN_PORT_DRIVER`); the
+  VM core only gains the reserved type, the capability name and the
+  third event-source slot. ESP32-S3 (`console_task.c`): `present` copies the
+  changed rows into a grid shared with the console's render task, under
+  the console's spinlock, one row per hold; the render task draws them
+  with `screen_render_row` (RGB565, box drawing and blocks drawn as lines
+  and fills, bold as a one-pixel double strike) instead of the console,
+  and redraws the console whole on close. Unix (`screen_unix.c`): ANSI on
+  a terminal (alternate screen, SGR colours), else a text dump of every
+  frame for goldens (`--screen ansi|text|none`).
+- **Library.** `gogo/tui` is gogo code: frames that share the screen's
+  `bytes.Buffer` and track the port's clip, colours and attributes, windows
+  (an origin and a clip), widgets as value structs and functions (Label,
+  Box, List, progress bar, status line, Edit), and `tui.Key` over the
+  keyboard or two buttons. It never receives on its own (`Event` maps a
+  message the caller received and takes only as many Dones as the screen
+  has Outs unanswered; `Open` reads the size Chunk in a helper
+  actor that hands the port over), so a UI composes with other messages.
+  It declares `//gogo:optional kbd`.
+- **Switch and sizes.** Kconfig `GOGO_SCREEN` (on): the board lists the
+  driver, the requirement `screen`; `screen.Config` is image format 15.1. `runtime/screen` is 4.3 KB of code on the
+  ESP32-S3 with no fixed state (`make screensize`); the firmware grows by
+  about 5.1 KB, plus the 1760-byte shared grid allocated at the first
+  open.
 
 ### 5.5 Value representation and memory
 
@@ -1364,13 +1421,14 @@ together with `mbox_words` through `actor_charged_words`).
   `Buffer`, 46 `port.Handoff`, 47 `net.Subscribe`, 48 `config.Get`, 49
   `B_FS` (gogo/fs), 50 `B_CODE` (gogo/code), 51-53 `sys.Time`,
   `sys.SetTime`, `sys.Random`.
-- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 47 of them,
-  0..46): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
+- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 48 of them,
+  0..47): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
   `Request`, `Options`), 6-8 `port.GPIO`, `port.Write`, `port.Edge`, 9-26
   `gogo/net`, 27-28 `fs.Info`, `fs.Space`, 29-33 `gogo/kbd` and
   `gogo/power`, 34 `code.Module`, 35-37 `port.Chunk`, `port.Out`,
   `port.Done`, 38-39 `gogo/imu`, 40-41 `gogo/ir`, 42-43 `gogo/audio`, 44
-  `net.DialTLS`, 45-46 `port.Host`, `port.Post` (embed mode).
+  `net.DialTLS`, 45-46 `port.Host`, `port.Post` (embed mode), 47
+  `screen.Config` (15.1).
 
 ### 5.7 Scheduling
 

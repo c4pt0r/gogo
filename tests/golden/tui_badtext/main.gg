@@ -1,0 +1,29 @@
+// Malformed UTF-8 in tui.Print, PrintAt and Label: every byte that is not
+// part of a well-formed character is drawn as '?', and 300 continuation
+// bytes (longer than one text operation) neither hang nor crash.
+package main
+
+import (
+	"gogo/screen"
+	"gogo/tui"
+)
+
+func main() {
+	s, ok := tui.Open(screen.Config{Cols: 12, Rows: 4})
+	if !ok {
+		println("no screen")
+		return
+	}
+	b := make([]byte, 300)
+	for i := range b {
+		b[i] = 0x80
+	}
+	f := tui.NewFrame(s)
+	tui.Print(f, string(b))
+	tui.PrintAt(f, 0, 1, "a"+string([]byte{0xFF, 0xE4, 0xBD})+"b你")
+	tui.Label(f, 0, 2, 12, string([]byte{0xC0, 0x80})+"ok", tui.Right)
+	tui.PrintAt(f, 0, 3, "w"+tui.Cut(string(b), 5)+"|")
+	println("width", tui.Width(string(b)))
+	tui.Flush(s)
+	tui.Close(s)
+}

@@ -59,7 +59,7 @@ func TestFirmwareUnion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -72,7 +72,7 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\n"
+	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -105,7 +105,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -396,20 +396,20 @@ func TestFirmwareTLS(t *testing.T) {
 	tls := writeImg(t, d, "tls.ggb", "tcp", "tls")
 	none := writeImg(t, d, "none.ggb")
 	for _, board := range []string{"sticks3", "cardputer"} {
-		if _, cfg, err := fwRun(t, "-board", board, "-o", d, tls); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_NET=y\n") || !strings.Contains(cfg, "CONFIG_GOGO_TLS=y\n") {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, tls); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_NET=y\n") || !strings.Contains(cfg, "CONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\n") {
 			t.Errorf("%s: %v\n%s", board, err, cfg)
 		}
 		if _, _, err := fwRun(t, "-board", board, "-o", d, "-without", "tls", tls); err == nil {
 			t.Errorf("%s: removing a required tls should fail", board)
 		}
 		// default on, but only on top of net (Kconfig depends on GOGO_NET)
-		if _, cfg, err := fwRun(t, "-board", board, "-o", d, none); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_NET=n\n") || !strings.Contains(cfg, "CONFIG_GOGO_TLS=n\n") {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, none); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_NET=n\n") || !strings.Contains(cfg, "CONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\n") {
 			t.Errorf("%s no net: %v\n%s", board, err, cfg)
 		}
-		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "net", none); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_TLS=y\n") {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "net", none); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\n") {
 			t.Errorf("%s -with net: %v\n%s", board, err, cfg)
 		}
-		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "net", "-without", "tls", none); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_TLS=n\n") {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "net", "-without", "tls", none); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\n") {
 			t.Errorf("%s -without tls: %v\n%s", board, err, cfg)
 		}
 		if _, _, err := fwRun(t, "-board", board, "-o", d, "-with", "tls", none); err == nil {
@@ -432,7 +432,7 @@ func TestFirmwareAudio(t *testing.T) {
 	spk := writeImg(t, d, "spk.ggb", "spk")
 	im := writeImg(t, d, "im.ggb", "imu")
 	for _, board := range []string{"sticks3", "cardputer"} {
-		if _, cfg, err := fwRun(t, "-board", board, "-o", d, mic); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\n") {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, mic); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\n") {
 			t.Errorf("%s mic: %v\n%s", board, err, cfg)
 		}
 		// mic and spk share one switch: an image that needs one keeps both

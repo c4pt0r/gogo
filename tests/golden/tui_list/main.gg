@@ -1,0 +1,49 @@
+// gogo/tui List: Up and Down with wrap-around, scrolling with the ^ / v
+// markers, Enter choosing, keys from the "kbd" port through tui.Event.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/screen"
+	"gogo/strconv"
+	"gogo/tui"
+)
+
+func main() {
+	s, ok := tui.Open(screen.Config{Cols: 16, Rows: 5})
+	keys, kok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
+	if !ok || !kok {
+		println("open failed")
+		return
+	}
+	println("keyboard", keys.HasKbd)
+	items := []string{"one", "two", "three", "four", "five", "six"}
+	l := tui.NewList(items, 4)
+	draw(s, l)
+	for {
+		msg := actor.Receive()
+		k2, k, ui := tui.Event(s, keys, msg)
+		keys = k2
+		if !ui || k.Code == tui.KeyNone {
+			continue
+		}
+		if k.Code == tui.KeyEsc {
+			break
+		}
+		l2, chosen := tui.ListKey(l, k)
+		l = l2
+		if chosen >= 0 {
+			println("chosen", chosen, items[chosen])
+		}
+		draw(s, l)
+	}
+	tui.CloseKeys(keys)
+	tui.Close(s)
+}
+
+func draw(s tui.Screen, l tui.List) {
+	f := tui.NewFrame(s)
+	tui.DrawList(f, l, 0, 0, 16)
+	tui.DrawStatus(f, "sel "+strconv.Itoa(l.Sel), "top "+strconv.Itoa(l.Top))
+	tui.Flush(s)
+}
