@@ -239,7 +239,7 @@ end, and only with `int` fields.
 | 44 | `TYPE_SCREEN_CONFIG` | Cols, Rows int: port.Open("screen") |
 | 45 | `TYPE_ERRORS_CODE` | the box of an errors.Code (an int) in an interface |
 | 46 | `TYPE_ERRORS_ERRORSTRING` | s string: errors.New's error |
-| 47 | `TYPE_NET_NODELINK` | Self, Peer, Relay int; Agent PID; Name string; Key Bytes: port.Open("node") |
+| 47 | `TYPE_NET_NODELINK` | Self, Peer, Relay int; Agent PID; Name string; Key Bytes; Conn PID; Hello Bytes: port.Open("node") |
 | 48 | `TYPE_NET_NODEEVENT` | From PID; Kind, Node int; Agent PID; Name string: node port event |
 
 ## Exit reasons

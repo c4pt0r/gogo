@@ -46,6 +46,8 @@
 #define GOGO_DIST_H
 
 #include <stdint.h>
+#include <stdbool.h>
+#include "term.h"
 #include "port.h"
 
 struct Vm;
@@ -63,6 +65,30 @@ struct Vm;
 #define DIST_WORDS_PER_BYTE 2u /* most heap words a received term may take per frame byte */
 
 extern const PortDriver dist_node_driver;
+
+/* A board's stream connection a node port can take over (VmBoard
+ * .dist_carrier): then the link costs one port, not two (the "tcp" port
+ * closes), and the node port reads and writes the connection itself.
+ *  - take: if conn is a port of the board's that it can carry, detaches
+ *    its connection for node port `node`, closes conn and sets *ctx; else
+ *    false (the link keeps conn and its owner pumps, as without a carrier).
+ *    Data conn had not sent yet goes out first; nothing is read until
+ *    resume.
+ *  - write: queues n bytes; false if it has no room (the frame is lost).
+ *  - resume: starts reading (dist_carried_input).
+ *  - release: the node port closed: the connection ends. */
+typedef struct DistCarrier {
+    bool (*take)(struct Vm *vm, term conn, Port *node, void **ctx);
+    bool (*write)(struct Vm *vm, void *ctx, const uint8_t *d, uint32_t n);
+    void (*resume)(struct Vm *vm, void *ctx);
+    void (*release)(struct Vm *vm, void *ctx);
+} DistCarrier;
+
+/* The carrier of node port `node` read n bytes of the peer's stream. */
+void dist_carried_input(struct Vm *vm, Port *node, const uint8_t *d, uint32_t n);
+/* Its connection ended (EOF or an error): the owner gets port.Closed and
+ * the port closes. */
+void dist_carried_end(struct Vm *vm, Port *node);
 
 /* Counters, for tests and diagnostics. */
 typedef struct DistStats {

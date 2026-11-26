@@ -10,6 +10,8 @@ struct Vm;
 
 extern const PortDriver hostnet_tcp_driver;
 extern const PortDriver hostnet_listen_driver;
+/* Node ports take their tcp connections over (runtime/dist, DistCarrier). */
+extern const struct DistCarrier hostnet_carrier;
 
 /* Attaches the sockets' event source to vm (once, after vm_boot). */
 void hostnet_install(struct Vm *vm);

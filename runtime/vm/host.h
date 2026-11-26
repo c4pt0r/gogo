@@ -48,6 +48,9 @@ typedef struct VmBoard {
     const struct NetIf *netif;
     const struct TlsHw *tls;
     const VmMount *const *mounts;
+    /* A board whose stream ports can hand their connection to a node port
+     * (runtime/dist, DistCarrier: host sockets); NULL = none. */
+    const struct DistCarrier *dist_carrier;
 } VmBoard;
 
 /* ---- wrappers (host.c): the only callers of the host's hooks ---- */

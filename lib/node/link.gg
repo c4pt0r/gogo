@@ -164,7 +164,7 @@ func clientLink(e ends, conn actor.PID, token, name string, ms int) {
 		return
 	}
 	np, err := port.Open("node", net.NodeLink{Self: selfID, Peer: serverID, Relay: 1, Agent: e.Door, Name: sname,
-		Key: sessionKey(key, ns, nc, selfID, serverID, sname, name)})
+		Key: sessionKey(key, ns, nc, selfID, serverID, sname, name), Conn: conn})
 	if err != nil {
 		actor.Send(e.Agent, fail)
 		return
@@ -234,13 +234,16 @@ func serverHandshake(e ends, listener, conn actor.PID, token, name string, ms in
 	if !ok || id == 0 {
 		return false
 	}
+	// The node port sends the welcome itself, first (Hello): it may take
+	// the connection over (Conn), and then nothing goes out through conn.
+	mac := hmac256(key, cat([]byte("gogo-node-s"), nc, ns, ids(id, 1), []byte(name), []byte(cname)))
+	welcome := cat([]byte{hsWelcome, protoVersion}, ids(1, id), mac, []byte(name))
 	np, err := port.Open("node", net.NodeLink{Self: 1, Peer: id, Relay: 0, Agent: e.Door, Name: cname,
-		Key: sessionKey(key, ns, nc, id, 1, name, cname)})
+		Key: sessionKey(key, ns, nc, id, 1, name, cname), Conn: conn,
+		Hello: bytes.FromSlice(cat(put16(nil, len(welcome)), welcome))})
 	if err != nil {
 		return false
 	}
-	mac := hmac256(key, cat([]byte("gogo-node-s"), nc, ns, ids(id, 1), []byte(name), []byte(cname)))
-	frameOut(conn, cat([]byte{hsWelcome, protoVersion}, ids(1, id), mac, []byte(name)))
 	actor.Send(listener, hsDone{Link: actor.Self()})
 	pump(e, conn, np, rest, cname, id, 1)
 	return true
@@ -311,6 +314,10 @@ func pump(e ends, conn, np actor.PID, rest []byte, peerName string, peerID, self
 				actor.Send(e.Agent, nodeUp{Name: m.Name, ID: m.Node, Agent: m.Agent})
 			} else if m.Kind == net.NodeDown {
 				actor.Send(e.Agent, nodeGone{ID: m.Node})
+			} else if m.Kind == net.NodeCarried {
+				// The node port took conn over; conn's Chunks queued before
+				// this event were forwarded: it may read the socket now.
+				actor.Send(np, net.Resume{})
 			}
 		case kick:
 			port.Close(np)

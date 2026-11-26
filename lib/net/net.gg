@@ -249,7 +249,14 @@ type Accepted struct {
 // Agent is the local actor that messages to a node's zero PID reach (the
 // node's door: it answers name lookups only). Name is the peer's name. Key
 // is the link's session key (32 bytes, from the handshake): every frame
-// carries a MAC under it, and a frame whose MAC fails ends the link.
+// carries a MAC under it, and a frame whose MAC fails ends the link. Conn,
+// if not the zero PID, is the link's "tcp" port: where the board can (on a
+// host VM with real sockets) the node port takes its connection over and
+// closes it, so a link costs one port, and sends a NodeEvent of Kind
+// NodeCarried; it reads the connection from then on once its owner sends
+// it net.Resume{} (after forwarding the Chunks of Conn it still had).
+// Hello, if not empty, goes out first, as it is (the handshake's last
+// frame).
 // Frames from the peer go to the port as port.Out commands (from the
 // port's owner only); frames for the peer come out as port.Chunk events.
 // The port is charged nothing; it fails to open with a bad id or key, when
@@ -262,6 +269,8 @@ type NodeLink struct {
 	Agent             actor.PID
 	Name              string
 	Key               bytes.Bytes
+	Conn              actor.PID
+	Hello             bytes.Bytes
 }
 
 // NodeEvent is an event of a "node" port: Kind NodeUp when the port opens
@@ -279,8 +288,9 @@ type NodeEvent struct {
 
 // NodeEvent kinds.
 const (
-	NodeUp   = 1
-	NodeDown = 2
+	NodeUp      = 1
+	NodeDown    = 2
+	NodeCarried = 3 // the node port took Conn over (NodeLink)
 )
 
 // The Reason of a "tcp" or "tls" port's port.Closed: the shared codes of

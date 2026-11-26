@@ -53,7 +53,9 @@ typedef struct Link {
     uint64_t tx, rx_n;       /* frames sent and received: each MAC covers its number */
     HmacKey key;             /* the session key from the handshake */
     uint8_t name_len;
+    uint8_t carried;         /* the board's carrier has the connection (cctx) */
     uint8_t name[DIST_NAME_MAX];   /* the peer's name (NODEUP) */
+    void *cctx;
 } Link;
 
 typedef struct Proxy {
@@ -101,6 +103,7 @@ typedef struct DistState {
     term *exports;
     Watch *watches;
     Pending *calls;
+    uint8_t *scratch;        /* a carried link's frame is built here (DIST_FRAME_MAX) */
 } DistState;
 
 static const uint8_t nfields[(TYPE_RESERVED_COUNT + 1u) / 2u] = TYPE_NFIELDS;
@@ -260,21 +263,37 @@ static void frame_mac(const HmacKey *k, uint64_t num, uint16_t sender, const uin
     hmac_mac(k, pre, sizeof pre, body, n, out);
 }
 
-/* A Chunk for one frame of n bytes (its length prefix included, its MAC
- * not) for l's owner; the caller writes the frame at *data, then sends it
- * with chunk_send. NULL if it cannot be made. */
-static Msg *chunk_new(Vm *vm, Link *l, uint32_t n, uint8_t **data) {
+#define CARRIED ((Msg *)(uintptr_t)1)   /* chunk_new's "build it in the scratch" */
+
+/* Room for one frame of n bytes (its length prefix included, its MAC
+ * not) for l: a Chunk for l's owner, or, on a carried link, the scratch
+ * (CARRIED); the caller writes the frame at *data, then sends it with
+ * chunk_send or drops it with chunk_drop. NULL if it cannot be made. */
+static Msg *chunk_new(Vm *vm, DistState *ds, Link *l, uint32_t n, uint8_t **data) {
+    if (l->carried) {
+        *data = ds->scratch;
+        return n + TAG <= DIST_FRAME_MAX ? CARRIED : NULL;
+    }
     l->seq = l->seq >= 0x7FFFFFFFu ? 1u : l->seq + 1u;
     return stream_chunk_new(vm, l->port->id, l->seq, (uint32_t)vm_now(vm), 0, n + TAG, data);
 }
 
+static void chunk_drop(Vm *vm, Msg *m) {
+    if (m != CARRIED) msg_free(vm, m);
+}
+
 /* MACs the frame d[0..n) (as chunk_new made it) and queues m on l's
- * owner; counted as sent, or dropped (m freed). */
+ * owner, or writes it to l's carrier; counted as sent, or dropped. */
 static void chunk_send(Vm *vm, DistState *ds, Link *l, Msg *m, uint8_t *d, uint32_t n) {
     uint8_t mac[32];
     wr16(d, n - 2u + TAG);
     frame_mac(&l->key, l->tx++, ds->self, d + 2, n - 2u, mac);
     memcpy(d + n, mac, TAG);
+    if (m == CARRIED) {
+        if (vm->board->dist_carrier->write(vm, l->cctx, d, n + TAG)) ds->st.sent++;
+        else ds->st.dropped++;
+        return;
+    }
     Actor *o = port_owner(vm, l->port);
     if (o && msg_try_enqueue(vm, o, m)) {
         ds->st.sent++;
@@ -287,7 +306,7 @@ static void chunk_send(Vm *vm, DistState *ds, Link *l, Msg *m, uint8_t *d, uint3
 /* Sends the frame b[0..n) (length prefix included) on l. */
 static void emit(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t n) {
     uint8_t *d;
-    Msg *m = l ? chunk_new(vm, l, n, &d) : NULL;
+    Msg *m = l ? chunk_new(vm, ds, l, n, &d) : NULL;
     if (!m) {
         ds->st.dropped++;
         return;
@@ -1019,7 +1038,7 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
     }
     x->used = ++ds->tick;
     uint8_t *p, *start;
-    Msg *m = !e.why ? chunk_new(vm, l, 2u + len, &p) : NULL;
+    Msg *m = !e.why ? chunk_new(vm, ds, l, 2u + len, &p) : NULL;
     if (!m) {
         ds->st.dropped++;
         return 0;
@@ -1035,7 +1054,7 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
     Enc w = { vm, from, ds, p, 0, 0 };
     enc(&w, msg, 0);
     if (w.why) {                    /* the export table filled up */
-        msg_free(vm, m);
+        chunk_drop(vm, m);
         ds->st.dropped++;
         return 0;
     }
@@ -1232,7 +1251,7 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
         Link *r = route(ds, dst);
         if (r && r != l) {
             uint8_t *p;
-            Msg *m = chunk_new(vm, r, 2u + n, &p);
+            Msg *m = chunk_new(vm, ds, r, 2u + n, &p);
             if (m) {
                 memcpy(p + 2, b, n);
                 ds->st.relayed++;
@@ -1356,18 +1375,20 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
 }
 
 /* The link's byte stream broke (a length out of range): it ends. */
-static void link_broken(Vm *vm, Port *p) {
+static void link_ended(Vm *vm, Port *p, int32_t reason) {
     Actor *o = port_owner(vm, p);
     Msg *m = o ? note_new(vm, 4) : NULL;
     if (m) {
         m->data[0] = hdr_make(4, K_STRUCT);
         m->data[1] = TYPE_CLOSED;
         m->data[2] = p->id;
-        m->data[3] = term_from_int(GOGO_E_BADARG);
+        m->data[3] = term_from_int(reason);
         if (!msg_try_enqueue(vm, o, m)) msg_free(vm, m);
     }
     port_close(vm, p->id);
 }
+
+static void link_broken(Vm *vm, Port *p) { link_ended(vm, p, GOGO_E_BADARG); }
 
 /* Checks the MAC of frame b[0..len) (body, then TAG bytes) from l and
  * handles it; false if the MAC is wrong (the link is not to be trusted
@@ -1473,17 +1494,45 @@ static DistState *state_new(Vm *vm) {
     return ds;
 }
 
-/* NodeLink{Self, Peer, Relay int; Agent PID; Name string; Key Bytes}. */
+void dist_carried_input(Vm *vm, Port *node, const uint8_t *d, uint32_t n) {
+    DistState *ds = vm->dist ? state(vm) : NULL;
+    Link *l = ds ? link_of(ds, node) : NULL;
+    if (l && !feed(vm, ds, l, d, n) && l->port == node) link_broken(vm, node);
+}
+
+void dist_carried_end(Vm *vm, Port *node) { link_ended(vm, node, GOGO_E_RESET); }
+
+/* Hello's bytes to l's peer as they are (no frame): through the carrier,
+ * or as a Chunk the owner writes first. */
+static void hello(Vm *vm, Link *l, const uint8_t *d, uint32_t n) {
+    if (!n) return;
+    if (l->carried) {
+        vm->board->dist_carrier->write(vm, l->cctx, d, n);
+        return;
+    }
+    uint8_t *w;
+    l->seq = l->seq >= 0x7FFFFFFFu ? 1u : l->seq + 1u;
+    Msg *m = stream_chunk_new(vm, l->port->id, l->seq, (uint32_t)vm_now(vm), 0, n, &w);
+    Actor *o = port_owner(vm, l->port);
+    if (!m) return;
+    memcpy(w, d, n);
+    if (!o || !msg_try_enqueue(vm, o, m)) msg_free(vm, m);
+}
+
+/* NodeLink{Self, Peer, Relay int; Agent PID; Name string; Key Bytes;
+ * Conn PID; Hello Bytes}. */
 static int n_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg) {
     (void)index;
     const uint32_t *o = obj_of(vm, owner, cfg);
     int32_t self, peer, relay;
-    const uint8_t *name, *key;
-    uint32_t nl, kl;
-    if (!o || hdr_words(o[0]) != 8u || !int_val(vm, owner, o[2], &self) || !int_val(vm, owner, o[3], &peer) ||
+    const uint8_t *name, *key, *hb;
+    uint32_t nl, kl, hl;
+    if (!o || hdr_words(o[0]) != 10u || !int_val(vm, owner, o[2], &self) || !int_val(vm, owner, o[3], &peer) ||
         !int_val(vm, owner, o[4], &relay) || !term_is_pid(o[5]) || !name_bytes(vm, owner, o[6], &name, &nl) ||
-        nl > DIST_NAME_MAX || !bytes_view(vm, owner, o[7], &key, &kl) || kl != 32u)
+        nl > DIST_NAME_MAX || !bytes_view(vm, owner, o[7], &key, &kl) || kl != 32u || !term_is_pid(o[8]) ||
+        !bytes_view(vm, owner, o[9], &hb, &hl))
         return -1;
+    term conn = o[8];
     term agent = o[5];
     if (self < 1 || self > 0xFFFF || peer < 1 || peer > 0xFFFF || self == peer ||
         vm->table_cap > DIST_SLOT_BASE)
@@ -1513,10 +1562,17 @@ static int n_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
     if (nl) memcpy(l->name, name, nl);
     ds->self = (uint16_t)self;
     if (agent != T_ZEROPID && actor_lookup(vm, agent)) ds->agent = agent;
+    /* The board's carrier takes the connection over: one port per link. */
+    const DistCarrier *car = vm->board->dist_carrier;
+    if (car && conn != T_ZEROPID && (ds->scratch || (ds->scratch = va_alloc(vm, DIST_FRAME_MAX))) &&
+        car->take(vm, conn, p, &l->cctx))
+        l->carried = 1;
+    hello(vm, l, hb, hl);
     /* NodeEvent{Kind: Up, Node: peer, Agent: the peer's door, Name}. The
      * port charges nothing, so the open cannot fail after this. p->owner is
      * set already (port_open), so it goes to the owner. */
     node_event(vm, p, 1, peer, up, l->name, l->name_len);
+    if (l->carried) node_event(vm, p, 3, peer, up, NULL, 0);   /* NodeCarried */
     /* A server tells the new board about the others, and them about it. */
     for (uint32_t i = 0; !l->relay && i < ds->nlinks; i++) {
         Link *k = ds->links[i];
@@ -1534,9 +1590,12 @@ static void n_command(Vm *vm, const Actor *from, Port *p, term msg) {
     const uint32_t *o = obj_of(vm, from, msg);
     const uint8_t *d;
     uint32_t n;
-    if (!l || from->id != p->owner || !o || hdr_kind(o[0]) != K_STRUCT || o[1] != TYPE_OUT ||
-        hdr_words(o[0]) != 3u || !bytes_view(vm, from, o[2], &d, &n))
+    if (!l || from->id != p->owner || !o || hdr_kind(o[0]) != K_STRUCT) return;
+    if (o[1] == TYPE_NET_RESUME) {                /* the owner forwarded conn's last Chunks */
+        if (l->carried) vm->board->dist_carrier->resume(vm, l->cctx);
         return;
+    }
+    if (o[1] != TYPE_OUT || hdr_words(o[0]) != 3u || !bytes_view(vm, from, o[2], &d, &n)) return;
     if (!feed(vm, ds, l, d, n) && l->port == p) link_broken(vm, p);
 }
 
@@ -1565,6 +1624,7 @@ static void n_close(Vm *vm, Port *p) {
         if (ds->watches[i].kind != W_FREE && route(ds, nd) == l) gone[ng++] = nd;
     }
     if (l->rx) va_free(vm, l->rx, l->rx_need);
+    if (l->carried) vm->board->dist_carrier->release(vm, l->cctx);
     uint16_t peer = l->peer;
     memset(l, 0, sizeof *l);
     for (uint32_t i = 0; i < ng; i++) node_gone(vm, ds, gone[i]);

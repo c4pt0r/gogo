@@ -238,7 +238,7 @@ static VmMount unix_flash = { .prefix = "/flash" }, unix_sd = { .prefix = "/sd" 
 static VmMount *const unix_mounts_all[] = { &unix_flash, &unix_sd };
 static const PortDriver *unix_ports[UNIX_PORTS_ALL + 1u];   /* filled by main: NULL-terminated */
 static const VmMount *unix_mounts[3];                        /* likewise */
-static const VmBoard unix_board = {
+static VmBoard unix_board = {   /* .dist_carrier set by --host-net */
     .ports = unix_ports,
     .netif = &unix_netif,
 #ifdef GOGO_TLS
@@ -369,6 +369,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "gogovm: --sim-clock needs --net-fd\n");
         return EXIT_USAGE;
     }
+    if (host_net) unix_board.dist_carrier = &hostnet_carrier;
     if (host_net && net_fd >= 0) {
         fprintf(stderr, "gogovm: --host-net and --net-fd exclude each other\n");
         return EXIT_USAGE;

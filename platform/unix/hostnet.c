@@ -21,6 +21,7 @@
 #include "opcodes.h"
 #include "host.h"
 #include "stream.h"
+#include "dist.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -35,7 +36,8 @@
 #define CHUNK_MAX 1460u      /* bytes per Chunk, as the MCU stack's segments */
 #define RETRY_MS  50u        /* an owner without room is tried again after this */
 
-enum { K_FREE = 0, K_CONN = 1, K_LISTEN = 2 };
+enum { K_FREE = 0, K_CONN = 1, K_LISTEN = 2, K_CARRIED = 3 };
+#define CARRY_OUT_MAX (256u * 1024u)   /* bytes a carried link may have unsent */
 
 typedef struct HConn {
     int fd;
@@ -54,6 +56,11 @@ typedef struct HConn {
     uint64_t retry_at;       /* an owner without room: not before this */
     short revents;           /* from the last poll */
     StreamOut so;
+    /* K_CARRIED: the connection belongs to node port `node` (its index is
+     * this entry's); out holds what is not sent yet. */
+    Port *node;
+    uint8_t *out;
+    uint32_t out_len, out_cap;
 } HConn;
 
 /* One HConn per port index (the Vm's port table grows; so does this). */
@@ -83,6 +90,9 @@ static bool conns_reach(uint32_t i) {
     return true;
 }
 static int accept_fd = -1;   /* the socket the next tcp open takes (accept) */
+
+/* The port indexes hostnet may have a socket at. */
+static uint32_t lim(const Vm *vm) { return nconns < vm->port_n ? nconns : vm->port_n; }
 
 static HConn *conn_of(const Vm *vm, const Port *p) { return &conns[port_index(vm, p)]; }
 
@@ -365,14 +375,118 @@ const PortDriver hostnet_listen_driver = {
     .close = l_close, .can_event = l_can_event
 };
 
+/* ---- carried node links (DistCarrier) ---- */
+
+/* Sends what it can of c's queue; false if the socket failed. */
+static bool carried_flush(HConn *c) {
+    while (c->out_len) {
+        ssize_t w = send(c->fd, c->out, c->out_len, 0);
+        if (w < 0) return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
+        memmove(c->out, c->out + w, c->out_len - (uint32_t)w);
+        c->out_len -= (uint32_t)w;
+    }
+    return true;
+}
+
+static bool carried_queue(HConn *c, const uint8_t *d, uint32_t n) {
+    if (c->out_len + n > CARRY_OUT_MAX) return false;
+    if (c->out_len + n > c->out_cap) {
+        uint32_t cap = c->out_cap ? c->out_cap : 4096u;
+        while (cap < c->out_len + n) cap *= 2u;
+        uint8_t *b = realloc(c->out, cap);
+        if (!b) return false;
+        c->out = b;
+        c->out_cap = cap;
+    }
+    memcpy(c->out + c->out_len, d, n);
+    c->out_len += n;
+    return true;
+}
+
+static void carried_step(Vm *vm, HConn *c) {
+    short ev = c->revents;
+    c->revents = 0;
+    Port *node = c->node;
+    if ((ev & POLLOUT) && !carried_flush(c)) {
+        dist_carried_end(vm, node);
+        return;
+    }
+    if (c->paused || !(ev & (POLLIN | POLLHUP | POLLERR))) return;
+    uint8_t buf[4096];
+    for (int k = 0; k < 16; k++) {            /* at most 64 KB a pass */
+        ssize_t r = recv(c->fd, buf, sizeof buf, 0);
+        if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return;
+        if (r <= 0) {
+            dist_carried_end(vm, node);
+            return;
+        }
+        dist_carried_input(vm, node, buf, (uint32_t)r);
+        if (c->kind != K_CARRIED || c->node != node) return;   /* the link ended */
+    }
+}
+
+static bool car_take(Vm *vm, term conn, Port *node, void **ctx) {
+    uint32_t ci = term_pid_slot(conn) - vm->port_base, ni = port_index(vm, node);
+    if (!term_is_pid(conn) || term_pid_slot(conn) < vm->port_base || ci >= lim(vm) || !conns_reach(ni)) return false;
+    Port *cp = port_at(vm, ci);
+    HConn *c = &conns[ci], *n = &conns[ni];
+    if (cp->id != conn || cp->drv != &hostnet_tcp_driver || cp->owner != node->owner || c->fd < 0 || c->dead ||
+        c->connecting || c->rd_done || c->closed_owed)
+        return false;
+    memset(n, 0, sizeof *n);
+    n->fd = c->fd;
+    n->kind = K_CARRIED;
+    n->node = node;
+    n->paused = 1;
+    /* What conn had not sent yet goes first. */
+    for (uint32_t k = 0; k < c->so.n; k++) {
+        uint32_t len;
+        const uint8_t *d = stream_out_at(vm, &c->so, k, &len);
+        if (d) carried_queue(n, d + (k ? 0 : c->off), len - (k ? 0 : c->off));
+    }
+    c->fd = -1;
+    port_close(vm, conn);
+    *ctx = (void *)(uintptr_t)ni;
+    return true;
+}
+
+static bool car_write(Vm *vm, void *ctx, const uint8_t *d, uint32_t n) {
+    (void)vm;
+    HConn *c = &conns[(uintptr_t)ctx];
+    if (!c->out_len) {                        /* try at once: no wait for a poll */
+        ssize_t w = send(c->fd, d, n, 0);
+        if (w > 0) {
+            d += w;
+            n -= (uint32_t)w;
+        }
+        if (!n) return true;
+    }
+    return carried_queue(c, d, n);
+}
+
+static void car_resume(Vm *vm, void *ctx) {
+    (void)vm;
+    conns[(uintptr_t)ctx].paused = 0;
+}
+
+static void car_release(Vm *vm, void *ctx) {
+    (void)vm;
+    HConn *c = &conns[(uintptr_t)ctx];
+    if (c->fd >= 0) close(c->fd);
+    free(c->out);
+    memset(c, 0, sizeof *c);
+    c->fd = -1;
+}
+
+const DistCarrier hostnet_carrier = { car_take, car_write, car_resume, car_release };
+
 /* ---- the event source ---- */
 
-/* The port indexes hostnet may have a socket at. */
-static uint32_t lim(const Vm *vm) { return nconns < vm->port_n ? nconns : vm->port_n; }
 
 static short interest(const Vm *vm, uint32_t i, uint64_t now) {
     const Port *p = port_at(vm, i);
     const HConn *c = &conns[i];
+    if (c->kind == K_CARRIED) return (short)((c->paused ? 0 : POLLIN) | (c->out_len ? POLLOUT : 0));
     if (!p->drv || c->fd < 0 || (p->drv != &hostnet_tcp_driver && p->drv != &hostnet_listen_driver)) return 0;
     if (now < c->retry_at) return 0;
     if (c->kind == K_LISTEN) return POLLIN;
@@ -407,6 +521,7 @@ static bool poll_now(const Vm *vm) {
 }
 
 static bool owes(const Vm *vm, uint32_t i, uint64_t now) {
+    if (conns[i].kind == K_CARRIED) return conns[i].revents != 0;
     const Port *p = port_at(vm, i);
     const HConn *c = &conns[i];
     if (!p->drv || p->drv != &hostnet_tcp_driver || now < c->retry_at) return false;
@@ -429,7 +544,8 @@ static void s_drain(Vm *vm, void *ctx, uint64_t now) {
         Port *p = port_at(vm, i);
         HConn *c = &conns[i];
         if (!p->drv || c->fd < 0) continue;
-        if (p->drv == &hostnet_tcp_driver) conn_step(vm, p, c, now);
+        if (c->kind == K_CARRIED) carried_step(vm, c);
+        else if (p->drv == &hostnet_tcp_driver) conn_step(vm, p, c, now);
         else if (p->drv == &hostnet_listen_driver) listen_step(vm, p, c, now);
     }
 }
