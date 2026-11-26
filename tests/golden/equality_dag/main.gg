@@ -1,0 +1,36 @@
+// Values that share subvalues: x = N{x, x} in a loop is a DAG with 2^d
+// paths. == walks paths, not objects, so a deep one would take 2^d
+// steps; past 65536 visited terms the compare is badcode, at once, and
+// the other actors keep running (a monitor sees the crash).
+package main
+
+import "gogo/actor"
+
+type N struct {
+	L, R any
+	V    int
+}
+
+func build(d int) any {
+	var x any = N{V: 1}
+	for i := 0; i < d; i++ {
+		x = N{L: x, R: x}
+	}
+	return x
+}
+
+func compare(d int) {
+	println(d, build(d) == build(d))
+}
+
+func main() {
+	compare(10)
+	p := actor.Spawn(func() { compare(40) })
+	ref := actor.Monitor(p)
+	for {
+		if d, ok := actor.Receive().(actor.DownMsg); ok && d.Ref == ref {
+			println("down", d.Reason.Code == actor.BadCode, d.Reason.Func)
+			return
+		}
+	}
+}

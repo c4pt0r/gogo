@@ -181,7 +181,7 @@ enum Builtin {
     B_PRINTLNU        = 55,  /*! mask, values... -> nil | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. */
     /* Since 15.4 (the language's abstraction phase). */
     B_PANIC           = 56,  /*! v -> (does not return) | panic(v): print "panic: " and v (as println prints it) to stderr, then end the calling actor with R_PANIC. Deferred calls do not run. */
-    B_CMP             = 57   /*! a, b -> -1 | 0 | 1 | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field, arrays element by element, anything else by term identity (a slice, a func, a Buffer). Nesting past 64 levels, other than through a struct's last field, is badcode. Does not preempt. */
+    B_CMP             = 57   /*! a, b -> -1 | 0 | 1 | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field, arrays element by element, anything else by term identity (a slice, a func, a Buffer). Nesting past 64 levels, other than through a struct's last field or an array's last element, is badcode, and so is a compare that visits more than 65536 terms (values sharing subvalues). Does not preempt. */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */

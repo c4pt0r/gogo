@@ -316,7 +316,11 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   equal: an `int64` is boxed inside an interface and plain outside one,
   so an `int` and an `int64` of one value differ. Maps (later) order
   their keys with it. The walk does not preempt; nesting deeper than 64
-  levels (other than through a struct's last field) is `badcode`.
+  levels (other than through a struct's last field or an array's last
+  element) is `badcode`, and so is a walk past 65536 visited terms
+  (`CMP_BUDGET`, deep_live's limit: values that share parts have many
+  paths), so one compare cannot freeze the VM. Floats are ordered by
+  `floats.c`'s `float_order`, the order of `OP_LTF` / `OP_EQF`.
   Unlike `EQ`, it does not make a value of a gone module `badcode`.
 - `println` of any value of the subset except `Bytes` and `Buffer`;
   slices print their elements, `[1 2 3]` (Go's `println` prints

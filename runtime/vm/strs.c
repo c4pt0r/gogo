@@ -681,12 +681,24 @@ static void cmp_key(const Vm *vm, const Actor *a, term t, CmpKey *k) {
 
 #define CMP_DEPTH 64   /* nesting (other than through the last field or element) */
 
+/* The terms one B_CMP may visit, deep_live's WALK_BUDGET: a compare walks
+ * without marking what it has seen, so values sharing subvalues (a DAG,
+ * x = N{x, x} in a loop) can take width^depth visits; without sharing
+ * every visit but the first reads a distinct heap word, so the limit is
+ * never reached. B_CMP does not preempt: past the limit it is badcode,
+ * not a VM frozen in one instruction. */
+#define CMP_BUDGET 65536
+
 /* B_CMP (opcodes.h): the order of x and y, -1, 0 or 1, or R_BAD_CODE past
- * CMP_DEPTH. Ranks first, then values; structs field by field and arrays
- * element by element (then by length), the last one in this loop, so a
- * list linked through it does not nest. Allocates nothing. */
-static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth) {
+ * CMP_DEPTH or after *left visits. Ranks first, then values; structs field
+ * by field and arrays element by element (then by length), the last one in
+ * this loop, so a list linked through it does not nest. Allocates nothing.
+ * Unlike println's walk it does not check for a gone module's values: a
+ * module's own values never reach another module, and the errors that do
+ * are of reserved types. */
+static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, int32_t *left) {
     for (;;) {
+        if (--*left < 0) return R_BAD_CODE;
         CmpKey kx, ky;
         cmp_key(vm, a, x, &kx);
         cmp_key(vm, a, y, &ky);
@@ -708,7 +720,7 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth) {
                 if (u == v && u) {
                     if (depth > CMP_DEPTH) return R_BAD_CODE;
                     for (uint32_t i = 0; i + 1u < u; i++) {
-                        int c = cmp_terms(vm, a, field_term(x, kx.e[i]), field_term(y, ky.e[i]), depth + 1);
+                        int c = cmp_terms(vm, a, field_term(x, kx.e[i]), field_term(y, ky.e[i]), depth + 1, left);
                         if (c) return c;
                     }
                     x = field_term(x, kx.e[u - 1u]);
@@ -724,7 +736,8 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth) {
 uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc) {
     if (id == B_CMP) {
         term *T = (term *)a->mem + a->fp;
-        int c = rc == 2u ? cmp_terms(vm, a, T[rb], T[rb + 1], 0) : R_BAD_CODE;
+        int32_t left = CMP_BUDGET;
+        int c = rc == 2u ? cmp_terms(vm, a, T[rb], T[rb + 1], 0, &left) : R_BAD_CODE;
         if (c > 1) return (uint32_t)c;
         T[ra] = term_from_int(c);
         return R_NORMAL;

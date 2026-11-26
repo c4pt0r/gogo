@@ -1080,6 +1080,34 @@ static term cmp_chain(Actor *a, uint32_t depth, uint32_t link) {
     return t;
 }
 
+/* A DAG of `depth` structs of reserved type 0 (2 fields), each holding
+ * the one below in both fields: 2^depth paths to the bottom. */
+static term cmp_dag(Actor *a, uint32_t depth) {
+    term t = term_from_int(1);
+    for (uint32_t d = 0; d < depth; d++) {
+        uint32_t o = heap_alloc(NULL, a, 4, NULL, 0);
+        CHECK(o != UINT32_MAX);
+        a->mem[o] = hdr_make(4, K_STRUCT);
+        a->mem[o + 1] = TYPE_PROCINFO;
+        a->mem[o + 2] = t;
+        a->mem[o + 3] = t;
+        t = term_from_ref(o);
+    }
+    return t;
+}
+
+/* Shared subvalues: a small DAG compares, one with 2^40 paths is badcode
+ * after the visit budget, at once. */
+TEST(cmp_budget) {
+    int32_t r = 99;
+    Actor *a = cmp_start(2);
+    a->mem[a->fp] = cmp_dag(a, 10); a->mem[a->fp + 1] = cmp_dag(a, 10);
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(2);
+    a->mem[a->fp] = cmp_dag(a, 40); a->mem[a->fp + 1] = cmp_dag(a, 40);
+    CHECK(strstr(cmp_run(a, 2, &r), "crashed: badcode") != NULL);
+}
+
 /* A slice (an array's value) compares element by element; a mode
  * argument is badcode. */
 TEST(cmp_elements) {

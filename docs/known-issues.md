@@ -445,8 +445,16 @@ rebuilt:
   where Go prints a struct's type and address.
 - **`==` on interfaces holding slices does not panic.** Two `any`
   values holding slices compare element by element, as arrays do; Go
-  panics there (`comparing uncomparable type`). A long `==` on deeply nested structs runs to the
-  end without preemption, like a large message copy.
+  panics there (`comparing uncomparable type`).
+- **`==` has a depth and a work limit.** `==` and `switch` on structs,
+  arrays and interface values walk both values in one VM instruction,
+  without preemption, like a large message copy. Nesting deeper than 64
+  levels (other than through a struct's last field or an array's last
+  element, which loop) ends the actor with `badcode` where Go answers;
+  so does a compare that visits more than 65536 terms, which values
+  sharing parts reach quickly (`x = N{x, x}` in a loop: the walk follows
+  paths, not objects). Each level takes about 100 bytes of the VM's
+  stack. *Workaround:* compare the fields of a deep value yourself.
 - **`println` of a slice differs from Go.** gogo prints the elements,
   `[1 2 3]`; Go's `println` prints `[len/cap]address` (only
   `fmt.Println` prints elements).
