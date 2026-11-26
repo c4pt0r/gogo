@@ -41,6 +41,11 @@ Drivers and their configuration types:
 | `"power"` | `power.Config` | 8 |
 | files | `fs.Open` (not `port.Open`) | 9 |
 | `"netif"`, `"udp"`, `"tcp"`, `"tcp_listen"` | `net.IfConfig`, `net.UDP`, `net.Dial`, `net.Listen` | 10 |
+| `"tls"` | `net.DialTLS` | 17 |
+| `"imu"` | `imu.Config` | 15 |
+| `"ir_tx"`, `"ir_rx"` | `ir.TX`, `ir.RX` | 15 |
+| `"mic"`, `"spk"` | `audio.Mic`, `audio.Speaker` | 16 |
+| ports a host program registers | `port.Host` | 18 |
 
 At most 16 ports can be open at once in the whole VM.
 
@@ -342,3 +347,86 @@ The screen is not a port yet. On the boards, everything a program prints
 (standard output in white, standard error in red) appears on the LCD as a
 scrolling text console, with Chinese characters supported. A real
 `display` port, and `uart`, `i2c` and `spi` ports, are planned.
+
+## 7.6 How ports work inside
+
+You never need this section to use ports, but it explains why they behave
+the way the earlier sections describe: why a slow actor cannot stall a
+driver, why a crash frees everything, and why every peripheral looks the
+same.
+
+```
+  owner actor                              VM (scheduler thread)                hardware / host
+ ┌──────────────────┐  port.Open(name,cfg) ┌───────────────────────────────┐
+ │                  │ ───────────────────► │ find driver by name           │
+ │  p := PID        │ ◄─────────────────── │  board drivers, host ports    │
+ │                  │      (PID, ok)       │ charge memory to the owner    │
+ │                  │                      │ port table: slot + generation │
+ │ actor.Send(p,cmd)│ ───────────────────► │ driver command                │ ──► registers,
+ │                  │                      │                               │     frames, DMA
+ │                  │                      │  ┌─────────────────────────┐  │
+ │  receive event ◄─┼── mailbox (quota) ◄──┼──│ event delivery          │◄─┼─┐
+ │  (typed struct)  │                      │  │ debounce, coalesce      │  │ │
+ └──────────────────┘                      │  └─────────────────────────┘  │ │
+                                           │      ▲                ▲       │ │
+                                           │      │ drain          │ drain │ │
+                                           │ ┌────┴──────┐  ┌──────┴─────┐ │ │
+                                           │ │ event ring│  │ source     │ │ │
+                                           │ │ (SPSC)    │  │ pending    │ │ │
+                                           │ └────▲──────┘  │ deadline   │ │ │
+                                           └──────┼─────────┴──────▲─────┴─┘ │
+                                                  │ interrupt      │ poll    │
+                                             gpio, kbd INT    net RX, IMU FIFO,
+                                                              audio DMA, TLS
+```
+
+**Opening.** `port.Open` looks the driver up by name: first the board's
+drivers, then any ports the host program registered (chapter 18). The
+memory a port needs is charged to the caller; if the caller's limit cannot
+hold the port's state plus one event, `Open` returns `ok == false` at once
+rather than opening a port whose events would all be dropped. Each VM has
+a table of 16 port slots. A port's PID is its slot number plus a
+generation, so a PID kept after its port closed never reaches a later port
+in the same slot.
+
+**Drivers.** Each kind of peripheral is a C driver with a small set of
+callbacks: open, command, close, and a few helpers for handoff and
+backpressure. A driver turns commands into hardware actions and hardware
+state into events. It never runs actors or allocates in their heaps.
+
+**Two ways in for events.** A driver that is told about hardware by an
+interrupt (a GPIO edge, the keyboard's INT line) pushes a small record
+into an *event ring* from the interrupt handler and wakes the VM; the ring
+has exactly one writer and one reader, so the handler never takes a lock
+and never calls into the VM. A driver that has to look at hardware (the
+network's received frames, the IMU's FIFO, audio DMA buffers, a TLS
+handshake step) is an *event source* with three questions the scheduler
+asks: is there work now, do the work, and when is the next time there
+might be. The scheduler never sleeps while a source has work due, and work
+that only depends on time waits for its deadline instead of spinning.
+
+**Delivery and backpressure.** Events are typed structs (`kbd.Key`,
+`imu.Gesture`, `port.Chunk`, ...) delivered to the owner's mailbox under
+its mailbox quota. When the owner falls behind, a driver drops or merges
+events and counts what it dropped (a debounced pin keeps only its latest
+level; a `Chunk` reports `Dropped`), so a slow actor costs itself data but
+never stalls the driver or other actors.
+
+**Streams.** Ports that move bytes over time share one protocol
+(`port.Out`, `port.Done`, `port.Chunk`): writes are `Out{Data}` messages,
+each answered with `Done{Seq}` when it has been sent or played; at most
+two may be in flight and a third is answered at once with `Done{-1}`;
+input arrives as `Chunk{Seq, TimeMs, Dropped, Data}`. IR, the microphone
+and the speaker use it (chapters 15 and 16). The network ports still use
+their own `net.Write` / `net.Written` / `net.Data` messages (chapter 10).
+
+**Ownership.** A port belongs to the actor that opened it until it is
+handed off (section 7.4). When the owner exits or crashes, the VM closes
+every port it owns and frees what they hold, which is why gogo programs
+need no cleanup code for hardware.
+
+**Requirements.** The compiler records which drivers a program opens by a
+constant name, and an image that needs a driver the firmware lacks is
+refused when it is loaded, not halfway through running. A library can
+mark a driver it can live without with `//gogo:optional` (chapter 12); its
+`Open` then simply fails on boards without that hardware.
