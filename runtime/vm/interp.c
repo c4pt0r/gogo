@@ -1068,13 +1068,6 @@ int interp_run(Vm *vm, Actor *a) {
                     int32_t ms;
                     CHECK(int_val(vm, a, R[rb + 2], &ms));
                     term pid = R[rb];
-                    const Actor *to = actor_lookup(vm, pid);
-                    if ((!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) &&
-                        !(!to && vm_dist_of(vm, pid))) {   /* a remote PID: sent below */
-                        R[ra] = T_NIL;
-                        R[ra + 1] = T_FALSE;
-                        break;
-                    }
                     /* Request{From: self, Ref: new ref, Body: req}. The
                      * ref is a root across the second allocation. */
                     term roots[1];
@@ -1091,7 +1084,7 @@ int interp_run(Vm *vm, Actor *a) {
                     obj[3] = roots[0];
                     obj[4] = R[rb + 1];
                     if ((r = msg_send(vm, a, pid, term_from_ref(off))) < 0) CRASH((uint32_t)-r);
-                    if (r == 1) {   /* a remote PID with no route: as a dead local one */
+                    if (r == 1) {   /* no live target (a dead local actor, a remote one with no route) */
                         R[ra] = T_NIL;
                         R[ra + 1] = T_FALSE;
                         break;
