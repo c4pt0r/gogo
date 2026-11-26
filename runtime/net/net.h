@@ -141,5 +141,9 @@ void net_uninstall(struct Vm *vm);
  * counters); <= NET_FIXED_LIMIT. */
 uint32_t net_fixed_bytes(void);
 const NetStats *net_stats(const NetState *ns);
+/* net.Subscribe slots taken, of GOGO_NET_MAX_SUBS. Only reads, so another
+ * task may call it (a snapshot); the slot of a subscriber that exited is
+ * counted until the stack next looks at it (a report or a Subscribe). */
+uint32_t net_subs_used(const NetState *ns);
 
 #endif

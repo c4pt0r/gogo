@@ -91,7 +91,9 @@ rebuilt:
   the table is full, the VM first collects the holders; if that frees
   nothing, the allocation fails (`OutOfMemory`) and ports that need a
   handle refuse (a stream `Out` gets `Done{-1}`). *Workaround:*
-  do not keep many large frozen `Bytes` alive in one program.
+  do not keep many large frozen `Bytes` alive in one program; on a
+  board, `gogo config stats` shows the table's use (`bytes=N/64`, with
+  `ports=N/16` and `subs=N/4` for the port and `net.Subscribe` tables).
 - **Host and board memory limits differ by 16x.** An actor spawned
   without `SpawnOpt` may use 256 KB on the host and 16 KB on a board, so
   a program that passes under `gogo run` can die with `oom` on the board.

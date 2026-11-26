@@ -17,6 +17,13 @@ typedef char net_tcp_pcb_fits[sizeof(TcpPcb) <= 64u ? 1 : -1];
 uint32_t net_fixed_bytes(void) { return (uint32_t)sizeof(NetState); }
 const NetStats *net_stats(const NetState *ns) { return &ns->st; }
 
+uint32_t net_subs_used(const NetState *ns) {
+    const volatile term *subs = ns->subs;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < GOGO_NET_MAX_SUBS; i++) n += subs[i] != 0;
+    return n;
+}
+
 /* ---- message blocks ---- */
 
 term net_put_int(uint32_t *d, uint32_t *at, int32_t v) {

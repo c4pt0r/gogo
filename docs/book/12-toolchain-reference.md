@@ -382,8 +382,12 @@ gogo config [-port P] stats
 Edits the configuration store on the board or in the local file. See
 chapter 11 for how the store is chosen, the key rules and the keys gogo
 uses. `scan` lists the 2.4 GHz networks the board sees; `stats` prints the
-board's network counters and free memory (on a firmware built without
-`net`, only the memory figures). Both need a board.
+board's network counters, free memory and how full the VM's fixed tables
+are, as used/capacity: `bytes=N/64` (off-heap `bytes.Bytes` handles),
+`ports=N/16` (open ports) and `subs=N/4` (`net.Subscribe` slots). When a
+port open fails or a tcp write gets `Done{-1}`, these show whether a
+table is full. A firmware built without `net` prints no network counters
+and no `subs`. Both need a board.
 
 ## gogo setup
 

@@ -10,7 +10,7 @@
  *     \x02gogo-config rm <key>\n
  *     \x02gogo-config list\n
  *     \x02gogo-config scan\n                 (nearby Wi-Fi networks)
- *     \x02gogo-config stats\n                (the net stack's counters)
+ *     \x02gogo-config stats\n                (net counters, memory, fixed tables in use)
  *
  * with zero or more `\x02kv <text>\n` lines and then one `\x02ok[ <text>]\n`
  * or `\x02err <reason>\n`. Input outside a frame is ignored (the console has
@@ -20,6 +20,7 @@
  * wifi.* key makes the station reconnect with the new settings. */
 #include "sdkconfig.h"
 #include "host.h"
+#include "config.h"
 #include "platform_esp.h"
 #if CONFIG_GOGO_TLS
 #include "tls.h"
@@ -248,6 +249,17 @@ static void cmd_stats(void) {
     reply("kv", line, (size_t)n);
     n = snprintf(line, sizeof line, "arena_used=%u", (unsigned)platform_esp_arena_used());
     reply("kv", line, (size_t)n);
+    /* The fixed tables a program can run out of: used/capacity. */
+    uint32_t bytes_used, ports_used;
+    main_esp_usage(&bytes_used, &ports_used);
+    n = snprintf(line, sizeof line, "bytes=%u/%u", (unsigned)bytes_used, (unsigned)GOGO_BYTES_HANDLES);
+    reply("kv", line, (size_t)n);
+    n = snprintf(line, sizeof line, "ports=%u/%u", (unsigned)ports_used, (unsigned)GOGO_MAX_PORTS);
+    reply("kv", line, (size_t)n);
+#if CONFIG_GOGO_NET
+    n = snprintf(line, sizeof line, "subs=%u/%u", (unsigned)net_subs_used(&esp_net_state), (unsigned)GOGO_NET_MAX_SUBS);
+    reply("kv", line, (size_t)n);
+#endif
 #if CONFIG_SPIRAM
     /* PSRAM (StickS3): free now, lowest since boot. */
     n = snprintf(line, sizeof line, "psram_free=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
