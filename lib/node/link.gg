@@ -372,6 +372,12 @@ func pump(e ends, conn, np actor.PID, rest []byte, peerName string, peerID, self
 			port.Close(np)
 			port.Close(conn)
 			return
+		case actor.DownMsg:
+			if m.From == e.Agent { // the node's agent died: the node is gone
+				port.Close(np)
+				port.Close(conn)
+				return
+			}
 		}
 	}
 }

@@ -2684,7 +2684,12 @@ also id assignment. The door (`NodeLink.Agent`, a node's zero PID)
 answers peers' `whereisReq` Calls only, asking the agent. Node news comes
 from the links (`NodeEvent`, made in C), never from peers' messages. A
 link actor per connection runs the handshake, then pumps.
-`actor.Register` names are never visible remotely.
+`actor.Register` names are never visible remotely. The link actors and
+the listener monitor the agent (a monitor is charged to its watcher, so
+the agent pays nothing per board for it): if the agent dies they end,
+their ports close, and when a VM's last node port closes
+the driver forgets its exports, door and id, so the next `Listen` or
+`Connect` (a new agent) starts a fresh node.
 
 **Handshake and security.** A shared token (config `node.token`, or
 `Options.Token`; none: no Listen or Connect). The server sends a 16-byte

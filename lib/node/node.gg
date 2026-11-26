@@ -383,8 +383,13 @@ func without(ps []peer, i int) []peer {
 func doorRun(agentPID actor.PID) {
 	var zero actor.PID
 	actor.TrapExit(true) // a link signal must not end it
+	actor.Monitor(agentPID)
 	for {
 		switch m := actor.Receive().(type) {
+		case actor.DownMsg:
+			if m.From == agentPID { // the node is gone: a new one has its own door
+				return
+			}
 		case actor.Request:
 			switch r := m.Body.(type) {
 			case whereisReq:
@@ -406,6 +411,11 @@ func doorRun(agentPID actor.PID) {
 func agentRun() {
 	var zero actor.PID
 	self := actor.Self()
+	// The link actors and the listener monitor the agent (a monitor is
+	// charged to its watcher; a link would charge the agent a reserved
+	// exit note per board): if it dies they end, their ports close, and
+	// the node is gone (remote PIDs report NoConnection); the next Listen
+	// or Connect starts a new agent.
 	door := actor.Spawn(func() { doorRun(self) })
 	doorRef := actor.Monitor(door)
 	name := ""
@@ -652,6 +662,7 @@ type ends struct {
 // to the agent.
 func startDial(e ends, ip, p int, token, name string, ms int) {
 	actor.SpawnOpt(func() {
+		actor.Monitor(e.Agent) // it ends with the agent (pump; its ports close)
 		conn, err := port.Open("tcp", net.Dial{IP: ip, Port: p, TimeoutMs: ms})
 		if err != nil {
 			actor.Send(e.Agent, linkFail{Err: codeOf(err)})
@@ -693,6 +704,7 @@ func startListener(e ends, p int, token, name string, ms int) errors.Code {
 		return codeOf(err)
 	}
 	l := actor.Spawn(func() {
+		actor.Monitor(e.Agent) // it ends with the agent, its port closing
 		me := actor.Self()
 		var shaking []actor.PID // the link actors in their handshake
 		var refs []actor.Ref    // and the listener's monitors on them
@@ -705,6 +717,7 @@ func startListener(e ends, p int, token, name string, ms int) errors.Code {
 					break
 				}
 				w := actor.SpawnOpt(func() {
+					actor.Monitor(e.Agent) // it ends with the agent (pump), its ports closing
 					serverLink(e, me, conn, token, name, ms)
 				}, actor.Options{MaxMemory: linkMemory})
 				if !port.Handoff(conn, w) {
@@ -717,8 +730,11 @@ func startListener(e ends, p int, token, name string, ms int) errors.Code {
 			case hsDone: // a handshake ended: it no longer counts
 				var zr actor.Ref
 				shaking, refs = forget(shaking, refs, m.Link, zr)
-			case actor.DownMsg: // a link actor ended during its handshake
-				var zw actor.PID
+			case actor.DownMsg:
+				if m.From == e.Agent { // the node is gone: so is its listener (and port)
+					return
+				}
+				var zw actor.PID // a link actor ended during its handshake
 				shaking, refs = forget(shaking, refs, zw, m.Ref)
 			}
 		}

@@ -278,3 +278,33 @@ func TestNoNetwork(t *testing.T) {
 		n.finish("listen true\nconnect true\n")
 	}
 }
+
+// Killing a board's node agent ends the node: remote monitors fire with
+// NoConnection, the server sees the board go, and Connect starts a new
+// node that works.
+func TestNodeRestartable(t *testing.T) {
+	srv, port := startServer(t)
+	b := start(t, "restart", fmt.Sprintf("test.server=127.0.0.1:%d", port))
+	for _, l := range []string{"connect true", "whereis true", "down true true true", "self after true",
+		"connect again true", "whereis again true", "call true hi"} {
+		b.waitLine(l)
+	}
+	srv.waitLine("down phoenix")
+	noCrash(t, srv)
+}
+
+// A server whose agent dies can Listen again, and boards join it.
+func TestServerRestartable(t *testing.T) {
+	port := freePort(t)
+	srv := start(t, "relisten", fmt.Sprintf("test.port=%d", port))
+	srv.waitLine("listen true")
+	srv.waitLine("listen again true")
+	srv.waitLine("listening")
+	p, err := dial(t, port, "after", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.whereis("echo") == 0 {
+		t.Error("echo not found")
+	}
+}

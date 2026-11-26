@@ -188,6 +188,15 @@ for {
 }
 ```
 
+**If the node itself dies.** `gogo/node` runs the node in one actor, its
+agent (registered locally as `node`). If it dies for any reason (a bug,
+`actor.Kill`), the node ends as if every link were lost: the links and
+the listener end with it, monitors and links of remote PIDs fire with
+`NoConnection`, other nodes see this one go, and the VM is no node any
+more (`node.Self()` is `""`; PIDs it gave out reach nothing). gogo/node
+does not restart it: call `Listen` or `Connect` again, from your own
+supervisor as for any other failure, and a fresh node starts.
+
 ## 20.6 Delivery
 
 - **At most once.** A message is never duplicated. It may be lost: when

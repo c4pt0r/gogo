@@ -1700,13 +1700,23 @@ static void n_close(Vm *vm, Port *p) {
             }
         }
     }
+    bool any = false;
     for (uint32_t i = 0; i < ds->nlinks; i++) {
         Link *k = ds->links[i];
         if (!k || !k->port) continue;
+        any = true;
         uint8_t b[2u + HDR + 2u];
         wr16(wr16(wr16(wr16(b + 2, F_NODEDOWN), k->peer), ds->self), peer);
         wr16(b, HDR + 2u);
         emit(vm, ds, k, b, sizeof b);
+    }
+    if (!any) {
+        /* No link left: this VM is no node any more (its agent may have
+         * died). The next node it becomes starts afresh: no PID given out
+         * before stays reachable, and it may get a new id. */
+        memset(ds->exports, 0, ds->nexp * sizeof *ds->exports);
+        ds->agent = 0;
+        ds->self = 0;
     }
 }
 
