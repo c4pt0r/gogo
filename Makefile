@@ -100,6 +100,11 @@ test-book: vm gogo-cmd
 # mdBook (docs/book/book.toml, SUMMARY.md, theme/) in $(BUILD)/site/book.
 # mdBook copies every non-markdown file of docs/book; the example programs
 # and book.toml are removed again (the book links examples/ on GitHub).
+# The brand marks come from logos/: the mascot for the landing page, the
+# Gogo Lang lockup for the book's sidebar (theme/gogo.css); the favicon is
+# the book's (docs/book/theme/favicon.*), shared by the landing page.
+SITE_LOGOS = logos/gogo-octopus-color.svg logos/gogo-octopus-white.svg
+BOOK_LOGOS = logos/gogo-lang-color.svg logos/gogo-lang-white.svg
 MDBOOK ?= mdbook
 SITE = $(BUILD)/site
 MDBOOK_HINT = install mdBook 0.5: brew install mdbook, or a release binary from https://github.com/rust-lang/mdBook/releases
@@ -109,6 +114,10 @@ site:
 	$(MDBOOK) build docs/book -d $(CURDIR)/$(SITE)/book
 	rm -rf $(SITE)/book/examples $(SITE)/book/book.toml
 	cp site/index.html $(SITE)/index.html
+	mkdir -p $(SITE)/logos $(SITE)/book/logos
+	cp $(SITE_LOGOS) $(SITE)/logos/
+	cp $(BOOK_LOGOS) $(SITE)/book/logos/
+	cp docs/book/theme/favicon.svg docs/book/theme/favicon.png $(SITE)/
 	@echo "site: open $(SITE)/index.html"
 
 # make site, then every relative link and #anchor of the site resolves and
