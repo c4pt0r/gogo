@@ -54,7 +54,7 @@ enum Op {
     OP_MKCLOSURE = 22,  /*! a=dst b=captures c=ncaptures ext=func | ra = closure func ext{rb .. rb+c-1} | Allocate a closure of function ext capturing registers rb .. rb+c-1. */
     OP_TYPEIS    = 23,  /*! a=dst b=value ext=type | ra = (dynamic type of rb == ext) | Type test: ext is a TY_* id or a struct type id. */
     OP_BUILTIN   = 24,  /*! a=dst b=args c=nargs ext=builtin | ra = builtin ext(rb .. rb+c-1) | Call a builtin (B_*). Two-result builtins also write ra+1. */
-    OP_CONV      = 25,  /*! a=dst b=src c=mode | ra = conv_c(rb) | Integer conversion: c=0 int(rb) (low 32 bits); c=1 int64(rb); c=2 byte(rb) = rb & 0xFF (rb an int or int64). */
+    OP_CONV      = 25,  /*! a=dst b=src c=mode | ra = conv_c(rb) | Integer conversion: c=0 int(rb) of an int64 (low 32 bits); c=1 int64(rb) of an int (sign-extended); c=2 uint8(rb), c=3 uint16(rb), c=4 int8(rb), c=5 int16(rb) of an int or int64: the low 8 or 16 bits, zero- or sign-extended (15.3 for c=3..6); c=6 int64(uint32(rb)) of an int (zero-extended). */
     /* int64 ops. Operands are int64 values in either representation: a
      * small-int immediate or a K_INT64 box (heap or const area); results
      * are immediates when they fit in 31 bits, else boxed. The generic
@@ -104,7 +104,17 @@ enum Op {
     OP_NEF       = 58,  /*! a=dst b=lhs c=rhs | ra = rb != rc | float inequality (true if either is NaN). */
     OP_LTF       = 59,  /*! a=dst b=lhs c=rhs | ra = rb < rc | float less-than (false if either is NaN). */
     OP_LEF       = 60,  /*! a=dst b=lhs c=rhs | ra = rb <= rc | float less-or-equal (false if either is NaN). */
-    OP_CONVF     = 61   /*! a=dst b=src c=mode | ra = conv_c(rb) | Float conversion: c=0 float64(rb), c=1 float32(rb) of an int or int64; c=2 int(rb), c=3 int64(rb) of a float, truncated toward zero, NaN giving 0 and out of range the nearest end; c=4 float64(rb), c=5 float32(rb) of a float (rounded to nearest even). */
+    OP_CONVF     = 61,  /*! a=dst b=src c=mode | ra = conv_c(rb) | Float conversion: c=0 float64(rb), c=1 float32(rb) of an int or int64; c=2 int(rb), c=3 int64(rb) of a float, truncated toward zero, NaN giving 0 and out of range the nearest end; c=4 float64(rb), c=5 float32(rb) of a float (rounded to nearest even). */
+    /* Unsigned 64-bit ops (15.3). A uint64 is an int64 holding its bits,
+     * so + - * & OR ^ &^ <<, negation and equality are the int64 ops; these
+     * are the ones that differ. A uint32 (and uint) is an int holding its
+     * bits: the compiler widens it with CONV c=6 and uses the int64 ops
+     * (signed or not, they agree on 0 .. 2^32-1). */
+    OP_DIVU64    = 62,  /*! a=dst b=lhs c=rhs | ra = rb / rc | uint64 division; a zero divisor crashes with R_DIV_ZERO. */
+    OP_REMU64    = 63,  /*! a=dst b=lhs c=rhs | ra = rb % rc | uint64 remainder; a zero divisor crashes with R_DIV_ZERO. */
+    OP_LTU64     = 64,  /*! a=dst b=lhs c=rhs | ra = rb < rc | uint64 less-than. */
+    OP_LEU64     = 65,  /*! a=dst b=lhs c=rhs | ra = rb <= rc | uint64 less-or-equal. */
+    OP_SHRU64    = 66   /*! a=dst b=value c=count | ra = rb >> rc | uint64 logical right shift (count as SHR: a count >= 64 gives 0). */
 };
 
 enum Builtin {
@@ -167,7 +177,8 @@ enum Builtin {
     B_UNIX_TIME       = 51,  /*! -> int64 | sys.Time: Unix milliseconds, vm_unix_time_ms (0: unknown). */
     B_SET_UNIX_TIME   = 52,  /*! ms int64 -> bool | sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor). */
     B_RANDOM          = 53,  /*! -> int | sys.Random: an int in [0, 2^30), vm_random. */
-    B_FLOAT           = 54   /*! op int, args... -> result(s) | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). */
+    B_FLOAT           = 54,  /*! op int, args... -> result(s) | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). */
+    B_PRINTLNU        = 55   /*! mask, values... -> nil | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */

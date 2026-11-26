@@ -29,7 +29,7 @@ const (
 	OpMkclosure uint8 = 22
 	OpTypeis    uint8 = 23
 	OpBuiltin   uint8 = 24
-	OpConv      uint8 = 25 // c=0: int(rb), c=1: int64(rb), c=2: byte(rb) = rb & 0xFF
+	OpConv      uint8 = 25 // c: see ConvInt ..
 
 	// int64 ops: operands are immediates or K_INT64 boxes; the generic
 	// ADD..LE / NEG are int-only.
@@ -74,13 +74,26 @@ const (
 	OpLtf   uint8 = 59
 	OpLef   uint8 = 60
 	OpConvf uint8 = 61 // c: see ConvF64Int ..
+
+	// Unsigned 64-bit ops (15.3: sizedMinor): a uint64 is an int64
+	// holding its bits; a uint32 is widened (ConvUint64) to use the int64
+	// ops.
+	OpDivu64 uint8 = 62
+	OpRemu64 uint8 = 63
+	OpLtu64  uint8 = 64
+	OpLeu64  uint8 = 65
+	OpShru64 uint8 = 66 // logical
 )
 
 // OP_CONV c operands.
 const (
-	ConvInt   uint8 = 0
-	ConvInt64 uint8 = 1
-	ConvByte  uint8 = 2
+	ConvInt    uint8 = 0 // int of an int64: the low 32 bits
+	ConvInt64  uint8 = 1 // int64 of an int, sign-extended
+	ConvByte   uint8 = 2 // uint8 of an int or int64: the low 8 bits
+	ConvUint16 uint8 = 3 // (15.3) uint16: the low 16 bits
+	ConvInt8   uint8 = 4 // (15.3) int8: the low 8 bits, sign-extended
+	ConvInt16  uint8 = 5 // (15.3) int16: the low 16 bits, sign-extended
+	ConvUint64 uint8 = 6 // (15.3) int64 of a uint32 (an int), zero-extended
 )
 
 // OP_CONVF c operands.
@@ -157,6 +170,7 @@ const (
 	BSetUnixTime  uint32 = 52 // ms int64 -> bool: sys.SetTime (platform_set_unix_time_ms)
 	BRandom       uint32 = 53 // -> int in [0, 2^30): sys.Random (platform_random)
 	BFloat        uint32 = 54 // op int, args... -> result(s): gogo/math, strconv floats (runtime/floatlib)
+	BPrintlnu     uint32 = 55 // (15.3) mask, values... -> nil: println, bit i marks value i a uint64
 )
 
 // Off-heap Bytes limits: twins of runtime/vm/config.h's defaults (checked by
@@ -327,7 +341,8 @@ var opNames = [...]string{"NOP", "MOVE", "LOADK", "LOADI32", "ADD", "SUB", "MUL"
 	"CONV", "ADD64", "SUB64", "MUL64", "DIV64", "REM64", "NEG64", "EQ64", "NE64",
 	"LT64", "LE64", "BOX64", "CLEAR", "RETN", "CALLV",
 	"AND", "OR", "XOR", "ANDNOT", "SHL", "SHR", "AND64", "OR64", "XOR64", "ANDNOT64",
-	"SHL64", "SHR64", "ADDF", "SUBF", "MULF", "DIVF", "NEGF", "EQF", "NEF", "LTF", "LEF", "CONVF"}
+	"SHL64", "SHR64", "ADDF", "SUBF", "MULF", "DIVF", "NEGF", "EQF", "NEF", "LTF", "LEF", "CONVF",
+	"DIVU64", "REMU64", "LTU64", "LEU64", "SHRU64"}
 
 var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "MEMORY",
 	"SPAWN_LINK", "SPAWN_OPT", "LINK", "UNLINK", "TRAP_EXIT", "EXIT", "KILL",
@@ -336,7 +351,7 @@ var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "M
 	"UNREGISTER", "PORT_OPEN", "PORT_CLOSE", "STR_CONCAT", "LEN", "INDEX", "SETINDEX",
 	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
 	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
-	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE", "UNIX_TIME", "SET_UNIX_TIME", "RANDOM", "FLOAT"}
+	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE", "UNIX_TIME", "SET_UNIX_TIME", "RANDOM", "FLOAT", "PRINTLNU"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -361,6 +376,8 @@ var goConstants = map[string]uint32{
 	"OpAddf": uint32(OpAddf), "OpSubf": uint32(OpSubf), "OpMulf": uint32(OpMulf), "OpDivf": uint32(OpDivf),
 	"OpNegf": uint32(OpNegf), "OpEqf": uint32(OpEqf), "OpNef": uint32(OpNef), "OpLtf": uint32(OpLtf),
 	"OpLef": uint32(OpLef), "OpConvf": uint32(OpConvf),
+	"OpDivu64": uint32(OpDivu64), "OpRemu64": uint32(OpRemu64),
+	"OpLtu64": uint32(OpLtu64), "OpLeu64": uint32(OpLeu64), "OpShru64": uint32(OpShru64),
 	"BPrintln": BPrintln, "BSpawn": BSpawn, "BSelf": BSelf, "BSend": BSend,
 	"BReceive": BReceive, "BMemory": BMemory,
 	"BSpawnLink": BSpawnLink, "BSpawnOpt": BSpawnOpt, "BLink": BLink,
@@ -376,7 +393,7 @@ var goConstants = map[string]uint32{
 	"BBytesliceFrom": BBytesliceFrom, "BBufNew": BBufNew, "BBufWrite": BBufWrite,
 	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
 	"BBytesCopyto": BBytesCopyto, "BPortHandoff": BPortHandoff, "BNetSubscribe": BNetSubscribe,
-	"BConfigGet": BConfigGet, "BFs": BFs, "BCode": BCode, "BUnixTime": BUnixTime, "BSetUnixTime": BSetUnixTime, "BRandom": BRandom, "BFloat": BFloat,
+	"BConfigGet": BConfigGet, "BFs": BFs, "BCode": BCode, "BUnixTime": BUnixTime, "BSetUnixTime": BSetUnixTime, "BRandom": BRandom, "BFloat": BFloat, "BPrintlnu": BPrintlnu,
 	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes, "TyFloat32": TyFloat32, "TyFloat64": TyFloat64,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,

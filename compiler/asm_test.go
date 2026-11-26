@@ -67,7 +67,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpConvf)+1 || len(builtinNames) != int(BFloat)+1 {
+	if len(opNames) != int(OpShru64)+1 || len(builtinNames) != int(BPrintlnu)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -247,8 +247,8 @@ func TestTermsMatchC(t *testing.T) {
 			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
 		}
 	}
-	if imageMajor != 15 || imageMinor != floatMinor {
-		t.Errorf("image format %d.%d, want 15.%d (floating point is the newest minor)", imageMajor, imageMinor, floatMinor)
+	if newest := max(floatMinor, sizedMinor); imageMajor != 15 || imageMinor != newest {
+		t.Errorf("image format %d.%d, want 15.%d (the newest of floatMinor and sizedMinor)", imageMajor, imageMinor, newest)
 	}
 }
 

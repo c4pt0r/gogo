@@ -678,7 +678,7 @@ TEST(conv_to_byte) {
     CHECK(!a && strstr(err_buf, "crashed: badcode") != NULL);
     va_reset(&vm);
     build_int64_op(w, OP_CONV, 0, 0, 5);
-    r = run_conv(w, &img, &vm, &a, 0, 3);
+    r = run_conv(w, &img, &vm, &a, 0, 7);
     CHECK(!a && strstr(err_buf, "crashed: badcode") != NULL);
     CHECK_EQ(vm.live, 0);
 }
@@ -758,10 +758,11 @@ TEST(callv_nil_or_wrong_arity_is_badcode) {
 enum { BI32 = 0, B64 = 1, BSTR = 2 };
 typedef struct { int64_t v; int kind; } BOp;
 
-/* main (0 params, 3 regs): load x, load y, <op> r2, r0, r1; RECEIVE. Same
- * layout as build_int64_op. Returns the crash text ("" if none); the result
- * of a K_INT/K_INT64 box or immediate lands in *val, its term in *out. */
-static const char *run_bit(uint32_t op, BOp x, BOp y, term *out, int64_t *val) {
+/* main (0 params, 3 regs): load x, load y, insn (normally <op> r2, r0, r1);
+ * RECEIVE. Same layout as build_int64_op. Returns the crash text ("" if
+ * none); the result of a K_INT/K_INT64 box or immediate lands in *val, its
+ * term in *out. */
+static const char *run_insn(uint32_t insn, BOp x, BOp y, term *out, int64_t *val) {
     static uint32_t w[I64_WORDS]; static Image img; static Vm vm;
     va_reset(&vm);
     memset(w, 0, sizeof w);
@@ -780,7 +781,7 @@ static const char *run_bit(uint32_t op, BOp x, BOp y, term *out, int64_t *val) {
             w[21 + 2 * i] = term_from_const(o[i]->kind == BSTR ? 0 : (i ? 6 : 3));
         }
     }
-    w[24] = OP_MAKE(op, 2, 0, 1);
+    w[24] = insn;
     w[25] = OP_MAKE(OP_BUILTIN, 0, 0, 0);
     w[26] = B_RECEIVE;
     CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
@@ -806,6 +807,10 @@ static const char *run_bit(uint32_t op, BOp x, BOp y, term *out, int64_t *val) {
     }
     actor_free(&vm, a);
     return err_buf;
+}
+
+static const char *run_bit(uint32_t op, BOp x, BOp y, term *out, int64_t *val) {
+    return run_insn(OP_MAKE(op, 2, 0, 1), x, y, out, val);
 }
 
 #define I(n)  ((BOp){ (n), BI32 })
@@ -922,4 +927,74 @@ static const char *run_appended(uint32_t ty) {
 TEST(getfield_past_reserved_fields_reads_zero) {
     CHECK_EQ(run_appended(TYPE_OPTIONS)[0], 0);                               /* no crash: read 0 */
     CHECK(strstr(run_appended(TYPE_OWN_BASE), "crashed: badcode") != NULL);   /* own type: no default */
+}
+
+/* ---- sized integers (15.3) ---- */
+
+#define CMPOK(op, x, y, want) do { \
+        term t_; int64_t v_; \
+        CHECK_EQ(run_bit((op), (x), (y), &t_, &v_)[0], 0); \
+        CHECK(t_ == term_from_bool(want)); } while (0)
+#define CONVOK(c, x, want) do { \
+        term t_; int64_t v_; \
+        CHECK_EQ(run_insn(OP_MAKE(OP_CONV, 2, 0, (c)), (x), I(0), &t_, &v_)[0], 0); \
+        CHECK(v_ == (int64_t)(want)); } while (0)
+
+/* A uint64 is an int64 holding its bits, in either representation; a
+ * uint32 is compiled as one widened (CONV c=6). */
+TEST(unsigned_ops_int64) {
+    term t; int64_t v;
+    const int64_t min = INT64_MIN;
+    BITOK(OP_DIVU64, I(-1), I(2), INT64_MAX);
+    BITOK(OP_DIVU64, L(min), L(1LL << 40), 1LL << 23);
+    BITOK(OP_DIVU64, I(-1), I(-1), 1);
+    BITOK(OP_DIVU64, I(100), L(1LL << 40), 0);
+    BITOK(OP_REMU64, I(-1), I(10), 5);                      /* 18446744073709551615 % 10 */
+    BITOK(OP_REMU64, L(min), I(-1), min);
+    BITOK(OP_SHRU64, I(-1), I(60), 0xF);
+    BITOK(OP_SHRU64, L(min), I(63), 1);
+    BITOK(OP_SHRU64, I(-1), I(64), 0);
+    BITOK(OP_SHRU64, I(-1), L(1LL << 40), 0);
+    BITOK(OP_SHRU64, I(-1), I(33), 0x7FFFFFFF);
+    CHECK_EQ(run_bit(OP_SHRU64, I(-1), I(1), &t, &v)[0], 0);
+    CHECK(term_is_ref(t) && v == INT64_MAX);                /* boxed */
+    CMPOK(OP_LTU64, I(1), I(-1), true);
+    CMPOK(OP_LTU64, L(INT64_MAX), L(min), true);
+    CMPOK(OP_LTU64, L(min), I(0), false);
+    CMPOK(OP_LEU64, L(1LL << 40), L(1LL << 40), true);
+    CMPOK(OP_LEU64, I(-1), L(1LL << 40), false);
+    CHECK(strstr(run_bit(OP_DIVU64, I(1), I(0), &t, &v), "crashed: divzero") != NULL);
+    CHECK(strstr(run_bit(OP_REMU64, L(1LL << 40), I(0), &t, &v), "crashed: divzero") != NULL);
+    CHECK(strstr(run_bit(OP_SHRU64, I(1), L(min), &t, &v), "crashed: badshift") != NULL);
+    CHECK(strstr(run_bit(OP_LEU64, (BOp){0, BSTR}, I(1), &t, &v), "crashed: badcode") != NULL);
+    CHECK(strstr(run_bit(OP_DIVU64, I(-1), (BOp){0, BSTR}, &t, &v), "crashed: badcode") != NULL);
+    CHECK(strstr(run_bit(OP_SHRU64 + 1u, I(1), I(1), &t, &v), "crashed: badcode") != NULL);   /* no such op */
+}
+
+/* CONV c=3..5: uint16, int8, int16 of an int or int64; c=6 int64 of a
+ * uint32, zero-extended (boxed when beyond 31 bits). */
+TEST(conv_sized) {
+    term t; int64_t v;
+    CONVOK(3, I(0x12345), 0x2345);
+    CONVOK(3, I(-1), 0xFFFF);
+    CONVOK(3, L((1LL << 40) | 0x8001), 0x8001);
+    CONVOK(4, I(0x7F), 127);
+    CONVOK(4, I(0x80), -128);
+    CONVOK(4, I(-129), 127);
+    CONVOK(4, L((1LL << 40) | 0xFF), -1);
+    CONVOK(5, I(0x8000), -32768);
+    CONVOK(5, I(0x17FFF), 32767);
+    CONVOK(5, I(INT32_MIN), 0);
+    CONVOK(2, I(-1), 255);
+    CONVOK(6, I(5), 5);
+    CONVOK(6, I(-1), 0xFFFFFFFFLL);
+    CONVOK(6, I(INT32_MIN), 0x80000000LL);
+    CONVOK(6, I(0x40000000), 0x40000000LL);
+    CHECK_EQ(run_insn(OP_MAKE(OP_CONV, 2, 0, 6), I(-1), I(0), &t, &v)[0], 0);
+    CHECK(term_is_ref(t) && v == 0xFFFFFFFFLL);              /* a K_INT64, not a K_INT */
+    CHECK_EQ(run_insn(OP_MAKE(OP_CONV, 2, 0, 4), I(-1), I(0), &t, &v)[0], 0);
+    CHECK(term_is_int(t));
+    CHECK(strstr(run_insn(OP_MAKE(OP_CONV, 2, 0, 6), L(1LL << 40), I(0), &t, &v), "crashed: badcode") != NULL);
+    CHECK(strstr(run_insn(OP_MAKE(OP_CONV, 2, 0, 7), I(1), I(0), &t, &v), "crashed: badcode") != NULL);
+    CHECK(strstr(run_insn(OP_MAKE(OP_CONV, 2, 0, 3), (BOp){0, BSTR}, I(0), &t, &v), "crashed: badcode") != NULL);
 }

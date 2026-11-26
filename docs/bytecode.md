@@ -7,13 +7,13 @@ This is the per-opcode reference for the gogo VM, generated from the single sour
 `runtime/vm/opcodes.h` (the Go compiler parses the same file, `compiler/opcodes.go` mirrors it and
 `TestOpcodesMatchC` keeps the two equal). The design behind it is in [design.md](design.md) §5.6
 (bytecode, image layout, versioning) and §5.5 (value representation); `gogo dis file.ggb` prints a
-program's bytecode. Image format 15.2.
+program's bytecode. Image format 15.3.
 
 ## Contents
 
 - [Instruction encoding](#instruction-encoding)
-- [Opcodes](#opcodes) (62)
-- [Builtins](#builtins) (55)
+- [Opcodes](#opcodes) (67)
+- [Builtins](#builtins) (56)
 - [Type ids and reserved types](#type-ids-and-reserved-types)
 - [Exit reasons](#exit-reasons)
 - [Image file layout](#image-file-layout)
@@ -57,7 +57,7 @@ ids and jump targets (absolute code word indexes) are checked when used, and an 
 | 22 | `OP_MKCLOSURE` | `a=dst b=captures c=ncaptures ext=func` | +ext | `ra = closure func ext{rb .. rb+c-1}` | Allocate a closure of function ext capturing registers rb .. rb+c-1. |
 | 23 | `OP_TYPEIS` | `a=dst b=value ext=type` | +ext | `ra = (dynamic type of rb == ext)` | Type test: ext is a TY_* id or a struct type id. |
 | 24 | `OP_BUILTIN` | `a=dst b=args c=nargs ext=builtin` | +ext | `ra = builtin ext(rb .. rb+c-1)` | Call a builtin (B_*). Two-result builtins also write ra+1. |
-| 25 | `OP_CONV` | `a=dst b=src c=mode` |  | `ra = conv_c(rb)` | Integer conversion: c=0 int(rb) (low 32 bits); c=1 int64(rb); c=2 byte(rb) = rb & 0xFF (rb an int or int64). |
+| 25 | `OP_CONV` | `a=dst b=src c=mode` |  | `ra = conv_c(rb)` | Integer conversion: c=0 int(rb) of an int64 (low 32 bits); c=1 int64(rb) of an int (sign-extended); c=2 uint8(rb), c=3 uint16(rb), c=4 int8(rb), c=5 int16(rb) of an int or int64: the low 8 or 16 bits, zero- or sign-extended (15.3 for c=3..6); c=6 int64(uint32(rb)) of an int (zero-extended). |
 | 26 | `OP_ADD64` | `a=dst b=lhs c=rhs` |  | `ra = rb + rc` | int64 addition. |
 | 27 | `OP_SUB64` | `a=dst b=lhs c=rhs` |  | `ra = rb - rc` | int64 subtraction. |
 | 28 | `OP_MUL64` | `a=dst b=lhs c=rhs` |  | `ra = rb * rc` | int64 multiplication. |
@@ -94,6 +94,11 @@ ids and jump targets (absolute code word indexes) are checked when used, and an 
 | 59 | `OP_LTF` | `a=dst b=lhs c=rhs` |  | `ra = rb < rc` | float less-than (false if either is NaN). |
 | 60 | `OP_LEF` | `a=dst b=lhs c=rhs` |  | `ra = rb <= rc` | float less-or-equal (false if either is NaN). |
 | 61 | `OP_CONVF` | `a=dst b=src c=mode` |  | `ra = conv_c(rb)` | Float conversion: c=0 float64(rb), c=1 float32(rb) of an int or int64; c=2 int(rb), c=3 int64(rb) of a float, truncated toward zero, NaN giving 0 and out of range the nearest end; c=4 float64(rb), c=5 float32(rb) of a float (rounded to nearest even). |
+| 62 | `OP_DIVU64` | `a=dst b=lhs c=rhs` |  | `ra = rb / rc` | uint64 division; a zero divisor crashes with R_DIV_ZERO. |
+| 63 | `OP_REMU64` | `a=dst b=lhs c=rhs` |  | `ra = rb % rc` | uint64 remainder; a zero divisor crashes with R_DIV_ZERO. |
+| 64 | `OP_LTU64` | `a=dst b=lhs c=rhs` |  | `ra = rb < rc` | uint64 less-than. |
+| 65 | `OP_LEU64` | `a=dst b=lhs c=rhs` |  | `ra = rb <= rc` | uint64 less-or-equal. |
+| 66 | `OP_SHRU64` | `a=dst b=value c=count` |  | `ra = rb >> rc` | uint64 logical right shift (count as SHR: a count >= 64 gives 0). |
 
 ## Builtins
 
@@ -157,6 +162,7 @@ the registers `rb ..`; a builtin with two results writes `ra` and `ra+1`.
 | 52 | `B_SET_UNIX_TIME` | `ms int64` | `bool` | sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor). |
 | 53 | `B_RANDOM` | - | `int` | sys.Random: an int in [0, 2^30), vm_random. |
 | 54 | `B_FLOAT` | `op int, args...` | `result(s)` | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). |
+| 55 | `B_PRINTLNU` | `mask, values...` | `nil` | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. |
 
 ## Type ids and reserved types
 

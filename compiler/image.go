@@ -21,7 +21,11 @@ const (
 	// and resets imageMinor and the tables (single-number versions 1 to
 	// 14 came before: see runtime/vm/image.h).
 	imageMajor = 15
-	imageMinor = 2
+	// imageMinor is the newest feature minor. Renumbering a feature's
+	// minor touches its constant here (floatMinor, sizedMinor), IMAGE_MINOR
+	// in runtime/vm/image.h when it is the newest (TestTermsMatchC checks
+	// both), and the "15.N" in docs and opcodes.h comments.
+	imageMinor = max(floatMinor, sizedMinor)
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -36,15 +40,17 @@ const (
 // reserved types it uses (and every reserved row it carries). Empty at
 // 15.0; 15.1 added screen.Config; 15.2 floating point (the float ops,
 // B_FLOAT, and the K_FLOAT constants and TYPEIS ids, which scan counts
-// apart: floatMinor). A reserved type is keyed by its image name ("port.Chunk"); its
+// apart: floatMinor); 15.3 sized integers (the unsigned ops, B_PRINTLNU
+// and the new CONV modes: sizedMinor). A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
 var (
 	opMinor = map[uint8]uint16{
 		OpAddf: floatMinor, OpSubf: floatMinor, OpMulf: floatMinor, OpDivf: floatMinor, OpNegf: floatMinor,
 		OpEqf: floatMinor, OpNef: floatMinor, OpLtf: floatMinor, OpLef: floatMinor, OpConvf: floatMinor,
+		OpDivu64: sizedMinor, OpRemu64: sizedMinor, OpLtu64: sizedMinor, OpLeu64: sizedMinor, OpShru64: sizedMinor,
 	}
-	builtinMinor = map[uint32]uint16{BFloat: floatMinor}
+	builtinMinor = map[uint32]uint16{BFloat: floatMinor, BPrintlnu: sizedMinor}
 	typeMinor    = map[string]uint16{
 		"screen.Config": 1, // 15.1: the "screen" port
 	}
@@ -54,6 +60,20 @@ var (
 // op, B_FLOAT, a K_FLOAT constant or a TYPEIS of float32 / float64 needs
 // it, and requires FloatRequirement.
 const floatMinor = 2
+
+// sizedMinor is the minor of the sized integers (15.3): an image with an
+// unsigned op, B_PRINTLNU, or a CONV mode they added (convMinor) needs
+// it.
+const sizedMinor = 3
+
+// convMinor is the minor of an OP_CONV with mode c (op): the modes 0-2
+// are 15.0's.
+func convMinor(op uint8, c uint8) uint16 {
+	if op == OpConv && c > ConvByte {
+		return sizedMinor
+	}
+	return 0
+}
 
 // FloatRequirement is the requirement name of an image that uses floating
 // point: a VM built without GOGO_FLOAT lacks it and refuses the image.
@@ -334,7 +354,7 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 	}
 	for pc := 0; pc < len(code); pc++ {
 		op := uint8(code[pc])
-		minor = max(minor, opMinor[op])
+		minor = max(minor, opMinor[op], convMinor(op, uint8(code[pc]>>24)))
 		usesFloat = usesFloat || op >= OpAddf && op <= OpConvf
 		if !OpHasExt(op) {
 			continue
