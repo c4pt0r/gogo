@@ -11,9 +11,10 @@
  * be LFS_ERR_NOMEM. GOGO_FS_SLOT_BYTES must be sizeof(Lf) (160 with
  * littlefs v2.11 on a 32-bit chip; checked in lfs_be.c).
  *
- * Not part of the host build: the repo does not carry LittleFS (the ESP
- * build fetches it as a managed component), so this file is compiled by
- * the firmware build only. Pure C99 otherwise. When another thread uses
+ * Not in gogovm or libgogo: the repo does not carry LittleFS (the ESP
+ * build fetches it as a managed component); the firmware builds it, and
+ * make test-lfs runs it over a RAM block device with that copy (skipped
+ * before a firmware build fetched it). Pure C99 otherwise. When another thread uses
  * the volume too (the ESP console task's `gogo push`), the board gives a
  * lock (LfsOpts.lock) and every backend call holds it. */
 #ifndef GOGO_LFS_BE_H

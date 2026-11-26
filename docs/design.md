@@ -1897,8 +1897,15 @@ can serve two devices, and the table can be a board's `static const`).
   `check`, sector `read` / `write`, `sectors`), with the lazy mount and
   remount in the backend and FatFs's disk layer as `fat_be_disk_*` for
   the board's FatFs glue. The volume state (`LfsVol`, `FatVol`) is board
-  storage. Both are compiled by the firmware build only: the repo does
-  not carry LittleFS, and FatFs only as the ESP component.
+  storage. `lfs_be` checks every block number and offset against the
+  `BlockDev` before calling it and refuses a file system bigger than the
+  device in every mount mode, so a corrupt superblock cannot reach past
+  the device (raw flash, on a board without partitions); the read and
+  program sizes come from the `BlockDev`. Neither backend is in gogovm or
+  libgogo: `make test-fat` runs FatFs over a RAM disk (the vendored
+  FatFs, built for the host with the Cardputer's options) and `make
+  test-lfs` LittleFS over a RAM block device (the copy a firmware build
+  fetches; skipped before one).
 - **Mounts** (`VmMount{prefix, be, ctx}` in `VmBoard.mounts`):
   `vfs_init` mounts every entry with a backend; an entry without one
   still satisfies a requirement (unix without `--fs-root`, the embed

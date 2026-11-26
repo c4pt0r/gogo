@@ -70,7 +70,7 @@ endif
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
 
 vm: $(BUILD)/gogovm
 
@@ -240,6 +240,42 @@ test-screen-asan:
 $(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
+
+# The FatFs backend (runtime/vfs/fat) over a RAM disk, with the vendored
+# FatFs (platform/esp32s3/components/fatfs) built for the host with the
+# Cardputer's options (runtime/vfs/fat/test/stub); host slots are 192
+# bytes (64-bit pointers in FIL).
+FATFS_DIR = platform/esp32s3/components/fatfs/src
+FAT_TEST_SRCS = runtime/vfs/fat/test/test_fat.c runtime/vm/test/test_main.c runtime/vfs/fat/fat_be.c runtime/vfs/vfs.c runtime/vfs/path.c
+test-fat: $(BUILD)/test_fat
+	$(BUILD)/test_fat
+
+$(BUILD)/test_fat: $(FAT_TEST_SRCS) $(FATFS_DIR)/ff.c $(FATFS_DIR)/ffunicode.c $(wildcard runtime/vfs/fat/*.h) $(wildcard runtime/vfs/*.h)
+	@mkdir -p $(BUILD)/fatfs
+	$(CC) -std=gnu99 -O2 -g -w $(EXTRA_CFLAGS) -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -c $(FATFS_DIR)/ff.c -o $(BUILD)/fatfs/ff.o
+	$(CC) -std=gnu99 -O2 -g -w $(EXTRA_CFLAGS) -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -c $(FATFS_DIR)/ffunicode.c -o $(BUILD)/fatfs/ffunicode.o
+	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/fat -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -Iruntime/vfs -Iruntime/vm/test -o $@ $(FAT_TEST_SRCS) $(BUILD)/fatfs/ff.o $(BUILD)/fatfs/ffunicode.o
+
+# The LittleFS backend (runtime/vfs/lfs) over a RAM block device, with
+# the LittleFS that the firmware build fetches (joltwallet/littlefs, a
+# managed component; the repo does not carry it). Without it (no firmware
+# built in this checkout yet) the test is skipped. Host slots are 192
+# bytes (sizeof(Lf) with 64-bit pointers; 160 on the ESP32-S3).
+LFS_DIR ?= platform/esp32s3/managed_components/joltwallet__littlefs/src/littlefs
+ifneq ($(wildcard $(LFS_DIR)/lfs.c),)
+LFS_TEST_SRCS = runtime/vfs/lfs/test/test_lfs.c runtime/vm/test/test_main.c runtime/vfs/lfs/lfs_be.c runtime/vfs/vfs.c runtime/vfs/path.c runtime/configsvc/configsvc.c
+test-lfs: $(BUILD)/test_lfs
+	$(BUILD)/test_lfs
+
+$(BUILD)/test_lfs: $(LFS_TEST_SRCS) $(LFS_DIR)/lfs.c $(LFS_DIR)/lfs_util.c $(wildcard runtime/vfs/lfs/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/configsvc/*.h)
+	@mkdir -p $(BUILD)/lfs
+	$(CC) -std=c99 -O2 -g -w $(EXTRA_CFLAGS) -DLFS_NO_MALLOC -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR -Dmalloc=gogo_lfs_malloc -Dfree=gogo_lfs_free -I$(LFS_DIR) -c $(LFS_DIR)/lfs.c -o $(BUILD)/lfs/lfs.o
+	$(CC) -std=c99 -O2 -g -w $(EXTRA_CFLAGS) -I$(LFS_DIR) -c $(LFS_DIR)/lfs_util.c -o $(BUILD)/lfs/lfs_util.o
+	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/lfs -I$(LFS_DIR) -Iruntime/vfs -Iruntime/configsvc -Iruntime/vm/test -o $@ $(LFS_TEST_SRCS) $(BUILD)/lfs/lfs.o $(BUILD)/lfs/lfs_util.o
+else
+test-lfs:
+	@echo "test-lfs: skipped (no LittleFS at $(LFS_DIR); a firmware build fetches it)"
+endif
 
 # The gpio driver (runtime/gpio) over a fake GpioHal on a real VM.
 GPIO_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/gpio/test/test_gpio.c
@@ -480,6 +516,9 @@ check32:
 	done
 	for f in $(VFS_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vfs -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
+	done
+	for f in runtime/configsvc/*.c; do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/configsvc -Iruntime/vfs -Iruntime/configsvc/test/stub $$f || exit 1; \
 	done
 	for f in runtime/gpio/*.c; do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/gpio -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \

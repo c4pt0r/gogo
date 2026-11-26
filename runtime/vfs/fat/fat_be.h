@@ -27,8 +27,10 @@
  * Write open (truncate) while the path is open for reading
  * (runtime/vfs/vfs.h). Usage above 2 GB is clamped to INT32_MAX bytes.
  *
- * Not part of the host build (the repo carries FatFs only as the ESP
- * component); compiled by the firmware build. Only the VM thread calls in. */
+ * Not in gogovm or libgogo (the repo carries FatFs only as the ESP
+ * component); the firmware builds it, and make test-fat runs it over a
+ * RAM disk with that FatFs built for the host. Only the VM thread calls
+ * in. */
 #ifndef GOGO_FAT_BE_H
 #define GOGO_FAT_BE_H
 

@@ -469,9 +469,9 @@ rebuilt:
 
 ## Storage
 
-- **The LittleFS and FatFs backends have no host tests.** They are built
-  by the firmware builds only (the repository does not carry LittleFS),
-  so `make test` does not run them; the board smoke does.
+- **The LittleFS host test needs a firmware build first.** The
+  repository does not carry LittleFS; `make test-lfs` uses the copy the
+  ESP build fetches and is skipped (with a note) until one has run.
 - **A `/flash` that failed to mount is still listed.** The board keeps
   it in its mounts and every call under it is `NotMounted`, as before;
   only the order of checks differs (a `Write` open of a path already
