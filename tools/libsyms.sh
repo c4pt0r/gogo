@@ -9,6 +9,8 @@
 #   tools/libsyms.sh --subset build/libgogo-debug.a runtime/include/libgogo.syms
 #       the debug archive (not prelinked: its internal functions are
 #       global too) must define every listed function
+# LIBSYMS_API and LIBSYMS_PREFIX name the headers' export macro and the
+# functions' prefix (GOGO_API, gogo_); libgogoc.a's are GOGOC_API, gogoc_.
 set -e
 LC_ALL=C; export LC_ALL
 subset=0
@@ -31,13 +33,14 @@ if [ $subset = 1 ]; then
     echo "libsyms: ok ($(wc -l < "$t/want" | tr -d ' ') listed functions in $lib)"
     exit 0
 fi
-sed -n 's/^GOGO_API .*[^a-z_]\(gogo_[a-z_0-9]*\)(.*/\1/p' "$@" | sort -u > "$t/decl"
-[ -s "$t/decl" ] || { echo "libsyms: no GOGO_API functions in $*" >&2; exit 2; }
+api=${LIBSYMS_API:-GOGO_API} prefix=${LIBSYMS_PREFIX:-gogo_}
+sed -n "s/^$api .*[^a-z_]\\(${prefix}[a-z_0-9]*\\)(.*/\\1/p" "$@" | sort -u > "$t/decl"
+[ -s "$t/decl" ] || { echo "libsyms: no $api functions in $*" >&2; exit 2; }
 # Defined globals ("addr T name"); Mach-O names carry a leading underscore.
 nm -g "$lib" | awk -v macho=$macho 'NF == 3 && $2 ~ /^[A-TV-Z]$/ { s = $3; if (macho) sub(/^_/, "", s); print s }' | sort -u > "$t/got"
 bad=0
 if ! cmp -s "$t/want" "$t/decl"; then
-    echo "libsyms: the headers' GOGO_API functions differ from $list (< only in the list, > only declared):"
+    echo "libsyms: the headers' $api functions differ from $list (< only in the list, > only declared):"
     diff "$t/want" "$t/decl" | grep '^[<>]' | sed 's/^/  /'
     bad=1
 fi
