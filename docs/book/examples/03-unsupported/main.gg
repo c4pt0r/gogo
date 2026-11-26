@@ -24,10 +24,10 @@ func main() {
 	m := map[string]int{} // map
 	p := &Sq{2}           // pointer
 	x := 1.5              // float
-	switch counter {      // expression switch
-	case 0:
-		println("zero")
+	if counter > 0 {
+		goto done // goto
 	}
+done:
 	var a [4]int // array
 	s := Sq{1}
 	s.S = 2 // field assignment

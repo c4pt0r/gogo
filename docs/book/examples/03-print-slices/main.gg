@@ -1,0 +1,15 @@
+// println prints a slice's elements, like a struct's fields. Go's println
+// prints a slice as [len/cap]address instead.
+package main
+
+type Point struct{ X, Y int }
+
+func main() {
+	println([]int{1, 2, 3})
+	var none []string
+	println(none, len(none))
+	println([]string{"a", "b"}, []bool{true})
+	println([]byte("hi")) // bytes print as numbers
+	println([]Point{{1, 2}, {3, 4}})
+	println([][]int{{1}, {2, 3}})
+}

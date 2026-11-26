@@ -337,13 +337,13 @@ on standard error.
 | arrays, maps, pointers | slices only |
 | methods, interfaces | functions; type switches over `any` |
 | `p.X = v` | build a new struct |
-| `switch x`, labels, `goto`, `fallthrough` | `if`/`else if`; functions |
+| `switch` on an interface or a struct value, `goto` | type switch, compare fields; labeled `break`/`continue` |
 | type assertions `x.(T)` | type switch |
 | generics | none |
 | `error`, `panic`, `recover`, `defer` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |
 | package-level `var`, `init` | `const`; state in actors |
 | multiple packages, the standard library | one `package main`; `gogo/...` packages only |
-| `fmt.Println` | `println` |
+| `fmt.Println` | `println` (prints slices' elements; Go's `println` prints an address) |
 | UTF-8 aware `range` over strings | bytes |
 | `go run` | `gogo run`; `gogo build` + `gogo flash` |
 | runtime panics crash the program | runtime errors end only the actor |

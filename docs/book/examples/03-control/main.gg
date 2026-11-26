@@ -1,6 +1,6 @@
 // Control flow: if/else chains, the three for forms, range over slices and
-// strings, break and continue. There is no expression switch: use an
-// if/else chain (a type switch exists, see the actor chapter).
+// strings, break and continue. Switches, labels and range over an integer
+// follow in their own sections.
 package main
 
 func classify(n int) string {

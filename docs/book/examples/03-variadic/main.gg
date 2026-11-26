@@ -1,0 +1,39 @@
+// Variadic functions: a final ...T parameter is a []T; callers pass
+// separate values, none at all, or a slice with s...
+package main
+
+func sum(xs ...int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+func join(sep string, parts ...string) string {
+	s := ""
+	for i, p := range parts {
+		if i > 0 {
+			s += sep
+		}
+		s += p
+	}
+	return s
+}
+
+func main() {
+	println(sum(), sum(1, 2, 3))
+	nums := []int{10, 20, 30}
+	println(sum(nums...))
+	println(join(", ", "a", "b", "c"))
+	println(join(", ") == "")
+
+	// With no values the parameter is a nil slice.
+	count := func(xs ...int) bool { return xs == nil }
+	println(count(), count(1))
+
+	// s... passes the slice itself: the function sees the same array.
+	zero := func(xs ...int) { xs[0] = 0 }
+	zero(nums...)
+	println(nums[0])
+}

@@ -1,0 +1,57 @@
+// Expression switch: a tag compared with each case, several values per
+// case, a switch with no tag, an init statement and fallthrough.
+package main
+
+type Code int
+
+const (
+	Ok Code = iota
+	Busy
+	Gone
+)
+
+func describe(c Code) string {
+	switch c {
+	case Ok:
+		return "ok"
+	case Busy, Gone:
+		return "try later"
+	default:
+		return "unknown"
+	}
+}
+
+func size(n int) string {
+	switch { // no tag: the first true case runs
+	case n < 0:
+		return "negative"
+	case n < 10:
+		return "small"
+	}
+	return "large"
+}
+
+func main() {
+	println(describe(Ok), describe(Gone), describe(7))
+	println(size(-1), size(3), size(50))
+
+	for _, cmd := range []string{"start", "stop", "jump"} {
+		switch s := cmd + "!"; s { // strings compare by content
+		case "start!":
+			println("starting")
+		case "stop!":
+			println("stopping")
+		default:
+			println("unknown", s)
+		}
+	}
+
+	// fallthrough runs the next clause's body without testing it.
+	switch level := 2; level {
+	case 2:
+		println("level 2")
+		fallthrough
+	case 1:
+		println("level 1")
+	}
+}

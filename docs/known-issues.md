@@ -97,16 +97,16 @@ the M5StickS3 and the Cardputer ADV. The design is in
 
 - **Not supported yet (planned).** The compiler rejects maps, methods,
   pointers, arrays, integer types other than `int`, `int64` and `byte`
-  (`uint32` included), floats, package-level `var`s, the expression
-  `switch`, type assertions, `panic`, the `error` type, assignment to
-  struct fields, labeled statements, interfaces other than `any`,
-  variadic functions and packages of your own (only `package main`,
-  possibly in several files, plus the `gogo/...` libraries). Channels,
-  `go`, `select`, generics, `defer` and `recover` are outside the design.
-  "Language completeness" is a planned milestone. *Workarounds:* `if`/
-  `else if` chains for `switch`, a type switch for assertions, slices of
-  structs searched linearly for maps, rebuilding a struct with a literal
-  instead of assigning a field.
+  (`uint32` included), floats, package-level `var`s, a `switch` on an
+  `any` or a struct value, type assertions, `panic`, the `error` type,
+  assignment to struct fields, interfaces other than `any` and packages
+  of your own (only `package main`, possibly in several files, plus the
+  `gogo/...` libraries). `goto` is rejected (labeled `break` and
+  `continue` cover its uses). Channels, `go`, `select`, generics, `defer`
+  and `recover` are outside the design. "Language completeness" is a
+  planned milestone. *Workarounds:* a type switch for assertions and for
+  values in an `any`, slices of structs searched linearly for maps,
+  rebuilding a struct with a literal instead of assigning a field.
 - **No `gogo/fmt` or `gogo/errors`.** Printing is `println`; to build a
   string use `gogo/strconv` and `+`.
 - **Loop variables cannot be captured.** In a three-clause `for` loop,
@@ -139,7 +139,10 @@ the M5StickS3 and the Cardputer ADV. The design is in
   through a variable (as `examples/audiohw` does).
 - **Some error messages are unhelpful.** An interface type gives `type
   definition other than struct or int, int64, bool, string not
-  supported`; a variadic parameter gives `Ellipsis not supported`.
+  supported`.
+- **`println` of a slice differs from Go.** gogo prints the elements,
+  `[1 2 3]`; Go's `println` prints `[len/cap]address` (only
+  `fmt.Println` prints elements).
 - **Library differences from Go.** `strconv` handles bases 2 to 36 only
   (no prefixes, no underscores) and `Atoi` overflows at 32 bits;
   `strings.TrimSpace`, `ToLower` and `EqualFold` are ASCII-only and
