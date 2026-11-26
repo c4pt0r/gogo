@@ -238,11 +238,17 @@ static void control(Vm *vm, DistState *ds, uint16_t node, uint8_t type, const ui
 
 /* ---- local deliveries ---- */
 
+/* A reason code from the wire: one that is no small int (no reason any
+ * VM makes) is taken as NoConnection. */
+static uint32_t wire_code(uint32_t code) {
+    return term_int_fits((int32_t)code) ? code : R_NO_CONNECTION;
+}
+
 /* Reason{code, ""} at d[at..at+4). */
 static void put_reason(uint32_t *d, uint32_t at, uint32_t code) {
     d[at] = hdr_make(4, K_STRUCT);
     d[at + 1u] = TYPE_REASON;
-    d[at + 2u] = term_from_int((int32_t)(code & 0x3FFFFFFFu));
+    d[at + 2u] = term_from_int((int32_t)wire_code(code));
     d[at + 3u] = T_EMPTYSTR;
 }
 
@@ -283,11 +289,14 @@ static bool down_to(Vm *vm, Actor *w, uint64_t serial, term from, uint32_t code)
     return note_send(vm, w, m);
 }
 
-/* A link's exit signal `code` from `from` reaching t: an ExitMsg if t
- * traps exits (Killed aside), else t exits with code unless it is Normal. */
+/* A link's exit signal `code` from `from` reaching t, as the VM's own link
+ * notes: an ExitMsg if t traps exits (whatever the code: Killed is
+ * untrappable only when aimed at t itself, by Kill), else t exits with
+ * code unless it is Normal. */
 static bool exit_to(Vm *vm, Actor *t, term from, uint32_t code) {
+    code = wire_code(code);
     if (t->state == A_EXITED || (t->flags & AF_EXIT_PENDING)) return true;
-    if ((t->flags & AF_TRAP_EXIT) && code != R_KILLED) {
+    if (t->flags & AF_TRAP_EXIT) {
         Msg *m = note_new(vm, 8);
         if (m) {
             uint32_t *d = m->data;
@@ -521,15 +530,15 @@ static uint32_t get8(Dec *d) {
     return d->p[d->at++];
 }
 
+/* A LEB128 varint of at most `bits` bits (1..64): a group that would set
+ * a bit at or above `bits`, or more groups than `bits` needs, is bad. */
 static uint64_t get_var(Dec *d, uint32_t bits) {
     uint64_t v = 0;
-    for (uint32_t s = 0; s < bits + 7u; s += 7u) {
-        uint32_t b = get8(d);
-        v |= (uint64_t)(b & 0x7Fu) << s;
-        if (!(b & 0x80u)) {
-            if (bits < 64u && (v >> bits)) d->bad = true;
-            return v;
-        }
+    for (uint32_t s = 0; s < bits; s += 7u) {
+        uint32_t b = get8(d), g = b & 0x7Fu;
+        if (bits - s < 7u && (g >> (bits - s))) break;
+        v |= (uint64_t)g << s;
+        if (!(b & 0x80u)) return v;
     }
     d->bad = true;
     return 0;
