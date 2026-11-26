@@ -1,6 +1,7 @@
 # Known issues and limitations
 
-Open limitations of gogo as of image format 15.0, by area. Each entry
+Open limitations of gogo at image format 15 (the current minor is in
+`runtime/vm/image.h`; `gogo version` prints it), by area. Each entry
 says what the limitation is, what it costs you and, where there is one,
 how to work around it. Hardware facts refer to the two ESP32-S3 boards,
 the M5StickS3 and the Cardputer ADV. The design is in

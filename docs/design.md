@@ -157,10 +157,11 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   `types.StdSizes{WordSize: 4, MaxAlign: 4}`, so constant overflow is a
   compile error, and run-time overflow wraps in two's complement as in
   Go); `int64`; `byte` (`uint8`); `string` (immutable bytes); `rune`
-  only as the value of `range` over a string and as the type of character
-  literals; slices; structs; `any`; func values and func literals
-  (closures, any signature); named types of `int`, `int64`, `bool` and
-  `string` (`type Code int`); `bytes.Bytes` and `bytes.Buffer`.
+  only as the type of character literals (`range` over a string gives
+  its bytes, 0..255, with no UTF-8 decoding: the loop variable keeps Go's
+  static type `rune`, but its values are bytes); slices; structs; `any`;
+  func values and func literals (closures, any signature); named types
+  of `int`, `int64`, `bool` and `string` (`type Code int`); `bytes.Bytes` and `bytes.Buffer`.
 - Operators: arithmetic and comparison; string concatenation and
   comparison; bitwise `&`, `|`, `^`, `&^`, `<<`, `>>`, unary `^` and the
   compound assignments `&=`, `|=`, `^=`, `&^=`, `<<=`, `>>=`, on `int`,
@@ -1131,7 +1132,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
 | `bool` | `T_FALSE` | the specials `T_FALSE` / `T_TRUE` | as is | not scanned | as is |
 | `string` | `T_EMPTYSTR` | a `K_STRING` heap object or a constant-area ref | as is | heap strings copied (bytes not scanned); constant refs untouched | heap strings deep-copied; constant strings as is |
 | `byte` (`uint8`) | small int 0 | small-int immediate 0..255; `byte` arithmetic is truncated after each operation | not allowed (indistinguishable from `int` at run time; rejected at compile time) | not scanned | as is |
-| `rune` (`int32`) | small int 0 | small-int immediate; only as the value of `range` over a string and the type of character literals | not allowed | not scanned | as is |
+| `rune` (`int32`) | small int 0 | small-int immediate; only the type of character literals (the `range`-over-a-string variable is typed `rune` but holds bytes, 0..255) | not allowed | not scanned | as is |
 | `[]T` (slice) | `T_NILSLICE` = `0x52` (`s == nil` is true) | a `K_SLICE` heap object `[hdr][off][len][cap][array]` with raw off/len/cap; `array` is a `K_ARRAY` `[hdr][n][elems]` (elements scanned as terms) or a `K_BYTEARR` `[hdr][nbytes][bytes]` (`[]byte`, bytes not scanned), or `T_NIL` at capacity 0; an empty non-nil slice is a `K_SLICE` with cap 0 | as is | the header and the backing array are copied; `K_BYTEARR` bytes not scanned | deep copy preserving sharing and cycles (aliases hold within a message, never across actors) |
 | `bytes.Bytes` | `T_EMPTYBYTES` = `0x62` | a heap `K_BYTES` `[hdr][nbytes][bytes]` (immutable, not scanned; `Freeze` results up to 64 bytes and the results of `FromString` / `FromSlice`), or, for a larger `Freeze` result, an off-heap handle with tag `1110`: `(index << 4) \| 0xE` into the VM-wide reference-counted table | as is (`case bytes.Bytes` matches `TY_BYTES`) | heap bytes not scanned; handles' holders recomputed at GC, released when unreachable | heap ones deep-copied; handles passed by reference (count + 1), the receiver charged their full size (queued ones in the mailbox) |
 | `bytes.Buffer` | not usable (methods on the zero value are `badcode`; use `NewBuffer`) | a `K_BUF` `[hdr][len][array]` with raw `len`; `array` is a `K_BYTEARR` (its capacity), `T_NIL` at capacity 0; `Freeze` copies once and empties it | as is | array bytes not scanned | deep copy |
@@ -1452,7 +1453,8 @@ together with `mbox_words` through `actor_charged_words`).
   fake struct header inside a string's bytes, say), which would be a
   memory-safety bug, not just `badcode`. Function indexes, type ids and
   jump targets are checked when used (out of range is `badcode`).
-- **Image format version** (`IMAGE_MAJOR`.`IMAGE_MINOR`, now **15.0**):
+- **Image format version** (`IMAGE_MAJOR`.`IMAGE_MINOR`: format **15**,
+  the current minor in `runtime/vm/image.h`):
   header word 1 is `major << 16 | minor`. A VM runs the images of its own
   major whose minor is at most its own (one unsigned compare); any other
   is refused (`IMG_ERR_VERSION`: `GOGO_EVERSION` in the embedding API,
@@ -1460,8 +1462,9 @@ together with `mbox_words` through `actor_charged_words`).
   embed layer name both formats, `unsupported image format 15.1 (this VM
   runs 15.0 to 15.0)`). The compiler stamps each image with the lowest
   minor its program needs: the highest minor among the opcodes, builtins
-  and reserved rows it uses, from tables in `compiler/image.go` (all 15.0
-  today). The versioning policy:
+  and reserved rows it uses, from tables in `compiler/image.go` (everything
+  in 15.0 except the additions listed there, such as `screen.Config`).
+  The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old
     images keep running; a new image runs on an old VM unless it uses the
@@ -1471,7 +1474,7 @@ together with `mbox_words` through `actor_charged_words`).
     be the last major for a long time; the single-number versions 1 to 14
     before it are listed at the top of `runtime/vm/image.h`.
   - `gogo version` and the device's boot banner print the format
-    (`image format 15.0`).
+    (`image format 15.<minor>`).
   - **Reserved term encodings.** So that interfaces, pointers and maps
     (the language phases still to come) need only a minor, v15 keeps
     encodings free for them (`runtime/vm/term.h`): heap kinds 12-15, the

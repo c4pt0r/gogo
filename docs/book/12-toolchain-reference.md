@@ -110,11 +110,11 @@ gogo: warning: main.gg:12:9: port.Open with a non-constant driver name: the imag
 To open a driver that may be absent, name it and mark it soft with
 `//gogo:optional` (below), which works in `package main` too.
 
-The image format itself has a version, `major.minor` (15.0 today; `gogo
-version` prints it). A firmware runs images of its major whose minor is at
-most its own, and the compiler stamps each image with the lowest minor its
-program needs, so after a firmware update every module already on `/flash`
-keeps loading. An image of another major, or of a newer minor than the
+The image format itself has a version, `major.minor` (major 15; `gogo
+version` prints the full one). A firmware runs images of its major whose
+minor is at most its own, and the compiler stamps each image with the
+lowest minor its program needs, so after a firmware update every module
+already on `/flash` keeps loading. An image of another major, or of a newer minor than the
 firmware's, is refused (`unsupported image format 15.1 (this VM runs 15.0
 to 15.0)`; `code.Load` returns `BadVersion`).
 

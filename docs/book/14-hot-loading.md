@@ -208,7 +208,7 @@ crashing. Messages inside one module are unaffected.
   The main image is checked the same way at boot (`gogo: image requires
   kbd, which this VM lacks`).
 - **Format versions.** A module records the image format it was built for
-  (`major.minor`, 15.0 today). A firmware loads every module of its major
+  (`major.minor`; `gogo version` prints the current one). A firmware loads every module of its major
   up to its own minor, so modules stored on `/flash` keep working after a
   firmware update; a module built for a newer minor, or for another major,
   is `BadVersion`. Rebuild it with a `gogo` that matches the firmware, or

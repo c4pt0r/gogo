@@ -182,7 +182,7 @@ firmware. Neither touches the configuration store or `/flash`.
 
 At boot the firmware checks the program image and prints one of:
 
-- `gogo <version> (image format 15.0): image <N> bytes, arena <cap> bytes, free RAM <F> (largest <L>)`:
+- `gogo <version> (image format 15.<minor>): image <N> bytes, arena <cap> bytes, free RAM <F> (largest <L>)`:
   all is well; the program runs.
 - `gogo: no image`: nothing was flashed with `gogo flash`.
 - `gogo: bad image (<reason>)`: a damaged image.
