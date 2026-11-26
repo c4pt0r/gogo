@@ -1046,6 +1046,7 @@ static bool s3_pending(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return fa
 static bool s3_live(const Vm *vm, void *ctx) { (void)vm; (void)ctx; return false; }
 static void s3_drain(Vm *vm, void *ctx, uint64_t now) { (void)vm; (void)ctx; (void)now; }
 static const PortSource src3 = { s3_pending, s3_drain, s3_live, NULL, NULL };
+static const PortSource src4 = { s3_pending, s3_drain, s3_live, NULL, NULL };
 
 TEST(two_sources_both_drain) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
@@ -1078,18 +1079,21 @@ TEST(two_sources_both_drain) {
     teardown();
 }
 
-TEST(third_source_refused) {
+TEST(fourth_source_refused) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
+    CHECK_EQ(GOGO_MAX_SOURCES, 3u);
     CHECK(port_add_source(&vm, &test_src, NULL));
     CHECK(port_add_source(&vm, &src2, NULL));
-    CHECK(!port_add_source(&vm, &src3, NULL));
-    port_remove_source(&vm, &src3);                /* unknown: ignored */
-    CHECK(!port_add_source(&vm, &src3, NULL));
-    port_remove_source(&vm, &test_src);
     CHECK(port_add_source(&vm, &src3, NULL));
+    CHECK(!port_add_source(&vm, &src4, NULL));
+    port_remove_source(&vm, &src4);                /* unknown: ignored */
+    CHECK(!port_add_source(&vm, &src4, NULL));
+    port_remove_source(&vm, &test_src);
+    CHECK(port_add_source(&vm, &src4, NULL));
     port_remove_source(&vm, &src2);
     port_remove_source(&vm, &src3);
+    port_remove_source(&vm, &src4);
     teardown();
 }
 
