@@ -31,8 +31,8 @@ func main() {
 			if b.Charging == 1 {
 				state = state + ", charging"
 			}
-			println(b.MilliVolts, "mV", b.Percent, "%", state)
-			if b.Percent < 20 && b.External != 1 {
+			println(b.MilliVolts, "mV", b.Pct, "%", state)
+			if b.Pct < 20 && b.External != 1 {
 				println("  low battery!")
 			}
 		}

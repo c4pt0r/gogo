@@ -20,7 +20,7 @@
  * platform/{unix,esp32s3} gpio) adds its name here. "dns" is reserved for
  * the host network ports planned beside tcp and udp. */
 static const char *const board_names[] = {
-    "gpio", "kbd", "power", "imu", "ir_tx", "ir_rx", "mic", "spk",
+    "gpio", "kbd", "power", "imu", "ir_tx", "ir_rx", "mic", "speaker",
     "netif", "tcp", "tcp_listen", "udp", "dns", "tls", "file", NULL
 };
 

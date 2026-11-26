@@ -82,7 +82,7 @@ static const PortDriver *const unix_ports_all[] = {
     &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver,
     &net_tcp_listen_driver, &input_kbd_driver, &input_power_driver,
     &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
-    &input_mic_driver, &input_spk_driver, &screen_unix_driver,
+    &input_mic_driver, &input_speaker_driver, &screen_unix_driver,
 #ifdef GOGO_TLS
     &net_tls_driver,
 #endif

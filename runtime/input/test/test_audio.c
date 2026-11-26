@@ -50,7 +50,7 @@ static void mini_image(void) {
 
 static const PortDriver *const drivers[] = {
     &input_kbd_driver, &input_power_driver, &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
-    &input_mic_driver, &input_spk_driver, NULL
+    &input_mic_driver, &input_speaker_driver, NULL
 };
 
 static void setup(void) {
@@ -114,7 +114,7 @@ static term open_mic(Actor *a, int rate, int frame_ms, int gain) {
 
 static term open_spk(Actor *a, int rate, int volume) {
     a->hp = 0;
-    term name = heap_str(a, "spk");
+    term name = heap_str(a, "speaker");
     term f[2] = { term_from_int(rate), term_from_int(volume) };
     return port_open(&vm, a, name, heap_struct(a, TYPE_AUDIO_SPEAKER, 2, f));
 }
@@ -590,9 +590,9 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     CHECK(port_is(s));
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));                 /* idle: no poll */
-    CHECK(!input_spk_driver.can_event(&vm, port_of(s)));
+    CHECK(!input_speaker_driver.can_event(&vm, port_of(s)));
     send_out(owner, s, 6000, 7);
-    CHECK(input_spk_driver.can_event(&vm, port_of(s)));
+    CHECK(input_speaker_driver.can_event(&vm, port_of(s)));
     CHECK(port_next_deadline(&vm, &d));
     CHECK_EQ(d, 0u);                                     /* started at once */
     step(0);
@@ -624,7 +624,7 @@ TEST(spk_large_out_written_in_parts_done_after_played) {
     for (uint32_t i = 0; i < 6000; i++) same = same && w[i] == (uint8_t)(i + 7);
     CHECK(same);
     CHECK(!port_next_deadline(&vm, &d));
-    CHECK(!input_spk_driver.can_event(&vm, port_of(s)));
+    CHECK(!input_speaker_driver.can_event(&vm, port_of(s)));
     teardown();
 }
 
@@ -768,7 +768,7 @@ TEST(spk_close_while_playing) {
     fake_spk_set_idle();
     step(120);
     CHECK(owner->mbox_head == NULL);                     /* owed */
-    CHECK(input_spk_driver.can_event(&vm, port_of(s)));
+    CHECK(input_speaker_driver.can_event(&vm, port_of(s)));
     port_close(&vm, s);
     owner->max_words = ROOMY;
     step(130);

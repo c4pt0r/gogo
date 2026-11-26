@@ -15,7 +15,7 @@ import (
 
 func main() {
 	actor.Sleep(1000)
-	p, ok := port.Open("spk", audio.Speaker{Rate: 16000, Volume: 60})
+	p, ok := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 60})
 	if !ok {
 		println("tone: no spk")
 		return

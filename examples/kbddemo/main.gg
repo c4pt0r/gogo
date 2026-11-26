@@ -126,7 +126,7 @@ func main() {
 				return
 			}
 		case power.Battery:
-			println("battery", m.MilliVolts, "mV", m.Percent, "%", "charging", m.Charging, "external", m.External)
+			println("battery", m.MilliVolts, "mV", m.Pct, "%", "charging", m.Charging, "external", m.External)
 		}
 	}
 }

@@ -23,7 +23,7 @@ func main() {
 	fs.Mkdir("/flash/rec")
 	fs.WriteFile("/flash/rec/0007.wav", "x")
 	fs.WriteFile("/flash/rec/notes.txt", "x")
-	r, ok := sound.Record("/flash/rec", audio.Mic{Rate: 8000, FrameMs: 100}, 1)
+	r, ok := sound.Record("/flash/rec", audio.Mic{RateHz: 8000, FrameMs: 100}, 1)
 	if !ok {
 		println("no mic")
 		return

@@ -202,7 +202,7 @@ enum Builtin {
 #define TYPE_KBD_CONFIG    25   /* RepeatDelayMs, RepeatMs int: port.Open("kbd") */
 #define TYPE_KBD_KEY       26   /* Code, Char, Mods int; Down bool: key event */
 #define TYPE_POWER_CONFIG  27   /* PeriodMs int: port.Open("power") */
-#define TYPE_POWER_BATTERY 28   /* MilliVolts, Percent, Charging, External int */
+#define TYPE_POWER_BATTERY 28   /* MilliVolts, Pct, Charging, External int */
 #define TYPE_POWER_READ    29   /* (no fields): ask for a Battery now */
 /* Then the gogo/code struct type (lib/code/code.gg). */
 #define TYPE_CODE_MODULE   30   /* H int, missing string: a module handle (module_builtin) */
@@ -218,8 +218,8 @@ enum Builtin {
 #define TYPE_IR_TX       37   /* CarrierHz, DutyPct int: port.Open("ir_tx") */
 #define TYPE_IR_RX       38   /* GapUs int: port.Open("ir_rx") */
 /* Then the gogo/audio types. */
-#define TYPE_AUDIO_MIC     39   /* Rate, FrameMs, Gain int: port.Open("mic") */
-#define TYPE_AUDIO_SPEAKER 40   /* Rate, Volume int: port.Open("spk") */
+#define TYPE_AUDIO_MIC     39   /* RateHz, FrameMs, GainDb int: port.Open("mic") */
+#define TYPE_AUDIO_SPEAKER 40   /* RateHz, VolumePct int: port.Open("speaker") */
 /* Then the tls port config. */
 #define TYPE_NET_DIALTLS   41   /* IP, Port, TimeoutMs int, Host string: cfg of the "tls" port */
 /* Then the embedding types (lib/port/port.gg). */

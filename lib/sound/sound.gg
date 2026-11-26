@@ -27,7 +27,7 @@
 // its answer), so the port's charge counts against that MaxMemory and
 // never against the caller's limit.
 //
-// Play opens "spk" at the file's rate, hands it to a player actor and
+// Play opens "speaker" at the file's rate, hands it to a player actor and
 // keeps two Outs in flight (the driver plays the second right after the
 // first, so there is no gap). When it is over the caller gets one Played.
 // The mic and speaker are half duplex: while Record runs, Play returns
@@ -35,12 +35,12 @@
 // last Recorded (after a Stop or an error), and the player the speaker
 // before Played, so the caller may start the other one at once.
 //
-// The "mic" and "spk" drivers are optional (the directive below):
+// The "mic" and "speaker" drivers are optional (the directive below):
 // importing gogo/sound does not make an image require either. On a
 // firmware without the mic, Record returns false; without the speaker,
 // Play returns false (port.Open returns ok=false for an absent driver).
 //
-//gogo:optional mic spk
+//gogo:optional mic speaker
 package sound
 
 import (
@@ -210,7 +210,7 @@ func Record(dir string, cfg audio.Mic, maxSec int) (actor.PID, bool) {
 		return actor.Self(), false
 	}
 	frames := framesPerFile(secs, frameMs)
-	rate := cfg.Rate
+	rate := cfg.RateHz
 	planned := frames * (rate * frameMs / 1000 * 2)
 	parent := actor.Self()
 	r := actor.SpawnOpt(func() {
@@ -329,7 +329,7 @@ func Play(path string) (actor.PID, bool) {
 		f.Close()
 		return actor.Self(), false
 	}
-	sp, ok := port.Open("spk", audio.Speaker{Rate: hd.Rate, Volume: PlayVolume})
+	sp, ok := port.Open("speaker", audio.Speaker{RateHz: hd.Rate, VolumePct: PlayVolume})
 	if !ok {
 		f.Close()
 		return actor.Self(), false

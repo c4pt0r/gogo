@@ -429,15 +429,15 @@ func TestFirmwareTLS(t *testing.T) {
 func TestFirmwareAudio(t *testing.T) {
 	d := t.TempDir()
 	mic := writeImg(t, d, "mic.ggb", "mic")
-	spk := writeImg(t, d, "spk.ggb", "spk")
+	spk := writeImg(t, d, "speaker.ggb", "speaker")
 	im := writeImg(t, d, "im.ggb", "imu")
 	for _, board := range []string{"sticks3", "cardputer"} {
 		if _, cfg, err := fwRun(t, "-board", board, "-o", d, mic); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\n") {
 			t.Errorf("%s mic: %v\n%s", board, err, cfg)
 		}
-		// mic and spk share one switch: an image that needs one keeps both
-		if _, _, err := fwRun(t, "-board", board, "-o", d, "-without", "spk", mic); err == nil || !strings.Contains(err.Error(), "GOGO_AUDIO") {
-			t.Errorf("%s -without spk with a mic image: %v", board, err)
+		// mic and speaker share one switch: an image that needs one keeps both
+		if _, _, err := fwRun(t, "-board", board, "-o", d, "-without", "speaker", mic); err == nil || !strings.Contains(err.Error(), "GOGO_AUDIO") {
+			t.Errorf("%s -without speaker with a mic image: %v", board, err)
 		}
 		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-without", "mic", im); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_AUDIO=n\n") {
 			t.Errorf("%s -without mic: %v\n%s", board, err, cfg)
@@ -446,12 +446,12 @@ func TestFirmwareAudio(t *testing.T) {
 			t.Errorf("%s: removing a required switch should fail", board)
 		}
 	}
-	if _, err := fwPlan("sticks3", nil, []string{"mic"}, []string{"spk"}); err == nil || !strings.Contains(err.Error(), "GOGO_AUDIO") {
-		t.Errorf("-with mic -without spk: %v", err)
+	if _, err := fwPlan("sticks3", nil, []string{"mic"}, []string{"speaker"}); err == nil || !strings.Contains(err.Error(), "GOGO_AUDIO") {
+		t.Errorf("-with mic -without speaker: %v", err)
 	}
-	on, err := fwPlan("sticks3", nil, nil, []string{"spk"})
-	if err != nil || on["mic"] || on["spk"] {
-		t.Errorf("-without spk alone: %v %v", on, err)
+	on, err := fwPlan("sticks3", nil, nil, []string{"speaker"})
+	if err != nil || on["mic"] || on["speaker"] {
+		t.Errorf("-without speaker alone: %v %v", on, err)
 	}
 }
 

@@ -2102,7 +2102,7 @@ func main() {
 	case kbd.Key:
 		println(m.Code, m.Char, m.Mods, m.Down)
 	case power.Battery:
-		println(m.MilliVolts, m.Percent, m.Charging, m.External)
+		println(m.MilliVolts, m.Pct, m.Charging, m.External)
 	}
 }
 `)

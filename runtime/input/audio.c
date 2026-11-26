@@ -1,12 +1,12 @@
-/* The mic and spk ports (spec audio §1, §3): chip-independent audio on top
+/* The mic and speaker ports (spec audio §1, §3): chip-independent audio on top
  * of the board's hooks (InputHw mic_* / spk_*), on the scheduler thread.
- * PCM is 16-bit little-endian mono at Rate 8000 or 16000.
+ * PCM is 16-bit little-endian mono at RateHz 8000 or 16000.
  *
- *  - mic: audio.Mic{Rate, FrameMs, Gain}. FrameMs 0 is 100, else clamped
- *    to 20..500; Gain (dB) is clamped to 0..24 and rounded down to a 6 dB
+ *  - mic: audio.Mic{RateHz, FrameMs, GainDb}. FrameMs 0 is 100, else
+ *    clamped to 20..500; GainDb is clamped to 0..24 and rounded down to a 6 dB
  *    step. mic_read is polled every min(FrameMs, 50) ms, read until it
  *    returns 0 (at most MIC_READS_PER_POLL reads), and what it gives is
- *    gathered into frames of Rate * FrameMs / 1000 * 2 bytes; each full
+ *    gathered into frames of RateHz * FrameMs / 1000 * 2 bytes; each full
  *    frame is one port.Chunk (stream_deliver_chunk). A late poll (the
  *    scheduler held up by an SD write) catches up from the hardware buffer
  *    and loses nothing. Dropped counts whole frames lost: Chunks over the
@@ -30,7 +30,7 @@
  *    and 100 ms (F = 800) a 300 ms stall is heap + 4044 words, which a
  *    recorder with a real heap does not have under the MCU default limit
  *    (4096 words), so gogo/sound's recorder spawns with MaxMemory.
- *  - spk: audio.Speaker{Rate, Volume}, Volume clamped to 0..100. Every
+ *  - speaker: audio.Speaker{RateHz, VolumePct}, VolumePct clamped to 0..100. Every
  *    command is a port.Out of PCM (stream_out_accept: even, non-empty
  *    length; a bad one, or a third in flight, is Done{-1}). The Outs in
  *    flight are written with spk_write in order, as much as the hardware
@@ -44,7 +44,7 @@
  *    plays without gaps given a hardware buffer above SPK_POLL_MS. Closing
  *    cuts at once: it forgets what is in flight (stream_out_close, no Done)
  *    and spk_close stops the hardware and switches the amplifier off.
- *  - Half duplex: one mic or one spk port at a time, never both; a second
+ *  - Half duplex: one mic or one speaker port at a time, never both; a second
  *    open is refused before any hook is called, so the open one keeps
  *    running untouched.
  *
@@ -128,7 +128,7 @@ const PortDriver input_mic_driver = {
     "mic", TYPE_AUDIO_MIC, TYPE_CHUNK, mic_open, mic_command, mic_close, mic_can_event, NULL, NULL, NULL
 };
 
-/* ---- spk ---- */
+/* ---- speaker ---- */
 
 static bool pcm_ok(const Port *p, const uint8_t *d, uint32_t len) { (void)p; (void)d; return len % 2u == 0; }
 
@@ -175,8 +175,8 @@ static bool spk_can_event(const struct Vm *vm, const Port *p) { (void)vm;
     return o->n || o->owed_n;                  /* Dones are coming */
 }
 
-const PortDriver input_spk_driver = {
-    "spk", TYPE_AUDIO_SPEAKER, TYPE_DONE, spk_open, NULL, spk_close, spk_can_event, NULL, spk_command, NULL
+const PortDriver input_speaker_driver = {
+    "speaker", TYPE_AUDIO_SPEAKER, TYPE_DONE, spk_open, NULL, spk_close, spk_can_event, NULL, spk_command, NULL
 };
 
 /* ---- scheduler side ---- */

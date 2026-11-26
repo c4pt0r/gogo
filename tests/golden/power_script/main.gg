@@ -17,7 +17,7 @@ func main() {
 	for {
 		switch m := actor.Receive().(type) {
 		case power.Battery:
-			println("battery", m.MilliVolts, m.Percent, m.Charging, m.External)
+			println("battery", m.MilliVolts, m.Pct, m.Charging, m.External)
 		}
 	}
 }

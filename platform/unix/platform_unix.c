@@ -333,7 +333,7 @@ static void net_wait(uint32_t ms) {
     net_poll(-1);
 }
 
-/* The kbd, power, imu, ir, mic and spk drivers (runtime/input/) are linked
+/* The kbd, power, imu, ir, mic and speaker drivers (runtime/input/) are linked
  * into gogovm only, not into the C test builds that share this file:
  * main.c's board lists them after these. */
 const PortDriver *const unix_base_ports[] = {
