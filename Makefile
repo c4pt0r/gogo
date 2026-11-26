@@ -36,7 +36,8 @@ VM_CORE_SRCS = $(filter-out runtime/vm/check32.c,$(wildcard runtime/vm/*.c))
 # (pixels, for the LCD) is not in gogovm, which draws on the terminal
 # (platform/unix/screen_unix.c). The grid's width rule is the console's.
 SCREEN_SRCS = runtime/screen/screen.c runtime/screen/screen_port.c runtime/console/console.c runtime/console/font.c
-MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c runtime/board/board_main.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS)
+# hostnet.c: the "tcp" and "tcp_listen" ports on host sockets (gogovm --host-net).
+MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c runtime/board/board_main.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS)
 PLAT_HDRS = $(wildcard platform/unix/*.h) runtime/gpio/gpio.h runtime/board/board_main.h runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
 
 # The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
