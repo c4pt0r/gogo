@@ -20,18 +20,6 @@ static const uint32_t *float_obj(const Vm *vm, const Actor *a, term t) {
     return o && (o[0] == hdr_make(2, K_FLOAT) || o[0] == hdr_make(3, K_FLOAT)) ? o : NULL;
 }
 
-/* A new heap object [hdr kind][lo] (words 2) or [hdr kind][lo][hi]
- * (words 3) into *out. May GC; false on OOM. */
-static bool box_raw(Vm *vm, Actor *a, uint32_t kind, uint32_t words, uint64_t v, term *out) {
-    uint32_t off = heap_alloc(vm, a, words, NULL, 0);
-    if (off == UINT32_MAX) return false;
-    a->mem[off] = hdr_make(words, kind);
-    a->mem[off + 1] = (uint32_t)v;
-    if (words == 3u) a->mem[off + 2] = (uint32_t)(v >> 32);
-    *out = term_from_ref(off);
-    return true;
-}
-
 uint32_t float_type(const uint32_t *o) {
     return hdr_words(o[0]) == 2u ? TY_FLOAT32 : TY_FLOAT64;
 }
@@ -125,7 +113,7 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs) {
         if (rc == 2u || rc == 3u) {          /* int (c=2) / int64 (c=3) of a float */
             int64_t i = ftrunc(is32 ? widen((uint32_t)x) : x, rc == 3u);
             if (i >= TERM_INT_MIN && i <= TERM_INT_MAX) { R[ra] = term_from_int((int32_t)i); return R_NORMAL; }
-            if (!box_raw(vm, a, rc == 2u ? K_INT : K_INT64, rc == 2u ? 2u : 3u, (uint64_t)i, &t)) return R_OUT_OF_MEMORY;
+            if (!heap_box(vm, a, rc == 2u ? K_INT : K_INT64, rc == 2u ? 2u : 3u, (uint64_t)i, &t)) return R_OUT_OF_MEMORY;
             goto store;
         }
         if (rc != 4u && rc != 5u) return R_BAD_CODE;   /* float64 (c=4) / float32 (c=5) of a float */
@@ -180,7 +168,7 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs) {
         memcpy(&r, &dr, sizeof r);
     }
 box:
-    if (!box_raw(vm, a, K_FLOAT, is32 ? 2u : 3u, r, &t)) return R_OUT_OF_MEMORY;
+    if (!heap_box(vm, a, K_FLOAT, is32 ? 2u : 3u, r, &t)) return R_OUT_OF_MEMORY;
 store:
     ((term *)a->mem + a->fp)[ra] = t;
     return R_NORMAL;

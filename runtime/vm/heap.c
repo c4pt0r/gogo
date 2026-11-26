@@ -260,3 +260,13 @@ term heap_new_ref(Vm *vm, Actor *a) {
     vm->next_ref++;
     return term_from_ref(off);
 }
+
+bool heap_box(Vm *vm, Actor *a, uint32_t kind, uint32_t words, uint64_t v, term *out) {
+    uint32_t off = heap_alloc(vm, a, words, NULL, 0);
+    if (off == UINT32_MAX) return false;
+    a->mem[off] = hdr_make(words, kind);
+    a->mem[off + 1] = (uint32_t)v;
+    if (words == 3u) a->mem[off + 2] = (uint32_t)(v >> 32);
+    *out = term_from_ref(off);
+    return true;
+}

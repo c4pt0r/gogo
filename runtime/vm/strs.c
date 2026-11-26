@@ -718,6 +718,9 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, in
     }
 }
 
+/* strs_builtin's argc table covers builtins 28..45, in this order. */
+typedef char strs_argc_ok[(B_STR_CONCAT == 28 && B_APPEND == 34 && B_BYTES_COPYTO == 45) ? 1 : -1];
+
 uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc) {
     if (id == B_CMP) {
         term *T = (term *)a->mem + a->fp;
@@ -744,23 +747,26 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
     int32_t i, hi;
     SliceV s;
     Pair b;
+    /* The argument counts of builtins 28..45 (B_STR_CONCAT..B_BYTES_COPYTO;
+     * 0: B_APPEND checks its own), B_CONFIG_GET and B_SPRINT. */
+    static const uint8_t argc[] = { 2, 1, 2, 3, 3, 4, 0, 2, 1, 1, 1, 2, 1, 2, 1, 1, 2, 2 };
+    uint32_t want = id == B_CONFIG_GET ? 1u : id == B_SPRINT ? 2u : id - B_STR_CONCAT < sizeof argc ? argc[id - B_STR_CONCAT] : 0u;
+    if (want && rc != want) return R_BAD_CODE;
     switch (id) {
     case B_STR_CONCAT:
-        if (rc != 2u) return R_BAD_CODE;
         return str_concat(vm, a, R, ra, rb);
     case B_LEN:
-        if (rc != 1u) return R_BAD_CODE;
         if (str_view(vm, a, R[rb], &p, &lp) || bytes_view(vm, a, R[rb], &p, &lp)) {}
         else if (slice_view(vm, a, R[rb], &s)) lp = s.len;
         else if (!buf_obj(vm, a, R[rb], &lp, &lq)) return R_BAD_CODE;
         R[ra] = term_from_int((int32_t)lp);
         return R_NORMAL;
     case B_CAP:
-        if (rc != 1u || !slice_view(vm, a, R[rb], &s)) return R_BAD_CODE;
+        if (!slice_view(vm, a, R[rb], &s)) return R_BAD_CODE;
         R[ra] = term_from_int((int32_t)s.cap);
         return R_NORMAL;
     case B_INDEX:
-        if (rc != 2u || !arg_int(vm, a, R[rb + 1], &i) || i < 0) return R_BAD_CODE;
+        if (!arg_int(vm, a, R[rb + 1], &i) || i < 0) return R_BAD_CODE;
         if (seq_bytes(vm, a, R[rb], &p, &lp)) {
             if ((uint32_t)i >= lp) return R_BAD_CODE;
             R[ra] = term_from_int(p[i]);
@@ -772,7 +778,7 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
         }
         return R_NORMAL;
     case B_SETINDEX: {
-        if (rc != 3u || !slice_view(vm, a, R[rb], &s) || !arg_int(vm, a, R[rb + 1], &i) ||
+        if (!slice_view(vm, a, R[rb], &s) || !arg_int(vm, a, R[rb + 1], &i) ||
             i < 0 || (uint32_t)i >= s.len || s.ro) return R_BAD_CODE;   /* a const array is read-only */
         if (s.bytes) {
             int32_t v;
@@ -786,7 +792,7 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
     }
     case B_SLICE:
         /* lo, hi: 0 <= lo <= hi <= len (a slice's hi: cap) */
-        if (rc != 3u || !arg_int(vm, a, R[rb + 1], &i) || !arg_int(vm, a, R[rb + 2], &hi) || i < 0 || hi < i)
+        if (!arg_int(vm, a, R[rb + 1], &i) || !arg_int(vm, a, R[rb + 2], &hi) || i < 0 || hi < i)
             return R_BAD_CODE;
         lq = str_view(vm, a, R[rb], &p, &lp) ? SQ_STR : bytes_view(vm, a, R[rb], &p, &lp) ? SQ_BYTES : 0u;
         if (lq) {   /* a string or a Bytes: empty, the whole, a shared root or a copy */
@@ -804,51 +810,41 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
         }
         return sl_slice(vm, a, R, ra, rb, i, hi);
     case B_MAKE_SLICE:
-        if (rc != 4u) return R_BAD_CODE;
         return sl_make(vm, a, R, ra, rb);
     case B_APPEND:
         if (rc < 4u) return R_BAD_CODE;
         return sl_append(vm, a, R, ra, rb, rc);
     case B_COPY:
-        if (rc != 2u) return R_BAD_CODE;
         return sl_copy(vm, a, R, ra, R[rb], R[rb + 1], true);
     case B_STR_FROM:   /* string(b) of a []byte, x.String() of a Bytes: a copy */
         lq = SQ_BYTES | SQ_BSLICE;
         goto copy;
     case B_BYTESLICE_FROM:
-        if (rc != 1u) return R_BAD_CODE;
         return sl_bytes_from(vm, a, R, ra, rb);
     case B_STR_CMP:
-        if (rc != 2u) return R_BAD_CODE;
         if (!pair_view(vm, a, R + rb, SQ_STR, &b)) return R_BAD_CODE;
         R[ra] = term_from_int(strs_order(b.p, b.lp, b.q, b.lq));
         return R_NORMAL;
     case B_BUF_NEW:
-        if (rc != 1u) return R_BAD_CODE;
         return buf_new(vm, a, R, ra, rb);
     case B_BUF_WRITE:
-        if (rc != 2u) return R_BAD_CODE;
         return buf_write(vm, a, R, ra, rb);
     case B_BUF_FREEZE:
-        if (rc != 1u) return R_BAD_CODE;
         return buf_freeze(vm, a, R, ra, rb);
     case B_BYTES_FROM:   /* a heap Bytes copy of a string or []byte (any size) */
         lq = SQ_STR | SQ_BSLICE;
     copy:
-        if (rc != 1u || !seq_view(vm, a, R[rb], lq, &p, &lp)) return R_BAD_CODE;
+        if (!seq_view(vm, a, R[rb], lq, &p, &lp)) return R_BAD_CODE;
         return seq_copy(vm, a, ra, rb, id == B_STR_FROM ? K_STRING : K_BYTES, lq, 0, lp);
     case B_BYTES_EQUAL:
-        if (rc != 2u || !pair_view(vm, a, R + rb, SQ_BYTES, &b)) return R_BAD_CODE;
+        if (!pair_view(vm, a, R + rb, SQ_BYTES, &b)) return R_BAD_CODE;
         R[ra] = term_from_bool(pair_equal(&b));
         return R_NORMAL;
     case B_BYTES_COPYTO:
-        if (rc != 2u) return R_BAD_CODE;
         return sl_copy(vm, a, R, ra, R[rb + 1], R[rb], false);   /* copy(p, x) */
     case B_CONFIG_GET:
-        if (rc != 1u) return R_BAD_CODE;
         return config_get(vm, a, R, ra, rb);
     case B_SPRINT:
-        if (rc != 2u) return R_BAD_CODE;
         return strs_sprint(vm, a, R, ra, rb);
     default:
         return R_BAD_CODE;

@@ -146,12 +146,7 @@ static bool make_int(Vm *vm, Actor *a, int32_t v, term *out) {
         *out = term_from_int(v);
         return true;
     }
-    uint32_t off = heap_alloc(vm, a, 2, NULL, 0);
-    if (off == UINT32_MAX) return false;
-    a->mem[off] = hdr_make(2, K_INT);
-    a->mem[off + 1] = (uint32_t)v;
-    *out = term_from_ref(off);
-    return true;
+    return heap_box(vm, a, K_INT, 2, (uint32_t)v, out);
 }
 
 /* int64 values have two representations: a small-int immediate when the
@@ -185,13 +180,7 @@ static bool int64_fits(int64_t v) { return v >= TERM_INT_MIN && v <= TERM_INT_MA
 /* A new heap K_INT64 holding v. May GC (the caller reloads register
  * pointers). False on OOM. */
 static bool box_int64(Vm *vm, Actor *a, int64_t v, term *out) {
-    uint32_t off = heap_alloc(vm, a, 3, NULL, 0);
-    if (off == UINT32_MAX) return false;
-    a->mem[off] = hdr_make(3, K_INT64);
-    a->mem[off + 1] = (uint32_t)(uint64_t)v;
-    a->mem[off + 2] = (uint32_t)((uint64_t)v >> 32);
-    *out = term_from_ref(off);
-    return true;
+    return heap_box(vm, a, K_INT64, 3, (uint64_t)v, out);
 }
 
 /* Term for the int64 v: an immediate when it fits in 31 bits (no

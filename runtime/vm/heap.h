@@ -126,4 +126,9 @@ static inline bool int_val(const Vm *vm, const Actor *a, term t, int32_t *out) {
     return false;
 }
 
+/* A new heap box [hdr kind][lo] (words 2) or [hdr kind][lo][hi] (words
+ * 3): a K_INT, K_INT64 or K_FLOAT holding v, into *out. May GC; false on
+ * OOM. */
+bool heap_box(Vm *vm, Actor *a, uint32_t kind, uint32_t words, uint64_t v, term *out);
+
 #endif
