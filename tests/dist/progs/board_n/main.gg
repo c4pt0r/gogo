@@ -27,11 +27,14 @@ func main() {
 	next, _ := sys.Config("test.next")
 	c, _ := sys.Config("test.count")
 	count, _ := strconv.Atoi(c)
+	// Registered before joining: a node is announced (Up) as soon as the
+	// server opens its link, before Connect returns here, so the others
+	// may look echo up at once.
+	node.Register("echo", actor.Spawn(func() { echo(name) }))
 	if node.Connect(addr, name) != nil {
 		println(name, "connect failed")
 		return
 	}
-	node.Register("echo", actor.Spawn(func() { echo(name) }))
 	for i := 0; i < 400 && len(node.Nodes()) < count; i++ {
 		actor.Sleep(50)
 	}

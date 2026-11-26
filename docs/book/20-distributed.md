@@ -172,7 +172,10 @@ in flight (20.9); a Call beyond that returns `(nil, false)` at once
 rather than risk waiting out its timeout.
 
 `node.Subscribe()` makes the caller receive `node.Up{Node}` and
-`node.Down{Node}` for every node that joins or goes. A board that wants
+`node.Down{Node}` for every node that joins or goes. `Up` comes as soon as
+the server has the node, possibly before that node's own `Connect` has
+returned: names it registers afterwards may not be there yet, so
+`node.Register` before `Connect` what others should find at once. A board that wants
 to stay joined connects again after a `Down` of the server:
 
 ```go
