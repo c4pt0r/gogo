@@ -7,6 +7,12 @@
 // with Kind + 1 and the same Data. The embed tests (runtime/embed/test)
 // run it with such a host and compare its output with embed.out; on a
 // board or under gogovm there is no "echo" port.
+//
+// The image requires "echo", so the host registers it before the load;
+// "nosuch" is opened only to show the failure, so the directive keeps it
+// out of the requirements.
+//
+//gogo:optional nosuch
 package main
 
 import (
@@ -14,11 +20,6 @@ import (
 	"gogo/bytes"
 	"gogo/port"
 )
-
-// nosuch names no port. Not a constant: an image requires the
-// driver of every constant port.Open (it would not load without one);
-// "echo" is registered by the host before the load.
-func nosuch() string { return "nosuch" }
 
 // event waits for the port's next event.
 func event() port.Post {
@@ -39,7 +40,7 @@ func roundtrip(p actor.PID, kind int, data bytes.Bytes) {
 func main() {
 	_, ok := port.Open("echo", port.Host{Arg: -1})
 	println("open with Arg -1:", ok)
-	_, ok = port.Open(nosuch(), port.Host{})
+	_, ok = port.Open("nosuch", port.Host{})
 	println("open an unknown port:", ok)
 
 	p, ok := port.Open("echo", port.Host{Arg: 7, Data: bytes.FromString("config")})

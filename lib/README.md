@@ -46,9 +46,10 @@ comment after an empty `//` line:
 
 Those drivers then add no requirement for the package's **own** constant
 `port.Open` calls; `package main`, importers and other libraries still
-count theirs. Any driver name is accepted (a board's or a host port's);
-an empty list, a misspelt `//gogo:` directive or the directive in
-`package main` is a compile error (`directives` in `compiler/load.go`).
+count theirs (`package main` may use the directive too, for its own
+calls). Any driver name is accepted (a board's or a host port's); an
+empty list or a misspelt `//gogo:` directive is a compile error
+(`directives` in `compiler/load.go`).
 `gogo/http` declares `tls`, `gogo/sound` declares `mic spk`. Book chapter
 12 has the details.
 

@@ -448,7 +448,9 @@ else with `GOGO_EREQUIRES` (-4) and names the first missing name on the
 error stream. Basic I/O (`println`, actors, timers, posts) needs nothing.
 
 This version's library has no board peripherals, so an image that uses
-the network, say, is refused:
+the network, say, is refused. The first missing name in sorted order is
+reported, here `gpio` (netdemo opens buttons too) rather than a network
+driver:
 
 ```sh
 build/embed-c/main netdemo.ggb

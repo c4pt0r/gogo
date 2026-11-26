@@ -8,8 +8,9 @@ import (
 	"strings"
 )
 
-// anyPortWarning is the warning for a non-constant port.Open driver.
-const anyPortWarning = "port.Open with a non-constant driver name: the image does not require it (the open fails at run time on a board without it)"
+// anyPortWarning is the warning for a non-constant port.Open driver, after
+// the call's position.
+const anyPortWarning = "port.Open with a non-constant driver name: the image does not require it and the load does not check it; name the driver and mark it //gogo:optional if the program handles its absence"
 
 // Export is one exported entry of package main.
 type Export struct {
@@ -56,11 +57,11 @@ func isEmptyIface(t types.Type) bool {
 // Requires infers what the program needs from the board, by name, over
 // package main and every compiled library: the driver of each constant
 // port.Open (but those a library names in its //gogo:optional directive,
-// for its own calls; see directivePrefix), and "/sd" for constant gogo/fs
-// paths under /sd. Imports alone require nothing. A non-constant driver
-// name requires nothing, with a warning. The names are sorted.
+// for its own calls; see directivePrefix; package main may use it too),
+// and "/sd" for constant gogo/fs paths under /sd. Imports alone require
+// nothing. A non-constant driver name requires nothing, with a warning
+// per call ("file:line: ..."). The names are sorted.
 func Requires(p *Program) (names []string, warnings []string) {
-	warned := false
 	seen := map[string]bool{}
 	add := func(n string) {
 		if !seen[n] {
@@ -95,9 +96,8 @@ func Requires(p *Program) (names []string, warnings []string) {
 						if !pkg.Optional[s] {
 							add(s)
 						}
-					} else if !warned {
-						warned = true
-						warnings = append(warnings, anyPortWarning)
+					} else {
+						warnings = append(warnings, p.Fset.Position(call.Pos()).String()+": "+anyPortWarning)
 					}
 				case FsPath:
 					for _, a := range call.Args {

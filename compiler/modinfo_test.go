@@ -123,7 +123,7 @@ func TestRequiresInference(t *testing.T) {
 				t.Errorf("Requires = %q, %v; want %q, %d warnings", names, warns, tc.want, tc.warnings)
 			}
 			for _, w := range warns {
-				if w != anyPortWarning {
+				if !strings.HasSuffix(w, "main.gg:6:9: "+anyPortWarning) || !strings.Contains(w, "//gogo:optional") {
 					t.Errorf("warning %q", w)
 				}
 			}
@@ -173,6 +173,30 @@ func TestOptionalDirective(t *testing.T) {
 	}
 }
 
+// TestOptionalDirectiveMain: package main may mark its own constant
+// port.Open drivers soft too; a library's open of the same name still
+// counts, and the names it does not list count.
+func TestOptionalDirectiveMain(t *testing.T) {
+	const lib = "package a\nimport \"gogo/port\"\nfunc Ui() bool { _, ok := port.Open(\"ui\", port.Host{}); return ok }\n"
+	libs := fakeLibs(t, map[string]string{"a/a.gg": lib})
+	tests := []struct{ name, src, want string }{
+		{"main soft", "// Program p.\n//\n//gogo:optional nosuch ui\npackage main\nimport \"gogo/port\"\nfunc main() {\n\t_, _ = port.Open(\"nosuch\", 1)\n\t_, _ = port.Open(\"ui\", port.Host{})\n\t_, _ = port.Open(\"gpio\", 1)\n}\n", "gpio"},
+		{"library still counts", "//gogo:optional ui\npackage main\nimport (\n\"gogo/a\"\n\"gogo/port\"\n)\nfunc main() {\n\t_, _ = port.Open(\"ui\", port.Host{})\n\tprintln(a.Ui())\n}\n", "ui"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := LoadWith(writeProg(t, tc.src), libs)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			names, warns := Requires(prog)
+			if strings.Join(names, " ") != tc.want || len(warns) != 0 {
+				t.Errorf("Requires = %q, %v; want %q", names, warns, tc.want)
+			}
+		})
+	}
+}
+
 func TestOptionalDirectiveErrors(t *testing.T) {
 	const useLib = "package main\nimport \"gogo/a\"\nfunc main() { a.F() }\n"
 	lib := func(directive string) fstest.MapFS {
@@ -182,7 +206,7 @@ func TestOptionalDirectiveErrors(t *testing.T) {
 		{"no driver", useLib, "//gogo:optional", `a/a.gg:3:1: gogo: //gogo:optional names no driver`},
 		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`},
 		{"glued name", useLib, "//gogo:optionaltls", `unknown directive //gogo:optionaltls`},
-		{"in main", "package main\n\n//gogo:optional tls\n\nfunc main() {}\n", "", `gogo: //gogo:optional in package main`},
+		{"empty in main", "package main\n\n//gogo:optional\n\nfunc main() {}\n", "", `main.gg:3:1: gogo: //gogo:optional names no driver`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

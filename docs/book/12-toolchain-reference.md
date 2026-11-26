@@ -62,9 +62,16 @@ gogo: image requires kbd, which this VM lacks
 
 and `code.Load` returns `Unsupported` with `code.Missing` naming it
 (chapter 14). A driver name the compiler cannot see (a variable, a
-function call) requires nothing; the build warns
-(`port.Open with a non-constant driver name: ...`) and the open simply
-fails at run time on a board without the driver.
+function call) is a loophole: it requires nothing, so it escapes this
+check, and the open simply fails at run time on a board without the
+driver. The build warns at each such call, with its position:
+
+```text
+gogo: warning: main.gg:12:9: port.Open with a non-constant driver name: the image does not require it and the load does not check it; name the driver and mark it //gogo:optional if the program handles its absence
+```
+
+To open a driver that may be absent, name it and mark it soft with
+`//gogo:optional` (below), which works in `package main` too.
 
 The image format itself has a version, `major.minor` (15.0 today; `gogo
 version` prints it). A firmware runs images of its major whose minor is at
@@ -74,12 +81,12 @@ keeps loading. An image of another major, or of a newer minor than the
 firmware's, is refused (`unsupported image format 15.1 (this VM runs 15.0
 to 15.0)`; `code.Load` returns `BadVersion`).
 
-A library can declare that it uses some drivers only softly: it opens them
-only when a call asks for that at run time, and reports their absence
-(`port.Open` returns `ok=false`) as an ordinary failure of that call. It
-says so with a directive line in any of its files, conventionally the last
-line of the package doc comment, after an empty `//` line (where gofmt puts
-directives):
+A package, a library or `package main`, can declare that it uses some
+drivers only softly: it opens them only when a call asks for that at run
+time, and handles their absence (`port.Open` returns `ok=false`) as an
+ordinary failure. It says so with a directive line in any of its files,
+conventionally the last line of the package doc comment, after an empty
+`//` line (where gofmt puts directives):
 
 ```go
 // Package http is a small HTTP/1.x client and server...
@@ -89,19 +96,26 @@ package http
 ```
 
 - The listed drivers add no requirement **for that package's own**
-  `port.Open` calls. The same driver opened by `package main`, by a
-  package that imports this one, or by any other library still counts: a
-  program that calls `port.Open("tls", ...)` itself requires `tls`.
-- Any driver name is accepted, a board's or a host port's. An empty list,
-  a misspelt `//gogo:` directive, or the directive in `package main` is a
-  compile error, for example
+  `port.Open` calls. The same driver opened by another package still
+  counts: a program that calls `port.Open("tls", ...)` itself requires
+  `tls`, unless `package main` names it in its own directive. A program
+  that runs on several boards can so probe for a driver one of them lacks:
+
+  ```go
+  // Program keys uses the keyboard when the board has one.
+  //
+  //gogo:optional kbd
+  package main
+  ```
+
+- Any driver name is accepted, a board's or a host port's. An empty list
+  or a misspelt `//gogo:` directive is a compile error, for example
   `a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`.
 - `gogo/http` declares `tls` (an http-only program runs on a firmware
   without TLS, where an https request fails), and `gogo/sound` declares
   `mic spk` (`Record` returns false without a microphone, `Play` without a
   speaker).
-- The directive is a convention for library authors; the compiler does not
-  enforce it. A library can still hand `main` a function that opens the
+- The directive is a promise the compiler does not check. A library can still hand `main` a function that opens the
   driver; that open then fails cleanly at run time (`ok=false`) on a
   firmware without the driver.
 - `gogo firmware` (below) chooses features from the requirements, so it does not

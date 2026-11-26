@@ -104,9 +104,12 @@ type Program struct {
 	Pkg   *types.Package // package main
 	Info  *types.Info    // type information of every compiled package
 	Libs  []*Package     // compiled library packages, in dependency order
+	// Optional holds the drivers named by package main's //gogo:optional
+	// directives (see directives).
+	Optional map[string]bool
 }
 
-// Package is one compiled library package.
+// Package is one compiled package (a library, or main in packages()).
 type Package struct {
 	Pkg   *types.Package
 	Files []*ast.File
@@ -117,7 +120,7 @@ type Package struct {
 
 // packages lists every compiled package: the libraries, then main.
 func (p *Program) packages() []*Package {
-	return append(append([]*Package{}, p.Libs...), &Package{Pkg: p.Pkg, Files: p.Files})
+	return append(append([]*Package{}, p.Libs...), &Package{Pkg: p.Pkg, Files: p.Files, Optional: p.Optional})
 }
 
 // compiled reports whether pkg is compiled into the image (main or a
@@ -269,7 +272,7 @@ func (l *loader) loadLib(path string, stack []string) error {
 			}
 		}
 	}
-	optional, err := l.directives(files, true)
+	optional, err := l.directives(files)
 	if err != nil {
 		return err
 	}
@@ -287,21 +290,20 @@ func (l *loader) loadLib(path string, stack []string) error {
 //
 //	//gogo:optional name...
 //
-// a comment line of a library package (any file; conventionally the last
-// line of the package doc comment, after a blank // line, as gofmt places
-// directives) naming port drivers the package opens only when a call asks
-// for them at run time, and whose absence (port.Open's ok=false) it
-// reports as an ordinary failure of that call. Requires then adds no
-// requirement for that package's own constant port.Open of those drivers;
-// importers, package main and other libraries are unaffected. Any driver
-// name is accepted (a board's or a host port's).
+// a comment line of a compiled package, a library or package main (any
+// file; conventionally the last line of the package doc comment, after a
+// blank // line, as gofmt places directives) naming port drivers the
+// package opens only when a call asks for them at run time, and whose
+// absence (port.Open's ok=false) it handles as an ordinary failure.
+// Requires then adds no requirement for that package's own constant
+// port.Open of those drivers; importers and the other packages are
+// unaffected. Any driver name is accepted (a board's or a host port's).
 const directivePrefix = "//gogo:"
 
 // directives parses the //gogo: directives of one package's files and
-// returns the drivers named by //gogo:optional. lib is false for package
-// main, where the directive is an error: a main program's own port.Open
-// calls always count. An unknown directive or an empty list is an error.
-func (l *loader) directives(files []*ast.File, lib bool) (map[string]bool, error) {
+// returns the drivers named by //gogo:optional. An unknown directive or an
+// empty list is an error.
+func (l *loader) directives(files []*ast.File) (map[string]bool, error) {
 	var optional map[string]bool
 	for _, f := range files {
 		for _, g := range f.Comments {
@@ -314,9 +316,6 @@ func (l *loader) directives(files []*ast.File, lib bool) (map[string]bool, error
 				names, ok := strings.CutPrefix(rest, "optional")
 				if !ok || names != "" && names[0] != ' ' && names[0] != '\t' {
 					return nil, fmt.Errorf("%s: gogo: unknown directive %s (want //gogo:optional)", pos, strings.Fields(c.Text)[0])
-				}
-				if !lib {
-					return nil, fmt.Errorf("%s: gogo: //gogo:optional in package main (a main program's port.Open calls always require their driver)", pos)
 				}
 				fields := strings.Fields(names)
 				if len(fields) == 0 {
@@ -398,7 +397,8 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 		},
 		pkgs: map[string]*types.Package{},
 	}
-	if _, err := l.directives(files, false); err != nil {
+	optional, err := l.directives(files)
+	if err != nil {
 		return nil, err
 	}
 	allowed := func(p string) bool { return isStub(p) || l.isLib(p) }
@@ -431,5 +431,5 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 		}
 	}
 	sort.SliceStable(files, func(i, j int) bool { return fset.File(files[i].Pos()).Name() < fset.File(files[j].Pos()).Name() })
-	return &Program{Fset: fset, Files: files, Pkg: pkg, Info: l.info, Libs: l.order}, nil
+	return &Program{Fset: fset, Files: files, Pkg: pkg, Info: l.info, Libs: l.order, Optional: optional}, nil
 }

@@ -23,6 +23,10 @@
 //	exit        the actor exits with the port open (its exit closes it)
 //	sleep:MS    actor.Sleep(MS)
 //	small       try to open with a 16 KB limit: print "small ok"
+//
+// "none" names no driver: it is opened only for a PID that names nothing.
+//
+//gogo:optional none
 package main
 
 import (
@@ -168,12 +172,9 @@ func waitClosed() {
 	}
 }
 
-// noPort names no driver; not a constant, which the image would require.
-func noPort() string { return "none" }
-
 func run() {
 	script, _ := config.Get("test.script")
-	c, _ := port.Open(noPort(), net.IfConfig{}) // a PID that names nothing yet
+	c, _ := port.Open("none", net.IfConfig{}) // a PID that names nothing yet
 	pos := 0
 	for _, step := range strings.Split(script, " ") {
 		if step == "time" {

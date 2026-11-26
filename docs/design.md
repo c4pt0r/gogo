@@ -622,8 +622,8 @@ checked by the same rule (`gogo: image requires kbd, which this VM
 lacks`). A board's capabilities are exactly its port and mount lists,
 built with what its build has (§5.4.5); there is no separate bit table.
 
-**The `//gogo:optional` directive.** A library package can declare
-drivers it uses only softly: opened only when a call needs them at run
+**The `//gogo:optional` directive.** A package (a library or `package
+main`) can declare drivers it uses only softly: opened only when a call needs them at run
 time, and their absence (`port.Open` returning `ok=false`) reported as
 that call's failure. The directive is a comment line in any file of the
 package, `//gogo:optional name...` (by convention at the end of the
@@ -632,12 +632,15 @@ directives).
 - It applies only to the declaring package's **own** constant
   `port.Open` calls: those drivers add nothing to the image's
   requirements.
-  Importers, other libraries and `package main` still count their own
-  calls (a program that calls `port.Open("tls", ...)` itself requires
-  tls).
+  Importers and the other packages still count their own calls (a
+  program that calls `port.Open("tls", ...)` itself requires tls unless
+  main names `tls` in its own directive).
 - Any driver name is accepted, a board's or a host port's. An empty
-  list or a misspelt `//gogo:` directive is a compile error, and so is
-  the directive in `package main`.
+  list or a misspelt `//gogo:` directive is a compile error.
+- A non-constant driver name is a loophole: the compiler cannot see it,
+  so it requires nothing and escapes the load-time check; the build warns
+  at each such call (`file:line: port.Open with a non-constant driver
+  name: ...`), pointing to `//gogo:optional` as the intended way.
 - `gogo/http` declares `//gogo:optional tls` (an image that uses http
   does not require tls; on a firmware without tls, https requests fail);
   `gogo/sound` declares `//gogo:optional mic spk` (without a microphone

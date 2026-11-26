@@ -137,12 +137,18 @@ the M5StickS3 and the Cardputer ADV. The design is in
   about 360), which matters on boards with little flash.
 - **Requirement inference is a heuristic.** A constant `"/sd"` path
   passed to `gogo/fs` makes the image require `/sd`, even if the program
-  only probes for a card, and a constant `port.Open` in `package main`
-  requires its driver even when the program handles `ok=false` (only a
-  library can mark a driver soft, with `//gogo:optional`). A driver name
-  known only at run time gives a build warning and requires nothing.
-  *Workaround:* pass the name or path through a function or variable
-  (as `examples/audiohw` and the `port_unknown` golden do).
+  only probes for a card (there is no directive for mounts). *Workaround:*
+  pass the path through a variable (as `examples/audiohw` does). A
+  constant `port.Open` requires its driver unless the package marks it
+  `//gogo:optional` (libraries and `package main` alike).
+- **A non-constant driver name escapes the load-time check.** The
+  compiler cannot see it, so the image does not require it and a board
+  without the driver loads the image anyway (the open then fails at run
+  time). The build warns at each such call with its position; name the
+  driver and use `//gogo:optional` instead.
+- **Requirements count unreachable code.** Every compiled package's
+  constant opens count, reachable or not: an http client also requires
+  `tcp_listen`, because the server code is compiled in.
 - **Old images need a rebuild once.** Images of the single-number formats
   (up to 14) do not load on a v15 VM; from 15.0 on, a VM runs every older
   minor of its major.
