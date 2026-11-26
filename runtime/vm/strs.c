@@ -782,29 +782,30 @@ static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth, in
 /* A map key B_CMP cannot order (15.6): a func, a Buffer or a mutable
  * struct (a pointer, a map: identity, which the GC moves), or with mode 2
  * (an interface key) a slice. */
-static bool unordered(const Vm *vm, const Actor *a, term t, int32_t mode) {
+static bool unordered(const Vm *vm, const Actor *a, term t, bool mode2) {
     SliceV s;
     const uint32_t *o = obj_of(vm, a, t);
     uint32_t k = o ? hdr_kind(o[0]) : 0u;
     return k == K_CLOSURE || k == K_BUF || (k == K_STRUCT && (o[1] & STRUCT_MUT)) ||
-           (mode == 2 && slice_view(vm, a, t, &s));
+           (mode2 && slice_view(vm, a, t, &s));
 }
 
 uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc) {
     if (id == B_CMP) {
         term *T = (term *)a->mem + a->fp;
-        int32_t left = CMP_BUDGET, mode = 0;
+        int32_t left = CMP_BUDGET;
         SliceV s;
         /* Two arguments: interface values or structs, so a slice at the
          * top is one in an interface, which equals nothing (Go: false for
          * slices of two types, a panic for one type). Three: arrays. Four
-         * (15.6, gogo/maps): arrays, and the total order of a mode, 1 or
-         * 2, in which a NaN equals a NaN; an unordered key is 2. */
-        if (rc == 4u && (!arg_int(vm, a, T[rb + 3], &mode) || (uint32_t)mode - 1u > 1u)) return R_BAD_CODE;
+         * (15.6, gogo/maps): arrays, in a total order in which a NaN
+         * equals a NaN; a first operand it cannot order gives 2 (mode 2:
+         * a slice too). */
+        bool total = rc == 4u;
         int c = rc - 2u > 2u ? R_BAD_CODE
               : rc == 2u && (slice_view(vm, a, T[rb], &s) || slice_view(vm, a, T[rb + 1], &s)) ? 1
-              : mode && (unordered(vm, a, T[rb], mode) || unordered(vm, a, T[rb + 1], mode)) ? -2
-              : cmp_terms(vm, a, T[rb], T[rb + 1], 0, &left, mode != 0);
+              : total && unordered(vm, a, T[rb], T[rb + 3] == term_from_int(2)) ? -2
+              : cmp_terms(vm, a, T[rb], T[rb + 1], 0, &left, total);
         if (c > 1) return (uint32_t)c;
         T[ra] = term_from_int(c == -2 ? 2 : c);
         return R_NORMAL;

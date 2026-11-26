@@ -1186,9 +1186,20 @@ TEST(cmp_elements) {
     a = cmp_start(2);
     a->mem[a->fp] = T_NILSLICE; a->mem[a->fp + 1] = T_NILSLICE;
     CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 1);
-    a = cmp_start(4);                         /* four arguments: badcode */
+    a = cmp_start(5);                         /* five arguments: badcode */
     a->mem[a->fp] = term_from_int(1); a->mem[a->fp + 1] = term_from_int(1);
-    CHECK(strstr(cmp_run(a, 4, &r), "crashed: badcode") != NULL);
+    CHECK(strstr(cmp_run(a, 5, &r), "crashed: badcode") != NULL);
+    /* four (15.6, gogo/maps): a total order; a slice first with mode 2 is
+     * unordered (2), with mode 1 an array */
+    a = cmp_start(4);
+    a->mem[a->fp] = term_from_int(1); a->mem[a->fp + 1] = term_from_int(2); a->mem[a->fp + 3] = term_from_int(1);
+    CHECK_EQ(cmp_run(a, 4, &r)[0], 0); CHECK_EQ(r, -1);
+    a = cmp_start(4);
+    a->mem[a->fp] = s = cmp_slice(a, false, 3, a3); a->mem[a->fp + 1] = s; a->mem[a->fp + 3] = term_from_int(2);
+    CHECK_EQ(cmp_run(a, 4, &r)[0], 0); CHECK_EQ(r, 2);
+    a = cmp_start(4);
+    a->mem[a->fp] = s = cmp_slice(a, false, 3, a3); a->mem[a->fp + 1] = s; a->mem[a->fp + 3] = term_from_int(1);
+    CHECK_EQ(cmp_run(a, 4, &r)[0], 0); CHECK_EQ(r, 0);
 }
 
 /* Types first, then values; a struct chain through its last field is a

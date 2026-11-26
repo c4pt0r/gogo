@@ -913,13 +913,15 @@ int interp_run(Vm *vm, Actor *a) {
 
         case OP_NEWSTRUCT: case OP_MKCLOSURE: {
             REG(ra); REGS(rb, rc);
+            uint32_t fl = 0;
             if (op == OP_NEWSTRUCT) {
                 /* image_type_row, unrolled: a reserved row, or an own one;
                  * its word is the field count and the type's flags (term.h;
                  * image_load refuses a flagged reserved row) */
                 uint32_t own = ext - TYPE_OWN_BASE, row = ext < img->n_reserved ? ext : own + img->n_reserved;
                 CHECK((ext < img->n_reserved || own < img->n_types - img->n_reserved) &&
-                      (img->types[row * 2u] & ~STRUCT_FLAGS) == rc);
+                      ((fl = img->types[row * 2u]) & ~STRUCT_FLAGS) == rc);
+                fl &= STRUCT_FLAGS;
             }
             else CHECK(ext < img->n_funcs);
             uint32_t words = 2u + rc;
@@ -930,8 +932,7 @@ int interp_run(Vm *vm, Actor *a) {
             obj[0] = hdr_make(words, op == OP_NEWSTRUCT ? K_STRUCT : K_CLOSURE);
             /* The module's tag on its functions and its own types; a
              * reserved type stays bare (global). */
-            obj[1] = op == OP_MKCLOSURE ? ext | tag : ext < TYPE_OWN_BASE ? ext
-                   : ext | tag | (img->types[(ext - TYPE_OWN_BASE + img->n_reserved) * 2u] & STRUCT_FLAGS);
+            obj[1] = ((op == OP_MKCLOSURE || ext >= TYPE_OWN_BASE) ? ext | tag : ext) | fl;
             for (uint32_t i = 0; i < rc; i++) obj[2 + i] = R[rb + i];
             R[ra] = term_from_ref(off);
             break;
