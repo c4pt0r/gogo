@@ -15,6 +15,7 @@
 #include "opcodes.h"
 #include "port.h"
 #include "net_unix.h"
+#include "mbedtls/platform.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -27,7 +28,8 @@
 
 /* ---- a TlsHw without trust anchors (no handshake runs) ---- */
 
-static void *hw_alloc(size_t n) { return calloc(1, n); }
+static int alloc_fails;      /* hw_alloc refuses everything (PSA's init fails) */
+static void *hw_alloc(size_t n) { return alloc_fails ? NULL : calloc(1, n); }
 static void hw_free(void *p) { free(p); }
 static int hw_verify(struct mbedtls_ssl_config *conf, void **state) { (void)conf; *state = NULL; return 0; }
 static void hw_verify_free(void *state) { (void)state; }
@@ -135,6 +137,22 @@ TEST(tls_state_per_stack) {
     void (*old_write)(void *, int, const char *, size_t) = test_host.write;
     test_host.write = count_write;
     errs = 0;
+
+    /* The process's first tls_init, with PSA failing (its allocations
+     * refused): false, but the TlsHw stays bound, so mbedTLS's hooks (now
+     * installed) still work for anyone who allocates through them, another
+     * TlsHw is refused, and a retry with the same one succeeds. */
+    alloc_fails = 1;
+    CHECK(!tls_init(&hw_a));
+    CHECK(mbedtls_calloc(1, 16) == NULL);
+    alloc_fails = 0;
+    void *p = mbedtls_calloc(4, 4);
+    CHECK(p != NULL);
+    mbedtls_free(p);
+    CHECK(!tls_init(&hw_b));
+    CHECK(tls_init(&hw_a));
+    CHECK(tls_init(&hw_a));
+
     Actor *a0 = vm_up(0, &hw_a), *a1 = vm_up(1, &hw_a);
 
     /* Each stack holds its own connection: the other Vm's is no obstacle. */
