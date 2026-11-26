@@ -114,6 +114,31 @@ line, not an afterthought:
 The whole firmware image is about 1 MB, but most of that is ESP-IDF itself
 (Wi-Fi, the TCP/TLS libraries, the font): the gogo VM is a small part of it.
 
+### How is gogo different from MicroPython?
+Both run a high-level language on a microcontroller through a bytecode VM,
+but they make opposite choices in several places:
+
+| | gogo | MicroPython |
+|---|---|---|
+| Language | A subset of Go, statically typed | A subset of Python, dynamically typed |
+| Where it compiles | On your computer; the device only runs `.ggb` images | On the device (the compiler is in the firmware), which also gives a REPL |
+| Type errors | Found by `gogo build`, before the code ships | Found when that line runs |
+| Concurrency | Actors with separate heaps, copied messages, preemption | One shared heap; `asyncio` coroutines and limited threads |
+| Faults | A crash stops one actor; a supervisor restarts it | An uncaught exception stops the program unless caught |
+| Memory | Per-actor heaps and limits, small collections | One heap and one collector for everything |
+| Hardware | Ports (actors that send events) | Python classes and callbacks (`machine.Pin`, IRQ handlers) |
+| Updating code | Hot loading of modules with isolation | Copy new `.py` files and restart |
+| Size | VM core about 37 KB of code | Larger: it carries the compiler and a big runtime (typically a few hundred KB) |
+| Floats, big library, many boards | No floats yet; a small library; two boards | Floats, a large library and ecosystem, many boards |
+| Maturity | Young | Over a decade old, widely used |
+
+Choose MicroPython for interactive exploration at a REPL, quick scripts,
+floating-point work, its wide board support and its large community.
+Choose gogo when a device must keep several activities running and recover
+from faults on its own, when you want errors caught before the code reaches
+the device, when code must be updated in the field without a restart, or
+when the VM has to fit in a small memory budget or inside another program.
+
 ### Is gogo compiled or interpreted?
 Both, in two steps. `gogo build` compiles `.gg` source ahead of time, on your
 computer, into a `.ggb` bytecode image: parsing, type checking and code
