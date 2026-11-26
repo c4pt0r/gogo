@@ -212,11 +212,13 @@ rebuilt:
 
 ## Compiler and language
 
-- **Not supported yet (planned).** The compiler rejects maps, methods,
-  pointers, arrays, integer types other than `int`, `int64` and `byte`
+- **Not supported yet (planned).** The compiler rejects maps, pointer
+  receivers ("pointer receivers are not supported yet"), pointers, arrays, integer types other than `int`, `int64` and `byte`
   (`uint32` included), floats, package-level `var`s, a `switch` on an
   `any` or a struct value, type assertions, `panic`, the `error` type,
-  assignment to struct fields and interfaces other than `any`. `goto` is rejected (labeled `break` and
+  assignment to struct fields and interfaces other than `any` ("interface
+  types are not supported yet": methods are called on concrete types
+  only). `goto` is rejected (labeled `break` and
   `continue` cover its uses). Channels, `go`, `select`, generics, `defer`
   and `recover` are outside the design. "Language completeness" is a
   planned milestone. *Workarounds:* a type switch for assertions and for
@@ -244,6 +246,13 @@ rebuilt:
   not supported`. *Workaround:* `_, _ = actor.Call(...)`. `println(f())`
   with a multi-result `f` and `var a, b = f()` fail the same way; use
   `a, b := f()`.
+- **Methods: value receivers only, no embedding.** A method with a value
+  receiver works on a copy, so it cannot change its caller's value: return
+  the new value instead (`p = p.Moved(1, 0)`). Methods are not promoted
+  from embedded fields (embedded fields are rejected), and a named type
+  other than a struct or a basic type (`type L []int`) cannot be declared,
+  so it has no methods either. The methods of a type in a hot-loaded module
+  are that module's own, like its types.
 - **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
   zero PID.
 - **Some values cannot go into `any`.** `byte`, `rune`, named basic types

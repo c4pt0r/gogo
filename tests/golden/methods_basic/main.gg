@@ -1,0 +1,48 @@
+// Methods on named basic types: int, int64, string and bool.
+package main
+
+type Celsius int
+
+type Micros int64
+
+type Word string
+
+type Flag bool
+
+func (c Celsius) Fahrenheit() int { return int(c)*9/5 + 32 }
+
+func (c Celsius) Warmer(d Celsius) Celsius { return c + d }
+
+func (m Micros) Millis() int64 { return int64(m) / 1000 }
+
+func (w Word) Twice() Word { return w + w }
+
+func (w Word) Len() int { return len(w) }
+
+func (f Flag) Not() Flag { return !f }
+
+func (f Flag) String() string {
+	if f {
+		return "on"
+	}
+	return "off"
+}
+
+const Boiling Celsius = 100
+
+func main() {
+	var c Celsius = 20
+	println(c.Fahrenheit(), Boiling.Fahrenheit(), Celsius(-40).Fahrenheit())
+	println(c.Warmer(5).Warmer(Boiling).Fahrenheit())
+	m := Micros(1 << 40)
+	println(m.Millis(), Micros(2500).Millis())
+	var w Word = "ab"
+	var empty Word
+	println(w.Twice().Twice(), w.Len(), empty.Len())
+	var f Flag
+	println(f.String(), f.Not().String(), f.Not().Not().String())
+	h := c.Fahrenheit
+	c = 0
+	println(h(), c.Fahrenheit())
+	println(Word.Len("hello"), Celsius.Warmer(1, 2))
+}

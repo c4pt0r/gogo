@@ -34,10 +34,10 @@
 // released is KeyDown, or KeyEsc when it was held at least LongPressMs.
 // List wraps around, so the two buttons reach every item.
 //
-// Widgets are value structs and functions, as the language has no methods
-// yet: a widget's state (List, Edit) is a struct that its key function
+// Widgets are value structs and functions, as the package predates
+// methods: a widget's state (List, Edit) is a struct that its key function
 // returns updated, and a Draw function draws it into a Frame. Each doc
-// comment notes the method form planned for when methods arrive.
+// comment notes the method form planned for the package.
 //
 // Memory: the port's grid is 4 bytes a cell (1760 bytes for 40 x 11),
 // charged to the actor that owns the screen; a frame's buffer holds its

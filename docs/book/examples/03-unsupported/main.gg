@@ -8,7 +8,7 @@ type Shape interface{ Area() int } // user interface
 
 type Sq struct{ S int }
 
-func (s Sq) Area() int { return s.S * s.S } // method
+func (s *Sq) Area() int { return s.S * s.S } // pointer receiver
 
 func Max[T int | int64](a, b T) T { // generics
 	if a > b {

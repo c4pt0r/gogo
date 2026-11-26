@@ -73,7 +73,7 @@ the device: goroutines and channels share memory between threads, which
 would break actor isolation (actors and messages replace them); reflection
 and a full runtime would not fit the memory budget. What remains is
 the part that maps cleanly onto isolated actors and a small VM. The subset
-grows where that holds (methods, interfaces, maps, floats and more are planned; see
+grows where that holds (methods with value receivers are in; interfaces, maps, floats and more are planned; see
 above), and where gogo differs from Go it says so.
 
 Dynamic languages (Lua, MicroPython) find type errors only at run time and
@@ -222,9 +222,10 @@ messages, are therefore Go's.
 
 ### Which Go features are missing, and are they coming?
 Expression `switch`, labeled `break`/`continue`, `range` over an int,
-variadic functions and packages of your own are supported. Planned, in
-this order: methods and field assignment (compiler only); then `panic`, type assertions,
-interfaces and `error`; then pointers (boxed, copied when sent), maps (a
+variadic functions, packages of your own and methods with value receivers
+(`func (p Point) Add(q Point) Point`, called statically) are supported.
+Planned, in this order: field assignment (compiler only); then `panic`, type assertions,
+interfaces and `error`; then pointers (boxed, copied when sent) and pointer receivers, maps (a
 library, deterministic order), read-only package variables and `fmt`; then
 sized integers, floating point (`float32` and `float64`), arrays, embedded
 fields and a static `defer`. Not planned: `goto`, `recover`, per-actor

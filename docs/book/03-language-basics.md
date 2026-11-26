@@ -777,19 +777,18 @@ true false
 0
 ```
 
-## 3.5 Structs, and why there are no methods
+## 3.5 Structs and methods
 
 Structs work as in Go: literals with or without field names, nested
-structs, and value semantics (assignment copies). Two things are missing:
-**methods** and **field assignment**. You cannot write `func (p Point)
-Move(...)`, and you cannot write `p.X = 3`.
+structs, and value semantics (assignment copies). One thing is missing:
+**field assignment**. You cannot write `p.X = 3` yet.
 
-The gogo way is to treat structs as immutable values and write ordinary
-functions that return a new value:
+The gogo way is to treat structs as immutable values and write functions
+(or methods, below) that return a new value:
 
 ```go
-// Structs are values. There are no methods and no field assignment: write
-// functions that take a struct and return a new one.
+// Structs are values. There is no field assignment: write functions that
+// take a struct and return a new one.
 package main
 
 type Point struct{ X, Y int }
@@ -799,7 +798,7 @@ type Rect struct {
 	Name     string
 }
 
-// move is what would be a method in Go: it returns a moved copy.
+// move returns a moved copy.
 func move(p Point, dx, dy int) Point {
 	return Point{p.X + dx, p.Y + dy}
 }
@@ -849,6 +848,109 @@ sent. Comparing structs with `==` is not supported either; compare fields.
 Only `actor.PID`, `actor.Ref`, `int`, `int64`, `bool`, `string` and
 named types of those can be compared with `==`. For slices only `s == nil`
 works.
+
+### Methods
+
+A named struct type, or a named `int`, `int64`, `bool` or `string` type
+(`type Celsius int`), can have methods with a **value receiver**, as in
+Go: `func (p Point) Add(q Point) Point`. You call them as `x.M(args)`,
+also on expressions and in chains (`p.Moved(1, 0).Moved(0, 1)`), and they
+can be variadic. A package's methods are used from other packages like
+its functions, and two types can have methods of the same name.
+
+```go
+// Methods with value receivers: on a struct and on a named int. A method
+// gets a copy of its receiver, so it returns the new value instead of
+// changing the old one.
+package main
+
+import "gogo/actor"
+
+type Point struct{ X, Y int }
+
+func (p Point) Add(q Point) Point { return Point{p.X + q.X, p.Y + q.Y} }
+
+func (p Point) Moved(dx, dy int) Point { return p.Add(Point{dx, dy}) }
+
+// Reset changes only its own copy of p.
+func (p Point) Reset() {
+	p = Point{}
+	println("inside", p.X, p.Y)
+}
+
+type Celsius int
+
+func (c Celsius) Fahrenheit() int { return int(c)*9/5 + 32 }
+
+// Sum is variadic, like a function.
+func (p Point) Sum(more ...Point) Point {
+	for _, q := range more {
+		p = p.Add(q)
+	}
+	return p
+}
+
+func (p Point) Show() { println("show", p.X, p.Y) }
+
+func main() {
+	p := Point{1, 2}
+	p.Reset()
+	println(p.X, p.Y) // unchanged
+	p = p.Moved(10, 0).Moved(0, 10)
+	println(p)
+	println(Celsius(100).Fahrenheit(), p.Sum(), p.Sum(Point{1, 1}, Point{2, 2}))
+
+	// A method value remembers its receiver as it was.
+	show := p.Show
+	p = Point{}
+	show()
+
+	// It can be spawned like any func(): the receiver goes with it.
+	done := actor.Self()
+	actor.Spawn(func() {
+		show()
+		actor.Send(done, true)
+	})
+	actor.Receive()
+
+	// A method expression takes the receiver as its first argument.
+	f := Celsius.Fahrenheit
+	println(f(-40))
+}
+```
+
+```text
+inside 0 0
+1 2
+{11 12}
+212 {11 12} {14 15}
+show 11 12
+show 11 12
+-40
+```
+
+A few things to know:
+
+- **A method works on a copy.** Like a parameter, the receiver is the
+  method's own copy: assigning to it changes nothing for the caller. To
+  "update" a value, return the new one and assign it: `p = p.Moved(1, 0)`.
+  A slice field still shares its array, as in Go.
+- **A method value** `f := x.M` is a func value that captured a copy of
+  `x` when it was made. Like any func value it can be spawned, stored in a
+  struct field, and sent inside a struct to another actor, which gets its
+  own copy of the receiver.
+- **A method expression** `T.M` is the method as a function whose first
+  parameter is the receiver: `Celsius.Fahrenheit(-40)`.
+- **Names.** In `gogo dis`, in crash reports and in `actor.Reason.Func`, a
+  method is `Type.Method`, with its package's prefix outside `main`
+  (`app/geom.Point.Add`); a func literal inside it is
+  `main.Type.Method.func1`.
+- **Calls are static.** The compiler knows each call's method, so a call
+  costs the same as a function call. There are no interfaces of your own
+  yet (`interface types are not supported yet`), and pointer receivers,
+  `func (p *Point) M()`, wait for pointers (`pointer receivers are not
+  supported yet`). Methods are not promoted from embedded fields, which
+  are not supported either.
 
 ## 3.6 Slices, the only collection
 
@@ -1209,7 +1311,7 @@ type Shape interface{ Area() int } // user interface
 
 type Sq struct{ S int }
 
-func (s Sq) Area() int { return s.S * s.S } // method
+func (s *Sq) Area() int { return s.S * s.S } // pointer receiver
 
 func Max[T int | int64](a, b T) T { // generics
 	if a > b {
@@ -1241,8 +1343,8 @@ done:
 
 ```text
 main.gg:5:1: gogo: global variable not supported
-main.gg:7:6: gogo: type definition other than struct or int, int64, bool, string not supported
-main.gg:11:1: gogo: method not supported
+main.gg:7:6: gogo: interface types are not supported yet: call methods on the concrete type
+main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
@@ -1274,8 +1376,8 @@ The full list, with what to do instead:
 | maps | `map not supported` | a slice of key/value structs |
 | arrays `[N]T` | `array not supported` | slices |
 | pointers, `&x`, `*p` | `pointer not supported` | values; state in actors |
-| methods | `method not supported` | functions taking the struct |
-| your own interfaces | `type definition other than struct or int, int64, bool, string not supported` | function values, or messages and a type switch |
+| pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
+| your own interfaces | `interface types are not supported yet: call methods on the concrete type` | function values (method values too), or messages and a type switch |
 | `p.X = v` | `field assignment not supported` | build a new struct |
 | `switch` on an `any` or a struct | `switch on a value of type any not supported` | a type switch; compare fields |
 | type assertion `x.(T)` | `type assertion not supported` (and `multi-value assignment not supported` for `v, ok := x.(T)`) | a type switch |
@@ -1288,7 +1390,7 @@ The full list, with what to do instead:
 | `func init()` | `func init not supported` | call it from `main` |
 | embedded fields | `embedded field not supported` | a named field |
 
-> **Note.** Struct methods, maps, arrays, pointers, `uint32`,
+> **Note.** Pointer receivers, maps, arrays, pointers, `uint32`,
 > package-level variables, the `error` interface, `panic` and type
 > assertions are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see

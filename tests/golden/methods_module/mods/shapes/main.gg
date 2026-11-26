@@ -1,0 +1,24 @@
+// A hot-loaded module with methods of its own; main has a type of the
+// same name with a method of the same name, compiled separately.
+package main
+
+type Rect struct{ W, H int }
+
+func (r Rect) Area() int { return r.W * r.H }
+
+func (r Rect) Ratio() int { return r.W / r.H }
+
+// Area prints the area of a rect of side n.
+func Area(arg any) {
+	switch n := arg.(type) {
+	case int:
+		r := Rect{n, n + 1}
+		f := r.Area
+		println("module area", f())
+	}
+}
+
+// Ratio crashes in Rect.Ratio for a zero height.
+func Ratio(arg any) {
+	println(Rect{1, 0}.Ratio())
+}

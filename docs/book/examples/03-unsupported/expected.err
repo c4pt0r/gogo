@@ -1,6 +1,6 @@
 main.gg:5:1: gogo: global variable not supported
-main.gg:7:6: gogo: type definition other than struct or int, int64, bool, string not supported
-main.gg:11:1: gogo: method not supported
+main.gg:7:6: gogo: interface types are not supported yet: call methods on the concrete type
+main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported

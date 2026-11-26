@@ -1,0 +1,50 @@
+// Methods across packages: user packages call each other's methods; types
+// in different packages share method names, and main has its own Point too.
+// Each method is named after its package's import path: a crash names it.
+package main
+
+import (
+	"gogo/actor"
+	"methods_pkgs/geom"
+	"methods_pkgs/shapes"
+)
+
+type Point struct{ V int }
+
+func (p Point) String() string { return "main point" }
+
+func (p Point) Add(q Point) Point { return Point{p.V + q.V} }
+
+func main() {
+	g := geom.Point{X: 1, Y: 2}
+	println(g.Add(g).String(), geom.Origin())
+	s := shapes.Point{Name: "a"}
+	println(s.Add(shapes.Point{Name: "b"}).String())
+	println(Point{1}.Add(Point{2}).V, Point{}.String())
+	sq := shapes.Square{Corner: g, Side: 3}
+	println(sq.String(), sq.Far().String())
+	println(geom.Deg(725).Norm())
+	str := sq.Far().String
+	println(str(), geom.Point.String(g))
+
+	// A message of another package's type, its method called on receipt.
+	me := actor.Self()
+	w := actor.Spawn(func() {
+		switch m := actor.Receive().(type) {
+		case geom.Point:
+			actor.Send(me, m.Add(m).String())
+		}
+	})
+	actor.Send(w, geom.Point{X: 5, Y: 6})
+	println(actor.Receive())
+
+	// A runtime error in another package's method.
+	actor.Monitor(actor.Spawn(func() { println(geom.Point{}.Check()) }))
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.DownMsg:
+			println("down", m.Reason.Func)
+			return
+		}
+	}
+}

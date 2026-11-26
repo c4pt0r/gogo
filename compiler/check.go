@@ -189,15 +189,14 @@ func (c *checker) decl(d ast.Decl) {
 			c.unsupported(d, kindName(d))
 		}
 	case *ast.FuncDecl:
-		if d.Recv != nil {
-			c.unsupported(d, "method")
+		if d.Recv != nil && !c.recv(d.Recv) {
 			return
 		}
 		if d.Type.TypeParams != nil {
 			c.unsupported(d, "generic function")
 			return
 		}
-		if d.Name.Name == "init" {
+		if d.Name.Name == "init" && d.Recv == nil { // a method may be called init
 			c.unsupported(d, "func init") // would never be called
 			return
 		}
@@ -217,6 +216,25 @@ func (c *checker) decl(d ast.Decl) {
 	default:
 		c.unsupported(d, kindName(d))
 	}
+}
+
+// recv checks the receiver of a method: a value receiver of a named
+// struct or named basic type. It reports false if the method is not
+// compiled.
+func (c *checker) recv(fl *ast.FieldList) bool {
+	f := fl.List[0]
+	if _, ptr := ast.Unparen(f.Type).(*ast.StarExpr); ptr {
+		c.fail(f.Type.Pos(), "pointer receivers are not supported yet")
+		return false
+	}
+	n, ok := types.Unalias(c.p.Info.TypeOf(f.Type)).(*types.Named)
+	if !ok || n.TypeArgs().Len() > 0 {
+		c.unsupported(f.Type, "receiver of type "+types.TypeString(c.p.Info.TypeOf(f.Type), pkgName))
+		return false
+	}
+	// A type other than a struct or basic one is reported at its
+	// declaration (see typeSpec).
+	return structType(n) != nil || isBasic(n)
 }
 
 func (c *checker) fieldList(fl *ast.FieldList) {
@@ -239,6 +257,10 @@ func (c *checker) typeSpec(s *ast.TypeSpec) {
 	}
 	if s.TypeParams != nil {
 		c.unsupported(s, "generic type")
+		return
+	}
+	if _, ok := s.Type.(*ast.InterfaceType); ok {
+		c.fail(s.Pos(), "interface types are not supported yet: call methods on the concrete type")
 		return
 	}
 	st, ok := s.Type.(*ast.StructType)
@@ -407,7 +429,7 @@ func (c *checker) multiCall(e ast.Expr) *ast.CallExpr {
 	case *ast.Ident:
 		id = fun
 	case *ast.SelectorExpr:
-		if c.p.Info.Selections[fun] != nil {
+		if c.p.Info.Selections[fun] != nil && c.p.method(fun) == nil {
 			return nil
 		}
 		id = fun.Sel
@@ -1006,6 +1028,11 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 			return
 		}
 	case *ast.SelectorExpr:
+		if c.p.method(fun) != nil { // x.M(args), T.M(x, args)
+			c.methodRecv(fun)
+			c.args(call, 0)
+			return
+		}
 		if bytesMethod(c.p.Info, fun) != "" { // b.WriteString(s), x.Len() ...
 			c.expr(fun.X)
 			c.args(call, 0)
@@ -1025,6 +1052,31 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 		return
 	}
 	c.args(call, 0)
+}
+
+// method returns the method sel names, as x.M (a method value or call)
+// or T.M (a method expression), if it is declared in a compiled package,
+// else nil. The methods of the stub packages (gogo/bytes, gogo/fs) are
+// builtins: see bytesMethod and fsMethod.
+func (p *Program) method(sel *ast.SelectorExpr) *types.Func {
+	s := p.Info.Selections[sel]
+	if s == nil || (s.Kind() != types.MethodVal && s.Kind() != types.MethodExpr) {
+		return nil
+	}
+	fn, ok := s.Obj().(*types.Func)
+	if !ok || !p.compiled(fn.Pkg()) {
+		return nil
+	}
+	return fn
+}
+
+// methodRecv checks the operand of a method selector: the receiver
+// expression of x.M. The type T of a method expression T.M or (T).M was
+// checked at the method's declaration.
+func (c *checker) methodRecv(sel *ast.SelectorExpr) {
+	if c.p.Info.Selections[sel].Kind() == types.MethodVal {
+		c.expr(sel.X)
+	}
 }
 
 // libFunc reports whether sel names a function of a compiled library
@@ -1133,6 +1185,10 @@ func (c *checker) expr(e ast.Expr) {
 		}
 		if c.libFunc(e) {
 			return // lib.F as a func value; its type was checked above
+		}
+		if c.p.method(e) != nil {
+			c.methodRecv(e) // x.M, a method value, or T.M, a method expression
+			return
 		}
 		sel := c.p.Info.Selections[e]
 		if sel == nil || sel.Kind() != types.FieldVal {

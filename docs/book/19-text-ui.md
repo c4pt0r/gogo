@@ -143,10 +143,10 @@ before, and the LCD only redraws the rows that really changed.
 
 ## 19.3 Widgets
 
-The language has no methods yet, so each widget is a plain struct and some
+`gogo/tui` predates methods, so each widget is a plain struct and some
 functions. The doc comments in `lib/tui` give the method form each will
-take once methods arrive (`tui.ListKey(l, k)` becomes `l.Key(k)`, and so
-on). There is no field assignment either, so a widget's key function
+take when the package moves to methods (`tui.ListKey(l, k)` becomes
+`l.Key(k)`, and so on). There is no field assignment either, so a widget's key function
 returns the updated struct.
 
 - **`Label(f, x, y, w, text, align)`** draws text in `w` columns,

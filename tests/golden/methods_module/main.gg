@@ -1,0 +1,42 @@
+// Methods in a hot-loaded module: the module's methods run under its own
+// names, next to main's method of the same name.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/code"
+	"gogo/fs"
+)
+
+type Rect struct{ W, H int }
+
+func (r Rect) Area() int { return r.W + r.H } // not the module's Area
+
+func run(m code.Module, entry string, arg any) {
+	p, e := code.Spawn(m, entry, arg)
+	if e != code.OK {
+		println("spawn", entry, int(e))
+		return
+	}
+	actor.Monitor(p)
+	for {
+		switch d := actor.Receive().(type) {
+		case actor.DownMsg:
+			println(entry, "down", d.Reason.Code)
+			return
+		}
+	}
+}
+
+func main() {
+	b, e := fs.ReadFile("/flash/shapes.gmod", 100000)
+	if e != fs.OK {
+		println("read", int(e))
+		return
+	}
+	m, ce := code.Load(b)
+	println("load", int(ce))
+	run(m, "Area", 3)
+	run(m, "Ratio", 0)
+	println("main area", Rect{3, 4}.Area())
+}

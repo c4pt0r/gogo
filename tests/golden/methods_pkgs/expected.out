@@ -1,0 +1,8 @@
+(2,4) (0,0)
+point ab
+3 main point
+square at (1,2) (4,5)
+5
+(4,5) (1,2)
+(10,12)
+down methods_pkgs/geom.Point.Check

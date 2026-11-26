@@ -1,0 +1,58 @@
+// Methods with value receivers: on a struct and on a named int. A method
+// gets a copy of its receiver, so it returns the new value instead of
+// changing the old one.
+package main
+
+import "gogo/actor"
+
+type Point struct{ X, Y int }
+
+func (p Point) Add(q Point) Point { return Point{p.X + q.X, p.Y + q.Y} }
+
+func (p Point) Moved(dx, dy int) Point { return p.Add(Point{dx, dy}) }
+
+// Reset changes only its own copy of p.
+func (p Point) Reset() {
+	p = Point{}
+	println("inside", p.X, p.Y)
+}
+
+type Celsius int
+
+func (c Celsius) Fahrenheit() int { return int(c)*9/5 + 32 }
+
+// Sum is variadic, like a function.
+func (p Point) Sum(more ...Point) Point {
+	for _, q := range more {
+		p = p.Add(q)
+	}
+	return p
+}
+
+func (p Point) Show() { println("show", p.X, p.Y) }
+
+func main() {
+	p := Point{1, 2}
+	p.Reset()
+	println(p.X, p.Y) // unchanged
+	p = p.Moved(10, 0).Moved(0, 10)
+	println(p)
+	println(Celsius(100).Fahrenheit(), p.Sum(), p.Sum(Point{1, 1}, Point{2, 2}))
+
+	// A method value remembers its receiver as it was.
+	show := p.Show
+	p = Point{}
+	show()
+
+	// It can be spawned like any func(): the receiver goes with it.
+	done := actor.Self()
+	actor.Spawn(func() {
+		show()
+		actor.Send(done, true)
+	})
+	actor.Receive()
+
+	// A method expression takes the receiver as its first argument.
+	f := Celsius.Fahrenheit
+	println(f(-40))
+}

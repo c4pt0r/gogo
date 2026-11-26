@@ -1,0 +1,76 @@
+// Method values: x.M is a closure that captured x when it was made. It is
+// called later, carried in a struct sent to another actor, and spawned. A
+// runtime error inside a method names it Type.Method, in the crash report
+// and in actor.Reason.Func; one inside a func literal in a method names
+// the literal main.Type.Method.funcN.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/strconv"
+)
+
+type Account struct {
+	Name    string
+	Balance int
+}
+
+func (a Account) Report() string { return a.Name + " has " + strconv.Itoa(a.Balance) }
+
+func (a Account) Deposit(n int) Account { return Account{a.Name, a.Balance + n} }
+
+func (a Account) Share(parts int) int { return a.Balance / parts }
+
+// Work wraps a method value: it is a func field like any other.
+type Work struct {
+	Label string
+	Run   func() string
+}
+
+func (a Account) Each() func(int) int {
+	return func(parts int) int { return a.Balance / parts }
+}
+
+func reason(p actor.PID) {
+	actor.Monitor(p)
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.DownMsg:
+			println("down", m.Reason.Code, m.Reason.Func)
+			return
+		}
+	}
+}
+
+func main() {
+	a := Account{"ann", 10}
+	report := a.Report // captures a copy of a now
+	a = a.Deposit(5)
+	println(report(), "/", a.Report())
+	dep := a.Deposit
+	println(dep(1).Report(), dep(2).Report())
+
+	// A method value in a message: the receiver travels with it.
+	me := actor.Self()
+	w := actor.Spawn(func() {
+		switch m := actor.Receive().(type) {
+		case Work:
+			actor.Send(me, m.Label+": "+m.Run())
+		}
+	})
+	actor.Send(w, Work{"remote", Account{"bob", 7}.Report})
+	println(actor.Receive())
+
+	// A method value spawned as an actor.
+	p := actor.Spawn(Account{"cy", 3}.Deposit(1).Print)
+	reason(p)
+
+	// Runtime errors inside methods and their literals.
+	b := a
+	reason(actor.Spawn(func() { println(b.Share(0)) }))
+	reason(actor.Spawn(func() { println(b.Each()(0)) }))
+	println("main ok")
+}
+
+// Print prints the account; a method value of it has type func().
+func (a Account) Print() { println("print", a.Report()) }

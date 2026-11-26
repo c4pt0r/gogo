@@ -25,7 +25,7 @@ func (g *gen) nameLits(decls []*ast.FuncDecl) {
 		ast.Inspect(fd.Body, func(node ast.Node) bool {
 			if lit, ok := node.(*ast.FuncLit); ok {
 				n++
-				g.litNames[lit] = fmt.Sprintf("%s.%s.func%d", pkg, fd.Name.Name, n)
+				g.litNames[lit] = fmt.Sprintf("%s.%s.func%d", pkg, funcName(g.p.Info.Defs[fd.Name].(*types.Func)), n)
 			}
 			return true
 		})
@@ -163,6 +163,69 @@ func (f *fn) funcValueInto(n ast.Node, fn *types.Func, dst uint8) {
 		f.fail(n, "internal error: unknown function %s", fn.Name())
 	}
 	f.asm.EmitExt(OpMkclosure, dst, 0, 0, idx)
+}
+
+// methodIdx returns the function index of method m (declared in a
+// compiled package, so indexed by Compile).
+func (f *fn) methodIdx(n ast.Node, m *types.Func) uint32 {
+	idx, ok := f.g.funcIdx[m]
+	if !ok {
+		f.fail(n, "internal error: unknown method %s", funcName(m))
+	}
+	return idx
+}
+
+// methodCall compiles a call of method m into dst. A method is a function
+// whose parameter 0 is the receiver: x.M(args) passes x in the register
+// right below the arguments (a variadic method's slice is built above
+// it, as for a function), and T.M(x, args), a method expression, is a
+// plain call of that function.
+func (f *fn) methodCall(call *ast.CallExpr, sel *ast.SelectorExpr, m *types.Func, dst uint8) {
+	idx := f.methodIdx(call, m)
+	mark := f.next
+	defer func() { f.next = mark }()
+	if f.g.p.Info.Selections[sel].Kind() == types.MethodExpr {
+		base, n := f.args(call)
+		f.asm.EmitExt(OpCall, dst, base, n, idx)
+		return
+	}
+	recv := f.receiver(sel)
+	base, n := f.args(call) // right above recv
+	if n > 0 && base != recv+1 {
+		f.fail(call, "internal error: call arguments not above the receiver")
+	}
+	if int(n)+1 > maxRegs {
+		f.fail(call, "too many arguments")
+	}
+	f.asm.EmitExt(OpCall, dst, recv, n+1, idx)
+}
+
+// receiver evaluates the receiver of x.M into a fresh register. A value
+// receiver gets x's value: structs are immutable, so the method cannot
+// change the caller's copy.
+func (f *fn) receiver(sel *ast.SelectorExpr) uint8 {
+	if s := f.g.p.Info.Selections[sel]; len(s.Index()) != 1 || s.Indirect() {
+		f.fail(sel, "internal error: promoted or indirect method")
+	}
+	recv := f.allocFor(sel.X)
+	f.exprInto(sel.X, recv)
+	return recv
+}
+
+// methodValueInto compiles x.M, a method value, into dst: a closure of
+// method m capturing x, which becomes the method's parameter 0 when the
+// closure is called (see OP_CALLV). T.M, a method expression, is the
+// method's function itself: a closure without captures.
+func (f *fn) methodValueInto(sel *ast.SelectorExpr, m *types.Func, dst uint8) {
+	idx := f.methodIdx(sel, m)
+	if f.g.p.Info.Selections[sel].Kind() == types.MethodExpr {
+		f.asm.EmitExt(OpMkclosure, dst, 0, 0, idx)
+		return
+	}
+	mark := f.next
+	recv := f.receiver(sel)
+	f.asm.EmitExt(OpMkclosure, dst, recv, 1, idx)
+	f.next = mark
 }
 
 // typeSwitch compiles `switch m := x.(type)` for any expression x of type
