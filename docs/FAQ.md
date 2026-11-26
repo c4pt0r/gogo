@@ -315,6 +315,16 @@ instruction encoding, type table, versioning and load-time checks) is in
 [design.md](design.md) §5.6; value representation is in §5.5. `gogo dis
 file.ggb` prints a program's bytecode.
 
+### Can I read the book as a website?
+Yes. Install [mdBook](https://rust-lang.github.io/mdBook/) (`brew install
+mdbook`, or a release binary from its GitHub page), run `make site`, then
+open `build/site/index.html`: the landing page, with the book in
+`build/site/book`, its sidebar, search, and light and dark themes. The
+pages are plain files with relative links, so they work from disk or any
+static host. The book's sources stay the markdown in `docs/book`
+(`SUMMARY.md` lists the chapters for mdBook); its links to repository
+files outside the book point to GitHub on the site.
+
 ## The VM
 
 ### How does the VM run code?
