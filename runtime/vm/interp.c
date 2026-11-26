@@ -610,7 +610,7 @@ static const uint8_t builtin_info[] = {
     [B_PORT_HANDOFF] = BI(2), [B_NET_SUBSCRIBE] = BI(0), [B_CONFIG_GET] = BI_VAR | BI_TWO,
     [B_FS] = BI_VAR, [B_CODE] = BI_VAR, [B_UNIX_TIME] = BI(0), [B_SET_UNIX_TIME] = BI(1), [B_RANDOM] = BI(0),
     [B_FLOAT] = GOGO_FLOAT ? BI_VAR : 0u, [B_PRINTLNU] = BI_VAR, [B_PANIC] = BI(1), [B_CMP] = BI_VAR,
-    [B_CALL_ERR] = BI_VAR, [B_RESERVED_59] = 0, [B_RESERVED_60] = 0, [B_SPRINT] = BI_VAR,
+    [B_CALL_ERR] = BI_VAR, [B_REGISTER_ERR] = BI(2), [B_RESERVED_60] = 0, [B_SPRINT] = BI_VAR,
 };
 typedef char builtin_info_complete[sizeof builtin_info == B_LAST + 1u ? 1 : -1];
 
@@ -1254,14 +1254,15 @@ int interp_run(Vm *vm, Actor *a) {
             case B_EXIT:
                 actor_exit(vm, a, (uint32_t)iarg, T_EMPTYSTR);
                 return RUN_EXIT;
-            case B_REGISTER: {
+            case B_REGISTER: case B_REGISTER_ERR: {
                 CHECK(term_is_pid(R[rb + 1]));
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
                 r = names_register(vm, a->id, name, len, R[rb + 1]);
                 if (r < 0) CRASH(R_OUT_OF_MEMORY);
-                R[ra] = term_from_bool(r > 0);
+                /* B_REGISTER_ERR (15.7): the shared error code, not ok */
+                R[ra] = ext == B_REGISTER ? term_from_bool(r == GOGO_E_OK) : term_from_int(r);
                 break;
             }
             case B_WHEREIS: {

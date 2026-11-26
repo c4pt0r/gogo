@@ -56,7 +56,7 @@ func Lookup(name string, timeoutMs int) (int, error) {
 	pid, ok := actor.Whereis("dns")
 	if !ok {
 		pid = actor.Spawn(resolver)
-		if !actor.Register("dns", pid) { // another Lookup was first
+		if actor.Register("dns", pid) != nil { // errors.Exists: another Lookup was first
 			actor.Kill(pid, actor.Shutdown)
 			pid, _ = actor.Whereis("dns")
 		}

@@ -10,7 +10,7 @@ func main() {
 		actor.Send(self, 1)
 		actor.Receive()
 	})
-	println(actor.Register("svc", other))
+	println(actor.Register("svc", other) == nil)
 	actor.Receive()
 	_, ok := actor.Whereis("svc")
 	println("after other", ok)

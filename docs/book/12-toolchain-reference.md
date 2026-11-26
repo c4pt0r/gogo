@@ -149,10 +149,10 @@ program that divides, compares or shifts `uint32`/`uint64` values, uses
 `int8`/`int16`/`uint16` arithmetic or prints an unsigned value needs it),
 15.4 `panic`, interfaces and `==` on structs and interfaces, 15.5 the
 `node` port's types (`gogo/node`), 15.6 pointers, maps, read-only
-package-level variables and `gogo/fmt`, 15.7 `actor.Call`'s error (a new
-builtin: a program that calls `actor.Call`, directly or through a library
-such as `gogo/node`, `gogo/http` or `gogo/supervisor`, needs 15.7
-firmware).
+package-level variables and `gogo/fmt`, 15.7 the errors of `actor.Call`
+and `actor.Register` (new builtins: a program that calls either,
+directly or through a library such as `gogo/node`, `gogo/http`,
+`gogo/dns` or `gogo/supervisor`, needs 15.7 firmware).
 
 A package, a library or `package main`, can declare that it uses some
 drivers only softly: it opens them only when a call asks for that at run

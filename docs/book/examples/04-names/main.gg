@@ -30,8 +30,11 @@ func logf(line string) {
 func main() {
 	logf("lost: nobody is registered yet")
 	l := actor.Spawn(logger)
-	println("register", actor.Register("log", l))
-	println("again", actor.Register("log", actor.Self())) // the name is taken
+	if err := actor.Register("log", l); err != nil {
+		println("register:", err.Error())
+	}
+	err := actor.Register("log", actor.Self())
+	println("again:", err.Error()) // errors.Exists: the name is taken
 
 	done := actor.Self()
 	for i := 0; i < 2; i++ {

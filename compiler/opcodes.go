@@ -180,9 +180,9 @@ const (
 	BCmp   uint32 = 57 // a, b [, x] -> -1 | 0 | 1: the order of two values (== on interfaces, structs; x for arrays)
 
 	// 58-60 were kept for distributed actors (15.5), which needed none.
-	BCallErr    uint32 = 58 // (15.7) pid, req, ms -> reply, code: actor.Call with a shared error code
-	BReserved59 uint32 = 59
-	BReserved60 uint32 = 60
+	BCallErr     uint32 = 58 // (15.7) pid, req, ms -> reply, code: actor.Call with a shared error code
+	BRegisterErr uint32 = 59 // (15.7) name, pid -> code: actor.Register with a shared error code
+	BReserved60  uint32 = 60
 
 	// Since 15.6 (refMinor).
 	BSprint uint32 = 61 // mode, v -> string | nil: println's text of v (gogo/fmt)
@@ -381,7 +381,7 @@ var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "M
 	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
 	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
 	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE", "UNIX_TIME", "SET_UNIX_TIME", "RANDOM", "FLOAT", "PRINTLNU",
-	"PANIC", "CMP", "CALL_ERR", "RESERVED_59", "RESERVED_60", "SPRINT"}
+	"PANIC", "CMP", "CALL_ERR", "REGISTER_ERR", "RESERVED_60", "SPRINT"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -425,7 +425,7 @@ var goConstants = map[string]uint32{
 	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
 	"BBytesCopyto": BBytesCopyto, "BPortHandoff": BPortHandoff, "BNetSubscribe": BNetSubscribe,
 	"BConfigGet": BConfigGet, "BFs": BFs, "BCode": BCode, "BUnixTime": BUnixTime, "BSetUnixTime": BSetUnixTime, "BRandom": BRandom, "BFloat": BFloat, "BPrintlnu": BPrintlnu,
-	"BPanic": BPanic, "BCmp": BCmp, "BCallErr": BCallErr, "BReserved59": BReserved59, "BReserved60": BReserved60,
+	"BPanic": BPanic, "BCmp": BCmp, "BCallErr": BCallErr, "BRegisterErr": BRegisterErr, "BReserved60": BReserved60,
 	"BSprint": BSprint,
 	"TyInt":   TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes, "TyFloat32": TyFloat32, "TyFloat64": TyFloat64,

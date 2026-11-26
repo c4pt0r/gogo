@@ -3,6 +3,6 @@ call: nil true true
 down: true true true
 exit: true true
 cancel: false
-register: false
+register: true
 memory: 0
 mailbox empty: true

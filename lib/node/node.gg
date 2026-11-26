@@ -149,7 +149,7 @@ func agent() actor.PID {
 	// gets the largest limit an actor can have (256 KB: HEAP_MAX_WORDS);
 	// a board's arena bounds it first. tests/dist fills a server to 512.
 	p := actor.SpawnOpt(agentRun, actor.Options{MaxMemory: agentMemory})
-	if actor.Register("node", p) {
+	if actor.Register("node", p) == nil {
 		return p
 	}
 	actor.Kill(p, actor.Killed) // another actor started one first

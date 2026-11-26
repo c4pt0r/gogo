@@ -47,7 +47,8 @@ const (
 // types of panic, interfaces and equality (ifaceMinor); 15.5 the "node"
 // port's reserved types (distMinor); 15.6 references
 // (refMinor: SETFIELD and the type-row flags, which scan counts apart);
-// 15.7 the actor API's error results (actorMinor: B_CALL_ERR).
+// 15.7 the actor API's error results (actorMinor: B_CALL_ERR,
+// B_REGISTER_ERR).
 // A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
@@ -64,9 +65,9 @@ var (
 		BPanic:    ifaceMinor,
 		BCmp:      ifaceMinor,
 		BSprint:   refMinor,
-		BCallErr:  actorMinor,
-		// unused (distributed actors, 15.5, needed none): no image uses them
-		BReserved59: distMinor, BReserved60: distMinor,
+		BCallErr:  actorMinor, BRegisterErr: actorMinor,
+		// unused (distributed actors, 15.5, needed none): no image uses it
+		BReserved60: distMinor,
 	}
 	typeMinor = map[string]uint16{
 		"screen.Config":      1, // 15.1: the "screen" port
@@ -104,8 +105,9 @@ const refMinor = 6
 const distMinor = 5
 
 // actorMinor is the minor of the actor API's error results (15.7):
-// B_CALL_ERR, under actor.Call's (reply, error). Only an image that
-// calls actor.Call needs it; one that does not keeps its minor.
+// B_CALL_ERR under actor.Call's (reply, error) and B_REGISTER_ERR under
+// actor.Register's error. Only an image that calls one of them needs it;
+// one that does not keeps its minor.
 const actorMinor = 7
 
 // convMinor is the minor of an OP_CONV with mode c (op): the modes 0-2

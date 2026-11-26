@@ -1,8 +1,8 @@
 // Package actor is the gogo actor API. Its functions (marked
 // //gogo:builtin) exist only so programs type-check with the standard Go
 // toolchain; the gogo compiler replaces every call with VM instructions, so
-// the bodies are never executed. The functions with a body (Call, Fail) are
-// ordinary library code.
+// the bodies are never executed. The functions with a body (Call, Fail,
+// Register) are ordinary library code.
 //
 // The struct types ProcInfo, Reason, ExitMsg, DownMsg, Request and Options
 // have fixed type indices 0-5 in every image (TYPE_* in runtime/vm/opcodes.h); keep
@@ -250,12 +250,29 @@ func call(to PID, req any, timeoutMs int) (any, int) { panic("gogo only") }
 //gogo:builtin
 func Reply(req Request, reply any) { panic("gogo only") }
 
-// Register names p; false if the name is taken or p is not alive.
+// Register names p (on this node: see gogo/node's Register to export a
+// name to other nodes). err is nil, or an errors.Code: errors.NoProc if p
+// is not a live local actor (it has exited, is the zero PID, a port or a
+// remote PID; checked first), errors.Exists if the name is taken. A name
+// is freed when its actor exits or the registrant unregisters it.
+func Register(name string, p PID) error {
+	if code := register(name, p); code != 0 {
+		return errors.Code(code)
+	}
+	return nil
+}
+
+// register is Register with the shared error code in place of the error
+// (builtin B_REGISTER_ERR, image format 15.7).
 //
 //gogo:builtin
-func Register(name string, p PID) bool { panic("gogo only") }
+func register(name string, p PID) int { panic("gogo only") }
 
-// Whereis looks a registered name up.
+// Whereis looks a registered name up; ok is false if no actor has it.
+// It is a lookup in this VM's own table, like a map's comma-ok: it cannot
+// fail otherwise, so it has no error, unlike gogo/node's Whereis, which
+// asks another node over the network and can fail for the network's
+// reasons (Timeout, NoConnection).
 //
 //gogo:builtin
 func Whereis(name string) (PID, bool) { panic("gogo only") }

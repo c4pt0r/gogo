@@ -32,7 +32,7 @@ func main() {
 	t := actor.SendAfter(p, "late", 5)
 	actor.Sleep(10)
 	println("cancel:", actor.CancelTimer(t))
-	println("register:", actor.Register("nobody", p))
+	println("register:", actor.Register("nobody", p) == errors.NoProc)
 	println("memory:", actor.Info(p).Memory)
 	_, ok := actor.ReceiveTimeout(0)
 	println("mailbox empty:", !ok)

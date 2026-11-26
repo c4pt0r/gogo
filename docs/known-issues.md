@@ -27,6 +27,12 @@ rebuilt:
   `NoProc` (28) and `NoConnection` (29); `node.Whereis` and the other
   `gogo/node` calls now return the Call's error (`NoConnection` when the
   node goes during the call) where they returned `errors.Timeout`.
+- **`actor.Register`** returns an `error` instead of a `bool`: `nil`,
+  `errors.NoProc` (the PID is not a live local actor) or `errors.Exists`
+  (the name is taken). `if actor.Register(n, p) {` becomes `if
+  actor.Register(n, p) == nil {`, and `if !actor.Register(...)` becomes
+  `!= nil`; a call used as a statement needs no edit. Like `Call`, it
+  makes the image 15.7. `actor.Whereis` is unchanged.
 - **`actor.SendAfter`** takes its arguments in `Send`'s order with the
   delay last, as `Call` does: `actor.SendAfter(ms, p, msg)` is
   `actor.SendAfter(p, msg, ms)`. Every old call fails to compile (an

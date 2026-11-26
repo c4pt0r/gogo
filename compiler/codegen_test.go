@@ -853,7 +853,7 @@ func TestCompileActorBuiltins(t *testing.T) {
 		"actor.Sleep(3)":                                          "SLEEP",
 		"a, b := actor.Call(actor.Self(), 1, 2)\n\tprintln(a, b)": "CALL_ERR",
 		"actor.Reply(actor.Request{}, 1)":                         "REPLY",
-		"println(actor.Register(\"n\", actor.Self()))":            "REGISTER",
+		"println(actor.Register(\"n\", actor.Self()))":            "REGISTER_ERR",
 		"a, b := actor.Whereis(\"n\")\n\tprintln(a, b)":           "WHEREIS",
 		"actor.Unregister(\"n\")":                                 "UNREGISTER",
 	}

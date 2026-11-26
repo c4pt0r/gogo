@@ -623,7 +623,7 @@ func TrapExit(on bool)
 func Exit(code int)                             // exit with a reason code
 func Kill(p PID, code int)                      // send an exit signal
 func MakeRef() Ref
-func Register(name string, p PID) bool          // false if taken or p has exited
+func Register(name string, p PID) error         // errors.NoProc (p not alive), errors.Exists (taken)
 func Whereis(name string) (PID, bool)
 func Unregister(name string)                    // only the registering actor may
 func SendAfter(to PID, msg any, ms int) Ref; func CancelTimer(r Ref) bool
@@ -673,6 +673,12 @@ nothing any more, or the table of remote Calls in flight is full (the
 reason a `Monitor` of such a PID gets is `actor.NoConnection` too).
 `actor.Call` is library code over builtin 58 `B_CALL_ERR`, which returns
 `(reply, code)`; images before 15.7 keep `B_CALL` and its `(reply, ok)`.
+`actor.Register` likewise returns an error (15.7, builtin 59
+`B_REGISTER_ERR`): `errors.NoProc` if the PID is not a live local actor
+(checked first), `errors.Exists` if the name is taken; `B_REGISTER`'s
+bool stays for older images. `actor.Whereis` keeps `(PID, bool)`: a
+lookup in the VM's own table is map-like and has no other way to fail,
+while `node.Whereis` asks another node and returns an `error`.
 
 **Send semantics.** `Send` deep-copies the message (slices and nested
 structs included); the receiver gets an independent copy. This differs
@@ -1952,10 +1958,10 @@ together with `mbox_words` through `actor_charged_words`).
   (`distMinor`, §5.13); 15.6 the reference phase
   (`refMinor`): `OP_SETFIELD`, the type flags (a type row or a constant
   struct with any), the reason `actor.Nil` and the constant slices; 15.7
-  the actor API's error results (`actorMinor`): `B_CALL_ERR`, under
-  `actor.Call`, so a program that calls it (itself or through a library:
-  `gogo/node`, `gogo/http`, `gogo/supervisor`, ...) needs 15.7 and any
-  other keeps its minor.
+  the actor API's error results (`actorMinor`): `B_CALL_ERR` and
+  `B_REGISTER_ERR`, under `actor.Call` and `actor.Register`, so a program
+  that calls one (itself or through a library: `gogo/node`, `gogo/http`,
+  `gogo/supervisor`, ...) needs 15.7 and any other keeps its minor.
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old
@@ -1990,8 +1996,9 @@ together with `mbox_words` through `actor_charged_words`).
   were kept for distributed actors (15.5), which needed none; from 15.6,
   61 `B_SPRINT` (gogo/fmt: the text `println` prints for a value, as a
   new string, counted then written into it, or written to the console);
-  from 15.7, 58 `B_CALL_ERR` (`actor.Call`: `B_CALL` with a shared error
-  code in place of `ok`); 59-60 are free.
+  from 15.7, 58 `B_CALL_ERR` and 59 `B_REGISTER_ERR` (`actor.Call` and
+  `actor.Register`: `B_CALL` and `B_REGISTER` with a shared error code
+  in place of the bool); 60 is free.
 - **Float ops** (15.2, `OP_ADDF` .. `OP_CONVF`, 52-61): one set for both
   widths. The operands' boxes carry the width (a 2-word `K_FLOAT` is a
   `float32`, a 3-word one a `float64`), and the op computes in it; mixed
@@ -2080,13 +2087,13 @@ together with `mbox_words` through `actor_charged_words`).
   side's `GOGO_E_*` in `runtime/include/gogo_errors.h`, which a test keeps
   equal): 0 is `OK`, 1..35 are meanings every package shares
   (`NotFound`, `Exists`, `NoMemory`, ... `BadVersion` = 27, `NoProc` =
-  28 and `NoConnection` = 29, `actor.Call`'s; 30..35 are free), capped
+  28 and `NoConnection` = 29, `actor.Call`'s and `actor.Register`'s; 30..35 are free), capped
   so that `actor.Failed` (64) + a shared code stays a library exit reason below the user codes from 100; 36..99 are reserved,
   and each package that needs its own codes gets a block of 20 from 100
   (`gogo/http` 100..119, `gogo/sound` 120..139). The codes are
   compile-time constants: no opcode, reserved type or image field
   depends on the table, and the builtins that return a code (`B_FS`,
-  `B_CODE`, `B_CALL_ERR`) use the C side's names for the same numbers. `Code` is
+  `B_CODE`, `B_CALL_ERR`, `B_REGISTER_ERR`) use the C side's names for the same numbers. `Code` is
   an `error` (15.4): `gogo/errors` has `Code.Error` (the texts of
   `gogo_strerror`), `New`, `Is` and `Unwrap`. `Code`'s interface box and
   `New`'s `errorString` are reserved types 45 and 46, so these errors

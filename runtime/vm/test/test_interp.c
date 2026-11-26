@@ -734,7 +734,7 @@ TEST(register_operands_checked_at_the_frame_edge) {
  * right kind and not. */
 TEST(builtin_counts_results_and_kinds_checked) {
     const term I = term_from_int(0), S = T_EMPTYSTR, Z = T_ZEROREF, H = term_from_int(100);
-    static const uint32_t no_such[] = { B_RESERVED_59, B_RESERVED_60, B_LAST + 1u, 255, 0x10000u };
+    static const uint32_t no_such[] = { B_RESERVED_60, B_LAST + 1u, 255, 0x10000u };
     for (uint32_t i = 0; i < sizeof no_such / sizeof no_such[0]; i++) {
         bool exited;
         test_host_arena_forget();
@@ -758,6 +758,7 @@ TEST(builtin_counts_results_and_kinds_checked) {
         { B_PORT_CLOSE, 1, { I, I, I, I } }, { B_PORT_HANDOFF, 2, { I, I, I, I } }, { B_NET_SUBSCRIBE, 0, { I, I, I, I } },
         { B_UNIX_TIME, 0, { I, I, I, I } }, { B_SET_UNIX_TIME, 1, { I, I, I, I } }, { B_RANDOM, 0, { I, I, I, I } },
         { B_PANIC, 1, { I, I, I, I } }, { B_CALL, 3, { P_SELF, I, I, I } }, { B_CALL_ERR, 3, { P_SELF, I, I, I } },
+        { B_REGISTER_ERR, 2, { S, P_SELF, I, I } },
     };
     static ProbeRow rows[64];
     uint32_t n = 0;

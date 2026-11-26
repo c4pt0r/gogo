@@ -366,10 +366,20 @@ Passing PIDs around works, but some actors are services that many others
 need: a logger, a display, the DNS resolver. Give them a name:
 
 ```go
-func Register(name string, p PID) bool   // false if taken or p is dead
+func Register(name string, p PID) error  // errors.NoProc or errors.Exists
 func Whereis(name string) (PID, bool)
 func Unregister(name string)
 ```
+
+`Register` fails with `errors.NoProc` if `p` is not a live actor of this
+VM (it has exited, is the zero PID, a port or a remote PID; this is
+checked first), and with `errors.Exists` if another actor has the name.
+`Whereis` has no error, only `ok`: it looks the name up in this VM's own
+table, as `v, ok := m[k]` looks in a map, and either the name is there or
+it is not. `node.Whereis` (chapter 20), which finds a name on another
+node, returns an `error` instead, because it asks over the network and
+can fail for the network's reasons (`errors.Timeout`,
+`errors.NoConnection`).
 
 ```go
 // Registered names: find a service by name instead of passing its PID.
@@ -404,8 +414,11 @@ func logf(line string) {
 func main() {
 	logf("lost: nobody is registered yet")
 	l := actor.Spawn(logger)
-	println("register", actor.Register("log", l))
-	println("again", actor.Register("log", actor.Self())) // the name is taken
+	if err := actor.Register("log", l); err != nil {
+		println("register:", err.Error())
+	}
+	err := actor.Register("log", actor.Self())
+	println("again:", err.Error()) // errors.Exists: the name is taken
 
 	done := actor.Self()
 	for i := 0; i < 2; i++ {
@@ -426,8 +439,7 @@ func main() {
 ```
 
 ```text
-register true
-again false
+again: exists already
 log 1 from a worker
 log 2 from a worker
 log 3 from main

@@ -38,8 +38,8 @@ func TrapExit(on bool)
 func Exit(code int)
 func Kill(p PID, code int)
 func MakeRef() Ref
-func Register(name string, p PID) bool
-func Whereis(name string) (PID, bool)
+func Register(name string, p PID) error   // NoProc (p not alive), Exists (name taken)
+func Whereis(name string) (PID, bool)     // a local table lookup: ok, no error
 func Unregister(name string)
 func SendAfter(to PID, msg any, ms int) Ref
 func CancelTimer(r Ref) bool
@@ -381,6 +381,10 @@ under another name, and these codes under the same names.
 | 9 | 28 | 29 |
 |---|---|---|
 | `Timeout` (no reply in time) | `NoProc` (no live local actor: exited, never existed, the zero PID, a port) | `NoConnection` (a remote PID this node cannot reach: its node is gone, or the PID names nothing here any more) |
+
+**`actor.Register`'s error** (chapter 4.4): `NoProc` (28) if the PID is
+not a live local actor (checked first), `Exists` (2) if the name is
+taken.
 
 ## D. Limits
 

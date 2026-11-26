@@ -54,6 +54,7 @@ func TestMinorBaseline(t *testing.T) {
 		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tp := actor.Spawn(func() {})\n\tactor.Send(p, 1)\n\tq, _ := actor.Whereis(\"x\")\n\tactor.SendAfter(q, 2, 5)\n\tprintln(actor.Receive(), actor.NoPID)\n}\n", 0},
 		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\t_, err := actor.Call(actor.Self(), 1, 0)\n\tprintln(err != nil)\n}\n", actorMinor},
 		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Call(actor.Self(), 1, 0)\n}\n", actorMinor},
+		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tprintln(actor.Register(\"x\", actor.Self()) == nil)\n}\n", actorMinor},
 	} {
 		w := words(compileImage(t, tc.src))
 		if w[1] != 15<<16|tc.minor {

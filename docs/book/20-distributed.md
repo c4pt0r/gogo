@@ -33,7 +33,7 @@ and then use it like any other:
 | `println(p)` | `<pid 5@2>`: actor slot 5 on node 2 |
 | `actor.Kill(p, code)` | an exit signal on `p`'s node, as for a local actor (`p` must have been given out by its node; a node's door cannot be killed, nor linked to) |
 | `actor.SendAfter(p, m, ms)` | not across nodes: the sender exits with `actor.BadMsg` |
-| `actor.Info`, `actor.Register` | Info reports 0; Register refuses a remote PID |
+| `actor.Info`, `actor.Register` | Info reports 0; Register refuses a remote PID (`errors.NoProc`: names are per node, see `node.Register`) |
 
 A PID of this node that comes back from another node is the local PID
 again, so `actor.Self()` sent away and back is `== actor.Self()`.
