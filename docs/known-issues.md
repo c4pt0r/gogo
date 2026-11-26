@@ -44,6 +44,13 @@ the M5StickS3 and the Cardputer ADV. The design is in
   `/flash` (an erase) and occasionally hundreds on `/sd`; the TLS step
   takes about 0.2 s (see below). *Workaround:* keep messages small and do
   storage and HTTPS work in actors whose latency does not matter.
+  *Planned:* storage calls become asynchronous: the file operation runs in
+  a background platform task (on the ESP32-S3, a FreeRTOS task beside the
+  VM) and its result comes back to the actor as a message, so a slow
+  flash erase or SD write no longer pauses other actors. The same rule as
+  the planned host network ports: helper threads only do or report I/O,
+  and everything that touches actors stays on the VM thread, so the VM
+  needs no locks.
 - **Accounting is incomplete.** Links, monitors and pending `SendAfter`s
   are charged, but some VM-global resources are not: the per-actor extra
   record itself, registered names, the timer heap's slots, and a
