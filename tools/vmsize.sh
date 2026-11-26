@@ -21,6 +21,7 @@
 set -e
 LIMIT=65536
 cd "$(dirname "$0")/.."
+# shellcheck disable=SC2012 # the first match of a glob
 GCC=$(command -v xtensa-esp32s3-elf-gcc 2>/dev/null || ls "$HOME"/.espressif/tools/xtensa-esp-elf/*/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc 2>/dev/null | head -1 || true)
 if [ -z "$GCC" ]; then echo "vmsize: skipped (xtensa-esp32s3-elf-gcc not found)"; exit 0; fi
 SIZE=${GCC%gcc}size

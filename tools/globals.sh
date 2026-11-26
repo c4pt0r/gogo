@@ -52,7 +52,7 @@ if [ "$OBJECTS" = 1 ]; then FILES="$*"; ALLOW=/dev/null
 elif [ $# -gt 0 ]; then FILES="$*"; else
     FILES=""
     for d in vm vfs stream input net console screen embed; do
-        for f in runtime/$d/*.c; do
+        for f in runtime/"$d"/*.c; do
             [ -f "$f" ] || continue
             [ "$f" = runtime/vm/check32.c ] && continue
             FILES="$FILES $f"
@@ -120,6 +120,7 @@ if [ "$OBJECTS" = 1 ]; then
 fi
 for f in $FILES; do
     scan "$f"
+    # shellcheck disable=SC2086 # $MCU is a list of flags
     scan "$f" $MCU
     scan "$f" -DGOGO_EMBED
 done

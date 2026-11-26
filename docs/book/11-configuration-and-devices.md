@@ -18,10 +18,10 @@ Values are strings; convert them with `gogo/strconv`. Always have a
 default, so the program also runs where the key is not set:
 
 ```go
-// Read settings from the config store. Set them with
-//   gogo config set blink.ms 250
-// (on the board when one is connected, else in ~/.gogo/config). Keys that
-// start with "wifi." are never visible to programs.
+// Read settings from the config store. Set them with "gogo config set
+// blink.ms 250" (on the board when one is connected, else in
+// ~/.gogo/config). Keys that start with "wifi." are never visible to
+// programs.
 package main
 
 import (

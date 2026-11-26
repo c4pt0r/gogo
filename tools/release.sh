@@ -80,6 +80,7 @@ firmware() {
     for f in $files; do
         cp "$work/$f" "$out/$board-$(basename "$f")"
     done
+    # shellcheck disable=SC2086 # one line, the names split on whitespace
     echo "firmware $board: $(echo $files | tr '\n' ' ')"
 }
 
@@ -150,6 +151,7 @@ notices() {
 sums() {
     out=$1
     if command -v sha256sum >/dev/null 2>&1; then sha="sha256sum"; else sha="shasum -a 256"; fi
+    # shellcheck disable=SC2012,SC2086 # plain asset names; $sha may be "shasum -a 256"
     (cd "$out" && rm -f SHA256SUMS && list=$(ls | LC_ALL=C sort) && sums=$(echo "$list" | xargs $sha) &&
         printf '%s\n' "$sums" > SHA256SUMS)
     echo "sums $out/SHA256SUMS"

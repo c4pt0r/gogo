@@ -240,7 +240,7 @@ type bconn struct {
 	vmFin    bool
 	done     bool // reset either way, or both FINs exchanged
 	needAck  bool
-	resets   int // RSTs from the VM
+	resets   int    // RSTs from the VM
 	fwd      int    // payload bytes from the VM passed to the server
 	fwdAt    uint64 // simulated time a segment was last passed on
 }

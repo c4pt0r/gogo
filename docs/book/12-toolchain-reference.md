@@ -513,3 +513,15 @@ docs/book/examples/run.sh 04-call      # one
 packages keeps its program in `app/` (the build root, so its imports
 start with `app/`); `run.sh` runs it from there, with an empty search
 path.
+
+## Checking a change to gogo
+
+`make test` is the full check before a commit. Besides the C and Go
+tests and the size budgets, it runs:
+
+- `make lint`: `gofmt` on every `.go` file and on every `.gg` file
+  (gogo source is Go syntax, but `gofmt` reads only `.go`, so
+  `tools/lint.sh` checks a `.go` copy of each), `go vet ./...`, and
+  `shellcheck` on `tools/*.sh` when it is installed. To format a `.gg`
+  file, format a `.go` copy (or use `gofmt` on standard input:
+  `gofmt < f.gg > f.tmp && mv f.tmp f.gg`).

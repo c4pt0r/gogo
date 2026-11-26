@@ -166,7 +166,8 @@ and editor setup for `.gg` files. Releases are built by `tools/release.sh` (and 
 release workflow on a `v*` tag).
 
 Tests: `make test` runs the C tests (host and MCU configurations), the Go
-tests (compiler, golden outputs, network simulator) and the size checks.
+tests (compiler, golden outputs, network simulator), the size checks
+and `make lint` (gofmt, also on `.gg` files, and go vet).
 `docs/book/examples/run.sh` checks every example in the book.
 
 ## Embedding
