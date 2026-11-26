@@ -2587,9 +2587,9 @@ ints zigzag): nil, false, true, int, boxed int64, string, `Bytes`,
 `[]byte`, slice of terms, nil slice, reserved struct (type id, field
 count, fields), PID (node id, that node's term), zero PID, Ref (node id,
 48-bit serial), zero Ref, empty string, empty `Bytes`, a module's own
-struct (field count, qualified type name, fields; 0x11) and the same with
-its shape hash first (0x12). Tags 0x13..0x3F are kept for later term
-kinds. Node ids are global (the server assigns them, 1 itself, a fresh
+struct (field count, qualified type name, fields; 0x11), the same with
+its shape hash first (0x12), float32 (0x13, its 4 bytes) and float64
+(0x14, its 8 bytes). Tags 0x15..0x3F are kept for later term kinds. Node ids are global (the server assigns them, 1 itself, a fresh
 one per connection), so relayed frames keep their src and dst; the
 server checks the MAC of each hop and makes a new one for the next.
 
@@ -2599,7 +2599,10 @@ the receiving actor's module by qualified name, field count and shape: the
 compiler stores a shape hash (FNV-1a over the fields' kinds) in one word
 after the bytes of the type's name constant, which a VM reads by its
 length and never sees, so no format change; a mismatch drops the message.
-Pointers' targets and maps (types with `STRUCT_FLAGS`), closures,
+An interface box of a named non-struct type (`STRUCT_BOX`, 15.6) crosses
+as an own struct; the receiver's row gives it its own box flag, so a 15.5
+and a 15.6 image exchange them. Pointers' targets and maps (types with
+`STRUCT_MUT`), closures,
 `bytes.Buffer`, port PIDs, nesting deeper than 16 and frames over 4 KB
 crash the sender with `R_BAD_MSG`, as at a module boundary; a stale module
 value is `R_BAD_CODE`. The encoding is a tree: sharing inside one message

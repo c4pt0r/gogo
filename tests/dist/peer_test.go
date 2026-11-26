@@ -325,6 +325,8 @@ func TestCodecRoundTrip(t *testing.T) {
 		"zero ref":  {tZeroRef},
 		"our pid":   tPid(p.self, p.calledBy),
 		"our ref":   tRefOf(p.self, 99),
+		"float32":   {0x13, 0, 0, 0xc0, 0x3f},
+		"float64":   {0x14, 0, 0, 0, 0, 0, 0, 0xf8, 0x3f},
 		"nested":    append(append([]byte{tSlice}, varint(1)...), append(append([]byte{tSlice}, varint(1)...), tInt32(5)...)...),
 	}
 	for name, term := range terms {

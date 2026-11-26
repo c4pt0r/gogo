@@ -102,10 +102,11 @@ the receiver's. What may cross:
 
 | Value | Crosses |
 |---|---|
-| `int`, `int64`, `bool`, `string`, `bytes.Bytes`, `[]byte`, slices, `nil` | yes |
+| `int`, `int64`, `float32`, `float64`, `bool`, `string`, `bytes.Bytes`, `[]byte`, slices, `nil` | yes (floats bit for bit) |
 | actor PIDs, Refs | yes |
 | the system structs (`actor.Request`, `port.Chunk`, `net.Addr`, ...) | yes |
 | your own structs | yes, by name: the receiver must have a struct of the same qualified name (`snake/board.View`, `main.Ping`), the same number of fields and the same field kinds (int, string, PID, a slice of int, ...); otherwise the receiver drops the message |
+| your own named non-struct types in an interface (`any(Dir(3))` for `type Dir int`) | yes, by name, as your own structs |
 | func values, `bytes.Buffer`, pointers and maps, a port's PID | no: the sender exits with `actor.BadMsg` |
 | a Ref made by the receiving node itself | no: the receiver drops the message (a peer could otherwise forge a reply or a `DownMsg`) |
 | a value nested deeper than 16, or more than about 4 KB encoded | no: `actor.BadMsg` |

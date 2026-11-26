@@ -135,3 +135,17 @@ func TestLinkToDoorRefused(t *testing.T) {
 		t.Errorf("server stderr:\n%s", srv.errs)
 	}
 }
+
+// A named int and floats in interfaces cross both ways, from a 15.5 and a
+// 15.6 image (whose interface boxes are flagged).
+func TestBoxesAndFloats(t *testing.T) {
+	for _, prog := range []string{"boxer5", "boxer"} {
+		srv, port := startServer(t)
+		b := start(t, prog, fmt.Sprintf("test.server=127.0.0.1:%d", port))
+		b.waitLine("dir true 3")
+		b.waitLine("float true true")
+		b.waitLine("struct true true true")
+		b.waitLine("end")
+		noCrash(t, srv)
+	}
+}

@@ -32,7 +32,9 @@ enum {
     DT_NILSLICE = 0x09, DT_STRUCT = 0x0A, DT_PID = 0x0B, DT_ZEROPID = 0x0C,
     DT_REF = 0x0D, DT_ZEROREF = 0x0E, DT_EMPTYSTR = 0x0F, DT_EMPTYBYTES = 0x10,
     DT_OWN = 0x11,           /* a module's own struct: field count, qualified name, fields */
-    DT_OWN2 = 0x12           /* the same with its shape hash first (u32) */
+    DT_OWN2 = 0x12,          /* the same with its shape hash first (u32) */
+    DT_F32 = 0x13,           /* a float32: its 4 bytes */
+    DT_F64 = 0x14            /* a float64: its 8 bytes */
 };
 
 #define SERIAL_BITS 48u
@@ -550,6 +552,11 @@ static void enc(Enc *e, term t, uint32_t depth) {
         put_var(e, ((uint32_t)v << 1) ^ (uint32_t)(v >> 31));
         return;
     }
+    case K_FLOAT:                       /* the bits as they are */
+        if (words != 2u && words != 3u) break;
+        put(e, words == 2u ? DT_F32 : DT_F64);
+        for (uint32_t i = 1; i < words; i++) put_u32(e, o[i]);
+        return;
     case K_INT64: {
         int64_t v = (int64_t)((uint64_t)o[1] | (uint64_t)o[2] << 32);
         put(e, DT_INT64);
@@ -571,7 +578,7 @@ static void enc(Enc *e, term t, uint32_t depth) {
     }
     case K_STRUCT: {
         uint32_t ty = o[1];
-        if (ty & STRUCT_FLAGS) {        /* a pointer's target, a map: references stay home */
+        if (ty & STRUCT_MUT) {          /* a pointer's target, a map: references stay home */
             enc_fail(e, R_BAD_MSG);
             return;
         }
@@ -743,6 +750,16 @@ static term dec(Dec *d, uint32_t depth) {
         }
         return term_from_ref(off);
     }
+    case DT_F32:
+    case DT_F64: {
+        uint32_t n = tag == DT_F32 ? 2u : 3u, off = obj(d, n);
+        for (uint32_t i = 1; i < n; i++) {
+            uint32_t v = get_u32(d);
+            if (d->w && !d->bad) d->w[off + i] = v;
+        }
+        if (d->w && !d->bad) d->w[off] = hdr_make(n, K_FLOAT);
+        return term_from_ref(off);
+    }
     case DT_INT64: {
         uint64_t z = get_var(d, 64);
         uint64_t v = (z >> 1) ^ (0u - (z & 1u));
@@ -818,10 +835,11 @@ static term dec(Dec *d, uint32_t depth) {
             uint32_t len, shape;
             bool has;
             const uint8_t *nm = type_name(img, r, &len, &shape, &has);
-            if (nm && len == nl && !(img->types[2u * r] & STRUCT_FLAGS) && image_type_nfields(img, r) == nf &&
-                memcmp(nm, d->p + d->at, nl) == 0 &&
-                !(tag == DT_OWN2 && has && shape != want))
-                ty = (TYPE_OWN_BASE + r - img->n_reserved) | d->tag;
+            /* A reference type (a pointer's target, a map) never; an
+             * interface box (STRUCT_BOX, 15.6) gets the receiver's flag. */
+            if (nm && len == nl && !(img->types[2u * r] & STRUCT_MUT) && image_type_nfields(img, r) == nf &&
+                memcmp(nm, d->p + d->at, nl) == 0 && !(tag == DT_OWN2 && has && shape != want))
+                ty = (TYPE_OWN_BASE + r - img->n_reserved) | d->tag | (img->types[2u * r] & STRUCT_BOX);
         }
         d->at += nl;
         if (!ty) {

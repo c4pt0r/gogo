@@ -25,7 +25,14 @@ func echo() {
 	for {
 		switch m := actor.Receive().(type) {
 		case actor.Request:
-			actor.Reply(m, m.Body)
+			switch b := m.Body.(type) {
+			case Dir: // known here, as the program uses them
+				actor.Reply(m, b)
+			case F:
+				actor.Reply(m, b)
+			default:
+				actor.Reply(m, m.Body)
+			}
 		case Ping:
 			actor.Send(m.From, Pong{N: m.N + 1, Node: "server"})
 		}
@@ -49,6 +56,14 @@ func shaper() {
 			}
 		}
 	}
+}
+
+// Dir and F are boxer's: echo gives them back as they came.
+type Dir int
+
+type F struct {
+	X float64
+	Y float32
 }
 
 // slow never answers.
