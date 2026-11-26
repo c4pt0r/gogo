@@ -104,7 +104,7 @@ const (None = 0; Rising = 1; Falling = 2; Both = 3)
 ### gogo/errors
 
 ```go
-type Code int   // OK (0), a shared code (1..30), or a package's own (>= 100)
+type Code int   // OK (0), a shared code (1..35), or a package's own (>= 100)
 const (OK = 0; NotFound = 1; Exists = 2; NoMemory = 3; TooMany = 4; Busy = 5; BadArg = 6;
 	Closed = 7; IO = 8; Timeout = 9; Unsupported = 10; NoSpace = 11; BadPath = 12; IsDir = 13;
 	NotDir = 14; NotEmpty = 15; NotMounted = 16; BadImage = 17; Refused = 18; Reset = 19;
@@ -293,7 +293,7 @@ them) are described in chapters 15 and 16.
 | 8 | `actor.BadShift` | `badshift` | negative shift count |
 | 9 | `actor.BadMsg` | `badmsg` | sent a message holding a module's own struct or closure to an actor of another module (the sender exits; chapter 14) |
 | 10..63 | | | kept for the VM |
-| 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus an `errors.Code` (appendix C); `http.ListenFailed` is 69, `actor.Failed + errors.Busy` |
+| 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus a shared code, 1..35 (appendix C); `http.ListenFailed` is 69, `actor.Failed + errors.Busy` |
 | 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)` |
 
 The crash report is `gogo: actor <pid N> crashed: <kind>[ in <function>]`,
@@ -308,9 +308,9 @@ meaning the packages share.
 | Range | Codes |
 |---|---|
 | 0 | `OK` |
-| 1..30 | `NotFound`=1 `Exists`=2 `NoMemory`=3 `TooMany`=4 `Busy`=5 `BadArg`=6 `Closed`=7 `IO`=8 `Timeout`=9 `Unsupported`=10 `NoSpace`=11 `BadPath`=12 `IsDir`=13 `NotDir`=14 `NotEmpty`=15 `NotMounted`=16 `BadImage`=17 `Refused`=18 `Reset`=19 `NoRoute`=20 `BadCert`=21 `NoTime`=22 `TLS`=23 `Overflow`=24 `BadURL`=25 `BadFormat`=26 `BadVersion`=27 |
-| 31..63 | kept for later shared meanings |
-| 64..99 | reserved |
+| 1..27 | `NotFound`=1 `Exists`=2 `NoMemory`=3 `TooMany`=4 `Busy`=5 `BadArg`=6 `Closed`=7 `IO`=8 `Timeout`=9 `Unsupported`=10 `NoSpace`=11 `BadPath`=12 `IsDir`=13 `NotDir`=14 `NotEmpty`=15 `NotMounted`=16 `BadImage`=17 `Refused`=18 `Reset`=19 `NoRoute`=20 `BadCert`=21 `NoTime`=22 `TLS`=23 `Overflow`=24 `BadURL`=25 `BadFormat`=26 `BadVersion`=27 |
+| 28..35 | free for later shared meanings; shared codes stop at 35 so that `actor.Failed` + a shared code stays below 100 (appendix B) |
+| 36..99 | reserved, never shared codes |
 | 100 and up | one block of 20 per package that needs its own codes: `gogo/http` 100..119, `gogo/sound` 120..139 (neither uses its block yet) |
 
 **`fs.Err`** (also returned by `kv` and `ringlog`): the shared codes, as

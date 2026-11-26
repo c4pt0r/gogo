@@ -1558,15 +1558,23 @@ together with `mbox_words` through `actor_charged_words`).
   yet.
 - **Error codes** are one space, `gogo/errors` (`errors.Code`; the C
   side's `GOGO_E_*` in `runtime/include/gogo_errors.h`, which a test keeps
-  equal): 0 is `OK`, 1..30 are meanings every package shares
-  (`NotFound`, `Exists`, `NoMemory`, ... `BadVersion`), 31..63 are kept
-  for more of them, 64..99 are reserved, and each package that needs its
-  own codes gets a block of 20 from 100 (`gogo/http` 100..119,
-  `gogo/sound` 120..139). The codes are compile-time constants: no image
-  format and no VM code depend on the table. A later language phase gives
-  `Code` an `Error()` method and makes functions return `error`;
-  comparisons such as `err == errors.NotFound` keep working across
-  packages because the numbers already agree.
+  equal): 0 is `OK`, 1..35 are meanings every package shares
+  (`NotFound`, `Exists`, `NoMemory`, ... `BadVersion` = 27; 28..35 are
+  free), capped so that `actor.Failed` (64) + a shared code stays a
+  library exit reason below the user codes from 100; 36..99 are reserved,
+  and each package that needs its own codes gets a block of 20 from 100
+  (`gogo/http` 100..119, `gogo/sound` 120..139). The codes are
+  compile-time constants: no opcode, builtin, reserved type or image
+  field depends on the table (the C side uses the same names). A later
+  language phase gives `Code` an `Error()` method and makes functions
+  return `error`. **Open for that phase:** whether `fs.Err`, `code.Err`
+  and the other result types become aliases of `errors.Code`, or the
+  language gets an `errors.Is`-like rule. Until one of them, an `fs.Err`
+  and an `errors.Code` of the same number are different types: they do
+  not compare today, and as Go `error` values with different dynamic
+  types they would not be equal either. Equal numbers make either step
+  possible; they do not by themselves make `err == errors.NotFound` work
+  across packages.
 - Supervision is the `gogo/supervisor` library, written in the subset:
   `Supervise(child, spec)` and `SuperviseModule(m, entry, arg, spec)`
   supervise one child each (restart types Permanent and Transient, a

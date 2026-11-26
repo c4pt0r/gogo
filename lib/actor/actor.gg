@@ -62,7 +62,7 @@ const (
 	Shutdown        = 7
 	BadShift        = 8
 	BadMsg          = 9  // sent a value that may not cross modules (a module's own struct, a func value)
-	Failed          = 64 // the base of library failures: Failed + a shared error code (1..35)
+	Failed          = 64 // the base of library failures: Failed + a shared error code (1..35, gogo/errors)
 )
 
 // Spawn starts a new actor running f and returns its PID.

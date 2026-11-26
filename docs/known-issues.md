@@ -46,7 +46,8 @@ rebuilt:
   `gogo/http` and `gogo/sound` no longer borrow `fs.Err`: `Upload`,
   `ClientUpload`, `Recorded.Err` and `Played.Err` are `errors.Code`, so
   compare them with `errors.NoSpace` and the like, not `fs.NoSpace` (now
-  a type mismatch). `http.Failed` (100) is the connection's
+  a type mismatch): `if m.Err == fs.NoSpace` becomes `if m.Err ==
+  errors.NoSpace`, with `import "gogo/errors"`. `http.Failed` (100) is the connection's
   `Closed` reason, `errors.Timeout` or `errors.IO`, `http.BadURL` is `errors.BadURL` (25),
   `sound.SpkFailed` is `errors.IO`, and `sound.BadWav`, which nothing
   returned, is gone (`errors.BadFormat` is the shared code for it).

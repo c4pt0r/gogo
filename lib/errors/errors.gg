@@ -9,9 +9,8 @@
 // The space:
 //
 //	0        OK
-//	1..30    shared meanings (below)
-//	31..63   kept for later shared meanings
-//	64..99   reserved
+//	1..35    shared meanings (below; 28..35 are free for later ones)
+//	36..99   reserved, never shared codes
 //	>= 100   per package, each in its own block of 20:
 //	         100..119 gogo/http, 120..139 gogo/sound (both unused so far)
 //
@@ -22,8 +21,9 @@
 // needs some, go in its block, never in 1..99.
 //
 // An actor that ends because of one of these failures exits with
-// actor.Failed + the code (gogo/actor's exit reasons 64..99):
-// gogo/http's ListenFailed is actor.Failed + int(Busy).
+// actor.Failed + the code (gogo/actor's exit reasons 64..99): gogo/http's
+// ListenFailed is actor.Failed + int(Busy). That is why shared codes stop
+// at 35: 64 + 35 = 99 stays below the user exit codes from 100.
 package errors
 
 // Code is an error code: OK (0), a shared code, or a package's own.

@@ -3,9 +3,10 @@
  * errors.NotFound is GOGO_E_NOTFOUND. tests/errors_test.go keeps the two
  * equal. Constants only: no functions, no types.
  *
- * 0 is OK; 1..30 are the shared meanings; 31..63 are kept for later shared
- * meanings; 64..99 are reserved; codes >= 100 belong to one package each,
- * in blocks of 20 (gogo/errors lists them). These are the codes gogo
+ * 0 is OK; 1..35 are the shared meanings (28..35 free for later ones), so
+ * that actor.Failed (64) + a shared code is an exit reason below 100;
+ * 36..99 are reserved; codes >= 100 belong to one package each, in blocks
+ * of 20 (gogo/errors lists them). These are the codes gogo
  * programs see. They are not the embedding API's results: gogo.h's GOGO_EINVAL,
  * GOGO_EBUSY ... are negative and unrelated. */
 #ifndef GOGO_ERRORS_H
