@@ -201,20 +201,24 @@ static uint32_t pending_ports(const Vm *vm) {
 }
 #endif
 
+/* Takes from o (NULL: gone) what it holds as p's owner: the first k
+ * pinned Bytes, the charge and the port count. */
+static void owner_drop(Vm *vm, const Port *p, Actor *o, uint32_t k) {
+    if (!o) return;
+    while (k--) {
+        if (p->held[k]) bytes_release(vm, o, p->held[k]);
+    }
+    actor_uncharge(o, p->charge_words);
+    actor_port_disown(o);
+}
+
 void port_close(Vm *vm, term pid) {
     Port *p = port_of(vm, pid);
     if (!p) return;
     if (p->drv->close) p->drv->close(vm, p);
-    Actor *o = actor_lookup(vm, p->owner);
-    if (o) {
-        /* Release what the port pinned for o (o is alive here: an owner's
-         * exit closes its ports before its handles go, signals.c). */
-        for (uint32_t k = 0; k < PORT_MAX_HELD; k++) {
-            if (p->held[k]) bytes_release(vm, o, p->held[k]);
-        }
-        actor_uncharge(o, p->charge_words);
-        actor_port_disown(o);
-    }
+    /* The owner is alive here: an owner's exit closes its ports before
+     * its handles go (signals.c). */
+    owner_drop(vm, p, actor_lookup(vm, p->owner), PORT_MAX_HELD);
     memset(p->held, 0, sizeof p->held);
     if (p->flags & PORT_PENDING) vm->ports_pending--;
     p->flags = 0;
@@ -223,21 +227,21 @@ void port_close(Vm *vm, term pid) {
     p->gen = (uint16_t)((p->gen + 1u) & GEN_MASK);
 }
 
-void port_close_owned(Vm *vm, term owner) {
-    const Actor *a = actor_lookup(vm, owner);
-    if (a && !actor_port_owns(a)) return;
+/* Closes every open port of owner (T_NIL: every open port). */
+static void close_where(Vm *vm, term owner) {
     for (uint32_t i = 0; i < vm->port_n; i++) {
         Port *p = port_at(vm, i);
-        if (p->drv && p->owner == owner) port_close(vm, p->id);
+        if (p->drv && (owner == T_NIL || p->owner == owner)) port_close(vm, p->id);
     }
 }
 
-void port_close_all(Vm *vm) {
-    for (uint32_t i = 0; i < vm->port_n; i++) {
-        Port *p = port_at(vm, i);
-        if (p->drv) port_close(vm, p->id);
-    }
+void port_close_owned(Vm *vm, term owner) {
+    const Actor *a = actor_lookup(vm, owner);
+    if (a && !actor_port_owns(a)) return;
+    close_where(vm, owner);
 }
+
+void port_close_all(Vm *vm) { close_where(vm, T_NIL); }
 
 bool port_any_live(const Vm *vm) {
     SOURCES_EACH(vm, q) {
@@ -410,24 +414,15 @@ bool port_handoff(Vm *vm, Actor *from, term pid, term to) {
         uint32_t k;
         if (!actor_fits(t, p->charge_words + bytes_extra_words(vm, t, p->held, PORT_MAX_HELD))) return false;
         if (!actor_port_own(vm, t)) return false;
-        if (p->charge_words && !actor_charge(vm, t, p->charge_words)) {
-            actor_port_disown(t);
-            return false;
-        }
+        (void)actor_charge(vm, t, p->charge_words);   /* t has its extra now: cannot fail */
         for (k = 0; k < PORT_MAX_HELD; k++) {
             if (p->held[k] && !bytes_retain(vm, t, p->held[k])) break;
         }
-        if (k < PORT_MAX_HELD) {         /* undo */
-            while (k--) if (p->held[k]) bytes_release(vm, t, p->held[k]);
-            actor_uncharge(t, p->charge_words);
-            actor_port_disown(t);
+        if (k < PORT_MAX_HELD) {
+            owner_drop(vm, p, t, k);     /* undo */
             return false;
         }
-        for (k = 0; k < PORT_MAX_HELD; k++) {
-            if (p->held[k]) bytes_release(vm, from, p->held[k]);
-        }
-        actor_uncharge(from, p->charge_words);
-        actor_port_disown(from);
+        owner_drop(vm, p, from, PORT_MAX_HELD);
         p->owner = t->id;
     }
     if (p->drv->handoff) p->drv->handoff(vm, p);
