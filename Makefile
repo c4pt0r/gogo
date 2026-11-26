@@ -103,8 +103,8 @@ test-book: vm gogo-cmd
 # The brand marks come from logos/: the mascot for the landing page, the
 # Gogo Lang lockup for the book's sidebar (theme/gogo.css); the favicon is
 # the book's (docs/book/theme/favicon.*), shared by the landing page.
-SITE_LOGOS = logos/gogo-octopus-color.svg logos/gogo-octopus-white.svg
-BOOK_LOGOS = logos/gogo-lang-color.svg logos/gogo-lang-white.svg
+SITE_LOGOS = logos/gogo-octopus-color.svg
+BOOK_LOGOS = logos/gogo-lang-color.svg
 MDBOOK ?= mdbook
 SITE = $(BUILD)/site
 MDBOOK_HINT = install mdBook 0.5: brew install mdbook, or a release binary from https://github.com/rust-lang/mdBook/releases

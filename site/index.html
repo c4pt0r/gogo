@@ -18,8 +18,8 @@
 /* gogo's brand (logos/README.md): one narrow column, black and white with
    deep teal as the accent, Inter for text and a monospace face for code,
    the CLI and the diagram. Pale mint is a surface (the status pill, the
-   selection), never small text on white. In dark mode the mascot is the
-   white reverse and mint takes over as the accent. */
+   selection), never small text on white. In dark mode mint takes over as
+   the accent; the mascot is the supplied color mark in both modes. */
 
 :root {
   --ink: #000000;
@@ -50,14 +50,7 @@
   --accent: #dffaf7; --accent-line: #3f6f6b; --surface: #005550; --on-surface: #dffaf7;
   color-scheme: dark;
 }
-/* The mascot: the color mark on light, the white reverse on dark. */
-.on-dark { display: none; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .on-light { display: none; }
-  :root:not([data-theme="light"]) .on-dark { display: block; }
-}
-:root[data-theme="dark"] .on-light { display: none; }
-:root[data-theme="dark"] .on-dark { display: block; }
+/* The mascot is the designer's color mark, unchanged, on light and dark. */
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; background: var(--paper); }
@@ -177,7 +170,7 @@ footer span { color: var(--muted); font-size: 13px; }
 <body>
 <main>
   <nav class="nav shell" aria-label="Primary navigation">
-    <a class="brand" href="#top"><img class="mark on-light" src="logos/gogo-octopus-color.svg" alt="" width="28" height="27"><img class="mark on-dark" src="logos/gogo-octopus-white.svg" alt="" width="28" height="27"><b>gogo</b><span class="cursor" aria-hidden="true"></span></a>
+    <a class="brand" href="#top"><img class="mark" src="logos/gogo-octopus-color.svg" alt="" width="28" height="27"><b>gogo</b><span class="cursor" aria-hidden="true"></span></a>
     <div class="nav-links">
       <a class="wide" href="#language">language</a>
       <a class="wide" href="#architecture">architecture</a>
@@ -189,8 +182,7 @@ footer span { color: var(--muted); font-size: 13px; }
   </nav>
 
   <header class="hero shell" id="top">
-    <img class="hero-mark on-light" src="logos/gogo-octopus-color.svg" alt="The gogo mascot, a friendly octopus" width="104" height="101">
-    <img class="hero-mark on-dark" src="logos/gogo-octopus-white.svg" alt="The gogo mascot, a friendly octopus" width="104" height="101">
+    <img class="hero-mark" src="logos/gogo-octopus-color.svg" alt="The gogo mascot, a friendly octopus" width="104" height="101">
     <h1>Go syntax. Erlang actors. Small enough for a microcontroller.</h1>
     <p>gogo is an actor VM for microcontrollers and a compiler for a subset of Go. You write a program as a set of isolated actors. Each one has its own heap and memory limit, they talk only by copied messages, and supervisors restart the ones that crash.</p>
     <p>The VM is plain C99 with no third-party libraries.</p>
@@ -412,7 +404,7 @@ server gone, reason 11</pre>
   </section>
 
   <footer class="shell">
-    <a class="brand" href="#top"><img class="mark on-light" src="logos/gogo-octopus-color.svg" alt="" width="24" height="23"><img class="mark on-dark" src="logos/gogo-octopus-white.svg" alt="" width="24" height="23"><b>gogo</b></a>
+    <a class="brand" href="#top"><img class="mark" src="logos/gogo-octopus-color.svg" alt="" width="24" height="23"><b>gogo</b></a>
     <span>actors for microcontrollers</span>
   </footer>
 </main>

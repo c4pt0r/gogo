@@ -2,7 +2,7 @@
    (site/index.html) in gogo's brand (logos/README.md): Inter for prose, a
    monospace face for code, black and white with deep teal as the accent,
    a narrow column. The sidebar starts with the Gogo Lang lockup (the
-   documentation's mark), the white reverse in the dark themes; make site
+   documentation's mark), the supplied color artwork in every theme; make site
    copies it to book/logos/. mdBook's five themes map onto two palettes:
    light and rust are the light one, coal, navy and ayu the dark one; the
    picker offers Auto, Light and Coal (dark). Code is highlighted by
@@ -28,7 +28,7 @@ html.coal, html.navy, html.ayu {
   --ink: #ffffff; --text: #e8e8e8; --muted: #a3a3a3; --faint: #6e6e6e;
   --paper: #000000; --line: #262b2a; --code-bg: #0b0d0d;
   --accent: #dffaf7; --accent-line: #3f6f6b; --surface: #005550; --on-surface: #dffaf7;
-  --lockup: url("../logos/gogo-lang-white.svg");
+  --lockup: url("../logos/gogo-lang-color.svg");
   --color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -36,7 +36,7 @@ html.coal, html.navy, html.ayu {
     --ink: #ffffff; --text: #e8e8e8; --muted: #a3a3a3; --faint: #6e6e6e;
     --paper: #000000; --line: #262b2a; --code-bg: #0b0d0d;
     --accent: #dffaf7; --accent-line: #3f6f6b; --surface: #005550; --on-surface: #dffaf7;
-    --lockup: url("../logos/gogo-lang-white.svg");
+    --lockup: url("../logos/gogo-lang-color.svg");
     --color-scheme: dark;
   }
 }

@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="logos/gogo-octopus-white.svg">
-    <img src="logos/gogo-octopus-color.svg" alt="The gogo mascot, a friendly octopus" width="144">
-  </picture>
+  <img src="logos/gogo-octopus-color.svg" alt="The gogo mascot, a friendly octopus" width="144">
 </p>
 
 <h1 align="center">gogo</h1>
