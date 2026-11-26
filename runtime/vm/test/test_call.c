@@ -67,16 +67,6 @@ static uint32_t mbox_sum(const Actor *a) {
     return n;
 }
 
-/* A K_REF with this serial on s's heap. */
-static term make_ref(Vm *vm, Actor *s, uint64_t serial) {
-    uint32_t off = heap_alloc(vm, s, 3, NULL, 0);
-    CHECK(off != UINT32_MAX);
-    s->mem[off] = hdr_make(3, K_REF);
-    s->mem[off + 1] = (uint32_t)serial;
-    s->mem[off + 2] = (uint32_t)(serial >> 32);
-    return term_from_ref(off);
-}
-
 /* A struct {x} with a nested struct, to exercise ref relocation. */
 static term make_body(Vm *vm, Actor *s, int32_t x) {
     uint32_t in = heap_alloc(vm, s, 3, NULL, 0);
@@ -98,10 +88,9 @@ TEST(reply_skipped_by_receive) {
     setup(w, &img, &vm, 50);
     size_t base = va_used_bytes(&vm);
     Actor *r = actor_new(&vm, 64), *s = actor_new(&vm, 64);
-    term ref = make_ref(&vm, s, 77);
-    CHECK_EQ(msg_send_reply(&vm, s, r->id, ref, make_body(&vm, s, 1)), 0);
+    CHECK_EQ(msg_send_reply(&vm, s, r->id, 77, make_body(&vm, s, 1)), 0);
     CHECK_EQ(msg_send(&vm, s, r->id, term_from_int(5)), 0);
-    CHECK_EQ(msg_send_reply(&vm, s, r->id, ref, term_from_int(2)), 0);
+    CHECK_EQ(msg_send_reply(&vm, s, r->id, 77, term_from_int(2)), 0);
     CHECK_EQ(mbox_count(r), 3);
     CHECK_EQ(r->mbox_words, mbox_sum(r));
 
@@ -124,17 +113,16 @@ TEST(take_reply_selective) {
     setup(w, &img, &vm, 50);
     size_t base = va_used_bytes(&vm);
     Actor *r = actor_new(&vm, 64), *s = actor_new(&vm, 64);
-    term old = make_ref(&vm, s, 1), cur = make_ref(&vm, s, 0x100000002ull);
     CHECK_EQ(msg_send(&vm, s, r->id, term_from_int(5)), 0);
-    CHECK_EQ(msg_send_reply(&vm, s, r->id, old, term_from_int(9)), 0);
-    CHECK_EQ(msg_send_reply(&vm, s, r->id, cur, make_body(&vm, s, 42)), 0);
+    CHECK_EQ(msg_send_reply(&vm, s, r->id, 1, term_from_int(9)), 0);
+    CHECK_EQ(msg_send_reply(&vm, s, r->id, 0x100000002ull, make_body(&vm, s, 42)), 0);
     CHECK_EQ(msg_send(&vm, s, r->id, term_from_int(6)), 0);
 
     term t;
     CHECK_EQ(msg_take_reply(&vm, r, 3, &t), 0);          /* no such serial */
     CHECK_EQ(mbox_count(r), 2);                          /* stale one freed */
     CHECK_EQ(r->mbox_words, mbox_sum(r));
-    CHECK_EQ(msg_send_reply(&vm, s, r->id, cur, make_body(&vm, s, 42)), 0);
+    CHECK_EQ(msg_send_reply(&vm, s, r->id, 0x100000002ull, make_body(&vm, s, 42)), 0);
     CHECK_EQ(msg_take_reply(&vm, r, 0x100000002ull, &t), 1);
     CHECK_EQ(body_x(r, t), 42);
     CHECK_EQ(mbox_count(r), 2);
@@ -146,7 +134,7 @@ TEST(take_reply_selective) {
     CHECK_EQ(va_used_bytes(&vm), base);
 }
 
-/* A dead or stale target drops the reply silently. */
+/* A dead or stale target, or serial 0 (no Ref), drops the reply silently. */
 TEST(reply_dead_target_drops) {
     uint32_t w[IMG_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm, 50);
@@ -154,7 +142,11 @@ TEST(reply_dead_target_drops) {
     Actor *r = actor_new(&vm, 64), *s = actor_new(&vm, 64);
     term to = r->id;
     actor_free(&vm, r);
-    CHECK_EQ(msg_send_reply(&vm, s, to, make_ref(&vm, s, 1), term_from_int(1)), 1);
+    CHECK_EQ(msg_send_reply(&vm, s, to, 1, term_from_int(1)), 1);
+    Actor *r2 = actor_new(&vm, 64);
+    CHECK_EQ(msg_send_reply(&vm, s, r2->id, 0, term_from_int(1)), 1);   /* no Ref */
+    CHECK_EQ(mbox_count(r2), 0);
+    actor_free(&vm, r2);
     actor_free(&vm, s);
     CHECK_EQ(va_used_bytes(&vm), base);
 }
@@ -189,7 +181,7 @@ TEST(call_no_resend_on_resume) {
     term ref = REGS_OF(c)[3];
     CHECK(term_is_ref(ref));
     const uint32_t *ro = c->mem + term_ref_off(ref);
-    term sref = make_ref(&vm, s, (uint64_t)ro[1] | ((uint64_t)ro[2] << 32));
+    uint64_t sref = (uint64_t)ro[1] | ((uint64_t)ro[2] << 32);
     CHECK_EQ(msg_send_reply(&vm, s, c->id, sref, term_from_int(99)), 0);
     CHECK(runq_pop(&vm) == c);
     CHECK_EQ(interp_run(&vm, c), RUN_WAIT);      /* now blocked in Sleep */
@@ -217,7 +209,7 @@ TEST(call_timeout_clears_state) {
     c->state = A_WAITING;
     term ref = REGS_OF(c)[3];
     const uint32_t *ro = c->mem + term_ref_off(ref);
-    term sref = make_ref(&vm, s, (uint64_t)ro[1] | ((uint64_t)ro[2] << 32));
+    uint64_t sref = (uint64_t)ro[1] | ((uint64_t)ro[2] << 32);
     uint64_t next;
     CHECK(timer_next(&vm, &next));
     timer_fire_due(&vm, next);
@@ -280,7 +272,7 @@ TEST(stale_reply_reblocks_receive) {
     Actor *c = start(&vm, &img), *s = actor_new(&vm, 64);
     CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
     c->state = A_WAITING;
-    CHECK_EQ(msg_send_reply(&vm, s, c->id, make_ref(&vm, s, 5), term_from_int(1)), 0);
+    CHECK_EQ(msg_send_reply(&vm, s, c->id, 5, term_from_int(1)), 0);
     CHECK(runq_pop(&vm) == c);
     CHECK_EQ(interp_run(&vm, c), RUN_WAIT);      /* re-blocked, still alive */
     c->state = A_WAITING;

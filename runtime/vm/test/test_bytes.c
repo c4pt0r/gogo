@@ -550,12 +550,7 @@ TEST(bytes_receive_stays_within_limit) {
                 term t;
                 bool ok;
                 if (reply) {
-                    uint32_t ro = heap_alloc(&f.vm, a, 3, NULL, 0);
-                    CHECK(ro != UINT32_MAX);
-                    a->mem[ro] = hdr_make(3, K_REF);
-                    a->mem[ro + 1] = 7;
-                    a->mem[ro + 2] = 0;
-                    if (msg_send_reply(&f.vm, a, b->id, term_from_ref(ro), R(a)[0]) != 0) CHECK(false);
+                    if (msg_send_reply(&f.vm, a, b->id, 7, R(a)[0]) != 0) CHECK(false);
                     ok = !(b->flags & AF_EXIT_PENDING) && msg_take_reply(&f.vm, b, 7, &t) == 1;
                 } else {
                     CHECK_EQ(msg_send(&f.vm, a, b->id, R(a)[0]), 0);

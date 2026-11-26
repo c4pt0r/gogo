@@ -1067,8 +1067,11 @@ int interp_run(Vm *vm, Actor *a) {
                 const uint32_t *req = obj_of(vm, a, R[rb]);
                 CHECK(req && hdr_kind(req[0]) == K_STRUCT && req[1] == TYPE_REQUEST &&
                       hdr_words(req[0]) == 5u);
-                /* A dead sender, or a Request not made by Call, drops it. */
-                if ((r = msg_send_reply(vm, a, req[2], req[3], R[rb + 1])) < 0) CRASH((uint32_t)-r);
+                /* A dead sender, or a Request not made by Call (no Ref:
+                 * serial 0), drops it. */
+                uint64_t serial;
+                if (!ref_serial(vm, a, req[3], &serial)) serial = 0;
+                if ((r = msg_send_reply(vm, a, req[2], serial, R[rb + 1])) < 0) CRASH((uint32_t)-r);
                 R[ra] = T_NIL;
                 break;
             }

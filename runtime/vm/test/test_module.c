@@ -1518,12 +1518,11 @@ TEST(xmod_host_struct_badmsg) {
     Actor *h = host(f);
     uint32_t slot = load_b(f, h) >> 16;
     Actor *m = mod_actor(f, slot);
-    term ref = plant(h, K_REF, 5, 1, 0);
     term st = plant(h, K_STRUCT, T_MOD, 1, term_from_int(1));
-    CHECK_EQ(msg_send_reply(vm, h, m->id, ref, st), -(int)R_BAD_MSG);
+    CHECK_EQ(msg_send_reply(vm, h, m->id, 5, st), -(int)R_BAD_MSG);
     CHECK_EQ(msg_send(vm, h, m->id, st), -(int)R_BAD_MSG);
     CHECK_EQ(mbox_n(m), 0);
-    CHECK_EQ(msg_send_reply(vm, h, m->id, ref, term_from_int(1)), 0);
+    CHECK_EQ(msg_send_reply(vm, h, m->id, 5, term_from_int(1)), 0);
     CHECK_EQ(mbox_n(m), 1);
     actor_exit(vm, m, R_NORMAL, T_EMPTYSTR);
     actor_exit(vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1705,19 +1704,18 @@ TEST(stale_send_to_dead_badcode) {
     term dead = d->id;
     actor_exit(vm, d, R_NORMAL, T_EMPTYSTR);
     term sc = term_from_const(6) | STALE_TAG;
-    term ref = plant(h, K_REF, 5, 1, 0);
     CHECK_EQ(msg_send(vm, h, dead, sc), -(int)R_BAD_CODE);
     CHECK_EQ(msg_send(vm, h, term_from_int(3), plant(h, K_STRUCT, T_MOD | STALE_TAG, 1, T_NIL)),
              -(int)R_BAD_CODE);
-    CHECK_EQ(msg_send_reply(vm, h, dead, ref, sc), -(int)R_BAD_CODE);
-    CHECK_EQ(msg_send_reply(vm, h, h->id, term_from_int(1), sc), -(int)R_BAD_CODE);
+    CHECK_EQ(msg_send_reply(vm, h, dead, 5, sc), -(int)R_BAD_CODE);
+    CHECK_EQ(msg_send_reply(vm, h, h->id, 0, sc), -(int)R_BAD_CODE);
     uint32_t why = 0;
     CHECK(timer_add_send(vm, h, 5, dead, sc, &why) == T_NIL);
     CHECK_EQ(why, R_BAD_CODE);
     /* live values to nobody: dropped, no crash */
     CHECK_EQ(msg_send(vm, h, dead, term_from_const(6)), 1);
     CHECK_EQ(msg_send(vm, h, dead, plant(h, K_STRUCT, T_MOD, 1, T_NIL)), 1);
-    CHECK_EQ(msg_send_reply(vm, h, dead, ref, term_from_int(1)), 1);
+    CHECK_EQ(msg_send_reply(vm, h, dead, 5, term_from_int(1)), 1);
     CHECK_EQ(mbox_n(h), 0);
     /* through the interpreter: the sender exits badcode */
     Actor *s = a_actor(f, F_SEND, T_NIL);

@@ -436,18 +436,17 @@ bool msg_receive(Vm *vm, Actor *a, term *out) {
     return true;
 }
 
-int msg_send_reply(Vm *vm, Actor *from, term to_pid, term ref, term body) {
+int msg_send_reply(Vm *vm, Actor *from, term to_pid, uint64_t serial, term body) {
     Actor *to = actor_lookup(vm, to_pid);
-    const uint32_t *r = term_is_ref(ref) ? from->mem + term_ref_off(ref) : NULL;
-    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING) || !r || hdr_kind(r[0]) != K_REF)
+    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING) || !serial)
         return dropped(vm, from, body);
 
     uint32_t why;
     Msg *m = build_skip(vm, from, body, MSG_REPLY_HDR, to->mod, &why);
     if (!m) return -(int)why;
     m->flags |= MSG_REPLY;
-    m->data[0] = r[1];
-    m->data[1] = r[2];
+    m->data[0] = (uint32_t)serial;
+    m->data[1] = (uint32_t)(serial >> 32);
     msg_enqueue(vm, to, m, true);
     return 0;
 }

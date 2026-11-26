@@ -105,13 +105,13 @@ bool msg_try_enqueue(Vm *vm, Actor *to, Msg *m);
  * stays queued; check a->mbox_head to tell the two apart). May GC. */
 bool msg_receive(Vm *vm, Actor *a, term *out);
 
-/* Sends a reply to the Call that created `ref` (a K_REF term on from's
- * heap) with a copy of body. Like msg_send: 0 delivered or quota-dropped, 1
- * dropped (dead or stale pid, receiver marked for exit, or ref not a Ref),
+/* Sends a reply to the Call whose Ref has this serial with a copy of body.
+ * Like msg_send: 0 delivered or quota-dropped, 1 dropped (dead or stale
+ * pid, receiver marked for exit, or serial 0: no Ref),
  * or a negated exit reason as msg_send (a dropped body is checked the same
  * way). A reply that overflows the caller's quota marks the
  * caller MailboxOverflow, as any message does. */
-int msg_send_reply(Vm *vm, Actor *from, term to_pid, term ref, term body);
+int msg_send_reply(Vm *vm, Actor *from, term to_pid, uint64_t serial, term body);
 
 /* Takes the reply with this Ref serial out of a's mailbox into a's heap,
  * stores the body in *out and returns 1. Ordinary messages stay queued. Any
