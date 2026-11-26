@@ -1,0 +1,11 @@
+// Package geom is a user package with a struct type.
+package geom
+
+// Point is a position on a grid.
+type Point struct{ X, Y int }
+
+// Dist2 is the squared distance from the origin.
+func Dist2(p Point) int { return p.X*p.X + p.Y*p.Y }
+
+// Add adds two points.
+func Add(a, b Point) Point { return Point{X: a.X + b.X, Y: a.Y + b.Y} }

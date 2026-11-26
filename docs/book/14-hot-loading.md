@@ -22,7 +22,11 @@ same format and are built the same way:
 gogo build ./greeter -o greeter.gmod     # the extension is only a habit
 ```
 
-A module is an ordinary gogo `package main`. Its **entries** are the
+A module is an ordinary gogo `package main`, and may have packages of its
+own: built from `greeter/`, `import "greeter/words"` is `greeter/words/`,
+then the search path, exactly as for a program (section 3.1.1); they are
+compiled into the module, and their struct types are the module's own
+(section 14.5). Its **entries** are the
 exported functions with the signature `func()` or `func(arg any)`, found by
 name (case-sensitive). `func main()` is exported as the entry `main`. At
 boot the firmware loads the flashed image as module 0 and starts its
@@ -165,9 +169,19 @@ may carry only:
 - basic values, strings and `Bytes` (constants are copied to the heap, so
   the receiver never points into the sender's code),
 - PIDs, Refs and `Module` handles,
-- the struct types of gogo's own packages (`actor.Request`, `net.Up`, ...).
+- the reserved struct types of the stub packages (`actor.Request`,
+  `net.Up`, `fs.Info`, ...), which have the same type index in every
+  image.
 
-A module's **own** structs and function values may not cross. The sender
+A module's **own** structs and function values may not cross. That
+includes the struct types of every package compiled into the module: your
+own packages and the `gogo/` libraries written in gogo (`gogo/http`,
+`gogo/tui`, ...). Two modules that import the same package each compile
+their own copy, so its `T` in one module is not its `T` in the other:
+a shared "message types" package does not make a struct sendable between
+modules, and sending one fails with `BadMsg` at run time. Send basic
+values, strings or `Bytes` across instead, and rebuild the struct on the
+other side. The sender
 that tries exits with the reason `BadMsg` (whichever module it belongs
 to; the main program has no special case), and its supervisor handles that
 like any crash. `code.Spawn` with such an `arg` returns `BadArg` instead of

@@ -17,7 +17,8 @@ import (
 )
 
 // TestGolden compiles every tests/golden/*/ program (and every
-// examples/*/ with an expected.out), runs it on the VM named
+// examples/*/ with an expected.out), with an empty package search path
+// (its packages are its own subdirectories, never $GOGOPATH's), runs it on the VM named
 // by $GOGO_VM (30s timeout) and requires exit status 0 and stdout equal
 // byte-for-byte to expected.out; if expected.err exists, each of its
 // non-empty lines must be a substring of stderr, and no non-empty line of
@@ -59,7 +60,7 @@ func TestGolden(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prog, err := compiler.Load(dir)
+			prog, err := compiler.Config{}.Load(dir)
 			if err != nil {
 				t.Fatalf("load: %v", err)
 			}
@@ -93,7 +94,7 @@ func TestGolden(t *testing.T) {
 						}
 					}
 					for _, mod := range mods {
-						mprog, err := compiler.Load(mod)
+						mprog, err := compiler.Config{}.Load(mod)
 						if err != nil {
 							t.Fatalf("load module %s: %v", mod, err)
 						}

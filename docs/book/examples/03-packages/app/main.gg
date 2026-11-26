@@ -1,0 +1,17 @@
+// A program of three packages: package main here, app/shapes and the
+// nested app/text/banner. The imports start with app/, the name of this
+// directory (the build root).
+package main
+
+import (
+	"app/shapes"
+	"app/text/banner"
+)
+
+func main() {
+	r := shapes.Rect{W: 3, H: 4}
+	println(banner.Title("shapes"))
+	println("area", shapes.Area(r), "perimeter", shapes.Perimeter(r))
+	sq := shapes.Square(5)
+	println("square", sq.W, sq.H, shapes.Area(sq))
+}

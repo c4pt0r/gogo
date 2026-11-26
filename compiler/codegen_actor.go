@@ -15,12 +15,12 @@ type closure struct {
 }
 
 // nameLits names every func literal <pkg>.<enclosing>.func<N> (main
-// included: main.main.func1), N counting from 1 in source order within
+// included: main.main.func1; <pkg> is pkgPrefix), N counting from 1 in source order within
 // each top-level function (nested literals included).
 func (g *gen) nameLits(decls []*ast.FuncDecl) {
 	g.litNames = map[*ast.FuncLit]string{}
 	for _, fd := range decls {
-		pkg := g.p.Info.Defs[fd.Name].Pkg().Name()
+		pkg := pkgPrefix(g.p.Info.Defs[fd.Name].Pkg())
 		n := 0
 		ast.Inspect(fd.Body, func(node ast.Node) bool {
 			if lit, ok := node.(*ast.FuncLit); ok {

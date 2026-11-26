@@ -1,7 +1,8 @@
 // Command gogo compiles gogo programs to VM images, runs and disassembles them.
 //
-//	gogo build <dir> [-o out.ggb]
-//	gogo run [--key c=pin]... [--fs-root DIR] <dir|file.ggb>
+//	gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
+//	gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
+//	gogo env [-path dirs]
 //	gogo dis <file.ggb>
 //	gogo flash [-port P] [-esptool path] app.ggb
 //	gogo monitor [-port P] [-t seconds] [-until text] [-reset]
@@ -10,11 +11,14 @@
 //	gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
 //	gogo version
 //
-// `gogo run` builds a directory to a temporary image first, then runs the VM
-// and exits with its status. The VM is $GOGO_VM if set, else
-// <repo>/build/gogovm (built by `make vm`), where <repo> is the first
-// directory containing a go.mod declaring `module gogotools` (the repository root), searched upwards
-// from the gogo executable and then from the current directory.
+// `gogo build` compiles a directory (the build root) or one .gg file. Imports
+// outside gogo/ are user packages, found in the build root and then in the
+// search path: the directories of -path, else of $GOGOPATH, else $HOME/gogo
+// (compiler.Config). `gogo env` prints the search path, the VM and the version.
+//
+// `gogo run` builds a directory or a .gg file (one starting with #!, an
+// executable script, counts as one too) to a temporary image first, then
+// runs the VM and exits with its status. The VM is found by findVM.
 //
 // `gogo flash` writes an image to the ESP32-S3 image partition with an
 // external esptool (see flash.go); `gogo monitor` captures the board's
@@ -27,17 +31,19 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
 	"gogotools/compiler"
 )
 
-const usage = "usage: gogo build <dir> [-o out" + imageExt + "]\n       gogo run [--key c=pin]... [--fs-root DIR] <dir|file" + imageExt + ">\n       gogo dis <file" + imageExt + ">\n       gogo flash [-port P] [-esptool path] app" + imageExt + "\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats\n       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]\n       gogo version"
+const usage = "usage: gogo build [-path dirs] <dir|file" + sourceExt + "> [-o out" + imageExt + "]\n       gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file" + sourceExt + "|file" + imageExt + ">\n       gogo env [-path dirs]\n       gogo dis <file" + imageExt + ">\n       gogo flash [-port P] [-esptool path] app" + imageExt + "\n       gogo monitor [-port P] [-t seconds] [-until text] [-reset]\n       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...\n       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats\n       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]\n       gogo version"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "run" {
@@ -56,23 +62,31 @@ func main() {
 // runCmd implements `gogo run` and returns the process exit status.
 func runCmd(args []string) (int, error) {
 	// --key c=pin (unix tty mode) and --fs-root DIR (host directory behind
-	// /flash and /sd) are forwarded to gogovm.
-	var vmArgs []string
-	for len(args) > 0 && (args[0] == "--key" || args[0] == "--fs-root") {
+	// /flash and /sd) are forwarded to gogovm; -path dirs is the package
+	// search path of the build.
+	var vmArgs, buildArgs []string
+	for len(args) > 0 && (args[0] == "--key" || args[0] == "--fs-root" || args[0] == "-path" || args[0] == "--path") {
 		if len(args) < 2 {
-			if args[0] == "--fs-root" {
+			switch args[0] {
+			case "--fs-root":
 				return 1, errors.New("gogo run: --fs-root needs a directory\n" + usage)
+			case "--key":
+				return 1, errors.New("gogo run: --key needs a value like c=pin\n" + usage)
 			}
-			return 1, errors.New("gogo run: --key needs a value like c=pin\n" + usage)
+			return 1, errors.New("gogo run: -path needs a list of directories\n" + usage)
 		}
-		vmArgs = append(vmArgs, args[0], args[1])
+		if args[0] == "-path" || args[0] == "--path" {
+			buildArgs = append(buildArgs, "-path", args[1])
+		} else {
+			vmArgs = append(vmArgs, args[0], args[1])
+		}
 		args = args[2:]
 	}
 	if len(args) == 0 {
-		return 1, errors.New("gogo run: missing image (a directory or " + imageExt + " file)\n" + usage)
+		return 1, errors.New("gogo run: missing program (a directory, a " + sourceExt + " file or a " + imageExt + " image)\n" + usage)
 	}
 	if len(args) != 1 {
-		return 1, errors.New(usage)
+		return 1, fmt.Errorf("gogo run: arguments after the program (%s) are not supported yet\n%s", strings.Join(args[1:], " "), usage)
 	}
 	target := args[0]
 	fi, err := os.Stat(target)
@@ -80,18 +94,20 @@ func runCmd(args []string) (int, error) {
 		return 1, err
 	}
 	image := target
-	if fi.IsDir() {
+	if fi.IsDir() || isSourceFile(target) {
 		tmp, err := os.MkdirTemp("", "gogo-run-")
 		if err != nil {
 			return 1, err
 		}
 		defer os.RemoveAll(tmp)
 		image = filepath.Join(tmp, "main"+imageExt)
-		if err := build([]string{target, "-o", image}); err != nil {
+		if err := build(append(buildArgs, target, "-o", image)); err != nil {
 			return 1, err
 		}
+	} else if len(buildArgs) > 0 {
+		return 1, errors.New("gogo run: -path is for building a directory or " + sourceExt + " file, not for an image\n" + usage)
 	}
-	vm, err := findVM()
+	vm, _, err := findVM()
 	if err != nil {
 		return 1, err
 	}
@@ -134,31 +150,75 @@ func runCmd(args []string) (int, error) {
 	return 0, nil
 }
 
-// findVM returns $GOGO_VM, or build/gogovm in the gogo repository.
-func findVM() (string, error) {
-	if vm := os.Getenv("GOGO_VM"); vm != "" {
-		return vm, nil
+// vmName is the VM's file name, and vmAsset the name of the release asset
+// that holds it for this OS and CPU (tools/release.sh).
+var (
+	vmName  = "gogovm" + exeSuffix(runtime.GOOS)
+	vmAsset = "gogovm-" + runtime.GOOS + "-" + runtime.GOARCH + exeSuffix(runtime.GOOS)
+)
+
+func exeSuffix(goos string) string {
+	if goos == "windows" {
+		return ".exe"
 	}
-	var starts []string
+	return ""
+}
+
+// findVM returns the VM `gogo run` starts and where it was found: $GOGO_VM
+// if set; else gogovm (or the release asset name gogovm-<os>-<arch>) in
+// the directory of the gogo executable, as a release installs them; else
+// build/gogovm in the gogo repository (built by `make vm`), the first
+// directory containing a go.mod declaring `module gogotools`, searched
+// upwards from the gogo executable and then from the current directory.
+func findVM() (vm, from string, err error) {
+	if vm := os.Getenv("GOGO_VM"); vm != "" {
+		return vm, "$GOGO_VM", nil
+	}
+	var exeDir string
 	if exe, err := os.Executable(); err == nil {
 		if real, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = real
 		}
-		starts = append(starts, filepath.Dir(exe))
+		exeDir = filepath.Dir(exe)
 	}
-	if wd, err := os.Getwd(); err == nil {
+	wd, _ := os.Getwd()
+	return lookVM(exeDir, wd)
+}
+
+// lookVM is findVM without $GOGO_VM: exeDir is the gogo executable's
+// directory, wd the current directory ("" for unknown).
+func lookVM(exeDir, wd string) (string, string, error) {
+	var starts []string
+	if exeDir != "" {
+		for _, name := range []string{vmName, vmAsset} {
+			vm := filepath.Join(exeDir, name)
+			if fi, err := os.Stat(vm); err == nil && !fi.IsDir() {
+				return vm, "next to gogo", nil
+			}
+		}
+		starts = append(starts, exeDir)
+	}
+	if wd != "" {
 		starts = append(starts, wd)
 	}
 	for _, dir := range starts {
 		if repo, ok := findRepo(dir); ok {
-			vm := filepath.Join(repo, "build", "gogovm")
+			vm := filepath.Join(repo, "build", vmName)
 			if _, err := os.Stat(vm); err != nil {
-				return "", fmt.Errorf("gogo: VM not found at %s (run `make vm` in %s, or set GOGO_VM)", vm, repo)
+				return "", "", fmt.Errorf("gogo: VM not found at %s (run `make vm` in %s, or set GOGO_VM)", vm, repo)
 			}
-			return vm, nil
+			return vm, "the gogo repository", nil
 		}
 	}
-	return "", errors.New("gogo: cannot find the VM: set GOGO_VM or run from inside the gogo repository")
+	where := "next to gogo"
+	if exeDir != "" {
+		where = "in " + exeDir
+	}
+	fix := "download " + vmAsset + " from a release into the directory of gogo (under that name, or renamed " + vmName + "), or set GOGO_VM"
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		fix = "releases have gogovm for macOS and Linux only: build it (make vm) and set GOGO_VM"
+	}
+	return "", "", fmt.Errorf("gogo: cannot find the VM: no $GOGO_VM, no %s or %s %s, and not inside the gogo repository; %s", vmName, vmAsset, where, fix)
 }
 
 // findRepo walks up from dir to the directory whose go.mod says `module gogotools`.
@@ -198,6 +258,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "build":
 		return build(args[1:])
+	case "env":
+		return envCmd(args[1:], os.Stdout)
 	case "dis":
 		if len(args) != 2 {
 			return errors.New(usage)
@@ -232,14 +294,32 @@ func run(args []string) error {
 	return errors.New(usage)
 }
 
+// pathFlag parses the value of -path: nil (the default search path,
+// compiler.SearchPath) when not given.
+type pathFlag struct {
+	set  bool
+	dirs []string
+}
+
+func (p pathFlag) path() []string {
+	if p.set {
+		return p.dirs
+	}
+	return compiler.SearchPath()
+}
+
 func build(args []string) error {
 	var dir, out string
+	var path pathFlag
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "-o" && i+1 < len(args):
 			out = args[i+1]
 			i++
-		case dir == "" && args[i] != "-o":
+		case (args[i] == "-path" || args[i] == "--path") && i+1 < len(args):
+			path = pathFlag{true, compiler.SplitPath(args[i+1])}
+			i++
+		case dir == "" && !strings.HasPrefix(args[i], "-"):
 			dir = args[i]
 		default:
 			return errors.New(usage)
@@ -253,9 +333,9 @@ func build(args []string) error {
 		if err != nil {
 			return err
 		}
-		out = filepath.Base(abs) + imageExt
+		out = strings.TrimSuffix(filepath.Base(abs), sourceExt) + imageExt
 	}
-	prog, err := compiler.Load(dir)
+	prog, err := loadSource(dir, path.path())
 	if err != nil {
 		return err
 	}
@@ -268,4 +348,75 @@ func build(args []string) error {
 		fmt.Fprintln(os.Stderr, "gogo: warning:", w)
 	}
 	return os.WriteFile(out, img, 0o644)
+}
+
+// isSourceFile reports whether target is a gogo source file rather than an
+// image: a file ending in .gg, or starting with #! (an executable script).
+func isSourceFile(target string) bool {
+	fi, err := os.Stat(target)
+	if err != nil || fi.IsDir() {
+		return false
+	}
+	if strings.HasSuffix(target, sourceExt) {
+		return true
+	}
+	f, err := os.Open(target)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	head := make([]byte, 2)
+	n, _ := f.Read(head)
+	return string(head[:n]) == "#!"
+}
+
+// loadSource loads the program at target, a directory (the build root) or
+// one source file, with search path path, and prints the warnings about
+// packages found in more than one place.
+func loadSource(target string, path []string) (*compiler.Program, error) {
+	cfg := compiler.Config{Path: path}
+	var prog *compiler.Program
+	var err error
+	if isSourceFile(target) {
+		prog, err = cfg.LoadFile(target)
+	} else {
+		prog, err = cfg.Load(target)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range prog.Warnings {
+		fmt.Fprintln(os.Stderr, "gogo: warning:", w)
+	}
+	return prog, nil
+}
+
+// envCmd implements `gogo env`: the version, the package search path and
+// the VM `gogo run` would use.
+func envCmd(args []string, out io.Writer) error {
+	var path pathFlag
+	from := "$GOGOPATH"
+	if _, set := os.LookupEnv("GOGOPATH"); !set {
+		from = "$HOME/gogo, GOGOPATH is unset"
+	}
+	switch {
+	case len(args) == 2 && (args[0] == "-path" || args[0] == "--path"):
+		path = pathFlag{true, compiler.SplitPath(args[1])}
+		from = "-path"
+	case len(args) != 0:
+		return errors.New(usage)
+	}
+	fmt.Fprintf(out, "version   %s (image format %d.%d)\n", version, compiler.ImageMajor, compiler.ImageMinor)
+	dirs := path.path()
+	fmt.Fprintf(out, "GOGOPATH  %s (%s)\n", strings.Join(dirs, string(os.PathListSeparator)), from)
+	fmt.Fprintf(out, "search    1. the build root (imports starting with its directory's name)\n")
+	for i, d := range dirs {
+		fmt.Fprintf(out, "          %d. %s\n", i+2, d)
+	}
+	if vm, vmFrom, err := findVM(); err != nil {
+		fmt.Fprintf(out, "gogovm    not found: %v\n", err)
+	} else {
+		fmt.Fprintf(out, "gogovm    %s (%s)\n", vm, vmFrom)
+	}
+	return nil
 }

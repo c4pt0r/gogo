@@ -1,0 +1,23 @@
+// User packages: pkgs/geom and the nested pkgs/text/upper, with a struct
+// type of geom sent between actors and matched in a type switch.
+package main
+
+import (
+	"gogo/actor"
+	"pkgs/geom"
+	"pkgs/text/upper"
+)
+
+func main() {
+	p := geom.Point{X: 3, Y: 4}
+	println(geom.Dist2(p), geom.Add(p, geom.Point{X: 1, Y: 1}).X)
+	println(upper.Shout("hello"), upper.Excl)
+	me := actor.Self()
+	actor.Spawn(func() { actor.Send(me, geom.Point{X: 7, Y: 8}) })
+	switch m := actor.Receive().(type) {
+	case geom.Point:
+		println("got point", m.X, m.Y)
+	}
+	f := geom.Dist2
+	println(f(geom.Point{X: 1, Y: 2}))
+}

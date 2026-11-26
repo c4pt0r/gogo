@@ -141,8 +141,19 @@ go run ./cmd/gogo build docs/book/examples/02-hello -o hello.ggb
 go run ./cmd/gogo run hello.ggb
 ```
 
-`gogo` with no arguments prints its commands: `build`, `run`, `dis`,
-`flash`, `monitor`, `firmware`, `config`, `setup` and `version`.
+A program can be one file, or a script: `gogo run hello.gg` builds and
+runs a single file, and a file starting with `#!/usr/bin/env -S gogo run`
+runs by itself after `chmod +x`. A larger program is a directory with
+packages of its own (`import "app/util"` is `app/util/`); packages shared
+between programs go in `$GOGOPATH` (default `~/gogo`), and `gogo env`
+prints the search path and the VM `gogo run` uses.
+
+Without building from source, put `gogovm-<os>-<arch>` from the release
+next to `gogo`, named `gogovm`, and `gogo run` works too (macOS and
+Linux).
+
+`gogo` with no arguments prints its commands: `build`, `run`, `env`,
+`dis`, `flash`, `monitor`, `firmware`, `config`, `setup` and `version`.
 
 Once a board runs the firmware, flash programs on their own:
 
@@ -201,14 +212,17 @@ loading of modules; optional firmware features; IMU and infrared; audio;
 the wall clock (`gogo/sys`) and SNTP; the repository layout; HTTPS, a
 TLS 1.2 client (the `"tls"` port, mbedTLS, sliced so actors keep
 running during a handshake), `https://` URLs in `gogo/http`, the
-keep-alive `http.Client` and streaming file upload ([book chapter 17](docs/book/17-https.md)); image v13.
+keep-alive `http.Client` and streaming file upload ([book chapter 17](docs/book/17-https.md)); image v13;
+packages of your own with a `GOGOPATH` search, single-file programs and
+`#!` scripts, and `gogovm` in the releases.
 
 Next, in order:
 
 1. **Embed mode** (in progress, phase 1 of 5): embedding the VM in host
    programs the way Lua is embedded.
 2. **Language completeness**: more of Go (methods, maps, arrays, type
-   assertions, the expression `switch`, ...).
+   assertions, ...); program arguments for scripts; later `gogo get`
+   and package versions.
 3. **Bluetooth (BLE)**: a phone app connection and Wi-Fi setup from the
    phone.
 

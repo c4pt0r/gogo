@@ -1,0 +1,11 @@
+package main
+
+import "greeter/words"
+
+// Greet greets its argument.
+func Greet(arg any) {
+	switch s := arg.(type) {
+	case string:
+		println(words.Hello(s))
+	}
+}

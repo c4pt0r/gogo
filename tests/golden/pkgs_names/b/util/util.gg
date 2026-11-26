@@ -1,0 +1,4 @@
+package util
+
+// Two is 2.
+func Two() int { return 2 }

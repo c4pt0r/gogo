@@ -1,0 +1,18 @@
+// Package upper is a nested user package that imports a library.
+package upper
+
+import "gogo/strings"
+
+// Excl ends a shout.
+const Excl = "!"
+
+// Shout upper-cases s (ASCII) and appends Excl.
+func Shout(s string) string {
+	b := []byte(strings.TrimSpace(s))
+	for i := 0; i < len(b); i++ {
+		if b[i] >= 'a' && b[i] <= 'z' {
+			b[i] -= 'a' - 'A'
+		}
+	}
+	return string(b) + Excl
+}

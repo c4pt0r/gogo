@@ -1,0 +1,9 @@
+package util
+
+import "pkgs_names/b/util"
+
+// Crash divides by zero.
+func Crash(zero int) { println(1 / zero) }
+
+// Other calls the other util.
+func Other() int { return util.Two() }

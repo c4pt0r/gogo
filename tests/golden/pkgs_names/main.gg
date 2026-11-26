@@ -1,0 +1,20 @@
+// Two user packages named util: the image names their functions by
+// import path, in crash reports and in actor.Reason.Func.
+package main
+
+import (
+	"gogo/actor"
+	"pkgs_names/a/util"
+)
+
+func main() {
+	p := actor.Spawn(func() { util.Crash(0) })
+	actor.Monitor(p)
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.DownMsg:
+			println("down in", m.Reason.Func, util.Other())
+			return
+		}
+	}
+}

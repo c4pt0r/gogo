@@ -2,6 +2,7 @@
 package compiler
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"gogotools/lib"
 )
@@ -103,16 +105,19 @@ const libPrefix = "gogo/"
 const SourceExt = ".gg"
 
 // Program is a parsed and type-checked gogo program: package main plus the
-// library packages it imports.
+// library and user packages it imports.
 type Program struct {
 	Fset  *token.FileSet
 	Files []*ast.File    // package main
 	Pkg   *types.Package // package main
 	Info  *types.Info    // type information of every compiled package
-	Libs  []*Package     // compiled library packages, in dependency order
+	Libs  []*Package     // compiled library and user packages, in dependency order
 	// Optional holds the drivers named by package main's //gogo:optional
 	// directives (see directives).
 	Optional map[string]bool
+	// Warnings lists the user packages found in more than one place of
+	// the search (see resolve), one message each.
+	Warnings []string
 }
 
 // Package is one compiled package (a library, or main in packages()).
@@ -151,16 +156,31 @@ func (p *Program) isLib(pkg *types.Package) bool {
 // sizes makes int 32 bits, as on the target.
 func sizes() types.Sizes { return &types.StdSizes{WordSize: 4, MaxAlign: 4} }
 
-// loader parses and type-checks library packages from libs, a file system
-// with one directory per package: gogo/<name> lives in <name>/*.gg. It is
-// also the importer of every package it checks; it serves only packages it
-// has already loaded, and the stub packages (isStub).
+// loader parses and type-checks the packages a program imports: library
+// packages from libs, a file system with one directory per package
+// (gogo/<name> lives in <name>/*.gg), and user packages, every import path
+// not under gogo/, from directories on disk (see resolve). It is also the
+// importer of every package it checks; it serves only packages it has
+// already loaded, and the stub packages (isStub).
 type loader struct {
 	fset  *token.FileSet
 	libs  fs.FS
 	info  *types.Info
 	pkgs  map[string]*types.Package // checked packages by import path
-	order []*Package                // compiled libraries in load order
+	order []*Package                // compiled packages (libraries and user packages) in load order
+	// root is the build root as given (file names of user packages are
+	// joined to it), rootName the base name of its absolute path: the
+	// first element of the import paths it serves.
+	root, rootName string
+	path           []string // the search path after the root (Config.Path)
+	warnings       []string // packages found in more than one place
+	dirs           []pkgDir // the directories of the user packages resolved so far
+}
+
+// pkgDir is the directory of a resolved user package.
+type pkgDir struct {
+	path string
+	info os.FileInfo
 }
 
 func (l *loader) Import(path string) (*types.Package, error) {
@@ -170,7 +190,7 @@ func (l *loader) Import(path string) (*types.Package, error) {
 	if !isStub(path) {
 		return nil, fmt.Errorf("import %q not supported", path)
 	}
-	files, err := l.parseDir(stubDir(path))
+	files, err := l.parseLibDir(stubDir(path))
 	if err != nil {
 		return nil, err
 	}
@@ -189,9 +209,23 @@ func (l *loader) Import(path string) (*types.Package, error) {
 	return pkg, nil
 }
 
-// parseDir parses the gogo source files of directory dir of the library
+// parseFile parses one gogo source file. A first line starting with #!
+// (an executable script's interpreter line) is read as an empty line, so
+// line numbers stay those of the file.
+func parseFile(fset *token.FileSet, name string, src []byte) (*ast.File, error) {
+	if bytes.HasPrefix(src, []byte("#!")) {
+		if i := bytes.IndexByte(src, '\n'); i >= 0 {
+			src = src[i:]
+		} else {
+			src = nil
+		}
+	}
+	return parser.ParseFile(fset, name, src, parser.ParseComments)
+}
+
+// parseLibDir parses the gogo source files of directory dir of the library
 // set, in file name order.
-func (l *loader) parseDir(dir string) ([]*ast.File, error) {
+func (l *loader) parseLibDir(dir string) ([]*ast.File, error) {
 	names, err := fs.Glob(l.libs, dir+"/*"+SourceExt)
 	if err != nil {
 		return nil, err
@@ -202,7 +236,7 @@ func (l *loader) parseDir(dir string) ([]*ast.File, error) {
 		if err != nil {
 			return nil, err
 		}
-		f, err := parser.ParseFile(l.fset, name, src, parser.ParseComments)
+		f, err := parseFile(l.fset, name, src)
 		if err != nil {
 			return nil, err
 		}
@@ -241,30 +275,66 @@ func (l *loader) checkImports(f *ast.File, allowed func(string) bool, why string
 	return nil
 }
 
-// loadLib parses and type-checks library path, first loading the libraries
-// it imports (depth first, so l.order is a dependency order). A library may
-// import the stub packages and other libraries, without cycles; stack is
-// the chain of libraries being loaded, for the cycle error.
-func (l *loader) loadLib(path string, stack []string) error {
+// isUser reports whether import path names a user package: every path not
+// under gogo/ (see resolve).
+func isUser(path string) bool { return !strings.HasPrefix(path, libPrefix) }
+
+// importable reports whether a user package or package main may import
+// path: a stub, a library, or a user package (resolved when loaded).
+func (l *loader) importable(path string) bool {
+	return isStub(path) || l.isLib(path) || isUser(path)
+}
+
+// loadPkg parses and type-checks package path, a library or a user
+// package, first loading the packages it imports (depth first, so l.order
+// is a dependency order). A library may import the stub packages and other
+// libraries, a user package those and other user packages, without cycles;
+// stack is the chain of packages being loaded, for the cycle error, and at
+// the import that names path (token.NoPos for none).
+func (l *loader) loadPkg(path string, stack []string, at token.Pos) error {
 	if l.pkgs[path] != nil {
 		return nil
 	}
 	for i, p := range stack {
 		if p == path {
-			return fmt.Errorf("gogo: import cycle %s", strings.Join(append(stack[i:], path), " -> "))
+			return fmt.Errorf("%sgogo: import cycle %s", l.where(at), strings.Join(append(stack[i:], path), " -> "))
 		}
 	}
 	stack = append(stack, path)
-	name := strings.TrimPrefix(path, libPrefix)
-	files, err := l.parseDir(name)
-	if err != nil {
-		return err
-	}
+	var files []*ast.File
+	var name string
 	allowed := func(p string) bool { return isStub(p) || l.isLib(p) }
-	for _, f := range files {
-		if f.Name.Name != name {
-			return fmt.Errorf("%s: gogo: package %s in library %s (want package %s)", l.fset.Position(f.Name.Pos()), f.Name.Name, path, name)
+	if isUser(path) {
+		dir, err := l.resolve(path, at)
+		if err != nil {
+			return err
 		}
+		if files, err = l.parseUserDir(dir); err != nil {
+			return err
+		}
+		name = path[strings.LastIndex(path, "/")+1:]
+		allowed = l.importable
+		for _, f := range files {
+			if f.Name.Name == "main" {
+				return fmt.Errorf("%s: gogo: package main in %s: only the program's own directory can be package main", l.fset.Position(f.Name.Pos()), path)
+			}
+			if f.Name.Name != name {
+				return fmt.Errorf("%s: gogo: package %s in %s (want package %s, the name of its directory)", l.fset.Position(f.Name.Pos()), f.Name.Name, path, name)
+			}
+		}
+	} else {
+		name = strings.TrimPrefix(path, libPrefix)
+		var err error
+		if files, err = l.parseLibDir(name); err != nil {
+			return err
+		}
+		for _, f := range files {
+			if f.Name.Name != name {
+				return fmt.Errorf("%s: gogo: package %s in library %s (want package %s)", l.fset.Position(f.Name.Pos()), f.Name.Name, path, name)
+			}
+		}
+	}
+	for _, f := range files {
 		if err := l.checkImports(f, allowed, ""); err != nil {
 			return err
 		}
@@ -272,7 +342,7 @@ func (l *loader) loadLib(path string, stack []string) error {
 	for _, f := range files {
 		for _, imp := range f.Imports {
 			if p, _ := strconv.Unquote(imp.Path.Value); !isStub(p) {
-				if err := l.loadLib(p, stack); err != nil {
+				if err := l.loadPkg(p, stack, imp.Path.Pos()); err != nil {
 					return err
 				}
 			}
@@ -289,6 +359,219 @@ func (l *loader) loadLib(path string, stack []string) error {
 	l.pkgs[path] = pkg
 	l.order = append(l.order, &Package{Pkg: pkg, Files: files, Optional: optional})
 	return nil
+}
+
+// where is the "file:line:col: " prefix of an error at pos, or "".
+func (l *loader) where(pos token.Pos) string {
+	if !pos.IsValid() {
+		return ""
+	}
+	return l.fset.Position(pos).String() + ": "
+}
+
+// validImportPath reports whether path is a usable user import path:
+// slash-separated elements of letters, digits, '_', '-' and '.', none
+// empty, none starting with '.'.
+func validImportPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, elem := range strings.Split(path, "/") {
+		if elem == "" || elem[0] == '.' {
+			return false
+		}
+		for _, r := range elem {
+			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' && r != '.' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// hasSources reports whether dir is a directory holding gogo source files.
+func hasSources(dir string) bool {
+	names, err := filepath.Glob(filepath.Join(dir, "*"+SourceExt))
+	if err != nil {
+		return false
+	}
+	for _, n := range names {
+		if fi, err := os.Stat(n); err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// resolve finds the directory of user package path. The candidates, in
+// order: <root>/<rest> when the first element of path is the root's name
+// (import "app/util" in the build root app/), then <dir>/<path> for each
+// dir of the search path. The first one holding .gg files wins; when more
+// do, a warning names them all. at is the import, for the error.
+func (l *loader) resolve(path string, at token.Pos) (string, error) {
+	if !validImportPath(path) {
+		return "", fmt.Errorf("%sgogo: import %q: bad import path (want slash-separated names like \"app/util\")", l.where(at), path)
+	}
+	last := path[strings.LastIndex(path, "/")+1:]
+	if !token.IsIdentifier(last) || last == "_" {
+		return "", fmt.Errorf("%sgogo: import %q: %q cannot be a package name (its directory's name must be a Go identifier, like %q)", l.where(at), path, last, "util")
+	}
+	// base is the directory the import path's elements (from rel on) are
+	// names in, for checkCase.
+	type candidate struct{ dir, from, base, rel string }
+	var cands []candidate
+	first, rest, _ := strings.Cut(path, "/")
+	if first == l.rootName {
+		if rest == "" {
+			return "", fmt.Errorf("%sgogo: import %q: that is the program's own directory (package main), which cannot be imported", l.where(at), path)
+		}
+		cands = append(cands, candidate{filepath.Join(l.root, filepath.FromSlash(rest)), "build root", l.root, rest})
+	}
+	for _, d := range l.path {
+		cands = append(cands, candidate{filepath.Join(d, filepath.FromSlash(path)), "search path", d, path})
+	}
+	// The places holding the package; a candidate that is the same
+	// directory as an earlier one (the root inside a search path
+	// directory, a symlink) is the same place.
+	var found []string
+	var foundInfo []os.FileInfo
+	for _, c := range cands {
+		if !hasSources(c.dir) {
+			continue
+		}
+		fi, err := os.Stat(c.dir)
+		if err != nil {
+			continue
+		}
+		same := false
+		for _, f := range foundInfo {
+			same = same || os.SameFile(f, fi)
+		}
+		if same {
+			continue
+		}
+		if err := checkCase(c.base, c.rel); err != nil {
+			return "", fmt.Errorf("%sgogo: import %q: %v", l.where(at), path, err)
+		}
+		found = append(found, c.dir)
+		foundInfo = append(foundInfo, fi)
+	}
+	if len(found) > 1 {
+		l.warnings = append(l.warnings, fmt.Sprintf("package %q is in %d places; using the first: %s", path, len(found), strings.Join(found, ", ")))
+	}
+	if len(found) > 0 {
+		for _, d := range l.dirs {
+			if os.SameFile(d.info, foundInfo[0]) {
+				return "", fmt.Errorf("%sgogo: import %q is the directory %s, already imported as %q: use one import path", l.where(at), path, found[0], d.path)
+			}
+		}
+		l.dirs = append(l.dirs, pkgDir{path, foundInfo[0]})
+		return found[0], nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%sgogo: import %q: package not found; searched:", l.where(at), path)
+	if first != l.rootName {
+		fmt.Fprintf(&b, "\n\t%s (build root: serves only imports starting with %q)", l.root, l.rootName+"/")
+	}
+	for _, c := range cands {
+		why := "no such directory"
+		if fi, err := os.Stat(c.dir); err == nil {
+			why = "no " + SourceExt + " files"
+			if !fi.IsDir() {
+				why = "not a directory"
+			}
+		}
+		fmt.Fprintf(&b, "\n\t%s (%s: %s)", c.dir, c.from, why)
+	}
+	if len(l.path) == 0 {
+		b.WriteString("\n\t(the search path is empty)")
+	}
+	if l.isLib(libPrefix+path) || isStub(libPrefix+path) {
+		fmt.Fprintf(&b, "\n(did you mean %q?)", libPrefix+path)
+	}
+	return "", errors.New(b.String())
+}
+
+// checkCase reports an error unless every element of the slash path rel
+// is, letter case included, the name of a directory entry under base: on
+// a file system that ignores case (macOS by default) a path that differs
+// only in case would be found here, and not on Linux.
+func checkCase(base, rel string) error {
+	dir := base
+	for _, elem := range strings.Split(rel, "/") {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil // found by Stat; nothing to compare with
+		}
+		exact, other := false, ""
+		for _, e := range entries {
+			if e.Name() == elem {
+				exact = true
+				break
+			}
+			if strings.EqualFold(e.Name(), elem) {
+				other = e.Name()
+			}
+		}
+		if !exact && other != "" {
+			return fmt.Errorf("the directory is %s on disk: import paths must match directory names, letter case included", filepath.Join(dir, other))
+		}
+		dir = filepath.Join(dir, elem)
+	}
+	return nil
+}
+
+// realName returns the base name of directory dir as its parent lists it
+// (the letter case on disk, whatever case dir was typed in).
+func realName(dir string) string {
+	name := filepath.Base(dir)
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return name
+	}
+	entries, err := os.ReadDir(filepath.Dir(dir))
+	if err != nil {
+		return name
+	}
+	for _, e := range entries {
+		if e.Name() == name {
+			return name
+		}
+	}
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), name) {
+			if efi, err := os.Stat(filepath.Join(filepath.Dir(dir), e.Name())); err == nil && os.SameFile(efi, fi) {
+				return e.Name()
+			}
+		}
+	}
+	return name
+}
+
+// parseUserDir parses the gogo source files of directory dir (a user
+// package), in file name order.
+func (l *loader) parseUserDir(dir string) ([]*ast.File, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var files []*ast.File
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), SourceExt) {
+			continue
+		}
+		name := filepath.Join(dir, e.Name())
+		src, err := os.ReadFile(name)
+		if err != nil {
+			return nil, err
+		}
+		f, err := parseFile(l.fset, name, src)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
 }
 
 // directivePrefix starts every gogo source directive. The one directive
@@ -354,28 +637,106 @@ func (l *loader) check(path string, files []*ast.File) (*types.Package, error) {
 	return pkg, nil
 }
 
+// Config says how Load finds a program's packages.
+type Config struct {
+	// Libs is the library set (see loader); nil means the libraries
+	// embedded in the compiler.
+	Libs fs.FS
+	// Path is the package search path: the directories searched, in
+	// order, for a user package the build root does not hold (see
+	// resolve). Load's is SearchPath().
+	Path []string
+}
+
+// SearchPath is the default package search path: the directories of
+// $GOGOPATH (separated by the OS's list separator, ':' or ';' on Windows),
+// or $HOME/gogo when GOGOPATH is unset.
+func SearchPath() []string {
+	home, _ := os.UserHomeDir()
+	gp, set := os.LookupEnv("GOGOPATH")
+	return searchPath(gp, set, home)
+}
+
+func searchPath(gogopath string, set bool, home string) []string {
+	if !set {
+		if home == "" {
+			return nil
+		}
+		return []string{filepath.Join(home, "gogo")}
+	}
+	return SplitPath(gogopath)
+}
+
+// SplitPath splits a search path list (GOGOPATH, gogo build -path) into
+// its directories, made absolute; empty elements are dropped.
+func SplitPath(list string) []string {
+	var dirs []string
+	for _, d := range filepath.SplitList(list) {
+		if d == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(d); err == nil {
+			d = abs
+		}
+		dirs = append(dirs, d)
+	}
+	return dirs
+}
+
 // Load parses and type-checks the package main in dir, with the libraries
-// embedded in the compiler.
-func Load(dir string) (*Program, error) { return LoadWith(dir, lib.StubFS) }
+// embedded in the compiler and user packages found from dir and
+// SearchPath().
+func Load(dir string) (*Program, error) { return Config{Path: SearchPath()}.Load(dir) }
 
 // LoadWith is Load with the library set libs (see loader).
 func LoadWith(dir string, libs fs.FS) (*Program, error) {
+	return Config{Libs: libs, Path: SearchPath()}.Load(dir)
+}
+
+// Load parses and type-checks the package main in dir (the build root),
+// and every package it imports.
+func (c Config) Load(dir string) (*Program, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	fset := token.NewFileSet()
-	var files []*ast.File
+	var names []string
 	goFiles := 0
 	for _, e := range entries {
 		name := e.Name()
 		if !e.IsDir() && strings.HasSuffix(name, ".go") {
 			goFiles++
 		}
-		if e.IsDir() || !strings.HasSuffix(name, SourceExt) {
-			continue
+		if !e.IsDir() && strings.HasSuffix(name, SourceExt) {
+			names = append(names, name)
 		}
-		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.ParseComments)
+	}
+	return c.load(dir, names, goFiles)
+}
+
+// LoadFile is Load of a program of one file (gogo run x.gg): package main
+// is that file alone, and the build root, where user packages are found,
+// is its directory, whose other .gg files are not read.
+func (c Config) LoadFile(file string) (*Program, error) {
+	return c.load(filepath.Dir(file), []string{filepath.Base(file)}, 0)
+}
+
+// load is Load of the files names of dir as package main; goFiles counts
+// the .go files of dir, for the error when there are no .gg files.
+func (c Config) load(dir string, names []string, goFiles int) (*Program, error) {
+	libs := c.Libs
+	if libs == nil {
+		libs = lib.StubFS
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		f, err := parseFile(fset, path, src)
 		if err != nil {
 			return nil, err
 		}
@@ -390,6 +751,10 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 		}
 		return nil, fmt.Errorf("%s: no %s files", dir, SourceExt)
 	}
+	absRoot, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
 
 	l := &loader{
 		fset: fset,
@@ -401,27 +766,33 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 			Selections: map[*ast.SelectorExpr]*types.Selection{},
 			Implicits:  map[ast.Node]types.Object{},
 		},
-		pkgs: map[string]*types.Package{},
+		pkgs:     map[string]*types.Package{},
+		root:     dir,
+		rootName: realName(absRoot),
+		path:     c.Path,
 	}
 	optional, err := l.directives(files)
 	if err != nil {
 		return nil, err
 	}
-	allowed := func(p string) bool { return isStub(p) || l.isLib(p) }
-	var libPaths []string
+	type pkgImport struct {
+		path string
+		at   token.Pos
+	}
+	var imports []pkgImport
 	for _, f := range files {
-		if err := l.checkImports(f, allowed, ""); err != nil {
+		if err := l.checkImports(f, l.importable, ""); err != nil {
 			return nil, err
 		}
 		for _, imp := range f.Imports {
 			if p, _ := strconv.Unquote(imp.Path.Value); !isStub(p) {
-				libPaths = append(libPaths, p)
+				imports = append(imports, pkgImport{p, imp.Path.Pos()})
 			}
 		}
 	}
-	sort.Strings(libPaths)
-	for _, p := range libPaths {
-		if err := l.loadLib(p, nil); err != nil {
+	sort.SliceStable(imports, func(i, j int) bool { return imports[i].path < imports[j].path })
+	for _, imp := range imports {
+		if err := l.loadPkg(imp.path, nil, imp.at); err != nil {
 			return nil, err
 		}
 	}
@@ -437,5 +808,5 @@ func LoadWith(dir string, libs fs.FS) (*Program, error) {
 		}
 	}
 	sort.SliceStable(files, func(i, j int) bool { return fset.File(files[i].Pos()).Name() < fset.File(files[j].Pos()).Name() })
-	return &Program{Fset: fset, Files: files, Pkg: pkg, Info: l.info, Libs: l.order, Optional: optional}, nil
+	return &Program{Fset: fset, Files: files, Pkg: pkg, Info: l.info, Libs: l.order, Optional: optional, Warnings: l.warnings}, nil
 }

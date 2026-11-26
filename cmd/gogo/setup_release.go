@@ -13,6 +13,8 @@ package main
 //	<board>-partition-table.bin     } the files it names, each renamed to
 //	<board>-gogo.bin               /  <board>-<base name>
 //	gogo-<os>-<arch>[.exe]         the gogo command
+//	gogovm-<os>-<arch>             the host VM (darwin, linux), which gogo
+//	                               run finds next to gogo (findVM)
 //
 // <board> is sticks3 or cardputer.
 

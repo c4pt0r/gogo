@@ -156,12 +156,26 @@ installed (`idf.py` on `PATH`, `$IDF_PATH` or `~/esp/esp-idf`) and you run
 it inside the gogo source tree. Section 2.6 has the manual commands.
 
 The prebuilt `gogo` also compiles and flashes your own programs (section
-2.5). To run programs on your computer, as most of this book does, build
-gogo from source.
+2.5). To run programs on your computer, as most of this book does, you
+also need the host VM, `gogovm`. Each release has it for macOS and Linux:
+`gogovm-darwin-arm64`, `gogovm-darwin-amd64`, `gogovm-linux-amd64` and
+`gogovm-linux-arm64`. Put it next to `gogo`, named `gogovm` (the asset
+name works too):
+
+```sh
+curl -L -o gogovm https://github.com/c4pt0r/gogo/releases/latest/download/gogovm-darwin-arm64
+chmod +x gogovm
+sudo mv gogovm /usr/local/bin/   # the directory where gogo is
+gogo env                         # shows the gogovm it found
+```
+
+The release VM has no `tls` port (HTTPS on the host, chapter 17); for
+that, build gogo from source (section 2.2).
 
 ## 2.2 Building the tools from source
 
-To write programs and run them on your computer, build gogo from source.
+To change gogo itself, run its tests, or have a host VM with HTTPS, build the
+tools from source.
 ### What you need
 
 On your computer (macOS or Linux):
@@ -186,16 +200,18 @@ go build -o build/gogo ./cmd/gogo
 ```
 
 `build/gogo` is the only command you use directly. When it runs a program it
-looks for the VM at `build/gogovm` in the gogo tree it was built from (or in
-the tree around your current directory); set `GOGO_VM=/path/to/gogovm` to
-use another one.
+looks for the VM in this order: `$GOGO_VM`; `gogovm` in the directory of
+the `gogo` command itself (`build/gogovm` here, or wherever a release put
+it); `build/gogovm` in the gogo tree around `gogo` or your current
+directory. `gogo env` prints the one it would use.
 
 Run it without arguments to see what it can do:
 
 ```text
 $ build/gogo
-usage: gogo build <dir> [-o out.ggb]
-       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.ggb>
+usage: gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
+       gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
+       gogo env [-path dirs]
        gogo dis <file.ggb>
        gogo flash [-port P] [-esptool path] app.ggb
        gogo monitor [-port P] [-t seconds] [-until text] [-reset]
@@ -241,6 +257,58 @@ When the program has nothing left to do (no actor can run, no timer is
 pending, no input can arrive) the VM exits. Exit status 0 means the VM ran
 to the end, not that every actor succeeded; crashes are reported on
 standard error, as you will see in chapter 5.
+
+### Scripts
+
+`gogo run` also takes a single `.gg` file, and compiles that file alone:
+
+```text
+$ gogo run hello.gg
+```
+
+A file whose first line starts with `#!` is an executable script: the
+compiler reads that line as an empty one (line numbers in errors stay
+right), so with
+
+```go
+#!/usr/bin/env -S gogo run
+package main
+
+func main() {
+	println("hello from a script")
+}
+```
+
+and `chmod +x hello.gg`, `./hello.gg` runs it (`gogo` must be on your
+`PATH`). `env -S`, which splits `gogo run` into two words, is in macOS and
+in GNU coreutils 8.30 and newer, but not in BusyBox (Alpine) or older
+coreutils. There, name gogo by its absolute path instead, which needs no
+`env`: `#!/usr/local/bin/gogo run` (the kernel passes `run` as one
+argument).
+The name need not end in `.gg`: `gogo run` reads any file starting with
+`#!` as source. Arguments after the script are refused for now.
+
+A single file and a directory differ: `gogo run dir` compiles every `.gg`
+file in `dir` as one `package main`, so a directory of scripts, each with
+its own `func main`, only runs file by file. A script can still import
+packages from its directory (`import "scripts/calc"` for `scripts/calc/`
+next to a script in `scripts/`) and from the search path, as below.
+
+### Packages and GOGOPATH
+
+A program can be split into packages of its own (section 3.1.1):
+`import "app/shapes"` in a program in `app/` is the directory
+`app/shapes/`. Packages that several programs share live in a directory
+on the search path, by default `$HOME/gogo`:
+
+```sh
+mkdir -p ~/gogo/lib/ring                 # import "lib/ring"
+export GOGOPATH=$HOME/gogo:$HOME/work/gogo-pkgs   # optional: several directories
+gogo env                                 # prints the search path
+```
+
+`gogo build -path dirs` and `gogo run -path dirs` use `dirs` instead of
+`GOGOPATH` for one build.
 
 ## 2.4 A first actor
 

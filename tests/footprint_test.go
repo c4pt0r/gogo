@@ -38,7 +38,7 @@ func TestIdleActorFootprint(t *testing.T) {
 	}
 	delta := sizeofActor - actor32Size
 
-	prog, err := compiler.Load("footprint")
+	prog, err := compiler.Config{}.Load("footprint")
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

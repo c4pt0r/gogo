@@ -1,15 +1,22 @@
-# Release: on a tag v*, build the firmware for both boards and the gogo
-# command for every OS and CPU with tools/release.sh, and attach them with
+# Release: on a tag v*, build the firmware for both boards, the gogo
+# command for every OS and CPU and the host VM gogovm for macOS and Linux
+# with tools/release.sh, and attach them with
 # SHA256SUMS to a draft GitHub release for the tag (a pre-release if the tag
 # has a "-", e.g. v1.0.0-rc1). A maintainer checks the draft on both boards
 # and publishes it (platform/esp32s3/README.md, "Releases"); until then
 # `gogo setup` does not see it. It downloads the assets by name
 # (cmd/gogo/setup_release.go).
+#
+# The gogovm assets are best-effort: if a VM fails to build or to run, the
+# release goes ahead with the firmware and gogo, and the run's summary
+# lists the missing VMs. Run by hand (workflow_dispatch), it builds and
+# checks everything, the summary included, but creates no release.
 name: release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -56,15 +63,126 @@ jobs:
       - name: Test
         run: go vet ./cmd/gogo && go test ./cmd/gogo
       - name: Build
-        run: tools/release.sh cli "$GITHUB_REF_NAME" out
+        shell: bash
+        # A dispatched run on a branch like fix/x gets the version fix-x.
+        run: tools/release.sh cli "${GITHUB_REF_NAME//\//-}" out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli
           path: out/
           if-no-files-found: error
 
+  vm:
+    # gogovm is C: macOS builds both CPUs with clang -arch, Linux its own
+    # CPU natively and arm64 with the Debian cross compiler. Each VM runs a
+    # program before it is uploaded: natively, with Rosetta for
+    # darwin-amd64 when the runner has it, with qemu for linux-arm64.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: darwin
+            runner: macos-15
+            targets: darwin/amd64 darwin/arm64
+            native: darwin-arm64
+          - name: linux
+            runner: ubuntu-24.04
+            targets: linux/amd64 linux/arm64
+            native: linux-amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Cross compiler and qemu
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user-static
+      - name: Build
+        id: build
+        shell: bash
+        env:
+          CC_linux_arm64: aarch64-linux-gnu-gcc
+          VM_TARGETS: ${{ matrix.targets }}
+        # Each target on its own: one that fails does not lose the others.
+        run: |
+          read -ra targets <<< "$VM_TARGETS"
+          failed=
+          for t in "${targets[@]}"; do
+            if ! GOGO_RELEASE_WORK="$RUNNER_TEMP/work" tools/release.sh vm out "$t"; then
+              echo "::error::gogovm for $t did not build"
+              failed="$failed $t"
+            fi
+          done
+          file out/* || true
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        id: smoke
+        shell: bash
+        env:
+          NATIVE: ${{ matrix.native }}
+        # A VM that fails is moved out of out/, so the ones that pass are
+        # still uploaded; the job fails at the end.
+        run: |
+          go build -o "$RUNNER_TEMP/gogo" ./cmd/gogo
+          "$RUNNER_TEMP/gogo" build tests/golden/pkgs -o "$RUNNER_TEMP/pkgs.ggb"
+          mkdir -p "$RUNNER_TEMP/failed"
+          failed=
+          for vm in out/gogovm-*; do
+            [ -e "$vm" ] || continue
+            case "$vm" in
+            *linux-arm64) run=(qemu-aarch64-static "$vm") ;;
+            *darwin-amd64)
+              if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+                echo "::warning::no Rosetta on this runner: $vm is built but not run"
+                continue
+              fi
+              run=(arch -x86_64 "$vm") ;;
+            *) run=("$vm") ;;
+            esac
+            if "${run[@]}" "$RUNNER_TEMP/pkgs.ggb" > "$RUNNER_TEMP/got" &&
+              diff tests/golden/pkgs/expected.out "$RUNNER_TEMP/got"; then
+              echo "ran $vm"
+            else
+              echo "::error::$vm failed its smoke test"
+              failed="$failed $vm"
+              mv "$vm" "$RUNNER_TEMP/failed/"
+            fi
+          done
+          # gogo run finds the VM next to itself.
+          if [ -f "out/gogovm-$NATIVE" ]; then
+            cp "out/gogovm-$NATIVE" "$RUNNER_TEMP/gogovm"
+            "$RUNNER_TEMP/gogo" env
+            if ! "$RUNNER_TEMP/gogo" run tests/golden/pkgs > "$RUNNER_TEMP/got" ||
+              ! diff tests/golden/pkgs/expected.out "$RUNNER_TEMP/got"; then
+              echo "::error::gogo run with gogovm-$NATIVE next to it failed"
+              failed="$failed gogo-run"
+            fi
+          fi
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vm-${{ matrix.name }}
+          path: out/
+          if-no-files-found: warn
+      - name: Fail if a VM failed
+        if: steps.build.outputs.failed != '' || steps.smoke.outputs.failed != ''
+        env:
+          BUILD_FAILED: ${{ steps.build.outputs.failed }}
+          SMOKE_FAILED: ${{ steps.smoke.outputs.failed }}
+        run: |
+          echo "not built:$BUILD_FAILED; failed to run:$SMOKE_FAILED"
+          exit 1
+
   release:
-    needs: [firmware, cli]
+    needs: [firmware, cli, vm]
+    # The VMs are best-effort: only the firmware and gogo must have built.
+    if: ${{ !cancelled() && needs.firmware.result == 'success' && needs.cli.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -81,7 +199,25 @@ jobs:
           tools/release.sh notices out
           test -f out/LICENSE-APACHE-2.0.txt
           tools/release.sh sums out && cat out/SHA256SUMS
+      - name: Report the VMs
+        run: |
+          missing=
+          for t in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            [ -f "out/gogovm-$t" ] || missing="$missing gogovm-$t"
+          done
+          [ -z "$missing" ] || echo "::warning::release without$missing (see the vm jobs)"
+          {
+            if [ -n "$missing" ]; then
+              echo "**Missing host VMs:**$missing. The firmware and gogo assets are complete; see the vm jobs."
+            else
+              echo "All four host VMs (gogovm) built and ran."
+            fi
+            echo '```'
+            cat out/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Draft the release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -89,5 +225,5 @@ jobs:
           case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; esac
           gh release create "$GITHUB_REF_NAME" out/* --draft $pre \
             --title "gogo $GITHUB_REF_NAME" \
-            --notes "Install: download gogo for your system, install esptool, run \`gogo setup\`. See docs/book/02-getting-started.md." \
+            --notes "Install: download gogo for your system, install esptool, run \`gogo setup\`. To run programs on your computer, put gogovm for your system next to gogo, named gogovm. See docs/book/02-getting-started.md." \
             --verify-tag

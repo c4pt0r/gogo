@@ -1,0 +1,4 @@
+package shapes
+
+// Square is an n by n Rect. A package can span several files.
+func Square(n int) Rect { return Rect{W: n, H: n} }

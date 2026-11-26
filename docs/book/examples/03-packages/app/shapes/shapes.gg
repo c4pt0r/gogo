@@ -1,0 +1,11 @@
+// Package shapes measures rectangles. Its name is its directory's name.
+package shapes
+
+// Rect is a W by H rectangle.
+type Rect struct{ W, H int }
+
+// Area is W times H.
+func Area(r Rect) int { return r.W * r.H }
+
+// Perimeter is the length around r.
+func Perimeter(r Rect) int { return 2 * (r.W + r.H) }
