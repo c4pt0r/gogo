@@ -8,7 +8,8 @@ Peripherals such as GPIO, the keyboard, files, sockets, the IMU, infrared
 and audio are **ports**, which are actors that take commands and send
 typed events.
 
-The `gogo` tool compiles a program to a compact bytecode image. The same
+The `gogo` tool compiles a program (a directory of `.gg` source files) to a
+compact bytecode image (a `.ggb` file). The same
 image runs on the board and on the host VM (macOS and Linux), so you can
 develop and test on your computer first. The VM is plain C99 with no
 third-party libraries. An idle actor costs about 150 bytes.
@@ -33,7 +34,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
 | `platform/unix/` | the host VM (`build/gogovm`) and its simulated hardware |
 | `platform/esp32s3/` | the ESP-IDF firmware for both boards ([README](platform/esp32s3/README.md)) |
 | `compiler/`, `cmd/gogo/` | the compiler and the `gogo` command (Go module `gogotools`, the repository root) |
-| `lib/` | the standard library, `gogo/...` (Go module `gogo`; [package table](lib/README.md)) |
+| `lib/` | the standard library, `gogo/...`, as `.gg` sources embedded into the compiler ([package table](lib/README.md)) |
 | `examples/` | demo programs, most of them for a board |
 | `tests/` | golden output tests, network simulator tests, the memory footprint test |
 | `docs/` | the book, the design document, known issues |
@@ -67,8 +68,8 @@ build/gogo run docs/book/examples/02-hello
 Or without building the command first:
 
 ```sh
-go run ./cmd/gogo build docs/book/examples/02-hello -o hello.gogo
-go run ./cmd/gogo run hello.gogo
+go run ./cmd/gogo build docs/book/examples/02-hello -o hello.ggb
+go run ./cmd/gogo run hello.ggb
 ```
 
 `gogo` with no arguments prints its commands: `build`, `run`, `dis`,
@@ -77,14 +78,14 @@ go run ./cmd/gogo run hello.gogo
 Once a board runs the firmware, flash programs on their own:
 
 ```sh
-build/gogo build docs/book/examples/02-hello -o hello.gogo
-build/gogo flash hello.gogo
+build/gogo build docs/book/examples/02-hello -o hello.ggb
+build/gogo flash hello.ggb
 build/gogo monitor -reset -t 5
 ```
 
 [Chapter 2 of the book](docs/book/02-getting-started.md) has the details,
 including building and flashing the firmware by hand with ESP-IDF v6.1.1,
-and editor support. Releases are built by `tools/release.sh` (and the
+and editor setup for `.gg` files. Releases are built by `tools/release.sh` (and the
 release workflow on a `v*` tag).
 
 Tests: `make test` runs the C tests (host and MCU configurations), the Go

@@ -1,6 +1,6 @@
 // sddemo: /sd device checks (Cardputer ADV).
 //
-//	gogo build examples/sddemo -o sddemo.gogo && gogo flash sddemo.gogo
+//	gogo build examples/sddemo -o sddemo.ggb && gogo flash sddemo.ggb
 //
 // At boot, on each G0 press, and whenever the card comes back, a full
 // check: Stat, Usage, WriteFile /sd/gogo/hello.txt and read it back,

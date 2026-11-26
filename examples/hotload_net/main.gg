@@ -9,7 +9,7 @@
 //	gogo config set wifi.ssid <name>
 //	gogo config set wifi.password -
 //	gogo config set demo.modurl http://192.168.1.10:8000    # no trailing /
-//	gogo build examples/hotload_net -o hotload_net.gogo && gogo flash hotload_net.gogo
+//	gogo build examples/hotload_net -o hotload_net.ggb && gogo flash hotload_net.ggb
 //
 // The modules are those of examples/hotload (see README.md there).
 package main

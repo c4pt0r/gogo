@@ -8,10 +8,10 @@ firmware and programs, but the serial console commands (`monitor`,
 are not supported.
 
 ```text
-gogo build <dir> [-o out.gogo]
-gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>
-gogo dis <file.gogo>
-gogo flash [-port P] [-esptool path] app.gogo
+gogo build <dir> [-o out.ggb]
+gogo run [--key c=pin]... [--fs-root DIR] <dir|file.ggb>
+gogo dis <file.ggb>
+gogo flash [-port P] [-esptool path] app.ggb
 gogo monitor [-port P] [-t seconds] [-until text] [-reset]
 gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
@@ -22,13 +22,12 @@ gogo version
 ## gogo build
 
 ```text
-gogo build <dir> [-o out.gogo]
+gogo build <dir> [-o out.ggb]
 ```
 
-Compiles the `package main` in `<dir>` (all its `.go` files except
-`_test.go`) and the gogo libraries it imports into one image file. Without
-`-o` the image is named after the directory, `<dir>.gogo`, in the current
-directory. The image contains bytecode and constants and runs unchanged on
+Compiles the `package main` in `<dir>` (all its `.gg` files) and the gogo
+libraries it imports into one image file. Without `-o` the image is named
+after the directory, `<dir>.ggb`, in the current directory. The image contains bytecode and constants and runs unchanged on
 the host VM and on any board.
 
 Errors are printed as `file:line:col: message` and the exit status is 1.
@@ -36,11 +35,17 @@ Messages from Go's type checker look like Go's (`declared and not used: x`);
 messages about the subset start with `gogo:`:
 
 ```text
-main.go:9:2: gogo: captured variable must not be reassigned
+main.gg:9:2: gogo: captured variable must not be reassigned
 ```
 
 Type errors are reported first; subset errors appear once the program
 type-checks. Chapter 3 lists the subset errors.
+
+Only `.gg` files are read: `.go` files in the directory are ignored, and a
+directory with `.go` files but no `.gg` file is an error that says to
+rename them (`no .gg files, only .go files: ...`). gogo sources were `.go`
+files before; `.gg` is Go syntax, so map it to Go in your editor for
+highlighting (chapter 2, *Editor support*); gopls does not apply.
 
 ### The `requires` word and `//gogo:optional`
 
@@ -72,7 +77,7 @@ package http
   mic netif power spk tcp tcp_listen tls udp`). An unknown name, an empty
   list, a misspelt `//gogo:` directive, or the directive in `package main`
   is a compile error, for example
-  `a.go:3:1: gogo: //gogo:optional: unknown driver "tsl" (want one of ...)`.
+  `a.gg:3:1: gogo: //gogo:optional: unknown driver "tsl" (want one of ...)`.
 - `gogo/http` declares `tls` (an http-only program runs on a firmware
   without TLS, where an https request fails), and `gogo/sound` declares
   `mic spk` (`Record` returns false without a microphone, `Play` without a
@@ -88,11 +93,11 @@ package http
 ## gogo run
 
 ```text
-gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>
+gogo run [--key c=pin]... [--fs-root DIR] <dir|file.ggb>
 ```
 
 Runs a program on the host VM. Given a directory it builds it first (to a
-temporary image); given a `.gogo` file it runs that image. The exit status
+temporary image); given a `.ggb` file it runs that image. The exit status
 is the VM's: 0 when the VM ran until nothing was left to do, 1 if the
 image needs a capability the host VM lacks (for example `tls` in a VM
 built without mbedTLS), 2 if the image could not be loaded. A build error
@@ -158,15 +163,15 @@ There is no network on the host (chapter 10).
 ## gogo dis
 
 ```text
-gogo dis <file.gogo>
+gogo dis <file.ggb>
 ```
 
 Prints the bytecode of an image, function by function. Useful to see what
 the compiler made of your code, or to compare two builds:
 
 ```text
-$ gogo build docs/book/examples/02-hello -o hello.gogo
-$ gogo dis hello.gogo
+$ gogo build docs/book/examples/02-hello -o hello.ggb
+$ gogo dis hello.ggb
 func main (params=0 regs=4):
   0000  LOADK r1, "hello, gogo"
   0002  LOADK r2, 42
@@ -182,7 +187,7 @@ which live in a stack frame in the actor's memory.
 ## gogo flash
 
 ```text
-gogo flash [-port P] [-esptool path] app.gogo
+gogo flash [-port P] [-esptool path] app.ggb
 ```
 
 Writes an image (built with `gogo build`; `flash` does not take a

@@ -2,7 +2,7 @@
 // (Gain 0) and prints the RMS and peak of every 500 ms, with the time since
 // the open. Run audiotone on the other board at the same time.
 //
-//	gogo build platform/esp32s3/examples/audiolisten -o listen.gogo && gogo flash listen.gogo
+//	gogo build platform/esp32s3/examples/audiolisten -o listen.ggb && gogo flash listen.ggb
 package main
 
 import (

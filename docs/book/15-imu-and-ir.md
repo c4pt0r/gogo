@@ -266,7 +266,7 @@ actor.Kill(l, actor.Shutdown) // stops the log and closes the port
 
 The log is two files, `0.imu` (newest) and `1.imu`, rotated like `ringlog`
 (chapter 9), so it never takes more than `maxBytes` plus one record. A
-record is a 15-byte header plus the Chunk's data; `lib/imulog/imulog.go`
+record is a 15-byte header plus the Chunk's data; `lib/imulog/imulog.gg`
 documents the layout. Every record is synced, so a power loss costs at most
 the last one. `examples/imulogdemo` shows it on the host.
 

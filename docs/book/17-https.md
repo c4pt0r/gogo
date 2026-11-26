@@ -349,7 +349,7 @@ room for one `Data` beyond its own heap, or the open fails: spawn it with
 `actor.SpawnOpt` and a larger `MaxMemory`, as `gogo/http` does. And frame
 what you read (a length, a terminator): a close at a record boundary looks
 normal, so "read until the close" cannot tell a whole stream from a cut
-one. The full contract is in the `DialTLS` comment in `lib/net/net.go`.
+one. The full contract is in the `DialTLS` comment in `lib/net/net.gg`.
 
 ## 17.6 On the host, and capabilities
 

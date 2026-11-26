@@ -24,10 +24,9 @@ features.
 ## 2. Goals, non-goals, anti-goals
 
 **Goals**
-- Actor code is written in Go syntax; editors give completion and errors
-  through gopls, using gogo's stub packages and 32-bit type sizes.
-  Programs run **only on the gogo VM**; running them with `go run` is not
-  a goal.
+- Actor code is written in Go syntax, in `.gg` files (editors highlight
+  them as Go; gopls does not apply). Programs run **only on the gogo VM**;
+  running them with `go run` is not a goal.
 - Real isolation between actors: an actor that crashes, loops forever or
   exhausts its own memory limit affects no other actor and not the VM.
 - Run on small microcontrollers (down to RP2040 class: 264 KB RAM, 2 MB
@@ -92,14 +91,15 @@ own were also considered and rejected in favour of Go syntax.
 1. **The compiler** (`compiler/`, driven by the `gogo` command in
    `cmd/gogo/`; Go standard library only): `go/parser` -> `go/types`
    (32-bit sizes) -> subset check (`compiler/check.go`) -> code
-   generation -> a bytecode image (`.gogo`).
+   generation -> a bytecode image (`.ggb`). Sources are the `.gg` files
+   of a directory (`compiler.SourceExt`).
 2. **The VM** (`runtime/vm/`, C): image loader, interpreter, scheduler,
    per-actor heaps and GC, mailboxes, timers, the port (peripheral driver)
    layer and the module table.
 3. **Stub packages** (`gogo/actor`, `gogo/port`, `gogo/bytes`,
-   `gogo/net`, `gogo/fs`, `gogo/code`, `gogo/sys`, ...): Go sources that
+   `gogo/net`, `gogo/fs`, `gogo/code`, `gogo/sys`, ...): gogo sources that
    hold only signatures and types (bodies are `panic("gogo only")`), for
-   `go/types` and gopls. The compiler turns every call into a VM
+   `go/types`. The compiler turns every call into a VM
    instruction or builtin, and their struct types have fixed reserved
    type ids.
 4. **Libraries**, written in the gogo subset and compiled into every image
@@ -125,13 +125,12 @@ the TLS client port on top of it), `vfs/`, `stream/`, `input/`,
 `console/` (the screen console and fonts), `embed/` (the embedding API's
 implementation) and `include/` (`gogo.h`, the one public header). `platform/` holds only
 board-specific code (`unix/`, `esp32s3/`). `compiler/` and `cmd/gogo/`
-are the Go toolchain. `lib/` is the library source and its own Go module
-`gogo` (`lib/go.mod`), one directory per package (`gogo/X` is `lib/X/`).
-The root module is `gogotools`; it depends on `gogo` with `replace gogo
-=> ./lib`, and the compiler embeds the library sources through
-`lib/embed.go` (`//go:embed`). A program directory whose `go.mod` has
-`replace gogo => <repo>/lib` gets gopls completion and type checking for
-every `gogo/...` import.
+are the Go toolchain (Go module `gogotools`, the repository root). `lib/`
+is the library source, `.gg` files, one directory per package (`gogo/X`
+is `lib/X/`); its one Go file, `lib/embed.go` (package `gogotools/lib`),
+embeds `lib/*/*.gg` into the compiler (`//go:embed`). The Go toolchain
+does not read `.gg` files; `tests/lib_test.go` vets the library and runs
+its host tests on a copy of `lib/` as a temporary Go module `gogo`.
 
 ### 5.2 The Go subset
 
@@ -192,7 +191,7 @@ first, `n := i`).
 
 ### 5.3 The actor API (`gogo/actor`)
 
-The authoritative definition is `lib/actor/actor.go`.
+The authoritative definition is `lib/actor/actor.gg`.
 
 ```go
 type PID struct{ /* opaque */ }
@@ -271,7 +270,7 @@ actor's heap.
 
 A peripheral is a **port**: a special actor implemented by a C driver.
 It has a PID, takes command messages and sends event messages to its
-owner. The API is `lib/port/port.go`.
+owner. The API is `lib/port/port.gg`.
 
 ```go
 led, ok := port.Open("gpio", port.GPIO{Pin: 25, Mode: port.Output})
@@ -1374,10 +1373,10 @@ together with `mbox_words` through `actor_charged_words`).
 ### 5.9 Toolchain and workflow
 
 ```
-gogo build ./app -o app.gogo          # compile
-gogo run app.gogo                     # run on the host VM (simulated peripherals)
-gogo dis app.gogo                     # disassemble
-gogo flash app.gogo                   # write the image to the board's image partition (needs esptool)
+gogo build ./app -o app.ggb           # compile the .gg files of ./app
+gogo run app.ggb                      # run on the host VM (simulated peripherals)
+gogo dis app.ggb                      # disassemble
+gogo flash app.ggb                    # write the image to the board's image partition (needs esptool)
 gogo monitor -reset -t 30 -until "vm exited"   # capture the serial output
 ```
 
@@ -1392,7 +1391,7 @@ without reflashing it:
 ```
 . ~/esp/esp-idf/export.sh
 idf.py -C platform/esp32s3 build flash         # firmware (VM + platform + screen console)
-gogo flash app.gogo                            # image, into the gogo partition at 0x210000 (header + CRC)
+gogo flash app.ggb                             # image, into the gogo partition at 0x210000 (header + CRC)
 gogo monitor [-port P] [-t seconds] [-until text] [-reset]
 ```
 

@@ -167,19 +167,19 @@ enum Builtin {
 #define TY_BYTES  0x10006u   /* heap K_BYTES, off-heap handle, T_EMPTYBYTES */
 
 /* Reserved type-table indices: the compiler always emits the gogo/actor
- * struct types first, in this order (fields as in lib/actor/actor.go). */
+ * struct types first, in this order (fields as in lib/actor/actor.gg). */
 #define TYPE_PROCINFO 0   /* Memory int */
 #define TYPE_REASON   1   /* Code int, Func string */
 #define TYPE_EXITMSG  2   /* From PID, Reason Reason */
 #define TYPE_DOWNMSG  3   /* Ref Ref, From PID, Reason Reason */
 #define TYPE_REQUEST  4   /* From PID, Ref Ref, Body any */
 #define TYPE_OPTIONS  5   /* MaxMemory int */
-/* Then the gogo/port struct types (fields as in lib/port/port.go), always
+/* Then the gogo/port struct types (fields as in lib/port/port.gg), always
  * emitted too, whether the program imports gogo/port or not. */
 #define TYPE_GPIO     6   /* Pin, Mode, Edge, DebounceMs int */
 #define TYPE_WRITE    7   /* Value int */
 #define TYPE_EDGE     8   /* Pin int, Value int */
-/* Then the gogo/net struct types (fields as in lib/net/net.go), always
+/* Then the gogo/net struct types (fields as in lib/net/net.gg), always
  * emitted too. IPv4 addresses are ints (a.b.c.d = a<<24|b<<16|c<<8|d). */
 #define TYPE_NET_IFCONFIG  9   /* (no fields): cfg of the "netif" port */
 #define TYPE_NET_SETADDR  10   /* IP, Mask, Gateway, DNS int */
@@ -199,16 +199,16 @@ enum Builtin {
 #define TYPE_NET_WRITTEN   24   /* (no fields): tcp event, a Write was acknowledged */
 #define TYPE_NET_CLOSED    25   /* Reason int: tcp event */
 #define TYPE_NET_ACCEPTED  26   /* Conn PID: tcp_listen event */
-/* Then the gogo/fs struct types (fields as in lib/fs/fs.go), always emitted. */
+/* Then the gogo/fs struct types (fields as in lib/fs/fs.gg), always emitted. */
 #define TYPE_FS_INFO  27   /* Size int, IsDir bool: fs.Stat */
 #define TYPE_FS_SPACE 28   /* Used, Total int: fs.Usage */
-/* Then the gogo/kbd and gogo/power struct types (lib/kbd/kbd.go, lib/power/power.go). */
+/* Then the gogo/kbd and gogo/power struct types (lib/kbd/kbd.gg, lib/power/power.gg). */
 #define TYPE_KBD_CONFIG    29   /* RepeatDelayMs, RepeatMs int: port.Open("kbd") */
 #define TYPE_KBD_KEY       30   /* Code, Char, Mods int; Down bool: key event */
 #define TYPE_POWER_CONFIG  31   /* PeriodMs int: port.Open("power") */
 #define TYPE_POWER_BATTERY 32   /* MilliVolts, Percent, Charging, External int */
 #define TYPE_POWER_READ    33   /* (no fields): ask for a Battery now */
-/* Then the gogo/code struct type (lib/code/code.go). */
+/* Then the gogo/code struct type (lib/code/code.gg). */
 #define TYPE_CODE_MODULE   34   /* H, Missing int: a module handle (module_builtin) */
 /* Then (v10) the port stream types and the gogo/imu and gogo/ir types. */
 #define TYPE_CHUNK       35   /* Seq, TimeMs, Dropped int; Data bytes.Bytes: stream event */
@@ -223,7 +223,7 @@ enum Builtin {
 #define TYPE_AUDIO_SPEAKER 43   /* Rate, Volume int: port.Open("spk") */
 /* Then (v13) the tls port config. */
 #define TYPE_NET_DIALTLS   44   /* IP, Port, TimeoutMs int, Host string: cfg of the "tls" port */
-/* Then (v14) the embedding types (lib/port/port.go). */
+/* Then (v14) the embedding types (lib/port/port.gg). */
 #define TYPE_HOST          45   /* Arg int, Data bytes.Bytes: cfg of a host-defined port */
 #define TYPE_POST          46   /* Kind int, Data bytes.Bytes: a host post, host-port command or event */
 /* How many reserved types there are (0 .. TYPE_RESERVED_COUNT - 1): they are

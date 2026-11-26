@@ -3,7 +3,7 @@
 // report is printed). The platform's exit line then shows how much of the
 // arena (GOGO_ARENA_BYTES) was really allocated.
 //
-//	gogo build platform/esp32s3/examples/memfill -o memfill.gogo
+//	gogo build platform/esp32s3/examples/memfill -o memfill.ggb
 package main
 
 import "gogo/actor"

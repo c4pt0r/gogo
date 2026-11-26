@@ -3,7 +3,7 @@
 //	gogo config set wifi.ssid <name>          # once; stored on the device
 //	gogo config set wifi.password -          # reads the password from stdin
 //	gogo config set demo.url http://example.com/   # optional: the URL to fetch
-//	gogo build examples/netdemo -o netdemo.gogo && gogo flash netdemo.gogo
+//	gogo build examples/netdemo -o netdemo.ggb && gogo flash netdemo.ggb
 //
 // On boot it gets an address over DHCP and shows http://<IP>/ on the
 // screen. The page (Chinese/English) shows the KEY1/KEY2 press counts, the

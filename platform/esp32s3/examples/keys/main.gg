@@ -2,7 +2,7 @@
 // both edges, KEY2 (G12) only presses (falling edges); opening a pin the
 // platform reserves (G21, LCD reset) fails. Stops after 10 events.
 //
-//	gogo build platform/esp32s3/examples/keys -o keys.gogo && gogo flash keys.gogo
+//	gogo build platform/esp32s3/examples/keys -o keys.ggb && gogo flash keys.ggb
 package main
 
 import (

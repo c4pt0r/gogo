@@ -29,7 +29,7 @@ boot the firmware loads the flashed image as module 0 and starts its
 `main` the same way `code.Spawn` would.
 
 ```go
-// mods/greeter/main.go
+// mods/greeter/main.gg
 package main
 
 import "gogo/actor"

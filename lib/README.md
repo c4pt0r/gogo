@@ -1,24 +1,21 @@
 # lib: the gogo standard library
 
-Go-subset sources of every `gogo/...` package, one directory per package.
-This directory is the Go module `gogo` (`go.mod`), so import path `gogo/X`
-is `X/` here for the host Go toolchain too (`gogo/net` is `net/`; the C
-network stack is `runtime/net/`). `embed.go` (package `gogo`) embeds the
-sources into the compiler with `//go:embed`; the repository root is module
-`gogotools`, which requires `gogo` with `replace gogo => ./lib`.
+gogo sources (`.gg`, the Go subset) of every `gogo/...` package, one
+directory per package: import path `gogo/X` is `X/` here (`gogo/net` is
+`net/`; the C network stack is `runtime/net/`). `embed.go` (package
+`gogotools/lib` of the repository's root module `gogotools`, the only Go
+file here) embeds `*/*.gg` into the compiler with `//go:embed`.
 
-Editors: every package type-checks on the host (stub bodies are
-`panic("gogo only")`). A program directory whose `go.mod` has
+Editors: map `.gg` to Go for highlighting (book chapter 2, *Editor
+support*). The Go toolchain and gopls do not read `.gg` files.
 
-    require gogo v0.0.0
-    replace gogo => <path to>/lib
-
-gets gopls completion and errors for all `gogo/...` imports; `examples/`, the book's examples, `tests/golden/`, `tests/net/progs/`, `tests/footprint/` and `platform/esp32s3/examples/`
-are set up this way.
-
-Host checks (`make test-lib`, part of `make test`): `go vet
+Host checks (`make test-lib`, part of `make test` through `go test ./...`):
+`tests/lib_test.go` copies every `X/*.gg` as `X/*.go` into a temporary Go
+module `gogo`, where every package type-checks on the host (stub bodies are
+`panic("gogo only")`), with the host tests (`X/*_test.go`, real Go with
+build tag `gogohost`: `irproto/irproto_test.go`), and runs `go vet
 -stdmethods=false ./...` (`bytes.Buffer.WriteByte` deliberately returns no
-error) and `go test ./...` (`irproto/irproto_test.go`).
+error) and `go test ./...` there.
 
 Two kinds of package:
 

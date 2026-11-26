@@ -194,10 +194,10 @@ Run it without arguments to see what it can do:
 
 ```text
 $ build/gogo
-usage: gogo build <dir> [-o out.gogo]
-       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.gogo>
-       gogo dis <file.gogo>
-       gogo flash [-port P] [-esptool path] app.gogo
+usage: gogo build <dir> [-o out.ggb]
+       gogo run [--key c=pin]... [--fs-root DIR] <dir|file.ggb>
+       gogo dis <file.ggb>
+       gogo flash [-port P] [-esptool path] app.ggb
        gogo monitor [-port P] [-t seconds] [-until text] [-reset]
        gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
        gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
@@ -211,7 +211,7 @@ if you like.
 ## 2.3 Your first program
 
 A gogo program is a directory holding one `package main` (in one or more
-`.go` files) with a `func main()`:
+`.gg` files: gogo source, Go syntax) with a `func main()`:
 
 ```go
 // The smallest gogo program: package main, func main, println.
@@ -299,34 +299,36 @@ ever reach it again, so the VM exits.
 
 ### Editor support
 
-The gogo packages (`gogo/actor`, `gogo/port`, `gogo/net`, `gogo/http`, ...)
-exist as ordinary Go source in the gogo tree, in `lib/`, which is a Go
-module named `gogo` (stub function bodies are just `panic("gogo only")`).
-Give your program's directory a `go.mod` that points at it, and an editor
-with `gopls` can complete and type-check every import, network packages
-included:
+gogo source files end in `.gg`, and compiled images in `.ggb`. A `.gg`
+file is Go syntax, so map the extension to Go in your editor to get
+highlighting and indentation:
 
-```
-module myapp
+- **VS Code**: in `settings.json`,
 
-go 1.27
+  ```json
+  "files.associations": { "*.gg": "go" }
+  ```
 
-require gogo v0.0.0
+- **Vim / Neovim**: in your `vimrc` (or `init.vim`),
 
-replace gogo => /path/to/gogo/lib
-```
+  ```vim
+  autocmd BufRead,BufNewFile *.gg setfiletype go
+  ```
 
-The repository's own program directories (`examples/`, the book's examples, `tests/golden/`, `tests/net/progs/`, `tests/footprint/` and `platform/esp32s3/examples/`) are set up this way. Programs are only ever
-compiled and run by `gogo`, never by `go run`.
+  or in Lua for Neovim, `vim.filetype.add({ extension = { gg = "go" } })`.
+- **Emacs**: with `go-mode` installed,
 
-> **Note.** The host type checker is not the gogo compiler. It accepts
-> things gogo rejects (maps, globals, ...: see chapter 3), and rejects one
-> thing gogo accepts: `println` of a struct or other composite value
-> (`illegal types for operand: println`). `go vet` also reports gogo's
-> `bytes.Buffer.WriteByte`, which deliberately returns no error, and
-> composite literals of library structs without field names (`unkeyed
-> fields`, for example `http.Header{"Accept", "*/*"}`). `gogo
-> build` is the real judge.
+  ```elisp
+  (add-to-list 'auto-mode-alist '("\\.gg\\'" . go-mode))
+  ```
+
+That is syntax only. `gopls` and `go vet` do not apply: the Go toolchain
+does not read `.gg` files, and gogo is a subset of Go with its own
+packages (`gogo/actor`, `gogo/net`, ...), which exist only inside the gogo
+compiler. Programs are only ever compiled and run by `gogo`, never by `go
+run`; `gogo build` is the judge of what is valid. Their sources are in
+`lib/` of the gogo tree (one directory per package) if you want to read
+an API.
 
 ## 2.5 Running on a board
 
@@ -339,12 +341,13 @@ second, without touching the firmware.
 ### Build, flash and watch a program
 
 ```sh
-gogo build docs/book/examples/02-hello -o hello.gogo
-gogo flash hello.gogo
+gogo build docs/book/examples/02-hello -o hello.ggb
+gogo flash hello.ggb
 gogo monitor -reset -t 5 -until "gogo: vm exited"
 ```
 
-- `gogo build` compiles the directory to an image file.
+- `gogo build` compiles the directory to an image file (`.ggb`; without
+  `-o` it writes `<directory name>.ggb` in the current directory).
 - `gogo flash` writes the image to the board's program partition. It needs
   `esptool` on your `PATH` (the one you installed for `gogo setup`, or
   ESP-IDF's, which its `export.sh` puts there) and uses

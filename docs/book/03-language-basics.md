@@ -12,7 +12,7 @@ what to write instead. The compiler checks the subset with an allow-list:
 anything it does not know is rejected with an error of the form
 
 ```text
-main.go:LINE:COL: gogo: <what> not supported
+main.gg:LINE:COL: gogo: <what> not supported
 ```
 
 so you will never get a program that silently behaves differently from Go.
@@ -20,7 +20,8 @@ so you will never get a program that silently behaves differently from Go.
 ## 3.1 Programs and packages
 
 A program is one directory with `package main` and `func main()`. It can be
-split over several `.go` files (`_test.go` files are ignored). Your program
+split over several `.gg` files (gogo source files; other files in the
+directory, `.go` files included, are not read). Your program
 can import only gogo's own packages, all under the `gogo/` path:
 
 | Package | What it is |
@@ -38,7 +39,7 @@ can import only gogo's own packages, all under the `gogo/` path:
 Importing anything else, including Go's standard library, fails:
 
 ```text
-main.go:2:8: gogo: import "fmt" not supported
+main.gg:2:8: gogo: import "fmt" not supported
 ```
 
 You cannot write your own packages yet; split a large program over several
@@ -369,8 +370,8 @@ $ gogo build docs/book/examples/03-capture
 ```
 
 ```text
-main.go:9:2: gogo: captured variable must not be reassigned
-main.go:12:14: gogo: byte in interface not supported
+main.gg:9:2: gogo: captured variable must not be reassigned
+main.gg:12:14: gogo: byte in interface not supported
 ```
 
 The fix is to give the closure its own variable that never changes: pass
@@ -815,24 +816,24 @@ func main() {
 `gogo build` reports each one:
 
 ```text
-main.go:5:1: gogo: global variable not supported
-main.go:7:6: gogo: type definition other than struct or int, int64, bool, string not supported
-main.go:11:1: gogo: method not supported
-main.go:13:1: gogo: generic function not supported
-main.go:21:8: gogo: channel not supported
-main.go:22:2: gogo: go statement not supported
-main.go:23:2: gogo: defer statement not supported
-main.go:24:7: gogo: map not supported
-main.go:25:7: gogo: pointer not supported
-main.go:26:7: gogo: float not supported
-main.go:27:2: gogo: switch statement not supported
-main.go:31:8: gogo: array not supported
-main.go:33:2: gogo: field assignment not supported
-main.go:34:10: gogo: map not supported
-main.go:34:13: gogo: pointer not supported
-main.go:34:16: gogo: float not supported
-main.go:34:19: gogo: index of [4]int not supported
-main.go:35:2: gogo: builtin panic not supported
+main.gg:5:1: gogo: global variable not supported
+main.gg:7:6: gogo: type definition other than struct or int, int64, bool, string not supported
+main.gg:11:1: gogo: method not supported
+main.gg:13:1: gogo: generic function not supported
+main.gg:21:8: gogo: channel not supported
+main.gg:22:2: gogo: go statement not supported
+main.gg:23:2: gogo: defer statement not supported
+main.gg:24:7: gogo: map not supported
+main.gg:25:7: gogo: pointer not supported
+main.gg:26:7: gogo: float not supported
+main.gg:27:2: gogo: switch statement not supported
+main.gg:31:8: gogo: array not supported
+main.gg:33:2: gogo: field assignment not supported
+main.gg:34:10: gogo: map not supported
+main.gg:34:13: gogo: pointer not supported
+main.gg:34:16: gogo: float not supported
+main.gg:34:19: gogo: index of [4]int not supported
+main.gg:35:2: gogo: builtin panic not supported
 ```
 
 The full list, with what to do instead:
