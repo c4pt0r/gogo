@@ -525,3 +525,10 @@ tests and the size budgets, it runs:
   `shellcheck` on `tools/*.sh` when it is installed. To format a `.gg`
   file, format a `.go` copy (or use `gofmt` on standard input:
   `gofmt < f.gg > f.tmp && mv f.tmp f.gg`).
+- `make test-examples`: every program in `examples/` and
+  `platform/esp32s3/examples/` must build (the board-only ones too:
+  building needs no board), and the ones with an `expected.out` run with
+  `gogo run` and must print it (`tools/examples.sh`, which reads the
+  same `input`, `config`, `fsroot`, `mods/` and `expected.err` files as
+  the golden tests). A new example without an `expected.out` is still
+  built on every run.

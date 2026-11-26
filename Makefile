@@ -66,17 +66,23 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lint lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: lint test-examples lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize screensize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-net-mcu vmsize netsize vfssize screensize
 
 vm: $(BUILD)/gogovm
 
 # gofmt on .go and .gg files, go vet, shellcheck on tools/*.sh when installed (tools/lint.sh).
 lint:
 	tools/lint.sh
+
+# Every examples/*/ and platform/esp32s3/examples/*/ program builds; the ones
+# with an expected.out run with gogo run and print it (tools/examples.sh).
+test-examples: vm $(BUILD)/gogovm_mcu
+	go build -o $(BUILD)/gogo ./cmd/gogo
+	tools/examples.sh $(BUILD)
 
 $(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
