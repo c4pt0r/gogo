@@ -1078,8 +1078,89 @@ A few things to know:
   costs the same as a function call. There are no interfaces of your own
   yet (`interface types are not supported yet`), and pointer receivers,
   `func (p *Point) M()`, wait for pointers (`pointer receivers are not
-  supported yet`). Methods are not promoted from embedded fields, which
-  are not supported either.
+  supported yet`).
+
+### Embedded fields
+
+A struct can embed another named type: a field without a name, named
+after its type. The embedded struct's fields and methods are *promoted*:
+`s.X` means `s.Point.X` and `s.Dist()` means `s.Point.Dist()`, for reading,
+for field assignment and for method values, as in Go:
+
+```go
+// Embedded fields: the fields and methods of an embedded struct are
+// promoted to the outer one, and a shallower name hides a deeper one.
+package main
+
+type Point struct{ X, Y int }
+
+func (p Point) Dist() int { return abs(p.X) + abs(p.Y) }
+
+func (p Point) Moved(dx, dy int) Point { return Point{p.X + dx, p.Y + dy} }
+
+// Sprite embeds a Point: s.X is s.Point.X, s.Dist() is s.Point.Dist().
+type Sprite struct {
+	Point
+	Name string
+}
+
+// Label is the outer type's own method.
+func (s Sprite) Label() string { return s.Name }
+
+// Player embeds a Sprite and has its own X, which hides Sprite's (depth 1
+// beats depth 2); the promoted one is still reachable by its full path.
+type Player struct {
+	Sprite
+	X     int
+	Lives int
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func main() {
+	s := Sprite{Point{3, -4}, "ship"}
+	println(s.X, s.Y, s.Dist(), s.Label())
+
+	// Promoted fields can be assigned, like any field.
+	s.X = 10
+	s.Point.Y++
+	println(s.X, s.Y, s.Moved(1, 1).X)
+
+	p := Player{Sprite: s, X: 99, Lives: 3}
+	p.Y = 0 // p.Sprite.Point.Y
+	println(p.X, p.Sprite.X, p.Y, p.Dist(), p.Label(), p.Lives)
+
+	// A method value of a promoted method keeps its receiver.
+	dist := p.Dist
+	p.Sprite.X = 0
+	println(dist(), p.Dist())
+}
+```
+
+```text
+3 -4 7 ship
+10 -3 11
+99 10 0 10 ship 3
+10 0
+```
+
+Go's rules decide which name a selector means: the shallowest one wins
+(`p.X` is Player's own `X`, not the promoted `p.Sprite.X`), and two at the
+same depth make the selector ambiguous, a compile error (`ambiguous
+selector c.X`) unless you write the path. An embedded field is an
+ordinary field underneath: a literal sets it by its type's name
+(`Player{Sprite: s}`), and a promoted field costs one `GETFIELD` per
+level. A type can embed a named struct or a named basic type
+(`type Celsius int`), from any package; not a pointer. A method
+expression of a promoted method (`Sprite.Dist`) is rejected: write a
+method value or call it on the embedded field. There are no interfaces
+of your own yet; when they come, promoted methods will count toward
+implementing them.
 
 ## 3.6 Slices, the only collection
 
@@ -1516,7 +1597,6 @@ The full list, with what to do instead:
 | `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
 | `struct == struct` | `comparison of main.P not supported` | compare fields |
 | `func init()` | `func init not supported` | call it from `main` |
-| embedded fields | `embedded field not supported` | a named field |
 
 > **Note.** Pointer receivers, maps, arrays, pointers, `uint32`,
 > package-level variables, the `error` interface, `panic` and type

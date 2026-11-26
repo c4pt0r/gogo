@@ -1,0 +1,61 @@
+package main
+
+type Point struct{ X, Y int }
+
+func (p Point) Sum() int { return p.X + p.Y }
+
+func (p Point) Scaled(k int) Point { return Point{p.X * k, p.Y * k} }
+
+type Named struct {
+	Point
+	Name string
+}
+
+func (n Named) Label() string { return n.Name }
+
+type Deep struct {
+	Named
+	X int // shadows Named.Point.X: depth 1 beats depth 2
+}
+
+type Celsius int
+
+func (c Celsius) F() int { return int(c)*9/5 + 32 }
+
+type Temp struct {
+	Celsius
+	Where string
+}
+
+func main() {
+	n := Named{Point{1, 2}, "a"}
+	println(n.X, n.Y, n.Sum(), n.Label(), n.Point.X)
+	n.X = 10
+	n.Y++
+	n.Point.Y += 5
+	println(n.X, n.Y, n.Sum())
+	s := n.Scaled(2)
+	println(s.X, s.Y)
+	f := n.Sum
+	n.X = 0
+	println(f(), n.Sum())
+
+	d := Deep{Named{Point{3, 4}, "d"}, 99}
+	println(d.X, d.Point.X, d.Y, d.Name, d.Sum(), d.Label())
+	d.X = 1
+	d.Point.X = 7
+	d.Name += "!"
+	println(d.X, d.Point.X, d.Named.Point.X, d.Name, d.Sum())
+
+	ns := []Named{{Point{1, 1}, "x"}, {Point{2, 2}, "y"}}
+	ns[1].X = 50
+	ns[0].Name = "z"
+	println(ns[1].Sum(), ns[0].Label())
+
+	t := Temp{100, "here"}
+	println(t.F(), t.Where, int(t.Celsius))
+	g := t.F
+	println(g())
+	var z Deep
+	println(z.X, z.Y, z.Name == "", z.Sum())
+}

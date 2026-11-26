@@ -40,7 +40,7 @@ func (f *fn) isFieldTarget(e ast.Expr) bool {
 // fieldTargetOf evaluates the operands of field assignment target e, as Go
 // does before any assignment: an element root's slice and index go into a
 // fresh block [s, i, v] (released by the caller); a variable root needs
-// nothing.
+// nothing. A promoted field is a path down the embedded fields.
 func (f *fn) fieldTargetOf(e ast.Expr) fieldTarget {
 	t := fieldTarget{local: -1, elem: -1, typ: f.g.p.Info.TypeOf(e)}
 	x := ast.Unparen(e)
@@ -50,11 +50,14 @@ func (f *fn) fieldTargetOf(e ast.Expr) fieldTarget {
 			break
 		}
 		s := f.g.p.Info.Selections[sel]
-		st := structType(f.g.p.Info.TypeOf(sel.X))
-		if s == nil || s.Kind() != types.FieldVal || len(s.Index()) != 1 || st == nil {
+		if s == nil || s.Kind() != types.FieldVal || s.Indirect() {
 			f.fail(sel, "internal error: unexpected field assignment target")
 		}
-		t.path = append([]fieldStep{{st, s.Index()[0]}}, t.path...)
+		steps := embedPath(f.g.p.Info.TypeOf(sel.X), s.Index()) // promoted: down the embedded fields
+		if steps == nil {
+			f.fail(sel, "internal error: unexpected field assignment target")
+		}
+		t.path = append(steps, t.path...)
 		x = ast.Unparen(sel.X)
 	}
 	switch x := x.(type) {

@@ -299,13 +299,18 @@ rebuilt:
   not supported`. *Workaround:* `_, _ = actor.Call(...)`. `println(f())`
   with a multi-result `f` and `var a, b = f()` fail the same way; use
   `a, b := f()`.
-- **Methods: value receivers only, no embedding.** A method with a value
+- **Methods: value receivers only.** A method with a value
   receiver works on a copy, so it cannot change its caller's value: return
-  the new value instead (`p = p.Moved(1, 0)`). Methods are not promoted
-  from embedded fields (embedded fields are rejected), and a named type
+  the new value instead (`p = p.Moved(1, 0)`). A named type
   other than a struct or a basic type (`type L []int`) cannot be declared,
   so it has no methods either. The methods of a type in a hot-loaded module
   are that module's own, like its types.
+- **Embedded fields: no pointers, no promoted method expressions.**
+  Embedding `*T` is rejected with pointers. A method expression of a
+  promoted method (`Outer.M` for a method of an embedded field) is
+  rejected (`method expression of a promoted method not supported`).
+  *Workaround:* a method value `x.M`, or `Inner.M(x.Inner)`. Promoted
+  methods will implement interfaces once user interfaces exist.
 - **Every field write allocates.** Structs are immutable in the VM, so
   `p.X = v` builds a new struct (2 + fields words) for each struct on the
   path (`a.b.c = v` builds three) and the old one becomes garbage: the

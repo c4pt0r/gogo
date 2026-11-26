@@ -1198,10 +1198,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 			return
 		}
 		sel := f.g.p.Info.Selections[e]
-		if sel == nil || sel.Kind() != types.FieldVal || len(sel.Index()) != 1 {
+		if sel == nil || sel.Kind() != types.FieldVal || sel.Indirect() {
 			f.fail(e, "internal error: unexpected selector")
 		}
-		f.asm.Emit(OpGetfield, dst, f.operand(e.X), uint8(sel.Index()[0]))
+		f.fieldPathInto(e, sel.Index(), f.operand(e.X), dst) // promoted: down the embedded fields
 	case *ast.IndexExpr:
 		f.indexInto(e, dst)
 	case *ast.SliceExpr:

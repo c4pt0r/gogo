@@ -206,15 +206,19 @@ func (f *fn) methodCall(call *ast.CallExpr, sel *ast.SelectorExpr, m *types.Func
 	f.asm.EmitExt(OpCall, dst, recv, n+1, idx)
 }
 
-// receiver evaluates the receiver of x.M into a fresh register. A value
+// receiver evaluates the receiver of x.M into a fresh register (for a
+// method promoted from an embedded field, that field of x). A value
 // receiver gets x's value: structs are immutable, so the method cannot
 // change the caller's copy.
 func (f *fn) receiver(sel *ast.SelectorExpr) uint8 {
-	if s := f.g.p.Info.Selections[sel]; len(s.Index()) != 1 || s.Indirect() {
-		f.fail(sel, "internal error: promoted or indirect method")
+	s := f.g.p.Info.Selections[sel]
+	if s.Indirect() {
+		f.fail(sel, "internal error: indirect method")
 	}
 	recv := f.allocFor(sel.X)
 	f.exprInto(sel.X, recv)
+	idx := s.Index()
+	f.fieldPathInto(sel, idx[:len(idx)-1], recv, recv) // a promoted method: its embedded receiver
 	return recv
 }
 

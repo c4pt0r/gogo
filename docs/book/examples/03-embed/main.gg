@@ -1,0 +1,52 @@
+// Embedded fields: the fields and methods of an embedded struct are
+// promoted to the outer one, and a shallower name hides a deeper one.
+package main
+
+type Point struct{ X, Y int }
+
+func (p Point) Dist() int { return abs(p.X) + abs(p.Y) }
+
+func (p Point) Moved(dx, dy int) Point { return Point{p.X + dx, p.Y + dy} }
+
+// Sprite embeds a Point: s.X is s.Point.X, s.Dist() is s.Point.Dist().
+type Sprite struct {
+	Point
+	Name string
+}
+
+// Label is the outer type's own method.
+func (s Sprite) Label() string { return s.Name }
+
+// Player embeds a Sprite and has its own X, which hides Sprite's (depth 1
+// beats depth 2); the promoted one is still reachable by its full path.
+type Player struct {
+	Sprite
+	X     int
+	Lives int
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func main() {
+	s := Sprite{Point{3, -4}, "ship"}
+	println(s.X, s.Y, s.Dist(), s.Label())
+
+	// Promoted fields can be assigned, like any field.
+	s.X = 10
+	s.Point.Y++
+	println(s.X, s.Y, s.Moved(1, 1).X)
+
+	p := Player{Sprite: s, X: 99, Lives: 3}
+	p.Y = 0 // p.Sprite.Point.Y
+	println(p.X, p.Sprite.X, p.Y, p.Dist(), p.Label(), p.Lives)
+
+	// A method value of a promoted method keeps its receiver.
+	dist := p.Dist
+	p.Sprite.X = 0
+	println(dist(), p.Dist())
+}

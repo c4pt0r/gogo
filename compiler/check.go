@@ -275,11 +275,7 @@ func (c *checker) typeSpec(s *ast.TypeSpec) {
 		return
 	}
 	for _, f := range st.Fields.List {
-		if len(f.Names) == 0 {
-			c.unsupported(f, "embedded field")
-			continue
-		}
-		c.typeExpr(f.Type)
+		c.typeExpr(f.Type) // an embedded field too: a field named after its type
 	}
 }
 
@@ -1138,10 +1134,17 @@ func (p *Program) method(sel *ast.SelectorExpr) *types.Func {
 
 // methodRecv checks the operand of a method selector: the receiver
 // expression of x.M. The type T of a method expression T.M or (T).M was
-// checked at the method's declaration.
+// checked at the method's declaration. A method expression of a promoted
+// method (B.M for a method M of B's embedded A) would need a function of
+// its own that takes a B: it is rejected.
 func (c *checker) methodRecv(sel *ast.SelectorExpr) {
-	if c.p.Info.Selections[sel].Kind() == types.MethodVal {
+	s := c.p.Info.Selections[sel]
+	if s.Kind() == types.MethodVal {
 		c.expr(sel.X)
+		return
+	}
+	if len(s.Index()) > 1 {
+		c.unsupported(sel, "method expression of a promoted method")
 	}
 }
 

@@ -221,6 +221,18 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   hand. A field write to a variable a closure captures is rejected
   ("captured variable must not be changed by field assignment"). No
   opcode of its own.
+- Embedded fields: a struct may embed a named struct or a named basic
+  type (not a pointer). It is an ordinary field named after its type;
+  go/types resolves a promoted selector to a path of field indices with
+  Go's depth and ambiguity rules (an ambiguous selector is a type
+  error). A promoted field read is one `GETFIELD` per level, a write
+  rebuilds every struct on the path, and a promoted method is called
+  (or made a method value) with the embedded value as its receiver, so
+  no wrapper functions are generated. A method expression of a promoted
+  method (`Outer.M`) is rejected. For interfaces, the compiler's
+  `gen.methodTable` lists a type's own and promoted methods with the
+  field path to each receiver, which interface dispatch is to use. No
+  opcode of its own.
 - `println` of any value of the subset except `Bytes` and `Buffer`;
   slices print their elements, `[1 2 3]` (Go's `println` prints
   `[len/cap]address`). Nesting deeper than 16 prints as `{...}` /
@@ -2115,9 +2127,9 @@ types and named requirements (§5.6); one stream protocol for every byte
 port with `port.Closed` and `From`; embed mode phase 1 (`libgogo`,
 §5.11); user packages with a `GOGOPATH` search and `#!` scripts; the
 first language additions (expression `switch`, labels, `range` over int,
-variadic functions, methods with value receivers); floating point
-(`float32`, `float64`, `gogo/math`, `strconv.FormatFloat` /
-`ParseFloat`; image format 15.2).
+variadic functions, methods with value receivers, embedded fields);
+floating point (`float32`, `float64`, `gogo/math`, `strconv.FormatFloat`
+/ `ParseFloat`; image format 15.2).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
@@ -2129,8 +2141,8 @@ variadic functions, methods with value receivers); floating point
    with direct LAN links as a later step.
 3. **Language completeness:** pointer receivers, interfaces and
    `error`, `panic`, pointers, maps, read-only package variables, `fmt`,
-   sized integers, arrays, embedded fields, static `defer`
-   (`float32`/`float64` are done).
+   sized integers, arrays, static `defer` (`float32`/`float64` are
+   done).
 4. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler,
