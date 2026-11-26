@@ -1,0 +1,15 @@
+package main
+
+import "gogo/sys"
+
+func main() {
+	args := sys.Args()
+	println(len(args))
+	for i, a := range args {
+		println(i, "["+a+"]", len(a))
+	}
+	// Every call returns a new slice.
+	args[0] = "changed"
+	println(sys.Args()[0])
+	println(sys.Args() != nil)
+}

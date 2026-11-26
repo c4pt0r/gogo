@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -157,6 +158,7 @@ func TestRunSources(t *testing.T) {
 		"prog/hello.txt":        "not read",
 		"s/hello.gg":            "package main\n\nfunc main() { println(\"hello\") }\n",
 		"s/other.gg":            "package main\n\nfunc main() { println(\"other\") }\n",
+		"s/args.gg":             "package main\n\nimport \"gogo/sys\"\n\nfunc main() {\n\targs := sys.Args()\n\tprintln(len(args))\n\tfor _, a := range args {\n\t\tprintln(\"[\" + a + \"]\")\n\t}\n}\n",
 		"s/sum.gg":              "package main\n\nimport \"s/calc\"\n\nfunc main() { println(\"sum\", calc.Add(2, 3)) }\n",
 		"s/calc/calc.gg":        "package calc\n\nfunc Add(a, b int) int { return a + b }\n",
 		"s/gp.gg":               "package main\n\nimport \"shared/greet\"\n\nfunc main() { println(greet.Hi()) }\n",
@@ -192,10 +194,16 @@ func TestRunSources(t *testing.T) {
 	if _, errs, err := run([]string{gp}, filepath.Join(work, "s")); err == nil || !strings.Contains(errs, "main redeclared") {
 		t.Errorf("gogo run s: %v %q", err, errs)
 	}
-	// Arguments after the program are refused for now.
-	for _, arg := range []string{"x", "-v"} {
-		if _, errs, err := run(nil, filepath.Join(work, "s", "hello.gg"), arg); err == nil || !strings.Contains(errs, "("+arg+") are not supported yet") {
-			t.Errorf("gogo run hello.gg %s: %v %q", arg, err, errs)
+	// Everything after the program is the program's: sys.Args, flags
+	// look-alikes included, and none of it changes how the program is found.
+	for _, extra := range [][]string{nil, {"x"}, {"-v", "a b", "", "--", "-path"}} {
+		out, errs, err := run(nil, append([]string{filepath.Join(work, "s", "args.gg")}, extra...)...)
+		want := fmt.Sprintf("%d\n", len(extra))
+		for _, a := range extra {
+			want += "[" + a + "]\n"
+		}
+		if err != nil || out != want || errs != "" {
+			t.Errorf("gogo run args.gg %q: %v, stdout %q (want %q), stderr %q", extra, err, out, want, errs)
 		}
 	}
 	// gogo build of a .gg file writes <name>.ggb.

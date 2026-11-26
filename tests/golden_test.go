@@ -32,6 +32,7 @@ import (
 // the runner creates sd/ too if a line of fsroot has the field "sd", and a line
 // "file flash/My File" creates that file, containing "seed", first). A file
 // `vmargs` holds extra VM flags (whitespace-separated, before the image); a
+// file `progargs` the program's arguments, one per line (sys.Args); a
 // file `exitfail` makes a non-zero exit status the expected one, and a file
 // `exitcode` holding a number that exact status (platform/unix/main.c
 // lists them). A file `mcu`
@@ -141,6 +142,11 @@ func TestGolden(t *testing.T) {
 				}
 				if extra, err := os.ReadFile(filepath.Join(dir, "vmargs")); err == nil {
 					vmArgs = append(strings.Fields(string(extra)), vmArgs...)
+				}
+				// A file `progargs` holds the program's arguments (sys.Args),
+				// one per line, after the image.
+				if b, err := os.ReadFile(filepath.Join(dir, "progargs")); err == nil {
+					vmArgs = append(vmArgs, strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")...)
 				}
 				_, statErr := os.Stat(filepath.Join(dir, "exitfail"))
 				wantFail := statErr == nil

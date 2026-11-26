@@ -1,10 +1,11 @@
-// Package sys is the gogo system API: the wall clock, randomness and the
-// platform configuration store. It is a stub package like gogo/actor: the
+// Package sys is the gogo system API: the wall clock, randomness, the
+// platform configuration store and the program's arguments. It is a stub package like gogo/actor: the
 // compiler replaces every call with a VM builtin (B_UNIX_TIME,
 // B_SET_UNIX_TIME, B_RANDOM, B_CONFIG_GET), so the bodies are never
 // executed. The C side is vm_unix_time_ms, vm_set_unix_time_ms, vm_random
 // and vm_config_get (runtime/vm/host.h), over the host's optional RTC,
-// random and config hooks.
+// random and config hooks. Args has no builtin: the compiler expands it into
+// a lookup of the config key "\x00args" and a split (see Args).
 //
 // The wall clock is separate from actor.Now (milliseconds since the VM
 // started): it can be unknown. gogo/sntp sets it from the network; a TLS
@@ -34,6 +35,17 @@ func SetTime(ms int64) bool { panic("gogo only") }
 // source (the hardware generator on the board, getentropy on unix). It is
 // meant for protocol nonces, not as a key generator on its own.
 func Random() int { panic("gogo only") }
+
+// Args returns the program's arguments: what follows the program on the
+// command line of `gogo run prog a b` (or of a #! script, `./script a b`),
+// without the program itself, so Args()[0] is "a". Unlike Go's os.Args there
+// is no element for the program's name. It returns an empty, non-nil slice
+// when there are none, and always on a board, where nothing starts a
+// program with arguments. Every call returns a new slice, so changing it
+// does not change what the next call returns. (The compiler expands the
+// call inline over sys.Config, so it needs no VM support and no newer image
+// format.)
+func Args() []string { panic("gogo only") }
 
 // Config returns the value of key in the platform configuration store; ok
 // is false if key is not set, or starts with "wifi.". The store holds

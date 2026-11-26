@@ -492,6 +492,21 @@ text grid while it is open.
   the device configuration store; `wifi.` keys are invisible to programs.
   On Unix the store is `$GOGO_CONFIG` (default `~/.gogo/config`, lines
   `key=value`), edited with `gogo config set|get|list|rm` (§5.9).
+- **Program arguments** (`sys.Args() []string`): the arguments after the
+  program, as Go's `os.Args[1:]`: no element for the program's name, an
+  empty non-nil slice when there are none, a new slice on every call. It
+  costs the VM nothing: no builtin, no image minor, no host hook. The
+  compiler lowers the call inline (`sysArgs` in `codegen_actor.go`) to a
+  `sys.Config` lookup of the key `"\x00args"` (`compiler.ArgsKey`), whose
+  value a host serves as every argument followed by a NUL byte (empty
+  arguments survive; no arguments is an unset key), and a split loop at
+  the NULs. Where the host's `config_get` does not know the key (the
+  boards, an embedder that did not add it) the result is an empty slice;
+  an image that uses `sys.Args` runs on any VM of format 15. `gogovm prog.ggb
+  a b` serves the key from `argv` after the image
+  (`platform_set_args`, `platform_unix.c`); `gogo run prog a b` passes
+  everything after the program to it. The key is also visible to
+  `sys.Config`, which is harmless (arguments are public to the program).
 - **Wall clock and randomness** (`gogo/sys`, builtins 51-53; `gogo/sntp`):
   `sys.Time() int64` is Unix time in ms (UTC), 0 while unknown.
   `sys.SetTime(ms) bool` sets it, after which it advances with the
@@ -1911,7 +1926,7 @@ variadic functions, methods with value receivers).
 3. **Language completeness:** pointer receivers, interfaces and
    `error`, `panic`, pointers, maps, read-only package variables, `fmt`,
    sized integers, `float32`/`float64`, arrays, embedded fields, static
-   `defer`; `sys.Args()` for scripts.
+   `defer`.
 4. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler,

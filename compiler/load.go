@@ -72,8 +72,8 @@ const (
 )
 
 // SysPath is the import path of the system API (sys.Time, sys.SetTime,
-// sys.Random, sys.Config), a stub package like gogo/actor: calls become
-// B_UNIX_TIME, B_SET_UNIX_TIME, B_RANDOM and B_CONFIG_GET.
+// sys.Random, sys.Config, sys.Args), a stub package like gogo/actor: calls become
+// B_UNIX_TIME, B_SET_UNIX_TIME, B_RANDOM and B_CONFIG_GET (sys.Args is expanded inline from B_CONFIG_GET).
 const SysPath = "gogo/sys"
 
 // AudioPath is the import path of the audio port types (audio.Mic,

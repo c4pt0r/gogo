@@ -257,8 +257,9 @@ Yes, on your computer. `gogo run hello.gg` compiles and runs one file, and
 a file starting with `#!/usr/bin/env -S gogo run` runs directly after
 `chmod +x` (the compiler ignores a first `#!` line; where `env -S` is
 missing, as in BusyBox, use `#!/usr/local/bin/gogo run`). A script can import
-packages next to it and from `$GOGOPATH`. It cannot read command-line
-arguments yet. See the book, chapter 2.
+packages next to it and from `$GOGOPATH`, and reads its command-line
+arguments with `sys.Args()` (the words after the script, without its name;
+book chapter 12). See the book, chapter 2.
 
 ### Can I compile on the device?
 No. The compiler is written in Go and needs the Go runtime, which does not

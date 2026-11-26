@@ -266,6 +266,7 @@ func http.Upload(url, path, contentType, token string) (status int, err errors.C
 
 ```go
 func sys.Config(key string) (value string, ok bool)   // the configuration store
+func sys.Args() []string        // the program's arguments, without its name; empty on a board
 func sys.Time() int64           // Unix time in ms (UTC); 0: unknown
 func sys.SetTime(ms int64) bool // false: earlier than the build, refused; ms <= 0 forgets
 func sys.Random() int           // 30 random bits

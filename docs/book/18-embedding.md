@@ -231,6 +231,7 @@ is not 0, is refused with `GOGO_EINVAL`, so both can be given a meaning later.
 | `unix_time_ms`, `set_unix_time_ms` | a wall clock (an RTC); `NULL`: the VM keeps its own, unknown until a program sets it |
 | `random(ctx)` | 32 random bits; `NULL`: the VM's own clock-seeded mixer (not for secrets) |
 | `config_get` | the values `sys.Config` reads; `NULL`: nothing is set |
+| `config_get` (key `"\0args"`) | also how `sys.Args` gets the program's arguments: answer the 5-byte key `\0args` with every argument followed by a NUL byte (so `a`, empty, `b` is `a\0\0b\0`); unset: no arguments |
 | `code_alloc`, `code_free` | special memory for hot-loaded code; `NULL`: ordinary memory |
 | `destroy(ctx)` | called once when the VM is gone, to free the host's context; `NULL`: nothing |
 

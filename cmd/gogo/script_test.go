@@ -38,12 +38,25 @@ func TestShebangScript(t *testing.T) {
 			t.Errorf("%s: %v, output %q", name, err, out)
 		}
 	}
+	// A script reads its arguments with sys.Args: the words after it, as
+	// they are (a flag look-alike, a space, an empty one).
+	const argSrc = "#!/usr/bin/env -S gogo run\npackage main\n\nimport \"gogo/sys\"\n\nfunc main() {\n\tfor _, a := range sys.Args() {\n\t\tprintln(\"[\" + a + \"]\")\n\t}\n}\n"
+	argScript := filepath.Join(work, "scripts", "args")
+	if err := os.WriteFile(argScript, []byte(argSrc), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(argScript, "a", "-v", "b c", "", "--key")
+	cmd.Dir = work
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GOGO_VM="+vm, "GOGO_CONFIG="+filepath.Join(work, "no-config"))
+	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "[a]\n[-v]\n[b c]\n[]\n[--key]\n" {
+		t.Errorf("args script: %v, output %q", err, out)
+	}
 	// An error in a script names its real line.
 	bad := filepath.Join(work, "scripts", "bad.gg")
 	if err := os.WriteFile(bad, []byte("#!/usr/bin/env -S gogo run\npackage main\n\nfunc main() { nope() }\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bad)
+	cmd = exec.Command(bad)
 	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GOGO_VM="+vm)
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "bad.gg:4:15: undefined: nope") {

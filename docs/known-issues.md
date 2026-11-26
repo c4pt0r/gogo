@@ -102,7 +102,8 @@ rebuilt:
   arguments. So an argument starting with `-` is a flag even after a
   file name: put it after `--`. The exceptions: `gogo config set` takes
   its value as it is (`gogo config set offset -5`), and `gogo run` takes
-  its flags before the program only. A usage
+  its flags before the program only (what follows it is the program's
+  own, `sys.Args()`). A usage
   mistake prints what is wrong before the usage.
 - **Configuration keys.** `gogo config set` takes keys of `a-z 0-9 . _`
   only (upper case and `-` were allowed), refuses unknown keys under the
@@ -266,8 +267,11 @@ rebuilt:
   (book 14.6). Only the stub packages' reserved types (`actor.Request`,
   `net.Up`, `fs.Info`, ...) cross. *Workaround:* send basic values,
   strings or `Bytes`, and rebuild the struct in the receiver.
-- **Scripts get no arguments yet.** `gogo run x.gg args...` and `./script
-  args...` are refused until programs can read their arguments.
+- **`sys.Args()` has no program name.** It returns only the arguments
+  after the program (Go's `os.Args[1:]`), so there is no element 0 to tell
+  a script its own name. Boards get an empty slice: nothing starts a
+  program there with arguments. A `libgogo` host passes arguments by
+  answering the `config_get` hook for the key `"\x00args"` (book 18).
 - **Loop variables cannot be captured.** In a three-clause `for` loop,
   `func() { work(i) }` is rejected with `captured variable must not be
   reassigned`, because `i++` assigns `i`. Closures capture by value, so

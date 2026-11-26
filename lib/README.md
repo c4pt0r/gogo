@@ -70,7 +70,7 @@ declares `kbd`. Book chapter
 | `gogo/imu` | stub | | none (the `imu` port: `imu`) |
 | `gogo/ir` | stub | | none (the `ir_tx` / `ir_rx` ports: `ir_tx` / `ir_rx`) |
 | `gogo/audio` | stub | | none (the `mic` / `speaker` ports: `mic` / `speaker`) |
-| `gogo/sys` | stub | | none (the clock, randomness and `sys.Config`, the configuration store) |
+| `gogo/sys` | stub | | none (the clock, randomness, `sys.Config`, the configuration store, and `sys.Args`, the program's command-line arguments) |
 | `gogo/screen` | stub | | none (the `screen` port: `screen`) |
 | `gogo/errors` | stub | | none (the shared error codes, `errors.Code`; `GOGO_E_*` in `runtime/include/gogo_errors.h`) |
 | `gogo/supervisor` | library | actor, code | none |

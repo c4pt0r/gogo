@@ -73,6 +73,12 @@ wifi.ssid visible: false
 Keys starting with `wifi.` belong to the firmware: programs never see them,
 whatever is stored.
 
+A program started on your computer has one more input, its command-line
+arguments: `sys.Args()` returns the words after the program in `gogo run
+prog a b` as a `[]string` (`a`, `b`), without the program's own name, and
+an empty slice when there are none, always the case on a board (chapter
+12).
+
 ## 11.2 Editing settings: gogo config
 
 ```text

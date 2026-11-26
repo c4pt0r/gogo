@@ -9,6 +9,9 @@
  *          without them; --fs-quota simulates a full disk: each medium
  *          may hold BYTES of files (what is there counts, deletes give
  *          room back; Usage reports used and BYTES).
+ *   gogovm [flags] <file.ggb> [args...]
+ *          everything after the image is the program's own: sys.Args
+ *          returns it (flags come before the image, as for gogo run).
  *   gogovm --sizeof-actor  prints sizeof(Actor)
  *   gogovm --sizeof-net    prints the net stack's fixed state in bytes
  *   gogovm --has-tls       exit 0 if built with the "tls" port (GOGO_TLS)
@@ -314,8 +317,8 @@ int main(int argc, char **argv) {
         if (!listed(without, unix_mounts_all[i])) unix_mounts[nmounts++] = unix_mounts_all[i];
     }
     unix_mounts[nmounts] = NULL;
-    if (argc != 2) {
-        fprintf(stderr, "usage: gogovm [--without <name,...>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] [--screen ansi|text|none] <file.ggb>\n       gogovm --sizeof-actor | --sizeof-net\n");
+    if (argc < 2) {
+        fprintf(stderr, "usage: gogovm [--without <name,...>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] [--screen ansi|text|none] <file.ggb> [args...]\n       gogovm --sizeof-actor | --sizeof-net\n");
         return EXIT_USAGE;
     }
     if (net_fd >= 0) {
@@ -352,6 +355,7 @@ int main(int argc, char **argv) {
     }
     setvbuf(stdout, NULL, _IOLBF, 0);
     const char *path = argv[1];
+    platform_set_args(argc - 2, argv + 2);
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "gogovm: %s: cannot open\n", path); return EXIT_USAGE; }
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return load_error(path, "cannot read"); }
