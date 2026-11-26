@@ -292,7 +292,14 @@ rebuilt:
   to a 3-field struct in a tight loop costs about 30 ns more than an `int`
   increment, and more garbage means more frequent collections. In a hot
   loop over a large struct, keep the changing values in local variables
-  and write them back once.
+  and write them back once. Each level of a deep path also takes as many
+  registers as its struct has fields, so a long path through very wide
+  structs can fail to compile (`needs more than 255 registers`).
+  *Workaround:* copy an inner struct to a local, write it, store it back.
+- **A slice on a field path is read before the right-hand side runs.** In
+  `a.S[1].X = f()`, gogo reads `a.S` before calling `f`, so if `f`
+  replaces `a.S` the write goes to the old array (Go leaves this order
+  unspecified; `s[i] = v` behaves the same way in gogo).
 - **Fields of captured variables cannot be written.** `p.X = v` writes
   `p`, so it is rejected (`captured variable must not be changed by field
   assignment`) when a closure captures `p`, like `p = q`. Writing a field
