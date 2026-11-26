@@ -267,6 +267,8 @@ share: `st := []State{...}`, then `st[0] = next` inside a callback.
 `examples/tuidemo` is built this way. It is a menu, a job with a progress
 bar driven by a timer, a status line, a rename dialog and an About box, and
 the same image runs on both boards.
+`examples/snake` keeps its own receive loop instead: a game whose steps
+come from a timer, with a second actor, the autopilot, that plays it.
 
 ## 19.5 The screen port underneath
 

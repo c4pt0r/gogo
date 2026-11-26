@@ -1,0 +1,346 @@
+// snake: the classic game on the text screen, for the M5Stack Cardputer
+// (and the host terminal). The field fills the screen except the last row,
+// which shows the mode, the score and the high score.
+//
+// Two actors play it:
+//
+//   - the game actor (main) owns the screen and the keyboard, moves the
+//     snake (package snake/board) on a timer and draws every step;
+//   - the autopilot actor (package snake/autopilot) gets a board.View after
+//     every step and answers with a board.Move.
+//
+// The game monitors the autopilot. When it dies (press k to kill it), the
+// game restarts it; after 3 deaths within 10 s it gives up and switches to
+// manual. A crash of the autopilot never stops the game.
+//
+// Keys: arrows (Fn+; . , / on the Cardputer), the same keys without Fn, or
+// WASD steer and switch to manual; m toggles auto/manual; p pauses; Enter
+// or Space starts a new game after game over; k kills the autopilot; Esc
+// quits. The game starts in auto mode, and in auto mode it starts a new
+// game by itself 2 s after game over. The high score is kept with gogo/kv
+// (/flash/kv/snake.hi) when there is a flash file system.
+package main
+
+import (
+	"snake/autopilot"
+	"snake/board"
+
+	"gogo/actor"
+	"gogo/fs"
+	"gogo/kv"
+	"gogo/screen"
+	"gogo/strconv"
+	"gogo/sys"
+	"gogo/tui"
+)
+
+// Timing, in milliseconds.
+const (
+	slowestMs   = 180 // a step at score 0
+	fastestMs   = 70  // the shortest step
+	speedupMs   = 4   // a step gets this much shorter per food eaten
+	autoAgainMs = 2000
+	crashWinMs  = 10000 // autopilot deaths are counted in this window
+	maxCrashes  = 3     // more deaths than this in the window: manual
+	noteMs      = 3000  // how long a note shows in the status row
+	pollMs      = 10    // how often a step waiting for the autopilot looks again
+	pilotWaitMs = 1000  // the longest a step waits for the autopilot
+)
+
+// hiKey is the kv key of the high score.
+const hiKey = "snake.hi"
+
+// tick is the game's timer message.
+type tick struct{}
+
+// stepMs is the time between steps: the snake speeds up as it grows.
+func stepMs(g board.Game) int {
+	ms := slowestMs - speedupMs*g.Score
+	if ms < fastestMs {
+		return fastestMs
+	}
+	return ms
+}
+
+// keyDir is the direction a key steers to, or -1.
+func keyDir(k tui.Key) int {
+	switch k.Code {
+	case tui.KeyUp:
+		return board.Up
+	case tui.KeyDown:
+		return board.Down
+	case tui.KeyLeft:
+		return board.Left
+	case tui.KeyRight:
+		return board.Right
+	case tui.KeyChar:
+		switch k.Char {
+		case ';', 'w', 'W':
+			return board.Up
+		case '.', 's', 'S':
+			return board.Down
+		case ',', 'a', 'A':
+			return board.Left
+		case '/', 'd', 'D':
+			return board.Right
+		}
+	}
+	return -1
+}
+
+// loadHigh reads the stored high score (0 if there is none or no store).
+func loadHigh() int {
+	v, e := kv.Get(hiKey)
+	if e != fs.OK {
+		return 0
+	}
+	n, ok := strconv.Atoi(v.String())
+	if !ok {
+		return 0
+	}
+	return n
+}
+
+// Autopilot is the autopilot actor's state as the game sees it.
+type Autopilot struct {
+	PID     actor.PID
+	Ref     actor.Ref // the game's monitor on it
+	Up      bool
+	Crashes int   // deaths in the current window
+	Since   int64 // when the window started
+}
+
+// startPilot spawns the autopilot and monitors it. It gets more memory than
+// the 16 KB default: a View and a few searches over the field (it peaks
+// near 30 KB on the board).
+func startPilot(p Autopilot) Autopilot {
+	pid := actor.SpawnOpt(autopilot.Run, actor.Options{MaxMemory: 64 * 1024})
+	return Autopilot{PID: pid, Ref: actor.Monitor(pid), Up: true, Crashes: p.Crashes, Since: p.Since}
+}
+
+// ask sends the autopilot a View of g.
+func ask(p Autopilot, g board.Game, seq, w, h int) {
+	if p.Up && !g.Over {
+		actor.Send(p.PID, board.ViewOf(g, seq, w, h))
+	}
+}
+
+func main() {
+	// The config key snake.sim (steps) and optionally snake.seeds run the
+	// autopilot headless instead of the game; the example's test does that.
+	if v, ok := sys.Config("snake.sim"); ok {
+		steps, _ := strconv.Atoi(v)
+		seeds := 4
+		if v, ok := sys.Config("snake.seeds"); ok {
+			seeds, _ = strconv.Atoi(v)
+		}
+		simulateAll(seeds, steps, 40, 10)
+		return
+	}
+	s, ok := tui.Open(screen.Config{})
+	if !ok {
+		println("snake: no screen")
+		return
+	}
+	keys, ok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
+	if !ok {
+		tui.Close(s)
+		println("snake: no keys")
+		return
+	}
+	w, h := s.Cols, s.Rows-1 // the last row is the status row
+	g := board.NewGame(w, h, sys.Random()|1)
+	hi := loadHigh()
+	seq := 0 // counts steps and new games; stale Moves are dropped
+	games, frames := 1, 0
+	auto, paused := true, false
+	var overAt int64
+	note, noteUntil, shown := "", int64(0), ""
+	answered := -1       // the step the last Move answered
+	waitFrom := int64(0) // when the current step began to wait for it
+	pilot := startPilot(Autopilot{Since: actor.Now()})
+	self := actor.Self()
+	ask(pilot, g, seq, w, h)
+	actor.SendAfter(stepMs(g), self, tick{})
+	if draw(s, g, w, h, hi, auto, paused, "") {
+		frames++
+	}
+
+	for {
+		msg := actor.Receive()
+		k2, k, ui := tui.Event(s, keys, msg)
+		keys = k2
+		now := actor.Now()
+		redraw := true
+		if ui {
+			if k.Code == tui.KeyNone {
+				continue // a screen Done or a key release
+			}
+			if k.Code == tui.KeyEsc {
+				break
+			}
+			if d := keyDir(k); d >= 0 {
+				auto = false
+				if !paused && !g.Over {
+					g = board.Turn(g, d)
+				}
+			} else if k.Code == tui.KeyEnter || (k.Code == tui.KeyChar && k.Char == ' ') {
+				if g.Over {
+					g = board.NewGame(w, h, g.Rng)
+					seq++
+					games++
+					ask(pilot, g, seq, w, h)
+				}
+			} else if k.Code == tui.KeyChar {
+				switch k.Char {
+				case 'm', 'M':
+					auto = !auto
+					noteUntil = 0
+					if auto && !pilot.Up {
+						pilot = startPilot(Autopilot{Since: now})
+					}
+					ask(pilot, g, seq, w, h)
+				case 'p', 'P':
+					paused = !paused && !g.Over
+				case 'k', 'K':
+					if pilot.Up {
+						actor.Kill(pilot.PID, actor.Killed)
+					}
+				}
+			}
+		} else {
+			switch m := msg.(type) {
+			case tick:
+				// In auto mode a step waits for the autopilot's answer
+				// (but not forever): the snake slows down rather than
+				// going straight on blindly.
+				late := auto && pilot.Up && answered != seq && !paused && !g.Over
+				if late && waitFrom == 0 {
+					waitFrom = now
+				}
+				if late && now-waitFrom < pilotWaitMs {
+					actor.SendAfter(pollMs, self, tick{})
+					redraw = false
+					break
+				}
+				waitFrom = 0
+				if !paused && !g.Over {
+					g = board.Step(g, w, h)
+					seq++
+					if g.Over {
+						overAt = now
+						if g.Score > hi {
+							hi = g.Score
+							kv.Put(hiKey, strconv.Itoa(hi)) // no store: memory only
+						}
+						// On the serial console only: the screen hides it.
+						println("snake: game", games, "over: score", g.Score, "high", hi,
+							"frames", frames, "mem", actor.Info(self).Memory)
+					}
+					if auto {
+						ask(pilot, g, seq, w, h)
+					}
+				} else if g.Over && auto && now-overAt >= autoAgainMs {
+					g = board.NewGame(w, h, g.Rng)
+					seq++
+					games++
+					ask(pilot, g, seq, w, h)
+				} else {
+					redraw = false
+				}
+				actor.SendAfter(stepMs(g), self, tick{})
+			case board.Move:
+				if m.Seq == seq {
+					answered = seq
+					if auto && !g.Over {
+						g = board.Turn(g, m.Dir)
+					}
+				}
+				redraw = false // a turn shows at the next step
+			case actor.DownMsg:
+				if m.Ref != pilot.Ref {
+					continue
+				}
+				// The autopilot died: count it, then restart it or give up.
+				since, crashes := pilot.Since, pilot.Crashes+1
+				if now-since > crashWinMs {
+					since, crashes = now, 1
+				}
+				pilot = Autopilot{Crashes: crashes, Since: since}
+				if crashes > maxCrashes {
+					auto = false
+					note = "pilot down: manual"
+					println("snake: autopilot died", crashes, "times; manual")
+				} else {
+					pilot = startPilot(pilot)
+					note = "pilot restarted"
+					println("snake: autopilot died (reason " + strconv.Itoa(m.Reason.Code) + "), restarted")
+					ask(pilot, g, seq, w, h)
+				}
+				noteUntil = now + noteMs
+			}
+		}
+		lastShown := shown
+		shown = ""
+		if now < noteUntil {
+			shown = note
+		}
+		if (redraw || shown != lastShown) && draw(s, g, w, h, hi, auto, paused, shown) {
+			frames++
+		}
+	}
+	if pilot.Up {
+		actor.Send(pilot.PID, autopilot.Stop{})
+	}
+	tui.CloseKeys(keys)
+	tui.Close(s)
+	println("snake: score", g.Score, "high", hi)
+}
+
+// draw redraws the whole screen and flushes it; the port draws only the rows
+// that changed. It returns whether a frame was sent.
+func draw(s tui.Screen, g board.Game, w, h, hi int, auto, paused bool, note string) bool {
+	f := tui.NewFrame(s)
+	tui.Style(f, screen.White, screen.Black, 0)
+	tui.Clear(f)
+	if g.Food >= 0 {
+		tui.Style(f, screen.BrightRed, screen.Black, screen.Bold)
+		tui.PrintAt(f, g.Food%w, g.Food/w, "*")
+	}
+	tui.Style(f, screen.Green, screen.Black, 0)
+	last := len(g.Body) - 1
+	for i, c := range g.Body {
+		if i == last {
+			tui.Color(f, screen.BrightYellow, screen.Black)
+		}
+		tui.Fill(f, c%w, c/w, 1, 1, 0x2588) // a full block
+	}
+	if g.Over || paused {
+		box := tui.Window(f, w/2-11, h/2-2, 22, 4)
+		tui.Style(box, screen.BrightWhite, screen.Blue, 0)
+		tui.Clear(box)
+		tui.Box(box, 0, 0, 22, 4, "")
+		title, hint := "PAUSED", "p: go on"
+		if g.Over {
+			title, hint = "GAME OVER", "Enter: play again"
+			if auto {
+				hint = "auto restart..."
+			}
+		}
+		tui.Attr(box, screen.Bold)
+		tui.Label(box, 1, 1, 20, title, tui.Center)
+		tui.Attr(box, 0)
+		tui.Label(box, 1, 2, 20, hint, tui.Center)
+	}
+	mode := "MANUAL"
+	if auto {
+		mode = "AUTO"
+	}
+	right := "m:mode p:pause "
+	if note != "" {
+		right = note + " "
+	}
+	tui.Style(f, screen.White, screen.Black, 0)
+	tui.DrawStatus(f, " "+mode+" score "+strconv.Itoa(g.Score)+" hi "+strconv.Itoa(hi), right)
+	return tui.Flush(s)
+}

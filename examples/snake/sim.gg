@@ -1,0 +1,52 @@
+package main
+
+import (
+	"snake/autopilot"
+	"snake/board"
+)
+
+// simulate plays steps steps of autopilot games on a w x h field without a
+// screen or actors, starting from the random state seed, and prints what
+// happened: the games played, the food eaten, the best score and the most
+// steps the snake went without food. The test sets the config key
+// snake.sim (see main) to check that the autopilot keeps making progress
+// and never circles forever.
+func simulate(seed, steps, w, h int) bool {
+	g := board.NewGame(w, h, seed)
+	games, food, best, hungriest := 1, 0, 0, 0
+	for i := 0; i < steps; i++ {
+		g = board.Step(board.Turn(g, autopilot.Choose(board.ViewOf(g, i, w, h))), w, h)
+		if g.Hungry > hungriest {
+			hungriest = g.Hungry
+		}
+		if g.Hungry == 0 {
+			food++
+		}
+		if g.Over {
+			if g.Score > best {
+				best = g.Score
+			}
+			g = board.NewGame(w, h, g.Rng)
+			games++
+		}
+	}
+	if g.Score > best {
+		best = g.Score
+	}
+	// Making progress: never a field's worth of steps without food. (The
+	// autopilot's last-resort watchdog only starts at twice that.)
+	ok := hungriest <= w*h
+	println("seed", seed, "games", games, "food", food, "best", best, "hungriest", hungriest, "ok", ok)
+	return ok
+}
+
+// simulateAll runs simulate for the seeds 1 to n.
+func simulateAll(n, steps, w, h int) {
+	failed := 0
+	for seed := 1; seed <= n; seed++ {
+		if !simulate(seed, steps, w, h) {
+			failed++
+		}
+	}
+	println("snake sim:", n, "seeds of", steps, "steps,", failed, "stuck")
+}

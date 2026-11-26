@@ -1,0 +1,5 @@
+seed 1 games 1 food 173 best 173 hungriest 157 ok true
+seed 2 games 2 food 192 best 157 hungriest 167 ok true
+seed 3 games 2 food 220 best 120 hungriest 133 ok true
+seed 4 games 1 food 163 best 163 hungriest 130 ok true
+snake sim: 4 seeds of 5000 steps, 0 stuck

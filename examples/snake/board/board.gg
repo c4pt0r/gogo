@@ -1,0 +1,149 @@
+// Package board is the snake game itself, without a screen: the field,
+// the snake, the food, and the messages between the game and its
+// autopilot. A cell is y*w + x on a w x h field.
+package board
+
+import "gogo/actor"
+
+// Directions, clockwise; (d+2)%4 is the opposite of d.
+const (
+	Up    = 0
+	Right = 1
+	Down  = 2
+	Left  = 3
+)
+
+// Game is one game. It is a value: every change returns a new Game.
+type Game struct {
+	Body   []int // the snake's cells, tail first, head last
+	Dir    int   // the direction of the last step
+	Next   int   // the direction of the next step
+	Food   int   // the food's cell
+	Score  int
+	Hungry int // steps since the snake last ate
+	Rng    int // the random state that places the food (xorshift)
+	Over   bool
+}
+
+// View is what the game sends the autopilot after every step.
+type View struct {
+	Seq       int // the step it describes; the Move answering it carries it back
+	W, H      int
+	Body      []int
+	Food, Dir int
+	Hungry    int
+	Game      actor.PID // where to send the Move
+}
+
+// Move is the autopilot's answer to a View.
+type Move struct{ Seq, Dir int }
+
+// Neighbour returns the cell next to c in direction d; false off the field.
+func Neighbour(w, h, c, d int) (int, bool) {
+	x, y := c%w, c/w
+	switch d {
+	case Up:
+		y--
+	case Right:
+		x++
+	case Down:
+		y++
+	case Left:
+		x--
+	}
+	if x < 0 || x >= w || y < 0 || y >= h {
+		return 0, false
+	}
+	return y*w + x, true
+}
+
+// Random advances the xorshift state x (never 0). int is 32 bits and >>
+// keeps the sign, so the right shift masks the copied sign bits away.
+func Random(x int) int {
+	x ^= x << 13
+	x ^= (x >> 17) & 0x7fff
+	x ^= x << 5
+	return x
+}
+
+// NewGame is a snake of three cells in the middle of the field, heading
+// right, and a first food placed with the random state rng.
+func NewGame(w, h, rng int) Game {
+	c := (h/2)*w + w/2 - 2
+	body := []int{c - 1, c, c + 1}
+	food, rng := PlaceFood(w, h, body, rng)
+	return Game{Body: body, Dir: Right, Next: Right, Food: food, Rng: rng}
+}
+
+// PlaceFood picks a random free cell (-1 if the snake fills the field) and
+// returns the new random state.
+func PlaceFood(w, h int, body []int, rng int) (int, int) {
+	used := make([]bool, w*h)
+	for _, c := range body {
+		used[c] = true
+	}
+	free := w*h - len(body)
+	if free <= 0 {
+		return -1, rng
+	}
+	rng = Random(rng)
+	n := (rng & 0x7fffffff) % free
+	for c := range used {
+		if !used[c] {
+			if n == 0 {
+				return c, rng
+			}
+			n--
+		}
+	}
+	return -1, rng
+}
+
+// Turn sets the next direction, unless it would reverse the snake.
+func Turn(g Game, d int) Game {
+	if d == (g.Dir+2)%4 {
+		return g
+	}
+	return Game{Body: g.Body, Dir: g.Dir, Next: d, Food: g.Food, Score: g.Score, Hungry: g.Hungry, Rng: g.Rng, Over: g.Over}
+}
+
+// End is g with the game over.
+func End(g Game) Game {
+	return Game{Body: g.Body, Dir: g.Dir, Next: g.Next, Food: g.Food, Score: g.Score, Hungry: g.Hungry, Rng: g.Rng, Over: true}
+}
+
+// Step moves the snake one cell. Eating grows it by one and places new
+// food; a wall or the snake's own body ends the game. The tail cell is
+// free unless the snake grows, since the tail moves on in the same step.
+func Step(g Game, w, h int) Game {
+	head := g.Body[len(g.Body)-1]
+	c, ok := Neighbour(w, h, head, g.Next)
+	if !ok {
+		return End(g)
+	}
+	grow := c == g.Food
+	first := 1
+	if grow {
+		first = 0
+	}
+	for _, b := range g.Body[first:] {
+		if b == c {
+			return End(g)
+		}
+	}
+	body := g.Body
+	if !grow {
+		body = body[1:]
+	}
+	body = append(body, c)
+	if !grow {
+		return Game{Body: body, Dir: g.Next, Next: g.Next, Food: g.Food, Score: g.Score, Hungry: g.Hungry + 1, Rng: g.Rng}
+	}
+	food, rng := PlaceFood(w, h, body, g.Rng)
+	return Game{Body: body, Dir: g.Next, Next: g.Next, Food: food, Score: g.Score + 1, Rng: rng, Over: food < 0}
+}
+
+// ViewOf is the View of g for the autopilot.
+func ViewOf(g Game, seq, w, h int) View {
+	return View{Seq: seq, W: w, H: h, Body: g.Body, Food: g.Food, Dir: g.Dir, Hungry: g.Hungry, Game: actor.Self()}
+}
