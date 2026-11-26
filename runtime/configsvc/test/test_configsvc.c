@@ -130,6 +130,42 @@ TEST(configsvc_framing) {
     CHECK(!strcmp(req("get a.b"), "\x02" "err config store unavailable\n"));
 }
 
+/* info: the board's identity, one ok line; works without a store. */
+static const char *const provides[] = { "gpio", "udp", "/flash", "float", NULL };
+static ConfigInfo info_of;
+static void b_info(void *ctx, ConfigInfo *out) { (void)ctx; *out = info_of; }
+
+TEST(configsvc_info) {
+    static const ConfigBoard ib = { .write = b_write, .info = b_info };
+    setup();
+    /* a board without the hook */
+    CHECK(!strcmp(req("info"), "\x02" "err no info on this board\n"));
+    configsvc_init(&svc, &kv, &ib, NULL, NULL);
+    info_of = (ConfigInfo){ .fw = "v0.2.0-3-gabc1234", .board = "sticks3", .image_major = 15, .image_minor = 6,
+                            .provides = provides };
+    CHECK(!strcmp(req("info"), "\x02ok fw=v0.2.0-3-gabc1234 board=sticks3 image=15.6 provides=gpio,udp,/flash,float\n"));
+    /* fields the board does not know are left out; spaces never reach the line */
+    info_of = (ConfigInfo){ .fw = "my build", .image_major = 1 };
+    CHECK(!strcmp(req("info"), "\x02ok fw=my_build image=1.0\n"));
+    info_of = (ConfigInfo){ 0 };
+    CHECK(!strcmp(req("info"), "\x02ok\n"));
+    /* no store needed; info with an argument is not info */
+    configsvc_init(&svc, NULL, &ib, NULL, NULL);
+    info_of = (ConfigInfo){ .fw = "dev", .board = "cardputer" };
+    CHECK(!strcmp(req("info"), "\x02ok fw=dev board=cardputer\n"));
+    CHECK(!strcmp(req("info x"), "\x02" "err config store unavailable\n"));
+    configsvc_init(&svc, &kv, &ib, NULL, NULL);
+    CHECK(!strcmp(req("info x"), "\x02" "err usage: set <key> <value> | get <key> | rm <key> | list | scan | stats | info\n"));
+}
+
+/* How a firmware without info (v0.1.0's handler, and this one's for any
+ * unknown bare word) answers: `gogo setup` and `gogo device info` take
+ * this as "unknown". */
+TEST(configsvc_unknown_word) {
+    setup();
+    CHECK(!strcmp(req("nosuchop"), "\x02" "err bad key\n"));
+}
+
 TEST(configsvc_vm_get) {
     setup();
     uint8_t b[16];

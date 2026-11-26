@@ -118,6 +118,61 @@ static void cmd_rm(ConfigSvc *s, const char *key) {
     if (s->board->changed) s->board->changed(s->board->ctx, key);
 }
 
+/* ---- info ---- */
+
+/* Appends " name=" (no space first when the line is empty) and v to the
+ * line in scratch (*n bytes so far), spaces and control bytes as '_';
+ * false (nothing appended) if it does not fit in cap. */
+static bool info_put(char *line, size_t *n, size_t cap, const char *name, const char *v, size_t vn) {
+    size_t nn = strlen(name), need = (*n ? 1u : 0u) + nn + 1u + vn;
+    if (*n + need > cap) return false;
+    if (*n) line[(*n)++] = ' ';
+    memcpy(line + *n, name, nn);
+    *n += nn;
+    line[(*n)++] = '=';
+    for (size_t i = 0; i < vn; i++) {
+        char c = v[i];
+        line[(*n)++] = (unsigned char)c <= ' ' || c == 0x7f ? '_' : c;
+    }
+    return true;
+}
+
+static size_t utoa10(char *b, uint32_t v) {
+    char t[10];
+    size_t n = 0, k = 0;
+    do { t[n++] = (char)('0' + v % 10u); v /= 10u; } while (v);
+    while (n) b[k++] = t[--n];
+    return k;
+}
+
+static void cmd_info(ConfigSvc *s) {
+    ConfigInfo in;
+    memset(&in, 0, sizeof in);
+    if (!s->board->info) { reply_s(s, "err", "no info on this board"); return; }
+    s->board->info(s->board->ctx, &in);
+    char *line = s->scratch;
+    size_t n = 0, cap = sizeof s->scratch;
+    if (in.fw && *in.fw) info_put(line, &n, cap, "fw", in.fw, strlen(in.fw));
+    if (in.board && *in.board) info_put(line, &n, cap, "board", in.board, strlen(in.board));
+    if (in.image_major) {
+        char v[24];
+        size_t k = utoa10(v, in.image_major);
+        v[k++] = '.';
+        k += utoa10(v + k, in.image_minor);
+        info_put(line, &n, cap, "image", v, k);
+    }
+    if (in.provides && in.provides[0] && info_put(line, &n, cap, "provides", in.provides[0], strlen(in.provides[0]))) {
+        /* the rest, comma-separated, as many as fit */
+        for (const char *const *p = in.provides + 1; *p; p++) {
+            size_t pn = strlen(*p);
+            if (n + 1u + pn > cap) break;
+            line[n++] = ',';
+            for (size_t i = 0; i < pn; i++) line[n++] = (unsigned char)(*p)[i] <= ' ' ? '_' : (*p)[i];
+        }
+    }
+    configsvc_reply(s, "ok", n ? line : NULL, n);
+}
+
 /* ---- gogo push ---- */
 
 static const char *err_text(int e) {
@@ -316,6 +371,7 @@ static void handle(ConfigSvc *s, char *line, size_t n) {
         reply_s(s, "ok", NULL);
         return;
     }
+    if (is(op, opn, "info") && bare) { cmd_info(s); return; }
     if (is(op, opn, "format-flash") && bare) { board_cmd(s, s->board->format_flash, "no /flash on this board"); return; }
     if (!s->kv) { reply_s(s, "err", "config store unavailable"); return; }
     if (is(op, opn, "list") && bare) { cmd_list(s); return; }
@@ -332,7 +388,7 @@ static void handle(ConfigSvc *s, char *line, size_t n) {
     if (is(op, opn, "set") && more) cmd_set(s, key, p, (size_t)(end - p));
     else if (is(op, opn, "get") && !more) cmd_get(s, key);
     else if (is(op, opn, "rm") && !more) cmd_rm(s, key);
-    else reply_s(s, "err", "usage: set <key> <value> | get <key> | rm <key> | list | scan");
+    else reply_s(s, "err", "usage: set <key> <value> | get <key> | rm <key> | list | scan | stats | info");
 }
 
 void configsvc_feed(ConfigSvc *s, const uint8_t *buf, size_t got) {
