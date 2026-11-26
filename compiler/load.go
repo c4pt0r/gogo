@@ -174,6 +174,13 @@ type loader struct {
 	root, rootName string
 	path           []string // the search path after the root (Config.Path)
 	warnings       []string // packages found in more than one place
+	dirs           []pkgDir // the directories of the user packages resolved so far
+}
+
+// pkgDir is the directory of a resolved user package.
+type pkgDir struct {
+	path string
+	info os.FileInfo
 }
 
 func (l *loader) Import(path string) (*types.Package, error) {
@@ -405,28 +412,60 @@ func (l *loader) resolve(path string, at token.Pos) (string, error) {
 	if !validImportPath(path) {
 		return "", fmt.Errorf("%sgogo: import %q: bad import path (want slash-separated names like \"app/util\")", l.where(at), path)
 	}
-	type candidate struct{ dir, from string }
+	last := path[strings.LastIndex(path, "/")+1:]
+	if !token.IsIdentifier(last) || last == "_" {
+		return "", fmt.Errorf("%sgogo: import %q: %q cannot be a package name (its directory's name must be a Go identifier, like %q)", l.where(at), path, last, "util")
+	}
+	// base is the directory the import path's elements (from rel on) are
+	// names in, for checkCase.
+	type candidate struct{ dir, from, base, rel string }
 	var cands []candidate
 	first, rest, _ := strings.Cut(path, "/")
 	if first == l.rootName {
 		if rest == "" {
 			return "", fmt.Errorf("%sgogo: import %q: that is the program's own directory (package main), which cannot be imported", l.where(at), path)
 		}
-		cands = append(cands, candidate{filepath.Join(l.root, filepath.FromSlash(rest)), "build root"})
+		cands = append(cands, candidate{filepath.Join(l.root, filepath.FromSlash(rest)), "build root", l.root, rest})
 	}
 	for _, d := range l.path {
-		cands = append(cands, candidate{filepath.Join(d, filepath.FromSlash(path)), "search path"})
+		cands = append(cands, candidate{filepath.Join(d, filepath.FromSlash(path)), "search path", d, path})
 	}
+	// The places holding the package; a candidate that is the same
+	// directory as an earlier one (the root inside a search path
+	// directory, a symlink) is the same place.
 	var found []string
+	var foundInfo []os.FileInfo
 	for _, c := range cands {
-		if hasSources(c.dir) {
-			found = append(found, c.dir)
+		if !hasSources(c.dir) {
+			continue
 		}
+		fi, err := os.Stat(c.dir)
+		if err != nil {
+			continue
+		}
+		same := false
+		for _, f := range foundInfo {
+			same = same || os.SameFile(f, fi)
+		}
+		if same {
+			continue
+		}
+		if err := checkCase(c.base, c.rel); err != nil {
+			return "", fmt.Errorf("%sgogo: import %q: %v", l.where(at), path, err)
+		}
+		found = append(found, c.dir)
+		foundInfo = append(foundInfo, fi)
 	}
 	if len(found) > 1 {
 		l.warnings = append(l.warnings, fmt.Sprintf("package %q is in %d places; using the first: %s", path, len(found), strings.Join(found, ", ")))
 	}
 	if len(found) > 0 {
+		for _, d := range l.dirs {
+			if os.SameFile(d.info, foundInfo[0]) {
+				return "", fmt.Errorf("%sgogo: import %q is the directory %s, already imported as %q: use one import path", l.where(at), path, found[0], d.path)
+			}
+		}
+		l.dirs = append(l.dirs, pkgDir{path, foundInfo[0]})
 		return found[0], nil
 	}
 	var b strings.Builder
@@ -447,7 +486,66 @@ func (l *loader) resolve(path string, at token.Pos) (string, error) {
 	if len(l.path) == 0 {
 		b.WriteString("\n\t(the search path is empty)")
 	}
+	if l.isLib(libPrefix+path) || isStub(libPrefix+path) {
+		fmt.Fprintf(&b, "\n(did you mean %q?)", libPrefix+path)
+	}
 	return "", errors.New(b.String())
+}
+
+// checkCase reports an error unless every element of the slash path rel
+// is, letter case included, the name of a directory entry under base: on
+// a file system that ignores case (macOS by default) a path that differs
+// only in case would be found here, and not on Linux.
+func checkCase(base, rel string) error {
+	dir := base
+	for _, elem := range strings.Split(rel, "/") {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil // found by Stat; nothing to compare with
+		}
+		exact, other := false, ""
+		for _, e := range entries {
+			if e.Name() == elem {
+				exact = true
+				break
+			}
+			if strings.EqualFold(e.Name(), elem) {
+				other = e.Name()
+			}
+		}
+		if !exact && other != "" {
+			return fmt.Errorf("the directory is %s on disk: import paths must match directory names, letter case included", filepath.Join(dir, other))
+		}
+		dir = filepath.Join(dir, elem)
+	}
+	return nil
+}
+
+// realName returns the base name of directory dir as its parent lists it
+// (the letter case on disk, whatever case dir was typed in).
+func realName(dir string) string {
+	name := filepath.Base(dir)
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return name
+	}
+	entries, err := os.ReadDir(filepath.Dir(dir))
+	if err != nil {
+		return name
+	}
+	for _, e := range entries {
+		if e.Name() == name {
+			return name
+		}
+	}
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), name) {
+			if efi, err := os.Stat(filepath.Join(filepath.Dir(dir), e.Name())); err == nil && os.SameFile(efi, fi) {
+				return e.Name()
+			}
+		}
+	}
+	return name
 }
 
 // parseUserDir parses the gogo source files of directory dir (a user
@@ -670,7 +768,7 @@ func (c Config) load(dir string, names []string, goFiles int) (*Program, error) 
 		},
 		pkgs:     map[string]*types.Package{},
 		root:     dir,
-		rootName: filepath.Base(absRoot),
+		rootName: realName(absRoot),
 		path:     c.Path,
 	}
 	optional, err := l.directives(files)

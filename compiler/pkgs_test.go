@@ -3,6 +3,7 @@ package compiler
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -321,5 +322,121 @@ func TestSearchPathDefault(t *testing.T) {
 	}
 	if got := SplitPath("rel"); len(got) != 1 || !filepath.IsAbs(got[0]) {
 		t.Errorf("SplitPath(rel) = %q, want an absolute path", got)
+	}
+}
+
+// A build root inside a search path directory (projects kept in ~/gogo)
+// finds its packages in one place, not two.
+func TestRootInsideSearchPath(t *testing.T) {
+	gp := t.TempDir()
+	app := writeTree(t, filepath.Join(gp, "app"), map[string]string{
+		"main.gg":   "package main\n\nimport \"app/util\"\n\nfunc main() { util.Sum(util.Point{}) }\n",
+		"util/u.gg": utilPkg,
+	})
+	link := filepath.Join(t.TempDir(), "gp-link")
+	if err := os.Symlink(gp, link); err != nil {
+		t.Fatal(err)
+	}
+	// The default search path, $HOME/gogo, with the project in ~/gogo/app.
+	home := t.TempDir()
+	if err := os.Symlink(gp, filepath.Join(home, "gogo")); err != nil {
+		t.Fatal(err)
+	}
+	def := searchPath("", false, home)
+	for _, path := range [][]string{{gp}, {link}, {gp, link}, def} {
+		prog, err := buildRun(t, app, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(prog.Warnings) != 0 {
+			t.Errorf("search path %q: warnings %q", path, prog.Warnings)
+		}
+	}
+	// Built from inside the search path directory as the cwd too.
+	wd, _ := os.Getwd()
+	defer os.Chdir(wd)
+	if err := os.Chdir(gp); err != nil {
+		t.Fatal(err)
+	}
+	prog, err := buildRun(t, "app", []string{gp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Warnings) != 0 {
+		t.Errorf("warnings %q", prog.Warnings)
+	}
+}
+
+// caseInsensitive reports whether the file system under dir ignores case.
+func caseInsensitive(t *testing.T, dir string) bool {
+	p := filepath.Join(dir, "CaseProbe")
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(p)
+	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
+	return err == nil
+}
+
+// An import path must match the directory names on disk, letter case
+// included, so a program that builds on macOS builds on Linux.
+func TestImportCase(t *testing.T) {
+	work := t.TempDir()
+	app := writeTree(t, filepath.Join(work, "app"), map[string]string{
+		"main.gg":   "package main\n\nimport \"app/util\"\n\nfunc main() { util.Sum(util.Point{}) }\n",
+		"Util/u.gg": utilPkg,
+	})
+	_, err := buildRun(t, app, nil)
+	want := "package not found"
+	if caseInsensitive(t, work) {
+		want = "the directory is " + filepath.Join(app, "Util") + " on disk: import paths must match directory names, letter case included"
+	}
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("error %v, want %q", err, want)
+	}
+	// A root typed in another case still serves imports in its real case.
+	if caseInsensitive(t, work) {
+		ok := writeTree(t, filepath.Join(work, "proj"), map[string]string{
+			"main.gg":   "package main\n\nimport \"proj/util\"\n\nfunc main() { util.Sum(util.Point{}) }\n",
+			"util/u.gg": utilPkg,
+		})
+		if _, err := buildRun(t, filepath.Join(filepath.Dir(ok), "PROJ"), nil); err != nil {
+			t.Errorf("root typed PROJ: %v", err)
+		}
+	}
+}
+
+func TestUserPackageMoreErrors(t *testing.T) {
+	work := t.TempDir()
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{"stdlib without prefix", map[string]string{
+			"main.gg": "package main\n\nimport \"strings\"\n\nfunc main() {}\n",
+		}, `(did you mean "gogo/strings"?)`},
+		{"dash in name", map[string]string{
+			"main.gg":     "package main\n\nimport \"app/my-lib\"\n\nfunc main() {}\n",
+			"my-lib/l.gg": "package mylib\n",
+		}, `import "app/my-lib": "my-lib" cannot be a package name`},
+		{"same directory twice", map[string]string{
+			"main.gg":   "package main\n\nimport (\n\t\"app/util\"\n\t\"app/x/util\"\n)\n\nfunc main() { util.Sum(util.Point{}) }\n",
+			"util/u.gg": utilPkg,
+		}, `already imported as "app/util": use one import path`},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app := writeTree(t, filepath.Join(work, strconv.Itoa(i), "app"), tc.files)
+			if tc.name == "same directory twice" {
+				if err := os.Symlink(app, filepath.Join(app, "x")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := buildRun(t, app, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
