@@ -189,6 +189,8 @@ The book chapter [Embedding gogo](docs/book/18-embedding.md) is the guide;
   hot loading.
 - [docs/known-issues.md](docs/known-issues.md): open limitations by area,
   with workarounds.
+- [docs/FAQ.md](docs/FAQ.md): common questions: the language, the VM,
+  ports, embedding and what is planned.
 
 ## Status and roadmap
 
