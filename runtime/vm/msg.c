@@ -38,6 +38,7 @@ typedef struct Buf {
 typedef struct Xm {
     const Vm *vm;
     uint32_t tag, why, words;
+    bool handles, fin;        /* a handle seen; a handle or a crossing const (fin_fn has work) */
 } Xm;
 
 static void xm_fail(Xm *x, uint32_t why) {
@@ -55,49 +56,49 @@ static const uint32_t *xm_const(Xm *x, term t) {
     return NULL;
 }
 
-/* Checks heap object o (closure or struct type word) and counts the const
- * copies its terms need. */
-static void xm_obj(Xm *x, const uint32_t *o) {
-    uint32_t k = hdr_kind(o[0]), first, end;
-    if ((k == K_CLOSURE || (k == K_STRUCT && o[1] >= TYPE_OWN_BASE)) &&
-        (o[1] & MOD_TAG_MASK) != x->tag)
-        xm_fail(x, module_of_tag(x->vm, o[1]) ? R_BAD_MSG : R_BAD_CODE);
-    heap_obj_terms(o, &first, &end);
-    for (uint32_t i = first; i < end; i++) {
-        const uint32_t *c = xm_const(x, o[i]);
-        if (c) x->words += hdr_words(c[0]);
+/* Counts what the term t, not followed as a ref, adds to the copy. */
+static void xm_term(Xm *x, term t) {
+    const uint32_t *c = xm_const(x, t);
+    if (c) {
+        x->words += hdr_words(c[0]);
+        x->fin = true;
     }
+    if (term_is_handle(t)) x->handles = x->fin = true;
 }
 
-/* With set, marks the unmarked objects reachable from root and returns their
- * total words; without, unmarks the marked ones (returns 0). */
-static uint32_t walk(uint32_t *mem, term root, bool set, Xm *x) {
+/* With x, marks the unmarked objects reachable from root and returns their
+ * total words, checking each (a closure's or struct's type word) against
+ * the module rules and counting what its other terms add (xm_term);
+ * without, unmarks the marked ones (returns 0). */
+static uint32_t walk(uint32_t *mem, term root, Xm *x) {
     uint32_t total = 0;
     if (!term_is_ref(root)) return 0;
     uint32_t cur = term_ref_off(root), up = WALK_TOP, i, end;
     uint32_t *o;
-    if (((mem[cur] & WALK_MARK) != 0) == set) return 0;
+    if (((mem[cur] & WALK_MARK) != 0) == (x != NULL)) return 0;
     goto enter;
     for (;;) {
         while (i < end) {
             term t = o[i];
-            if (term_is_ref(t) && ((mem[term_ref_off(t)] & WALK_MARK) != 0) != set) {
+            if (term_is_ref(t) && ((mem[term_ref_off(t)] & WALK_MARK) != 0) != (x != NULL)) {
                 o[i] = up;
                 up = (cur << 16) | i;
                 cur = term_ref_off(t);
             enter:
                 o = mem + cur;
-                if (set) {
-                    xm_obj(x, o);   /* set: x is never NULL */
-                    heap_obj_terms(o, &i, &end);
+                o[0] &= ~WALK_MARK;   /* unmarking (marking: it is not marked) */
+                heap_obj_terms(o, &i, &end);
+                if (x) {
+                    uint32_t k = hdr_kind(o[0]);
+                    if ((k == K_CLOSURE || (k == K_STRUCT && o[1] >= TYPE_OWN_BASE)) &&
+                        (o[1] & MOD_TAG_MASK) != x->tag)
+                        xm_fail(x, module_of_tag(x->vm, o[1]) ? R_BAD_MSG : R_BAD_CODE);
                     total += hdr_words(o[0]);
                     o[0] |= WALK_MARK;
-                } else {
-                    o[0] &= ~WALK_MARK;
-                    heap_obj_terms(o, &i, &end);
                 }
                 continue;
             }
+            if (x) xm_term(x, t);
             i++;
         }
         if (up == WALK_TOP) return total;
@@ -113,24 +114,24 @@ static uint32_t walk(uint32_t *mem, term root, bool set, Xm *x) {
 }
 
 /* Words a copy of t into module x->tag takes (UINT32_MAX when more than
- * 65535), the const copies included; x->why set if the rules refuse it. */
+ * 65535), the const copies included; x->why set if the rules refuse it.
+ * Leaves the reachable objects marked (WALK_MARK): the copy clears the
+ * marks (copy_fn, restore); a caller that does not copy unmarks them with
+ * walk(mem, t, NULL), by the same pointer reversal, so a send that fails
+ * or drops costs the size of the message, not of the sender's heap. */
 static uint32_t msg_size(uint32_t *src_mem, term t, Xm *x) {
-    uint32_t n = walk(src_mem, t, true, x);
-    walk(src_mem, t, false, NULL);
-    const uint32_t *c = xm_const(x, t);
-    if (c) x->words += hdr_words(c[0]);
+    uint32_t n = walk(src_mem, t, x);
+    xm_term(x, t);
     n += x->words;
     return n > MSG_MAX_WORDS ? UINT32_MAX : n;
 }
 
-/* The copy being built: b, the sender's heap, the module rules; ok false
- * once a copy did not fit (cannot happen: sized by walk). */
+/* The copy being built: b, the sender's heap, the module rules. */
 typedef struct Build {
     Buf b;
     uint32_t *src;
     Xm *x;
     Vm *vm;
-    bool ok, handles;
 } Build;
 
 /* Sharing-preserving copy. While copying, each source
@@ -146,7 +147,8 @@ typedef struct Build {
  * at least 2 words, so word 1 always exists. */
 
 /* Replaces the source ref at p by a ref into b, copying the object on
- * first visit. */
+ * first visit; the copy's header loses msg_size's mark, and restore puts
+ * that header back in the source. */
 static void copy_fn(void *ctx, term *p) {
     Build *c = ctx;
     Buf *b = &c->b;
@@ -155,13 +157,11 @@ static void copy_fn(void *ctx, term *p) {
     uint32_t off = hdr_words(obj[0]);
     if (hdr_kind(obj[0]) != K_FORWARD) {
         uint32_t words = off;
-        if (words > b->cap - b->len) {   /* cannot happen: sized by walk */
-            c->ok = false;
-            return;
-        }
+        GOGO_ASSERT(words <= b->cap - b->len);   /* sized by msg_size */
         off = b->len;
         memcpy(b->w + off, obj, (size_t)words * 4u);
         b->len += words;
+        b->w[off] &= ~WALK_MARK;
         b->w[off + 1] = src;
         obj[0] = hdr_make(off, K_FORWARD);
     }
@@ -190,10 +190,7 @@ static void fin_fn(void *ctx, term *p) {
         *p = term_from_ref(c->b.len);
         c->b.len += w;
     }
-    if (term_is_handle(*p)) {
-        bytes_msg_ref(c->vm, *p);
-        c->handles = true;
-    }
+    if (term_is_handle(*p)) bytes_msg_ref(c->vm, *p);
 }
 
 static uint32_t msg_skip(const Msg *m) { return (m->flags & MSG_REPLY) ? MSG_REPLY_HDR : 0u; }
@@ -242,26 +239,25 @@ uint32_t msg_footprint_words(uint16_t words) {
  * for byte on every path. */
 static Msg *build_skip(Vm *vm, Actor *src, term t, uint32_t skip, uint32_t dst_mod,
                        uint32_t *why) {
-    Xm x = { vm, module_tag(vm, dst_mod), 0, 0 };
+    Xm x = { vm, module_tag(vm, dst_mod), 0, 0, false, false };
     uint32_t n = msg_size(src->mem, t, &x);
     if (why) *why = x.why ? x.why : R_OUT_OF_MEMORY;
-    if (x.why || n == UINT32_MAX || n > MSG_MAX_WORDS - skip) return NULL;
     uint32_t words = skip + n;
-    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
-    if (!m) return NULL;
+    Msg *m = NULL;
+    if (!x.why && n <= MSG_MAX_WORDS - skip) m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
+    if (!m) {
+        walk(src->mem, t, NULL);      /* no copy follows: unmark */
+        return NULL;
+    }
     memset(m->data, 0, (size_t)skip * 4u);
-    Build c = { { m->data, words, skip }, src->mem, &x, vm, true, false };
+    Build c = { { m->data, words, skip }, src->mem, &x, vm };
     m->root = t;
     heap_map_terms(m->data, skip, &c.b.len, &m->root, 1, TAGS_REF, copy_fn, &c);
     restore(&c.b, src->mem, skip);
-    if (!c.ok) {                      /* cannot happen: sized by walk */
-        va_free(vm, m, msg_alloc_bytes((uint16_t)words));
-        return NULL;
-    }
-    heap_map_terms(m->data, skip, &c.b.len, &m->root, 1, TAGS_CONST | TAGS_HANDLE, fin_fn, &c);
+    if (x.fin) heap_map_terms(m->data, skip, &c.b.len, &m->root, 1, TAGS_CONST | TAGS_HANDLE, fin_fn, &c);
     m->next = NULL;
     m->words = (uint16_t)words;
-    m->flags = c.handles ? MSG_HANDLES : 0u;
+    m->flags = x.handles ? MSG_HANDLES : 0u;
     return m;
 }
 
@@ -359,8 +355,9 @@ bool msg_try_enqueue(Vm *vm, Actor *to, Msg *m) {
  * sender's badcode whether or not its receiver lives. 1, or the negated
  * reason. Only the size walk: no allocation. */
 static int dropped(const Vm *vm, Actor *from, term t) {
-    Xm x = { vm, module_tag(vm, from->mod), 0, 0 };
+    Xm x = { vm, module_tag(vm, from->mod), 0, 0, false, false };
     msg_size(from->mem, t, &x);
+    walk(from->mem, t, NULL);
     return x.why ? -(int)x.why : 1;
 }
 
