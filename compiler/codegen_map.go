@@ -225,16 +225,17 @@ func (f *fn) mapBuiltin(call *ast.CallExpr, name string, dst uint8) bool {
 // rangeMap compiles `for k, v := range m`: the map is evaluated once;
 // each pass calls next with the index and key the last one left, which
 // gives the next entry in key order (or -1), so the body may insert and
-// delete (see gogo/maps' next).
+// delete (see gogo/maps' next, which also takes the length it last saw).
 func (f *fn) rangeMap(s *ast.RangeStmt) {
 	label := f.takeLabel()
 	scope := f.next
 	mt := mapOf(f.g.p.Info.TypeOf(s.X))
 	mode := f.mapModeInto(s, mt)
-	st := f.allocN(s, 3) // [mode, m, i, prev]: next's arguments
+	st := f.allocN(s, 4) // [mode, m, i, prev, n]: next's arguments
 	f.exprInto(s.X, st)
 	f.asm.EmitExt(OpLoadk, st+1, 0, 0, TermInt(0))
 	f.asm.EmitExt(OpLoadk, st+2, 0, 0, TermNil)
+	f.asm.EmitExt(OpLoadk, st+3, 0, 0, TermInt(0))
 	declare := func(e ast.Expr) (*types.Var, uint8, bool) {
 		id, _ := e.(*ast.Ident)
 		if id == nil || id.Name == "_" {
@@ -260,14 +261,15 @@ func (f *fn) rangeMap(s *ast.RangeStmt) {
 	topL, endL := f.asm.NewLabel(), f.asm.NewLabel()
 	f.bind(topL)
 	mark := f.next
-	res := f.allocN(s, 3) // [i, k, v]
-	f.mapCall(s, "next", res, mode, 4)
+	res := f.allocN(s, 4) // [i, k, v, n]
+	f.mapCall(s, "next", res, mode, 5)
 	zero := f.allocScalar(s)
 	f.asm.EmitExt(OpLoadk, zero, 0, 0, TermInt(0))
 	f.asm.Emit(OpLt, zero, res, zero)
 	f.jump(OpJmpt, zero, endL)
 	f.asm.Emit(OpMove, st+1, res, 0)
 	f.asm.Emit(OpMove, st+2, res+1, 0)
+	f.asm.Emit(OpMove, st+3, res+3, 0)
 	if hasKey {
 		f.asm.Emit(OpMove, key, res+1, 0)
 		if isWide(mt.Key()) { // the plain representation outside the map (not a box's field: unbox would take a named or unsigned type for one)

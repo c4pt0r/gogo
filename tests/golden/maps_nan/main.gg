@@ -42,4 +42,20 @@ func main() {
 	s[K{2, 1}] = true
 	s[K{2, 1}] = false
 	fmt.Println(len(s), s[K{2, 1}], s[K{nan, 1}])
+
+	// replacing NaN keys while ranging ends
+	f := map[float64]int{}
+	for i := 0; i < 5; i++ {
+		f[math.NaN()] = i
+		f[float64(i)] = i
+	}
+	passes := 0
+	for k, v := range f {
+		passes++
+		if k != k {
+			delete(f, k)
+			f[math.NaN()] = v + 100
+		}
+	}
+	fmt.Println(passes > 0, len(f) > 10)
 }

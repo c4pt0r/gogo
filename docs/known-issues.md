@@ -303,7 +303,9 @@ rebuilt:
   the pointer), and so does a slice held directly by an interface key; a
   slice deeper inside such a key is compared element by element (Go
   panics). NaN keys behave as in Go (each insert adds an
-  entry, a lookup never finds one); they range first. A map sent to
+  entry, a lookup never finds one); they range first, and if a loop body
+  changes the map while ranging over NaN keys, the NaN keys it has not
+  reached yet are skipped (Go would produce them). A map sent to
   another actor is copied with its entries (Go would share it). A nil map
   reads as empty and a write to it ends the actor with `actor.Nil`, not a
   `panic`. A nil map or a nil pointer in an interface is the nil

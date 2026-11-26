@@ -139,22 +139,26 @@ func clearAll(m *Map) {
 }
 
 // next steps a range over m: given the entry index i where the previous
-// step left (0 to start) and the key it gave, it returns the index after
-// the next entry, that entry's key and value, or -1 when there are no
-// more. If the entry before i no longer has key prev (the body inserted
-// or deleted), the next entry is the first whose key is above prev, so a
-// deleted entry not yet reached is not produced, and an inserted one is if
-// its key comes later, as Go allows; keys only grow, so the range ends.
-func next(mode int, m *Map, i int, prev any) (int, any, any) {
+// step left (0 to start), the key it gave and the map's length then, it
+// returns the index after the next entry, that entry's key and value and
+// the length, or -1 when there are no more. If the length changed (the
+// body inserted or deleted), the next entry is the first whose key is
+// above prev, so a deleted entry not yet reached is not produced, and an
+// inserted one is if its key comes later, as Go allows. Each such step
+// goes past every key equal to prev in the total order, so the range ends
+// even if the body inserts a NaN key at every pass; the cost is that
+// NaN keys not yet reached when the body changes the map, among the NaNs
+// prev equals, are not produced.
+func next(mode int, m *Map, i int, prev any, n0 int) (int, any, any, int) {
 	if m == nil {
-		return -1, nil, nil
+		return -1, nil, nil, 0
 	}
 	n := len(m.e) / 2
-	if i > 0 && (i > n || compare(m.e[2*i-2], prev, nil, mode) != 0) {
+	if i > 0 && (n != n0 || compare(m.e[2*i-2], prev, nil, mode) != 0) {
 		i = after(m, prev, mode)
 	}
 	if i >= n {
-		return -1, nil, nil
+		return -1, nil, nil, n
 	}
-	return i + 1, m.e[2*i], m.e[2*i+1]
+	return i + 1, m.e[2*i], m.e[2*i+1], n
 }

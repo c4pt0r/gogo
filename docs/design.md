@@ -341,7 +341,10 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   element, as an array). A key that
   is not equal to itself under Go's `==` (a NaN, or a struct holding one)
   is never found and each insert adds an entry after the equal ones, as
-  in Go; `range` steps to the first key above the last one, so it ends. A lookup is a binary search;
+  in Go; when the body changes the map's length, `range` steps to the
+  first key above the last one in the total order, so it ends even if the
+  body inserts a NaN key at every pass (NaN keys not yet reached, equal to
+  the last one, are then skipped). A lookup is a binary search;
   an insert or a delete moves the entries after it with `B_COPY`, O(n),
   and writes the header with `SETFIELD`. The compiler lowers each
   operation to a call (`compiler/codegen_map.go`), passing keys and values
