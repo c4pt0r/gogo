@@ -691,14 +691,8 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		}
 		x := f.localOf(s.X)
 		mark := f.next
-		one := f.allocScalar(s) // the constant 1: an immediate (a const-area float)
-		if isFloat(f.g.p.Info.TypeOf(s.X)) {
-			f.floatOne(s.X, one)
-		} else if isInt64(f.g.p.Info.TypeOf(s.X)) {
-			f.int64Into(1, one)
-		} else {
-			f.asm.EmitExt(OpLoadk, one, 0, 0, TermInt(1))
-		}
+		one := f.allocScalar(s)
+		f.oneInto(s.X, one)
 		f.asm.Emit(f.typedOp(op, s.X), x, x, one)
 		f.truncByte(s.X, x)
 		f.next = mark

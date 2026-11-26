@@ -133,7 +133,16 @@ func (f *fn) floatConversion(call *ast.CallExpr, to, from types.Type, dst uint8)
 	f.truncByte(call, dst) // byte(f): int(f), then the low 8 bits
 }
 
-// floatOne loads 1 of e's float type into dst (x++ and x--).
-func (f *fn) floatOne(e ast.Expr, dst uint8) {
-	f.floatInto(constant.MakeInt64(1), f.g.p.Info.TypeOf(e), dst)
+// oneInto loads the constant 1 of e's type (int, int64, byte or a float
+// type) into dst, for x++ and x-- on a variable, an element or a field:
+// an immediate, or a const-area float (never a heap object).
+func (f *fn) oneInto(e ast.Expr, dst uint8) {
+	switch t := f.g.p.Info.TypeOf(e); {
+	case isFloat(t):
+		f.floatInto(constant.MakeInt64(1), t, dst)
+	case isInt64(t):
+		f.int64Into(1, dst)
+	default:
+		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermInt(1))
+	}
 }
