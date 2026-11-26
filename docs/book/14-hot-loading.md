@@ -236,21 +236,36 @@ crashing. Messages inside one module are unaffected.
 
 ## 14.7 Fetching a module over the network
 
-`examples/hotload_net` in the repository does it on a board: it joins
-Wi-Fi, downloads `worker_v1.gmod` with `http.Do` from the base URL in the
-config key `demo.modurl`, loads it, runs it under `SuperviseModule`, waits,
-downloads `worker_v2.gmod` and upgrades. The body of an HTTP response is
-charged to the actor that asked, whose default limit on a board is 16 KB,
-so the example limits the module to 4 KB (`modBody`, passed as `maxBody`); for bigger modules
-raise it, up to `http.MaxBodyLimit`, in an actor started with a larger
-`MaxMemory`. Serve the modules from your computer with
-`python3 -m http.server`; the example's README has the exact commands.
+> **Load only modules you trust, over a channel that proves where they
+> come from.** A loaded module runs with the same rights as the main
+> program: every port the firmware has, the config store, the files, the
+> network. Its requirement names say what it needs from the firmware, not
+> what it is allowed to do, and modules are not signed: nothing in the
+> image says who built it. Fetched over plain `http://`, anyone on the
+> path can replace it with their own code. Fetch modules over `https://`
+> from a server you control, keep the people who can write to that server
+> as few as the people who can flash the board, and never load bytes that
+> came from an unauthenticated source (a plain HTTP download, a message
+> from the network, a file anyone can write).
 
-(This example cannot run on the host, which has no network, so it is not
-among the checked examples.)
+`examples/hotload_net` in the repository does it on a board: it joins
+Wi-Fi, sets the clock (`gogo/sntp`; chapter 17), downloads
+`worker_v1.gmod` with `http.Do` from the `https://` base URL in the config
+key `demo.modurl` (it refuses an `http://` one), loads it, runs it under
+`SuperviseModule`, waits, downloads `worker_v2.gmod` and upgrades. The
+body of an HTTP response is charged to the actor that asked, whose default
+limit on a board is 16 KB, so the example limits the module to 4 KB
+(`modBody`, passed as `maxBody`); for bigger modules raise it, up to `http.MaxBodyLimit`, in an actor started with a larger
+`MaxMemory`. The server needs a certificate the board trusts (chapter 17);
+the example's README serves the modules from your computer through
+Tailscale Funnel, with the exact commands.
+
+(The host has no network, so only the refusal of an `http://` URL is
+checked there, by `make test-examples`.)
 
 ## 14.8 Not in this version
 
 Writing modules to flash or replacing the whole firmware image, changing
 code inside a running actor (Erlang-style code upgrade), calling functions
 or sharing types across modules, signing, and per-module permissions.
+Signed modules are planned (see `docs/known-issues.md`).

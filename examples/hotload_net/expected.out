@@ -1,0 +1,1 @@
+FAIL: demo.modurl must start with https:// (a module runs with full rights: never load one over plain http)

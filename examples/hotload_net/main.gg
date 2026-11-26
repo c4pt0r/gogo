@@ -1,6 +1,7 @@
 // hotload_net: hot loading over the network, on a board.
 //
-// On boot: join Wi-Fi (dhcp), fetch worker_v1.gmod from the base URL in the
+// On boot: join Wi-Fi (dhcp), set the clock (sntp: the certificate check
+// needs the date), fetch worker_v1.gmod over HTTPS from the base URL in the
 // config key demo.modurl, load it, and run its "Work" entry under
 // supervisor.SuperviseModule. After a few seconds fetch worker_v2.gmod and
 // upgrade the running worker to it, printing each step, the code memory in
@@ -8,10 +9,18 @@
 //
 //	gogo config set wifi.ssid <name>
 //	gogo config set wifi.password -
-//	gogo config set demo.modurl http://192.168.1.10:8000    # no trailing /
+//	gogo config set demo.modurl https://mods.example.net    # no trailing /
 //	gogo build examples/hotload_net -o hotload_net.ggb && gogo flash hotload_net.ggb
 //
 // The modules are those of examples/hotload (see README.md there).
+//
+// WARNING: a loaded module runs with the same rights as the main program
+// (every port, the config store, the files, the network); nothing in the
+// image says who built it, and modules are not signed. Load only modules
+// you trust, over a channel that proves where they come from. That is why
+// this example takes only an https:// URL (the server's certificate must be
+// one the board trusts) and refuses plain http://: over plain HTTP anyone
+// on the path can replace the module and run their code on the board.
 package main
 
 import (
@@ -21,7 +30,9 @@ import (
 	"gogo/dhcp"
 	"gogo/http"
 	"gogo/net"
+	"gogo/sntp"
 	"gogo/strconv"
+	"gogo/strings"
 	"gogo/supervisor"
 	"gogo/sys"
 )
@@ -39,9 +50,9 @@ func fetch(base, name string) (code.Module, string) {
 	var none code.Module
 	t0 := actor.Now()
 	var nobody bytes.Bytes
-	r, ok := http.Do("GET", base+"/"+name, "", nobody, modBody, 10000)
+	r, ok := http.Do("GET", base+"/"+name, "", nobody, modBody, 20000)
 	if !ok {
-		return none, "fetch " + name + " (DNS, connect or timeout)"
+		return none, "fetch " + name + " (DNS, connect, certificate or timeout)"
 	}
 	if r.Status != 200 || r.Truncated {
 		return none, "fetch " + name + ": status " + strconv.Itoa(r.Status) + ", or longer than modBody"
@@ -81,7 +92,10 @@ func feed(w actor.PID, n int) {
 func run() string {
 	base, ok := sys.Config("demo.modurl")
 	if !ok {
-		return "demo.modurl is not set (gogo config set demo.modurl http://<host>:<port>)"
+		return "demo.modurl is not set (gogo config set demo.modurl https://<host>)"
+	}
+	if !strings.HasPrefix(base, "https://") {
+		return "demo.modurl must start with https:// (a module runs with full rights: never load one over plain http)"
 	}
 	println("step 1: network")
 	// Subscribe first, then start one DHCP client and wait for net.Up: the
@@ -106,6 +120,9 @@ func run() string {
 		return "no network"
 	}
 	println("network up; code mem", code.MemUsed())
+	if !sntp.Sync("pool.ntp.org", 8000) {
+		return "no time from pool.ntp.org (https checks the certificate's dates)"
+	}
 
 	println("step 2: fetch and load v1")
 	v1, why := fetch(base, "worker_v1.gmod")

@@ -702,10 +702,13 @@ global malloc), so the VM arena, Wi-Fi and the LCD buffers stay in
 internal RAM. The Cardputer ADV has no PSRAM and returns `NULL`.
 
 Not provided: permissions (modules have the main program's rights),
-signatures, modules stored in flash, `sys.Has`, in-place code
-replacement, cross-module function calls and shared types.
+signatures (planned: see `docs/known-issues.md`), modules stored in
+flash, `sys.Has`, in-place code replacement, cross-module function calls
+and shared types. Since a module has every right the main program has,
+load only images from a trusted source over an authenticated channel.
 `examples/hotload` is the host golden example; `examples/hotload_net`
-fetches modules over HTTP and upgrades on a board.
+fetches modules over HTTPS (and refuses plain HTTP) and upgrades on a
+board.
 
 ### 5.4.5 Optional firmware features
 

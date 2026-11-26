@@ -118,7 +118,12 @@ rebuilt:
   `code.Load` some bytes can run code with the same rights as the main
   program. Its requirement names say what the firmware must provide, not
   what a module may do. Function, type and jump indexes are checked when
-  used (`badcode`), not when loaded. Load only images you trust.
+  used (`badcode`), not when loaded. *Workaround:* load only images you
+  trust, fetched over an authenticated channel (`https://` from a server
+  you control, as `examples/hotload_net` does; never plain `http://`).
+  *Planned:* signed images: an Ed25519 signature over the image, checked
+  by `code.Load` against a public key in the firmware, with the PSA
+  crypto the TLS port already links (`TlsHw`).
 - **Modules live in RAM only.** There is no automatic loading from flash
   at boot and no execute-in-place from flash. *Workaround:* store the
   module with `fs.WriteFile` and load it with `fs.ReadFile` +
