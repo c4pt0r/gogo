@@ -6,6 +6,7 @@
 #include "heap.h"
 #include "interp.h"
 #include "opcodes.h"
+#include "port_names.h"
 #include <string.h>
 
 /* Words of a loaded image, header to the end of the exports. */
@@ -60,13 +61,16 @@ static void drop(Vm *vm, uint32_t s, uint16_t who) {
 
 /* The first requirement of img the Vm lacks (image.h): a name that is
  * neither a driver in its driver list nor a mount prefix in its board's
- * mounts. Its name's const offset, or UINT32_MAX if nothing is missing.
+ * mounts, nor "float" in a VM built with GOGO_FLOAT. Its name's const offset, or UINT32_MAX if nothing is missing.
  * The check of every load, the boot image's included. */
 static uint32_t missing_req(const Vm *vm, const Image *img) {
     const uint32_t *r = image_requires(img);
     for (uint32_t i = 1; i <= r[0]; i++) {
         const uint32_t *s = img->consts + r[i];
         const uint8_t *n = (const uint8_t *)(s + 2);
+#if GOGO_FLOAT
+        if (s[1] == sizeof PORT_REQ_FLOAT - 1u && memcmp(n, PORT_REQ_FLOAT, s[1]) == 0) continue;
+#endif
         if (!port_name_find((const void *const *)vm->board->mounts, true, n, s[1]) && !port_find_driver(vm, n, s[1]))
             return r[i];
     }

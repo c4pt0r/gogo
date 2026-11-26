@@ -28,10 +28,11 @@
  *
  * Reserved for the language phases still to come (interfaces, pointers,
  * maps), so that they need an image format minor, not a major (image.h):
- *   - heap kinds 12-15 (K_*, below; image_load refuses a const object of
- *     an unknown kind);
+ *   - heap kinds 13-15 (K_*, below; image_load refuses a const object of
+ *     an unknown kind; 15.2 gave 12 to K_FLOAT);
  *   - the specials from 0x72 up (T_*: only 0x02-0x62 are given);
- *   - the TYPEIS ids 0x10007-0x100FF beside TY_* (opcodes.h);
+ *   - the TYPEIS ids 0x10009-0x100FF beside TY_* (opcodes.h; 15.2 gave
+ *     0x10007 and 0x10008 to float32 and float64);
  *   - bits 16-20 of a K_STRUCT's type word (0 in every v15 image), for
  *     per-type flags.
  * Nothing in a v15 compiler or VM produces any of them; the image
@@ -94,7 +95,10 @@ enum {
                       * a heap bytes.Bytes (any size) */
     K_BUF     = 11,  /* [hdr][len][array]: a bytes.Buffer; raw len, array a
                       * K_BYTEARR ref (its capacity), T_NIL when cap is 0 */
-    /* 12-15: reserved for interface values, pointers and maps (top). */
+    K_FLOAT   = 12,  /* (15.2) [hdr][bits]: a float32; [hdr][lo][hi]: a float64 (the
+                      * size tells them apart); raw, not scanned. Every float
+                      * value is one (heap or const area), never an immediate */
+    /* 13-15: reserved for interface values, pointers and maps (top). */
     K_FORWARD = 63
 };
 

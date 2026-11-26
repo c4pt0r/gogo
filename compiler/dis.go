@@ -3,6 +3,7 @@ package compiler
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -69,6 +70,10 @@ func Disassemble(img []byte) (string, error) {
 			return "TyInt64"
 		case TyBytes:
 			return "TyBytes"
+		case TyFloat32:
+			return "TyFloat32"
+		case TyFloat64:
+			return "TyFloat64"
 		}
 		row := id // a reserved type's row is its index; own types follow them
 		if id >= TypeOwnBase {
@@ -110,6 +115,12 @@ func Disassemble(img []byte) (string, error) {
 			if off := int(t >> 4); off+3 <= len(consts) && consts[off] == HdrMake(3, KInt64) {
 				return fmt.Sprintf("int64(%d)", int64(uint64(consts[off+1])|uint64(consts[off+2])<<32))
 			}
+			if off := int(t >> 4); off+3 <= len(consts) && consts[off] == HdrMake(3, KFloat) {
+				return fmt.Sprintf("float64(%v)", math.Float64frombits(uint64(consts[off+1])|uint64(consts[off+2])<<32))
+			}
+			if off := int(t >> 4); off+2 <= len(consts) && consts[off] == HdrMake(2, KFloat) {
+				return fmt.Sprintf("float32(%v)", math.Float32frombits(consts[off+1]))
+			}
 		}
 		return fmt.Sprintf("0x%08x", t)
 	}
@@ -143,7 +154,7 @@ func Disassemble(img []byte) (string, error) {
 			var args string
 			switch op {
 			case OpNop:
-			case OpMove, OpNeg, OpNot, OpNeg64, OpBox64:
+			case OpMove, OpNeg, OpNot, OpNeg64, OpBox64, OpNegf:
 				args = fmt.Sprintf("r%d, r%d", a, b)
 			case OpLoadk:
 				args = fmt.Sprintf("r%d, %s", a, term(ext))
@@ -152,7 +163,8 @@ func Disassemble(img []byte) (string, error) {
 			case OpAdd, OpSub, OpMul, OpDiv, OpRem, OpEq, OpNe, OpLt, OpLe,
 				OpAnd, OpOr, OpXor, OpAndnot, OpShl, OpShr,
 				OpAnd64, OpOr64, OpXor64, OpAndnot64, OpShl64, OpShr64,
-				OpAdd64, OpSub64, OpMul64, OpDiv64, OpRem64, OpEq64, OpNe64, OpLt64, OpLe64:
+				OpAdd64, OpSub64, OpMul64, OpDiv64, OpRem64, OpEq64, OpNe64, OpLt64, OpLe64,
+				OpAddf, OpSubf, OpMulf, OpDivf, OpEqf, OpNef, OpLtf, OpLef:
 				args = fmt.Sprintf("r%d, r%d, r%d", a, b, c)
 			case OpJmp:
 				args = fmt.Sprintf("@%04d", ext)
@@ -166,7 +178,7 @@ func Disassemble(img []byte) (string, error) {
 				args = fmt.Sprintf("r%d, r%d, %d, %s", a, b, c, typeName(ext))
 			case OpClear, OpRetn:
 				args = fmt.Sprintf("r%d, %d", a, b)
-			case OpGetfield, OpConv, OpCallv:
+			case OpGetfield, OpConv, OpCallv, OpConvf:
 				args = fmt.Sprintf("r%d, r%d, %d", a, b, c)
 			case OpMkclosure:
 				args = fmt.Sprintf("r%d, r%d, %d, %s", a, b, c, funcName(ext))

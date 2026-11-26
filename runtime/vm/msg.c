@@ -31,7 +31,7 @@ typedef struct Buf {
  * to every value it reaches. A value naming a module (a const ref, a
  * closure, a struct of a module's own type: term.h) may enter only that
  * module's actors as it is. Crossing into another module, a const string,
- * int or int64 becomes a heap copy (words: the room those copies take);
+ * int, int64 or float becomes a heap copy (words: the room those copies take);
  * any other module value fails the copy with `why`: R_BAD_CODE if its
  * module is gone (stale, whatever the destination), else R_BAD_MSG.
  * Inside one module every live value passes unchanged. */
@@ -50,7 +50,7 @@ static const uint32_t *xm_const(Xm *x, term t) {
     if (!term_is_const(t) || (t & MOD_TAG_MASK) == x->tag) return NULL;
     const uint32_t *o = const_obj_of(x->vm, t);
     uint32_t k = o ? hdr_kind(o[0]) : 0u;
-    if (k == K_STRING || k == K_INT || k == K_INT64) return o;   /* no terms inside */
+    if (k == K_STRING || k == K_INT || k == K_INT64 || k == K_FLOAT) return o;   /* no terms inside */
     xm_fail(x, o ? R_BAD_MSG : R_BAD_CODE);
     return NULL;
 }

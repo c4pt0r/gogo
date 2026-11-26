@@ -670,12 +670,12 @@ func TestScreenConfigMinor(t *testing.T) {
 }
 
 func TestCheckVersion(t *testing.T) {
-	for _, v := range []uint32{15 << 16, 15<<16 | 1} {
+	for _, v := range []uint32{15 << 16, 15<<16 | 1, 15<<16 | 2} {
 		if err := CheckVersion(v); err != nil {
 			t.Errorf("%s: %v", VersionString(v), err)
 		}
 	}
-	for _, v := range []uint32{14, 15, 14 << 16, 15<<16 | 2, 16 << 16} {
+	for _, v := range []uint32{14, 15, 14 << 16, 15<<16 | 3, 16 << 16} {
 		if err := CheckVersion(v); err == nil {
 			t.Errorf("%s accepted", VersionString(v))
 		}

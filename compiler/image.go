@@ -3,6 +3,7 @@ package compiler
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -20,7 +21,7 @@ const (
 	// and resets imageMinor and the tables (single-number versions 1 to
 	// 14 came before: see runtime/vm/image.h).
 	imageMajor = 15
-	imageMinor = 1
+	imageMinor = 2
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -33,16 +34,30 @@ const (
 // The image format minor in which each addition after 15.0 appeared: an
 // image's minor is the highest one among the opcodes, builtins and
 // reserved types it uses (and every reserved row it carries). Empty at
-// 15.0; 15.1 added screen.Config. A reserved type is keyed by its image name ("port.Chunk"); its
+// 15.0; 15.1 added screen.Config; 15.2 floating point (the float ops,
+// B_FLOAT, and the K_FLOAT constants and TYPEIS ids, which scan counts
+// apart: floatMinor). A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
 var (
-	opMinor      = map[uint8]uint16{}
-	builtinMinor = map[uint32]uint16{}
+	opMinor = map[uint8]uint16{
+		OpAddf: 2, OpSubf: 2, OpMulf: 2, OpDivf: 2, OpNegf: 2,
+		OpEqf: 2, OpNef: 2, OpLtf: 2, OpLef: 2, OpConvf: 2,
+	}
+	builtinMinor = map[uint32]uint16{BFloat: 2}
 	typeMinor    = map[string]uint16{
 		"screen.Config": 1, // 15.1: the "screen" port
 	}
 )
+
+// floatMinor is the minor of floating point (15.2): an image with a float
+// op, B_FLOAT, a K_FLOAT constant or a TYPEIS of float32 / float64 needs
+// it, and requires FloatRequirement.
+const floatMinor = 2
+
+// FloatRequirement is the requirement name of an image that uses floating
+// point: a VM built without GOGO_FLOAT lacks it and refuses the image.
+const FloatRequirement = "float"
 
 // VersionString renders an image version word as "major.minor".
 func VersionString(w uint32) string { return fmt.Sprintf("%d.%d", w>>16, w&0xFFFF) }
@@ -83,10 +98,12 @@ type imgType struct {
 
 // ImageBuilder assembles an image byte slice.
 type ImageBuilder struct {
-	consts  []uint32
-	strings map[string]uint32
-	int64s  map[int64]uint32
-	funcs   []imgFunc
+	consts   []uint32
+	strings  map[string]uint32
+	int64s   map[int64]uint32
+	floats   map[uint64]uint32 // float64 constants by bits
+	floats32 map[uint32]uint32 // float32 constants by bits
+	funcs    []imgFunc
 	// reserved holds a row for every reserved type (AddReservedType, in
 	// index order); only the first nReserved are written, where
 	// nReserved is one more than the highest reserved type the program
@@ -110,7 +127,7 @@ type imgExport struct {
 
 // NewImageBuilder returns an empty builder.
 func NewImageBuilder() *ImageBuilder {
-	return &ImageBuilder{strings: map[string]uint32{}, int64s: map[int64]uint32{}}
+	return &ImageBuilder{strings: map[string]uint32{}, int64s: map[int64]uint32{}, floats: map[uint64]uint32{}, floats32: map[uint32]uint32{}}
 }
 
 // AddString adds a K_STRING constant (deduplicated) and returns its word offset.
@@ -138,6 +155,32 @@ func (b *ImageBuilder) AddInt64(v int64) uint32 {
 	off := uint32(len(b.consts))
 	b.consts = append(b.consts, HdrMake(3, KInt64), uint32(uint64(v)), uint32(uint64(v)>>32))
 	b.int64s[v] = off
+	return off
+}
+
+// AddFloat64 adds a float64 K_FLOAT constant (deduplicated by bits, so 0
+// and -0 stay apart) and returns its word offset.
+func (b *ImageBuilder) AddFloat64(v float64) uint32 {
+	u := math.Float64bits(v)
+	if off, ok := b.floats[u]; ok {
+		return off
+	}
+	off := uint32(len(b.consts))
+	b.consts = append(b.consts, HdrMake(3, KFloat), uint32(u), uint32(u>>32))
+	b.floats[u] = off
+	return off
+}
+
+// AddFloat32 adds a float32 K_FLOAT constant (deduplicated by bits) and
+// returns its word offset.
+func (b *ImageBuilder) AddFloat32(v float32) uint32 {
+	u := math.Float32bits(v)
+	if off, ok := b.floats32[u]; ok {
+		return off
+	}
+	off := uint32(len(b.consts))
+	b.consts = append(b.consts, HdrMake(2, KFloat), u)
+	b.floats32[u] = off
 	return off
 }
 
@@ -231,9 +274,12 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 		funcWords = append(funcWords, uint32(len(code)), uint32(f.nParams)|uint32(f.nRegs)<<16, f.name)
 		code = append(code, reloc...)
 	}
-	used, minor, err := b.scan(code)
+	used, minor, usesFloat, err := b.scan(code)
 	if err != nil {
 		return nil, err
+	}
+	if usesFloat {
+		b.requireFloat()
 	}
 	nRes := len(used)
 	var rows []imgType
@@ -270,11 +316,13 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 // and those a NEWSTRUCT, TYPEIS or const struct names): used[i] for every
 // reserved row the image carries (len(used) is n_reserved). And the lowest
 // format minor that runs the image: the highest among its opcodes,
-// builtins and used reserved types. A row it carries but does not use is
+// builtins and used reserved types, and floatMinor if it uses floating
+// point (usesFloat: a float op, B_FLOAT, a K_FLOAT constant or a TYPEIS of
+// a float type). A row it carries but does not use is
 // written with 0 fields and adds no minor: no VM reads it (NEWSTRUCT and
 // const structs mark their type; TYPEIS and GETFIELD read no row), and
 // the loader accepts any count up to its own.
-func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, err error) {
+func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat bool, err error) {
 	marked := map[uint32]bool{}
 	for t := range b.used {
 		marked[t] = true
@@ -287,6 +335,7 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, err error
 	for pc := 0; pc < len(code); pc++ {
 		op := uint8(code[pc])
 		minor = max(minor, opMinor[op])
+		usesFloat = usesFloat || op >= OpAddf && op <= OpConvf
 		if !OpHasExt(op) {
 			continue
 		}
@@ -294,28 +343,49 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, err error
 		switch op {
 		case OpNewstruct, OpTypeis:
 			mark(code[pc])
+			if op == OpTypeis && (code[pc] == TyFloat32 || code[pc] == TyFloat64) {
+				usesFloat = true
+			}
 		case OpBuiltin:
 			minor = max(minor, builtinMinor[code[pc]])
+			usesFloat = usesFloat || code[pc] == BFloat
 		}
 	}
 	for off := 0; off < len(b.consts); off += int(b.consts[off] >> 6) {
-		if b.consts[off]&63 == KStruct {
+		switch b.consts[off] & 63 {
+		case KStruct:
 			mark(b.consts[off+1])
+		case KFloat:
+			usesFloat = true
 		}
+	}
+	if usesFloat {
+		minor = max(minor, floatMinor)
 	}
 	nRes := 0
 	for t := range marked {
 		nRes = max(nRes, int(t)+1)
 	}
 	if nRes > len(b.reserved) {
-		return nil, 0, fmt.Errorf("image: reserved type %d used but not declared", nRes-1)
+		return nil, 0, false, fmt.Errorf("image: reserved type %d used but not declared", nRes-1)
 	}
 	used = make([]bool, nRes)
 	for t := range marked {
 		used[t] = true
 		minor = max(minor, typeMinor[b.reserved[t].goName])
 	}
-	return used, minor, nil
+	return used, minor, usesFloat, nil
+}
+
+// requireFloat adds FloatRequirement to the image's requirements (once).
+func (b *ImageBuilder) requireFloat() {
+	off := b.AddString(FloatRequirement)
+	for _, r := range b.requires {
+		if r == off {
+			return
+		}
+	}
+	b.requires = append(b.requires, off)
 }
 
 // constMap is the v7 const map: one bit per const word (bit i%32 of word

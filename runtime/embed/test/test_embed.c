@@ -592,9 +592,9 @@ TEST(embed_image_version) {
     Img im = image("echo");
     CHECK_EQ(im.w[1], 15u << 16);                    /* stamped 15.0 */
     gogo_vm *vm = new_vm(&thost, &t, NULL);
-    im.w[1] = 15u << 16 | 2u;
+    im.w[1] = 15u << 16 | 3u;
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EVERSION);
-    CHECK(strstr(t.err, "gogo: unsupported image format 15.2 (this VM runs 15.0 to 15.1)") != NULL);
+    CHECK(strstr(t.err, "gogo: unsupported image format 15.3 (this VM runs 15.0 to 15.2)") != NULL);
     im.w[1] = 14u;
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EVERSION);
     CHECK(strstr(t.err, "image format 0.14 ") != NULL);

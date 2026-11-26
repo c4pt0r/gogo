@@ -17,6 +17,7 @@
  *   K_BYTEARR  [hdr][nbytes][bytes]     raw, not scanned
  *   K_BYTES    [hdr][nbytes][bytes]     raw, not scanned
  *   K_BUF      [hdr][len][array term]
+ *   K_FLOAT    [hdr][bits] / [hdr][lo][hi]  raw, not scanned (float32 / float64)
  * Word 1 is never a term (message copy borrows it, see msg.c), and a
  * kind's term words always run to its last word (msg.c's walk resumes a
  * parent with end = its size). Every object has at least two words, so a forwarded object can hold

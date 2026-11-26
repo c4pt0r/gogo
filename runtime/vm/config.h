@@ -67,6 +67,15 @@
 #error "GOGO_MAX_MODULES must be 1..8"
 #endif
 
+/* Floating point (float32, float64; floats.h): 1 builds the float ops,
+ * K_FLOAT, float println and the gogo/math / strconv float builtins
+ * (runtime/floatlib), and the VM then has the requirement "float"; 0 leaves
+ * them out, and an image that uses floats is refused at load ("image
+ * requires float, which this VM lacks"). ESP: Kconfig GOGO_FLOAT. */
+#ifndef GOGO_FLOAT
+#define GOGO_FLOAT 1
+#endif
+
 /* 1: debug build (the sanitizer test builds, host only). GOGO_ASSERT checks
  * internal invariants and aborts with the failed expression on stderr;
  * va_alloc keeps each block's size in front of it for va_free to check.

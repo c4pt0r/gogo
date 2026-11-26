@@ -26,6 +26,12 @@ func TestPortNames(t *testing.T) {
 	for _, m := range regexp.MustCompile(`(?m)^#define PORT_NAME_\w+\s+"([a-z0-9_]+)"`).FindAllSubmatch(hdr, -1) {
 		listed[string(m[1])] = true
 	}
+	// Requirement names that are not drivers (PORT_REQ_*: "float"), which
+	// the firmware provides too.
+	reqs := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^#define PORT_REQ_\w+\s+"([a-z0-9_]+)"`).FindAllSubmatch(hdr, -1) {
+		reqs[string(m[1])] = true
+	}
 	if len(listed) == 0 {
 		t.Fatal("no PORT_NAME_* in runtime/vm/port_names.h")
 	}
@@ -58,7 +64,7 @@ func TestPortNames(t *testing.T) {
 	}
 	for _, l := range lists {
 		for _, m := range regexp.MustCompile(`"([^"]+)"`).FindAllSubmatch(l[1], -1) {
-			if n := string(m[1]); !strings.HasPrefix(n, "/") { // mounts are not ports
+			if n := string(m[1]); !strings.HasPrefix(n, "/") && !reqs[n] { // mounts and PORT_REQ_* are not ports
 				used[n] = "cmd/gogo/firmware.go"
 			}
 		}
