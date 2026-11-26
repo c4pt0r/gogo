@@ -13,7 +13,7 @@ func (p Point) Moved(dx, dy int) Point { return p.Add(Point{dx, dy}) }
 
 // Reset changes only its own copy of p.
 func (p Point) Reset() {
-	p = Point{}
+	p.X, p.Y = 0, 0
 	println("inside", p.X, p.Y)
 }
 

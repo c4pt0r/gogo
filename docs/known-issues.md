@@ -248,15 +248,14 @@ rebuilt:
 - **Not supported yet (planned).** The compiler rejects maps, pointer
   receivers ("pointer receivers are not supported yet"), pointers, arrays, integer types other than `int`, `int64` and `byte`
   (`uint32` included), floats, package-level `var`s, a `switch` on an
-  `any` or a struct value, type assertions, `panic`, the `error` type,
-  assignment to struct fields and interfaces other than `any` ("interface
+  `any` or a struct value, type assertions, `panic`, the `error` type
+  and interfaces other than `any` ("interface
   types are not supported yet": methods are called on concrete types
   only). `goto` is rejected (labeled `break` and
   `continue` cover its uses). Channels, `go`, `select`, generics, `defer`
   and `recover` are outside the design. "Language completeness" is a
   planned milestone. *Workarounds:* a type switch for assertions and for
-  values in an `any`, slices of structs searched linearly for maps,
-  rebuilding a struct with a literal instead of assigning a field.
+  values in an `any`, slices of structs searched linearly for maps.
 - **No `gogo/fmt` or `gogo/errors`.** Printing is `println`; to build a
   string use `gogo/strconv` and `+`.
 - **A shared package's struct types cannot cross modules.** A program
@@ -286,6 +285,22 @@ rebuilt:
   other than a struct or a basic type (`type L []int`) cannot be declared,
   so it has no methods either. The methods of a type in a hot-loaded module
   are that module's own, like its types.
+- **Every field write allocates.** Structs are immutable in the VM, so
+  `p.X = v` builds a new struct (2 + fields words) for each struct on the
+  path (`a.b.c = v` builds three) and the old one becomes garbage: the
+  same cost as rebuilding it with a literal by hand. On the host a write
+  to a 3-field struct in a tight loop costs about 30 ns more than an `int`
+  increment, and more garbage means more frequent collections. In a hot
+  loop over a large struct, keep the changing values in local variables
+  and write them back once.
+- **Fields of captured variables cannot be written.** `p.X = v` writes
+  `p`, so it is rejected (`captured variable must not be changed by field
+  assignment`) when a closure captures `p`, like `p = q`. Writing a field
+  of a captured slice's element (`s[i].X = v`) is allowed: it changes the
+  shared array, as in Go. *Workaround:* copy first, `q := p`, and write
+  `q`'s fields.
+- **No field assignment through a map index or a pointer.** Maps and
+  pointers are not supported yet; `f().X = v` is not valid Go either.
 - **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
   zero PID.
 - **Some values cannot go into `any`.** `byte`, `rune`, named basic types

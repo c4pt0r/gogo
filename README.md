@@ -244,7 +244,7 @@ Next, in order:
    and commands, and a platform layer that makes new boards cheap.
 2. **Distributed actors:** boards and a server node exchanging actor
    messages directly (first through the server; direct links later).
-3. **Language completeness:** methods, field assignment, interfaces and
+3. **Language completeness:** pointer receivers, interfaces and
    `error`, `panic`, pointers, maps, `fmt`, sized integers, floating
    point, arrays; script arguments.
 4. **More hardware:** a `usb` port for the serial connection, the

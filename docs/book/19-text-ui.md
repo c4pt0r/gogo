@@ -146,8 +146,8 @@ before, and the LCD only redraws the rows that really changed.
 `gogo/tui` predates methods, so each widget is a plain struct and some
 functions. The doc comments in `lib/tui` give the method form each will
 take when the package moves to methods (`tui.ListKey(l, k)` becomes
-`l.Key(k)`, and so on). There is no field assignment either, so a widget's key function
-returns the updated struct.
+`l.Key(k)`, and so on). A widget's key function returns the updated
+struct, which is also how a method with a value receiver would return it.
 
 - **`Label(f, x, y, w, text, align)`** draws text in `w` columns,
   `tui.Left`, `Center` or `Right`. It cuts the text to fit and pads it with
