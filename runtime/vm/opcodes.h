@@ -209,7 +209,7 @@ enum Builtin {
 #define TYPE_POWER_BATTERY 32   /* MilliVolts, Percent, Charging, External int */
 #define TYPE_POWER_READ    33   /* (no fields): ask for a Battery now */
 /* Then the gogo/code struct type (lib/code/code.gg). */
-#define TYPE_CODE_MODULE   34   /* H, Missing int: a module handle (module_builtin) */
+#define TYPE_CODE_MODULE   34   /* H int, missing string: a module handle (module_builtin) */
 /* Then (v10) the port stream types and the gogo/imu and gogo/ir types. */
 #define TYPE_CHUNK       35   /* Seq, TimeMs, Dropped int; Data bytes.Bytes: stream event */
 #define TYPE_OUT         36   /* Data bytes.Bytes: stream command */

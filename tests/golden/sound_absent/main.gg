@@ -1,6 +1,6 @@
 // sound_absent: gogo/sound declares //gogo:optional mic spk, so an image
 // that imports it requires neither: it loads on a firmware without audio
-// (vmargs --caps 0: no capability at all), where Record and Play fail
+// (vmargs --without mic,spk), where Record and Play fail
 // cleanly (port.Open's ok=false for an absent driver) instead of the image
 // being refused. The WAV file is valid, so Play gets as far as the open.
 package main

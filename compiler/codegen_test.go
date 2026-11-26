@@ -2091,7 +2091,7 @@ func main() {
 	p, e2 := code.Spawn(m, "Main", 1)
 	p, e2 = code.SpawnLink(m, "Main", "s")
 	p, e2 = code.SpawnOpt(m, "Main", 0, actor.Options{MaxMemory: 4096})
-	println(p, e, e2, code.Hold(m), code.Missing(m), code.MemUsed(), m.H, code.CapKbd)
+	println(p, e, e2, code.Hold(m), code.Missing(m), code.MemUsed(), m.H, code.BadVersion)
 	code.Release(m)
 	var a any = m
 	switch x := a.(type) {

@@ -108,30 +108,20 @@ typedef struct gogo_host {
     void     (*code_free)(void *ctx, void *p, size_t n);
 } gogo_host;
 
-/* Capability bits (gogo_config.caps; an image's requires word). A VM gets
- * the granted bits; an image that needs one it lacks is refused
- * (GOGO_ECAPS, the reason on stream 2). Basic I/O (print, actors, timers)
- * needs none. This version provides no capability yet: grant none. */
-#define GOGO_CAP_NET    1u
-#define GOGO_CAP_KBD    2u
-#define GOGO_CAP_POWER  4u
-#define GOGO_CAP_SD     8u
-#define GOGO_CAP_IMU    16u
-#define GOGO_CAP_IR_TX  32u
-#define GOGO_CAP_IR_RX  64u
-#define GOGO_CAP_MIC    128u
-#define GOGO_CAP_SPK    256u
-#define GOGO_CAP_TLS    512u
-
 /* A NULL config is the all-zero one. */
 typedef struct gogo_config {
-    uint32_t caps;            /* granted GOGO_CAP_* bits; a bit this build cannot give makes gogo_new fail */
+    /* The requirement names the VM may serve (NULL-terminated; strings
+     * and array must stay valid while the VM exists), or NULL: all it has.
+     * A name is a port driver ("ui", a host port) or a mount prefix
+     * ("/flash"). Whatever is not listed is absent for this VM: an image
+     * requiring it is refused (GOGO_EREQUIRES), port.Open of it fails, and
+     * /flash is not mounted. */
+    const char *const *grant;
     size_t   mem_limit;       /* bytes the whole VM may allocate, over every actor's own limit; 0 = none.
                                * Queued posts are outside it (host memory, at most
                                * GOGO_POST_MAX of them) until delivered. */
     uint16_t max_actors;      /* live actors at once; 0 = the build's default (GOGO_TABLE_CAP) */
-    /* An existing host directory served as /flash (no capability bit:
-     * every board has /flash), or NULL: no storage, every gogo/fs call is
+    /* An existing host directory served as /flash, or NULL: no storage, every gogo/fs call is
      * NotMounted. The program is confined to it: paths are walked from the
      * directory without following symlinks (a symlink, FIFO or device is
      * BadPath, and so is opening a file with other hard links for
@@ -164,7 +154,8 @@ enum {
     GOGO_EINVAL = -1,     /* a bad argument */
     GOGO_ENOMEM = -2,     /* out of memory (or over mem_limit) */
     GOGO_EIMAGE = -3,     /* not a valid image of this VM's format */
-    GOGO_ECAPS = -4,      /* the image needs a capability the VM lacks */
+    GOGO_EREQUIRES = -4,  /* the image requires a driver or mount the VM lacks (named on stream 2) */
+    GOGO_ECAPS = GOGO_EREQUIRES,   /* the old name, for one release */
     GOGO_ESTATE = -5,     /* out of order: no image loaded, loaded twice, not started */
     GOGO_ESTARTED = -6,   /* gogo_start again: a VM runs once */
     GOGO_ESTART = -7,     /* main could not start: no main export, out of memory */
@@ -192,14 +183,16 @@ enum {
 /* A new VM on host h (whose hooks get host_ctx). h and host_ctx must stay
  * valid until the VM is freed and released. NULL if the table is
  * incomplete (write, alloc, free and now_ms are required; wake with wait;
- * the unix_time and code pairs both or neither), cfg is invalid (caps this
- * build cannot give, a negative fs_quota, an fs_root that is not a
- * directory) or memory runs out. */
+ * the unix_time and code pairs both or neither), cfg is invalid (a
+ * negative fs_quota, an fs_root that is not a directory) or memory runs
+ * out. */
 GOGO_API gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg);
 
 /* Loads the image (len bytes, little-endian words) as the VM's program.
  * Once, before gogo_start. GOGO_EIMAGE, GOGO_EVERSION (both formats are
- * named on stream 2), GOGO_ECAPS (the reason is on stream 2), GOGO_ENOMEM, GOGO_EINVAL (borrowed and unaligned),
+ * named on stream 2), GOGO_EREQUIRES (the image requires a port driver or
+ * mount this VM lacks: a host port must be registered before the load;
+ * the missing name is on stream 2), GOGO_ENOMEM, GOGO_EINVAL (borrowed and unaligned),
  * GOGO_ESTATE (already loaded). After a failure the VM may load again. */
 GOGO_API int gogo_load(gogo_vm *vm, const void *image, size_t len, int flags);
 
@@ -266,9 +259,10 @@ GOGO_API int gogo_join(gogo_vm *vm);
  * events reach its owner as port.Post{Kind, Data} (gogo_port_emit,
  * gogo_port_post). Ports keep their usual rules: the owner's exit,
  * port.Close or actor.Kill closes one (the driver's close runs once),
- * port.Handoff gives it to another actor, a stale PID is ignored. Host
- * ports need no capability bit (they work with caps 0): what one may do is
- * the host's own business. While posts are open (gogo_close_posts), an
+ * port.Handoff gives it to another actor, a stale PID is ignored. What a
+ * host port may do is the host's own business. An image that opens a host
+ * port by a constant name requires it: register the port before
+ * gogo_load, or the load is refused (GOGO_EREQUIRES). While posts are open (gogo_close_posts), an
  * open host port keeps the VM alive, as it can still get events; after
  * the close it no longer does (a host that only emits between steps
  * closes posts when it is done with its ports). port.Post carries no
@@ -303,10 +297,13 @@ typedef struct gogo_port_driver {
 #define GOGO_PORT_NAME_MAX 31u
 
 /* Registers a host port driver as name (NUL-terminated; both are copied),
- * its callbacks getting ctx. Before gogo_start. 0, or GOGO_EEXIST (a
+ * its callbacks getting ctx. Before gogo_load (a registered port
+ * satisfies an image's requirement of its name). 0, or GOGO_EEXIST (a
  * port of this name exists, or it names a board driver: "gpio", "tcp",
  * ...), GOGO_EFULL (GOGO_MAX_HOST_PORTS already), GOGO_E2BIG (the name),
- * GOGO_EINVAL (no name or driver), GOGO_ESTARTED, GOGO_EBUSY. */
+ * GOGO_EINVAL (no name or driver), GOGO_ESTATE (an image is loaded),
+ * GOGO_EBUSY. A port registered under a name the config's grant leaves
+ * out is accepted but never visible to the program. */
 GOGO_API int gogo_register_port(gogo_vm *vm, const char *name, const gogo_port_driver *drv, void *ctx);
 
 /* VM thread (a callback, or between steps): sends the port's owner

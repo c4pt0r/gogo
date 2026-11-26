@@ -292,14 +292,15 @@ func (l *loader) loadLib(path string, stack []string) error {
 // directives) naming port drivers the package opens only when a call asks
 // for them at run time, and whose absence (port.Open's ok=false) it
 // reports as an ordinary failure of that call. Requires then adds no
-// capability for that package's own constant port.Open of those drivers;
-// importers, package main and other libraries are unaffected.
+// requirement for that package's own constant port.Open of those drivers;
+// importers, package main and other libraries are unaffected. Any driver
+// name is accepted (a board's or a host port's).
 const directivePrefix = "//gogo:"
 
 // directives parses the //gogo: directives of one package's files and
 // returns the drivers named by //gogo:optional. lib is false for package
 // main, where the directive is an error: a main program's own port.Open
-// calls always count. An unknown directive or driver name is an error.
+// calls always count. An unknown directive or an empty list is an error.
 func (l *loader) directives(files []*ast.File, lib bool) (map[string]bool, error) {
 	var optional map[string]bool
 	for _, f := range files {
@@ -322,9 +323,6 @@ func (l *loader) directives(files []*ast.File, lib bool) (map[string]bool, error
 					return nil, fmt.Errorf("%s: gogo: //gogo:optional names no driver", pos)
 				}
 				for _, d := range fields {
-					if driverCaps[d] == 0 {
-						return nil, fmt.Errorf("%s: gogo: //gogo:optional: unknown driver %q (want one of %s)", pos, d, strings.Join(capDriverNames(), ", "))
-					}
 					if optional == nil {
 						optional = map[string]bool{}
 					}

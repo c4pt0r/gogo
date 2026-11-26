@@ -1,6 +1,6 @@
 // Load errors, checked in order: BadImage (BadVersion), Unsupported, NoMemory. Runs
-// with code.mem=2K (one hello module fits, two do not) and no firmware
-// capabilities (vmargs --caps 0); a failed Load never counts anything.
+// with code.mem=2K (one hello module fits, two do not) on a board without
+// the kbd driver (vmargs --without kbd); a failed Load never counts anything.
 package main
 
 import (
@@ -19,7 +19,7 @@ func read(path string) bytes.Bytes {
 
 func try(what string, b bytes.Bytes, used int) {
 	m, e := code.Load(b)
-	println(what, int(e), m.H == 0 && m.Missing == 0, code.MemUsed() == used)
+	println(what, int(e), m.H == 0 && code.Missing(m) == "", code.MemUsed() == used)
 }
 
 func main() {
@@ -52,10 +52,10 @@ func main() {
 	buf.WriteBytes(b.Slice(0, n-4))
 	try("unaligned truncated", buf.Freeze().Slice(1, n-3), used)
 
-	// A valid image that needs kbd: Unsupported, before the cap.
+	// A valid image that requires kbd: Unsupported, before the cap.
 	k := read("/flash/kbdmod.gmod")
 	m, e := code.Load(k)
-	println("kbd", int(e), code.Missing(m) == code.CapKbd, m.Missing == code.CapKbd, m.H, code.MemUsed() == used)
+	println("kbd", int(e), code.Missing(m) == "kbd", code.Missing(first) == "", m.H, code.MemUsed() == used)
 	_, e = code.Spawn(m, "Main", 0)
 	println("spawn unsupported", int(e), int(code.Hold(m)))
 

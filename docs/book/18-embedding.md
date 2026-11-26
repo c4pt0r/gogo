@@ -366,7 +366,7 @@ static const gogo_port_driver echo_driver = { echo_open, echo_command, NULL };
 and registers it before the program starts:
 
 ```c
-    if (rc == GOGO_OK) rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before start */
+    if (rc == GOGO_OK) rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before load */
 ```
 
 The gogo side ([`examples/hostecho`](../../examples/hostecho/main.gg)) opens

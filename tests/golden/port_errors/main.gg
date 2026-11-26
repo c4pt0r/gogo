@@ -9,8 +9,12 @@ import (
 // Same fields as port.GPIO but not the GPIO type.
 type NotGPIO struct{ Pin, Mode, Edge, DebounceMs int }
 
+// An absent driver, named by a call: a constant name would make the
+// image require it.
+func nosuch() string { return "nosuch" }
+
 func main() {
-	_, ok := port.Open("nosuch", port.GPIO{Pin: 11, Mode: port.Input})
+	_, ok := port.Open(nosuch(), port.GPIO{Pin: 11, Mode: port.Input})
 	println("unknown driver", ok)
 	_, ok = port.Open("gpio", port.GPIO{Pin: 64, Mode: port.Input})
 	println("pin 64", ok)

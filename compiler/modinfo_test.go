@@ -7,28 +7,38 @@ import (
 	"testing/fstest"
 )
 
-// imgTrailer decodes the v9 trailer of an image: requires and the export
-// names (name -> function index).
-func imgTrailer(t *testing.T, raw []byte) (uint32, map[string]uint32) {
+// imgTrailer decodes the trailer of an image: the requirement names and
+// the export names (name -> function index).
+func imgTrailer(t *testing.T, raw []byte) ([]string, map[string]uint32) {
 	t.Helper()
 	w := words(raw)
 	nf, nt, nc, ncode := w[2], w[3], w[4], w[5]
 	consts := w[8+3*nf+2*nt:][:nc]
-	tr := w[8+3*nf+2*nt+nc+ncode+(nc+31)/32:]
-	if len(tr) < 2 || uint32(len(tr)) != 2+2*tr[1] {
-		t.Fatalf("trailer is %d words, n_exports %d", len(tr), tr[1])
-	}
-	out := map[string]uint32{}
-	for i := uint32(0); i < tr[1]; i++ {
-		off := tr[2+2*i]
+	str := func(off uint32) string {
 		n := consts[off+1]
 		var b []byte
 		for k := uint32(0); k < n; k++ {
 			b = append(b, byte(consts[off+2+k/4]>>(8*(k%4))))
 		}
-		out[string(b)] = tr[3+2*i]
+		return string(b)
 	}
-	return tr[0], out
+	tr := w[8+3*nf+2*nt+nc+ncode+(nc+31)/32:]
+	if len(tr) < 1 || uint32(len(tr)) < 2+tr[0] {
+		t.Fatalf("trailer is %d words", len(tr))
+	}
+	var req []string
+	for _, off := range tr[1 : 1+tr[0]] {
+		req = append(req, str(off))
+	}
+	tr = tr[1+tr[0]:]
+	if uint32(len(tr)) != 1+2*tr[0] {
+		t.Fatalf("exports are %d words, n_exports %d", len(tr), tr[0])
+	}
+	out := map[string]uint32{}
+	for i := uint32(0); i < tr[0]; i++ {
+		out[str(tr[1+2*i])] = tr[2+2*i]
+	}
+	return req, out
 }
 
 func exportNames(m map[string]uint32) []string {
@@ -74,37 +84,33 @@ func init0() { actor.Spawn(Tick) }
 func TestRequiresInference(t *testing.T) {
 	tests := []struct {
 		name, src string
-		bits      uint32
+		want      string // the names, space-separated
 		warnings  int
 	}{
-		{"net import", "package main\nimport \"gogo/net\"\nfunc main() { _ = net.Up{} }\n", CapNet, 0},
-		{"kbd driver", "package main\nimport (\n\"gogo/port\"\n\"gogo/kbd\"\n)\nfunc main() { _, _ = port.Open(\"kbd\", kbd.Config{}) }\n", CapKbd, 0},
-		{"kbd driver no import", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"kbd\", 1) }\n", CapKbd, 0},
-		{"power driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"power\", 1) }\n", CapPower, 0},
-		{"imu driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"imu\", 1) }\n", CapIMU, 0},
-		{"ir_tx driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"ir_tx\", 1) }\n", CapIRTX, 0},
-		{"ir_rx driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"ir_rx\", 1) }\n", CapIRRX, 0},
-		{"mic driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"mic\", 1) }\n", CapMic, 0},
-		{"spk driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"spk\", 1) }\n", CapSpk, 0},
-		{"tls driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"tls\", 1) }\n", CapTLS, 0},
+		// An import alone requires nothing: only the ports it opens.
+		{"net import", "package main\nimport \"gogo/net\"\nfunc main() { _ = net.Up{} }\n", "", 0},
+		{"kbd import", "package main\nimport \"gogo/kbd\"\nfunc main() { _ = kbd.Config{} }\n", "", 0},
+		{"kbd driver", "package main\nimport (\n\"gogo/port\"\n\"gogo/kbd\"\n)\nfunc main() { _, _ = port.Open(\"kbd\", kbd.Config{}) }\n", "kbd", 0},
+		{"kbd driver no import", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"kbd\", 1) }\n", "kbd", 0},
+		{"power driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"power\", 1) }\n", "power", 0},
+		{"tls driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"tls\", 1) }\n", "tls", 0},
+		// Any name: a host port's, or one no board has (the load then fails).
+		{"host port", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"ui\", port.Host{}) }\n", "ui", 0},
+		{"two and a repeat", "package main\nimport \"gogo/port\"\nfunc main() {\n\t_, _ = port.Open(\"spk\", 1)\n\t_, _ = port.Open(\"gpio\", 1)\n\t_, _ = port.Open(\"spk\", 2)\n}\n", "gpio spk", 0},
 		// gogo/http opens "tls" only for an https URL, and fails that
 		// request cleanly without it: it declares //gogo:optional tls, so
 		// importing it does not require tls; main's own open still does.
-		{"http import", "package main\nimport \"gogo/http\"\nfunc main() { _, _ = http.Get(\"http://x/\", 0) }\n", CapNet, 0},
-		{"https get", "package main\nimport \"gogo/http\"\nfunc main() { _, _ = http.Get(\"https://x/\", 0) }\n", CapNet, 0},
-		{"http and own tls", "package main\nimport (\n\"gogo/http\"\n\"gogo/port\"\n)\nfunc main() {\n\t_, _ = http.Get(\"https://x/\", 0)\n\t_, _ = port.Open(\"tls\", 1)\n}\n", CapNet | CapTLS, 0},
+		{"http import", "package main\nimport \"gogo/http\"\nfunc main() { _, _ = http.Get(\"http://x/\", 0) }\n", "tcp tcp_listen udp", 0},
+		{"http and own tls", "package main\nimport (\n\"gogo/http\"\n\"gogo/port\"\n)\nfunc main() {\n\t_, _ = http.Get(\"https://x/\", 0)\n\t_, _ = port.Open(\"tls\", 1)\n}\n", "tcp tcp_listen tls udp", 0},
 		// gogo/sound declares //gogo:optional mic spk likewise.
-		{"sound import", "package main\nimport \"gogo/sound\"\nfunc main() { _, _ = sound.Play(\"/flash/a.wav\") }\n", 0, 0},
-		{"sys import alone", "package main\nimport \"gogo/sys\"\nfunc main() { _ = sys.Time() }\n", 0, 0},
-		{"audio import alone", "package main\nimport \"gogo/audio\"\nfunc main() { _ = audio.Mic{} }\n", 0, 0},
-		{"imu import alone", "package main\nimport \"gogo/imu\"\nfunc main() { _ = imu.Config{} }\n", 0, 0},
-		{"udp driver", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"udp\", 1) }\n", CapNet, 0},
-		{"sd path", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/sd/a\", 10) }\n", CapSD, 0},
-		{"sd exact", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/sd\", 10) }\n", CapSD, 0},
-		{"sdx is not sd", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/sdx/a\", 10) }\n", 0, 0},
-		{"flash path", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/flash/a\", 10) }\n", 0, 0},
-		{"variable driver", "package main\nimport \"gogo/port\"\nfunc main() {\n\td := \"x\"\n\tif len(d) > 5 { d = \"y\" }\n\t_, _ = port.Open(d, 1)\n}\n", CapAnyPort, 1},
-		{"plain gpio", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"gpio\", port.GPIO{Pin: 1}) }\n", 0, 0},
+		{"sound import", "package main\nimport \"gogo/sound\"\nfunc main() { _, _ = sound.Play(\"/flash/a.wav\") }\n", "", 0},
+		{"sys import alone", "package main\nimport \"gogo/sys\"\nfunc main() { _ = sys.Time() }\n", "", 0},
+		{"sd path", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/sd/a\", 10) }\n", "/sd", 0},
+		{"sd exact", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/sd\", 10) }\n", "/sd", 0},
+		{"sdx is not sd", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/sdx/a\", 10) }\n", "", 0},
+		{"flash path", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/flash/a\", 10) }\n", "", 0},
+		{"variable driver", "package main\nimport \"gogo/port\"\nfunc main() {\n\td := \"x\"\n\tif len(d) > 5 { d = \"y\" }\n\t_, _ = port.Open(d, 1)\n}\n", "", 1},
+		{"plain gpio", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"gpio\", port.GPIO{Pin: 1}) }\n", "gpio", 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -112,12 +118,12 @@ func TestRequiresInference(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			bits, warns := Requires(prog)
-			if bits != tc.bits || len(warns) != tc.warnings {
-				t.Errorf("Requires = %#x, %v; want %#x, %d warnings", bits, warns, tc.bits, tc.warnings)
+			names, warns := Requires(prog)
+			if strings.Join(names, " ") != tc.want || len(warns) != tc.warnings {
+				t.Errorf("Requires = %q, %v; want %q, %d warnings", names, warns, tc.want, tc.warnings)
 			}
 			for _, w := range warns {
-				if w != "port.Open with a non-constant driver name: requires any port" {
+				if w != anyPortWarning {
 					t.Errorf("warning %q", w)
 				}
 			}
@@ -125,33 +131,31 @@ func TestRequiresInference(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Compile: %v", err)
 			}
-			if got, _ := imgTrailer(t, img); got != tc.bits {
-				t.Errorf("image requires %#x, want %#x", got, tc.bits)
+			if got, _ := imgTrailer(t, img); strings.Join(got, " ") != tc.want {
+				t.Errorf("image requires %q, want %q", got, tc.want)
+			}
+			if got, err := ImageRequires(img); err != nil || strings.Join(got, " ") != tc.want {
+				t.Errorf("ImageRequires = %q, %v; want %q", got, err, tc.want)
 			}
 		})
 	}
 }
 
-func TestCapConstants(t *testing.T) {
-	if CapNet != 1 || CapKbd != 2 || CapPower != 4 || CapSD != 8 || CapIMU != 16 || CapIRTX != 32 || CapIRRX != 64 || CapMic != 128 || CapSpk != 256 || CapTLS != 512 || CapAnyPort != 1<<31 {
-		t.Error("capability bits changed")
-	}
-}
-
 // TestOptionalDirective covers //gogo:optional: a library's own constant
-// port.Open of a named driver adds no capability; the same call in package
-// main or in another library (an importer included) still does.
+// port.Open of a named driver (any name) adds no requirement; the same
+// call in package main or in another library (an importer included) still
+// does.
 func TestOptionalDirective(t *testing.T) {
-	const opt = "// Package a opens mic only when asked.\n//\n//gogo:optional mic spk\npackage a\nimport \"gogo/port\"\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok }\nfunc Play() bool { _, ok := port.Open(\"spk\", 1); return ok }\nfunc IR() bool { _, ok := port.Open(\"ir_tx\", 1); return ok }\n"
+	const opt = "// Package a opens mic only when asked.\n//\n//gogo:optional mic spk ui\npackage a\nimport \"gogo/port\"\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok }\nfunc Play() bool { _, ok := port.Open(\"spk\", 1); return ok }\nfunc UI() bool { _, ok := port.Open(\"ui\", port.Host{}); return ok }\nfunc IR() bool { _, ok := port.Open(\"ir_tx\", 1); return ok }\n"
 	const user = "package b\nimport (\n\"gogo/a\"\n\"gogo/port\"\n)\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok && a.Rec() }\n"
 	libs := fakeLibs(t, map[string]string{"a/a.gg": opt, "b/b.gg": user})
 	tests := []struct {
 		name, src string
-		bits      uint32
+		want      string
 	}{
-		{"optional drivers", "package main\nimport \"gogo/a\"\nfunc main() { println(a.Rec(), a.Play()) }\n", 0},
-		{"main opens it itself", "package main\nimport (\n\"gogo/a\"\n\"gogo/port\"\n)\nfunc main() {\n\tprintln(a.Rec())\n\t_, _ = port.Open(\"mic\", 1)\n}\n", CapMic},
-		{"importer opens it itself", "package main\nimport \"gogo/b\"\nfunc main() { println(b.Rec()) }\n", CapMic},
+		{"optional drivers", "package main\nimport \"gogo/a\"\nfunc main() { println(a.Rec(), a.Play(), a.UI()) }\n", ""},
+		{"main opens it itself", "package main\nimport (\n\"gogo/a\"\n\"gogo/port\"\n)\nfunc main() {\n\tprintln(a.Rec())\n\t_, _ = port.Open(\"mic\", 1)\n}\n", "mic"},
+		{"importer opens it itself", "package main\nimport \"gogo/b\"\nfunc main() { println(b.Rec()) }\n", "mic"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,9 +165,9 @@ func TestOptionalDirective(t *testing.T) {
 			}
 			// a.IR's ir_tx, not in the directive, always counts (Requires
 			// reads every call of a compiled package, reachable or not).
-			want := tc.bits | CapIRTX
-			if bits, _ := Requires(prog); bits != want {
-				t.Errorf("Requires = %#x, want %#x", bits, want)
+			want := strings.TrimSpace("ir_tx " + tc.want)
+			if names, _ := Requires(prog); strings.Join(names, " ") != want {
+				t.Errorf("Requires = %q, want %q", names, want)
 			}
 		})
 	}
@@ -175,8 +179,6 @@ func TestOptionalDirectiveErrors(t *testing.T) {
 		return fakeLibs(t, map[string]string{"a/a.gg": "package a\n\n" + directive + "\n\nfunc F() {}\n"})
 	}
 	tests := []struct{ name, src, directive, want string }{
-		{"unknown driver", useLib, "//gogo:optional tls gpio", `a/a.gg:3:1: gogo: //gogo:optional: unknown driver "gpio" (want one of imu, ir_rx, ir_tx, kbd, mic, netif, power, spk, tcp, tcp_listen, tls, udp)`},
-		{"misspelt driver", useLib, "//gogo:optional tsl", `unknown driver "tsl"`},
 		{"no driver", useLib, "//gogo:optional", `a/a.gg:3:1: gogo: //gogo:optional names no driver`},
 		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`},
 		{"glued name", useLib, "//gogo:optionaltls", `unknown directive //gogo:optionaltls`},

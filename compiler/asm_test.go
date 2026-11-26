@@ -642,26 +642,15 @@ func TestFsMatchC(t *testing.T) {
 }
 
 // TestCodeMatchC cross-checks gogo/code with C: code.Err with CODE_* and
-// the B_CODE op codes with CODE_OP_* (runtime/vm/module.h), code.Cap* and the
-// compiler's Cap* with CAP_* (runtime/vm/host.h).
+// the B_CODE op codes with CODE_OP_* (runtime/vm/module.h).
 func TestCodeMatchC(t *testing.T) {
 	c := map[string]int64{}
-	for _, f := range []string{"../runtime/vm/module.h", "../runtime/vm/host.h"} {
-		src, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range regexp.MustCompile(`\b(CODE_\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
-			c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
-		}
-		for _, m := range regexp.MustCompile(`#define\s+(CAP_\w+)\s+\(?(\d+)u(?:\s*<<\s*(\d+))?`).FindAllStringSubmatch(string(src), -1) {
-			v, _ := strconv.ParseInt(m[2], 10, 64)
-			if m[3] != "" {
-				sh, _ := strconv.Atoi(m[3])
-				v <<= sh
-			}
-			c[m[1]] = v
-		}
+	src, err := os.ReadFile("../runtime/vm/module.h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range regexp.MustCompile(`\b(CODE_\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
+		c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
 	}
 	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
 	pkg, err := l.Import(CodePath)
@@ -670,8 +659,7 @@ func TestCodeMatchC(t *testing.T) {
 	}
 	stub := map[string]string{"OK": "CODE_OK", "BadImage": "CODE_BAD_IMAGE", "Unsupported": "CODE_UNSUPPORTED",
 		"NoMemory": "CODE_NO_MEMORY", "NotFound": "CODE_NOT_FOUND", "BadArg": "CODE_BAD_ARG", "TooMany": "CODE_TOO_MANY",
-		"BadVersion": "CODE_BAD_VERSION",
-		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapIMU": "CAP_IMU", "CapIRTX": "CAP_IR_TX", "CapIRRX": "CAP_IR_RX", "CapMic": "CAP_MIC", "CapSpk": "CAP_SPK", "CapTLS": "CAP_TLS", "CapAnyPort": "CAP_ANYPORT"}
+		"BadVersion": "CODE_BAD_VERSION"}
 	for name, cname := range stub {
 		k, ok := pkg.Scope().Lookup(name).(*types.Const)
 		if !ok {
@@ -681,11 +669,6 @@ func TestCodeMatchC(t *testing.T) {
 		v, _ := constant.Int64Val(k.Val())
 		if cv, ok := c[cname]; !ok || cv != v {
 			t.Errorf("code.%s = %d, %s = %d (present=%v)", name, v, cname, cv, ok)
-		}
-	}
-	for name, v := range map[string]uint32{"CAP_NET": CapNet, "CAP_KBD": CapKbd, "CAP_POWER": CapPower, "CAP_SD": CapSD, "CAP_IMU": CapIMU, "CAP_IR_TX": CapIRTX, "CAP_IR_RX": CapIRRX, "CAP_MIC": CapMic, "CAP_SPK": CapSpk, "CAP_TLS": CapTLS, "CAP_ANYPORT": CapAnyPort} {
-		if c[name] != int64(v) {
-			t.Errorf("compiler %s = %d, C %d", name, v, c[name])
 		}
 	}
 	nErr := 0

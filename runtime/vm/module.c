@@ -58,9 +58,19 @@ static void drop(Vm *vm, uint32_t s, uint16_t who) {
     if (!e->live && !held) unload(vm, s);
 }
 
-/* The capability check of every load (boot included). */
-static bool caps_ok(const Vm *vm, const Image *img, uint32_t *missing) {
-    return vm_caps_ok(img->exports[-2], vm->caps, missing) != 0;   /* the word before n_exports */
+/* The first requirement of img the Vm lacks (image.h): a name that is
+ * neither a driver in its driver list nor a mount prefix in its board's
+ * mounts. Its name's const offset, or UINT32_MAX if nothing is missing.
+ * The check of every load, the boot image's included. */
+static uint32_t missing_req(const Vm *vm, const Image *img) {
+    const uint32_t *r = image_requires(img);
+    for (uint32_t i = 1; i <= r[0]; i++) {
+        const uint32_t *s = img->consts + r[i];
+        const char *const *m = vm->board->mounts;
+        while (m && *m && (strlen(*m) != s[1] || memcmp(*m, s + 2, s[1]))) m++;
+        if (!(m && *m) && !port_find_driver(vm, (const uint8_t *)(s + 2), s[1])) return r[i];
+    }
+    return UINT32_MAX;
 }
 
 int module_install_static(Vm *vm, const Image *img) {
@@ -72,10 +82,14 @@ int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words) {
     Image img;
     int rc = image_load(&img, words, n_words);
     if (rc != IMG_OK) return rc;
-    uint32_t missing;
-    if (!caps_ok(vm, &img, &missing)) {
-        char msg[VM_CAPS_MSG_MAX];
-        vm_write_err(vm, msg, vm_caps_explain(msg, img.exports[-2], missing));
+    uint32_t off = missing_req(vm, &img);
+    if (off != UINT32_MAX) {
+        /* "gogo: image requires <name>, which this VM lacks" */
+        static const char a[] = "gogo: image requires ", b[] = ", which this VM lacks\n";
+        uint32_t n = img.consts[off + 1] < MOD_MISSING_MAX ? img.consts[off + 1] : MOD_MISSING_MAX;
+        vm_write_err(vm, a, sizeof a - 1u);
+        vm_write_err(vm, (const char *)&img.consts[off + 2], n);
+        vm_write_err(vm, b, sizeof b - 1u);
         return CODE_UNSUPPORTED;
     }
     return module_install_static(vm, &img);
@@ -125,7 +139,7 @@ static uint32_t *copy_code(Vm *vm, const uint8_t *src, uint32_t len, bool vm_too
     return d;
 }
 
-int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle) {
+int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle, char *missing) {
     const uint8_t *data;
     uint32_t len;
     if (!caller || !bytes_view(vm, caller, bytes, &data, &len)) return CODE_BAD_ARG;
@@ -138,14 +152,16 @@ int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle) {
     /* Unaligned: validate an aligned copy, made where the code will live. */
     if (((uintptr_t)data & 3u) && !(words = copy_code(vm, data, len, true, &flags))) return CODE_NO_MEMORY;
     Image img;
-    uint32_t missing, s = vm->mod_next, tries = 0;
+    uint32_t off, s = vm->mod_next, tries = 0;
     int rc = CODE_BAD_IMAGE;
     if (len & 3u) goto fail;
     int ir = image_load(&img, words, len / 4u);
     if (ir == IMG_ERR_VERSION) rc = CODE_BAD_VERSION;
     if (ir != IMG_OK || image_words(&img) != len / 4u) goto fail;   /* exactly one image */
-    if (!caps_ok(vm, &img, &missing)) {
-        *handle = missing;
+    if ((off = missing_req(vm, &img)) != UINT32_MAX) {
+        uint32_t n = img.consts[off + 1] < MOD_MISSING_MAX ? img.consts[off + 1] : MOD_MISSING_MAX;
+        if (missing) memcpy(missing, &img.consts[off + 2], n);
+        *handle = n;
         rc = CODE_UNSUPPORTED;
         goto fail;
     }
@@ -242,7 +258,7 @@ void module_release(Vm *vm, Actor *a, uint32_t handle) {
 /* Arguments after the op, per CODE_OP_*. */
 static const uint8_t code_nargs[CODE_OP_MEM_USED + 1] = { 1, 3, 3, 4, 1, 1, 1, 0 };
 
-/* The struct of a code.Module{H, Missing}, or NULL if t is none. */
+/* The struct of a code.Module{H, missing}, or NULL if t is none. */
 static const uint32_t *module_obj(const Vm *vm, const Actor *a, term t) {
     const uint32_t *o = obj_of(vm, a, t);
     return o && o[0] == hdr_make(4, K_STRUCT) && o[1] == TYPE_CODE_MODULE ? o : NULL;
@@ -259,31 +275,32 @@ static uint32_t handle_of(const Vm *vm, const Actor *a, term t) {
 
 uint32_t module_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs) {
     term *R = (term *)a->mem + a->fp;
-    int32_t op, x;
+    int32_t op;
     if (rc == 0 || !int_val(vm, a, R[rb], &op) || op < 0 || op > CODE_OP_MEM_USED ||
         rc != 1u + code_nargs[op] || (op <= CODE_OP_SPAWN_OPT && ra + 1u >= nregs))
         return R_BAD_CODE;
     const uint32_t *m = NULL;
-    if (op != CODE_OP_LOAD && op != CODE_OP_MEM_USED &&
-        (!(m = module_obj(vm, a, R[rb + 1])) || !int_val(vm, a, m[3], &x))) return R_BAD_CODE;
+    if (op != CODE_OP_LOAD && op != CODE_OP_MEM_USED && !(m = module_obj(vm, a, R[rb + 1]))) return R_BAD_CODE;
     uint32_t handle = m ? handle_of(vm, a, m[2]) : 0u;
     term res = T_NIL;
     int err = CODE_OK;
     switch (op) {
     case CODE_OP_LOAD: {
-        /* Module{H, Missing} and a box for Missing, before the Bytes is
-         * read (may GC); the box is garbage unless Missing needs it. */
-        uint32_t o = heap_alloc(vm, a, 6, NULL, 0);
+        /* Module{H, missing} and a string for the missing name, before
+         * the Bytes is read (may GC); the string is garbage unless the
+         * load is Unsupported. */
+        char miss[MOD_MISSING_MAX];
+        uint32_t o = heap_alloc(vm, a, 6u + MOD_MISSING_MAX / 4u, NULL, 0);
         if (o == UINT32_MAX) return R_OUT_OF_MEMORY;
         R = (term *)a->mem + a->fp;
-        err = module_load(vm, a, R[rb + 1], &handle);
-        uint32_t miss = err == CODE_UNSUPPORTED ? handle : 0u;   /* < 2^31: CAP_ANYPORT is never missing */
+        err = module_load(vm, a, R[rb + 1], &handle, miss);
         a->mem[o] = hdr_make(4, K_STRUCT);
         a->mem[o + 1] = TYPE_CODE_MODULE;
         a->mem[o + 2] = term_from_int(err == CODE_OK ? (int32_t)handle + 1 : 0);
-        a->mem[o + 4] = hdr_make(2, K_INT);
-        a->mem[o + 5] = miss;
-        a->mem[o + 3] = miss <= (uint32_t)TERM_INT_MAX ? term_from_int((int32_t)miss) : term_from_ref(o + 4);
+        a->mem[o + 3] = err == CODE_UNSUPPORTED ? term_from_ref(o + 4) : T_EMPTYSTR;
+        a->mem[o + 4] = hdr_make(2u + MOD_MISSING_MAX / 4u, K_STRING);
+        a->mem[o + 5] = err == CODE_UNSUPPORTED ? handle : 0u;
+        if (err == CODE_UNSUPPORTED) memcpy(&a->mem[o + 6], miss, handle);
         res = term_from_ref(o);
         break;
     }
@@ -305,17 +322,8 @@ uint32_t module_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc,
     case CODE_OP_RELEASE:
         module_release(vm, a, handle);
         break;
-    case CODE_OP_MISSING:              /* the field's value (boxed again if it must be) */
-        if (term_int_fits(x)) {
-            res = term_from_int(x);
-        } else {
-            uint32_t o = heap_alloc(vm, a, 2, NULL, 0);   /* may GC: m is not used after */
-            if (o == UINT32_MAX) return R_OUT_OF_MEMORY;
-            R = (term *)a->mem + a->fp;
-            a->mem[o] = hdr_make(2, K_INT);
-            a->mem[o + 1] = (uint32_t)x;
-            res = term_from_ref(o);
-        }
+    case CODE_OP_MISSING:              /* the missing field as it is (a string) */
+        res = m[3];
         break;
     default: /* CODE_OP_MEM_USED (a small int: clamped, never boxed) */
         res = term_from_int(vm->mod_mem > (uint32_t)TERM_INT_MAX ? TERM_INT_MAX : (int32_t)vm->mod_mem);

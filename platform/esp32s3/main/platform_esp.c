@@ -405,6 +405,9 @@ const gogo_host esp_host = {
 
 /* ---- the board table ---- */
 
+/* What this build provides: the drivers and mounts it really has (board.h
+ * HAS_* and the Kconfig switches). An image's requirements are checked
+ * against these lists at load. */
 static const struct PortDriver *const esp_ports[] = {
     &gpio_esp_driver,
 #if CONFIG_GOGO_NET
@@ -413,64 +416,39 @@ static const struct PortDriver *const esp_ports[] = {
 #if CONFIG_GOGO_TLS
     &net_tls_driver,
 #endif
-    &input_kbd_driver, &input_power_driver, &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
-    &input_mic_driver, &input_spk_driver,
+#if HAS_KBD && CONFIG_GOGO_KBD
+    &input_kbd_driver,
+#endif
+#if CONFIG_GOGO_BATTERY
+    &input_power_driver,
+#endif
+#if HAS_IMU && CONFIG_GOGO_IMU
+    &input_imu_driver,
+#endif
+#if HAS_IR_TX && CONFIG_GOGO_IR
+    &input_ir_tx_driver,
+#endif
+#if HAS_IR_RX && CONFIG_GOGO_IR
+    &input_ir_rx_driver,
+#endif
+#if HAS_MIC && CONFIG_GOGO_AUDIO
+    &input_mic_driver,
+#endif
+#if HAS_SPK && CONFIG_GOGO_AUDIO
+    &input_spk_driver,
+#endif
+    NULL
+};
+
+static const char *const esp_mounts[] = {
+    "/flash",
+#if HAS_SD && CONFIG_GOGO_SD
+    "/sd",
+#endif
     NULL
 };
 
 extern const InputHw input_esp_hw;
-
-/* The capabilities this build provides (host.h CAP_*). */
-#if CONFIG_GOGO_NET
-#define CAPS_NET CAP_NET
-#else
-#define CAPS_NET 0u
-#endif
-#if CONFIG_GOGO_TLS
-#define CAPS_TLS CAP_TLS
-#else
-#define CAPS_TLS 0u
-#endif
-#if HAS_KBD && CONFIG_GOGO_KBD
-#define CAPS_KBD CAP_KBD
-#else
-#define CAPS_KBD 0u
-#endif
-#if CONFIG_GOGO_BATTERY
-#define CAPS_POWER CAP_POWER
-#else
-#define CAPS_POWER 0u
-#endif
-#if HAS_SD && CONFIG_GOGO_SD
-#define CAPS_SD CAP_SD
-#else
-#define CAPS_SD 0u
-#endif
-#if HAS_IMU && CONFIG_GOGO_IMU
-#define CAPS_IMU CAP_IMU
-#else
-#define CAPS_IMU 0u
-#endif
-#if HAS_IR_TX && CONFIG_GOGO_IR
-#define CAPS_IR_TX CAP_IR_TX
-#else
-#define CAPS_IR_TX 0u
-#endif
-#if HAS_IR_RX && CONFIG_GOGO_IR
-#define CAPS_IR_RX CAP_IR_RX
-#else
-#define CAPS_IR_RX 0u
-#endif
-#if HAS_MIC && CONFIG_GOGO_AUDIO
-#define CAPS_MIC CAP_MIC
-#else
-#define CAPS_MIC 0u
-#endif
-#if HAS_SPK && CONFIG_GOGO_AUDIO
-#define CAPS_SPK CAP_SPK
-#else
-#define CAPS_SPK 0u
-#endif
 
 const VmBoard esp_board = {
     esp_ports, &input_esp_hw,
@@ -484,5 +462,5 @@ const VmBoard esp_board = {
 #else
     NULL,
 #endif
-    CAPS_NET | CAPS_TLS | CAPS_KBD | CAPS_POWER | CAPS_SD | CAPS_IMU | CAPS_IR_TX | CAPS_IR_RX | CAPS_MIC | CAPS_SPK
+    esp_mounts
 };

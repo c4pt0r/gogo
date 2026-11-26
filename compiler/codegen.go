@@ -79,8 +79,8 @@ func Compile(p *Program) ([]byte, error) {
 	if m, ok := p.Pkg.Scope().Lookup("main").(*types.Func); ok {
 		g.b.SetEntry(g.funcIdx[m])
 	}
-	bits, _ := Requires(p)
-	g.b.SetRequires(bits)
+	names, _ := Requires(p)
+	g.b.SetRequires(names)
 	for _, e := range Exports(p) {
 		g.b.AddExport(e.Name, g.funcIdx[e.Fn])
 	}
@@ -219,7 +219,7 @@ var reservedTypes = []struct {
 	{PowerPath, "Config", []string{"PeriodMs"}},
 	{PowerPath, "Battery", []string{"MilliVolts", "Percent", "Charging", "External"}},
 	{PowerPath, "Read", nil},
-	{CodePath, "Module", []string{"H", "Missing"}},
+	{CodePath, "Module", []string{"H", "missing"}},
 	{PortPath, "Chunk", []string{"Seq", "TimeMs", "Dropped", "Data"}},
 	{PortPath, "Out", []string{"Data"}},
 	{PortPath, "Done", []string{"Seq"}},

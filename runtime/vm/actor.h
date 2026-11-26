@@ -67,7 +67,6 @@ typedef struct Vm {
     uint32_t mod_mem;         /* code bytes of the counted (loaded, not boot) modules */
     uint32_t mod_cap;         /* their limit: config code.mem (module_config) */
     uint8_t mod_next;         /* where module_load's round-robin slot search starts */
-    uint32_t caps;            /* CAP_* this Vm may use: board caps & granted */
     uint32_t rand_x;          /* vm_random's fallback state */
     uint64_t t0;              /* host->now_ms at the time base; vm_now counts from it */
     uintptr_t *table;
@@ -104,13 +103,11 @@ typedef struct Vm {
 } Vm;
 
 /* Clears vm and ties it to its host (host_ctx goes to every hook) and
- * board (NULL = no board hardware); the Vm may use the CAP_* bits in
- * board->caps & granted_caps. Then allocates the PID table. Returns 0, or
+ * board (NULL = no board hardware). Then allocates the PID table. Returns 0, or
  * -1 if the table cannot be allocated or table_cap exceeds PORT_SLOT_BASE
  * (the slots above it name ports). Boot code then calls vm_boot; tests
  * install a hand-built image with module_install_static. */
-int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board, uint32_t granted_caps,
-            uint16_t table_cap);
+int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board, uint16_t table_cap);
 
 /* Slot + PID assigned, block allocated, empty stack, state A_RUNNABLE,
  * max_words 0 (default limit), not enqueued, running module slot `mod`'s

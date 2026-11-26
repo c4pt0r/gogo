@@ -129,7 +129,7 @@ type Dial struct {
 // one. IP, Port and TimeoutMs are as in Dial (TimeoutMs bounds the connect
 // and the handshake together). The certificate is always verified, there is
 // no way to turn that off, and the check needs the wall clock (gogo/sys,
-// set by gogo/sntp). Needs the firmware capability "tls".
+// set by gogo/sntp). Needs the firmware's "tls" driver.
 //
 // TimeoutMs 0 bounds the handshake at 30 s. Before the wall clock is set
 // the port opens but at once gets Closed{NoTime} (nothing is sent). A

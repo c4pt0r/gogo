@@ -5,7 +5,7 @@
 #include <string.h>
 
 /* Layout: 8 header + 3 func + 0 types + 3 consts + 1 code + 1 const map
- * + 2 (requires, n_exports) = 18 words. consts: [hdr(3,K_STRING)] [4]
+ * + 2 (n_requires, n_exports) = 18 words. consts: [hdr(3,K_STRING)] [4]
  * ["main"]; map: bit 0. */
 #define IMG_WORDS 18
 
@@ -21,7 +21,7 @@ static void build(uint32_t *w) {
     memcpy(&w[13], "main", 4);
     w[14] = OP_NOP;
     w[15] = 1u;          /* const map: an object starts at const word 0 */
-    w[16] = 0;           /* requires */
+    w[16] = 0;           /* n_requires */
     w[17] = 0;           /* n_exports */
 }
 
@@ -406,11 +406,11 @@ TEST(const_struct_interior_ref_rejected) {
     CHECK_EQ(build_loadk(&img, term_from_const(8), fwd, 3), IMG_OK);
 }
 
-/* ---- v9: requires bitmask and exports table after the const map ---- */
+/* ---- the trailer: requirement names and exports after the const map ---- */
 
 /* 8 header + 3 func + 7 consts ("main" 0..2, "Other" 3..6) + 1 code + 1 map
- * + requires + n_exports + 2 pairs = 26 words. */
-#define EXP_WORDS 26
+ * + n_requires + 1 requirement ("Other") + n_exports + 2 pairs = 27 words. */
+#define EXP_WORDS 27
 
 static void build_exp(uint32_t *w) {
     memset(w, 0, EXP_WORDS * sizeof(uint32_t));
@@ -421,19 +421,20 @@ static void build_exp(uint32_t *w) {
     w[14] = hdr_make(4, K_STRING); w[15] = 5; memcpy(&w[16], "Other", 5);
     w[18] = OP_NOP;
     w[19] = 1u | 8u;     /* objects at const words 0 and 3 */
-    w[20] = 5u;          /* requires */
-    w[21] = 2u;          /* n_exports */
-    w[22] = 0; w[23] = 0;    /* "main" -> func 0 */
-    w[24] = 3; w[25] = 0;    /* "Other" -> func 0 */
+    w[20] = 1u;          /* n_requires */
+    w[21] = 3u;          /* requirement "Other" */
+    w[22] = 2u;          /* n_exports */
+    w[23] = 0; w[24] = 0;    /* "main" -> func 0 */
+    w[25] = 3; w[26] = 0;    /* "Other" -> func 0 */
 }
 
-TEST(v9_exports_load) {
+TEST(trailer_load) {
     uint32_t w[EXP_WORDS]; Image img; uint32_t f = 99;
     build_exp(w);
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_OK);
-    CHECK_EQ(img.exports[-2], 5);
+    CHECK(image_requires(&img) == &w[20]);
     CHECK_EQ(img.n_exports, 2);
-    CHECK(img.exports == &w[22]);
+    CHECK(img.exports == &w[23]);
     CHECK_EQ(image_export_find(&img, (const uint8_t *)"main", 4, &f), 1);
     CHECK_EQ(f, 0);
     f = 99;
@@ -444,26 +445,37 @@ TEST(v9_exports_load) {
     CHECK_EQ(image_export_find(&img, (const uint8_t *)"", 0, &f), 0);
 }
 
-TEST(v9_export_bad_name_rejected) {
+TEST(trailer_bad_requirement_rejected) {
     uint32_t w[EXP_WORDS]; Image img;
-    build_exp(w); w[24] = 4;       /* the byte_len word, not an object start */
+    build_exp(w); w[21] = 4;       /* the byte_len word, not an object start */
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
-    build_exp(w); w[24] = 7;       /* past the consts */
+    build_exp(w); w[21] = 7;       /* past the consts */
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
 }
 
-TEST(v9_export_bad_func_rejected) {
+TEST(trailer_export_bad_name_rejected) {
     uint32_t w[EXP_WORDS]; Image img;
-    build_exp(w); w[25] = 1;       /* n_funcs is 1 */
+    build_exp(w); w[25] = 4;       /* the byte_len word, not an object start */
+    CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
+    build_exp(w); w[25] = 7;       /* past the consts */
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
 }
 
-TEST(v9_truncated_trailer_rejected) {
+TEST(trailer_export_bad_func_rejected) {
+    uint32_t w[EXP_WORDS]; Image img;
+    build_exp(w); w[26] = 1;       /* n_funcs is 1 */
+    CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
+}
+
+TEST(trailer_truncated_rejected) {
     uint32_t w[EXP_WORDS]; Image img;
     build_exp(w);
     CHECK_EQ(image_load(&img, w, EXP_WORDS - 1), IMG_ERR_TRUNCATED);   /* a pair short */
-    CHECK_EQ(image_load(&img, w, 21), IMG_ERR_TRUNCATED);              /* no n_exports */
-    CHECK_EQ(image_load(&img, w, 20), IMG_ERR_TRUNCATED);              /* no requires */
-    build_exp(w); w[21] = 0xFFFFFFFFu;                                  /* huge count */
+    CHECK_EQ(image_load(&img, w, 22), IMG_ERR_TRUNCATED);              /* no n_exports */
+    CHECK_EQ(image_load(&img, w, 21), IMG_ERR_TRUNCATED);              /* the requirement short */
+    CHECK_EQ(image_load(&img, w, 20), IMG_ERR_TRUNCATED);              /* no n_requires */
+    build_exp(w); w[22] = 0xFFFFFFFFu;                                  /* huge export count */
+    CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_TRUNCATED);
+    build_exp(w); w[20] = 0xFFFFFFFFu;                                  /* huge requirement count */
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_TRUNCATED);
 }

@@ -29,8 +29,8 @@ void test_fail_eq(const char *file, int line, const char *ea, const char *eb,
         if (a_ != b_) test_fail_eq(__FILE__, __LINE__, #a, #b, a_, b_); \
     } while (0)
 
-/* Appends the v7 const-area object-start map and the v9 trailer
- * (requires = 0, n_exports = 0) to the hand-built image w (header counts
+/* Appends the const-area object-start map and the trailer
+ * (n_requires = 0, n_exports = 0) to the hand-built image w (header counts
  * already set, room for map + 2 words after the code) and returns the
  * image's length in words. */
 #include <stdint.h>

@@ -53,15 +53,16 @@ static void put_str(uint32_t *c, uint32_t off, const char *s) {
 
 /* Lays out header, funcs, types (every reserved type has 0 fields but
  * Options (1) and code.Module (2); the module type T_MOD has 1),
- * consts, code, the
- * const map, requires and the exports. Returns the length in words. */
+ * consts (c, then the requirement name req as one more string if not
+ * NULL), code, the const map, the requirements and the exports. Returns
+ * the length in words. */
 static uint32_t build(uint32_t *w, const TFunc *f, uint32_t nf, const uint32_t *c, uint32_t nc,
-                      const uint32_t *exp, uint32_t nexp, uint32_t requires) {
+                      const uint32_t *exp, uint32_t nexp, const char *req) {
     memset(w, 0, MAXW * 4u);
-    uint32_t ncode = 0;
+    uint32_t ncode = 0, rl = req ? (uint32_t)strlen(req) : 0u, rw = req ? 2u + (rl + 3u) / 4u : 0u;
     for (uint32_t i = 0; i < nf; i++) ncode += f[i].ncode;
     w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = nf; w[3] = TYPES;
-    w[4] = nc; w[5] = ncode; w[6] = 0; w[7] = TYPE_RESERVED_COUNT;
+    w[4] = nc + rw; w[5] = ncode; w[6] = 0; w[7] = TYPE_RESERVED_COUNT;
     uint32_t p = 8, off = 0;
     for (uint32_t i = 0; i < nf; i++) {
         w[p++] = off;
@@ -75,12 +76,22 @@ static uint32_t build(uint32_t *w, const TFunc *f, uint32_t nf, const uint32_t *
     }
     memcpy(&w[p], c, nc * 4u);
     p += nc;
+    if (req) {
+        w[p] = hdr_make(rw, K_STRING);
+        w[p + 1] = rl;
+        memcpy(&w[p + 2], req, rl);
+        p += rw;
+    }
     for (uint32_t i = 0; i < nf; i++) {
         memcpy(&w[p], f[i].code, f[i].ncode * 4u);
         p += f[i].ncode;
     }
-    uint32_t n = img_seal(w);                /* map + requires 0 + n_exports 0 */
-    w[n - 2] = requires;
+    uint32_t n = img_seal(w);                /* map + n_requires 0 + n_exports 0 */
+    if (req) {                               /* one requirement: the string after c */
+        w[n - 2] = 1;
+        w[n - 1] = nc;
+        n++;
+    }
     w[n - 1] = nexp;
     memcpy(&w[n], exp, nexp * 2u * 4u);
     return n + nexp * 2u;
@@ -142,7 +153,7 @@ static const uint32_t a_send[] = { OP_MAKE(OP_BUILTIN, 1, 2, 2), B_SEND, OP_MAKE
 
 enum { F_MAIN, F_LEN, F_CALLV, F_FIELD, F_IS5, F_IS34, F_SPAWN, F_PRINT, F_BADK, F_EQ, F_NE, F_SEND };
 
-static uint32_t build_a(uint32_t *w, bool with_main_export, uint32_t requires) {
+static uint32_t build_a(uint32_t *w, bool with_main_export, const char *requires) {
     uint32_t c[9];
     put_str(c, 0, "main"); put_str(c, 3, "f"); put_str(c, 6, "AAAA");
     TFunc f[A_FUNCS] = {
@@ -191,11 +202,11 @@ static const uint32_t b_bad[] = {
     OP_MAKE(OP_RET, 0, 0, 0),
 };
 
-/* B with the given requires word and pad extra const words (K_INTs, an
+/* B with the given requirement (or NULL) and pad extra const words (K_INTs, an
  * even number; 3: one K_INT64, B_INT64) to make it bigger. */
 #define B_PAD 12u
 #define B_INT64 0x123456789LL
-static uint32_t build_b_with(uint32_t *w, uint32_t requires, uint32_t pad) {
+static uint32_t build_b_with(uint32_t *w, const char *requires, uint32_t pad) {
     static uint32_t c[B_PAD + MAXW / 2];
     put_str(c, 0, "Main"); put_str(c, 3, "get"); put_str(c, 6, "BBBB"); put_str(c, 9, "Bad");
     for (uint32_t i = 0; i + 1 < pad; i += 2) { c[B_PAD + i] = hdr_make(2, K_INT); c[B_PAD + 1 + i] = i; }
@@ -210,7 +221,7 @@ static uint32_t build_b_with(uint32_t *w, uint32_t requires, uint32_t pad) {
     return build(w, f, 3, c, B_PAD + pad, exp, 2, requires);
 }
 
-static uint32_t build_b(uint32_t *w) { return build_b_with(w, 0, 0); }
+static uint32_t build_b(uint32_t *w) { return build_b_with(w, NULL, 0); }
 
 /* ---- fixtures ---- */
 
@@ -222,7 +233,7 @@ typedef struct Fx {
 
 static Fx *fx_new(void) {
     Fx *f = calloc(1, sizeof *f);
-    CHECK_EQ(image_load(&f->img, f->a, build_a(f->a, true, 0)), IMG_OK);
+    CHECK_EQ(image_load(&f->img, f->a, build_a(f->a, true, NULL)), IMG_OK);
     CHECK_EQ(test_vm_init(&f->vm, &f->img, 16), 0);
     return f;
 }
@@ -240,13 +251,13 @@ static void run_queue(Vm *vm) {
  * becoming its holder. Returns the handle. */
 static uint32_t b_pad;   /* build_b_with's pad for load_b */
 static uint32_t load_b(Fx *f, Actor *owner) {
-    uint32_t n = build_b_with(f->b, 0, b_pad);
+    uint32_t n = build_b_with(f->b, NULL, b_pad);
     uint8_t *data;
     term h = bytes_new(&f->vm, owner, n * 4u, &data);
     CHECK(h != T_NIL);
     memcpy(data, f->b, n * 4u);
     uint32_t handle = 0;
-    CHECK_EQ(module_load(&f->vm, owner, h, &handle), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, owner, h, &handle, NULL), CODE_OK);
     bytes_release(&f->vm, owner, h);         /* only the module keeps it now */
     return handle;
 }
@@ -285,7 +296,7 @@ TEST(boot_is_module0) {
     static uint32_t w[MAXW];
     Vm vm;
     va_reset(&vm);
-    uint32_t n = build_a(w, true, 0);
+    uint32_t n = build_a(w, true, NULL);
     CHECK_EQ(test_vm_boot(&vm, w, n, 16), VM_BOOT_OK);
     CHECK(vm.mods[0] != NULL);
     CHECK(module_resolve(&vm, 0, 0) == &vm.mods[0]->img);
@@ -299,7 +310,7 @@ TEST(no_main_refused) {
     static uint32_t w[MAXW];
     Vm vm;
     va_reset(&vm);
-    uint32_t n = build_a(w, false, 0);
+    uint32_t n = build_a(w, false, NULL);
     CHECK_EQ(test_vm_boot(&vm, w, n, 16), VM_BOOT_OK);
     capture_start();
     int rc = vm_run(&vm);
@@ -309,26 +320,36 @@ TEST(no_main_refused) {
     CHECK_EQ(vm.live, 0u);
 }
 
-/* R1: the unified boot keeps the firmware capability check. */
-TEST(boot_caps_refused) {
+/* R1: the unified boot checks the image's requirements: a driver name
+ * against the driver list, a mount prefix against the board's mounts;
+ * the first one missing is named. */
+TEST(boot_requirement_refused) {
     static uint32_t w[MAXW];
-    Vm vm;
-    va_reset(&vm);
-    uint32_t n = build_a(w, true, CAP_NET);
-    test_granted = 0;
-    capture_start();
-    int rc = test_vm_boot(&vm, w, n, 16);
-    capture_stop();
-    test_granted = UINT32_MAX;
-    CHECK_EQ(rc, VM_BOOT_REFUSED);
-    CHECK(strcmp(err_buf, "gogo: image needs net; firmware lacks net\n") == 0);
+    static const struct { const char *req; int rc; } cases[] = {
+        { "tcp", VM_BOOT_OK }, { "gpio", VM_BOOT_OK }, { "/sd", VM_BOOT_OK }, { "/flash", VM_BOOT_OK },
+        { "kbd", VM_BOOT_REFUSED }, { "/cd", VM_BOOT_REFUSED }, { "tc", VM_BOOT_REFUSED },
+        { "/s", VM_BOOT_REFUSED }, { "", VM_BOOT_REFUSED },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        Vm vm;
+        va_reset(&vm);
+        uint32_t n = build_a(w, true, cases[i].req);
+        capture_start();
+        int rc = test_vm_boot(&vm, w, n, 16);
+        capture_stop();
+        CHECK_EQ(rc, cases[i].rc);
+        if (rc == VM_BOOT_OK) continue;      /* va_reset forgets it */
+        char want[64];
+        snprintf(want, sizeof want, "gogo: image requires %s, which this VM lacks\n", cases[i].req);
+        CHECK(strcmp(err_buf, want) == 0);
+    }
 }
 
 TEST(boot_bad_image) {
     static uint32_t w[MAXW];
     Vm vm;
     va_reset(&vm);
-    uint32_t n = build_a(w, true, 0);
+    uint32_t n = build_a(w, true, NULL);
     w[0] ^= 1u;
     CHECK_EQ(test_vm_boot(&vm, w, n, 16), IMG_ERR_MAGIC);
     CHECK(strcmp(image_err_str(IMG_ERR_MAGIC), "bad magic") == 0);
@@ -534,8 +555,8 @@ TEST(load_bad_image) {
     term b = bytes_new(vm, h, 64, &data);
     memset(data, 0xAB, 64);
     uint32_t handle;
-    CHECK_EQ(module_load(vm, h, b, &handle), CODE_BAD_IMAGE);
-    CHECK_EQ(module_load(vm, h, term_from_int(3), &handle), CODE_BAD_ARG);
+    CHECK_EQ(module_load(vm, h, b, &handle, NULL), CODE_BAD_IMAGE);
+    CHECK_EQ(module_load(vm, h, term_from_int(3), &handle, NULL), CODE_BAD_ARG);
     CHECK_EQ(module_mem_used(vm), 0u);
     actor_exit(vm, h, R_NORMAL, T_EMPTYSTR);
     free(f);
@@ -772,7 +793,7 @@ TEST(load_spawn_main_runs) {
     Actor *h = host(f);
     uint32_t n = build_b(f->b), handle;
     size_t before = va_used_bytes(&f->vm);
-    CHECK_EQ(module_load(&f->vm, h, heapbytes(h, f->b, n), &handle), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, heapbytes(h, f->b, n), &handle, NULL), CODE_OK);
     CHECK_EQ(module_mem_used(&f->vm), n * 4u);
     CHECK(va_used_bytes(&f->vm) > before);
     CHECK(f->vm.mods[handle >> 16]->bytes == T_NIL);      /* its own copy */
@@ -789,9 +810,9 @@ TEST(load_spawn_main_runs) {
 TEST(load_main_program_image) {
     Fx *f = fx_new();
     Actor *h = host(f);
-    uint32_t n = build_a(f->b, true, 0), handle;
+    uint32_t n = build_a(f->b, true, NULL), handle;
     term b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_OK);
     bytes_release(&f->vm, h, b);
     CHECK(handle >> 16 != 0);
     term pid;
@@ -851,7 +872,7 @@ TEST(bad_image) {
         term b = offheap(f, h, w, len);
         size_t va0 = va_used_bytes(&f->vm);
         int want = c == 3 ? CODE_BAD_VERSION : CODE_BAD_IMAGE;   /* 15.1: newer than the VM */
-        CHECK_EQ(module_load(&f->vm, h, b, &handle), want);
+        CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), want);
         CHECK_EQ(va_used_bytes(&f->vm), va0);
         bytes_release(&f->vm, h, b);
         CHECK_EQ(handle, 12345u);
@@ -862,7 +883,7 @@ TEST(bad_image) {
         term sl = bytes_sub(&f->vm, h, r, 1, len * 4u);
         CHECK(sl != T_NIL);
         va0 = va_used_bytes(&f->vm);
-        CHECK_EQ(module_load(&f->vm, h, sl, &handle), want);
+        CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), want);
         CHECK_EQ(va_used_bytes(&f->vm), va0);                     /* the copy is freed */
         bytes_release(&f->vm, h, r);
         heap_gc(&f->vm, h, 0, NULL, 0);
@@ -871,8 +892,8 @@ TEST(bad_image) {
     CHECK_EQ(bytes_table_used(&f->vm), 1u);                       /* only good's: nothing retained */
     /* not Bytes at all */
     uint32_t handle;
-    CHECK_EQ(module_load(&f->vm, h, term_from_int(3), &handle), CODE_BAD_ARG);
-    CHECK_EQ(module_load(&f->vm, h, T_EMPTYBYTES, &handle), CODE_BAD_IMAGE);
+    CHECK_EQ(module_load(&f->vm, h, term_from_int(3), &handle, NULL), CODE_BAD_ARG);
+    CHECK_EQ(module_load(&f->vm, h, T_EMPTYBYTES, &handle, NULL), CODE_BAD_IMAGE);
     /* the loader still works */
     b_main_runs(f, h, good);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -892,7 +913,7 @@ static void boot_with_config(Fx *f, const char *line) {
     const char *old = getenv("GOGO_CONFIG");
     char *saved = old ? strdup(old) : NULL;
     setenv("GOGO_CONFIG", path, 1);
-    uint32_t n = build_a(f->a, true, 0);
+    uint32_t n = build_a(f->a, true, NULL);
     capture_start();
     CHECK_EQ(test_vm_boot(&f->vm, f->a, n, 16), VM_BOOT_OK);
     capture_stop();
@@ -909,10 +930,10 @@ TEST(cap_exceeded) {
     boot_with_config(f, "code.mem=1024\n");
     CHECK_EQ(f->vm.mod_cap, 1024u);
     Actor *h = host(f);
-    uint32_t n = build_b_with(f->b, 0, 400), handle;
+    uint32_t n = build_b_with(f->b, NULL, 400), handle;
     CHECK(n * 4u > 1500u);
     term b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_NO_MEMORY);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_NO_MEMORY);
     bytes_release(&f->vm, h, b);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
     CHECK_EQ(bytes_table_used(&f->vm), 0u);
@@ -922,7 +943,7 @@ TEST(cap_exceeded) {
     n = build_b(f->b);
     if (2u * n * 4u > 1024u) {
         b = offheap(f, h, f->b, n);
-        CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_NO_MEMORY);
+        CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_NO_MEMORY);
         bytes_release(&f->vm, h, b);
     }
     b_main_runs(f, h, small);
@@ -945,18 +966,24 @@ TEST(cap_exceeded) {
     }
 }
 
-/* A module needing kbd on a firmware without it: Unsupported with the
- * missing bits, nothing counted. */
+/* A module requiring kbd on a board without it: Unsupported with the
+ * missing name, nothing counted; with a driver of that name (a host
+ * port, say) the same bytes load. */
+static const PortDriver kbd_named = { .name = "kbd" };
+static const PortDriver *const with_kbd[] = { &kbd_named, NULL };
 TEST(unsupported) {
     Fx *f = fx_new();
     Actor *h = host(f);
-    f->vm.caps = CAP_NET | CAP_POWER | CAP_SD;
-    uint32_t n = build_b_with(f->b, CAP_KBD | CAP_NET | CAP_ANYPORT, 0), handle = 0;
+    uint32_t n = build_b_with(f->b, "kbd", 0), handle = 0;
+    char miss[MOD_MISSING_MAX];
     term b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_UNSUPPORTED);
-    CHECK_EQ(handle, CAP_KBD);
-    f->vm.caps = test_board.caps;
-    CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_OK);  /* the same bytes, now supported */
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, miss), CODE_UNSUPPORTED);
+    CHECK_EQ(handle, 3u);
+    CHECK(memcmp(miss, "kbd", 3) == 0);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_UNSUPPORTED);   /* no buffer: fine */
+    port_set_drivers(&f->vm, with_kbd);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_OK);  /* the same bytes, now supported */
+    port_set_drivers(&f->vm, NULL);
     bytes_release(&f->vm, h, b);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(module_mem_used(&f->vm), 0u);
@@ -1046,10 +1073,10 @@ TEST(table_full) {
     Actor *h = host(f);
     uint32_t n = build_b(f->b), handle;
     term b = offheap(f, h, f->b, n);
-    for (uint32_t i = 1; i < GOGO_MAX_MODULES; i++) CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_OK);
+    for (uint32_t i = 1; i < GOGO_MAX_MODULES; i++) CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_OK);
     uint32_t used = module_mem_used(&f->vm);
     CHECK_EQ(used, (GOGO_MAX_MODULES - 1u) * n * 4u);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_TOO_MANY);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_TOO_MANY);
     CHECK_EQ(module_mem_used(&f->vm), used);
     bytes_release(&f->vm, h, b);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1071,7 +1098,7 @@ TEST(unaligned_bytes_copied) {
     CHECK(sl != T_NIL);
     const uint8_t *p; uint32_t len;
     CHECK(bytes_view(&f->vm, h, sl, &p, &len) && ((uintptr_t)p & 3u) != 0);
-    CHECK_EQ(module_load(&f->vm, h, sl, &handle), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), CODE_OK);
     CHECK_EQ(module_mem_used(&f->vm), n * 4u);
     const ModEntry *e = f->vm.mods[handle >> 16];
     CHECK(e->bytes == T_NIL && ((uintptr_t)e->img.funcs & 3u) == 0);
@@ -1094,7 +1121,7 @@ TEST(platform_code_memory) {
     test_host.code_alloc = plat_alloc; test_host.code_free = plat_free;
     uint32_t n = build_b(f->b), handle;
     term b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_OK);
     bytes_release(&f->vm, h, b);
     CHECK_EQ(bytes_table_used(&f->vm), 0u);
     CHECK_EQ(plat_allocs, 1u);
@@ -1104,7 +1131,7 @@ TEST(platform_code_memory) {
     /* bad images and refusals give it back */
     f->b[0] ^= 1u;
     b = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, b, &handle), CODE_BAD_IMAGE);
+    CHECK_EQ(module_load(&f->vm, h, b, &handle, NULL), CODE_BAD_IMAGE);
     bytes_release(&f->vm, h, b);
     CHECK_EQ(plat_allocs - plat_frees, 1u);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1127,15 +1154,14 @@ static int32_t field_h(Actor *a, term m) {
     return term_to_int(o[2]);
 }
 /* A code.Module{H, Missing} in a's heap; H boxed when it is no small int. */
-static term forge(Actor *a, int32_t h, int32_t missing) {
+/* A Module{H: h, missing} built by hand (h boxed if it must be). */
+static term forge(Actor *a, int32_t h, term missing) {
     uint32_t o = heap_alloc(NULL, a, 6, NULL, 0);
     CHECK(o != UINT32_MAX);
     a->mem[o] = hdr_make(4, K_STRUCT); a->mem[o + 1] = TYPE_CODE_MODULE;
     a->mem[o + 4] = hdr_make(2, K_INT); a->mem[o + 5] = (uint32_t)h;
     a->mem[o + 2] = term_int_fits(h) ? term_from_int(h) : term_from_ref(o + 4);
-    a->mem[o + 3] = term_int_fits(missing) ? term_from_int(missing) : term_from_ref(o + 4);
-    if (!term_int_fits(h) && !term_int_fits(missing)) CHECK(h == missing);   /* one shared box */
-    a->mem[o + 5] = term_int_fits(h) ? (uint32_t)missing : (uint32_t)h;
+    a->mem[o + 3] = missing;
     return term_from_ref(o);
 }
 TEST(code_builtin_ops) {
@@ -1155,7 +1181,7 @@ TEST(code_builtin_ops) {
     CHECK_EQ(regs(a)[6], term_from_int((int32_t)(n * 4u)));
     regs(a)[3] = m;
     CHECK_EQ(code_op(f, a, 6, CODE_OP_MISSING, 1), R_NORMAL);
-    CHECK_EQ(regs(a)[6], term_from_int(0));
+    CHECK_EQ(regs(a)[6], T_EMPTYSTR);
     /* Spawn(m, "Main", self) */
     regs(a)[3] = m;
     regs(a)[4] = term_from_const(0) | module_tag(&f->vm, (uint32_t)(H - 1) >> 16);   /* B's "Main" */
@@ -1168,7 +1194,7 @@ TEST(code_builtin_ops) {
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN_LINK, 3), R_NORMAL);
     CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));
     CHECK_EQ(regs(a)[0], T_ZEROPID);
-    term zero = forge(a, 0, 0);
+    term zero = forge(a, 0, T_EMPTYSTR);
     uint32_t o;
     regs(a)[3] = zero;
     regs(a)[4] = term_from_const(0);                        /* A's "main" */
@@ -1202,17 +1228,19 @@ TEST(code_builtin_ops) {
     regs(a)[4] = term_from_const(0);                        /* (B's "Main" is gone with B) */
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN, 3), R_NORMAL);
     CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));   /* stale */
-    /* Unsupported: Module{H: 0, Missing: the bits} */
-    f->vm.caps = CAP_NET;
-    b = offheap(f, a, f->b, build_b_with(f->b, CAP_KBD | CAP_SD, 0));
+    /* Unsupported: Module{H: 0, missing: the name} */
+    b = offheap(f, a, f->b, build_b_with(f->b, "/cd", 0));
     regs(a)[3] = b;
     CHECK_EQ(code_op(f, a, 0, CODE_OP_LOAD, 1), R_NORMAL);
-    f->vm.caps = test_board.caps;
     CHECK_EQ(regs(a)[1], term_from_int(CODE_UNSUPPORTED));
     CHECK_EQ(field_h(a, regs(a)[0]), 0);
     regs(a)[3] = regs(a)[0];
     CHECK_EQ(code_op(f, a, 6, CODE_OP_MISSING, 1), R_NORMAL);
-    CHECK_EQ(regs(a)[6], term_from_int((int32_t)(CAP_KBD | CAP_SD)));
+    {
+        const uint8_t *p;
+        uint32_t len;
+        CHECK(name_bytes(&f->vm, a, regs(a)[6], &p, &len) && len == 3 && memcmp(p, "/cd", 3) == 0);
+    }
     CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN, 3), R_NORMAL);
     CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));
     /* badcode: unknown op, wrong arity, not a Module, no room for 2 results */
@@ -1228,10 +1256,11 @@ TEST(code_builtin_ops) {
     free(f);
 }
 
-/* I1: whatever H or Missing a program forges, B_CODE gives NotFound /
- * nothing, never module 0, never UB (run under UBSan); an Unsupported
- * load's Module is H 0 whatever bits are missing, and Missing reports them
- * all, boxed when they do not fit a small int. */
+/* I1: whatever H a program forges, B_CODE gives NotFound / nothing,
+ * never module 0, never UB (run under UBSan); Missing of a forged Module
+ * is its field as it is. An Unsupported
+ * load's Module is H 0, and Missing gives at most MOD_MISSING_MAX bytes of
+ * a long name. */
 TEST(forged_module_values_safe) {
     Fx *f = fx_new();
     Actor *a = actor_new(&f->vm, 1024);
@@ -1242,7 +1271,7 @@ TEST(forged_module_values_safe) {
                            (int32_t)live + 2, (int32_t)(live | 0xFFFFu) + 1, 8 << 16, (8 << 16) + 1,
                            TERM_INT_MAX, TERM_INT_MAX + 1, INT32_MAX };
     for (size_t i = 0; i < sizeof hs / sizeof hs[0]; i++) {
-        term m = forge(a, hs[i], term_int_fits(hs[i]) ? INT32_MIN : hs[i]);
+        term m = forge(a, hs[i], T_EMPTYSTR);
         regs(a)[3] = m; regs(a)[4] = term_from_const(0); regs(a)[5] = T_NIL;
         CHECK_EQ(code_op(f, a, 0, CODE_OP_SPAWN, 3), R_NORMAL);
         CHECK_EQ(regs(a)[1], term_from_int(CODE_NOT_FOUND));
@@ -1253,30 +1282,34 @@ TEST(forged_module_values_safe) {
         CHECK_EQ(code_op(f, a, 6, CODE_OP_RELEASE, 1), R_NORMAL);
         regs(a)[3] = m;
         CHECK_EQ(code_op(f, a, 6, CODE_OP_MISSING, 1), R_NORMAL);   /* the field, as is */
-        int32_t mv = 0;
-        CHECK(int_val(&f->vm, a, regs(a)[6], &mv) && mv == (term_int_fits(hs[i]) ? INT32_MIN : hs[i]));
+        CHECK_EQ(regs(a)[6], T_EMPTYSTR);
+        regs(a)[3] = forge(a, hs[i], term_from_int(7));
+        CHECK_EQ(code_op(f, a, 6, CODE_OP_MISSING, 1), R_NORMAL);   /* as is, whatever it holds */
+        CHECK_EQ(regs(a)[6], term_from_int(7));
     }
     CHECK(f->vm.mods[0] != NULL && f->vm.mods[live >> 16] != NULL);
     CHECK_EQ(f->vm.mods[0]->holders[0], MOD_NO_HOLDER);    /* never held through code */
     /* the real handle still works */
-    term ok = forge(a, (int32_t)live + 1, 0);
+    term ok = forge(a, (int32_t)live + 1, T_EMPTYSTR);
     regs(a)[3] = ok;
     CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
     CHECK_EQ(regs(a)[6], term_from_int(CODE_OK));
-    /* the probe: requires 0x7FFFFFFF on caps 0 */
-    f->vm.caps = 0;
-    term b = offheap(f, a, f->b, build_b_with(f->b, 0x7FFFFFFFu, 0));
+    /* the probe: a requirement name longer than MOD_MISSING_MAX */
+    static const char longname[] = "a-driver-name-that-is-longer-than-32-bytes";
+    term b = offheap(f, a, f->b, build_b_with(f->b, longname, 0));
     regs(a)[3] = b;
     CHECK_EQ(code_op(f, a, 0, CODE_OP_LOAD, 1), R_NORMAL);
-    f->vm.caps = test_board.caps;
     CHECK_EQ(regs(a)[1], term_from_int(CODE_UNSUPPORTED));
     term m = regs(a)[0];
     CHECK_EQ(field_h(a, m), 0);
     regs(a)[3] = m;
     CHECK_EQ(code_op(f, a, 6, CODE_OP_MISSING, 1), R_NORMAL);
-    int32_t got = 0;
-    CHECK(int_val(&f->vm, a, regs(a)[6], &got));
-    CHECK_EQ(got, 0x7FFFFFFF);
+    {
+        const uint8_t *p;
+        uint32_t len;
+        CHECK(name_bytes(&f->vm, a, regs(a)[6], &p, &len) && len == MOD_MISSING_MAX &&
+              memcmp(p, longname, MOD_MISSING_MAX) == 0);
+    }
     regs(a)[3] = m;
     CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
     CHECK_EQ(regs(a)[6], term_from_int(CODE_NOT_FOUND));
@@ -1302,7 +1335,7 @@ TEST(slice_not_pinned) {
     term sl = bytes_sub(&f->vm, h, big, 1024, n * 4u);
     CHECK(sl != T_NIL);
     size_t va0 = va_used_bytes(&f->vm);
-    CHECK_EQ(module_load(&f->vm, h, sl, &handle), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), CODE_OK);
     CHECK(va_used_bytes(&f->vm) - va0 < 8u * 1024u);              /* about the slice, not the root */
     CHECK(f->vm.mods[handle >> 16]->bytes == T_NIL);
     CHECK_EQ(module_mem_used(&f->vm), n * 4u);
@@ -1312,7 +1345,7 @@ TEST(slice_not_pinned) {
     b_main_runs(f, h, handle);
     /* a whole root: in place */
     term r = offheap(f, h, f->b, n);
-    CHECK_EQ(module_load(&f->vm, h, r, &handle), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, r, &handle, NULL), CODE_OK);
     CHECK(f->vm.mods[handle >> 16]->bytes == r);
     bytes_release(&f->vm, h, r);
     /* over the cap: NoMemory before validating (no copy of the unaligned bytes) */
@@ -1320,7 +1353,7 @@ TEST(slice_not_pinned) {
     term u = bytes_new(&f->vm, h, 4001, &data);
     term us = bytes_sub(&f->vm, h, u, 1, 4000);
     va0 = va_used_bytes(&f->vm);
-    CHECK_EQ(module_load(&f->vm, h, us, &handle), CODE_NO_MEMORY);
+    CHECK_EQ(module_load(&f->vm, h, us, &handle, NULL), CODE_NO_MEMORY);
     CHECK_EQ(va_used_bytes(&f->vm), va0);
     bytes_release(&f->vm, h, u);
     actor_exit(&f->vm, h, R_NORMAL, T_EMPTYSTR);
@@ -1343,14 +1376,14 @@ TEST(platform_memory_single_copy) {
     plat_on = true; plat_allocs = plat_frees = 0;
     test_host.code_alloc = plat_alloc; test_host.code_free = plat_free;
     size_t va0 = va_used_bytes(&f->vm);
-    CHECK_EQ(module_load(&f->vm, h, sl, &handle), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), CODE_OK);
     CHECK_EQ(plat_allocs, 1u);
     CHECK(va_used_bytes(&f->vm) - va0 <= sizeof(ModEntry) + 8u); /* the entry only */
     b_main_runs(f, h, handle);
     module_release(&f->vm, h, handle);
     CHECK_EQ(plat_frees, 1u);
     plat_misalign = true;
-    CHECK_EQ(module_load(&f->vm, h, sl, &handle), CODE_OK);
+    CHECK_EQ(module_load(&f->vm, h, sl, &handle, NULL), CODE_OK);
     CHECK_EQ(plat_frees, 2u);                               /* the bad block went back */
     CHECK(f->vm.mods[handle >> 16]->flags & MOD_OWN_COPY);
     b_main_runs(f, h, handle);

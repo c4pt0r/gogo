@@ -18,7 +18,8 @@
  * ir; v11 audio; v12 gogo/sys builtins; v13 net.DialTLS; v14 port.Host,
  * port.Post.
  *   v15.0 own types from TYPE_OWN_BASE (128) with the reserved count in
- *       header word 7; major.minor versions; append-only reserved fields.
+ *       header word 7; major.minor versions; append-only reserved fields;
+ *       named requirements instead of the capability bits.
  *
  * Types: an image's type table holds n_reserved reserved rows (header
  * word 7; at most TYPE_RESERVED_COUNT, else IMG_ERR_VERSION: the image
@@ -35,9 +36,15 @@
  * n_types, consts_words, code_words, entry, n_reserved), funcs (3 words
  * each), types (2 each: nfields, name), consts, code, const map
  * (ceil(consts_words / 32) words, bit i of word i / 32 for const word i;
- * used in place, no RAM), requires (1 word: capability bits), n_exports
- * (1 word), then n_exports pairs {name_const_off, func_index}. Each export
- * name is a const string at a marked object start; func_index < n_funcs. */
+ * used in place, no RAM), n_requires (1 word), n_requires const offsets,
+ * n_exports (1 word), then n_exports pairs {name_const_off, func_index}.
+ * Each requirement and export name is a const string at a marked object
+ * start; func_index < n_funcs.
+ *
+ * Requirements: what the image needs from the board, by name: a port
+ * driver ("kbd", "tcp", a host port's name) or a mount prefix ("/sd",
+ * starting with '/'). The loader refuses an image whose requirement the
+ * VM lacks (module.h), naming the first one missing. */
 #ifndef GOGO_IMAGE_H
 #define GOGO_IMAGE_H
 
@@ -96,6 +103,12 @@ const char *image_err_str(int rc);
  * consts[off+1] unchecked, relying on image_load's string_ok validation of
  * every export name offset. */
 int image_export_find(const Image *img, const uint8_t *name, uint32_t len, uint32_t *func);
+
+/* The image's requirement list: n_requires, then that many const offsets
+ * of the names (validated by image_load). */
+static inline const uint32_t *image_requires(const Image *img) {
+    return img->cmap + (img->consts_words + 31u) / 32u;
+}
 
 uint32_t image_func_code_off(const Image *img, uint32_t f);
 uint16_t image_func_nparams(const Image *img, uint32_t f);

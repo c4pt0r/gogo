@@ -50,7 +50,7 @@ func fetch(base, name string) (code.Module, string) {
 	m, e := code.Load(r.Body)
 	t2 := actor.Now()
 	if e != code.OK {
-		return none, "load " + name + ": error " + strconv.Itoa(int(e)) + ", missing " + strconv.Itoa(code.Missing(m))
+		return none, "load " + name + ": error " + strconv.Itoa(int(e)) + ", missing " + code.Missing(m)
 	}
 	println("fetched", name, r.Body.Len(), "bytes in", int(t1-t0), "ms; loaded in", int(t2-t1), "ms; code mem", code.MemUsed())
 	return m, ""

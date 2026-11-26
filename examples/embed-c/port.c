@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     int commands = 0;
     gogo_vm *vm = gogo_new_posix(NULL);
     int rc = vm ? GOGO_OK : GOGO_ENOMEM;
-    if (rc == GOGO_OK) rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before start */
+    if (rc == GOGO_OK) rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before load */
     if (rc == GOGO_OK) rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);
     free(img);
     if (rc == GOGO_OK) rc = gogo_run(vm);

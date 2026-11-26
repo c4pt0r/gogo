@@ -1,5 +1,6 @@
 // Open of a driver the platform does not have fails; Close of the PID a
-// failed Open returned is a no-op.
+// failed Open returned is a no-op. The name is not a constant: a constant
+// one would make the image require the driver, and the load would fail.
 package main
 
 import (
@@ -7,12 +8,14 @@ import (
 	"gogo/port"
 )
 
+func nosuch() string { return "nosuch" }
+
 func main() {
-	p, ok := port.Open("nosuch", port.GPIO{Pin: 1, Mode: port.Output, Edge: port.None})
+	p, ok := port.Open(nosuch(), port.GPIO{Pin: 1, Mode: port.Output, Edge: port.None})
 	println(ok)
 	port.Close(p)
 	var q actor.PID
-	q, ok = port.Open("nosuch", 5)
+	q, ok = port.Open(nosuch(), 5)
 	println(ok)
 	port.Close(q)
 	println("done")

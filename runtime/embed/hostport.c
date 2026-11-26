@@ -94,12 +94,16 @@ static bool hp_live(const Vm *vm, const Port *p) {
     return embed_state(vm->host_ctx) == EMBED_LIVE;
 }
 
+/* The Vm's driver list: the board's, then the host ports, each only if
+ * the grant has its name. */
 void embed_ports_install(gogo_vm *g) {
-    if (!g->n_host_ports) return;       /* vm_init left the board's list */
+    if (!g->n_host_ports && !g->cfg.grant) return;   /* vm_init left the board's list */
     const PortDriver *const *b = g->vm.board->ports;
     uint32_t n = 0;
-    for (; b && *b && n < EMBED_BOARD_PORTS_MAX; b++) g->port_list[n++] = *b;
-    for (uint32_t k = 0; k < g->n_host_ports; k++) g->port_list[n++] = &g->host_ports[k].base;
+    for (; b && *b && n < EMBED_BOARD_PORTS_MAX; b++)
+        if (embed_granted(g, (*b)->name)) g->port_list[n++] = *b;
+    for (uint32_t k = 0; k < g->n_host_ports; k++)
+        if (embed_granted(g, g->host_ports[k].name)) g->port_list[n++] = &g->host_ports[k].base;
     g->port_list[n] = NULL;
     port_set_drivers(&g->vm, g->port_list);
 }
@@ -123,7 +127,7 @@ static uint32_t board_count(const gogo_vm *g) {
 int gogo_register_port(gogo_vm *g, const char *name, const gogo_port_driver *drv, void *ctx) {
     if (!g || !name || !*name || !drv) return GOGO_EINVAL;
     if (g->stepping) return GOGO_EBUSY;
-    if (g->vm.run_state != VM_ST_NEW) return GOGO_ESTARTED;
+    if (g->loaded) return GOGO_ESTATE;    /* registered ports count as the image's requirements */
     size_t nl = strlen(name);
     if (nl > GOGO_PORT_NAME_MAX) return GOGO_E2BIG;
     if (name_taken(g, name)) return GOGO_EEXIST;

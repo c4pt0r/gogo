@@ -433,7 +433,7 @@ func TestHTTPSUploadDenied(t *testing.T) {
 // Plain http goes through the same code: a one-shot Get is still HTTP/1.0
 // with Connection: close; the Client keeps a plain connection too, and an
 // upload over http works, but not with a token (BadURL: it would go in the
-// clear). The image needs no tls capability (run with net only).
+// clear). The image does not require tls (run without the tls driver).
 func TestHTTPPlainSamePath(t *testing.T) {
 	s := startHTTPServer(t, nil, false, func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if r.Method == "POST" && r.URL.Path == "/up" {
@@ -453,7 +453,7 @@ func TestHTTPPlainSamePath(t *testing.T) {
 			"CGET http://gogo.test/2 true 200 8 false\n  body [hello /2]\n"+
 			"UP http://gogo.test/up 0 101\nCUP http://gogo.test/up 0 101\n"+
 			"cclose\nUPNT http://gogo.test/up 200 0\ndone\n",
-		"--caps", "1") // net only: an http image loads without the tls capability
+		"--without", "tls") // an http image loads on a firmware without the tls driver
 	conns, reqs := s.count()
 	want := []string{`GET /x HTTP/1.0 gogo.test "close" ""`, `GET /1 HTTP/1.1 gogo.test "" ""`, `GET /2 HTTP/1.1 gogo.test "" ""`,
 		`POST /up HTTP/1.1 gogo.test "close" ""`}
@@ -466,8 +466,8 @@ func TestHTTPPlainSamePath(t *testing.T) {
 	_ = sim.DNSPort
 }
 
-// On a firmware without the "tls" driver (--caps 1: net only; the image
-// does not require tls, gogo/http declares it //gogo:optional), https
+// On a firmware without the "tls" driver (--without tls; the image does
+// not require tls, gogo/http declares it //gogo:optional), https
 // fails cleanly, one-shot and on a Client, and http still works, on the
 // same Client too. Nothing reaches the https server.
 func TestHTTPSNoTLSDriver(t *testing.T) {
@@ -483,7 +483,7 @@ func TestHTTPSNoTLSDriver(t *testing.T) {
 			"cclose\n"+
 			"GET http://gogo.test/d true 200 8 false\n  body [hello /d]\n"+
 			"done\n",
-		"--caps", "1")
+		"--without", "tls")
 	if conns, _ := s.count(); conns != 0 || r.stats["opens"] != 0 {
 		t.Errorf("https server saw %d connections, tls opens %d; want 0, 0", conns, r.stats["opens"])
 	}

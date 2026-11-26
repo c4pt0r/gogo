@@ -82,9 +82,12 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     uint64_t total = (uint64_t)IMAGE_HEADER_WORDS + (uint64_t)w[2] * 3u +
                      (uint64_t)w[3] * 2u + (uint64_t)w[4] + (uint64_t)w[5] +
                      ((uint64_t)w[4] + 31u) / 32u;
-    if (total + 2u > n_words) return IMG_ERR_TRUNCATED;   /* + requires, n_exports */
-    uint32_t n_exp = w[total + 1u];
-    if (total + 2u + (uint64_t)n_exp * 2u > n_words) return IMG_ERR_TRUNCATED;
+    if (total + 2u > n_words) return IMG_ERR_TRUNCATED;   /* n_requires, n_exports */
+    uint32_t tr = (uint32_t)total;
+    if (w[tr] > n_words - tr - 2u) return IMG_ERR_TRUNCATED;
+    uint32_t ex = tr + 1u + w[tr];                         /* n_exports */
+    uint32_t n_exp = w[ex];
+    if (n_exp > (n_words - ex - 1u) / 2u) return IMG_ERR_TRUNCATED;
     /* The index ranges a module tag leaves (term.h). */
     if (w[2] > FUNC_MAX || w[3] < w[7] || w[3] - w[7] > TYPE_MAX - TYPE_OWN_BASE || w[4] > CONST_MAX_WORDS)
         return IMG_ERR_BOUNDS;
@@ -100,7 +103,7 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     img->cmap = img->code + img->code_words;
     img->n_reserved = w[7];
     img->n_exports = n_exp;
-    img->exports = w + total + 2u;
+    img->exports = w + ex + 1u;
 
     if (w[6] >= img->n_funcs) return IMG_ERR_BOUNDS;
     for (uint32_t i = 0; i < img->n_funcs; i++) {
@@ -118,6 +121,9 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
             return IMG_ERR_VERSION;
     }
     if (!consts_ok(img)) return IMG_ERR_BOUNDS;
+    for (uint32_t i = tr + 1u; i < ex; i++) {
+        if (!string_ok(img, w[i])) return IMG_ERR_BOUNDS;
+    }
     for (uint32_t i = 0; i < img->n_exports; i++) {
         if (!string_ok(img, img->exports[(size_t)i * 2u]) ||
             img->exports[(size_t)i * 2u + 1u] >= img->n_funcs) return IMG_ERR_BOUNDS;

@@ -46,15 +46,12 @@ gogo_host test_host = {
     t_write, t_alloc, t_free, t_now, t_wake, t_wait, NULL, NULL, t_random, NULL, t_config_get, NULL, NULL
 };
 
-VmBoard test_board = {
-    unix_base_ports, NULL, &unix_netif, NULL,
-    CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX | CAP_MIC | CAP_SPK
-};
+static const char *const test_mounts[] = { "/flash", "/sd", NULL };
 
-uint32_t test_granted = UINT32_MAX;
+VmBoard test_board = { unix_base_ports, NULL, &unix_netif, NULL, test_mounts };
 
 int test_vm_init(Vm *vm, const Image *img, uint16_t table_cap) {
-    if (vm_init(vm, &test_host, NULL, &test_board, test_granted, table_cap) != 0) return -1;
+    if (vm_init(vm, &test_host, NULL, &test_board, table_cap) != 0) return -1;
     if (img && module_install_static(vm, img) != CODE_OK) return -1;
     return 0;
 }
@@ -63,7 +60,6 @@ void test_vm_bare(Vm *vm) {
     memset(vm, 0, sizeof *vm);
     vm->host = &test_host;
     vm->board = &test_board;
-    vm->caps = test_board.caps & test_granted;
 }
 
 int test_vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words, uint16_t table_cap) {

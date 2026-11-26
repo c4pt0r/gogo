@@ -64,10 +64,10 @@ static void vm_task(void *arg) {
                      GOGO_VERSION, IMAGE_MAJOR, IMAGE_MINOR, (unsigned long)nwords * 4u, (unsigned long)platform_esp_arena_cap(),
                      (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    /* The unified boot (module.h): the image becomes module 0 (caps check
-     * included), then vm_run starts its "main" export. */
+    /* The unified boot (module.h): the image becomes module 0 (requirement
+     * check included), then vm_run starts its "main" export. */
     int rc = VM_BOOT_NO_MEMORY;
-    if (vm_init(&vm, &esp_host, NULL, &esp_board, UINT32_MAX, (uint16_t)GOGO_TABLE_CAP) == 0) {
+    if (vm_init(&vm, &esp_host, NULL, &esp_board, (uint16_t)GOGO_TABLE_CAP) == 0) {
         rc = vm_boot(&vm, words, nwords);
     }
     if (rc == IMG_ERR_VERSION) {

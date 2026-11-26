@@ -10,7 +10,7 @@
 #include "host.h"
 
 /* The ESP board (platform_esp.c): its gogo_host (ctx unused, NULL) and
- * VmBoard (port drivers, input chips, Wi-Fi netif, the build's caps). */
+ * VmBoard (port drivers, input chips, Wi-Fi netif, mounts: what the build has). */
 extern const gogo_host esp_host;
 extern const VmBoard esp_board;
 

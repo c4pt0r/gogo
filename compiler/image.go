@@ -91,8 +91,9 @@ type ImageBuilder struct {
 	used     int // highest reserved index UseType marked, plus 1
 	types    []imgType // own types: index TypeOwnBase + position
 	entry    uint32
-	// v9 trailer: capability bits, and the exported entries by name.
-	requires uint32
+	// The trailer: requirement names (const offsets), and the exported
+	// entries by name.
+	requires []uint32
 	exports  []imgExport
 }
 
@@ -170,8 +171,14 @@ func (b *ImageBuilder) UseType(idx uint32) {
 	}
 }
 
-// SetRequires sets the capability bits the image needs (Cap*).
-func (b *ImageBuilder) SetRequires(bits uint32) { b.requires = bits }
+// SetRequires sets the names the image requires from the board: port
+// drivers and mount prefixes (see Requires).
+func (b *ImageBuilder) SetRequires(names []string) {
+	b.requires = nil
+	for _, n := range names {
+		b.requires = append(b.requires, b.AddString(n))
+	}
+}
 
 // AddExport exports function f under name (the host spawns it by name).
 func (b *ImageBuilder) AddExport(name string, f uint32) {
@@ -228,7 +235,9 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 	words = append(words, b.consts...)
 	words = append(words, code...)
 	words = append(words, constMap(b.consts)...)
-	words = append(words, b.requires, uint32(len(b.exports)))
+	words = append(words, uint32(len(b.requires)))
+	words = append(words, b.requires...)
+	words = append(words, uint32(len(b.exports)))
 	for _, e := range b.exports {
 		words = append(words, e.name, e.fn)
 	}
@@ -288,23 +297,39 @@ func constMap(consts []uint32) []uint32 {
 	return m
 }
 
-// ImageRequires returns the capability word (Cap*) of a v9 image or module
-// file: the word after the const map, see Bytes.
-func ImageRequires(img []byte) (uint32, error) {
+// ImageRequires returns the requirement names of an image or module
+// file: the trailer after the const map, see Bytes.
+func ImageRequires(img []byte) ([]string, error) {
 	if len(img) < 32 || len(img)%4 != 0 {
-		return 0, fmt.Errorf("not a gogo image (size %d)", len(img))
+		return nil, fmt.Errorf("not a gogo image (size %d)", len(img))
 	}
-	w := func(i int) uint32 { return binary.LittleEndian.Uint32(img[i*4:]) }
+	w := func(i uint64) uint32 { return binary.LittleEndian.Uint32(img[i*4:]) }
+	n := uint64(len(img) / 4)
 	if w(0) != imageMagic {
-		return 0, fmt.Errorf("not a gogo image (bad magic)")
+		return nil, fmt.Errorf("not a gogo image (bad magic)")
 	}
 	if err := CheckVersion(w(1)); err != nil {
-		return 0, err
+		return nil, err
 	}
-	// the requires word; uint64 so huge counts cannot wrap
-	at := 8 + uint64(w(2))*3 + uint64(w(3))*2 + uint64(w(4)) + uint64(w(5)) + (uint64(w(4))+31)/32
-	if at+2 > uint64(len(img)/4) {
-		return 0, fmt.Errorf("truncated gogo image")
+	// uint64 so huge counts cannot wrap
+	nf, nt, nc, ncode := uint64(w(2)), uint64(w(3)), uint64(w(4)), uint64(w(5))
+	cbase := 8 + nf*3 + nt*2
+	at := cbase + nc + ncode + (nc+31)/32
+	if at+1 > n || at+1+uint64(w(at)) > n || cbase+nc > n {
+		return nil, fmt.Errorf("truncated gogo image")
 	}
-	return w(int(at)), nil
+	var names []string
+	for i := uint64(0); i < uint64(w(at)); i++ {
+		off := uint64(w(at + 1 + i))
+		if off+2 > nc {
+			return nil, fmt.Errorf("bad gogo image (requirement %d)", i)
+		}
+		l := uint64(w(cbase + off + 1))
+		if off+2+(l+3)/4 > nc {
+			return nil, fmt.Errorf("bad gogo image (requirement %d)", i)
+		}
+		start := (cbase + off + 2) * 4
+		names = append(names, string(img[start:start+l]))
+	}
+	return names, nil
 }

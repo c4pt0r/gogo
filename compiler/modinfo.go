@@ -8,24 +8,8 @@ import (
 	"strings"
 )
 
-// Capability bits of the image's requires word (v9; bits 4-6 added in v10, 7-8 in v11, 9 in v13): what the host must
-// provide for the module to run. Inferred by Requires.
-const (
-	CapNet     uint32 = 1
-	CapKbd     uint32 = 2
-	CapPower   uint32 = 4
-	CapSD      uint32 = 8
-	CapIMU     uint32 = 16
-	CapIRTX    uint32 = 32
-	CapIRRX    uint32 = 64
-	CapMic     uint32 = 128
-	CapSpk     uint32 = 256
-	CapTLS     uint32 = 512
-	CapAnyPort uint32 = 1 << 31 // port.Open with a driver name not known at build time
-)
-
 // anyPortWarning is the warning for a non-constant port.Open driver.
-const anyPortWarning = "port.Open with a non-constant driver name: requires any port"
+const anyPortWarning = "port.Open with a non-constant driver name: the image does not require it (the open fails at run time on a board without it)"
 
 // Export is one exported entry of package main.
 type Export struct {
@@ -69,40 +53,22 @@ func isEmptyIface(t types.Type) bool {
 	return ok && i.NumMethods() == 0 && i.IsMethodSet()
 }
 
-// importCaps maps an import path to the capability it implies.
-var importCaps = map[string]uint32{
-	NetPath: CapNet, libPrefix + "dhcp": CapNet, libPrefix + "dns": CapNet, libPrefix + "http": CapNet,
-	KbdPath: CapKbd, PowerPath: CapPower,
-}
-
-// driverCaps maps a constant port.Open driver name to its capability.
-var driverCaps = map[string]uint32{
-	"kbd": CapKbd, "power": CapPower, "imu": CapIMU, "ir_tx": CapIRTX, "ir_rx": CapIRRX, "mic": CapMic, "spk": CapSpk, "tls": CapTLS,
-	"netif": CapNet, "udp": CapNet, "tcp": CapNet, "tcp_listen": CapNet,
-}
-
-// capDriverNames lists the driver names of driverCaps, sorted: the names
-// a //gogo:optional directive accepts.
-func capDriverNames() []string {
-	var names []string
-	for d := range driverCaps {
-		names = append(names, d)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// Requires infers the capabilities the program needs, over package main
-// and every compiled library: imports, constant port.Open drivers (but
-// those a library names in its //gogo:optional directive, for its own
-// calls; see directivePrefix) and constant gogo/fs paths under /sd. A
-// non-constant driver name requires any port, with a warning.
-func Requires(p *Program) (bits uint32, warnings []string) {
+// Requires infers what the program needs from the board, by name, over
+// package main and every compiled library: the driver of each constant
+// port.Open (but those a library names in its //gogo:optional directive,
+// for its own calls; see directivePrefix), and "/sd" for constant gogo/fs
+// paths under /sd. Imports alone require nothing. A non-constant driver
+// name requires nothing, with a warning. The names are sorted.
+func Requires(p *Program) (names []string, warnings []string) {
 	warned := false
-	for _, pkg := range p.packages() {
-		for _, imp := range pkg.Pkg.Imports() {
-			bits |= importCaps[imp.Path()]
+	seen := map[string]bool{}
+	add := func(n string) {
+		if !seen[n] {
+			seen[n] = true
+			names = append(names, n)
 		}
+	}
+	for _, pkg := range p.packages() {
 		for _, f := range pkg.Files {
 			ast.Inspect(f, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
@@ -127,19 +93,16 @@ func Requires(p *Program) (bits uint32, warnings []string) {
 					}
 					if s, ok := constString(p, call.Args[0]); ok {
 						if !pkg.Optional[s] {
-							bits |= driverCaps[s]
+							add(s)
 						}
-					} else {
-						bits |= CapAnyPort
-						if !warned {
-							warned = true
-							warnings = append(warnings, anyPortWarning)
-						}
+					} else if !warned {
+						warned = true
+						warnings = append(warnings, anyPortWarning)
 					}
 				case FsPath:
 					for _, a := range call.Args {
 						if s, ok := constString(p, a); ok && (s == "/sd" || strings.HasPrefix(s, "/sd/")) {
-							bits |= CapSD
+							add("/sd")
 						}
 					}
 				}
@@ -147,7 +110,8 @@ func Requires(p *Program) (bits uint32, warnings []string) {
 			})
 		}
 	}
-	return bits, warnings
+	sort.Strings(names)
+	return names, warnings
 }
 
 func constString(p *Program, e ast.Expr) (string, bool) {

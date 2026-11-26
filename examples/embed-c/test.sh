@@ -4,7 +4,7 @@
 #   main IMAGE                    examples/many_idle against its expected.out
 #   main --flash --allow-load     examples/hotload (modules in /flash, code.Load allowed)
 #   main --flash                  the same with code.Load refused (hotload-refused.out)
-#   main on examples/netdemo      refused: it needs the net capability
+#   main on examples/netdemo      refused: it requires drivers (gpio, netif, ...) the host lacks
 #   main --two A B                httpparse and many_idle stepped by one loop
 #   post greeter.ggb              greeter/embed.out
 #   port hostecho.ggb             examples/hostecho/embed.out
@@ -37,8 +37,8 @@ check "main --flash --allow-load hotload" examples/hotload/expected.out "$T/out"
 "$E/main" --flash "$T/flash" "$T/img/hotload.ggb" > "$T/out" 2> "$T/err" || { echo "FAIL main hotload refused: exit status"; fail=1; }
 check "main --flash hotload (code.Load refused)" examples/embed-c/hotload-refused.out "$T/out"
 
-if "$E/main" "$T/img/netdemo.ggb" > "$T/out" 2> "$T/err"; then echo "FAIL main netdemo: ran without the net capability"; fail=1
-elif grep -q "image needs net" "$T/err" && grep -q "error -4" "$T/err"; then echo "ok   main netdemo (refused: needs net)"
+if "$E/main" "$T/img/netdemo.ggb" > "$T/out" 2> "$T/err"; then echo "FAIL main netdemo: ran without its drivers"; fail=1
+elif grep -q "image requires gpio" "$T/err" && grep -q "error -4" "$T/err"; then echo "ok   main netdemo (refused: requires gpio)"
 else echo "FAIL main netdemo"; cat "$T/err"; fail=1; fi
 
 "$E/main" --two "$T/img/httpparse.ggb" "$T/img/many_idle.ggb" > "$T/out" 2> "$T/err" || { echo "FAIL main --two: exit status"; fail=1; }

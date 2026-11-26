@@ -42,11 +42,14 @@ import (
 // Module is a loaded module, or none (the zero Module). It is a plain value:
 // send it to another actor, which may Spawn from it or Hold it. Having a
 // Module does not keep the module loaded; only holds and running actors do.
-// H names the module (0: none); Missing is what Missing returns. Both are
-// plain ints, not secrets: a Module built by hand names a module only if
-// its H is exactly what Load returned for one still loaded, and never the
-// main program; any other value is simply NotFound.
-type Module struct{ H, Missing int }
+// H names the module (0: none). It is a plain int, not a secret: a Module
+// built by hand names a module only if its H is exactly what Load returned
+// for one still loaded, and never the main program; any other value is
+// simply NotFound. The unexported field is what Missing returns.
+type Module struct {
+	H       int
+	missing string
+}
 
 // Err is the result of every call; OK is 0.
 type Err int
@@ -55,7 +58,7 @@ type Err int
 const (
 	OK          Err = 0
 	BadImage    Err = 1 // not exactly one valid image of this VM's format
-	Unsupported Err = 2 // needs a firmware capability it lacks: see Missing
+	Unsupported Err = 2 // requires a driver or mount this firmware lacks: see Missing
 	NoMemory    Err = 3 // over code.mem, or out of memory
 	NotFound    Err = 4 // no such module (unloaded, or the zero Module) or entry
 	BadArg      Err = 5 // an argument that cannot be passed
@@ -63,24 +66,9 @@ const (
 	BadVersion  Err = 7 // built for another image format: another major, or a newer minor than this firmware runs
 )
 
-// Capability bits (Missing; CAP_* in runtime/vm/host.h).
-const (
-	CapNet     = 1       // gogo/net, dhcp, dns, http
-	CapKbd     = 2       // the "kbd" port
-	CapPower   = 4       // the "power" port
-	CapSD      = 8       // the /sd file system
-	CapIMU     = 16      // the "imu" port
-	CapIRTX    = 32      // the "ir_tx" port
-	CapIRRX    = 64      // the "ir_rx" port
-	CapMic     = 128     // the "mic" port
-	CapSpk     = 256     // the "spk" port
-	CapTLS     = 512     // the "tls" port
-	CapAnyPort = 1 << 31 // only a build-time marker: never missing
-)
-
 // Load checks b and loads it as a module held by the caller. The checks, in
 // order: BadImage or BadVersion, Unsupported, NoMemory, TooMany. On error the Module is
-// none; after Unsupported, Missing tells what the firmware lacks.
+// none; after Unsupported, Missing names what the firmware lacks.
 func Load(b bytes.Bytes) (Module, Err) { panic("gogo only") }
 
 // Spawn starts entry of m in a new actor running m's code, with arg (any
@@ -106,10 +94,11 @@ func Hold(m Module) Err { panic("gogo only") }
 // keeps it.
 func Release(m Module) { panic("gogo only") }
 
-// Missing is the capability bits (Cap*) the firmware lacked when Load
-// returned m with Unsupported; 0 for any other Module from Load (it is
-// m.Missing).
-func Missing(m Module) int { panic("gogo only") }
+// Missing names the requirement the firmware lacked when Load returned m
+// with Unsupported: the first missing port driver ("kbd", "tls", a host
+// port's name) or mount prefix ("/sd"), at most 32 bytes of it; "" for
+// any other Module.
+func Missing(m Module) string { panic("gogo only") }
 
 // MemUsed is the code memory (bytes) of the loaded modules, counted against
 // code.mem.
