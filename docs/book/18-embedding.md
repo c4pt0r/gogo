@@ -455,7 +455,7 @@ port (chapter 7). `examples/embed-c/port.c` defines one called `"echo"`:
  * owner once the open succeeds. */
 static int echo_open(void *ctx, gogo_vm *vm, gogo_port p, int32_t arg, const uint8_t *data, size_t len) {
     (void)ctx;
-    if (arg < 0) return GOGO_EINVAL;   /* refused: Open's ok is false */
+    if (arg < 0) return GOGO_EINVAL;   /* refused: port.Open fails with errors.Busy */
     gogo_port_emit(vm, p, arg, data, len);
     return 0;
 }
@@ -513,7 +513,8 @@ ended by the host: true true
 
 A driver, like the host table, begins with its size; it has three
 callbacks, each optional: `open` (0 accepts, a negative `GOGO_E*`
-refuses; `NULL` accepts all), `command` (a `port.Post` sent to the port)
+refuses, and `port.Open` then fails with `errors.Busy`, whatever the
+code; `NULL` accepts all), `command` (a `port.Post` sent to the port)
 and `close` (the port closed, for any reason: the owner exited,
 `port.Close`, `actor.Kill`, `gogo_port_close`, `gogo_free`). They run on
 the VM's thread inside `gogo_step`, and get the port as a `gogo_port`: a
