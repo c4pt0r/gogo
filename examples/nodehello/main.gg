@@ -1,0 +1,103 @@
+// nodehello: distributed actors on one computer. One program plays both
+// parts, so the server and the client share the Add message type:
+//
+//	GOGO_NET=host gogo run examples/nodehello server [port]
+//	GOGO_NET=host gogo run examples/nodehello client [server-ip[:port]]
+//
+// Both need the same node.token in the config (book, chapter 20).
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/strconv"
+	"gogo/sys"
+)
+
+// Add asks the counter to add N; the reply is the new total (an int).
+type Add struct {
+	N int
+}
+
+func main() {
+	args := sys.Args()
+	if len(args) > 0 && args[0] == "server" {
+		port := node.DefaultPort // 4370
+		if len(args) > 1 {
+			if p, err := strconv.Atoi(args[1]); err == nil {
+				port = p
+			}
+		}
+		server(port)
+	} else if len(args) > 0 && args[0] == "client" {
+		addr := "127.0.0.1"
+		if len(args) > 1 {
+			addr = args[1]
+		}
+		client(addr)
+	} else {
+		println("usage: nodehello server [port] | client [server-ip[:port]]")
+	}
+}
+
+// counter is the actor the server exports as "counter".
+func counter() {
+	total := 0
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.Request:
+			switch b := m.Body.(type) {
+			case Add:
+				total += b.N
+				println("add", b.N, "from", m.From, "total", total)
+				actor.Reply(m, total)
+			}
+		}
+	}
+}
+
+func server(port int) {
+	if err := node.Listen(port, "server"); err != nil {
+		println("listen:", err.Error())
+		return
+	}
+	if err := node.Register("counter", actor.Spawn(counter)); err != nil {
+		println("register:", err.Error())
+		return
+	}
+	println("server: listening on port", port)
+	for {
+		actor.Sleep(60000)
+	}
+}
+
+func client(addr string) {
+	if err := node.Connect(addr, "client"); err != nil {
+		println("connect:", err.Error())
+		return
+	}
+	counter, err := node.Whereis("server", "counter", 2000)
+	if err != nil {
+		println("whereis:", err.Error())
+		return
+	}
+	println("client: found counter", counter)
+	ref := actor.Monitor(counter)
+	for i := 1; i <= 5; i++ {
+		total, ok := actor.Call(counter, Add{N: i}, 2000)
+		if !ok {
+			println("no reply")
+			return
+		}
+		println("added", i, "total", total.(int))
+		// wait a second, but stop at once if the server goes away
+		if m, got := actor.ReceiveTimeout(1000); got {
+			if d, down := m.(actor.DownMsg); down && d.Ref == ref {
+				println("server gone, reason", d.Reason.Code)
+				return
+			}
+		}
+	}
+	node.Disconnect()
+	println("client: done")
+}

@@ -111,6 +111,11 @@ config set node.token ...`), or `node.Options{Token: ...}` with
 `ConnectOpt` / `ListenOpt`. Without one, `Connect` and `Listen` return
 `errors.BadArg`. `node.name` in the config can give the node's name too.
 
+[examples/nodehello](../../examples/nodehello/README.md) is the smallest
+complete pair: one program that runs as `server` or `client` on the
+host, finds a counter, calls it five times and notices the server going
+away. Run both with `GOGO_NET=host` on one computer.
+
 `node.Nodes()` lists the nodes this one can reach and `node.Self()` is its
 own name. `node.Disconnect()` drops a board's link.
 

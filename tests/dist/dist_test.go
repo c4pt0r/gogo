@@ -37,7 +37,11 @@ type node struct {
 
 func build(t *testing.T, prog string) string {
 	t.Helper()
-	p, err := compiler.Load(filepath.Join("progs", prog))
+	dir := filepath.Join("progs", prog)
+	if strings.Contains(prog, "/") { // an example: ../../examples/<name>
+		dir, prog = prog, filepath.Base(prog)
+	}
+	p, err := compiler.Load(dir)
 	if err != nil {
 		t.Fatalf("load %s: %v", prog, err)
 	}
@@ -61,6 +65,12 @@ func start(t *testing.T, prog string, cfg ...string) *node {
 // startVM is start with extra VM flags.
 func startVM(t *testing.T, prog string, flags []string, cfg ...string) *node {
 	t.Helper()
+	return startArgs(t, prog, flags, nil, cfg...)
+}
+
+// startArgs is startVM with the program's arguments (sys.Args).
+func startArgs(t *testing.T, prog string, flags, args []string, cfg ...string) *node {
+	t.Helper()
 	vm := os.Getenv("GOGO_VM")
 	if vm == "" {
 		t.Fatal("GOGO_VM is not set: run `make test-go`, or build the VM with `make vm` and set GOGO_VM=$PWD/build/gogovm")
@@ -69,8 +79,9 @@ func startVM(t *testing.T, prog string, flags []string, cfg ...string) *node {
 	if err := os.WriteFile(conf, []byte(strings.Join(append(cfg, "node.token="+token), "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	n := &node{t: t, name: prog, more: make(chan struct{}, 1), done: make(chan struct{})}
-	n.cmd = exec.Command(vm, append(append([]string{"--host-net"}, flags...), build(t, prog))...)
+	n := &node{t: t, name: filepath.Base(prog), more: make(chan struct{}, 1), done: make(chan struct{})}
+	argv := append(append([]string{"--host-net"}, flags...), build(t, prog))
+	n.cmd = exec.Command(vm, append(argv, args...)...)
 	n.cmd.Env = append(os.Environ(), "GOGO_CONFIG="+conf)
 	out, err := n.cmd.StdoutPipe()
 	if err != nil {
