@@ -1,0 +1,172 @@
+// A line server on TCP port 7000: a listener actor accepts connections and
+// hands each to its own actor, under a cap and with a memory limit, so one
+// bad client takes down only its own actor. A connection's bytes arrive in
+// Chunks that split lines anywhere: the handler joins them and answers
+// complete lines only, at most two Outs in flight.
+//
+// On the host there is no network, so main plays one connection itself: a
+// stand-in actor speaks the tcp port's messages to the same handler.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/dhcp"
+	"gogo/errors"
+	"gogo/net"
+	"gogo/port"
+	"gogo/supervisor"
+)
+
+const (
+	MaxLine    = 128  // a longer line ends the connection
+	MaxConns   = 3    // the stack takes at most 3 inbound connections anyway
+	ConnMemory = 8192 // each handler's limit
+)
+
+// answer is the protocol: "ping" gets "pong", anything else is echoed.
+func answer(line string) string {
+	if line == "ping" {
+		return "pong\n"
+	}
+	return "echo: " + line + "\n"
+}
+
+// flush sends what waits in out while fewer than two Outs are in flight,
+// and returns the new count.
+func flush(conn actor.PID, out bytes.Buffer, inFlight int) int {
+	if inFlight < 2 && out.Len() > 0 {
+		actor.Send(conn, port.Out{Data: out.Freeze()})
+		inFlight++
+	}
+	return inFlight
+}
+
+// serveConn owns one connection.
+func serveConn(conn actor.PID) {
+	var partial bytes.Bytes // the start of a line not finished yet
+	in := bytes.NewBuffer(256)
+	out := bytes.NewBuffer(256)
+	inFlight := 0
+	peerDone := false
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Chunk:
+			in.WriteBytes(partial)
+			in.WriteBytes(m.Data)
+			data := in.Freeze()
+			start := 0
+			for i := 0; i < data.Len(); i++ {
+				if data.At(i) == '\n' {
+					out.WriteString(answer(data.Slice(start, i).String()))
+					start = i + 1
+				}
+			}
+			partial = data.Slice(start, data.Len())
+			if partial.Len() > MaxLine {
+				port.Close(conn) // no Shutdown: the connection is reset
+				return
+			}
+		case port.Done:
+			inFlight--
+		case port.Closed:
+			if m.Reason != net.Normal { // reset, timeout, link lost
+				port.Close(conn)
+				return
+			}
+			peerDone = true // the peer finished sending; answer what we have
+		}
+		inFlight = flush(conn, out, inFlight)
+		if peerDone && inFlight == 0 && out.Len() == 0 {
+			actor.Send(conn, net.Shutdown{})
+			port.Close(conn) // after Shutdown the stack completes the close
+			return
+		}
+	}
+}
+
+// listener accepts connections and gives each to a new handler actor.
+func listener(portNum int) {
+	_, err := port.Open("tcp_listen", net.Listen{Port: portNum})
+	if err != nil {
+		actor.Exit(actor.Failed + int(errors.Busy)) // the supervisor retries
+	}
+	live := 0
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Accepted:
+			conn := m.Conn
+			if live >= MaxConns {
+				port.Close(conn) // refuse: reset
+				continue
+			}
+			h := actor.SpawnOpt(func() { serveConn(conn) }, actor.Options{MaxMemory: ConnMemory})
+			if !port.Handoff(conn, h) {
+				port.Close(conn)
+				actor.Kill(h, actor.Killed)
+				continue
+			}
+			actor.Monitor(h)
+			live++
+		case actor.DownMsg:
+			live-- // a handler ended, however it ended
+		}
+	}
+}
+
+// standIn plays the tcp port for one connection: it sends Chunks that
+// split lines anywhere, answers every Out with a Done, and prints what the
+// handler sends.
+func standIn() {
+	h := actor.Receive().(actor.PID)
+	me := actor.Self()
+	seq := 0
+	for _, s := range []string{"pi", "ng\nhello wor", "ld\nping\n", "bye"} {
+		seq++
+		actor.Send(h, port.Chunk{From: me, Seq: seq, Data: bytes.FromString(s)})
+	}
+	actor.Send(h, port.Closed{From: me, Reason: net.Normal})
+	done := 0
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Out:
+			show(m.Data.String())
+			done++
+			actor.Send(h, port.Done{From: me, Seq: done})
+		case net.Shutdown:
+			println("shutdown after", done, "Outs")
+			return
+		}
+	}
+}
+
+// show prints sent data line by line.
+func show(s string) {
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			println("sent:", s[start:i])
+			start = i + 1
+		}
+	}
+}
+
+func main() {
+	if dhcp.Start(dhcp.Config{}) != nil {
+		println("no network: one connection through a stand-in")
+		s := actor.Spawn(standIn)
+		h := actor.SpawnOpt(func() { serveConn(s) }, actor.Options{MaxMemory: ConnMemory})
+		actor.Monitor(h)
+		actor.Send(s, h)
+		switch m := actor.Receive().(type) {
+		case actor.DownMsg:
+			println("handler ended, reason", m.Reason.Code)
+		}
+		return
+	}
+	supervisor.Supervise(func() { listener(7000) }, supervisor.Spec{Restart: supervisor.Permanent, MaxRestarts: 5, PeriodMs: 10000})
+	println("serving lines on port 7000")
+	for {
+		actor.Receive() // main must not return while the tree runs
+	}
+}

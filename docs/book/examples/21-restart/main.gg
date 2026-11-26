@@ -1,0 +1,76 @@
+// Be ready to restart: a restarted actor starts empty, so a counter that
+// must survive its own crash keeps its value in gogo/kv and reloads it at
+// start. A supervisor restarts it; the new instance registers the same
+// name, so clients find it again.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/fs"
+	"gogo/kv"
+	"gogo/strconv"
+	"gogo/supervisor"
+)
+
+type Incr struct{}
+
+type Get struct{}
+
+type Crash struct{}
+
+// load reads the stored count: 0 if there is none yet.
+func load() int {
+	v, e := kv.Get("count")
+	if e != fs.OK {
+		return 0 // fs.NotFound on the first start
+	}
+	n, err := strconv.Atoi(v.String())
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func counter() {
+	n := load()
+	println("counter starts at", n)
+	actor.Register("counter", actor.Self())
+	for {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			switch r.Body.(type) {
+			case Incr:
+				n++
+				kv.Put("count", strconv.Itoa(n)) // persist before answering
+				actor.Reply(r, n)
+			case Get:
+				actor.Reply(r, n)
+			case Crash:
+				zero := 0
+				println(n / zero)
+			}
+		}
+	}
+}
+
+// call finds the counter by name, waiting for a restart if needed.
+func call(req any) (any, bool) {
+	for i := 0; i < 10; i++ {
+		if p, ok := actor.Whereis("counter"); ok {
+			v, ok := actor.Call(p, req, 100)
+			return v, ok
+		}
+		actor.Sleep(10)
+	}
+	return nil, false
+}
+
+func main() {
+	supervisor.Supervise(counter, supervisor.Spec{Restart: supervisor.Permanent, MaxRestarts: 3, PeriodMs: 1000})
+	for i := 0; i < 3; i++ {
+		call(Incr{})
+	}
+	call(Crash{})
+	v, ok := call(Incr{})
+	println("after the crash:", v, ok)
+}

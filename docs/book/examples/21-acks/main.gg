@@ -1,0 +1,64 @@
+// Backpressure with acks: the same fast producer and slow consumer as
+// section 6.4, but the producer keeps at most Window samples unacknowledged.
+// The consumer's mailbox never holds more than that, so it survives with a
+// 4 KB limit, and the producer runs at the consumer's pace.
+package main
+
+import "gogo/actor"
+
+const Window = 4
+
+type Sample struct {
+	From     actor.PID
+	N, Value int
+}
+
+type Ack struct{}
+
+type Total struct{ N, Sum int }
+
+func consumer(boss actor.PID) {
+	n, sum := 0, 0
+	for n < 1000 {
+		switch m := actor.Receive().(type) {
+		case Sample:
+			if n%100 == 0 {
+				actor.Sleep(1) // slow work
+			}
+			n++
+			sum += m.Value
+			actor.Send(m.From, Ack{})
+		}
+	}
+	actor.Send(boss, Total{n, sum})
+}
+
+func main() {
+	me := actor.Self()
+	c := actor.SpawnOpt(func() { consumer(me) }, actor.Options{MaxMemory: 4096})
+	actor.Monitor(c)
+	inFlight := 0
+	for i := 0; i < 1000; i++ {
+		for inFlight == Window { // wait for room
+			switch m := actor.Receive().(type) {
+			case Ack:
+				inFlight--
+			case actor.DownMsg:
+				println("consumer died, reason", m.Reason.Code)
+				return
+			}
+		}
+		actor.Send(c, Sample{me, i, i % 10})
+		inFlight++
+	}
+	for {
+		switch m := actor.Receive().(type) {
+		case Total:
+			println("consumer got", m.N, "samples, sum", m.Sum)
+			return
+		case actor.DownMsg:
+			println("consumer died, reason", m.Reason.Code)
+			return
+		}
+	}
+}

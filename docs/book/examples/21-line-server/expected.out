@@ -1,0 +1,6 @@
+no network: one connection through a stand-in
+sent: pong
+sent: echo: hello world
+sent: pong
+shutdown after 2 Outs
+handler ended, reason 0

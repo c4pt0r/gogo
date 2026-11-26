@@ -1,0 +1,3 @@
+  sensor: GetScale timed out
+cycle: 0 true slow: true
+fixed: 420 true slow: false

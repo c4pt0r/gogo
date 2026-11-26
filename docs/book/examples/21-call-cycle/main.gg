@@ -1,0 +1,82 @@
+// A Call cycle: the controller Calls the sensor, and the sensor, while
+// answering, Calls the controller back. Each waits in Call for its own
+// reply and leaves the other's request in its mailbox, so both wait until
+// their timeouts. The fix keeps requests one-directional: the controller
+// sends what the sensor needs with the request.
+package main
+
+import "gogo/actor"
+
+type Read struct{}
+
+type ReadWith struct{ Scale int }
+
+type GetScale struct{}
+
+type Measure struct{}
+
+func controller(sensor actor.PID, fixed bool) {
+	for {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			switch r.Body.(type) {
+			case Measure:
+				var req any = Read{}
+				if fixed {
+					req = ReadWith{10}
+				}
+				v, ok := actor.Call(sensor, req, 300)
+				if !ok {
+					v = -1
+				}
+				actor.Reply(r, v)
+			case GetScale:
+				actor.Reply(r, 10)
+			}
+		}
+	}
+}
+
+func sensor(boss actor.PID) {
+	for {
+		switch r := actor.Receive().(type) {
+		case actor.Request:
+			switch b := r.Body.(type) {
+			case Read:
+				// Calls up the hierarchy: a cycle with the controller.
+				scale, ok := actor.Call(boss, GetScale{}, 200)
+				if !ok {
+					println("  sensor: GetScale timed out")
+					scale = 0
+				}
+				actor.Reply(r, 42*scale.(int))
+			case ReadWith:
+				actor.Reply(r, 42*b.Scale)
+			}
+		}
+	}
+}
+
+// start spawns a controller and its sensor, which knows its controller.
+func start(fixed bool) actor.PID {
+	me := actor.Self()
+	c := actor.Spawn(func() {
+		boss := actor.Self()
+		s := actor.Spawn(func() { sensor(boss) })
+		actor.Send(me, true)
+		controller(s, fixed)
+	})
+	actor.Receive()
+	return c
+}
+
+func measure(label string, c actor.PID) {
+	t0 := actor.Now()
+	v, ok := actor.Call(c, Measure{}, 1000)
+	println(label, v, ok, "slow:", actor.Now()-t0 >= 200)
+}
+
+func main() {
+	measure("cycle:", start(false))
+	measure("fixed:", start(true))
+}

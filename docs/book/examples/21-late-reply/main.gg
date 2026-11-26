@@ -1,0 +1,58 @@
+// Receive takes the oldest message, whatever it is. A client that gives up
+// on a slow answer will find that answer in its mailbox later, in front of
+// the one it waits for now. Tagging each request with an ID lets it tell
+// them apart and drop the late one.
+package main
+
+import "gogo/actor"
+
+type Query struct {
+	ID, DelayMs int
+	From        actor.PID
+}
+
+type Answer struct{ ID, Value int }
+
+func server() {
+	for {
+		switch q := actor.Receive().(type) {
+		case Query:
+			actor.Sleep(q.DelayMs) // slow work
+			actor.Send(q.From, Answer{q.ID, q.ID * 100})
+		}
+	}
+}
+
+// ask sends query id and waits at most timeoutMs for its answer.
+func ask(s actor.PID, id, delayMs, timeoutMs int) (int, bool) {
+	actor.Send(s, Query{id, delayMs, actor.Self()})
+	deadline := actor.Now() + int64(timeoutMs)
+	for {
+		left := int(deadline - actor.Now())
+		if left <= 0 {
+			return 0, false
+		}
+		m, ok := actor.ReceiveTimeout(left)
+		if !ok {
+			return 0, false
+		}
+		switch a := m.(type) {
+		case Answer:
+			if a.ID == id {
+				return a.Value, true
+			}
+			println("  dropped the late answer to query", a.ID)
+		default:
+			println("  dropped a message of an unexpected type")
+		}
+	}
+}
+
+func main() {
+	s := actor.Spawn(server)
+	v, ok := ask(s, 1, 100, 50) // the server needs 100 ms: give up after 50
+	println("query 1:", v, ok)
+	actor.Send(actor.Self(), "noise")
+	v, ok = ask(s, 2, 0, 500)
+	println("query 2:", v, ok)
+}

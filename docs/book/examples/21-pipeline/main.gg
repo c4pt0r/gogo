@@ -1,0 +1,164 @@
+// A recorder pipeline: a capture actor owns the microphone and passes each
+// frame to a writer actor, which appends it to a file and acknowledges it.
+// Capture keeps at most MaxInFlight frames unacknowledged and at most
+// MaxQueued waiting; when the writer falls further behind, the oldest
+// waiting frame is dropped and counted (latest wins). Both limits come
+// from the memory arithmetic of section 16.1. On the host the sound comes
+// from the stdin script (`mic tone` lines of 250 ms, 300 ms apart, as in
+// chapter 16's recorder): 1500 ms of sound, 15 frames of 100 ms.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/audio"
+	"gogo/bytes"
+	"gogo/fs"
+	"gogo/port"
+)
+
+const (
+	RateHz      = 8000
+	FrameMs     = 100
+	StallMs     = 300  // the longest write stall to ride out
+	MaxInFlight = 2    // frames at the writer, not yet acknowledged
+	MaxQueued   = 4    // frames waiting in capture
+	HeapWords   = 1024 // each actor's own heap, beside the frames
+)
+
+type Frame struct {
+	From actor.PID
+	Seq  int
+	Data bytes.Bytes
+}
+
+type Written struct{ Seq int }
+
+type Stop struct{}
+
+type Finish struct {
+	Boss                     actor.PID
+	MicDropped, QueueDropped int
+}
+
+type Stats struct {
+	Frames, Bytes, MicDropped, QueueDropped int
+}
+
+// frameWords is F, a frame's size in words (4 bytes).
+func frameWords() int { return RateHz * FrameMs / 2000 }
+
+// captureMemory, in bytes: the mic's buffer and the Chunks that pile up
+// in a stall of StallMs (section 16.1), plus the frames capture keeps
+// queued (F words each, plus 8 for the Frame, the Bytes header and the
+// queue slot).
+func captureMemory() int {
+	f := frameWords()
+	stall := (StallMs+FrameMs-1)/FrameMs + 1
+	return (HeapWords + f + stall*(f+11) + MaxQueued*(f+8)) * 4
+}
+
+// writerMemory, in bytes: the frames in flight in its mailbox and the one
+// it holds (F words each, plus 10 for the Frame and the message block).
+func writerMemory() int {
+	return (HeapWords + (MaxInFlight+1)*(frameWords()+10)) * 4
+}
+
+func writer(path string) {
+	f, e := fs.Open(path, fs.Write)
+	if e != fs.OK {
+		actor.Exit(actor.Failed + int(e))
+	}
+	frames, n := 0, 0
+	for {
+		switch m := actor.Receive().(type) {
+		case Frame:
+			if e := f.Write(m.Data); e != fs.OK {
+				actor.Exit(actor.Failed + int(e)) // a supervisor decides what next
+			}
+			frames++
+			n += m.Data.Len()
+			actor.Send(m.From, Written{m.Seq})
+		case Finish:
+			f.Close()
+			actor.Send(m.Boss, Stats{frames, n, m.MicDropped, m.QueueDropped})
+			return
+		}
+	}
+}
+
+// pop removes the first frame, clearing the freed slot so the slice does
+// not keep its Bytes alive.
+func pop(q []Frame) []Frame {
+	copy(q, q[1:])
+	q[len(q)-1] = Frame{}
+	return q[:len(q)-1]
+}
+
+func capture(w actor.PID) {
+	var mic actor.PID
+	switch req := actor.Receive().(type) {
+	case actor.Request: // the opener's Call: open the mic here, under this actor's limit
+		p, err := port.Open("mic", audio.Mic{RateHz: RateHz, FrameMs: FrameMs})
+		actor.Reply(req, err == nil)
+		if err != nil {
+			return
+		}
+		mic = p
+	}
+	me := actor.Self()
+	var queue []Frame
+	var boss actor.PID
+	seq, inFlight, micDropped, queueDropped := 0, 0, 0, 0
+	stopping := false
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Chunk:
+			micDropped += m.Dropped
+			seq++
+			if len(queue) == MaxQueued {
+				queue = pop(queue) // the writer is behind: drop the oldest
+				queueDropped++
+			}
+			queue = append(queue, Frame{me, seq, m.Data})
+		case Written:
+			inFlight--
+		case actor.Request:
+			port.Close(mic) // no more Chunks; finish what is queued
+			boss = m.From
+			stopping = true
+			actor.Reply(m, true)
+		}
+		for inFlight < MaxInFlight && len(queue) > 0 {
+			actor.Send(w, queue[0])
+			queue = pop(queue)
+			inFlight++
+		}
+		if stopping && inFlight == 0 && len(queue) == 0 {
+			actor.Send(w, Finish{boss, micDropped, queueDropped})
+			return
+		}
+	}
+}
+
+func main() {
+	println("capture MaxMemory", captureMemory(), "writer MaxMemory", writerMemory())
+	w := actor.SpawnOpt(func() { writer("/flash/rec.pcm") }, actor.Options{MaxMemory: writerMemory()})
+	c := actor.SpawnOpt(func() { capture(w) }, actor.Options{MaxMemory: captureMemory()})
+	r, ok := actor.Call(c, 0, 1000)
+	opened, _ := r.(bool)
+	if !ok || !opened {
+		println("no mic")
+		return
+	}
+	actor.Sleep(1900) // the last tone line is read at 1500 ms
+	if _, ok = actor.Call(c, Stop{}, 1000); !ok {
+		println("capture did not answer")
+		return
+	}
+	switch s := actor.Receive().(type) {
+	case Stats:
+		println("frames", s.Frames, "bytes", s.Bytes, "mic dropped", s.MicDropped, "queue dropped", s.QueueDropped)
+	}
+	i, _ := fs.Stat("/flash/rec.pcm")
+	println("file size", i.Size)
+}

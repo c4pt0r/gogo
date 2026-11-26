@@ -1,0 +1,45 @@
+// Treat each actor as a small machine: the same work passes under the
+// host's default limit (256 KB) and fails under a board's (16 KB). Giving
+// the actor an explicit MaxMemory makes the host behave like the board,
+// and actor.Info shows what the work really needs.
+package main
+
+import "gogo/actor"
+
+type Result struct {
+	Peak int
+}
+
+// table builds a lookup table of n entries and reports its own memory.
+func table(boss actor.PID, n int) {
+	t := make([]int, 0, n)
+	for i := 0; i < n; i++ {
+		t = append(t, i*i)
+	}
+	actor.Send(boss, Result{actor.Info(actor.Self()).Memory})
+}
+
+// run starts table with the given limit (0: the platform default) and
+// says how it ended.
+func run(label string, limit int) {
+	me := actor.Self()
+	p := actor.SpawnOpt(func() { table(me, 5000) }, actor.Options{MaxMemory: limit})
+	actor.Monitor(p)
+	for {
+		switch m := actor.Receive().(type) {
+		case Result:
+			println(label, "ok, uses more than 16 KB:", m.Peak > 16384)
+		case actor.DownMsg:
+			if m.Reason.Code == actor.OutOfMemory {
+				println(label, "OutOfMemory")
+			}
+			return
+		}
+	}
+}
+
+func main() {
+	run("default limit:", 0)         // 256 KB under gogo run, 16 KB on a board
+	run("board-sized limit:", 16384) // what a board gives by default
+	run("sized for the job:", 32768) // measured, with room to spare
+}

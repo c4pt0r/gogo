@@ -1,0 +1,3 @@
+capture MaxMemory 18800 writer MaxMemory 9016
+frames 15 bytes 24000 mic dropped 0 queue dropped 0
+file size 24000

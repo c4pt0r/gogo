@@ -1,0 +1,112 @@
+// Shared state lives in an actor. Counters are split by key over two owner
+// actors (shards); each owner is the only one that changes its table, so
+// access is serialized without locks. Readers ask with Call, or subscribe
+// and get a snapshot pushed after every change.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/strconv"
+)
+
+type Count struct {
+	Key string
+	N   int
+}
+
+type Incr struct{ Key string }
+
+type Get struct{ Key string }
+
+type Subscribe struct{ To actor.PID }
+
+type Snapshot struct {
+	Shard  int
+	Counts []Count
+}
+
+func owner(shard int) {
+	var counts []Count
+	var subs []actor.PID
+	for {
+		switch m := actor.Receive().(type) {
+		case Incr:
+			counts = incr(counts, m.Key)
+			for _, s := range subs {
+				actor.Send(s, Snapshot{shard, counts}) // a copy: readers cannot change it
+			}
+		case Subscribe:
+			subs = append(subs, m.To)
+		case actor.Request:
+			switch g := m.Body.(type) {
+			case Get:
+				actor.Reply(m, find(counts, g.Key))
+			}
+		}
+	}
+}
+
+func incr(counts []Count, key string) []Count {
+	for i := range counts {
+		if counts[i].Key == key {
+			counts[i].N++
+			return counts
+		}
+	}
+	return append(counts, Count{key, 1})
+}
+
+func find(counts []Count, key string) int {
+	for _, c := range counts {
+		if c.Key == key {
+			return c.N
+		}
+	}
+	return 0
+}
+
+// shardFor picks the owner of a key: the same key always goes to the same
+// shard.
+func shardFor(key string, shards []actor.PID) actor.PID {
+	h := 0
+	for i := 0; i < len(key); i++ {
+		h = (h*31 + int(key[i])) % 1024
+	}
+	return shards[h%len(shards)]
+}
+
+// get asks the key's owner, with a timeout.
+func get(key string, shards []actor.PID) (int, bool) {
+	v, ok := actor.Call(shardFor(key, shards), Get{key}, 100)
+	if !ok {
+		return 0, false
+	}
+	n, isInt := v.(int)
+	return n, isInt
+}
+
+func display() {
+	for {
+		switch s := actor.Receive().(type) {
+		case Snapshot:
+			line := "shard " + strconv.Itoa(s.Shard) + ":"
+			for _, c := range s.Counts {
+				line += " " + c.Key + "=" + strconv.Itoa(c.N)
+			}
+			println(line)
+		}
+	}
+}
+
+func main() {
+	shards := []actor.PID{actor.Spawn(func() { owner(0) }), actor.Spawn(func() { owner(1) })}
+	d := actor.Spawn(display)
+	for _, s := range shards {
+		actor.Send(s, Subscribe{d})
+	}
+	for _, k := range []string{"door", "fan", "door", "window", "door"} {
+		actor.Send(shardFor(k, shards), Incr{k})
+	}
+	n, ok := get("door", shards)
+	println("door:", n, ok)
+}

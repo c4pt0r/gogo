@@ -1,0 +1,54 @@
+// Retries with backoff: upload a recording, and on a failure that may pass
+// (a timeout, a reset, no route, no answer) wait and try again, doubling
+// the wait each time, up to a few attempts. Failures that cannot pass (no
+// such file, a bad URL, a bad certificate) are not retried.
+//
+// On the host there is no network, so every attempt fails with IO.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/errors"
+	"gogo/fs"
+	"gogo/http"
+	"gogo/sys"
+)
+
+// transient says whether trying again later may help.
+func transient(e errors.Code) bool {
+	return e == errors.Timeout || e == errors.IO || e == errors.Reset ||
+		e == errors.Refused || e == errors.NoRoute
+}
+
+// uploadWithRetry tries up to attempts times; waitMs doubles after each
+// failure. It returns the server's status, or 0 and the last error.
+func uploadWithRetry(url, path, token string, attempts, waitMs int) (int, errors.Code) {
+	for i := 1; ; i++ {
+		status, err := http.Upload(url, path, "audio/wav", token)
+		if err == errors.OK && status < 500 {
+			return status, err // 2xx, or a 4xx that retrying will not fix
+		}
+		if err != errors.OK && !transient(err) {
+			return 0, err
+		}
+		if i == attempts {
+			return status, err
+		}
+		println("attempt", i, "failed, error", int(err), "status", status, "- retry in", waitMs, "ms")
+		actor.Sleep(waitMs)
+		waitMs *= 2
+	}
+}
+
+func main() {
+	url, _ := sys.Config("upload.url")
+	token, _ := sys.Config("upload.token") // never print it
+	fs.WriteFile("/flash/rec.wav", "not really a recording")
+
+	status, err := uploadWithRetry(url, "/flash/missing.wav", token, 4, 100)
+	println("missing file:", status, int(err), "(not retried)")
+
+	t0 := actor.Now()
+	status, err = uploadWithRetry(url, "/flash/rec.wav", token, 4, 100)
+	println("upload:", status, int(err), "gave up after 700 ms of waits:", actor.Now()-t0 >= 700)
+}

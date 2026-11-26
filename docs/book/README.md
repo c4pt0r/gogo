@@ -27,6 +27,7 @@ and assumes no knowledge of embedded programming or Erlang.
 17. [HTTPS](17-https.md): https URLs, the clock, the keep-alive `http.Client`, streaming uploads, the `"tls"` port
 18. [Embedding gogo](18-embedding.md): running gogo images inside a C program: `libgogo.a`, the host table and the latched wake, stepping, posts, host ports, a sandboxed `/flash`
 19. [Text UI](19-text-ui.md): the `"screen"` port, `gogo/tui`: frames, windows, colours, menus, progress bars, status lines, a line editor, keys on both boards
+21. [Best Practices](21-best-practices.md): actors as small machines, messages and `Bytes`, backpressure, shared state, Call discipline, restarts, receive order, C or gogo, high-bandwidth streams (audio, sensors, cameras), streaming TCP and HTTP, a checklist
 
 [Known issues](../known-issues.md) lists gogo's open limitations, with
 workarounds.

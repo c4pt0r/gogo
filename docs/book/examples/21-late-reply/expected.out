@@ -1,0 +1,4 @@
+query 1: 0 false
+  dropped a message of an unexpected type
+  dropped the late answer to query 1
+query 2: 200 true

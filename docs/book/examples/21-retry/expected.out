@@ -1,0 +1,6 @@
+missing file: 0 1 (not retried)
+dns: net.Subscribe failed (no network or 4 subscribers): retrying on each lookup
+attempt 1 failed, error 8 status 0 - retry in 100 ms
+attempt 2 failed, error 8 status 0 - retry in 200 ms
+attempt 3 failed, error 8 status 0 - retry in 400 ms
+upload: 0 8 gave up after 700 ms of waits: true

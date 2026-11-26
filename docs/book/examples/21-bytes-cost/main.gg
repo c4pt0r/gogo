@@ -1,0 +1,66 @@
+// What a large frozen Bytes costs. It is passed by reference, but every
+// holder is charged its full size, a receiver that has it still waiting
+// in its mailbox included. And one actor may hold at most 16 of them.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+)
+
+type Frame struct {
+	Seq  int
+	Data bytes.Bytes
+}
+
+// frame makes an n-byte frozen Bytes: over 64 bytes, so it lives off-heap.
+func frame(n int) bytes.Bytes {
+	b := bytes.NewBuffer(n)
+	for i := 0; i < n; i++ {
+		b.WriteByte(byte(i))
+	}
+	return b.Freeze()
+}
+
+// holder sleeps first, so a frame sent to it waits in its mailbox.
+func holder() {
+	actor.Sleep(50)
+	for {
+		actor.Receive()
+	}
+}
+
+// hoarder keeps every frame it makes, until it runs out of handles.
+func hoarder(boss actor.PID) {
+	var kept []bytes.Bytes
+	for {
+		kept = append(kept, frame(1000))
+		actor.Send(boss, len(kept))
+	}
+}
+
+func main() {
+	f := frame(4000)
+	a := actor.Spawn(holder)
+	b := actor.Spawn(holder)
+	actor.Sleep(10) // both are asleep now
+	before := actor.Info(a).Memory
+	actor.Send(a, Frame{1, f})
+	actor.Send(b, Frame{1, f})
+	println("queued frame charged to a:", actor.Info(a).Memory-before >= 4000)
+	println("and to b as well:", actor.Info(b).Memory-before >= 4000)
+
+	me := actor.Self()
+	h := actor.Spawn(func() { hoarder(me) })
+	actor.Monitor(h)
+	held := 0
+	for {
+		switch m := actor.Receive().(type) {
+		case int:
+			held = m
+		case actor.DownMsg:
+			println("hoarder held", held, "frames, then:", m.Reason.Code == actor.OutOfMemory)
+			return
+		}
+	}
+}

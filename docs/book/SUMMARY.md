@@ -25,3 +25,4 @@
 - [17. HTTPS](17-https.md)
 - [18. Embedding gogo](18-embedding.md)
 - [19. Text UI](19-text-ui.md)
+- [21. Best Practices](21-best-practices.md)
