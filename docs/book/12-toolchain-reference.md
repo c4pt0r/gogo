@@ -532,3 +532,8 @@ tests and the size budgets, it runs:
   same `input`, `config`, `fsroot`, `mods/` and `expected.err` files as
   the golden tests). A new example without an `expected.out` is still
   built on every run.
+- `make vmsize` (and `netsize`, `vfssize`, `screensize`): the code size
+  of the VM core and of each runtime part for the ESP32-S3, against
+  their budgets (skipped without the ESP-IDF compiler). `vmsize` also
+  prints the VM core's lines of C; `tools/vmsize.sh --record` appends
+  the size and the line count to `docs/vmsize-history.csv`.

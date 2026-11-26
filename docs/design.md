@@ -33,8 +33,15 @@ features.
   flash, Cortex-M0+) and drive real peripherals.
 - The same VM runs on macOS and Linux (the host build, for development
   and tests, not a hardware target).
-- Readable code size: the VM aims at about 5k lines of C and the compiler
-  at about 5k lines of Go, tests excluded.
+- Readable code size. The VM core (`runtime/vm/*.c`, tests and
+  `check32.c` excluded) is about 5.6k lines of C (5 626 in November
+  2026) and the compiler about 5.9k lines of Go, tests excluded. Both
+  first aimed at about 5k; hot loading, the off-heap `bytes.Bytes`
+  table, the port side of the stream protocol and the internal
+  invariant checks took them past it, and each was worth its lines. The
+  budget that is enforced is the VM core's code size (64 KB on the
+  ESP32-S3, `make vmsize`); its line count is recorded beside it, so
+  growth stays visible (section 5.10).
 
 **Non-goals**
 - Full Go compatibility: channels, generics, reflection, `defer` /
@@ -1613,8 +1620,10 @@ stderr), otherwise the local file.
 - **Memory footprint test**: creates N idle actors and checks
   `actor.Info().Memory` against the 160-byte target (warning) and the
   256-byte hard limit (failure) (`tests/footprint`).
-- Size: `make vmsize` measures the VM core for the ESP32-S3 (-Os); the
-  history is in `docs/vmsize-history.csv`.
+- Size: `make vmsize` measures the VM core for the ESP32-S3 (-Os) and
+  counts its lines of C; `tools/vmsize.sh --record` appends both to
+  `docs/vmsize-history.csv` (the `lines` column is empty in rows recorded
+  before it existed).
 
 ### 5.11 Runtime architecture: instances, host and board tables
 
