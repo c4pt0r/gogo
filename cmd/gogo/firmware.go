@@ -28,9 +28,9 @@ type fwFeature struct {
 	// provides lists the requirement names (port drivers, mount prefixes)
 	// the feature builds; none: never required (a default-on detail)
 	provides []string
-	onBy     bool // on by default whenever the board has it
-	needs string // another feature this one depends on (Kconfig depends on)
-	hasH  string // board.h macro that says whether the board has it, if any
+	onBy     bool   // on by default whenever the board has it
+	needs    string // another feature this one depends on (Kconfig depends on)
+	hasH     string // board.h macro that says whether the board has it, if any
 	// offDefaults is an sdkconfig fragment (in platform/esp32s3) added to
 	// SDKCONFIG_DEFAULTS when the feature is off: IDF settings that only
 	// the feature needs, put back to IDF's own defaults (sdkconfig.defaults

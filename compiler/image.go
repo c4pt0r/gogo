@@ -91,7 +91,7 @@ type ImageBuilder struct {
 	// asks nothing of the VM (see scan).
 	reserved []imgType
 	used     map[uint32]bool // reserved indexes UseType marked
-	types    []imgType // own types: index TypeOwnBase + position
+	types    []imgType       // own types: index TypeOwnBase + position
 	entry    uint32
 	// The trailer: requirement names (const offsets), and the exported
 	// entries by name.
