@@ -325,37 +325,33 @@ static bool fits(const Actor *to, const Msg *m, uint32_t fw, bool quota) {
            (!quota || (uint32_t)to->mem_words + actor_charged_words(to) + fw + list <= actor_max_words(to));
 }
 
-static void queue(Vm *vm, Actor *to, Msg *m, uint32_t fw) {
+/* Queues m on `to` (charged as in mbox_words) and wakes it, if it fits:
+ * the mailbox counter, and with quota the limit. */
+static bool enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
+    uint32_t fw = msg_charge_words(vm, m);
+    if (!fits(to, m, fw, quota)) return false;
     m->next = NULL;
     if (to->mbox_tail) to->mbox_tail->next = m;
     else to->mbox_head = m;
     to->mbox_tail = m;
-    GOGO_ASSERT(fw <= 65535u - to->mbox_words);   /* fits() checked */
     to->mbox_words = (uint16_t)(to->mbox_words + fw);
 
     if (to->state == A_WAITING) {
         to->state = A_RUNNABLE;
         runq_push(vm, to);
     }
+    return true;
 }
 
 bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
-    uint32_t fw = msg_charge_words(vm, m);
-    if (!fits(to, m, fw, quota)) {
-        msg_free(vm, m);
-        actor_mark_exit(vm, to, R_MAILBOX_OVERFLOW, T_EMPTYSTR);
-        return false;
-    }
-    queue(vm, to, m, fw);
-    return true;
+    if (enqueue(vm, to, m, quota)) return true;
+    msg_free(vm, m);
+    actor_mark_exit(vm, to, R_MAILBOX_OVERFLOW, T_EMPTYSTR);
+    return false;
 }
 
 bool msg_try_enqueue(Vm *vm, Actor *to, Msg *m) {
-    if (to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) return false;
-    uint32_t fw = msg_charge_words(vm, m);
-    if (!fits(to, m, fw, true)) return false;
-    queue(vm, to, m, fw);
-    return true;
+    return to->state != A_EXITED && !(to->flags & AF_EXIT_PENDING) && enqueue(vm, to, m, true);
 }
 
 /* A send that drops (no live target) still checks t, against from's own
@@ -394,16 +390,6 @@ int msg_send(Vm *vm, Actor *from, term to_pid, term msg) {
     return send_to(vm, from, to_pid, 0, false, msg);
 }
 
-/* Removes the head message and stops counting it in mbox_words. */
-static void drop_head(Vm *vm, Actor *a) {
-    Msg *m = a->mbox_head;
-    GOGO_ASSERT(a->mbox_words >= msg_charge_words(vm, m));
-    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(vm, m));
-    a->mbox_head = m->next;
-    if (!a->mbox_head) a->mbox_tail = NULL;
-    msg_free(vm, m);
-}
-
 /* Unpacks queued m into a's heap. Only m's own block stops counting
  * against a's limit first (so it is not counted twice while unpacking).
  * Its off-heap Bytes, and the holder list adopting them may make, stay
@@ -423,48 +409,41 @@ static bool take(Vm *vm, Actor *a, Msg *m, term *out) {
     return true;
 }
 
-bool msg_receive(Vm *vm, Actor *a, term *out) {
-    /* Replies are for Call only; any at the head are stale. */
-    while (a->mbox_head && (a->mbox_head->flags & MSG_REPLY)) drop_head(vm, a);
-    Msg *m = a->mbox_head;
-    if (!m) return false;
-    if (!take(vm, a, m, out)) return false;
-    a->mbox_head = m->next;
-    if (!a->mbox_head) a->mbox_tail = NULL;
-    msg_free(vm, m);
-    return true;
-}
+bool msg_receive(Vm *vm, Actor *a, term *out) { return msg_take_reply(vm, a, 0, out) > 0; }
 
 int msg_send_reply(Vm *vm, Actor *from, term to_pid, uint64_t serial, term body) {
     return send_to(vm, from, to_pid, serial, true, body);
 }
 
+/* Serial 0 (msg_receive): the oldest ordinary message; the replies before
+ * it are stale (replies are for Call only) and are freed. Otherwise the
+ * reply with that serial; ordinary messages stay, the other replies met
+ * on the way are stale (an earlier, timed-out Call) and are freed. */
 int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out) {
     Msg *prev = NULL, *m = a->mbox_head;
-    while (m) {
+    int got = 0;
+    while (m && !got) {
         Msg *next = m->next;
         if (!(m->flags & MSG_REPLY)) {
-            prev = m;
-        } else if (((uint64_t)m->data[0] | ((uint64_t)m->data[1] << 32)) == serial) {
-            if (m->flags & MSG_FAILED) {
-                a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(vm, m));
-            } else if (!take(vm, a, m, out)) {
-                return -1;
+            if (serial) {
+                prev = m;
+                m = next;
+                continue;
             }
-            /* unpack may GC but never touches the queue; unlink m. */
-            if (prev) prev->next = next; else a->mbox_head = next;
-            if (!next) a->mbox_tail = prev;
-            int got = (m->flags & MSG_FAILED) ? 2 : 1;
-            msg_free(vm, m);
-            return got;
-        } else {   /* a stale reply of an earlier, timed-out Call */
-            if (prev) prev->next = next; else a->mbox_head = next;
-            if (!next) a->mbox_tail = prev;
+            got = 1;
+        } else if (serial && ((uint64_t)m->data[0] | ((uint64_t)m->data[1] << 32)) == serial) {
+            got = (m->flags & MSG_FAILED) ? 2 : 1;
+        }
+        if (got == 1) {
+            if (!take(vm, a, m, out)) return -1;   /* unpack may GC but never touches the queue */
+        } else {                      /* a stale reply, or the failed Call's block */
             GOGO_ASSERT(a->mbox_words >= msg_charge_words(vm, m));
             a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(vm, m));
-            msg_free(vm, m);
         }
+        if (prev) prev->next = next; else a->mbox_head = next;
+        if (!next) a->mbox_tail = prev;
+        msg_free(vm, m);
         m = next;
     }
-    return 0;
+    return got;
 }
