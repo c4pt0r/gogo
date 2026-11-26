@@ -69,7 +69,7 @@ func server() {
 
 func main() {
 	self := actor.Self()
-	m, e := code.Load(read("/flash/iso.gmod"))
+	m, e := code.Load(read("/flash/iso.ggb"))
 	println("load", int(e))
 
 	// Const string, int64 and a reserved struct with a const string: copies,
@@ -94,7 +94,7 @@ func main() {
 		println(r.Code, r.Func)
 	}
 
-	m, _ = code.Load(read("/flash/iso.gmod"))
+	m, _ = code.Load(read("/flash/iso.ggb"))
 	// A module struct or a func value: the module's actor exits BadMsg.
 	println("struct", spawnDown(m, "Struct", self) == actor.BadMsg)
 

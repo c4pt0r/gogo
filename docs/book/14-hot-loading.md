@@ -19,7 +19,7 @@ The package is `gogo/code`. Its full reference is in
 same format and are built the same way:
 
 ```sh
-gogo build ./greeter -o greeter.gmod     # the extension is only a habit
+gogo build ./greeter -o greeter.ggb     # a module is a .ggb image like any other
 ```
 
 A module is an ordinary gogo `package main`, and may have packages of its
@@ -81,7 +81,7 @@ The example `examples/14-load` reads a module from `/flash`, loads it,
 starts `Greet`, and then shows the errors and the unload:
 
 ```go
-b, e := fs.ReadFile("/flash/greeter.gmod", 8192)
+b, e := fs.ReadFile("/flash/greeter.ggb", 8192)
 m, err := code.Load(b)
 println("load:", int(err), "code mem in use:", code.MemUsed() > 0)
 
@@ -89,7 +89,7 @@ p, err := code.Spawn(m, "Greet", actor.Self())
 ...
 ```
 
-Its output (`run.sh` builds `mods/greeter` into `/flash/greeter.gmod` before
+Its output (`run.sh` builds `mods/greeter` into `/flash/greeter.ggb` before
 running it):
 
 ```text
@@ -143,11 +143,11 @@ message, the supervisor restarts it from the module, then the host loads
 `worker_v2` and upgrades without stopping.
 
 ```go
-v1 := load("/flash/worker_v1.gmod")
+v1 := load("/flash/worker_v1.ggb")
 sup := supervisor.SuperviseModule(v1, "Work", actor.Self(),
 	supervisor.Spec{Restart: supervisor.Permanent, MaxRestarts: 3})
 ...
-v2 := load("/flash/worker_v2.gmod")
+v2 := load("/flash/worker_v2.ggb")
 code.Release(v1) // the supervisor's hold keeps v1 until the upgrade
 r, _ := actor.Call(sup, supervisor.Upgrade{Module: v2}, 2000)
 println("upgrade result (0 is ok):", r)
@@ -260,9 +260,9 @@ crashing. Messages inside one module are unaffected.
 
 `examples/hotload_net` in the repository does it on a board: it joins
 Wi-Fi, sets the clock (`gogo/sntp`; chapter 17), downloads
-`worker_v1.gmod` with `http.Do` from the `https://` base URL in the config
+`worker_v1.ggb` with `http.Do` from the `https://` base URL in the config
 key `demo.modurl` (it refuses an `http://` one), loads it, runs it under
-`SuperviseModule`, waits, downloads `worker_v2.gmod` and upgrades. The
+`SuperviseModule`, waits, downloads `worker_v2.ggb` and upgrades. The
 body of an HTTP response is charged to the actor that asked, whose default
 limit on a board is 16 KB, so the example limits the module to 4 KB
 (`modBody`, passed as `maxBody`); for bigger modules raise it, up to `http.MaxBodyLimit`, in an actor started with a larger

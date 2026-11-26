@@ -25,7 +25,7 @@ for p in many_idle httpparse hotload hostecho netdemo embed-c/greeter; do
     "$B/gogo" build "examples/$p" -o "$T/img/$(basename "$p").ggb" || { echo "FAIL build $p"; exit 1; }
 done
 for m in worker_v1 worker_v2; do
-    "$B/gogo" build "examples/hotload/mods/$m" -o "$T/flash/$m.gmod" || { echo "FAIL build $m"; exit 1; }
+    "$B/gogo" build "examples/hotload/mods/$m" -o "$T/flash/$m.ggb" || { echo "FAIL build $m"; exit 1; }
 done
 
 "$E/main" "$T/img/many_idle.ggb" > "$T/out" 2> "$T/err" || { echo "FAIL main many_idle: exit status"; fail=1; }

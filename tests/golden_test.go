@@ -118,7 +118,7 @@ func TestGolden(t *testing.T) {
 						if err != nil {
 							t.Fatalf("compile module %s: %v", mod, err)
 						}
-						if err := os.WriteFile(filepath.Join(root, "flash", filepath.Base(mod)+".gmod"), mimg, 0o644); err != nil {
+						if err := os.WriteFile(filepath.Join(root, "flash", filepath.Base(mod)+".ggb"), mimg, 0o644); err != nil {
 							t.Fatal(err)
 						}
 					}

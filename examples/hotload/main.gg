@@ -1,13 +1,13 @@
 // hotload: run a worker from a module under a supervisor, then upgrade it
 // without stopping the program.
 //
-// The host reads /flash/worker_v1.gmod, loads it and starts "Work" under
+// The host reads /flash/worker_v1.ggb, loads it and starts "Work" under
 // supervisor.SuperviseModule. v1 crashes on its third message; the supervisor
-// restarts it from the module. The host then loads /flash/worker_v2.gmod and
+// restarts it from the module. The host then loads /flash/worker_v2.ggb and
 // sends supervisor.Upgrade: the child is restarted from v2 and v1 unloads.
 //
-//	gogo build examples/hotload/mods/worker_v1 -o worker_v1.gmod
-//	gogo build examples/hotload/mods/worker_v2 -o worker_v2.gmod
+//	gogo build examples/hotload/mods/worker_v1 -o worker_v1.ggb
+//	gogo build examples/hotload/mods/worker_v2 -o worker_v2.ggb
 //
 // (copy both into /flash, then build and run this program)
 package main
@@ -50,7 +50,7 @@ func feed(w actor.PID, n int) {
 }
 
 func main() {
-	v1 := load("/flash/worker_v1.gmod")
+	v1 := load("/flash/worker_v1.ggb")
 	size1 := code.MemUsed()
 	println("loaded v1:", size1 > 0)
 	// The supervisor holds v1 once this returns; we could Release it now.
@@ -63,7 +63,7 @@ func main() {
 	println("worker restarted from the module")
 	feed(w, 1)
 
-	v2 := load("/flash/worker_v2.gmod")
+	v2 := load("/flash/worker_v2.ggb")
 	size2 := code.MemUsed() - size1
 	println("loaded v2, both resident:", size2 > 0)
 	code.Release(v1) // the supervisor's hold keeps v1 until the upgrade

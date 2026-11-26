@@ -274,7 +274,7 @@ embed-images: gogo-cmd
 	for p in $(EMBED_PROGS); do $(BUILD)/gogo build runtime/embed/test/testdata/$$p -o $(BUILD)/embed/$$p.ggb || exit 1; done
 	for p in $(EMBED_EXAMPLES); do $(BUILD)/gogo build examples/$$p -o $(BUILD)/embed/$$p.ggb || exit 1; done
 	@mkdir -p $(BUILD)/embed/hotload-flash
-	for m in worker_v1 worker_v2; do $(BUILD)/gogo build examples/hotload/mods/$$m -o $(BUILD)/embed/hotload-flash/$$m.gmod || exit 1; done
+	for m in worker_v1 worker_v2; do $(BUILD)/gogo build examples/hotload/mods/$$m -o $(BUILD)/embed/hotload-flash/$$m.ggb || exit 1; done
 
 test-embed: $(BUILD)/test_embed embed-images
 	GOGO_EMBED_IMAGES=$(BUILD)/embed $(BUILD)/test_embed

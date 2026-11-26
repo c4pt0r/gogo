@@ -1,5 +1,5 @@
 // Load a module from a file and start one of its entries in a new actor.
-// run.sh builds mods/greeter into /flash/greeter.gmod first.
+// run.sh builds mods/greeter into /flash/greeter.ggb first.
 package main
 
 import (
@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	b, e := fs.ReadFile("/flash/greeter.gmod", 8192)
+	b, e := fs.ReadFile("/flash/greeter.ggb", 8192)
 	if e != fs.OK {
 		println("read failed", int(e))
 		return
