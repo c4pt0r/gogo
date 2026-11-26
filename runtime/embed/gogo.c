@@ -158,6 +158,13 @@ static bool copy_sized(void *dst, size_t cap, const void *src, uint32_t size) {
     return true;
 }
 
+/* An output struct's size: what the caller allows of what the library
+ * fills, at least the size word and the one after it; 0 if too small. */
+static uint32_t out_size(uint32_t caller, size_t lib) {
+    if (caller < 2u * sizeof(uint32_t)) return 0;
+    return caller < lib ? caller : (uint32_t)lib;
+}
+
 /* ---- inspecting an image ---- */
 
 /* Validates the image as vm_boot does (image_load), into *img. */
@@ -168,9 +175,14 @@ static int image_check(Image *img, const void *image, size_t len) {
     return rc == IMG_OK ? GOGO_OK : rc == IMG_ERR_VERSION ? GOGO_EVERSION : GOGO_EIMAGE;
 }
 
+/* Every field the caller's size covers is written, 0 where there is no
+ * value (an error), and size says how much this library filled. */
 int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info) {
+    uint32_t n = info ? out_size(info->size, sizeof(gogo_image_info)) : 0;
+    if (!n) return GOGO_EINVAL;
     gogo_image_info r;
-    if (!info || !copy_sized(&r, sizeof r, info, info->size)) return GOGO_EINVAL;
+    memset(&r, 0, sizeof r);
+    r.size = n;
     Image img;
     int rc = image_check(&img, image, len);
     if (rc == GOGO_OK) {
@@ -178,7 +190,7 @@ int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info) {
         r.n_exports = img.n_exports;
     }
     if (rc != GOGO_EINVAL && len >= 8u && ((const uint32_t *)image)[0] == IMAGE_MAGIC) r.format = ((const uint32_t *)image)[1];
-    memcpy(info, &r, info->size < sizeof r ? info->size : sizeof r);
+    memcpy(info, &r, n);
     return rc;
 }
 
@@ -470,13 +482,16 @@ void gogo_poster_free(gogo_poster *p) {
 }
 
 int gogo_get_stats(gogo_vm *g, gogo_stats *out) {
+    uint32_t n = out ? out_size(out->size, sizeof(gogo_stats)) : 0;
+    if (!g || !n) return GOGO_EINVAL;
     gogo_stats st;
-    if (!g || !out || !copy_sized(&st, sizeof st, out, out->size)) return GOGO_EINVAL;
+    memset(&st, 0, sizeof st);
+    st.size = n;
     st.posts_delivered = g->inbox.delivered;
     st.posts_dropped = g->inbox.dropped;
     st.mem_used = va_used_bytes(&g->vm);
     st.mem_peak = va_peak_bytes(&g->vm);
-    memcpy(out, &st, out->size < sizeof st ? out->size : sizeof st);
+    memcpy(out, &st, n);
     return GOGO_OK;
 }
 

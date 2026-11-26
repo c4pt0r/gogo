@@ -206,7 +206,11 @@ against an older header. Fields are only ever added at the end. A newer
 library reads a smaller table's missing hooks as `NULL` (and a smaller
 configuration's missing fields as 0); an older library ignores the
 fields it does not know. `gogo_new` copies the table, so it may live on
-the stack; the `ctx` must stay valid until the VM is gone.
+the stack; the `ctx` must stay valid until the VM is gone. The structs
+the library fills in (`gogo_stats`, `gogo_image_info`) work the other way
+round: the caller sets `size`, and the library writes back how much of
+it it filled, so a host built against a newer header can tell a field
+this library lacks from one that is 0.
 
 | hook | |
 |---|---|

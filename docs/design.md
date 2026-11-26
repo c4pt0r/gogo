@@ -1792,7 +1792,9 @@ only through two tables of function pointers that the caller hands it.
   their `GOGO_*_INIT`, and grow only at the end: the library reads the
   fields it knows, an older struct's missing fields take their defaults,
   and a newer one's extra fields are ignored, so a field may be appended
-  only if its 0 keeps the old behaviour; anything marked experimental is
+  only if its 0 keeps the old behaviour; in the structs the library fills
+  (`gogo_stats`, `gogo_image_info`) it writes back in `size` how much it
+  filled, and every field within that is written, 0 on an error; anything marked experimental is
   outside these guarantees (`GOGO_EXPERIMENTAL` on the declaration, a
   macro that is empty unless the host makes it a deprecation; the book's
   18.12 has the table: host ports, `grant`, `fs_root`, `fs_quota`, the

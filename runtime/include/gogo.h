@@ -285,12 +285,16 @@ GOGO_API int gogo_load(gogo_vm *vm, const void *image, size_t len, int flags);
  * GOGO_EVERSION (another major or a newer minor; info->format is still
  * filled in). */
 typedef struct gogo_image_info {
-    uint32_t size;          /* set by the caller: sizeof(gogo_image_info) (GOGO_IMAGE_INFO_INIT) */
+    uint32_t size;          /* in: the caller's sizeof(gogo_image_info) (GOGO_IMAGE_INFO_INIT);
+                             * out: the bytes this library filled (no more than in) */
     uint32_t format;        /* the image's format, major << 16 | minor */
     uint32_t n_requires;    /* its requirements (gogo_image_require) */
     uint32_t n_exports;     /* its exported entry points (main among them) */
-    /* Fields are appended here, never inserted: the library fills the
-     * first size bytes it knows. */
+    /* Fields are appended here, never inserted. The library writes every
+     * field within the caller's size that it knows (0 on an error) and
+     * sets size to how far that is: a field past it, which a newer
+     * header has and this library lacks, keeps the caller's value, so
+     * check size before reading it. */
 } gogo_image_info;
 #define GOGO_IMAGE_INFO_INIT { .size = sizeof(gogo_image_info) }
 GOGO_API GOGO_EXPERIMENTAL int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info);
@@ -466,10 +470,13 @@ GOGO_API void gogo_poster_close_posts(gogo_poster *p);
 GOGO_API void gogo_poster_free(gogo_poster *p);
 
 /* Counters (GOGO_EXPERIMENTAL: the fields may change). On the owning
- * thread: with gogo_run_thread, after gogo_join (or from a hook). The caller sets out->size (GOGO_STATS_INIT); the
- * library fills the fields it knows within it. 0, or GOGO_EINVAL. */
+ * thread: with gogo_run_thread, after gogo_join (or from a hook). The
+ * caller sets out->size (GOGO_STATS_INIT); the library fills the fields
+ * it knows within it and sets out->size to how far that is (as
+ * gogo_image_info: a field past it is not this library's). 0, or
+ * GOGO_EINVAL. */
 typedef struct gogo_stats {
-    uint32_t size;             /* set by the caller: sizeof(gogo_stats) */
+    uint32_t size;             /* in: the caller's sizeof(gogo_stats); out: the bytes filled */
     uint32_t reserved;
     uint64_t posts_delivered;  /* posts queued on their receiver */
     uint64_t posts_dropped;    /* posts not delivered: unknown name, over quota, out of memory,

@@ -658,6 +658,19 @@ TEST(embed_image_info) {
     CHECK_EQ(old.i.n_requires, 1);
     CHECK_EQ(old.i.n_exports, 0xEEEEEEEEu);
     CHECK_EQ(old.i.size, 12);
+    /* A newer caller's larger struct: size says what this library filled. */
+    struct { gogo_image_info i; uint32_t later; } big;
+    memset(&big, 0xEE, sizeof big);
+    big.i.size = sizeof big;
+    CHECK_EQ(gogo_image_info_get(im.w, im.len, &big.i), GOGO_OK);
+    CHECK_EQ(big.i.size, sizeof(gogo_image_info));
+    CHECK_EQ(big.later, 0xEEEEEEEEu);
+    /* On an error every output is written: no caller junk comes back. */
+    memset(&big, 0x55, sizeof big);
+    big.i.size = sizeof big.i;
+    uint32_t bad[4] = { 1, 2, 3, 4 };
+    CHECK_EQ(gogo_image_info_get(bad, sizeof bad, &big.i), GOGO_EIMAGE);
+    CHECK(big.i.format == 0 && big.i.n_requires == 0 && big.i.n_exports == 0);
     info.size = 0;
     CHECK_EQ(gogo_image_info_get(im.w, im.len, &info), GOGO_EINVAL);
     info.size = sizeof info;
@@ -1163,6 +1176,12 @@ TEST(embed_hostport_sized) {
     CHECK_EQ(gogo_get_stats(vm, &old.s), GOGO_OK);
     CHECK_EQ(old.s.posts_delivered, 3);
     CHECK_EQ(old.s.mem_used, 0xEEEEEEEEEEEEEEEEull);
+    struct { gogo_stats s; uint64_t later; } big;
+    memset(&big, 0xEE, sizeof big);
+    big.s.size = sizeof big;
+    CHECK_EQ(gogo_get_stats(vm, &big.s), GOGO_OK);
+    CHECK_EQ(big.s.size, sizeof(gogo_stats));     /* the library's fields end there */
+    CHECK_EQ(big.later, 0xEEEEEEEEEEEEEEEEull);
     gogo_stats st = GOGO_STATS_INIT;
     st.size = 4;
     CHECK_EQ(gogo_get_stats(vm, &st), GOGO_EINVAL);
