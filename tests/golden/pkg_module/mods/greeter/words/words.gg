@@ -1,0 +1,5 @@
+// Package words belongs to the greeter module.
+package words
+
+// Hello greets name.
+func Hello(name string) string { return "hello, " + name }

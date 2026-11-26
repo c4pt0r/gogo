@@ -1,0 +1,29 @@
+// A hot-loaded module whose own user package (greeter/words) is compiled
+// into it.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/code"
+	"gogo/fs"
+)
+
+func main() {
+	b, e := fs.ReadFile("/flash/greeter.gmod", 100000)
+	if e != fs.OK {
+		println("read", int(e))
+		return
+	}
+	m, ce := code.Load(b)
+	println("load", int(ce))
+	p, ce := code.Spawn(m, "Greet", "gogo")
+	println("spawn", int(ce))
+	actor.Monitor(p)
+	for {
+		switch actor.Receive().(type) {
+		case actor.DownMsg:
+			println("done")
+			return
+		}
+	}
+}
