@@ -450,7 +450,11 @@ in `cmd/gogo/flash.go`.
     open. Cost of audio (2026-11-25): StickS3 +18720 B firmware, +592 B
     static DIRAM; Cardputer ADV +19680 B, +820 B.
 - `image_part.c`: the partition check and mmap above.
-- `main.c`: the VM runs in a FreeRTOS task pinned to CPU1.
+- `main.c`: the VM runs in a FreeRTOS task pinned to CPU1. It brings the board up
+  (console, config service, Wi-Fi, `/flash` and `/sd`), maps the image and
+  boots it through `gogo_board_main` (`runtime/board`, the boot path the
+  unix VM uses too), with the `Vm`, `VfsState`, `InputState` and
+  `NetState` in static storage.
 - Screen (debug console, mirror of stdout/stderr):
   - `pm1.c` (StickS3 only): M5PM1 (I2C G47/G48, 0x6E): I2C idle sleep and watchdog off,
     PM1 GPIO2 high = LCD rail, 200 ms settle (M5GFX/M5Unified StickS3

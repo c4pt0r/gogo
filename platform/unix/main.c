@@ -65,6 +65,7 @@
 #include "vfs_int.h"
 #include "fs_dir.h"
 #include "screen_unix.h"
+#include "board_main.h"
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -152,7 +153,14 @@ static void main_write(void *ctx, int stream, const char *s, size_t n) {
 
 /* Runs the started Vm as vm_run does, then returns main's status. main
  * is the one actor vm_start made. */
-static int run_main(Vm *vm) {
+/* BoardRun.booting: the wall clock (the host's, or $GOGO_UNIX_TIME_MS). */
+static void set_wall_clock(Vm *vm, void *ctx) {
+    (void)ctx;
+    vm_set_unix_time_ms(vm, platform_unix_wall_start());
+}
+
+static int run_main(Vm *vm, void *ctx) {
+    (void)ctx;
     if (vm_start(vm)) return EXIT_USAGE;   /* said on stream 2: no main, or no memory */
     for (uint16_t i = 0; i < vm->table_cap && !main_pid; i++) {
         if (!(vm->table[i] & 1u)) main_pid = ((const Actor *)vm->table[i])->id;
@@ -381,16 +389,22 @@ int main(int argc, char **argv) {
     if (got != (size_t)size) { free(words); return load_error(path, "cannot read"); }
     /* Image words are little-endian; this loader assumes a little-endian host. */
 
-    /* The unified boot (module.h): load the image as module 0 (requirement
-     * check included), then vm_run starts its "main" export. */
+    /* The one boot path (runtime/board): vm_init, the wall clock, vm_boot
+     * (the image is module 0, its requirements checked), the net stack
+     * (with --net-fd), the file systems (vfs_init mounts the board's
+     * /flash and /sd that have a backend) and the input source, then
+     * run_main. */
     Vm vm;
-    int rc = VM_BOOT_NO_MEMORY;
     gogo_host host = unix_host;
     host.write = main_write;
-    if (vm_init(&vm, &host, NULL, &unix_board, (uint16_t)GOGO_TABLE_CAP) == 0) {
-        vm_set_unix_time_ms(&vm, platform_unix_wall_start());
-        rc = vm_boot(&vm, words, (uint32_t)(size / 4));
-    }
+    input_unix_on_fatal(screen_unix_restore);
+    BoardRun run = {
+        .vm = &vm, .table_cap = (uint16_t)GOGO_TABLE_CAP, .vfs = &vfs_state, .input = &input_state,
+        .net = net_fd >= 0 ? &net_state : NULL, .net_install = net_install,
+        .booting = set_wall_clock, .run = run_main,
+    };
+    int run_rc = 0;
+    int rc = gogo_board_main(&unix_board, &host, &run, words, (uint32_t)(size / 4), &run_rc);
     if (rc != VM_BOOT_OK) {
         uint32_t ver = size >= 8 ? words[1] : 0u;
         free(words);
@@ -406,13 +420,7 @@ int main(int argc, char **argv) {
         }
         return EXIT_MISSING;         /* VM_BOOT_REFUSED: the line is written */
     }
-    /* After vm_init: it starts the Vm's source list and fs hook empty.
-     * vfs_init mounts the board's /flash and /sd that have a backend. */
-    if (net_fd >= 0) net_install(&vm, &net_state);
-    vfs_init(&vm, &vfs_state);
-    input_install(&vm, &input_state);
-    input_unix_on_fatal(screen_unix_restore);
-    rc = run_main(&vm);
+    rc = run_rc;
 #ifdef GOGO_TLS
     tls_vm_peak = va_peak_bytes(&vm);
 #endif

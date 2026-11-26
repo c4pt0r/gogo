@@ -123,7 +123,9 @@ rebuilt:
   `IrTxHal`, `IrRxHal`, `MicHal`, `SpkHal`, whose hooks take a `ctx`
   first. The `gpio` driver is `GPIO_DRIVER(&hal)` over a `GpioHal`.
   `VmBoard.mounts` lists `VmMount{prefix, be, ctx}` entries, not
-  strings. Write `VmBoard` with designated initializers.
+  strings. Write `VmBoard` with designated initializers. A board boots
+  its image with `gogo_board_main` (`runtime/board/board_main.h`) and
+  speaks `gogo config` through `runtime/configsvc` over its own `KvHal`.
 
 ## Deprecated, removed in the next release
 

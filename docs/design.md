@@ -1800,7 +1800,8 @@ only through two tables of function pointers that the caller hands it.
 - **Start-up order.** `vm_init` (tables, limits), `vm_boot` (the
   image becomes module 0, requirements checked), then the board attaches its
   subsystems to the instance (`net_install`, `vfs_init`,
-  `input_install`), then `vm_run`. Wi-Fi frames or link events that
+  `input_install`), then `vm_run`. Both boards go through one function
+  for this, `gogo_board_main` (§5.11.1). Wi-Fi frames or link events that
   arrive before `net_install` are dropped; the first link-up and DHCP
   after boot work unchanged (checked on the StickS3 in E12).
 - **Run loop.** `vm_run` is a loop over `vm_step` (scheduler passes until
@@ -1905,9 +1906,25 @@ can serve two devices, and the table can be a board's `static const`).
   feeds it bytes; `configsvc_vm_get` is `sys.Config`'s lookup (no
   `wifi.` keys). The ESP's store is NVS (`config_esp.c`). The unix VM has
   no console protocol: `gogo config` edits its file directly.
-- **Not yet.** Each platform's `main.c` still hand-rolls `vm_init`,
-  `vm_boot`, `net_install`, `vfs_init`, `input_install`; one boot path
-  (`gogo_board_main`) is the next part of this layer.
+- **One boot path** (`runtime/board/board_main.c`):
+  `gogo_board_main(board, host, run, words, nwords, &run_rc)` does
+  `vm_init`, `vm_boot`, `net_install`, `vfs_init`, `input_install` in
+  that order and runs the VM, for the ESP firmware and the unix VM alike.
+  The board's state (the `Vm`, `VfsState`, `InputState`, `NetState`) is
+  in the `BoardRun` it fills, with hooks for its own steps (unix: the
+  wall clock after `vm_init`, its own run loop for exit statuses; ESP:
+  the Wi-Fi heap report before the run); `net_install` is a pointer
+  there, so a build without the network links none of it. The platform
+  reports a boot error its own way (unix exit statuses, the ESP console
+  line and idle).
+- **Not libgogo.** The boards do not boot through the embedding API.
+  `gogo.h` is the stable surface for hosts that bring only a `gogo_host`
+  and host ports; a board needs what that API hides on purpose (the
+  `VmBoard` with its driver instances and mounts, the net stack's
+  `NetState`, the input source, a `Vm` in static storage) and would have
+  to widen it to reach them. libgogo stays dogfooded by its own tests and
+  `examples/embed-c`; `gogo_board_main` is the boards' shared path
+  instead.
 - **Atomics.** The VM core uses only a fence (`vm_barrier`); keep
   compare-and-swap out of it. The embed layer's post inbox and
   `embed_set_state` use `__atomic` compare-and-swap, which a Cortex-M0+
@@ -1935,8 +1952,9 @@ no runtime copies):
 5. A `NetIf` for the CYW43 on a Pico W (net/netif.h), optionally `TlsHw`.
 6. Configuration: a `KvHal` over a flash sector, a static `ConfigSvc`,
    and a console reader that feeds it (`configsvc_feed`).
-7. Its `VmBoard` (designated initializers), a `main` that boots the image
-   as the ESP and unix ones do, and the build lines for `runtime/vm`,
+7. Its `VmBoard` (designated initializers), a `main` that maps the image
+   and calls `gogo_board_main` with a static `Vm` and its states, and
+   the build lines for `runtime/vm`, `runtime/board`,
    `runtime/gpio`, `runtime/vfs` (+ `lfs/`), `runtime/input`,
    `runtime/stream`, `runtime/configsvc` and `runtime/net`.
 
