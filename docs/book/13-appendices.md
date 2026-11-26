@@ -86,7 +86,7 @@ type Closed struct{ From actor.PID; Reason int }    // event: the port ended by 
 type Host struct{ Arg int; Data bytes.Bytes }                  // cfg of a host-defined port
 type Post struct{ From actor.PID; Kind int; Data bytes.Bytes }  // a message from the embedding host
 
-func Open(driver string, cfg any) (p actor.PID, ok bool)
+func Open(driver string, cfg any) (p actor.PID, err error)
 func Close(p actor.PID)
 func Handoff(p actor.PID, to actor.PID) (ok bool)
 ```

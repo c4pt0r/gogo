@@ -1272,13 +1272,13 @@ font.
   maximum. A different codec later needs no program change.
 - **Memory.** The frame buffer is allocated from the VM allocator at open
   and charged to the owner (`Port.charge_words`; F = frame bytes / 4
-  words); each `Chunk` waiting in the mailbox costs F + 10 words more.
+  words); each `Chunk` waiting in the mailbox costs F + 11 words more.
   Open also checks that the owner has room for one `Chunk` beside the
   buffer (`Port.room_64w`, in `Port`'s padding, so `Port` stays 64 bytes)
   and fails with `errors.NoMemory` otherwise, rather than staying silent forever. To
   survive a stall of S ms (writing to SD), the owner needs heap + F +
-  (ceil(S / FrameMs) + 1) x (F + 10) words: at 16 kHz and 100 ms, a 300 ms
-  stall needs heap + 4040 words, more than the default 4096-word limit on
+  (ceil(S / FrameMs) + 1) x (F + 11) words: at 16 kHz and 100 ms, a 300 ms
+  stall needs heap + 4044 words, more than the default 4096-word limit on
   a board, so `gogo/sound`'s recorder starts with `actor.Options{MaxMemory}`
   and opens `mic` itself.
 - **Platform hooks.** `MicHal` (`open/read/close`) and `SpkHal`

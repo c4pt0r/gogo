@@ -123,7 +123,7 @@ request with exactly such a body, and in HTTP/1.1 they frame it.
 type Client struct{ PID actor.PID }
 
 func NewClient() Client
-func ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
+func ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, error)
 func ClientUpload(c Client, url, path, contentType, token string) (status int, err errors.Code)
 func CloseClient(c Client)
 ```

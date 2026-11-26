@@ -46,7 +46,7 @@ and the results are shown with them.
 ## 10.2 Getting an address: gogo/dhcp
 
 ```go
-func Start(cfg dhcp.Config) bool   // Config{TimeoutMs int}; <= 0 means 10000
+func Start(cfg dhcp.Config) error  // Config{TimeoutMs int}; <= 0 means 10000
 ```
 
 `dhcp.Start` starts the DHCP client actor, linked to the caller, and waits
@@ -137,7 +137,7 @@ no network to watch
 ## 10.3 Names: gogo/dns
 
 ```go
-func Lookup(name string, timeoutMs int) (int, bool) // timeoutMs <= 0: 5000
+func Lookup(name string, timeoutMs int) (int, error) // timeoutMs <= 0: 5000
 ```
 
 `dns.Lookup` returns the IPv4 address of a name (an A record), asking the
@@ -151,9 +151,9 @@ To set the date from the network, see section 10.8.
 ## 10.4 HTTP client
 
 ```go
-func Get(url string, timeoutMs int) (http.Response, bool)
-func Post(url, contentType string, body bytes.Bytes, timeoutMs int) (http.Response, bool)
-func Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (http.Response, bool)
+func Get(url string, timeoutMs int) (http.Response, error)
+func Post(url, contentType string, body bytes.Bytes, timeoutMs int) (http.Response, error)
+func Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (http.Response, error)
 func HeaderValue(h []http.Header, name string) (string, bool) // case-insensitive
 
 type Response struct {
@@ -575,7 +575,7 @@ func SetTime(ms int64) bool
 func Random() int        // 30 random bits: 0 <= n < 1<<30
 
 // gogo/sntp
-func Sync(server string, timeoutMs int) bool // timeoutMs <= 0: 5000
+func Sync(server string, timeoutMs int) error // timeoutMs <= 0: 5000
 func Now() int64                             // sys.Time()
 ```
 
