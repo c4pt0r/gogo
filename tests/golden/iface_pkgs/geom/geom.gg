@@ -1,0 +1,26 @@
+// Package geom has types that implement shapes.Shape without importing
+// it, and an interface of its own.
+package geom
+
+// Rect is a rectangle.
+type Rect struct{ W, H int }
+
+func (r Rect) Area() int    { return r.W * r.H }
+func (r Rect) Name() string { return "rect" }
+
+// Side is a square's side.
+type Side int
+
+func (s Side) Area() int    { return int(s) * int(s) }
+func (s Side) Name() string { return "square" }
+
+// Stringer is implemented by types that describe themselves.
+type Stringer interface{ String() string }
+
+// Describe uses the description, if the value has one.
+func Describe(x any) string {
+	if s, ok := x.(Stringer); ok {
+		return s.String()
+	}
+	return "?"
+}

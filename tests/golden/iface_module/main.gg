@@ -1,0 +1,52 @@
+// Interfaces and hot loading: a module dispatches over its own types; a
+// value of the host's own types (a struct, or a named int boxed in an
+// interface) cannot reach it (the spawn is refused), as for any module
+// type; a panic in a module's dispatcher ends that actor only.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/code"
+	"gogo/fs"
+)
+
+type Shape interface{ Area() int }
+
+type Rect struct{ W, H int } // not the module's Rect
+type Sq int
+
+func (r Rect) Area() int { return r.W + r.H }
+func (s Sq) Area() int   { return -int(s) }
+
+func run(m code.Module, entry string, arg any) {
+	p, e := code.Spawn(m, entry, arg)
+	if e != code.OK {
+		println("spawn", entry, "refused", int(e))
+		return
+	}
+	actor.Monitor(p)
+	for {
+		switch d := actor.Receive().(type) {
+		case actor.DownMsg:
+			println(entry, "down", d.Reason.Code)
+			return
+		}
+	}
+}
+
+func main() {
+	b, e := fs.ReadFile("/flash/shapes.ggb", 100000)
+	if e != fs.OK {
+		println("read", int(e))
+		return
+	}
+	m, ce := code.Load(b)
+	println("load", int(ce))
+	run(m, "Sum", 3)
+	run(m, "Sum", "x")
+	run(m, "Sum", Rect{1, 2})
+	run(m, "Sum", Sq(2))
+	run(m, "Nil", 0)
+	var s Shape = Sq(5)
+	println("host", s.Area(), Shape(Rect{3, 4}).Area())
+}

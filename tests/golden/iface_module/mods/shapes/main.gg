@@ -1,0 +1,38 @@
+// A hot-loaded module with an interface of its own, implemented by its
+// own types: its dispatchers cover its own image's types.
+package main
+
+type Shape interface{ Area() int }
+
+type Rect struct{ W, H int }
+type Sq int
+
+func (r Rect) Area() int { return r.W * r.H }
+func (s Sq) Area() int   { return int(s) * int(s) }
+
+func sum(shapes []Shape) int {
+	t := 0
+	for _, s := range shapes {
+		t += s.Area()
+	}
+	return t
+}
+
+// Sum prints the total area of a rect and a square of side n, and what
+// it was given.
+func Sum(arg any) {
+	switch n := arg.(type) {
+	case int:
+		println("module sum", sum([]Shape{Rect{n, n + 1}, Sq(n)}))
+	case Shape:
+		println("module got a shape", n.Area())
+	default:
+		println("module got something else")
+	}
+}
+
+// Nil calls a method on a nil Shape: a panic in the module's dispatcher.
+func Nil(arg any) {
+	var s Shape
+	println(s.Area())
+}

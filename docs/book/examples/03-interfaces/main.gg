@@ -1,0 +1,66 @@
+// Interfaces: a method set any type can satisfy (structs and named basic
+// types alike), interface values that hold one of them, type switches and
+// assertions on them, and == between them.
+package main
+
+type Shape interface {
+	Area() int
+	Name() string
+}
+
+type Rect struct{ W, H int }
+type Square int
+
+func (r Rect) Area() int      { return r.W * r.H }
+func (r Rect) Name() string   { return "rect" }
+func (s Square) Area() int    { return int(s) * int(s) }
+func (s Square) Name() string { return "square" }
+
+// Stringer is a smaller interface; every Shape that has String is one.
+type Stringer interface{ String() string }
+
+func (s Square) String() string { return "a square" }
+
+func total(shapes []Shape) int {
+	t := 0
+	for _, s := range shapes {
+		t += s.Area() // calls Rect.Area or Square.Area
+	}
+	return t
+}
+
+func describe(x any) string {
+	switch v := x.(type) {
+	case nil:
+		return "nothing"
+	case Stringer:
+		return v.String()
+	case Shape:
+		return v.Name()
+	case int:
+		return "an int"
+	}
+	return "something else"
+}
+
+func main() {
+	shapes := []Shape{Rect{2, 3}, Square(4)}
+	println(total(shapes))
+	for _, s := range shapes {
+		println(s.Name(), describe(s))
+	}
+	println(describe(nil), describe(7), describe("x"))
+
+	// x.(T) takes the value out (a panic if it holds another type);
+	// with ok it reports instead.
+	sq := shapes[1].(Square)
+	r, ok := shapes[1].(Rect)
+	println(int(sq), r.W, ok)
+
+	// Interface values are equal when they hold equal values of the
+	// same type.
+	var a, b Shape = Rect{2, 3}, Rect{2, 3}
+	println(a == b, a == shapes[0], a == Shape(Square(6)))
+	var none Shape
+	println(none == nil)
+}

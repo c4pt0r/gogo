@@ -1,0 +1,26 @@
+rect 6
+circle 3
+square 16
+total 25
+framed 4 16
+square 25 100
+square shape framed 0 shape square 0
+rect 216 64
+circle
+cat
+6 cat
+hel 3 true
+hello 5 true short read: 5 < 9
+check 1 ok
+check -2 code -2 true false
+nil
+shape rect 1
+named dog
+error code 7
+int
+other
+true 9
+false
+short read: 1 < 2
+true false true true
+true

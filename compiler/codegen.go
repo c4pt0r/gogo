@@ -135,6 +135,10 @@ type gen struct {
 	used []*ast.FuncDecl
 
 	boxIdx map[string]uint32 // own box types (boxIndex), by image name
+
+	concrete  []types.Type           // concreteTypes, once computed
+	dispIdx   map[*types.Func]uint32 // dispatchers, by interface method
+	isHelpers []isHelper             // implements tests, by interface type
 }
 
 // addFunc gives declared function fn the next function index.
@@ -1188,12 +1192,13 @@ func (f *fn) localReg(e ast.Expr) (uint8, bool) {
 }
 
 // boxes reports whether e, going into a destination of type target, is
-// converted to an interface value: an int64 (small int64 values are
+// converted to an interface value (nil is the nil interface value, not
+// the nil slice): an int64 (small int64 values are
 // immediates the VM cannot tell from ints, so inside an interface an int64
 // is always a K_INT64 box, BOX64), a named non-struct value or a byte
 // (boxed in a struct of their type, see codegen_iface.go).
 func (f *fn) boxes(e ast.Expr, target types.Type) bool {
-	return convertsToIface(f.g.p.Info.TypeOf(e), target)
+	return convertsToIface(f.g.p.Info.TypeOf(e), target) || (target != nil && isIface(target) && f.g.p.Info.Types[e].IsNil())
 }
 
 // valueInto compiles e into dst as a value of type target (the type of the
@@ -1469,6 +1474,9 @@ func isInt64(t types.Type) bool {
 func (f *fn) conversion(call *ast.CallExpr, dst uint8) {
 	to, from := f.g.p.Info.TypeOf(call.Fun), f.g.p.Info.TypeOf(call.Args[0])
 	switch {
+	case isIface(to): // any(x), I(x): as an assignment
+		f.valueInto(call.Args[0], to, dst)
+		return
 	case isPID(to): // actor.PID <-> fs.File: the same term
 		f.exprInto(call.Args[0], dst)
 		return
@@ -1519,7 +1527,7 @@ func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 	case isBytes(t): // empty
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermEmptyBytes)
 		return
-	case isAny(t) || isFunc(t) || isBuffer(t):
+	case isIface(t) || isFunc(t) || isBuffer(t):
 		// The zero Buffer is nil: unusable (its methods are badcode).
 		// A nil any; a nil func, which Spawn rejects (the spawner crashes
 		// with badcode).
@@ -1757,7 +1765,13 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 func (f *fn) panicCall(call *ast.CallExpr, dst uint8) {
 	mark := f.next
 	v := f.alloc(call)
-	f.valueInto(call.Args[0], anyType, v)
+	t := f.g.p.Info.TypeOf(call.Args[0])
+	if isIface(t) || types.Implements(t, errorType.Underlying().(*types.Interface)) {
+		f.exprInto(call.Args[0], v)
+		f.panicValue(call, t, v)
+	} else {
+		f.valueInto(call.Args[0], anyType, v)
+	}
 	f.asm.EmitExt(OpBuiltin, dst, v, 1, BPanic)
 	f.next = mark
 }

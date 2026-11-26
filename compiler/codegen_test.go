@@ -2401,3 +2401,45 @@ func TestPanicMinor(t *testing.T) {
 		t.Errorf("version %s, want 15.0", VersionString(v))
 	}
 }
+
+// TestDispatcher: a method call on an interface value calls a generated
+// dispatcher, a TYPEIS chain over the program's types that have the
+// method (a box unwrapped first), ending in a panic; an assertion to an
+// interface calls a generated test.
+func TestDispatcher(t *testing.T) {
+	src := `package main
+
+type S interface{ Area() int }
+
+type R struct{ W int }
+type Q int
+type Other struct{}
+
+func (r R) Area() int     { return r.W }
+func (q Q) Area() int     { return int(q) }
+func (o Other) Name() int { return 0 }
+
+func main() {
+	var s S = Q(2)
+	var x any = R{1}
+	_, ok := x.(S)
+	println(s.Area(), ok)
+}
+`
+	dis := compileSrc(t, src)
+	_, body := funcDis(t, dis, "S.Area")
+	code := parseIns(t, body)
+	if countOp(code, "TYPEIS", "") != 2 || countOp(code, "GETFIELD", "") != 1 || countOp(code, "BUILTIN", "PANIC") != 1 {
+		t.Errorf("dispatcher:\n%s", strings.Join(body, "\n"))
+	}
+	if countOp(code, "CALL", "R.Area") != 1 || countOp(code, "CALL", "Q.Area") != 1 {
+		t.Errorf("dispatcher calls:\n%s", strings.Join(body, "\n"))
+	}
+	_, body = funcDis(t, dis, "S.(is)")
+	if countOp(parseIns(t, body), "TYPEIS", "") != 2 {
+		t.Errorf("implements test:\n%s", strings.Join(body, "\n"))
+	}
+	if strings.Contains(compileSrc(t, "package main\ntype R struct{ W int }\nfunc (r R) Area() int { return r.W }\nfunc main() { println(R{1}.Area()) }\n"), "(is)") {
+		t.Error("a program without interfaces got a generated test")
+	}
+}

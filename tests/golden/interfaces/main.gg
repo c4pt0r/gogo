@@ -1,0 +1,188 @@
+// User interfaces: method calls on interface values (dispatched over the
+// image's types), embedding, interface-to-interface assignment, method
+// values, multi-result and variadic methods, type switches and assertions
+// with interface types, ==, and error as an ordinary interface, and
+// promoted methods of embedded fields. Valid Go: `go run` prints the same
+// (gocompare); iface_nilcall has the panic of a nil interface.
+package main
+
+type Named interface{ Name() string }
+
+type Shape interface {
+	Named
+	Area() int
+	Scale(fs ...int) Shape
+}
+
+type Rect struct{ W, H int }
+type Circle struct{ R int }
+type Square int // a named non-struct type implements it too
+
+func (r Rect) Name() string { return "rect" }
+func (r Rect) Area() int    { return r.W * r.H }
+func (r Rect) Scale(fs ...int) Shape {
+	for _, f := range fs {
+		r = Rect{r.W * f, r.H * f}
+	}
+	return r
+}
+
+func (c Circle) Name() string { return "circle" }
+func (c Circle) Area() int    { return 3 * c.R * c.R }
+func (c Circle) Scale(fs ...int) Shape {
+	for _, f := range fs {
+		c = Circle{c.R * f}
+	}
+	return c
+}
+
+func (s Square) Name() string { return "square" }
+func (s Square) Area() int    { return int(s) * int(s) }
+func (s Square) Scale(fs ...int) Shape {
+	for _, f := range fs {
+		s *= Square(f)
+	}
+	return s
+}
+
+type Pet struct{ Kind string }
+
+func (p Pet) Name() string { return p.Kind }
+
+// Framed embeds a Rect: it is a Shape through Rect's promoted methods,
+// but its own Name.
+type Framed struct {
+	Rect
+	Border int
+}
+
+func (f Framed) Name() string { return "framed" }
+
+// Tagged embeds a Square, a named int: its methods are promoted too.
+type Tagged struct {
+	Tag string
+	Square
+}
+
+type Reader interface {
+	Read(n int) (string, int, error)
+}
+
+type Src struct{ Data string }
+
+func (s Src) Read(n int) (string, int, error) {
+	if n > len(s.Data) {
+		return s.Data, len(s.Data), ErrShort{len(s.Data), n}
+	}
+	return s.Data[:n], n, nil
+}
+
+type ErrShort struct{ Got, Want int }
+
+func (e ErrShort) Error() string { return "short read: " + itoa(e.Got) + " < " + itoa(e.Want) }
+
+type Code int
+
+func (c Code) Error() string { return "code " + itoa(int(c)) }
+
+func itoa(n int) string {
+	if n < 0 {
+		return "-" + itoa(-n)
+	}
+	if n < 10 {
+		return string([]byte{byte('0' + n)})
+	}
+	return itoa(n/10) + itoa(n%10)
+}
+
+func total(shapes []Shape) int {
+	t := 0
+	for _, s := range shapes {
+		t += s.Area()
+	}
+	return t
+}
+
+func check(n int) error {
+	if n < 0 {
+		return Code(n)
+	}
+	return nil
+}
+
+func describe(x any) string {
+	switch v := x.(type) {
+	case nil:
+		return "nil"
+	case Shape:
+		return "shape " + v.Name() + " " + itoa(v.Area())
+	case Named:
+		return "named " + v.Name()
+	case error:
+		return "error " + v.Error()
+	case int:
+		return "int"
+	}
+	return "other"
+}
+
+func main() {
+	shapes := []Shape{Rect{2, 3}, Circle{1}, Square(4)}
+	for _, s := range shapes {
+		println(s.Name(), s.Area())
+	}
+	println("total", total(shapes))
+	more := []Shape{Framed{Rect{2, 2}, 1}, Tagged{"t", Square(5)}}
+	for _, s := range more {
+		println(s.Name(), s.Area(), s.Scale(2).Area())
+	}
+	var n2 Named = Tagged{"u", 3}
+	println(n2.Name(), describe(Framed{}), describe(Tagged{}))
+	big := shapes[0].Scale(2, 3)
+	println(big.Name(), big.Area(), shapes[2].Scale(2).Area())
+
+	// An interface value goes into a smaller interface.
+	var n Named = shapes[1]
+	println(n.Name())
+	n = Pet{"cat"}
+	println(n.Name())
+
+	// A method value of an interface value.
+	area := shapes[0].Area
+	name := n.Name
+	println(area(), name())
+
+	// Multiple results, and an error.
+	var r Reader = Src{"hello"}
+	s, k, err := r.Read(3)
+	println(s, k, err == nil)
+	s, k, err = r.Read(9)
+	println(s, k, err != nil, err.Error())
+
+	// error is an ordinary interface.
+	for _, v := range []int{1, -2} {
+		if err := check(v); err != nil {
+			println("check", v, err.Error(), err == Code(-2), err == Code(3))
+		} else {
+			println("check", v, "ok")
+		}
+	}
+
+	// Type switches and assertions with interface types.
+	for _, x := range []any{nil, Rect{1, 1}, Pet{"dog"}, Code(7), 5, "s"} {
+		println(describe(x))
+	}
+	var x any = Square(3)
+	sh, ok := x.(Shape)
+	println(ok, sh.Area())
+	_, ok = x.(error)
+	println(ok)
+	e := any(ErrShort{1, 2}).(error)
+	println(e.Error())
+
+	// == on interface values.
+	var a, b Shape = Rect{1, 2}, Rect{1, 2}
+	println(a == b, a == Shape(Rect{2, 1}), a != nil, Shape(Square(2)) == Square(2))
+	var none Shape
+	println(none == nil)
+}

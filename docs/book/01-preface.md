@@ -96,9 +96,9 @@ The next steps, in order:
    way Lua is embedded, for desktop and server programs, phone apps and
    test tools. The C library and its API are in place (chapter 18); the
    network and the board peripherals are not in it yet.
-2. **Language completeness**: more of Go, such as methods, maps, arrays,
-   type assertions and the expression `switch` (chapter 3 lists what is
-   missing today).
+2. **Language completeness**: more of Go. Methods, interfaces, `error`,
+   `panic` and type assertions are in; pointers, maps, arrays, sized
+   integers and floats are next (chapter 3 lists what is missing today).
 3. **Bluetooth (BLE)**: talking to a phone app, and setting up Wi-Fi from
    the phone.
 

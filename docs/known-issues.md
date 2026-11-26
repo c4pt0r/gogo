@@ -261,10 +261,7 @@ rebuilt:
 ## Compiler and language
 
 - **Not supported yet (planned).** The compiler rejects maps, pointer
-  receivers ("pointer receivers are not supported yet"), pointers, package-level `var`s, the `error` type
-  and interfaces other than `any` ("interface
-  types are not supported yet": methods are called on concrete types
-  only). `goto` is rejected (labeled `break` and
+  receivers ("pointer receivers are not supported yet"), pointers and package-level `var`s. `goto` is rejected (labeled `break` and
   `continue` cover its uses). Channels, `go`, `select`, generics and
   `recover` are outside the design. "Language completeness" is a
   planned milestone. *Workarounds:* a type switch for assertions and for
@@ -397,12 +394,24 @@ rebuilt:
 - **Old images need a rebuild once.** Images of the single-number formats
   (up to 14) do not load on a v15 VM; from 15.0 on, a VM runs every older
   minor of its major.
-- **Some error messages are unhelpful.** An interface type gives `type
-  definition other than struct or an integer, float, bool or string type
-  not supported`.
+- **Interface calls cost a type check per candidate.** A method call on
+  an interface value tests the value's type against each type of the
+  program that has the method, in declaration order, before calling it;
+  a program with many such types pays for the chain (and its image holds
+  one dispatcher per interface method called). The VM's own types
+  (`bytes.Bytes`, `bytes.Buffer`, `fs.File`) do not satisfy your
+  interfaces: their methods are builtins.
+- **Interface values of your types stay in your module.** A hot-loaded
+  module and its loader dispatch only over their own types (the closed
+  world that makes dispatch work), so a value of your type, inside an
+  interface or not, cannot be sent to another module (`BadMsg`, or a
+  refused `code.Spawn`).
+- **`panic` of an error prints `Error()`**, as Go does, but a
+  `fmt.Stringer` value prints as a value (Go prints its `String()`).
 - **`panic` ends the actor; there is no `recover`.** A panic is a crash
   with the reason `actor.Panic`, for links, monitors and supervisors to
-  handle. Its value prints as `println` prints it (a struct as `{1 2}`),
+  handle. Its value prints as `println` prints it (a struct as `{1 2}`, a
+  named basic value inside an interface as `{5}`),
   where Go prints a struct's type and address.
 - **`==` on interfaces holding slices does not panic.** Two `any`
   values holding slices compare element by element, as arrays do; Go

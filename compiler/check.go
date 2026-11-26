@@ -116,7 +116,10 @@ func (c *checker) typeProblem(t types.Type) string {
 	case *types.Named:
 		obj := t.Obj()
 		if obj.Pkg() == nil {
-			return obj.Name() // error, comparable
+			if obj.Name() == "error" {
+				return ""
+			}
+			return obj.Name() // comparable
 		}
 		if c.p.compiled(obj.Pkg()) {
 			return ""
@@ -153,10 +156,17 @@ func (c *checker) typeProblem(t types.Type) string {
 		}
 		return ""
 	case *types.Interface:
-		if t.Empty() {
-			return "" // any
+		// any, or methods whose signatures are of the subset (embedded
+		// interfaces add theirs); no type sets (constraints only).
+		if !t.IsMethodSet() {
+			return "interface with a type set"
 		}
-		return "interface"
+		for i := 0; i < t.NumMethods(); i++ {
+			if c.typeProblem(types.NewSignatureType(nil, nil, nil, t.Method(i).Type().(*types.Signature).Params(), t.Method(i).Type().(*types.Signature).Results(), t.Method(i).Type().(*types.Signature).Variadic())) != "" {
+				return "interface method " + t.Method(i).Name() + " of type " + types.TypeString(t.Method(i).Type(), pkgName)
+			}
+		}
+		return ""
 	case *types.Struct:
 		return "anonymous struct"
 	case *types.Tuple:
@@ -267,8 +277,10 @@ func (c *checker) typeSpec(s *ast.TypeSpec) {
 		c.typeExpr(s.Type)
 		return
 	}
-	if _, ok := s.Type.(*ast.InterfaceType); ok {
-		c.fail(s.Pos(), "interface types are not supported yet: call methods on the concrete type")
+	if isIface(c.p.Info.TypeOf(s.Type)) { // type I interface{ ... }, type E error
+		if msg := c.typeProblem(c.p.Info.TypeOf(s.Type)); msg != "" {
+			c.unsupported(s, msg)
+		}
 		return
 	}
 	st, ok := s.Type.(*ast.StructType)
@@ -405,7 +417,7 @@ func (c *checker) convert(target types.Type, e ast.Expr) {
 	if isSlice(target) || isIface(target) {
 		c.nilSlice(e) // the nil slice, the nil interface value
 	}
-	if !isAny(target) {
+	if !isIface(target) {
 		return
 	}
 	c.noFuncInAny(e)
@@ -417,7 +429,7 @@ func (c *checker) convert(target types.Type, e ast.Expr) {
 // basic value and a sized integer (byte, rune, uint32, ...) are boxed
 // (codegen_iface.go).
 func (c *checker) convertType(target, src types.Type, pos token.Pos) {
-	if !isAny(target) {
+	if !isIface(target) {
 		return
 	}
 	if isFunc(src) {
@@ -489,7 +501,7 @@ func (c *checker) typeExpr(e ast.Expr) {
 		return
 	}
 	switch e := e.(type) {
-	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType: // FuncType: its signature was checked above
+	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType, *ast.InterfaceType: // their signatures were checked above
 	case *ast.ArrayType:
 		c.typeExpr(e.Elt) // []T, [N]T, [...]T
 	default:
@@ -906,8 +918,8 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 			ta, _ = a.Rhs[0].(*ast.TypeAssertExpr)
 		}
 	}
-	if ta == nil || !isAny(c.p.Info.TypeOf(ta.X)) {
-		c.unsupported(s, "type switch over a value other than any")
+	if ta == nil || !isIface(c.p.Info.TypeOf(ta.X)) {
+		c.unsupported(s, "type switch over a value other than an interface")
 		return
 	}
 	c.expr(ta.X)
@@ -919,7 +931,7 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 			}
 			if isFsFile(c.p.Info.TypeOf(t)) {
 				c.unsupported(t, "type switch case fs.File not supported; wrap it in a struct")
-			} else if !c.caseType(t) {
+			} else if !c.caseType(t) && !c.ifaceCase(t) {
 				c.unsupported(t, "type switch case other than a struct, int, int64, byte, float32, float64, bool, string, a named type of those, actor.PID, actor.Ref or bytes.Bytes")
 			}
 		}
@@ -1106,6 +1118,12 @@ func tupleTypes(t *types.Tuple) []types.Type {
 // has checked the context around it.
 func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 	if tv, ok := c.p.Info.Types[call.Fun]; ok && tv.IsType() {
+		if isIface(tv.Type) && len(call.Args) == 1 { // any(x), error(e), I(x): as an assignment
+			c.typeExpr(call.Fun)
+			c.convert(tv.Type, call.Args[0])
+			c.expr(call.Args[0])
+			return
+		}
 		if !c.isIntConv(call) && !c.isBytesConv(call) && !isPIDConv(c.p.Info, call) && !c.isSameBasicConv(call) {
 			c.unsupported(call, "conversion")
 			return
@@ -1214,24 +1232,33 @@ func (p *Program) method(sel *ast.SelectorExpr) *types.Func {
 		return nil
 	}
 	fn, ok := s.Obj().(*types.Func)
-	if !ok || !p.compiled(fn.Pkg()) || p.isBuiltin(fn) {
+	if !ok || (!p.compiled(fn.Pkg()) && !isIface(s.Recv())) || p.isBuiltin(fn) {
 		return nil
 	}
 	return fn
+}
+
+// ifaceMethod reports whether sel selects a method of an interface value
+// (x.M with x of interface type: dispatched at run time).
+func (p *Program) ifaceMethod(sel *ast.SelectorExpr) bool {
+	s := p.Info.Selections[sel]
+	return s != nil && s.Kind() == types.MethodVal && isIface(s.Recv())
 }
 
 // methodRecv checks the operand of a method selector: the receiver
 // expression of x.M. The type T of a method expression T.M or (T).M was
 // checked at the method's declaration. A method expression of a promoted
 // method (B.M for a method M of B's embedded A) would need a function of
-// its own that takes a B: it is rejected.
+// its own that takes a B: it is rejected, and so is I.M of an interface I.
 func (c *checker) methodRecv(sel *ast.SelectorExpr) {
 	s := c.p.Info.Selections[sel]
 	if s.Kind() == types.MethodVal {
 		c.expr(sel.X)
 		return
 	}
-	if len(s.Index()) > 1 {
+	if isIface(s.Recv()) {
+		c.unsupported(sel, "method expression on an interface type")
+	} else if len(s.Index()) > 1 {
 		c.unsupported(sel, "method expression of a promoted method")
 	}
 }
@@ -1378,6 +1405,13 @@ func (c *checker) expr(e ast.Expr) {
 	}
 }
 
+// ifaceCase reports whether t names an interface type of the subset (a
+// type switch case or assertion type: does the value implement it).
+func (c *checker) ifaceCase(t ast.Expr) bool {
+	tv, ok := c.p.Info.Types[t]
+	return ok && tv.IsType() && isIface(tv.Type) && c.typeProblem(tv.Type) == ""
+}
+
 // typeAssert checks x.(T): x an interface value, T a type a type switch
 // may name.
 func (c *checker) typeAssert(e *ast.TypeAssertExpr) {
@@ -1389,7 +1423,7 @@ func (c *checker) typeAssert(e *ast.TypeAssertExpr) {
 		c.unsupported(e.Type, "type assertion to fs.File; wrap it in a struct")
 		return
 	}
-	if !c.caseType(e.Type) {
+	if !c.caseType(e.Type) && !c.ifaceCase(e.Type) {
 		c.unsupported(e.Type, "type assertion to "+types.TypeString(c.p.Info.TypeOf(e.Type), pkgName))
 		return
 	}

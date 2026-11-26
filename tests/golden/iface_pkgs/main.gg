@@ -1,0 +1,30 @@
+// Interfaces across packages of one image: an interface of one package,
+// implemented by types of another package that does not import it, of
+// main and of its own package; a third package's interface implemented
+// by main's type; method names shared across packages.
+package main
+
+import (
+	"iface_pkgs/geom"
+	"iface_pkgs/shapes"
+)
+
+type Tri struct{ B, H int }
+
+func (t Tri) Area() int      { return t.B * t.H / 2 }
+func (t Tri) Name() string   { return "tri" }
+func (t Tri) String() string { return "a triangle" }
+
+func main() {
+	ss := []shapes.Shape{geom.Rect{2, 3}, geom.Side(3), Tri{4, 5}, shapes.Unit{}}
+	println(shapes.Total(ss))
+	big, ok := shapes.Largest(ss)
+	println(big.Name(), big.Area(), ok)
+	_, ok = shapes.Largest(nil)
+	println(ok)
+	for _, s := range ss {
+		println(s.Name(), geom.Describe(s))
+	}
+	var st geom.Stringer = Tri{1, 1}
+	println(st.String())
+}

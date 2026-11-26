@@ -1,0 +1,19 @@
+// A method call on a nil interface value panics, as in Go: the
+// dispatcher finds no type and ends the actor with actor.Panic.
+package main
+
+import "gogo/actor"
+
+type Shape interface{ Area() int }
+
+func main() {
+	p := actor.Spawn(func() {
+		var s Shape
+		println(s.Area())
+	})
+	actor.Monitor(p)
+	switch d := actor.Receive().(type) {
+	case actor.DownMsg:
+		println("down", d.Reason.Code == actor.Panic, d.Reason.Func)
+	}
+}

@@ -5,3 +5,6 @@ panic: {1 2}
 panic: false
 panic: linked
 panic: again
+panic: failed at step 3
+panic: failed at step 4
+panic: failed at step 5

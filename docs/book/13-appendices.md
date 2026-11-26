@@ -384,7 +384,7 @@ as `code.Err(errors.X)` under the same names.
 | `uint` is 64 bits on most machines | `uint` is 32 bits, like `int`; `int8` .. `uint64` as in Go, but not in an `any` |
 | complex, `uintptr` | none |
 | maps, pointers | slices of structs, searched |
-| methods, interfaces | functions; type switches over `any` |
+| methods with pointer receivers | value receivers that return the new value |
 | `goto` | labeled `break`/`continue` |
 | generics | none |
 | `error`, `panic`, `recover` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |

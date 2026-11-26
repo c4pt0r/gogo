@@ -231,9 +231,8 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   right below the arguments; `x.M` is a closure that captured a copy of
   `x` (`MKCLOSURE`); `T.M` is the function itself. Structs are immutable
   values, so a method works on its own copy of the receiver, as in Go. No
-  opcode of their own. Pointer receivers and interface types are rejected
-  ("pointer receivers are not supported yet", "interface types are not
-  supported yet").
+  opcode of their own. Pointer receivers are rejected ("pointer
+  receivers are not supported yet").
 - Field assignment: `p.X = v`, `s[i].X = v`, `a.b.c = v`,
   `m.Items[i].X = v`, `op=` and `++`/`--` on a field, and fields in
   multi-assignments (index operands and right-hand sides first, then the
@@ -259,7 +258,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   embedded gogo stub type (`bytes.Buffer`, `fs.File`: builtins that take
   their own type), which are called on the field instead. For interfaces, the compiler's
   `gen.methodTable` lists a type's own and promoted methods with the
-  field path to each receiver, which interface dispatch is to use. No
+  field path to each receiver, which interface dispatch uses. No
   opcode of its own.
 - Static `defer`: `defer f(args)` anywhere but inside a loop (within its
   own function: a func literal is a function of its own), so each defer
@@ -279,6 +278,23 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   them, since it captures by value and writes to captured variables are
   rejected. Rejected: `defer` inside a loop, a deferred call whose single
   argument is a multi-value call. No opcode, no run-time defer list.
+- Interfaces, `error` included, with closed-world dispatch: the image
+  holds every type its interface values can hold (a module's own types
+  never leave it, D9 of the language plan; reserved types are global),
+  so a method call on an interface value is a `CALL` of a dispatcher
+  the compiler generates per interface method (named
+  `Interface.Method`, `error.Error`): a `TYPEIS` chain over the image's
+  named types that have the method, promoted ones included (a box is
+  unwrapped, an embedded receiver loaded, with `GETFIELD`), each calling
+  its implementation, ending in a panic (`invalid memory
+  address or nil pointer dereference`) for nil. An assertion or a type
+  switch case to an interface type calls a generated test, a `TYPEIS`
+  chain over the implementing types (`Interface.(is)`). Interface
+  embedding, interface-to-interface assignment, method values of
+  interface values and `I(x)` conversions work; method expressions
+  `I.M` do not. `panic` of an error prints its `Error()`. No opcode of
+  their own; the VM's own types (`Bytes`, `Buffer`, `fs.File`) are not
+  candidates, as their methods are builtins.
 - Interface values (`any`): a value is its own term; an `int64` goes in
   as a `K_INT64` box (`BOX64`), a sized integer (`byte`, `rune`,
   `uint32`, `uint64`, ...: box type `byte`, `int32`, ...) and a value of a named
@@ -314,9 +330,8 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   package's name is its directory's name (§5.1, the loader).
 
 **Not supported yet (planned for the "language completeness"
-milestone):** maps, pointers (and pointer receivers), package-level variables,
-the `error` interface and interfaces other than `any`.
-Each is rejected at compile time with a `<what> not supported` error
+milestone):** maps, pointers (and pointer receivers) and package-level
+variables. Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 
 **Out of the design:** channels and `select`, the `go` statement (use
@@ -2282,7 +2297,9 @@ variadic functions, methods with value receivers, embedded fields,
 arrays, static `defer`); floating point (`float32`, `float64`,
 `gogo/math`, `strconv.FormatFloat` / `ParseFloat`; image format 15.2);
 sized integers (`int8` .. `uint64`, `strconv.FormatUint` / `ParseUint` /
-`ParseInt`; image format 15.3).
+`ParseInt`; image format 15.3); `panic`, type assertions, interfaces and
+`error`, `==` on structs, arrays and interfaces, and the library's Go
+signatures (image format 15.4).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
@@ -2292,9 +2309,9 @@ sized integers (`int8` .. `uint64`, `strconv.FormatUint` / `ParseUint` /
 2. **Distributed actors:** remote PIDs and a `gogo/node` library; boards
    connect to a server node that also relays board-to-board messages,
    with direct LAN links as a later step.
-3. **Language completeness:** pointer receivers, interfaces and
-   `error`, `panic`, pointers, maps, read-only package variables, `fmt`
-   (floating point and sized integers are done).
+3. **Language completeness:** pointer receivers, pointers, maps,
+   read-only package variables, `fmt` (floating point, sized integers,
+   interfaces, `error` and `panic` are done).
 4. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler,

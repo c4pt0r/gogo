@@ -216,7 +216,7 @@ func (f *fn) assertInto(e *ast.TypeAssertExpr, dst uint8) {
 	defer func() { f.next = mark }()
 	f.exprInto(e.X, dst)
 	t := f.allocScalar(e)
-	f.typeTest(e.Type, dst, t)
+	f.assertTest(e, dst, t)
 	okL := f.asm.NewLabel()
 	f.jump(OpJmpt, t, okL)
 	f.panicMsg(e, f.assertMsg(e))
@@ -229,7 +229,7 @@ func (f *fn) assertInto(e *ast.TypeAssertExpr, dst uint8) {
 // zero value.
 func (f *fn) assertOkInto(e *ast.TypeAssertExpr, base uint8) {
 	f.exprInto(e.X, base)
-	f.typeTest(e.Type, base, base+1)
+	f.assertTest(e, base, base+1)
 	t := f.g.p.Info.TypeOf(e.Type)
 	okL, endL := f.asm.NewLabel(), f.asm.NewLabel()
 	f.jump(OpJmpt, base+1, okL)
@@ -238,6 +238,16 @@ func (f *fn) assertOkInto(e *ast.TypeAssertExpr, base uint8) {
 	f.bind(okL)
 	f.unbox(e, t, base)
 	f.bind(endL)
+}
+
+// assertTest emits t = (the interface value in register x has type T, or
+// implements T for an interface type T) for x.(T).
+func (f *fn) assertTest(e *ast.TypeAssertExpr, x, t uint8) {
+	if tt := f.g.p.Info.TypeOf(e.Type); isIface(tt) {
+		f.ifaceTest(e, tt, x, t)
+		return
+	}
+	f.typeTest(e.Type, x, t)
 }
 
 // panicMsg panics with the constant string msg.
@@ -273,6 +283,20 @@ func cmpType(xt, yt types.Type) types.Type {
 // cmpInto emits dst = x == y (op OpEq) or x != y (OpNe) by B_CMP, x and y
 // converted to type t.
 func (f *fn) cmpInto(x, y ast.Expr, t types.Type, op uint8, dst uint8) {
+	if f.g.p.Info.Types[x].IsNil() {
+		x, y = y, x
+	}
+	if xt := f.g.p.Info.TypeOf(x); f.g.p.Info.Types[y].IsNil() && isIface(xt) && !xt.Underlying().(*types.Interface).Empty() {
+		// x == nil for a non-empty interface: never an int64 box (an
+		// int64 has no methods), so EQ compares it with nil.
+		mark := f.next
+		r := f.operand(x)
+		z := f.allocScalar(y)
+		f.asm.EmitExt(OpLoadk, z, 0, 0, TermNil)
+		f.asm.Emit(op, dst, r, z)
+		f.next = mark
+		return
+	}
 	mark := f.next
 	base := f.allocN(x, 2)
 	f.valueInto(x, t, base)
@@ -287,4 +311,236 @@ func (f *fn) cmpRegs(n ast.Node, r uint8, op uint8, dst uint8) {
 	f.asm.EmitExt(OpBuiltin, r, r, 2, BCmp)
 	f.asm.EmitExt(OpLoadk, r+1, 0, 0, TermInt(0))
 	f.asm.Emit(op, dst, r, r+1)
+}
+
+// Interfaces are dispatched in a closed world: the image holds every type
+// whose values can be in its interface values (a module's own types never
+// leave it, and the reserved types are the same everywhere), so a method
+// call on an interface value calls a dispatcher, a function the compiler
+// generates per interface method: a TYPEIS chain over the image's types
+// that have that method, each calling its implementation. A type
+// assertion or a type switch case to an interface type calls a similar
+// chain that answers whether the value's type implements it.
+
+// errorType is the universe interface error.
+var errorType = types.Universe.Lookup("error").Type()
+
+// concreteTypes lists the named non-interface types of every compiled
+// package (libraries, system packages and main), in declaration order:
+// the candidates of every dispatcher. The VM's own types (//gogo:builtin,
+// whose methods are builtins) are not among them.
+func (g *gen) concreteTypes() []types.Type {
+	if g.concrete != nil {
+		return g.concrete
+	}
+	g.concrete = []types.Type{}
+	for _, pkg := range g.p.packages() {
+		for _, f := range pkg.Files {
+			for _, d := range f.Decls {
+				gd, ok := d.(*ast.GenDecl)
+				if !ok {
+					continue
+				}
+				for _, s := range gd.Specs {
+					ts, ok := s.(*ast.TypeSpec)
+					if !ok || ts.Assign.IsValid() {
+						continue
+					}
+					tn, ok := g.p.Info.Defs[ts.Name].(*types.TypeName)
+					if !ok || g.p.isBuiltin(tn) || isIface(tn.Type()) {
+						continue
+					}
+					if types.NewMethodSet(tn.Type()).Len() > 0 {
+						g.concrete = append(g.concrete, tn.Type())
+					}
+				}
+			}
+		}
+	}
+	return g.concrete
+}
+
+// impl returns the method of concrete type t that implements interface
+// method m (same name, as seen from m's package, and identical
+// signature), its own or promoted from an embedded field (methodTable:
+// with the field path to its receiver), or nil.
+func (g *gen) impl(t types.Type, m *types.Func) *promotedMethod {
+	n, ok := types.Unalias(t).(*types.Named)
+	if !ok {
+		return nil
+	}
+	for _, e := range g.methodTable(n) {
+		if e.fn.Id() == m.Id() && types.Identical(e.fn.Type(), m.Type()) {
+			return &e
+		}
+	}
+	return nil
+}
+
+// ifaceName names a function generated for interface type t: name, with
+// the qualifier of a function of t's package.
+func (g *gen) ifaceName(t types.Type, name string) string {
+	if n, ok := types.Unalias(t).(*types.Named); ok {
+		if n.Obj().Pkg() == nil { // error
+			return n.Obj().Name() + "." + name
+		}
+		return g.qualified(n.Obj().Pkg(), n.Obj().Name()+"."+name)
+	}
+	return types.TypeString(t, func(p *types.Package) string { return pkgPrefix(p) }) + "." + name
+}
+
+// nilDeref is the panic of a method call on a nil interface value.
+const nilDeref = "runtime error: invalid memory address or nil pointer dereference"
+
+// dispatcher returns the function index of the dispatcher of interface
+// method m (parameters: the interface value, then m's), generating it
+// when first used: for each implementing type, TYPEIS, then a call of its
+// method with the value (unboxed for a box) and the arguments, returning
+// its results; a value of no such type (nil) panics.
+func (g *gen) dispatcher(m *types.Func) uint32 {
+	if idx, ok := g.dispIdx[m]; ok {
+		return idx
+	}
+	sig := m.Type().(*types.Signature)
+	info := &funcInfo{name: g.ifaceName(sig.Recv().Type(), m.Name())}
+	idx := uint32(len(g.funcs))
+	g.funcs = append(g.funcs, info)
+	if g.dispIdx == nil {
+		g.dispIdx = map[*types.Func]uint32{}
+	}
+	g.dispIdx[m] = idx
+	np := 1 + sig.Params().Len()
+	k := sig.Results().Len()
+	t := uint8(np) // a scratch register for TYPEIS
+	var a Asm
+	for _, ct := range g.concreteTypes() {
+		pm := g.impl(ct, m)
+		if pm == nil {
+			continue
+		}
+		id, ok := g.typeID(ct)
+		fi, found := g.funcIndex(pm.fn)
+		if !ok || !found {
+			continue
+		}
+		next := a.NewLabel()
+		a.EmitExt(OpTypeis, t, 0, 0, id)
+		a.EmitJump(OpJmpf, t, next)
+		if boxed(ct) {
+			a.Emit(OpGetfield, 0, 0, 0)
+		}
+		for _, step := range pm.path { // a promoted method: its embedded receiver
+			a.Emit(OpGetfield, 0, 0, uint8(step.idx))
+		}
+		a.EmitExt(OpCall, 0, 0, uint8(np), fi)
+		if k > 1 {
+			a.Emit(OpRetn, 0, uint8(k), 0)
+		} else {
+			a.Emit(OpRet, 0, 0, 0)
+		}
+		a.Bind(next)
+	}
+	a.EmitExt(OpLoadk, t, 0, 0, TermConst(g.b.AddString(nilDeref)))
+	a.EmitExt(OpBuiltin, t, t, 1, BPanic)
+	a.Emit(OpRet, t, 0, 0)
+	g.finishGenerated(info, &a, np, max(np+1, k))
+	return idx
+}
+
+// implements returns the function index of the test "the dynamic type of
+// parameter 0 implements interface type it", generating it when first
+// used: a TYPEIS chain over the implementing types; for an empty
+// interface, value != nil.
+func (g *gen) implements(it types.Type) uint32 {
+	for _, h := range g.isHelpers {
+		if types.Identical(h.t, it) {
+			return h.idx
+		}
+	}
+	info := &funcInfo{name: g.ifaceName(it, "(is)")}
+	idx := uint32(len(g.funcs))
+	g.funcs = append(g.funcs, info)
+	g.isHelpers = append(g.isHelpers, isHelper{it, idx})
+	var a Asm
+	iface := it.Underlying().(*types.Interface)
+	if iface.Empty() {
+		a.EmitExt(OpLoadk, 1, 0, 0, TermNil)
+		a.EmitExt(OpBuiltin, 0, 0, 2, BCmp)
+		a.EmitExt(OpLoadk, 1, 0, 0, TermInt(0))
+		a.Emit(OpNe, 0, 0, 1)
+		a.Emit(OpRet, 0, 0, 0)
+		g.finishGenerated(info, &a, 1, 2)
+		return idx
+	}
+	yes := a.NewLabel()
+	for _, ct := range g.concreteTypes() {
+		if !types.Implements(ct, iface) {
+			continue
+		}
+		if id, ok := g.typeID(ct); ok {
+			a.EmitExt(OpTypeis, 1, 0, 0, id)
+			a.EmitJump(OpJmpt, 1, yes)
+		}
+	}
+	a.EmitExt(OpLoadk, 1, 0, 0, TermFalse)
+	a.Emit(OpRet, 1, 0, 0)
+	a.Bind(yes)
+	a.EmitExt(OpLoadk, 1, 0, 0, TermTrue)
+	a.Emit(OpRet, 1, 0, 0)
+	g.finishGenerated(info, &a, 1, 2)
+	return idx
+}
+
+// isHelper is a generated implements test, by interface type.
+type isHelper struct {
+	t   types.Type
+	idx uint32
+}
+
+// finishGenerated assembles a generated function.
+func (g *gen) finishGenerated(info *funcInfo, a *Asm, nParams, nRegs int) {
+	code, err := a.Finish()
+	if err != nil {
+		panic(genError{err})
+	}
+	info.code, info.nParams, info.nRegs = code, uint16(nParams), uint16(nRegs)
+}
+
+// ifaceTest emits t = (the interface value in register x implements
+// interface type it): a call of its implements test.
+func (f *fn) ifaceTest(n ast.Node, it types.Type, x, t uint8) {
+	f.asm.Emit(OpMove, t, x, 0)
+	f.asm.EmitExt(OpCall, t, t, 1, f.g.implements(it))
+}
+
+// methodIndex returns the function index that x.M (sel) calls: the
+// method's own, or for an interface value its dispatcher.
+func (f *fn) methodIndex(sel *ast.SelectorExpr, m *types.Func) uint32 {
+	if f.g.p.ifaceMethod(sel) {
+		return f.g.dispatcher(m)
+	}
+	return f.methodIdx(sel, m)
+}
+
+// panicValueInto leaves in register v the value panic prints for the
+// value in v, of static type t: an error's Error() (as Go prints it);
+// for an interface value that may hold an error, decided at run time.
+func (f *fn) panicValue(n ast.Node, t types.Type, v uint8) {
+	errIface := errorType.Underlying().(*types.Interface)
+	switch {
+	case isIface(t) && types.Implements(t, errIface):
+		f.asm.EmitExt(OpCall, v, v, 1, f.g.dispatcher(errIface.Method(0)))
+	case isIface(t):
+		mark := f.next
+		ok := f.allocScalar(n)
+		f.ifaceTest(n, errorType, v, ok)
+		skip := f.asm.NewLabel()
+		f.jump(OpJmpf, ok, skip)
+		f.asm.EmitExt(OpCall, v, v, 1, f.g.dispatcher(errIface.Method(0)))
+		f.bind(skip)
+		f.next = mark
+	case types.Implements(t, errIface): // as an error, through the dispatcher
+		f.toIface(n, t, v)
+		f.asm.EmitExt(OpCall, v, v, 1, f.g.dispatcher(errIface.Method(0)))
+	}
 }

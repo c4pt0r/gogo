@@ -1,0 +1,2 @@
+panic: runtime error: invalid memory address or nil pointer dereference
+gogo: actor <pid 1> crashed: panic in Shape.Area

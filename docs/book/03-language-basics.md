@@ -180,7 +180,7 @@ way, from its own directory. `gogo run file.gg` builds a single file, with
 its directory as the build root (chapter 2, *Scripts*).
 
 > **Note.** There is no `gogo/fmt` or `gogo/errors` package. Print with
-> `println`, and report errors as shown in section 3.9.
+> `println`, and report errors as shown in section 3.10.
 
 ## 3.2 Types and values
 
@@ -1303,8 +1303,8 @@ A few things to know:
   (`app/geom.Point.Add`); a func literal inside it is
   `main.Type.Method.func1`.
 - **Calls are static.** The compiler knows each call's method, so a call
-  costs the same as a function call. There are no interfaces of your own
-  yet (`interface types are not supported yet`), and pointer receivers,
+  costs the same as a function call; a call through an interface value
+  (section 3.9) adds a type check per candidate type. Pointer receivers,
   `func (p *Point) M()`, wait for pointers (`pointer receivers are not
   supported yet`).
 
@@ -1763,10 +1763,130 @@ true false
 gogo stores IPv4 addresses in an `int`, which is why `192.168.1.42` prints
 as a negative number. Chapter 10 shows how to format one.
 
-## 3.9 Errors without `error`
+## 3.9 Interfaces
 
-The `error` type is not in the subset yet. Library functions report
-failure in one of two ways, and your code can do the same:
+An interface is a set of methods. Any type that has those methods
+satisfies it, a struct or a named basic type alike, without saying so, and
+a value of an interface type holds a value of any such type. Calling a
+method on it calls the method of the type it holds:
+
+```go
+// Interfaces: a method set any type can satisfy (structs and named basic
+// types alike), interface values that hold one of them, type switches and
+// assertions on them, and == between them.
+package main
+
+type Shape interface {
+	Area() int
+	Name() string
+}
+
+type Rect struct{ W, H int }
+type Square int
+
+func (r Rect) Area() int      { return r.W * r.H }
+func (r Rect) Name() string   { return "rect" }
+func (s Square) Area() int    { return int(s) * int(s) }
+func (s Square) Name() string { return "square" }
+
+// Stringer is a smaller interface; every Shape that has String is one.
+type Stringer interface{ String() string }
+
+func (s Square) String() string { return "a square" }
+
+func total(shapes []Shape) int {
+	t := 0
+	for _, s := range shapes {
+		t += s.Area() // calls Rect.Area or Square.Area
+	}
+	return t
+}
+
+func describe(x any) string {
+	switch v := x.(type) {
+	case nil:
+		return "nothing"
+	case Stringer:
+		return v.String()
+	case Shape:
+		return v.Name()
+	case int:
+		return "an int"
+	}
+	return "something else"
+}
+
+func main() {
+	shapes := []Shape{Rect{2, 3}, Square(4)}
+	println(total(shapes))
+	for _, s := range shapes {
+		println(s.Name(), describe(s))
+	}
+	println(describe(nil), describe(7), describe("x"))
+
+	// x.(T) takes the value out (a panic if it holds another type);
+	// with ok it reports instead.
+	sq := shapes[1].(Square)
+	r, ok := shapes[1].(Rect)
+	println(int(sq), r.W, ok)
+
+	// Interface values are equal when they hold equal values of the
+	// same type.
+	var a, b Shape = Rect{2, 3}, Rect{2, 3}
+	println(a == b, a == shapes[0], a == Shape(Square(6)))
+	var none Shape
+	println(none == nil)
+}
+```
+
+```text
+22
+rect rect
+square a square
+nothing an int something else
+4 0 false
+true true false
+true
+```
+
+- **Satisfying an interface** needs the methods, with value receivers.
+  Interfaces can embed other interfaces (`type ReadWriter interface {
+  Reader; Writer }`), and one interface value can be assigned to another
+  interface whose methods it has.
+- **`any`** (the empty interface) holds any value. Inside one, a value
+  keeps its type: an `int64` is not an `int`, a `Celsius` (`type Celsius
+  int`) is neither, and a `byte` or a `uint32` is not an `int` either.
+- **Type switches** take interface types as cases too (`case Stringer:`
+  matches every value whose type has `String() string`), and `case nil`
+  matches the nil interface value.
+- **Type assertions:** `v := x.(T)` gives the value as a `T` and panics
+  (`interface conversion: ...`) if `x` holds another type; `v, ok :=
+  x.(T)` sets `ok` to false instead. `T` may be an interface type.
+- **`==`** compares interface values by the type and the value they hold
+  (structs field by field). `x == nil` is true only for the nil
+  interface value. A method call on a nil interface value panics, as in
+  Go.
+- **`error`** is the predefined interface `interface{ Error() string }`
+  (section 3.10).
+
+How it works: gogo knows every type in your program when it compiles it,
+so a method call on an interface value is a call of a small function the
+compiler writes, which checks the value's type against the types of your
+program that have that method and calls the right one. A value goes into
+an interface as it is; a named basic value (and a `byte`) is wrapped in a
+small box so that its type can be told apart, which costs an allocation
+unless the value is a constant.
+
+Interface values cross actors in messages like any other value. A type
+of your program is your module's own (chapter 14): a value of it, in an
+interface or not, cannot be sent to a hot-loaded module, and the module's
+types cannot be sent to you.
+
+## 3.10 Errors without `error`
+
+Your own types can implement `error` (section 3.9), but the gogo
+libraries do not return `error` yet. They report failure in one of two
+ways:
 
 - a `bool` result, like `strconv.Atoi` or `actor.Whereis`;
 - a named `int` type of error codes, where 0 means success, like `fs.Err`.
@@ -1842,7 +1962,7 @@ with the reason `actor.Panic`. There is no `recover`. To stop the current
 actor with a code of your own instead, call `actor.Exit(code)` with a
 code of 100 or more.
 
-## 3.10 What is not supported
+## 3.11 What is not supported
 
 Here is a program that uses many of the features gogo leaves out:
 
@@ -1853,7 +1973,7 @@ package main
 
 var counter = 0 // package-level variable
 
-type Shape interface{ Area() int } // user interface
+type Shape interface{ Area() int } // fine: interfaces are supported
 
 type Sq struct{ S int }
 
@@ -1889,7 +2009,6 @@ done:
 
 ```text
 main.gg:5:1: gogo: global variable not supported
-main.gg:7:6: gogo: interface types are not supported yet: call methods on the concrete type
 main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
@@ -1921,7 +2040,6 @@ The full list, with what to do instead:
 | maps | `map not supported` | a slice of key/value structs |
 | pointers, `&x`, `*p` | `pointer not supported` | values; state in actors |
 | pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
-| your own interfaces | `interface types are not supported yet: call methods on the concrete type` | function values (method values too), or messages and a type switch |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
 | `complex64/128` | `complex not supported` | two floats |
 | `uintptr` | `uintptr not supported` | `uint32` |
@@ -1930,9 +2048,8 @@ The full list, with what to do instead:
 | an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
 
-> **Note.** Pointer receivers, maps, pointers,
-> package-level variables and the `error` interface are not supported
-> yet. They are planned for
+> **Note.** Pointer receivers, maps, pointers and
+> package-level variables are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see
 > `docs/design.md` §5.2).
 
@@ -1943,7 +2060,9 @@ The full list, with what to do instead:
   `[1 2]`, unlike Go), but not `Bytes` or `Buffer` (use `.String()`), not
   a struct or slice holding `uint32` or `uint64` values, and not a
   multi-result call (`println(divmod(7, 2))` is `multiple values not
-  supported`).
+  supported`). An interface value prints the value it holds (Go prints two
+  addresses); a sized integer or a named basic value inside one prints in
+  its box, `{5}`.
 - A two-result gogo builtin cannot be a statement on its own: `actor.
   Call(p, req, 100)` on a line by itself is rejected with `multiple values
   not supported`. Write `_, _ = actor.Call(p, req, 100)`. Your own

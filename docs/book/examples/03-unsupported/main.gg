@@ -4,7 +4,7 @@ package main
 
 var counter = 0 // package-level variable
 
-type Shape interface{ Area() int } // user interface
+type Shape interface{ Area() int } // fine: interfaces are supported
 
 type Sq struct{ S int }
 

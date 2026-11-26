@@ -7,7 +7,7 @@ No. gogo programs are written in a subset of Go syntax and checked by Go's
 own type checker, but they compile to gogo bytecode for gogo's actor VM, not
 to native code, and many Go features are not supported (or not yet). That is
 why source files end in `.gg` and compiled images in `.ggb`. See
-[book chapter 3](book/03-language-basics.md) for the subset and §3.10 for
+[book chapter 3](book/03-language-basics.md) for the subset and §3.11 for
 what is missing.
 
 ### What is gogo for?
@@ -73,7 +73,7 @@ the device: goroutines and channels share memory between threads, which
 would break actor isolation (actors and messages replace them); reflection
 and a full runtime would not fit the memory budget. What remains is
 the part that maps cleanly onto isolated actors and a small VM. The subset
-grows where that holds (methods with value receivers and floats are in; interfaces, maps and more are planned; see
+grows where that holds (methods, interfaces, `error` and floats are in; maps and more are planned; see
 above), and where gogo differs from Go it says so.
 
 Dynamic languages (Lua, MicroPython) find type errors only at run time and
@@ -225,14 +225,15 @@ Expression `switch`, labeled `break`/`continue`, `range` over an int,
 variadic functions, packages of your own, methods with value receivers
 (`func (p Point) Add(q Point) Point`, called statically), field
 assignment (`p.X = v`, `s[i].X += 1`), embedded fields (promoted
-fields and methods), arrays (`[N]T`, values as in Go, but no `==` yet
-and not in an `any`), floating point (`float32` and `float64`, with
+fields and methods), arrays (`[N]T`, values as in Go, but not in an
+`any`), floating point (`float32` and `float64`, with
 `gogo/math` and `strconv.FormatFloat` / `ParseFloat`), the sized integers
-(`int8` .. `uint64` and `uint`, 32 bits like `int`, not in an `any`) and a static
+(`int8` .. `uint64` and `uint`, 32 bits like `int`), a static
 `defer` (not inside loops; deferred calls run on normal returns only,
-not when the actor crashes) are supported.
-Planned, in this order: `panic`, type assertions,
-interfaces and `error`; then pointers (boxed, copied when sent) and pointer receivers, maps (a
+not when the actor crashes or panics), interfaces (with `error`), type
+assertions, `==` on structs, arrays and interfaces, and `panic` are
+supported.
+Planned, in this order: pointers (boxed, copied when sent) and pointer receivers, maps (a
 library, deterministic order), read-only package variables and `fmt`.
 Not planned: `goto`, `recover`, `defer` inside loops,
 per-actor mutable globals, channels, `go` statements. Generics are

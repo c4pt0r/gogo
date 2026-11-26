@@ -11,6 +11,11 @@ import (
 
 type Point struct{ X, Y int }
 
+// Failure is an error: panic prints its Error(), as Go does.
+type Failure struct{ Step int }
+
+func (f Failure) Error() string { return "failed at step " + string([]byte{byte('0' + f.Step)}) }
+
 func check(n int) int {
 	if n < 0 {
 		panic("negative")
@@ -39,6 +44,15 @@ func main() {
 	watch("int64", func() { panic(int64(1) << 40) })
 	watch("struct", func() { panic(Point{1, 2}) })
 	watch("bool", func() { panic(false) })
+	watch("error", func() { panic(Failure{3}) })
+	watch("error in any", func() {
+		var x any = Failure{4}
+		panic(x)
+	})
+	watch("error value", func() {
+		var err error = Failure{5}
+		panic(err)
+	})
 
 	// A linked actor that traps exits gets an ExitMsg with the reason.
 	actor.TrapExit(true)

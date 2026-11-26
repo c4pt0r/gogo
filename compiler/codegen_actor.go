@@ -187,7 +187,7 @@ func (f *fn) methodIdx(n ast.Node, m *types.Func) uint32 {
 // it, as for a function), and T.M(x, args), a method expression, is a
 // plain call of that function.
 func (f *fn) methodCall(call *ast.CallExpr, sel *ast.SelectorExpr, m *types.Func, dst uint8) {
-	idx := f.methodIdx(call, m)
+	idx := f.methodIndex(sel, m)
 	mark := f.next
 	defer func() { f.next = mark }()
 	if f.g.p.Info.Selections[sel].Kind() == types.MethodExpr {
@@ -217,8 +217,9 @@ func (f *fn) receiver(sel *ast.SelectorExpr) uint8 {
 	}
 	recv := f.allocFor(sel.X)
 	f.exprInto(sel.X, recv)
-	idx := s.Index()
-	f.fieldPathInto(sel, idx[:len(idx)-1], recv, recv) // a promoted method: its embedded receiver
+	if idx := s.Index(); !isIface(s.Recv()) { // an interface's method set is flat: no field path
+		f.fieldPathInto(sel, idx[:len(idx)-1], recv, recv) // a promoted method: its embedded receiver
+	}
 	return recv
 }
 
@@ -227,7 +228,7 @@ func (f *fn) receiver(sel *ast.SelectorExpr) uint8 {
 // closure is called (see OP_CALLV). T.M, a method expression, is the
 // method's function itself: a closure without captures.
 func (f *fn) methodValueInto(sel *ast.SelectorExpr, m *types.Func, dst uint8) {
-	idx := f.methodIdx(sel, m)
+	idx := f.methodIndex(sel, m)
 	if f.g.p.Info.Selections[sel].Kind() == types.MethodExpr {
 		f.asm.EmitExt(OpMkclosure, dst, 0, 0, idx)
 		return
@@ -274,6 +275,8 @@ func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 				f.asm.Emit(OpMove, r, m, 0)
 				f.asm.EmitExt(OpLoadk, r+1, 0, 0, TermNil)
 				f.cmpRegs(te, r, OpEq, t)
+			} else if tt := f.g.p.Info.TypeOf(te); isIface(tt) {
+				f.ifaceTest(te, tt, m, t)
 			} else {
 				f.typeTest(te, m, t)
 			}

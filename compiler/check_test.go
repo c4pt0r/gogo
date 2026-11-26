@@ -199,8 +199,6 @@ func TestRejects(t *testing.T) {
 		{"float-func-value", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\tf := strconv.FormatFloat // ERR\n\t_ = f\n}\n", []string{"strconv.FormatFloat as a func value not supported"}},
 		{"method-pointer-receiver", "package main\ntype P struct{ X int }\nfunc (p *P) M() {} // ERR\nfunc main() {}\n", []string{"pointer receivers are not supported yet"}},
 		{"method-pointer-call", "package main\ntype P struct{ X int }\nfunc (p *P) M() {} // ERR\nfunc main() {\n\tp := P{}\n\tp.M()\n}\n", []string{"pointer receivers are not supported yet"}},
-		{"method-interface", "package main\ntype S interface{ Area() int } // ERR\nfunc main() {}\n", []string{"interface types are not supported yet"}},
-		{"method-interface-param", "package main\nfunc f(s interface{ M() }) {} // ERR\nfunc main() {}\n", []string{"interface not supported"}},
 		{"method-on-slice-type", "package main\ntype L []int // ERR\nfunc (l L) Len() int { return len(l) }\nfunc main() {}\n", []string{"type definition"}},
 		{"method-value-any", "package main\ntype P struct{ X int }\nfunc (p P) M() {}\nfunc main() {\n\tvar x any = P{}.M // ERR\n\t_ = x\n}\n", []string{"func value in interface not supported"}},
 		{"slice-typeswitch", "package main\nfunc main() {\n\tvar x any = []int{1}\n\tswitch x.(type) {\n\tcase []int: // ERR\n\t}\n}\n", []string{"type switch case"}},
@@ -256,7 +254,6 @@ func TestRejects(t *testing.T) {
 		{"switch-slice", "package main\nfunc main() {\n\ts := []int{1}\n\tswitch s { // ERR\n\tcase nil:\n\t}\n}\n", []string{"switch on a value of type []int not supported"}},
 		{"goto", "package main\nfunc main() {\n\tgoto end // ERR\nend:\n\tfor {\n\t}\n}\n", []string{"goto statement not supported"}},
 		{"label-block", "package main\nfunc main() {\nL: // ERR\n\t{\n\t\tprintln(1)\n\t}\n\tgoto L\n}\n", []string{"label on a statement other than for or switch not supported"}},
-		{"error", "package main\nfunc f() error { return nil } // ERR\nfunc main() { f() }\n", []string{"error"}},
 		{"bit-string", "package main\nfunc main() {\n\ts := \"a\"\n\tprintln(s & s) // ERR\n}\n", []string{"operator &"}},
 		{"bit-bool", "package main\nfunc main() {\n\tb := true\n\tprintln(b | b) // ERR\n}\n", []string{"operator |"}},
 		{"shift-string", "package main\nfunc main() {\n\ts := \"a\"\n\tprintln(s << 1) // ERR\n}\n", []string{"shift"}},
@@ -274,7 +271,6 @@ func TestRejects(t *testing.T) {
 		{"tworesult-stmt", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.ReceiveTimeout(5) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"tworesult-var", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar m, ok = actor.ReceiveTimeout(5) // ERR\n\tprintln(m, ok)\n}\n", []string{"multiple values not supported"}},
 		{"ref-literal", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tr := actor.Ref{} // ERR\n\tprintln(r)\n}\n", []string{"composite literal of actor.Ref not supported"}},
-		{"iface-literal", "package main\nfunc main() {\n\tvar x interface{ M() } // ERR\n\t_ = x\n}\n", []string{"interface"}},
 		{"captured-reassign-after", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tx := 1\n\tactor.Spawn(func() { println(x) })\n\tx = 2 // ERR\n}\n", []string{"captured variable must not be reassigned"}},
 		{"captured-reassign-before", "package main\nfunc main() {\n\tvar x int\n\tx = 1 // ERR\n\tf := func() { println(x) }\n\t_ = f\n}\n", []string{"captured variable must not be reassigned"}},
 		{"captured-reassign-loop", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tfor i := 0; i < 3; i++ { // ERR\n\t\tactor.Spawn(func() { println(i) })\n\t}\n}\n", []string{"captured variable must not be reassigned"}},
@@ -312,6 +308,9 @@ func TestRejects(t *testing.T) {
 		{"assert-var", "package main\nfunc main() {\n\tvar x any = 1\n\tvar v, ok = x.(int) // ERR\n\tprintln(v, ok)\n}\n", []string{"multiple values not supported"}},
 		{"assert-concrete", "package main\nfunc main() {\n\tx := 1\n\t_ = x.(int) // ERR\n}\n", []string{"not an interface"}},
 		{"buffer-field-compare", "package main\nimport \"gogo/bytes\"\ntype T struct{ B bytes.Buffer }\nfunc main() {\n\ta := T{bytes.NewBuffer(1)}\n\tprintln(a == a) // ERR\n}\n", []string{"comparison of main.T not supported"}},
+		{"iface-method-expr", "package main\ntype S interface{ M() int }\nfunc main() {\n\tf := S.M // ERR\n\t_ = f\n}\n", []string{"method expression on an interface type not supported"}},
+		{"iface-bad-method", "package main\ntype S interface{ M() map[int]int } // ERR\nfunc main() {}\n", []string{"interface method M"}},
+		{"iface-typeset", "package main\ntype N interface{ ~int } // ERR\nfunc main() {}\n", []string{"interface with a type set not supported"}},
 		{"alias-generic", "package main\ntype L[T any] = []T // ERR\nfunc main() {}\n", []string{"generic type not supported"}},
 		{"alias-map", "package main\ntype M = map[int]int // ERR\nfunc main() {}\n", []string{"map not supported"}},
 		{"port-renamed", "package main\nimport p \"gogo/port\" // ERR\nfunc main() { p.Close(p.Edge{}) }\n", []string{`import p "gogo/port" not supported`}},
@@ -915,6 +914,25 @@ func TestAcceptsEquality(t *testing.T) {
 		{"typeswitch-nil", "package main\nfunc main() {\n\tvar x any\n\tswitch x.(type) {\n\tcase nil:\n\t\tprintln(0)\n\t}\n}\n"},
 		{"array-compare", "package main\nfunc main() {\n\ta, b := [2]int{}, [2]int{}\n\tprintln(a == b)\n}\n"},
 		{"array-switch", "package main\nfunc main() {\n\ta := [2]int{}\n\tswitch a {\n\t}\n}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := compileProg(t, tc.src); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// TestAcceptsInterfaces: interface types, error and interface literals
+// (formerly rejected).
+func TestAcceptsInterfaces(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"method-interface", "package main\ntype S interface{ Area() int }\nfunc main() {}\n"},
+		{"method-interface-param", "package main\nfunc f(s interface{ M() }) {}\nfunc main() {}\n"},
+		{"error", "package main\nfunc f() error { return nil }\nfunc main() { f() }\n"},
+		{"iface-literal", "package main\nfunc main() {\n\tvar x interface{ M() }\n\t_ = x\n}\n"},
+		{"embedded", "package main\ntype N interface{ Name() string }\ntype S interface {\n\tN\n\tArea() int\n}\ntype R struct{ W int }\nfunc (r R) Name() string { return \"r\" }\nfunc (r R) Area() int { return r.W }\nfunc main() {\n\tvar s S = R{2}\n\tvar n N = s\n\tprintln(s.Area(), n.Name())\n}\n"},
+		{"named-error", "package main\ntype E error\nfunc main() {\n\tvar e E\n\tprintln(e == nil)\n}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := compileProg(t, tc.src); err != nil {

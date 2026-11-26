@@ -4,7 +4,10 @@ int 10 true main.main.func2
 int64 10 true main.main.func3
 struct 10 true main.main.func4
 bool 10 true main.main.func5
-exit 10 main.main.func6
+error 10 true main.main.func6
+error in any 10 true main.main.func7
+error value 10 true main.main.func8
+exit 10 main.main.func9
 run 0
 run 1
 run 2
