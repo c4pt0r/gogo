@@ -87,13 +87,13 @@ func TestRunKeyNeedsValue(t *testing.T) {
 	if _, err := runCmd([]string{"--key"}); err == nil || !strings.Contains(err.Error(), "--key") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := runCmd([]string{"--key", "a=1"}); err == nil || !strings.Contains(err.Error(), "missing image") || strings.Contains(err.Error(), "needs a value") {
+	if _, err := runCmd([]string{"--key", "a=1"}); err == nil || !strings.Contains(err.Error(), "missing program") || strings.Contains(err.Error(), "needs a value") {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := runCmd([]string{"--key", "a=1", "--key"}); err == nil || !strings.Contains(err.Error(), "needs a value") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := runCmd(nil); err == nil || !strings.Contains(err.Error(), "missing image") {
+	if _, err := runCmd(nil); err == nil || !strings.Contains(err.Error(), "missing program") {
 		t.Errorf("err = %v", err)
 	}
 }
