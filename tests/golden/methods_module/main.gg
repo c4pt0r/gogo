@@ -29,7 +29,7 @@ func run(m code.Module, entry string, arg any) {
 }
 
 func main() {
-	b, e := fs.ReadFile("/flash/shapes.gmod", 100000)
+	b, e := fs.ReadFile("/flash/shapes.ggb", 100000)
 	if e != fs.OK {
 		println("read", int(e))
 		return
