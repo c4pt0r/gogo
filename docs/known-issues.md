@@ -454,11 +454,12 @@ rebuilt:
   (*workaround:* `bytes.FromSlice`).
 - **Shrinking `/flash`** (`fs.flash.size` smaller than the file system)
   needs `gogo device format-flash`, which erases it.
-- **`gogo push` takes images only**, one at a time, at about 10 KB/s,
-  and does not tell the running program. Pushing over a file the
-  program has open (a log it is appending to) replaces it under the
-  program, whose later writes to it then fail or are lost.
-  *Workaround:* move other files over HTTP, or use the SD card.
+- **`gogo push` takes images only**, one at a time, at about 40 KB/s
+  (measured on the M5StickS3: 46 KB in 1.2 s), and does not tell the
+  running program. Pushing over a file the program has open replaces it
+  under the program, whose handle may then fail or read the old data.
+  *Workaround:* push to a new name, or move other files over HTTP or
+  the SD card.
 
 ## Input, audio, IMU and IR
 
