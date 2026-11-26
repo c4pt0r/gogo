@@ -359,6 +359,7 @@ static void listen_step(Vm *vm, Port *p, HConn *c, uint64_t now) {
         accept_fd = -1;
     }
     if (conn == T_NIL) {
+        c = &conns[port_index(vm, p)];   /* the open may have moved conns (conns_reach) */
         c->retry_at = now + RETRY_MS;
         return;
     }
