@@ -1598,7 +1598,13 @@ gogo monitor -reset -timeout 30 -until "vm exited"   # capture the serial output
 
 `gogo` with no arguments prints its usage. `gogo run` builds a directory
 to a temporary image, runs `$GOGO_VM` or `<repo>/build/gogovm` and exits
-with its status.
+with its status: 0 when `main` exited Normal, 1 for a usage, toolchain or
+build error, 2 for a bad image or version, 3 for a missing requirement, 4
+when `main` crashed, 64..99 for a library failure of `main` and 100..255
+for `main`'s own code (book chapter 12). The VM core does not keep main's
+exit reason: `platform/unix/main.c` reads it from the crash report the VM
+writes on stream 2 for every abnormal exit, matching main's PID while the
+actor is still in its slot, so the status costs no VM bytes.
 
 On an ESP32-S3 the firmware and the image are stored separately: the
 firmware is built with ESP-IDF and flashed once, and programs change

@@ -1,0 +1,8 @@
+package main
+
+import "gogo/actor"
+
+// A user code above 255 is 255.
+func main() {
+	actor.Exit(1000)
+}

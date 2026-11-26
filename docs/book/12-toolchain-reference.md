@@ -51,7 +51,9 @@ current directory. Given a `.gg` file instead (or a file starting with
 `#!`), it compiles that file alone as `package main`, into `<name>.ggb`. The image contains bytecode and constants and runs unchanged on
 the host VM and on any board.
 
-Errors are printed as `file:line:col: message` and the exit status is 1.
+Errors are printed as `file:line:col: message` and the exit status is 1
+(every `gogo` command exits 1 on an error; `gogo run` has its own
+statuses, below).
 Messages from Go's type checker look like Go's (`declared and not used: x`);
 messages about the subset start with `gogo:`:
 
@@ -188,17 +190,35 @@ any file starting with `#!`, it builds that file alone, with its directory
 as the build root for packages (an executable script with the first line
 `#!/usr/bin/env -S gogo run` runs this way, chapter 2); given a `.ggb`
 file it runs that image. `-path dirs` is the search path of the build, as
-for `gogo build`. Arguments after the program are refused for now. The exit status
-is the VM's: 0 when the VM ran until nothing was left to do, 1 if the
-image requires a driver or mount the host VM lacks (for example `tls` in a
-VM built without mbedTLS), 2 if the image could not be loaded (also an
-unsupported image format). A build error
-is status 1 too.
+for `gogo build`. Arguments after the program are refused for now.
 
-> **Note.** A crash, even of the `main` actor, does not change the exit
-> status: crashes are reported on standard error and the VM goes on until
-> it is idle. There is no way for a program to set the exit status, so
-> scripts must look at the output to tell success from failure.
+**Exit status.** `gogo run` exits with the VM's status, which says how the
+`main` actor ended:
+
+| Status | Meaning |
+|---|---|
+| 0 | `main` exited `Normal` (or `Shutdown`) |
+| 1 | a usage, toolchain or build error, or the VM was not found |
+| 2 | the image could not be loaded: not an image, damaged, or a format this VM does not run |
+| 3 | the image requires a driver or mount the VM lacks (for example `tls` in a VM built without mbedTLS) |
+| 4 | `main` crashed: a VM reason such as `divzero`, `oom` or `killed` (appendix B), also when a linked actor's crash took it down |
+| 64..99 | `main` exited with a library failure, `actor.Failed` plus a shared code (appendix B), as it is: `http.ListenFailed` is 69 |
+| 100..255 | `main` exited with your code, `actor.Exit(code)` with `code` from 100; a code above 255 is 255 |
+
+Only `main` counts: other actors' crashes are reported on standard
+error but leave the status alone, so a program whose `main` ends
+normally exits 0. To fail a script, end `main` with a code:
+
+```go
+if !ok {
+	println("check failed")
+	actor.Exit(100) // gogo run exits 100
+}
+```
+
+If the VM itself is killed by a signal, `gogo run` exits 128 plus the
+signal's number, as a shell does. The host VM `build/gogovm` exits with
+the same statuses (it is where they come from).
 
 Options:
 

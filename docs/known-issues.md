@@ -104,6 +104,10 @@ rebuilt:
   its value as it is (`gogo config set offset -5`), and `gogo run` takes
   its flags before the program only. A usage
   mistake prints what is wrong before the usage.
+- **Exit statuses** of `gogo run` and `gogovm` (book chapter 12): a
+  crash of `main` exits 4 and `actor.Exit(code)` in `main` exits with
+  the code (0 before). A missing driver or mount exits 3 (was 1), a bad
+  image still 2, and a `gogovm` usage error 1 (was 2).
 
 ## Deprecated, removed in the next release
 
@@ -112,11 +116,11 @@ rebuilt:
 
 ## VM
 
-- **A crash does not change the exit status.** `gogovm` (and so
-  `gogo run`) exits 0 when the run queue empties, even after the main
-  actor crashed (`gogo: actor <pid 0> crashed: divzero in main`). A
-  program cannot set an exit status either: `actor.Exit` only ends the
-  actor. *Workaround:* scripts and CI must look for `crashed:` on stderr.
+- **Only `main` sets the exit status.** `gogovm` and `gogo run` exit
+  with the main actor's status (book chapter 12); a crash of another
+  actor, while `main` ends normally, still exits 0. *Workaround:* link
+  the actors whose failure must fail the run to `main` (or have `main`
+  monitor them and `actor.Exit` with a code).
 - **`actor.Call` does not notice that the server died.** It waits out
   the whole timeout. *Workaround:* monitor the server and keep timeouts
   short; treat `ok == false` as "maybe dead".

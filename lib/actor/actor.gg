@@ -99,7 +99,9 @@ func Unlink(p PID) { panic("gogo only") }
 // TrapExit turns exit signals into ExitMsg messages.
 func TrapExit(on bool) { panic("gogo only") }
 
-// Exit ends the calling actor with the given reason code.
+// Exit ends the calling actor with the given reason code. When main exits
+// with a code of 64 or more, gogo run and gogovm exit with it (a code
+// above 255 is 255); see the book's chapter 12.
 func Exit(code int) { panic("gogo only") }
 
 // Kill sends an exit signal with the given code to p.

@@ -254,9 +254,11 @@ separated by spaces, followed by a newline, on standard output. (There is no
 `fmt` package.)
 
 When the program has nothing left to do (no actor can run, no timer is
-pending, no input can arrive) the VM exits. Exit status 0 means the VM ran
-to the end, not that every actor succeeded; crashes are reported on
-standard error, as you will see in chapter 5.
+pending, no input can arrive) the VM exits. The exit status says how
+`main` ended: 0 when it returned, 4 when it crashed, or the code it
+passed to `actor.Exit` (chapter 12 has the table). Crashes of other
+actors are reported on standard error, as you will see in chapter 5,
+and do not change it.
 
 ### Scripts
 

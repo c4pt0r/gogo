@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,9 @@ import (
 // the runner creates sd/ too if a line of fsroot has the field "sd", and a line
 // "file flash/My File" creates that file, containing "seed", first). A file
 // `vmargs` holds extra VM flags (whitespace-separated, before the image); a
-// file `exitfail` makes a non-zero exit status the expected one. A file `mcu`
+// file `exitfail` makes a non-zero exit status the expected one, and a file
+// `exitcode` holding a number that exact status (platform/unix/main.c
+// lists them). A file `mcu`
 // also runs it on $GOGO_VM_MCU (the MCU-config VM). `make test-go` builds
 // both VMs and sets GOGO_VM and GOGO_VM_MCU.
 func TestGolden(t *testing.T) {
@@ -141,6 +144,12 @@ func TestGolden(t *testing.T) {
 				}
 				_, statErr := os.Stat(filepath.Join(dir, "exitfail"))
 				wantFail := statErr == nil
+				wantCode := -1
+				if b, err := os.ReadFile(filepath.Join(dir, "exitcode")); err == nil {
+					if wantCode, err = strconv.Atoi(strings.TrimSpace(string(b))); err != nil {
+						t.Fatalf("exitcode: %v", err)
+					}
+				}
 				cmd := exec.CommandContext(ctx, vm, vmArgs...)
 				cmd.Stdout = &stdout
 				cmd.Stderr = &stderr
@@ -164,7 +173,11 @@ func TestGolden(t *testing.T) {
 				if ctx.Err() != nil {
 					t.Fatalf("VM timed out after 30s\n--- stdout ---\n%s\n--- stderr ---\n%s", stdout.Bytes(), stderr.Bytes())
 				}
-				if wantFail {
+				if wantCode >= 0 {
+					if got := cmd.ProcessState.ExitCode(); got != wantCode {
+						t.Errorf("VM exit status %d, want %d (%v)\n--- stderr ---\n%s", got, wantCode, runErr, stderr.Bytes())
+					}
+				} else if wantFail {
 					if runErr == nil {
 						t.Errorf("VM exited 0, want a non-zero status")
 					}

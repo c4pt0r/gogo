@@ -2,9 +2,8 @@
  *
  *   gogovm [--without NAME,...] [--key c=pin]... [--fs-root DIR] [--fs-quota BYTES]
  *          [--net-fd N [--sim-clock]] [--screen ansi|text|none] <file.ggb>
- *          exit 0 when the run queue empties (also after a crash), 1 when
- *          the board lacks a driver or mount the image requires, 2 on a
- *          usage or load error. --without and --fs-quota are for tests:
+ *          runs until the run queue empties, then exits with the main
+ *          actor's status (below). --without and --fs-quota are for tests:
  *          --without drops the named port drivers ("kbd", "tls", ...) and
  *          mounts ("/sd") from the board, modelling a firmware built
  *          without them; --fs-quota simulates a full disk: each medium
@@ -26,6 +25,22 @@
  * --net-fd N: fd N (inherited, e.g. a socketpair end) is the network link
  * (net_unix.h); --sim-clock: time is simulated, moved only by the peer
  * simulator over that link.
+ *
+ * Exit status (gogo run passes it through; cmd/gogo/exitcodes.go):
+ *   0        main exited Normal (other actors' crashes do not count)
+ *   1        usage error, --fs-root error, out of memory at boot, no main
+ *   2        bad image (cannot be read or refused by the loader), or an
+ *            image format this VM does not run
+ *   3        the image requires a driver or mount this VM lacks
+ *   4        main crashed: a VM reason (killed, oom, divzero, ...), or
+ *            an exit code below 64
+ *   64..99   main exited with a library failure (actor.Failed + a
+ *            shared gogo/errors code), as it is
+ *   100..255 main exited with a user code; one above 255 is 255
+ * The VM core does not keep main's exit reason: it reports every exit
+ * other than Normal and Shutdown on stream 2 while the actor is still in
+ * its slot (report_crash, signals.c), and main_write below picks out
+ * main's report by the actor's PID.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,9 +82,89 @@ static FsDir *fs_flash, *fs_sd;   /* --fs-root: /flash and /sd */
 static InputState input_state;
 static NetState net_state;
 
+enum { EXIT_OK, EXIT_USAGE, EXIT_BAD_IMAGE, EXIT_MISSING, EXIT_CRASHED };
+
 static int load_error(const char *path, const char *what) {
     fprintf(stderr, "gogovm: %s: %s\n", path, what);
-    return 2;
+    return EXIT_BAD_IMAGE;
+}
+
+/* ---- main's exit status ---- */
+
+static Vm *main_vm;            /* the Vm, once main runs */
+static uint32_t main_pid;      /* main's PID term; 0 before vm_start */
+static int main_status;        /* EXIT_OK until main's report is seen */
+static char err_line[64];      /* the start of the stream-2 line being written */
+static size_t err_len;
+
+/* The status for main's exit code (the table at the top). */
+static int exit_status(int32_t code) {
+    if (code >= 64 && code <= 99) return code;
+    if (code >= 100) return code > 255 ? 255 : code;
+    return EXIT_CRASHED;
+}
+
+/* One whole stream-2 line: if it is the crash report of main
+ * ("gogo: actor <pid N> crashed: <kind> | exit(<code>)[ in f]", N the
+ * slot, which still holds main), main_status is its status. */
+static void err_line_done(void) {
+    static const char pre[] = "gogo: actor <pid ", mid[] = "> crashed: ";
+    const char *p = err_line, *end = err_line + err_len;
+    if (err_len < sizeof pre - 1u || memcmp(p, pre, sizeof pre - 1u) != 0) return;
+    p += sizeof pre - 1u;
+    uint32_t slot = 0;
+    const char *d = p;
+    while (p < end && *p >= '0' && *p <= '9' && slot <= 0xFFFFu) slot = slot * 10u + (uint32_t)(*p++ - '0');
+    if (p == d || (size_t)(end - p) < sizeof mid - 1u || memcmp(p, mid, sizeof mid - 1u) != 0) return;
+    p += sizeof mid - 1u;
+    if (slot >= main_vm->table_cap) return;
+    uintptr_t e = main_vm->table[slot];
+    if ((e & 1u) || ((const Actor *)e)->id != main_pid) return;   /* a free slot, or another actor */
+    int32_t code = 1;                                             /* a kind: a crash */
+    if (end - p > 5 && memcmp(p, "exit(", 5) == 0) {
+        char num[16];
+        size_t n = 0;
+        for (p += 5; p < end && *p != ')' && n < sizeof num - 1u; p++) num[n++] = *p;
+        num[n] = 0;
+        code = (int32_t)strtol(num, NULL, 10);
+    }
+    main_status = exit_status(code);
+}
+
+/* The host's write, watching stream 2 for main's report. Only the start
+ * of a line is kept: the report's fields fit in it. */
+static void main_write(void *ctx, int stream, const char *s, size_t n) {
+    unix_host.write(ctx, stream, s, n);
+    if (stream != 2 || !main_pid) return;
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] == '\n') {
+            err_line_done();
+            err_len = 0;
+        } else if (err_len < sizeof err_line) {
+            err_line[err_len++] = s[i];
+        }
+    }
+}
+
+/* Runs the started Vm as vm_run does, then returns main's status. main
+ * is the one actor vm_start made. */
+static int run_main(Vm *vm) {
+    if (vm_start(vm)) return EXIT_USAGE;   /* said on stream 2: no main, or no memory */
+    for (uint16_t i = 0; i < vm->table_cap; i++) {
+        if (!(vm->table[i] & 1u)) main_pid = ((const Actor *)vm->table[i])->id;
+    }
+    main_vm = vm;
+    while (vm_step(vm, 0) != VM_DONE) {
+        uint64_t next, now;
+        if (!vm_next_deadline(vm, &next)) {
+            vm_wait(vm, UINT32_MAX);
+        } else {
+            now = vm_now(vm);
+            if (next > now) vm_wait(vm, next - now > UINT32_MAX - 1u ? UINT32_MAX - 1u : (uint32_t)(next - now));
+        }
+    }
+    vm_stop(vm);
+    return main_status;
 }
 
 /* The unix board: gpio, net and the simulated keyboard, battery, motion
@@ -166,12 +261,12 @@ int main(int argc, char **argv) {
             char tail;
             if (sscanf(argv[2], "%c=%d%c", &c, &pin, &tail) != 2 || !input_unix_add_key(c, pin)) {
                 fprintf(stderr, "gogovm: bad --key %s (want <char>=<pin>, pin 0..63)\n", argv[2]);
-                return 2;
+                return EXIT_USAGE;
             }
         } else if (strcmp(argv[1], "--screen") == 0) {
             if (!screen_unix_set_mode(argv[2])) {
                 fprintf(stderr, "gogovm: bad --screen %s (want ansi, text or none)\n", argv[2]);
-                return 2;
+                return EXIT_USAGE;
             }
         } else if (strcmp(argv[1], "--without") == 0) {
             /* --without <name,...>: test only, drivers and mounts the board leaves out. */
@@ -186,14 +281,14 @@ int main(int argc, char **argv) {
             long long q;
             if (sscanf(argv[2], "%lld%c", &q, &tail) != 1 || q < 0) {
                 fprintf(stderr, "gogovm: bad --fs-quota %s\n", argv[2]);
-                return 2;
+                return EXIT_USAGE;
             }
             fs_quota = q;
         } else if (strcmp(argv[1], "--net-fd") == 0) {
             char tail;
             if (sscanf(argv[2], "%d%c", &net_fd, &tail) != 1 || net_fd < 0) {
                 fprintf(stderr, "gogovm: bad --net-fd %s\n", argv[2]);
-                return 2;
+                return EXIT_USAGE;
             }
         } else {
             break;
@@ -203,7 +298,7 @@ int main(int argc, char **argv) {
     }
     if (sim && net_fd < 0) {
         fprintf(stderr, "gogovm: --sim-clock needs --net-fd\n");
-        return 2;
+        return EXIT_USAGE;
     }
     size_t nports = 0, nmounts = 0;
     for (size_t i = 0; i < UNIX_PORTS_ALL; i++) {
@@ -216,7 +311,7 @@ int main(int argc, char **argv) {
     unix_mounts[nmounts] = NULL;
     if (argc != 2) {
         fprintf(stderr, "usage: gogovm [--without <name,...>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] [--screen ansi|text|none] <file.ggb>\n       gogovm --sizeof-actor | --sizeof-net\n");
-        return 2;
+        return EXIT_USAGE;
     }
     if (net_fd >= 0) {
         signal(SIGPIPE, SIG_IGN);        /* a closed link is EOF / a failed send, not death */
@@ -228,20 +323,20 @@ int main(int argc, char **argv) {
         struct stat st;
         if (snprintf(dir, sizeof dir, "%s/flash", fs_root) >= (int)sizeof dir) {
             fprintf(stderr, "gogovm: --fs-root too long\n");
-            return 2;
+            return EXIT_USAGE;
         }
         if (mkdir(fs_root, 0777) != 0 && errno != EEXIST) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot create\n", fs_root);
-            return 2;
+            return EXIT_USAGE;
         }
         if ((mkdir(dir, 0777) != 0 && errno != EEXIST) || stat(dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot create flash directory\n", fs_root);
-            return 2;
+            return EXIT_USAGE;
         }
         fs_flash = fs_dir_open(&unix_host, NULL, dir, fs_quota, NULL);
         if (!fs_flash) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot open flash directory\n", fs_root);
-            return 2;
+            return EXIT_USAGE;
         }
         if (!listed(without, "/flash")) vfs_mount(&vfs_state, "/flash", fs_dir_vfs(fs_flash), fs_flash);
         if (!listed(without, "/sd") && snprintf(dir, sizeof dir, "%s/sd", fs_root) < (int)sizeof dir &&
@@ -253,7 +348,7 @@ int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     const char *path = argv[1];
     FILE *f = fopen(path, "rb");
-    if (!f) return load_error(path, "cannot open");
+    if (!f) { fprintf(stderr, "gogovm: %s: cannot open\n", path); return EXIT_USAGE; }
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return load_error(path, "cannot read"); }
     long size = ftell(f);
     if (size < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return load_error(path, "cannot read"); }
@@ -269,7 +364,9 @@ int main(int argc, char **argv) {
      * check included), then vm_run starts its "main" export. */
     Vm vm;
     int rc = VM_BOOT_NO_MEMORY;
-    if (vm_init(&vm, &unix_host, NULL, &unix_board, (uint16_t)GOGO_TABLE_CAP) == 0) {
+    gogo_host host = unix_host;
+    host.write = main_write;
+    if (vm_init(&vm, &host, NULL, &unix_board, (uint16_t)GOGO_TABLE_CAP) == 0) {
         vm_set_unix_time_ms(&vm, platform_unix_wall_start());
         rc = vm_boot(&vm, words, (uint32_t)(size / 4));
     }
@@ -279,18 +376,21 @@ int main(int argc, char **argv) {
         if (rc == IMG_ERR_VERSION) {
             fprintf(stderr, "gogovm: %s: unsupported image format %u.%u (this VM runs %u.0 to %u.%u)\n", path,
                     (unsigned)(ver >> 16), (unsigned)(ver & 0xFFFFu), IMAGE_MAJOR, IMAGE_MAJOR, IMAGE_MINOR);
-            return 2;
+            return EXIT_BAD_IMAGE;
         }
         if (rc < 0) return load_error(path, image_err_str(rc));
-        if (rc == VM_BOOT_NO_MEMORY) fprintf(stderr, "gogovm: out of memory\n");
-        return 1;                    /* VM_BOOT_REFUSED: the line is written */
+        if (rc == VM_BOOT_NO_MEMORY) {
+            fprintf(stderr, "gogovm: out of memory\n");
+            return EXIT_USAGE;
+        }
+        return EXIT_MISSING;         /* VM_BOOT_REFUSED: the line is written */
     }
     /* After vm_init: it starts the Vm's source list and fs hook empty. */
     if (net_fd >= 0) net_install(&vm, &net_state);
     vfs_init(&vm, &vfs_state);
     input_install(&vm, &input_state);
     input_unix_on_fatal(screen_unix_restore);
-    rc = vm_run(&vm);
+    rc = run_main(&vm);
 #ifdef GOGO_TLS
     tls_vm_peak = va_peak_bytes(&vm);
 #endif

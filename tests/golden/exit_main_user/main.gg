@@ -1,0 +1,12 @@
+package main
+
+import "gogo/actor"
+
+// main exits with a user code: the VM exits with it. An actor that
+// crashed before does not change that.
+func main() {
+	actor.Spawn(func() { actor.Exit(4) })
+	actor.Sleep(10)
+	println("exiting")
+	actor.Exit(150)
+}
