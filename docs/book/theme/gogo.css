@@ -18,13 +18,13 @@ html.light, html.rust, html:not(.js) {
 }
 html.coal, html.navy, html.ayu {
   --ink: #ffffff; --text: #e8e8e8; --muted: #9a9a9a; --faint: #5e5e5e;
-  --paper: #000000; --line: #333333; --code-bg: #0b0b0b;
+  --paper: #000000; --line: #333333; --code-bg: #000000;
   --color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
   html:not(.js) {
     --ink: #ffffff; --text: #e8e8e8; --muted: #9a9a9a; --faint: #5e5e5e;
-    --paper: #000000; --line: #333333; --code-bg: #0b0b0b;
+    --paper: #000000; --line: #333333; --code-bg: #000000;
     --color-scheme: dark;
   }
 }
@@ -112,11 +112,17 @@ code, pre, .hljs { font-family: var(--mono) !important; }
 :not(pre) > code, :not(pre) > .hljs {
   background: transparent; color: var(--ink); padding: 0; font-size: 12px;
 }
-pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 0; padding: 0; }
+/* The same box as the landing page's pre: --code-bg (light grey, black
+   in dark), a 1px --line border, square corners, 12px/1.7, 18px 20px. */
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 0; padding: 0; margin: 20px 0; box-shadow: none; }
 pre > code, pre > .hljs {
   display: block; background: var(--code-bg) !important; color: var(--text);
-  font-size: 12px; line-height: 1.7; padding: 16px 18px; overflow-x: auto;
+  font-size: 12px; line-height: 1.7; padding: 18px 20px; overflow-x: auto;
 }
+/* mdBook's copy button: a faint glyph, no box. */
+pre > .buttons { top: 8px; right: 8px; }
+pre > .buttons button { background: transparent; border: 0; color: var(--faint); }
+pre > .buttons button:hover { color: var(--ink); }
 pre > code.language-go { color: var(--muted); }
 
 /* highlight.js classes, monochrome: weight and contrast, no hue. Any
@@ -132,7 +138,8 @@ pre code .hljs-keyword, pre code .hljs-selector-tag, pre code .hljs-literal, pre
 pre code .hljs-title, pre code .hljs-name, pre code .hljs-number, pre code .hljs-symbol {
   color: var(--ink) !important; font-weight: 400;
 }
-pre code .hljs-type, pre code .hljs-built_in, pre code .hljs-builtin-name, pre code .hljs-title.class_ {
+pre code .hljs-built_in, pre code .hljs-builtin-name { color: var(--ink) !important; font-weight: 400; }
+pre code .hljs-type, pre code .hljs-title.class_ {
   color: var(--text) !important; font-weight: 400;
   text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px;
 }
