@@ -76,8 +76,11 @@ jobs:
         with:
           path: out
           merge-multiple: true
-      - name: Checksums
-        run: tools/release.sh sums out && cat out/SHA256SUMS
+      - name: License notices and checksums
+        run: |
+          tools/release.sh notices out
+          test -f out/LICENSE-APACHE-2.0.txt
+          tools/release.sh sums out && cat out/SHA256SUMS
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}

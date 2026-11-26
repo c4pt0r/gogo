@@ -80,7 +80,11 @@ time.
 `build/release/<version>/`: per board the default firmware's
 `bootloader.bin`, `partition-table.bin`, `gogo.bin` and `flasher_args.json`
 (named `<board>-<file>`, e.g. `cardputer-gogo.bin`), the `gogo` command for
-darwin, linux and windows on amd64 and arm64, and `SHA256SUMS`. The
+darwin, linux and windows on amd64 and arm64, the license files that
+must travel with these binaries (`LICENSE`, `THIRD_PARTY_NOTICES.md`,
+`font-licenses.zip` with the console font's OFL texts, and
+`LICENSE-APACHE-2.0.txt` for ESP-IDF, mbedTLS and the Wi-Fi libraries,
+copied from the ESP-IDF tree), and `SHA256SUMS` over all of them. The
 firmware builds are the plain ones above (Kconfig defaults, every feature
 on); the IDF build directories go under `$GOGO_RELEASE_WORK` (default
 `build/release-work`). `.github/workflows/release.yml` runs the same
