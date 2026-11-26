@@ -39,9 +39,6 @@ static int consts_ok(const Image *img) {
             if (image_const_start(img, off + i) != (i == 0)) return 0;
         }
         switch (kind) {
-        case K_STRING:
-            if (!string_ok(img, off)) return 0;
-            break;
         case K_INT:
             if (words != 2) return 0;
             break;
@@ -51,6 +48,7 @@ static int consts_ok(const Image *img) {
         case K_FLOAT:   /* known to every 15.2 VM, GOGO_FLOAT or not (the requirement refuses) */
             if (words != 2 && words != 3) return 0;
             break;
+        case K_STRING:    /* the walk has checked its start and extent */
         case K_BYTEARR:   /* 15.6: a package-level variable's []byte, read-only */
             if (words < 2 || obj[1] > (words - 2u) * 4u) return 0;
             break;
