@@ -125,6 +125,10 @@ void sig_set_trap(Actor *a, bool on);
  * read. */
 uint32_t actor_charged_words(const Actor *a);
 
+/* True if `words` more charged words keep a within its limit: heap block
+ * + actor_charged_words + words <= actor_max_words (summed in 64 bits). */
+bool actor_fits(const Actor *a, uint32_t words);
+
 /* Where a's extra keeps its off-heap Bytes holder list (bytes.h; the list
  * is NULL while a holds none). actor_held: NULL when a has no extra.
  * actor_held_new: the extra is allocated if needed (NULL if it cannot be). */

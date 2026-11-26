@@ -139,8 +139,7 @@ static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
     if (ok && (p->charge_words || p->room_64w)) {
         /* The driver's state for the port is the owner's; room_64w must
          * fit beside it (an event the owner could never take). */
-        ok = (uint32_t)owner->mem_words + actor_charged_words(owner) + p->charge_words + p->room_64w * 64u <=
-                 actor_max_words(owner) && actor_charge(vm, owner, p->charge_words);
+        ok = actor_fits(owner, p->charge_words + p->room_64w * 64u) && actor_charge(vm, owner, p->charge_words);
         if (!ok && drv->close) drv->close(vm, p);
     }
     if (!ok) {
@@ -409,8 +408,7 @@ bool port_handoff(Vm *vm, Actor *from, term pid, term to) {
          * (each root t does not hold yet, at its full length, and t's
          * holder list if it has none). */
         uint32_t k;
-        uint64_t need = (uint64_t)p->charge_words + bytes_extra_words(vm, t, p->held, PORT_MAX_HELD);
-        if ((uint64_t)t->mem_words + actor_charged_words(t) + need > actor_max_words(t)) return false;
+        if (!actor_fits(t, p->charge_words + bytes_extra_words(vm, t, p->held, PORT_MAX_HELD))) return false;
         if (!actor_port_own(vm, t)) return false;
         if (p->charge_words && !actor_charge(vm, t, p->charge_words)) {
             actor_port_disown(t);

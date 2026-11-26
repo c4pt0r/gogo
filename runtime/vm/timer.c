@@ -157,7 +157,7 @@ term timer_add_send(Vm *vm, Actor *from, uint64_t deadline, term to_pid, term ms
     uint32_t charge = send_charge(vm, m);
     /* The pending timer counts against the creator's limit, like a queued
      * message against the receiver's. */
-    if ((uint32_t)from->mem_words + actor_charged_words(from) + charge > actor_max_words(from)) {
+    if (!actor_fits(from, charge)) {
         msg_free(vm, m);
         return T_NIL;
     }

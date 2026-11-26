@@ -314,7 +314,7 @@ static bool fits(const Actor *to, const Msg *m, uint32_t fw, bool quota) {
      * count it now (not queued: mbox_words stays fw). */
     uint32_t list = (m->flags & MSG_HANDLES) ? bytes_list_words(to) : 0u;
     return fw <= 65535u - to->mbox_words &&
-           (!quota || (uint32_t)to->mem_words + actor_charged_words(to) + fw + list <= actor_max_words(to));
+           (!quota || actor_fits(to, fw + list));
 }
 
 /* Queues m on `to` (charged as in mbox_words) and wakes it, if it fits:

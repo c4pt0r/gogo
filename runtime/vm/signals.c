@@ -127,9 +127,8 @@ uint32_t actor_count(const Actor *a, uint32_t which) {
     return x ? x->n[which] : 0u;
 }
 
-/* True if `words` more charged words keep a within its limit. */
-static bool charge_fits(const Actor *a, uint32_t words) {
-    return (uint32_t)a->mem_words + actor_charged_words(a) + words <= actor_max_words(a);
+bool actor_fits(const Actor *a, uint32_t words) {
+    return (uint64_t)a->mem_words + actor_charged_words(a) + words <= actor_max_words(a);
 }
 
 static void unwind(Vm *vm, Actor *a, uint32_t code, term func_name, bool notify);
@@ -361,7 +360,7 @@ static bool exit_signal(Vm *vm, Actor *t, term from, uint32_t code) {
  * (charged to a, which must fit it), wp on p's. False, with nothing made
  * or charged, if out of memory or over a's limit. */
 static bool pair_new(Vm *vm, Actor *a, uint32_t wa, Actor *p, uint32_t wp, uint64_t serial) {
-    if (!charge_fits(a, node_words(wa))) return false;
+    if (!actor_fits(a, node_words(wa))) return false;
     Link *la = node_new(vm, wa, p->id, serial), *lp = node_new(vm, wp, a->id, serial);
     ActorExtra *xa = extra_get(vm, a, false), *xp = extra_get(vm, p, false);
     if (!la || !lp || !xa || !xp) {
