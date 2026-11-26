@@ -74,12 +74,12 @@ static bool ports_grow(Vm *vm) {
     uint32_t n = vm->port_n, k = n / PORT_CHUNK, nchunks = (vm->port_max + PORT_CHUNK - 1u) / PORT_CHUNK;
     if (n >= vm->port_max) return false;
     if (!vm->port_chunk) {
-        vm->port_chunk = va_alloc(vm, nchunks * sizeof *vm->port_chunk);
+        vm->port_chunk = nchunks == 1u ? &vm->port_chunk1 : va_alloc(vm, nchunks * sizeof *vm->port_chunk);
         if (!vm->port_chunk) return false;
     }
-    Port *c = va_alloc(vm, PORT_CHUNK * sizeof *c);
+    Port *c = k ? va_alloc(vm, PORT_CHUNK * sizeof *c) : vm->port_first;   /* the first is in the Vm */
     if (!c) return false;
-    memset(c, 0, PORT_CHUNK * sizeof *c);
+    if (k) memset(c, 0, PORT_CHUNK * sizeof *c);
     vm->port_chunk[k] = c;
     n += PORT_CHUNK;
     vm->port_n = (uint16_t)(n < vm->port_max ? n : vm->port_max);

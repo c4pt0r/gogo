@@ -133,9 +133,14 @@ typedef struct Vm {
     VaHeap va;                /* allocator (alloc.h): scalars, then its free lists */
     /* The port table (port.h), in chunks of PORT_CHUNK that never move
      * (drivers keep Port pointers): port_n ports exist (none until the
-     * first open), at most port_max; index i is slot port_base + i. */
+     * first open), at most port_max; index i is slot port_base + i. The
+     * first chunk, and the chunk list of a table of one chunk (a board's
+     * 16), live here, as the fixed table did: no port takes arena memory
+     * on a board. */
     Port **port_chunk;
+    Port *port_chunk1;        /* port_chunk's storage when it has one entry */
     uint16_t port_n, port_max, port_base;
+    Port port_first[PORT_CHUNK];
     uint16_t max_links;       /* node links of distribution (runtime/dist); 0 = its default */
     PortEvent evq_slots[GOGO_EVQ_CAP];   /* event ring storage (evq.h), last: large */
 } Vm;

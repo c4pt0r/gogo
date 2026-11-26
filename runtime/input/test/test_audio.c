@@ -252,7 +252,6 @@ TEST(mic_gain_clamped_to_6db_steps) {
 
 TEST(mic_open_failure_leaves_nothing) {
     setup();
-    port_close(&vm, open_mic(owner, 16000, 100, 0));     /* the port table's first chunk stays */
     fake_mic_open_fail(true);
     uint32_t charged = actor_charged_words(owner);
     size_t used = va_used_bytes(&vm);

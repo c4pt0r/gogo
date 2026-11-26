@@ -257,11 +257,26 @@ TEST(port_open_fails) {
     teardown();
 }
 
+/* The first 16 ports live in the Vm, as the fixed table did: opening
+ * them takes nothing from the allocator (a board's actor arena); a
+ * larger table's further chunks are allocated as they are reached. */
+TEST(port_table_first_chunk_in_vm) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm);
+    CHECK(open_fake(&vm, a, 1) != T_NIL);
+    CHECK(vm.port_chunk == &vm.port_chunk1 && vm.port_chunk[0] == vm.port_first);
+    size_t base = va_used_bytes(&vm);
+    for (int i = 1; i < 16; i++) CHECK(open_fake(&vm, a, 1) != T_NIL);
+    CHECK_EQ(va_used_bytes(&vm), base);
+    teardown();
+}
+
 TEST(port_owner_exit) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
     Actor *c = waiting_actor(&vm);
-    port_close(&vm, open_fake(&vm, c, 1));       /* the port table's first chunk stays */
+    port_close(&vm, open_fake(&vm, c, 1));
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
     fk.closes = 0;
     size_t base = va_used_bytes(&vm);
