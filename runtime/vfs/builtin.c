@@ -91,7 +91,7 @@ static bool arg_data(const Vm *vm, const Actor *a, term t, const uint8_t **p, ui
     const uint32_t *o = obj_of(vm, a, t);
     if (!o || o[0] != hdr_make(5, K_SLICE) || o[2] > o[3]) return false;
     if (o[4] == T_NIL) return o[3] == 0;
-    const uint32_t *arr = obj_of(vm, a, o[4]);
+    const uint32_t *arr = obj_of(vm, a, field_term(t, o[4]));   /* a const slice's array: its module's tag */
     if (!arr || hdr_kind(arr[0]) != K_BYTEARR || arr[1] > (hdr_words(arr[0]) - 2u) * 4u ||
         o[1] > arr[1] || o[3] > arr[1] - o[1]) return false;
     *p = (const uint8_t *)(arr + 2) + o[1];

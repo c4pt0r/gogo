@@ -51,9 +51,16 @@ static int consts_ok(const Image *img) {
         case K_FLOAT:   /* known to every 15.2 VM, GOGO_FLOAT or not (the requirement refuses) */
             if (words != 2 && words != 3) return 0;
             break;
+        case K_BYTEARR:   /* 15.6: a package-level variable's []byte, read-only */
+            if (words < 2 || obj[1] > (words - 2u) * 4u) return 0;
+            break;
+        case K_SLICE:     /* 15.6: its slices and arrays */
+        case K_ARRAY:
         case K_STRUCT:
         case K_CLOSURE: {
-            /* Untagged like every image word: the VM tags them when read. */
+            /* Untagged like every image word: the VM tags them when read.
+             * (A slice's offsets and an array's count are checked where
+             * they are used, as on the heap.) */
             if (words < 2 || (obj[1] & MOD_TAG_MASK)) return 0;
             uint32_t first, end;
             heap_obj_terms(obj, &first, &end);
@@ -158,4 +165,4 @@ const char *image_func_name(const Image *img, uint32_t f, uint32_t *len) {
 
 uint32_t image_func_name_off(const Image *img, uint32_t f) { return img->funcs[f * 3u + 2u]; }
 
-uint32_t image_type_nfields(const Image *img, uint32_t r) { return img->types[r * 2u]; }
+uint32_t image_type_nfields(const Image *img, uint32_t r) { return img->types[r * 2u] & ~STRUCT_FLAGS; }

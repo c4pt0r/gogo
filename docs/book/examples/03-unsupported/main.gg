@@ -2,13 +2,13 @@
 // subset rejects, so you can see the compiler's messages.
 package main
 
-var counter = 0 // package-level variable
+var counter = 0 // fine: package-level variables are read-only
 
 type Shape interface{ Area() int } // fine: interfaces are supported
 
 type Sq struct{ S int }
 
-func (s *Sq) Area() int { return s.S * s.S } // pointer receiver
+func (s *Sq) Area() int { return s.S * s.S } // fine: pointer receivers are supported
 
 func Max[T int | int64](a, b T) T { // generics
 	if a > b {
@@ -20,13 +20,15 @@ func Max[T int | int64](a, b T) T { // generics
 func main() {
 	ch := make(chan int) // channel
 	go func() { ch <- 1 }()
-	defer recover()       // recover
-	m := map[string]int{} // map
-	p := &Sq{2}           // pointer
-	x := 1.5i             // complex
+	sq := []Sq{{2}}
+	defer recover()    // recover
+	m := map[*Sq]int{} // a map with pointer keys
+	p := &sq[0]        // a pointer into a slice
+	x := 1.5i          // complex
 	if counter > 0 {
 		goto done // goto
 	}
+	counter++ // a write to a package-level variable
 done:
 	var a any = [4]int{} // array in an interface
 	y := any(1).(int)    // fine: type assertions are supported

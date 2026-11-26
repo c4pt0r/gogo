@@ -59,7 +59,9 @@ func TestFloatImage(t *testing.T) {
 	for _, tc := range []struct{ name, src, req string }{
 		{"literal", "package main\nfunc main() {\n\tx := 1.5\n\tprintln(x)\n}\n", "float"},
 		{"conversion", "package main\nfunc main() {\n\tn := 3\n\tprintln(float32(n))\n}\n", "float"},
-		{"typeswitch", "package main\nfunc main() {\n\tvar a any = 1\n\tswitch a.(type) {\n\tcase float64:\n\t\tprintln(1)\n\t}\n}\n", "float"},
+		// a float case alone needs 15.2 but not "float": no float can
+		// reach it (15.6: gogo/fmt formats floats without requiring them)
+		{"typeswitch", "package main\nfunc main() {\n\tvar a any = 1\n\tswitch a.(type) {\n\tcase float64:\n\t\tprintln(1)\n\t}\n}\n", "-"},
 		{"math", "package main\nimport \"gogo/math\"\nfunc main() {\n\tprintln(math.IsNaN(math.NaN()))\n}\n", "float"},
 		{"format", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\tprintln(strconv.FormatFloat(1, 'g', -1, 64))\n}\n", "float"},
 		{"strconv-ints", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\tprintln(strconv.Itoa(3))\n}\n", ""},
@@ -69,6 +71,9 @@ func TestFloatImage(t *testing.T) {
 		minor := uint32(0)
 		if tc.req != "" {
 			minor = floatMinor
+		}
+		if tc.req == "-" {
+			tc.req = ""
 		}
 		if v := words(img)[1]; v != 15<<16|minor {
 			t.Errorf("%s: version %s, want 15.%d", tc.name, VersionString(v), minor)

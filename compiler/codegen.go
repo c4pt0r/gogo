@@ -26,6 +26,7 @@ func Compile(p *Program) ([]byte, error) {
 	if err := g.collectTypes(); err != nil {
 		return nil, err
 	}
+	g.boxed = findBoxed(p)
 
 	// Index every top-level function of every package first so calls to
 	// later ones resolve: all but the builtins, those of the system
@@ -81,7 +82,7 @@ func Compile(p *Program) ([]byte, error) {
 		// parameters follow (CALLV passes them in that order).
 		params := append(append([]*types.Var{}, c.captures...), g.declParams(c.lit.Type)...)
 		sig := p.Info.TypeOf(c.lit).(*types.Signature)
-		if err := g.compileFunc(c.info, params, sig.Results(), c.lit.Body); err != nil {
+		if err := g.compileFunc(c.info, params, len(c.captures), sig.Results(), c.lit.Body); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -135,6 +136,13 @@ type gen struct {
 	used []*ast.FuncDecl
 
 	boxIdx map[string]uint32 // own box types (boxIndex), by image name
+	ptrIdx map[string]uint32 // pointer targets' types (ptrIndex), by image name
+	// globals holds the terms of the package-level variables evaluated so
+	// far (globalTerm); globalsBusy those being evaluated.
+	mapIdx      map[string]uint32 // map headers' types (mapIndex), by image name
+	globals     map[*types.Var]uint32
+	globalsBusy map[*types.Var]bool
+	boxed       map[*types.Var]bool // the variables that live in a box (findBoxed)
 
 	concrete  []types.Type           // concreteTypes, once computed
 	dispIdx   map[*types.Func]uint32 // dispatchers, by interface method
@@ -171,7 +179,7 @@ func (g *gen) compileDecl(fd *ast.FuncDecl) error {
 	if fd.Recv != nil { // the receiver is parameter 0
 		params = append(g.fieldVars(fd.Recv), params...)
 	}
-	return g.compileFunc(g.funcs[g.funcIdx[fn]], params, fn.Type().(*types.Signature).Results(), fd.Body)
+	return g.compileFunc(g.funcs[g.funcIdx[fn]], params, 0, fn.Type().(*types.Signature).Results(), fd.Body)
 }
 
 // qualified names a function or type of package pkg in the image: plain
@@ -484,8 +492,9 @@ type fn struct {
 	boundAt    int           // code position of the last label bound (-1: none)
 	lastClear  int           // code position of the last CLEAR emitted (-1: none)
 
-	defers   *deferState // the function's defer statements, nil if none (codegen_defer.go)
-	compared bool        // the value being compiled is only compared (constBox)
+	defers   *deferState         // the function's defer statements, nil if none (codegen_defer.go)
+	inBox    map[*types.Var]bool // boxed variables bound to their box (markBoxed)
+	compared bool                // the value being compiled is only compared (constBox)
 }
 
 // declParams lists the parameters of a declared function; unnamed ones are
@@ -511,11 +520,13 @@ func (g *gen) fieldVars(fl *ast.FieldList) []*types.Var {
 	return params
 }
 
-// compileFunc compiles body into info; params get r0..r(n-1); results are
-// the function's results (nil if none). Named results get the registers
-// after the parameters, initialized to their zero values, so a bare return
-// returns them in place.
-func (g *gen) compileFunc(info *funcInfo, params []*types.Var, results *types.Tuple, body *ast.BlockStmt) (err error) {
+// compileFunc compiles body into info; params get r0..r(n-1), the first
+// ncaps of them a closure's captures (a boxed variable's box already);
+// results are the function's results (nil if none). Named results get the
+// registers after the parameters, initialized to their zero values, so a
+// bare return returns them in place. A parameter or named result that
+// lives in a box (findBoxed) is put into one at entry.
+func (g *gen) compileFunc(info *funcInfo, params []*types.Var, ncaps int, results *types.Tuple, body *ast.BlockStmt) (err error) {
 	f := &fn{g: g, info: info, locals: map[*types.Var]uint8{}, named: -1,
 		labelDirty: map[Label]int{}, boundAt: -1, lastClear: -1}
 	if results != nil {
@@ -541,6 +552,13 @@ func (g *gen) compileFunc(info *funcInfo, params []*types.Var, results *types.Tu
 		}
 	}
 	info.nParams = uint16(f.next)
+	for i, v := range params {
+		if i >= ncaps {
+			f.boxVar(body, v, uint8(i))
+		} else if v != nil && g.boxed[v] {
+			f.markBoxed(v) // a capture of a boxed variable is its box
+		}
+	}
 	if results != nil && results.Len() > 0 && results.At(0).Name() != "" {
 		f.named = f.next
 		for i := 0; i < results.Len(); i++ {
@@ -549,6 +567,7 @@ func (g *gen) compileFunc(info *funcInfo, params []*types.Var, results *types.Tu
 			f.zeroInto(body, v.Type(), r)
 			if v.Name() != "_" {
 				f.locals[v] = r
+				f.boxVar(body, v, r)
 			}
 		}
 		f.clearDead()
@@ -775,12 +794,20 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		if s.Tok == token.DEC {
 			op = OpSub
 		}
+		if ix, ok := f.isMapIndex(s.X); ok { // m[k]++
+			f.mapOpAssign(ix, op, nil)
+			return
+		}
 		if ix, ok := ast.Unparen(s.X).(*ast.IndexExpr); ok && !f.isFieldTarget(ix) { // s[i]++
 			f.indexOpAssign(ix, op, nil)
 			return
 		}
 		if f.isFieldTarget(s.X) { // x.F++
 			f.fieldOpAssign(s.X, op, nil)
+			return
+		}
+		if f.derefTarget(s.X) { // *p++, x++ of a variable in a box
+			f.derefOpAssign(s.X, op, nil)
 			return
 		}
 		x := f.localOf(s.X)
@@ -804,8 +831,10 @@ func (f *fn) stmtCode(s ast.Stmt) {
 			f.runDefers()
 			f.retNil()
 			return
-		case f.named >= 0 && f.defers != nil:
-			f.retToNamed(s) // the results are set before the deferred calls run
+		case f.named >= 0 && (f.defers != nil || f.namedInBox()):
+			// the results are set before the deferred calls run, and
+			// before a closure that shares a result could read it
+			f.retToNamed(s)
 			return
 		case k > 1:
 			// return a, b (each converted to its result type) or return
@@ -828,7 +857,7 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		mark := f.next
 		res := s.Results[0]
 		var r uint8
-		if f.boxes(res, f.result) || f.copiesArray(res, f.result) {
+		if f.boxes(res, f.result) || f.copiesArray(res, f.result) || f.g.p.Info.Types[res].IsNil() {
 			r = f.alloc(res)
 			f.valueInto(res, f.result, r)
 		} else {
@@ -897,6 +926,13 @@ func tupleLen(t types.Type) int {
 // local. Result i is converted to targets[i] (nil, or a nil entry: no
 // conversion): an int64 going into any is boxed.
 func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
+	if ix, ok := f.isMapIndex(e); ok { // v, ok := m[k]
+		f.mapGetInto(ix, base)
+		if len(targets) > 0 && convertsToIface(f.g.p.Info.TypeOf(ix), targets[0]) {
+			f.toIface(e, f.g.p.Info.TypeOf(ix), base)
+		}
+		return
+	}
 	if ta, ok := ast.Unparen(e).(*ast.TypeAssertExpr); ok { // v, ok := x.(T)
 		f.assertOkInto(ta, base)
 		if len(targets) > 0 && convertsToIface(f.g.p.Info.TypeOf(ta.Type), targets[0]) {
@@ -948,6 +984,9 @@ func (f *fn) localOf(e ast.Expr) uint8 {
 	if !ok || !found {
 		f.fail(e, "internal error: unknown variable %s", id.Name)
 	}
+	if f.g.boxed[v] && !f.inBox[v] {
+		f.fail(e, "internal error: variable %s lives in a box, but its binding made none", id.Name)
+	}
 	return r
 }
 
@@ -959,12 +998,20 @@ var assignOps = map[token.Token]uint8{
 }
 
 func (f *fn) assign(s *ast.AssignStmt) {
+	if ix, ok := f.isMapIndex(s.Lhs[0]); ok && s.Tok != token.ASSIGN && s.Tok != token.DEFINE {
+		f.mapOpAssign(ix, assignOps[s.Tok], s.Rhs[0]) // m[k] op= e
+		return
+	}
 	if ix, ok := ast.Unparen(s.Lhs[0]).(*ast.IndexExpr); ok && s.Tok != token.ASSIGN && s.Tok != token.DEFINE && !f.isFieldTarget(ix) {
 		f.indexOpAssign(ix, assignOps[s.Tok], s.Rhs[0]) // s[i] op= e
 		return
 	}
 	if s.Tok != token.ASSIGN && s.Tok != token.DEFINE && f.isFieldTarget(s.Lhs[0]) {
 		f.fieldOpAssign(s.Lhs[0], assignOps[s.Tok], s.Rhs[0]) // x.F op= e
+		return
+	}
+	if s.Tok != token.ASSIGN && s.Tok != token.DEFINE && f.derefTarget(s.Lhs[0]) {
+		f.derefOpAssign(s.Lhs[0], assignOps[s.Tok], s.Rhs[0]) // *p op= e, x op= e of a boxed x
 		return
 	}
 	if len(s.Lhs) == 1 && len(s.Rhs) == 1 && f.isFieldTarget(s.Lhs[0]) {
@@ -1001,21 +1048,35 @@ func (f *fn) assign(s *ast.AssignStmt) {
 	inPlace := make([]bool, len(s.Lhs)) // an array variable: its elements are copied over
 	index := make([]int, len(s.Lhs))
 	fields := make([]*fieldTarget, len(s.Lhs))
+	derefs := make([]int, len(s.Lhs)) // *p, or a boxed variable: the pointer's register, or -1
 	var newVars []*types.Var
 	var newRegs []uint8
 	mark := f.next
 	for i, l := range s.Lhs {
 		index[i] = -1
+		derefs[i] = -1
 		id, _ := ast.Unparen(l).(*ast.Ident)
 		if f.isFieldTarget(l) { // x.F: its operands are evaluated now
 			t := f.fieldTargetOf(l)
 			fields[i] = &t
 			continue
 		}
+		if (s.Tok != token.DEFINE || f.g.p.Info.Defs[id] == nil) && f.derefTarget(l) { // *p, a boxed x
+			derefs[i] = int(f.derefPtr(l))
+			continue
+		}
 		if ix, ok := ast.Unparen(l).(*ast.IndexExpr); ok {
+			mt := mapOf(f.g.p.Info.TypeOf(ix.X))
+			if mt != nil { // m[k]: [mode, m, k, v], set's arguments
+				f.mapModeInto(l, mt)
+			}
 			blk := f.allocN(l, 3)
 			f.exprInto(ix.X, blk)
-			f.exprInto(ix.Index, blk+1)
+			if mt != nil {
+				f.mapKeyInto(ix.Index, mt, blk+1)
+			} else {
+				f.exprInto(ix.Index, blk+1)
+			}
 			index[i] = int(blk)
 			targets[i] = int(blk + 2)
 			continue
@@ -1039,12 +1100,18 @@ func (f *fn) assign(s *ast.AssignStmt) {
 	// store assigns target i from register r.
 	store := func(i int, r uint8) {
 		switch {
+		case derefs[i] >= 0:
+			f.storeDeref(s.Lhs[i], f.derefType(s.Lhs[i]), uint8(derefs[i]), r)
 		case fields[i] != nil:
 			f.storeField(s.Lhs[i], *fields[i], func(dst, _ uint8) { f.asm.Emit(OpMove, dst, r, 0) })
 		case index[i] >= 0:
 			blk := uint8(index[i])
 			if r != blk+2 {
 				f.asm.Emit(OpMove, blk+2, r, 0)
+			}
+			if isMap(f.g.p.Info.TypeOf(ast.Unparen(s.Lhs[i]).(*ast.IndexExpr).X)) {
+				f.mapCall(s, "set", blk, blk-1, 4)
+				break
 			}
 			f.asm.EmitExt(OpBuiltin, blk, blk, 3, BSetindex)
 		case inPlace[i]:
@@ -1084,6 +1151,7 @@ func (f *fn) assign(s *ast.AssignStmt) {
 	f.next = mark
 	for i, v := range newVars {
 		f.locals[v] = newRegs[i]
+		f.boxVar(s, v, newRegs[i])
 	}
 }
 
@@ -1116,6 +1184,7 @@ func (f *fn) declStmt(d *ast.GenDecl) {
 		for i, v := range vars {
 			if v != nil && v.Name() != "_" {
 				f.locals[v] = regs[i]
+				f.boxVar(vs, v, regs[i])
 			}
 		}
 	}
@@ -1165,9 +1234,11 @@ func (f *fn) forStmt(s *ast.ForStmt) {
 	f.dropLabel(label)
 	if s.Post != nil {
 		f.bind(contL)
+		f.rebox(s)
 		f.stmt(s.Post)
 	} else {
 		f.bindEnd(contL)
+		f.rebox(s)
 	}
 	f.clearDead() // the body's locals die before the next iteration
 	f.jump(OpJmp, 0, topL)
@@ -1194,7 +1265,7 @@ func (f *fn) localReg(e ast.Expr) (uint8, bool) {
 		return r, true
 	}
 	if id, ok := ast.Unparen(e).(*ast.Ident); ok {
-		if v, ok := f.g.p.Info.Uses[id].(*types.Var); ok {
+		if v, ok := f.g.p.Info.Uses[id].(*types.Var); ok && !f.g.boxed[v] {
 			if r, ok := f.locals[v]; ok {
 				return r, true
 			}
@@ -1219,7 +1290,7 @@ func (f *fn) boxes(e ast.Expr, target types.Type) bool {
 // interface (boxes). A constant is boxed at compile time, in the const
 // area.
 func (f *fn) valueInto(e ast.Expr, target types.Type, dst uint8) {
-	if target != nil && isIface(target) && f.g.p.Info.Types[e].IsNil() { // the nil interface value
+	if target != nil && !isSlice(target) && f.g.p.Info.Types[e].IsNil() { // the nil interface value, pointer, map, func
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNil)
 		return
 	}
@@ -1312,14 +1383,32 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 			f.funcValueInto(e, fn, dst)
 			return
 		}
-		if _, ok := f.g.p.Info.Uses[e].(*types.Nil); ok { // the checker admits nil slices only
-			f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNilSlice)
+		if _, ok := f.g.p.Info.Uses[e].(*types.Nil); ok { // a nil slice, pointer, map or func
+			if t := f.g.p.Info.TypeOf(e); isSlice(t) || basicKind(t) == types.UntypedNil {
+				f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNilSlice)
+			} else {
+				f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNil)
+			}
+			return
+		}
+		if v := globalVar(f.g.p.Info, e); v != nil { // a package-level variable: its constant
+			f.globalInto(e, v, dst)
+			return
+		}
+		if v, ok := f.isBoxedVar(e); ok { // in its box (D7)
+			f.boxedLoad(e, v, f.localOf(e), dst)
 			return
 		}
 		if r := f.localOf(e); r != dst {
 			f.asm.Emit(OpMove, dst, r, 0)
 		}
+	case *ast.StarExpr:
+		f.starInto(e, dst)
 	case *ast.UnaryExpr:
+		if e.Op == token.AND { // &x, &T{...}
+			f.addrInto(e, dst)
+			return
+		}
 		if e.Op == token.XOR { // ^x == x XOR -1
 			x := f.operand(e.X)
 			m := f.allocScalar(e)
@@ -1349,16 +1438,30 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 			f.funcValueInto(e, fn, dst) // lib.F
 			return
 		}
+		if v := globalVar(f.g.p.Info, e); v != nil { // lib.V
+			f.globalInto(e, v, dst)
+			return
+		}
 		sel := f.g.p.Info.Selections[e]
-		if sel == nil || sel.Kind() != types.FieldVal || sel.Indirect() {
+		if sel == nil || sel.Kind() != types.FieldVal || (sel.Indirect() && !isPointer(f.g.p.Info.TypeOf(e.X))) {
 			f.fail(e, "internal error: unexpected selector")
 		}
-		f.fieldPathInto(e, sel.Index(), f.operand(e.X), dst) // promoted: down the embedded fields
+		// promoted: down the embedded fields; p.X of a pointer p reads
+		// its target, laid out as the struct (codegen_ptr.go)
+		f.fieldPathInto(e, sel.Index(), f.operand(e.X), dst)
 	case *ast.IndexExpr:
+		if isMap(f.g.p.Info.TypeOf(e.X)) {
+			f.mapIndexInto(e, dst)
+			return
+		}
 		f.indexInto(e, dst)
 	case *ast.SliceExpr:
 		f.sliceInto(e, dst)
 	case *ast.CompositeLit:
+		if isMap(f.g.p.Info.TypeOf(e)) {
+			f.mapLitInto(e, dst)
+			return
+		}
 		if isSlice(f.g.p.Info.TypeOf(e)) {
 			f.sliceLit(e, dst)
 			return
@@ -1383,6 +1486,19 @@ func (f *fn) binaryInto(e *ast.BinaryExpr, dst uint8) {
 	if e.Op == token.EQL || e.Op == token.NEQ {
 		if xt, yt := f.g.p.Info.TypeOf(e.X), f.g.p.Info.TypeOf(e.Y); needsCmp(xt) || needsCmp(yt) {
 			f.cmpInto(e.X, e.Y, cmpType(xt, yt), binaryOps[e.Op], dst)
+			return
+		}
+		x, y := e.X, e.Y
+		if f.g.p.Info.Types[x].IsNil() {
+			x, y = y, x
+		}
+		if f.g.p.Info.Types[y].IsNil() && !isSlice(f.g.p.Info.TypeOf(x)) { // p == nil: the nil term
+			mark := f.next
+			r := f.operand(x)
+			z := f.allocScalar(y)
+			f.asm.EmitExt(OpLoadk, z, 0, 0, TermNil)
+			f.asm.Emit(binaryOps[e.Op], dst, r, z)
+			f.next = mark
 			return
 		}
 	}
@@ -1539,7 +1655,7 @@ func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 	case isBytes(t): // empty
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermEmptyBytes)
 		return
-	case isIface(t) || isFunc(t) || isBuffer(t):
+	case isIface(t) || isFunc(t) || isBuffer(t) || isPointer(t) || isMap(t):
 		// The zero Buffer is nil: unusable (its methods are badcode).
 		// A nil any; a nil func, which Spawn rejects (the spawner crashes
 		// with badcode).
@@ -1564,6 +1680,16 @@ func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 }
 
 func (f *fn) structLit(e *ast.CompositeLit, dst uint8) {
+	f.structLitAs(e, noIndex, dst)
+}
+
+// noIndex asks newStruct for the struct type's own index.
+const noIndex = ^uint32(0)
+
+// structLitAs builds the struct literal e into dst as a struct of type
+// index idx (noIndex: e's type; else a pointer target's, laid out as e's
+// type: &T{...}).
+func (f *fn) structLitAs(e *ast.CompositeLit, idx uint32, dst uint8) {
 	st := structType(f.g.p.Info.TypeOf(e))
 	if st == nil {
 		f.fail(e, "internal error: composite literal of non-struct type")
@@ -1582,7 +1708,7 @@ func (f *fn) structLit(e *ast.CompositeLit, dst uint8) {
 			vals = append(vals, fieldVal{i, el})
 		}
 	}
-	f.newStruct(e, st, vals, dst)
+	f.newStructAs(e, st, idx, vals, dst)
 }
 
 // fieldVal is a struct literal value and the index of the field it sets.
@@ -1595,14 +1721,22 @@ type fieldVal struct {
 // the order given (source order, as Go requires); fields without a value get
 // their zero value.
 func (f *fn) newStruct(n ast.Node, st *types.Named, vals []fieldVal, dst uint8) {
+	f.newStructAs(n, st, noIndex, vals, dst)
+}
+
+// newStructAs is newStruct with the type index idx of the struct built
+// (noIndex: st's own; else a pointer target's, laid out as st).
+func (f *fn) newStructAs(n ast.Node, st *types.Named, idx uint32, vals []fieldVal, dst uint8) {
 	fields := st.Underlying().(*types.Struct)
 	nf := fields.NumFields()
 	if nf > maxRegs {
 		f.fail(n, "struct %s has too many fields", st.Obj().Name())
 	}
-	idx, ok := f.g.typeIndex(st)
-	if !ok {
-		f.fail(n, "internal error: struct type %s has no index", st.Obj().Name())
+	if idx == noIndex {
+		var ok bool
+		if idx, ok = f.g.typeIndex(st); !ok {
+			f.fail(n, "internal error: struct type %s has no index", st.Obj().Name())
+		}
 	}
 	mark := f.next
 	base := f.allocN(n, nf)

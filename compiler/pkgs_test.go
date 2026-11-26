@@ -168,8 +168,8 @@ func TestUserPackageErrors(t *testing.T) {
 		}, []string{`import u "app/util" not supported`}},
 		{"subset applies", map[string]string{
 			"main.gg":   "package main\n\nimport \"app/util\"\n\nfunc main() { util.F() }\n",
-			"util/u.gg": "package util\n\nvar g int\n\nfunc F() { println(g) }\n",
-		}, []string{filepath.Join("util", "u.gg") + ":3:1: gogo: global variable not supported"}},
+			"util/u.gg": "package util\n\nvar g int\n\nfunc F() { g++ }\n",
+		}, []string{filepath.Join("util", "u.gg") + ":5:12: gogo: package-level variable g is read-only"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -251,7 +251,7 @@ func TestShebang(t *testing.T) {
 	work := t.TempDir()
 	dir := writeTree(t, filepath.Join(work, "s"), map[string]string{
 		"ok.gg":  "#!/usr/bin/env -S gogo run\npackage main\n\nfunc main() { println(\"hi\") }\n",
-		"bad.gg": "#!/usr/bin/env -S gogo run\npackage main\n\nfunc main() {\n\tm := map[int]int{}\n\t_ = m\n}\n",
+		"bad.gg": "#!/usr/bin/env -S gogo run\npackage main\n\nfunc main() {\n\tm := 1.5i\n\t_ = m\n}\n",
 		"typ.gg": "#!/usr/bin/env -S gogo run\npackage main\n\nfunc main() { undefined() }\n",
 		"pkg.gg": "#!/usr/bin/env -S gogo run\npackage main\n\nimport \"s/util\"\n\nfunc main() { util.Sum(util.Point{}) }\n",
 		// a package file may start with #! too
@@ -276,7 +276,7 @@ func TestShebang(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if errs := Check(prog); len(errs) == 0 || !strings.Contains(errs[0].Error(), "bad.gg:5:7: gogo: map not supported") {
+	if errs := Check(prog); len(errs) == 0 || !strings.Contains(errs[0].Error(), "bad.gg:5:7: gogo: complex not supported") {
 		t.Errorf("errors %v, want bad.gg:5:7", errs)
 	}
 	if _, err := (Config{}).LoadFile(filepath.Join(dir, "typ.gg")); err == nil || !strings.Contains(err.Error(), "typ.gg:4:15: undefined: undefined") {

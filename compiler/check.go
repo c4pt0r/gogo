@@ -34,7 +34,7 @@ func Check(p *Program) (errs []error) {
 func (c *checker) file(f *ast.File) {
 	for _, d := range f.Decls {
 		if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.VAR {
-			c.unsupported(gd, "global variable")
+			c.globalDecl(gd) // read-only, static (15.6)
 			continue
 		}
 		c.decl(d)
@@ -125,8 +125,14 @@ func (c *checker) typeProblem(t types.Type) string {
 			return ""
 		}
 		return obj.Name()
-	case *types.Pointer:
-		return "pointer"
+	case *types.Pointer: // 15.6: to any type of the subset but an array
+		if isArray(t.Elem()) {
+			return "pointer to an array"
+		}
+		if msg := c.typeProblem(t.Elem()); msg != "" {
+			return "pointer to " + msg
+		}
+		return ""
 	case *types.Slice:
 		if msg := c.typeProblem(t.Elem()); msg != "" {
 			return "slice of " + msg
@@ -137,8 +143,17 @@ func (c *checker) typeProblem(t types.Type) string {
 			return "array of " + msg
 		}
 		return ""
-	case *types.Map:
-		return "map"
+	case *types.Map: // 15.6
+		if msg := c.mapKeyProblem(t.Key(), nil); msg != "" {
+			return "map with key type " + types.TypeString(t.Key(), pkgName) + ": " + msg
+		}
+		if msg := c.typeProblem(t.Key()); msg != "" {
+			return "map key of type " + msg
+		}
+		if msg := c.typeProblem(t.Elem()); msg != "" {
+			return "map of " + msg
+		}
+		return ""
 	case *types.Chan:
 		return "channel"
 	case *types.Signature:
@@ -218,12 +233,9 @@ func (c *checker) decl(d ast.Decl) {
 			c.unsupported(d, "function without body")
 			return
 		}
-		var sig *types.Signature
 		if fn, ok := c.p.Info.Defs[d.Name].(*types.Func); ok {
-			sig = fn.Type().(*types.Signature)
-			c.results = sig.Results()
+			c.results = fn.Type().(*types.Signature).Results()
 		}
-		c.capturedWrites(d.Body, sig)
 		c.block(d.Body)
 	default:
 		c.unsupported(d, kindName(d))
@@ -235,11 +247,11 @@ func (c *checker) decl(d ast.Decl) {
 // compiled.
 func (c *checker) recv(fl *ast.FieldList) bool {
 	f := fl.List[0]
-	if _, ptr := ast.Unparen(f.Type).(*ast.StarExpr); ptr {
-		c.fail(f.Type.Pos(), "pointer receivers are not supported yet")
-		return false
+	rt := c.p.Info.TypeOf(f.Type)
+	if pt := pointerOf(rt); pt != nil { // a pointer receiver (15.6)
+		rt = pt.Elem()
 	}
-	n, ok := types.Unalias(c.p.Info.TypeOf(f.Type)).(*types.Named)
+	n, ok := types.Unalias(rt).(*types.Named)
 	if !ok || n.TypeArgs().Len() > 0 {
 		c.unsupported(f.Type, "receiver of type "+types.TypeString(c.p.Info.TypeOf(f.Type), pkgName))
 		return false
@@ -290,6 +302,10 @@ func (c *checker) typeSpec(s *ast.TypeSpec) {
 		return
 	}
 	for _, f := range st.Fields.List {
+		if _, ptr := f.Type.(*ast.StarExpr); ptr && len(f.Names) == 0 {
+			c.unsupported(f.Type, "embedded pointer field") // promoted fields would need a nil check per step
+			continue
+		}
 		c.typeExpr(f.Type) // an embedded field too: a field named after its type
 	}
 }
@@ -411,8 +427,8 @@ func isAny(t types.Type) bool {
 // assignment, argument, result or field value). A func value cannot go
 // into an interface (it has no type id).
 func (c *checker) convert(target types.Type, e ast.Expr) {
-	if isSlice(target) || isIface(target) {
-		c.nilSlice(e) // the nil slice, the nil interface value
+	if isSlice(target) || isIface(target) || isPointer(target) || isMap(target) {
+		c.nilSlice(e) // the nil slice, the nil interface value, the nil pointer
 	}
 	if !isIface(target) {
 		return
@@ -459,6 +475,16 @@ func (c *checker) convertType(target, src types.Type, pos token.Pos) {
 		c.fail(pos, "array in interface not supported: use a slice or a struct with an array field")
 	}
 	c.vmMethods(target, src, pos)
+	if it, ok := underlying(target).(*types.Interface); ok && isPointer(src) {
+		ms := types.NewMethodSet(src)
+		for i := 0; i < it.NumMethods(); i++ {
+			m := it.Method(i)
+			if sel := ms.Lookup(m.Pkg(), m.Name()); sel != nil && len(sel.Index()) > 1 && isPointer(sel.Obj().Type().(*types.Signature).Recv().Type()) {
+				c.fail(pos, "%s as a %s not supported: its method %s has a pointer receiver and is promoted from an embedded field (no pointers into fields)",
+					types.TypeString(src, pkgName), types.TypeString(target, pkgName), m.Name())
+			}
+		}
+	}
 }
 
 // vmMethods rejects a value of concrete type src going into interface
@@ -575,9 +601,13 @@ func (c *checker) typeExpr(e ast.Expr) {
 		return
 	}
 	switch e := e.(type) {
-	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType, *ast.InterfaceType: // their signatures were checked above
+	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType, *ast.InterfaceType, *ast.MapType: // their signatures were checked above
 	case *ast.ArrayType:
 		c.typeExpr(e.Elt) // []T, [N]T, [...]T
+	case *ast.StarExpr:
+		c.typeExpr(e.X) // *T
+	case *ast.ParenExpr:
+		c.typeExpr(e.X)
 	default:
 		c.unsupported(e, kindName(e))
 	}
@@ -733,100 +763,6 @@ func (c *checker) stmt(s ast.Stmt) {
 	}
 }
 
-// capturedWrites rejects every write to a variable that a func literal in
-// body captures. Closures copy their captures by value, which matches Go's
-// by-reference capture only if the variable never changes after its
-// declaration (its single assignment), in or out of the closure. A return
-// with values writes every named result of its function (sig for body, the
-// literal's own signature inside a func literal); a bare return writes none.
-func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
-	captured := map[*types.Var]bool{}
-	ast.Inspect(body, func(n ast.Node) bool {
-		if lit, ok := n.(*ast.FuncLit); ok {
-			for _, v := range litCaptures(c.p.Info, lit) {
-				captured[v] = true
-			}
-		}
-		return true
-	})
-	if len(captured) == 0 {
-		return
-	}
-	results := namedResults(c.p.Info, body, sig)
-	deferred := map[*ast.FuncLit]bool{} // defer func() { ... }()
-	ast.Inspect(body, func(n ast.Node) bool {
-		if d, ok := n.(*ast.DeferStmt); ok {
-			if lit, ok := ast.Unparen(d.Call.Fun).(*ast.FuncLit); ok {
-				deferred[lit] = true
-			}
-		}
-		return true
-	})
-	// write checks a write to e; inDefer: e is in a deferred func literal.
-	write := func(e ast.Expr, inDefer bool) {
-		// A field assignment x.F = v writes x, and so does an element
-		// assignment x[i] = v to an array x (but s[i].F = v writes the
-		// slice's shared array, not s).
-		x, field, elem := ast.Unparen(e), false, false
-		for {
-			if ix, ok := x.(*ast.IndexExpr); ok && isArray(c.p.Info.TypeOf(ix.X)) {
-				x, elem = ast.Unparen(ix.X), true
-				continue
-			}
-			sel, ok := x.(*ast.SelectorExpr)
-			if !ok || c.p.Info.Selections[sel] == nil {
-				break
-			}
-			x, field = ast.Unparen(sel.X), true
-		}
-		// Uses, not Defs: the variables a := declares are not writes.
-		if id, ok := x.(*ast.Ident); ok {
-			if v, ok := c.p.Info.Uses[id].(*types.Var); ok && captured[v] {
-				if results[v] && inDefer {
-					c.fail(e.Pos(), "captured named result must not be changed: a deferred func literal captures it by value, so it cannot set the result")
-				} else if results[v] {
-					c.fail(e.Pos(), "captured named result must not be changed: closures capture by value")
-				} else if elem {
-					c.fail(e.Pos(), "captured variable must not be changed by element assignment")
-				} else if field {
-					c.fail(e.Pos(), "captured variable must not be changed by field assignment")
-				} else {
-					c.fail(id.Pos(), "captured variable must not be reassigned")
-				}
-			}
-		}
-	}
-	var walk func(n ast.Node, sig *types.Signature, inDefer bool)
-	walk = func(n ast.Node, sig *types.Signature, inDefer bool) {
-		ast.Inspect(n, func(n ast.Node) bool {
-			switch n := n.(type) {
-			case *ast.FuncLit:
-				s, _ := c.p.Info.TypeOf(n).(*types.Signature)
-				walk(n.Body, s, deferred[n])
-				return false
-			case *ast.ReturnStmt:
-				if len(n.Results) == 0 || sig == nil {
-					break
-				}
-				for i := 0; i < sig.Results().Len(); i++ {
-					if v := sig.Results().At(i); v.Name() != "" && captured[v] {
-						c.fail(n.Pos(), "captured named result must not be set by return; use unnamed results")
-						break
-					}
-				}
-			case *ast.AssignStmt:
-				for _, l := range n.Lhs {
-					write(l, inDefer)
-				}
-			case *ast.IncDecStmt:
-				write(n.X, inDefer)
-			}
-			return true
-		})
-	}
-	walk(body, sig, false)
-}
-
 // litCaptures lists the variables lit uses but does not declare, in order
 // of first reference (nested literals included). A closure copies them by
 // value.
@@ -839,7 +775,7 @@ func litCaptures(info *types.Info, lit *ast.FuncLit) []*types.Var {
 			return true
 		}
 		v, ok := info.Uses[id].(*types.Var)
-		if !ok || v.IsField() || seen[v] || (v.Pos() >= lit.Pos() && v.Pos() < lit.End()) {
+		if !ok || v.IsField() || seen[v] || (v.Pos() >= lit.Pos() && v.Pos() < lit.End()) || globalVar(info, id) != nil {
 			return true
 		}
 		seen[v] = true
@@ -851,13 +787,20 @@ func litCaptures(info *types.Info, lit *ast.FuncLit) []*types.Var {
 
 // lhs reports an unsupported assignment target.
 func (c *checker) lhs(e ast.Expr) {
+	if c.globalWrite(e) {
+		return
+	}
 	switch e := e.(type) {
-	case *ast.Ident: // writes to captured variables: see capturedWrites
+	case *ast.Ident:
 	case *ast.ParenExpr:
 		c.lhs(e.X)
 	case *ast.SelectorExpr:
 		c.fieldLhs(e)
 	case *ast.IndexExpr:
+		if isMap(c.p.Info.TypeOf(e.X)) { // m[k] = v
+			c.indexExpr(e)
+			return
+		}
 		if isArray(c.p.Info.TypeOf(e.X)) { // a[i], p.A[i], s[j][i]: x is a variable or on a path
 			c.arrayLhs(e.X)
 			c.indexArg(e.Index)
@@ -871,8 +814,8 @@ func (c *checker) lhs(e ast.Expr) {
 		c.indexArg(e.Index)
 	case *ast.IndexListExpr:
 		c.unsupported(e, "index assignment")
-	case *ast.StarExpr:
-		c.unsupported(e, "pointer assignment")
+	case *ast.StarExpr: // *p = v (15.6)
+		c.expr(e.X)
 	default:
 		c.unsupported(e, kindName(e))
 	}
@@ -886,11 +829,17 @@ func (c *checker) fieldLhs(e *ast.SelectorExpr) {
 		c.unsupported(e, "assignment to "+types.ExprString(e))
 		return
 	}
+	if pt := pointerOf(c.p.Info.TypeOf(e.X)); pt != nil && structType(pt.Elem()) != nil {
+		c.expr(e.X) // p.X = v through a pointer, any expression (15.6)
+		return
+	}
 	if t := c.p.Info.TypeOf(e.X); structType(t) == nil {
 		c.unsupported(e, "field assignment on "+types.TypeString(t, pkgName))
 		return
 	}
 	switch x := ast.Unparen(e.X).(type) {
+	case *ast.StarExpr: // (*p).X = v
+		c.expr(x.X)
 	case *ast.Ident:
 	case *ast.SelectorExpr:
 		c.fieldLhs(x)
@@ -915,6 +864,16 @@ func (c *checker) assign(s *ast.AssignStmt) {
 		}
 		c.call(call, true)
 		return
+	}
+	if len(s.Lhs) == 2 && len(s.Rhs) == 1 && (s.Tok == token.ASSIGN || s.Tok == token.DEFINE) {
+		if ix, ok := ast.Unparen(s.Rhs[0]).(*ast.IndexExpr); ok && isMap(c.p.Info.TypeOf(ix.X)) { // v, ok := m[k]
+			for _, l := range s.Lhs {
+				c.lhs(l)
+			}
+			c.convertType(c.p.Info.TypeOf(s.Lhs[0]), mapOf(c.p.Info.TypeOf(ix.X)).Elem(), ix.Pos())
+			c.indexExpr(ix)
+			return
+		}
 	}
 	if ta := commaOk(s.Lhs, s.Rhs); ta != nil && (s.Tok == token.ASSIGN || s.Tok == token.DEFINE) { // v, ok := x.(T)
 		for _, l := range s.Lhs {
@@ -1009,7 +968,7 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 			if isFsFile(c.p.Info.TypeOf(t)) {
 				c.unsupported(t, "type switch case fs.File not supported; wrap it in a struct")
 			} else if !c.caseType(t) && !c.ifaceCase(t) {
-				c.unsupported(t, "type switch case other than a struct, int, int64, byte, float32, float64, bool, string, a named type of those, actor.PID, actor.Ref or bytes.Bytes")
+				c.unsupported(t, "type switch case other than a struct, int, int64, byte, float32, float64, bool, string, a named type of those, a pointer, actor.PID, actor.Ref or bytes.Bytes")
 			}
 		}
 		for _, b := range cc.Body {
@@ -1063,6 +1022,8 @@ func (c *checker) caseType(t ast.Expr) bool {
 		return false
 	}
 	switch ty := types.Unalias(tv.Type).(type) {
+	case *types.Pointer, *types.Map: // *T, map[K]V (15.6)
+		return c.typeProblem(ty) == ""
 	case *types.Basic:
 		return isCaseBasic(ty) || intKindOf(ty).bits != 0 // a sized integer is boxed
 	case *types.Named:
@@ -1131,6 +1092,10 @@ func (p *Program) stubName(fn *types.Func) string {
 		return "math." + fn.Name()
 	case StrconvPath:
 		return "strconv." + fn.Name()
+	case MapsPath:
+		return "maps." + fn.Name()
+	case FmtPath:
+		return "fmt." + fn.Name()
 	}
 	return ""
 }
@@ -1221,8 +1186,14 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 		switch obj := c.p.Info.Uses[fun].(type) {
 		case *types.Builtin:
 			switch obj.Name() {
-			case "len", "cap", "append", "make", "copy":
+			case "len", "cap", "append", "make", "copy", "delete", "clear":
 				c.seqBuiltin(call, obj.Name())
+				return
+			case "new": // new(T) (15.6)
+				c.typeExpr(call.Args[0])
+				if isArray(c.p.Info.TypeOf(call.Args[0])) {
+					c.unsupported(call, "pointer to an array")
+				}
 				return
 			case "panic": // panic(v): v goes into an any
 				c.convert(anyType, call.Args[0])
@@ -1320,15 +1291,73 @@ func (p *Program) ifaceMethod(sel *ast.SelectorExpr) bool {
 // its own that takes a B: it is rejected, and so is I.M of an interface I.
 func (c *checker) methodRecv(sel *ast.SelectorExpr) {
 	s := c.p.Info.Selections[sel]
+	fn, _ := s.Obj().(*types.Func)
+	ptrRecv := fn != nil && isPointer(fn.Type().(*types.Signature).Recv().Type())
 	if s.Kind() == types.MethodVal {
 		c.expr(sel.X)
+		if !ptrRecv || isIface(s.Recv()) {
+			return
+		}
+		// A pointer method: on a pointer, or on a local variable (&x). A
+		// slice element, a field or a promoted method would need a
+		// pointer into it (no interior pointers).
+		_, isVar := ast.Unparen(sel.X).(*ast.Ident)
+		switch {
+		case c.isGlobal(sel.X):
+			c.fail(sel.Pos(), "package-level variable %s is read-only: its method %s has a pointer receiver", types.ExprString(sel.X), fn.Name())
+		case len(s.Index()) > 1:
+			c.fail(sel.Pos(), "method %s with a pointer receiver promoted from an embedded field not supported: it needs a pointer to the field (no interior pointers); call it on the field of a pointer, or embed a value whose methods have value receivers", fn.Name())
+		case !isPointer(c.p.Info.TypeOf(sel.X)) && !isVar:
+			c.fail(sel.Pos(), "method %s has a pointer receiver: %s needs a pointer to it (no interior pointers: &s[i], &v.F); use a pointer (a []*T, a *T field) or a local variable", fn.Name(), types.ExprString(sel.X))
+		}
 		return
 	}
 	if isIface(s.Recv()) {
 		c.unsupported(sel, "method expression on an interface type")
 	} else if len(s.Index()) > 1 {
 		c.unsupported(sel, "method expression of a promoted method")
+	} else if isPointer(s.Recv()) && !ptrRecv {
+		c.unsupported(sel, "method expression (*T).M of a value method")
 	}
+}
+
+// addrOf checks &x (15.6): &T{...} of a composite literal (not an array),
+// or &v of a local variable (not an array), which then lives in a box. An
+// interior pointer, &s[i] or &v.F, is rejected: it would point into a
+// slice's array or a struct field.
+func (c *checker) addrOf(e *ast.UnaryExpr) {
+	switch x := ast.Unparen(e.X).(type) {
+	case *ast.CompositeLit:
+		if isArray(c.p.Info.TypeOf(x)) {
+			c.unsupported(e, "pointer to an array")
+			return
+		}
+		c.compositeLit(x)
+		return
+	case *ast.Ident:
+		v, ok := c.p.Info.Uses[x].(*types.Var)
+		switch {
+		case !ok:
+		case c.isGlobal(x):
+			c.fail(e.Pos(), "address of package-level variable %s not supported: package-level variables are read-only", x.Name)
+		case isArray(v.Type()):
+			c.unsupported(e, "pointer to an array")
+		default:
+			c.expr(x)
+		}
+		return
+	}
+	c.fail(e.Pos(), "interior pointer %s not supported: gogo has no pointers into a slice element or a struct field; use a []*T or a *T field, or s[i].F = v", types.ExprString(e))
+}
+
+// isGlobal reports whether e names a package-level variable.
+func (c *checker) isGlobal(e ast.Expr) bool {
+	id, ok := ast.Unparen(e).(*ast.Ident)
+	if !ok {
+		return false
+	}
+	v, ok := c.p.Info.Uses[id].(*types.Var)
+	return ok && !v.IsField() && v.Pkg() != nil && v.Parent() == v.Pkg().Scope()
 }
 
 // libFunc reports whether sel names a function of a compiled library
@@ -1447,6 +1476,9 @@ func (c *checker) expr(e ast.Expr) {
 			c.methodRecv(e) // x.M, a method value, or T.M, a method expression
 			return
 		}
+		if globalVar(c.p.Info, e) != nil {
+			return // lib.V, a package-level variable
+		}
 		if c.stubPromoted(e) {
 			return
 		}
@@ -1459,10 +1491,16 @@ func (c *checker) expr(e ast.Expr) {
 	case *ast.CallExpr:
 		c.call(e, false)
 	case *ast.UnaryExpr:
+		if e.Op == token.AND {
+			c.addrOf(e)
+			return
+		}
 		if e.Op != token.SUB && e.Op != token.NOT && e.Op != token.XOR {
 			c.unsupported(e, "operator "+e.Op.String())
 			return
 		}
+		c.expr(e.X)
+	case *ast.StarExpr: // *p (15.6)
 		c.expr(e.X)
 	case *ast.BinaryExpr:
 		c.binary(e)
@@ -1522,6 +1560,23 @@ func (c *checker) compositeLitIn(e *ast.CompositeLit, elided bool) {
 	t := c.p.Info.TypeOf(e)
 	if sl, ok := underlying(t).(*types.Slice); ok {
 		c.sliceLit(e, sl)
+		return
+	}
+	if mt := mapOf(t); mt != nil { // map[K]V{k: v, ...} (15.6)
+		for _, el := range e.Elts {
+			kv := el.(*ast.KeyValueExpr)
+			for _, x := range []struct {
+				e ast.Expr
+				t types.Type
+			}{{kv.Key, mt.Key()}, {kv.Value, mt.Elem()}} {
+				c.convert(x.t, x.e)
+				if lit, ok := x.e.(*ast.CompositeLit); ok && lit.Type == nil {
+					c.compositeLitIn(lit, true)
+					continue
+				}
+				c.expr(x.e)
+			}
+		}
 		return
 	}
 	if at := arrayType(t); at != nil {
@@ -1610,7 +1665,7 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 // struct whose fields are all comparable (go/types has rejected slices and funcs; a Bytes field
 // compares by content; a Buffer does not compare).
 func (c *checker) comparable(t types.Type) bool {
-	if isPID(t) || isRef(t) || isIface(t) {
+	if isPID(t) || isRef(t) || isIface(t) || isPointer(t) { // a pointer by identity
 		return true
 	}
 	if a := arrayType(t); a != nil { // element by element
@@ -1656,8 +1711,15 @@ func (c *checker) indexArg(e ast.Expr) {
 	}
 }
 
-// indexExpr checks s[i] on a string (a byte), a slice or an array.
+// indexExpr checks s[i] on a string (a byte), a slice or an array, and
+// m[k] on a map.
 func (c *checker) indexExpr(e *ast.IndexExpr) {
+	if mt := mapOf(c.p.Info.TypeOf(e.X)); mt != nil {
+		c.expr(e.X)
+		c.convert(mt.Key(), e.Index)
+		c.expr(e.Index)
+		return
+	}
 	if xt := c.p.Info.TypeOf(e.X); !isString(xt) && !isSlice(xt) && !isArray(xt) {
 		c.unsupported(e, "index of "+types.TypeString(xt, nil))
 		return
@@ -1693,7 +1755,7 @@ func (c *checker) sliceExpr(e *ast.SliceExpr) {
 // string ranges over bytes, not runes: i is the byte index and c the byte
 // value (typed rune, an int32, as in Go; gogo's rune is an int).
 func (c *checker) rangeStmt(s *ast.RangeStmt) {
-	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) && !isArray(xt) && !isInteger(xt) {
+	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) && !isArray(xt) && !isInteger(xt) && !isMap(xt) {
 		c.unsupported(s, "range over "+types.TypeString(c.p.Info.TypeOf(s.X), nil))
 		return
 	}
@@ -1764,7 +1826,7 @@ func (c *checker) nilCompare(e *ast.BinaryExpr) bool {
 	if isNil(x) {
 		x, y = y, x
 	}
-	if !isNil(y) || (!isSlice(c.p.Info.TypeOf(x)) && !isIface(c.p.Info.TypeOf(x))) {
+	if xt := c.p.Info.TypeOf(x); !isNil(y) || (!isSlice(xt) && !isIface(xt) && !isPointer(xt) && !isMap(xt)) {
 		return false
 	}
 	c.nilSlice(y)
@@ -1802,8 +1864,8 @@ func (c *checker) seqBuiltin(call *ast.CallExpr, name string) {
 	argType := func(i int) types.Type { return c.p.Info.TypeOf(call.Args[i]) }
 	switch name {
 	case "len":
-		if len(call.Args) != 1 || (!isString(argType(0)) && !isSlice(argType(0)) && !isArray(argType(0))) {
-			c.unsupported(call, "len of anything but a string, a slice or an array")
+		if len(call.Args) != 1 || (!isString(argType(0)) && !isSlice(argType(0)) && !isArray(argType(0)) && !isMap(argType(0))) {
+			c.unsupported(call, "len of anything but a string, a slice, an array or a map")
 			return
 		}
 		c.expr(call.Args[0])
@@ -1831,15 +1893,38 @@ func (c *checker) seqBuiltin(call *ast.CallExpr, name string) {
 			c.expr(a)
 		}
 	case "make":
+		if isMap(argType(0)) { // make(map[K]V[, n])
+			c.typeExpr(call.Args[0])
+			for _, a := range call.Args[1:] {
+				c.indexArg(a)
+			}
+			return
+		}
 		if !isSlice(argType(0)) {
-			c.unsupported(call, "make of anything but a slice")
+			c.unsupported(call, "make of anything but a slice or a map")
 			return
 		}
 		c.typeExpr(call.Args[0])
 		for _, a := range call.Args[1:] {
 			c.indexArg(a)
 		}
+	case "delete", "clear": // a map's (15.6)
+		if !isMap(argType(0)) {
+			c.unsupported(call, name+" of anything but a map")
+			return
+		}
+		if c.globalWrite(call.Args[0]) {
+			return
+		}
+		c.expr(call.Args[0])
+		if name == "delete" {
+			c.convert(mapOf(argType(0)).Key(), call.Args[1])
+			c.expr(call.Args[1])
+		}
 	case "copy":
+		if c.globalWrite(call.Args[0]) {
+			return
+		}
 		c.expr(call.Args[0])
 		c.expr(call.Args[1])
 	}
@@ -1879,6 +1964,38 @@ func (c *checker) stubPromoted(sel *ast.SelectorExpr) bool {
 	return true
 }
 
+// mapKeyProblem says why t cannot be a map's key type, or "": keys are
+// ordered by B_CMP, which compares a pointer, a map or a func by identity,
+// an order the GC changes, so no key may hold one (an interface key
+// holding one is not caught: known-issues).
+func (c *checker) mapKeyProblem(t types.Type, seen map[types.Type]bool) string {
+	if seen[t] {
+		return ""
+	}
+	if seen == nil {
+		seen = map[types.Type]bool{}
+	}
+	seen[t] = true
+	switch u := t.Underlying().(type) {
+	case *types.Pointer:
+		return "a pointer key (no pointer keys: pointers move)"
+	case *types.Map, *types.Signature, *types.Slice:
+		return "not comparable"
+	case *types.Array:
+		return c.mapKeyProblem(u.Elem(), seen)
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			if msg := c.mapKeyProblem(u.Field(i).Type(), seen); msg != "" {
+				return msg
+			}
+		}
+	}
+	if isBuffer(t) {
+		return "not comparable"
+	}
+	return ""
+}
+
 // holdsUnsigned reports whether t is a struct, slice or array type with a
 // uint32, uint or uint64 inside (at any depth): println prints such a
 // value's fields and elements without their static types, so these would
@@ -1907,6 +2024,16 @@ func holdsUnsigned(t types.Type, seen map[types.Type]bool) bool {
 	case *types.Array:
 		if k := intKindOf(u.Elem()); k.unsigned && k.bits >= 32 || holdsUnsigned(u.Elem(), seen) {
 			return true
+		}
+	case *types.Pointer: // println prints the target (15.6)
+		if k := intKindOf(u.Elem()); k.unsigned && k.bits >= 32 || holdsUnsigned(u.Elem(), seen) {
+			return true
+		}
+	case *types.Map:
+		for _, x := range []types.Type{u.Key(), u.Elem()} {
+			if k := intKindOf(x); k.unsigned && k.bits >= 32 || holdsUnsigned(x, seen) {
+				return true
+			}
 		}
 	}
 	return false

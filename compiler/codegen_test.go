@@ -222,9 +222,9 @@ func main() {
 }
 
 func TestCompileErrorsSurface(t *testing.T) {
-	err := compileErr(t, "package main\nfunc main() {\n\tm := map[string]int{}\n\t_ = m\n}\n")
-	if !strings.Contains(err.Error(), "map") {
-		t.Errorf("error %q does not mention map", err)
+	err := compileErr(t, "package main\nfunc main() {\n\tm := 1.5i\n\t_ = m\n}\n")
+	if !strings.Contains(err.Error(), "complex") {
+		t.Errorf("error %q does not mention complex", err)
 	}
 }
 
@@ -904,7 +904,7 @@ func TestCodegenTwoResultBuiltinStmt(t *testing.T) {
 	}
 	g.nameLits([]*ast.FuncDecl{fd})
 	info := &funcInfo{name: "main"}
-	if err := g.compileFunc(info, nil, nil, fd.Body); err != nil {
+	if err := g.compileFunc(info, nil, 0, nil, fd.Body); err != nil {
 		t.Fatal(err)
 	}
 	found := false

@@ -79,30 +79,30 @@ func main() {
 		return
 	}
 	items := []string{"Start", "Pause", "Reset", "Rename", "About", "Quit"}
-	st := []State{{Menu: tui.NewList(items, len(items)), Name: "gogo", Status: "ready", Kbd: keys.HasKbd}}
+	st := State{Menu: tui.NewList(items, len(items)), Name: "gogo", Status: "ready", Kbd: keys.HasKbd}
 	self := actor.Self()
 	actor.SendAfter(200, self, tick{})
 	keys = tui.Run(s, keys, tui.Handlers{
 		Key: func(k tui.Key) bool {
-			n, more := onKey(st[0], k)
-			st[0] = n
+			n, more := onKey(st, k)
+			st = n
 			return more
 		},
 		Msg: func(msg any) bool {
 			switch msg.(type) {
 			case tick:
-				st[0] = onTick(st[0])
+				st = onTick(st)
 				actor.SendAfter(200, self, tick{})
 			}
 			return true
 		},
 		Draw: func(f tui.Frame) {
-			draw(f, s, st[0])
+			draw(f, s, st)
 		},
 	})
 	tui.CloseKeys(keys)
 	tui.Close(s)
-	println("tuidemo: bye,", st[0].Name)
+	println("tuidemo: bye,", st.Name)
 }
 
 func onTick(st State) State {

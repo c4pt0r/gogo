@@ -1,0 +1,183 @@
+// Maps (15.6): make, literals, m[k] with the zero value for a missing
+// key, comma-ok, assignment, op=, ++, delete, len, clear, range, nil
+// maps, maps as references, maps of maps and of slices, struct, array,
+// interface and int64 keys, and maps in interfaces. Go iterates a map in
+// a random order, so this program sorts what it ranges over (gogo's
+// order is the keys' own: maps_order). Valid Go: `go run` prints the
+// same.
+package main
+
+type Point struct{ X, Y int }
+
+type Color int
+
+type ID int64
+
+const (
+	Red Color = iota
+	Green
+	Blue
+)
+
+func sortedKeys(m map[string]int) []string {
+	var ks []string
+	for k := range m {
+		ks = append(ks, k)
+	}
+	for i := 1; i < len(ks); i++ {
+		for j := i; j > 0 && ks[j] < ks[j-1]; j-- {
+			ks[j], ks[j-1] = ks[j-1], ks[j]
+		}
+	}
+	return ks
+}
+
+func show(m map[string]int) {
+	s := ""
+	for _, k := range sortedKeys(m) {
+		s += k + "=" + itoa(m[k]) + " "
+	}
+	println(len(m), s)
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	b := []byte{}
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	if neg {
+		return "-" + string(b)
+	}
+	return string(b)
+}
+
+func count(words []string) map[string]int {
+	m := map[string]int{}
+	for _, w := range words {
+		m[w]++
+	}
+	return m
+}
+
+func main() {
+	m := make(map[string]int)
+	m["b"] = 2
+	m["a"] = 1
+	m["c"] = 3
+	m["b"] += 10
+	m["d"]++
+	println(m["a"], m["b"], m["zz"])
+	show(m)
+	v, ok := m["c"]
+	println(v, ok)
+	v, ok = m["q"]
+	println(v, ok)
+	delete(m, "a")
+	delete(m, "nope")
+	show(m)
+
+	// a map is a reference: n and m are one map
+	n := m
+	n["x"] = 9
+	println(len(m), m["x"])
+	show(count([]string{"go", "gogo", "go", "actor", "go"}))
+
+	// nil maps read as empty
+	var nilm map[string]int
+	println(nilm == nil, len(nilm), nilm["a"], m != nil)
+	for range nilm {
+		println("never")
+	}
+
+	// keys of other types
+	pm := map[Point]string{{1, 2}: "a", {0, 5}: "b"}
+	pm[Point{1, 2}] += "!"
+	println(pm[Point{1, 2}], pm[Point{0, 5}], pm[Point{9, 9}] == "", len(pm))
+	big := map[int64]int{1 << 40: 1, -5: 2, 3: 3}
+	big[1<<40] *= 7
+	println(big[1<<40], big[-5], big[4], len(big))
+	ksum := int64(0)
+	for k, v := range big {
+		ksum += k / 2 * int64(v)
+	}
+	println(ksum)
+	um := map[uint64]int{1: 1, 1 << 63: 2}
+	n2, top := 0, 0
+	for k, v := range um {
+		n2 += v
+		if k == 1<<63 {
+			top = v
+		}
+	}
+	println(n2, top)
+	im64 := map[ID]string{3: "a", 1 << 40: "b"}
+	for k, v := range im64 {
+		if k == 3 {
+			println(v, k+1)
+		}
+	}
+	cm := map[Color]string{Red: "red", Blue: "blue"}
+	println(cm[Blue], cm[Green] == "", len(cm))
+	ak := map[[2]int]int{{1, 2}: 12}
+	k := [2]int{1, 2}
+	ak[k]++
+	k[0] = 5
+	println(ak[[2]int{1, 2}], ak[k], len(ak))
+	im := map[any]int{1: 1, "one": 2, int64(1): 3, Point{1, 1}: 4}
+	println(im[1], im["one"], im[int64(1)], im[Point{1, 1}], im[2], len(im))
+	fm := map[float64]string{1.5: "x", 0: "zero"}
+	println(fm[1.5], fm[-0.0], len(fm))
+	bm := map[bool]int{true: 1}
+	bm[false]--
+	println(bm[true], bm[false], len(bm))
+
+	// maps of maps, of slices, of structs
+	mm := map[string]map[string]int{}
+	mm["a"] = map[string]int{}
+	mm["a"]["b"] = 5
+	println(mm["a"]["b"], len(mm["z"]))
+	ms := map[string][]int{}
+	ms["x"] = append(ms["x"], 1, 2)
+	ms["x"][0] = 7
+	println(len(ms["x"]), ms["x"][0])
+	mp := map[string]Point{"o": {}}
+	p := mp["o"]
+	p.X = 3
+	println(mp["o"].X, p.X)
+
+	// delete while ranging: allowed, as in Go
+	d := map[int]int{1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6}
+	for k := range d {
+		if k%2 == 0 {
+			delete(d, k)
+		}
+	}
+	println(len(d), d[1], d[3], d[5], d[2])
+	sum := 0
+	for k, v := range d {
+		sum += k * v
+	}
+	println(sum)
+	clear(d)
+	println(len(d))
+
+	// in an interface
+	var a any = m
+	if mv, ok := a.(map[string]int); ok {
+		println(len(mv))
+	}
+	switch a.(type) {
+	case map[string]bool:
+		println("wrong")
+	case map[string]int:
+		println("map[string]int")
+	}
+}

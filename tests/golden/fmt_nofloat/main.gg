@@ -1,0 +1,15 @@
+// gogo/fmt formats floats, but a program that makes none needs no float
+// support: it runs on a VM built without floating point.
+package main
+
+import "gogo/fmt"
+
+type Celsius int
+
+func (c Celsius) String() string { return fmt.Sprintf("%d°C", int(c)) }
+
+func main() {
+	fmt.Printf("%d|%5s|%v|%x\n", 42, "go", Celsius(21), 255)
+	var x any = 7
+	fmt.Println(x, []int{1, 2}, fmt.Sprint("a", 1))
+}

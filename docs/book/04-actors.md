@@ -521,8 +521,9 @@ parent still has 1
 same pid: true false
 ```
 
-This is why gogo insists that captured variables never change (chapter
-3): the copy is taken at one moment, and that moment must not matter.
+A captured variable that the closure and its maker both change (chapter
+3) is shared within one actor; a spawned closure takes a copy of it with
+it, so from then on the child's variable is its own.
 
 `SpawnLink` and `SpawnOpt` are variants of `Spawn` that link the new actor
 to the caller and set its memory limit; they come up in the next two

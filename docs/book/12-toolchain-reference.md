@@ -61,7 +61,7 @@ Messages from Go's type checker look like Go's (`declared and not used: x`);
 messages about the subset start with `gogo:`:
 
 ```text
-main.gg:9:2: gogo: captured variable must not be reassigned
+main.gg:9:7: gogo: interior pointer &s[0] not supported: gogo has no pointers into a slice element or a struct field; use a []*T or a *T field, or s[i].F = v
 ```
 
 Type errors are reported first; subset errors appear once the program
@@ -112,9 +112,11 @@ The image also records, by name, what it needs from the board (its
 requirements, appendix F): the driver of every `port.Open` with a constant
 driver name (`"kbd"`, `"tcp"`, a host port's `"ui"`), and the mount `/sd`
 for constant `/sd` paths, in `package main` and in every library compiled
-in. An image that uses floating point (a float value, operation,
-constant or type switch case, `gogo/math`, `strconv.FormatFloat` or
-`ParseFloat`) also requires `float`, the firmware option `GOGO_FLOAT`. An
+in. An image that can make a float (a float constant, a conversion of an
+integer to a float, `math.Inf`, `math.NaN`, `strconv.ParseFloat`) also
+requires `float`, the firmware option `GOGO_FLOAT`; code that only handles
+floats it is given (`gogo/fmt`'s formatting, a float case of a type
+switch) requires nothing, since without a source no float can reach it. An
 import by itself requires nothing. A firmware that lacks a required
 driver or mount refuses the image at boot, naming it:
 

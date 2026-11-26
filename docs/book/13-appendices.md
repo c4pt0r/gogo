@@ -297,6 +297,7 @@ them) are described in chapters 15 and 16.
 | 8 | `actor.BadShift` | `badshift` | negative shift count |
 | 9 | `actor.BadMsg` | `badmsg` | sent a message holding a module's own struct or closure to an actor of another module (the sender exits; chapter 14) |
 | 10 | `actor.Panic` | `panic` | `panic(v)` (which first prints `panic: v` on standard error) |
+| 12 | `actor.Nil` | `nil` | a nil pointer dereference: a field read or write, or `*p`, of a nil pointer; a write to a nil map |
 | 11..63 | | | kept for the VM |
 | 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus a shared code, 1..35 (appendix C); `http.ListenFailed` is 69, `actor.Failed + errors.Busy` |
 | 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)` |
@@ -381,17 +382,17 @@ under another name, and these codes under the same names.
 | goroutines, channels, `select` | actors: `actor.Spawn`, `Send`, `Receive` |
 | shared memory between goroutines | none; every actor has its own heap |
 | sending a slice shares it | `Send` deep-copies (large frozen `Bytes` are shared, read-only) |
-| closures capture variables by reference | closures copy captured values; captured variables must not be reassigned |
+| closures capture variables by reference | the same within an actor; a spawned closure takes copies of them |
 | `int` is 64 bits on most machines | `int` is always 32 bits |
 | `uint` is 64 bits on most machines | `uint` is 32 bits, like `int`; `int8` .. `uint64` as in Go, but not in an `any` |
 | complex, `uintptr` | none |
-| maps, pointers | slices of structs, searched |
-| methods with pointer receivers | value receivers that return the new value |
+| maps, random iteration order | maps in key order; sorted slices underneath (O(n) insert); copied when sent |
+| pointers, `&s[i]` | pointers copied (with what they point to) when sent; no pointers into slices or fields |
 | `goto` | labeled `break`/`continue` |
 | generics | none |
 | `error`, `panic`, `recover` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |
 | `defer` anywhere, run on panics too | `defer` outside loops only, run on normal returns only |
-| package-level `var`, `init` | `const`; state in actors |
+| package-level `var`, `init` | read-only package-level `var`s, set at build time; state in actors; no `init` |
 | multiple packages, the standard library | one `package main`; `gogo/...` packages only |
 | `fmt.Println` | `println` (prints slices' elements; Go's `println` prints an address) |
 | UTF-8 aware `range` over strings | bytes |

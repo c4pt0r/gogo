@@ -1,5 +1,5 @@
-// Functions: several results, named results, function values, closures,
-// and the rule that a captured variable must not change.
+// Functions: several results, named results, function values and
+// closures.
 package main
 
 func divmod(a, b int) (int, int) {
@@ -29,8 +29,7 @@ func apply(f func(int) int, xs []int) []int {
 	return out
 }
 
-// adder returns a closure. step is captured by value when the closure is
-// made, and is never assigned again.
+// adder returns a closure that captures step.
 func adder(step int) func(int) int {
 	return func(x int) int { return x + step }
 }
@@ -79,12 +78,11 @@ func main() {
 	show(apply(adder(10), xs))
 	show(apply(func(x int) int { return x * x }, xs))
 
-	// A closure that needs changing state gets it as an argument and
-	// returns the new value instead of assigning a captured variable.
-	count := func(n int, s string) int { return n + len(s) }
+	// A closure that changes a variable it captures.
 	total := 0
+	count := func(s string) { total += len(s) }
 	for _, w := range []string{"go", "gogo", "actor"} {
-		total = count(total, w)
+		count(w)
 	}
 	println("letters", total)
 }

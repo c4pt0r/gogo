@@ -7,13 +7,13 @@ This is the per-opcode reference for the gogo VM, generated from the single sour
 `runtime/vm/opcodes.h` (the Go compiler parses the same file, `compiler/opcodes.go` mirrors it and
 `TestOpcodesMatchC` keeps the two equal). The design behind it is in [design.md](design.md) §5.6
 (bytecode, image layout, versioning) and §5.5 (value representation); `gogo dis file.ggb` prints a
-program's bytecode. Image format 15.4.
+program's bytecode. Image format 15.6.
 
 ## Contents
 
 - [Instruction encoding](#instruction-encoding)
-- [Opcodes](#opcodes) (67)
-- [Builtins](#builtins) (58)
+- [Opcodes](#opcodes) (68)
+- [Builtins](#builtins) (62)
 - [Type ids and reserved types](#type-ids-and-reserved-types)
 - [Exit reasons](#exit-reasons)
 - [Image file layout](#image-file-layout)
@@ -52,8 +52,8 @@ ids and jump targets (absolute code word indexes) are checked when used, and an 
 | 17 | `OP_JMPT` | `a=cond ext=target` | +ext | `if ra: pc = code + ext` | Jump if ra is true. |
 | 18 | `OP_CALL` | `a=dst b=args c=nargs ext=func` | +ext | `ra = func ext(rb .. rb+c-1)` | Call a function by index; c must equal its parameter count. The result returns into ra via RET or RETN. |
 | 19 | `OP_RET` | `a=src` |  | `return ra` | Return one value into the caller's CALL or CALLV destination register. |
-| 20 | `OP_NEWSTRUCT` | `a=dst b=fields c=nfields ext=type` | +ext | `ra = struct ext{rb .. rb+c-1}` | Allocate a struct of type ext (reserved index or TYPE_OWN_BASE + n); c must equal the type's field count. |
-| 21 | `OP_GETFIELD` | `a=dst b=struct c=index` |  | `ra = rb.fields[c]` | Read a field; past the end of an older image's reserved struct it reads int 0, of an own struct it is badcode. |
+| 20 | `OP_NEWSTRUCT` | `a=dst b=fields c=nfields ext=type` | +ext | `ra = struct ext{rb .. rb+c-1}` | Allocate a struct of type ext (reserved index or TYPE_OWN_BASE + n); c must equal the type's field count. The struct's type word carries its row's flags (15.6: mutable, map, box; term.h). |
+| 21 | `OP_GETFIELD` | `a=dst b=struct c=index` |  | `ra = rb.fields[c]` | Read a field; past the end of an older image's reserved struct it reads int 0, of an own struct it is badcode; nil crashes with R_NIL (15.6). |
 | 22 | `OP_MKCLOSURE` | `a=dst b=captures c=ncaptures ext=func` | +ext | `ra = closure func ext{rb .. rb+c-1}` | Allocate a closure of function ext capturing registers rb .. rb+c-1. |
 | 23 | `OP_TYPEIS` | `a=dst b=value ext=type` | +ext | `ra = (dynamic type of rb == ext)` | Type test: ext is a TY_* id or a struct type id. |
 | 24 | `OP_BUILTIN` | `a=dst b=args c=nargs ext=builtin` | +ext | `ra = builtin ext(rb .. rb+c-1)` | Call a builtin (B_*). Two-result builtins also write ra+1. |
@@ -99,6 +99,7 @@ ids and jump targets (absolute code word indexes) are checked when used, and an 
 | 64 | `OP_LTU64` | `a=dst b=lhs c=rhs` |  | `ra = rb < rc` | uint64 less-than. |
 | 65 | `OP_LEU64` | `a=dst b=lhs c=rhs` |  | `ra = rb <= rc` | uint64 less-or-equal. |
 | 66 | `OP_SHRU64` | `a=dst b=value c=count` |  | `ra = rb >> rc` | uint64 logical right shift (count as SHR: a count >= 64 gives 0). |
+| 67 | `OP_SETFIELD` | `a=src b=struct c=index` |  | `rb.fields[c] = ra` | Write a field of a heap struct of a mutable type (a pointer's target, a map header); nil crashes with R_NIL, anything else (a const or immutable struct, past the end) is badcode. |
 
 ## Builtins
 
@@ -164,7 +165,11 @@ the registers `rb ..`; a builtin with two results writes `ra` and `ra+1`.
 | 54 | `B_FLOAT` | `op int, args...` | `result(s)` | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). |
 | 55 | `B_PRINTLNU` | `mask, values...` | `nil` | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. |
 | 56 | `B_PANIC` | `v` | `(does not return)` | panic(v): print "panic: " and v (as println prints it) to stderr, then end the calling actor with R_PANIC. Deferred calls do not run. |
-| 57 | `B_CMP` | `a, b [, x]` | `-1 \| 0 \| 1` | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field, arrays (slices) element by element, anything else by term identity (a func, a Buffer). A third argument (its value unused) says a and b are arrays; without it a slice at the top, one held by an interface, equals nothing, itself included. Nesting past 64 levels, other than through a struct's last field or an array's last element, is badcode, and so is a compare that visits more than 65536 terms (values sharing subvalues). Does not preempt. |
+| 57 | `B_CMP` | `a, b [, x [, mode]]` | `-1 \| 0 \| 1 \| 2` | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field (a struct of a mutable type, a pointer or a map, by identity: 15.6), arrays (slices) element by element, anything else by term identity (a func, a Buffer). A third argument (its value unused) says a and b are arrays; without it a slice at the top, one held by an interface, equals nothing, itself included. Nesting past 64 levels, other than through a struct's last field or an array's last element, is badcode, and so is a compare that visits more than 65536 terms (values sharing subvalues). Does not preempt. A fourth argument (15.6, gogo/maps), a mode, makes it a total order: a NaN equals a NaN and sorts before every other float, and a value it cannot order (a func, a Buffer, a pointer or a map at any depth, or with mode 2 a slice at the top) gives 2. |
+| 58 | `B_RESERVED_58` | - | - | Kept for distributed actors (badcode until then). |
+| 59 | `B_RESERVED_59` | - | - | Kept for distributed actors (badcode until then). |
+| 60 | `B_RESERVED_60` | - | - | Kept for distributed actors (badcode until then). |
+| 61 | `B_SPRINT` | `mode, v` | `string \| nil` | The text println prints for v, without the newline (a box as its value, a pointer's target after &, a map as map[k:v ...]): mode 0 returns it as a new string, mode 1 writes it to the console (gogo/fmt). |
 
 ## Type ids and reserved types
 
@@ -253,6 +258,7 @@ codes are >= 100.
 | 8 | `R_BAD_SHIFT` |  |
 | 9 | `R_BAD_MSG` | a value that may not cross modules (msg.h) |
 | 10 | `R_PANIC` | panic(v), a failed type assertion, a method call on a nil interface (15.4) |
+| 12 | `R_NIL` | a nil pointer dereference, a write to a nil map: GETFIELD or SETFIELD of nil (15.6) |
 | 64 | `R_FAILED` | + a GOGO_E_* code: a library failure (no VM code uses it) |
 
 ## Image file layout

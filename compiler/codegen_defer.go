@@ -217,6 +217,8 @@ func (f *fn) retToNamed(s *ast.ReturnStmt) {
 		r := uint8(f.named + i)
 		if isArray(t) {
 			f.copyElems(s, r, base+uint8(i))
+		} else if v := f.namedBoxed(i); v != nil { // a named result in a box (D7)
+			f.storeDeref(s, varPtr(v), r, base+uint8(i))
 		} else {
 			f.asm.Emit(OpMove, r, base+uint8(i), 0)
 		}

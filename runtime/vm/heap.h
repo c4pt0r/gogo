@@ -89,10 +89,11 @@ static inline term field_term(term t, term f) {
     return (term_is_const(t) && term_is_const(f)) ? f | (t & MOD_TAG_MASK) : f;
 }
 
-/* The type word of the struct obj that t names: a const struct's word is
- * untagged in its image; a module type gets the module's tag. */
+/* The type word of the struct obj that t names, without its flags
+ * (STRUCT_FLAGS): a const struct's word is untagged in its image; a module
+ * type gets the module's tag. */
 static inline uint32_t struct_type(term t, const uint32_t *obj) {
-    uint32_t ty = obj[1];
+    uint32_t ty = obj[1] & ~STRUCT_FLAGS;
     return (term_is_const(t) && ty >= TYPE_OWN_BASE) ? ty | (t & MOD_TAG_MASK) : ty;
 }
 

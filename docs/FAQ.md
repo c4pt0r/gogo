@@ -231,13 +231,15 @@ fields and methods), arrays (`[N]T`, values as in Go, but not in an
 (`int8` .. `uint64` and `uint`, 32 bits like `int`), a static
 `defer` (not inside loops; deferred calls run on normal returns only,
 not when the actor crashes or panics), interfaces (with `error`), type
-assertions, `==` on structs, arrays and interfaces, and `panic` are
-supported.
-Planned, in this order: pointers (boxed, copied when sent) and pointer receivers, maps (a
-library, deterministic order), read-only package variables and `fmt`.
-Not planned: `goto`, `recover`, `defer` inside loops,
-per-actor mutable globals, channels, `go` statements. Generics are
-deferred.
+assertions, `==` on structs, arrays and interfaces, `panic`, pointers and
+pointer receivers (copied with what they point to when sent; no
+pointers into slices or fields), maps (a library: iteration in key order,
+O(n) insert), closures that share what they capture (Go 1.22 loop
+variables), read-only package-level variables, and `gogo/fmt` (no
+reflection: `%T` and `%p` are missing) are supported.
+What remains outside: generics (deferred), goroutines, channels and
+`select` (actors instead), `recover` (supervisors instead), `unsafe` and
+reflection, `goto`, `defer` inside loops and per-actor mutable globals.
 
 ### Why does my function that returns `error` fail on success?
 Probably it returns an `errors.Code` from `gogo/fs` or `gogo/code`

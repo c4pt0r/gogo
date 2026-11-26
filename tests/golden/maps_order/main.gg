@@ -1,0 +1,39 @@
+// gogo ranges over a map in the order of its keys (Go's order is
+// random): numbers by value, strings byte by byte, structs field by
+// field. println prints a map as Go's fmt does, map[k:v ...]. A
+// package-level map is sorted when the program is built.
+package main
+
+type P struct{ A, B int }
+
+var table = map[string]int{"zeta": 26, "alpha": 1, "mu": 12}
+
+func main() {
+	m := map[int]string{30: "c", -2: "a", 7: "b"}
+	for k, v := range m {
+		println(k, v)
+	}
+	println(m)
+	s := map[string]bool{"b": true, "B": false, "": true, "ab": false}
+	for k := range s {
+		println("[" + k + "]")
+	}
+	ps := map[P]int{{2, 1}: 0, {1, 9}: 1, {1, 2}: 2}
+	println(ps)
+	println(table, len(table))
+	for k, v := range table {
+		println(k, v)
+	}
+	// inserting while ranging: a key after the current one is seen
+	n := map[int]int{1: 1, 5: 5}
+	for k := range n {
+		if k == 1 {
+			n[3] = 3
+			n[0] = 0
+		}
+		println("saw", k)
+	}
+	println(len(n))
+	var empty map[string]int
+	println(empty, map[string]int{})
+}

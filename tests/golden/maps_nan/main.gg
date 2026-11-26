@@ -1,0 +1,61 @@
+// NaN keys, as in Go: each insert adds an entry, a lookup never finds
+// one, delete does nothing, and range yields each entry once; the other
+// keys stay found. fmt prints NaN keys first, as Go's fmt does. Valid Go
+// (with gogo/fmt and gogo/math as fmt and math): `go run` prints the same.
+package main
+
+import (
+	"gogo/fmt"
+	"gogo/math"
+)
+
+type K struct {
+	F float64
+	N int
+}
+
+func main() {
+	nan := math.NaN()
+	m := map[float64]int{}
+	m[1] = 1
+	m[nan] = 2
+	m[3] = 3
+	m[0.5] = 4
+	m[nan] = 2 // a second NaN entry (the same value: Go orders NaNs at random)
+	m[0.7] = 6
+	_, ok := m[1]
+	_, okNaN := m[nan]
+	m[1] = 99
+	delete(m, nan)
+	fmt.Println(len(m), ok, okNaN, m[1], m[3], m[0.5], m[0.7])
+	n, sum := 0, 0
+	for _, v := range m {
+		n++
+		sum += v
+	}
+	fmt.Println(n, sum)
+	fmt.Println(m)
+
+	s := map[K]bool{}
+	s[K{nan, 1}] = true
+	s[K{nan, 1}] = true
+	s[K{2, 1}] = true
+	s[K{2, 1}] = false
+	fmt.Println(len(s), s[K{2, 1}], s[K{nan, 1}])
+
+	// replacing NaN keys while ranging ends
+	f := map[float64]int{}
+	for i := 0; i < 5; i++ {
+		f[math.NaN()] = i
+		f[float64(i)] = i
+	}
+	passes := 0
+	for k, v := range f {
+		passes++
+		if k != k {
+			delete(f, k)
+			f[math.NaN()] = v + 100
+		}
+	}
+	fmt.Println(passes > 0, len(f) > 10)
+}

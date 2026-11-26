@@ -1,0 +1,28 @@
+// A package-level variable is read-only: writing it is a compile error,
+// and a write through a copy of one of its slices (which shares the
+// constant array) ends the actor with badcode, as does an append that
+// would fill the array's spare room.
+package main
+
+import "gogo/actor"
+
+var table = []int{1, 2, 3}
+
+func watch(f func()) {
+	p := actor.Spawn(f)
+	actor.Monitor(p)
+	d := actor.Receive().(actor.DownMsg)
+	println(d.Reason.Code == actor.BadCode, d.Reason.Func)
+}
+
+func main() {
+	t := table
+	println(t[2], len(t))
+	watch(func() { t[0] = 9 })
+	watch(func() { u := table[:1]; u = append(u, 5); println(u[1]) })
+	watch(func() { copy(t, []int{4}) })
+	var own []int
+	own = append(own, table...) // a writable copy
+	own[0] = 9
+	println(own[0], table[0])
+}

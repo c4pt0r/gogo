@@ -286,14 +286,67 @@ rebuilt:
 
 ## Compiler and language
 
-- **Not supported yet (planned).** The compiler rejects maps, pointer
-  receivers ("pointer receivers are not supported yet"), pointers and package-level `var`s. `goto` is rejected (labeled `break` and
-  `continue` cover its uses). Channels, `go`, `select`, generics and
-  `recover` are outside the design. "Language completeness" is a
-  planned milestone. *Workaround:* slices of structs searched linearly
-  for maps.
-- **No `gogo/fmt`.** Printing is `println`; to build a string use
-  `gogo/strconv` and `+`.
+- **Not supported (out of the design).** `goto` is rejected (labeled
+  `break` and `continue` cover its uses). Channels, `go`, `select`,
+  generics, `recover` and `unsafe` are outside the design.
+- **Maps differ from Go's in order, speed and keys.** `range` over a map
+  goes in the order of its keys (numbers by value, strings byte by byte,
+  structs field by field, a `uint32` or `uint64` key by its signed bit
+  pattern), not Go's random order; code that relies on Go's
+  randomization sees a fixed order. A map is a sorted slice: a lookup is
+  O(log n), but an insert or a delete moves the entries after it, O(n),
+  and a large map is slower than Go's hash map (see `gogo/maps`). Keys
+  may not hold pointers, maps or funcs (`map with key type ...: a pointer
+  key`); a key that holds one at run time, at any depth (an interface key,
+  or an interface field of a struct key), ends the actor with a panic
+  (`hash of unhashable type`, as Go does for a map or a func: Go accepts
+  the pointer), and so does a slice held directly by an interface key; a
+  slice deeper inside such a key is compared element by element (Go
+  panics). NaN keys behave as in Go (each insert adds an
+  entry, a lookup never finds one); they range first, and if a loop body
+  changes the map while ranging over NaN keys, the NaN keys it has not
+  reached yet are skipped (Go would produce them). A map sent to
+  another actor is copied with its entries (Go would share it). A nil map
+  reads as empty and a write to it ends the actor with `actor.Nil`, not a
+  `panic`. A nil map or a nil pointer in an interface is the nil
+  interface value (Go's interface would hold a typed nil): `x != nil` is
+  false, and a type switch does not match its type. `println` of a map
+  prints `map[k:v ...]`, of a nil map `nil`.
+- **Package-level variables are read-only.** A package-level `var` is set
+  when the program is built and cannot be written (`package-level
+  variable x is read-only`); mutable state belongs in an actor. Its
+  initializer must be static: constants, literals, conversions, other
+  package-level variables and calls of single-`return` functions such as
+  `errors.New`, but no `make`, no `&T{}` and no arithmetic on a function's
+  parameters (`package-level variable x: ... is not static`). A slice of
+  one shares its constant array: `t := table; t[0] = 1` ends the actor
+  with `badcode` at run time, and so does `copy` into it or an `append`
+  that would fill its spare room. *Workaround:* copy first,
+  `own := append([]int{}, table...)`. Sent in a message, such a value
+  stays read-only in the receiver, and a struct or slice of one cannot be
+  sent to another module (`BadMsg`): an error from `errors.New` held in a
+  package-level variable is one; return or send `errors.New(...)` itself
+  to cross modules.
+- **`gogo/fmt` differs from Go's.** It has no reflection: inside a
+  struct, slice or map a field's `String` or `Error` method is not called
+  and a `uint32` or `uint64` prints signed; a pointer below the top
+  prints `&` and its target (Go prints an address); `%p` and `%T` are not
+  supported (`%!p(...)`), and a bad verb or an extra operand names only a
+  basic type (`?` otherwise); `%s` of a `[]byte` prints its elements and
+  `%q`, `%x` and `%X` of one print `%!x(?=[104 105])` (convert with
+  `string(b)`), and `%x` of a value of a named integer type prints
+  `%!x(?=5)` (convert it to its integer type); `%+v` and `%#v` print a
+  struct as `%v` does, `{1 2}`, without field or type names (Go:
+  `{X:1 Y:2}`, `main.P{X:1, Y:2}`); `Sprint` puts a space between an
+  operand of a named string type (`type S string`) and its neighbour,
+  where Go puts none (it sees the string kind); width and precision count
+  bytes of a string; `Errorf`'s error is a value (two with the same text and
+  wrapped error are equal) and an error it wraps with `%w` cannot be sent
+  to another module (its type is gogo/fmt's own). `Scan` and the `Fprint`
+  family are missing (no `io`). Formatting costs code: a program that
+  calls `Sprintf` carries the whole formatter and the `error` and
+  `Stringer` dispatchers (about 19 KB of image, with gogo/errors and
+  gogo/strconv).
 - **`gogo/errors` differs from Go's.** Two errors from `errors.New` with
   the same text are equal (errors are values, compared by what they
   hold; Go's are equal only to themselves). There is no `errors.As`
@@ -314,22 +367,36 @@ rebuilt:
   value is split at NUL bytes). Every `sys.Args()` call copies the
   arguments into the actor's heap: call it once and keep the result; a
   very large argv (hundreds of KB) runs the actor out of memory.
-- **Loop variables cannot be captured.** In a three-clause `for` loop,
-  `func() { work(i) }` is rejected with `captured variable must not be
-  reassigned`, because `i++` assigns `i`. Closures capture by value, so
-  every captured variable must be assigned once. *Workaround:* copy
-  first: `n := i`.
+- **A spawned closure copies what it captures.** Within one actor,
+  closures share the variables they capture, as in Go (a variable written
+  after a closure captured it lives in a box, one allocation at its
+  declaration). A closure passed to `actor.Spawn` is copied into the new
+  actor with what it captures, so a variable it changes there is the
+  child's own (Go's goroutines would share it).
 - **Two-result builtins cannot stand alone.** `actor.Call(p, req, 100)`
   or `actor.ReceiveTimeout(0)` as a statement fails with `multiple values
   not supported`. *Workaround:* `_, _ = actor.Call(...)`. `println(f())`
   with a multi-result `f` and `var a, b = f()` fail the same way; use
   `a, b := f()`.
-- **Methods: value receivers only.** A method with a value
-  receiver works on a copy, so it cannot change its caller's value: return
-  the new value instead (`p = p.Moved(1, 0)`). A named type
-  other than a struct or a basic type (`type L []int`) cannot be declared,
-  so it has no methods either. The methods of a type in a hot-loaded module
-  are that module's own, like its types.
+- **Pointers: no interior pointers, a copy after a send.** `&s[i]` and
+  `&v.F` are rejected (`interior pointer ... not supported`), and so is a
+  pointer method called on a slice element or a field (`s[i].M()`,
+  `v.F.M()`: it would need `&s[i]`), or promoted from an embedded field.
+  *Workaround:* keep pointers in the slice or field (`[]*T`, a `*T`
+  field), or write the element's field directly, `s[i].X = v`. Pointers
+  to arrays (`&a`, `*[N]T`) and embedded pointer fields are rejected too.
+  A pointer sent to another actor (in a message, or captured by a spawned
+  closure) is copied with its target, as a slice's array is: the receiver
+  gets its own target, so a write there is not seen by the sender (Go's
+  goroutines would share it). A nil pointer dereference ends the actor
+  with the reason `actor.Nil` (crash kind `nil`), not a `panic`, and
+  there is no `recover`. `println(p)` prints the target after `&`
+  (`&{1 2}`, `&5`), not an address. A local variable whose address is
+  taken lives in a box (one allocation at its declaration), and `*p` of a
+  pointer to a struct copies the struct (one allocation). A named type
+  other than a struct or a basic type (`type L []int`) cannot be
+  declared, so it has no methods. The methods of a type in a hot-loaded
+  module are that module's own, like its types.
 - **Arrays: no `==`, not in `any`, hidden copies.** `a == b` on arrays
   is rejected until composite values can be compared (`comparison of
   arrays not supported yet`): compare the elements. An array cannot go
@@ -350,14 +417,12 @@ rebuilt:
   the loop body into a function. A crash, a `panic` (Go runs the
   deferred calls while it unwinds) or `actor.Exit` ends the actor
   without running the deferred calls (its ports and files are closed
-  anyway). A deferred func literal cannot set a named result (`captured
-  named result must not be changed`), so `defer func() { err = ... }()`
-  has no gogo equivalent: compute the result before returning. `defer
+  anyway). `defer
   f(g())` with a multi-value `g` is rejected. Each `return` compiles the
   deferred calls again, so many returns after many defers make the
   function's code larger.
 - **Embedded fields: no pointers, no promoted method expressions.**
-  Embedding `*T` is rejected with pointers. A method expression of a
+  Embedding `*T` is rejected (`embedded pointer field not supported`). A method expression of a
   promoted method (`Outer.M` for a method of an embedded field) is
   rejected (`method expression of a promoted method not supported`).
   *Workaround:* a method value `x.M`, or `Inner.M(x.Inner)`. The methods
@@ -367,7 +432,8 @@ rebuilt:
   promoted methods count toward implementing an interface, an embedded
   interface's included; those of an embedded gogo type do not.
 - **Every field write allocates.** Structs are immutable in the VM, so
-  `p.X = v` builds a new struct (2 + fields words) for each struct on the
+  `v.X = v` on a struct variable (not through a pointer, whose target is
+  written in place) builds a new struct (2 + fields words) for each struct on the
   path (`a.b.c = v` builds three) and the old one becomes garbage: the
   same cost as rebuilding it with a literal by hand. On the host a write
   to a 3-field struct in a tight loop costs about 30 ns more than an `int`
@@ -381,14 +447,10 @@ rebuilt:
   `a.S[1].X = f()`, gogo reads `a.S` before calling `f`, so if `f`
   replaces `a.S` the write goes to the old array (Go leaves this order
   unspecified; `s[i] = v` behaves the same way in gogo).
-- **Fields of captured variables cannot be written.** `p.X = v` writes
-  `p`, so it is rejected (`captured variable must not be changed by field
-  assignment`) when a closure captures `p`, like `p = q`. Writing a field
-  of a captured slice's element (`s[i].X = v`) is allowed: it changes the
-  shared array, as in Go. *Workaround:* copy first, `q := p`, and write
-  `q`'s fields.
-- **No field assignment through a map index or a pointer.** Maps and
-  pointers are not supported yet; `f().X = v` is not valid Go either.
+- **No field assignment through a map index.** `m[k].X = v` is not valid
+  Go either: read the struct, write it, store it back. A field of a
+  pointer's target can be written (`p.X = v`, `f().X = v` for a `f` that
+  returns a pointer).
 - **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
   zero PID.
 - **Some values cannot go into `any`.** Func values (no type id) are
@@ -513,7 +575,8 @@ rebuilt:
   maths.
 - **Firmware option.** Floats need firmware built with `GOGO_FLOAT`
   (requirement `float`, image format 15.2). On a firmware without it, an
-  image that uses floats is refused at boot (`gogo: image requires float,
+  image that can make floats (a float constant, a conversion of an
+  integer, `math.Inf`, `math.NaN`, `ParseFloat`) is refused at boot (`gogo: image requires float,
   which this VM lacks`) and `code.Load` returns `Unsupported`. `gogo
   firmware` builds it in only when an image needs it (or `-with float`),
   so a module that needs floats and is loaded later needs `-with float`.

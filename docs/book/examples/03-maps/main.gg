@@ -1,0 +1,30 @@
+// Maps: make, literals, lookups with comma-ok, delete, len and range,
+// which goes in key order.
+package main
+
+func main() {
+	stock := map[string]int{"pears": 5, "apples": 3}
+	stock["plums"] = 7
+	stock["apples"]++
+	delete(stock, "pears")
+
+	n, ok := stock["pears"]
+	println(n, ok, len(stock))
+
+	for fruit, count := range stock {
+		println(fruit, count)
+	}
+
+	// Counting words: a missing key reads as 0.
+	counts := make(map[string]int)
+	for _, w := range []string{"go", "gogo", "go"} {
+		counts[w]++
+	}
+	println(counts["go"], counts["gogo"], counts["rust"])
+
+	// A map is a reference: both names see one map.
+	alias := counts
+	alias["rust"] = 1
+	println(len(counts))
+	println(counts)
+}

@@ -22,11 +22,12 @@ const (
 	// 14 came before: see runtime/vm/image.h).
 	imageMajor = 15
 	// imageMinor is the newest feature minor. Renumbering a feature's
-	// minor touches its constant here (floatMinor, sizedMinor, ifaceMinor),
+	// minor touches its constant here (floatMinor, sizedMinor, ifaceMinor,
+	// refMinor),
 	// IMAGE_MINOR in runtime/vm/image.h when it is the newest
 	// (TestTermsMatchC checks both), and the "15.N" in docs and opcodes.h
 	// comments.
-	imageMinor = max(floatMinor, sizedMinor, ifaceMinor)
+	imageMinor = max(floatMinor, sizedMinor, ifaceMinor, refMinor)
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -43,7 +44,9 @@ const (
 // B_FLOAT, and the K_FLOAT constants and TYPEIS ids, which scan counts
 // apart: floatMinor); 15.3 sized integers (the unsigned ops, B_PRINTLNU
 // and the new CONV modes: sizedMinor); 15.4 the builtins and reserved
-// types of panic, interfaces and equality (ifaceMinor). A reserved type is keyed by its image name ("port.Chunk"); its
+// types of panic, interfaces and equality (ifaceMinor); 15.6 references
+// (refMinor: SETFIELD and the type-row flags, which scan counts apart).
+// A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
 var (
@@ -51,12 +54,16 @@ var (
 		OpAddf: floatMinor, OpSubf: floatMinor, OpMulf: floatMinor, OpDivf: floatMinor, OpNegf: floatMinor,
 		OpEqf: floatMinor, OpNef: floatMinor, OpLtf: floatMinor, OpLef: floatMinor, OpConvf: floatMinor,
 		OpDivu64: sizedMinor, OpRemu64: sizedMinor, OpLtu64: sizedMinor, OpLeu64: sizedMinor, OpShru64: sizedMinor,
+		OpSetfield: refMinor,
 	}
 	builtinMinor = map[uint32]uint16{
 		BFloat:    floatMinor,
 		BPrintlnu: sizedMinor,
 		BPanic:    ifaceMinor,
 		BCmp:      ifaceMinor,
+		BSprint:   refMinor,
+		// kept for distributed actors (15.5): no gogo image uses them yet
+		BReserved58: 5, BReserved59: 5, BReserved60: 5,
 	}
 	typeMinor = map[string]uint16{
 		"screen.Config":      1, // 15.1: the "screen" port
@@ -79,6 +86,13 @@ const sizedMinor = 3
 // panic, interfaces, equality): every builtin and reserved type it added
 // is stamped with it.
 const ifaceMinor = 4
+
+// refMinor is the minor of the language's reference phase (15.6:
+// pointers, maps, read-only globals, fmt): SETFIELD, the per-type flags
+// of a type row and a const struct (StructMut, StructMap, StructBox), the
+// const slices and arrays, and B_SPRINT. 15.5 belongs to distributed
+// actors.
+const refMinor = 6
 
 // convMinor is the minor of an OP_CONV with mode c (op): the modes 0-2
 // are 15.0's.
@@ -138,6 +152,12 @@ type ImageBuilder struct {
 	floats   map[uint64]uint32 // float64 constants by bits
 	floats32 map[uint32]uint32 // float32 constants by bits
 	structs  map[string]uint32 // const structs by type and fields
+	// constSlices: the image has constant slices (15.6, refMinor)
+	constSlices bool
+	// makesFloat: the code makes floats out of other values (MakesFloat)
+	makesFloat bool
+	// boxTypes: the own types that box values in interfaces (MarkBox)
+	boxTypes map[uint32]bool
 	funcs    []imgFunc
 	// reserved holds a row for every reserved type (AddReservedType, in
 	// index order); only the first nReserved are written, where
@@ -219,6 +239,46 @@ func (b *ImageBuilder) AddFloat32(v float32) uint32 {
 	return off
 }
 
+// AddInt32 adds a K_INT constant: an int outside 31 bits in a constant
+// object (an immediate does not need one).
+func (b *ImageBuilder) AddInt32(v int32) uint32 {
+	off := uint32(len(b.consts))
+	b.consts = append(b.consts, HdrMake(2, KInt), uint32(v))
+	return off
+}
+
+// AddTermSlice adds a constant slice (15.6: a package-level variable's)
+// and returns its term: of the terms, or of the bytes if isBytes, in a
+// K_ARRAY or K_BYTEARR of their length, behind a K_SLICE of that length
+// and capacity (with no array when empty: an empty, non-nil slice).
+func (b *ImageBuilder) AddTermSlice(terms []uint32, bytes []byte, isBytes bool) uint32 {
+	n := len(terms)
+	if isBytes {
+		n = len(bytes)
+	}
+	arr := TermNil
+	if n > 0 {
+		off := uint32(len(b.consts))
+		if isBytes {
+			payload := (n + 3) / 4
+			buf := make([]byte, payload*4)
+			copy(buf, bytes)
+			b.consts = append(b.consts, HdrMake(uint32(2+payload), KBytearr), uint32(n))
+			for i := 0; i < payload; i++ {
+				b.consts = append(b.consts, binary.LittleEndian.Uint32(buf[i*4:]))
+			}
+		} else {
+			b.consts = append(b.consts, HdrMake(uint32(2+n), KArray), uint32(n))
+			b.consts = append(b.consts, terms...)
+		}
+		arr = TermConst(off)
+	}
+	off := uint32(len(b.consts))
+	b.consts = append(b.consts, HdrMake(5, KSlice), 0, uint32(n), uint32(n), arr)
+	b.constSlices = true
+	return TermConst(off)
+}
+
 // AddStruct adds a K_STRUCT constant of type typ (an image type index)
 // with the given field terms (immediates or const refs), deduplicated,
 // and returns its word offset.
@@ -228,6 +288,7 @@ func (b *ImageBuilder) AddStruct(typ uint32, fields []uint32) uint32 {
 		return off
 	}
 	off := uint32(len(b.consts))
+	typ |= b.TypeFlags(typ) // as NEWSTRUCT would make it (15.6)
 	b.consts = append(b.consts, HdrMake(uint32(2+len(fields)), KStruct), typ)
 	b.consts = append(b.consts, fields...)
 	if b.structs == nil {
@@ -251,9 +312,24 @@ func (b *ImageBuilder) SetFuncCode(f uint32, code []uint32) { b.funcs[f].code = 
 // AddType declares an own struct type and returns its index (TypeOwnBase
 // and up, in declaration order).
 func (b *ImageBuilder) AddType(name string, nFields uint32) uint32 {
+	return b.AddTypeFlags(name, nFields, 0)
+}
+
+// AddTypeFlags is AddType for a type with flags (StructMut, StructMap,
+// StructBox: 15.6), kept in its row's field-count word.
+func (b *ImageBuilder) AddTypeFlags(name string, nFields, flags uint32) uint32 {
 	n := b.AddString(name)
-	b.types = append(b.types, imgType{name: n, nFields: nFields, goName: name})
+	b.types = append(b.types, imgType{name: n, nFields: nFields | flags, goName: name})
 	return TypeOwnBase + uint32(len(b.types)-1)
+}
+
+// TypeFlags returns the flags of own type idx (0 for a reserved one).
+func (b *ImageBuilder) TypeFlags(idx uint32) uint32 {
+	idx &= 0xFFFF
+	if idx < TypeOwnBase {
+		return 0
+	}
+	return b.types[idx-TypeOwnBase].nFields &^ 0xFFFF
 }
 
 // AddReservedType declares the next reserved type (index order) and
@@ -344,6 +420,9 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 	if usesFloat {
 		b.requireFloat()
 	}
+	if minor >= refMinor {
+		b.flagBoxes()
+	}
 	nRes := len(used)
 	var rows []imgType
 	for i, t := range b.reserved[:nRes] {
@@ -386,8 +465,13 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 // reserved row the image carries (len(used) is n_reserved). And the lowest
 // format minor that runs the image: the highest among its opcodes,
 // builtins and used reserved types, and floatMinor if it uses floating
-// point (usesFloat: a float op, B_FLOAT, a K_FLOAT constant or a TYPEIS of
-// a float type). A row it carries but does not use is
+// point, and whether the image makes floats, which requires
+// FloatRequirement (usesFloat: a K_FLOAT constant, CONVF of an integer, or
+// a B_FLOAT op that makes a float out of others, MakesFloat). The other
+// float ops, B_FLOAT and a TYPEIS of a float type only need the minor: on
+// a VM without floats no float value can reach them (an image or module
+// that could make one requires float), so gogo/fmt's float formatting
+// does not make every image that formats require float. A row it carries but does not use is
 // written with 0 fields and adds no minor: no VM reads it (NEWSTRUCT and
 // const structs mark their type; TYPEIS and GETFIELD read no row), and
 // the loader accepts any count up to its own.
@@ -404,7 +488,13 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 	for pc := 0; pc < len(code); pc++ {
 		op := uint8(code[pc])
 		minor = max(minor, opMinor[op], convMinor(op, uint8(code[pc]>>24)))
-		usesFloat = usesFloat || op >= OpAddf && op <= OpConvf
+		// only what makes a float out of other values: CONVF of an
+		// integer (the other float ops take floats, from somewhere that
+		// made them)
+		usesFloat = usesFloat || op == OpConvf && (uint8(code[pc]>>24) == ConvF64Int || uint8(code[pc]>>24) == ConvF32Int)
+		if op >= OpAddf && op <= OpConvf {
+			minor = max(minor, floatMinor)
+		}
 		if !OpHasExt(op) {
 			continue
 		}
@@ -413,21 +503,32 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 		case OpNewstruct, OpTypeis:
 			mark(code[pc])
 			if op == OpTypeis && (code[pc] == TyFloat32 || code[pc] == TyFloat64) {
-				usesFloat = true
+				minor = max(minor, floatMinor)
 			}
 		case OpBuiltin:
 			minor = max(minor, builtinMinor[code[pc]])
-			usesFloat = usesFloat || code[pc] == BFloat
 		}
+	}
+	for _, t := range b.types {
+		if t.nFields > 0xFFFF { // a row with flags
+			minor = max(minor, refMinor)
+		}
+	}
+	if b.constSlices {
+		minor = max(minor, refMinor)
 	}
 	for off := 0; off < len(b.consts); off += int(b.consts[off] >> 6) {
 		switch b.consts[off] & 63 {
 		case KStruct:
-			mark(b.consts[off+1])
+			mark(b.consts[off+1] & 0xFFFF)
+			if b.consts[off+1] > 0xFFFF { // a type word with flags
+				minor = max(minor, refMinor)
+			}
 		case KFloat:
 			usesFloat = true
 		}
 	}
+	usesFloat = usesFloat || b.makesFloat
 	if usesFloat {
 		minor = max(minor, floatMinor)
 	}
@@ -445,6 +546,36 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 	}
 	return used, minor, usesFloat, nil
 }
+
+// MarkBox records own type idx as the box of a value in an interface
+// (codegen_iface.go): flagBoxes flags it StructBox.
+func (b *ImageBuilder) MarkBox(idx uint32) {
+	if b.boxTypes == nil {
+		b.boxTypes = map[uint32]bool{}
+	}
+	b.boxTypes[idx] = true
+}
+
+// flagBoxes ORs StructBox into the rows of the interface boxes and into
+// their constant structs, so println and fmt print a box as its value. It
+// is done only for an image that needs 15.6 anyway: an image that uses
+// none of 15.6's additions keeps its minor, and its println output (a
+// box as {5}), so it still runs on an older VM.
+func (b *ImageBuilder) flagBoxes() {
+	for idx := range b.boxTypes {
+		b.types[idx-TypeOwnBase].nFields |= StructBox
+	}
+	for off := 0; off < len(b.consts); off += int(b.consts[off] >> 6) {
+		if b.consts[off]&63 == KStruct && b.boxTypes[b.consts[off+1]&0xFFFF] {
+			b.consts[off+1] |= StructBox
+		}
+	}
+}
+
+// MakesFloat records that the code makes floats out of other values
+// (math.Inf, math.NaN, strconv.ParseFloat: B_FLOAT ops the scan cannot
+// tell apart), so the image requires FloatRequirement.
+func (b *ImageBuilder) MakesFloat() { b.makesFloat = true }
 
 // requireFloat adds FloatRequirement to the image's requirements (once).
 func (b *ImageBuilder) requireFloat() {

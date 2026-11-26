@@ -54,6 +54,9 @@ func (f *fn) floatCall(call *ast.CallExpr, name string, dst uint8) {
 	if !ok {
 		f.fail(call, "internal error: unexpected float call %s", name)
 	}
+	if op == FloatInf || op == FloatNaN || op == FloatParse {
+		f.g.b.MakesFloat() // the others take floats, which come from somewhere that makes them
+	}
 	base := f.allocScalar(call)
 	f.asm.EmitExt(OpLoadk, base, 0, 0, TermInt(op))
 	var params *types.Tuple

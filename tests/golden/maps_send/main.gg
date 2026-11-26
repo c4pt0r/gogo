@@ -1,0 +1,30 @@
+// A map sent to another actor is copied with its entries, like a slice:
+// the receiver's writes do not show in the sender's map.
+package main
+
+import "gogo/actor"
+
+type Msg struct {
+	From actor.PID
+	M    map[string]int
+}
+
+func main() {
+	m := map[string]int{"a": 1}
+	child := actor.Spawn(func() {
+		msg := actor.Receive().(Msg)
+		msg.M["a"] = 100
+		msg.M["b"] = 2
+		actor.Send(msg.From, msg.M)
+	})
+	actor.Send(child, Msg{actor.Self(), m})
+	back := actor.Receive().(map[string]int)
+	println(m["a"], len(m), back["a"], back["b"], len(back))
+	// a spawned closure capturing a map takes a copy
+	done := actor.Self()
+	actor.Spawn(func() {
+		m["c"] = 3
+		actor.Send(done, len(m))
+	})
+	println(actor.Receive().(int), len(m))
+}

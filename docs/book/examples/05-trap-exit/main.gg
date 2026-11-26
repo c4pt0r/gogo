@@ -16,8 +16,7 @@ func main() {
 	actor.TrapExit(true)
 	var pids []actor.PID
 	for i := 0; i < 3; i++ {
-		n := i // the loop variable changes (i++): capture a fresh copy
-		pids = append(pids, actor.SpawnLink(func() { flaky(n) }))
+		pids = append(pids, actor.SpawnLink(func() { flaky(i) })) // each iteration has its own i
 	}
 	for i := 0; i < 3; i++ {
 		switch m := actor.Receive().(type) {

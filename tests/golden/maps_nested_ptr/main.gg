@@ -1,0 +1,37 @@
+// A map key that holds a pointer at any depth (inside an interface key, or
+// in an interface field of a struct key) ends the actor with a panic:
+// gogo orders keys, and a pointer's order moves with the garbage
+// collector. Go accepts these keys; gogo cannot keep them.
+package main
+
+import "gogo/actor"
+
+type T struct{ N int }
+
+type S struct{ P *T }
+
+type W struct{ A any }
+
+func watch(f func()) {
+	p := actor.Spawn(f)
+	actor.Monitor(p)
+	d := actor.Receive().(actor.DownMsg)
+	println(d.Reason.Code == actor.Panic, d.Reason.Func)
+}
+
+func main() {
+	watch(func() {
+		m := map[any]int{}
+		for i := 0; i < 40; i++ {
+			m[S{&T{i}}] = i
+		}
+		println("never", len(m))
+	})
+	watch(func() {
+		m := map[W]int{}
+		m[W{&T{1}}] = 1
+		println("never", len(m))
+	})
+	m := map[W]int{{1}: 1, {"a"}: 2}
+	println(m[W{1}], m[W{"a"}], len(m))
+}

@@ -929,6 +929,59 @@ TEST(getfield_past_reserved_fields_reads_zero) {
     CHECK(strstr(run_appended(TYPE_OWN_BASE), "crashed: badcode") != NULL);   /* own type: no default */
 }
 
+/* ---- references (15.6): SETFIELD on a struct of a flagged type ---- */
+
+/* One own type of one field with row flags fl; code (main, 5 regs):
+ *   LOADK r1, 1; NEWSTRUCT r0, r1, 1, own; [LOADK r0, nil if nil0]
+ *   LOADK r2, 7; SETFIELD r2 -> r0.0; GETFIELD r3, r0, 0; EQ r4, r3, r2;
+ *   JMPT r4, @end; DIV r4, r1, r1-1 (divzero unless the write shows);
+ *   RET r0 */
+#define SF_WORDS (8u + 3u + 2u + 3u + 20u + 1u + 2u)
+static const char *run_setfield(uint32_t fl, bool nil0) {
+    uint32_t w[SF_WORDS]; Image img; Vm vm;
+    memset(w, 0, sizeof w);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 1;
+    w[4] = 3; w[5] = 20; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 5u << 16; w[10] = 0;              /* main, 5 regs */
+    w[11] = 1u | fl; w[12] = 0;                         /* the own type, named "main" */
+    uint32_t *c = w + 13;
+    c[0] = hdr_make(3, K_STRING); c[1] = 4; memcpy(&c[2], "main", 4);
+    uint32_t *k = c + 3, n = 0;
+    k[n++] = OP_MAKE(OP_LOADK, 1, 0, 0); k[n++] = term_from_int(1);
+    k[n++] = OP_MAKE(OP_NEWSTRUCT, 0, 1, 1); k[n++] = TYPE_OWN_BASE;
+    k[n++] = OP_MAKE(OP_LOADK, 0, 0, 0); k[n++] = nil0 ? T_NIL : term_from_int(0);
+    if (!nil0) { k[n - 2] = OP_MAKE(OP_NOP, 0, 0, 0); k[n - 1] = OP_MAKE(OP_NOP, 0, 0, 0); }
+    k[n++] = OP_MAKE(OP_LOADK, 2, 0, 0); k[n++] = term_from_int(7);
+    k[n++] = OP_MAKE(OP_SETFIELD, 2, 0, 0);
+    k[n++] = OP_MAKE(OP_GETFIELD, 3, 0, 0);
+    k[n++] = OP_MAKE(OP_EQ, 4, 3, 2);
+    uint32_t at = n;
+    k[n++] = OP_MAKE(OP_JMPT, 4, 0, 0); k[n++] = at + 4u;
+    k[n++] = OP_MAKE(OP_SUB, 2, 1, 1);
+    k[n++] = OP_MAKE(OP_DIV, 4, 1, 2);
+    k[n++] = OP_MAKE(OP_RET, 0, 0, 0);
+    while (n < 20u) k[n++] = OP_MAKE(OP_NOP, 0, 0, 0);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
+    va_reset(&vm);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
+    Actor *r = actor_new(&vm, 64);
+    CHECK(r != NULL);
+    CHECK(heap_push_frame(&vm, r, 5, -1));
+    r->pc = img.code;
+    err_len = 0; err_buf[0] = 0;
+    platform_unix_err_hook = capture_err;
+    CHECK_EQ(interp_run(&vm, r), RUN_EXIT);
+    platform_unix_err_hook = NULL;
+    return err_buf;
+}
+
+TEST(setfield_mutable_only) {
+    CHECK_EQ(run_setfield(STRUCT_MUT, false)[0], 0);                        /* written in place */
+    CHECK_EQ(run_setfield(STRUCT_MUT | STRUCT_BOX, false)[0], 0);
+    CHECK(strstr(run_setfield(0, false), "crashed: badcode") != NULL);       /* immutable */
+    CHECK(strstr(run_setfield(STRUCT_MUT, true), "crashed: nil") != NULL);   /* nil */
+}
+
 /* ---- sized integers (15.3) ---- */
 
 #define CMPOK(op, x, y, want) do { \
@@ -1133,9 +1186,20 @@ TEST(cmp_elements) {
     a = cmp_start(2);
     a->mem[a->fp] = T_NILSLICE; a->mem[a->fp + 1] = T_NILSLICE;
     CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 1);
-    a = cmp_start(4);                         /* four arguments: badcode */
+    a = cmp_start(5);                         /* five arguments: badcode */
     a->mem[a->fp] = term_from_int(1); a->mem[a->fp + 1] = term_from_int(1);
-    CHECK(strstr(cmp_run(a, 4, &r), "crashed: badcode") != NULL);
+    CHECK(strstr(cmp_run(a, 5, &r), "crashed: badcode") != NULL);
+    /* four (15.6, gogo/maps): a total order; a slice first with mode 2 is
+     * unordered (2), with mode 1 an array */
+    a = cmp_start(4);
+    a->mem[a->fp] = term_from_int(1); a->mem[a->fp + 1] = term_from_int(2); a->mem[a->fp + 3] = term_from_int(1);
+    CHECK_EQ(cmp_run(a, 4, &r)[0], 0); CHECK_EQ(r, -1);
+    a = cmp_start(4);
+    a->mem[a->fp] = s = cmp_slice(a, false, 3, a3); a->mem[a->fp + 1] = s; a->mem[a->fp + 3] = term_from_int(2);
+    CHECK_EQ(cmp_run(a, 4, &r)[0], 0); CHECK_EQ(r, 2);
+    a = cmp_start(4);
+    a->mem[a->fp] = s = cmp_slice(a, false, 3, a3); a->mem[a->fp + 1] = s; a->mem[a->fp + 3] = term_from_int(1);
+    CHECK_EQ(cmp_run(a, 4, &r)[0], 0); CHECK_EQ(r, 0);
 }
 
 /* Types first, then values; a struct chain through its last field is a

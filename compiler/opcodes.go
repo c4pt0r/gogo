@@ -83,6 +83,9 @@ const (
 	OpLtu64  uint8 = 64
 	OpLeu64  uint8 = 65
 	OpShru64 uint8 = 66 // logical
+
+	// References (15.6: refMinor).
+	OpSetfield uint8 = 67 // rb.fields[c] = ra, in place: a heap struct of a mutable type (StructMut)
 )
 
 // OP_CONV c operands.
@@ -175,6 +178,14 @@ const (
 	// Since 15.4 (ifaceMinor).
 	BPanic uint32 = 56 // v -> (does not return): panic(v), exit reason R_PANIC
 	BCmp   uint32 = 57 // a, b [, x] -> -1 | 0 | 1: the order of two values (== on interfaces, structs; x for arrays)
+
+	// 58-60: kept for distributed actors.
+	BReserved58 uint32 = 58
+	BReserved59 uint32 = 59
+	BReserved60 uint32 = 60
+
+	// Since 15.6 (refMinor).
+	BSprint uint32 = 61 // mode, v -> string | nil: println's text of v (gogo/fmt)
 )
 
 // Off-heap Bytes limits: twins of runtime/vm/config.h's defaults (checked by
@@ -296,6 +307,14 @@ const (
 	KForward uint32 = 63
 )
 
+// Per-type flags (15.6) in bits 16-18 of a type-table row's field-count
+// word, which NEWSTRUCT copies into the struct's type word (term.h).
+const (
+	StructMut uint32 = 0x10000 // a reference: SETFIELD writes it, B_CMP compares it by identity
+	StructMap uint32 = 0x20000 // a map header (with StructMut): prints as map[k:v ...]
+	StructBox uint32 = 0x40000 // a box: prints as its one field
+)
+
 // Special terms.
 const (
 	TermNil   uint32 = 0x02
@@ -349,7 +368,7 @@ var opNames = [...]string{"NOP", "MOVE", "LOADK", "LOADI32", "ADD", "SUB", "MUL"
 	"LT64", "LE64", "BOX64", "CLEAR", "RETN", "CALLV",
 	"AND", "OR", "XOR", "ANDNOT", "SHL", "SHR", "AND64", "OR64", "XOR64", "ANDNOT64",
 	"SHL64", "SHR64", "ADDF", "SUBF", "MULF", "DIVF", "NEGF", "EQF", "NEF", "LTF", "LEF", "CONVF",
-	"DIVU64", "REMU64", "LTU64", "LEU64", "SHRU64"}
+	"DIVU64", "REMU64", "LTU64", "LEU64", "SHRU64", "SETFIELD"}
 
 var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "MEMORY",
 	"SPAWN_LINK", "SPAWN_OPT", "LINK", "UNLINK", "TRAP_EXIT", "EXIT", "KILL",
@@ -359,7 +378,7 @@ var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "M
 	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
 	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
 	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE", "UNIX_TIME", "SET_UNIX_TIME", "RANDOM", "FLOAT", "PRINTLNU",
-	"PANIC", "CMP"}
+	"PANIC", "CMP", "RESERVED_58", "RESERVED_59", "RESERVED_60", "SPRINT"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -386,7 +405,8 @@ var goConstants = map[string]uint32{
 	"OpLef": uint32(OpLef), "OpConvf": uint32(OpConvf),
 	"OpDivu64": uint32(OpDivu64), "OpRemu64": uint32(OpRemu64),
 	"OpLtu64": uint32(OpLtu64), "OpLeu64": uint32(OpLeu64), "OpShru64": uint32(OpShru64),
-	"BPrintln": BPrintln, "BSpawn": BSpawn, "BSelf": BSelf, "BSend": BSend,
+	"OpSetfield": uint32(OpSetfield),
+	"BPrintln":   BPrintln, "BSpawn": BSpawn, "BSelf": BSelf, "BSend": BSend,
 	"BReceive": BReceive, "BMemory": BMemory,
 	"BSpawnLink": BSpawnLink, "BSpawnOpt": BSpawnOpt, "BLink": BLink,
 	"BUnlink": BUnlink, "BTrapExit": BTrapExit, "BExit": BExit, "BKill": BKill,
@@ -402,8 +422,9 @@ var goConstants = map[string]uint32{
 	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
 	"BBytesCopyto": BBytesCopyto, "BPortHandoff": BPortHandoff, "BNetSubscribe": BNetSubscribe,
 	"BConfigGet": BConfigGet, "BFs": BFs, "BCode": BCode, "BUnixTime": BUnixTime, "BSetUnixTime": BSetUnixTime, "BRandom": BRandom, "BFloat": BFloat, "BPrintlnu": BPrintlnu,
-	"BPanic": BPanic, "BCmp": BCmp,
-	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
+	"BPanic": BPanic, "BCmp": BCmp, "BReserved58": BReserved58, "BReserved59": BReserved59, "BReserved60": BReserved60,
+	"BSprint": BSprint,
+	"TyInt":   TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes, "TyFloat32": TyFloat32, "TyFloat64": TyFloat64,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
 	"TypeDownmsg": TypeDownmsg, "TypeRequest": TypeRequest, "TypeOptions": TypeOptions,

@@ -1,0 +1,43 @@
+// A pointer sent to another actor is copied with its target, like a
+// slice's array: the receiver gets its own target, and writes on either
+// side do not show on the other. Within one message, pointers to one
+// target stay one target.
+package main
+
+import "gogo/actor"
+
+type Box struct{ N int }
+
+type Pair struct{ A, B *Box }
+
+type Msg struct {
+	From actor.PID
+	P    *Box
+	Two  Pair
+}
+
+func main() {
+	b := &Box{1}
+	child := actor.Spawn(func() {
+		m := actor.Receive().(Msg)
+		m.P.N = 100   // the child's copy
+		m.Two.A.N = 7 // A and B are one target in the copy too
+		println("child", m.P.N, m.Two.B.N, m.Two.A == m.Two.B)
+		actor.Send(m.From, m.P)
+	})
+	shared := &Box{5}
+	actor.Send(child, Msg{actor.Self(), b, Pair{shared, shared}})
+	back := actor.Receive().(*Box)
+	println("main", b.N, shared.N, back.N, back == b)
+	back.N++
+	println(b.N, back.N)
+
+	// a closure capturing a pointer, spawned: the target is copied too
+	c := &Box{3}
+	done := actor.Self()
+	actor.Spawn(func() {
+		c.N *= 2
+		actor.Send(done, c.N)
+	})
+	println(actor.Receive().(int), c.N)
+}

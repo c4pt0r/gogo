@@ -60,6 +60,11 @@ const (
 	ErrorsPath = "gogo/errors"
 	// MathPath: the math library: calls become B_FLOAT (runtime/floatlib).
 	MathPath = "gogo/math"
+	// MapsPath: the run time of the map type (15.6), loaded into every
+	// program that uses a map; maps.compare is B_CMP.
+	MapsPath = "gogo/maps"
+	// FmtPath: formatting (15.6); fmt.sprint is B_SPRINT.
+	FmtPath = "gogo/fmt"
 )
 
 // StrconvPath is the import path of gogo/strconv, a system package whose
@@ -341,6 +346,16 @@ func usesError(info *types.Info) bool {
 	e := types.Universe.Lookup("error")
 	for _, obj := range info.Uses {
 		if obj == e {
+			return true
+		}
+	}
+	return false
+}
+
+// usesMaps reports whether a checked package has a value of a map type.
+func usesMaps(info *types.Info) bool {
+	for _, tv := range info.Types {
+		if _, ok := underlying(tv.Type).(*types.Map); ok {
 			return true
 		}
 	}
@@ -910,6 +925,13 @@ func (c Config) load(dir string, names []string, goFiles int) (*Program, error) 
 	// errors' reserved types, whose methods its dispatchers must know.
 	if l.pkgs[ErrorsPath] == nil && usesError(l.info) {
 		if err := l.loadPkg(ErrorsPath, nil, token.NoPos); err != nil {
+			return nil, err
+		}
+	}
+	// A program that uses a map loads gogo/maps, the map operations the
+	// compiler calls (only those used are compiled).
+	if l.pkgs[MapsPath] == nil && usesMaps(l.info) {
+		if err := l.loadPkg(MapsPath, nil, token.NoPos); err != nil {
 			return nil, err
 		}
 	}

@@ -274,8 +274,23 @@ TEST(const_ref_out_of_range_rejected) {
 
 TEST(const_unknown_kind_rejected) {
     Image img;
-    uint32_t e[] = { hdr_make(2, 9), 0 };
+    uint32_t e[] = { hdr_make(2, 13), 0 };
     CHECK_EQ(build_consts(&img, e, 2), IMG_ERR_BOUNDS);
+    uint32_t b[] = { hdr_make(3, K_BUF), 0, T_NIL };          /* a Buffer never */
+    CHECK_EQ(build_consts(&img, b, 3), IMG_ERR_BOUNDS);
+}
+
+/* 15.6: package-level variables' slices, arrays and byte arrays. */
+TEST(const_slices) {
+    Image img;
+    uint32_t ok[] = { hdr_make(3, K_BYTEARR), 4, 0x64636261u };
+    CHECK_EQ(build_consts(&img, ok, 3), IMG_OK);
+    uint32_t big[] = { hdr_make(3, K_BYTEARR), 5, 0 };        /* 5 bytes in one word */
+    CHECK_EQ(build_consts(&img, big, 3), IMG_ERR_BOUNDS);
+    uint32_t heap[] = { hdr_make(5, K_SLICE), 0, 1, 1, term_from_ref(0) };
+    CHECK_EQ(build_consts(&img, heap, 5), IMG_ERR_BOUNDS);
+    uint32_t arr[] = { hdr_make(4, K_ARRAY), 2, term_from_int(1), term_from_ref(0) };
+    CHECK_EQ(build_consts(&img, arr, 4), IMG_ERR_BOUNDS);
 }
 
 TEST(const_zero_header_rejected) {

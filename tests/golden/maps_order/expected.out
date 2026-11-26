@@ -1,0 +1,18 @@
+-2 a
+7 b
+30 c
+map[-2:a 7:b 30:c]
+[]
+[B]
+[ab]
+[b]
+map[{1 2}:2 {1 9}:1 {2 1}:0]
+map[alpha:1 mu:12 zeta:26] 3
+alpha 1
+mu 12
+zeta 26
+saw 1
+saw 3
+saw 5
+4
+nil map[]

@@ -179,8 +179,8 @@ A module built for hot loading (chapter 14) finds its packages the same
 way, from its own directory. `gogo run file.gg` builds a single file, with
 its directory as the build root (chapter 2, *Scripts*).
 
-> **Note.** There is no `gogo/fmt` package. Print with `println`, and
-> report errors as shown in section 3.10.
+> **Note.** `println` prints any value; `gogo/fmt` formats as Go's `fmt`
+> does (section 3.7). Errors are reported as shown in section 3.10.
 
 ## 3.2 Types and values
 
@@ -198,7 +198,8 @@ The supported types are:
 - `bool` and `string`. A string is an immutable sequence of bytes.
 - `rune` (`int32`) is the type of character literals and of the value in
   `range` over a string (which gives bytes, not decoded runes).
-- Slices (`[]T`), arrays (`[N]T`), structs, function values and `any`.
+- Slices (`[]T`), arrays (`[N]T`), maps (`map[K]V`, section 3.6),
+  structs, pointers (`*T`, section 3.5), function values and `any`.
 - Named types whose underlying type is an integer or float type, `bool`
   or `string` (`type Weekday int`, `type Reg uint32`), and named structs.
 - Type aliases, another name for a type of the subset (`type Millis =
@@ -207,8 +208,7 @@ The supported types are:
 - The gogo types `actor.PID`, `actor.Ref`, `bytes.Bytes`, `bytes.Buffer`
   and the struct types of the gogo packages.
 
-There are **no** maps, no pointers, no channels, no complex numbers and
-no `uintptr`.
+There are **no** channels, complex numbers or `uintptr`.
 
 ```go
 // The basic types of the subset: int (32 bits), int64, byte, bool, string,
@@ -486,6 +486,73 @@ parse: 18446744073709551615 true
 - **Firmware.** Programs that use the unsigned 64-bit operations or the
   narrow conversions need image format 15.3 (chapter 12); `byte`, `int32`
   and `uint32` addition alone do not.
+
+### Package-level variables
+
+A package-level `var` is **read-only**: it is set when the program is
+built, and the value lives in the image, in flash, so it takes no RAM in
+any actor. Tables, lookup maps and sentinel errors are what it is for;
+state that changes belongs in an actor.
+
+```go
+// Package-level variables: read-only, set when the program is built,
+// kept in flash.
+package main
+
+import "gogo/errors"
+
+type Note struct {
+	Name string
+	Hz   int
+}
+
+var (
+	scale     = []Note{{"A", 440}, {"B", 494}, {"C", 523}}
+	ErrNoNote = errors.New("no such note")
+	sizes     = map[string]int{"S": 1, "M": 2, "L": 3}
+	greeting  = "hello"
+)
+
+func find(name string) (Note, error) {
+	for _, n := range scale {
+		if n.Name == name {
+			return n, nil
+		}
+	}
+	return Note{}, ErrNoNote
+}
+
+func main() {
+	n, err := find("B")
+	println(n.Hz, err == nil)
+	_, err = find("H")
+	println(err == ErrNoNote, err.Error())
+	println(sizes["M"], len(scale), greeting)
+
+	// A copy is yours to change; the variable itself is read-only.
+	mine := append([]Note{}, scale...)
+	mine[0].Hz = 432
+	println(mine[0].Hz, scale[0].Hz)
+}
+```
+
+```text
+494 true
+true no such note
+2 3 hello
+432 440
+```
+
+The initializer must be something the compiler can work out: constants,
+literals of structs, slices, arrays and maps (a map's keys constants of
+an integer, float, bool or string type), conversions, other package-level
+variables and calls of functions whose body is a single `return` (as
+`errors.New` is). `make`, `&T{}` and a function that computes are
+rejected (`package-level variable x: ... is not static`). Every write is
+a compile error (`package-level variable scale is read-only`): an
+assignment, `++`, `scale[0].Hz = 1`, `copy` into it. A slice of one still
+shares its array, which is in flash: `t := scale; t[0] = n` ends the actor
+with `badcode` at run time. Copy it first, as `mine` above does.
 
 ## 3.3 Control flow
 
@@ -786,8 +853,8 @@ bare returns, be passed around as values and be written as literals
 (closures).
 
 ```go
-// Functions: several results, named results, function values, closures,
-// and the rule that a captured variable must not change.
+// Functions: several results, named results, function values and
+// closures.
 package main
 
 func divmod(a, b int) (int, int) {
@@ -817,8 +884,7 @@ func apply(f func(int) int, xs []int) []int {
 	return out
 }
 
-// adder returns a closure. step is captured by value when the closure is
-// made, and is never assigned again.
+// adder returns a closure that captures step.
 func adder(step int) func(int) int {
 	return func(x int) int { return x + step }
 }
@@ -867,12 +933,11 @@ func main() {
 	show(apply(adder(10), xs))
 	show(apply(func(x int) int { return x * x }, xs))
 
-	// A closure that needs changing state gets it as an argument and
-	// returns the new value instead of assigning a captured variable.
-	count := func(n int, s string) int { return n + len(s) }
+	// A closure that changes a variable it captures.
 	total := 0
+	count := func(s string) { total += len(s) }
 	for _, w := range []string{"go", "gogo", "actor"} {
-		total = count(total, w)
+		count(w)
 	}
 	println("letters", total)
 }
@@ -887,50 +952,64 @@ minmax -2 9
 letters 11
 ```
 
-### Closures capture by value
+### Closures share what they capture
 
-In Go a closure refers to the variables it captures; if the variable
-changes later, the closure sees the change. In gogo a closure **copies**
-the captured values when it is created. That is what lets a closure be sent
-to another actor or used to start one: it carries its data with it.
-
-To make sure the two models never give different answers, gogo rejects any
-assignment to a captured variable after its declaration, inside or outside
-the closure, and writing one of its fields (`p.X = v` changes `p`):
+As in Go, a closure refers to the variables it captures: when the
+variable changes later, inside or outside the closure, the other side
+sees the change.
 
 ```go
-// This program does NOT compile. Closures copy what they capture when they
-// are made, so gogo rejects a captured variable that changes afterwards
-// (in Go the closure would see the change; in gogo it could not).
+// Closures share the variables they capture, as in Go: a counter kept in
+// a closure, and a loop variable that is the iteration's own.
 package main
 
-func main() {
+func counter() (func() int, func()) {
 	n := 0
-	show := func() { println(n) }
-	n = 5
+	return func() int { return n }, func() { n++ }
+}
+
+func main() {
+	get, inc := counter()
+	inc()
+	inc()
+	println(get())
+
+	x := 1
+	show := func() { println(x) }
+	x = 5
 	show()
+
+	var fs []func()
+	for i := 0; i < 3; i++ {
+		fs = append(fs, func() { println(i) })
+	}
+	for _, f := range fs {
+		f()
+	}
 }
 ```
 
 ```text
-$ gogo build docs/book/examples/03-capture
+$ gogo run docs/book/examples/03-capture
+2
+5
+0
+1
+2
 ```
 
-```text
-main.gg:9:2: gogo: captured variable must not be reassigned
-```
+Each iteration of a loop has its own loop variable, as in Go 1.22: the
+three closures print 0, 1 and 2, not 3 three times. A deferred func
+literal can set a named result (`defer func() { err = wrap(err) }()`).
 
-The fix is to give the closure its own variable that never changes: pass
-the changing value as an argument, return the new value, or copy it first
-(`n := i` before the closure). A common case is the loop variable: `for i
-:= 0; i < 3; i++ { actor.Spawn(func() { work(i) }) }` is rejected because
-`i++` assigns `i`. Write `n := i` inside the loop and capture `n`.
-`range` variables are fine, because `range` declares fresh ones each time
-round.
-
-Similarly, a named result that a closure captures must not be set by a
-`return` with values (`captured named result must not be set by return;
-use unnamed results`).
+How it works: a closure copies the values it captures when it is made.
+A captured variable that is assigned after its declaration is kept in a
+box instead (the same box `&x` gives, section 3.5), and the closure
+copies the box, so both sides share it; a variable that is never
+assigned after its declaration needs no box. The difference shows when a
+closure goes to another actor: `actor.Spawn(func() { ... })` copies what
+the closure captures, boxes included, into the new actor, so a variable
+the new actor changes is its own (chapter 4).
 
 Function values have a few more limits: they cannot be compared (not even
 with `nil`) and cannot be put into `any`. Calling a nil function value
@@ -1089,17 +1168,11 @@ Two differences from Go:
   Go's `defer mu.Unlock()` habit does not carry over to panics. There is no `recover`: the actor ends, and its
   ports and files are closed for it (section 5.7), so `defer f.Close()` is
   for actors that live on, not a safety net.
-- **A deferred func literal sees values, not variables.** A func literal
-  captures by value (section 3.4), so the Go pattern of deferring a
-  literal and then changing a variable it reads, `x := 1; defer func() {
-  println(x) }(); x = 2` (Go prints 2), is rejected (`captured variable
-  must not be reassigned`): pass the value as an argument, or set it
-  before the `defer`. For the same reason the idiom `defer func() { err
-  = wrap(err) }()` is rejected (`captured named result must not be
-  changed`): compute the result before returning instead. With named
-  results, `return x` still sets them before the deferred calls run, as
-  in Go, so a deferred call that writes through a slice of an array
-  result changes what the caller gets.
+- **A deferred func literal sees variables, as in Go.** `x := 1; defer
+  func() { println(x) }(); x = 2` prints 2, and `defer func() { err =
+  wrap(err) }()` changes the result: with named results, `return x` sets
+  them before the deferred calls run, and the caller gets what the
+  deferred calls left in them.
 
 A deferred call whose single argument is a call with several results,
 `defer f(g())`, is rejected; assign the results to variables first.
@@ -1195,9 +1268,8 @@ struct takes about twice as long as `x++` on an `int`. In a hot loop
 over a big struct, keep the changing values in local variables and
 write them back once at the end.
 
-A field of a variable that a closure captures cannot be written, for the
-same reason the variable cannot be reassigned (section 3.4): `captured
-variable must not be changed by field assignment`.
+A field of a variable that a closure captures can be written on either
+side; the closure sees the change (section 3.4).
 
 `==` and `!=` work on `int`, `int64`, `byte`, floats, `bool`, `string`
 and named types of those, `actor.PID`, `actor.Ref`, structs (field by
@@ -1288,11 +1360,11 @@ show 11 12
 
 A few things to know:
 
-- **A method works on a copy.** Like a parameter, the receiver is the
-  method's own copy: assigning to it or to its fields changes nothing for
-  the caller. To "update" a value, return the new one and assign it:
-  `p = p.Moved(1, 0)`.
-  A slice field still shares its array, as in Go.
+- **A value receiver works on a copy.** Like a parameter, the receiver is
+  the method's own copy: assigning to it or to its fields changes nothing
+  for the caller (a slice field still shares its array, as in Go). A
+  pointer receiver, `func (p *Point) Move(dx int)`, changes the caller's
+  value: see *Pointers* below.
 - **A method value** `f := x.M` is a func value that captured a copy of
   `x` when it was made. Like any func value it can be spawned, stored in a
   struct field, and sent inside a struct to another actor, which gets its
@@ -1305,9 +1377,7 @@ A few things to know:
   `main.Type.Method.func1`.
 - **Calls are static.** The compiler knows each call's method, so a call
   costs the same as a function call; a call through an interface value
-  (section 3.9) adds a type check per candidate type. Pointer receivers,
-  `func (p *Point) M()`, wait for pointers (`pointer receivers are not
-  supported yet`).
+  (section 3.9) adds a type check per candidate type.
 
 ### Embedded fields
 
@@ -1395,45 +1465,109 @@ methods count toward implementing an interface (section 3.9), and the
 methods of an embedded interface are promoted too: `struct { Namer; K
 int }` is a `Namer`, and its `Name()` calls the field's.
 
-## 3.6 Slices and arrays
+### Pointers
 
-Without maps, slices do most of the work. `make`, `append` (also
-`append(a, b...)`), `copy`, `len`, `cap` and slice expressions `s[i:j]`
-behave as in Go, including sharing: two slices of one array see each
-other's writes. A small table of key/value pairs searched in a loop stands
-in for a map:
+`&T{...}`, `new(T)` and `&x` make pointers; `*p` reads and writes what
+one points to, and `p.X` its fields, as in Go. Two pointers to one value
+see each other's writes:
+
+```go
+// Pointers: &T{}, new, *p, fields through a pointer, pointer receivers,
+// a linked list, and *T in an interface.
+package main
+
+type Counter struct {
+	name string
+	n    int
+}
+
+// Inc has a pointer receiver: it changes the caller's Counter.
+func (c *Counter) Inc() { c.n++ }
+
+// Get has a value receiver: it works on a copy, as before.
+func (c Counter) Get() int { return c.n }
+
+type Getter interface{ Get() int }
+
+type Node struct {
+	Val  int
+	Next *Node
+}
+
+func main() {
+	p := &Counter{name: "hits"}
+	q := p // q and p point to one Counter
+	q.Inc()
+	p.Inc()
+	println(p.n, q.Get())
+
+	var c Counter // a variable: c.Inc() takes &c
+	c.Inc()
+	snapshot := c // a copy: a value, as always
+	c.Inc()
+	println(c.n, snapshot.n)
+
+	var g Getter = p // *Counter has Get too
+	println(g.Get())
+
+	var list *Node
+	for i := 1; i <= 3; i++ {
+		list = &Node{i, list}
+	}
+	for n := list; n != nil; n = n.Next {
+		println(n.Val)
+	}
+
+	x := new(int)
+	*x += 41
+	*x++
+	println(*x)
+}
+```
+
+```text
+2 2
+2 1
+2
+3
+2
+1
+42
+```
+
+Method sets are Go's: a pointer receiver method can be called on a
+variable (`c.Inc()` takes `&c`) or a pointer, a value receiver method on
+either, and `*T` has both kinds in an interface. `==` compares pointers,
+not what they point to. Reading through a nil pointer ends the actor with
+the reason `actor.Nil` (crash kind `nil`, chapter 5).
+
+What differs from Go:
+
+- **No pointers into slices or fields.** `&s[i]` and `&v.F` are rejected
+  (`interior pointer &s[i] not supported`), and so is calling a pointer
+  method on a slice element or a field (`s[i].Inc()`). Keep pointers in
+  the slice (`[]*Counter`), or write the field directly, `s[i].n++`.
+- **A send copies.** A pointer sent to another actor (in a message, or
+  captured by a spawned closure) arrives with a copy of what it points to,
+  as a slice's array does (chapter 6): the receiver's writes stay its own.
+- **No pointers to arrays**, and no embedded pointer fields.
+- `println(p)` prints what `p` points to after `&` (`&{1 2}`), not an
+  address.
+
+A pointer to a struct is one heap object laid out like the struct, so
+`p.X = v` writes in place without allocating; `*p` makes a copy (one
+allocation). A variable whose address is taken lives in a box for its
+whole life (one allocation at its declaration).
+
+## 3.6 Slices, arrays and maps
+
+`make`, `append` (also `append(a, b...)`), `copy`, `len`, `cap` and slice
+expressions `s[i:j]` behave as in Go, including sharing: two slices of one
+array see each other's writes:
 
 ```go
 // Slices: literals, make, append, copy, slicing and sharing, nil slices.
-// Slices are the main collection: arrays are fixed, and there are no maps.
 package main
-
-type Entry struct {
-	Key   string
-	Value int
-}
-
-// lookup is a linear search over a slice of pairs, the usual stand-in for
-// a small map.
-func lookup(tbl []Entry, key string) (int, bool) {
-	for _, e := range tbl {
-		if e.Key == key {
-			return e.Value, true
-		}
-	}
-	return 0, false
-}
-
-// set returns tbl with key set to v.
-func set(tbl []Entry, key string, v int) []Entry {
-	for i, e := range tbl {
-		if e.Key == key {
-			tbl[i] = Entry{key, v}
-			return tbl
-		}
-	}
-	return append(tbl, Entry{key, v})
-}
 
 func main() {
 	var s []int // nil
@@ -1457,15 +1591,6 @@ func main() {
 	b := []byte("gogo")
 	b[0] = 'G'
 	println(string(b))
-
-	var tbl []Entry
-	tbl = set(tbl, "apples", 3)
-	tbl = set(tbl, "pears", 5)
-	tbl = set(tbl, "apples", 4)
-	v, ok := lookup(tbl, "apples")
-	println("apples", v, ok, len(tbl))
-	_, ok = lookup(tbl, "plums")
-	println("plums", ok)
 
 	// Swapping elements with a tuple assignment works.
 	s[0], s[4] = s[4], s[0]
@@ -1515,12 +1640,12 @@ func main() {
 ```
 
 ```text
-[1 2 3]
-[] 0
-[a b] [true]
-[104 105]
-[{1 2} {3 4}]
-[[1] [2 3]]
+true 0
+5 16
+100 2 7
+2 0 100 8
+Gogo
+16 0
 ```
 
 This differs from Go: Go's `println` prints any slice as its length,
@@ -1622,10 +1747,76 @@ of it. Some things to know:
 - **Not in `any`.** An array cannot go into an interface, so it cannot be
   a message on its own (`array in interface not supported`): send a slice,
   or a struct with the array as a field, which is copied with the message.
-- A variable a closure captures cannot have its elements assigned
-  (`captured variable must not be changed by element assignment`), for the
-  reason its fields cannot (section 3.4). Named array types
-  (`type Grid [9]int`) are not supported.
+- A closure that captures an array variable shares its elements with the
+  variable, as in Go. Named array types (`type Grid [9]int`) are not
+  supported.
+
+### Maps
+
+`map[K]V` works as in Go: `make`, literals, `m[k]` (the value type's
+zero value for a missing key), `v, ok := m[k]`, assignment, `m[k]++`,
+`delete`, `len`, `clear` and `range`. A map is a reference: assigning it
+shares it.
+
+```go
+// Maps: make, literals, lookups with comma-ok, delete, len and range,
+// which goes in key order.
+package main
+
+func main() {
+	stock := map[string]int{"pears": 5, "apples": 3}
+	stock["plums"] = 7
+	stock["apples"]++
+	delete(stock, "pears")
+
+	n, ok := stock["pears"]
+	println(n, ok, len(stock))
+
+	for fruit, count := range stock {
+		println(fruit, count)
+	}
+
+	// Counting words: a missing key reads as 0.
+	counts := make(map[string]int)
+	for _, w := range []string{"go", "gogo", "go"} {
+		counts[w]++
+	}
+	println(counts["go"], counts["gogo"], counts["rust"])
+
+	// A map is a reference: both names see one map.
+	alias := counts
+	alias["rust"] = 1
+	println(len(counts))
+	println(counts)
+}
+```
+
+```text
+0 false 2
+apples 4
+plums 7
+2 1 0
+3
+map[go:2 gogo:1 rust:1]
+```
+
+What differs from Go:
+
+- **`range` goes in key order** (numbers by value, strings byte by byte),
+  not Go's random order, so a program prints the same thing every run.
+  Deleting during a `range` is fine, as in Go.
+- **It is a sorted slice.** A lookup is a binary search; an insert or a
+  delete moves the entries after it, so it costs O(n). Maps of a few
+  hundred entries are fine; a large map that changes often is slower than
+  Go's.
+- **Keys cannot hold pointers, maps or funcs** (`map with key type ...: a
+  pointer key`). Structs, arrays, strings, numbers, bools and interfaces
+  are fine.
+- **A send copies** the map with its entries (chapter 6).
+- Writing to a nil map ends the actor with `actor.Nil`; reading one gives
+  the zero value, as in Go.
+
+`println(m)` prints `map[k:v ...]`, as Go's `fmt` does.
 
 ## 3.7 Strings, strconv and strings
 
@@ -1702,6 +1893,58 @@ To turn a byte into a one-character string, convert a one-element slice:
 rejects.) Another common trick is to slice a constant string: with `const
 digits = "0123456789"`, `digits[d:d+1]` is the digit `d`, and no slice is
 allocated. Chapter 8 uses it for keyboard characters.
+
+### Formatting: gogo/fmt
+
+`gogo/fmt` has Go's `Sprint`, `Sprintln`, `Sprintf`, `Print`, `Println`,
+`Printf` and `Errorf`, with the usual verbs (`%v %d %s %q %x %X %o %b %c
+%U %t %e %f %g`), flags, widths and precisions. A value with an `Error`
+or `String` method prints through it:
+
+```go
+// gogo/fmt: Println, Printf with verbs, widths and precisions, Sprintf,
+// Stringer and error operands, and Errorf with %w.
+package main
+
+import (
+	"gogo/errors"
+	"gogo/fmt"
+)
+
+type Celsius int
+
+// String makes Celsius a fmt.Stringer.
+func (c Celsius) String() string { return fmt.Sprintf("%d°C", int(c)) }
+
+type Point struct{ X, Y int }
+
+var errClosed = errors.New("closed")
+
+func main() {
+	fmt.Println("temp", Celsius(21), true, 2.5)
+	fmt.Println(Point{1, 2}, []int{1, 2}, map[string]int{"b": 2, "a": 1})
+	fmt.Printf("%-6s|%5d|%05.1f|%x|%q\n", "go", 42, 3.14159, 255, "hi")
+	s := fmt.Sprintf("%v and %v", Celsius(-3), &Point{3, 4})
+	fmt.Println(s, len(s))
+	err := fmt.Errorf("read %s: %w", "sensor", errClosed)
+	fmt.Println(err, errors.Is(err, errClosed))
+}
+```
+
+```text
+temp 21°C true 2.5
+{1 2} [1 2] map[a:1 b:2]
+go    |   42|003.1|ff|"hi"
+-3°C and &{3 4} 16
+read sensor: closed true
+```
+
+`%v` of a struct, slice, map or pointer prints what `println` prints. Go
+calls the `String` method of a field inside a struct; gogo does not (no
+reflection), and `%T` and `%p` are not supported. Only the functions you
+call are compiled into the image, but `Sprintf` alone brings the whole
+formatter, about 19 KB of image: use `println` and `strconv` where image
+size matters.
 
 ## 3.8 Bit operations
 
@@ -2011,13 +2254,13 @@ Here is a program that uses many of the features gogo leaves out:
 // subset rejects, so you can see the compiler's messages.
 package main
 
-var counter = 0 // package-level variable
+var counter = 0 // fine: package-level variables are read-only
 
 type Shape interface{ Area() int } // fine: interfaces are supported
 
 type Sq struct{ S int }
 
-func (s *Sq) Area() int { return s.S * s.S } // pointer receiver
+func (s *Sq) Area() int { return s.S * s.S } // fine: pointer receivers are supported
 
 func Max[T int | int64](a, b T) T { // generics
 	if a > b {
@@ -2029,13 +2272,15 @@ func Max[T int | int64](a, b T) T { // generics
 func main() {
 	ch := make(chan int) // channel
 	go func() { ch <- 1 }()
-	defer recover()       // recover
-	m := map[string]int{} // map
-	p := &Sq{2}           // pointer
-	x := 1.5i             // complex
+	sq := []Sq{{2}}
+	defer recover()    // recover
+	m := map[*Sq]int{} // a map with pointer keys
+	p := &sq[0]        // a pointer into a slice
+	x := 1.5i          // complex
 	if counter > 0 {
 		goto done // goto
 	}
+	counter++ // a write to a package-level variable
 done:
 	var a any = [4]int{} // array in an interface
 	y := any(1).(int)    // fine: type assertions are supported
@@ -2048,22 +2293,20 @@ done:
 `gogo build` reports each one:
 
 ```text
-main.gg:5:1: gogo: global variable not supported
-main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
-main.gg:23:8: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
-main.gg:24:7: gogo: map not supported
-main.gg:25:7: gogo: pointer not supported
-main.gg:26:7: gogo: complex not supported
-main.gg:28:3: gogo: goto statement not supported
-main.gg:30:1: gogo: label on a statement other than for or switch not supported
-main.gg:31:14: gogo: array in interface not supported: use a slice or a struct with an array field
-main.gg:34:10: gogo: map not supported
-main.gg:34:13: gogo: pointer not supported
-main.gg:34:16: gogo: complex not supported
-main.gg:35:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
+main.gg:24:8: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
+main.gg:25:7: gogo: map with key type *main.Sq: a pointer key (no pointer keys: pointers move) not supported
+main.gg:26:7: gogo: interior pointer &sq[0] not supported: gogo has no pointers into a slice element or a struct field; use a []*T or a *T field, or s[i].F = v
+main.gg:27:7: gogo: complex not supported
+main.gg:29:3: gogo: goto statement not supported
+main.gg:31:2: gogo: package-level variable counter is read-only
+main.gg:32:1: gogo: label on a statement other than for or switch not supported
+main.gg:33:14: gogo: array in interface not supported: use a slice or a struct with an array field
+main.gg:36:10: gogo: map with key type *main.Sq: a pointer key (no pointer keys: pointers move) not supported
+main.gg:36:16: gogo: complex not supported
+main.gg:37:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
 ```
 
 The full list, with what to do instead:
@@ -2075,22 +2318,16 @@ The full list, with what to do instead:
 | `defer` in a loop | `defer inside a loop not supported: deferred calls are static (move the loop body into a function)` | a function per iteration |
 | `recover()` | `recover (a panic ends the actor: let its supervisor restart it) not supported` | let the actor exit; a supervisor restarts it (chapter 5); ports and files close automatically |
 | `error` | `error not supported` | `bool` or an `int` code type |
-| package-level `var` | `global variable not supported` | `const`, or state in an actor |
-| maps | `map not supported` | a slice of key/value structs |
-| pointers, `&x`, `*p` | `pointer not supported` | values; state in actors |
-| pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
+| writing a package-level `var` | `package-level variable counter is read-only` | state in an actor |
+| a map with pointer keys | `map with key type *T: a pointer key (no pointer keys: pointers move) not supported` | a key the pointer's target identifies |
+| a pointer into a slice element or a field, `&s[i]`, `&v.F` | `interior pointer &s[i] not supported` | a `[]*T` or a `*T` field, or `s[i].F = v` |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
 | `complex64/128` | `complex not supported` | two floats |
 | `uintptr` | `uintptr not supported` | `uint32` |
 | generics | `generic function not supported` | write the function per type |
-| `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
+| Go's std packages by their Go paths | `import "fmt": package not found` | the gogo ones: `gogo/fmt`, `gogo/strings`, `gogo/strconv`, `gogo/errors`, `gogo/math` |
 | an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
-
-> **Note.** Pointer receivers, maps, pointers and
-> package-level variables are not supported yet. They are planned for
-> the "language completeness" milestone, next after embed mode (see
-> `docs/design.md` §5.2).
 
 ### Small surprises
 
@@ -2100,8 +2337,11 @@ The full list, with what to do instead:
   a struct or slice holding `uint32` or `uint64` values, and not a
   multi-result call (`println(divmod(7, 2))` is `multiple values not
   supported`). An interface value prints the value it holds (Go prints two
-  addresses); a sized integer or a named basic value inside one prints in
-  its box, `{5}`.
+  addresses), a pointer what it points to (`&{1 2}`), a map `map[k:v]`;
+  a sized integer or a named basic value inside one prints in its box,
+  `{5}`, unless the program uses pointers, maps or `gogo/fmt` (then `5`:
+  older firmware cannot print it so, and a program without them still
+  runs there).
 - A two-result gogo builtin cannot be a statement on its own: `actor.
   Call(p, req, 100)` on a line by itself is rejected with `multiple values
   not supported`. Write `_, _ = actor.Call(p, req, 100)`. Your own

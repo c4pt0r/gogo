@@ -38,6 +38,31 @@ func TestMinorBaseline(t *testing.T) {
 	for _, e := range minorBaselineErrors() {
 		t.Error(e)
 	}
+	// A sized integer or named basic value in an interface (15.0) and
+	// uint64 arithmetic (15.3) keep their minor: the box rows carry
+	// StructBox only in an image that needs 15.6 anyway (flagBoxes).
+	for _, tc := range []struct {
+		src   string
+		minor uint32
+	}{
+		{"package main\ntype C int\nfunc main() {\n\tvar x any = byte(5)\n\tvar y any = C(2)\n\tprintln(x, y)\n}\n", 0},
+		{"package main\nfunc main() {\n\tu := uint64(7)\n\tvar x any = u / 2\n\tprintln(x)\n}\n", sizedMinor},
+		{"package main\nimport \"gogo/errors\"\nfunc main() {\n\tvar x any = uint16(5)\n\tvar e error = errors.New(\"e\")\n\tprintln(x, e.Error())\n}\n", ifaceMinor},
+		{"package main\nfunc main() {\n\tvar x any = byte(5)\n\tp := &x\n\tprintln(*p)\n}\n", refMinor},
+	} {
+		w := words(compileImage(t, tc.src))
+		if w[1] != 15<<16|tc.minor {
+			t.Errorf("%q: image format %s, want 15.%d", tc.src, VersionString(w[1]), tc.minor)
+		}
+		boxed := false // a type row with StructBox
+		rows := w[8+3*w[2]:]
+		for i := uint32(0); i < w[3]; i++ {
+			boxed = boxed || rows[2*i]&StructBox != 0
+		}
+		if boxed != (tc.minor == refMinor) {
+			t.Errorf("%q: a box row flagged %v, want %v", tc.src, boxed, tc.minor == refMinor)
+		}
+	}
 }
 
 // TestMinorBaselineCatches: the check fails for an addition without a

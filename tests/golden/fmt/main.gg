@@ -1,0 +1,79 @@
+// gogo/fmt (15.6): Sprint, Sprintln, Sprintf, Print, Println, Printf and
+// Errorf, the verbs, flags, widths and precisions, error and Stringer
+// operands, and %v of structs, slices, maps and pointers. Valid Go (with
+// gogo/fmt and gogo/errors as fmt and errors): `go run` prints the same.
+package main
+
+import (
+	"gogo/errors"
+	"gogo/fmt"
+)
+
+type Point struct{ X, Y int }
+
+type Celsius int
+
+func (c Celsius) String() string { return fmt.Sprintf("%d°C", int(c)) }
+
+type Kind int
+
+type Temp struct {
+	Name string
+	Deg  float64
+}
+
+func (t *Temp) String() string { return t.Name + "=" + fmt.Sprint(t.Deg) }
+
+var errBase = errors.New("base")
+
+func main() {
+	fmt.Println("hello", 42, true, 1.5, nil, 'x', "")
+	fmt.Println(Point{1, 2}, []int{1, 2, 3}, map[string]int{"a": 1, "b": 2}, &Point{3, 4}, []string{"x", "y"})
+	fmt.Print("x", "y", 1, 2, "z", 3.5, "\n")
+	fmt.Print(1, 2, "\n")
+	s := fmt.Sprint("a", 1, 2, "b", "c", 3.5)
+	fmt.Println(s, len(s))
+	fmt.Print(fmt.Sprintln("end", 1, true))
+
+	// integers
+	fmt.Printf("%d|%5d|%-5d|%05d|%x|%X|%o|%O|%b|%c|%q|%U\n", 42, 42, 42, -42, 255, 255, 8, 8, 5, 'A', 'z', 0x1F600)
+	fmt.Printf("%+d|% d|%3c|%.3d|%8.3d|%#x|%#o|%#b|%x\n", 5, 5, 'x', 7, -7, 255, 8, 5, -255)
+	fmt.Printf("%d %d %d %d %d %d\n", int8(-8), int16(300), int32(-70000), int64(1)<<40, uint8(200), uint16(60000))
+	fmt.Printf("%d %d %x %v\n", uint32(4000000000), uint64(1)<<63, uint64(1)<<63, uint(7))
+
+	// strings
+	fmt.Printf("%s|%10s|%-10s|%q|%x|% x|%X|%.2s|%q\n", "go", "go", "go", "a\"b\n", "hi", "hi", "hi", "gopher", "tab\there")
+	fmt.Printf("%#q|%q|%5.1s|\n", "raw", "\x00\x7f", "abc")
+
+	// bools, Stringers, errors
+	fmt.Printf("%v|%t|%v|%s|%d\n", true, false, Celsius(21), Celsius(-3), Celsius(5))
+	t := &Temp{"room", 20.5}
+	fmt.Println(t, Celsius(30))
+	fmt.Printf("[%v] [%s] [%q]\n", errBase, errBase, errBase)
+
+	// floats
+	fmt.Printf("%f|%.2f|%8.3f|%-8.2f|%e|%E|%g|%G|%v\n", 3.14159, 3.14159, 3.14159, 2.5, 123456.789, 0.00012, 0.000012, 1e21, float32(0.1))
+	fmt.Printf("%+.1f|% .1f|%08.3f|%.0f|%v|%v|%v\n", 2.25, 2.25, -3.14159, 2.5, 1e6, 1e21, 100.0)
+	fmt.Println(1.0, 0.1+0.2, float32(1)/3, -0.0)
+
+	// * widths, %%, and mistakes
+	fmt.Printf("%*d|%-*d|%.*f|100%%\n", 5, 1, 4, 2, 2, 1.23456)
+	fmt.Printf("%d %s\n", 1)
+	fmt.Printf("%d\n", 1, "two")
+	fmt.Printf("%z|%d\n", 3, "x")
+
+	// values of other types
+	var k any = Kind(3)
+	fmt.Println(k, byte(65), int64(-5))
+	fmt.Printf("%v %d\n", []string{"a", "b"}, []int{1, 2})
+	var np *Point
+	fmt.Println(np == nil, map[int]bool{})
+
+	// Errorf
+	e := fmt.Errorf("op %d: %w", 3, errBase)
+	fmt.Println(e, errors.Is(e, errBase), errors.Unwrap(e) == errBase)
+	e2 := fmt.Errorf("plain %s", "text")
+	fmt.Println(e2.Error(), errors.Unwrap(e2) == nil)
+	n, err := fmt.Println("count")
+	fmt.Println(n, err)
+}

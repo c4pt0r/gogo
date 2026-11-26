@@ -13,6 +13,13 @@ import (
 // seqBuiltin compiles the predeclared len, cap, append, make or copy into
 // dst. False for any other builtin (println).
 func (f *fn) seqBuiltin(call *ast.CallExpr, name string, dst uint8) bool {
+	if f.mapBuiltin(call, name, dst) { // len, delete, clear of a map
+		return true
+	}
+	if mt := mapOf(f.g.p.Info.TypeOf(call)); name == "make" && mt != nil {
+		f.makeMapInto(call, mt, dst)
+		return true
+	}
 	switch name {
 	case "len":
 		f.seqCall(call, dst, BLen, f.into(call.Args[0]))
@@ -24,6 +31,8 @@ func (f *fn) seqBuiltin(call *ast.CallExpr, name string, dst uint8) bool {
 		f.makeInto(call, dst)
 	case "append":
 		f.appendInto(call, dst)
+	case "new":
+		f.newInto(call, dst)
 	default:
 		return false
 	}

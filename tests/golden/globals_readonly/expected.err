@@ -1,0 +1,3 @@
+gogo: actor <pid 1> crashed: badcode in main.main.func1
+gogo: actor <pid 1> crashed: badcode in main.main.func2
+gogo: actor <pid 1> crashed: badcode in main.main.func3

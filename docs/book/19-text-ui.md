@@ -261,9 +261,9 @@ UI. You give it three callbacks in a `tui.Handlers`:
 - `Draw` redraws the interface.
 
 `Key` or `Msg` returns false to end the loop. `Run` draws and flushes
-before the first message and after every call to `Key` or `Msg`. Closures
-capture by value, so keep the state the callbacks change in a slice they
-share: `st := []State{...}`, then `st[0] = next` inside a callback.
+before the first message and after every call to `Key` or `Msg`. The
+callbacks share the variables they capture, so they can keep their state
+in a local variable of the function that calls `Run`.
 `examples/tuidemo` is built this way. It is a menu, a job with a progress
 bar driven by a timer, a status line, a rename dialog and an About box, and
 the same image runs on both boards.

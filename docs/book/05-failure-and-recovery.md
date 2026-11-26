@@ -92,6 +92,7 @@ type Reason struct {
 | 8 | `actor.BadShift` | a negative shift count | `badshift` |
 | 9 | `actor.BadMsg` | sent a module's own value to another module (chapter 14) | `badmsg` |
 | 10 | `actor.Panic` | `panic(v)`, a failed type assertion, a method call on a nil interface | `panic`, after `panic: v` |
+| 12 | `actor.Nil` | a nil pointer dereference, a write to a nil map (11 is kept for later) | `nil` |
 | ≥ 100 | your own | `actor.Exit(code)` or `actor.Kill(p, code)` | `exit(<code>)` |
 
 `Normal` and `Shutdown` are the two "expected" endings; everything else
@@ -301,8 +302,7 @@ func main() {
 	actor.TrapExit(true)
 	var pids []actor.PID
 	for i := 0; i < 3; i++ {
-		n := i // the loop variable changes (i++): capture a fresh copy
-		pids = append(pids, actor.SpawnLink(func() { flaky(n) }))
+		pids = append(pids, actor.SpawnLink(func() { flaky(i) })) // each iteration has its own i
 	}
 	for i := 0; i < 3; i++ {
 		switch m := actor.Receive().(type) {
@@ -355,8 +355,8 @@ gogo: actor <pid 3> crashed: exit(102)
 gogo: actor <pid 1> crashed: killed
 ```
 
-The `n := i` line is there because of the closure rule from chapter 3: `i`
-changes with `i++`, so the closure must capture a variable that does not.
+Each closure gets its own `i`: as in Go 1.22, every iteration of the loop
+has its own loop variable (chapter 3).
 
 ## 5.5 Monitors
 
