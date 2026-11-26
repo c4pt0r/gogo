@@ -361,10 +361,10 @@ static int dropped(const Vm *vm, Actor *from, term t) {
  * carrying serial; serial 0 drops). A PID naming no local actor that is a
  * remote one goes to the distribution hook. */
 static int send_to(Vm *vm, Actor *from, term to_pid, uint64_t serial, bool reply, term msg) {
-    Actor *to = actor_lookup(vm, to_pid);
+    Actor *to = actor_lookup_live(vm, to_pid);
     const VmDist *d;
     if (!to && (serial || !reply) && (d = vm_dist_of(vm, to_pid))) return d->send(vm, from, to_pid, serial, msg);
-    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING) || (reply && !serial))
+    if (!to || (reply && !serial))
         return dropped(vm, from, msg);
 
     uint32_t why;

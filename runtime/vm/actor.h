@@ -181,6 +181,10 @@ void actor_free(Vm *vm, Actor *a);
 /* NULL if pid is not a PID, names a free slot, or has a stale generation. */
 Actor *actor_lookup(Vm *vm, term pid);
 
+/* Like actor_lookup, but also NULL for an actor that exited or is marked
+ * to exit: one that may still get messages and signals. */
+Actor *actor_lookup_live(Vm *vm, term pid);
+
 void runq_push(Vm *vm, Actor *a);
 Actor *runq_pop(Vm *vm);          /* NULL when empty */
 

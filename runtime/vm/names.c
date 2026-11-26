@@ -27,8 +27,7 @@ static void unlink_free(Vm *vm, Name **p) {
 }
 
 int names_register(Vm *vm, term by, const uint8_t *name, uint32_t len, term pid) {
-    const Actor *a = actor_lookup(vm, pid);
-    if (!a || a->state == A_EXITED || (a->flags & AF_EXIT_PENDING)) return 0;
+    if (!actor_lookup_live(vm, pid)) return 0;
     if (find(vm, name, len)) return 0;
     Name *n = va_alloc(vm, name_size(len));
     if (!n) return -1;

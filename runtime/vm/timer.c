@@ -267,8 +267,8 @@ void timer_fire_due(Vm *vm, uint64_t now) {
             /* Released first: a creator sending to itself must not have
              * the message counted twice by its quota. */
             uncharge(vm, t);
-            Actor *to = actor_lookup(vm, t->pid);
-            if (to && to->state != A_EXITED && !(to->flags & AF_EXIT_PENDING)) {
+            Actor *to = actor_lookup_live(vm, t->pid);
+            if (to) {
                 msg_enqueue(vm, to, t->msg, true);   /* owns it now, even if dropped */
                 t->msg = NULL;
             }

@@ -396,15 +396,14 @@ void port_drain(Vm *vm, uint64_t now) {
 /* ---- ownership (M5) ---- */
 
 Actor *port_owner(Vm *vm, const Port *p) {
-    Actor *o = actor_lookup(vm, p->owner);
-    return o && o->state != A_EXITED && !(o->flags & AF_EXIT_PENDING) ? o : NULL;
+    return actor_lookup_live(vm, p->owner);
 }
 
 bool port_handoff(Vm *vm, Actor *from, term pid, term to) {
     Port *p = port_of(vm, pid);
     if (!p || p->owner != from->id) return false;
-    Actor *t = port_is(vm, to) ? NULL : actor_lookup(vm, to);
-    if (!t || t->state == A_EXITED || (t->flags & AF_EXIT_PENDING)) return false;
+    Actor *t = actor_lookup_live(vm, to);   /* NULL for a port PID too */
+    if (!t) return false;
     if (t != from) {
         /* t must fit the charge plus what holding the pinned Bytes adds
          * (each root t does not hold yet, at its full length, and t's

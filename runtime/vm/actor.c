@@ -104,6 +104,11 @@ Actor *actor_lookup(Vm *vm, term pid) {
     return a->id == pid ? a : NULL;          /* generation must match too */
 }
 
+Actor *actor_lookup_live(Vm *vm, term pid) {
+    Actor *a = actor_lookup(vm, pid);
+    return a && a->state != A_EXITED && !(a->flags & AF_EXIT_PENDING) ? a : NULL;
+}
+
 void runq_push(Vm *vm, Actor *a) {
     a->next = NULL;
     if (vm->runq_tail) vm->runq_tail->next = a;
