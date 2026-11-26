@@ -13,6 +13,14 @@
 // game restarts it; after 3 deaths within 10 s it gives up and switches to
 // manual. A crash of the autopilot never stops the game.
 //
+// Distributed (gogo/node): with the config key snake.server (a.b.c.d:port)
+// the board joins that server node and the autopilot runs there, one View
+// and one Move over the network per step. When the link drops, the
+// monitor's DownMsg (reason NoConnection) brings a local autopilot back,
+// and the board rejoins when the server returns. The server is this same
+// program with snake.serve (a port) on a host VM with real sockets:
+// GOGO_NET=host gogo run examples/snake (see README.md).
+//
 // Keys: arrows (Fn+; . , / on the Cardputer), the same keys without Fn, or
 // WASD steer and switch to manual; m toggles auto/manual; p pauses; Enter
 // or Space starts a new game after game over; k kills the autopilot; Esc
@@ -26,8 +34,10 @@ import (
 	"snake/board"
 
 	"gogo/actor"
+	"gogo/dhcp"
 	"gogo/fs"
 	"gogo/kv"
+	"gogo/node"
 	"gogo/port"
 	"gogo/screen"
 	"gogo/strconv"
@@ -109,6 +119,85 @@ type Autopilot struct {
 	Up      bool
 	Crashes int   // deaths in the current window
 	Since   int64 // when the window started
+	Remote  bool  // it runs on the server node
+}
+
+// The server node's name, and the name its autopilot is registered under.
+const (
+	serverNode = "snake-server"
+	pilotName  = "autopilot"
+	rejoinMs   = 3000 // how often a board without the server tries again
+)
+
+// remotePilot tells the game that the server's autopilot is reachable.
+type remotePilot struct{ PID actor.PID }
+
+// netConfig is the server's address and the shared token: the config keys
+// snake.server and node.token ("" if unset).
+func netConfig() (string, string) {
+	addr, _ := sys.Config("snake.server")
+	token, _ := sys.Config("node.token")
+	return addr, token
+}
+
+// joiner keeps the board joined to the server node: it gets an address
+// (DHCP; a host VM has its own), connects, finds the server's autopilot
+// and tells the game, waits for the server to go, and tries again every
+// rejoinMs.
+func joiner(game actor.PID, addr, token string) {
+	dhcp.Start(dhcp.Config{TimeoutMs: 15000})
+	node.Subscribe()
+	for {
+		if node.ConnectOpt(addr, node.Options{Name: "snake-board", Token: token, TimeoutMs: 3000}) {
+			if p, ok := node.Whereis(serverNode, pilotName, 2000); ok {
+				println("snake: joined", addr)
+				actor.Send(game, remotePilot{PID: p})
+				waitDown()
+				println("snake: server lost")
+			} else {
+				node.Disconnect()
+			}
+		}
+		actor.Sleep(rejoinMs)
+	}
+}
+
+// waitDown returns when the server node is gone.
+func waitDown() {
+	for {
+		switch m := actor.Receive().(type) {
+		case node.Down:
+			if m.Node == serverNode {
+				return
+			}
+		}
+	}
+}
+
+// serve is the server node: it keeps an autopilot registered for the
+// boards, restarting it when it dies.
+func serve(port int, token string) {
+	if !node.ListenOpt(port, node.Options{Name: serverNode, Token: token}) {
+		println("snake: cannot serve on port", port, "(node.token set? GOGO_NET=host?)")
+		return
+	}
+	println("snake: autopilot server on port", port)
+	for {
+		pid := actor.SpawnOpt(autopilot.Run, actor.Options{MaxMemory: 64 * 1024})
+		node.Unregister(pilotName)
+		node.Register(pilotName, pid)
+		actor.Monitor(pid)
+		for {
+			m := actor.Receive()
+			switch d := m.(type) {
+			case actor.DownMsg:
+				println("snake: autopilot died (reason " + strconv.Itoa(d.Reason.Code) + "), restarted")
+			default:
+				continue
+			}
+			break
+		}
+	}
 }
 
 // startPilot spawns the autopilot and monitors it. It gets more memory than
@@ -150,6 +239,12 @@ func main() {
 		simulateAll(seeds, steps)
 		return
 	}
+	addr, token := netConfig()
+	if v, ok := sys.Config("snake.serve"); ok {
+		port, _ := strconv.Atoi(v)
+		serve(port, token)
+		return
+	}
 	s, ok := tui.Open(screen.Config{})
 	if !ok {
 		println("snake: no screen")
@@ -174,9 +269,12 @@ func main() {
 	waitFrom := int64(0) // when the current step began to wait for it
 	pilot := startPilot(Autopilot{Since: actor.Now()})
 	self := actor.Self()
+	if addr != "" {
+		actor.Spawn(func() { joiner(self, addr, token) })
+	}
 	ask(pilot, g, seq, w, h)
 	actor.SendAfter(stepMs(g), self, tick{})
-	if draw(s, g, w, h, hi, auto, paused, "") {
+	if draw(s, g, w, h, hi, auto, paused, false, "") {
 		frames++
 	}
 
@@ -276,6 +374,18 @@ func main() {
 					redraw = false
 				}
 				actor.SendAfter(stepMs(g), self, tick{})
+			case remotePilot:
+				// The server's autopilot takes over from the local one.
+				if pilot.Up && !pilot.Remote {
+					actor.Demonitor(pilot.Ref)
+					actor.Send(pilot.PID, autopilot.Stop{})
+				}
+				pilot = Autopilot{PID: m.PID, Ref: actor.Monitor(m.PID), Up: true, Crashes: pilot.Crashes,
+					Since: pilot.Since, Remote: true}
+				note = "pilot on server"
+				noteUntil = now + noteMs
+				answered = -1
+				ask(pilot, g, seq, w, h)
 			case board.Move:
 				if m.Seq == seq {
 					answered = seq
@@ -287,6 +397,16 @@ func main() {
 			case actor.DownMsg:
 				if m.Ref != pilot.Ref {
 					continue
+				}
+				if pilot.Remote {
+					// The server or the link is gone: a local autopilot
+					// takes over at once (not counted as a crash).
+					println("snake: remote autopilot lost (reason " + strconv.Itoa(m.Reason.Code) + "), local")
+					pilot = startPilot(Autopilot{Crashes: pilot.Crashes, Since: pilot.Since})
+					note = "server lost: local"
+					noteUntil = now + noteMs
+					ask(pilot, g, seq, w, h)
+					break
 				}
 				if !auto {
 					// Not needed in manual mode: m starts a new one.
@@ -320,12 +440,12 @@ func main() {
 		if now < noteUntil {
 			shown = note
 		}
-		if (redraw || shown != lastShown) && draw(s, g, w, h, hi, auto, paused, shown) {
+		if (redraw || shown != lastShown) && draw(s, g, w, h, hi, auto, paused, pilot.Remote, shown) {
 			frames++
 		}
 	}
 	saveHigh(hi, savedHi)
-	if pilot.Up {
+	if pilot.Up && !pilot.Remote {
 		actor.Send(pilot.PID, autopilot.Stop{})
 	}
 	tui.CloseKeys(keys)
@@ -333,9 +453,10 @@ func main() {
 	println("snake: score", g.Score, "high", hi)
 }
 
-// draw redraws the whole screen and flushes it; the port draws only the rows
+// draw redraws the whole screen and flushes it (remote: the autopilot is
+// the server's); the port draws only the rows
 // that changed. It returns whether a frame was sent.
-func draw(s tui.Screen, g board.Game, w, h, hi int, auto, paused bool, note string) bool {
+func draw(s tui.Screen, g board.Game, w, h, hi int, auto, paused, remote bool, note string) bool {
 	f := tui.NewFrame(s)
 	tui.Style(f, screen.White, screen.Black, 0)
 	tui.Clear(f)
@@ -369,7 +490,9 @@ func draw(s tui.Screen, g board.Game, w, h, hi int, auto, paused bool, note stri
 		tui.Label(box, 1, 2, 20, hint, tui.Center)
 	}
 	mode := "MANUAL"
-	if auto {
+	if auto && remote {
+		mode = "AUTO NET" // the autopilot runs on the server node
+	} else if auto {
 		mode = "AUTO"
 	}
 	right := "m:mode p:pause "

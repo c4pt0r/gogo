@@ -76,6 +76,41 @@ high score, frames sent, frames the screen port dropped and the game
 actor's memory) and when the autopilot
 is restarted. While the screen is open, only `gogo monitor` shows them.
 
+## The autopilot on another machine
+
+With `gogo/node` the autopilot can run on a server node (the host) while
+the game stays on the board: the same image plays both parts, chosen by
+configuration keys.
+
+- The **server** is a host VM with real sockets (`GOGO_NET=host`, or
+  `gogovm --host-net`) and `snake.serve` set to a TCP port. It joins no
+  game: it registers an autopilot as `autopilot` on the node
+  `snake-server`, restarts it when it dies, and serves every board.
+- The **board** has `snake.server` set to the server's `a.b.c.d:port`. A
+  joiner actor gets an address (`gogo/dhcp`), connects as the node `snake-board`, finds the server's
+  `autopilot` and hands it to the game, which then sends it its `View`s and
+  gets `Move`s back over the network: one request and one reply per step.
+  The status row says `AUTO NET`. `board.View` and `board.Move` cross the
+  network as they are: both ends compile the same `snake/board`, and a
+  struct goes from node to node by its qualified name and field count.
+- Both need the same `node.token`.
+
+When the server or the link goes, the game's monitor on the remote
+autopilot fires (`actor.DownMsg`, reason `actor.NoConnection`): a local
+autopilot takes over at once (`server lost: local`; not counted as a
+crash) and the joiner tries the server again every 3 s. When it is back,
+the server's autopilot takes over again (`pilot on server`). `k` does
+not kill a remote autopilot (`actor.Kill` of a remote PID does nothing).
+
+```sh
+printf 'snake.serve=4370\nnode.token=<a long random string>\n' > /tmp/snake-server.cfg
+GOGO_NET=host GOGO_CONFIG=/tmp/snake-server.cfg build/gogo run examples/snake
+
+build/gogo config set snake.server 192.168.1.10:4370    # the host's address
+build/gogo config set node.token '<the same string>'
+build/gogo flash examples/snake
+```
+
 ## Checking the autopilot
 
 This is a demo, so it is not part of `make test`. With the config key
@@ -109,6 +144,7 @@ build/gogo flash snake.ggb                        # the Cardputer ADV
 build/gogo monitor -timeout 60
 ```
 
-The image needs a firmware with the `screen` driver (image format 15.1 or
-later). On a board without a keyboard (the StickS3) it runs the demo in
+The image needs a firmware with the `screen`, `netif` and `udp` drivers
+(`gogo/dhcp`, for the server mode) and image format 15.2 or later (for
+`gogo/node`, whose own drivers are optional). On a board without a keyboard (the StickS3) it runs the demo in
 auto mode; button A is Enter and B is down.
