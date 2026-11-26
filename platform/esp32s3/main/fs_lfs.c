@@ -155,7 +155,8 @@ int fs_lfs_mount(void) {
         return -1;
     }
     uint32_t part_blocks = (uint32_t)(part->size / BLOCK);
-    flash_bd = (BlockDev){ (void *)part, BLOCK, part_blocks, bd_read, bd_prog, bd_erase, NULL };
+    flash_bd = (BlockDev){ .ctx = (void *)part, .block_size = BLOCK, .block_count = part_blocks,
+                           .read = bd_read, .prog = bd_prog, .erase = bd_erase };
     uint32_t want = wanted_blocks(part_blocks);
 
     int mode = LFS_BE_AUTO;

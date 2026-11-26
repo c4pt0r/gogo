@@ -52,15 +52,17 @@ DRESULT fat_be_disk_ioctl(FatVol *v, BYTE cmd, void *buf) {
 
 /* Says once what the medium holds instead of a FAT: MBR partition 1 type
  * (0x07 = NTFS here, 0xEE = GPT) or, with no MBR, the boot sector's OEM
- * name. */
+ * name. Sector 0 is read into FatFs's window: the volume is not mounted
+ * (try_mount unregistered it), so the window is free, and nothing goes on
+ * the VM task's stack. */
 static void say_nofs(FatVol *v) {
-    uint32_t sec[SECTOR / 4u];             /* 4-aligned, on the VM task's stack */
-    const uint8_t *b = (const uint8_t *)sec;
+    uint8_t *b = v->fs.win;
     char what[24] = "unreadable";
     const DiskHal *h = v->hal;
     v->said_nofs = true;
     if (!v->say) return;
-    if (h->read(h->ctx, 0, (uint8_t *)sec, 1) == 0) {
+    v->fs.winsect = (LBA_t)0 - 1;   /* the window no longer holds what FatFs read */
+    if (h->read(h->ctx, 0, b, 1) == 0) {
         if (b[510] == 0x55 && b[511] == 0xAA && b[446 + 4] != 0 && memcmp(b + 3, "NTFS", 4))
             snprintf(what, sizeof what, "partition type 0x%02X", b[446 + 4]);
         else {
@@ -83,8 +85,8 @@ static int try_mount(FatVol *v, int attempt) {
     if (a != 0) return a == 2 ? 2 : 1;
     FRESULT r = f_mount(&v->fs, "0:", 1);
     if (r == FR_OK) return 0;
-    if (r == FR_NO_FILESYSTEM && !v->said_nofs) say_nofs(v);
     f_mount(NULL, "0:", 0);
+    if (r == FR_NO_FILESYSTEM && !v->said_nofs) say_nofs(v);
     return r == FR_NO_FILESYSTEM ? 2 : 1;
 }
 

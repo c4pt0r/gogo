@@ -24,17 +24,26 @@
 #include "vfs.h"
 #include "lfs.h"
 
+/* The read / prog cache of the volume and of each open file (bytes; a
+ * board whose flash programs larger units builds with a larger one, and
+ * GOGO_FS_SLOT_BYTES grows with it). */
+#ifndef LFS_BE_CACHE
 #define LFS_BE_CACHE     64u
+#endif
 #define LFS_BE_LOOKAHEAD 16u
 
 /* A board's flash, in erase blocks of block_size bytes (block_count of
  * them). read / prog take a block and an offset in it (prog only to erased
- * bytes, in multiples of 16 bytes); erase erases one block; sync flushes
- * what the device buffers (0 if nothing). Every call returns 0 or a
- * negative error. */
+ * bytes, in multiples of prog_size); erase erases one block; sync
+ * (optional) flushes what the device buffers. Every call returns 0 or a
+ * negative error. read_size / prog_size: the smallest read and program
+ * (0 = 16); both must divide LFS_BE_CACHE, which must divide block_size.
+ * Bounds: lfs_be calls read / prog / erase only with block < block_count
+ * and off + n <= block_size, so the device needs no checks of its own. */
 typedef struct BlockDev {
     void *ctx;
     uint32_t block_size, block_count;
+    uint32_t read_size, prog_size;
     int (*read)(void *ctx, uint32_t block, uint32_t off, void *buf, uint32_t n);
     int (*prog)(void *ctx, uint32_t block, uint32_t off, const void *buf, uint32_t n);
     int (*erase)(void *ctx, uint32_t block);
@@ -80,8 +89,9 @@ enum {
  * in place (data kept); a smaller one keeps the current size and says so
  * (shrinking needs a format). A blank or unreadable file system (first
  * boot) is formatted; any other mount error (IO), or a file system bigger
- * than the device, leaves v unmounted and its data untouched. 0 mounted,
- * else a negative LittleFS error. Runs before any other user of v. */
+ * than the device, leaves v unmounted and its data untouched; the
+ * too-big refusal applies in every mode. 0 mounted, else a negative
+ * LittleFS error. Runs before any other user of v. */
 int lfs_be_mount(LfsVol *v, const BlockDev *bd, const LfsOpts *o, uint32_t want_blocks, int mode);
 
 /* The mounted file system's size in blocks (0 if not mounted). */

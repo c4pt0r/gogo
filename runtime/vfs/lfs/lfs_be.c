@@ -31,16 +31,26 @@ void gogo_lfs_free(void *p) { (void)p; }
 
 static const BlockDev *bd_of(const struct lfs_config *c) { return ((const LfsVol *)c->context)->bd; }
 
+/* Inside the device: block b exists and [off, off + n) is inside it. Every
+ * call checks, so a corrupt superblock can never reach past the device
+ * (raw flash after it, on a board without a partition table). */
+static bool in_dev(const BlockDev *d, lfs_block_t b, lfs_off_t off, lfs_size_t n) {
+    return b < d->block_count && off <= d->block_size && n <= d->block_size - off;
+}
+
 static int bd_read(const struct lfs_config *c, lfs_block_t b, lfs_off_t off, void *buf, lfs_size_t n) {
     const BlockDev *d = bd_of(c);
+    if (!in_dev(d, b, off, n)) return LFS_ERR_IO;
     return d->read(d->ctx, (uint32_t)b, (uint32_t)off, buf, (uint32_t)n) == 0 ? 0 : LFS_ERR_IO;
 }
 static int bd_prog(const struct lfs_config *c, lfs_block_t b, lfs_off_t off, const void *buf, lfs_size_t n) {
     const BlockDev *d = bd_of(c);
+    if (!in_dev(d, b, off, n)) return LFS_ERR_IO;
     return d->prog(d->ctx, (uint32_t)b, (uint32_t)off, buf, (uint32_t)n) == 0 ? 0 : LFS_ERR_IO;
 }
 static int bd_erase(const struct lfs_config *c, lfs_block_t b) {
     const BlockDev *d = bd_of(c);
+    if (!in_dev(d, b, 0, 0)) return LFS_ERR_IO;
     return d->erase(d->ctx, (uint32_t)b) == 0 ? 0 : LFS_ERR_IO;
 }
 static int bd_sync(const struct lfs_config *c) {
@@ -186,21 +196,29 @@ static int u_usage(void *c, int32_t *used, int32_t *total) {
 }
 
 /* The backend: each call under the volume's lock (LfsOpts.lock). */
-static void take(void *c) { const LfsOpts *o = ((LfsVol *)c)->opts; if (o && o->lock) o->lock(true); }
-static int give(void *c, int r) { const LfsOpts *o = ((LfsVol *)c)->opts; if (o && o->lock) o->lock(false); return r; }
-static int l_open(void *c, void *f, const char *rel, int mode) { take(c); return give(c, u_open(c, f, rel, mode)); }
-static int l_read(void *c, void *f, uint8_t *buf, uint32_t n, uint32_t *got) { take(c); return give(c, u_read(c, f, buf, n, got)); }
-static int l_write(void *c, void *f, const uint8_t *buf, uint32_t n) { take(c); return give(c, u_write(c, f, buf, n)); }
-static int l_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32_t n) { take(c); return give(c, u_write_at(c, f, off, buf, n)); }
-static int l_sync(void *c, void *f) { take(c); return give(c, u_sync(c, f)); }
-static int l_size(void *c, void *f, int32_t *out) { take(c); return give(c, u_size(c, f, out)); }
-static int l_close(void *c, void *f) { take(c); return give(c, u_close(c, f)); }
-static int l_stat(void *c, const char *rel, int32_t *size, bool *is_dir) { take(c); return give(c, u_stat(c, rel, size, is_dir)); }
-static int l_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) { take(c); return give(c, u_readdir(c, rel, cb, ctx)); }
-static int l_mkdir(void *c, const char *rel) { take(c); return give(c, u_mkdir(c, rel)); }
-static int l_remove(void *c, const char *rel) { take(c); return give(c, u_remove(c, rel)); }
-static int l_rename(void *c, const char *from, const char *to, bool replace) { take(c); return give(c, u_rename(c, from, to, replace)); }
-static int l_usage(void *c, int32_t *used, int32_t *total) { take(c); return give(c, u_usage(c, used, total)); }
+/* take reads the lock once and give releases exactly what take took: a
+ * call that races lfs_be_mount setting opts (the console task, at boot)
+ * cannot give a lock it never took. */
+static void (*take(void *c))(bool) {
+    const LfsOpts *o = ((LfsVol *)c)->opts;
+    void (*lock)(bool) = o ? o->lock : NULL;
+    if (lock) lock(true);
+    return lock;
+}
+static int give(void (*lock)(bool), int r) { if (lock) lock(false); return r; }
+static int l_open(void *c, void *f, const char *rel, int mode) { return give(take(c), u_open(c, f, rel, mode)); }
+static int l_read(void *c, void *f, uint8_t *buf, uint32_t n, uint32_t *got) { return give(take(c), u_read(c, f, buf, n, got)); }
+static int l_write(void *c, void *f, const uint8_t *buf, uint32_t n) { return give(take(c), u_write(c, f, buf, n)); }
+static int l_write_at(void *c, void *f, uint32_t off, const uint8_t *buf, uint32_t n) { return give(take(c), u_write_at(c, f, off, buf, n)); }
+static int l_sync(void *c, void *f) { return give(take(c), u_sync(c, f)); }
+static int l_size(void *c, void *f, int32_t *out) { return give(take(c), u_size(c, f, out)); }
+static int l_close(void *c, void *f) { return give(take(c), u_close(c, f)); }
+static int l_stat(void *c, const char *rel, int32_t *size, bool *is_dir) { return give(take(c), u_stat(c, rel, size, is_dir)); }
+static int l_readdir(void *c, const char *rel, VfsDirCb cb, void *ctx) { return give(take(c), u_readdir(c, rel, cb, ctx)); }
+static int l_mkdir(void *c, const char *rel) { return give(take(c), u_mkdir(c, rel)); }
+static int l_remove(void *c, const char *rel) { return give(take(c), u_remove(c, rel)); }
+static int l_rename(void *c, const char *from, const char *to, bool replace) { return give(take(c), u_rename(c, from, to, replace)); }
+static int l_usage(void *c, int32_t *used, int32_t *total) { return give(take(c), u_usage(c, used, total)); }
 
 const VfsBackend lfs_be_backend = {
     false, l_open, l_read, l_write, l_sync, l_size, l_close,
@@ -232,8 +250,8 @@ int lfs_be_mount(LfsVol *v, const BlockDev *bd, const LfsOpts *o, uint32_t want,
     v->cfg.prog = bd_prog;
     v->cfg.erase = bd_erase;
     v->cfg.sync = bd_sync;
-    v->cfg.read_size = 16;
-    v->cfg.prog_size = 16;
+    v->cfg.read_size = bd->read_size ? bd->read_size : 16u;
+    v->cfg.prog_size = bd->prog_size ? bd->prog_size : 16u;
     v->cfg.block_size = bd->block_size;
     v->cfg.block_count = 0;            /* mount: from the superblock */
     v->cfg.block_cycles = 500;
@@ -243,30 +261,44 @@ int lfs_be_mount(LfsVol *v, const BlockDev *bd, const LfsOpts *o, uint32_t want,
     v->cfg.prog_buffer = v->prog_buf;
     v->cfg.lookahead_buffer = v->look_buf;
 
+    if (CACHE % v->cfg.read_size || CACHE % v->cfg.prog_size || bd->block_size % CACHE) {
+        if (say) say("gogo: %s: block device geometry does not fit the %u-byte cache; not mounted", name,
+                     (unsigned)CACHE);
+        return LFS_ERR_INVAL;
+    }
+
     int e;
     uint32_t cur = 0;
     if (mode == LFS_BE_FORMAT) {
         e = format_mount(v, want);
-    } else if (mode == LFS_BE_MOUNT_ONLY) {
-        e = lfs_mount(&v->lfs, &v->cfg);
     } else if ((e = lfs_mount(&v->lfs, &v->cfg)) == LFS_ERR_CORRUPT || e == LFS_ERR_INVAL) {
-        /* blank (first boot) or not a LittleFS we can read: format. Any
-         * other error (IO) leaves the volume unmounted, its data untouched. */
-        if (say) say("gogo: formatting %s", name);
-        e = format_mount(v, want);
-    } else if (e == 0 && (cur = cur_blocks(v)) > dev_blocks) {
+        /* blank (first boot) or not a LittleFS we can read: format (not in
+         * LFS_BE_MOUNT_ONLY). Any other error (IO) leaves the volume
+         * unmounted, its data untouched. */
+        if (mode == LFS_BE_AUTO) {
+            if (say) say("gogo: formatting %s", name);
+            e = format_mount(v, want);
+        }
+    }
+    /* In every mode: a superblock that claims more blocks than the device
+     * has is refused (the block wrappers would refuse the blocks past the
+     * end anyway). */
+    if (e == 0 && (cur = cur_blocks(v)) > dev_blocks) {
         lfs_unmount(&v->lfs);
         if (say) say("gogo: %s (%lu KB) is bigger than its partition; not mounted (%s formats)", name,
                      (unsigned long)cur * kb, hint);
         return LFS_ERR_INVAL;
-    } else if (e == 0 && want > cur) {
+    }
+    if (e < 0 || mode != LFS_BE_AUTO) {
+        /* nothing to resize */
+    } else if (want > cur) {
         if ((e = lfs_fs_grow(&v->lfs, want)) < 0) {
             /* the superblock was not rewritten: remount at the old size */
             if (say) say("gogo: %s grow failed (%d), keeping %lu KB", name, e, (unsigned long)cur * kb);
             lfs_unmount(&v->lfs);
             e = lfs_mount(&v->lfs, &v->cfg);
         }
-    } else if (e == 0 && want < cur) {
+    } else if (want < cur) {
         if (say) say("gogo: %s shrink needs format (%s)", name, hint);
     }
     if (e < 0) {
