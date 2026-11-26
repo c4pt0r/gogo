@@ -80,6 +80,40 @@ Dynamic languages (Lua, MicroPython) find type errors only at run time and
 are harder to keep small and isolated per task; Rust or C give no isolation
 between tasks, no hot loading and a slower edit-test loop on hardware.
 
+### Why is gogo so small?
+The VM core is about 37 KB of code, an idle actor about 150 bytes, and a
+"hello" image about 1 KB, because size was a constraint from the first
+line, not an afterthought:
+
+- **The compiler stays on your computer.** Parsing, type checking and code
+  generation never run on the device, so the firmware carries no compiler,
+  parser or type tables, and type questions are settled before the code
+  ships.
+- **A simple, fixed bytecode.** 32-bit instruction words for a register
+  machine, decoded by one `switch` loop: no JIT, no dispatch tables
+  generated at run time.
+- **Values are compact.** Small integers live directly in a tagged word, so
+  they need no heap object, and struct values are immutable and shared
+  inside an actor instead of copied.
+- **Images run in place.** Code and constants are read straight from flash;
+  nothing is copied into RAM to start a program.
+- **Small heaps, simple GC.** Each actor has its own small heap collected by
+  a copying collector, which is little code and needs no global
+  bookkeeping.
+- **The library is mostly gogo, not C.** Only the stub packages map to VM
+  builtins; HTTP, DNS, supervisors, WAV files, the text UI and the rest are
+  ordinary gogo code that lives in the program image, so a program only
+  pays for what it imports.
+- **Everything optional is optional.** Networking, TLS, SD/exFAT, the CJK
+  font, audio, IR, the IMU and the screen are compile-time switches; a
+  firmware without them is simply smaller.
+- **A budget that is enforced.** Every change records the VM core size
+  against a 64 KB limit, new mutable globals fail the build, and features
+  that would cost too much (a JIT, a hash map in C) are designed out.
+
+The whole firmware image is about 1 MB, but most of that is ESP-IDF itself
+(Wi-Fi, the TCP/TLS libraries, the font): the gogo VM is a small part of it.
+
 ### Is gogo compiled or interpreted?
 Both, in two steps. `gogo build` compiles `.gg` source ahead of time, on your
 computer, into a `.ggb` bytecode image: parsing, type checking and code
