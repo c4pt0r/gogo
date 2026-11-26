@@ -656,7 +656,17 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 		return
 	}
 	results := namedResults(c.p.Info, body, sig)
-	write := func(e ast.Expr) {
+	deferred := map[*ast.FuncLit]bool{} // defer func() { ... }()
+	ast.Inspect(body, func(n ast.Node) bool {
+		if d, ok := n.(*ast.DeferStmt); ok {
+			if lit, ok := ast.Unparen(d.Call.Fun).(*ast.FuncLit); ok {
+				deferred[lit] = true
+			}
+		}
+		return true
+	})
+	// write checks a write to e; inDefer: e is in a deferred func literal.
+	write := func(e ast.Expr, inDefer bool) {
 		// A field assignment x.F = v writes x, and so does an element
 		// assignment x[i] = v to an array x (but s[i].F = v writes the
 		// slice's shared array, not s).
@@ -675,8 +685,10 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 		// Uses, not Defs: the variables a := declares are not writes.
 		if id, ok := x.(*ast.Ident); ok {
 			if v, ok := c.p.Info.Uses[id].(*types.Var); ok && captured[v] {
-				if results[v] {
-					c.fail(e.Pos(), "captured named result must not be changed: closures capture by value (a deferred func literal cannot set a result)")
+				if results[v] && inDefer {
+					c.fail(e.Pos(), "captured named result must not be changed: a deferred func literal captures it by value, so it cannot set the result")
+				} else if results[v] {
+					c.fail(e.Pos(), "captured named result must not be changed: closures capture by value")
 				} else if elem {
 					c.fail(e.Pos(), "captured variable must not be changed by element assignment")
 				} else if field {
@@ -687,13 +699,13 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 			}
 		}
 	}
-	var walk func(n ast.Node, sig *types.Signature)
-	walk = func(n ast.Node, sig *types.Signature) {
+	var walk func(n ast.Node, sig *types.Signature, inDefer bool)
+	walk = func(n ast.Node, sig *types.Signature, inDefer bool) {
 		ast.Inspect(n, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.FuncLit:
 				s, _ := c.p.Info.TypeOf(n).(*types.Signature)
-				walk(n.Body, s)
+				walk(n.Body, s, deferred[n])
 				return false
 			case *ast.ReturnStmt:
 				if len(n.Results) == 0 || sig == nil {
@@ -707,15 +719,15 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 				}
 			case *ast.AssignStmt:
 				for _, l := range n.Lhs {
-					write(l)
+					write(l, inDefer)
 				}
 			case *ast.IncDecStmt:
-				write(n.X)
+				write(n.X, inDefer)
 			}
 			return true
 		})
 	}
-	walk(body, sig)
+	walk(body, sig, false)
 }
 
 // litCaptures lists the variables lit uses but does not declare, in order

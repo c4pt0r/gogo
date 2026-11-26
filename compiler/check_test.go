@@ -191,6 +191,7 @@ func TestRejects(t *testing.T) {
 		{"defer-loop-in-literal", "package main\nfunc main() {\n\tf := func() {\n\t\tfor {\n\t\t\tdefer println() // ERR\n\t\t}\n\t}\n\tf()\n}\n", []string{"defer inside a loop not supported"}},
 		{"defer-multivalue-arg", "package main\nfunc two() (int, int) { return 1, 2 }\nfunc f(a, b int) {}\nfunc main() {\n\tdefer f(two()) // ERR\n}\n", []string{"deferred call with a multi-value argument not supported"}},
 		{"defer-set-named-result", "package main\nfunc f() (r int) {\n\tdefer func() {\n\t\tr++ // ERR\n\t}()\n\treturn\n}\nfunc main() { println(f()) }\n", []string{"captured named result must not be changed", "deferred func literal"}},
+		{"defer-set-named-result-outside", "package main\nfunc f() (r int) {\n\tdefer func() { println(r) }()\n\tr = 3 // ERR\n\treturn\n}\nfunc main() { println(f()) }\n", []string{"captured named result must not be changed: closures capture by value"}},
 		{"defer-tworesult-builtin", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tdefer actor.ReceiveTimeout(5) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"defer-recover", "package main\nfunc main() {\n\tdefer recover() // ERR\n}\n", []string{"builtin recover not supported"}},
 		{"complex", "package main\nfunc main() {\n\tx := 1.5i // ERR\n\t_ = x\n}\n", []string{"complex"}},
