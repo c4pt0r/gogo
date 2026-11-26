@@ -245,3 +245,16 @@ func TestConfigDeprecatedForms(t *testing.T) {
 		t.Errorf("stats: %v %q", err, errOut.String())
 	}
 }
+
+// node.token is a secret like wifi.password: get and list show "(set)".
+func TestConfigNodeTokenHidden(t *testing.T) {
+	if got := shown("node.token", "hunter2"); got != "(set)" {
+		t.Errorf("shown(node.token) = %q", got)
+	}
+	if got := shown("node.name", "kitchen"); got != "kitchen" {
+		t.Errorf("shown(node.name) = %q", got)
+	}
+	if _, ok := findCfgKey("node.token"); !ok {
+		t.Error("node.token is not in the key table")
+	}
+}
