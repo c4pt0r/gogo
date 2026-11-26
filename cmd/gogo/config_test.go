@@ -43,6 +43,9 @@ func TestConfigCommand(t *testing.T) {
 		{[]string{"set", "bad key", "x"}, "", "bad key"},
 		{[]string{"set", "", "x"}, "", "bad key"},
 		{[]string{"set", "a=b", "x"}, "", "bad key"},
+		{[]string{"set", "\x00args", "x"}, "", "bad key"}, // the key sys.Args reads
+		{[]string{"get", "\x00args"}, "", "bad key"},
+		{[]string{"rm", "\x00args"}, "", "bad key"},
 		{[]string{"set", "much.too.long.key", "x"}, "", "bad key"},
 		{[]string{"set", "k", "two\nlines"}, "", "bad value"},
 		{[]string{"set", "k", strings.Repeat("x", 1001)}, "", "bad value"},

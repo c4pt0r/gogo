@@ -204,8 +204,11 @@ them with `sys.Args()`, a `[]string` of the arguments only: unlike Go's
 arguments the slice is empty (and not `nil`). A `#!` script gets the
 arguments of its own command line the same way (`./tool.gg -v` runs
 `gogo run ./tool.gg -v`). `gogovm` takes them after the image,
-`gogovm [flags] prog.ggb [args...]`. On a board nothing
-starts a program with arguments, so `sys.Args()` is empty there; a host
+`gogovm [flags] prog.ggb [args...]`. Every call to
+`sys.Args()` copies the arguments into the actor's heap, so call it once
+and keep the result; a very large command line (hundreds of KB) can run
+the actor out of memory (a crash, `oom`, not an empty slice). On a board
+nothing starts a program with arguments, so `sys.Args()` is empty there; a host
 that embeds the VM can provide them (chapter 18).
 
 **Exit status.** `gogo run` exits with the VM's status, which says how the

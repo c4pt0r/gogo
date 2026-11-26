@@ -271,7 +271,10 @@ rebuilt:
   after the program (Go's `os.Args[1:]`), so there is no element 0 to tell
   a script its own name. Boards get an empty slice: nothing starts a
   program there with arguments. A `libgogo` host passes arguments by
-  answering the `config_get` hook for the key `"\x00args"` (book 18).
+  answering the `config_get` hook for the key `"\x00args"` (book 18; the
+  value is split at NUL bytes). Every `sys.Args()` call copies the
+  arguments into the actor's heap: call it once and keep the result; a
+  very large argv (hundreds of KB) runs the actor out of memory.
 - **Loop variables cannot be captured.** In a three-clause `for` loop,
   `func() { work(i) }` is rejected with `captured variable must not be
   reassigned`, because `i++` assigns `i`. Closures capture by value, so
