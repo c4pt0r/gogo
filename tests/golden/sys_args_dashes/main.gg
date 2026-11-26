@@ -1,0 +1,11 @@
+package main
+
+import "gogo/sys"
+
+func main() {
+	args := sys.Args()
+	println(len(args))
+	for _, a := range args {
+		println("["+a+"]", len(a))
+	}
+}

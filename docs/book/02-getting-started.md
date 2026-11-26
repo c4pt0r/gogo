@@ -291,7 +291,8 @@ coreutils. There, name gogo by its absolute path instead, which needs no
 `env`: `#!/usr/local/bin/gogo run` (the kernel passes `run` as one
 argument).
 The name need not end in `.gg`: `gogo run` reads any file starting with
-`#!` as source. Arguments after the script are refused for now.
+`#!` as source. Arguments after the script are the program's: it reads
+them with `sys.Args()` (chapter 12).
 
 A single file and a directory differ: `gogo run dir` compiles every `.gg`
 file in `dir` as one `package main`, so a directory of scripts, each with

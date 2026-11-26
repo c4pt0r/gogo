@@ -184,7 +184,7 @@ package http
 ## gogo run
 
 ```text
-gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
+gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb> [args...]
 ```
 
 Runs a program on the host VM. Given a directory it builds it first (to a
@@ -193,7 +193,23 @@ any file starting with `#!`, it builds that file alone, with its directory
 as the build root for packages (an executable script with the first line
 `#!/usr/bin/env -S gogo run` runs this way, chapter 2); given a `.ggb`
 file it runs that image. `-path dirs` is the search path of the build, as
-for `gogo build`. Arguments after the program are refused for now.
+for `gogo build`.
+
+**Program arguments.** Everything after the program is the program's, as
+for `go run`: flags come before the program, and what follows it is passed
+on untouched (`gogo run tool.gg -v "a b"` gives `tool.gg` the two arguments
+`-v` and `a b`; `--` and empty words are passed too). The program reads
+them with `sys.Args()`, a `[]string` of the arguments only: unlike Go's
+`os.Args` there is no element 0 for the program's own name, so with no
+arguments the slice is empty (and not `nil`). A `#!` script gets the
+arguments of its own command line the same way (`./tool.gg -v` runs
+`gogo run ./tool.gg -v`). `gogovm` takes them after the image,
+`gogovm [flags] prog.ggb [args...]`. Every call to
+`sys.Args()` copies the arguments into the actor's heap, so call it once
+and keep the result; a very large command line (hundreds of KB) can run
+the actor out of memory (a crash, `oom`, not an empty slice). On a board
+nothing starts a program with arguments, so `sys.Args()` is empty there; a host
+that embeds the VM can provide them (chapter 18).
 
 **Exit status.** `gogo run` exits with the VM's status, which says how the
 `main` actor ended:

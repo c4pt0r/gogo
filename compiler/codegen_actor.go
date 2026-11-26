@@ -93,6 +93,8 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 		base, n := f.args(call)
 		f.asm.EmitExt(OpBuiltin, base, base, n, BMemory)
 		f.asm.EmitExt(OpNewstruct, dst, base, 1, idx)
+	case "sys.Args":
+		f.sysArgs(call, dst)
 	default:
 		id, ok := actorBuiltins[name]
 		if !ok {
@@ -321,4 +323,55 @@ func (f *fn) typeID(te ast.Expr) uint32 {
 	}
 	f.fail(te, "internal error: unexpected type switch case %s", types.TypeString(t, nil))
 	return 0
+}
+
+// ArgsKey is the configuration key under which a host serves the program's
+// arguments (sys.Args): each argument followed by a NUL byte, so empty
+// arguments survive and no arguments is an unset key. A NUL cannot be in
+// an argument, and the key cannot be set by `gogo config`.
+const ArgsKey = "\x00args"
+
+// sysArgs compiles sys.Args() inline, with no builtin of its own (so no
+// VM code and no image minor): it reads ArgsKey with CONFIG_GET and splits
+// the value at the NULs into a new []string, as
+//
+//	s, _ := sys.Config(ArgsKey)
+//	a := []string{}
+//	for i, start := 0, 0; i < len(s); i++ {
+//		if s[i] == 0 { a = append(a, s[start:i]); start = i + 1 }
+//	}
+func (f *fn) sysArgs(call *ast.CallExpr, dst uint8) {
+	mark := f.next
+	s := f.allocN(call, 2) // s, ok
+	f.seqCall(call, s, BConfigGet, func(r uint8) {
+		f.asm.EmitExt(OpLoadk, r, 0, 0, TermConst(f.g.b.AddString(ArgsKey)))
+	})
+	out := f.alloc(call)
+	f.seqCall(call, out, BMakeSlice, f.loadInt(0), f.loadInt(0), f.loadInt(0),
+		func(r uint8) { f.asm.EmitExt(OpLoadk, r, 0, 0, TermEmptyStr) })
+	n, i, start, one, zero, t := f.allocScalar(call), f.allocScalar(call), f.allocScalar(call),
+		f.allocScalar(call), f.allocScalar(call), f.allocScalar(call)
+	f.seqCall(call, n, BLen, f.moveFrom(s))
+	f.asm.EmitExt(OpLoadk, i, 0, 0, TermInt(0))
+	f.asm.EmitExt(OpLoadk, start, 0, 0, TermInt(0))
+	f.asm.EmitExt(OpLoadk, one, 0, 0, TermInt(1))
+	f.asm.EmitExt(OpLoadk, zero, 0, 0, TermInt(0))
+	loop, next, end := f.asm.NewLabel(), f.asm.NewLabel(), f.asm.NewLabel()
+	f.bind(loop)
+	f.asm.Emit(OpLt, t, i, n)
+	f.jump(OpJmpf, t, end)
+	f.seqCall(call, t, BIndex, f.moveFrom(s), f.moveFrom(i))
+	f.asm.Emit(OpEq, t, t, zero)
+	f.jump(OpJmpf, t, next)
+	sub := f.alloc(call)
+	f.seqCall(call, sub, BSlice, f.moveFrom(s), f.moveFrom(start), f.moveFrom(i))
+	f.seqCall(call, out, BAppend, f.moveFrom(out), f.loadInt(AppendTerm),
+		func(r uint8) { f.asm.EmitExt(OpLoadk, r, 0, 0, TermEmptyStr) }, f.moveFrom(sub))
+	f.asm.Emit(OpAdd, start, i, one)
+	f.bind(next)
+	f.asm.Emit(OpAdd, i, i, one)
+	f.jump(OpJmp, 0, loop)
+	f.bindEnd(end)
+	f.asm.Emit(OpMove, dst, out, 0)
+	f.next = mark
 }

@@ -85,7 +85,7 @@ func main() {
 	os.Exit(code)
 }
 
-const runUsage = "usage: gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file" + sourceExt + "|file" + imageExt + ">"
+const runUsage = "usage: gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file" + sourceExt + "|file" + imageExt + "> [args...]"
 
 // runCmd implements `gogo run` and returns the process exit status: the
 // VM's (exitcodes.go), or exitUsage for a usage, build or toolchain error.
@@ -98,8 +98,8 @@ func runCmd(args []string) (int, error) {
 	fs.Var(&keys, "key", "")
 	fsRoot := fs.String("fs-root", "", "")
 	getPath := addPathFlag(fs)
-	// Everything after the program is the program's (refused for now),
-	// as for `go run`: flags come before it.
+	// Everything after the program is the program's (sys.Args), as for
+	// `go run`: flags come before it.
 	args, err := parseFlagsRaw(fs, args, runUsage, func(pos []string) bool { return len(pos) > 0 })
 	if err != nil {
 		return exitUsage, err
@@ -115,10 +115,7 @@ func runCmd(args []string) (int, error) {
 	if len(args) == 0 {
 		return exitUsage, usageError("run", "missing program (a directory, a "+sourceExt+" file or a "+imageExt+" image)", runUsage)
 	}
-	if len(args) != 1 {
-		return exitUsage, usageError("run", fmt.Sprintf("arguments after the program (%s) are not supported yet", strings.Join(args[1:], " ")), runUsage)
-	}
-	target := args[0]
+	target, progArgs := args[0], args[1:]
 	fi, err := os.Stat(target)
 	if err != nil {
 		return exitUsage, err
@@ -141,7 +138,7 @@ func runCmd(args []string) (int, error) {
 	if err != nil {
 		return exitUsage, err
 	}
-	cmd := exec.Command(vm, append(vmArgs, image)...)
+	cmd := exec.Command(vm, append(append(vmArgs, image), progArgs...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	// Forward SIGINT/SIGTERM to the VM and wait for it, so the VM can
 	// restore the terminal, nothing is orphaned and the temp image is

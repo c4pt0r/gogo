@@ -1,0 +1,10 @@
+package main
+
+import "gogo/sys"
+
+func main() {
+	args := sys.Args()
+	println(len(args), args != nil)
+	args = append(args, "x")
+	println(len(args), len(sys.Args()))
+}

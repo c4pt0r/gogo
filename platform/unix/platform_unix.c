@@ -390,8 +390,31 @@ static uint64_t host_now(void *ctx) { (void)ctx; return platform_now_ms(); }
 static void host_wake(void *ctx) { (void)ctx; platform_notify(); }
 static void host_wait(void *ctx, uint32_t ms) { (void)ctx; platform_wait(ms); }
 static uint32_t host_random(void *ctx) { (void)ctx; return platform_random(); }
+/* The program's arguments (platform_set_args): the strings of the
+ * command line after the image, which stay valid while the VM runs. */
+static int prog_argc;
+static char *const *prog_argv;
+
+void platform_set_args(int argc, char *const *argv) {
+    prog_argc = argc;
+    prog_argv = argv;
+}
+
+/* The value of the key "\0args" (sys.Args): every argument followed by a
+ * NUL, so an empty argument is kept and no arguments is an unset key. */
+static int32_t args_value(uint8_t *buf, uint32_t cap) {
+    uint32_t n = 0;
+    for (int i = 0; i < prog_argc; i++) {
+        size_t l = strlen(prog_argv[i]) + 1u;
+        if (cap > n) memcpy(buf + n, prog_argv[i], l < cap - n ? l : cap - n);
+        n += (uint32_t)l;
+    }
+    return n ? (int32_t)n : -1;
+}
+
 static int32_t host_config_get(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
     (void)ctx;
+    if (kl == 5u && memcmp(k, "\0args", 5) == 0) return args_value(buf, cap);
     return platform_config_get(k, kl, buf, cap);
 }
 

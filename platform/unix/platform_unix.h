@@ -27,6 +27,9 @@ uint64_t platform_now_ms(void);          /* ms since first use, or the simulated
 uint32_t platform_random(void);
 void platform_wait(uint32_t ms);         /* latched: see platform_notify */
 void platform_notify(void);              /* any thread, async-signal-safe */
+/* The program's arguments, as sys.Args returns them (argv[0..argc) are the
+ * strings after the image on the command line; they must outlive the VM). */
+void platform_set_args(int argc, char *const *argv);
 int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uint32_t cap);
 
 /* The wall clock a run starts with (Unix ms, 0 = unknown): the host clock,
