@@ -513,7 +513,16 @@ in `cmd/gogo/flash.go`.
   which takes the volume's lock) and `format-flash`, plus the board's
   `scan` (nearby networks) and `stats` (net counters, `heap_free`,
   `heap_min`, `arena_used`, and the fixed tables in use as
-  `bytes=N/64`, `ports=N/16`, `subs=N/4`). The password is never sent back (`(set)`).
+  `bytes=N/64`, `ports=N/16`, `subs=N/4`), and `info`, one line
+  `\x02ok fw=<version> board=<sticks3|cardputer> image=<major>.<minor>
+  provides=<name>,...` (`GOGO_FIRMWARE_VERSION`, `BOARD_NAME`, the image
+  format, and `esp_board`'s drivers and mounts plus `float`: what an
+  image's requirements are checked against), which `gogo device info`
+  prints and `gogo setup` compares with the firmware it is about to
+  flash; a firmware older than `info` answers `\x02err bad key`. The
+  version is the `git describe` of the repo at configure time (`dev`
+  without git), set in `CMakeLists.txt` as the app's `PROJECT_VER`, so
+  it is also in `gogo.bin`'s app descriptor, where setup reads it. The password is never sent back (`(set)`).
   Program output never carries `\x02` on serial (written as `?`), so a
   program cannot fake a reply; buffers that held a frame are zeroed after
   each command, and `get wifi.password` reads only the value's length.

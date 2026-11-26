@@ -2106,8 +2106,11 @@ messages and the partition table are described in
 
 **Device configuration (`gogo config`).** `gogo config set|get|rm|list
 <key> [value]`; `gogo device scan` (the 2.4 GHz networks the board sees),
-`gogo device stats` (network counters, heap) and `gogo device
-format-flash` use the same channel (`gogo config scan|stats` still work,
+`gogo device stats` (network counters, heap), `gogo device info` (the
+firmware's version, board, image format and provided requirement names:
+one `\x02ok fw=... board=... image=M.m provides=...` line; a firmware
+older than it answers `\x02err bad key`, read as "unknown") and `gogo
+device format-flash` use the same channel (`gogo config scan|stats` still work,
 deprecated). A value of `-` reads one line from
 stdin (`gogo config set wifi.password -` keeps the password out of the
 shell history). On the device the store is the firmware's NVS
@@ -2415,7 +2418,8 @@ can serve two devices, and the table can be a board's `static const`).
   protocol (`gogo config`, `gogo device`, `gogo push`) once, over a
   board's `KvHal` (`get` / `set` / `rm` / `each`), its console output
   (whole lines), its `/flash` backend for push, and optional board
-  requests (`scan`, `stats`, `format-flash`). The board's console reader
+  requests (`scan`, `stats`, `format-flash`, and `info`, whose fields
+  the board fills in a `ConfigInfo`). The board's console reader
   feeds it bytes; `configsvc_vm_get` is `sys.Config`'s lookup (no
   `wifi.` keys). The ESP's store is NVS (`config_esp.c`). The unix VM has
   no console protocol: `gogo config` edits its file directly.
