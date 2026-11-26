@@ -60,9 +60,6 @@ void va_free(Vm *vm, void *p, size_t bytes) {
     }
 }
 
-size_t va_used_bytes(const Vm *vm) { return vm->va.used; }
-void va_set_limit(Vm *vm, size_t bytes) { vm->va.limit = bytes; }
-size_t va_peak_bytes(const Vm *vm) { return vm->va.peak; }
 void va_reset_peak(Vm *vm) { vm->va.peak = vm->va.used; }
 
 void va_reset(Vm *vm) {

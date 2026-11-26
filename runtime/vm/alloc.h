@@ -32,9 +32,11 @@ typedef struct VaHeap {
 
 void *va_alloc(struct Vm *vm, size_t bytes);         /* NULL on failure or over limit */
 void va_free(struct Vm *vm, void *p, size_t bytes);
-size_t va_used_bytes(const struct Vm *vm);           /* handed out, rounded to class size */
-void va_set_limit(struct Vm *vm, size_t bytes);      /* 0 = unlimited (for OOM tests) */
-size_t va_peak_bytes(const struct Vm *vm);           /* highest va_used_bytes since reset */
+/* The counters, read and set in place (macros: Vm is defined after this
+ * header, in actor.h). */
+#define va_used_bytes(vm) ((size_t)(vm)->va.used)                  /* handed out, rounded to class size */
+#define va_set_limit(vm, bytes) ((void)((vm)->va.limit = (bytes)))  /* 0 = unlimited (for OOM tests) */
+#define va_peak_bytes(vm) ((size_t)(vm)->va.peak)                  /* highest va_used_bytes since reset */
 void va_reset_peak(struct Vm *vm);                   /* peak = current use */
 void va_reset(struct Vm *vm);                        /* forget all state (tests) */
 
