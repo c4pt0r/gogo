@@ -137,15 +137,16 @@ vm() {
     done
 }
 
-# api_version VERSION: a release tag vX.Y.Z must be the embedding API's
-# version in runtime/include/gogo.h (GOGO_VERSION_MAJOR, _MINOR, _PATCH),
-# which gogo_version() reports; other versions (git describe output) are
-# not checked.
+# api_version VERSION: a release tag's X.Y.Z (vX.Y.Z, or vX.Y.Z-rc1,
+# -beta2, ...) must be the embedding API's version in
+# runtime/include/gogo.h (GOGO_VERSION_MAJOR, _MINOR, _PATCH), which
+# gogo_version() reports. Versions that are not release tags (git
+# describe output, vX.Y.Z-N-gHASH[-dirty], or "dev") are not checked.
 api_version() {
-    case $1 in v[0-9]*.[0-9]*.[0-9]*) ;; *) return 0 ;; esac
-    case $1 in *[!v0-9.]*) return 0 ;; esac
+    xyz=$(printf '%s\n' "$1" | sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)\(-[A-Za-z][A-Za-z0-9.]*\)\{0,1\}$/\1/p')
+    [ -n "$xyz" ] || return 0
     h=$(awk '/^#define GOGO_VERSION_(MAJOR|MINOR|PATCH) / { v = v sep $3; sep = "." } END { print v }' runtime/include/gogo.h)
-    [ "v$h" = "$1" ] || die "release $1, but runtime/include/gogo.h says GOGO_VERSION $h: set GOGO_VERSION_MAJOR/MINOR/PATCH"
+    [ "$h" = "$xyz" ] || die "release $1, but runtime/include/gogo.h says GOGO_VERSION $h: set GOGO_VERSION_MAJOR/MINOR/PATCH"
 }
 
 # notices DIR
