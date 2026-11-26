@@ -87,8 +87,10 @@ configuration keys.
   game: it registers an autopilot as `autopilot` on the node
   `snake-server`, restarts it when it dies, and serves every board.
 - The **board** has `snake.server` set to the server's `a.b.c.d:port`. A
-  joiner actor gets an address (`gogo/dhcp`), connects as the node `snake-board`, finds the server's
-  `autopilot` and hands it to the game, which then sends it its `View`s and
+  joiner actor gets an address (`gogo/dhcp`), connects as the node named
+  by `node.name` (else `snake-` and a random number, so that two boards
+  never share a name), finds the server's `autopilot` and hands it to the
+  game, which then sends it its `View`s and
   gets `Move`s back over the network: one request and one reply per step.
   The status row says `AUTO NET`. `board.View` and `board.Move` cross the
   network as they are: both ends compile the same `snake/board`, and a

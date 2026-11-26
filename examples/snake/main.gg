@@ -147,8 +147,9 @@ func netConfig() (string, string) {
 func joiner(game actor.PID, addr, token string) {
 	dhcp.Start(dhcp.Config{TimeoutMs: 15000})
 	node.Subscribe()
+	name := boardName()
 	for {
-		if node.ConnectOpt(addr, node.Options{Name: "snake-board", Token: token, TimeoutMs: 3000}) {
+		if node.ConnectOpt(addr, node.Options{Name: name, Token: token, TimeoutMs: 3000}) {
 			if p, ok := node.Whereis(serverNode, pilotName, 2000); ok {
 				println("snake: joined", addr)
 				actor.Send(game, remotePilot{PID: p})
@@ -160,6 +161,21 @@ func joiner(game actor.PID, addr, token string) {
 		}
 		actor.Sleep(rejoinMs)
 	}
+}
+
+// boardName is this board's node name: the config key node.name, else
+// "snake-" and a random number drawn once per run, so that two boards
+// never share a name (the server drops a board's old link when one of the
+// same name joins).
+func boardName() string {
+	if n, ok := sys.Config("node.name"); ok && n != "" {
+		return n
+	}
+	r := sys.Random() % 100000
+	if r < 0 {
+		r = -r
+	}
+	return "snake-" + strconv.Itoa(r)
 }
 
 // waitDown returns when the server node is gone.
