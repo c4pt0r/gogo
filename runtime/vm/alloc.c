@@ -13,16 +13,16 @@ void *va_alloc(Vm *vm, size_t bytes) {
     size_t size = bytes > VA_MAX_SMALL ? bytes : round_up(bytes);
     if (h->limit && h->used + size > h->limit) return NULL;
 
-    void *p;
+    char *p;
     if (bytes > VA_MAX_SMALL) {
-        p = vm_chunk_alloc(vm, bytes);
+        p = vm_chunk_alloc(vm, size + VA_HDR);
     } else {
-        size_t cls = size / VA_GRAIN;
+        size_t cls = (size + VA_HDR) / VA_GRAIN;
         if (h->free_list[cls]) {
-            p = h->free_list[cls];
+            p = (char *)h->free_list[cls];
             h->free_list[cls] = h->free_list[cls]->next;
         } else {
-            if ((size_t)(h->chunk_end - h->chunk_cur) < size) {
+            if ((size_t)(h->chunk_end - h->chunk_cur) < size + VA_HDR) {
                 /* Tail of the old chunk is abandoned; at most 248 bytes. */
                 char *c = vm_chunk_alloc(vm, VA_CHUNK);
                 if (!c) return NULL;
@@ -30,26 +30,33 @@ void *va_alloc(Vm *vm, size_t bytes) {
                 h->chunk_end = c + VA_CHUNK;
             }
             p = h->chunk_cur;
-            h->chunk_cur += size;
+            h->chunk_cur += size + VA_HDR;
         }
     }
-    if (p) h->used += size;
+    if (!p) return NULL;
+    h->used += size;
     if (h->used > h->peak) h->peak = h->used;
-    return p;
+#if GOGO_DEBUG
+    *(size_t *)(void *)p = size;
+#endif
+    return p + VA_HDR;
 }
 
 void va_free(Vm *vm, void *p, size_t bytes) {
     if (!p) return;
     VaHeap *h = &vm->va;
+    size_t size = bytes > VA_MAX_SMALL ? bytes : round_up(bytes);
+    char *b = (char *)p - VA_HDR;
+    GOGO_ASSERT(*(const size_t *)(const void *)b == size);   /* the size it was allocated with */
+    GOGO_ASSERT(h->used >= size);
+    h->used -= size;
     if (bytes > VA_MAX_SMALL) {
-        vm_chunk_free(vm, p, bytes);
-        h->used -= bytes;
+        vm_chunk_free(vm, b, size + VA_HDR);
     } else {
-        size_t size = round_up(bytes);
-        FreeBlock *b = p;
-        b->next = h->free_list[size / VA_GRAIN];
-        h->free_list[size / VA_GRAIN] = b;
-        h->used -= size;
+        FreeBlock *f = (FreeBlock *)(void *)b;
+        size_t cls = (size + VA_HDR) / VA_GRAIN;
+        f->next = h->free_list[cls];
+        h->free_list[cls] = f;
     }
 }
 

@@ -1,16 +1,23 @@
 /* Small-block allocator: size classes of 8 bytes up to 256, carved from
  * 4 KB chunks; larger requests go straight to the platform. No per-block
- * header, so callers must pass the original size to va_free. Each Vm owns
- * its allocator state (Vm.va). */
+ * header, so callers must pass the original size to va_free (a debug build,
+ * GOGO_DEBUG, adds one and checks it). Each Vm owns its allocator state
+ * (Vm.va). */
 #ifndef GOGO_ALLOC_H
 #define GOGO_ALLOC_H
 
 #include <stddef.h>
+#include "config.h"
 
 #define VA_GRAIN      8u
 #define VA_MAX_SMALL  256u
-#define VA_CLASSES    (VA_MAX_SMALL / VA_GRAIN)
 #define VA_CHUNK      4096u
+#if GOGO_DEBUG
+#define VA_HDR        VA_GRAIN   /* the block's size, in front of it */
+#else
+#define VA_HDR        0u
+#endif
+#define VA_CLASSES    ((VA_MAX_SMALL + VA_HDR) / VA_GRAIN)
 
 struct Vm;
 struct VaFree;
@@ -20,7 +27,7 @@ struct VaFree;
 typedef struct VaHeap {
     char *chunk_cur, *chunk_end;              /* unused tail of newest chunk */
     size_t used, limit, peak;
-    struct VaFree *free_list[VA_CLASSES + 1]; /* indexed by size / VA_GRAIN */
+    struct VaFree *free_list[VA_CLASSES + 1]; /* indexed by (size + VA_HDR) / VA_GRAIN */
 } VaHeap;
 
 void *va_alloc(struct Vm *vm, size_t bytes);         /* NULL on failure or over limit */

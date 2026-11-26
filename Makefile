@@ -199,7 +199,7 @@ $(BUILD)/test_screen: $(SCREEN_DEPS)
 
 # The same tests under AddressSanitizer and UBSan (build/asan).
 test-screen-asan:
-	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" build/asan/test_screen
+	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -DGOGO_DEBUG=1" build/asan/test_screen
 	build/asan/test_screen
 
 $(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
@@ -385,7 +385,9 @@ test-net-mcu: $(BUILD)/gogovm_mcu
 # The net and tls scenarios on a gogovm (and its mbedTLS) built with
 # AddressSanitizer (build/asan). On macOS leaks are not reported (no
 # LeakSanitizer); the tls tests check the TLS heap returns to 0 instead.
-ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer
+# GOGO_DEBUG=1 (runtime/vm/config.h): the sanitizer builds also check
+# the runtime's internal invariants (GOGO_ASSERT).
+ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer -DGOGO_DEBUG=1
 test-tls-asan:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls
 	build/asan/test_net
