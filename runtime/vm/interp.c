@@ -418,9 +418,9 @@ bool term_text(Out *o, const Vm *vm, const Actor *a, term t) {
 }
 
 /* B_PANIC v: prints "panic: v" on stderr; returns the reason to crash
- * with, R_PANIC (R_BAD_CODE for a stale value or another count). */
-static uint32_t do_panic(const Vm *vm, const Actor *a, const term *v, uint32_t n) {
-    if (n != 1u || deep_live(vm, a, v[0], 0, WALK_BUDGET) == WALK_STALE) return R_BAD_CODE;
+ * with, R_PANIC (R_BAD_CODE for a stale value). */
+static uint32_t do_panic(const Vm *vm, const Actor *a, const term *v) {
+    if (deep_live(vm, a, v[0], 0, WALK_BUDGET) == WALK_STALE) return R_BAD_CODE;
     do_println(vm, a, v, 1, 0, 2);
     return R_PANIC;
 }
@@ -564,6 +564,38 @@ static const uint8_t op_info[] = {
     [OP_SHRU64] = OPF_ABC, [OP_SETFIELD] = OPF_AB_,
 };
 typedef char op_info_complete[sizeof op_info == OP_SETFIELD + 1u ? 1 : -1];
+
+/* What OP_BUILTIN checks for each builtin before its case runs. The low
+ * three bits: BI(n), exactly n arguments; BI_VAR, the builtin checks its
+ * own count; 0, not a builtin (an id this VM does not have, B_FLOAT
+ * without floats, the reserved ids), so an id left out of the table is
+ * badcode, never "no arguments". BI_TWO: two results, ra+1 is a register
+ * too. BI_PID: the first argument is a PID. BI_INT: the first argument is
+ * an int, its value in iarg. */
+#define BI(n)   ((n) + 1u)
+#define BI_VAR  7u
+#define BI_TWO  8u
+#define BI_PID  16u
+#define BI_INT  32u
+static const uint8_t builtin_info[] = {
+    [B_PRINTLN] = BI_VAR, [B_SPAWN] = BI(1), [B_SELF] = BI(0), [B_SEND] = BI(2), [B_RECEIVE] = BI(0),
+    [B_MEMORY] = BI(1), [B_SPAWN_LINK] = BI(1), [B_SPAWN_OPT] = BI(2), [B_LINK] = BI(1) | BI_PID,
+    [B_UNLINK] = BI(1) | BI_PID, [B_TRAP_EXIT] = BI(1), [B_EXIT] = BI(1) | BI_INT, [B_KILL] = BI(2) | BI_PID,
+    [B_MONITOR] = BI(1) | BI_PID, [B_DEMONITOR] = BI(1), [B_MAKE_REF] = BI(0),
+    [B_RECEIVE_TIMEOUT] = BI(1) | BI_INT | BI_TWO, [B_SEND_AFTER] = BI(3), [B_CANCEL_TIMER] = BI(1),
+    [B_SLEEP] = BI(1) | BI_INT, [B_NOW] = BI(0), [B_CALL] = BI_VAR, [B_REPLY] = BI(2), [B_REGISTER] = BI(2),
+    [B_WHEREIS] = BI(1) | BI_TWO, [B_UNREGISTER] = BI(1), [B_PORT_OPEN] = BI(2) | BI_TWO, [B_PORT_CLOSE] = BI(1),
+    /* 28 .. 45, B_CONFIG_GET, B_CMP and B_SPRINT: strs_builtin checks their counts */
+    [B_STR_CONCAT] = BI_VAR, [B_LEN] = BI_VAR, [B_INDEX] = BI_VAR, [B_SETINDEX] = BI_VAR, [B_SLICE] = BI_VAR,
+    [B_MAKE_SLICE] = BI_VAR, [B_APPEND] = BI_VAR, [B_COPY] = BI_VAR, [B_CAP] = BI_VAR, [B_STR_FROM] = BI_VAR,
+    [B_BYTESLICE_FROM] = BI_VAR, [B_STR_CMP] = BI_VAR, [B_BUF_NEW] = BI_VAR, [B_BUF_WRITE] = BI_VAR,
+    [B_BUF_FREEZE] = BI_VAR, [B_BYTES_FROM] = BI_VAR, [B_BYTES_EQUAL] = BI_VAR, [B_BYTES_COPYTO] = BI_VAR,
+    [B_PORT_HANDOFF] = BI(2), [B_NET_SUBSCRIBE] = BI(0), [B_CONFIG_GET] = BI_VAR | BI_TWO,
+    [B_FS] = BI_VAR, [B_CODE] = BI_VAR, [B_UNIX_TIME] = BI(0), [B_SET_UNIX_TIME] = BI(1), [B_RANDOM] = BI(0),
+    [B_FLOAT] = GOGO_FLOAT ? BI_VAR : 0u, [B_PRINTLNU] = BI_VAR, [B_PANIC] = BI(1), [B_CMP] = BI_VAR,
+    [B_RESERVED_58] = 0, [B_RESERVED_59] = 0, [B_RESERVED_60] = 0, [B_SPRINT] = BI_VAR,
+};
+typedef char builtin_info_complete[sizeof builtin_info == B_SPRINT + 1u ? 1 : -1];
 
 int interp_run(Vm *vm, Actor *a) {
     /* The actor's module is loaded while it lives (its live count). */
@@ -993,7 +1025,14 @@ int interp_run(Vm *vm, Actor *a) {
             break;
         }
 
-        case OP_BUILTIN:
+        case OP_BUILTIN: {
+            uint32_t bi = ext < sizeof builtin_info ? builtin_info[ext] : 0u;
+            int32_t iarg = 0;
+            /* BI(n): rc == n; BI_VAR: any; 0 (bi - 1 wraps): none */
+            CHECK((bi & 7u) == BI_VAR || (bi & 7u) - 1u == rc);
+            if (bi & BI_TWO) CHECK(ra + 2u <= nregs);
+            if (bi & BI_PID) CHECK(term_is_pid(R[rb]));
+            if (bi & BI_INT) CHECK(int_val(vm, a, R[rb], &iarg));
             switch (ext) {
             case B_PRINTLN: case B_PRINTLNU: {
                 /* Anything printed that names a gone module is badcode.
@@ -1007,7 +1046,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_SPAWN: case B_SPAWN_LINK: case B_SPAWN_OPT: {
-                CHECK(rc == (ext == B_SPAWN_OPT ? 2u : 1u));
                 uint16_t max_words = 0;
                 if (ext == B_SPAWN_OPT) CHECK(vm_spawn_opt_words(vm, a, R[rb + 1], &max_words));
                 term pid;
@@ -1017,11 +1055,9 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_SELF:
-                CHECK(rc == 0);
                 R[ra] = a->id;
                 break;
             case B_SEND:
-                CHECK(rc == 2);
                 if (port_is(vm, R[rb])) {
                     /* A command: handed to the driver in place, for any sender. */
                     CHECK(deep_live(vm, a, R[rb + 1], 0, WALK_BUDGET) >= 0);
@@ -1036,7 +1072,6 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = T_NIL;
                 break;
             case B_RECEIVE: {
-                CHECK(rc == 0);
                 term t;
                 if (!msg_receive(vm, a, &t)) {
                     if (a->mbox_head) CRASH(R_OUT_OF_MEMORY);   /* message does not fit */
@@ -1048,10 +1083,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_RECEIVE_TIMEOUT: {
-                CHECK(rc == 1);
-                REGS(ra, 2);
-                int32_t ms;
-                CHECK(int_val(vm, a, R[rb], &ms));
                 term t;
                 if (msg_receive(vm, a, &t)) {
                     timer_cancel_wakeup(vm, a);
@@ -1061,7 +1092,7 @@ int interp_run(Vm *vm, Actor *a) {
                     break;
                 }
                 if (a->mbox_head) CRASH(R_OUT_OF_MEMORY);   /* message does not fit */
-                switch (timed_wait(vm, a, ms)) {
+                switch (timed_wait(vm, a, iarg)) {
                 case WAIT_OOM: CRASH(R_OUT_OF_MEMORY);
                 case WAIT_BLOCK: a->pc = code + pc; return RUN_WAIT;   /* retry when woken */
                 default: break;                                        /* timed out, or ms <= 0 */
@@ -1071,10 +1102,7 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_SLEEP: {
-                CHECK(rc == 1);
-                int32_t ms;
-                CHECK(int_val(vm, a, R[rb], &ms));
-                switch (timed_wait(vm, a, ms)) {
+                switch (timed_wait(vm, a, iarg)) {
                 case WAIT_OOM: CRASH(R_OUT_OF_MEMORY);
                 case WAIT_BLOCK: a->pc = code + pc; return RUN_WAIT;   /* also after a message */
                 default: break;
@@ -1140,7 +1168,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_REPLY: {
-                CHECK(rc == 2);
                 const uint32_t *req = obj_of(vm, a, R[rb]);
                 CHECK(req && hdr_kind(req[0]) == K_STRUCT && req[1] == TYPE_REQUEST &&
                       hdr_words(req[0]) == 5u);
@@ -1153,11 +1180,12 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_SEND_AFTER: {
-                CHECK(rc == 3);   /* like Send, a non-PID target just drops it */
+                /* like Send, a non-PID target just drops it; ms is checked
+                 * after the remote-PID refusal (not BI_INT), whose reason
+                 * comes first */
                 if (vm_dist_of(vm, R[rb + 1])) CRASH(R_BAD_MSG);   /* no timers to remote PIDs yet */
-                int32_t ms;
-                CHECK(int_val(vm, a, R[rb], &ms));
-                uint64_t deadline = vm_now(vm) + (ms > 0 ? (uint32_t)ms : 0u);
+                CHECK(int_val(vm, a, R[rb], &iarg));
+                uint64_t deadline = vm_now(vm) + (iarg > 0 ? (uint32_t)iarg : 0u);
                 uint32_t why;
                 term ref = timer_add_send(vm, a, deadline, R[rb + 1], R[rb + 2], &why);
                 if (ref == T_NIL) CRASH(why);
@@ -1167,12 +1195,11 @@ int interp_run(Vm *vm, Actor *a) {
             }
             case B_CANCEL_TIMER: {
                 uint64_t serial;
-                CHECK(rc == 1 && ref_serial(vm, a, R[rb], &serial));
+                CHECK(ref_serial(vm, a, R[rb], &serial));
                 R[ra] = term_from_bool(serial != 0 && timer_cancel(vm, serial));   /* zero Ref: false */
                 break;
             }
             case B_NOW: {
-                CHECK(rc == 0);
                 /* An immediate (no allocation) for the first ~12 days. */
                 term t;
                 if (!make_int64(vm, a, (int64_t)vm_now(vm), &t)) CRASH(R_OUT_OF_MEMORY);
@@ -1181,7 +1208,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_MEMORY: {
-                CHECK(rc == 1);
                 /* The caller's own state (mem, mem_words) is current in a. */
                 const Actor *p = actor_lookup(vm, R[rb]);
                 size_t bytes = p ? actor_memory_bytes(p) : 0u;
@@ -1192,7 +1218,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_MAKE_REF: {
-                CHECK(rc == 0);
                 term ref = heap_new_ref(vm, a);
                 if (ref == T_NIL) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
@@ -1200,7 +1225,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_MONITOR: {
-                CHECK(rc == 1 && term_is_pid(R[rb]));
                 term ref = sig_monitor(vm, a, R[rb]);
                 if (ref == T_NIL) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
@@ -1209,28 +1233,25 @@ int interp_run(Vm *vm, Actor *a) {
             }
             case B_DEMONITOR: {
                 uint64_t serial;
-                CHECK(rc == 1 && ref_serial(vm, a, R[rb], &serial));
+                CHECK(ref_serial(vm, a, R[rb], &serial));
                 if (serial != 0) sig_demonitor(vm, a, serial);   /* zero Ref: nothing */
                 R[ra] = T_NIL;
                 break;
             }
             case B_LINK:
-                CHECK(rc == 1 && term_is_pid(R[rb]));
                 if (!sig_link(vm, a, R[rb])) CRASH(R_OUT_OF_MEMORY);
                 R[ra] = T_NIL;
                 break;
             case B_UNLINK:
-                CHECK(rc == 1 && term_is_pid(R[rb]));
                 sig_unlink(vm, a, R[rb]);
                 R[ra] = T_NIL;
                 break;
             case B_TRAP_EXIT:
-                CHECK(rc == 1 && (R[rb] == T_TRUE || R[rb] == T_FALSE));
+                CHECK(R[rb] == T_TRUE || R[rb] == T_FALSE);
                 sig_set_trap(a, R[rb] == T_TRUE);
                 R[ra] = T_NIL;
                 break;
             case B_KILL: {
-                CHECK(rc == 2 && term_is_pid(R[rb]));
                 int32_t c;
                 CHECK(int_val(vm, a, R[rb + 1], &c));
                 if (port_is(vm, R[rb])) port_close(vm, R[rb]);   /* any caller, any code */
@@ -1238,15 +1259,11 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = T_NIL;
                 break;
             }
-            case B_EXIT: {
-                CHECK(rc == 1);
-                int32_t c;
-                CHECK(int_val(vm, a, R[rb], &c));
-                actor_exit(vm, a, (uint32_t)c, T_EMPTYSTR);
+            case B_EXIT:
+                actor_exit(vm, a, (uint32_t)iarg, T_EMPTYSTR);
                 return RUN_EXIT;
-            }
             case B_REGISTER: {
-                CHECK(rc == 2 && term_is_pid(R[rb + 1]));
+                CHECK(term_is_pid(R[rb + 1]));
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
@@ -1256,8 +1273,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_WHEREIS: {
-                CHECK(rc == 1);
-                REGS(ra, 2);
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
@@ -1268,7 +1283,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_UNREGISTER: {
-                CHECK(rc == 1);
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
@@ -1277,8 +1291,6 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_PORT_OPEN: {
-                CHECK(rc == 2);
-                REGS(ra, 2);
                 CHECK(deep_live(vm, a, R[rb], 0, WALK_BUDGET) >= 0 &&
                       deep_live(vm, a, R[rb + 1], 0, WALK_BUDGET) >= 0);
                 term pid = port_open(vm, a, R[rb], R[rb + 1]);   /* no GC */
@@ -1287,38 +1299,17 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_PORT_CLOSE:
-                CHECK(rc == 1);
                 port_close(vm, R[rb]);    /* anything but an open port's PID
                                            * (e.g. from a failed Open): nothing */
                 R[ra] = T_NIL;
                 break;
             case B_PORT_HANDOFF:
-                CHECK(rc == 2);
                 R[ra] = term_from_bool(port_handoff(vm, a, R[rb], R[rb + 1]));   /* no GC */
                 break;
             case B_NET_SUBSCRIBE:
-                CHECK(rc == 0);
                 R[ra] = term_from_bool(port_subscribe(vm, a));   /* no GC */
                 break;
-            case B_STR_CONCAT: case B_LEN: case B_INDEX: case B_SETINDEX: case B_SLICE:
-            case B_MAKE_SLICE: case B_APPEND: case B_COPY: case B_CAP: case B_STR_FROM:
-            case B_BYTESLICE_FROM: case B_STR_CMP: case B_BUF_NEW: case B_BUF_WRITE:
-            case B_BUF_FREEZE: case B_BYTES_FROM: case B_BYTES_EQUAL: case B_BYTES_COPYTO:
-            case B_CMP: case B_SPRINT: {
-                uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
-                RELOAD();
-                if (err != R_NORMAL) CRASH(err);
-                break;
-            }
-            case B_CONFIG_GET: {
-                REGS(ra, 2);   /* two results: value, ok */
-                uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
-                RELOAD();
-                if (err != R_NORMAL) CRASH(err);
-                break;
-            }
             case B_UNIX_TIME: {
-                CHECK(rc == 0);
                 term t;
                 if (!make_int64(vm, a, vm_unix_time_ms(vm), &t)) CRASH(R_OUT_OF_MEMORY);
                 RELOAD();
@@ -1327,35 +1318,29 @@ int interp_run(Vm *vm, Actor *a) {
             }
             case B_SET_UNIX_TIME: {
                 int64_t ms;
-                CHECK(rc == 1 && int64_val(vm, a, R[rb], &ms));
+                CHECK(int64_val(vm, a, R[rb], &ms));
                 R[ra] = term_from_bool(vm_set_unix_time_ms(vm, ms) != 0);
                 break;
             }
             case B_RANDOM:
-                CHECK(rc == 0);
                 R[ra] = term_from_int((int32_t)(vm_random(vm) & 0x3FFFFFFFu));
                 break;
-            case B_FS: case B_CODE: case B_PANIC: {
-                /* Both check ra+1 themselves (two-result ops only). */
-                uint32_t err = ext == B_PANIC ? do_panic(vm, a, R + rb, rc)
+            default: {
+                /* The library builtins (strs.c, module.c, the fs hook,
+                 * floatlib) and panic: each checks what the table does
+                 * not (strs_builtin, module_builtin, fs_builtin and
+                 * float_lib their argument counts). May GC. */
+                uint32_t err = ext == B_PANIC ? do_panic(vm, a, R + rb)
                              : ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
-                             : vm->fs_builtin ? vm->fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
-                RELOAD();      /* may GC */
-                if (err != R_NORMAL) CRASH(err);
-                break;
-            }
+                             : ext == B_FS ? (vm->fs_builtin ? vm->fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE)
 #if GOGO_FLOAT
-            case B_FLOAT: {
-                /* Checks ra+1 itself (two-result ops only). */
-                uint32_t err = float_lib(vm, a, ra, rb, rc, nregs);
-                RELOAD();      /* may GC */
+                             : ext == B_FLOAT ? float_lib(vm, a, ra, rb, rc, nregs)
+#endif
+                             : strs_builtin(vm, a, ext, ra, rb, rc);
+                RELOAD();
                 if (err != R_NORMAL) CRASH(err);
                 break;
             }
-#endif
-            default:
-                /* Unknown builtin id. */
-                CRASH(R_BAD_CODE);
             }
             /* A builtin may have marked the running actor itself (a send
              * to itself over its quota, Kill of itself, Link of a dead pid):
@@ -1365,6 +1350,7 @@ int interp_run(Vm *vm, Actor *a) {
                 return RUN_EXIT;
             }
             break;
+        }
 
         default:
             CRASH(R_BAD_CODE);

@@ -568,6 +568,37 @@ TEST(register_operands_out_of_range_are_badcode) {
     }
 }
 
+/* A builtin id the VM does not have, a wrong argument count, a two-result
+ * builtin whose second result register is past the frame, and a first
+ * argument of the wrong kind where it must be a PID or an int are all
+ * badcode. r0 = 1, r1 = nil, then BUILTIN ra, rb, rc, id. */
+TEST(builtin_ids_counts_and_kinds_are_badcode) {
+    static const uint32_t bad[][4] = {   /* id, ra, rb, rc */
+        { B_RESERVED_58, 0, 0, 0 }, { B_RESERVED_60, 0, 0, 0 }, { B_SPRINT + 1u, 0, 0, 0 }, { 255, 0, 0, 0 },
+        { B_SELF, 0, 0, 1 }, { B_SEND, 0, 0, 1 }, { B_SEND_AFTER, 0, 0, 2 }, { B_PANIC, 0, 0, 2 },
+        { B_SPAWN_OPT, 0, 0, 1 }, { B_RANDOM, 0, 0, 1 }, { B_STR_CONCAT, 0, 0, 1 }, { B_CONFIG_GET, 0, 0, 2 },
+        { B_WHEREIS, 3, 0, 1 }, { B_RECEIVE_TIMEOUT, 3, 0, 1 }, { B_PORT_OPEN, 3, 0, 2 }, { B_CONFIG_GET, 3, 0, 1 },
+        { B_LINK, 2, 0, 1 }, { B_MONITOR, 2, 1, 1 }, { B_KILL, 2, 0, 2 },
+        { B_SLEEP, 2, 1, 1 }, { B_EXIT, 2, 1, 1 }, { B_SEND_AFTER, 2, 1, 3 }, { B_RECEIVE_TIMEOUT, 2, 1, 1 },
+    };
+    for (uint32_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        Vm vm; Image img; Actor *a;
+        test_host_arena_forget();
+        const uint32_t code[] = {
+            OP_MAKE(OP_LOADK, 0, 0, 0), term_from_int(1),
+            OP_MAKE(OP_LOADK, 1, 0, 0), T_NIL,
+            OP_MAKE(OP_BUILTIN, bad[i][1], bad[i][2], bad[i][3]), bad[i][0],
+            OP_MAKE(OP_BUILTIN, 0, 0, 0), B_RECEIVE,
+        };
+        const char *err = run_code(code, 8, 4, &vm, &img, &a);
+        if (!strstr(err, "crashed: badcode")) {
+            printf("    row %u (builtin %u): %s\n", i, bad[i][0], err);
+            CHECK(0);
+        }
+        if (a) actor_free(&vm, a);
+    }
+}
+
 /* Zero PID and zero Ref: typed, equal to themselves only, harmless as
  * builtin arguments, printed as <pid 0> / <ref 0>. */
 TEST(zero_pid_and_ref) {
