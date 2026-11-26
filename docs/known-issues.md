@@ -49,7 +49,10 @@ rebuilt:
   a type mismatch): `if m.Err == fs.NoSpace` becomes `if m.Err ==
   errors.NoSpace`, with `import "gogo/errors"`. `http.Failed` (100) is the connection's
   `Closed` reason, `errors.Timeout` or `errors.IO`, `http.BadURL` is `errors.BadURL` (25),
-  `sound.SpkFailed` is `errors.IO`, and `sound.BadWav`, which nothing
+  `sound.SpkFailed` is `errors.IO`, `kv.Put` of a value over 4096 bytes
+  is `errors.Overflow` (was `fs.NoMemory`) and of another type
+  `errors.BadArg` (was `fs.BadPath`), `imulog.Append` of a payload over
+  65535 bytes `errors.Overflow` (was `fs.NoMemory`), all as `fs.Err`, and `sound.BadWav`, which nothing
   returned, is gone (`errors.BadFormat` is the shared code for it).
   `http.ListenFailed` is 69 instead of 100: exit codes 64..99 are library
   failures now (`actor.Failed` plus a shared code); user codes still

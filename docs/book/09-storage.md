@@ -357,8 +357,11 @@ func Delete(key string) fs.Err
 func Keys() ([]string, fs.Err)
 ```
 
-A key follows the file name rules (and must not end in `.tmp`). `Put`
-replaces the value atomically. A `[]byte` must go through
+A key follows the file name rules (and must not end in `.tmp`); a bad
+key is `fs.BadPath`. `Put` replaces the value atomically. A value over
+4096 bytes is the shared code `errors.Overflow` and a value of another
+type `errors.BadArg`, both as an `fs.Err` (compare with
+`fs.Err(errors.Overflow)`). A `[]byte` must go through
 `bytes.FromSlice` first.
 
 The classic use is a boot counter:

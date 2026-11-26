@@ -531,7 +531,8 @@ FatFs).
 - **`gogo/kv`**: one file per key under `/flash/kv/`. `Get(key)
   (bytes.Bytes, fs.Err)` (a missing key is `fs.NotFound`; read errors are
   returned as they are), `Put(key, v any) fs.Err` (`string` or `Bytes`,
-  replaced atomically, at most 4096 B), `Delete(key) fs.Err`, `Keys()
+  replaced atomically, at most 4096 B: a larger value is
+  `fs.Err(errors.Overflow)`, another type `fs.Err(errors.BadArg)`), `Delete(key) fs.Err`, `Keys()
   ([]string, fs.Err)`.
 - **`gogo/ringlog`**: `Append(dir, maxBytes, line)` and `Read(dir, max)`
   over two files `0.log` and `1.log` that rotate, so the total stays

@@ -6,6 +6,7 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 	"gogo/fs"
 	"gogo/kv"
 )
@@ -78,6 +79,7 @@ func main() {
 	b, e = kv.Get("big")
 	println("big kept", int(e), b.Len())
 	println("oversize bytes", int(kv.Put("big2", bytes.FromSlice(big2))))
+	println("bad type", int(kv.Put("n", 5)) == int(errors.BadArg))
 	get("big2")
 
 	// A value that does not fit the caller's quota is NoMemory, not absent.

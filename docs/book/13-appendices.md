@@ -313,8 +313,12 @@ meaning the packages share.
 | 36..99 | reserved, never shared codes |
 | 100 and up | one block of 20 per package that needs its own codes: `gogo/http` 100..119, `gogo/sound` 120..139 (neither uses its block yet) |
 
-**`fs.Err`** (also returned by `kv` and `ringlog`): the shared codes, as
-`fs.Err(errors.X)` under the same names.
+**`fs.Err`** (also returned by `kv`, `ringlog`, `imulog` and `wav`): the
+shared codes, as `fs.Err(errors.X)` under the same names. `kv.Put` also
+returns `fs.Err(errors.Overflow)` (24) for a value over 4096 bytes and
+`fs.Err(errors.BadArg)` (6) for one that is neither a string nor `Bytes`;
+`imulog.Append` returns `fs.Err(errors.Overflow)` for a payload over
+65535 bytes.
 
 | 0 | 1 | 2 | 3 | 4 | 5 | 7 | 8 | 11 | 12 | 13 | 14 | 15 | 16 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|

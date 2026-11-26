@@ -30,9 +30,10 @@ badkey delete 12
 badkey get 12
 max value 0
 big 0 4096
-oversize 3
+oversize 24
 big kept 0 4096
-oversize bytes 3
+oversize bytes 24
+bad type true
 get big2 1 
 small actor get big 3 0
 delete big 0
