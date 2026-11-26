@@ -46,6 +46,12 @@ static inline uint32_t msg_footprint_words(uint16_t words) {
     return (uint32_t)((msg_alloc_bytes(words) + 3u) / 4u);
 }
 
+/* A new, unqueued message block of `words` data words (left as they are),
+ * flags 0, root a ref to word 0 (a struct the caller lays out there), as
+ * the hand-built blocks (notices, port events) start. NULL if out of
+ * memory. */
+Msg *msg_new(Vm *vm, uint32_t words);
+
 /* Words a queued message is charged, as counted in mbox_words (and in a
  * SendAfter creator's timer charge): its block plus the full length of each
  * distinct off-heap Bytes root it carries. */

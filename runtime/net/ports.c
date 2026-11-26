@@ -36,14 +36,7 @@ term net_put_int(uint32_t *d, uint32_t *at, int32_t v) {
 }
 
 Msg *net_msg_new(Vm *vm, uint32_t words) {
-    if (words > 0xFFFFu) return NULL;
-    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
-    if (!m) return NULL;
-    m->next = NULL;
-    m->words = (uint16_t)words;
-    m->flags = 0;
-    m->root = term_from_ref(0);
-    return m;
+    return words > 0xFFFFu ? NULL : msg_new(vm, words);
 }
 
 bool net_room(Vm *vm, Actor *o, uint32_t words, uint32_t reserve) {

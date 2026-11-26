@@ -99,12 +99,8 @@ static HConn *conn_of(const Vm *vm, const Port *p) { return &conns[port_index(vm
 static bool event_new(Vm *vm, const Port *p, uint32_t type, term a, bool with_reason, int32_t reason) {
     Actor *o = port_owner(vm, p);
     uint32_t words = type == TYPE_NET_CONNECTED ? 2u : with_reason ? 4u : 3u;
-    Msg *m = o ? va_alloc(vm, msg_alloc_bytes((uint16_t)words)) : NULL;
+    Msg *m = o ? msg_new(vm, words) : NULL;
     if (!m) return false;
-    m->next = NULL;
-    m->words = (uint16_t)words;
-    m->flags = 0;
-    m->root = term_from_ref(0);
     m->data[0] = hdr_make(words, K_STRUCT);
     m->data[1] = type;
     if (words > 2u) m->data[2] = a;

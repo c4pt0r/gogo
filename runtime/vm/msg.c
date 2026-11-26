@@ -227,6 +227,16 @@ uint32_t msg_charge_words(Vm *vm, const Msg *m) {
     return w;
 }
 
+Msg *msg_new(Vm *vm, uint32_t words) {
+    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
+    if (!m) return NULL;
+    m->next = NULL;
+    m->words = (uint16_t)words;
+    m->flags = 0;
+    m->root = term_from_ref(0);
+    return m;
+}
+
 /* msg_build with `skip` reserved words (zeroed) before the objects: sizes
  * the copy first (checking the module rules), allocates the message once,
  * then copies into it: a Cheney copy (objects appended in order, a scan
@@ -240,7 +250,7 @@ static Msg *build_skip(Vm *vm, Actor *src, term t, uint32_t skip, uint32_t dst_m
     if (why) *why = x.why ? x.why : R_OUT_OF_MEMORY;
     uint32_t words = skip + n;
     Msg *m = NULL;
-    if (!x.why && n <= MSG_MAX_WORDS - skip) m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
+    if (!x.why && n <= MSG_MAX_WORDS - skip) m = msg_new(vm, words);
     if (!m) {
         walk(src->mem, t, NULL);      /* no copy follows: unmark */
         return NULL;
@@ -251,9 +261,7 @@ static Msg *build_skip(Vm *vm, Actor *src, term t, uint32_t skip, uint32_t dst_m
     heap_map_terms(m->data, skip, &c.b.len, &m->root, 1, TAGS_REF, copy_fn, &c);
     restore(&c.b, src->mem, skip);
     if (x.fin) heap_map_terms(m->data, skip, &c.b.len, &m->root, 1, TAGS_CONST | TAGS_HANDLE, fin_fn, &c);
-    m->next = NULL;
-    m->words = (uint16_t)words;
-    m->flags = x.handles ? MSG_HANDLES : 0u;
+    if (x.handles) m->flags = MSG_HANDLES;
     return m;
 }
 

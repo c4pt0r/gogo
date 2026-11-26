@@ -162,12 +162,8 @@ void actor_extra_free(Vm *vm, Actor *a) {
 
 static inline Msg *note_new(Vm *vm, uint32_t at) {
     uint32_t words = at == AT_EXIT ? NOTE_WORDS : DOWN_WORDS;
-    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
+    Msg *m = msg_new(vm, words);
     if (!m) return NULL;
-    m->next = NULL;
-    m->words = (uint16_t)words;
-    m->flags = 0;
-    m->root = term_from_ref(0);
     uint32_t *d = m->data, *r = d + at;
     d[0] = hdr_make(at, K_STRUCT);
     if (at == AT_EXIT) {

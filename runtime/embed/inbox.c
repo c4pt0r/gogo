@@ -78,12 +78,8 @@ static term put_int(uint32_t *d, uint32_t *at, int32_t v) {
 static Msg *post_msg(Vm *vm, term from, int32_t kind, const uint8_t *data, uint32_t len, term h) {
     bool in = h == T_NIL && len;
     uint32_t words = 5u + (term_int_fits(kind) ? 0u : 2u) + (in ? 2u + (len + 3u) / 4u : 0u);
-    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
+    Msg *m = msg_new(vm, words);
     if (!m) return NULL;
-    m->next = NULL;
-    m->words = (uint16_t)words;
-    m->flags = 0;
-    m->root = term_from_ref(0);
     uint32_t *d = m->data, at = 5;
     d[0] = hdr_make(5, K_STRUCT);
     d[1] = TYPE_POST;
@@ -111,12 +107,8 @@ Msg *embed_post_msg(Vm *vm, term from, int32_t kind, const uint8_t *data, uint32
 }
 
 Msg *embed_closed_msg(Vm *vm, term from) {
-    Msg *m = va_alloc(vm, msg_alloc_bytes(4u));
+    Msg *m = msg_new(vm, 4u);
     if (!m) return NULL;
-    m->next = NULL;
-    m->words = 4u;
-    m->flags = 0;
-    m->root = term_from_ref(0);
     m->data[0] = hdr_make(4, K_STRUCT);
     m->data[1] = TYPE_CLOSED;
     m->data[2] = from;

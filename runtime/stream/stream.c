@@ -35,12 +35,8 @@ Msg *stream_chunk_new(struct Vm *vm, term from, uint32_t seq, uint32_t time_ms, 
     uint64_t words = 7u + box_words((int32_t)seq) + box_words(t) + box_words((int32_t)dropped) +
                      (len ? 2u + ((uint64_t)len + 3u) / 4u : 0u);
     if (words > 0xFFFFu) return NULL;
-    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
+    Msg *m = msg_new(vm, words);         /* inline Bytes: no handles */
     if (!m) return NULL;
-    m->next = NULL;
-    m->words = (uint16_t)words;
-    m->flags = 0;                       /* inline Bytes: no handles */
-    m->root = term_from_ref(0);
     uint32_t *d = m->data, at = 7;
     d[0] = hdr_make(7, K_STRUCT);
     d[1] = TYPE_CHUNK;

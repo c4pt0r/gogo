@@ -289,12 +289,8 @@ static Msg *ints_msg(Vm *vm, uint32_t type, const int32_t *v, uint32_t n, uint32
     for (i = 0; i < n; i++) {
         if (!(raw_mask >> i & 1u) && !term_int_fits(v[i])) words += 2u;
     }
-    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
+    Msg *m = msg_new(vm, words);
     if (!m) return NULL;
-    m->next = NULL;
-    m->words = (uint16_t)words;
-    m->flags = 0;
-    m->root = term_from_ref(0);
     m->data[0] = hdr_make(2u + n, K_STRUCT);
     m->data[1] = type;
     words = 2u + n;                          /* where the next box goes */

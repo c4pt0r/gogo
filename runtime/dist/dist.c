@@ -376,16 +376,6 @@ static void put_reason(uint32_t *d, uint32_t at, uint32_t code) {
     d[at + 3u] = T_EMPTYSTR;
 }
 
-static Msg *note_new(Vm *vm, uint32_t words) {
-    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
-    if (!m) return NULL;
-    m->next = NULL;
-    m->words = (uint16_t)words;
-    m->flags = 0;
-    m->root = term_from_ref(0);
-    return m;
-}
-
 /* Queues a notification outside w's quota (as the VM's own link and
  * monitor notes); false only when out of memory. */
 static bool note_send(Vm *vm, Actor *w, Msg *m) {
@@ -397,7 +387,7 @@ static bool note_send(Vm *vm, Actor *w, Msg *m) {
 
 /* DownMsg{Ref: serial, From: from, Reason{code}} to w. */
 static bool down_to(Vm *vm, Actor *w, uint64_t serial, term from, uint32_t code) {
-    Msg *m = note_new(vm, 12);
+    Msg *m = msg_new(vm, 12);
     if (m) {
         uint32_t *d = m->data;
         d[0] = hdr_make(5, K_STRUCT);
@@ -421,7 +411,7 @@ static bool exit_to(Vm *vm, Actor *t, term from, uint32_t code) {
     code = wire_code(code);
     if (t->state == A_EXITED || (t->flags & AF_EXIT_PENDING)) return true;
     if (t->flags & AF_TRAP_EXIT) {
-        Msg *m = note_new(vm, 8);
+        Msg *m = msg_new(vm, 8);
         if (m) {
             uint32_t *d = m->data;
             d[0] = hdr_make(4, K_STRUCT);
@@ -926,14 +916,12 @@ static void deliver(Vm *vm, DistState *ds, Actor *to, const uint8_t *p, uint32_t
         return;
     }
     uint32_t words = d.words;
-    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
+    Msg *m = msg_new(vm, words);
     if (!m) {
         ds->st.dropped++;
         return;
     }
-    m->next = NULL;
-    m->words = (uint16_t)words;
-    m->flags = reply ? MSG_REPLY : 0u;
+    if (reply) m->flags = MSG_REPLY;
     Dec w = { vm, ds, p, n, 0, m->data, skip, false, &me->img, module_tag(vm, to->mod) };
     m->root = dec(&w, 0);
     if (w.bad) {                    /* no proxy slot for a PID in it */
@@ -1052,7 +1040,7 @@ static void calls_fail(Vm *vm, DistState *ds, uint16_t node) {
         if (!c->caller || c->node != node) continue;
         Actor *a = actor_lookup(vm, c->caller);
         c->caller = 0;
-        Msg *m = a ? note_new(vm, MSG_REPLY_HDR) : NULL;
+        Msg *m = a ? msg_new(vm, MSG_REPLY_HDR) : NULL;
         if (!m) continue;
         m->flags = MSG_REPLY | MSG_FAILED;
         m->root = T_NIL;
@@ -1207,7 +1195,7 @@ static void node_event(Vm *vm, const Port *p, int32_t kind, int32_t node, term a
                        uint32_t nl) {
     Actor *o = port_owner(vm, p);
     uint32_t sw = nl ? 2u + (nl + 3u) / 4u : 0u;
-    Msg *m = o ? note_new(vm, 7u + sw) : NULL;
+    Msg *m = o ? msg_new(vm, 7u + sw) : NULL;
     if (!m) return;
     m->data[0] = hdr_make(7, K_STRUCT);
     m->data[1] = TYPE_NET_NODEEVENT;
@@ -1421,7 +1409,7 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
 /* The link's byte stream broke (a length out of range): it ends. */
 static void link_ended(Vm *vm, Port *p, int32_t reason) {
     Actor *o = port_owner(vm, p);
-    Msg *m = o ? note_new(vm, 4) : NULL;
+    Msg *m = o ? msg_new(vm, 4) : NULL;
     if (m) {
         m->data[0] = hdr_make(4, K_STRUCT);
         m->data[1] = TYPE_CLOSED;
