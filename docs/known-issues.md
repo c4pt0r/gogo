@@ -261,8 +261,7 @@ rebuilt:
 ## Compiler and language
 
 - **Not supported yet (planned).** The compiler rejects maps, pointer
-  receivers ("pointer receivers are not supported yet"), pointers, package-level `var`s, a `switch` on an
-  `any` or a struct value, the `error` type
+  receivers ("pointer receivers are not supported yet"), pointers, package-level `var`s, the `error` type
   and interfaces other than `any` ("interface
   types are not supported yet": methods are called on concrete types
   only). `goto` is rejected (labeled `break` and
@@ -405,6 +404,10 @@ rebuilt:
   with the reason `actor.Panic`, for links, monitors and supervisors to
   handle. Its value prints as `println` prints it (a struct as `{1 2}`),
   where Go prints a struct's type and address.
+- **`==` on interfaces holding slices does not panic.** Two `any`
+  values holding slices compare element by element, as arrays do; Go
+  panics there (`comparing uncomparable type`). A long `==` on deeply nested structs runs to the
+  end without preemption, like a large message copy.
 - **`println` of a slice differs from Go.** gogo prints the elements,
   `[1 2 3]`; Go's `println` prints `[len/cap]address` (only
   `fmt.Println` prints elements).

@@ -655,12 +655,12 @@ level 2
 level 1
 ```
 
-The value can be an `int`, `int64`, `byte`, `bool`, `string`, a named type
-of one of them (`type Code int`), an `actor.PID` or an `actor.Ref`. A
-switch on an `any` value or on a struct is not supported yet (`switch on a
-value of type any not supported`). For messages in an `any`, use a *type*
-switch, `switch v := x.(type)`, which is how actors look at what they
-receive (chapter 4).
+The value can be of any type `==` works on (section 3.5): an `int`,
+`int64`, `byte`, `bool`, `string`, a named type of one of them (`type Code
+int`), a float, an `actor.PID`, an `actor.Ref`, a struct, an array, or an interface value such
+as an `any`, whose cases may be values of different types (`case 1, "one",
+nil:`). To ask *which type* an `any` holds, use a *type* switch, `switch v
+:= x.(type)`, which is how actors look at what they receive (chapter 4).
 
 ### Labeled break and continue
 
@@ -1160,11 +1160,9 @@ func main() {
 	var z Rect
 	println(z.Max.X, z.Name == "")
 
-	// Compare structs field by field: == on structs is not in the subset.
-	println(samePoint(p, Point{1, 2}))
+	// == compares structs field by field.
+	println(p == Point{1, 2}, q != p)
 }
-
-func samePoint(a, b Point) bool { return a.X == b.X && a.Y == b.Y }
 ```
 
 ```text
@@ -1174,7 +1172,7 @@ box! 20 {{0 0} {4 5} box!}
 box 12
 {0 1} {5 6}
 0 true
-true
+true true
 ```
 
 Writing a field changes only the variable or slice element written:
@@ -1182,7 +1180,6 @@ Writing a field changes only the variable or slice element written:
 method that writes a field of its parameter changes only its own copy.
 A slice element is written in place, because a slice shares its array
 (`pts[i].X = v` is seen through every slice of that array, as in Go).
-Comparing structs with `==` is not supported; compare fields.
 
 **What a field write costs.** Inside the VM a struct never changes. `p.X =
 v` builds a new struct with `X` replaced, copies the other fields into it,
@@ -1201,9 +1198,12 @@ A field of a variable that a closure captures cannot be written, for the
 same reason the variable cannot be reassigned (section 3.4): `captured
 variable must not be changed by field assignment`.
 
-Only `actor.PID`, `actor.Ref`, `int`, `int64`, `bool`, `string` and
-named types of those can be compared with `==`. For slices only `s == nil`
-works.
+`==` and `!=` work on `int`, `int64`, `byte`, floats, `bool`, `string`
+and named types of those, `actor.PID`, `actor.Ref`, structs (field by
+field; a `bytes.Bytes` field by its contents), arrays (element by
+element) and interface values (section 3.9). A struct with a
+`bytes.Buffer` field does not compare. For slices only `s
+== nil` works.
 
 ### Methods
 
@@ -1922,14 +1922,11 @@ The full list, with what to do instead:
 | pointers, `&x`, `*p` | `pointer not supported` | values; state in actors |
 | pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
 | your own interfaces | `interface types are not supported yet: call methods on the concrete type` | function values (method values too), or messages and a type switch |
-| `switch` on an `any` or a struct | `switch on a value of type any not supported` | a type switch; compare fields |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
 | `complex64/128` | `complex not supported` | two floats |
 | `uintptr` | `uintptr not supported` | `uint32` |
 | generics | `generic function not supported` | write the function per type |
 | `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
-| `struct == struct` | `comparison of main.P not supported` | compare fields |
-| `array == array` | `comparison of arrays not supported yet` | compare elements |
 | an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
 

@@ -237,8 +237,6 @@ func TestRejects(t *testing.T) {
 		{"pointer", "package main\nfunc main() {\n\tx := 1\n\tp := &x // ERR\n\t_ = p\n}\n", []string{"pointer"}},
 		{"array-any", "package main\nfunc main() {\n\tvar a [3]int\n\tvar x any = a // ERR\n\t_ = x\n}\n", []string{"array in interface not supported"}},
 		{"array-send", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Send(actor.Self(), [2]int{}) // ERR\n}\n", []string{"array in interface not supported"}},
-		{"array-compare", "package main\nfunc main() {\n\ta, b := [2]int{}, [2]int{}\n\tprintln(a == b) // ERR\n}\n", []string{"comparison of arrays not supported yet"}},
-		{"array-switch", "package main\nfunc main() {\n\ta := [2]int{}\n\tswitch a { // ERR\n\t}\n}\n", []string{"switch on a value of type [2]int not supported"}},
 		{"array-slice-field", "package main\ntype S struct{ A [2]int }\nfunc main() {\n\tvar s S\n\tt := s.A[:] // ERR\n\t_ = t\n}\n", []string{"slice of an array that is not a variable not supported"}},
 		{"array-slice-elem", "package main\nfunc main() {\n\tvar m [2][2]int\n\tt := m[1][:] // ERR\n\t_ = t\n}\n", []string{"slice of an array that is not a variable not supported"}},
 		{"array-captured-elem", "package main\nfunc main() {\n\tvar a [2]int\n\tf := func() int { return a[0] }\n\ta[1] = 3 // ERR\n\t_ = f\n}\n", []string{"captured variable must not be changed by element assignment"}},
@@ -255,9 +253,6 @@ func TestRejects(t *testing.T) {
 		{"conversion-string", "package main\nfunc main() {\n\tx := 65\n\ts := string(x) // ERR\n\t_ = s\n}\n", []string{"conversion"}},
 		{"int64-mix", "package main\nfunc main() {\n\tvar a int64 = 1\n\tb := 2\n\tprintln(a + b) // ERR\n}\n", []string{"mismatched types int64 and int"}},
 		{"int64-mix-assign", "package main\nfunc main() {\n\tvar a int64\n\tb := 2\n\ta = b // ERR\n\t_ = a\n}\n", []string{"cannot use b"}},
-		{"switch-any", "package main\nfunc main() {\n\tvar x any = 1\n\tswitch x { // ERR\n\tcase 1:\n\t}\n}\n", []string{"switch on a value of type any not supported"}},
-		{"switch-struct", "package main\ntype P struct{ X int }\nfunc main() {\n\tp := P{1}\n\tswitch p { // ERR\n\tcase P{1}:\n\t}\n}\n", []string{"switch on a value of type main.P not supported"}},
-		{"switch-case-any", "package main\nfunc main() {\n\tx := 1\n\tvar a any = 1\n\tswitch x {\n\tcase a: // ERR\n\t}\n}\n", []string{"switch case of type any not supported"}},
 		{"switch-slice", "package main\nfunc main() {\n\ts := []int{1}\n\tswitch s { // ERR\n\tcase nil:\n\t}\n}\n", []string{"switch on a value of type []int not supported"}},
 		{"goto", "package main\nfunc main() {\n\tgoto end // ERR\nend:\n\tfor {\n\t}\n}\n", []string{"goto statement not supported"}},
 		{"label-block", "package main\nfunc main() {\nL: // ERR\n\t{\n\t\tprintln(1)\n\t}\n\tgoto L\n}\n", []string{"label on a statement other than for or switch not supported"}},
@@ -279,10 +274,6 @@ func TestRejects(t *testing.T) {
 		{"tworesult-stmt", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.ReceiveTimeout(5) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"tworesult-var", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar m, ok = actor.ReceiveTimeout(5) // ERR\n\tprintln(m, ok)\n}\n", []string{"multiple values not supported"}},
 		{"ref-literal", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tr := actor.Ref{} // ERR\n\tprintln(r)\n}\n", []string{"composite literal of actor.Ref not supported"}},
-		{"any-compare-right-named", "package main\ntype C int\nfunc main() {\n\tvar c C = 3\n\tvar x any = 3\n\tprintln(c == x) // ERR\n}\n", []string{"comparison of any"}},
-		{"any-compare-right-const", "package main\nfunc main() {\n\tvar x any = 5\n\tprintln(5 == x) // ERR\n}\n", []string{"comparison of any"}},
-		{"any-compare-right-pid", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar x any = 5\n\tprintln(actor.Self() != x) // ERR\n}\n", []string{"comparison of any"}},
-		{"any-compare", "package main\nfunc main() {\n\tvar a, b any\n\tprintln(a == b) // ERR\n}\n", []string{"comparison of any"}},
 		{"iface-literal", "package main\nfunc main() {\n\tvar x interface{ M() } // ERR\n\t_ = x\n}\n", []string{"interface"}},
 		{"captured-reassign-after", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tx := 1\n\tactor.Spawn(func() { println(x) })\n\tx = 2 // ERR\n}\n", []string{"captured variable must not be reassigned"}},
 		{"captured-reassign-before", "package main\nfunc main() {\n\tvar x int\n\tx = 1 // ERR\n\tf := func() { println(x) }\n\t_ = f\n}\n", []string{"captured variable must not be reassigned"}},
@@ -320,6 +311,7 @@ func TestRejects(t *testing.T) {
 		{"assert-file", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar x any = 1\n\t_ = x.(fs.File) // ERR\n}\n", []string{"type assertion to fs.File; wrap it in a struct not supported"}},
 		{"assert-var", "package main\nfunc main() {\n\tvar x any = 1\n\tvar v, ok = x.(int) // ERR\n\tprintln(v, ok)\n}\n", []string{"multiple values not supported"}},
 		{"assert-concrete", "package main\nfunc main() {\n\tx := 1\n\t_ = x.(int) // ERR\n}\n", []string{"not an interface"}},
+		{"buffer-field-compare", "package main\nimport \"gogo/bytes\"\ntype T struct{ B bytes.Buffer }\nfunc main() {\n\ta := T{bytes.NewBuffer(1)}\n\tprintln(a == a) // ERR\n}\n", []string{"comparison of main.T not supported"}},
 		{"alias-generic", "package main\ntype L[T any] = []T // ERR\nfunc main() {}\n", []string{"generic type not supported"}},
 		{"alias-map", "package main\ntype M = map[int]int // ERR\nfunc main() {}\n", []string{"map not supported"}},
 		{"port-renamed", "package main\nimport p \"gogo/port\" // ERR\nfunc main() { p.Close(p.Edge{}) }\n", []string{`import p "gogo/port" not supported`}},
@@ -904,4 +896,30 @@ func compileProg(t *testing.T, src string) ([]byte, error) {
 		return nil, err
 	}
 	return Compile(prog)
+}
+
+// TestAcceptsEquality: == on interfaces and structs, and switches on
+// them, by B_CMP (formerly rejected); a struct with a Buffer field does
+// not compare.
+func TestAcceptsEquality(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"switch-any", "package main\nfunc main() {\n\tvar x any = 1\n\tswitch x {\n\tcase 1:\n\t}\n}\n"},
+		{"switch-struct", "package main\ntype P struct{ X int }\nfunc main() {\n\tp := P{1}\n\tswitch p {\n\tcase P{1}:\n\t}\n}\n"},
+		{"switch-case-any", "package main\nfunc main() {\n\tx := 1\n\tvar a any = 1\n\tswitch x {\n\tcase a:\n\t}\n}\n"},
+		{"any-compare-right-named", "package main\ntype C int\nfunc main() {\n\tvar c C = 3\n\tvar x any = 3\n\tprintln(c == x)\n}\n"},
+		{"any-compare-right-const", "package main\nfunc main() {\n\tvar x any = 5\n\tprintln(5 == x)\n}\n"},
+		{"any-compare-right-pid", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar x any = 5\n\tprintln(actor.Self() != x)\n}\n"},
+		{"any-compare", "package main\nfunc main() {\n\tvar a, b any\n\tprintln(a == b)\n}\n"},
+		{"struct-eq", "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tprintln(P{1, 2} == P{1, 2}, P{} != P{1, 0})\n}\n"},
+		{"any-nil", "package main\nfunc main() {\n\tvar x any\n\tprintln(x == nil, nil != x)\n}\n"},
+		{"typeswitch-nil", "package main\nfunc main() {\n\tvar x any\n\tswitch x.(type) {\n\tcase nil:\n\t\tprintln(0)\n\t}\n}\n"},
+		{"array-compare", "package main\nfunc main() {\n\ta, b := [2]int{}, [2]int{}\n\tprintln(a == b)\n}\n"},
+		{"array-switch", "package main\nfunc main() {\n\ta := [2]int{}\n\tswitch a {\n\t}\n}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := compileProg(t, tc.src); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }

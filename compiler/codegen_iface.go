@@ -248,3 +248,43 @@ func (f *fn) panicMsg(n ast.Node, msg string) {
 	f.asm.EmitExt(OpBuiltin, r, r, 1, BPanic)
 	f.next = mark
 }
+
+// Equality of interface values and structs: B_CMP, the VM's order of two
+// values (types first, then values; structs field by field), compared
+// with 0. The other comparable types use EQ (EQ64 for int64).
+
+// needsCmp reports whether == on values of type t is a B_CMP: an
+// interface, an array (element by element), or a struct (not a PID or a
+// Ref, which are terms).
+func needsCmp(t types.Type) bool {
+	return isIface(t) || isArray(t) || (structType(t) != nil && !isPID(t))
+}
+
+// cmpType is the type the operands of x == y are compared as: an
+// interface one's (the other operand is converted to it, as in Go), else
+// x's.
+func cmpType(xt, yt types.Type) types.Type {
+	if isIface(yt) && !isIface(xt) {
+		return yt
+	}
+	return xt
+}
+
+// cmpInto emits dst = x == y (op OpEq) or x != y (OpNe) by B_CMP, x and y
+// converted to type t.
+func (f *fn) cmpInto(x, y ast.Expr, t types.Type, op uint8, dst uint8) {
+	mark := f.next
+	base := f.allocN(x, 2)
+	f.valueInto(x, t, base)
+	f.valueInto(y, t, base+1)
+	f.cmpRegs(x, base, op, dst)
+	f.next = mark
+}
+
+// cmpRegs emits dst = r == r+1 (op OpEq) or != (OpNe) by B_CMP, on two
+// registers holding comparable values of one type; r+1 is clobbered.
+func (f *fn) cmpRegs(n ast.Node, r uint8, op uint8, dst uint8) {
+	f.asm.EmitExt(OpBuiltin, r, r, 2, BCmp)
+	f.asm.EmitExt(OpLoadk, r+1, 0, 0, TermInt(0))
+	f.asm.Emit(op, dst, r, r+1)
+}

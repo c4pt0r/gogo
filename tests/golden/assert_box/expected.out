@@ -8,7 +8,7 @@ Name n
 string s
 Flag true
 Point 3
-other
+nil
 Kelvin 300 Flag false Celsius 1
 Celsius 21 byte 120
 22

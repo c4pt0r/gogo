@@ -9,6 +9,8 @@ uint32
 uint64 big
 uint64
 Reg
+true false true
+true false false
 4000000 3
 18000000000 true
 false

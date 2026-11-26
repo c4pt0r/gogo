@@ -1363,6 +1363,12 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 }
 
 func (f *fn) binaryInto(e *ast.BinaryExpr, dst uint8) {
+	if e.Op == token.EQL || e.Op == token.NEQ {
+		if xt, yt := f.g.p.Info.TypeOf(e.X), f.g.p.Info.TypeOf(e.Y); needsCmp(xt) || needsCmp(yt) {
+			f.cmpInto(e.X, e.Y, cmpType(xt, yt), binaryOps[e.Op], dst)
+			return
+		}
+	}
 	if f.strBinary(e, dst) {
 		return
 	}

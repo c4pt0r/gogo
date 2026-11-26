@@ -1,0 +1,54 @@
+// == on arrays (element by element, nested arrays and arrays of structs
+// included), on floats inside structs and interfaces (a NaN equals
+// nothing, not even itself; -0 equals 0; float32 and float64 are
+// different types), and a switch on an array. Valid Go: `go run` prints
+// the same (gocompare).
+package main
+
+type P struct{ X, Y int }
+
+type Sample struct {
+	V    float64
+	Tags [2]string
+}
+
+func kind(a [3]int) string {
+	switch a {
+	case [3]int{}:
+		return "zero"
+	case [3]int{1, 2, 3}:
+		return "one-two-three"
+	}
+	return "other"
+}
+
+func main() {
+	a := [3]int{1, 2, 3}
+	b := [3]int{1, 2, 3}
+	c := [3]int{1, 2, 4}
+	println(a == b, a != b, a == c, kind(a), kind(c), kind([3]int{}))
+	m := [2][2]int{{1, 2}, {3, 4}}
+	n := m
+	n[1][1] = 5
+	println(m == [2][2]int{{1, 2}, {3, 4}}, m == n)
+	ps := [2]P{{1, 2}, {3, 4}}
+	println(ps == [2]P{{1, 2}, {3, 4}}, ps == [2]P{{1, 2}, {3, 5}})
+	bs := [4]byte{'g', 'o'}
+	println(bs == [4]byte{'g', 'o', 0, 0}, bs == [4]byte{'g', 'o', 'o'})
+
+	zero := 0.0
+	nan := zero / zero
+	negz := -zero
+	s1 := Sample{1.5, [2]string{"a", "b"}}
+	s2 := Sample{1.5, [2]string{"a", "b"}}
+	println(s1 == s2, s1 == Sample{1.5, [2]string{"a", "c"}})
+	println(Sample{nan, [2]string{}} == Sample{nan, [2]string{}}, Sample{negz, [2]string{}} == Sample{0, [2]string{}})
+	var x, y any = nan, nan
+	println(x == y, x != y)
+	x, y = negz, 0.0
+	println(x == y)
+	x, y = float32(1.5), 1.5
+	println(x == y, x == float32(1.5), y == 1.5)
+	x, y = 2.0, 2
+	println(x == y)
+}

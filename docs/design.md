@@ -279,6 +279,29 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   them, since it captures by value and writes to captured variables are
   rejected. Rejected: `defer` inside a loop, a deferred call whose single
   argument is a multi-value call. No opcode, no run-time defer list.
+- Interface values (`any`): a value is its own term; an `int64` goes in
+  as a `K_INT64` box (`BOX64`), a sized integer (`byte`, `rune`,
+  `uint32`, `uint64`, ...: box type `byte`, `int32`, ...) and a value of a named
+  non-struct type (`type Celsius int`) in a one-field struct of their own
+  type id (a constant one in the const area), so `TYPEIS` tells every
+  type apart; type switches and assertions (`x.(T)`, `v, ok := x.(T)`)
+  unbox. A failed `x.(T)` panics (`interface conversion: ...`). An
+  `int64` taken out of an interface goes back to its plain
+  representation (an immediate when it fits).
+- `==` on structs, arrays and interface values, and a `switch` on them,
+  compare with builtin 57 `B_CMP` (15.4, `runtime/vm/strs.c`): a total
+  order of two values, by kind first, then by value: ints, `int64`s and
+  floats by value (a NaN equals nothing, `-0 == 0`; `float32` and
+  `float64` are different kinds), Refs by serial, strings and `Bytes` by
+  their bytes, structs of one type field by field, arrays (slices) element
+  by element, anything else by its term (bools, PIDs and `nil`; a func or
+  `Buffer` by identity). A slice inside an interface compares by its
+  elements where Go panics. Values of different dynamic types are never
+  equal: an `int64` is boxed inside an interface and plain outside one,
+  so an `int` and an `int64` of one value differ. Maps (later) order
+  their keys with it. The walk does not preempt; nesting deeper than 64
+  levels (other than through a struct's last field) is `badcode`.
+  Unlike `EQ`, it does not make a value of a gone module `badcode`.
 - `println` of any value of the subset except `Bytes` and `Buffer`;
   slices print their elements, `[1 2 3]` (Go's `println` prints
   `[len/cap]address`). Nesting deeper than 16 prints as `{...}` /
@@ -292,8 +315,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
 
 **Not supported yet (planned for the "language completeness"
 milestone):** maps, pointers (and pointer receivers), package-level variables,
-a `switch` on an `any` or a struct value, the
-`error` interface and interfaces other than `any`.
+the `error` interface and interfaces other than `any`.
 Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 
@@ -1747,7 +1769,7 @@ together with `mbox_words` through `actor_charged_words`).
   `sys.SetTime`, `sys.Random`, 54 `B_FLOAT` (15.2: gogo/math and
   `strconv.FormatFloat` / `ParseFloat`, `runtime/floatlib`), 55
   `B_PRINTLNU` (15.3: `println` with `uint64` values); from 15.4, 56
-  `panic`.
+  `panic`, 57 `B_CMP` (`==` on structs, arrays and interfaces).
 - **Float ops** (15.2, `OP_ADDF` .. `OP_CONVF`, 52-61): one set for both
   widths. The operands' boxes carry the width (a 2-word `K_FLOAT` is a
   `float32`, a 3-word one a `float64`), and the op computes in it; mixed

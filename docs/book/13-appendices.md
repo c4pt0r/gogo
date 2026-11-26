@@ -385,7 +385,7 @@ as `code.Err(errors.X)` under the same names.
 | complex, `uintptr` | none |
 | maps, pointers | slices of structs, searched |
 | methods, interfaces | functions; type switches over `any` |
-| `switch` on an interface or a struct value, `goto` | type switch, compare fields; labeled `break`/`continue` |
+| `goto` | labeled `break`/`continue` |
 | generics | none |
 | `error`, `panic`, `recover` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |
 | `defer` anywhere, run on panics too | `defer` outside loops only, run on normal returns only |

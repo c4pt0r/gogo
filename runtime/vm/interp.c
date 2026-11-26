@@ -84,19 +84,6 @@ static uint32_t func_of_pc(const Image *img, uint32_t pc) {
 
 /* ---- module tags (term.h) ---- */
 
-/* A term word read out of the object t names: a const ref inside a const
- * object is untagged in its image and gets the container's tag. */
-static inline term field_term(term t, term f) {
-    return (term_is_const(t) && term_is_const(f)) ? f | (t & MOD_TAG_MASK) : f;
-}
-
-/* The type word of the struct obj that t names: a const struct's word is
- * untagged in its image; a module type gets the module's tag. */
-static inline uint32_t struct_type(term t, const uint32_t *obj) {
-    uint32_t ty = obj[1];
-    return (term_is_const(t) && ty >= TYPE_OWN_BASE) ? ty | (t & MOD_TAG_MASK) : ty;
-}
-
 /* A struct of type word ty may be used: a reserved type (global), one of
  * the running module's own (tag), or of another module still loaded. */
 static inline bool type_live(const Vm *vm, uint32_t tag, uint32_t ty) {
@@ -425,6 +412,14 @@ static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t 
     }
     out_str(&o, "\n");
     out_flush(&o);
+}
+
+/* B_PANIC v: prints "panic: v" on stderr; returns the reason to crash
+ * with, R_PANIC (R_BAD_CODE for a stale value or another count). */
+static uint32_t do_panic(const Vm *vm, const Actor *a, const term *v, uint32_t n) {
+    if (n != 1u || deep_live(vm, a, v[0], 0, WALK_BUDGET) == WALK_STALE) return R_BAD_CODE;
+    do_println(vm, a, v, 1, 0, 2);
+    return R_PANIC;
 }
 
 /* ---- actors ---- */
@@ -976,10 +971,6 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = T_NIL;
                 break;
             }
-            case B_PANIC:
-                CHECK(rc == 1 && deep_live(vm, a, R[rb], 0, WALK_BUDGET) != WALK_STALE);
-                do_println(vm, a, R + rb, 1, 0, 2);
-                CRASH(R_PANIC);
             case B_SPAWN: case B_SPAWN_LINK: case B_SPAWN_OPT: {
                 CHECK(rc == (ext == B_SPAWN_OPT ? 2u : 1u));
                 uint16_t max_words = 0;
@@ -1277,7 +1268,8 @@ int interp_run(Vm *vm, Actor *a) {
             case B_STR_CONCAT: case B_LEN: case B_INDEX: case B_SETINDEX: case B_SLICE:
             case B_MAKE_SLICE: case B_APPEND: case B_COPY: case B_CAP: case B_STR_FROM:
             case B_BYTESLICE_FROM: case B_STR_CMP: case B_BUF_NEW: case B_BUF_WRITE:
-            case B_BUF_FREEZE: case B_BYTES_FROM: case B_BYTES_EQUAL: case B_BYTES_COPYTO: {
+            case B_BUF_FREEZE: case B_BYTES_FROM: case B_BYTES_EQUAL: case B_BYTES_COPYTO:
+            case B_CMP: {
                 uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
                 RELOAD();
                 if (err != R_NORMAL) CRASH(err);
@@ -1308,9 +1300,10 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 0);
                 R[ra] = term_from_int((int32_t)(vm_random(vm) & 0x3FFFFFFFu));
                 break;
-            case B_FS: case B_CODE: {
+            case B_FS: case B_CODE: case B_PANIC: {
                 /* Both check ra+1 themselves (two-result ops only). */
-                uint32_t err = ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
+                uint32_t err = ext == B_PANIC ? do_panic(vm, a, R + rb, rc)
+                             : ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
                              : vm->fs_builtin ? vm->fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
                 RELOAD();      /* may GC */
                 if (err != R_NORMAL) CRASH(err);

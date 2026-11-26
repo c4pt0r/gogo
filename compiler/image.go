@@ -56,6 +56,7 @@ var (
 		BFloat:    floatMinor,
 		BPrintlnu: sizedMinor,
 		BPanic:    ifaceMinor,
+		BCmp:      ifaceMinor,
 	}
 	typeMinor = map[string]uint16{
 		"screen.Config": 1, // 15.1: the "screen" port

@@ -37,6 +37,8 @@ func kind(x any) string {
 		return "Flag false"
 	case Point:
 		return "Point " + itoa(v.X+v.Y)
+	case nil:
+		return "nil"
 	}
 	return "other"
 }

@@ -914,6 +914,9 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 	for _, cl := range s.Body.List {
 		cc := cl.(*ast.CaseClause)
 		for _, t := range cc.List {
+			if c.p.Info.Types[t].IsNil() {
+				continue // case nil
+			}
 			if isFsFile(c.p.Info.TypeOf(t)) {
 				c.unsupported(t, "type switch case fs.File not supported; wrap it in a struct")
 			} else if !c.caseType(t) {
@@ -928,8 +931,8 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 
 // switchStmt checks an expression switch: tagged (`switch x { case 1, 2: }`)
 // or tagless (`switch { case x > 0: }`), with an optional init statement.
-// The tag and every case value must be comparable with ==: a switch on an
-// interface or a struct value is not supported yet.
+// The tag and every case value must be comparable with ==; a case value
+// goes into an interface tag as in an assignment, and the other way round.
 func (c *checker) switchStmt(s *ast.SwitchStmt) {
 	if s.Init != nil {
 		c.stmt(s.Init)
@@ -944,9 +947,14 @@ func (c *checker) switchStmt(s *ast.SwitchStmt) {
 	for _, cl := range s.Body.List {
 		cc := cl.(*ast.CaseClause)
 		for _, e := range cc.List {
-			if t := c.p.Info.TypeOf(e); s.Tag != nil && !c.comparable(t) {
+			if t := c.p.Info.TypeOf(e); s.Tag != nil && !c.comparable(t) && !(c.p.Info.Types[e].IsNil() && isIface(c.p.Info.TypeOf(s.Tag))) {
 				c.unsupported(e, "switch case of type "+types.TypeString(t, pkgName))
 				continue
+			}
+			if s.Tag != nil {
+				tt := c.p.Info.TypeOf(s.Tag)
+				c.convert(tt, e) // nil, a boxed value into an interface tag
+				c.convertType(c.p.Info.TypeOf(e), tt, s.Tag.Pos())
 			}
 			c.expr(e)
 		}
@@ -1464,18 +1472,17 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 			if c.nilCompare(e) {
 				return
 			}
-			if isArray(xt) {
-				c.fail(e.Pos(), "comparison of arrays not supported yet: compare the elements")
-				return
-			}
 			// Both sides: Go converts a non-interface operand to the other
-			// side's interface type, which is not in the subset.
-			for _, t := range []types.Type{xt, c.p.Info.TypeOf(e.Y)} {
+			// side's interface type (boxing it, see convert).
+			yt := c.p.Info.TypeOf(e.Y)
+			for _, t := range []types.Type{xt, yt} {
 				if !c.comparable(t) {
 					c.unsupported(e, "comparison of "+types.TypeString(t, nil))
 					return
 				}
 			}
+			c.convertType(xt, yt, e.Y.Pos())
+			c.convertType(yt, xt, e.X.Pos())
 		case token.LAND, token.LOR:
 		default:
 			if isString(xt) && (e.Op == token.ADD || e.Op == token.LSS || e.Op == token.LEQ || e.Op == token.GTR || e.Op == token.GEQ) {
@@ -1491,11 +1498,25 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 	c.expr(e.Y)
 }
 
-// comparable reports whether == is allowed on t: int, int64, float32,
-// float64, bool, string (or a named type of them), actor.PID, fs.File or
-// actor.Ref.
+// comparable reports whether == is allowed on t: int, int64, byte,
+// float32, float64, bool, string (or a named type of them), actor.PID,
+// fs.File, actor.Ref, an interface, an array of a comparable type, or a
+// struct whose fields are all comparable (go/types has rejected slices and funcs; a Bytes field
+// compares by content; a Buffer does not compare).
 func (c *checker) comparable(t types.Type) bool {
-	if isPID(t) || isRef(t) {
+	if isPID(t) || isRef(t) || isIface(t) {
+		return true
+	}
+	if a := arrayType(t); a != nil { // element by element
+		return isBytes(a.Elem()) || c.comparable(a.Elem())
+	}
+	if st := structType(t); st != nil {
+		s := st.Underlying().(*types.Struct)
+		for i := 0; i < s.NumFields(); i++ {
+			if ft := s.Field(i).Type(); !isBytes(ft) && !c.comparable(ft) {
+				return false
+			}
+		}
 		return true
 	}
 	b, ok := underlying(t).(*types.Basic)
@@ -1622,7 +1643,8 @@ func (c *checker) nilSlice(e ast.Expr) {
 }
 
 // nilCompare checks s == nil, nil == s and the != forms for a slice s (the
-// only comparison of slices). False if e is not one.
+// only comparison of slices) or an interface value s. False if e is not
+// one.
 func (c *checker) nilCompare(e *ast.BinaryExpr) bool {
 	isNil := func(x ast.Expr) bool {
 		id, ok := ast.Unparen(x).(*ast.Ident)
@@ -1636,7 +1658,7 @@ func (c *checker) nilCompare(e *ast.BinaryExpr) bool {
 	if isNil(x) {
 		x, y = y, x
 	}
-	if !isNil(y) || !isSlice(c.p.Info.TypeOf(x)) {
+	if !isNil(y) || (!isSlice(c.p.Info.TypeOf(x)) && !isIface(c.p.Info.TypeOf(x))) {
 		return false
 	}
 	c.nilSlice(y)

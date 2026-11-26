@@ -269,7 +269,14 @@ func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 		mark := f.next
 		t := f.allocScalar(cc) // TYPEIS results are bools
 		for i, te := range cc.List {
-			f.typeTest(te, m, t)
+			if f.g.p.Info.Types[te].IsNil() { // case nil: m == nil
+				r := f.allocN(te, 2)
+				f.asm.Emit(OpMove, r, m, 0)
+				f.asm.EmitExt(OpLoadk, r+1, 0, 0, TermNil)
+				f.cmpRegs(te, r, OpEq, t)
+			} else {
+				f.typeTest(te, m, t)
+			}
 			if i == len(cc.List)-1 {
 				f.jump(OpJmpf, t, nextL)
 			} else {

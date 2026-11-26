@@ -611,7 +611,129 @@ static uint32_t config_get(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) 
     return R_NORMAL;
 }
 
+/* ---- order (B_CMP) ---- */
+
+/* The order of two byte strings: by their first differing byte, then by
+ * length; -1, 0 or 1 (B_STR_CMP, B_CMP). */
+static int strs_order(const uint8_t *p, uint32_t lp, const uint8_t *q, uint32_t lq) {
+    uint32_t m = lp < lq ? lp : lq;
+    int c = m ? memcmp(p, q, m) : 0;
+    if (c == 0) c = lp < lq ? -1 : (lp > lq ? 1 : 0);
+    return c < 0 ? -1 : (c > 0 ? 1 : 0);
+}
+
+
+/* One side of B_CMP. ty is its rank: K_INT for an int (immediate or
+ * boxed), the heap kind of an int64 box, Ref, string, Bytes or other
+ * object (a closure, a Buffer: by identity), K_ARRAY or K_BYTEARR for a
+ * slice (an array's value: by its elements), K_FLOAT (+ 32 for a
+ * float32) for a float, 64 + the type word for a struct, 0 for the other
+ * immediates (bools, PIDs, nil, the zero Ref: by term). Then what orders
+ * it within its rank: hi:lo (an int with its sign bit flipped, an int64,
+ * a Ref serial, a float's bits as one unsigned order, a term), bytes p, n
+ * (strings, Bytes, byte arrays), or the terms e, n (a struct's fields, an
+ * array's elements). Values of different gogo types never share a rank
+ * and a value: an int64 is boxed in an interface and in its plain
+ * representation outside one. */
+typedef struct CmpKey {
+    uint32_t ty, n;
+    int32_t hi;
+    uint32_t lo;
+    const uint8_t *p;
+    const term *e;
+} CmpKey;
+
+static void cmp_key(const Vm *vm, const Actor *a, term t, CmpKey *k) {
+    SliceV s;
+    const uint32_t *o = obj_of(vm, a, t);
+    uint32_t kind = o ? hdr_kind(o[0]) : 0u;
+    k->e = NULL;
+    k->hi = 0;
+    k->lo = t;
+    k->ty = kind;
+    if (term_is_int(t) || kind == K_INT) {
+        k->ty = K_INT;
+        k->lo = (term_is_int(t) ? (uint32_t)term_to_int(t) : o[1]) ^ 0x80000000u;
+    } else if (kind == K_INT64 || kind == K_REF) {
+        k->hi = (int32_t)o[2];
+        k->lo = o[1];
+    } else if (seq_bytes(vm, a, t, &k->p, &k->n)) k->ty = t == T_EMPTYSTR || kind == K_STRING ? K_STRING : K_BYTES;
+    else if (kind == K_STRUCT) {
+        k->ty = struct_type(t, o) + 64u;
+        k->e = o + 2;
+        k->n = hdr_words(o[0]) - 2u;
+    } else if (slice_view(vm, a, t, &s)) {   /* an array's value: by its elements */
+        k->n = s.len;
+        k->ty = s.bytes ? K_BYTEARR : K_ARRAY;
+        if (s.len) {
+            k->p = slice_bytes((Actor *)a, &s);
+            k->e = s.bytes ? NULL : slice_terms((Actor *)a, &s);
+        }
+    }
+#if GOGO_FLOAT
+    else if (kind == K_FLOAT) {
+        /* By value: NaN equals nothing (n), -0 == 0. The bits, sign and
+         * magnitude made one unsigned order, go to hi:lo; a float32 is
+         * its own rank. */
+        bool f64 = hdr_words(o[0]) == 3u;
+        uint64_t u = f64 ? (uint64_t)o[2] << 32 | o[1] : (uint64_t)o[1] << 32;
+        k->n = (u << 1) > (f64 ? 0xFFE0000000000000u : 0xFF00000000000000u);
+        k->ty = f64 ? K_FLOAT : K_FLOAT + 32u;
+        if (!(u << 1)) u = 0;
+        u = (u >> 63) ? ~u : u | (uint64_t)1 << 63;
+        k->hi = (int32_t)((uint32_t)(u >> 32) ^ 0x80000000u);
+        k->lo = (uint32_t)u;
+    }
+#endif
+}
+
+#define CMP_DEPTH 64   /* nesting (other than through the last field or element) */
+
+/* B_CMP (opcodes.h): the order of x and y, -1, 0 or 1, or R_BAD_CODE past
+ * CMP_DEPTH. Ranks first, then values; structs field by field and arrays
+ * element by element (then by length), the last one in this loop, so a
+ * list linked through it does not nest. Allocates nothing. */
+static int cmp_terms(const Vm *vm, const Actor *a, term x, term y, int depth) {
+    for (;;) {
+        CmpKey kx, ky;
+        cmp_key(vm, a, x, &kx);
+        cmp_key(vm, a, y, &ky);
+        uint32_t u = kx.ty, v = ky.ty;
+        if (u == v) {
+            if (u == K_STRING || u == K_BYTES || u == K_BYTEARR) return strs_order(kx.p, kx.n, ky.p, ky.n);
+#if GOGO_FLOAT
+            if ((u == K_FLOAT || u == K_FLOAT + 32u) && (kx.n || ky.n)) return 1;   /* NaN */
+#endif
+            if (kx.hi != ky.hi) return kx.hi < ky.hi ? -1 : 1;
+            u = kx.lo;
+            v = ky.lo;
+            if (kx.e || kx.ty == K_ARRAY) {   /* fields or elements */
+                u = kx.n;
+                v = ky.n;
+                if (u == v && u) {
+                    if (depth > CMP_DEPTH) return R_BAD_CODE;
+                    for (uint32_t i = 0; i + 1u < u; i++) {
+                        int c = cmp_terms(vm, a, field_term(x, kx.e[i]), field_term(y, ky.e[i]), depth + 1);
+                        if (c) return c;
+                    }
+                    x = field_term(x, kx.e[u - 1u]);
+                    y = field_term(y, ky.e[u - 1u]);
+                    continue;
+                }
+            }
+        }
+        return (u > v) - (u < v);
+    }
+}
+
 uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc) {
+    if (id == B_CMP) {
+        term *T = (term *)a->mem + a->fp;
+        int c = rc == 2u ? cmp_terms(vm, a, T[rb], T[rb + 1], 0) : R_BAD_CODE;
+        if (c > 1) return (uint32_t)c;
+        T[ra] = term_from_int(c);
+        return R_NORMAL;
+    }
     term *R = (term *)a->mem + a->fp;
     const uint8_t *p, *q;
     uint32_t lp, lq;
@@ -677,15 +799,11 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
     case B_BYTESLICE_FROM:
         if (rc != 1u) return R_BAD_CODE;
         return sl_bytes_from(vm, a, R, ra, rb);
-    case B_STR_CMP: {
+    case B_STR_CMP:
         if (rc != 2u) return R_BAD_CODE;
         if (!str_view(vm, a, R[rb], &p, &lp) || !str_view(vm, a, R[rb + 1], &q, &lq)) return R_BAD_CODE;
-        uint32_t m = lp < lq ? lp : lq;
-        int c = m ? memcmp(p, q, m) : 0;
-        if (c == 0) c = lp < lq ? -1 : (lp > lq ? 1 : 0);
-        R[ra] = term_from_int(c < 0 ? -1 : (c > 0 ? 1 : 0));
+        R[ra] = term_from_int(strs_order(p, lp, q, lq));
         return R_NORMAL;
-    }
     case B_BUF_NEW:
         if (rc != 1u) return R_BAD_CODE;
         return buf_new(vm, a, R, ra, rb);

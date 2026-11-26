@@ -13,7 +13,7 @@ program's bytecode. Image format 15.4.
 
 - [Instruction encoding](#instruction-encoding)
 - [Opcodes](#opcodes) (67)
-- [Builtins](#builtins) (57)
+- [Builtins](#builtins) (58)
 - [Type ids and reserved types](#type-ids-and-reserved-types)
 - [Exit reasons](#exit-reasons)
 - [Image file layout](#image-file-layout)
@@ -164,6 +164,7 @@ the registers `rb ..`; a builtin with two results writes `ra` and `ra+1`.
 | 54 | `B_FLOAT` | `op int, args...` | `result(s)` | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). |
 | 55 | `B_PRINTLNU` | `mask, values...` | `nil` | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. |
 | 56 | `B_PANIC` | `v` | `(does not return)` | panic(v): print "panic: " and v (as println prints it) to stderr, then end the calling actor with R_PANIC. Deferred calls do not run. |
+| 57 | `B_CMP` | `a, b` | `-1 \| 0 \| 1` | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field, arrays element by element, anything else by term identity (a slice, a func, a Buffer). Nesting past 64 levels, other than through a struct's last field, is badcode. Does not preempt. |
 
 ## Type ids and reserved types
 

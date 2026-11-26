@@ -8,6 +8,7 @@
 #include "term.h"
 #include "actor.h"
 #include "module.h"
+#include "opcodes.h"
 
 #define HEAP_MAX_WORDS 65535u
 
@@ -80,6 +81,19 @@ static inline const uint32_t *obj_of(const Vm *vm, const Actor *a, term t) {
     uint32_t words = hdr_words(a->mem[off]);
     if (words < 2u || words > limit - off) return NULL;
     return a->mem + off;
+}
+
+/* A term word read out of the object t names: a const ref inside a const
+ * object is untagged in its image and gets the container's tag. */
+static inline term field_term(term t, term f) {
+    return (term_is_const(t) && term_is_const(f)) ? f | (t & MOD_TAG_MASK) : f;
+}
+
+/* The type word of the struct obj that t names: a const struct's word is
+ * untagged in its image; a module type gets the module's tag. */
+static inline uint32_t struct_type(term t, const uint32_t *obj) {
+    uint32_t ty = obj[1];
+    return (term_is_const(t) && ty >= TYPE_OWN_BASE) ? ty | (t & MOD_TAG_MASK) : ty;
 }
 
 /* The bytes of a name argument: a string constant, a heap string or the

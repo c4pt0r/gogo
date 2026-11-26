@@ -998,3 +998,135 @@ TEST(conv_sized) {
     CHECK(strstr(run_insn(OP_MAKE(OP_CONV, 2, 0, 7), I(1), I(0), &t, &v), "crashed: badcode") != NULL);
     CHECK(strstr(run_insn(OP_MAKE(OP_CONV, 2, 0, 3), (BOp){0, BSTR}, I(0), &t, &v), "crashed: badcode") != NULL);
 }
+
+/* ---- B_CMP ---- */
+
+/* main (0 params, 8 regs): BUILTIN r3, r0, nargs, CMP; BUILTIN r4, r0, 0,
+ * RECEIVE (blocks, so r3 can be read); RET r3. */
+#define CMP_WORDS (8 + 3 + 3 + 5 + 3)
+static uint32_t cmp_w[CMP_WORDS];
+static Image cmp_img;
+static Vm cmp_vm;
+
+static Actor *cmp_start(uint32_t nargs) {
+    uint32_t *w = cmp_w;
+    va_reset(&cmp_vm);
+    memset(w, 0, sizeof cmp_w);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 0;
+    w[4] = 3; w[5] = 5; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 0 | (8u << 16); w[10] = 0;
+    w[11] = hdr_make(3, K_STRING); w[12] = 4; memcpy(&w[13], "main", 4);
+    w[14] = OP_MAKE(OP_BUILTIN, 3, 0, nargs); w[15] = B_CMP;
+    w[16] = OP_MAKE(OP_BUILTIN, 4, 0, 0); w[17] = B_RECEIVE;
+    w[18] = OP_MAKE(OP_RET, 3, 0, 0);
+    CHECK_EQ(image_load(&cmp_img, w, img_seal(w)), IMG_OK);
+    CHECK_EQ(test_vm_init(&cmp_vm, &cmp_img, 4), 0);
+    Actor *a = actor_new(&cmp_vm, 1500);   /* room for every value: no GC while planting */
+    CHECK(a != NULL);
+    CHECK(heap_push_frame(&cmp_vm, a, 8, -1));
+    a->pc = cmp_img.code;
+    return a;
+}
+
+/* Runs the CMP on r0, r1 (and mode r2 when nargs is 3): the result in
+ * *out and "" , or the crash report. */
+static const char *cmp_run(Actor *a, uint32_t nargs, int32_t *out) {
+    (void)nargs;
+    err_len = 0; err_buf[0] = 0;
+    platform_unix_err_hook = capture_err;
+    int rc = interp_run(&cmp_vm, a);
+    platform_unix_err_hook = NULL;
+    if (rc == RUN_WAIT) {
+        *out = term_to_int(a->mem[a->fp + 3]);
+        actor_free(&cmp_vm, a);
+    }
+    return err_buf;
+}
+
+/* A term slice of n ints (bytes: a []byte) in a's heap. */
+static term cmp_slice(Actor *a, bool bytes, uint32_t n, const int32_t *v) {
+    uint32_t aw = bytes ? 2u + (n + 3u) / 4u : 2u + n;
+    uint32_t arr = heap_alloc(NULL, a, aw, NULL, 0);
+    CHECK(arr != UINT32_MAX);
+    a->mem[arr] = hdr_make(aw, bytes ? K_BYTEARR : K_ARRAY);
+    a->mem[arr + 1] = n;
+    for (uint32_t i = 2; i < aw; i++) a->mem[arr + i] = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (bytes) ((uint8_t *)(a->mem + arr + 2))[i] = (uint8_t)v[i];
+        else a->mem[arr + 2 + i] = term_from_int(v[i]);
+    }
+    uint32_t s = heap_alloc(NULL, a, 5, NULL, 0);
+    CHECK(s != UINT32_MAX);
+    a->mem[s] = hdr_make(5, K_SLICE);
+    a->mem[s + 1] = 0; a->mem[s + 2] = n; a->mem[s + 3] = n;
+    a->mem[s + 4] = n ? term_from_ref(arr) : T_NIL;
+    return term_from_ref(s);
+}
+
+/* A chain of `depth` structs of reserved type 0 (ProcInfo shape, 2
+ * fields), linked through field `link` (the other field is 7): the
+ * innermost holds 1 in both. */
+static term cmp_chain(Actor *a, uint32_t depth, uint32_t link) {
+    term t = term_from_int(1);
+    for (uint32_t d = 0; d < depth; d++) {
+        uint32_t o = heap_alloc(NULL, a, 4, NULL, 0);
+        CHECK(o != UINT32_MAX);
+        a->mem[o] = hdr_make(4, K_STRUCT);
+        a->mem[o + 1] = TYPE_PROCINFO;
+        a->mem[o + 2 + link] = t;
+        a->mem[o + 3 - link] = term_from_int(7);
+        t = term_from_ref(o);
+    }
+    return t;
+}
+
+/* A slice (an array's value) compares element by element; a mode
+ * argument is badcode. */
+TEST(cmp_elements) {
+    const int32_t a3[] = {1, 2, 3};
+    int32_t r = 99;
+    Actor *a = cmp_start(2);
+    term s = cmp_slice(a, false, 3, a3);
+    a->mem[a->fp] = s; a->mem[a->fp + 1] = s;
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(2);
+    a->mem[a->fp] = cmp_slice(a, false, 3, a3); a->mem[a->fp + 1] = cmp_slice(a, false, 3, a3);
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(2);
+    a->mem[a->fp] = cmp_slice(a, false, 2, a3); a->mem[a->fp + 1] = cmp_slice(a, false, 3, a3);
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, -1);
+    a = cmp_start(2);
+    a->mem[a->fp] = cmp_slice(a, true, 3, a3); a->mem[a->fp + 1] = cmp_slice(a, true, 3, a3);
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(3);                         /* three arguments: badcode */
+    a->mem[a->fp] = term_from_int(1); a->mem[a->fp + 1] = term_from_int(1); a->mem[a->fp + 2] = term_from_int(0);
+    CHECK(strstr(cmp_run(a, 3, &r), "crashed: badcode") != NULL);
+}
+
+/* Types first, then values; a struct chain through its last field is a
+ * loop, through another field it nests, and past 64 levels that is
+ * badcode. */
+TEST(cmp_types_and_depth) {
+    int32_t r = 99;
+    Actor *a = cmp_start(2);
+    a->mem[a->fp] = T_NIL; a->mem[a->fp + 1] = term_from_int(0);
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK(r != 0);
+    a = cmp_start(2);
+    a->mem[a->fp] = term_from_int(-5); a->mem[a->fp + 1] = term_from_int(3);
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, -1);
+    a = cmp_start(2);
+    a->mem[a->fp] = term_from_int(5); a->mem[a->fp + 1] = term_from_int(5);
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(2);                       /* int 1 and bool true: types differ */
+    a->mem[a->fp] = term_from_int(1); a->mem[a->fp + 1] = T_TRUE;
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK(r != 0);
+    a = cmp_start(2);
+    a->mem[a->fp] = cmp_chain(a, 100, 1); a->mem[a->fp + 1] = cmp_chain(a, 100, 1);
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(2);
+    a->mem[a->fp] = cmp_chain(a, 30, 0); a->mem[a->fp + 1] = cmp_chain(a, 30, 0);
+    CHECK_EQ(cmp_run(a, 2, &r)[0], 0); CHECK_EQ(r, 0);
+    a = cmp_start(2);
+    a->mem[a->fp] = cmp_chain(a, 70, 0); a->mem[a->fp + 1] = cmp_chain(a, 70, 0);
+    CHECK(strstr(cmp_run(a, 2, &r), "crashed: badcode") != NULL);
+}

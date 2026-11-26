@@ -1,7 +1,7 @@
 /* Sequence builtins (strs.c): strings (concatenation, len, indexing,
  * slicing, ordering, content equality), slices (make, len, cap, index
  * read/write, slicing, append, copy, []byte <-> string), bytes.Bytes and
- * bytes.Buffer. */
+ * bytes.Buffer; and B_CMP, the order of any two values. */
 #ifndef GOGO_STRS_H
 #define GOGO_STRS_H
 
@@ -12,7 +12,7 @@
 /* Runs sequence builtin `id` (B_STR_CONCAT, B_LEN, B_INDEX, B_SETINDEX,
  * B_SLICE, B_MAKE_SLICE, B_APPEND, B_COPY, B_CAP, B_STR_FROM,
  * B_BYTESLICE_FROM, B_STR_CMP, B_BUF_NEW, B_BUF_WRITE, B_BUF_FREEZE,
- * B_BYTES_FROM, B_BYTES_EQUAL, B_BYTES_COPYTO, B_CONFIG_GET) for BUILTIN
+ * B_BYTES_FROM, B_BYTES_EQUAL, B_BYTES_COPYTO, B_CONFIG_GET, B_CMP) for BUILTIN
  * ra, rb, rc: arguments in registers rb..rb+rc-1 of a's top frame, result
  * into register ra (B_CONFIG_GET: value and ok into ra and ra+1). The
  * caller has checked that ra (ra+1 for B_CONFIG_GET) and rb..rb+rc-1 are
