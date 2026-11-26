@@ -3,9 +3,9 @@
 // them by fixed index). The C side is the board's keyboard driver.
 //
 // Open it with port.Open("kbd", kbd.Config{RepeatDelayMs: 400, RepeatMs: 60}).
-// One actor owns the port at a time. ok is false when the board has no
-// keyboard. The owner receives a Key message for every key press, repeat
-// and release. A Key that would take the owner past its memory limit is
+// One actor owns the port at a time. Open fails with errors.NotFound when
+// the board has no keyboard. The owner receives a Key message for every
+// key press, repeat and release. A Key that would take the owner past its memory limit is
 // dropped (the owner is not killed).
 //
 // The struct types Config and Key have fixed type indices 25 and 26 in every

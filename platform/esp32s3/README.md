@@ -673,19 +673,19 @@ Firmware build switches (Kconfig, `main/Kconfig.projbuild`; `idf.py menuconfig`
 under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
 
 - `GOGO_KBD` (default y): the Cardputer's TCA8418 keyboard. Off: `port.Open("kbd")`
-  returns ok=false, `input_esp.c` has no keyboard code, and `i2c_bus.c` is not
+  fails with `errors.NotFound`, `input_esp.c` has no keyboard code, and `i2c_bus.c` is not
   built on the Cardputer, so the IDF I2C master driver drops out of the link.
   No effect on the StickS3 (no keyboard).
 - `GOGO_BATTERY` (default y): the battery reader (Cardputer ADC, StickS3 M5PM1).
-  Off: `port.Open("power")` returns ok=false and no ADC or PM1 battery code is
+  Off: `port.Open("power")` fails with `errors.NotFound` and no ADC or PM1 battery code is
   linked. The StickS3 still uses I2C for the PM1 LCD rail when the console is on.
 
 - `GOGO_IMU` (default y): the BMI270 driver (`imu_esp.c`) and its 8 KB
-  configuration. Off: `port.Open("imu")` returns ok=false, there is no `imu` driver, and
+  configuration. Off: `port.Open("imu")` fails with `errors.NotFound`, there is no `imu` driver, and
   on the Cardputer with `GOGO_KBD` also off `i2c_bus.c` and the IDF I2C master
   driver drop out.
 - `GOGO_IR` (default y): `ir_esp.c` on the RMT. Off: `port.Open` of `ir_tx`
-  and `ir_rx` returns ok=false (the drivers are not listed), and the IDF RMT
+  and `ir_rx` fails with `errors.NotFound` (the drivers are not listed), and the IDF RMT
   driver is not linked (checked: no `rmt_new_tx_channel` in `gogo.elf`). The
   IR pins stay reserved.
 
@@ -718,14 +718,14 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
 
 - `GOGO_AUDIO` (default y): `audio_esp.c`, the `mic` and `speaker` ports on the
   ES8311 and I2S (both boards; see `audio_esp.c` above). It selects
-  `CONFIG_I2S_ISR_IRAM_SAFE`. Off: `port.Open` of `mic` and `speaker` returns
-  ok=false (the drivers are not listed), and the IDF I2S driver is not linked;
+  `CONFIG_I2S_ISR_IRAM_SAFE`. Off: `port.Open` of `mic` and `speaker` fails
+  with `errors.NotFound` (the drivers are not listed), and the IDF I2S driver is not linked;
   `runtime/input/audio.c` (the common driver) is still linked. Cost: StickS3 +18720 B
   `gogo.bin`, +592 B static DIRAM; Cardputer ADV +19680 B, +820 B.
 - `GOGO_SCREEN` (default y): the `screen` port (`runtime/screen/*.c`, its
   hooks in `console_task.c`): a 40 x 11 cell grid drawn by the console's
   render task while the port is open. Off: `runtime/screen` is not built,
-  `port.Open("screen")` returns ok=false and an image that requires
+  `port.Open("screen")` fails with `errors.NotFound` and an image that requires
   `screen` is refused. The driver is also left out of a `GOGO_CONSOLE=0`
   build, and its open fails when the LCD failed to start. Cost
   (ESP-IDF 6.1.1, against the same tree without it): StickS3 1093056 ->
@@ -752,7 +752,7 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
 - `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `runtime/net/*.c`
   are not built, the drivers `netif`, `udp`, `tcp` and `tcp_listen` are not
   listed (an image that requires one is refused at boot, naming it), `port.Open` of `netif`, `udp`,
-  `tcp` and `tcp_listen` returns ok=false, `net.Subscribe` returns false (no port
+  `tcp` and `tcp_listen` fails with `errors.NotFound`, `net.Subscribe` returns false (no port
   source), and `gogo device scan` answers "no network in this firmware" and `gogo device stats` prints only the memory figures.
   `gogo config set wifi.*` still stores the value. `esp_wifi`, `wpa_supplicant`,
   `libnet80211`, `libpp` and `libphy` are not linked.

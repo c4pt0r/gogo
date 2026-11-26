@@ -6,7 +6,7 @@ menu "gogo"
         help
             Build the TCA8418 keyboard driver and the I2C bus it needs
             (Cardputer ADV; no effect on the StickS3, which has no keyboard).
-            When off, port.Open("kbd") returns ok=false and the IDF I2C
+            When off, port.Open("kbd") fails with errors.NotFound and the IDF I2C
             master driver is not linked into the Cardputer firmware.
 
     config GOGO_BATTERY
@@ -14,8 +14,8 @@ menu "gogo"
         default y
         help
             Build the battery reader: the ADC divider on the Cardputer, the
-            M5PM1 on the StickS3. When off, port.Open("power") returns
-            ok=false. The StickS3 still uses I2C for the PM1 LCD rail when
+            M5PM1 on the StickS3. When off, port.Open("power") fails
+            with errors.NotFound. The StickS3 still uses I2C for the PM1 LCD rail when
             the console is on.
 
     config GOGO_NET
@@ -25,7 +25,7 @@ menu "gogo"
             Build the Wi-Fi station driver and gogo's net stack (netif, udp,
             tcp, tcp_listen ports). When off, the capability "net" is absent
             (an image that needs it is refused at boot), port.Open of those
-            ports returns ok=false, net.Subscribe returns false, and
+            ports fails with errors.NotFound, net.Subscribe returns false, and
             `gogo device scan` answers "no network in this firmware" and `stats`
             prints only the memory figures.
             esp_wifi, wpa_supplicant, libnet80211, libpp and libphy are not linked.
@@ -58,7 +58,7 @@ menu "gogo"
             Build the BMI270 IMU driver (imu_esp.c, both boards, on the
             shared I2C bus) and its 8 KB legacy configuration (Bosch,
             BSD-3). When off, CAP_IMU is absent (an image that needs it is
-            refused at boot), port.Open("imu") returns ok=false, and on the
+            refused at boot), port.Open("imu") fails with errors.NotFound, and on the
             Cardputer with GOGO_KBD also off the IDF I2C driver is not
             linked.
 
@@ -69,7 +69,7 @@ menu "gogo"
             Build the RMT infrared drivers (ir_esp.c): ir_tx on both
             boards (StickS3 G46, Cardputer G44), ir_rx on the StickS3 only
             (G42). When off, CAP_IR_TX and CAP_IR_RX are absent, port.Open
-            of those ports returns ok=false, and the IDF RMT driver is not
+            of those ports fails with errors.NotFound, and the IDF RMT driver is not
             linked.
 
     config GOGO_AUDIO
@@ -81,7 +81,7 @@ menu "gogo"
             boards (ES8311 codec and I2S), and make the I2S interrupt
             IRAM-safe so a /flash write does not lose or replay DMA
             buffers. When off, the mic and speaker drivers are absent,
-            port.Open of those ports returns ok=false, and the IDF I2S
+            port.Open of those ports fails with errors.NotFound, and the IDF I2S
             driver is not linked.
 
     config GOGO_TLS
@@ -92,7 +92,7 @@ menu "gogo"
             Build the "tls" port (runtime/net/tls/tls.c): a TLS 1.2 client over gogo's
             tcp, on ESP-IDF's mbedTLS component (sdkconfig.defaults) with
             the certificate bundle. When off, tls.c is not built, CAP_TLS is
-            absent and port.Open("tls") returns ok=false.
+            absent and port.Open("tls") fails with errors.NotFound.
 
     config GOGO_DIST
         bool "Distributed actors (node)"
@@ -111,7 +111,7 @@ menu "gogo"
             character cells with colours and attributes, drawn on the LCD
             by the console's render task (gogo/screen, gogo/tui). When off,
             the board does not list the driver (an image that
-            requires "screen" is refused), port.Open("screen") returns ok=false and
+            requires "screen" is refused), port.Open("screen") fails with errors.NotFound and
             the LCD only shows the text console.
 
     config GOGO_FLOAT

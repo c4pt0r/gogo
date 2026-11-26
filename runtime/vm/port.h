@@ -142,8 +142,8 @@ term port_open(struct Vm *vm, struct Actor *owner, term name, term cfg);   /* po
  * cannot use), or the code a driver's open returned (> 0: e.g.
  * GOGO_E_UNSUPPORTED, no network at all). port_open_with of a driver without `open`, a C caller's
  * mistake, leaves it as it was; after a success it is meaningless. Go code
- * still gets only port.Open's ok == false; the reason is for C callers
- * (gogo/fs's Open) until the language has `error`. */
+ * gets it as port.Open's error (read with gogo/fs's FS_OPENERR right after
+ * the failed open), as does gogo/fs's Open. */
 term port_open_with(struct Vm *vm, struct Actor *owner, const PortDriver *drv,
                     const int32_t *f, uint32_t n);
 bool port_is(const struct Vm *vm, term pid);

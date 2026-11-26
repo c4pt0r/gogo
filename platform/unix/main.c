@@ -214,8 +214,8 @@ static int run_main(Vm *vm, void *ctx) {
  * sensor, infrared and audio (input_unix.c), the "tls" port when built
  * with it, and the /flash and /sd mounts. --without (test only) leaves
  * names out of both lists, so it models a firmware without them: an image
- * requiring one is refused, and port.Open of an absent driver returns
- * ok=false, as on that firmware. */
+ * requiring one is refused, and port.Open of an absent driver fails with
+ * errors.NotFound, as on that firmware. */
 static const PortDriver unix_kbd = INPUT_KBD_DRIVER(&input_unix_kbd);
 static const PortDriver unix_power = INPUT_POWER_DRIVER(&input_unix_power);
 static const PortDriver unix_imu = INPUT_IMU_DRIVER(&input_unix_imu);

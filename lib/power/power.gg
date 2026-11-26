@@ -3,9 +3,9 @@
 // them by fixed index). The C side is the board's power driver.
 //
 // Open it with port.Open("power", power.Config{PeriodMs: 5000}). One actor
-// owns the port at a time. ok is false when the board has no battery
-// monitor. The owner receives a Battery message when the port opens (the
-// first good sample), for every Read it sends to the port with actor.Send,
+// owns the port at a time. Open fails with errors.NotFound when the board
+// has no battery monitor. The owner receives a Battery message when the
+// port opens (the first good sample), for every Read it sends to the port with actor.Send,
 // at once when Charging or External changes, and when Pct has moved by
 // 2 or more since the last one sent. There is no heartbeat: nothing is sent
 // while nothing changes. PeriodMs is how often the board samples the chip:
