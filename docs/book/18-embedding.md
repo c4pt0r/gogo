@@ -433,8 +433,11 @@ static const gogo_port_driver echo_driver = { echo_open, echo_command, NULL };
 and registers it before the program starts:
 
 ```c
-    if (rc == GOGO_OK) rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before load */
+    if (rc == GOGO_OK && requires(img, len, "echo"))
+        rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before load */
 ```
+
+(`requires` reads the image's requirements, section 18.9.)
 
 The gogo side ([`examples/hostecho`](../../examples/hostecho/main.gg)) opens
 it with a `port.Host` config, sends it `port.Post` commands and receives
@@ -528,6 +531,32 @@ build/embed-c/main netdemo.ggb
 gogo: image requires gpio, which this VM lacks
 gogo_load netdemo.ggb: unsupported: a driver or mount is missing (-10)
 ```
+
+A host can read an image's requirements before it loads it, without a
+VM: `gogo_image_info_get` gives the image's format and the number of its
+requirements and exports, and `gogo_image_require` the name of each.
+`port.c` registers its port only for an image that needs it:
+
+```c
+static int requires(const void *img, size_t len, const char *want) {
+    gogo_image_info info = GOGO_IMAGE_INFO_INIT;
+    int found = 0;
+    if (gogo_image_info_get(img, len, &info) != GOGO_OK) return 0;
+    for (uint32_t i = 0; i < info.n_requires; i++) {
+        const char *name;
+        size_t n;
+        if (gogo_image_require(img, len, i, &name, &n) != GOGO_OK) continue;
+        fprintf(stderr, "requires %.*s\n", (int)n, name);
+        if (n == strlen(want) && memcmp(name, want, n) == 0) found = 1;
+    }
+    return found;
+}
+```
+
+The names point into the image and are not NUL-terminated. Both
+functions validate the whole image, as `gogo_load` does, and return its
+errors (`GOGO_EIMAGE`, `GOGO_EVERSION`, with the format still filled
+in), so they also tell a host whether an image will load at all.
 
 `grant` narrows what the VM has: a `NULL`-terminated list of names, and
 whatever is not listed is absent for this VM (an image requiring it is

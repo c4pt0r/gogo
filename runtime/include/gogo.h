@@ -255,6 +255,31 @@ GOGO_API int gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg
  * GOGO_ESTATE (already loaded). After a failure the VM may load again. */
 GOGO_API int gogo_load(gogo_vm *vm, const void *image, size_t len, int flags);
 
+/* ---- inspecting an image, without a VM ----
+ *
+ * Pure functions, any thread: they read the image (len bytes, 4-byte
+ * aligned) and keep nothing. Each validates the whole image as gogo_load
+ * does: GOGO_EINVAL (no image, unaligned, no out), GOGO_EIMAGE,
+ * GOGO_EVERSION (another major or a newer minor; info->format is still
+ * filled in). */
+typedef struct gogo_image_info {
+    uint32_t size;          /* set by the caller: sizeof(gogo_image_info) (GOGO_IMAGE_INFO_INIT) */
+    uint32_t format;        /* the image's format, major << 16 | minor */
+    uint32_t n_requires;    /* its requirements (gogo_image_require) */
+    uint32_t n_exports;     /* its exported entry points (main among them) */
+    /* Fields are appended here, never inserted: the library fills the
+     * first size bytes it knows. */
+} gogo_image_info;
+#define GOGO_IMAGE_INFO_INIT { .size = sizeof(gogo_image_info) }
+GOGO_API int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info);
+
+/* Requirement i (< n_requires, else GOGO_EINVAL) of the image: a port
+ * driver's name ("ui", a host port's, "tcp") or a mount prefix ("/flash",
+ * "/sd"), as gogo_load checks them. *name points into the image (valid
+ * while it is; not NUL-terminated) and *name_len is its length. A host
+ * may read them to register exactly the host ports an image needs. */
+GOGO_API int gogo_image_require(const void *image, size_t len, uint32_t i, const char **name, size_t *name_len);
+
 /* Starts the image's main. GOGO_ESTATE without an image or if started
  * before; GOGO_ENOTFOUND if the image has no main, GOGO_ENOMEM if main
  * cannot start for want of memory (both also on stream 2). */

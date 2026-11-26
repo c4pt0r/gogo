@@ -2,14 +2,16 @@
  *
  *   port hostecho.ggb
  *
- * Registers a driver named "echo" and runs examples/hostecho on it. Its
- * open refuses a negative Arg and otherwise answers with an event (Kind =
- * Arg, Data = the config's Data); every port.Post the program sends to it
- * comes back as an event with Kind + 1 and the same Data. */
+ * Lists what the image requires, registers a driver named "echo" if it is
+ * among them, and runs examples/hostecho on it. Its open refuses a
+ * negative Arg and otherwise answers with an event (Kind = Arg, Data =
+ * the config's Data); every port.Post the program sends to it comes back
+ * as an event with Kind + 1 and the same Data. */
 #define _POSIX_C_SOURCE 200809L
 #include "gogo.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static void *read_file(const char *path, size_t *len) {
     FILE *f = fopen(path, "rb");
@@ -22,6 +24,22 @@ static void *read_file(const char *path, size_t *len) {
     fclose(f);
     *len = (size_t)n;
     return buf;
+}
+
+/* Whether the image requires want (a driver or mount name), listing every
+ * requirement on stderr. */
+static int requires(const void *img, size_t len, const char *want) {
+    gogo_image_info info = GOGO_IMAGE_INFO_INIT;
+    int found = 0;
+    if (gogo_image_info_get(img, len, &info) != GOGO_OK) return 0;
+    for (uint32_t i = 0; i < info.n_requires; i++) {
+        const char *name;
+        size_t n;
+        if (gogo_image_require(img, len, i, &name, &n) != GOGO_OK) continue;
+        fprintf(stderr, "requires %.*s\n", (int)n, name);
+        if (n == strlen(want) && memcmp(name, want, n) == 0) found = 1;
+    }
+    return found;
 }
 
 /* port.Open("echo", port.Host{Arg, Data}). Events emitted here reach the
@@ -49,7 +67,8 @@ int main(int argc, char **argv) {
     int commands = 0;
     gogo_vm *vm = NULL;
     int rc = gogo_new_posix(NULL, &vm);
-    if (rc == GOGO_OK) rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before load */
+    if (rc == GOGO_OK && requires(img, len, "echo"))
+        rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before load */
     if (rc == GOGO_OK) rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);
     free(img);
     if (rc == GOGO_OK) rc = gogo_run(vm);

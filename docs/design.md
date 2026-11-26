@@ -1783,7 +1783,9 @@ only through two tables of function pointers that the caller hands it.
   outside these guarantees; `libgogo.a` exports only `GOGO_API` symbols,
   the reviewed list in `runtime/include/libgogo.syms`
   (`tools/libsyms.sh`). `gogo_version()` gives the library's version and
-  `gogo_image_format()` the image formats it loads. The API's error
+  `gogo_image_format()` the image formats it loads; `gogo_image_info_get`
+  and `gogo_image_require` read an image's format and requirement names
+  without a VM. The API's error
   results are the shared error codes negated (`GOGO_EINVAL` is
   `-GOGO_E_BADARG`), so one table describes them (`gogo_strerror`); only
   `GOGO_ESTATE` (-36) is the API's own, from the range 36..99 that is

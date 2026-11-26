@@ -147,6 +147,54 @@ const char *gogo_strerror(int rc) {
     return c < sizeof code_text / sizeof code_text[0] ? code_text[c] : "unknown error";
 }
 
+/* *dst = the first size bytes of src (a struct of the host's), the rest
+ * zero: a smaller struct gets the defaults, a larger one's extra fields
+ * are ignored. False if size cannot hold even the size word and the one
+ * after it. */
+static bool copy_sized(void *dst, size_t cap, const void *src, uint32_t size) {
+    memset(dst, 0, cap);
+    if (size < 2u * sizeof(uint32_t)) return false;
+    memcpy(dst, src, size < cap ? size : cap);
+    return true;
+}
+
+/* ---- inspecting an image ---- */
+
+/* Validates the image as vm_boot does (image_load), into *img. */
+static int image_check(Image *img, const void *image, size_t len) {
+    if (!image || ((uintptr_t)image & 3u)) return GOGO_EINVAL;
+    if (len == 0 || len % 4u || len / 4u > UINT32_MAX) return GOGO_EIMAGE;
+    int rc = image_load(img, image, (uint32_t)(len / 4u));
+    return rc == IMG_OK ? GOGO_OK : rc == IMG_ERR_VERSION ? GOGO_EVERSION : GOGO_EIMAGE;
+}
+
+int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info) {
+    gogo_image_info r;
+    if (!info || !copy_sized(&r, sizeof r, info, info->size)) return GOGO_EINVAL;
+    Image img;
+    int rc = image_check(&img, image, len);
+    if (rc == GOGO_OK) {
+        r.n_requires = image_requires(&img)[0];
+        r.n_exports = img.n_exports;
+    }
+    if (rc != GOGO_EINVAL && len >= 8u && ((const uint32_t *)image)[0] == IMAGE_MAGIC) r.format = ((const uint32_t *)image)[1];
+    memcpy(info, &r, info->size < sizeof r ? info->size : sizeof r);
+    return rc;
+}
+
+int gogo_image_require(const void *image, size_t len, uint32_t i, const char **name, size_t *name_len) {
+    if (!name || !name_len) return GOGO_EINVAL;
+    Image img;
+    int rc = image_check(&img, image, len);
+    if (rc != GOGO_OK) return rc;
+    const uint32_t *r = image_requires(&img);
+    if (i >= r[0]) return GOGO_EINVAL;
+    const uint32_t *s = img.consts + r[1u + i];   /* a K_STRING: header, length, bytes (image_load checked) */
+    *name = (const char *)(s + 2);
+    *name_len = s[1];
+    return GOGO_OK;
+}
+
 /* ---- lifecycle ---- */
 
 static bool host_ok(const gogo_host *h) {
@@ -163,17 +211,6 @@ static int vm_setup(gogo_vm *g) {
     vfs_init(&g->vm, &g->vfs);       /* no fs_root: no mounts, every gogo/fs call is NotMounted */
     embed_ports_install(g);
     return port_add_source(&g->vm, &inbox_source, g) ? 0 : -1;
-}
-
-/* *dst = the first size bytes of src (a struct of the host's), the rest
- * zero: a smaller struct gets the defaults, a larger one's extra fields
- * are ignored. False if size cannot hold even the size word and the one
- * after it. */
-static bool copy_sized(void *dst, size_t cap, const void *src, uint32_t size) {
-    memset(dst, 0, cap);
-    if (size < 2u * sizeof(uint32_t)) return false;
-    memcpy(dst, src, size < cap ? size : cap);
-    return true;
 }
 
 int gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg, gogo_vm **out) {

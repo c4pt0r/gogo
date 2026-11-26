@@ -630,6 +630,53 @@ TEST(embed_versions_and_errors) {
     CHECK(strcmp(gogo_strerror(GOGO_E_SHARED_MAX), "unknown error") == 0);
 }
 
+/* Inspecting an image without a VM: its format, requirements and
+ * exports, the same validation as gogo_load. hostport opens "hp". */
+TEST(embed_image_info) {
+    Img im = image("hostport");
+    CHECK(im.w != NULL);
+    if (!im.w) return;
+    gogo_image_info info = GOGO_IMAGE_INFO_INIT;
+    CHECK_EQ(gogo_image_info_get(im.w, im.len, &info), GOGO_OK);
+    CHECK_EQ(info.format, im.w[1]);
+    CHECK_EQ(info.n_requires, 1);
+    CHECK(info.n_exports >= 1);
+    const char *name = NULL;
+    size_t nl = 0;
+    CHECK_EQ(gogo_image_require(im.w, im.len, 0, &name, &nl), GOGO_OK);
+    CHECK(nl == 2 && memcmp(name, "hp", 2) == 0);
+    CHECK_EQ(gogo_image_require(im.w, im.len, 1, &name, &nl), GOGO_EINVAL);
+    CHECK_EQ(gogo_image_require(im.w, im.len, 0, NULL, &nl), GOGO_EINVAL);
+    /* An older caller's smaller struct: only its fields are written. */
+    struct { gogo_image_info i; uint32_t guard; } old;
+    memset(&old, 0xEE, sizeof old);
+    old.i.size = 12;                                    /* size, format, n_requires */
+    CHECK_EQ(gogo_image_info_get(im.w, im.len, &old.i), GOGO_OK);
+    CHECK_EQ(old.i.n_requires, 1);
+    CHECK_EQ(old.i.n_exports, 0xEEEEEEEEu);
+    CHECK_EQ(old.i.size, 12);
+    info.size = 0;
+    CHECK_EQ(gogo_image_info_get(im.w, im.len, &info), GOGO_EINVAL);
+    info.size = sizeof info;
+    /* A newer minor: GOGO_EVERSION, the format still given. */
+    uint32_t fmt = im.w[1];
+    im.w[1] = gogo_image_format() + 1u;
+    CHECK_EQ(gogo_image_info_get(im.w, im.len, &info), GOGO_EVERSION);
+    CHECK_EQ(info.format, gogo_image_format() + 1u);
+    CHECK_EQ(gogo_image_require(im.w, im.len, 0, &name, &nl), GOGO_EVERSION);
+    im.w[1] = fmt;
+    CHECK_EQ(gogo_image_info_get((const char *)im.w + 2, im.len - 4, &info), GOGO_EINVAL);   /* unaligned */
+    uint32_t junk[4] = { 1, 2, 3, 4 };
+    CHECK_EQ(gogo_image_info_get(junk, sizeof junk, &info), GOGO_EIMAGE);
+    CHECK_EQ(gogo_image_info_get(im.w, 6, &info), GOGO_EIMAGE);
+    free(im.w);
+    /* Without requirements. */
+    im = image("echo");
+    CHECK_EQ(gogo_image_info_get(im.w, im.len, &info), GOGO_OK);
+    CHECK_EQ(info.n_requires, 0);
+    free(im.w);
+}
+
 TEST(embed_no_main) {
     TCtx t; tctx_init(&t);
     /* codeload's image with its only export renamed: no "main". */

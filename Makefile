@@ -327,8 +327,8 @@ endif
 $(BUILD)/libgogo.a: $(BUILD)/libgogo.o runtime/include/gogo.h runtime/include/libgogo.syms
 	@rm -f $@
 	ar rcs $@ $(BUILD)/libgogo.o
-	tools/libsyms.sh $@ runtime/include/libgogo.syms runtime/include/gogo.h
-	tools/globals.sh --objects $@
+	tools/libsyms.sh $@ runtime/include/libgogo.syms runtime/include/gogo.h || { rm -f $@; exit 1; }
+	tools/globals.sh --objects $@ || { rm -f $@; exit 1; }
 
 $(BUILD)/libgogo-debug.a: $(LIB_OBJS)
 	@rm -f $@
