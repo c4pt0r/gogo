@@ -6,6 +6,8 @@
 #                              same files; exit 1 above the limit
 #   tools/vmsize.sh --record   also append "date,commit,bytes,lines" to docs/vmsize-history.csv
 #                              (lines: of those .c files, a trend only, no limit)
+#   tools/vmsize.sh --floatlib the float library (runtime/floatlib/*.c, not VM core): its
+#                              code size, and fixed state (limit 0)
 #   tools/vmsize.sh --no-float the VM core built without floating point (-DGOGO_FLOAT=0,
 #                              runtime/vm/config.h): the size of firmware without the
 #                              "float" requirement (never recorded; the record and the
@@ -104,6 +106,24 @@ if [ "$1" = "--screen" ]; then
     printf '%7d  screen code total (text+rodata+literal; not VM core)\n' "$total"
     printf '%7d  screen fixed state (bss+data; the grid, 4 bytes a cell, is per open port)\n' "$fixed"
     if [ "$fixed" -gt 0 ]; then echo "screensize: runtime/screen has fixed state"; exit 1; fi
+    exit 0
+fi
+if [ "$1" = "--floatlib" ]; then
+    total=0; fixed=0; lines=""
+    for f in runtime/floatlib/*.c; do
+        o="$OUT/$(basename "$f" .c).o"
+        "$GCC" -std=c99 -Os -mlongcalls -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_BYTES=163840u \
+            -Iruntime/vm -Iruntime/vm/test/stub -c "$f" -o "$o"
+        n=$("$SIZE" -A "$o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
+        b=$("$SIZE" -A "$o" | awk '/^\.(bss|data)/ {s += $2} END {print s + 0}')
+        total=$((total + n)); fixed=$((fixed + b))
+        lines="$lines$(printf '%7d  %s' "$n" "$f")
+"
+    done
+    printf '%s' "$lines" | sort -rn
+    printf '%7d  floatlib code total (text+rodata+literal; not VM core)\n' "$total"
+    printf '%7d  floatlib fixed state (bss+data)\n' "$fixed"
+    if [ "$fixed" -gt 0 ]; then echo "floatlibsize: runtime/floatlib has fixed state"; exit 1; fi
     exit 0
 fi
 if [ "$1" = "--vfs" ]; then

@@ -34,7 +34,7 @@ What it is not for: hard real-time work with sub-millisecond deadlines
 (code is interpreted, actors have garbage-collected heaps and a TLS
 handshake can pause everything for about 200 ms), heavy number crunching or
 signal processing (an interpreter with boxed floats; do such work in C drivers),
-and the very smallest microcontrollers (the VM core alone is about 41 KB of
+and the very smallest microcontrollers (the VM core alone is about 39 KB of
 code and needs tens of KB of RAM).
 
 ### Why actors?
@@ -81,7 +81,7 @@ are harder to keep small and isolated per task; Rust or C give no isolation
 between tasks, no hot loading and a slower edit-test loop on hardware.
 
 ### Why is gogo so small?
-The VM core is about 41 KB of code (37.6 KB built without floats), an idle actor about 150 bytes, and a
+The VM core is about 39 KB of code (37.6 KB built without floats), an idle actor about 150 bytes, and a
 "hello" image about 1 KB, because size was a constraint from the first
 line, not an afterthought:
 
@@ -128,7 +128,7 @@ but they make opposite choices in several places:
 | Memory | Per-actor heaps and limits, small collections | One heap and one collector for everything |
 | Hardware | Ports (actors that send events) | Python classes and callbacks (`machine.Pin`, IRQ handlers) |
 | Updating code | Hot loading of modules with isolation | Copy new `.py` files and restart |
-| Size | VM core about 41 KB of code | Larger: it carries the compiler and a big runtime (typically a few hundred KB) |
+| Size | VM core about 39 KB of code | Larger: it carries the compiler and a big runtime (typically a few hundred KB) |
 | Floats, big library, many boards | `float32` and `float64` (boxed; `float32` on the ESP32-S3's FPU), a small `gogo/math`; a small library; two boards | Floats with a full `math` module, a large library and ecosystem, many boards |
 | Maturity | Young | Over a decade old, widely used |
 
@@ -293,7 +293,7 @@ file.ggb` prints a program's bytecode.
 A register-based bytecode with fixed 32-bit instructions, interpreted by a
 `switch` loop. Actors are preempted by counting reductions (1000 per time
 slice, counted on backward jumps), so a busy loop cannot starve other
-actors. The VM core is about 41 KB of a 64 KB budget.
+actors. The VM core is about 39 KB of a 64 KB budget.
 
 ### Will there be a JIT?
 Not planned. On the ESP32-S3 a JIT would need executable internal RAM (which

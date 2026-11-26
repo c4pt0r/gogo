@@ -1,9 +1,9 @@
-/* The float library: B_FLOAT (floatlib.h). */
+/* The float library: B_FLOAT and println's floats (floatlib.h); the
+ * decimal conversions are in decimal.c. */
 #include "floats.h"
 
 #if GOGO_FLOAT
 
-#include <stdlib.h>
 #include <string.h>
 #include "floatlib.h"
 #include "heap.h"
@@ -87,201 +87,43 @@ static double fl_sqrt(double x) {
     return of_bits((uint64_t)(e / 2 + 1023) << 52 | (q & 0xFFFFFFFFFFFFFull));
 }
 
-/* ---- strconv ---- */
+/* ---- values ---- */
 
-/* Appends n copies of c (dst NULL: counts only). */
-static uint32_t put(char *dst, uint32_t at, char c, int n) {
-    for (; n > 0; n--, at++)
-        if (dst) dst[at] = c;
-    return at;
-}
-
-/* Go's strconv fmtEFG: lays out digits s[0..nd) (0.s x 10^dp) as fmt
- * 'e', 'E', 'f', 'g' or 'G' with precision prec (shortest: the digits are
- * the shortest form), '-' first if neg. Writes to dst unless it is NULL;
- * returns the length either way. */
-static uint32_t efg(char *dst, bool neg, const char *s, int dp, int nd, int prec, char fmt, bool shortest) {
-    uint32_t at = 0;
-    if (fmt == 'g' || fmt == 'G') {
-        int eprec = prec;
-        if (eprec > nd && nd >= dp) eprec = nd;
-        if (shortest) eprec = 6;       /* %e is used if the exponent is < -4 or >= 6 */
-        int exp = dp - 1;
-        if (exp < -4 || exp >= eprec) {
-            if (prec > nd) prec = nd;
-            prec--;
-            fmt = (char)(fmt + 'e' - 'g');
-        } else {
-            if (prec > dp) prec = nd;
-            prec = prec - dp > 0 ? prec - dp : 0;
-            fmt = 'f';
-        }
-    }
-    if (neg) at = put(dst, at, '-', 1);
-    if (fmt == 'e' || fmt == 'E') {
-        at = put(dst, at, nd ? s[0] : '0', 1);
-        if (prec > 0) {
-            at = put(dst, at, '.', 1);
-            int i;
-            for (i = 1; i < nd && i <= prec; i++) at = put(dst, at, s[i], 1);
-            at = put(dst, at, '0', prec + 1 - i);
-        }
-        at = put(dst, at, fmt, 1);
-        int exp = nd ? dp - 1 : 0;
-        at = put(dst, at, exp < 0 ? '-' : '+', 1);
-        if (exp < 0) exp = -exp;
-        if (exp >= 100) at = put(dst, at, (char)('0' + exp / 100), 1);
-        at = put(dst, at, (char)('0' + exp / 10 % 10), 1);
-        return put(dst, at, (char)('0' + exp % 10), 1);
-    }
-    if (fmt != 'f') {
-        at = put(dst, at, '%', 1);
-        return put(dst, at, fmt, 1);
-    }
-    if (dp > 0) {
-        for (int i = 0; i < dp; i++) at = put(dst, at, i < nd ? s[i] : '0', 1);
-    } else {
-        at = put(dst, at, '0', 1);
-    }
-    if (prec > 0) {
-        at = put(dst, at, '.', 1);
-        for (int i = 0; i < prec; i++) {
-            int j = dp + i;               /* digit index of this place */
-            at = put(dst, at, j >= 0 && j < nd ? s[j] : '0', 1);
-        }
-    }
-    return at;
-}
-
-
-/* The digit buffer: a float64 has at most 767 significant digits. */
-#define DIGITS_CAP 800
-
-uint32_t floatlib_format(char *dst, double v, bool is32, char fmt, int prec) {
-    char digits[DIGITS_CAP];
-    const char *special = NULL;
-    if (is32) v = (float)v;
-    bool neg = (bits_of(v) & SIGN_BIT) != 0;
-    if (v != v) special = "NaN";
-    else if (v - v != 0) special = neg ? "-Inf" : "+Inf";
-    if (special) {
-        uint32_t n = (uint32_t)strlen(special);
-        if (dst) memcpy(dst, special, n);
-        return n;
-    }
-    if (neg) v = -v;
-    if (fmt == 'b') {   /* mantissa "p" exponent, both decimal */
-        uint64_t u = bits_of(v), m;
-        int e;
-        if (is32) {
-            float f = (float)v;
-            uint32_t w;
-            memcpy(&w, &f, sizeof w);
-            m = w & 0x7FFFFFu;
-            e = (int)(w >> 23);
-            if (e) m |= 1u << 23;
-            e = (e ? e : 1) - 150;
-        } else {
-            m = u & 0xFFFFFFFFFFFFFull;
-            e = (int)(u >> 52);
-            if (e) m |= 1ull << 52;
-            e = (e ? e : 1) - 1075;
-        }
-        char t[48];
-        int n = 0, k = 0;
-        if (neg) t[n++] = '-';
-        char d[24];
-        do { d[k++] = (char)('0' + m % 10u); m /= 10u; } while (m);
-        while (k) t[n++] = d[--k];
-        t[n++] = 'p';
-        t[n++] = e < 0 ? '-' : '+';
-        unsigned ue = (unsigned)(e < 0 ? -e : e);
-        do { d[k++] = (char)('0' + ue % 10u); ue /= 10u; } while (ue);
-        while (k) t[n++] = d[--k];
-        if (dst) memcpy(dst, t, (size_t)n);
-        return (uint32_t)n;
-    }
-    int dp = 0, nd = 0;
-    if (v == 0) return efg(dst, neg, digits, 0, 0, prec, fmt, prec < 0);
-    if (prec < 0) {
-        nd = float_digits(v, is32, FD_SHORTEST, 0, digits, DIGITS_CAP, &dp);
-        switch (fmt) {
-        case 'e': case 'E': prec = nd - 1; break;
-        case 'f': prec = nd - dp > 0 ? nd - dp : 0; break;
-        case 'g': case 'G': prec = nd; break;
-        }
-        return efg(dst, neg, digits, dp, nd, prec, fmt, true);
-    }
-    switch (fmt) {
-    case 'e': case 'E':
-        nd = float_digits(v, is32, FD_DIGITS, prec + 1, digits, DIGITS_CAP, &dp);
-        break;
-    case 'f':
-        nd = float_digits(v, is32, FD_FRAC, prec, digits, DIGITS_CAP, &dp);
-        break;
-    case 'g': case 'G':
-        if (prec == 0) prec = 1;
-        nd = float_digits(v, is32, FD_DIGITS, prec, digits, DIGITS_CAP, &dp);
-        break;
-    }
-    return efg(dst, neg, digits, dp, nd, prec, fmt, false);
-}
-
-static int lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
-
-/* Go's ParseFloat syntax, without underscores: [+-] then decimal digits
- * with an optional point and e exponent, 0x hex digits with an optional
- * point and a required p exponent, or inf / infinity (any case); "nan"
- * (any case) without a sign. */
-static bool float_syntax(const uint8_t *s, uint32_t n) {
-    uint32_t i = 0, digits = 0;
-    if (n == 3 && lower(s[0]) == 'n' && lower(s[1]) == 'a' && lower(s[2]) == 'n') return true;
-    if (i < n && (s[i] == '+' || s[i] == '-')) i++;
-    if (n - i == 3 || n - i == 8) {
-        static const char inf[] = "infinity";
-        uint32_t j = 0;
-        while (j < n - i && lower(s[i + j]) == inf[j]) j++;
-        if (j == n - i) return true;
-    }
-    bool hex = n - i > 2 && s[i] == '0' && lower(s[i + 1]) == 'x';
-    if (hex) i += 2;
-    bool point = false;
-    for (; i < n; i++) {
-        int c = lower(s[i]);
-        if (c == '.' && !point) point = true;
-        else if ((c >= '0' && c <= '9') || (hex && c >= 'a' && c <= 'f')) digits++;
-        else break;
-    }
-    if (!digits) return false;
-    if (i == n) return !hex;
-    if (lower(s[i]) != (hex ? 'p' : 'e')) return false;
-    i++;
-    if (i < n && (s[i] == '+' || s[i] == '-')) i++;
-    if (i == n) return false;
-    for (; i < n; i++)
-        if (s[i] < '0' || s[i] > '9') return false;
+/* The float64 that t names (a 3-word K_FLOAT, heap or const area): every
+ * float argument of B_FLOAT is one (the compiler converts). */
+static bool f64_val(const Vm *vm, const Actor *a, term t, double *d) {
+    const uint32_t *o = obj_of(vm, a, t);
+    if (!o || o[0] != hdr_make(3, K_FLOAT)) return false;
+    *d = of_bits((uint64_t)o[1] | (uint64_t)o[2] << 32);
     return true;
 }
 
-/* The longest string ParseFloat reads (longer ones give ok = false). */
-#define PARSE_MAX 512u
+/* A new heap float64 holding d. May GC; false on OOM. */
+static bool f64_box(Vm *vm, Actor *a, double d, term *out) {
+    uint32_t off = heap_alloc(vm, a, 3, NULL, 0);
+    if (off == UINT32_MAX) return false;
+    uint64_t u = bits_of(d);
+    a->mem[off] = hdr_make(3, K_FLOAT);
+    a->mem[off + 1] = (uint32_t)u;
+    a->mem[off + 2] = (uint32_t)(u >> 32);
+    *out = term_from_ref(off);
+    return true;
+}
 
-static uint32_t parse_float(const Vm *vm, const Actor *a, term st, int32_t bits, double *out, bool *ok) {
-    const uint8_t *p;
-    uint32_t n;
-    char buf[PARSE_MAX + 1u];
-    if (!name_bytes(vm, a, st, &p, &n) || (bits != 32 && bits != 64)) return R_BAD_CODE;
-    *out = 0;
-    *ok = false;
-    if (n == 0 || n > PARSE_MAX || !float_syntax(p, n)) return R_NORMAL;
-    memcpy(buf, p, n);
-    buf[n] = 0;
-    double d = bits == 32 ? (double)strtof(buf, NULL) : strtod(buf, NULL);
-    /* Overflow gives +-Inf and false, as Go's ErrRange; underflow is fine. */
-    bool inf = d - d != 0 && d == d;
-    *ok = !inf || lower(buf[n - 1]) == 'f' || lower(buf[n - 1]) == 'y';
-    *out = d;
-    return R_NORMAL;
+/* ---- println ---- */
+
+void floatlib_print(Out *o, const uint32_t *obj) {
+    char t[32];
+    bool is32 = hdr_words(obj[0]) == 2u;
+    double v;
+    if (is32) {
+        float f;
+        memcpy(&f, &obj[1], sizeof f);
+        v = f;
+    } else {
+        v = of_bits((uint64_t)obj[1] | (uint64_t)obj[2] << 32);
+    }
+    out_bytes(o, t, floatlib_format(t, v, is32, 'g', -1));
 }
 
 /* ---- B_FLOAT ---- */
@@ -290,7 +132,7 @@ uint32_t float_lib(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint
     term *R = (term *)a->mem + a->fp;
     int32_t op, i, prec, bitsz;
     double x = 0, y = 0, r;
-    bool is32, b;
+    bool b;
     term t;
     if (rc < 1u || !int_val(vm, a, R[rb], &op)) return R_BAD_CODE;
     const term *arg = R + rb + 1;
@@ -298,8 +140,8 @@ uint32_t float_lib(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint
     /* Ops on float64 arguments first: read them all. */
     static const uint8_t nf[] = {1, 1, 1, 1, 1, 1, 1, 2, 1, 0, 0, 1, 1, 2, 2, 1, 0};
     if (op < 0 || (uint32_t)op >= sizeof nf || nargs < nf[op]) return R_BAD_CODE;
-    if (nf[op] >= 1 && (!float_val(vm, a, arg[0], &x, &is32) || is32)) return R_BAD_CODE;
-    if (nf[op] >= 2 && (!float_val(vm, a, arg[1], &y, &is32) || is32)) return R_BAD_CODE;
+    if (nf[op] >= 1 && !f64_val(vm, a, arg[0], &x)) return R_BAD_CODE;
+    if (nf[op] >= 2 && !f64_val(vm, a, arg[1], &y)) return R_BAD_CODE;
     switch (op) {
     case FLOAT_OP_SQRT:      r = fl_sqrt(x); break;
     case FLOAT_OP_FLOOR:     r = fl_floor(x); break;
@@ -351,10 +193,12 @@ uint32_t float_lib(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint
         return R_NORMAL;
     }
     case FLOAT_OP_PARSE: {
-        if (nargs != 2u || ra + 1u >= nregs || !int_val(vm, a, arg[1], &bitsz)) return R_BAD_CODE;
-        uint32_t why = parse_float(vm, a, arg[0], bitsz, &r, &b);
-        if (why != R_NORMAL) return why;
-        if (!float_box(vm, a, r, false, &t)) return R_OUT_OF_MEMORY;
+        const uint8_t *p;
+        uint32_t len;
+        if (nargs != 2u || ra + 1u >= nregs || !int_val(vm, a, arg[1], &bitsz) ||
+            (bitsz != 32 && bitsz != 64) || !name_bytes(vm, a, arg[0], &p, &len)) return R_BAD_CODE;
+        b = floatlib_parse(p, len, bitsz == 32, &r) == FP_OK;
+        if (!f64_box(vm, a, r, &t)) return R_OUT_OF_MEMORY;
         R = (term *)a->mem + a->fp;
         R[ra] = t;
         R[ra + 1] = term_from_bool(b);
@@ -364,7 +208,7 @@ uint32_t float_lib(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint
         return R_BAD_CODE;
     }
     if (nf[op] != nargs && op != FLOAT_OP_INF) return R_BAD_CODE;
-    if (!float_box(vm, a, r, false, &t)) return R_OUT_OF_MEMORY;
+    if (!f64_box(vm, a, r, &t)) return R_OUT_OF_MEMORY;
     ((term *)a->mem + a->fp)[ra] = t;
     return R_NORMAL;
 }

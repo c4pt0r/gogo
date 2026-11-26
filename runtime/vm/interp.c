@@ -390,7 +390,7 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
         out_str(o, "<buffer>");
 #if GOGO_FLOAT
     } else if (kind == K_FLOAT) {
-        out_float(o, obj);
+        floatlib_print(o, obj);
 #endif
     } else if (kind == K_REF && hdr_words(obj[0]) == 3u) {
         out_str(o, "<ref ");

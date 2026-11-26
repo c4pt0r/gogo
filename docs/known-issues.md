@@ -394,20 +394,18 @@ rebuilt:
   an out-of-range `f` to the implementation; gogo gives 0 for NaN and
   the nearest end of the range otherwise (Go on arm64 does the same; on
   amd64 Go gives the minimum value). With a 32-bit `int`, `int(3e9)` is
-  2147483647.
+  2147483647. `byte(f)` is the low 8 bits of that `int` (`byte(300.7)` is
+  44, `byte(-1.5)` 255).
 - **A small `gogo/math`.** `Sqrt`, `Floor`, `Ceil`, `Trunc`, `Round`,
   `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
   `IsInf`, `Max`, `Min` and the constants only: no `Pow`, `Exp`, `Log`,
   trigonometry, `Mod` or `Float64bits` (there is no `uint64`) yet.
 - **`strconv` float differences from Go.** `ParseFloat` returns `(f
   float64, ok bool)`: `ok` is false for bad syntax (`f` 0) and for an
-  out-of-range value (`f` ±Inf, Go's `ErrRange`); it takes no
-  underscores and no input longer than 512 bytes. `FormatFloat` has no
+  out-of-range value (`f` ±Inf, Go's `ErrRange`). `FormatFloat` has no
   `'x'` / `'X'` (hexadecimal) format: it gives `%x`, as Go does for an
-  unknown format. On the boards, `ParseFloat(s, 32)` uses newlib's
-  `strtof`, which rounds through `float64`: a decimal within about one
-  part in 10^17 of the halfway point between two `float32` values can
-  round the wrong way (the host is exact).
+  unknown format. Both are exact and the same on the host and the boards
+  (gogo's own code, not the C library's).
 - **Float equality in `switch` and `==` follows IEEE 754.** A `case`
   with `NaN` never matches, and `-0` matches `0`, as in Go.
 

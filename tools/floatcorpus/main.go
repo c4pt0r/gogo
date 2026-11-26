@@ -1,8 +1,9 @@
 // Command floatcorpus writes runtime/vm/test/float_corpus.h: float values
 // with formats and what Go's strconv.FormatFloat (and so Go's println, which
-// is FormatFloat(v, 'g', -1, width)) gives for them. The C tests
-// (runtime/vm/test/test_float.c) check gogo's float -> decimal conversion
-// (runtime/vm/floats.c, runtime/floatlib/floatlib.c) against it. Run it with
+// is FormatFloat(v, 'g', -1, width)) gives for them, and strings with what
+// Go's strconv.ParseFloat gives for them at both widths. The C tests
+// (runtime/vm/test/test_float.c) check gogo's conversions
+// (runtime/floatlib/decimal.c) against it. Run it with
 // `make float-corpus` from the repository root; TestCorpusUpToDate fails
 // when the file is stale (a different Go, or a change to the corpus).
 package main
@@ -10,6 +11,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"math/rand"
 	"os"
 	"strconv"
@@ -112,6 +114,97 @@ func generate() string {
 		}
 		fmt.Fprintf(&b, "    {0x%016xull, %d, '%c', %d, %q},\n", e.bits, is, e.fmt, e.prec, strconv.FormatFloat(v, e.fmt, e.prec, size))
 	}
+	b.WriteString("};\n\n")
+	b.WriteString("/* ParseFloat: the string, and Go's result at 64 and at 32 bits: the\n" +
+		" * bits (a float32's in the low half) and whether err was nil. */\n")
+	b.WriteString("static const struct ParseCase {\n    const char *s;\n    uint64_t bits64;\n    uint32_t bits32;\n    uint8_t ok64, ok32;\n} parse_corpus[] = {\n")
+	for _, s := range parseStrings() {
+		f64, err64 := strconv.ParseFloat(s, 64)
+		f32, err32 := strconv.ParseFloat(s, 32)
+		b64, b32 := math.Float64bits(f64), math.Float32bits(float32(f32))
+		if math.IsNaN(f64) { // NaN: only "is NaN" is compared
+			b64, b32 = 0x7FF8000000000001, 0x7FC00000
+		}
+		fmt.Fprintf(&b, "    {%q, 0x%016xull, 0x%08xu, %d, %d},\n", s, b64, b32, okBit(err64), okBit(err32))
+	}
 	b.WriteString("};\n")
 	return b.String()
+}
+
+func okBit(err error) int {
+	if err == nil {
+		return 1
+	}
+	return 0
+}
+
+// parseStrings are inputs for ParseFloat: Go's syntax corners, values at
+// the edges of both widths, decimal strings within one digit of the exact
+// halfway point between two neighbouring floats (where a parser that is
+// not exact rounds the wrong way), and random decimal strings.
+func parseStrings() []string {
+	ss := []string{"0", "-0", "1", "1.5", "+.5e1", "5.", ".", "", "+", "-", "1e", "1e+", " 1", "1 ",
+		"1_000", "1__0", "_1", "1_", "1_.5", "0x_1p0", "0x1_0p0", "1e1_0", "0x1p-2", "0X1.8P1", "0x.8p1", "0x1",
+		"0x1p", "0x", "inf", "-Inf", "+INFINITY", "infinity", "infx", "nan", "NaN", "-nan", "+NaN",
+		"1e400", "-1e400", "1e-400", "1e308", "1.7976931348623157e308", "1.7976931348623158e308",
+		"1.7976931348623159e308", "4.9e-324", "2.4703282292062327e-324", "2.4703282292062328e-324",
+		"3.4028234e38", "3.4028235e38", "3.4028236e38", "3.40282356e38", "1e-45", "7e-46", "7.1e-46", "1.4e-45",
+		"1.000000059", "1.00000005960464477540", "1.0000000596046448", "1.00000005960464477539",
+		"9007199254740993", "9007199254740993.0000000001", "9007199254740992.99999999999",
+		"123456789012345678901234567890", "0.000000000000000000000000000000001234567890123456789",
+		"0x1.fffffffffffff8p1023", "0x1.fffffffffffff7ffp1023", "0x1p-1074", "0x1p-1075", "0x1.0000000000001p-1075",
+		"1e99999999999", "1e-99999999999", "0e99999", "000123.4500e-2", "1.e2", "0.1e-0"}
+	// A string of 900 digits: more than are kept exactly.
+	long := "1." + strings.Repeat("0", 400) + strings.Repeat("9", 499)
+	ss = append(ss, long, "0."+strings.Repeat("0", 300)+"25e300")
+	r := rand.New(rand.NewSource(2))
+	// Halfway points: the exact decimal of (f + next(f)) / 2, and one
+	// unit of its last digit below and above.
+	for i := 0; i < 120; i++ {
+		var lo, hi *big.Float
+		if i%2 == 0 {
+			f := math.Float64frombits(r.Uint64() & 0x7FEFFFFFFFFFFFFF)
+			lo, hi = new(big.Float).SetFloat64(f), new(big.Float).SetFloat64(math.Nextafter(f, math.Inf(1)))
+		} else {
+			f := math.Float32frombits(r.Uint32() & 0x7F7FFFFF)
+			lo = new(big.Float).SetFloat64(float64(f))
+			hi = new(big.Float).SetFloat64(float64(math.Nextafter32(f, float32(math.Inf(1)))))
+		}
+		mid := new(big.Float).SetPrec(2000).Add(lo, hi)
+		mid.Quo(mid, big.NewFloat(2))
+		t := mid.Text('e', 800)
+		mant, exp, _ := strings.Cut(t, "e")
+		mant = strings.TrimRight(mant, "0")
+		if mant[len(mant)-1] == '.' {
+			mant = mant[:len(mant)-1]
+		}
+		ss = append(ss, mant+"e"+exp)
+		switch i % 3 {
+		case 0: // a shorter prefix: just below the halfway point
+			if len(mant) > 12 {
+				ss = append(ss, mant[:len(mant)-3]+"e"+exp)
+			}
+		case 1: // just above
+			ss = append(ss, mant+"0000001e"+exp)
+		}
+	}
+	for i := 0; i < 600; i++ {
+		d := r.Intn(25) + 1
+		var b strings.Builder
+		for j := 0; j < d; j++ {
+			b.WriteByte(byte('0' + r.Intn(10)))
+			if j == r.Intn(d) && r.Intn(2) == 0 {
+				b.WriteByte('.')
+			}
+		}
+		s := b.String()
+		if strings.Count(s, ".") > 1 {
+			continue
+		}
+		if r.Intn(2) == 0 {
+			s += "e" + strconv.Itoa(r.Intn(700)-350)
+		}
+		ss = append(ss, s)
+	}
+	return ss
 }

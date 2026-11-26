@@ -1,4 +1,4 @@
-/* Float -> decimal (floats.c, floatlib.c) against Go's strconv and println
+/* Float -> decimal (runtime/floatlib) against Go's strconv and println
  * over the corpus tools/floatcorpus generates (float_corpus.h), and the
  * K_FLOAT box. */
 #include "test.h"
@@ -72,7 +72,7 @@ TEST(float_println_matches_go) {
         Out o;
         cap_n = 0;
         out_init(&o, &cv, 1);
-        out_float(&o, obj);
+        floatlib_print(&o, obj);
         out_flush(&o);
         if (cap_n != strlen(c->want) || memcmp(cap_buf, c->want, cap_n) != 0) {
             if (bad++ < 10) report(c, cap_buf, cap_n);
@@ -81,23 +81,54 @@ TEST(float_println_matches_go) {
     CHECK_EQ(bad, 0);
 }
 
+/* ParseFloat at both widths, exact, against Go: NaN by "is NaN". */
+TEST(float_parse_matches_go) {
+    size_t bad = 0, n = sizeof parse_corpus / sizeof parse_corpus[0];
+    for (size_t i = 0; i < n; i++) {
+        const struct ParseCase *c = &parse_corpus[i];
+        for (int w = 0; w < 2; w++) {
+            double d;
+            int rc = floatlib_parse((const uint8_t *)c->s, (uint32_t)strlen(c->s), w == 1, &d);
+            uint64_t got, want = w ? c->bits32 : c->bits64;
+            if (w) {
+                float f = (float)d;
+                uint32_t u;
+                memcpy(&u, &f, sizeof u);
+                got = u;
+                if ((u & 0x7F800000u) == 0x7F800000u && (u & 0x7FFFFFu)) got = 0x7FC00000u;
+            } else {
+                memcpy(&got, &d, sizeof got);
+                if (d != d) got = 0x7FF8000000000001ull;
+            }
+            int ok = rc == FP_OK, wok = w ? c->ok32 : c->ok64;
+            if (got != want || ok != wok) {
+                if (bad++ < 10)
+                    fprintf(stderr, "  ParseFloat(\"%.60s\", %d): got %016llx ok %d, want %016llx ok %d\n",
+                            c->s, w ? 32 : 64, (unsigned long long)got, ok, (unsigned long long)want, wok);
+            }
+        }
+    }
+    CHECK_EQ(bad, 0);
+    CHECK(n > 500);
+}
+
 /* The digit engine's modes directly: shortest, n digits, n places. */
 TEST(float_digits_modes) {
     char d[32];
     int dp, nd;
-    nd = float_digits(0.1, false, FD_SHORTEST, 0, d, (int)sizeof d, &dp);
+    nd = floatlib_digits(0.1, false, FD_SHORTEST, 0, d, (int)sizeof d, &dp);
     CHECK(nd == 1 && d[0] == '1' && dp == 0);
-    nd = float_digits(0.1, true, FD_SHORTEST, 0, d, (int)sizeof d, &dp);   /* float32(0.1) */
+    nd = floatlib_digits(0.1, true, FD_SHORTEST, 0, d, (int)sizeof d, &dp);   /* float32(0.1) */
     CHECK(nd == 1 && d[0] == '1' && dp == 0);
-    nd = float_digits(0.1, false, FD_DIGITS, 20, d, (int)sizeof d, &dp);
+    nd = floatlib_digits(0.1, false, FD_DIGITS, 20, d, (int)sizeof d, &dp);
     CHECK(nd == 20 && memcmp(d, "10000000000000000555", 20) == 0 && dp == 0);
-    nd = float_digits(9.5, false, FD_DIGITS, 1, d, (int)sizeof d, &dp);    /* half to even: 10 */
+    nd = floatlib_digits(9.5, false, FD_DIGITS, 1, d, (int)sizeof d, &dp);    /* half to even: 10 */
     CHECK(nd == 1 && d[0] == '1' && dp == 2);
-    nd = float_digits(0.5, false, FD_FRAC, 0, d, (int)sizeof d, &dp);      /* rounds to 0 */
+    nd = floatlib_digits(0.5, false, FD_FRAC, 0, d, (int)sizeof d, &dp);      /* rounds to 0 */
     CHECK_EQ(nd, 0);
-    nd = float_digits(0.0004, false, FD_FRAC, 2, d, (int)sizeof d, &dp);
+    nd = floatlib_digits(0.0004, false, FD_FRAC, 2, d, (int)sizeof d, &dp);
     CHECK_EQ(nd, 0);
-    nd = float_digits(1e300, false, FD_DIGITS, 3, d, (int)sizeof d, &dp);
+    nd = floatlib_digits(1e300, false, FD_DIGITS, 3, d, (int)sizeof d, &dp);
     CHECK(nd == 1 && d[0] == '1' && dp == 301);
 }
 

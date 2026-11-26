@@ -334,7 +334,8 @@ strconv: 3.142 6.02e+23 true
 - Conversions are explicit. `int(f)`, `int64(f)` and `byte(f)` truncate
   toward zero. Go leaves NaN and out-of-range values to the
   implementation; gogo gives 0 for NaN and the nearest end of the range
-  otherwise (`int(1e10)` is 2147483647, since `int` is 32 bits).
+  otherwise (`int(1e10)` is 2147483647, since `int` is 32 bits);
+  `byte(f)` keeps the low 8 bits of that `int` (`byte(300.7)` is 44).
 - `float32` and `float64` values can go into `any` (a type switch tells
   them apart), into structs and slices, and into messages, which copy
   them like any value. A named float type cannot go into `any`, like a
@@ -345,8 +346,8 @@ strconv: 3.142 6.02e+23 true
   `Pow`, `Exp`, `Log` and the trigonometric functions are not there yet.
   `strconv.FormatFloat` and `strconv.ParseFloat` work as in Go, except
   that `ParseFloat` returns `ok bool` instead of an error (`false`, with
-  `±Inf`, when the value is out of range), takes no underscores, and
-  `FormatFloat` has no `'x'` format.
+  `±Inf`, when the value is out of range) and `FormatFloat` has no
+  `'x'` format. Both are exact, on the board as on your computer.
 - **Cost.** Every float is a small heap object (8 or 12 bytes), so each
   arithmetic result allocates; keep tight loops on integers where you
   can. On the ESP32-S3, `float32` arithmetic runs on the FPU and

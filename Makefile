@@ -70,11 +70,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: float-corpus lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: float-corpus lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize floatlibsize
 
 vm: $(BUILD)/gogovm
 
@@ -524,6 +524,9 @@ check32:
 	for f in runtime/vm/check32.c $(VM_CORE_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
 	done
+	for f in $(FLOATLIB_SRCS); do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
+	done
 	for f in $(NET_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test/stub $$f || exit 1; \
 	done
@@ -578,6 +581,11 @@ vfssize:
 # runtime/screen/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
 screensize:
 	tools/vmsize.sh --screen
+
+# runtime/floatlib/ (printing and parsing floats, gogo/math) code size on the
+# ESP32-S3 (-Os), reported apart from the VM core; no fixed state allowed.
+floatlibsize:
+	tools/vmsize.sh --floatlib
 
 # Everything built with CFLAGS / EXTRA_CFLAGS: rebuilt when they change.
 STAMPED = $(addprefix $(BUILD)/,gogovm gogovm_mcu gogovm_nofloat test_c test_c_mcu test_net test_net_mcu test_tls \

@@ -255,7 +255,9 @@ the requirement `float`):
   `int(f)`, `int64(f)` and `byte(f)` truncate toward zero. Where Go leaves
   the result to the implementation (NaN, or out of the target's range),
   gogo does what Go does on arm64: NaN gives 0, and a value out of range
-  the nearest end (`int(1e10)` is 2147483647: `int` is 32 bits).
+  the nearest end (`int(1e10)` is 2147483647: `int` is 32 bits). `byte(f)`
+  is the low 8 bits of that saturated `int` (`byte(300.7)` is 44,
+  `byte(-1.5)` 255, `byte(1e10)` 255), which also matches arm64 Go.
 - Constants: go/types' exact arithmetic folds constant expressions
   (`1.0/3`, `math.Pi * 2`); a typed `float32` constant is rounded once.
 - `println` prints a float as Go 1.27's `println` does:
@@ -263,17 +265,25 @@ the requirement `float`):
   shortest digits that read back as the same value (`1.5`, `0.1` for
   `float32(0.1)`, `1e+21`, `5e-324`, `-0`, `NaN`, `+Inf`). Older Go
   releases printed `+1.500000e+000`; gogo follows the current format.
-  The conversion is exact (a small bignum in `runtime/vm/floats.c`, no
-  libc `printf`) and is checked against Go over a generated corpus
-  (`tools/floatcorpus`).
+  The conversion is exact (a small bignum, no libc `printf`) and lives in
+  `runtime/floatlib` with the rest of the decimal code: the VM core only
+  calls `floatlib_print` from `println`. It is checked against Go over a
+  generated corpus (`tools/floatcorpus`).
 - `gogo/math` (a stub: `Sqrt`, `Floor`, `Ceil`, `Trunc`, `Round`,
   `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
   `IsInf`, `Max`, `Min`, the constants) and `strconv.FormatFloat` /
   `ParseFloat` (compiler intrinsics: the calls are builtins, their
   bodies never compiled, so a program that imports strconv for `Atoi`
   needs no float support) are the `B_FLOAT` builtin in
-  `runtime/floatlib`, outside the VM core and without libm (`ParseFloat`
-  checks Go's syntax and then uses the C library's `strtod` / `strtof`).
+  `runtime/floatlib`, outside the VM core, without libm and without the C
+  library's conversions: `ParseFloat` parses Go's syntax (underscores
+  included) and rounds exactly on the same bignum, at either width (a
+  libc `strtof` need not: the boards' picolibc keeps 9 significant digits
+  and can round a longer `float32` input the wrong way).
+- Stack: `println` of a float takes about 0.9 KB of C stack (the
+  shortest-digit bignums), `FormatFloat` with a precision about 1.6 KB
+  (an 800-byte digit buffer besides), `ParseFloat` about 1 KB (two
+  3.7-kbit bignums); the VM task's stack on the ESP32-S3 is 16 KB.
 - Speed: values are boxed (every result allocates a 2- or 3-word heap
   object). `float32` arithmetic uses the ESP32-S3's single-precision FPU
   (`OP_ADDF` .. `OP_DIVF` on two `float32` boxes never widen to double);
@@ -1788,7 +1798,8 @@ value is typed. `gogo config keys` prints it.
   counts its lines of C; `tools/vmsize.sh --record` appends both to
   `docs/vmsize-history.csv` (the `lines` column is empty in rows recorded
   before it existed); `tools/vmsize.sh --no-float` measures the core built
-  without floating point (`GOGO_FLOAT=0`), never recorded.
+  without floating point (`GOGO_FLOAT=0`), never recorded, and `make
+  floatlibsize` the float library outside it.
 - Floats: goldens (`tests/golden/float_*`, one on a gogovm built with
   `GOGO_FLOAT=0` to check the refusal), and the C tests compare
   `println` and `strconv.FormatFloat` with Go's output over the corpus

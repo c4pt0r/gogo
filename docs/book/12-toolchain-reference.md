@@ -709,7 +709,7 @@ tests, it runs:
   (`examples/packages` uses all three).
 - `make test-book`: every example in this book, through
   `docs/book/examples/run.sh` (above).
-- `make vmsize` (and `netsize`, `vfssize`, `screensize`): the code size
+- `make vmsize` (and `netsize`, `vfssize`, `screensize`, `floatlibsize`): the code size
   of the VM core and of each runtime part for the ESP32-S3, against
   their budgets (skipped without the ESP-IDF compiler). `vmsize` also
   prints the VM core's lines of C; `tools/vmsize.sh --record` appends

@@ -20,6 +20,7 @@ func FormatFloat(f float64, fmt byte, prec, bitSize int) string { panic("gogo on
 // "1e-3"), hexadecimal with a p exponent ("0x1.8p1"), "inf", "infinity"
 // and "nan" (any case; the infinities with an optional sign). ok is false
 // if s is not valid (f is 0), and also if it is out of range: then f is
-// ±Inf, as with Go's ErrRange. Unlike Go, underscores are not accepted, and
-// strings longer than 512 bytes give ok = false.
+// ±Inf, as with Go's ErrRange. Underscores may separate digits, as in Go.
+// The rounding is exact for any input (gogo's own parser, not the C
+// library's).
 func ParseFloat(s string, bitSize int) (f float64, ok bool) { panic("gogo only") }

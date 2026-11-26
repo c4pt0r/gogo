@@ -1,7 +1,6 @@
 // gogo/math and strconv.FormatFloat / ParseFloat. expected.out is what Go
-// 1.27 prints for the same calls (with Go's ParseFloat error as ok), but
-// for "1_000": gogo's ParseFloat takes no underscores (0 false; Go: 1000
-// true). FormatFloat's 'x' format (hexadecimal) is not supported.
+// 1.27 prints for the same calls (with Go's ParseFloat error as ok).
+// FormatFloat's 'x' format (hexadecimal) is not supported.
 package main
 
 import (
