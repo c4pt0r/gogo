@@ -198,7 +198,7 @@ func main() {
 
 	_, ok1 := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 	_, ok2 := port.Open("gpio", gpio.Config{Pin: key2, Mode: gpio.InputPullUp, Edge: gpio.Falling})
-	if !ok1 || !ok2 {
+	if ok1 != nil || ok2 != nil {
 		println("fsdemo: keys unavailable")
 	}
 	presses := 0

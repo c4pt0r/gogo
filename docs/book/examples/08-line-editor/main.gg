@@ -14,8 +14,8 @@ import (
 const printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 
 func main() {
-	_, ok := port.Open("kbd", kbd.Config{RepeatDelayMs: 400, RepeatMs: 60})
-	if !ok {
+	_, err := port.Open("kbd", kbd.Config{RepeatDelayMs: 400, RepeatMs: 60})
+	if err != nil {
 		println("no keyboard on this board")
 		return
 	}

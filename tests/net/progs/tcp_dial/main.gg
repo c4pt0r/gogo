@@ -18,8 +18,8 @@ func main() {
 		b.WriteByte(byte('a' + i%26))
 	}
 	big := b.Freeze()
-	c, ok := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
-	println("dial", ok)
+	c, err := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+	println("dial", err == nil)
 	for {
 		switch m := actor.Receive().(type) {
 		case net.Connected:

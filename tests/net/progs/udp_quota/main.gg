@@ -13,8 +13,8 @@ func main() {
 	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
 	me := actor.Self()
 	r := actor.SpawnOpt(func() {
-		_, ok := port.Open("udp", net.UDP{Port: 9})
-		println("udp", ok)
+		_, err := port.Open("udp", net.UDP{Port: 9})
+		println("udp", err == nil)
 		actor.Sleep(1000)
 		got := 0
 		for {

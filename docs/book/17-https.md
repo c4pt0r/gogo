@@ -342,7 +342,7 @@ same messages (`Connected`, `Shutdown` and the stream protocol's
 differs:
 
 ```go
-c, ok := port.Open("tls", net.DialTLS{IP: ip, Port: 443, TimeoutMs: 15000, Host: "myhost.example.ts.net"})
+c, err := port.Open("tls", net.DialTLS{IP: ip, Port: 443, TimeoutMs: 15000, Host: "myhost.example.ts.net"})
 ```
 
 `Host` is the name the certificate must be for (it is also sent to the

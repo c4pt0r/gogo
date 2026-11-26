@@ -97,16 +97,16 @@ const cookie = 0x63825363 // the DHCP magic cookie
 func run() {
 	st := make([]int, sLen)
 	tm := make([]int64, tLen)
-	n, ok := port.Open("netif", net.IfConfig{})
+	n, err := port.Open("netif", net.IfConfig{})
 	var u actor.PID
-	if ok {
-		u, ok = port.Open("udp", net.UDP{Port: 68})
+	if err == nil {
+		u, err = port.Open("udp", net.UDP{Port: 68})
 	}
-	if ok && staticAddr(n) {
+	if err == nil && staticAddr(n) {
 		st[sState] = bound
 		st[sStatic] = 1
 		tm[tDeadline] = -1 // never
-	} else if ok {
+	} else if err == nil {
 		net.Subscribe()
 		restart(st, tm, u)
 	}
@@ -130,7 +130,7 @@ func run() {
 		}
 		switch m := m.(type) {
 		case actor.Request:
-			if !ok {
+			if err != nil {
 				actor.Reply(m, false)
 				return // no network: nothing to do
 			}

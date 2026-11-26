@@ -2,7 +2,7 @@
  *
  * vm/ only holds the hook (Vm.fs_builtin, actor.h) and one case in the
  * interpreter; vfs_init(vm, st) points the hook here and the state at st. B_FS's first argument is
- * the op (FS_OPEN..FS_WRITEAT, vfs.h), the rest are the op's arguments.
+ * the op (FS_OPEN..FS_OPENERR, vfs.h), the rest are the op's arguments.
  * Two-result ops write (value, Err) into ra, ra+1 and check that ra+1 is
  * in the frame; the others write Err into ra only.
  *
@@ -33,7 +33,7 @@
 #define CHARGE_WORDS (GOGO_FS_SLOT_BYTES / 4u)
 
 /* Arguments after the op, and the ops with two results. */
-static const uint8_t n_args[FS_WRITEAT + 1] = { 2, 2, 2, 1, 1, 2, 2, 1, 1, 1, 1, 2, 1, 3 };
+static const uint8_t n_args[FS_OPENERR + 1] = { 2, 2, 2, 1, 1, 2, 2, 1, 1, 1, 1, 2, 1, 3, 0 };
 #define TWO_RESULTS ((1u << FS_OPEN) | (1u << FS_READ) | (1u << FS_SIZE) | (1u << FS_READFILE) | \
                      (1u << FS_STAT) | (1u << FS_READDIR) | (1u << FS_USAGE))
 
@@ -275,7 +275,7 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
     term *R = (term *)a->mem + a->fp;
     VfsState *st = vm->vfs;
     int32_t op, i = 0;
-    if (rc == 0 || !int_val(vm, a, R[rb], &op) || op < 0 || op > FS_WRITEAT || rc != 1u + n_args[op])
+    if (rc == 0 || !int_val(vm, a, R[rb], &op) || op < 0 || op > FS_OPENERR || rc != 1u + n_args[op])
         return R_BAD_CODE;
     bool two = (TWO_RESULTS >> op) & 1u;
     if (two && ra + 1u >= nregs) return R_BAD_CODE;
@@ -294,6 +294,8 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
         if (op == FS_WRITE && !arg_data(vm, a, y, &data, &n)) return R_BAD_CODE;
         if (op == FS_WRITEAT && (!int_val(vm, a, y, &i) || !arg_data(vm, a, R[rb + 3], &data, &n))) return R_BAD_CODE;
         if (!f) e = GOGO_E_CLOSED;
+        break;
+    case FS_OPENERR:
         break;
     default:
         if (!arg_path(vm, a, x, pa, &la)) return R_BAD_CODE;
@@ -379,6 +381,9 @@ static uint32_t fs_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t 
         break;
     case FS_RENAME:
         e = vfs_rename(st, pa, la, pb, lb);
+        break;
+    case FS_OPENERR:   /* port.Open's reason, read right after its B_PORT_OPEN */
+        e = vm->open_err;
         break;
     default: /* FS_USAGE */
         if ((e = vfs_usage(st, pa, la, &v, &w))) v = w = 0;

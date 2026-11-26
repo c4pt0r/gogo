@@ -286,14 +286,13 @@ func TestRejects(t *testing.T) {
 		{"captured-opassign-before", "package main\nfunc main() {\n\tx := 1\n\tx += 1 // ERR\n\tf := func() { println(x) }\n\t_ = f\n}\n", []string{"captured variable must not be reassigned"}},
 		{"import-unknown-lib", "package main\nimport \"gogo/nosuch\" // ERR\nfunc main() { nosuch.X() }\n", []string{`import "gogo/nosuch" not supported`}},
 		{"fs-file-case", "package main\nimport (\n\t\"gogo/actor\"\n\t\"gogo/fs\"\n)\nfunc main() {\n\tvar x any = actor.Self()\n\tswitch x.(type) {\n\tcase fs.File: // ERR\n\t\tprintln(\"file\")\n\tcase actor.PID:\n\t}\n}\n", []string{"type switch case fs.File not supported; wrap it in a struct"}},
-		{"port-open-stmt", "package main\nimport \"gogo/port\"\nfunc main() {\n\tport.Open(\"gpio\", port.Host{}) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"port-open-var", "package main\nimport \"gogo/port\"\nfunc main() {\n\tvar p, ok = port.Open(\"gpio\", port.Host{}) // ERR\n\tprintln(p, ok)\n}\n", []string{"multiple values not supported"}},
 		{"fs-stat-stmt", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tfs.Stat(\"/flash\") // ERR\n}\n", []string{"multiple values not supported"}},
 		{"fs-readfile-single", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tb := fs.ReadFile(\"/flash/a\", 9) // ERR\n\t_ = b\n}\n", []string{"assignment mismatch"}},
 		{"fs-read-method-stmt", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar f fs.File\n\tf.Read(1) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"fs-size-var", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar f fs.File\n\tvar n, e = f.Size() // ERR\n\tprintln(n, e)\n}\n", []string{"multiple values not supported"}},
 		{"fs-method-value", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar f fs.File\n\tg := f.Close // ERR\n\t_ = g\n}\n", []string{"selector other than a field read not supported"}},
-		{"port-open-arg", "package main\nimport \"gogo/port\"\nfunc f(p any, ok bool) {}\nfunc main() {\n\tf(port.Open(\"gpio\", port.Host{})) // ERR\n}\n", []string{"multiple values not supported"}},
+		{"port-open-arg", "package main\nimport \"gogo/port\"\nfunc f(p any, ok bool) {}\nfunc main() {\n\tf(port.Open(\"gpio\", port.Host{})) // ERR\n}\n", []string{"cannot use port.Open"}},
 		{"bytes-buffer-case", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tvar x any = bytes.NewBuffer(1)\n\tswitch x.(type) {\n\tcase bytes.Buffer: // ERR\n\t}\n}\n", []string{"type switch case"}},
 		{"bytes-literal", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.Bytes{} // ERR\n\t_ = x\n}\n", []string{"composite literal of bytes.Bytes"}},
 		{"buffer-literal", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tb := bytes.Buffer{} // ERR\n\t_ = b\n}\n", []string{"zero value of bytes.Buffer", "use bytes.NewBuffer"}},
@@ -678,7 +677,8 @@ func TestAcceptsFuncValues(t *testing.T) {
 	}
 }
 
-// fakeLibs is a library set with the real gogo/actor stubs plus extra
+// fakeLibs is a library set with the real gogo/actor, gogo/port, gogo/bytes
+// and gogo/errors plus extra
 // packages given as dir/file.go -> source.
 func fakeLibs(t *testing.T, extra map[string]string) fstest.MapFS {
 	t.Helper()
@@ -694,7 +694,11 @@ func fakeLibs(t *testing.T, extra map[string]string) fstest.MapFS {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fsys := fstest.MapFS{"actor/actor.gg": {Data: src}, "port/port.gg": {Data: psrc}, "bytes/bytes.gg": {Data: bsrc}}
+	esrc, err := lib.StubFS.ReadFile("errors/errors.gg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys := fstest.MapFS{"actor/actor.gg": {Data: src}, "port/port.gg": {Data: psrc}, "bytes/bytes.gg": {Data: bsrc}, "errors/errors.gg": {Data: esrc}}
 	for name, s := range extra {
 		fsys[name] = &fstest.MapFile{Data: []byte(s)}
 	}

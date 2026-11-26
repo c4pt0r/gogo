@@ -8,10 +8,10 @@ import (
 )
 
 func main() {
-	_, ok := port.Open("netif", net.IfConfig{})
-	println("netif", ok)
-	_, ok = port.Open("udp", net.UDP{Port: 7})
-	println("udp", ok)
+	_, err := port.Open("netif", net.IfConfig{})
+	println("netif", err == nil)
+	_, err = port.Open("udp", net.UDP{Port: 7})
+	println("udp", err == nil)
 	println("subscribe", net.Subscribe())
 	var d net.Datagram
 	println(d.From.IP, d.From.Port, d.Data.Len())

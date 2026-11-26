@@ -21,11 +21,11 @@ func next() {
 }
 
 func main() {
-	p, ok := port.Open("screen", screen.Config{Cols: 10, Rows: 2})
-	println("open", ok)
+	p, err := port.Open("screen", screen.Config{Cols: 10, Rows: 2})
+	println("open", err == nil)
 	next()
 	_, ok2 := port.Open("screen", screen.Config{})
-	println("second open", ok2)
+	println("second open", ok2 == nil)
 	b := bytes.NewBuffer(32)
 	b.Write([]byte{screen.OpColor, 0x2F, screen.OpText, 3})
 	b.WriteString("abc")
@@ -41,9 +41,9 @@ func main() {
 	next()
 	port.Close(p)
 	_, ok3 := port.Open("screen", screen.Config{Cols: 256, Rows: 1})
-	println("too big", ok3)
-	p, ok = port.Open("screen", screen.Config{})
-	println("reopen", ok)
+	println("too big", ok3 == nil)
+	p, err = port.Open("screen", screen.Config{})
+	println("reopen", err == nil)
 	next()
 	port.Close(p)
 }

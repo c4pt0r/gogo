@@ -22,8 +22,8 @@ func send(p actor.PID, n int) int {
 }
 
 func worker() {
-	p, ok := port.Open("screen", screen.Config{Cols: 10, Rows: 2})
-	if !ok {
+	p, err := port.Open("screen", screen.Config{Cols: 10, Rows: 2})
+	if err != nil {
 		println("no screen")
 		return
 	}

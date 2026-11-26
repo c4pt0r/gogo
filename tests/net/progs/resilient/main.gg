@@ -22,7 +22,9 @@ func main() {
 			println("up", actor.Now())
 			if !have {
 				actor.Sleep(100)
-				c, have = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+				var err error
+				c, err = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+				have = err == nil
 				println("dial", have)
 			}
 		case net.Down:

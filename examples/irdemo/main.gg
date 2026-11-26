@@ -19,13 +19,13 @@ import (
 )
 
 func main() {
-	_, ok := port.Open("ir_rx", ir.RX{GapUs: 10000})
-	if !ok {
+	_, err := port.Open("ir_rx", ir.RX{GapUs: 10000})
+	if err != nil {
 		println("no ir_rx")
 		return
 	}
-	tx, ok := port.Open("ir_tx", ir.TX{CarrierHz: 38000, DutyPct: 33})
-	if !ok {
+	tx, err := port.Open("ir_tx", ir.TX{CarrierHz: 38000, DutyPct: 33})
+	if err != nil {
 		println("no ir_tx")
 		return
 	}

@@ -94,9 +94,9 @@ func show(op, url string, r http.Response, ok bool) {
 }
 
 func main() {
-	nif, ok := port.Open("netif", net.IfConfig{})
+	nif, err := port.Open("netif", net.IfConfig{})
 	actor.Send(nif, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1, DNS: 10<<24 | 1})
-	println("start", ok)
+	println("start", err == nil)
 	script, _ := sys.Config("test.script")
 	text, _ := sys.Config("test.body")
 	timeout := atoi("test.timeout", 5000)

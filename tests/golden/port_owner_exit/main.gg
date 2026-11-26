@@ -20,8 +20,8 @@ type Num struct{ N int }
 type Done struct{}
 
 func worker(boss actor.PID) {
-	_, ok := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Falling})
-	actor.Send(boss, Hello{actor.Self(), ok})
+	_, err := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+	actor.Send(boss, Hello{actor.Self(), err == nil})
 	n := 0
 	switch m := actor.Receive().(type) {
 	case Num:

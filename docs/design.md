@@ -546,19 +546,22 @@ types (`Host`, `Post`). Each device's types are in its own package
 `gogo/audio`, `gogo/screen`, `gogo/net`).
 
 ```go
-led, ok := port.Open("gpio", gpio.Config{Pin: 25, Mode: gpio.Output})
+led, err := port.Open("gpio", gpio.Config{Pin: 25, Mode: gpio.Output})
 actor.Send(led, gpio.Write{Value: 1})
-btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+btn, err := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 // the owner then receives gpio.Edge{Pin, Value} messages
 ```
 
-- `port.Open(driver string, cfg any) (actor.PID, bool)`: the caller
+- `port.Open(driver string, cfg any) (actor.PID, error)`: the caller
   becomes the owner. An unknown driver, an invalid configuration, a busy
-  resource or a lack of memory gives `ok == false` and the zero PID. The
-  VM keeps the reason as a shared error code, `vm->open_err`
-  (`NotFound`, `BadArg`, `TooMany`, `NoMemory` or `Busy`, `port.h`):
-  `fs.Open` reports it, and Go code will get it when `port.Open` returns
-  `error` (language phase B).
+  resource or a lack of memory gives an `errors.Code` and the zero PID:
+  the VM keeps the reason as a shared error code, `vm->open_err`
+  (`NotFound`, `BadArg`, `TooMany`, `NoMemory` or `Busy`, `port.h`).
+  `port.Open` is library code over builtin 26, `B_PORT_OPEN`, which
+  returns only a bool: on a failure it reads the reason right away with
+  `B_FS` operation 14, `FS_OPENERR` (15.4; no instruction runs in
+  between that could let another actor open a port), which keeps the
+  VM core out of it. `fs.Open` reports the same reason.
   `port.Close(p)` closes a port; stale or unknown PIDs are ignored.
   `port.Handoff(p, to) bool`: the owner hands the port to another live
   actor; later events go to `to`, the port closes when `to` exits, and
@@ -933,7 +936,7 @@ compiled package is still in the image. `lib/strconv/unsigned.gg` uses it.
 
 **The `//gogo:optional` directive.** A package (a library or `package
 main`) can declare drivers it uses only softly: opened only when a call needs them at run
-time, and their absence (`port.Open` returning `ok=false`) reported as
+time, and their absence (`port.Open` returning an error) reported as
 that call's failure. The directive is a comment line in any file of the
 package, `//gogo:optional name...` (by convention at the end of the
 package doc comment, after an empty `//` line, as gofmt places
@@ -1001,7 +1004,7 @@ font.
   `runtime/floatlib`; off, the VM lacks the requirement `float` and
   refuses an image that uses floats). A
   switched-off feature behaves as if the board lacked the hardware: its
-  `port.Open` returns `ok=false`, and `gogo device scan` and the like
+  `port.Open` returns `errors.NotFound`, and `gogo device scan` and the like
   answer "no network in this firmware".
 - **What a build provides.** `platform_esp.c` lists in `esp_ports` only
   the drivers the build has (`#if HAS_KBD && CONFIG_GOGO_KBD`, ...) and
@@ -1132,7 +1135,7 @@ font.
   words); each `Chunk` waiting in the mailbox costs F + 10 words more.
   Open also checks that the owner has room for one `Chunk` beside the
   buffer (`Port.room_64w`, in `Port`'s padding, so `Port` stays 64 bytes)
-  and returns `ok=false` otherwise, rather than staying silent forever. To
+  and fails with `errors.NoMemory` otherwise, rather than staying silent forever. To
   survive a stall of S ms (writing to SD), the owner needs heap + F +
   (ceil(S / FrameMs) + 1) x (F + 10) words: at 16 kHz and 100 ms, a 300 ms
   stall needs heap + 4040 words, more than the default 4096-word limit on
@@ -1226,7 +1229,7 @@ explains it from the user's side.
   are process-global and take no context, so they are bound to the first
   board TLS table (`TlsHw`) that sets mbedTLS up. Every VM in one process
   must use that same table: a VM whose board brings another one has its
-  `tls` opens refused (`ok=false`, logged once). This is the runtime's
+  `tls` opens refused (an error, logged once). This is the runtime's
   one piece of process-global state. VMs on different threads may still
   run TLS at the same time: on the host the time hook reads a
   thread-local pointer to the VM being driven, so each VM checks

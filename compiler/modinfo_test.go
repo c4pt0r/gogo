@@ -147,8 +147,8 @@ func TestRequiresInference(t *testing.T) {
 // call in package main or in another library (an importer included) still
 // does.
 func TestOptionalDirective(t *testing.T) {
-	const opt = "// Package a opens mic only when asked.\n//\n//gogo:optional mic spk ui\npackage a\nimport \"gogo/port\"\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok }\nfunc Play() bool { _, ok := port.Open(\"spk\", 1); return ok }\nfunc UI() bool { _, ok := port.Open(\"ui\", port.Host{}); return ok }\nfunc IR() bool { _, ok := port.Open(\"ir_tx\", 1); return ok }\n"
-	const user = "package b\nimport (\n\"gogo/a\"\n\"gogo/port\"\n)\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok && a.Rec() }\n"
+	const opt = "// Package a opens mic only when asked.\n//\n//gogo:optional mic spk ui\npackage a\nimport \"gogo/port\"\nfunc Rec() bool { _, err := port.Open(\"mic\", 1); return err == nil }\nfunc Play() bool { _, err := port.Open(\"spk\", 1); return err == nil }\nfunc UI() bool { _, err := port.Open(\"ui\", port.Host{}); return err == nil }\nfunc IR() bool { _, err := port.Open(\"ir_tx\", 1); return err == nil }\n"
+	const user = "package b\nimport (\n\"gogo/a\"\n\"gogo/port\"\n)\nfunc Rec() bool { _, err := port.Open(\"mic\", 1); return err == nil && a.Rec() }\n"
 	libs := fakeLibs(t, map[string]string{"a/a.gg": opt, "b/b.gg": user})
 	tests := []struct {
 		name, src string
@@ -178,7 +178,7 @@ func TestOptionalDirective(t *testing.T) {
 // port.Open drivers soft too; a library's open of the same name still
 // counts, and the names it does not list count.
 func TestOptionalDirectiveMain(t *testing.T) {
-	const lib = "package a\nimport \"gogo/port\"\nfunc Ui() bool { _, ok := port.Open(\"ui\", port.Host{}); return ok }\n"
+	const lib = "package a\nimport \"gogo/port\"\nfunc Ui() bool { _, err := port.Open(\"ui\", port.Host{}); return err == nil }\n"
 	libs := fakeLibs(t, map[string]string{"a/a.gg": lib})
 	tests := []struct{ name, src, want string }{
 		{"main soft", "// Program p.\n//\n//gogo:optional nosuch ui\npackage main\nimport \"gogo/port\"\nfunc main() {\n\t_, _ = port.Open(\"nosuch\", 1)\n\t_, _ = port.Open(\"ui\", port.Host{})\n\t_, _ = port.Open(\"gpio\", 1)\n}\n", "gpio"},

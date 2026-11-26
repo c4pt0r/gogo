@@ -13,8 +13,8 @@ import (
 const key1 = 11
 
 func main() {
-	_, ok := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
-	if !ok {
+	_, err := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+	if err != nil {
 		println("cannot open KEY1")
 		return
 	}

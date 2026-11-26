@@ -568,7 +568,7 @@ func (l *loader) parseUserDir(dir string) ([]*ast.File, error) {
 // file; conventionally the last line of the package doc comment, after a
 // blank // line, as gofmt places directives) naming port drivers the
 // package opens only when a call asks for them at run time, and whose
-// absence (port.Open's ok=false) it handles as an ordinary failure.
+// absence (port.Open's error) it handles as an ordinary failure.
 // Requires then adds no requirement for that package's own constant
 // port.Open of those drivers; importers and the other packages are
 // unaffected. Any driver name is accepted (a board's or a host port's).

@@ -26,6 +26,7 @@ package port
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 )
 
 // Chunk is a stream event: the next block of input. From is the port. Seq
@@ -110,13 +111,28 @@ type Post struct {
 }
 
 // Open opens a port of the named driver with cfg; the caller becomes its
-// owner. ok is false if the driver is unknown, cfg is invalid for it, the
-// resource is taken, or memory runs out. The VM knows which (as a
-// gogo/errors code: NotFound, BadArg, Busy, TooMany or NoMemory); Open
-// will return it as an error once the language has one.
+// owner. It fails with an errors.Code: errors.NotFound if the driver is
+// unknown (the board lacks it), errors.BadArg if cfg is invalid for it,
+// errors.Busy if the resource is taken, errors.TooMany if the port table
+// is full, errors.NoMemory if memory runs out; p is then the zero PID.
+func Open(driver string, cfg any) (p actor.PID, err error) {
+	p, ok := open(driver, cfg)
+	if !ok {
+		return p, errors.Code(openErr()) // read at once: nothing runs in between
+	}
+	return p, nil
+}
+
+// open is Open with ok in place of the error (builtin B_PORT_OPEN).
 //
 //gogo:builtin
-func Open(driver string, cfg any) (p actor.PID, ok bool) { panic("gogo only") }
+func open(driver string, cfg any) (actor.PID, bool) { panic("gogo only") }
+
+// openErr is why the last refused port open of this VM failed, a shared
+// error code (vm->open_err; gogo/fs's builtin, op FsOpenErr).
+//
+//gogo:builtin
+func openErr() int { panic("gogo only") }
 
 // Close closes the port p. A stale or unknown p is ignored.
 //

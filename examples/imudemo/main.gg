@@ -53,8 +53,8 @@ func gestureName(kind int) string {
 }
 
 func main() {
-	_, ok := port.Open("imu", imu.Config{RateHz: 100, Gestures: imu.Tap | imu.DoubleTap | imu.Orientation | imu.Step, BatchMs: 200})
-	if !ok {
+	_, err := port.Open("imu", imu.Config{RateHz: 100, Gestures: imu.Tap | imu.DoubleTap | imu.Orientation | imu.Step, BatchMs: 200})
+	if err != nil {
 		println("no imu")
 		return
 	}

@@ -11,8 +11,8 @@ import (
 )
 
 func main() {
-	p, ok := port.Open("power", power.Config{PeriodMs: 1000})
-	println(ok)
+	p, err := port.Open("power", power.Config{PeriodMs: 1000})
+	println(err == nil)
 	actor.Send(p, power.Read{})
 	for {
 		switch m := actor.Receive().(type) {

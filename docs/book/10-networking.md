@@ -393,8 +393,8 @@ func main() {
 		println("no network")
 		return
 	}
-	u, ok := port.Open("udp", net.UDP{Port: 7})
-	if !ok {
+	u, err := port.Open("udp", net.UDP{Port: 7})
+	if err != nil {
 		println("udp port 7 is taken")
 		return
 	}
@@ -522,8 +522,8 @@ func main() {
 		println("no network")
 		return
 	}
-	_, ok := port.Open("tcp_listen", net.Listen{Port: 7})
-	if !ok {
+	_, err := port.Open("tcp_listen", net.Listen{Port: 7})
+	if err != nil {
 		println("port 7 is taken")
 		return
 	}

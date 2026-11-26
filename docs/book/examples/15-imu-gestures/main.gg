@@ -25,8 +25,8 @@ func side(v int) string {
 }
 
 func main() {
-	_, ok := port.Open("imu", imu.Config{Gestures: imu.DoubleTap | imu.Orientation | imu.Step})
-	if !ok {
+	_, err := port.Open("imu", imu.Config{Gestures: imu.DoubleTap | imu.Orientation | imu.Step})
+	if err != nil {
 		println("no motion sensor on this board")
 		return
 	}

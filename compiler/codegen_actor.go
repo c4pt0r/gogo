@@ -46,7 +46,7 @@ var actorBuiltins = map[string]uint32{
 	"SendAfter": BSendAfter, "CancelTimer": BCancelTimer, "Sleep": BSleep,
 	"Now": BNow, "Call": BCall, "Reply": BReply, "Register": BRegister,
 	"Whereis": BWhereis, "Unregister": BUnregister,
-	"port.Open": BPortOpen, "port.Close": BPortClose, "port.Handoff": BPortHandoff,
+	"port.open": BPortOpen, "port.Close": BPortClose, "port.Handoff": BPortHandoff,
 	"net.Subscribe": BNetSubscribe, "sys.Config": BConfigGet,
 	"sys.Time": BUnixTime, "sys.SetTime": BSetUnixTime, "sys.Random": BRandom,
 	"bytes.NewBuffer": BBufNew, "bytes.FromString": BBytesFrom, "bytes.FromSlice": BBytesFrom,

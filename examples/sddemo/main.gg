@@ -115,7 +115,7 @@ func check(n int) {
 func main() {
 	n := 1
 	check(n)
-	if _, ok := port.Open("gpio", gpio.Config{Pin: g0, Mode: gpio.InputPullUp, Edge: gpio.Falling}); !ok {
+	if _, err := port.Open("gpio", gpio.Config{Pin: g0, Mode: gpio.InputPullUp, Edge: gpio.Falling}); err != nil {
 		println("sd: G0 unavailable")
 	}
 	last := fs.OK

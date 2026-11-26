@@ -15,8 +15,8 @@ import (
 )
 
 func main() {
-	tx, ok := port.Open("ir_tx", ir.TX{CarrierHz: 38000, DutyPct: 33})
-	if !ok {
+	tx, err := port.Open("ir_tx", ir.TX{CarrierHz: 38000, DutyPct: 33})
+	if err != nil {
 		println("no ir_tx")
 		return
 	}

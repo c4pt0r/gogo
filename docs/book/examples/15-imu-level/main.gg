@@ -30,8 +30,8 @@ func abs(v int) int {
 }
 
 func main() {
-	_, ok := port.Open("imu", imu.Config{RateHz: 25, BatchMs: 200})
-	if !ok {
+	_, err := port.Open("imu", imu.Config{RateHz: 25, BatchMs: 200})
+	if err != nil {
 		println("no motion sensor on this board")
 		return
 	}

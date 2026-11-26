@@ -51,8 +51,8 @@ func show(what string, r http.Response, ok bool, t0 int64) {
 // Spawned with room for the TLS state (net.DialTLS: charged to the owner).
 func wrongHost(ip int) {
 	t0 := actor.Now()
-	p, ok := port.Open("tls", net.DialTLS{IP: ip, Port: 443, TimeoutMs: 15000, Host: "wrong.example"})
-	if !ok {
+	p, err := port.Open("tls", net.DialTLS{IP: ip, Port: 443, TimeoutMs: 15000, Host: "wrong.example"})
+	if err != nil {
 		println("wrong.example: open 失败 / open failed")
 		return
 	}

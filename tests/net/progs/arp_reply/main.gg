@@ -10,8 +10,8 @@ import (
 
 func main() {
 	println("subscribe", net.Subscribe())
-	n, ok := port.Open("netif", net.IfConfig{})
-	println("netif", ok)
+	n, err := port.Open("netif", net.IfConfig{})
+	println("netif", err == nil)
 	actor.Sleep(1000)
 	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1, DNS: 10<<24 | 53})
 	switch m := actor.Receive().(type) {

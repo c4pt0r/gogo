@@ -15,7 +15,7 @@ func main() {
 	k1, ok1 := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Both})
 	k2, ok2 := port.Open("gpio", gpio.Config{Pin: 12, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 	_, okr := port.Open("gpio", gpio.Config{Pin: 21, Mode: gpio.Output})
-	println("keys:", ok1, ok2, "reserved:", okr)
+	println("keys:", ok1 == nil, ok2 == nil, "reserved:", okr == nil)
 	for n := 0; n < 10; n++ {
 		switch e := actor.Receive().(type) {
 		case gpio.Edge:

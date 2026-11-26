@@ -12,12 +12,12 @@ import (
 )
 
 func main() {
-	p, ok := port.Open("nosuch", gpio.Config{Pin: 1, Mode: gpio.Output, Edge: gpio.None})
-	println(ok)
+	p, err := port.Open("nosuch", gpio.Config{Pin: 1, Mode: gpio.Output, Edge: gpio.None})
+	println(err == nil)
 	port.Close(p)
 	var q actor.PID
-	q, ok = port.Open("nosuch", 5)
-	println(ok)
+	q, err = port.Open("nosuch", 5)
+	println(err == nil)
 	port.Close(q)
 	println("done")
 }

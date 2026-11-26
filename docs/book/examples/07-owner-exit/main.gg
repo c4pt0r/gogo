@@ -10,8 +10,8 @@ import (
 )
 
 func worker(boss actor.PID, crash bool) {
-	_, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
-	actor.Send(boss, ok)
+	_, err := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
+	actor.Send(boss, err == nil)
 	if crash {
 		zero := 0
 		println(1 / zero)
@@ -27,7 +27,7 @@ func main() {
 	println("second worker opened pin 5:", actor.Receive())
 
 	// While someone owns it, nobody else can open it.
-	_, ok := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
+	_, err := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
 	_, again := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
-	println("pin 7 first open:", ok, "second open:", again)
+	println("pin 7 first open:", err == nil, "second open:", again == nil)
 }

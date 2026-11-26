@@ -6,9 +6,9 @@ port of the last chapter: open them with `port.Open`, receive typed events
 in your type switch, and they close when your actor exits.
 
 Both are the same on every board and on the host. A board without the
-hardware simply refuses to open the port (`ok == false`): the M5StickS3 has
-no keyboard, so `port.Open("kbd", ...)` fails there. Write programs that
-check `ok` and carry on with what the board has.
+hardware simply refuses to open the port (`errors.NotFound`): the M5StickS3
+has no keyboard, so `port.Open("kbd", ...)` fails there. Write programs
+that check the error and carry on with what the board has.
 
 Each of these ports has **one owner at a time** in the whole VM; a second
 `Open` fails while the first is open. If several actors need key presses,
@@ -78,8 +78,8 @@ import (
 const printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 
 func main() {
-	_, ok := port.Open("kbd", kbd.Config{RepeatDelayMs: 400, RepeatMs: 60})
-	if !ok {
+	_, err := port.Open("kbd", kbd.Config{RepeatDelayMs: 400, RepeatMs: 60})
+	if err != nil {
 		println("no keyboard on this board")
 		return
 	}
@@ -208,8 +208,8 @@ import (
 )
 
 func main() {
-	p, ok := port.Open("power", power.Config{PeriodMs: 5000})
-	if !ok {
+	p, err := port.Open("power", power.Config{PeriodMs: 5000})
+	if err != nil {
 		println("no battery monitor on this board")
 		return
 	}

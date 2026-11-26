@@ -22,6 +22,7 @@ const (
 	FsRename    = 11
 	FsUsage     = 12
 	FsWriteAt   = 13
+	FsOpenErr   = 14 // (15.4) -> code: why the last refused port open failed (port.Open)
 )
 
 // fsOps maps each gogo/fs function (stubName) and method (fsMethod) except
@@ -31,6 +32,7 @@ var fsOps = map[string]int32{
 	"File.Size": FsSize, "fs.ReadFile": FsReadFile, "fs.WriteFile": FsWriteFile,
 	"fs.Stat": FsStat, "fs.ReadDir": FsReadDir, "fs.Mkdir": FsMkdir,
 	"fs.Remove": FsRemove, "fs.Rename": FsRename, "fs.Usage": FsUsage, "File.WriteAt": FsWriteAt,
+	"port.openErr": FsOpenErr,
 }
 
 // fsCall compiles a call of the gogo/fs function or method called name

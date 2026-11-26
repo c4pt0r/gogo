@@ -38,7 +38,8 @@
 // The "mic" and "speaker" drivers are optional (the directive below):
 // importing gogo/sound does not make an image require either. On a
 // firmware without the mic, Record returns false; without the speaker,
-// Play returns false (port.Open returns ok=false for an absent driver).
+// Play returns false (port.Open fails with errors.NotFound for an absent
+// driver).
 //
 //gogo:optional mic speaker
 package sound
@@ -240,8 +241,8 @@ func record(parent actor.PID, cfg audio.Mic, dir string, next, rate, frameMs, fr
 	switch req := actor.Receive().(type) {
 	case actor.Request:
 		p, opened := port.Open("mic", cfg)
-		actor.Reply(req, opened)
-		if !opened {
+		actor.Reply(req, opened == nil)
+		if opened != nil {
 			return
 		}
 		mic = p
@@ -326,8 +327,8 @@ func Play(path string) (actor.PID, bool) {
 		f.Close()
 		return actor.Self(), false
 	}
-	sp, ok := port.Open("speaker", audio.Speaker{RateHz: hd.Rate, VolumePct: PlayVolume})
-	if !ok {
+	sp, err := port.Open("speaker", audio.Speaker{RateHz: hd.Rate, VolumePct: PlayVolume})
+	if err != nil {
 		f.Close()
 		return actor.Self(), false
 	}

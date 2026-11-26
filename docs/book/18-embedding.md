@@ -488,8 +488,8 @@ it with a `port.Host` config, sends it `port.Post` commands and receives
 `port.Post` events:
 
 ```go
-	p, ok := port.Open("echo", port.Host{Arg: 7, Data: bytes.FromString("config")})
-	println("open:", ok)
+	p, err := port.Open("echo", port.Host{Arg: 7, Data: bytes.FromString("config")})
+	println("open:", err == nil)
 	e := event()
 	println("hello", e.Kind, e.Data.String())
 ```

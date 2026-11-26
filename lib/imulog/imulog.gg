@@ -63,8 +63,8 @@ func Start(cfg imu.Config, dir string, maxBytes int) (actor.PID, bool) {
 	if maxBytes < 64 {
 		return actor.Self(), false
 	}
-	p, ok := port.Open("imu", cfg)
-	if !ok {
+	p, err := port.Open("imu", cfg)
+	if err != nil {
 		return actor.Self(), false
 	}
 	l := actor.Spawn(func() {

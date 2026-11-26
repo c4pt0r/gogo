@@ -619,7 +619,7 @@ func TestFsMatchC(t *testing.T) {
 	// The op codes of the compiler.
 	ops := map[string]int32{"FS_OPEN": FsOpen, "FS_READ": FsRead, "FS_WRITE": FsWrite, "FS_SYNC": FsSync, "FS_SIZE": FsSize,
 		"FS_READFILE": FsReadFile, "FS_WRITEFILE": FsWriteFile, "FS_STAT": FsStat, "FS_READDIR": FsReadDir,
-		"FS_MKDIR": FsMkdir, "FS_REMOVE": FsRemove, "FS_RENAME": FsRename, "FS_USAGE": FsUsage, "FS_WRITEAT": FsWriteAt}
+		"FS_MKDIR": FsMkdir, "FS_REMOVE": FsRemove, "FS_RENAME": FsRename, "FS_USAGE": FsUsage, "FS_WRITEAT": FsWriteAt, "FS_OPENERR": FsOpenErr}
 	for name, v := range ops {
 		if cv, ok := c[name]; !ok || cv != int64(v) {
 			t.Errorf("%s: C=%d Go=%d (present=%v)", name, cv, v, ok)

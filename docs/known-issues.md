@@ -67,6 +67,14 @@ rebuilt:
   compile (they do nothing now); a type switch or a switch that names
   both `fs.Err` and `errors.Code` (or `code.Err`) as separate cases no
   longer compiles (duplicate case): keep one.
+- **Go signatures.** A library function named like a Go function has
+  the Go signature, and one that can fail for several reasons returns an
+  `error` (format 15.4):
+  - `port.Open(driver, cfg)` returns `(actor.PID, error)`, the error an
+    `errors.Code` (`NotFound` for a driver the board lacks, `BadArg`,
+    `Busy`, `TooMany`, `NoMemory`): `p, ok := port.Open(...)` / `if !ok`
+    becomes `p, err := port.Open(...)` / `if err != nil`. An image that
+    opens a port needs firmware of format 15.4 or later.
 - **Embedding API** (`gogo.h`; hosts must be edited and rebuilt, see
   the book's chapter 18):
   - `gogo_host` and `gogo_config` begin with a `size`: start them from
@@ -252,7 +260,7 @@ rebuilt:
 - **No `sys.Has`.** A program cannot ask which drivers and mounts the
   firmware has before loading; it learns the first missing one from
   `code.Missing` after `Unsupported`, and an absent driver from
-  `port.Open`'s `ok=false`.
+  `port.Open`'s `errors.NotFound`.
 - **`code.Missing` names one requirement.** Only the first missing name
   is reported, and at most 32 bytes of it.
 - **Stale module values alias after 256 loads.** A value from an

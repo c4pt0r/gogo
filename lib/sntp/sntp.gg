@@ -105,8 +105,8 @@ func worker() {
 // exchange sends the request to ip:123 (up to 3 times before deadline) and
 // returns the time from the first valid reply.
 func exchange(ip int, deadline int64) (int64, bool) {
-	u, ok := port.Open("udp", net.UDP{})
-	if !ok {
+	u, err := port.Open("udp", net.UDP{})
+	if err != nil {
 		return 0, false
 	}
 	ms, ok := try(u, ip, deadline)

@@ -24,8 +24,8 @@ func waitDone() int {
 }
 
 func main() {
-	p, ok := port.Open("screen", screen.Config{Cols: 12, Rows: 2})
-	if !ok {
+	p, err := port.Open("screen", screen.Config{Cols: 12, Rows: 2})
+	if err != nil {
 		println("no screen")
 		return
 	}

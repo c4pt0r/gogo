@@ -923,6 +923,10 @@ func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
 
 // stubOf returns the stubName of the builtin function call invokes, or "".
 func (f *fn) stubOf(call *ast.CallExpr) string {
+	if id, ok := ast.Unparen(call.Fun).(*ast.Ident); ok { // a system package's own builtin
+		fn, _ := f.g.p.Info.Uses[id].(*types.Func)
+		return f.g.p.stubName(fn)
+	}
 	if sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr); ok {
 		obj, _ := f.g.p.Info.Uses[sel.Sel].(*types.Func)
 		if name := f.g.p.stubName(obj); name != "" {
@@ -1720,6 +1724,10 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			f.asm.EmitExt(OpBuiltin, dst, base, n, BPrintln)
 			return
 		case *types.Func:
+			if name := f.g.p.stubName(obj); name != "" { // a system package's own builtin
+				f.stubCall(call, name, dst)
+				return
+			}
 			idx, ok := f.g.funcIndex(obj)
 			if !ok {
 				f.fail(call, "internal error: unknown function %s", obj.Name())
@@ -1743,19 +1751,7 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 		}
 		obj, ok := f.g.p.Info.Uses[fun.Sel].(*types.Func)
 		if name := f.g.p.stubName(obj); ok && name != "" {
-			if _, isFs := fsOps[name]; isFs {
-				f.fsCall(call, name, dst)
-				return
-			}
-			if _, isCode := codeOps[name]; isCode {
-				f.codeCall(call, name, dst)
-				return
-			}
-			if _, isFloat := floatOps[name]; isFloat {
-				f.floatCall(call, name, dst)
-				return
-			}
-			f.actorCall(call, name, dst)
+			f.stubCall(call, name, dst)
 			return
 		}
 		if idx, found := f.g.funcIndex(obj); ok && found { // lib.F(...)
@@ -1765,6 +1761,24 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 		}
 	}
 	f.fail(call, "internal error: unexpected call")
+}
+
+// stubCall compiles a call of the builtin function called name
+// (stubName) into dst, through the builtin that implements its package.
+func (f *fn) stubCall(call *ast.CallExpr, name string, dst uint8) {
+	if _, isFs := fsOps[name]; isFs {
+		f.fsCall(call, name, dst)
+		return
+	}
+	if _, isCode := codeOps[name]; isCode {
+		f.codeCall(call, name, dst)
+		return
+	}
+	if _, isFloat := floatOps[name]; isFloat {
+		f.floatCall(call, name, dst)
+		return
+	}
+	f.actorCall(call, name, dst)
 }
 
 // panicCall compiles panic(v): B_PANIC prints v as println would, on

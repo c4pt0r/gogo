@@ -149,7 +149,9 @@ func resolver() {
 			if !ok {
 				data, ok = encode(name, id)
 				if ok && server != 0 && actor.Now() < deadline {
-					u, busy = port.Open("udp", net.UDP{})
+					var err error
+					u, err = port.Open("udp", net.UDP{})
+					busy = err == nil
 				}
 				ok = false
 			}

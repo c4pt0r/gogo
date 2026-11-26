@@ -14,9 +14,9 @@ import (
 )
 
 func main() {
-	sp, ok := port.Open("speaker", audio.Speaker{RateHz: 8000, VolumePct: 50})
+	sp, err := port.Open("speaker", audio.Speaker{RateHz: 8000, VolumePct: 50})
 	tx, ok2 := port.Open("ir_tx", ir.TX{})
-	println("open", ok, ok2)
+	println("open", err == nil, ok2 == nil)
 	b := bytes.NewBuffer(800)
 	for i := 0; i < 800; i++ {
 		b.WriteByte(0)

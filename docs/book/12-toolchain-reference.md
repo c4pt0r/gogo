@@ -149,7 +149,7 @@ program that divides, compares or shifts `uint32`/`uint64` values, uses
 
 A package, a library or `package main`, can declare that it uses some
 drivers only softly: it opens them only when a call asks for that at run
-time, and handles their absence (`port.Open` returns `ok=false`) as an
+time, and handles their absence (`port.Open` returns an error) as an
 ordinary failure. It says so with a directive line in any of its files,
 conventionally the last line of the package doc comment, after an empty
 `//` line (where gofmt puts directives):
@@ -186,7 +186,7 @@ package http
   `mic speaker` (`Record` returns false without a microphone, `Play` without a
   speaker).
 - The directive is a promise the compiler does not check. A library can still hand `main` a function that opens the
-  driver; that open then fails cleanly at run time (`ok=false`) on a
+  driver; that open then fails cleanly at run time (an error) on a
   firmware without the driver.
 - `gogo firmware` (below) chooses features from the requirements, so it does not
   turn a soft driver on by itself; `tls`, `mic` and `speaker` are on by default,

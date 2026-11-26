@@ -885,7 +885,7 @@ func commaOk(lhs, rhs []ast.Expr) *ast.TypeAssertExpr {
 }
 
 // twoResult lists the builtin functions that return two values (by stubName).
-var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true, "sys.Config": true,
+var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.open": true, "sys.Config": true,
 	"fs.Open": true, "fs.ReadFile": true, "fs.Stat": true, "fs.ReadDir": true, "fs.Usage": true,
 	"File.Read": true, "File.Size": true,
 	"code.Load": true, "code.Spawn": true, "code.SpawnLink": true, "code.SpawnOpt": true,
@@ -1011,6 +1011,10 @@ func (c *checker) caseType(t ast.Expr) bool {
 // bytes, net, config or fs) a call invokes, or the fsMethod name of a
 // gogo/fs method call, or "".
 func (c *checker) actorFunc(call *ast.CallExpr) string {
+	if id, ok := ast.Unparen(call.Fun).(*ast.Ident); ok { // a system package's own builtin
+		fn, _ := c.p.Info.Uses[id].(*types.Func)
+		return c.p.stubName(fn)
+	}
 	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	if !ok {
 		return ""
@@ -1184,7 +1188,7 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 				}
 			}
 		case *types.Func:
-			if !c.p.compiled(obj.Pkg()) || c.p.isBuiltin(obj) {
+			if !c.p.compiled(obj.Pkg()) || (c.p.isBuiltin(obj) && c.p.stubName(obj) == "") {
 				c.unsupported(call, "call of "+obj.Name())
 				return
 			}

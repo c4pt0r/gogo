@@ -24,10 +24,10 @@ func sample(d bytes.Bytes, i int) int {
 }
 
 func main() {
-	mic, ok := port.Open("mic", audio.Mic{RateHz: 8000, FrameMs: 100, GainDb: 13})
-	println("mic", ok)
-	_, ok = port.Open("speaker", audio.Speaker{RateHz: 8000, VolumePct: 50})
-	println("spk while mic", ok)
+	mic, err := port.Open("mic", audio.Mic{RateHz: 8000, FrameMs: 100, GainDb: 13})
+	println("mic", err == nil)
+	_, err = port.Open("speaker", audio.Speaker{RateHz: 8000, VolumePct: 50})
+	println("spk while mic", err == nil)
 	for n := 0; n < 3; {
 		switch c := actor.Receive().(type) {
 		case port.Chunk:
@@ -46,10 +46,10 @@ func main() {
 		}
 	}
 	port.Close(mic)
-	spk, ok := port.Open("speaker", audio.Speaker{RateHz: 8000, VolumePct: 50})
-	println("spk", ok)
-	_, ok = port.Open("mic", audio.Mic{RateHz: 8000})
-	println("mic while spk", ok)
+	spk, err := port.Open("speaker", audio.Speaker{RateHz: 8000, VolumePct: 50})
+	println("spk", err == nil)
+	_, err = port.Open("mic", audio.Mic{RateHz: 8000})
+	println("mic while spk", err == nil)
 	b := bytes.NewBuffer(10000)
 	for i := 0; i < 10000; i++ {
 		b.WriteByte(0)

@@ -6,6 +6,6 @@ import (
 )
 
 func Main(arg any) {
-	p, ok := port.Open("kbd", kbd.Config{RepeatDelayMs: 400})
-	println(p, ok)
+	p, err := port.Open("kbd", kbd.Config{RepeatDelayMs: 400})
+	println(p, err == nil)
 }

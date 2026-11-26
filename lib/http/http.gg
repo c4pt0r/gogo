@@ -51,7 +51,7 @@
 //
 // The "tls" driver is optional (the directive below): importing gogo/http
 // does not make an image require tls. On a firmware without it an https
-// request fails (port.Open returns ok=false), as ClientDo/ClientUpload do,
+// request fails (port.Open returns an error), as ClientDo/ClientUpload do,
 // while http works.
 //
 //gogo:optional tls
@@ -340,11 +340,11 @@ func dial(u target, deadline int64) (actor.PID, bool) {
 		return none, false
 	}
 	if u.Secure {
-		c, ok := port.Open("tls", net.DialTLS{IP: ip, Port: u.Port, TimeoutMs: left, Host: u.Host})
-		return c, ok
+		c, err := port.Open("tls", net.DialTLS{IP: ip, Port: u.Port, TimeoutMs: left, Host: u.Host})
+		return c, err == nil
 	}
-	c, ok := port.Open("tcp", net.Dial{IP: ip, Port: u.Port, TimeoutMs: left})
-	return c, ok
+	c, err := port.Open("tcp", net.Dial{IP: ip, Port: u.Port, TimeoutMs: left})
+	return c, err == nil
 }
 
 // requestHead is j's request line and headers for a body of length bytes
@@ -1191,7 +1191,7 @@ func Serve(portNum int, handler func(Request) Response) actor.PID {
 }
 
 func listen(portNum int, handler func(Request) Response) {
-	if _, ok := port.Open("tcp_listen", net.Listen{Port: portNum}); !ok {
+	if _, err := port.Open("tcp_listen", net.Listen{Port: portNum}); err != nil {
 		actor.Exit(ListenFailed)
 	}
 	for {
