@@ -391,6 +391,15 @@ the requirement `float`):
   named basic types; the planned boxing of named non-struct types would
   lift it). As struct fields, slice and array elements they go anywhere,
   messages included. Indexes may be any integer of up to 32 bits.
+- `gogo/strconv` gains `FormatUint`, `ParseUint` and `ParseInt` (with a
+  bit size), in `lib/strconv/unsigned.gg`, a `//gogo:ondemand` file: the
+  compiler emits its functions only when the program refers to them
+  (`onDemandUsed`: a walk over the other files' identifiers, then over the
+  bodies of the functions found), so an image that imports strconv for
+  `Itoa` is unchanged. They are written with `int64` operations on the
+  `uint64`'s bits, so even a caller stays at 15.0 unless it uses unsigned
+  ops itself. This is per-file inclusion, not dead-code elimination: an
+  ordinary library function is still compiled in whether used or not.
 
 **Closures capture by value.** A func literal copies each captured
 variable into the closure when it is created (the capture slots of its
@@ -872,6 +881,14 @@ returns `Unsupported` and `code.Missing` names it; the boot image is
 checked by the same rule (`gogo: image requires kbd, which this VM
 lacks`). A board's capabilities are exactly its port and mount lists,
 built with what its build has (§5.4.5); there is no separate bit table.
+
+**The `//gogo:ondemand` directive.** A comment line `//gogo:ondemand`
+in a file (meant for libraries) makes the compiler emit that file's
+top-level functions only when the rest of the program refers to them,
+directly or through another such function (`onDemandUsed` in
+`compiler/codegen.go`); the file may declare no methods. It is per-file
+inclusion, not dead-code elimination: every other function of a
+compiled package is still in the image. `lib/strconv/unsigned.gg` uses it.
 
 **The `//gogo:optional` directive.** A package (a library or `package
 main`) can declare drivers it uses only softly: opened only when a call needs them at run
@@ -2230,7 +2247,8 @@ first language additions (expression `switch`, labels, `range` over int,
 variadic functions, methods with value receivers, embedded fields,
 arrays, static `defer`); floating point (`float32`, `float64`,
 `gogo/math`, `strconv.FormatFloat` / `ParseFloat`; image format 15.2);
-sized integers (`int8` .. `uint64`; image format 15.3).
+sized integers (`int8` .. `uint64`, `strconv.FormatUint` / `ParseUint` /
+`ParseInt`; image format 15.3).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first

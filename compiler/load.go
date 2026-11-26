@@ -590,8 +590,7 @@ func (l *loader) parseUserDir(dir string) ([]*ast.File, error) {
 	return files, nil
 }
 
-// directivePrefix starts every gogo source directive. The one directive
-// is
+// directivePrefix starts every gogo source directive. There are two.
 //
 //	//gogo:optional name...
 //
@@ -603,7 +602,20 @@ func (l *loader) parseUserDir(dir string) ([]*ast.File, error) {
 // Requires then adds no requirement for that package's own constant
 // port.Open of those drivers; importers and the other packages are
 // unaffected. Any driver name is accepted (a board's or a host port's).
+//
+//	//gogo:ondemand
+//
+// a comment line in a file (of any compiled package; meant for libraries)
+// whose top-level functions are compiled into an image only when the rest
+// of the program refers to them, directly or through another such
+// function (onDemandUsed in codegen.go). It takes no arguments, and the
+// file may declare no methods. Without it every function of a compiled
+// package is in the image, used or not.
 const directivePrefix = "//gogo:"
+
+// onDemandDirective marks a file whose functions are compiled only when
+// used (see directivePrefix).
+const onDemandDirective = directivePrefix + "ondemand"
 
 // directives parses the //gogo: directives of one package's files and
 // returns the drivers named by //gogo:optional. An unknown directive or an
@@ -618,9 +630,15 @@ func (l *loader) directives(files []*ast.File) (map[string]bool, error) {
 					continue
 				}
 				pos := l.fset.Position(c.Pos())
+				if c.Text == onDemandDirective {
+					if err := onDemandMethods(f); err != nil {
+						return nil, fmt.Errorf("%s: gogo: %v", l.fset.Position(err.(onDemandErr).pos), err)
+					}
+					continue
+				}
 				names, ok := strings.CutPrefix(rest, "optional")
 				if !ok || names != "" && names[0] != ' ' && names[0] != '\t' {
-					return nil, fmt.Errorf("%s: gogo: unknown directive %s (want //gogo:optional)", pos, strings.Fields(c.Text)[0])
+					return nil, fmt.Errorf("%s: gogo: unknown directive %s (want //gogo:optional or //gogo:ondemand)", pos, strings.Fields(c.Text)[0])
 				}
 				fields := strings.Fields(names)
 				if len(fields) == 0 {
@@ -825,4 +843,32 @@ func (c Config) load(dir string, names []string, goFiles int) (*Program, error) 
 	}
 	sort.SliceStable(files, func(i, j int) bool { return fset.File(files[i].Pos()).Name() < fset.File(files[j].Pos()).Name() })
 	return &Program{Fset: fset, Files: files, Pkg: pkg, Info: l.info, Libs: l.order, Optional: optional, Warnings: l.warnings}, nil
+}
+
+// onDemandErr is a method declared in a //gogo:ondemand file.
+type onDemandErr struct{ pos token.Pos }
+
+func (onDemandErr) Error() string { return "a //gogo:ondemand file may declare no methods" }
+
+// onDemandMethods reports the first method declared in f (a
+// //gogo:ondemand file), or nil.
+func onDemandMethods(f *ast.File) error {
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv != nil {
+			return onDemandErr{fd.Pos()}
+		}
+	}
+	return nil
+}
+
+// isOnDemand reports whether f carries //gogo:ondemand.
+func isOnDemand(f *ast.File) bool {
+	for _, g := range f.Comments {
+		for _, c := range g.List {
+			if c.Text == onDemandDirective {
+				return true
+			}
+		}
+	}
+	return false
 }

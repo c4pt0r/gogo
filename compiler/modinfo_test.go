@@ -205,7 +205,7 @@ func TestOptionalDirectiveErrors(t *testing.T) {
 	}
 	tests := []struct{ name, src, directive, want string }{
 		{"no driver", useLib, "//gogo:optional", `a/a.gg:3:1: gogo: //gogo:optional names no driver`},
-		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`},
+		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional or //gogo:ondemand)`},
 		{"glued name", useLib, "//gogo:optionaltls", `unknown directive //gogo:optionaltls`},
 		{"empty in main", "package main\n\n//gogo:optional\n\nfunc main() {}\n", "", `main.gg:3:1: gogo: //gogo:optional names no driver`},
 	}

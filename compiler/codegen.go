@@ -28,12 +28,15 @@ func Compile(p *Program) ([]byte, error) {
 	}
 
 	// Index every top-level function of every package first so calls to
-	// later ones resolve.
+	// later ones resolve; a //gogo:ondemand file's only if used.
+	used := onDemandUsed(p)
 	var decls []*ast.FuncDecl
 	for _, pkg := range p.packages() {
 		for _, f := range pkg.Files {
+			onDemand := isOnDemand(f)
 			for _, d := range f.Decls {
-				if fd, ok := d.(*ast.FuncDecl); ok && !isIntrinsic(p.Info, fd) {
+				if fd, ok := d.(*ast.FuncDecl); ok && !isIntrinsic(p.Info, fd) &&
+					(!onDemand || used[p.Info.Defs[fd.Name].(*types.Func)]) {
 					fn := p.Info.Defs[fd.Name].(*types.Func)
 					g.funcIdx[fn] = uint32(len(g.funcs))
 					g.funcs = append(g.funcs, &funcInfo{name: g.qualified(fn.Pkg(), funcName(fn))})
@@ -1640,4 +1643,46 @@ func (f *fn) callValue(call *ast.CallExpr, dst uint8) {
 	}
 	f.asm.Emit(OpCallv, dst, clo, n)
 	f.next = mark
+}
+
+// onDemandUsed returns the functions of //gogo:ondemand files that the
+// program refers to: from any other file, or from the body of an on-demand
+// function it refers to (transitively). A reference is any use of the
+// function's name: a call, or a func value.
+func onDemandUsed(p *Program) map[*types.Func]bool {
+	decls := map[*types.Func]*ast.FuncDecl{}
+	var others []*ast.File
+	for _, pkg := range p.packages() {
+		for _, f := range pkg.Files {
+			if !isOnDemand(f) {
+				others = append(others, f)
+				continue
+			}
+			for _, d := range f.Decls {
+				if fd, ok := d.(*ast.FuncDecl); ok {
+					decls[p.Info.Defs[fd.Name].(*types.Func)] = fd
+				}
+			}
+		}
+	}
+	used := map[*types.Func]bool{}
+	if len(decls) == 0 {
+		return used
+	}
+	var visit func(n ast.Node)
+	visit = func(n ast.Node) {
+		ast.Inspect(n, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok {
+				if fn, ok := p.Info.Uses[id].(*types.Func); ok && decls[fn] != nil && !used[fn] {
+					used[fn] = true
+					visit(decls[fn])
+				}
+			}
+			return true
+		})
+	}
+	for _, f := range others {
+		visit(f)
+	}
+	return used
 }

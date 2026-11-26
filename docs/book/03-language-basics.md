@@ -381,6 +381,8 @@ not fit its type is a compile error. `uint` is 32 bits, like `int`.
 // conversions.
 package main
 
+import "gogo/strconv"
+
 // Reg is a named uint32 with methods, like a hardware register.
 type Reg uint32
 
@@ -438,8 +440,10 @@ func main() {
 	r := Reg(0x80000001)
 	println("register:", r.Bit(31), r.Bit(1), uint32(r))
 
-	println("crc32:", crc32("hello"))
+	println("crc32:", crc32("hello"), strconv.FormatUint(uint64(crc32("hello")), 16))
 	println("fnv1a:", fnv1a("gogo"))
+	v, ok := strconv.ParseUint("18446744073709551615", 10, 64)
+	println("parse:", v, ok)
 }
 ```
 
@@ -449,8 +453,9 @@ unsigned: 18446744073709551615 6148914691236517205 true 15
 uint: 2147483648 0 -2147483648
 convert: 255 4294967295 18446744073709551615 -56 4294967295
 register: true false 2147483649
-crc32: 907060870
+crc32: 907060870 3610a686
 fnv1a: 11313272551757906769
+parse: 18446744073709551615 true
 ```
 
 - Conversions follow Go: to a narrower type they keep the low bits
@@ -469,6 +474,8 @@ fnv1a: 11313272551757906769
 - `println` prints an unsigned value as unsigned. A struct, slice or array
   holding a `uint32`, `uint` or `uint64` cannot be printed whole (`println
   of main.P not supported`): print its fields one by one.
+- `gogo/strconv` has `FormatUint`, `ParseUint` and `ParseInt` with a bit
+  size (0 means 32 bits, the size of `int` and `uint` in gogo).
 - **Cost.** `int8`, `int16`, `uint8`, `uint16` and `int32` are as cheap as
   `int` (a narrow result costs one extra instruction to cut it back);
   `uint64` as cheap as `int64`. `uint32` (and `uint`) `+ - * & | ^ <<` cost
@@ -1633,7 +1640,8 @@ rest:
 
 - `gogo/strings`: `Index`, `IndexByte`, `Cut`, `HasPrefix`, `HasSuffix`,
   `TrimSpace`, `ToLower`, `EqualFold`, `Split`.
-- `gogo/strconv`: `Itoa`, `Atoi`, `FormatInt64`, `ParseInt64`.
+- `gogo/strconv`: `Itoa`, `Atoi`, `FormatInt64`, `ParseInt64`,
+  `FormatUint`, `ParseUint`, `ParseInt` (with a bit size).
 
 All of them work on bytes. `ToLower`, `EqualFold` and `TrimSpace` know only
 ASCII. Parse functions return `(value, ok bool)` instead of an error.

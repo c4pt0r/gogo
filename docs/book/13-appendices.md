@@ -158,6 +158,9 @@ func strconv.Itoa(i int) string
 func strconv.Atoi(s string) (n int, ok bool)
 func strconv.FormatInt64(i int64, base int) string        // "" for a bad base
 func strconv.ParseInt64(s string, base int) (n int64, ok bool) // no base 0, no _
+func strconv.FormatUint(i uint64, base int) string          // "" for a bad base
+func strconv.ParseUint(s string, base, bitSize int) (n uint64, ok bool) // bitSize 0: 32
+func strconv.ParseInt(s string, base, bitSize int) (n int64, ok bool)   // bitSize 0: 32
 ```
 
 ### gogo/kbd and gogo/power

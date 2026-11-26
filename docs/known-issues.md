@@ -374,7 +374,10 @@ rebuilt:
   *Workaround:* wrap it in a struct.
 - **No dead-code elimination.** Importing a library compiles all of it
   into the image (`gogo/strings` costs about 440 words, `gogo/strconv`
-  about 360), which matters on boards with little flash.
+  about 360), which matters on boards with little flash. The exception
+  is a file marked `//gogo:ondemand`, whose functions are compiled in only
+  when the program uses them: strconv's `FormatUint` (about 130 words) and
+  `ParseUint` / `ParseInt` (about 430 together) are in one.
 - **Requirement inference is a heuristic.** A constant `"/sd"` path
   passed to `gogo/fs` makes the image require `/sd`, even if the program
   only probes for a card (there is no directive for mounts). *Workaround:*
@@ -399,7 +402,8 @@ rebuilt:
   `[1 2 3]`; Go's `println` prints `[len/cap]address` (only
   `fmt.Println` prints elements).
 - **Library differences from Go.** `strconv` handles bases 2 to 36 only
-  (no prefixes, no underscores) and `Atoi` overflows at 32 bits;
+  (no prefixes, no underscores), `Atoi` overflows at 32 bits, and
+  `ParseInt` / `ParseUint` with bit size 0 mean 32 bits;
   `strings.TrimSpace`, `ToLower` and `EqualFold` are ASCII-only and
   `Split(s, "")` splits into bytes; slices grow by doubling from a
   capacity of 4.
@@ -471,7 +475,9 @@ rebuilt:
   `uint64`, arithmetic on `int8`, `int16` or `uint16`, the `uint32` ops
   above and `println` of an unsigned value need firmware of image format
   15.3 or later; `byte` and `int32` arithmetic and `uint32` `+ - * & | ^
-  <<` do not.
+  <<` do not. `gogo/strconv`'s `FormatUint` / `ParseUint` / `ParseInt`
+  are written without them, so importing it does not raise an image's
+  format.
 - **Float conversions out of range** follow Go on arm64: `uint64(f)` is 0
   for NaN and negative values and 2^64-1 from 2^64 up; `uint32(f)` is the
   low 32 bits of `int64(f)` (4294967295 for `f` = -1.0, 1410065408 for

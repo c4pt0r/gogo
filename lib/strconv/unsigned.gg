@@ -1,0 +1,125 @@
+package strconv
+
+// The unsigned and sized-integer functions. This file is compiled into an
+// image only for the functions the program uses (//gogo:ondemand), so
+// importing strconv for Itoa or Atoi does not pay for them. They compute
+// with int64 operations on the uint64's bits: the unsigned ops (/, %, <,
+// >> on a uint64) would make every image that calls them need format 15.3.
+//
+//gogo:ondemand
+
+// udiv returns n / b and n % b of n's bits as a uint64, 2 <= b <= 36.
+func udiv(n, b int64) (q, r int64) {
+	if n >= 0 {
+		return n / b, n % b
+	}
+	// n >= 2^63: halve it (logically), divide, double; the remainder is
+	// then below 2b.
+	q = (n >> 1 & 0x7FFFFFFFFFFFFFFF) / b * 2
+	r = n - q*b
+	if r >= b {
+		q++
+		r -= b
+	}
+	return q, r
+}
+
+// FormatUint returns the string form of i in the given base, 2 <= base <=
+// 36, using lower case letters for digits above 9. For any other base it
+// returns "".
+func FormatUint(i uint64, base int) string {
+	if base < 2 || base > 36 {
+		return ""
+	}
+	buf := make([]byte, 64) // 64 binary digits
+	p := len(buf)
+	b := int64(base)
+	n := int64(i)
+	for {
+		p--
+		q, r := udiv(n, b)
+		buf[p] = digits[int(r)]
+		n = q
+		if n == 0 {
+			break
+		}
+	}
+	return string(buf[p:])
+}
+
+// digitVal is the value of digit c in any base up to 36 (letters of either
+// case), 36 if c is not a digit.
+func digitVal(c byte) int64 {
+	switch {
+	case c >= '0' && c <= '9':
+		return int64(c - '0')
+	case c >= 'a' && c <= 'z':
+		return int64(c-'a') + 10
+	case c >= 'A' && c <= 'Z':
+		return int64(c-'A') + 10
+	}
+	return 36
+}
+
+// ParseUint parses s as an unsigned integer in the given base, 2 <= base
+// <= 36, with no sign and, above base 10, letters of either case. bitSize
+// is the width of the result's type: 8, 16, 32 or 64, or 0 for uint (32
+// bits in gogo). ok is false if base or bitSize is out of range, s is
+// empty or not a valid number, or the value does not fit in bitSize bits.
+// Unlike Go, base 0 (prefix detection) and underscores are not supported.
+func ParseUint(s string, base int, bitSize int) (n uint64, ok bool) {
+	if bitSize == 0 {
+		bitSize = 32
+	}
+	if base < 2 || base > 36 || bitSize < 1 || bitSize > 64 || len(s) == 0 {
+		return 0, false
+	}
+	max := int64(-1) // the bits of 2^64 - 1
+	if bitSize < 64 {
+		max = int64(1)<<bitSize - 1
+	}
+	b := int64(base)
+	cut, rem := udiv(max, b) // acc*b + d <= max: acc < cut, or acc == cut and d <= rem
+	var acc int64            // below 2^63 until the last digit
+	for i := 0; i < len(s); i++ {
+		d := digitVal(s[i])
+		if d >= b || acc < 0 || acc > cut || acc == cut && d > rem {
+			return 0, false
+		}
+		acc = acc*b + d
+	}
+	return uint64(acc), true
+}
+
+// ParseInt parses s as a signed integer in the given base, as ParseInt64
+// does, for a result of bitSize bits: 8, 16, 32 or 64, or 0 for int (32
+// bits in gogo). ok is false if bitSize is out of range or the value does
+// not fit in bitSize bits.
+func ParseInt(s string, base int, bitSize int) (n int64, ok bool) {
+	if bitSize == 0 {
+		bitSize = 32
+	}
+	if bitSize < 1 || bitSize > 64 || len(s) == 0 {
+		return 0, false
+	}
+	neg := s[0] == '-'
+	if s[0] == '-' || s[0] == '+' {
+		s = s[1:]
+	}
+	u, ok := ParseUint(s, base, 64)
+	if !ok {
+		return 0, false
+	}
+	v := int64(u)
+	if bitSize == 64 {
+		if v < 0 && !(neg && v == -1<<63) { // beyond 2^63 - 1; only -2^63 fits
+			return 0, false
+		}
+	} else if limit := int64(1) << (bitSize - 1); v < 0 || !neg && v >= limit || neg && v > limit {
+		return 0, false
+	}
+	if neg {
+		return -v, true
+	}
+	return v, true
+}
