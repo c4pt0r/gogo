@@ -105,9 +105,13 @@ void module_config(Vm *vm) {
     if (n < 0) return;
     uint64_t x = 0;
     int32_t i = 0;
-    while (i < n && i < (int32_t)sizeof v && v[i] >= '0' && v[i] <= '9') x = x * 10u + (uint64_t)(v[i++] - '0');
-    if (i > 0 && i + 1 == n && (v[i] | 0x20) == 'k') { x <<= 10; i++; }
-    else if (i > 0 && i + 1 == n && (v[i] | 0x20) == 'm') { x <<= 20; i++; }
+    uint32_t d;
+    while (i < n && i < (int32_t)sizeof v && (d = (uint8_t)v[i] - (uint32_t)'0') <= 9u) { x = x * 10u + d; i++; }
+    if (i > 0 && i + 1 == n) {
+        uint32_t c = (uint8_t)(v[i] | 0x20), sh = c == 'k' ? 10u : c == 'm' ? 20u : 0u;
+        x <<= sh;
+        i += sh != 0;
+    }
     if (i == 0 || i != n || x > 0xFFFFFFFFu) {   /* 12 bytes: no overflow before this check */
         static const char msg[] = "gogo: bad code.mem; using the default\n";
         vm_write_err(vm, msg, sizeof msg - 1u);
