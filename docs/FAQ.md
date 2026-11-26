@@ -228,6 +228,25 @@ sized integers, floating point (`float32` and `float64`), arrays, embedded
 fields and a static `defer`. Not planned: `goto`, `recover`, per-actor
 mutable globals, channels, `go` statements. Generics are deferred.
 
+### Can I import packages?
+- **The standard library, yes:** `gogo/actor`, `gogo/http`, `gogo/strconv`,
+  `gogo/tui` and the rest are built into the compiler.
+- **Your own packages, soon.** Today a program is one directory, and
+  `import "app/util"` is refused. Coming next: imports outside `gogo/`
+  resolve first inside the directory you build (`gogo build app` maps
+  `app/util` to `app/util/`), then in each directory of `$GOGOPATH`
+  (colon-separated, `;` on Windows; `$HOME/gogo` when unset), first match
+  wins, with a warning when the same path exists in more than one place.
+  No `go.mod` is needed. `gogo env` will print the search path and
+  `gogo build -path` will override it. Fetching packages from the network
+  (`gogo get`) and versioning come later.
+- **Ordinary Go packages, no.** gogo is a subset of Go, and most Go
+  packages use features it does not have (goroutines, reflection, and for
+  now maps and floats). Libraries have to be written for gogo.
+
+At run time, separately built modules can also be combined with hot
+loading (book chapter 14).
+
 ### Can I compile on the device?
 No. The compiler is written in Go and needs the Go runtime, which does not
 fit a microcontroller. You compile on your computer and push the `.ggb`
