@@ -808,8 +808,11 @@ static term dec(Dec *d, uint32_t depth) {
     }
     case DT_REF: {
         uint64_t node = get_var(d, 16), s = get_var(d, SERIAL_BITS);
-        if (!node || !s) d->bad = true;
-        if (node != d->ds->self) s |= node << SERIAL_BITS;
+        /* A Ref of this node coming from a peer is refused: a peer could
+         * otherwise forge a local Ref (a DownMsg or a reply that matches a
+         * local monitor or Call). */
+        if (!node || !s || node == d->ds->self) d->bad = true;
+        s |= node << SERIAL_BITS;
         uint32_t off = obj(d, 3);
         if (d->w && !d->bad) {
             d->w[off] = hdr_make(3, K_REF);
