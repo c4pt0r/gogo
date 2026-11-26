@@ -626,7 +626,8 @@ one:
 
 At 25 Hz that is fine in gogo. Filtering 16 000 audio samples a second,
 compressing an image or computing an FFT is not: there is no port for
-those today, and they would be C functions behind a port. In gogo, pass
+those today, and they would be C functions behind a port (chapter 22
+shows how to write one). In gogo, pass
 such data through without touching each byte (write it to a file, send it
 on a socket) and keep the per-byte loops for small things: a peak over a
 short frame, the line parser of section 21.10.

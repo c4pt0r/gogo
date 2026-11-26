@@ -73,11 +73,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
+test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
 
 vm: $(BUILD)/gogovm
 
@@ -499,6 +499,18 @@ $(BUILD)/embed-go: $(BUILD)/libgogo.a FORCE
 
 example-embed: $(EXAMPLE_EMBED_BINS) gogo-cmd
 	examples/embed-c/test.sh $(BUILD)
+
+# examples/dice-driver: a port driver in C (book chapter 22), compiled
+# into a test-only board (board.c) on the unix host and nowhere else: not
+# into gogovm or the firmware. test.sh runs its program there and compares
+# the output with driver.out, and checks that gogovm refuses the image.
+DICE_SRCS = examples/dice-driver/board.c examples/dice-driver/dice.c runtime/board/board_main.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c)
+$(BUILD)/dice-driver/dice-board: $(DICE_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(FLAGS_STAMP)
+	@mkdir -p $(BUILD)/dice-driver
+	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(DICE_SRCS) $(VM_SRCS)
+
+example-driver: $(BUILD)/dice-driver/dice-board vm gogo-cmd
+	examples/dice-driver/test.sh $(BUILD)
 
 # Console text grid + font lookup (runtime/console), host build.
 CONSOLE_SRCS = runtime/console/console.c runtime/console/font.c

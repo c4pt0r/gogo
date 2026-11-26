@@ -1,0 +1,9 @@
+open with seed 0: busy
+open with seed 42: true
+main rolls 1 5 4
+main rolls 3 1 1 1 5
+handoff: true
+player rolls 2 6 5 2
+done
+a second port, same seed: true
+main rolls 1 5 4

@@ -1,0 +1,55 @@
+// dice-driver: a port whose driver is C code in the VM.
+//
+// The "dice" driver (dice.c next to this file) uses only gogo/port's
+// generic types: it is opened with a port.Host config (Arg is the seed),
+// takes port.Post commands (Kind is how many dice to roll) and answers
+// with one port.Post event per die (Kind is the face). It exists only in
+// the test board (board.c, `make example-driver`): the image requires
+// "dice", so gogovm and every firmware refuse it.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+	"gogo/strconv"
+)
+
+// roll asks the dice port p for n dice and prints the faces.
+func roll(who string, p actor.PID, n int) {
+	actor.Send(p, port.Post{Kind: n})
+	faces := ""
+	for got := 0; got < n; {
+		switch e := actor.Receive().(type) {
+		case port.Post:
+			if e.From == p {
+				faces += " " + strconv.Itoa(e.Kind)
+				got++
+			}
+		}
+	}
+	println(who, "rolls"+faces)
+}
+
+func main() {
+	_, err := port.Open("dice", port.Host{Arg: 0})
+	println("open with seed 0:", err.Error())
+
+	p, err := port.Open("dice", port.Host{Arg: 42})
+	println("open with seed 42:", err == nil)
+	roll("main", p, 3)
+	roll("main", p, 5)
+
+	// The port's events follow its owner; the driver does nothing for it.
+	me := actor.Self()
+	player := actor.Spawn(func() {
+		roll("player", p, 4)
+		actor.Send(me, "done")
+	})
+	println("handoff:", port.Handoff(p, player))
+	println(actor.Receive())
+
+	port.Close(p) // the player's exit has closed it: a stale PID is ignored
+	q, err := port.Open("dice", port.Host{Arg: 42})
+	println("a second port, same seed:", err == nil)
+	roll("main", q, 3)
+}

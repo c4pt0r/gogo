@@ -29,6 +29,7 @@ and assumes no knowledge of embedded programming or Erlang.
 19. [Text UI](19-text-ui.md): the `"screen"` port, `gogo/tui`: frames, windows, colours, menus, progress bars, status lines, a line editor, keys on both boards
 20. [Distributed Actors](20-distributed.md): `gogo/node`: a server node and boards, remote PIDs, names, what a message may hold, lost nodes, security
 21. [Best Practices](21-best-practices.md): actors as small machines, messages and `Bytes`, backpressure, shared state, Call discipline, restarts, receive order, C or gogo, high-bandwidth streams (audio, sensors, cameras), streaming TCP and HTTP, a checklist
+22. [Extending gogo with C](22-extending-with-c.md): why there is no FFI, port drivers in C (the driver table, events, memory, requirements, optional features, host simulation), a tested driver with generic types, host ports, pitfalls
 
 [Known issues](../known-issues.md) lists gogo's open limitations, with
 workarounds.
@@ -54,4 +55,7 @@ VMs over real TCP by `go test ./tests/dist/`.
 
 Chapter 18's C programs are in [`examples/embed-c/`](../../examples/embed-c/);
 `make example-embed` builds them, runs them and checks that every C
-snippet in the chapter is cut from them.
+snippet in the chapter is cut from them. Chapter 22's driver is in
+[`examples/dice-driver/`](../../examples/dice-driver/); `make
+example-driver` runs it on its test board and checks the chapter's
+snippets against the tree.
