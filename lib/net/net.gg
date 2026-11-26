@@ -3,7 +3,7 @@
 // compiler replaces every call with VM instructions, so the bodies are never
 // executed.
 //
-// The struct types below have fixed type indices 9-26 (and 44, DialTLS) in every image
+// The struct types below have fixed type indices 9-22 (and 41, DialTLS) in every image
 // (TYPE_NET_* in runtime/vm/opcodes.h); keep their field order in sync with
 // compiler.reservedTypes.
 //
@@ -32,31 +32,50 @@
 //     limit only): an active open. Open fails without an address, while
 //     the link is down, to a broadcast or multicast address, or without a
 //     free connection slot (4 in all; a TIME_WAIT or half-open inbound one
-//     is reclaimed). The owner gets Connected, or Closed with Refused,
-//     Timeout or NoRoute. See Write, Shutdown, Data and Closed.
+//     is reclaimed). The owner gets Connected, or port.Closed with
+//     Refused, Timeout or NoRoute. The connection speaks the stream
+//     protocol of every byte port (gogo/port): received bytes arrive as
+//     port.Chunk (Dropped always 0), port.Out sends and each Out is
+//     answered by port.Done once the peer acknowledged all of it, and
+//     port.Closed ends it; every event's From is the connection's port.
+//     See Shutdown and the Closed reasons below.
 //   - "tls", cfg DialTLS{IP, Port, TimeoutMs, Host}: like "tcp", with TLS
 //     1.2 on top (see DialTLS). At most one at a time: a second open fails.
 //   - "tcp_listen", cfg Listen{Port}: the owner gets Accepted{Conn} for each
 //     connection the peer completes; Conn is a "tcp" port owned by the
-//     listener and paused (no Data, window 0) until port.Handoff gives it
+//     listener and paused (no Chunk, window 0) until port.Handoff gives it
 //     to another actor or its owner sends it Resume{}. Inbound connections
 //     never take the last free slot (a SYN that would is dropped; the peer
 //     retries), so the device's own Dial always finds one.
 //
 // TCP is deliberately small: one segment in flight each way (window 1460
 // bytes), in-order segments only, retransmission after 1 s doubling to 8
-// s, given up (Closed{Timeout}) after 6 retransmissions. A peer whose
+// s, given up (port.Closed{Timeout}) after 6 retransmissions. A peer whose
 // window stays 0 gets 1-byte probes on the same timer, so a connection
 // it never reopens is aborted the same way, about 39 s after its first
 // probe (Closed{Timeout}). A received
-// segment is acknowledged only once its Data is in the owner's mailbox: an
-// owner near its memory limit is never killed, the peer resends instead
-// (Data leaves room for the control events; one that still does not fit
-// waits until the owner has read some).
+// segment is acknowledged only once its Chunk is in the owner's mailbox:
+// an owner near its memory limit is never killed, the peer resends instead
+// (a Chunk leaves room for the control events; one that still does not
+// fit waits until the owner has read some).
+//
+// Out: at most two in flight per connection (one being sent, one queued;
+// an Out whose Done is still owed counts). A third, an empty one, one
+// after Shutdown, or one on a connection that has ended gets Done{Seq: -1}
+// and is not sent; the connection carries on. Data is pinned (or copied)
+// on the owner's behalf until acknowledged; a small Out is copied into a
+// Bytes handle held for the owner, so it is also refused when the VM's 64
+// Bytes handles are all taken by other actors. When the connection ends,
+// the Outs still in flight get Done{-1}, then the Closed comes.
+//
+// port.Closed: Reason Normal means the peer finished sending (it may still
+// read: Out and Shutdown work until the port is closed). Any other reason:
+// the connection is gone (this may follow a Normal one). After either,
+// close the port.
 //
 // A connection lives only while the interface keeps its address: link
 // loss, SetAddr to another address or IP 0, or the "netif" port closing
-// (its owner exiting) ends every connection with Closed{NoRoute}, orphans
+// (its owner exiting) ends every connection with port.Closed{NoRoute}, orphans
 // included. Keep the netif owner (the DHCP actor) alive while connections
 // should finish closing.
 package net
@@ -123,8 +142,8 @@ type Dial struct {
 // DialTLS configures a "tls" port: a "tcp" connection to IP:Port with TLS
 // on top, to the server named Host (the SNI name, and the name its
 // certificate is checked against). The port speaks the same messages as
-// "tcp" (Connected, Write, Written, Data, Shutdown, Closed), only the bytes
-// are the TLS plaintext; it is a separate config type, not a field of Dial,
+// "tcp" (Connected, Shutdown and the port.Out, Done, Chunk and Closed of
+// the stream protocol), only the bytes are the TLS plaintext; it is a separate config type, not a field of Dial,
 // because a port's config type is fixed per driver and Dial is the "tcp"
 // one. IP, Port and TimeoutMs are as in Dial (TimeoutMs bounds the connect
 // and the handshake together). The certificate is always verified, there is
@@ -141,7 +160,7 @@ type Dial struct {
 // port before that went out resets the connection.
 //
 // Memory: the TLS state (about 23 KB: record buffers of 16 KB in and 4 KB
-// out) is charged to the owner, which needs room for it and one Data on
+// out) is charged to the owner, which needs room for it and one Chunk on
 // top of its heap, or the open fails: on a board with the default 16 KB
 // actor limit, open it from an actor spawned with a larger MaxMemory
 // (actor.SpawnOpt). A connection peaks at about 34 KB of TLS memory (the
@@ -153,8 +172,9 @@ type Dial struct {
 // what you read (a length, a terminator) and treat a short read as an
 // error, never "read until close".
 //
-// Closed: at most one Normal, then exactly one terminal Closed (any other
-// reason) per connection; a Write still pending then gets no Written.
+// Closed: at most one Normal, then at most one terminal Closed (any other
+// reason; a graceful close ends with Normal alone) per connection; the Outs
+// still in flight get Done{-1} before a terminal one.
 type DialTLS struct {
 	IP, Port, TimeoutMs int
 	Host                string
@@ -165,18 +185,6 @@ type Listen struct {
 	Port int
 }
 
-// Write is a command to a "tcp" port: send Data. Written follows once the
-// peer acknowledged all of it. One Write may wait behind the one in
-// progress; a third before Written closes the connection with
-// Closed{Overflow}, as does writing on while 3 Written events are owed
-// (not yet delivered because the owner's mailbox is full). Data is pinned
-// (or copied) on the owner's behalf until acknowledged; a small Write is
-// copied into a Bytes handle held for the owner, so it can also close with
-// Overflow when the VM's 64 Bytes handles are all taken by other actors.
-type Write struct {
-	Data bytes.Bytes
-}
-
 // Shutdown is a command to a "tcp" port: send FIN after the pending
 // writes. After it, closing the port (or the owner's exit) lets the
 // connection finish its close on its own instead of resetting it (an
@@ -185,29 +193,12 @@ type Write struct {
 // whatever its progress.
 type Shutdown struct{}
 
-// Resume is a command to an accepted "tcp" port: start delivering Data
+// Resume is a command to an accepted "tcp" port: start delivering Chunks
 // (port.Handoff does the same).
 type Resume struct{}
 
 // Connected is sent to a "tcp" port's owner when the connection is up.
 type Connected struct{}
-
-// Data is an event of a "tcp" port: the next bytes from the peer, in
-// order, one message per segment.
-type Data struct {
-	Data bytes.Bytes
-}
-
-// Written is sent when the peer acknowledged a Write's data.
-type Written struct{}
-
-// Closed is an event of a "tcp" port. Reason Normal: the peer finished
-// sending (it may still read: Write and Shutdown work until the port is
-// closed). Any other reason: the connection is gone (this may follow a
-// Normal one). After either, close the port.
-type Closed struct {
-	Reason int
-}
 
 // Accepted is an event of a "tcp_listen" port: Conn is a new connection's
 // "tcp" port, owned by the listener's owner and paused.
@@ -215,15 +206,14 @@ type Accepted struct {
 	Conn actor.PID
 }
 
-// Closed reasons.
+// The Reason of a "tcp" or "tls" port's port.Closed (4 is unused).
 const (
-	Normal   = 0
-	Reset    = 1
-	Timeout  = 2
-	Refused  = 3
-	Overflow = 4
-	NoRoute  = 5
-	NoTime   = 6 // tls: the wall clock is not set (gogo/sntp, gogo/sys)
-	BadCert  = 7 // tls: the server's certificate is untrusted, expired or not for Host
-	TLS      = 8 // tls: any other TLS failure (an alert, a bad record, out of memory)
+	Normal  = 0
+	Reset   = 1
+	Timeout = 2
+	Refused = 3
+	NoRoute = 5
+	NoTime  = 6 // tls: the wall clock is not set (gogo/sntp, gogo/sys)
+	BadCert = 7 // tls: the server's certificate is untrusted, expired or not for Host
+	TLS     = 8 // tls: any other TLS failure (an alert, a bad record, out of memory)
 )

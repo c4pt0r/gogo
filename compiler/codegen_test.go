@@ -553,13 +553,13 @@ func TestCompileReservedTypes(t *testing.T) {
 	want := []string{"ProcInfo/1", "Reason/2", "ExitMsg/2", "DownMsg/3", "Request/3", "Options/1",
 		"port.GPIO/4", "port.Write/1", "port.Edge/2",
 		"net.IfConfig/0", "net.SetAddr/4", "net.Up/3", "net.Down/0", "net.Addr/2", "net.UDP/1",
-		"net.SendTo/2", "net.Datagram/2", "net.Dial/3", "net.Listen/1", "net.Write/1", "net.Shutdown/0",
-		"net.Resume/0", "net.Connected/0", "net.Data/1", "net.Written/0", "net.Closed/1", "net.Accepted/1",
+		"net.SendTo/2", "net.Datagram/2", "net.Dial/3", "net.Listen/1", "net.Shutdown/0",
+		"net.Resume/0", "net.Connected/0", "net.Accepted/1",
 		"fs.Info/2", "fs.Space/2",
 		"kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4", "power.Read/0", "code.Module/2",
-		"port.Chunk/4", "port.Out/1", "port.Done/1", "imu.Config/3", "imu.Gesture/2", "ir.TX/2", "ir.RX/1",
+		"port.Chunk/5", "port.Out/1", "port.Done/2", "port.Closed/2", "imu.Config/3", "imu.Gesture/2", "ir.TX/2", "ir.RX/1",
 		"audio.Mic/3", "audio.Speaker/2", "net.DialTLS/4",
-		"port.Host/2", "port.Post/2"}
+		"port.Host/2", "port.Post/3"}
 	// A program that names no reserved type carries no reserved row: its
 	// own types are numbered from TypeOwnBase.
 	img := compileImage(t, "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tvar a any = P{1, 2}\n\tswitch a.(type) {\n\tcase P:\n\t\tprintln(1)\n\t}\n}\n")
@@ -597,8 +597,8 @@ func TestCompileReservedTypes(t *testing.T) {
 	for _, w := range want[:len(want)-1] {
 		empty = append(empty, w[:strings.Index(w, "/")]+"/0")
 	}
-	if got := imageTypes(t, img); strings.Join(got, " ") != strings.Join(append(empty, "port.Post/2"), " ") {
-		t.Fatalf("types %v, want %v then port.Post/2", got, empty)
+	if got := imageTypes(t, img); strings.Join(got, " ") != strings.Join(append(empty, "port.Post/3"), " ") {
+		t.Fatalf("types %v, want %v then port.Post/3", got, empty)
 	}
 }
 
@@ -638,8 +638,8 @@ func TestImageMinorStamp(t *testing.T) {
 	if v := words(img)[1]; v != 15<<16 {
 		t.Errorf("version %s, want 15.0 (kbd.Config not used)", VersionString(v))
 	}
-	if got := imageTypes(t, img); got[TypeKbdConfig] != "kbd.Config/0" || got[TypeDone] != "port.Done/1" {
-		t.Errorf("rows %v: want kbd.Config/0 and port.Done/1", got)
+	if got := imageTypes(t, img); got[TypeKbdConfig] != "kbd.Config/0" || got[TypeDone] != "port.Done/2" {
+		t.Errorf("rows %v: want kbd.Config/0 and port.Done/2", got)
 	}
 	typeMinor["port.Done"] = 2
 	if v := words(compileImage(t, done))[1]; v != 15<<16|2 {
@@ -652,7 +652,7 @@ func TestImageMinorStamp(t *testing.T) {
 	}
 }
 
-// TestScreenConfigMinor: screen.Config is reserved type 47 of 15.1; a
+// TestScreenConfigMinor: screen.Config is reserved type 44 of 15.1; a
 // program that uses it is stamped 15.1, one that does not stays 15.0.
 func TestScreenConfigMinor(t *testing.T) {
 	use := "package main\nimport (\n\t\"gogo/port\"\n\t\"gogo/screen\"\n)\nfunc main() {\n\t_, _ = port.Open(\"screen\", screen.Config{})\n}\n"
@@ -660,7 +660,7 @@ func TestScreenConfigMinor(t *testing.T) {
 	if v := words(img)[1]; v != 15<<16|1 {
 		t.Errorf("version %s, want 15.1", VersionString(v))
 	}
-	if got := imageTypes(t, img); len(got) < 48 || got[TypeScreenConfig] != "screen.Config/2" {
+	if got := imageTypes(t, img); len(got) < 45 || got[TypeScreenConfig] != "screen.Config/2" {
 		t.Errorf("rows %v: want screen.Config/2 at %d", got, TypeScreenConfig)
 	}
 	other := "package main\nimport \"gogo/screen\"\nfunc main() {\n\tprintln(screen.OpText)\n}\n"
@@ -2115,8 +2115,8 @@ func main() {
 			seen[code[i+1]] = true
 		}
 	}
-	if !seen[30] || !seen[32] {
-		t.Errorf("TYPEIS operands %v, want 30 and 32", seen)
+	if !seen[TypeKbdKey] || !seen[TypePowerBattery] || TypeKbdKey != 26 || TypePowerBattery != 28 {
+		t.Errorf("TYPEIS operands %v, want 26 and 28", seen)
 	}
 }
 

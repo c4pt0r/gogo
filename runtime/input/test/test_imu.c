@@ -113,12 +113,13 @@ static void collect(Actor *a) {
         Ev e;
         memset(&e, 0, sizeof e);
         if (m->data[1] == TYPE_CHUNK) {
-            CHECK_EQ(m->data[0], hdr_make(6, K_STRUCT));
-            e.seq = word_int(m, m->data[2]);
-            e.time = word_int(m, m->data[3]);
-            e.dropped = word_int(m, m->data[4]);
-            if (m->data[5] != T_EMPTYBYTES) {
-                const uint32_t *b = &m->data[term_ref_off(m->data[5])];
+            CHECK_EQ(m->data[0], hdr_make(7, K_STRUCT));
+            CHECK(term_is_pid(m->data[2]));   /* From */
+            e.seq = word_int(m, m->data[3]);
+            e.time = word_int(m, m->data[4]);
+            e.dropped = word_int(m, m->data[5]);
+            if (m->data[6] != T_EMPTYBYTES) {
+                const uint32_t *b = &m->data[term_ref_off(m->data[6])];
                 e.len = b[1];
                 memcpy(e.first, &b[2], e.len < 12 ? e.len : 12);
             }

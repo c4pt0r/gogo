@@ -3,8 +3,8 @@
  * callbacks behind it; the Vm finds them by name through its driver list
  * (Vm.drivers: the board's drivers, then the host's), so the VM core needs
  * nothing of its own for them. The cfg is a port.Host{Arg, Data} and the
- * commands are port.Post{Kind, Data}, both read in place; events go to the
- * owner as port.Post messages, their Data inline when short, else in an
+ * commands are port.Post{From, Kind, Data} (From ignored), both read in
+ * place; events go to the owner as port.Post messages (From: the port), their Data inline when short, else in an
  * off-heap Bytes the port makes for its owner (as Buffer.Freeze would). */
 #include "embed.h"
 #include "interp.h"
@@ -73,8 +73,8 @@ static void hp_command(Vm *vm, const Actor *from, Port *p, term msg) {
     int32_t kind;
     const uint8_t *d;
     uint32_t len;
-    if (!hp->pub.command || !o || hdr_kind(o[0]) != K_STRUCT || o[1] != TYPE_POST || hdr_words(o[0]) != 4u ||
-        !int_val(vm, from, o[2], &kind) || !bytes_view(vm, from, o[3], &d, &len))
+    if (!hp->pub.command || !o || hdr_kind(o[0]) != K_STRUCT || o[1] != TYPE_POST || hdr_words(o[0]) != 5u ||
+        !int_val(vm, from, o[3], &kind) || !bytes_view(vm, from, o[4], &d, &len))
         return;
     hp->pub.command(hp->ctx, vm->host_ctx, port_val(vm, p), kind, d, len);
 }
@@ -164,7 +164,7 @@ int embed_port_send(gogo_vm *g, uint32_t port, int32_t kind, const uint8_t *data
     if (!o) return GOGO_ECLOSED;
     Msg *m;
     if (len <= GOGO_BYTES_INLINE) {
-        m = embed_post_msg(vm, kind, data, len, T_NIL);
+        m = embed_post_msg(vm, p->id, kind, data, len, T_NIL);
     } else {
         /* Off-heap: the port makes the Bytes for its owner, the message
          * takes its own reference, and the port lets go before the
@@ -176,7 +176,7 @@ int embed_port_send(gogo_vm *g, uint32_t port, int32_t kind, const uint8_t *data
         if (h == T_NIL && heap_reclaim_waiting(vm, o)) h = port_bytes_new(vm, p, len, &w);
         if (h == T_NIL) return GOGO_EFULL;
         memcpy(w, data, len);
-        m = embed_post_msg(vm, kind, NULL, len, h);
+        m = embed_post_msg(vm, p->id, kind, NULL, len, h);
         port_bytes_release(vm, p, h);
     }
     if (m && p == g->opening) {          /* held until the open's outcome */

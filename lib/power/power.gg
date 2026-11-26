@@ -14,8 +14,8 @@
 // take the owner past its memory limit is dropped (the owner is not
 // killed). There is no power-button event.
 //
-// The struct types Config, Battery and Read have fixed type indices 31, 32
-// and 33 in every image (TYPE_POWER_CONFIG, TYPE_POWER_BATTERY,
+// The struct types Config, Battery and Read have fixed type indices 27, 28
+// and 29 in every image (TYPE_POWER_CONFIG, TYPE_POWER_BATTERY,
 // TYPE_POWER_READ in runtime/vm/opcodes.h); keep their field order in sync with
 // compiler.reservedTypes.
 package power

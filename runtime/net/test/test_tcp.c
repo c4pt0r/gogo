@@ -140,7 +140,7 @@ static void command(Actor *from, term p, uint32_t type, term field, bool has) {
 static void write_str(Actor *from, term p, const char *s) {
     from->hp = 0;
     term b = heap_bytes(from, s);
-    port_command(&vm, from, p, heap_struct(from, TYPE_NET_WRITE, &b, 1));
+    port_command(&vm, from, p, heap_struct(from, TYPE_OUT, &b, 1));
 }
 
 static void drain(void) {
@@ -238,7 +238,8 @@ static uint32_t event_of(Actor *a, int32_t *field) {
     if (!m) return 0;
     const uint32_t *d = m->data;
     uint32_t type = d[1];
-    if (field) *field = hdr_words(d[0]) > 2u && term_is_int(d[2]) ? term_to_int(d[2]) : -1;
+    uint32_t i = hdr_words(d[0]) > 3u && term_is_pid(d[2]) ? 3u : 2u;   /* past a From */
+    if (field) *field = hdr_words(d[0]) > i && term_is_int(d[i]) ? term_to_int(d[i]) : -1;
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
     a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
@@ -334,7 +335,7 @@ static Conn mk(uint8_t state) {
     if (state == TCP_CLOSE_WAIT || state == TCP_LAST_ACK) {
         seg_in(k.pport, k.vport, k.peer, k.nxt, 0x11, NULL);
         k.peer++;
-        CHECK_EQ(event_of(k.o, NULL), TYPE_NET_CLOSED);
+        CHECK_EQ(event_of(k.o, NULL), TYPE_CLOSED);
     }
     if (state == TCP_FIN_WAIT_1 || state == TCP_FIN_WAIT_2 || state == TCP_LAST_ACK ||
         state == TCP_CLOSING || state == TCP_TIME_WAIT) {
@@ -348,7 +349,7 @@ static Conn mk(uint8_t state) {
     if (state == TCP_CLOSING || state == TCP_TIME_WAIT) {
         seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
         k.peer++;
-        CHECK_EQ(event_of(k.o, NULL), TYPE_NET_CLOSED);
+        CHECK_EQ(event_of(k.o, NULL), TYPE_CLOSED);
     }
     CHECK(k.c && k.c->state == state);
     tx.n = 0;
@@ -379,7 +380,7 @@ typedef struct Row {
 static const Row rows[] = {
     { TCP_SYN_SENT, IN_SYNACK, F_A, TCP_ESTABLISHED, TYPE_NET_CONNECTED, -1 },
     { TCP_SYN_SENT, IN_SYNACK_BAD, F_R, TCP_SYN_SENT, 0, -1 },
-    { TCP_SYN_SENT, IN_RSTACK, 0, TCP_CLOSED, TYPE_NET_CLOSED, 3 },
+    { TCP_SYN_SENT, IN_RSTACK, 0, TCP_CLOSED, TYPE_CLOSED, 3 },
     { TCP_SYN_SENT, IN_RST, 0, TCP_SYN_SENT, 0, -1 },
     { TCP_SYN_SENT, IN_ACK_BAD, F_R, TCP_SYN_SENT, 0, -1 },
     { TCP_SYN_SENT, IN_SYN, 0, TCP_SYN_SENT, 0, -1 },          /* no simultaneous open */
@@ -387,9 +388,9 @@ static const Row rows[] = {
     { TCP_SYN_RCVD, IN_ACK_BAD, F_R, TCP_SYN_RCVD, 0, -1 },
     { TCP_SYN_RCVD, IN_RST, 0, TCP_CLOSED, 0, -1 },
     { TCP_SYN_RCVD, IN_SYN_DUP, F_SA, TCP_SYN_RCVD, 0, -1 },
-    { TCP_ESTABLISHED, IN_DATA, F_A, TCP_ESTABLISHED, TYPE_NET_DATA, -1 },
-    { TCP_ESTABLISHED, IN_FIN, F_A, TCP_CLOSE_WAIT, TYPE_NET_CLOSED, 0 },
-    { TCP_ESTABLISHED, IN_RST, 0, TCP_CLOSED, TYPE_NET_CLOSED, 1 },
+    { TCP_ESTABLISHED, IN_DATA, F_A, TCP_ESTABLISHED, TYPE_CHUNK, -1 },
+    { TCP_ESTABLISHED, IN_FIN, F_A, TCP_CLOSE_WAIT, TYPE_CLOSED, 0 },
+    { TCP_ESTABLISHED, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, 1 },
     { TCP_ESTABLISHED, IN_RST_OFF, F_A, TCP_ESTABLISHED, 0, -1 },  /* RFC 5961 challenge ACK */
     { TCP_ESTABLISHED, IN_ACK_FAR, 0, TCP_ESTABLISHED, 0, -1 },    /* past a refused 1460 B + FIN */
     { TCP_ESTABLISHED, IN_SYN, F_A, TCP_ESTABLISHED, 0, -1 },  /* challenge ACK */
@@ -398,15 +399,15 @@ static const Row rows[] = {
     { TCP_ESTABLISHED, IN_ACK, 0, TCP_ESTABLISHED, 0, -1 },
     { TCP_FIN_WAIT_1, IN_ACK, 0, TCP_FIN_WAIT_2, 0, -1 },
     { TCP_FIN_WAIT_1, IN_ACK_NONE, 0, TCP_FIN_WAIT_1, 0, -1 },
-    { TCP_FIN_WAIT_1, IN_FIN, F_A, TCP_CLOSING, TYPE_NET_CLOSED, 0 },
-    { TCP_FIN_WAIT_1, IN_FINACK, F_A, TCP_TIME_WAIT, TYPE_NET_CLOSED, 0 },
-    { TCP_FIN_WAIT_1, IN_DATA, F_A, TCP_FIN_WAIT_1, TYPE_NET_DATA, -1 },
-    { TCP_FIN_WAIT_1, IN_RST, 0, TCP_CLOSED, TYPE_NET_CLOSED, 1 },
-    { TCP_FIN_WAIT_2, IN_FIN, F_A, TCP_TIME_WAIT, TYPE_NET_CLOSED, 0 },
-    { TCP_FIN_WAIT_2, IN_DATA, F_A, TCP_FIN_WAIT_2, TYPE_NET_DATA, -1 },
-    { TCP_FIN_WAIT_2, IN_RST, 0, TCP_CLOSED, TYPE_NET_CLOSED, 1 },
+    { TCP_FIN_WAIT_1, IN_FIN, F_A, TCP_CLOSING, TYPE_CLOSED, 0 },
+    { TCP_FIN_WAIT_1, IN_FINACK, F_A, TCP_TIME_WAIT, TYPE_CLOSED, 0 },
+    { TCP_FIN_WAIT_1, IN_DATA, F_A, TCP_FIN_WAIT_1, TYPE_CHUNK, -1 },
+    { TCP_FIN_WAIT_1, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, 1 },
+    { TCP_FIN_WAIT_2, IN_FIN, F_A, TCP_TIME_WAIT, TYPE_CLOSED, 0 },
+    { TCP_FIN_WAIT_2, IN_DATA, F_A, TCP_FIN_WAIT_2, TYPE_CHUNK, -1 },
+    { TCP_FIN_WAIT_2, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, 1 },
     { TCP_CLOSE_WAIT, IN_DATA, F_A, TCP_CLOSE_WAIT, 0, -1 },   /* after the FIN: dropped */
-    { TCP_CLOSE_WAIT, IN_RST, 0, TCP_CLOSED, TYPE_NET_CLOSED, 1 },
+    { TCP_CLOSE_WAIT, IN_RST, 0, TCP_CLOSED, TYPE_CLOSED, 1 },
     { TCP_CLOSE_WAIT, IN_ACK, 0, TCP_CLOSE_WAIT, 0, -1 },
     { TCP_LAST_ACK, IN_ACK, 0, TCP_CLOSED, 0, -1 },
     { TCP_LAST_ACK, IN_ACK_NONE, 0, TCP_LAST_ACK, 0, -1 },
@@ -465,7 +466,7 @@ TEST(tcp_state_table) {
         CHECK_EQ(st, r->next);
         int32_t f = -1;
         CHECK_EQ(event_of(k.o, &f), r->event);
-        if (r->event == TYPE_NET_CLOSED) CHECK_EQ(f, r->reason);
+        if (r->event == TYPE_CLOSED) CHECK_EQ(f, r->reason);
         CHECK_EQ(event_of(k.o, NULL), 0);
         teardown();
     }
@@ -484,7 +485,7 @@ TEST(tcp_reply_numbers) {
     apply(&k, IN_OLD);                     /* old: ACKs what it has, delivers nothing */
     s = out_at(0);
     CHECK_EQ(s.ack, k.peer + 3u);
-    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_DATA);
+    CHECK_EQ(event_of(k.o, NULL), TYPE_CHUNK);
     CHECK_EQ(event_of(k.o, NULL), 0);
     teardown();
     /* RST to a segment without a connection: seq from its ACK, or
@@ -531,12 +532,16 @@ TEST(tcp_retransmit_timer) {
     CHECK_EQ(tx.n, 8);
     CHECK_EQ(out_at(7).fl, F_RA);
     int32_t f;
-    CHECK_EQ(event_of(k.o, &f), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);   /* the Out in flight, not sent */
+    CHECK_EQ(f, -1);
+    CHECK_EQ(event_of(k.o, &f), TYPE_CLOSED);
     CHECK_EQ(f, 2);
     CHECK_EQ(nst.st.tcp_retx, 6u);
     CHECK(k.c->state == TCP_CLOSED);
-    write_str(k.o, k.port, "late");         /* the port has no connection: ignored */
+    write_str(k.o, k.port, "late");         /* the port has no connection: refused */
     CHECK_EQ(tx.n, 8);
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, -1);
     teardown();
 }
 
@@ -555,7 +560,7 @@ TEST(tcp_other_timers) {
     CHECK_EQ(event_of(o, NULL), 0);
     advance(1);
     int32_t f;
-    CHECK_EQ(event_of(o, &f), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(o, &f), TYPE_CLOSED);
     CHECK_EQ(f, 2);
     CHECK_EQ(tx.n, 2);                     /* no RST for a SYN never answered */
     teardown();
@@ -606,7 +611,7 @@ TEST(tcp_charge_and_handoff) {
     CHECK_EQ(actor_charged_words(o), c0);
     CHECK_EQ(actor_charged_words(h), h0 + (c1 - c0));
     seg_in(80, s.sport, PEER_ISN + 1u, s.seq + 5u, 0x10, NULL);   /* ACK of "data" */
-    CHECK_EQ(event_of(h, NULL), TYPE_NET_WRITTEN);
+    CHECK_EQ(event_of(h, NULL), TYPE_DONE);
     CHECK_EQ(event_of(o, NULL), 0);
     CHECK_EQ(actor_charged_words(h), h0 + TCP_PCB_WORDS);
     port_close(&vm, p);
@@ -614,13 +619,17 @@ TEST(tcp_charge_and_handoff) {
     teardown();
 }
 
-/* Two Writes may be outstanding; a third closes with Overflow (RST). A
- * Write before Connected waits; an empty Write is Written at once. */
+/* Two Outs may be in flight; a third gets Done{-1} and the connection
+ * carries on. An Out before Connected waits; an empty one gets Done{-1}.
+ * Each Done says From: the port. */
 TEST(tcp_write_flow_control) {
     setup();
     Conn k = mk(TCP_SYN_SENT);
+    int32_t f;
     write_str(k.o, k.port, "");
-    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_WRITTEN);
+    CHECK(k.o->mbox_head && k.o->mbox_head->data[2] == k.port);   /* From */
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, -1);
     write_str(k.o, k.port, "one");
     CHECK_EQ(tx.n, 0);
     seg_in(80, k.vport, PEER_ISN, k.nxt, 0x12, NULL);
@@ -630,14 +639,16 @@ TEST(tcp_write_flow_control) {
     write_str(k.o, k.port, "two");
     CHECK_EQ(tx.n, 2);                     /* one segment in flight */
     write_str(k.o, k.port, "three");
-    CHECK_EQ(tx.n, 3);
-    CHECK_EQ(out_at(2).fl, F_RA);
+    CHECK_EQ(tx.n, 2);                     /* refused: nothing sent, no RST */
     CHECK_EQ(event_of(k.o, NULL), TYPE_NET_CONNECTED);
-    int32_t f;
-    CHECK_EQ(event_of(k.o, &f), TYPE_NET_CLOSED);
-    CHECK_EQ(f, 4);
-    CHECK(k.c->state == TCP_CLOSED);
-    CHECK_EQ(actor_charged_words(k.o), 0);   /* pins and the block's charge released */
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, -1);
+    CHECK(k.c->state == TCP_ESTABLISHED);
+    seg_in(80, k.vport, PEER_ISN + 1u, s.seq + 3u, 0x10, NULL);   /* ACK of "one" */
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, 1);
+    CHECK_EQ(tx.n, 3);                     /* "two" */
+    CHECK_EQ(out_at(2).n, 3u);
     teardown();
 }
 
@@ -686,7 +697,7 @@ TEST(tcp_resume) {
     CHECK_EQ(out_at(1).wnd, TCP_MSS);
     seg_in(k.pport, k.vport, k.peer, k.nxt, 0x18, "early");
     CHECK_EQ(out_at(2).ack, k.peer + 5u);
-    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_DATA);
+    CHECK_EQ(event_of(k.o, NULL), TYPE_CHUNK);
     teardown();
 }
 
@@ -697,7 +708,7 @@ TEST(tcp_link_down) {
     net_link_event(&nst, false);
     drain();
     int32_t f;
-    CHECK_EQ(event_of(k.o, &f), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, &f), TYPE_CLOSED);
     CHECK_EQ(f, 5);
     CHECK(k.c->state == TCP_CLOSED);
     CHECK_EQ(tx.n, 0);
@@ -747,7 +758,7 @@ static void write_held(Actor *o, term p) {
     CHECK(h != T_NIL);
     memcpy(w, "req", 3);
     o->hp = 0;
-    port_command(&vm, o, p, heap_struct(o, TYPE_NET_WRITE, &h, 1));
+    port_command(&vm, o, p, heap_struct(o, TYPE_OUT, &h, 1));
 }
 
 /* A slow reader whose mailbox the Data filled to its quota is never
@@ -779,13 +790,13 @@ TEST(tcp_slow_reader_never_killed) {
         uint32_t n = 0, written = 0, closed = 0;
         int32_t f = -1;
         for (uint32_t t; (t = event_of(k.o, &f)) != 0; n++) {
-            if (t == TYPE_NET_WRITTEN) written++;
-            if (t == TYPE_NET_CLOSED) { closed++; CHECK_EQ(f, 1); }
+            if (t == TYPE_DONE) written++;
+            if (t == TYPE_CLOSED) { closed++; CHECK_EQ(f, 1); }
         }
         advance(1000);                       /* retried events, if any were held */
         for (uint32_t t; (t = event_of(k.o, &f)) != 0; n++) {
-            if (t == TYPE_NET_WRITTEN) written++;
-            if (t == TYPE_NET_CLOSED) { closed++; CHECK_EQ(f, 1); }
+            if (t == TYPE_DONE) written++;
+            if (t == TYPE_CLOSED) { closed++; CHECK_EQ(f, 1); }
         }
         CHECK_EQ(written, 1);
         CHECK_EQ(closed, 1);
@@ -808,35 +819,29 @@ TEST(tcp_event_retry) {
     k.o->max_words = 4096;
     advance(100);
     int32_t f = -1;
-    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_WRITTEN);
-    CHECK_EQ(event_of(k.o, &f), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, NULL), TYPE_DONE);
+    CHECK_EQ(event_of(k.o, &f), TYPE_CLOSED);
     CHECK_EQ(f, 1);
     CHECK_EQ(event_of(k.o, NULL), 0);
     teardown();
 }
 
-/* An empty Write's Written comes after the Write before it. */
-TEST(tcp_empty_write_in_order) {
+/* An empty Out is refused at once (Done{-1}); the Out before it goes on. */
+TEST(tcp_empty_out_refused) {
     setup();
     Conn k = mk(TCP_ESTABLISHED);
-    write_str(k.o, k.port, "abc");
-    write_str(k.o, k.port, "");
-    CHECK_EQ(event_of(k.o, NULL), 0);      /* not before "abc"'s */
-    write_str(k.o, k.port, "x");           /* a third: Overflow */
     int32_t f;
-    CHECK_EQ(event_of(k.o, &f), TYPE_NET_CLOSED);
-    CHECK_EQ(f, 4);
-    teardown();
-    setup();
-    k = mk(TCP_ESTABLISHED);
     write_str(k.o, k.port, "abc");
     write_str(k.o, k.port, "");
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, -1);
+    CHECK_EQ(event_of(k.o, NULL), 0);
     seg_in(k.pport, k.vport, k.peer, k.nxt + 3u, 0x10, NULL);
-    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_WRITTEN);
-    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_WRITTEN);
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, 1);
     CHECK_EQ(event_of(k.o, NULL), 0);
     command(k.o, k.port, TYPE_NET_SHUTDOWN, 0, false);
-    CHECK_EQ(out_at(tx.n - 1).fl, 0x11);   /* FIN once both are done */
+    CHECK_EQ(out_at(tx.n - 1).fl, 0x11);   /* FIN once "abc" is done */
     teardown();
 }
 
@@ -871,7 +876,7 @@ TEST(tcp_address_change) {
                   heap_int(netif_owner, (int32_t)PEER_IP), term_from_int(0) };
     port_command(&vm, netif_owner, n, heap_struct(netif_owner, TYPE_NET_SETADDR, f, 4));
     int32_t r;
-    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
     CHECK_EQ(r, 5);
     CHECK(k.c->state == TCP_CLOSED);
     CHECK_EQ(actor_charged_words(k.o), 0);
@@ -958,29 +963,55 @@ TEST(tcp_inbound_keeps_a_slot_for_dial) {
     teardown();
 }
 
-/* An owner that keeps writing while its Written events cannot be
- * delivered (held in the port, at most 3) is closed with Overflow and RST
- * instead of losing a Written. Two held Written are set up directly
- * (Port.state[1], HELD_WR_ONE = 2: what a full mailbox leaves). */
-TEST(tcp_held_written_overflow) {
+/* An owner that cannot take its Dones: they are owed in the port's
+ * StreamOut, an owed Done keeps its Out's place among the two in flight
+ * (a further Out is refused, owed too), and they come out in order once
+ * it has room. Nothing is lost and the owner is never killed. */
+TEST(tcp_owed_dones) {
     setup();
     Conn k = mk(TCP_ESTABLISHED);
-    k.c->port->state[1] = 2u * 2u;
-    write_str(k.o, k.port, "a");             /* 2 held + 1 in flight: fine */
+    write_str(k.o, k.port, "a");
+    write_str(k.o, k.port, "b");
     CHECK_EQ(tx.n, 1);
+    k.o->max_words = (uint16_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room at all */
+    seg_in(k.pport, k.vport, k.peer, k.nxt + 1u, 0x10, NULL);   /* ACK of "a": its Done owed */
+    CHECK_EQ(tx.n, 2);                       /* "b" goes out */
+    CHECK(out_at(1).n == 1u && out_at(1).data[0] == 'b');
+    write_str(k.o, k.port, "c");             /* "b" in flight + an owed Done: refused */
+    CHECK(!(k.o->flags & AF_EXIT_PENDING));
+    CHECK_EQ(event_of(k.o, NULL), 0);
     CHECK(k.c->state == TCP_ESTABLISHED);
+    k.o->max_words = 4096;
+    advance(100);
+    int32_t f;
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, 1);
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, -1);
     CHECK_EQ(event_of(k.o, NULL), 0);
-    write_str(k.o, k.port, "b");             /* a 4th owed Written: Overflow */
-    CHECK_EQ(tx.n, 2);
-    CHECK_EQ(out_at(1).fl, F_RA);
-    CHECK(k.c->state == TCP_CLOSED);
-    int32_t r = -1;
-    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_WRITTEN);   /* the held ones, then Closed */
-    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_WRITTEN);
-    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
-    CHECK_EQ(r, 4);
+    seg_in(k.pport, k.vport, k.peer, k.nxt + 2u, 0x10, NULL);   /* ACK of "b" */
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, 2);
+    teardown();
+}
+
+/* A Done never overtakes a held Connected: with Connected held for a full
+ * mailbox, an Out refused once the owner has room again is owed behind it,
+ * and both come out in order. */
+TEST(tcp_done_after_held_connected) {
+    setup();
+    Conn k = mk(TCP_SYN_SENT);
+    uint16_t room = k.o->max_words;
+    k.o->max_words = (uint16_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room at all */
+    seg_in(80, k.vport, PEER_ISN, k.nxt, 0x12, NULL);   /* SYN-ACK: Connected held */
     CHECK_EQ(event_of(k.o, NULL), 0);
-    CHECK_EQ(actor_charged_words(k.o), 0);
+    k.o->max_words = room;
+    write_str(k.o, k.port, "");             /* refused: its Done{-1} follows Connected */
+    int32_t f;
+    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_CONNECTED);
+    CHECK_EQ(event_of(k.o, &f), TYPE_DONE);
+    CHECK_EQ(f, -1);
+    CHECK_EQ(event_of(k.o, NULL), 0);
     teardown();
 }
 
@@ -1007,7 +1038,7 @@ static bool up_rx(Vm *v, TcpPcb *c, const uint8_t *p, uint32_t n) {
 static bool up_fin(Vm *v, TcpPcb *c) {
     up.fins++;
     if (up.fin_post >= 0) {
-        tcp_post(v, c, TYPE_NET_CLOSED, up.fin_post);
+        tcp_post(v, c, TYPE_CLOSED, up.fin_post);
         if (up.fin_post != CR_NORMAL) up.closed = true;
     }
     return !up.refuse_fin;
@@ -1039,7 +1070,7 @@ static void up_close(Vm *v, Port *p) {
     tcp_close_port(v, p);
 }
 static const PortDriver up_driver = {
-    "up", TYPE_NET_DIAL, TYPE_NET_DATA, up_open, NULL, up_close, tcp_port_can_event, NULL, NULL, NULL
+    "up", TYPE_NET_DIAL, TYPE_CHUNK, up_open, NULL, up_close, tcp_port_can_event, NULL, NULL, NULL
 };
 static const TcpUpper upper = {
     &up_driver, up_rx, up_fin, up_connected, up_acked, up_tx, up_ended, up_pending, up_drain, NULL, up_closed
@@ -1144,7 +1175,7 @@ TEST(tcp_upper_layer) {
     seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);
     CHECK_EQ(up.ended, 1);
     int32_t r = -1;
-    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
     CHECK_EQ(r, 1);
     CHECK(k.c->state == TCP_CLOSED);
     CHECK_EQ(actor_charged_words(k.o), 0);
@@ -1164,7 +1195,7 @@ TEST(tcp_upper_deadline) {
     CHECK_EQ(tx.n, 1);
     CHECK_EQ(out_at(0).fl, F_RA);
     int32_t r = -1;
-    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
     CHECK_EQ(r, 2);
     CHECK_EQ(up.ended, 1);
     teardown();
@@ -1185,7 +1216,7 @@ static int nc_open(Vm *v, Port *p, uint16_t index, const int32_t *cfg, uint32_t 
     return 0;
 }
 static const PortDriver nc_driver = {
-    "nc", TYPE_NET_DIAL, TYPE_NET_DATA, nc_open, NULL, tcp_close_port, tcp_port_can_event, NULL, NULL, NULL
+    "nc", TYPE_NET_DIAL, TYPE_CHUNK, nc_open, NULL, tcp_close_port, tcp_port_can_event, NULL, NULL, NULL
 };
 static const TcpUpper nc_upper = { &nc_driver, NULL, NULL, NULL, NULL, NULL, NULL, up_pending, up_drain, NULL, NULL };
 static const PortDriver *const nc_list[] = { &nc_driver, NULL };
@@ -1201,7 +1232,7 @@ TEST(tcp_hold_closed_without_connection) {
     CHECK(port_any_live(&vm));
     drain();
     int32_t r = -1;
-    CHECK_EQ(event_of(o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(o, &r), TYPE_CLOSED);
     CHECK_EQ(r, CR_NOTIME);
     CHECK(!port_any_live(&vm));
     port_close(&vm, p);
@@ -1220,7 +1251,7 @@ TEST(tcp_upper_one_terminal_closed) {
     seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);   /* then the peer resets */
     CHECK(k.c->state == TCP_CLOSED);
     int32_t r = -1;
-    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
     CHECK_EQ(r, CR_TLS);
     CHECK_EQ(event_of(k.o, NULL), 0);          /* no second Closed */
     teardown();
@@ -1237,9 +1268,9 @@ TEST(tcp_upper_terminal_after_normal) {
     k.peer++;
     seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);
     int32_t r = -1;
-    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
     CHECK_EQ(r, CR_NORMAL);
-    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
     CHECK_EQ(r, CR_RESET);
     teardown();
     setup();
@@ -1253,7 +1284,7 @@ TEST(tcp_upper_terminal_after_normal) {
     k.o->max_words = 4096;
     advance(100);
     r = -1;
-    CHECK_EQ(event_of(k.o, &r), TYPE_NET_CLOSED);
+    CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
     CHECK_EQ(r, CR_RESET);
     CHECK_EQ(event_of(k.o, NULL), 0);
     teardown();

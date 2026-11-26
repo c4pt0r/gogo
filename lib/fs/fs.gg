@@ -4,7 +4,7 @@
 // builtin B_FS (File.Close with the port close builtin), so the bodies are
 // never executed. The C side is runtime/vfs/.
 //
-// The struct types Info and Space have fixed type indices 27 and 28 in
+// The struct types Info and Space have fixed type indices 23 and 24 in
 // every image (TYPE_FS_INFO, TYPE_FS_SPACE in runtime/vm/opcodes.h); keep their
 // field order in sync with compiler.reservedTypes.
 //

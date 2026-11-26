@@ -27,7 +27,7 @@
  *    frame no Chunk of which could ever be delivered is ok=false, not
  *    silence. To ride out a stall of S ms the owner needs its heap +
  *    F + (ceil(S / FrameMs) + 1) * (F + MIC_CHUNK_EXTRA) words: at 16 kHz
- *    and 100 ms (F = 800) a 300 ms stall is heap + 4040 words, which a
+ *    and 100 ms (F = 800) a 300 ms stall is heap + 4044 words, which a
  *    recorder with a real heap does not have under the MCU default limit
  *    (4096 words), so gogo/sound's recorder spawns with MaxMemory.
  *  - spk: audio.Speaker{Rate, Volume}, Volume clamped to 0..100. Every
@@ -37,7 +37,7 @@
  *    takes per call, the queued one right after the head (no gap between
  *    them); a running total of bytes written gives each Out its end mark,
  *    and an Out has played once written - spk_queued() reaches it: then
- *    stream_out_done sends (or owes) Done{Seq}. A write error fails that
+ *    stream_out_done sends (or owes) Done{From, Seq}. A write error fails that
  *    Out (Done{-1}, in order). Polled every SPK_POLL_MS while an Out is in
  *    flight or a Done is owed (stream_out_flush on every poll), so a
  *    program that keeps two Outs in flight and sends the next on each Done
@@ -57,7 +57,7 @@
 
 enum { RATE_8K = 8000, RATE_16K = 16000, DEF_FRAME_MS = 100, MIN_FRAME_MS = 20, MAX_FRAME_MS = 500,
        MAX_GAIN = 24, GAIN_STEP = 6, MAX_VOLUME = 100, MIC_MAX_POLL = 50, MIC_READS_PER_POLL = 64,
-       MIC_CHUNK_EXTRA = 10,   /* a Chunk's words beside its data: struct, an int box, the Bytes header */
+       MIC_CHUNK_EXTRA = 11,   /* a Chunk's words beside its data: struct, an int box, the Bytes header */
        SPK_POLL_MS = 10, SPK_WRITES_PER_POLL = 16 };
 
 typedef InputAudio Audio;

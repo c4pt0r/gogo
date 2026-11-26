@@ -151,17 +151,19 @@ static void collect(Actor *a) {
         Ev *e = &got[ngot < 64 ? ngot : 63];
         memset(e, 0, sizeof *e);
         if (m->data[1] == TYPE_DONE) {
-            CHECK_EQ(m->data[0], hdr_make(3, K_STRUCT));
+            CHECK_EQ(m->data[0], hdr_make(4, K_STRUCT));
+            CHECK(term_is_pid(m->data[2]));   /* From */
             e->len = -1;
-            e->seq = word_int(m, m->data[2]);
+            e->seq = word_int(m, m->data[3]);
         } else {
-            CHECK_EQ(m->data[0], hdr_make(6, K_STRUCT));
+            CHECK_EQ(m->data[0], hdr_make(7, K_STRUCT));
             CHECK_EQ(m->data[1], TYPE_CHUNK);
-            e->seq = word_int(m, m->data[2]);
-            e->time = word_int(m, m->data[3]);
-            e->dropped = word_int(m, m->data[4]);
-            CHECK(m->data[5] != T_EMPTYBYTES);
-            const uint32_t *b = &m->data[term_ref_off(m->data[5])];
+            CHECK(term_is_pid(m->data[2]));   /* From */
+            e->seq = word_int(m, m->data[3]);
+            e->time = word_int(m, m->data[4]);
+            e->dropped = word_int(m, m->data[5]);
+            CHECK(m->data[6] != T_EMPTYBYTES);
+            const uint32_t *b = &m->data[term_ref_off(m->data[6])];
             const uint8_t *s = (const uint8_t *)&b[2];
             e->len = (int)b[1];
             e->first = (uint16_t)(s[0] | s[1] << 8);

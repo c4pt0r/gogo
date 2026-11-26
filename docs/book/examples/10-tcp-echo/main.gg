@@ -10,28 +10,28 @@ import (
 	"gogo/port"
 )
 
-// echo owns one connection. A tcp port takes at most two Writes before a
-// Written comes back (a third closes the connection with Overflow), so
-// data that arrives while two are in flight waits in a Buffer.
+// echo owns one connection. A tcp port takes at most two Outs in flight
+// (a third is refused with Done{Seq: -1} and not sent), so data that
+// arrives while two are in flight waits in a Buffer.
 func echo(conn actor.PID) {
 	inFlight := 0
 	waiting := bytes.NewBuffer(256)
 	for {
 		switch m := actor.Receive().(type) {
-		case net.Data:
+		case port.Chunk:
 			if inFlight < 2 {
-				actor.Send(conn, net.Write{Data: m.Data})
+				actor.Send(conn, port.Out{Data: m.Data})
 				inFlight++
 			} else {
 				waiting.WriteBytes(m.Data)
 			}
-		case net.Written:
+		case port.Done:
 			inFlight--
 			if waiting.Len() > 0 {
-				actor.Send(conn, net.Write{Data: waiting.Freeze()})
+				actor.Send(conn, port.Out{Data: waiting.Freeze()})
 				inFlight++
 			}
-		case net.Closed:
+		case port.Closed:
 			if m.Reason == net.Normal {
 				// The peer has finished sending: finish our side too.
 				actor.Send(conn, net.Shutdown{})

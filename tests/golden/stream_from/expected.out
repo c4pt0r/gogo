@@ -1,0 +1,4 @@
+open true true
+speaker Dones: -1 1 2
+ir_tx Dones: 1
+from neither: 0

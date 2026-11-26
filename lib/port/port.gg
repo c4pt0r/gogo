@@ -3,17 +3,23 @@
 // type-check with the standard Go toolchain; the gogo compiler replaces
 // every call with VM instructions, so the bodies are never executed.
 //
-// The struct types GPIO, Write and Edge have fixed type indices 6-8 in every
-// image, Chunk, Out and Done 35-37, Host and Post 45-46 (TYPE_* in
+// The struct types Chunk, Out, Done and Closed have fixed type indices
+// 31-34 in every image, Host and Post 42-43 (TYPE_* in
 // runtime/vm/opcodes.h); keep their field order in sync with
-// compiler.reservedTypes.
+// compiler.reservedTypes. The struct types GPIO, Write and Edge have fixed
+// type indices 6-8.
 //
-// Send a command to a port with actor.Send(p, port.Write{Value: 1}); any
-// actor holding the PID may. Events (port.Edge) go to the owner, the actor
-// that opened the port, as ordinary messages under its mailbox quota. The
-// owner's exit closes its ports; actor.Kill on a port PID closes it. Ports
-// cannot be linked or monitored. The owner may give a port to another actor
-// with Handoff.
+// Send a command to a port with actor.Send(p, cmd); any actor holding the
+// PID may. Events go to the owner, the actor that opened the port, as
+// ordinary messages under its mailbox quota. The owner's exit closes its
+// ports; actor.Kill on a port PID closes it. Ports cannot be linked or
+// monitored. The owner may give a port to another actor with Handoff.
+//
+// The stream protocol. Every port that moves bytes (tcp, tls, imu, ir,
+// mic, speaker, screen) speaks the same four messages: Chunk brings input,
+// Out sends output and Done answers each Out, and Closed says the port
+// ended by itself. The events carry From, the port's PID, so one actor can
+// own several ports and tell their events apart.
 package port
 
 import (
@@ -35,29 +41,50 @@ type Write struct{ Value int }
 // Edge is an event: the pin's level changed; Value is the level after it.
 type Edge struct{ Pin, Value int }
 
-// Chunk is a stream event, the one message type of every port that delivers
-// data in blocks (the "imu" sample batches, "ir_rx" frames). Seq counts the
-// chunks the port made, from 1, dropped ones included, so a gap in Seq means
-// chunks were lost; TimeMs is when the data began (the low 31 bits of the
-// millisecond clock; each port documents its precision); Dropped is how
-// many chunks were dropped since the last one delivered (a chunk over the
-// owner's mailbox quota is dropped and counted; the owner is not killed).
+// Chunk is a stream event: the next block of input. From is the port. Seq
+// counts the chunks the port made, from 1, dropped ones included, so a gap
+// in Seq means chunks were lost; TimeMs is when the data began (the low 31
+// bits of the millisecond clock; each port documents its precision);
+// Dropped is how many chunks were dropped since the last one delivered (a
+// chunk over the owner's mailbox quota is dropped and counted; the owner
+// is not killed). A port that loses nothing (tcp, tls: the peer resends
+// instead) always says 0.
 type Chunk struct {
+	From                 actor.PID
 	Seq, TimeMs, Dropped int
 	Data                 bytes.Bytes
 }
 
-// Out is a stream command: send Data to a port that outputs a stream (the
-// "ir_tx" timings). At most 2 Outs are in flight per port (one running, one
-// queued).
+// Out is a stream command: send Data. At most 2 Outs are in flight per port
+// (one running, one queued); a third is refused with Done{Seq: -1} and the
+// port carries on.
 type Out struct{ Data bytes.Bytes }
 
-// Done is a stream event: an Out has finished. Every accepted Out gets one,
-// in the order the Outs were sent; a refusal (Seq -1) is dropped only when
-// 16 Dones are already owed and unread (an owner that reads nothing, flooded
-// with Outs). Seq numbers the Outs sent successfully, from 1; it is -1 when the port refused the Out (too many in flight, or bad
-// data) or the hardware could not send it, and such an Out uses no number.
-type Done struct{ Seq int }
+// Done is a stream event: an Out has finished. From is the port. Every
+// accepted Out gets one, in the order the Outs were sent, and an Out counts
+// as in flight until its Done is delivered. A refused Out is answered at
+// once, so its Done{Seq: -1} may come before the Dones of Outs still in
+// flight: count Dones, Seq numbers only the sent ones. A refusal is dropped
+// only when 8 Dones are already owed and unread (an owner that reads
+// nothing, flooded with Outs). Seq numbers the Outs sent successfully, from
+// 1; it is -1 when the port refused the Out (too many in flight, bad data,
+// nothing to send it on) or could not send it, and such an Out uses no
+// number.
+type Done struct {
+	From actor.PID
+	Seq  int
+}
+
+// Closed is a stream event: the port ended by itself (the peer closed or
+// reset a connection, a timeout, the hardware failed). From is the port;
+// Reason says why (the net package's reasons for tcp and tls). Normal (0)
+// from tcp or tls means only that the peer finished sending: Outs still
+// work until another Closed. After any other reason the port does nothing
+// more: close it. A port sends at most one Normal and one terminal Closed.
+type Closed struct {
+	From   actor.PID
+	Reason int
+}
 
 // Host configures a port that the program embedding the VM defines (embed
 // mode, gogo_register_port in runtime/include/gogo.h): Arg and Data are
@@ -70,10 +97,13 @@ type Host struct {
 
 // Post is a message from the program embedding the VM (embed mode). The
 // host's gogo_post sends one to a registered name: Kind and Data are what
-// the host gave; it arrives as an ordinary message under the receiver's
-// mailbox quota (a post over it is dropped, and the receiver is not
-// killed). Host-defined ports use it for their commands and events too.
+// the host gave, From is the zero PID; it arrives as an ordinary message
+// under the receiver's mailbox quota (a post over it is dropped, and the
+// receiver is not killed). Host-defined ports use it for their commands
+// and events too; an event's From is the port (a command's From is
+// ignored).
 type Post struct {
+	From actor.PID
 	Kind int
 	Data bytes.Bytes
 }

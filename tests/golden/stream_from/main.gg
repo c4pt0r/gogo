@@ -1,0 +1,45 @@
+// stream_from: one actor owns two stream ports, the speaker and the IR
+// transmitter, and tells their Dones apart by From. Three Outs to the
+// speaker (the third is refused at once, Done{-1}) and one to ir_tx; the
+// Dones are sorted per port, since the two ports finish at their own pace.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/audio"
+	"gogo/bytes"
+	"gogo/ir"
+	"gogo/port"
+	"gogo/strconv"
+)
+
+func main() {
+	sp, ok := port.Open("spk", audio.Speaker{Rate: 8000, Volume: 50})
+	tx, ok2 := port.Open("ir_tx", ir.TX{})
+	println("open", ok, ok2)
+	b := bytes.NewBuffer(800)
+	for i := 0; i < 800; i++ {
+		b.WriteByte(0)
+	}
+	pcm := b.Freeze()
+	actor.Send(sp, port.Out{Data: pcm})
+	actor.Send(sp, port.Out{Data: pcm})
+	actor.Send(sp, port.Out{Data: pcm})
+	actor.Send(tx, port.Out{Data: bytes.FromSlice([]byte{100, 0, 200, 0})})
+	spSeqs, txSeqs, other := "", "", 0
+	for n := 0; n < 4; n++ {
+		switch d := actor.Receive().(type) {
+		case port.Done:
+			if d.From == sp {
+				spSeqs += " " + strconv.Itoa(d.Seq)
+			} else if d.From == tx {
+				txSeqs += " " + strconv.Itoa(d.Seq)
+			} else {
+				other++
+			}
+		}
+	}
+	println("speaker Dones:" + spSeqs)
+	println("ir_tx Dones:" + txSeqs)
+	println("from neither:", other)
+}

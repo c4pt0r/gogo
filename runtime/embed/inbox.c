@@ -70,25 +70,27 @@ static term put_int(uint32_t *d, uint32_t *at, int32_t v) {
     return t;
 }
 
-/* port.Post{Kind, Data} as one message block: the struct, the Kind box if
- * it needs one, then Data: the handle h (a reference of the block's own),
- * or else data inline as a K_BYTES (none when empty), which the receiver
- * gets as an ordinary Bytes on its heap. NULL if memory is out. */
-static Msg *post_msg(Vm *vm, int32_t kind, const uint8_t *data, uint32_t len, term h) {
+/* port.Post{From, Kind, Data} as one message block: the struct, the Kind
+ * box if it needs one, then Data: the handle h (a reference of the block's
+ * own), or else data inline as a K_BYTES (none when empty), which the
+ * receiver gets as an ordinary Bytes on its heap. From is the sending
+ * port's PID, T_ZEROPID for a gogo_post. NULL if memory is out. */
+static Msg *post_msg(Vm *vm, term from, int32_t kind, const uint8_t *data, uint32_t len, term h) {
     bool in = h == T_NIL && len;
-    uint32_t words = 4u + (term_int_fits(kind) ? 0u : 2u) + (in ? 2u + (len + 3u) / 4u : 0u);
+    uint32_t words = 5u + (term_int_fits(kind) ? 0u : 2u) + (in ? 2u + (len + 3u) / 4u : 0u);
     Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
     if (!m) return NULL;
     m->next = NULL;
     m->words = (uint16_t)words;
     m->flags = 0;
     m->root = term_from_ref(0);
-    uint32_t *d = m->data, at = 4;
-    d[0] = hdr_make(4, K_STRUCT);
+    uint32_t *d = m->data, at = 5;
+    d[0] = hdr_make(5, K_STRUCT);
     d[1] = TYPE_POST;
-    d[2] = put_int(d, &at, kind);
+    d[2] = from;
+    d[3] = put_int(d, &at, kind);
     if (h != T_NIL) {
-        d[3] = h;
+        d[4] = h;
         m->flags = MSG_HANDLES;
         bytes_msg_ref(vm, h);
     } else if (in) {
@@ -97,15 +99,15 @@ static Msg *post_msg(Vm *vm, int32_t kind, const uint8_t *data, uint32_t len, te
         d[at + 1u] = len;
         d[at + bw - 1u] = 0;            /* padding */
         memcpy(&d[at + 2u], data, len);
-        d[3] = term_from_ref(at);
+        d[4] = term_from_ref(at);
     } else {
-        d[3] = T_EMPTYBYTES;
+        d[4] = T_EMPTYBYTES;
     }
     return m;
 }
 
-Msg *embed_post_msg(Vm *vm, int32_t kind, const uint8_t *data, uint32_t len, term h) {
-    return post_msg(vm, kind, data, len, h);
+Msg *embed_post_msg(Vm *vm, term from, int32_t kind, const uint8_t *data, uint32_t len, term h) {
+    return post_msg(vm, from, kind, data, len, h);
 }
 
 int embed_enqueue_post(Vm *vm, Actor *to, Msg *m) {
@@ -127,7 +129,7 @@ static bool deliver(gogo_vm *g, const InboxNode *n) {
     term pid;
     if (!names_whereis(&g->vm, n->text, n->name_len, &pid)) return false;
     Actor *to = actor_lookup(&g->vm, pid);
-    return to && embed_enqueue_post(&g->vm, to, post_msg(&g->vm, n->kind, data, n->data_len, T_NIL)) == 0;
+    return to && embed_enqueue_post(&g->vm, to, post_msg(&g->vm, T_ZEROPID, n->kind, data, n->data_len, T_NIL)) == 0;
 }
 
 static bool src_pending(const Vm *vm, void *ctx) {

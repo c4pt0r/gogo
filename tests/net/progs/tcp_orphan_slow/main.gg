@@ -13,12 +13,12 @@ import (
 
 func handler(conn actor.PID) {
 	switch actor.Receive().(type) {
-	case net.Data:
+	case port.Chunk:
 		b := bytes.NewBuffer(200)
 		for i := 0; i < 200; i++ {
 			b.WriteByte('z')
 		}
-		actor.Send(conn, net.Write{Data: b.Freeze()})
+		actor.Send(conn, port.Out{Data: b.Freeze()})
 		actor.Send(conn, net.Shutdown{})
 	}
 }

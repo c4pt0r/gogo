@@ -116,14 +116,9 @@ func FromKbd(e kbd.Key) Key {
 // (the Key it means, KeyNone if none) or a port.Done answering one of the
 // screen's Outs. It returns k updated and whether msg was the UI's;
 // anything else (ok false) is the caller's to handle. It never waits.
-//
-// A port.Done does not name the port that sent it (until Done carries a
-// From field): Event takes as many Dones as s has Outs unanswered (Flush
-// counts them) and hands every other Done back. A program that also uses
-// another stream port (spk, ir_tx, ...) therefore gets the right number of
-// Dones, but while both have Outs in flight one of its Dones may be taken
-// for the screen's and the screen's handed back instead, so it should
-// count its Dones rather than rely on their Seq. Planned: k.Event(s, msg).
+// A Done is the screen's when its From is s.Port: the Dones of other
+// stream ports (speaker, ir_tx, ...) are handed back, every one of them.
+// Planned: k.Event(s, msg).
 func Event(s Screen, k Keys, msg any) (Keys, Key, bool) {
 	switch m := msg.(type) {
 	case kbd.Key:
@@ -154,9 +149,7 @@ func Event(s Screen, k Keys, msg any) (Keys, Key, bool) {
 		}
 		return up, Key{Code: KeyDown}, true
 	case port.Done:
-		st := s.st
-		if len(st) > 6 && st[6] > 0 {
-			st[6]--
+		if m.From == s.Port {
 			return k, Key{}, true
 		}
 	}

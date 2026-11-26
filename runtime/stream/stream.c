@@ -29,11 +29,10 @@ static term put_int(uint32_t *d, uint32_t *at, int32_t v) {
     return t;
 }
 
-/* Chunk{Seq, TimeMs, Dropped, Data} as one message block: [0..5] the
- * struct, then the int boxes it needs, then Data as a heap K_BYTES (none
- * when empty). NULL if it does not fit a block or memory is out. */
-static Msg *chunk_msg(struct Vm *vm, int32_t seq, int32_t time, int32_t dropped, const uint8_t *data, uint32_t len) {
-    uint64_t words = 6u + box_words(seq) + box_words(time) + box_words(dropped) +
+Msg *stream_chunk_new(struct Vm *vm, term from, uint32_t seq, uint32_t time_ms, uint32_t dropped,
+                      uint32_t len, uint8_t **data) {
+    int32_t t = (int32_t)(time_ms & INT31_MAX);
+    uint64_t words = 7u + box_words((int32_t)seq) + box_words(t) + box_words((int32_t)dropped) +
                      (len ? 2u + ((uint64_t)len + 3u) / 4u : 0u);
     if (words > 0xFFFFu) return NULL;
     Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
@@ -42,21 +41,23 @@ static Msg *chunk_msg(struct Vm *vm, int32_t seq, int32_t time, int32_t dropped,
     m->words = (uint16_t)words;
     m->flags = 0;                       /* inline Bytes: no handles */
     m->root = term_from_ref(0);
-    uint32_t *d = m->data, at = 6;
-    d[0] = hdr_make(6, K_STRUCT);
+    uint32_t *d = m->data, at = 7;
+    d[0] = hdr_make(7, K_STRUCT);
     d[1] = TYPE_CHUNK;
-    d[2] = put_int(d, &at, seq);
-    d[3] = put_int(d, &at, time);
-    d[4] = put_int(d, &at, dropped);
+    d[2] = from;
+    d[3] = put_int(d, &at, (int32_t)seq);
+    d[4] = put_int(d, &at, t);
+    d[5] = put_int(d, &at, (int32_t)dropped);
+    *data = NULL;
     if (len) {
         uint32_t bw = 2u + (len + 3u) / 4u;
         d[at] = hdr_make(bw, K_BYTES);
         d[at + 1u] = len;
         d[at + bw - 1u] = 0;            /* padding */
-        memcpy(&d[at + 2u], data, len);
-        d[5] = term_from_ref(at);
+        *data = (uint8_t *)&d[at + 2u];
+        d[6] = term_from_ref(at);
     } else {
-        d[5] = T_EMPTYBYTES;
+        d[6] = T_EMPTYBYTES;
     }
     return m;
 }
@@ -76,25 +77,29 @@ bool stream_deliver_chunk(struct Vm *vm, const Port *p, StreamIn *s, uint32_t ti
     s->seq = s->seq >= INT31_MAX ? 1u : s->seq + 1u;
     uint32_t dropped = s->dropped_since > INT31_MAX ? INT31_MAX : s->dropped_since;
     Actor *o = port_owner(vm, p);
-    Msg *m = o ? chunk_msg(vm, (int32_t)s->seq, (int32_t)(time_ms & INT31_MAX), (int32_t)dropped, data, len)
-               : NULL;
-    if (m && try_deliver(vm, o, m)) {
-        s->dropped_since = 0;
-        return true;
+    uint8_t *w;
+    Msg *m = o ? stream_chunk_new(vm, p->id, s->seq, time_ms, dropped, len, &w) : NULL;
+    if (m) {
+        if (len) memcpy(w, data, len);
+        if (try_deliver(vm, o, m)) {
+            s->dropped_since = 0;
+            return true;
+        }
+        msg_free(vm, m);
     }
-    if (m) msg_free(vm, m);
     if (s->dropped_since < UINT32_MAX) s->dropped_since++;
     return false;
 }
 
 /* ---- Out / Done ---- */
 
-/* Sends Done{seq} to p's owner without ever marking it; once more after
- * collecting a waiting owner's heap slack (as Chunks). */
+/* Sends Done{From: p, Seq: seq} to p's owner without ever marking it;
+ * once more after collecting a waiting owner's heap slack (as Chunks). */
 static bool send_done(struct Vm *vm, const Port *p, int32_t seq) {
-    if (port_deliver_ints(vm, p, TYPE_DONE, &seq, 1, 0)) return true;
+    int32_t v[2] = { (int32_t)p->id, seq };
+    if (port_deliver_ints(vm, p, TYPE_DONE, v, 2, PORT_RAW(0))) return true;
     Actor *o = port_owner(vm, p);
-    return o && heap_reclaim_waiting(vm, o) && port_deliver_ints(vm, p, TYPE_DONE, &seq, 1, 0);
+    return o && heap_reclaim_waiting(vm, o) && port_deliver_ints(vm, p, TYPE_DONE, v, 2, PORT_RAW(0));
 }
 
 /* Accepted Dones owed: their Seqs run up to next_seq. */
@@ -114,22 +119,23 @@ bool stream_out_flush(struct Vm *vm, Port *p, StreamOut *o) {
         bool ok = o->owed_bits & 1u;
         int32_t seq = ok ? (int32_t)seq_back(o->next_seq, owed_ok(o) - 1u) : -1;
         if (!send_done(vm, p, seq)) return false;
-        o->owed_bits = (uint16_t)(o->owed_bits >> 1);
+        o->owed_bits = (uint8_t)(o->owed_bits >> 1);
         o->owed_n--;
     }
     return true;
 }
 
 /* The next Done in order: an accepted Out's (ok: Seq next_seq + 1) or a
- * refusal. Sent now if nothing older is owed (those go first), else owed. */
+ * refusal. Sent now if nothing older is owed (those go first) and the
+ * driver holds no events of its own (user), else owed. */
 static void emit(struct Vm *vm, Port *p, StreamOut *o, bool ok) {
-    bool clear = stream_out_flush(vm, p, o);    /* before next_seq moves: owed Seqs end at it */
+    bool clear = !o->user && stream_out_flush(vm, p, o);   /* before next_seq moves: owed Seqs end at it */
     if (ok) o->next_seq = o->next_seq >= INT31_MAX ? 1u : o->next_seq + 1u;
     if (clear && send_done(vm, p, ok ? (int32_t)o->next_seq : -1)) return;
     /* Room stays for the Dones of the Outs in flight (owed_n + n never
      * exceeds STREAM_OWED_MAX), so only a refusal is ever lost here. */
     if (!ok && o->owed_n + o->n >= STREAM_OWED_MAX) return;
-    if (ok) o->owed_bits = (uint16_t)(o->owed_bits | 1u << o->owed_n);
+    if (ok) o->owed_bits = (uint8_t)(o->owed_bits | 1u << o->owed_n);
     o->owed_n++;
 }
 

@@ -382,9 +382,9 @@ func sendRequest(c actor.PID, j job) {
 	if j.Method != "GET" && j.Method != "HEAD" {
 		n = j.Body.Len()
 	}
-	actor.Send(c, net.Write{Data: requestHead(j, n)})
+	actor.Send(c, port.Out{Data: requestHead(j, n)})
 	if j.Body.Len() > 0 {
-		actor.Send(c, net.Write{Data: j.Body})
+		actor.Send(c, port.Out{Data: j.Body})
 	}
 }
 
@@ -410,7 +410,7 @@ func finish(c actor.PID, how int, secure bool, until int64, queue []any) []any {
 		m, got := actor.ReceiveTimeout(wait)
 		waiting = got
 		switch m.(type) {
-		case net.Closed:
+		case port.Closed:
 			waiting = false
 		case actor.DownMsg: // the caller (creator) ended: nobody to linger for
 			waiting = false
@@ -618,9 +618,9 @@ func readResponse(c actor.PID, j job, first bytes.Bytes, queue []any) (Response,
 		}
 		d = empty
 		switch e := m.(type) {
-		case net.Data:
+		case port.Chunk:
 			d = e.Data
-		case net.Closed:
+		case port.Closed:
 			if e.Reason == net.Normal && status >= 0 && framing == byClose { // the body ran to the close
 				return Response{status, hs, body.Freeze(), false}, done, queue
 			}
@@ -739,13 +739,13 @@ func client(creator actor.PID) {
 		case actor.DownMsg: // the creator ended: so does the client
 			clientEnd(conn, open, key, queue)
 			return
-		case net.Closed: // the server ended the idle connection
+		case port.Closed: // the server ended the idle connection
 			if open {
 				finish(conn, peerClosed, false, 0, nil)
 				open = false
 				queue = flush(queue)
 			}
-		case net.Data: // bytes on an idle connection: not HTTP we follow
+		case port.Chunk: // bytes on an idle connection: not HTTP we follow
 			if open {
 				finish(conn, failed, false, 0, nil)
 				open = false
@@ -855,11 +855,11 @@ func clientFetch(j job, conn actor.PID, open bool, key string, queue []any) (Res
 			break
 		}
 		switch m.(type) {
-		case net.Closed:
+		case port.Closed:
 			finish(conn, peerClosed, false, 0, nil)
 			open = false
 			queue = flush(queue)
-		case net.Data:
+		case port.Chunk:
 			finish(conn, failed, false, 0, nil)
 			open = false
 			queue = flush(queue)
@@ -935,7 +935,7 @@ func exchange(c actor.PID, j job, f fs.File, size int, queue []any) (Response, i
 // Failed (the connection closed, a wait timed out, or a DownMsg came: the
 // actor followed ended; it is kept in queue) or the file's error.
 func sendFile(c actor.PID, j job, f fs.File, size int, queue []any) (bytes.Bytes, int, fs.Err, []any) {
-	actor.Send(c, net.Write{Data: requestHead(j, size)})
+	actor.Send(c, port.Out{Data: requestHead(j, size)})
 	sent, inflight := 0, 1
 	var early bytes.Bytes
 	for (sent < size || inflight > 0) && early.Len() == 0 {
@@ -950,7 +950,7 @@ func sendFile(c actor.PID, j job, f fs.File, size int, queue []any) (bytes.Bytes
 			if d.Len() > size-sent {
 				d = d.Slice(0, size-sent) // the file grew: send what Content-Length says
 			}
-			actor.Send(c, net.Write{Data: d})
+			actor.Send(c, port.Out{Data: d})
 			sent += d.Len()
 			inflight++
 		}
@@ -963,11 +963,14 @@ func sendFile(c actor.PID, j job, f fs.File, size int, queue []any) (bytes.Bytes
 			return early, sent, Failed, queue
 		}
 		switch x := m.(type) {
-		case net.Written:
+		case port.Done:
 			inflight--
-		case net.Data:
+			if x.Seq < 0 { // not sent: the connection is gone
+				return early, sent, Failed, queue
+			}
+		case port.Chunk:
 			early = x.Data
-		case net.Closed:
+		case port.Closed:
 			return early, sent, Failed, queue
 		case actor.DownMsg:
 			return early, sent, Failed, keepMsg(queue, m)
@@ -1215,9 +1218,9 @@ func readRequest() (Request, int) {
 			return Request{}, -1
 		}
 		switch e := m.(type) {
-		case net.Closed:
+		case port.Closed:
 			return Request{}, -1
-		case net.Data:
+		case port.Chunk:
 			d := e.Data
 			if want < 0 {
 				head += d.String()
@@ -1292,9 +1295,9 @@ func writeResponse(conn actor.PID, r Response, head bool) {
 		}
 	}
 	b.WriteString("\r\n")
-	actor.Send(conn, net.Write{Data: b.Freeze()})
+	actor.Send(conn, port.Out{Data: b.Freeze()})
 	if r.Body.Len() > 0 && !head {
-		actor.Send(conn, net.Write{Data: r.Body})
+		actor.Send(conn, port.Out{Data: r.Body})
 	}
 }
 

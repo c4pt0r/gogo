@@ -52,7 +52,7 @@ func TestOpcodesMatchC(t *testing.T) {
 	if len(cConsts) < 30 {
 		t.Fatalf("parsed only %d C constants", len(cConsts))
 	}
-	for _, n := range []string{"BPortOpen", "BPortClose", "TypeGpio", "TypeWrite", "TypeEdge", "OpClear", "OpRetn", "OpCallv", "BBytesCopyto", "BPortHandoff", "BNetSubscribe", "BConfigGet", "TypeNetDatagram", "TyBytes"} {
+	for _, n := range []string{"BPortOpen", "BPortClose", "TypeGpio", "TypeWrite", "TypeEdge", "TypeClosed", "OpClear", "OpRetn", "OpCallv", "BBytesCopyto", "BPortHandoff", "BNetSubscribe", "BConfigGet", "TypeNetDatagram", "TyBytes"} {
 		if _, ok := cConsts[n]; !ok {
 			t.Errorf("%s not parsed from runtime/vm/opcodes.h", n)
 		}
@@ -191,8 +191,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 48 {
-		t.Errorf("%d reserved types, want 48", len(reservedTypes))
+	if len(reservedTypes) != 45 {
+		t.Errorf("%d reserved types, want 45", len(reservedTypes))
 	}
 }
 

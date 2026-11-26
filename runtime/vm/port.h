@@ -196,12 +196,16 @@ typedef struct PortSrcSlot {
 bool port_add_source(struct Vm *vm, const PortSource *s, void *ctx);
 void port_remove_source(struct Vm *vm, const PortSource *s);   /* unknown is ignored */
 
-/* Sends p's owner struct `type` with n <= PORT_MAX_FIELDS int fields (bit i
- * of bool_mask set: field i is a bool, true when v[i] != 0). Non-fatal:
- * false, nothing charged, when the owner is gone or exiting, memory is out,
- * or its quota is full. */
+/* Sends p's owner struct `type` with n <= PORT_MAX_FIELDS fields, ints
+ * unless bit i of raw_mask (PORT_RAW(i)) is set: then v[i] is a term cast
+ * to int32, put as it is (PORT_BOOL(b) for a bool, p->id for an event's
+ * From). Immediates only (bools, PIDs, small ints): a heap ref put raw
+ * would point into nothing. Non-fatal: false, nothing charged, when the owner is gone or
+ * exiting, memory is out, or its quota is full. */
+#define PORT_RAW(i) (1u << (i))
+#define PORT_BOOL(b) ((int32_t)((b) ? T_TRUE : T_FALSE))
 bool port_deliver_ints(struct Vm *vm, const Port *p, uint32_t type, const int32_t *v,
-                       uint32_t n, uint32_t bool_mask);
+                       uint32_t n, uint32_t raw_mask);
 
 /* net.Subscribe through the source; false without one. */
 bool port_subscribe(struct Vm *vm, struct Actor *a);

@@ -486,10 +486,12 @@ static bool pop(uint32_t *type, int32_t *f0, const uint8_t **data, uint32_t *len
     owner->mbox_words = (uint16_t)(owner->mbox_words - msg_charge_words(&vm, m));
     const uint32_t *o = m->data + term_ref_off(m->root);
     *type = o[1];
-    *f0 = term_is_int(o[2]) ? term_to_int(o[2]) : 0;
+    uint32_t i = term_is_pid(o[2]) ? 3u : 2u;   /* past a From */
+    if (i == 3u) CHECK_EQ(o[2], vm.ports[0].id);
+    *f0 = term_is_int(o[i]) ? term_to_int(o[i]) : 0;
     if (data && *type == TYPE_CHUNK) {
         static uint8_t copy[16];
-        const uint32_t *b = m->data + term_ref_off(o[5]);
+        const uint32_t *b = m->data + term_ref_off(o[6]);
         *len = b[1];
         memcpy(copy, b + 2, *len < sizeof copy ? *len : sizeof copy);
         *data = copy;

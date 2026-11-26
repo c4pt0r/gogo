@@ -1125,14 +1125,17 @@ TEST(deliver_ints_bool) {
     Actor *a = waiting_actor(&vm);
     term p = open_fake(&vm, a, 1);
     CHECK(port_is(p));
-    int32_t v[2] = { 5, 1 };
-    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, 1u << 1));
+    int32_t v[2] = { 5, PORT_BOOL(1) };
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, PORT_RAW(1)));
     const Msg *m = a->mbox_head;
     CHECK_EQ(m->data[2], term_from_int(5));
     CHECK_EQ(m->data[3], T_TRUE);
-    v[1] = 0;
-    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, 1u << 1));
+    v[1] = PORT_BOOL(0);
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, PORT_RAW(1)));
     CHECK_EQ(a->mbox_head->next->data[3], T_FALSE);
+    v[0] = (int32_t)first_port(&vm)->id;   /* a PID, as an event's From */
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, PORT_RAW(0) | PORT_RAW(1)));
+    CHECK_EQ(a->mbox_head->next->next->data[2], first_port(&vm)->id);
     clear_runq(&vm);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     teardown();

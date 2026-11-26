@@ -23,8 +23,8 @@
  * (undefined); gogo_post is fine.
  *
  * Messages from the host. gogo_post(vm, "name", kind, data, len) sends the
- * actor registered under "name" (actor.Register) a port.Post{Kind, Data}
- * message. Posts are queued in a lock-free inbox and delivered in order per
+ * actor registered under "name" (actor.Register) a port.Post{From, Kind,
+ * Data} message, From the zero PID. Posts are queued in a lock-free inbox and delivered in order per
  * posting thread at the VM's next step, as ordinary messages under the
  * receiver's mailbox quota. A post whose name is not registered when it is
  * delivered is dropped and counted (gogo_get_stats): in particular posts
@@ -255,8 +255,9 @@ GOGO_API int gogo_join(gogo_vm *vm);
  *
  * A host defines ports of its own, which Go code opens by name like any
  * port: port.Open("ui", port.Host{Arg: 1, Data: cfg}) calls the driver's
- * open; actor.Send(p, port.Post{Kind, Data}) calls its command; the port's
- * events reach its owner as port.Post{Kind, Data} (gogo_port_emit,
+ * open; actor.Send(p, port.Post{Kind: k, Data: d}) calls its command; the
+ * port's events reach its owner as port.Post{From, Kind, Data}, From the
+ * port's PID (gogo_port_emit,
  * gogo_port_post). Ports keep their usual rules: the owner's exit,
  * port.Close or actor.Kill closes one (the driver's close runs once),
  * port.Handoff gives it to another actor, a stale PID is ignored. What a

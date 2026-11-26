@@ -13,7 +13,7 @@
 // play without gaps. The two ports are half duplex: while one is open,
 // opening the other returns ok=false.
 //
-// The struct types Mic and Speaker have fixed type indices 42 and 43 in
+// The struct types Mic and Speaker have fixed type indices 39 and 40 in
 // every image (TYPE_AUDIO_MIC, TYPE_AUDIO_SPEAKER in runtime/vm/opcodes.h); keep
 // their field order in sync with compiler.reservedTypes.
 package audio
@@ -25,12 +25,12 @@ package audio
 // floor, without clipping), and each platform maps it to its codec's gain.
 //
 // Memory: with F = Rate*FrameMs/2000 words (one frame), the port charges
-// its owner F words, and each Chunk waiting in the mailbox takes F+10 more.
+// its owner F words, and each Chunk waiting in the mailbox takes F+11 more.
 // Open fails (ok=false) when not even one Chunk fits beside the owner's
 // heap. To ride out a stall of S ms (an SD card write) without Dropped,
-// the owner needs heap + F + (ceil(S/FrameMs) + 1) * (F+10) words (the
+// the owner needs heap + F + (ceil(S/FrameMs) + 1) * (F+11) words (the
 // +1 is the Chunk it is handling): at 16 kHz, 100 ms and a 300 ms stall
-// that is heap + 4040 words (a word is 4 bytes), more than the 4096-word
+// that is heap + 4044 words (a word is 4 bytes), more than the 4096-word
 // default on a board, so a recorder is spawned with
 // actor.Options{MaxMemory}. Dropped counts whole frames lost.
 type Mic struct{ Rate, FrameMs, Gain int }

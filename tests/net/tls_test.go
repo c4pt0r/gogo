@@ -967,7 +967,7 @@ func TestTLSLargeTransfer(t *testing.T) {
 	}
 }
 
-// Reuse after the server closed: the next Write gets a clean Closed (the
+// Reuse after the server closed: the next Out gets Done{-1} and a clean Closed (the
 // server's host resets it), and a new Dial works.
 func TestTLSReconnect(t *testing.T) {
 	cert := pki(t).leaf(t, certOpts{host: "gogo.test"})
@@ -990,7 +990,7 @@ func TestTLSReconnect(t *testing.T) {
 		echoHandler(s, c)
 	})
 	runTLS(t, srv, "time sleep:100 dial send:one echo:3 recvall sleep:100 send:again close dial send:two echo:3 shut close", "",
-		"time true\ndial true\nconnected\nwritten\necho one\nrecvall 0 closed 0\nclosed 1\nclosed port\n"+
+		"time true\ndial true\nconnected\nwritten\necho one\nrecvall 0 closed 0\nnot sent\nclosed 1\nclosed port\n"+
 			"dial true\nconnected\nwritten\necho two\nclosed 0\nclosed port\ndone\n")
 }
 

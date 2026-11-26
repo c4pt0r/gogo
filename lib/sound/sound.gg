@@ -187,7 +187,7 @@ func framesPerFile(secs, frameMs int) int {
 func memoryFor(rate, frameMs int) int {
 	f := rate * frameMs / 2000 // frame words
 	frames := (300+frameMs-1)/frameMs + 1
-	return (headroom + f + frames*(f+10)) * 4
+	return (headroom + f + frames*(f+11)) * 4
 }
 
 // Record starts the recorder for dir (created, one level, if missing),

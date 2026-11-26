@@ -327,9 +327,9 @@ static void deliver(Peer *pe) {
 static void check_mbox(Peer *pe) {
     for (const Msg *m = pe->owner->mbox_head; m; m = m->next) {
         if (m->data[1] == TYPE_NET_CONNECTED) pe->result = 1;
-        if (m->data[1] == TYPE_NET_CLOSED) {
+        if (m->data[1] == TYPE_CLOSED) {
             pe->result = 2;
-            pe->reason = term_to_int(m->data[2]);
+            pe->reason = term_to_int(m->data[3]);   /* after From */
         }
     }
 }

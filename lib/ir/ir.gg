@@ -9,7 +9,7 @@
 // as one port.Chunk. The timings are little-endian uint16 microseconds,
 // mark and space alternating, mark first, each at most 32767.
 //
-// The struct types TX and RX have fixed type indices 40 and 41 in every
+// The struct types TX and RX have fixed type indices 37 and 38 in every
 // image (TYPE_IR_TX, TYPE_IR_RX in runtime/vm/opcodes.h); keep their field order in
 // sync with compiler.reservedTypes.
 package ir

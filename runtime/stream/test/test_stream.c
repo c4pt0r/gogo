@@ -126,9 +126,10 @@ static int dones(Actor *a, int32_t *seqs, int cap) {
     int n = 0;
     Msg *m;
     while ((m = pop(a)) != NULL) {
-        CHECK_EQ(m->data[0], hdr_make(3, K_STRUCT));
+        CHECK_EQ(m->data[0], hdr_make(4, K_STRUCT));
         CHECK_EQ(m->data[1], TYPE_DONE);
-        if (n < cap) seqs[n] = word_int(m, m->data[2]);
+        CHECK_EQ(m->data[2], sp);              /* From: the port */
+        if (n < cap) seqs[n] = word_int(m, m->data[3]);
         n++;
         msg_free(&vm, m);
     }
@@ -140,16 +141,17 @@ typedef struct { int32_t seq, time, dropped; uint32_t len; uint8_t data[64]; } C
 static bool pop_chunk(Actor *a, Chunk *c) {
     Msg *m = pop(a);
     if (!m) return false;
-    CHECK_EQ(m->data[0], hdr_make(6, K_STRUCT));
+    CHECK_EQ(m->data[0], hdr_make(7, K_STRUCT));
     CHECK_EQ(m->data[1], TYPE_CHUNK);
     CHECK_EQ(m->flags, 0u);                  /* inline Bytes: no handles */
-    c->seq = word_int(m, m->data[2]);
-    c->time = word_int(m, m->data[3]);
-    c->dropped = word_int(m, m->data[4]);
+    CHECK_EQ(m->data[2], sp);                /* From: the port */
+    c->seq = word_int(m, m->data[3]);
+    c->time = word_int(m, m->data[4]);
+    c->dropped = word_int(m, m->data[5]);
     c->len = 0;
-    if (m->data[5] != T_EMPTYBYTES) {
-        CHECK(term_is_ref(m->data[5]));
-        const uint32_t *b = &m->data[term_ref_off(m->data[5])];
+    if (m->data[6] != T_EMPTYBYTES) {
+        CHECK(term_is_ref(m->data[6]));
+        const uint32_t *b = &m->data[term_ref_off(m->data[6])];
         CHECK_EQ(hdr_kind(b[0]), K_BYTES);
         c->len = b[1];
         CHECK_EQ(hdr_words(b[0]), 2u + (c->len + 3u) / 4u);
@@ -556,8 +558,8 @@ TEST(out_owed_partial_flush_keeps_order) {
     owner_full();
     CHECK(!stream_out_done(&vm, port_at(sp), &so));     /* Done{1} owed */
     CHECK_EQ(send_h(1), 1);                             /* 0 running + 1 owed < 2: accepted */
-    /* room for exactly one Done (a 3-word block) */
-    owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner) + msg_footprint_words(3));
+    /* room for exactly one Done (a 4-word block) */
+    owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner) + msg_footprint_words(4));
     CHECK(!stream_out_done(&vm, port_at(sp), &so));     /* sends Done{1}, owes Done{2} */
     CHECK_EQ(so.owed_n, 1u);
     int32_t seqs[4];

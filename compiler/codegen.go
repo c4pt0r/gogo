@@ -166,9 +166,9 @@ func isBytes(t types.Type) bool { return isBytesType(t, "Bytes") }
 
 func isBuffer(t types.Type) bool { return isBytesType(t, "Buffer") }
 
-// reservedTypes are the gogo/actor, gogo/port, gogo/net, gogo/fs, gogo/kbd,
-// gogo/power, gogo/code, gogo/imu, gogo/ir, gogo/audio and gogo/net DialTLS struct types (and the
-// later port.Chunk, Out, Done, Host and Post). The VM builds and recognizes
+// reservedTypes are the struct types of the system packages (gogo/actor,
+// gogo/net, gogo/fs, gogo/kbd, gogo/power, gogo/code, gogo/port,
+// gogo/imu, gogo/ir, gogo/audio, gogo/screen). The VM builds and recognizes
 // these structs by fixed index, their position here (TYPE_* in
 // runtime/vm/opcodes.h, field counts in TYPE_NFIELDS there). An image's
 // type table starts with them, in this order, up to the highest one the
@@ -204,13 +204,9 @@ var reservedTypes = []struct {
 	{NetPath, "Datagram", []string{"From", "Data"}},
 	{NetPath, "Dial", []string{"IP", "Port", "TimeoutMs"}},
 	{NetPath, "Listen", []string{"Port"}},
-	{NetPath, "Write", []string{"Data"}},
 	{NetPath, "Shutdown", nil},
 	{NetPath, "Resume", nil},
 	{NetPath, "Connected", nil},
-	{NetPath, "Data", []string{"Data"}},
-	{NetPath, "Written", nil},
-	{NetPath, "Closed", []string{"Reason"}},
 	{NetPath, "Accepted", []string{"Conn"}},
 	{FsPath, "Info", []string{"Size", "IsDir"}},
 	{FsPath, "Space", []string{"Used", "Total"}},
@@ -220,9 +216,10 @@ var reservedTypes = []struct {
 	{PowerPath, "Battery", []string{"MilliVolts", "Percent", "Charging", "External"}},
 	{PowerPath, "Read", nil},
 	{CodePath, "Module", []string{"H", "missing"}},
-	{PortPath, "Chunk", []string{"Seq", "TimeMs", "Dropped", "Data"}},
+	{PortPath, "Chunk", []string{"From", "Seq", "TimeMs", "Dropped", "Data"}},
 	{PortPath, "Out", []string{"Data"}},
-	{PortPath, "Done", []string{"Seq"}},
+	{PortPath, "Done", []string{"From", "Seq"}},
+	{PortPath, "Closed", []string{"From", "Reason"}},
 	{ImuPath, "Config", []string{"RateHz", "Gestures", "BatchMs"}},
 	{ImuPath, "Gesture", []string{"Kind", "Value"}},
 	{IrPath, "TX", []string{"CarrierHz", "DutyPct"}},
@@ -231,7 +228,7 @@ var reservedTypes = []struct {
 	{AudioPath, "Speaker", []string{"Rate", "Volume"}},
 	{NetPath, "DialTLS", []string{"IP", "Port", "TimeoutMs", "Host"}},
 	{PortPath, "Host", []string{"Arg", "Data"}},
-	{PortPath, "Post", []string{"Kind", "Data"}},
+	{PortPath, "Post", []string{"From", "Kind", "Data"}},
 	{ScreenPath, "Config", []string{"Cols", "Rows"}}, // 15.1
 }
 

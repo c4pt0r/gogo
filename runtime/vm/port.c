@@ -229,13 +229,14 @@ bool port_next_deadline(const Vm *vm, uint64_t *deadline) {
 
 /* ---- delivery ---- */
 
-/* A message holding struct `type` with n int fields (bit i of bool_mask:
- * field i is a bool): [hdr][type][f0..fn-1], then a K_INT box for each
- * field that does not fit a small int. NULL when out of memory. */
-static Msg *ints_msg(Vm *vm, uint32_t type, const int32_t *v, uint32_t n, uint32_t bool_mask) {
+/* A message holding struct `type` with n fields: ints, but where bit i of
+ * raw_mask is set v[i] is a term put as it is (a bool's T_TRUE or
+ * T_FALSE, a PID): [hdr][type][f0..fn-1], then a K_INT box for each int
+ * that does not fit a small int. NULL when out of memory. */
+static Msg *ints_msg(Vm *vm, uint32_t type, const int32_t *v, uint32_t n, uint32_t raw_mask) {
     uint32_t words = 2u + n, i;
     for (i = 0; i < n; i++) {
-        if (!(bool_mask >> i & 1u) && !term_int_fits(v[i])) words += 2u;
+        if (!(raw_mask >> i & 1u) && !term_int_fits(v[i])) words += 2u;
     }
     Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
     if (!m) return NULL;
@@ -247,8 +248,8 @@ static Msg *ints_msg(Vm *vm, uint32_t type, const int32_t *v, uint32_t n, uint32
     m->data[1] = type;
     words = 2u + n;                          /* where the next box goes */
     for (i = 0; i < n; i++) {
-        term t = v[i] ? T_TRUE : T_FALSE;
-        if (!(bool_mask >> i & 1u)) {
+        term t = (term)v[i];
+        if (!(raw_mask >> i & 1u)) {
             t = term_from_int(v[i]);
             if (!term_int_fits(v[i])) {
                 m->data[words] = hdr_make(2, K_INT);
@@ -263,9 +264,9 @@ static Msg *ints_msg(Vm *vm, uint32_t type, const int32_t *v, uint32_t n, uint32
 }
 
 bool port_deliver_ints(Vm *vm, const Port *p, uint32_t type, const int32_t *v, uint32_t n,
-                       uint32_t bool_mask) {
+                       uint32_t raw_mask) {
     Actor *o = port_owner(vm, p);
-    Msg *m = o ? ints_msg(vm, type, v, n, bool_mask) : NULL;
+    Msg *m = o ? ints_msg(vm, type, v, n, raw_mask) : NULL;
     if (!m) return false;
     if (msg_try_enqueue(vm, o, m)) return true;
     msg_free(vm, m);

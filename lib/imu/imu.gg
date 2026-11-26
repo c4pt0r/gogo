@@ -11,7 +11,7 @@
 // are fixed: acceleration +-8 g, rotation +-2000 dps (both over +-32768).
 // The axes are the sensor chip's own, which differ between boards.
 //
-// The struct types Config and Gesture have fixed type indices 38 and 39 in
+// The struct types Config and Gesture have fixed type indices 35 and 36 in
 // every image (TYPE_IMU_CONFIG, TYPE_IMU_GESTURE in runtime/vm/opcodes.h); keep
 // their field order in sync with compiler.reservedTypes.
 package imu

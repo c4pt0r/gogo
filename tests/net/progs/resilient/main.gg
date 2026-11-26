@@ -31,9 +31,9 @@ func main() {
 			println("get", ok, actor.Now())
 		case net.Connected:
 			println("connected", actor.Now())
-		case net.Data:
+		case port.Chunk:
 			println("data", m.Data.String())
-		case net.Closed:
+		case port.Closed:
 			println("closed", m.Reason, actor.Now())
 			port.Close(c)
 			have = false

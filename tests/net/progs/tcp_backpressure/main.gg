@@ -25,14 +25,14 @@ func main() {
 		next, bad := 0, 0
 		for {
 			switch m := actor.Receive().(type) {
-			case net.Data:
+			case port.Chunk:
 				for i := 0; i < m.Data.Len(); i++ {
 					if int(m.Data.At(i)) != next%251 {
 						bad++
 					}
 					next++
 				}
-			case net.Closed:
+			case port.Closed:
 				println("got", next, "bad", bad, "closed", m.Reason)
 				port.Close(c)
 				actor.Send(me, 1)
