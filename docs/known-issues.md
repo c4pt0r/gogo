@@ -755,11 +755,13 @@ rebuilt:
   `tls` port still runs on the simulated stack), so addresses are
   numeric; `tcp_listen` binds every interface of the computer and `tcp`
   connects anywhere.
-- **Boards per server: up to the link and port caps.** A host VM serves
-  512 boards by default (`node.max_links`, `vm.max_ports`, or
-  `gogovm --max-links` / `--max-ports`, each at most 2048); a board link
-  costs the server one port. A board's own links cost it two ports each
-  (its MCU stack cannot hand a TCP connection to the node port).
+- **Boards per server: about 930 at most.** A host VM serves 512 boards
+  by default (`node.max_links`, `vm.max_ports`, or `gogovm --max-links` /
+  `--max-ports`, each at most 2048); a board link costs the server one
+  port and one file descriptor. Past about 930 boards the server's node
+  agent (one entry per board, 256 KB at most) refuses new ones, whatever
+  the caps. A board's own links cost it two ports each (its MCU stack
+  cannot hand a TCP connection to the node port).
 - **Tables sized by the link cap** *L*: 48 + 2*L* remote PIDs known at once
   (and at most 4096 minus the port cap: remote PIDs live between 0xF000
   and the port PIDs), 48 + 2*L* local PIDs given out (dead ones are

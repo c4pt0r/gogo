@@ -519,16 +519,18 @@ Direct links between boards on the same network, with the server as
 directory and fallback relay, are the next step.
 
 ### How many boards can one server serve?
-As many as its caps allow: a server on a host VM serves 512 boards by
-default. Each board's link costs the server one port (the node port
-takes the TCP connection over) and one of its node links; the defaults
-are 1024 ports and 512 links, and both can be raised to 2048 with the
-config keys `vm.max_ports` and `node.max_links` or `gogovm --max-ports`
-/ `--max-links` (`gogo_config.max_ports` / `max_links` in an embedding
-host). The tables grow with the cap (about 100 bytes per link of it,
-allocated at the first link), the port table as ports open. `tests/dist`
-runs 20 boards on a server limited to 24 ports. A board itself keeps the
-small defaults (16 ports, 8 links): it joins one server. See book 20.9.
+A server on a host VM serves 512 boards with the defaults, and the tests
+fill one to 512. Each board's link costs the server one port (the node
+port takes the TCP connection over) and one of its node links; the
+defaults are 1024 ports and 512 links, and both can be raised to 2048
+with the config keys `vm.max_ports` and `node.max_links` or `gogovm
+--max-ports` / `--max-links`. With raised caps a server takes about 930
+boards; then its node agent's memory (256 KB) is nearly full and new
+boards are refused, while the others carry on (`make test-dist-scale`).
+Give the process enough file descriptors (`ulimit -n`): one per board.
+A board keeps the small defaults (16 ports, 8 links) even in a big star:
+it holds remote PIDs only for the nodes it talks to (tested in a star of
+300). See book 20.9.
 
 ## About the project
 
