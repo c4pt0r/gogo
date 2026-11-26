@@ -579,7 +579,7 @@ static const uint8_t op_info[] = {
     [OP_DIVU64] = OPF_ABC | OPF_W, [OP_REMU64] = OPF_ABC | OPF_W, [OP_LTU64] = OPF_ABC, [OP_LEU64] = OPF_ABC,
     [OP_SHRU64] = OPF_ABC | OPF_W | OPF_SH, [OP_SETFIELD] = OPF_AB_,
 };
-typedef char op_info_complete[sizeof op_info == OP_SETFIELD + 1u ? 1 : -1];
+typedef char op_info_complete[sizeof op_info == OP_LAST + 1u ? 1 : -1];
 
 /* What OP_BUILTIN checks for each builtin before its case runs. The low
  * three bits: BI(n), exactly n arguments; BI_VAR, the builtin checks its
@@ -611,7 +611,7 @@ static const uint8_t builtin_info[] = {
     [B_FLOAT] = GOGO_FLOAT ? BI_VAR : 0u, [B_PRINTLNU] = BI_VAR, [B_PANIC] = BI(1), [B_CMP] = BI_VAR,
     [B_RESERVED_58] = 0, [B_RESERVED_59] = 0, [B_RESERVED_60] = 0, [B_SPRINT] = BI_VAR,
 };
-typedef char builtin_info_complete[sizeof builtin_info == B_SPRINT + 1u ? 1 : -1];
+typedef char builtin_info_complete[sizeof builtin_info == B_LAST + 1u ? 1 : -1];
 
 int interp_run(Vm *vm, Actor *a) {
     /* The actor's module is loaded while it lives (its live count). */
@@ -664,6 +664,7 @@ int interp_run(Vm *vm, Actor *a) {
         bool wide;         /* an int64 (else an int: ires fits 32 bits) */
         CHECK(op < sizeof op_info);
         info = op_info[op];
+        GOGO_ASSERT(((info & OPF_EXT) != 0) == op_has_ext(op));   /* the compiler's view */
         if (info & OPF_EXT) {
             CHECK(next < img->code_words);
             ext = code[next++];
@@ -732,7 +733,7 @@ int interp_run(Vm *vm, Actor *a) {
             if (wide) why = arith64(op, x, y, &ires);
             else { why = arith32(op, (int32_t)x, (int32_t)y, &r32); ires = r32; }
             if (why != 0) CRASH(why);
-        put_int:   /* LOADI32, CONV, the int-valued builtins */
+        put_int:   /* LOADI32, CONV, NOW, MEMORY, UNIX_TIME (see B_NOW) */
             if (!(wide ? make_int64(vm, a, ires, &t) : make_int(vm, a, (int32_t)ires, &t))) CRASH(R_OUT_OF_MEMORY);
             RELOAD();
             R[ra] = t;
@@ -1182,9 +1183,11 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = term_from_bool(serial != 0 && timer_cancel(vm, serial));   /* zero Ref: false */
                 break;
             }
-            /* NOW, MEMORY and UNIX_TIME end in put_int: they cannot
-             * mark the running actor, so the exit check below has
-             * nothing to see. */
+            /* NOW, MEMORY and UNIX_TIME end in put_int, whose break
+             * skips the pending-exit check after this switch. That is
+             * only right for a builtin that cannot mark the running
+             * actor (actor_mark_exit: a send over its quota, a kill or
+             * link of itself); one that can must end in break. */
             case B_NOW:
                 /* An immediate (no allocation) for the first ~12 days. */
                 ires = (int64_t)vm_now(vm);
