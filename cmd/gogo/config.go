@@ -34,9 +34,13 @@ import (
 // parses it. Values are at most configMaxValue bytes without newlines.
 // get and rm also take the older key spelling (A-Z and "-" too), so keys
 // set before the table can still be read and removed. `get` and `list`
-// never print the Wi-Fi password, only whether it is set.
+// never print a secret (configSecrets), only whether it is set.
+//
+// `import <file|->` sets every key of a key=value file (parseImport) after
+// checking all of them; `export` prints the store as such a file, secrets
+// as comments without their values.
 
-const configUsage = "usage: gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | keys | scan | stats"
+const configUsage = "usage: gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats"
 
 const (
 	configMaxKey   = 15
@@ -404,6 +408,9 @@ func configExec(args []string, env configEnv) error {
 	fs := newFlags("config")
 	port := fs.String("port", "", "")
 	local := fs.Bool("local", false, "")
+	dry := false
+	fs.BoolVar(&dry, "n", false, "")
+	fs.BoolVar(&dry, "dry-run", false, "")
 	// set's value is taken as it is, even if it starts with "-".
 	args, err := parseFlagsRaw(fs, args, configUsage, func(pos []string) bool { return len(pos) == 2 && pos[0] == "set" })
 	if err != nil {
@@ -416,11 +423,17 @@ func configExec(args []string, env configEnv) error {
 		return usageError("config", "missing operation", configUsage)
 	}
 	op, args := args[0], args[1:]
-	want := map[string]int{"set": 2, "get": 1, "list": 0, "rm": 1, "keys": 0, "scan": 0, "stats": 0}
+	want := map[string]int{"set": 2, "get": 1, "list": 0, "rm": 1, "import": 1, "export": 0, "keys": 0, "scan": 0, "stats": 0}
 	if n, ok := want[op]; !ok {
 		return usageError("config", fmt.Sprintf("unknown operation %q", op), configUsage)
 	} else if len(args) != n {
 		return usageError("config", fmt.Sprintf("%s takes %d argument(s)", op, n), configUsage)
+	}
+	if dry && op != "import" {
+		return usageError("config", "-n (-dry-run) is for import only", configUsage)
+	}
+	if op == "import" {
+		return configImport(args[0], *port, *local, dry, env)
 	}
 	if op == "set" {
 		if err := checkSetKey(args[0]); err != nil {
@@ -478,6 +491,16 @@ func configExec(args []string, env configEnv) error {
 		if op == "scan" {
 			timeout = 20 * time.Second
 		}
+		if op == "export" {
+			c := newBoardConn(f)
+			defer c.close()
+			kvs, _, err := c.request("list", nil, timeout)
+			if err != nil {
+				return fmt.Errorf("gogo config: %v", err)
+			}
+			writeExport(env.out, target, kvs)
+			return nil
+		}
 		return boardConfig(f, op, args, env.out, timeout)
 	}
 	return fileConfig(target.path, op, args, env.out)
@@ -509,35 +532,224 @@ func fileConfig(path, op string, args []string, out io.Writer) error {
 		for _, kv := range kvs {
 			fmt.Fprintln(out, kv)
 		}
-	case "set", "rm":
+	case "export":
+		var kvs []string
+		seen := map[string]bool{}
+		for _, l := range lines {
+			if k, _, ok := strings.Cut(strings.TrimSuffix(l, "\r"), "="); ok && validKey(k) && !seen[k] {
+				seen[k] = true
+				kvs = append(kvs, strings.TrimSuffix(l, "\r"))
+			}
+		}
+		writeExport(out, configTarget{path: path}, kvs)
+	case "set":
+		if err := checkValue(args[1]); err != nil {
+			return err
+		}
+		return writeConfig(path, setLine(lines, args[0], args[1]))
+	case "rm":
 		key := args[0]
 		var kept []string
 		found := false
 		for _, l := range lines {
 			if k, _, ok := strings.Cut(strings.TrimSuffix(l, "\r"), "="); ok && k == key {
-				if op == "set" && !found {
-					kept = append(kept, key+"="+args[1])
-				}
 				found = true
 				continue
 			}
 			kept = append(kept, l)
 		}
-		if op == "rm" && !found {
+		if !found {
 			return fmt.Errorf("gogo config: %s is not set", key)
-		}
-		if op == "set" {
-			v := args[1]
-			if len(v) > configMaxValue || strings.ContainsAny(v, "\n\r\x00") {
-				return fmt.Errorf("gogo config: bad value (at most %d bytes, no newlines)", configMaxValue)
-			}
-			if !found {
-				kept = append(kept, key+"="+v)
-			}
 		}
 		return writeConfig(path, kept)
 	}
 	return nil
+}
+
+// setLine returns the store's lines with key set to value: the key's
+// first line replaced and its later ones dropped, or a line added.
+func setLine(lines []string, key, value string) []string {
+	var kept []string
+	found := false
+	for _, l := range lines {
+		if k, _, ok := strings.Cut(strings.TrimSuffix(l, "\r"), "="); ok && k == key {
+			if !found {
+				kept = append(kept, key+"="+value)
+			}
+			found = true
+			continue
+		}
+		kept = append(kept, l)
+	}
+	if !found {
+		kept = append(kept, key+"="+value)
+	}
+	return kept
+}
+
+// cfgSetting is one key=value line of an import file.
+type cfgSetting struct {
+	line       int
+	key, value string
+}
+
+// parseImport reads the key=value lines of an import file (named name in
+// errors): the store's own format, as the VM reads it (platform_unix.c):
+// the key runs to the first "=", the value to the end of the line (a
+// trailing \r dropped, nothing trimmed). Blank lines and lines starting
+// with "#" (after blanks) are skipped. Every line is checked as set
+// checks it, and a key may appear once; all mistakes are reported, as
+// file:line.
+func parseImport(name string, r io.Reader) ([]cfgSetting, error) {
+	var sets []cfgSetting
+	var errs []string
+	first := map[string]int{}
+	br := bufio.NewReader(r)
+	for n := 1; ; n++ {
+		l, err := br.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("gogo config: %s: %v", name, err)
+		}
+		if l == "" && err == io.EOF {
+			break
+		}
+		l = strings.TrimSuffix(strings.TrimSuffix(l, "\n"), "\r")
+		if t := strings.TrimSpace(l); t != "" && t[0] != '#' {
+			key, value, ok := strings.Cut(l, "=")
+			switch {
+			case !ok:
+				errs = append(errs, fmt.Sprintf("%s:%d: want key=value", name, n))
+			case first[key] != 0:
+				errs = append(errs, fmt.Sprintf("%s:%d: %s is set again (first on line %d)", name, n, key, first[key]))
+			default:
+				if cerr := checkSetting(key, value); cerr != nil {
+					errs = append(errs, fmt.Sprintf("%s:%d: %s", name, n, strings.TrimPrefix(cerr.Error(), "gogo config: ")))
+				} else {
+					first[key] = n
+					sets = append(sets, cfgSetting{n, key, value})
+				}
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+	}
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("gogo config: nothing imported:\n  %s", strings.Join(errs, "\n  "))
+	}
+	if len(sets) == 0 {
+		return nil, fmt.Errorf("gogo config: %s has no settings (key=value lines)", name)
+	}
+	return sets, nil
+}
+
+// configImport: `gogo config import [-n] <file|->` sets every key of the
+// file, in its order, on the store set would use. Nothing is written
+// unless every line is good. On the local store all keys are written in
+// one go; on a board one by one, and a failure stops the import and says
+// which keys were written.
+func configImport(file, port string, local, dry bool, env configEnv) error {
+	name, r := file, env.in
+	if file == "-" {
+		name = "stdin"
+	} else {
+		f, err := os.Open(file)
+		if err != nil {
+			return fmt.Errorf("gogo config: %v", err)
+		}
+		defer f.Close()
+		r = f
+	}
+	sets, err := parseImport(name, r)
+	if err != nil {
+		return err
+	}
+	target, err := configTargetFor(port, local, env)
+	if err != nil {
+		return err
+	}
+	line := func(s cfgSetting) string {
+		if isSecret(s.key) {
+			return s.key + " (set)"
+		}
+		return s.key
+	}
+	for _, s := range sets {
+		if s.key == "fs.flash.format" {
+			fmt.Fprintln(env.errOut, "gogo config: fs.flash.format is deprecated, use gogo device format-flash")
+		}
+		if !dry {
+			warnSecret(target, s.key, env.errOut)
+		}
+	}
+	if dry {
+		for _, s := range sets {
+			fmt.Fprintf(env.out, "would set %s\n", line(s))
+		}
+		fmt.Fprintf(env.out, "would import %d keys to %s (dry run: nothing written)\n", len(sets), target)
+		return nil
+	}
+	if target.port == "" {
+		lines, err := readConfig(target.path)
+		if err != nil {
+			return err
+		}
+		for _, s := range sets {
+			lines = setLine(lines, s.key, s.value)
+		}
+		if err := writeConfig(target.path, lines); err != nil {
+			return err
+		}
+		for _, s := range sets {
+			fmt.Fprintf(env.out, "set %s\n", line(s))
+		}
+	} else {
+		f, err := env.open(target.port)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		c := newBoardConn(f)
+		defer c.close()
+		for i, s := range sets {
+			if _, _, err := c.request("set", []string{s.key, s.value}, 5*time.Second); err != nil {
+				keys := func(ss []cfgSetting) string {
+					if len(ss) == 0 {
+						return "none"
+					}
+					var ks []string
+					for _, s := range ss {
+						ks = append(ks, s.key)
+					}
+					return strings.Join(ks, ", ")
+				}
+				return fmt.Errorf("gogo config: import stopped at %s:%d (%s): %v\n  written: %s\n  not written: %s",
+					name, s.line, s.key, err, keys(sets[:i]), keys(sets[i:]))
+			}
+			fmt.Fprintf(env.out, "set %s\n", line(s))
+		}
+	}
+	fmt.Fprintf(env.out, "imported %d keys to %s\n", len(sets), target)
+	return nil
+}
+
+// writeExport prints kvs (key=value, as list gives them) as an import
+// file: sorted, a secret as a comment without its value, and a key import
+// would refuse (an old spelling) as a comment too.
+func writeExport(out io.Writer, target configTarget, kvs []string) {
+	sort.Strings(kvs)
+	fmt.Fprintf(out, "# gogo config export from the %s\n", target)
+	for _, kv := range kvs {
+		k, v, _ := strings.Cut(kv, "=")
+		switch {
+		case isSecret(k):
+			fmt.Fprintf(out, "# %s=(set, not exported)\n", k)
+		case checkSetting(k, v) != nil:
+			fmt.Fprintf(out, "# %s=%s (not importable: %s)\n", k, v, strings.TrimPrefix(checkSetting(k, v).Error(), "gogo config: "))
+		default:
+			fmt.Fprintf(out, "%s\n", kv)
+		}
+	}
 }
 
 // boardConn talks to the board's console handler

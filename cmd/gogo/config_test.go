@@ -542,3 +542,214 @@ func TestConfigSecretTarget(t *testing.T) {
 		}
 	}
 }
+
+const importFile = `# my boards
+wifi.ssid=Home Net
+
+net.ip=192.168.1.20
+  # an indented comment
+demo.url=http://x/?a=b&c=d
+greeting=  spaced  ` + "\r" + `
+wifi.password=hunter2
+`
+
+// import: comments and blank lines skipped, the value to the end of the
+// line ("=" in it, blanks kept, a CRLF line end dropped), file order, the
+// password never shown.
+func TestConfigImport(t *testing.T) {
+	want := map[string]string{"wifi.ssid": "Home Net", "net.ip": "192.168.1.20", "demo.url": "http://x/?a=b&c=d", "greeting": "  spaced  ", "wifi.password": "hunter2"}
+	order := []string{"wifi.ssid", "net.ip", "demo.url", "greeting", "wifi.password"}
+	wantOut := "set wifi.ssid\nset net.ip\nset demo.url\nset greeting\nset wifi.password (set)\n"
+	file := filepath.Join(t.TempDir(), "boards.cfg")
+	os.WriteFile(file, []byte(importFile), 0o600)
+	t.Setenv("GOGO_CONFIG", "")
+	t.Setenv("HOME", t.TempDir())
+
+	// To the one board connected, from a file, the flag after it.
+	c := newConfigBench(t, 1)
+	out, errOut, err := c.run("", "import", file)
+	b := c.boards[c.ports[0]]
+	if err != nil || out != wantOut+"imported 5 keys to board /dev/cu.usbmodemA\n" {
+		t.Fatalf("board import: %v\n%s", err, out)
+	}
+	if fmt.Sprint(b.sets) != fmt.Sprint(order) || fmt.Sprint(b.store) != fmt.Sprint(want) {
+		t.Fatalf("board: sets %q store %q", b.sets, b.store)
+	}
+	if strings.Contains(out+errOut, "hunter2") {
+		t.Fatalf("the password is in the output: %q %q", out, errOut)
+	}
+
+	// From stdin, to -port with two boards.
+	c = newConfigBench(t, 2)
+	if out, _, err := c.run(importFile, "import", "-", "-port", "/dev/cu.usbmodemB"); err != nil || !strings.HasSuffix(out, "imported 5 keys to board /dev/cu.usbmodemB\n") {
+		t.Fatalf("stdin to -port: %v %q", err, out)
+	}
+	if len(c.boards["/dev/cu.usbmodemA"].sets) != 0 || len(c.boards["/dev/cu.usbmodemB"].sets) != 5 {
+		t.Fatal("wrong board written")
+	}
+	// Two boards, no -port; no board: refused, before anything is opened.
+	if _, _, err := c.run("", "import", file); err == nil || !strings.Contains(err.Error(), "several boards found") {
+		t.Fatalf("two boards: %v", err)
+	}
+	c = newConfigBench(t, 0)
+	if _, _, err := c.run("", "import", file); err == nil || !strings.Contains(err.Error(), "no board found") {
+		t.Fatalf("no board: %v", err)
+	}
+
+	// To the local store with -local: one write, other lines kept, a
+	// warning for the password (and not its value).
+	local := filepath.Join(os.Getenv("HOME"), ".gogo", "config")
+	os.MkdirAll(filepath.Dir(local), 0o700)
+	os.WriteFile(local, []byte("# mine\nnet.ip=10.0.0.1\nkeep=1\n"), 0o600)
+	out, errOut, err = c.run("", "-local", "import", file)
+	if err != nil || out != wantOut+"imported 5 keys to local store "+local+"\n" {
+		t.Fatalf("local import: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "warning: wifi.password is kept in plain text") || strings.Contains(out+errOut, "hunter2") {
+		t.Fatalf("local import stderr %q", errOut)
+	}
+	data, _ := os.ReadFile(local)
+	if string(data) != "# mine\nnet.ip=192.168.1.20\nkeep=1\nwifi.ssid=Home Net\ndemo.url=http://x/?a=b&c=d\ngreeting=  spaced  \nwifi.password=hunter2\n" {
+		t.Fatalf("local file %q", data)
+	}
+	// $GOGO_CONFIG counts as choosing the local store.
+	envFile := filepath.Join(t.TempDir(), "cfg")
+	t.Setenv("GOGO_CONFIG", envFile)
+	if _, _, err := newConfigBench(t, 1).run("", "import", file); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(envFile); !strings.Contains(string(data), "wifi.ssid=Home Net\n") {
+		t.Fatalf("GOGO_CONFIG file %q", data)
+	}
+}
+
+// A bad file writes nothing and names every bad line.
+func TestConfigImportErrors(t *testing.T) {
+	t.Setenv("GOGO_CONFIG", "")
+	cases := []struct{ file, want string }{
+		{"Blink=1\n", "f.cfg:1: bad key \"Blink\""},
+		{"ok.key=1\nnet.ip=1.2.3\n", "f.cfg:2: bad value for net.ip (ip)"},
+		{"net.bogus=1\n", "f.cfg:1: net.bogus is not a key gogo knows"},
+		{"a=1\n\nb=2\na=3\n", "f.cfg:4: a is set again (first on line 1)"},
+		{"just words\n", "f.cfg:1: want key=value"},
+		{"=x\n", "f.cfg:1: bad key \"\""},
+		{"a=1\nwifi.password=" + strings.Repeat("p", 65) + "\nx y=2\n", "f.cfg:2: bad value for wifi.password (string): want at most 64 bytes\n  f.cfg:3: bad key \"x y\""},
+		{"# nothing\n\n", "f.cfg has no settings"},
+		{"", "f.cfg has no settings"},
+	}
+	for _, tc := range cases {
+		dir := t.TempDir()
+		file := filepath.Join(dir, "f.cfg")
+		os.WriteFile(file, []byte(tc.file), 0o600)
+		t.Chdir(dir)
+		c := newConfigBench(t, 1)
+		out, _, err := c.run("", "import", "f.cfg")
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q: %v, want %q", tc.file, err, tc.want)
+		}
+		if len(c.opened) != 0 || out != "" {
+			t.Errorf("%q: opened %q, out %q", tc.file, c.opened, out)
+		}
+		if strings.Contains(fmt.Sprint(err), "ppppp") {
+			t.Errorf("%q: the value is in the error", tc.file)
+		}
+	}
+	// No final newline: the last line still counts.
+	file := filepath.Join(t.TempDir(), "f")
+	os.WriteFile(file, []byte("a=1\nb=2"), 0o600)
+	c := newConfigBench(t, 1)
+	if _, _, err := c.run("", "import", file); err != nil || c.boards[c.ports[0]].store["b"] != "2" {
+		t.Errorf("no final newline: %v %q", err, c.boards[c.ports[0]].store)
+	}
+	if _, _, err := c.run("", "import", filepath.Join(t.TempDir(), "missing")); err == nil || !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("missing file: %v", err)
+	}
+	if _, _, err := c.run("", "import"); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("no file: %v", err)
+	}
+	if _, _, err := c.run("", "-n", "list"); err == nil || !strings.Contains(err.Error(), "for import only") {
+		t.Errorf("-n list: %v", err)
+	}
+}
+
+// A board that refuses a key stops the import: the keys before it are
+// written, the rest are not, and the error says which.
+func TestConfigImportPartial(t *testing.T) {
+	t.Setenv("GOGO_CONFIG", "")
+	c := newConfigBench(t, 1)
+	b := c.boards[c.ports[0]]
+	b.failOn = "wifi.password"
+	out, errOut, err := c.run("a=1\nwifi.password=hunter2\nb=2\nc=3\n", "import", "-")
+	want := "gogo config: import stopped at stdin:2 (wifi.password): board: ESP_ERR_NVS_NOT_ENOUGH_SPACE\n  written: a\n  not written: wifi.password, b, c"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err %v\nwant %s", err, want)
+	}
+	if out != "set a\n" || fmt.Sprint(b.sets) != "[a]" {
+		t.Fatalf("out %q sets %q", out, b.sets)
+	}
+	if strings.Contains(out+errOut+err.Error(), "hunter2") {
+		t.Fatal("the password is in the output")
+	}
+}
+
+// -n (-dry-run) checks and names the store but writes nothing.
+func TestConfigImportDryRun(t *testing.T) {
+	t.Setenv("GOGO_CONFIG", "")
+	t.Setenv("HOME", t.TempDir())
+	for _, flag := range []string{"-n", "--dry-run"} {
+		c := newConfigBench(t, 1)
+		out, errOut, err := c.run(importFile, "import", "-", flag)
+		if err != nil || out != "would set wifi.ssid\nwould set net.ip\nwould set demo.url\nwould set greeting\nwould set wifi.password (set)\nwould import 5 keys to board /dev/cu.usbmodemA (dry run: nothing written)\n" {
+			t.Fatalf("%s: %v\n%s", flag, err, out)
+		}
+		if len(c.opened) != 0 || strings.Contains(out+errOut, "hunter2") {
+			t.Fatalf("%s: opened %q", flag, c.opened)
+		}
+		out, _, err = c.run(importFile, flag, "-local", "import", "-")
+		if err != nil || !strings.HasSuffix(out, "to local store "+filepath.Join(os.Getenv("HOME"), ".gogo", "config")+" (dry run: nothing written)\n") {
+			t.Fatalf("%s -local: %v %q", flag, err, out)
+		}
+		if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".gogo")); err == nil {
+			t.Fatalf("%s -local wrote the store", flag)
+		}
+		if _, _, err := c.run("x y=1\n", "import", "-", flag); err == nil || !strings.Contains(err.Error(), "stdin:1: bad key") {
+			t.Fatalf("%s: bad file: %v", flag, err)
+		}
+	}
+}
+
+// export prints an import file: secrets as comments without values, keys
+// import would refuse as comments; it round-trips through import.
+func TestConfigExport(t *testing.T) {
+	t.Setenv("GOGO_CONFIG", "")
+	c := newConfigBench(t, 2)
+	src := c.boards["/dev/cu.usbmodemA"]
+	for k, v := range map[string]string{"wifi.ssid": "Home Net", "wifi.password": "hunter2", "node.token": "tok3n", "demo.url": "http://x/?a=b", "Old-Key": "1", "pad": " x "} {
+		src.store[k] = v
+	}
+	out, _, err := c.run("", "export", "-port", "/dev/cu.usbmodemA")
+	want := "# gogo config export from the board /dev/cu.usbmodemA\n" +
+		"# Old-Key=1 (not importable: bad key \"Old-Key\" (1-15 characters of a-z 0-9 . _))\n" +
+		"demo.url=http://x/?a=b\n# node.token=(set, not exported)\npad= x \n" +
+		"# wifi.password=(set, not exported)\nwifi.ssid=Home Net\n"
+	if err != nil || out != want {
+		t.Fatalf("export: %v\n%s\nwant\n%s", err, out, want)
+	}
+	if strings.Contains(out, "hunter2") || strings.Contains(out, "tok3n") {
+		t.Fatal("a secret was exported")
+	}
+	if _, _, err := c.run(out, "import", "-", "-port", "/dev/cu.usbmodemB"); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(c.boards["/dev/cu.usbmodemB"].store); got != "map[demo.url:http://x/?a=b pad: x  wifi.ssid:Home Net]" {
+		t.Fatalf("round trip: %s", got)
+	}
+	// The local store, first line of a key winning.
+	path := filepath.Join(t.TempDir(), "cfg")
+	os.WriteFile(path, []byte("# mine\nb=2\na=1\nb=dup\nnode.token=tok3n\n"), 0o600)
+	t.Setenv("GOGO_CONFIG", path)
+	out, _, err = c.run("", "export")
+	if err != nil || out != "# gogo config export from the local store "+path+"\na=1\nb=2\n# node.token=(set, not exported)\n" {
+		t.Fatalf("local export: %v\n%s", err, out)
+	}
+}
