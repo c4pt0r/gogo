@@ -1,0 +1,116 @@
+// Field assignment: evaluation order, multi-assignment, receivers,
+// closures and reserved types.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/port"
+)
+
+type P struct{ X, Y int }
+
+type Box struct {
+	Ps  []P
+	Pos P
+}
+
+// trace prints a label and returns v: it shows when an operand is
+// evaluated.
+func trace(label string, v int) int {
+	println(label)
+	return v
+}
+
+// Moved returns a copy of p moved by dx: the field write changes only the
+// receiver, which is a copy.
+func (p P) Moved(dx int) P {
+	p.X += dx
+	return p
+}
+
+// Reset writes its receiver's fields and returns nothing: the caller's
+// value does not change.
+func (p P) Reset() {
+	p.X = 0
+	p.Y = 0
+}
+
+func main() {
+	// Index operands on the left, then the right-hand sides, left to right;
+	// then the assignments, left to right.
+	ps := []P{{1, 2}, {3, 4}}
+	ps[trace("i", 0)].X, ps[trace("j", 1)].Y = trace("a", 10), trace("b", 20)
+	println(ps[0], ps[1]) // {10 2} {3 20}
+
+	// Swap two fields.
+	p := P{1, 2}
+	p.X, p.Y = p.Y, p.X
+	println(p) // {2 1}
+
+	// Both targets name the same element: the second write sees the first.
+	ps[0].X, ps[0].Y = 7, 8
+	println(ps[0]) // {7 8}
+
+	// A field and its whole variable: left to right.
+	q := P{5, 5}
+	q, q.X = P{9, 9}, 1
+	println(q) // {1 9}
+	q.X, q = 2, P{3, 3}
+	println(q) // {3 3}
+
+	// The index is evaluated once in op= and ++.
+	n := 0
+	next := func() int {
+		println("next")
+		return n
+	}
+	ps[next()].X += 100
+	ps[next()].Y++
+	println(ps[0]) // {107 9}
+
+	// The right-hand side is evaluated before the element is read: a call
+	// that changes the element through a shared slice is not undone.
+	b := Box{Ps: []P{{0, 0}}}
+	set := func() int {
+		b.Ps[0].Y = 50 // b.Ps shares its array with the closure's copy
+		return 1
+	}
+	b.Ps[0].X = set()
+	println(b.Ps[0]) // {1 50}
+	b.Ps[0].X += set() + 1
+	println(b.Ps[0]) // {3 50}
+
+	// Multi-value calls into fields.
+	var c Box
+	c.Pos.X, c.Pos.Y = pair()
+	println(c.Pos) // {4 5}
+
+	// Receivers are copies.
+	r := P{1, 1}
+	println(r.Moved(5), r) // {6 1} {1 1}
+	r.Reset()
+	println(r) // {1 1}
+
+	// A closure's copy of a variable can be written inside the closure
+	// only by reading it into a local first.
+	base := P{1, 2}
+	f := func(dx int) P {
+		c := base
+		c.X += dx
+		return c
+	}
+	println(f(10), base) // {11 2} {1 2}
+
+	// Reserved types are structs too.
+	out := port.Out{Data: bytes.FromString("hi")}
+	out.Data = bytes.FromString("hello")
+	println(out.Data.Len()) // 5
+	ch := port.Chunk{From: actor.Self(), Seq: 1}
+	ch.Seq++
+	ch.Dropped += 3
+	ch.Data = bytes.FromString("abc")
+	println(ch.Seq, ch.Dropped, ch.Data.Len(), ch.From == actor.Self()) // 2 3 3 true
+}
+
+func pair() (int, int) { return 4, 5 }
