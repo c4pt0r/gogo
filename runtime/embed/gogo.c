@@ -458,9 +458,9 @@ int gogo_poster_post(gogo_poster *p, const char *name, size_t name_len, int32_t 
 
 int gogo_poster_port_post(gogo_poster *p, gogo_port port, int32_t kind, const void *data, size_t len) {
     gogo_vm *g = vm_of(p);
-    if (!g || (len && !data) || port.index >= GOGO_MAX_PORTS) return GOGO_EINVAL;
+    if (!g || (len && !data) || !embed_port_valid(port)) return GOGO_EINVAL;
     if (len > GOGO_POST_DATA_MAX) return GOGO_E2BIG;
-    return post(g, "", 0, embed_port_enc(port), kind, data, len);
+    return post(g, "", 0, port, kind, data, len);
 }
 
 void gogo_poster_close_posts(gogo_poster *p) { gogo_close_posts(vm_of(p)); }
@@ -469,12 +469,15 @@ void gogo_poster_free(gogo_poster *p) {
     if (p) unref(vm_of(p));
 }
 
-void gogo_get_stats(gogo_vm *g, gogo_stats *out) {
-    if (!g || !out) return;
-    out->posts_delivered = g->inbox.delivered;
-    out->posts_dropped = g->inbox.dropped;
-    out->mem_used = va_used_bytes(&g->vm);
-    out->mem_peak = va_peak_bytes(&g->vm);
+int gogo_get_stats(gogo_vm *g, gogo_stats *out) {
+    gogo_stats st;
+    if (!g || !out || !copy_sized(&st, sizeof st, out, out->size)) return GOGO_EINVAL;
+    st.posts_delivered = g->inbox.delivered;
+    st.posts_dropped = g->inbox.dropped;
+    st.mem_used = va_used_bytes(&g->vm);
+    st.mem_peak = va_peak_bytes(&g->vm);
+    memcpy(out, &st, out->size < sizeof st ? out->size : sizeof st);
+    return GOGO_OK;
 }
 
 void gogo_free(gogo_vm *g) {

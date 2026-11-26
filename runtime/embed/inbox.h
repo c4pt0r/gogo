@@ -44,6 +44,9 @@ int inbox_push(Inbox *in, const gogo_host *h, void *hctx, const char *name, size
  * inline; NULL if memory is out. VM thread. */
 struct Msg *embed_post_msg(struct Vm *vm, term from, int32_t kind, const uint8_t *data, uint32_t len, term h);
 
+/* port.Closed{from, reason} as a message block; NULL if memory is out. */
+struct Msg *embed_closed_msg(struct Vm *vm, term from, int32_t reason);
+
 /* Queues m (NULL: out of memory) on `to` without ever marking it: 0, or
  * GOGO_ENOMEM, or GOGO_EFULL (over its quota, or exiting: m is freed). */
 int embed_enqueue_post(struct Vm *vm, struct Actor *to, struct Msg *m);

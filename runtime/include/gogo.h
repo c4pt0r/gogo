@@ -349,35 +349,43 @@ GOGO_API int gogo_join(gogo_vm *vm);
  * gogo_load, or the load is refused (GOGO_EREQUIRES). While posts are open (gogo_close_posts), an
  * open host port keeps the VM alive, as it can still get events; after
  * the close it no longer does (a host that only emits between steps
- * closes posts when it is done with its ports). port.Post carries no
- * source: an actor that owns several host ports, or also gets gogo_post
- * messages, tells them apart by Kind.
+ * closes posts when it is done with its ports). An event's From is its
+ * port, so an actor that owns several host ports, or also gets posts
+ * (From the zero PID), tells them apart. A port that ends on the host's
+ * side (a device unplugged) is closed with gogo_port_close.
  *
  * The callbacks run on the VM thread inside gogo_step (close also inside
  * gogo_free) and are hooks: gogo_step, gogo_run, gogo_load and gogo_start
  * return GOGO_EBUSY there. data is valid during the call only; open's is
- * the cfg's Data, command's the command's Data. A port is named by its
- * index and a 12-bit generation bumped at each close of its slot: a closed
+ * the cfg's Data, command's the command's Data. A gogo_port names one
+ * open port: a nonzero value, opaque to the host, made of the port's slot
+ * and a 12-bit generation bumped at each close of the slot, so a closed
  * port's value names no later port until that slot has been opened and
  * closed 4096 more times (as for port PIDs). */
-typedef struct gogo_port { uint16_t index, gen; } gogo_port;
+typedef uint32_t gogo_port;
 typedef struct gogo_port_driver {
-    /* port.Open: 0 to accept, anything else refuses (Open's ok is false).
-     * NULL accepts every open. Events it emits (gogo_port_emit returns 0)
-     * are queued on the owner once the open succeeds, then subject to its
-     * quota like any event (over it, dropped); if it refuses, they are
-     * discarded. */
+    uint32_t size;          /* sizeof(gogo_port_driver) as the host was compiled (GOGO_PORT_DRIVER_INIT) */
+    uint32_t reserved;      /* 0 */
+    /* port.Open: 0 to accept, a negative GOGO_E* to refuse (Open's ok is
+     * false). NULL accepts every open. Events it emits (gogo_port_emit
+     * returns 0) are queued on the owner once the open succeeds, then
+     * subject to its quota like any event (over it, dropped); if it
+     * refuses, they are discarded. */
     int  (*open)(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uint8_t *data, size_t len);
     /* A port.Post sent to the port (by any actor). NULL ignores them; so
      * is any other message. */
     void (*command)(void *ctx, gogo_vm *vm, gogo_port port, int32_t kind, const uint8_t *data, size_t len);
-    /* The port has closed (any reason, gogo_free too); gogo_port_emit to
-     * it returns GOGO_ECLOSED already. NULL: nothing. */
+    /* The port has closed (any reason, gogo_port_close and gogo_free
+     * too); gogo_port_emit to it returns GOGO_ECLOSED already. NULL:
+     * nothing. */
     void (*close)(void *ctx, gogo_vm *vm, gogo_port port);
+    /* Fields are appended here, never inserted. */
 } gogo_port_driver;
 
-/* Most host ports per VM, and the longest name. */
-#define GOGO_MAX_HOST_PORTS 4
+#define GOGO_PORT_DRIVER_INIT { .size = sizeof(gogo_port_driver) }
+
+/* The longest host port name. A VM takes a few host ports (4 in this
+ * version; GOGO_EFULL beyond). */
 #define GOGO_PORT_NAME_MAX 31u
 
 /* Registers a host port driver as name (name_len bytes, no NUL among
@@ -385,8 +393,10 @@ typedef struct gogo_port_driver {
  * its callbacks getting ctx. Before gogo_load (a registered port
  * satisfies an image's requirement of its name). 0, or GOGO_EEXIST (a
  * port of this name exists, or it names one of the runtime's drivers,
- * "gpio", "tcp", "screen", ..., or one of the board's), GOGO_EFULL (GOGO_MAX_HOST_PORTS already), GOGO_E2BIG (the name),
- * GOGO_EINVAL (no name or driver), GOGO_ESTATE (an image is loaded),
+ * "gpio", "tcp", "screen", ..., or one of the board's), GOGO_EFULL (the
+ * VM has as many host ports as it takes), GOGO_E2BIG (the name),
+ * GOGO_EINVAL (no name, or no driver or one without a size),
+ * GOGO_ESTATE (an image is loaded),
  * GOGO_EBUSY. A port registered under a name the config's grant leaves
  * out is accepted but never visible to the program. */
 GOGO_API int gogo_register_port(gogo_vm *vm, const char *name, size_t name_len, const gogo_port_driver *drv,
@@ -399,6 +409,17 @@ GOGO_API int gogo_register_port(gogo_vm *vm, const char *name, size_t name_len, 
  * killed), GOGO_ENOMEM,
  * GOGO_E2BIG (over GOGO_POST_DATA_MAX), GOGO_EINVAL. */
 GOGO_API int gogo_port_emit(gogo_vm *vm, gogo_port port, int32_t kind, const void *data, size_t len);
+
+/* VM thread (a callback, or between steps): the port has ended on the
+ * host's side. Its owner gets port.Closed{From: the port, Reason: reason}
+ * (a shared code of gogo_errors.h, such as GOGO_E_IO; the program then
+ * knows the port does nothing more), then the port is closed and the
+ * driver's close runs, as for port.Close. 0; GOGO_EFULL or GOGO_ENOMEM if
+ * the Closed could not be queued (over the owner's quota: the port is
+ * closed all the same); GOGO_ECLOSED (the port is closed or closing, or
+ * its owner is exiting); GOGO_EBUSY (from the port's own open: refuse the
+ * open instead); GOGO_EINVAL. */
+GOGO_API int gogo_port_close(gogo_vm *vm, gogo_port port, int32_t reason);
 
 /* ---- posting from other threads ----
  *
@@ -435,15 +456,20 @@ GOGO_API void gogo_poster_close_posts(gogo_poster *p);
 GOGO_API void gogo_poster_free(gogo_poster *p);
 
 /* Counters. On the owning thread: with gogo_run_thread, after gogo_join
- * (or from a hook). */
+ * (or from a hook). The caller sets out->size (GOGO_STATS_INIT); the
+ * library fills the fields it knows within it. 0, or GOGO_EINVAL. */
 typedef struct gogo_stats {
+    uint32_t size;             /* set by the caller: sizeof(gogo_stats) */
+    uint32_t reserved;
     uint64_t posts_delivered;  /* posts queued on their receiver */
     uint64_t posts_dropped;    /* posts not delivered: unknown name, over quota, out of memory,
                                 * or the VM finished first */
-    size_t   mem_used;         /* the VM allocator's bytes in use */
-    size_t   mem_peak;         /* its highest use */
+    uint64_t mem_used;         /* the VM allocator's bytes in use */
+    uint64_t mem_peak;         /* its highest use */
+    /* Fields are appended here, never inserted. */
 } gogo_stats;
-GOGO_API void gogo_get_stats(gogo_vm *vm, gogo_stats *out);
+#define GOGO_STATS_INIT { .size = sizeof(gogo_stats) }
+GOGO_API int gogo_get_stats(gogo_vm *vm, gogo_stats *out);
 
 /* Closes posts (gogo_close_posts) and the program's ports and returns
  * every byte the VM took from its host (pending posts included); a VM running in gogo_run_thread is

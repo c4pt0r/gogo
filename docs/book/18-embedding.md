@@ -437,10 +437,18 @@ static int echo_open(void *ctx, gogo_vm *vm, gogo_port p, int32_t arg, const uin
 static void echo_command(void *ctx, gogo_vm *vm, gogo_port p, int32_t kind, const uint8_t *data, size_t len) {
     int *commands = ctx;
     ++*commands;
+    if (kind == 100) {
+        gogo_port_close(vm, p, GOGO_E_IO);   /* the owner gets port.Closed{p, errors.IO} */
+        return;
+    }
     gogo_port_emit(vm, p, kind + 1, data, len);
 }
 
-static const gogo_port_driver echo_driver = { echo_open, echo_command, NULL };
+static const gogo_port_driver echo_driver = {
+    .size = sizeof(gogo_port_driver),
+    .open = echo_open,
+    .command = echo_command,
+};
 ```
 
 and registers it before the program starts:
@@ -473,18 +481,43 @@ echo -4 0 true
 echo 2000000001 12 true
 echo 4 300 true
 closed
+ended by the host: true true
 ```
 
-A driver has three callbacks, each optional: `open` (0 accepts, anything
-else refuses; `NULL` accepts all), `command` (a `port.Post` sent to the
-port) and `close` (the port closed, for any reason: the owner exited,
-`port.Close`, `actor.Kill`, `gogo_free`). They run on the VM's thread
-inside `gogo_step`. The host sends the port's owner an event with
-`gogo_port_emit` from a callback or between steps, or with
-`gogo_poster_port_post` from any thread (queued like a post). A VM has at most
-`GOGO_MAX_HOST_PORTS` (4) host ports, registered before `gogo_load`:
-an image that opens a host port by a constant name requires it (section
-18.9), and a registration after the load returns `GOGO_ESTATE`.
+A driver, like the host table, begins with its size; it has three
+callbacks, each optional: `open` (0 accepts, a negative `GOGO_E*`
+refuses; `NULL` accepts all), `command` (a `port.Post` sent to the port)
+and `close` (the port closed, for any reason: the owner exited,
+`port.Close`, `actor.Kill`, `gogo_port_close`, `gogo_free`). They run on
+the VM's thread inside `gogo_step`, and get the port as a `gogo_port`: a
+nonzero 32-bit value that names that one open port, and no later one in
+its slot until 4096 more closes there. The host sends the port's owner
+an event with `gogo_port_emit` from a callback or between steps, or with
+`gogo_poster_port_post` from any thread (queued like a post). A VM takes
+a few host ports (4 in this version; `GOGO_EFULL` beyond), registered
+before `gogo_load`: an image that opens a host port by a constant name
+requires it (section 18.9), and a registration after the load returns
+`GOGO_ESTATE`.
+
+**A port can end on the host's side**, when the device behind it goes
+away, say. `gogo_port_close(vm, port, reason)` sends the owner
+`port.Closed{From, Reason}` (chapter 7's stream event: the port does
+nothing more), with a shared code as the reason (`GOGO_E_IO` is
+`errors.IO`), and closes the port: the driver's `close` runs, and the
+program's own `port.Close` of it later finds a stale PID and does
+nothing. `port.c` ends its port when it gets a command of Kind 100, and
+`hostecho` waits for the `Closed`:
+
+```go
+	actor.Send(q, port.Post{Kind: 100}) // the host ends the port
+	for ended := false; !ended; {
+		switch c := actor.Receive().(type) {
+		case port.Closed:
+			println("ended by the host:", c.From == q, c.Reason == int(errors.IO))
+			ended = true
+		}
+	}
+```
 
 What a host port may do is the host's business. They keep the usual port rules: one owner, closed when the
 owner exits, `port.Handoff` gives one away, a stale PID is ignored. While
@@ -624,6 +657,7 @@ as in `main.c --two`, or on many threads, as in the stress test.
 - At most 4 host ports per VM, 256 queued posts, and 255 bytes of name
   and 262,080 bytes of data per post. A post must also fit the receiver's
   memory limit beside its heap and mailbox.
-- `port.Post` carries no source: an actor that owns several host ports,
-  or also gets posts, tells them apart by `Kind`.
+- `gogo_port_close` belongs to the VM's thread; a host whose device goes
+  away on another thread hands the news to that thread first (a flag it
+  checks between steps, say).
 - The `fs_quota` counts regular-file bytes only (section 18.8).

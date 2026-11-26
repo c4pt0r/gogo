@@ -457,7 +457,9 @@ type Closed struct{ From actor.PID; Reason int }    // event: the port ended by 
 - `Closed{Reason}` says the port ended by itself: the peer closed or reset
   a connection, a timeout, a failure. TCP and TLS send it (chapter 10);
   their reasons are the `net` constants, which are shared codes from
-  `gogo/errors` (`net.Timeout` is `errors.Timeout`). After a `Closed` other than
+  `gogo/errors` (`net.Timeout` is `errors.Timeout`). A host port sends it
+  when the program embedding the VM ends the port (chapter 18), with
+  whatever shared code that program gives. After a `Closed` other than
   `Normal` the port does nothing more: close it.
 - Every event carries `From`, the port's PID, so one actor can own several
   stream ports and still tell their events apart.

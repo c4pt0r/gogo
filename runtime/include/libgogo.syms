@@ -13,6 +13,7 @@ gogo_load
 gogo_new
 gogo_new_posix
 gogo_next_deadline
+gogo_port_close
 gogo_port_emit
 gogo_posix_ctx_free
 gogo_posix_ctx_new

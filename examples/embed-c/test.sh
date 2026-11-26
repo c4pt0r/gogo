@@ -52,7 +52,7 @@ check "post greeter" examples/embed-c/greeter/embed.out "$T/out"
 
 "$E/port" "$T/img/hostecho.ggb" > "$T/out" 2> "$T/err" || { echo "FAIL port: exit status"; fail=1; }
 check "port hostecho" examples/hostecho/embed.out "$T/out"
-grep -qx "4 commands" "$T/err" || { echo "FAIL port: commands"; cat "$T/err"; fail=1; }
+grep -qx "5 commands" "$T/err" || { echo "FAIL port: commands"; cat "$T/err"; fail=1; }
 grep -qx "requires echo" "$T/err" || { echo "FAIL port: requirements"; cat "$T/err"; fail=1; }
 
 # The book chapter's snippets: each block must appear, as it is, in a source.

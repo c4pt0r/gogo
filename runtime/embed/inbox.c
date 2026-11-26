@@ -110,6 +110,22 @@ Msg *embed_post_msg(Vm *vm, term from, int32_t kind, const uint8_t *data, uint32
     return post_msg(vm, from, kind, data, len, h);
 }
 
+Msg *embed_closed_msg(Vm *vm, term from, int32_t reason) {
+    uint32_t words = 4u + (term_int_fits(reason) ? 0u : 2u);
+    Msg *m = va_alloc(vm, msg_alloc_bytes((uint16_t)words));
+    if (!m) return NULL;
+    m->next = NULL;
+    m->words = (uint16_t)words;
+    m->flags = 0;
+    m->root = term_from_ref(0);
+    uint32_t *d = m->data, at = 4;
+    d[0] = hdr_make(4, K_STRUCT);
+    d[1] = TYPE_CLOSED;
+    d[2] = from;
+    d[3] = put_int(d, &at, reason);
+    return m;
+}
+
 int embed_enqueue_post(Vm *vm, Actor *to, Msg *m) {
     if (!m) return GOGO_ENOMEM;
     /* Like a port event: never marks the receiver; once more after

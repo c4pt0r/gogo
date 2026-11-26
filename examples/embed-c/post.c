@@ -73,7 +73,7 @@ int main(int argc, char **argv) {
     int rc = gogo_run(vm);   /* returns once posts are closed and the greeter idles */
     if (started) pthread_join(t, NULL);
 
-    gogo_stats st;
+    gogo_stats st = GOGO_STATS_INIT;
     gogo_get_stats(vm, &st);
     printf("posts delivered: %llu, dropped: %llu\n",
            (unsigned long long)st.posts_delivered, (unsigned long long)st.posts_dropped);

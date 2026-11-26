@@ -81,6 +81,13 @@ rebuilt:
     `gogo_close_posts` are for the VM's own thread.
   - Names take a length: `gogo_post(vm, name, name_len, kind, data,
     len)` and `gogo_register_port(vm, name, name_len, drv, ctx)`.
+  - `gogo_port` is a `uint32_t` (it was a struct of index and
+    generation); compare it with `==`. `gogo_port_driver` and
+    `gogo_stats` begin with a `size` too (`GOGO_PORT_DRIVER_INIT`,
+    `GOGO_STATS_INIT`); a stats counter is a `uint64_t`, and
+    `gogo_get_stats` returns a result code. A driver's `open` refuses
+    with a negative `GOGO_E*`. `GOGO_MAX_HOST_PORTS` is gone (a VM still
+    takes 4 host ports).
   - The `GOGO_E*` results are the shared error codes negated, so their
     numbers changed (`GOGO_EINVAL` -1 is -6, `GOGO_EREQUIRES` -4 is
     -10, `GOGO_EVERSION` -13 is -27, ...); code that uses the names
@@ -291,13 +298,11 @@ rebuilt:
 - **Small writes need a `Bytes` handle.** A small `Out` is copied into
   a port-held handle (for retransmission); if the VM's 64 handles are all
   taken, it is refused with `Done{-1}`.
-- **Only tcp and tls send `port.Closed`.** The microphone does not
-  report a hardware failure, and a host port cannot end itself from the
-  C side yet (there is no `gogo_port_close`): the owner learns of either
-  only by silence. The `Reason` such ports will give is not specified
-  yet; it waits for one error numbering shared by every package. The message and its meaning (the port ended by itself;
-  close it) are fixed, so these ports can start sending it without a
-  change to programs.
+- **The microphone does not send `port.Closed`.** tcp, tls and host
+  ports (`gogo_port_close`) do, but a microphone hardware failure is not
+  reported: its owner learns of it only by silence. The message and its
+  meaning (the port ended by itself; close it) are fixed, so it can
+  start sending one without a change to programs.
 - **Losing the link or address ends every connection** with
   `Closed{NoRoute}`, and so does the exit of the `netif` owner (the DHCP
   actor). A crashed DHCP actor therefore drops all connections.

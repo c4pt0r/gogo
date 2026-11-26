@@ -14,7 +14,7 @@ static const PortDriver d_extra = { .name = "board_only" };   /* not a runtime n
 static const PortDriver *const board_ports[] = { &d_gpio, &d_tcp, &d_screen, &d_kbd, &d_extra, NULL };
 static const VmBoard board = { board_ports, NULL, NULL, NULL, NULL };
 
-static const gogo_port_driver none = { NULL, NULL, NULL };
+static const gogo_port_driver none = GOGO_PORT_DRIVER_INIT;
 
 static void check_board_names(const gogo_config *cfg) {
     gogo_vm *g = NULL;

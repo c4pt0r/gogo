@@ -6,7 +6,8 @@
  * among them, and runs examples/hostecho on it. Its open refuses a
  * negative Arg and otherwise answers with an event (Kind = Arg, Data =
  * the config's Data); every port.Post the program sends to it comes back
- * as an event with Kind + 1 and the same Data. */
+ * as an event with Kind + 1 and the same Data, except Kind 100, which
+ * ends the port from the host's side. */
 #define _POSIX_C_SOURCE 200809L
 #include "gogo.h"
 #include <stdio.h>
@@ -55,10 +56,18 @@ static int echo_open(void *ctx, gogo_vm *vm, gogo_port p, int32_t arg, const uin
 static void echo_command(void *ctx, gogo_vm *vm, gogo_port p, int32_t kind, const uint8_t *data, size_t len) {
     int *commands = ctx;
     ++*commands;
+    if (kind == 100) {
+        gogo_port_close(vm, p, GOGO_E_IO);   /* the owner gets port.Closed{p, errors.IO} */
+        return;
+    }
     gogo_port_emit(vm, p, kind + 1, data, len);
 }
 
-static const gogo_port_driver echo_driver = { echo_open, echo_command, NULL };
+static const gogo_port_driver echo_driver = {
+    .size = sizeof(gogo_port_driver),
+    .open = echo_open,
+    .command = echo_command,
+};
 
 int main(int argc, char **argv) {
     size_t len;

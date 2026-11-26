@@ -788,8 +788,9 @@ font.
   Outs still in flight. While the driver holds events of its own
   (`StreamOut.user`: tcp's held `Connected` or `Closed`) every `Done` is
   owed, so none overtakes them. A port that ends by itself sends
-  `port.Closed{From, Reason}` (tcp and tls today, with the `net`
-  reasons; a host port and a failing microphone are meant to, later).
+  `port.Closed{From, Reason}` (tcp and tls, with the `net` reasons, and
+  a host port the embedder ends with `gogo_port_close`, with the reason
+  it gives; a failing microphone is meant to, later).
   Reserved types 31-34.
 - **`imu` port** (`gogo/imu`): `imu.Config{RateHz, Gestures, BatchMs}`.
   `RateHz` is 0, 25, 50, 100 or 200; a sample is 12 bytes `gx gy gz ax ay
@@ -1735,8 +1736,10 @@ only through two tables of function pointers that the caller hands it.
   `_free`), which is the `gogo_vm` holding a reference of its own, so a
   posting thread may outlive the owner's `gogo_free` (posts then return
   `GOGO_ECLOSED`; the memory and the host's `destroy` wait for the last
-  reference); host ports (`gogo_register_port`, `gogo_port_emit`)
-  opened from Go as `port.Host`, registered before `gogo_load` so they
+  reference); host ports (`gogo_register_port`, `gogo_port_emit`,
+  `gogo_port_close`, which sends the owner `port.Closed`; a `gogo_port`
+  is an opaque `uint32_t`) opened from Go as `port.Host`, registered
+  before `gogo_load` so they
   satisfy the image's requirements (`gogo_config.grant`, a list of names
   or NULL for all, can withhold them); a sandboxed `/flash` on a host directory
   (`fs_dir.c`, `gogo_config.fs_root`, per-instance `fs_quota`); and the
