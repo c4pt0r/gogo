@@ -2,6 +2,7 @@
 package compiler
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -201,8 +202,17 @@ func (l *loader) Import(path string) (*types.Package, error) {
 	return pkg, nil
 }
 
-// parseFile parses one gogo source file.
+// parseFile parses one gogo source file. A first line starting with #!
+// (an executable script's interpreter line) is read as an empty line, so
+// line numbers stay those of the file.
 func parseFile(fset *token.FileSet, name string, src []byte) (*ast.File, error) {
+	if bytes.HasPrefix(src, []byte("#!")) {
+		if i := bytes.IndexByte(src, '\n'); i >= 0 {
+			src = src[i:]
+		} else {
+			src = nil
+		}
+	}
 	return parser.ParseFile(fset, name, src, parser.ParseComments)
 }
 

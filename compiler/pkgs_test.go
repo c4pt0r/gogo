@@ -244,6 +244,56 @@ func TestLoadFile(t *testing.T) {
 	}
 }
 
+// A first line starting with #! is a blank line: the file builds and its
+// errors keep their line numbers.
+func TestShebang(t *testing.T) {
+	work := t.TempDir()
+	dir := writeTree(t, filepath.Join(work, "s"), map[string]string{
+		"ok.gg":  "#!/usr/bin/env -S gogo run\npackage main\n\nfunc main() { println(\"hi\") }\n",
+		"bad.gg": "#!/usr/bin/env -S gogo run\npackage main\n\nfunc main() {\n\tm := map[int]int{}\n\t_ = m\n}\n",
+		"typ.gg": "#!/usr/bin/env -S gogo run\npackage main\n\nfunc main() { undefined() }\n",
+		"pkg.gg": "#!/usr/bin/env -S gogo run\npackage main\n\nimport \"s/util\"\n\nfunc main() { util.Sum(util.Point{}) }\n",
+		// a package file may start with #! too
+		"util/u.gg": "#!x\n" + utilPkg,
+		"only.gg":   "#!/bin/sh",
+	})
+	shebang, err := Config{}.LoadFile(filepath.Join(dir, "ok.gg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := writeTree(t, filepath.Join(work, "plain"), map[string]string{"main.gg": "\npackage main\n\nfunc main() { println(\"hi\") }\n"})
+	pp, err := Config{}.Load(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := Compile(shebang)
+	b, _ := Compile(pp)
+	if string(a) != string(b) {
+		t.Error("the #! file compiles to another image")
+	}
+	prog, err := Config{}.LoadFile(filepath.Join(dir, "bad.gg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := Check(prog); len(errs) == 0 || !strings.Contains(errs[0].Error(), "bad.gg:5:7: gogo: map not supported") {
+		t.Errorf("errors %v, want bad.gg:5:7", errs)
+	}
+	if _, err := (Config{}).LoadFile(filepath.Join(dir, "typ.gg")); err == nil || !strings.Contains(err.Error(), "typ.gg:4:15: undefined: undefined") {
+		t.Errorf("error %v, want typ.gg:4:15", err)
+	}
+	if _, err := (Config{}).LoadFile(filepath.Join(dir, "pkg.gg")); err != nil {
+		t.Errorf("package with #!: %v", err)
+	}
+	if _, err := (Config{}).LoadFile(filepath.Join(dir, "only.gg")); err == nil || !strings.Contains(err.Error(), "expected 'package'") {
+		t.Errorf("a file of only #!: %v", err)
+	}
+	// Only a first line: #! later is a syntax error.
+	late := writeTree(t, filepath.Join(work, "late"), map[string]string{"main.gg": "package main\n#!x\nfunc main() {}\n"})
+	if _, err := (Config{}).Load(late); err == nil {
+		t.Error("#! on line 2 accepted")
+	}
+}
+
 func TestSearchPathDefault(t *testing.T) {
 	sep := string(os.PathListSeparator)
 	home := filepath.Join(string(filepath.Separator)+"home", "u")
