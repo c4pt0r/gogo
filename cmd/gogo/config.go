@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,12 +24,17 @@ import (
 // its NVS store, over the serial console (boardConfig; `scan` lists the
 // Wi-Fi networks the board sees, `stats` its net stack's counters). See configMain for which one is used.
 //
-// Keys are 1-15 characters of [A-Za-z0-9._-] (the ESP32's NVS limit, so
-// a configuration means the same on every platform); values are at most
-// configMaxValue bytes without newlines. `get` and `list` never print the
-// Wi-Fi password, only whether it is set.
+// set checks the key and the value against the key table (cfgKeys): a key
+// is 1-15 bytes of [a-z0-9._] (15 is the ESP32's NVS limit, so a
+// configuration means the same on every platform); a key under a
+// platform prefix (cfgReserved) must be one of the table's, and its value
+// must parse as the key's type, as the firmware or library that reads it
+// parses it. Values are at most configMaxValue bytes without newlines.
+// get and rm also take the older key spelling (A-Z and "-" too), so keys
+// set before the table can still be read and removed. `get` and `list`
+// never print the Wi-Fi password, only whether it is set.
 
-const configUsage = "usage: gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats"
+const configUsage = "usage: gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | keys | scan | stats"
 
 const (
 	configMaxKey   = 15
@@ -48,6 +55,8 @@ func configPath() (string, error) {
 	return filepath.Join(home, ".gogo", "config"), nil
 }
 
+// validKey reports whether k is a key get and rm accept: 1-15 bytes of
+// [A-Za-z0-9._-] (what the board's store accepts).
 func validKey(k string) bool {
 	if k == "" || len(k) > configMaxKey {
 		return false
@@ -55,6 +64,184 @@ func validKey(k string) bool {
 	for i := 0; i < len(k); i++ {
 		c := k[i]
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// newKeyOK reports whether k may be set: 1-15 bytes of [a-z0-9._].
+func newKeyOK(k string) bool {
+	if k == "" || len(k) > configMaxKey {
+		return false
+	}
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// cfgType is how a value is checked on set.
+type cfgType int
+
+const (
+	cfgString cfgType = iota // any value
+	cfgSize                  // bytes: digits with an optional K or M suffix (k, m too), at most 4 GB - 1
+	cfgIP                    // a dotted IPv4 address
+	cfgBool                  // yes or no
+	cfgInt                   // a decimal integer (31-bit, as a gogo int)
+)
+
+var cfgTypeNames = [...]string{"string", "size", "ip", "bool", "int"}
+
+// cfgKey is one key the platform or a gogo library reads.
+type cfgKey struct {
+	name     string
+	typ      cfgType
+	platform bool     // read by the firmware or the VM, not a program (wifi.* is hidden from programs)
+	maxLen   int      // longest value; 0: configMaxValue
+	values   []string // if set, the only values allowed
+	about    string
+}
+
+// cfgKeys are the keys gogo itself reads (book chapter 11.3). Keep the
+// book's table in step.
+var cfgKeys = []cfgKey{
+	{name: "wifi.ssid", typ: cfgString, platform: true, maxLen: 32, about: "the Wi-Fi network"},
+	{name: "wifi.password", typ: cfgString, platform: true, maxLen: 64, about: "its password (never printed)"},
+	{name: "net.ip", typ: cfgIP, about: "a static address instead of DHCP (gogo/dhcp)"},
+	{name: "net.mask", typ: cfgIP, about: "its netmask (default 255.255.255.0)"},
+	{name: "net.gw", typ: cfgIP, about: "its gateway"},
+	{name: "net.dns", typ: cfgIP, about: "its DNS server"},
+	{name: "fs.flash.size", typ: cfgSize, platform: true, about: "the size of /flash"},
+	{name: "fs.flash.format", typ: cfgString, platform: true, values: []string{"yes"}, about: "yes: format /flash at the next boot"},
+	{name: "code.mem", typ: cfgSize, platform: true, about: "the budget for loaded module code"},
+}
+
+// cfgReserved are the prefixes of the platform's and gogo's own keys: a
+// key under one must be in cfgKeys.
+var cfgReserved = []string{"wifi.", "net.", "fs.", "code.", "gogo."}
+
+func findCfgKey(k string) (cfgKey, bool) {
+	for _, c := range cfgKeys {
+		if c.name == k {
+			return c, true
+		}
+	}
+	return cfgKey{}, false
+}
+
+// writeCfgKeys prints the key table (`gogo config keys`).
+func writeCfgKeys(out io.Writer) {
+	for _, c := range cfgKeys {
+		owner := "gogo library"
+		if c.platform {
+			owner = "platform"
+		}
+		typ := cfgTypeNames[c.typ]
+		if c.values != nil {
+			typ = strings.Join(c.values, "|")
+		}
+		fmt.Fprintf(out, "%-15s  %-6s  %-12s  %s\n", c.name, typ, owner, c.about)
+	}
+	fmt.Fprintf(out, "reserved prefixes: %s (other keys are yours)\n", strings.Join(cfgReserved, " "))
+}
+
+// checkSetKey reports why key cannot be set, or nil.
+func checkSetKey(key string) error {
+	if !newKeyOK(key) {
+		return fmt.Errorf("gogo config: bad key %q (1-%d characters of a-z 0-9 . _)", key, configMaxKey)
+	}
+	if _, ok := findCfgKey(key); !ok {
+		for _, p := range cfgReserved {
+			if strings.HasPrefix(key, p) {
+				return fmt.Errorf("gogo config: %s is not a key gogo knows, and %s* keys belong to gogo (pick another prefix for your own)", key, p)
+			}
+		}
+	}
+	return nil
+}
+
+// checkSetting reports why `set key value` is refused, or nil.
+func checkSetting(key, value string) error {
+	if err := checkSetKey(key); err != nil {
+		return err
+	}
+	if err := checkValue(value); err != nil {
+		return err
+	}
+	c, ok := findCfgKey(key)
+	if !ok {
+		return nil
+	}
+	bad := func(want string) error {
+		return fmt.Errorf("gogo config: bad value for %s (%s): want %s", key, cfgTypeNames[c.typ], want)
+	}
+	if c.maxLen > 0 && len(value) > c.maxLen {
+		return bad(fmt.Sprintf("at most %d bytes", c.maxLen))
+	}
+	if c.values != nil && !slices.Contains(c.values, value) {
+		return bad(strings.Join(c.values, " or "))
+	}
+	switch c.typ {
+	case cfgSize:
+		if !sizeOK(value) {
+			return bad("bytes, with an optional K or M suffix, like 65536, 64K or 1M")
+		}
+	case cfgIP:
+		if !ipOK(value) {
+			return bad("a dotted IPv4 address like 192.168.1.20")
+		}
+	case cfgBool:
+		if value != "yes" && value != "no" {
+			return bad("yes or no")
+		}
+	case cfgInt:
+		if n, err := strconv.ParseInt(value, 10, 32); err != nil || n < -(1<<30) || n >= 1<<30 {
+			return bad("a decimal integer")
+		}
+	}
+	return nil
+}
+
+// sizeOK: digits, an optional K or M (either case), at most 2^32-1 bytes,
+// as the firmware and the VM parse it (fs_lfs.c, module.c).
+func sizeOK(v string) bool {
+	i := 0
+	for i < len(v) && v[i] >= '0' && v[i] <= '9' {
+		i++
+	}
+	if i == 0 || i > 10 {
+		return false
+	}
+	n, _ := strconv.ParseUint(v[:i], 10, 64)
+	switch v[i:] {
+	case "":
+	case "K", "k":
+		n <<= 10
+	case "M", "m":
+		n <<= 20
+	default:
+		return false
+	}
+	return n <= 0xFFFFFFFF
+}
+
+// ipOK: four decimal parts 0..255 of 1 to 3 digits, as gogo/dhcp parses it.
+func ipOK(v string) bool {
+	parts := strings.Split(v, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, p := range parts {
+		if len(p) == 0 || len(p) > 3 {
+			return false
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 255 || p[0] == '+' || p[0] == '-' {
 			return false
 		}
 	}
@@ -157,14 +344,22 @@ func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer,
 		return usageError("config", "missing operation", configUsage)
 	}
 	op, args := args[0], args[1:]
-	want := map[string]int{"set": 2, "get": 1, "list": 0, "rm": 1, "scan": 0, "stats": 0}
+	want := map[string]int{"set": 2, "get": 1, "list": 0, "rm": 1, "keys": 0, "scan": 0, "stats": 0}
 	if n, ok := want[op]; !ok {
 		return usageError("config", fmt.Sprintf("unknown operation %q", op), configUsage)
 	} else if len(args) != n {
 		return usageError("config", fmt.Sprintf("%s takes %d argument(s)", op, n), configUsage)
 	}
-	if len(args) > 0 && !validKey(args[0]) {
-		return fmt.Errorf("gogo config: bad key %q (1-%d characters of A-Z a-z 0-9 . _ -)", args[0], configMaxKey)
+	if op == "set" {
+		if err := checkSetKey(args[0]); err != nil {
+			return err
+		}
+	} else if len(args) > 0 && !validKey(args[0]) {
+		return fmt.Errorf("gogo config: bad key %q (1-%d characters of a-z 0-9 . _)", args[0], configMaxKey)
+	}
+	if op == "keys" {
+		writeCfgKeys(out)
+		return nil
 	}
 	if op == "set" && args[1] == "-" {
 		restore := noEcho(stdin, errOut, args[0])
@@ -176,7 +371,7 @@ func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer,
 		args[1] = strings.TrimRight(v, "\r\n")
 	}
 	if op == "set" {
-		if err := checkValue(args[1]); err != nil {
+		if err := checkSetting(args[0], args[1]); err != nil {
 			return err
 		}
 	}

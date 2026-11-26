@@ -104,6 +104,11 @@ rebuilt:
   its value as it is (`gogo config set offset -5`), and `gogo run` takes
   its flags before the program only. A usage
   mistake prints what is wrong before the usage.
+- **Configuration keys.** `gogo config set` takes keys of `a-z 0-9 . _`
+  only (upper case and `-` were allowed), refuses unknown keys under the
+  gogo prefixes `wifi.`, `net.`, `fs.`, `code.` and `gogo.`, and checks
+  the values of gogo's keys (book chapter 11). `get` and `rm` still take
+  the old spelling.
 - **Exit statuses** of `gogo run` and `gogovm` (book chapter 12): a
   crash of `main` exits 4 and `actor.Exit(code)` in `main` exits with
   the code (0 before). A missing driver or mount exits 3 (was 1), a bad

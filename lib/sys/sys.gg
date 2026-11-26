@@ -38,7 +38,10 @@ func Random() int { panic("gogo only") }
 // Config returns the value of key in the platform configuration store; ok
 // is false if key is not set, or starts with "wifi.". The store holds
 // string keys and values, set with `gogo config set key value`: on unix
-// the file $GOGO_CONFIG (default ~/.gogo/config), on the board its NVS,
-// where a key is at most 15 bytes. Keys starting with "wifi." (Wi-Fi
+// the file $GOGO_CONFIG (default ~/.gogo/config), on the board its NVS.
+// A key is 1 to 15 bytes of a-z, 0-9, "." and "_" (15 is the NVS limit).
+// The prefixes "wifi.", "net.", "fs.", "code." and "gogo." are gogo's own
+// (`gogo config keys` lists its keys, and `gogo config set` checks their
+// values); other keys are the program's. Keys starting with "wifi." (Wi-Fi
 // credentials) belong to the platform and are never visible to programs.
 func Config(key string) (value string, ok bool) { panic("gogo only") }

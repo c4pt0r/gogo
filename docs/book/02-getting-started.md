@@ -217,7 +217,7 @@ usage: gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
        gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
        gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
        gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
-       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
+       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | keys | scan | stats
        gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
        gogo version
 ```

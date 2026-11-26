@@ -1637,7 +1637,15 @@ wifi.password` echoes only `(set)`. Store selection on the host: `-port`
 names a board; `-local` the local file `$GOGO_CONFIG` (default
 `~/.gogo/config`); with neither, a set `$GOGO_CONFIG` means the local
 file, otherwise exactly one connected board is used (with a note on
-stderr), otherwise the local file.
+stderr), otherwise the local file. `set` validates against a key table
+in `cmd/gogo/config.go` (name, type: string, size, ip, bool or int,
+platform-owned or a library's): keys are 1-15 bytes of `[a-z0-9._]`,
+an unknown key under a reserved prefix (`wifi.`, `net.`, `fs.`,
+`code.`, `gogo.`) is refused, and a known key's value must parse as its
+type, as its reader parses it (`fs_lfs.c`, `module.c`, `gogo/dhcp`). The
+firmware and the VM still parse what they read and fall back to a
+default on a bad value; the table only moves the error to the moment the
+value is typed. `gogo config keys` prints it.
 
 ### 5.10 Tests
 
