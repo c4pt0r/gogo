@@ -74,24 +74,6 @@ static bool str_alloc(Vm *vm, Actor *a, uint32_t len, uint32_t *off) {
     return raw_alloc(vm, a, K_STRING, len, off);
 }
 
-static uint32_t str_concat(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
-    const uint8_t *p, *q;
-    uint32_t lp, lq;
-    if (!str_view(vm, a, R[rb], &p, &lp) || !str_view(vm, a, R[rb + 1], &q, &lq)) return R_BAD_CODE;
-    if (lq == 0) { R[ra] = R[rb]; return R_NORMAL; }
-    if (lp == 0) { R[ra] = R[rb + 1]; return R_NORMAL; }
-    uint32_t off;
-    if (lp + lq < lp || !str_alloc(vm, a, lp + lq, &off)) return R_OUT_OF_MEMORY;
-    R = (term *)a->mem + a->fp;   /* the allocation may have moved everything */
-    str_view(vm, a, R[rb], &p, &lp);
-    str_view(vm, a, R[rb + 1], &q, &lq);
-    uint8_t *d = (uint8_t *)(a->mem + off + 2);
-    memcpy(d, p, lp);
-    memcpy(d + lp, q, lq);
-    R[ra] = term_from_ref(off);
-    return R_NORMAL;
-}
-
 /* ---- slices ---- */
 
 /* A slice argument: arr is T_NIL when cap is 0 (always for nil). A
@@ -184,6 +166,36 @@ static bool seq_view(const Vm *vm, const Actor *a, term t, uint32_t mask, const 
 
 /* A string or a Bytes: its bytes. */
 #define seq_bytes(vm, a, t, p, len) seq_view(vm, a, t, SQ_STR | SQ_BYTES, p, len)
+
+/* The bytes of two values v[0], v[1] of the kinds in mask. */
+typedef struct Pair {
+    const uint8_t *p, *q;
+    uint32_t lp, lq;
+} Pair;
+
+static bool pair_view(const Vm *vm, const Actor *a, const term *v, uint32_t mask, Pair *b) {
+    return seq_view(vm, a, v[0], mask, &b->p, &b->lp) && seq_view(vm, a, v[1], mask, &b->q, &b->lq);
+}
+
+static bool pair_equal(const Pair *b) {
+    return b->lp == b->lq && (b->lp == 0 || memcmp(b->p, b->q, b->lp) == 0);
+}
+
+static uint32_t str_concat(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
+    Pair b;
+    if (!pair_view(vm, a, R + rb, SQ_STR, &b)) return R_BAD_CODE;
+    if (b.lq == 0) { R[ra] = R[rb]; return R_NORMAL; }
+    if (b.lp == 0) { R[ra] = R[rb + 1]; return R_NORMAL; }
+    uint32_t off;
+    if (b.lp + b.lq < b.lp || !str_alloc(vm, a, b.lp + b.lq, &off)) return R_OUT_OF_MEMORY;
+    R = (term *)a->mem + a->fp;   /* the allocation may have moved everything */
+    pair_view(vm, a, R + rb, SQ_STR, &b);
+    uint8_t *d = (uint8_t *)(a->mem + off + 2);
+    memcpy(d, b.p, b.lp);
+    memcpy(d + b.lp, b.q, b.lq);
+    R[ra] = term_from_ref(off);
+    return R_NORMAL;
+}
 
 /* R[ra] = a new heap K_STRING / K_BYTES (kind) holding n bytes, from byte
  * lo on, of the register term R[r], which seq_view(mask) reads (again
@@ -374,17 +386,19 @@ static uint32_t sl_slice(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb, in
     return R_NORMAL;
 }
 
-/* COPY dst, src: n = min(len(dst), len(src)) elements, overlap allowed. */
-static uint32_t sl_copy(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
+/* COPY dst, src (any: a slice, a string or a Bytes) and BYTES_COPYTO
+ * src, dst (not any: a Bytes only): n = min(len(dst), len(src)) elements,
+ * overlap allowed. */
+static uint32_t sl_copy(Vm *vm, Actor *a, term *R, uint32_t ra, term dt, term st, bool any) {
     SliceV d, s;
     const uint8_t *str = NULL;
     uint32_t slen;
-    if (!slice_view(vm, a, R[rb], &d)) return R_BAD_CODE;
-    if (str_view(vm, a, R[rb + 1], &str, &slen) || bytes_view(vm, a, R[rb + 1], &str, &slen)) {
+    if (!slice_view(vm, a, dt, &d)) return R_BAD_CODE;
+    if (seq_view(vm, a, st, any ? SQ_STR | SQ_BYTES : SQ_BYTES, &str, &slen)) {
         if (d.arr != T_NIL && !d.bytes) return R_BAD_CODE;
     } else {
         str = NULL;
-        if (!slice_view(vm, a, R[rb + 1], &s)) return R_BAD_CODE;
+        if (!any || !slice_view(vm, a, st, &s)) return R_BAD_CODE;
         if (d.arr != T_NIL && s.arr != T_NIL && d.bytes != s.bytes) return R_BAD_CODE;
         slen = s.len;
     }
@@ -518,20 +532,6 @@ static uint32_t buf_freeze(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) 
     memcpy(d, buf_bytes(a, o), len);
     o[1] = 0;
     R[ra] = out;
-    return R_NORMAL;
-}
-
-/* BYTES_COPYTO x, p: copy(p, x) of a Bytes into a []byte. */
-static uint32_t bytes_copyto(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
-    const uint8_t *p;
-    uint32_t len;
-    SliceV d;
-    if (!bytes_view(vm, a, R[rb], &p, &len) || !slice_view(vm, a, R[rb + 1], &d) ||
-        (d.arr != T_NIL && !d.bytes)) return R_BAD_CODE;
-    uint32_t n = d.len < len ? d.len : len;
-    if (n && d.ro) return R_BAD_CODE;   /* into a const array */
-    if (n) memmove(slice_bytes(a, &d), p, n);
-    R[ra] = term_from_int((int32_t)n);
     return R_NORMAL;
 }
 
@@ -739,10 +739,11 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
         return R_NORMAL;
     }
     term *R = (term *)a->mem + a->fp;
-    const uint8_t *p, *q;
+    const uint8_t *p;
     uint32_t lp, lq;
     int32_t i, hi;
     SliceV s;
+    Pair b;
     switch (id) {
     case B_STR_CONCAT:
         if (rc != 2u) return R_BAD_CODE;
@@ -810,7 +811,7 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
         return sl_append(vm, a, R, ra, rb, rc);
     case B_COPY:
         if (rc != 2u) return R_BAD_CODE;
-        return sl_copy(vm, a, R, ra, rb);
+        return sl_copy(vm, a, R, ra, R[rb], R[rb + 1], true);
     case B_STR_FROM:   /* string(b) of a []byte, x.String() of a Bytes: a copy */
         lq = SQ_BYTES | SQ_BSLICE;
         goto copy;
@@ -819,8 +820,8 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
         return sl_bytes_from(vm, a, R, ra, rb);
     case B_STR_CMP:
         if (rc != 2u) return R_BAD_CODE;
-        if (!str_view(vm, a, R[rb], &p, &lp) || !str_view(vm, a, R[rb + 1], &q, &lq)) return R_BAD_CODE;
-        R[ra] = term_from_int(strs_order(p, lp, q, lq));
+        if (!pair_view(vm, a, R + rb, SQ_STR, &b)) return R_BAD_CODE;
+        R[ra] = term_from_int(strs_order(b.p, b.lp, b.q, b.lq));
         return R_NORMAL;
     case B_BUF_NEW:
         if (rc != 1u) return R_BAD_CODE;
@@ -837,13 +838,12 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
         if (rc != 1u || !seq_view(vm, a, R[rb], lq, &p, &lp)) return R_BAD_CODE;
         return seq_copy(vm, a, ra, rb, id == B_STR_FROM ? K_STRING : K_BYTES, lq, 0, lp);
     case B_BYTES_EQUAL:
-        if (rc != 2u || !bytes_view(vm, a, R[rb], &p, &lp) || !bytes_view(vm, a, R[rb + 1], &q, &lq))
-            return R_BAD_CODE;
-        R[ra] = term_from_bool(lp == lq && (lp == 0 || memcmp(p, q, lp) == 0));
+        if (rc != 2u || !pair_view(vm, a, R + rb, SQ_BYTES, &b)) return R_BAD_CODE;
+        R[ra] = term_from_bool(pair_equal(&b));
         return R_NORMAL;
     case B_BYTES_COPYTO:
         if (rc != 2u) return R_BAD_CODE;
-        return bytes_copyto(vm, a, R, ra, rb);
+        return sl_copy(vm, a, R, ra, R[rb + 1], R[rb], false);   /* copy(p, x) */
     case B_CONFIG_GET:
         if (rc != 1u) return R_BAD_CODE;
         return config_get(vm, a, R, ra, rb);
@@ -856,9 +856,9 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
 }
 
 bool strs_equal(const Vm *vm, const Actor *a, term x, term y, bool *eq) {
-    const uint8_t *p, *q;
-    uint32_t lp, lq;
-    if (!str_view(vm, a, x, &p, &lp) || !str_view(vm, a, y, &q, &lq)) return false;
-    *eq = lp == lq && (lp == 0 || memcmp(p, q, lp) == 0);
+    Pair b;
+    term v[2] = { x, y };
+    if (!pair_view(vm, a, v, SQ_STR, &b)) return false;
+    *eq = pair_equal(&b);
     return true;
 }
