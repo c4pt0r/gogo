@@ -1,0 +1,19 @@
+# logup: uploading to http://127.0.0.1:9/ingest?board=from-golden (batch 4, max 6, attempts 1)
+sim line 1 ax=125 az=1375 peak=100
+sim line 2 ax=250 az=1250 peak=200
+sim line 3 ax=375 az=1125 peak=300
+sim line 4 ax=500 az=1000 peak=400
+sim line 5 ax=625 az=875 peak=500
+sim line 6 ax=750 az=750 peak=600
+sim line 7 ax=875 az=625 peak=700
+sim line 8 ax=1000 az=500 peak=800
+sim line 9 ax=1125 az=375 peak=900
+sim line 10 ax=1250 az=250 peak=1000
+# backlog full: dropped 4 lines, keeping the newest 6
+sim line 11 ax=1375 az=125 peak=1100
+sim line 12 ax=1500 az=0 peak=1200
+# send failed: I/O error
+# giving up on 4 lines
+# send failed: I/O error
+# giving up on 2 lines
+# done: 0 lines sent, 2 failed posts, 6 lines lost, 6 dropped (backlog over 6)

@@ -1,0 +1,10 @@
+# The golden run: 12 log lines of its own (no ports, no timing), batches of
+# 4, a backlog of 6 so the oldest lines are visibly dropped, one POST per
+# batch to an address the host VM has no link to (every batch therefore
+# fails the same way), and no heartbeat.
+logup.sim=12
+logup.batch=4
+logup.max=6
+logup.attempts=1
+logup.timeout=400
+logup.url=http://127.0.0.1:9/ingest?board=from-golden
