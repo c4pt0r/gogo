@@ -479,6 +479,22 @@ board, run `gogo setup`. It identifies the board, downloads and verifies the fir
 flashes it without touching your settings, optionally sets up Wi-Fi, and
 runs a first program. See [book chapter 2](book/02-getting-started.md).
 
+### Does `gogo setup` reflash every time?
+No. Before flashing it asks the firmware on the board which version it
+runs (`gogo device info` shows the same), and when that is exactly the
+version it is about to flash, built for the same board, it says
+`the board already runs gogo <version> (<board>); not reflashing` and
+goes on to Wi-Fi and the first program. When it cannot tell (no answer,
+a firmware older than the question, a development or `-dirty` build) it
+flashes, and says why in one line. `-reflash` always flashes. Either way
+the board's settings (NVS) are never written. See
+[book section 2.1](book/02-getting-started.md).
+
+### Which firmware does my board run?
+`gogo device info` prints its version, board, image format and the
+drivers it provides. A firmware older than that command (v0.1.0) says
+so; its version is in the boot line, `gogo monitor -reset`.
+
 ### How do I configure several boards / many settings at once?
 Put the settings in a file of `key=value` lines (`#` comments allowed)
 and run `gogo config import <file>`: every line is checked first, and

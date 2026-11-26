@@ -67,6 +67,8 @@ func (b *simBoard) serve() {
 		case "stats":
 			b.say("kv heap_free=1")
 			b.say("ok")
+		case "info":
+			b.say("ok fw=v0.2.0 board=cardputer image=15.6 provides=gpio,kbd,/flash,/sd")
 		case "format-flash":
 			b.formats++
 			b.say("ok restarting to format /flash")
@@ -215,6 +217,13 @@ func TestDevice(t *testing.T) {
 	b = &simBoard{oldFirm: true}
 	if _, _, err := deviceRun(t, b, "", "-yes", "format-flash"); err == nil || !strings.Contains(err.Error(), "no format-flash (update it)") {
 		t.Errorf("old firmware: %v", err)
+	}
+	want := "firmware  gogo v0.2.0\nboard     cardputer (Cardputer ADV)\nimage     format 15.6 (runs images 15.0 to 15.6)\nprovides  gpio kbd /flash /sd\n"
+	if out, _, err := deviceRun(t, &simBoard{}, "", "info"); err != nil || out != want {
+		t.Errorf("info: %q %v", out, err)
+	}
+	if _, _, err := deviceRun(t, &simBoard{oldFirm: true}, "", "info"); err == nil || !strings.Contains(err.Error(), "this firmware has no info") {
+		t.Errorf("info on an old firmware: %v", err)
 	}
 	if _, _, err := deviceRun(t, &simBoard{}, "", "erase"); err == nil || !strings.Contains(err.Error(), "unknown operation") {
 		t.Errorf("erase: %v", err)

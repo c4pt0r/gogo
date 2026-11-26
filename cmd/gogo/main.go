@@ -21,7 +21,7 @@
 // external esptool (see flash.go); `gogo monitor` captures the board's
 // serial console (see monitor.go). `gogo config` edits the configuration
 // store that sys.Config reads, on the board or locally (see config.go).
-// `gogo device` scans, shows the counters of and formats /flash on the
+// `gogo device` shows the firmware of, scans, shows the counters of and formats /flash on the
 // board (see device.go). `gogo setup` takes a new board to a running program (see setup.go).
 package main
 

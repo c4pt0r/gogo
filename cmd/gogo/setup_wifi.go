@@ -168,6 +168,15 @@ func (c *console) config(op string, args []string, out io.Writer, timeout time.D
 	return boardConfig(v, op, args, out, timeout)
 }
 
+// request sends one config command and returns its reply (boardConn.request).
+func (c *console) request(op string, args []string, timeout time.Duration) ([]string, string, error) {
+	v := &consoleView{c: c, endOnReply: true}
+	defer v.close()
+	bc := newBoardConn(v)
+	defer bc.close()
+	return bc.request(op, args, timeout)
+}
+
 // watch reads the console until f returns true for a line or timeout
 // passes; it reports whether f ended it.
 func (c *console) watch(timeout time.Duration, f func(string) bool) bool {

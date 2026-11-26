@@ -9,7 +9,8 @@
  * on stdout), /flash's backend for push (lfs_be.c takes the volume's lock,
  * so the VM and this task can both use it), and the board's requests:
  * scan (nearby Wi-Fi networks), stats (net counters, memory, fixed tables
- * in use, this task's stack), format-flash (answers ok, then restarts the
+ * in use, this task's stack), info (the firmware version, the board, the
+ * image format and the requirement names esp_board provides), format-flash (answers ok, then restarts the
  * board, whose next mount formats /flash: fs_lfs_request_format; NVS is
  * not touched). Setting or removing a wifi.* key makes the station
  * reconnect with the new settings. A task reads the USB-Serial/JTAG
@@ -41,6 +42,14 @@
 #include "esp_system.h"
 #include "vfs_int.h"
 #include "configsvc.h"
+#include "image.h"
+#include "port.h"
+#include "port_names.h"
+#include "board.h"
+
+#ifndef GOGO_FIRMWARE_VERSION
+#define GOGO_FIRMWARE_VERSION "dev"
+#endif
 
 #define CFG_NS        "gogo"
 #define CFG_STACK     4096u    /* bytes; gogo device stats shows the least free */
@@ -276,6 +285,32 @@ static void cmd_format_flash(ConfigSvc *s) {
     esp_restart();
 }
 
+/* ---- info ---- */
+
+/* The requirement names of esp_board (an image's requirements are checked
+ * against the same lists, runtime/vm/module.c): its drivers, its mounts,
+ * and "float" in a float build. Filled on the first info. */
+#define INFO_NAMES 32
+static const char *info_names[INFO_NAMES + 1];
+
+static void cmd_info(void *ctx, ConfigInfo *out) {
+    (void)ctx;
+    if (!info_names[0]) {
+        size_t n = 0;
+        for (const struct PortDriver *const *d = esp_board.ports; *d && n < INFO_NAMES; d++) info_names[n++] = (*d)->name;
+        for (const VmMount *const *m = esp_board.mounts; *m && n < INFO_NAMES; m++) info_names[n++] = (*m)->prefix;
+#if GOGO_FLOAT
+        if (n < INFO_NAMES) info_names[n++] = PORT_REQ_FLOAT;
+#endif
+        info_names[n] = NULL;
+    }
+    out->fw = GOGO_FIRMWARE_VERSION;
+    out->board = BOARD_NAME;
+    out->image_major = IMAGE_MAJOR;
+    out->image_minor = IMAGE_MINOR;
+    out->provides = info_names;
+}
+
 static const ConfigBoard esp_cfg_board = {
     .write = out_line,
     .changed = changed,
@@ -284,6 +319,7 @@ static const ConfigBoard esp_cfg_board = {
 #endif
     .stats = cmd_stats,
     .format_flash = cmd_format_flash,
+    .info = cmd_info,
 };
 
 static void config_task(void *arg) {

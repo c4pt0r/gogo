@@ -80,6 +80,7 @@ to the board:
   sticks3-gogo.bin (1093072 bytes, sha256 ok)
 
 [4/6] Flashing the firmware
+  board firmware unknown (no answer on its console); flashing it
   0x00000000  bootloader.bin (18880 bytes)
   0x00008000  partition-table.bin (3072 bytes)
   0x00010000  gogo.bin (1093072 bytes)
@@ -120,7 +121,13 @@ to the board:
    against the release's `SHA256SUMS`, and keeps them in your user cache
    directory (`~/Library/Caches/gogo` on macOS, `~/.cache/gogo` on
    Linux), so a second run downloads only `SHA256SUMS` again.
-4. **Flash.** It writes the bootloader, the partition table and the
+4. **Flash.** First it asks the firmware already on the board which
+   version it is (`gogo device info`, chapter 12). If that is exactly
+   the version about to be flashed, built for the same board, it says
+   `the board already runs gogo <version> (<board>); not reflashing` and
+   moves on; `-reflash` flashes anyway. Otherwise (another version, a
+   new board, a firmware too old to answer, a development build) it says
+   why in one line and writes the bootloader, the partition table and the
    firmware at the offsets the firmware build lists. It never erases the
    chip and never writes the NVS partition, where the board keeps its
    settings, so a Wi-Fi setup from before survives. If the firmware now
@@ -151,9 +158,10 @@ always safe.
 | `-release-url URL\|DIR` | the files of one release from another place: an `http(s)` URL or a local directory (also `GOGO_RELEASE_URL`) |
 | `-offline` | build the firmware locally instead of downloading it |
 | `-skip-wifi` | leave the Wi-Fi settings as they are |
+| `-reflash` | flash the firmware even when the board already runs the same version |
 | `-new-layout` | flash even though the board keeps its settings elsewhere than the new firmware, or its partition table cannot be read (the old settings are then not used, and their space may be reused later) |
 | `-yes` | accept every default without asking (Wi-Fi is then skipped) |
-| `-dry-run` | read the board and download, but only print the commands that would write to it |
+| `-dry-run` | read the board and download, but only print the commands that would write to it (and whether the firmware would be flashed at all) |
 | `-esptool path` | the esptool to run |
 
 Without a release to download (no network, or no such release),
@@ -225,8 +233,8 @@ usage: gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
        gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
        gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
        gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats
-       gogo device [-port P] [-yes] scan | stats | format-flash
-       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
+       gogo device [-port P] [-yes] info | scan | stats | format-flash
+       gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]
        gogo version
 ```
 

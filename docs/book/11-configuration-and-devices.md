@@ -91,9 +91,10 @@ gogo config [-port P | -local] export                 # the store as a file for 
 gogo config keys                 # the keys gogo itself reads (section 11.3)
 ```
 
-Two board commands go with it (chapter 12):
+Three board commands go with it (chapter 12):
 
 ```text
+gogo device [-port P] info       # the firmware the board runs: version, board, image format
 gogo device [-port P] scan       # Wi-Fi networks the board sees (2.4 GHz)
 gogo device [-port P] stats      # network counters and free memory on the board
 ```

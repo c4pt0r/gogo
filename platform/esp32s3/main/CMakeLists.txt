@@ -181,14 +181,9 @@ if(GOGO_BOARD STREQUAL "cardputer" AND CONFIG_GOGO_SD)
         "-Wl,--wrap=get_fattime")
 endif()
 
-# Firmware version for the boot line: `git describe` of the repo at
-# configure time.
-execute_process(
-    COMMAND git describe --always --dirty
-    WORKING_DIRECTORY "${GOGO_ROOT}"
-    OUTPUT_VARIABLE GOGO_FIRMWARE_VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET)
+# Firmware version for the boot line and `gogo device info`: the app's
+# PROJECT_VER, `git describe` of the repo (../CMakeLists.txt).
+idf_build_get_property(GOGO_FIRMWARE_VERSION PROJECT_VER)
 if(NOT GOGO_FIRMWARE_VERSION)
     set(GOGO_FIRMWARE_VERSION "dev")
 endif()

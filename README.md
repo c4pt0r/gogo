@@ -127,8 +127,8 @@ gogo setup
 ```
 
 It identifies the board, downloads and checks the matching firmware,
-flashes it (keeping the board's settings), sets up Wi-Fi and runs a first
-program.
+flashes it (keeping the board's settings; not at all if the board already
+runs that firmware), sets up Wi-Fi and runs a first program.
 
 **From source, on your computer.** You need Go 1.27 or newer, a C99
 compiler and `make`.
@@ -172,6 +172,7 @@ loading:
 build/gogo flash docs/book/examples/02-hello
 build/gogo monitor -reset -timeout 5
 build/gogo push greeter.ggb               # to /flash/greeter.ggb, for code.Load
+build/gogo device info                    # the firmware the board runs
 build/gogo device stats                   # the board's counters and memory
 ```
 

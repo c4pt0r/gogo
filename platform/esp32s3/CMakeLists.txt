@@ -12,6 +12,20 @@ if(NOT DEFINED SDKCONFIG_DEFAULTS AND NOT DEFINED ENV{SDKCONFIG_DEFAULTS})
     endif()
     set(SDKCONFIG_DEFAULTS "sdkconfig.defaults;sdkconfig.sticks3")
 endif()
+# The firmware version: `git describe` of the repo at configure time
+# ("dev" without git). It is the app's PROJECT_VER, so it is in gogo.bin's
+# app descriptor too, where `gogo setup` reads the version it is about to
+# flash, and main/CMakeLists.txt gives it to the C code as
+# GOGO_FIRMWARE_VERSION (the boot line, `gogo device info`).
+execute_process(
+    COMMAND git describe --always --dirty
+    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+    OUTPUT_VARIABLE PROJECT_VER
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT PROJECT_VER)
+    set(PROJECT_VER "dev")
+endif()
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(gogo)
 

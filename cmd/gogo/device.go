@@ -3,9 +3,14 @@ package main
 // gogo device: operations on the board itself, over its serial console
 // (the \x02gogo-config frames of config.go's boardConn):
 //
+//	gogo device [-port P] info                  the firmware it runs
 //	gogo device [-port P] scan                  the Wi-Fi networks it sees
 //	gogo device [-port P] stats                 its counters and memory
 //	gogo device [-port P] [-yes] format-flash   format /flash
+//
+// info shows the firmware's version, the board it was built for, the image
+// format it runs and the requirement names it provides (the board's `info`
+// answer, configsvc.h). A firmware older than info says so.
 //
 // format-flash formats the gogo LittleFS partition (gogofs) and nothing
 // else: the board restarts and formats it at mount (fs_lfs.c). It never
@@ -25,7 +30,7 @@ import (
 	"time"
 )
 
-const deviceUsage = "usage: gogo device [-port P] [-yes] scan | stats | format-flash"
+const deviceUsage = "usage: gogo device [-port P] [-yes] info | scan | stats | format-flash"
 
 // deviceEnv holds the side effects of gogo device, replaced in tests.
 type deviceEnv struct {
@@ -54,7 +59,7 @@ func deviceMain(args []string, env deviceEnv) error {
 		return usageError("device", "want one operation", deviceUsage)
 	}
 	op := pos[0]
-	if op != "scan" && op != "stats" && op != "format-flash" {
+	if op != "info" && op != "scan" && op != "stats" && op != "format-flash" {
 		return usageError("device", fmt.Sprintf("unknown operation %q", op), deviceUsage)
 	}
 	if *port == "" {
@@ -74,6 +79,9 @@ func deviceMain(args []string, env deviceEnv) error {
 		return err
 	}
 	defer f.Close()
+	if op == "info" {
+		return deviceInfo(f, env.out)
+	}
 	if op != "format-flash" {
 		timeout := 5 * time.Second
 		if op == "scan" {
@@ -93,5 +101,37 @@ func deviceMain(args []string, env deviceEnv) error {
 		return fmt.Errorf("gogo device: %v", err)
 	}
 	fmt.Fprintf(env.out, "the board restarts and formats /flash; `gogo monitor -timeout 5` shows \"gogo: formatting /flash\"\n")
+	return nil
+}
+
+// deviceInfo asks the board for its info line and prints it, one field a
+// line.
+func deviceInfo(rw io.ReadWriter, out io.Writer) error {
+	c := newBoardConn(rw)
+	defer c.close()
+	_, text, err := c.request("info", nil, 5*time.Second)
+	if be, ok := err.(errBoard); ok && (be.reason == "bad key" || strings.HasPrefix(be.reason, "usage:")) {
+		return fmt.Errorf("gogo device: this firmware has no info (it is older than gogo device info; update it with gogo setup); its boot line, shown by `gogo monitor -reset`, has its version")
+	}
+	if err != nil {
+		return fmt.Errorf("gogo device: %v", err)
+	}
+	m := parseBoardInfo(text)
+	if v, ok := m["fw"]; ok {
+		fmt.Fprintf(out, "firmware  gogo %s\n", v)
+	}
+	if v, ok := m["board"]; ok {
+		if t := setupBoardTitles[v]; t != "" {
+			v += " (" + t + ")"
+		}
+		fmt.Fprintf(out, "board     %s\n", v)
+	}
+	if v, ok := m["image"]; ok {
+		major, _, _ := strings.Cut(v, ".")
+		fmt.Fprintf(out, "image     format %s (runs images %s.0 to %s)\n", v, major, v)
+	}
+	if v, ok := m["provides"]; ok {
+		fmt.Fprintf(out, "provides  %s\n", strings.ReplaceAll(v, ",", " "))
+	}
 	return nil
 }

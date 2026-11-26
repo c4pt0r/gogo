@@ -19,8 +19,8 @@ gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
 gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats
-gogo device [-port P] [-yes] scan | stats | format-flash
-gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
+gogo device [-port P] [-yes] info | scan | stats | format-flash
+gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]
 gogo version
 ```
 
@@ -557,6 +557,7 @@ value, against that table). `scan` and `stats` are `gogo device scan` and
 ## gogo device
 
 ```text
+gogo device [-port P] info
 gogo device [-port P] scan
 gogo device [-port P] stats
 gogo device [-port P] [-yes] format-flash
@@ -564,6 +565,23 @@ gogo device [-port P] [-yes] format-flash
 
 Operations on the board itself, over its serial console:
 
+- `info` shows the firmware the board runs: its version (the `git
+  describe` it was built from, `dev` without git, `-dirty` for
+  uncommitted changes), the board it was built for, the image format it
+  runs (`gogo version` shows the one `gogo` writes) and the requirement
+  names it provides (the drivers and mounts an image may require, as
+  `gogo info` lists them for an image):
+
+  ```text
+  $ gogo device info
+  firmware  gogo v0.2.0
+  board     sticks3 (M5StickS3)
+  image     format 15.6 (runs images 15.0 to 15.6)
+  provides  gpio netif udp tcp tcp_listen tls node power imu ir_tx ir_rx mic speaker screen /flash float
+  ```
+
+  A firmware older than `info` (v0.1.0) says so; its boot line (`gogo
+  monitor -reset`) has its version.
 - `scan` lists the 2.4 GHz networks the board sees.
 - `stats` prints the board's network counters, free memory and how full
   the VM's fixed tables are, as used/capacity: `bytes=N/64` (off-heap
@@ -589,7 +607,7 @@ release, with a note, and go away in the next.
 
 ```text
 gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR]
-           [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
+           [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]
 ```
 
 Takes a board from new to running a program, in six steps (chapter 2
@@ -606,10 +624,20 @@ shows a run):
    file against the release's `SHA256SUMS` (a mismatch stops setup), and
    caches it in the user cache directory (`gogo/release/<sha256>`); without
    a release it builds the firmware locally (below);
-4. flashes the bootloader, partition table and app at the offsets in the
+4. asks the firmware on the board for its `info` (as `gogo device info`)
+   and reads the version of the firmware about to be flashed from its
+   app image (`gogo.bin`'s ESP-IDF app descriptor, which carries the same
+   `git describe`). When both are the same release or clean commit and
+   the board matches, it skips the flash: `the board already runs gogo
+   <version> (<board>); not reflashing (-reflash to flash it anyway)`.
+   Otherwise it says why in one line (`board firmware unknown (...)`:
+   no answer, a firmware older than `info`, a `dev` or `-dirty` build on
+   the board; or `board runs gogo <x> (<board>), flashing ...`) and
+   flashes the bootloader, partition table and app at the offsets in the
    firmware's `flasher_args.json`, then resets the board with a watchdog
    reset (the Cardputer ADV does not come back from esptool's default
-   reset);
+   reset). A local build of uncommitted changes (`-dirty`) is always
+   flashed;
 5. scans for Wi-Fi networks on the board, and writes the chosen network
    and the password (read without echo) like `gogo config set`;
 6. flashes a small hello program like `gogo flash` and watches the
@@ -679,12 +707,15 @@ Options:
   elsewhere than the new firmware's, or cannot be read. Neither NVS area
   is written, but the old settings are then not used, and the new
   firmware (or a later one) may reuse the space where they were.
+- `-reflash`: flash the firmware even when the board already runs the
+  same version (step 4), without asking the board.
 - `-yes`: take the default answer to every question, without asking;
   the Wi-Fi step is then skipped, and a board esptool cannot tell apart
   needs `-board`.
 - `-dry-run`: run only what reads (esptool's chip check, the download,
-  the Wi-Fi scan) and print the esptool commands and settings that would
-  be written, without writing anything.
+  the board's `info`, the Wi-Fi scan) and print the esptool commands and
+  settings that would be written, or that the firmware would not be
+  reflashed, without writing anything.
 
 On failure setup prints the problem and a `fix:` line, and stops; it is
 safe to run again.

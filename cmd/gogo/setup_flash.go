@@ -20,10 +20,12 @@ package main
 //     is never trusted to say where the settings are.
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
@@ -120,6 +122,9 @@ type flasherArgs struct {
 		Offset string `json:"offset"`
 		File   string `json:"file"`
 	} `json:"partition-table"`
+	App struct {
+		File string `json:"file"`
+	} `json:"app"`
 	Extra struct {
 		Chip string `json:"chip"`
 	} `json:"extra_esptool_args"`
@@ -170,6 +175,44 @@ type firmwarePlan struct {
 	writes  []flashWrite // sorted by offset
 	parts   []partition  // the partition table being written
 	protect []partition  // ranges no write may touch
+	version string       // the app's version (appVersion); "" if unknown
+}
+
+// ESP-IDF app image layout (esp_app_format.h): a 24-byte image header,
+// then the first segment's 8-byte header, then its data, which starts with
+// the esp_app_desc_t: magic word, secure version, two reserved words, then
+// the 32-byte NUL-terminated version (PROJECT_VER; the gogo firmware's is
+// its `git describe`, platform/esp32s3/CMakeLists.txt).
+const (
+	appImageMagic = 0xE9
+	appDescAt     = 24 + 8
+	appDescMagic  = 0xABCD5432
+	appVersionAt  = appDescAt + 16
+	appVersionLen = 32
+)
+
+// appVersion reads the version from an app image's descriptor; "" if the
+// file is not an app image or the version fills the field (it may then
+// be cut short, so it cannot be compared).
+func appVersion(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	b := make([]byte, appVersionAt+appVersionLen)
+	if _, err := io.ReadFull(f, b); err != nil {
+		return ""
+	}
+	if b[0] != appImageMagic || binary.LittleEndian.Uint32(b[appDescAt:]) != appDescMagic {
+		return ""
+	}
+	v := b[appVersionAt:]
+	i := bytes.IndexByte(v, 0)
+	if i <= 0 {
+		return ""
+	}
+	return string(v[:i])
 }
 
 // planFirmware turns flasher_args.json into a checked write list. path
@@ -221,7 +264,13 @@ func planFirmware(fa *flasherArgs, path func(string) string, boardNVS []partitio
 	if err := checkWrites(writes, parts, ptOff, protect); err != nil {
 		return nil, err
 	}
-	return &firmwarePlan{args: fa, writes: writes, parts: parts, protect: protect}, nil
+	plan := &firmwarePlan{args: fa, writes: writes, parts: parts, protect: protect}
+	for _, w := range writes {
+		if fa.App.File != "" && w.name == fa.App.File {
+			plan.version = appVersion(w.path)
+		}
+	}
+	return plan, nil
 }
 
 // protectedRanges is defaultNVS plus the given NVS partitions.

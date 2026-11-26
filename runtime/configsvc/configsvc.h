@@ -13,6 +13,7 @@
  *     \x02gogo-config list\n
  *     \x02gogo-config scan\n                 (nearby Wi-Fi networks)
  *     \x02gogo-config stats\n                (board counters: memory, tables, net)
+ *     \x02gogo-config info\n                 (the firmware: version, board, image format)
  *     \x02gogo-config format-flash\n         (format /flash: the board restarts)
  *     \x02gogo-config push <path> <len> <crc32>\n   (gogo push: write a file
  *     \x02gogo-config data <offset> <base64>\n       to /flash, in chunks; push
@@ -26,6 +27,14 @@
  * sent back: get and list show "(set)". Keys are 1..15 bytes of
  * `a-z A-Z 0-9 . _ -`, values at most CONFIG_VALUE_MAX bytes without \x02
  * or \r.
+ *
+ * info answers one line, `\x02ok fw=<version> board=<name> image=<major>.<minor>
+ * provides=<name>,<name>...`: the firmware's version (`git describe`, "dev"
+ * when unknown), the board it was built for, the image format it runs
+ * (major.0 to major.minor) and the requirement names it provides (port
+ * drivers, mount prefixes, "float"). A field the board does not know is
+ * left out; values never hold spaces. It needs no store. A firmware older
+ * than info answers it `\x02err bad key` (as any unknown bare word).
  *
  * push writes a file to /flash: <path> is an absolute /flash path, <len>
  * its size and <crc32> the CRC-32 (IEEE) of its bytes in hex. The bytes
@@ -68,6 +77,14 @@ typedef struct KvHal {
 
 typedef struct ConfigSvc ConfigSvc;
 
+/* The board's identity, for info. NULL / 0 fields are left out. */
+typedef struct ConfigInfo {
+    const char *fw;                 /* firmware version */
+    const char *board;              /* board name (sticks3, cardputer) */
+    uint32_t image_major, image_minor;   /* image formats it runs (major 0: unknown) */
+    const char *const *provides;    /* requirement names, NULL-terminated */
+} ConfigInfo;
+
 /* The board's side, besides the store. Every hook is optional (NULL: the
  * request answers that the board cannot). Hooks get the service, so they
  * can answer with configsvc_kv / configsvc_reply; each must end with one
@@ -76,6 +93,7 @@ typedef struct ConfigSvc ConfigSvc;
  *    nothing else interleaves (required).
  *  - changed: key was set or removed (the ESP reconnects Wi-Fi on wifi.*).
  *  - scan, stats: the board's reports, as kv lines.
+ *  - info: fills in the board's identity (the service writes the reply).
  *  - format_flash: replies, then formats /flash (the ESP restarts). */
 typedef struct ConfigBoard {
     void *ctx;
@@ -84,6 +102,7 @@ typedef struct ConfigBoard {
     void (*scan)(ConfigSvc *s);
     void (*stats)(ConfigSvc *s);
     void (*format_flash)(ConfigSvc *s);
+    void (*info)(void *ctx, ConfigInfo *out);
 } ConfigBoard;
 
 /* The service's state: zeroed static storage, set up by configsvc_init. */
