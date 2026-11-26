@@ -37,6 +37,49 @@ signal processing (no floats, an interpreter; do such work in C drivers),
 and the very smallest microcontrollers (the VM core alone is about 37 KB of
 code and needs tens of KB of RAM).
 
+### Why actors?
+Because a small device is a bundle of things happening at once (button
+presses, sensor samples, network packets, audio buffers, timers), and the
+usual ways of handling that each have a sharp edge: callbacks tangle state,
+RTOS tasks sharing memory need locks and fail by corrupting each other.
+Actors keep each activity in its own lightweight process (about 150 bytes
+idle) with **its own heap**, talking only by copied messages:
+
+- **Isolation.** A bug or out-of-memory in one actor crashes only that
+  actor; no other actor's data can be touched. Each actor can be given a
+  memory limit.
+- **Supervision.** A supervisor restarts what crashed ("let it crash"), so
+  a device can recover from faults instead of rebooting.
+- **No locks.** Nothing is shared, so there are no data races or deadlocks
+  on shared state.
+- **Small GC pauses.** Each heap is collected on its own, so a collection
+  touches one actor's data, not the whole program's.
+- **One model for everything.** Hardware is ports, which are actors too:
+  an interrupt, a key or a TCP packet arrives as an ordinary message in the
+  same receive loop. Hot loading swaps actors' code, and the planned
+  distribution sends the same messages across devices.
+
+This is the model Erlang has used for decades in systems that must not go
+down, scaled down to a microcontroller.
+
+### Why a subset of Go?
+Go's syntax is small, familiar and statically typed, so most mistakes are
+found when you build, not on the device. Reusing it also gives gogo a
+proven front end for free (Go's own parser and type checker), editor syntax
+highlighting and a language many people already read.
+
+It is a subset because some of Go conflicts with the design or does not fit
+the device: goroutines and channels share memory between threads, which
+would break actor isolation (actors and messages replace them); reflection,
+floats and a full runtime would not fit the memory budget. What remains is
+the part that maps cleanly onto isolated actors and a small VM. The subset
+grows where that holds (methods, interfaces, maps and more are planned; see
+above), and where gogo differs from Go it says so.
+
+Dynamic languages (Lua, MicroPython) find type errors only at run time and
+are harder to keep small and isolated per task; Rust or C give no isolation
+between tasks, no hot loading and a slower edit-test loop on hardware.
+
 ### Is gogo compiled or interpreted?
 Both, in two steps. `gogo build` compiles `.gg` source ahead of time, on your
 computer, into a `.ggb` bytecode image: parsing, type checking and code
