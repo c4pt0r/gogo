@@ -61,7 +61,7 @@ Messages from Go's type checker look like Go's (`declared and not used: x`);
 messages about the subset start with `gogo:`:
 
 ```text
-main.gg:9:2: gogo: captured variable must not be reassigned
+main.gg:9:7: gogo: interior pointer &s[0] not supported: gogo has no pointers into a slice element or a struct field; use a []*T or a *T field, or s[i].F = v
 ```
 
 Type errors are reported first; subset errors appear once the program

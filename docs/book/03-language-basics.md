@@ -786,8 +786,8 @@ bare returns, be passed around as values and be written as literals
 (closures).
 
 ```go
-// Functions: several results, named results, function values, closures,
-// and the rule that a captured variable must not change.
+// Functions: several results, named results, function values and
+// closures.
 package main
 
 func divmod(a, b int) (int, int) {
@@ -817,8 +817,7 @@ func apply(f func(int) int, xs []int) []int {
 	return out
 }
 
-// adder returns a closure. step is captured by value when the closure is
-// made, and is never assigned again.
+// adder returns a closure that captures step.
 func adder(step int) func(int) int {
 	return func(x int) int { return x + step }
 }
@@ -867,12 +866,11 @@ func main() {
 	show(apply(adder(10), xs))
 	show(apply(func(x int) int { return x * x }, xs))
 
-	// A closure that needs changing state gets it as an argument and
-	// returns the new value instead of assigning a captured variable.
-	count := func(n int, s string) int { return n + len(s) }
+	// A closure that changes a variable it captures.
 	total := 0
+	count := func(s string) { total += len(s) }
 	for _, w := range []string{"go", "gogo", "actor"} {
-		total = count(total, w)
+		count(w)
 	}
 	println("letters", total)
 }
@@ -887,50 +885,64 @@ minmax -2 9
 letters 11
 ```
 
-### Closures capture by value
+### Closures share what they capture
 
-In Go a closure refers to the variables it captures; if the variable
-changes later, the closure sees the change. In gogo a closure **copies**
-the captured values when it is created. That is what lets a closure be sent
-to another actor or used to start one: it carries its data with it.
-
-To make sure the two models never give different answers, gogo rejects any
-assignment to a captured variable after its declaration, inside or outside
-the closure, and writing one of its fields (`p.X = v` changes `p`):
+As in Go, a closure refers to the variables it captures: when the
+variable changes later, inside or outside the closure, the other side
+sees the change.
 
 ```go
-// This program does NOT compile. Closures copy what they capture when they
-// are made, so gogo rejects a captured variable that changes afterwards
-// (in Go the closure would see the change; in gogo it could not).
+// Closures share the variables they capture, as in Go: a counter kept in
+// a closure, and a loop variable that is the iteration's own.
 package main
 
-func main() {
+func counter() (func() int, func()) {
 	n := 0
-	show := func() { println(n) }
-	n = 5
+	return func() int { return n }, func() { n++ }
+}
+
+func main() {
+	get, inc := counter()
+	inc()
+	inc()
+	println(get())
+
+	x := 1
+	show := func() { println(x) }
+	x = 5
 	show()
+
+	var fs []func()
+	for i := 0; i < 3; i++ {
+		fs = append(fs, func() { println(i) })
+	}
+	for _, f := range fs {
+		f()
+	}
 }
 ```
 
 ```text
-$ gogo build docs/book/examples/03-capture
+$ gogo run docs/book/examples/03-capture
+2
+5
+0
+1
+2
 ```
 
-```text
-main.gg:9:2: gogo: captured variable must not be reassigned
-```
+Each iteration of a loop has its own loop variable, as in Go 1.22: the
+three closures print 0, 1 and 2, not 3 three times. A deferred func
+literal can set a named result (`defer func() { err = wrap(err) }()`).
 
-The fix is to give the closure its own variable that never changes: pass
-the changing value as an argument, return the new value, or copy it first
-(`n := i` before the closure). A common case is the loop variable: `for i
-:= 0; i < 3; i++ { actor.Spawn(func() { work(i) }) }` is rejected because
-`i++` assigns `i`. Write `n := i` inside the loop and capture `n`.
-`range` variables are fine, because `range` declares fresh ones each time
-round.
-
-Similarly, a named result that a closure captures must not be set by a
-`return` with values (`captured named result must not be set by return;
-use unnamed results`).
+How it works: a closure copies the values it captures when it is made.
+A captured variable that is assigned after its declaration is kept in a
+box instead (the same box `&x` gives, section 3.6), and the closure
+copies the box, so both sides share it; a variable that is never
+assigned after its declaration needs no box. The difference shows when a
+closure goes to another actor: `actor.Spawn(func() { ... })` copies what
+the closure captures, boxes included, into the new actor, so a variable
+the new actor changes is its own (chapter 4).
 
 Function values have a few more limits: they cannot be compared (not even
 with `nil`) and cannot be put into `any`. Calling a nil function value
@@ -1089,17 +1101,11 @@ Two differences from Go:
   Go's `defer mu.Unlock()` habit does not carry over to panics. There is no `recover`: the actor ends, and its
   ports and files are closed for it (section 5.7), so `defer f.Close()` is
   for actors that live on, not a safety net.
-- **A deferred func literal sees values, not variables.** A func literal
-  captures by value (section 3.4), so the Go pattern of deferring a
-  literal and then changing a variable it reads, `x := 1; defer func() {
-  println(x) }(); x = 2` (Go prints 2), is rejected (`captured variable
-  must not be reassigned`): pass the value as an argument, or set it
-  before the `defer`. For the same reason the idiom `defer func() { err
-  = wrap(err) }()` is rejected (`captured named result must not be
-  changed`): compute the result before returning instead. With named
-  results, `return x` still sets them before the deferred calls run, as
-  in Go, so a deferred call that writes through a slice of an array
-  result changes what the caller gets.
+- **A deferred func literal sees variables, as in Go.** `x := 1; defer
+  func() { println(x) }(); x = 2` prints 2, and `defer func() { err =
+  wrap(err) }()` changes the result: with named results, `return x` sets
+  them before the deferred calls run, and the caller gets what the
+  deferred calls left in them.
 
 A deferred call whose single argument is a call with several results,
 `defer f(g())`, is rejected; assign the results to variables first.
@@ -1195,9 +1201,8 @@ struct takes about twice as long as `x++` on an `int`. In a hot loop
 over a big struct, keep the changing values in local variables and
 write them back once at the end.
 
-A field of a variable that a closure captures cannot be written, for the
-same reason the variable cannot be reassigned (section 3.4): `captured
-variable must not be changed by field assignment`.
+A field of a variable that a closure captures can be written on either
+side; the closure sees the change (section 3.4).
 
 `==` and `!=` work on `int`, `int64`, `byte`, floats, `bool`, `string`
 and named types of those, `actor.PID`, `actor.Ref`, structs (field by
@@ -1622,10 +1627,9 @@ of it. Some things to know:
 - **Not in `any`.** An array cannot go into an interface, so it cannot be
   a message on its own (`array in interface not supported`): send a slice,
   or a struct with the array as a field, which is copied with the message.
-- A variable a closure captures cannot have its elements assigned
-  (`captured variable must not be changed by element assignment`), for the
-  reason its fields cannot (section 3.4). Named array types
-  (`type Grid [9]int`) are not supported.
+- A closure that captures an array variable shares its elements with the
+  variable, as in Go. Named array types (`type Grid [9]int`) are not
+  supported.
 
 ## 3.7 Strings, strconv and strings
 

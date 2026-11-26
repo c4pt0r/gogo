@@ -1,11 +1,28 @@
-// This program does NOT compile. Closures copy what they capture when they
-// are made, so gogo rejects a captured variable that changes afterwards
-// (in Go the closure would see the change; in gogo it could not).
+// Closures share the variables they capture, as in Go: a counter kept in
+// a closure, and a loop variable that is the iteration's own.
 package main
 
-func main() {
+func counter() (func() int, func()) {
 	n := 0
-	show := func() { println(n) }
-	n = 5
+	return func() int { return n }, func() { n++ }
+}
+
+func main() {
+	get, inc := counter()
+	inc()
+	inc()
+	println(get())
+
+	x := 1
+	show := func() { println(x) }
+	x = 5
 	show()
+
+	var fs []func()
+	for i := 0; i < 3; i++ {
+		fs = append(fs, func() { println(i) })
+	}
+	for _, f := range fs {
+		f()
+	}
 }

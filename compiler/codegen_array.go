@@ -256,6 +256,17 @@ func (f *fn) namedBoxed(i int) *types.Var {
 	return nil
 }
 
+// namedInBox reports whether a named result lives in a box (a closure
+// captures it and it is set after its declaration: D7).
+func (f *fn) namedInBox() bool {
+	for i := range f.results {
+		if f.namedBoxed(i) != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // isResult reports whether v is a named result of the function being
 // compiled.
 func (f *fn) isResult(v *types.Var) bool {

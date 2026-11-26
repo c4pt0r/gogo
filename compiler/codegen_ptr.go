@@ -22,7 +22,10 @@ import (
 // they would need a pointer into a slice's array or a struct field.
 //
 // A variable whose address is taken (&x, or x.M() of a pointer method M)
-// lives in such a box for its whole life: its register holds the box.
+// lives in such a box for its whole life, and so does one that a func
+// literal captures and that is assigned after its declaration (D7 of the
+// language plan): its register holds the box, which closures capture, so
+// they share the variable as in Go (closures otherwise capture by value).
 
 // isPointer reports whether t's underlying type is a pointer.
 func isPointer(t types.Type) bool {
@@ -336,8 +339,11 @@ func findBoxed(p *Program) map[*types.Var]bool {
 					sig = fn.Type().(*types.Signature)
 				}
 				walk(fd.Body, sig)
-				_ = captured
-				_ = written
+				for v := range captured {
+					if written[v] && !isArray(v.Type()) {
+						boxed[v] = true
+					}
+				}
 			}
 		}
 	}

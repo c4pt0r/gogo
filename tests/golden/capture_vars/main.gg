@@ -1,0 +1,117 @@
+// Closures share the variables they capture, as in Go (D7 of the
+// language plan): a captured variable that is assigned after its
+// declaration lives in a box, which the closure captures. Loop variables
+// are per iteration (Go 1.22). Valid Go: `go run` prints the same.
+package main
+
+type P struct{ X, Y int }
+
+func counter() (func() int, func()) {
+	n := 0
+	return func() int { return n }, func() { n++ }
+}
+
+func doubled() (r int) {
+	defer func() { r *= 2 }()
+	r = 5
+	return r + 1
+}
+
+func errLater() (err int) {
+	defer func() {
+		if err == 0 {
+			err = 42
+		}
+	}()
+	return 0
+}
+
+func adder(base int) func(int) int {
+	base *= 10
+	return func(k int) int {
+		base += k
+		return base
+	}
+}
+
+func pair() (a int, get func() int) {
+	get = func() int { return a }
+	return 7, get
+}
+
+func main() {
+	// a three-clause loop: each iteration has its own i
+	var fs []func() int
+	for i := 0; i < 3; i++ {
+		fs = append(fs, func() int { return i })
+	}
+	// the body changes i too: still the iteration's own variable
+	for i := 0; i < 6; i++ {
+		fs = append(fs, func() int { return i * 10 })
+		i++
+	}
+	// range variables
+	for k, w := range []int{100, 200} {
+		fs = append(fs, func() int { return k + w })
+	}
+	var got []int
+	for _, f := range fs {
+		got = append(got, f())
+	}
+	println(got[0], got[1], got[2], got[3], got[4], got[5], got[6], got[7])
+
+	// pointers to a loop variable: one per iteration
+	var ps []*int
+	for i := 0; i < 3; i++ {
+		ps = append(ps, &i)
+	}
+	println(*ps[0], *ps[1], *ps[2])
+
+	// a closure that writes what it captures
+	get, inc := counter()
+	inc()
+	inc()
+	println(get())
+
+	// written after the closure was made, outside it
+	x := 1
+	show := func() int { return x }
+	x = 2
+	x += 3
+	println(show())
+
+	// a struct variable: fields written on both sides
+	p := P{1, 2}
+	move := func(dx int) { p.X += dx }
+	move(5)
+	p.Y = 9
+	snap := func() P { return p }
+	move(1)
+	println(p.X, p.Y, snap().X)
+
+	// an array variable is shared too
+	var a [3]int
+	set := func(i, v int) { a[i] = v }
+	set(1, 7)
+	a[2] = 8
+	println(a[0], a[1], a[2])
+
+	// deferred closures set named results
+	println(doubled(), errLater())
+
+	// parameters, := redeclarations, nested closures
+	add := adder(2)
+	add(1)
+	println(add(2))
+	y, z := 1, 2
+	peek := func() int { return y*10 + z }
+	y, w := 3, 4
+	println(peek(), w)
+	outer := func() func() {
+		return func() { y++ }
+	}
+	outer()()
+	println(y, peek())
+	n, g := pair()
+	println(n, g())
+}

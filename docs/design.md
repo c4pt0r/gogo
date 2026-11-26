@@ -206,9 +206,9 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   over an array variable ranges over a copy. Rejected: slicing an array
   that is not a variable ("slice of an array that is not a variable"),
   arrays in an interface (so not a message on their own), `==` on arrays
-  (it needs the comparison builtin planned with interfaces), named array
-  types, and element writes to a captured array variable. No opcode of
-  their own.
+  (it needs the comparison builtin planned with interfaces) and named
+  array types. A closure that captures an array variable shares its
+  array, which is written in place. No opcode of their own.
 - Statements: `if`, `for` (three-clause, condition-only, infinite, and
   `range` over a slice, a string or an integer), the expression `switch`
   (tagged or not, several values per case, `fallthrough`) on integer,
@@ -243,9 +243,9 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   A copy made before the write keeps the old value, as Go's value
   semantics require. Each write allocates one struct (2 + fields words)
   per struct on its path, the same as rebuilding it with a literal by
-  hand. A field write to a variable a closure captures is rejected
-  ("captured variable must not be changed by field assignment"). No
-  opcode of its own.
+  hand. A variable that a closure captures and that is written is kept
+  in a box (Closures, below): a field write goes to its box. No opcode of
+  its own.
 - Embedded fields: a struct may embed a named struct or a named basic
   type (not a pointer: "embedded pointer field not supported"). It is an ordinary field named after its type;
   go/types resolves a promoted selector to a path of field indices with
@@ -310,9 +310,9 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   failed check and `actor.Exit` end the actor without running them (its
   ports and files are closed as it ends, §5.8), and there is no
   `recover`. With named results, a return with values sets them before
-  the deferred calls run, as in Go; a deferred func literal cannot change
-  them, since it captures by value and writes to captured variables are
-  rejected. Rejected: `defer` inside a loop, a deferred call whose single
+  the deferred calls run, as in Go, and a deferred func literal that
+  captures one may change it (the result then lives in a box, Closures
+  below, and the return reads it after the deferred calls). Rejected: `defer` inside a loop, a deferred call whose single
   argument is a multi-value call. No opcode, no run-time defer list.
 - Interfaces, `error` included, with closed-world dispatch: the image
   holds every type its interface values can hold (a module's own types
@@ -487,21 +487,24 @@ the requirement `float`):
   ops itself. This is per-file inclusion, not dead-code elimination: an
   ordinary library function is still compiled in whether used or not.
 
-**Closures capture by value.** A func literal copies each captured
-variable into the closure when it is created (the capture slots of its
-`K_CLOSURE`), unlike Go's capture by reference. So that both give the
-same result, the compiler requires a captured variable to be assigned
-only once: any write after its declaration, inside or outside the
-closure (`=`, `op=`, `++`/`--`, a `:=` redeclaration), is rejected with
-"captured variable must not be reassigned", and so is a write to one of
-its fields (`p.X = v`). A write to a field of a captured slice's element
-(`s[i].X = v`) changes the shared array, not the variable, and is
-allowed. A `return` with values also
-writes every named result, so a function whose named result is captured
-rejects such returns ("captured named result must not be set by
-return"); a bare `return` writes nothing and is allowed. A consequence:
-the variable of a three-clause `for` loop cannot be captured (copy it
-first, `n := i`).
+**Closures share what they capture** (15.6, D7 of the language plan).
+A func literal copies each captured variable into the closure when it
+is created (the capture slots of its `K_CLOSURE`). A variable that is
+never assigned after its declaration gives the same result as Go's
+capture by reference. One that a closure captures and that is assigned
+after its declaration, inside or outside a closure (`=`, `op=`,
+`++`/`--`, a `:=` redeclaration, a field write, a `return` with values
+for a named result), lives in a box instead, the box of a pointer to it
+(`findBoxed`, `compiler/codegen_ptr.go`): its register holds the box,
+closures capture the box, and reads and writes go through it, so every
+side sees every write, as in Go. An array variable needs no box: it is
+written in place already. Loop variables are per iteration, as in Go
+1.22: a three-clause `for` loop's variable that only its post statement
+assigns needs no box (each iteration's closures copy that iteration's
+value), and a boxed one gets a new box, a copy, before each post
+statement; a `range` loop's variables are declared fresh each iteration.
+A closure passed to `actor.Spawn` is copied into the new actor, boxes
+included, so from then on the child's variables are its own.
 
 ### 5.3 The actor API (`gogo/actor`)
 

@@ -819,8 +819,10 @@ func (f *fn) stmtCode(s ast.Stmt) {
 			f.runDefers()
 			f.retNil()
 			return
-		case f.named >= 0 && f.defers != nil:
-			f.retToNamed(s) // the results are set before the deferred calls run
+		case f.named >= 0 && (f.defers != nil || f.namedInBox()):
+			// the results are set before the deferred calls run, and
+			// before a closure that shares a result could read it
+			f.retToNamed(s)
 			return
 		case k > 1:
 			// return a, b (each converted to its result type) or return

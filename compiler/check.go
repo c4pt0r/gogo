@@ -224,12 +224,9 @@ func (c *checker) decl(d ast.Decl) {
 			c.unsupported(d, "function without body")
 			return
 		}
-		var sig *types.Signature
 		if fn, ok := c.p.Info.Defs[d.Name].(*types.Func); ok {
-			sig = fn.Type().(*types.Signature)
-			c.results = sig.Results()
+			c.results = fn.Type().(*types.Signature).Results()
 		}
-		c.capturedWrites(d.Body, sig)
 		c.block(d.Body)
 	default:
 		c.unsupported(d, kindName(d))
@@ -755,103 +752,6 @@ func (c *checker) stmt(s ast.Stmt) {
 	default:
 		c.unsupported(s, kindName(s))
 	}
-}
-
-// capturedWrites rejects every write to a variable that a func literal in
-// body captures. Closures copy their captures by value, which matches Go's
-// by-reference capture only if the variable never changes after its
-// declaration (its single assignment), in or out of the closure. A return
-// with values writes every named result of its function (sig for body, the
-// literal's own signature inside a func literal); a bare return writes none.
-func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
-	captured := map[*types.Var]bool{}
-	ast.Inspect(body, func(n ast.Node) bool {
-		if lit, ok := n.(*ast.FuncLit); ok {
-			for _, v := range litCaptures(c.p.Info, lit) {
-				captured[v] = true
-			}
-		}
-		return true
-	})
-	if len(captured) == 0 {
-		return
-	}
-	results := namedResults(c.p.Info, body, sig)
-	deferred := map[*ast.FuncLit]bool{} // defer func() { ... }()
-	ast.Inspect(body, func(n ast.Node) bool {
-		if d, ok := n.(*ast.DeferStmt); ok {
-			if lit, ok := ast.Unparen(d.Call.Fun).(*ast.FuncLit); ok {
-				deferred[lit] = true
-			}
-		}
-		return true
-	})
-	// write checks a write to e; inDefer: e is in a deferred func literal.
-	write := func(e ast.Expr, inDefer bool) {
-		// A field assignment x.F = v writes x, and so does an element
-		// assignment x[i] = v to an array x (but s[i].F = v writes the
-		// slice's shared array, not s).
-		x, field, elem := ast.Unparen(e), false, false
-		for {
-			if ix, ok := x.(*ast.IndexExpr); ok && isArray(c.p.Info.TypeOf(ix.X)) {
-				x, elem = ast.Unparen(ix.X), true
-				continue
-			}
-			sel, ok := x.(*ast.SelectorExpr)
-			if !ok || c.p.Info.Selections[sel] == nil {
-				break
-			}
-			if isPointer(c.p.Info.TypeOf(sel.X)) {
-				return // p.X = v writes p's target, not p
-			}
-			x, field = ast.Unparen(sel.X), true
-		}
-		// Uses, not Defs: the variables a := declares are not writes.
-		if id, ok := x.(*ast.Ident); ok {
-			if v, ok := c.p.Info.Uses[id].(*types.Var); ok && captured[v] {
-				if results[v] && inDefer {
-					c.fail(e.Pos(), "captured named result must not be changed: a deferred func literal captures it by value, so it cannot set the result")
-				} else if results[v] {
-					c.fail(e.Pos(), "captured named result must not be changed: closures capture by value")
-				} else if elem {
-					c.fail(e.Pos(), "captured variable must not be changed by element assignment")
-				} else if field {
-					c.fail(e.Pos(), "captured variable must not be changed by field assignment")
-				} else {
-					c.fail(id.Pos(), "captured variable must not be reassigned")
-				}
-			}
-		}
-	}
-	var walk func(n ast.Node, sig *types.Signature, inDefer bool)
-	walk = func(n ast.Node, sig *types.Signature, inDefer bool) {
-		ast.Inspect(n, func(n ast.Node) bool {
-			switch n := n.(type) {
-			case *ast.FuncLit:
-				s, _ := c.p.Info.TypeOf(n).(*types.Signature)
-				walk(n.Body, s, deferred[n])
-				return false
-			case *ast.ReturnStmt:
-				if len(n.Results) == 0 || sig == nil {
-					break
-				}
-				for i := 0; i < sig.Results().Len(); i++ {
-					if v := sig.Results().At(i); v.Name() != "" && captured[v] {
-						c.fail(n.Pos(), "captured named result must not be set by return; use unnamed results")
-						break
-					}
-				}
-			case *ast.AssignStmt:
-				for _, l := range n.Lhs {
-					write(l, inDefer)
-				}
-			case *ast.IncDecStmt:
-				write(n.X, inDefer)
-			}
-			return true
-		})
-	}
-	walk(body, sig, false)
 }
 
 // litCaptures lists the variables lit uses but does not declare, in order

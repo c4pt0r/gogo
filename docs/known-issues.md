@@ -313,11 +313,12 @@ rebuilt:
   value is split at NUL bytes). Every `sys.Args()` call copies the
   arguments into the actor's heap: call it once and keep the result; a
   very large argv (hundreds of KB) runs the actor out of memory.
-- **Loop variables cannot be captured.** In a three-clause `for` loop,
-  `func() { work(i) }` is rejected with `captured variable must not be
-  reassigned`, because `i++` assigns `i`. Closures capture by value, so
-  every captured variable must be assigned once. *Workaround:* copy
-  first: `n := i`.
+- **A spawned closure copies what it captures.** Within one actor,
+  closures share the variables they capture, as in Go (a variable written
+  after a closure captured it lives in a box, one allocation at its
+  declaration). A closure passed to `actor.Spawn` is copied into the new
+  actor with what it captures, so a variable it changes there is the
+  child's own (Go's goroutines would share it).
 - **Two-result builtins cannot stand alone.** `actor.Call(p, req, 100)`
   or `actor.ReceiveTimeout(0)` as a statement fails with `multiple values
   not supported`. *Workaround:* `_, _ = actor.Call(...)`. `println(f())`
@@ -362,9 +363,7 @@ rebuilt:
   the loop body into a function. A crash, a `panic` (Go runs the
   deferred calls while it unwinds) or `actor.Exit` ends the actor
   without running the deferred calls (its ports and files are closed
-  anyway). A deferred func literal cannot set a named result (`captured
-  named result must not be changed`), so `defer func() { err = ... }()`
-  has no gogo equivalent: compute the result before returning. `defer
+  anyway). `defer
   f(g())` with a multi-value `g` is rejected. Each `return` compiles the
   deferred calls again, so many returns after many defers make the
   function's code larger.
@@ -394,12 +393,6 @@ rebuilt:
   `a.S[1].X = f()`, gogo reads `a.S` before calling `f`, so if `f`
   replaces `a.S` the write goes to the old array (Go leaves this order
   unspecified; `s[i] = v` behaves the same way in gogo).
-- **Fields of captured variables cannot be written.** `p.X = v` writes
-  `p`, so it is rejected (`captured variable must not be changed by field
-  assignment`) when a closure captures `p`, like `p = q`. Writing a field
-  of a captured slice's element (`s[i].X = v`) is allowed: it changes the
-  shared array, as in Go. *Workaround:* copy first, `q := p`, and write
-  `q`'s fields.
 - **No field assignment through a map index.** Maps are not supported
   yet. A field of a pointer's target can be written (`p.X = v`, `f().X =
   v` for a `f` that returns a pointer).

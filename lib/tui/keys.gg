@@ -163,8 +163,8 @@ func Event(s Screen, k Keys, msg any) (Keys, Key, bool) {
 // Msg every message that is not the UI's (Ignore drops them); either
 // returns false to end Run. Draw draws the whole interface; Run calls it with a fresh
 // frame, and flushes, before the first message and after every Key or Msg
-// call. Keep state the callbacks change in a slice they capture (closures
-// capture by value; a slice's elements are shared).
+// call. The callbacks may keep their state in variables they capture
+// (closures share them).
 type Handlers struct {
 	Key  func(k Key) bool
 	Msg  func(msg any) bool
