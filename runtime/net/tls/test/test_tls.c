@@ -141,7 +141,10 @@ TEST(tls_state_per_stack) {
     /* The process's first tls_init, with PSA failing (its allocations
      * refused): false, but the TlsHw stays bound, so mbedTLS's hooks (now
      * installed) still work for anyone who allocates through them, another
-     * TlsHw is refused, and a retry with the same one succeeds. */
+     * TlsHw is refused, and a retry with the same one succeeds. This must
+     * stay the first tls_init of the process: the binding and PSA's state
+     * are process-wide and never reset, so a test that runs tls_init
+     * earlier would make this one fail. */
     alloc_fails = 1;
     CHECK(!tls_init(&hw_a));
     CHECK(mbedtls_calloc(1, 16) == NULL);
