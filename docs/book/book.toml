@@ -23,7 +23,9 @@ before = ["links"]
 [output.html]
 default-theme = "light"
 preferred-dark-theme = "coal"
-# The landing page's look: monochrome, monospace (theme/gogo.css).
+# The landing page's look, in gogo's brand: Inter, monospace code, deep
+# teal accent, the Gogo Lang lockup in the sidebar (theme/gogo.css; the
+# favicon is theme/favicon.svg and .png).
 additional-css = ["theme/gogo.css"]
 # Chapter titles carry their numbers already ("# 4. Actors").
 no-section-label = true
