@@ -21,7 +21,7 @@ func holder(parent actor.PID) {
 }
 
 func main() {
-	println("start", dhcp.Start(dhcp.Config{}))
+	println("start", dhcp.Start(dhcp.Config{}) == nil)
 	self := actor.Self()
 	var hs []actor.PID
 	for i := 0; i < 4; i++ {
@@ -33,8 +33,8 @@ func main() {
 			println("subscribed", m)
 		}
 	}
-	ip, ok := dns.Lookup("a.test", 3000)
-	println("a.test", ip, ok, actor.Now())
+	ip, err := dns.Lookup("a.test", 3000)
+	println("a.test", ip, why(err), actor.Now())
 	r := actor.Monitor(hs[0])
 	actor.Send(hs[0], true)
 	for done := false; !done; {
@@ -43,7 +43,15 @@ func main() {
 			done = m.Ref == r
 		}
 	}
-	ip, ok = dns.Lookup("a.test", 3000)
-	println("a.test", ip, ok, actor.Now())
+	ip, err = dns.Lookup("a.test", 3000)
+	println("a.test", ip, why(err), actor.Now())
 	println("done")
+}
+
+// why is "ok", or err's text.
+func why(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return err.Error()
 }

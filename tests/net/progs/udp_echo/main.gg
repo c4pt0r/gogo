@@ -10,8 +10,8 @@ import (
 func main() {
 	n, _ := port.Open("netif", net.IfConfig{})
 	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
-	u, ok := port.Open("udp", net.UDP{Port: 7})
-	println("udp", ok)
+	u, err := port.Open("udp", net.UDP{Port: 7})
+	println("udp", err == nil)
 	for i := 0; i < 4; {
 		switch d := actor.Receive().(type) {
 		case net.Datagram:

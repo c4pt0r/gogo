@@ -1,8 +1,8 @@
 // Package code is the gogo hot-loading API: load a module (an image built
 // by `gogo build`, as bytes.Bytes from a file, the network or a message)
-// and start its entry functions in new actors. It is a stub package like
+// and start its entry functions in new actors. It is a system package like
 // gogo/fs: the compiler replaces every call with the VM builtin B_CODE, so
-// the bodies are never executed. The C side is runtime/vm/module.c.
+// the bodies (marked //gogo:builtin) are never executed. The C side is runtime/vm/module.c.
 //
 // Every image is a module. Its entries are the exported functions of its
 // package main with signature func() or func(arg any), found by name (case
@@ -47,16 +47,21 @@ import (
 // built by hand names a module only if its H is exactly what Load returned
 // for one still loaded, and never the main program; any other value is
 // simply NotFound. The unexported field is what Missing returns.
+//
+//gogo:reserved 30
 type Module struct {
 	H       int
 	missing string
 }
 
-// Err is the result of every call; OK is 0.
-type Err int
+// Err is the result of every call, OK (0) or why it failed: another name
+// for errors.Code, so an Err is an error (its Error says what happened)
+// and compares with the codes of every package: code.NotFound ==
+// errors.NotFound.
+type Err = errors.Code
 
 // Error values: the shared codes of gogo/errors (GOGO_E_* in
-// runtime/include/gogo_errors.h), so code.NotFound == code.Err(errors.NotFound).
+// runtime/include/gogo_errors.h) under the names this package uses.
 const (
 	OK          = Err(errors.OK)
 	NotFound    = Err(errors.NotFound)    // no such module (unloaded, or the zero Module) or entry
@@ -71,18 +76,26 @@ const (
 // Load checks b and loads it as a module held by the caller. The checks, in
 // order: BadImage or BadVersion, Unsupported, NoMemory, TooMany. On error the Module is
 // none; after Unsupported, Missing names what the firmware lacks.
+//
+//gogo:builtin
 func Load(b bytes.Bytes) (Module, Err) { panic("gogo only") }
 
 // Spawn starts entry of m in a new actor running m's code, with arg (any
 // value; an entry without a parameter ignores it). NotFound if m is not
 // loaded or has no such entry, BadImage if the entry's function is
 // malformed (more parameters than registers; never from `gogo build`).
+//
+//gogo:builtin
 func Spawn(m Module, entry string, arg any) (actor.PID, Err) { panic("gogo only") }
 
 // SpawnLink is Spawn, linked to the caller (actor.SpawnLink).
+//
+//gogo:builtin
 func SpawnLink(m Module, entry string, arg any) (actor.PID, Err) { panic("gogo only") }
 
 // SpawnOpt is Spawn with options (actor.SpawnOpt).
+//
+//gogo:builtin
 func SpawnOpt(m Module, entry string, arg any, opts actor.Options) (actor.PID, Err) {
 	panic("gogo only")
 }
@@ -90,18 +103,26 @@ func SpawnOpt(m Module, entry string, arg any, opts actor.Options) (actor.PID, E
 // Hold makes the caller a holder of m: m stays loaded until the caller
 // Releases it or exits. Holding twice is one hold. NotFound if m is not
 // loaded, TooMany if it has 4 holders.
+//
+//gogo:builtin
 func Hold(m Module) Err { panic("gogo only") }
 
 // Release ends the caller's hold on m, if any; m unloads if nothing else
 // keeps it.
+//
+//gogo:builtin
 func Release(m Module) { panic("gogo only") }
 
 // Missing names the requirement the firmware lacked when Load returned m
 // with Unsupported: the first missing port driver ("kbd", "tls", a host
 // port's name) or mount prefix ("/sd"), at most 32 bytes of it; "" for
 // any other Module.
+//
+//gogo:builtin
 func Missing(m Module) string { panic("gogo only") }
 
 // MemUsed is the code memory (bytes) of the loaded modules, counted against
 // code.mem.
+//
+//gogo:builtin
 func MemUsed() int { panic("gogo only") }

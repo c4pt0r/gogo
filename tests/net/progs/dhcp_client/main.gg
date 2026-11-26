@@ -16,7 +16,7 @@ func main() {
 	if s, ok := sys.Config("test.timeout"); ok {
 		timeout, _ = strconv.Atoi(s)
 	}
-	println("start", dhcp.Start(dhcp.Config{TimeoutMs: timeout}), actor.Now())
+	println("start", dhcp.Start(dhcp.Config{TimeoutMs: timeout}) == nil, actor.Now())
 	for {
 		switch m := actor.Receive().(type) {
 		case net.Up:

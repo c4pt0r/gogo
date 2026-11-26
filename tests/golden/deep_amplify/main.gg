@@ -20,8 +20,8 @@ func main() {
 	me := actor.Self()
 	start := actor.Now()
 	sender := actor.Spawn(func() {
-		p, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
-		if !ok {
+		p, err := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
+		if err != nil {
 			return
 		}
 		level := tree{n: 0}

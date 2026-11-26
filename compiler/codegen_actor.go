@@ -32,7 +32,7 @@ func (g *gen) nameLits(decls []*ast.FuncDecl) {
 	}
 }
 
-// actorBuiltins maps each stub function (by stubName: gogo/actor and
+// actorBuiltins maps each builtin function (by stubName: gogo/actor and
 // gogo/port) to its BUILTIN id. The arguments go into consecutive
 // registers; the two-result builtins (ReceiveTimeout, Call, Whereis,
 // port.Open, sys.Config) write dst and dst+1, so they are only compiled by assign,
@@ -46,7 +46,7 @@ var actorBuiltins = map[string]uint32{
 	"SendAfter": BSendAfter, "CancelTimer": BCancelTimer, "Sleep": BSleep,
 	"Now": BNow, "Call": BCall, "Reply": BReply, "Register": BRegister,
 	"Whereis": BWhereis, "Unregister": BUnregister,
-	"port.Open": BPortOpen, "port.Close": BPortClose, "port.Handoff": BPortHandoff,
+	"port.open": BPortOpen, "port.Close": BPortClose, "port.Handoff": BPortHandoff,
 	"net.Subscribe": BNetSubscribe, "sys.Config": BConfigGet,
 	"sys.Time": BUnixTime, "sys.SetTime": BSetUnixTime, "sys.Random": BRandom,
 	"bytes.NewBuffer": BBufNew, "bytes.FromString": BBytesFrom, "bytes.FromSlice": BBytesFrom,
@@ -77,7 +77,7 @@ func (f *fn) bytesMethodCall(call *ast.CallExpr, sel *ast.SelectorExpr, name str
 	f.next = mark
 }
 
-// actorCall compiles a call of the stub function called name (stubName)
+// actorCall compiles a call of the builtin function called name (stubName)
 // into dst.
 func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 	switch name {
@@ -86,7 +86,7 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 		if st == nil {
 			f.fail(call, "internal error: actor.Info result is not a struct")
 		}
-		idx, ok := f.g.typeIdx[st.Obj()]
+		idx, ok := f.g.typeIndex(st)
 		if !ok {
 			f.fail(call, "internal error: ProcInfo has no type index")
 		}
@@ -98,7 +98,7 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 	default:
 		id, ok := actorBuiltins[name]
 		if !ok {
-			f.fail(call, "internal error: unexpected stub function %s", name)
+			f.fail(call, "internal error: unexpected builtin function %s", name)
 		}
 		if twoResult[name] {
 			f.fail(call, "internal error: %s outside a two-value assignment", name)
@@ -164,7 +164,7 @@ func (f *fn) closureInto(lit *ast.FuncLit, dst uint8) {
 // funcValueInto compiles the top-level function fn (of any signature) used
 // as a value into dst: a closure without captures.
 func (f *fn) funcValueInto(n ast.Node, fn *types.Func, dst uint8) {
-	idx, ok := f.g.funcIdx[fn]
+	idx, ok := f.g.funcIndex(fn)
 	if !ok {
 		f.fail(n, "internal error: unknown function %s", fn.Name())
 	}
@@ -174,7 +174,7 @@ func (f *fn) funcValueInto(n ast.Node, fn *types.Func, dst uint8) {
 // methodIdx returns the function index of method m (declared in a
 // compiled package, so indexed by Compile).
 func (f *fn) methodIdx(n ast.Node, m *types.Func) uint32 {
-	idx, ok := f.g.funcIdx[m]
+	idx, ok := f.g.methodFunc(m)
 	if !ok {
 		f.fail(n, "internal error: unknown method %s", funcName(m))
 	}
@@ -187,7 +187,7 @@ func (f *fn) methodIdx(n ast.Node, m *types.Func) uint32 {
 // it, as for a function), and T.M(x, args), a method expression, is a
 // plain call of that function.
 func (f *fn) methodCall(call *ast.CallExpr, sel *ast.SelectorExpr, m *types.Func, dst uint8) {
-	idx := f.methodIdx(call, m)
+	idx := f.methodIndex(sel, m)
 	mark := f.next
 	defer func() { f.next = mark }()
 	if f.g.p.Info.Selections[sel].Kind() == types.MethodExpr {
@@ -217,8 +217,9 @@ func (f *fn) receiver(sel *ast.SelectorExpr) uint8 {
 	}
 	recv := f.allocFor(sel.X)
 	f.exprInto(sel.X, recv)
-	idx := s.Index()
-	f.fieldPathInto(sel, idx[:len(idx)-1], recv, recv) // a promoted method: its embedded receiver
+	if idx := s.Index(); !isIface(s.Recv()) { // an interface's method set is flat: no field path
+		f.fieldPathInto(sel, idx[:len(idx)-1], recv, recv) // a promoted method: its embedded receiver
+	}
 	return recv
 }
 
@@ -227,7 +228,7 @@ func (f *fn) receiver(sel *ast.SelectorExpr) uint8 {
 // closure is called (see OP_CALLV). T.M, a method expression, is the
 // method's function itself: a closure without captures.
 func (f *fn) methodValueInto(sel *ast.SelectorExpr, m *types.Func, dst uint8) {
-	idx := f.methodIdx(sel, m)
+	idx := f.methodIndex(sel, m)
 	if f.g.p.Info.Selections[sel].Kind() == types.MethodExpr {
 		f.asm.EmitExt(OpMkclosure, dst, 0, 0, idx)
 		return
@@ -269,7 +270,16 @@ func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 		mark := f.next
 		t := f.allocScalar(cc) // TYPEIS results are bools
 		for i, te := range cc.List {
-			f.asm.EmitExt(OpTypeis, t, m, 0, f.typeID(te))
+			if f.g.p.Info.Types[te].IsNil() { // case nil: m == nil
+				r := f.allocN(te, 2)
+				f.asm.Emit(OpMove, r, m, 0)
+				f.asm.EmitExt(OpLoadk, r+1, 0, 0, TermNil)
+				f.cmpRegs(te, r, anyType, OpEq, t)
+			} else if tt := f.g.p.Info.TypeOf(te); isIface(tt) {
+				f.ifaceTest(te, tt, m, t)
+			} else {
+				f.typeTest(te, m, t)
+			}
 			if i == len(cc.List)-1 {
 				f.jump(OpJmpf, t, nextL)
 			} else {
@@ -290,51 +300,32 @@ func (f *fn) typeSwitch(s *ast.TypeSwitchStmt) {
 }
 
 // caseBody compiles a clause with its binder (if any) on register m;
-// break leaves the switch.
+// break leaves the switch. In a clause of one concrete type the binder has
+// that type: m is unboxed in place (no later clause tests it).
 func (f *fn) caseBody(cc *ast.CaseClause, m uint8, endL Label) {
 	if v, ok := f.g.p.Info.Implicits[cc].(*types.Var); ok {
 		f.locals[v] = m
+		if len(cc.List) == 1 && !isIface(v.Type()) && f.uses(cc.Body, v) {
+			f.unbox(cc, v.Type(), m)
+		}
 	}
 	f.breakTo = append(f.breakTo, endL)
 	f.block(cc.Body)
 	f.breakTo = f.breakTo[:len(f.breakTo)-1]
 }
 
-// typeID is the TYPEIS operand for case type te.
-func (f *fn) typeID(te ast.Expr) uint32 {
-	t := f.g.p.Info.TypeOf(te)
-	if isPID(t) {
-		return TyPid
+// uses reports whether the statements body refer to variable v.
+func (f *fn) uses(body []ast.Stmt, v *types.Var) bool {
+	found := false
+	for _, s := range body {
+		ast.Inspect(s, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && f.g.p.Info.Uses[id] == v {
+				found = true
+			}
+			return !found
+		})
 	}
-	if isRef(t) {
-		return TyRef
-	}
-	if isBytes(t) {
-		return TyBytes
-	}
-	if b, ok := types.Unalias(t).(*types.Basic); ok {
-		switch b.Kind() {
-		case types.Int:
-			return TyInt
-		case types.Int64:
-			return TyInt64
-		case types.Float32:
-			return TyFloat32
-		case types.Float64:
-			return TyFloat64
-		case types.Bool:
-			return TyBool
-		case types.String:
-			return TyString
-		}
-	}
-	if st := structType(t); st != nil {
-		if idx, ok := f.g.typeIdx[st.Obj()]; ok {
-			return idx
-		}
-	}
-	f.fail(te, "internal error: unexpected type switch case %s", types.TypeString(t, nil))
-	return 0
+	return found
 }
 
 // ArgsKey is the configuration key under which a host serves the program's

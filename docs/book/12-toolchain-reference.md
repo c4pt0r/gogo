@@ -140,15 +140,16 @@ version` prints the full one). A firmware runs images of its major whose
 minor is at most its own, and the compiler stamps each image with the
 lowest minor its program needs, so after a firmware update every module
 already on `/flash` keeps loading. An image of another major, or of a newer minor than the
-firmware's, is refused (`unsupported image format 15.3 (this VM runs 15.0
-to 15.2)`; `code.Load` returns `BadVersion`). The minors so far: 15.1
+firmware's, is refused (`unsupported image format 15.4 (this VM runs 15.0
+to 15.3)`; `code.Load` returns `BadVersion`). The minors so far: 15.1
 added `screen.Config`, 15.2 floating point, 15.3 sized integers (only a
 program that divides, compares or shifts `uint32`/`uint64` values, uses
-`int8`/`int16`/`uint16` arithmetic or prints an unsigned value needs it).
+`int8`/`int16`/`uint16` arithmetic or prints an unsigned value needs it),
+15.4 `panic`, interfaces and `==` on structs and interfaces.
 
 A package, a library or `package main`, can declare that it uses some
 drivers only softly: it opens them only when a call asks for that at run
-time, and handles their absence (`port.Open` returns `ok=false`) as an
+time, and handles their absence (`port.Open` returns an error) as an
 ordinary failure. It says so with a directive line in any of its files,
 conventionally the last line of the package doc comment, after an empty
 `//` line (where gofmt puts directives):
@@ -175,13 +176,17 @@ package http
 
 - Any driver name is accepted, a board's or a host port's. An empty list
   or a misspelt `//gogo:` directive is a compile error, for example
-  `a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional)`.
+  `a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional,
+  //gogo:builtin or //gogo:reserved)`. The other two mark declarations of
+  the standard library's system packages (a function the VM implements, a
+  struct type with a fixed type index; `lib/README.md`); a program cannot
+  use them.
 - `gogo/http` declares `tls` (an http-only program runs on a firmware
   without TLS, where an https request fails), and `gogo/sound` declares
   `mic speaker` (`Record` returns false without a microphone, `Play` without a
   speaker).
 - The directive is a promise the compiler does not check. A library can still hand `main` a function that opens the
-  driver; that open then fails cleanly at run time (`ok=false`) on a
+  driver; that open then fails cleanly at run time (an error) on a
   firmware without the driver.
 - `gogo firmware` (below) chooses features from the requirements, so it does not
   turn a soft driver on by itself; `tls`, `mic` and `speaker` are on by default,
@@ -324,7 +329,7 @@ Prints the version, the package search path (where it comes from:
 
 ```text
 $ gogo env
-version   v0.4.0 (image format 15.3)
+version   v0.4.0 (image format 15.4)
 GOGOPATH  /home/you/gogo ($HOME/gogo, GOGOPATH is unset)
 search    1. the build root (imports starting with its directory's name)
           2. /home/you/gogo

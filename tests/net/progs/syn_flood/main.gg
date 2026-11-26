@@ -23,13 +23,13 @@ func accepted() {
 func main() {
 	n, _ := port.Open("netif", net.IfConfig{})
 	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
-	_, ok := port.Open("tcp_listen", net.Listen{Port: 80})
-	println("listen", ok)
+	_, err := port.Open("tcp_listen", net.Listen{Port: 80})
+	println("listen", err == nil)
 	accepted()
-	_, ok = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 90})
-	println("dial", ok)
-	_, ok = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 91})
-	println("dial", ok)
+	_, err = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 90})
+	println("dial", err == nil)
+	_, err = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 91})
+	println("dial", err == nil)
 	for done := 0; done < 2; {
 		switch m := actor.Receive().(type) {
 		case port.Closed:

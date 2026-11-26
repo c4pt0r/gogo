@@ -10,12 +10,12 @@ import (
 )
 
 func main() {
-	if !dhcp.Start(dhcp.Config{}) {
+	if dhcp.Start(dhcp.Config{}) != nil {
 		println("no network")
 		return
 	}
-	u, ok := port.Open("udp", net.UDP{Port: 7})
-	if !ok {
+	u, err := port.Open("udp", net.UDP{Port: 7})
+	if err != nil {
 		println("udp port 7 is taken")
 		return
 	}

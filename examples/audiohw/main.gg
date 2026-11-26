@@ -55,16 +55,16 @@ func main() {
 }
 
 func halfDuplex() {
-	m, ok := port.Open("mic", audio.Mic{RateHz: 16000})
+	m, err := port.Open("mic", audio.Mic{RateHz: 16000})
 	_, ok2 := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 50})
-	println("mic open", ok, "spk while mic", ok2)
-	if ok {
+	println("mic open", err == nil, "spk while mic", ok2 == nil)
+	if err == nil {
 		port.Close(m)
 	}
-	s, ok := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 50})
+	s, err := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 50})
 	_, ok2 = port.Open("mic", audio.Mic{RateHz: 16000})
-	println("spk open", ok, "mic while spk", ok2)
-	if ok {
+	println("spk open", err == nil, "mic while spk", ok2 == nil)
+	if err == nil {
 		port.Close(s)
 	}
 }
@@ -176,8 +176,8 @@ func analyse(path string, rate int) {
 
 // tone plays 0.5 s of a sine at rate and times it.
 func tone(rate int) {
-	p, ok := port.Open("speaker", audio.Speaker{RateHz: rate, VolumePct: 50})
-	if !ok {
+	p, err := port.Open("speaker", audio.Speaker{RateHz: rate, VolumePct: 50})
+	if err != nil {
 		println("tone", rate, "spk failed")
 		return
 	}

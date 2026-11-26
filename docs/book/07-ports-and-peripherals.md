@@ -21,7 +21,7 @@ cannot leave a pin claimed forever.
 ```go
 package port
 
-func Open(driver string, cfg any) (p actor.PID, ok bool)
+func Open(driver string, cfg any) (p actor.PID, err error)
 func Close(p actor.PID)
 func Handoff(p actor.PID, to actor.PID) (ok bool)
 ```
@@ -31,9 +31,11 @@ the stream messages (section 7.6) and the host-port types (chapter 18).
 Each device's configuration, commands and events live in a package of its
 own (`gogo/gpio`, `gogo/kbd`, `gogo/power`, `gogo/imu`, ...).
 
-`Open` fails (`ok == false`, and `p` is the zero PID) if the driver is
-unknown or not on this board, if the configuration is invalid, if the
-resource is already taken, or if memory runs out. `Close` closes a port;
+`Open` fails with an `errors.Code` (and `p` is the zero PID):
+`errors.NotFound` if the driver is unknown or not on this board,
+`errors.BadArg` if the configuration is invalid, `errors.Busy` if the
+resource is already taken, `errors.TooMany` if the port table is full, or
+`errors.NoMemory` if memory runs out. `Close` closes a port;
 closing one that is already closed is ignored. `actor.Kill` on a port PID
 also closes it.
 
@@ -91,8 +93,8 @@ import (
 const ledPin = 5
 
 func main() {
-	led, ok := port.Open("gpio", gpio.Config{Pin: ledPin, Mode: gpio.Output})
-	if !ok {
+	led, err := port.Open("gpio", gpio.Config{Pin: ledPin, Mode: gpio.Output})
+	if err != nil {
 		println("cannot open the LED pin")
 		return
 	}
@@ -149,8 +151,8 @@ import (
 const key1 = 11
 
 func main() {
-	_, ok := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
-	if !ok {
+	_, err := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+	if err != nil {
 		println("cannot open KEY1")
 		return
 	}
@@ -248,8 +250,8 @@ import (
 )
 
 func worker(boss actor.PID, crash bool) {
-	_, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
-	actor.Send(boss, ok)
+	_, err := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
+	actor.Send(boss, err == nil)
 	if crash {
 		zero := 0
 		println(1 / zero)
@@ -265,9 +267,9 @@ func main() {
 	println("second worker opened pin 5:", actor.Receive())
 
 	// While someone owns it, nobody else can open it.
-	_, ok := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
+	_, err := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
 	_, again := port.Open("gpio", gpio.Config{Pin: 7, Mode: gpio.Output})
-	println("pin 7 first open:", ok, "second open:", again)
+	println("pin 7 first open:", err == nil, "second open:", again == nil)
 }
 ```
 
@@ -319,8 +321,8 @@ func keyHandler(boss actor.PID) {
 }
 
 func main() {
-	btn, ok := port.Open("gpio", gpio.Config{Pin: 12, Mode: gpio.InputPullUp, Edge: gpio.Falling})
-	println("open", ok)
+	btn, err := port.Open("gpio", gpio.Config{Pin: 12, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+	println("open", err == nil)
 	me := actor.Self()
 	h := actor.Spawn(func() { keyHandler(me) })
 	println("handoff", port.Handoff(btn, h))
@@ -374,7 +376,7 @@ same.
  ┌──────────────────┐  port.Open(name,cfg) ┌───────────────────────────────┐
  │                  │ ───────────────────► │ find driver by name           │
  │  p := PID        │ ◄─────────────────── │  board drivers, host ports    │
- │                  │      (PID, ok)       │ charge memory to the owner    │
+ │                  │      (PID, err)      │ charge memory to the owner    │
  │                  │                      │ port table: slot + generation │
  │ actor.Send(p,cmd)│ ───────────────────► │ driver command                │ ──► registers,
  │                  │                      │                               │     frames, DMA
@@ -397,7 +399,7 @@ same.
 **Opening.** `port.Open` looks the driver up by name: first the board's
 drivers, then any ports the host program registered (chapter 18). The
 memory a port needs is charged to the caller; if the caller's limit cannot
-hold the port's state plus one event, `Open` returns `ok == false` at once
+hold the port's state plus one event, `Open` fails at once (`errors.NoMemory`)
 rather than opening a port whose events would all be dropped. Each VM has
 a table of 16 port slots. A port's PID is its slot number plus a
 generation, so a PID kept after its port closed never reaches a later port

@@ -1,6 +1,6 @@
-// Package kbd is the gogo keyboard API: the "kbd" port. It is a stub
-// package like gogo/fs: the compiler type-checks against it and the bodies
-// (there are none) are never run. The C side is the board's keyboard driver.
+// Package kbd is the gogo keyboard API: the "kbd" port. It is a system
+// package like gogo/fs: its types are reserved (the VM builds and reads
+// them by fixed index). The C side is the board's keyboard driver.
 //
 // Open it with port.Open("kbd", kbd.Config{RepeatDelayMs: 400, RepeatMs: 60}).
 // One actor owns the port at a time. ok is false when the board has no
@@ -15,6 +15,8 @@ package kbd
 
 // Config configures the port. A RepeatDelayMs of 0 turns auto-repeat off;
 // RepeatMs is the interval between repeats (0 or less means 50).
+//
+//gogo:reserved 25
 type Config struct{ RepeatDelayMs, RepeatMs int }
 
 // Key is one key event. Code is the USB HID usage of the key (the constants
@@ -22,6 +24,8 @@ type Config struct{ RepeatDelayMs, RepeatMs int }
 // modifiers (0 for none), Mods a bit set of the Mod constants, Down true
 // for a press or a repeat and false for a release. A modifier key's own
 // press carries its bit in Mods and its release does not.
+//
+//gogo:reserved 26
 type Key struct {
 	Code, Char, Mods int
 	Down             bool

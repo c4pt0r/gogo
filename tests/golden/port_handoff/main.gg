@@ -24,8 +24,8 @@ func holder(boss actor.PID) {
 }
 
 func main() {
-	p, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
-	println("open", ok)
+	p, err := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
+	println("open", err == nil)
 	me := actor.Self()
 	c := actor.Spawn(func() { holder(me) })
 	actor.Send(c, Take{p})
@@ -34,12 +34,12 @@ func main() {
 	println("to zero pid", port.Handoff(p, zero))
 	println("to child", port.Handoff(p, c))
 	println("again", port.Handoff(p, c))
-	_, ok = port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
-	println("reopen while child owns", ok)
+	_, err = port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
+	println("reopen while child owns", err == nil)
 	ref := actor.Monitor(c)
 	actor.Send(c, Quit{})
 	actor.Receive()
 	_ = ref
-	_, ok = port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
-	println("reopen after child exit", ok)
+	_, err = port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
+	println("reopen after child exit", err == nil)
 }

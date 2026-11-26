@@ -59,6 +59,32 @@ rebuilt:
   start at 100. An image built before this change still runs on new
   firmware, but the codes it compiled into its own comparisons are the
   old ones while the firmware returns the new ones: rebuild it.
+- **`fs.Err` and `code.Err` are `errors.Code`** (type aliases, with
+  interfaces and `error` in format 15.4): every package's error codes are
+  one type, so `err == errors.NotFound` holds for an error from any of
+  them, and `fs.NotFound`, `code.BadImage` ... are the same constants as
+  `errors.NotFound`, `errors.BadImage`. Conversions between them still
+  compile (they do nothing now); a type switch or a switch that names
+  both `fs.Err` and `errors.Code` (or `code.Err`) as separate cases no
+  longer compiles (duplicate case): keep one.
+- **Go signatures.** A library function named like a Go function has
+  the Go signature, and one that can fail for several reasons returns an
+  `error` (format 15.4):
+  - `port.Open(driver, cfg)` returns `(actor.PID, error)`, the error an
+    `errors.Code` (`NotFound` for a driver the board lacks, `BadArg`,
+    `Busy`, `TooMany`, `NoMemory`): `p, ok := port.Open(...)` / `if !ok`
+    becomes `p, err := port.Open(...)` / `if err != nil`. An image that
+    opens a port needs firmware of format 15.4 or later.
+  - `strconv.Atoi(s)`, `ParseInt`, `ParseUint` and `ParseFloat` return
+    an `error` in place of `ok bool`: `errors.BadFormat`,
+    `errors.Overflow` (with the value clamped, as in Go, where it was 0)
+    or, for a bad base or bit size, `errors.BadArg`. `n, ok :=` / `if
+    !ok` becomes `n, err :=` / `if err != nil`.
+  - `http.Get`, `Post`, `Do` and `ClientDo` return `(Response, error)`
+    (`errors.BadURL`, `Timeout` or `IO`), `dns.Lookup` returns `(int,
+    error)` (`NotFound`, `NoRoute`, `Timeout`, `BadArg`), `sntp.Sync` and
+    `dhcp.Start` return an `error` instead of a `bool`: `if
+    !dhcp.Start(cfg)` becomes `if dhcp.Start(cfg) != nil`.
 - **Embedding API** (`gogo.h`; hosts must be edited and rebuilt, see
   the book's chapter 18):
   - `gogo_host` and `gogo_config` begin with a `size`: start them from
@@ -244,7 +270,7 @@ rebuilt:
 - **No `sys.Has`.** A program cannot ask which drivers and mounts the
   firmware has before loading; it learns the first missing one from
   `code.Missing` after `Unsupported`, and an absent driver from
-  `port.Open`'s `ok=false`.
+  `port.Open`'s `errors.NotFound`.
 - **`code.Missing` names one requirement.** Only the first missing name
   is reported, and at most 32 bytes of it.
 - **Stale module values alias after 256 loads.** A value from an
@@ -261,23 +287,23 @@ rebuilt:
 ## Compiler and language
 
 - **Not supported yet (planned).** The compiler rejects maps, pointer
-  receivers ("pointer receivers are not supported yet"), pointers, package-level `var`s, a `switch` on an
-  `any` or a struct value, type assertions, `panic`, the `error` type
-  and interfaces other than `any` ("interface
-  types are not supported yet": methods are called on concrete types
-  only). `goto` is rejected (labeled `break` and
+  receivers ("pointer receivers are not supported yet"), pointers and package-level `var`s. `goto` is rejected (labeled `break` and
   `continue` cover its uses). Channels, `go`, `select`, generics and
   `recover` are outside the design. "Language completeness" is a
-  planned milestone. *Workarounds:* a type switch for assertions and for
-  values in an `any`, slices of structs searched linearly for maps.
-- **No `gogo/fmt` or `gogo/errors`.** Printing is `println`; to build a
-  string use `gogo/strconv` and `+`.
+  planned milestone. *Workaround:* slices of structs searched linearly
+  for maps.
+- **No `gogo/fmt`.** Printing is `println`; to build a string use
+  `gogo/strconv` and `+`.
+- **`gogo/errors` differs from Go's.** Two errors from `errors.New` with
+  the same text are equal (errors are values, compared by what they
+  hold; Go's are equal only to themselves). There is no `errors.As`
+  (no reflection) and no `errors.Join`.
 - **A shared package's struct types cannot cross modules.** A program
   and a hot-loaded module (or two modules) that import the same package,
   your own or a `gogo/` library such as `gogo/http`, each compile their own
   copy of it, so its struct types are different types in each. Sending
   one across modules fails with `BadMsg` at run time, not at compile time
-  (book 14.6). Only the stub packages' reserved types (`actor.Request`,
+  (book 14.6). Only the system packages' reserved types (`actor.Request`,
   `net.Up`, `fs.Info`, ...) cross. *Workaround:* send basic values,
   strings or `Bytes`, and rebuild the struct in the receiver.
 - **`sys.Args()` has no program name.** It returns only the arguments
@@ -321,7 +347,8 @@ rebuilt:
   arrays).
 - **`defer` is static and runs on normal returns only.** A `defer`
   inside a loop is rejected (`defer inside a loop not supported`): move
-  the loop body into a function. A crash or `actor.Exit` ends the actor
+  the loop body into a function. A crash, a `panic` (Go runs the
+  deferred calls while it unwinds) or `actor.Exit` ends the actor
   without running the deferred calls (its ports and files are closed
   anyway). A deferred func literal cannot set a named result (`captured
   named result must not be changed`), so `defer func() { err = ... }()`
@@ -336,8 +363,9 @@ rebuilt:
   *Workaround:* a method value `x.M`, or `Inner.M(x.Inner)`. The methods
   of an embedded gogo type (`bytes.Buffer`, `bytes.Bytes`, `fs.File`) are
   not promoted (`method M of an embedded gogo/bytes type not
-  supported`): call them on the field, `w.Buffer.WriteByte(b)`. Promoted
-  methods will implement interfaces once user interfaces exist.
+  supported`): call them on the field, `w.Buffer.WriteByte(b)`. Other
+  promoted methods count toward implementing an interface, an embedded
+  interface's included; those of an embedded gogo type do not.
 - **Every field write allocates.** Structs are immutable in the VM, so
   `p.X = v` builds a new struct (2 + fields words) for each struct on the
   path (`a.b.c = v` builds three) and the old one becomes garbage: the
@@ -363,12 +391,15 @@ rebuilt:
   pointers are not supported yet; `f().X = v` is not valid Go either.
 - **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
   zero PID.
-- **Some values cannot go into `any`.** `byte`, `rune` and the other
-  sized integers, named basic types (`type C int`) and func values are
-  rejected, because at run time they are indistinguishable from `int` or
-  `int64` (or have no type id). Func values cannot be compared, not even
-  with `nil`.
-  *Workaround:* convert to `int` first; wrap a func value in a struct.
+- **Some values cannot go into `any`.** Func values (no type id) are
+  rejected. Func values cannot be compared, not even with `nil`.
+  *Workaround:* wrap a func value in a struct.
+- **Boxed values cost an allocation.** A sized integer (`byte`, `rune`,
+  `uint32`, ...) or a named basic value (`type Celsius int`) put into an
+  interface is boxed in a one-field struct (a constant one is not), and
+  an `int64` in a `K_INT64`; taking it out unboxes it. The box of your
+  own named type is a type of your module, so like your structs it
+  cannot be sent to another module.
 - **`fs.File` and `actor.PID` share a type tag.** `fs.File` cannot be a
   type switch case, and an `fs.File` in an `any` is seen as a PID.
   *Workaround:* wrap it in a struct.
@@ -395,15 +426,74 @@ rebuilt:
 - **Old images need a rebuild once.** Images of the single-number formats
   (up to 14) do not load on a v15 VM; from 15.0 on, a VM runs every older
   minor of its major.
-- **Some error messages are unhelpful.** An interface type gives `type
-  definition other than struct or an integer, float, bool or string type
-  not supported`.
+- **Interface calls cost a type check per candidate.** A method call on
+  an interface value tests the value's type against each type of the
+  program that has the method, in declaration order, before calling it;
+  a program with many such types pays for the chain (and its image holds
+  one dispatcher per interface method called).
+- **`errors.OK` in an `error` is not `nil`.** `gogo/fs` and `gogo/code`
+  return an `errors.Code` (`fs.Err`, `code.Err`), whose success is
+  `errors.OK`, the code 0; converted to `error` it is a non-nil value,
+  like a typed nil pointer in Go, so `return fs.WriteFile(p, b)` in a
+  function that returns `error` would turn every success into a failure.
+  The compiler rejects a call's `errors.Code` result returned or stored
+  directly as an `error` (a `return`, a `var` or an assignment:
+  `errors.Code result used as an error`); passing one to compare it,
+  `errors.Is(fs.Remove(p), errors.NotFound)`, an explicit
+  `error(fs.Remove(p))` and a `Code` variable converted later are
+  allowed. *Workaround:* `if c != fs.OK { return c }; return nil`. The library functions that return `error` return `nil`
+  on success.
+- **The VM's own types do not implement your interfaces.** The methods
+  of `bytes.Bytes`, `bytes.Buffer` and `fs.File` are builtins, which a
+  dispatcher cannot call: putting one (or a struct that embeds one) into
+  an interface whose methods it would provide is a compile error (`bytes.Bytes as a
+  main.Stringer not supported`), and `x.(Stringer)` (or a type switch
+  case `Stringer`) on an `any` holding a `Bytes`, or a struct that
+  embeds a `bytes.Buffer`, is false, where Go says true. *Workaround:* wrap the value
+  in a struct of your own with the methods.
+- **Interface values of your types stay in your module.** A hot-loaded
+  module and its loader dispatch only over their own types (the closed
+  world that makes dispatch work), so a value of your type, inside an
+  interface or not, cannot be sent to another module (`BadMsg`, or a
+  refused `code.Spawn`).
+- **`panic` of an error prints `Error()`**, as Go does, but a
+  `fmt.Stringer` value prints as a value (Go prints its `String()`).
+- **Panic texts differ from Go's in places.** A failed `x.(T)` says
+  `interface conversion: interface {} is not string`, without the
+  dynamic type Go names (`interface {} is int, not string`);
+  `panic(nil)` prints `panic: nil` where Go 1.21+ raises a
+  `*runtime.PanicNilError`; a method call on a nil interface value is
+  reported in the interface's dispatcher (`crashed: panic in
+  Shape.Area`), not in the caller.
+- **`panic` ends the actor; there is no `recover`.** A panic is a crash
+  with the reason `actor.Panic`, for links, monitors and supervisors to
+  handle. Its value prints as `println` prints it (a struct as `{1 2}`, a
+  named basic value inside an interface as `{5}`),
+  where Go prints a struct's type and address.
+- **`==` on interfaces holding slices does not panic.** An `any` holding
+  a slice equals nothing, not even itself: Go gives false for slices of
+  two types and panics for slices of one (`comparing uncomparable type`).
+  A slice deeper inside, in a struct field of an `any`, compares element
+  by element, as arrays do, and without its element type
+  (`S{[]int(nil)} == S{[]string{}}` is true).
+- **`==` has a depth and a work limit.** `==` and `switch` on structs,
+  arrays and interface values walk both values in one VM instruction,
+  without preemption, like a large message copy. Nesting deeper than 64
+  levels (other than through a struct's last field or an array's last
+  element, which loop) ends the actor with `badcode` where Go answers;
+  so does a compare that visits more than 65536 terms, which values
+  sharing parts reach quickly (`x = N{x, x}` in a loop: the walk follows
+  paths, not objects). Each level takes about 100 bytes of the VM's
+  stack. *Workaround:* compare the fields of a deep value yourself.
 - **`println` of a slice differs from Go.** gogo prints the elements,
   `[1 2 3]`; Go's `println` prints `[len/cap]address` (only
   `fmt.Println` prints elements).
 - **Library differences from Go.** `strconv` handles bases 2 to 36 only
   (no prefixes, no underscores), `Atoi` overflows at 32 bits, and
-  `ParseInt` / `ParseUint` with bit size 0 mean 32 bits;
+  `ParseInt` / `ParseUint` with bit size 0 mean 32 bits; their errors
+  are `errors.BadFormat`, `errors.Overflow` (with the value clamped, as
+  in Go) or `errors.BadArg` (a bad base or bit size), not
+  `*strconv.NumError`s;
   `strings.TrimSpace`, `ToLower` and `EqualFold` are ASCII-only and
   `Split(s, "")` splits into bytes; slices grow by doubling from a
   capacity of 4.
@@ -437,9 +527,10 @@ rebuilt:
   `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
   `IsInf`, `Max`, `Min` and the constants only: no `Pow`, `Exp`, `Log`,
   trigonometry, `Mod` or `Float64bits` yet.
-- **`strconv` float differences from Go.** `ParseFloat` returns `(f
-  float64, ok bool)`: `ok` is false for bad syntax (`f` 0) and for an
-  out-of-range value (`f` ±Inf, Go's `ErrRange`). `FormatFloat` has no
+- **`strconv` float differences from Go.** `ParseFloat`'s error is
+  `errors.BadFormat` for bad syntax (`f` 0) and `errors.Overflow` for an
+  out-of-range value (`f` ±Inf, Go's `ErrRange`), not a
+  `*strconv.NumError`. `FormatFloat` has no
   `'x'` / `'X'` (hexadecimal) format: it gives `%x`, as Go does for an
   unknown format. Both are exact and the same on the host and the boards
   (gogo's own code, not the C library's).
@@ -448,13 +539,11 @@ rebuilt:
 
 ## Sized integers
 
-- **Not in `any`.** `int8`, `int16`, `int32` (`rune`), `uint8` (`byte`),
-  `uint16`, `uint32`, `uint` and `uint64` values cannot go into an
-  interface on their own (`uint32 in interface not supported`), so not
-  into `actor.Send` either: inside `any` they would be `int` or `int64`
-  terms that a type switch could not tell apart. *Workaround:* put them in
-  a struct field (messages copy those like any value) or convert to `int`
-  / `int64`. The planned boxing of named non-struct types will lift this.
+- **Boxed in `any`.** An `int8`, `int16`, `int32` (`rune`), `uint8`
+  (`byte`), `uint16`, `uint32`, `uint` or `uint64` value in an interface
+  (and so in `actor.Send`) is a one-field struct of its own type, an
+  allocation unless it is a constant (see "Boxed values cost an
+  allocation").
 - **`println` of a struct, slice or array holding unsigned 32- or 64-bit
   values is rejected.** `println` prints bare unsigned values correctly,
   but inside a composite value the static type is gone and they would

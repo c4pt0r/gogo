@@ -18,8 +18,8 @@ func handle(r http.Request) http.Response {
 		println(1 / (len(r.Path) - 6)) // divzero
 	}
 	if r.Path == "/proxy" {
-		p, ok := http.Get("http://10.0.0.1:9000/data", 5000)
-		println("proxy", ok, p.Status, actor.Now())
+		p, err := http.Get("http://10.0.0.1:9000/data", 5000)
+		println("proxy", err == nil, p.Status, actor.Now())
 		return http.Response{Status: p.Status, Body: p.Body}
 	}
 	if r.Path == "/badheader" {
@@ -32,7 +32,7 @@ func handle(r http.Request) http.Response {
 }
 
 func main() {
-	println("start", dhcp.Start(dhcp.Config{}))
+	println("start", dhcp.Start(dhcp.Config{}) == nil)
 	actor.TrapExit(true)
 	http.Serve(80, handle)
 	http.Serve(80, handle)

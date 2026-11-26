@@ -206,7 +206,7 @@ may carry only:
 - basic values, strings and `Bytes` (constants are copied to the heap, so
   the receiver never points into the sender's code),
 - PIDs, Refs and `Module` handles,
-- the reserved struct types of the stub packages (`actor.Request`,
+- the reserved struct types of the system packages (`actor.Request`,
   `net.Up`, `fs.Info`, ...), which have the same type index in every
   image.
 
@@ -223,6 +223,13 @@ that tries exits with the reason `BadMsg` (whichever module it belongs
 to; the main program has no special case), and its supervisor handles that
 like any crash. `code.Spawn` with such an `arg` returns `BadArg` instead of
 crashing. Messages inside one module are unaffected.
+
+The same holds inside interface values: a value of a module's own type in
+an `any` or an `error` is still the module's own, so it cannot cross
+either. That is what lets each image call interface methods by checking
+its own types only (section 3.9). A module's interface types and the
+types that implement them work inside the module exactly as in a
+program.
 
 ## 14.7 What a module may do, and what the firmware offers
 

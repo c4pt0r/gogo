@@ -178,7 +178,10 @@ enum Builtin {
     B_SET_UNIX_TIME   = 52,  /*! ms int64 -> bool | sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor). */
     B_RANDOM          = 53,  /*! -> int | sys.Random: an int in [0, 2^30), vm_random. */
     B_FLOAT           = 54,  /*! op int, args... -> result(s) | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). */
-    B_PRINTLNU        = 55   /*! mask, values... -> nil | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. */
+    B_PRINTLNU        = 55,  /*! mask, values... -> nil | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. */
+    /* Since 15.4 (the language's abstraction phase). */
+    B_PANIC           = 56,  /*! v -> (does not return) | panic(v): print "panic: " and v (as println prints it) to stderr, then end the calling actor with R_PANIC. Deferred calls do not run. */
+    B_CMP             = 57   /*! a, b [, x] -> -1 | 0 | 1 | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field, arrays (slices) element by element, anything else by term identity (a func, a Buffer). A third argument (its value unused) says a and b are arrays; without it a slice at the top, one held by an interface, equals nothing, itself included. Nesting past 64 levels, other than through a struct's last field or an array's last element, is badcode, and so is a compare that visits more than 65536 terms (values sharing subvalues). Does not preempt. */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
@@ -253,11 +256,15 @@ enum Builtin {
 #define TYPE_POST          43   /* From PID, Kind int, Data bytes.Bytes: a host post, host-port command or event */
 /* Then (15.1) the gogo/screen type (lib/screen/screen.gg). */
 #define TYPE_SCREEN_CONFIG 44   /* Cols, Rows int: port.Open("screen") */
+/* Then (15.4) the gogo/errors types (lib/errors/errors.gg): the errors
+ * that may cross modules. */
+#define TYPE_ERRORS_CODE        45   /* the box of an errors.Code (an int) in an interface */
+#define TYPE_ERRORS_ERRORSTRING 46   /* s string: errors.New's error */
 /* How many reserved types this VM knows (0 .. TYPE_RESERVED_COUNT - 1):
  * they are global across modules. The one constant to bump with a new
  * reserved type (compiler: len(reservedTypes)); a new one is an image
  * format minor (image.h). */
-#define TYPE_RESERVED_COUNT 45u
+#define TYPE_RESERVED_COUNT 47u
 /* Field counts of the reserved types this VM knows, in index order, two
  * per byte (TYPE_NF2(even, odd)). An image's reserved row may declare at
  * most this many (image_load): fields are only ever appended, of type
@@ -295,7 +302,8 @@ enum Builtin {
     TYPE_NF2(1, 3), /* 38 ir.RX, audio.Mic */ \
     TYPE_NF2(2, 4), /* 40 audio.Speaker, net.DialTLS */ \
     TYPE_NF2(2, 3), /* 42 port.Host, port.Post */ \
-    TYPE_NF2(2, 0), /* 44 screen.Config (15.1) */ \
+    TYPE_NF2(2, 1), /* 44 screen.Config (15.1), errors.Code (15.4) */ \
+    TYPE_NF2(1, 0), /* 46 errors.errorString (15.4) */ \
 }
 /* The first own type: an image names its own struct types from here up
  * (image.h), whatever reserved types it or the VM knows, and a struct of
@@ -318,6 +326,7 @@ enum Reason {
     R_SHUTDOWN         = 7,
     R_BAD_SHIFT        = 8,
     R_BAD_MSG          = 9,   /* a value that may not cross modules (msg.h) */
+    R_PANIC            = 10,  /* panic(v), a failed type assertion, a method call on a nil interface (15.4) */
     R_FAILED           = 64   /* + a GOGO_E_* code: a library failure (no VM code uses it) */
 };
 

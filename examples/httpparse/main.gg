@@ -65,8 +65,8 @@ func Parse(raw bytes.Bytes) (req Request, ok bool) {
 		}
 	}
 	if cl, has := header(hs, "Content-Length"); has {
-		n, good := strconv.Atoi(cl)
-		if !good || n != len(body) {
+		n, perr := strconv.Atoi(cl)
+		if perr != nil || n != len(body) {
 			return Request{}, false
 		}
 	}

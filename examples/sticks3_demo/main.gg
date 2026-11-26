@@ -36,12 +36,12 @@ func worker(boss actor.PID) {
 	}
 
 	// The previous instance's port was closed when it exited, so it can be opened again here.
-	_, ok := port.Open("gpio", gpio.Config{
+	_, err := port.Open("gpio", gpio.Config{
 		Pin:  key1,
 		Mode: gpio.InputPullUp,
 		Edge: gpio.Falling,
 	})
-	if !ok {
+	if err != nil {
 		println("worker: 打不开 KEY1")
 		return
 	}
@@ -75,12 +75,12 @@ func main() {
 		MaxRestarts: 3,
 		PeriodMs:    5000,
 	})
-	_, ok := port.Open("gpio", gpio.Config{
+	_, err := port.Open("gpio", gpio.Config{
 		Pin:  key2,
 		Mode: gpio.InputPullUp,
 		Edge: gpio.Falling,
 	})
-	if !ok {
+	if err != nil {
 		println("main: 打不开 KEY2")
 	}
 

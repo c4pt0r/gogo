@@ -8,8 +8,8 @@ import (
 )
 
 func main() {
-	p, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
-	println(ok)
+	p, err := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
+	println(err == nil)
 	actor.Send(p, gpio.Write{Value: 1})
 	actor.Send(p, gpio.Write{Value: 0})
 	port.Close(p)

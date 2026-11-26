@@ -1,6 +1,6 @@
-// Package power is the gogo battery API: the "power" port. It is a stub
-// package like gogo/fs: the compiler type-checks against it and the bodies
-// (there are none) are never run. The C side is the board's power driver.
+// Package power is the gogo battery API: the "power" port. It is a system
+// package like gogo/fs: its types are reserved (the VM builds and reads
+// them by fixed index). The C side is the board's power driver.
 //
 // Open it with port.Open("power", power.Config{PeriodMs: 5000}). One actor
 // owns the port at a time. ok is false when the board has no battery
@@ -21,13 +21,19 @@
 package power
 
 // Config configures the port.
+//
+//gogo:reserved 27
 type Config struct{ PeriodMs int }
 
 // Battery is a reading: the cell voltage in millivolts, the charge in
 // percent, and Charging and External as 1, 0, or -1 when the board cannot
 // tell (charging now; running on external power). The Cardputer always
 // reports -1 for both.
+//
+//gogo:reserved 28
 type Battery struct{ MilliVolts, Pct, Charging, External int }
 
 // Read asks the port for a Battery message now.
+//
+//gogo:reserved 29
 type Read struct{}

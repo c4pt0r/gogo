@@ -1,15 +1,12 @@
 package compiler
 
 import (
-	"go/token"
 	"go/types"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
-
-	"gogotools/lib"
 )
 
 // TestFloatOpsMatchC cross-checks the B_FLOAT op codes with FLOAT_OP_* in
@@ -41,8 +38,7 @@ func TestFloatOpsMatchC(t *testing.T) {
 			t.Errorf("%s: compiler %d, %s = %d (present %v)", name, op, cname, v, ok)
 		}
 	}
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
-	pkg, err := l.Import(MathPath)
+	pkg, err := testLoader().lib(MathPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,14 +53,15 @@ func TestFloatOpsMatchC(t *testing.T) {
 
 // TestFloatImage: a program with floats is stamped 15.2 and requires
 // "float"; one that imports strconv without its float functions stays
-// 15.0 and requires nothing (the intrinsics' bodies are not compiled).
+// 15.0 and requires nothing (strconv is compiled where used; ParseFloat,
+// whose error is an errors.Code, needs 15.4).
 func TestFloatImage(t *testing.T) {
 	for _, tc := range []struct{ name, src, req string }{
 		{"literal", "package main\nfunc main() {\n\tx := 1.5\n\tprintln(x)\n}\n", "float"},
 		{"conversion", "package main\nfunc main() {\n\tn := 3\n\tprintln(float32(n))\n}\n", "float"},
 		{"typeswitch", "package main\nfunc main() {\n\tvar a any = 1\n\tswitch a.(type) {\n\tcase float64:\n\t\tprintln(1)\n\t}\n}\n", "float"},
 		{"math", "package main\nimport \"gogo/math\"\nfunc main() {\n\tprintln(math.IsNaN(math.NaN()))\n}\n", "float"},
-		{"format", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\t_, ok := strconv.ParseFloat(\"1\", 64)\n\tprintln(ok)\n}\n", "float"},
+		{"format", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\tprintln(strconv.FormatFloat(1, 'g', -1, 64))\n}\n", "float"},
 		{"strconv-ints", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\tprintln(strconv.Itoa(3))\n}\n", ""},
 		{"math-const", "package main\nimport \"gogo/math\"\nfunc main() {\n\tconst p = math.Pi * 100\n\tprintln(int(p - 0.159265358979323846264338327950288419716939937510582097494459))\n}\n", ""},
 	} {

@@ -37,9 +37,10 @@ PC that breaks the rules is still listed by `ReadDir`, but cannot be opened.
 ## 9.2 Errors
 
 Every call returns an `fs.Err`; `fs.OK` (0) means success. Storage errors
-never crash the caller. The values are the shared codes of `gogo/errors`
-(appendix C), so `fs.NotFound` is `fs.Err(errors.NotFound)`, the same
-number `gogo/code` and the other packages use for it.
+never crash the caller. `fs.Err` is another name for `errors.Code`, the
+shared codes of `gogo/errors` (appendix C): `fs.NotFound` is
+`errors.NotFound`, the code `gogo/code` and the other packages use for it,
+and an `fs.Err` is an `error` too (`e.Error()` is `"not found"`).
 
 | Value | Name | Meaning |
 |---|---|---|
@@ -360,8 +361,8 @@ func Keys() ([]string, fs.Err)
 A key follows the file name rules (and must not end in `.tmp`); a bad
 key is `fs.BadPath`. `Put` replaces the value atomically. A value over
 4096 bytes is the shared code `errors.Overflow` and a value of another
-type `errors.BadArg`, both as an `fs.Err` (compare with
-`fs.Err(errors.Overflow)`). A `[]byte` must go through
+type `errors.BadArg` (compare with `errors.Overflow`). A `[]byte` must
+go through
 `bytes.FromSlice` first.
 
 The classic use is a boot counter:

@@ -176,6 +176,10 @@ store:
     return R_NORMAL;
 }
 
+int float_order(const uint32_t *x, const uint32_t *y) {
+    return fcmp(raw(x), raw(y), hdr_words(x[0]) == 2u);
+}
+
 #else
 typedef int gogo_no_float;   /* ISO C: no empty translation unit */
 #endif /* GOGO_FLOAT */

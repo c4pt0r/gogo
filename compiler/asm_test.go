@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"encoding/binary"
+	"go/ast"
 	"go/constant"
 	"go/token"
 	"go/types"
@@ -67,7 +68,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpShru64)+1 || len(builtinNames) != int(BPrintlnu)+1 {
+	if len(opNames) != int(OpShru64)+1 || len(builtinNames) != int(BCmp)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.
@@ -95,7 +96,7 @@ func TestReasonCodesMatchC(t *testing.T) {
 		v, _ := strconv.ParseInt(m[2], 10, 64)
 		cCodes[m[1]] = v
 	}
-	pkg, err := (&loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}).Import(ActorPath)
+	pkg, err := testLoader().lib(ActorPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,8 +107,8 @@ func TestReasonCodesMatchC(t *testing.T) {
 			goCodes[upperSnake(name)] = v
 		}
 	}
-	if len(goCodes) != 11 {
-		t.Errorf("gogo/actor has %d constants, want the 10 reason codes and Failed", len(goCodes))
+	if len(goCodes) != 12 {
+		t.Errorf("gogo/actor has %d constants, want the 11 reason codes and Failed", len(goCodes))
 	}
 	for n, v := range goCodes {
 		if cv, ok := cCodes[n]; !ok || cv != v {
@@ -137,10 +138,10 @@ func upperSnake(s string) string {
 // gogo/actor and gogo/port stubs (names, field names in order) and the
 // TYPE_* indices.
 func TestReservedTypesMatchStubs(t *testing.T) {
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
+	l := testLoader()
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath, GpioPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath, ScreenPath} {
-		pkg, err := l.Import(path)
+	for _, path := range []string{ActorPath, PortPath, GpioPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath, ScreenPath, ErrorsPath} {
+		pkg, err := l.lib(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -175,6 +176,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			prefix = "TypeAudio"
 		case ScreenPath:
 			prefix = "TypeScreen"
+		case ErrorsPath:
+			prefix = "TypeErrors"
 		}
 		if g, ok := goConstants[prefix+strings.ToUpper(rt.name[:1])+strings.ToLower(rt.name[1:])]; !ok || g != uint32(i) {
 			t.Errorf("%s.%s is reserved index %d, TYPE_ constant says %d (present=%v)", rt.pkg, rt.name, i, g, ok)
@@ -184,17 +187,20 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s missing from the stubs", rt.pkg, rt.name)
 			continue
 		}
-		st := obj.Type().Underlying().(*types.Struct)
 		var names []string
-		for j := 0; j < st.NumFields(); j++ {
-			names = append(names, st.Field(j).Name())
+		if st, ok := obj.Type().Underlying().(*types.Struct); ok {
+			for j := 0; j < st.NumFields(); j++ {
+				names = append(names, st.Field(j).Name())
+			}
+		} else {
+			names = []string{"value"} // the box of a named basic type
 		}
 		if strings.Join(names, " ") != strings.Join(rt.fields, " ") {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 45 {
-		t.Errorf("%d reserved types, want 45", len(reservedTypes))
+	if len(reservedTypes) != 47 {
+		t.Errorf("%d reserved types, want 47", len(reservedTypes))
 	}
 }
 
@@ -247,8 +253,8 @@ func TestTermsMatchC(t *testing.T) {
 			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
 		}
 	}
-	if newest := max(floatMinor, sizedMinor); imageMajor != 15 || imageMinor != newest {
-		t.Errorf("image format %d.%d, want 15.%d (the newest of floatMinor and sizedMinor)", imageMajor, imageMinor, newest)
+	if newest := max(floatMinor, sizedMinor, ifaceMinor); imageMajor != 15 || imageMinor != newest {
+		t.Errorf("image format %d.%d, want 15.%d (the newest of floatMinor, sizedMinor and ifaceMinor)", imageMajor, imageMinor, newest)
 	}
 }
 
@@ -277,8 +283,8 @@ func TestConfigMatchC(t *testing.T) {
 
 // TestGpioConstants pins the gogo/gpio constants (gogo/port has none).
 func TestGpioConstants(t *testing.T) {
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
-	if p, err := l.Import(PortPath); err != nil || len(p.Scope().Names()) == 0 {
+	l := testLoader()
+	if p, err := l.lib(PortPath); err != nil || len(p.Scope().Names()) == 0 {
 		t.Fatalf("gogo/port: %v", err)
 	} else {
 		for _, name := range p.Scope().Names() {
@@ -287,7 +293,7 @@ func TestGpioConstants(t *testing.T) {
 			}
 		}
 	}
-	pkg, err := l.Import(GpioPath)
+	pkg, err := l.lib(GpioPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -591,8 +597,8 @@ func TestFsMatchC(t *testing.T) {
 	for _, m := range regexp.MustCompile(`\b((?:VFS|FS)_[A-Z]+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
 		c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
 	}
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
-	pkg, err := l.Import(FsPath)
+	l := testLoader()
+	pkg, err := l.lib(FsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +619,7 @@ func TestFsMatchC(t *testing.T) {
 	// The op codes of the compiler.
 	ops := map[string]int32{"FS_OPEN": FsOpen, "FS_READ": FsRead, "FS_WRITE": FsWrite, "FS_SYNC": FsSync, "FS_SIZE": FsSize,
 		"FS_READFILE": FsReadFile, "FS_WRITEFILE": FsWriteFile, "FS_STAT": FsStat, "FS_READDIR": FsReadDir,
-		"FS_MKDIR": FsMkdir, "FS_REMOVE": FsRemove, "FS_RENAME": FsRename, "FS_USAGE": FsUsage, "FS_WRITEAT": FsWriteAt}
+		"FS_MKDIR": FsMkdir, "FS_REMOVE": FsRemove, "FS_RENAME": FsRename, "FS_USAGE": FsUsage, "FS_WRITEAT": FsWriteAt, "FS_OPENERR": FsOpenErr}
 	for name, v := range ops {
 		if cv, ok := c[name]; !ok || cv != int64(v) {
 			t.Errorf("%s: C=%d Go=%d (present=%v)", name, cv, v, ok)
@@ -653,8 +659,8 @@ func TestCodeMatchC(t *testing.T) {
 	for _, m := range regexp.MustCompile(`\b(CODE_\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
 		c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
 	}
-	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
-	pkg, err := l.Import(CodePath)
+	l := testLoader()
+	pkg, err := l.lib(CodePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -693,9 +699,14 @@ func TestCodeMatchC(t *testing.T) {
 // are.
 func sharedCodes(t *testing.T, l *loader, pkg *types.Package, typeName string) int {
 	t.Helper()
-	ep, err := l.Import(ErrorsPath)
+	ep, err := l.lib(ErrorsPath)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The package's typeName is an alias of errors.Code: its constants
+	// of that type are Codes.
+	if a, ok := pkg.Scope().Lookup(typeName).(*types.TypeName); !ok || !a.IsAlias() || types.Unalias(a.Type()) != ep.Scope().Lookup("Code").Type() {
+		t.Fatalf("%s.%s is not an alias of errors.Code", pkg.Name(), typeName)
 	}
 	n := 0
 	for _, name := range pkg.Scope().Names() {
@@ -703,7 +714,7 @@ func sharedCodes(t *testing.T, l *loader, pkg *types.Package, typeName string) i
 		if !ok {
 			continue
 		}
-		if nt, ok := k.Type().(*types.Named); !ok || nt.Obj().Name() != typeName || nt.Obj().Pkg() != pkg {
+		if nt, ok := types.Unalias(k.Type()).(*types.Named); !ok || nt.Obj() != ep.Scope().Lookup("Code") {
 			continue
 		}
 		n++
@@ -718,4 +729,20 @@ func sharedCodes(t *testing.T, l *loader, pkg *types.Package, typeName string) i
 		}
 	}
 	return n
+}
+
+// testLoader is a loader of the embedded libraries, for the tests that
+// read a library's declarations (lib).
+func testLoader() *loader {
+	return &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{},
+		info: &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{},
+			Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}, Implicits: map[ast.Node]types.Object{}}}
+}
+
+// lib loads library path (and what it imports) and returns it.
+func (l *loader) lib(path string) (*types.Package, error) {
+	if err := l.loadPkg(path, nil, token.NoPos); err != nil {
+		return nil, err
+	}
+	return l.pkgs[path], nil
 }

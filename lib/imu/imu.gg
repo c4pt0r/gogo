@@ -1,6 +1,6 @@
-// Package imu is the gogo motion-sensor API: the "imu" port. It is a stub
-// package like gogo/power: the compiler type-checks against it and the
-// bodies (there are none) are never run. The C side is the board's IMU
+// Package imu is the gogo motion-sensor API: the "imu" port. It is a system
+// package like gogo/power: its types are reserved (the VM builds and reads them
+// by fixed index). The C side is the board's IMU
 // driver (runtime/input/imu.c).
 //
 // Open it with port.Open("imu", imu.Config{RateHz: 100, Gestures: imu.Tap |
@@ -25,6 +25,8 @@ package imu
 // previous Chunk), within one poll period (50 ms) of its first sample. A
 // partial last batch is discarded when the port is closed or its owner
 // exits, so close right after a Chunk to lose nothing.
+//
+//gogo:reserved 35
 type Config struct{ RateHz, Gestures, BatchMs int }
 
 // Gesture is an event: Kind is one of the gesture constants below; Value is
@@ -33,6 +35,8 @@ type Config struct{ RateHz, Gestures, BatchMs int }
 // landscape left, 2 portrait upside down, 3 landscape right; 4 is added
 // when the board is face down. The step count is cumulative since the
 // sensor was set up (closing the port does not reset it).
+//
+//gogo:reserved 36
 type Gesture struct{ Kind, Value int }
 
 // Gestures: the bits of Config.Gestures, and the Kind of a Gesture.

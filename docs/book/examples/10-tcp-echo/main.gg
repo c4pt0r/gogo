@@ -43,12 +43,12 @@ func echo(conn actor.PID) {
 }
 
 func main() {
-	if !dhcp.Start(dhcp.Config{}) {
+	if dhcp.Start(dhcp.Config{}) != nil {
 		println("no network")
 		return
 	}
-	_, ok := port.Open("tcp_listen", net.Listen{Port: 7})
-	if !ok {
+	_, err := port.Open("tcp_listen", net.Listen{Port: 7})
+	if err != nil {
 		println("port 7 is taken")
 		return
 	}

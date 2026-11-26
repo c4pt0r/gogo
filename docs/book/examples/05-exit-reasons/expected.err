@@ -4,4 +4,6 @@ gogo: actor <pid 1> crashed: badcode in main.main.func4
 gogo: actor <pid 1> crashed: badshift in main.main.func5
 gogo: actor <pid 1> crashed: badcode in main.main.func6
 gogo: actor <pid 1> crashed: oom in deep
+panic: boom
+gogo: actor <pid 1> crashed: panic in main.main.func8
 gogo: actor <pid 1> crashed: killed

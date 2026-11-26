@@ -4,7 +4,7 @@ package main
 
 var counter = 0 // package-level variable
 
-type Shape interface{ Area() int } // user interface
+type Shape interface{ Area() int } // fine: interfaces are supported
 
 type Sq struct{ S int }
 
@@ -29,8 +29,8 @@ func main() {
 	}
 done:
 	var a any = [4]int{} // array in an interface
-	y := any(1).(int)    // type assertion
+	y := any(1).(int)    // fine: type assertions are supported
 	_ = y
 	println(m, p, x, a)
-	panic("boom")
+	println(recover())
 }

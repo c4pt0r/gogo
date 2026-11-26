@@ -1,0 +1,29 @@
+// An errors.Code result (gogo/fs's) may be passed where an error is
+// expected, to compare it, and converted explicitly with error(...);
+// only returning or storing it as an error directly is rejected (its OK
+// would be a non-nil error).
+package main
+
+import (
+	"gogo/errors"
+	"gogo/fs"
+)
+
+func remove(p string) error {
+	if c := fs.Remove(p); c != fs.OK {
+		return c
+	}
+	return nil
+}
+
+func raw(p string) error { return error(fs.Remove(p)) } // OK included: on purpose
+
+func main() {
+	println(errors.Is(fs.Remove("/nowhere/x"), errors.NotMounted))
+	println(errors.Is(fs.Remove("/nowhere/x"), errors.NotFound))
+	err := remove("/nowhere/x")
+	println(err != nil, err == errors.NotMounted)
+	println(raw("/nowhere/x").Error())
+	var e error = errors.OK
+	println(e != nil, e.Error())
+}

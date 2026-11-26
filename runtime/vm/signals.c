@@ -331,6 +331,7 @@ static const char *kind_name(uint32_t code) {
     case R_BAD_CODE:         return "badcode";
     case R_BAD_SHIFT:        return "badshift";
     case R_BAD_MSG:          return "badmsg";
+    case R_PANIC:            return "panic";
     default:                 return NULL;
     }
 }

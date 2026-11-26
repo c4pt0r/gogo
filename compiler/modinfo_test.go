@@ -147,8 +147,8 @@ func TestRequiresInference(t *testing.T) {
 // call in package main or in another library (an importer included) still
 // does.
 func TestOptionalDirective(t *testing.T) {
-	const opt = "// Package a opens mic only when asked.\n//\n//gogo:optional mic spk ui\npackage a\nimport \"gogo/port\"\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok }\nfunc Play() bool { _, ok := port.Open(\"spk\", 1); return ok }\nfunc UI() bool { _, ok := port.Open(\"ui\", port.Host{}); return ok }\nfunc IR() bool { _, ok := port.Open(\"ir_tx\", 1); return ok }\n"
-	const user = "package b\nimport (\n\"gogo/a\"\n\"gogo/port\"\n)\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok && a.Rec() }\n"
+	const opt = "// Package a opens mic only when asked.\n//\n//gogo:optional mic spk ui\npackage a\nimport \"gogo/port\"\nfunc Rec() bool { _, err := port.Open(\"mic\", 1); return err == nil }\nfunc Play() bool { _, err := port.Open(\"spk\", 1); return err == nil }\nfunc UI() bool { _, err := port.Open(\"ui\", port.Host{}); return err == nil }\nfunc IR() bool { _, err := port.Open(\"ir_tx\", 1); return err == nil }\n"
+	const user = "package b\nimport (\n\"gogo/a\"\n\"gogo/port\"\n)\nfunc Rec() bool { _, err := port.Open(\"mic\", 1); return err == nil && a.Rec() }\n"
 	libs := fakeLibs(t, map[string]string{"a/a.gg": opt, "b/b.gg": user})
 	tests := []struct {
 		name, src string
@@ -178,7 +178,7 @@ func TestOptionalDirective(t *testing.T) {
 // port.Open drivers soft too; a library's open of the same name still
 // counts, and the names it does not list count.
 func TestOptionalDirectiveMain(t *testing.T) {
-	const lib = "package a\nimport \"gogo/port\"\nfunc Ui() bool { _, ok := port.Open(\"ui\", port.Host{}); return ok }\n"
+	const lib = "package a\nimport \"gogo/port\"\nfunc Ui() bool { _, err := port.Open(\"ui\", port.Host{}); return err == nil }\n"
 	libs := fakeLibs(t, map[string]string{"a/a.gg": lib})
 	tests := []struct{ name, src, want string }{
 		{"main soft", "// Program p.\n//\n//gogo:optional nosuch ui\npackage main\nimport \"gogo/port\"\nfunc main() {\n\t_, _ = port.Open(\"nosuch\", 1)\n\t_, _ = port.Open(\"ui\", port.Host{})\n\t_, _ = port.Open(\"gpio\", 1)\n}\n", "gpio"},
@@ -205,9 +205,14 @@ func TestOptionalDirectiveErrors(t *testing.T) {
 	}
 	tests := []struct{ name, src, directive, want string }{
 		{"no driver", useLib, "//gogo:optional", `a/a.gg:3:1: gogo: //gogo:optional names no driver`},
-		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional or //gogo:ondemand)`},
+		{"unknown directive", useLib, "//gogo:optinal tls", `a/a.gg:3:1: gogo: unknown directive //gogo:optinal (want //gogo:optional, //gogo:ondemand, //gogo:builtin or //gogo:reserved)`},
 		{"glued name", useLib, "//gogo:optionaltls", `unknown directive //gogo:optionaltls`},
 		{"empty in main", "package main\n\n//gogo:optional\n\nfunc main() {}\n", "", `main.gg:3:1: gogo: //gogo:optional names no driver`},
+		{"builtin apart", useLib, "//gogo:builtin", `a/a.gg:3:1: gogo: //gogo:builtin must be the last line of a declaration's doc comment`},
+		{"builtin in main", "package main\n\n//gogo:builtin\nfunc main() {}\n", "", `main.gg:3:1: gogo: //gogo:builtin is for the gogo/ libraries only`},
+		{"reserved on a func", useLib, "//gogo:reserved 3\nfunc G() {}", `a/a.gg:3:1: gogo: bad directive //gogo:reserved 3`},
+		{"reserved without index", useLib, "//gogo:reserved\ntype T struct{}", `a/a.gg:3:1: gogo: bad directive //gogo:reserved`},
+		{"builtin with argument", useLib, "//gogo:builtin B_X\nfunc G() {}", `a/a.gg:3:1: gogo: bad directive //gogo:builtin B_X`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -216,5 +221,58 @@ func TestOptionalDirectiveErrors(t *testing.T) {
 				t.Errorf("Load error %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestReservedMarkMismatch: a //gogo:reserved index the compiler does not
+// know for that type fails the compilation.
+func TestReservedMarkMismatch(t *testing.T) {
+	libs := fakeLibs(t, map[string]string{"a/a.gg": "package a\n\n//gogo:reserved 3\ntype T struct{ X int }\n"})
+	prog, err := LoadWith(writeProg(t, "package main\nimport \"gogo/a\"\nfunc main() { println(a.T{}.X) }\n"), libs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compile(prog); err == nil || !strings.Contains(err.Error(), "gogo/a.T is //gogo:reserved 3, which the compiler does not know as that") {
+		t.Fatalf("Compile error %v", err)
+	}
+}
+
+// TestSystemPackageCode: a system package (one with //gogo: marks) may
+// hold library code, compiled only where the program uses it.
+func TestSystemPackageCode(t *testing.T) {
+	libs := fakeLibs(t, map[string]string{"a/a.gg": `package a
+
+// B is a VM object.
+//
+//gogo:builtin
+type B struct{ _ int32 }
+
+// Used is compiled: the program calls it.
+func Used() int { return helper() + 1 }
+
+func helper() int { return 41 }
+
+// Unused is not.
+func Unused() int { return 2 }
+`})
+	prog, err := LoadWith(writeProg(t, "package main\nimport \"gogo/a\"\nfunc main() { println(a.Used()) }\n"), libs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := Compile(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dis, err := Disassemble(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.Used", "a.helper"} {
+		if !strings.Contains(dis, "func "+name) {
+			t.Errorf("%s missing:\n%s", name, dis)
+		}
+	}
+	if strings.Contains(dis, "a.Unused") {
+		t.Errorf("a.Unused compiled:\n%s", dis)
 	}
 }

@@ -64,7 +64,7 @@ func show(r http.Response) {
 
 func main() {
 	actor.Register("hits", actor.Spawn(hits))
-	if !dhcp.Start(dhcp.Config{TimeoutMs: 10000}) {
+	if dhcp.Start(dhcp.Config{TimeoutMs: 10000}) != nil {
 		println("no network: testing the handler directly")
 		show(handle(http.Request{Method: "GET", Path: "/"}))
 		show(handle(http.Request{Method: "GET", Path: "/"}))

@@ -11,8 +11,8 @@ import (
 )
 
 func main() {
-	p, ok := port.Open("power", power.Config{PeriodMs: 5000})
-	if !ok {
+	p, err := port.Open("power", power.Config{PeriodMs: 5000})
+	if err != nil {
 		println("no battery monitor on this board")
 		return
 	}

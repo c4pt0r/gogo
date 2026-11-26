@@ -32,7 +32,7 @@ and shows `gogo: wifi connected (...)` and later `gogo: ip <address>` on the
 screen. Only 2.4 GHz networks work.
 
 **On your computer, `gogo run` has no network.** The network ports refuse
-to open, `net.Subscribe` returns false, and `dhcp.Start` returns false at
+to open, `net.Subscribe` returns false, and `dhcp.Start` fails at
 once. The examples in this chapter check for that and say `no network`,
 which is what you see when you run them on the host. gogo's own tests run
 network programs against a simulated network (`tests/net`); the HTTP
@@ -50,9 +50,10 @@ func Start(cfg dhcp.Config) bool   // Config{TimeoutMs int}; <= 0 means 10000
 ```
 
 `dhcp.Start` starts the DHCP client actor, linked to the caller, and waits
-until the interface has an address (`true`) or the timeout has passed
-(`false`; the client keeps trying in the background). It returns `false`
-at once when there is no network. The client renews the lease, rebinds,
+until the interface has an address (it returns `nil`) or the timeout has
+passed (`errors.Timeout`; the client keeps trying in the background). It
+fails at once when there is no network (`port.Open`'s error for
+`"netif"`). The client renews the lease, rebinds,
 and starts over if the lease runs out. It owns the `"netif"` port, so keep
 it alive (do not let the caller exit) while you use the network.
 
@@ -168,9 +169,14 @@ HTTP/1.1 with `Connection: close` to `https://` URLs (chapter 17 covers https, t
 `http.Upload`). Each request runs in a temporary actor; the caller waits for it the way
 `actor.Call` waits, and on timeout the request is abandoned. The temporary
 actor follows its caller: if the caller exits or is killed meanwhile, the
-request stops and its connection is reset. `ok` is false
-when DNS, the connection or the timeout fails; an HTTP error status such
-as 404 is `ok` with that `Status`.
+request stops and its connection is reset. The error is an
+`errors.Code`: `errors.BadURL` for a URL (or method or content type) that
+cannot be sent, `errors.Timeout` when the timeout runs out,
+`errors.IO` when DNS or the connection fails or the response is
+malformed; an HTTP error status such as 404 is a response (`nil` error)
+with that `Status`. `dns.Lookup` says more about a name: `errors.NotFound`
+(no such name, no A record), `errors.NoRoute` (no network or DNS
+server), `errors.Timeout`.
 
 ```go
 // Fetch a page with http.Get. The URL comes from the config store
@@ -188,13 +194,13 @@ func main() {
 	if !ok {
 		url = "http://example.com/"
 	}
-	if !dhcp.Start(dhcp.Config{}) {
+	if dhcp.Start(dhcp.Config{}) != nil {
 		println("no network")
 		return
 	}
-	r, ok := http.Get(url, 8000)
-	if !ok {
-		println("GET", url, "failed (DNS, connect or timeout)")
+	r, err := http.Get(url, 8000)
+	if err != nil {
+		println("GET", url, "failed:", err.Error())
 		return
 	}
 	ct, _ := http.HeaderValue(r.Headers, "content-type")
@@ -313,7 +319,7 @@ func show(r http.Response) {
 
 func main() {
 	actor.Register("hits", actor.Spawn(hits))
-	if !dhcp.Start(dhcp.Config{TimeoutMs: 10000}) {
+	if dhcp.Start(dhcp.Config{TimeoutMs: 10000}) != nil {
 		println("no network: testing the handler directly")
 		show(handle(http.Request{Method: "GET", Path: "/"}))
 		show(handle(http.Request{Method: "GET", Path: "/"}))
@@ -389,12 +395,12 @@ import (
 )
 
 func main() {
-	if !dhcp.Start(dhcp.Config{}) {
+	if dhcp.Start(dhcp.Config{}) != nil {
 		println("no network")
 		return
 	}
-	u, ok := port.Open("udp", net.UDP{Port: 7})
-	if !ok {
+	u, err := port.Open("udp", net.UDP{Port: 7})
+	if err != nil {
 		println("udp port 7 is taken")
 		return
 	}
@@ -518,12 +524,12 @@ func echo(conn actor.PID) {
 }
 
 func main() {
-	if !dhcp.Start(dhcp.Config{}) {
+	if dhcp.Start(dhcp.Config{}) != nil {
 		println("no network")
 		return
 	}
-	_, ok := port.Open("tcp_listen", net.Listen{Port: 7})
-	if !ok {
+	_, err := port.Open("tcp_listen", net.Listen{Port: 7})
+	if err != nil {
 		println("port 7 is taken")
 		return
 	}
@@ -590,9 +596,10 @@ it back to before the build. `SetTime` with 0 or less forgets the time, and
 `gogo/dns`, or a dotted address; UDP port 123) for the time and sets the
 wall clock. It runs the exchange in a helper actor, so your mailbox is not
 touched, sends the request up to 3 times within the timeout, and corrects
-for half the round trip. It returns false, leaving the clock alone, if the
-name does not resolve, no valid reply comes in time, or the floor refuses
-the answer. SNTP is not authenticated, so a reply could come from anyone on
+for half the round trip. It returns an error, leaving the clock alone, if
+the name does not resolve (`dns.Lookup`'s error), no valid reply comes in
+time (`errors.Timeout`), or the floor refuses the answer
+(`errors.BadArg`). SNTP is not authenticated, so a reply could come from anyone on
 the network path. Sync once at startup, and again every few hours if the
 date matters; the clock drifts with the board's crystal in between.
 
@@ -650,7 +657,7 @@ func main() {
 	if !ok {
 		server = "pool.ntp.org"
 	}
-	if dhcp.Start(dhcp.Config{}) && sntp.Sync(server, 5000) {
+	if dhcp.Start(dhcp.Config{}) == nil && sntp.Sync(server, 5000) == nil {
 		println("synced with", server, "->", date(sys.Time()), "UTC")
 	} else {
 		println("not synced: no network or no answer")

@@ -178,13 +178,15 @@ something else
 ```
 
 `int` and `int64` are different cases: an `int64` put into `any` stays an
-`int64`. A `byte` cannot be put into `any` at all (it would be
-indistinguishable from an `int` at run time), and neither can a value of a
-named basic type such as `type Celsius int`: wrap it in a struct. Slices can
-be sent but cannot be a case; put them in a struct.
+`int64`. So do a `byte` and a value of a named basic type such as `type
+Celsius int`: each keeps its own type in an `any` (it is boxed), so `case
+Celsius` matches a `Celsius` and not an `int`. Slices can be sent but cannot
+be a case; put them in a struct.
 
-The type switch is the only way to look inside an `any`: the type assertion
-`x.(T)` is not supported.
+When only one type is expected, a type assertion is shorter: `t :=
+m.(Celsius)` takes the value out, and crashes the actor with a panic if `m`
+holds another type; `t, ok := m.(Celsius)` does not crash but sets `ok` to
+false (and `t` to the zero value).
 
 > **Note.** Erlang's `receive` can wait for a message matching a pattern
 > and leave the others in the mailbox. gogo's `Receive` always takes the

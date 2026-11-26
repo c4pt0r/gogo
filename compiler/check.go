@@ -52,7 +52,7 @@ type checker struct {
 	results *types.Tuple // results of the function being checked
 	loops   int          // loops around the statement being checked, in its function
 	seen    map[string]bool
-	okNil   map[*ast.Ident]bool // nil idents that stand for a nil slice
+	okNil   map[*ast.Ident]bool // nil idents that stand for a nil slice or a nil interface value
 }
 
 func (c *checker) fail(pos token.Pos, format string, args ...any) {
@@ -116,9 +116,12 @@ func (c *checker) typeProblem(t types.Type) string {
 	case *types.Named:
 		obj := t.Obj()
 		if obj.Pkg() == nil {
-			return obj.Name() // error, comparable
+			if obj.Name() == "error" {
+				return ""
+			}
+			return obj.Name() // comparable
 		}
-		if c.p.compiled(obj.Pkg()) || isStub(obj.Pkg().Path()) {
+		if c.p.compiled(obj.Pkg()) {
 			return ""
 		}
 		return obj.Name()
@@ -153,10 +156,17 @@ func (c *checker) typeProblem(t types.Type) string {
 		}
 		return ""
 	case *types.Interface:
-		if t.Empty() {
-			return "" // any
+		// any, or methods whose signatures are of the subset (embedded
+		// interfaces add theirs); no type sets (constraints only).
+		if !t.IsMethodSet() {
+			return "interface with a type set"
 		}
-		return "interface"
+		for i := 0; i < t.NumMethods(); i++ {
+			if c.typeProblem(types.NewSignatureType(nil, nil, nil, t.Method(i).Type().(*types.Signature).Params(), t.Method(i).Type().(*types.Signature).Results(), t.Method(i).Type().(*types.Signature).Variadic())) != "" {
+				return "interface method " + t.Method(i).Name() + " of type " + types.TypeString(t.Method(i).Type(), pkgName)
+			}
+		}
+		return ""
 	case *types.Struct:
 		return "anonymous struct"
 	case *types.Tuple:
@@ -188,6 +198,9 @@ func (c *checker) decl(d ast.Decl) {
 			c.unsupported(d, kindName(d))
 		}
 	case *ast.FuncDecl:
+		if c.p.isBuiltin(c.p.Info.Defs[d.Name]) {
+			return // the VM's: its body is never compiled
+		}
 		if d.Recv != nil && !c.recv(d.Recv) {
 			return
 		}
@@ -198,9 +211,6 @@ func (c *checker) decl(d ast.Decl) {
 		if d.Name.Name == "init" && d.Recv == nil { // a method may be called init
 			c.unsupported(d, "func init") // would never be called
 			return
-		}
-		if isIntrinsic(c.p.Info, d) {
-			return // compiled as B_FLOAT at each call
 		}
 		c.fieldList(d.Type.Params)
 		c.fieldList(d.Type.Results) // any number of results, named or not
@@ -253,16 +263,21 @@ func (c *checker) fieldList(fl *ast.FieldList) {
 }
 
 func (c *checker) typeSpec(s *ast.TypeSpec) {
-	if s.Assign.IsValid() {
-		c.unsupported(s, "type alias")
-		return
+	if c.p.isBuiltin(c.p.Info.Defs[s.Name]) {
+		return // a VM object (actor.PID, bytes.Bytes ...)
 	}
 	if s.TypeParams != nil {
 		c.unsupported(s, "generic type")
 		return
 	}
-	if _, ok := s.Type.(*ast.InterfaceType); ok {
-		c.fail(s.Pos(), "interface types are not supported yet: call methods on the concrete type")
+	if s.Assign.IsValid() { // type A = T: another name for T, any type of the subset
+		c.typeExpr(s.Type)
+		return
+	}
+	if isIface(c.p.Info.TypeOf(s.Type)) { // type I interface{ ... }, type E error
+		if msg := c.typeProblem(c.p.Info.TypeOf(s.Type)); msg != "" {
+			c.unsupported(s, msg)
+		}
 		return
 	}
 	st, ok := s.Type.(*ast.StructType)
@@ -291,7 +306,7 @@ func isFunc(t types.Type) bool {
 // funcValueCall reports whether call calls a func value: a variable or
 // parameter, a struct field, an element, a call result or a literal of
 // func type (compiled to CALLV), rather than a declared function, a
-// builtin, a stub function, a gogo/bytes method or a conversion.
+// builtin, a builtin function, a gogo/bytes method or a conversion.
 func funcValueCall(info *types.Info, call *ast.CallExpr) bool {
 	fun := ast.Unparen(call.Fun)
 	if tv, ok := info.Types[fun]; ok && tv.IsType() {
@@ -360,8 +375,28 @@ func (c *checker) isIntConv(call *ast.CallExpr) bool {
 	return number(c.p.Info.TypeOf(call.Fun)) && number(c.p.Info.TypeOf(call.Args[0]))
 }
 
+// isSameBasicConv reports whether conversion call is between a bool or
+// string type and another of the same underlying type (type Name string:
+// Name(s), string(n)): the value is the same.
+func (c *checker) isSameBasicConv(call *ast.CallExpr) bool {
+	if len(call.Args) != 1 {
+		return false
+	}
+	to, from := underlying(c.p.Info.TypeOf(call.Fun)), underlying(c.p.Info.TypeOf(call.Args[0]))
+	tb, ok1 := to.(*types.Basic)
+	fb, ok2 := from.(*types.Basic)
+	if !ok1 || !ok2 {
+		return false
+	}
+	both := func(info types.BasicInfo) bool { return tb.Info()&info != 0 && fb.Info()&info != 0 }
+	return both(types.IsBoolean) || (both(types.IsString) && basicKind(from) != types.UntypedRune && fb.Info()&types.IsInteger == 0)
+}
+
 // isByte reports whether t is byte (uint8), unnamed.
 func isByte(t types.Type) bool { return basicKind(t) == types.Uint8 }
+
+// anyType is the empty interface, any.
+var anyType = types.Universe.Lookup("any").Type()
 
 // isAny reports whether t is the empty interface.
 func isAny(t types.Type) bool {
@@ -373,25 +408,48 @@ func isAny(t types.Type) bool {
 }
 
 // convert checks the implicit conversion of e to type target (an
-// assignment, argument, result or field value). A value of a named basic
-// type cannot go into an interface: at run time it is indistinguishable
-// from its underlying type. Nor can a func value.
+// assignment, argument, result or field value). A func value cannot go
+// into an interface (it has no type id).
 func (c *checker) convert(target types.Type, e ast.Expr) {
-	if isSlice(target) {
-		c.nilSlice(e)
+	if isSlice(target) || isIface(target) {
+		c.nilSlice(e) // the nil slice, the nil interface value
 	}
-	if !isAny(target) {
+	if !isIface(target) {
 		return
 	}
 	c.noFuncInAny(e)
 	c.convertType(target, c.p.Info.TypeOf(e), e.Pos())
 }
 
+// codeAsError rejects the result of a call that returns an errors.Code
+// (fs.WriteFile, code.Load's ...: fs.Err and code.Err are aliases)
+// returned or stored as an error, as in `return fs.WriteFile(p, b)` in a
+// function that returns error: errors.OK in an error is not nil, so
+// success would read as a failure. Its callers are the return, var and
+// assignment statements; an argument (errors.Is(fs.Remove(p),
+// errors.NotFound), which compares), an explicit error(...) conversion
+// and a Code held in a variable convert as any value does.
+func (c *checker) codeAsError(target types.Type, e ast.Expr) {
+	call, ok := ast.Unparen(e).(*ast.CallExpr)
+	if !ok || c.p.Info.Types[call.Fun].IsType() || !types.Identical(target, errorType) || !isErrorsCode(c.p.Info.TypeOf(call)) {
+		return // not a call, a conversion, or not a Code into an error
+	}
+	c.fail(e.Pos(), "errors.Code result used as an error: OK would be a non-nil error; check it against OK first")
+}
+
+// isErrorsCode reports whether t is gogo/errors' Code (fs.Err and code.Err
+// included: they are aliases).
+func isErrorsCode(t types.Type) bool {
+	n, ok := types.Unalias(t).(*types.Named)
+	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == ErrorsPath && n.Obj().Name() == "Code"
+}
+
 // convertType checks the implicit conversion of a value of type src (one
-// result of a multi-result call, or e in convert) to type target. A byte
-// cannot go into an interface either: at run time it is a small int.
+// result of a multi-result call, or e in convert) to type target. A named
+// basic value and a sized integer (byte, rune, uint32, ...) are boxed
+// (codegen_iface.go).
 func (c *checker) convertType(target, src types.Type, pos token.Pos) {
-	if !isAny(target) {
+	if !isIface(target) {
 		return
 	}
 	if isFunc(src) {
@@ -400,16 +458,60 @@ func (c *checker) convertType(target, src types.Type, pos token.Pos) {
 	if isArray(src) {
 		c.fail(pos, "array in interface not supported: use a slice or a struct with an array field")
 	}
-	if k := basicKind(src); k != types.Int && k != types.Int64 && k != types.UntypedInt && k != types.Invalid && intKindOf(src).bits != 0 {
-		// A sized integer would be an int or int64 inside: TYPEIS could
-		// not tell it apart.
-		c.fail(pos, "%s in interface not supported", types.TypeString(src, pkgName))
+	c.vmMethods(target, src, pos)
+}
+
+// vmMethods rejects a value of concrete type src going into interface
+// type target when one of the methods that implement target is a builtin
+// of the VM's (bytes.Bytes, bytes.Buffer, fs.File and a struct embedding
+// one): dispatch calls only compiled functions, so the value would not
+// implement target at run time.
+func (c *checker) vmMethods(target, src types.Type, pos token.Pos) {
+	it, ok := underlying(target).(*types.Interface)
+	if !ok || src == nil || isIface(src) || it.Empty() {
+		return
 	}
-	if n, ok := types.Unalias(src).(*types.Named); ok {
-		if _, basic := n.Underlying().(*types.Basic); basic {
-			c.fail(pos, "named basic type in interface not supported")
+	if m := c.p.vmMethodFor(src, it); m != "" {
+		c.fail(pos, "%s as a %s not supported: its method %s is a builtin of the VM, which interfaces cannot call",
+			types.TypeString(src, pkgName), types.TypeString(target, pkgName), m)
+	}
+}
+
+// vmMethodFor returns the name of a method of interface it that concrete
+// type src gets from a VM builtin (its own, or promoted from an embedded
+// bytes.Buffer, ...), or "".
+func (p *Program) vmMethodFor(src types.Type, it *types.Interface) string {
+	ms := types.NewMethodSet(src)
+	for i := 0; i < it.NumMethods(); i++ {
+		m := it.Method(i)
+		if sel := ms.Lookup(m.Pkg(), m.Name()); sel != nil {
+			if fn, _ := sel.Obj().(*types.Func); fn != nil && p.vmMethod(fn) {
+				return m.Name()
+			}
 		}
 	}
+	return ""
+}
+
+// vmImplements reports whether concrete type src implements interface it
+// only through a VM builtin method: at run time it does not (the checker
+// keeps such values out of it; a type switch or an assertion says no).
+func (p *Program) vmImplements(src types.Type, it *types.Interface) bool {
+	return p.vmMethodFor(src, it) != ""
+}
+
+// vmMethod reports whether method fn is a builtin: marked itself, or a
+// method of a type the VM implements.
+func (p *Program) vmMethod(fn *types.Func) bool {
+	if p.isBuiltin(fn) {
+		return true
+	}
+	recv := fn.Type().(*types.Signature).Recv()
+	if recv == nil {
+		return false
+	}
+	n, ok := types.Unalias(recv.Type()).(*types.Named)
+	return ok && p.isBuiltin(n.Obj())
 }
 
 // multiCall returns e as a call of a compiled (main or library) function
@@ -439,7 +541,7 @@ func (c *checker) multiCall(e ast.Expr) *ast.CallExpr {
 	default:
 		return nil
 	}
-	if fn, ok := c.p.Info.Uses[id].(*types.Func); !ok || !c.p.compiled(fn.Pkg()) {
+	if fn, ok := c.p.Info.Uses[id].(*types.Func); !ok || !c.p.compiled(fn.Pkg()) || c.p.isBuiltin(fn) {
 		return nil
 	}
 	return call
@@ -473,7 +575,7 @@ func (c *checker) typeExpr(e ast.Expr) {
 		return
 	}
 	switch e := e.(type) {
-	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType: // FuncType: its signature was checked above
+	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType, *ast.InterfaceType: // their signatures were checked above
 	case *ast.ArrayType:
 		c.typeExpr(e.Elt) // []T, [N]T, [...]T
 	default:
@@ -482,6 +584,10 @@ func (c *checker) typeExpr(e ast.Expr) {
 }
 
 func (c *checker) valueSpec(s *ast.ValueSpec) {
+	if len(s.Values) == 1 && len(s.Names) > 1 {
+		c.unsupported(s.Values[0], "multiple values") // var a, b = f(): use a, b := f()
+		return
+	}
 	if s.Type != nil {
 		c.typeExpr(s.Type)
 		if len(s.Values) == 0 && isBuffer(c.p.Info.TypeOf(s.Type)) {
@@ -491,6 +597,7 @@ func (c *checker) valueSpec(s *ast.ValueSpec) {
 	for _, v := range s.Values {
 		if s.Type != nil {
 			c.convert(c.p.Info.TypeOf(s.Type), v)
+			c.codeAsError(c.p.Info.TypeOf(s.Type), v)
 		}
 		c.expr(v)
 	}
@@ -575,6 +682,7 @@ func (c *checker) stmt(s ast.Stmt) {
 		for i, r := range s.Results {
 			if c.results != nil && i < c.results.Len() {
 				c.convert(c.results.At(i).Type(), r)
+				c.codeAsError(c.results.At(i).Type(), r)
 			}
 			c.expr(r)
 		}
@@ -808,6 +916,14 @@ func (c *checker) assign(s *ast.AssignStmt) {
 		c.call(call, true)
 		return
 	}
+	if ta := commaOk(s.Lhs, s.Rhs); ta != nil && (s.Tok == token.ASSIGN || s.Tok == token.DEFINE) { // v, ok := x.(T)
+		for _, l := range s.Lhs {
+			c.lhs(l)
+		}
+		c.convertType(c.p.Info.TypeOf(s.Lhs[0]), c.p.Info.TypeOf(ta.Type), ta.Pos())
+		c.typeAssert(ta)
+		return
+	}
 	if len(s.Lhs) > 1 && len(s.Rhs) == 1 && (s.Tok == token.ASSIGN || s.Tok == token.DEFINE) {
 		if call := c.multiCall(s.Rhs[0]); call != nil { // a, b := f()
 			targets := make([]types.Type, len(s.Lhs))
@@ -830,17 +946,27 @@ func (c *checker) assign(s *ast.AssignStmt) {
 	for i, r := range s.Rhs {
 		if s.Tok == token.ASSIGN || s.Tok == token.DEFINE {
 			c.convert(c.p.Info.TypeOf(s.Lhs[i]), r)
+			c.codeAsError(c.p.Info.TypeOf(s.Lhs[i]), r)
 		}
 		c.expr(r)
 	}
 }
 
-// twoResult lists the stub functions that return two values (by stubName).
-var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.Open": true, "sys.Config": true,
+// commaOk returns x.(T) if lhs, rhs is `v, ok = x.(T)`, else nil.
+func commaOk(lhs, rhs []ast.Expr) *ast.TypeAssertExpr {
+	if len(lhs) != 2 || len(rhs) != 1 {
+		return nil
+	}
+	ta, _ := ast.Unparen(rhs[0]).(*ast.TypeAssertExpr)
+	return ta
+}
+
+// twoResult lists the builtin functions that return two values (by stubName).
+var twoResult = map[string]bool{"ReceiveTimeout": true, "Call": true, "Whereis": true, "port.open": true, "sys.Config": true,
 	"fs.Open": true, "fs.ReadFile": true, "fs.Stat": true, "fs.ReadDir": true, "fs.Usage": true,
 	"File.Read": true, "File.Size": true,
 	"code.Load": true, "code.Spawn": true, "code.SpawnLink": true, "code.SpawnOpt": true,
-	"strconv.ParseFloat": true}
+	"strconv.parseFloat": true}
 
 // twoResultCall returns the call of `a, b := actor.X(...)` or
 // `a, b = actor.X(...)` when X is a two-result builtin, else nil.
@@ -869,18 +995,21 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 			ta, _ = a.Rhs[0].(*ast.TypeAssertExpr)
 		}
 	}
-	if ta == nil || !isAny(c.p.Info.TypeOf(ta.X)) {
-		c.unsupported(s, "type switch over a value other than any")
+	if ta == nil || !isIface(c.p.Info.TypeOf(ta.X)) {
+		c.unsupported(s, "type switch over a value other than an interface")
 		return
 	}
 	c.expr(ta.X)
 	for _, cl := range s.Body.List {
 		cc := cl.(*ast.CaseClause)
 		for _, t := range cc.List {
+			if c.p.Info.Types[t].IsNil() {
+				continue // case nil
+			}
 			if isFsFile(c.p.Info.TypeOf(t)) {
 				c.unsupported(t, "type switch case fs.File not supported; wrap it in a struct")
-			} else if !c.caseType(t) {
-				c.unsupported(t, "type switch case other than a struct, int, int64, float32, float64, bool, string, actor.PID, actor.Ref or bytes.Bytes")
+			} else if !c.caseType(t) && !c.ifaceCase(t) {
+				c.unsupported(t, "type switch case other than a struct, int, int64, byte, float32, float64, bool, string, a named type of those, actor.PID, actor.Ref or bytes.Bytes")
 			}
 		}
 		for _, b := range cc.Body {
@@ -891,8 +1020,8 @@ func (c *checker) typeSwitch(s *ast.TypeSwitchStmt) {
 
 // switchStmt checks an expression switch: tagged (`switch x { case 1, 2: }`)
 // or tagless (`switch { case x > 0: }`), with an optional init statement.
-// The tag and every case value must be comparable with ==: a switch on an
-// interface or a struct value is not supported yet.
+// The tag and every case value must be comparable with ==; a case value
+// goes into an interface tag as in an assignment, and the other way round.
 func (c *checker) switchStmt(s *ast.SwitchStmt) {
 	if s.Init != nil {
 		c.stmt(s.Init)
@@ -907,9 +1036,14 @@ func (c *checker) switchStmt(s *ast.SwitchStmt) {
 	for _, cl := range s.Body.List {
 		cc := cl.(*ast.CaseClause)
 		for _, e := range cc.List {
-			if t := c.p.Info.TypeOf(e); s.Tag != nil && !c.comparable(t) {
+			if t := c.p.Info.TypeOf(e); s.Tag != nil && !c.comparable(t) && !(c.p.Info.Types[e].IsNil() && isIface(c.p.Info.TypeOf(s.Tag))) {
 				c.unsupported(e, "switch case of type "+types.TypeString(t, pkgName))
 				continue
+			}
+			if s.Tag != nil {
+				tt := c.p.Info.TypeOf(s.Tag)
+				c.convert(tt, e) // nil, a boxed value into an interface tag
+				c.convertType(c.p.Info.TypeOf(e), tt, s.Tag.Pos())
 			}
 			c.expr(e)
 		}
@@ -919,9 +1053,10 @@ func (c *checker) switchStmt(s *ast.SwitchStmt) {
 	}
 }
 
-// caseType reports whether t is an allowed type switch case: a struct type,
-// int, int64, bool, string, actor.PID, actor.Ref or bytes.Bytes (not
-// bytes.Buffer, which has no type id).
+// caseType reports whether t is an allowed type switch case or type
+// assertion type: a struct type, int, int64, byte, bool, string, a named
+// type of those, actor.PID, actor.Ref or bytes.Bytes (not bytes.Buffer,
+// which has no type id).
 func (c *checker) caseType(t ast.Expr) bool {
 	tv, ok := c.p.Info.Types[t]
 	if !ok || !tv.IsType() {
@@ -929,7 +1064,7 @@ func (c *checker) caseType(t ast.Expr) bool {
 	}
 	switch ty := types.Unalias(tv.Type).(type) {
 	case *types.Basic:
-		return isCaseBasic(ty)
+		return isCaseBasic(ty) || intKindOf(ty).bits != 0 // a sized integer is boxed
 	case *types.Named:
 		if isFsFile(ty) {
 			return false // the same term tag as actor.PID: the case would match every PID
@@ -940,16 +1075,23 @@ func (c *checker) caseType(t ast.Expr) bool {
 		if isBuffer(ty) {
 			return false
 		}
-		_, isStruct := ty.Underlying().(*types.Struct)
-		return isStruct && c.typeProblem(ty) == ""
+		switch ty.Underlying().(type) {
+		case *types.Struct, *types.Basic:
+			return c.typeProblem(ty) == ""
+		}
+		return false
 	}
 	return false
 }
 
-// actorFunc returns the stubName of the stub function (gogo/actor, port,
+// actorFunc returns the stubName of the builtin function (gogo/actor, port,
 // bytes, net, config or fs) a call invokes, or the fsMethod name of a
 // gogo/fs method call, or "".
 func (c *checker) actorFunc(call *ast.CallExpr) string {
+	if id, ok := ast.Unparen(call.Fun).(*ast.Ident); ok { // a system package's own builtin
+		fn, _ := c.p.Info.Uses[id].(*types.Func)
+		return c.p.stubName(fn)
+	}
 	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 	if !ok {
 		return ""
@@ -958,13 +1100,13 @@ func (c *checker) actorFunc(call *ast.CallExpr) string {
 		return fsMethod(c.p.Info, sel)
 	}
 	fn, _ := c.p.Info.Uses[sel.Sel].(*types.Func)
-	return stubName(fn)
+	return c.p.stubName(fn)
 }
 
-// stubName names a stub function: "Spawn" for actor.Spawn, "port.Open" for
-// port.Open; "" for any other function.
-func stubName(fn *types.Func) string {
-	if fn == nil || fn.Pkg() == nil {
+// stubName names a builtin function (//gogo:builtin): "Spawn" for
+// actor.Spawn, "port.Open" for port.Open; "" for any other function.
+func (p *Program) stubName(fn *types.Func) string {
+	if fn == nil || fn.Pkg() == nil || !p.isBuiltin(fn) {
 		return ""
 	}
 	if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
@@ -988,22 +1130,9 @@ func stubName(fn *types.Func) string {
 	case MathPath:
 		return "math." + fn.Name()
 	case StrconvPath:
-		if strconvIntrinsics[fn.Name()] {
-			return "strconv." + fn.Name()
-		}
+		return "strconv." + fn.Name()
 	}
 	return ""
-}
-
-// strconvIntrinsics are the gogo/strconv functions the compiler implements
-// (B_FLOAT): a call is a builtin call, like a stub function's, and the
-// declaration in lib/strconv is never checked or compiled.
-var strconvIntrinsics = map[string]bool{"FormatFloat": true, "ParseFloat": true}
-
-// isIntrinsic reports whether fd declares one of strconvIntrinsics.
-func isIntrinsic(info *types.Info, fd *ast.FuncDecl) bool {
-	fn, _ := info.Defs[fd.Name].(*types.Func)
-	return fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == StrconvPath && strconvIntrinsics[fn.Name()]
 }
 
 // fsMethod names the gogo/fs method a selector calls, as "File.Read"; ""
@@ -1057,7 +1186,13 @@ func tupleTypes(t *types.Tuple) []types.Type {
 // has checked the context around it.
 func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 	if tv, ok := c.p.Info.Types[call.Fun]; ok && tv.IsType() {
-		if !c.isIntConv(call) && !c.isBytesConv(call) && !isPIDConv(c.p.Info, call) {
+		if isIface(tv.Type) && len(call.Args) == 1 { // any(x), error(e), I(x): as an assignment
+			c.typeExpr(call.Fun)
+			c.convert(tv.Type, call.Args[0])
+			c.expr(call.Args[0])
+			return
+		}
+		if !c.isIntConv(call) && !c.isBytesConv(call) && !isPIDConv(c.p.Info, call) && !c.isSameBasicConv(call) {
 			c.unsupported(call, "conversion")
 			return
 		}
@@ -1089,6 +1224,13 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 			case "len", "cap", "append", "make", "copy":
 				c.seqBuiltin(call, obj.Name())
 				return
+			case "panic": // panic(v): v goes into an any
+				c.convert(anyType, call.Args[0])
+				c.expr(call.Args[0])
+				return
+			case "recover":
+				c.unsupported(call, "recover (a panic ends the actor: let its supervisor restart it)")
+				return
 			case "println":
 			default:
 				c.unsupported(call, "builtin "+obj.Name())
@@ -1110,7 +1252,7 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 				}
 			}
 		case *types.Func:
-			if !c.p.compiled(obj.Pkg()) {
+			if !c.p.compiled(obj.Pkg()) || (c.p.isBuiltin(obj) && c.p.stubName(obj) == "") {
 				c.unsupported(call, "call of "+obj.Name())
 				return
 			}
@@ -1149,33 +1291,42 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 }
 
 // method returns the method sel names, as x.M (a method value or call)
-// or T.M (a method expression), if it is declared in a compiled package,
-// else nil. The methods of the stub packages (gogo/bytes, gogo/fs) are
-// builtins: see bytesMethod and fsMethod.
+// or T.M (a method expression), if it is declared in a compiled package
+// and not a builtin, else nil. The builtin methods (gogo/bytes, gogo/fs)
+// are compiled by bytesMethod and fsMethod.
 func (p *Program) method(sel *ast.SelectorExpr) *types.Func {
 	s := p.Info.Selections[sel]
 	if s == nil || (s.Kind() != types.MethodVal && s.Kind() != types.MethodExpr) {
 		return nil
 	}
 	fn, ok := s.Obj().(*types.Func)
-	if !ok || !p.compiled(fn.Pkg()) {
+	if !ok || (!p.compiled(fn.Pkg()) && !isIface(s.Recv())) || p.isBuiltin(fn) {
 		return nil
 	}
 	return fn
+}
+
+// ifaceMethod reports whether sel selects a method of an interface value
+// (x.M with x of interface type: dispatched at run time).
+func (p *Program) ifaceMethod(sel *ast.SelectorExpr) bool {
+	s := p.Info.Selections[sel]
+	return s != nil && s.Kind() == types.MethodVal && isIface(s.Recv())
 }
 
 // methodRecv checks the operand of a method selector: the receiver
 // expression of x.M. The type T of a method expression T.M or (T).M was
 // checked at the method's declaration. A method expression of a promoted
 // method (B.M for a method M of B's embedded A) would need a function of
-// its own that takes a B: it is rejected.
+// its own that takes a B: it is rejected, and so is I.M of an interface I.
 func (c *checker) methodRecv(sel *ast.SelectorExpr) {
 	s := c.p.Info.Selections[sel]
 	if s.Kind() == types.MethodVal {
 		c.expr(sel.X)
 		return
 	}
-	if len(s.Index()) > 1 {
+	if isIface(s.Recv()) {
+		c.unsupported(sel, "method expression on an interface type")
+	} else if len(s.Index()) > 1 {
 		c.unsupported(sel, "method expression of a promoted method")
 	}
 }
@@ -1184,7 +1335,7 @@ func (c *checker) methodRecv(sel *ast.SelectorExpr) {
 // package (lib.F).
 func (c *checker) libFunc(sel *ast.SelectorExpr) bool {
 	fn, ok := c.p.Info.Uses[sel.Sel].(*types.Func)
-	return ok && c.p.Info.Selections[sel] == nil && c.p.isLib(fn.Pkg())
+	return ok && c.p.Info.Selections[sel] == nil && c.p.isLib(fn.Pkg()) && !c.p.isBuiltin(fn)
 }
 
 // args checks the arguments of a call of a declared function from index
@@ -1279,11 +1430,15 @@ func (c *checker) expr(e ast.Expr) {
 	case *ast.CompositeLit:
 		c.compositeLit(e)
 	case *ast.SelectorExpr:
-		if obj, ok := c.p.Info.Uses[e.Sel].(*types.Const); ok && obj.Pkg() != nil && (isStub(obj.Pkg().Path()) || c.p.isLib(obj.Pkg())) {
+		if obj, ok := c.p.Info.Uses[e.Sel].(*types.Const); ok && obj.Pkg() != nil && c.p.isLib(obj.Pkg()) {
 			return // actor.Normal, port.Output etc.
 		}
+		if fn, _ := c.p.Info.Uses[e.Sel].(*types.Func); fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == StrconvPath && c.p.stubName(fn) != "" {
+			c.unsupported(e, fn.Pkg().Name()+"."+fn.Name()+" as a func value")
+			return
+		}
 		if c.libFunc(e) {
-			if fn, _ := c.p.Info.Uses[e.Sel].(*types.Func); stubName(fn) != "" {
+			if fn, _ := c.p.Info.Uses[e.Sel].(*types.Func); c.p.stubName(fn) != "" {
 				c.unsupported(e, fn.Pkg().Name()+"."+fn.Name()+" as a func value")
 			}
 			return // lib.F as a func value; its type was checked above
@@ -1315,9 +1470,36 @@ func (c *checker) expr(e ast.Expr) {
 		c.indexExpr(e)
 	case *ast.SliceExpr:
 		c.sliceExpr(e)
+	case *ast.TypeAssertExpr:
+		c.typeAssert(e)
 	default:
 		c.unsupported(e, kindName(e))
 	}
+}
+
+// ifaceCase reports whether t names an interface type of the subset (a
+// type switch case or assertion type: does the value implement it).
+func (c *checker) ifaceCase(t ast.Expr) bool {
+	tv, ok := c.p.Info.Types[t]
+	return ok && tv.IsType() && isIface(tv.Type) && c.typeProblem(tv.Type) == ""
+}
+
+// typeAssert checks x.(T): x an interface value, T a type a type switch
+// may name.
+func (c *checker) typeAssert(e *ast.TypeAssertExpr) {
+	if e.Type == nil {
+		c.unsupported(e, "x.(type) outside a type switch")
+		return
+	}
+	if isFsFile(c.p.Info.TypeOf(e.Type)) {
+		c.unsupported(e.Type, "type assertion to fs.File; wrap it in a struct")
+		return
+	}
+	if !c.caseType(e.Type) && !c.ifaceCase(e.Type) {
+		c.unsupported(e.Type, "type assertion to "+types.TypeString(c.p.Info.TypeOf(e.Type), pkgName))
+		return
+	}
+	c.expr(e.X)
 }
 
 func (c *checker) compositeLit(e *ast.CompositeLit) {
@@ -1396,18 +1578,17 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 			if c.nilCompare(e) {
 				return
 			}
-			if isArray(xt) {
-				c.fail(e.Pos(), "comparison of arrays not supported yet: compare the elements")
-				return
-			}
 			// Both sides: Go converts a non-interface operand to the other
-			// side's interface type, which is not in the subset.
-			for _, t := range []types.Type{xt, c.p.Info.TypeOf(e.Y)} {
+			// side's interface type (boxing it, see convert).
+			yt := c.p.Info.TypeOf(e.Y)
+			for _, t := range []types.Type{xt, yt} {
 				if !c.comparable(t) {
 					c.unsupported(e, "comparison of "+types.TypeString(t, nil))
 					return
 				}
 			}
+			c.convertType(xt, yt, e.Y.Pos())
+			c.convertType(yt, xt, e.X.Pos())
 		case token.LAND, token.LOR:
 		default:
 			if isString(xt) && (e.Op == token.ADD || e.Op == token.LSS || e.Op == token.LEQ || e.Op == token.GTR || e.Op == token.GEQ) {
@@ -1423,11 +1604,25 @@ func (c *checker) binary(e *ast.BinaryExpr) {
 	c.expr(e.Y)
 }
 
-// comparable reports whether == is allowed on t: int, int64, float32,
-// float64, bool, string (or a named type of them), actor.PID, fs.File or
-// actor.Ref.
+// comparable reports whether == is allowed on t: int, int64, byte,
+// float32, float64, bool, string (or a named type of them), actor.PID,
+// fs.File, actor.Ref, an interface, an array of a comparable type, or a
+// struct whose fields are all comparable (go/types has rejected slices and funcs; a Bytes field
+// compares by content; a Buffer does not compare).
 func (c *checker) comparable(t types.Type) bool {
-	if isPID(t) || isRef(t) {
+	if isPID(t) || isRef(t) || isIface(t) {
+		return true
+	}
+	if a := arrayType(t); a != nil { // element by element
+		return isBytes(a.Elem()) || c.comparable(a.Elem())
+	}
+	if st := structType(t); st != nil {
+		s := st.Underlying().(*types.Struct)
+		for i := 0; i < s.NumFields(); i++ {
+			if ft := s.Field(i).Type(); !isBytes(ft) && !c.comparable(ft) {
+				return false
+			}
+		}
 		return true
 	}
 	b, ok := underlying(t).(*types.Basic)
@@ -1543,8 +1738,8 @@ func sliceElem(t types.Type) types.Type {
 // isByteSlice reports whether t is a slice of bytes.
 func isByteSlice(t types.Type) bool { return isByte(sliceElem(t)) }
 
-// nilSlice admits e if it is nil going into a slice-typed destination: the
-// nil slice.
+// nilSlice admits e if it is nil going into a slice-typed or
+// interface-typed destination: the nil slice, the nil interface value.
 func (c *checker) nilSlice(e ast.Expr) {
 	if id, ok := ast.Unparen(e).(*ast.Ident); ok {
 		if _, isNil := c.p.Info.Uses[id].(*types.Nil); isNil {
@@ -1554,7 +1749,8 @@ func (c *checker) nilSlice(e ast.Expr) {
 }
 
 // nilCompare checks s == nil, nil == s and the != forms for a slice s (the
-// only comparison of slices). False if e is not one.
+// only comparison of slices) or an interface value s. False if e is not
+// one.
 func (c *checker) nilCompare(e *ast.BinaryExpr) bool {
 	isNil := func(x ast.Expr) bool {
 		id, ok := ast.Unparen(x).(*ast.Ident)
@@ -1568,7 +1764,7 @@ func (c *checker) nilCompare(e *ast.BinaryExpr) bool {
 	if isNil(x) {
 		x, y = y, x
 	}
-	if !isNil(y) || !isSlice(c.p.Info.TypeOf(x)) {
+	if !isNil(y) || (!isSlice(c.p.Info.TypeOf(x)) && !isIface(c.p.Info.TypeOf(x))) {
 		return false
 	}
 	c.nilSlice(y)
@@ -1676,7 +1872,7 @@ func (c *checker) stubPromoted(sel *ast.SelectorExpr) bool {
 		return false
 	}
 	fn, ok := s.Obj().(*types.Func)
-	if !ok || fn.Pkg() == nil || c.p.compiled(fn.Pkg()) {
+	if !ok || fn.Pkg() == nil || !c.p.isBuiltin(fn) {
 		return false
 	}
 	c.fail(sel.Pos(), "method %s of an embedded %s type not supported: call it on the field", fn.Name(), fn.Pkg().Path())

@@ -155,12 +155,12 @@ func strings.EqualFold(s, t string) bool         // ASCII letters
 func strings.Split(s, sep string) []string       // sep "" splits into bytes
 
 func strconv.Itoa(i int) string
-func strconv.Atoi(s string) (n int, ok bool)
+func strconv.Atoi(s string) (n int, err error) // errors.BadFormat, errors.Overflow (n clamped)
 func strconv.FormatInt64(i int64, base int) string        // "" for a bad base
 func strconv.ParseInt64(s string, base int) (n int64, ok bool) // no base 0, no _
 func strconv.FormatUint(i uint64, base int) string          // "" for a bad base
-func strconv.ParseUint(s string, base, bitSize int) (n uint64, ok bool) // bitSize 0: 32
-func strconv.ParseInt(s string, base, bitSize int) (n int64, ok bool)   // bitSize 0: 32
+func strconv.ParseUint(s string, base, bitSize int) (n uint64, err error) // bitSize 0: 32
+func strconv.ParseInt(s string, base, bitSize int) (n int64, err error)   // bitSize 0: 32
 ```
 
 ### gogo/kbd and gogo/power
@@ -182,7 +182,7 @@ type power.Read struct{}
 
 ```go
 type fs.File actor.PID
-type fs.Err int
+type fs.Err = errors.Code
 type fs.Info struct{ Size int; IsDir bool }
 type fs.Space struct{ Used, Total int }
 const (fs.Read = 0; fs.Write = 1; fs.Append = 2)
@@ -239,18 +239,18 @@ type net.Addr struct{ IP, Port int }
 func net.Subscribe() (ok bool)
 
 type dhcp.Config struct{ TimeoutMs int }
-func dhcp.Start(cfg Config) bool
+func dhcp.Start(cfg Config) error
 
-func dns.Lookup(name string, timeoutMs int) (int, bool)
+func dns.Lookup(name string, timeoutMs int) (int, error)
 
 type http.Header struct{ Name, Value string }
 type http.Request struct{ Method, Path string; Headers []Header; Body bytes.Bytes }
 type http.Response struct{ Status int; Headers []Header; Body bytes.Bytes; Truncated bool }
 const (http.MaxBody = 8192; MaxBodyLimit = 65536; MaxHead = 2048;
 	ReadTimeoutMs = 10000; DefaultTimeoutMs = 10000; ListenFailed = 69)   // actor.Failed + errors.Busy
-func http.Get(url string, timeoutMs int) (Response, bool)
-func http.Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
-func http.Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, bool)
+func http.Get(url string, timeoutMs int) (Response, error)
+func http.Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, error)
+func http.Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, error)
 func http.HeaderValue(h []Header, name string) (string, bool)
 func http.Serve(port int, handler func(Request) Response) actor.PID
 
@@ -259,7 +259,7 @@ type http.Client struct{ PID actor.PID }
 const (http.BadURL = errors.BadURL; TLSMemory = 26624;
 	UploadChunk = 4096; LingerMs = 1000; MaxQueued = 4)
 func http.NewClient() Client
-func http.ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool)
+func http.ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, error)
 func http.ClientUpload(c Client, url, path, contentType, token string) (status int, err errors.Code)
 func http.CloseClient(c Client)
 func http.Upload(url, path, contentType, token string) (status int, err errors.Code)
@@ -274,7 +274,7 @@ func sys.Time() int64           // Unix time in ms (UTC); 0: unknown
 func sys.SetTime(ms int64) bool // false: earlier than the build, refused; ms <= 0 forgets
 func sys.Random() int           // 30 random bits
 
-func sntp.Sync(server string, timeoutMs int) bool // sets sys's clock; timeoutMs <= 0: 5000
+func sntp.Sync(server string, timeoutMs int) error // sets sys's clock; timeoutMs <= 0: 5000
 func sntp.Now() int64                             // sys.Time()
 ```
 
@@ -296,7 +296,8 @@ them) are described in chapters 15 and 16.
 | 7 | `actor.Shutdown` | (none) | asked to stop; supervisors use it |
 | 8 | `actor.BadShift` | `badshift` | negative shift count |
 | 9 | `actor.BadMsg` | `badmsg` | sent a message holding a module's own struct or closure to an actor of another module (the sender exits; chapter 14) |
-| 10..63 | | | kept for the VM |
+| 10 | `actor.Panic` | `panic` | `panic(v)` (which first prints `panic: v` on standard error) |
+| 11..63 | | | kept for the VM |
 | 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus a shared code, 1..35 (appendix C); `http.ListenFailed` is 69, `actor.Failed + errors.Busy` |
 | 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)` |
 
@@ -310,7 +311,9 @@ that (chapter 12).
 
 **The shared codes** (`gogo/errors`, `GOGO_E_*` in
 `runtime/include/gogo_errors.h` on the C side): one numbering for every
-meaning the packages share.
+meaning the packages share. An `errors.Code` is an `error`; its `Error()`
+is the text `gogo_strerror` gives the same code on the C side (`"not
+found"`, `"busy"`, ...), and `"error N"` for a code without one.
 
 | Range | Codes |
 |---|---|
@@ -320,12 +323,12 @@ meaning the packages share.
 | 36..99 | reserved, never shared codes |
 | 100 and up | one block of 20 per package that needs its own codes: `gogo/http` 100..119, `gogo/sound` 120..139 (neither uses its block yet) |
 
-**`fs.Err`** (also returned by `kv`, `ringlog`, `imulog` and `wav`): the
-shared codes, as `fs.Err(errors.X)` under the same names. `kv.Put` also
-returns `fs.Err(errors.Overflow)` (24) for a value over 4096 bytes and
-`fs.Err(errors.BadArg)` (6) for one that is neither a string nor `Bytes`;
-`imulog.Append` returns `fs.Err(errors.Overflow)` for a payload over
-65535 bytes.
+**`fs.Err`** (also returned by `kv`, `ringlog`, `imulog` and `wav`):
+`errors.Code` under another name, and these codes under the same names.
+`kv.Put` also returns `errors.Overflow` (24) for a value over 4096 bytes
+and `errors.BadArg` (6) for one that is neither a string nor `Bytes`;
+`imulog.Append` returns `errors.Overflow` for a payload over 65535
+bytes.
 
 | 0 | 1 | 2 | 3 | 4 | 5 | 7 | 8 | 11 | 12 | 13 | 14 | 15 | 16 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -338,8 +341,8 @@ returns `fs.Err(errors.Overflow)` (24) for a value over 4096 bytes and
 |---|---|---|---|---|---|---|---|
 | `Normal` (peer finished sending) | `Timeout` | `Refused` | `Reset` | `NoRoute` (address or link lost) | `BadCert` (the certificate failed verification) | `NoTime` (the wall clock is not set) | `TLS` (any other TLS failure) |
 
-**`code.Err`** (the result of every `gogo/code` call): the shared codes,
-as `code.Err(errors.X)` under the same names.
+**`code.Err`** (the result of every `gogo/code` call): `errors.Code`
+under another name, and these codes under the same names.
 
 | 0 | 1 | 3 | 4 | 6 | 10 | 17 | 27 |
 |---|---|---|---|---|---|---|---|
@@ -383,9 +386,8 @@ as `code.Err(errors.X)` under the same names.
 | `uint` is 64 bits on most machines | `uint` is 32 bits, like `int`; `int8` .. `uint64` as in Go, but not in an `any` |
 | complex, `uintptr` | none |
 | maps, pointers | slices of structs, searched |
-| methods, interfaces | functions; type switches over `any` |
-| `switch` on an interface or a struct value, `goto` | type switch, compare fields; labeled `break`/`continue` |
-| type assertions `x.(T)` | type switch |
+| methods with pointer receivers | value receivers that return the new value |
+| `goto` | labeled `break`/`continue` |
 | generics | none |
 | `error`, `panic`, `recover` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |
 | `defer` anywhere, run on panics too | `defer` outside loops only, run on normal returns only |

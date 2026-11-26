@@ -85,7 +85,7 @@ func state() {
 	actor.Register("state", actor.Self())
 	_, ok1 := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 	_, ok2 := port.Open("gpio", gpio.Config{Pin: key2, Mode: gpio.InputPullUp, Edge: gpio.Falling})
-	if !ok1 || !ok2 {
+	if ok1 != nil || ok2 != nil {
 		println("keys: 打不开 / cannot open")
 	}
 	k1, k2, fetches, oks := 0, 0, 0, 0
@@ -122,10 +122,10 @@ func fetcher() {
 	for {
 		actor.Sleep(10000)
 		t0 := actor.Now()
-		r, ok := http.Get(url, 8000)
+		r, err := http.Get(url, 8000)
 		ms := strconv.FormatInt64(actor.Now()-t0, 10)
 		text := "失败 / failed (" + ms + " ms)"
-		if ok {
+		if err == nil {
 			text = "HTTP " + strconv.Itoa(r.Status) + ", " + strconv.Itoa(r.Body.Len()) + " B, " + ms + " ms"
 			if r.Truncated {
 				text = text + " (截断 / truncated)"
@@ -133,7 +133,7 @@ func fetcher() {
 		}
 		println("GET:", text)
 		if s, found := actor.Whereis("state"); found {
-			actor.Send(s, fetched{OK: ok, Text: url + " → " + text})
+			actor.Send(s, fetched{OK: err == nil, Text: url + " → " + text})
 		}
 	}
 }

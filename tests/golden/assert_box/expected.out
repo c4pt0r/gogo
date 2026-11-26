@@ -1,0 +1,21 @@
+int 1
+Celsius -5
+Kelvin 3
+byte 200
+int64 42
+Big 5
+Name n
+string s
+Flag true
+Point 3
+nil
+Kelvin 300 Flag false Celsius 1
+Celsius 21 byte 120
+22
+0 false
+21 true
+120 true 220
+42 true true
+1 2 true
+true false
+false

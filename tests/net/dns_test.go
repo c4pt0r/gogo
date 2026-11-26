@@ -56,12 +56,10 @@ func dnsFrame(server sim.Host, port uint16, payload []byte) []byte {
 	return sim.UDPFrame(server, vmHost, sim.UDP{SrcPort: sim.DNSPort, DstPort: port, Payload: payload})
 }
 
-func ipLine(name string, ip sim.IP, ok bool, at uint64) string {
-	s := name + " " + ipInt(ip) + " false "
-	if ok {
-		s = name + " " + ipInt(ip) + " true "
-	}
-	return s + itoa(at) + "\n"
+// ipLine is dns_client's line for a lookup of name at time at: the
+// address and "ok", or the error's text.
+func ipLine(name string, ip sim.IP, why string, at uint64) string {
+	return name + " " + ipInt(ip) + " " + why + " " + itoa(at) + "\n"
 }
 
 // Lookups through the gateway's resolver: replies with the wrong id, port
@@ -97,10 +95,10 @@ func TestDNSLookup(t *testing.T) {
 		sim.DNSAnswer(q, false, sim.ARecord("a.test", sim.IPv4(1, 2, 3, 4), 60)).Bytes()))), gwHost.IP, "b.test")
 	none(t)(v.Exchange(dnsFrame(gwHost, port, sim.DNSAnswer(q, false, sim.ARecord("b.test", sim.IPv4(200, 1, 2, 3), 60)).Bytes())))
 	ex := sim.IPv4(93, 184, 216, 34)
-	stop(t, v, "start true\n"+ipLine("example.com", ex, true, 100)+ipLine("10.9.8.7", sim.IPv4(10, 9, 8, 7), true, 100)+
-		ipLine("example.com", ex, true, 100)+ipLine("nx.example", anyIP, false, 100)+ipLine("noa.example", anyIP, false, 100)+
-		ipLine("bad..name", anyIP, false, 100)+ipLine("a.test", sim.IPv4(1, 2, 3, 4), true, 100)+
-		ipLine("b.test", sim.IPv4(200, 1, 2, 3), true, 100)+"done\n")
+	stop(t, v, "start true\n"+ipLine("example.com", ex, "ok", 100)+ipLine("10.9.8.7", sim.IPv4(10, 9, 8, 7), "ok", 100)+
+		ipLine("example.com", ex, "ok", 100)+ipLine("nx.example", anyIP, "not found", 100)+ipLine("noa.example", anyIP, "not found", 100)+
+		ipLine("bad..name", anyIP, "bad argument", 100)+ipLine("a.test", sim.IPv4(1, 2, 3, 4), "ok", 100)+
+		ipLine("b.test", sim.IPv4(200, 1, 2, 3), "ok", 100)+"done\n")
 }
 
 // Answers are cached until their TTL ends, 4 at most, the one expiring
@@ -176,14 +174,14 @@ func TestDNSTimeout(t *testing.T) {
 	none(t)(v.Advance(999))
 	q4, port4 := dnsQuery(t, one(t)(v.Advance(1)), srv.IP, "slow.test")
 	none(t)(v.Exchange(dnsFrame(srv, port4, sim.DNSAnswer(q4, false, sim.ARecord("slow.test", sim.IPv4(7, 7, 7, 7), 60)).Bytes())))
-	stop(t, v, "start true\n"+ipLine("slow.test", anyIP, false, 3100)+ipLine("slow.test", sim.IPv4(7, 7, 7, 7), true, 4100)+"done\n")
+	stop(t, v, "start true\n"+ipLine("slow.test", anyIP, "timed out", 3100)+ipLine("slow.test", sim.IPv4(7, 7, 7, 7), "ok", 4100)+"done\n")
 }
 
 // Without a DNS server Lookup fails at once.
 func TestDNSNoServer(t *testing.T) {
 	v := startDNS(t, anyIP, "x.test", "")
 	none(t)(v.Advance(1000))
-	stop(t, v, "start true\n"+ipLine("x.test", anyIP, false, 0)+"done\n")
+	stop(t, v, "start true\n"+ipLine("x.test", anyIP, "no route", 0)+"done\n")
 }
 
 // Link loss (Down) flushes the cache and fails a lookup in flight at once
@@ -199,8 +197,8 @@ func TestDNSDownFlushes(t *testing.T) {
 	dnsQuery(t, one(t)(v.Advance(400)), gwHost.IP, "a.test") // 600: not cached any more: asked again
 	none(t)(v.Advance(50))
 	none(t)(v.SetLink(false)) // 650: in flight: fails now; the next one at once (no server)
-	stop(t, v, "start true\n"+ipLine("a.test", sim.IPv4(1, 2, 3, 4), true, 100)+ipLine("a.test", sim.IPv4(1, 2, 3, 4), true, 100)+
-		ipLine("a.test", anyIP, false, 650)+ipLine("a.test", anyIP, false, 650)+"done\n")
+	stop(t, v, "start true\n"+ipLine("a.test", sim.IPv4(1, 2, 3, 4), "ok", 100)+ipLine("a.test", sim.IPv4(1, 2, 3, 4), "ok", 100)+
+		ipLine("a.test", anyIP, "no route", 650)+ipLine("a.test", anyIP, "no route", 650)+"done\n")
 }
 
 // A resolver whose net.Subscribe failed (all 4 slots taken) is not broken
@@ -227,5 +225,5 @@ func TestDNSResubscribe(t *testing.T) {
 	none(t)(v.Exchange(dnsFrame(gwHost, port, sim.DNSAnswer(q, false, sim.ARecord("a.test", sim.IPv4(1, 2, 3, 4), 300)).Bytes())))
 	stop(t, v, "start true\nsubscribed true\nsubscribed true\nsubscribed true\nsubscribed true\n"+
 		"dns: net.Subscribe failed (no network or 4 subscribers): retrying on each lookup\n"+
-		ipLine("a.test", anyIP, false, 0)+ipLine("a.test", sim.IPv4(1, 2, 3, 4), true, 1000)+"done\n")
+		ipLine("a.test", anyIP, "no route", 0)+ipLine("a.test", sim.IPv4(1, 2, 3, 4), "ok", 1000)+"done\n")
 }

@@ -11,8 +11,8 @@ import (
 const ledPin = 5
 
 func main() {
-	led, ok := port.Open("gpio", gpio.Config{Pin: ledPin, Mode: gpio.Output})
-	if !ok {
+	led, err := port.Open("gpio", gpio.Config{Pin: ledPin, Mode: gpio.Output})
+	if err != nil {
 		println("cannot open the LED pin")
 		return
 	}

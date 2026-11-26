@@ -1,6 +1,6 @@
 // Package gpio is the gogo GPIO API: the "gpio" port, one pin per port. It
-// is a stub package with only types and constants: the compiler
-// type-checks against it and the VM builds and reads the structs by fixed
+// is a system package with only types and constants: the types are
+// reserved (//gogo:reserved), the VM builds and reads them by fixed
 // index. The C side is the board's gpio driver.
 //
 // Open a pin with port.Open("gpio", gpio.Config{Pin: 25, Mode:
@@ -14,6 +14,8 @@
 package gpio
 
 // Config configures a "gpio" port: one pin.
+//
+//gogo:reserved 6
 type Config struct {
 	Pin        int
 	Mode       int // Input, InputPullUp, InputPullDown, Output
@@ -22,9 +24,13 @@ type Config struct {
 }
 
 // Write is a command: drive an output pin to Value (0 or 1).
+//
+//gogo:reserved 7
 type Write struct{ Value int }
 
 // Edge is an event: the pin's level changed; Value is the level after it.
+//
+//gogo:reserved 8
 type Edge struct{ Pin, Value int }
 
 // Modes.

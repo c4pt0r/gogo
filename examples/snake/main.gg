@@ -95,8 +95,8 @@ func loadHigh() int {
 	if e != fs.OK {
 		return 0
 	}
-	n, ok := strconv.Atoi(v.String())
-	if !ok {
+	n, err := strconv.Atoi(v.String())
+	if err != nil {
 		return 0
 	}
 	return n

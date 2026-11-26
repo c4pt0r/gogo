@@ -51,8 +51,8 @@ func show(what string, r http.Response, ok bool, t0 int64) {
 // Spawned with room for the TLS state (net.DialTLS: charged to the owner).
 func wrongHost(ip int) {
 	t0 := actor.Now()
-	p, ok := port.Open("tls", net.DialTLS{IP: ip, Port: 443, TimeoutMs: 15000, Host: "wrong.example"})
-	if !ok {
+	p, err := port.Open("tls", net.DialTLS{IP: ip, Port: 443, TimeoutMs: 15000, Host: "wrong.example"})
+	if err != nil {
 		println("wrong.example: open 失败 / open failed")
 		return
 	}
@@ -79,7 +79,7 @@ func wrongHost(ip int) {
 
 func run() {
 	t0 := actor.Now()
-	if !sntp.Sync("pool.ntp.org", 8000) {
+	if sntp.Sync("pool.ntp.org", 8000) != nil {
 		println("sntp: 失败 / failed,", ms(t0))
 		return
 	}
@@ -88,20 +88,20 @@ func run() {
 	actor.Sleep(15000)
 
 	t0 = actor.Now()
-	r, ok := http.Get(url, 20000)
-	show("Get", r, ok, t0)
+	r, err := http.Get(url, 20000)
+	show("Get", r, err == nil, t0)
 
 	var none bytes.Bytes
 	c := http.NewClient()
 	for i := 1; i <= 3; i++ {
 		t0 = actor.Now()
-		r, ok = http.ClientDo(c, "GET", url, "", none, 20000)
-		show("Client "+strconv.Itoa(i), r, ok, t0)
+		r, err = http.ClientDo(c, "GET", url, "", none, 20000)
+		show("Client "+strconv.Itoa(i), r, err == nil, t0)
 	}
 	http.CloseClient(c)
 
 	ip, found := dns.Lookup("example.com", 5000)
-	if !found {
+	if found != nil {
 		println("dns: example.com 失败 / failed")
 	} else {
 		actor.Monitor(actor.SpawnOpt(func() { wrongHost(ip) }, actor.Options{MaxMemory: 40000}))

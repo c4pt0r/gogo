@@ -19,8 +19,8 @@ type Speaker struct{ RateHz, VolumePct int }
 ```
 
 ```go
-mic, ok := port.Open("mic", audio.Mic{RateHz: 16000, FrameMs: 100})
-spk, ok := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 60})
+mic, err := port.Open("mic", audio.Mic{RateHz: 16000, FrameMs: 100})
+spk, err := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 60})
 ```
 
 - `Mic.RateHz` is 8000 or 16000. `FrameMs` is how much sound one `Chunk`
@@ -37,7 +37,7 @@ spk, ok := port.Open("speaker", audio.Speaker{RateHz: 16000, VolumePct: 60})
   speaker never runs dry between them; with one `Out` at a time you hear a
   click at every seam.
 - The ports are **half duplex**: while one is open the other refuses to
-  open (`ok == false`). You cannot record and play at the same time.
+  open (`errors.Busy`). You cannot record and play at the same time.
 - A mic that cannot keep up does not stop the program: a `Chunk` that does
   not fit the owner's memory quota, or sound the hardware lost, is counted
   in the next `Chunk`'s `Dropped` (whole frames).
@@ -368,7 +368,7 @@ declares `//gogo:optional mic speaker` (chapter 12), and `Record` and `Play`
 return false when the hardware is absent. A program that opens `"mic"` or
 `"speaker"` with `port.Open` itself still requires them. Both are on by default and share one switch, `GOGO_AUDIO` (`gogo
 firmware` names them `mic` and `speaker`). A board without the hardware
-refuses `port.Open` (`ok == false`). The codec's I2S pins are reserved: the
+refuses `port.Open` (`errors.NotFound`). The codec's I2S pins are reserved: the
 `gpio` port refuses G14 to G18 on the StickS3 and G41, G42, G43 and G46 on
 the Cardputer ADV.
 

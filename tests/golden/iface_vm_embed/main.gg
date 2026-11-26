@@ -1,0 +1,37 @@
+// A struct embedding a VM type (bytes.Buffer) in a program with an
+// interface whose method the VM type has (Len): the struct is not a
+// candidate of the interface's dispatcher, nor of its implements test
+// (its Len is a builtin, which a dispatcher cannot call), so the program
+// compiles, and an assertion to the interface says false, where Go says
+// true (known-issues).
+package main
+
+import "gogo/bytes"
+
+type Lener interface{ Len() int }
+
+type W struct {
+	bytes.Buffer
+	K int
+}
+
+type My struct{}
+
+func (My) Len() int { return 42 }
+
+func main() {
+	var l Lener = My{}
+	println(l.Len())
+	w := W{bytes.NewBuffer(8), 1}
+	w.Buffer.WriteString("ab")
+	println(w.Buffer.Len())
+	var a any = w
+	_, ok := a.(Lener)
+	println(ok)
+	switch a.(type) {
+	case Lener:
+		println("Lener")
+	case W:
+		println("W")
+	}
+}

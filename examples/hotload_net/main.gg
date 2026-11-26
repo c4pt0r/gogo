@@ -50,8 +50,8 @@ func fetch(base, name string) (code.Module, string) {
 	var none code.Module
 	t0 := actor.Now()
 	var nobody bytes.Bytes
-	r, ok := http.Do("GET", base+"/"+name, "", nobody, modBody, 20000)
-	if !ok {
+	r, err := http.Do("GET", base+"/"+name, "", nobody, modBody, 20000)
+	if err != nil {
 		return none, "fetch " + name + " (DNS, connect, certificate or timeout)"
 	}
 	if r.Status != 200 || r.Truncated {
@@ -103,7 +103,7 @@ func run() string {
 	// trying after dhcp.Start's own timeout (a second Start would fail
 	// while the first client owns netif).
 	net.Subscribe()
-	up := dhcp.Start(dhcp.Config{TimeoutMs: 1000})
+	up := dhcp.Start(dhcp.Config{TimeoutMs: 1000}) == nil
 	// Wait by deadline, not by message count: other messages (a late
 	// reply, net.Down while associating) may arrive first.
 	deadline := actor.Now() + 30000
@@ -120,7 +120,7 @@ func run() string {
 		return "no network"
 	}
 	println("network up; code mem", code.MemUsed())
-	if !sntp.Sync("pool.ntp.org", 8000) {
+	if sntp.Sync("pool.ntp.org", 8000) != nil {
 		return "no time from pool.ntp.org (https checks the certificate's dates)"
 	}
 

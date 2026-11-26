@@ -1,0 +1,45 @@
+// Errors across modules: errors.Code and errors.New's errors are reserved
+// types, so they reach a hot-loaded module as themselves; an error of the
+// program's own type is the program's own and cannot.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/code"
+	"gogo/errors"
+	"gogo/fs"
+)
+
+type Mine struct{}
+
+func (Mine) Error() string { return "mine" }
+
+func show(m code.Module, arg any) {
+	p, e := code.Spawn(m, "Show", arg)
+	if e != code.OK {
+		println("refused:", e.Error(), e == errors.BadArg)
+		return
+	}
+	actor.Monitor(p)
+	for {
+		switch actor.Receive().(type) {
+		case actor.DownMsg:
+			return
+		}
+	}
+}
+
+func main() {
+	b, e := fs.ReadFile("/flash/show.ggb", 100000)
+	if e != fs.OK {
+		println("read", int(e))
+		return
+	}
+	m, ce := code.Load(b)
+	println("load", int(ce))
+	show(m, errors.NotFound)
+	show(m, errors.Code(130))
+	show(m, errors.New("made here"))
+	show(m, 5)
+	show(m, Mine{})
+}

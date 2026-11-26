@@ -1,0 +1,78 @@
+// panic(v) ends the actor with reason actor.Panic (10), after printing
+// "panic: v" on stderr; a monitor and a linked actor that traps exits see
+// the reason, with the function that panicked, and a supervisor restarts
+// the child like after any crash.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/supervisor"
+)
+
+type Point struct{ X, Y int }
+
+// Failure is an error: panic prints its Error(), as Go does.
+type Failure struct{ Step int }
+
+func (f Failure) Error() string { return "failed at step " + string([]byte{byte('0' + f.Step)}) }
+
+func check(n int) int {
+	if n < 0 {
+		panic("negative")
+	}
+	return n * 2
+}
+
+func watch(name string, f func()) {
+	p := actor.Spawn(f)
+	ref := actor.Monitor(p)
+	for {
+		switch d := actor.Receive().(type) {
+		case actor.DownMsg:
+			if d.Ref == ref {
+				println(name, d.Reason.Code, d.Reason.Code == actor.Panic, d.Reason.Func)
+				return
+			}
+		}
+	}
+}
+
+func main() {
+	println(check(4))
+	watch("string", func() { check(-1) })
+	watch("int", func() { panic(42) })
+	watch("int64", func() { panic(int64(1) << 40) })
+	watch("struct", func() { panic(Point{1, 2}) })
+	watch("bool", func() { panic(false) })
+	watch("error", func() { panic(Failure{3}) })
+	watch("error in any", func() {
+		var x any = Failure{4}
+		panic(x)
+	})
+	watch("error value", func() {
+		var err error = Failure{5}
+		panic(err)
+	})
+
+	// A linked actor that traps exits gets an ExitMsg with the reason.
+	actor.TrapExit(true)
+	actor.SpawnLink(func() { panic("linked") })
+	switch e := actor.Receive().(type) {
+	case actor.ExitMsg:
+		println("exit", e.Reason.Code, e.Reason.Func)
+	}
+	actor.TrapExit(false)
+
+	// A supervisor restarts a child that panics.
+	runs := actor.Self()
+	supervisor.Supervise(func() {
+		actor.Send(runs, "run")
+		panic("again")
+	}, supervisor.Spec{Restart: supervisor.Transient, MaxRestarts: 5, PeriodMs: 10000})
+	for i := 0; i < 3; i++ {
+		switch m := actor.Receive().(type) {
+		case string:
+			println(m, i)
+		}
+	}
+}

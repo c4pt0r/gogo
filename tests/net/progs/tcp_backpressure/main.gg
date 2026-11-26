@@ -15,8 +15,8 @@ func main() {
 	me := actor.Self()
 	r := actor.SpawnOpt(func() {
 		actor.Sleep(100)
-		c, ok := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
-		println("dial", ok)
+		c, err := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+		println("dial", err == nil)
 		switch actor.Receive().(type) {
 		case net.Connected:
 			println("connected")

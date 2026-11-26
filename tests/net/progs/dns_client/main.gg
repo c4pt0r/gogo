@@ -1,7 +1,7 @@
 // Runs the lookups in the store's test.script, space separated, in order:
 // "name" looks name up, "a+b" looks a and b up at once from two actors,
 // "sleep:ms" sleeps. test.timeout is the lookup timeout (default 3000).
-// Each result prints as "name ip ok time".
+// Each result prints as "name ip ok time", or the error's text for ok.
 package main
 
 import (
@@ -14,8 +14,12 @@ import (
 )
 
 func lookup(name string, timeout int) {
-	ip, ok := dns.Lookup(name, timeout)
-	println(name, ip, ok, actor.Now())
+	ip, err := dns.Lookup(name, timeout)
+	why := "ok"
+	if err != nil {
+		why = err.Error()
+	}
+	println(name, ip, why, actor.Now())
 }
 
 func timeoutMs() int {
@@ -27,7 +31,7 @@ func timeoutMs() int {
 }
 
 func main() {
-	println("start", dhcp.Start(dhcp.Config{}))
+	println("start", dhcp.Start(dhcp.Config{}) == nil)
 	script, _ := sys.Config("test.script")
 	timeout := timeoutMs()
 	for _, step := range strings.Split(script, " ") {

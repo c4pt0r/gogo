@@ -22,10 +22,11 @@ const (
 	// 14 came before: see runtime/vm/image.h).
 	imageMajor = 15
 	// imageMinor is the newest feature minor. Renumbering a feature's
-	// minor touches its constant here (floatMinor, sizedMinor), IMAGE_MINOR
-	// in runtime/vm/image.h when it is the newest (TestTermsMatchC checks
-	// both), and the "15.N" in docs and opcodes.h comments.
-	imageMinor = max(floatMinor, sizedMinor)
+	// minor touches its constant here (floatMinor, sizedMinor, ifaceMinor),
+	// IMAGE_MINOR in runtime/vm/image.h when it is the newest
+	// (TestTermsMatchC checks both), and the "15.N" in docs and opcodes.h
+	// comments.
+	imageMinor = max(floatMinor, sizedMinor, ifaceMinor)
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -41,7 +42,8 @@ const (
 // 15.0; 15.1 added screen.Config; 15.2 floating point (the float ops,
 // B_FLOAT, and the K_FLOAT constants and TYPEIS ids, which scan counts
 // apart: floatMinor); 15.3 sized integers (the unsigned ops, B_PRINTLNU
-// and the new CONV modes: sizedMinor). A reserved type is keyed by its image name ("port.Chunk"); its
+// and the new CONV modes: sizedMinor); 15.4 the builtins and reserved
+// types of panic, interfaces and equality (ifaceMinor). A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
 var (
@@ -50,9 +52,16 @@ var (
 		OpEqf: floatMinor, OpNef: floatMinor, OpLtf: floatMinor, OpLef: floatMinor, OpConvf: floatMinor,
 		OpDivu64: sizedMinor, OpRemu64: sizedMinor, OpLtu64: sizedMinor, OpLeu64: sizedMinor, OpShru64: sizedMinor,
 	}
-	builtinMinor = map[uint32]uint16{BFloat: floatMinor, BPrintlnu: sizedMinor}
-	typeMinor    = map[string]uint16{
-		"screen.Config": 1, // 15.1: the "screen" port
+	builtinMinor = map[uint32]uint16{
+		BFloat:    floatMinor,
+		BPrintlnu: sizedMinor,
+		BPanic:    ifaceMinor,
+		BCmp:      ifaceMinor,
+	}
+	typeMinor = map[string]uint16{
+		"screen.Config":      1, // 15.1: the "screen" port
+		"errors.Code":        ifaceMinor,
+		"errors.errorString": ifaceMinor,
 	}
 )
 
@@ -65,6 +74,11 @@ const floatMinor = 2
 // unsigned op, B_PRINTLNU, or a CONV mode they added (convMinor) needs
 // it.
 const sizedMinor = 3
+
+// ifaceMinor is the minor of the language's abstraction phase (15.4:
+// panic, interfaces, equality): every builtin and reserved type it added
+// is stamped with it.
+const ifaceMinor = 4
 
 // convMinor is the minor of an OP_CONV with mode c (op): the modes 0-2
 // are 15.0's.
@@ -123,6 +137,7 @@ type ImageBuilder struct {
 	int64s   map[int64]uint32
 	floats   map[uint64]uint32 // float64 constants by bits
 	floats32 map[uint32]uint32 // float32 constants by bits
+	structs  map[string]uint32 // const structs by type and fields
 	funcs    []imgFunc
 	// reserved holds a row for every reserved type (AddReservedType, in
 	// index order); only the first nReserved are written, where
@@ -204,6 +219,24 @@ func (b *ImageBuilder) AddFloat32(v float32) uint32 {
 	return off
 }
 
+// AddStruct adds a K_STRUCT constant of type typ (an image type index)
+// with the given field terms (immediates or const refs), deduplicated,
+// and returns its word offset.
+func (b *ImageBuilder) AddStruct(typ uint32, fields []uint32) uint32 {
+	key := fmt.Sprint(typ, fields)
+	if off, ok := b.structs[key]; ok {
+		return off
+	}
+	off := uint32(len(b.consts))
+	b.consts = append(b.consts, HdrMake(uint32(2+len(fields)), KStruct), typ)
+	b.consts = append(b.consts, fields...)
+	if b.structs == nil {
+		b.structs = map[string]uint32{}
+	}
+	b.structs[key] = off
+	return off
+}
+
 // AddFunc declares a function and returns its index.
 func (b *ImageBuilder) AddFunc(name string, nParams, nRegs uint16) uint32 {
 	n := b.AddString(name)
@@ -225,12 +258,22 @@ func (b *ImageBuilder) AddType(name string, nFields uint32) uint32 {
 
 // AddReservedType declares the next reserved type (index order) and
 // returns its index. Its row is written only if the program uses it or a
-// later reserved type.
+// later reserved type. The names of the types up to screen.Config go into
+// the const area here, whether written or not (images have always held
+// them, first); those of later types only with their row (see Bytes), so
+// that a new reserved type changes no image that does not carry it.
 func (b *ImageBuilder) AddReservedType(name string, nFields uint32) uint32 {
-	n := b.AddString(name)
-	b.reserved = append(b.reserved, imgType{name: n, nFields: nFields, goName: name})
+	t := imgType{nFields: nFields, goName: name, name: noName}
+	if len(b.reserved) <= int(TypeScreenConfig) {
+		t.name = b.AddString(name)
+	}
+	b.reserved = append(b.reserved, t)
 	return uint32(len(b.reserved) - 1)
 }
+
+// noName marks a reserved row whose name string is added only when the
+// row is written (AddReservedType).
+const noName = ^uint32(0)
 
 // UseType marks type idx as used by the program: a reserved type then
 // gets its row with its fields (and every lower one, with none) in the
@@ -307,7 +350,13 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 		if !used[i] {
 			t.nFields = 0 // not used: any VM that knows the type accepts it
 		}
+		if t.name == noName {
+			t.name = b.AddString(t.goName)
+		}
 		rows = append(rows, t)
+	}
+	if len(b.consts) > MaxConstWords { // the names just added
+		return nil, fmt.Errorf("image: const area is %d words, over the %d-word limit (strings and int64 constants)", len(b.consts), MaxConstWords)
 	}
 	rows = append(rows, b.types...)
 	words := []uint32{imageMagic, imageMajor<<16 | uint32(minor), uint32(len(b.funcs)), uint32(len(rows)),

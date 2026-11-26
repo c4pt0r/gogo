@@ -13,13 +13,13 @@ func main() {
 	if !ok {
 		url = "http://example.com/"
 	}
-	if !dhcp.Start(dhcp.Config{}) {
+	if dhcp.Start(dhcp.Config{}) != nil {
 		println("no network")
 		return
 	}
-	r, ok := http.Get(url, 8000)
-	if !ok {
-		println("GET", url, "failed (DNS, connect or timeout)")
+	r, err := http.Get(url, 8000)
+	if err != nil {
+		println("GET", url, "failed:", err.Error())
 		return
 	}
 	ct, _ := http.HeaderValue(r.Headers, "content-type")

@@ -32,10 +32,10 @@ func handler(conn actor.PID, main actor.PID) {
 func main() {
 	n, _ := port.Open("netif", net.IfConfig{})
 	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
-	l, ok := port.Open("tcp_listen", net.Listen{Port: 8080})
-	println("listen", ok)
-	_, ok = port.Open("tcp_listen", net.Listen{Port: 8080})
-	println("again", ok)
+	l, err := port.Open("tcp_listen", net.Listen{Port: 8080})
+	println("listen", err == nil)
+	_, err = port.Open("tcp_listen", net.Listen{Port: 8080})
+	println("again", err == nil)
 	me := actor.Self()
 	for {
 		switch m := actor.Receive().(type) {

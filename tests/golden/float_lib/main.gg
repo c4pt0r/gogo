@@ -9,8 +9,12 @@ import (
 )
 
 func parse(s string, bits int) {
-	f, ok := strconv.ParseFloat(s, bits)
-	println(s, f, ok)
+	f, err := strconv.ParseFloat(s, bits)
+	why := "ok"
+	if err != nil {
+		why = err.Error()
+	}
+	println(s, f, why)
 }
 
 func main() {

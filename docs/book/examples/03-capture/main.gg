@@ -8,7 +8,4 @@ func main() {
 	show := func() { println(n) }
 	n = 5
 	show()
-	var b byte = 7
-	var v any = b // a byte cannot go into any
-	println(v)
 }

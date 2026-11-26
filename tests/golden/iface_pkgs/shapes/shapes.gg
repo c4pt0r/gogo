@@ -1,0 +1,36 @@
+// Package shapes declares an interface and works on its values, whatever
+// package their types come from.
+package shapes
+
+// Shape is anything with an area.
+type Shape interface {
+	Area() int
+	Name() string
+}
+
+// Total sums the areas.
+func Total(ss []Shape) int {
+	t := 0
+	for _, s := range ss {
+		t += s.Area()
+	}
+	return t
+}
+
+// Largest returns the shape with the largest area, and false for none.
+func Largest(ss []Shape) (Shape, bool) {
+	var best Shape
+	for _, s := range ss {
+		if best == nil || s.Area() > best.Area() {
+			best = s
+		}
+	}
+	return best, best != nil
+}
+
+// Unit is a shape of this package.
+type Unit struct{}
+
+func (Unit) Area() int      { return 1 }
+func (Unit) Name() string   { return "unit" }
+func (Unit) String() string { return "the unit" }

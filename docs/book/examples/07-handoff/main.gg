@@ -21,8 +21,8 @@ func keyHandler(boss actor.PID) {
 }
 
 func main() {
-	btn, ok := port.Open("gpio", gpio.Config{Pin: 12, Mode: gpio.InputPullUp, Edge: gpio.Falling})
-	println("open", ok)
+	btn, err := port.Open("gpio", gpio.Config{Pin: 12, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+	println("open", err == nil)
 	me := actor.Self()
 	h := actor.Spawn(func() { keyHandler(me) })
 	println("handoff", port.Handoff(btn, h))

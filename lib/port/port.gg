@@ -1,7 +1,8 @@
 // Package port is the gogo peripheral API: a port is a special actor with a
-// PID, backed by a platform driver. These stubs exist only so programs
-// type-check with the standard Go toolchain; the gogo compiler replaces
-// every call with VM instructions, so the bodies are never executed.
+// PID, backed by a platform driver. Its functions (marked //gogo:builtin)
+// exist only so programs type-check with the standard Go toolchain; the
+// gogo compiler replaces every call with VM instructions, so the bodies
+// are never executed.
 //
 // The struct types Chunk, Out, Done and Closed have fixed type indices
 // 31-34 in every image, Host and Post 42-43 (TYPE_* in
@@ -25,6 +26,7 @@ package port
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/errors"
 )
 
 // Chunk is a stream event: the next block of input. From is the port. Seq
@@ -35,6 +37,8 @@ import (
 // chunk over the owner's mailbox quota is dropped and counted; the owner
 // is not killed). A port that loses nothing (tcp, tls: the peer resends
 // instead) always says 0.
+//
+//gogo:reserved 31
 type Chunk struct {
 	From                 actor.PID
 	Seq, TimeMs, Dropped int
@@ -44,6 +48,8 @@ type Chunk struct {
 // Out is a stream command: send Data. At most 2 Outs are in flight per port
 // (one running, one queued); a third is refused with Done{Seq: -1} and the
 // port carries on.
+//
+//gogo:reserved 32
 type Out struct{ Data bytes.Bytes }
 
 // Done is a stream event: an Out has finished. From is the port. Every
@@ -56,6 +62,8 @@ type Out struct{ Data bytes.Bytes }
 // 1; it is -1 when the port refused the Out (too many in flight, bad data,
 // nothing to send it on) or could not send it, and such an Out uses no
 // number.
+//
+//gogo:reserved 33
 type Done struct {
 	From actor.PID
 	Seq  int
@@ -69,6 +77,8 @@ type Done struct {
 // from tcp or tls means only that the peer finished sending: Outs still
 // work until another Closed. After any other reason the port does nothing
 // more: close it. A port sends at most one Normal and one terminal Closed.
+//
+//gogo:reserved 34
 type Closed struct {
 	From   actor.PID
 	Reason int
@@ -78,6 +88,8 @@ type Closed struct {
 // mode, gogo_register_port in runtime/include/gogo.h): Arg and Data are
 // passed to the host's open as they are. Such a port takes Post commands
 // and sends its owner Post events.
+//
+//gogo:reserved 42
 type Host struct {
 	Arg  int
 	Data bytes.Bytes
@@ -90,6 +102,8 @@ type Host struct {
 // receiver is not killed). Host-defined ports use it for their commands
 // and events too; an event's From is the port (a command's From is
 // ignored).
+//
+//gogo:reserved 43
 type Post struct {
 	From actor.PID
 	Kind int
@@ -97,13 +111,32 @@ type Post struct {
 }
 
 // Open opens a port of the named driver with cfg; the caller becomes its
-// owner. ok is false if the driver is unknown, cfg is invalid for it, the
-// resource is taken, or memory runs out. The VM knows which (as a
-// gogo/errors code: NotFound, BadArg, Busy, TooMany or NoMemory); Open
-// will return it as an error once the language has one.
-func Open(driver string, cfg any) (p actor.PID, ok bool) { panic("gogo only") }
+// owner. It fails with an errors.Code: errors.NotFound if the driver is
+// unknown (the board lacks it), errors.BadArg if cfg is invalid for it,
+// errors.Busy if the resource is taken, errors.TooMany if the port table
+// is full, errors.NoMemory if memory runs out; p is then the zero PID.
+func Open(driver string, cfg any) (p actor.PID, err error) {
+	p, ok := open(driver, cfg)
+	if !ok {
+		return p, errors.Code(openErr()) // read at once: nothing runs in between
+	}
+	return p, nil
+}
+
+// open is Open with ok in place of the error (builtin B_PORT_OPEN).
+//
+//gogo:builtin
+func open(driver string, cfg any) (actor.PID, bool) { panic("gogo only") }
+
+// openErr is why the last refused port open of this VM failed, a shared
+// error code (vm->open_err; gogo/fs's builtin, op FsOpenErr).
+//
+//gogo:builtin
+func openErr() int { panic("gogo only") }
 
 // Close closes the port p. A stale or unknown p is ignored.
+//
+//gogo:builtin
 func Close(p actor.PID) { panic("gogo only") }
 
 // Handoff makes the actor to the owner of port p: its later events go to
@@ -113,4 +146,6 @@ func Close(p actor.PID) { panic("gogo only") }
 // port, to is not a live actor, or to cannot take the charge within its
 // memory limit. Handoff to the caller itself only resumes a paused port
 // (e.g. an accepted net connection).
+//
+//gogo:builtin
 func Handoff(p actor.PID, to actor.PID) (ok bool) { panic("gogo only") }

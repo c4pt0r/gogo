@@ -1,8 +1,8 @@
 // Package bytes is gogo's byte data API: immutable, shareable Bytes and
-// the Buffer that builds them. These stubs exist only so programs
-// type-check with the standard Go toolchain; the gogo compiler replaces
-// every function and method call with VM instructions, so the bodies are
-// never executed.
+// the Buffer that builds them. Its declarations (marked //gogo:builtin)
+// exist only so programs type-check with the standard Go toolchain; the
+// gogo compiler replaces every function and method call with VM
+// instructions, so the bodies are never executed.
 //
 // Bytes is an immutable byte sequence. Its zero value is empty. Small ones
 // (up to 64 bytes from Freeze; any size from FromString and FromSlice) live
@@ -38,56 +38,90 @@
 package bytes
 
 // Bytes is an immutable byte sequence (see the package comment).
+//
+//gogo:builtin
 type Bytes struct{ _ [0]int32 }
 
 // Buffer is a growable byte buffer, a reference type (see the package
 // comment).
+//
+//gogo:builtin
 type Buffer struct{ _ [0]int32 }
 
 // NewBuffer returns an empty buffer with room for capacity bytes.
+//
+//gogo:builtin
 func NewBuffer(capacity int) Buffer { panic("gogo only") }
 
 // FromString returns a Bytes holding a copy of s.
+//
+//gogo:builtin
 func FromString(s string) Bytes { panic("gogo only") }
 
 // FromSlice returns a Bytes holding a copy of p.
+//
+//gogo:builtin
 func FromSlice(p []byte) Bytes { panic("gogo only") }
 
 // WriteString appends s.
+//
+//gogo:builtin
 func (b Buffer) WriteString(s string) { panic("gogo only") }
 
 // Write appends p.
+//
+//gogo:builtin
 func (b Buffer) Write(p []byte) { panic("gogo only") }
 
 // WriteByte appends c. (No error result, deliberately: go vet's stdmethods
 // check expects one, but gogo calls have no error type.)
+//
+//gogo:builtin
 func (b Buffer) WriteByte(c byte) { panic("gogo only") }
 
 // WriteBytes appends x.
+//
+//gogo:builtin
 func (b Buffer) WriteBytes(x Bytes) { panic("gogo only") }
 
 // Len returns the number of bytes written since the last Freeze.
+//
+//gogo:builtin
 func (b Buffer) Len() int { panic("gogo only") }
 
 // Freeze returns the contents as a Bytes (copied once) and empties b.
+//
+//gogo:builtin
 func (b Buffer) Freeze() Bytes { panic("gogo only") }
 
 // Len returns the number of bytes in x.
+//
+//gogo:builtin
 func (x Bytes) Len() int { panic("gogo only") }
 
 // At returns x[i].
+//
+//gogo:builtin
 func (x Bytes) At(i int) byte { panic("gogo only") }
 
 // Slice returns x[lo:hi]. A large part of an off-heap Bytes shares it
 // (and keeps all of it alive); anything else is a copy.
+//
+//gogo:builtin
 func (x Bytes) Slice(lo, hi int) Bytes { panic("gogo only") }
 
 // String returns a copy of x as a string.
+//
+//gogo:builtin
 func (x Bytes) String() string { panic("gogo only") }
 
 // Equal reports whether x and y hold the same bytes.
+//
+//gogo:builtin
 func (x Bytes) Equal(y Bytes) bool { panic("gogo only") }
 
 // CopyTo copies x into p, as copy(p, x) would, and returns the number of
 // bytes copied.
+//
+//gogo:builtin
 func (x Bytes) CopyTo(p []byte) int { panic("gogo only") }

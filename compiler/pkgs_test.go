@@ -194,9 +194,9 @@ func TestUserPackageRequires(t *testing.T) {
 	work := t.TempDir()
 	app := writeTree(t, filepath.Join(work, "app"), map[string]string{
 		"main.gg":     "package main\n\nimport (\n\t\"app/radio\"\n\t\"app/snd\"\n)\n\nfunc main() { println(radio.Up(), snd.Rec()) }\n",
-		"radio/r.gg":  "package radio\n\nimport \"gogo/port\"\n\nfunc Up() bool { _, ok := port.Open(\"udp\", 1); return ok }\n",
-		"snd/snd.gg":  "// Package snd records when it can.\n//\n//gogo:optional mic\npackage snd\n\nimport \"gogo/port\"\n\nfunc Rec() bool { _, ok := port.Open(\"mic\", 1); return ok }\n",
-		"snd/more.gg": "package snd\n\nimport \"gogo/port\"\n\nfunc IR() bool { _, ok := port.Open(\"ir_tx\", 1); return ok }\n",
+		"radio/r.gg":  "package radio\n\nimport \"gogo/port\"\n\nfunc Up() bool { _, err := port.Open(\"udp\", 1); return err == nil }\n",
+		"snd/snd.gg":  "// Package snd records when it can.\n//\n//gogo:optional mic\npackage snd\n\nimport \"gogo/port\"\n\nfunc Rec() bool { _, err := port.Open(\"mic\", 1); return err == nil }\n",
+		"snd/more.gg": "package snd\n\nimport \"gogo/port\"\n\nfunc IR() bool { _, err := port.Open(\"ir_tx\", 1); return err == nil }\n",
 	})
 	prog, err := Config{}.Load(app)
 	if err != nil {

@@ -103,15 +103,15 @@ func mods(m int) string {
 func main() {
 	// Either may be missing (the StickS3 has no keyboard): continue with
 	// what the board has.
-	_, kok := port.Open("kbd", kbd.Config{})
-	if !kok {
+	_, kerr := port.Open("kbd", kbd.Config{})
+	if kerr != nil {
 		println("no keyboard")
 	}
-	_, pok := port.Open("power", power.Config{PeriodMs: 1000})
-	if !pok {
+	_, perr := port.Open("power", power.Config{PeriodMs: 1000})
+	if perr != nil {
 		println("no battery")
 	}
-	if !kok && !pok {
+	if kerr != nil && perr != nil {
 		return
 	}
 	for {

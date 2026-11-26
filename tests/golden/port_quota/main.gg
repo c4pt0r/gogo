@@ -10,8 +10,8 @@ import (
 
 func main() {
 	owner := actor.SpawnOpt(func() {
-		_, ok := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Both})
-		if !ok {
+		_, err := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Both})
+		if err != nil {
 			println("open failed")
 		}
 		actor.Sleep(1000000)

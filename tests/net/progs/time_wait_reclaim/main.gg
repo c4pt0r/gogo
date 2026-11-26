@@ -36,7 +36,7 @@ func main() {
 		c, _ = port.Open("tcp", net.Dial{IP: gw, Port: p})
 		closed(c)
 	}
-	c, ok := port.Open("tcp", net.Dial{IP: gw, Port: 105})
-	println("dial", ok)
+	c, err := port.Open("tcp", net.Dial{IP: gw, Port: 105})
+	println("dial", err == nil)
 	actor.Sleep(100)
 }

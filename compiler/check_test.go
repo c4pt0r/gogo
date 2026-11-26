@@ -193,15 +193,12 @@ func TestRejects(t *testing.T) {
 		{"defer-set-named-result", "package main\nfunc f() (r int) {\n\tdefer func() {\n\t\tr++ // ERR\n\t}()\n\treturn\n}\nfunc main() { println(f()) }\n", []string{"captured named result must not be changed", "deferred func literal"}},
 		{"defer-set-named-result-outside", "package main\nfunc f() (r int) {\n\tdefer func() { println(r) }()\n\tr = 3 // ERR\n\treturn\n}\nfunc main() { println(f()) }\n", []string{"captured named result must not be changed: closures capture by value"}},
 		{"defer-tworesult-builtin", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tdefer actor.ReceiveTimeout(5) // ERR\n}\n", []string{"multiple values not supported"}},
-		{"defer-recover", "package main\nfunc main() {\n\tdefer recover() // ERR\n}\n", []string{"builtin recover not supported"}},
+		{"defer-recover", "package main\nfunc main() {\n\tdefer recover() // ERR\n}\n", []string{"recover (a panic ends the actor"}},
 		{"complex", "package main\nfunc main() {\n\tx := 1.5i // ERR\n\t_ = x\n}\n", []string{"complex"}},
 		{"float-rem", "package main\nfunc main() {\n\tx := 1.5\n\tprintln(x % 2) // ERR\n}\n", []string{"%"}},
 		{"float-func-value", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\tf := strconv.FormatFloat // ERR\n\t_ = f\n}\n", []string{"strconv.FormatFloat as a func value not supported"}},
-		{"float-named-any", "package main\ntype C float64\nfunc main() {\n\tvar a any = C(1) // ERR\n\t_ = a\n}\n", []string{"named basic type in interface not supported"}},
 		{"method-pointer-receiver", "package main\ntype P struct{ X int }\nfunc (p *P) M() {} // ERR\nfunc main() {}\n", []string{"pointer receivers are not supported yet"}},
 		{"method-pointer-call", "package main\ntype P struct{ X int }\nfunc (p *P) M() {} // ERR\nfunc main() {\n\tp := P{}\n\tp.M()\n}\n", []string{"pointer receivers are not supported yet"}},
-		{"method-interface", "package main\ntype S interface{ Area() int } // ERR\nfunc main() {}\n", []string{"interface types are not supported yet"}},
-		{"method-interface-param", "package main\nfunc f(s interface{ M() }) {} // ERR\nfunc main() {}\n", []string{"interface not supported"}},
 		{"method-on-slice-type", "package main\ntype L []int // ERR\nfunc (l L) Len() int { return len(l) }\nfunc main() {}\n", []string{"type definition"}},
 		{"method-value-any", "package main\ntype P struct{ X int }\nfunc (p P) M() {}\nfunc main() {\n\tvar x any = P{}.M // ERR\n\t_ = x\n}\n", []string{"func value in interface not supported"}},
 		{"slice-typeswitch", "package main\nfunc main() {\n\tvar x any = []int{1}\n\tswitch x.(type) {\n\tcase []int: // ERR\n\t}\n}\n", []string{"type switch case"}},
@@ -210,10 +207,7 @@ func TestRejects(t *testing.T) {
 		{"slice-3index", "package main\nfunc main() {\n\ts := []int{1, 2}\n\tprintln(len(s[0:1:2])) // ERR\n}\n", []string{"3-index"}},
 		{"slice-named", "package main\ntype B []byte // ERR\nfunc main() {}\n", []string{"type definition"}},
 		{"variadic-multi", "package main\nfunc f(xs ...int) {}\nfunc g() (int, int) { return 1, 2 }\nfunc main() {\n\tf(g()) // ERR\n}\n", []string{"multiple values not supported"}},
-		{"variadic-any-byte", "package main\nfunc f(xs ...any) {}\nfunc main() {\n\tvar b byte = 1\n\tf(1, b) // ERR\n}\n", []string{"byte in interface not supported"}},
 		{"variadic-builtin-spread", "package main\nfunc main() {\n\ts := []any{1}\n\tprintln(s...) // ERR\n}\n", []string{"println"}},
-		{"nil-any", "package main\nfunc main() {\n\tvar x any = nil // ERR\n\t_ = x\n}\n", []string{"nil"}},
-		{"slice-byte-any", "package main\nfunc main() {\n\tb := []byte(\"a\")\n\tvar x []any\n\tx = append(x, b[0]) // ERR\n\t_ = x\n}\n", []string{"byte in interface"}},
 		{"string-index-assign", "package main\nfunc main() {\n\ts := \"ab\"\n\ts[0] = 1 // ERR\n}\n", []string{"cannot assign"}},
 		{"funcvalue-any", "package main\nfunc f() {}\nfunc main() {\n\tvar x any = f // ERR\n\t_ = x\n}\n", []string{"func value in interface not supported"}},
 		{"funcvalue-send", "package main\nimport \"gogo/actor\"\nfunc f() {}\nfunc main() {\n\tactor.Send(actor.Self(), f) // ERR\n}\n", []string{"func value in interface not supported"}},
@@ -241,33 +235,25 @@ func TestRejects(t *testing.T) {
 		{"pointer", "package main\nfunc main() {\n\tx := 1\n\tp := &x // ERR\n\t_ = p\n}\n", []string{"pointer"}},
 		{"array-any", "package main\nfunc main() {\n\tvar a [3]int\n\tvar x any = a // ERR\n\t_ = x\n}\n", []string{"array in interface not supported"}},
 		{"array-send", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Send(actor.Self(), [2]int{}) // ERR\n}\n", []string{"array in interface not supported"}},
-		{"array-compare", "package main\nfunc main() {\n\ta, b := [2]int{}, [2]int{}\n\tprintln(a == b) // ERR\n}\n", []string{"comparison of arrays not supported yet"}},
-		{"array-switch", "package main\nfunc main() {\n\ta := [2]int{}\n\tswitch a { // ERR\n\t}\n}\n", []string{"switch on a value of type [2]int not supported"}},
 		{"array-slice-field", "package main\ntype S struct{ A [2]int }\nfunc main() {\n\tvar s S\n\tt := s.A[:] // ERR\n\t_ = t\n}\n", []string{"slice of an array that is not a variable not supported"}},
 		{"array-slice-elem", "package main\nfunc main() {\n\tvar m [2][2]int\n\tt := m[1][:] // ERR\n\t_ = t\n}\n", []string{"slice of an array that is not a variable not supported"}},
 		{"array-captured-elem", "package main\nfunc main() {\n\tvar a [2]int\n\tf := func() int { return a[0] }\n\ta[1] = 3 // ERR\n\t_ = f\n}\n", []string{"captured variable must not be changed by element assignment"}},
 		{"array-captured-nested", "package main\ntype P struct{ X int }\nfunc main() {\n\tvar a [2]P\n\tf := func() {\n\t\ta[0].X++ // ERR\n\t}\n\tf()\n}\n", []string{"captured variable must not be changed by element assignment"}},
 		{"array-of-map", "package main\nfunc main() {\n\tvar a [2]map[int]int // ERR\n\t_ = a\n}\n", []string{"array of map"}},
 		{"array-named-type", "package main\ntype G [4]int // ERR\nfunc main() {}\n", []string{"type definition"}},
-		{"panic", "package main\nfunc main() {\n\tpanic(1) // ERR\n}\n", []string{"panic"}},
+		{"recover", "package main\nfunc main() {\n\tprintln(recover()) // ERR\n}\n", []string{"recover (a panic ends the actor: let its supervisor restart it) not supported"}},
+		{"panic-func", "package main\nfunc main() {\n\tpanic(main) // ERR\n}\n", []string{"func value in interface not supported"}},
 		{"range-func", "package main\nfunc seq(yield func(int) bool) {}\nfunc main() {\n\tfor i := range seq { // ERR\n\t\t_ = i\n\t}\n}\n", []string{"range over func"}},
 		{"range-int-assign", "package main\nfunc main() {\n\tvar i int\n\tfor i = range 3 { // ERR\n\t}\n\tprintln(i)\n}\n", []string{"range assigning to existing variables"}},
 		{"string-sub", "package main\nfunc main() {\n\ts := \"a\"\n\tprintln(s[0] - s[0], len(s))\n\tt := s[:1] + s[0:] // ok\n\tprintln(t)\n\tvar i int64\n\tprintln(s[i]) // ERR\n}\n", []string{"index of type int64"}},
 		{"string-slice3", "package main\nfunc main() {\n\ts := \"abc\"\n\tprintln(s[0:1:2]) // ERR\n}\n", []string{"3-index"}},
 		{"range-assign", "package main\nfunc main() {\n\tvar i int\n\tfor i = range \"ab\" { // ERR\n\t}\n\tprintln(i)\n}\n", []string{"range"}},
-		{"rune-any", "package main\nfunc main() {\n\tfor _, c := range \"ab\" {\n\t\tvar x any = c // ERR\n\t\t_ = x\n\t}\n}\n", []string{"rune in interface"}},
-		{"conversion", "package main\ntype C bool\nfunc main() {\n\tx := true\n\ty := C(x) // ERR\n\t_ = y\n}\n", []string{"conversion"}},
 		{"conversion-string", "package main\nfunc main() {\n\tx := 65\n\ts := string(x) // ERR\n\t_ = s\n}\n", []string{"conversion"}},
-		{"conversion-named-string", "package main\ntype T string\nfunc main() {\n\tx := \"a\"\n\tt := T(x) // ERR\n\t_ = t\n}\n", []string{"conversion"}},
 		{"int64-mix", "package main\nfunc main() {\n\tvar a int64 = 1\n\tb := 2\n\tprintln(a + b) // ERR\n}\n", []string{"mismatched types int64 and int"}},
 		{"int64-mix-assign", "package main\nfunc main() {\n\tvar a int64\n\tb := 2\n\ta = b // ERR\n\t_ = a\n}\n", []string{"cannot use b"}},
-		{"switch-any", "package main\nfunc main() {\n\tvar x any = 1\n\tswitch x { // ERR\n\tcase 1:\n\t}\n}\n", []string{"switch on a value of type any not supported"}},
-		{"switch-struct", "package main\ntype P struct{ X int }\nfunc main() {\n\tp := P{1}\n\tswitch p { // ERR\n\tcase P{1}:\n\t}\n}\n", []string{"switch on a value of type main.P not supported"}},
-		{"switch-case-any", "package main\nfunc main() {\n\tx := 1\n\tvar a any = 1\n\tswitch x {\n\tcase a: // ERR\n\t}\n}\n", []string{"switch case of type any not supported"}},
 		{"switch-slice", "package main\nfunc main() {\n\ts := []int{1}\n\tswitch s { // ERR\n\tcase nil:\n\t}\n}\n", []string{"switch on a value of type []int not supported"}},
 		{"goto", "package main\nfunc main() {\n\tgoto end // ERR\nend:\n\tfor {\n\t}\n}\n", []string{"goto statement not supported"}},
 		{"label-block", "package main\nfunc main() {\nL: // ERR\n\t{\n\t\tprintln(1)\n\t}\n\tgoto L\n}\n", []string{"label on a statement other than for or switch not supported"}},
-		{"error", "package main\nfunc f() error { return nil } // ERR\nfunc main() { f() }\n", []string{"error"}},
 		{"bit-string", "package main\nfunc main() {\n\ts := \"a\"\n\tprintln(s & s) // ERR\n}\n", []string{"operator &"}},
 		{"bit-bool", "package main\nfunc main() {\n\tb := true\n\tprintln(b | b) // ERR\n}\n", []string{"operator |"}},
 		{"shift-string", "package main\nfunc main() {\n\ts := \"a\"\n\tprintln(s << 1) // ERR\n}\n", []string{"shift"}},
@@ -275,38 +261,16 @@ func TestRejects(t *testing.T) {
 		{"andnot-assign-string", "package main\nfunc main() {\n\ts := \"a\"\n\ts &^= s // ERR\n}\n", []string{"operator &^"}},
 		{"init", "package main\nfunc init() {} // ERR\nfunc main() {}\n", []string{"func init not supported"}},
 		{"uintptr", "package main\nfunc main() {\n\tvar x uintptr = 1 // ERR\n\t_ = x\n}\n", []string{"uintptr"}},
-		{"uint32-any", "package main\nfunc main() {\n\tvar u uint32 = 1\n\tvar x any = u // ERR\n\t_ = x\n}\n", []string{"uint32 in interface not supported"}},
-		{"int8-any", "package main\nfunc f(v any) {}\nfunc main() {\n\tf(int8(1)) // ERR\n}\n", []string{"int8 in interface not supported"}},
-		{"uint64-any", "package main\nfunc main() {\n\tvar x any = uint64(1) // ERR\n\t_ = x\n}\n", []string{"uint64 in interface not supported"}},
-		{"named-uint32-any", "package main\ntype R uint32\nfunc main() {\n\tvar x any = R(1) // ERR\n\t_ = x\n}\n", []string{"named basic type in interface not supported"}},
-		{"uint32-case", "package main\nfunc main() {\n\tvar x any = 1\n\tswitch x.(type) {\n\tcase uint32: // ERR\n\t}\n}\n", []string{"type switch case"}},
 		{"uint64-index", "package main\nfunc main() {\n\ts := []int{1}\n\tvar i uint64\n\tprintln(s[i]) // ERR\n}\n", []string{"index of type uint64"}},
 		{"println-struct-uint32", "package main\ntype P struct{ A int; B []uint32 }\nfunc main() {\n\tprintln(P{}) // ERR\n}\n", []string{"println of main.P not supported", "uint32 or uint64"}},
 		{"println-slice-uint64", "package main\nfunc main() {\n\tprintln([]uint64{1}) // ERR\n}\n", []string{"println of []uint64 not supported"}},
-		{"namedbasic-any", "package main\ntype C int\nfunc main() {\n\tvar x any = C(1) // ERR\n\t_ = x\n}\n", []string{"named basic type in interface not supported"}},
-		{"namedbasic-var", "package main\ntype C int\nfunc main() {\n\tvar c C = 1\n\tvar x any\n\tx = c // ERR\n\t_ = x\n}\n", []string{"named basic type in interface not supported"}},
-		{"namedbasic-arg", "package main\ntype C bool\nfunc f(v any) {}\nfunc main() {\n\tvar c C\n\tf(c) // ERR\n}\n", []string{"named basic type in interface not supported"}},
-		{"namedbasic-send", "package main\nimport \"gogo/actor\"\ntype C string\nfunc main() {\n\tvar c C = \"x\"\n\tactor.Send(actor.Self(), c) // ERR\n}\n", []string{"named basic type in interface not supported"}},
-		{"namedbasic-field", "package main\ntype C int\ntype B struct{ V any }\nfunc main() {\n\tvar c C\n\tprintln(B{c}) // ERR\n}\n", []string{"named basic type in interface not supported"}},
-		{"namedbasic-return", "package main\ntype C int\nfunc f() any {\n\tvar c C\n\treturn c // ERR\n}\nfunc main() { println(f()) }\n", []string{"named basic type in interface not supported"}},
-		{"namedbasic-case", "package main\ntype C int\nfunc main() {\n\tvar x any = 1\n\tswitch x.(type) {\n\tcase C: // ERR\n\t}\n}\n", []string{"type switch case"}},
 		{"multiret-println", "package main\nfunc f() (int, int) { return 1, 2 }\nfunc main() {\n\tprintln(f()) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"multiret-var", "package main\nfunc f() (int, int) { return 1, 2 }\nfunc main() {\n\tvar a, b = f() // ERR\n\tprintln(a, b)\n}\n", []string{"multiple values not supported"}},
 		{"multiret-builtin-return", "package main\nimport \"gogo/actor\"\nfunc f() (any, bool) {\n\treturn actor.ReceiveTimeout(5) // ERR\n}\nfunc main() { a, b := f(); println(a, b) }\n", []string{"multiple values not supported"}},
-		{"multiret-named-any", "package main\ntype C int\nfunc g() (C, int) { return 1, 2 }\nfunc f() (any, int) {\n\treturn g() // ERR\n}\nfunc main() { a, b := f(); println(a, b) }\n", []string{"named basic type in interface not supported"}},
-		{"multiret-arg-any", "package main\ntype C int\nfunc g() (C, int) { return 1, 2 }\nfunc h(a any, b int) {}\nfunc main() {\n\th(g()) // ERR\n}\n", []string{"named basic type in interface not supported"}},
-		{"byte-any", "package main\nfunc main() {\n\tvar c byte = 3\n\tvar x any = c // ERR\n\t_ = x\n}\n", []string{"byte in interface not supported"}},
-		{"byte-send", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tx := 3\n\tactor.Send(actor.Self(), byte(x)) // ERR\n}\n", []string{"byte in interface not supported"}},
-		{"byte-case", "package main\nfunc main() {\n\tvar x any = 1\n\tswitch x.(type) {\n\tcase byte: // ERR\n\t}\n}\n", []string{"type switch case"}},
 		{"tworesult-single", "package main\nimport \"gogo/actor\"\nfunc main() {\n\ta, b := actor.Self() // ERR\n\t_, _ = a, b\n}\n", []string{"assignment mismatch"}},
 		{"tworesult-stmt", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.ReceiveTimeout(5) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"tworesult-var", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar m, ok = actor.ReceiveTimeout(5) // ERR\n\tprintln(m, ok)\n}\n", []string{"multiple values not supported"}},
 		{"ref-literal", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tr := actor.Ref{} // ERR\n\tprintln(r)\n}\n", []string{"composite literal of actor.Ref not supported"}},
-		{"any-compare-right-named", "package main\ntype C int\nfunc main() {\n\tvar c C = 3\n\tvar x any = 3\n\tprintln(c == x) // ERR\n}\n", []string{"comparison of any"}},
-		{"any-compare-right-const", "package main\nfunc main() {\n\tvar x any = 5\n\tprintln(5 == x) // ERR\n}\n", []string{"comparison of any"}},
-		{"any-compare-right-pid", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar x any = 5\n\tprintln(actor.Self() != x) // ERR\n}\n", []string{"comparison of any"}},
-		{"any-compare", "package main\nfunc main() {\n\tvar a, b any\n\tprintln(a == b) // ERR\n}\n", []string{"comparison of any"}},
-		{"iface-literal", "package main\nfunc main() {\n\tvar x interface{ M() } // ERR\n\t_ = x\n}\n", []string{"interface"}},
 		{"captured-reassign-after", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tx := 1\n\tactor.Spawn(func() { println(x) })\n\tx = 2 // ERR\n}\n", []string{"captured variable must not be reassigned"}},
 		{"captured-reassign-before", "package main\nfunc main() {\n\tvar x int\n\tx = 1 // ERR\n\tf := func() { println(x) }\n\t_ = f\n}\n", []string{"captured variable must not be reassigned"}},
 		{"captured-reassign-loop", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tfor i := 0; i < 3; i++ { // ERR\n\t\tactor.Spawn(func() { println(i) })\n\t}\n}\n", []string{"captured variable must not be reassigned"}},
@@ -322,14 +286,13 @@ func TestRejects(t *testing.T) {
 		{"captured-opassign-before", "package main\nfunc main() {\n\tx := 1\n\tx += 1 // ERR\n\tf := func() { println(x) }\n\t_ = f\n}\n", []string{"captured variable must not be reassigned"}},
 		{"import-unknown-lib", "package main\nimport \"gogo/nosuch\" // ERR\nfunc main() { nosuch.X() }\n", []string{`import "gogo/nosuch" not supported`}},
 		{"fs-file-case", "package main\nimport (\n\t\"gogo/actor\"\n\t\"gogo/fs\"\n)\nfunc main() {\n\tvar x any = actor.Self()\n\tswitch x.(type) {\n\tcase fs.File: // ERR\n\t\tprintln(\"file\")\n\tcase actor.PID:\n\t}\n}\n", []string{"type switch case fs.File not supported; wrap it in a struct"}},
-		{"port-open-stmt", "package main\nimport \"gogo/port\"\nfunc main() {\n\tport.Open(\"gpio\", port.Host{}) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"port-open-var", "package main\nimport \"gogo/port\"\nfunc main() {\n\tvar p, ok = port.Open(\"gpio\", port.Host{}) // ERR\n\tprintln(p, ok)\n}\n", []string{"multiple values not supported"}},
 		{"fs-stat-stmt", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tfs.Stat(\"/flash\") // ERR\n}\n", []string{"multiple values not supported"}},
 		{"fs-readfile-single", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tb := fs.ReadFile(\"/flash/a\", 9) // ERR\n\t_ = b\n}\n", []string{"assignment mismatch"}},
 		{"fs-read-method-stmt", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar f fs.File\n\tf.Read(1) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"fs-size-var", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar f fs.File\n\tvar n, e = f.Size() // ERR\n\tprintln(n, e)\n}\n", []string{"multiple values not supported"}},
 		{"fs-method-value", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar f fs.File\n\tg := f.Close // ERR\n\t_ = g\n}\n", []string{"selector other than a field read not supported"}},
-		{"port-open-arg", "package main\nimport \"gogo/port\"\nfunc f(p any, ok bool) {}\nfunc main() {\n\tf(port.Open(\"gpio\", port.Host{})) // ERR\n}\n", []string{"multiple values not supported"}},
+		{"port-open-arg", "package main\nimport \"gogo/port\"\nfunc f(p any, ok bool) {}\nfunc main() {\n\tf(port.Open(\"gpio\", port.Host{})) // ERR\n}\n", []string{"cannot use port.Open"}},
 		{"bytes-buffer-case", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tvar x any = bytes.NewBuffer(1)\n\tswitch x.(type) {\n\tcase bytes.Buffer: // ERR\n\t}\n}\n", []string{"type switch case"}},
 		{"bytes-literal", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.Bytes{} // ERR\n\t_ = x\n}\n", []string{"composite literal of bytes.Bytes"}},
 		{"buffer-literal", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tb := bytes.Buffer{} // ERR\n\t_ = b\n}\n", []string{"zero value of bytes.Buffer", "use bytes.NewBuffer"}},
@@ -339,6 +302,23 @@ func TestRejects(t *testing.T) {
 		{"bytes-println", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.FromString(\"a\")\n\tprintln(x) // ERR\n}\n", []string{"println of bytes.Bytes"}},
 		{"bytes-compare", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.FromString(\"a\")\n\tprintln(x == x) // ERR\n}\n", []string{"comparison of"}},
 		{"bytes-methodvalue", "package main\nimport \"gogo/bytes\"\nfunc main() {\n\tx := bytes.FromString(\"a\")\n\tf := x.Len // ERR\n\t_ = f\n}\n", []string{"not supported"}},
+		{"assert-slice", "package main\nfunc main() {\n\tvar x any = 1\n\t_ = x.([]int) // ERR\n}\n", []string{"type assertion to []int not supported"}},
+		{"assert-file", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar x any = 1\n\t_ = x.(fs.File) // ERR\n}\n", []string{"type assertion to fs.File; wrap it in a struct not supported"}},
+		{"assert-var", "package main\nfunc main() {\n\tvar x any = 1\n\tvar v, ok = x.(int) // ERR\n\tprintln(v, ok)\n}\n", []string{"multiple values not supported"}},
+		{"assert-concrete", "package main\nfunc main() {\n\tx := 1\n\t_ = x.(int) // ERR\n}\n", []string{"not an interface"}},
+		{"buffer-field-compare", "package main\nimport \"gogo/bytes\"\ntype T struct{ B bytes.Buffer }\nfunc main() {\n\ta := T{bytes.NewBuffer(1)}\n\tprintln(a == a) // ERR\n}\n", []string{"comparison of main.T not supported"}},
+		{"iface-method-expr", "package main\ntype S interface{ M() int }\nfunc main() {\n\tf := S.M // ERR\n\t_ = f\n}\n", []string{"method expression on an interface type not supported"}},
+		{"iface-bad-method", "package main\ntype S interface{ M() map[int]int } // ERR\nfunc main() {}\n", []string{"interface method M"}},
+		{"iface-vm-bytes", "package main\nimport \"gogo/bytes\"\ntype L interface{ Len() int }\nfunc main() {\n\tvar l L = bytes.FromString(\"a\") // ERR\n\t_ = l\n}\n", []string{"bytes.Bytes as a main.L not supported", "builtin of the VM"}},
+		{"iface-vm-arg", "package main\nimport \"gogo/bytes\"\ntype S interface{ String() string }\nfunc f(s S) {}\nfunc main() {\n\tf(bytes.FromString(\"a\")) // ERR\n}\n", []string{"bytes.Bytes as a main.S not supported"}},
+		{"iface-vm-embedded", "package main\nimport \"gogo/bytes\"\ntype W interface{ WriteByte(c byte) }\ntype B struct{ bytes.Buffer }\nfunc main() {\n\tvar w W = B{} // ERR\n\t_ = w\n}\n", []string{"main.B as a main.W not supported"}},
+		{"iface-vm-conv", "package main\nimport \"gogo/bytes\"\ntype L interface{ Len() int }\nfunc main() {\n\tl := L(bytes.FromString(\"a\")) // ERR\n\t_ = l\n}\n", []string{"bytes.Bytes as a main.L not supported"}},
+		{"code-as-error", "package main\nimport \"gogo/fs\"\nfunc save() error {\n\treturn fs.Remove(\"/a\") // ERR\n}\nfunc main() { println(save() == nil) }\n", []string{"errors.Code result used as an error"}},
+		{"code-as-error-var", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar err error = fs.Remove(\"/a\") // ERR\n\tprintln(err == nil)\n}\n", []string{"errors.Code result used as an error"}},
+		{"code-as-error-assign", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar err error\n\terr = fs.Remove(\"/a\") // ERR\n\tprintln(err == nil)\n}\n", []string{"errors.Code result used as an error"}},
+		{"iface-typeset", "package main\ntype N interface{ ~int } // ERR\nfunc main() {}\n", []string{"interface with a type set not supported"}},
+		{"alias-generic", "package main\ntype L[T any] = []T // ERR\nfunc main() {}\n", []string{"generic type not supported"}},
+		{"alias-map", "package main\ntype M = map[int]int // ERR\nfunc main() {}\n", []string{"map not supported"}},
 		{"port-renamed", "package main\nimport p \"gogo/port\" // ERR\nfunc main() { p.Close(p.Edge{}) }\n", []string{`import p "gogo/port" not supported`}},
 	}
 	for _, tc := range tests {
@@ -704,7 +684,8 @@ func TestAcceptsFuncValues(t *testing.T) {
 	}
 }
 
-// fakeLibs is a library set with the real gogo/actor stubs plus extra
+// fakeLibs is a library set with the real gogo/actor, gogo/port, gogo/bytes
+// and gogo/errors plus extra
 // packages given as dir/file.go -> source.
 func fakeLibs(t *testing.T, extra map[string]string) fstest.MapFS {
 	t.Helper()
@@ -720,7 +701,11 @@ func fakeLibs(t *testing.T, extra map[string]string) fstest.MapFS {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fsys := fstest.MapFS{"actor/actor.gg": {Data: src}, "port/port.gg": {Data: psrc}, "bytes/bytes.gg": {Data: bsrc}}
+	esrc, err := lib.StubFS.ReadFile("errors/errors.gg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys := fstest.MapFS{"actor/actor.gg": {Data: src}, "port/port.gg": {Data: psrc}, "bytes/bytes.gg": {Data: bsrc}, "errors/errors.gg": {Data: esrc}}
 	for name, s := range extra {
 		fsys[name] = &fstest.MapFile{Data: []byte(s)}
 	}
@@ -866,10 +851,104 @@ func TestMainImportsSupervisor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(prog.Libs) != 1 || prog.Libs[0].Pkg.Path() != "gogo/supervisor" {
-		t.Fatalf("Libs = %v, want gogo/supervisor", prog.Libs)
+	var libs []string
+	for _, l := range prog.Libs {
+		if !prog.system[l.Pkg] {
+			libs = append(libs, l.Pkg.Path())
+		}
+	}
+	if len(libs) == 0 || libs[len(libs)-1] != "gogo/supervisor" {
+		t.Fatalf("Libs = %v (system packages aside), want gogo/supervisor last", libs)
 	}
 	if errs := Check(prog); len(errs) != 0 {
 		t.Fatalf("Check: %v", errs)
+	}
+}
+
+// TestAcceptsBoxing: named basic values and bytes go into interfaces
+// (boxed) and are type switch cases, nil is the nil interface value, and
+// bool and string convert to and from their named types (all formerly
+// rejected).
+func TestAcceptsBoxing(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"variadic-any-byte", "package main\nfunc f(xs ...any) {}\nfunc main() {\n\tvar b byte = 1\n\tf(1, b)\n}\n"},
+		{"slice-byte-any", "package main\nfunc main() {\n\tb := []byte(\"a\")\n\tvar x []any\n\tx = append(x, b[0])\n\t_ = x\n}\n"},
+		{"namedbasic-any", "package main\ntype C int\nfunc main() {\n\tvar x any = C(1)\n\t_ = x\n}\n"},
+		{"namedbasic-var", "package main\ntype C int\nfunc main() {\n\tvar c C = 1\n\tvar x any\n\tx = c\n\t_ = x\n}\n"},
+		{"namedbasic-arg", "package main\ntype C bool\nfunc f(v any) {}\nfunc main() {\n\tvar c C\n\tf(c)\n}\n"},
+		{"namedbasic-send", "package main\nimport \"gogo/actor\"\ntype C string\nfunc main() {\n\tvar c C = \"x\"\n\tactor.Send(actor.Self(), c)\n}\n"},
+		{"namedbasic-field", "package main\ntype C int\ntype B struct{ V any }\nfunc main() {\n\tvar c C\n\tprintln(B{c})\n}\n"},
+		{"namedbasic-return", "package main\ntype C int\nfunc f() any {\n\tvar c C\n\treturn c\n}\nfunc main() { println(f()) }\n"},
+		{"namedbasic-case", "package main\ntype C int\nfunc main() {\n\tvar x any = 1\n\tswitch x.(type) {\n\tcase C:\n\t}\n}\n"},
+		{"multiret-named-any", "package main\ntype C int\nfunc g() (C, int) { return 1, 2 }\nfunc f() (any, int) {\n\treturn g()\n}\nfunc main() { a, b := f(); println(a, b) }\n"},
+		{"multiret-arg-any", "package main\ntype C int\nfunc g() (C, int) { return 1, 2 }\nfunc h(a any, b int) {}\nfunc main() {\n\th(g())\n}\n"},
+		{"byte-any", "package main\nfunc main() {\n\tvar c byte = 3\n\tvar x any = c\n\t_ = x\n}\n"},
+		{"byte-send", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tx := 3\n\tactor.Send(actor.Self(), byte(x))\n}\n"},
+		{"byte-case", "package main\nfunc main() {\n\tvar x any = 1\n\tswitch x.(type) {\n\tcase byte:\n\t}\n}\n"},
+		{"nil-any", "package main\nfunc main() {\n\tvar x any = nil\n\t_ = x\n}\n"},
+		{"conversion", "package main\ntype C bool\nfunc main() {\n\tx := true\n\ty := C(x)\n\t_ = y\n}\n"},
+		{"conversion-named-string", "package main\ntype T string\nfunc main() {\n\tx := \"a\"\n\tt := T(x)\n\t_ = t\n}\n"},
+		{"float-named-any", "package main\ntype C float64\nfunc main() {\n\tvar a any = C(1)\n\t_ = a\n}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := compileProg(t, tc.src); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// compileProg loads, checks and compiles src.
+func compileProg(t *testing.T, src string) ([]byte, error) {
+	t.Helper()
+	prog, err := Load(writeProg(t, src))
+	if err != nil {
+		return nil, err
+	}
+	return Compile(prog)
+}
+
+// TestAcceptsEquality: == on interfaces and structs, and switches on
+// them, by B_CMP (formerly rejected); a struct with a Buffer field does
+// not compare.
+func TestAcceptsEquality(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"switch-any", "package main\nfunc main() {\n\tvar x any = 1\n\tswitch x {\n\tcase 1:\n\t}\n}\n"},
+		{"switch-struct", "package main\ntype P struct{ X int }\nfunc main() {\n\tp := P{1}\n\tswitch p {\n\tcase P{1}:\n\t}\n}\n"},
+		{"switch-case-any", "package main\nfunc main() {\n\tx := 1\n\tvar a any = 1\n\tswitch x {\n\tcase a:\n\t}\n}\n"},
+		{"any-compare-right-named", "package main\ntype C int\nfunc main() {\n\tvar c C = 3\n\tvar x any = 3\n\tprintln(c == x)\n}\n"},
+		{"any-compare-right-const", "package main\nfunc main() {\n\tvar x any = 5\n\tprintln(5 == x)\n}\n"},
+		{"any-compare-right-pid", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar x any = 5\n\tprintln(actor.Self() != x)\n}\n"},
+		{"any-compare", "package main\nfunc main() {\n\tvar a, b any\n\tprintln(a == b)\n}\n"},
+		{"struct-eq", "package main\ntype P struct{ X, Y int }\nfunc main() {\n\tprintln(P{1, 2} == P{1, 2}, P{} != P{1, 0})\n}\n"},
+		{"any-nil", "package main\nfunc main() {\n\tvar x any\n\tprintln(x == nil, nil != x)\n}\n"},
+		{"typeswitch-nil", "package main\nfunc main() {\n\tvar x any\n\tswitch x.(type) {\n\tcase nil:\n\t\tprintln(0)\n\t}\n}\n"},
+		{"array-compare", "package main\nfunc main() {\n\ta, b := [2]int{}, [2]int{}\n\tprintln(a == b)\n}\n"},
+		{"array-switch", "package main\nfunc main() {\n\ta := [2]int{}\n\tswitch a {\n\t}\n}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := compileProg(t, tc.src); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// TestAcceptsInterfaces: interface types, error and interface literals
+// (formerly rejected).
+func TestAcceptsInterfaces(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"method-interface", "package main\ntype S interface{ Area() int }\nfunc main() {}\n"},
+		{"method-interface-param", "package main\nfunc f(s interface{ M() }) {}\nfunc main() {}\n"},
+		{"error", "package main\nfunc f() error { return nil }\nfunc main() { f() }\n"},
+		{"iface-literal", "package main\nfunc main() {\n\tvar x interface{ M() }\n\t_ = x\n}\n"},
+		{"embedded", "package main\ntype N interface{ Name() string }\ntype S interface {\n\tN\n\tArea() int\n}\ntype R struct{ W int }\nfunc (r R) Name() string { return \"r\" }\nfunc (r R) Area() int { return r.W }\nfunc main() {\n\tvar s S = R{2}\n\tvar n N = s\n\tprintln(s.Area(), n.Name())\n}\n"},
+		{"named-error", "package main\ntype E error\nfunc main() {\n\tvar e E\n\tprintln(e == nil)\n}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := compileProg(t, tc.src); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

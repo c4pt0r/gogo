@@ -1,0 +1,94 @@
+// == on structs and interface values, and switches on them: values of
+// one dynamic type compare by value (structs field by field, nested
+// structs and interfaces included); values of different dynamic types,
+// even with the same representation, are not equal. Valid Go: `go run`
+// prints the same.
+package main
+
+type Celsius int
+type Kelvin int
+type Name string
+
+type Point struct{ X, Y int }
+type Line struct {
+	From, To Point
+	Label    string
+}
+type Tagged struct {
+	Tag any
+	N   int64
+}
+
+func describe(x any) string {
+	switch x {
+	case nil:
+		return "nil"
+	case 1:
+		return "int 1"
+	case Celsius(1):
+		return "Celsius 1"
+	case "one":
+		return "string one"
+	case Name("one"):
+		return "Name one"
+	case Point{1, 1}:
+		return "Point{1 1}"
+	case int64(1):
+		return "int64 1"
+	case byte(1):
+		return "byte 1"
+	case true:
+		return "true"
+	}
+	return "other"
+}
+
+func origin(p Point) bool {
+	switch p {
+	case Point{}:
+		return true
+	}
+	return false
+}
+
+func main() {
+	a, b := Point{1, 2}, Point{1, 2}
+	println(a == b, a != b, a == Point{2, 1}, Point{} == Point{0, 0})
+	l1 := Line{a, Point{3, 4}, "x"}
+	l2 := Line{b, Point{3, 4}, "x"}
+	println(l1 == l2, l1 == Line{a, Point{3, 4}, "y"}, l1 != Line{})
+
+	var x, y any = 1, 1
+	println(x == y, x == 1, 1 == x, x != 2)
+	y = Celsius(1)
+	println(x == y, y == Celsius(1), y == Kelvin(1), y == 1)
+	y = int64(1)
+	println(x == y, y == int64(1))
+	x, y = "s", "s"
+	println(x == y, x == "s", x == Name("s"))
+	x, y = a, b
+	println(x == y, x == Point{1, 2}, x == Point{2, 1}, x == l1)
+	var n any
+	println(n == nil, x == nil, nil != x, n == x)
+
+	t1 := Tagged{Celsius(5), 1 << 40}
+	t2 := Tagged{Celsius(5), 1 << 40}
+	t3 := Tagged{Kelvin(5), 1 << 40}
+	println(t1 == t2, t1 == t3, t1 == Tagged{})
+
+	// An int64 taken out of an interface compares like any other.
+	var w any = int64(7)
+	v := w.(int64)
+	println(Tagged{nil, v} == Tagged{nil, 7})
+
+	for _, v := range []any{nil, 1, Celsius(1), "one", Name("one"), Point{1, 1}, int64(1), byte(1), true, false, 2} {
+		println(describe(v))
+	}
+	println(origin(Point{}), origin(a))
+
+	// A slice in an interface: slices of different types are different
+	// values (Go panics only for two slices of one type).
+	var ns []int
+	var e, g any = ns, []string{}
+	println(e == g, e == nil, g == 1)
+}

@@ -44,8 +44,8 @@ func owner(kind int) {
 		wait()
 		wait()
 	} else if kind == 4 { // accepted, paused
-		_, ok := port.Open("tcp_listen", net.Listen{Port: 1004})
-		println("listen", ok)
+		_, err := port.Open("tcp_listen", net.Listen{Port: 1004})
+		println("listen", err == nil)
 		wait()
 	} else if kind == 5 { // FIN_WAIT_1 after Shutdown, data unacknowledged
 		c := dial(1005)
@@ -90,8 +90,8 @@ func main() {
 	wait()
 	println("survivor written")
 	for p := 3001; p <= 3003; p++ {
-		_, ok := port.Open("tcp", net.Dial{IP: gw, Port: p})
-		println("dial", ok)
+		_, err := port.Open("tcp", net.Dial{IP: gw, Port: p})
+		println("dial", err == nil)
 	}
 	actor.Sleep(10)
 	port.Close(sv)

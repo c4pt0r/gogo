@@ -26,7 +26,7 @@ func handler(conn actor.PID) {
 func main() {
 	n, _ := port.Open("netif", net.IfConfig{})
 	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
-	if _, ok := port.Open("tcp_listen", net.Listen{Port: 8080}); !ok {
+	if _, err := port.Open("tcp_listen", net.Listen{Port: 8080}); err != nil {
 		println("listen failed")
 	}
 	for {

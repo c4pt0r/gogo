@@ -7,13 +7,13 @@ This is the per-opcode reference for the gogo VM, generated from the single sour
 `runtime/vm/opcodes.h` (the Go compiler parses the same file, `compiler/opcodes.go` mirrors it and
 `TestOpcodesMatchC` keeps the two equal). The design behind it is in [design.md](design.md) §5.6
 (bytecode, image layout, versioning) and §5.5 (value representation); `gogo dis file.ggb` prints a
-program's bytecode. Image format 15.3.
+program's bytecode. Image format 15.4.
 
 ## Contents
 
 - [Instruction encoding](#instruction-encoding)
 - [Opcodes](#opcodes) (67)
-- [Builtins](#builtins) (56)
+- [Builtins](#builtins) (58)
 - [Type ids and reserved types](#type-ids-and-reserved-types)
 - [Exit reasons](#exit-reasons)
 - [Image file layout](#image-file-layout)
@@ -163,6 +163,8 @@ the registers `rb ..`; a builtin with two results writes `ra` and `ra+1`.
 | 53 | `B_RANDOM` | - | `int` | sys.Random: an int in [0, 2^30), vm_random. |
 | 54 | `B_FLOAT` | `op int, args...` | `result(s)` | (15.2, GOGO_FLOAT) gogo/math and strconv.FormatFloat / ParseFloat (float_lib, runtime/floatlib; FLOAT_OP_*). |
 | 55 | `B_PRINTLNU` | `mask, values...` | `nil` | (15.3) println with unsigned values: bit i of the int mask (i < 30) marks value i a uint64 (an int64's bits), printed unsigned. |
+| 56 | `B_PANIC` | `v` | `(does not return)` | panic(v): print "panic: " and v (as println prints it) to stderr, then end the calling actor with R_PANIC. Deferred calls do not run. |
+| 57 | `B_CMP` | `a, b [, x]` | `-1 \| 0 \| 1` | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field, arrays (slices) element by element, anything else by term identity (a func, a Buffer). A third argument (its value unused) says a and b are arrays; without it a slice at the top, one held by an interface, equals nothing, itself included. Nesting past 64 levels, other than through a struct's last field or an array's last element, is badcode, and so is a compare that visits more than 65536 terms (values sharing subvalues). Does not preempt. |
 
 ## Type ids and reserved types
 
@@ -230,6 +232,8 @@ end, and only with `int` fields.
 | 42 | `TYPE_HOST` | Arg int, Data bytes.Bytes: cfg of a host-defined port |
 | 43 | `TYPE_POST` | From PID, Kind int, Data bytes.Bytes: a host post, host-port command or event |
 | 44 | `TYPE_SCREEN_CONFIG` | Cols, Rows int: port.Open("screen") |
+| 45 | `TYPE_ERRORS_CODE` | the box of an errors.Code (an int) in an interface |
+| 46 | `TYPE_ERRORS_ERRORSTRING` | s string: errors.New's error |
 
 ## Exit reasons
 
@@ -248,6 +252,7 @@ codes are >= 100.
 | 7 | `R_SHUTDOWN` |  |
 | 8 | `R_BAD_SHIFT` |  |
 | 9 | `R_BAD_MSG` | a value that may not cross modules (msg.h) |
+| 10 | `R_PANIC` | panic(v), a failed type assertion, a method call on a nil interface (15.4) |
 | 64 | `R_FAILED` | + a GOGO_E_* code: a library failure (no VM code uses it) |
 
 ## Image file layout

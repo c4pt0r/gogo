@@ -103,7 +103,7 @@ own were also considered and rejected in favour of Go syntax.
    a first line starting with `#!` reads as an empty line, for
    executable scripts. The loader (`compiler/load.go`) parses package
    main from the build root, then loads each import depth first: the
-   stub packages and the `gogo/X` libraries from the embedded `lib/`,
+   `gogo/X` libraries (system packages included) from the embedded `lib/`,
    and user packages, every other import path, from disk. A user package
    is found in the build root when the path's first element is the root
    directory's name (`app/util` is `<root>/util/`), else in each
@@ -121,12 +121,15 @@ own were also considered and rejected in favour of Go syntax.
 2. **The VM** (`runtime/vm/`, C): image loader, interpreter, scheduler,
    per-actor heaps and GC, mailboxes, timers, the port (peripheral driver)
    layer and the module table.
-3. **Stub packages** (`gogo/actor`, `gogo/port`, `gogo/bytes`,
-   `gogo/net`, `gogo/fs`, `gogo/code`, `gogo/sys`, ...): gogo sources that
-   hold only signatures and types (bodies are `panic("gogo only")`), for
-   `go/types`. The compiler turns every call into a VM
-   instruction or builtin, and their struct types have fixed reserved
-   type ids.
+3. **System packages** (`gogo/actor`, `gogo/port`, `gogo/bytes`,
+   `gogo/net`, `gogo/fs`, `gogo/code`, `gogo/sys`, ...): gogo sources
+   whose declarations the VM implements, each marked in its doc comment:
+   `//gogo:builtin` on a function, method or type (bodies are
+   `panic("gogo only")`, for `go/types` and the host toolchain; the
+   compiler turns every call into a VM instruction or builtin) and
+   `//gogo:reserved N` on a struct type with fixed reserved type id N.
+   A system package may hold library code beside them (functions with
+   real bodies), compiled into an image only where the program uses it.
 4. **Libraries**, written in the gogo subset and compiled into every image
    that imports them: `gogo/supervisor`, `gogo/strings`, `gogo/strconv`,
    `gogo/dhcp`, `gogo/dns`, `gogo/http`, `gogo/sntp`, `gogo/kv`,
@@ -134,8 +137,8 @@ own were also considered and rejected in favour of Go syntax.
    `gogo/irproto`. All import paths are under `gogo/`, never a Go
    standard library path. `gogo/strings` and `gogo/strconv` work on bytes
    (no rune decoding). Importing a library compiles all of it into the
-   image (no dead-function elimination). Libraries may import stubs and
-   other libraries, without cycles. The package table, with each
+   image (no dead-function elimination). Libraries may import system
+   packages and other libraries, without cycles. The package table, with each
    package's kind and requirements, is [lib/README.md](../lib/README.md).
 5. **Platform layers** (`platform/`): `unix` (the host VM `gogovm`, with
    simulated peripherals) and `esp32s3` (one ESP-IDF firmware for both
@@ -228,9 +231,8 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   right below the arguments; `x.M` is a closure that captured a copy of
   `x` (`MKCLOSURE`); `T.M` is the function itself. Structs are immutable
   values, so a method works on its own copy of the receiver, as in Go. No
-  opcode of their own. Pointer receivers and interface types are rejected
-  ("pointer receivers are not supported yet", "interface types are not
-  supported yet").
+  opcode of their own. Pointer receivers are rejected ("pointer
+  receivers are not supported yet").
 - Field assignment: `p.X = v`, `s[i].X = v`, `a.b.c = v`,
   `m.Items[i].X = v`, `op=` and `++`/`--` on a field, and fields in
   multi-assignments (index operands and right-hand sides first, then the
@@ -256,7 +258,9 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   embedded gogo stub type (`bytes.Buffer`, `fs.File`: builtins that take
   their own type), which are called on the field instead. For interfaces, the compiler's
   `gen.methodTable` lists a type's own and promoted methods with the
-  field path to each receiver, which interface dispatch is to use. No
+  field path to each receiver, which interface dispatch uses; a method
+  promoted from an embedded interface is that interface's, called
+  through its dispatcher on the field's value (`gen.methodFunc`). No
   opcode of its own.
 - Static `defer`: `defer f(args)` anywhere but inside a loop (within its
   own function: a func literal is a function of its own), so each defer
@@ -276,6 +280,56 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   them, since it captures by value and writes to captured variables are
   rejected. Rejected: `defer` inside a loop, a deferred call whose single
   argument is a multi-value call. No opcode, no run-time defer list.
+- Interfaces, `error` included, with closed-world dispatch: the image
+  holds every type its interface values can hold (a module's own types
+  never leave it, D9 of the language plan; reserved types are global),
+  so a method call on an interface value is a `CALL` of a dispatcher
+  the compiler generates per interface method (named
+  `Interface.Method`, `error.Error`): a `TYPEIS` chain over the image's
+  named types that have the method, promoted ones included (a box is
+  unwrapped, an embedded receiver loaded, with `GETFIELD`), each calling
+  its implementation, ending in a panic (`invalid memory
+  address or nil pointer dereference`) for nil. An assertion or a type
+  switch case to an interface type calls a generated test, a `TYPEIS`
+  chain over the implementing types (`Interface.(is)`). Interface
+  embedding, interface-to-interface assignment, method values of
+  interface values and `I(x)` conversions work; method expressions
+  `I.M` do not. `panic` of an error prints its `Error()`. No opcode of
+  their own; the VM's own types (`Bytes`, `Buffer`, `fs.File`) are not
+  candidates, as their methods are builtins: the checker rejects such a
+  value (or a struct embedding one) going into an interface whose
+  methods it would provide (`checker.vmMethods`), so a call never
+  reaches a dispatcher without its case.
+- Interface values (`any`): a value is its own term; an `int64` goes in
+  as a `K_INT64` box (`BOX64`), a sized integer (`byte`, `rune`,
+  `uint32`, `uint64`, ...: box type `byte`, `int32`, ...) and a value of a named
+  non-struct type (`type Celsius int`) in a one-field struct of their own
+  type id (a constant one in the const area), so `TYPEIS` tells every
+  type apart; type switches and assertions (`x.(T)`, `v, ok := x.(T)`)
+  unbox. A failed `x.(T)` panics (`interface conversion: ...`). An
+  `int64` taken out of an interface goes back to its plain
+  representation (an immediate when it fits).
+- `==` on structs, arrays and interface values, and a `switch` on them,
+  compare with builtin 57 `B_CMP` (15.4, `runtime/vm/strs.c`): a total
+  order of two values, by kind first, then by value: ints, `int64`s and
+  floats by value (a NaN equals nothing, `-0 == 0`; `float32` and
+  `float64` are different kinds), Refs by serial, strings and `Bytes` by
+  their bytes, structs of one type field by field, arrays (slices) element
+  by element, anything else by its term (bools, PIDs and `nil`; a func or
+  `Buffer` by identity). A slice held by an interface equals nothing
+  (Go: false, or a panic for two slices of one type): B_CMP compares a
+  top-level slice by its elements only when a third argument says the
+  values are arrays; a slice deeper inside compares by its elements, as
+  an array. Values of different dynamic types are never
+  equal: an `int64` is boxed inside an interface and plain outside one,
+  so an `int` and an `int64` of one value differ. Maps (later) order
+  their keys with it. The walk does not preempt; nesting deeper than 64
+  levels (other than through a struct's last field or an array's last
+  element) is `badcode`, and so is a walk past 65536 visited terms
+  (`CMP_BUDGET`, deep_live's limit: values that share parts have many
+  paths), so one compare cannot freeze the VM. Floats are ordered by
+  `floats.c`'s `float_order`, the order of `OP_LTF` / `OP_EQF`.
+  Unlike `EQ`, it does not make a value of a gone module `badcode`.
 - `println` of any value of the subset except `Bytes` and `Buffer`;
   slices print their elements, `[1 2 3]` (Go's `println` prints
   `[len/cap]address`). Nesting deeper than 16 prints as `{...}` /
@@ -288,10 +342,8 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   package's name is its directory's name (§5.1, the loader).
 
 **Not supported yet (planned for the "language completeness"
-milestone):** maps, pointers (and pointer receivers), package-level variables,
-a `switch` on an `any` or a struct value, type assertions, `panic`, the
-`error` interface and interfaces other than `any`.
-Each is rejected at compile time with a `<what> not supported` error
+milestone):** maps, pointers (and pointer receivers) and package-level
+variables. Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 
 **Out of the design:** channels and `select`, the `go` statement (use
@@ -326,9 +378,10 @@ the requirement `float`):
 - `gogo/math` (a stub: `Sqrt`, `Floor`, `Ceil`, `Trunc`, `Round`,
   `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
   `IsInf`, `Max`, `Min`, the constants) and `strconv.FormatFloat` /
-  `ParseFloat` (compiler intrinsics: the calls are builtins, their
-  bodies never compiled, so a program that imports strconv for `Atoi`
-  needs no float support) are the `B_FLOAT` builtin in
+  `ParseFloat` (builtins of the system package `gogo/strconv`, which is
+  compiled only where used, so a program that imports strconv for `Atoi`
+  needs no float support; `ParseFloat` is library code that turns the
+  builtin's bool into Go's error) are the `B_FLOAT` builtin in
   `runtime/floatlib`, outside the VM core, without libm and without the C
   library's conversions: `ParseFloat` parses Go's syntax (underscores
   included) and rounds exactly on the same bignum, at either width (a
@@ -458,7 +511,8 @@ type Request struct{ From PID; Ref Ref; Body any }
 
 Reason codes: `Normal`, `Killed`, `OutOfMemory`, `MailboxOverflow`,
 `NoProc`, `DivZero`, `BadCode`, `Shutdown`, `BadShift`, `BadMsg` (a value
-that may not cross modules was sent, §5.4.4); user codes start at 100.
+that may not cross modules was sent, §5.4.4), `Panic` (`panic(v)`);
+user codes start at 100.
 
 A type switch takes the place of Erlang's pattern matching on receive:
 
@@ -505,19 +559,22 @@ types (`Host`, `Post`). Each device's types are in its own package
 `gogo/audio`, `gogo/screen`, `gogo/net`).
 
 ```go
-led, ok := port.Open("gpio", gpio.Config{Pin: 25, Mode: gpio.Output})
+led, err := port.Open("gpio", gpio.Config{Pin: 25, Mode: gpio.Output})
 actor.Send(led, gpio.Write{Value: 1})
-btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+btn, err := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 // the owner then receives gpio.Edge{Pin, Value} messages
 ```
 
-- `port.Open(driver string, cfg any) (actor.PID, bool)`: the caller
+- `port.Open(driver string, cfg any) (actor.PID, error)`: the caller
   becomes the owner. An unknown driver, an invalid configuration, a busy
-  resource or a lack of memory gives `ok == false` and the zero PID. The
-  VM keeps the reason as a shared error code, `vm->open_err`
-  (`NotFound`, `BadArg`, `TooMany`, `NoMemory` or `Busy`, `port.h`):
-  `fs.Open` reports it, and Go code will get it when `port.Open` returns
-  `error` (language phase B).
+  resource or a lack of memory gives an `errors.Code` and the zero PID:
+  the VM keeps the reason as a shared error code, `vm->open_err`
+  (`NotFound`, `BadArg`, `TooMany`, `NoMemory` or `Busy`, `port.h`).
+  `port.Open` is library code over builtin 26, `B_PORT_OPEN`, which
+  returns only a bool: on a failure it reads the reason right away with
+  `B_FS` operation 14, `FS_OPENERR` (15.4; no instruction runs in
+  between that could let another actor open a port), which keeps the
+  VM core out of it. `fs.Open` reports the same reason.
   `port.Close(p)` closes a port; stale or unknown PIDs are ignored.
   `port.Handoff(p, to) bool`: the owner hands the port to another live
   actor; later events go to `to`, the port closes when `to` exits, and
@@ -572,7 +629,7 @@ text grid while it is open.
   `runtime/net/netif.h`. Above it are the ports `netif`, `udp`, `tcp`,
   `tcp_listen` and `tls`, and above those the libraries `gogo/dhcp`,
   `gogo/dns`, `gogo/http` and `gogo/sntp`, written in the subset. The
-  stub package `gogo/net` (`lib/net/`) holds the port types (reserved
+  system package `gogo/net` (`lib/net/`) holds the port types (reserved
   types 9-22 and 41).
 - **Ports.** `netif` (`net.IfConfig{}`, one owner for the whole machine;
   command `net.SetAddr{IP, Mask, Gateway, DNS}`). `udp` (`net.UDP{Port}`;
@@ -622,18 +679,20 @@ text grid while it is open.
   control block 12 B, a `Port` 64 B (32-bit); the net code is about
   11.3 KB (xtensa, -Os). The Wi-Fi driver takes about 30 KB of heap and
   31.5 KB of static RAM; lwIP and esp_netif are not linked.
-- **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs})` starts the DHCP
+- **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs}) error` starts the DHCP
   client actor, which owns `netif` (renewal at T1, rebinding at T2, the
   address cleared at expiry). With the configuration keys `net.ip`,
   `net.mask`, `net.gw` and `net.dns` it sets a static address instead.
-- **`gogo/dns`**: `dns.Lookup(name, timeoutMs) (int, bool)`, served by a
+- **`gogo/dns`**: `dns.Lookup(name, timeoutMs) (int, error)` (`NotFound`,
+  `NoRoute`, `Timeout`, `BadArg`), served by a
   resolver actor registered as `dns`: A records, 2 retries, a cache of 4
   entries by TTL, cleared when the network goes down or the DNS server
   changes.
 - **`gogo/http`**: the client `http.Get`, `http.Post` and
   `http.Do(method, url, contentType, body, maxBody, timeoutMs)` take
   `http://` (HTTP/1.0) or `https://` (HTTP/1.1, through the `tls` port)
-  URLs, both with `Connection: close`. Each request runs in a temporary
+  URLs, both with `Connection: close`, and return `(Response, error)`
+  (`BadURL`, `Timeout`, `IO`). Each request runs in a temporary
   actor; the caller waits as with `Call`. The response body is limited
   (`MaxBody`, 8 KB by default; `Do` up to `MaxBodyLimit`, 64 KB), cut
   there and marked `Truncated`, and charged to the caller, whose default
@@ -683,7 +742,7 @@ text grid while it is open.
   (`runtime/vm/platform.h`; `runtime/vm/walltime.c` has weak defaults: an
   offset from the monotonic clock, unknown at boot). There is no
   permission model: any code may set the time, and the floor is the only
-  protection. `sntp.Sync(server, timeoutMs) bool` does one SNTP exchange
+  protection. `sntp.Sync(server, timeoutMs) error` does one SNTP exchange
   in a helper actor (up to 3 sends, 60 random bits as a nonce, source and
   fields checked, half the round trip added) and calls `sys.SetTime` on
   success. On Unix the wall clock starts from the host clock or from
@@ -698,7 +757,7 @@ FatFs).
   table, the backend interface `VfsBackend`) plus backends: LittleFS
   (`runtime/vfs/lfs/`, over a board's `BlockDev`) and FatFs
   (`runtime/vfs/fat/`, over a `DiskHal`) on the ESP32-S3; a host directory on Unix (`gogo run --fs-root
-  <dir>`; without it every path is `NotMounted`). `gogo/fs` is a stub
+  <dir>`; without it every path is `NotMounted`). `gogo/fs` is a system
   package: the compiler turns its calls into `B_FS` (builtin 49, first
   argument the operation number); `File.Close` is a port close.
   `fs.Info` and `fs.Space` are reserved types 23 and 24.
@@ -810,7 +869,7 @@ functions in new actors by name. Code is never replaced in place: an
 upgrade is a supervisor restarting a child with the new module. Book
 chapter 14 explains it from the user's side.
 
-**API** (stub package `gogo/code`, compiled to builtin 50 `B_CODE`; the C
+**API** (system package `gogo/code`, compiled to builtin 50 `B_CODE`; the C
 side is `runtime/vm/module.c`):
 
 ```go
@@ -858,7 +917,7 @@ table after the constant map (§5.6).
 When sender and receiver belong to different modules, constant strings,
 bytes and boxed `int64`s in the message are copied to the heap; only
 basic values, `Bytes`, PIDs, Refs, `Module` values and reserved types
-(the structs of the `gogo` stub packages) may cross. A message that
+(the reserved structs of the `gogo` system packages) may cross. A message that
 contains a module's own struct type or a closure makes the **sender**
 exit with `BadMsg`, for its supervisor to handle; `code.Spawn`'s `arg`
 follows the same rule but returns `BadArg`. The check runs when the
@@ -892,7 +951,7 @@ compiled package is still in the image. `lib/strconv/unsigned.gg` uses it.
 
 **The `//gogo:optional` directive.** A package (a library or `package
 main`) can declare drivers it uses only softly: opened only when a call needs them at run
-time, and their absence (`port.Open` returning `ok=false`) reported as
+time, and their absence (`port.Open` returning an error) reported as
 that call's failure. The directive is a comment line in any file of the
 package, `//gogo:optional name...` (by convention at the end of the
 package doc comment, after an empty `//` line, as gofmt places
@@ -960,7 +1019,7 @@ font.
   `runtime/floatlib`; off, the VM lacks the requirement `float` and
   refuses an image that uses floats). A
   switched-off feature behaves as if the board lacked the hardware: its
-  `port.Open` returns `ok=false`, and `gogo device scan` and the like
+  `port.Open` returns `errors.NotFound`, and `gogo device scan` and the like
   answer "no network in this firmware".
 - **What a build provides.** `platform_esp.c` lists in `esp_ports` only
   the drivers the build has (`#if HAS_KBD && CONFIG_GOGO_KBD`, ...) and
@@ -1091,7 +1150,7 @@ font.
   words); each `Chunk` waiting in the mailbox costs F + 10 words more.
   Open also checks that the owner has room for one `Chunk` beside the
   buffer (`Port.room_64w`, in `Port`'s padding, so `Port` stays 64 bytes)
-  and returns `ok=false` otherwise, rather than staying silent forever. To
+  and fails with `errors.NoMemory` otherwise, rather than staying silent forever. To
   survive a stall of S ms (writing to SD), the owner needs heap + F +
   (ceil(S / FrameMs) + 1) x (F + 10) words: at 16 kHz and 100 ms, a 300 ms
   stall needs heap + 4040 words, more than the default 4096-word limit on
@@ -1185,7 +1244,7 @@ explains it from the user's side.
   are process-global and take no context, so they are bound to the first
   board TLS table (`TlsHw`) that sets mbedTLS up. Every VM in one process
   must use that same table: a VM whose board brings another one has its
-  `tls` opens refused (`ok=false`, logged once). This is the runtime's
+  `tls` opens refused (an error, logged once). This is the runtime's
   one piece of process-global state. VMs on different threads may still
   run TLS at the same time: on the host the time hook reads a
   thread-local pointer to the VM being driven, so each VM checks
@@ -1710,7 +1769,8 @@ together with `mbox_words` through `actor_charged_words`).
   `TYPEIS` ids of `float32` and `float64`, which also make the image
   require `float`; 15.3 sized integers, the unsigned `uint64` ops,
   `B_PRINTLNU` and `OP_CONV` modes 3-6 (`sizedMinor`, which the scan
-  reads off each `OP_CONV`'s mode).
+  reads off each `OP_CONV`'s mode); 15.4 the language's abstraction
+  phase, `panic` and the interface and equality builtins (`ifaceMinor`).
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old
@@ -1741,7 +1801,8 @@ together with `mbox_words` through `actor_charged_words`).
   `B_FS` (gogo/fs), 50 `B_CODE` (gogo/code), 51-53 `sys.Time`,
   `sys.SetTime`, `sys.Random`, 54 `B_FLOAT` (15.2: gogo/math and
   `strconv.FormatFloat` / `ParseFloat`, `runtime/floatlib`), 55
-  `B_PRINTLNU` (15.3: `println` with `uint64` values).
+  `B_PRINTLNU` (15.3: `println` with `uint64` values); from 15.4, 56
+  `panic`, 57 `B_CMP` (`==` on structs, arrays and interfaces).
 - **Float ops** (15.2, `OP_ADDF` .. `OP_CONVF`, 52-61): one set for both
   widths. The operands' boxes carry the width (a 2-word `K_FLOAT` is a
   `float32`, a 3-word one a `float64`), and the op computes in it; mixed
@@ -1753,15 +1814,19 @@ together with `mbox_words` through `actor_charged_words`).
   holding the bits; `uint32` uses the `int64` ops on widened values
   (Sized integers, §5.2). `OP_CONV` gained modes 3-6 (`uint16`, `int8`,
   `int16`, and `int64` of a `uint32`).
-- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 45 of them,
+- **Reserved types** (`TYPE_*` in `runtime/vm/opcodes.h`, 47 of them,
   0..44): 0-5 `gogo/actor` (`ProcInfo`, `Reason`, `ExitMsg`, `DownMsg`,
   `Request`, `Options`), 6-8 `gpio.Config`, `gpio.Write`, `gpio.Edge`,
   9-22 `gogo/net`, 23-24 `fs.Info`, `fs.Space`, 25-29 `gogo/kbd` and
   `gogo/power`, 30 `code.Module`, 31-34 `port.Chunk`, `port.Out`,
   `port.Done`, `port.Closed` (the stream protocol), 35-36 `gogo/imu`,
   37-38 `gogo/ir`, 39-40 `gogo/audio`, 41 `net.DialTLS`, 42-43
-  `port.Host`, `port.Post` (embed mode), 44 `screen.Config` (15.1). The
-  15.0 table (0..43) is frozen by `TestMinorBaseline` in `compiler/`.
+  `port.Host`, `port.Post` (embed mode), 44 `screen.Config` (15.1), 45-46
+  `errors.Code` (the box an error holds it in) and `errors.errorString`
+  (15.4). The 15.0 table (0..43) is frozen by `TestMinorBaseline` in
+  `compiler/`. The names of the types after 44 go into an image's
+  constant area only with their row, so a new one changes no image that
+  does not use it.
 
 ### 5.7 Scheduling
 
@@ -1787,9 +1852,10 @@ together with `mbox_words` through `actor_charged_words`).
 - **Exit reasons** are `actor.Reason{Code int; Func string}`. `Code` is
   `actor.Normal` (the entry function returned), `Killed`, `OutOfMemory`,
   `MailboxOverflow`, `NoProc`, `DivZero`, `BadCode`, `Shutdown`,
-  `BadShift`, `BadMsg`, a library failure (64..99: `actor.Failed` (64)
-  plus a shared error code, such as `http.ListenFailed`; 10..63 are kept
-  for the VM), or a user code (100 or more, from
+  `BadShift`, `BadMsg`, `Panic` (10), a library failure (64..99:
+  `actor.Failed` (64) plus a shared error code, such as
+  `http.ListenFailed`; 11..63 are kept for the VM), or a user code (100
+  or more, from
   `actor.Exit(code)` / `actor.Kill(p, code)`); `Func` is the name of the
   function where a run-time error happened, else empty.
 - On exit, linked actors get an exit signal (an `ExitMsg` if they trap
@@ -1801,9 +1867,14 @@ together with `mbox_words` through `actor_charged_words`).
   trapped.
 - Crash reports go to stderr: `gogo: actor <pid N> crashed: <kind>[ in
   <func>]`, where `<kind>` is `killed`, `oom`, `mailbox_overflow`,
-  `noproc`, `divzero`, `badcode`, `badshift`, `badmsg` or `exit(<code>)`;
-  `Normal` and `Shutdown` are not reported. There are no line numbers
-  yet.
+  `noproc`, `divzero`, `badcode`, `badshift`, `badmsg`, `panic` or
+  `exit(<code>)`; `Normal` and `Shutdown` are not reported. There are no
+  line numbers yet.
+- **`panic(v)`** (builtin 56 `B_PANIC`, 15.4) prints `panic: ` and `v`
+  (as `println` prints it) on stderr and ends the actor with
+  `actor.Panic`, like any run-time error: links, monitors and supervisors
+  see it. There is no `recover`: a supervisor restarts the actor
+  instead.
 - **Error codes** are one space, `gogo/errors` (`errors.Code`; the C
   side's `GOGO_E_*` in `runtime/include/gogo_errors.h`, which a test keeps
   equal): 0 is `OK`, 1..35 are meanings every package shares
@@ -1813,16 +1884,17 @@ together with `mbox_words` through `actor_charged_words`).
   and each package that needs its own codes gets a block of 20 from 100
   (`gogo/http` 100..119, `gogo/sound` 120..139). The codes are
   compile-time constants: no opcode, builtin, reserved type or image
-  field depends on the table (the C side uses the same names). A later
-  language phase gives `Code` an `Error()` method and makes functions
-  return `error`. **Open for that phase:** whether `fs.Err`, `code.Err`
-  and the other result types become aliases of `errors.Code`, or the
-  language gets an `errors.Is`-like rule. Until one of them, an `fs.Err`
-  and an `errors.Code` of the same number are different types: they do
-  not compare today, and as Go `error` values with different dynamic
-  types they would not be equal either. Equal numbers make either step
-  possible; they do not by themselves make `err == errors.NotFound` work
-  across packages.
+  field depends on the table (the C side uses the same names). `Code` is
+  an `error` (15.4): `gogo/errors` has `Code.Error` (the texts of
+  `gogo_strerror`), `New`, `Is` and `Unwrap`. `Code`'s interface box and
+  `New`'s `errorString` are reserved types 45 and 46, so these errors
+  cross modules, and every program that uses `error` loads `gogo/errors`
+  (a system package: only what it uses is compiled) so that its
+  dispatchers know them. `fs.Err` and `code.Err` are type aliases of
+  `errors.Code` (`type Err = errors.Code`; the language decision of 15.4
+  over an `errors.Is`-like rule): one type, so `err == errors.NotFound`
+  holds for an error from any package, as a `Code` or as an `error`, and
+  `fs.NotFound` stays a constant of it.
 - Supervision is the `gogo/supervisor` library, written in the subset:
   `Supervise(child, spec)` and `SuperviseModule(m, entry, arg, spec)`
   supervise one child each (restart types Permanent and Transient, a
@@ -2248,7 +2320,9 @@ variadic functions, methods with value receivers, embedded fields,
 arrays, static `defer`); floating point (`float32`, `float64`,
 `gogo/math`, `strconv.FormatFloat` / `ParseFloat`; image format 15.2);
 sized integers (`int8` .. `uint64`, `strconv.FormatUint` / `ParseUint` /
-`ParseInt`; image format 15.3).
+`ParseInt`; image format 15.3); `panic`, type assertions, interfaces and
+`error`, `==` on structs, arrays and interfaces, and the library's Go
+signatures (image format 15.4).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
@@ -2258,9 +2332,9 @@ sized integers (`int8` .. `uint64`, `strconv.FormatUint` / `ParseUint` /
 2. **Distributed actors:** remote PIDs and a `gogo/node` library; boards
    connect to a server node that also relays board-to-board messages,
    with direct LAN links as a later step.
-3. **Language completeness:** pointer receivers, interfaces and
-   `error`, `panic`, pointers, maps, read-only package variables, `fmt`
-   (floating point and sized integers are done).
+3. **Language completeness:** pointer receivers, pointers, maps,
+   read-only package variables, `fmt` (floating point, sized integers,
+   interfaces, `error` and `panic` are done).
 4. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler,

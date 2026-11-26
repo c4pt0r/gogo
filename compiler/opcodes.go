@@ -171,6 +171,10 @@ const (
 	BRandom       uint32 = 53 // -> int in [0, 2^30): sys.Random (platform_random)
 	BFloat        uint32 = 54 // op int, args... -> result(s): gogo/math, strconv floats (runtime/floatlib)
 	BPrintlnu     uint32 = 55 // (15.3) mask, values... -> nil: println, bit i marks value i a uint64
+
+	// Since 15.4 (ifaceMinor).
+	BPanic uint32 = 56 // v -> (does not return): panic(v), exit reason R_PANIC
+	BCmp   uint32 = 57 // a, b [, x] -> -1 | 0 | 1: the order of two values (== on interfaces, structs; x for arrays)
 )
 
 // Off-heap Bytes limits: twins of runtime/vm/config.h's defaults (checked by
@@ -263,10 +267,13 @@ const (
 	TypePost uint32 = 43
 	// screen.Config (15.1): cfg of the "screen" port
 	TypeScreenConfig uint32 = 44
+	// gogo/errors (15.4): the box of an errors.Code, errors.New's error
+	TypeErrorsCode        uint32 = 45
+	TypeErrorsErrorstring uint32 = 46
 	// TypeReservedCount is how many reserved types there are
 	// (TYPE_RESERVED_COUNT in runtime/vm/opcodes.h; TestReservedTypeCount
 	// checks len(reservedTypes)).
-	TypeReservedCount uint32 = 45
+	TypeReservedCount uint32 = 47
 	// TypeOwnBase is the index of an image's first own struct type
 	// (TYPE_OWN_BASE): fixed, whatever the reserved count.
 	TypeOwnBase uint32 = 128
@@ -351,7 +358,8 @@ var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "M
 	"UNREGISTER", "PORT_OPEN", "PORT_CLOSE", "STR_CONCAT", "LEN", "INDEX", "SETINDEX",
 	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
 	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
-	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE", "UNIX_TIME", "SET_UNIX_TIME", "RANDOM", "FLOAT", "PRINTLNU"}
+	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE", "UNIX_TIME", "SET_UNIX_TIME", "RANDOM", "FLOAT", "PRINTLNU",
+	"PANIC", "CMP"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
@@ -394,6 +402,7 @@ var goConstants = map[string]uint32{
 	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
 	"BBytesCopyto": BBytesCopyto, "BPortHandoff": BPortHandoff, "BNetSubscribe": BNetSubscribe,
 	"BConfigGet": BConfigGet, "BFs": BFs, "BCode": BCode, "BUnixTime": BUnixTime, "BSetUnixTime": BSetUnixTime, "BRandom": BRandom, "BFloat": BFloat, "BPrintlnu": BPrintlnu,
+	"BPanic": BPanic, "BCmp": BCmp,
 	"TyInt": TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes, "TyFloat32": TyFloat32, "TyFloat64": TyFloat64,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
@@ -410,5 +419,6 @@ var goConstants = map[string]uint32{
 	"TypeImuConfig": TypeImuConfig, "TypeImuGesture": TypeImuGesture, "TypeIrTx": TypeIrTx, "TypeIrRx": TypeIrRx,
 	"TypeAudioMic": TypeAudioMic, "TypeAudioSpeaker": TypeAudioSpeaker, "TypeNetDialtls": TypeNetDialtls,
 	"TypeHost": TypeHost, "TypePost": TypePost, "TypeScreenConfig": TypeScreenConfig,
+	"TypeErrorsCode": TypeErrorsCode, "TypeErrorsErrorstring": TypeErrorsErrorstring,
 	"TypeReservedCount": TypeReservedCount, "TypeOwnBase": TypeOwnBase,
 }

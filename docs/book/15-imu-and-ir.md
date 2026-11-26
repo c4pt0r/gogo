@@ -116,8 +116,8 @@ func abs(v int) int {
 }
 
 func main() {
-	_, ok := port.Open("imu", imu.Config{RateHz: 25, BatchMs: 200})
-	if !ok {
+	_, err := port.Open("imu", imu.Config{RateHz: 25, BatchMs: 200})
+	if err != nil {
 		println("no motion sensor on this board")
 		return
 	}
@@ -214,8 +214,8 @@ func side(v int) string {
 }
 
 func main() {
-	_, ok := port.Open("imu", imu.Config{Gestures: imu.DoubleTap | imu.Orientation | imu.Step})
-	if !ok {
+	_, err := port.Open("imu", imu.Config{Gestures: imu.DoubleTap | imu.Orientation | imu.Step})
+	if err != nil {
 		println("no motion sensor on this board")
 		return
 	}
@@ -340,8 +340,8 @@ import (
 )
 
 func main() {
-	rx, ok := port.Open("ir_rx", ir.RX{GapUs: 10000})
-	if !ok {
+	rx, err := port.Open("ir_rx", ir.RX{GapUs: 10000})
+	if err != nil {
 		println("no IR receiver on this board")
 		return
 	}
@@ -360,8 +360,8 @@ func main() {
 		println("it is NEC: address", addr, "command", cmd)
 	}
 
-	tx, ok := port.Open("ir_tx", ir.TX{CarrierHz: 38000, DutyPct: 33})
-	if !ok {
+	tx, err := port.Open("ir_tx", ir.TX{CarrierHz: 38000, DutyPct: 33})
+	if err != nil {
 		println("no IR transmitter on this board")
 		return
 	}

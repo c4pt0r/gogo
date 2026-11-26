@@ -13,7 +13,7 @@ import (
 
 func main() {
 	println("subscribe", net.Subscribe())
-	println("start", dhcp.Start(dhcp.Config{TimeoutMs: 30000}), actor.Now())
+	println("start", dhcp.Start(dhcp.Config{TimeoutMs: 30000}) == nil, actor.Now())
 	var c actor.PID
 	have := false
 	for {
@@ -22,13 +22,15 @@ func main() {
 			println("up", actor.Now())
 			if !have {
 				actor.Sleep(100)
-				c, have = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+				var err error
+				c, err = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+				have = err == nil
 				println("dial", have)
 			}
 		case net.Down:
 			println("down", actor.Now())
-			_, ok := http.Get("http://10.0.0.1/", 5000)
-			println("get", ok, actor.Now())
+			_, err := http.Get("http://10.0.0.1/", 5000)
+			println("get", err == nil, actor.Now())
 		case net.Connected:
 			println("connected", actor.Now())
 		case port.Chunk:

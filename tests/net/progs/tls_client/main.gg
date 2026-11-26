@@ -184,27 +184,27 @@ func run() {
 		if step == "time" {
 			println("time", sys.SetTime(int64(cfg("test.time", 0))*1000))
 		} else if step == "dial" || step == "open" {
-			p, ok := port.Open("tls", dialCfg())
-			println(step, ok)
+			p, err := port.Open("tls", dialCfg())
+			println(step, err == nil)
 			c = p
 			pos = 0
-			if ok && step == "dial" {
+			if err == nil && step == "dial" {
 				connect()
 			}
 		} else if step == "dialtime" {
 			t0 := actor.Now()
-			p, ok := port.Open("tls", dialCfg())
-			println("dial", ok)
+			p, err := port.Open("tls", dialCfg())
+			println("dial", err == nil)
 			c = p
 			pos = 0
-			if ok {
+			if err == nil {
 				connect()
 				println("handshake sim ms", actor.Now()-t0)
 			}
 		} else if step == "dial2" {
-			p, ok := port.Open("tls", dialCfg())
-			println("dial2", ok)
-			if ok {
+			p, err := port.Open("tls", dialCfg())
+			println("dial2", err == nil)
+			if err == nil {
 				port.Close(p)
 			}
 		} else if strings.HasPrefix(step, "send:") {
@@ -246,8 +246,8 @@ func main() {
 	if strings.HasPrefix(script, "small") {
 		a = actor.SpawnOpt(func() {
 			sys.SetTime(int64(cfg("test.time", 0)) * 1000)
-			_, ok := port.Open("tls", dialCfg())
-			println("small", ok)
+			_, err := port.Open("tls", dialCfg())
+			println("small", err == nil)
 		}, actor.Options{MaxMemory: 16 * 1024})
 	} else {
 		a = actor.SpawnOpt(run, actor.Options{MaxMemory: 64 * 1024})

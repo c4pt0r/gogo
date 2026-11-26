@@ -90,6 +90,8 @@ type Reason struct {
 | 6 | `actor.BadCode` | index or slice out of range, nil function call, unusable zero `Buffer`, ... | `badcode` |
 | 7 | `actor.Shutdown` | asked to stop (supervisors use this) | none |
 | 8 | `actor.BadShift` | a negative shift count | `badshift` |
+| 9 | `actor.BadMsg` | sent a module's own value to another module (chapter 14) | `badmsg` |
+| 10 | `actor.Panic` | `panic(v)`, a failed type assertion, a method call on a nil interface | `panic`, after `panic: v` |
 | ≥ 100 | your own | `actor.Exit(code)` or `actor.Kill(p, code)` | `exit(<code>)` |
 
 `Normal` and `Shutdown` are the two "expected" endings; everything else
@@ -134,6 +136,7 @@ func main() {
 		f()
 	})
 	watch("endless recursion", func() { println(deep(0)) })
+	watch("panic", func() { panic("boom") })
 	watch("killed", func() {
 		actor.Kill(actor.Self(), actor.Killed)
 	})
@@ -148,6 +151,7 @@ index out of range -> code 6 func [main.main.func4]
 negative shift -> code 8 func [main.main.func5]
 nil func -> code 6 func [main.main.func6]
 endless recursion -> code 2 func [deep]
+panic -> code 10 func [main.main.func8]
 killed -> code 1 func []
 ```
 
@@ -160,11 +164,19 @@ gogo: actor <pid 1> crashed: badcode in main.main.func4
 gogo: actor <pid 1> crashed: badshift in main.main.func5
 gogo: actor <pid 1> crashed: badcode in main.main.func6
 gogo: actor <pid 1> crashed: oom in deep
+panic: boom
+gogo: actor <pid 1> crashed: panic in main.main.func8
 gogo: actor <pid 1> crashed: killed
 ```
 
 Note that endless recursion is not a special error: the stack lives in the
 actor's memory, so it simply runs into the memory limit (`oom`).
+
+`panic(v)` is Go's: it prints `panic: ` and the value on standard error
+and ends the actor, here with the reason `actor.Panic`. There is no
+`recover`. A panic is a crash like the others, so the links, monitors and
+supervisors of the next sections handle it; that is gogo's answer to
+"something that should never happen just did".
 
 ## 5.3 Links
 
@@ -491,8 +503,8 @@ type Ready struct{ From actor.PID }
 // parse turns "n" into n, and crashes on anything else: no error handling
 // at all, the supervisor takes care of failure.
 func parse(s string) int {
-	n, ok := strconv.Atoi(s)
-	if !ok {
+	n, err := strconv.Atoi(s)
+	if err != nil {
 		actor.Exit(100) // "bad input"
 	}
 	return n

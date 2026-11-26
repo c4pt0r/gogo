@@ -1,0 +1,9 @@
+load 0
+module sum 21
+Sum down 0
+module got something else
+Sum down 0
+spawn Sum refused 6
+spawn Sum refused 6
+Nil down 10
+host -5 7

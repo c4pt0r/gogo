@@ -1,6 +1,6 @@
 // Package screen is the gogo text screen API: the "screen" port. It is a
-// stub package like gogo/imu: the compiler type-checks against it and the
-// bodies (there are none) are never run. The C side is runtime/screen/ and
+// system package like gogo/imu: its type is reserved (the VM builds and
+// reads it by fixed index). The C side is runtime/screen/ and
 // the board's display hook. Most programs use gogo/tui, which builds on it.
 //
 // The screen is a grid of character cells. Each cell holds one character, a
@@ -54,6 +54,8 @@ package screen
 // means the whole display (40 x 11 on both boards and, by default, on the
 // host). A board refuses a grid larger than its display; the host takes up
 // to 255 columns and 32 rows.
+//
+//gogo:reserved 44
 type Config struct{ Cols, Rows int }
 
 // Operations (see the package comment).

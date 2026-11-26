@@ -9,8 +9,8 @@ import (
 )
 
 func main() {
-	_, ok := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Both})
-	println(ok)
+	_, err := port.Open("gpio", gpio.Config{Pin: 11, Mode: gpio.InputPullUp, Edge: gpio.Both})
+	println(err == nil)
 	for {
 		switch e := actor.Receive().(type) {
 		case gpio.Edge:

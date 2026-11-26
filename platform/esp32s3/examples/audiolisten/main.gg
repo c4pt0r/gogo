@@ -12,8 +12,8 @@ import (
 )
 
 func main() {
-	p, ok := port.Open("mic", audio.Mic{RateHz: 16000, FrameMs: 100})
-	if !ok {
+	p, err := port.Open("mic", audio.Mic{RateHz: 16000, FrameMs: 100})
+	if err != nil {
 		println("listen: no mic")
 		return
 	}

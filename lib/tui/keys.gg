@@ -53,17 +53,17 @@ type Keys struct {
 // the buttons b (Buttons{ButtonA, ButtonB} on the StickS3); ok is false if
 // neither opens. The caller owns the ports.
 func OpenKeys(b Buttons) (Keys, bool) {
-	k, ok := port.Open("kbd", kbd.Config{RepeatDelayMs: 400, RepeatMs: 80})
-	if ok {
+	k, err := port.Open("kbd", kbd.Config{RepeatDelayMs: 400, RepeatMs: 80})
+	if err == nil {
 		return Keys{HasKbd: true, Kbd: k}, true
 	}
 	a, oka := port.Open("gpio", gpio.Config{Pin: b.A, Mode: gpio.InputPullUp, Edge: gpio.Both})
 	bb, okb := port.Open("gpio", gpio.Config{Pin: b.B, Mode: gpio.InputPullUp, Edge: gpio.Both})
-	if !oka || !okb {
-		if oka {
+	if oka != nil || okb != nil {
+		if oka == nil {
 			port.Close(a)
 		}
-		if okb {
+		if okb == nil {
 			port.Close(bb)
 		}
 		return Keys{}, false

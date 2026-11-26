@@ -1,0 +1,95 @@
+// Type assertions on any, and the values that are boxed in one: a named
+// non-struct type keeps its type (a Celsius is not an int, nor another
+// named int), a byte is not an int, an int64 is not an int. Valid Go:
+// `go run` prints the same (gocompare); assert_fail has the panics.
+package main
+
+type Celsius int
+type Kelvin int
+type Name string
+type Flag bool
+type Big int64
+
+type Point struct{ X, Y int }
+
+func kind(x any) string {
+	switch v := x.(type) {
+	case int:
+		return "int " + itoa(v)
+	case Celsius:
+		return "Celsius " + itoa(int(v))
+	case Kelvin:
+		return "Kelvin " + itoa(int(v))
+	case byte:
+		return "byte " + itoa(int(v))
+	case int64:
+		return "int64 " + itoa(int(v+1))
+	case Big:
+		return "Big " + itoa(int(v>>32))
+	case Name:
+		return "Name " + string(v)
+	case string:
+		return "string " + v
+	case Flag:
+		if v {
+			return "Flag true"
+		}
+		return "Flag false"
+	case Point:
+		return "Point " + itoa(v.X+v.Y)
+	case nil:
+		return "nil"
+	}
+	return "other"
+}
+
+func itoa(n int) string {
+	if n < 0 {
+		return "-" + itoa(-n)
+	}
+	if n < 10 {
+		return string([]byte{byte('0' + n)})
+	}
+	return itoa(n/10) + itoa(n%10)
+}
+
+func pair() (Celsius, byte) { return 21, 'x' }
+
+func main() {
+	var b byte = 200
+	c := Celsius(-5)
+	values := []any{1, c, Kelvin(3), b, int64(41), Big(5) << 32, Name("n"), "s", Flag(true), Point{1, 2}, nil}
+	for _, v := range values {
+		println(kind(v))
+	}
+
+	// Constants are boxed too.
+	var k any = Kelvin(300)
+	var f any = Flag(false)
+	println(kind(k), kind(f), kind(Celsius(1)))
+
+	// Results of a multi-result call into interfaces.
+	var x, y any
+	x, y = pair()
+	println(kind(x), kind(y))
+
+	// x.(T): the value, unboxed; x.(T) with ok: false and the zero value
+	// on a mismatch.
+	n := x.(Celsius) + 1
+	println(int(n))
+	i, ok := x.(int)
+	println(i, ok)
+	cv, ok := x.(Celsius)
+	println(int(cv), ok)
+	by, ok := y.(byte)
+	println(by, ok, by+100)
+	w, ok := values[4].(int64)
+	println(w+1, ok, w == 41)
+	p, ok := values[9].(Point)
+	println(p.X, p.Y, ok)
+	s, ok := values[3].(string)
+	println(s == "", ok)
+	var e any
+	_, ok = e.(int)
+	println(ok)
+}

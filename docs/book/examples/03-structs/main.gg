@@ -45,8 +45,6 @@ func main() {
 	var z Rect
 	println(z.Max.X, z.Name == "")
 
-	// Compare structs field by field: == on structs is not in the subset.
-	println(samePoint(p, Point{1, 2}))
+	// == compares structs field by field.
+	println(p == Point{1, 2}, q != p)
 }
-
-func samePoint(a, b Point) bool { return a.X == b.X && a.Y == b.Y }

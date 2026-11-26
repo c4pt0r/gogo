@@ -11,7 +11,7 @@ support*). The Go toolchain and gopls do not read `.gg` files.
 
 Host checks (`make test-lib`, part of `make test` through `go test ./...`):
 `tests/lib_test.go` copies every `X/*.gg` as `X/*.go` into a temporary Go
-module `gogo`, where every package type-checks on the host (stub bodies are
+module `gogo`, where every package type-checks on the host (builtin bodies are
 `panic("gogo only")`), with the host tests (`X/*_test.go`, real Go with
 build tag `gogohost`: `irproto/irproto_test.go`), and runs `go vet
 -stdmethods=false ./...` (`bytes.Buffer.WriteByte` deliberately returns no
@@ -19,18 +19,26 @@ error) and `go test ./...` there.
 
 Two kinds of package:
 
-- **stub**: API only. The bodies are never executed: the compiler replaces
-  every call with a VM instruction or builtin, and its struct types have
-  fixed type indices (`TYPE_*` in `runtime/vm/opcodes.h`). The list is
-  `isStub` in `compiler/load.go`. A library may hold such functions too:
-  `strconv.FormatFloat` and `ParseFloat` (`lib/strconv/float.gg`) are
-  compiler intrinsics (`strconvIntrinsics` in `compiler/check.go`), never
-  compiled, so the rest of `gogo/strconv` needs no float support.
+- **system**: a package that declares builtins: functions, methods and
+  types the VM implements, each marked by the last line of its doc
+  comment, `//gogo:builtin` (the body, `panic("gogo only")`, is for the
+  host toolchain and is never compiled: the compiler turns every call
+  into a VM instruction or builtin), and struct types with a fixed type
+  index, `//gogo:reserved N` (`TYPE_*` in `runtime/vm/opcodes.h`; the
+  compiler checks the index against its table). A system package may also
+  hold ordinary library code (functions and methods with real bodies),
+  which is compiled into an image only where the program uses it, so
+  importing a system package costs nothing by itself. The marks are read
+  by `marks.add` in `compiler/load.go`; they are for the `gogo/`
+  libraries only.
+  `gogo/strconv` is one: its `FormatFloat` and the parser under
+  `ParseFloat` (`lib/strconv/float.gg`) are `B_FLOAT` builtins, so the
+  rest of `gogo/strconv` needs no float support.
 - **library**: written in the gogo subset and compiled into every image that
-  imports it (no dead-function elimination). A library may import stubs and
-  other libraries, without cycles, but not a user package (a program's own,
-  any import path outside `gogo/`). User packages compile like libraries
-  and may import both.
+  imports it (no dead-function elimination). A library may import system
+  packages and other libraries, without cycles, but not a user package (a
+  program's own, any import path outside `gogo/`). User packages compile
+  like libraries and may import both.
 
 The requirements column lists the names the compiler records in the
 image when a package is compiled in (`compiler/modinfo.go`): the driver of
@@ -67,25 +75,25 @@ declares `kbd`. Book chapter
 
 | package | kind | imports | requires |
 |---------|------|---------|------------|
-| `gogo/actor` | stub | | none |
-| `gogo/port` | stub | actor, bytes | none (each constant `port.Open`: its driver); also the stream protocol every byte port speaks (`Chunk`, `Out`, `Done`, `Closed`) and the host-port types |
-| `gogo/bytes` | stub | | none |
-| `gogo/net` | stub | actor, bytes, errors | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
-| `gogo/gpio` | stub | | none (the `gpio` port: `gpio`) |
-| `gogo/fs` | stub | actor, bytes, errors | none (constant `/sd` paths: `/sd`) |
-| `gogo/kbd` | stub | | none (the `kbd` port: `kbd`) |
-| `gogo/power` | stub | | none (the `power` port: `power`) |
-| `gogo/code` | stub | actor, bytes, errors | none |
-| `gogo/imu` | stub | | none (the `imu` port: `imu`) |
-| `gogo/ir` | stub | | none (the `ir_tx` / `ir_rx` ports: `ir_tx` / `ir_rx`) |
-| `gogo/audio` | stub | | none (the `mic` / `speaker` ports: `mic` / `speaker`) |
-| `gogo/sys` | stub | | none (the clock, randomness, `sys.Config`, the configuration store, and `sys.Args`, the program's command-line arguments) |
-| `gogo/screen` | stub | | none (the `screen` port: `screen`) |
-| `gogo/errors` | stub | | none (the shared error codes, `errors.Code`; `GOGO_E_*` in `runtime/include/gogo_errors.h`) |
-| `gogo/math` | stub | | `float`, as any use of floats (the functions are `B_FLOAT`, `runtime/floatlib`; a constant used only as an integer, `int(math.MaxInt32)`, requires nothing) |
+| `gogo/actor` | system | | none |
+| `gogo/port` | system | actor, bytes | none (each constant `port.Open`: its driver); also the stream protocol every byte port speaks (`Chunk`, `Out`, `Done`, `Closed`) and the host-port types |
+| `gogo/bytes` | system | | none |
+| `gogo/net` | system | actor, bytes, errors | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
+| `gogo/gpio` | system | | none (the `gpio` port: `gpio`) |
+| `gogo/fs` | system | actor, bytes, errors | none (constant `/sd` paths: `/sd`) |
+| `gogo/kbd` | system | | none (the `kbd` port: `kbd`) |
+| `gogo/power` | system | | none (the `power` port: `power`) |
+| `gogo/code` | system | actor, bytes, errors | none |
+| `gogo/imu` | system | | none (the `imu` port: `imu`) |
+| `gogo/ir` | system | | none (the `ir_tx` / `ir_rx` ports: `ir_tx` / `ir_rx`) |
+| `gogo/audio` | system | | none (the `mic` / `speaker` ports: `mic` / `speaker`) |
+| `gogo/sys` | system | | none (the clock, randomness, `sys.Config`, the configuration store, and `sys.Args`, the program's command-line arguments) |
+| `gogo/screen` | system | | none (the `screen` port: `screen`) |
+| `gogo/errors` | system | | none (`New`, `Is`, `Unwrap`; the shared error codes, `errors.Code`, an `error`; `GOGO_E_*` in `runtime/include/gogo_errors.h`; loaded by every program that uses `error`, compiled only where used) |
+| `gogo/math` | system | | `float`, as any use of floats (the functions are `B_FLOAT`, `runtime/floatlib`; a constant used only as an integer, `int(math.MaxInt32)`, requires nothing) |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |
-| `gogo/strconv` | library | | none; `float` when `FormatFloat` or `ParseFloat` is called (compiler intrinsics: `B_FLOAT`, their bodies are never compiled). `FormatUint`, `ParseUint` and `ParseInt` (`unsigned.gg`) are compiled in only when called (`//gogo:ondemand`) and written with `int64` operations, so they never need image format 15.3 |
+| `gogo/strconv` | system | errors | none; `float` when `FormatFloat` or `ParseFloat` is called (builtins: `B_FLOAT`). `FormatUint`, `ParseUint` and `ParseInt` (`unsigned.gg`) are written with `int64` operations, so they never need the sized integers' image format 15.3 |
 | `gogo/dhcp` | library | actor, bytes, net, port, sys | `netif`, `udp` |
 | `gogo/dns` | library | actor, bytes, net, port | `udp` |
 | `gogo/http` | library | actor, bytes, dns, errors, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |

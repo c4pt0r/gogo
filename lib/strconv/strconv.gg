@@ -1,22 +1,43 @@
 // Package strconv is the gogo number conversion library: a small subset of
 // Go's strconv written in the gogo subset and compiled into every image that
-// imports it. The subset has no error values, so the parse functions report
-// failure with a bool.
+// imports it. Atoi, ParseInt, ParseUint and ParseFloat have Go's
+// signatures; ParseInt64, which is not Go's ParseInt, reports failure with
+// a bool.
 package strconv
+
+import "gogo/errors"
 
 const digits = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 // Itoa is FormatInt64(int64(i), 10).
 func Itoa(i int) string { return FormatInt64(int64(i), 10) }
 
-// Atoi parses s as a decimal int, accepting an optional sign. ok is false
-// if s is not a valid number or does not fit in 32 bits.
-func Atoi(s string) (n int, ok bool) {
+// Atoi parses s as a decimal int, accepting an optional sign. It fails
+// with errors.BadFormat if s is not a decimal number (n is 0) and
+// errors.Overflow if it does not fit in 32 bits (n is the nearest int, as
+// in Go). (Go's errors are *strconv.NumError values wrapping ErrSyntax and
+// ErrRange.)
+func Atoi(s string) (n int, err error) {
 	v, ok := ParseInt64(s, 10)
-	if !ok || v < -2147483648 || v > 2147483647 {
-		return 0, false
+	if ok && v >= -2147483648 && v <= 2147483647 {
+		return int(v), nil
 	}
-	return int(v), true
+	i := 0
+	if len(s) > 1 && (s[0] == '+' || s[0] == '-') {
+		i = 1
+	}
+	for ; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, errors.BadFormat
+		}
+	}
+	if len(s) == 0 {
+		return 0, errors.BadFormat
+	}
+	if s[0] == '-' { // a number, out of range
+		return -2147483648, errors.Overflow
+	}
+	return 2147483647, errors.Overflow
 }
 
 // FormatInt64 returns the string form of i in the given base, 2 <= base <=

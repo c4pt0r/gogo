@@ -84,19 +84,6 @@ static uint32_t func_of_pc(const Image *img, uint32_t pc) {
 
 /* ---- module tags (term.h) ---- */
 
-/* A term word read out of the object t names: a const ref inside a const
- * object is untagged in its image and gets the container's tag. */
-static inline term field_term(term t, term f) {
-    return (term_is_const(t) && term_is_const(f)) ? f | (t & MOD_TAG_MASK) : f;
-}
-
-/* The type word of the struct obj that t names: a const struct's word is
- * untagged in its image; a module type gets the module's tag. */
-static inline uint32_t struct_type(term t, const uint32_t *obj) {
-    uint32_t ty = obj[1];
-    return (term_is_const(t) && ty >= TYPE_OWN_BASE) ? ty | (t & MOD_TAG_MASK) : ty;
-}
-
 /* A struct of type word ty may be used: a reserved type (global), one of
  * the running module's own (tag), or of another module still loaded. */
 static inline bool type_live(const Vm *vm, uint32_t tag, uint32_t ty) {
@@ -410,11 +397,14 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
     return left;
 }
 
-/* Bit i of mask: args[i] is a uint64 (an int64's bits), printed unsigned. */
-static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n, uint32_t mask) {
+/* println(args...) on stream 1, bit i of mask marking args[i] a uint64
+ * (an int64's bits), printed unsigned; panic(v) on stream 2, after
+ * "panic: ". */
+static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t n, uint32_t mask, int stream) {
     Out o;
     int64_t v;
-    out_init(&o, vm, 1);
+    out_init(&o, vm, stream);
+    if (stream == 2) out_str(&o, "panic: ");
     for (uint32_t i = 0; i < n; i++) {
         if (i) out_str(&o, " ");
         if (i < 30u && mask >> i & 1u && int64_val(vm, a, args[i], &v)) out_dec(&o, (uint64_t)v, false);
@@ -422,6 +412,14 @@ static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t 
     }
     out_str(&o, "\n");
     out_flush(&o);
+}
+
+/* B_PANIC v: prints "panic: v" on stderr; returns the reason to crash
+ * with, R_PANIC (R_BAD_CODE for a stale value or another count). */
+static uint32_t do_panic(const Vm *vm, const Actor *a, const term *v, uint32_t n) {
+    if (n != 1u || deep_live(vm, a, v[0], 0, WALK_BUDGET) == WALK_STALE) return R_BAD_CODE;
+    do_println(vm, a, v, 1, 0, 2);
+    return R_PANIC;
 }
 
 /* ---- actors ---- */
@@ -969,7 +967,7 @@ int interp_run(Vm *vm, Actor *a) {
                 uint32_t first = ext == B_PRINTLNU;
                 if (first) CHECK(rc && int_val(vm, a, R[rb], &mask));
                 for (uint32_t i = first; i < rc; i++) CHECK(deep_live(vm, a, R[rb + i], 0, WALK_BUDGET) != WALK_STALE);
-                do_println(vm, a, R + rb + first, rc - first, (uint32_t)mask);
+                do_println(vm, a, R + rb + first, rc - first, (uint32_t)mask, 1);
                 R[ra] = T_NIL;
                 break;
             }
@@ -1270,7 +1268,8 @@ int interp_run(Vm *vm, Actor *a) {
             case B_STR_CONCAT: case B_LEN: case B_INDEX: case B_SETINDEX: case B_SLICE:
             case B_MAKE_SLICE: case B_APPEND: case B_COPY: case B_CAP: case B_STR_FROM:
             case B_BYTESLICE_FROM: case B_STR_CMP: case B_BUF_NEW: case B_BUF_WRITE:
-            case B_BUF_FREEZE: case B_BYTES_FROM: case B_BYTES_EQUAL: case B_BYTES_COPYTO: {
+            case B_BUF_FREEZE: case B_BYTES_FROM: case B_BYTES_EQUAL: case B_BYTES_COPYTO:
+            case B_CMP: {
                 uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
                 RELOAD();
                 if (err != R_NORMAL) CRASH(err);
@@ -1301,9 +1300,10 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 0);
                 R[ra] = term_from_int((int32_t)(vm_random(vm) & 0x3FFFFFFFu));
                 break;
-            case B_FS: case B_CODE: {
+            case B_FS: case B_CODE: case B_PANIC: {
                 /* Both check ra+1 themselves (two-result ops only). */
-                uint32_t err = ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
+                uint32_t err = ext == B_PANIC ? do_panic(vm, a, R + rb, rc)
+                             : ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
                              : vm->fs_builtin ? vm->fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE;
                 RELOAD();      /* may GC */
                 if (err != R_NORMAL) CRASH(err);

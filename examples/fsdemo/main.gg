@@ -139,8 +139,8 @@ func lastLogged() int {
 	for i > 0 && s[i-1] != '\n' {
 		i--
 	}
-	n, ok := strconv.Atoi(s[i:end])
-	if !ok {
+	n, err := strconv.Atoi(s[i:end])
+	if err != nil {
 		return -1
 	}
 	return n
@@ -155,13 +155,13 @@ func powercut() {
 		return
 	}
 	if e == fs.OK {
-		x, good := strconv.Atoi(v.String())
+		x, perr := strconv.Atoi(v.String())
 		verdict := "BAD"
-		if good && (x == last || x == last+1) {
+		if perr == nil && (x == last || x == last+1) {
 			verdict = "OK"
 		}
 		println("powercut: kv pc=" + v.String() + ", last logged " + itoa(last) + ": " + verdict)
-		if good {
+		if perr == nil {
 			n = x
 		}
 	} else {
@@ -198,7 +198,7 @@ func main() {
 
 	_, ok1 := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 	_, ok2 := port.Open("gpio", gpio.Config{Pin: key2, Mode: gpio.InputPullUp, Edge: gpio.Falling})
-	if !ok1 || !ok2 {
+	if ok1 != nil || ok2 != nil {
 		println("fsdemo: keys unavailable")
 	}
 	presses := 0

@@ -34,7 +34,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
                                                   │ import "gogo/..."
  ┌────────────────────────────────────────────────▼─────────────────────────┐
  │ lib/   standard library (.gg, embedded in the compiler)                  │
- │  stubs → VM builtins: actor port bytes fs sys net code kbd power imu ir  │
+ │  system → VM builtins: actor port bytes fs sys net code kbd power imu ir │
  │                       audio screen gpio                                  │
  │  libraries in gogo:   supervisor strings strconv dhcp dns http sntp kv   │
  │                       ringlog wav sound irproto tui …                    │
@@ -83,7 +83,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
 ```
 
 Above the double line runs on your computer: programs import the
-standard library, whose stub packages compile to VM builtins and whose
+standard library, whose system packages compile to VM builtins and whose
 other packages are ordinary gogo code; the compiler turns them into a
 `.ggb` image. Below it runs on the target: the VM core schedules actors
 and reaches every peripheral through ports, and the same core runs on

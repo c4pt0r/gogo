@@ -1,6 +1,6 @@
 // Package ir is the gogo infrared API: the "ir_tx" and "ir_rx" ports. It
-// is a stub package like gogo/power: the compiler type-checks against it
-// and the bodies (there are none) are never run. The C side is the board's
+// is a system package like gogo/power: its types are reserved (the VM
+// builds and reads them by fixed index). The C side is the board's
 // IR driver (runtime/input/ir.c).
 //
 // Open a transmitter with port.Open("ir_tx", ir.TX{CarrierHz: 38000,
@@ -25,6 +25,8 @@ package ir
 // finished if it ends soon (on the ESP32-S3 boards: within 100 ms, which
 // covers NEC), else cut short, since closing powers the emitter down.
 // gogo/irproto builds the timings of known protocols.
+//
+//gogo:reserved 37
 type TX struct{ CarrierHz, DutyPct int }
 
 // RX configures the receiver: a gap longer than GapUs microseconds ends a
@@ -35,4 +37,6 @@ type TX struct{ CarrierHz, DutyPct int }
 // any Chunks lost before it, so a cut frame that follows a lost one shows
 // 2). TimeMs is when the frame began if the board knows it, else when it was
 // read, within 20 ms of its end.
+//
+//gogo:reserved 38
 type RX struct{ GapUs int }

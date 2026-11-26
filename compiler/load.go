@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -21,97 +20,54 @@ import (
 	"gogotools/lib"
 )
 
-// ActorPath is the import path of the actor API. Its package is a stub:
-// the compiler replaces its calls with VM instructions.
-const ActorPath = "gogo/actor"
-
-// PortPath is the import path of the port (peripheral) API, a stub package
-// like gogo/actor.
-const PortPath = "gogo/port"
-
-// BytesPath is the import path of the byte data API (bytes.Bytes,
-// bytes.Buffer), a stub package like gogo/actor.
-const BytesPath = "gogo/bytes"
-
-// NetPath is the import path of the network API (port configs, commands,
-// events, Subscribe), a stub package like gogo/port. Its source is in
-// lib/net/.
-const NetPath = "gogo/net"
-
-// GpioPath is the import path of the GPIO port types (gpio.Config,
-// gpio.Write, gpio.Edge) and their mode and edge constants, a stub package
-// with only types and constants; the types are reserved.
-const GpioPath = "gogo/gpio"
-
-// FsPath is the import path of the storage API (fs.Open, fs.ReadFile, ...,
-// fs.File's methods), a stub package like gogo/actor: calls become B_FS,
-// File.Close the port close builtin. Its reserved types are Info and Space.
-const FsPath = "gogo/fs"
-
-// KbdPath is the import path of the keyboard API (kbd.Config, kbd.Key, key
-// codes), a stub package with only types and constants. Its reserved types
-// are Config and Key.
-const KbdPath = "gogo/kbd"
-
-// PowerPath is the import path of the battery API (power.Config,
-// power.Battery, power.Read), a stub package with only types. All three are
-// reserved types.
-const PowerPath = "gogo/power"
-
-// CodePath is the import path of the hot-loading API (code.Load,
-// code.Spawn, ...), a stub package like gogo/fs: calls become B_CODE. Its
-// reserved type is Module.
-const CodePath = "gogo/code"
-
-// ImuPath and IrPath are the import paths of the IMU and infrared APIs
-// (imu.Config, imu.Gesture; ir.TX, ir.RX), stub packages with only types and
-// constants. Their types are reserved.
+// The system packages: gogo libraries that declare builtins (functions
+// and types the VM implements, //gogo:builtin) or reserved types
+// (//gogo:reserved N). Their paths are named here because the compiler
+// maps their builtins by package and name (stubName, fsMethod,
+// bytesMethod) and their reserved types by index (reservedTypes); which
+// declaration is which is marked in the source (see marks).
 const (
+	// ActorPath: the actor API; its calls become builtins.
+	ActorPath = "gogo/actor"
+	// PortPath: the port (peripheral) API and the stream protocol types.
+	PortPath = "gogo/port"
+	// BytesPath: bytes.Bytes and bytes.Buffer, VM objects.
+	BytesPath = "gogo/bytes"
+	// NetPath: the network port configs, commands, events, Subscribe.
+	NetPath = "gogo/net"
+	// GpioPath: the GPIO port types and their mode and edge constants.
+	GpioPath = "gogo/gpio"
+	// FsPath: the storage API: calls become B_FS, File.Close the port
+	// close builtin.
+	FsPath = "gogo/fs"
+	// KbdPath and PowerPath: the keyboard and battery port types.
+	KbdPath   = "gogo/kbd"
+	PowerPath = "gogo/power"
+	// CodePath: the hot-loading API: calls become B_CODE.
+	CodePath = "gogo/code"
+	// ImuPath and IrPath: the IMU and infrared port types.
 	ImuPath = "gogo/imu"
 	IrPath  = "gogo/ir"
+	// SysPath: sys.Time, sys.SetTime, sys.Random, sys.Config.
+	SysPath = "gogo/sys"
+	// AudioPath: the audio port types (the recording and playback
+	// library is gogo/sound).
+	AudioPath = "gogo/audio"
+	// ScreenPath: the text screen port types (the text UI library is
+	// gogo/tui).
+	ScreenPath = "gogo/screen"
+	// ErrorsPath: the shared error codes (errors.Code).
+	ErrorsPath = "gogo/errors"
+	// MathPath: the math library: calls become B_FLOAT (runtime/floatlib).
+	MathPath = "gogo/math"
 )
 
-// SysPath is the import path of the system API (sys.Time, sys.SetTime,
-// sys.Random, sys.Config, sys.Args), a stub package like gogo/actor: calls become
-// B_UNIX_TIME, B_SET_UNIX_TIME, B_RANDOM and B_CONFIG_GET (sys.Args is expanded inline from B_CONFIG_GET).
-const SysPath = "gogo/sys"
-
-// AudioPath is the import path of the audio port types (audio.Mic,
-// audio.Speaker), a stub package with only types and constants; the types
-// are reserved. The recording and playback library is gogo/sound.
-const AudioPath = "gogo/audio"
-
-// ScreenPath is the import path of the text screen port types
-// (screen.Config) and its operation constants, a stub package; the type is
-// reserved. The text UI library is gogo/tui.
-const ScreenPath = "gogo/screen"
-
-// ErrorsPath is the import path of the shared error codes (errors.Code
-// and its constants), a stub package with only a type and constants.
-const ErrorsPath = "gogo/errors"
-
-// MathPath is the import path of the math library (math.Sqrt, math.Inf,
-// math.Pi, ...), a stub package like gogo/sys: calls become B_FLOAT
-// (runtime/floatlib).
-const MathPath = "gogo/math"
-
-// StrconvPath is the import path of gogo/strconv, a library package whose
-// float functions (FormatFloat, ParseFloat) the compiler implements itself
-// (intrinsics; see stubName): they are B_FLOAT calls and their bodies are
-// never compiled, so a program that imports strconv without them neither
-// requires "float" nor needs image format 15.2.
+// StrconvPath is the import path of gogo/strconv, a system package whose
+// float builtins (FormatFloat, parseFloat under ParseFloat) are B_FLOAT
+// calls, so that a program that imports strconv without them neither
+// requires "float" nor needs the image format minor of floats; the rest
+// is compiled where used.
 const StrconvPath = "gogo/strconv"
-
-// isStub reports whether path is one of the stub packages.
-func isStub(path string) bool {
-	return path == MathPath || path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == GpioPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath || path == ScreenPath || path == ErrorsPath
-}
-
-// stubDir is the directory of the library set holding stub package path:
-// gogo/<name> lives in <name>/ (lib/<name>/ in the repository).
-func stubDir(path string) string {
-	return strings.TrimPrefix(path, libPrefix)
-}
 
 // libPrefix starts the import path of every gogo library package.
 const libPrefix = "gogo/"
@@ -134,6 +90,25 @@ type Program struct {
 	// Warnings lists the user packages found in more than one place of
 	// the search (see resolve), one message each.
 	Warnings []string
+	// marks holds the //gogo:builtin and //gogo:reserved declarations of
+	// the libraries (see loader.marks).
+	marks
+}
+
+// marks are the per-declaration directives of the system packages:
+// builtin holds the functions, methods and types the VM implements
+// (//gogo:builtin: the compiler turns a call into a builtin or an
+// instruction and never compiles the body; a builtin type is a VM object
+// the checker does not look into); reserved the struct types with a
+// fixed type index (//gogo:reserved N, the index in reservedTypes);
+// system the packages holding either. A system package may hold library
+// code too (functions with bodies, such as methods of its types): it is
+// compiled only where the program uses it (see gen.funcIndex), so that
+// importing a system package costs nothing by itself.
+type marks struct {
+	builtin  map[types.Object]bool
+	reserved map[*types.TypeName]int
+	system   map[*types.Package]bool
 }
 
 // Package is one compiled package (a library, or main in packages()).
@@ -150,8 +125,9 @@ func (p *Program) packages() []*Package {
 	return append(append([]*Package{}, p.Libs...), &Package{Pkg: p.Pkg, Files: p.Files, Optional: p.Optional})
 }
 
-// compiled reports whether pkg is compiled into the image (main or a
-// library), as opposed to the stub packages or the standard library.
+// compiled reports whether pkg is compiled into the image (main, a
+// library or a user package; a system package's builtins are not, see
+// marks).
 func (p *Program) compiled(pkg *types.Package) bool {
 	if pkg == p.Pkg {
 		return true
@@ -177,7 +153,7 @@ func sizes() types.Sizes { return &types.StdSizes{WordSize: 4, MaxAlign: 4} }
 // (gogo/<name> lives in <name>/*.gg), and user packages, every import path
 // not under gogo/, from directories on disk (see resolve). It is also the
 // importer of every package it checks; it serves only packages it has
-// already loaded, and the stub packages (isStub).
+// already loaded.
 type loader struct {
 	fset  *token.FileSet
 	libs  fs.FS
@@ -191,6 +167,7 @@ type loader struct {
 	path           []string // the search path after the root (Config.Path)
 	warnings       []string // packages found in more than one place
 	dirs           []pkgDir // the directories of the user packages resolved so far
+	marks                   // the libraries' builtin and reserved declarations
 }
 
 // pkgDir is the directory of a resolved user package.
@@ -203,26 +180,7 @@ func (l *loader) Import(path string) (*types.Package, error) {
 	if pkg := l.pkgs[path]; pkg != nil {
 		return pkg, nil
 	}
-	if !isStub(path) {
-		return nil, fmt.Errorf("import %q not supported", path)
-	}
-	files, err := l.parseLibDir(stubDir(path))
-	if err != nil {
-		return nil, err
-	}
-	// gogo/port, gogo/net, gogo/fs and gogo/code import gogo/actor and gogo/bytes
-	// through l, so every package sees the same actor.PID and bytes.Bytes.
-	var imp types.Importer = importer.Default()
-	if path == PortPath || path == NetPath || path == FsPath || path == CodePath {
-		imp = l
-	}
-	conf := types.Config{Sizes: sizes(), Importer: imp}
-	pkg, err := conf.Check(path, l.fset, files, nil)
-	if err != nil {
-		return nil, err
-	}
-	l.pkgs[path] = pkg
-	return pkg, nil
+	return nil, fmt.Errorf("import %q not supported", path)
 }
 
 // parseFile parses one gogo source file. A first line starting with #!
@@ -264,11 +222,11 @@ func (l *loader) parseLibDir(dir string) ([]*ast.File, error) {
 	return files, nil
 }
 
-// isLib reports whether path names a compiled library package: gogo/<name>
-// with gogo source files in <name>/, other than the stub packages.
+// isLib reports whether path names a library package: gogo/<name> with
+// gogo source files in <name>/.
 func (l *loader) isLib(path string) bool {
 	name, ok := strings.CutPrefix(path, libPrefix)
-	if !ok || isStub(path) || name == "" || name == "main" || strings.ContainsAny(name, "/.*?[\\") {
+	if !ok || name == "" || name == "main" || strings.ContainsAny(name, "/.*?[\\") {
 		return false
 	}
 	names, err := fs.Glob(l.libs, name+"/*"+SourceExt)
@@ -296,15 +254,14 @@ func (l *loader) checkImports(f *ast.File, allowed func(string) bool, why string
 func isUser(path string) bool { return !strings.HasPrefix(path, libPrefix) }
 
 // importable reports whether a user package or package main may import
-// path: a stub, a library, or a user package (resolved when loaded).
+// path: a library, or a user package (resolved when loaded).
 func (l *loader) importable(path string) bool {
-	return isStub(path) || l.isLib(path) || isUser(path)
+	return l.isLib(path) || isUser(path)
 }
 
 // loadPkg parses and type-checks package path, a library or a user
 // package, first loading the packages it imports (depth first, so l.order
-// is a dependency order). A library may import the stub packages and other
-// libraries, a user package those and other user packages, without cycles;
+// is a dependency order). A library may import other libraries, a user package those and other user packages, without cycles;
 // stack is the chain of packages being loaded, for the cycle error, and at
 // the import that names path (token.NoPos for none).
 func (l *loader) loadPkg(path string, stack []string, at token.Pos) error {
@@ -319,7 +276,7 @@ func (l *loader) loadPkg(path string, stack []string, at token.Pos) error {
 	stack = append(stack, path)
 	var files []*ast.File
 	var name string
-	allowed := func(p string) bool { return isStub(p) || l.isLib(p) }
+	allowed := l.isLib
 	if isUser(path) {
 		dir, err := l.resolve(path, at)
 		if err != nil {
@@ -357,10 +314,9 @@ func (l *loader) loadPkg(path string, stack []string, at token.Pos) error {
 	}
 	for _, f := range files {
 		for _, imp := range f.Imports {
-			if p, _ := strconv.Unquote(imp.Path.Value); !isStub(p) {
-				if err := l.loadPkg(p, stack, imp.Path.Pos()); err != nil {
-					return err
-				}
+			p, _ := strconv.Unquote(imp.Path.Value)
+			if err := l.loadPkg(p, stack, imp.Path.Pos()); err != nil {
+				return err
 			}
 		}
 	}
@@ -372,9 +328,23 @@ func (l *loader) loadPkg(path string, stack []string, at token.Pos) error {
 	if err != nil {
 		return err
 	}
+	if err := l.marks.add(l, path, pkg, files); err != nil {
+		return err
+	}
 	l.pkgs[path] = pkg
 	l.order = append(l.order, &Package{Pkg: pkg, Files: files, Optional: optional})
 	return nil
+}
+
+// usesError reports whether a checked package names the type error.
+func usesError(info *types.Info) bool {
+	e := types.Universe.Lookup("error")
+	for _, obj := range info.Uses {
+		if obj == e {
+			return true
+		}
+	}
+	return false
 }
 
 // where is the "file:line:col: " prefix of an error at pos, or "".
@@ -502,7 +472,7 @@ func (l *loader) resolve(path string, at token.Pos) (string, error) {
 	if len(l.path) == 0 {
 		b.WriteString("\n\t(the search path is empty)")
 	}
-	if l.isLib(libPrefix+path) || isStub(libPrefix+path) {
+	if l.isLib(libPrefix + path) {
 		fmt.Fprintf(&b, "\n(did you mean %q?)", libPrefix+path)
 	}
 	return "", errors.New(b.String())
@@ -590,7 +560,7 @@ func (l *loader) parseUserDir(dir string) ([]*ast.File, error) {
 	return files, nil
 }
 
-// directivePrefix starts every gogo source directive. There are two.
+// directivePrefix starts every gogo source directive. There are four:
 //
 //	//gogo:optional name...
 //
@@ -598,7 +568,7 @@ func (l *loader) parseUserDir(dir string) ([]*ast.File, error) {
 // file; conventionally the last line of the package doc comment, after a
 // blank // line, as gofmt places directives) naming port drivers the
 // package opens only when a call asks for them at run time, and whose
-// absence (port.Open's ok=false) it handles as an ordinary failure.
+// absence (port.Open's error) it handles as an ordinary failure.
 // Requires then adds no requirement for that package's own constant
 // port.Open of those drivers; importers and the other packages are
 // unaffected. Any driver name is accepted (a board's or a host port's).
@@ -611,6 +581,13 @@ func (l *loader) parseUserDir(dir string) ([]*ast.File, error) {
 // function (onDemandUsed in codegen.go). It takes no arguments, and the
 // file may declare no methods. Without it every function of a compiled
 // package is in the image, used or not.
+//
+//	//gogo:builtin
+//	//gogo:reserved N
+//
+// the last line of the doc comment of one declaration of a gogo/ library
+// (see marks): a function, method or type the VM implements, and a struct
+// type with the fixed reserved index N.
 const directivePrefix = "//gogo:"
 
 // onDemandDirective marks a file whose functions are compiled only when
@@ -619,7 +596,8 @@ const onDemandDirective = directivePrefix + "ondemand"
 
 // directives parses the //gogo: directives of one package's files and
 // returns the drivers named by //gogo:optional. An unknown directive or an
-// empty list is an error.
+// empty list is an error; where //gogo:builtin and //gogo:reserved stand
+// is checked by marks.add.
 func (l *loader) directives(files []*ast.File) (map[string]bool, error) {
 	var optional map[string]bool
 	for _, f := range files {
@@ -636,9 +614,12 @@ func (l *loader) directives(files []*ast.File) (map[string]bool, error) {
 					}
 					continue
 				}
+				if name, _ := declDirective(c.Text); name != "" {
+					continue
+				}
 				names, ok := strings.CutPrefix(rest, "optional")
 				if !ok || names != "" && names[0] != ' ' && names[0] != '\t' {
-					return nil, fmt.Errorf("%s: gogo: unknown directive %s (want //gogo:optional or //gogo:ondemand)", pos, strings.Fields(c.Text)[0])
+					return nil, fmt.Errorf("%s: gogo: unknown directive %s (want //gogo:optional, //gogo:ondemand, //gogo:builtin or //gogo:reserved)", pos, strings.Fields(c.Text)[0])
 				}
 				fields := strings.Fields(names)
 				if len(fields) == 0 {
@@ -655,6 +636,96 @@ func (l *loader) directives(files []*ast.File) (map[string]bool, error) {
 	}
 	return optional, nil
 }
+
+// declDirective returns the name of the per-declaration directive comment
+// line text ("builtin" or "reserved") and its arguments, or "".
+func declDirective(text string) (name string, args []string) {
+	rest, ok := strings.CutPrefix(text, directivePrefix)
+	if !ok {
+		return "", nil
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 || (fields[0] != "builtin" && fields[0] != "reserved") {
+		return "", nil
+	}
+	return fields[0], fields[1:]
+}
+
+// add records the //gogo:builtin and //gogo:reserved N declarations of
+// package path (checked as pkg from files). Each must be the last line of
+// a declaration's doc comment: builtin on a function, a method or a type,
+// reserved N on a struct type, in a gogo/ library only. A builtin
+// function's body (panic("gogo only"), for the host toolchain) is never
+// compiled.
+func (m *marks) add(l *loader, path string, pkg *types.Package, files []*ast.File) error {
+	attached := map[token.Pos]bool{}
+	mark := func(doc *ast.CommentGroup, obj types.Object, isType bool) error {
+		if doc == nil || obj == nil {
+			return nil
+		}
+		c := doc.List[len(doc.List)-1]
+		name, args := declDirective(c.Text)
+		if name == "" {
+			return nil
+		}
+		attached[c.Pos()] = true
+		pos := l.fset.Position(c.Pos())
+		if isUser(path) {
+			return fmt.Errorf("%s: gogo: //gogo:%s is for the gogo/ libraries only", pos, name)
+		}
+		if m.builtin == nil {
+			m.builtin, m.reserved, m.system = map[types.Object]bool{}, map[*types.TypeName]int{}, map[*types.Package]bool{}
+		}
+		m.system[pkg] = true
+		switch {
+		case name == "builtin" && len(args) == 0:
+			m.builtin[obj] = true
+			return nil
+		case name == "reserved" && len(args) == 1 && isType:
+			n, err := strconv.Atoi(args[0])
+			if err == nil && n >= 0 {
+				m.reserved[obj.(*types.TypeName)] = n
+				return nil
+			}
+		}
+		return fmt.Errorf("%s: gogo: bad directive %s (want //gogo:builtin, or //gogo:reserved N on a type)", pos, c.Text)
+	}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			switch d := d.(type) {
+			case *ast.FuncDecl:
+				if err := mark(d.Doc, l.info.Defs[d.Name], false); err != nil {
+					return err
+				}
+			case *ast.GenDecl:
+				for _, s := range d.Specs {
+					ts, ok := s.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					doc := ts.Doc
+					if doc == nil && len(d.Specs) == 1 {
+						doc = d.Doc
+					}
+					if err := mark(doc, l.info.Defs[ts.Name], true); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		for _, g := range f.Comments {
+			for _, c := range g.List {
+				if name, _ := declDirective(c.Text); name != "" && !attached[c.Pos()] {
+					return fmt.Errorf("%s: gogo: //gogo:%s must be the last line of a declaration's doc comment", l.fset.Position(c.Pos()), name)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// isBuiltin reports whether obj is a //gogo:builtin declaration.
+func (m *marks) isBuiltin(obj types.Object) bool { return m.builtin[obj] }
 
 // check type-checks one compiled package, recording into l.info.
 func (l *loader) check(path string, files []*ast.File) (*types.Package, error) {
@@ -819,9 +890,8 @@ func (c Config) load(dir string, names []string, goFiles int) (*Program, error) 
 			return nil, err
 		}
 		for _, imp := range f.Imports {
-			if p, _ := strconv.Unquote(imp.Path.Value); !isStub(p) {
-				imports = append(imports, pkgImport{p, imp.Path.Pos()})
-			}
+			p, _ := strconv.Unquote(imp.Path.Value)
+			imports = append(imports, pkgImport{p, imp.Path.Pos()})
 		}
 	}
 	sort.SliceStable(imports, func(i, j int) bool { return imports[i].path < imports[j].path })
@@ -835,6 +905,14 @@ func (c Config) load(dir string, names []string, goFiles int) (*Program, error) 
 	if err != nil {
 		return nil, err
 	}
+	// A program that uses error loads gogo/errors (nothing of it is
+	// compiled unless used): an error it receives may be one of the
+	// errors' reserved types, whose methods its dispatchers must know.
+	if l.pkgs[ErrorsPath] == nil && usesError(l.info) {
+		if err := l.loadPkg(ErrorsPath, nil, token.NoPos); err != nil {
+			return nil, err
+		}
+	}
 	// main is optional (every image is a module); when present it is func main().
 	if obj := pkg.Scope().Lookup("main"); obj != nil {
 		if fn, ok := obj.(*types.Func); !ok || fn.Type().(*types.Signature).Params().Len() != 0 || fn.Type().(*types.Signature).Results().Len() != 0 {
@@ -842,7 +920,10 @@ func (c Config) load(dir string, names []string, goFiles int) (*Program, error) 
 		}
 	}
 	sort.SliceStable(files, func(i, j int) bool { return fset.File(files[i].Pos()).Name() < fset.File(files[j].Pos()).Name() })
-	return &Program{Fset: fset, Files: files, Pkg: pkg, Info: l.info, Libs: l.order, Optional: optional, Warnings: l.warnings}, nil
+	if err := l.marks.add(l, "main", pkg, files); err != nil {
+		return nil, err
+	}
+	return &Program{Fset: fset, Files: files, Pkg: pkg, Info: l.info, Libs: l.order, Optional: optional, Warnings: l.warnings, marks: l.marks}, nil
 }
 
 // onDemandErr is a method declared in a //gogo:ondemand file.

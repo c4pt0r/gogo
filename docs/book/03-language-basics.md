@@ -36,7 +36,7 @@ path, and packages of your own (section 3.1.1):
 | `gogo/fs`, `gogo/kv`, `gogo/ringlog` | storage |
 | `gogo/net`, `gogo/dhcp`, `gogo/dns`, `gogo/http` | networking |
 | `gogo/sys` | the wall clock, randomness, settings from the device's configuration store |
-| `gogo/errors` | the error codes every package shares (`errors.NotFound`, ...) |
+| `gogo/errors` | `New`, `Is`, `Unwrap`, and the error codes every package shares (`errors.NotFound`, ...) |
 
 Go's standard library is not available. Importing `fmt` looks for a
 package of your own called `fmt`, finds none and says where it looked:
@@ -179,8 +179,8 @@ A module built for hot loading (chapter 14) finds its packages the same
 way, from its own directory. `gogo run file.gg` builds a single file, with
 its directory as the build root (chapter 2, *Scripts*).
 
-> **Note.** There is no `gogo/fmt` or `gogo/errors` package. Print with
-> `println`, and report errors as shown in section 3.9.
+> **Note.** There is no `gogo/fmt` package. Print with `println`, and
+> report errors as shown in section 3.10.
 
 ## 3.2 Types and values
 
@@ -201,6 +201,8 @@ The supported types are:
 - Slices (`[]T`), arrays (`[N]T`), structs, function values and `any`.
 - Named types whose underlying type is an integer or float type, `bool`
   or `string` (`type Weekday int`, `type Reg uint32`), and named structs.
+- Type aliases, another name for a type of the subset (`type Millis =
+  int64`, `type Err = errors.Code`): the two names are interchangeable.
 - `const` with `iota`.
 - The gogo types `actor.PID`, `actor.Ref`, `bytes.Bytes`, `bytes.Buffer`
   and the struct types of the gogo packages.
@@ -265,7 +267,7 @@ convert: 300000000 44 5
 
 Conversions between the integer types must be written out, as in Go, and
 so must a conversion to a named type built on one (`Weekday(n)`,
-`errors.Code(e)` for an `fs.Err` e). `string(b)` and
+`errors.Code(n)`). `string(b)` and
 `[]byte(s)` convert between strings and byte slices (each copies). Other
 conversions are rejected.
 
@@ -314,8 +316,8 @@ func main() {
 	println("math:", math.Sqrt(2), math.Floor(-x), math.Round(2.5), math.Pi)
 
 	s := strconv.FormatFloat(math.Pi, 'f', 3, 64)
-	v, ok := strconv.ParseFloat("6.02e23", 64)
-	println("strconv:", s, v, ok)
+	v, err := strconv.ParseFloat("6.02e23", 64)
+	println("strconv:", s, v, err == nil)
 }
 ```
 
@@ -348,8 +350,8 @@ strconv: 3.142 6.02e+23 true
   `IsInf`, `Max`, `Min` and Go's constants (`Pi`, `E`, `MaxFloat64`, ...);
   `Pow`, `Exp`, `Log` and the trigonometric functions are not there yet.
   `strconv.FormatFloat` and `strconv.ParseFloat` work as in Go, except
-  that `ParseFloat` returns `ok bool` instead of an error (`false`, with
-  `±Inf`, when the value is out of range) and `FormatFloat` has no
+  that `ParseFloat`'s error is `errors.BadFormat` or `errors.Overflow`
+  (with `±Inf`, when the value is out of range) and `FormatFloat` has no
   `'x'` format. Both are exact, on the board as on your computer.
 - **Cost.** Every float is a small heap object (8 or 12 bytes), so each
   arithmetic result allocates; keep tight loops on integers where you
@@ -442,8 +444,8 @@ func main() {
 
 	println("crc32:", crc32("hello"), strconv.FormatUint(uint64(crc32("hello")), 16))
 	println("fnv1a:", fnv1a("gogo"))
-	v, ok := strconv.ParseUint("18446744073709551615", 10, 64)
-	println("parse:", v, ok)
+	v, err := strconv.ParseUint("18446744073709551615", 10, 64)
+	println("parse:", v, err == nil)
 }
 ```
 
@@ -467,10 +469,9 @@ parse: 18446744073709551615 true
   `uint64(f)` is 0).
 - They work everywhere an `int` does: struct fields, slices, arrays,
   `switch`, indexes (any integer of up to 32 bits; not `int64` or
-  `uint64`), `range` over a sized count, and messages (as struct fields).
-  They cannot go into `any` on their own (`uint32 in interface not
-  supported`): inside an interface the VM could not tell a `uint32` from an
-  `int`. Put the value in a struct, or convert it.
+  `uint64`), `range` over a sized count, `any` and messages. In an
+  interface a sized value keeps its type, as in Go: `any(uint32(1))` is
+  not `any(1)`, and a type switch tells them apart.
 - `println` prints an unsigned value as unsigned. A struct, slice or array
   holding a `uint32`, `uint` or `uint64` cannot be printed whole (`println
   of main.P not supported`): print its fields one by one.
@@ -654,12 +655,12 @@ level 2
 level 1
 ```
 
-The value can be an `int`, `int64`, `byte`, `bool`, `string`, a named type
-of one of them (`type Code int`), an `actor.PID` or an `actor.Ref`. A
-switch on an `any` value or on a struct is not supported yet (`switch on a
-value of type any not supported`). For messages in an `any`, use a *type*
-switch, `switch v := x.(type)`, which is how actors look at what they
-receive (chapter 4).
+The value can be of any type `==` works on (section 3.5): an `int`,
+`int64`, `byte`, `bool`, `string`, a named type of one of them (`type Code
+int`), a float, an `actor.PID`, an `actor.Ref`, a struct, an array, or an interface value such
+as an `any`, whose cases may be values of different types (`case 1, "one",
+nil:`). To ask *which type* an `any` holds, use a *type* switch, `switch v
+:= x.(type)`, which is how actors look at what they receive (chapter 4).
 
 ### Labeled break and continue
 
@@ -895,9 +896,7 @@ to another actor or used to start one: it carries its data with it.
 
 To make sure the two models never give different answers, gogo rejects any
 assignment to a captured variable after its declaration, inside or outside
-the closure, and writing one of its fields (`p.X = v` changes `p`). It
-also rejects giving `any` a `byte`, because at run time a
-byte cannot be told apart from an `int`:
+the closure, and writing one of its fields (`p.X = v` changes `p`):
 
 ```go
 // This program does NOT compile. Closures copy what they capture when they
@@ -910,9 +909,6 @@ func main() {
 	show := func() { println(n) }
 	n = 5
 	show()
-	var b byte = 7
-	var v any = b // a byte cannot go into any
-	println(v)
 }
 ```
 
@@ -922,7 +918,6 @@ $ gogo build docs/book/examples/03-capture
 
 ```text
 main.gg:9:2: gogo: captured variable must not be reassigned
-main.gg:12:14: gogo: byte in interface not supported
 ```
 
 The fix is to give the closure its own variable that never changes: pass
@@ -1089,8 +1084,9 @@ so a `defer` in a literal called in a loop is allowed).
 Two differences from Go:
 
 - **Deferred calls run on normal returns only.** A crash (division by
-  zero, an index out of range, `badcode`) and `actor.Exit` end the actor
-  without running them. There is no `recover`: the actor ends, and its
+  zero, an index out of range, `badcode`), a `panic` (also one inside a
+  deferred call) and `actor.Exit` end the actor without running them, so
+  Go's `defer mu.Unlock()` habit does not carry over to panics. There is no `recover`: the actor ends, and its
   ports and files are closed for it (section 5.7), so `defer f.Close()` is
   for actors that live on, not a safety net.
 - **A deferred func literal sees values, not variables.** A func literal
@@ -1165,11 +1161,9 @@ func main() {
 	var z Rect
 	println(z.Max.X, z.Name == "")
 
-	// Compare structs field by field: == on structs is not in the subset.
-	println(samePoint(p, Point{1, 2}))
+	// == compares structs field by field.
+	println(p == Point{1, 2}, q != p)
 }
-
-func samePoint(a, b Point) bool { return a.X == b.X && a.Y == b.Y }
 ```
 
 ```text
@@ -1179,7 +1173,7 @@ box! 20 {{0 0} {4 5} box!}
 box 12
 {0 1} {5 6}
 0 true
-true
+true true
 ```
 
 Writing a field changes only the variable or slice element written:
@@ -1187,7 +1181,6 @@ Writing a field changes only the variable or slice element written:
 method that writes a field of its parameter changes only its own copy.
 A slice element is written in place, because a slice shares its array
 (`pts[i].X = v` is seen through every slice of that array, as in Go).
-Comparing structs with `==` is not supported; compare fields.
 
 **What a field write costs.** Inside the VM a struct never changes. `p.X =
 v` builds a new struct with `X` replaced, copies the other fields into it,
@@ -1206,9 +1199,12 @@ A field of a variable that a closure captures cannot be written, for the
 same reason the variable cannot be reassigned (section 3.4): `captured
 variable must not be changed by field assignment`.
 
-Only `actor.PID`, `actor.Ref`, `int`, `int64`, `bool`, `string` and
-named types of those can be compared with `==`. For slices only `s == nil`
-works.
+`==` and `!=` work on `int`, `int64`, `byte`, floats, `bool`, `string`
+and named types of those, `actor.PID`, `actor.Ref`, structs (field by
+field; a `bytes.Bytes` field by its contents), arrays (element by
+element) and interface values (section 3.9). A struct with a
+`bytes.Buffer` field does not compare. For slices only `s
+== nil` works.
 
 ### Methods
 
@@ -1308,8 +1304,8 @@ A few things to know:
   (`app/geom.Point.Add`); a func literal inside it is
   `main.Type.Method.func1`.
 - **Calls are static.** The compiler knows each call's method, so a call
-  costs the same as a function call. There are no interfaces of your own
-  yet (`interface types are not supported yet`), and pointer receivers,
+  costs the same as a function call; a call through an interface value
+  (section 3.9) adds a type check per candidate type. Pointer receivers,
   `func (p *Point) M()`, wait for pointers (`pointer receivers are not
   supported yet`).
 
@@ -1388,15 +1384,16 @@ same depth make the selector ambiguous, a compile error (`ambiguous
 selector c.X`) unless you write the path. An embedded field is an
 ordinary field underneath: a literal sets it by its type's name
 (`Player{Sprite: s}`), and a promoted field costs one `GETFIELD` per
-level. A type can embed a named struct or a named basic type
-(`type Celsius int`), from any package; not a pointer. A method
+level. A type can embed a named struct, a named basic type
+(`type Celsius int`) or an interface, from any package; not a pointer. A method
 expression of a promoted method (`Sprite.Dist`) is rejected: write a
 method value or call it on the embedded field. The methods of an
 embedded gogo type (`bytes.Buffer`, `bytes.Bytes`, `fs.File`) are not
 promoted either (`method WriteByte of an embedded gogo/bytes type not
-supported`): call them on the field, `w.Buffer.WriteByte(b)`. There are no interfaces
-of your own yet; when they come, promoted methods will count toward
-implementing them.
+supported`): call them on the field, `w.Buffer.WriteByte(b)`. Promoted
+methods count toward implementing an interface (section 3.9), and the
+methods of an embedded interface are promoted too: `struct { Namer; K
+int }` is a `Namer`, and its `Name()` calls the field's.
 
 ## 3.6 Slices and arrays
 
@@ -1620,9 +1617,8 @@ of it. Some things to know:
   in a field or an element is not changed in place (a write through it
   copies it), so `p.Cells[:]` is rejected (`slice of an array that is not
   a variable not supported`): copy it first, `c := p.Cells; c[:]`.
-- **No `==` yet.** Comparing arrays (`comparison of arrays not supported
-  yet`), and a `switch` on one, wait for the comparison of composite values
-  (with interfaces); compare the elements.
+- **`==` compares the elements**, as in Go: `a == b` and a `switch` on an
+  array hold when every element is equal.
 - **Not in `any`.** An array cannot go into an interface, so it cannot be
   a message on its own (`array in interface not supported`): send a slice,
   or a struct with the array as a field, which is copied with the message.
@@ -1644,7 +1640,9 @@ rest:
   `FormatUint`, `ParseUint`, `ParseInt` (with a bit size).
 
 All of them work on bytes. `ToLower`, `EqualFold` and `TrimSpace` know only
-ASCII. Parse functions return `(value, ok bool)` instead of an error.
+ASCII. `Atoi` has Go's signature, `(int, error)`, the error
+`errors.BadFormat` or `errors.Overflow`; `ParseInt64`, gogo's own, returns
+`(value, ok bool)`.
 
 ```go
 // Strings are immutable byte sequences. gogo/strings and gogo/strconv
@@ -1668,10 +1666,10 @@ func main() {
 	println(strings.EqualFold("Content-Length", "content-length"))
 
 	// Numbers and strings.
-	n, ok := strconv.Atoi("-1234")
-	println(n, ok)
-	_, ok = strconv.Atoi("12x")
-	println(ok)
+	n, err := strconv.Atoi("-1234")
+	println(n, err == nil)
+	_, err = strconv.Atoi("12x")
+	println(err.Error())
 	println(strconv.Itoa(99) + " bottles")
 	println(strconv.FormatInt64(255, 16), strconv.FormatInt64(-5, 2))
 	big, ok := strconv.ParseInt64("9000000000", 10)
@@ -1689,7 +1687,7 @@ GET true true true
 16 4 get
 true
 -1234 true
-false
+bad format
 99 bottles
 ff -101
 9000000000 true
@@ -1768,83 +1766,243 @@ true false
 gogo stores IPv4 addresses in an `int`, which is why `192.168.1.42` prints
 as a negative number. Chapter 10 shows how to format one.
 
-## 3.9 Errors without `error`
+## 3.9 Interfaces
 
-The `error` type is not in the subset, and neither is `panic`. Library
-functions report failure in one of two ways, and your code can do the same:
-
-- a `bool` result, like `strconv.Atoi` or `actor.Whereis`;
-- a named `int` type of error codes, where 0 means success, like `fs.Err`.
+An interface is a set of methods. Any type that has those methods
+satisfies it, a struct or a named basic type alike, without saying so, and
+a value of an interface type holds a value of any such type. Calling a
+method on it calls the method of the type it holds:
 
 ```go
-// There is no error type in the subset. Report failure with a bool, or
-// with a named int type of error codes, as gogo/fs does with fs.Err.
+// Interfaces: a method set any type can satisfy (structs and named basic
+// types alike), interface values that hold one of them, type switches and
+// assertions on them, and == between them.
 package main
 
-import "gogo/strconv"
-
-// ParseErr is a small set of error codes; 0 means success.
-type ParseErr int
-
-const (
-	OK ParseErr = iota
-	Empty
-	BadNumber
-	OutOfRange
-)
-
-// describe names a code for messages.
-func describe(e ParseErr) string {
-	if e == OK {
-		return "ok"
-	} else if e == Empty {
-		return "empty input"
-	} else if e == BadNumber {
-		return "not a number"
-	}
-	return "out of range"
+type Shape interface {
+	Area() int
+	Name() string
 }
 
-// parsePercent parses "0".."100".
-func parsePercent(s string) (int, ParseErr) {
-	if s == "" {
-		return 0, Empty
+type Rect struct{ W, H int }
+type Square int
+
+func (r Rect) Area() int      { return r.W * r.H }
+func (r Rect) Name() string   { return "rect" }
+func (s Square) Area() int    { return int(s) * int(s) }
+func (s Square) Name() string { return "square" }
+
+// Stringer is a smaller interface; every Shape that has String is one.
+type Stringer interface{ String() string }
+
+func (s Square) String() string { return "a square" }
+
+func total(shapes []Shape) int {
+	t := 0
+	for _, s := range shapes {
+		t += s.Area() // calls Rect.Area or Square.Area
 	}
-	n, ok := strconv.Atoi(s)
-	if !ok {
-		return 0, BadNumber
+	return t
+}
+
+func describe(x any) string {
+	switch v := x.(type) {
+	case nil:
+		return "nothing"
+	case Stringer:
+		return v.String()
+	case Shape:
+		return v.Name()
+	case int:
+		return "an int"
+	}
+	return "something else"
+}
+
+func main() {
+	shapes := []Shape{Rect{2, 3}, Square(4)}
+	println(total(shapes))
+	for _, s := range shapes {
+		println(s.Name(), describe(s))
+	}
+	println(describe(nil), describe(7), describe("x"))
+
+	// x.(T) takes the value out (a panic if it holds another type);
+	// with ok it reports instead.
+	sq := shapes[1].(Square)
+	r, ok := shapes[1].(Rect)
+	println(int(sq), r.W, ok)
+
+	// Interface values are equal when they hold equal values of the
+	// same type.
+	var a, b Shape = Rect{2, 3}, Rect{2, 3}
+	println(a == b, a == shapes[0], a == Shape(Square(6)))
+	var none Shape
+	println(none == nil)
+}
+```
+
+```text
+22
+rect rect
+square a square
+nothing an int something else
+4 0 false
+true true false
+true
+```
+
+- **Satisfying an interface** needs the methods, with value receivers,
+  a type's own or promoted from an embedded field (an embedded
+  interface's included). Interfaces can embed other interfaces (`type ReadWriter interface {
+  Reader; Writer }`), and one interface value can be assigned to another
+  interface whose methods it has. The methods of gogo's own types
+  (`bytes.Bytes`, `bytes.Buffer`, `fs.File`) are builtins of the VM and
+  do not count: `var s Stringer = b` for a `Bytes` b is a compile
+  error; wrap it in a struct of your own.
+- **`any`** (the empty interface) holds any value. Inside one, a value
+  keeps its type: an `int64` is not an `int`, a `Celsius` (`type Celsius
+  int`) is neither, and a `byte` or a `uint32` is not an `int` either.
+- **Type switches** take interface types as cases too (`case Stringer:`
+  matches every value whose type has `String() string`), and `case nil`
+  matches the nil interface value.
+- **Type assertions:** `v := x.(T)` gives the value as a `T` and panics
+  (`interface conversion: ...`) if `x` holds another type; `v, ok :=
+  x.(T)` sets `ok` to false instead. `T` may be an interface type.
+- **`==`** compares interface values by the type and the value they hold
+  (structs field by field). `x == nil` is true only for the nil
+  interface value. A method call on a nil interface value panics, as in
+  Go.
+- **`error`** is the predefined interface `interface{ Error() string }`
+  (section 3.10).
+
+How it works: gogo knows every type in your program when it compiles it,
+so a method call on an interface value is a call of a small function the
+compiler writes, which checks the value's type against the types of your
+program that have that method and calls the right one. A value goes into
+an interface as it is; a named basic value (and a `byte`) is wrapped in a
+small box so that its type can be told apart, which costs an allocation
+unless the value is a constant.
+
+Interface values cross actors in messages like any other value. A type
+of your program is your module's own (chapter 14): a value of it, in an
+interface or not, cannot be sent to a hot-loaded module, and the module's
+types cannot be sent to you.
+
+## 3.10 Errors
+
+As in Go, a function that can fail returns an `error` as its last result,
+`nil` for success. `error` is the predefined interface `interface{ Error()
+string }`, so any type with that method is one (section 3.9), and
+`gogo/errors` has what Go's `errors` has (but `As`):
+
+- `errors.New(text)` makes an error whose `Error()` is `text`;
+- `errors.Is(err, target)` reports whether `err`, or an error it wraps
+  (through `Unwrap() error` methods), is `target`; `errors.Unwrap(err)`
+  takes one layer off;
+- `errors.Code` is gogo's one set of error codes, shared by every
+  package (`errors.NotFound`, `errors.Busy`, ...; appendix C). A `Code`
+  is an `error`: its `Error()` says what it means (`"not found"`), and
+  `err == errors.NotFound` works whichever package returned `err`.
+
+```go
+// Errors are values of the interface error. gogo/errors has Go's New, Is
+// and Unwrap, and Code, the shared error codes, which are errors too.
+package main
+
+import (
+	"gogo/errors"
+	"gogo/strconv"
+)
+
+// ErrEmpty is a sentinel error, compared with ==.
+const ErrEmpty = errors.BadArg
+
+// RangeError is an error type of our own, with the details.
+type RangeError struct {
+	N   int
+	Err error // what it wraps
+}
+
+func (e RangeError) Error() string { return strconv.Itoa(e.N) + " is out of range" }
+func (e RangeError) Unwrap() error { return e.Err }
+
+// parsePercent parses "0".."100".
+func parsePercent(s string) (int, error) {
+	if s == "" {
+		return 0, ErrEmpty
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, errors.New("not a number: " + s)
 	}
 	if n < 0 || n > 100 {
-		return 0, OutOfRange
+		return 0, RangeError{n, errors.Overflow}
 	}
-	return n, OK
+	return n, nil
 }
 
 func main() {
 	for _, s := range []string{"42", "", "x1", "250"} {
 		n, err := parsePercent(s)
-		if err != OK {
-			println("["+s+"]", "error:", describe(err), int(err))
-			continue
+		switch {
+		case err == nil:
+			println("["+s+"]", "=", n)
+		case err == ErrEmpty:
+			println("["+s+"]", "empty:", err.Error())
+		case errors.Is(err, errors.Overflow):
+			println("["+s+"]", "too big:", err.Error())
+		default:
+			println("["+s+"]", "error:", err.Error())
 		}
-		println("["+s+"]", "=", n)
 	}
 }
 ```
 
 ```text
 [42] = 42
-[] error: empty input 1
-[x1] error: not a number 2
-[250] error: out of range 3
+[] empty: bad argument
+[x1] error: not a number: x1
+[250] too big: 250 is out of range
 ```
+
+Compare an error with a sentinel by `==` (`err == errors.NotFound`), or
+with `errors.Is` when it may be wrapped; a type switch or `err.(T)` gets
+at an error type's details. Unlike Go, two errors from `errors.New` with
+the same text are equal: an error is a value, compared by what it holds.
+
+> **Warning.** `gogo/fs` and `gogo/code` still return an `errors.Code`
+> (`fs.Err`, `code.Err`), not an `error`, and their success is
+> `errors.OK`, the code 0. Put into an `error`, `errors.OK` is a
+> non-nil error, like a typed nil pointer in Go: `return
+> fs.WriteFile(p, b)` in a function that returns `error` would report
+> every success as a failure. The compiler rejects that form, and the
+> same in a `var` or an assignment (`errors.Code result used as an
+> error`); passing the result to compare it (`errors.Is(fs.Remove(p),
+> errors.NotFound)`) and an explicit `error(...)` conversion are
+> allowed. Check the code first:
+>
+> ```go
+> func save(p string, b bytes.Bytes) error {
+> 	if c := fs.WriteFile(p, b); c != fs.OK {
+> 		return c
+> 	}
+> 	return nil
+> }
+> ```
+>
+> The functions that return `error` (`port.Open`, `strconv.Atoi`,
+> `http.Get`, ...) return a true `nil` on success.
 
 For failures you do not expect and cannot handle, gogo's answer is
 different: let the actor crash, and let a supervisor restart it. That is
-the subject of chapter 5. To stop the current actor deliberately, call
-`actor.Exit(code)` with a code of 100 or more.
+the subject of chapter 5. `panic(v)` crashes the current actor on
+purpose: it prints `panic: ` and `v` on standard error and ends the actor
+with the reason `actor.Panic`. There is no `recover`. To stop the current
+actor with a code of your own instead, call `actor.Exit(code)` with a
+code of 100 or more.
 
-## 3.10 What is not supported
+## 3.11 What is not supported
 
 Here is a program that uses many of the features gogo leaves out:
 
@@ -1855,7 +2013,7 @@ package main
 
 var counter = 0 // package-level variable
 
-type Shape interface{ Area() int } // user interface
+type Shape interface{ Area() int } // fine: interfaces are supported
 
 type Sq struct{ S int }
 
@@ -1880,10 +2038,10 @@ func main() {
 	}
 done:
 	var a any = [4]int{} // array in an interface
-	y := any(1).(int)    // type assertion
+	y := any(1).(int)    // fine: type assertions are supported
 	_ = y
 	println(m, p, x, a)
-	panic("boom")
+	println(recover())
 }
 ```
 
@@ -1891,23 +2049,21 @@ done:
 
 ```text
 main.gg:5:1: gogo: global variable not supported
-main.gg:7:6: gogo: interface types are not supported yet: call methods on the concrete type
 main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
-main.gg:23:8: gogo: builtin recover not supported
+main.gg:23:8: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
 main.gg:24:7: gogo: map not supported
 main.gg:25:7: gogo: pointer not supported
 main.gg:26:7: gogo: complex not supported
 main.gg:28:3: gogo: goto statement not supported
 main.gg:30:1: gogo: label on a statement other than for or switch not supported
 main.gg:31:14: gogo: array in interface not supported: use a slice or a struct with an array field
-main.gg:32:7: gogo: type assertion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
 main.gg:34:16: gogo: complex not supported
-main.gg:35:2: gogo: builtin panic not supported
+main.gg:35:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
 ```
 
 The full list, with what to do instead:
@@ -1917,30 +2073,22 @@ The full list, with what to do instead:
 | `go f()` | `go statement not supported` | `actor.Spawn(f)` |
 | channels, `select`, `<-` | `channel not supported`, `operator <- not supported` | messages: `actor.Send`, `actor.Receive` |
 | `defer` in a loop | `defer inside a loop not supported: deferred calls are static (move the loop body into a function)` | a function per iteration |
-| `recover` | `builtin recover not supported` | let the actor exit; a supervisor restarts it; ports and files close automatically |
-| `panic(v)` | `builtin panic not supported` | `actor.Exit(code)` |
+| `recover()` | `recover (a panic ends the actor: let its supervisor restart it) not supported` | let the actor exit; a supervisor restarts it (chapter 5); ports and files close automatically |
 | `error` | `error not supported` | `bool` or an `int` code type |
 | package-level `var` | `global variable not supported` | `const`, or state in an actor |
 | maps | `map not supported` | a slice of key/value structs |
 | pointers, `&x`, `*p` | `pointer not supported` | values; state in actors |
 | pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
-| your own interfaces | `interface types are not supported yet: call methods on the concrete type` | function values (method values too), or messages and a type switch |
-| `switch` on an `any` or a struct | `switch on a value of type any not supported` | a type switch; compare fields |
-| type assertion `x.(T)` | `type assertion not supported` (and `multi-value assignment not supported` for `v, ok := x.(T)`) | a type switch |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
 | `complex64/128` | `complex not supported` | two floats |
 | `uintptr` | `uintptr not supported` | `uint32` |
-| a sized integer in `any` | `uint32 in interface not supported` | a struct holding it, or `int` / `int64` |
 | generics | `generic function not supported` | write the function per type |
 | `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
-| `struct == struct` | `comparison of main.P not supported` | compare fields |
-| `array == array` | `comparison of arrays not supported yet` | compare elements |
 | an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
 
-> **Note.** Pointer receivers, maps, pointers,
-> package-level variables, the `error` interface, `panic` and type
-> assertions are not supported yet. They are planned for
+> **Note.** Pointer receivers, maps, pointers and
+> package-level variables are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see
 > `docs/design.md` §5.2).
 
@@ -1951,7 +2099,9 @@ The full list, with what to do instead:
   `[1 2]`, unlike Go), but not `Bytes` or `Buffer` (use `.String()`), not
   a struct or slice holding `uint32` or `uint64` values, and not a
   multi-result call (`println(divmod(7, 2))` is `multiple values not
-  supported`).
+  supported`). An interface value prints the value it holds (Go prints two
+  addresses); a sized integer or a named basic value inside one prints in
+  its box, `{5}`.
 - A two-result gogo builtin cannot be a statement on its own: `actor.
   Call(p, req, 100)` on a line by itself is rejected with `multiple values
   not supported`. Write `_, _ = actor.Call(p, req, 100)`. Your own

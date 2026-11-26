@@ -28,38 +28,53 @@ func Compile(p *Program) ([]byte, error) {
 	}
 
 	// Index every top-level function of every package first so calls to
-	// later ones resolve; a //gogo:ondemand file's only if used.
+	// later ones resolve: all but the builtins, those of the system
+	// packages, which get an index when first used (funcIndex), and a
+	// //gogo:ondemand file's, which are compiled only if used.
 	used := onDemandUsed(p)
-	var decls []*ast.FuncDecl
+	var decls, all []*ast.FuncDecl
+	g.lazy = map[*types.Func]*ast.FuncDecl{}
 	for _, pkg := range p.packages() {
 		for _, f := range pkg.Files {
 			onDemand := isOnDemand(f)
 			for _, d := range f.Decls {
-				if fd, ok := d.(*ast.FuncDecl); ok && !isIntrinsic(p.Info, fd) &&
-					(!onDemand || used[p.Info.Defs[fd.Name].(*types.Func)]) {
-					fn := p.Info.Defs[fd.Name].(*types.Func)
-					g.funcIdx[fn] = uint32(len(g.funcs))
-					g.funcs = append(g.funcs, &funcInfo{name: g.qualified(fn.Pkg(), funcName(fn))})
+				fd, ok := d.(*ast.FuncDecl)
+				if !ok {
+					continue
+				}
+				fn := p.Info.Defs[fd.Name].(*types.Func)
+				switch {
+				case p.isBuiltin(fn):
+					continue
+				case p.system[pkg.Pkg]:
+					g.lazy[fn] = fd
+				case onDemand && !used[fn]:
+				default:
+					g.addFunc(fn)
 					decls = append(decls, fd)
 				}
+				all = append(all, fd)
 			}
 		}
 	}
-	g.nameLits(decls)
+	g.nameLits(all)
 	var errs []error
 	for _, fd := range decls {
-		fn := p.Info.Defs[fd.Name].(*types.Func)
-		params := g.declParams(fd.Type)
-		if fd.Recv != nil { // the receiver is parameter 0
-			params = append(g.fieldVars(fd.Recv), params...)
-		}
-		if err := g.compileFunc(g.funcs[g.funcIdx[fn]], params, fn.Type().(*types.Signature).Results(), fd.Body); err != nil {
+		if err := g.compileDecl(fd); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	// Func literals, queued as they are compiled; compiling one may queue
-	// more (nested literals).
-	for len(g.pending) > 0 {
+	// Func literals and the system packages' functions in use, queued as
+	// they are compiled; compiling one may queue more.
+	for len(g.pending) > 0 || len(g.used) > 0 {
+		if len(g.used) > 0 {
+			fd := g.used[0]
+			g.used = g.used[1:]
+			if err := g.compileDecl(fd); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
 		c := g.pending[0]
 		g.pending = g.pending[1:]
 		// The captures are the leading parameters, the literal's own
@@ -112,6 +127,51 @@ type gen struct {
 
 	litNames map[*ast.FuncLit]string // hidden function name of each func literal
 	pending  []closure               // closures still to compile
+
+	// lazy holds the functions of the system packages (marks), indexed
+	// and compiled only once used; used queues those indexed but not yet
+	// compiled.
+	lazy map[*types.Func]*ast.FuncDecl
+	used []*ast.FuncDecl
+
+	boxIdx map[string]uint32 // own box types (boxIndex), by image name
+
+	concrete  []types.Type           // concreteTypes, once computed
+	dispIdx   map[*types.Func]uint32 // dispatchers, by interface method
+	isHelpers []isHelper             // implements tests, by interface type
+}
+
+// addFunc gives declared function fn the next function index.
+func (g *gen) addFunc(fn *types.Func) uint32 {
+	idx := uint32(len(g.funcs))
+	g.funcIdx[fn] = idx
+	g.funcs = append(g.funcs, &funcInfo{name: g.qualified(fn.Pkg(), funcName(fn))})
+	return idx
+}
+
+// funcIndex returns the function index of declared function fn (not a
+// builtin). A function of a system package gets its index, and is queued
+// for compilation, here, when first used.
+func (g *gen) funcIndex(fn *types.Func) (uint32, bool) {
+	if idx, ok := g.funcIdx[fn]; ok {
+		return idx, true
+	}
+	fd, ok := g.lazy[fn]
+	if !ok {
+		return 0, false
+	}
+	g.used = append(g.used, fd)
+	return g.addFunc(fn), true
+}
+
+// compileDecl compiles declared function fd (indexed already).
+func (g *gen) compileDecl(fd *ast.FuncDecl) error {
+	fn := g.p.Info.Defs[fd.Name].(*types.Func)
+	params := g.declParams(fd.Type)
+	if fd.Recv != nil { // the receiver is parameter 0
+		params = append(g.fieldVars(fd.Recv), params...)
+	}
+	return g.compileFunc(g.funcs[g.funcIdx[fn]], params, fn.Type().(*types.Signature).Results(), fd.Body)
 }
 
 // qualified names a function or type of package pkg in the image: plain
@@ -147,7 +207,7 @@ func pkgPrefix(pkg *types.Package) string {
 }
 
 // structType returns the named struct type behind t, or nil. actor.PID,
-// actor.Ref, bytes.Bytes and bytes.Buffer are structs in the stubs but
+// actor.Ref, bytes.Bytes and bytes.Buffer are structs in the system packages but
 // tagged terms and opaque heap objects in the VM, so they are not.
 func structType(t types.Type) *types.Named {
 	n, ok := types.Unalias(t).(*types.Named)
@@ -260,6 +320,10 @@ var reservedTypes = []struct {
 	{PortPath, "Host", []string{"Arg", "Data"}},
 	{PortPath, "Post", []string{"From", "Kind", "Data"}},
 	{ScreenPath, "Config", []string{"Cols", "Rows"}}, // 15.1
+	// 15.4: the errors that may cross modules. Code is an int: its row is
+	// the box an interface holds it in, of one field.
+	{ErrorsPath, "Code", []string{"value"}},
+	{ErrorsPath, "errorString", []string{"s"}},
 }
 
 // reservedName is the image name of reserved type i: the bare name for
@@ -292,6 +356,8 @@ func reservedName(i int) string {
 		return "audio." + rt.name
 	case ScreenPath:
 		return "screen." + rt.name
+	case ErrorsPath:
+		return "errors." + rt.name
 	}
 	panic("reservedName: package " + rt.pkg)
 }
@@ -301,43 +367,42 @@ func reservedName(i int) string {
 // appearance in the package sources (libraries, then main; declarations
 // and uses alike).
 func (g *gen) collectTypes() error {
-	stubs := map[string]*types.Package{} // whichever package imports them
-	for _, pkg := range g.p.packages() {
-		for _, imp := range pkg.Pkg.Imports() {
-			if isStub(imp.Path()) {
-				stubs[imp.Path()] = imp
-			}
+	byIdx := map[int]*types.TypeName{}
+	for tn, i := range g.p.reserved {
+		if i >= len(reservedTypes) || reservedTypes[i].pkg != tn.Pkg().Path() || reservedTypes[i].name != tn.Name() {
+			return fmt.Errorf("gogo: internal error: %s.%s is //gogo:reserved %d, which the compiler does not know as that", tn.Pkg().Path(), tn.Name(), i)
 		}
+		byIdx[i] = tn
+	}
+	loaded := map[string]*types.Package{}
+	for _, pkg := range g.p.Libs {
+		loaded[pkg.Pkg.Path()] = pkg.Pkg
 	}
 	for i, rt := range reservedTypes {
 		name := reservedName(i)
 		idx := g.b.AddReservedType(name, uint32(len(rt.fields)))
-		stub := stubs[rt.pkg]
-		if stub == nil {
+		tn := byIdx[i]
+		if tn == nil {
+			if pkg := loaded[rt.pkg]; pkg != nil && pkg.Scope().Lookup(rt.name) != nil {
+				return fmt.Errorf("gogo: internal error: %s is not marked //gogo:reserved %d", name, i)
+			}
 			continue
 		}
-		tn, ok := stub.Scope().Lookup(rt.name).(*types.TypeName)
-		if !ok {
-			return fmt.Errorf("gogo: internal error: %s missing", name)
-		}
-		if st, ok := tn.Type().Underlying().(*types.Struct); !ok || st.NumFields() != len(rt.fields) {
+		_, box := tn.Type().Underlying().(*types.Basic) // the box of a named basic type: one field
+		if st, ok := tn.Type().Underlying().(*types.Struct); (!ok || st.NumFields() != len(rt.fields)) && !(box && len(rt.fields) == 1) {
 			return fmt.Errorf("gogo: internal error: %s does not match the reserved layout", name)
 		}
 		g.typeIdx[tn] = idx
 	}
 	add := func(t types.Type) {
-		n := structType(t)
-		if n == nil {
-			return
-		}
-		if idx, ok := g.typeIdx[n.Obj()]; ok {
-			g.b.UseType(idx) // a reserved type the program names gets its row
-		} else {
-			name := g.qualified(n.Obj().Pkg(), n.Obj().Name())
-			g.typeIdx[n.Obj()] = g.b.AddType(name, uint32(n.Underlying().(*types.Struct).NumFields()))
+		if n := structType(t); n != nil {
+			g.typeIndex(n)
 		}
 	}
 	for _, pkg := range g.p.packages() {
+		if g.p.system[pkg.Pkg] {
+			continue // its types count where the program uses them
+		}
 		for _, f := range pkg.Files {
 			ast.Inspect(f, func(node ast.Node) bool {
 				if id, ok := node.(*ast.Ident); ok {
@@ -355,6 +420,23 @@ func (g *gen) collectTypes() error {
 		}
 	}
 	return nil
+}
+
+// typeIndex returns the image type index of named struct type n, giving
+// an own type the next index when first seen (collectTypes sees them in
+// source order; a system package's are added as its code uses them). A
+// reserved type it returns gets its row in the image.
+func (g *gen) typeIndex(n *types.Named) (uint32, bool) {
+	if idx, ok := g.typeIdx[n.Obj()]; ok {
+		g.b.UseType(idx)
+		return idx, true
+	}
+	if _, ok := n.Underlying().(*types.Struct); !ok {
+		return 0, false
+	}
+	idx := g.b.AddType(g.qualified(n.Obj().Pkg(), n.Obj().Name()), uint32(n.Underlying().(*types.Struct).NumFields()))
+	g.typeIdx[n.Obj()] = idx
+	return idx, true
 }
 
 // genError aborts the compilation of one function; compileFunc recovers it.
@@ -402,7 +484,8 @@ type fn struct {
 	boundAt    int           // code position of the last label bound (-1: none)
 	lastClear  int           // code position of the last CLEAR emitted (-1: none)
 
-	defers *deferState // the function's defer statements, nil if none (codegen_defer.go)
+	defers   *deferState // the function's defer statements, nil if none (codegen_defer.go)
+	compared bool        // the value being compiled is only compared (constBox)
 }
 
 // declParams lists the parameters of a declared function; unnamed ones are
@@ -814,6 +897,13 @@ func tupleLen(t types.Type) int {
 // local. Result i is converted to targets[i] (nil, or a nil entry: no
 // conversion): an int64 going into any is boxed.
 func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
+	if ta, ok := ast.Unparen(e).(*ast.TypeAssertExpr); ok { // v, ok := x.(T)
+		f.assertOkInto(ta, base)
+		if len(targets) > 0 && convertsToIface(f.g.p.Info.TypeOf(ta.Type), targets[0]) {
+			f.toIface(e, f.g.p.Info.TypeOf(ta.Type), base)
+		}
+		return
+	}
 	call, ok := ast.Unparen(e).(*ast.CallExpr)
 	if !ok {
 		f.fail(e, "internal error: multi-value expression is not a call")
@@ -825,17 +915,21 @@ func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
 	}
 	tup := f.g.p.Info.TypeOf(call).(*types.Tuple)
 	for i := 0; i < tup.Len() && i < len(targets); i++ {
-		if targets[i] != nil && isAny(targets[i]) && isWide(tup.At(i).Type()) {
-			f.asm.Emit(OpBox64, base+uint8(i), base+uint8(i), 0)
+		if convertsToIface(tup.At(i).Type(), targets[i]) {
+			f.toIface(call, tup.At(i).Type(), base+uint8(i))
 		}
 	}
 }
 
-// stubOf returns the stubName of the stub function call invokes, or "".
+// stubOf returns the stubName of the builtin function call invokes, or "".
 func (f *fn) stubOf(call *ast.CallExpr) string {
+	if id, ok := ast.Unparen(call.Fun).(*ast.Ident); ok { // a system package's own builtin
+		fn, _ := f.g.p.Info.Uses[id].(*types.Func)
+		return f.g.p.stubName(fn)
+	}
 	if sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr); ok {
 		obj, _ := f.g.p.Info.Uses[sel.Sel].(*types.Func)
-		if name := stubName(obj); name != "" {
+		if name := f.g.p.stubName(obj); name != "" {
 			return name
 		}
 		return fsMethod(f.g.p.Info, sel)
@@ -1109,23 +1203,40 @@ func (f *fn) localReg(e ast.Expr) (uint8, bool) {
 	return 0, false
 }
 
-// boxes reports whether e, going into a destination of type target, is an
-// int64 converted to an interface. Small int64 values are immediates that
-// the VM cannot tell from ints, so every such conversion boxes the value
-// (BOX64): inside `any` an int64 is always a K_INT64 box. Named int64 types
-// cannot go into an interface (the checker rejects them).
+// boxes reports whether e, going into a destination of type target, is
+// converted to an interface value (nil is the nil interface value, not
+// the nil slice): an int64 (small int64 values are
+// immediates the VM cannot tell from ints, so inside an interface an int64
+// is always a K_INT64 box, BOX64), a named non-struct value or a byte
+// (boxed in a struct of their type, see codegen_iface.go).
 func (f *fn) boxes(e ast.Expr, target types.Type) bool {
-	return isAny(target) && isWide(f.g.p.Info.TypeOf(e))
+	return convertsToIface(f.g.p.Info.TypeOf(e), target) || (target != nil && isIface(target) && f.g.p.Info.Types[e].IsNil())
 }
 
 // valueInto compiles e into dst as a value of type target (the type of the
 // variable, parameter, result or field it is assigned to; nil if unknown,
-// e.g. the blank identifier), boxing an int64 that goes into an interface.
-// A constant is boxed at compile time, in the const area.
+// e.g. the blank identifier), converting a value that goes into an
+// interface (boxes). A constant is boxed at compile time, in the const
+// area.
 func (f *fn) valueInto(e ast.Expr, target types.Type, dst uint8) {
+	if target != nil && isIface(target) && f.g.p.Info.Types[e].IsNil() { // the nil interface value
+		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNil)
+		return
+	}
 	if !f.boxes(e, target) {
 		f.exprInto(e, dst)
 		f.copyArray(e, target, dst)
+		return
+	}
+	if t := f.g.p.Info.TypeOf(e); boxed(t) {
+		if tv := f.g.p.Info.Types[e]; tv.Value != nil {
+			f.constBox(e, tv.Value, dst)
+			return
+		}
+		mark := f.next
+		r := f.operand(e) // a local in place, else a temporary
+		f.asm.EmitExt(OpNewstruct, dst, r, 1, f.g.boxIndex(t))
+		f.next = mark
 		return
 	}
 	if tv := f.g.p.Info.Types[e]; tv.Value != nil {
@@ -1261,12 +1372,20 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 		f.closureInto(e, dst)
 	case *ast.CallExpr:
 		f.call(e, dst)
+	case *ast.TypeAssertExpr:
+		f.assertInto(e, dst)
 	default:
 		f.fail(e, "internal error: unexpected expression %T", e)
 	}
 }
 
 func (f *fn) binaryInto(e *ast.BinaryExpr, dst uint8) {
+	if e.Op == token.EQL || e.Op == token.NEQ {
+		if xt, yt := f.g.p.Info.TypeOf(e.X), f.g.p.Info.TypeOf(e.Y); needsCmp(xt) || needsCmp(yt) {
+			f.cmpInto(e.X, e.Y, cmpType(xt, yt), binaryOps[e.Op], dst)
+			return
+		}
+	}
 	if f.strBinary(e, dst) {
 		return
 	}
@@ -1350,12 +1469,30 @@ func (f *fn) int64Into(n int64, dst uint8) {
 	f.asm.EmitExt(OpLoadk, dst, 0, 0, TermConst(f.g.b.AddInt64(n)))
 }
 
+// isBool reports whether t's underlying type is bool (or untyped bool).
+func isBool(t types.Type) bool {
+	b, ok := underlying(t).(*types.Basic)
+	return ok && b.Info()&types.IsBoolean != 0
+}
+
+// isInt64 reports whether t's underlying type is int64.
+func isInt64(t types.Type) bool {
+	b, ok := underlying(t).(*types.Basic)
+	return ok && b.Kind() == types.Int64
+}
+
 // conversion compiles a conversion between numeric types, string(b) or
 // []byte(s) (the only conversions the checker allows) into dst.
 func (f *fn) conversion(call *ast.CallExpr, dst uint8) {
 	to, from := f.g.p.Info.TypeOf(call.Fun), f.g.p.Info.TypeOf(call.Args[0])
 	switch {
+	case isIface(to): // any(x), I(x): as an assignment
+		f.valueInto(call.Args[0], to, dst)
+		return
 	case isPID(to): // actor.PID <-> fs.File: the same term
+		f.exprInto(call.Args[0], dst)
+		return
+	case isString(to) && isString(from), isBool(to): // Name(s), string(n), Flag(b): the same value
 		f.exprInto(call.Args[0], dst)
 		return
 	case isString(to): // string(b []byte)
@@ -1402,7 +1539,7 @@ func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 	case isBytes(t): // empty
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermEmptyBytes)
 		return
-	case isAny(t) || isFunc(t) || isBuffer(t):
+	case isIface(t) || isFunc(t) || isBuffer(t):
 		// The zero Buffer is nil: unusable (its methods are badcode).
 		// A nil any; a nil func, which Spawn rejects (the spawner crashes
 		// with badcode).
@@ -1463,7 +1600,7 @@ func (f *fn) newStruct(n ast.Node, st *types.Named, vals []fieldVal, dst uint8) 
 	if nf > maxRegs {
 		f.fail(n, "struct %s has too many fields", st.Obj().Name())
 	}
-	idx, ok := f.g.typeIdx[st.Obj()]
+	idx, ok := f.g.typeIndex(st)
 	if !ok {
 		f.fail(n, "internal error: struct type %s has no index", st.Obj().Name())
 	}
@@ -1572,8 +1709,12 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 	switch fun := ast.Unparen(call.Fun).(type) {
 	case *ast.Ident:
 		switch obj := f.g.p.Info.Uses[fun].(type) {
-		case *types.Builtin: // println and the sequence builtins
+		case *types.Builtin: // println, panic and the sequence builtins
 			if f.seqBuiltin(call, obj.Name(), dst) {
+				return
+			}
+			if obj.Name() == "panic" {
+				f.panicCall(call, dst)
 				return
 			}
 			if f.printlnUnsigned(call, dst) {
@@ -1583,7 +1724,11 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			f.asm.EmitExt(OpBuiltin, dst, base, n, BPrintln)
 			return
 		case *types.Func:
-			idx, ok := f.g.funcIdx[obj]
+			if name := f.g.p.stubName(obj); name != "" { // a system package's own builtin
+				f.stubCall(call, name, dst)
+				return
+			}
+			idx, ok := f.g.funcIndex(obj)
 			if !ok {
 				f.fail(call, "internal error: unknown function %s", obj.Name())
 			}
@@ -1605,29 +1750,52 @@ func (f *fn) call(call *ast.CallExpr, dst uint8) {
 			return
 		}
 		obj, ok := f.g.p.Info.Uses[fun.Sel].(*types.Func)
-		if name := stubName(obj); ok && name != "" {
-			if _, isFs := fsOps[name]; isFs {
-				f.fsCall(call, name, dst)
-				return
-			}
-			if _, isCode := codeOps[name]; isCode {
-				f.codeCall(call, name, dst)
-				return
-			}
-			if _, isFloat := floatOps[name]; isFloat {
-				f.floatCall(call, name, dst)
-				return
-			}
-			f.actorCall(call, name, dst)
+		if name := f.g.p.stubName(obj); ok && name != "" {
+			f.stubCall(call, name, dst)
 			return
 		}
-		if idx, found := f.g.funcIdx[obj]; ok && found { // lib.F(...)
+		if idx, found := f.g.funcIndex(obj); ok && found { // lib.F(...)
 			base, n := f.args(call)
 			f.asm.EmitExt(OpCall, dst, base, n, idx)
 			return
 		}
 	}
 	f.fail(call, "internal error: unexpected call")
+}
+
+// stubCall compiles a call of the builtin function called name
+// (stubName) into dst, through the builtin that implements its package.
+func (f *fn) stubCall(call *ast.CallExpr, name string, dst uint8) {
+	if _, isFs := fsOps[name]; isFs {
+		f.fsCall(call, name, dst)
+		return
+	}
+	if _, isCode := codeOps[name]; isCode {
+		f.codeCall(call, name, dst)
+		return
+	}
+	if _, isFloat := floatOps[name]; isFloat {
+		f.floatCall(call, name, dst)
+		return
+	}
+	f.actorCall(call, name, dst)
+}
+
+// panicCall compiles panic(v): B_PANIC prints v as println would, on
+// stderr after "panic: ", and ends the actor with reason actor.Panic. It
+// does not return.
+func (f *fn) panicCall(call *ast.CallExpr, dst uint8) {
+	mark := f.next
+	v := f.alloc(call)
+	t := f.g.p.Info.TypeOf(call.Args[0])
+	if isIface(t) || types.Implements(t, errorType.Underlying().(*types.Interface)) {
+		f.exprInto(call.Args[0], v)
+		f.panicValue(call, t, v)
+	} else {
+		f.valueInto(call.Args[0], anyType, v)
+	}
+	f.asm.EmitExt(OpBuiltin, dst, v, 1, BPanic)
+	f.next = mark
 }
 
 // callValue compiles a call of a func value into dst: the closure goes into

@@ -655,7 +655,7 @@ func TestImageMinorStamp(t *testing.T) {
 // TestScreenConfigMinor: screen.Config is reserved type 44 of 15.1; a
 // program that uses it is stamped 15.1, one that does not stays 15.0.
 func TestScreenConfigMinor(t *testing.T) {
-	use := "package main\nimport (\n\t\"gogo/port\"\n\t\"gogo/screen\"\n)\nfunc main() {\n\t_, _ = port.Open(\"screen\", screen.Config{})\n}\n"
+	use := "package main\nimport (\n\t\"gogo/actor\"\n\t\"gogo/screen\"\n)\nfunc main() {\n\tactor.Send(actor.Self(), screen.Config{})\n}\n"
 	img := compileImage(t, use)
 	if v := words(img)[1]; v != 15<<16|1 {
 		t.Errorf("version %s, want 15.1", VersionString(v))
@@ -1323,25 +1323,27 @@ import (
 )
 
 func main() {
-	p, ok := port.Open("gpio", gpio.Config{Pin: 25, Mode: gpio.Output, Edge: gpio.None, DebounceMs: 20})
-	if !ok {
+	p, err := port.Open("gpio", gpio.Config{Pin: 25, Mode: gpio.Output, Edge: gpio.None, DebounceMs: 20})
+	if err != nil {
 		return
 	}
 	var q actor.PID
-	q, ok = port.Open("gpio", gpio.Config{Pin: 0, Mode: gpio.InputPullUp, Edge: gpio.Both})
+	q, err = port.Open("gpio", gpio.Config{Pin: 0, Mode: gpio.InputPullUp, Edge: gpio.Both})
 	actor.Send(p, gpio.Write{Value: 1})
 	switch m := actor.Receive().(type) {
 	case gpio.Edge:
-		println(m.Pin, m.Value, ok)
+		println(m.Pin, m.Value, err == nil)
 	}
 	port.Close(p)
 	actor.Kill(q, actor.Killed)
 }
 `
 	img := compileImage(t, src)
+	// port.Open's error is an errors.Code, reserved type 45: the rows up
+	// to it come along, empty but for the ones the program uses.
 	want := "ProcInfo/0 Reason/0 ExitMsg/0 DownMsg/0 Request/0 Options/0 gpio.Config/4 gpio.Write/1 gpio.Edge/2"
-	if got := strings.Join(imageTypes(t, img), " "); got != want {
-		t.Fatalf("types %s, want %s", got, want)
+	if got := strings.Join(imageTypes(t, img), " "); !strings.HasPrefix(got, want+" ") || !strings.HasSuffix(got, " screen.Config/0 errors.Code/1") {
+		t.Fatalf("types %s, want %s ... errors.Code/1", got, want)
 	}
 	dis, err := Disassemble(img)
 	if err != nil {
@@ -1350,6 +1352,7 @@ func main() {
 	for _, re := range []string{
 		`NEWSTRUCT r\d+, r\d+, 4, gpio\.Config\n`,
 		`BUILTIN r\d+, r\d+, 2, PORT_OPEN\n`,
+		`BUILTIN r\d+, r\d+, 1, FS\n`,
 		`NEWSTRUCT r\d+, r\d+, 1, gpio\.Write\n`,
 		`TYPEIS r\d+, r\d+, gpio\.Edge\n`,
 		`BUILTIN r\d+, r\d+, 1, PORT_CLOSE\n`,
@@ -1358,8 +1361,10 @@ func main() {
 			t.Errorf("no match for %s:\n%s", re, dis)
 		}
 	}
-	if strings.Count(dis, "PORT_OPEN") != 2 {
-		t.Errorf("want two PORT_OPEN:\n%s", dis)
+	// port.Open is a library function: main calls it twice, it calls
+	// PORT_OPEN once (and B_FS's FsOpenErr for the reason).
+	if strings.Count(dis, "CALL r") < 2 || strings.Count(dis, ", PORT_OPEN\n") != 1 || !strings.Contains(dis, "func port.Open") {
+		t.Errorf("want two calls of port.Open, which has one PORT_OPEN:\n%s", dis)
 	}
 	// The literal is NEWSTRUCT with type id 6 (TYPE_GPIO_CONFIG).
 	code := words(img)
@@ -2093,10 +2098,10 @@ import (
 )
 
 func main() {
-	k, ok := port.Open("kbd", kbd.Config{RepeatDelayMs: 400})
-	println(k, ok, kbd.ModCtrl, kbd.Fn, kbd.Enter)
-	p, ok2 := port.Open("power", power.Config{PeriodMs: 1000})
-	println(p, ok2)
+	k, err := port.Open("kbd", kbd.Config{RepeatDelayMs: 400})
+	println(k, err == nil, kbd.ModCtrl, kbd.Fn, kbd.Enter)
+	p, err2 := port.Open("power", power.Config{PeriodMs: 1000})
+	println(p, err2 == nil)
 	actor.Send(p, power.Read{})
 	switch m := actor.Receive().(type) {
 	case kbd.Key:
@@ -2106,8 +2111,8 @@ func main() {
 	}
 }
 `)
-	if v := binary.LittleEndian.Uint32(img[4:]); v != 15<<16 {
-		t.Errorf("image version %s, want 15.0", VersionString(v))
+	if v := binary.LittleEndian.Uint32(img[4:]); v != 15<<16|ifaceMinor { // port.Open
+		t.Errorf("image version %s, want 15.%d", VersionString(v), ifaceMinor)
 	}
 	seen := map[uint32]bool{}
 	code := words(img)
@@ -2189,8 +2194,8 @@ func main() {
 	set := sys.SetTime(1700000000000)
 	now := sys.Time()
 	println(now > 0, set, sys.Random())
-	_, ok := port.Open("tls", net.DialTLS{IP: 1, Port: 443, TimeoutMs: 100, Host: "example.com"})
-	println(ok)
+	_, err := port.Open("tls", net.DialTLS{IP: 1, Port: 443, TimeoutMs: 100, Host: "example.com"})
+	println(err == nil)
 }
 `
 	img := compileImage(t, src)
@@ -2383,5 +2388,63 @@ func main() {
 	// literal and println(s[0]) account for the other two).
 	if countOp(code, "BUILTIN", ", 2, INDEX") != 2 || countOp(code, "BUILTIN", "SETINDEX") != 2 {
 		t.Errorf("want s[0] read and written once:\n%s", dis)
+	}
+}
+
+// TestPanicMinor: panic compiles to B_PANIC, which stamps the image with
+// ifaceMinor; a program without it stays 15.0.
+func TestPanicMinor(t *testing.T) {
+	src := "package main\nfunc f(n int) int {\n\tif n < 0 {\n\t\tpanic(n)\n\t}\n\treturn n\n}\nfunc main() { println(f(1)) }\n"
+	_, body := funcDis(t, compileSrc(t, src), "f")
+	if countOp(parseIns(t, body), "BUILTIN", "PANIC") != 1 {
+		t.Errorf("want one BUILTIN PANIC:\n%s", strings.Join(body, "\n"))
+	}
+	if v := words(compileImage(t, src))[1]; v != 15<<16|ifaceMinor {
+		t.Errorf("version %s, want 15.%d", VersionString(v), ifaceMinor)
+	}
+	if v := words(compileImage(t, "package main\nfunc main() { println(1) }\n"))[1]; v != 15<<16 {
+		t.Errorf("version %s, want 15.0", VersionString(v))
+	}
+}
+
+// TestDispatcher: a method call on an interface value calls a generated
+// dispatcher, a TYPEIS chain over the program's types that have the
+// method (a box unwrapped first), ending in a panic; an assertion to an
+// interface calls a generated test.
+func TestDispatcher(t *testing.T) {
+	src := `package main
+
+type S interface{ Area() int }
+
+type R struct{ W int }
+type Q int
+type Other struct{}
+
+func (r R) Area() int     { return r.W }
+func (q Q) Area() int     { return int(q) }
+func (o Other) Name() int { return 0 }
+
+func main() {
+	var s S = Q(2)
+	var x any = R{1}
+	_, ok := x.(S)
+	println(s.Area(), ok)
+}
+`
+	dis := compileSrc(t, src)
+	_, body := funcDis(t, dis, "S.Area")
+	code := parseIns(t, body)
+	if countOp(code, "TYPEIS", "") != 2 || countOp(code, "GETFIELD", "") != 1 || countOp(code, "BUILTIN", "PANIC") != 1 {
+		t.Errorf("dispatcher:\n%s", strings.Join(body, "\n"))
+	}
+	if countOp(code, "CALL", "R.Area") != 1 || countOp(code, "CALL", "Q.Area") != 1 {
+		t.Errorf("dispatcher calls:\n%s", strings.Join(body, "\n"))
+	}
+	_, body = funcDis(t, dis, "S.(is)")
+	if countOp(parseIns(t, body), "TYPEIS", "") != 2 {
+		t.Errorf("implements test:\n%s", strings.Join(body, "\n"))
+	}
+	if strings.Contains(compileSrc(t, "package main\ntype R struct{ W int }\nfunc (r R) Area() int { return r.W }\nfunc main() { println(R{1}.Area()) }\n"), "(is)") {
+		t.Error("a program without interfaces got a generated test")
 	}
 }

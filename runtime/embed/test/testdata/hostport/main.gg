@@ -32,8 +32,8 @@ func kid() {
 }
 
 func opener() {
-	_, ok := port.Open("hp", port.Host{Arg: 2})
-	println("child opened", ok)
+	_, err := port.Open("hp", port.Host{Arg: 2})
+	println("child opened", err == nil)
 }
 
 func main() {
@@ -51,9 +51,9 @@ func main() {
 				println("bye")
 				return
 			} else if m.Kind == 1 {
-				q, ok := port.Open("hp", port.Host{Arg: 1})
+				q, err := port.Open("hp", port.Host{Arg: 1})
 				p = q
-				println("open", ok)
+				println("open", err == nil)
 			} else if m.Kind == 2 {
 				actor.Send(p, port.Post{Kind: 5, Data: bytes.FromString("cmd")})
 			} else if m.Kind == 3 {

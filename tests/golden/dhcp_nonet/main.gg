@@ -1,4 +1,5 @@
-// Without a network dhcp.Start returns false at once; the client exits.
+// Without a network dhcp.Start fails at once, with port.Open's error for
+// the "netif" port (the host VM's refuses: busy); the client exits.
 package main
 
 import (
@@ -7,5 +8,6 @@ import (
 )
 
 func main() {
-	println("start", dhcp.Start(dhcp.Config{}), actor.Now())
+	err := dhcp.Start(dhcp.Config{})
+	println("start", err != nil, err.Error(), actor.Now())
 }

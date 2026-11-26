@@ -51,7 +51,7 @@
 //
 // The "tls" driver is optional (the directive below): importing gogo/http
 // does not make an image require tls. On a firmware without it an https
-// request fails (port.Open returns ok=false), as ClientDo/ClientUpload do,
+// request fails (port.Open returns an error), as ClientDo/ClientUpload do,
 // while http works.
 //
 //gogo:optional tls
@@ -132,10 +132,10 @@ type job struct {
 	File                       string // Upload: the file to send as the body
 }
 
-// result is a worker's or Client's reply.
+// result is a worker's or Client's reply: errors.OK, or why not.
 type result struct {
 	Resp Response
-	OK   bool
+	Err  errors.Code
 }
 
 // upResult is the uploader's reply.
@@ -195,12 +195,14 @@ const (
 )
 
 // Get fetches url (http:// or https://host[:port][/path][?query][#fragment])
-// and returns the response; false if the URL is not http:// or https://
-// (or has user info, spaces or control bytes), the host does not resolve,
-// the connection fails (for https: also the certificate is not valid
-// for the host, or the clock is not set), or the response is malformed (a
-// chunked one included: HTTP/1.0 is not sent one), contradictory or
-// incomplete within timeoutMs (<= 0: DefaultTimeoutMs).
+// and returns the response, or an error (an errors.Code): errors.BadURL if
+// the URL is not http:// or https:// (or has user info, spaces or control
+// bytes); errors.Timeout if there is no complete response within
+// timeoutMs (<= 0: DefaultTimeoutMs); errors.IO if the host does not
+// resolve, the connection fails (for https: also the certificate is not
+// valid for the host, or the clock is not set), or the response is
+// malformed (a chunked one included: HTTP/1.0 is not sent one),
+// contradictory or incomplete.
 //
 // The response body is an off-heap Bytes charged in full to the caller
 // (and to every actor it is sent to): the caller needs room for up to
@@ -208,13 +210,13 @@ const (
 // its memory limit and it exits with MailboxOverflow. Under the MCU's 16
 // KB default limit, either call from an actor spawned with a larger
 // limit (actor.SpawnOpt, MaxMemory) or use Do with a small maxBody.
-func Get(url string, timeoutMs int) (Response, bool) {
+func Get(url string, timeoutMs int) (Response, error) {
 	var none bytes.Bytes
 	return Do("GET", url, "", none, MaxBody, timeoutMs)
 }
 
 // Post sends body with Content-Type contentType to url, as Get.
-func Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool) {
+func Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, error) {
 	return Do("POST", url, contentType, body, MaxBody, timeoutMs)
 }
 
@@ -222,11 +224,12 @@ func Post(url, contentType string, body bytes.Bytes, timeoutMs int) (Response, b
 // at maxBody bytes (<= 0: MaxBody; at most MaxBodyLimit), as Get. A
 // Content-Type header is sent if contentType is not empty, Content-Length
 // for any method but GET and HEAD. A method or content type with spaces
-// or control bytes (resp. control bytes) fails at once.
-func Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, bool) {
+// or control bytes (resp. control bytes) fails at once with
+// errors.BadURL.
+func Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs int) (Response, error) {
 	u, ok := parseURL(url)
 	if !ok || method == "" || !safe(method, false) || !safe(contentType, true) {
-		return Response{}, false
+		return Response{}, BadURL
 	}
 	if timeoutMs <= 0 {
 		timeoutMs = DefaultTimeoutMs
@@ -243,11 +246,19 @@ func Do(method, url, contentType string, body bytes.Bytes, maxBody, timeoutMs in
 	switch x := r.(type) {
 	case result:
 		if ok {
-			return x.Resp, x.OK
+			return x.Resp, errOf(x.Err)
 		}
 	}
 	actor.Kill(w, actor.Shutdown) // its connection, if any, is reset
-	return Response{}, false
+	return Response{}, errors.Timeout
+}
+
+// errOf is c as an error: nil for errors.OK.
+func errOf(c errors.Code) error {
+	if c == errors.OK {
+		return nil
+	}
+	return c
 }
 
 // memFor is the memory limit of an actor that assembles a body of up to
@@ -293,8 +304,9 @@ func parseURL(url string) (target, bool) {
 		n = 443
 	}
 	if found {
-		n, ok = strconv.Atoi(p)
-		ok = ok && n > 0 && n < 65536
+		var err error
+		n, err = strconv.Atoi(p)
+		ok = err == nil && n > 0 && n < 65536
 	}
 	return target{secure, host, hostPort, path, n}, ok && host != "" && strings.IndexByte(hostPort, '@') < 0 &&
 		safe(hostPort, false) && safe(path, false)
@@ -319,8 +331,8 @@ func contentLength(hs []Header) int {
 	n := -1
 	for _, h := range hs {
 		if strings.EqualFold(h.Name, "Content-Length") {
-			v, ok := strconv.Atoi(h.Value)
-			if !ok || v < 0 || (n >= 0 && v != n) {
+			v, err := strconv.Atoi(h.Value)
+			if err != nil || v < 0 || (n >= 0 && v != n) {
 				return -2
 			}
 			n = v
@@ -334,17 +346,17 @@ func contentLength(hs []Header) int {
 // the port; it needs connMemory(u.Secure, ...).
 func dial(u target, deadline int64) (actor.PID, bool) {
 	var none actor.PID
-	ip, ok := dns.Lookup(u.Host, int(deadline-actor.Now()))
+	ip, err := dns.Lookup(u.Host, int(deadline-actor.Now()))
 	left := int(deadline - actor.Now())
-	if !ok || left <= 0 {
+	if err != nil || left <= 0 {
 		return none, false
 	}
 	if u.Secure {
-		c, ok := port.Open("tls", net.DialTLS{IP: ip, Port: u.Port, TimeoutMs: left, Host: u.Host})
-		return c, ok
+		c, err := port.Open("tls", net.DialTLS{IP: ip, Port: u.Port, TimeoutMs: left, Host: u.Host})
+		return c, err == nil
 	}
-	c, ok := port.Open("tcp", net.Dial{IP: ip, Port: u.Port, TimeoutMs: left})
-	return c, ok
+	c, err := port.Open("tcp", net.Dial{IP: ip, Port: u.Port, TimeoutMs: left})
+	return c, err == nil
 }
 
 // requestHead is j's request line and headers for a body of length bytes
@@ -437,25 +449,28 @@ func worker() {
 		actor.Monitor(r.From)
 		switch j := r.Body.(type) {
 		case job:
-			resp, ok := fetch(j)
-			actor.Reply(r, result{resp, ok})
+			resp, e := fetch(j)
+			actor.Reply(r, result{resp, e})
 		}
 	}
 }
 
-// fetch performs j on a connection of its own; the caller gives up (and
-// kills the worker) at j.Deadline, so fetch need not watch it except to
-// stop waiting.
-func fetch(j job) (Response, bool) {
+// fetch performs j on a connection of its own, returning errors.OK or the
+// failure (see failure); the caller gives up (and kills the worker) at
+// j.Deadline, so fetch need not watch it except to stop waiting.
+func fetch(j job) (Response, errors.Code) {
 	c, ok := dial(j.URL, j.Deadline)
 	if !ok {
-		return Response{}, false
+		return Response{}, failure(j.Deadline)
 	}
 	sendRequest(c, j)
 	var none bytes.Bytes
 	resp, how, _ := readResponse(c, j, none, nil)
 	finish(c, how, j.URL.Secure, lingerUntil(j.Deadline), nil)
-	return resp, how != failed
+	if how == failed {
+		return resp, failure(j.Deadline)
+	}
+	return resp, errors.OK
 }
 
 // readResponse reads the response to j from c, starting with the bytes
@@ -667,11 +682,12 @@ const clientMemory = 2*MaxBody + 6144 + TLSMemory + 3*UploadChunk
 const MaxQueued = 4
 
 // ClientDo makes a request through c, as Do does with maxBody MaxBody,
-// on c's kept connection; false also if c is closed (after timeoutMs).
-func ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, bool) {
+// on c's kept connection; errors.Timeout also if c is closed (after
+// timeoutMs).
+func ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeoutMs int) (Response, error) {
 	u, ok := parseURL(url)
 	if !ok || method == "" || !safe(method, false) || !safe(contentType, true) {
-		return Response{}, false
+		return Response{}, BadURL
 	}
 	if timeoutMs <= 0 {
 		timeoutMs = DefaultTimeoutMs
@@ -681,10 +697,10 @@ func ClientDo(c Client, method, url, contentType string, body bytes.Bytes, timeo
 	switch x := r.(type) {
 	case result:
 		if ok {
-			return x.Resp, x.OK
+			return x.Resp, errOf(x.Err)
 		}
 	}
-	return Response{}, false
+	return Response{}, errors.Timeout
 }
 
 // CloseClient closes c's connection gracefully and ends it. Requests still
@@ -720,7 +736,7 @@ func client(creator actor.PID) {
 				if b.File != "" {
 					actor.Reply(r, upResult{resp.Status, e})
 				} else {
-					actor.Reply(r, result{resp, e == errors.OK})
+					actor.Reply(r, result{resp, e})
 				}
 				if creatorDown(queue) { // the creator ended meanwhile: the
 					// requests queued behind it fail now, unsent
@@ -798,7 +814,7 @@ func keepMsg(queue []any, m any) []any {
 	return queue
 }
 
-// refuse answers a Client request with a failure: e for an upload.
+// refuse answers a Client request with the failure e.
 func refuse(r actor.Request, e errors.Code) {
 	switch b := r.Body.(type) {
 	case job:
@@ -807,7 +823,7 @@ func refuse(r actor.Request, e errors.Code) {
 			return
 		}
 	}
-	actor.Reply(r, result{})
+	actor.Reply(r, result{Err: e})
 }
 
 // flush takes what is left in the mailbox after a connection was closed
@@ -1152,9 +1168,9 @@ func parseStatus(head string) (int, []Header, bool) {
 	if len(line) < 12 || !strings.HasPrefix(line, "HTTP/1.") || line[8] != ' ' || (len(line) > 12 && line[12] != ' ') {
 		return 0, nil, false
 	}
-	code, ok := strconv.Atoi(line[9:12])
+	code, err := strconv.Atoi(line[9:12])
 	hs, good := parseHeaders(rest)
-	return code, hs, ok && good && code >= 100
+	return code, hs, err == nil && good && code >= 100
 }
 
 // parseHeaders parses "Name: value" lines separated by CRLF.
@@ -1191,7 +1207,7 @@ func Serve(portNum int, handler func(Request) Response) actor.PID {
 }
 
 func listen(portNum int, handler func(Request) Response) {
-	if _, ok := port.Open("tcp_listen", net.Listen{Port: portNum}); !ok {
+	if _, err := port.Open("tcp_listen", net.Listen{Port: portNum}); err != nil {
 		actor.Exit(ListenFailed)
 	}
 	for {

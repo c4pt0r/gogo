@@ -13,8 +13,8 @@ func main() {
 	n, _ := port.Open("netif", net.IfConfig{})
 	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
 	actor.Sleep(100)
-	c, ok := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
-	println("dial", ok)
+	c, err := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+	println("dial", err == nil)
 	done := false
 	for !done {
 		switch m := actor.Receive().(type) {
@@ -34,8 +34,8 @@ func main() {
 			done = true
 		}
 	}
-	c, ok = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 81, TimeoutMs: 2500})
-	println("dial2", ok)
+	c, err = port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 81, TimeoutMs: 2500})
+	println("dial2", err == nil)
 	switch m := actor.Receive().(type) {
 	case port.Closed:
 		println("closed", m.Reason, actor.Now())

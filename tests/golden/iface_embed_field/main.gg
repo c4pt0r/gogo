@@ -1,0 +1,61 @@
+// A struct that embeds an interface: its methods are promoted, so the
+// struct implements the interface, and a call goes through the field's
+// dynamic value; a struct field can override one of them. Valid Go:
+// `go run` prints the same (gocompare).
+package main
+
+type Namer interface{ Name() string }
+
+type Shape interface {
+	Namer
+	Area() int
+}
+
+type Base struct{ N string }
+
+func (b Base) Name() string { return "base:" + b.N }
+
+type Square struct{ S int }
+
+func (s Square) Name() string { return "square" }
+func (s Square) Area() int    { return s.S * s.S }
+
+type Wrap struct {
+	Namer
+	K int
+}
+
+type Labeled struct {
+	Shape
+	Label string
+}
+
+func (l Labeled) Name() string { return l.Label + "/" + l.Shape.Name() }
+
+type Outer struct{ Wrap }
+
+func main() {
+	w := Wrap{Base{"inner"}, 1}
+	println(w.Name(), w.Namer.Name())
+	var n Namer = w
+	println(n.Name())
+	var x any = w
+	_, ok := x.(Namer)
+	_, isShape := x.(Shape)
+	println(ok, isShape)
+
+	l := Labeled{Square{3}, "big"}
+	var s Shape = l
+	println(s.Name(), s.Area(), l.Area())
+
+	n = Wrap{l, 2}
+	println(n.Name())
+	n = Outer{Wrap{Base{"deep"}, 3}}
+	println(n.Name())
+	f := w.Name
+	println(f())
+	shapes := []Namer{w, l, Square{2}, Outer{w}}
+	for _, v := range shapes {
+		println(v.Name())
+	}
+}
