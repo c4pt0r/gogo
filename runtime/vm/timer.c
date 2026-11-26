@@ -5,20 +5,6 @@
 #include "signals.h"
 #include <string.h>
 
-static Timer *timer_new(Vm *vm, uint64_t deadline, uint64_t serial, term pid, Msg *msg) {
-    Timer *t = va_alloc(vm, sizeof *t);
-    if (!t) return NULL;
-    t->seq = 0;
-    t->deadline = deadline;
-    t->serial = serial;
-    t->pid = pid;
-    t->msg = msg;
-    t->owner = T_NIL;
-    t->charge = 0;
-    t->counted = false;
-    return t;
-}
-
 /* Words a SendAfter timer holding m is charged to its creator: the queued
  * message charge (as in mbox_words, off-heap Bytes included) plus the
  * timer entry. */
@@ -123,26 +109,46 @@ static Timer *heap_remove(Vm *vm, uint32_t i) {
     return t;
 }
 
+/* A new entry (serial 0, no owner), with room made for it in the heap.
+ * NULL if out of memory (nothing changes; msg stays the caller's). */
+static Timer *timer_new(Vm *vm, uint64_t deadline, term pid, Msg *msg) {
+    if (!heap_reserve(vm)) return NULL;
+    Timer *t = va_alloc(vm, sizeof *t);
+    if (!t) {
+        heap_trim(vm);
+        return NULL;
+    }
+    memset(t, 0, sizeof *t);
+    t->deadline = deadline;
+    t->pid = pid;
+    t->msg = msg;
+    t->owner = T_NIL;
+    return t;
+}
+
+/* Cancels the timer with this serial, or with serial 0 pid's wakeup. */
+static bool cancel(Vm *vm, uint64_t serial, term pid) {
+    for (uint32_t i = 0; i < vm->ntimers; i++) {
+        const Timer *t = vm->timers[i];
+        if (serial ? t->serial == serial : t->pid == pid && t->msg == NULL) {
+            timer_free(vm, heap_remove(vm, i));
+            return true;
+        }
+    }
+    return false;
+}
+
 bool timer_add_wakeup(Vm *vm, Actor *a, uint64_t deadline) {
     if (a->flags & AF_WAKEUP_ARMED) return true;   /* at most one per actor */
-    if (!heap_reserve(vm)) return false;
-    Timer *t = timer_new(vm, deadline, 0, a->id, NULL);
-    if (!t) { heap_trim(vm); return false; }
+    Timer *t = timer_new(vm, deadline, a->id, NULL);
+    if (!t) return false;
     timer_insert(vm, t);
     a->flags |= AF_WAKEUP_ARMED;
     return true;
 }
 
 void timer_cancel_wakeup(Vm *vm, Actor *a) {
-    if (a->flags & AF_WAKEUP_ARMED) {
-        for (uint32_t i = 0; i < vm->ntimers; i++) {
-            const Timer *t = vm->timers[i];
-            if (t->pid == a->id && t->msg == NULL) {
-                timer_free(vm, heap_remove(vm, i));
-                break;
-            }
-        }
-    }
+    if (a->flags & AF_WAKEUP_ARMED) cancel(vm, 0, a->id);
     a->flags &= (uint8_t)~(AF_WAKEUP_ARMED | AF_TIMED_OUT);
 }
 
@@ -154,65 +160,36 @@ term timer_add_send(Vm *vm, Actor *from, uint64_t deadline, term to_pid, term ms
     if (!m) return T_NIL;
     uint32_t charge = send_charge(vm, m);
     /* The pending timer counts against the creator's limit, like a queued
-     * message against the receiver's. */
-    if (!actor_fits(from, charge)) {
-        msg_free(vm, m);
-        return T_NIL;
-    }
-    /* Everything that can fail but the Ref comes first, so inserting
-     * cannot fail afterwards. */
-    if (!heap_reserve(vm)) {
-        msg_free(vm, m);
-        return T_NIL;
-    }
-    Timer *t = timer_new(vm, deadline, 0, to_pid, m);
+     * message against the receiver's. Everything that can fail but the
+     * Ref comes first, so inserting cannot fail afterwards. */
+    Timer *t = actor_fits(from, charge) ? timer_new(vm, deadline, to_pid, m) : NULL;
     if (!t) {
         msg_free(vm, m);
-        heap_trim(vm);
         return T_NIL;
     }
     Actor *to = actor_lookup(vm, to_pid);
     if (to && to->state != A_EXITED) {
-        if (!actor_timer_ref(vm, to)) {
-            timer_free(vm, t);
-            heap_trim(vm);
-            return T_NIL;
-        }
+        if (!actor_timer_ref(vm, to)) goto fail;
         t->counted = true;
     }
-    if (!actor_charge(vm, from, charge)) {
-        timer_free(vm, t);
-        heap_trim(vm);
-        return T_NIL;
-    }
-    if (!actor_timer_own(vm, from)) {
-        timer_free(vm, t);
-        heap_trim(vm);
-        return T_NIL;
-    }
+    if (!actor_charge(vm, from, charge)) goto fail;
+    (void)actor_timer_own(vm, from);   /* from has its extra now: cannot fail */
     t->owner = from->id;
     t->charge = charge;
     term ref = heap_new_ref(vm, from);     /* the block may only use what is left */
-    if (ref == T_NIL) {
-        timer_free(vm, t);                 /* releases the charge */
-        heap_trim(vm);
-        return T_NIL;
-    }
+    if (ref == T_NIL) goto fail;           /* timer_free releases the charge */
     const uint32_t *obj = from->mem + term_ref_off(ref);
     t->serial = (uint64_t)obj[1] | ((uint64_t)obj[2] << 32);
     timer_insert(vm, t);
     return ref;
+fail:
+    timer_free(vm, t);
+    heap_trim(vm);
+    return T_NIL;
 }
 
 bool timer_cancel(Vm *vm, uint64_t serial) {
-    if (serial == 0) return false;          /* wakeups are not cancellable by ref */
-    for (uint32_t i = 0; i < vm->ntimers; i++) {
-        if (vm->timers[i]->serial == serial) {
-            timer_free(vm, heap_remove(vm, i));
-            return true;
-        }
-    }
-    return false;
+    return serial && cancel(vm, serial, 0);   /* wakeups are not cancellable by ref */
 }
 
 void timer_cancel_actor(Vm *vm, const Actor *a) {
