@@ -495,8 +495,14 @@ TEST(screen_port_out_done) {
     port_close(&vm, p);
 }
 
-/* A full mailbox: Dones are owed and sent before the next Out's. */
+static uint64_t clk;
+static uint64_t clock_fn(void) { return clk; }
+
+/* A full mailbox: Dones are owed, then delivered by the port's own retry
+ * (no further Out needed), in order. */
 TEST(screen_port_owed) {
+    clk = 1000;
+    test_host_set_clock(clock_fn);
     vm_setup();
     term p = open_screen(0, 0);
     uint32_t type;
@@ -504,14 +510,57 @@ TEST(screen_port_owed) {
     CHECK(pop(&type, &seq, NULL, NULL));
     owner->max_words = (uint16_t)(owner->mem_words + vm.ports[0].charge_words);   /* no room for a message */
     static const uint8_t f[] = { SCREEN_OP_TEXT, 1, 'a' };
+    static const uint8_t bad[] = { 99 };
     port_command(&vm, owner, p, mk_out(f, sizeof f));
+    port_command(&vm, owner, p, mk_out(bad, sizeof bad));
     port_command(&vm, owner, p, mk_out(f, sizeof f));
     CHECK(!pop(&type, &seq, NULL, NULL));
-    owner->max_words = 0;   /* the default: room again */
-    port_command(&vm, owner, p, mk_out(f, sizeof f));
-    for (int32_t want = 1; want <= 3; want++) {
+    CHECK(port_any_live(&vm));                 /* Dones still to come: the VM keeps running */
+    uint64_t dl = 0;
+    CHECK(port_next_deadline(&vm, &dl));
+    port_drain(&vm, clk);                       /* still full: nothing */
+    CHECK(!pop(&type, &seq, NULL, NULL));
+    owner->max_words = 0;                       /* the owner has room again */
+    clk = dl;
+    CHECK(port_due_now(&vm));
+    port_drain(&vm, clk);
+    static const int32_t want[] = { 1, -1, 2 };
+    for (int i = 0; i < 3; i++) {
         CHECK(pop(&type, &seq, NULL, NULL));
-        CHECK_EQ(seq, want);
+        CHECK_EQ(type, TYPE_DONE);
+        CHECK_EQ(seq, want[i]);
     }
+    CHECK(!port_any_live(&vm));
+    CHECK(!port_next_deadline(&vm, &dl));
     port_close(&vm, p);
+    test_host_set_clock(NULL);
+}
+
+/* SCREEN_OWED_MAX owed: the next Outs are not drawn and get Done{-1}, owed
+ * after the others, so every Out still gets its Done. */
+TEST(screen_port_owed_full) {
+    clk = 1000;
+    test_host_set_clock(clock_fn);
+    vm_setup();
+    term p = open_screen(0, 0);
+    uint32_t type;
+    int32_t seq;
+    CHECK(pop(&type, &seq, NULL, NULL));
+    owner->max_words = (uint16_t)(owner->mem_words + vm.ports[0].charge_words);
+    static const uint8_t f[] = { SCREEN_OP_MOVE, 0, 0, SCREEN_OP_TEXT, 1, 'a' };
+    static const uint8_t g2[] = { SCREEN_OP_MOVE, 0, 0, SCREEN_OP_TEXT, 1, 'b' };
+    for (unsigned i = 0; i < SCREEN_OWED_MAX; i++) port_command(&vm, owner, p, mk_out(f, sizeof f));
+    port_command(&vm, owner, p, mk_out(g2, sizeof g2));   /* refused: 'b' not drawn */
+    port_command(&vm, owner, p, mk_out(g2, sizeof g2));
+    CHECK_EQ(screen_cell_cp(screen_cell(screen_port_grid(&vm.ports[0]), 0, 0)), (uint32_t)'a');
+    owner->max_words = 0;
+    clk += 100;
+    port_drain(&vm, clk);
+    for (unsigned i = 0; i < SCREEN_OWED_MAX + 2u; i++) {
+        CHECK(pop(&type, &seq, NULL, NULL));
+        CHECK_EQ(seq, i < SCREEN_OWED_MAX ? (int32_t)i + 1 : -1);
+    }
+    CHECK(!pop(&type, &seq, NULL, NULL));
+    port_close(&vm, p);
+    test_host_set_clock(NULL);
 }

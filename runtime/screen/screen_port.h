@@ -13,10 +13,13 @@
  *    handed to the display, and the owner gets port.Done{Seq} (Seq counts
  *    the frames drawn, from 1); a malformed or empty frame is not drawn and
  *    gets Done{-1}. The data is read in place: nothing is copied or held.
- *    A Done the owner has no mailbox room for is owed and sent, in order,
- *    before the next Out's (at most SCREEN_OWED_MAX owed; an Out arriving
- *    with that many owed is not drawn, and its Done{-1} is dropped). Other
- *    commands are ignored.
+ *    A Done the owner has no mailbox room for is owed and retried every
+ *    10 ms (after collecting a waiting owner's heap slack, as stream/
+ *    does), in order, by the port's own event source, so every Out gets
+ *    its Done eventually; owed Dones keep the VM running. With
+ *    SCREEN_OWED_MAX owed, a further Out is not drawn and gets Done{-1}
+ *    (counted, never lost). Without a free event-source slot the retry
+ *    happens only at the next Out. Other commands are ignored.
  *  - Close (or the owner's exit): the display is handed back (the text
  *    console shows again) and the memory freed.
  *

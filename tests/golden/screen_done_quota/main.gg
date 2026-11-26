@@ -1,0 +1,50 @@
+// The "screen" port under memory pressure: an actor fills its heap a word
+// more each round, sends an Out from a helper (so the filler is garbage
+// once it returns) and checks whether the Done came at once. The first
+// time it did not (the mailbox had no room), the Done must still arrive
+// while the actor waits: the port retries it, not only at the next Out.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/port"
+	"gogo/screen"
+)
+
+func send(p actor.PID, n int) int {
+	fill := make([]int, n)
+	fill[n-1] = n
+	b := bytes.NewBuffer(16)
+	b.Write([]byte{screen.OpMove, 0, 0, screen.OpText, 1, byte('a' + n%26)})
+	actor.Send(p, port.Out{Data: b.Freeze()})
+	return fill[n-1]
+}
+
+func worker() {
+	p, ok := port.Open("screen", screen.Config{Cols: 10, Rows: 2})
+	if !ok {
+		println("no screen")
+		return
+	}
+	actor.Receive() // the Chunk
+	for n := 1; n < 4000; n++ {
+		send(p, n)
+		_, now := actor.ReceiveTimeout(0)
+		if now {
+			continue
+		}
+		_, later := actor.ReceiveTimeout(1000)
+		if later {
+			println("an owed Done arrived while waiting")
+		} else {
+			println("lost Done")
+		}
+		return
+	}
+	println("never ran out of room")
+}
+
+func main() {
+	actor.SpawnOpt(worker, actor.Options{MaxMemory: 4000})
+}

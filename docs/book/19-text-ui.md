@@ -276,6 +276,22 @@ import (
 	"gogo/screen"
 )
 
+// waitDone waits up to a second for the port's Done and returns its Seq
+// (0: none came). A Done can come late when memory is short: never wait
+// for one without a timeout.
+func waitDone() int {
+	for {
+		msg, ok := actor.ReceiveTimeout(1000)
+		if !ok {
+			return 0
+		}
+		switch m := msg.(type) {
+		case port.Done:
+			return m.Seq
+		}
+	}
+}
+
 func main() {
 	p, ok := port.Open("screen", screen.Config{Cols: 12, Rows: 2})
 	if !ok {
@@ -291,15 +307,9 @@ func main() {
 	b.WriteString("hello")
 	b.Write([]byte{screen.OpAttr, 0, screen.OpFill, 0, 1, 12, 1, 0x00, 0x25}) // ─ is U+2500
 	actor.Send(p, port.Out{Data: b.Freeze()})
-	switch m := actor.Receive().(type) {
-	case port.Done:
-		println("done", m.Seq)
-	}
+	println("done", waitDone())
 	actor.Send(p, port.Out{Data: bytes.FromSlice([]byte{42})}) // not an operation
-	switch m := actor.Receive().(type) {
-	case port.Done:
-		println("done", m.Seq)
-	}
+	println("done", waitDone())
 	port.Close(p)
 }
 ```
@@ -340,7 +350,13 @@ done -1
   The package comment of `gogo/screen` has the details.
 - **Done.** The port checks the whole frame first. A malformed frame is
   drawn not at all and answered with `port.Done{Seq: -1}`; a good one is
-  drawn and answered with the next `Seq`.
+  drawn and answered with the next `Seq`. Every `Out` gets its `Done`, in
+  order, but not always at once: when the owner's memory is too full to
+  take the message, the port tries again every 10 ms, and the `Done`
+  arrives once the owner has room (waiting in `Receive` usually frees
+  it). With 8 `Done`s waiting, a further `Out` is not drawn and gets
+  `Done{-1}`. So, as `waitDone` above does, never wait for a `Done`
+  without a timeout. A `port.Done` does not say which port sent it.
 - **Memory.** The grid is 4 bytes a cell (1760 bytes for 40 x 11). It is
   allocated when the port opens and charged to the owner. The frame's data
   is read in place, never copied. A frame that changes nothing draws
