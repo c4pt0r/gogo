@@ -125,3 +125,10 @@ Next, in order:
    assertions, the expression `switch`, ...).
 3. **Bluetooth (BLE)**: a phone app connection and Wi-Fi setup from the
    phone.
+
+## License
+
+gogo is licensed under the BSD 3-Clause License, see [LICENSE](LICENSE).
+Third-party components (the console font, the BMI270 configuration blob,
+FatFs, LittleFS, and the ESP-IDF parts linked into the firmware) keep their
+own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

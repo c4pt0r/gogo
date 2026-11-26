@@ -7,6 +7,9 @@ printable ASCII (6x12 cells) plus the GB 2312 characters (12x12 cells).
 
 [Fusion Pixel Font](https://github.com/TakWolf/fusion-pixel-font) 12px
 monospaced, `zh_hans` variant, release **2026.11.10**, SIL OFL 1.1 (`OFL.txt`).
+Fusion Pixel is built from Ark Pixel, Cubic 11 and Galmuri; their licenses,
+copied from the same release archive, are in `LICENSES/`. The generated
+`.font` blobs stay under the OFL (see `THIRD_PARTY_NOTICES.md`).
 
 - Download: `https://github.com/TakWolf/fusion-pixel-font/releases/download/2026.11.10/fusion-pixel-font-12px-monospaced-bdf-v2026.11.10.zip`
   (sha256 `bbf8efa39f165dee5e52ed1c2ccc21f7d7d32dd6e536190cba55065220b2c0a5`)
