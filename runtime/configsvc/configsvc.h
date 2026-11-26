@@ -35,7 +35,9 @@
  * a temporary name (.gogo-push) beside the target, and end reads it back,
  * checks it against <len> and <crc32> and only then renames it over
  * <path>. A failure, abort or a new push drops the temporary file. The
- * backend must take its own lock when the VM uses it too. */
+ * backend must take its own lock when the VM uses it too; each backend
+ * call is atomic then, but the sequence (write, close, read back, rename)
+ * is not: the VM may use the volume between two calls. */
 #ifndef GOGO_CONFIGSVC_H
 #define GOGO_CONFIGSVC_H
 
