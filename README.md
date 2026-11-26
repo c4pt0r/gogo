@@ -80,9 +80,6 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
  │ LittleFS FAT NVS PSRAM │ │                      │ │ → C, Rust, Go, Swift    │
  └────────────────────────┘ └──────────────────────┘ └─────────────────────────┘
 
- Release:  git tag vX.Y.Z ─► GitHub Actions ─► draft release
-           (firmware per board · gogo CLI per OS · SHA256SUMS · licenses)
-           └─► gogo setup: detect board → verify → flash → Wi-Fi → hello
 ```
 
 Above the double line runs on your computer: programs import the
