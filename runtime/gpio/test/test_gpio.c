@@ -10,6 +10,8 @@
 #include "msg.h"
 #include "signals.h"
 #include "interp.h"
+#include "config.h"
+#include "../include/gogo_errors.h"
 #include <string.h>
 
 static GpioPin pins[8];
@@ -84,7 +86,16 @@ TEST(gpio_edge_match_and_filter) {
 
 /* ---- debounce (gpio_event and the driver's event source) ---- */
 
-static const PortDriver *const drv_list[] = { &drv, NULL };
+/* A HAL that lowers every debounce to 0, as the unix script mode does. */
+static int f_config_nodeb(void *ctx, uint32_t pin, int mode, bool watch, uint16_t *deb) {
+    (void)ctx; (void)pin; (void)mode; (void)watch;
+    *deb = 0;
+    return 0;
+}
+static const GpioHal nodeb_hal = { .npins = 8, .pins = pins, .config = f_config_nodeb, .write = f_write,
+                                   .read = f_read, .release = f_release };
+static const PortDriver nodeb_drv = GPIO_DRIVER(&nodeb_hal);
+static const PortDriver *const drv_list[] = { &drv, &nodeb_drv, NULL };
 
 static Actor *owner;
 static Port *dport;
@@ -99,9 +110,9 @@ static void drain_at(uint64_t t) {
     port_drain(&vm, t);
 }
 
-/* A waiting owner and an open "gpio" port on pin 2 (Both edges, debounce
- * deb ms), on a fresh VM whose time base is t0. */
-static void db_open(int32_t deb, uint64_t t0) {
+/* A waiting owner and an open "gpio" port of driver d on pin 2 (Both
+ * edges, debounce deb ms), on a fresh VM whose time base is t0. */
+static void db_open_with(const PortDriver *d, int32_t deb, uint64_t t0) {
     CHECK_EQ(test_vm_init(&vm, NULL, 16), 0);
     evq_reset(&vm);
     vm.t0 = t0;
@@ -113,10 +124,12 @@ static void db_open(int32_t deb, uint64_t t0) {
     CHECK(owner != NULL);
     owner->state = A_WAITING;
     int32_t cfg[4] = { 2, GPIO_INPUT, GPIO_BOTH, deb };
-    term p = port_open_with(&vm, owner, &drv, cfg, 4);
+    term p = port_open_with(&vm, owner, d, cfg, 4);
     CHECK(p != T_NIL);
     dport = port_at(&vm, term_pid_slot(p) - vm.port_base);
 }
+
+static void db_open(int32_t deb, uint64_t t0) { db_open_with(&drv, deb, t0); }
 
 static void db_close(void) {
     while (runq_pop(&vm)) {}
@@ -153,7 +166,8 @@ TEST(gpio_debounce_burst) {
     db_open(20, 0);
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));
-    CHECK(!source_in());                        /* registered when a value is first held */
+    CHECK(source_in());                         /* registered by the open of a debounced input */
+    CHECK(vm.sources[0].ctx == NULL);
     /* 5 edges within 20 ms: first delivered at once. */
     db_push(1, 0);
     db_push(0, 4);
@@ -235,10 +249,10 @@ TEST(gpio_debounce_t0) {
     db_close();
 }
 
-/* Debounce 0 (the unix script mode's config sets it): every edge at once. */
+/* Debounce 0 (the unix script mode's config sets it): every edge at once,
+ * and no event source. */
 TEST(gpio_debounce_off) {
-    db_open(20, 0);
-    dport->state[1] = 0;                        /* as if config had lowered it to 0 */
+    db_open_with(&nodeb_drv, 20, 0);
     for (uint32_t i = 0; i < 5; i++) db_push((int32_t)(i & 1u), i);
     drain_at(5);
     CHECK_EQ(mbox_len(), 5);
@@ -346,6 +360,37 @@ TEST(gpio_debounce_idle_no_spin) {
     CHECK_EQ(rc, 0);
     CHECK(!port_next_deadline(&vm, &d));    /* flushed at the window's end */
     CHECK(db_reads < 30u);
+}
+
+/* Without a free event-source slot a debounced input is refused with
+ * TooMany (its debounce could not work), its pin left unconfigured; an
+ * output, an input without an edge and an undebounced input still open. */
+static bool noop_pending(const struct Vm *v, void *c) { (void)v; (void)c; return false; }
+static void noop_drain(struct Vm *v, void *c, uint64_t now) { (void)v; (void)c; (void)now; }
+static bool noop_live(const struct Vm *v, void *c) { (void)v; (void)c; return false; }
+static const PortSource other[4] = {
+    { noop_pending, noop_drain, noop_live, NULL, NULL }, { noop_pending, noop_drain, noop_live, NULL, NULL },
+    { noop_pending, noop_drain, noop_live, NULL, NULL }, { noop_pending, noop_drain, noop_live, NULL, NULL },
+};
+
+TEST(gpio_debounce_needs_a_source_slot) {
+    CHECK_EQ(test_vm_init(&vm, NULL, 16), 0);
+    memset(pins, 0, sizeof pins);
+    port_set_drivers(&vm, drv_list);
+    for (uint32_t i = 0; i < GOGO_MAX_SOURCES; i++) CHECK(port_add_source(&vm, &other[i], NULL));
+    Actor *a = actor_new(&vm, 64);
+    CHECK(a != NULL);
+    int32_t in[4] = { 2, GPIO_PULLUP, GPIO_BOTH, 0 }, out[4] = { 3, GPIO_OUTPUT, GPIO_EDGE_NONE, 0 },
+            quiet[4] = { 4, GPIO_INPUT, GPIO_EDGE_NONE, 0 };
+    CHECK(port_open_with(&vm, a, &drv, in, 4) == T_NIL);
+    CHECK_EQ(vm.open_err, GOGO_E_TOOMANY);
+    CHECK(!pins[2].open);
+    CHECK(port_open_with(&vm, a, &drv, out, 4) != T_NIL);
+    CHECK(port_open_with(&vm, a, &drv, quiet, 4) != T_NIL);
+    CHECK(port_open_with(&vm, a, &nodeb_drv, in, 4) != T_NIL);   /* debounce 0: no source needed */
+    for (uint32_t i = 0; i < GOGO_MAX_SOURCES; i++) port_remove_source(&vm, &other[i]);
+    a->state = A_RUNNABLE;
+    actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
 }
 
 /* A HAL with more than 256 pins: the port keeps the whole pin number, so

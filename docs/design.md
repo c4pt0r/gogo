@@ -752,8 +752,10 @@ btn, err := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge:
   is delivered at once, one inside the window is held (the latest wins),
   and when the window ends the held level is delivered if it differs from
   the last one, which opens a new window. The window ends are the
-  driver's event source, registered in a VM when a first value is held
-  and kept (its context is the count of ports holding a value). The VM
+  driver's event source, registered in a VM by the first open of a
+  debounced input and kept (its context is the count of ports holding a
+  value); with no source slot free that open fails with `TooMany`, so the
+  debounce never silently stops. The VM
   core has no debounce of its own (it had, in the port layer, for this
   one driver).
 

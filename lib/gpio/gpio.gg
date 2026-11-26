@@ -6,7 +6,8 @@
 // Open a pin with port.Open("gpio", gpio.Config{Pin: 25, Mode:
 // gpio.Output}); drive an output with actor.Send(p, gpio.Write{Value: 1}).
 // An input with an Edge other than None sends its owner an Edge event on
-// each change, debounced.
+// each change, debounced. Its Open fails with errors.TooMany in the rare
+// VM whose event-source slots are all taken (the debounce needs one).
 //
 // The struct types Config, Write and Edge have fixed type indices 6-8 in
 // every image (TYPE_GPIO_* in runtime/vm/opcodes.h); keep their field

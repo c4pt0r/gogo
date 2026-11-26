@@ -23,7 +23,8 @@
  * window after the last delivery is held, and only the latest is
  * delivered when the window ends, if its level changed (gpio.c). The
  * window ends are an event source of the driver's (port_add_source: one
- * of GOGO_MAX_SOURCES, from the first value a VM's gpio port holds). */
+ * of GOGO_MAX_SOURCES, from a VM's first open of a debounced input, which
+ * is refused with GOGO_E_TOOMANY when no slot is free). */
 #ifndef GOGO_GPIO_H
 #define GOGO_GPIO_H
 

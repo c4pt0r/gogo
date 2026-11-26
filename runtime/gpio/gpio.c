@@ -7,6 +7,7 @@
 #include "actor.h"
 #include "evq.h"
 #include "host.h"
+#include "../include/gogo_errors.h"
 
 #define PIN(p)  ((p)->state[0])
 #define MODE(p) ((p)->state[1] >> 4 & 3u)
@@ -15,6 +16,16 @@
 /* state[1] flags: a value was delivered (the window runs from last_t); a
  * trailing value is held; the level last delivered; the level held. */
 enum { DB_DELIVERED = 1, DB_PENDING = 2, DB_LAST_B = 4, DB_PEND_B = 8 };
+
+static const PortSource gpio_source;   /* the debounce's window ends (below) */
+
+/* The VM's slot of the driver's source, NULL while it is not registered. */
+static PortSrcSlot *src_slot(struct Vm *vm) {
+    for (PortSrcSlot *q = vm->sources; q->s; q++) {
+        if (q->s == &gpio_source) return q;
+    }
+    return NULL;
+}
 
 static const GpioHal *hal_of(const Port *p) { return (const GpioHal *)p->drv->hw; }
 
@@ -57,6 +68,12 @@ int gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32
     bool watch = watched((uint32_t)mode, (uint32_t)edge);
     uint16_t deb = (uint16_t)(cfg[3] > 0 ? (cfg[3] > 65535 ? 65535 : cfg[3]) : 20);
     if (h->config(h->ctx, (uint32_t)pin, mode, watch, &deb) != 0) return -1;
+    /* A debounced input needs the driver's event source in this VM (it
+     * may hold a value): refused with TooMany if no source slot is free. */
+    if (watch && deb && !src_slot(vm) && !port_add_source(vm, &gpio_source, NULL)) {
+        h->release(h->ctx, (uint32_t)pin, mode, watch);
+        return GOGO_E_TOOMANY;
+    }
     p->state[0] = (uint32_t)pin;
     p->state[1] = (uint32_t)mode << 4 | (uint32_t)edge << 6 | (uint32_t)deb << 16;   /* deb: gpio_event */
     s->vm = vm;
@@ -85,22 +102,14 @@ void gpio_command(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint3
  * one inside the window is held as the trailing value (the latest wins).
  * When the window ends, the held value is delivered if its level differs
  * from the last delivered one, and that delivery opens a new window. The
- * window ends are this driver's event source, registered in a VM when it
- * first holds a value and kept for the VM's life: its ctx is the number of
- * ports holding a value (no memory), so a VM with none pays one test per
- * scheduler pass. All of it runs on the scheduler thread. */
-
-static const PortSource gpio_source;
+ * window ends are this driver's event source, registered in a VM by the
+ * first open of a debounced input (gpio_open refuses one with TooMany when
+ * no source slot is free, so debounce never silently stops) and kept for
+ * the VM's life: its ctx is the number of ports holding a value (no
+ * memory), so a VM with none pays one test per scheduler pass. All of it
+ * runs on the scheduler thread. */
 
 static bool is_gpio(const Port *p) { return p->drv && p->drv->event == gpio_event; }
-
-/* The VM's slot of the driver's source, NULL while it is not registered. */
-static PortSrcSlot *src_slot(struct Vm *vm) {
-    for (PortSrcSlot *q = vm->sources; q->s; q++) {
-        if (q->s == &gpio_source) return q;
-    }
-    return NULL;
-}
 
 /* Adds d to the count of ports holding a value (the source is in). */
 static void held_add(struct Vm *vm, intptr_t d) {
@@ -151,11 +160,7 @@ void gpio_event(struct Vm *vm, Port *p, const PortEvent *e, uint64_t now) {
         return;
     }
     if (!(p->state[1] & DB_PENDING)) {
-        if (!src_slot(vm) && !port_add_source(vm, &gpio_source, NULL)) {
-            deliver_at(vm, p, e->b, t);   /* no source slot: not held */
-            return;
-        }
-        held_add(vm, 1);
+        held_add(vm, 1);          /* gpio_open registered the source */
         p->state[1] |= DB_PENDING;
     }
     p->state[1] = (p->state[1] & ~(uint32_t)DB_PEND_B) | (e->b ? DB_PEND_B : 0u);

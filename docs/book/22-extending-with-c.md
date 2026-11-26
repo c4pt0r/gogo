@@ -219,6 +219,12 @@ int gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32
     bool watch = watched((uint32_t)mode, (uint32_t)edge);
     uint16_t deb = (uint16_t)(cfg[3] > 0 ? (cfg[3] > 65535 ? 65535 : cfg[3]) : 20);
     if (h->config(h->ctx, (uint32_t)pin, mode, watch, &deb) != 0) return -1;
+    /* A debounced input needs the driver's event source in this VM (it
+     * may hold a value): refused with TooMany if no source slot is free. */
+    if (watch && deb && !src_slot(vm) && !port_add_source(vm, &gpio_source, NULL)) {
+        h->release(h->ctx, (uint32_t)pin, mode, watch);
+        return GOGO_E_TOOMANY;
+    }
     p->state[0] = (uint32_t)pin;
     p->state[1] = (uint32_t)mode << 4 | (uint32_t)edge << 6 | (uint32_t)deb << 16;   /* deb: gpio_event */
     s->vm = vm;
@@ -235,13 +241,15 @@ int gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32
 }
 ```
 
-Three things to notice. Every refusal is `return -1`, which `port.Open`
-reports as `errors.Busy` (section 22.6): a pin out of range, a reserved
-pin, a pin already open. The port's state words keep the pin, mode and
-edge (`PIN(p)`, `MODE(p)`, `EDGE(p)` read them back) and the debounce
-window (below). And the per-pin slot `s` is shared
-with the interrupt handler, so the driver fills it completely, then
-publishes it with `vm_barrier()` before setting `open`.
+Three things to notice. Every refusal but one is `return -1`, which
+`port.Open` reports as `errors.Busy` (section 22.6): a pin out of range,
+a reserved pin, a pin already open; a debounced input that finds no free
+event-source slot returns `GOGO_E_TOOMANY` (the debounce, below). The
+port's state words keep the pin, mode and edge (`PIN(p)`, `MODE(p)`,
+`EDGE(p)` read them back) and the debounce window (below). And the
+per-pin slot `s` is shared with the interrupt handler, so the driver
+fills it completely, then publishes it with `vm_barrier()` before
+setting `open`.
 
 ### Command and close
 
@@ -343,12 +351,17 @@ void gpio_event(struct Vm *vm, Port *p, const PortEvent *e, uint64_t now) {
 
 `port_deliver` is what the scheduler does for a driver without the hook.
 The end of a window is a deadline, so the driver registers an event
-source (section 22.5) the first time it holds a value in a VM: its
+source (section 22.5) when a VM first opens a debounced input: its
 `next_deadline` is the earliest window end, its `pending` is true once
 that time has come, and its `drain` delivers what is due. The source's
 context is the number of ports holding a value (no memory to allocate or
 free), so a VM with nothing held pays one test per scheduler pass, and
-the source stays registered for the VM's life.
+the source stays registered for the VM's life. If every source slot is
+taken, `gpio_open` refuses the debounced input with
+`GOGO_E_TOOMANY` (`port.Open` fails with `errors.TooMany`) rather than
+open a pin whose debounce could not work; an output, an input without an
+edge or one whose debounce the hardware layer lowered to 0 needs no
+slot.
 
 ### Two hardware layers
 
@@ -963,9 +976,10 @@ outside this repository. Plainly:
   returned (section 22.6).
 - **Event sources are scarce.** A VM has `GOGO_MAX_SOURCES` (4) source
   slots, and the firmware can use all four (net, input, the screen's retry
-  while the screen port is open, `gpio`'s debounce while a pin holds a
-  value). A new driver that polls needs that limit raised (it is a
-  compile-time setting) or must join an existing source.
+  while the screen port is open, and `gpio`'s debounce from the first
+  debounced input opened; with no slot left that open fails with
+  `errors.TooMany`). A new driver that polls needs that limit raised (it
+  is a compile-time setting) or must join an existing source.
 - **The event ring is for two-int events from one writer.** A driver with
   generic types cannot use it (a `port.Post` is not two ints), and a
   second interrupt source must not push to it concurrently with `gpio`.
