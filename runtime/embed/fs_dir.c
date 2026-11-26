@@ -416,15 +416,20 @@ static bool ignores_case(int root) {
     return same;
 }
 
-FsDir *fs_dir_open(const gogo_host *h, void *ctx, const char *dir, int64_t quota) {
+FsDir *fs_dir_open(const gogo_host *h, void *ctx, const char *dir, int64_t quota, int *err) {
+    int e;
+    if (!err) err = &e;
+    *err = GOGO_EINVAL;
     if (!h || !dir) return NULL;
     int fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (fd < 0) return NULL;
     FsDir *d = h->alloc(ctx, sizeof *d);
     if (!d) {
         close(fd);
+        *err = GOGO_ENOMEM;
         return NULL;
     }
+    *err = GOGO_OK;
     d->h = h;
     d->hctx = ctx;
     d->root = fd;

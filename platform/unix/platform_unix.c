@@ -398,6 +398,13 @@ static int32_t host_config_get(void *ctx, const uint8_t *k, uint32_t kl, uint8_t
 /* No RTC hooks: the Vm keeps the wall clock (main.c seeds it); no special
  * code memory. */
 const gogo_host unix_host = {
-    host_write, chunk_alloc, chunk_free, host_now, host_wake, host_wait, NULL, NULL, host_random, NULL,
-    host_config_get, NULL, NULL
+    .size = sizeof(gogo_host),
+    .write = host_write,
+    .alloc = chunk_alloc,
+    .free = chunk_free,
+    .now_ms = host_now,
+    .wake = host_wake,
+    .wait = host_wait,
+    .random = host_random,
+    .config_get = host_config_get,
 };

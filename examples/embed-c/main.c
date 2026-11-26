@@ -45,9 +45,10 @@ static gogo_vm *load_vm(const gogo_host *h, void *ctx, const gogo_config *cfg, c
     size_t len;
     void *img = read_file(path, &len);
     if (!img) { fprintf(stderr, "cannot read %s\n", path); return NULL; }
-    gogo_vm *vm = h ? gogo_new(h, ctx, cfg) : gogo_new_posix(cfg);
-    if (!vm) { fprintf(stderr, "gogo_new failed\n"); free(img); return NULL; }
-    int rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);   /* copied: img can go */
+    gogo_vm *vm;
+    int rc = h ? gogo_new(h, ctx, cfg, &vm) : gogo_new_posix(cfg, &vm);
+    if (rc != GOGO_OK) { fprintf(stderr, "gogo_new: error %d\n", rc); free(img); return NULL; }
+    rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);   /* copied: img can go */
     free(img);
     if (rc != GOGO_OK) {
         fprintf(stderr, "gogo_load %s: error %d\n", path, rc);
@@ -105,8 +106,12 @@ static void w_wake(void *c) {
 
 /* No wait hook: this loop sleeps in poll() itself. */
 static const gogo_host pipe_host = {
-    w_write, w_alloc, w_free, w_now, w_wake, NULL,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    .size = sizeof(gogo_host),
+    .write = w_write,
+    .alloc = w_alloc,
+    .free = w_free,
+    .now_ms = w_now,
+    .wake = w_wake,
 };
 
 static int run_two(const char *pa, const char *pb) {
@@ -155,14 +160,13 @@ static int run_two(const char *pa, const char *pb) {
 }
 
 int main(int argc, char **argv) {
-    gogo_config cfg;
-    memset(&cfg, 0, sizeof cfg);   /* every name granted, no memory cap, no /flash */
+    gogo_config cfg = GOGO_CONFIG_INIT;   /* every name granted, no memory cap, no /flash */
     int i = 1;
     if (argc == 4 && strcmp(argv[1], "--two") == 0) return run_two(argv[2], argv[3]);
     for (; i < argc - 1; i++) {
         if (strcmp(argv[i], "--flash") == 0 && i + 1 < argc - 1) cfg.fs_root = argv[++i];
         else if (strcmp(argv[i], "--quota") == 0 && i + 1 < argc - 1) cfg.fs_quota = strtoll(argv[++i], NULL, 10);
-        else if (strcmp(argv[i], "--allow-load") == 0) cfg.allow_code_load = 1;
+        else if (strcmp(argv[i], "--allow-load") == 0) cfg.flags |= GOGO_CONFIG_CODE_LOAD;
         else break;
     }
     if (i != argc - 1) {

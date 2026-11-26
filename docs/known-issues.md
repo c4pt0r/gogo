@@ -59,6 +59,21 @@ rebuilt:
   start at 100. An image built before this change still runs on new
   firmware, but the codes it compiled into its own comparisons are the
   old ones while the firmware returns the new ones: rebuild it.
+- **Embedding API** (`gogo.h`; hosts must be edited and rebuilt, see
+  the book's chapter 18):
+  - `gogo_host` and `gogo_config` begin with a `size`: start them from
+    `GOGO_HOST_INIT` and `GOGO_CONFIG_INIT` (a table without its size is
+    refused). Fill tables with designated initializers; positional ones
+    no longer line up. `gogo_new` copies the host table.
+  - `gogo_new(h, ctx, cfg)` and `gogo_new_posix(cfg)` return a result
+    code and give the VM through a last argument, `&vm`.
+  - `gogo_host.random_bytes` is gone (nothing called it). The new
+    `destroy` hook frees the host's context after the VM's last
+    reference.
+  - `set_unix_time_ms` returns 0 to accept and a negative `GOGO_E*` to
+    refuse (it returned 1 and 0).
+  - `gogo_config.allow_code_load` is the flag `GOGO_CONFIG_CODE_LOAD` in
+    `flags`; `mem_limit` is a `uint64_t` and `max_actors` a `uint32_t`.
 
 ## VM
 
@@ -488,7 +503,7 @@ rebuilt:
   queued for it) names whatever port then holds the slot, as with port
   PIDs.
 - **`code.Load` refused reads as `NoMemory`.** With
-  `gogo_config.allow_code_load = 0`, `code.Load` returns `NoMemory`, not
+  `GOGO_CONFIG_CODE_LOAD` not in `gogo_config.flags`, `code.Load` returns `NoMemory`, not
   a distinct "not allowed" error.
 - **Embedded VMs sharing a host directory.** VMs that run at the same
   time must not have nested `fs_root` directories (an outer program could

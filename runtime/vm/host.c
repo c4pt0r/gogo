@@ -42,8 +42,12 @@ int64_t vm_unix_time_ms(const Vm *vm) {
 
 int vm_set_unix_time_ms(Vm *vm, int64_t ms) {
     if (ms > 0 && ms < GOGO_BUILD_UNIX_MS) return 0;
-    if (vm->host->set_unix_time_ms) return vm->host->set_unix_time_ms(vm->host_ctx, ms);
-    vm->wall_known = ms > 0;
-    vm->wall_offset = vm->wall_known ? ms - (int64_t)host_ms(vm) : 0;
+    if (vm->host->set_unix_time_ms) return !vm->host->set_unix_time_ms(vm->host_ctx, ms);
+    vm->wall_known = false;
+    vm->wall_offset = 0;
+    if (ms > 0) {
+        vm->wall_known = true;
+        vm->wall_offset = ms - (int64_t)host_ms(vm);
+    }
     return 1;
 }

@@ -146,7 +146,7 @@ static void src_drain(Vm *vm, void *ctx, uint64_t now) {
         next = n->next;
         if (deliver(g, n)) g->inbox.delivered++;
         else g->inbox.dropped++;
-        g->uh->free(g->uctx, n, n->bytes);
+        g->uh.free(g->uctx, n, n->bytes);
     }
 }
 

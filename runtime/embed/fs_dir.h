@@ -44,8 +44,8 @@ const VfsBackend *fs_dir_vfs(const FsDir *d);
  * directory) are not seen. A write past it stores what still fits and
  * fails with NoSpace, and Usage reports (used, quota). Memory
  * comes from h->alloc(ctx). NULL if dir cannot be opened as a directory
- * or memory runs out. */
-FsDir *fs_dir_open(const gogo_host *h, void *ctx, const char *dir, int64_t quota);
+ * (*err GOGO_EINVAL) or memory runs out (GOGO_ENOMEM); err may be NULL. */
+FsDir *fs_dir_open(const gogo_host *h, void *ctx, const char *dir, int64_t quota, int *err);
 
 /* Closes the root (files opened through it must be closed first) and
  * frees d. NULL is ignored. */

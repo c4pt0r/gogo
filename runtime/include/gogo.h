@@ -1,16 +1,24 @@
 /* gogo embedding API: run gogo images inside a host program, the way Lua is
- * embedded. Any number of VMs may live in one process; they share nothing
- * (one exception: the TLS hooks, below).
+ * embedded. Any number of VMs may live in one process; they share nothing.
  *
  * A host
- *  1. fills a gogo_host table (or takes gogo_host_posix()) and a
- *     gogo_config, and makes a VM with gogo_new;
+ *  1. fills a gogo_host table (starting from GOGO_HOST_INIT, or takes
+ *     gogo_host_posix()) and a gogo_config (GOGO_CONFIG_INIT), and makes a
+ *     VM with gogo_new;
  *  2. gives it an image (`gogo build` output) with gogo_load and starts its
  *     main with gogo_start;
  *  3. either calls gogo_run (or gogo_run_thread), or steps the VM itself:
  *     gogo_step until GOGO_DONE, waiting between steps while it returns
  *     GOGO_IDLE until gogo_next_deadline or a wake;
  *  4. frees it with gogo_free.
+ *
+ * ABI. The structs a host fills begin with their size: start each from
+ * its GOGO_*_INIT, which sets it to the size this header gives. The
+ * library reads only the fields it knows: fields that a newer header
+ * appends are ignored by an older library, and fields that an older
+ * header lacks take their defaults (0, NULL). Fields are only ever
+ * appended, and a field that may be ignored is one whose 0 means what
+ * the library did before it existed.
  *
  * Threads. A VM is single-threaded: every gogo_* call runs on the thread
  * that owns the VM, except gogo_post, gogo_port_post, gogo_close_posts,
@@ -21,6 +29,10 @@
  * Re-entrancy. Hooks run inside gogo_step. A hook must not call gogo_step,
  * gogo_run, gogo_load or gogo_start (they return GOGO_EBUSY) nor gogo_free
  * (undefined); gogo_post is fine.
+ *
+ * Hook results. A hook that can fail returns 0 for success and a negative
+ * GOGO_E* for failure; a hook that returns a value (a length, a time)
+ * documents its own.
  *
  * Messages from the host. gogo_post(vm, "name", kind, data, len) sends the
  * actor registered under "name" (actor.Register) a port.Post{From, Kind,
@@ -33,11 +45,7 @@
  * over the receiver's quota is dropped and counted too. While posts are
  * open and some actor holds a registered name, the VM keeps running (it
  * can still get posts); gogo_close_posts ends that, and the VM is then
- * done when its actors are, as on a board.
- *
- * TLS. The "tls" port's mbedTLS allocator, time and RNG hooks are
- * process-global (mbedTLS gives them no context): every VM in a process
- * must use the same board TLS table, and its hooks must be thread-safe. */
+ * done when its actors are, as on a board. */
 #ifndef GOGO_H
 #define GOGO_H
 
@@ -60,6 +68,10 @@ extern "C" {
 #endif
 
 typedef struct gogo_host {
+    /* sizeof(gogo_host) as the host was compiled (GOGO_HOST_INIT); the
+     * word after it is reserved, 0. */
+    uint32_t size;
+    uint32_t reserved;
     /* Program output (stream 1, println) and diagnostics (stream 2, crash
      * reports and refusals). Required. */
     void     (*write)(void *ctx, int stream /*1 out, 2 err*/, const char *s, size_t n);
@@ -88,15 +100,14 @@ typedef struct gogo_host {
      * before each step and never between an idle result and the wait. */
     void     (*wait)(void *ctx, uint32_t timeout_ms);
     /* Wall clock (an RTC), Unix ms, 0 = unknown. NULL: the VM keeps its own
-     * offset clock, unknown until set. set returns 1, or 0 to refuse;
-     * both or neither. */
+     * offset clock, unknown until set. set returns 0, or a negative
+     * GOGO_E* to refuse (sys.SetTime then returns false); both or
+     * neither. */
     int64_t  (*unix_time_ms)(void *ctx);
     int      (*set_unix_time_ms)(void *ctx, int64_t ms);
     /* 32 random bits unpredictable to a network peer. NULL: the VM's own
      * clock-seeded mixer (not for secrets). */
     uint32_t (*random)(void *ctx);
-    /* Cryptographic random bytes (TLS); 0 ok. Optional. */
-    int      (*random_bytes)(void *ctx, uint8_t *buf, size_t n);
     /* sys.Config: copies the value of the kl-byte key k into buf (at most
      * cap bytes; buf may be NULL when cap is 0) and returns the value's full
      * length, or -1 if unset. NULL: nothing is set. */
@@ -106,10 +117,29 @@ typedef struct gogo_host {
      * code itself). code_free gets the same n back. Both or neither. */
     void    *(*code_alloc)(void *ctx, size_t n);
     void     (*code_free)(void *ctx, void *p, size_t n);
+    /* Called once, with the ctx, after the VM's last reference is gone
+     * (gogo_free, and the posting references of gogo_retain), on the
+     * thread that dropped it: the host frees its context here. No other
+     * hook runs after it. NULL: nothing. Not called when gogo_new fails
+     * (the ctx stays the host's). */
+    void     (*destroy)(void *ctx);
+    /* Fields are appended here, never inserted. */
 } gogo_host;
 
-/* A NULL config is the all-zero one. */
+/* A gogo_host with its size set and every hook NULL. C99 designated
+ * initializers; in C++ before C++20, value-initialize and set .size. */
+#define GOGO_HOST_INIT { .size = sizeof(gogo_host) }
+
+/* A NULL config is GOGO_CONFIG_INIT: every name the VM has granted, no
+ * memory cap, the default actor table, no storage, no hot loading. */
 typedef struct gogo_config {
+    uint32_t size;            /* sizeof(gogo_config) as the host was compiled (GOGO_CONFIG_INIT) */
+    uint32_t flags;           /* GOGO_CONFIG_* bits; an unknown bit makes gogo_new fail */
+    uint64_t mem_limit;       /* bytes the whole VM may allocate, over every actor's own limit; 0 = none.
+                               * Queued posts are outside it (host memory, at most
+                               * GOGO_POST_MAX of them) until delivered. */
+    uint32_t max_actors;      /* live actors at once; 0 = the build's default (16384), at most 65520 */
+    uint32_t reserved;        /* 0 */
     /* The requirement names the VM may serve (NULL-terminated; strings
      * and array must stay valid while the VM exists), or NULL: all it has.
      * A name is a port driver ("ui", a host port) or a mount prefix
@@ -117,10 +147,6 @@ typedef struct gogo_config {
      * requiring it is refused (GOGO_EREQUIRES), port.Open of it fails, and
      * /flash is not mounted. */
     const char *const *grant;
-    size_t   mem_limit;       /* bytes the whole VM may allocate, over every actor's own limit; 0 = none.
-                               * Queued posts are outside it (host memory, at most
-                               * GOGO_POST_MAX of them) until delivered. */
-    uint16_t max_actors;      /* live actors at once; 0 = the build's default (GOGO_TABLE_CAP) */
     /* An existing host directory served as /flash, or NULL: no storage, every gogo/fs call is
      * NotMounted. The program is confined to it: paths are walked from the
      * directory without following symlinks (a symlink, FIFO or device is
@@ -142,8 +168,14 @@ typedef struct gogo_config {
      * fs_quota). Changes made by others (the host, another VM on the same
      * directory) are not seen. Negative: gogo_new fails. */
     int64_t  fs_quota;
-    int      allow_code_load; /* 0: code.Load returns NoMemory (bundled images only) */
+    /* Fields are appended here, never inserted. */
 } gogo_config;
+
+#define GOGO_CONFIG_INIT { .size = sizeof(gogo_config) }
+
+/* gogo_config.flags: code.Load may load modules. Without it every
+ * code.Load returns NoMemory (bundled images only). */
+#define GOGO_CONFIG_CODE_LOAD 1u
 
 typedef struct gogo_vm gogo_vm;
 
@@ -180,13 +212,16 @@ enum {
  * and unchanged until gogo_free, and be 4-byte aligned). */
 #define GOGO_LOAD_COPY 1
 
-/* A new VM on host h (whose hooks get host_ctx). h and host_ctx must stay
- * valid until the VM is freed and released. NULL if the table is
- * incomplete (write, alloc, free and now_ms are required; wake with wait;
- * the unix_time and code pairs both or neither), cfg is invalid (a
- * negative fs_quota, an fs_root that is not a directory) or memory runs
- * out. */
-GOGO_API gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg);
+/* Makes a VM on host h, whose hooks get host_ctx, and stores it in *out.
+ * The table is copied (h need not outlive the call); host_ctx must stay
+ * valid until the host's destroy hook runs, or, without one, until the
+ * VM is freed and released. 0, or (with *out NULL):
+ * GOGO_EINVAL: the table is incomplete (write, alloc, free and now_ms are
+ * required; wake with wait; the unix_time and code pairs both or
+ * neither), or cfg is invalid (a size or flag this library does not
+ * know, max_actors too large, a negative fs_quota, an fs_root that is not
+ * a directory); GOGO_ENOMEM. */
+GOGO_API int gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg, gogo_vm **out);
 
 /* Loads the image (len bytes, little-endian words) as the VM's program.
  * Once, before gogo_start. GOGO_EIMAGE, GOGO_EVERSION (both formats are
@@ -343,11 +378,12 @@ GOGO_API void gogo_free(gogo_vm *vm);
  * wall clock (setting it is refused), getentropy (random aborts if it
  * fails), stdout/stderr, and a latched condition-variable wait and wake.
  * Its state lives in a context: gogo_posix_ctx_new, or gogo_new_posix,
- * which makes a VM that owns one (freed with the VM's last reference). */
+ * which makes a VM that owns one (freed with the VM's last reference, as
+ * a destroy hook would). */
 GOGO_API const gogo_host *gogo_host_posix(void);
 GOGO_API void *gogo_posix_ctx_new(void);         /* NULL if out of memory */
 GOGO_API void gogo_posix_ctx_free(void *ctx);
-GOGO_API gogo_vm *gogo_new_posix(const gogo_config *cfg);
+GOGO_API int gogo_new_posix(const gogo_config *cfg, gogo_vm **out);   /* as gogo_new */
 
 #ifdef __cplusplus
 }

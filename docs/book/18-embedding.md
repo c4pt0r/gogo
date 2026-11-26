@@ -45,9 +45,10 @@ the difference).
 the POSIX host and loads the image:
 
 ```c
-    gogo_vm *vm = h ? gogo_new(h, ctx, cfg) : gogo_new_posix(cfg);
-    if (!vm) { fprintf(stderr, "gogo_new failed\n"); free(img); return NULL; }
-    int rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);   /* copied: img can go */
+    gogo_vm *vm;
+    int rc = h ? gogo_new(h, ctx, cfg, &vm) : gogo_new_posix(cfg, &vm);
+    if (rc != GOGO_OK) { fprintf(stderr, "gogo_new: error %d\n", rc); free(img); return NULL; }
+    rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);   /* copied: img can go */
     free(img);
     if (rc != GOGO_OK) {
         fprintf(stderr, "gogo_load %s: error %d\n", path, rc);
@@ -102,32 +103,40 @@ missing driver) are also written to the host's error stream.
 set), `getentropy`, stdout and stderr, and a latched wait. The VM owns
 that host's state and frees it with the VM.
 
+Functions that make something return a result code and hand the new
+object back through their last argument: `gogo_new(h, ctx, cfg, &vm)`
+is `GOGO_OK`, or an error with `vm` set to `NULL`, so a host can say why
+it failed.
+
 ## 18.3 The configuration
 
-The second argument of `gogo_new` (or the only one of `gogo_new_posix`)
-is a `gogo_config`. All zero (or `NULL`) is a VM that grants every name it
-has, with no memory cap, no storage and no hot loading. `main.c` fills in three fields
+The third argument of `gogo_new` (or the first of `gogo_new_posix`) is a
+`gogo_config`. Start it from `GOGO_CONFIG_INIT`: that is a VM that
+grants every name it has, with no memory cap, no storage and no hot
+loading (a `NULL` config is the same). `main.c` fills in three fields
 from its options:
 
 ```c
         if (strcmp(argv[i], "--flash") == 0 && i + 1 < argc - 1) cfg.fs_root = argv[++i];
         else if (strcmp(argv[i], "--quota") == 0 && i + 1 < argc - 1) cfg.fs_quota = strtoll(argv[++i], NULL, 10);
-        else if (strcmp(argv[i], "--allow-load") == 0) cfg.allow_code_load = 1;
+        else if (strcmp(argv[i], "--allow-load") == 0) cfg.flags |= GOGO_CONFIG_CODE_LOAD;
 ```
 
 | field | meaning |
 |---|---|
-| `grant` | the requirement names the VM may serve, a `NULL`-terminated list; `NULL` = all it has (section 18.9) |
+| `size` | the struct's size, set by `GOGO_CONFIG_INIT` (section 18.4 explains why) |
+| `flags` | `GOGO_CONFIG_CODE_LOAD` lets `code.Load` load modules (section 18.10) |
 | `mem_limit` | bytes the whole VM may allocate, on top of each actor's own limit; 0 = no cap |
-| `max_actors` | live actors at once; 0 = the build's default (16384) |
+| `max_actors` | live actors at once; 0 = the build's default (16384), at most 65520 |
+| `grant` | the requirement names the VM may serve, a `NULL`-terminated list; `NULL` = all it has (section 18.9) |
 | `fs_root` | a host directory served as `/flash`, or `NULL` for no storage (section 18.8) |
 | `fs_quota` | bytes the files under `fs_root` may hold; 0 = no quota |
-| `allow_code_load` | 1 lets `code.Load` load modules (section 18.10) |
 
 Over `mem_limit`, the VM's allocations fail and the actor that asked is
 stopped with `oom`, as when an actor goes over its own limit
-(chapter 6). `gogo_new` returns `NULL` for a configuration it cannot
-honour: a negative quota, an `fs_root` that is not a directory.
+(chapter 6). `gogo_new` returns `GOGO_EINVAL` for a configuration it
+cannot honour: no size, a flag it does not know, too many actors, a
+negative quota, an `fs_root` that is not a directory.
 
 ## 18.4 The host table and the latched wake
 
@@ -138,10 +147,31 @@ outside world, and a `ctx` pointer that every hook gets back. `main.c`'s
 ```c
 /* No wait hook: this loop sleeps in poll() itself. */
 static const gogo_host pipe_host = {
-    w_write, w_alloc, w_free, w_now, w_wake, NULL,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    .size = sizeof(gogo_host),
+    .write = w_write,
+    .alloc = w_alloc,
+    .free = w_free,
+    .now_ms = w_now,
+    .wake = w_wake,
 };
 ```
+
+The table, like the configuration, begins with its own size; name the
+hooks you set, and leave the rest out (they are `NULL`). A table filled
+at run time starts from `GOGO_HOST_INIT`:
+
+```
+gogo_host h = GOGO_HOST_INIT;
+h.write = my_write;
+...
+```
+
+The size is what lets the library grow without breaking a host built
+against an older header. Fields are only ever added at the end. A newer
+library reads a smaller table's missing hooks as `NULL` (and a smaller
+configuration's missing fields as 0); an older library ignores the
+fields it does not know. `gogo_new` copies the table, so it may live on
+the stack; the `ctx` must stay valid until the VM is gone.
 
 | hook | |
 |---|---|
@@ -152,9 +182,16 @@ static const gogo_host pipe_host = {
 | `wait(ctx, timeout_ms)` | the idle wait `gogo_run` uses; `NULL` if the host steps the VM itself |
 | `unix_time_ms`, `set_unix_time_ms` | a wall clock (an RTC); `NULL`: the VM keeps its own, unknown until a program sets it |
 | `random(ctx)` | 32 random bits; `NULL`: the VM's own clock-seeded mixer (not for secrets) |
-| `random_bytes(ctx, buf, n)` | cryptographic random bytes, for TLS; optional, with no fallback (the library has no TLS yet) |
 | `config_get` | the values `sys.Config` reads; `NULL`: nothing is set |
 | `code_alloc`, `code_free` | special memory for hot-loaded code; `NULL`: ordinary memory |
+| `destroy(ctx)` | called once when the VM is gone, to free the host's context; `NULL`: nothing |
+
+A hook that can fail returns 0 for success and a negative `GOGO_E*` for
+failure (`set_unix_time_ms` refusing a time, a host port's `open`
+refusing it); hooks that return a value, a length or a time, say what
+they return. `destroy` runs after the VM's last reference is dropped
+(`gogo_free`, or the last posting thread's), on that thread, and never
+if `gogo_new` failed.
 
 The hooks run on the VM's thread, inside `gogo_step`, except `wake` (and
 `alloc`/`free` for posts). A hook must not call `gogo_step`, `gogo_run`,
@@ -479,16 +516,16 @@ library's, is refused with `GOGO_EVERSION` (-13), and both formats are
 named (`gogo: unsupported image format 15.1 (this VM runs 15.0 to
 15.0)`).
 
-## 18.10 Hot loading: `allow_code_load`
+## 18.10 Hot loading: `GOGO_CONFIG_CODE_LOAD`
 
 `code.Load` (chapter 14) turns bytes into running code, so whether a
-program may use it is the host's decision. With `allow_code_load` 0, the
+program may use it is the host's decision. Without the flag, the
 default, `code.Load` refuses every module, and **the refusal reads as
 `NoMemory`** (3): the program cannot tell it from running out of code
 memory. Bundled code (the image itself) is unaffected.
 
 `examples/hotload` loads its worker from `/flash`, so it needs both
-`fs_root` and `allow_code_load`:
+`fs_root` and `GOGO_CONFIG_CODE_LOAD`:
 
 ```sh
 build/embed-c/main --flash dir --allow-load hotload.ggb   # runs as under gogovm

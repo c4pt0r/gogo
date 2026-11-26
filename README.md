@@ -184,9 +184,9 @@ runs it (or steps it from its own event loop), posts messages to its
 actors and gives it ports of its own; any number of VMs share one process.
 
 ```c
-gogo_vm *vm = gogo_new_posix(NULL);
-gogo_load(vm, image, len, GOGO_LOAD_COPY);
-gogo_run(vm);
+gogo_vm *vm;
+if (gogo_new_posix(NULL, &vm) == GOGO_OK && gogo_load(vm, image, len, GOGO_LOAD_COPY) == GOGO_OK)
+    gogo_run(vm);
 gogo_free(vm);
 ```
 

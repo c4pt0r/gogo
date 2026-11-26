@@ -94,8 +94,22 @@ static void t_wait(void *c, uint32_t ms) {
 }
 
 static const gogo_host thost = {
-    t_write, t_alloc, t_free, t_now, t_wake, t_wait, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    .size = sizeof(gogo_host),
+    .write = t_write,
+    .alloc = t_alloc,
+    .free = t_free,
+    .now_ms = t_now,
+    .wake = t_wake,
+    .wait = t_wait,
 };
+
+/* gogo_new's VM, or NULL (its error checked to be one). */
+static gogo_vm *new_vm(const gogo_host *h, void *ctx, const gogo_config *cfg) {
+    gogo_vm *vm = (gogo_vm *)&vm;   /* not NULL: gogo_new must clear it on failure */
+    int rc = gogo_new(h, ctx, cfg, &vm);
+    CHECK(rc == GOGO_OK ? vm != NULL : rc < 0 && vm == NULL);
+    return rc == GOGO_OK ? vm : NULL;
+}
 
 static void tctx_init(TCtx *t) {
     memset(t, 0, sizeof *t);
@@ -133,7 +147,7 @@ static Img image(const char *name) {
 }
 
 static gogo_vm *new_loaded(TCtx *t, const char *prog, const gogo_config *cfg) {
-    gogo_vm *vm = gogo_new(&thost, t, cfg);
+    gogo_vm *vm = new_vm(&thost, t, cfg);
     CHECK(vm != NULL);
     if (!vm) return NULL;
     Img im = image(prog);
@@ -393,7 +407,7 @@ static void *hammer(void *arg) {
 TEST(embed_post_while_freeing_stepped) {
     const char *e = getenv("GOGO_EMBED_FREE_ROUNDS");
     long rounds = e ? atol(e) : 2000;
-    gogo_config cfg = { 0 };
+    gogo_config cfg = GOGO_CONFIG_INIT;
     cfg.max_actors = 16;
     for (long round = 0; round < rounds; round++) {
         TCtx t; tctx_init(&t);
@@ -506,8 +520,8 @@ TEST(embed_next_deadline) {
 TEST(embed_code_load_switch) {
     for (int allow = 0; allow <= 1; allow++) {
         TCtx t; tctx_init(&t);
-        gogo_config cfg = { 0 };
-        cfg.allow_code_load = allow;
+        gogo_config cfg = GOGO_CONFIG_INIT;
+        cfg.flags = allow ? GOGO_CONFIG_CODE_LOAD : 0;
         gogo_vm *vm = new_loaded(&t, "codeload", &cfg);
         CHECK_EQ(gogo_start(vm), GOGO_OK);
         CHECK_EQ(settle(vm), GOGO_DONE);
@@ -522,7 +536,7 @@ TEST(embed_mem_limit) {
     size_t peak[2];
     for (int k = 0; k < 2; k++) {
         TCtx t; tctx_init(&t);
-        gogo_config cfg = { 0 };
+        gogo_config cfg = GOGO_CONFIG_INIT;
         cfg.max_actors = 16;
         cfg.mem_limit = k ? 0 : 96u * 1024u;
         gogo_vm *vm = new_loaded(&t, "hog", &cfg);
@@ -541,7 +555,7 @@ TEST(embed_mem_limit) {
 
 TEST(embed_lifecycle_errors) {
     TCtx t; tctx_init(&t);
-    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    gogo_vm *vm = new_vm(&thost, &t, NULL);
     CHECK(vm != NULL);
     CHECK_EQ(gogo_start(vm), GOGO_ESTATE);
     CHECK_EQ(gogo_step(vm, 0), GOGO_ESTATE);
@@ -570,7 +584,7 @@ TEST(embed_image_version) {
     TCtx t; tctx_init(&t);
     Img im = image("echo");
     CHECK_EQ(im.w[1], 15u << 16);                    /* stamped 15.0 */
-    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    gogo_vm *vm = new_vm(&thost, &t, NULL);
     im.w[1] = 15u << 16 | 2u;
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EVERSION);
     CHECK(strstr(t.err, "gogo: unsupported image format 15.2 (this VM runs 15.0 to 15.1)") != NULL);
@@ -595,7 +609,7 @@ TEST(embed_no_main) {
     for (size_t i = 0; i + 4 <= im.len; i++)
         if (memcmp(b + i, "main", 4) == 0) { b[i] = 'x'; renamed++; }
     CHECK(renamed > 0);
-    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    gogo_vm *vm = new_vm(&thost, &t, NULL);
     int r = gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY);
     if (r == GOGO_OK) {
         CHECK_EQ(gogo_start(vm), GOGO_ESTART);
@@ -622,35 +636,44 @@ TEST(embed_reentry_refused) {
 
 TEST(embed_host_validation) {
     TCtx t; tctx_init(&t);
+    gogo_vm *out = NULL;
     gogo_host h = thost;
     h.alloc = NULL;
-    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    CHECK_EQ(gogo_new(&h, &t, NULL, &out), GOGO_EINVAL);
     h = thost; h.free = NULL;
-    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    CHECK_EQ(gogo_new(&h, &t, NULL, &out), GOGO_EINVAL);
     h = thost; h.now_ms = NULL;
-    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    CHECK_EQ(gogo_new(&h, &t, NULL, &out), GOGO_EINVAL);
     h = thost; h.write = NULL;
-    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    CHECK_EQ(gogo_new(&h, &t, NULL, &out), GOGO_EINVAL);
     h = thost; h.wake = NULL;                  /* wait without wake */
-    CHECK(gogo_new(&h, &t, NULL) == NULL);
+    CHECK_EQ(gogo_new(&h, &t, NULL, &out), GOGO_EINVAL);
     h.wait = NULL;                             /* a busy-loop host: fine */
-    gogo_vm *vm = gogo_new(&h, &t, NULL);
+    gogo_vm *vm = new_vm(&h, &t, NULL);
     CHECK(vm != NULL);
     CHECK_EQ(gogo_run(vm), GOGO_EINVAL);
     CHECK_EQ(gogo_run_thread(vm), GOGO_EINVAL);
     gogo_free(vm);
     h = thost; h.code_free = t_free;           /* one of a pair */
-    CHECK(gogo_new(&h, &t, NULL) == NULL);
-    gogo_config cfg = { 0 };
+    CHECK_EQ(gogo_new(&h, &t, NULL, &out), GOGO_EINVAL);
+    h = thost; h.size = 0;                     /* not from GOGO_HOST_INIT */
+    CHECK_EQ(gogo_new(&h, &t, NULL, &out), GOGO_EINVAL);
+    h = thost; h.size = 7;
+    CHECK_EQ(gogo_new(&h, &t, NULL, &out), GOGO_EINVAL);
+    gogo_config cfg = GOGO_CONFIG_INIT;
     cfg.fs_root = "/nonexistent-gogo-root";    /* not a directory (embed_fs_root_bad) */
-    CHECK(gogo_new(&thost, &t, &cfg) == NULL);
+    CHECK_EQ(gogo_new(&thost, &t, &cfg, &out), GOGO_EINVAL);
     cfg.fs_root = NULL;
-    CHECK(gogo_new(NULL, NULL, NULL) == NULL);
+    CHECK_EQ(gogo_new(NULL, NULL, NULL, &out), GOGO_EINVAL);
+    CHECK_EQ(gogo_new(&thost, &t, NULL, NULL), GOGO_EINVAL);
+    CHECK(out == NULL);
     /* Out of memory at every step of gogo_new and gogo_load. */
     Img im = image("echo");
     for (long k = 0; k < 40; k++) {
         t.fail_after = k;
-        gogo_vm *v = gogo_new(&thost, &t, NULL);
+        gogo_vm *v = NULL;
+        int rc = gogo_new(&thost, &t, NULL, &v);
+        CHECK(rc == GOGO_OK || rc == GOGO_ENOMEM);
         if (v) {
             int r = gogo_load(v, im.w, im.len, GOGO_LOAD_COPY);
             CHECK(r == GOGO_OK || r == GOGO_ENOMEM);
@@ -663,9 +686,107 @@ TEST(embed_host_validation) {
     tctx_done(&t);
 }
 
+/* The size-first structs: a host table or config from an older header
+ * (smaller) gets the defaults for what it lacks; one from a newer header
+ * (larger) has its unknown fields ignored. The config must have a size,
+ * known flags and a max_actors the PID space holds. */
+typedef struct BigHost { gogo_host h; void (*later)(void *); uint64_t more[4]; } BigHost;
+typedef struct BigConfig { gogo_config c; uint64_t later[4]; } BigConfig;
+
+TEST(embed_sized_structs) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm = NULL;
+    /* An older host: no hooks after now_ms (no wake, wait, ...). */
+    gogo_host h = thost;
+    h.size = (uint32_t)((const char *)&h.wake - (const char *)&h);
+    h.wait = t_wait;                           /* past its size: not seen */
+    CHECK_EQ(gogo_new(&h, &t, NULL, &vm), GOGO_OK);
+    CHECK_EQ(gogo_run(vm), GOGO_EINVAL);       /* no wait hook */
+    gogo_free(vm);
+    /* A newer one: its extra fields are not read. */
+    BigHost bh;
+    memset(&bh, 0xA5, sizeof bh);
+    bh.h = thost;
+    bh.h.size = sizeof bh;
+    bh.later = NULL;
+    vm = new_vm(&bh.h, &t, NULL);
+    CHECK(vm != NULL);
+    gogo_free(vm);
+    BigConfig bc;
+    memset(&bc, 0xA5, sizeof bc);
+    bc.c = (gogo_config)GOGO_CONFIG_INIT;
+    bc.c.size = sizeof bc;
+    vm = new_vm(&thost, &t, &bc.c);
+    CHECK(vm != NULL);
+    gogo_free(vm);
+    /* An older config: only up to max_actors. */
+    gogo_config c = GOGO_CONFIG_INIT;
+    c.max_actors = 16;
+    c.fs_root = "/nonexistent-gogo-root";      /* past its size: not seen */
+    c.size = (uint32_t)((const char *)&c.reserved - (const char *)&c);
+    vm = new_vm(&thost, &t, &c);
+    CHECK(vm != NULL);
+    gogo_free(vm);
+    c = (gogo_config)GOGO_CONFIG_INIT;
+    c.size = 0;                                /* not from GOGO_CONFIG_INIT */
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
+    c = (gogo_config)GOGO_CONFIG_INIT;
+    c.flags = 2;                               /* a flag this library does not know */
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
+    c.flags = 0;
+    c.max_actors = 65521;
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
+    c.max_actors = 0;
+    c.mem_limit = UINT64_MAX;                  /* larger than size_t on 32-bit: no cap */
+    vm = new_vm(&thost, &t, &c);
+    CHECK(vm != NULL);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
+/* The host table is copied: one on the stack may go once gogo_new has
+ * returned. destroy runs once, after the last reference. */
+static int destroyed;
+static void t_destroy(void *c) { CHECK(c == &destroyed); destroyed++; }
+
+TEST(embed_host_copied_and_destroyed) {
+    TCtx t; tctx_init(&t);
+    gogo_vm *vm;
+    {
+        gogo_host h = thost;
+        vm = new_vm(&h, &t, NULL);
+        memset(&h, 0, sizeof h);               /* the VM has its own copy */
+    }
+    CHECK(vm != NULL);
+    gogo_free(vm);
+    tctx_done(&t);
+    /* destroy gets the ctx; with a retained handle it waits for the
+     * release. */
+    destroyed = 0;
+    gogo_host d = GOGO_HOST_INIT;
+    d.write = gogo_host_posix()->write;
+    d.alloc = gogo_host_posix()->alloc;
+    d.free = gogo_host_posix()->free;
+    d.now_ms = gogo_host_posix()->now_ms;
+    d.destroy = t_destroy;
+    vm = new_vm(&d, &destroyed, NULL);
+    gogo_retain(vm);
+    gogo_free(vm);
+    CHECK_EQ(destroyed, 0);
+    CHECK_EQ(gogo_post(vm, "x", 1, NULL, 0), GOGO_ECLOSED);
+    gogo_release(vm);
+    CHECK_EQ(destroyed, 1);
+    /* Not when gogo_new fails: the ctx stays the host's. */
+    gogo_config c = GOGO_CONFIG_INIT;
+    c.fs_quota = -1;
+    CHECK_EQ(gogo_new(&d, &destroyed, &c, &vm), GOGO_EINVAL);
+    CHECK_EQ(destroyed, 1);
+}
+
 /* The default host on its own: a VM that owns its POSIX context. */
 TEST(embed_posix_host) {
-    gogo_vm *vm = gogo_new_posix(NULL);
+    gogo_vm *vm = NULL;
+    CHECK_EQ(gogo_new_posix(NULL, &vm), GOGO_OK);
     CHECK(vm != NULL);
     Img im = image("sleeper");
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
@@ -674,13 +795,12 @@ TEST(embed_posix_host) {
     gogo_free(vm);
     const gogo_host *h = gogo_host_posix();
     CHECK(h->unix_time_ms(NULL) > 1700000000000LL);
-    CHECK_EQ(h->set_unix_time_ms(NULL, 1800000000000LL), 0);
-    uint8_t b[300];
-    memset(b, 0, sizeof b);
-    CHECK_EQ(h->random_bytes(NULL, b, sizeof b), 0);
-    int nz = 0;
-    for (size_t i = 0; i < sizeof b; i++) nz += b[i] != 0;
-    CHECK(nz > 200);
+    CHECK(h->set_unix_time_ms(NULL, 1800000000000LL) < 0);   /* refused: the OS owns it */
+    uint32_t r[8];
+    int same = 0;
+    for (int i = 0; i < 8; i++) r[i] = h->random(NULL);
+    for (int i = 1; i < 8; i++) same += r[i] == r[0];
+    CHECK(same < 7);
     /* A latched wake: the next wait returns at once. */
     void *c = gogo_posix_ctx_new();
     uint64_t t0 = h->now_ms(c);
@@ -755,7 +875,7 @@ static const gogo_port_driver hdrv = { h_open, h_command, h_close };
 
 static gogo_vm *new_hostport(TCtx *t, HCtx *h) {
     memset(h, 0, sizeof *h);
-    gogo_vm *vm = gogo_new(&thost, t, NULL);
+    gogo_vm *vm = new_vm(&thost, t, NULL);
     CHECK(vm != NULL);
     CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, h), GOGO_OK);
     Img im = image("hostport");
@@ -778,7 +898,7 @@ TEST(embed_hostecho_golden) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
     h.echo = 1;
-    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    gogo_vm *vm = new_vm(&thost, &t, NULL);
     CHECK_EQ(gogo_register_port(vm, "echo", &hdrv, &h), GOGO_OK);
     Img im = image("hostecho");
     CHECK(im.w != NULL);
@@ -911,7 +1031,7 @@ TEST(embed_hostport_handoff) {
 TEST(embed_hostport_register) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
-    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    gogo_vm *vm = new_vm(&thost, &t, NULL);
     CHECK_EQ(gogo_register_port(vm, "gpio", &hdrv, &h), GOGO_EEXIST);
     CHECK_EQ(gogo_register_port(vm, "tcp", &hdrv, &h), GOGO_EEXIST);
     CHECK_EQ(gogo_register_port(vm, "screen", &hdrv, &h), GOGO_EEXIST);
@@ -973,7 +1093,7 @@ TEST(embed_hostport_requirement) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
     Img im = image("hostport");
-    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    gogo_vm *vm = new_vm(&thost, &t, NULL);
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EREQUIRES);
     CHECK(strstr(t.err, "gogo: image requires hp, which this VM lacks\n") != NULL);
     CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
@@ -981,14 +1101,14 @@ TEST(embed_hostport_requirement) {
     gogo_free(vm);
     static const char *const only_ui[] = { "ui", NULL };
     static const char *const with_hp[] = { "ui", "hp", NULL };
-    gogo_config cfg = { 0 };
+    gogo_config cfg = GOGO_CONFIG_INIT;
     cfg.grant = only_ui;
-    vm = gogo_new(&thost, &t, &cfg);
+    vm = new_vm(&thost, &t, &cfg);
     CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EREQUIRES);
     gogo_free(vm);
     cfg.grant = with_hp;
-    vm = gogo_new(&thost, &t, &cfg);
+    vm = new_vm(&thost, &t, &cfg);
     CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
@@ -1023,7 +1143,7 @@ static void *port_produce(void *arg) {
 TEST(embed_hostport_post_threads) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
-    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    gogo_vm *vm = new_vm(&thost, &t, NULL);
     CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
     Img im = image("hostport");
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
@@ -1127,7 +1247,7 @@ TEST(embed_fs_root_quota_per_vm) {
     TCtx ta, tb;
     tctx_init(&ta);
     tctx_init(&tb);
-    gogo_config ca = { 0 }, cb = { 0 };
+    gogo_config ca = GOGO_CONFIG_INIT, cb = GOGO_CONFIG_INIT;
     ca.fs_root = ra;
     ca.fs_quota = 1000;
     cb.fs_root = rb;
@@ -1198,7 +1318,7 @@ TEST(embed_fs_root_symlink_refused) {
     snprintf(link, sizeof link, "%s/d", root);
     CHECK_EQ(symlink(base, link), 0);
     TCtx t; tctx_init(&t);
-    gogo_config c = { 0 };
+    gogo_config c = GOGO_CONFIG_INIT;
     c.fs_root = root;                   /* fs_quota 0: none */
     gogo_vm *vm = new_loaded(&t, "fsuse", &c);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
@@ -1222,20 +1342,22 @@ TEST(embed_fs_root_bad) {
     FILE *f = fopen(file, "w");
     if (f) fclose(f);
     TCtx t; tctx_init(&t);
-    gogo_config c = { 0 };
+    gogo_config c = GOGO_CONFIG_INIT;
+    gogo_vm *vm = NULL;
     c.fs_root = file;
-    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
     c.fs_root = missing;
-    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
     c.fs_root = base;
     c.fs_quota = -1;                    /* negative: invalid (0 is none) */
-    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
     c.fs_root = NULL;
-    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_EINVAL);
     c.fs_root = base;
     c.fs_quota = 0;
     t.fail_after = 1;                   /* the gogo_vm, not its FsDir */
-    CHECK(gogo_new(&thost, &t, &c) == NULL);
+    CHECK_EQ(gogo_new(&thost, &t, &c, &vm), GOGO_ENOMEM);
+    CHECK(vm == NULL);
     t.fail_after = -1;
     tctx_done(&t);
     rm_tree(base);
@@ -1247,7 +1369,7 @@ TEST(embed_fs_quota_zero_is_unlimited) {
     char root[256];
     temp_dir(root, sizeof root);
     TCtx t; tctx_init(&t);
-    gogo_config c = { 0 };
+    gogo_config c = GOGO_CONFIG_INIT;
     c.fs_root = root;
     gogo_vm *vm = new_loaded(&t, "fsuse", &c);
     CHECK_EQ(gogo_start(vm), GOGO_OK);

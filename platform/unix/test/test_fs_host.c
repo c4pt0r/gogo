@@ -27,7 +27,7 @@ static long host_blocks;
 
 static void *m_alloc(void *c, size_t n) { (void)c; host_blocks++; return malloc(n); }
 static void m_free(void *c, void *p, size_t n) { (void)c; (void)n; host_blocks--; free(p); }
-static const gogo_host mhost = { NULL, m_alloc, m_free, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
+static const gogo_host mhost = { .size = sizeof(gogo_host), .alloc = m_alloc, .free = m_free };
 
 static void setup_quota(int64_t quota) {
     snprintf(base, sizeof base, "%s/gogofs-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
@@ -36,7 +36,7 @@ static void setup_quota(int64_t quota) {
     snprintf(out, sizeof out, "%s/out", base);
     CHECK_EQ(mkdir(root, 0777), 0);
     CHECK_EQ(mkdir(out, 0777), 0);
-    bc = fs_dir_open(&mhost, NULL, root, quota);
+    bc = fs_dir_open(&mhost, NULL, root, quota, NULL);
     CHECK(bc != NULL);
     be = bc ? fs_dir_vfs(bc) : &fs_dir_backend;
 }
@@ -287,7 +287,7 @@ static void out_untouched(void) {
     CHECK(strcmp(host_get(p), "secret") == 0);
     Ls l = {0};
     /* count out/'s entries through a second FsDir rooted there */
-    FsDir *o = fs_dir_open(&mhost, NULL, out, -1);
+    FsDir *o = fs_dir_open(&mhost, NULL, out, -1, NULL);
     CHECK(o != NULL);
     CHECK_EQ(fs_dir_backend.readdir(o, "/", ls_cb, &l), GOGO_E_OK);
     CHECK_EQ(l.n, 1);
@@ -508,9 +508,9 @@ TEST(quota_tracks_usage) {
     char p[256];
     in_root(p, sizeof p, "/old");
     host_put(p, "1234");                              /* 4 bytes already there */
-    bc = fs_dir_open(&mhost, NULL, root, 10);
+    bc = fs_dir_open(&mhost, NULL, root, 10, NULL);
     CHECK(bc != NULL);
-    FsDir *other = fs_dir_open(&mhost, NULL, out, 3);  /* a second instance, its own quota */
+    FsDir *other = fs_dir_open(&mhost, NULL, out, 3, NULL);  /* a second instance, its own quota */
     CHECK(other != NULL);
     int32_t used, total;
     CHECK_EQ(be->usage(bc, &used, &total), GOGO_E_OK);

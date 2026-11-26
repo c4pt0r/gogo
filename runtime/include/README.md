@@ -17,8 +17,8 @@ The archive holds the VM core (`runtime/vm`), the file system layer
 (`runtime/vfs`), streams (`runtime/stream`) and the embedding layer
 (`runtime/embed`), compiled as strict C99 (`-std=c99 -pedantic`) with
 `-DGOGO_EMBED`. The keyboard, power, IMU, IR, audio, network and TLS ports
-are not in it: a VM made from it grants no capability bits (see
-`GOGO_CAP_*` in `gogo.h`). It has no mutable global state
+are not in it: its only drivers are the host ports a program registers,
+and its only mount is `/flash` on a host directory. It has no mutable global state
 (`tools/globals.sh --objects`), so any number of VMs can run in one
 process, on any threads. It needs POSIX threads and clocks for
 `gogo_host_posix`, `gogo_new_posix` and `gogo_run_thread`.

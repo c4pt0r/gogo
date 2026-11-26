@@ -47,8 +47,8 @@ int main(int argc, char **argv) {
     void *img = argc == 2 ? read_file(argv[1], &len) : NULL;
     if (!img) { fprintf(stderr, "usage: %s hostecho.ggb\n", argv[0]); return 2; }
     int commands = 0;
-    gogo_vm *vm = gogo_new_posix(NULL);
-    int rc = vm ? GOGO_OK : GOGO_ENOMEM;
+    gogo_vm *vm = NULL;
+    int rc = gogo_new_posix(NULL, &vm);
     if (rc == GOGO_OK) rc = gogo_register_port(vm, "echo", &echo_driver, &commands);   /* before load */
     if (rc == GOGO_OK) rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);
     free(img);

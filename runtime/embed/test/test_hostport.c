@@ -17,7 +17,8 @@ static const VmBoard board = { board_ports, NULL, NULL, NULL, NULL };
 static const gogo_port_driver none = { NULL, NULL, NULL };
 
 static void check_board_names(const gogo_config *cfg) {
-    gogo_vm *g = gogo_new_posix(cfg);
+    gogo_vm *g = NULL;
+    CHECK_EQ(gogo_new_posix(cfg, &g), GOGO_OK);
     CHECK(g != NULL);
     const VmBoard *own = g->vm.board;
     g->vm.board = &board;
@@ -32,13 +33,13 @@ static void check_board_names(const gogo_config *cfg) {
 
 TEST(hostport_board_names_refused) {
     check_board_names(NULL);
-    gogo_config cfg;
-    memset(&cfg, 0, sizeof cfg);
+    gogo_config cfg = GOGO_CONFIG_INIT;
     static const char *const grant[] = { "dns", NULL };
     cfg.grant = grant;              /* board drivers not granted: still refused */
     check_board_names(&cfg);
     /* On the library's own board, a name only that board had is free. */
-    gogo_vm *g = gogo_new_posix(NULL);
+    gogo_vm *g = NULL;
+    CHECK_EQ(gogo_new_posix(NULL, &g), GOGO_OK);
     CHECK_EQ(gogo_register_port(g, "board_only", &none, NULL), GOGO_OK);
     gogo_free(g);
 }

@@ -1678,12 +1678,20 @@ only through two tables of function pointers that the caller hands it.
 - **The host table** (`gogo_host`, public in `gogo.h`): what every host
   gives: output, memory chunks, the monotonic clock, wall clock, random,
   `wait`/`wake` (a latched wakeup: a wake before or during a wait ends
-  it), config lookup, module code memory. Hooks a host may omit are
-  `NULL`; the wrappers in `runtime/vm/host.c` (`vm_now`, `vm_out`,
-  `vm_alloc_chunk`, ...) are the only callers and apply the defaults.
-  The ESP firmware's table is `esp_host` (`platform_esp.c`), the unix
-  VM's is in `platform/unix/`, and `gogo_host_posix()` is the one that
-  `libgogo` ships.
+  it), config lookup, module code memory, and (embed only) `destroy`, run
+  once with the host's context after the VM's last reference. Hooks a
+  host may omit are `NULL`; the wrappers in `runtime/vm/host.c`
+  (`vm_now`, `vm_out`, `vm_alloc_chunk`, ...) are the only callers and
+  apply the defaults. A hook that can fail returns 0 or a negative
+  `GOGO_E*` (`set_unix_time_ms`; `host.c` turns that into the VM's own
+  1/0). The table starts with its `size` and grows only at the end;
+  every table is written with designated initializers (`.write =
+  host_write`), never positionally. The ESP firmware's table is
+  `esp_host` (`platform_esp.c`), the unix VM's is in `platform/unix/`,
+  and `gogo_host_posix()` is the one that `libgogo` ships. The VM core
+  reads a board's table in place and does not look at `size`;
+  `gogo_new` copies an embedder's table into the `gogo_vm` (the first
+  `size` bytes, the rest `NULL`), so the embedder's copy may go at once.
 - **The board table** (`VmBoard`, internal, `runtime/vm/host.h`): board-only
   hardware: the port drivers, the input chips (`InputHw`), the network
   interface (`NetIf`), the TLS port's hooks (`TlsHw`: allocator, clock,
@@ -1766,10 +1774,13 @@ only through two tables of function pointers that the caller hands it.
   change: an image that names it is simply refused by a firmware without
   it.
 - **C ABI** (`runtime/include/gogo.h`): within an ABI version functions
-  keep their signatures and meaning and new ones are additive; structs
-  will carry a leading `size` and grow only at the end; anything marked
-  experimental is outside these guarantees; `libgogo.a` exports only
-  `GOGO_API` symbols.
+  keep their signatures and meaning and new ones are additive; the structs
+  a host fills (`gogo_host`, `gogo_config`) carry a leading `size`, set by
+  their `GOGO_*_INIT`, and grow only at the end: the library reads the
+  fields it knows, an older struct's missing fields take their defaults,
+  and a newer one's extra fields are ignored, so a field may be appended
+  only if its 0 keeps the old behaviour; anything marked experimental is
+  outside these guarantees; `libgogo.a` exports only `GOGO_API` symbols.
 - **Library API:** stable at v0.2: `actor`, `bytes`, `port` (its generic
   part), `fs`, `sys`, `strings`, `strconv`, `kv`. Experimental: `net`,
   `http`, `dns`, `dhcp`, `sntp`, `code`, `supervisor`, `imu`, `ir`,

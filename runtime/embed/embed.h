@@ -46,7 +46,7 @@ typedef struct HostPort {
 
 struct gogo_vm {
     Vm vm;                       /* its host is .fwd, with ctx this gogo_vm */
-    const gogo_host *uh;         /* the host's own table and ctx */
+    gogo_host uh;                /* the host's own table (gogo_new's copy) and ctx */
     void *uctx;
     gogo_host fwd;               /* forwarders to uh (NULL where uh has NULL) */
     gogo_config cfg;
@@ -54,8 +54,8 @@ struct gogo_vm {
     EmbedBlk *code_blocks;       /* live code_alloc blocks */
     Inbox inbox;
     VfsState vfs;                /* its mounts (none without fs_root) and open files */
-    FsDir *fs;                   /* cfg.fs_root as /flash (from uh->alloc), or NULL */
-    void *image_copy;            /* GOGO_LOAD_COPY: the copy (from uh->alloc) */
+    FsDir *fs;                   /* cfg.fs_root as /flash (from uh.alloc), or NULL */
+    void *image_copy;            /* GOGO_LOAD_COPY: the copy (from uh.alloc) */
     size_t image_bytes;
     struct EmbedThread *thread;  /* gogo_run_thread, until gogo_join */
     HostPort host_ports[GOGO_MAX_HOST_PORTS];
@@ -73,7 +73,6 @@ struct gogo_vm {
     int posting;
     bool loaded;                 /* gogo_load succeeded */
     bool stepping;               /* inside gogo_step (re-entry guard) */
-    void (*ctx_free)(void *);    /* frees uctx at the last release (gogo_new_posix), or NULL */
 };
 
 /* True if the config's grant has name (or there is no grant: all). */

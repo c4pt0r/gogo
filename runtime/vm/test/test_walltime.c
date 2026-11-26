@@ -94,7 +94,13 @@ TEST(walltime_keeps_across_t0) {
 static int64_t rtc_ms;
 static int rtc_sets;
 static int64_t rtc_get(void *ctx) { CHECK(ctx == &rtc_ms); return rtc_ms; }
-static int rtc_set(void *ctx, int64_t ms) { CHECK(ctx == &rtc_ms); rtc_sets++; rtc_ms = ms; return 1; }
+static int rtc_set(void *ctx, int64_t ms) {
+    CHECK(ctx == &rtc_ms);
+    rtc_sets++;
+    if (ms == GOGO_BUILD_UNIX_MS + 9) return -1;   /* a refusal */
+    rtc_ms = ms;
+    return 0;
+}
 
 TEST(walltime_rtc_host) {
     gogo_host h = test_host;
@@ -111,6 +117,8 @@ TEST(walltime_rtc_host) {
     CHECK_EQ(vm_set_unix_time_ms(v, GOGO_BUILD_UNIX_MS + 7), 1);
     CHECK_EQ(rtc_sets, 1);
     CHECK(vm_unix_time_ms(v) == GOGO_BUILD_UNIX_MS + 7);
+    CHECK_EQ(vm_set_unix_time_ms(v, GOGO_BUILD_UNIX_MS + 9), 0);   /* the host refused (negative) */
+    CHECK_EQ(rtc_sets, 2);
     CHECK(!v->wall_known);                                       /* the Vm's own clock is unused */
     free(v);
 }
