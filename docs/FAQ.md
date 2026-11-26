@@ -273,11 +273,14 @@ compiler directly. A host that only runs precompiled images will not need
 it.
 
 ### Where is the bytecode documented?
-The instruction encoding, image layout, type table, versioning and load-time
-checks are in [design.md](design.md) §5.6; value representation is in §5.5;
-`runtime/vm/opcodes.h` is the authoritative list of opcodes, builtins and
-reserved types (the compiler parses it). `gogo dis file.ggb` prints a
-program's bytecode. A per-opcode reference is planned.
+[bytecode.md](bytecode.md) is the per-opcode reference: every opcode with its
+number, operands, effect and meaning, the builtins table, the reserved types
+and the image file layout. It is generated from `runtime/vm/opcodes.h` (the
+compiler parses the same file), so it cannot drift (`make bytecode-doc`
+regenerates it; `make test` fails if it is stale). The design behind it (the
+instruction encoding, type table, versioning and load-time checks) is in
+[design.md](design.md) §5.6; value representation is in §5.5. `gogo dis
+file.ggb` prints a program's bytecode.
 
 ## The VM
 

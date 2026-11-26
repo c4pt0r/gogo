@@ -1419,6 +1419,9 @@ together with `mbox_words` through `actor_charged_words`).
 
 ### 5.6 Bytecode and interpreter
 
+- The per-opcode reference (every opcode, builtin, reserved type and the
+  image file layout as tables) is [bytecode.md](bytecode.md), generated
+  from `runtime/vm/opcodes.h`; this section is the narrative.
 - Register-based bytecode with fixed 32-bit instruction words (`op | a<<8
   | b<<16 | c<<24`: an 8-bit opcode and three 8-bit operands), some
   followed by one extension word (`runtime/vm/opcodes.h`, which the Go

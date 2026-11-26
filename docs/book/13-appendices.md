@@ -418,3 +418,11 @@ work on every firmware), `gogo/fs` on `/flash`, and the type-only use of
 `gogo/net` or `gogo/kbd` need no name. A port opened by a name known only
 at run time requires nothing (with a compiler warning); the open just
 fails on a firmware without the driver.
+
+## G. Bytecode reference
+
+For the instruction set itself (every opcode with its number, operands and
+effect, the builtins table, the reserved types and the image file layout) see
+the generated [bytecode reference](../bytecode.md). `gogo dis file.ggb`
+prints the bytecode of a program, and the design behind it is in
+[design.md](../design.md) section 5.6.

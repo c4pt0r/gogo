@@ -2,6 +2,25 @@
  * Instruction word: op | a<<8 | b<<16 | c<<24. Ops marked +ext are
  * followed by one extra word. Every member has an explicit number because
  * the Go compiler parses this file.
+ *
+ * Reference comments: tools/bcdoc generates docs/bytecode.md from this file
+ * (make bytecode-doc; make test fails when the doc is stale). Every Op and
+ * Builtin member carries ONE structured comment on its own line, so merges
+ * stay line-local:
+ *     OP_X = n,  / *! OPERANDS | EFFECT | DESCRIPTION * /
+ *     B_X  = n,  / *! ARGS -> RESULTS | DESCRIPTION * /
+ * (spaces added inside the comment markers here so this text does not nest
+ * a comment; the real marker is the opener, "!", the text, the closer). OPERANDS
+ * lists the fields the op uses as name=role pairs (a=dst b=lhs c=rhs
+ * ext=target), or - for none; EFFECT is register notation (ra is
+ * register a); a field is separated from the next by " | ", so the text
+ * itself must not contain " | " (write OR for bitwise or). For a builtin, ARGS
+ * and RESULTS may contain " | " (alternatives): the description is
+ * everything after the LAST " | ". Plain comments, including multi-line
+ * ones above a member, are ignored. Whether an op takes an extension word
+ * comes from op_has_ext below, not from the comment. Adding an op: pick
+ * the next number, add the member with its comment, add it to op_has_ext
+ * if it takes ext, run `make bytecode-doc`.
  */
 #ifndef GOGO_OPCODES_H
 #define GOGO_OPCODES_H
@@ -10,151 +29,128 @@
 #include <stdbool.h>
 
 enum Op {
-    OP_NOP       = 0,
-    OP_MOVE      = 1,   /* ra = rb */
-    OP_LOADK     = 2,   /* ra = ext (raw term)                 +ext */
-    OP_LOADI32   = 3,   /* ra = int32 ext (boxed if needed)    +ext */
-    OP_ADD       = 4,
-    OP_SUB       = 5,
-    OP_MUL       = 6,
-    OP_DIV       = 7,
-    OP_REM       = 8,
-    OP_NEG       = 9,   /* ra = -rb */
-    OP_EQ        = 10,
-    OP_NE        = 11,
-    OP_LT        = 12,
-    OP_LE        = 13,
-    OP_NOT       = 14,
-    OP_JMP       = 15,  /* pc = code + ext                     +ext */
-    OP_JMPF      = 16,  /* jump if ra is false                 +ext */
-    OP_JMPT      = 17,  /* jump if ra is true                  +ext */
-    OP_CALL      = 18,  /* func ext, args rb..rb+c-1 -> ra     +ext */
-    OP_RET       = 19,
-    OP_NEWSTRUCT = 20,  /* ra = struct type ext, fields rb..   +ext */
-    OP_GETFIELD  = 21,  /* ra = rb.fields[c] */
-    OP_MKCLOSURE = 22,  /* ra = closure func ext, captures rb.. +ext */
-    OP_TYPEIS    = 23,  /* ra = (dynamic type of rb == ext)    +ext */
-    OP_BUILTIN   = 24,  /* ra = builtin ext(rb..rb+c-1)        +ext */
-    OP_CONV      = 25,  /* c=0: ra = int(rb) (low 32 bits); c=1: ra = int64(rb);
-                         * c=2: ra = byte(rb) = rb & 0xFF (rb an int or int64) */
+    OP_NOP       = 0,   /*! - | - | Do nothing. */
+    OP_MOVE      = 1,   /*! a=dst b=src | ra = rb | Copy a register. */
+    OP_LOADK     = 2,   /*! a=dst ext=term | ra = ext | Load a raw term: small int, special immediate or constant-area ref (checked against the const map when executed). */
+    OP_LOADI32   = 3,   /*! a=dst ext=int32 | ra = int32(ext) | Load a 32-bit integer, boxed as an int64 when it does not fit an immediate. */
+    OP_ADD       = 4,   /*! a=dst b=lhs c=rhs | ra = rb + rc | int addition (int only; int64 is ADD64). */
+    OP_SUB       = 5,   /*! a=dst b=lhs c=rhs | ra = rb - rc | int subtraction. */
+    OP_MUL       = 6,   /*! a=dst b=lhs c=rhs | ra = rb * rc | int multiplication. */
+    OP_DIV       = 7,   /*! a=dst b=lhs c=rhs | ra = rb / rc | int division, truncated; a zero divisor crashes with R_DIV_ZERO. */
+    OP_REM       = 8,   /*! a=dst b=lhs c=rhs | ra = rb % rc | int remainder; a zero divisor crashes with R_DIV_ZERO. */
+    OP_NEG       = 9,   /*! a=dst b=src | ra = -rb | int negation. */
+    OP_EQ        = 10,  /*! a=dst b=lhs c=rhs | ra = rb == rc | Equality of ints, bools, strings (by content), PIDs and Refs; an int64 box is badcode (use EQ64). */
+    OP_NE        = 11,  /*! a=dst b=lhs c=rhs | ra = rb != rc | Inequality, as EQ. */
+    OP_LT        = 12,  /*! a=dst b=lhs c=rhs | ra = rb < rc | int less-than. */
+    OP_LE        = 13,  /*! a=dst b=lhs c=rhs | ra = rb <= rc | int less-or-equal. */
+    OP_NOT       = 14,  /*! a=dst b=src | ra = !rb | Boolean negation. */
+    OP_JMP       = 15,  /*! ext=target | pc = code + ext | Unconditional jump to an absolute code word index. */
+    OP_JMPF      = 16,  /*! a=cond ext=target | if !ra: pc = code + ext | Jump if ra is false. */
+    OP_JMPT      = 17,  /*! a=cond ext=target | if ra: pc = code + ext | Jump if ra is true. */
+    OP_CALL      = 18,  /*! a=dst b=args c=nargs ext=func | ra = func ext(rb .. rb+c-1) | Call a function by index; c must equal its parameter count. The result returns into ra via RET or RETN. */
+    OP_RET       = 19,  /*! a=src | return ra | Return one value into the caller's CALL or CALLV destination register. */
+    OP_NEWSTRUCT = 20,  /*! a=dst b=fields c=nfields ext=type | ra = struct ext{rb .. rb+c-1} | Allocate a struct of type ext (reserved index or TYPE_OWN_BASE + n); c must equal the type's field count. */
+    OP_GETFIELD  = 21,  /*! a=dst b=struct c=index | ra = rb.fields[c] | Read a field; past the end of an older image's reserved struct it reads int 0, of an own struct it is badcode. */
+    OP_MKCLOSURE = 22,  /*! a=dst b=captures c=ncaptures ext=func | ra = closure func ext{rb .. rb+c-1} | Allocate a closure of function ext capturing registers rb .. rb+c-1. */
+    OP_TYPEIS    = 23,  /*! a=dst b=value ext=type | ra = (dynamic type of rb == ext) | Type test: ext is a TY_* id or a struct type id. */
+    OP_BUILTIN   = 24,  /*! a=dst b=args c=nargs ext=builtin | ra = builtin ext(rb .. rb+c-1) | Call a builtin (B_*). Two-result builtins also write ra+1. */
+    OP_CONV      = 25,  /*! a=dst b=src c=mode | ra = conv_c(rb) | Integer conversion: c=0 int(rb) (low 32 bits); c=1 int64(rb); c=2 byte(rb) = rb & 0xFF (rb an int or int64). */
     /* int64 ops. Operands are int64 values in either representation: a
      * small-int immediate or a K_INT64 box (heap or const area); results
      * are immediates when they fit in 31 bits, else boxed. The generic
      * ADD..LE / NEG above are int-only. */
-    OP_ADD64     = 26,
-    OP_SUB64     = 27,
-    OP_MUL64     = 28,
-    OP_DIV64     = 29,
-    OP_REM64     = 30,
-    OP_NEG64     = 31,  /* ra = -rb */
-    OP_EQ64      = 32,
-    OP_NE64      = 33,
-    OP_LT64      = 34,
-    OP_LE64      = 35,
-    OP_BOX64     = 36,  /* ra = rb as a K_INT64 box (no-op if already boxed);
-                         * an int64 inside `any` is always boxed */
-    OP_CLEAR     = 37,  /* ra .. ra+b-1 = nil: dead registers stop being GC
-                         * roots (b is the count, 0 = nothing) */
-    OP_RETN      = 38,  /* return ra .. ra+b-1 into the caller's registers
-                         * dst .. dst+b-1, dst = the CALL's or CALLV's ra
-                         * (RET returns one) */
-    OP_CALLV     = 39,  /* call the closure in rb with args rb+1..rb+c -> ra:
-                         * its captures, then the args, are the callee's
-                         * parameters; anything but a closure whose function
-                         * takes captures+c parameters (nil) is badcode */
+    OP_ADD64     = 26,  /*! a=dst b=lhs c=rhs | ra = rb + rc | int64 addition. */
+    OP_SUB64     = 27,  /*! a=dst b=lhs c=rhs | ra = rb - rc | int64 subtraction. */
+    OP_MUL64     = 28,  /*! a=dst b=lhs c=rhs | ra = rb * rc | int64 multiplication. */
+    OP_DIV64     = 29,  /*! a=dst b=lhs c=rhs | ra = rb / rc | int64 division; a zero divisor crashes with R_DIV_ZERO. */
+    OP_REM64     = 30,  /*! a=dst b=lhs c=rhs | ra = rb % rc | int64 remainder; a zero divisor crashes with R_DIV_ZERO. */
+    OP_NEG64     = 31,  /*! a=dst b=src | ra = -rb | int64 negation. */
+    OP_EQ64      = 32,  /*! a=dst b=lhs c=rhs | ra = rb == rc | int64 equality. */
+    OP_NE64      = 33,  /*! a=dst b=lhs c=rhs | ra = rb != rc | int64 inequality. */
+    OP_LT64      = 34,  /*! a=dst b=lhs c=rhs | ra = rb < rc | int64 less-than. */
+    OP_LE64      = 35,  /*! a=dst b=lhs c=rhs | ra = rb <= rc | int64 less-or-equal. */
+    OP_BOX64     = 36,  /*! a=dst b=src | ra = box64(rb) | Make rb a K_INT64 box (no-op if already boxed); an int64 inside `any` is always boxed. */
+    OP_CLEAR     = 37,  /*! a=first b=count | ra .. ra+b-1 = nil | Set dead registers to nil so they stop being GC roots (b = 0 does nothing). */
+    OP_RETN      = 38,  /*! a=first b=count | return ra .. ra+b-1 | Return b values into the caller's registers dst .. dst+b-1, dst = the CALL's or CALLV's ra (RET returns one). */
+    OP_CALLV     = 39,  /*! a=dst b=closure c=nargs | ra = rb(rb+1 .. rb+c) | Call the closure in rb with args rb+1 .. rb+c: its captures, then the args, are the callee's parameters; anything but a closure whose function takes captures+c parameters (nil) is badcode. */
     /* Bitwise ops, Go semantics, int then int64 (as ADD / ADD64). SHL / SHR
      * take any integer count (either representation): a count >= the width
      * gives 0 (SHR: 0 or -1 by sign), a negative count crashes with
      * R_BAD_SHIFT. SHR is arithmetic. */
-    OP_AND       = 40,
-    OP_OR        = 41,
-    OP_XOR       = 42,
-    OP_ANDNOT    = 43,  /* ra = rb &^ rc */
-    OP_SHL       = 44,
-    OP_SHR       = 45,
-    OP_AND64     = 46,
-    OP_OR64      = 47,
-    OP_XOR64     = 48,
-    OP_ANDNOT64  = 49,
-    OP_SHL64     = 50,
-    OP_SHR64     = 51
+    OP_AND       = 40,  /*! a=dst b=lhs c=rhs | ra = rb & rc | int bitwise and. */
+    OP_OR        = 41,  /*! a=dst b=lhs c=rhs | ra = rb OR rc | int bitwise or. */
+    OP_XOR       = 42,  /*! a=dst b=lhs c=rhs | ra = rb ^ rc | int bitwise xor. */
+    OP_ANDNOT    = 43,  /*! a=dst b=lhs c=rhs | ra = rb &^ rc | int bit clear. */
+    OP_SHL       = 44,  /*! a=dst b=value c=count | ra = rb << rc | int left shift; a count >= the width gives 0, a negative count crashes with R_BAD_SHIFT. */
+    OP_SHR       = 45,  /*! a=dst b=value c=count | ra = rb >> rc | int arithmetic right shift; a count >= the width gives 0 or -1 by sign, a negative count crashes with R_BAD_SHIFT. */
+    OP_AND64     = 46,  /*! a=dst b=lhs c=rhs | ra = rb & rc | int64 bitwise and. */
+    OP_OR64      = 47,  /*! a=dst b=lhs c=rhs | ra = rb OR rc | int64 bitwise or. */
+    OP_XOR64     = 48,  /*! a=dst b=lhs c=rhs | ra = rb ^ rc | int64 bitwise xor. */
+    OP_ANDNOT64  = 49,  /*! a=dst b=lhs c=rhs | ra = rb &^ rc | int64 bit clear. */
+    OP_SHL64     = 50,  /*! a=dst b=value c=count | ra = rb << rc | int64 left shift (count as SHL; the count may be either representation). */
+    OP_SHR64     = 51   /*! a=dst b=value c=count | ra = rb >> rc | int64 arithmetic right shift (count as SHR). */
 };
 
 enum Builtin {
-    B_PRINTLN = 0,
-    B_SPAWN   = 1,
-    B_SELF    = 2,
-    B_SEND    = 3,
-    B_RECEIVE = 4,
-    B_MEMORY  = 5,
+    B_PRINTLN = 0,  /*! values... -> nil | Print the values, space-separated, with a newline, to the console. */
+    B_SPAWN   = 1,  /*! closure -> pid | Start a new actor running the closure. */
+    B_SELF    = 2,  /*! -> pid | The calling actor's PID. */
+    B_SEND    = 3,  /*! pid, msg -> nil | Copy msg into the target's mailbox (a value that may not cross modules is R_BAD_MSG). */
+    B_RECEIVE = 4,  /*! -> msg | Block until a message arrives and take it. */
+    B_MEMORY  = 5,  /*! -> ProcInfo | The calling actor's memory figures (actor.ProcInfo). */
     /* Two-result builtins write ra and ra+1. */
-    B_SPAWN_LINK      = 6,   /* closure -> pid */
-    B_SPAWN_OPT       = 7,   /* closure, Options struct -> pid */
-    B_LINK            = 8,   /* pid -> nil */
-    B_UNLINK          = 9,   /* pid -> nil */
-    B_TRAP_EXIT       = 10,  /* bool -> nil */
-    B_EXIT            = 11,  /* code (does not return) */
-    B_KILL            = 12,  /* pid, code -> nil */
-    B_MONITOR         = 13,  /* pid -> ref */
-    B_DEMONITOR       = 14,  /* ref -> nil */
-    B_MAKE_REF        = 15,  /* -> ref */
-    B_RECEIVE_TIMEOUT = 16,  /* ms -> msg, ok */
-    B_SEND_AFTER      = 17,  /* ms, pid, msg -> ref */
-    B_CANCEL_TIMER    = 18,  /* ref -> bool */
-    B_SLEEP           = 19,  /* ms -> nil */
-    B_NOW             = 20,  /* -> int64 */
-    B_CALL            = 21,  /* pid, req, ms -> reply, ok */
-    B_REPLY           = 22,  /* Request struct, reply -> nil */
-    B_REGISTER        = 23,  /* name, pid -> bool */
-    B_WHEREIS         = 24,  /* name -> pid, ok */
-    B_UNREGISTER      = 25,  /* name -> nil */
-    B_PORT_OPEN       = 26,  /* driver string, cfg any -> pid, ok */
-    B_PORT_CLOSE      = 27,  /* pid -> nil */
+    B_SPAWN_LINK      = 6,   /*! closure -> pid | Spawn and link atomically. */
+    B_SPAWN_OPT       = 7,   /*! closure, Options struct -> pid | Spawn with actor.Options (MaxMemory). */
+    B_LINK            = 8,   /*! pid -> nil | Link to another actor. */
+    B_UNLINK          = 9,   /*! pid -> nil | Remove a link. */
+    B_TRAP_EXIT       = 10,  /*! bool -> nil | Turn exit trapping on or off: linked exits arrive as ExitMsg. */
+    B_EXIT            = 11,  /*! code -> (does not return) | Terminate the calling actor with an exit code. */
+    B_KILL            = 12,  /*! pid, code -> nil | Terminate another actor with a code. */
+    B_MONITOR         = 13,  /*! pid -> ref | Monitor an actor: its end arrives as DownMsg. */
+    B_DEMONITOR       = 14,  /*! ref -> nil | Cancel a monitor. */
+    B_MAKE_REF        = 15,  /*! -> ref | A fresh unique reference. */
+    B_RECEIVE_TIMEOUT = 16,  /*! ms -> msg, ok | Receive with a timeout in milliseconds; ok is false on timeout. */
+    B_SEND_AFTER      = 17,  /*! ms, pid, msg -> ref | Send after a delay; the ref cancels it. */
+    B_CANCEL_TIMER    = 18,  /*! ref -> bool | Cancel a send-after timer; true if it had not fired. */
+    B_SLEEP           = 19,  /*! ms -> nil | Suspend the calling actor. */
+    B_NOW             = 20,  /*! -> int64 | Monotonic milliseconds. */
+    B_CALL            = 21,  /*! pid, req, ms -> reply, ok | Request/reply with a timeout (actor.Call). */
+    B_REPLY           = 22,  /*! Request struct, reply -> nil | Answer an actor.Request. */
+    B_REGISTER        = 23,  /*! name, pid -> bool | Register a name for a PID. */
+    B_WHEREIS         = 24,  /*! name -> pid, ok | Look up a registered name. */
+    B_UNREGISTER      = 25,  /*! name -> nil | Remove a registered name. */
+    B_PORT_OPEN       = 26,  /*! driver string, cfg any -> pid, ok | Open a port driver (port.Open). */
+    B_PORT_CLOSE      = 27,  /*! pid -> nil | Close a port. */
     /* Sequences (strs.c): the generic ones dispatch on the kind of their
      * first argument. Out-of-range -> badcode, allocation failure -> OOM. */
-    B_STR_CONCAT      = 28,  /* a, b -> string */
-    B_LEN             = 29,  /* string | slice | Bytes | Buffer -> int */
-    B_INDEX           = 30,  /* string | slice | Bytes, i -> element; a byte
-                              * (of a string, []byte or Bytes) as an int */
-    B_SETINDEX        = 31,  /* slice, i, v -> nil; a []byte stores v & 0xFF */
-    B_SLICE           = 32,  /* string | slice | Bytes, lo, hi -> the same kind; every
-                              * bound is explicit, any negative or out-of-range
-                              * one is badcode (a slice's hi may reach cap) */
-    B_MAKE_SLICE      = 33,  /* elemkind (0 term, 1 byte), len, cap, zero -> slice;
-                              * every element is `zero` (0 for bytes) */
-    B_APPEND          = 34,  /* slice, mode, zero, v... -> slice. mode 0: append the
-                              * terms v...; 1: the bytes v...; 2: every element of
-                              * the term slice v (one v); 3: every byte of the
-                              * []byte or string v (one v). Growth is decided once
-                              * for all of them: if they do not all fit in cap, a
-                              * new array (x2, min 4, spare slots = zero) gets
-                              * them and the old one is left untouched */
-    B_COPY            = 35,  /* dst slice, src slice | string | Bytes -> n copied */
-    B_CAP             = 36,  /* slice -> int */
-    B_STR_FROM        = 37,  /* []byte | Bytes -> string (a copy) */
-    B_BYTESLICE_FROM  = 38,  /* string | Bytes -> []byte (a copy) */
-    B_STR_CMP         = 39,  /* a, b -> -1 | 0 | 1 */
+    B_STR_CONCAT      = 28,  /*! a, b -> string | Concatenate two strings. */
+    B_LEN             = 29,  /*! string | slice | Bytes | Buffer -> int | Length of a sequence. */
+    B_INDEX           = 30,  /*! string | slice | Bytes, i -> element | Element i; a byte (of a string, []byte or Bytes) as an int. */
+    B_SETINDEX        = 31,  /*! slice, i, v -> nil | Store an element; a []byte stores v & 0xFF. */
+    B_SLICE           = 32,  /*! string | slice | Bytes, lo, hi -> the same kind | Sub-sequence; every bound is explicit, any negative or out-of-range one is badcode (a slice's hi may reach cap). */
+    B_MAKE_SLICE      = 33,  /*! elemkind, len, cap, zero -> slice | New slice; elemkind 0 term, 1 byte; every element is `zero` (0 for bytes). */
+    B_APPEND          = 34,  /*! slice, mode, zero, v... -> slice | Append. Mode 0: the terms v...; 1: the bytes v...; 2: every element of the term slice v (one v); 3: every byte of the []byte or string v (one v). Growth is decided once for all of them: if they do not all fit in cap, a new array (x2, min 4, spare slots = zero) gets them and the old one is left untouched. */
+    B_COPY            = 35,  /*! dst slice, src slice | string | Bytes -> n | Copy elements; n is the count copied. */
+    B_CAP             = 36,  /*! slice -> int | Capacity of a slice. */
+    B_STR_FROM        = 37,  /*! []byte | Bytes -> string | String from bytes (a copy). */
+    B_BYTESLICE_FROM  = 38,  /*! string | Bytes -> []byte | Byte slice from a string or Bytes (a copy). */
+    B_STR_CMP         = 39,  /*! a, b -> -1 | 0 | 1 | Compare two strings. */
     /* bytes.Buffer and bytes.Bytes (strs.c, handles in bytes.c). A Buffer
      * builtin on anything but a Buffer (the zero Buffer is nil) is badcode. */
-    B_BUF_NEW         = 40,  /* cap -> Buffer */
-    B_BUF_WRITE       = 41,  /* buf, string | []byte | Bytes | byte (an int) -> nil */
-    B_BUF_FREEZE      = 42,  /* buf -> Bytes (a copy: heap K_BYTES up to
-                              * GOGO_BYTES_INLINE bytes, else off-heap); buf
-                              * is emptied and stays usable */
-    B_BYTES_FROM      = 43,  /* string | []byte -> Bytes (a heap copy, any size) */
-    B_BYTES_EQUAL     = 44,  /* Bytes, Bytes -> bool (same contents) */
-    B_BYTES_COPYTO    = 45,  /* Bytes, []byte -> n copied */
-    B_PORT_HANDOFF    = 46,  /* port pid, to pid -> bool (port.h port_handoff) */
-    B_NET_SUBSCRIBE   = 47,  /* -> bool: net.Subscribe (port.h port_subscribe) */
-    B_CONFIG_GET      = 48,  /* key string -> value string, ok bool: sys.Config
-                              * (host->config_get; "wifi." keys hidden) */
-    B_FS              = 49,  /* op int, args... -> result(s): gogo/fs, run by
-                              * the Vm's fs_builtin hook (actor.h; vfs/builtin.c) */
-    B_CODE            = 50,  /* op int, args... -> result(s): gogo/code
-                              * (module_builtin, module.h; CODE_OP_*) */
-    B_UNIX_TIME       = 51,  /* -> int64: sys.Time, vm_unix_time_ms (0: unknown) */
-    B_SET_UNIX_TIME   = 52,  /* ms int64 -> bool: sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor) */
-    B_RANDOM          = 53   /* -> int in [0, 2^30): sys.Random, vm_random */
+    B_BUF_NEW         = 40,  /*! cap -> Buffer | New bytes.Buffer with an initial capacity. */
+    B_BUF_WRITE       = 41,  /*! buf, string | []byte | Bytes | byte (an int) -> nil | Append to a Buffer. */
+    B_BUF_FREEZE      = 42,  /*! buf -> Bytes | Freeze into Bytes (a copy: heap K_BYTES up to GOGO_BYTES_INLINE bytes, else off-heap); buf is emptied and stays usable. */
+    B_BYTES_FROM      = 43,  /*! string | []byte -> Bytes | Bytes from a string or slice (a heap copy, any size). */
+    B_BYTES_EQUAL     = 44,  /*! Bytes, Bytes -> bool | Same contents. */
+    B_BYTES_COPYTO    = 45,  /*! Bytes, []byte -> n | Copy Bytes into a slice; n is the count copied. */
+    B_PORT_HANDOFF    = 46,  /*! port pid, to pid -> bool | Hand a port's events to another actor (port.h port_handoff). */
+    B_NET_SUBSCRIBE   = 47,  /*! -> bool | net.Subscribe: receive network events (port.h port_subscribe). */
+    B_CONFIG_GET      = 48,  /*! key string -> value string, ok bool | sys.Config (host->config_get; "wifi." keys hidden). */
+    B_FS              = 49,  /*! op int, args... -> result(s) | gogo/fs, run by the Vm's fs_builtin hook (actor.h; vfs/builtin.c). */
+    B_CODE            = 50,  /*! op int, args... -> result(s) | gogo/code (module_builtin, module.h; CODE_OP_*). */
+    B_UNIX_TIME       = 51,  /*! -> int64 | sys.Time: Unix milliseconds, vm_unix_time_ms (0: unknown). */
+    B_SET_UNIX_TIME   = 52,  /*! ms int64 -> bool | sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor). */
+    B_RANDOM          = 53   /*! -> int | sys.Random: an int in [0, 2^30), vm_random. */
 };
 
 /* Type ids for TYPEIS; struct types use their type-table index. */

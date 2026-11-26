@@ -203,6 +203,9 @@ The book chapter [Embedding gogo](docs/book/18-embedding.md) is the guide;
 - [docs/design.md](docs/design.md): the design document: the VM, the
   image format, the term encoding, ports, the network stack, storage and
   hot loading.
+- [docs/bytecode.md](docs/bytecode.md): the bytecode reference: every
+  opcode, the builtins, the reserved types and the image file layout,
+  generated from `runtime/vm/opcodes.h`.
 - [docs/known-issues.md](docs/known-issues.md): open limitations by area,
   with workarounds.
 - [docs/FAQ.md](docs/FAQ.md): common questions: the language, the VM,
