@@ -1014,6 +1014,8 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_BUILTIN: {
             uint32_t bi = ext < sizeof builtin_info ? builtin_info[ext] : 0u;
             int32_t iarg = 0;
+            term val;          /* two: the results of a two-result builtin */
+            bool ok;
             /* BI(n): rc == n; BI_VAR: any; 0 (bi - 1 wraps): none */
             CHECK((bi & 7u) == BI_VAR || (bi & 7u) - 1u == rc);
             if (bi & BI_TWO) CHECK(ra + 2u <= nregs);
@@ -1068,14 +1070,11 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = t;
                 break;
             }
-            case B_RECEIVE_TIMEOUT: {
-                term t;
-                if (msg_receive(vm, a, &t)) {
+            case B_RECEIVE_TIMEOUT:
+                if ((ok = msg_receive(vm, a, &val))) {
                     timer_cancel_wakeup(vm, a);
                     RELOAD();
-                    R[ra] = t;
-                    R[ra + 1] = T_TRUE;
-                    break;
+                    goto two;
                 }
                 if (a->mbox_head) CRASH(R_OUT_OF_MEMORY);   /* message does not fit */
                 switch (timed_wait(vm, a, iarg)) {
@@ -1083,10 +1082,8 @@ int interp_run(Vm *vm, Actor *a) {
                 case WAIT_BLOCK: a->pc = code + pc; return RUN_WAIT;   /* retry when woken */
                 default: break;                                        /* timed out, or ms <= 0 */
                 }
-                R[ra] = T_NIL;
-                R[ra + 1] = T_FALSE;
-                break;
-            }
+                val = T_NIL;
+                goto two;
             case B_SLEEP: {
                 switch (timed_wait(vm, a, iarg)) {
                 case WAIT_OOM: CRASH(R_OUT_OF_MEMORY);
@@ -1259,10 +1256,10 @@ int interp_run(Vm *vm, Actor *a) {
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
-                term pid;
-                bool found = names_whereis(vm, name, len, &pid);
-                R[ra] = found ? pid : T_ZEROPID;
-                R[ra + 1] = term_from_bool(found);
+                if (!(ok = names_whereis(vm, name, len, &val))) val = T_ZEROPID;
+            two:   /* ra, ra+1 = val, ok */
+                R[ra] = val;
+                R[ra + 1] = term_from_bool(ok);
                 break;
             }
             case B_UNREGISTER: {
@@ -1276,10 +1273,9 @@ int interp_run(Vm *vm, Actor *a) {
             case B_PORT_OPEN: {
                 CHECK(deep_live(vm, a, R[rb], 0, WALK_BUDGET) >= 0 &&
                       deep_live(vm, a, R[rb + 1], 0, WALK_BUDGET) >= 0);
-                term pid = port_open(vm, a, R[rb], R[rb + 1]);   /* no GC */
-                R[ra] = pid != T_NIL ? pid : T_ZEROPID;   /* failed: the zero PID */
-                R[ra + 1] = term_from_bool(pid != T_NIL);
-                break;
+                val = port_open(vm, a, R[rb], R[rb + 1]);   /* no GC */
+                if (!(ok = val != T_NIL)) val = T_ZEROPID;   /* failed: the zero PID */
+                goto two;
             }
             case B_PORT_CLOSE:
                 port_close(vm, R[rb]);    /* anything but an open port's PID
