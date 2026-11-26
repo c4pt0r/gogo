@@ -94,6 +94,10 @@ func (f *fn) rangeStmt(s *ast.RangeStmt) {
 		f.rangeInt(s)
 		return
 	}
+	if isMap(f.g.p.Info.TypeOf(s.X)) {
+		f.rangeMap(s)
+		return
+	}
 	label := f.takeLabel()
 	scope := f.next
 	str := f.alloc(s)

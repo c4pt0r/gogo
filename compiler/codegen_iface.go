@@ -90,6 +90,8 @@ func (g *gen) typeID(t types.Type) (uint32, bool) {
 		return g.boxIndex(t), true
 	case isPointer(t):
 		return g.ptrIndex(pointerOf(t)), true
+	case isMap(t):
+		return g.mapIndex(mapOf(t)), true
 	}
 	if b, ok := types.Unalias(t).(*types.Basic); ok {
 		switch b.Kind() {

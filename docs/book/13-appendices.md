@@ -297,7 +297,7 @@ them) are described in chapters 15 and 16.
 | 8 | `actor.BadShift` | `badshift` | negative shift count |
 | 9 | `actor.BadMsg` | `badmsg` | sent a message holding a module's own struct or closure to an actor of another module (the sender exits; chapter 14) |
 | 10 | `actor.Panic` | `panic` | `panic(v)` (which first prints `panic: v` on standard error) |
-| 12 | `actor.Nil` | `nil` | a nil pointer dereference: a field read or write, or `*p`, of a nil pointer |
+| 12 | `actor.Nil` | `nil` | a nil pointer dereference: a field read or write, or `*p`, of a nil pointer; a write to a nil map |
 | 11..63 | | | kept for the VM |
 | 64..99 | `actor.Failed` + a shared code | `exit(<code>)` | a library's failure: `actor.Failed` (64) plus a shared code, 1..35 (appendix C); `http.ListenFailed` is 69, `actor.Failed + errors.Busy` |
 | 100+ | (yours) | `exit(<code>)` | `actor.Exit(code)` or `actor.Kill(p, code)` |

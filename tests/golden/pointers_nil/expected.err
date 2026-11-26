@@ -3,4 +3,5 @@ gogo: actor <pid 1> crashed: nil in main.main.func2
 gogo: actor <pid 1> crashed: nil in main.main.func3
 gogo: actor <pid 1> crashed: nil in main.main.func4
 gogo: actor <pid 1> crashed: nil in main.main.func5
+gogo: actor <pid 1> crashed: nil in maps.find
 gogo: actor <pid 0> crashed: nil in main

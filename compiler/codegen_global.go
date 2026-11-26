@@ -6,6 +6,8 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"sort"
+	"strings"
 )
 
 // Package-level variables (15.6, D2 of the language plan) are read-only
@@ -298,6 +300,9 @@ func (g *gen) staticLit(e *ast.CompositeLit, env map[*types.Var]uint32) uint32 {
 		idx, _ := g.typeIndex(st)
 		return TermConst(g.b.AddStruct(idx, fields))
 	}
+	if mt := mapOf(t); mt != nil {
+		return g.staticMap(e, mt, env)
+	}
 	var elem types.Type
 	n := len(e.Elts)
 	if at := arrayType(t); at != nil {
@@ -381,4 +386,57 @@ func (g *gen) zeroTerm(n ast.Node, t types.Type) uint32 {
 	}
 	g.staticFail(n, "zero value of %s in a package-level variable not supported", types.TypeString(t, pkgName))
 	return 0
+}
+
+// staticMap is the term of map literal e of a package-level variable: a
+// constant header (flagged StructMut | StructMap, so it prints as a map
+// and SETFIELD refuses it) whose entries are sorted at compile time in
+// B_CMP's order, which is known here for the keys staticProblem allows:
+// constants of an integer, float, bool or string type.
+func (g *gen) staticMap(e *ast.CompositeLit, mt *types.Map, env map[*types.Var]uint32) uint32 {
+	type entry struct {
+		key  constant.Value
+		k, v uint32
+	}
+	var es []entry
+	for _, el := range e.Elts {
+		kv := el.(*ast.KeyValueExpr)
+		key := g.p.Info.Types[kv.Key].Value
+		k := g.staticTerm(kv.Key, mt.Key(), env)
+		if isWide(mt.Key()) && k&1 == 1 { // a map's int64 keys are boxed
+			k = TermConst(g.b.AddInt64(int64(int32(k) >> 1)))
+		}
+		es = append(es, entry{key, k, g.staticTerm(kv.Value, mt.Elem(), env)})
+	}
+	unsigned := intKindOf(mt.Key()).unsigned
+	less := func(a, b constant.Value) bool {
+		switch a.Kind() {
+		case constant.String:
+			return strings.Compare(constant.StringVal(a), constant.StringVal(b)) < 0
+		case constant.Bool:
+			return !constant.BoolVal(a) && constant.BoolVal(b)
+		case constant.Float:
+			x, _ := constant.Float64Val(a)
+			y, _ := constant.Float64Val(b)
+			return x < y
+		}
+		if isFloat(mt.Key()) {
+			x, _ := constant.Float64Val(constant.ToFloat(a))
+			y, _ := constant.Float64Val(constant.ToFloat(b))
+			return x < y
+		}
+		x, _ := constBits(a, mt.Key())
+		y, _ := constBits(b, mt.Key())
+		if unsigned && !isWide(mt.Key()) { // a uint32's bits, as an int
+			return int32(uint32(x)) < int32(uint32(y))
+		}
+		return x < y
+	}
+	sort.SliceStable(es, func(i, j int) bool { return less(es[i].key, es[j].key) })
+	terms := make([]uint32, 0, 2*len(es))
+	for _, x := range es {
+		terms = append(terms, x.k, x.v)
+	}
+	entries := g.b.AddTermSlice(terms, nil, false)
+	return TermConst(g.b.AddStruct(g.mapIndex(mt)|StructMut|StructMap, []uint32{entries}))
 }

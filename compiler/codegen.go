@@ -139,6 +139,7 @@ type gen struct {
 	ptrIdx map[string]uint32 // pointer targets' types (ptrIndex), by image name
 	// globals holds the terms of the package-level variables evaluated so
 	// far (globalTerm); globalsBusy those being evaluated.
+	mapIdx      map[string]uint32 // map headers' types (mapIndex), by image name
 	globals     map[*types.Var]uint32
 	globalsBusy map[*types.Var]bool
 	boxed       map[*types.Var]bool // the variables that live in a box (findBoxed)
@@ -790,6 +791,10 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		if s.Tok == token.DEC {
 			op = OpSub
 		}
+		if ix, ok := f.isMapIndex(s.X); ok { // m[k]++
+			f.mapOpAssign(ix, op, nil)
+			return
+		}
 		if ix, ok := ast.Unparen(s.X).(*ast.IndexExpr); ok && !f.isFieldTarget(ix) { // s[i]++
 			f.indexOpAssign(ix, op, nil)
 			return
@@ -918,6 +923,13 @@ func tupleLen(t types.Type) int {
 // local. Result i is converted to targets[i] (nil, or a nil entry: no
 // conversion): an int64 going into any is boxed.
 func (f *fn) multiCallInto(e ast.Expr, base uint8, targets []types.Type) {
+	if ix, ok := f.isMapIndex(e); ok { // v, ok := m[k]
+		f.mapGetInto(ix, base)
+		if len(targets) > 0 && convertsToIface(f.g.p.Info.TypeOf(ix), targets[0]) {
+			f.toIface(e, f.g.p.Info.TypeOf(ix), base)
+		}
+		return
+	}
 	if ta, ok := ast.Unparen(e).(*ast.TypeAssertExpr); ok { // v, ok := x.(T)
 		f.assertOkInto(ta, base)
 		if len(targets) > 0 && convertsToIface(f.g.p.Info.TypeOf(ta.Type), targets[0]) {
@@ -980,6 +992,10 @@ var assignOps = map[token.Token]uint8{
 }
 
 func (f *fn) assign(s *ast.AssignStmt) {
+	if ix, ok := f.isMapIndex(s.Lhs[0]); ok && s.Tok != token.ASSIGN && s.Tok != token.DEFINE {
+		f.mapOpAssign(ix, assignOps[s.Tok], s.Rhs[0]) // m[k] op= e
+		return
+	}
 	if ix, ok := ast.Unparen(s.Lhs[0]).(*ast.IndexExpr); ok && s.Tok != token.ASSIGN && s.Tok != token.DEFINE && !f.isFieldTarget(ix) {
 		f.indexOpAssign(ix, assignOps[s.Tok], s.Rhs[0]) // s[i] op= e
 		return
@@ -1046,7 +1062,11 @@ func (f *fn) assign(s *ast.AssignStmt) {
 		if ix, ok := ast.Unparen(l).(*ast.IndexExpr); ok {
 			blk := f.allocN(l, 3)
 			f.exprInto(ix.X, blk)
-			f.exprInto(ix.Index, blk+1)
+			if mt := mapOf(f.g.p.Info.TypeOf(ix.X)); mt != nil { // m[k]: set's arguments
+				f.mapKeyInto(ix.Index, mt, blk+1)
+			} else {
+				f.exprInto(ix.Index, blk+1)
+			}
 			index[i] = int(blk)
 			targets[i] = int(blk + 2)
 			continue
@@ -1078,6 +1098,10 @@ func (f *fn) assign(s *ast.AssignStmt) {
 			blk := uint8(index[i])
 			if r != blk+2 {
 				f.asm.Emit(OpMove, blk+2, r, 0)
+			}
+			if isMap(f.g.p.Info.TypeOf(ast.Unparen(s.Lhs[i]).(*ast.IndexExpr).X)) {
+				f.mapCall(s, "set", blk, blk, 3)
+				break
 			}
 			f.asm.EmitExt(OpBuiltin, blk, blk, 3, BSetindex)
 		case inPlace[i]:
@@ -1416,10 +1440,18 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 		// its target, laid out as the struct (codegen_ptr.go)
 		f.fieldPathInto(e, sel.Index(), f.operand(e.X), dst)
 	case *ast.IndexExpr:
+		if isMap(f.g.p.Info.TypeOf(e.X)) {
+			f.mapIndexInto(e, dst)
+			return
+		}
 		f.indexInto(e, dst)
 	case *ast.SliceExpr:
 		f.sliceInto(e, dst)
 	case *ast.CompositeLit:
+		if isMap(f.g.p.Info.TypeOf(e)) {
+			f.mapLitInto(e, dst)
+			return
+		}
 		if isSlice(f.g.p.Info.TypeOf(e)) {
 			f.sliceLit(e, dst)
 			return
@@ -1613,7 +1645,7 @@ func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 	case isBytes(t): // empty
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermEmptyBytes)
 		return
-	case isIface(t) || isFunc(t) || isBuffer(t) || isPointer(t):
+	case isIface(t) || isFunc(t) || isBuffer(t) || isPointer(t) || isMap(t):
 		// The zero Buffer is nil: unusable (its methods are badcode).
 		// A nil any; a nil func, which Spawn rejects (the spawner crashes
 		// with badcode).

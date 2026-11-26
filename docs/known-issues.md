@@ -286,11 +286,25 @@ rebuilt:
 
 ## Compiler and language
 
-- **Not supported yet (planned).** The compiler rejects maps. `goto` is rejected (labeled `break` and
-  `continue` cover its uses). Channels, `go`, `select`, generics and
-  `recover` are outside the design. "Language completeness" is a
-  planned milestone. *Workaround:* slices of structs searched linearly
-  for maps.
+- **Not supported (out of the design).** `goto` is rejected (labeled
+  `break` and `continue` cover its uses). Channels, `go`, `select`,
+  generics, `recover` and `unsafe` are outside the design.
+- **Maps differ from Go's in order, speed and keys.** `range` over a map
+  goes in the order of its keys (numbers by value, strings byte by byte,
+  structs field by field, a `uint32` or `uint64` key by its signed bit
+  pattern), not Go's random order; code that relies on Go's
+  randomization sees a fixed order. A map is a sorted slice: a lookup is
+  O(log n), but an insert or a delete moves the entries after it, O(n),
+  and a large map is slower than Go's hash map (see `gogo/maps`). Keys
+  may not hold pointers, maps or funcs (`map with key type ...: a pointer
+  key`); an interface key holding one is not caught, and its entry may
+  not be found again after a garbage collection moves it. A map sent to
+  another actor is copied with its entries (Go would share it). A nil map
+  reads as empty and a write to it ends the actor with `actor.Nil`, not a
+  `panic`. A nil map or a nil pointer in an interface is the nil
+  interface value (Go's interface would hold a typed nil): `x != nil` is
+  false, and a type switch does not match its type. `println` of a map
+  prints `map[k:v ...]`, of a nil map `nil`.
 - **Package-level variables are read-only.** A package-level `var` is set
   when the program is built and cannot be written (`package-level
   variable x is read-only`); mutable state belongs in an actor. Its
@@ -408,9 +422,10 @@ rebuilt:
   `a.S[1].X = f()`, gogo reads `a.S` before calling `f`, so if `f`
   replaces `a.S` the write goes to the old array (Go leaves this order
   unspecified; `s[i] = v` behaves the same way in gogo).
-- **No field assignment through a map index.** Maps are not supported
-  yet. A field of a pointer's target can be written (`p.X = v`, `f().X =
-  v` for a `f` that returns a pointer).
+- **No field assignment through a map index.** `m[k].X = v` is not valid
+  Go either: read the struct, write it, store it back. A field of a
+  pointer's target can be written (`p.X = v`, `f().X = v` for a `f` that
+  returns a pointer).
 - **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
   zero PID.
 - **Some values cannot go into `any`.** Func values (no type id) are

@@ -1,0 +1,132 @@
+// Package maps is the run time of gogo's map type (15.6, D4 of the
+// language plan): the compiler lowers map[K]V operations to calls of its
+// functions, and loads it into every program that uses a map. Programs
+// do not import it.
+//
+// A map is a reference to a header, a struct of a type of the map type's
+// own (flagged mutable and map: SETFIELD writes it, println prints it as
+// map[k:v ...]) with one field: the entries, a slice of keys and values,
+// alternating (k0, v0, k1, v1, ...), sorted by key in the VM's order of
+// values (B_CMP: ints, int64s and floats by value, strings by bytes,
+// structs field by field, arrays element by element). A lookup is a
+// binary search; an insert or a delete moves the entries after it, so
+// it costs O(n). Iteration is in key order, so it is deterministic. The
+// compiler passes keys and values as they are (an int64 or uint64 key
+// boxed, so that keys of one map are of one representation), and
+// takes the results as the map's types: these functions see them as any,
+// but never convert them.
+package maps
+
+// Map is the layout of every map header: m.e is its entries.
+type Map struct {
+	e []any
+}
+
+// compare is B_CMP with its array argument: the order of a and b, -1, 0
+// or 1; two arrays compare element by element.
+//
+//gogo:builtin
+func compare(a, b, arrays any) int { panic("gogo only") }
+
+// find returns the index of key k's entry in m (counted in entries, not
+// in slice elements) and true, or the index where it would go and false.
+// m is not nil.
+func find(m *Map, k any) (int, bool) {
+	lo, hi := 0, len(m.e)/2
+	for lo < hi {
+		mid := (lo + hi) / 2
+		c := compare(m.e[2*mid], k, nil)
+		if c == 0 {
+			return mid, true
+		}
+		if c < 0 {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, false
+}
+
+// get is m[k]: the value and true, or nil and false (the compiler gives
+// the zero value instead). A nil map has no entries.
+func get(m *Map, k any) (any, bool) {
+	if m == nil {
+		return nil, false
+	}
+	i, ok := find(m, k)
+	if !ok {
+		return nil, false
+	}
+	return m.e[2*i+1], true
+}
+
+// set is m[k] = v. A nil map ends the actor with reason actor.Nil (the
+// first read of its header).
+func set(m *Map, k, v any) {
+	i, ok := find(m, k)
+	if ok {
+		m.e[2*i+1] = v
+		return
+	}
+	m.e = append(m.e, nil, nil)
+	copy(m.e[2*i+2:], m.e[2*i:])
+	m.e[2*i] = k
+	m.e[2*i+1] = v
+}
+
+// del is delete(m, k).
+func del(m *Map, k any) {
+	if m == nil {
+		return
+	}
+	i, ok := find(m, k)
+	if !ok {
+		return
+	}
+	copy(m.e[2*i:], m.e[2*i+2:])
+	n := len(m.e) - 2
+	m.e[n] = nil // the old last entry: not kept alive
+	m.e[n+1] = nil
+	m.e = m.e[:n]
+}
+
+// length is len(m).
+func length(m *Map) int {
+	if m == nil {
+		return 0
+	}
+	return len(m.e) / 2
+}
+
+// clearAll is clear(m).
+func clearAll(m *Map) {
+	if m != nil {
+		m.e = nil
+	}
+}
+
+// next steps a range over m: given the entry index i where the previous
+// step left (0 to start) and the key it gave, it returns the index after
+// the next entry, that entry's key and value, or -1 when there are no
+// more. The next entry is the first whose key is above prev, so the loop
+// body may insert and delete: a deleted entry not yet reached is not
+// produced, and an inserted one is if its key comes later, as Go allows.
+func next(m *Map, i int, prev any) (int, any, any) {
+	if m == nil {
+		return -1, nil, nil
+	}
+	n := len(m.e) / 2
+	if i > 0 && (i > n || compare(m.e[2*i-2], prev, nil) != 0) {
+		// the entries moved: find the first key above prev
+		j, ok := find(m, prev)
+		if ok {
+			j++
+		}
+		i = j
+	}
+	if i >= n {
+		return -1, nil, nil
+	}
+	return i + 1, m.e[2*i], m.e[2*i+1]
+}

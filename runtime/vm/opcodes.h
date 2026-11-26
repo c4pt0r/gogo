@@ -332,7 +332,7 @@ enum Reason {
     R_BAD_MSG          = 9,   /* a value that may not cross modules (msg.h) */
     R_PANIC            = 10,  /* panic(v), a failed type assertion, a method call on a nil interface (15.4) */
     /* 11: kept for distributed actors. */
-    R_NIL              = 12,  /* a nil pointer dereference: GETFIELD or SETFIELD of nil (15.6) */
+    R_NIL              = 12,  /* a nil pointer dereference, a write to a nil map: GETFIELD or SETFIELD of nil (15.6) */
     R_FAILED           = 64   /* + a GOGO_E_* code: a library failure (no VM code uses it) */
 };
 

@@ -2034,10 +2034,10 @@ func main() {
 	ch := make(chan int) // channel
 	go func() { ch <- 1 }()
 	sq := []Sq{{2}}
-	defer recover()       // recover
-	m := map[string]int{} // map
-	p := &sq[0]           // a pointer into a slice
-	x := 1.5i             // complex
+	defer recover()    // recover
+	m := map[*Sq]int{} // a map with pointer keys
+	p := &sq[0]        // a pointer into a slice
+	x := 1.5i          // complex
 	if counter > 0 {
 		goto done // goto
 	}
@@ -2058,14 +2058,14 @@ main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
 main.gg:24:8: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
-main.gg:25:7: gogo: map not supported
+main.gg:25:7: gogo: map with key type *main.Sq: a pointer key (no pointer keys: pointers move) not supported
 main.gg:26:7: gogo: interior pointer &sq[0] not supported: gogo has no pointers into a slice element or a struct field; use a []*T or a *T field, or s[i].F = v
 main.gg:27:7: gogo: complex not supported
 main.gg:29:3: gogo: goto statement not supported
 main.gg:31:2: gogo: package-level variable counter is read-only
 main.gg:32:1: gogo: label on a statement other than for or switch not supported
 main.gg:33:14: gogo: array in interface not supported: use a slice or a struct with an array field
-main.gg:36:10: gogo: map not supported
+main.gg:36:10: gogo: map with key type *main.Sq: a pointer key (no pointer keys: pointers move) not supported
 main.gg:36:16: gogo: complex not supported
 main.gg:37:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
 ```
@@ -2080,7 +2080,7 @@ The full list, with what to do instead:
 | `recover()` | `recover (a panic ends the actor: let its supervisor restart it) not supported` | let the actor exit; a supervisor restarts it (chapter 5); ports and files close automatically |
 | `error` | `error not supported` | `bool` or an `int` code type |
 | writing a package-level `var` | `package-level variable counter is read-only` | state in an actor |
-| maps | `map not supported` | a slice of key/value structs |
+| a map with pointer keys | `map with key type *T: a pointer key (no pointer keys: pointers move) not supported` | a key the pointer's target identifies |
 | a pointer into a slice element or a field, `&s[i]`, `&v.F` | `interior pointer &s[i] not supported` | a `[]*T` or a `*T` field, or `s[i].F = v` |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
 | `complex64/128` | `complex not supported` | two floats |
@@ -2089,10 +2089,6 @@ The full list, with what to do instead:
 | `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
 | an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
-
-> **Note.** Maps are not supported yet. They are planned for
-> the "language completeness" milestone, next after embed mode (see
-> `docs/design.md` §5.2).
 
 ### Small surprises
 

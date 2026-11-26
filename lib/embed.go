@@ -9,7 +9,7 @@ import "embed"
 // StubFS holds the gogo source of the gogo libraries, one directory per
 // package: gogo/<name> lives in <name>/*.gg (gogo/net in net/). actor/,
 // port/, bytes/, net/, gpio/, fs/, kbd/, power/, code/, imu/, ir/, audio/,
-// screen/, sys/ and math/ are system packages, whose //gogo:builtin declarations
+// screen/, sys/, math/ and maps/ are system packages, whose //gogo:builtin declarations
 // the compiler replaces with VM instructions; the others (errors/,
 // supervisor/, strings/, strconv/, dhcp/, dns/, http/, sntp/, kv/,
 // ringlog/, imulog/, wav/, sound/, irproto/, tui/) are libraries written in the

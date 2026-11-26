@@ -79,8 +79,20 @@ func (c *checker) staticProblem(e ast.Expr, depth int) string {
 		if isBuffer(t) || isPID(t) || isRef(t) || isBytes(t) {
 			return "a composite literal of " + types.TypeString(t, pkgName)
 		}
-		if _, ok := underlying(t).(*types.Map); ok {
-			return "a map"
+		if mt := mapOf(t); mt != nil { // keys of a basic type, constant: sorted when built
+			if b, ok := underlying(mt.Key()).(*types.Basic); !ok || b.Info()&(types.IsInteger|types.IsFloat|types.IsString|types.IsBoolean) == 0 {
+				return "a map with keys of type " + types.TypeString(mt.Key(), pkgName) + " (a package-level map's keys are constants of an integer, float, bool or string type)"
+			}
+			for _, el := range x.Elts {
+				kv := el.(*ast.KeyValueExpr)
+				if info.Types[kv.Key].Value == nil {
+					return "a map key that is not a constant"
+				}
+				if why := c.staticProblem(kv.Value, depth); why != "" {
+					return why
+				}
+			}
+			return ""
 		}
 		if !isArray(t) && !isSlice(t) && structType(t) == nil {
 			return "a composite literal of " + types.TypeString(t, pkgName)

@@ -321,6 +321,38 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   message that holds one carries the ref, so the receiver's copy is
   read-only too, and it cannot cross modules (`BadMsg`), except a string,
   an int or a float, which are copied.
+- Maps (15.6, D4 of the language plan): `map[K]V` with `make` (a size
+  hint is ignored), literals, `m[k]` (the value type's zero value for a
+  missing key), `v, ok := m[k]`, `m[k] = v`, `m[k] op= v`, `m[k]++`,
+  `delete`, `len`, `clear`, `range`, `m == nil`, maps in interfaces,
+  type switches and assertions, and package-level maps (sorted when the
+  program is built: constant keys of an integer, float, bool or string
+  type). A map is a library, `gogo/maps` (a system package that every
+  program using a map loads; only the functions it calls are compiled):
+  a map value is a reference to a header, a struct of a type of the map
+  type's own, flagged `STRUCT_MUT | STRUCT_MAP`, whose one field is the
+  entries, a slice of keys and values alternating, sorted by key in
+  `B_CMP`'s order (`maps.compare` is `B_CMP` with its array argument, so
+  array keys compare element by element). A lookup is a binary search;
+  an insert or a delete moves the entries after it with `B_COPY`, O(n),
+  and writes the header with `SETFIELD`. The compiler lowers each
+  operation to a call (`compiler/codegen_map.go`), passing keys and values
+  as they are, with no interface conversion: a key is converted to the
+  key type (an interface key boxed as any value going into one) and an
+  `int64` or `uint64` key is boxed (`BOX64`), so that a map's keys have one
+  representation and sort by value (a `uint32` or `uint64` key sorts by
+  its signed bit pattern); a value read back is the value type's (an
+  array is copied, as Go copies it). `range` calls `maps.next` with the
+  index and key the last step left: the next entry is the first whose key
+  is above the last one, so the body may delete (an entry not yet reached
+  is not produced) and insert (a later key is produced), as Go allows,
+  and the order is the keys' own: deterministic, unlike Go's. A write to
+  a nil map ends the actor with `actor.Nil`; reading one gives the zero
+  value. A map is a reference: assignment shares it; a send copies it
+  with its entries. Keys may not hold pointers, maps or funcs (they
+  compare by identity, an order the GC changes): "map with key type ...:
+  a pointer key". `println` prints a map as `map[k:v ...]`
+  (`out_term`, from the header's `STRUCT_MAP` flag).
 - Static `defer`: `defer f(args)` anywhere but inside a loop (within its
   own function: a func literal is a function of its own), so each defer
   statement runs at most once per call. The function value, receiver
@@ -400,8 +432,9 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   `gogo build -path`), first match wins. No `go.mod`, no versions; a
   package's name is its directory's name (§5.1, the loader).
 
-**Not supported yet (planned for the "language completeness"
-milestone):** maps. Each is rejected at compile time with a `<what> not supported` error
+**Not supported yet:** nothing of the planned "language completeness"
+milestone is left (generics, goroutines, channels, `select`, `recover`
+and `unsafe` are out of the design). Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 
 **Out of the design:** channels and `select`, the `go` statement (use
@@ -1497,6 +1530,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
 | `bytes.Buffer` | not usable (methods on the zero value are `badcode`; use `NewBuffer`) | a `K_BUF` `[hdr][len][array]` with raw `len`; `array` is a `K_BYTEARR` (its capacity), `T_NIL` at capacity 0; `Freeze` copies once and empties it | as is | array bytes not scanned | deep copy |
 | struct (the reserved `actor.*`, `port.*`, ... types included) | a `K_STRUCT` with each field's zero value | `K_STRUCT` heap object `[hdr][type id][fields...]`; a module's own type ids carry the module tag, reserved types do not (§5.5.3) | as is (`TYPEIS` compares the type id) | fields scanned | deep copy preserving sharing and cycles |
 | `*T` (15.6) | `T_NIL` | a `K_STRUCT` heap object of the type `*T`, whose row and type word carry `STRUCT_MUT`: `T`'s fields for a struct `T` (written in place by `SETFIELD`), else one field (`STRUCT_BOX`) | as is (`TYPEIS` -> the type `*T`) | fields scanned | deep copy (a copy of the target; aliases within one message preserved) |
+| `map[K]V` (15.6) | `T_NIL` | a `K_STRUCT` heap object of the type `map[K]V` (`STRUCT_MUT \| STRUCT_MAP`), one field: the entries slice, keys and values alternating, sorted by key; a package-level map's in the constant area (read-only) | as is (`TYPEIS` -> the type `map[K]V`) | the entries scanned | deep copy |
 | `any` | `T_NIL` | the term of the dynamic value | - | by the dynamic value | by the dynamic value |
 | func value (any signature) | `T_NIL` (`Spawn` and calls are `badcode`) | a `K_CLOSURE` heap object `[hdr][module tag \| function index][captures...]`; `CALLV` passes the captures as leading arguments, then the arguments | not allowed (rejected at compile time) | captures scanned | deep copy |
 | `actor.PID` | `T_ZEROPID` = `0x6` (slot 0, generation 0: slot 0 never has generation 0 and port slots are >= `0xFFF0`, so it equals no live actor or port) | PID immediate `(gen << 20) \| (slot << 4) \| 0x6` | as is (`TYPEIS` -> `PID`) | not scanned | as is |

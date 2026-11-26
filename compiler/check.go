@@ -143,8 +143,17 @@ func (c *checker) typeProblem(t types.Type) string {
 			return "array of " + msg
 		}
 		return ""
-	case *types.Map:
-		return "map"
+	case *types.Map: // 15.6
+		if msg := c.mapKeyProblem(t.Key(), nil); msg != "" {
+			return "map with key type " + types.TypeString(t.Key(), pkgName) + ": " + msg
+		}
+		if msg := c.typeProblem(t.Key()); msg != "" {
+			return "map key of type " + msg
+		}
+		if msg := c.typeProblem(t.Elem()); msg != "" {
+			return "map of " + msg
+		}
+		return ""
 	case *types.Chan:
 		return "channel"
 	case *types.Signature:
@@ -418,7 +427,7 @@ func isAny(t types.Type) bool {
 // assignment, argument, result or field value). A func value cannot go
 // into an interface (it has no type id).
 func (c *checker) convert(target types.Type, e ast.Expr) {
-	if isSlice(target) || isIface(target) || isPointer(target) {
+	if isSlice(target) || isIface(target) || isPointer(target) || isMap(target) {
 		c.nilSlice(e) // the nil slice, the nil interface value, the nil pointer
 	}
 	if !isIface(target) {
@@ -592,7 +601,7 @@ func (c *checker) typeExpr(e ast.Expr) {
 		return
 	}
 	switch e := e.(type) {
-	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType, *ast.InterfaceType: // their signatures were checked above
+	case *ast.Ident, *ast.SelectorExpr, *ast.FuncType, *ast.InterfaceType, *ast.MapType: // their signatures were checked above
 	case *ast.ArrayType:
 		c.typeExpr(e.Elt) // []T, [N]T, [...]T
 	case *ast.StarExpr:
@@ -788,6 +797,10 @@ func (c *checker) lhs(e ast.Expr) {
 	case *ast.SelectorExpr:
 		c.fieldLhs(e)
 	case *ast.IndexExpr:
+		if isMap(c.p.Info.TypeOf(e.X)) { // m[k] = v
+			c.indexExpr(e)
+			return
+		}
 		if isArray(c.p.Info.TypeOf(e.X)) { // a[i], p.A[i], s[j][i]: x is a variable or on a path
 			c.arrayLhs(e.X)
 			c.indexArg(e.Index)
@@ -851,6 +864,16 @@ func (c *checker) assign(s *ast.AssignStmt) {
 		}
 		c.call(call, true)
 		return
+	}
+	if len(s.Lhs) == 2 && len(s.Rhs) == 1 && (s.Tok == token.ASSIGN || s.Tok == token.DEFINE) {
+		if ix, ok := ast.Unparen(s.Rhs[0]).(*ast.IndexExpr); ok && isMap(c.p.Info.TypeOf(ix.X)) { // v, ok := m[k]
+			for _, l := range s.Lhs {
+				c.lhs(l)
+			}
+			c.convertType(c.p.Info.TypeOf(s.Lhs[0]), mapOf(c.p.Info.TypeOf(ix.X)).Elem(), ix.Pos())
+			c.indexExpr(ix)
+			return
+		}
 	}
 	if ta := commaOk(s.Lhs, s.Rhs); ta != nil && (s.Tok == token.ASSIGN || s.Tok == token.DEFINE) { // v, ok := x.(T)
 		for _, l := range s.Lhs {
@@ -999,7 +1022,7 @@ func (c *checker) caseType(t ast.Expr) bool {
 		return false
 	}
 	switch ty := types.Unalias(tv.Type).(type) {
-	case *types.Pointer: // *T (15.6)
+	case *types.Pointer, *types.Map: // *T, map[K]V (15.6)
 		return c.typeProblem(ty) == ""
 	case *types.Basic:
 		return isCaseBasic(ty) || intKindOf(ty).bits != 0 // a sized integer is boxed
@@ -1069,6 +1092,8 @@ func (p *Program) stubName(fn *types.Func) string {
 		return "math." + fn.Name()
 	case StrconvPath:
 		return "strconv." + fn.Name()
+	case MapsPath:
+		return "maps." + fn.Name()
 	}
 	return ""
 }
@@ -1159,7 +1184,7 @@ func (c *checker) call(call *ast.CallExpr, allowTwo bool) {
 		switch obj := c.p.Info.Uses[fun].(type) {
 		case *types.Builtin:
 			switch obj.Name() {
-			case "len", "cap", "append", "make", "copy":
+			case "len", "cap", "append", "make", "copy", "delete", "clear":
 				c.seqBuiltin(call, obj.Name())
 				return
 			case "new": // new(T) (15.6)
@@ -1535,6 +1560,23 @@ func (c *checker) compositeLitIn(e *ast.CompositeLit, elided bool) {
 		c.sliceLit(e, sl)
 		return
 	}
+	if mt := mapOf(t); mt != nil { // map[K]V{k: v, ...} (15.6)
+		for _, el := range e.Elts {
+			kv := el.(*ast.KeyValueExpr)
+			for _, x := range []struct {
+				e ast.Expr
+				t types.Type
+			}{{kv.Key, mt.Key()}, {kv.Value, mt.Elem()}} {
+				c.convert(x.t, x.e)
+				if lit, ok := x.e.(*ast.CompositeLit); ok && lit.Type == nil {
+					c.compositeLitIn(lit, true)
+					continue
+				}
+				c.expr(x.e)
+			}
+		}
+		return
+	}
 	if at := arrayType(t); at != nil {
 		c.arrayLit(e, at)
 		return
@@ -1667,8 +1709,15 @@ func (c *checker) indexArg(e ast.Expr) {
 	}
 }
 
-// indexExpr checks s[i] on a string (a byte), a slice or an array.
+// indexExpr checks s[i] on a string (a byte), a slice or an array, and
+// m[k] on a map.
 func (c *checker) indexExpr(e *ast.IndexExpr) {
+	if mt := mapOf(c.p.Info.TypeOf(e.X)); mt != nil {
+		c.expr(e.X)
+		c.convert(mt.Key(), e.Index)
+		c.expr(e.Index)
+		return
+	}
 	if xt := c.p.Info.TypeOf(e.X); !isString(xt) && !isSlice(xt) && !isArray(xt) {
 		c.unsupported(e, "index of "+types.TypeString(xt, nil))
 		return
@@ -1704,7 +1753,7 @@ func (c *checker) sliceExpr(e *ast.SliceExpr) {
 // string ranges over bytes, not runes: i is the byte index and c the byte
 // value (typed rune, an int32, as in Go; gogo's rune is an int).
 func (c *checker) rangeStmt(s *ast.RangeStmt) {
-	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) && !isArray(xt) && !isInteger(xt) {
+	if xt := c.p.Info.TypeOf(s.X); !isString(xt) && !isSlice(xt) && !isArray(xt) && !isInteger(xt) && !isMap(xt) {
 		c.unsupported(s, "range over "+types.TypeString(c.p.Info.TypeOf(s.X), nil))
 		return
 	}
@@ -1775,7 +1824,7 @@ func (c *checker) nilCompare(e *ast.BinaryExpr) bool {
 	if isNil(x) {
 		x, y = y, x
 	}
-	if !isNil(y) || (!isSlice(c.p.Info.TypeOf(x)) && !isIface(c.p.Info.TypeOf(x)) && !isPointer(c.p.Info.TypeOf(x))) {
+	if xt := c.p.Info.TypeOf(x); !isNil(y) || (!isSlice(xt) && !isIface(xt) && !isPointer(xt) && !isMap(xt)) {
 		return false
 	}
 	c.nilSlice(y)
@@ -1813,8 +1862,8 @@ func (c *checker) seqBuiltin(call *ast.CallExpr, name string) {
 	argType := func(i int) types.Type { return c.p.Info.TypeOf(call.Args[i]) }
 	switch name {
 	case "len":
-		if len(call.Args) != 1 || (!isString(argType(0)) && !isSlice(argType(0)) && !isArray(argType(0))) {
-			c.unsupported(call, "len of anything but a string, a slice or an array")
+		if len(call.Args) != 1 || (!isString(argType(0)) && !isSlice(argType(0)) && !isArray(argType(0)) && !isMap(argType(0))) {
+			c.unsupported(call, "len of anything but a string, a slice, an array or a map")
 			return
 		}
 		c.expr(call.Args[0])
@@ -1842,13 +1891,33 @@ func (c *checker) seqBuiltin(call *ast.CallExpr, name string) {
 			c.expr(a)
 		}
 	case "make":
+		if isMap(argType(0)) { // make(map[K]V[, n])
+			c.typeExpr(call.Args[0])
+			for _, a := range call.Args[1:] {
+				c.indexArg(a)
+			}
+			return
+		}
 		if !isSlice(argType(0)) {
-			c.unsupported(call, "make of anything but a slice")
+			c.unsupported(call, "make of anything but a slice or a map")
 			return
 		}
 		c.typeExpr(call.Args[0])
 		for _, a := range call.Args[1:] {
 			c.indexArg(a)
+		}
+	case "delete", "clear": // a map's (15.6)
+		if !isMap(argType(0)) {
+			c.unsupported(call, name+" of anything but a map")
+			return
+		}
+		if c.globalWrite(call.Args[0]) {
+			return
+		}
+		c.expr(call.Args[0])
+		if name == "delete" {
+			c.convert(mapOf(argType(0)).Key(), call.Args[1])
+			c.expr(call.Args[1])
 		}
 	case "copy":
 		if c.globalWrite(call.Args[0]) {
@@ -1891,6 +1960,38 @@ func (c *checker) stubPromoted(sel *ast.SelectorExpr) bool {
 	}
 	c.fail(sel.Pos(), "method %s of an embedded %s type not supported: call it on the field", fn.Name(), fn.Pkg().Path())
 	return true
+}
+
+// mapKeyProblem says why t cannot be a map's key type, or "": keys are
+// ordered by B_CMP, which compares a pointer, a map or a func by identity,
+// an order the GC changes, so no key may hold one (an interface key
+// holding one is not caught: known-issues).
+func (c *checker) mapKeyProblem(t types.Type, seen map[types.Type]bool) string {
+	if seen[t] {
+		return ""
+	}
+	if seen == nil {
+		seen = map[types.Type]bool{}
+	}
+	seen[t] = true
+	switch u := t.Underlying().(type) {
+	case *types.Pointer:
+		return "a pointer key (no pointer keys: pointers move)"
+	case *types.Map, *types.Signature, *types.Slice:
+		return "not comparable"
+	case *types.Array:
+		return c.mapKeyProblem(u.Elem(), seen)
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			if msg := c.mapKeyProblem(u.Field(i).Type(), seen); msg != "" {
+				return msg
+			}
+		}
+	}
+	if isBuffer(t) {
+		return "not comparable"
+	}
+	return ""
 }
 
 // holdsUnsigned reports whether t is a struct, slice or array type with a

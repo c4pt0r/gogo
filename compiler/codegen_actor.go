@@ -50,6 +50,7 @@ var actorBuiltins = map[string]uint32{
 	"net.Subscribe": BNetSubscribe, "sys.Config": BConfigGet,
 	"sys.Time": BUnixTime, "sys.SetTime": BSetUnixTime, "sys.Random": BRandom,
 	"bytes.NewBuffer": BBufNew, "bytes.FromString": BBytesFrom, "bytes.FromSlice": BBytesFrom,
+	"maps.compare": BCmp,
 }
 
 // bytesMethods maps each gogo/bytes method (by bytesMethod) to its

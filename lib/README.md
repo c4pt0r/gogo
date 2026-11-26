@@ -90,6 +90,7 @@ declares `kbd`. Book chapter
 | `gogo/sys` | system | | none (the clock, randomness, `sys.Config`, the configuration store, and `sys.Args`, the program's command-line arguments) |
 | `gogo/screen` | system | | none (the `screen` port: `screen`) |
 | `gogo/errors` | system | | none (`New`, `Is`, `Unwrap`; the shared error codes, `errors.Code`, an `error`; `GOGO_E_*` in `runtime/include/gogo_errors.h`; loaded by every program that uses `error`, compiled only where used) |
+| `gogo/maps` | system | | none (the run time of the map type, 15.6: loaded by every program that uses a map and compiled only where used; programs do not import it; `compare` is `B_CMP`) |
 | `gogo/math` | system | | `float`, as any use of floats (the functions are `B_FLOAT`, `runtime/floatlib`; a constant used only as an integer, `int(math.MaxInt32)`, requires nothing) |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |

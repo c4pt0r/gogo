@@ -21,10 +21,10 @@ func main() {
 	ch := make(chan int) // channel
 	go func() { ch <- 1 }()
 	sq := []Sq{{2}}
-	defer recover()       // recover
-	m := map[string]int{} // map
-	p := &sq[0]           // a pointer into a slice
-	x := 1.5i             // complex
+	defer recover()    // recover
+	m := map[*Sq]int{} // a map with pointer keys
+	p := &sq[0]        // a pointer into a slice
+	x := 1.5i          // complex
 	if counter > 0 {
 		goto done // goto
 	}

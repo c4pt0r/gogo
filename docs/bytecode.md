@@ -254,7 +254,7 @@ codes are >= 100.
 | 8 | `R_BAD_SHIFT` |  |
 | 9 | `R_BAD_MSG` | a value that may not cross modules (msg.h) |
 | 10 | `R_PANIC` | panic(v), a failed type assertion, a method call on a nil interface (15.4) |
-| 12 | `R_NIL` | a nil pointer dereference: GETFIELD or SETFIELD of nil (15.6) |
+| 12 | `R_NIL` | a nil pointer dereference, a write to a nil map: GETFIELD or SETFIELD of nil (15.6) |
 | 64 | `R_FAILED` | + a GOGO_E_* code: a library failure (no VM code uses it) |
 
 ## Image file layout
