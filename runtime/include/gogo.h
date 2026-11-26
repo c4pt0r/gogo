@@ -293,7 +293,7 @@ typedef struct gogo_image_info {
     uint32_t size;          /* in: the caller's sizeof(gogo_image_info) (GOGO_IMAGE_INFO_INIT);
                              * out: the bytes this library filled (no more than in) */
     uint32_t format;        /* the image's format, major << 16 | minor */
-    uint32_t n_requires;    /* its requirements (gogo_image_require) */
+    uint32_t n_requires;    /* its requirements (gogo_image_requires) */
     uint32_t n_exports;     /* its exported entry points (main among them) */
     /* Fields are appended here, never inserted. The library writes every
      * field within the caller's size that it knows (0 on an error) and
@@ -304,12 +304,21 @@ typedef struct gogo_image_info {
 #define GOGO_IMAGE_INFO_INIT { .size = sizeof(gogo_image_info) }
 GOGO_API GOGO_EXPERIMENTAL int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info);
 
-/* Requirement i (< n_requires, else GOGO_EINVAL) of the image: a port
- * driver's name ("ui", a host port's, "tcp") or a mount prefix ("/flash",
- * "/sd"), as gogo_load checks them. *name points into the image (valid
- * while it is; not NUL-terminated) and *name_len is its length. A host
- * may read them to register exactly the host ports an image needs. */
-GOGO_API GOGO_EXPERIMENTAL int gogo_image_require(const void *image, size_t len, uint32_t i, const char **name, size_t *name_len);
+/* A name the API gives back: a pointer (not NUL-terminated) and a length.
+ * A plain pair, fixed for good (it is used in arrays). */
+typedef struct gogo_name {
+    const char *ptr;
+    size_t len;
+} gogo_name;
+
+/* The image's requirements, validating it once: each a port driver's
+ * name ("ui", a host port's, "tcp") or a mount prefix ("/flash", "/sd"),
+ * as gogo_load checks them. *n is how many the image has; the first
+ * min(*n, cap) go to out[] (out may be NULL when cap is 0, to count).
+ * The names point into the image (valid while it is). A host may read
+ * them to register exactly the host ports an image needs. */
+GOGO_API GOGO_EXPERIMENTAL int gogo_image_requires(const void *image, size_t len, gogo_name *out, uint32_t cap,
+                                                   uint32_t *n);
 
 /* Starts the image's main. GOGO_ESTATE without an image or if started
  * before; GOGO_ENOTFOUND if the image has no main, GOGO_ENOMEM if main

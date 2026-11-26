@@ -650,12 +650,15 @@ TEST(embed_image_info) {
     CHECK_EQ(info.format, im.w[1]);
     CHECK_EQ(info.n_requires, 1);
     CHECK(info.n_exports >= 1);
-    const char *name = NULL;
-    size_t nl = 0;
-    CHECK_EQ(gogo_image_require(im.w, im.len, 0, &name, &nl), GOGO_OK);
-    CHECK(nl == 2 && memcmp(name, "hp", 2) == 0);
-    CHECK_EQ(gogo_image_require(im.w, im.len, 1, &name, &nl), GOGO_EINVAL);
-    CHECK_EQ(gogo_image_require(im.w, im.len, 0, NULL, &nl), GOGO_EINVAL);
+    gogo_name names[2];
+    uint32_t nr = 99;
+    CHECK_EQ(gogo_image_requires(im.w, im.len, names, 2, &nr), GOGO_OK);
+    CHECK_EQ(nr, 1);
+    CHECK(names[0].len == 2 && memcmp(names[0].ptr, "hp", 2) == 0);
+    CHECK_EQ(gogo_image_requires(im.w, im.len, NULL, 0, &nr), GOGO_OK);   /* count only */
+    CHECK_EQ(nr, 1);
+    CHECK_EQ(gogo_image_requires(im.w, im.len, NULL, 1, &nr), GOGO_EINVAL);
+    CHECK_EQ(gogo_image_requires(im.w, im.len, names, 2, NULL), GOGO_EINVAL);
     /* An older caller's smaller struct: only its fields are written. */
     struct { gogo_image_info i; uint32_t guard; } old;
     memset(&old, 0xEE, sizeof old);
@@ -685,7 +688,8 @@ TEST(embed_image_info) {
     im.w[1] = gogo_image_format() + 1u;
     CHECK_EQ(gogo_image_info_get(im.w, im.len, &info), GOGO_EVERSION);
     CHECK_EQ(info.format, gogo_image_format() + 1u);
-    CHECK_EQ(gogo_image_require(im.w, im.len, 0, &name, &nl), GOGO_EVERSION);
+    CHECK_EQ(gogo_image_requires(im.w, im.len, names, 2, &nr), GOGO_EVERSION);
+    CHECK_EQ(nr, 0);
     im.w[1] = fmt;
     CHECK_EQ(gogo_image_info_get((const char *)im.w + 2, im.len - 4, &info), GOGO_EINVAL);   /* unaligned */
     uint32_t junk[4] = { 1, 2, 3, 4 };

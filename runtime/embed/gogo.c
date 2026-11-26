@@ -202,16 +202,19 @@ int gogo_image_info_get(const void *image, size_t len, gogo_image_info *info) {
     return rc;
 }
 
-int gogo_image_require(const void *image, size_t len, uint32_t i, const char **name, size_t *name_len) {
-    if (!name || !name_len) return GOGO_EINVAL;
+int gogo_image_requires(const void *image, size_t len, gogo_name *out, uint32_t cap, uint32_t *n) {
+    if (!n || (cap && !out)) return GOGO_EINVAL;
+    *n = 0;
     Image img;
     int rc = image_check(&img, image, len);
     if (rc != GOGO_OK) return rc;
     const uint32_t *r = image_requires(&img);
-    if (i >= r[0]) return GOGO_EINVAL;
-    const uint32_t *s = img.consts + r[1u + i];   /* a K_STRING: header, length, bytes (image_load checked) */
-    *name = (const char *)(s + 2);
-    *name_len = s[1];
+    *n = r[0];
+    for (uint32_t i = 0; i < r[0] && i < cap; i++) {
+        const uint32_t *s = img.consts + r[1u + i];   /* a K_STRING: header, length, bytes (image_load checked) */
+        out[i].ptr = (const char *)(s + 2);
+        out[i].len = s[1];
+    }
     return GOGO_OK;
 }
 

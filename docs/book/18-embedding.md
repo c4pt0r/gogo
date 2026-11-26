@@ -599,27 +599,26 @@ gogo_load netdemo.ggb: unsupported: a driver or mount is missing (-10)
 
 A host can read an image's requirements before it loads it, without a
 VM: `gogo_image_info_get` gives the image's format and the number of its
-requirements and exports, and `gogo_image_require` the name of each.
+requirements and exports, and `gogo_image_requires` their names, as
+`gogo_name` pairs (pointer and length).
 `port.c` registers its port only for an image that needs it:
 
 ```c
 static int requires(const void *img, size_t len, const char *want) {
-    gogo_image_info info = GOGO_IMAGE_INFO_INIT;
+    gogo_name names[16];
+    uint32_t n;
     int found = 0;
-    if (gogo_image_info_get(img, len, &info) != GOGO_OK) return 0;
-    for (uint32_t i = 0; i < info.n_requires; i++) {
-        const char *name;
-        size_t n;
-        if (gogo_image_require(img, len, i, &name, &n) != GOGO_OK) continue;
-        fprintf(stderr, "requires %.*s\n", (int)n, name);
-        if (n == strlen(want) && memcmp(name, want, n) == 0) found = 1;
+    if (gogo_image_requires(img, len, names, 16, &n) != GOGO_OK) return 0;
+    for (uint32_t i = 0; i < n && i < 16; i++) {
+        fprintf(stderr, "requires %.*s\n", (int)names[i].len, names[i].ptr);
+        if (names[i].len == strlen(want) && memcmp(names[i].ptr, want, names[i].len) == 0) found = 1;
     }
     return found;
 }
 ```
 
-The names point into the image and are not NUL-terminated. Both
-functions validate the whole image, as `gogo_load` does, and return its
+The names point into the image and are not NUL-terminated. Each call
+validates the whole image once, as `gogo_load` does, and returns its
 errors (`GOGO_EIMAGE`, `GOGO_EVERSION`, with the format still filled
 in), so they also tell a host whether an image will load at all.
 
@@ -682,7 +681,7 @@ in any minor release:
 | `gogo_new`, `gogo_load`, `gogo_start`, `gogo_step`, `gogo_next_deadline`, `gogo_run`, `gogo_free` | host ports: `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`, `gogo_poster_port_post`, `gogo_port_driver` |
 | the host table, `gogo_host_posix`, `gogo_new_posix` | the flag `GOGO_CONFIG_CODE_LOAD`; the configuration's `grant`, `fs_root` and `fs_quota` |
 | the configuration's `size`, `flags`, `mem_limit`, `max_actors` | `gogo_get_stats` and its fields |
-| the error codes, `gogo_strerror`, `gogo_version`, `gogo_image_format` | `gogo_image_info_get`, `gogo_image_require` |
+| the error codes, `gogo_strerror`, `gogo_version`, `gogo_image_format` | `gogo_image_info_get`, `gogo_image_requires` |
 | `gogo_post`, `gogo_close_posts` and the poster (`gogo_poster_new`, `_post`, `_close_posts`, `_free`) | `gogo_run_thread`, `gogo_join` |
 
 `GOGO_EXPERIMENTAL` expands to nothing. To see every place a program

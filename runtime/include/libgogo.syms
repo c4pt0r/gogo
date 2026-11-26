@@ -7,7 +7,7 @@ gogo_get_stats
 gogo_host_posix
 gogo_image_format
 gogo_image_info_get
-gogo_image_require
+gogo_image_requires
 gogo_join
 gogo_load
 gogo_new

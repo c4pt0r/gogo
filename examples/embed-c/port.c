@@ -30,15 +30,13 @@ static void *read_file(const char *path, size_t *len) {
 /* Whether the image requires want (a driver or mount name), listing every
  * requirement on stderr. */
 static int requires(const void *img, size_t len, const char *want) {
-    gogo_image_info info = GOGO_IMAGE_INFO_INIT;
+    gogo_name names[16];
+    uint32_t n;
     int found = 0;
-    if (gogo_image_info_get(img, len, &info) != GOGO_OK) return 0;
-    for (uint32_t i = 0; i < info.n_requires; i++) {
-        const char *name;
-        size_t n;
-        if (gogo_image_require(img, len, i, &name, &n) != GOGO_OK) continue;
-        fprintf(stderr, "requires %.*s\n", (int)n, name);
-        if (n == strlen(want) && memcmp(name, want, n) == 0) found = 1;
+    if (gogo_image_requires(img, len, names, 16, &n) != GOGO_OK) return 0;
+    for (uint32_t i = 0; i < n && i < 16; i++) {
+        fprintf(stderr, "requires %.*s\n", (int)names[i].len, names[i].ptr);
+        if (names[i].len == strlen(want) && memcmp(names[i].ptr, want, names[i].len) == 0) found = 1;
     }
     return found;
 }
