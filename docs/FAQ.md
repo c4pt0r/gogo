@@ -33,7 +33,7 @@ restarts it while the rest keeps going. Typical uses:
 What it is not for: hard real-time work with sub-millisecond deadlines
 (code is interpreted, actors have garbage-collected heaps and a TLS
 handshake can pause everything for about 200 ms), heavy number crunching or
-signal processing (no floats, an interpreter; do such work in C drivers),
+signal processing (an interpreter, and no floats yet; do such work in C drivers),
 and the very smallest microcontrollers (the VM core alone is about 37 KB of
 code and needs tens of KB of RAM).
 
@@ -129,7 +129,7 @@ but they make opposite choices in several places:
 | Hardware | Ports (actors that send events) | Python classes and callbacks (`machine.Pin`, IRQ handlers) |
 | Updating code | Hot loading of modules with isolation | Copy new `.py` files and restart |
 | Size | VM core about 37 KB of code | Larger: it carries the compiler and a big runtime (typically a few hundred KB) |
-| Floats, big library, many boards | No floats yet; a small library; two boards | Floats, a large library and ecosystem, many boards |
+| Floats, big library, many boards | No floats yet (planned); a small library; two boards | Floats, a large library and ecosystem, many boards |
 | Maturity | Young | Over a decade old, widely used |
 
 Choose MicroPython for interactive exploration at a REPL, quick scripts,
@@ -176,9 +176,9 @@ variadic functions are supported. Planned, in this order: methods, field
 assignment and user packages (compiler only); then `panic`, type assertions,
 interfaces and `error`; then pointers (boxed, copied when sent), maps (a
 library, deterministic order), read-only package variables and `fmt`; then
-sized integers, arrays, embedded fields and a static `defer`. Not planned:
-`goto`, `recover`, per-actor mutable globals, channels, `go` statements,
-floats. Generics are deferred.
+sized integers, floating point (`float32` and `float64`), arrays, embedded
+fields and a static `defer`. Not planned: `goto`, `recover`, per-actor
+mutable globals, channels, `go` statements. Generics are deferred.
 
 ### Can I compile on the device?
 No. The compiler is written in Go and needs the Go runtime, which does not
