@@ -143,7 +143,9 @@ as locally.
 
 `actor.Call` to a PID whose node is gone returns `(nil, false)` at once,
 as a Call to a dead local actor does, and so does a Call waiting for its
-reply when the node goes.
+reply when the node goes. A node tracks a limited number of remote Calls
+in flight (20.9); a Call beyond that returns `(nil, false)` at once
+rather than risk waiting out its timeout.
 
 `node.Subscribe()` makes the caller receive `node.Up{Node}` and
 `node.Down{Node}` for every node that joins or goes. A board that wants

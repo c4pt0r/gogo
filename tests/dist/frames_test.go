@@ -149,3 +149,13 @@ func TestBoxesAndFloats(t *testing.T) {
 		noCrash(t, srv)
 	}
 }
+
+// More Calls than the board's table: none waits for its timeout when the
+// server goes.
+func TestCallsBeyondTable(t *testing.T) {
+	srv, port := startServer(t)
+	b := startVM(t, "caller", []string{"--max-links", "1"}, fmt.Sprintf("test.server=127.0.0.1:%d", port))
+	b.waitLine("calling")
+	srv.kill()
+	b.waitLine("failed 12")
+}

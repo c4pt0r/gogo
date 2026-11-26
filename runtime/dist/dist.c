@@ -1005,23 +1005,29 @@ static void node_gone(Vm *vm, DistState *ds, uint16_t node) {
 
 /* msg was just sent by from to node: if it is a Call's Request (From is
  * the sender, a Ref), remember the Call. */
-static void call_note(Vm *vm, DistState *ds, const Actor *from, term msg, uint16_t node) {
+static bool call_note(Vm *vm, DistState *ds, const Actor *from, term msg, uint16_t node) {
     const uint32_t *o = obj_of(vm, from, msg);
     if (!o || hdr_kind(o[0]) != K_STRUCT || o[1] != TYPE_REQUEST || hdr_words(o[0]) != 5u || o[2] != from->id)
-        return;
+        return true;
     const uint32_t *r = obj_of(vm, from, o[3]);
-    if (!r || hdr_kind(r[0]) != K_REF || hdr_words(r[0]) != 3u) return;
-    Pending *slot = &ds->calls[0];
+    if (!r || hdr_kind(r[0]) != K_REF || hdr_words(r[0]) != 3u) return true;
+    /* Its own entry, else a free one, else one whose caller no longer waits
+     * in a Call; with none, the Call fails at once (h_send). */
+    Pending *slot = NULL;
     for (uint32_t i = 0; i < ds->ncalls; i++) {
         Pending *c = &ds->calls[i];
-        if (c->caller == from->id || !c->caller) {
+        if (c->caller == from->id) {
             slot = c;
-            if (c->caller == from->id) break;
+            break;
         }
+        const Actor *w = c->caller ? actor_lookup(vm, c->caller) : NULL;
+        if (!slot && (!w || !(w->flags & AF_CALL_PENDING))) slot = c;
     }
+    if (!slot) return false;
     slot->caller = from->id;
     slot->node = node;
     slot->serial = (uint64_t)r[1] | (uint64_t)r[2] << 32;
+    return true;
 }
 
 /* The reply for caller's Call serial arrived: forget the Call. */
@@ -1061,7 +1067,9 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
     if (!e.why && 2u + NUM + len + TAG > DIST_FRAME_MAX) e.why = R_BAD_MSG;
     if (e.why && e.why != WHY_DROP) return -(int)e.why;
     Link *l = x ? route(ds, x->node) : NULL;
-    if (!l) {                       /* stale, or no route: as a dead local PID */
+    /* Stale, no route, or a Call the table has no room for (it could not
+     * fail at once if the node went): as a dead local PID. */
+    if (!l || (!serial && !e.why && !call_note(vm, ds, from, msg, x->node))) {
         ds->st.dropped++;
         return 1;
     }
@@ -1088,7 +1096,6 @@ static int h_send(Vm *vm, Actor *from, term to, uint64_t serial, term msg) {
         return 0;
     }
     chunk_send(vm, ds, l, m, start, 2u + len);
-    if (!serial) call_note(vm, ds, from, msg, x->node);
     return 0;
 }
 

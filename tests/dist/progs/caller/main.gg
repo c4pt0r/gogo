@@ -1,0 +1,43 @@
+// More Calls in flight to the server than the board can track (it runs
+// with --max-links 1: 9 entries); when the server goes, every one of them
+// ends at once: tracked ones on the node's loss, the rest when made.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/sys"
+)
+
+func call(slow actor.PID, i int, done actor.PID) {
+	_, ok := actor.Call(slow, i, 30000)
+	actor.Send(done, ok)
+}
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	println("connect", node.Connect(addr, "caller"))
+	slow, ok := node.Whereis("server", "slow", 2000)
+	println("slow", ok)
+	self := actor.Self()
+	for i := 0; i < 12; i++ {
+		k := i
+		actor.Spawn(func() { call(slow, k, self) })
+	}
+	actor.Sleep(300)
+	println("calling")
+	failed := 0
+	for failed < 12 {
+		m, ok := actor.ReceiveTimeout(5000)
+		if !ok {
+			break
+		}
+		switch b := m.(type) {
+		case bool:
+			if !b {
+				failed++
+			}
+		}
+	}
+	println("failed", failed)
+}
