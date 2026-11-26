@@ -59,7 +59,7 @@ static int consts_ok(const Image *img) {
             /* Untagged like every image word: the VM tags them when read.
              * (A slice's offsets and an array's count are checked where
              * they are used, as on the heap.) */
-            if (words < 2 || (obj[1] & MOD_TAG_MASK)) return 0;
+            if (words < 2 || (obj[1] & MOD_TAG_MASK) || (kind == K_SLICE && words != 5)) return 0;
             uint32_t first, end;
             heap_obj_terms(obj, &first, &end);
             for (uint32_t i = first; i < end; i++) {
