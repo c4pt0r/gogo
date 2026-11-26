@@ -755,13 +755,29 @@ rebuilt:
   `tls` port still runs on the simulated stack), so addresses are
   numeric; `tcp_listen` binds every interface of the computer and `tcp`
   connects anywhere.
-- **At most 7 boards per server.** Each board takes two of the server's
-  16 ports (its TCP connection and its node link), the listener one.
-- **Fixed tables.** 64 remote PIDs known at once (a full table gives up
-  the least recently used one that no link or monitor names; a message
-  that needs one more when none can go is dropped), 64 local PIDs given
-  out (dead ones are reused), 32 remote links and monitors (a full table
-  answers with `NoConnection`), 16 Calls in flight, 8 links.
+- **Boards per server: up to the link and port caps.** A host VM serves
+  512 boards by default (`node.max_links`, `vm.max_ports`, or
+  `gogovm --max-links` / `--max-ports`, each at most 2048); a board link
+  costs the server one port. A board's own links cost it two ports each
+  (its MCU stack cannot hand a TCP connection to the node port).
+- **Tables sized by the link cap** *L*: 48 + 2*L* remote PIDs known at once
+  (and at most 4096 minus the port cap: remote PIDs live between 0xF000
+  and the port PIDs), 48 + 2*L* local PIDs given out (dead ones are
+  reused), 16 + 2*L* remote links and monitors (a full table answers with
+  `NoConnection`), 8 + *L* remote Calls in flight (one more fails at once);
+  on a board (*L* = 8) 64, 64, 32 and 16. A full remote-PID table evicts
+  the least recently used entry that no link or monitor names: a remote
+  PID kept without a monitor then goes stale (sends to it are dropped,
+  and it no longer equals a fresh copy). *Workaround:* monitor the remote
+  PIDs you keep. A message that needs one more entry when none can go is
+  dropped.
+- **Peers can fill the watch table.** Monitors from peers are not
+  deduplicated or capped per peer, so a peer can fill the remote links and
+  monitors table (peers are trusted alike).
+- **A message of many empty slices may be refused.** The decoder refuses
+  a term that would take more than two heap words per byte of encoding;
+  a `[]any` of many empty slices is over that bound, and is dropped as
+  bad.
 - **Who can reach what.** The PIDs a node gave out are reachable by every
   peer, not only by the one they were sent to.
 - **Not across nodes:** `actor.SendAfter` to a remote PID is `BadMsg`,
@@ -777,7 +793,8 @@ rebuilt:
   package.
 - **Drops are silent.** At most once means a message can be lost (a full
   link queue, a full table, a receiver over its memory limit) without the
-  sender knowing; the counters (`dist_stats`) are visible to C only.
+  sender knowing; the link stays up (frames carry their number, gaps are
+  accepted). The counters (`dist_stats`) are visible to C only.
 - **Remote link and monitor notes are made when they fire.** The VM
   reserves the memory of a local link's or monitor's note in advance; a
   remote one is allocated when it fires, so under memory exhaustion it

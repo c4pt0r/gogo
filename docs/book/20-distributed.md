@@ -190,8 +190,8 @@ for {
 - **In order** between one sender and one receiver, relayed or not.
 - **Backpressure.** Each connection's link actor sends frames to TCP at
   TCP's pace (the stream protocol's `Out` and `Done`, chapter 10.7) and
-  queues up to 8 KB more; beyond that, messages are dropped. Senders never
-  block. Unlike a local send, a remote message that would take its
+  queues up to 8 KB more; beyond that, messages are dropped and the link
+  stays up. Senders never block. Unlike a local send, a remote message that would take its
   receiver over its memory limit is dropped: a peer cannot end a local
   actor by sending it data.
 
@@ -210,8 +210,9 @@ for {
   nothing; link, monitor and kill signals need a PID given out, and exit
   and down signals are accepted only for links and monitors that exist.
 - **Integrity.** Both ends derive a session key from the token and the
-  handshake, and every frame carries a MAC (HMAC-SHA-256) over its
-  number: a frame changed, injected or replayed on the way ends the link.
+  handshake, and every frame carries its number and a MAC (HMAC-SHA-256)
+  over both: a frame changed or injected on the way ends the link, and a
+  replayed or reordered one is refused.
 - **Not encrypted.** The messages travel in plain TCP; someone on the
   network can read them. Use a trusted network and a long random token
   (a captured handshake allows guessing a weak one offline). TLS for node
@@ -241,12 +242,33 @@ delays a few by several hundred ms).
 | Limit | Value |
 |---|---|
 | frame (one message, encoded) | 4096 bytes |
-| node links per VM | 8; a server node serves at most 7 boards (each board takes 2 of its 16 ports, the listener one) |
-| remote PIDs known at once | 64 (a message that needs one more is dropped) |
-| local PIDs given out | 64 (dead ones are reused) |
-| remote links and monitors | 32 (a full table answers with `NoConnection`) |
+| node links per VM, *L* | 8 on a board, 512 on a host VM; set with the config key `node.max_links` or `gogovm --max-links` (at most 2048) |
+| ports per VM | 16 on a board, 1024 on a host VM; `vm.max_ports` or `gogovm --max-ports` (at most 2048) |
+| ports per link | 1 on a host VM (the node port takes the TCP connection over), 2 on a board (TCP and node port) |
+| remote PIDs known at once | 48 + 2*L* (64 on a board; also at most 4096 minus the port cap) |
+| local PIDs given out | 48 + 2*L* (dead ones are reused) |
+| remote links and monitors | 16 + 2*L* (a full table answers with `NoConnection`) |
+| remote Calls in flight | 8 + *L* (a Call beyond that returns `(nil, false)` at once) |
 | nesting of a message | 16 |
 | queued frames per link | 8 KB |
+
+**How many boards a server serves** is set by its link and port caps: a
+host VM serves up to 512 boards by default, each costing it one port, so
+the defaults (1024 ports, 512 links) leave room for the program's own
+ports; raise both, up to 2048, for more. The tables above are allocated at
+the first link, about 100 bytes per link of the cap (some 50 KB at 512),
+plus about 300 bytes per open link and its link actor's heap (at most
+40 KB, usually a few). A board joins one server, so its 8 links are
+plenty.
+
+**Full tables.** When the remote-PID table is full, the least recently
+used entry that no link or monitor names makes room. A remote PID that an
+actor kept without monitoring it can so go *stale*: sends to it are
+dropped, and it is no longer `==` a fresh copy of the same PID from a new
+message. Monitor the remote PIDs you keep (a subscriber list on the
+server, say): a monitored PID is never evicted. When the link's queue is
+full, the message is dropped (counted), and the link stays up: frames
+carry their number, and the receiver accepts gaps (20.6).
 
 The VM core gains only the hooks; the rest is the `"node"` port
 (`runtime/dist/`) and the `gogo/node` library. The programs of this

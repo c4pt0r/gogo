@@ -2561,11 +2561,38 @@ peer as one `port.Chunk`, and `net.NodeEvent{From, Kind, Node, Agent,
 Name}` (48): `NodeUp` with the peer's door when it opens and, on a board,
 for every board the server reports (NODEUP); `NodeDown` when the server
 reports a node gone (NODEDOWN). The driver holds the frame MACs, the
-codec, the proxy table (64), the export table (64), the remote links and
-monitors (32 "watches"), the Calls in flight (16), the relay and the
-frame reassembly. Its state (about 4 KB on 32-bit, most of it the 8
-links' MAC key states) is allocated from the VM's allocator at the first
-open and kept for the VM's life. Routing: the link whose peer is the
+codec, the proxy table, the export table, the remote links and monitors
+("watches"), the Calls in flight, the relay and the frame reassembly.
+The tables are sized by the VM's link cap *L* (`vm->max_links`: config
+`node.max_links`, `gogovm --max-links`, `gogo_config.max_links`; 8 on a
+board, 512 on a host): 48 + 2*L* proxies (and at most `port_base -
+DIST_SLOT_BASE`, the slots between 0xF000 and the port PIDs), 48 + 2*L*
+exports, 16 + 2*L* watches, 8 + *L* Calls, about 96 bytes per unit of *L*
+on 32-bit, allocated from the VM's allocator at the first open and kept
+for the VM's life; a Link (its MAC key state, ~300 bytes) is allocated
+when first used and reused. A full Calls table makes a new remote Call
+fail at once (it could not fail at once on node loss otherwise). A full
+proxy table evicts the least recently used proxy no watch names (u16
+use clock: after 65536 uses an old entry may look new, which only
+changes the victim).
+
+**Ports and the carrier.** The port table grows in chunks of 16 that
+never move, up to the VM's cap (`vm_set_max_ports`, before the first
+open: config `vm.max_ports`, `gogovm --max-ports`,
+`gogo_config.max_ports`; 16 on a board, 1024 on a host, at most
+`PORT_MAX_CEILING` 2048). Port PIDs take the top slots (`port_base =
+0x10000 - cap`), remote PIDs the slots from 0xF000 below them, actors
+the rest (`table_cap` must stay at or under 0xF000 for a node to open).
+A board whose stream ports can hand over their connection offers a
+`DistCarrier` (`VmBoard.dist_carrier`; host sockets under
+`--host-net`): `net.NodeLink.Conn` names the link's tcp port, the node
+port takes its socket and closes it, and reads and writes it itself, so
+a link costs one port. `NodeLink.Hello` is sent first as it is (the
+server's welcome). The node port tells its owner `NodeCarried` after the
+Chunks the tcp port had already delivered, and reads nothing until the
+owner, having forwarded those, sends `net.Resume`. The MCU stack has no
+carrier: there the link actor pumps the tcp port's Chunks into the node
+port as before (two ports per link). Routing: the link whose peer is the
 destination, else the link opened with `Relay` (a board's link to the
 server).
 
@@ -2619,8 +2646,9 @@ per hop, FIFO mailboxes, synchronous decode into the receiver's mailbox).
 Unlike a local send, a remote message over the receiver's quota is
 dropped, never the receiver killed. Dropped (counted in `DistStats`): a
 stale proxy, a full proxy or export table, the link actor's mailbox or 8
-KB queue full, an undecodable or unmatched term, a destination that is
-not exported or dead. The link actor paces frames into `port.Out`s of up
+KB queue full (the frame is a gap in the numbers; the link stays), an
+undecodable or unmatched term, a destination that is not exported or
+dead. The link actor paces frames into `port.Out`s of up
 to 1400 bytes with TCP's `Done`s (two in flight).
 
 **Links, monitors, Kill.** A watch is `{kind, local actor, node, peer,

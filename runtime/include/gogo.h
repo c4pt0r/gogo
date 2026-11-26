@@ -203,10 +203,11 @@ typedef struct gogo_config {
      * default, 1024, or fewer when max_actors leaves less room: actor and
      * port PIDs share 65536 slots, so max_actors + max_ports may be at most
      * 65536. At most 2048 (gogo_new fails above). */
-    uint32_t max_ports;
-    /* Node links of distributed actors (a host port VM has none today:
-     * kept for a server node in an embedding host); 0 = the default. */
-    uint32_t max_links;
+    GOGO_EXPERIMENTAL uint32_t max_ports;
+    /* Node links of distributed actors at once (an embedded VM has no
+     * "node" port today: kept for a server node in an embedding host);
+     * 0 = 512. At most 2048. */
+    GOGO_EXPERIMENTAL uint32_t max_links;
     /* Fields are appended here, never inserted. */
 } gogo_config;
 
