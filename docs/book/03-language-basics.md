@@ -2337,7 +2337,11 @@ The full list, with what to do instead:
   a struct or slice holding `uint32` or `uint64` values, and not a
   multi-result call (`println(divmod(7, 2))` is `multiple values not
   supported`). An interface value prints the value it holds (Go prints two
-  addresses), a pointer what it points to (`&{1 2}`), a map `map[k:v]`.
+  addresses), a pointer what it points to (`&{1 2}`), a map `map[k:v]`;
+  a sized integer or a named basic value inside one prints in its box,
+  `{5}`, unless the program uses pointers, maps or `gogo/fmt` (then `5`:
+  older firmware cannot print it so, and a program without them still
+  runs there).
 - A two-result gogo builtin cannot be a statement on its own: `actor.
   Call(p, req, 100)` on a line by itself is rejected with `multiple values
   not supported`. Write `_, _ = actor.Call(p, req, 100)`. Your own

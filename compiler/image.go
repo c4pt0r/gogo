@@ -156,7 +156,9 @@ type ImageBuilder struct {
 	constSlices bool
 	// makesFloat: the code makes floats out of other values (MakesFloat)
 	makesFloat bool
-	funcs      []imgFunc
+	// boxTypes: the own types that box values in interfaces (MarkBox)
+	boxTypes map[uint32]bool
+	funcs    []imgFunc
 	// reserved holds a row for every reserved type (AddReservedType, in
 	// index order); only the first nReserved are written, where
 	// nReserved is one more than the highest reserved type the program
@@ -418,6 +420,9 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 	if usesFloat {
 		b.requireFloat()
 	}
+	if minor >= refMinor {
+		b.flagBoxes()
+	}
 	nRes := len(used)
 	var rows []imgType
 	for i, t := range b.reserved[:nRes] {
@@ -540,6 +545,31 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 		minor = max(minor, typeMinor[b.reserved[t].goName])
 	}
 	return used, minor, usesFloat, nil
+}
+
+// MarkBox records own type idx as the box of a value in an interface
+// (codegen_iface.go): flagBoxes flags it StructBox.
+func (b *ImageBuilder) MarkBox(idx uint32) {
+	if b.boxTypes == nil {
+		b.boxTypes = map[uint32]bool{}
+	}
+	b.boxTypes[idx] = true
+}
+
+// flagBoxes ORs StructBox into the rows of the interface boxes and into
+// their constant structs, so println and fmt print a box as its value. It
+// is done only for an image that needs 15.6 anyway: an image that uses
+// none of 15.6's additions keeps its minor, and its println output (a
+// box as {5}), so it still runs on an older VM.
+func (b *ImageBuilder) flagBoxes() {
+	for idx := range b.boxTypes {
+		b.types[idx-TypeOwnBase].nFields |= StructBox
+	}
+	for off := 0; off < len(b.consts); off += int(b.consts[off] >> 6) {
+		if b.consts[off]&63 == KStruct && b.boxTypes[b.consts[off+1]&0xFFFF] {
+			b.consts[off+1] |= StructBox
+		}
+	}
 }
 
 // MakesFloat records that the code makes floats out of other values

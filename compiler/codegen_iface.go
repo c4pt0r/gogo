@@ -70,7 +70,8 @@ func (g *gen) boxIndex(t types.Type) uint32 {
 	if g.boxIdx == nil {
 		g.boxIdx = map[string]uint32{}
 	}
-	idx := g.b.AddTypeFlags(key, 1, StructBox) // println prints its field (15.6)
+	idx := g.b.AddType(key, 1)
+	g.b.MarkBox(idx) // flagged StructBox in an image of 15.6 (flagBoxes)
 	g.boxIdx[key] = idx
 	return idx
 }

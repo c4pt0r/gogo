@@ -1642,7 +1642,10 @@ The five bits between the slot and a struct's type index are per-type
 flags (15.6), copied by `NEWSTRUCT` from bits 16-18 of the type row's
 field-count word: `STRUCT_MUT` (16, a pointer's target or a map header:
 `SETFIELD` writes it, `B_CMP` compares it by identity), `STRUCT_MAP` (17,
-a map header) and `STRUCT_BOX` (18, a box: `println` prints its field).
+a map header) and `STRUCT_BOX` (18, a box: `println` prints its field;
+an interface box's row gets it only in an image that needs 15.6 anyway,
+`flagBoxes`, so an image without 15.6 features keeps its minor and its
+`println` output, `{5}`).
 A reserved row has none (the loader compares its count whole); bits 19-20
 are free (see the reserved term encodings under the image format, §5.6).
 `struct_type()` leaves the flags out.
