@@ -112,17 +112,21 @@ static uint32_t str_slice(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
 
 /* ---- slices ---- */
 
-/* A slice argument: arr is T_NIL when cap is 0 (always for nil). */
+/* A slice argument: arr is T_NIL when cap is 0 (always for nil). A
+ * const array (15.6: a package-level variable's, in flash) is read-only:
+ * a write through it is badcode, and its elements get its module's tag
+ * when read (field_term). */
 typedef struct SliceV {
     term arr;
     uint32_t off, len, cap;
     bool bytes;          /* arr is a K_BYTEARR (false when arr is T_NIL) */
+    bool ro;             /* arr is in a const area */
+    uint32_t *ao;        /* arr's object */
 } SliceV;
 
 /* The elements of the K_ARRAY / K_BYTEARR ref t: *elems is its element
  * capacity. NULL if t is neither. */
 static uint32_t *arr_obj(const Vm *vm, const Actor *a, term t, bool *bytes, uint32_t *elems) {
-    if (!term_is_ref(t)) return NULL;
     uint32_t *o = (uint32_t *)obj_of(vm, a, t);
     if (!o) return NULL;
     uint32_t words = hdr_words(o[0]);
@@ -142,32 +146,43 @@ static uint32_t *arr_obj(const Vm *vm, const Actor *a, term t, bool *bytes, uint
     return o;
 }
 
-/* Reads the slice t (nil or a well-formed heap K_SLICE); false otherwise. */
+/* Reads the slice t (nil or a well-formed K_SLICE, heap or const);
+ * false otherwise. */
 static bool slice_view(const Vm *vm, const Actor *a, term t, SliceV *s) {
     s->arr = T_NIL;
     s->off = s->len = s->cap = 0;
-    s->bytes = false;
+    s->bytes = s->ro = false;
     if (t == T_NILSLICE) return true;
-    if (!term_is_ref(t)) return false;
     const uint32_t *o = obj_of(vm, a, t);
     if (!o || o[0] != hdr_make(5, K_SLICE)) return false;
     s->off = o[1];
     s->len = o[2];
     s->cap = o[3];
-    s->arr = o[4];
+    s->arr = field_term(t, o[4]);
     if (s->len > s->cap) return false;
     if (s->arr == T_NIL) return s->cap == 0;
     uint32_t elems;
-    if (!arr_obj(vm, a, s->arr, &s->bytes, &elems)) return false;
+    s->ro = term_is_const(s->arr);
+    if (!(s->ao = arr_obj(vm, a, s->arr, &s->bytes, &elems))) return false;
     return s->off <= elems && s->cap <= elems - s->off;
 }
 
 /* Pointer to element i (< cap) of a term slice, or byte i of a byte slice. */
 static term *slice_terms(Actor *a, const SliceV *s) {
-    return (term *)a->mem + term_ref_off(s->arr) + 2u + s->off;
+    (void)a;
+    return (term *)s->ao + 2u + s->off;
 }
 static uint8_t *slice_bytes(Actor *a, const SliceV *s) {
-    return (uint8_t *)(a->mem + term_ref_off(s->arr) + 2u) + s->off;
+    (void)a;
+    return (uint8_t *)(s->ao + 2u) + s->off;
+}
+
+/* Copies n terms of the term slice s, from element i, to dst (they may
+ * overlap): a const array's terms get its module's tag. */
+static void terms_copy(term *dst, const SliceV *s, uint32_t i, uint32_t n) {
+    const term *src = slice_terms(NULL, s) + i;
+    if (!s->ro) memmove(dst, src, (size_t)n * 4u);
+    else for (uint32_t k = 0; k < n; k++) dst[k] = field_term(s->arr, src[k]);
 }
 
 /* Words of an array of cap elements. */
@@ -276,6 +291,7 @@ static uint32_t sl_append(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb, u
         mode < 0 || mode > 3 || !append_src(vm, a, R + rb + 3, nv, mode, &src)) return R_BAD_CODE;
     if (s.arr != T_NIL && s.bytes != src.bytes) return R_BAD_CODE;
     bool bytes = src.bytes;
+    if (s.ro && src.n && s.len + src.n <= s.cap) return R_BAD_CODE;   /* in place into a const array */
     if (src.n == 0) { R[ra] = R[rb]; return R_NORMAL; }     /* append(s, empty...) is s */
     if (src.n > arr_max(bytes) - s.len) return R_OUT_OF_MEMORY;
     uint32_t need = s.len + src.n;
@@ -298,11 +314,11 @@ static uint32_t sl_append(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb, u
     R = (term *)a->mem + a->fp;
     slice_view(vm, a, R[rb], &s);                            /* re-derive after GC */
     append_src(vm, a, R + rb + 3, nv, mode, &src);
-    SliceV d = { arr, off, need, cap, bytes };
+    SliceV d = { arr, off, need, cap, bytes, false, a->mem + term_ref_off(arr) };
     if (grow) {
         arr_fill(a, arr, bytes, need, cap, R[rb + 2]);
         if (bytes && s.len) memcpy(slice_bytes(a, &d), slice_bytes(a, &s), s.len);
-        else if (s.len) memcpy(slice_terms(a, &d), slice_terms(a, &s), (size_t)s.len * 4u);
+        else if (s.len) terms_copy(slice_terms(a, &d), &s, 0, s.len);
     }
     /* The new elements; a spread source may overlap the destination. */
     if (bytes) {
@@ -316,7 +332,7 @@ static uint32_t sl_append(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb, u
     } else {
         term *p = slice_terms(a, &d) + s.len;
         if (!src.spread) memcpy(p, R + rb + 3, (size_t)nv * 4u);
-        else memmove(p, slice_terms(a, &src.sl), (size_t)src.n * 4u);
+        else terms_copy(p, &src.sl, 0, src.n);
     }
     R[ra] = h;
     return R_NORMAL;
@@ -356,10 +372,11 @@ static uint32_t sl_copy(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
         slen = s.len;
     }
     uint32_t n = d.len < slen ? d.len : slen;
+    if (n && d.ro) return R_BAD_CODE;   /* into a const array */
     if (n) {
         if (str) memmove(slice_bytes(a, &d), str, n);
         else if (d.bytes) memmove(slice_bytes(a, &d), slice_bytes(a, &s), n);
-        else memmove(slice_terms(a, &d), slice_terms(a, &s), (size_t)n * 4u);
+        else terms_copy(slice_terms(a, &d), &s, 0, n);
     }
     R[ra] = term_from_int((int32_t)n);
     return R_NORMAL;
@@ -583,6 +600,7 @@ static uint32_t bytes_copyto(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb
     if (!bytes_view(vm, a, R[rb], &p, &len) || !slice_view(vm, a, R[rb + 1], &d) ||
         (d.arr != T_NIL && !d.bytes)) return R_BAD_CODE;
     uint32_t n = d.len < len ? d.len : len;
+    if (n && d.ro) return R_BAD_CODE;   /* into a const array */
     if (n) memmove(slice_bytes(a, &d), p, n);
     R[ra] = term_from_int((int32_t)n);
     return R_NORMAL;
@@ -775,14 +793,14 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
             R[ra] = term_from_int(p[i]);
         } else if (slice_view(vm, a, R[rb], &s)) {
             if ((uint32_t)i >= s.len) return R_BAD_CODE;
-            R[ra] = s.bytes ? term_from_int(slice_bytes(a, &s)[i]) : slice_terms(a, &s)[i];
+            R[ra] = s.bytes ? term_from_int(slice_bytes(a, &s)[i]) : field_term(s.arr, slice_terms(a, &s)[i]);
         } else {
             return R_BAD_CODE;
         }
         return R_NORMAL;
     case B_SETINDEX: {
         if (rc != 3u || !slice_view(vm, a, R[rb], &s) || !arg_int(vm, a, R[rb + 1], &i) ||
-            i < 0 || (uint32_t)i >= s.len) return R_BAD_CODE;
+            i < 0 || (uint32_t)i >= s.len || s.ro) return R_BAD_CODE;   /* a const array is read-only */
         if (s.bytes) {
             int32_t v;
             if (!arg_int(vm, a, R[rb + 2], &v)) return R_BAD_CODE;

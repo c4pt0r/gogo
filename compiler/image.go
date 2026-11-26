@@ -149,7 +149,9 @@ type ImageBuilder struct {
 	floats   map[uint64]uint32 // float64 constants by bits
 	floats32 map[uint32]uint32 // float32 constants by bits
 	structs  map[string]uint32 // const structs by type and fields
-	funcs    []imgFunc
+	// constSlices: the image has constant slices (15.6, refMinor)
+	constSlices bool
+	funcs       []imgFunc
 	// reserved holds a row for every reserved type (AddReservedType, in
 	// index order); only the first nReserved are written, where
 	// nReserved is one more than the highest reserved type the program
@@ -228,6 +230,46 @@ func (b *ImageBuilder) AddFloat32(v float32) uint32 {
 	b.consts = append(b.consts, HdrMake(2, KFloat), u)
 	b.floats32[u] = off
 	return off
+}
+
+// AddInt32 adds a K_INT constant: an int outside 31 bits in a constant
+// object (an immediate does not need one).
+func (b *ImageBuilder) AddInt32(v int32) uint32 {
+	off := uint32(len(b.consts))
+	b.consts = append(b.consts, HdrMake(2, KInt), uint32(v))
+	return off
+}
+
+// AddTermSlice adds a constant slice (15.6: a package-level variable's)
+// and returns its term: of the terms, or of the bytes if isBytes, in a
+// K_ARRAY or K_BYTEARR of their length, behind a K_SLICE of that length
+// and capacity (with no array when empty: an empty, non-nil slice).
+func (b *ImageBuilder) AddTermSlice(terms []uint32, bytes []byte, isBytes bool) uint32 {
+	n := len(terms)
+	if isBytes {
+		n = len(bytes)
+	}
+	arr := TermNil
+	if n > 0 {
+		off := uint32(len(b.consts))
+		if isBytes {
+			payload := (n + 3) / 4
+			buf := make([]byte, payload*4)
+			copy(buf, bytes)
+			b.consts = append(b.consts, HdrMake(uint32(2+payload), KBytearr), uint32(n))
+			for i := 0; i < payload; i++ {
+				b.consts = append(b.consts, binary.LittleEndian.Uint32(buf[i*4:]))
+			}
+		} else {
+			b.consts = append(b.consts, HdrMake(uint32(2+n), KArray), uint32(n))
+			b.consts = append(b.consts, terms...)
+		}
+		arr = TermConst(off)
+	}
+	off := uint32(len(b.consts))
+	b.consts = append(b.consts, HdrMake(5, KSlice), 0, uint32(n), uint32(n), arr)
+	b.constSlices = true
+	return TermConst(off)
 }
 
 // AddStruct adds a K_STRUCT constant of type typ (an image type index)
@@ -449,6 +491,9 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 		if t.nFields > 0xFFFF { // a row with flags
 			minor = max(minor, refMinor)
 		}
+	}
+	if b.constSlices {
+		minor = max(minor, refMinor)
 	}
 	for off := 0; off < len(b.consts); off += int(b.consts[off] >> 6) {
 		switch b.consts[off] & 63 {

@@ -143,11 +143,12 @@ static int32_t deep_live(const Vm *vm, const Actor *a, term t, int depth, int32_
         for (uint32_t i = 2; left >= 0 && i < hdr_words(obj[0]); i++)
             left = deep_live(vm, a, field_term(t, obj[i]), depth + 1, left);
     } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
-        const uint32_t *arr = obj_of(vm, a, obj[4]);
+        term at = field_term(t, obj[4]);   /* a const array (15.6) */
+        const uint32_t *arr = obj_of(vm, a, at);
         uint32_t off = obj[1], len = obj[2];
         if (arr && hdr_kind(arr[0]) == K_ARRAY && len && off <= arr[1] && len <= arr[1] - off) {
             for (uint32_t i = 0; left >= 0 && i < len; i++)
-                left = deep_live(vm, a, arr[2 + off + i], depth + 1, left);
+                left = deep_live(vm, a, field_term(at, arr[2 + off + i]), depth + 1, left);
         }
     }
     return left;
@@ -327,7 +328,8 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
 static int32_t out_slice(Out *o, const Vm *vm, const Actor *a, term t, const uint32_t *h, int depth,
                          int32_t left, bool map) {
     uint32_t off = h[1], len = h[2];
-    const uint32_t *arr = obj_of(vm, a, field_term(t, h[4]));
+    term at = field_term(t, h[4]);   /* a const array (15.6) */
+    const uint32_t *arr = obj_of(vm, a, at);
     if (depth >= PRINT_MAX_DEPTH) { out_str(o, "[...]"); return left; }
     out_str(o, "[");
     if (arr && len && off <= arr[1] && len <= arr[1] - off) {
@@ -335,7 +337,7 @@ static int32_t out_slice(Out *o, const Vm *vm, const Actor *a, term t, const uin
         for (uint32_t i = 0; i < len && left >= 0; i++) {
             if (i && left > 0) out_str(o, map && i & 1u ? ":" : " ");
             if (bytes) out_int(o, ((const uint8_t *)(arr + 2))[off + i]);
-            else left = out_term(o, vm, a, field_term(t, arr[2 + off + i]), depth + 1, left);
+            else left = out_term(o, vm, a, field_term(at, arr[2 + off + i]), depth + 1, left);
         }
     }
     if (left >= 0) out_str(o, "]");

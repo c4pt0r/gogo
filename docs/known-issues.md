@@ -286,11 +286,26 @@ rebuilt:
 
 ## Compiler and language
 
-- **Not supported yet (planned).** The compiler rejects maps and package-level `var`s. `goto` is rejected (labeled `break` and
+- **Not supported yet (planned).** The compiler rejects maps. `goto` is rejected (labeled `break` and
   `continue` cover its uses). Channels, `go`, `select`, generics and
   `recover` are outside the design. "Language completeness" is a
   planned milestone. *Workaround:* slices of structs searched linearly
   for maps.
+- **Package-level variables are read-only.** A package-level `var` is set
+  when the program is built and cannot be written (`package-level
+  variable x is read-only`); mutable state belongs in an actor. Its
+  initializer must be static: constants, literals, conversions, other
+  package-level variables and calls of single-`return` functions such as
+  `errors.New`, but no `make`, no `&T{}` and no arithmetic on a function's
+  parameters (`package-level variable x: ... is not static`). A slice of
+  one shares its constant array: `t := table; t[0] = 1` ends the actor
+  with `badcode` at run time, and so does `copy` into it or an `append`
+  that would fill its spare room. *Workaround:* copy first,
+  `own := append([]int{}, table...)`. Sent in a message, such a value
+  stays read-only in the receiver, and a struct or slice of one cannot be
+  sent to another module (`BadMsg`): an error from `errors.New` held in a
+  package-level variable is one; return or send `errors.New(...)` itself
+  to cross modules.
 - **No `gogo/fmt`.** Printing is `println`; to build a string use
   `gogo/strconv` and `+`.
 - **`gogo/errors` differs from Go's.** Two errors from `errors.New` with

@@ -441,7 +441,10 @@ func checkSrc(t *testing.T, src string) []error {
 func TestRejectsMore(t *testing.T) {
 	const hdr = "package main\nimport \"gogo/actor\"\ntype P struct{ X int }\ntype Q struct{ Y int }\n"
 	tests := []struct{ name, src, want string }{
-		{"global-var", "package main\nvar g int\nfunc main() { println(g) }\n", "global variable"},
+		{"global-write", "package main\nvar g int\nfunc main() { g = 1 }\n", "package-level variable g is read-only"},
+		{"global-pointer", "package main\ntype T struct{ X int }\nvar g = &T{}\nfunc main() { println(g.X) }\n", "a pointer (its target would be read-only)"},
+		{"global-call", "package main\nvar g = make([]int, 3)\nfunc main() { println(len(g)) }\n", "a call of make"},
+		{"global-elem", "package main\nvar g = []int{1}\nfunc main() { g[0]++ }\n", "package-level variable g is read-only"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -715,7 +718,7 @@ func TestLibraries(t *testing.T) {
 		{"lib-imports-missing", "package lib\nimport \"gogo/nolib\"\nfunc F() {}\n", `import "gogo/nolib" not supported`},
 		{"lib-renamed-actor", "package lib\nimport a \"gogo/actor\"\nfunc F() { a.Self() }\n", `import a "gogo/actor" not supported`},
 		{"lib-wrong-package", "package other\nfunc F() {}\n", "package other"},
-		{"lib-global", "package lib\nvar g int\nfunc F() { println(g) }\n", "lib/lib.gg:2:1: gogo: global variable not supported"},
+		{"lib-global", "package lib\nvar g int\nfunc F() { g++ }\n", "lib/lib.gg:3:12: gogo: package-level variable g is read-only"},
 		{"lib-subset", "package lib\nfunc F() {\n\tm := map[int]int{}\n\t_ = m\n}\n", "lib/lib.gg:3:7: gogo: map not supported"},
 		{"lib-type-error", "package lib\nfunc F() { undefined() }\n", "undefined"},
 		{"lib-imports-port", "package lib\nimport (\n\t\"gogo/actor\"\n\t\"gogo/port\"\n)\nfunc F() { port.Close(actor.Self()) }\n", ""},

@@ -135,9 +135,13 @@ type gen struct {
 	lazy map[*types.Func]*ast.FuncDecl
 	used []*ast.FuncDecl
 
-	boxIdx map[string]uint32   // own box types (boxIndex), by image name
-	ptrIdx map[string]uint32   // pointer targets' types (ptrIndex), by image name
-	boxed  map[*types.Var]bool // the variables that live in a box (findBoxed)
+	boxIdx map[string]uint32 // own box types (boxIndex), by image name
+	ptrIdx map[string]uint32 // pointer targets' types (ptrIndex), by image name
+	// globals holds the terms of the package-level variables evaluated so
+	// far (globalTerm); globalsBusy those being evaluated.
+	globals     map[*types.Var]uint32
+	globalsBusy map[*types.Var]bool
+	boxed       map[*types.Var]bool // the variables that live in a box (findBoxed)
 
 	concrete  []types.Type           // concreteTypes, once computed
 	dispIdx   map[*types.Func]uint32 // dispatchers, by interface method
@@ -1353,6 +1357,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 			}
 			return
 		}
+		if v := globalVar(f.g.p.Info, e); v != nil { // a package-level variable: its constant
+			f.globalInto(e, v, dst)
+			return
+		}
 		if v, ok := f.isBoxedVar(e); ok { // in its box (D7)
 			f.boxedLoad(e, v, f.localOf(e), dst)
 			return
@@ -1394,6 +1402,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 		}
 		if fn, ok := f.g.p.Info.Uses[e.Sel].(*types.Func); ok {
 			f.funcValueInto(e, fn, dst) // lib.F
+			return
+		}
+		if v := globalVar(f.g.p.Info, e); v != nil { // lib.V
+			f.globalInto(e, v, dst)
 			return
 		}
 		sel := f.g.p.Info.Selections[e]

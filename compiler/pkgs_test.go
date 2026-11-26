@@ -168,8 +168,8 @@ func TestUserPackageErrors(t *testing.T) {
 		}, []string{`import u "app/util" not supported`}},
 		{"subset applies", map[string]string{
 			"main.gg":   "package main\n\nimport \"app/util\"\n\nfunc main() { util.F() }\n",
-			"util/u.gg": "package util\n\nvar g int\n\nfunc F() { println(g) }\n",
-		}, []string{filepath.Join("util", "u.gg") + ":3:1: gogo: global variable not supported"}},
+			"util/u.gg": "package util\n\nvar g int\n\nfunc F() { g++ }\n",
+		}, []string{filepath.Join("util", "u.gg") + ":5:12: gogo: package-level variable g is read-only"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -13,11 +13,14 @@ import (
 
 // TestGoldenMatchesGo runs every tests/golden/*/ program that has a file
 // `gocompare` as a Go program, with the go command: its .gg files are
-// copied as .go files into a temporary module, and what Go's println
-// prints (to stderr) must equal the golden's expected.out, which the gogo
-// run is held to by TestGolden. So such a golden shows that gogo means
-// what Go means: it may print only values Go's println prints the same
-// way (integers, bools, strings) and import no gogo package; a marked
+// copied as .go files into a temporary module, with the imports of the
+// gogo packages that mirror Go's (goImports: gogo/errors, gogo/fmt, ...)
+// renamed to Go's, and what it prints (Go's println on stderr, fmt on
+// stdout, both into one pipe, in order) must equal the golden's
+// expected.out, which the gogo run is held to by TestGolden. So such a
+// golden shows that gogo means what Go means: it may print with println
+// only values Go's println prints the same way (integers, bools, strings)
+// and import no other gogo package; a marked
 // golden must be one package that exits 0 with no input, arguments or VM
 // setup (no expected.err, progargs, exitcode, ... and no subdirectories).
 // Skipped when no go command (Go 1.22 or later) is found. The program is
@@ -75,6 +78,9 @@ func TestGoldenMatchesGo(t *testing.T) {
 					t.Fatal(err)
 				}
 				name := strings.TrimSuffix(filepath.Base(src), ".gg") + ".go"
+				for gg, goPath := range goImports {
+					b = bytes.ReplaceAll(b, []byte(`"`+gg+`"`), []byte(`"`+goPath+`"`))
+				}
 				if err := os.WriteFile(filepath.Join(mod, name), b, 0o644); err != nil {
 					t.Fatal(err)
 				}
@@ -84,24 +90,32 @@ func TestGoldenMatchesGo(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			var stdout, stderr bytes.Buffer
-			cmd := exec.CommandContext(ctx, gobin, "run", ".")
+			build := exec.CommandContext(ctx, gobin, "build", "-o", "prog", ".")
+			build.Dir = mod
+			build.Env = env
+			if out, err := build.CombinedOutput(); err != nil {
+				t.Fatalf("go build: %v\n%s", err, out)
+			}
+			// stdout (fmt) and stderr (println) into one pipe, in order:
+			// gogo prints both on its console
+			var out bytes.Buffer
+			cmd := exec.CommandContext(ctx, filepath.Join(mod, "prog"))
 			cmd.Dir = mod
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-			cmd.Env = env
+			cmd.Stdout = &out
+			cmd.Stderr = &out
 			if err := cmd.Run(); err != nil {
-				t.Fatalf("go run: %v\n--- stderr ---\n%s", err, stderr.Bytes())
+				t.Fatalf("the Go program: %v\n--- output ---\n%s", err, out.Bytes())
 			}
-			if stdout.Len() > 0 {
-				t.Errorf("go run printed to stdout (only println output is compared):\n%s", stdout.Bytes())
-			}
-			if !bytes.Equal(stderr.Bytes(), want) {
-				t.Errorf("Go prints\n%s\nexpected.out (gogo) is\n%s", stderr.Bytes(), want)
+			if !bytes.Equal(out.Bytes(), want) {
+				t.Errorf("Go prints\n%s\nexpected.out (gogo) is\n%s", out.Bytes(), want)
 			}
 		})
 	}
 }
+
+// goImports maps the gogo packages that a gocompare golden may import to
+// the Go packages they mirror.
+var goImports = map[string]string{"gogo/errors": "errors", "gogo/fmt": "fmt", "gogo/strconv": "strconv", "gogo/strings": "strings"}
 
 // unsupportedMarks are the golden files TestGolden acts on that a Go run
 // cannot reproduce.

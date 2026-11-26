@@ -2015,7 +2015,7 @@ Here is a program that uses many of the features gogo leaves out:
 // subset rejects, so you can see the compiler's messages.
 package main
 
-var counter = 0 // package-level variable
+var counter = 0 // fine: package-level variables are read-only
 
 type Shape interface{ Area() int } // fine: interfaces are supported
 
@@ -2041,6 +2041,7 @@ func main() {
 	if counter > 0 {
 		goto done // goto
 	}
+	counter++ // a write to a package-level variable
 done:
 	var a any = [4]int{} // array in an interface
 	y := any(1).(int)    // fine: type assertions are supported
@@ -2053,7 +2054,6 @@ done:
 `gogo build` reports each one:
 
 ```text
-main.gg:5:1: gogo: global variable not supported
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
@@ -2062,11 +2062,12 @@ main.gg:25:7: gogo: map not supported
 main.gg:26:7: gogo: interior pointer &sq[0] not supported: gogo has no pointers into a slice element or a struct field; use a []*T or a *T field, or s[i].F = v
 main.gg:27:7: gogo: complex not supported
 main.gg:29:3: gogo: goto statement not supported
-main.gg:31:1: gogo: label on a statement other than for or switch not supported
-main.gg:32:14: gogo: array in interface not supported: use a slice or a struct with an array field
-main.gg:35:10: gogo: map not supported
-main.gg:35:16: gogo: complex not supported
-main.gg:36:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
+main.gg:31:2: gogo: package-level variable counter is read-only
+main.gg:32:1: gogo: label on a statement other than for or switch not supported
+main.gg:33:14: gogo: array in interface not supported: use a slice or a struct with an array field
+main.gg:36:10: gogo: map not supported
+main.gg:36:16: gogo: complex not supported
+main.gg:37:10: gogo: recover (a panic ends the actor: let its supervisor restart it) not supported
 ```
 
 The full list, with what to do instead:
@@ -2078,7 +2079,7 @@ The full list, with what to do instead:
 | `defer` in a loop | `defer inside a loop not supported: deferred calls are static (move the loop body into a function)` | a function per iteration |
 | `recover()` | `recover (a panic ends the actor: let its supervisor restart it) not supported` | let the actor exit; a supervisor restarts it (chapter 5); ports and files close automatically |
 | `error` | `error not supported` | `bool` or an `int` code type |
-| package-level `var` | `global variable not supported` | `const`, or state in an actor |
+| writing a package-level `var` | `package-level variable counter is read-only` | state in an actor |
 | maps | `map not supported` | a slice of key/value structs |
 | a pointer into a slice element or a field, `&s[i]`, `&v.F` | `interior pointer &s[i] not supported` | a `[]*T` or a `*T` field, or `s[i].F = v` |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
@@ -2089,7 +2090,7 @@ The full list, with what to do instead:
 | an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
 
-> **Note.** Maps and package-level variables are not supported yet. They are planned for
+> **Note.** Maps are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see
 > `docs/design.md` §5.2).
 

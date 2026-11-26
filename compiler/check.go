@@ -34,7 +34,7 @@ func Check(p *Program) (errs []error) {
 func (c *checker) file(f *ast.File) {
 	for _, d := range f.Decls {
 		if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.VAR {
-			c.unsupported(gd, "global variable")
+			c.globalDecl(gd) // read-only, static (15.6)
 			continue
 		}
 		c.decl(d)
@@ -766,7 +766,7 @@ func litCaptures(info *types.Info, lit *ast.FuncLit) []*types.Var {
 			return true
 		}
 		v, ok := info.Uses[id].(*types.Var)
-		if !ok || v.IsField() || seen[v] || (v.Pos() >= lit.Pos() && v.Pos() < lit.End()) {
+		if !ok || v.IsField() || seen[v] || (v.Pos() >= lit.Pos() && v.Pos() < lit.End()) || globalVar(info, id) != nil {
 			return true
 		}
 		seen[v] = true
@@ -778,8 +778,11 @@ func litCaptures(info *types.Info, lit *ast.FuncLit) []*types.Var {
 
 // lhs reports an unsupported assignment target.
 func (c *checker) lhs(e ast.Expr) {
+	if c.globalWrite(e) {
+		return
+	}
 	switch e := e.(type) {
-	case *ast.Ident: // writes to captured variables: see capturedWrites
+	case *ast.Ident:
 	case *ast.ParenExpr:
 		c.lhs(e.X)
 	case *ast.SelectorExpr:
@@ -1273,9 +1276,11 @@ func (c *checker) methodRecv(sel *ast.SelectorExpr) {
 		// pointer into it (no interior pointers).
 		_, isVar := ast.Unparen(sel.X).(*ast.Ident)
 		switch {
+		case c.isGlobal(sel.X):
+			c.fail(sel.Pos(), "package-level variable %s is read-only: its method %s has a pointer receiver", types.ExprString(sel.X), fn.Name())
 		case len(s.Index()) > 1:
 			c.fail(sel.Pos(), "method %s with a pointer receiver promoted from an embedded field not supported: it needs a pointer to the field (no interior pointers); call it on the field of a pointer, or embed a value whose methods have value receivers", fn.Name())
-		case !isPointer(c.p.Info.TypeOf(sel.X)) && (!isVar || c.isGlobal(sel.X)):
+		case !isPointer(c.p.Info.TypeOf(sel.X)) && !isVar:
 			c.fail(sel.Pos(), "method %s has a pointer receiver: %s needs a pointer to it (no interior pointers: &s[i], &v.F); use a pointer (a []*T, a *T field) or a local variable", fn.Name(), types.ExprString(sel.X))
 		}
 		return
@@ -1443,6 +1448,9 @@ func (c *checker) expr(e ast.Expr) {
 		if c.p.method(e) != nil {
 			c.methodRecv(e) // x.M, a method value, or T.M, a method expression
 			return
+		}
+		if globalVar(c.p.Info, e) != nil {
+			return // lib.V, a package-level variable
 		}
 		if c.stubPromoted(e) {
 			return
@@ -1843,6 +1851,9 @@ func (c *checker) seqBuiltin(call *ast.CallExpr, name string) {
 			c.indexArg(a)
 		}
 	case "copy":
+		if c.globalWrite(call.Args[0]) {
+			return
+		}
 		c.expr(call.Args[0])
 		c.expr(call.Args[1])
 	}

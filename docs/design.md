@@ -296,6 +296,31 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   a copy, before each post statement, so each iteration has its own
   variable as in Go 1.22. A pointer to struct costs one object of 2 +
   fields words; a write through it allocates nothing.
+- Package-level variables (15.6, D2 of the language plan): read-only and
+  set when the program is built. The compiler evaluates each initializer
+  (`compiler/codegen_global.go`): constants, `nil`, composite literals of
+  structs, slices and arrays (also with index keys), conversions,
+  another package-level variable, a field of a constant struct, and calls
+  of functions whose body is a single `return` of one value (such as
+  `errors.New`), evaluated with their arguments bound, at most 8 deep. The
+  value is a term: an immediate, or a ref into the constant area, which
+  gains `K_SLICE`, `K_ARRAY` and `K_BYTEARR` objects (and `K_INT` for an
+  `int` outside 31 bits). A use is one `LOADK`; nothing runs at start-up
+  and no actor holds a copy. Every write is a compile error (`package-level
+  variable x is read-only`): an assignment, `++`, an element or field
+  write on a path from the variable that does not go through a pointer,
+  `copy` into it, `&x` and a pointer method on it. A write through a copy
+  that shares a constant array (`t := table; t[0] = 1`, `copy(t, ...)`,
+  or an `append` that would fill the array's spare room) ends the actor
+  with `badcode`: `B_SETINDEX`, `B_COPY`, `B_APPEND` and
+  `B_BYTES_COPYTO` refuse a constant array, and the elements read out of
+  one get its module's tag (`field_term`). Rejected initializers: a
+  pointer (`&T{}`: its target would be read-only), a func value, a call of
+  anything else (`make`, a function of several statements), arithmetic on
+  a function's parameters. A constant value keeps no actor's memory: a
+  message that holds one carries the ref, so the receiver's copy is
+  read-only too, and it cannot cross modules (`BadMsg`), except a string,
+  an int or a float, which are copied.
 - Static `defer`: `defer f(args)` anywhere but inside a loop (within its
   own function: a func literal is a function of its own), so each defer
   statement runs at most once per call. The function value, receiver
@@ -376,7 +401,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   package's name is its directory's name (§5.1, the loader).
 
 **Not supported yet (planned for the "language completeness"
-milestone):** maps and package-level variables. Each is rejected at compile time with a `<what> not supported` error
+milestone):** maps. Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 
 **Out of the design:** channels and `select`, the `go` statement (use
@@ -1757,7 +1782,10 @@ together with `mbox_words` through `actor_charged_words`).
 - **Image layout** (`runtime/vm/image.h`, little-endian words): an
   8-word header (magic, version, n_funcs, n_types, consts_words,
   code_words, entry, n_reserved), the function table (3 words each), the
-  type table (2 words each: field count, name), the constant area, the
+  type table (2 words each: field count and flags, name), the constant
+  area (strings, `K_INT`, `K_INT64`, `K_FLOAT`, structs, closures, and
+  from 15.6 the slices, arrays and byte arrays of package-level
+  variables), the
   code, and the constant map: one bit per constant word, set where an
   object starts (ceil(consts_words / 32) words, read in place from flash,
   no RAM). After the map come the requirements (`n_requires`, then one
@@ -1815,7 +1843,7 @@ together with `mbox_words` through `actor_charged_words`).
   phase, `panic` and the interface and equality builtins (`ifaceMinor`);
   15.5 is kept for distributed actors; 15.6 the reference phase
   (`refMinor`): `OP_SETFIELD`, the type flags (a type row or a constant
-  struct with any) and the reason `actor.Nil`.
+  struct with any), the reason `actor.Nil` and the constant slices.
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old
