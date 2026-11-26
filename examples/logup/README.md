@@ -35,7 +35,7 @@ a device log is for.
 
 | source | line | config |
 |---|---|---|
-| `imu` | `imu samples=20 gx=0 gy=0 gz=0 ax=11 ay=766 az=636 dropped=0` (milli-g, deg/s) | `logup.src` |
+| `imu` | `imu samples=20 gx=0 gy=0 gz=0 ax=11 ay=766 az=636 dropped=0` (milli-g, deg/s) every 200 ms; `imu gesture=tap`, `imu gesture=orientation value=1`, `imu gesture=step value=7`, ... for every gesture the sensor detects (tap, double and triple tap, orientation, flat, any and no motion, step) | `logup.src` |
 | `kbd` | `key down=1 code=44 char=115 mods=0` (USB HID usage; both edges) | `logup.src` |
 | `mic` | `mic samples=1600 peak=90 mean=8 dropped=0` (a level, not audio) | `logup.src` |
 | net | `net up`, `net down`, `net: no netif port (…)` | always |

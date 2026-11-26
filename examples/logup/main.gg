@@ -139,9 +139,37 @@ func mg(raw int) int { return raw * 8000 / 32768 }
 
 func dps(raw int) int { return raw * 2000 / 32768 }
 
-// srcIMU logs one line per batch of motion samples.
+// gestureName is the log name of an imu.Gesture kind.
+func gestureName(k int) string {
+	switch k {
+	case imu.Tap:
+		return "tap"
+	case imu.DoubleTap:
+		return "doubletap"
+	case imu.TripleTap:
+		return "tripletap"
+	case imu.Orientation:
+		return "orientation"
+	case imu.Flat:
+		return "flat"
+	case imu.AnyMotion:
+		return "anymotion"
+	case imu.NoMotion:
+		return "nomotion"
+	case imu.Step:
+		return "step"
+	}
+	return "gesture" + strconv.Itoa(k)
+}
+
+// allGestures asks the sensor for every gesture it detects: a gesture it
+// is not asked for is never reported, whatever happens to the board.
+const allGestures = imu.Tap | imu.DoubleTap | imu.TripleTap | imu.Orientation |
+	imu.Flat | imu.AnyMotion | imu.NoMotion | imu.Step
+
+// srcIMU logs one line per batch of motion samples, and one per gesture.
 func srcIMU(to actor.PID) {
-	_, err := port.Open("imu", imu.Config{RateHz: 100, BatchMs: 200, Gestures: imu.Step})
+	_, err := port.Open("imu", imu.Config{RateHz: 100, BatchMs: 200, Gestures: allGestures})
 	if err != nil {
 		actor.Send(to, "imu: unavailable ("+err.Error()+")")
 		return
@@ -162,9 +190,13 @@ func srcIMU(to actor.PID) {
 					" dropped="+strconv.Itoa(m.Dropped))
 			}
 		case imu.Gesture:
-			if m.Kind == imu.Step {
-				actor.Send(to, "imu steps="+strconv.Itoa(m.Value))
+			// Value is the orientation number for Orientation, the
+			// cumulative step count for Step, and 0 otherwise.
+			line := "imu gesture=" + gestureName(m.Kind)
+			if m.Kind == imu.Orientation || m.Kind == imu.Step {
+				line += " value=" + strconv.Itoa(m.Value)
 			}
+			actor.Send(to, line)
 		}
 	}
 }
