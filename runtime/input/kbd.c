@@ -98,7 +98,7 @@ static bool kbd_can_event(const struct Vm *vm, const Port *p) { (void)vm;
 }
 
 const PortDriver input_kbd_driver = {
-    PORT_NAME_KBD, TYPE_KBD_CONFIG, TYPE_KBD_KEY, kbd_open, NULL, kbd_close, kbd_can_event, NULL, NULL, NULL
+    PORT_NAME_KBD, TYPE_KBD_CONFIG, TYPE_KBD_KEY, kbd_open, NULL, kbd_close, kbd_can_event, NULL, NULL, NULL, NULL
 };
 
 /* ---- scheduler side ---- */

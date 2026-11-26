@@ -114,6 +114,12 @@ rebuilt:
   crash of `main` exits 4 and `actor.Exit(code)` in `main` exits with
   the code (0 before). A missing driver or mount exits 3 (was 1), a bad
   image still 2, and a `gogovm` usage error 1 (was 2).
+- **Board code** (C, `platform/`; boards outside this repository must be
+  edited): the `gpio` driver is now one runtime driver over the board's
+  hardware layer: list `GPIO_DRIVER(&hal)` over a `GpioHal`
+  (`runtime/gpio/gpio.h`). `PortDriver` gained a last member `hw` (the
+  instance's hardware layer), so a positional initializer needs one more
+  `NULL`.
 
 ## Deprecated, removed in the next release
 

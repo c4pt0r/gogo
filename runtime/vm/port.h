@@ -87,6 +87,11 @@ typedef struct PortDriver {
      * (C callers, int fields) uses `open` only: it refuses a driver that
      * has none. */
     int  (*open_term)(struct Vm *vm, const struct Actor *owner, Port *p, uint16_t index, term cfg);
+    /* The driver instance's hardware layer (NULL: none): a generic driver
+     * in runtime/ (gpio, kbd, imu, ...) reads its HAL table from here
+     * (p->drv->hw), so one driver serves every board without a copy.
+     * The VM never reads it. */
+    const void *hw;
 } PortDriver;
 
 /* Most off-heap Bytes one port pins for its owner (a TCP connection holds

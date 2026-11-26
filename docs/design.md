@@ -378,7 +378,10 @@ btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: 
   keyboard, ...) fail to open.
 - A driver is a table of C functions (open, command, close, and optional
   hooks such as `command_term` for structured commands, `handoff`); new
-  peripherals need no change to the VM core. The port table has a fixed
+  peripherals need no change to the VM core. A generic driver (`gpio`)
+  is one runtime implementation; a board lists an
+  instance of it over its hardware layer (`PortDriver.hw`).
+  The port table has a fixed
   size (`GOGO_MAX_PORTS`, 16 by default).
 - Interrupt and input events go through a lock-free single-producer ring
   (`GOGO_EVQ_CAP`): an ISR only writes the ring, without locks or
@@ -393,8 +396,9 @@ btn, ok := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge: 
   is a terminal mode that maps keys to pins; Ctrl-C and SIGTERM restore
   the terminal first; Ctrl-D ends input. Outputs are printed.
 - ESP32-S3: `gpio` uses GPIO interrupts (StickS3: KEY1 = G11, KEY2 =
-  G12). On a single-edge pin, the ISR drops an edge in the same direction
-  that arrives within `DebounceMs` after an unreported opposite change
+  G12). On a single-edge pin, the driver (`gpio_edge`, `runtime/gpio/`,
+  the same on every board) drops an edge in the same direction that
+  arrives within `DebounceMs` after an unreported opposite change
   (release bounce).
 
 Not yet: `uart`, `i2c` and `spi`. The board's screen is a console that

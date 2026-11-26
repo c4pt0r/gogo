@@ -1070,7 +1070,7 @@ static void up_close(Vm *v, Port *p) {
     tcp_close_port(v, p);
 }
 static const PortDriver up_driver = {
-    "up", TYPE_NET_DIAL, TYPE_CHUNK, up_open, NULL, up_close, tcp_port_can_event, NULL, NULL, NULL
+    "up", TYPE_NET_DIAL, TYPE_CHUNK, up_open, NULL, up_close, tcp_port_can_event, NULL, NULL, NULL, NULL
 };
 static const TcpUpper upper = {
     &up_driver, up_rx, up_fin, up_connected, up_acked, up_tx, up_ended, up_pending, up_drain, NULL, up_closed
@@ -1216,7 +1216,7 @@ static int nc_open(Vm *v, Port *p, uint16_t index, const int32_t *cfg, uint32_t 
     return 0;
 }
 static const PortDriver nc_driver = {
-    "nc", TYPE_NET_DIAL, TYPE_CHUNK, nc_open, NULL, tcp_close_port, tcp_port_can_event, NULL, NULL, NULL
+    "nc", TYPE_NET_DIAL, TYPE_CHUNK, nc_open, NULL, tcp_close_port, tcp_port_can_event, NULL, NULL, NULL, NULL
 };
 static const TcpUpper nc_upper = { &nc_driver, NULL, NULL, NULL, NULL, NULL, NULL, up_pending, up_drain, NULL, NULL };
 static const PortDriver *const nc_list[] = { &nc_driver, NULL };

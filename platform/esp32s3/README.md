@@ -259,13 +259,16 @@ in `cmd/gogo/flash.go`.
   `esp_host`'s `unix_time_ms` / `set_unix_time_ms`: unknown at every boot
   until `gogo/sntp` or `sys.SetTime` sets it, with the build time
   (`GOGO_BUILD_UNIX_MS`, from `main/CMakeLists.txt`) as the floor.
-- `gpio_esp.c`: the `gpio` port driver, same semantics as unix (cfg
-  `{Pin, Mode, Edge, DebounceMs}`, default debounce 20 ms, `Write{Value}` on
-  outputs, events `{pin, level}`). Inputs use an any-edge interrupt; the ISR
-  pushes to the event ring and notifies, never locking or allocating. For a
-  single-edge pin it also drops an edge that comes less than the debounce
-  time after the previous level change (a key release's bounce). Refused
-  pins (`board.h`): StickS3 19-20 (USB), 26-37 (in-package flash and octal
+- `gpio_esp.c`: the `GpioHal` under the `gpio` port driver
+  (`runtime/gpio/gpio.c`: cfg `{Pin, Mode, Edge, DebounceMs}`, default
+  debounce 20 ms, `Write{Value}` on outputs, events `{pin, level}`, the
+  same code as on unix). A watched input uses an any-edge interrupt; the
+  handler reads the level and calls `gpio_edge`, which pushes to the event
+  ring, then notifies, never locking or allocating. For a single-edge pin
+  `gpio_edge` also drops an edge that comes less than the debounce time
+  after the previous level change (a key release's bounce). The 49 pin
+  slots (`GpioPin`, 20 B each) are this file's static storage. Refused
+  pins (`board.h` `BOARD_RESERVED_MASK`): StickS3 19-20 (USB), 26-37 (in-package flash and octal
   PSRAM of the ESP32-S3-PICO-1-N8R8), 21, 38-41, 45 (LCD), 47-48 (M5PM1
   I2C), 42 and 46 (IR), 14-18 (codec I2S); Cardputer ADV 19-20 (USB), 26-32
   (flash), 33-38 (LCD), 12, 14, 39, 40 (SD card), 8-9 (I2C bus), 10 (battery

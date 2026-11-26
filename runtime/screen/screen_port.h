@@ -72,7 +72,7 @@ void screen_port_ignore(struct Vm *vm, Port *p, uint32_t type, const int32_t *f,
 
 #define SCREEN_PORT_DRIVER(open_fn) \
     { PORT_NAME_SCREEN, TYPE_SCREEN_CONFIG, TYPE_DONE, (open_fn), screen_port_ignore, screen_port_close, \
-      screen_port_can_event, NULL, screen_port_command, NULL }
+      screen_port_can_event, NULL, screen_port_command, NULL, NULL }
 
 /* Tests: the grid of an open screen port, NULL if p is not one. */
 const ScreenGrid *screen_port_grid(const Port *p);
