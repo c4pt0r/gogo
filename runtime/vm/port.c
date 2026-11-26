@@ -146,7 +146,7 @@ static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
     if (!ok) {
         /* Refused. Bump the generation anyway: anything the driver pushed
          * under it is stale. */
-        if (rc) vm->open_err = GOGO_E_BUSY;
+        if (rc) vm->open_err = rc > 0 ? (uint8_t)rc : GOGO_E_BUSY;
         p->drv = NULL;
         p->gen = (uint16_t)((gen + 1u) & GEN_MASK);
         actor_port_disown(owner);

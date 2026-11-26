@@ -91,6 +91,9 @@ func startOn(t *testing.T, env, prog string, flags, args []string, cfg ...string
 	}
 	n := &node{t: t, name: filepath.Base(prog), more: make(chan struct{}, 1), done: make(chan struct{})}
 	argv := append(append([]string{"--host-net"}, flags...), build(t, prog))
+	if len(flags) > 0 && flags[0] == "--no-host-net" { // the simulated stack, with no network
+		argv = append(append([]string{}, flags[1:]...), build(t, prog))
+	}
 	n.cmd = exec.Command(vm, append(argv, args...)...)
 	n.cmd.Env = append(os.Environ(), "GOGO_CONFIG="+conf)
 	out, err := n.cmd.StdoutPipe()
@@ -264,5 +267,14 @@ func TestServerLost(t *testing.T) {
 	if strings.Join(events, "|") != strings.Join(want, "|") || got[0] != "w ready" ||
 		got[5] != "call to lost node false true" || got[6] != "connect again false" {
 		t.Errorf("watcher output %q", got)
+	}
+}
+
+// Without a network (gogovm without --host-net or --net-fd), or without
+// the drivers, Listen and Connect say Unsupported.
+func TestNoNetwork(t *testing.T) {
+	for _, flags := range [][]string{{"--no-host-net"}, {"--without", "tcp,tcp_listen,node"}} {
+		n := startVM(t, "nonet", flags)
+		n.finish("listen true\nconnect true\n")
 	}
 }

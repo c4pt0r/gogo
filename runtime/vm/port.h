@@ -71,7 +71,8 @@ typedef struct PortDriver {
     const char *name;
     uint32_t cfg_type;      /* reserved type index the cfg struct must have */
     uint32_t event_type;    /* reserved type of event messages: struct of 2 ints (a, b) */
-    /* cfg: the cfg struct's int fields in order. 0 = ok, else refuse. */
+    /* cfg: the cfg struct's int fields in order. 0 = ok; a GOGO_E_* code
+     * (> 0) refuses for that reason, anything else (< 0) as busy. */
     int  (*open)(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n);
     /* A command struct of reserved type `type` whose fields are all int. */
     void (*command)(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n);
@@ -137,7 +138,8 @@ term port_open(struct Vm *vm, struct Actor *owner, term name, term cfg);   /* po
  * GOGO_E_TOOMANY (the port table is full), GOGO_E_NOMEMORY (the owner
  * cannot take the port's charge and room, or the port count) or
  * GOGO_E_BUSY (the driver refused: the resource is taken, or a cfg it
- * cannot use). port_open_with of a driver without `open`, a C caller's
+ * cannot use), or the code a driver's open returned (> 0: e.g.
+ * GOGO_E_UNSUPPORTED, no network at all). port_open_with of a driver without `open`, a C caller's
  * mistake, leaves it as it was; after a success it is meaningless. Go code
  * still gets only port.Open's ok == false; the reason is for C callers
  * (gogo/fs's Open) until the language has `error`. */

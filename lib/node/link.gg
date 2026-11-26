@@ -132,10 +132,14 @@ func waitConnected(conn actor.PID, deadline int64) errors.Code {
 	}
 }
 
-// codeOf is err's code (port.Open's errors are Codes).
+// codeOf is err's code (port.Open's errors are Codes). A driver this VM
+// does not have ("tcp", "tcp_listen", "node": NotFound) is Unsupported.
 func codeOf(err error) errors.Code {
 	switch c := err.(type) {
 	case errors.Code:
+		if c == errors.NotFound {
+			return errors.Unsupported
+		}
 		return c
 	}
 	return errors.IO
