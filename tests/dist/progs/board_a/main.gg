@@ -19,6 +19,12 @@ type Pong struct {
 	Node string
 }
 
+// Shape's second field is an int here, a string on the server.
+type Shape struct {
+	A int
+	B int
+}
+
 // next returns the next message other than node.Up (at most 5 s).
 func next() any {
 	for {
@@ -72,6 +78,38 @@ func main() {
 	case actor.ExitMsg:
 		println("exit", m.From == v2, m.Reason.Code)
 	}
+
+	// Remote Kill: victim3 exits with the code.
+	v3, _ := node.Whereis("server", "victim3", 2000)
+	r3 := actor.Monitor(v3)
+	actor.Kill(v3, 125)
+	switch m := next().(type) {
+	case actor.DownMsg:
+		println("killed", m.Ref == r3, m.Reason.Code)
+	}
+
+	// Killed through a link reaches a trapping actor as an ExitMsg.
+	v4, _ := node.Whereis("server", "victim4", 2000)
+	actor.Link(v4)
+	actor.Kill(v4, actor.Killed)
+	switch m := next().(type) {
+	case actor.ExitMsg:
+		println("link killed", m.From == v4, m.Reason.Code == actor.Killed)
+	}
+
+	// SendAfter to a remote PID: BadMsg.
+	sa := actor.Spawn(func() { actor.SendAfter(10, echo, "late") })
+	sar := actor.Monitor(sa)
+	switch m := next().(type) {
+	case actor.DownMsg:
+		println("sendafter", m.Ref == sar, m.Reason.Code == actor.BadMsg)
+	}
+
+	// A struct of the same name and field count but other field kinds is
+	// dropped by the receiver: the Call times out.
+	sh, _ := node.Whereis("server", "shape", 2000)
+	_, ok = actor.Call(sh, Shape{A: 1, B: 2}, 500)
+	println("shape mismatch answered", ok)
 
 	// A value that may not leave the node: the sender crashes with BadMsg.
 	h := actor.Spawn(func() {

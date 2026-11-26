@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -144,6 +145,16 @@ func (n *node) finish(want string) {
 	}
 }
 
+// wait waits for the node to exit by itself.
+func (n *node) wait() {
+	n.t.Helper()
+	select {
+	case <-n.done:
+	case <-time.After(20 * time.Second):
+		n.t.Fatalf("%s still running", n.name)
+	}
+}
+
 func (n *node) kill() {
 	n.cmd.Process.Signal(syscall.SIGKILL)
 	<-n.done
@@ -184,6 +195,10 @@ pong 42 server
 same pid true
 down true true 123
 exit true 124
+killed true 125
+link killed true true
+sendafter true true
+shape mismatch answered false
 badmsg true true
 whereis becho true
 relay call true hello from b
@@ -210,5 +225,16 @@ func TestServerLost(t *testing.T) {
 	w := start(t, "watcher", fmt.Sprintf("test.server=127.0.0.1:%d", port))
 	w.waitLine("w ready")
 	srv.kill()
-	w.finish("w ready\ndown true 11\nexit 11\nnode down server\nconnect again false\n")
+	w.wait()
+	got := w.output()
+	if len(got) != 7 {
+		t.Fatalf("watcher output %q", got)
+	}
+	events := append([]string(nil), got[1:5]...)
+	sort.Strings(events)
+	want := []string{"call in flight false true", "down true 11", "exit 11", "node down server"}
+	if strings.Join(events, "|") != strings.Join(want, "|") || got[0] != "w ready" ||
+		got[5] != "call to lost node false true" || got[6] != "connect again false" {
+		t.Errorf("watcher output %q", got)
+	}
 }

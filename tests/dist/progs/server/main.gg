@@ -32,6 +32,32 @@ func echo() {
 	}
 }
 
+// Shape has the same name and field count as board a's, but another
+// field kind: a's Shape never reaches shaper.
+type Shape struct {
+	A int
+	B string
+}
+
+func shaper() {
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.Request:
+			switch m.Body.(type) {
+			case Shape:
+				actor.Reply(m, "shape ok")
+			}
+		}
+	}
+}
+
+// slow never answers.
+func slow() {
+	for {
+		actor.Receive()
+	}
+}
+
 // victim exits with code when it gets "die".
 func victim(code int) {
 	for {
@@ -55,6 +81,10 @@ func main() {
 	node.Register("echo", actor.Spawn(echo))
 	node.Register("victim", actor.Spawn(func() { victim(123) }))
 	node.Register("victim2", actor.Spawn(func() { victim(124) }))
+	node.Register("victim3", actor.Spawn(func() { victim(0) }))
+	node.Register("victim4", actor.Spawn(func() { victim(0) }))
+	node.Register("shape", actor.Spawn(shaper))
+	node.Register("slow", actor.Spawn(slow))
 	println("listening")
 	for {
 		switch m := actor.Receive().(type) {
