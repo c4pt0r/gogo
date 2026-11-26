@@ -490,7 +490,8 @@ FatFs).
   of a path with an open file are `Busy`; on `/sd`, opening a file that
   is being read with `Write` (which truncates) is `Busy` too, `Append` is
   allowed. A reader may open a file that is being written; what it sees
-  is not specified.
+  is not specified. An open file's slot keeps its path's length and
+  32-bit hash, not the path; two paths are the same when both match.
 - **`gogo/kv`**: one file per key under `/flash/kv/`. `Get(key)
   (bytes.Bytes, fs.Err)` (a missing key is `fs.NotFound`; read errors are
   returned as they are), `Put(key, v any) fs.Err` (`string` or `Bytes`,

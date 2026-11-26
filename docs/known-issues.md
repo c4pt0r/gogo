@@ -324,6 +324,11 @@ rebuilt:
 - **Case handling.** `/sd` is case-insensitive and `/flash` is not. The
   host backend (`gogo run --fs-root`) follows the host file system: on a
   case-insensitive host a rename that changes only case gives `Exists`.
+- **Busy compares a hash.** The Busy rules tell paths apart by their
+  length and a 32-bit hash, not their text, so two different paths of
+  the same length whose hashes collide (about 1 in 4 billion per pair)
+  count as one: opening the second for `Write` or removing it while the
+  first is open gives `Busy`.
 - **`WriteFile` uses `<name>.tmp`** and truncates that file even when
   someone else has it open.
 - **LittleFS formats itself** when mounting fails with a corrupt or
