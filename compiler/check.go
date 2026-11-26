@@ -196,7 +196,7 @@ func (c *checker) decl(d ast.Decl) {
 			c.unsupported(d, "generic function")
 			return
 		}
-		if d.Name.Name == "init" {
+		if d.Name.Name == "init" && d.Recv == nil { // a method may be called init
 			c.unsupported(d, "func init") // would never be called
 			return
 		}

@@ -79,6 +79,7 @@ func main() {
 
 	// Same method name on different types.
 	println(Name{"n"}.String(), Tag(3).String(), String())
+	println(Name{"i"}.init())
 }
 
 type Name struct{ S string }
@@ -96,3 +97,6 @@ func (t Tag) String() string {
 }
 
 func String() string { return "func" }
+
+// init is an ordinary method name; only func init is rejected.
+func (n Name) init() string { return "init:" + n.S }
