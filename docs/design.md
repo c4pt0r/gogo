@@ -2158,10 +2158,11 @@ value is typed. `gogo config keys` prints it.
   carries it: `runtime/vm/*.c` compiled with the firmware's flags, linked
   with relaxation and `--gc-sections` from the VM's API (the exports that
   code outside `runtime/vm` names), and `.text` + `.rodata` + `.literal`
-  of the result summed, about 38.1 KB (38149 B in November 2026), with a
-  per-file table from the linker map. It agrees with a real build: the
-  VM objects' sections in the StickS3 IDF build's `gogo.map` add up to
-  37697 B against 37750 B here without the 399 B pool of merged strings,
+  of the result summed, about 36.2 KB (36195 B at the end of November
+  2026), with a per-file table from the linker map. It agrees with a real
+  build: for the tree it was checked on (38149 B), the VM objects'
+  sections in the StickS3 IDF build's `gogo.map` add up to 37697 B
+  against 37750 B here without the 399 B pool of merged strings,
   which the IDF map gives to another object (0.14 %;
   `platform/esp32s3/vmsize.sh` reads that map). The older
   measure, the sum of the unlinked objects' sections without the firmware
