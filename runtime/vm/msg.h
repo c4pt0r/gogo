@@ -40,8 +40,11 @@ static inline size_t msg_alloc_bytes(uint16_t words) {
     return sizeof(Msg) + (size_t)words * 4u;
 }
 
-/* Words the block of a message of `words` data words takes. */
-uint32_t msg_footprint_words(uint16_t words);
+/* Words the block of a message of `words` data words takes. Inline: with
+ * a constant (signals.c's notices, the net drivers' reserves) it folds. */
+static inline uint32_t msg_footprint_words(uint16_t words) {
+    return (uint32_t)((msg_alloc_bytes(words) + 3u) / 4u);
+}
 
 /* Words a queued message is charged, as counted in mbox_words (and in a
  * SendAfter creator's timer charge): its block plus the full length of each

@@ -227,10 +227,6 @@ uint32_t msg_charge_words(Vm *vm, const Msg *m) {
     return w;
 }
 
-uint32_t msg_footprint_words(uint16_t words) {
-    return (uint32_t)((msg_alloc_bytes(words) + 3u) / 4u);
-}
-
 /* msg_build with `skip` reserved words (zeroed) before the objects: sizes
  * the copy first (checking the module rules), allocates the message once,
  * then copies into it: a Cheney copy (objects appended in order, a scan
