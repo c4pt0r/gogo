@@ -9,6 +9,7 @@
 #include "interp.h"
 #include "opcodes.h"
 #include "term.h"
+#include "module.h"
 #include <string.h>
 
 /* Capture diagnostics (see platform_unix.c) so test output stays clean. */
@@ -523,80 +524,274 @@ TEST(clear_out_of_range_is_badcode) {
     CHECK(a == NULL);
 }
 
-/* Every operand that names a register (or a register range) is checked
- * against the frame's register count: one past the end is badcode for
- * every op that reads or writes it (opcodes.h names the operands). Each
- * row is an instruction with one operand out of range, the others valid. */
-TEST(register_operands_out_of_range_are_badcode) {
-    static const uint32_t bad[] = {
-        /* a single register past the last (r4 of 4) */
-        OP_MAKE(OP_MOVE, 4, 0, 0), OP_MAKE(OP_MOVE, 0, 4, 0),
-        OP_MAKE(OP_LOADK, 4, 0, 0), OP_MAKE(OP_LOADI32, 4, 0, 0),
-        OP_MAKE(OP_ADD, 4, 0, 0), OP_MAKE(OP_SUB, 0, 4, 0), OP_MAKE(OP_SHL, 0, 0, 4),
-        OP_MAKE(OP_NEG, 4, 0, 0), OP_MAKE(OP_NEG, 0, 4, 0),
-        OP_MAKE(OP_EQ, 4, 0, 0), OP_MAKE(OP_NE, 0, 4, 0), OP_MAKE(OP_LT, 0, 0, 4), OP_MAKE(OP_LE, 0, 4, 0),
-        OP_MAKE(OP_NOT, 4, 0, 0), OP_MAKE(OP_NOT, 0, 4, 0),
-        OP_MAKE(OP_JMPF, 4, 0, 0), OP_MAKE(OP_JMPT, 4, 0, 0),
-        OP_MAKE(OP_CALL, 4, 0, 0), OP_MAKE(OP_RET, 4, 0, 0),
-        OP_MAKE(OP_NEWSTRUCT, 4, 0, 1), OP_MAKE(OP_MKCLOSURE, 4, 0, 0),
-        OP_MAKE(OP_GETFIELD, 4, 0, 0), OP_MAKE(OP_GETFIELD, 0, 4, 0),
-        OP_MAKE(OP_SETFIELD, 4, 0, 0), OP_MAKE(OP_SETFIELD, 0, 4, 0),
-        OP_MAKE(OP_TYPEIS, 4, 0, 0), OP_MAKE(OP_TYPEIS, 0, 4, 0),
-        OP_MAKE(OP_BUILTIN, 4, 0, 0), OP_MAKE(OP_CONV, 4, 0, 1), OP_MAKE(OP_CONV, 0, 4, 1),
-        OP_MAKE(OP_ADD64, 4, 0, 0), OP_MAKE(OP_MUL64, 0, 4, 0), OP_MAKE(OP_SHRU64, 0, 0, 4),
-        OP_MAKE(OP_NEG64, 4, 0, 0), OP_MAKE(OP_NEG64, 0, 4, 0),
-        OP_MAKE(OP_EQ64, 4, 0, 0), OP_MAKE(OP_LEU64, 0, 0, 4),
-        OP_MAKE(OP_BOX64, 4, 0, 0), OP_MAKE(OP_BOX64, 0, 4, 0),
-        OP_MAKE(OP_CALLV, 4, 0, 0), OP_MAKE(OP_CALLV, 0, 4, 0),
-        OP_MAKE(OP_AND, 4, 0, 0), OP_MAKE(OP_ANDNOT64, 0, 0, 4),
-        /* a range that runs one past the end */
-        OP_MAKE(OP_CLEAR, 1, 4, 0), OP_MAKE(OP_RETN, 1, 4, 0),
-        OP_MAKE(OP_CALL, 0, 1, 4), OP_MAKE(OP_NEWSTRUCT, 0, 1, 4), OP_MAKE(OP_MKCLOSURE, 0, 1, 4),
-        OP_MAKE(OP_BUILTIN, 0, 1, 4), OP_MAKE(OP_CALLV, 0, 1, 3),
+/* ---- operand and builtin-argument checks, each pinned from both sides ----
+ *
+ * probe() runs one instruction (then blocks in RECEIVE) in main, a frame of
+ * PROBE_REGS registers preset to valid values, so that only the operand
+ * under test can make it badcode. main runs as a callee of "outer" (which
+ * then blocks in RECEIVE), so RET and RETN have a caller to return to. The
+ * image also has f1 (2 parameters: RET r0), f2 (none: LOADK r0 1; RET r0)
+ * and f3 (1: RET r0), all named "fn", the reserved types up to Options,
+ * and one own type, TYPE_OWN_BASE, mutable, of 2 fields. outer's
+ * registers hold the same presets as main's. Each row runs with its
+ * operand at the edge of the frame (must not be badcode) and one past it
+ * (must be badcode, in main); most also with it at PROBE_REGS + 2, past
+ * main's two frame words, which is outer's r0: a valid value there, so
+ * only the register check makes that run badcode. */
+#define PROBE_REGS 4u
+#define PROBE_OWN TYPE_OWN_BASE
+/* register presets that need the actor (probe() makes them) */
+#define P_SELF   ((term)0xFFFFFF00u)   /* the actor's own PID */
+#define P_STRUCT ((term)0xFFFFFF10u)   /* a heap struct of the own type */
+#define P_CLO0   ((term)0xFFFFFF20u)   /* a closure of f2, no captures */
+#define P_CLO1   ((term)0xFFFFFF30u)   /* a closure of f3, no captures */
+#define P_OPTS   ((term)0xFFFFFF40u)   /* an actor.Options{MaxMemory: 0} */
+#define P_REQ    ((term)0xFFFFFF50u)   /* an actor.Request{self, zero Ref, 1} */
+static uint32_t probe_img[96];
+
+static term probe_obj(Vm *vm, Actor *a, term t) {
+    uint32_t tag = module_tag(vm, 0);
+    uint32_t words = t == P_STRUCT ? 4u : t == P_OPTS ? 3u : t == P_REQ ? 5u : 2u;
+    uint32_t off = heap_alloc(vm, a, words, NULL, 0);
+    CHECK(off != UINT32_MAX);
+    uint32_t *o = a->mem + off;
+    o[0] = hdr_make(words, t == P_CLO0 || t == P_CLO1 ? K_CLOSURE : K_STRUCT);
+    if (t == P_STRUCT) { o[1] = PROBE_OWN | tag | STRUCT_MUT; o[2] = term_from_int(1); o[3] = term_from_int(2); }
+    else if (t == P_OPTS) { o[1] = TYPE_OPTIONS; o[2] = term_from_int(0); }
+    else if (t == P_REQ) { o[1] = TYPE_REQUEST; o[2] = a->id; o[3] = T_ZEROREF; o[4] = term_from_int(1); }
+    else o[1] = (t == P_CLO0 ? 2u : 3u) | tag;
+    return term_from_ref(off);
+}
+
+static const char *probe(uint32_t op_word, uint32_t ext, const term *regs, bool *exited) {
+    const uint32_t main_words = 4u, outer_off = 9u;
+    const uint32_t fcode[] = {
+        OP_MAKE(OP_RET, 0, 0, 0),                                                 /* f1, at 4 */
+        OP_MAKE(OP_LOADK, 0, 0, 0), term_from_int(1), OP_MAKE(OP_RET, 0, 0, 0),   /* f2, at 5 */
+        OP_MAKE(OP_RET, 0, 0, 0),                                                 /* f3, at 8 */
+        OP_MAKE(OP_CALL, 0, 0, 0), 0, OP_MAKE(OP_BUILTIN, 1, 0, 0), B_RECEIVE,    /* outer, at 9 */
     };
-    for (uint32_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
-        Vm vm; Image img; Actor *a;
-        test_host_arena_forget();   /* one Vm per row, as one per test */
-        /* ext 0 where the op has one: int 0, func 0, type 0, builtin PRINTLN */
-        const uint32_t code[] = { bad[i], 0, OP_MAKE(OP_BUILTIN, 0, 0, 0), B_RECEIVE };
-        const char *err = run_code(code, 4, 4, &vm, &img, &a);
-        if (!strstr(err, "crashed: badcode")) {
-            printf("    instruction %u (op %u): %s\n", i, OP_OP(bad[i]), err);
+    uint32_t *w = probe_img, nf = sizeof fcode / sizeof fcode[0];
+    memset(w, 0, sizeof probe_img);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 5; w[3] = 7;
+    w[4] = 6; w[5] = main_words + nf; w[6] = 0; w[7] = 6;
+    uint32_t *f = w + 8;
+    f[0] = 0;          f[1] = PROBE_REGS << 16;   f[2] = 0;   /* main */
+    f[3] = 4;          f[4] = 2u | (2u << 16);    f[5] = 3;   /* f1 */
+    f[6] = 5;          f[7] = 0u | (1u << 16);    f[8] = 3;   /* f2 */
+    f[9] = 8;          f[10] = 1u | (1u << 16);   f[11] = 3;  /* f3 */
+    f[12] = outer_off; f[13] = PROBE_REGS << 16;  f[14] = 3;  /* outer */
+    uint32_t *ty = f + 15;
+    static const uint8_t reserved_fields[] = { 1, 2, 2, 3, 3, 1 };   /* ProcInfo .. Options */
+    for (uint32_t i = 0; i < 6; i++) { ty[i * 2u] = reserved_fields[i]; ty[i * 2u + 1u] = 3; }
+    ty[12] = 2u | STRUCT_MUT; ty[13] = 3;                             /* the own type */
+    uint32_t *c = ty + 14;
+    c[0] = hdr_make(3, K_STRING); c[1] = 4; memcpy(&c[2], "main", 4);
+    c[3] = hdr_make(3, K_STRING); c[4] = 2; memcpy(&c[5], "fn", 2);
+    uint32_t *code = c + 6;
+    code[0] = op_word; code[1] = ext;
+    code[2] = OP_MAKE(OP_BUILTIN, 0, 0, 0); code[3] = B_RECEIVE;
+    memcpy(code + main_words, fcode, sizeof fcode);
+    static Vm vm; static Image img;
+    va_reset(&vm);
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
+    CHECK_EQ(test_vm_init(&vm, &img, 4), 0);
+    Actor *a = actor_new(&vm, 128);
+    CHECK(a != NULL);
+    CHECK(heap_push_frame(&vm, a, PROBE_REGS, -1));                     /* outer */
+    CHECK(heap_push_frame(&vm, a, PROBE_REGS, (int32_t)outer_off));     /* main, called from outer */
+    for (uint32_t i = 0; i < 2u * PROBE_REGS; i++) {   /* main's, then outer's (above the frame words) */
+        term t = regs[i % PROBE_REGS];
+        if (t == P_SELF) t = a->id;
+        else if (t >= P_SELF) t = probe_obj(&vm, a, t);
+        a->mem[a->fp + i + (i < PROBE_REGS ? 0u : 2u)] = t;
+    }
+    a->pc = img.code;
+    err_len = 0; err_buf[0] = 0;
+    platform_unix_err_hook = capture_err;
+    int rc = interp_run(&vm, a);
+    platform_unix_err_hook = NULL;
+    *exited = rc == RUN_EXIT;
+    if (!*exited) actor_free(&vm, a);
+    return err_buf;
+}
+
+/* A row of the two-sided tests: the instruction and its presets inside
+ * the bounds (ok), and outside (bad). */
+typedef struct { uint32_t ok, bad, ext; term regs[PROBE_REGS], bad_regs[PROBE_REGS]; uint32_t far; } ProbeRow;
+
+static void probe_rows(const ProbeRow *rows, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++) {
+        bool exited;
+        test_host_arena_forget();   /* one Vm per run, as one per test */
+        const char *err = probe(rows[i].ok, rows[i].ext, rows[i].regs, &exited);
+        if (strstr(err, "badcode")) {
+            printf("    row %u (op %u) inside: %s\n", i, OP_OP(rows[i].ok), err);
             CHECK(0);
         }
-        if (a) actor_free(&vm, a);
+        test_host_arena_forget();
+        const term *bad = rows[i].bad_regs[0] ? rows[i].bad_regs : rows[i].regs;
+        err = probe(rows[i].bad, rows[i].ext, bad, &exited);
+        if (!strstr(err, "crashed: badcode in main")) {
+            printf("    row %u (op %u) outside: %s\n", i, OP_OP(rows[i].bad), err);
+            CHECK(0);
+        }
+        if (!rows[i].far) continue;
+        test_host_arena_forget();
+        err = probe(rows[i].far, rows[i].ext, rows[i].regs, &exited);
+        if (!strstr(err, "crashed: badcode in main")) {
+            printf("    row %u (op %u) far outside: %s\n", i, OP_OP(rows[i].far), err);
+            CHECK(0);
+        }
     }
 }
 
-/* A builtin id the VM does not have, a wrong argument count, a two-result
- * builtin whose second result register is past the frame, and a first
- * argument of the wrong kind where it must be a PID or an int are all
- * badcode. r0 = 1, r1 = nil, then BUILTIN ra, rb, rc, id. */
-TEST(builtin_ids_counts_and_kinds_are_badcode) {
-    static const uint32_t bad[][4] = {   /* id, ra, rb, rc */
-        { B_RESERVED_58, 0, 0, 0 }, { B_RESERVED_60, 0, 0, 0 }, { B_SPRINT + 1u, 0, 0, 0 }, { 255, 0, 0, 0 },
-        { B_SELF, 0, 0, 1 }, { B_SEND, 0, 0, 1 }, { B_SEND_AFTER, 0, 0, 2 }, { B_PANIC, 0, 0, 2 },
-        { B_SPAWN_OPT, 0, 0, 1 }, { B_RANDOM, 0, 0, 1 }, { B_STR_CONCAT, 0, 0, 1 }, { B_CONFIG_GET, 0, 0, 2 },
-        { B_WHEREIS, 3, 0, 1 }, { B_RECEIVE_TIMEOUT, 3, 0, 1 }, { B_PORT_OPEN, 3, 0, 2 }, { B_CONFIG_GET, 3, 0, 1 },
-        { B_LINK, 2, 0, 1 }, { B_MONITOR, 2, 1, 1 }, { B_KILL, 2, 0, 2 },
-        { B_SLEEP, 2, 1, 1 }, { B_EXIT, 2, 1, 1 }, { B_SEND_AFTER, 2, 1, 3 }, { B_RECEIVE_TIMEOUT, 2, 1, 1 },
+/* Every operand that names a register (or a register range) is checked
+ * against the frame's register count (op_info in the decoder; CALLV's
+ * argument range in its case), for every op and every such operand:
+ * each row puts one operand at the last register, then one past. */
+TEST(register_operands_checked_at_the_frame_edge) {
+    enum { FA = 1, FB = 2, FC = 4 };   /* the single-register operands */
+    enum { K_INTS, K_TRUES, K_STRUCTS, K_CLO0S, K_CLO1S };
+    static const struct { uint8_t op, f, b, c, kind; uint32_t ext; } ops[] = {
+        { OP_MOVE, FA | FB, 0, 0, K_INTS, 0 }, { OP_LOADK, FA, 0, 0, K_INTS, 0x3u /* int 1 */ },
+        { OP_LOADI32, FA, 0, 0, K_INTS, 5 },
+        { OP_ADD, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_SUB, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_MUL, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_DIV, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_REM, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_NEG, FA | FB, 0, 0, K_INTS, 0 },
+        { OP_EQ, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_NE, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_LT, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_LE, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_NOT, FA | FB, 0, 0, K_TRUES, 0 },
+        { OP_JMPF, FA, 0, 0, K_TRUES, 2 }, { OP_JMPT, FA, 0, 0, K_TRUES, 2 },   /* ext: the RECEIVE */
+        { OP_CALL, FA, 0, 2, K_INTS, 1 }, { OP_RET, FA, 0, 0, K_INTS, 0 },
+        { OP_NEWSTRUCT, FA, 0, 2, K_INTS, PROBE_OWN }, { OP_GETFIELD, FA | FB, 0, 0, K_STRUCTS, 0 },
+        { OP_MKCLOSURE, FA, 0, 1, K_INTS, 3 }, { OP_TYPEIS, FA | FB, 0, 0, K_INTS, TY_INT },
+        { OP_BUILTIN, FA, 0, 0, K_INTS, B_SELF }, { OP_CONV, FA | FB, 0, 1, K_INTS, 0 },
+        { OP_ADD64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_SUB64, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_MUL64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_DIV64, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_REM64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_NEG64, FA | FB, 0, 0, K_INTS, 0 },
+        { OP_EQ64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_NE64, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_LT64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_LE64, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_BOX64, FA | FB, 0, 0, K_INTS, 0 }, { OP_CALLV, FA | FB, 0, 0, K_CLO0S, 0 },
+        { OP_AND, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_OR, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_XOR, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_ANDNOT, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_SHL, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_SHR, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_AND64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_OR64, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_XOR64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_ANDNOT64, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_SHL64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_SHR64, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_DIVU64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_REMU64, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_LTU64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_LEU64, FA | FB | FC, 0, 0, K_INTS, 0 },
+        { OP_SHRU64, FA | FB | FC, 0, 0, K_INTS, 0 }, { OP_SETFIELD, FA | FB, 0, 0, K_STRUCTS, 0 },
     };
-    for (uint32_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
-        Vm vm; Image img; Actor *a;
+    const term presets[][PROBE_REGS] = {
+        { term_from_int(1), term_from_int(1), term_from_int(1), term_from_int(1) },
+        { T_TRUE, T_TRUE, T_TRUE, T_TRUE },
+        { P_STRUCT, P_STRUCT, P_STRUCT, P_STRUCT },
+        { P_CLO0, P_CLO0, P_CLO0, P_CLO0 },
+        { P_CLO1, P_CLO1, P_CLO1, P_CLO1 },
+    };
+    static ProbeRow rows[160];
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < sizeof ops / sizeof ops[0]; i++) {
+        uint32_t op = ops[i].op, b = ops[i].b, c = ops[i].c;
+        for (uint32_t f = FA; f <= FC; f <<= 1) {
+            if (!(ops[i].f & f)) continue;
+            ProbeRow *r = &rows[n++];
+            memset(r, 0, sizeof *r);
+            /* GETFIELD/SETFIELD with the struct in rb: index c 0 either way */
+            r->ok = OP_MAKE(op, f == FA ? PROBE_REGS - 1u : 0u, f == FB ? PROBE_REGS - 1u : b, f == FC ? PROBE_REGS - 1u : c);
+            r->bad = OP_MAKE(op, f == FA ? PROBE_REGS : 0u, f == FB ? PROBE_REGS : b, f == FC ? PROBE_REGS : c);
+            r->far = OP_MAKE(op, f == FA ? PROBE_REGS + 2u : 0u, f == FB ? PROBE_REGS + 2u : b, f == FC ? PROBE_REGS + 2u : c);
+            r->ext = ops[i].ext;
+            memcpy(r->regs, presets[ops[i].kind], sizeof r->regs);
+        }
+    }
+    /* a range that ends at the last register, then one past */
+    static const struct { uint32_t ok, bad, far, ext; uint8_t kind; } ranges[] = {
+        { OP_MAKE(OP_CLEAR, 2, 2, 0), OP_MAKE(OP_CLEAR, 3, 2, 0), OP_MAKE(OP_CLEAR, 5, 2, 0), 0, K_INTS },
+        { OP_MAKE(OP_RETN, 2, 2, 0), OP_MAKE(OP_RETN, 3, 2, 0), OP_MAKE(OP_RETN, 5, 2, 0), 0, K_INTS },
+        { OP_MAKE(OP_CALL, 0, 2, 2), OP_MAKE(OP_CALL, 0, 3, 2), OP_MAKE(OP_CALL, 0, 5, 2), 1, K_INTS },
+        { OP_MAKE(OP_NEWSTRUCT, 0, 2, 2), OP_MAKE(OP_NEWSTRUCT, 0, 3, 2), OP_MAKE(OP_NEWSTRUCT, 0, 5, 2), PROBE_OWN, K_INTS },
+        { OP_MAKE(OP_MKCLOSURE, 0, 2, 2), OP_MAKE(OP_MKCLOSURE, 0, 3, 2), OP_MAKE(OP_MKCLOSURE, 0, 5, 2), 1, K_INTS },
+        { OP_MAKE(OP_BUILTIN, 0, 2, 2), OP_MAKE(OP_BUILTIN, 0, 3, 2), OP_MAKE(OP_BUILTIN, 0, 5, 2), B_SEND, K_INTS },
+        /* CALLV's own check: the arguments rb+1 .. rb+c */
+        { OP_MAKE(OP_CALLV, 0, 2, 1), OP_MAKE(OP_CALLV, 0, 3, 1), 0, 0, K_CLO1S },
+    };
+    for (uint32_t i = 0; i < sizeof ranges / sizeof ranges[0]; i++) {
+        ProbeRow *r = &rows[n++];
+        memset(r, 0, sizeof *r);
+        r->ok = ranges[i].ok; r->bad = ranges[i].bad; r->far = ranges[i].far; r->ext = ranges[i].ext;
+        memcpy(r->regs, presets[ranges[i].kind], sizeof r->regs);
+    }
+    CHECK(n <= sizeof rows / sizeof rows[0]);
+    probe_rows(rows, n);
+}
+
+/* OP_BUILTIN's own checks (builtin_info, and the cases that keep theirs):
+ * an id the VM does not have; the argument count, the right one and one
+ * more, for every builtin with a fixed count; a two-result builtin's ra+1,
+ * at the last register and past it; a PID or int first argument, of the
+ * right kind and not. */
+TEST(builtin_counts_results_and_kinds_checked) {
+    const term I = term_from_int(0), S = T_EMPTYSTR, Z = T_ZEROREF, H = term_from_int(100);
+    static const uint32_t no_such[] = { B_RESERVED_58, B_RESERVED_59, B_RESERVED_60, B_LAST + 1u, 255, 0x10000u };
+    for (uint32_t i = 0; i < sizeof no_such / sizeof no_such[0]; i++) {
+        bool exited;
         test_host_arena_forget();
-        const uint32_t code[] = {
-            OP_MAKE(OP_LOADK, 0, 0, 0), term_from_int(1),
-            OP_MAKE(OP_LOADK, 1, 0, 0), T_NIL,
-            OP_MAKE(OP_BUILTIN, bad[i][1], bad[i][2], bad[i][3]), bad[i][0],
-            OP_MAKE(OP_BUILTIN, 0, 0, 0), B_RECEIVE,
-        };
-        const char *err = run_code(code, 8, 4, &vm, &img, &a);
-        if (!strstr(err, "crashed: badcode")) {
-            printf("    row %u (builtin %u): %s\n", i, bad[i][0], err);
+        const term regs[PROBE_REGS] = { I, I, I, I };
+        if (!strstr(probe(OP_MAKE(OP_BUILTIN, 0, 0, 0), no_such[i], regs, &exited), "crashed: badcode in main")) {
+            printf("    builtin %u: not badcode\n", no_such[i]);
             CHECK(0);
         }
-        if (a) actor_free(&vm, a);
     }
+    /* counts: n arguments from r0 (ra 2, so a second result fits), then n + 1 */
+    const struct { uint32_t id, n; term r[PROBE_REGS]; } counts[] = {
+        { B_SPAWN, 1, { P_CLO0, I, I, I } }, { B_SELF, 0, { I, I, I, I } }, { B_SEND, 2, { I, I, I, I } },
+        { B_RECEIVE, 0, { I, I, I, I } }, { B_MEMORY, 1, { I, I, I, I } },
+        { B_SPAWN_LINK, 1, { P_CLO0, I, I, I } }, { B_SPAWN_OPT, 2, { P_CLO0, P_OPTS, I, I } },
+        { B_LINK, 1, { P_SELF, I, I, I } }, { B_UNLINK, 1, { P_SELF, I, I, I } }, { B_TRAP_EXIT, 1, { T_TRUE, I, I, I } },
+        { B_EXIT, 1, { H, I, I, I } }, { B_KILL, 2, { P_SELF, H, I, I } }, { B_MONITOR, 1, { P_SELF, I, I, I } },
+        { B_DEMONITOR, 1, { Z, I, I, I } }, { B_MAKE_REF, 0, { I, I, I, I } }, { B_RECEIVE_TIMEOUT, 1, { I, I, I, I } },
+        { B_SEND_AFTER, 3, { I, P_SELF, I, I } }, { B_CANCEL_TIMER, 1, { Z, I, I, I } }, { B_SLEEP, 1, { I, I, I, I } },
+        { B_NOW, 0, { I, I, I, I } }, { B_REPLY, 2, { P_REQ, I, I, I } }, { B_REGISTER, 2, { S, P_SELF, I, I } },
+        { B_WHEREIS, 1, { S, I, I, I } }, { B_UNREGISTER, 1, { S, I, I, I } }, { B_PORT_OPEN, 2, { S, S, I, I } },
+        { B_PORT_CLOSE, 1, { I, I, I, I } }, { B_PORT_HANDOFF, 2, { I, I, I, I } }, { B_NET_SUBSCRIBE, 0, { I, I, I, I } },
+        { B_UNIX_TIME, 0, { I, I, I, I } }, { B_SET_UNIX_TIME, 1, { I, I, I, I } }, { B_RANDOM, 0, { I, I, I, I } },
+        { B_PANIC, 1, { I, I, I, I } }, { B_CALL, 3, { P_SELF, I, I, I } },
+    };
+    static ProbeRow rows[64];
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < sizeof counts / sizeof counts[0]; i++) {
+        ProbeRow *r = &rows[n++];
+        memset(r, 0, sizeof *r);
+        r->ok = OP_MAKE(OP_BUILTIN, 2, 0, counts[i].n);
+        r->bad = OP_MAKE(OP_BUILTIN, 2, 0, counts[i].n + 1u);
+        r->ext = counts[i].id;
+        memcpy(r->regs, counts[i].r, sizeof r->regs);
+    }
+    const ProbeRow kinds[] = {
+        /* two results: ra+1 the last register, then past it */
+        { OP_MAKE(OP_BUILTIN, 2, 0, 1), OP_MAKE(OP_BUILTIN, 3, 0, 1), B_WHEREIS, { S, S, S, S }, {0}, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 1), OP_MAKE(OP_BUILTIN, 3, 0, 1), B_RECEIVE_TIMEOUT, { I, I, I, I }, {0}, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 2), OP_MAKE(OP_BUILTIN, 3, 0, 2), B_PORT_OPEN, { S, S, S, S }, {0}, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 1), OP_MAKE(OP_BUILTIN, 3, 0, 1), B_CONFIG_GET, { S, S, S, S }, {0}, 0 },
+        /* (Call to an int: no request, so nothing for the RECEIVE after it) */
+        { OP_MAKE(OP_BUILTIN, 2, 0, 3), OP_MAKE(OP_BUILTIN, 3, 0, 3), B_CALL, { I, I, I, I }, {0}, 0 },
+        /* a PID first argument: the actor itself, then an int */
+        { OP_MAKE(OP_BUILTIN, 2, 0, 1), OP_MAKE(OP_BUILTIN, 2, 0, 1), B_LINK, { P_SELF, I, I, I }, { I, I, I, I }, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 1), OP_MAKE(OP_BUILTIN, 2, 0, 1), B_UNLINK, { P_SELF, I, I, I }, { I, I, I, I }, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 1), OP_MAKE(OP_BUILTIN, 2, 0, 1), B_MONITOR, { P_SELF, I, I, I }, { I, I, I, I }, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 2), OP_MAKE(OP_BUILTIN, 2, 0, 2), B_KILL, { P_SELF, H, I, I }, { I, H, I, I }, 0 },
+        /* an int first argument: an int, then the empty string */
+        { OP_MAKE(OP_BUILTIN, 2, 0, 1), OP_MAKE(OP_BUILTIN, 2, 0, 1), B_SLEEP, { I, I, I, I }, { S, I, I, I }, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 1), OP_MAKE(OP_BUILTIN, 2, 0, 1), B_EXIT, { H, I, I, I }, { S, I, I, I }, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 1), OP_MAKE(OP_BUILTIN, 2, 0, 1), B_RECEIVE_TIMEOUT, { I, I, I, I }, { S, I, I, I }, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 3), OP_MAKE(OP_BUILTIN, 2, 0, 3), B_SEND_AFTER, { I, P_SELF, I, I }, { S, P_SELF, I, I }, 0 },
+        { OP_MAKE(OP_BUILTIN, 2, 0, 3), OP_MAKE(OP_BUILTIN, 2, 0, 3), B_CALL, { P_SELF, I, I, I }, { P_SELF, I, S, I }, 0 },
+    };
+    for (uint32_t i = 0; i < sizeof kinds / sizeof kinds[0]; i++) rows[n++] = kinds[i];
+    CHECK(n <= sizeof rows / sizeof rows[0]);
+    probe_rows(rows, n);
 }
 
 /* Zero PID and zero Ref: typed, equal to themselves only, harmless as
