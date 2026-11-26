@@ -222,9 +222,10 @@ messages, are therefore Go's.
 
 ### Which Go features are missing, and are they coming?
 Expression `switch`, labeled `break`/`continue`, `range` over an int,
-variadic functions, packages of your own and methods with value receivers
-(`func (p Point) Add(q Point) Point`, called statically) are supported.
-Planned, in this order: field assignment (compiler only); then `panic`, type assertions,
+variadic functions, packages of your own, methods with value receivers
+(`func (p Point) Add(q Point) Point`, called statically) and field
+assignment (`p.X = v`, `s[i].X += 1`) are supported.
+Planned, in this order: `panic`, type assertions,
 interfaces and `error`; then pointers (boxed, copied when sent) and pointer receivers, maps (a
 library, deterministic order), read-only package variables and `fmt`; then
 sized integers, floating point (`float32` and `float64`), arrays, embedded

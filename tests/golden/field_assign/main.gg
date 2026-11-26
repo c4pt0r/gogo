@@ -1,0 +1,129 @@
+// Field assignment: every target form, compound ops, value semantics.
+package main
+
+type P struct{ X, Y int }
+
+type Rect struct {
+	Min, Max P
+	Name     string
+}
+
+type Shape struct {
+	Box  Rect
+	Tags []string
+}
+
+type Scene struct {
+	Items []Shape
+	N     int64
+	B     byte
+	V     any
+}
+
+func main() {
+	// p.X = v
+	p := P{1, 2}
+	p.X = 10
+	println(p.X, p.Y, p) // 10 2 {10 2}
+
+	// a.b.c = v
+	r := Rect{Name: "r"}
+	r.Max.X = 3
+	r.Max.Y = 4
+	r.Name = r.Name + "!"
+	println(r.Min.X, r.Max.X, r.Max.Y, r.Name) // 0 3 4 r!
+
+	// s[i].X = v
+	ps := []P{{1, 1}, {2, 2}, {3, 3}}
+	ps[1].X = 20
+	ps[2].Y = ps[1].X + 1
+	println(ps[0], ps[1], ps[2]) // {1 1} {20 2} {3 21}
+
+	// m.Items[i].X = v, and deeper
+	m := Scene{Items: []Shape{{Box: Rect{Name: "a"}}, {Box: Rect{Name: "b"}}}}
+	m.Items[1].Box.Max.X = 7
+	m.Items[0].Box.Name = "first"
+	m.Items[0].Tags = append(m.Items[0].Tags, "t")
+	println(m.Items[0].Box.Name, m.Items[1].Box.Max.X, len(m.Items[0].Tags)) // first 7 1
+
+	// Compound ops and ++ / -- on fields.
+	p.X += 5
+	p.Y *= 3
+	p.Y -= 1
+	p.X++
+	p.Y--
+	println(p) // {16 4}
+	ps[0].X += 100
+	ps[0].Y++
+	m.Items[1].Box.Max.X <<= 2
+	println(ps[0], m.Items[1].Box.Max.X) // {101 2} 28
+	r.Name += "?"
+	m.Items[0].Box.Name += "!"
+	println(r.Name, m.Items[0].Box.Name) // r!? first!
+
+	// int64 fields.
+	m.N = 1 << 40
+	m.N += 1 << 40
+	m.N++
+	m.N *= 2
+	println(m.N) // 4398046511106
+	m.N = 5
+	m.N -= 7
+	println(m.N) // -2
+
+	// byte fields wrap.
+	m.B = 250
+	m.B += 10
+	println(m.B) // 4
+	m.B--
+	m.B--
+	m.B--
+	m.B--
+	m.B--
+	println(m.B) // 255
+
+	// An int64 going into an any field is boxed.
+	var big int64 = 1 << 33
+	m.V = big
+	switch v := m.V.(type) {
+	case int64:
+		println("int64", v) // int64 8589934592
+	}
+
+	// Value semantics: a copy made before the write does not change.
+	q := p
+	p.X = 0
+	println(q.X, p.X) // 16 0
+	e := ps[1]
+	ps[1].Y = 99
+	println(e.Y, ps[1].Y) // 2 99
+	saved := m.Items[1]
+	m.Items[1].Box.Name = "changed"
+	println(saved.Box.Name, m.Items[1].Box.Name) // b changed
+	r2 := r
+	r.Max.X = -1
+	println(r2.Max.X, r.Max.X) // 3 -1
+
+	// A slice element shares its slice's array, as in Go.
+	alias := ps
+	ps[2].X = 42
+	println(alias[2].X) // 42
+
+	// Writing a field of a parameter changes only the callee's copy.
+	println(bump(p), p.X) // 1 0
+
+	// Range variables are copies too.
+	for _, it := range ps {
+		it.X = -5
+	}
+	println(ps[0].X) // 101
+	for i := range ps {
+		ps[i].X = i
+	}
+	println(ps[0].X, ps[1].X, ps[2].X) // 0 1 2
+}
+
+func bump(p P) int {
+	p.X++
+	return p.X
+}

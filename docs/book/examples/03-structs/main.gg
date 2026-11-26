@@ -1,5 +1,5 @@
-// Structs are values. There is no field assignment: write functions that
-// take a struct and return a new one.
+// Structs are values: assignment copies, and assigning a field changes only
+// the variable (or slice element) written, never an earlier copy.
 package main
 
 type Point struct{ X, Y int }
@@ -9,18 +9,15 @@ type Rect struct {
 	Name     string
 }
 
-// move returns a moved copy.
+// move returns a moved copy: p is the function's own copy.
 func move(p Point, dx, dy int) Point {
-	return Point{p.X + dx, p.Y + dy}
+	p.X += dx
+	p.Y += dy
+	return p
 }
 
 func area(r Rect) int {
 	return (r.Max.X - r.Min.X) * (r.Max.Y - r.Min.Y)
-}
-
-// grow returns r with Max moved, keeping the other fields.
-func grow(r Rect, d int) Rect {
-	return Rect{Min: r.Min, Max: move(r.Max, d, d), Name: r.Name}
 }
 
 func main() {
@@ -30,8 +27,19 @@ func main() {
 
 	r := Rect{Min: Point{0, 0}, Max: Point{3, 4}, Name: "box"}
 	println(r.Name, area(r))
-	r = grow(r, 1) // "updating" a field: build a new value and reassign
+	old := r
+	r.Max.X++ // a nested field
+	r.Max.Y++
+	r.Name += "!"
 	println(r.Name, area(r), r)
+	println(old.Name, area(old)) // the copy made before is unchanged
+
+	// A slice element's fields, in place: the slice shares its array.
+	pts := []Point{{0, 0}, {5, 5}}
+	for i := range pts {
+		pts[i].X, pts[i].Y = pts[i].Y, pts[i].X+1 // swap and bump
+	}
+	println(pts[0], pts[1])
 
 	// The zero value of a struct has every field zero.
 	var z Rect

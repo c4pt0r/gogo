@@ -2342,3 +2342,46 @@ func (b Box) Get() int {
 		}
 	}
 }
+
+// TestCompileFieldAssign: x.F = v rebuilds the struct with NEWSTRUCT,
+// copying the other fields with GETFIELD, and stores it back: into the
+// variable's own register, or into the element with SETINDEX. A path
+// rebuilds every struct on it.
+func TestCompileFieldAssign(t *testing.T) {
+	dis := compileSrc(t, `package main
+
+type P struct{ X, Y, Z int }
+
+type R struct{ A, B P }
+
+func main() {
+	p := P{1, 2, 3}
+	p.Y++
+	r := R{}
+	r.B.Z = 5
+	s := []P{p}
+	s[0].X += 9
+	println(p, r, s[0])
+}
+`)
+	_, body := funcDis(t, dis, "main")
+	code := parseIns(t, body)
+	// Literals: P{1, 2, 3}, R{} (two zero Ps and the R), and the P of r.B.Z,
+	// R of r.B.Z and P of s[0].X += 9.
+	if n := countOp(code, "NEWSTRUCT", ", 3, P"); n != 6 {
+		t.Errorf("want 6 NEWSTRUCT of P, got %d:\n%s", n, dis)
+	}
+	if n := countOp(code, "NEWSTRUCT", ", 2, R"); n != 2 {
+		t.Errorf("want 2 NEWSTRUCT of R, got %d:\n%s", n, dis)
+	}
+	// p.Y++ copies X and Z, reads Y; r.B.Z reads A, B and B's X and Y;
+	// s[0].X += 9 copies Y, Z and reads X.
+	if n := countOp(code, "GETFIELD", ""); n != 10 {
+		t.Errorf("want 10 GETFIELD, got %d:\n%s", n, dis)
+	}
+	// s[0].X += 9 reads the element once and writes it back (the
+	// literal and println(s[0]) account for the other two).
+	if countOp(code, "BUILTIN", ", 2, INDEX") != 2 || countOp(code, "BUILTIN", "SETINDEX") != 2 {
+		t.Errorf("want s[0] read and written once:\n%s", dis)
+	}
+}

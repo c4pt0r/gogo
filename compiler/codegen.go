@@ -685,6 +685,10 @@ func (f *fn) stmtCode(s ast.Stmt) {
 			f.indexOpAssign(ix, op, nil)
 			return
 		}
+		if f.isFieldTarget(s.X) { // x.F++
+			f.fieldOpAssign(s.X, op, nil)
+			return
+		}
 		x := f.localOf(s.X)
 		mark := f.next
 		one := f.allocScalar(s) // the constant 1: an immediate
@@ -849,6 +853,14 @@ func (f *fn) assign(s *ast.AssignStmt) {
 		f.indexOpAssign(ix, assignOps[s.Tok], s.Rhs[0]) // s[i] op= e
 		return
 	}
+	if s.Tok != token.ASSIGN && s.Tok != token.DEFINE && f.isFieldTarget(s.Lhs[0]) {
+		f.fieldOpAssign(s.Lhs[0], assignOps[s.Tok], s.Rhs[0]) // x.F op= e
+		return
+	}
+	if len(s.Lhs) == 1 && len(s.Rhs) == 1 && f.isFieldTarget(s.Lhs[0]) {
+		f.fieldAssign(s.Lhs[0], s.Rhs[0]) // x.F = e
+		return
+	}
 	if s.Tok == token.ADD_ASSIGN && isString(f.g.p.Info.TypeOf(s.Lhs[0])) { // s += e
 		x := f.localOf(s.Lhs[0])
 		mark := f.next
@@ -870,15 +882,23 @@ func (f *fn) assign(s *ast.AssignStmt) {
 	// evaluated, so the temporaries sit above them. An element target
 	// s[i] gets three registers [s, i, v], s and i evaluated now (Go
 	// evaluates the index operands on the left first), v filled at the
-	// assignment; index[i] is its first register, or -1.
+	// assignment; index[i] is its first register, or -1. A field target
+	// x.F has its operands evaluated now too (fields[i]; see
+	// fieldTargetOf) and is rebuilt at the assignment.
 	targets := make([]int, len(s.Lhs))
 	index := make([]int, len(s.Lhs))
+	fields := make([]*fieldTarget, len(s.Lhs))
 	var newVars []*types.Var
 	var newRegs []uint8
 	mark := f.next
 	for i, l := range s.Lhs {
 		index[i] = -1
 		id, _ := ast.Unparen(l).(*ast.Ident)
+		if f.isFieldTarget(l) { // x.F: its operands are evaluated now
+			t := f.fieldTargetOf(l)
+			fields[i] = &t
+			continue
+		}
 		if ix, ok := ast.Unparen(l).(*ast.IndexExpr); ok {
 			blk := f.allocN(l, 3)
 			f.exprInto(ix.X, blk)
@@ -905,6 +925,8 @@ func (f *fn) assign(s *ast.AssignStmt) {
 	// store assigns target i from register r.
 	store := func(i int, r uint8) {
 		switch {
+		case fields[i] != nil:
+			f.storeField(s.Lhs[i], *fields[i], func(dst, _ uint8) { f.asm.Emit(OpMove, dst, r, 0) })
 		case index[i] >= 0:
 			blk := uint8(index[i])
 			if r != blk+2 {

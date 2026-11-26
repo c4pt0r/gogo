@@ -115,8 +115,9 @@ type Autopilot struct {
 // the 16 KB default: a View and a few searches over the field (it peaks
 // near 30 KB on the board).
 func startPilot(p Autopilot) Autopilot {
-	pid := actor.SpawnOpt(autopilot.Run, actor.Options{MaxMemory: 64 * 1024})
-	return Autopilot{PID: pid, Ref: actor.Monitor(pid), Up: true, Crashes: p.Crashes, Since: p.Since}
+	p.PID = actor.SpawnOpt(autopilot.Run, actor.Options{MaxMemory: 64 * 1024})
+	p.Ref, p.Up = actor.Monitor(p.PID), true
+	return p
 }
 
 // ask sends the autopilot a View of g. Its patience is twice the field:

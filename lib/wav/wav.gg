@@ -97,7 +97,8 @@ func Write(w Writer, pcm bytes.Bytes) (Writer, fs.Err) {
 	if e != fs.OK {
 		return w, e
 	}
-	return Writer{F: w.F, Path: w.Path, Rate: w.Rate, Planned: w.Planned, N: w.N + pcm.Len()}, fs.OK
+	w.N += pcm.Len()
+	return w, fs.OK
 }
 
 // Close commits and closes the file and makes its header true (see above).

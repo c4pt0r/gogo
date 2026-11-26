@@ -673,7 +673,8 @@ to another actor or used to start one: it carries its data with it.
 
 To make sure the two models never give different answers, gogo rejects any
 assignment to a captured variable after its declaration, inside or outside
-the closure. It also rejects giving `any` a `byte`, because at run time a
+the closure, and writing one of its fields (`p.X = v` changes `p`). It
+also rejects giving `any` a `byte`, because at run time a
 byte cannot be told apart from an `int`:
 
 ```go
@@ -780,15 +781,15 @@ true false
 ## 3.5 Structs and methods
 
 Structs work as in Go: literals with or without field names, nested
-structs, and value semantics (assignment copies). One thing is missing:
-**field assignment**. You cannot write `p.X = 3` yet.
-
-The gogo way is to treat structs as immutable values and write functions
-(or methods, below) that return a new value:
+structs, value semantics (assignment copies) and field assignment:
+`p.X = v`, `r.Max.X++`, `pts[i].Y += 2`, `m.Items[i].Name = "a"`, and
+fields in multi-assignments (`p.X, p.Y = p.Y, p.X`). Index expressions and
+right-hand sides are evaluated first, then the assignments happen left to
+right, as in Go.
 
 ```go
-// Structs are values. There is no field assignment: write functions that
-// take a struct and return a new one.
+// Structs are values: assignment copies, and assigning a field changes only
+// the variable (or slice element) written, never an earlier copy.
 package main
 
 type Point struct{ X, Y int }
@@ -798,18 +799,15 @@ type Rect struct {
 	Name     string
 }
 
-// move returns a moved copy.
+// move returns a moved copy: p is the function's own copy.
 func move(p Point, dx, dy int) Point {
-	return Point{p.X + dx, p.Y + dy}
+	p.X += dx
+	p.Y += dy
+	return p
 }
 
 func area(r Rect) int {
 	return (r.Max.X - r.Min.X) * (r.Max.Y - r.Min.Y)
-}
-
-// grow returns r with Max moved, keeping the other fields.
-func grow(r Rect, d int) Rect {
-	return Rect{Min: r.Min, Max: move(r.Max, d, d), Name: r.Name}
 }
 
 func main() {
@@ -819,8 +817,19 @@ func main() {
 
 	r := Rect{Min: Point{0, 0}, Max: Point{3, 4}, Name: "box"}
 	println(r.Name, area(r))
-	r = grow(r, 1) // "updating" a field: build a new value and reassign
+	old := r
+	r.Max.X++ // a nested field
+	r.Max.Y++
+	r.Name += "!"
 	println(r.Name, area(r), r)
+	println(old.Name, area(old)) // the copy made before is unchanged
+
+	// A slice element's fields, in place: the slice shares its array.
+	pts := []Point{{0, 0}, {5, 5}}
+	for i := range pts {
+		pts[i].X, pts[i].Y = pts[i].Y, pts[i].X+1 // swap and bump
+	}
+	println(pts[0], pts[1])
 
 	// The zero value of a struct has every field zero.
 	var z Rect
@@ -836,14 +845,36 @@ func samePoint(a, b Point) bool { return a.X == b.X && a.Y == b.Y }
 ```text
 1 11 {11 2}
 box 12
-box 20 {{0 0} {4 5} box}
+box! 20 {{0 0} {4 5} box!}
+box 12
+{0 1} {5 6}
 0 true
 true
 ```
 
-This is less odd in an actor program than it sounds. State lives in an
-actor's local variables, and messages are values that are built once and
-sent. Comparing structs with `==` is not supported either; compare fields.
+Writing a field changes only the variable or slice element written:
+`old` keeps the value it had when it was copied, and a function or a
+method that writes a field of its parameter changes only its own copy.
+A slice element is written in place, because a slice shares its array
+(`pts[i].X = v` is seen through every slice of that array, as in Go).
+Comparing structs with `==` is not supported; compare fields.
+
+**What a field write costs.** Inside the VM a struct never changes. `p.X =
+v` builds a new struct with `X` replaced, copies the other fields into it,
+and stores it back into `p` (or into the slice element); for a path such
+as `r.Max.X++` it builds every struct on the path, here a new `Point` and
+a new `Rect`. So each write allocates one struct per level (2 words plus
+one per field), and the old one becomes garbage for the collector. This
+is exactly what rebuilding the struct with a literal by hand
+(`p = Point{p.X + 1, p.Y}`) costs, so prefer the clearer field write.
+In a tight loop it is noticeable: on the host, `p.X++` on a 3-field
+struct takes about twice as long as `x++` on an `int`. In a hot loop
+over a big struct, keep the changing values in local variables and
+write them back once at the end.
+
+A field of a variable that a closure captures cannot be written, for the
+same reason the variable cannot be reassigned (section 3.4): `captured
+variable must not be changed by field assignment`.
 
 Only `actor.PID`, `actor.Ref`, `int`, `int64`, `bool`, `string` and
 named types of those can be compared with `==`. For slices only `s == nil`
@@ -874,7 +905,7 @@ func (p Point) Moved(dx, dy int) Point { return p.Add(Point{dx, dy}) }
 
 // Reset changes only its own copy of p.
 func (p Point) Reset() {
-	p = Point{}
+	p.X, p.Y = 0, 0
 	println("inside", p.X, p.Y)
 }
 
@@ -932,8 +963,9 @@ show 11 12
 A few things to know:
 
 - **A method works on a copy.** Like a parameter, the receiver is the
-  method's own copy: assigning to it changes nothing for the caller. To
-  "update" a value, return the new one and assign it: `p = p.Moved(1, 0)`.
+  method's own copy: assigning to it or to its fields changes nothing for
+  the caller. To "update" a value, return the new one and assign it:
+  `p = p.Moved(1, 0)`.
   A slice field still shares its array, as in Go.
 - **A method value** `f := x.M` is a func value that captured a copy of
   `x` when it was made. Like any func value it can be spawned, stored in a
@@ -1331,9 +1363,9 @@ func main() {
 		goto done // goto
 	}
 done:
-	var a [4]int // array
-	s := Sq{1}
-	s.S = 2 // field assignment
+	var a [4]int      // array
+	y := any(1).(int) // type assertion
+	_ = y
 	println(m, p, x, a[0])
 	panic("boom")
 }
@@ -1355,7 +1387,7 @@ main.gg:26:7: gogo: float not supported
 main.gg:28:3: gogo: goto statement not supported
 main.gg:30:1: gogo: label on a statement other than for or switch not supported
 main.gg:31:8: gogo: array not supported
-main.gg:33:2: gogo: field assignment not supported
+main.gg:32:7: gogo: type assertion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
 main.gg:34:16: gogo: float not supported
@@ -1378,7 +1410,6 @@ The full list, with what to do instead:
 | pointers, `&x`, `*p` | `pointer not supported` | values; state in actors |
 | pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
 | your own interfaces | `interface types are not supported yet: call methods on the concrete type` | function values (method values too), or messages and a type switch |
-| `p.X = v` | `field assignment not supported` | build a new struct |
 | `switch` on an `any` or a struct | `switch on a value of type any not supported` | a type switch; compare fields |
 | type assertion `x.(T)` | `type assertion not supported` (and `multi-value assignment not supported` for `v, ok := x.(T)`) | a type switch |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |

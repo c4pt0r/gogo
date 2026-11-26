@@ -28,9 +28,9 @@ func main() {
 		goto done // goto
 	}
 done:
-	var a [4]int // array
-	s := Sq{1}
-	s.S = 2 // field assignment
+	var a [4]int      // array
+	y := any(1).(int) // type assertion
+	_ = y
 	println(m, p, x, a[0])
 	panic("boom")
 }

@@ -105,31 +105,17 @@ func main() {
 	println("tuidemo: bye,", st[0].Name)
 }
 
-// with returns st with the given fields changed (no field assignment yet).
-func withMenu(st State, m tui.List) State {
-	return State{Menu: m, Mode: st.Mode, Running: st.Running, Progress: st.Progress, Ticks: st.Ticks, Name: st.Name,
-		Names: st.Names, Edit: st.Edit, Status: st.Status, Kbd: st.Kbd}
-}
-
-func withJob(st State, running bool, progress, ticks int, status string) State {
-	return State{Menu: st.Menu, Mode: st.Mode, Running: running, Progress: progress, Ticks: ticks, Name: st.Name,
-		Names: st.Names, Edit: st.Edit, Status: status, Kbd: st.Kbd}
-}
-
-func withMode(st State, mode int, e tui.Edit, name string, n int, status string) State {
-	return State{Menu: st.Menu, Mode: mode, Running: st.Running, Progress: st.Progress, Ticks: st.Ticks, Name: name,
-		Names: n, Edit: e, Status: status, Kbd: st.Kbd}
-}
-
 func onTick(st State) State {
 	if !st.Running {
 		return st
 	}
-	p := st.Progress + 5
-	if p >= 100 {
-		return withJob(st, false, 100, st.Ticks+1, "job done")
+	st.Ticks++
+	st.Progress += 5
+	st.Status = "running"
+	if st.Progress >= 100 {
+		st.Progress, st.Running, st.Status = 100, false, "job done"
 	}
-	return withJob(st, true, p, st.Ticks+1, "running")
+	return st
 }
 
 // onKey applies k; false quits.
@@ -137,19 +123,20 @@ func onKey(st State, k tui.Key) (State, bool) {
 	switch st.Mode {
 	case modeEdit:
 		e, what := tui.EditKey(st.Edit, k)
+		st.Edit = e
 		switch what {
 		case tui.EditDone:
-			if e.Text == "" {
-				return withMode(st, modeMenu, e, st.Name, st.Names, "name unchanged"), true
+			st.Mode, st.Status = modeMenu, "name unchanged"
+			if e.Text != "" {
+				st.Name, st.Status = e.Text, "renamed"
 			}
-			return withMode(st, modeMenu, e, e.Text, st.Names, "renamed"), true
 		case tui.EditCancel:
-			return withMode(st, modeMenu, e, st.Name, st.Names, "rename cancelled"), true
+			st.Mode, st.Status = modeMenu, "rename cancelled"
 		}
-		return withMode(st, modeEdit, e, st.Name, st.Names, st.Status), true
+		return st, true
 	case modeAbout:
 		if k.Code == tui.KeyEnter || k.Code == tui.KeyEsc {
-			return withMode(st, modeMenu, st.Edit, st.Name, st.Names, st.Status), true
+			st.Mode = modeMenu
 		}
 		return st, true
 	}
@@ -157,25 +144,26 @@ func onKey(st State, k tui.Key) (State, bool) {
 		return st, false
 	}
 	m, chosen := tui.ListKey(st.Menu, k)
-	st = withMenu(st, m)
+	st.Menu = m
 	switch chosen {
 	case itemStart:
 		if st.Progress >= 100 {
-			return withJob(st, true, 0, st.Ticks, "running"), true
+			st.Progress = 0
 		}
-		return withJob(st, true, st.Progress, st.Ticks, "running"), true
+		st.Running, st.Status = true, "running"
 	case itemPause:
-		return withJob(st, false, st.Progress, st.Ticks, "paused"), true
+		st.Running, st.Status = false, "paused"
 	case itemReset:
-		return withJob(st, false, 0, 0, "reset"), true
+		st.Running, st.Progress, st.Ticks, st.Status = false, 0, 0, "reset"
 	case itemRename:
 		if st.Kbd {
-			return withMode(st, modeEdit, tui.NewEdit(st.Name, 16), st.Name, st.Names, "editing"), true
+			st.Mode, st.Edit, st.Status = modeEdit, tui.NewEdit(st.Name, 16), "editing"
+		} else {
+			st.Names++
+			st.Name, st.Status = preset(st.Names), "renamed"
 		}
-		n := st.Names + 1
-		return withMode(st, modeMenu, st.Edit, preset(n), n, "renamed"), true
 	case itemAbout:
-		return withMode(st, modeAbout, st.Edit, st.Name, st.Names, st.Status), true
+		st.Mode = modeAbout
 	case itemQuit:
 		return st, false
 	}

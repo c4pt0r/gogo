@@ -640,10 +640,24 @@ func (c *checker) capturedWrites(body *ast.BlockStmt, sig *types.Signature) {
 		return
 	}
 	write := func(e ast.Expr) {
+		// A field assignment x.F = v writes x (but s[i].F = v writes
+		// the slice's shared array, not s).
+		x, field := ast.Unparen(e), false
+		for {
+			sel, ok := x.(*ast.SelectorExpr)
+			if !ok || c.p.Info.Selections[sel] == nil {
+				break
+			}
+			x, field = ast.Unparen(sel.X), true
+		}
 		// Uses, not Defs: the variables a := declares are not writes.
-		if id, ok := ast.Unparen(e).(*ast.Ident); ok {
+		if id, ok := x.(*ast.Ident); ok {
 			if v, ok := c.p.Info.Uses[id].(*types.Var); ok && captured[v] {
-				c.fail(id.Pos(), "captured variable must not be reassigned")
+				if field {
+					c.fail(e.Pos(), "captured variable must not be changed by field assignment")
+				} else {
+					c.fail(id.Pos(), "captured variable must not be reassigned")
+				}
 			}
 		}
 	}
@@ -707,7 +721,7 @@ func (c *checker) lhs(e ast.Expr) {
 	case *ast.ParenExpr:
 		c.lhs(e.X)
 	case *ast.SelectorExpr:
-		c.unsupported(e, "field assignment")
+		c.fieldLhs(e)
 	case *ast.IndexExpr:
 		if !isSlice(c.p.Info.TypeOf(e.X)) {
 			c.unsupported(e, "index assignment to "+types.TypeString(c.p.Info.TypeOf(e.X), nil))
@@ -721,6 +735,29 @@ func (c *checker) lhs(e ast.Expr) {
 		c.unsupported(e, "pointer assignment")
 	default:
 		c.unsupported(e, kindName(e))
+	}
+}
+
+// fieldLhs checks a field assignment target x.F, where x is a local
+// variable, a slice element s[i] or, in turn, a field of a struct (a.b.c).
+func (c *checker) fieldLhs(e *ast.SelectorExpr) {
+	sel := c.p.Info.Selections[e]
+	if sel == nil || sel.Kind() != types.FieldVal {
+		c.unsupported(e, "assignment to "+types.ExprString(e))
+		return
+	}
+	if t := c.p.Info.TypeOf(e.X); structType(t) == nil {
+		c.unsupported(e, "field assignment on "+types.TypeString(t, pkgName))
+		return
+	}
+	switch x := ast.Unparen(e.X).(type) {
+	case *ast.Ident:
+	case *ast.SelectorExpr:
+		c.fieldLhs(x)
+	case *ast.IndexExpr:
+		c.lhs(x)
+	default:
+		c.unsupported(e, "field assignment to "+kindName(x))
 	}
 }
 

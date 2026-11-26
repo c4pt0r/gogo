@@ -149,7 +149,8 @@ func NewList(items []string, rows int) List {
 func ListSelect(l List, i int) List {
 	n := len(l.Items)
 	if n == 0 {
-		return List{Items: l.Items, Rows: l.Rows}
+		l.Sel, l.Top = 0, 0
+		return l
 	}
 	if i < 0 {
 		i = 0
@@ -157,14 +158,14 @@ func ListSelect(l List, i int) List {
 	if i >= n {
 		i = n - 1
 	}
-	top := l.Top
-	if i < top {
-		top = i
+	l.Sel = i
+	if i < l.Top {
+		l.Top = i
 	}
-	if i >= top+l.Rows {
-		top = i - l.Rows + 1
+	if i >= l.Top+l.Rows {
+		l.Top = i - l.Rows + 1
 	}
-	return List{Items: l.Items, Sel: i, Top: top, Rows: l.Rows}
+	return l
 }
 
 // ListKey handles k: Up and Down move the selection (wrapping around at
@@ -319,24 +320,27 @@ func EditKey(e Edit, k Key) (Edit, int) {
 		if k.Char >= 32 && k.Char <= 126 {
 			c = printable[k.Char-32 : k.Char-31]
 		}
-		return Edit{Text: t[:p] + c + t[p:], Pos: p + 1, Off: e.Off, Max: e.Max}, EditChanged
+		e.Text, e.Pos = t[:p]+c+t[p:], p+1
+		return e, EditChanged
 	case KeyBackspace:
 		if p == 0 {
 			return e, EditNone
 		}
-		return Edit{Text: t[:p-1] + t[p:], Pos: p - 1, Off: e.Off, Max: e.Max}, EditChanged
+		e.Text, e.Pos = t[:p-1]+t[p:], p-1
+		return e, EditChanged
 	case KeyDelete:
 		if p >= len(t) {
 			return e, EditNone
 		}
-		return Edit{Text: t[:p] + t[p+1:], Pos: p, Off: e.Off, Max: e.Max}, EditChanged
+		e.Text = t[:p] + t[p+1:]
+		return e, EditChanged
 	case KeyLeft:
 		if p > 0 {
-			return Edit{Text: t, Pos: p - 1, Off: e.Off, Max: e.Max}, EditNone
+			e.Pos--
 		}
 	case KeyRight:
 		if p < len(t) {
-			return Edit{Text: t, Pos: p + 1, Off: e.Off, Max: e.Max}, EditNone
+			e.Pos++
 		}
 	case KeyEnter:
 		return e, EditDone
@@ -383,5 +387,6 @@ func DrawEdit(f Frame, e Edit, x, y, w int, focus bool) Edit {
 	if focus {
 		Cursor(f, x+e.Pos-off, y, true)
 	}
-	return Edit{Text: e.Text, Pos: e.Pos, Off: off, Max: e.Max}
+	e.Off = off
+	return e
 }

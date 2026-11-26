@@ -205,6 +205,19 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   opcode of their own. Pointer receivers and interface types are rejected
   ("pointer receivers are not supported yet", "interface types are not
   supported yet").
+- Field assignment: `p.X = v`, `s[i].X = v`, `a.b.c = v`,
+  `m.Items[i].X = v`, `op=` and `++`/`--` on a field, and fields in
+  multi-assignments (index operands and right-hand sides first, then the
+  assignments left to right, as in Go). Structs stay immutable in the
+  VM: a write builds a new struct (`GETFIELD` of every other field,
+  `NEWSTRUCT`) and stores it back to the variable, or to the element
+  with `SETINDEX`; on a path every struct is rebuilt, innermost first.
+  A copy made before the write keeps the old value, as Go's value
+  semantics require. Each write allocates one struct (2 + fields words)
+  per struct on its path, the same as rebuilding it with a literal by
+  hand. A field write to a variable a closure captures is rejected
+  ("captured variable must not be changed by field assignment"). No
+  opcode of its own.
 - `println` of any value of the subset except `Bytes` and `Buffer`;
   slices print their elements, `[1 2 3]` (Go's `println` prints
   `[len/cap]address`). Nesting deeper than 16 prints as `{...}` /
@@ -220,8 +233,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
 milestone):** maps, pointers (and pointer receivers), arrays, integer types other than
 `int`, `int64` and `byte` (`uint32` included), package-level variables,
 a `switch` on an `any` or a struct value, type assertions, `panic`, the
-`error` interface, assignment to struct fields and interfaces other than
-`any`.
+`error` interface and interfaces other than `any`.
 Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 
@@ -235,7 +247,10 @@ variable into the closure when it is created (the capture slots of its
 same result, the compiler requires a captured variable to be assigned
 only once: any write after its declaration, inside or outside the
 closure (`=`, `op=`, `++`/`--`, a `:=` redeclaration), is rejected with
-"captured variable must not be reassigned". A `return` with values also
+"captured variable must not be reassigned", and so is a write to one of
+its fields (`p.X = v`). A write to a field of a captured slice's element
+(`s[i].X = v`) changes the shared array, not the variable, and is
+allowed. A `return` with values also
 writes every named result, so a function whose named result is captured
 rejects such returns ("captured named result must not be set by
 return"); a bare `return` writes nothing and is allowed. A consequence:
@@ -1893,7 +1908,7 @@ variadic functions, methods with value receivers).
 2. **Distributed actors:** remote PIDs and a `gogo/node` library; boards
    connect to a server node that also relays board-to-board messages,
    with direct LAN links as a later step.
-3. **Language completeness:** pointer receivers, field assignment, interfaces and
+3. **Language completeness:** pointer receivers, interfaces and
    `error`, `panic`, pointers, maps, read-only package variables, `fmt`,
    sized integers, `float32`/`float64`, arrays, embedded fields, static
    `defer`; `sys.Args()` for scripts.

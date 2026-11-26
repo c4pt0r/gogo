@@ -379,7 +379,6 @@ as `code.Err(errors.X)` under the same names.
 | floats, complex, `uint`, `int8/16/32`, `uint16/32/64`, `uintptr` | none; `int`, `int64`, `byte` |
 | arrays, maps, pointers | slices only |
 | methods, interfaces | functions; type switches over `any` |
-| `p.X = v` | build a new struct |
 | `switch` on an interface or a struct value, `goto` | type switch, compare fields; labeled `break`/`continue` |
 | type assertions `x.(T)` | type switch |
 | generics | none |
