@@ -1256,6 +1256,34 @@ TEST(code_builtin_ops) {
     free(f);
 }
 
+/* The range of H that can name a module, at both ends: 0x10001 (slot 1,
+ * generation 0) and GOGO_MAX_MODULES << 16 (the last slot, generation
+ * 0xFFFF) name their modules; 0x10000 (slot 0, generation 0xFFFF) and
+ * one past the top never do, even when slot 0 has that generation. */
+TEST(module_handle_range_ends) {
+    Fx *f = fx_new();
+    Actor *a = actor_new(&f->vm, 1024);
+    CHECK(heap_push_frame(&f->vm, a, 8, -1));
+    f->vm.mod_gen[0] = 0xFFFFu;
+    CHECK_EQ(load_b(f, a), 0x10000u);                         /* slot 1, generation 0 */
+    f->vm.mod_next = GOGO_MAX_MODULES - 1u;
+    f->vm.mod_gen[GOGO_MAX_MODULES - 1u] = 0xFFFFu;
+    CHECK_EQ(load_b(f, a), ((GOGO_MAX_MODULES - 1u) << 16) | 0xFFFFu);
+    const struct { int32_t h; int32_t want; } cases[] = {
+        { 0x10000, CODE_NOT_FOUND }, { 0x10001, CODE_OK },
+        { (int32_t)(GOGO_MAX_MODULES << 16), CODE_OK }, { (int32_t)(GOGO_MAX_MODULES << 16) + 1, CODE_NOT_FOUND },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        regs(a)[3] = forge(a, cases[i].h, T_EMPTYSTR);
+        CHECK_EQ(code_op(f, a, 6, CODE_OP_HOLD, 1), R_NORMAL);
+        CHECK_EQ(regs(a)[6], term_from_int(cases[i].want));
+    }
+    CHECK_EQ(f->vm.mods[0]->holders[0], MOD_NO_HOLDER);
+    actor_exit(&f->vm, a, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(module_mem_used(&f->vm), 0u);
+    free(f);
+}
+
 /* I1: whatever H a program forges, B_CODE gives NotFound / nothing,
  * never module 0, never UB (run under UBSan); Missing of a forged Module
  * is its field as it is. An Unsupported
