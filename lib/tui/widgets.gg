@@ -287,11 +287,21 @@ const (
 )
 
 // NewEdit makes an editor holding text (cut to max bytes), the cursor at
-// its end.
+// its end. Edit works on printable ASCII: any other byte of text becomes
+// '?'.
 func NewEdit(text string, max int) Edit {
 	if len(text) > max {
 		text = text[:max]
 	}
+	t := ""
+	for i := 0; i < len(text); i++ {
+		c := int(text[i])
+		if c < 32 || c > 126 {
+			c = '?'
+		}
+		t = t + printable[c-32:c-31]
+	}
+	text = t
 	return Edit{Text: text, Pos: len(text), Max: max}
 }
 
