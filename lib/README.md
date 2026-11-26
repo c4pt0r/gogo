@@ -72,6 +72,7 @@ declares `kbd`. Book chapter
 | `gogo/audio` | stub | | none (the `mic` / `speaker` ports: `mic` / `speaker`) |
 | `gogo/sys` | stub | | none (the clock, randomness and `sys.Config`, the configuration store) |
 | `gogo/screen` | stub | | none (the `screen` port: `screen`) |
+| `gogo/errors` | stub | | none (the shared error codes, `errors.Code`; `GOGO_E_*` in `runtime/include/gogo_errors.h`) |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |
 | `gogo/strconv` | library | | none |

@@ -101,6 +101,19 @@ const (Input = 0; InputPullUp = 1; InputPullDown = 2; Output = 3)
 const (None = 0; Rising = 1; Falling = 2; Both = 3)
 ```
 
+### gogo/errors
+
+```go
+type Code int   // OK (0), a shared code (1..30), or a package's own (>= 100)
+const (OK = 0; NotFound = 1; Exists = 2; NoMemory = 3; TooMany = 4; Busy = 5; BadArg = 6;
+	Closed = 7; IO = 8; Timeout = 9; Unsupported = 10; NoSpace = 11; BadPath = 12; IsDir = 13;
+	NotDir = 14; NotEmpty = 15; NotMounted = 16; BadImage = 17; Refused = 18; Reset = 19;
+	NoRoute = 20; BadCert = 21; NoTime = 22; TLS = 23; Overflow = 24; BadURL = 25;
+	BadFormat = 26; BadVersion = 27)
+```
+
+Appendix C lists who uses which.
+
 ### gogo/bytes
 
 ```go
@@ -283,6 +296,18 @@ The crash report is `gogo: actor <pid N> crashed: <kind>[ in <function>]`,
 on standard error.
 
 ## C. Error codes
+
+**The shared codes** (`gogo/errors`, `GOGO_E_*` in
+`runtime/include/gogo_errors.h` on the C side): one numbering for every
+meaning the packages share.
+
+| Range | Codes |
+|---|---|
+| 0 | `OK` |
+| 1..30 | `NotFound`=1 `Exists`=2 `NoMemory`=3 `TooMany`=4 `Busy`=5 `BadArg`=6 `Closed`=7 `IO`=8 `Timeout`=9 `Unsupported`=10 `NoSpace`=11 `BadPath`=12 `IsDir`=13 `NotDir`=14 `NotEmpty`=15 `NotMounted`=16 `BadImage`=17 `Refused`=18 `Reset`=19 `NoRoute`=20 `BadCert`=21 `NoTime`=22 `TLS`=23 `Overflow`=24 `BadURL`=25 `BadFormat`=26 `BadVersion`=27 |
+| 31..63 | kept for later shared meanings |
+| 64..99 | reserved |
+| 100 and up | one block of 20 per package that needs its own codes: `gogo/http` 100..119, `gogo/sound` 120..139 (neither uses its block yet) |
 
 **`fs.Err`** (also returned by `kv` and `ringlog`):
 

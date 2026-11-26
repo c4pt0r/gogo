@@ -1,0 +1,55 @@
+// Package errors is gogo's one error code space: every package that
+// reports why a call failed uses these numbers for the meanings they
+// share, so a program that imports several of them can compare and switch
+// on one set of codes. It is a stub package with only a type and
+// constants. The C side defines the same numbers once, as GOGO_E_* in
+// runtime/include/gogo_errors.h (tests/errors_test.go keeps the two
+// equal).
+//
+// The space:
+//
+//	0        OK
+//	1..30    shared meanings (below)
+//	31..63   kept for later shared meanings
+//	64..99   reserved
+//	>= 100   per package, each in its own block of 20:
+//	         100..119 gogo/http, 120..139 gogo/sound (both unused so far)
+//
+// A package's own codes, when it needs some, go in its block, never in
+// 1..99.
+package errors
+
+// Code is an error code: OK (0), a shared code, or a package's own.
+type Code int
+
+// The codes.
+const (
+	OK          Code = 0
+	NotFound    Code = 1  // no such file, module, entry or name
+	Exists      Code = 2  // the target exists already
+	NoMemory    Code = 3  // out of memory, or over the caller's quota
+	TooMany     Code = 4  // a fixed table is full (open files, modules, holders)
+	Busy        Code = 5  // the resource is in use
+	BadArg      Code = 6  // an argument that cannot be used
+	Closed      Code = 7  // closed, not owned by the caller, or of the wrong kind
+	IO          Code = 8  // a medium or transfer failed
+	Timeout     Code = 9  // the other side did not answer in time
+	Unsupported Code = 10 // this firmware lacks what it needs
+	NoSpace     Code = 11 // the medium is full
+	BadPath     Code = 12 // a path or name that breaks the rules
+	IsDir       Code = 13 // a file operation on a directory
+	NotDir      Code = 14 // a path segment before the last is not a directory
+	NotEmpty    Code = 15 // removing a directory that has entries
+	NotMounted  Code = 16 // unknown mount prefix, or the medium is missing
+	BadImage    Code = 17 // not a valid image
+	Refused     Code = 18 // the peer refused the connection
+	Reset       Code = 19 // the peer reset the connection
+	NoRoute     Code = 20 // no address, no gateway, or the interface went down
+	BadCert     Code = 21 // the peer's certificate is untrusted, expired or for another name
+	NoTime      Code = 22 // the wall clock is not set
+	TLS         Code = 23 // any other TLS failure
+	Overflow    Code = 24 // a value or a buffer is too large
+	BadURL      Code = 25 // a URL, or a header value, that cannot be used
+	BadFormat   Code = 26 // data in the wrong format
+	BadVersion  Code = 27 // built for another image format
+)

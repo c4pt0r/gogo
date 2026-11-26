@@ -1548,6 +1548,17 @@ together with `mbox_words` through `actor_charged_words`).
   `noproc`, `divzero`, `badcode`, `badshift`, `badmsg` or `exit(<code>)`;
   `Normal` and `Shutdown` are not reported. There are no line numbers
   yet.
+- **Error codes** are one space, `gogo/errors` (`errors.Code`; the C
+  side's `GOGO_E_*` in `runtime/include/gogo_errors.h`, which a test keeps
+  equal): 0 is `OK`, 1..30 are meanings every package shares
+  (`NotFound`, `Exists`, `NoMemory`, ... `BadVersion`), 31..63 are kept
+  for more of them, 64..99 are reserved, and each package that needs its
+  own codes gets a block of 20 from 100 (`gogo/http` 100..119,
+  `gogo/sound` 120..139). The codes are compile-time constants: no image
+  format and no VM code depend on the table. A later language phase gives
+  `Code` an `Error()` method and makes functions return `error`;
+  comparisons such as `err == errors.NotFound` keep working across
+  packages because the numbers already agree.
 - Supervision is the `gogo/supervisor` library, written in the subset:
   `Supervise(child, spec)` and `SuperviseModule(m, entry, arg, spec)`
   supervise one child each (restart types Permanent and Transient, a
