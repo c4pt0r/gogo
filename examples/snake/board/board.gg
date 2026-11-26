@@ -13,7 +13,7 @@ const (
 	Left  = 3
 )
 
-// Game is one game. It is a value: every change returns a new Game.
+// Game is one game. It is a value: Turn, End and Step return a changed copy.
 type Game struct {
 	Body   []int // the snake's cells, tail first, head last
 	Dir    int   // the direction of the last step
@@ -102,15 +102,16 @@ func PlaceFood(w, h int, body []int, rng int) (int, int) {
 
 // Turn sets the next direction, unless it would reverse the snake.
 func Turn(g Game, d int) Game {
-	if d == (g.Dir+2)%4 {
-		return g
+	if d != (g.Dir+2)%4 {
+		g.Next = d
 	}
-	return Game{Body: g.Body, Dir: g.Dir, Next: d, Food: g.Food, Score: g.Score, Hungry: g.Hungry, Rng: g.Rng, Over: g.Over}
+	return g
 }
 
 // End is g with the game over.
 func End(g Game) Game {
-	return Game{Body: g.Body, Dir: g.Dir, Next: g.Next, Food: g.Food, Score: g.Score, Hungry: g.Hungry, Rng: g.Rng, Over: true}
+	g.Over = true
+	return g
 }
 
 // Step moves the snake one cell. Eating grows it by one and places new
@@ -132,16 +133,18 @@ func Step(g Game, w, h int) Game {
 			return End(g)
 		}
 	}
-	body := g.Body
+	g.Dir = g.Next
 	if !grow {
-		body = body[1:]
+		g.Body = append(g.Body[1:], c)
+		g.Hungry++
+		return g
 	}
-	body = append(body, c)
-	if !grow {
-		return Game{Body: body, Dir: g.Next, Next: g.Next, Food: g.Food, Score: g.Score, Hungry: g.Hungry + 1, Rng: g.Rng}
-	}
-	food, rng := PlaceFood(w, h, body, g.Rng)
-	return Game{Body: body, Dir: g.Next, Next: g.Next, Food: food, Score: g.Score + 1, Rng: rng, Over: food < 0}
+	g.Body = append(g.Body, c)
+	g.Food, g.Rng = PlaceFood(w, h, g.Body, g.Rng)
+	g.Score++
+	g.Hungry = 0
+	g.Over = g.Food < 0
+	return g
 }
 
 // ViewOf is the View of g for the autopilot, with its patience.

@@ -138,13 +138,15 @@ func Event(s Screen, k Keys, msg any) (Keys, Key, bool) {
 			if k.downB != 0 {
 				return k, Key{}, true // a second press edge: keep the first
 			}
-			return Keys{A: k.A, B: k.B, PinA: k.PinA, PinB: k.PinB, downB: actor.Now() + 1}, Key{}, true
+			k.downB = actor.Now() + 1
+			return k, Key{}, true
 		}
 		if k.downB == 0 {
 			return k, Key{}, true // a release without a press (opened while held)
 		}
 		held := actor.Now() + 1 - k.downB
-		up := Keys{A: k.A, B: k.B, PinA: k.PinA, PinB: k.PinB}
+		up := k
+		up.downB = 0
 		if held >= LongPressMs {
 			return up, Key{Code: KeyEsc}, true
 		}
