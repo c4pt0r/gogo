@@ -1,5 +1,5 @@
 // Slices: literals, make, append, copy, slicing and sharing, nil slices.
-// Slices are the only collection: there are no arrays and no maps.
+// Slices are the main collection: arrays are fixed, and there are no maps.
 package main
 
 type Entry struct {

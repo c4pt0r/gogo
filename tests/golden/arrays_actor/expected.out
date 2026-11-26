@@ -1,0 +1,5 @@
+[1 2 3] [x y] [[1 2] [3 4]]
+peer got 1 gogo 100 9
+sender keeps 0 reply has 100
+child sees -1 -1
+parent sees 1 1

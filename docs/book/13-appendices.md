@@ -378,12 +378,13 @@ as `code.Err(errors.X)` under the same names.
 | closures capture variables by reference | closures copy captured values; captured variables must not be reassigned |
 | `int` is 64 bits on most machines | `int` is always 32 bits |
 | complex, `uint`, `int8/16/32`, `uint16/32/64`, `uintptr` | none; `int`, `int64`, `byte`, `float32`, `float64` |
-| arrays, maps, pointers | slices only |
+| maps, pointers | slices of structs, searched |
 | methods, interfaces | functions; type switches over `any` |
 | `switch` on an interface or a struct value, `goto` | type switch, compare fields; labeled `break`/`continue` |
 | type assertions `x.(T)` | type switch |
 | generics | none |
-| `error`, `panic`, `recover`, `defer` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |
+| `error`, `panic`, `recover` | `bool`/code results; `actor.Exit`; supervisors; automatic cleanup |
+| `defer` anywhere, run on panics too | `defer` outside loops only, run on normal returns only |
 | package-level `var`, `init` | `const`; state in actors |
 | multiple packages, the standard library | one `package main`; `gogo/...` packages only |
 | `fmt.Println` | `println` (prints slices' elements; Go's `println` prints an address) |

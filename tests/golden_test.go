@@ -37,8 +37,10 @@ import (
 // `exitcode` holding a number that exact status (platform/unix/main.c
 // lists them). A file `mcu` also runs it on $GOGO_VM_MCU (the MCU-config
 // VM); a file `nofloat` runs it on $GOGO_VM_NOFLOAT (gogovm built without
-// floating point) instead of $GOGO_VM. `make test-go` builds the three
-// VMs and sets the variables.
+// floating point) instead of $GOGO_VM; a file `gocompare` also runs it
+// with the go command, as Go, which must print the same
+// (TestGoldenMatchesGo). `make test-go` builds the three VMs and sets the
+// variables.
 func TestGolden(t *testing.T) {
 	vm := os.Getenv("GOGO_VM")
 	if vm == "" {

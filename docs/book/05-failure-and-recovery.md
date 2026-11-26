@@ -653,5 +653,8 @@ When an actor exits, for any reason, the VM:
   deliver to it (a `SendAfter` it set up for *another* actor still fires);
 - sends exit signals to linked actors and `DownMsg` to monitors.
 
-This is why gogo does not need `defer`: there is nothing you could forget
-to release.
+This is why cleanup in gogo does not depend on `defer`: there is nothing
+you could forget to release when an actor ends. gogo's `defer` (section
+3.4) runs on normal returns only, for actors that live on and must
+release something before they continue; a crash skips it, and this
+cleanup takes over.

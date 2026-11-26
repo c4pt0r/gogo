@@ -4,16 +4,15 @@ main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
-main.gg:23:2: gogo: defer statement not supported
+main.gg:23:8: gogo: builtin recover not supported
 main.gg:24:7: gogo: map not supported
 main.gg:25:7: gogo: pointer not supported
 main.gg:26:7: gogo: complex not supported
 main.gg:28:3: gogo: goto statement not supported
 main.gg:30:1: gogo: label on a statement other than for or switch not supported
-main.gg:31:8: gogo: array not supported
+main.gg:31:14: gogo: array in interface not supported: use a slice or a struct with an array field
 main.gg:32:7: gogo: type assertion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
 main.gg:34:16: gogo: complex not supported
-main.gg:34:19: gogo: index of [4]int not supported
 main.gg:35:2: gogo: builtin panic not supported

@@ -44,9 +44,9 @@ features.
   growth stays visible (section 5.10).
 
 **Non-goals**
-- Full Go compatibility: channels, generics, reflection, `defer` /
-  `recover`, method calls through user-defined interfaces and shared
-  memory between goroutines are out.
+- Full Go compatibility: channels, generics, reflection, `recover`
+  (and `defer` beyond its static form), method calls through
+  user-defined interfaces and shared memory between goroutines are out.
 - Distribution, multi-core scheduling, JIT.
 - Go standard library compatibility; gogo has a small library of its own.
 
@@ -183,6 +183,25 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
 - Slices: `make`, `append` (also `append(a, b...)`), `copy`, `len`,
   `cap`, indexing, element assignment and slicing; `len`, indexing and
   slicing of strings and `Bytes`.
+- Arrays `[N]T`, values as in Go: literals (`[...]T`, index keys),
+  indexing, `len`, `cap`, `range`, element and field assignment through
+  them, arrays of structs and in struct fields. An array is a slice of
+  length and capacity N (`MAKE_SLICE`). The compiler keeps them values:
+  a local variable's array is written in place (`SETINDEX`), `a[:]`
+  shares it and `a = b` copies `b`'s elements into it (`COPY`), so its
+  slices see the change as in Go; every other array (in a field or an
+  element) is never written in place: a write through it copies it and
+  stores the copy back along the path, as a field write rebuilds a
+  struct, so copies of a struct or of an array of arrays may share inner
+  arrays. An array value is copied (`MAKE_SLICE` + `COPY`) whenever it
+  goes into a variable, an argument, a result, a field or an element,
+  unless it is a literal or a call result; `range` with a value variable
+  over an array variable ranges over a copy. Rejected: slicing an array
+  that is not a variable ("slice of an array that is not a variable"),
+  arrays in an interface (so not a message on their own), `==` on arrays
+  (it needs the comparison builtin planned with interfaces), named array
+  types, and element writes to a captured array variable. No opcode of
+  their own.
 - Statements: `if`, `for` (three-clause, condition-only, infinite, and
   `range` over a slice, a string or an integer), the expression `switch`
   (tagged or not, several values per case, `fallthrough`) on integer,
@@ -221,6 +240,38 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   hand. A field write to a variable a closure captures is rejected
   ("captured variable must not be changed by field assignment"). No
   opcode of its own.
+- Embedded fields: a struct may embed a named struct or a named basic
+  type (not a pointer). It is an ordinary field named after its type;
+  go/types resolves a promoted selector to a path of field indices with
+  Go's depth and ambiguity rules (an ambiguous selector is a type
+  error). A promoted field read is one `GETFIELD` per level, a write
+  rebuilds every struct on the path, and a promoted method is called
+  (or made a method value) with the embedded value as its receiver, so
+  no wrapper functions are generated. A method expression of a promoted
+  method (`Outer.M`) is rejected, and so are the promoted methods of an
+  embedded gogo stub type (`bytes.Buffer`, `fs.File`: builtins that take
+  their own type), which are called on the field instead. For interfaces, the compiler's
+  `gen.methodTable` lists a type's own and promoted methods with the
+  field path to each receiver, which interface dispatch is to use. No
+  opcode of its own.
+- Static `defer`: `defer f(args)` anywhere but inside a loop (within its
+  own function: a func literal is a function of its own), so each defer
+  statement runs at most once per call. The function value, receiver
+  and arguments are evaluated at the statement, into registers reserved
+  for that defer; each `return` (and the end of a function without
+  results) compiles the deferred calls itself, last deferred first. A
+  return statically knows which defers ran before it: one later in the
+  source has not (only a loop could jump back), one in an enclosing block
+  has; a defer in a nested block (an `if`, a `switch` clause) gets a flag
+  register, set at the statement and tested at the returns outside that
+  block. Deferred calls run on **normal returns only**: a crash, a
+  failed check and `actor.Exit` end the actor without running them (its
+  ports and files are closed as it ends, §5.8), and there is no
+  `recover`. With named results, a return with values sets them before
+  the deferred calls run, as in Go; a deferred func literal cannot change
+  them, since it captures by value and writes to captured variables are
+  rejected. Rejected: `defer` inside a loop, a deferred call whose single
+  argument is a multi-value call. No opcode, no run-time defer list.
 - `println` of any value of the subset except `Bytes` and `Buffer`;
   slices print their elements, `[1 2 3]` (Go's `println` prints
   `[len/cap]address`). Nesting deeper than 16 prints as `{...}` /
@@ -233,7 +284,7 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   package's name is its directory's name (§5.1, the loader).
 
 **Not supported yet (planned for the "language completeness"
-milestone):** maps, pointers (and pointer receivers), arrays, integer types other than
+milestone):** maps, pointers (and pointer receivers), integer types other than
 `int`, `int64` and `byte` (`uint32` included), package-level variables,
 a `switch` on an `any` or a struct value, type assertions, `panic`, the
 `error` interface and interfaces other than `any`.
@@ -241,8 +292,8 @@ Each is rejected at compile time with a `<what> not supported` error
 (`compiler/check.go`). There is no `gogo/fmt` or `gogo/errors` package.
 
 **Out of the design:** channels and `select`, the `go` statement (use
-`actor.Spawn`), generics, `defer` / `recover`, reflection, `unsafe`,
-complex numbers.
+`actor.Spawn`), generics, `recover`, a `defer` inside a loop,
+reflection, `unsafe`, complex numbers.
 
 **Floating point** (image format 15.2, the firmware option `GOGO_FLOAT`,
 the requirement `float`):
@@ -2115,9 +2166,9 @@ types and named requirements (§5.6); one stream protocol for every byte
 port with `port.Closed` and `From`; embed mode phase 1 (`libgogo`,
 §5.11); user packages with a `GOGOPATH` search and `#!` scripts; the
 first language additions (expression `switch`, labels, `range` over int,
-variadic functions, methods with value receivers); floating point
-(`float32`, `float64`, `gogo/math`, `strconv.FormatFloat` /
-`ParseFloat`; image format 15.2).
+variadic functions, methods with value receivers, embedded fields,
+arrays, static `defer`); floating point (`float32`, `float64`,
+`gogo/math`, `strconv.FormatFloat` / `ParseFloat`; image format 15.2).
 
 **Next, in order:**
 1. **API v0.2:** shared error codes, a versioned C ABI (`size`-first
@@ -2129,8 +2180,7 @@ variadic functions, methods with value receivers); floating point
    with direct LAN links as a later step.
 3. **Language completeness:** pointer receivers, interfaces and
    `error`, `panic`, pointers, maps, read-only package variables, `fmt`,
-   sized integers, arrays, embedded fields, static `defer`
-   (`float32`/`float64` are done).
+   sized integers (`float32`/`float64` are done).
 4. **Hardware:** a `usb` port (the serial stream and connect events), the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler,

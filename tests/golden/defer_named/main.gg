@@ -1,0 +1,47 @@
+package main
+
+// A return with values sets the named results before the deferred calls
+// run, as in Go: a deferred call that writes through a slice of an array
+// result changes what the caller gets.
+
+func namedArg() (r int) {
+	defer println("arg r =", r)
+	r = 5
+	return
+}
+
+func arrNamed() (r [2]int) {
+	s := r[:]
+	defer func(t []int) { t[0] = 42 }(s)
+	return [2]int{1, 2}
+}
+
+func arrNamedBare() (r [2]int) {
+	s := r[:]
+	defer func(t []int) { t[0] = 42 }(s)
+	r[1] = 9
+	return
+}
+
+func pair() ([2]int, string) { return [2]int{7, 8}, "p" }
+
+func arrMulti(fromCall bool) (r [2]int, name string) {
+	s := r[:]
+	defer func(t []int) { t[1] = -1 }(s)
+	if fromCall {
+		return pair()
+	}
+	return [2]int{3, 4}, "lit"
+}
+
+func main() {
+	println(namedArg())
+	a := arrNamed()
+	println(a[0], a[1])
+	b := arrNamedBare()
+	println(b[0], b[1])
+	c, n := arrMulti(false)
+	println(c[0], c[1], n)
+	c, n = arrMulti(true)
+	println(c[0], c[1], n)
+}

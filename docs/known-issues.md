@@ -261,14 +261,14 @@ rebuilt:
 ## Compiler and language
 
 - **Not supported yet (planned).** The compiler rejects maps, pointer
-  receivers ("pointer receivers are not supported yet"), pointers, arrays, integer types other than `int`, `int64` and `byte`
+  receivers ("pointer receivers are not supported yet"), pointers, integer types other than `int`, `int64` and `byte`
   (`uint32` included), package-level `var`s, a `switch` on an
   `any` or a struct value, type assertions, `panic`, the `error` type
   and interfaces other than `any` ("interface
   types are not supported yet": methods are called on concrete types
   only). `goto` is rejected (labeled `break` and
-  `continue` cover its uses). Channels, `go`, `select`, generics, `defer`
-  and `recover` are outside the design. "Language completeness" is a
+  `continue` cover its uses). Channels, `go`, `select`, generics and
+  `recover` are outside the design. "Language completeness" is a
   planned milestone. *Workarounds:* a type switch for assertions and for
   values in an `any`, slices of structs searched linearly for maps.
 - **No `gogo/fmt` or `gogo/errors`.** Printing is `println`; to build a
@@ -299,13 +299,46 @@ rebuilt:
   not supported`. *Workaround:* `_, _ = actor.Call(...)`. `println(f())`
   with a multi-result `f` and `var a, b = f()` fail the same way; use
   `a, b := f()`.
-- **Methods: value receivers only, no embedding.** A method with a value
+- **Methods: value receivers only.** A method with a value
   receiver works on a copy, so it cannot change its caller's value: return
-  the new value instead (`p = p.Moved(1, 0)`). Methods are not promoted
-  from embedded fields (embedded fields are rejected), and a named type
+  the new value instead (`p = p.Moved(1, 0)`). A named type
   other than a struct or a basic type (`type L []int`) cannot be declared,
   so it has no methods either. The methods of a type in a hot-loaded module
   are that module's own, like its types.
+- **Arrays: no `==`, not in `any`, hidden copies.** `a == b` on arrays
+  is rejected until composite values can be compared (`comparison of
+  arrays not supported yet`): compare the elements. An array cannot go
+  into an `any` (`array in interface not supported`), so it is not a
+  message on its own: send a slice or a struct with an array field. Only
+  an array variable can be sliced (`p.A[:]` is rejected: copy the array
+  into a variable first). Named array types (`type G [9]int`) are not
+  supported. Like Go, gogo copies an array on every assignment, argument,
+  result and field or element store, which allocates N elements each time
+  (a literal or a call result is not copied again); pass `a[:]` to avoid
+  it. A write through an array in a field or an element
+  (`p.A[i] = v`, `m[i][j] = v`) also copies that array, and rebuilds the
+  structs on its path, so it costs O(N) rather than O(1). Like a slice,
+  `println(a)` prints the elements (`[1 2 3]`; Go's `println` rejects
+  arrays).
+- **`defer` is static and runs on normal returns only.** A `defer`
+  inside a loop is rejected (`defer inside a loop not supported`): move
+  the loop body into a function. A crash or `actor.Exit` ends the actor
+  without running the deferred calls (its ports and files are closed
+  anyway). A deferred func literal cannot set a named result (`captured
+  named result must not be changed`), so `defer func() { err = ... }()`
+  has no gogo equivalent: compute the result before returning. `defer
+  f(g())` with a multi-value `g` is rejected. Each `return` compiles the
+  deferred calls again, so many returns after many defers make the
+  function's code larger.
+- **Embedded fields: no pointers, no promoted method expressions.**
+  Embedding `*T` is rejected with pointers. A method expression of a
+  promoted method (`Outer.M` for a method of an embedded field) is
+  rejected (`method expression of a promoted method not supported`).
+  *Workaround:* a method value `x.M`, or `Inner.M(x.Inner)`. The methods
+  of an embedded gogo type (`bytes.Buffer`, `bytes.Bytes`, `fs.File`) are
+  not promoted (`method M of an embedded gogo/bytes type not
+  supported`): call them on the field, `w.Buffer.WriteByte(b)`. Promoted
+  methods will implement interfaces once user interfaces exist.
 - **Every field write allocates.** Structs are immutable in the VM, so
   `p.X = v` builds a new struct (2 + fields words) for each struct on the
   path (`a.b.c = v` builds three) and the old one becomes garbage: the

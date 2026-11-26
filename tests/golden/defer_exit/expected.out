@@ -1,0 +1,6 @@
+normal returns
+normal deferred
+done message from normal
+normal ended with 0
+crash ended with 5
+exit ended with 7

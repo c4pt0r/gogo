@@ -1,0 +1,39 @@
+package main
+
+import "gogo/actor"
+
+// Deferred calls run on every normal return, also of a spawned function,
+// and not when the actor crashes or calls actor.Exit: the actor ends and
+// its ports and files are closed for it.
+
+func worker(name string, done actor.PID, how int) {
+	defer actor.Send(done, name)
+	defer println(name, "deferred")
+	switch how {
+	case 1:
+		zero := 0
+		println(name, 1/zero) // crashes: no deferred call runs
+	case 2:
+		actor.Exit(7) // ends the actor: no deferred call runs
+	}
+	println(name, "returns")
+}
+
+func main() {
+	self := actor.Self()
+	actor.TrapExit(true)
+	for i, name := range []string{"normal", "crash", "exit"} {
+		actor.SpawnLink(func() { worker(name, self, i) })
+		for {
+			m := actor.Receive()
+			switch m := m.(type) {
+			case string:
+				println("done message from", m)
+				continue
+			case actor.ExitMsg:
+				println(name, "ended with", m.Reason.Code)
+			}
+			break
+		}
+	}
+}

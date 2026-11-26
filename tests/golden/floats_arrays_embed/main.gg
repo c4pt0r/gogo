@@ -1,0 +1,68 @@
+package main
+
+// Floats with phase D features: arrays of float32 and float64, float
+// fields promoted from embedded structs, and deferred calls with float
+// arguments, evaluated at the defer statement.
+
+type Vec struct{ X, Y float64 }
+
+func (v Vec) Len2() float64 { return v.X*v.X + v.Y*v.Y }
+
+type Body struct {
+	Vec
+	Mass float32
+}
+
+type Particle struct {
+	Body
+	Hist [3]float64
+}
+
+func mean(xs [4]float32) float32 {
+	var t float32
+	for _, x := range xs {
+		t += x
+	}
+	xs[0] = 1000 // the caller's array is unchanged
+	return t / float32(len(xs))
+}
+
+func report(label string, v float64) { println(label, v) }
+
+func step(p Particle, dt float64) (q Particle) {
+	defer report("old x", p.X)
+	p.X += p.Y * dt
+	p.Hist[0], p.Hist[1], p.Hist[2] = p.Hist[1], p.Hist[2], p.X
+	defer report("new x", p.X)
+	return p
+}
+
+func main() {
+	a := [4]float32{0.5, 1.5, 2.25}
+	b := a
+	b[3] = 4
+	println(mean(a), mean(b), a[0])
+
+	var grid [2][3]float64
+	grid[1][2] = 0.1 + 0.2
+	g2 := grid
+	g2[1][2] *= 2
+	println(grid[1][2], g2[1][2], grid[0][0] == 0)
+
+	p := Particle{Body{Vec{1, 2}, 0.25}, [3]float64{}}
+	p.Y /= 4
+	p.Mass *= 2
+	println(p.X, p.Y, p.Mass, p.Len2())
+	f := p.Len2
+	p.X = 10
+	println(f(), p.Len2())
+
+	q := step(p, 0.5)
+	q = step(q, 0.5)
+	println(q.X, q.Hist[0], q.Hist[1], q.Hist[2], p.Hist[2])
+
+	s := [...]float64{3: -1.5, 1: 2}
+	sl := s[1:]
+	sl[0] = 7
+	println(len(s), s[1], s[3])
+}

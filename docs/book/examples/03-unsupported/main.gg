@@ -20,7 +20,7 @@ func Max[T int | int64](a, b T) T { // generics
 func main() {
 	ch := make(chan int) // channel
 	go func() { ch <- 1 }()
-	defer println("bye")
+	defer recover()       // recover
 	m := map[string]int{} // map
 	p := &Sq{2}           // pointer
 	x := 1.5i             // complex
@@ -28,9 +28,9 @@ func main() {
 		goto done // goto
 	}
 done:
-	var a [4]int      // array
-	y := any(1).(int) // type assertion
+	var a any = [4]int{} // array in an interface
+	y := any(1).(int)    // type assertion
 	_ = y
-	println(m, p, x, a[0])
+	println(m, p, x, a)
 	panic("boom")
 }

@@ -1,0 +1,45 @@
+package main
+
+import "gogo/actor"
+
+// Arrays inside one actor and across actors: println prints an array like
+// a slice, a message carries a copy, and a spawned closure gets its own.
+
+type Frame struct {
+	Seq  int
+	Data [4]byte
+	Hist [3]int
+}
+
+func main() {
+	a := [3]int{1, 2, 3}
+	println(a, [2]string{"x", "y"}, [2][2]int{{1, 2}, {3, 4}})
+
+	fr := Frame{Seq: 1, Data: [4]byte{'g', 'o', 'g', 'o'}}
+	fr.Hist[2] = 9
+	done := actor.Self()
+	peer := actor.Spawn(func() {
+		switch m := actor.Receive().(type) {
+		case Frame:
+			m.Hist[0] = 100 // the receiver's own copy
+			data := m.Data  // a field's array is sliced through a variable
+			println("peer got", m.Seq, string(data[:]), m.Hist[0], m.Hist[2])
+			actor.Send(done, m)
+		}
+	})
+	actor.Send(peer, fr)
+	switch back := actor.Receive().(type) {
+	case Frame:
+		println("sender keeps", fr.Hist[0], "reply has", back.Hist[0])
+	}
+
+	// A spawned closure takes a copy of a captured array with it.
+	s := a[:]
+	actor.Spawn(func() {
+		s[0] = -1 // the spawned actor's copy of the slice
+		println("child sees", a[0], s[0])
+		actor.Send(done, true)
+	})
+	actor.Receive()
+	println("parent sees", a[0], s[0])
+}

@@ -247,8 +247,8 @@ Next, in order:
 2. **Distributed actors:** boards and a server node exchanging actor
    messages directly (first through the server; direct links later).
 3. **Language completeness:** pointer receivers, interfaces and
-   `error`, `panic`, pointers, maps, `fmt`, sized integers, arrays;
-   script arguments.
+   `error`, `panic`, pointers, maps, `fmt`, sized integers; script
+   arguments.
 4. **More hardware:** a `usb` port for the serial connection, the
    Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
 5. **Embedding bindings:** Rust, Go (with an in-process compiler), iOS

@@ -398,6 +398,8 @@ type fn struct {
 	labelDirty map[Label]int // dirty at the jumps to each label, merged
 	boundAt    int           // code position of the last label bound (-1: none)
 	lastClear  int           // code position of the last CLEAR emitted (-1: none)
+
+	defers *deferState // the function's defer statements, nil if none (codegen_defer.go)
 }
 
 // declParams lists the parameters of a declared function; unnamed ones are
@@ -465,8 +467,12 @@ func (g *gen) compileFunc(info *funcInfo, params []*types.Var, results *types.Tu
 		}
 		f.clearDead()
 	}
+	f.setupDefers(body)
 	f.stmts(body.List)
 	if n := len(body.List); n == 0 || !isReturn(body.List[n-1]) {
+		if len(f.results) == 0 { // else the end is unreachable
+			f.runDefers()
+		}
 		f.retNil()
 	}
 	code, aerr := f.asm.Finish()
@@ -646,7 +652,9 @@ func (f *fn) stmts(list []ast.Stmt) {
 // block compiles statements in a new scope: its locals die at its end.
 func (f *fn) block(list []ast.Stmt) {
 	mark := f.next
+	f.scopeIn()
 	f.stmts(list)
+	f.scopeOut()
 	f.next = mark
 }
 
@@ -681,7 +689,7 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		if s.Tok == token.DEC {
 			op = OpSub
 		}
-		if ix, ok := ast.Unparen(s.X).(*ast.IndexExpr); ok { // s[i]++
+		if ix, ok := ast.Unparen(s.X).(*ast.IndexExpr); ok && !f.isFieldTarget(ix) { // s[i]++
 			f.indexOpAssign(ix, op, nil)
 			return
 		}
@@ -698,14 +706,21 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		f.next = mark
 	case *ast.DeclStmt:
 		f.declStmt(s.Decl.(*ast.GenDecl))
+	case *ast.DeferStmt:
+		f.deferStmt(s)
 	case *ast.ReturnStmt:
 		k := len(f.results)
 		switch {
 		case len(s.Results) == 0 && f.named >= 0: // bare return of named results
-			f.ret(uint8(f.named), k)
+			f.runDefers()
+			f.retNamed(s, k)
 			return
 		case len(s.Results) == 0:
+			f.runDefers()
 			f.retNil()
+			return
+		case f.named >= 0 && f.defers != nil:
+			f.retToNamed(s) // the results are set before the deferred calls run
 			return
 		case k > 1:
 			// return a, b (each converted to its result type) or return
@@ -720,19 +735,22 @@ func (f *fn) stmtCode(s ast.Stmt) {
 					f.valueInto(res, f.results[i], base+uint8(i))
 				}
 			}
+			f.runDefers()
 			f.ret(base, k)
 			f.next = mark
 			return
 		}
 		mark := f.next
 		res := s.Results[0]
-		if f.boxes(res, f.result) {
-			r := f.alloc(res)
+		var r uint8
+		if f.boxes(res, f.result) || f.copiesArray(res, f.result) {
+			r = f.alloc(res)
 			f.valueInto(res, f.result, r)
-			f.asm.Emit(OpRet, r, 0, 0)
 		} else {
-			f.asm.Emit(OpRet, f.operand(res), 0, 0)
+			r = f.operand(res)
 		}
+		f.runDefers()
+		f.asm.Emit(OpRet, r, 0, 0)
 		f.next = mark
 	case *ast.IfStmt:
 		f.ifStmt(s)
@@ -845,7 +863,7 @@ var assignOps = map[token.Token]uint8{
 }
 
 func (f *fn) assign(s *ast.AssignStmt) {
-	if ix, ok := ast.Unparen(s.Lhs[0]).(*ast.IndexExpr); ok && s.Tok != token.ASSIGN && s.Tok != token.DEFINE {
+	if ix, ok := ast.Unparen(s.Lhs[0]).(*ast.IndexExpr); ok && s.Tok != token.ASSIGN && s.Tok != token.DEFINE && !f.isFieldTarget(ix) {
 		f.indexOpAssign(ix, assignOps[s.Tok], s.Rhs[0]) // s[i] op= e
 		return
 	}
@@ -856,6 +874,9 @@ func (f *fn) assign(s *ast.AssignStmt) {
 	if len(s.Lhs) == 1 && len(s.Rhs) == 1 && f.isFieldTarget(s.Lhs[0]) {
 		f.fieldAssign(s.Lhs[0], s.Rhs[0]) // x.F = e
 		return
+	}
+	if len(s.Lhs) == 1 && len(s.Rhs) == 1 && s.Tok == token.ASSIGN && f.assignArray(s.Lhs[0], s.Rhs[0]) {
+		return // a = e of an array variable: copied in place
 	}
 	if s.Tok == token.ADD_ASSIGN && isString(f.g.p.Info.TypeOf(s.Lhs[0])) { // s += e
 		x := f.localOf(s.Lhs[0])
@@ -882,6 +903,7 @@ func (f *fn) assign(s *ast.AssignStmt) {
 	// x.F has its operands evaluated now too (fields[i]; see
 	// fieldTargetOf) and is rebuilt at the assignment.
 	targets := make([]int, len(s.Lhs))
+	inPlace := make([]bool, len(s.Lhs)) // an array variable: its elements are copied over
 	index := make([]int, len(s.Lhs))
 	fields := make([]*fieldTarget, len(s.Lhs))
 	var newVars []*types.Var
@@ -913,6 +935,7 @@ func (f *fn) assign(s *ast.AssignStmt) {
 			targets[i] = int(r)
 		default:
 			targets[i] = int(f.localOf(l))
+			inPlace[i] = isArray(f.g.p.Info.TypeOf(l))
 		}
 	}
 	if s.Tok == token.DEFINE {
@@ -929,6 +952,8 @@ func (f *fn) assign(s *ast.AssignStmt) {
 				f.asm.Emit(OpMove, blk+2, r, 0)
 			}
 			f.asm.EmitExt(OpBuiltin, blk, blk, 3, BSetindex)
+		case inPlace[i]:
+			f.copyElems(s.Lhs[i], uint8(targets[i]), r)
 		case targets[i] >= 0 && uint8(targets[i]) != r:
 			f.asm.Emit(OpMove, uint8(targets[i]), r, 0)
 		}
@@ -1070,6 +1095,9 @@ func (f *fn) operand(e ast.Expr) uint8 {
 
 // localReg returns the register of the local variable e names, if it is one.
 func (f *fn) localReg(e ast.Expr) (uint8, bool) {
+	if r, ok := f.preset(e); ok {
+		return r, true
+	}
 	if id, ok := ast.Unparen(e).(*ast.Ident); ok {
 		if v, ok := f.g.p.Info.Uses[id].(*types.Var); ok {
 			if r, ok := f.locals[v]; ok {
@@ -1096,6 +1124,7 @@ func (f *fn) boxes(e ast.Expr, target types.Type) bool {
 func (f *fn) valueInto(e ast.Expr, target types.Type, dst uint8) {
 	if !f.boxes(e, target) {
 		f.exprInto(e, dst)
+		f.copyArray(e, target, dst)
 		return
 	}
 	if tv := f.g.p.Info.Types[e]; tv.Value != nil {
@@ -1149,6 +1178,12 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 		f.constInto(e, tv.Value, dst)
 		return
 	}
+	if r, ok := f.preset(e); ok { // evaluated at its defer statement
+		if r != dst {
+			f.asm.Emit(OpMove, dst, r, 0)
+		}
+		return
+	}
 	mark := f.next
 	defer func() { f.next = mark }()
 
@@ -1198,10 +1233,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 			return
 		}
 		sel := f.g.p.Info.Selections[e]
-		if sel == nil || sel.Kind() != types.FieldVal || len(sel.Index()) != 1 {
+		if sel == nil || sel.Kind() != types.FieldVal || sel.Indirect() {
 			f.fail(e, "internal error: unexpected selector")
 		}
-		f.asm.Emit(OpGetfield, dst, f.operand(e.X), uint8(sel.Index()[0]))
+		f.fieldPathInto(e, sel.Index(), f.operand(e.X), dst) // promoted: down the embedded fields
 	case *ast.IndexExpr:
 		f.indexInto(e, dst)
 	case *ast.SliceExpr:
@@ -1209,6 +1244,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 	case *ast.CompositeLit:
 		if isSlice(f.g.p.Info.TypeOf(e)) {
 			f.sliceLit(e, dst)
+			return
+		}
+		if isArray(f.g.p.Info.TypeOf(e)) {
+			f.arrayLit(e, dst)
 			return
 		}
 		f.structLit(e, dst)
@@ -1374,6 +1413,10 @@ func (f *fn) conversion(call *ast.CallExpr, dst uint8) {
 func (f *fn) zeroInto(n ast.Node, t types.Type, dst uint8) {
 	if st := structType(t); st != nil {
 		f.newStruct(n, st, nil, dst)
+		return
+	}
+	if at := arrayType(t); at != nil {
+		f.zeroArray(n, at, dst)
 		return
 	}
 	switch {

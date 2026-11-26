@@ -195,14 +195,14 @@ The supported types are:
 - `bool` and `string`. A string is an immutable sequence of bytes.
 - `rune` only as the type of character literals and of the value in
   `range` over a string.
-- Slices (`[]T`), structs, function values and `any`.
+- Slices (`[]T`), arrays (`[N]T`), structs, function values and `any`.
 - Named types whose underlying type is `int`, `int64`, `float32`,
   `float64`, `bool` or `string` (`type Weekday int`), and named structs.
 - `const` with `iota`.
 - The gogo types `actor.PID`, `actor.Ref`, `bytes.Bytes`, `bytes.Buffer`
   and the struct types of the gogo packages.
 
-There are **no** unsigned types except `byte`, no `int8/16/32`, no arrays,
+There are **no** unsigned types except `byte`, no `int8/16/32`,
 no maps, no pointers, no channels, no complex numbers.
 
 ```go
@@ -875,6 +875,114 @@ true false
 0
 ```
 
+### Defer
+
+`defer f(args)` runs the call when the function returns, as in Go:
+deferred calls run last deferred first, at every `return` and at the end
+of the function, and the function value, the receiver and the arguments
+are evaluated at the `defer` statement. A method value (`defer c.Close()`)
+and a func literal (`defer func() { ... }()`) work too:
+
+```go
+// defer: the deferred calls run when the function returns, last deferred
+// first; their arguments are evaluated at the defer statement.
+package main
+
+type Conn struct{ Name string }
+
+func (c Conn) Close() { println("close", c.Name) }
+
+func open(name string) Conn {
+	println("open", name)
+	return Conn{name}
+}
+
+// copyAll returns early on a bad item: every return runs the deferred
+// calls registered before it.
+func copyAll(items []int) (n int) {
+	src := open("src")
+	defer src.Close()
+	dst := open("dst")
+	defer dst.Close()
+	for _, it := range items {
+		if it < 0 {
+			println("bad item", it)
+			return n
+		}
+		n++
+	}
+	return n
+}
+
+func count() {
+	x := 1
+	defer println("deferred x =", x) // x is evaluated now: 1
+	x = 2
+	if x > 1 {
+		defer println("only when x > 1")
+	}
+	defer func() {
+		println("func literal, last deferred, runs first")
+	}()
+	println("x =", x)
+}
+
+func main() {
+	println("copied", copyAll([]int{1, 2, 3}))
+	println("copied", copyAll([]int{1, -2, 3}))
+	count()
+}
+```
+
+```text
+open src
+open dst
+close dst
+close src
+copied 3
+open src
+open dst
+bad item -2
+close dst
+close src
+copied 1
+x = 2
+func literal, last deferred, runs first
+only when x > 1
+deferred x = 1
+```
+
+gogo's `defer` is **static**: a `defer` statement may not be inside a
+loop (`defer inside a loop not supported`), so each one runs at most once
+per call and the compiler knows them all. It compiles the deferred calls
+at each return, in order; there is no run-time list of deferred calls and
+no cost when none was registered. A `defer` inside an `if` or a `switch`
+clause is fine (a flag records whether it ran). To defer in a loop, move
+the loop body into a function (a func literal is a function of its own,
+so a `defer` in a literal called in a loop is allowed).
+
+Two differences from Go:
+
+- **Deferred calls run on normal returns only.** A crash (division by
+  zero, an index out of range, `badcode`) and `actor.Exit` end the actor
+  without running them. There is no `recover`: the actor ends, and its
+  ports and files are closed for it (section 5.7), so `defer f.Close()` is
+  for actors that live on, not a safety net.
+- **A deferred func literal sees values, not variables.** A func literal
+  captures by value (section 3.4), so the Go pattern of deferring a
+  literal and then changing a variable it reads, `x := 1; defer func() {
+  println(x) }(); x = 2` (Go prints 2), is rejected (`captured variable
+  must not be reassigned`): pass the value as an argument, or set it
+  before the `defer`. For the same reason the idiom `defer func() { err
+  = wrap(err) }()` is rejected (`captured named result must not be
+  changed`): compute the result before returning instead. With named
+  results, `return x` still sets them before the deferred calls run, as
+  in Go, so a deferred call that writes through a slice of an array
+  result changes what the caller gets.
+
+A deferred call whose single argument is a call with several results,
+`defer f(g())`, is rejected; assign the results to variables first.
+
 ## 3.5 Structs and methods
 
 Structs work as in Go: literals with or without field names, nested
@@ -1078,12 +1186,96 @@ A few things to know:
   costs the same as a function call. There are no interfaces of your own
   yet (`interface types are not supported yet`), and pointer receivers,
   `func (p *Point) M()`, wait for pointers (`pointer receivers are not
-  supported yet`). Methods are not promoted from embedded fields, which
-  are not supported either.
+  supported yet`).
 
-## 3.6 Slices, the only collection
+### Embedded fields
 
-Without arrays and maps, slices do all the work. `make`, `append` (also
+A struct can embed another named type: a field without a name, named
+after its type. The embedded struct's fields and methods are *promoted*:
+`s.X` means `s.Point.X` and `s.Dist()` means `s.Point.Dist()`, for reading,
+for field assignment and for method values, as in Go:
+
+```go
+// Embedded fields: the fields and methods of an embedded struct are
+// promoted to the outer one, and a shallower name hides a deeper one.
+package main
+
+type Point struct{ X, Y int }
+
+func (p Point) Dist() int { return abs(p.X) + abs(p.Y) }
+
+func (p Point) Moved(dx, dy int) Point { return Point{p.X + dx, p.Y + dy} }
+
+// Sprite embeds a Point: s.X is s.Point.X, s.Dist() is s.Point.Dist().
+type Sprite struct {
+	Point
+	Name string
+}
+
+// Label is the outer type's own method.
+func (s Sprite) Label() string { return s.Name }
+
+// Player embeds a Sprite and has its own X, which hides Sprite's (depth 1
+// beats depth 2); the promoted one is still reachable by its full path.
+type Player struct {
+	Sprite
+	X     int
+	Lives int
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func main() {
+	s := Sprite{Point{3, -4}, "ship"}
+	println(s.X, s.Y, s.Dist(), s.Label())
+
+	// Promoted fields can be assigned, like any field.
+	s.X = 10
+	s.Point.Y++
+	println(s.X, s.Y, s.Moved(1, 1).X)
+
+	p := Player{Sprite: s, X: 99, Lives: 3}
+	p.Y = 0 // p.Sprite.Point.Y
+	println(p.X, p.Sprite.X, p.Y, p.Dist(), p.Label(), p.Lives)
+
+	// A method value of a promoted method keeps its receiver.
+	dist := p.Dist
+	p.Sprite.X = 0
+	println(dist(), p.Dist())
+}
+```
+
+```text
+3 -4 7 ship
+10 -3 11
+99 10 0 10 ship 3
+10 0
+```
+
+Go's rules decide which name a selector means: the shallowest one wins
+(`p.X` is Player's own `X`, not the promoted `p.Sprite.X`), and two at the
+same depth make the selector ambiguous, a compile error (`ambiguous
+selector c.X`) unless you write the path. An embedded field is an
+ordinary field underneath: a literal sets it by its type's name
+(`Player{Sprite: s}`), and a promoted field costs one `GETFIELD` per
+level. A type can embed a named struct or a named basic type
+(`type Celsius int`), from any package; not a pointer. A method
+expression of a promoted method (`Sprite.Dist`) is rejected: write a
+method value or call it on the embedded field. The methods of an
+embedded gogo type (`bytes.Buffer`, `bytes.Bytes`, `fs.File`) are not
+promoted either (`method WriteByte of an embedded gogo/bytes type not
+supported`): call them on the field, `w.Buffer.WriteByte(b)`. There are no interfaces
+of your own yet; when they come, promoted methods will count toward
+implementing them.
+
+## 3.6 Slices and arrays
+
+Without maps, slices do most of the work. `make`, `append` (also
 `append(a, b...)`), `copy`, `len`, `cap` and slice expressions `s[i:j]`
 behave as in Go, including sharing: two slices of one array see each
 other's writes. A small table of key/value pairs searched in a loop stands
@@ -1091,7 +1283,7 @@ in for a map:
 
 ```go
 // Slices: literals, make, append, copy, slicing and sharing, nil slices.
-// Slices are the only collection: there are no arrays and no maps.
+// Slices are the main collection: arrays are fixed, and there are no maps.
 package main
 
 type Entry struct {
@@ -1213,6 +1405,106 @@ This differs from Go: Go's `println` prints any slice as its length,
 capacity and the address of its array, `[3/3]0xc000014090`; only
 `fmt.Println` prints the elements. gogo has no addresses to show, so it
 prints what `fmt.Println` would.
+
+### Arrays
+
+An array `[N]T` has a fixed length that is part of its type, and it is a
+**value**, as in Go: assigning it, passing it, returning it or storing it
+in a field or an element copies it. Indexing (checked, like a slice's),
+`len`, `cap`, `range`, element and field assignment through it
+(`a[i] = v`, `pts[i].X = v`, `b.Cells[r][c] = v`), literals with `[...]`
+and index keys, arrays of structs and arrays in struct fields all work as
+in Go:
+
+```go
+// Arrays are values: assigning, passing or returning one copies it. A
+// slice of an array variable shares it, as in Go.
+package main
+
+type Point struct{ X, Y int }
+
+// Board holds its cells in an array field: copying a Board copies them.
+type Board struct {
+	Cells [3][3]byte
+	Moves int
+}
+
+// play returns the board with one more move: b is play's own copy.
+func play(b Board, row, col int, who byte) Board {
+	b.Cells[row][col] = who
+	b.Moves++
+	return b
+}
+
+func sum(a [4]int) int {
+	t := 0
+	for _, v := range a {
+		t += v
+	}
+	return t
+}
+
+func main() {
+	var a [4]int // the zero value: four zeros
+	a[1] = 5
+	a[3] += 2
+	b := a // a copy
+	b[0] = 9
+	println(a[0], b[0], len(a), sum(a))
+
+	// Literals: [...] counts the elements; keys set given indices.
+	primes := [...]int{2, 3, 5, 7, 11}
+	flags := [8]bool{1: true, 6: true}
+	println(len(primes), primes[4], flags[1], flags[2])
+
+	// a[:] shares the variable's array; a = b copies b into it.
+	s := a[:]
+	s[0] = -1
+	println(a[0])
+	a = b
+	println(s[0])
+
+	// Arrays of structs, and arrays in struct fields.
+	pts := [2]Point{{1, 2}, {3, 4}}
+	pts[1].X = 30
+	var empty Board
+	game := play(empty, 1, 1, 'x')
+	game = play(game, 0, 2, 'o')
+	println(pts[1].X, empty.Moves, game.Moves, game.Cells[1][1], game.Cells[0][2])
+}
+```
+
+```text
+0 9 4 7
+5 11 true false
+-1
+9
+30 0 2 120 111
+```
+
+Inside the VM an array is a slice of length and capacity N, so it prints
+like one (`println(a)` gives `[0 5 0 2]`) and `a[:]` is an ordinary slice
+of it. Some things to know:
+
+- **Copies are real copies.** `b := a`, `f(a)`, `return a` and `p.Cells = c`
+  each allocate a new array of N elements (an array literal or a call
+  result is not copied again). Pass a slice, `a[:]`, when a function only
+  reads or should write the caller's array.
+- **Only an array variable can be sliced.** `a[:]` shares `a`, and
+  `a = b` copies `b`'s elements into that shared array, as in Go. An array
+  in a field or an element is not changed in place (a write through it
+  copies it), so `p.Cells[:]` is rejected (`slice of an array that is not
+  a variable not supported`): copy it first, `c := p.Cells; c[:]`.
+- **No `==` yet.** Comparing arrays (`comparison of arrays not supported
+  yet`), and a `switch` on one, wait for the comparison of composite values
+  (with interfaces); compare the elements.
+- **Not in `any`.** An array cannot go into an interface, so it cannot be
+  a message on its own (`array in interface not supported`): send a slice,
+  or a struct with the array as a field, which is copied with the message.
+- A variable a closure captures cannot have its elements assigned
+  (`captured variable must not be changed by element assignment`), for the
+  reason its fields cannot (section 3.4). Named array types
+  (`type Grid [9]int`) are not supported.
 
 ## 3.7 Strings, strconv and strings
 
@@ -1452,7 +1744,7 @@ func Max[T int | int64](a, b T) T { // generics
 func main() {
 	ch := make(chan int) // channel
 	go func() { ch <- 1 }()
-	defer println("bye")
+	defer recover()       // recover
 	m := map[string]int{} // map
 	p := &Sq{2}           // pointer
 	x := 1.5i             // complex
@@ -1460,10 +1752,10 @@ func main() {
 		goto done // goto
 	}
 done:
-	var a [4]int      // array
-	y := any(1).(int) // type assertion
+	var a any = [4]int{} // array in an interface
+	y := any(1).(int)    // type assertion
 	_ = y
-	println(m, p, x, a[0])
+	println(m, p, x, a)
 	panic("boom")
 }
 ```
@@ -1477,18 +1769,17 @@ main.gg:11:9: gogo: pointer receivers are not supported yet
 main.gg:13:1: gogo: generic function not supported
 main.gg:21:8: gogo: channel not supported
 main.gg:22:2: gogo: go statement not supported
-main.gg:23:2: gogo: defer statement not supported
+main.gg:23:8: gogo: builtin recover not supported
 main.gg:24:7: gogo: map not supported
 main.gg:25:7: gogo: pointer not supported
 main.gg:26:7: gogo: complex not supported
 main.gg:28:3: gogo: goto statement not supported
 main.gg:30:1: gogo: label on a statement other than for or switch not supported
-main.gg:31:8: gogo: array not supported
+main.gg:31:14: gogo: array in interface not supported: use a slice or a struct with an array field
 main.gg:32:7: gogo: type assertion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
 main.gg:34:16: gogo: complex not supported
-main.gg:34:19: gogo: index of [4]int not supported
 main.gg:35:2: gogo: builtin panic not supported
 ```
 
@@ -1498,12 +1789,12 @@ The full list, with what to do instead:
 |---|---|---|
 | `go f()` | `go statement not supported` | `actor.Spawn(f)` |
 | channels, `select`, `<-` | `channel not supported`, `operator <- not supported` | messages: `actor.Send`, `actor.Receive` |
-| `defer`, `recover` | `defer statement not supported` | let the actor exit; ports and files close automatically |
+| `defer` in a loop | `defer inside a loop not supported: deferred calls are static (move the loop body into a function)` | a function per iteration |
+| `recover` | `builtin recover not supported` | let the actor exit; a supervisor restarts it; ports and files close automatically |
 | `panic(v)` | `builtin panic not supported` | `actor.Exit(code)` |
 | `error` | `error not supported` | `bool` or an `int` code type |
 | package-level `var` | `global variable not supported` | `const`, or state in an actor |
 | maps | `map not supported` | a slice of key/value structs |
-| arrays `[N]T` | `array not supported` | slices |
 | pointers, `&x`, `*p` | `pointer not supported` | values; state in actors |
 | pointer receivers `func (p *T) M()` | `pointer receivers are not supported yet` | a value receiver that returns the new value |
 | your own interfaces | `interface types are not supported yet: call methods on the concrete type` | function values (method values too), or messages and a type switch |
@@ -1515,10 +1806,11 @@ The full list, with what to do instead:
 | generics | `generic function not supported` | write the function per type |
 | `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
 | `struct == struct` | `comparison of main.P not supported` | compare fields |
+| `array == array` | `comparison of arrays not supported yet` | compare elements |
+| an array in `any` | `array in interface not supported` | a slice, or a struct holding the array |
 | `func init()` | `func init not supported` | call it from `main` |
-| embedded fields | `embedded field not supported` | a named field |
 
-> **Note.** Pointer receivers, maps, arrays, pointers, `uint32`,
+> **Note.** Pointer receivers, maps, pointers, `uint32`,
 > package-level variables, the `error` interface, `panic` and type
 > assertions are not supported yet. They are planned for
 > the "language completeness" milestone, next after embed mode (see

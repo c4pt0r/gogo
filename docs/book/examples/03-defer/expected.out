@@ -1,0 +1,15 @@
+open src
+open dst
+close dst
+close src
+copied 3
+open src
+open dst
+bad item -2
+close dst
+close src
+copied 1
+x = 2
+func literal, last deferred, runs first
+only when x > 1
+deferred x = 1

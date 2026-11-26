@@ -1,0 +1,112 @@
+package main
+
+type Res struct{ Name string }
+
+func (r Res) Close() { println("close", r.Name) }
+
+func (r Res) Log(msg string, n int) { println("log", r.Name, msg, n) }
+
+type Wrapped struct {
+	Res
+	ID int
+}
+
+func trace(name string) string {
+	println("enter", name)
+	return name
+}
+
+func un(name string) { println("leave", name) }
+
+func order() {
+	defer un(trace("order"))
+	for i := 0; i < 3; i++ {
+		println("work", i)
+	}
+	defer println("second")
+	defer println("third")
+}
+
+func args() int {
+	x := 1
+	defer println("deferred x =", x)
+	x = 2
+	r := Res{"a"}
+	defer r.Close()
+	r = Res{"b"}
+	defer r.Log("msg", x)
+	f := r.Close
+	r = Res{"c"}
+	defer f()
+	println("x =", x, r.Name)
+	return x * 10
+}
+
+func early(n int) (res int) {
+	defer println("always", n)
+	if n > 5 {
+		defer println("big", n)
+		if n > 10 {
+			return 100
+		}
+		res = 50
+		println("past big")
+	}
+	switch {
+	case n == 0:
+		defer println("zero")
+		return -1
+	case n == 1:
+		return 1
+	}
+	res += n
+	return
+}
+
+func multi() (int, string) {
+	defer func() {
+		println("literal")
+	}()
+	a := [3]int{1, 2, 3}
+	defer show(a)
+	a[0] = 99
+	return a[0], "s"
+}
+
+func show(a [3]int) { println("show", a[0], a[1], a[2]) }
+
+func promoted() {
+	w := Wrapped{Res{"w"}, 1}
+	defer w.Close()
+	defer w.Res.Log("direct", w.ID)
+	w.Name = "changed"
+	println("promoted body", w.Name)
+}
+
+func nothing() {
+	defer println("nothing")
+}
+
+func loopInClosure() {
+	for i := 0; i < 2; i++ {
+		func() {
+			defer println("closure done")
+			println("closure", 7)
+		}()
+	}
+}
+
+func main() {
+	order()
+	println("args ->", args())
+	println(early(0))
+	println(early(1))
+	println(early(3))
+	println(early(7))
+	println(early(12))
+	n, s := multi()
+	println(n, s)
+	promoted()
+	nothing()
+	loopInClosure()
+}

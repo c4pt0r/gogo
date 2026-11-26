@@ -1,0 +1,48 @@
+// defer: the deferred calls run when the function returns, last deferred
+// first; their arguments are evaluated at the defer statement.
+package main
+
+type Conn struct{ Name string }
+
+func (c Conn) Close() { println("close", c.Name) }
+
+func open(name string) Conn {
+	println("open", name)
+	return Conn{name}
+}
+
+// copyAll returns early on a bad item: every return runs the deferred
+// calls registered before it.
+func copyAll(items []int) (n int) {
+	src := open("src")
+	defer src.Close()
+	dst := open("dst")
+	defer dst.Close()
+	for _, it := range items {
+		if it < 0 {
+			println("bad item", it)
+			return n
+		}
+		n++
+	}
+	return n
+}
+
+func count() {
+	x := 1
+	defer println("deferred x =", x) // x is evaluated now: 1
+	x = 2
+	if x > 1 {
+		defer println("only when x > 1")
+	}
+	defer func() {
+		println("func literal, last deferred, runs first")
+	}()
+	println("x =", x)
+}
+
+func main() {
+	println("copied", copyAll([]int{1, 2, 3}))
+	println("copied", copyAll([]int{1, -2, 3}))
+	count()
+}
