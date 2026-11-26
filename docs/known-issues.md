@@ -483,12 +483,14 @@ rebuilt:
   (`msg_free`, `heap_alloc`, `timer_*`, `out_*`, ...), which can clash
   with a host's own symbols. *Workaround:* link `libgogo.a` in products;
   use the debug archive only to debug.
-- **Not yet run on Linux.** The embed tests (`make test-embed`, the
-  multi-VM and TSan tests), `make test-fs-host` (the sandbox's Linux
-  error paths: `ENOTDIR` for a symlinked directory, `ENXIO` for a FIFO),
-  the ELF prelink step (`ld -r` + `objcopy --keep-global-symbol`) and
-  `tools/libsyms.sh` / `tools/globals.sh --objects` on ELF have only run
-  on macOS; they are checked by reading only.
+- **Linux: the full suite has run on arm64 only.** `make test` (the
+  embed tests, `make test-fs-host`'s Linux error paths, the ELF prelink
+  step, `tools/libsyms.sh` and `tools/globals.sh` on ELF), `make
+  test-lib` and `make test-tls-asan` pass on Ubuntu 24.04 arm64 with gcc
+  13. `make test-embed-tsan` and `make test-embed-leaks` (LeakSanitizer)
+  have not run on Linux yet, and leak checking is off in
+  `test-tls-asan` (the C suites' fixtures and gogovm's exit do not free
+  their VM).
 
 ## ESP32-S3 boards
 

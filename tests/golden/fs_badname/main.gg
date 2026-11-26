@@ -8,14 +8,19 @@ import "gogo/fs"
 func main() {
 	names, e := fs.ReadDir("/flash")
 	println("readdir", len(names), int(e))
+	// ReadDir's order is not defined (the host's directory order differs
+	// between file systems): look for each name, then print in one order.
+	bad, ok := false, false
 	for _, n := range names {
 		if n == "My File.TXT" {
-			println("listed", n)
+			bad = true
 		}
 		if n == "ok.txt" {
-			println("listed", n)
+			ok = true
 		}
 	}
+	println("listed My File.TXT", bad)
+	println("listed ok.txt", ok)
 	_, e = fs.Open("/flash/My File.TXT", fs.Read)
 	println("open", int(e))
 	_, e = fs.ReadFile("/flash/My File.TXT", 10)

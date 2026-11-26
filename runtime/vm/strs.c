@@ -306,7 +306,7 @@ static uint32_t sl_append(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb, u
     /* The new elements; a spread source may overlap the destination. */
     if (bytes) {
         uint8_t *p = slice_bytes(a, &d) + s.len;
-        int32_t b;
+        int32_t b = 0;   /* append_src checked that every value is an int */
         if (!src.spread) {
             for (uint32_t k = 0; k < nv; k++) { arg_int(vm, a, R[rb + 3 + k], &b); p[k] = (uint8_t)b; }
         }

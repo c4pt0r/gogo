@@ -412,11 +412,14 @@ test-net-mcu: $(BUILD)/gogovm_mcu
 # GOGO_DEBUG=1 (runtime/vm/config.h): the sanitizer builds also check
 # the runtime's internal invariants (GOGO_ASSERT).
 ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer -DGOGO_DEBUG=1
+# Leak checking is off (LeakSanitizer runs on Linux only): the C suites'
+# fixtures and gogovm's exit do not free their Vm; test-embed-leaks checks
+# the embedding API for leaks.
 test-tls-asan:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls
-	build/asan/test_net
-	build/asan/test_tls
-	GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
+	ASAN_OPTIONS=detect_leaks=0 build/asan/test_net
+	ASAN_OPTIONS=detect_leaks=0 build/asan/test_tls
+	ASAN_OPTIONS=detect_leaks=0 GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
 
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
@@ -450,8 +453,9 @@ globals:
 	GLOBALS_CC='$(CC)' GLOBALS_CFLAGS='$(CFLAGS)' GLOBALS_MCU_FLAGS='$(MCU_FLAGS)' tools/globals.sh
 
 # The guard must flag exactly the mutable symbols of its fixture (and no const ones).
+# gcc on ELF names the function-local static ?.cnt (globals.sh), clang fx_fn.cnt.
 globals-selftest:
-	GLOBALS_CC='$(CC)' GLOBALS_CFLAGS='$(CFLAGS)' GLOBALS_MCU_FLAGS='$(MCU_FLAGS)' tools/globals.sh --print tools/selftest/globals_fixture.c | diff - tools/selftest/globals_fixture.expect
+	GLOBALS_CC='$(CC)' GLOBALS_CFLAGS='$(CFLAGS)' GLOBALS_MCU_FLAGS='$(MCU_FLAGS)' tools/globals.sh --print tools/selftest/globals_fixture.c | sed 's/ ?\.cnt$$/ fx_fn.cnt/' | LC_ALL=C sort | diff - tools/selftest/globals_fixture.expect
 
 clean:
 	rm -rf $(BUILD)

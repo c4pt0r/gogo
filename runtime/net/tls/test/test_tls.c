@@ -19,9 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#if defined(__APPLE__)
-#include <sys/random.h>
-#endif
+#include <sys/random.h>   /* getentropy (glibc declares it here, not in unistd.h at -std=c99) */
 
 #define IP4(a, b, c, d) (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | ((uint32_t)(c) << 8) | (uint32_t)(d))
 #define PEER_IP IP4(10, 0, 0, 1)

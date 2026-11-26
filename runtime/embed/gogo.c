@@ -9,7 +9,8 @@
 #include "image.h"
 #include <string.h>
 
-typedef char steps_match[(GOGO_RUNNABLE == VM_RUNNABLE && GOGO_IDLE == VM_IDLE && GOGO_DONE == VM_DONE) ? 1 : -1];
+typedef char steps_match[((int)GOGO_RUNNABLE == (int)VM_RUNNABLE && (int)GOGO_IDLE == (int)VM_IDLE &&
+                          (int)GOGO_DONE == (int)VM_DONE) ? 1 : -1];
 
 /* No board hardware: ports, input and network come from the host. The
  * mounts are /flash when fs_root serves it (and the grant has it). */
