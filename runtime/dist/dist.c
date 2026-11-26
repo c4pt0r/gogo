@@ -91,11 +91,16 @@ typedef struct DistState {
     uint16_t tick;           /* proxy use clock (least recently used goes first) */
     term agent;              /* the local actor a SEND to PID 0 reaches */
     DistStats st;
-    Link links[DIST_LINKS];
-    Proxy proxies[DIST_PROXIES];
-    term exports[DIST_EXPORTS];
-    Watch watches[DIST_WATCHES];
-    Pending calls[DIST_CALLS];
+    /* The tables, sized at the first open from the VM's link cap
+     * (vm->max_links, else DIST_LINKS; state_new): a link is allocated
+     * when first needed and kept (its memory is reused, so a Link pointer
+     * stays valid). */
+    uint16_t nlinks, nprox, nexp, nwatch, ncalls;
+    Link **links;
+    Proxy *proxies;
+    term *exports;
+    Watch *watches;
+    Pending *calls;
 } DistState;
 
 static const uint8_t nfields[(TYPE_RESERVED_COUNT + 1u) / 2u] = TYPE_NFIELDS;
@@ -136,7 +141,7 @@ static const uint8_t *type_name(const Image *img, uint32_t r, uint32_t *len, uin
 static Proxy *proxy_of(DistState *ds, term pid) {
     if (!term_is_pid(pid) || term_pid_slot(pid) < DIST_SLOT_BASE) return NULL;
     uint32_t i = term_pid_slot(pid) - DIST_SLOT_BASE;
-    if (i >= DIST_PROXIES) return NULL;
+    if (i >= ds->nprox) return NULL;
     Proxy *x = &ds->proxies[i];
     return x->node && x->gen == term_pid_gen(pid) ? x : NULL;
 }
@@ -154,7 +159,7 @@ static void proxy_free(Proxy *x) {
 
 /* True if a remote link or monitor names proxy p. */
 static bool proxy_watched(const DistState *ds, term p) {
-    for (uint32_t i = 0; i < DIST_WATCHES; i++) {
+    for (uint32_t i = 0; i < ds->nwatch; i++) {
         const Watch *w = &ds->watches[i];
         if ((w->kind == W_MON_OUT || w->kind == W_LINK) && w->peer == p) return true;
     }
@@ -166,7 +171,7 @@ static bool proxy_watched(const DistState *ds, term p) {
  * node's agent; 0 if there is none. */
 static term proxy_intern(DistState *ds, uint16_t node, term remote) {
     Proxy *free = NULL, *old = NULL;
-    for (uint32_t i = 0; i < DIST_PROXIES; i++) {
+    for (uint32_t i = 0; i < ds->nprox; i++) {
         Proxy *x = &ds->proxies[i];
         if (x->node == node && x->remote == remote) {
             x->used = ++ds->tick;
@@ -174,7 +179,7 @@ static term proxy_intern(DistState *ds, uint16_t node, term remote) {
         }
         if (!x->node && !free) free = x;
     }
-    for (uint32_t i = 0; !free && i < DIST_PROXIES; i++) {
+    for (uint32_t i = 0; !free && i < ds->nprox; i++) {
         Proxy *x = &ds->proxies[i];
         if (x->remote == T_ZEROPID || proxy_watched(ds, proxy_term(ds, x))) continue;
         if (!old || (uint16_t)(ds->tick - x->used) > (uint16_t)(ds->tick - old->used)) old = x;
@@ -191,7 +196,7 @@ static term proxy_intern(DistState *ds, uint16_t node, term remote) {
 }
 
 static term proxy_find(DistState *ds, uint16_t node, term remote) {
-    for (uint32_t i = 0; i < DIST_PROXIES; i++) {
+    for (uint32_t i = 0; i < ds->nprox; i++) {
         Proxy *x = &ds->proxies[i];
         if (x->node == node && x->remote == remote) return proxy_term(ds, x);
     }
@@ -200,14 +205,14 @@ static term proxy_find(DistState *ds, uint16_t node, term remote) {
 
 /* Forgets node's proxies: their terms name nothing from now on. */
 static void proxies_drop(DistState *ds, uint16_t node) {
-    for (uint32_t i = 0; i < DIST_PROXIES; i++) {
+    for (uint32_t i = 0; i < ds->nprox; i++) {
         Proxy *x = &ds->proxies[i];
         if (x->node == node) proxy_free(x);
     }
 }
 
 static bool exported(const DistState *ds, term pid) {
-    for (uint32_t i = 0; i < DIST_EXPORTS; i++) {
+    for (uint32_t i = 0; i < ds->nexp; i++) {
         if (ds->exports[i] == pid) return true;
     }
     return false;
@@ -216,7 +221,7 @@ static bool exported(const DistState *ds, term pid) {
 /* Records pid as given out; false if the table is full of live actors. */
 static bool export_add(Vm *vm, DistState *ds, term pid) {
     term *free = NULL;
-    for (uint32_t i = 0; i < DIST_EXPORTS; i++) {
+    for (uint32_t i = 0; i < ds->nexp; i++) {
         term *e = &ds->exports[i];
         if (*e == pid) return true;
         if (!free && (!*e || !actor_lookup(vm, *e))) free = e;
@@ -229,8 +234,8 @@ static bool export_add(Vm *vm, DistState *ds, term pid) {
 /* ---- links and routes ---- */
 
 static Link *link_of(DistState *ds, const Port *p) {
-    for (uint32_t i = 0; i < DIST_LINKS; i++) {
-        if (ds->links[i].port == p) return &ds->links[i];
+    for (uint32_t i = 0; i < ds->nlinks; i++) {
+        if (ds->links[i] && ds->links[i]->port == p) return ds->links[i];
     }
     return NULL;
 }
@@ -238,9 +243,9 @@ static Link *link_of(DistState *ds, const Port *p) {
 /* The link frames for node take: its own, else the relay; NULL: none. */
 static Link *route(DistState *ds, uint16_t node) {
     Link *relay = NULL;
-    for (uint32_t i = 0; i < DIST_LINKS; i++) {
-        Link *l = &ds->links[i];
-        if (!l->port) continue;
+    for (uint32_t i = 0; i < ds->nlinks; i++) {
+        Link *l = ds->links[i];
+        if (!l || !l->port) continue;
         if (l->peer == node) return l;
         if (l->relay) relay = l;
     }
@@ -898,7 +903,7 @@ static void deliver(Vm *vm, DistState *ds, Actor *to, const uint8_t *p, uint32_t
 /* ---- watches ---- */
 
 static Watch *watch_new(DistState *ds, uint8_t kind, uint16_t node, term local, term peer, uint64_t serial) {
-    for (uint32_t i = 0; i < DIST_WATCHES; i++) {
+    for (uint32_t i = 0; i < ds->nwatch; i++) {
         Watch *w = &ds->watches[i];
         if (w->kind == W_FREE) {
             w->kind = kind;
@@ -913,7 +918,7 @@ static Watch *watch_new(DistState *ds, uint8_t kind, uint16_t node, term local, 
 }
 
 static Watch *watch_find(DistState *ds, uint8_t kind, term local, term peer, uint64_t serial) {
-    for (uint32_t i = 0; i < DIST_WATCHES; i++) {
+    for (uint32_t i = 0; i < ds->nwatch; i++) {
         Watch *w = &ds->watches[i];
         if (w->kind == kind && w->local == local && (kind == W_MON_OUT || w->peer == peer) &&
             (kind == W_LINK || w->serial == serial)) return w;
@@ -935,7 +940,7 @@ static void calls_fail(Vm *vm, DistState *ds, uint16_t node);
 /* Node `node` is unreachable: its monitors fire, its links signal, its
  * other watches and its proxies go. */
 static void node_gone(Vm *vm, DistState *ds, uint16_t node) {
-    for (uint32_t i = 0; i < DIST_WATCHES; i++) {
+    for (uint32_t i = 0; i < ds->nwatch; i++) {
         Watch w = ds->watches[i];
         if (w.kind == W_FREE || w.node != node) continue;
         ds->watches[i].kind = W_FREE;
@@ -959,7 +964,7 @@ static void call_note(Vm *vm, DistState *ds, const Actor *from, term msg, uint16
     const uint32_t *r = obj_of(vm, from, o[3]);
     if (!r || hdr_kind(r[0]) != K_REF || hdr_words(r[0]) != 3u) return;
     Pending *slot = &ds->calls[0];
-    for (uint32_t i = 0; i < DIST_CALLS; i++) {
+    for (uint32_t i = 0; i < ds->ncalls; i++) {
         Pending *c = &ds->calls[i];
         if (c->caller == from->id || !c->caller) {
             slot = c;
@@ -973,7 +978,7 @@ static void call_note(Vm *vm, DistState *ds, const Actor *from, term msg, uint16
 
 /* The reply for caller's Call serial arrived: forget the Call. */
 static void call_done(DistState *ds, term caller, uint64_t serial) {
-    for (uint32_t i = 0; i < DIST_CALLS; i++) {
+    for (uint32_t i = 0; i < ds->ncalls; i++) {
         Pending *c = &ds->calls[i];
         if (c->caller == caller && c->serial == serial) c->caller = 0;
     }
@@ -982,7 +987,7 @@ static void call_done(DistState *ds, term caller, uint64_t serial) {
 /* node is gone: its Calls in flight fail at once. A block for a Call that
  * already returned is a stale reply, dropped unseen. */
 static void calls_fail(Vm *vm, DistState *ds, uint16_t node) {
-    for (uint32_t i = 0; i < DIST_CALLS; i++) {
+    for (uint32_t i = 0; i < ds->ncalls; i++) {
         Pending *c = &ds->calls[i];
         if (!c->caller || c->node != node) continue;
         Actor *a = actor_lookup(vm, c->caller);
@@ -1086,7 +1091,7 @@ static bool h_link(Vm *vm, Actor *a, term pid, bool on) {
 
 static void h_exited(Vm *vm, Actor *a, uint32_t code) {
     DistState *ds = state(vm);
-    for (uint32_t i = 0; i < DIST_WATCHES; i++) {
+    for (uint32_t i = 0; i < ds->nwatch; i++) {
         Watch *w = &ds->watches[i];
         if (w->kind == W_FREE || w->local != a->id) continue;
         uint8_t kind = w->kind;
@@ -1108,11 +1113,11 @@ static void h_exited(Vm *vm, Actor *a, uint32_t code) {
     }
     if (exported(ds, a->id)) {
         /* Peers may hold proxies of it: tell them it is gone. */
-        for (uint32_t i = 0; i < DIST_LINKS; i++) {
-            if (ds->links[i].port) gone_to(vm, ds, &ds->links[i], ds->self, a->id);
+        for (uint32_t i = 0; i < ds->nlinks; i++) {
+            if (ds->links[i] && ds->links[i]->port) gone_to(vm, ds, ds->links[i], ds->self, a->id);
         }
     }
-    for (uint32_t i = 0; i < DIST_EXPORTS; i++) {
+    for (uint32_t i = 0; i < ds->nexp; i++) {
         if (ds->exports[i] == a->id) ds->exports[i] = 0;
     }
     if (ds->agent == a->id) ds->agent = 0;
@@ -1216,9 +1221,9 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
         Proxy *x = p ? proxy_of(ds, p) : NULL;
         if (x && !proxy_watched(ds, p)) proxy_free(x);
         if (!l->relay) {                         /* the server: tell the other boards */
-            for (uint32_t i = 0; i < DIST_LINKS; i++) {
-                Link *k = &ds->links[i];
-                if (k->port && k != l) gone_to(vm, ds, k, src, rd32(f));
+            for (uint32_t i = 0; i < ds->nlinks; i++) {
+                Link *k = ds->links[i];
+                if (k && k->port && k != l) gone_to(vm, ds, k, src, rd32(f));
             }
         }
         return;
@@ -1324,7 +1329,7 @@ static void frame_in(Vm *vm, DistState *ds, Link *l, const uint8_t *b, uint32_t 
     }
     case F_DEMONITOR: {
         if (fn != 16u) break;
-        for (uint32_t i = 0; i < DIST_WATCHES; i++) {
+        for (uint32_t i = 0; i < ds->nwatch; i++) {
             Watch *w = &ds->watches[i];
             if (w->kind == W_MON_IN && w->node == src && w->peer == rd32(f) && w->serial == rd64(f + 8))
                 w->kind = W_FREE;
@@ -1429,11 +1434,34 @@ static bool feed(Vm *vm, DistState *ds, Link *l, const uint8_t *d, uint32_t n) {
 
 /* ---- the port ---- */
 
+/* Zeroed room for n of size bytes each, or NULL. */
+static void *table(Vm *vm, uint32_t n, size_t size) {
+    void *t = va_alloc(vm, n * size);
+    if (t) memset(t, 0, n * size);
+    return t;
+}
+
 static DistState *state_new(Vm *vm) {
     if (vm->dist) return state(vm);
     DistState *ds = va_alloc(vm, sizeof *ds);
     if (!ds) return NULL;
     memset(ds, 0, sizeof *ds);
+    /* Sized from the link cap: 8 links give the tables a board always had
+     * (64 proxies and exports, 32 watches, 16 Calls). Proxies fit the
+     * remote PID slots below the ports'. */
+    uint32_t n = vm->max_links ? vm->max_links : DIST_LINKS, room = vm->port_base - DIST_SLOT_BASE;
+    uint32_t np = 48u + 2u * n;
+    ds->nlinks = (uint16_t)n;
+    ds->nprox = (uint16_t)(np < room ? np : room);
+    ds->nexp = (uint16_t)(48u + 2u * n);
+    ds->nwatch = (uint16_t)(16u + 2u * n);
+    ds->ncalls = (uint16_t)(8u + n);
+    if (!(ds->links = table(vm, ds->nlinks, sizeof *ds->links)) ||
+        !(ds->proxies = table(vm, ds->nprox, sizeof *ds->proxies)) ||
+        !(ds->exports = table(vm, ds->nexp, sizeof *ds->exports)) ||
+        !(ds->watches = table(vm, ds->nwatch, sizeof *ds->watches)) ||
+        !(ds->calls = table(vm, ds->ncalls, sizeof *ds->calls)))
+        return NULL;   /* a partial state stays allocated: rare, and the open fails */
     ds->hooks.send = h_send;
     ds->hooks.monitor = h_monitor;
     ds->hooks.link = h_link;
@@ -1462,15 +1490,16 @@ static int n_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
         return -1;
     DistState *ds = vm->dist ? state(vm) : NULL;
     Link *l = NULL;
-    for (uint32_t i = 0; ds && i < DIST_LINKS; i++) {
-        Link *k = &ds->links[i];
+    for (uint32_t i = 0; ds && i < ds->nlinks; i++) {
+        Link *k = ds->links[i];
         /* One id per VM while it has links (a new connection may get a
          * new one); one link per peer; one relay. */
-        if (k->port && (k->peer == peer || (relay && k->relay) || ds->self != self)) return -1;
+        if (k && k->port && (k->peer == peer || (relay && k->relay) || ds->self != self)) return -1;
     }
     if (!ds && !(ds = state_new(vm))) return -1;
-    for (uint32_t i = 0; i < DIST_LINKS && !l; i++) {
-        if (!ds->links[i].port) l = &ds->links[i];
+    for (uint32_t i = 0; i < ds->nlinks && !l; i++) {
+        if (!ds->links[i]) ds->links[i] = table(vm, 1, sizeof *l);   /* zeroed: port NULL */
+        if (ds->links[i] && !ds->links[i]->port) l = ds->links[i];
     }
     if (!l) return -1;
     term up = proxy_intern(ds, (uint16_t)peer, T_ZEROPID);
@@ -1489,9 +1518,9 @@ static int n_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg)
      * set already (port_open), so it goes to the owner. */
     node_event(vm, p, 1, peer, up, l->name, l->name_len);
     /* A server tells the new board about the others, and them about it. */
-    for (uint32_t i = 0; !l->relay && i < DIST_LINKS; i++) {
-        Link *k = &ds->links[i];
-        if (!k->port || k == l || k->relay) continue;
+    for (uint32_t i = 0; !l->relay && i < ds->nlinks; i++) {
+        Link *k = ds->links[i];
+        if (!k || !k->port || k == l || k->relay) continue;
         nodeup_to(vm, ds, l, k);
         nodeup_to(vm, ds, k, l);
     }
@@ -1518,16 +1547,20 @@ static void n_close(Vm *vm, Port *p) {
     DistState *ds = state(vm);
     Link *l = link_of(ds, p);
     if (!l) return;
-    uint16_t gone[DIST_PROXIES + DIST_WATCHES + 1u];
-    uint32_t ng = 0;
+    /* The nodes reached through l: its peer and, for the relay, every node
+     * of a proxy or watch whose route is l. */
+    uint32_t cap = l->relay ? 1u + ds->nprox + ds->nwatch : 1u, ng = 0;
+    uint16_t one, *gone = cap > 1u ? va_alloc(vm, cap * sizeof *gone) : NULL;
+    if (!gone) {
+        gone = &one;
+        cap = 1;
+    }
     gone[ng++] = l->peer;
-    /* Nodes reached through l only (through the relay): every node of a
-     * proxy or watch whose route is l. */
-    for (uint32_t i = 0; i < DIST_PROXIES; i++) {
+    for (uint32_t i = 0; cap > 1u && i < ds->nprox; i++) {
         uint16_t nd = ds->proxies[i].node;
         if (nd && route(ds, nd) == l) gone[ng++] = nd;
     }
-    for (uint32_t i = 0; i < DIST_WATCHES; i++) {
+    for (uint32_t i = 0; cap > 1u && i < ds->nwatch; i++) {
         uint16_t nd = ds->watches[i].node;
         if (ds->watches[i].kind != W_FREE && route(ds, nd) == l) gone[ng++] = nd;
     }
@@ -1535,9 +1568,10 @@ static void n_close(Vm *vm, Port *p) {
     uint16_t peer = l->peer;
     memset(l, 0, sizeof *l);
     for (uint32_t i = 0; i < ng; i++) node_gone(vm, ds, gone[i]);
-    for (uint32_t i = 0; i < DIST_LINKS; i++) {
-        Link *k = &ds->links[i];
-        if (!k->port) continue;
+    if (gone != &one) va_free(vm, gone, cap * sizeof *gone);
+    for (uint32_t i = 0; i < ds->nlinks; i++) {
+        Link *k = ds->links[i];
+        if (!k || !k->port) continue;
         uint8_t b[2u + HDR + 2u];
         wr16(wr16(wr16(wr16(b + 2, F_NODEDOWN), k->peer), ds->self), peer);
         wr16(b, HDR + 2u);

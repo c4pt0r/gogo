@@ -51,12 +51,14 @@
 struct Vm;
 
 #define DIST_FRAME_MAX 4096u   /* bytes of a frame, its length prefix included */
-#define DIST_LINKS     8u      /* node ports open at once */
+#ifndef DIST_LINKS
+#define DIST_LINKS     8u      /* node links of a VM whose max_links is 0 (gogovm: 512) */
+#endif
 #define DIST_NAME_MAX  32u     /* bytes of a node name */
-#define DIST_PROXIES   64u     /* remote PIDs known at once */
-#define DIST_EXPORTS   64u     /* local PIDs given out (reachable by peers) */
-#define DIST_WATCHES   32u     /* remote links and monitors, both directions */
-#define DIST_CALLS     16u     /* Calls to remote PIDs waiting at once (a lost node fails them) */
+/* The tables scale with the link cap n (state_new): 48 + 2n remote PIDs
+ * known at once (at most the remote PID slots below the ports'), 48 + 2n
+ * local PIDs given out, 16 + 2n remote links and monitors, 8 + n Calls in
+ * flight: with 8 links 64, 64, 32 and 16. */
 #define DIST_DEPTH     16u     /* nesting of a term on the wire */
 #define DIST_WORDS_PER_BYTE 2u /* most heap words a received term may take per frame byte */
 
