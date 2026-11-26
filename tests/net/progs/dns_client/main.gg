@@ -6,11 +6,11 @@ package main
 
 import (
 	"gogo/actor"
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/dns"
 	"gogo/strconv"
 	"gogo/strings"
+	"gogo/sys"
 )
 
 func lookup(name string, timeout int) {
@@ -19,7 +19,7 @@ func lookup(name string, timeout int) {
 }
 
 func timeoutMs() int {
-	if s, ok := config.Get("test.timeout"); ok {
+	if s, ok := sys.Config("test.timeout"); ok {
 		t, _ := strconv.Atoi(s)
 		return t
 	}
@@ -28,7 +28,7 @@ func timeoutMs() int {
 
 func main() {
 	println("start", dhcp.Start(dhcp.Config{}))
-	script, _ := config.Get("test.script")
+	script, _ := sys.Config("test.script")
 	timeout := timeoutMs()
 	for _, step := range strings.Split(script, " ") {
 		if strings.HasPrefix(step, "sleep:") {

@@ -23,12 +23,13 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/fs"
+	"gogo/gpio"
 	"gogo/kv"
 	"gogo/port"
 	"gogo/ringlog"
 	"gogo/strconv"
+	"gogo/sys"
 )
 
 const (
@@ -181,7 +182,7 @@ func powercut() {
 }
 
 func main() {
-	mode, _ := config.Get("fsdemo.mode")
+	mode, _ := sys.Config("fsdemo.mode")
 	n := bootCount()
 	ringlog.Append(logDir, logMax, "boot "+itoa(n)+"\n")
 	println("fsdemo: boot", n)
@@ -195,15 +196,15 @@ func main() {
 	}
 	keep()
 
-	_, ok1 := port.Open("gpio", port.GPIO{Pin: key1, Mode: port.InputPullUp, Edge: port.Falling})
-	_, ok2 := port.Open("gpio", port.GPIO{Pin: key2, Mode: port.InputPullUp, Edge: port.Falling})
+	_, ok1 := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+	_, ok2 := port.Open("gpio", gpio.Config{Pin: key2, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 	if !ok1 || !ok2 {
 		println("fsdemo: keys unavailable")
 	}
 	presses := 0
 	for {
 		switch m := actor.Receive().(type) {
-		case port.Edge:
+		case gpio.Edge:
 			presses++
 			k := "KEY1"
 			if m.Pin == key2 {

@@ -4,7 +4,6 @@
 package main
 
 import (
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/sntp"
 	"gogo/strconv"
@@ -44,7 +43,7 @@ func date(ms int64) string {
 }
 
 func main() {
-	server, ok := config.Get("clock.server")
+	server, ok := sys.Config("clock.server")
 	if !ok {
 		server = "pool.ntp.org"
 	}

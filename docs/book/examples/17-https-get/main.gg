@@ -5,14 +5,14 @@
 package main
 
 import (
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/http"
 	"gogo/sntp"
+	"gogo/sys"
 )
 
 func main() {
-	url, ok := config.Get("fetch.url")
+	url, ok := sys.Config("fetch.url")
 	if !ok {
 		url = "https://example.com/"
 	}

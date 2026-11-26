@@ -6,14 +6,14 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/http"
 	"gogo/sntp"
+	"gogo/sys"
 )
 
 func main() {
-	url, ok := config.Get("poll.url")
+	url, ok := sys.Config("poll.url")
 	if !ok {
 		url = "https://example.com/status"
 	}

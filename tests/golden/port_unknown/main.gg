@@ -7,11 +7,12 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 func main() {
-	p, ok := port.Open("nosuch", port.GPIO{Pin: 1, Mode: port.Output, Edge: port.None})
+	p, ok := port.Open("nosuch", gpio.Config{Pin: 1, Mode: gpio.Output, Edge: gpio.None})
 	println(ok)
 	port.Close(p)
 	var q actor.PID

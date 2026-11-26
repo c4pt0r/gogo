@@ -11,6 +11,7 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 	"gogo/supervisor"
 )
@@ -35,10 +36,10 @@ func worker(boss actor.PID) {
 	}
 
 	// The previous instance's port was closed when it exited, so it can be opened again here.
-	_, ok := port.Open("gpio", port.GPIO{
+	_, ok := port.Open("gpio", gpio.Config{
 		Pin:  key1,
-		Mode: port.InputPullUp,
-		Edge: port.Falling,
+		Mode: gpio.InputPullUp,
+		Edge: gpio.Falling,
 	})
 	if !ok {
 		println("worker: 打不开 KEY1")
@@ -54,7 +55,7 @@ func worker(boss actor.PID) {
 			continue
 		}
 		switch msg.(type) {
-		case port.Edge: // KEY1 pressed
+		case gpio.Edge: // KEY1 pressed
 			println("worker #", n, "要崩溃了!")
 			zero := 0
 			println(1 / zero)
@@ -74,10 +75,10 @@ func main() {
 		MaxRestarts: 3,
 		PeriodMs:    5000,
 	})
-	_, ok := port.Open("gpio", port.GPIO{
+	_, ok := port.Open("gpio", gpio.Config{
 		Pin:  key2,
-		Mode: port.InputPullUp,
-		Edge: port.Falling,
+		Mode: gpio.InputPullUp,
+		Edge: gpio.Falling,
 	})
 	if !ok {
 		println("main: 打不开 KEY2")
@@ -94,7 +95,7 @@ func main() {
 			if instances > 1 {
 				println("已重启, 第", instances, "个实例")
 			}
-		case port.Edge: // KEY2 pressed
+		case gpio.Edge: // KEY2 pressed
 			println("重启次数:", instances-1, "worker 内存:", actor.Info(cur).Memory, "B")
 		case actor.ExitMsg:
 			if m.From == sup {

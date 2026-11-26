@@ -167,7 +167,7 @@ func isBytes(t types.Type) bool { return isBytesType(t, "Bytes") }
 func isBuffer(t types.Type) bool { return isBytesType(t, "Buffer") }
 
 // reservedTypes are the struct types of the system packages (gogo/actor,
-// gogo/net, gogo/fs, gogo/kbd, gogo/power, gogo/code, gogo/port,
+// gogo/gpio, gogo/net, gogo/fs, gogo/kbd, gogo/power, gogo/code, gogo/port,
 // gogo/imu, gogo/ir, gogo/audio, gogo/screen). The VM builds and recognizes
 // these structs by fixed index, their position here (TYPE_* in
 // runtime/vm/opcodes.h, field counts in TYPE_NFIELDS there). An image's
@@ -191,9 +191,9 @@ var reservedTypes = []struct {
 	{ActorPath, "DownMsg", []string{"Ref", "From", "Reason"}},
 	{ActorPath, "Request", []string{"From", "Ref", "Body"}},
 	{ActorPath, "Options", []string{"MaxMemory"}},
-	{PortPath, "GPIO", []string{"Pin", "Mode", "Edge", "DebounceMs"}},
-	{PortPath, "Write", []string{"Value"}},
-	{PortPath, "Edge", []string{"Pin", "Value"}},
+	{GpioPath, "Config", []string{"Pin", "Mode", "Edge", "DebounceMs"}},
+	{GpioPath, "Write", []string{"Value"}},
+	{GpioPath, "Edge", []string{"Pin", "Value"}},
 	{NetPath, "IfConfig", nil},
 	{NetPath, "SetAddr", []string{"IP", "Mask", "Gateway", "DNS"}},
 	{NetPath, "Up", []string{"IP", "Gateway", "DNS"}},
@@ -242,6 +242,8 @@ func reservedName(i int) string {
 		return rt.name
 	case PortPath:
 		return "port." + rt.name
+	case GpioPath:
+		return "gpio." + rt.name
 	case NetPath:
 		return "net." + rt.name
 	case FsPath:

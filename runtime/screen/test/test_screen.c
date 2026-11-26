@@ -576,7 +576,7 @@ TEST(screen_port_out_done) {
     CHECK_EQ(presents, 2);
     /* other commands are ignored */
     int32_t one = 1;
-    port_command(&vm, owner, p, mk_struct(TYPE_WRITE, &one, 1));
+    port_command(&vm, owner, p, mk_struct(TYPE_GPIO_WRITE, &one, 1));
     CHECK(!pop(&type, &seq, NULL, NULL));
     port_close(&vm, p);
 }

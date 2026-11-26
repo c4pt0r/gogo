@@ -6,8 +6,8 @@
 // The struct types Chunk, Out, Done and Closed have fixed type indices
 // 31-34 in every image, Host and Post 42-43 (TYPE_* in
 // runtime/vm/opcodes.h); keep their field order in sync with
-// compiler.reservedTypes. The struct types GPIO, Write and Edge have fixed
-// type indices 6-8.
+// compiler.reservedTypes. The types of each device are in its own package
+// (gogo/gpio, gogo/kbd, gogo/imu, ...).
 //
 // Send a command to a port with actor.Send(p, cmd); any actor holding the
 // PID may. Events go to the owner, the actor that opened the port, as
@@ -26,20 +26,6 @@ import (
 	"gogo/actor"
 	"gogo/bytes"
 )
-
-// GPIO configures a "gpio" port: one pin.
-type GPIO struct {
-	Pin        int
-	Mode       int // Input, InputPullUp, InputPullDown, Output
-	Edge       int // None, Rising, Falling, Both (inputs only)
-	DebounceMs int // input debounce; <= 0 means the default, 20 ms
-}
-
-// Write is a command: drive an output pin to Value (0 or 1).
-type Write struct{ Value int }
-
-// Edge is an event: the pin's level changed; Value is the level after it.
-type Edge struct{ Pin, Value int }
 
 // Chunk is a stream event: the next block of input. From is the port. Seq
 // counts the chunks the port made, from 1, dropped ones included, so a gap
@@ -107,22 +93,6 @@ type Post struct {
 	Kind int
 	Data bytes.Bytes
 }
-
-// GPIO modes.
-const (
-	Input         = 0
-	InputPullUp   = 1
-	InputPullDown = 2
-	Output        = 3
-)
-
-// GPIO edges.
-const (
-	None    = 0
-	Rising  = 1
-	Falling = 2
-	Both    = 3
-)
 
 // Open opens a port of the named driver with cfg; the caller becomes its
 // owner. ok is false if the driver is unknown, cfg is invalid for it, the

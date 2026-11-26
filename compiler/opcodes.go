@@ -172,9 +172,10 @@ const (
 	TypeDownmsg  uint32 = 3
 	TypeRequest  uint32 = 4
 	TypeOptions  uint32 = 5
-	TypeGpio     uint32 = 6
-	TypeWrite    uint32 = 7
-	TypeEdge     uint32 = 8
+	// gogo/gpio
+	TypeGpioConfig uint32 = 6
+	TypeGpioWrite  uint32 = 7
+	TypeGpioEdge   uint32 = 8
 	// gogo/net
 	TypeNetIfconfig  uint32 = 9
 	TypeNetSetaddr   uint32 = 10
@@ -349,7 +350,7 @@ var goConstants = map[string]uint32{
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes,
 	"TypeProcinfo": TypeProcinfo, "TypeReason": TypeReason, "TypeExitmsg": TypeExitmsg,
 	"TypeDownmsg": TypeDownmsg, "TypeRequest": TypeRequest, "TypeOptions": TypeOptions,
-	"TypeGpio": TypeGpio, "TypeWrite": TypeWrite, "TypeEdge": TypeEdge,
+	"TypeGpioConfig": TypeGpioConfig, "TypeGpioWrite": TypeGpioWrite, "TypeGpioEdge": TypeGpioEdge,
 	"TypeNetIfconfig": TypeNetIfconfig, "TypeNetSetaddr": TypeNetSetaddr, "TypeNetUp": TypeNetUp,
 	"TypeNetDown": TypeNetDown, "TypeNetAddr": TypeNetAddr, "TypeNetUdp": TypeNetUdp,
 	"TypeNetSendto": TypeNetSendto, "TypeNetDatagram": TypeNetDatagram,

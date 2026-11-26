@@ -146,7 +146,7 @@ enum Builtin {
     B_BYTES_COPYTO    = 45,  /* Bytes, []byte -> n copied */
     B_PORT_HANDOFF    = 46,  /* port pid, to pid -> bool (port.h port_handoff) */
     B_NET_SUBSCRIBE   = 47,  /* -> bool: net.Subscribe (port.h port_subscribe) */
-    B_CONFIG_GET      = 48,  /* key string -> value string, ok bool: config.Get
+    B_CONFIG_GET      = 48,  /* key string -> value string, ok bool: sys.Config
                               * (host->config_get; "wifi." keys hidden) */
     B_FS              = 49,  /* op int, args... -> result(s): gogo/fs, run by
                               * the Vm's fs_builtin hook (actor.h; vfs/builtin.c) */
@@ -175,10 +175,10 @@ enum Builtin {
 #define TYPE_DOWNMSG  3   /* Ref Ref, From PID, Reason Reason */
 #define TYPE_REQUEST  4   /* From PID, Ref Ref, Body any */
 #define TYPE_OPTIONS  5   /* MaxMemory int */
-/* Then the gogo/port GPIO struct types (fields as in lib/port/port.gg). */
-#define TYPE_GPIO     6   /* Pin, Mode, Edge, DebounceMs int */
-#define TYPE_WRITE    7   /* Value int */
-#define TYPE_EDGE     8   /* Pin int, Value int */
+/* Then the gogo/gpio struct types (fields as in lib/gpio/gpio.gg). */
+#define TYPE_GPIO_CONFIG 6   /* Pin, Mode, Edge, DebounceMs int: cfg of the "gpio" port */
+#define TYPE_GPIO_WRITE  7   /* Value int: gpio command */
+#define TYPE_GPIO_EDGE   8   /* Pin int, Value int: gpio event */
 /* Then the gogo/net struct types (fields as in lib/net/net.gg). IPv4
  * addresses are ints (a.b.c.d = a<<24|b<<16|c<<8|d). */
 #define TYPE_NET_IFCONFIG  9   /* (no fields): cfg of the "netif" port */
@@ -250,8 +250,8 @@ enum Builtin {
     TYPE_NF2(1, 2), /* 0 ProcInfo, Reason */ \
     TYPE_NF2(2, 3), /* 2 ExitMsg, DownMsg */ \
     TYPE_NF2(3, 1), /* 4 Request, Options */ \
-    TYPE_NF2(4, 1), /* 6 port.GPIO, port.Write */ \
-    TYPE_NF2(2, 0), /* 8 port.Edge, net.IfConfig */ \
+    TYPE_NF2(4, 1), /* 6 gpio.Config, gpio.Write */ \
+    TYPE_NF2(2, 0), /* 8 gpio.Edge, net.IfConfig */ \
     TYPE_NF2(4, 3), /* 10 net.SetAddr, net.Up */ \
     TYPE_NF2(0, 2), /* 12 net.Down, net.Addr */ \
     TYPE_NF2(1, 2), /* 14 net.UDP, net.SendTo */ \

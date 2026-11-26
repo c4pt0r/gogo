@@ -1,0 +1,44 @@
+// Package gpio is the gogo GPIO API: the "gpio" port, one pin per port. It
+// is a stub package with only types and constants: the compiler
+// type-checks against it and the VM builds and reads the structs by fixed
+// index. The C side is the board's gpio driver.
+//
+// Open a pin with port.Open("gpio", gpio.Config{Pin: 25, Mode:
+// gpio.Output}); drive an output with actor.Send(p, gpio.Write{Value: 1}).
+// An input with an Edge other than None sends its owner an Edge event on
+// each change, debounced.
+//
+// The struct types Config, Write and Edge have fixed type indices 6-8 in
+// every image (TYPE_GPIO_* in runtime/vm/opcodes.h); keep their field
+// order in sync with compiler.reservedTypes.
+package gpio
+
+// Config configures a "gpio" port: one pin.
+type Config struct {
+	Pin        int
+	Mode       int // Input, InputPullUp, InputPullDown, Output
+	Edge       int // None, Rising, Falling, Both (inputs only)
+	DebounceMs int // input debounce; <= 0 means the default, 20 ms
+}
+
+// Write is a command: drive an output pin to Value (0 or 1).
+type Write struct{ Value int }
+
+// Edge is an event: the pin's level changed; Value is the level after it.
+type Edge struct{ Pin, Value int }
+
+// Modes.
+const (
+	Input         = 0
+	InputPullUp   = 1
+	InputPullDown = 2
+	Output        = 3
+)
+
+// Edges.
+const (
+	None    = 0
+	Rising  = 1
+	Falling = 2
+	Both    = 3
+)

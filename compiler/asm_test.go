@@ -52,7 +52,7 @@ func TestOpcodesMatchC(t *testing.T) {
 	if len(cConsts) < 30 {
 		t.Fatalf("parsed only %d C constants", len(cConsts))
 	}
-	for _, n := range []string{"BPortOpen", "BPortClose", "TypeGpio", "TypeWrite", "TypeEdge", "TypeClosed", "OpClear", "OpRetn", "OpCallv", "BBytesCopyto", "BPortHandoff", "BNetSubscribe", "BConfigGet", "TypeNetDatagram", "TyBytes"} {
+	for _, n := range []string{"BPortOpen", "BPortClose", "TypeGpioConfig", "TypeGpioWrite", "TypeGpioEdge", "TypeClosed", "OpClear", "OpRetn", "OpCallv", "BBytesCopyto", "BPortHandoff", "BNetSubscribe", "BConfigGet", "TypeNetDatagram", "TyBytes"} {
 		if _, ok := cConsts[n]; !ok {
 			t.Errorf("%s not parsed from runtime/vm/opcodes.h", n)
 		}
@@ -139,7 +139,7 @@ func upperSnake(s string) string {
 func TestReservedTypesMatchStubs(t *testing.T) {
 	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
 	pkgs := map[string]*types.Package{}
-	for _, path := range []string{ActorPath, PortPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath, ScreenPath} {
+	for _, path := range []string{ActorPath, PortPath, GpioPath, NetPath, FsPath, KbdPath, PowerPath, CodePath, ImuPath, IrPath, AudioPath, ScreenPath} {
 		pkg, err := l.Import(path)
 		if err != nil {
 			t.Fatal(err)
@@ -155,6 +155,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 		}
 		prefix := "Type"
 		switch rt.pkg {
+		case GpioPath:
+			prefix = "TypeGpio"
 		case NetPath:
 			prefix = "TypeNet"
 		case FsPath:
@@ -273,9 +275,19 @@ func TestConfigMatchC(t *testing.T) {
 	}
 }
 
-// TestPortConstants pins the gogo/port constants.
-func TestPortConstants(t *testing.T) {
-	pkg, err := (&loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}).Import(PortPath)
+// TestGpioConstants pins the gogo/gpio constants (gogo/port has none).
+func TestGpioConstants(t *testing.T) {
+	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
+	if p, err := l.Import(PortPath); err != nil || len(p.Scope().Names()) == 0 {
+		t.Fatalf("gogo/port: %v", err)
+	} else {
+		for _, name := range p.Scope().Names() {
+			if _, ok := p.Scope().Lookup(name).(*types.Const); ok {
+				t.Errorf("gogo/port has constant %s", name)
+			}
+		}
+	}
+	pkg, err := l.Import(GpioPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,11 +300,11 @@ func TestPortConstants(t *testing.T) {
 		}
 	}
 	if len(got) != len(want) {
-		t.Errorf("gogo/port constants %v, want %v", got, want)
+		t.Errorf("gogo/gpio constants %v, want %v", got, want)
 	}
 	for n, v := range want {
 		if g, ok := got[n]; !ok || g != v {
-			t.Errorf("port.%s = %d (present=%v), want %d", n, g, ok, v)
+			t.Errorf("gpio.%s = %d (present=%v), want %d", n, g, ok, v)
 		}
 	}
 }

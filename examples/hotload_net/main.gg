@@ -18,12 +18,12 @@ import (
 	"gogo/actor"
 	"gogo/bytes"
 	"gogo/code"
-	"gogo/config"
 	"gogo/dhcp"
-	"gogo/net"
 	"gogo/http"
+	"gogo/net"
 	"gogo/strconv"
 	"gogo/supervisor"
+	"gogo/sys"
 )
 
 // modBody is the largest module accepted. The body is charged to this actor,
@@ -79,7 +79,7 @@ func feed(w actor.PID, n int) {
 
 // run does the demo; the result is "" or why it failed.
 func run() string {
-	base, ok := config.Get("demo.modurl")
+	base, ok := sys.Config("demo.modurl")
 	if !ok {
 		return "demo.modurl is not set (gogo config set demo.modurl http://<host>:<port>)"
 	}

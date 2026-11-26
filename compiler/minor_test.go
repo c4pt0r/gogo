@@ -22,7 +22,7 @@ const (
 // baselineTypes are the reserved types of 15.0, with their field counts.
 var baselineTypes = []string{
 	"ProcInfo/1", "Reason/2", "ExitMsg/2", "DownMsg/3", "Request/3", "Options/1",
-	"port.GPIO/4", "port.Write/1", "port.Edge/2", "net.IfConfig/0", "net.SetAddr/4", "net.Up/3",
+	"gpio.Config/4", "gpio.Write/1", "gpio.Edge/2", "net.IfConfig/0", "net.SetAddr/4", "net.Up/3",
 	"net.Down/0", "net.Addr/2", "net.UDP/1", "net.SendTo/2", "net.Datagram/2", "net.Dial/3",
 	"net.Listen/1", "net.Shutdown/0", "net.Resume/0", "net.Connected/0", "net.Accepted/1",
 	"fs.Info/2", "fs.Space/2", "kbd.Config/2", "kbd.Key/4", "power.Config/1", "power.Battery/4",

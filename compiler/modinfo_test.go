@@ -111,7 +111,7 @@ func TestRequiresInference(t *testing.T) {
 		{"sdx is not sd", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/sdx/a\", 10) }\n", "", 0},
 		{"flash path", "package main\nimport \"gogo/fs\"\nfunc main() { _, _ = fs.ReadFile(\"/flash/a\", 10) }\n", "", 0},
 		{"variable driver", "package main\nimport \"gogo/port\"\nfunc main() {\n\td := \"x\"\n\tif len(d) > 5 { d = \"y\" }\n\t_, _ = port.Open(d, 1)\n}\n", "", 1},
-		{"plain gpio", "package main\nimport \"gogo/port\"\nfunc main() { _, _ = port.Open(\"gpio\", port.GPIO{Pin: 1}) }\n", "gpio", 0},
+		{"plain gpio", "package main\nimport (\n\t\"gogo/gpio\"\n\t\"gogo/port\"\n)\nfunc main() { _, _ = port.Open(\"gpio\", gpio.Config{Pin: 1}) }\n", "gpio", 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

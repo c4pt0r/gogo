@@ -5,6 +5,7 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
@@ -23,7 +24,7 @@ func holder(boss actor.PID) {
 }
 
 func main() {
-	p, ok := port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	p, ok := port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
 	println("open", ok)
 	me := actor.Self()
 	c := actor.Spawn(func() { holder(me) })
@@ -33,12 +34,12 @@ func main() {
 	println("to zero pid", port.Handoff(p, zero))
 	println("to child", port.Handoff(p, c))
 	println("again", port.Handoff(p, c))
-	_, ok = port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	_, ok = port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
 	println("reopen while child owns", ok)
 	ref := actor.Monitor(c)
 	actor.Send(c, Quit{})
 	actor.Receive()
 	_ = ref
-	_, ok = port.Open("gpio", port.GPIO{Pin: 5, Mode: port.Output})
+	_, ok = port.Open("gpio", gpio.Config{Pin: 5, Mode: gpio.Output})
 	println("reopen after child exit", ok)
 }

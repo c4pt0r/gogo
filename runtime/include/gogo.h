@@ -97,7 +97,7 @@ typedef struct gogo_host {
     uint32_t (*random)(void *ctx);
     /* Cryptographic random bytes (TLS); 0 ok. Optional. */
     int      (*random_bytes)(void *ctx, uint8_t *buf, size_t n);
-    /* config.Get: copies the value of the kl-byte key k into buf (at most
+    /* sys.Config: copies the value of the kl-byte key k into buf (at most
      * cap bytes; buf may be NULL when cap is 0) and returns the value's full
      * length, or -1 if unset. NULL: nothing is set. */
     int32_t  (*config_get)(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap);

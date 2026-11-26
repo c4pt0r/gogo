@@ -14,12 +14,13 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/dhcp"
+	"gogo/gpio"
 	"gogo/http"
 	"gogo/net"
 	"gogo/port"
 	"gogo/strconv"
+	"gogo/sys"
 )
 
 const (
@@ -82,8 +83,8 @@ func escapeHTML(s string) string {
 // state owns the keys and the counters; registered as "state".
 func state() {
 	actor.Register("state", actor.Self())
-	_, ok1 := port.Open("gpio", port.GPIO{Pin: key1, Mode: port.InputPullUp, Edge: port.Falling})
-	_, ok2 := port.Open("gpio", port.GPIO{Pin: key2, Mode: port.InputPullUp, Edge: port.Falling})
+	_, ok1 := port.Open("gpio", gpio.Config{Pin: key1, Mode: gpio.InputPullUp, Edge: gpio.Falling})
+	_, ok2 := port.Open("gpio", gpio.Config{Pin: key2, Mode: gpio.InputPullUp, Edge: gpio.Falling})
 	if !ok1 || !ok2 {
 		println("keys: 打不开 / cannot open")
 	}
@@ -91,7 +92,7 @@ func state() {
 	last := "还没有 / none yet"
 	for {
 		switch m := actor.Receive().(type) {
-		case port.Edge:
+		case gpio.Edge:
 			if m.Pin == key1 {
 				k1++
 				println("KEY1", k1)
@@ -113,7 +114,7 @@ func state() {
 
 // fetcher gets demo.url every 10 s and reports to state.
 func fetcher() {
-	url, ok := config.Get("demo.url")
+	url, ok := sys.Config("demo.url")
 	if !ok || url == "" {
 		url = "http://example.com/"
 	}

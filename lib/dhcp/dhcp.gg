@@ -19,9 +19,9 @@ package dhcp
 import (
 	"gogo/actor"
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/net"
 	"gogo/port"
+	"gogo/sys"
 )
 
 // Config configures Start.
@@ -183,7 +183,7 @@ func staticAddr(n actor.PID) bool {
 }
 
 func cfgIP(key string) (int, bool) {
-	s, ok := config.Get(key)
+	s, ok := sys.Config(key)
 	if !ok {
 		return 0, false
 	}

@@ -19,7 +19,7 @@
 // `gogo flash` writes an image to the ESP32-S3 image partition with an
 // external esptool (see flash.go); `gogo monitor` captures the board's
 // serial console (see monitor.go). `gogo config` edits the configuration
-// store that config.Get reads, on the board or locally (see config.go).
+// store that sys.Config reads, on the board or locally (see config.go).
 // `gogo setup` takes a new board to a running program (see setup.go).
 package main
 

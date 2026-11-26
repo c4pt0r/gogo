@@ -5,13 +5,13 @@
 package main
 
 import (
-	"gogo/config"
 	"gogo/strconv"
+	"gogo/sys"
 )
 
 // intSetting returns the key's value as an int, or def.
 func intSetting(key string, def int) int {
-	v, ok := config.Get(key)
+	v, ok := sys.Config(key)
 	if !ok {
 		return def
 	}
@@ -26,8 +26,8 @@ func intSetting(key string, def int) int {
 func main() {
 	println("blink.ms =", intSetting("blink.ms", 500))
 	println("retries =", intSetting("retries", 3))
-	name, ok := config.Get("device.name")
+	name, ok := sys.Config("device.name")
 	println("device.name =", name, ok)
-	_, ok = config.Get("wifi.ssid")
+	_, ok = sys.Config("wifi.ssid")
 	println("wifi.ssid visible:", ok)
 }

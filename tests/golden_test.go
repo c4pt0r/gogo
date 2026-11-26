@@ -130,7 +130,7 @@ func TestGolden(t *testing.T) {
 				cmd := exec.CommandContext(ctx, vm, vmArgs...)
 				cmd.Stdout = &stdout
 				cmd.Stderr = &stderr
-				// The config store (config.Get) is the optional `config`
+				// The config store (sys.Config) is the optional `config`
 				// file, else a file that does not exist: never ~/.gogo/config.
 				cfg := filepath.Join(t.TempDir(), "no-config")
 				if _, err := os.Stat(filepath.Join(dir, "config")); err == nil {

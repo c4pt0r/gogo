@@ -1006,7 +1006,7 @@ func openFile(path string) (fs.File, int, fs.Err) {
 
 // Upload sends the file at path to url as the body of a POST with
 // Content-Type contentType and, if token is not "", "Authorization:
-// Bearer <token>" (take it from the store, config.Get("upload.token"),
+// Bearer <token>" (take it from the store, sys.Config("upload.token"),
 // rather than from the source; it is never logged). A token goes over
 // https only: with an http:// URL it is BadURL, so a mistyped URL cannot
 // send it in the clear. The file is streamed: read UploadChunk bytes at a

@@ -1106,11 +1106,11 @@ TEST(deliver_ints_struct) {
     term p = open_fake(&vm, a, 1);
     CHECK(port_is(p));
     int32_t v[2] = { 7, 1 << 30 };
-    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, 0));
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_GPIO_EDGE, v, 2, 0));
     CHECK_EQ(mbox_len(a), 1);
     const Msg *m = a->mbox_head;
     CHECK_EQ(m->data[0], hdr_make(4, K_STRUCT));
-    CHECK_EQ(m->data[1], (uint32_t)TYPE_EDGE);
+    CHECK_EQ(m->data[1], (uint32_t)TYPE_GPIO_EDGE);
     CHECK_EQ(m->data[2], term_from_int(7));
     CHECK(term_is_ref(m->data[3]));
     CHECK_EQ(m->data[term_ref_off(m->data[3]) + 1], 1u << 30);
@@ -1126,15 +1126,15 @@ TEST(deliver_ints_bool) {
     term p = open_fake(&vm, a, 1);
     CHECK(port_is(p));
     int32_t v[2] = { 5, PORT_BOOL(1) };
-    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, PORT_RAW(1)));
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_GPIO_EDGE, v, 2, PORT_RAW(1)));
     const Msg *m = a->mbox_head;
     CHECK_EQ(m->data[2], term_from_int(5));
     CHECK_EQ(m->data[3], T_TRUE);
     v[1] = PORT_BOOL(0);
-    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, PORT_RAW(1)));
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_GPIO_EDGE, v, 2, PORT_RAW(1)));
     CHECK_EQ(a->mbox_head->next->data[3], T_FALSE);
     v[0] = (int32_t)first_port(&vm)->id;   /* a PID, as an event's From */
-    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, PORT_RAW(0) | PORT_RAW(1)));
+    CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_GPIO_EDGE, v, 2, PORT_RAW(0) | PORT_RAW(1)));
     CHECK_EQ(a->mbox_head->next->next->data[2], first_port(&vm)->id);
     clear_runq(&vm);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
@@ -1150,7 +1150,7 @@ TEST(deliver_ints_full_mailbox_not_fatal) {
     a->max_words = 96;
     int32_t v[2] = { 1, 2 };
     int sent = 0;
-    for (int i = 0; i < 40; i++) sent += port_deliver_ints(&vm, first_port(&vm), TYPE_EDGE, v, 2, 0);
+    for (int i = 0; i < 40; i++) sent += port_deliver_ints(&vm, first_port(&vm), TYPE_GPIO_EDGE, v, 2, 0);
     CHECK(sent > 0 && sent < 40);
     CHECK_EQ(mbox_len(a), sent);
     uint32_t code; term fn;

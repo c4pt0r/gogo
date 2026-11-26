@@ -21,7 +21,7 @@
  *       header word 7; major.minor versions; append-only reserved fields;
  *       named requirements instead of the capability bits; one stream
  *       protocol (port.Chunk, Out, Done, Closed, with From on the events
- *       and on port.Post) for every byte port, the
+ *       and on port.Post) for every byte port, gogo/gpio's types, the
  *       reserved table renumbered (44 types); the term tags the later
  *       language phases need reserved (below).
  *   v15.1 reserved type 44, screen.Config (the "screen" port).

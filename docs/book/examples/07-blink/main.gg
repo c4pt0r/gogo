@@ -4,21 +4,22 @@ package main
 
 import (
 	"gogo/actor"
+	"gogo/gpio"
 	"gogo/port"
 )
 
 const ledPin = 5
 
 func main() {
-	led, ok := port.Open("gpio", port.GPIO{Pin: ledPin, Mode: port.Output})
+	led, ok := port.Open("gpio", gpio.Config{Pin: ledPin, Mode: gpio.Output})
 	if !ok {
 		println("cannot open the LED pin")
 		return
 	}
 	for i := 0; i < 3; i++ {
-		actor.Send(led, port.Write{Value: 1})
+		actor.Send(led, gpio.Write{Value: 1})
 		actor.Sleep(100)
-		actor.Send(led, port.Write{Value: 0})
+		actor.Send(led, gpio.Write{Value: 0})
 		actor.Sleep(100)
 	}
 	port.Close(led)

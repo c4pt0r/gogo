@@ -33,7 +33,6 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
-	"gogo/config"
 	"gogo/net"
 	"gogo/port"
 	"gogo/strconv"
@@ -42,7 +41,7 @@ import (
 )
 
 func cfg(key string, def int) int {
-	if s, ok := config.Get(key); ok {
+	if s, ok := sys.Config(key); ok {
 		n, _ := strconv.Atoi(s)
 		return n
 	}
@@ -50,7 +49,7 @@ func cfg(key string, def int) int {
 }
 
 func dialCfg() net.DialTLS {
-	host, _ := config.Get("test.host")
+	host, _ := sys.Config("test.host")
 	return net.DialTLS{IP: 10<<24 | 1, Port: 443, TimeoutMs: cfg("test.timeout", 0), Host: host}
 }
 
@@ -178,7 +177,7 @@ func waitClosed() {
 }
 
 func run() {
-	script, _ := config.Get("test.script")
+	script, _ := sys.Config("test.script")
 	c, _ := port.Open("none", net.IfConfig{}) // a PID that names nothing yet
 	pos := 0
 	for _, step := range strings.Split(script, " ") {
@@ -242,7 +241,7 @@ func run() {
 func main() {
 	n, _ := port.Open("netif", net.IfConfig{})
 	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
-	script, _ := config.Get("test.script")
+	script, _ := sys.Config("test.script")
 	var a actor.PID
 	if strings.HasPrefix(script, "small") {
 		a = actor.SpawnOpt(func() {

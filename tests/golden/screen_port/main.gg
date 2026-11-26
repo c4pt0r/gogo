@@ -6,6 +6,7 @@ package main
 import (
 	"gogo/actor"
 	"gogo/bytes"
+	"gogo/gpio"
 	"gogo/port"
 	"gogo/screen"
 )
@@ -35,7 +36,7 @@ func main() {
 	next()
 	actor.Send(p, port.Out{Data: bytes.FromSlice([]byte{})})
 	next()
-	actor.Send(p, port.Write{Value: 1})
+	actor.Send(p, gpio.Write{Value: 1})
 	actor.Send(p, port.Out{Data: bytes.FromSlice([]byte{screen.OpCursor, 0})})
 	next()
 	port.Close(p)
