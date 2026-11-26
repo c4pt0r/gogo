@@ -214,7 +214,7 @@ usage: gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
        gogo env [-path dirs]
        gogo dis <file.ggb>
        gogo info [-path dirs] <file.ggb|dir|file.gg>
-       gogo flash [-port P] [-esptool path] app.ggb
+       gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
        gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
        gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
        gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
@@ -423,10 +423,11 @@ gogo monitor -reset -timeout 5 -until "gogo: vm exited"
   `esptool` on your `PATH` (the one you installed for `gogo setup`, or
   ESP-IDF's, which its `export.sh` puts there) and uses
   the only `/dev/cu.usbmodem*` port it finds; pass `-port` if there are
-  several.
+  several. It also takes a directory, and builds it first:
+  `gogo flash docs/book/examples/02-hello` does both steps.
 - `gogo monitor` copies the board's console to your terminal. `-reset`
   restarts the board first, so you see the program from the beginning;
-  `-t 5` stops after 5 seconds; `-until` stops at the first line containing
+  `-timeout 5` stops after 5 seconds; `-until` stops at the first line containing
   that text.
 
 The board prints a boot line, runs the program, and prints a line when the

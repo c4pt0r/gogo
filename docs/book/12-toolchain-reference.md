@@ -14,7 +14,7 @@ gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
 gogo env [-path dirs]
 gogo dis <file.ggb>
 gogo info [-path dirs] <file.ggb|dir|file.gg>
-gogo flash [-port P] [-esptool path] app.ggb
+gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
 gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
@@ -359,13 +359,15 @@ this `gogo` does not know is an error.
 ## gogo flash
 
 ```text
-gogo flash [-port P] [-esptool path] app.ggb
+gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
 ```
 
-Writes an image (built with `gogo build`; `flash` does not take a
-directory) to the board's program partition at 0x210000, with a header and
-a CRC that the firmware checks at boot. Needs the board's gogo firmware to
-be installed already (chapter 2).
+Writes an image to the board's program partition at 0x210000, with a
+header and a CRC that the firmware checks at boot. Given a directory or a
+`.gg` file it builds it first, as `gogo run` does (to a temporary image;
+`-path` as for `gogo build`), so `gogo flash ./app` is `gogo build` and
+`gogo flash` in one step. Needs the board's gogo firmware to be installed
+already (chapter 2).
 
 - `-port P`: the serial port. Default: the only `/dev/cu.usbmodem*`; with
   none or several, `gogo flash` stops and asks for `-port`.

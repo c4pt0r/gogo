@@ -1,6 +1,7 @@
 package main
 
-// gogo flash: writes an image to the ESP32-S3 image partition.
+// gogo flash: writes an image to the ESP32-S3 image partition; given a
+// directory or a source file, it builds it first (to a temporary image).
 //
 // The partition (platform/esp32s3/partitions.csv: `gogo`, data subtype 0x40
 // at 0x210000, 1 MB) holds a 16-byte little-endian header
@@ -29,7 +30,7 @@ const (
 	partSize    = 0x100000   // `gogo` partition size
 	partHdrSize = 16
 	portGlob    = "/dev/cu.usbmodem*"
-	flashUsage  = "usage: gogo flash [-port P] [-esptool path] app" + imageExt
+	flashUsage  = "usage: gogo flash [-port P] [-esptool path] [-path dirs] <app" + imageExt + "|dir|file" + sourceExt + ">"
 )
 
 // checkImage reports why img cannot go into the image partition, or nil.
@@ -112,14 +113,28 @@ func (f flasher) flash(args []string) error {
 	fs := newFlags("flash")
 	port := fs.String("port", "", "")
 	esptool := fs.String("esptool", "", "")
+	getPath := addPathFlag(fs)
 	pos, err := parseFlags(fs, args, flashUsage)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 {
-		return usageError("flash", "want one image file", flashUsage)
+		return usageError("flash", "want one image, directory or "+sourceExt+" file", flashUsage)
 	}
 	file := pos[0]
+	// A directory or a source file is built first, as gogo run does.
+	if fi, err := os.Stat(file); err == nil && (fi.IsDir() || isSourceFile(file)) {
+		tmp, err := os.MkdirTemp("", "gogo-flash-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmp)
+		if file, err = buildImage(file, filepath.Join(tmp, "app"+imageExt), getPath().path()); err != nil {
+			return err
+		}
+	} else if getPath().set {
+		return usageError("flash", "-path is for building a directory or "+sourceExt+" file, not for an image", flashUsage)
+	}
 	img, err := os.ReadFile(file)
 	if err != nil {
 		return err
