@@ -30,7 +30,9 @@
 # both darwin targets, else on Linux `cc` for the host's own CPU. The
 # Linux VMs are linked statically. The release VMs are built without the
 # tls port (it needs ESP-IDF's mbedTLS source): build gogovm from source
-# for HTTPS on the host.
+# for HTTPS on the host. They are built with -Wno-error, and in a full
+# release they are best-effort: a VM this host cannot build is left out
+# with a warning (the workflow builds all four).
 set -eu
 cd "$(dirname "$0")/.."
 repo=$(pwd)
@@ -121,8 +123,9 @@ vm() {
         case " $VM_TARGETS " in *" $t "*) ;; *) die "no gogovm for $t (targets: $VM_TARGETS)" ;; esac
         cc=$(vm_cc "$os" "$arch")
         [ -n "$cc" ] || die "cannot build gogovm-$os-$arch on $(uname -s) $(uname -m): set CC_${os}_${arch} to a C compiler for it"
-        flags=-g0
-        [ "$os" = linux ] && flags="-g0 -static"
+        # -Wno-error: a new compiler's warning must not stop a release.
+        flags="-g0 -Wno-error"
+        [ "$os" = linux ] && flags="$flags -static"
         work=${GOGO_RELEASE_WORK:-$repo/build/release-work}/vm-$os-$arch
         rm -rf "$work"
         # MBEDTLS_DIR points nowhere: no tls port (above).
@@ -168,7 +171,11 @@ sums) [ $# -eq 2 ] || die "usage: tools/release.sh sums DIR"; sums "$2" ;;
     mkdir -p "$out"
     for b in $BOARDS; do firmware "$b" "$out"; done
     cli "$v" "$out"
-    vm "$out"
+    # The VMs are best-effort, as in the release workflow: one that cannot
+    # be built here is left out, with a warning.
+    for t in $VM_TARGETS; do
+        ( vm "$out" "$t" ) || echo "release.sh: warning: gogovm-${t%/*}-${t#*/} not built" >&2
+    done
     notices "$out"
     sums "$out"
     echo "release $v: $out"

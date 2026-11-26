@@ -6,11 +6,17 @@
 # and publishes it (platform/esp32s3/README.md, "Releases"); until then
 # `gogo setup` does not see it. It downloads the assets by name
 # (cmd/gogo/setup_release.go).
+#
+# The gogovm assets are best-effort: if a VM fails to build or to run, the
+# release goes ahead with the firmware and gogo, and the run's summary
+# lists the missing VMs. Run by hand (workflow_dispatch), it builds and
+# checks everything, the summary included, but creates no release.
 name: release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -66,18 +72,21 @@ jobs:
 
   vm:
     # gogovm is C: macOS builds both CPUs with clang -arch, Linux its own
-    # CPU natively and arm64 with the Debian cross compiler.
+    # CPU natively and arm64 with the Debian cross compiler. Each VM runs a
+    # program before it is uploaded: natively, with Rosetta for
+    # darwin-amd64 when the runner has it, with qemu for linux-arm64.
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: darwin
             runner: macos-15
             targets: darwin/amd64 darwin/arm64
-            smoke: darwin-arm64
+            native: darwin-arm64
           - name: linux
             runner: ubuntu-24.04
             targets: linux/amd64 linux/arm64
-            smoke: linux-amd64
+            native: linux-amd64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,11 +96,11 @@ jobs:
         with:
           go-version: "1.27.1"
           cache: false
-      - name: Cross compiler
+      - name: Cross compiler and qemu
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user-static
       - name: Build
         shell: bash
         env:
@@ -104,10 +113,27 @@ jobs:
       - name: Smoke test
         shell: bash
         env:
-          SMOKE: ${{ matrix.smoke }}
+          NATIVE: ${{ matrix.native }}
         run: |
           go build -o "$RUNNER_TEMP/gogo" ./cmd/gogo
-          cp "out/gogovm-$SMOKE" "$RUNNER_TEMP/gogovm"
+          "$RUNNER_TEMP/gogo" build tests/golden/pkgs -o "$RUNNER_TEMP/pkgs.ggb"
+          for vm in out/gogovm-*; do
+            case "$vm" in
+            *linux-arm64) run=(qemu-aarch64-static "$vm") ;;
+            *darwin-amd64)
+              if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+                echo "::warning::no Rosetta on this runner: $vm is built but not run"
+                continue
+              fi
+              run=(arch -x86_64 "$vm") ;;
+            *) run=("$vm") ;;
+            esac
+            "${run[@]}" "$RUNNER_TEMP/pkgs.ggb" > "$RUNNER_TEMP/got"
+            diff tests/golden/pkgs/expected.out "$RUNNER_TEMP/got"
+            echo "ran $vm"
+          done
+          # gogo run finds the VM next to itself.
+          cp "out/gogovm-$NATIVE" "$RUNNER_TEMP/gogovm"
           "$RUNNER_TEMP/gogo" env
           "$RUNNER_TEMP/gogo" run tests/golden/pkgs > "$RUNNER_TEMP/got"
           diff tests/golden/pkgs/expected.out "$RUNNER_TEMP/got"
@@ -119,6 +145,8 @@ jobs:
 
   release:
     needs: [firmware, cli, vm]
+    # The VMs are best-effort: only the firmware and gogo must have built.
+    if: ${{ !cancelled() && needs.firmware.result == 'success' && needs.cli.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -135,7 +163,25 @@ jobs:
           tools/release.sh notices out
           test -f out/LICENSE-APACHE-2.0.txt
           tools/release.sh sums out && cat out/SHA256SUMS
+      - name: Report the VMs
+        run: |
+          missing=
+          for t in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            [ -f "out/gogovm-$t" ] || missing="$missing gogovm-$t"
+          done
+          [ -z "$missing" ] || echo "::warning::release without$missing (see the vm jobs)"
+          {
+            if [ -n "$missing" ]; then
+              echo "**Missing host VMs:**$missing. The firmware and gogo assets are complete; see the vm jobs."
+            else
+              echo "All four host VMs (gogovm) built and ran."
+            fi
+            echo '```'
+            cat out/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Draft the release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
