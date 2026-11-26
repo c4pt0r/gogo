@@ -33,7 +33,9 @@
  *   v15.4 the language's abstraction phase: builtins 56 B_PANIC and 57
  *       B_CMP, exit reason R_PANIC (10), reserved types 45 errors.Code
  *       (the box an error holds it in) and 46 errors.errorString.
- *   v15.5 kept for distributed actors.
+ *   v15.5 distributed actors: reserved types 47-48, net.NodeLink and
+ *       net.NodeEvent (the "node" port, gogo/node), exit reason
+ *       R_NO_CONNECTION (11).
  *   v15.6 references: OP_SETFIELD, exit reason R_NIL (12), the type
  *       flags (bits 16-18 of an own row's field-count word and of a
  *       struct's type word: STRUCT_MUT, STRUCT_MAP, STRUCT_BOX, term.h).

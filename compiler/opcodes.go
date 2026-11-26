@@ -281,10 +281,13 @@ const (
 	// gogo/errors (15.4): the box of an errors.Code, errors.New's error
 	TypeErrorsCode        uint32 = 45
 	TypeErrorsErrorstring uint32 = 46
+	// net.NodeLink, net.NodeEvent (15.5): cfg and events of the "node" port
+	TypeNetNodelink  uint32 = 47
+	TypeNetNodeevent uint32 = 48
 	// TypeReservedCount is how many reserved types there are
 	// (TYPE_RESERVED_COUNT in runtime/vm/opcodes.h; TestReservedTypeCount
 	// checks len(reservedTypes)).
-	TypeReservedCount uint32 = 47
+	TypeReservedCount uint32 = 49
 	// TypeOwnBase is the index of an image's first own struct type
 	// (TYPE_OWN_BASE): fixed, whatever the reserved count.
 	TypeOwnBase uint32 = 128
@@ -441,5 +444,6 @@ var goConstants = map[string]uint32{
 	"TypeAudioMic": TypeAudioMic, "TypeAudioSpeaker": TypeAudioSpeaker, "TypeNetDialtls": TypeNetDialtls,
 	"TypeHost": TypeHost, "TypePost": TypePost, "TypeScreenConfig": TypeScreenConfig,
 	"TypeErrorsCode": TypeErrorsCode, "TypeErrorsErrorstring": TypeErrorsErrorstring,
+	"TypeNetNodelink": TypeNetNodelink, "TypeNetNodeevent": TypeNetNodeevent,
 	"TypeReservedCount": TypeReservedCount, "TypeOwnBase": TypeOwnBase,
 }
