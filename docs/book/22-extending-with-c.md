@@ -219,8 +219,8 @@ int gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32
     bool watch = watched((uint32_t)mode, (uint32_t)edge);
     uint16_t deb = (uint16_t)(cfg[3] > 0 ? (cfg[3] > 65535 ? 65535 : cfg[3]) : 20);
     if (h->config(h->ctx, (uint32_t)pin, mode, watch, &deb) != 0) return -1;
-    p->state[0] = (uint32_t)pin | (uint32_t)mode << 8 | (uint32_t)edge << 16;
-    p->state[1] = (uint32_t)deb << 16;   /* the port's debounce (gpio_event) */
+    p->state[0] = (uint32_t)pin;
+    p->state[1] = (uint32_t)mode << 4 | (uint32_t)edge << 6 | (uint32_t)deb << 16;   /* deb: gpio_event */
     s->vm = vm;
     s->index = index;
     s->gen = p->gen;

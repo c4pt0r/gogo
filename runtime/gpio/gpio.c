@@ -1,15 +1,16 @@
 /* The `gpio` port driver over a GpioHal (gpio.h). Port state: state[0]
- * pin | mode << 8 | edge << 16; state[1] the debounce window, DB_* flags |
- * debounce_ms << 16; state[2..3] the vm_now ms of the last delivery (low,
+ * the pin (a whole word: any pin below the HAL's npins); state[1] DB_*
+ * flags | mode << 4 | edge << 6 | debounce_ms << 16 (the debounce window
+ * and the cfg); state[2..3] the vm_now ms of the last delivery (low,
  * high). The pin's shared state is hal->pins[pin]. */
 #include "gpio.h"
 #include "actor.h"
 #include "evq.h"
 #include "host.h"
 
-#define PIN(p)  ((p)->state[0] & 0xFFu)
-#define MODE(p) ((p)->state[0] >> 8 & 0xFFu)
-#define EDGE(p) ((p)->state[0] >> 16)
+#define PIN(p)  ((p)->state[0])
+#define MODE(p) ((p)->state[1] >> 4 & 3u)
+#define EDGE(p) ((p)->state[1] >> 6 & 3u)
 #define DEB(p)  ((p)->state[1] >> 16)
 /* state[1] flags: a value was delivered (the window runs from last_t); a
  * trailing value is held; the level last delivered; the level held. */
@@ -56,8 +57,8 @@ int gpio_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32
     bool watch = watched((uint32_t)mode, (uint32_t)edge);
     uint16_t deb = (uint16_t)(cfg[3] > 0 ? (cfg[3] > 65535 ? 65535 : cfg[3]) : 20);
     if (h->config(h->ctx, (uint32_t)pin, mode, watch, &deb) != 0) return -1;
-    p->state[0] = (uint32_t)pin | (uint32_t)mode << 8 | (uint32_t)edge << 16;
-    p->state[1] = (uint32_t)deb << 16;   /* the port's debounce (gpio_event) */
+    p->state[0] = (uint32_t)pin;
+    p->state[1] = (uint32_t)mode << 4 | (uint32_t)edge << 6 | (uint32_t)deb << 16;   /* deb: gpio_event */
     s->vm = vm;
     s->index = index;
     s->gen = p->gen;

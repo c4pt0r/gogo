@@ -347,3 +347,32 @@ TEST(gpio_debounce_idle_no_spin) {
     CHECK(!port_next_deadline(&vm, &d));    /* flushed at the window's end */
     CHECK(db_reads < 30u);
 }
+
+/* A HAL with more than 256 pins: the port keeps the whole pin number, so
+ * pin 256 is written and released, not pin 0. */
+static GpioPin many[300];
+static uint32_t wrote_pin, released_pin;
+static void w_write(void *ctx, uint32_t pin, int level) { (void)ctx; (void)level; wrote_pin = pin; }
+static void w_release(void *ctx, uint32_t pin, int mode, bool watch) {
+    (void)ctx; (void)mode; (void)watch;
+    released_pin = pin;
+}
+static const GpioHal many_hal = { .npins = 300, .pins = many, .config = f_config, .write = w_write,
+                                  .read = f_read, .release = w_release };
+static const PortDriver many_drv = GPIO_DRIVER(&many_hal);
+
+TEST(gpio_pin_above_255) {
+    CHECK_EQ(test_vm_init(&vm, NULL, 16), 0);
+    Port p;
+    memset(&p, 0, sizeof p);
+    p.drv = &many_drv;
+    int32_t cfg[4] = { 256, GPIO_OUTPUT, GPIO_EDGE_NONE, 0 }, one = 1;
+    CHECK_EQ(gpio_open(&vm, &p, 0, cfg, 4), 0);
+    CHECK(many[256].open && !many[0].open);
+    gpio_command(&vm, &p, TYPE_GPIO_WRITE, &one, 1);
+    CHECK_EQ(wrote_pin, 256u);
+    CHECK(!gpio_can_event(&vm, &p));
+    gpio_close(&vm, &p);
+    CHECK_EQ(released_pin, 256u);
+    CHECK(!many[256].open);
+}
