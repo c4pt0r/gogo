@@ -30,7 +30,8 @@ enum {
     DT_STRING = 0x05, DT_BYTES = 0x06, DT_BYTESLICE = 0x07, DT_SLICE = 0x08,
     DT_NILSLICE = 0x09, DT_STRUCT = 0x0A, DT_PID = 0x0B, DT_ZEROPID = 0x0C,
     DT_REF = 0x0D, DT_ZEROREF = 0x0E, DT_EMPTYSTR = 0x0F, DT_EMPTYBYTES = 0x10,
-    DT_OWN = 0x11            /* a module's own struct: field count, qualified name, fields */
+    DT_OWN = 0x11,           /* a module's own struct: field count, qualified name, fields */
+    DT_OWN2 = 0x12           /* the same with its shape hash first (u32) */
 };
 
 #define SERIAL_BITS 48u
@@ -114,8 +115,10 @@ static uint8_t *wr16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_
 static uint8_t *wr32(uint8_t *p, uint32_t v) { p = wr16(p, v & 0xFFFFu); return wr16(p, v >> 16); }
 static uint8_t *wr64(uint8_t *p, uint64_t v) { p = wr32(p, (uint32_t)v); return wr32(p, (uint32_t)(v >> 32)); }
 
-/* The name of type-table row r of img (a K_STRING in its const area). */
-static const uint8_t *type_name(const Image *img, uint32_t r, uint32_t *len) {
+/* The name of type-table row r of img (a K_STRING in its const area), and
+ * its shape hash (*shape, *has_shape): the compiler stores it in one word
+ * after the name's bytes (compiler.AddTypeShape); older images have none. */
+static const uint8_t *type_name(const Image *img, uint32_t r, uint32_t *len, uint32_t *shape, bool *has_shape) {
     uint32_t off = img->types[2u * r + 1u];
     if (off >= img->consts_words) return NULL;
     const uint32_t *c = img->consts + off;
@@ -123,6 +126,8 @@ static const uint8_t *type_name(const Image *img, uint32_t r, uint32_t *len) {
     if (hdr_kind(c[0]) != K_STRING || words < 2u || words > img->consts_words - off || c[1] > (words - 2u) * 4u)
         return NULL;
     *len = c[1];
+    *has_shape = words == 3u + (c[1] + 3u) / 4u;
+    *shape = *has_shape ? c[words - 1u] : 0u;
     return (const uint8_t *)(c + 2);
 }
 
@@ -531,16 +536,26 @@ static void enc(Enc *e, term t, uint32_t depth) {
     }
     case K_STRUCT: {
         uint32_t ty = o[1];
+        if (ty & STRUCT_FLAGS) {        /* a pointer's target, a map: references stay home */
+            enc_fail(e, R_BAD_MSG);
+            return;
+        }
         if (ty >= TYPE_OWN_BASE) {      /* a module's own type: by its name */
             if (term_is_const(t)) ty |= t & MOD_TAG_MASK;
             const ModEntry *me = module_of_tag(e->vm, ty);
-            uint32_t row = me ? image_type_row(&me->img, ty & 0xFFFFu) : 0u, nl = 0;
-            const uint8_t *nm = me && row < me->img.n_types ? type_name(&me->img, row, &nl) : NULL;
+            uint32_t row = me ? image_type_row(&me->img, ty & 0xFFFFu) : 0u, nl = 0, shape;
+            bool has;
+            const uint8_t *nm = me && row < me->img.n_types ? type_name(&me->img, row, &nl, &shape, &has) : NULL;
             if (!nm) {
                 enc_fail(e, R_BAD_CODE);
                 return;
             }
-            put(e, DT_OWN);
+            if (has) {
+                put(e, DT_OWN2);
+                put_u32(e, shape);
+            } else {
+                put(e, DT_OWN);
+            }
             put_var(e, words - 2u);
             put_var(e, nl);
             put_raw(e, nm, nl);
@@ -753,8 +768,11 @@ static term dec(Dec *d, uint32_t depth) {
         }
         return term_from_ref(off);
     }
-    case DT_OWN: {
-        /* An own type of the receiver's module with this name and field count. */
+    case DT_OWN:
+    case DT_OWN2: {
+        /* An own type of the receiver's module with this name and field
+         * count, and the same shape when both sides have one. */
+        uint32_t want = tag == DT_OWN2 ? get_u32(d) : 0u;
         uint32_t nf = (uint32_t)get_var(d, 32), nl = (uint32_t)get_var(d, 32), ty = 0;
         if (d->bad || nl > d->n - d->at) {
             d->bad = true;
@@ -762,9 +780,12 @@ static term dec(Dec *d, uint32_t depth) {
         }
         const Image *img = d->img;
         for (uint32_t r = img->n_reserved; r < img->n_types && !ty; r++) {
-            uint32_t len;
-            const uint8_t *nm = type_name(img, r, &len);
-            if (nm && len == nl && image_type_nfields(img, r) == nf && memcmp(nm, d->p + d->at, nl) == 0)
+            uint32_t len, shape;
+            bool has;
+            const uint8_t *nm = type_name(img, r, &len, &shape, &has);
+            if (nm && len == nl && !(img->types[2u * r] & STRUCT_FLAGS) && image_type_nfields(img, r) == nf &&
+                memcmp(nm, d->p + d->at, nl) == 0 &&
+                !(tag == DT_OWN2 && has && shape != want))
                 ty = (TYPE_OWN_BASE + r - img->n_reserved) | d->tag;
         }
         d->at += nl;

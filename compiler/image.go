@@ -339,6 +339,25 @@ func (b *ImageBuilder) TypeFlags(idx uint32) uint32 {
 	return b.types[idx-TypeOwnBase].nFields &^ 0xFFFF
 }
 
+// AddTypeShape is AddType for a struct whose fields' kinds hash to shape
+// (structShape): its name constant gets one word more than its bytes need,
+// holding the hash. Distributed actors compare it when a struct of this
+// type crosses nodes (runtime/dist); a VM reads the name by its length
+// and never sees the word. The name is its own constant, not shared.
+func (b *ImageBuilder) AddTypeShape(name string, nFields, shape uint32) uint32 {
+	n := uint32(len(b.consts))
+	payload := (len(name) + 3) / 4
+	b.consts = append(b.consts, HdrMake(uint32(3+payload), KString), uint32(len(name)))
+	buf := make([]byte, payload*4)
+	copy(buf, name)
+	for i := 0; i < payload; i++ {
+		b.consts = append(b.consts, binary.LittleEndian.Uint32(buf[i*4:]))
+	}
+	b.consts = append(b.consts, shape)
+	b.types = append(b.types, imgType{name: n, nFields: nFields, goName: name})
+	return TypeOwnBase + uint32(len(b.types)-1)
+}
+
 // AddReservedType declares the next reserved type (index order) and
 // returns its index. Its row is written only if the program uses it or a
 // later reserved type. The names of the types up to screen.Config go into
