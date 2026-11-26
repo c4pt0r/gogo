@@ -234,6 +234,36 @@ var reservedTypes = []struct {
 	{PortPath, "Post", []string{"Kind", "Data"}},
 }
 
+// reservedName is the image name of reserved type i: the bare name for
+// gogo/actor types, else the package's last element and the name
+// ("port.Chunk"). typeMinor (image.go) is keyed by it.
+func reservedName(i int) string {
+	rt := reservedTypes[i]
+	switch rt.pkg {
+	case ActorPath:
+		return rt.name
+	case PortPath:
+		return "port." + rt.name
+	case NetPath:
+		return "net." + rt.name
+	case FsPath:
+		return "fs." + rt.name
+	case KbdPath:
+		return "kbd." + rt.name
+	case PowerPath:
+		return "power." + rt.name
+	case CodePath:
+		return "code." + rt.name
+	case ImuPath:
+		return "imu." + rt.name
+	case IrPath:
+		return "ir." + rt.name
+	case AudioPath:
+		return "audio." + rt.name
+	}
+	panic("reservedName: package " + rt.pkg)
+}
+
 // collectTypes emits the reserved types first (whether used or not), then
 // gives the other struct types image type indices in order of first
 // appearance in the package sources (libraries, then main; declarations
@@ -247,28 +277,8 @@ func (g *gen) collectTypes() error {
 			}
 		}
 	}
-	for _, rt := range reservedTypes {
-		name := rt.name
-		switch rt.pkg {
-		case PortPath:
-			name = "port." + rt.name // actor types keep their bare names
-		case NetPath:
-			name = "net." + rt.name
-		case FsPath:
-			name = "fs." + rt.name
-		case KbdPath:
-			name = "kbd." + rt.name
-		case PowerPath:
-			name = "power." + rt.name
-		case CodePath:
-			name = "code." + rt.name
-		case ImuPath:
-			name = "imu." + rt.name
-		case IrPath:
-			name = "ir." + rt.name
-		case AudioPath:
-			name = "audio." + rt.name
-		}
+	for i, rt := range reservedTypes {
+		name := reservedName(i)
 		idx := g.b.AddReservedType(name, uint32(len(rt.fields)))
 		stub := stubs[rt.pkg]
 		if stub == nil {
