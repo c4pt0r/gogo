@@ -41,10 +41,9 @@ struct ActorExtra {
      * the preallocated DownMsg) and its side of each link (entry +
      * preallocated ExitMsg). Read through actor_charged_words. Registered
      * names live in names.c, timers in Vm.timers. */
-    uint32_t charged_words;
-    uint32_t timers_in;       /* SendAfter timers pending for this actor (timer.c) */
-    uint32_t timers_out;      /* pending SendAfter timers charged to this actor (timer.c) */
-    uint32_t ports;           /* open ports this actor owns (port.c) */
+    uint32_t n[AX_COUNTS];    /* AX_CHARGED: those words; AX_TIMERS_IN: SendAfter timers
+                               * pending for it; AX_TIMERS_OUT: pending SendAfter timers
+                               * charged to it (timer.c); AX_PORTS: open ports it owns (port.c) */
     HeldBytes *held;          /* off-heap Bytes it holds (bytes.c), or NULL */
 };
 
@@ -98,7 +97,7 @@ static ActorExtra *extra_get(Vm *vm, Actor *a, bool from_reserve) {
 
 uint32_t actor_charged_words(const Actor *a) {
     const ActorExtra *x = a->extra;
-    return (uint32_t)a->mbox_words + (x ? x->charged_words + (x->held ? bytes_words(x->held->bytes) : 0u) : 0u);
+    return (uint32_t)a->mbox_words + (x ? x->n[AX_CHARGED] + (x->held ? bytes_words(x->held->bytes) : 0u) : 0u);
 }
 
 HeldBytes **actor_held(Actor *a) {
@@ -111,77 +110,26 @@ HeldBytes **actor_held_new(Vm *vm, Actor *a) {
     return x ? &x->held : NULL;
 }
 
-bool actor_timer_ref(Vm *vm, Actor *a) {
+bool actor_count_add(Vm *vm, Actor *a, uint32_t which, uint32_t n) {
     ActorExtra *x = extra_get(vm, a, false);
     if (!x) return false;
-    x->timers_in++;
+    x->n[which] += n;
     return true;
 }
 
-void actor_timer_unref(Actor *a) {
+void actor_count_sub(Actor *a, uint32_t which, uint32_t n) {
     ActorExtra *x = a->extra;
-    if (x && x->timers_in) x->timers_in--;
+    if (x && x->n[which] >= n) x->n[which] -= n;
 }
 
-bool actor_timer_own(Vm *vm, Actor *a) {
-    ActorExtra *x = extra_get(vm, a, false);
-    if (!x) return false;
-    x->timers_out++;
-    return true;
-}
-
-void actor_timer_disown(Actor *a) {
-    ActorExtra *x = a->extra;
-    if (x && x->timers_out) x->timers_out--;
-}
-
-bool actor_timer_owns(const Actor *a) {
+uint32_t actor_count(const Actor *a, uint32_t which) {
     const ActorExtra *x = a->extra;
-    return x && x->timers_out;
-}
-
-bool actor_port_own(Vm *vm, Actor *a) {
-    ActorExtra *x = extra_get(vm, a, false);
-    if (!x) return false;
-    x->ports++;
-    return true;
-}
-
-void actor_port_disown(Actor *a) {
-    ActorExtra *x = a->extra;
-    if (x && x->ports) x->ports--;
-}
-
-bool actor_port_owns(const Actor *a) {
-    const ActorExtra *x = a->extra;
-    return x && x->ports;
-}
-
-bool actor_timer_has(const Actor *a) {
-    const ActorExtra *x = a->extra;
-    return x && x->timers_in;
-}
-
-uint32_t actor_extra_charged(const Actor *a) {
-    const ActorExtra *x = a->extra;
-    return x ? x->charged_words : 0u;
+    return x ? x->n[which] : 0u;
 }
 
 /* True if `words` more charged words keep a within its limit. */
 static bool charge_fits(const Actor *a, uint32_t words) {
     return (uint32_t)a->mem_words + actor_charged_words(a) + words <= actor_max_words(a);
-}
-
-bool actor_charge(Vm *vm, Actor *a, uint32_t words) {
-    ActorExtra *x = extra_get(vm, a, false);
-    if (!x) return false;
-    x->charged_words += words;
-    return true;
-}
-
-void actor_uncharge(Actor *a, uint32_t words) {
-    ActorExtra *x = a->extra;
-    if (x) x->charged_words -= words;
 }
 
 static void unwind(Vm *vm, Actor *a, uint32_t code, term func_name, bool notify);
@@ -389,7 +337,7 @@ static inline Link *node_new(Vm *vm, uint32_t which, term peer, uint64_t serial)
 static inline void node_push(ActorExtra *x, uint32_t which, Link *l) {
     l->next = x->list[which];
     x->list[which] = l;
-    x->charged_words += node_words(which);
+    x->n[AX_CHARGED] += node_words(which);
 }
 
 bool sig_is_linked(const Actor *a, term pid) {

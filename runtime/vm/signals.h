@@ -131,15 +131,31 @@ uint32_t actor_charged_words(const Actor *a);
 HeldBytes **actor_held(Actor *a);
 HeldBytes **actor_held_new(Vm *vm, Actor *a);
 
-/* ActorExtra.charged_words alone (0 without an extra); for tests. */
-uint32_t actor_extra_charged(const Actor *a);
-
-/* Charges / releases words for resources a holds outside its heap
- * (timer.c: pending SendAfter timers). actor_charge allocates the extra
- * block on first use; false if out of memory (nothing is charged). The
- * caller checks the limit. */
-bool actor_charge(Vm *vm, Actor *a, uint32_t words);
-void actor_uncharge(Actor *a, uint32_t words);
+/* Counters in a's extra: AX_CHARGED, ActorExtra.charged_words (words
+ * charged to a for resources it holds outside its heap: pending SendAfter
+ * timers, link sides, monitors, port state; the caller checks the limit);
+ * AX_TIMERS_IN, the SendAfter timers pending for a; AX_TIMERS_OUT, the
+ * pending timers charged to a as their creator (timer.c); AX_PORTS, the
+ * open ports a owns (port.c). actor_count_add allocates the extra on first
+ * use; false if out of memory (nothing counted). actor_count_sub undoes
+ * (never below 0); actor_count reads (0 without an extra). The names below
+ * are the uses. */
+enum { AX_CHARGED, AX_TIMERS_IN, AX_TIMERS_OUT, AX_PORTS, AX_COUNTS };
+bool actor_count_add(Vm *vm, Actor *a, uint32_t which, uint32_t n);
+void actor_count_sub(Actor *a, uint32_t which, uint32_t n);
+uint32_t actor_count(const Actor *a, uint32_t which);
+#define actor_charge(vm, a, w)   actor_count_add((vm), (a), AX_CHARGED, (w))
+#define actor_uncharge(a, w)     actor_count_sub((a), AX_CHARGED, (w))
+#define actor_extra_charged(a)   actor_count((a), AX_CHARGED)   /* tests */
+#define actor_timer_ref(vm, a)   actor_count_add((vm), (a), AX_TIMERS_IN, 1u)
+#define actor_timer_unref(a)     actor_count_sub((a), AX_TIMERS_IN, 1u)
+#define actor_timer_has(a)       (actor_count((a), AX_TIMERS_IN) != 0)
+#define actor_timer_own(vm, a)   actor_count_add((vm), (a), AX_TIMERS_OUT, 1u)
+#define actor_timer_disown(a)    actor_count_sub((a), AX_TIMERS_OUT, 1u)
+#define actor_timer_owns(a)      (actor_count((a), AX_TIMERS_OUT) != 0)
+#define actor_port_own(vm, a)    actor_count_add((vm), (a), AX_PORTS, 1u)
+#define actor_port_disown(a)     actor_count_sub((a), AX_PORTS, 1u)
+#define actor_port_owns(a)       (actor_count((a), AX_PORTS) != 0)
 
 /* Frees a->extra, if any. Called by actor_free. After actor_exit its lists
  * are empty; for an actor freed without exiting, it first removes the
@@ -154,21 +170,5 @@ void actor_extra_free(Vm *vm, Actor *a);
 bool vm_reserve_init(Vm *vm);
 void vm_reserve_release(Vm *vm);
 void *signal_alloc(Vm *vm, size_t bytes);
-
-/* Counts the SendAfter timers pending for a (timer.c bookkeeping). _ref
- * allocates a's extra if needed and returns false if it cannot (nothing
- * counted); _unref undoes one; _has says whether any is pending. */
-bool actor_timer_ref(Vm *vm, Actor *a);
-void actor_timer_unref(Actor *a);
-bool actor_timer_has(const Actor *a);
-/* Likewise for pending timers charged to a as their creator. */
-bool actor_timer_own(Vm *vm, Actor *a);
-void actor_timer_disown(Actor *a);
-bool actor_timer_owns(const Actor *a);
-/* Likewise for the open ports a owns (port.c): _own is false if the extra
- * cannot be allocated (nothing counted). */
-bool actor_port_own(Vm *vm, Actor *a);
-void actor_port_disown(Actor *a);
-bool actor_port_owns(const Actor *a);
 
 #endif
