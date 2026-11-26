@@ -70,19 +70,27 @@ static int consts_ok(const Image *img) {
     return 1;
 }
 
+/* Field counts of the reserved types (opcodes.h), two per byte. */
+static const uint8_t vm_nfields[(TYPE_RESERVED_COUNT + 1u) / 2u] = TYPE_NFIELDS;
+
 int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     if (n_words < IMAGE_HEADER_WORDS) return IMG_ERR_TRUNCATED;
     if (w[0] != IMAGE_MAGIC) return IMG_ERR_MAGIC;
-    if (w[1] != IMAGE_VERSION) return IMG_ERR_VERSION;
+    /* Same major, minor up to ours: one compare (a lower major wraps). */
+    if (w[1] - (IMAGE_MAJOR << 16) > IMAGE_MINOR || w[7] > TYPE_RESERVED_COUNT) return IMG_ERR_VERSION;
 
     uint64_t total = (uint64_t)IMAGE_HEADER_WORDS + (uint64_t)w[2] * 3u +
                      (uint64_t)w[3] * 2u + (uint64_t)w[4] + (uint64_t)w[5] +
                      ((uint64_t)w[4] + 31u) / 32u;
-    if (total + 2u > n_words) return IMG_ERR_TRUNCATED;   /* + requires, n_exports */
-    uint32_t n_exp = w[total + 1u];
-    if (total + 2u + (uint64_t)n_exp * 2u > n_words) return IMG_ERR_TRUNCATED;
+    if (total + 2u > n_words) return IMG_ERR_TRUNCATED;   /* n_requires, n_exports */
+    uint32_t tr = (uint32_t)total;
+    if (w[tr] > n_words - tr - 2u) return IMG_ERR_TRUNCATED;
+    uint32_t ex = tr + 1u + w[tr];                         /* n_exports */
+    uint32_t n_exp = w[ex];
+    if (n_exp > (n_words - ex - 1u) / 2u) return IMG_ERR_TRUNCATED;
     /* The index ranges a module tag leaves (term.h). */
-    if (w[2] > FUNC_MAX || w[3] > TYPE_MAX || w[4] > CONST_MAX_WORDS) return IMG_ERR_BOUNDS;
+    if (w[2] > FUNC_MAX || w[3] < w[7] || w[3] - w[7] > TYPE_MAX - TYPE_OWN_BASE || w[4] > CONST_MAX_WORDS)
+        return IMG_ERR_BOUNDS;
 
     img->n_funcs = w[2];
     img->n_types = w[3];
@@ -93,9 +101,9 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     img->consts = img->types + (size_t)img->n_types * 2u;
     img->code = img->consts + img->consts_words;
     img->cmap = img->code + img->code_words;
-    img->requires = w[total];
+    img->n_reserved = w[7];
     img->n_exports = n_exp;
-    img->exports = w + total + 2u;
+    img->exports = w + ex + 1u;
 
     if (w[6] >= img->n_funcs) return IMG_ERR_BOUNDS;
     for (uint32_t i = 0; i < img->n_funcs; i++) {
@@ -108,8 +116,14 @@ int image_load(Image *img, const uint32_t *w, uint32_t n_words) {
     }
     for (uint32_t i = 0; i < img->n_types; i++) {
         if (!string_ok(img, img->types[(size_t)i * 2u + 1u])) return IMG_ERR_BOUNDS;
+        /* A reserved row with more fields than this VM knows: built for a newer VM. */
+        if (i < img->n_reserved && img->types[(size_t)i * 2u] > ((vm_nfields[i >> 1] >> ((i & 1u) * 4u)) & 15u))
+            return IMG_ERR_VERSION;
     }
     if (!consts_ok(img)) return IMG_ERR_BOUNDS;
+    for (uint32_t i = tr + 1u; i < ex; i++) {
+        if (!string_ok(img, w[i])) return IMG_ERR_BOUNDS;
+    }
     for (uint32_t i = 0; i < img->n_exports; i++) {
         if (!string_ok(img, img->exports[(size_t)i * 2u]) ||
             img->exports[(size_t)i * 2u + 1u] >= img->n_funcs) return IMG_ERR_BOUNDS;
@@ -141,4 +155,4 @@ const char *image_func_name(const Image *img, uint32_t f, uint32_t *len) {
 
 uint32_t image_func_name_off(const Image *img, uint32_t f) { return img->funcs[f * 3u + 2u]; }
 
-uint32_t image_type_nfields(const Image *img, uint32_t t) { return img->types[t * 2u]; }
+uint32_t image_type_nfields(const Image *img, uint32_t r) { return img->types[r * 2u]; }

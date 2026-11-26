@@ -9,14 +9,21 @@
 #include "image.h"
 #include <string.h>
 
-typedef char caps_match[(GOGO_CAP_NET == CAP_NET && GOGO_CAP_KBD == CAP_KBD && GOGO_CAP_POWER == CAP_POWER &&
-                         GOGO_CAP_SD == CAP_SD && GOGO_CAP_IMU == CAP_IMU && GOGO_CAP_IR_TX == CAP_IR_TX &&
-                         GOGO_CAP_IR_RX == CAP_IR_RX && GOGO_CAP_MIC == CAP_MIC && GOGO_CAP_SPK == CAP_SPK &&
-                         GOGO_CAP_TLS == CAP_TLS) ? 1 : -1];
 typedef char steps_match[(GOGO_RUNNABLE == VM_RUNNABLE && GOGO_IDLE == VM_IDLE && GOGO_DONE == VM_DONE) ? 1 : -1];
 
-/* No board hardware: ports, input and network come from the host. */
-static const VmBoard embed_board = { NULL, NULL, NULL, NULL, 0 };
+/* No board hardware: ports, input and network come from the host. The
+ * mounts are /flash when fs_root serves it (and the grant has it). */
+static const char *const flash_mount[] = { "/flash", NULL };
+static const VmBoard embed_board = { NULL, NULL, NULL, NULL, NULL };
+static const VmBoard embed_board_flash = { NULL, NULL, NULL, NULL, flash_mount };
+
+bool embed_granted(const gogo_vm *g, const char *name) {
+    const char *const *l = g->cfg.grant;
+    if (!l) return true;
+    for (; *l; l++)
+        if (!strcmp(*l, name)) return true;
+    return false;
+}
 
 /* Scheduler passes gogo_run runs between checks for a stop. */
 #define RUN_BUDGET 256u
@@ -103,7 +110,7 @@ static bool host_ok(const gogo_host *h) {
  * allocator) and the inbox. */
 static int vm_setup(gogo_vm *g) {
     uint16_t cap = g->cfg.max_actors ? g->cfg.max_actors : (uint16_t)GOGO_TABLE_CAP;
-    if (vm_init(&g->vm, &g->fwd, g, &embed_board, g->cfg.caps, cap) != 0) return -1;
+    if (vm_init(&g->vm, &g->fwd, g, g->fs ? &embed_board_flash : &embed_board, cap) != 0) return -1;
     va_set_limit(&g->vm, g->cfg.mem_limit);
     vfs_init(&g->vm, &g->vfs);       /* no fs_root: no mounts, every gogo/fs call is NotMounted */
     embed_ports_install(g);
@@ -114,8 +121,7 @@ gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg) {
     static const gogo_config zero_cfg;
     if (!host_ok(h)) return NULL;
     if (!cfg) cfg = &zero_cfg;
-    /* Refuse what this build cannot give, rather than mask it. */
-    if ((cfg->caps & ~embed_board.caps) || cfg->fs_quota < 0) return NULL;
+    if (cfg->fs_quota < 0) return NULL;
     gogo_vm *g = h->alloc(host_ctx, sizeof *g);
     if (!g) return NULL;
     memset(g, 0, sizeof *g);
@@ -124,9 +130,8 @@ gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg) {
     g->cfg = *cfg;
     g->refs = 1;
     make_fwd(g);
-    /* /flash needs no capability: every board has it. fs_quota 0 is no
-     * quota (fs_dir: -1). */
-    if (cfg->fs_root && (!(g->fs = fs_dir_open(h, host_ctx, cfg->fs_root, cfg->fs_quota ? cfg->fs_quota : -1)) ||
+    /* fs_quota 0 is no quota (fs_dir: -1). */
+    if (cfg->fs_root && embed_granted(g, "/flash") && (!(g->fs = fs_dir_open(h, host_ctx, cfg->fs_root, cfg->fs_quota ? cfg->fs_quota : -1)) ||
                          !vfs_mount(&g->vfs, "/flash", fs_dir_vfs(g->fs), g->fs))) {
         fs_dir_close(g->fs);
         h->free(host_ctx, g, sizeof *g);
@@ -140,6 +145,36 @@ gogo_vm *gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg) {
         return NULL;
     }
     return g;
+}
+
+static char *put_u(char *p, uint32_t v) {
+    char d[10];
+    int n = 0;
+    do d[n++] = (char)('0' + v % 10u); while ((v /= 10u) != 0);
+    while (n) *p++ = d[--n];
+    return p;
+}
+
+static char *put_s(char *p, const char *s) {
+    while (*s) *p++ = *s++;
+    return p;
+}
+
+/* "gogo: unsupported image format M.m (this VM runs 15.0 to 15.x)\n" for
+ * an image with version word ver; returns its length (buf: 80 bytes). */
+static size_t version_msg(char *buf, uint32_t ver) {
+    char *p = put_s(buf, "gogo: unsupported image format ");
+    p = put_u(p, ver >> 16);
+    *p++ = '.';
+    p = put_u(p, ver & 0xFFFFu);
+    p = put_s(p, " (this VM runs ");
+    p = put_u(p, IMAGE_MAJOR);
+    p = put_s(p, ".0 to ");
+    p = put_u(p, IMAGE_MAJOR);
+    *p++ = '.';
+    p = put_u(p, IMAGE_MINOR);
+    p = put_s(p, ")\n");
+    return (size_t)(p - buf);
 }
 
 int gogo_load(gogo_vm *g, const void *image, size_t len, int flags) {
@@ -162,7 +197,11 @@ int gogo_load(gogo_vm *g, const void *image, size_t len, int flags) {
         if (!g->cfg.allow_code_load) g->vm.mod_cap = 0;   /* every code.Load is NoMemory */
         return GOGO_OK;
     }
-    if (rc < 0) {
+    if (rc == IMG_ERR_VERSION) {
+        char msg[80];
+        size_t n = version_msg(msg, ((const uint32_t *)words)[1]);
+        g->uh->write(g->uctx, 2, msg, n);
+    } else if (rc < 0) {
         static const char pre[] = "gogo: bad image: ";
         const char *why = image_err_str(rc);
         g->uh->write(g->uctx, 2, pre, sizeof pre - 1u);
@@ -176,7 +215,7 @@ int gogo_load(gogo_vm *g, const void *image, size_t len, int flags) {
     /* Start over with a clean Vm (vm_boot gave its table back). */
     blk_free_all(g, &g->blocks, g->uh->free);
     if (vm_setup(g) != 0) g->vm.table = NULL;
-    return rc < 0 ? GOGO_EIMAGE : rc == VM_BOOT_REFUSED ? GOGO_ECAPS : GOGO_ENOMEM;
+    return rc == IMG_ERR_VERSION ? GOGO_EVERSION : rc < 0 ? GOGO_EIMAGE : rc == VM_BOOT_REFUSED ? GOGO_EREQUIRES : GOGO_ENOMEM;
 }
 
 int gogo_start(gogo_vm *g) {

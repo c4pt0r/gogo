@@ -1,6 +1,6 @@
 // Uses /flash: a small file round trip, then writes 100-byte chunks to
 // /flash/big until a write fails, and reports the usage. Every line ends
-// with an fs.Err number. (Naming /sd would make the image need CAP_SD.)
+// with an fs.Err number. (Naming /sd would make the image require "/sd".)
 package main
 
 import "gogo/fs"

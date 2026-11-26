@@ -34,7 +34,7 @@ func main() {
 	actor.Sleep(2000) // time to attach a serial monitor after a reset
 	halfDuplex()
 	// Through a variable: a constant "/sd" given to gogo/fs would make the
-	// image require the sd capability, and the StickS3 has none.
+	// image require the "/sd" mount, and the StickS3 has none.
 	sd := "/sd"
 	dir := "/flash/audiohw"
 	if _, e := fs.ReadDir(sd); e == fs.OK {

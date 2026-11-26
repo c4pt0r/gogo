@@ -62,12 +62,12 @@ func main() {
 	_, e = code.Spawn(code.Module{}, "main", 0)
 	println("zero", int(e))
 	for _, h := range []int{1, -1, 65536, 1 << 30, -1 << 30} { // never module 0, never a crash
-		f := code.Module{H: h, Missing: h}
+		f := code.Module{H: h}
 		_, e = code.Spawn(f, "main", 0)
-		println("forged", int(e), int(code.Hold(f)), code.Missing(f) == h)
+		println("forged", int(e), int(code.Hold(f)), code.Missing(f) == "")
 		code.Release(f)
 	}
-	println("missing", code.Missing(m))
+	println("missing", len(code.Missing(m)))
 
 	// Released with no actor of it left: unloaded, the handle is stale.
 	code.Release(m)

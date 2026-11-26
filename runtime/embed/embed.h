@@ -76,6 +76,9 @@ struct gogo_vm {
     void (*ctx_free)(void *);    /* frees uctx at the last release (gogo_new_posix), or NULL */
 };
 
+/* True if the config's grant has name (or there is no grant: all). */
+bool embed_granted(const gogo_vm *g, const char *name);
+
 static inline int embed_state(const gogo_vm *g) { return __atomic_load_n(&g->state, __ATOMIC_ACQUIRE); }
 
 /* gogo_run's loop stops between steps once the VM is being freed. */

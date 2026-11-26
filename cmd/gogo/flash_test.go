@@ -21,7 +21,7 @@ func fakeImage(n int) []byte {
 		img[i] = byte(i * 7)
 	}
 	if n >= 8 {
-		binary.LittleEndian.PutUint32(img[4:], compiler.ImageVersion)
+		binary.LittleEndian.PutUint32(img[4:], compiler.ImageMajor<<16|compiler.ImageMinor)
 	}
 	return img
 }
@@ -64,8 +64,11 @@ func TestPackImageRejects(t *testing.T) {
 		"too big":   fakeImage(partSize - 16 + 4),
 	}
 	old := fakeImage(64)
-	binary.LittleEndian.PutUint32(old[4:], compiler.ImageVersion-1)
+	binary.LittleEndian.PutUint32(old[4:], 14)
 	cases["old version"] = old
+	newer := fakeImage(64)
+	binary.LittleEndian.PutUint32(newer[4:], compiler.ImageMajor<<16|(compiler.ImageMinor+1))
+	cases["newer minor"] = newer
 	cases["truncated header"] = fakeImage(4)
 	for name, img := range cases {
 		if out := packImage(img); out != nil {

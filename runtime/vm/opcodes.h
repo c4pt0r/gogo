@@ -209,7 +209,7 @@ enum Builtin {
 #define TYPE_POWER_BATTERY 32   /* MilliVolts, Percent, Charging, External int */
 #define TYPE_POWER_READ    33   /* (no fields): ask for a Battery now */
 /* Then the gogo/code struct type (lib/code/code.gg). */
-#define TYPE_CODE_MODULE   34   /* H, Missing int: a module handle (module_builtin) */
+#define TYPE_CODE_MODULE   34   /* H int, missing string: a module handle (module_builtin) */
 /* Then (v10) the port stream types and the gogo/imu and gogo/ir types. */
 #define TYPE_CHUNK       35   /* Seq, TimeMs, Dropped int; Data bytes.Bytes: stream event */
 #define TYPE_OUT         36   /* Data bytes.Bytes: stream command */
@@ -226,11 +226,56 @@ enum Builtin {
 /* Then (v14) the embedding types (lib/port/port.gg). */
 #define TYPE_HOST          45   /* Arg int, Data bytes.Bytes: cfg of a host-defined port */
 #define TYPE_POST          46   /* Kind int, Data bytes.Bytes: a host post, host-port command or event */
-/* How many reserved types there are (0 .. TYPE_RESERVED_COUNT - 1): they are
- * global across modules; every index from here up is a module's own type
- * and carries its module tag in a struct's type word (term.h). The one
- * constant to bump with a new reserved type (compiler: len(reservedTypes)). */
+/* How many reserved types this VM knows (0 .. TYPE_RESERVED_COUNT - 1):
+ * they are global across modules. The one constant to bump with a new
+ * reserved type (compiler: len(reservedTypes)); a new one is an image
+ * format minor (image.h). */
 #define TYPE_RESERVED_COUNT 47u
+/* Field counts of the reserved types this VM knows, in index order, two
+ * per byte (TYPE_NF2(even, odd)). An image's reserved row may declare at
+ * most this many (image_load): fields are only ever appended, of type
+ * int, 0 meaning the default, so a struct of an older image has a prefix
+ * of the fields, and GETFIELD past its end reads int 0. A new reserved
+ * type or an appended field is an image format minor (image.h).
+ * TestReservedFieldsMatchC checks this table against compiler.reservedTypes.
+ * These readers check a struct's exact size today; when their type gains a
+ * field, relax each to "at least" and read the new field only when present:
+ * net.SendTo and net.Addr (net/udp.c), port.Out (stream/stream.c),
+ * port.Post (embed/hostport.c), net.SetAddr (net/ports.c), actor.Options
+ * (vm_spawn_opt_words, interp.c), actor.Request (B_REPLY, interp.c) and
+ * code.Module (module_obj, module.c). */
+#define TYPE_NF2(a, b) ((uint8_t)((a) | (b) << 4))
+#define TYPE_NFIELDS { \
+    TYPE_NF2(1, 2), /* 0 ProcInfo, Reason */ \
+    TYPE_NF2(2, 3), /* 2 ExitMsg, DownMsg */ \
+    TYPE_NF2(3, 1), /* 4 Request, Options */ \
+    TYPE_NF2(4, 1), /* 6 port.GPIO, port.Write */ \
+    TYPE_NF2(2, 0), /* 8 port.Edge, net.IfConfig */ \
+    TYPE_NF2(4, 3), /* 10 net.SetAddr, net.Up */ \
+    TYPE_NF2(0, 2), /* 12 net.Down, net.Addr */ \
+    TYPE_NF2(1, 2), /* 14 net.UDP, net.SendTo */ \
+    TYPE_NF2(2, 3), /* 16 net.Datagram, net.Dial */ \
+    TYPE_NF2(1, 1), /* 18 net.Listen, net.Write */ \
+    TYPE_NF2(0, 0), /* 20 net.Shutdown, net.Resume */ \
+    TYPE_NF2(0, 1), /* 22 net.Connected, net.Data */ \
+    TYPE_NF2(0, 1), /* 24 net.Written, net.Closed */ \
+    TYPE_NF2(1, 2), /* 26 net.Accepted, fs.Info */ \
+    TYPE_NF2(2, 2), /* 28 fs.Space, kbd.Config */ \
+    TYPE_NF2(4, 1), /* 30 kbd.Key, power.Config */ \
+    TYPE_NF2(4, 0), /* 32 power.Battery, power.Read */ \
+    TYPE_NF2(2, 4), /* 34 code.Module, port.Chunk */ \
+    TYPE_NF2(1, 1), /* 36 port.Out, port.Done */ \
+    TYPE_NF2(3, 2), /* 38 imu.Config, imu.Gesture */ \
+    TYPE_NF2(2, 1), /* 40 ir.TX, ir.RX */ \
+    TYPE_NF2(3, 2), /* 42 audio.Mic, audio.Speaker */ \
+    TYPE_NF2(4, 2), /* 44 net.DialTLS, port.Host */ \
+    TYPE_NF2(2, 0), /* 46 port.Post */ \
+}
+/* The first own type: an image names its own struct types from here up
+ * (image.h), whatever reserved types it or the VM knows, and a struct of
+ * an own type carries its module tag in its type word (term.h). Fixed
+ * forever: reserved types stay below it. */
+#define TYPE_OWN_BASE 128u
 
 /* Exit reason codes (actor.Normal ...); user codes are >= 100. */
 enum Reason {

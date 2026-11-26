@@ -15,7 +15,7 @@
  * (module-tagged const refs, closures, structs: term.h) then fail
  * module_of_tag and their use is `badcode`.
  *
- * Handles: slot << 16 | generation (16 bits); a code.Module{H, Missing}
+ * Handles: slot << 16 | generation (16 bits); a code.Module{H, missing}
  * carries handle + 1 in H (module_builtin). A term tag
  * carries only the low 8 bits of the generation (term.h); handles compare
  * all 16 (module_resolve). module_load picks free slots round-robin
@@ -35,14 +35,19 @@
 enum {
     CODE_OK = 0,
     CODE_BAD_IMAGE = 1,     /* not a valid image (image_load), or unusable bytes */
-    CODE_UNSUPPORTED = 2,   /* needs a capability the firmware lacks */
+    CODE_UNSUPPORTED = 2,   /* requires a driver or mount the VM lacks */
     CODE_NO_MEMORY = 3,
     CODE_NOT_FOUND = 4,     /* no such module (stale handle) or entry */
     CODE_BAD_ARG = 5,
-    CODE_TOO_MANY = 6       /* the module table is full */
+    CODE_TOO_MANY = 6,      /* the module table is full */
+    CODE_BAD_VERSION = 7    /* an image format this VM does not run (image_load's IMG_ERR_VERSION) */
 };
 
 #define MOD_HOLDERS 4u
+
+/* The longest missing requirement name kept (bytes): code.Missing and
+ * the boot refusal line show at most this much of it. */
+#define MOD_MISSING_MAX 32u
 
 /* ModEntry.flags. Where a counted module's code lives: in its Bytes (bytes
  * != T_NIL), or in a copy it owns (MOD_OWN_COPY: VM memory, va_alloc;
@@ -63,7 +68,7 @@ enum {
     CODE_OP_SPAWN_OPT = 3,  /* Module, entry, arg, actor.Options -> PID, Err */
     CODE_OP_HOLD = 4,       /* Module -> Err */
     CODE_OP_RELEASE = 5,    /* Module -> nil */
-    CODE_OP_MISSING = 6,    /* Module -> int */
+    CODE_OP_MISSING = 6,    /* Module -> string */
     CODE_OP_MEM_USED = 7    /* -> int */
 };
 
@@ -104,16 +109,18 @@ enum {
  * refusal the actor table is freed again (vm_init again to retry). */
 int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words);
 
-/* The boot image into slot 0: image_load, then the capability check
- * (on a missing capability the refusal line goes to stderr in one
- * write), then module_install_static. Returns IMG_OK, a negative IMG_ERR_*,
+/* The boot image into slot 0: image_load, then the requirement check
+ * (each name a driver in the Vm's driver list or a mount prefix in its
+ * board's mounts; for the first one missing, the refusal line "gogo: image
+ * requires <name>, which this VM lacks" goes to stderr), then
+ * module_install_static. Returns IMG_OK, a negative IMG_ERR_*,
  * CODE_UNSUPPORTED, CODE_NO_MEMORY or CODE_TOO_MANY (slot 0 in use). The
  * words are used in place, never copied, and must outlive the VM. */
 int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words);
 
 /* Installs an already loaded image as slot 0, VM-held and not counted
- * (module_load_static's last step; tests install hand-built images with it). No caps
- * check: that is module_load_static's. CODE_OK, CODE_TOO_MANY or
+ * (module_load_static's last step; tests install hand-built images with it). No
+ * requirement check: that is module_load_static's. CODE_OK, CODE_TOO_MANY or
  * CODE_NO_MEMORY. */
 int module_install_static(Vm *vm, const Image *img);
 
@@ -126,8 +133,11 @@ void module_config(Vm *vm);
 /* code.Load: loads the image in Bytes `bytes` (as caller sees it: off-heap,
  * heap or const) into a free slot and makes caller a holder. Checks, in
  * order: the bytes are exactly one valid image (image_load, and no
- * trailing words) -> CODE_BAD_IMAGE; its requires word against
- * vm->caps -> CODE_UNSUPPORTED, with *handle = the missing CAP_* bits;
+ * trailing words) -> CODE_BAD_IMAGE, or CODE_BAD_VERSION for an image of
+ * another major or a newer minor (IMG_ERR_VERSION); its requirements
+ * (as module_load_static) -> CODE_UNSUPPORTED, with *handle = the length
+ * of the first missing name (at most MOD_MISSING_MAX) and that many of its
+ * bytes copied to missing (MOD_MISSING_MAX bytes, or NULL);
  * the code memory limit (Vm.mod_cap, counting the image's bytes) ->
  * CODE_NO_MEMORY; a free slot -> CODE_TOO_MANY. Unaligned bytes are
  * validated as an aligned copy (whose allocation may fail: CODE_NO_MEMORY).
@@ -140,7 +150,7 @@ void module_config(Vm *vm);
  * memory (heap or const Bytes, any slice). A copy is made once, counted like in-place code, and
  * the Bytes is not kept. CODE_BAD_ARG if bytes is no Bytes. On CODE_OK
  * *handle is the module handle; nothing is kept on any error. */
-int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle);
+int module_load(Vm *vm, Actor *caller, term bytes, uint32_t *handle, char *missing);
 
 /* code.Hold: makes a a holder of module handle (once per actor: holding
  * again is CODE_OK). CODE_NOT_FOUND if the module is gone, CODE_TOO_MANY
@@ -158,13 +168,14 @@ void module_release(Vm *vm, Actor *a, uint32_t handle);
  * arity or operand, R_OUT_OF_MEMORY when the Module struct does not fit);
  * may GC.
  *
- * code.Module{H, Missing} (reserved type 34): Load gives H = handle + 1
- * for a loaded module and H = 0 on every error, and Missing = the missing
- * CAP_* bits after Unsupported (boxed if above a small int), else 0. Only
+ * code.Module{H, missing} (reserved type 34): Load gives H = handle + 1
+ * for a loaded module and H = 0 on every error, and missing = the first
+ * missing requirement's name after Unsupported (a heap string, at most
+ * MOD_MISSING_MAX bytes of it), else "". Only
  * H in 0x10001 .. GOGO_MAX_MODULES << 16 can name a module, never slot 0
  * (the boot image is not reachable through gogo/code); every other int,
  * forged or stale, is NotFound for Spawn and Hold and nothing for Release.
- * code.Missing returns the Missing field as it is. */
+ * code.Missing returns the missing field as it is. */
 uint32_t module_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs);
 
 /* Starts the export `entry` (len bytes) of the module `handle` in a new

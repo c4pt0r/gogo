@@ -93,13 +93,13 @@ static inline term field_term(term t, term f) {
  * untagged in its image; a module type gets the module's tag. */
 static inline uint32_t struct_type(term t, const uint32_t *obj) {
     uint32_t ty = obj[1];
-    return (term_is_const(t) && ty >= TYPE_RESERVED_COUNT) ? ty | (t & MOD_TAG_MASK) : ty;
+    return (term_is_const(t) && ty >= TYPE_OWN_BASE) ? ty | (t & MOD_TAG_MASK) : ty;
 }
 
 /* A struct of type word ty may be used: a reserved type (global), one of
  * the running module's own (tag), or of another module still loaded. */
 static inline bool type_live(const Vm *vm, uint32_t tag, uint32_t ty) {
-    return ty < TYPE_RESERVED_COUNT || (ty & MOD_TAG_MASK) == tag || module_of_tag(vm, ty) != NULL;
+    return ty < TYPE_OWN_BASE || (ty & MOD_TAG_MASK) == tag || module_of_tag(vm, ty) != NULL;
 }
 
 /* False if t names something of a module that is gone: a const ref that
@@ -116,7 +116,7 @@ static bool term_live(const Vm *vm, const Actor *a, term t) {
     if (!o) return true;                 /* not an object: the kind checks decide */
     uint32_t k = hdr_kind(o[0]);
     if (k == K_CLOSURE) return module_of_tag(vm, o[1]) != NULL;
-    if (k == K_STRUCT) return o[1] < TYPE_RESERVED_COUNT || module_of_tag(vm, o[1]) != NULL;
+    if (k == K_STRUCT) return o[1] < TYPE_OWN_BASE || module_of_tag(vm, o[1]) != NULL;
     return true;
 }
 
@@ -834,7 +834,10 @@ int interp_run(Vm *vm, Actor *a) {
 
         case OP_NEWSTRUCT: case OP_MKCLOSURE: {
             REG(ra); REGS(rb, rc);
-            if (op == OP_NEWSTRUCT) CHECK(ext < img->n_types && image_type_nfields(img, ext) == rc);
+            if (op == OP_NEWSTRUCT) {
+                uint32_t row = image_type_row(img, ext);
+                CHECK(row < img->n_types && image_type_nfields(img, row) == rc);
+            }
             else CHECK(ext < img->n_funcs);
             uint32_t words = 2u + rc;
             uint32_t off = heap_alloc(vm, a, words, NULL, 0);
@@ -844,7 +847,7 @@ int interp_run(Vm *vm, Actor *a) {
             obj[0] = hdr_make(words, op == OP_NEWSTRUCT ? K_STRUCT : K_CLOSURE);
             /* The module's tag on its functions and its own types; a
              * reserved type stays bare (global). */
-            obj[1] = (op == OP_MKCLOSURE || ext >= TYPE_RESERVED_COUNT) ? ext | tag : ext;
+            obj[1] = (op == OP_MKCLOSURE || ext >= TYPE_OWN_BASE) ? ext | tag : ext;
             for (uint32_t i = 0; i < rc; i++) obj[2 + i] = R[rb + i];
             R[ra] = term_from_ref(off);
             break;
@@ -853,9 +856,11 @@ int interp_run(Vm *vm, Actor *a) {
         case OP_GETFIELD: {
             REG(ra); REG(rb);
             const uint32_t *obj = obj_of(vm, a, R[rb]);
-            CHECK(obj && hdr_kind(obj[0]) == K_STRUCT && 2u + rc < hdr_words(obj[0]) &&
+            /* Past the end only of a reserved struct from an older image:
+             * the fields appended since are ints, 0 the default (opcodes.h). */
+            CHECK(obj && hdr_kind(obj[0]) == K_STRUCT && (2u + rc < hdr_words(obj[0]) || obj[1] < TYPE_OWN_BASE) &&
                   type_live(vm, tag, struct_type(R[rb], obj)));
-            R[ra] = field_term(R[rb], obj[2 + rc]);
+            R[ra] = 2u + rc < hdr_words(obj[0]) ? field_term(R[rb], obj[2 + rc]) : term_from_int(0);
             break;
         }
 
@@ -883,7 +888,7 @@ int interp_run(Vm *vm, Actor *a) {
             /* ext names a type of this module's image: its own struct
              * types are tagged like its structs. */
             CHECK(!(ext & MOD_TAG_MASK));
-            R[ra] = term_from_bool(ty == (ext >= TYPE_RESERVED_COUNT && ext < TY_INT ? ext | tag : ext));
+            R[ra] = term_from_bool(ty == (ext >= TYPE_OWN_BASE && ext < TY_INT ? ext | tag : ext));
             break;
         }
 

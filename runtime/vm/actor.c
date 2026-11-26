@@ -22,14 +22,12 @@ static uint16_t next_gen(uint16_t slot, uint16_t gen) {
 
 static const VmBoard no_board;
 
-int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board, uint32_t granted_caps,
-            uint16_t table_cap) {
+int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board, uint16_t table_cap) {
     memset(vm, 0, sizeof *vm);
     vm->host = host;
     vm->host_ctx = host_ctx;
     if (!board) board = &no_board;
     vm->board = board;
-    vm->caps = board->caps & granted_caps;
     if (table_cap > PORT_SLOT_BASE) return -1;
     vm->next_ref = 1;
     vm->mod_cap = GOGO_CODE_MEM_DEFAULT;   /* module_config may change it */

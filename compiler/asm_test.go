@@ -237,12 +237,14 @@ func TestTermsMatchC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := regexp.MustCompile(`#define\s+IMAGE_VERSION\s+(\d+)u`).FindStringSubmatch(string(src))
-	if m == nil || m[1] != strconv.Itoa(imageVersion) {
-		t.Errorf("IMAGE_VERSION in runtime/vm/image.h %v, Go imageVersion %d", m, imageVersion)
+	for name, v := range map[string]int{"IMAGE_MAJOR": imageMajor, "IMAGE_MINOR": imageMinor} {
+		m := regexp.MustCompile(`#define\s+` + name + `\s+(\d+)u`).FindStringSubmatch(string(src))
+		if m == nil || m[1] != strconv.Itoa(v) {
+			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
+		}
 	}
-	if imageVersion != 14 {
-		t.Errorf("imageVersion %d, want 14", imageVersion)
+	if imageMajor != 15 || imageMinor != 0 {
+		t.Errorf("image format %d.%d, want 15.0", imageMajor, imageMinor)
 	}
 }
 
@@ -340,7 +342,7 @@ func TestImageLayout(t *testing.T) {
 	}
 	w := words(raw)
 	// "main": 2 hdr words + 1 payload = 3; "P": 3.
-	want := []uint32{0x4F474F47, imageVersion, 1, 1, 6, 1, 0, 0}
+	want := []uint32{0x4F474F47, 15 << 16, 1, 1, 6, 1, 0, 0}
 	for i, v := range want {
 		if w[i] != v {
 			t.Fatalf("header word %d = %#x, want %#x", i, w[i], v)
@@ -505,6 +507,36 @@ func TestReservedTypeCount(t *testing.T) {
 	}
 }
 
+// TestReservedFieldsMatchC: the VM's field counts of the reserved types
+// (TYPE_NFIELDS in runtime/vm/opcodes.h, which image_load checks every
+// reserved row against) match reservedTypes.
+func TestReservedFieldsMatchC(t *testing.T) {
+	src, err := os.ReadFile("../runtime/vm/opcodes.h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c []int
+	for _, m := range regexp.MustCompile(`TYPE_NF2\((\d+), (\d+)\),`).FindAllStringSubmatch(string(src), -1) {
+		a, _ := strconv.Atoi(m[1])
+		b, _ := strconv.Atoi(m[2])
+		c = append(c, a, b)
+	}
+	if len(c) != (len(reservedTypes)+1)/2*2 {
+		t.Fatalf("TYPE_NFIELDS has %d entries, reservedTypes %d", len(c), len(reservedTypes))
+	}
+	for i, rt := range reservedTypes {
+		if c[i] != len(rt.fields) {
+			t.Errorf("reserved type %d (%s): TYPE_NFIELDS %d, reservedTypes %d", i, rt.name, c[i], len(rt.fields))
+		}
+		if len(rt.fields) > 15 {
+			t.Errorf("reserved type %d (%s): %d fields, TYPE_NFIELDS packs at most 15", i, rt.name, len(rt.fields))
+		}
+	}
+	if len(reservedTypes)%2 == 1 && c[len(c)-1] != 0 {
+		t.Errorf("TYPE_NFIELDS pad entry %d, want 0", c[len(c)-1])
+	}
+}
+
 // TestImageConstAreaLimit: a const ref carries a 17-bit word offset (the
 // top bits of the runtime term are the module tag, runtime/vm/term.h), so a const
 // area past 1<<17 words is a compile error, not an image the VM rejects.
@@ -610,26 +642,15 @@ func TestFsMatchC(t *testing.T) {
 }
 
 // TestCodeMatchC cross-checks gogo/code with C: code.Err with CODE_* and
-// the B_CODE op codes with CODE_OP_* (runtime/vm/module.h), code.Cap* and the
-// compiler's Cap* with CAP_* (runtime/vm/host.h).
+// the B_CODE op codes with CODE_OP_* (runtime/vm/module.h).
 func TestCodeMatchC(t *testing.T) {
 	c := map[string]int64{}
-	for _, f := range []string{"../runtime/vm/module.h", "../runtime/vm/host.h"} {
-		src, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range regexp.MustCompile(`\b(CODE_\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
-			c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
-		}
-		for _, m := range regexp.MustCompile(`#define\s+(CAP_\w+)\s+\(?(\d+)u(?:\s*<<\s*(\d+))?`).FindAllStringSubmatch(string(src), -1) {
-			v, _ := strconv.ParseInt(m[2], 10, 64)
-			if m[3] != "" {
-				sh, _ := strconv.Atoi(m[3])
-				v <<= sh
-			}
-			c[m[1]] = v
-		}
+	src, err := os.ReadFile("../runtime/vm/module.h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range regexp.MustCompile(`\b(CODE_\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(string(src), -1) {
+		c[m[1]], _ = strconv.ParseInt(m[2], 10, 64)
 	}
 	l := &loader{fset: token.NewFileSet(), libs: lib.StubFS, pkgs: map[string]*types.Package{}}
 	pkg, err := l.Import(CodePath)
@@ -638,7 +659,7 @@ func TestCodeMatchC(t *testing.T) {
 	}
 	stub := map[string]string{"OK": "CODE_OK", "BadImage": "CODE_BAD_IMAGE", "Unsupported": "CODE_UNSUPPORTED",
 		"NoMemory": "CODE_NO_MEMORY", "NotFound": "CODE_NOT_FOUND", "BadArg": "CODE_BAD_ARG", "TooMany": "CODE_TOO_MANY",
-		"CapNet": "CAP_NET", "CapKbd": "CAP_KBD", "CapPower": "CAP_POWER", "CapSD": "CAP_SD", "CapIMU": "CAP_IMU", "CapIRTX": "CAP_IR_TX", "CapIRRX": "CAP_IR_RX", "CapMic": "CAP_MIC", "CapSpk": "CAP_SPK", "CapTLS": "CAP_TLS", "CapAnyPort": "CAP_ANYPORT"}
+		"BadVersion": "CODE_BAD_VERSION"}
 	for name, cname := range stub {
 		k, ok := pkg.Scope().Lookup(name).(*types.Const)
 		if !ok {
@@ -650,19 +671,14 @@ func TestCodeMatchC(t *testing.T) {
 			t.Errorf("code.%s = %d, %s = %d (present=%v)", name, v, cname, cv, ok)
 		}
 	}
-	for name, v := range map[string]uint32{"CAP_NET": CapNet, "CAP_KBD": CapKbd, "CAP_POWER": CapPower, "CAP_SD": CapSD, "CAP_IMU": CapIMU, "CAP_IR_TX": CapIRTX, "CAP_IR_RX": CapIRRX, "CAP_MIC": CapMic, "CAP_SPK": CapSpk, "CAP_TLS": CapTLS, "CAP_ANYPORT": CapAnyPort} {
-		if c[name] != int64(v) {
-			t.Errorf("compiler %s = %d, C %d", name, v, c[name])
-		}
-	}
 	nErr := 0
 	for name := range c {
 		if strings.HasPrefix(name, "CODE_") && !strings.HasPrefix(name, "CODE_OP_") {
 			nErr++
 		}
 	}
-	if nErr != 7 {
-		t.Errorf("%d CODE_ errors in module.h, the stub has 7", nErr)
+	if nErr != 8 {
+		t.Errorf("%d CODE_ errors in module.h, the stub has 8", nErr)
 	}
 	ops := map[string]int32{"CODE_OP_LOAD": CodeLoad, "CODE_OP_SPAWN": CodeSpawn, "CODE_OP_SPAWN_LINK": CodeSpawnLink,
 		"CODE_OP_SPAWN_OPT": CodeSpawnOpt, "CODE_OP_HOLD": CodeHold, "CODE_OP_RELEASE": CodeRelease,

@@ -11,10 +11,9 @@
 /* Both mutable: a test may swap a hook (e.g. code_alloc) or the board's
  * input (the fake InputHw) and must put it back. */
 extern gogo_host test_host;
-extern VmBoard test_board;      /* unix base ports, unix netif, every cap */
-extern uint32_t test_granted;   /* the caps test_vm_init grants (default all) */
+extern VmBoard test_board;      /* unix base ports, unix netif, mounts /flash and /sd */
 
-/* vm_init on test_host / test_board with test_granted, then (img not NULL)
+/* vm_init on test_host / test_board, then (img not NULL)
  * module_install_static. 0, or -1 on failure. */
 int test_vm_init(Vm *vm, const Image *img, uint16_t table_cap);
 /* A cleared vm tied to test_host / test_board, without vm_init's PID table

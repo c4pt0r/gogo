@@ -59,7 +59,7 @@ static Port *port_of(Vm *vm, term pid) {
     return p->drv && p->id == pid ? p : NULL;
 }
 
-static const PortDriver *find_driver(const Vm *vm, const uint8_t *name, uint32_t len) {
+const PortDriver *port_find_driver(const Vm *vm, const uint8_t *name, uint32_t len) {
     const PortDriver *const *l = vm->drivers ? vm->drivers : vm->board->ports;
     for (; l && *l; l++) {
         if (strlen((*l)->name) == len && (len == 0 || memcmp((*l)->name, name, len) == 0)) return *l;
@@ -121,7 +121,7 @@ term port_open(Vm *vm, Actor *owner, term name, term cfg) {
     const uint8_t *nm;
     uint32_t len;
     if (!name_bytes(vm, owner, name, &nm, &len)) return T_NIL;
-    const PortDriver *drv = find_driver(vm, nm, len);
+    const PortDriver *drv = port_find_driver(vm, nm, len);
     if (!drv) return T_NIL;
     if (drv->open_term) {
         const uint32_t *o = obj_of(vm, owner, cfg);

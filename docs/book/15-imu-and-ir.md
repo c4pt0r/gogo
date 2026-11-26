@@ -409,11 +409,12 @@ receiver and the LED at least 30 cm apart when you try this on a board.
 - The G42, G44 and G46 pins are reserved for IR: the `gpio` port refuses
   them.
 
-## 15.4 Capabilities and firmware
+## 15.4 Requirements and firmware
 
 The compiler records which of these ports a program opens (`imu`, `ir_tx`,
-`ir_rx`) in the image, as it does for the network and the keyboard
-(chapter 14). A firmware built without them refuses such an image at boot.
+`ir_rx`) in the image as requirements, as it does for the network and the
+keyboard (chapter 14). A firmware built without them refuses such an image
+at boot, naming the missing driver.
 The switches are `GOGO_IMU` and `GOGO_IR` (`gogo firmware` names them
 `imu`, `irtx` and `irrx`; one switch builds both IR ports). Turning
 `GOGO_IR` off removes the IDF's RMT driver from the firmware; turning

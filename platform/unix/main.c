@@ -1,19 +1,21 @@
 /* gogovm: runs a gogo image file.
  *
- *   gogovm [--caps HEX] [--key c=pin]... [--fs-root DIR] [--fs-quota BYTES]
+ *   gogovm [--without NAME,...] [--key c=pin]... [--fs-root DIR] [--fs-quota BYTES]
  *          [--net-fd N [--sim-clock]] <file.ggb>
  *          exit 0 when the run queue empties (also after a crash), 1 when
- *          the firmware lacks a capability the image needs, 2 on a usage
- *          or load error. --caps and --fs-quota are for tests: the
- *          firmware's capability bits, and a simulated full disk:
- *          each medium may hold BYTES of files (what is there counts,
- *          deletes give room back; Usage reports used and BYTES).
+ *          the board lacks a driver or mount the image requires, 2 on a
+ *          usage or load error. --without and --fs-quota are for tests:
+ *          --without drops the named port drivers ("kbd", "tls", ...) and
+ *          mounts ("/sd") from the board, modelling a firmware built
+ *          without them; --fs-quota simulates a full disk: each medium
+ *          may hold BYTES of files (what is there counts, deletes give
+ *          room back; Usage reports used and BYTES).
  *   gogovm --sizeof-actor  prints sizeof(Actor)
  *   gogovm --sizeof-net    prints the net stack's fixed state in bytes
  *   gogovm --has-tls       exit 0 if built with the "tls" port (GOGO_TLS)
  *
  * Built with GOGO_TLS (the Makefile does when it finds the mbedTLS source),
- * gogovm has the "tls" port and CAP_TLS; $GOGO_TLS_STATS set makes it print
+ * gogovm has the "tls" port; $GOGO_TLS_STATS set makes it print
  * one "tls-stats ..." line to stderr at exit (tls_stats, the TLS heap, and
  * vm_peak: the VM allocator's peak, va_peak_bytes).
  *
@@ -66,32 +68,45 @@ static int load_error(const char *path, const char *what) {
 }
 
 /* The unix board: gpio, net and the simulated keyboard, battery, motion
- * sensor, infrared and audio (input_unix.c), and the "tls" port when built
- * with it; every capability. A driver with a capability bit is listed only
- * when the granted caps (--caps, test only) have it, so --caps models a
- * firmware without it: port.Open of an absent driver returns ok=false, as
- * on that firmware. */
-static const struct { const PortDriver *d; uint32_t cap; } unix_ports_all[] = {
-    {&gpio_unix_driver, 0}, {&net_netif_driver, 0}, {&net_udp_driver, 0}, {&net_tcp_driver, 0},
-    {&net_tcp_listen_driver, 0}, {&input_kbd_driver, CAP_KBD}, {&input_power_driver, CAP_POWER},
-    {&input_imu_driver, CAP_IMU}, {&input_ir_tx_driver, CAP_IR_TX}, {&input_ir_rx_driver, CAP_IR_RX},
-    {&input_mic_driver, CAP_MIC}, {&input_spk_driver, CAP_SPK},
+ * sensor, infrared and audio (input_unix.c), the "tls" port when built
+ * with it, and the /flash and /sd mounts. --without (test only) leaves
+ * names out of both lists, so it models a firmware without them: an image
+ * requiring one is refused, and port.Open of an absent driver returns
+ * ok=false, as on that firmware. */
+static const PortDriver *const unix_ports_all[] = {
+    &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver,
+    &net_tcp_listen_driver, &input_kbd_driver, &input_power_driver,
+    &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
+    &input_mic_driver, &input_spk_driver,
 #ifdef GOGO_TLS
-    {&net_tls_driver, CAP_TLS},
+    &net_tls_driver,
 #endif
 };
 #define UNIX_PORTS_ALL (sizeof unix_ports_all / sizeof unix_ports_all[0])
+static const char *const unix_mounts_all[] = { "/flash", "/sd" };
 static const PortDriver *unix_ports[UNIX_PORTS_ALL + 1u];   /* filled by main: NULL-terminated */
+static const char *unix_mounts[3];                           /* likewise */
 static const VmBoard unix_board = {
     unix_ports, &input_unix_hw, &unix_netif,
 #ifdef GOGO_TLS
     &unix_tls_hw,
-    CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX | CAP_MIC | CAP_SPK | CAP_TLS
 #else
     NULL,
-    CAP_NET | CAP_KBD | CAP_POWER | CAP_SD | CAP_IMU | CAP_IR_TX | CAP_IR_RX | CAP_MIC | CAP_SPK
 #endif
+    unix_mounts
 };
+
+/* True if name is one of the comma-separated names in list (NULL: none). */
+static int listed(const char *list, const char *name) {
+    size_t n = strlen(name);
+    for (const char *p = list; p && *p;) {
+        const char *e = strchr(p, ',');
+        size_t l = e ? (size_t)(e - p) : strlen(p);
+        if (l == n && strncmp(p, name, n) == 0) return 1;
+        p = e ? e + 1 : p + l;
+    }
+    return 0;
+}
 
 #ifdef GOGO_TLS
 static size_t tls_heap_base;   /* the TLS heap once tls_init has run (PSA's own state) */
@@ -128,7 +143,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     int net_fd = -1, sim = 0;
-    uint32_t granted = UINT32_MAX;      /* --caps narrows the board's caps */
+    const char *without = NULL;         /* --without: names left out of the board */
     const char *fs_root = NULL;
     int64_t fs_quota = -1;
     while (argc >= 2 && strncmp(argv[1], "--", 2) == 0) {
@@ -148,15 +163,9 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "gogovm: bad --key %s (want <char>=<pin>, pin 0..63)\n", argv[2]);
                 return 2;
             }
-        } else if (strcmp(argv[1], "--caps") == 0) {
-            /* --caps <hex>: test only, the firmware capability bits. */
-            char tail;
-            unsigned caps;
-            if (sscanf(argv[2], "%x%c", &caps, &tail) != 1) {
-                fprintf(stderr, "gogovm: bad --caps %s (want hex)\n", argv[2]);
-                return 2;
-            }
-            granted = caps;
+        } else if (strcmp(argv[1], "--without") == 0) {
+            /* --without <name,...>: test only, drivers and mounts the board leaves out. */
+            without = argv[2];
         } else if (strcmp(argv[1], "--fs-root") == 0) {
             fs_root = argv[2];
         } else if (strcmp(argv[1], "--fs-quota") == 0) {
@@ -186,13 +195,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "gogovm: --sim-clock needs --net-fd\n");
         return 2;
     }
-    size_t nports = 0;
+    size_t nports = 0, nmounts = 0;
     for (size_t i = 0; i < UNIX_PORTS_ALL; i++) {
-        if ((unix_ports_all[i].cap & granted) == unix_ports_all[i].cap) unix_ports[nports++] = unix_ports_all[i].d;
+        if (!listed(without, unix_ports_all[i]->name)) unix_ports[nports++] = unix_ports_all[i];
     }
     unix_ports[nports] = NULL;
+    for (size_t i = 0; i < 2; i++) {
+        if (!listed(without, unix_mounts_all[i])) unix_mounts[nmounts++] = unix_mounts_all[i];
+    }
+    unix_mounts[nmounts] = NULL;
     if (argc != 2) {
-        fprintf(stderr, "usage: gogovm [--caps <hex>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] <file.ggb>\n       gogovm --sizeof-actor | --sizeof-net\n");
+        fprintf(stderr, "usage: gogovm [--without <name,...>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] <file.ggb>\n       gogovm --sizeof-actor | --sizeof-net\n");
         return 2;
     }
     if (net_fd >= 0) {
@@ -220,8 +233,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "gogovm: --fs-root %s: cannot open flash directory\n", fs_root);
             return 2;
         }
-        vfs_mount(&vfs_state, "/flash", fs_dir_vfs(fs_flash), fs_flash);
-        if (snprintf(dir, sizeof dir, "%s/sd", fs_root) < (int)sizeof dir &&
+        if (!listed(without, "/flash")) vfs_mount(&vfs_state, "/flash", fs_dir_vfs(fs_flash), fs_flash);
+        if (!listed(without, "/sd") && snprintf(dir, sizeof dir, "%s/sd", fs_root) < (int)sizeof dir &&
             stat(dir, &st) == 0 && S_ISDIR(st.st_mode)) {
             fs_sd = fs_dir_open(&unix_host, NULL, dir, fs_quota);
             if (fs_sd) vfs_mount(&vfs_state, "/sd", fs_dir_vfs(fs_sd), fs_sd);
@@ -242,16 +255,22 @@ int main(int argc, char **argv) {
     if (got != (size_t)size) { free(words); return load_error(path, "cannot read"); }
     /* Image words are little-endian; this loader assumes a little-endian host. */
 
-    /* The unified boot (module.h): load the image as module 0 (caps check
-     * included), then vm_run starts its "main" export. */
+    /* The unified boot (module.h): load the image as module 0 (requirement
+     * check included), then vm_run starts its "main" export. */
     Vm vm;
     int rc = VM_BOOT_NO_MEMORY;
-    if (vm_init(&vm, &unix_host, NULL, &unix_board, granted, (uint16_t)GOGO_TABLE_CAP) == 0) {
+    if (vm_init(&vm, &unix_host, NULL, &unix_board, (uint16_t)GOGO_TABLE_CAP) == 0) {
         vm_set_unix_time_ms(&vm, platform_unix_wall_start());
         rc = vm_boot(&vm, words, (uint32_t)(size / 4));
     }
     if (rc != VM_BOOT_OK) {
+        uint32_t ver = size >= 8 ? words[1] : 0u;
         free(words);
+        if (rc == IMG_ERR_VERSION) {
+            fprintf(stderr, "gogovm: %s: unsupported image format %u.%u (this VM runs %u.0 to %u.%u)\n", path,
+                    (unsigned)(ver >> 16), (unsigned)(ver & 0xFFFFu), IMAGE_MAJOR, IMAGE_MAJOR, IMAGE_MINOR);
+            return 2;
+        }
         if (rc < 0) return load_error(path, image_err_str(rc));
         if (rc == VM_BOOT_NO_MEMORY) fprintf(stderr, "gogovm: out of memory\n");
         return 1;                    /* VM_BOOT_REFUSED: the line is written */

@@ -1,5 +1,8 @@
 // Open of a driver the platform does not have fails; Close of the PID a
-// failed Open returned is a no-op.
+// failed Open returned is a no-op. The directive keeps the image from
+// requiring the absent driver.
+//
+//gogo:optional nosuch
 package main
 
 import (

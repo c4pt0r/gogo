@@ -1,0 +1,11 @@
+// A constant /sd path makes the image require the /sd mount: on a board
+// without it (vmargs --without /sd) the image is refused at load, naming
+// the mount, and nothing runs.
+package main
+
+import "gogo/fs"
+
+func main() {
+	_, e := fs.ReadFile("/sd/notes.txt", 100)
+	println("not reached", int(e))
+}

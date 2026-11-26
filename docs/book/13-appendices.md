@@ -59,8 +59,8 @@ type Upgrade struct{ Module code.Module }     // actor.Call(sup, Upgrade{m}, ms)
 ### gogo/code
 
 ```go
-type Module struct{ H, Missing int }          // H == 0: none
-type Err int                                  // OK, BadImage, Unsupported, NoMemory, NotFound, BadArg, TooMany
+type Module struct{ H int; missing string }   // H == 0: none
+type Err int                                  // OK, BadImage, Unsupported, NoMemory, NotFound, BadArg, TooMany, BadVersion
 
 func Load(b bytes.Bytes) (Module, Err)
 func Spawn(m Module, entry string, arg any) (actor.PID, Err)
@@ -68,7 +68,7 @@ func SpawnLink(m Module, entry string, arg any) (actor.PID, Err)
 func SpawnOpt(m Module, entry string, arg any, opts actor.Options) (actor.PID, Err)
 func Hold(m Module) Err
 func Release(m Module)
-func Missing(m Module) int
+func Missing(m Module) string                 // after Unsupported: the missing driver or mount
 func MemUsed() int
 ```
 
@@ -294,9 +294,9 @@ on standard error.
 
 **`code.Err`** (the result of every `gogo/code` call):
 
-| 0 | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| `OK` | `BadImage` | `Unsupported` (firmware lacks a feature: see `Missing`) | `NoMemory` (over `code.mem`) | `NotFound` | `BadArg` | `TooMany` (module table or holders full) |
+| 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| `OK` | `BadImage` | `Unsupported` (firmware lacks a driver or mount: see `Missing`) | `NoMemory` (over `code.mem`) | `NotFound` | `BadArg` | `TooMany` (module table or holders full) | `BadVersion` (another image format) |
 
 ## D. Limits
 
@@ -348,27 +348,32 @@ on standard error.
 | `go run` | `gogo run`; `gogo build` + `gogo flash` |
 | runtime panics crash the program | runtime errors end only the actor |
 
-## F. Capabilities
+## F. Requirement names
 
-The compiler records in every image and module the optional firmware
-features it needs (the `requires` word); a firmware without one refuses
-the image at boot and `code.Load` returns `Unsupported` (chapter 14).
-`gogo firmware` (chapter 12) picks the firmware switches from it.
+The compiler records in every image and module, by name, the drivers and
+mounts it needs from the firmware (its requirements); a firmware that
+lacks one refuses the image at boot, naming it, and `code.Load` returns
+`Unsupported` with `code.Missing` naming it (chapter 14). `gogo firmware`
+(chapter 12) picks the firmware switches from the names.
 
-| Bit | `gogo/code` constant | Needed by | `gogo firmware` feature | Firmware switch |
-|---|---|---|---|---|
-| 1 | `CapNet` | `gogo/net` and everything built on it: `dhcp`, `dns`, `http`, `sntp` | `net` | `CONFIG_GOGO_NET` |
-| 2 | `CapKbd` | the `kbd` port (`gogo/kbd`) | `kbd` | `CONFIG_GOGO_KBD` |
-| 4 | `CapPower` | the `power` port (`gogo/power`) | `power` | `CONFIG_GOGO_BATTERY` |
-| 8 | `CapSD` | a constant `/sd` path in a `gogo/fs` call | `sd` | `CONFIG_GOGO_SD` |
-| 16 | `CapIMU` | the `imu` port (`gogo/imu`, `gogo/imulog`) | `imu` | `CONFIG_GOGO_IMU` |
-| 32 | `CapIRTX` | the `ir_tx` port | `irtx` | `CONFIG_GOGO_IR` |
-| 64 | `CapIRRX` | the `ir_rx` port | `irrx` | `CONFIG_GOGO_IR` |
-| 128 | `CapMic` | the `mic` port opened directly; `gogo/sound` opens it for `Record` but does not require it (`//gogo:optional`, chapter 12) | `mic` | `CONFIG_GOGO_AUDIO` |
-| 256 | `CapSpk` | the `spk` port opened directly; `gogo/sound` opens it for `Play` but does not require it | `spk` | `CONFIG_GOGO_AUDIO` |
-| 512 | `CapTLS` | the `tls` port opened directly (`net.DialTLS`); `gogo/http` opens it for `https://` URLs but does not require it (`//gogo:optional`, chapters 12 and 17) | `tls` | `CONFIG_GOGO_TLS` (needs `CONFIG_GOGO_NET`) |
+| Name | Required by | `gogo firmware` feature | Firmware switch |
+|---|---|---|---|
+| `gpio` | the `gpio` port | (always built) | |
+| `/flash` | (never inferred: every firmware has it) | (always built) | |
+| `netif`, `udp`, `tcp`, `tcp_listen` | the network ports, opened by `gogo/dhcp`, `dns`, `http`, `sntp` or directly with `gogo/net` | `net` | `CONFIG_GOGO_NET` |
+| `kbd` | the `kbd` port (`gogo/kbd`) | `kbd` | `CONFIG_GOGO_KBD` |
+| `power` | the `power` port (`gogo/power`) | `power` | `CONFIG_GOGO_BATTERY` |
+| `/sd` | a constant `/sd` path in a `gogo/fs` call | `sd` | `CONFIG_GOGO_SD` |
+| `imu` | the `imu` port (`gogo/imu`, `gogo/imulog`) | `imu` | `CONFIG_GOGO_IMU` |
+| `ir_tx` | the `ir_tx` port | `irtx` | `CONFIG_GOGO_IR` |
+| `ir_rx` | the `ir_rx` port | `irrx` | `CONFIG_GOGO_IR` |
+| `mic` | the `mic` port opened directly; `gogo/sound` opens it for `Record` but does not require it (`//gogo:optional`, chapter 12) | `mic` | `CONFIG_GOGO_AUDIO` |
+| `spk` | the `spk` port opened directly; `gogo/sound` opens it for `Play` but does not require it | `spk` | `CONFIG_GOGO_AUDIO` |
+| `tls` | the `tls` port opened directly (`net.DialTLS`); `gogo/http` opens it for `https://` URLs but does not require it (`//gogo:optional`, chapters 12 and 17) | `tls` | `CONFIG_GOGO_TLS` (needs `CONFIG_GOGO_NET`) |
+| a host port's name | `port.Open` of a port the embedding program defines (chapter 18) | (none: an embedded VM only) | |
 
-Every other package needs none, including `gogo/sys` (the wall clock and
-`Random` work on every firmware) and `gogo/fs` on `/flash`. A port opened
-by a name known only at run time marks the image as needing every port
-the board has (`CapAnyPort`, with a compiler warning).
+An import alone requires nothing: `gogo/sys` (the wall clock and `Random`
+work on every firmware), `gogo/fs` on `/flash`, and the type-only use of
+`gogo/net` or `gogo/kbd` need no name. A port opened by a name known only
+at run time requires nothing (with a compiler warning); the open just
+fails on a firmware without the driver.

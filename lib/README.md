@@ -27,12 +27,13 @@ Two kinds of package:
   imports it (no dead-function elimination). A library may import stubs and
   other libraries, without cycles.
 
-The capability column is the `requires` bit the compiler records in the
-image (`compiler/modinfo.go`: the import itself, or a constant
-`port.Open` driver name inside the package); the firmware refuses an image
-whose bits it lacks (`code.Cap*`, `CAP_*` in `runtime/vm/host.h`).
-Packages built only on others inherit their bits (for example `gogo/http`
-via `gogo/net`).
+The requirements column lists the names the compiler records in the
+image when a package is compiled in (`compiler/modinfo.go`): the driver of
+each constant `port.Open` in the package, and `/sd` for a constant `/sd`
+path given to `gogo/fs`. An import by itself requires nothing. The
+firmware refuses an image that requires a driver or mount it lacks
+(`code.Missing` names it). Packages built only on others inherit their
+names (for example `gogo/http` via `gogo/dns`).
 
 A library whose port drivers are soft (opened only when a call asks for
 them at run time, their absence reported as that call's failure) names
@@ -43,39 +44,40 @@ comment after an empty `//` line:
 //gogo:optional tls
 ```
 
-Those drivers then add no bit for the package's **own** constant
+Those drivers then add no requirement for the package's **own** constant
 `port.Open` calls; `package main`, importers and other libraries still
-count theirs. Names must be capability drivers (`imu ir_rx ir_tx kbd mic
-netif power spk tcp tcp_listen tls udp`); an unknown name, an empty list,
-a misspelt `//gogo:` directive or the directive in `package main` is a
-compile error (`directives` in `compiler/load.go`). `gogo/http` declares
-`tls`, `gogo/sound` declares `mic spk`. Book chapter 12 has the details.
+count theirs (`package main` may use the directive too, for its own
+calls). Any driver name is accepted (a board's or a host port's); an
+empty list or a misspelt `//gogo:` directive is a compile error
+(`directives` in `compiler/load.go`).
+`gogo/http` declares `tls`, `gogo/sound` declares `mic spk`. Book chapter
+12 has the details.
 
-| package | kind | imports | capability |
+| package | kind | imports | requires |
 |---------|------|---------|------------|
 | `gogo/actor` | stub | | none |
-| `gogo/port` | stub | actor, bytes | none (per driver opened) |
+| `gogo/port` | stub | actor, bytes | none (each constant `port.Open`: its driver) |
 | `gogo/bytes` | stub | | none |
-| `gogo/net` | stub | actor, bytes | net (the `tls` port: tls) |
+| `gogo/net` | stub | actor, bytes | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
 | `gogo/config` | stub | | none |
-| `gogo/fs` | stub | actor, bytes | none (`/sd` paths: sd) |
-| `gogo/kbd` | stub | | kbd |
-| `gogo/power` | stub | | power |
+| `gogo/fs` | stub | actor, bytes | none (constant `/sd` paths: `/sd`) |
+| `gogo/kbd` | stub | | none (the `kbd` port: `kbd`) |
+| `gogo/power` | stub | | none (the `power` port: `power`) |
 | `gogo/code` | stub | actor, bytes | none |
-| `gogo/imu` | stub | | none (the `imu` port: imu) |
-| `gogo/ir` | stub | | none (the `ir_tx` / `ir_rx` ports: ir_tx / ir_rx) |
-| `gogo/audio` | stub | | none (the `mic` / `spk` ports: mic / spk) |
+| `gogo/imu` | stub | | none (the `imu` port: `imu`) |
+| `gogo/ir` | stub | | none (the `ir_tx` / `ir_rx` ports: `ir_tx` / `ir_rx`) |
+| `gogo/audio` | stub | | none (the `mic` / `spk` ports: `mic` / `spk`) |
 | `gogo/sys` | stub | | none |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |
 | `gogo/strconv` | library | | none |
-| `gogo/dhcp` | library | actor, bytes, config, net, port | net |
-| `gogo/dns` | library | actor, bytes, net, port | net |
-| `gogo/http` | library | actor, bytes, dns, fs, net, port, strconv, strings | net (opens the `tls` port for `https://` URLs without requiring tls: `//gogo:optional tls`) |
-| `gogo/sntp` | library | actor, bytes, dns, net, port, sys | net |
+| `gogo/dhcp` | library | actor, bytes, config, net, port | `netif`, `udp` |
+| `gogo/dns` | library | actor, bytes, net, port | `udp` |
+| `gogo/http` | library | actor, bytes, dns, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |
+| `gogo/sntp` | library | actor, bytes, dns, net, port, sys | `udp` |
 | `gogo/kv` | library | bytes, fs | none |
 | `gogo/ringlog` | library | bytes, fs | none |
-| `gogo/imulog` | library | actor, bytes, fs, imu, port | imu |
+| `gogo/imulog` | library | actor, bytes, fs, imu, port | `imu` |
 | `gogo/wav` | library | bytes, fs | none |
 | `gogo/sound` | library | actor, audio, fs, port, wav | none (opens `mic` for Record and `spk` for Play without requiring them: `//gogo:optional mic spk`) |
 | `gogo/irproto` | library | bytes | none |

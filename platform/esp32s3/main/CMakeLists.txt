@@ -82,7 +82,7 @@ endif()
 
 # The BMI270 (GOGO_IMU: imu_esp.c and the 8 KB legacy configuration, Bosch
 # BSD-3) and IR on the RMT (GOGO_IR: ir_esp.c). Off, the file is not built,
-# its hooks stay NULL (port.Open fails, the capability is absent) and, for
+# its hooks stay NULL (port.Open fails, the driver is absent) and, for
 # IR, the IDF RMT driver is not linked.
 set(GOGO_IMU_SRCS "")
 if(CONFIG_GOGO_IMU)

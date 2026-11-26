@@ -156,7 +156,7 @@ static int run_two(const char *pa, const char *pb) {
 
 int main(int argc, char **argv) {
     gogo_config cfg;
-    memset(&cfg, 0, sizeof cfg);   /* no caps, no memory cap, no /flash */
+    memset(&cfg, 0, sizeof cfg);   /* every name granted, no memory cap, no /flash */
     int i = 1;
     if (argc == 4 && strcmp(argv[1], "--two") == 0) return run_two(argv[2], argv[3]);
     for (; i < argc - 1; i++) {

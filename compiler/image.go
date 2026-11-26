@@ -7,29 +7,57 @@ import (
 
 const (
 	imageMagic = 0x4F474F47
-	// imageVersion moves in lockstep with IMAGE_VERSION in runtime/vm/image.h: any
-	// change to opcode numbers or semantics, builtin numbers, reserved
-	// types or the term encoding bumps it (v2: M3; v3: M4; v4: M5 CALLV; v5: bitwise ops;
-	// v6: B_FS and the gogo/fs reserved types; v7: the const map after the
-	// code, see constMap; v8: reserved types kbd.*, power.*; v9: requires
-	// bitmask and exports table after the const map, B_CODE and the
-	// gogo/code reserved type Module; v10: the port stream types Chunk,
-	// Out, Done and the gogo/imu and gogo/ir reserved types; v11: the
-	// gogo/audio reserved types Mic and Speaker, requires bits mic and spk;
-	// v12: the gogo/sys builtins B_UNIX_TIME, B_SET_UNIX_TIME and B_RANDOM,
-	// 51-53; v13: the reserved type net.DialTLS (44), requires bit tls;
-	// v14: the reserved types port.Host (45) and port.Post (46)).
-	imageVersion = 14
+	// imageMajor and imageMinor move in lockstep with IMAGE_MAJOR and
+	// IMAGE_MINOR in runtime/vm/image.h (TestImageVersionMatchesC). The
+	// header's version word is major<<16 | minor; a VM runs the images of
+	// its major whose minor is at most its own. imageMinor is the newest
+	// minor this compiler knows; each image is stamped with the lowest
+	// minor its program needs (see the minor tables below). A new builtin,
+	// opcode, reserved type or appended int field raises imageMinor and
+	// gets an entry in its table; anything incompatible bumps imageMajor
+	// and resets imageMinor and the tables (single-number versions 1 to
+	// 14 came before: see runtime/vm/image.h).
+	imageMajor = 15
+	imageMinor = 0
 )
 
-// ImageVersion is the image format version this compiler emits.
-const ImageVersion = imageVersion
+// ImageMajor and ImageMinor are the image format this compiler emits
+// (the newest minor it can stamp).
+const (
+	ImageMajor = imageMajor
+	ImageMinor = imageMinor
+)
+
+// The image format minor in which each addition after 15.0 appeared: an
+// image's minor is the highest one among the opcodes, builtins and
+// reserved types it uses (and every reserved row it carries). Empty at
+// 15.0. A reserved type is keyed by its image name ("port.Chunk"); its
+// entry is the minor of its current field layout, so an appended field
+// raises it.
+var (
+	opMinor      = map[uint8]uint16{}
+	builtinMinor = map[uint32]uint16{}
+	typeMinor    = map[string]uint16{}
+)
+
+// VersionString renders an image version word as "major.minor".
+func VersionString(w uint32) string { return fmt.Sprintf("%d.%d", w>>16, w&0xFFFF) }
+
+// CheckVersion reports whether a VM of this compiler's format runs an image
+// with version word w: the same major and a minor up to imageMinor.
+func CheckVersion(w uint32) error {
+	if w>>16 == imageMajor && w&0xFFFF <= imageMinor {
+		return nil
+	}
+	return fmt.Errorf("image format %s, this gogo runs %d.0 to %d.%d: rebuild it with `gogo build`",
+		VersionString(w), imageMajor, imageMajor, imageMinor)
+}
 
 // Index limits of an image (runtime/vm/term.h): at run time the top 11 bits of a
 // const ref, a closure's function word and a module struct's type word are
 // the module tag, so an image's const offsets have 17 bits (512 KB of
 // constants), function indexes 21 and type indexes 16 (TYPEIS's basic
-// types start at 0x10000).
+// types start at 0x10000; own types start at TypeOwnBase).
 const (
 	MaxConstWords = 1 << 17
 	MaxFuncs      = 1 << 21
@@ -46,6 +74,7 @@ type imgFunc struct {
 type imgType struct {
 	name    uint32
 	nFields uint32
+	goName  string
 }
 
 // ImageBuilder assembles an image byte slice.
@@ -54,10 +83,19 @@ type ImageBuilder struct {
 	strings map[string]uint32
 	int64s  map[int64]uint32
 	funcs   []imgFunc
-	types   []imgType
-	entry   uint32
-	// v9 trailer: capability bits, and the exported entries by name.
-	requires uint32
+	// reserved holds a row for every reserved type (AddReservedType, in
+	// index order); only the first nReserved are written, where
+	// nReserved is one more than the highest reserved type the program
+	// uses (UseType, or named by a NEWSTRUCT, TYPEIS or const struct).
+	// A row the program does not use is written with 0 fields, so it
+	// asks nothing of the VM (see scan).
+	reserved []imgType
+	used     map[uint32]bool // reserved indexes UseType marked
+	types    []imgType       // own types: index TypeOwnBase + position
+	entry    uint32
+	// The trailer: requirement names (const offsets), and the exported
+	// entries by name.
+	requires []uint32
 	exports  []imgExport
 }
 
@@ -110,15 +148,43 @@ func (b *ImageBuilder) AddFunc(name string, nParams, nRegs uint16) uint32 {
 // order, so a function's code offset is the total length of earlier functions.
 func (b *ImageBuilder) SetFuncCode(f uint32, code []uint32) { b.funcs[f].code = code }
 
-// AddType declares a struct type and returns its index.
+// AddType declares an own struct type and returns its index (TypeOwnBase
+// and up, in declaration order).
 func (b *ImageBuilder) AddType(name string, nFields uint32) uint32 {
 	n := b.AddString(name)
-	b.types = append(b.types, imgType{name: n, nFields: nFields})
-	return uint32(len(b.types) - 1)
+	b.types = append(b.types, imgType{name: n, nFields: nFields, goName: name})
+	return TypeOwnBase + uint32(len(b.types)-1)
 }
 
-// SetRequires sets the capability bits the image needs (Cap*).
-func (b *ImageBuilder) SetRequires(bits uint32) { b.requires = bits }
+// AddReservedType declares the next reserved type (index order) and
+// returns its index. Its row is written only if the program uses it or a
+// later reserved type.
+func (b *ImageBuilder) AddReservedType(name string, nFields uint32) uint32 {
+	n := b.AddString(name)
+	b.reserved = append(b.reserved, imgType{name: n, nFields: nFields, goName: name})
+	return uint32(len(b.reserved) - 1)
+}
+
+// UseType marks type idx as used by the program: a reserved type then
+// gets its row with its fields (and every lower one, with none) in the
+// image, and its minor counts.
+func (b *ImageBuilder) UseType(idx uint32) {
+	if idx < TypeOwnBase {
+		if b.used == nil {
+			b.used = map[uint32]bool{}
+		}
+		b.used[idx] = true
+	}
+}
+
+// SetRequires sets the names the image requires from the board: port
+// drivers and mount prefixes (see Requires).
+func (b *ImageBuilder) SetRequires(names []string) {
+	b.requires = nil
+	for _, n := range names {
+		b.requires = append(b.requires, b.AddString(n))
+	}
+}
 
 // AddExport exports function f under name (the host spawns it by name).
 func (b *ImageBuilder) AddExport(name string, f uint32) {
@@ -134,8 +200,8 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 	if len(b.consts) > MaxConstWords {
 		return nil, fmt.Errorf("image: const area is %d words, over the %d-word limit (strings and int64 constants)", len(b.consts), MaxConstWords)
 	}
-	if len(b.funcs) > MaxFuncs || len(b.types) > MaxTypes {
-		return nil, fmt.Errorf("image: %d functions, %d types: over the limits (%d, %d)", len(b.funcs), len(b.types), MaxFuncs, MaxTypes)
+	if len(b.funcs) > MaxFuncs || len(b.types) > int(MaxTypes-TypeOwnBase) {
+		return nil, fmt.Errorf("image: %d functions, %d types: over the limits (%d, %d)", len(b.funcs), len(b.types), MaxFuncs, MaxTypes-TypeOwnBase)
 	}
 	var code []uint32
 	var funcWords []uint32
@@ -161,16 +227,31 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 		funcWords = append(funcWords, uint32(len(code)), uint32(f.nParams)|uint32(f.nRegs)<<16, f.name)
 		code = append(code, reloc...)
 	}
-	words := []uint32{imageMagic, imageVersion, uint32(len(b.funcs)), uint32(len(b.types)),
-		uint32(len(b.consts)), uint32(len(code)), b.entry, 0}
+	used, minor, err := b.scan(code)
+	if err != nil {
+		return nil, err
+	}
+	nRes := len(used)
+	var rows []imgType
+	for i, t := range b.reserved[:nRes] {
+		if !used[i] {
+			t.nFields = 0 // not used: any VM that knows the type accepts it
+		}
+		rows = append(rows, t)
+	}
+	rows = append(rows, b.types...)
+	words := []uint32{imageMagic, imageMajor<<16 | uint32(minor), uint32(len(b.funcs)), uint32(len(rows)),
+		uint32(len(b.consts)), uint32(len(code)), b.entry, uint32(nRes)}
 	words = append(words, funcWords...)
-	for _, t := range b.types {
+	for _, t := range rows {
 		words = append(words, t.nFields, t.name)
 	}
 	words = append(words, b.consts...)
 	words = append(words, code...)
 	words = append(words, constMap(b.consts)...)
-	words = append(words, b.requires, uint32(len(b.exports)))
+	words = append(words, uint32(len(b.requires)))
+	words = append(words, b.requires...)
+	words = append(words, uint32(len(b.exports)))
 	for _, e := range b.exports {
 		words = append(words, e.name, e.fn)
 	}
@@ -179,6 +260,58 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 		binary.LittleEndian.PutUint32(out[i*4:], w)
 	}
 	return out, nil
+}
+
+// scan finds the reserved types the program uses (those UseType marked,
+// and those a NEWSTRUCT, TYPEIS or const struct names): used[i] for every
+// reserved row the image carries (len(used) is n_reserved). And the lowest
+// format minor that runs the image: the highest among its opcodes,
+// builtins and used reserved types. A row it carries but does not use is
+// written with 0 fields and adds no minor: no VM reads it (NEWSTRUCT and
+// const structs mark their type; TYPEIS and GETFIELD read no row), and
+// the loader accepts any count up to its own.
+func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, err error) {
+	marked := map[uint32]bool{}
+	for t := range b.used {
+		marked[t] = true
+	}
+	mark := func(t uint32) {
+		if t < TypeOwnBase {
+			marked[t] = true
+		}
+	}
+	for pc := 0; pc < len(code); pc++ {
+		op := uint8(code[pc])
+		minor = max(minor, opMinor[op])
+		if !OpHasExt(op) {
+			continue
+		}
+		pc++
+		switch op {
+		case OpNewstruct, OpTypeis:
+			mark(code[pc])
+		case OpBuiltin:
+			minor = max(minor, builtinMinor[code[pc]])
+		}
+	}
+	for off := 0; off < len(b.consts); off += int(b.consts[off] >> 6) {
+		if b.consts[off]&63 == KStruct {
+			mark(b.consts[off+1])
+		}
+	}
+	nRes := 0
+	for t := range marked {
+		nRes = max(nRes, int(t)+1)
+	}
+	if nRes > len(b.reserved) {
+		return nil, 0, fmt.Errorf("image: reserved type %d used but not declared", nRes-1)
+	}
+	used = make([]bool, nRes)
+	for t := range marked {
+		used[t] = true
+		minor = max(minor, typeMinor[b.reserved[t].goName])
+	}
+	return used, minor, nil
 }
 
 // constMap is the v7 const map: one bit per const word (bit i%32 of word
@@ -192,23 +325,39 @@ func constMap(consts []uint32) []uint32 {
 	return m
 }
 
-// ImageRequires returns the capability word (Cap*) of a v9 image or module
-// file: the word after the const map, see Bytes.
-func ImageRequires(img []byte) (uint32, error) {
+// ImageRequires returns the requirement names of an image or module
+// file: the trailer after the const map, see Bytes.
+func ImageRequires(img []byte) ([]string, error) {
 	if len(img) < 32 || len(img)%4 != 0 {
-		return 0, fmt.Errorf("not a gogo image (size %d)", len(img))
+		return nil, fmt.Errorf("not a gogo image (size %d)", len(img))
 	}
-	w := func(i int) uint32 { return binary.LittleEndian.Uint32(img[i*4:]) }
+	w := func(i uint64) uint32 { return binary.LittleEndian.Uint32(img[i*4:]) }
+	n := uint64(len(img) / 4)
 	if w(0) != imageMagic {
-		return 0, fmt.Errorf("not a gogo image (bad magic)")
+		return nil, fmt.Errorf("not a gogo image (bad magic)")
 	}
-	if w(1) != imageVersion {
-		return 0, fmt.Errorf("image version %d, this gogo writes version %d: rebuild it with `gogo build`", w(1), imageVersion)
+	if err := CheckVersion(w(1)); err != nil {
+		return nil, err
 	}
-	// the requires word; uint64 so huge counts cannot wrap
-	at := 8 + uint64(w(2))*3 + uint64(w(3))*2 + uint64(w(4)) + uint64(w(5)) + (uint64(w(4))+31)/32
-	if at+2 > uint64(len(img)/4) {
-		return 0, fmt.Errorf("truncated gogo image")
+	// uint64 so huge counts cannot wrap
+	nf, nt, nc, ncode := uint64(w(2)), uint64(w(3)), uint64(w(4)), uint64(w(5))
+	cbase := 8 + nf*3 + nt*2
+	at := cbase + nc + ncode + (nc+31)/32
+	if at+1 > n || at+1+uint64(w(at)) > n || cbase+nc > n {
+		return nil, fmt.Errorf("truncated gogo image")
 	}
-	return w(int(at)), nil
+	var names []string
+	for i := uint64(0); i < uint64(w(at)); i++ {
+		off := uint64(w(at + 1 + i))
+		if off+2 > nc {
+			return nil, fmt.Errorf("bad gogo image (requirement %d)", i)
+		}
+		l := uint64(w(cbase + off + 1))
+		if off+2+(l+3)/4 > nc {
+			return nil, fmt.Errorf("bad gogo image (requirement %d)", i)
+		}
+		start := (cbase + off + 2) * 4
+		names = append(names, string(img[start:start+l]))
+	}
+	return names, nil
 }

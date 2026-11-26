@@ -122,7 +122,7 @@ The chapters build on each other:
 | 10. Networking | DHCP, DNS, UDP, TCP, HTTP client and server, the date (SNTP) |
 | 11. Configuration and Devices | `gogo config`, Wi-Fi, the two boards |
 | 12. Toolchain Reference | Every `gogo` command |
-| 13. Appendices | Library quick reference, exit reasons, error codes, limits, differences from Go, capabilities |
+| 13. Appendices | Library quick reference, exit reasons, error codes, limits, differences from Go, requirement names |
 | 14. Hot Loading | Loading code at run time: `gogo/code`, modules, supervised upgrades |
 | 15. IMU and IR | The motion sensor, infrared send and receive, streams |
 | 16. Audio | The microphone and speaker, WAV files |

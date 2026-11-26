@@ -563,6 +563,29 @@ TEST(embed_lifecycle_errors) {
     tctx_done(&t);
 }
 
+/* The image format: the same major with a minor up to the VM's loads;
+ * an older major or a newer minor is GOGO_EVERSION, naming both formats,
+ * and the VM stays loadable. */
+TEST(embed_image_version) {
+    TCtx t; tctx_init(&t);
+    Img im = image("echo");
+    CHECK_EQ(im.w[1], 15u << 16);                    /* stamped 15.0 */
+    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    im.w[1] = 15u << 16 | 1u;
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EVERSION);
+    CHECK(strstr(t.err, "gogo: unsupported image format 15.1 (this VM runs 15.0 to 15.0)") != NULL);
+    im.w[1] = 14u;
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EVERSION);
+    CHECK(strstr(t.err, "image format 0.14 ") != NULL);
+    im.w[1] = 15u << 16;
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    gogo_free(vm);
+    free(im.w);
+    tctx_done(&t);
+}
+
 TEST(embed_no_main) {
     TCtx t; tctx_init(&t);
     /* codeload's image with its only export renamed: no "main". */
@@ -622,8 +645,6 @@ TEST(embed_host_validation) {
     cfg.fs_root = "/nonexistent-gogo-root";    /* not a directory (embed_fs_root_bad) */
     CHECK(gogo_new(&thost, &t, &cfg) == NULL);
     cfg.fs_root = NULL;
-    cfg.caps = GOGO_CAP_NET;                   /* not provided by this build */
-    CHECK(gogo_new(&thost, &t, &cfg) == NULL);
     CHECK(gogo_new(NULL, NULL, NULL) == NULL);
     /* Out of memory at every step of gogo_new and gogo_load. */
     Img im = image("echo");
@@ -885,7 +906,7 @@ TEST(embed_hostport_handoff) {
 }
 
 /* Registration: names a board driver has, duplicates, the limit, after
- * start, and from a hook (open's re-entry attempts). The embed board has
+ * the load, and from a hook (open's re-entry attempts). The embed board has
  * no drivers of its own yet, so only the reserved names are refused here,
  * not name_taken's walk of the board's list. */
 TEST(embed_hostport_register) {
@@ -915,9 +936,9 @@ TEST(embed_hostport_register) {
     Img im = image("hostport");
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
     free(im.w);
-    CHECK_EQ(gogo_register_port(vm, "f", &hdrv, &h), GOGO_EFULL);
+    CHECK_EQ(gogo_register_port(vm, "f", &hdrv, &h), GOGO_ESTATE);    /* after the load */
     CHECK_EQ(gogo_start(vm), GOGO_OK);
-    CHECK_EQ(gogo_register_port(vm, "e", &hdrv, &h), GOGO_ESTARTED);
+    CHECK_EQ(gogo_register_port(vm, "e", &hdrv, &h), GOGO_ESTATE);
     CHECK_EQ(settle(vm), GOGO_IDLE);
     h.vm = vm;
     CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
@@ -930,9 +951,7 @@ TEST(embed_hostport_register) {
     tctx_done(&t);
 }
 
-/* Host ports need no capability: a VM with caps 0 opens them (the
- * golden's VM has a NULL config). With posts closed, an open host port no
- * longer keeps the VM alive. */
+/* With posts closed, an open host port no longer keeps the VM alive. */
 TEST(embed_hostport_close_posts) {
     TCtx t; tctx_init(&t);
     HCtx h;
@@ -943,6 +962,41 @@ TEST(embed_hostport_close_posts) {
     CHECK_EQ(settle(vm), GOGO_DONE);
     CHECK_EQ(h.closes, 1);
     gogo_free(vm);
+    tctx_done(&t);
+}
+
+/* Requirements: the hostport image opens "hp" by a constant name, so it
+ * requires it. Unregistered, the load is GOGO_EREQUIRES naming "hp" (and
+ * the VM stays loadable); registered before the load, it loads; a grant
+ * that leaves "hp" out hides the registered port. */
+TEST(embed_hostport_requirement) {
+    TCtx t; tctx_init(&t);
+    HCtx h; memset(&h, 0, sizeof h);
+    Img im = image("hostport");
+    gogo_vm *vm = gogo_new(&thost, &t, NULL);
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EREQUIRES);
+    CHECK(strstr(t.err, "gogo: image requires hp, which this VM lacks\n") != NULL);
+    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    gogo_free(vm);
+    static const char *const only_ui[] = { "ui", NULL };
+    static const char *const with_hp[] = { "ui", "hp", NULL };
+    gogo_config cfg = { 0 };
+    cfg.grant = only_ui;
+    vm = gogo_new(&thost, &t, &cfg);
+    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EREQUIRES);
+    gogo_free(vm);
+    cfg.grant = with_hp;
+    vm = gogo_new(&thost, &t, &cfg);
+    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    CHECK_EQ(gogo_start(vm), GOGO_OK);
+    CHECK_EQ(settle(vm), GOGO_IDLE);
+    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
+    CHECK_EQ(h.opens, 1);
+    gogo_free(vm);
+    free(im.w);
     tctx_done(&t);
 }
 
@@ -1032,17 +1086,15 @@ TEST(embed_hostport_open_emit) {
     tctx_done(&t);
 }
 
-/* A registration between gogo_load and gogo_start counts. */
+/* Registration is before gogo_load (a registered port satisfies the
+ * image's requirement of its name): after it, GOGO_ESTATE. */
 TEST(embed_hostport_register_after_load) {
     TCtx t; tctx_init(&t);
     HCtx h; memset(&h, 0, sizeof h);
-    gogo_vm *vm = new_loaded(&t, "hostport", NULL);
-    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_OK);
+    gogo_vm *vm = new_loaded(&t, "echo", NULL);
+    CHECK_EQ(gogo_register_port(vm, "hp", &hdrv, &h), GOGO_ESTATE);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);
-    CHECK_EQ(ctl(vm, 1), GOGO_IDLE);
-    CHECK_EQ(h.opens, 1);
-    CHECK(strcmp(t.out, "ready\nopen true\n") == 0);
     gogo_free(vm);
     tctx_done(&t);
 }

@@ -23,6 +23,10 @@
 //	exit        the actor exits with the port open (its exit closes it)
 //	sleep:MS    actor.Sleep(MS)
 //	small       try to open with a 16 KB limit: print "small ok"
+//
+// "none" names no driver: it is opened only for a PID that names nothing.
+//
+//gogo:optional none
 package main
 
 import (

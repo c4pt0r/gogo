@@ -1,7 +1,7 @@
 package main
 
-// gogo firmware: picks the firmware feature set for a board from what a set
-// of images and modules require, writes it as an sdkconfig overlay and
+// gogo firmware: picks the firmware feature set for a board from the
+// requirement names (drivers and mounts) a set of images and modules carry, writes it as an sdkconfig overlay and
 // prints (or runs, with -build) the idf.py command that builds it.
 
 import (
@@ -25,11 +25,12 @@ const firmwareUsage = "usage: gogo firmware -board sticks3|cardputer [-o dir] [-
 type fwFeature struct {
 	name  string // the name given to -with / -without
 	kconf string // Kconfig symbol
-	cap   uint32 // requires bit; 0: never required (a default-on detail)
-	port  bool   // covered by CapAnyPort
-	onBy  bool   // on by default whenever the board has it
-	needs string // another feature this one depends on (Kconfig depends on)
-	hasH  string // board.h macro that says whether the board has it, if any
+	// provides lists the requirement names (port drivers, mount prefixes)
+	// the feature builds; none: never required (a default-on detail)
+	provides []string
+	onBy     bool   // on by default whenever the board has it
+	needs    string // another feature this one depends on (Kconfig depends on)
+	hasH     string // board.h macro that says whether the board has it, if any
 	// offDefaults is an sdkconfig fragment (in platform/esp32s3) added to
 	// SDKCONFIG_DEFAULTS when the feature is off: IDF settings that only
 	// the feature needs, put back to IDF's own defaults (sdkconfig.defaults
@@ -45,24 +46,38 @@ type fwFeature struct {
 // (the GOGO_* symbols; GOGO_FS_EXFAT depends on GOGO_SD, GOGO_TLS on GOGO_NET);
 // TestFirmwareTableMatchesSources checks both. Change them together.
 var fwFeatures = []fwFeature{
-	{name: "net", kconf: "CONFIG_GOGO_NET", cap: compiler.CapNet, port: true},
-	{name: "kbd", kconf: "CONFIG_GOGO_KBD", cap: compiler.CapKbd, port: true, hasH: "HAS_KBD"},
-	{name: "power", kconf: "CONFIG_GOGO_BATTERY", cap: compiler.CapPower, port: true},
-	{name: "sd", kconf: "CONFIG_GOGO_SD", cap: compiler.CapSD, onBy: true, hasH: "HAS_SD"},
+	{name: "net", kconf: "CONFIG_GOGO_NET", provides: []string{"netif", "udp", "tcp", "tcp_listen"}},
+	{name: "kbd", kconf: "CONFIG_GOGO_KBD", provides: []string{"kbd"}, hasH: "HAS_KBD"},
+	{name: "power", kconf: "CONFIG_GOGO_BATTERY", provides: []string{"power"}},
+	{name: "sd", kconf: "CONFIG_GOGO_SD", provides: []string{"/sd"}, onBy: true, hasH: "HAS_SD"},
 	{name: "exfat", kconf: "CONFIG_GOGO_FS_EXFAT", onBy: true, needs: "sd"},
 	{name: "cjk", kconf: "CONFIG_GOGO_FONT_CJK", onBy: true},
-	{name: "imu", kconf: "CONFIG_GOGO_IMU", cap: compiler.CapIMU, onBy: true, hasH: "HAS_IMU"},
-	// irtx and irrx are two capabilities of one switch (GOGO_IR builds both
+	{name: "imu", kconf: "CONFIG_GOGO_IMU", provides: []string{"imu"}, onBy: true, hasH: "HAS_IMU"},
+	// irtx and irrx are two features of one switch (GOGO_IR builds both
 	// drivers; the board's HAS_IR_RX says whether it has a receiver).
-	{name: "irtx", kconf: "CONFIG_GOGO_IR", cap: compiler.CapIRTX, onBy: true, hasH: "HAS_IR_TX"},
-	{name: "irrx", kconf: "CONFIG_GOGO_IR", cap: compiler.CapIRRX, onBy: true, hasH: "HAS_IR_RX"},
+	{name: "irtx", kconf: "CONFIG_GOGO_IR", provides: []string{"ir_tx"}, onBy: true, hasH: "HAS_IR_TX"},
+	{name: "irrx", kconf: "CONFIG_GOGO_IR", provides: []string{"ir_rx"}, onBy: true, hasH: "HAS_IR_RX"},
 	// mic and spk likewise share GOGO_AUDIO (one codec and I2S bus, half duplex).
-	{name: "mic", kconf: "CONFIG_GOGO_AUDIO", cap: compiler.CapMic, onBy: true, hasH: "HAS_MIC"},
-	{name: "spk", kconf: "CONFIG_GOGO_AUDIO", cap: compiler.CapSpk, onBy: true, hasH: "HAS_SPK"},
+	{name: "mic", kconf: "CONFIG_GOGO_AUDIO", provides: []string{"mic"}, onBy: true, hasH: "HAS_MIC"},
+	{name: "spk", kconf: "CONFIG_GOGO_AUDIO", provides: []string{"spk"}, onBy: true, hasH: "HAS_SPK"},
 	// tls is the TLS client over the net stack (mbedTLS): it depends on net.
 	// Its mbedTLS settings (-O2, the PSRAM allocator, restartable ECC) would
 	// otherwise also apply to Wi-Fi's WPA crypto: sdkconfig.tls-off undoes them.
-	{name: "tls", kconf: "CONFIG_GOGO_TLS", cap: compiler.CapTLS, onBy: true, needs: "net", offDefaults: "sdkconfig.tls-off"},
+	{name: "tls", kconf: "CONFIG_GOGO_TLS", provides: []string{"tls"}, onBy: true, needs: "net", offDefaults: "sdkconfig.tls-off"},
+}
+
+// fwBase lists the requirement names every firmware provides, whatever
+// its features (platform/esp32s3/main/platform_esp.c esp_ports, esp_mounts).
+var fwBase = []string{"gpio", "/flash"}
+
+// fwProvides reports whether feature f builds requirement name n.
+func fwProvides(f fwFeature, n string) bool {
+	for _, p := range f.provides {
+		if p == n {
+			return true
+		}
+	}
+	return false
 }
 
 // fwBoard describes one board: its SDKCONFIG_DEFAULTS overlay (see
@@ -102,18 +117,24 @@ func fwNames() string {
 	return strings.Join(n, " ")
 }
 
-// fwPlan computes which features are on for board, given the requires word
-// of the files and the -with / -without lists.
-func fwPlan(board string, req uint32, with, without []string) (map[string]bool, error) {
+// fwPlan computes which features are on for board, given the requirement
+// names of the files and the -with / -without lists.
+func fwPlan(board string, req []string, with, without []string) (map[string]bool, error) {
 	has := func(f fwFeature) bool { return fwBoards[board].has[f.name] }
-	const known = compiler.CapNet | compiler.CapKbd | compiler.CapPower | compiler.CapSD | compiler.CapIMU | compiler.CapIRTX | compiler.CapIRRX | compiler.CapMic | compiler.CapSpk | compiler.CapTLS | compiler.CapAnyPort
-	if bad := req &^ known; bad != 0 {
-		return nil, fmt.Errorf("gogo firmware: the images require capability bits %#x that this gogo does not know", bad)
-	}
 	required := map[string]bool{}
-	for _, f := range fwFeatures {
-		if f.cap != 0 && (req&f.cap != 0 || (req&compiler.CapAnyPort != 0 && f.port && has(f))) {
-			required[f.name] = true
+	reqBy := map[string]bool{} // features some image requires directly
+	for _, n := range req {
+		found := false
+		for _, b := range fwBase {
+			found = found || b == n
+		}
+		for _, f := range fwFeatures {
+			if fwProvides(f, n) {
+				required[f.name], reqBy[f.name], found = true, true, true
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("gogo firmware: the images require %q, which no gogo firmware provides", n)
 		}
 	}
 	// features that share one Kconfig switch are one build option: what one
@@ -161,13 +182,12 @@ func fwPlan(board string, req uint32, with, without []string) (map[string]bool, 
 		}
 		if required[n] {
 			f, _ := fwLookup(n)
-			if f.cap&req == 0 {
+			if !reqBy[n] {
 				for _, g := range fwFeatures { // required only through its switch partner
-					if g.name != n && g.kconf == f.kconf && g.cap&req != 0 {
+					if g.name != n && g.kconf == f.kconf && reqBy[g.name] {
 						return nil, fmt.Errorf("gogo firmware: cannot remove %s: it shares the %s switch with %s, which the images require", n, f.kconf, g.name)
 					}
 				}
-				return nil, fmt.Errorf("gogo firmware: cannot remove %s: required (an image opens ports by run-time name)", n)
 			}
 			return nil, fmt.Errorf("gogo firmware: cannot remove %s: it is required by the images", n)
 		}
@@ -309,17 +329,17 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 	if len(files) == 0 {
 		return errors.New("gogo firmware: no image or module files\n" + firmwareUsage)
 	}
-	var req uint32
+	var req []string
 	for _, f := range files {
 		img, err := os.ReadFile(f)
 		if err != nil {
 			return err
 		}
-		bits, err := compiler.ImageRequires(img)
+		names, err := compiler.ImageRequires(img)
 		if err != nil {
 			return fmt.Errorf("gogo firmware: %s: %v", f, err)
 		}
-		req |= bits
+		req = append(req, names...)
 	}
 	on, err := fwPlan(*board, req, splitList(*withS), splitList(*withoutS))
 	if err != nil {

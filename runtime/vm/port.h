@@ -133,6 +133,9 @@ void port_drain(struct Vm *vm, uint64_t now);            /* ring -> messages, de
 bool port_next_deadline(const struct Vm *vm, uint64_t *deadline);   /* pending trailing debounce */
 bool port_any_live(const struct Vm *vm);
 void port_set_drivers(struct Vm *vm, const PortDriver *const *list);   /* NULL = board->ports; after vm_init */
+/* The driver named name (len bytes) in the Vm's driver list, or NULL:
+ * what port.Open finds, and what a requirement name is checked against. */
+const PortDriver *port_find_driver(const struct Vm *vm, const uint8_t *name, uint32_t len);
 
 /* Gives port pid to actor `to` if `from` owns it: the charge, the pinned
  * Bytes (re-pinned for `to`, released for `from`) and later events move;

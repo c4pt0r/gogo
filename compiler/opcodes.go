@@ -221,10 +221,13 @@ const (
 	// port.Host, port.Post (v14): host-defined ports and host posts
 	TypeHost uint32 = 45
 	TypePost uint32 = 46
-	// TypeReservedCount is how many reserved types there are: every type
-	// index from here up is a module's own (TYPE_RESERVED_COUNT in
-	// runtime/vm/opcodes.h; TestReservedTypeCount checks len(reservedTypes)).
+	// TypeReservedCount is how many reserved types there are
+	// (TYPE_RESERVED_COUNT in runtime/vm/opcodes.h; TestReservedTypeCount
+	// checks len(reservedTypes)).
 	TypeReservedCount uint32 = 47
+	// TypeOwnBase is the index of an image's first own struct type
+	// (TYPE_OWN_BASE): fixed, whatever the reserved count.
+	TypeOwnBase uint32 = 128
 )
 
 // Heap object kinds.
@@ -358,5 +361,5 @@ var goConstants = map[string]uint32{
 	"TypeImuConfig": TypeImuConfig, "TypeImuGesture": TypeImuGesture, "TypeIrTx": TypeIrTx, "TypeIrRx": TypeIrRx,
 	"TypeAudioMic": TypeAudioMic, "TypeAudioSpeaker": TypeAudioSpeaker, "TypeNetDialtls": TypeNetDialtls,
 	"TypeHost": TypeHost, "TypePost": TypePost,
-	"TypeReservedCount": TypeReservedCount,
+	"TypeReservedCount": TypeReservedCount, "TypeOwnBase": TypeOwnBase,
 }

@@ -79,8 +79,8 @@ func Compile(p *Program) ([]byte, error) {
 	if m, ok := p.Pkg.Scope().Lookup("main").(*types.Func); ok {
 		g.b.SetEntry(g.funcIdx[m])
 	}
-	bits, _ := Requires(p)
-	g.b.SetRequires(bits)
+	names, _ := Requires(p)
+	g.b.SetRequires(names)
 	for _, e := range Exports(p) {
 		g.b.AddExport(e.Name, g.funcIdx[e.Fn])
 	}
@@ -168,9 +168,18 @@ func isBuffer(t types.Type) bool { return isBytesType(t, "Buffer") }
 
 // reservedTypes are the gogo/actor, gogo/port, gogo/net, gogo/fs, gogo/kbd,
 // gogo/power, gogo/code, gogo/imu, gogo/ir, gogo/audio and gogo/net DialTLS struct types (and the
-// later port.Chunk, Out, Done, Host and Post: types are only ever appended). Every image
-// starts its type table with them, in this order, so the VM can build and
-// recognize these structs by fixed index (TYPE_* in runtime/vm/opcodes.h).
+// later port.Chunk, Out, Done, Host and Post). The VM builds and recognizes
+// these structs by fixed index, their position here (TYPE_* in
+// runtime/vm/opcodes.h, field counts in TYPE_NFIELDS there). An image's
+// type table starts with them, in this order, up to the highest one the
+// program uses; own types are numbered from TypeOwnBase after them.
+//
+// Within a major format they only grow: a new type goes at the end and an
+// existing type may gain fields only at the end, of type int, where 0
+// means the default (a VM reading an older image's struct sees 0, and an
+// old VM refuses an image whose struct has more fields than it knows).
+// Each such change is a format minor: add the type's image name to
+// typeMinor (image.go).
 var reservedTypes = []struct {
 	pkg    string
 	name   string
@@ -210,7 +219,7 @@ var reservedTypes = []struct {
 	{PowerPath, "Config", []string{"PeriodMs"}},
 	{PowerPath, "Battery", []string{"MilliVolts", "Percent", "Charging", "External"}},
 	{PowerPath, "Read", nil},
-	{CodePath, "Module", []string{"H", "Missing"}},
+	{CodePath, "Module", []string{"H", "missing"}},
 	{PortPath, "Chunk", []string{"Seq", "TimeMs", "Dropped", "Data"}},
 	{PortPath, "Out", []string{"Data"}},
 	{PortPath, "Done", []string{"Seq"}},
@@ -223,6 +232,36 @@ var reservedTypes = []struct {
 	{NetPath, "DialTLS", []string{"IP", "Port", "TimeoutMs", "Host"}},
 	{PortPath, "Host", []string{"Arg", "Data"}},
 	{PortPath, "Post", []string{"Kind", "Data"}},
+}
+
+// reservedName is the image name of reserved type i: the bare name for
+// gogo/actor types, else the package's last element and the name
+// ("port.Chunk"). typeMinor (image.go) is keyed by it.
+func reservedName(i int) string {
+	rt := reservedTypes[i]
+	switch rt.pkg {
+	case ActorPath:
+		return rt.name
+	case PortPath:
+		return "port." + rt.name
+	case NetPath:
+		return "net." + rt.name
+	case FsPath:
+		return "fs." + rt.name
+	case KbdPath:
+		return "kbd." + rt.name
+	case PowerPath:
+		return "power." + rt.name
+	case CodePath:
+		return "code." + rt.name
+	case ImuPath:
+		return "imu." + rt.name
+	case IrPath:
+		return "ir." + rt.name
+	case AudioPath:
+		return "audio." + rt.name
+	}
+	panic("reservedName: package " + rt.pkg)
 }
 
 // collectTypes emits the reserved types first (whether used or not), then
@@ -238,29 +277,9 @@ func (g *gen) collectTypes() error {
 			}
 		}
 	}
-	for _, rt := range reservedTypes {
-		name := rt.name
-		switch rt.pkg {
-		case PortPath:
-			name = "port." + rt.name // actor types keep their bare names
-		case NetPath:
-			name = "net." + rt.name
-		case FsPath:
-			name = "fs." + rt.name
-		case KbdPath:
-			name = "kbd." + rt.name
-		case PowerPath:
-			name = "power." + rt.name
-		case CodePath:
-			name = "code." + rt.name
-		case ImuPath:
-			name = "imu." + rt.name
-		case IrPath:
-			name = "ir." + rt.name
-		case AudioPath:
-			name = "audio." + rt.name
-		}
-		idx := g.b.AddType(name, uint32(len(rt.fields)))
+	for i, rt := range reservedTypes {
+		name := reservedName(i)
+		idx := g.b.AddReservedType(name, uint32(len(rt.fields)))
 		stub := stubs[rt.pkg]
 		if stub == nil {
 			continue
@@ -279,7 +298,9 @@ func (g *gen) collectTypes() error {
 		if n == nil {
 			return
 		}
-		if _, ok := g.typeIdx[n.Obj()]; !ok {
+		if idx, ok := g.typeIdx[n.Obj()]; ok {
+			g.b.UseType(idx) // a reserved type the program names gets its row
+		} else {
 			name := g.qualified(n.Obj().Pkg(), n.Obj().Name())
 			g.typeIdx[n.Obj()] = g.b.AddType(name, uint32(n.Underlying().(*types.Struct).NumFields()))
 		}

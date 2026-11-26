@@ -17,7 +17,7 @@ One source tree, two boards, chosen at build time with the CMake variable
 | Cardputer ADV (M5Stamp S3A, ESP32-S3FN8, no PSRAM) | `cardputer` | MOSI 35, SCLK 36, DC 34, CS 37, RST 33, BL 38 | none | `/flash`, `/sd` (SPI2: CS 12, MOSI 14, CLK 40, MISO 39) |
 
 The StickS3 build also takes `sdkconfig.sticks3` (PSRAM, see "PSRAM and
-firmware capabilities" below); `CMakeLists.txt` adds it to
+what the firmware provides" below); `CMakeLists.txt` adds it to
 `SDKCONFIG_DEFAULTS` when none is given. After pulling this change, delete the
 generated `platform/esp32s3/sdkconfig` (and `build/CMakeCache.txt`) once, so
 the new defaults are applied: IDF keeps the values already in `sdkconfig`.
@@ -102,7 +102,7 @@ is published. Check it on both boards first, then publish:
     /tmp/gogo-v1.2.3/gogo-darwin-arm64 setup -yes -skip-wifi -release-url /tmp/gogo-v1.2.3   # chmod +x first; each board
     gh release edit v1.2.3 -R c4pt0r/gogo --draft=false
 
-## PSRAM and firmware capabilities
+## PSRAM and what the firmware provides
 
 **PSRAM (StickS3 only).** The ESP32-S3-PICO-1-N8R8 has 8 MB octal PSRAM
 (`sdkconfig.sticks3`: `CONFIG_SPIRAM`, `SPIRAM_MODE_OCT`, 80 MHz,
@@ -203,14 +203,15 @@ adds it by itself):
 (`tls_max_step_us`: the longest slice; `tls_last_hs_us`: the last
 handshake; `tls_last_error`: the last mbedTLS error).
 
-**Capabilities.** `esp_board.caps` (same file) holds the `CAP_*` bits this
-build really has: `CAP_NET` (`GOGO_NET`), `CAP_KBD` (Cardputer with `GOGO_KBD`),
-`CAP_POWER` (`GOGO_BATTERY`), `CAP_SD` (Cardputer with `GOGO_SD`), `CAP_IMU`
-(`GOGO_IMU`), `CAP_IR_TX` (`GOGO_IR`), `CAP_IR_RX` (StickS3 with `GOGO_IR`),
-`CAP_MIC` and `CAP_SPK` (`GOGO_AUDIO`), `CAP_TLS` (`GOGO_TLS`, needs
-`GOGO_NET`; see "TLS" below). An image or module whose
-`requires` word needs more is refused at boot (`gogo: image needs ...;
-firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
+**What the build provides.** `esp_board` (same file) lists only the port
+drivers and mounts this build really has: `gpio` always; `netif`, `udp`,
+`tcp` and `tcp_listen` (`GOGO_NET`); `tls` (`GOGO_TLS`, needs `GOGO_NET`;
+see "TLS" below); `kbd` (Cardputer with `GOGO_KBD`); `power`
+(`GOGO_BATTERY`); `imu` (`GOGO_IMU`); `ir_tx` (`GOGO_IR`); `ir_rx` (StickS3
+with `GOGO_IR`); `mic` and `spk` (`GOGO_AUDIO`); the mounts `/flash` always
+and `/sd` (Cardputer with `GOGO_SD`). An image or module that requires
+another name is refused at boot (`gogo: image requires <name>, which this
+VM lacks`) or by `code.Load` (`Unsupported`, `code.Missing` names it). `code.mem` (default
 64 KB) limits the total module code.
 
 ## Flash layout (`partitions.csv`, 8 MB)
@@ -224,10 +225,10 @@ firmware lacks ...`) or by `code.Load` (`Unsupported`). `code.mem` (default
 
 The `gogo` partition holds a 16-byte little-endian header
 `{0x4D494747 "GGIM", image_bytes, crc32_ieee(image), 0}` and the image
-(format v14, lockstep with `IMAGE_VERSION` in `runtime/vm/image.h`; when the
-image version changes, reflash the firmware too: an older firmware refuses
-a newer image with `gogo: bad image (unsupported version)`, and a newer firmware an older
-one). At boot the firmware checks the magic, the length (multiple of 4,
+(format 15.x, `IMAGE_MAJOR`.`IMAGE_MINOR` in `runtime/vm/image.h`: the
+firmware runs images of its major up to its own minor, and refuses others
+with `gogo: unsupported image format M.m (this firmware runs 15.0 to
+15.x)`). At boot the firmware checks the magic, the length (multiple of 4,
 at most partition size - 16) and the CRC, then mmaps the partition and runs
 the image in place. Console messages:
 
@@ -242,7 +243,7 @@ in `cmd/gogo/flash.go`.
 ## Platform layer (`main/`)
 
 - `platform_esp.c`: the board's `gogo_host` (`esp_host`) and `VmBoard`
-  (`esp_board`: port drivers, `input_esp_hw`, the Wi-Fi netif, caps), see
+  (`esp_board`: port drivers, `input_esp_hw`, the Wi-Fi netif, mounts), see
   `runtime/vm/host.h`. Output to the USB-Serial/JTAG console
   (stdout line-buffered, flushed before each stderr write). Chunks from the
   internal-RAM heap, capped at `GOGO_ARENA_BYTES`. `now_ms` from
@@ -650,11 +651,11 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   linked. The StickS3 still uses I2C for the PM1 LCD rail when the console is on.
 
 - `GOGO_IMU` (default y): the BMI270 driver (`imu_esp.c`) and its 8 KB
-  configuration. Off: `port.Open("imu")` returns ok=false, `CAP_IMU` is 0, and
+  configuration. Off: `port.Open("imu")` returns ok=false, there is no `imu` driver, and
   on the Cardputer with `GOGO_KBD` also off `i2c_bus.c` and the IDF I2C master
   driver drop out.
 - `GOGO_IR` (default y): `ir_esp.c` on the RMT. Off: `port.Open` of `ir_tx`
-  and `ir_rx` returns ok=false, `CAP_IR_TX`/`CAP_IR_RX` are 0, and the IDF RMT
+  and `ir_rx` returns ok=false (the drivers are not listed), and the IDF RMT
   driver is not linked (checked: no `rmt_new_tx_channel` in `gogo.elf`). The
   IR pins stay reserved.
 
@@ -688,12 +689,12 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
 - `GOGO_AUDIO` (default y): `audio_esp.c`, the `mic` and `spk` ports on the
   ES8311 and I2S (both boards; see `audio_esp.c` above). It selects
   `CONFIG_I2S_ISR_IRAM_SAFE`. Off: `port.Open` of `mic` and `spk` returns
-  ok=false, `CAP_MIC`/`CAP_SPK` are 0, and the IDF I2S driver is not linked;
+  ok=false (the drivers are not listed), and the IDF I2S driver is not linked;
   `runtime/input/audio.c` (the common driver) is still linked. Cost: StickS3 +18720 B
   `gogo.bin`, +592 B static DIRAM; Cardputer ADV +19680 B, +820 B.
 - `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `runtime/net/*.c`
-  are not built, the capability `net` is absent (an image that needs it is
-  refused at boot with the missing cap named), `port.Open` of `netif`, `udp`,
+  are not built, the drivers `netif`, `udp`, `tcp` and `tcp_listen` are not
+  listed (an image that requires one is refused at boot, naming it), `port.Open` of `netif`, `udp`,
   `tcp` and `tcp_listen` returns ok=false, `net.Subscribe` returns false (no port
   source), and `gogo config scan` answers "no network in this firmware" and `gogo config stats` prints only the memory figures.
   `gogo config set wifi.*` still stores the value. `esp_wifi`, `wpa_supplicant`,
@@ -704,8 +705,8 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
 
 - `GOGO_SD` (default y; no effect on the StickS3): `/sd` on FatFs. Off:
   `fs_fat.c` is not built, FatFs, `sdmmc` and `sdspi` are not linked, `/sd` is
-  not registered (every path is `NotMounted`, as with no card) and `CAP_SD` is 0
-  (an image that needs `sd` is refused at boot). The SD pins (G12, G14, G39,
+  not registered (every path is `NotMounted`, as with no card) and not listed
+  in the board's mounts (an image that requires `/sd` is refused at boot). The SD pins (G12, G14, G39,
   G40) stay reserved and the gpio port still refuses them: the slot is wired to
   them and a card may be in it, so a program driving them could corrupt it;
   this is the same choice as the keyboard INT and battery pins with `GOGO_KBD`

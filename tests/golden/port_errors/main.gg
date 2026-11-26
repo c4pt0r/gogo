@@ -1,4 +1,7 @@
-// Open failures, and a stale port PID after Close.
+// Open failures, and a stale port PID after Close. The directive keeps
+// the image from requiring the absent driver.
+//
+//gogo:optional nosuch
 package main
 
 import (

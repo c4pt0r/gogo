@@ -5,7 +5,7 @@
 #include <string.h>
 
 /* Layout: 8 header + 3 func + 0 types + 3 consts + 1 code + 1 const map
- * + 2 (requires, n_exports) = 18 words. consts: [hdr(3,K_STRING)] [4]
+ * + 2 (n_requires, n_exports) = 18 words. consts: [hdr(3,K_STRING)] [4]
  * ["main"]; map: bit 0. */
 #define IMG_WORDS 18
 
@@ -21,7 +21,7 @@ static void build(uint32_t *w) {
     memcpy(&w[13], "main", 4);
     w[14] = OP_NOP;
     w[15] = 1u;          /* const map: an object starts at const word 0 */
-    w[16] = 0;           /* requires */
+    w[16] = 0;           /* n_requires */
     w[17] = 0;           /* n_exports */
 }
 
@@ -64,37 +64,81 @@ TEST(image_bad_magic) {
 
 TEST(image_bad_version) {
     uint32_t w[IMG_WORDS]; Image img;
-    CHECK_EQ(IMAGE_VERSION, 14u);
-    build(w); w[1] = 1;        /* M1/M2 images: opcode semantics changed in M3 */
+    CHECK_EQ(IMAGE_VERSION, 15u << 16);       /* 15.0 */
+    /* Every single-number version before 15 is another major. */
+    for (uint32_t v = 1; v <= 14; v++) {
+        build(w); w[1] = v;
+        CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    }
+    build(w); w[1] = 15u << 16 | 1u;          /* 15.1: a minor newer than this VM */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 2;        /* M3 images: RETN, CONV c=2 and builtins added in M4 */
+    build(w); w[1] = 16u << 16;               /* 16.0: another major */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 3;        /* M4 images: CALLV added in M5 */
+    build(w); w[1] = 14u << 16;
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 4;        /* M5 images: bitwise ops added in v5 */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 5;        /* v5 images: B_FS and the fs reserved types added in v6 */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 6;        /* v6 images: no const map (added in v7) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 7;        /* v7 images: kbd and power reserved types added in v8 */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 8;        /* v8 images: no requires/exports trailer (added in v9) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 9;        /* v9 images: no port stream / imu / ir reserved types (added in v10) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 10;       /* v10 images: no audio reserved types (added in v11) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 11;       /* v11 images: no gogo/sys builtins 51-53 (added in v12) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 12;       /* v12 images: no net.DialTLS reserved type (added in v13) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 13;       /* v13 images: no port.Host / port.Post reserved types (added in v14) */
-    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
-    build(w); w[1] = 15;
+    build(w); w[1] = 15u;                     /* not 15.0: the major is the high half */
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
     build(w);
     CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+}
+
+/* A VM accepts every minor up to its own, of its major. */
+TEST(image_minor_window) {
+    uint32_t w[IMG_WORDS]; Image img;
+    for (uint32_t m = 0; m <= IMAGE_MINOR; m++) {
+        build(w); w[1] = IMAGE_MAJOR << 16 | m;
+        CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_OK);
+    }
+    build(w); w[1] = IMAGE_MAJOR << 16 | (IMAGE_MINOR + 1u);
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+}
+
+/* Header word 7 is the reserved row count: up to TYPE_RESERVED_COUNT,
+ * and never more rows than the table has. */
+TEST(image_n_reserved) {
+    uint32_t w[IMG_WORDS]; Image img;
+    build(w); w[7] = TYPE_RESERVED_COUNT + 1u;   /* a reserved type this VM does not know */
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_VERSION);
+    build(w); w[7] = 1;                          /* more reserved rows than types (0) */
+    CHECK_EQ(image_load(&img, w, IMG_WORDS), IMG_ERR_BOUNDS);
+}
+
+/* A reserved row may declare up to the fields this VM knows for that
+ * type (fields are only appended): fewer loads, more is a newer VM's. */
+TEST(image_reserved_fields) {
+    /* the image_type_nfields layout: one type row, here reserved type 0
+     * (ProcInfo, 1 field: Memory) */
+    Image img;
+    uint32_t v[20];
+    for (uint32_t nf = 0; nf <= 2; nf++) {
+        memset(v, 0, sizeof v);
+        v[0] = IMAGE_MAGIC; v[1] = IMAGE_VERSION; v[2] = 1; v[3] = 1; v[4] = 3; v[5] = 1; v[7] = 1;
+        v[11] = nf; v[12] = 0;
+        v[13] = hdr_make(3, K_STRING); v[14] = 4; memcpy(&v[15], "main", 4);
+        v[16] = OP_NOP;
+        v[17] = 1u;
+        CHECK_EQ(image_load(&img, v, 20), nf <= 1 ? IMG_OK : IMG_ERR_VERSION);
+    }
+    v[7] = 0;                                    /* the same row as an own type: any count */
+    CHECK_EQ(image_load(&img, v, 20), IMG_OK);
+}
+
+/* Own types are named from TYPE_OWN_BASE whatever the reserved count. */
+TEST(image_type_rows) {
+    Image img;
+    memset(&img, 0, sizeof img);
+    img.n_types = 5; img.n_reserved = 3;
+    CHECK_EQ(image_type_row(&img, 0), 0);
+    CHECK_EQ(image_type_row(&img, 2), 2);
+    CHECK_EQ(image_type_row(&img, 3), 5);                    /* not in this image */
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE - 1u), 5);
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE), 3);
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE + 1u), 4);
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE + 2u), 5);
+    CHECK_EQ(image_type_row(&img, UINT32_MAX), 5);
+    img.n_reserved = 0;
+    CHECK_EQ(image_type_row(&img, 0), 5);
+    CHECK_EQ(image_type_row(&img, TYPE_OWN_BASE + 4u), 4);
 }
 
 TEST(image_truncated) {
@@ -362,11 +406,11 @@ TEST(const_struct_interior_ref_rejected) {
     CHECK_EQ(build_loadk(&img, term_from_const(8), fwd, 3), IMG_OK);
 }
 
-/* ---- v9: requires bitmask and exports table after the const map ---- */
+/* ---- the trailer: requirement names and exports after the const map ---- */
 
 /* 8 header + 3 func + 7 consts ("main" 0..2, "Other" 3..6) + 1 code + 1 map
- * + requires + n_exports + 2 pairs = 26 words. */
-#define EXP_WORDS 26
+ * + n_requires + 1 requirement ("Other") + n_exports + 2 pairs = 27 words. */
+#define EXP_WORDS 27
 
 static void build_exp(uint32_t *w) {
     memset(w, 0, EXP_WORDS * sizeof(uint32_t));
@@ -377,19 +421,20 @@ static void build_exp(uint32_t *w) {
     w[14] = hdr_make(4, K_STRING); w[15] = 5; memcpy(&w[16], "Other", 5);
     w[18] = OP_NOP;
     w[19] = 1u | 8u;     /* objects at const words 0 and 3 */
-    w[20] = 5u;          /* requires */
-    w[21] = 2u;          /* n_exports */
-    w[22] = 0; w[23] = 0;    /* "main" -> func 0 */
-    w[24] = 3; w[25] = 0;    /* "Other" -> func 0 */
+    w[20] = 1u;          /* n_requires */
+    w[21] = 3u;          /* requirement "Other" */
+    w[22] = 2u;          /* n_exports */
+    w[23] = 0; w[24] = 0;    /* "main" -> func 0 */
+    w[25] = 3; w[26] = 0;    /* "Other" -> func 0 */
 }
 
-TEST(v9_exports_load) {
+TEST(trailer_load) {
     uint32_t w[EXP_WORDS]; Image img; uint32_t f = 99;
     build_exp(w);
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_OK);
-    CHECK_EQ(img.requires, 5);
+    CHECK(image_requires(&img) == &w[20]);
     CHECK_EQ(img.n_exports, 2);
-    CHECK(img.exports == &w[22]);
+    CHECK(img.exports == &w[23]);
     CHECK_EQ(image_export_find(&img, (const uint8_t *)"main", 4, &f), 1);
     CHECK_EQ(f, 0);
     f = 99;
@@ -400,26 +445,37 @@ TEST(v9_exports_load) {
     CHECK_EQ(image_export_find(&img, (const uint8_t *)"", 0, &f), 0);
 }
 
-TEST(v9_export_bad_name_rejected) {
+TEST(trailer_bad_requirement_rejected) {
     uint32_t w[EXP_WORDS]; Image img;
-    build_exp(w); w[24] = 4;       /* the byte_len word, not an object start */
+    build_exp(w); w[21] = 4;       /* the byte_len word, not an object start */
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
-    build_exp(w); w[24] = 7;       /* past the consts */
+    build_exp(w); w[21] = 7;       /* past the consts */
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
 }
 
-TEST(v9_export_bad_func_rejected) {
+TEST(trailer_export_bad_name_rejected) {
     uint32_t w[EXP_WORDS]; Image img;
-    build_exp(w); w[25] = 1;       /* n_funcs is 1 */
+    build_exp(w); w[25] = 4;       /* the byte_len word, not an object start */
+    CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
+    build_exp(w); w[25] = 7;       /* past the consts */
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
 }
 
-TEST(v9_truncated_trailer_rejected) {
+TEST(trailer_export_bad_func_rejected) {
+    uint32_t w[EXP_WORDS]; Image img;
+    build_exp(w); w[26] = 1;       /* n_funcs is 1 */
+    CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_BOUNDS);
+}
+
+TEST(trailer_truncated_rejected) {
     uint32_t w[EXP_WORDS]; Image img;
     build_exp(w);
     CHECK_EQ(image_load(&img, w, EXP_WORDS - 1), IMG_ERR_TRUNCATED);   /* a pair short */
-    CHECK_EQ(image_load(&img, w, 21), IMG_ERR_TRUNCATED);              /* no n_exports */
-    CHECK_EQ(image_load(&img, w, 20), IMG_ERR_TRUNCATED);              /* no requires */
-    build_exp(w); w[21] = 0xFFFFFFFFu;                                  /* huge count */
+    CHECK_EQ(image_load(&img, w, 22), IMG_ERR_TRUNCATED);              /* no n_exports */
+    CHECK_EQ(image_load(&img, w, 21), IMG_ERR_TRUNCATED);              /* the requirement short */
+    CHECK_EQ(image_load(&img, w, 20), IMG_ERR_TRUNCATED);              /* no n_requires */
+    build_exp(w); w[22] = 0xFFFFFFFFu;                                  /* huge export count */
+    CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_TRUNCATED);
+    build_exp(w); w[20] = 0xFFFFFFFFu;                                  /* huge requirement count */
     CHECK_EQ(image_load(&img, w, EXP_WORDS), IMG_ERR_TRUNCATED);
 }
