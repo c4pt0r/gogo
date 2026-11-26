@@ -70,7 +70,7 @@ calls). Any driver name is accepted (a board's or a host port's); an
 empty list or a misspelt `//gogo:` directive is a compile error
 (`directives` in `compiler/load.go`).
 `gogo/http` declares `tls`, `gogo/sound` declares `mic speaker`, `gogo/tui`
-declares `kbd`. Book chapter
+declares `kbd`, `gogo/node` declares `tcp tcp_listen node`. Book chapter
 12 has the details.
 
 | package | kind | imports | requires |
@@ -78,7 +78,7 @@ declares `kbd`. Book chapter
 | `gogo/actor` | system | | none |
 | `gogo/port` | system | actor, bytes | none (each constant `port.Open`: its driver); also the stream protocol every byte port speaks (`Chunk`, `Out`, `Done`, `Closed`) and the host-port types |
 | `gogo/bytes` | system | | none |
-| `gogo/net` | system | actor, bytes, errors | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
+| `gogo/net` | system | actor, bytes, errors | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`, `node`) |
 | `gogo/gpio` | system | | none (the `gpio` port: `gpio`) |
 | `gogo/fs` | system | actor, bytes, errors | none (constant `/sd` paths: `/sd`) |
 | `gogo/kbd` | system | | none (the `kbd` port: `kbd`) |
@@ -106,4 +106,5 @@ declares `kbd`. Book chapter
 | `gogo/wav` | library | bytes, fs | none |
 | `gogo/sound` | library | actor, audio, errors, fs, port, wav | none (opens `mic` for Record and `speaker` for Play without requiring them: `//gogo:optional mic speaker`) |
 | `gogo/irproto` | library | bytes | none |
+| `gogo/node` | library | actor, bytes, net, port, strconv, strings, sys | none (distributed actors: a server node and the boards that connect to it; opens `tcp`, `tcp_listen` and `node` without requiring them: `//gogo:optional tcp tcp_listen node`) |
 | `gogo/tui` | library | actor, bytes, gpio, kbd, port, screen, strconv | `gpio`, `screen` (opens `kbd` without requiring it: `//gogo:optional kbd`) |

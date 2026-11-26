@@ -55,6 +55,9 @@
 #   tools/vmsize.sh --screen   the "screen" port instead (runtime/screen/*.c, not VM core):
 #                              code size and fixed state (.bss + .data, limit 0: its
 #                              grid is allocated per open port, charged to the owner)
+#   tools/vmsize.sh --dist     the "node" port instead (runtime/dist/*.c, not VM core): code
+#                              size and fixed state (.bss + .data, limit 0: its state
+#                              is allocated at the first node link)
 #   tools/vmsize.sh --tls      the "tls" port (runtime/net/tls/tls.c) and the mbedTLS it links
 #                              ($MBEDTLS_DIR, runtime/net/tls/config): linked with
 #                              --gc-sections from net_tls_driver, so only what the
@@ -83,7 +86,7 @@ OBJ_FLAGS="-std=c99 -Os -mlongcalls -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_
 MODE=vm; OBJECTS=0; FLOAT=1; RECORD=0; BUILD=""
 while [ $# -gt 0 ]; do
     case $1 in
-        --net|--vfs|--screen|--floatlib|--tls|--roots) MODE=${1#--} ;;
+        --net|--vfs|--screen|--floatlib|--tls|--dist|--roots) MODE=${1#--} ;;
         --check-flags) MODE=check-flags; BUILD=${2:?--check-flags needs the IDF build directory}; shift ;;
         --objects) OBJECTS=1 ;;
         --no-float) FLOAT=0 ;;
@@ -297,6 +300,13 @@ if [ "$MODE" = screen ]; then
     printf '%7d  screen code total (text+rodata+literal, %s; not VM core)\n' "$code" "$how"
     printf '%7d  screen fixed state (bss+data; the grid, 4 bytes a cell, is per open port)\n' "$fixed"
     if [ "$fixed" -gt 0 ]; then echo "screensize: runtime/screen has fixed state"; exit 1; fi
+    exit 0
+fi
+if [ "$MODE" = dist ]; then
+    lib dist runtime/dist "-Iruntime/dist -Iruntime/stream -Iruntime/vm -Iruntime/vm/test/stub" runtime/dist/*.c
+    printf '%7d  dist code total (text+rodata+literal, %s; not VM core)\n' "$code" "$how"
+    printf '%7d  dist fixed state (bss+data; its tables are allocated at the first node link)\n' "$fixed"
+    if [ "$fixed" -gt 0 ]; then echo "distsize: runtime/dist has fixed state"; exit 1; fi
     exit 0
 fi
 if [ "$MODE" = floatlib ]; then

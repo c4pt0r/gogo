@@ -25,6 +25,17 @@
  * the terminal, a text dump of every frame on stdout, or nothing; the
  * default is ansi when stdout is a terminal, else text.
  *
+ * --host-net (or $GOGO_NET=host): the "tcp" and "tcp_listen" ports use the
+ * host's sockets (hostnet.c), so the VM can be a real network peer, e.g. the
+ * server node of distributed actors; netif, udp and DNS stay the simulated
+ * ones. Listening binds every interface; outbound connections go anywhere.
+ * Not with --net-fd.
+ *
+ * --max-ports N, --max-links N: the VM's caps on open ports and on node
+ * links (distributed actors); else the config keys vm.max_ports and
+ * node.max_links; else 1024 and 512 (a board's are 16 and 8). Ports are
+ * at most 2048 (their PIDs take the top slots of the 65536).
+ *
  * --net-fd N: fd N (inherited, e.g. a socketpair end) is the network link
  * (net_unix.h); --sim-clock: time is simulated, moved only by the peer
  * simulator over that link.
@@ -66,6 +77,8 @@
 #include "fs_dir.h"
 #include "screen_unix.h"
 #include "board_main.h"
+#include "hostnet.h"
+#include "dist.h"
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -86,6 +99,14 @@ static VfsState vfs_state;
 static FsDir *fs_flash, *fs_sd;   /* --fs-root: /flash and /sd */
 static InputState input_state;
 static NetState net_state;
+
+/* The host's default caps (gogovm_mcu, which models a board, has 16 and 8). */
+#ifndef GOGO_HOST_PORTS
+#define GOGO_HOST_PORTS 1024
+#endif
+#ifndef GOGO_HOST_LINKS
+#define GOGO_HOST_LINKS 512
+#endif
 
 enum { EXIT_OK, EXIT_USAGE, EXIT_BAD_IMAGE, EXIT_MISSING, EXIT_CRASHED };
 
@@ -159,6 +180,12 @@ static void set_wall_clock(Vm *vm, void *ctx) {
     vm_set_unix_time_ms(vm, platform_unix_wall_start());
 }
 
+/* BoardRun.ready with --host-net: the sockets' event source. */
+static void host_net_ready(Vm *vm, void *ctx) {
+    (void)ctx;
+    hostnet_install(vm);
+}
+
 static int run_main(Vm *vm, void *ctx) {
     (void)ctx;
     if (vm_start(vm)) return EXIT_USAGE;   /* said on stream 2: no main, or no memory */
@@ -199,7 +226,7 @@ static const PortDriver unix_speaker = INPUT_SPEAKER_DRIVER(&input_unix_spk);
 static const PortDriver *const unix_ports_all[] = {
     &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver,
     &net_tcp_listen_driver, &unix_kbd, &unix_power, &unix_imu, &unix_ir_tx, &unix_ir_rx,
-    &unix_mic, &unix_speaker, &screen_unix_driver,
+    &unix_mic, &unix_speaker, &screen_unix_driver, &dist_node_driver,
 #ifdef GOGO_TLS
     &net_tls_driver,
 #endif
@@ -211,7 +238,7 @@ static VmMount unix_flash = { .prefix = "/flash" }, unix_sd = { .prefix = "/sd" 
 static VmMount *const unix_mounts_all[] = { &unix_flash, &unix_sd };
 static const PortDriver *unix_ports[UNIX_PORTS_ALL + 1u];   /* filled by main: NULL-terminated */
 static const VmMount *unix_mounts[3];                        /* likewise */
-static const VmBoard unix_board = {
+static VmBoard unix_board = {   /* .dist_carrier set by --host-net */
     .ports = unix_ports,
     .netif = &unix_netif,
 #ifdef GOGO_TLS
@@ -267,10 +294,19 @@ int main(int argc, char **argv) {
         return 0;
     }
     int net_fd = -1, sim = 0;
+    const char *gn = getenv("GOGO_NET");
+    int host_net = gn && strcmp(gn, "host") == 0;
     const char *without = NULL;         /* --without: names left out of the board */
     const char *fs_root = NULL;
     int64_t fs_quota = -1;
+    unsigned max_ports = 0, max_links = 0;
     while (argc >= 2 && strncmp(argv[1], "--", 2) == 0) {
+        if (strcmp(argv[1], "--host-net") == 0) {
+            host_net = 1;
+            argv++;
+            argc--;
+            continue;
+        }
         if (strcmp(argv[1], "--sim-clock") == 0) {
             sim = 1;
             argv++;
@@ -308,6 +344,15 @@ int main(int argc, char **argv) {
                 return EXIT_USAGE;
             }
             fs_quota = q;
+        } else if (strcmp(argv[1], "--max-ports") == 0 || strcmp(argv[1], "--max-links") == 0) {
+            char tail;
+            unsigned v;
+            if (sscanf(argv[2], "%u%c", &v, &tail) != 1 || v < 1 || v > 2048) {
+                fprintf(stderr, "gogovm: bad %s %s (want 1..2048)\n", argv[1], argv[2]);
+                return EXIT_USAGE;
+            }
+            if (argv[1][6] == 'p') max_ports = v;
+            else max_links = v;
         } else if (strcmp(argv[1], "--net-fd") == 0) {
             char tail;
             if (sscanf(argv[2], "%d%c", &net_fd, &tail) != 1 || net_fd < 0) {
@@ -324,9 +369,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "gogovm: --sim-clock needs --net-fd\n");
         return EXIT_USAGE;
     }
+    if (host_net) unix_board.dist_carrier = &hostnet_carrier;
+    if (host_net && net_fd >= 0) {
+        fprintf(stderr, "gogovm: --host-net and --net-fd exclude each other\n");
+        return EXIT_USAGE;
+    }
     size_t nports = 0, nmounts = 0;
     for (size_t i = 0; i < UNIX_PORTS_ALL; i++) {
-        if (!listed(without, unix_ports_all[i]->name)) unix_ports[nports++] = unix_ports_all[i];
+        const PortDriver *d = unix_ports_all[i];
+        if (host_net && d == &net_tcp_driver) d = &hostnet_tcp_driver;
+        if (host_net && d == &net_tcp_listen_driver) d = &hostnet_listen_driver;
+        if (!listed(without, d->name)) unix_ports[nports++] = d;
     }
     unix_ports[nports] = NULL;
     for (size_t i = 0; i < 2; i++) {
@@ -334,13 +387,11 @@ int main(int argc, char **argv) {
     }
     unix_mounts[nmounts] = NULL;
     if (argc < 2) {
-        fprintf(stderr, "usage: gogovm [--without <name,...>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] [--screen ansi|text|none] <file.ggb> [args...]\n       gogovm --sizeof-actor | --sizeof-net\n");
+        fprintf(stderr, "usage: gogovm [--without <name,...>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock] | --host-net] [--max-ports <n>] [--max-links <n>] [--screen ansi|text|none] <file.ggb> [args...]\n       gogovm --sizeof-actor | --sizeof-net\n");
         return EXIT_USAGE;
     }
-    if (net_fd >= 0) {
-        signal(SIGPIPE, SIG_IGN);        /* a closed link is EOF / a failed send, not death */
-        platform_unix_net_open(net_fd, sim != 0, &net_state);
-    }
+    if (net_fd >= 0 || host_net) signal(SIGPIPE, SIG_IGN);   /* a closed link is EOF / a failed send, not death */
+    if (net_fd >= 0) platform_unix_net_open(net_fd, sim != 0, &net_state);
     if (fs_root) {
         /* /flash -> DIR/flash (created), /sd -> DIR/sd (only if it exists). */
         char dir[1024];
@@ -401,7 +452,9 @@ int main(int argc, char **argv) {
     BoardRun run = {
         .vm = &vm, .table_cap = (uint16_t)GOGO_TABLE_CAP, .vfs = &vfs_state, .input = &input_state,
         .net = net_fd >= 0 ? &net_state : NULL, .net_install = net_install,
-        .booting = set_wall_clock, .run = run_main,
+        .max_ports = (uint16_t)max_ports, .max_links = (uint16_t)max_links,
+        .default_ports = GOGO_HOST_PORTS, .default_links = GOGO_HOST_LINKS,
+        .booting = set_wall_clock, .ready = host_net ? host_net_ready : NULL, .run = run_main,
     };
     int run_rc = 0;
     int rc = gogo_board_main(&unix_board, &host, &run, words, (uint32_t)(size / 4), &run_rc);

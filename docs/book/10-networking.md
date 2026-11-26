@@ -39,9 +39,13 @@ network programs against a simulated network (`tests/net`); the HTTP
 server, UDP echo and TCP echo examples below were checked that way too,
 and the results are shown with them.
 
-> **Note.** There is no user-facing way to run a network program on your
-> computer against a real or simulated network. The simulator in
-> `tests/net` is driven from Go test code, not from `gogo run`.
+> **Note.** With `GOGO_NET=host` in the environment (or `gogovm
+> --host-net`), the host VM's `tcp` and `tcp_listen` ports use your
+> computer's real sockets instead: a program can dial and accept TCP
+> connections (numeric addresses; `netif`, `udp` and so DHCP and DNS stay
+> unavailable). That is how a server node of distributed actors runs
+> (chapter 20). The simulator in `tests/net` is driven from Go test code,
+> not from `gogo run`.
 
 ## 10.2 Getting an address: gogo/dhcp
 

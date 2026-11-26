@@ -1,0 +1,31 @@
+// Board b: becho answers Calls; it waits to be killed.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/sys"
+)
+
+func becho() {
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.Request:
+			switch s := m.Body.(type) {
+			case string:
+				actor.Reply(m, s+" from b")
+			}
+		}
+	}
+}
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	if node.Connect(addr, "b") != nil {
+		println("b connect failed")
+		return
+	}
+	node.Register("becho", actor.Spawn(becho))
+	println("b ready")
+	actor.Receive()
+}

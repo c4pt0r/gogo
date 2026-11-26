@@ -487,7 +487,7 @@ static bool pop(uint32_t *type, int32_t *f0, const uint8_t **data, uint32_t *len
     const uint32_t *o = m->data + term_ref_off(m->root);
     *type = o[1];
     uint32_t i = term_is_pid(o[2]) ? 3u : 2u;   /* past a From */
-    if (i == 3u) CHECK_EQ(o[2], vm.ports[0].id);
+    if (i == 3u) CHECK_EQ(o[2], (*port_at(&vm, 0)).id);
     *f0 = term_is_int(o[i]) ? term_to_int(o[i]) : 0;
     if (data && *type == TYPE_CHUNK) {
         static uint8_t copy[16];
@@ -514,15 +514,15 @@ TEST(screen_port_open_info) {
     CHECK_EQ(type, TYPE_CHUNK);
     CHECK_EQ(len, 4u);
     CHECK(d[0] == 8 && d[1] == 3 && d[2] == 16 && d[3] == 7);
-    const ScreenGrid *gr = screen_port_grid(&vm.ports[0]);
+    const ScreenGrid *gr = screen_port_grid(port_at(&vm, 0));
     CHECK(gr && gr->cols == 8 && gr->rows == 3);
     /* the grid is charged to the owner */
-    CHECK(vm.ports[0].charge_words >= 8 * 3);
+    CHECK((*port_at(&vm, 0)).charge_words >= 8 * 3);
     /* one screen per Vm */
     CHECK_EQ(open_screen(0, 0), T_NIL);
     port_close(&vm, p);
     CHECK_EQ(closes, 1);
-    CHECK(screen_port_grid(&vm.ports[0]) == NULL);
+    CHECK(screen_port_grid(port_at(&vm, 0)) == NULL);
     /* sizes: up to the hook's maximum */
     p = open_screen(20, 5);
     CHECK(p != T_NIL);
@@ -559,7 +559,7 @@ TEST(screen_port_out_done) {
     CHECK_EQ(seq, 1);
     CHECK_EQ(presents, 2);
     CHECK_EQ(last_dirty, 2u);
-    const ScreenGrid *gr = screen_port_grid(&vm.ports[0]);
+    const ScreenGrid *gr = screen_port_grid(port_at(&vm, 0));
     CHECK_EQ(screen_cell_cp(screen_cell(gr, 2, 1)), (uint32_t)'k');
     /* malformed: Done{-1}, nothing drawn, no Seq used */
     static const uint8_t bad[] = { SCREEN_OP_TEXT, 1, 'X', 42 };
@@ -594,7 +594,7 @@ TEST(screen_port_owed) {
     uint32_t type;
     int32_t seq;
     CHECK(pop(&type, &seq, NULL, NULL));
-    owner->max_words = (uint16_t)(owner->mem_words + vm.ports[0].charge_words);   /* no room for a message */
+    owner->max_words = (uint16_t)(owner->mem_words + (*port_at(&vm, 0)).charge_words);   /* no room for a message */
     static const uint8_t f[] = { SCREEN_OP_TEXT, 1, 'a' };
     static const uint8_t bad[] = { 99 };
     port_command(&vm, owner, p, mk_out(f, sizeof f));
@@ -632,13 +632,13 @@ TEST(screen_port_owed_full) {
     uint32_t type;
     int32_t seq;
     CHECK(pop(&type, &seq, NULL, NULL));
-    owner->max_words = (uint16_t)(owner->mem_words + vm.ports[0].charge_words);
+    owner->max_words = (uint16_t)(owner->mem_words + (*port_at(&vm, 0)).charge_words);
     static const uint8_t f[] = { SCREEN_OP_MOVE, 0, 0, SCREEN_OP_TEXT, 1, 'a' };
     static const uint8_t g2[] = { SCREEN_OP_MOVE, 0, 0, SCREEN_OP_TEXT, 1, 'b' };
     for (unsigned i = 0; i < SCREEN_OWED_MAX; i++) port_command(&vm, owner, p, mk_out(f, sizeof f));
     port_command(&vm, owner, p, mk_out(g2, sizeof g2));   /* refused: 'b' not drawn */
     port_command(&vm, owner, p, mk_out(g2, sizeof g2));
-    CHECK_EQ(screen_cell_cp(screen_cell(screen_port_grid(&vm.ports[0]), 0, 0)), (uint32_t)'a');
+    CHECK_EQ(screen_cell_cp(screen_cell(screen_port_grid(port_at(&vm, 0)), 0, 0)), (uint32_t)'a');
     owner->max_words = 0;
     clk += 100;
     port_drain(&vm, clk);

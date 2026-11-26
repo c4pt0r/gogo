@@ -7,6 +7,7 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"strings"
 )
 
 // maxRegs is the register limit of one function: register numbers are 8 bits.
@@ -332,6 +333,8 @@ var reservedTypes = []struct {
 	// the box an interface holds it in, of one field.
 	{ErrorsPath, "Code", []string{"value"}},
 	{ErrorsPath, "errorString", []string{"s"}},
+	{NetPath, "NodeLink", []string{"Self", "Peer", "Relay", "Agent", "Name", "Key", "Conn", "Hello"}}, // 15.5
+	{NetPath, "NodeEvent", []string{"From", "Kind", "Node", "Agent", "Name"}},                         // 15.5
 }
 
 // reservedName is the image name of reserved type i: the bare name for
@@ -442,9 +445,103 @@ func (g *gen) typeIndex(n *types.Named) (uint32, bool) {
 	if _, ok := n.Underlying().(*types.Struct); !ok {
 		return 0, false
 	}
-	idx := g.b.AddType(g.qualified(n.Obj().Pkg(), n.Obj().Name()), uint32(n.Underlying().(*types.Struct).NumFields()))
+	st := n.Underlying().(*types.Struct)
+	name := g.qualified(n.Obj().Pkg(), n.Obj().Name())
+	var idx uint32
+	if g.usesNode() { // only a program that may send it to a node needs its shape
+		idx = g.b.AddTypeShape(name, uint32(st.NumFields()), g.structShape(st))
+	} else {
+		idx = g.b.AddType(name, uint32(st.NumFields()))
+	}
 	g.typeIdx[n.Obj()] = idx
 	return idx, true
+}
+
+// usesNode reports whether the program imports gogo/node (distribution).
+func (g *gen) usesNode() bool {
+	for _, l := range g.p.Libs {
+		if l.Pkg != nil && l.Pkg.Path() == "gogo/node" {
+			return true
+		}
+	}
+	return false
+}
+
+// structShape hashes the kinds of a struct's fields (FNV-1a, 32 bits):
+// what a struct sent to another node must agree on besides its name and
+// field count (runtime/dist checks it). A field of a struct type counts by
+// its qualified name, a slice by its element's kind.
+func (g *gen) structShape(st *types.Struct) uint32 {
+	var sb strings.Builder
+	for i := 0; i < st.NumFields(); i++ {
+		sb.WriteString(g.fieldKind(st.Field(i).Type(), true))
+		sb.WriteByte(',')
+	}
+	h := uint32(2166136261)
+	for _, c := range []byte(sb.String()) {
+		h = (h ^ uint32(c)) * 16777619
+	}
+	return h
+}
+
+// fieldKind is a field type's code for structShape.
+func (g *gen) fieldKind(t types.Type, deep bool) string {
+	switch {
+	case isBytes(t):
+		return "B"
+	case isBuffer(t):
+		return "F"
+	}
+	if n, ok := types.Unalias(t).(*types.Named); ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == ActorPath {
+		switch n.Obj().Name() {
+		case "PID":
+			return "p"
+		case "Ref":
+			return "r"
+		}
+	}
+	if n, ok := types.Unalias(t).(*types.Named); ok {
+		if _, isStruct := n.Underlying().(*types.Struct); isStruct {
+			return "S" + g.qualified(n.Obj().Pkg(), n.Obj().Name())
+		}
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		switch u.Kind() {
+		case types.Bool:
+			return "b"
+		case types.String:
+			return "s"
+		case types.Int64:
+			return "l"
+		case types.Uint64:
+			return "L"
+		case types.Uint8:
+			return "y"
+		case types.Float32:
+			return "f4"
+		case types.Float64:
+			return "f8"
+		default:
+			return "i"
+		}
+	case *types.Slice:
+		if !deep {
+			return "["
+		}
+		return "[" + g.fieldKind(u.Elem(), false)
+	case *types.Array:
+		return "A"
+	case *types.Pointer:
+		return "*"
+	case *types.Map:
+		return "M"
+	case *types.Interface:
+		return "a"
+	case *types.Signature:
+		return "f"
+	}
+	return "?"
 }
 
 // genError aborts the compilation of one function; compileFunc recovers it.

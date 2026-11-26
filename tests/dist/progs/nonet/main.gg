@@ -1,0 +1,15 @@
+// Listen and Connect on a VM without a network, or without the drivers:
+// both fail with errors.Unsupported.
+package main
+
+import (
+	"gogo/errors"
+	"gogo/node"
+)
+
+func main() {
+	err := node.Listen(4370, "server")
+	println("listen", err == errors.Unsupported)
+	err = node.Connect("127.0.0.1:4370", "board")
+	println("connect", err == errors.Unsupported)
+}

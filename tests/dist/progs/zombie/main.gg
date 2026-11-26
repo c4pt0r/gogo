@@ -1,0 +1,43 @@
+// The node agent dies while a Connect is in its handshake (killed 0 to 5
+// ms after Connect starts, many times over): the link actor must end too,
+// so a later Connect, under another name, always succeeds.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/strconv"
+	"gogo/sys"
+)
+
+func killAgent() {
+	if a, ok := actor.Whereis("node"); ok {
+		actor.Kill(a, actor.Killed)
+	}
+}
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	fails := 0
+	for i := 0; i < 36; i++ {
+		name := "z" + strconv.Itoa(i)
+		actor.Spawn(func() { node.Connect(addr, name+"a") })
+		actor.Sleep(i % 6)
+		killAgent()
+		actor.Sleep(100)
+		// The first Connect may have started after the kill (with a new
+		// agent) and joined: then this VM is a node, which is fine.
+		if node.Self() != "" {
+			killAgent()
+			actor.Sleep(50)
+			continue
+		}
+		if err := node.Connect(addr, name+"b"); err != nil {
+			println("round", i, "connect", err.Error())
+			fails++
+		}
+		killAgent() // and start over
+		actor.Sleep(50)
+	}
+	println("fails", fails)
+}

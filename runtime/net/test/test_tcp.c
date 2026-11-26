@@ -302,7 +302,7 @@ static Conn mk(uint8_t state) {
     k.o = new_actor();
     if (state == TCP_SYN_RCVD) {
         term f = term_from_int(8080);
-        CHECK(port_is(open_port(k.o, "tcp_listen", TYPE_NET_LISTEN, &f, 1)));
+        CHECK(test_port_is(open_port(k.o, "tcp_listen", TYPE_NET_LISTEN, &f, 1)));
         k.pport = 5555;
         k.vport = 8080;
         seg_in(k.pport, k.vport, PEER_ISN, 0, 0x02, NULL);
@@ -318,7 +318,7 @@ static Conn mk(uint8_t state) {
         return k;
     }
     k.port = dial(k.o, 0);
-    CHECK(port_is(k.port));
+    CHECK(test_port_is(k.port));
     CHECK_EQ(tx.n, 1);
     Out s = out_at(0);
     k.pport = 80;
@@ -552,7 +552,7 @@ TEST(tcp_other_timers) {
     configure();
     Actor *o = new_actor();
     term p = dial(o, 2500);
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     advance(1000);
     CHECK_EQ(tx.n, 2);                     /* SYN, retransmitted SYN */
     CHECK_EQ(out_at(1).fl, 0x02);
@@ -684,7 +684,7 @@ TEST(tcp_resume) {
     Msg *m = k.o->mbox_head;
     CHECK(m && m->data[1] == TYPE_NET_ACCEPTED);
     term conn = m->data[2];
-    CHECK(port_is(conn));
+    CHECK(test_port_is(conn));
     CHECK_EQ(event_of(k.o, NULL), TYPE_NET_ACCEPTED);
     seg_in(k.pport, k.vport, k.peer, k.nxt, 0x18, "early");
     CHECK_EQ(tx.n, 1);
@@ -716,7 +716,7 @@ TEST(tcp_link_down) {
     term fl[3] = { term_from_int(0), term_from_int(80), term_from_int(0) };
     k.o->hp = 0;
     fl[0] = heap_int(k.o, (int32_t)PEER_IP);
-    CHECK(!port_is(port_open(&vm, k.o, heap_str(k.o, "tcp"), heap_struct(k.o, TYPE_NET_DIAL, fl, 3))));
+    CHECK(!test_port_is(port_open(&vm, k.o, heap_str(k.o, "tcp"), heap_struct(k.o, TYPE_NET_DIAL, fl, 3))));
     teardown();
 }
 
@@ -856,7 +856,7 @@ TEST(tcp_refused_dial_sends_nothing) {
     o->hp = 0;
     f[0] = heap_int(o, (int32_t)PEER_IP);
     term p = port_open(&vm, o, heap_str(o, "tcp"), heap_struct(o, TYPE_NET_DIAL, f, 3));
-    CHECK(!port_is(p));
+    CHECK(!test_port_is(p));
     advance(10);
     CHECK_EQ(tx.n, 0);
     for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) CHECK_EQ(nst.tcp[i].state, TCP_CLOSED);
@@ -869,7 +869,7 @@ TEST(tcp_address_change) {
     Conn k = mk(TCP_ESTABLISHED);
     term n = T_NIL;
     for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
-        if (vm.ports[i].drv && vm.ports[i].owner == netif_owner->id) n = vm.ports[i].id;
+        if ((*port_at(&vm, i)).drv && (*port_at(&vm, i)).owner == netif_owner->id) n = (*port_at(&vm, i)).id;
     }
     netif_owner->hp = 0;
     term f[4] = { heap_int(netif_owner, (int32_t)IP4(10, 0, 0, 3)), heap_int(netif_owner, (int32_t)IP4(255, 255, 255, 0)),
@@ -938,7 +938,7 @@ TEST(tcp_inbound_keeps_a_slot_for_dial) {
     configure();
     Actor *o = new_actor();
     term f = term_from_int(8080);
-    CHECK(port_is(open_port(o, "tcp_listen", TYPE_NET_LISTEN, &f, 1)));
+    CHECK(test_port_is(open_port(o, "tcp_listen", TYPE_NET_LISTEN, &f, 1)));
     uint32_t drops = nst.st.tcp_syn_drop;
     for (uint16_t i = 0; i < GOGO_NET_MAX_TCP; i++) seg_in((uint16_t)(5000 + i), 8080, PEER_ISN, 0, 0x02, NULL);
     CHECK_EQ(tx.n, (int)GOGO_NET_MAX_TCP - 1);           /* SYN-ACKs; none for the last */
@@ -957,7 +957,7 @@ TEST(tcp_inbound_keeps_a_slot_for_dial) {
     CHECK_EQ(tx.n, 0);
     Actor *d = new_actor();
     term p = dial(d, 0);
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     CHECK_EQ(tx.n, 1);
     CHECK_EQ(out_at(0).fl, 0x02);                         /* our SYN */
     teardown();
@@ -1099,7 +1099,7 @@ static Conn up_dial(int32_t timeout) {
     k.o->hp = 0;
     f[0] = heap_int(k.o, (int32_t)PEER_IP);
     k.port = port_open(&vm, k.o, heap_str(k.o, "up"), heap_struct(k.o, TYPE_NET_DIAL, f, 3));
-    CHECK(port_is(k.port));
+    CHECK(test_port_is(k.port));
     drain();
     CHECK_EQ(tx.n, 1);
     Out s = out_at(0);
@@ -1230,7 +1230,7 @@ TEST(tcp_hold_closed_without_connection) {
     Actor *o = new_actor();
     term f[3] = { term_from_int(1), term_from_int(80), term_from_int(0) };
     term p = open_port(o, "nc", TYPE_NET_DIAL, f, 3);
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     CHECK(port_any_live(&vm));
     drain();
     int32_t r = -1;

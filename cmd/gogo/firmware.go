@@ -42,7 +42,7 @@ type fwFeature struct {
 // This table and fwBoards below are the single place in Go that knows the
 // features and boards. They MUST match platform/esp32s3/main/board.h
 // (HAS_KBD, HAS_SD, HAS_IMU, HAS_IR_TX, HAS_IR_RX, HAS_MIC, HAS_SPK per board) and platform/esp32s3/main/Kconfig.projbuild
-// (the GOGO_* symbols; GOGO_FS_EXFAT depends on GOGO_SD, GOGO_TLS on GOGO_NET);
+// (the GOGO_* symbols; GOGO_FS_EXFAT depends on GOGO_SD, GOGO_TLS and GOGO_DIST on GOGO_NET);
 // TestFirmwareTableMatchesSources checks both. Change them together.
 var fwFeatures = []fwFeature{
 	{name: "net", kconf: "CONFIG_GOGO_NET", provides: []string{"netif", "udp", "tcp", "tcp_listen"}},
@@ -66,6 +66,9 @@ var fwFeatures = []fwFeature{
 	// screen is the text grid port on the LCD (runtime/screen); small, so on
 	// by default.
 	{name: "screen", kconf: "CONFIG_GOGO_SCREEN", provides: []string{"screen"}, onBy: true},
+	// node is the port of distributed actors (runtime/dist, gogo/node), over
+	// the net stack's tcp: it depends on net.
+	{name: "node", kconf: "CONFIG_GOGO_DIST", provides: []string{"node"}, onBy: true, needs: "net"},
 	// float is floating point in the VM and the float library (requirement
 	// "float"): like net, built only when an image needs it (or -with).
 	{name: "float", kconf: "CONFIG_GOGO_FLOAT", provides: []string{"float"}},
@@ -101,8 +104,8 @@ func fwHas(names ...string) map[string]bool {
 }
 
 var fwBoards = map[string]fwBoard{
-	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "speaker", "tls", "screen", "float")},
-	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "speaker", "tls", "screen", "float")},
+	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "speaker", "tls", "screen", "node", "float")},
+	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "speaker", "tls", "screen", "node", "float")},
 }
 
 func fwLookup(name string) (fwFeature, bool) {

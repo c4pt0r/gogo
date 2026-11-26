@@ -56,8 +56,8 @@ idle) with **its own heap**, talking only by copied messages:
   touches one actor's data, not the whole program's.
 - **One model for everything.** Hardware is ports, which are actors too:
   an interrupt, a key or a TCP packet arrives as an ordinary message in the
-  same receive loop. Hot loading swaps actors' code, and the planned
-  distribution sends the same messages across devices.
+  same receive loop. Hot loading swaps actors' code, and distribution
+  (`gogo/node`) sends the same messages across devices.
 
 This is the model Erlang has used for decades in systems that must not go
 down, scaled down to a microcontroller.
@@ -494,13 +494,43 @@ and marks its experimental parts, so a host built against one release
 keeps working with the next. Rust, Go and mobile bindings are planned.
 See book chapter 18.
 
-### Will actors be able to talk across devices?
-Planned. Remote PIDs make `actor.Send` work the same whether the target is
-local, on another board, or on a server. The first step is a star: boards
-connect to a server node (gogo embedded on the server), which also relays
-board-to-board messages, with links and monitors reporting a lost node.
+### Can actors talk across devices?
+Yes, with `gogo/node` (book chapter 20). A remote PID is an ordinary
+`actor.PID`: `actor.Send`, `Call`, `Monitor` and `Link` work the same
+whether the target is local, on another board or on a server. It is a
+star: boards connect over TCP to a server node (a host VM with real
+sockets, `GOGO_NET=host gogo run ...`), which also relays board-to-board
+messages. Nodes prove a shared token (`node.token`) with HMAC-SHA-256,
+and every frame then carries a MAC under a session key, so frames cannot
+be changed or injected (they are not encrypted, though: use a trusted
+network). A peer reaches a node's door, which answers lookups of names
+exported with `node.Register`, and the PIDs the node has given out in
+messages; never its agent, or a PID it did not give out. `node.Listen`,
+`Connect`, `Register` and `Whereis` return an `error` with the shared
+`gogo/errors` codes (`Refused`, `Timeout`, `NotFound`, ...), as
+`port.Open` does. When a node
+becomes unreachable, monitors get a `DownMsg` and links an exit signal
+with reason `actor.NoConnection`, and Calls to it fail at once. Messages
+may hold the basic values, PIDs, Refs, system structs and your own
+structs (matched by qualified name, field count and field kinds), up to
+4 KB; delivery is at most once and in order between two actors. The
+snake example runs its autopilot on the server.
 Direct links between boards on the same network, with the server as
-directory and fallback relay, are a later direction.
+directory and fallback relay, are the next step.
+
+### How many boards can one server serve?
+A server on a host VM serves 512 boards with the defaults, and the tests
+fill one to 512. Each board's link costs the server one port (the node
+port takes the TCP connection over) and one of its node links; the
+defaults are 1024 ports and 512 links, and both can be raised to 2048
+with the config keys `vm.max_ports` and `node.max_links` or `gogovm
+--max-ports` / `--max-links`. With raised caps a server takes about 930
+boards; then its node agent's memory (256 KB) is nearly full and new
+boards are refused, while the others carry on (`make test-dist-scale`).
+Give the process enough file descriptors (`ulimit -n`): one per board.
+A board keeps the small defaults (16 ports, 8 links) even in a big star:
+it holds remote PIDs only for the nodes it talks to (tested in a star of
+300). See book 20.9.
 
 ## About the project
 

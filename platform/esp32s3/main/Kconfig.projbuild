@@ -94,6 +94,15 @@ menu "gogo"
             the certificate bundle. When off, tls.c is not built, CAP_TLS is
             absent and port.Open("tls") returns ok=false.
 
+    config GOGO_DIST
+        bool "Distributed actors (node)"
+        depends on GOGO_NET
+        default y
+        help
+            Build the "node" port (runtime/dist/): links of a distributed node
+            (gogo/node), over gogo's tcp. When off, dist.c is not built and
+            port.Open("node") returns ok=false (an image that needs it is refused).
+
     config GOGO_SCREEN
         bool "Text screen port (screen)"
         default y

@@ -150,7 +150,7 @@ static int open_slots(void) {
 }
 static int open_ports(void) {
     int n = 0;
-    for (unsigned i = 0; i < GOGO_MAX_PORTS; i++) n += vm.ports[i].drv != NULL;
+    for (unsigned i = 0; i < GOGO_MAX_PORTS; i++) n += (*port_at(&vm, i)).drv != NULL;
     return n;
 }
 
@@ -171,7 +171,7 @@ TEST(fs_open_write_read) {
     CHECK_EQ(fs(a, FS_OPEN, "si", "/flash/a", VFS_WRITE), R_NORMAL);
     CHECK_EQ(ERR2(a), GOGO_E_OK);
     term f = R(a)[0];
-    CHECK(port_is(f));
+    CHECK(test_port_is(f));
     CHECK_EQ(actor_charged_words(a), base + CHARGE);
     CHECK_EQ(open_slots(), 1);
     CHECK_EQ(fs(a, FS_WRITE, "ts", f, "hel"), R_NORMAL);       /* string */
@@ -823,7 +823,7 @@ TEST(fs_two_vms_own_mounts) {
     CHECK_EQ(fs_on(&vm2, b, FS_STAT, "/sd/only_vm", 0, &t), GOGO_E_NOTMOUNTED);
     /* A file vm2 opens for writing is in vs2's slots, not vs's. */
     CHECK_EQ(fs_on(&vm2, b, FS_OPEN, "/flash/only_vm2", VFS_WRITE, &t), GOGO_E_OK);
-    CHECK(port_is(t));
+    CHECK(test_port_is(t));
     CHECK_EQ(open_slots(), 0);
     int n2 = 0;
     for (int i = 0; i < (int)GOGO_FS_MAX_OPEN; i++) n2 += vfs_slot_mode(&vs2, i) >= 0;

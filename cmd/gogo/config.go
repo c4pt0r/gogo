@@ -41,8 +41,8 @@ const (
 	configMaxValue = 1000
 )
 
-// configSecret is shown as "(set)".
-const configSecret = "wifi.password"
+// configSecrets are shown as "(set)".
+var configSecrets = []string{"wifi.password", "node.token"}
 
 func configPath() (string, error) {
 	if p := os.Getenv("GOGO_CONFIG"); p != "" {
@@ -119,11 +119,15 @@ var cfgKeys = []cfgKey{
 	{name: "fs.flash.size", typ: cfgSize, platform: true, about: "the size of /flash"},
 	{name: "fs.flash.format", typ: cfgString, platform: true, values: []string{"yes"}, about: "deprecated: gogo device format-flash"},
 	{name: "code.mem", typ: cfgSize, platform: true, about: "the budget for loaded module code"},
+	{name: "vm.max_ports", typ: cfgInt, platform: true, about: "most ports open at once (default 16 on a board, 1024 on the host; at most 2048)"},
+	{name: "node.max_links", typ: cfgInt, platform: true, about: "most node links (default 8 on a board, 512 on the host)"},
+	{name: "node.token", typ: cfgString, maxLen: 200, about: "the shared secret of distributed actors (gogo/node; never printed)"},
+	{name: "node.name", typ: cfgString, maxLen: 32, about: "this node's name (gogo/node)"},
 }
 
 // cfgReserved are the prefixes of the platform's and gogo's own keys: a
 // key under one must be in cfgKeys.
-var cfgReserved = []string{"wifi.", "net.", "fs.", "code.", "gogo."}
+var cfgReserved = []string{"wifi.", "net.", "fs.", "code.", "gogo.", "node.", "vm."}
 
 func findCfgKey(k string) (cfgKey, bool) {
 	for _, c := range cfgKeys {
@@ -313,8 +317,10 @@ func checkValue(v string) error {
 }
 
 func shown(key, value string) string {
-	if key == configSecret {
-		return "(set)"
+	for _, k := range configSecrets {
+		if key == k {
+			return "(set)"
+		}
 	}
 	return value
 }

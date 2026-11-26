@@ -36,8 +36,11 @@ VM_CORE_SRCS = $(filter-out runtime/vm/check32.c,$(wildcard runtime/vm/*.c))
 # (pixels, for the LCD) is not in gogovm, which draws on the terminal
 # (platform/unix/screen_unix.c). The grid's width rule is the console's.
 SCREEN_SRCS = runtime/screen/screen.c runtime/screen/screen_port.c runtime/console/console.c runtime/console/font.c
-MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c runtime/board/board_main.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS)
-PLAT_HDRS = $(wildcard platform/unix/*.h) runtime/gpio/gpio.h runtime/board/board_main.h runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
+# runtime/dist/ (pure C99): the "node" port of distributed actors; hostnet.c:
+# the "tcp" and "tcp_listen" ports on host sockets (gogovm --host-net).
+DIST_SRCS = $(wildcard runtime/dist/*.c)
+MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c runtime/board/board_main.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS)
+PLAT_HDRS = $(wildcard runtime/dist/*.h) $(wildcard platform/unix/*.h) runtime/gpio/gpio.h runtime/board/board_main.h runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
 
 # The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
 # built here with runtime/net/tls/config (gogo_*_config.h) into its own static library,
@@ -70,11 +73,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize
+test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
 
 vm: $(BUILD)/gogovm
 
@@ -126,7 +129,7 @@ gogo-cmd:
 
 $(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-c: $(BUILD)/test_c
 	$(BUILD)/test_c
@@ -279,11 +282,11 @@ FAT_TEST_SRCS = runtime/vfs/fat/test/test_fat.c runtime/vm/test/test_main.c runt
 test-fat: $(BUILD)/test_fat
 	$(BUILD)/test_fat
 
-$(BUILD)/test_fat: $(FAT_TEST_SRCS) $(FATFS_DIR)/ff.c $(FATFS_DIR)/ffunicode.c $(wildcard runtime/vfs/fat/*.h) $(wildcard runtime/vfs/*.h)
+$(BUILD)/test_fat: $(FAT_TEST_SRCS) $(FATFS_DIR)/ff.c $(FATFS_DIR)/ffunicode.c $(wildcard runtime/vfs/fat/*.h) $(wildcard runtime/vfs/*.h) runtime/vm/test/test.h
 	@mkdir -p $(BUILD)/fatfs
 	$(CC) -std=gnu99 -O2 -g -w $(EXTRA_CFLAGS) -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -c $(FATFS_DIR)/ff.c -o $(BUILD)/fatfs/ff.o
 	$(CC) -std=gnu99 -O2 -g -w $(EXTRA_CFLAGS) -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -c $(FATFS_DIR)/ffunicode.c -o $(BUILD)/fatfs/ffunicode.o
-	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/fat -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -Iruntime/vfs -Iruntime/vm/test -o $@ $(FAT_TEST_SRCS) $(BUILD)/fatfs/ff.o $(BUILD)/fatfs/ffunicode.o
+	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/fat -Iruntime/vfs/fat/test/stub -I$(FATFS_DIR) -Iruntime/vfs -Iruntime/vm/test -Iruntime/vm -o $@ $(FAT_TEST_SRCS) $(BUILD)/fatfs/ff.o $(BUILD)/fatfs/ffunicode.o
 
 # The LittleFS backend (runtime/vfs/lfs) over a RAM block device, with
 # the LittleFS that the firmware build fetches (joltwallet/littlefs, a
@@ -296,11 +299,11 @@ LFS_TEST_SRCS = runtime/vfs/lfs/test/test_lfs.c runtime/vm/test/test_main.c runt
 test-lfs: $(BUILD)/test_lfs
 	$(BUILD)/test_lfs
 
-$(BUILD)/test_lfs: $(LFS_TEST_SRCS) $(LFS_DIR)/lfs.c $(LFS_DIR)/lfs_util.c $(wildcard runtime/vfs/lfs/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/configsvc/*.h)
+$(BUILD)/test_lfs: $(LFS_TEST_SRCS) $(LFS_DIR)/lfs.c $(LFS_DIR)/lfs_util.c $(wildcard runtime/vfs/lfs/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/configsvc/*.h) runtime/vm/test/test.h
 	@mkdir -p $(BUILD)/lfs
 	$(CC) -std=c99 -O2 -g -w $(EXTRA_CFLAGS) -DLFS_NO_MALLOC -DLFS_NO_DEBUG -DLFS_NO_WARN -DLFS_NO_ERROR -Dmalloc=gogo_lfs_malloc -Dfree=gogo_lfs_free -I$(LFS_DIR) -c $(LFS_DIR)/lfs.c -o $(BUILD)/lfs/lfs.o
 	$(CC) -std=c99 -O2 -g -w $(EXTRA_CFLAGS) -I$(LFS_DIR) -c $(LFS_DIR)/lfs_util.c -o $(BUILD)/lfs/lfs_util.o
-	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/lfs -I$(LFS_DIR) -Iruntime/vfs -Iruntime/configsvc -Iruntime/vm/test -o $@ $(LFS_TEST_SRCS) $(BUILD)/lfs/lfs.o $(BUILD)/lfs/lfs_util.o
+	$(CC) $(CFLAGS) -DGOGO_FS_SLOT_BYTES=192u -Iruntime/vfs/lfs -I$(LFS_DIR) -Iruntime/vfs -Iruntime/configsvc -Iruntime/vm/test -Iruntime/vm -o $@ $(LFS_TEST_SRCS) $(BUILD)/lfs/lfs.o $(BUILD)/lfs/lfs_util.o
 else
 test-lfs:
 	@echo "test-lfs: skipped (no LittleFS at $(LFS_DIR); a firmware build fetches it)"
@@ -504,14 +507,14 @@ test-console: $(BUILD)/test_console $(BUILD)/test_console_ascii
 	$(BUILD)/test_console
 	$(BUILD)/test_console_ascii
 
-$(BUILD)/test_console: runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS) $(wildcard runtime/console/*.h) runtime/console/font/gogo12.font
+$(BUILD)/test_console: runtime/console/test/test_console.c runtime/vm/test/test_main.c runtime/vm/test/test.h $(CONSOLE_SRCS) $(wildcard runtime/console/*.h) runtime/console/font/gogo12.font
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Iruntime/console -Iruntime/vm/test -o $@ runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS)
+	$(CC) $(CFLAGS) -Iruntime/console -Iruntime/vm/test -Iruntime/vm -o $@ runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS)
 
 # The same tests against the ASCII-only font (GOGO_FONT_CJK=n firmware).
-$(BUILD)/test_console_ascii: runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS) $(wildcard runtime/console/*.h) runtime/console/font/gogo12-ascii.font
+$(BUILD)/test_console_ascii: runtime/console/test/test_console.c runtime/vm/test/test_main.c runtime/vm/test/test.h $(CONSOLE_SRCS) $(wildcard runtime/console/*.h) runtime/console/font/gogo12-ascii.font
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -DFONT_ASCII -DFONT_PATH='"runtime/console/font/gogo12-ascii.font"' -Iruntime/console -Iruntime/vm/test -o $@ runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS)
+	$(CC) $(CFLAGS) -DFONT_ASCII -DFONT_PATH='"runtime/console/font/gogo12-ascii.font"' -Iruntime/console -Iruntime/vm/test -Iruntime/vm -o $@ runtime/console/test/test_console.c runtime/vm/test/test_main.c $(CONSOLE_SRCS)
 
 # Render a text file through the console grid and font into a PPM:
 #   make console-ppm TEXT=runtime/console/font/sample.txt OUT=build/sample.ppm
@@ -543,7 +546,7 @@ test-go: vm $(BUILD)/gogovm_mcu $(BUILD)/gogovm_nofloat
 # `nofloat` run on it (an image that uses floats is refused at load).
 $(BUILD)/gogovm_nofloat: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -DGOGO_FLOAT=0 -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) -DGOGO_FLOAT=0 -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
 
 # The standard library (lib/*/*.gg) on the host toolchain, copied into a
 # temporary Go module gogo by tests/lib_test.go: vet (stdmethods off: gogo's
@@ -556,7 +559,7 @@ test-lib:
 # limit (16 KB per actor): the library actors must fit.
 $(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -DGOGO_HOST_PORTS=16 -DGOGO_HOST_LINKS=8 $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-net-mcu: $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/
@@ -580,7 +583,28 @@ test-tls-asan:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls
 	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_net
 	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" build/asan/test_tls
-	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" GOGO_VM=$(CURDIR)/build/asan/gogovm go test -count=1 ./tests/net/ ./tests/dist/
+# Distributed actors under AddressSanitizer and UndefinedBehaviorSanitizer
+# (build/san): tests/dist, its Go peer sending malformed and random frames
+# ($GOGO_DIST_FUZZ of them) at the node port's codec.
+SAN_FLAGS = -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -DGOGO_DEBUG=1
+# runtime/dist's SHA-256 and HMAC-SHA-256 against known answers.
+test-dist-c: $(BUILD)/test_hmac
+	$(BUILD)/test_hmac
+
+$(BUILD)/test_hmac: runtime/dist/test/test_hmac.c runtime/dist/hmac.c runtime/dist/hmac.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iruntime/dist -o $@ runtime/dist/test/test_hmac.c runtime/dist/hmac.c
+
+# A server at the caps' ceiling (2048 ports, 2047 links), filled with Go
+# peers until its node agent refuses more (some 2000 file descriptors).
+test-dist-scale: vm
+	GOGO_DIST_SCALE=1 GOGO_VM=$(CURDIR)/$(BUILD)/gogovm go test -count=1 -run 'TestServerFill' -v ./tests/dist/
+
+test-dist-san:
+	$(MAKE) BUILD=build/san EXTRA_CFLAGS="$(SAN_FLAGS)" build/san/gogovm
+	ASAN_OPTIONS="$(TLS_ASAN_OPTIONS)" GOGO_DIST_FUZZ=$${GOGO_DIST_FUZZ:-20000} GOGO_VM=$(CURDIR)/build/san/gogovm go test -count=1 ./tests/dist/
+
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
@@ -596,6 +620,9 @@ check32:
 	done
 	for f in $(NET_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test/stub $$f || exit 1; \
+	done
+	for f in $(DIST_SRCS); do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/dist -Iruntime/stream -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
 	done
 	for f in $(STREAM_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/stream -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
@@ -641,6 +668,10 @@ netsize:
 # runtime/net/tls/ plus the mbedTLS it links, on the ESP32-S3 (-Os), reported apart from the VM core.
 tlssize:
 	MBEDTLS_DIR=$(MBEDTLS_DIR) tools/vmsize.sh --tls
+
+# runtime/dist/ (the "node" port) code size (linked, as vmsize) and fixed state on the ESP32-S3, reported apart from the VM core.
+distsize:
+	tools/vmsize.sh --dist
 
 # runtime/vfs/ code size (linked, as vmsize) and fixed state on the ESP32-S3, reported apart from the VM core.
 vfssize:

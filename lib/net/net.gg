@@ -3,7 +3,8 @@
 // programs type-check; the gogo compiler replaces every call with VM
 // instructions, so its body is never executed.
 //
-// The struct types below have fixed type indices 9-22 (and 41, DialTLS) in every image
+// The struct types below have fixed type indices 9-22 (and 41, DialTLS;
+// 47-48, NodeLink and NodeEvent) in every image
 // (TYPE_NET_* in runtime/vm/opcodes.h); keep their field order in sync with
 // compiler.reservedTypes.
 //
@@ -238,6 +239,64 @@ type Connected struct{}
 type Accepted struct {
 	Conn actor.PID
 }
+
+// NodeLink configures a "node" port (image format 15.5): one link of a
+// distributed node, the bytes of one authenticated connection to a peer
+// node. gogo/node opens it after its handshake; programs use gogo/node,
+// not this port. Self is this node's id and Peer the peer's (ids are given
+// by the server node, which is 1); Relay 1 makes the link the route to
+// every node without a link of its own (a board's link to the server).
+// Agent is the local actor that messages to a node's zero PID reach (the
+// node's door: it answers name lookups only). Name is the peer's name. Key
+// is the link's session key (32 bytes, from the handshake): every frame
+// carries a MAC under it, and a frame whose MAC fails ends the link. Conn,
+// if not the zero PID, is the link's "tcp" port: where the board can (on a
+// host VM with real sockets) the node port takes its connection over and
+// closes it, so a link costs one port, and sends a NodeEvent of Kind
+// NodeCarried; it reads the connection from then on once its owner sends
+// it net.Resume{} (after forwarding the Chunks of Conn it still had).
+// Hello, if not empty, goes out first, as it is (the handshake's last
+// frame).
+// Frames from the peer go to the port as port.Out commands (from the
+// port's owner only); frames for the peer come out as port.Chunk events.
+// The port is charged nothing; it fails to open with a bad id or key, when
+// 8 links are open, or when the VM's actor table reaches into the remote
+// PID range (more than 61440 actors).
+//
+//gogo:reserved 47
+type NodeLink struct {
+	Self, Peer, Relay int
+	Agent             actor.PID
+	Name              string
+	Key               bytes.Bytes
+	Conn              actor.PID
+	Hello             bytes.Bytes
+}
+
+// NodeEvent is an event of a "node" port: Kind NodeUp when the port opens
+// (Node, Name: the peer; Agent: the peer's door, a remote PID) and, on a
+// board's link to the server, when another board joins; Kind NodeDown when
+// the server reports node Node gone (its PIDs are stale now).
+//
+//gogo:reserved 48
+type NodeEvent struct {
+	From       actor.PID
+	Kind, Node int
+	Agent      actor.PID
+	Name       string
+}
+
+// NodeEvent kinds.
+const (
+	NodeUp      = 1
+	NodeDown    = 2
+	NodeCarried = 3 // the node port took Conn over (NodeLink)
+	// NodeDoor: sent to the node port, NodeEvent{Kind: NodeDoor, Node: id}
+	// asks for node id's door; the port answers with the same Kind and the
+	// door as Agent (the zero PID if no link reaches the node). A door is
+	// a remote PID like any other, made on demand.
+	NodeDoor = 4
+)
 
 // The Reason of a "tcp" or "tls" port's port.Closed: the shared codes of
 // gogo/errors (Normal is errors.OK), as plain ints like the field.

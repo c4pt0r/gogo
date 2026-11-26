@@ -70,7 +70,7 @@ typedef uint32_t term;
 #define T_ZEROREF ((term)0x42)
 /* The zero actor.PID: the PID term of slot 0, generation 0. actor.c never
  * gives slot 0 generation 0 (it starts at 1 and skips 0 on wrap) and port
- * PIDs use slots >= PORT_SLOT_BASE, so no live actor or port has it: Send
+ * PIDs use slots >= vm->port_base, so no live actor or port has it: Send
  * drops, Link/Monitor see a dead PID (NoProc). Prints as <pid 0>. */
 #define T_ZEROPID ((term)0x06)
 /* The nil slice, the zero value of every slice type: length and capacity
@@ -125,6 +125,13 @@ static inline term term_make_pid(uint16_t slot, uint16_t gen) {
 }
 static inline uint16_t term_pid_slot(term t) { return (uint16_t)((t >> 4) & 0xFFFFu); }
 static inline uint16_t term_pid_gen(term t) { return (uint16_t)(t >> 20); }
+
+/* Remote PIDs (distribution, runtime/dist/): slots DIST_SLOT_BASE up to
+ * the ports' (vm->port_base, port.h) name entries of the VM's proxy table
+ * (vm_dist_of, actor.h). Only meaningful while vm->dist is set: a VM that
+ * opens a node link keeps its actor table below DIST_SLOT_BASE, and every
+ * check looks up a local actor first. */
+#define DIST_SLOT_BASE 0xF000u
 
 /* Module tags (see the top of this file). */
 #define MOD_TAG_SHIFT 21u

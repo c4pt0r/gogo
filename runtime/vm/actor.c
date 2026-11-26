@@ -28,7 +28,9 @@ int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board,
     vm->host_ctx = host_ctx;
     if (!board) board = &no_board;
     vm->board = board;
-    if (table_cap > PORT_SLOT_BASE) return -1;
+    vm->port_max = GOGO_MAX_PORTS;
+    vm->port_base = (uint16_t)(PORT_SLOT_TOP - GOGO_MAX_PORTS);
+    if (table_cap > vm->port_base) return -1;
     vm->next_ref = 1;
     vm->mod_cap = GOGO_CODE_MEM_DEFAULT;   /* module_config may change it */
     vm->table = va_alloc(vm, (size_t)table_cap * sizeof(uintptr_t));
@@ -87,6 +89,11 @@ void actor_free(Vm *vm, Actor *a) {
     module_actor_exit(vm, a);              /* may unload its module */
     va_free(vm, a, sizeof(Actor));
     vm->live--;
+}
+
+const VmDist *vm_dist_of(const Vm *vm, term pid) {
+    return term_is_pid(pid) && term_pid_slot(pid) >= DIST_SLOT_BASE && term_pid_slot(pid) < vm->port_base ? vm->dist
+                                                                                                         : NULL;
 }
 
 Actor *actor_lookup(Vm *vm, term pid) {

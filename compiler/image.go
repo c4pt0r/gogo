@@ -23,11 +23,11 @@ const (
 	imageMajor = 15
 	// imageMinor is the newest feature minor. Renumbering a feature's
 	// minor touches its constant here (floatMinor, sizedMinor, ifaceMinor,
-	// refMinor),
+	// distMinor, refMinor),
 	// IMAGE_MINOR in runtime/vm/image.h when it is the newest
 	// (TestTermsMatchC checks both), and the "15.N" in docs and opcodes.h
 	// comments.
-	imageMinor = max(floatMinor, sizedMinor, ifaceMinor, refMinor)
+	imageMinor = max(floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor)
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -44,7 +44,8 @@ const (
 // B_FLOAT, and the K_FLOAT constants and TYPEIS ids, which scan counts
 // apart: floatMinor); 15.3 sized integers (the unsigned ops, B_PRINTLNU
 // and the new CONV modes: sizedMinor); 15.4 the builtins and reserved
-// types of panic, interfaces and equality (ifaceMinor); 15.6 references
+// types of panic, interfaces and equality (ifaceMinor); 15.5 the "node"
+// port's reserved types (distMinor); 15.6 references
 // (refMinor: SETFIELD and the type-row flags, which scan counts apart).
 // A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
@@ -62,13 +63,15 @@ var (
 		BPanic:    ifaceMinor,
 		BCmp:      ifaceMinor,
 		BSprint:   refMinor,
-		// kept for distributed actors (15.5): no gogo image uses them yet
-		BReserved58: 5, BReserved59: 5, BReserved60: 5,
+		// unused (distributed actors, 15.5, needed none): no image uses them
+		BReserved58: distMinor, BReserved59: distMinor, BReserved60: distMinor,
 	}
 	typeMinor = map[string]uint16{
 		"screen.Config":      1, // 15.1: the "screen" port
 		"errors.Code":        ifaceMinor,
 		"errors.errorString": ifaceMinor,
+		"net.NodeLink":       distMinor,
+		"net.NodeEvent":      distMinor,
 	}
 )
 
@@ -93,6 +96,10 @@ const ifaceMinor = 4
 // const slices and arrays, and B_SPRINT. 15.5 belongs to distributed
 // actors.
 const refMinor = 6
+
+// distMinor is the minor of distributed actors (15.5): the reserved types
+// net.NodeLink and net.NodeEvent of the "node" port (gogo/node).
+const distMinor = 5
 
 // convMinor is the minor of an OP_CONV with mode c (op): the modes 0-2
 // are 15.0's.
@@ -330,6 +337,25 @@ func (b *ImageBuilder) TypeFlags(idx uint32) uint32 {
 		return 0
 	}
 	return b.types[idx-TypeOwnBase].nFields &^ 0xFFFF
+}
+
+// AddTypeShape is AddType for a struct whose fields' kinds hash to shape
+// (structShape): its name constant gets one word more than its bytes need,
+// holding the hash. Distributed actors compare it when a struct of this
+// type crosses nodes (runtime/dist); a VM reads the name by its length
+// and never sees the word. The name is its own constant, not shared.
+func (b *ImageBuilder) AddTypeShape(name string, nFields, shape uint32) uint32 {
+	n := uint32(len(b.consts))
+	payload := (len(name) + 3) / 4
+	b.consts = append(b.consts, HdrMake(uint32(3+payload), KString), uint32(len(name)))
+	buf := make([]byte, payload*4)
+	copy(buf, name)
+	for i := 0; i < payload; i++ {
+		b.consts = append(b.consts, binary.LittleEndian.Uint32(buf[i*4:]))
+	}
+	b.consts = append(b.consts, shape)
+	b.types = append(b.types, imgType{name: n, nFields: nFields, goName: name})
+	return TypeOwnBase + uint32(len(b.types)-1)
 }
 
 // AddReservedType declares the next reserved type (index order) and

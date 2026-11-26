@@ -1,0 +1,44 @@
+// Sends a named int and floats in interfaces to the server's echo and
+// back, from a 15.5 image.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/sys"
+)
+
+type Dir int
+
+type T struct{ N int }
+
+type F struct {
+	X float64
+	Y float32
+}
+
+func main() {
+
+	addr, _ := sys.Config("test.server")
+	println("connect", node.Connect(addr, "boxer5") == nil)
+	echo, werr := node.Whereis("server", "echo", 2000)
+	ok := werr == nil
+	println("echo", ok)
+	var v any = Dir(3)
+	r, ok := actor.Call(echo, v, 2000)
+	switch d := r.(type) {
+	case Dir:
+		println("dir", ok, int(d))
+	}
+	r, ok = actor.Call(echo, 2.5, 2000)
+	switch f := r.(type) {
+	case float64:
+		println("float", ok, f == 2.5)
+	}
+	r, ok = actor.Call(echo, F{X: -1.25, Y: 0.5}, 2000)
+	switch f := r.(type) {
+	case F:
+		println("struct", ok, f.X == -1.25, f.Y == 0.5)
+	}
+	println("end")
+}

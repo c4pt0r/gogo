@@ -1,0 +1,57 @@
+// Board n of many: joins as test.name, exports echo, waits until it sees
+// test.count nodes, then Calls the next board's echo through the relay.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/strconv"
+	"gogo/sys"
+)
+
+func echo(name string) {
+	for {
+		switch m := actor.Receive().(type) {
+		case actor.Request:
+			switch s := m.Body.(type) {
+			case string:
+				actor.Reply(m, s+" from "+name)
+			}
+		}
+	}
+}
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	name, _ := sys.Config("test.name")
+	next, _ := sys.Config("test.next")
+	c, _ := sys.Config("test.count")
+	count, _ := strconv.Atoi(c)
+	// Registered before joining: a node is announced (Up) as soon as the
+	// server opens its link, before Connect returns here, so the others
+	// may look echo up at once.
+	node.Register("echo", actor.Spawn(func() { echo(name) }))
+	if node.Connect(addr, name) != nil {
+		println(name, "connect failed")
+		return
+	}
+	for i := 0; i < 400 && len(node.Nodes()) < count; i++ {
+		actor.Sleep(50)
+	}
+	if len(node.Nodes()) < count {
+		println(name, "sees", len(node.Nodes()), "nodes")
+		return
+	}
+	p, werr := node.Whereis(next, "echo", 3000)
+	ok := werr == nil
+	if !ok {
+		println(name, "no echo on", next)
+		return
+	}
+	r, ok := actor.Call(p, "hi", 3000)
+	switch s := r.(type) {
+	case string:
+		println(name, ok, s)
+	}
+	actor.Receive()
+}

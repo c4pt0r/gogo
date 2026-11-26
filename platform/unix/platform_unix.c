@@ -275,6 +275,22 @@ void platform_notify(void) {
 
 static void net_wait(uint32_t ms);
 
+int (*platform_unix_extra_fds)(struct pollfd *p, int max);
+
+/* platform_wait's pollfds: the wake pipe, the tty and `extra` more. */
+static struct pollfd *poll_buf;
+static int poll_cap;
+static struct pollfd *poll_room(int extra) {
+    int want = 2 + extra;
+    if (want > poll_cap) {
+        struct pollfd *b = realloc(poll_buf, (size_t)want * sizeof *b);
+        if (!b) return NULL;
+        poll_buf = b;
+        poll_cap = want;
+    }
+    return poll_buf;
+}
+
 /* Returns after the timeout or once notified; consumes the latch. */
 void platform_wait(uint32_t ms) {
     if (input_unix_wait(ms)) {             /* an input line was consumed: rescan */
@@ -286,14 +302,16 @@ void platform_wait(uint32_t ms) {
         net_wait(ms);
         return;
     }
-    struct pollfd p[2];
+    struct pollfd *p = poll_room(platform_unix_extra_fds ? platform_unix_extra_fds(NULL, 0) : 0);
     char buf[64];
-    int n = 1;
+    int n = 1, ti = -1;
+    if (!p) return;                        /* out of memory: no wait (the VM polls) */
     p[0].fd = wake_fd[0]; p[0].events = POLLIN; p[0].revents = 0;
     int sfd = input_unix_poll_fd();        /* tty stdin, or -1 */
-    if (sfd >= 0) { p[1].fd = sfd; p[1].events = POLLIN; p[1].revents = 0; n = 2; }
+    if (sfd >= 0) { ti = n; p[n].fd = sfd; p[n].events = POLLIN; p[n].revents = 0; n++; }
+    if (platform_unix_extra_fds) n += platform_unix_extra_fds(p + n, poll_cap - n);
     int rc = poll(p, (nfds_t)n, ms == UINT32_MAX ? -1 : (ms > 2000000000u ? 2000000000 : (int)ms));
-    if (rc > 0 && n == 2 && p[1].revents) input_unix_read_tty();
+    if (rc > 0 && ti >= 0 && p[ti].revents) input_unix_read_tty();
     while (read(wake_fd[0], buf, sizeof buf) > 0) {}   /* clear the latch */
 }
 

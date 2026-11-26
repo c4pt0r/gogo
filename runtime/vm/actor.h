@@ -54,6 +54,36 @@ enum {
     AF_CALL_PENDING = 16  /* a Call sent its request and awaits the reply (interp.c) */
 };
 
+struct Out;
+
+/* Distribution hooks (runtime/dist/, design.md §5.13): set by the "node"
+ * port driver when a program opens its first node link, NULL before (and
+ * always in builds without it). The core calls them only for a proxy PID
+ * (term_is_proxy) that names no local actor, and on every actor exit.
+ *  - send: Send (serial 0) or a Call reply (serial: the Ref's) to a remote
+ *    PID; returns as msg_send (0 sent or dropped, or a negated exit reason
+ *    of the sender: R_BAD_MSG for a value that may not leave the node).
+ *  - monitor: a's monitor `serial` of remote pid (false: out of memory).
+ *  - link: link (on) or unlink a and remote pid (false: out of memory).
+ *  - demonitor: a dropped monitor `serial` (any serial; unknown ignored).
+ *  - exited: a is exiting with code (its remote links and monitors).
+ *  - print: writes a proxy PID's number (println, "<pid N@node>").
+ *  - kill: actor.Kill of a remote pid by `from` (false: out of memory).
+ * SendAfter to a remote PID is BadMsg (no remote timers). */
+typedef struct VmDist {
+    int  (*send)(struct Vm *vm, struct Actor *from, term to, uint64_t serial, term msg);
+    bool (*monitor)(struct Vm *vm, struct Actor *a, term pid, uint64_t serial);
+    bool (*link)(struct Vm *vm, struct Actor *a, term pid, bool on);
+    void (*demonitor)(struct Vm *vm, struct Actor *a, uint64_t serial);
+    void (*exited)(struct Vm *vm, struct Actor *a, uint32_t code);
+    void (*print)(struct Out *o, const struct Vm *vm, term pid);
+    bool (*kill)(struct Vm *vm, struct Actor *from, term pid, uint32_t code);
+} VmDist;
+
+/* vm->dist if pid is a remote (proxy) PID and the VM has distribution,
+ * else NULL: the one test before every hook call but exited (actor.c). */
+const VmDist *vm_dist_of(const struct Vm *vm, term pid);
+
 /* PID table: a live slot holds its Actor*; a free slot holds
  * (gen << 1) | 1, where gen is the 12-bit generation the next actor in
  * that slot will get. Actor pointers are aligned, so bit 0 tells them apart. */
@@ -87,7 +117,7 @@ typedef struct Vm {
     void *reserve;            /* emergency reserve (signals.h), NULL while used up */
     bool reserve_wanted;      /* between vm_reserve_init and _release */
     bool wall_known;          /* wall clock set (walltime.c) */
-    uint8_t ports_pending;    /* ports holding a trailing debounce value */
+    uint16_t ports_pending;   /* ports holding a trailing debounce value */
     uint8_t run_state;        /* vm_start / vm_step / vm_stop: VM_ST_* (interp.h) */
     int64_t wall_offset;      /* unix ms - host->now_ms at the last set (no RTC) */
     /* Event ring indices (evq.h): head producer-only (ISR), tail consumer-only. */
@@ -99,15 +129,32 @@ typedef struct Vm {
     struct VfsState *vfs;     /* vfs mounts and open files (vfs_init); NULL = none */
     struct InputState *input; /* input port state (input_install); NULL = none */
     struct NetState *net;     /* the net stack (net_install, runtime/net/); NULL = none */
+    const VmDist *dist;       /* distribution hooks (runtime/dist/); NULL = none */
     VaHeap va;                /* allocator (alloc.h): scalars, then its free lists */
-    Port ports[GOGO_MAX_PORTS];   /* port table (port.h) */
+    /* The port table (port.h), in chunks of PORT_CHUNK that never move
+     * (drivers keep Port pointers): port_n ports exist (none until the
+     * first open), at most port_max; index i is slot port_base + i. The
+     * first chunk, and the chunk list of a table of one chunk (a board's
+     * 16), live here, as the fixed table did: no port takes arena memory
+     * on a board. */
+    Port **port_chunk;
+    Port *port_chunk1;        /* port_chunk's storage when it has one entry */
+    uint16_t port_n, port_max, port_base;
+    Port port_first[PORT_CHUNK];
+    uint16_t max_links;       /* node links of distribution (runtime/dist); 0 = its default */
     PortEvent evq_slots[GOGO_EVQ_CAP];   /* event ring storage (evq.h), last: large */
 } Vm;
 
+/* Port i (i < vm->port_n) and the index of port p. */
+static inline Port *port_at(const Vm *vm, uint32_t i) {
+    return &vm->port_chunk[i / PORT_CHUNK][i % PORT_CHUNK];
+}
+static inline uint32_t port_index(const Vm *vm, const Port *p) { return term_pid_slot(p->id) - vm->port_base; }
+
 /* Clears vm and ties it to its host (host_ctx goes to every hook) and
  * board (NULL = no board hardware). Then allocates the PID table. Returns 0, or
- * -1 if the table cannot be allocated or table_cap exceeds PORT_SLOT_BASE
- * (the slots above it name ports). Boot code then calls vm_boot; tests
+ * -1 if the table cannot be allocated or table_cap exceeds the default
+ * port_base (PORT_SLOT_TOP - GOGO_MAX_PORTS: the slots above it name ports). Boot code then calls vm_boot; tests
  * install a hand-built image with module_install_static. */
 int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board, uint16_t table_cap);
 

@@ -11,8 +11,8 @@
 #include "../include/gogo_errors.h"
 #include <string.h>
 
-#if (GOGO_MAX_PORTS) < 1u || (GOGO_MAX_PORTS) > 16u
-#error "GOGO_MAX_PORTS must be 1..16 (port PIDs use slots PORT_SLOT_BASE..0xFFFF)"
+#if (GOGO_MAX_PORTS) < 1u || (GOGO_MAX_PORTS) > PORT_MAX_CEILING
+#error "GOGO_MAX_PORTS must be 1..PORT_MAX_CEILING (port PIDs use the slots 0x10000 - max .. 0xFFFF)"
 #endif
 
 #define GEN_MASK 0xFFFu
@@ -47,17 +47,43 @@ bool port_subscribe(Vm *vm, Actor *a) {
     return false;
 }
 
-bool port_is(term pid) {
-    return term_is_pid(pid) && term_pid_slot(pid) >= PORT_SLOT_BASE;
+bool port_is(const Vm *vm, term pid) {
+    return term_is_pid(pid) && term_pid_slot(pid) >= vm->port_base;
+}
+
+int vm_set_max_ports(Vm *vm, uint32_t n) {
+    if (!n) n = GOGO_MAX_PORTS;
+    if (n > PORT_MAX_CEILING || vm->port_n || vm->table_cap > PORT_SLOT_TOP - n) return -1;
+    vm->port_max = (uint16_t)n;
+    vm->port_base = (uint16_t)(PORT_SLOT_TOP - n);
+    return 0;
 }
 
 /* The open port pid names, or NULL (not a port PID, free or stale). */
 static Port *port_of(Vm *vm, term pid) {
-    if (!port_is(pid)) return NULL;
-    uint32_t i = term_pid_slot(pid) - PORT_SLOT_BASE;
-    if (i >= GOGO_MAX_PORTS) return NULL;
-    Port *p = &vm->ports[i];
+    if (!port_is(vm, pid)) return NULL;
+    uint32_t i = term_pid_slot(pid) - vm->port_base;
+    if (i >= vm->port_n) return NULL;
+    Port *p = port_at(vm, i);
     return p->drv && p->id == pid ? p : NULL;
+}
+
+/* One chunk more of the table (zeroed); false at the cap or out of
+ * memory. The chunk list is allocated once, for the cap. */
+static bool ports_grow(Vm *vm) {
+    uint32_t n = vm->port_n, k = n / PORT_CHUNK, nchunks = (vm->port_max + PORT_CHUNK - 1u) / PORT_CHUNK;
+    if (n >= vm->port_max) return false;
+    if (!vm->port_chunk) {
+        vm->port_chunk = nchunks == 1u ? &vm->port_chunk1 : va_alloc(vm, nchunks * sizeof *vm->port_chunk);
+        if (!vm->port_chunk) return false;
+    }
+    Port *c = k ? va_alloc(vm, PORT_CHUNK * sizeof *c) : vm->port_first;   /* the first is in the Vm */
+    if (!c) return false;
+    if (k) memset(c, 0, PORT_CHUNK * sizeof *c);
+    vm->port_chunk[k] = c;
+    n += PORT_CHUNK;
+    vm->port_n = (uint16_t)(n < vm->port_max ? n : vm->port_max);
+    return true;
 }
 
 const void *port_name_find(const void *const *list, bool drv, const uint8_t *name, uint32_t len) {
@@ -92,19 +118,22 @@ static bool int_struct(const Vm *vm, const Actor *a, term t, uint32_t *type,
  * through drv->open_term with the raw cfg when cfg is not T_NIL. */
 static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *f, uint32_t n, term cfg) {
     uint16_t i = 0;
-    while (i < GOGO_MAX_PORTS && vm->ports[i].drv) i++;
+    while (i < vm->port_n && port_at(vm, i)->drv) i++;
     vm->open_err = GOGO_E_TOOMANY;
-    if (i == GOGO_MAX_PORTS) return T_NIL;
+    if (i == vm->port_n && (i >= vm->port_max || !ports_grow(vm))) {
+        if (i < vm->port_max) vm->open_err = GOGO_E_NOMEMORY;
+        return T_NIL;
+    }
     vm->open_err = GOGO_E_NOMEMORY;   /* also the charge check's below */
     if (!actor_port_own(vm, owner)) return T_NIL;
 
-    Port *p = &vm->ports[i];
+    Port *p = port_at(vm, i);
     uint16_t gen = p->gen;
     memset(p, 0, sizeof *p);
     p->drv = drv;
     p->owner = owner->id;
     p->gen = gen;
-    p->id = term_make_pid((uint16_t)(PORT_SLOT_BASE + i), gen);
+    p->id = term_make_pid((uint16_t)(vm->port_base + i), gen);
     int rc = cfg != T_NIL ? drv->open_term(vm, owner, p, i, cfg) : drv->open(vm, p, i, f, n);
     bool ok = rc == 0;
     if (ok && (p->charge_words || p->room_64w)) {
@@ -117,7 +146,7 @@ static term open_in(Vm *vm, Actor *owner, const PortDriver *drv, const int32_t *
     if (!ok) {
         /* Refused. Bump the generation anyway: anything the driver pushed
          * under it is stale. */
-        if (rc) vm->open_err = GOGO_E_BUSY;
+        if (rc) vm->open_err = rc > 0 ? (uint8_t)rc : GOGO_E_BUSY;
         p->drv = NULL;
         p->gen = (uint16_t)((gen + 1u) & GEN_MASK);
         actor_port_disown(owner);
@@ -168,7 +197,7 @@ void port_command(Vm *vm, const Actor *from, term pid, term msg) {
 /* The ports holding a pending debounce value: what ports_pending counts. */
 static uint32_t pending_ports(const Vm *vm) {
     uint32_t n = 0;
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) n += (vm->ports[i].flags & PORT_PENDING) != 0;
+    for (uint32_t i = 0; i < vm->port_n; i++) n += (port_at(vm, i)->flags & PORT_PENDING) != 0;
     return n;
 }
 #endif
@@ -198,15 +227,15 @@ void port_close(Vm *vm, term pid) {
 void port_close_owned(Vm *vm, term owner) {
     const Actor *a = actor_lookup(vm, owner);
     if (a && !actor_port_owns(a)) return;
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
-        Port *p = &vm->ports[i];
+    for (uint32_t i = 0; i < vm->port_n; i++) {
+        Port *p = port_at(vm, i);
         if (p->drv && p->owner == owner) port_close(vm, p->id);
     }
 }
 
 void port_close_all(Vm *vm) {
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
-        Port *p = &vm->ports[i];
+    for (uint32_t i = 0; i < vm->port_n; i++) {
+        Port *p = port_at(vm, i);
         if (p->drv) port_close(vm, p->id);
     }
 }
@@ -215,8 +244,8 @@ bool port_any_live(const Vm *vm) {
     SOURCES_EACH(vm, q) {
         if (q->s->any_live(vm, q->ctx)) return true;
     }
-    for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
-        const Port *p = &vm->ports[i];
+    for (uint32_t i = 0; i < vm->port_n; i++) {
+        const Port *p = port_at(vm, i);
         if (p->drv && p->drv->can_event && p->drv->can_event(vm, p)) return true;
     }
     return false;
@@ -239,8 +268,8 @@ bool port_next_deadline(const Vm *vm, uint64_t *deadline) {
     SOURCES_EACH(vm, q) {
         if (q->s->next_deadline && q->s->next_deadline(vm, q->ctx, &d) && d < best) best = d;
     }
-    for (uint32_t i = 0; vm->ports_pending && i < GOGO_MAX_PORTS; i++) {
-        const Port *p = &vm->ports[i];
+    for (uint32_t i = 0; vm->ports_pending && i < vm->port_n; i++) {
+        const Port *p = port_at(vm, i);
         d = p->last_t + p->debounce_ms;
         if ((p->flags & PORT_PENDING) && d < best) best = d;
     }
@@ -335,8 +364,8 @@ static uint64_t event_time(uint32_t ms, uint64_t now) {
 void port_drain(Vm *vm, uint64_t now) {
     PortEvent e;
     for (uint32_t n = 0; n < GOGO_EVQ_CAP && evq_pop(vm, &e); n++) {
-        if (e.port >= GOGO_MAX_PORTS) continue;
-        Port *p = &vm->ports[e.port];
+        if (e.port >= vm->port_n) continue;
+        Port *p = port_at(vm, e.port);
         if (!p->drv || p->gen != e.gen) continue;   /* closed since: stale */
         if (!p->debounce_ms) {
             deliver(vm, p, e.a, e.b);
@@ -356,7 +385,7 @@ void port_drain(Vm *vm, uint64_t now) {
         }
     }
     if (vm->ports_pending) {
-        for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) flush_due(vm, &vm->ports[i], now);
+        for (uint32_t i = 0; i < vm->port_n; i++) flush_due(vm, port_at(vm, i), now);
     }
     GOGO_ASSERT(vm->ports_pending == pending_ports(vm));
     SOURCES_EACH(vm, q) {
@@ -374,7 +403,7 @@ Actor *port_owner(Vm *vm, const Port *p) {
 bool port_handoff(Vm *vm, Actor *from, term pid, term to) {
     Port *p = port_of(vm, pid);
     if (!p || p->owner != from->id) return false;
-    Actor *t = port_is(to) ? NULL : actor_lookup(vm, to);
+    Actor *t = port_is(vm, to) ? NULL : actor_lookup(vm, to);
     if (!t || t->state == A_EXITED || (t->flags & AF_EXIT_PENDING)) return false;
     if (t != from) {
         /* t must fit the charge plus what holding the pinned Bytes adds

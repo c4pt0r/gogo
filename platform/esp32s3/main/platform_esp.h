@@ -29,9 +29,9 @@ void platform_esp_init(void);
 uint64_t platform_esp_ms(void);
 size_t platform_esp_arena_used(void);
 /* The VM's fixed tables in use (main.c), for `gogo device stats`: off-heap
- * Bytes handles (of GOGO_BYTES_HANDLES) and open ports (of GOGO_MAX_PORTS).
+ * Bytes handles (of GOGO_BYTES_HANDLES) and open ports (of the Vm's cap).
  * Read from another task: a snapshot. */
-void main_esp_usage(uint32_t *bytes_used, uint32_t *ports_used);
+void main_esp_usage(uint32_t *bytes_used, uint32_t *ports_used, uint32_t *ports_max);
 size_t platform_esp_arena_cap(void);
 /* Prints the first refused esp_host.alloc (size, cause, arena used,
  * free internal RAM at that moment), if any. */

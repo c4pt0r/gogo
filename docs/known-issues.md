@@ -736,6 +736,75 @@ rebuilt:
   (`wifi: access point busy (reason 208)`); it connects about a second
   later.
 
+## Distributed actors (`gogo/node`)
+
+- **Node links are not encrypted.** The handshake proves the shared token
+  (HMAC-SHA-256 challenge-response, the token never sent) and every frame
+  carries a MAC under a session key, so frames cannot be changed, injected
+  or replayed; but anyone on the network path can read them, and a
+  captured handshake allows an offline guess of a weak token.
+  *Workaround:* a trusted network and a long random token. Encryption
+  needs a TLS *server* port (or an AEAD on the frames), which gogo does
+  not have yet.
+- **A star only.** Boards reach each other through the server; there are
+  no direct board-to-board links yet, and a lost server cuts every board
+  off (monitors and links fire with `NoConnection`).
+- **The server node is a host VM** (`gogovm --host-net` / `GOGO_NET=host`):
+  an embedding program cannot be one yet. Under `GOGO_NET=host` the host
+  VM has `tcp` and `tcp_listen` only (no `udp`, DNS, DHCP or `tls`: the
+  `tls` port still runs on the simulated stack), so addresses are
+  numeric; `tcp_listen` binds every interface of the computer and `tcp`
+  connects anywhere.
+- **Boards per server: about 930 at most.** A host VM serves 512 boards
+  by default (`node.max_links`, `vm.max_ports`, or `gogovm --max-links` /
+  `--max-ports`, each at most 2048); a board link costs the server one
+  port and one file descriptor. Past about 930 boards the server's node
+  agent (one entry per board, 256 KB at most) refuses new ones, whatever
+  the caps. A board's own links cost it two ports each (its MCU stack
+  cannot hand a TCP connection to the node port).
+- **Tables sized by the link cap** *L*: 48 + 2*L* remote PIDs known at once
+  (and at most 4096 minus the port cap: remote PIDs live between 0xF000
+  and the port PIDs), 48 + 2*L* local PIDs given out (dead ones are
+  reused), 16 + 2*L* remote links and monitors (a full table answers with
+  `NoConnection`), 8 + *L* remote Calls in flight (one more fails at once);
+  on a board (*L* = 8) 64, 64, 32 and 16. A full remote-PID table evicts
+  the least recently used entry that no link or monitor names: a remote
+  PID kept without a monitor then goes stale (sends to it are dropped,
+  and it no longer equals a fresh copy). *Workaround:* monitor the remote
+  PIDs you keep. A message that needs one more entry when none can go is
+  dropped.
+- **Peers can fill the watch table.** Monitors from peers are not
+  deduplicated or capped per peer, so a peer can fill the remote links and
+  monitors table (peers are trusted alike).
+- **A message of many empty slices may be refused.** The decoder refuses
+  a term that would take more than two heap words per byte of encoding;
+  a `[]any` of many empty slices is over that bound, and is dropped as
+  bad.
+- **Who can reach what.** The PIDs a node gave out are reachable by every
+  peer, not only by the one they were sent to.
+- **Not across nodes:** `actor.SendAfter` to a remote PID is `BadMsg`,
+  `actor.Info` reports 0, a remote exit reason has no function name, the
+  sharing of values inside one message is not kept (two fields naming one
+  slice arrive as two copies), pointers and maps do not cross, and a Ref
+  sent back to the node that made it is dropped there.
+- **Own structs** are matched by qualified name, field count and field
+  kinds (a shape hash the compiler stores with the type's name). Images
+  from a compiler before the hash match by name and field count only; a
+  mismatched definition then gives the receiver values of the wrong kind,
+  which may misbehave where it uses them. The hash is stored only in
+  programs that import `gogo/node`: a module compiled apart (hot loaded)
+  that sends its own struct to a remote PID it was handed sends it
+  without one, matched by name and field count only. Share message types
+  through one package.
+- **Drops are silent.** At most once means a message can be lost (a full
+  link queue, a full table, a receiver over its memory limit) without the
+  sender knowing; the link stays up (frames carry their number, gaps are
+  accepted). The counters (`dist_stats`) are visible to C only.
+- **Remote link and monitor notes are made when they fire.** The VM
+  reserves the memory of a local link's or monitor's note in advance; a
+  remote one is allocated when it fires, so under memory exhaustion it
+  can be lost.
+
 ## Storage
 
 - **The LittleFS host test needs a firmware build first.** The

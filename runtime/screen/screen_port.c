@@ -73,8 +73,8 @@ int screen_port_open(struct Vm *vm, Port *p, const int32_t *cfg, uint32_t n, con
     if (cols < 1 || rows < 1 || cols > hw->max_cols || rows > hw->max_rows || cols > (int32_t)SCREEN_MAX_COLS ||
         rows > (int32_t)SCREEN_MAX_ROWS)
         return -1;
-    for (unsigned i = 0; i < GOGO_MAX_PORTS; i++) {   /* one screen per Vm */
-        const Port *q = &vm->ports[i];
+    for (unsigned i = 0; i < vm->port_n; i++) {   /* one screen per Vm */
+        const Port *q = port_at(vm, i);
         if (q != p && q->drv && q->drv->command_term == screen_port_command) return -1;
     }
     uint32_t bytes = (uint32_t)sizeof(ScreenPort) + (uint32_t)cols * (uint32_t)rows * 4u;

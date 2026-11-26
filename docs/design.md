@@ -134,7 +134,7 @@ own were also considered and rejected in favour of Go syntax.
    that imports them: `gogo/supervisor`, `gogo/strings`, `gogo/strconv`,
    `gogo/dhcp`, `gogo/dns`, `gogo/http`, `gogo/sntp`, `gogo/kv`,
    `gogo/ringlog`, `gogo/imulog`, `gogo/wav`, `gogo/sound`,
-   `gogo/irproto`. All import paths are under `gogo/`, never a Go
+   `gogo/irproto`, `gogo/node`. All import paths are under `gogo/`, never a Go
    standard library path. `gogo/strings` and `gogo/strconv` work on bytes
    (no rune decoding). Importing a library compiles all of it into the
    image (no dead-function elimination). Libraries may import system
@@ -150,7 +150,8 @@ own were also considered and rejected in favour of Go syntax.
 **Repository layout.** `runtime/` is the C runtime shared by all boards:
 `vm/` (interpreter and actors), `net/` (the network stack; `net/tls/` is
 the TLS client port on top of it), `vfs/`, `stream/`, `input/`,
-`console/` (the screen console and fonts), `embed/` (the embedding API's
+`console/` (the screen console and fonts), `dist/` (the `node` port of
+distributed actors, §5.13), `embed/` (the embedding API's
 implementation) and `include/` (`gogo.h`, the one public header). `platform/` holds only
 board-specific code (`unix/`, `esp32s3/`). `compiler/` and `cmd/gogo/`
 are the Go toolchain (Go module `gogotools`, the repository root). `lib/`
@@ -636,8 +637,9 @@ type Request struct{ From PID; Ref Ref; Body any }
 
 Reason codes: `Normal`, `Killed`, `OutOfMemory`, `MailboxOverflow`,
 `NoProc`, `DivZero`, `BadCode`, `Shutdown`, `BadShift`, `BadMsg` (a value
-that may not cross modules was sent, §5.4.4), `Panic` (`panic(v)`);
-user codes start at 100.
+that may not cross modules or nodes was sent, §5.4.4, §5.13), `Panic`
+(`panic(v)`), `NoConnection` (the node of a linked or monitored remote
+actor became unreachable, §5.13); user codes start at 100.
 
 A type switch takes the place of Erlang's pattern matching on receive:
 
@@ -723,8 +725,9 @@ btn, err := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge:
   peripherals need no change to the VM core. A generic driver (`gpio`,
   the input ports) is one runtime implementation; a board lists an
   instance of it over its hardware layer (`PortDriver.hw`, §5.11.1).
-  The port table has a fixed
-  size (`GOGO_MAX_PORTS`, 16 by default).
+  The port table grows in chunks of 16 up to a cap per VM
+  (`GOGO_MAX_PORTS`, 16 on a board, 1024 in the host VM, at most 2048;
+  §5.13).
 - Interrupt and input events go through a lock-free single-producer ring
   (`GOGO_EVQ_CAP`): an ISR only writes the ring, without locks or
   allocation, and the scheduler drains it each round into messages.
@@ -1564,7 +1567,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
 | `map[K]V` (15.6) | `T_NIL` | a `K_STRUCT` heap object of the type `map[K]V` (`STRUCT_MUT \| STRUCT_MAP`), one field: the entries slice, keys and values alternating, sorted by key; a package-level map's in the constant area (read-only) | as is (`TYPEIS` -> the type `map[K]V`) | the entries scanned | deep copy |
 | `any` | `T_NIL` | the term of the dynamic value | - | by the dynamic value | by the dynamic value |
 | func value (any signature) | `T_NIL` (`Spawn` and calls are `badcode`) | a `K_CLOSURE` heap object `[hdr][module tag \| function index][captures...]`; `CALLV` passes the captures as leading arguments, then the arguments | not allowed (rejected at compile time) | captures scanned | deep copy |
-| `actor.PID` | `T_ZEROPID` = `0x6` (slot 0, generation 0: slot 0 never has generation 0 and port slots are >= `0xFFF0`, so it equals no live actor or port) | PID immediate `(gen << 20) \| (slot << 4) \| 0x6` | as is (`TYPEIS` -> `PID`) | not scanned | as is |
+| `actor.PID` | `T_ZEROPID` = `0x6` (slot 0, generation 0: slot 0 never has generation 0 and port slots are >= `0xFFF0`, so it equals no live actor or port; slots from `0xF000` up to the first port slot are remote PIDs when the VM has node links, §5.13) | PID immediate `(gen << 20) \| (slot << 4) \| 0x6` | as is (`TYPEIS` -> `PID`) | not scanned | as is |
 | `actor.Ref` | `T_ZEROREF` = `0x42`, a special whose serial counts as 0 | a `K_REF` heap object `[hdr][serial lo][hi]`; serials start at 1 | as is (`TYPEIS` -> `Ref`, the zero value too) | a `K_REF` is copied, content not scanned; `T_ZEROREF` not scanned | `K_REF` deep-copied (same serial); `T_ZEROREF` as is |
 
 Zero PID and Ref: `Send` to the zero PID is dropped; `Link` or `Monitor`
@@ -1914,7 +1917,8 @@ together with `mbox_words` through `actor_charged_words`).
   `B_PRINTLNU` and `OP_CONV` modes 3-6 (`sizedMinor`, which the scan
   reads off each `OP_CONV`'s mode); 15.4 the language's abstraction
   phase, `panic` and the interface and equality builtins (`ifaceMinor`);
-  15.5 is kept for distributed actors; 15.6 the reference phase
+  15.5 distributed actors, the reserved types of the `node` port
+  (`distMinor`, §5.13); 15.6 the reference phase
   (`refMinor`): `OP_SETFIELD`, the type flags (a type row or a constant
   struct with any), the reason `actor.Nil` and the constant slices.
   The versioning policy:
@@ -1948,7 +1952,7 @@ together with `mbox_words` through `actor_charged_words`).
   `strconv.FormatFloat` / `ParseFloat`, `runtime/floatlib`), 55
   `B_PRINTLNU` (15.3: `println` with `uint64` values); from 15.4, 56
   `panic`, 57 `B_CMP` (`==` on structs, arrays and interfaces); 58-60
-  kept for distributed actors (15.5); from 15.6, 61 `B_SPRINT` (gogo/fmt:
+  unused (distributed actors, 15.5, need no builtin); from 15.6, 61 `B_SPRINT` (gogo/fmt:
   the text `println` prints for a value, as a new string, counted then
   written into it, or written to the console).
 - **Float ops** (15.2, `OP_ADDF` .. `OP_CONVF`, 52-61): one set for both
@@ -1981,7 +1985,7 @@ together with `mbox_words` through `actor_charged_words`).
   37-38 `gogo/ir`, 39-40 `gogo/audio`, 41 `net.DialTLS`, 42-43
   `port.Host`, `port.Post` (embed mode), 44 `screen.Config` (15.1), 45-46
   `errors.Code` (the box an error holds it in) and `errors.errorString`
-  (15.4). The 15.0 table (0..43) is frozen by `TestMinorBaseline` in
+  (15.4), 47-48 `net.NodeLink`, `net.NodeEvent` (15.5, §5.13). The 15.0 table (0..43) is frozen by `TestMinorBaseline` in
   `compiler/`. The names of the types after 44 go into an image's
   constant area only with their row, so a new one changes no image that
   does not use it.
@@ -2010,10 +2014,11 @@ together with `mbox_words` through `actor_charged_words`).
 - **Exit reasons** are `actor.Reason{Code int; Func string}`. `Code` is
   `actor.Normal` (the entry function returned), `Killed`, `OutOfMemory`,
   `MailboxOverflow`, `NoProc`, `DivZero`, `BadCode`, `Shutdown`,
-  `BadShift`, `BadMsg`, `Panic` (10), `Nil` (12, 15.6: a nil pointer or
-  map dereference; 11 is kept for distributed actors), a library failure (64..99:
+  `BadShift`, `BadMsg`, `Panic` (10), `NoConnection` (11, 15.5: the node
+  of a linked or monitored remote actor became unreachable, §5.13), `Nil`
+  (12, 15.6: a nil pointer or map dereference), a library failure (64..99:
   `actor.Failed` (64) plus a shared error code, such as
-  `http.ListenFailed`; 11..63 are kept for the VM), or a user code (100
+  `http.ListenFailed`; 13..63 are kept for the VM), or a user code (100
   or more, from
   `actor.Exit(code)` / `actor.Kill(p, code)`); `Func` is the name of the
   function where a run-time error happened, else empty.
@@ -2513,6 +2518,205 @@ no runtime copies):
   `http`, `dns`, `dhcp`, `sntp`, `code`, `supervisor`, `imu`, `ir`,
   `audio`, `sound`, `wav`, `imulog`, `ringlog`, `irproto`. A deprecated
   name stays for one minor release with a compiler warning.
+
+### 5.13 Distributed actors (`gogo/node`, the `node` port)
+
+**Topology (step one): a star.** Boards connect over TCP to one server
+node, a host VM with real sockets (`gogovm --host-net`, or `GOGO_NET=host`:
+`platform/unix/hostnet.c` gives the `tcp` and `tcp_listen` ports on POSIX
+sockets, with the MCU stack's messages; listening binds every interface,
+connections go anywhere; `netif`, `udp` and `tls` stay on the simulated
+stack). The server relays board-to-board frames. `actor.Send`,
+`Call`/`Reply`, `Monitor`, `Link` and `Kill` work on remote PIDs.
+
+**Remote PIDs are proxies.** PID slots from `DIST_SLOT_BASE` (0xF000) up
+to the port PIDs (`vm->port_base`; `vm_dist_of`) name entries of the VM's proxy
+table `{node id, the PID on its node, generation, last use}`
+(`runtime/dist/`). The table interns, so `==` is exact; an entry is freed
+(generation bumped, so its terms name nothing) when its node goes, when
+a message is sent to it after its actor exited (its node answers that
+sender only with GONE, passed on by the server to that node only: an
+exit costs nothing, one GONE per node that still uses the PID), or when
+the full table needs a slot (the least recently used entry that no link
+or monitor names; doors too, made again on demand). A local PID that comes
+back is the local term again. `println` shows `<pid N@node>`. A VM that
+opens a node link keeps its actor table below 0xF000 (the open fails
+otherwise; the embed API's `max_actors` bound is unchanged).
+
+**The core's part** (`VmDist`, `runtime/vm/actor.h`; NULL until the first
+node link opens, and in builds without `runtime/dist`): a PID that names
+no local actor and is a proxy (`vm_dist_of`) goes to a hook in
+`msg_send` and `msg_send_reply` (one function, `send_to`), `B_CALL`,
+`sig_monitor`, `sig_demonitor`, `sig_link`, `sig_unlink`, `sig_kill` and
+`println`; `actor_exit` calls the `exited` hook; `B_SEND_AFTER` to a
+proxy is `R_BAD_MSG`. A Call to a proxy with no route returns `(nil,
+false)` at once (`h_send` returns 1); a reply block flagged `MSG_FAILED`
+ends a Call the same way (`msg_take_reply` returns 2). The core keeps no
+entries for remote peers. Cost, with the growable port table and the
+per-VM caps: +449 B of VM core (tools/vmsize.sh, linked: 35943 -> 36392).
+
+**The `node` port** (`runtime/dist/dist.c`, outside the core, 12.1 KB linked
+of code with `hmac.c`): one port per link, opened by `gogo/node` with
+`net.NodeLink{Self, Peer, Relay, Agent, Name, Key, Conn, Hello}` (reserved type 47,
+format 15.5) once its handshake succeeded. Its owner (the link actor)
+feeds it the peer's bytes as `port.Out`; it emits every frame for the
+peer as one `port.Chunk`, and `net.NodeEvent{From, Kind, Node, Agent,
+Name}` (48): `NodeUp` when it opens and, on a board, for every board the
+server reports (NODEUP), with no door: the owner asks for a node's door
+when it needs one (`NodeDoor`, sent to the port and answered with the
+door, made on demand); `NodeDown` when the server reports a node gone
+(NODEDOWN); `NodeCarried` (the carrier, below). The driver holds the frame MACs, the
+codec, the proxy table, the export table, the remote links and monitors
+("watches"), the Calls in flight, the relay and the frame reassembly.
+The tables are sized by the VM's link cap *L* (`vm->max_links`: config
+`node.max_links`, `gogovm --max-links`, `gogo_config.max_links`; 8 on a
+board, 512 on a host): 48 + 2*L* proxies (and at most `port_base -
+DIST_SLOT_BASE`, the slots between 0xF000 and the port PIDs), 48 + 2*L*
+exports, 16 + 2*L* watches, 8 + *L* Calls, about 96 bytes per unit of *L*
+on 32-bit, allocated from the VM's allocator at the first open and kept
+for the VM's life; a Link (its MAC key state, ~300 bytes) is allocated
+when first used and reused. A full Calls table makes a new remote Call
+fail at once (it could not fail at once on node loss otherwise). A full
+proxy table evicts the least recently used proxy no watch names (u16
+use clock: after 65536 uses an old entry may look new, which only
+changes the victim).
+
+**Ports and the carrier.** The port table grows in chunks of 16 that
+never move, up to the VM's cap (`vm_set_max_ports`, before the first
+open: config `vm.max_ports`, `gogovm --max-ports`,
+`gogo_config.max_ports`; 16 on a board, 1024 on a host, at most
+`PORT_MAX_CEILING` 2048). Port PIDs take the top slots (`port_base =
+0x10000 - cap`), remote PIDs the slots from 0xF000 below them, actors
+the rest (`table_cap` must stay at or under 0xF000 for a node to open).
+A board whose stream ports can hand over their connection offers a
+`DistCarrier` (`VmBoard.dist_carrier`; host sockets under
+`--host-net`): `net.NodeLink.Conn` names the link's tcp port, the node
+port takes its socket and closes it, and reads and writes it itself, so
+a link costs one port. `NodeLink.Hello` is sent first as it is (the
+server's welcome). The node port tells its owner `NodeCarried` after the
+Chunks the tcp port had already delivered, and reads nothing until the
+owner, having forwarded those, sends `net.Resume`. The MCU stack has no
+carrier: there the link actor pumps the tcp port's Chunks into the node
+port as before (two ports per link). Routing: the link whose peer is the
+destination, else the link opened with `Relay` (a board's link to the
+server).
+
+**Wire format.** Frames are `u16 length` (little-endian, at most
+`DIST_FRAME_MAX`, 4096 bytes in all) + `u32 number` + `u8 type, u8 flags,
+u16 dst node, u16 src node` + fields + a 16-byte MAC: HMAC-SHA-256 under
+the link's session key over the number, the sender's id on the link (the
+hop's, never the header's src) and the body (`runtime/dist/hmac.c`). Each
+side numbers its frames from 1 up; the receiver accepts any number above
+the last one it accepted, so a frame dropped after it was numbered (a
+full queue) is only a gap, while a replayed or reordered frame is
+refused (counted as bad, the link stays). The last number, 0xFFFFFFFF,
+ends the link once its frame is taken (a sender at it drops further
+frames), so a link that has sent 2^32 - 1 frames goes down and the board
+connects again with a new key. A wrong MAC ends the link. Frames:
+SEND (u32 dst PID, 0 = the door; term), REPLY (u32 dst PID, u64 Ref
+serial; term), LINK/UNLINK (u32 from, u32 to), EXIT and KILL (from, to,
+u32 code), MONITOR/DEMONITOR (u32 watcher, u32 target, u64 serial), DOWN
+(watcher, target, serial, code), NODEDOWN (u16 node), NODEUP (u16 node,
+name), GONE (u32 PID). Terms are a tag byte and a payload (LEB128 varints,
+ints zigzag): nil, false, true, int, boxed int64, string, `Bytes`,
+`[]byte`, slice of terms, nil slice, reserved struct (type id, field
+count, fields), PID (node id, that node's term), zero PID, Ref (node id,
+48-bit serial), zero Ref, empty string, empty `Bytes`, a module's own
+struct (field count, qualified type name, fields; 0x11), the same with
+its shape hash first (0x12), float32 (0x13, its 4 bytes) and float64
+(0x14, its 8 bytes). Tags 0x15..0x3F are kept for later term kinds. Node ids are global (the server assigns them, 1 itself, a fresh
+one per connection), so relayed frames keep their src and dst; the
+server checks the MAC of each hop and makes a new one for the next.
+
+**What crosses (strict).** The table above. A reserved struct must have
+exactly this VM's field count for its id. An own struct is matched in
+the receiving actor's module by qualified name, field count and shape: in
+a program that imports `gogo/node` (only), the compiler stores a shape hash (FNV-1a over the fields' kinds) in one word
+after the bytes of the type's name constant, which a VM reads by its
+length and never sees, so no format change; a mismatch drops the message.
+An interface box of a named non-struct type (`STRUCT_BOX`, 15.6) crosses
+as an own struct; the receiver's row gives it its own box flag, so a 15.5
+and a 15.6 image exchange them. Pointers' targets and maps (types with
+`STRUCT_MUT`), closures,
+`bytes.Buffer`, port PIDs, nesting deeper than 16 and frames over 4 KB
+crash the sender with `R_BAD_MSG`, as at a module boundary; a stale module
+value is `R_BAD_CODE`. The encoding is a tree: sharing inside one message
+is not kept, and a cycle fails at depth 16. A Ref decodes as `node << 48 |
+serial`; a peer may not send this node's own Refs (they could forge a
+reply or a `DownMsg`). Decoding validates every length, tag, varint width
+and field count before it allocates, and refuses a term that would take
+more than two heap words per byte of its encoding (nested empty slices
+expand twelvefold): it builds only well-formed terms (no handles, no const
+refs, own types only of the receiver's module).
+
+**Delivery.** At most once, in order per pair of actors (one TCP stream
+per hop, FIFO mailboxes, synchronous decode into the receiver's mailbox).
+Unlike a local send, a remote message over the receiver's quota is
+dropped, never the receiver killed. Dropped (counted in `DistStats`): a
+stale proxy, a full proxy or export table, the link actor's mailbox or 8
+KB queue full (the frame is a gap in the numbers; the link stays), an
+undecodable or unmatched term, a destination that is not exported or
+dead. The link actor paces frames into `port.Out`s of up
+to 1400 bytes with TCP's `Done`s (two in flight).
+
+**Links, monitors, Kill.** A watch is `{kind, local actor, node, peer,
+serial}`: MON_OUT (a local actor monitors a proxy), MON_IN (a remote
+watcher monitors a local actor), LINK. Exits send DOWN or EXIT with the
+code (remote reasons carry no function name); `Demonitor`/`Unlink` send
+DEMONITOR/UNLINK; `Kill` sends KILL, which the target node applies as
+`sig_kill` does, to an exported actor only, never to its door (nor LINK:
+the door traps exits, and the agent monitors it rather than linking). EXIT and
+DOWN are accepted only for a matching watch, LINK/MONITOR/KILL only for an
+exported target. A remote link's exit signal reaches a trapping actor as
+an `ExitMsg` whatever its code, as the VM's own link signals. When a link
+closes every node routed through it is gone: MON_OUT entries deliver
+`DownMsg{NoConnection}` (`actor.NoConnection`, 11), LINK entries an exit
+signal `NoConnection`, the Calls in flight to it get a failed reply, the
+node's proxies are freed, and the server sends NODEDOWN to its other
+links. Monitoring or linking a proxy with no route (or with the watch
+table full) answers at once with `NoConnection`. Remote notes are
+allocated when they fire (local links reserve theirs in advance).
+
+**`gogo/node`.** Two actors per node. The agent (locally registered
+`node`, its PID never sent anywhere) holds the node table, the exported
+names and the subscribers, and serves this package's calls; on the server
+also id assignment. The door (`NodeLink.Agent`, a node's zero PID)
+answers peers' `whereisReq` Calls only, asking the agent. Node news comes
+from the links (`NodeEvent`, made in C), never from peers' messages. A
+link actor per connection runs the handshake, then pumps.
+`actor.Register` names are never visible remotely. The link actors and
+the listener monitor the agent (a monitor is charged to its watcher, so
+the agent pays nothing per board for it): if the agent dies they end,
+their ports close, and when a VM's last node port closes
+the driver forgets its exports, door and id, so the next `Listen` or
+`Connect` (a new agent) starts a fresh node.
+
+**Handshake and security.** A shared token (config `node.token`, or
+`Options.Token`; none: no Listen or Connect). The server sends a 16-byte
+nonce Ns; the client answers with its nonce Nc, its name and
+HMAC-SHA-256(token, "gogo-node-c" Ns Nc name); the server checks it,
+assigns the id, opens the node port, and only then answers with HMAC(token,
+"gogo-node-s" Nc Ns ids serverName name), or rejects and closes. Both
+derive the session key HMAC(token, "gogo-node-k" Ns Nc ids serverName
+clientName). At most two connections may be in their handshake on a
+server; more are closed at once, and a handshake ends after 5 s. SHA-256
+is written in the subset (`lib/node/sha.gg`) for the handshake and in C
+(`runtime/dist/hmac.c`) for the frames. A peer reaches the door and the
+PIDs this node gave out (to any peer); the server enforces src == the
+link's peer on frames from boards. All token holders are trusted alike.
+The links are not encrypted: readable on the path, but not changeable.
+
+**Topology C (direction).** Direct LAN links between boards, the server as
+directory and fallback relay: NODEUP gains a board's address; a board
+dials the other board's `tcp_listen`, runs the same handshake with the ids
+the server gave, and opens a second `node` port with `Peer` set and `Relay`
+0. Routing already prefers a direct link and falls back to the relay; ids,
+wire PIDs and Refs are already global. Two changes will be needed:
+`n_close` must not fire monitors when a direct link closes while the
+relay still routes to that node (only a NODEDOWN from the server means
+the node is gone), and exact per-pair order across a switch from relay
+to direct would need a FENCE frame (a new frame type, announced by the
+protocol version in the handshake).
 
 ## 6. Status and roadmap
 

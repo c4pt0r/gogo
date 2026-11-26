@@ -23,6 +23,11 @@ set(GOGO_TLS_SRCS "")
 if(CONFIG_GOGO_TLS)
     set(GOGO_TLS_SRCS "${GOGO_ROOT}/runtime/net/tls/tls.c" "${GOGO_ROOT}/runtime/net/tls/anchor.c")
 endif()
+# Distributed actors (GOGO_DIST): the "node" port (pure C99).
+set(GOGO_DIST_SRCS "")
+if(CONFIG_GOGO_DIST)
+    file(GLOB GOGO_DIST_SRCS "${GOGO_ROOT}/runtime/dist/*.c")
+endif()
 # Storage (spec storage §5): the vfs core and the B_FS builtin (pure C99),
 # with LittleFS (runtime/vfs/lfs) on the partition fs_lfs.c describes as
 # /flash.
@@ -142,8 +147,8 @@ idf_component_register(
     SRCS main.c platform_esp.c gpio_esp.c image_part.c console_task.c lcd_st7789.c
          ${GOGO_WIFI_SRCS} config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
          ${GOGO_IMU_SRCS} ${GOGO_IR_SRCS} ${GOGO_AUDIO_SRCS}
-         ${GOGO_VM_SRCS} ${GOGO_FLOATLIB_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_GPIO_SRCS} ${GOGO_SERVICE_SRCS} ${GOGO_VFS_SRCS} ${GOGO_FSBE_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_SCREEN_SRCS} ${GOGO_COMMON_SRCS}
-    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/runtime/vm" "${GOGO_ROOT}/runtime/net" "${GOGO_ROOT}/runtime/net/tls" "${GOGO_ROOT}/runtime/vfs" "${GOGO_ROOT}/runtime/vfs/lfs" "${GOGO_ROOT}/runtime/vfs/fat" "${GOGO_ROOT}/runtime/gpio" "${GOGO_ROOT}/runtime/configsvc" "${GOGO_ROOT}/runtime/board" "${GOGO_ROOT}/runtime/input" "${GOGO_ROOT}/runtime/stream" "${GOGO_ROOT}/runtime/screen" "${GOGO_ROOT}/runtime/console"
+         ${GOGO_VM_SRCS} ${GOGO_FLOATLIB_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_DIST_SRCS} ${GOGO_GPIO_SRCS} ${GOGO_SERVICE_SRCS} ${GOGO_VFS_SRCS} ${GOGO_FSBE_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_SCREEN_SRCS} ${GOGO_COMMON_SRCS}
+    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/runtime/vm" "${GOGO_ROOT}/runtime/net" "${GOGO_ROOT}/runtime/net/tls" "${GOGO_ROOT}/runtime/dist" "${GOGO_ROOT}/runtime/vfs" "${GOGO_ROOT}/runtime/vfs/lfs" "${GOGO_ROOT}/runtime/vfs/fat" "${GOGO_ROOT}/runtime/gpio" "${GOGO_ROOT}/runtime/configsvc" "${GOGO_ROOT}/runtime/board" "${GOGO_ROOT}/runtime/input" "${GOGO_ROOT}/runtime/stream" "${GOGO_ROOT}/runtime/screen" "${GOGO_ROOT}/runtime/console"
     EMBED_FILES "${GOGO_ROOT}/runtime/console/font/${GOGO_FONT_FILE}"
     LDFRAGMENTS linker.lf
     PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c esp_adc
@@ -223,4 +228,4 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Os -Wall -Wextra -Werror
     -Werror=extra -Wunused-parameter -Wsign-compare -Werror=unused-function
     -Werror=unused-variable -Werror=unused-but-set-variable)
 # The VM core is portable C99.
-set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_FLOATLIB_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_GPIO_SRCS} ${GOGO_SERVICE_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_SCREEN_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")
+set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_FLOATLIB_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_DIST_SRCS} ${GOGO_GPIO_SRCS} ${GOGO_SERVICE_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_SCREEN_SRCS} ${GOGO_COMMON_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")

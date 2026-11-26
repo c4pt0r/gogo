@@ -39,7 +39,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
  │  system → VM builtins: actor port bytes fs sys net code kbd power imu ir │
  │                       audio screen gpio                                  │
  │  libraries in gogo:   supervisor strings strconv dhcp dns http sntp kv   │
- │                       ringlog wav sound irproto tui …                    │
+ │                       ringlog wav sound irproto tui node …               │
  └────────────────────────────────────────────────┬─────────────────────────┘
  ┌────────────────────────────────────────────────▼─────────────────────────┐
  │ compiler/  (Go, module gogotools)                                        │
@@ -66,19 +66,19 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
  │ └───────────────────────┘ └───────────────────────────────────────────┘│
  └─────────────────────────────────────┬──────────────────────────────────┘
                                        │ PortDriver / PortSource
- ┌────────┬─────────┬─────────┬────────┴┬───────────┬──────────┬──────────┐
- │ net    │ net/tls │ vfs     │ stream  │ input     │ console  │ screen   │
- │ eth arp│ mbedTLS │ /flash  │ Chunk   │ kbd power │ text +   │ (tui)    │
- │ ip udp │ cert    │ /sd     │ Out Done│ imu ir    │ CJK font │ cells    │
- │ tcp    │ bundle  │ sandbox │ Closed  │ audio     │          │ LCD ANSI │
- └────────┴─────────┴─────────┴─────────┴───────────┴──────────┴──────────┘
+ ┌────────┬─────────┬────────┬─────────┴┬───────────┬──────────┬──────────┐
+ │ net    │ net/tls │ vfs    │ stream   │ input     │ console  │ dist     │
+ │ eth arp│ mbedTLS │ /flash │ Chunk    │ kbd power │ + screen │ node port│
+ │ ip udp │ cert    │ /sd    │ Out Done │ imu ir    │ CJK font │ proxies  │
+ │ tcp    │ bundle  │ sandbox│ Closed   │ audio     │ (tui)    │ relay    │
+ └────────┴─────────┴────────┴──────────┴───────────┴──────────┴──────────┘
                                        │ gogo_host + VmBoard tables
           ┌────────────────────────────┼─────────────────────────────┐
  ┌────────▼───────────────┐ ┌──────────▼───────────┐ ┌───────────────▼─────────┐
  │ platform/esp32s3       │ │ platform/unix        │ │ runtime/embed           │
  │ ESP-IDF · FreeRTOS     │ │ gogovm (host VM)     │ │ libgogo.a + gogo.h      │
  │ M5StickS3   Cardputer  │ │ sim net / gpio / mic │ │ gogo_step · gogo_post   │
- │ Wi-Fi LCD I2S IR IMU   │ │ --fs-root --without  │ │ host ports · sandbox fs │
+ │ Wi-Fi LCD I2S IR IMU   │ │ --fs-root --host-net │ │ host ports · sandbox fs │
  │ LittleFS FAT NVS PSRAM │ │                      │ │ → C, Rust, Go, Swift    │
  └────────────────────────┘ └──────────────────────┘ └─────────────────────────┘
 
@@ -99,6 +99,7 @@ the boards, in the host VM, and inside other programs through
 | `runtime/vm/` | the VM core: interpreter, actors, scheduler, GC, ports, modules, floats |
 | `runtime/floatlib/` | `gogo/math` and `strconv.FormatFloat` / `ParseFloat` (pure C, no libm; built with the `GOGO_FLOAT` option) |
 | `runtime/net/` | the TCP/IP stack (Ethernet, ARP, IPv4, ICMP, UDP, TCP), pure C; `runtime/net/tls/`, the TLS client port over it (mbedTLS) |
+| `runtime/dist/` | the `node` port of distributed actors: remote PIDs, the wire codec, remote links and monitors, the relay ([book chapter 20](docs/book/20-distributed.md)) |
 | `runtime/vfs/`, `runtime/stream/`, `runtime/input/`, `runtime/console/`, `runtime/screen/` | file systems, the stream protocol of every byte port (`Chunk`/`Out`/`Done`/`Closed`), input and audio ports, the screen console and fonts, the `screen` port (a text grid; `gogo/tui` builds on it) |
 | `platform/unix/` | the host VM (`build/gogovm`) and its simulated hardware |
 | `platform/esp32s3/` | the ESP-IDF firmware for both boards ([README](platform/esp32s3/README.md)) |
@@ -213,7 +214,7 @@ The book chapter [Embedding gogo](docs/book/18-embedding.md) is the guide;
 
 ## Documentation
 
-- [Programming gogo](docs/book/README.md): the book, 20 chapters, every
+- [Programming gogo](docs/book/README.md): the book, 21 chapters, every
   example tested. Read it online at
   <https://gogovm.dev/book/>, or build the site locally with
   `make site` (mdBook, into `build/site`, next to the landing page).
@@ -257,12 +258,17 @@ Done:
 - **Embedding:** `libgogo.a` with a C API (§5.11 of the design notes);
   a Go binding, and in-process compilation for Go and C hosts
   (`libgogoc.a`).
+- **Distributed actors, step one:** `gogo/node`: boards join a server node
+  (a host VM with real sockets) that relays between them; remote PIDs
+  work with `Send`, `Call`, `Monitor` and `Link`, and a lost node fires
+  monitors and links with `NoConnection` (book chapter 20). Frames are
+  authenticated, not encrypted: trusted networks only.
 
 Next, in order:
 
-1. **Distributed actors** (in progress): boards and a server node
-   exchanging actor messages, first through the server; direct links
-   between boards later.
+1. **Distributed actors, next:** direct links between boards on the same
+   network (the server as directory and fallback relay), TLS on node
+   links.
 2. **More hardware:** the Arduino Nano ESP32, RP2040 boards, Bluetooth
    (BLE); a `usb` port for the serial connection later.
 3. **Embedding bindings:** Rust, iOS and Android.

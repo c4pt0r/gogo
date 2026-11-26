@@ -1,10 +1,11 @@
 /* Ports: peripherals as special actors with a PID.
  *
- * A fixed table of GOGO_MAX_PORTS entries lives in the Vm. A port PID is an
- * ordinary PID term whose slot is PORT_SLOT_BASE + index and whose
- * generation is the entry's 12-bit generation, bumped on every close, so a
- * stale PID never names a newer port. vm_init keeps the actor table below
- * PORT_SLOT_BASE, so actor_lookup returns NULL for a port PID (Link and
+ * The Vm's port table grows in chunks of PORT_CHUNK up to its cap
+ * (vm->port_max, vm_set_max_ports). A port PID is an ordinary PID term
+ * whose slot is vm->port_base + index (port_base = PORT_SLOT_TOP - cap)
+ * and whose generation is the entry's 12-bit generation, bumped on every
+ * close, so a stale PID never names a newer port. The actor table stays
+ * below port_base, so actor_lookup returns NULL for a port PID (Link and
  * Monitor treat it as dead).
  *
  * Drivers never see terms: the VM decodes the int fields of the cfg and
@@ -54,7 +55,14 @@
 struct Vm;
 struct Actor;
 
-#define PORT_SLOT_BASE 0xFFF0u
+/* Port PIDs use the top slots: index i of a Vm whose cap is max_ports is
+ * slot 0x10000 - max_ports + i (vm->port_base + i; with 16 ports,
+ * 0xFFF0..0xFFFF as always). The cap may be at most PORT_MAX_CEILING, so
+ * port slots never reach below 0xF800 and the remote PIDs of distribution
+ * keep 0xF000 up to vm->port_base (term.h). */
+#define PORT_SLOT_TOP     0x10000u
+#define PORT_MAX_CEILING  2048u
+#define PORT_CHUNK        16u        /* the table grows by this many ports */
 
 /* Most int fields the VM decodes from a cfg or command struct. */
 #define PORT_MAX_FIELDS 8u
@@ -64,7 +72,8 @@ typedef struct PortDriver {
     const char *name;
     uint32_t cfg_type;      /* reserved type index the cfg struct must have */
     uint32_t event_type;    /* reserved type of event messages: struct of 2 ints (a, b) */
-    /* cfg: the cfg struct's int fields in order. 0 = ok, else refuse. */
+    /* cfg: the cfg struct's int fields in order. 0 = ok; a GOGO_E_* code
+     * (> 0) refuses for that reason, anything else (< 0) as busy. */
     int  (*open)(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n);
     /* A command struct of reserved type `type` whose fields are all int. */
     void (*command)(struct Vm *vm, Port *p, uint32_t type, const int32_t *f, uint32_t n);
@@ -130,13 +139,18 @@ term port_open(struct Vm *vm, struct Actor *owner, term name, term cfg);   /* po
  * GOGO_E_TOOMANY (the port table is full), GOGO_E_NOMEMORY (the owner
  * cannot take the port's charge and room, or the port count) or
  * GOGO_E_BUSY (the driver refused: the resource is taken, or a cfg it
- * cannot use). port_open_with of a driver without `open`, a C caller's
+ * cannot use), or the code a driver's open returned (> 0: e.g.
+ * GOGO_E_UNSUPPORTED, no network at all). port_open_with of a driver without `open`, a C caller's
  * mistake, leaves it as it was; after a success it is meaningless. Go code
  * still gets only port.Open's ok == false; the reason is for C callers
  * (gogo/fs's Open) until the language has `error`. */
 term port_open_with(struct Vm *vm, struct Actor *owner, const PortDriver *drv,
                     const int32_t *f, uint32_t n);
-bool port_is(term pid);
+bool port_is(const struct Vm *vm, term pid);
+/* Sets vm's most ports open at once (0: GOGO_MAX_PORTS): before any port
+ * opens. -1 if n is above PORT_MAX_CEILING, a port was opened already, or
+ * the actor table reaches into the slots the ports would take. */
+int vm_set_max_ports(struct Vm *vm, uint32_t n);
 /* Hands the struct msg (read in place on `from`'s heap: no copy, no
  * mailbox, no quota) to the port's driver: raw to command_term if the
  * driver has one, else decoded; a message that is not a struct of at most

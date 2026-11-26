@@ -1,0 +1,33 @@
+// The node agent dies (killed here): remote PIDs report NoConnection, and
+// a later Connect starts a fresh node that works.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/sys"
+)
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	println("connect", node.Connect(addr, "phoenix") == nil)
+	echo, err := node.Whereis("server", "echo", 2000)
+	println("whereis", err == nil)
+	ref := actor.Monitor(echo)
+	agent, _ := actor.Whereis("node")
+	actor.Kill(agent, actor.Killed)
+	m, ok := actor.ReceiveTimeout(3000)
+	switch d := m.(type) {
+	case actor.DownMsg:
+		println("down", ok, d.Ref == ref, d.Reason.Code == actor.NoConnection)
+	}
+	println("self after", node.Self() == "")
+	println("connect again", node.Connect(addr, "phoenix") == nil)
+	echo, err = node.Whereis("server", "echo", 2000)
+	println("whereis again", err == nil)
+	r, ok := actor.Call(echo, "hi", 2000)
+	switch s := r.(type) {
+	case string:
+		println("call", ok, s)
+	}
+}

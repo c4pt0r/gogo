@@ -180,12 +180,12 @@ TEST(port_open_close) {
     setup(w, &img, &vm);
     Actor *a = waiting_actor(&vm);
     term p = open_fake(&vm, a, 25);
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     CHECK(term_is_pid(p));
     CHECK(term_pid_slot(p) >= PORT_SLOT_BASE);
     CHECK_EQ(term_pid_slot(p) - PORT_SLOT_BASE, fk.index);
     CHECK(actor_lookup(&vm, p) == NULL);
-    CHECK(!port_is(a->id));
+    CHECK(!test_port_is(a->id));
     CHECK_EQ(fk.opens, 1);
     CHECK_EQ(fk.n, 2u);
     CHECK_EQ(fk.cfg[0], 25);
@@ -257,9 +257,28 @@ TEST(port_open_fails) {
     teardown();
 }
 
+/* The first 16 ports live in the Vm, as the fixed table did: opening
+ * them takes nothing from the allocator (a board's actor arena); a
+ * larger table's further chunks are allocated as they are reached. */
+TEST(port_table_first_chunk_in_vm) {
+    uint32_t w[MINI_WORDS]; Image img; Vm vm;
+    setup(w, &img, &vm);
+    Actor *a = waiting_actor(&vm);
+    CHECK(open_fake(&vm, a, 1) != T_NIL);
+    CHECK(vm.port_chunk == &vm.port_chunk1 && vm.port_chunk[0] == vm.port_first);
+    size_t base = va_used_bytes(&vm);
+    for (int i = 1; i < 16; i++) CHECK(open_fake(&vm, a, 1) != T_NIL);
+    CHECK_EQ(va_used_bytes(&vm), base);
+    teardown();
+}
+
 TEST(port_owner_exit) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
+    Actor *c = waiting_actor(&vm);
+    port_close(&vm, open_fake(&vm, c, 1));
+    actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
+    fk.closes = 0;
     size_t base = va_used_bytes(&vm);
     Actor *a = waiting_actor(&vm), *b = waiting_actor(&vm);
     term p1 = open_fake(&vm, a, 1);
@@ -995,7 +1014,7 @@ TEST(port_command_term_and_subscribe) {
     port_set_drivers(&vm, raw_list);
     Actor *a = waiting_actor(&vm);
     term p = open_fake(&vm, a, 3);
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     term msg = heap_str(&vm, a, "not a struct");
     port_command(&vm, a, p, msg);
     CHECK_EQ(rawk.raw, 1);
@@ -1114,14 +1133,14 @@ TEST(fourth_source_refused) {
     teardown();
 }
 
-static const Port *first_port(Vm *vm) { return &vm->ports[0]; }
+static const Port *first_port(Vm *vm) { return port_at(vm, 0); }
 
 TEST(deliver_ints_struct) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
     Actor *a = waiting_actor(&vm);
     term p = open_fake(&vm, a, 1);
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     int32_t v[2] = { 7, 1 << 30 };
     CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_GPIO_EDGE, v, 2, 0));
     CHECK_EQ(mbox_len(a), 1);
@@ -1141,7 +1160,7 @@ TEST(deliver_ints_bool) {
     setup(w, &img, &vm);
     Actor *a = waiting_actor(&vm);
     term p = open_fake(&vm, a, 1);
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     int32_t v[2] = { 5, PORT_BOOL(1) };
     CHECK(port_deliver_ints(&vm, first_port(&vm), TYPE_GPIO_EDGE, v, 2, PORT_RAW(1)));
     const Msg *m = a->mbox_head;
@@ -1163,7 +1182,7 @@ TEST(deliver_ints_full_mailbox_not_fatal) {
     setup(w, &img, &vm);
     Actor *a = waiting_actor(&vm);
     term p = open_fake(&vm, a, 1);
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     a->max_words = 96;
     int32_t v[2] = { 1, 2 };
     int sent = 0;
@@ -1223,7 +1242,7 @@ TEST(port_stale_values_badcode) {
         if (k >= 3) {
             o = actor_new(&vm, 64);
             R[0] = open_fake(&vm, o, 1);
-            CHECK(port_is(R[0]));
+            CHECK(test_port_is(R[0]));
             term cmd = heap_struct(&vm, a, 7, cfg, 2);
             if (k == 3) a->mem[term_ref_off(cmd) + 2] = stale;               /* stale field */
             else a->mem[term_ref_off(cmd) + 1] = 40u | tag;                 /* stale type */
@@ -1278,7 +1297,7 @@ TEST(port_open_term) {
     term cfg = term_from_ref(off);
     term name = heap_str(&vm, a, "fake");
     term p = port_open(&vm, a, name, cfg);
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     CHECK_EQ(otk.opens, 1);
     CHECK_EQ(fk.opens, 0);                      /* open is not used */
     CHECK(otk.owner == a && otk.cfg == cfg);

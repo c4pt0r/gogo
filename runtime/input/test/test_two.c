@@ -147,7 +147,7 @@ TEST(input_two_vms_do_not_cross) {
         CHECK(own[i] != NULL);
         own[i]->state = A_WAITING;
         kbd[i] = open_port(&vm[i], own[i], "kbd", TYPE_KBD_CONFIG);
-        CHECK(port_is(kbd[i]));
+        CHECK(test_port_is(kbd[i]));
         CHECK_EQ(hw[i].opens, 1);
     }
     CHECK(st[0].kbd.port != st[1].kbd.port);
@@ -171,7 +171,7 @@ TEST(input_two_vms_do_not_cross) {
     /* Power: each samples its own chip. */
     for (int i = 0; i < 2; i++) {
         pwr[i] = open_port(&vm[i], own[i], "power", TYPE_POWER_CONFIG);
-        CHECK(port_is(pwr[i]));
+        CHECK(test_port_is(pwr[i]));
     }
     port_drain(&vm[0], 3);
     port_drain(&vm[1], 3);
@@ -198,7 +198,7 @@ TEST(input_two_vms_do_not_cross) {
     port_set_drivers(&bare, drivers[0]);
     Actor *b = actor_new(&bare, 256);
     CHECK(b != NULL);
-    CHECK(!port_is(open_port(&bare, b, "kbd", TYPE_KBD_CONFIG)));
+    CHECK(!test_port_is(open_port(&bare, b, "kbd", TYPE_KBD_CONFIG)));
     CHECK(input_failed(&bare));
 
     port_close_all(&bare);

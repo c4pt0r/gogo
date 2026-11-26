@@ -140,34 +140,34 @@ static void collect(Actor *a) {
 TEST(imu_open_without_hw_fails) {
     setup();
     fake_no_imu();
-    CHECK(!port_is(open_imu(owner, 100, 0, 200)));
+    CHECK(!test_port_is(open_imu(owner, 100, 0, 200)));
     teardown();
 }
 
 TEST(imu_open_hw_refuses) {
     setup();
     fake_imu_open_fail(true);
-    CHECK(!port_is(open_imu(owner, 100, 1, 200)));
+    CHECK(!test_port_is(open_imu(owner, 100, 1, 200)));
     fake_imu_open_fail(false);
-    CHECK(port_is(open_imu(owner, 100, 1, 200)));      /* the failed open left nothing behind */
+    CHECK(test_port_is(open_imu(owner, 100, 1, 200)));      /* the failed open left nothing behind */
     teardown();
 }
 
 TEST(imu_invalid_config) {
     setup();
-    CHECK(!port_is(open_imu(owner, 10, 0, 200)));      /* rate not in {0,25,50,100,200} */
-    CHECK(!port_is(open_imu(owner, -25, 0, 200)));
-    CHECK(!port_is(open_imu(owner, 400, 0, 200)));
-    CHECK(!port_is(open_imu(owner, 100, 256, 200)));   /* unknown gesture bit */
-    CHECK(!port_is(open_imu(owner, 100, -1, 200)));
+    CHECK(!test_port_is(open_imu(owner, 10, 0, 200)));      /* rate not in {0,25,50,100,200} */
+    CHECK(!test_port_is(open_imu(owner, -25, 0, 200)));
+    CHECK(!test_port_is(open_imu(owner, 400, 0, 200)));
+    CHECK(!test_port_is(open_imu(owner, 100, 256, 200)));   /* unknown gesture bit */
+    CHECK(!test_port_is(open_imu(owner, 100, -1, 200)));
     CHECK_EQ(fake_imu_opens(), 0);                     /* the hardware was never touched */
     int rates[] = { 0, 25, 50, 100, 200 };
     for (int i = 0; i < 5; i++) {
         term p = open_imu(owner, rates[i], 255, 50);
-        CHECK(port_is(p));
+        CHECK(test_port_is(p));
         port_close(&vm, p);
     }
-    CHECK(port_is(open_imu(owner, 100, 0, 0)));        /* default batch */
+    CHECK(test_port_is(open_imu(owner, 100, 0, 0)));        /* default batch */
     CHECK_EQ(fake_imu_rate(), 100);
     teardown();
 }
@@ -177,14 +177,14 @@ TEST(imu_batch_ms_clamped) {
     setup();
     uint64_t d;
     term p = open_imu(owner, 100, 0, 10);              /* -> 50: polls every 50 ms, a Chunk per poll */
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     fake_imu_push(5, 0);
     step(50);
     collect(owner);
     CHECK_EQ(ngot, 1);
     port_close(&vm, p);
     p = open_imu(owner, 25, 0, 5000);                  /* -> 1000: 300 B cap */
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     fake_imu_push(30, 0);
     step(1050);
     collect(owner);
@@ -192,7 +192,7 @@ TEST(imu_batch_ms_clamped) {
     CHECK_EQ(got[0].len, 300u);
     port_close(&vm, p);
     p = open_imu(owner, 100, 0, -3);                   /* -> 200 */
-    CHECK(port_is(p));
+    CHECK(test_port_is(p));
     fake_imu_push(5, 0);
     step(1050 + 150);
     collect(owner);
@@ -209,11 +209,11 @@ TEST(imu_second_owner_fails_and_reopen) {
     Actor *b = actor_new(&vm, 256);
     b->state = A_WAITING;
     term pp = open_imu(owner, 100, 0, 200);
-    CHECK(port_is(pp));
-    CHECK(!port_is(open_imu(b, 100, 0, 200)));
+    CHECK(test_port_is(pp));
+    CHECK(!test_port_is(open_imu(b, 100, 0, 200)));
     port_close(&vm, pp);
     CHECK_EQ(fake_imu_closes(), 1);
-    CHECK(port_is(open_imu(b, 50, 3, 100)));
+    CHECK(test_port_is(open_imu(b, 50, 3, 100)));
     CHECK_EQ(fake_imu_opens(), 2);
     CHECK_EQ(fake_imu_rate(), 50);
     CHECK_EQ(fake_imu_mask(), 3);
@@ -222,7 +222,7 @@ TEST(imu_second_owner_fails_and_reopen) {
 
 TEST(imu_batching_timing) {
     setup();
-    CHECK(port_is(open_imu(owner, 100, 0, 200)));      /* batch 200 ms: 240 B max, polled every 50 ms */
+    CHECK(test_port_is(open_imu(owner, 100, 0, 200)));      /* batch 200 ms: 240 B max, polled every 50 ms */
     uint64_t d;
     CHECK(port_next_deadline(&vm, &d));
     CHECK_EQ(d, 50);
@@ -263,7 +263,7 @@ TEST(imu_batching_timing) {
 
 TEST(imu_batch_full_sends_early) {
     setup();
-    CHECK(port_is(open_imu(owner, 25, 0, 1000)));      /* 25 * 12 = 300 B per second: poll at 50 ms */
+    CHECK(test_port_is(open_imu(owner, 25, 0, 1000)));      /* 25 * 12 = 300 B per second: poll at 50 ms */
     fake_imu_push(30, 0);                              /* more than one batch (25 samples) */
     step(50);
     collect(owner);
@@ -283,7 +283,7 @@ TEST(imu_batch_full_sends_early) {
 
 TEST(imu_batch_cap_2400) {
     setup();
-    CHECK(port_is(open_imu(owner, 200, 0, 1000)));     /* 200 * 12 = 2400 B exactly */
+    CHECK(test_port_is(open_imu(owner, 200, 0, 1000)));     /* 200 * 12 = 2400 B exactly */
     fake_imu_push(250, 0);
     step(50);
     collect(owner);
@@ -300,7 +300,7 @@ TEST(imu_batch_cap_2400) {
 
 TEST(imu_poll_period_follows_batch) {
     setup();
-    CHECK(port_is(open_imu(owner, 100, 0, 50)));
+    CHECK(test_port_is(open_imu(owner, 100, 0, 50)));
     uint64_t d;
     CHECK(port_next_deadline(&vm, &d));
     CHECK_EQ(d, 50);
@@ -315,7 +315,7 @@ TEST(imu_poll_period_follows_batch) {
 TEST(imu_rate0_never_reads_fifo) {
     setup();
     fake_imu_push(3, 0);
-    CHECK(port_is(open_imu(owner, 0, 1, 200)));
+    CHECK(test_port_is(open_imu(owner, 0, 1, 200)));
     for (uint64_t t = 50; t <= 1000; t += 50) step(t);
     CHECK_EQ(fake_imu_fifo_reads(), 0);
     CHECK(fake_imu_gesture_reads() > 0);
@@ -329,7 +329,7 @@ TEST(imu_rate0_never_reads_fifo) {
 
 TEST(imu_gesture_mask_and_values) {
     setup();
-    CHECK(port_is(open_imu(owner, 0, 2 | 8 | 128, 200)));   /* DoubleTap, Orientation, Step */
+    CHECK(test_port_is(open_imu(owner, 0, 2 | 8 | 128, 200)));   /* DoubleTap, Orientation, Step */
     fake_imu_gesture(1 | 2 | 8 | 16 | 128, 5, 4242);
     step(50);
     collect(owner);
@@ -345,7 +345,7 @@ TEST(imu_gesture_mask_and_values) {
 
 TEST(imu_no_mask_never_reads_gestures) {
     setup();
-    CHECK(port_is(open_imu(owner, 100, 0, 50)));
+    CHECK(test_port_is(open_imu(owner, 100, 0, 50)));
     fake_imu_gesture(255, 1, 1);
     step(50); step(100);
     CHECK_EQ(fake_imu_gesture_reads(), 0);
@@ -354,7 +354,7 @@ TEST(imu_no_mask_never_reads_gestures) {
 
 TEST(imu_fifo_error_retries) {
     setup();
-    CHECK(port_is(open_imu(owner, 100, 0, 50)));
+    CHECK(test_port_is(open_imu(owner, 100, 0, 50)));
     fake_imu_push(2, 3);
     fake_imu_fifo_fail(true);
     step(50);
@@ -373,7 +373,7 @@ TEST(imu_fifo_error_retries) {
 TEST(imu_slow_consumer) {
     setup();
     owner->max_words = 400;
-    CHECK(port_is(open_imu(owner, 100, 0, 50)));
+    CHECK(test_port_is(open_imu(owner, 100, 0, 50)));
     int polls = 40;
     for (int i = 1; i <= polls; i++) {
         fake_imu_push(5, (int16_t)i);
@@ -401,7 +401,7 @@ TEST(imu_slow_consumer) {
 TEST(imu_close_stops_polling_and_reopen_resets) {
     setup();
     term pp = open_imu(owner, 100, 0, 50);
-    CHECK(port_is(pp));
+    CHECK(test_port_is(pp));
     fake_imu_push(2, 0);
     step(50);
     collect(owner);
@@ -415,7 +415,7 @@ TEST(imu_close_stops_polling_and_reopen_resets) {
     step(1000);
     CHECK_EQ(fake_imu_fifo_len(), 2);                  /* nobody reads it */
     pp = open_imu(owner, 100, 0, 50);
-    CHECK(port_is(pp));
+    CHECK(test_port_is(pp));
     step(1050);
     collect(owner);
     CHECK_EQ(ngot, 0);                                 /* the fake flushed its FIFO in open */
@@ -447,7 +447,7 @@ TEST(imu_buffer_charged_and_freed) {
     CHECK(big != NULL);
     big->state = A_WAITING;
     uint32_t charged = actor_charged_words(big);
-    CHECK(port_is(open_imu(big, 200, 0, 1000)));       /* 2400 B = 600 words */
+    CHECK(test_port_is(open_imu(big, 200, 0, 1000)));       /* 2400 B = 600 words */
     size_t used = va_used_bytes(&vm);
     CHECK_EQ(actor_charged_words(big), charged + 600u);
     port_close_owned(&vm, big->id);                    /* the owner exits */
@@ -457,11 +457,11 @@ TEST(imu_buffer_charged_and_freed) {
     /* An owner that cannot afford it is refused, and nothing is left behind. */
     owner->max_words = 400;
     size_t before = va_used_bytes(&vm);
-    CHECK(!port_is(open_imu(owner, 200, 0, 1000)));    /* owner: 256 words */
+    CHECK(!test_port_is(open_imu(owner, 200, 0, 1000)));    /* owner: 256 words */
     CHECK(va_used_bytes(&vm) <= before + 64);            /* only the Config struct on the heap */
     CHECK_EQ(actor_charged_words(owner), 0u);
     CHECK_EQ(fake_imu_closes(), 2);                    /* the hardware was stopped again */
-    CHECK(port_is(open_imu(owner, 0, 1, 200)));        /* RateHz 0: no buffer, no charge */
+    CHECK(test_port_is(open_imu(owner, 0, 1, 200)));        /* RateHz 0: no buffer, no charge */
     CHECK_EQ(actor_charged_words(owner), 0u);
     teardown();
 }
@@ -470,7 +470,7 @@ TEST(imu_buffer_charged_and_freed) {
 TEST(imu_partial_hooks) {
     setup();
     fake_imu_no_fifo();
-    CHECK(!port_is(open_imu(owner, 100, 0, 200)));
-    CHECK(port_is(open_imu(owner, 0, 1, 200)));
+    CHECK(!test_port_is(open_imu(owner, 100, 0, 200)));
+    CHECK(test_port_is(open_imu(owner, 0, 1, 200)));
     teardown();
 }

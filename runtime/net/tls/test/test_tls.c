@@ -112,7 +112,7 @@ static Actor *vm_up(int i, const TlsHw *hw) {
     a->max_words = 60000u;               /* room for a connection's charge */
     a->hp = 0;
     term n = port_open(&vm[i], a, str_at(&vm[i], a, "netif"), struct_at(&vm[i], a, TYPE_NET_IFCONFIG, NULL, 0));
-    CHECK(port_is(n));
+    CHECK(test_port_is(n));
     a->hp = 0;
     term f[4] = { term_from_int((int32_t)IP4(10, 0, 0, 2 + i)), term_from_int((int32_t)IP4(255, 255, 255, 0)),
                   term_from_int((int32_t)PEER_IP), term_from_int(0) };
@@ -158,11 +158,11 @@ TEST(tls_state_per_stack) {
 
     /* Each stack holds its own connection: the other Vm's is no obstacle. */
     term t0 = dial_tls(0, a0);
-    CHECK(port_is(t0));
+    CHECK(test_port_is(t0));
     CHECK(nst[0].tls.conn != NULL && nst[1].tls.conn == NULL);
     CHECK(dial_tls(0, a0) == T_NIL);          /* GOGO_TLS_MAX (1) on this stack */
     term t1 = dial_tls(1, a1);
-    CHECK(port_is(t1));
+    CHECK(test_port_is(t1));
     CHECK(nst[1].tls.conn != NULL && nst[1].tls.conn != nst[0].tls.conn);
     CHECK_EQ(tls_stats(&nst[0])->opens, 1u);
     CHECK_EQ(tls_stats(&nst[1])->opens, 1u);
@@ -175,7 +175,7 @@ TEST(tls_state_per_stack) {
     CHECK(nst[0].tls.conn == NULL && nst[1].tls.conn != NULL);
     CHECK_EQ(tls_stats(&nst[0])->live, 0u);
     CHECK_EQ(tls_stats(&nst[1])->live, 1u);
-    CHECK(port_is(dial_tls(0, a0)));          /* and that stack may open again */
+    CHECK(test_port_is(dial_tls(0, a0)));          /* and that stack may open again */
     CHECK_EQ(tls_stats(&nst[0])->opens, 2u);
     CHECK_EQ(errs, 0u);
 

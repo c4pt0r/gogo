@@ -1,0 +1,29 @@
+// A server whose node agent dies listens again on the same port.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/strconv"
+	"gogo/sys"
+)
+
+func main() {
+	p, _ := sys.Config("test.port")
+	port, _ := strconv.Atoi(p)
+	println("listen", node.Listen(port, "server") == nil)
+	agent, _ := actor.Whereis("node")
+	actor.Kill(agent, actor.Killed)
+	actor.Sleep(200)
+	println("listen again", node.Listen(port, "server") == nil)
+	node.Register("echo", actor.Spawn(func() {
+		for {
+			switch m := actor.Receive().(type) {
+			case actor.Request:
+				actor.Reply(m, m.Body)
+			}
+		}
+	}))
+	println("listening")
+	actor.Receive()
+}

@@ -107,8 +107,8 @@ func TestReasonCodesMatchC(t *testing.T) {
 			goCodes[upperSnake(name)] = v
 		}
 	}
-	if len(goCodes) != 13 {
-		t.Errorf("gogo/actor has %d constants, want the 12 reason codes and Failed", len(goCodes))
+	if len(goCodes) != 14 {
+		t.Errorf("gogo/actor has %d constants, want the 13 reason codes and Failed", len(goCodes))
 	}
 	for n, v := range goCodes {
 		if cv, ok := cCodes[n]; !ok || cv != v {
@@ -199,8 +199,8 @@ func TestReservedTypesMatchStubs(t *testing.T) {
 			t.Errorf("%s.%s fields %v, want %v", rt.pkg, rt.name, names, rt.fields)
 		}
 	}
-	if len(reservedTypes) != 47 {
-		t.Errorf("%d reserved types, want 47", len(reservedTypes))
+	if len(reservedTypes) != 49 {
+		t.Errorf("%d reserved types, want 49", len(reservedTypes))
 	}
 }
 
@@ -263,8 +263,8 @@ func TestTermsMatchC(t *testing.T) {
 			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
 		}
 	}
-	if newest := max(floatMinor, sizedMinor, ifaceMinor, refMinor); imageMajor != 15 || imageMinor != newest {
-		t.Errorf("image format %d.%d, want 15.%d (the newest of floatMinor, sizedMinor, ifaceMinor and refMinor)", imageMajor, imageMinor, newest)
+	if newest := max(floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor); imageMajor != 15 || imageMinor != newest {
+		t.Errorf("image format %d.%d, want 15.%d (the newest of floatMinor, sizedMinor, ifaceMinor, distMinor and refMinor)", imageMajor, imageMinor, newest)
 	}
 }
 

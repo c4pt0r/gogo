@@ -1,0 +1,59 @@
+// The watcher monitors the server's echo, then loses the server.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/node"
+	"gogo/sys"
+)
+
+type callResult struct{ OK, Fast bool }
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	if node.Connect(addr, "w") != nil {
+		println("connect failed")
+		return
+	}
+	node.Subscribe()
+	echo, _ := node.Whereis("server", "echo", 2000)
+	slow, _ := node.Whereis("server", "slow", 2000)
+	ref := actor.Monitor(echo)
+	self := actor.Self()
+	// A Call in flight when the server goes fails at once.
+	actor.Spawn(func() {
+		t0 := actor.Now()
+		_, ok := actor.Call(slow, "hello", 10000)
+		actor.Send(self, callResult{OK: ok, Fast: actor.Now()-t0 < 5000})
+	})
+	actor.TrapExit(true)
+	actor.Link(echo)
+	println("w ready")
+	n := 0
+	for n < 4 {
+		m, ok := actor.ReceiveTimeout(10000)
+		if !ok {
+			println("timeout")
+			return
+		}
+		switch e := m.(type) {
+		case actor.DownMsg:
+			println("down", e.Ref == ref, e.Reason.Code)
+			n++
+		case actor.ExitMsg:
+			println("exit", e.Reason.Code)
+			n++
+		case node.Down:
+			println("node down", e.Node)
+			n++
+		case callResult:
+			println("call in flight", e.OK, e.Fast)
+			n++
+		}
+	}
+	// A Call to a PID of a node that is gone fails at once.
+	t0 := actor.Now()
+	_, ok := actor.Call(echo, "hi", 5000)
+	println("call to lost node", ok, actor.Now()-t0 < 1000)
+	println("connect again", node.Connect(addr, "w") == nil)
+}

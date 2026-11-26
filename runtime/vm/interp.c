@@ -368,7 +368,9 @@ static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth,
         if (blen) out_bytes(o, (const char *)bp, blen);
     } else if (term_is_pid(t)) {
         out_str(o, "<pid ");
-        out_int(o, term_pid_slot(t));
+        const VmDist *d = vm_dist_of(vm, t);
+        if (d) d->print(o, vm, t);   /* <pid N@node> */
+        else out_int(o, term_pid_slot(t));
         out_str(o, ">");
     } else if (kind == K_STRING && obj[1] <= (hdr_words(obj[0]) - 2u) * 4u) {
         out_bytes(o, (const char *)(obj + 2), obj[1]);
@@ -998,7 +1000,7 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             case B_SEND:
                 CHECK(rc == 2);
-                if (port_is(R[rb])) {
+                if (port_is(vm, R[rb])) {
                     /* A command: handed to the driver in place, for any sender. */
                     CHECK(deep_live(vm, a, R[rb + 1], 0, WALK_BUDGET) >= 0);
                     port_command(vm, a, R[rb], R[rb + 1]);
@@ -1066,12 +1068,6 @@ int interp_run(Vm *vm, Actor *a) {
                     int32_t ms;
                     CHECK(int_val(vm, a, R[rb + 2], &ms));
                     term pid = R[rb];
-                    const Actor *to = actor_lookup(vm, pid);
-                    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) {
-                        R[ra] = T_NIL;
-                        R[ra + 1] = T_FALSE;
-                        break;
-                    }
                     /* Request{From: self, Ref: new ref, Body: req}. The
                      * ref is a root across the second allocation. */
                     term roots[1];
@@ -1088,6 +1084,11 @@ int interp_run(Vm *vm, Actor *a) {
                     obj[3] = roots[0];
                     obj[4] = R[rb + 1];
                     if ((r = msg_send(vm, a, pid, term_from_ref(off))) < 0) CRASH((uint32_t)-r);
+                    if (r == 1) {   /* no live target (a dead local actor, a remote one with no route) */
+                        R[ra] = T_NIL;
+                        R[ra + 1] = T_FALSE;
+                        break;
+                    }
                     R[ra] = roots[0];
                     CHECK(ref_serial(vm, a, R[ra], &serial));
                     if (ms > 0) {
@@ -1112,8 +1113,8 @@ int interp_run(Vm *vm, Actor *a) {
                 timer_cancel_wakeup(vm, a);
                 a->flags &= (uint8_t)~AF_CALL_PENDING;
                 RELOAD();
-                R[ra] = got ? t : T_NIL;
-                R[ra + 1] = term_from_bool(got != 0);
+                R[ra] = got == 1 ? t : T_NIL;   /* 2: failed (its node is gone) */
+                R[ra + 1] = term_from_bool(got == 1);
                 break;
             }
             case B_REPLY: {
@@ -1131,6 +1132,7 @@ int interp_run(Vm *vm, Actor *a) {
             }
             case B_SEND_AFTER: {
                 CHECK(rc == 3);   /* like Send, a non-PID target just drops it */
+                if (vm_dist_of(vm, R[rb + 1])) CRASH(R_BAD_MSG);   /* no timers to remote PIDs yet */
                 int32_t ms;
                 CHECK(int_val(vm, a, R[rb], &ms));
                 uint64_t deadline = vm_now(vm) + (ms > 0 ? (uint32_t)ms : 0u);
@@ -1209,7 +1211,7 @@ int interp_run(Vm *vm, Actor *a) {
                 CHECK(rc == 2 && term_is_pid(R[rb]));
                 int32_t c;
                 CHECK(int_val(vm, a, R[rb + 1], &c));
-                if (port_is(R[rb])) port_close(vm, R[rb]);   /* any caller, any code */
+                if (port_is(vm, R[rb])) port_close(vm, R[rb]);   /* any caller, any code */
                 else if (!sig_kill(vm, a, R[rb], (uint32_t)c)) CRASH(R_OUT_OF_MEMORY);
                 R[ra] = T_NIL;
                 break;

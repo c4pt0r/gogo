@@ -503,6 +503,7 @@ TcpPcb *tcp_dial(NetState *ns, Port *p, const int32_t *cfg, uint32_t n) {
 static int t_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     NetState *ns = vm->net;
     (void)index;
+    if (!ns) return GOGO_E_UNSUPPORTED;   /* a VM without a network (gogovm without --net-fd) */
     if (n != 0u) return tcp_dial(ns, p, cfg, n) ? 0 : -1;
     if (!ns || !ns->accepting) return -1;
     TcpPcb *c = &ns->tcp[ns->accepting - 1u];
@@ -624,7 +625,8 @@ const PortDriver net_tcp_driver = {
 static int l_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     NetState *ns = vm->net;
     (void)index;
-    if (!ns || !ns->attached || n != 1u || cfg[0] <= 0 || cfg[0] > 65535) return -1;
+    if (!ns) return GOGO_E_UNSUPPORTED;   /* a VM without a network */
+    if (!ns->attached || n != 1u || cfg[0] <= 0 || cfg[0] > 65535) return -1;
     for (uint32_t i = 0; i < GOGO_NET_MAX_LISTEN; i++) {
         if (ns->lis[i].port && ns->lis[i].lport == (uint32_t)cfg[0]) return -1;
     }
@@ -1033,8 +1035,8 @@ void tcp_poll(Vm *vm) {
     uint32_t now = now32(ns);
     if (ns->tcp_held && due(ns->held_at, now)) {
         ns->tcp_held = 0;
-        for (uint32_t i = 0; i < GOGO_MAX_PORTS; i++) {
-            Port *p = &vm->ports[i];
+        for (uint32_t i = 0; i < vm->port_n; i++) {
+            Port *p = port_at(vm, i);
             bool ours = p->drv == &net_tcp_driver || (ns->upper && p->drv == ns->upper->drv);
             if (ours && held(p) && !flush(vm, p)) retry_later(ns);
         }

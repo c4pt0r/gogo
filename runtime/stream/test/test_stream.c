@@ -74,7 +74,7 @@ static const PortDriver *const drivers[] = { &st_driver, NULL };
 static Actor *owner;
 static term sp;
 
-static Port *port_at(term pid) { return &vm.ports[term_pid_slot(pid) - PORT_SLOT_BASE]; }
+static Port *pid_port(term pid) { return port_at(&vm, term_pid_slot(pid) - PORT_SLOT_BASE); }
 
 static void setup(void) {
     test_host_arena_forget();
@@ -87,7 +87,7 @@ static void setup(void) {
     CHECK(owner != NULL);
     owner->state = A_WAITING;
     sp = port_open_with(&vm, owner, &st_driver, NULL, 0);
-    CHECK(port_is(sp));
+    CHECK(test_port_is(sp));
     check = NULL;
     last_rc = 99;
     accepts = closes = 0;
@@ -202,8 +202,8 @@ TEST(chunk_fields_and_data) {
     setup();
     StreamIn s = { 0, 0 };
     const uint8_t d[5] = { 1, 2, 3, 4, 5 };
-    CHECK(stream_deliver_chunk(&vm, port_at(sp), &s, 1234, d, 5));
-    CHECK(stream_deliver_chunk(&vm, port_at(sp), &s, 0xFFFFFFFFu, NULL, 0));   /* boxed TimeMs, empty */
+    CHECK(stream_deliver_chunk(&vm, pid_port(sp), &s, 1234, d, 5));
+    CHECK(stream_deliver_chunk(&vm, pid_port(sp), &s, 0xFFFFFFFFu, NULL, 0));   /* boxed TimeMs, empty */
     Chunk c;
     CHECK(pop_chunk(owner, &c));
     CHECK_EQ(c.seq, 1); CHECK_EQ(c.time, 1234); CHECK_EQ(c.dropped, 0);
@@ -226,7 +226,7 @@ TEST(chunk_seq_dropped_full_mailbox) {
     for (int i = 0; i < 64; i++) d[i] = (uint8_t)i;
     int delivered = 0, dropped = 0;
     for (int i = 0; i < 40; i++) {
-        if (stream_deliver_chunk(&vm, port_at(sp), &s, (uint32_t)i, d, 64)) delivered++;
+        if (stream_deliver_chunk(&vm, pid_port(sp), &s, (uint32_t)i, d, 64)) delivered++;
         else dropped++;
     }
     CHECK(delivered > 0 && dropped > 0);
@@ -242,13 +242,13 @@ TEST(chunk_seq_dropped_full_mailbox) {
     }
     CHECK_EQ(want - 1, delivered);
     /* Room again: the next one says how many were lost, and its Seq shows the gap. */
-    CHECK(stream_deliver_chunk(&vm, port_at(sp), &s, 99, d, 3));
+    CHECK(stream_deliver_chunk(&vm, pid_port(sp), &s, 99, d, 3));
     CHECK(pop_chunk(owner, &c));
     CHECK_EQ(c.seq, 41); CHECK_EQ(c.dropped, dropped);
     CHECK_EQ(s.dropped_since, 0u);
     /* A driver-side loss (a truncated frame) adds to the next Chunk's Dropped. */
     s.dropped_since++;
-    CHECK(stream_deliver_chunk(&vm, port_at(sp), &s, 100, d, 1));
+    CHECK(stream_deliver_chunk(&vm, pid_port(sp), &s, 100, d, 1));
     CHECK(pop_chunk(owner, &c));
     CHECK_EQ(c.seq, 42); CHECK_EQ(c.dropped, 1);
     teardown();
@@ -258,12 +258,12 @@ TEST(chunk_owner_gone_counts) {
     setup();
     StreamIn s = { 0, 0 };
     owner->flags |= AF_EXIT_PENDING;
-    CHECK(!stream_deliver_chunk(&vm, port_at(sp), &s, 0, T4, 4));
+    CHECK(!stream_deliver_chunk(&vm, pid_port(sp), &s, 0, T4, 4));
     CHECK_EQ(s.seq, 1u); CHECK_EQ(s.dropped_since, 1u);
     owner->flags &= (uint8_t)~AF_EXIT_PENDING;
     /* Too big for a message block: dropped and counted, nothing else. */
     static uint8_t big[0x40000];
-    CHECK(!stream_deliver_chunk(&vm, port_at(sp), &s, 0, big, sizeof big));
+    CHECK(!stream_deliver_chunk(&vm, pid_port(sp), &s, 0, big, sizeof big));
     CHECK_EQ(s.seq, 2u); CHECK_EQ(s.dropped_since, 2u);
     CHECK_EQ(mbox_n(owner), 0);
     teardown();
@@ -272,7 +272,7 @@ TEST(chunk_owner_gone_counts) {
 TEST(chunk_seq_wraps_positive) {
     setup();
     StreamIn s = { 0x7FFFFFFFu, 0 };
-    CHECK(stream_deliver_chunk(&vm, port_at(sp), &s, 0, T4, 4));
+    CHECK(stream_deliver_chunk(&vm, pid_port(sp), &s, 0, T4, 4));
     Chunk c;
     CHECK(pop_chunk(owner, &c));
     CHECK_EQ(c.seq, 1);
@@ -294,12 +294,12 @@ TEST(out_flood) {
     CHECK_EQ(dones(owner, seqs, 16), 8);
     for (int i = 0; i < 8; i++) CHECK_EQ(seqs[i], -1);
     CHECK_EQ(so.n, 2u);
-    CHECK(stream_out_done(&vm, port_at(sp), &so));       /* the queued one is the head now */
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));      /* nothing in flight: no Done */
+    CHECK(stream_out_done(&vm, pid_port(sp), &so));       /* the queued one is the head now */
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));      /* nothing in flight: no Done */
     CHECK_EQ(dones(owner, seqs, 16), 2);
     CHECK_EQ(seqs[0], 1); CHECK_EQ(seqs[1], 2);
-    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(port_at(sp)->held[k], 0u);
+    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(pid_port(sp)->held[k], 0u);
     CHECK_EQ(snd->mbox_head, NULL);                    /* Dones go to the owner, not the sender */
     teardown();
 }
@@ -315,17 +315,17 @@ TEST(out_done_ordering_and_head) {
     CHECK_EQ(send_out(owner, b, 4), 0);
     const uint8_t *h = stream_out_head(&vm, &so, &len);
     CHECK(h && len == 2 && h[0] == 7);
-    CHECK(stream_out_done(&vm, port_at(sp), &so));
+    CHECK(stream_out_done(&vm, pid_port(sp), &so));
     h = stream_out_head(&vm, &so, &len);
     CHECK(h && len == 4 && h[0] == 8 && h[2] == 9);
     CHECK_EQ(send_out(owner, c, 2), 0);                 /* queued behind b */
     CHECK_EQ(send_out(owner, c, 2), -1);                /* full: refused, no Seq */
-    CHECK(stream_out_done(&vm, port_at(sp), &so));
+    CHECK(stream_out_done(&vm, pid_port(sp), &so));
     h = stream_out_head(&vm, &so, &len);
     CHECK(h && len == 2 && h[0] == 10);
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));
     CHECK_EQ(send_out(owner, a, 2), 1);                 /* idle again: starts at once */
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));
     int32_t seqs[8];
     CHECK_EQ(dones(owner, seqs, 8), 5);
     CHECK_EQ(seqs[0], 1); CHECK_EQ(seqs[1], -1); CHECK_EQ(seqs[2], 2);
@@ -348,7 +348,7 @@ TEST(out_at_positions) {
     d = stream_out_at(&vm, &so, 1, &len);
     CHECK(d && len == 4 && d[0] == 8 && d[2] == 9);
     CHECK(stream_out_at(&vm, &so, 2, &len) == NULL);
-    CHECK(stream_out_done(&vm, port_at(sp), &so));
+    CHECK(stream_out_done(&vm, pid_port(sp), &so));
     d = stream_out_at(&vm, &so, 0, &len);
     CHECK(d && len == 4 && d[0] == 8);
     CHECK(stream_out_at(&vm, &so, 1, &len) == NULL);
@@ -363,17 +363,17 @@ TEST(out_fail_head) {
     uint32_t len;
     CHECK_EQ(send_out(owner, a, 2), 1);
     CHECK_EQ(send_out(owner, b, 2), 0);
-    CHECK(stream_out_fail(&vm, port_at(sp), &so));
+    CHECK(stream_out_fail(&vm, pid_port(sp), &so));
     const uint8_t *h = stream_out_head(&vm, &so, &len);
     CHECK(h && len == 2 && h[0] == 8);
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));
-    CHECK(!stream_out_fail(&vm, port_at(sp), &so));    /* nothing in flight: no-op */
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));
+    CHECK(!stream_out_fail(&vm, pid_port(sp), &so));    /* nothing in flight: no-op */
     CHECK_EQ(send_out(owner, a, 2), 1);
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));
     int32_t seqs[8];
     CHECK_EQ(dones(owner, seqs, 8), 3);
     CHECK_EQ(seqs[0], -1); CHECK_EQ(seqs[1], 1); CHECK_EQ(seqs[2], 2);
-    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(port_at(sp)->held[k], 0u);
+    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(pid_port(sp)->held[k], 0u);
     teardown();
 }
 
@@ -407,13 +407,13 @@ TEST(out_malformed) {
     CHECK_EQ(send_out(a, zero, 4), -1);
     CHECK_EQ(send_out(a, over, 2), -1);
     CHECK_EQ(so.n, 0u);
-    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(port_at(sp)->held[k], 0u);
+    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(pid_port(sp)->held[k], 0u);
     int32_t seqs[16];
     CHECK_EQ(dones(owner, seqs, 16), 10);
     for (int i = 0; i < 10; i++) CHECK_EQ(seqs[i], -1);
     const uint8_t max[2] = { 0xFF, 0x7F };
     CHECK_EQ(send_out(a, max, 2), 1);                    /* 32767: fine */
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));
     CHECK_EQ(dones(owner, seqs, 16), 1);
     CHECK_EQ(seqs[0], 1);
     teardown();
@@ -449,14 +449,14 @@ TEST(out_close_in_flight) {
     CHECK(term_is_handle(copy) && copy != h);
     uint32_t len;
     CHECK(stream_out_head(&vm, &so, &len) == bytes_data(&vm, h, &len));
-    stream_out_close(&vm, port_at(sp), &so);
+    stream_out_close(&vm, pid_port(sp), &so);
     CHECK_EQ(so.n, 0u); CHECK_EQ(so.held[0], 0u); CHECK_EQ(so.held[1], 0u);
-    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(port_at(sp)->held[k], 0u);
+    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(pid_port(sp)->held[k], 0u);
     CHECK(is_free(copy));
     CHECK(!is_free(h));                                /* still the owner's */
     bytes_release(&vm, owner, h);
     CHECK(is_free(h));
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));
     CHECK_EQ(mbox_n(owner), 0);
     teardown();
 }
@@ -484,7 +484,7 @@ TEST(out_handoff) {
     to->state = A_WAITING;
     CHECK_EQ(send_out(owner, T4, 4), 1);
     CHECK(port_handoff(&vm, owner, sp, to->id));
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));
     int32_t seqs[4];
     CHECK_EQ(dones(owner, seqs, 4), 0);
     CHECK_EQ(dones(to, seqs, 4), 1);
@@ -526,23 +526,23 @@ TEST(out_dones_owed_until_room) {
     CHECK_EQ(send_h(0), 1);
     CHECK_EQ(send_h(1), 0);
     owner_full();
-    CHECK(stream_out_done(&vm, port_at(sp), &so));      /* Done{1} owed */
+    CHECK(stream_out_done(&vm, pid_port(sp), &so));      /* Done{1} owed */
     CHECK_EQ(mbox_n(owner), 0);
     CHECK_EQ(send_h(2), -1);                            /* 1 queued + 1 owed: full; Done{-1} owed */
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));     /* Done{2} owed */
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));     /* Done{2} owed */
     CHECK_EQ(so.owed_n, 3u);
     CHECK_EQ(send_h(2), -1);                            /* both Dones still owed: refused */
-    CHECK(!stream_out_flush(&vm, port_at(sp), &so));
+    CHECK(!stream_out_flush(&vm, pid_port(sp), &so));
     CHECK_EQ(mbox_n(owner), 0);
-    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(port_at(sp)->held[k], 0u);   /* released at done */
+    for (uint32_t k = 0; k < PORT_MAX_HELD; k++) CHECK_EQ(pid_port(sp)->held[k], 0u);   /* released at done */
     owner_room();
-    CHECK(stream_out_flush(&vm, port_at(sp), &so));
-    CHECK(stream_out_flush(&vm, port_at(sp), &so));     /* nothing left: no repeats */
+    CHECK(stream_out_flush(&vm, pid_port(sp), &so));
+    CHECK(stream_out_flush(&vm, pid_port(sp), &so));     /* nothing left: no repeats */
     int32_t seqs[8];
     CHECK_EQ(dones(owner, seqs, 8), 4);
     CHECK_EQ(seqs[0], 1); CHECK_EQ(seqs[1], -1); CHECK_EQ(seqs[2], 2); CHECK_EQ(seqs[3], -1);
     CHECK_EQ(send_h(3), 1);                             /* acknowledged: room again */
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));
     CHECK_EQ(dones(owner, seqs, 8), 1);
     CHECK_EQ(seqs[0], 3);
     CHECK(!(owner->flags & AF_EXIT_PENDING));
@@ -557,17 +557,17 @@ TEST(out_owed_partial_flush_keeps_order) {
     make_handles();
     CHECK_EQ(send_h(0), 1);
     owner_full();
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));     /* Done{1} owed */
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));     /* Done{1} owed */
     CHECK_EQ(send_h(1), 1);                             /* 0 running + 1 owed < 2: accepted */
     /* room for exactly one Done (a 4-word block) */
     owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner) + msg_footprint_words(4));
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));     /* sends Done{1}, owes Done{2} */
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));     /* sends Done{1}, owes Done{2} */
     CHECK_EQ(so.owed_n, 1u);
     int32_t seqs[4];
     CHECK_EQ(dones(owner, seqs, 4), 1);
     CHECK_EQ(seqs[0], 1);
     owner_room();
-    CHECK(stream_out_flush(&vm, port_at(sp), &so));
+    CHECK(stream_out_flush(&vm, pid_port(sp), &so));
     CHECK_EQ(dones(owner, seqs, 4), 1);
     CHECK_EQ(seqs[0], 2);
     teardown();
@@ -583,11 +583,11 @@ TEST(out_owed_refusals_bounded) {
     for (int i = 0; i < 40; i++) CHECK_EQ(send_h(1 + i % 3) == -1 || so.n == 2, true);
     CHECK_EQ(so.n, 2u);                                 /* the first one past the head was queued */
     CHECK_EQ(so.owed_n, STREAM_OWED_MAX - 2u);
-    CHECK(stream_out_done(&vm, port_at(sp), &so));      /* Done{1} owed, never dropped */
-    CHECK(!stream_out_done(&vm, port_at(sp), &so));     /* Done{2} owed */
+    CHECK(stream_out_done(&vm, pid_port(sp), &so));      /* Done{1} owed, never dropped */
+    CHECK(!stream_out_done(&vm, pid_port(sp), &so));     /* Done{2} owed */
     CHECK_EQ(so.owed_n, STREAM_OWED_MAX);
     owner_room();
-    CHECK(stream_out_flush(&vm, port_at(sp), &so));
+    CHECK(stream_out_flush(&vm, pid_port(sp), &so));
     int32_t seqs[32];
     CHECK_EQ(dones(owner, seqs, 32), (int)STREAM_OWED_MAX);
     for (uint32_t i = 0; i + 2 < STREAM_OWED_MAX; i++) CHECK_EQ(seqs[i], -1);
@@ -604,7 +604,7 @@ TEST(out_close_with_owed_dones) {
     CHECK_EQ(send_out(owner, T4, 4), 0);
     term running = so.held[1];
     owner_full();
-    CHECK(stream_out_done(&vm, port_at(sp), &so));      /* Done{1} owed, the second running */
+    CHECK(stream_out_done(&vm, pid_port(sp), &so));      /* Done{1} owed, the second running */
     CHECK_EQ(so.held[0], running);
     CHECK_EQ(send_out(owner, T4, 4), -1);               /* Done{-1} owed */
     CHECK_EQ(so.owed_n, 2u);
@@ -668,11 +668,11 @@ TEST(out_fail_owed_in_order) {
     owner_full();
     CHECK_EQ(send_h(0), 1);
     CHECK_EQ(send_h(1), 0);
-    CHECK(stream_out_done(&vm, port_at(sp), &so));       /* Done{1} owed */
-    CHECK(!stream_out_fail(&vm, port_at(sp), &so));      /* Done{-1} owed */
+    CHECK(stream_out_done(&vm, pid_port(sp), &so));       /* Done{1} owed */
+    CHECK(!stream_out_fail(&vm, pid_port(sp), &so));      /* Done{-1} owed */
     CHECK_EQ(so.owed_n, 2u);
     owner_room();
-    CHECK(stream_out_flush(&vm, port_at(sp), &so));
+    CHECK(stream_out_flush(&vm, pid_port(sp), &so));
     int32_t seqs[4];
     CHECK_EQ(dones(owner, seqs, 4), 2);
     CHECK_EQ(seqs[0], 1); CHECK_EQ(seqs[1], -1);

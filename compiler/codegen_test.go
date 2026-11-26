@@ -669,6 +669,24 @@ func TestScreenConfigMinor(t *testing.T) {
 	}
 }
 
+// TestNodeTypesMinor: net.NodeLink and net.NodeEvent are reserved types
+// 47 and 48 of 15.5 (distMinor); a program that uses them is stamped 15.5,
+// below 15.6, a net program that does not keeps its lower minor.
+func TestNodeTypesMinor(t *testing.T) {
+	use := "package main\nimport (\n\t\"gogo/net\"\n\t\"gogo/port\"\n)\nfunc main() {\n\t_, _ = port.Open(\"node\", net.NodeLink{Self: 2, Peer: 1})\n}\n"
+	img := compileImage(t, use)
+	if v := words(img)[1]; v != 15<<16|distMinor {
+		t.Errorf("version %s, want 15.%d", VersionString(v), distMinor)
+	}
+	if got := imageTypes(t, img); len(got) < 48 || got[TypeNetNodelink] != "net.NodeLink/8" {
+		t.Errorf("rows %v: want net.NodeLink/8 at %d", got, TypeNetNodelink)
+	}
+	other := "package main\nimport (\n\t\"gogo/net\"\n\t\"gogo/port\"\n)\nfunc main() {\n\t_, _ = port.Open(\"tcp\", net.Dial{IP: 1, Port: 2})\n}\n"
+	if v := words(compileImage(t, other))[1]; v >= 15<<16|distMinor {
+		t.Errorf("version %s, want below 15.%d", VersionString(v), distMinor)
+	}
+}
+
 func TestCheckVersion(t *testing.T) {
 	for m := uint32(0); m <= imageMinor; m++ {
 		if err := CheckVersion(15<<16 | m); err != nil {

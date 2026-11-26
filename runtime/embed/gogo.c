@@ -166,6 +166,7 @@ bool embed_copy_sized(void *dst, size_t cap, const void *src, uint32_t size, siz
 /* The first sizes, which never change: up to the last field of v0.2. */
 #define HOST_SIZE_V1 (offsetof(gogo_host, destroy) + sizeof(void (*)(void *)))
 #define CONFIG_SIZE_V1 (offsetof(gogo_config, fs_quota) + sizeof(int64_t))
+#define EMBED_MAX_PORTS 1024u   /* the default most ports of an embedded VM */
 
 /* The output structs' first sizes, which never change (v0.2). */
 #define STATS_SIZE_V1 (offsetof(gogo_stats, mem_peak) + sizeof(uint64_t))
@@ -231,11 +232,26 @@ static bool host_ok(const gogo_host *h) {
            !h->unix_time_ms == !h->set_unix_time_ms && !h->code_alloc == !h->code_free;
 }
 
+/* The ports a VM of config c may open: c's max_ports, else the default,
+ * EMBED_MAX_PORTS, or what the actor table leaves of the 65536 PID slots
+ * (16 at the old most of 65520 actors). */
+static uint32_t embed_max_ports(const gogo_config *c) {
+    uint32_t actors = c->max_actors ? c->max_actors : GOGO_TABLE_CAP;
+    if (c->max_ports) return c->max_ports;
+    if (actors >= PORT_SLOT_TOP) return 1;
+    return PORT_SLOT_TOP - actors < EMBED_MAX_PORTS ? PORT_SLOT_TOP - actors : EMBED_MAX_PORTS;
+}
+
 /* vm_init with the config, then the memory cap (vm_init clears the
  * allocator) and the inbox. */
 static int vm_setup(gogo_vm *g) {
     uint16_t cap = g->cfg.max_actors ? (uint16_t)g->cfg.max_actors : (uint16_t)GOGO_TABLE_CAP;
-    if (vm_init(&g->vm, &g->fwd, g, g->fs ? &embed_board_flash : &embed_board, cap) != 0) return -1;
+    g->closed_msg = NULL;            /* vm_init starts the allocator over */
+    g->closed_n = 0;
+    if (vm_init(&g->vm, &g->fwd, g, g->fs ? &embed_board_flash : &embed_board, cap) != 0 ||
+        vm_set_max_ports(&g->vm, embed_max_ports(&g->cfg)) != 0)
+        return -1;
+    g->vm.max_links = (uint16_t)g->cfg.max_links;
     va_set_limit(&g->vm, g->cfg.mem_limit > (uint64_t)(size_t)-1 ? (size_t)-1 : (size_t)g->cfg.mem_limit);
     vfs_init(&g->vm, &g->vfs);       /* no fs_root: no mounts, every gogo/fs call is NotMounted */
     embed_ports_install(g);
@@ -253,7 +269,9 @@ int gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg, gogo_vm
         memset(&c, 0, sizeof c);
     } else if (!embed_copy_sized(&c, sizeof c, cfg, cfg->size, CONFIG_SIZE_V1) || c.reserved ||
                (c.flags & ~GOGO_CONFIG_CODE_LOAD) ||
-               c.max_actors > PORT_SLOT_BASE || c.fs_quota < 0) {
+               c.max_actors > 0xFFF0u || c.max_ports > PORT_MAX_CEILING || c.max_links > PORT_MAX_CEILING ||
+               (c.max_actors ? c.max_actors : GOGO_TABLE_CAP) + embed_max_ports(&c) > PORT_SLOT_TOP ||
+               c.fs_quota < 0) {
         return GOGO_EINVAL;
     }
     gogo_vm *g = uh.alloc(host_ctx, sizeof *g);

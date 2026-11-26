@@ -175,6 +175,8 @@ from its options:
 | `grant` | the requirement names the VM may serve, a `NULL`-terminated list; `NULL` = all it has (section 18.9) |
 | `fs_root` | a host directory served as `/flash`, or `NULL` for no storage (section 18.8) |
 | `fs_quota` | bytes the files under `fs_root` may hold; 0 = no quota |
+| `max_ports` | ports open at once (the table grows as they open); 0 = 1024, or fewer when `max_actors` leaves less room (actor and port PIDs share 65536 slots); at most 2048 |
+| `max_links` | node links at once (chapter 20; an embedded VM has no node port yet); 0 = 8; at most 2048 |
 
 Over `mem_limit`, the VM's allocations fail and the actor that asked is
 stopped with `oom`, as when an actor goes over its own limit
@@ -819,7 +821,7 @@ in any minor release:
 | stable | experimental |
 |---|---|
 | `gogo_new`, `gogo_load`, `gogo_start`, `gogo_step`, `gogo_next_deadline`, `gogo_run`, `gogo_free` | host ports: `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`, `gogo_poster_port_post`, `gogo_port_driver` |
-| the host table, `gogo_host_posix`, `gogo_new_posix` | the flag `GOGO_CONFIG_CODE_LOAD`; the configuration's `grant`, `fs_root` and `fs_quota` |
+| the host table, `gogo_host_posix`, `gogo_new_posix` | the flag `GOGO_CONFIG_CODE_LOAD`; the configuration's `grant`, `fs_root`, `fs_quota`, `max_ports` and `max_links` |
 | the configuration's `size`, `flags`, `mem_limit`, `max_actors` | `gogo_get_stats` and its fields |
 | the error codes, `gogo_strerror`, `gogo_version`, `gogo_image_format` | `gogo_image_info_get`, `gogo_image_requires` |
 | `gogo_post`, `gogo_close_posts` and the poster (`gogo_poster_new`, `_post`, `_close_posts`, `_free`) | `gogo_run_thread`, `gogo_join` |

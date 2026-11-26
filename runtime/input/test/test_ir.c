@@ -177,18 +177,18 @@ static const uint16_t F3[3] = { 9000, 4500, 560 };
 TEST(ir_open_without_hw_fails) {
     setup();
     fake_no_ir();
-    CHECK(!port_is(open_tx(owner, 38000, 33)));
-    CHECK(!port_is(open_rx(owner, 10000)));
+    CHECK(!test_port_is(open_tx(owner, 38000, 33)));
+    CHECK(!test_port_is(open_rx(owner, 10000)));
     teardown();
 }
 
 TEST(ir_tx_config) {
     setup();
-    CHECK(!port_is(open_tx(owner, 5000, 33)));          /* carrier 10000..500000 */
-    CHECK(!port_is(open_tx(owner, 600000, 33)));
-    CHECK(!port_is(open_tx(owner, 38000, 100)));        /* duty 1..99 */
+    CHECK(!test_port_is(open_tx(owner, 5000, 33)));          /* carrier 10000..500000 */
+    CHECK(!test_port_is(open_tx(owner, 600000, 33)));
+    CHECK(!test_port_is(open_tx(owner, 38000, 100)));        /* duty 1..99 */
     term tx = open_tx(owner, 0, 0);                     /* defaults 38000 / 33 */
-    CHECK(port_is(tx));
+    CHECK(test_port_is(tx));
     send_out(owner, tx, F3, 3);
     step(0);
     CHECK_EQ(fake_ir_tx_starts(), 1);
@@ -196,7 +196,7 @@ TEST(ir_tx_config) {
     CHECK_EQ(fake_ir_tx_duty(), 33);
     port_close(&vm, tx);
     tx = open_tx(owner, 40000, 50);
-    CHECK(port_is(tx));
+    CHECK(test_port_is(tx));
     send_out(owner, tx, F3, 3);
     step(100);
     CHECK_EQ(fake_ir_tx_carrier(), 40000u);
@@ -209,10 +209,10 @@ TEST(ir_tx_one_owner) {
     Actor *b = actor_new(&vm, 256);
     CHECK(b != NULL);
     term tx = open_tx(owner, 38000, 33);
-    CHECK(port_is(tx));
-    CHECK(!port_is(open_tx(b, 38000, 33)));
+    CHECK(test_port_is(tx));
+    CHECK(!test_port_is(open_tx(b, 38000, 33)));
     port_close(&vm, tx);
-    CHECK(port_is(open_tx(b, 38000, 33)));
+    CHECK(test_port_is(open_tx(b, 38000, 33)));
     teardown();
 }
 
@@ -221,10 +221,10 @@ TEST(ir_tx_one_owner) {
 TEST(ir_tx_out_done_queue) {
     setup();
     term tx = open_tx(owner, 38000, 33);
-    CHECK(port_is(tx));
+    CHECK(test_port_is(tx));
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));                /* idle: no poll */
-    CHECK(!input_ir_tx_driver.can_event(&vm, &vm.ports[term_pid_slot(tx) - PORT_SLOT_BASE]));
+    CHECK(!input_ir_tx_driver.can_event(&vm, port_at(&vm, term_pid_slot(tx) - PORT_SLOT_BASE)));
     fake_ir_tx_set_busy(true);
     send_out(owner, tx, F3, 3);
     static const uint16_t G[2] = { 1000, 1000 };
@@ -234,7 +234,7 @@ TEST(ir_tx_out_done_queue) {
     CHECK_EQ(ngot, 1);
     CHECK_EQ(got[0].len, -1);
     CHECK_EQ(got[0].seq, -1);
-    CHECK(input_ir_tx_driver.can_event(&vm, &vm.ports[term_pid_slot(tx) - PORT_SLOT_BASE]));
+    CHECK(input_ir_tx_driver.can_event(&vm, port_at(&vm, term_pid_slot(tx) - PORT_SLOT_BASE)));
     step(0);
     CHECK_EQ(fake_ir_tx_starts(), 0);                   /* busy: waits (a frame of before) */
     fake_ir_tx_set_busy(false);
@@ -266,7 +266,7 @@ TEST(ir_tx_out_done_queue) {
     CHECK_EQ(ngot, 1);
     CHECK_EQ(got[0].seq, 2);
     CHECK(!port_next_deadline(&vm, &d));                /* nothing in flight */
-    CHECK(!input_ir_tx_driver.can_event(&vm, &vm.ports[term_pid_slot(tx) - PORT_SLOT_BASE]));
+    CHECK(!input_ir_tx_driver.can_event(&vm, port_at(&vm, term_pid_slot(tx) - PORT_SLOT_BASE)));
     teardown();
 }
 
@@ -355,7 +355,7 @@ TEST(ir_tx_close_in_flight) {
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));
     tx = open_tx(owner, 38000, 33);
-    CHECK(port_is(tx));
+    CHECK(test_port_is(tx));
     send_out(owner, tx, F3, 3);
     step(10);
     CHECK_EQ(fake_ir_tx_starts(), 1);                   /* still sending the old frame */
@@ -416,9 +416,9 @@ TEST(ir_tx_owed_done_retried) {
 TEST(ir_rx_config_and_frame) {
     setup();
     term rx = open_rx(owner, 0);
-    CHECK(port_is(rx));
+    CHECK(test_port_is(rx));
     CHECK_EQ(fake_ir_rx_gap(), 10000u);                 /* default */
-    CHECK(!port_is(open_rx(owner, 5000)));              /* one owner */
+    CHECK(!test_port_is(open_rx(owner, 5000)));              /* one owner */
     uint64_t d;
     CHECK(port_next_deadline(&vm, &d));
     CHECK_EQ(d, 20u);
@@ -439,7 +439,7 @@ TEST(ir_rx_config_and_frame) {
     CHECK(stream_timings_ok(NULL, got[0].data, 6));     /* can be sent back as it is */
     port_close(&vm, rx);
     CHECK_EQ(fake_ir_rx_closes(), 1);
-    CHECK(port_is(open_rx(owner, 40000)));
+    CHECK(test_port_is(open_rx(owner, 40000)));
     CHECK_EQ(fake_ir_rx_gap(), 32767u);                 /* clamped */
     teardown();
 }
@@ -447,7 +447,7 @@ TEST(ir_rx_config_and_frame) {
 TEST(ir_rx_cut_at_256_counts_dropped) {
     setup();
     term rx = open_rx(owner, 10000);
-    CHECK(port_is(rx));
+    CHECK(test_port_is(rx));
     static uint16_t v[300];
     for (int i = 0; i < 300; i++) v[i] = (uint16_t)(100 + i);
     fake_ir_rx_push(v, 300);
@@ -466,7 +466,7 @@ TEST(ir_rx_cut_at_256_counts_dropped) {
 
 TEST(ir_rx_values_clamped) {
     setup();
-    CHECK(port_is(open_rx(owner, 10000)));
+    CHECK(test_port_is(open_rx(owner, 10000)));
     static const uint16_t v[3] = { 0, 40000, 32767 };
     fake_ir_rx_push(v, 3);
     step(20);
@@ -480,7 +480,7 @@ TEST(ir_rx_values_clamped) {
 
 TEST(ir_rx_frames_per_poll_and_errors) {
     setup();
-    CHECK(port_is(open_rx(owner, 10000)));
+    CHECK(test_port_is(open_rx(owner, 10000)));
     fake_ir_rx_fail(true);
     fake_ir_rx_push(F3, 3);
     step(20);
@@ -503,7 +503,7 @@ TEST(ir_rx_buffer_charged_and_freed) {
     uint32_t charged = actor_charged_words(owner);
     size_t used0 = va_used_bytes(&vm);
     term rx = open_rx(owner, 10000);
-    CHECK(port_is(rx));
+    CHECK(test_port_is(rx));
     CHECK_EQ(actor_charged_words(owner), charged + 128u);
     CHECK(va_used_bytes(&vm) >= used0 + 512u);
     size_t used = va_used_bytes(&vm);
@@ -514,12 +514,12 @@ TEST(ir_rx_buffer_charged_and_freed) {
     /* Refused hardware: nothing left behind. */
     fake_ir_rx_open_fail(true);
     size_t before = va_used_bytes(&vm);
-    CHECK(!port_is(open_rx(owner, 10000)));
+    CHECK(!test_port_is(open_rx(owner, 10000)));
     CHECK(va_used_bytes(&vm) <= before + 64);
     fake_ir_rx_open_fail(false);
     fake_no_ir_rx_close();                              /* optional */
     rx = open_rx(owner, 10000);
-    CHECK(port_is(rx));
+    CHECK(test_port_is(rx));
     port_close(&vm, rx);
     teardown();
 }
@@ -534,7 +534,7 @@ TEST(ir_rx_can_event_follows_live) {
     fake_set_live(false);
     CHECK(!input_ir_rx_driver.can_event(&vm, &p));
     term rx = open_rx(owner, 10000);
-    CHECK(port_is(rx));
+    CHECK(test_port_is(rx));
     uint64_t d;
     CHECK(!port_next_deadline(&vm, &d));                /* dead: no receive poll */
     teardown();
@@ -593,7 +593,7 @@ TEST(ir_tx_non_owner_and_handoff) {
 /* A hook that knows when the frame began gives TimeMs. */
 TEST(ir_rx_time_from_hook) {
     setup();
-    CHECK(port_is(open_rx(owner, 10000)));
+    CHECK(test_port_is(open_rx(owner, 10000)));
     fake_ir_rx_start(7);
     fake_ir_rx_push(F3, 3);
     step(20);
@@ -609,7 +609,7 @@ TEST(ir_rx_time_with_t0) {
     setup();
     vm.t0 = 1000;
     now = 1000;                                 /* host 1000 = VM 0 */
-    CHECK(port_is(open_rx(owner, 10000)));      /* first poll at VM 20 */
+    CHECK(test_port_is(open_rx(owner, 10000)));      /* first poll at VM 20 */
     fake_ir_rx_start(1007);                     /* host clock */
     fake_ir_rx_push(F3, 3);
     now = 1019;
@@ -631,7 +631,7 @@ TEST(ir_rx_time_with_t0) {
 TEST(ir_tx_open_close_hooks_order) {
     setup();
     term tx = open_tx(owner, 0, 0);
-    CHECK(port_is(tx));
+    CHECK(test_port_is(tx));
     CHECK(strcmp(fake_ir_tx_log(), "O") == 0);
     CHECK_EQ(fake_ir_tx_open_carrier(), 38000u);
     CHECK_EQ(fake_ir_tx_open_duty(), 33);
@@ -643,7 +643,7 @@ TEST(ir_tx_open_close_hooks_order) {
     port_close(&vm, tx);                                /* stale: no second close */
     CHECK(strcmp(fake_ir_tx_log(), "OSC") == 0);
     tx = open_tx(owner, 40000, 50);
-    CHECK(port_is(tx));
+    CHECK(test_port_is(tx));
     CHECK_EQ(fake_ir_tx_open_carrier(), 40000u);
     CHECK_EQ(fake_ir_tx_open_duty(), 50);
     port_close_owned(&vm, owner->id);                   /* the owner exits */
@@ -655,14 +655,14 @@ TEST(ir_tx_open_close_hooks_order) {
  * bad config never reaches the hook. */
 TEST(ir_tx_open_hook_failure) {
     setup();
-    CHECK(!port_is(open_tx(owner, 5000, 33)));          /* refused before the hook */
+    CHECK(!test_port_is(open_tx(owner, 5000, 33)));          /* refused before the hook */
     CHECK(strcmp(fake_ir_tx_log(), "") == 0);
     fake_ir_tx_open_fail(true);
-    CHECK(!port_is(open_tx(owner, 38000, 33)));
+    CHECK(!test_port_is(open_tx(owner, 38000, 33)));
     CHECK(strcmp(fake_ir_tx_log(), "") == 0);
     fake_ir_tx_open_fail(false);
     term tx = open_tx(owner, 38000, 33);
-    CHECK(port_is(tx));
+    CHECK(test_port_is(tx));
     send_out(owner, tx, F3, 3);
     step(0);
     port_close(&vm, tx);
@@ -675,7 +675,7 @@ TEST(ir_tx_without_open_close_hooks) {
     setup();
     fake_no_ir_tx_open_close();
     term tx = open_tx(owner, 38000, 33);
-    CHECK(port_is(tx));
+    CHECK(test_port_is(tx));
     send_out(owner, tx, F3, 3);
     step(0);
     CHECK_EQ(fake_ir_tx_starts(), 1);

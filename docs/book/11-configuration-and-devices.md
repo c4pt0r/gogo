@@ -150,7 +150,8 @@ $ gogo device scan
 gogo: no board found (/dev/cu.usbmodem*); connect it or pass -port
 ```
 
-`get` and `list` never print the Wi-Fi password, only `(set)`.
+`get` and `list` never print the Wi-Fi password or `node.token`, only
+`(set)`.
 
 > **Note.** On your computer the store is a plain text file, and `gogo
 > config set wifi.password -` writes the password into it unencrypted.
@@ -169,10 +170,14 @@ The board talks to `gogo config` over the USB serial console, so close
 | `fs.flash.size` | size | firmware | size of `/flash` (chapter 9) |
 | `fs.flash.format` | `yes` | firmware | deprecated: format `/flash` once at the next boot; use `gogo device format-flash` |
 | `code.mem` | size | VM (`gogo/code`) | budget for loaded module code, default 64 KB (chapter 14) |
+| `node.token` | string (at most 200 bytes) | `gogo/node` | the shared secret of distributed actors (chapter 20); never printed |
+| `node.name` | string (at most 32 bytes) | `gogo/node` | this node's name when a program gives none |
+| `vm.max_ports` | int | VM, at boot | most ports open at once: 16 on a board, 1024 on the host (`gogovm --max-ports`), at most 2048; the table grows as ports open |
+| `node.max_links` | int | `node` port, at boot | most node links: 8 on a board, 512 on the host (`gogovm --max-links`) |
 
 A size is a number of bytes with an optional `K` or `M` suffix (`65536`,
 `64K`, `1M`). `gogo config keys` prints this table. The `wifi.`, `net.`,
-`fs.`, `code.` and `gogo.` prefixes are reserved for keys gogo adds
+`fs.`, `code.`, `gogo.`, `node.` and `vm.` prefixes are reserved for keys gogo adds
 later; anything else is yours. A dotted prefix per program (`demo.url`,
 `fsdemo.mode`) keeps keys apart.
 

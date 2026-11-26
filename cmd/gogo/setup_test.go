@@ -332,12 +332,20 @@ func newSetupBench(t *testing.T, chip string, stdin string) *setupBench {
 	t.Setenv("FAKE_ESPTOOL_PT", ptFile)
 	t.Setenv("GOGO_RELEASE_URL", "")
 	f.env = &setupEnv{
-		stdin:    strings.NewReader(stdin),
-		out:      f.out,
-		goos:     "darwin",
-		getenv:   func(string) string { return "" },
-		glob:     func(string) ([]string, error) { return []string{"/dev/cu.usbmodem9"}, nil },
-		lookPath: exec.LookPath,
+		stdin:  strings.NewReader(stdin),
+		out:    f.out,
+		goos:   "darwin",
+		getenv: func(string) string { return "" },
+		glob:   func(string) ([]string, error) { return []string{"/dev/cu.usbmodem9"}, nil },
+		// Only the fixture's own tools: an idf.py or esptool on the real
+		// PATH (ESP-IDF's export.sh) must not change what setup finds.
+		lookPath: func(name string) (string, error) {
+			p := filepath.Join(bin, name)
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p, nil
+			}
+			return "", exec.ErrNotFound
+		},
 		openPort: func(string) (io.ReadWriteCloser, error) { return f.openConsole(), nil },
 		client:   http.DefaultClient,
 		cacheDir: filepath.Join(dir, "cache"),

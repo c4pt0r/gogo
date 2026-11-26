@@ -387,15 +387,30 @@ static int dropped(const Vm *vm, Actor *from, term t) {
     return x.why ? -(int)x.why : 1;
 }
 
-int msg_send(Vm *vm, Actor *from, term to_pid, term msg) {
+/* msg_send (reply false) and msg_send_reply (reply true: a reply block
+ * carrying serial; serial 0 drops). A PID naming no local actor that is a
+ * remote one goes to the distribution hook. */
+static int send_to(Vm *vm, Actor *from, term to_pid, uint64_t serial, bool reply, term msg) {
     Actor *to = actor_lookup(vm, to_pid);
-    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING)) return dropped(vm, from, msg);
+    const VmDist *d;
+    if (!to && (serial || !reply) && (d = vm_dist_of(vm, to_pid))) return d->send(vm, from, to_pid, serial, msg);
+    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING) || (reply && !serial))
+        return dropped(vm, from, msg);
 
     uint32_t why;
-    Msg *m = msg_build(vm, from, msg, to->mod, &why);
+    Msg *m = build_skip(vm, from, msg, reply ? MSG_REPLY_HDR : 0u, to->mod, &why);
     if (!m) return -(int)why;
+    if (reply) {
+        m->flags |= MSG_REPLY;
+        m->data[0] = (uint32_t)serial;
+        m->data[1] = (uint32_t)(serial >> 32);
+    }
     msg_enqueue(vm, to, m, true);
     return 0;
+}
+
+int msg_send(Vm *vm, Actor *from, term to_pid, term msg) {
+    return send_to(vm, from, to_pid, 0, false, msg);
 }
 
 /* Removes the head message and stops counting it in mbox_words. */
@@ -440,18 +455,7 @@ bool msg_receive(Vm *vm, Actor *a, term *out) {
 }
 
 int msg_send_reply(Vm *vm, Actor *from, term to_pid, uint64_t serial, term body) {
-    Actor *to = actor_lookup(vm, to_pid);
-    if (!to || to->state == A_EXITED || (to->flags & AF_EXIT_PENDING) || !serial)
-        return dropped(vm, from, body);
-
-    uint32_t why;
-    Msg *m = build_skip(vm, from, body, MSG_REPLY_HDR, to->mod, &why);
-    if (!m) return -(int)why;
-    m->flags |= MSG_REPLY;
-    m->data[0] = (uint32_t)serial;
-    m->data[1] = (uint32_t)(serial >> 32);
-    msg_enqueue(vm, to, m, true);
-    return 0;
+    return send_to(vm, from, to_pid, serial, true, body);
 }
 
 int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out) {
@@ -461,12 +465,17 @@ int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out) {
         if (!(m->flags & MSG_REPLY)) {
             prev = m;
         } else if (((uint64_t)m->data[0] | ((uint64_t)m->data[1] << 32)) == serial) {
-            if (!take(vm, a, m, out)) return -1;
+            if (m->flags & MSG_FAILED) {
+                a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(vm, m));
+            } else if (!take(vm, a, m, out)) {
+                return -1;
+            }
             /* unpack may GC but never touches the queue; unlink m. */
             if (prev) prev->next = next; else a->mbox_head = next;
             if (!next) a->mbox_tail = prev;
+            int got = (m->flags & MSG_FAILED) ? 2 : 1;
             msg_free(vm, m);
-            return 1;
+            return got;
         } else {   /* a stale reply of an earlier, timed-out Call */
             if (prev) prev->next = next; else a->mbox_head = next;
             if (!next) a->mbox_tail = prev;
