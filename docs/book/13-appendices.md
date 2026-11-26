@@ -383,15 +383,15 @@ under another name, and these codes under the same names.
 | actors at once | 1024 | 16384 |
 | idle actor | about 150 bytes | about 150 bytes |
 | reductions per time slice | 1000 | 1000 |
-| open ports | 16 | 16 |
+| open ports | 16 (`vm.max_ports`, up to 2048) | 1024 (`vm.max_ports` or `gogovm --max-ports`, up to 2048) |
 | open files | 4 | 4 |
 | off-heap `Bytes` per actor / in the VM | 16 / 64 | 16 / 64 |
 | `Bytes` shared instead of copied | over 64 bytes, from `Freeze` | same |
-| TCP connections | 4 | (no network; `GOGO_NET=host`: the host's sockets, up to the 16 ports) |
+| TCP connections | 4 | (no network; `GOGO_NET=host`: the host's sockets, up to the ports) |
 | `net.Subscribe` subscribers | 4 | (no network) |
 | HTTP head / body | 2 KB / 8 KB (client body up to 64 KB with `Do`) | (no network) |
 | TLS connections | 1 (about 23 KB charged to its owner) | (no network) |
-| distributed actors: frame, links, remote PIDs, remote links and monitors | 4096 bytes, 8, 64, 32 | same (`GOGO_NET=host`) |
+| distributed actors: frame, links, remote PIDs, remote links and monitors | 4096 bytes, 8, 64, 32 | 4096 bytes, 512, 1072, 1040 (`GOGO_NET=host`; `node.max_links`, chapter 20.9) |
 | config key / value | 15 chars / 1000 bytes | same |
 | file name / path | 32 / 96 bytes | same |
 | `kv` value | 4096 bytes | same |

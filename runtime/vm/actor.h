@@ -153,8 +153,8 @@ static inline uint32_t port_index(const Vm *vm, const Port *p) { return term_pid
 
 /* Clears vm and ties it to its host (host_ctx goes to every hook) and
  * board (NULL = no board hardware). Then allocates the PID table. Returns 0, or
- * -1 if the table cannot be allocated or table_cap exceeds PORT_SLOT_BASE
- * (the slots above it name ports). Boot code then calls vm_boot; tests
+ * -1 if the table cannot be allocated or table_cap exceeds the default
+ * port_base (PORT_SLOT_TOP - GOGO_MAX_PORTS: the slots above it name ports). Boot code then calls vm_boot; tests
  * install a hand-built image with module_install_static. */
 int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board, uint16_t table_cap);
 

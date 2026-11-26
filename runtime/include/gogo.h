@@ -206,7 +206,7 @@ typedef struct gogo_config {
     GOGO_EXPERIMENTAL uint32_t max_ports;
     /* Node links of distributed actors at once (an embedded VM has no
      * "node" port today: kept for a server node in an embedding host);
-     * 0 = 512. At most 2048. */
+     * 0 = the node port's default, 8. At most 2048. */
     GOGO_EXPERIMENTAL uint32_t max_links;
     /* Fields are appended here, never inserted. */
 } gogo_config;

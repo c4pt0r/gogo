@@ -209,6 +209,10 @@ type Request struct{ From PID; Ref Ref; Body any }
 `Call` wraps `req` in an `actor.Request` with a fresh unique `Ref`, sends
 it, and waits for a reply carrying that `Ref`, at most `timeoutMs`
 milliseconds. Other messages that arrive meanwhile stay in the mailbox.
+A Call to an actor that has exited returns `(nil, false)` at once; its
+`req` is still checked as a `Send`'s message is, so one that cannot be
+sent (a closure, a port's PID to another node, ...) stops the caller
+with `actor.BadMsg`.
 The server receives an `actor.Request`, looks at its `Body`, and answers
 with `actor.Reply`:
 

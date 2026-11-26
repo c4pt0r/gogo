@@ -791,8 +791,11 @@ rebuilt:
   kinds (a shape hash the compiler stores with the type's name). Images
   from a compiler before the hash match by name and field count only; a
   mismatched definition then gives the receiver values of the wrong kind,
-  which may misbehave where it uses them. Share message types through one
-  package.
+  which may misbehave where it uses them. The hash is stored only in
+  programs that import `gogo/node`: a module compiled apart (hot loaded)
+  that sends its own struct to a remote PID it was handed sends it
+  without one, matched by name and field count only. Share message types
+  through one package.
 - **Drops are silent.** At most once means a message can be lost (a full
   link queue, a full table, a receiver over its memory limit) without the
   sender knowing; the link stays up (frames carry their number, gaps are

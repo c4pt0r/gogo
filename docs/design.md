@@ -725,8 +725,9 @@ btn, err := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge:
   peripherals need no change to the VM core. A generic driver (`gpio`,
   the input ports) is one runtime implementation; a board lists an
   instance of it over its hardware layer (`PortDriver.hw`, §5.11.1).
-  The port table has a fixed
-  size (`GOGO_MAX_PORTS`, 16 by default).
+  The port table grows in chunks of 16 up to a cap per VM
+  (`GOGO_MAX_PORTS`, 16 on a board, 1024 in the host VM, at most 2048;
+  §5.13).
 - Interrupt and input events go through a lock-free single-producer ring
   (`GOGO_EVQ_CAP`): an ISR only writes the ring, without locks or
   allocation, and the scheduler drains it each round into messages.
@@ -1566,7 +1567,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
 | `map[K]V` (15.6) | `T_NIL` | a `K_STRUCT` heap object of the type `map[K]V` (`STRUCT_MUT \| STRUCT_MAP`), one field: the entries slice, keys and values alternating, sorted by key; a package-level map's in the constant area (read-only) | as is (`TYPEIS` -> the type `map[K]V`) | the entries scanned | deep copy |
 | `any` | `T_NIL` | the term of the dynamic value | - | by the dynamic value | by the dynamic value |
 | func value (any signature) | `T_NIL` (`Spawn` and calls are `badcode`) | a `K_CLOSURE` heap object `[hdr][module tag \| function index][captures...]`; `CALLV` passes the captures as leading arguments, then the arguments | not allowed (rejected at compile time) | captures scanned | deep copy |
-| `actor.PID` | `T_ZEROPID` = `0x6` (slot 0, generation 0: slot 0 never has generation 0 and port slots are >= `0xFFF0`, so it equals no live actor or port; slots `0xF000`..`0xFFEF` are remote PIDs when the VM has node links, §5.13) | PID immediate `(gen << 20) \| (slot << 4) \| 0x6` | as is (`TYPEIS` -> `PID`) | not scanned | as is |
+| `actor.PID` | `T_ZEROPID` = `0x6` (slot 0, generation 0: slot 0 never has generation 0 and port slots are >= `0xFFF0`, so it equals no live actor or port; slots from `0xF000` up to the first port slot are remote PIDs when the VM has node links, §5.13) | PID immediate `(gen << 20) \| (slot << 4) \| 0x6` | as is (`TYPEIS` -> `PID`) | not scanned | as is |
 | `actor.Ref` | `T_ZEROREF` = `0x42`, a special whose serial counts as 0 | a `K_REF` heap object `[hdr][serial lo][hi]`; serials start at 1 | as is (`TYPEIS` -> `Ref`, the zero value too) | a `K_REF` is copied, content not scanned; `T_ZEROREF` not scanned | `K_REF` deep-copied (same serial); `T_ZEROREF` as is |
 
 Zero PID and Ref: `Send` to the zero PID is dropped; `Link` or `Monitor`
@@ -2528,8 +2529,8 @@ connections go anywhere; `netif`, `udp` and `tls` stay on the simulated
 stack). The server relays board-to-board frames. `actor.Send`,
 `Call`/`Reply`, `Monitor`, `Link` and `Kill` work on remote PIDs.
 
-**Remote PIDs are proxies.** PID slots `DIST_SLOT_BASE` (0xF000) to 0xFFEF
-(`term_is_proxy`, `runtime/vm/term.h`) name entries of the VM's proxy
+**Remote PIDs are proxies.** PID slots from `DIST_SLOT_BASE` (0xF000) up
+to the port PIDs (`vm->port_base`; `vm_dist_of`) name entries of the VM's proxy
 table `{node id, the PID on its node, generation, last use}`
 (`runtime/dist/`). The table interns, so `==` is exact; an entry is freed
 (generation bumped, so its terms name nothing) when its node goes, when
@@ -2551,18 +2552,20 @@ no local actor and is a proxy (`vm_dist_of`) goes to a hook in
 proxy is `R_BAD_MSG`. A Call to a proxy with no route returns `(nil,
 false)` at once (`h_send` returns 1); a reply block flagged `MSG_FAILED`
 ends a Call the same way (`msg_take_reply` returns 2). The core keeps no
-entries for remote peers. Cost: +366 B of VM core (tools/vmsize.sh), 4 B
-in `Vm`.
+entries for remote peers. Cost, with the growable port table and the
+per-VM caps: +449 B of VM core (tools/vmsize.sh, linked: 35943 -> 36392).
 
-**The `node` port** (`runtime/dist/dist.c`, outside the core, 11.3 KB
-of code): one port per link, opened by `gogo/node` with
-`net.NodeLink{Self, Peer, Relay, Agent, Name, Key}` (reserved type 47,
+**The `node` port** (`runtime/dist/dist.c`, outside the core, 12.1 KB linked
+of code with `hmac.c`): one port per link, opened by `gogo/node` with
+`net.NodeLink{Self, Peer, Relay, Agent, Name, Key, Conn, Hello}` (reserved type 47,
 format 15.5) once its handshake succeeded. Its owner (the link actor)
 feeds it the peer's bytes as `port.Out`; it emits every frame for the
 peer as one `port.Chunk`, and `net.NodeEvent{From, Kind, Node, Agent,
-Name}` (48): `NodeUp` with the peer's door when it opens and, on a board,
-for every board the server reports (NODEUP); `NodeDown` when the server
-reports a node gone (NODEDOWN). The driver holds the frame MACs, the
+Name}` (48): `NodeUp` when it opens and, on a board, for every board the
+server reports (NODEUP), with no door: the owner asks for a node's door
+when it needs one (`NodeDoor`, sent to the port and answered with the
+door, made on demand); `NodeDown` when the server reports a node gone
+(NODEDOWN); `NodeCarried` (the carrier, below). The driver holds the frame MACs, the
 codec, the proxy table, the export table, the remote links and monitors
 ("watches"), the Calls in flight, the relay and the frame reassembly.
 The tables are sized by the VM's link cap *L* (`vm->max_links`: config

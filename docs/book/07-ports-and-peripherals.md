@@ -55,7 +55,8 @@ Drivers and their configuration types:
 | `"screen"` | `screen.Config` | 19 |
 | ports a host program registers | `port.Host` | 18 |
 
-At most 16 ports can be open at once in the whole VM.
+At most 16 ports can be open at once in the whole VM on a board, 1024 in
+the host VM; the config key `vm.max_ports` (up to 2048) changes it.
 
 ## 7.2 GPIO
 

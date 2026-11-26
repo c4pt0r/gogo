@@ -1,10 +1,11 @@
 /* Ports: peripherals as special actors with a PID.
  *
- * A fixed table of GOGO_MAX_PORTS entries lives in the Vm. A port PID is an
- * ordinary PID term whose slot is PORT_SLOT_BASE + index and whose
- * generation is the entry's 12-bit generation, bumped on every close, so a
- * stale PID never names a newer port. vm_init keeps the actor table below
- * PORT_SLOT_BASE, so actor_lookup returns NULL for a port PID (Link and
+ * The Vm's port table grows in chunks of PORT_CHUNK up to its cap
+ * (vm->port_max, vm_set_max_ports). A port PID is an ordinary PID term
+ * whose slot is vm->port_base + index (port_base = PORT_SLOT_TOP - cap)
+ * and whose generation is the entry's 12-bit generation, bumped on every
+ * close, so a stale PID never names a newer port. The actor table stays
+ * below port_base, so actor_lookup returns NULL for a port PID (Link and
  * Monitor treat it as dead).
  *
  * Drivers never see terms: the VM decodes the int fields of the cfg and

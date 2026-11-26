@@ -199,7 +199,9 @@ for {
 - **Backpressure.** Each connection's link actor sends frames to TCP at
   TCP's pace (the stream protocol's `Out` and `Done`, chapter 10.7) and
   queues up to 8 KB more; beyond that, messages are dropped and the link
-  stays up. Senders never block. Unlike a local send, a remote message that would take its
+  stays up. On a host VM the node port writes the socket itself (20.9)
+  and queues up to 256 KB per link in the host's memory, outside the
+  VM's limits, before it drops. Senders never block. Unlike a local send, a remote message that would take its
   receiver over its memory limit is dropped: a peer cannot end a local
   actor by sending it data.
 
@@ -258,7 +260,7 @@ delays a few by several hundred ms).
 | remote links and monitors | 16 + 2*L* (a full table answers with `NoConnection`) |
 | remote Calls in flight | 8 + *L* (a Call beyond that returns `(nil, false)` at once) |
 | nesting of a message | 16 |
-| queued frames per link | 8 KB |
+| queued frames per link | 8 KB on a board (the link actor); 256 KB on a host VM (the node port, host memory) |
 
 **How many boards a server serves.** A host VM serves 512 boards with
 the default caps (1024 ports, 512 links), each costing it one port and

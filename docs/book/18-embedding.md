@@ -176,7 +176,7 @@ from its options:
 | `fs_root` | a host directory served as `/flash`, or `NULL` for no storage (section 18.8) |
 | `fs_quota` | bytes the files under `fs_root` may hold; 0 = no quota |
 | `max_ports` | ports open at once (the table grows as they open); 0 = 1024, or fewer when `max_actors` leaves less room (actor and port PIDs share 65536 slots); at most 2048 |
-| `max_links` | node links at once (chapter 20); 0 = 512; at most 2048 |
+| `max_links` | node links at once (chapter 20; an embedded VM has no node port yet); 0 = 8; at most 2048 |
 
 Over `mem_limit`, the VM's allocations fail and the actor that asked is
 stopped with `oom`, as when an actor goes over its own limit
