@@ -74,6 +74,9 @@
 // tens of milliseconds, and an SD card occasionally hundreds. Write
 // results in large pieces (or use WriteFile) and keep such calls out of
 // time-critical actors.
+//
+// The path rules, where /flash and /sd live on each platform, and the names
+// that libraries reserve are listed in one place: Programming gogo, section 9.1.
 package fs
 
 import (

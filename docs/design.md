@@ -905,7 +905,8 @@ FatFs).
   killed, and `port.Handoff` passes it on. At most 4 files are open in
   the whole VM (`TooMany`, `GOGO_FS_MAX_OPEN`); each is charged to its
   owner. Operations by a non-owner give `Closed` and do not crash.
-- **Path rules.** Absolute paths with `/flash` or `/sd` as the whole
+- **Path rules** (with the names libraries reserve, listed for users in
+  book section 9.1). Absolute paths with `/flash` or `/sd` as the whole
   first segment; names of 1 to 32 bytes from `A-Z a-z 0-9 . _ -`; a whole
   path of at most 96 bytes. Segments ending in `.` (`.` and `..`
   included), empty segments and a trailing `/` are `BadPath`. Renaming a

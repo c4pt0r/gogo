@@ -34,6 +34,33 @@ Anything else is `fs.BadPath`. Prefer lower-case names: `/sd` is FAT and
 ignores case (`A.TXT` is `a.txt`), while `/flash` does not. A name made on a
 PC that breaks the rules is still listed by `ReadDir`, but cannot be opened.
 
+### Where the media are
+
+| Path | On a board | `gogo run` / `gogovm` on a computer | A program that embeds gogo (chapter 18) |
+|---|---|---|---|
+| `/flash` | the board's flash (LittleFS) | `DIR/flash` with `--fs-root DIR` (created if missing); without it, every call is `NotMounted` | the host's `fs_root` directory; without it, `NotMounted` |
+| `/sd` | the SD card (FAT), when one is inserted (Cardputer ADV) | `DIR/sd`, only if that directory exists | never mounted |
+| anything else (`/`, `/tmp`, `/data`, ...) | `BadPath` | `BadPath` | `BadPath` |
+
+On a computer a program stays inside those directories: symlinks, FIFOs
+and devices in them are not followed (`BadPath`), a file with other hard
+links cannot be opened for writing, and on a file system that ignores case
+(macOS by default) `/flash` ignores case too.
+
+### Reserved names
+
+The file system itself reserves no names beyond the rules above, but these
+libraries and tools use names of their own. Keep your files out of their
+way: put a program's data in a directory of its own (`/flash/myapp/...`).
+
+| Name | Used by | What happens |
+|---|---|---|
+| `<name>.tmp` | `fs.WriteFile` | the new content is written to `<name>.tmp` beside the file, then renamed over it (section 9.3). Do not keep data in names ending in `.tmp`: a `WriteFile` of the same base name replaces it, and on `/sd` a power cut can leave one behind |
+| `/flash/kv/` | `gogo/kv` (section 9.5) | one file per key. Keys may not end in `.tmp`; any other file put there shows up in `kv.Keys()` |
+| `0.log`, `1.log` | `gogo/ringlog` (section 9.6) | the two halves of a log, in the directory you pass to `ringlog.Append` and `ringlog.Read` |
+| `.gogo-push` | `gogo push` (chapter 12) | the upload is written to this name in the target directory, checked, then renamed; an interrupted push can leave it |
+| `/flash/<name>.ggb` | `gogo push` | where an image goes by default; `code.Load` loads images from any path (chapter 14) |
+
 ## 9.2 Errors
 
 Every call returns an `fs.Err`; `fs.OK` (0) means success. Storage errors

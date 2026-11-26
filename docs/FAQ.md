@@ -315,6 +315,15 @@ instruction encoding, type table, versioning and load-time checks) is in
 [design.md](design.md) §5.6; value representation is in §5.5. `gogo dis
 file.ggb` prints a program's bytecode.
 
+### Which file paths and names are special?
+Paths start with `/flash` (the board's flash) or `/sd` (an SD card, where
+there is one); names are 1 to 32 bytes of `A-Z a-z 0-9 . _ -`, a path at
+most 96 bytes, and no name may end in `.`. On a computer, `gogo run
+--fs-root DIR` maps them to `DIR/flash` and `DIR/sd`. A few names are used
+by libraries and tools: `<name>.tmp` (`fs.WriteFile`), `/flash/kv/`
+(`gogo/kv`), `0.log`/`1.log` (`gogo/ringlog`) and `.gogo-push` (`gogo
+push`). Book section 9.1 has the full tables.
+
 ### Can I read the book as a website?
 Yes, at <https://gogovm.dev/book/>; it is rebuilt from main
 whenever the book or the landing page changes (the pages workflow). To
