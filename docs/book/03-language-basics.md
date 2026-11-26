@@ -1084,8 +1084,9 @@ so a `defer` in a literal called in a loop is allowed).
 Two differences from Go:
 
 - **Deferred calls run on normal returns only.** A crash (division by
-  zero, an index out of range, `badcode`) and `actor.Exit` end the actor
-  without running them. There is no `recover`: the actor ends, and its
+  zero, an index out of range, `badcode`), a `panic` (also one inside a
+  deferred call) and `actor.Exit` end the actor without running them, so
+  Go's `defer mu.Unlock()` habit does not carry over to panics. There is no `recover`: the actor ends, and its
   ports and files are closed for it (section 5.7), so `defer f.Close()` is
   for actors that live on, not a safety net.
 - **A deferred func literal sees values, not variables.** A func literal
@@ -1616,9 +1617,8 @@ of it. Some things to know:
   in a field or an element is not changed in place (a write through it
   copies it), so `p.Cells[:]` is rejected (`slice of an array that is not
   a variable not supported`): copy it first, `c := p.Cells; c[:]`.
-- **No `==` yet.** Comparing arrays (`comparison of arrays not supported
-  yet`), and a `switch` on one, wait for the comparison of composite values
-  (with interfaces); compare the elements.
+- **`==` compares the elements**, as in Go: `a == b` and a `switch` on an
+  array hold when every element is equal.
 - **Not in `any`.** An array cannot go into an interface, so it cannot be
   a message on its own (`array in interface not supported`): send a slice,
   or a struct with the array as a field, which is copied with the message.

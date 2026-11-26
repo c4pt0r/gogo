@@ -290,8 +290,8 @@ rebuilt:
   receivers ("pointer receivers are not supported yet"), pointers and package-level `var`s. `goto` is rejected (labeled `break` and
   `continue` cover its uses). Channels, `go`, `select`, generics and
   `recover` are outside the design. "Language completeness" is a
-  planned milestone. *Workarounds:* a type switch for assertions and for
-  values in an `any`, slices of structs searched linearly for maps.
+  planned milestone. *Workaround:* slices of structs searched linearly
+  for maps.
 - **No `gogo/fmt`.** Printing is `println`; to build a string use
   `gogo/strconv` and `+`.
 - **`gogo/errors` differs from Go's.** Two errors from `errors.New` with
@@ -347,7 +347,8 @@ rebuilt:
   arrays).
 - **`defer` is static and runs on normal returns only.** A `defer`
   inside a loop is rejected (`defer inside a loop not supported`): move
-  the loop body into a function. A crash or `actor.Exit` ends the actor
+  the loop body into a function. A crash, a `panic` (Go runs the
+  deferred calls while it unwinds) or `actor.Exit` ends the actor
   without running the deferred calls (its ports and files are closed
   anyway). A deferred func literal cannot set a named result (`captured
   named result must not be changed`), so `defer func() { err = ... }()`
@@ -453,6 +454,13 @@ rebuilt:
   refused `code.Spawn`).
 - **`panic` of an error prints `Error()`**, as Go does, but a
   `fmt.Stringer` value prints as a value (Go prints its `String()`).
+- **Panic texts differ from Go's in places.** A failed `x.(T)` says
+  `interface conversion: interface {} is not string`, without the
+  dynamic type Go names (`interface {} is int, not string`);
+  `panic(nil)` prints `panic: nil` where Go 1.21+ raises a
+  `*runtime.PanicNilError`; a method call on a nil interface value is
+  reported in the interface's dispatcher (`crashed: panic in
+  Shape.Area`), not in the caller.
 - **`panic` ends the actor; there is no `recover`.** A panic is a crash
   with the reason `actor.Panic`, for links, monitors and supervisors to
   handle. Its value prints as `println` prints it (a struct as `{1 2}`, a
