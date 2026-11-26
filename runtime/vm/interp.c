@@ -690,11 +690,14 @@ int interp_run(Vm *vm, Actor *a) {
              * to an object start (image_const_start); never heap refs (they
              * would point into a random heap). A const ref gets the
              * module's tag (term.h). */
-            CHECK(term_is_int(ext) || ext == T_NIL || ext == T_TRUE || ext == T_FALSE ||
-                  ext == T_EMPTYSTR || ext == T_ZEROPID || ext == T_ZEROREF || ext == T_NILSLICE ||
-                  ext == T_EMPTYBYTES ||
-                  (term_is_const(ext) && !(ext & MOD_TAG_MASK) && image_const_start(img, term_const_off(ext))));
-            R[ra] = term_is_const(ext) ? ext | tag : ext;
+            if (term_is_const(ext)) {
+                CHECK(!(ext & MOD_TAG_MASK) && image_const_start(img, term_const_off(ext)));
+                ext |= tag;
+            } else {
+                /* the specials are T_NIL 0x02, 0x12, .. T_EMPTYBYTES 0x62 (term.h) */
+                CHECK(term_is_int(ext) || ext == T_ZEROPID || ((ext & 0xFu) == 2u && ext <= T_EMPTYBYTES));
+            }
+            R[ra] = ext;
             break;
 
         case OP_LOADI32:
