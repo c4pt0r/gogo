@@ -199,7 +199,7 @@ const Image *module_resolve(const Vm *vm, uint32_t slot, uint32_t gen);
 uint32_t module_code_words(const ModEntry *e);
 
 /* The handle of the module now in slot (slot << 16 | generation). */
-uint32_t module_handle(const Vm *vm, uint32_t slot);
+static inline uint32_t module_handle(const Vm *vm, uint32_t slot) { return (slot << 16) | vm->mod_gen[slot]; }
 
 /* Run for every new actor (actor_new_in): counts it in its module's live
  * actors. */

@@ -212,10 +212,6 @@ const Image *module_resolve(const Vm *vm, uint32_t slot, uint32_t gen) {
     return (e && vm->mod_gen[slot] == gen) ? &e->img : NULL;
 }
 
-uint32_t module_handle(const Vm *vm, uint32_t slot) {
-    return (slot << 16) | vm->mod_gen[slot];
-}
-
 int module_spawn(Vm *vm, Actor *caller, uint32_t handle, const uint8_t *entry, uint32_t len,
                  term arg, uint32_t flags, term *pid) {
     uint32_t slot = handle >> 16, f;
