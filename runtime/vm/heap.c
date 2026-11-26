@@ -105,38 +105,45 @@ static uint32_t policy_words(uint32_t old_words, uint32_t live, uint32_t need,
     return old_words;
 }
 
-/* One Cheney pass from a's block into a new block of new_words, which must
- * hold hp + stack words (an upper bound of the live data). The heap is
- * compacted to the bottom, the stack moves to the top; saved fps are
+/* One pass from a's block into a new block of new_words, which must hold
+ * hp + stack words. With `trace`, a Cheney copy (an upper bound of the live
+ * data): the heap is compacted to the bottom. Without, the block is already
+ * compacted (everything in [0, hp) is live) and is copied as it is: a
+ * resize. Either way the stack moves to the top; saved fps are
  * top-relative, so only sp and fp shift. The old block is freed after the
  * copy, so at most two blocks exist at once. False (nothing changed) if the
  * new block cannot be allocated. */
-static bool copy_into(Vm *vm, Actor *a, uint32_t new_words, term *roots, int n_roots) {
+static bool copy_into(Vm *vm, Actor *a, uint32_t new_words, term *roots, int n_roots, bool trace) {
     uint32_t old_words = a->mem_words;
     uint32_t stack_words = old_words - a->sp;
     uint32_t new_sp = new_words - stack_words;
     Copier c;
     c.from = a->mem;
     c.to = va_alloc(vm, (size_t)new_words * 4u);
-    c.free = 0;
-    c.held = bytes_gc_begin(a);
+    c.free = a->hp;
     if (!c.to) return false;
 
-    /* 1. Roots: the stack (forwarded in its new place) and the caller's. */
     memcpy(c.to + new_sp, c.from + a->sp, (size_t)stack_words * 4u);
-    for (uint32_t i = new_sp; i < new_words; i++) c.to[i] = forward(&c, c.to[i]);
-    for (int i = 0; i < n_roots; i++) roots[i] = forward(&c, roots[i]);
+    if (trace) {
+        c.free = 0;
+        c.held = bytes_gc_begin(a);
+        /* 1. Roots: the stack (forwarded in its new place) and the caller's. */
+        for (uint32_t i = new_sp; i < new_words; i++) c.to[i] = forward(&c, c.to[i]);
+        for (int i = 0; i < n_roots; i++) roots[i] = forward(&c, roots[i]);
 
-    /* 2. Cheney scan: forward the term words of each copied object. */
-    for (uint32_t scan = 0; scan < c.free; ) {
-        uint32_t h = c.to[scan];
-        uint32_t first, end;
-        heap_obj_terms(c.to + scan, &first, &end);
-        for (uint32_t i = scan + first; i < scan + end; i++) c.to[i] = forward(&c, c.to[i]);
-        scan += hdr_words(h);
+        /* 2. Cheney scan: forward the term words of each copied object. */
+        for (uint32_t scan = 0; scan < c.free; ) {
+            uint32_t h = c.to[scan];
+            uint32_t first, end;
+            heap_obj_terms(c.to + scan, &first, &end);
+            for (uint32_t i = scan + first; i < scan + end; i++) c.to[i] = forward(&c, c.to[i]);
+            scan += hdr_words(h);
+        }
+
+        if (c.held) bytes_gc_sweep(vm, a, c.held);   /* what nothing reached goes */
+    } else {
+        memcpy(c.to, c.from, (size_t)c.free * 4u);   /* compacted: everything is live */
     }
-
-    if (c.held) bytes_gc_sweep(vm, a, c.held);   /* what nothing reached goes */
     va_free(vm, a->mem, (size_t)old_words * 4u);
     a->mem = c.to;
     a->mem_words = (uint16_t)new_words;
@@ -144,22 +151,6 @@ static bool copy_into(Vm *vm, Actor *a, uint32_t new_words, term *roots, int n_r
     a->sp = (uint16_t)new_sp;
     a->fp = (uint16_t)((uint32_t)a->fp + new_words - old_words);
     return true;
-}
-
-/* Copies the compacted heap [0, hp) and the stack into a block of new_words
- * (no tracing needed: everything in the block is live). */
-static void resize_block(Vm *vm, Actor *a, uint32_t new_words) {
-    uint32_t old_words = a->mem_words;
-    uint32_t stack_words = old_words - a->sp;
-    uint32_t *mem = va_alloc(vm, (size_t)new_words * 4u);
-    if (!mem) return;                            /* keep the compacted block */
-    memcpy(mem, a->mem, (size_t)a->hp * 4u);
-    memcpy(mem + new_words - stack_words, a->mem + a->sp, (size_t)stack_words * 4u);
-    va_free(vm, a->mem, (size_t)old_words * 4u);
-    a->mem = mem;
-    a->mem_words = (uint16_t)new_words;
-    a->sp = (uint16_t)(new_words - stack_words);
-    a->fp = (uint16_t)((uint32_t)a->fp + new_words - old_words);
 }
 
 /* Spec M2 §5.1.3: at most two blocks of this actor exist at once.
@@ -184,25 +175,25 @@ void heap_gc(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots) {
     bool grow_certain = target > old_words && stack_words + need_words > old_words &&
                         used <= cap && need_words <= cap - used;  /* target >= used + need */
     if (grow_certain || target < old_words) {
-        if (copy_into(vm, a, target, roots, n_roots)) return;
+        if (copy_into(vm, a, target, roots, n_roots, true)) return;
     }
-    if (!copy_into(vm, a, old_words, roots, n_roots)) return;  /* no memory to collect with */
+    if (!copy_into(vm, a, old_words, roots, n_roots, true)) return;  /* no memory to collect with */
 
     uint32_t live = (uint32_t)a->hp + stack_words;
     uint32_t new_words = policy_words(old_words, live, need_words, cap);
-    if (new_words != old_words) resize_block(vm, a, new_words);
+    if (new_words != old_words) copy_into(vm, a, new_words, NULL, 0, false);
 }
 
 void heap_gc_tight(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_roots) {
     (void)vm;
     uint32_t old_words = a->mem_words;
-    if (!copy_into(vm, a, old_words, roots, n_roots)) return;  /* no memory to collect with */
+    if (!copy_into(vm, a, old_words, roots, n_roots, true)) return;  /* no memory to collect with */
     uint32_t live = (uint32_t)a->hp + (old_words - a->sp);
     uint32_t cap = block_cap(a);                 /* after the sweep released Bytes */
     uint32_t want = live + need_words;           /* <= 2 * 65535, no overflow */
     if (need_words && want > cap) return;        /* cannot fit: keep the compacted block */
     if (want < MIN_BLOCK_WORDS && MIN_BLOCK_WORDS <= old_words) want = MIN_BLOCK_WORDS;
-    if (want != old_words) resize_block(vm, a, want);
+    if (want != old_words) copy_into(vm, a, want, NULL, 0, false);
 }
 
 bool heap_reclaim_waiting(Vm *vm, Actor *a) {
