@@ -3,8 +3,9 @@ package main
 // Conversions between every pair of sized integer types, and to and from
 // float32 and float64, on edge values. Checked against Go (gocompare):
 // int and uint are left out of the matrix (32 bits in gogo, 64 in Go on
-// the host); float to integer conversions stay within the target's range
-// or follow what Go does on arm64.
+// the host); float to integer conversions here stay within every target's
+// range. Out-of-range ones are implementation-specific in Go (arm64 and
+// amd64 differ), so float_conv_range checks gogo's rule without Go.
 
 func fromInt8(x int8) {
 	println("int8", x, int16(x), int32(x), int64(x), uint8(x), uint16(x), uint32(x), uint64(x), float32(x), float64(x))
@@ -81,11 +82,10 @@ func main() {
 		18446744073709551615, 9007199254740993, 18446744073709550592, 18446744073709550593} {
 		fromUint64(v)
 	}
-	for _, f := range []float64{0, 1.9, -1.9, 127.5, -128.5, 255.9, 65535.5, 4294967295.5,
-		3e9, 9.2e18, 1.8e19, -0.5} {
+	for _, f := range []float64{0, 1.9, 127.5, 0.5} {
 		fromFloat64(f)
 	}
-	for _, f := range []float32{0, 2.5, -2.5, 65535, 4294967040, 1e19, 1.8e19} {
+	for _, f := range []float32{0, 2.5, 126.75} {
 		fromFloat32(f)
 	}
 	// conversions of variables to named types and back

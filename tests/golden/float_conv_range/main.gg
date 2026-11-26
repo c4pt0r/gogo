@@ -1,0 +1,24 @@
+package main
+
+// Float to integer conversions out of the target's range. Go leaves these
+// implementation-specific (arm64 and amd64 differ), so this golden is not
+// compared with Go: it pins gogo's rule, which is Go's on arm64 (see
+// docs/known-issues.md, "Float conversions out of range").
+
+func fromFloat64(f float64) {
+	println("float64", f, int8(f), int16(f), int32(f), int64(f), uint8(f), uint16(f), uint32(f), uint64(f))
+}
+
+func fromFloat32(f float32) {
+	println("float32", f, int8(f), int16(f), int32(f), int64(f), uint8(f), uint16(f), uint32(f), uint64(f))
+}
+
+func main() {
+	for _, f := range []float64{-1.9, -128.5, 255.9, 65535.5, 4294967295.5,
+		3e9, 9.2e18, 1.8e19, -0.5} {
+		fromFloat64(f)
+	}
+	for _, f := range []float32{-2.5, 65535, 4294967040, 1e19, 1.8e19} {
+		fromFloat32(f)
+	}
+}
