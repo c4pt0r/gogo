@@ -44,28 +44,46 @@ uint32_t float_type(const uint32_t *o) {
 #define SIGN(is32) ((is32) ? 0x80000000ull : 0x8000000000000000ull)
 
 /* x compared with y (raw bits of one width) in IEEE order, on the bits:
- * -1, 0 or 1, and 2 if either is NaN; -0 equals 0. */
+ * -1, 0 or 1, and 2 if either is NaN; -0 equals 0. A float32's bits go to
+ * the top half, where sign and magnitude order as a float64's do; only
+ * the infinity differs. */
 static int fcmp(uint64_t x, uint64_t y, bool is32) {
-    uint64_t mag = MAG(is32);
-    if ((x & mag) > INF(is32) || (y & mag) > INF(is32)) return 2;
+    uint64_t mag = MAG(false), inf = INF(false);
+    if (is32) {
+        x <<= 32;
+        y <<= 32;
+        inf = INF(true) << 32;
+    }
+    if ((x & mag) > inf || (y & mag) > inf) return 2;
     if (!((x | y) & mag)) return 0;
-    int64_t p = x & SIGN(is32) ? -(int64_t)(x & mag) : (int64_t)x;   /* sign-magnitude to an order */
-    int64_t q = y & SIGN(is32) ? -(int64_t)(y & mag) : (int64_t)y;
+    int64_t p = (int64_t)x < 0 ? -(int64_t)(x & mag) : (int64_t)x;   /* sign-magnitude to an order */
+    int64_t q = (int64_t)y < 0 ? -(int64_t)(y & mag) : (int64_t)y;
     return (p > q) - (p < q);
 }
 
-/* The float with raw bits u truncated toward zero to an int (32 bits) or,
- * with to64, an int64, on the bits: NaN gives 0 and a value beyond the
- * range the nearest end (C leaves both undefined; Go on arm64 does this). */
-static int64_t ftrunc(uint64_t u, bool is32, bool to64) {
-    int mbits = is32 ? 23 : 52, lim = to64 ? 63 : 31;
-    uint32_t hi = is32 ? (uint32_t)u << 1 : (uint32_t)(u >> 32) << 1;   /* exponent at the top */
-    int e = (int)(hi >> (is32 ? 24 : 21)) - (is32 ? 127 : 1023);
-    uint64_t m = (u & (is32 ? 0x7FFFFFull : 0xFFFFFFFFFFFFFull)) | (is32 ? 0x800000ull : 0x10000000000000ull);
-    bool neg = (u & SIGN(is32)) != 0;
-    if ((u & MAG(is32)) > INF(is32) || e < 0) return 0;      /* NaN, |x| < 1 */
+/* The float64 bits of the float32 with bits u (exact; a NaN stays one). */
+static uint64_t widen(uint32_t u) {
+    float f;
+    double d;
+    uint64_t r;
+    memcpy(&f, &u, sizeof f);
+    d = f;
+    memcpy(&r, &d, sizeof r);
+    return r;
+}
+
+/* The float64 with raw bits u truncated toward zero to an int (32 bits)
+ * or, with to64, an int64, on the bits: NaN gives 0 and a value beyond the
+ * range the nearest end (C leaves both undefined; Go on arm64 does this).
+ * A float32 is widened first (exact, so the result is the same). */
+static int64_t ftrunc(uint64_t u, bool to64) {
+    int lim = to64 ? 63 : 31;
+    int e = (int)((uint32_t)(u >> 32) << 1 >> 21) - 1023;
+    uint64_t m = (u & 0xFFFFFFFFFFFFFull) | 0x10000000000000ull;
+    bool neg = (int64_t)u < 0;
+    if ((u & MAG(false)) > INF(false) || e < 0) return 0;      /* NaN, |x| < 1 */
     if (e >= lim) return neg ? (to64 ? INT64_MIN : INT32_MIN) : (to64 ? INT64_MAX : INT32_MAX);
-    uint64_t v = e >= mbits ? m << (e - mbits) : m >> (mbits - e);
+    uint64_t v = e >= 52 ? m << (e - 52) : m >> (52 - e);
     return neg ? -(int64_t)v : (int64_t)v;
 }
 
@@ -105,20 +123,15 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs) {
     }
     if (op == OP_CONVF) {
         if (rc == 2u || rc == 3u) {          /* int (c=2) / int64 (c=3) of a float */
-            int64_t i = ftrunc(x, is32, rc == 3u);
+            int64_t i = ftrunc(is32 ? widen((uint32_t)x) : x, rc == 3u);
             if (i >= TERM_INT_MIN && i <= TERM_INT_MAX) { R[ra] = term_from_int((int32_t)i); return R_NORMAL; }
             if (!box_raw(vm, a, rc == 2u ? K_INT : K_INT64, rc == 2u ? 2u : 3u, (uint64_t)i, &t)) return R_OUT_OF_MEMORY;
             goto store;
         }
         if (rc != 4u && rc != 5u) return R_BAD_CODE;   /* float64 (c=4) / float32 (c=5) of a float */
         if ((rc == 5u) == is32) { R[ra] = R[rb]; return R_NORMAL; }
-        if (is32) {
-            float f;
-            uint32_t u = (uint32_t)x;
-            memcpy(&f, &u, sizeof f);
-            double d = f;
-            memcpy(&r, &d, sizeof r);
-        } else {
+        if (is32) r = widen((uint32_t)x);
+        else {
             double d;
             memcpy(&d, &x, sizeof d);
             float f = (float)d;
@@ -135,12 +148,9 @@ uint32_t float_exec(Vm *vm, Actor *a, uint32_t w, uint32_t nregs) {
     if (op >= OP_EQF) {
         int c = fcmp(x, y, is32);
         bool b;
-        switch (op) {
-        case OP_EQF: b = c == 0; break;
-        case OP_NEF: b = c != 0; break;
-        case OP_LTF: b = c < 0; break;
-        default:     b = c <= 0; break;      /* OP_LEF */
-        }
+        /* bit c + 1 (c: -1, 0, 1, 2 for NaN) of the nibble of EQF, NEF,
+         * LTF, LEF (57..60, consecutive in the image format): 2, D, 1, 3 */
+        b = 0x31D2u >> ((op - OP_EQF) * 4u + (uint32_t)(c + 1)) & 1u;
         R[ra] = term_from_bool(b);
         return R_NORMAL;
     }
