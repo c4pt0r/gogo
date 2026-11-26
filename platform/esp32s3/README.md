@@ -208,7 +208,7 @@ drivers and mounts this build really has: `gpio` always; `netif`, `udp`,
 `tcp` and `tcp_listen` (`GOGO_NET`); `tls` (`GOGO_TLS`, needs `GOGO_NET`;
 see "TLS" below); `kbd` (Cardputer with `GOGO_KBD`); `power`
 (`GOGO_BATTERY`); `imu` (`GOGO_IMU`); `ir_tx` (`GOGO_IR`); `ir_rx` (StickS3
-with `GOGO_IR`); `mic` and `spk` (`GOGO_AUDIO`); `screen` (`GOGO_SCREEN`, in builds with
+with `GOGO_IR`); `mic` and `speaker` (`GOGO_AUDIO`); `screen` (`GOGO_SCREEN`, in builds with
 the console task); the mounts `/flash` always
 and `/sd` (Cardputer with `GOGO_SD`). An image or module that requires
 another name is refused at boot (`gogo: image requires <name>, which this
@@ -386,7 +386,7 @@ in `cmd/gogo/flash.go`.
     bit 3 = GPIO, `GPIO_DRV` 0x13 bit 3 = push-pull, `GPIO_MODE` 0x10 bit 3 =
     output, so it never glitches on). `pm1.c` drives it to "the speaker
     wants it and `ir_rx` does not block it" (`pm1_spk_amp`,
-    `pm1_spk_amp_block`): a `spk` open fails while `ir_rx` is open, and an
+    `pm1_spk_amp_block`): a `speaker` open fails while `ir_rx` is open, and an
     `ir_rx` opened during playback silences the speaker until it closes. All PM1 users start with
     `pm1_wake` (poll the chip up to 200 ms, `I2C_CFG` 0x09 = 0: no idle
     sleep), once per boot.
@@ -414,9 +414,9 @@ in `cmd/gogo/flash.go`.
     `Gain` 0 = PGA 30 dB + ADC scale 24 dB (54 dB), and `Gain` adds digital
     volume. High-pass reg 0x1B = 0x0A, 0x1C = 0x64 (0x6A left a ~600 ms DC
     step after each open).
-  - spk: 4 DMA buffers of 10 ms refilled by the `on_sent` callback from an
+  - speaker: 4 DMA buffers of 10 ms refilled by the `on_sent` callback from an
     8 KB ring (internal RAM, allocated at open), so `spk_queued` is exact
-    and the latency at most 40 ms. Volume 1..100 = the board's ceiling
+    and the latency at most 40 ms. VolumePct 1..100 = the board's ceiling
     `AUDIO_SPK_MAX_DB` (`board.h`) minus 40 dB .. the ceiling, 0 mute. The
     ceiling is 0 dB on the Cardputer ADV and **-4 dB on the StickS3**: at DAC
     0 dB its USB console once stopped answering (probably a supply dip from
@@ -489,7 +489,7 @@ in `cmd/gogo/flash.go`.
   retrying` (first failure only), `gogo: ip <a.b.c.d> (gateway <g>)` when
   the stack goes up (`wifi_esp_netif.report`) and `gogo: network down`.
 - `config_esp.c`: the config store (NVS namespace `gogo`, one blob per key;
-  `config.Get` reads it, `wifi.` keys hidden) and the `gogo config` command
+  `sys.Config` reads it, `wifi.` keys hidden) and the `gogo config` command
   handler: a task (CPU0) reads the USB-Serial/JTAG input (driver installed,
   stdio switched to it) and answers frames
   `\x02gogo-config <op> [<key> [<value>]]\n` with `\x02kv <text>` lines and
@@ -687,9 +687,9 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   owning actor (only the arena buffers above are); they are system heap,
   held only while the port is open.
 
-- `GOGO_AUDIO` (default y): `audio_esp.c`, the `mic` and `spk` ports on the
+- `GOGO_AUDIO` (default y): `audio_esp.c`, the `mic` and `speaker` ports on the
   ES8311 and I2S (both boards; see `audio_esp.c` above). It selects
-  `CONFIG_I2S_ISR_IRAM_SAFE`. Off: `port.Open` of `mic` and `spk` returns
+  `CONFIG_I2S_ISR_IRAM_SAFE`. Off: `port.Open` of `mic` and `speaker` returns
   ok=false (the drivers are not listed), and the IDF I2S driver is not linked;
   `runtime/input/audio.c` (the common driver) is still linked. Cost: StickS3 +18720 B
   `gogo.bin`, +592 B static DIRAM; Cardputer ADV +19680 B, +820 B.
@@ -798,10 +798,10 @@ modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
     idf.py -C platform/esp32s3 -B <dir> -DGOGO_BOARD=<board> -DSDKCONFIG=<dir>/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;<board overlay>;<dir>/sdkconfig.gogo" build
 
-Feature names are `net kbd power sd exfat cjk imu irtx irrx mic spk tls screen`; `net`, `kbd`,
+Feature names are `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen`; `net`, `kbd`,
 `power` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
-`imu`, `irtx`, `irrx`, `mic`, `spk`, `tls` are on by default and `-without` turns them off
-(`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `spk` are one, `GOGO_AUDIO`; `tls` needs `net`, `GOGO_TLS` depends on `GOGO_NET`). A required feature cannot be removed,
+`imu`, `irtx`, `irrx`, `mic`, `speaker`, `tls` are on by default and `-without` turns them off
+(`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `speaker` are one, `GOGO_AUDIO`; `tls` needs `net`, `GOGO_TLS` depends on `GOGO_NET`). A required feature cannot be removed,
 and one the board lacks (`kbd`, `sd` on the StickS3) is an error. A feature
 that is off may add its own sdkconfig fragment to `SDKCONFIG_DEFAULTS` (the
 table's `offDefaults`): `tls` off adds `sdkconfig.tls-off`, which puts

@@ -7,6 +7,34 @@ the M5StickS3 and the Cardputer ADV. The design is in
 [design.md](design.md); the book's appendix lists the documented limits
 ([13-appendices.md](book/13-appendices.md)).
 
+## Breaking changes since v0.1.0
+
+Programs written for v0.1.0 need these edits, and every image must be
+rebuilt:
+
+- **Images.** The reserved type numbers changed inside format 15.0, so an
+  image built by an older compiler, including one built between the
+  image format 15 change and this one, loads but misreads types. Rebuild
+  every `.ggb`, hot-loadable modules on `/flash` included.
+- **tcp and tls** speak the stream protocol: `net.Write{Data}` is
+  `port.Out{Data}`, `net.Written` is `port.Done` (a third Out in flight
+  gets `Done{Seq: -1}` instead of closing the connection), `net.Data` is
+  `port.Chunk` and `net.Closed` is `port.Closed`; `net.Overflow` is gone.
+- **Event sources.** `port.Chunk`, `port.Done` and `port.Post` gained
+  `From` as their first field: positional literals need it.
+- **GPIO** types moved to `gogo/gpio`: `port.GPIO` is `gpio.Config`,
+  `port.Write` and `port.Edge` are `gpio.Write` and `gpio.Edge`, and the
+  mode and edge constants are `gpio.Input` ... `gpio.Both`.
+- **Configuration.** `gogo/config` is gone: `config.Get(key)` is
+  `sys.Config(key)`.
+- **Units.** `audio.Mic{Rate, FrameMs, Gain}` is `{RateHz, FrameMs,
+  GainDb}`, `audio.Speaker{Rate, Volume}` is `{RateHz, VolumePct}`,
+  `audio.MaxGain` and `MaxVolume` are `MaxGainDb` and `MaxVolumePct`, and
+  `power.Battery.Percent` is `Pct`.
+- **Speaker.** The driver `"spk"` is `"speaker"`, in `port.Open`, in
+  `//gogo:optional` and as a `gogo firmware` feature (`-without spk` is
+  now `-without speaker`).
+
 ## VM
 
 - **A crash does not change the exit status.** `gogovm` (and so
@@ -61,7 +89,7 @@ the M5StickS3 and the Cardputer ADV. The design is in
   off-heap handles (`GOGO_BYTES_HANDLES`) and one actor may hold 16. When
   the table is full, the VM first collects the holders; if that frees
   nothing, the allocation fails (`OutOfMemory`) and ports that need a
-  handle fail (a TCP write ends with `Closed{Overflow}`). *Workaround:*
+  handle refuse (a stream `Out` gets `Done{-1}`). *Workaround:*
   do not keep many large frozen `Bytes` alive in one program.
 - **Host and board memory limits differ by 16x.** An actor spawned
   without `SpawnOpt` may use 256 KB on the host and 16 KB on a board, so
@@ -177,15 +205,22 @@ the M5StickS3 and the Cardputer ADV. The design is in
   simulator in `tests/net` is reachable only from Go tests. Network
   programs must be tried on a board or through a Go test.
 - **TCP allows few writes in flight.** The window is one segment; a
-  connection takes one `Write` in flight and one queued. A third `Write`
-  before a `Written` arrives (or writing on while three `Written` are
-  owed) ends the connection with `Closed{Overflow}` and a reset. A naive
-  echo server works in light testing and breaks under load.
-  *Workaround:* count `Written` events and buffer
+  connection takes one `Out` in flight and one queued (an `Out` whose
+  `Done` is still owed counts). A third `Out` before a `Done` arrives is
+  refused with `Done{-1}` and not sent; the connection carries on. A
+  naive echo server that ignores `Done{-1}` loses data under load.
+  *Workaround:* count `Done` events and buffer
   (`docs/book/examples/10-tcp-echo` does).
-- **Small writes need a `Bytes` handle.** A small `Write` is copied into
+- **Small writes need a `Bytes` handle.** A small `Out` is copied into
   a port-held handle (for retransmission); if the VM's 64 handles are all
-  taken, the connection ends with `Closed{Overflow}`.
+  taken, it is refused with `Done{-1}`.
+- **Only tcp and tls send `port.Closed`.** The microphone does not
+  report a hardware failure, and a host port cannot end itself from the
+  C side yet (there is no `gogo_port_close`): the owner learns of either
+  only by silence. The `Reason` such ports will give is not specified
+  yet; it waits for one error numbering shared by every package. The message and its meaning (the port ended by itself;
+  close it) are fixed, so these ports can start sending it without a
+  change to programs.
 - **Losing the link or address ends every connection** with
   `Closed{NoRoute}`, and so does the exit of the `netif` owner (the DHCP
   actor). A crashed DHCP actor therefore drops all connections.
@@ -336,8 +371,8 @@ the M5StickS3 and the Cardputer ADV. The design is in
   closed are lost; goldens must `sleep` between `ir rx` lines.
 - **StickS3 5 V rail.** While an IR port is open the Grove/Hat 5 V pins
   are outputs (EXT_5V is on): nothing may feed 5 V into them then.
-- **Audio is half-duplex.** One `mic` or one `spk` at a time; on the
-  StickS3 `spk` cannot open while `ir_rx` is open.
+- **Audio is half-duplex.** One `mic` or one `speaker` at a time; on the
+  StickS3 `speaker` cannot open while `ir_rx` is open.
 - **Audio details.** The first `mic` open after a power cycle records
   about 1 s of zeros (codec warm-up); later opens do not, because the
   codec's analog reference stays on until reset (its idle current is not
@@ -369,10 +404,6 @@ the M5StickS3 and the Cardputer ADV. The design is in
   slot, `GOGO_MAX_SOURCES` 3); with 8 owed, a further `Out` is not drawn
   and gets `Done{-1}`. Wait for a Done with a timeout. A host whose
   event-source slots are all taken retries only at the next `Out`.
-- **Dones do not name their port.** `tui.Event` takes as many Dones as
-  the screen has Outs unanswered; with another stream port in flight the
-  two ports' Dones can be swapped (counts stay right, Seqs may not) until
-  `port.Done` carries its sender.
 - **Hidden console.** While a screen is open on a board, println output
   and crash reports go to the hidden console (and serial) and show only
   after the screen closes.

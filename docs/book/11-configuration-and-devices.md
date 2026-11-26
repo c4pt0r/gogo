@@ -4,12 +4,14 @@ A device needs settings that are not part of the program: the Wi-Fi
 network, a fixed IP address, the URL of a server, a calibration value.
 gogo keeps them in a **configuration store** of string keys and values,
 edited from your computer with `gogo config` and read by programs with
-`config.Get`.
+`sys.Config`.
 
-## 11.1 Reading settings: gogo/config
+## 11.1 Reading settings: sys.Config
 
 ```go
-func Get(key string) (value string, ok bool) // ok is false if the key is not set
+package sys
+
+func Config(key string) (value string, ok bool) // ok is false if the key is not set
 ```
 
 Values are strings; convert them with `gogo/strconv`. Always have a
@@ -23,13 +25,13 @@ default, so the program also runs where the key is not set:
 package main
 
 import (
-	"gogo/config"
 	"gogo/strconv"
+	"gogo/sys"
 )
 
 // intSetting returns the key's value as an int, or def.
 func intSetting(key string, def int) int {
-	v, ok := config.Get(key)
+	v, ok := sys.Config(key)
 	if !ok {
 		return def
 	}
@@ -44,9 +46,9 @@ func intSetting(key string, def int) int {
 func main() {
 	println("blink.ms =", intSetting("blink.ms", 500))
 	println("retries =", intSetting("retries", 3))
-	name, ok := config.Get("device.name")
+	name, ok := sys.Config("device.name")
 	println("device.name =", name, ok)
-	_, ok = config.Get("wifi.ssid")
+	_, ok = sys.Config("wifi.ssid")
 	println("wifi.ssid visible:", ok)
 }
 ```

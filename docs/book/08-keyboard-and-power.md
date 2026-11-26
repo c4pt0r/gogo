@@ -170,7 +170,7 @@ event, so you may see a release without a press; ignore it.
 package power
 
 type Config struct{ PeriodMs int }
-type Battery struct{ MilliVolts, Percent, Charging, External int }
+type Battery struct{ MilliVolts, Pct, Charging, External int }
 type Read struct{}
 ```
 
@@ -181,14 +181,14 @@ the minimum is 1000). The owner receives a `power.Battery`:
 - once when the port opens (the first good sample);
 - after every `power.Read{}` command you send to the port;
 - at once when `Charging` or `External` changes;
-- when `Percent` has moved by 2 or more since the last one sent.
+- when `Pct` has moved by 2 or more since the last one sent.
 
 Nothing is sent while nothing changes; there is no heartbeat.
 
 The fields:
 
 - **`MilliVolts`**: the cell voltage, as the average of the last 4 samples.
-- **`Percent`**: 0 to 100, computed linearly from `MilliVolts`: 3300 mV or
+- **`Pct`**: 0 to 100, computed linearly from `MilliVolts`: 3300 mV or
   less is 0 %, 4100 mV or more is 100 %.
 - **`Charging`**, **`External`**: 1 (yes), 0 (no) or -1 (the board cannot
   tell). On the M5StickS3 both are read from its power chip. The
@@ -228,8 +228,8 @@ func main() {
 			if b.Charging == 1 {
 				state = state + ", charging"
 			}
-			println(b.MilliVolts, "mV", b.Percent, "%", state)
-			if b.Percent < 20 && b.External != 1 {
+			println(b.MilliVolts, "mV", b.Pct, "%", state)
+			if b.Pct < 20 && b.External != 1 {
 				println("  low battery!")
 			}
 		}

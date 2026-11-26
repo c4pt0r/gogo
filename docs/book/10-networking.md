@@ -178,13 +178,13 @@ as 404 is `ok` with that `Status`.
 package main
 
 import (
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/http"
+	"gogo/sys"
 )
 
 func main() {
-	url, ok := config.Get("fetch.url")
+	url, ok := sys.Config("fetch.url")
 	if !ok {
 		url = "http://example.com/"
 	}
@@ -433,11 +433,13 @@ for it with ARP; send again.
 
 ## 10.7 TCP
 
-TCP connections are ports too:
+TCP connections are ports too, and they speak the stream protocol every
+byte port shares (section 7.6): bytes in are `port.Chunk`, bytes out are
+`port.Out`, each answered by `port.Done`, and the end is `port.Closed`.
 
 | Port | Config | Commands | Events to the owner |
 |---|---|---|---|
-| `"tcp"` | `net.Dial{IP, Port, TimeoutMs}` | `net.Write{Data}`, `net.Shutdown{}` | `net.Connected{}`, `net.Data{Data}`, `net.Written{}`, `net.Closed{Reason}` |
+| `"tcp"` | `net.Dial{IP, Port, TimeoutMs}` | `port.Out{Data}`, `net.Shutdown{}` | `net.Connected{}`, `port.Chunk{From, Seq, ..., Data}`, `port.Done{From, Seq}`, `port.Closed{From, Reason}` |
 | `"tcp_listen"` | `net.Listen{Port}` | | `net.Accepted{Conn}` |
 
 - **Dialing.** `port.Open("tcp", net.Dial{...})` starts connecting; you get
@@ -447,21 +449,27 @@ TCP connections are ports too:
   connection. `Conn` is a `"tcp"` port owned by the listener's owner and
   **paused** until you `port.Handoff` it to the actor that will handle it
   (or send it `net.Resume{}` to keep it).
-- **Receiving.** Each `Data` is the next segment from the peer, in order.
-  A segment is acknowledged only once its `Data` is in your mailbox, so a
-  slow reader slows the sender down instead of being killed.
-- **Sending.** `Write{Data}` sends a `Bytes`; `Written` follows when the
-  peer has acknowledged it. One `Write` may wait behind the one in
-  progress; **a third `Write` before a `Written` closes the connection**
-  with `Closed{Overflow}`.
+- **Receiving.** Each `Chunk` is the next segment from the peer, in order;
+  `Dropped` is always 0. A segment is acknowledged only once its `Chunk`
+  is in your mailbox, so a slow reader slows the sender down instead of
+  being killed or losing data.
+- **Sending.** `Out{Data}` sends a `Bytes`; `Done{Seq}` follows when the
+  peer has acknowledged all of it. One `Out` may wait behind the one in
+  progress; **a third `Out` before a `Done` is refused** with
+  `Done{Seq: -1}` and not sent; the connection carries on. An empty
+  `Out`, one after `Shutdown`, or one on a connection that has ended gets
+  `Done{-1}` too.
 - **Closing.** `Closed{Normal}` means the peer has finished sending (you may
-  still write). Any other reason means the connection is gone. Send
-  `Shutdown{}` to finish your side, then close the port: the stack completes
-  the close on its own. Closing the port without `Shutdown` (or exiting)
-  resets the connection.
+  still send). Any other reason means the connection is gone; `Out`s still
+  in flight then get `Done{-1}` before the `Closed`. Send `Shutdown{}` to
+  finish your side, then close the port: the stack completes the close on
+  its own. Closing the port without `Shutdown` (or exiting) resets the
+  connection.
+- **From.** Every event carries the connection's PID in `From`, so an
+  actor that owns several connections can tell them apart.
 
 The write rule matters in practice. This echo server queues data in a
-`Buffer` while two writes are in flight:
+`Buffer` while two Outs are in flight:
 
 ```go
 // A TCP echo server on port 7: the listener accepts connections and hands
@@ -476,28 +484,28 @@ import (
 	"gogo/port"
 )
 
-// echo owns one connection. A tcp port takes at most two Writes before a
-// Written comes back (a third closes the connection with Overflow), so
-// data that arrives while two are in flight waits in a Buffer.
+// echo owns one connection. A tcp port takes at most two Outs in flight
+// (a third is refused with Done{Seq: -1} and not sent), so data that
+// arrives while two are in flight waits in a Buffer.
 func echo(conn actor.PID) {
 	inFlight := 0
 	waiting := bytes.NewBuffer(256)
 	for {
 		switch m := actor.Receive().(type) {
-		case net.Data:
+		case port.Chunk:
 			if inFlight < 2 {
-				actor.Send(conn, net.Write{Data: m.Data})
+				actor.Send(conn, port.Out{Data: m.Data})
 				inFlight++
 			} else {
 				waiting.WriteBytes(m.Data)
 			}
-		case net.Written:
+		case port.Done:
 			inFlight--
 			if waiting.Len() > 0 {
-				actor.Send(conn, net.Write{Data: waiting.Freeze()})
+				actor.Send(conn, port.Out{Data: waiting.Freeze()})
 				inFlight++
 			}
-		case net.Closed:
+		case port.Closed:
 			if m.Reason == net.Normal {
 				// The peer has finished sending: finish our side too.
 				actor.Send(conn, net.Shutdown{})
@@ -539,9 +547,9 @@ no network
 
 On the simulated network a client sent five segments without
 acknowledging the echoes, and got `one two three four five` back in full,
-followed by the server's FIN. With a naive echo (one `Write` per `Data`)
-the same exchange ended in a reset, because the third `Write` arrived
-before the first `Written`.
+followed by the server's FIN. A naive echo (one `Out` per `Chunk`) would
+lose data in the same exchange: the third `Out` arrives before the first
+`Done` and is refused.
 
 The stack is deliberately small: one segment in flight in each direction
 (1460 bytes), in-order segments only, retransmission after 1 s doubling to
@@ -598,7 +606,6 @@ meant for protocol nonces and IDs; `gogo/sntp` uses it for its request.
 package main
 
 import (
-	"gogo/config"
 	"gogo/dhcp"
 	"gogo/sntp"
 	"gogo/strconv"
@@ -638,7 +645,7 @@ func date(ms int64) string {
 }
 
 func main() {
-	server, ok := config.Get("clock.server")
+	server, ok := sys.Config("clock.server")
 	if !ok {
 		server = "pool.ntp.org"
 	}

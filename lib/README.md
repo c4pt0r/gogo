@@ -50,30 +50,30 @@ count theirs (`package main` may use the directive too, for its own
 calls). Any driver name is accepted (a board's or a host port's); an
 empty list or a misspelt `//gogo:` directive is a compile error
 (`directives` in `compiler/load.go`).
-`gogo/http` declares `tls`, `gogo/sound` declares `mic spk`, `gogo/tui`
+`gogo/http` declares `tls`, `gogo/sound` declares `mic speaker`, `gogo/tui`
 declares `kbd`. Book chapter
 12 has the details.
 
 | package | kind | imports | requires |
 |---------|------|---------|------------|
 | `gogo/actor` | stub | | none |
-| `gogo/port` | stub | actor, bytes | none (each constant `port.Open`: its driver) |
+| `gogo/port` | stub | actor, bytes | none (each constant `port.Open`: its driver); also the stream protocol every byte port speaks (`Chunk`, `Out`, `Done`, `Closed`) and the host-port types |
 | `gogo/bytes` | stub | | none |
 | `gogo/net` | stub | actor, bytes | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`) |
-| `gogo/config` | stub | | none |
+| `gogo/gpio` | stub | | none (the `gpio` port: `gpio`) |
 | `gogo/fs` | stub | actor, bytes | none (constant `/sd` paths: `/sd`) |
 | `gogo/kbd` | stub | | none (the `kbd` port: `kbd`) |
 | `gogo/power` | stub | | none (the `power` port: `power`) |
 | `gogo/code` | stub | actor, bytes | none |
 | `gogo/imu` | stub | | none (the `imu` port: `imu`) |
 | `gogo/ir` | stub | | none (the `ir_tx` / `ir_rx` ports: `ir_tx` / `ir_rx`) |
-| `gogo/audio` | stub | | none (the `mic` / `spk` ports: `mic` / `spk`) |
-| `gogo/sys` | stub | | none |
+| `gogo/audio` | stub | | none (the `mic` / `speaker` ports: `mic` / `speaker`) |
+| `gogo/sys` | stub | | none (the clock, randomness and `sys.Config`, the configuration store) |
 | `gogo/screen` | stub | | none (the `screen` port: `screen`) |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |
 | `gogo/strconv` | library | | none |
-| `gogo/dhcp` | library | actor, bytes, config, net, port | `netif`, `udp` |
+| `gogo/dhcp` | library | actor, bytes, net, port, sys | `netif`, `udp` |
 | `gogo/dns` | library | actor, bytes, net, port | `udp` |
 | `gogo/http` | library | actor, bytes, dns, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |
 | `gogo/sntp` | library | actor, bytes, dns, net, port, sys | `udp` |
@@ -81,6 +81,6 @@ declares `kbd`. Book chapter
 | `gogo/ringlog` | library | bytes, fs | none |
 | `gogo/imulog` | library | actor, bytes, fs, imu, port | `imu` |
 | `gogo/wav` | library | bytes, fs | none |
-| `gogo/sound` | library | actor, audio, fs, port, wav | none (opens `mic` for Record and `spk` for Play without requiring them: `//gogo:optional mic spk`) |
+| `gogo/sound` | library | actor, audio, fs, port, wav | none (opens `mic` for Record and `speaker` for Play without requiring them: `//gogo:optional mic speaker`) |
 | `gogo/irproto` | library | bytes | none |
-| `gogo/tui` | library | actor, bytes, kbd, port, screen, strconv | `screen` (opens `kbd` without requiring it: `//gogo:optional kbd`) |
+| `gogo/tui` | library | actor, bytes, gpio, kbd, port, screen, strconv | `gpio`, `screen` (opens `kbd` without requiring it: `//gogo:optional kbd`) |

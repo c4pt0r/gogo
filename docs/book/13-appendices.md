@@ -77,17 +77,28 @@ Chapter 14 describes them.
 ### gogo/port
 
 ```go
-type GPIO struct{ Pin, Mode, Edge, DebounceMs int }
-type Write struct{ Value int }
-type Edge struct{ Pin, Value int }
-type Host struct{ Arg int; Data bytes.Bytes }   // cfg of a host-defined port (embed mode)
-type Post struct{ Kind int; Data bytes.Bytes }  // a message from the embedding host
-const (Input = 0; InputPullUp = 1; InputPullDown = 2; Output = 3)
-const (None = 0; Rising = 1; Falling = 2; Both = 3)
+// the stream protocol of every byte port (tcp, tls, imu, ir, mic, speaker, screen)
+type Chunk struct{ From actor.PID; Seq, TimeMs, Dropped int; Data bytes.Bytes }  // event: input
+type Out struct{ Data bytes.Bytes }                 // command: send Data (2 in flight)
+type Done struct{ From actor.PID; Seq int }         // event: an Out finished (Seq -1: not sent)
+type Closed struct{ From actor.PID; Reason int }    // event: the port ended by itself
+// embed mode
+type Host struct{ Arg int; Data bytes.Bytes }                  // cfg of a host-defined port
+type Post struct{ From actor.PID; Kind int; Data bytes.Bytes }  // a message from the embedding host
 
 func Open(driver string, cfg any) (p actor.PID, ok bool)
 func Close(p actor.PID)
 func Handoff(p actor.PID, to actor.PID) (ok bool)
+```
+
+### gogo/gpio
+
+```go
+type Config struct{ Pin, Mode, Edge, DebounceMs int }  // cfg of "gpio"
+type Write struct{ Value int }                         // command
+type Edge struct{ Pin, Value int }                     // event
+const (Input = 0; InputPullUp = 1; InputPullDown = 2; Output = 3)
+const (None = 0; Rising = 1; Falling = 2; Both = 3)
 ```
 
 ### gogo/bytes
@@ -145,7 +156,7 @@ const (kbd.ModCtrl = 1; ModShift = 2; ModAlt = 4; ModOpt = 8; ModFn = 16)
 // Up 0x52, LeftCtrl 0xE0, LeftShift 0xE1, LeftAlt 0xE2, Opt 0xE3, Fn 0xF0
 
 type power.Config struct{ PeriodMs int }
-type power.Battery struct{ MilliVolts, Percent, Charging, External int }
+type power.Battery struct{ MilliVolts, Pct, Charging, External int }
 type power.Read struct{}
 ```
 
@@ -196,7 +207,7 @@ type net.Listen struct{ Port int }
 // commands
 type net.SetAddr struct{ IP, Mask, Gateway, DNS int }  // to "netif", owner only
 type net.SendTo struct{ Addr Addr; Data bytes.Bytes }  // to "udp"
-type net.Write struct{ Data bytes.Bytes }              // to "tcp" or "tls"
+// to "tcp" or "tls": port.Out{Data}, answered by port.Done
 type net.Shutdown struct{}
 type net.Resume struct{}
 // events
@@ -204,9 +215,7 @@ type net.Up struct{ IP, Gateway, DNS int }
 type net.Down struct{}
 type net.Datagram struct{ From Addr; Data bytes.Bytes }
 type net.Connected struct{}
-type net.Data struct{ Data bytes.Bytes }
-type net.Written struct{}
-type net.Closed struct{ Reason int }
+// from "tcp" or "tls": port.Chunk, port.Done, port.Closed{From, Reason}
 type net.Accepted struct{ Conn actor.PID }
 type net.Addr struct{ IP, Port int }
 func net.Subscribe() (ok bool)
@@ -238,15 +247,10 @@ func http.CloseClient(c Client)
 func http.Upload(url, path, contentType, token string) (status int, err fs.Err)
 ```
 
-### gogo/config
-
-```go
-func config.Get(key string) (value string, ok bool)
-```
-
 ### gogo/sys and gogo/sntp
 
 ```go
+func sys.Config(key string) (value string, ok bool)   // the configuration store
 func sys.Time() int64           // Unix time in ms (UTC); 0: unknown
 func sys.SetTime(ms int64) bool // false: earlier than the build, refused; ms <= 0 forgets
 func sys.Random() int           // 30 random bits
@@ -286,11 +290,13 @@ on standard error.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `OK` | `NotFound` | `Exists` | `NotMounted` | `NoSpace` | `TooMany` | `Busy` | `BadPath` | `IsDir` | `NotDir` | `NotEmpty` | `NoMemory` | `IO` | `Closed` |
 
-**`net.Closed` reasons:**
+**`port.Closed` reasons of `"tcp"` and `"tls"`** (the `net` constants):
 
-| 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
-|---|---|---|---|---|---|---|---|---|
-| `Normal` (peer finished sending) | `Reset` | `Timeout` | `Refused` | `Overflow` (too many Writes) | `NoRoute` (address or link lost) | `NoTime` (the wall clock is not set) | `BadCert` (the certificate failed verification) | `TLS` (any other TLS failure) |
+| 0 | 1 | 2 | 3 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|
+| `Normal` (peer finished sending) | `Reset` | `Timeout` | `Refused` | `NoRoute` (address or link lost) | `NoTime` (the wall clock is not set) | `BadCert` (the certificate failed verification) | `TLS` (any other TLS failure) |
+
+(4 is unused: it was `Overflow`, when a third write closed the connection.)
 
 **`code.Err`** (the result of every `gogo/code` call):
 
@@ -368,7 +374,7 @@ lacks one refuses the image at boot, naming it, and `code.Load` returns
 | `ir_tx` | the `ir_tx` port | `irtx` | `CONFIG_GOGO_IR` |
 | `ir_rx` | the `ir_rx` port | `irrx` | `CONFIG_GOGO_IR` |
 | `mic` | the `mic` port opened directly; `gogo/sound` opens it for `Record` but does not require it (`//gogo:optional`, chapter 12) | `mic` | `CONFIG_GOGO_AUDIO` |
-| `spk` | the `spk` port opened directly; `gogo/sound` opens it for `Play` but does not require it | `spk` | `CONFIG_GOGO_AUDIO` |
+| `speaker` | the `speaker` port opened directly; `gogo/sound` opens it for `Play` but does not require it | `speaker` | `CONFIG_GOGO_AUDIO` |
 | `tls` | the `tls` port opened directly (`net.DialTLS`); `gogo/http` opens it for `https://` URLs but does not require it (`//gogo:optional`, chapters 12 and 17) | `tls` | `CONFIG_GOGO_TLS` (needs `CONFIG_GOGO_NET`) |
 | `screen` | the `screen` port (`gogo/screen`, `gogo/tui`; chapter 19) | `screen` | `CONFIG_GOGO_SCREEN` |
 | a host port's name | `port.Open` of a port the embedding program defines (chapter 18) | (none: an embedded VM only) | |

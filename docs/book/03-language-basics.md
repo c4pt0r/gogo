@@ -28,13 +28,13 @@ can import only gogo's own packages, all under the `gogo/` path:
 |---|---|
 | `gogo/actor` | spawn, send, receive, links, monitors, timers, names |
 | `gogo/supervisor` | restart a failing actor |
-| `gogo/port` | open and close ports, GPIO |
+| `gogo/port`, `gogo/gpio` | open and close ports, the stream protocol; GPIO pins |
 | `gogo/bytes` | `Bytes` (immutable, shareable) and `Buffer` |
 | `gogo/strings`, `gogo/strconv` | string and number helpers |
 | `gogo/kbd`, `gogo/power` | keyboard and battery |
 | `gogo/fs`, `gogo/kv`, `gogo/ringlog` | storage |
 | `gogo/net`, `gogo/dhcp`, `gogo/dns`, `gogo/http` | networking |
-| `gogo/config` | settings from the device's configuration store |
+| `gogo/sys` | the wall clock, randomness, settings from the device's configuration store |
 
 Importing anything else, including Go's standard library, fails:
 

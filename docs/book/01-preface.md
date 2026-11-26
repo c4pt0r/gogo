@@ -22,7 +22,7 @@ Here is the flavour of it. This actor counts button presses:
 ```go
 for {
 	switch m := actor.Receive().(type) {
-	case port.Edge: // the button was pressed
+	case gpio.Edge: // the button was pressed
 		count++
 	case actor.Request: // someone asks for the count
 		actor.Reply(m, count)
