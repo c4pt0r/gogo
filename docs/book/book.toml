@@ -1,0 +1,34 @@
+# mdBook configuration. `make site` builds the book as a website into
+# build/site/book, next to the landing page (site/index.html); see
+# docs/FAQ.md. The chapters stay where they are (src = "."), so they read
+# the same on GitHub; SUMMARY.md lists them, in README.md's order.
+[book]
+title = "Programming gogo"
+authors = ["gogo contributors"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "../../build/site/book"
+# A chapter missing from SUMMARY.md's file is an error, not a new empty one.
+create-missing = false
+
+# Links from the book to repo files outside it (../known-issues.md,
+# ../../runtime/..., examples/) become GitHub URLs on the site
+# (tools/mdbooklinks); the markdown keeps the relative links GitHub follows.
+[preprocessor.repolinks]
+command = "go run ../../tools/mdbooklinks"
+before = ["links"]
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "coal"
+# The landing page's look: monochrome, monospace (theme/gogo.css).
+additional-css = ["theme/gogo.css"]
+# Chapter titles carry their numbers already ("# 4. Actors").
+no-section-label = true
+git-repository-url = "https://github.com/c4pt0r/gogo/tree/main/docs/book"
+git-repository-icon = "fab-github"
+
+[output.html.search]
+enable = true

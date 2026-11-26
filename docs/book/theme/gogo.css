@@ -1,0 +1,171 @@
+/* The book's look on the website (make site): the landing page's
+   (site/index.html) black and white, one monospace face, a narrow column.
+   mdBook's five themes map onto two palettes: light and rust are the light
+   one, coal, navy and ayu the dark one; the picker offers Auto, Light and
+   Coal (dark). Code is highlighted by contrast and weight, never hue. */
+
+:root {
+  --mono: Menlo, "DejaVu Sans Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  --mono-font: var(--mono);
+  --content-max-width: 760px;
+  --code-font-size: 12px;
+}
+
+html.light, html.rust, html:not(.js) {
+  --ink: #000000; --text: #1a1a1a; --muted: #6b6b6b; --faint: #a3a3a3;
+  --paper: #ffffff; --line: #e6e6e6; --code-bg: #f6f6f6;
+  --color-scheme: light;
+}
+html.coal, html.navy, html.ayu {
+  --ink: #ffffff; --text: #e8e8e8; --muted: #9a9a9a; --faint: #5e5e5e;
+  --paper: #000000; --line: #333333; --code-bg: #0b0b0b;
+  --color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  html:not(.js) {
+    --ink: #ffffff; --text: #e8e8e8; --muted: #9a9a9a; --faint: #5e5e5e;
+    --paper: #000000; --line: #333333; --code-bg: #0b0b0b;
+    --color-scheme: dark;
+  }
+}
+
+html.light, html.rust, html.coal, html.navy, html.ayu, html:not(.js) {
+  --bg: var(--paper);
+  --fg: var(--text);
+  --sidebar-bg: var(--paper);
+  --sidebar-fg: var(--muted);
+  --sidebar-non-existant: var(--faint);
+  --sidebar-active: var(--ink);
+  --sidebar-spacer: var(--line);
+  --sidebar-header-border-color: var(--line);
+  --scrollbar: var(--faint);
+  --icons: var(--faint);
+  --icons-hover: var(--ink);
+  --links: var(--ink);
+  --inline-code-color: var(--ink);
+  --theme-popup-bg: var(--paper);
+  --theme-popup-border: var(--line);
+  --theme-hover: var(--code-bg);
+  --quote-bg: var(--paper);
+  --quote-border: var(--line);
+  --warning-border: var(--ink);
+  --table-border-color: var(--line);
+  --table-header-bg: var(--code-bg);
+  --table-alternate-bg: var(--paper);
+  --searchbar-border-color: var(--line);
+  --searchbar-bg: var(--paper);
+  --searchbar-fg: var(--ink);
+  --searchbar-shadow-color: transparent;
+  --searchresults-header-fg: var(--muted);
+  --searchresults-border-color: var(--line);
+  --searchresults-li-bg: var(--paper);
+  --search-mark-bg: var(--line);
+  --footnote-highlight: var(--line);
+  --overlay-bg: color-mix(in srgb, var(--paper) 60%, transparent);
+  --blockquote-note-color: var(--ink);
+  --blockquote-tip-color: var(--ink);
+  --blockquote-important-color: var(--ink);
+  --blockquote-warning-color: var(--ink);
+  --blockquote-caution-color: var(--ink);
+  --copy-button-filter: grayscale(1) opacity(.5);
+  --copy-button-filter-hover: grayscale(1);
+}
+
+/* Two dark themes in the picker would be one too many, three identical. */
+#mdbook-theme-rust, #mdbook-theme-navy, #mdbook-theme-ayu { display: none; }
+
+html { font-family: var(--mono); font-size: 13px; }
+body, .sidebar, .menu-title, .content, input, button { font-family: var(--mono); }
+body { font-size: 13px; -webkit-font-smoothing: antialiased; }
+.content { line-height: 1.75; }
+.content main { max-width: var(--content-max-width); }
+.content p, .content li, .content td { color: var(--muted); }
+.content strong, .content b { color: var(--ink); font-weight: 700; }
+
+/* Headings: the landing page's regular weight, sized by a step or two. */
+.content h1, .content h2, .content h3, .content h4, .content h5 {
+  font-family: var(--mono); font-weight: 400; color: var(--ink); line-height: 1.4;
+}
+.content h1 { font-size: 20px; margin-top: 2.2em; letter-spacing: -0.01em; }
+.content h2 { font-size: 15px; margin-top: 3em; }
+.content h3 { font-size: 13px; margin-top: 2.2em; }
+.content h4, .content h5 { font-size: 13px; color: var(--text); }
+.content main > h1:first-child { margin-top: 1.2em; }
+.content .header:link, .content .header:visited { color: var(--ink); }
+
+a, .content a:link, .content a:visited { color: var(--ink); text-decoration: none; }
+.content a:link, .content a:visited {
+  border-bottom: 1px solid var(--line); transition: border-color .2s;
+}
+.content a:hover { border-color: var(--ink); text-decoration: none; }
+.content .header:link { border-bottom: 0; }
+a:focus-visible { outline: 1px solid var(--ink); outline-offset: 3px; }
+
+.menu-title { font-size: 13px; font-weight: 400; color: var(--ink); }
+#mdbook-menu-bar, .menu-bar { border-block-end-color: var(--line); }
+.chapter li a, .chapter li.chapter-item { font-size: 13px; }
+.chapter li a.active { color: var(--ink); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--faint); }
+.sidebar { border-inline-end: 1px solid var(--line); }
+
+/* Code: the landing page's pre, inline code plain ink. */
+code, pre, .hljs { font-family: var(--mono) !important; }
+:not(pre) > code, :not(pre) > .hljs {
+  background: transparent; color: var(--ink); padding: 0; font-size: 12px;
+}
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 0; padding: 0; }
+pre > code, pre > .hljs {
+  display: block; background: var(--code-bg) !important; color: var(--text);
+  font-size: 12px; line-height: 1.7; padding: 16px 18px; overflow-x: auto;
+}
+pre > code.language-go { color: var(--muted); }
+
+/* highlight.js classes, monochrome: weight and contrast, no hue. Any
+   class not named here (params, punctuation, operators, ...) takes the
+   block's colour, so no theme's hue shows through. */
+pre code span {
+  color: inherit !important; background: transparent !important;
+  font-weight: inherit; font-style: inherit; text-decoration: none;
+}
+pre code .hljs-keyword, pre code .hljs-selector-tag, pre code .hljs-literal, pre code .hljs-section {
+  color: var(--ink) !important; font-weight: 700;
+}
+pre code .hljs-title, pre code .hljs-name, pre code .hljs-number, pre code .hljs-symbol {
+  color: var(--ink) !important; font-weight: 400;
+}
+pre code .hljs-type, pre code .hljs-built_in, pre code .hljs-builtin-name, pre code .hljs-title.class_ {
+  color: var(--text) !important; font-weight: 400;
+  text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px;
+}
+pre code .hljs-string, pre code .hljs-regexp, pre code .hljs-meta .hljs-string {
+  color: var(--text) !important;
+}
+pre code .hljs-comment, pre code .hljs-quote { color: var(--faint) !important; font-style: italic; }
+pre code .hljs-emphasis { font-style: italic; }
+pre code .hljs-strong { font-weight: 700; }
+
+/* Tables scroll in their own box; the page never scrolls sideways. */
+.table-wrapper { overflow-x: auto; max-width: 100%; }
+.content table { border-collapse: collapse; font-size: 12px; margin: 1.2em 0; }
+.content table thead th { color: var(--ink); font-weight: 400; text-align: left; }
+.content table td, .content table th { border: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
+.content table thead tr { background: var(--code-bg); }
+.content table tbody tr:nth-child(2n) { background: transparent; }
+.content main { overflow-wrap: break-word; min-width: 0; }
+
+blockquote {
+  margin: 1.4em 0; padding: 2px 18px; background: transparent;
+  border-block-start: 0; border-block-end: 0; border-inline-start: 2px solid var(--line);
+  color: var(--muted);
+}
+
+/* Previous / next. */
+.nav-chapters { color: var(--faint); }
+.nav-chapters:hover { color: var(--ink); background: transparent; }
+.mobile-nav-chapters { background: var(--paper); border: 1px solid var(--line); color: var(--muted); border-radius: 0; }
+
+#mdbook-searchbar, #searchbar { border-radius: 0; font-family: var(--mono); }
+mark { background: var(--search-mark-bg); color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
