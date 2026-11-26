@@ -270,10 +270,10 @@ driver nobody uses. It reads the requirement names each file carries
 `<dir>/sdkconfig.gogo`, a list of `CONFIG_GOGO_*` lines, then prints the
 `idf.py` command that builds with it. It never flashes.
 
-- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic spk tls`.
+- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic spk tls screen`.
   The requirement names they build: `net` the drivers `netif`, `udp`,
-  `tcp` and `tcp_listen`; `kbd`, `power`, `imu`, `mic`, `spk` and `tls`
-  the driver of the same name; `irtx` and `irrx` the drivers `ir_tx` and
+  `tcp` and `tcp_listen`; `kbd`, `power`, `imu`, `mic`, `spk`, `tls` and
+  `screen` the driver of the same name; `irtx` and `irrx` the drivers `ir_tx` and
   `ir_rx`; `sd` the mount `/sd` (appendix F). `gpio` and `/flash` are in
   every firmware; any other name (a host port's, say) is an error.
   `net`, `kbd` and `power` are on only when a file requires them (or

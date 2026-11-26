@@ -1,0 +1,9 @@
+screen 1 24x5
++------------------------+
+|┌ Hello ───────────────┐|
+|│ gogo on a screen     │| ..bbbbbbbbbbbbbbbb
+|│ ██████████░░░░░ 66%  │| ..aaaaaaaaaaaaaaa
+|│status              ok│| .RRRRRRRRRRRRRRRRRRRRRR
+|└──────────────────────┘|
++------------------------+
+back to the console

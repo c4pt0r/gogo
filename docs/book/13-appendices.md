@@ -361,7 +361,7 @@ lacks one refuses the image at boot, naming it, and `code.Load` returns
 | `gpio` | the `gpio` port | (always built) | |
 | `/flash` | (never inferred: every firmware has it) | (always built) | |
 | `netif`, `udp`, `tcp`, `tcp_listen` | the network ports, opened by `gogo/dhcp`, `dns`, `http`, `sntp` or directly with `gogo/net` | `net` | `CONFIG_GOGO_NET` |
-| `kbd` | the `kbd` port (`gogo/kbd`) | `kbd` | `CONFIG_GOGO_KBD` |
+| `kbd` | the `kbd` port (`gogo/kbd`); `gogo/tui` opens it but does not require it | `kbd` | `CONFIG_GOGO_KBD` |
 | `power` | the `power` port (`gogo/power`) | `power` | `CONFIG_GOGO_BATTERY` |
 | `/sd` | a constant `/sd` path in a `gogo/fs` call | `sd` | `CONFIG_GOGO_SD` |
 | `imu` | the `imu` port (`gogo/imu`, `gogo/imulog`) | `imu` | `CONFIG_GOGO_IMU` |
@@ -370,6 +370,7 @@ lacks one refuses the image at boot, naming it, and `code.Load` returns
 | `mic` | the `mic` port opened directly; `gogo/sound` opens it for `Record` but does not require it (`//gogo:optional`, chapter 12) | `mic` | `CONFIG_GOGO_AUDIO` |
 | `spk` | the `spk` port opened directly; `gogo/sound` opens it for `Play` but does not require it | `spk` | `CONFIG_GOGO_AUDIO` |
 | `tls` | the `tls` port opened directly (`net.DialTLS`); `gogo/http` opens it for `https://` URLs but does not require it (`//gogo:optional`, chapters 12 and 17) | `tls` | `CONFIG_GOGO_TLS` (needs `CONFIG_GOGO_NET`) |
+| `screen` | the `screen` port (`gogo/screen`, `gogo/tui`; chapter 19) | `screen` | `CONFIG_GOGO_SCREEN` |
 | a host port's name | `port.Open` of a port the embedding program defines (chapter 18) | (none: an embedded VM only) | |
 
 An import alone requires nothing: `gogo/sys` (the wall clock and `Random`

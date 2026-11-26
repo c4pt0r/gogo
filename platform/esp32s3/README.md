@@ -208,7 +208,8 @@ drivers and mounts this build really has: `gpio` always; `netif`, `udp`,
 `tcp` and `tcp_listen` (`GOGO_NET`); `tls` (`GOGO_TLS`, needs `GOGO_NET`;
 see "TLS" below); `kbd` (Cardputer with `GOGO_KBD`); `power`
 (`GOGO_BATTERY`); `imu` (`GOGO_IMU`); `ir_tx` (`GOGO_IR`); `ir_rx` (StickS3
-with `GOGO_IR`); `mic` and `spk` (`GOGO_AUDIO`); the mounts `/flash` always
+with `GOGO_IR`); `mic` and `spk` (`GOGO_AUDIO`); `screen` (`GOGO_SCREEN`, in builds with
+the console task); the mounts `/flash` always
 and `/sd` (Cardputer with `GOGO_SD`). An image or module that requires
 another name is refused at boot (`gogo: image requires <name>, which this
 VM lacks`) or by `code.Load` (`Unsupported`, `code.Missing` names it). `code.mem` (default
@@ -692,6 +693,16 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   ok=false (the drivers are not listed), and the IDF I2S driver is not linked;
   `runtime/input/audio.c` (the common driver) is still linked. Cost: StickS3 +18720 B
   `gogo.bin`, +592 B static DIRAM; Cardputer ADV +19680 B, +820 B.
+- `GOGO_SCREEN` (default y): the `screen` port (`runtime/screen/*.c`, its
+  hooks in `console_task.c`): a 40 x 11 cell grid drawn by the console's
+  render task while the port is open. Off: `runtime/screen` is not built,
+  `port.Open("screen")` returns ok=false and an image that requires
+  `screen` is refused. The driver is also left out of a `GOGO_CONSOLE=0`
+  build, and its open fails when the LCD failed to start. Cost
+  (ESP-IDF 6.1.1, against the same tree without it): StickS3 1093056 ->
+  1098224 B `gogo.bin` (+5168), Cardputer ADV 1128352 -> 1133440 (+5088);
+  a 1760-byte grid is allocated from internal RAM at the first open and
+  kept.
 - `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `runtime/net/*.c`
   are not built, the drivers `netif`, `udp`, `tcp` and `tcp_listen` are not
   listed (an image that requires one is refused at boot, naming it), `port.Open` of `netif`, `udp`,
@@ -787,7 +798,7 @@ modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
     idf.py -C platform/esp32s3 -B <dir> -DGOGO_BOARD=<board> -DSDKCONFIG=<dir>/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;<board overlay>;<dir>/sdkconfig.gogo" build
 
-Feature names are `net kbd power sd exfat cjk imu irtx irrx mic spk tls`; `net`, `kbd`,
+Feature names are `net kbd power sd exfat cjk imu irtx irrx mic spk tls screen`; `net`, `kbd`,
 `power` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
 `imu`, `irtx`, `irrx`, `mic`, `spk`, `tls` are on by default and `-without` turns them off
 (`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `spk` are one, `GOGO_AUDIO`; `tls` needs `net`, `GOGO_TLS` depends on `GOGO_NET`). A required feature cannot be removed,

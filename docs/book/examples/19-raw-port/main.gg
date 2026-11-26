@@ -1,0 +1,35 @@
+package main
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/port"
+	"gogo/screen"
+)
+
+func main() {
+	p, ok := port.Open("screen", screen.Config{Cols: 12, Rows: 2})
+	if !ok {
+		println("no screen")
+		return
+	}
+	switch m := actor.Receive().(type) {
+	case port.Chunk: // the grid: cols, rows, colours, attributes
+		println("grid", m.Data.At(0), "x", m.Data.At(1), "colours", m.Data.At(2))
+	}
+	b := bytes.NewBuffer(32)
+	b.Write([]byte{screen.OpMove, 1, 0, screen.OpAttr, screen.Reverse, screen.OpText, 5})
+	b.WriteString("hello")
+	b.Write([]byte{screen.OpAttr, 0, screen.OpFill, 0, 1, 12, 1, 0x00, 0x25}) // ─ is U+2500
+	actor.Send(p, port.Out{Data: b.Freeze()})
+	switch m := actor.Receive().(type) {
+	case port.Done:
+		println("done", m.Seq)
+	}
+	actor.Send(p, port.Out{Data: bytes.FromSlice([]byte{42})}) // not an operation
+	switch m := actor.Receive().(type) {
+	case port.Done:
+		println("done", m.Seq)
+	}
+	port.Close(p)
+}

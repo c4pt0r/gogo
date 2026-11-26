@@ -346,6 +346,27 @@ the M5StickS3 and the Cardputer ADV. The design is in
   ports just refuse to open. Pins reserved for a switched-off feature
   stay reserved.
 
+## Text screen (`screen` port, `gogo/tui`)
+
+- **One grid size per board.** Both boards show 40 x 11 cells in
+  landscape; there is no portrait mode on the StickS3 and no other font
+  size. A smaller `screen.Config` uses the top-left corner.
+- **Cells only.** No pixel drawing, no images. Characters outside the
+  Basic Multilingual Plane are stored and shown as a box.
+- **Row comparison by hash.** A frame hands the display only the rows
+  whose 64-bit hash changed; two different contents of one row with the
+  same hash (about 1 in 2^64) would leave that row stale until its next
+  change.
+- **Dones can be late.** A `port.Done` the owner has no mailbox room for
+  is sent before the next `Out`'s, not on its own; at most 8 are owed,
+  and an `Out` arriving with 8 owed is not drawn. `gogo/tui` never waits
+  for a Done.
+- **StickS3 navigation.** Two buttons give Enter, Down and (long press)
+  Esc; there is no Up, so lists wrap around. `tui.Edit` needs a keyboard.
+- **Terminal mode.** In a terminal, `println` output is drawn over the
+  grid (the console and the grid are kept apart only on the boards).
+  `gogo run` has no `--screen` option; `build/gogovm --screen` has.
+
 ## Embedding (`libgogo`)
 
 - **Posts racing a close are lost quietly.** A `gogo_post` concurrent

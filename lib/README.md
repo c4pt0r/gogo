@@ -50,7 +50,8 @@ count theirs (`package main` may use the directive too, for its own
 calls). Any driver name is accepted (a board's or a host port's); an
 empty list or a misspelt `//gogo:` directive is a compile error
 (`directives` in `compiler/load.go`).
-`gogo/http` declares `tls`, `gogo/sound` declares `mic spk`. Book chapter
+`gogo/http` declares `tls`, `gogo/sound` declares `mic spk`, `gogo/tui`
+declares `kbd`. Book chapter
 12 has the details.
 
 | package | kind | imports | requires |
@@ -68,6 +69,7 @@ empty list or a misspelt `//gogo:` directive is a compile error
 | `gogo/ir` | stub | | none (the `ir_tx` / `ir_rx` ports: `ir_tx` / `ir_rx`) |
 | `gogo/audio` | stub | | none (the `mic` / `spk` ports: `mic` / `spk`) |
 | `gogo/sys` | stub | | none |
+| `gogo/screen` | stub | | none (the `screen` port: `screen`) |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |
 | `gogo/strconv` | library | | none |
@@ -81,3 +83,4 @@ empty list or a misspelt `//gogo:` directive is a compile error
 | `gogo/wav` | library | bytes, fs | none |
 | `gogo/sound` | library | actor, audio, fs, port, wav | none (opens `mic` for Record and `spk` for Play without requiring them: `//gogo:optional mic spk`) |
 | `gogo/irproto` | library | bytes | none |
+| `gogo/tui` | library | actor, bytes, kbd, port, screen, strconv | `screen` (opens `kbd` without requiring it: `//gogo:optional kbd`) |

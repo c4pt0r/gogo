@@ -1,0 +1,45 @@
+package main
+
+import (
+	"gogo/actor"
+	"gogo/screen"
+	"gogo/tui"
+)
+
+func main() {
+	s, ok := tui.Open(screen.Config{Cols: 14, Rows: 4})
+	keys, kok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
+	if !ok || !kok {
+		println("open failed")
+		return
+	}
+	items := []string{"Tea", "Coffee", "Water"}
+	l := tui.NewList(items, 3)
+	draw(s, l)
+	for {
+		msg := actor.Receive()
+		k2, k, ui := tui.Event(keys, msg)
+		keys = k2
+		if !ui {
+			continue // not the UI's: a real program handles it here
+		}
+		l2, chosen := tui.ListKey(l, k)
+		l = l2
+		if chosen >= 0 {
+			println("chose", items[chosen])
+			break
+		}
+		if k.Code != tui.KeyNone {
+			draw(s, l)
+		}
+	}
+	tui.CloseKeys(keys)
+	tui.Close(s)
+}
+
+func draw(s tui.Screen, l tui.List) {
+	f := tui.NewFrame(s)
+	tui.DrawList(f, l, 0, 0, 14)
+	tui.DrawStatus(f, "Enter: pick", "")
+	tui.Flush(s)
+}
