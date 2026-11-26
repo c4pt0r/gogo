@@ -342,3 +342,30 @@ connect to a server node (gogo embedded on the server), which also relays
 board-to-board messages, with links and monitors reporting a lost node.
 Direct links between boards on the same network, with the server as
 directory and fallback relay, are a later direction.
+
+## About the project
+
+### Is gogo vibe-coded AI slop?
+Vibe-coded, yes. Slop, no.
+
+Most of gogo's code was written by AI coding agents, directed by its author,
+who decides what gets built, makes the design calls and accepts or rejects
+the result. "Slop" is code nobody checked; gogo is built so that everything
+is checked:
+
+- **Every change is reviewed against a written plan**, by a separate review
+  pass that did not write it, and its findings are fixed and re-reviewed
+  before anything merges.
+- **Tests, not trust.** Golden tests for language features and libraries,
+  C unit tests for the VM and drivers, AddressSanitizer, UndefinedBehavior-
+  and ThreadSanitizer runs, fuzzing of decoders, and tests that guard the
+  image format against unregistered changes.
+- **Real hardware.** Features that touch the boards are run on an
+  M5StickS3 and a Cardputer ADV before they merge, not only in simulation.
+- **Budgets enforced by the build.** The VM core size is recorded on every
+  change against a 64 KB limit, and new mutable globals fail the build.
+- **Honest docs.** The book's examples are run as tests, the design notes are
+  checked against the code, and what does not work yet is written down in
+  [known-issues](known-issues.md) instead of being glossed over.
+
+Judge it by its tests and its known issues, not by who typed it.
