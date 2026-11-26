@@ -71,6 +71,9 @@ static int nkeys;
 
 static struct termios saved_tio;
 static volatile sig_atomic_t tio_saved;
+static void (*fatal_hook)(void);   /* input_unix_on_fatal */
+
+void input_unix_on_fatal(void (*f)(void)) { fatal_hook = f; }
 
 int input_unix_add_key(char c, int pin) {
     if (nkeys >= MAX_KEYS || pin < 0 || pin >= GPIO_UNIX_NPINS) return 0;
@@ -89,6 +92,7 @@ static void restore_tty(void) {
  * async-signal-safe calls (tcsetattr, signal, raise). */
 static void on_fatal_signal(int sig) {
     if (tio_saved) tcsetattr(STDIN_FILENO, TCSANOW, &saved_tio);
+    if (fatal_hook) fatal_hook();
     signal(sig, SIG_DFL);
     raise(sig);
 }

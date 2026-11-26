@@ -1,7 +1,7 @@
 /* gogovm: runs a gogo image file.
  *
  *   gogovm [--without NAME,...] [--key c=pin]... [--fs-root DIR] [--fs-quota BYTES]
- *          [--net-fd N [--sim-clock]] <file.ggb>
+ *          [--net-fd N [--sim-clock]] [--screen ansi|text|none] <file.ggb>
  *          exit 0 when the run queue empties (also after a crash), 1 when
  *          the board lacks a driver or mount the image requires, 2 on a
  *          usage or load error. --without and --fs-quota are for tests:
@@ -18,6 +18,10 @@
  * gogovm has the "tls" port; $GOGO_TLS_STATS set makes it print
  * one "tls-stats ..." line to stderr at exit (tls_stats, the TLS heap, and
  * vm_peak: the VM allocator's peak, va_peak_bytes).
+ *
+ * --screen: how the "screen" port shows its grid (screen_unix.c): ANSI on
+ * the terminal, a text dump of every frame on stdout, or nothing; the
+ * default is ansi when stdout is a terminal, else text.
  *
  * --net-fd N: fd N (inherited, e.g. a socketpair end) is the network link
  * (net_unix.h); --sim-clock: time is simulated, moved only by the peer
@@ -41,6 +45,7 @@
 #include "net_int.h"
 #include "vfs_int.h"
 #include "fs_dir.h"
+#include "screen_unix.h"
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -77,7 +82,7 @@ static const PortDriver *const unix_ports_all[] = {
     &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver,
     &net_tcp_listen_driver, &input_kbd_driver, &input_power_driver,
     &input_imu_driver, &input_ir_tx_driver, &input_ir_rx_driver,
-    &input_mic_driver, &input_spk_driver,
+    &input_mic_driver, &input_spk_driver, &screen_unix_driver,
 #ifdef GOGO_TLS
     &net_tls_driver,
 #endif
@@ -163,6 +168,11 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "gogovm: bad --key %s (want <char>=<pin>, pin 0..63)\n", argv[2]);
                 return 2;
             }
+        } else if (strcmp(argv[1], "--screen") == 0) {
+            if (!screen_unix_set_mode(argv[2])) {
+                fprintf(stderr, "gogovm: bad --screen %s (want ansi, text or none)\n", argv[2]);
+                return 2;
+            }
         } else if (strcmp(argv[1], "--without") == 0) {
             /* --without <name,...>: test only, drivers and mounts the board leaves out. */
             without = argv[2];
@@ -205,7 +215,7 @@ int main(int argc, char **argv) {
     }
     unix_mounts[nmounts] = NULL;
     if (argc != 2) {
-        fprintf(stderr, "usage: gogovm [--without <name,...>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] <file.ggb>\n       gogovm --sizeof-actor | --sizeof-net\n");
+        fprintf(stderr, "usage: gogovm [--without <name,...>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock]] [--screen ansi|text|none] <file.ggb>\n       gogovm --sizeof-actor | --sizeof-net\n");
         return 2;
     }
     if (net_fd >= 0) {
@@ -279,6 +289,7 @@ int main(int argc, char **argv) {
     if (net_fd >= 0) net_install(&vm, &net_state);
     vfs_init(&vm, &vfs_state);
     input_install(&vm, &input_state);
+    input_unix_on_fatal(screen_unix_restore);
     rc = vm_run(&vm);
 #ifdef GOGO_TLS
     tls_vm_peak = va_peak_bytes(&vm);

@@ -15,8 +15,12 @@ VM_SRCS  := $(filter-out runtime/vm/check32.c,$(VM_SRCS))
 VM_CORE_SRCS = $(filter-out runtime/vm/check32.c,$(wildcard runtime/vm/*.c))
 # runtime/stream/ (pure C99): Chunk / Out / Done for every streaming driver (spec input2 §1).
 STREAM_SRCS = $(wildcard runtime/stream/*.c)
-MAIN_SRCS = platform/unix/main.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(STREAM_SRCS)
-PLAT_HDRS = $(wildcard platform/unix/*.h) runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h)
+# runtime/screen/ (pure C99): the "screen" port's grid and driver; render.c
+# (pixels, for the LCD) is not in gogovm, which draws on the terminal
+# (platform/unix/screen_unix.c). The grid's width rule is the console's.
+SCREEN_SRCS = runtime/screen/screen.c runtime/screen/screen_port.c runtime/console/console.c runtime/console/font.c
+MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(STREAM_SRCS) $(SCREEN_SRCS)
+PLAT_HDRS = $(wildcard platform/unix/*.h) runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
 
 # The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
 # built here with runtime/net/tls/config (gogo_*_config.h) into its own static library,
@@ -49,17 +53,17 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-fs-host vfssize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
+.PHONY: lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm clean
 
 all: test
 
-test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize
+test: test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-net-mcu vmsize netsize vfssize screensize
 
 vm: $(BUILD)/gogovm
 
 $(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/embed -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-c: $(BUILD)/test_c
 	$(BUILD)/test_c
@@ -176,6 +180,26 @@ $(BUILD)/test_stream: $(STREAM_DEPS)
 $(BUILD)/test_stream_mcu: $(STREAM_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(STREAM_INC) -o $@ $(STREAM_SRCS) $(STREAM_TEST_SRCS) $(VM_SRCS)
+
+# screen (pure C99): the grid's operations, malformed and random sequences
+# against guard words, the LCD renderer, and the "screen" port on a real VM
+# (fake ScreenHw), in the host and MCU VM configs.
+SCREEN_ALL_SRCS = $(wildcard runtime/screen/*.c) runtime/console/console.c runtime/console/font.c
+SCREEN_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/screen/test/*.c)
+SCREEN_INC = -Iruntime/screen -Iruntime/console -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iplatform/unix
+SCREEN_DEPS = $(SCREEN_ALL_SRCS) $(STREAM_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
+
+test-screen: $(BUILD)/test_screen $(BUILD)/test_screen_mcu
+	$(BUILD)/test_screen
+	$(BUILD)/test_screen_mcu
+
+$(BUILD)/test_screen: $(SCREEN_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(STREAM_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
+
+$(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(STREAM_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
 
 # The host-directory backend (runtime/embed/fs_dir.c) against a temp dir:
 # the vfs contract and the sandbox (symlinks, hard links, a swapped path).
@@ -348,7 +372,7 @@ test-lib:
 # limit (16 KB per actor): the library actors must fit.
 $(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/embed -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-net-mcu: $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/
@@ -382,6 +406,9 @@ check32:
 	for f in $(VFS_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/vfs -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
 	done
+	for f in runtime/screen/*.c; do \
+		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/screen -Iruntime/console -Iruntime/stream -Iruntime/vm -Iruntime/vm/test/stub $$f || exit 1; \
+	done
 	for f in $(CONSOLE_SRCS); do \
 		clang --target=armv6m-none-eabi -ffreestanding -std=c99 -fsyntax-only -Wall -Wextra -Werror -Iruntime/console -Iruntime/vm/test/stub $$f || exit 1; \
 	done
@@ -413,3 +440,7 @@ tlssize:
 # runtime/vfs/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
 vfssize:
 	tools/vmsize.sh --vfs
+
+# runtime/screen/ code size and fixed state on the ESP32-S3 (-Os), reported apart from the VM core.
+screensize:
+	tools/vmsize.sh --screen

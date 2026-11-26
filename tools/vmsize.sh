@@ -10,6 +10,9 @@
 #                              the fixed state exceeds 4096 bytes
 #   tools/vmsize.sh --vfs      the vfs core instead (runtime/vfs/*.c): code size and fixed
 #                              state (.bss + .data); exit 1 above 3072 bytes
+#   tools/vmsize.sh --screen   the "screen" port instead (runtime/screen/*.c, not VM core):
+#                              code size and fixed state (.bss + .data, limit 0: its
+#                              grid is allocated per open port, charged to the owner)
 #   tools/vmsize.sh --tls      the "tls" port (runtime/net/tls/tls.c) and the mbedTLS it links
 #                              ($MBEDTLS_DIR, runtime/net/tls/config): linked with
 #                              --gc-sections from net_tls_driver, so only what the
@@ -76,6 +79,24 @@ if [ "$1" = "--tls" ]; then
     printf '%7d  runtime/net/tls/tls.c (the port, before gc)\n' "$port"
     printf '%7d  tls code total: the port + mbedTLS as linked (text+rodata+literal; not VM core)\n' "$code"
     printf '%7d  tls fixed state (bss+data)\n' "$fixed"
+    exit 0
+fi
+if [ "$1" = "--screen" ]; then
+    total=0; fixed=0; lines=""
+    for f in runtime/screen/*.c; do
+        o="$OUT/$(basename "$f" .c).o"
+        "$GCC" -std=c99 -Os -mlongcalls -DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_BYTES=163840u \
+            -Iruntime/screen -Iruntime/console -Iruntime/stream -Iruntime/vm -Iruntime/vm/test/stub -c "$f" -o "$o"
+        n=$("$SIZE" -A "$o" | awk '/^\.(text|rodata|literal)/ {s += $2} END {print s + 0}')
+        b=$("$SIZE" -A "$o" | awk '/^\.(bss|data)/ {s += $2} END {print s + 0}')
+        total=$((total + n)); fixed=$((fixed + b))
+        lines="$lines$(printf '%7d  %s' "$n" "$f")
+"
+    done
+    printf '%s' "$lines" | sort -rn
+    printf '%7d  screen code total (text+rodata+literal; not VM core)\n' "$total"
+    printf '%7d  screen fixed state (bss+data; the grid, 4 bytes a cell, is per open port)\n' "$fixed"
+    if [ "$fixed" -gt 0 ]; then echo "screensize: runtime/screen has fixed state"; exit 1; fi
     exit 0
 fi
 if [ "$1" = "--vfs" ]; then

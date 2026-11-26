@@ -21,6 +21,11 @@ int input_unix_add_key(char c, int pin);
 void input_unix_attach(void);
 void input_unix_detach(void);
 
+/* f (async-signal-safe) runs in the SIGINT / SIGTERM handler that restores
+ * the terminal, before the default action: the screen port leaves the
+ * alternate screen there. */
+void input_unix_on_fatal(void (*f)(void));
+
 /* True when stdin is a terminal (decided on first use). */
 bool input_unix_tty(void);
 /* False once stdin hit EOF (or Ctrl-D): no port can produce events. */
