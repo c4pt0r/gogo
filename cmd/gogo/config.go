@@ -361,6 +361,7 @@ func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer,
 		writeCfgKeys(out)
 		return nil
 	}
+
 	if op == "set" && args[1] == "-" {
 		restore := noEcho(stdin, errOut, args[0])
 		v, err := bufio.NewReader(stdin).ReadString('\n')
@@ -460,90 +461,121 @@ func fileConfig(op string, args []string, out io.Writer) error {
 	return nil
 }
 
-// boardConfig sends one command frame to the board's console handler
-// (platform/esp32s3/main/config_esp.c):
-//
-//	\x02gogo-config <op> [<key> [<value>]]\n
-//
-// and reads its reply: `\x02kv <text>` lines, then `\x02ok[ <text>]` or
-// `\x02err <reason>`. Everything else on the console (program output) is
-// skipped. The board never sends the Wi-Fi password back.
-func boardConfig(rw io.ReadWriter, op string, args []string, out io.Writer, timeout time.Duration) error {
-	frame := "\x02gogo-config " + op
-	for _, a := range args {
-		frame += " " + a
-	}
-	if _, err := io.WriteString(rw, frame+"\n"); err != nil {
-		return err
-	}
-	lines := make(chan string)
-	done := make(chan error, 1)
-	quit := make(chan struct{})
-	defer close(quit)
+// boardConn talks to the board's console handler
+// (platform/esp32s3/main/config_esp.c) on rw: one reader for the whole
+// session, so several requests can follow each other on one port.
+type boardConn struct {
+	rw    io.ReadWriter
+	lines chan string
+	done  chan error
+	quit  chan struct{}
+}
+
+func newBoardConn(rw io.ReadWriter) *boardConn {
+	c := &boardConn{rw: rw, lines: make(chan string), done: make(chan error, 1), quit: make(chan struct{})}
 	go func() {
 		var buf []byte
 		in := false
 		b := make([]byte, 512)
 		for {
 			n, err := rw.Read(b)
-			for _, c := range b[:n] {
+			for _, ch := range b[:n] {
 				switch {
-				case c == 0x02:
+				case ch == 0x02:
 					in, buf = true, buf[:0]
 				case !in:
-				case c == '\n':
+				case ch == '\n':
 					in = false
 					select {
-					case lines <- string(bytes.TrimSuffix(buf, []byte("\r"))):
-					case <-quit:
+					case c.lines <- string(bytes.TrimSuffix(buf, []byte("\r"))):
+					case <-c.quit:
 						return
 					}
 				default:
-					buf = append(buf, c)
+					buf = append(buf, ch)
 				}
 			}
 			if err != nil {
-				done <- err
+				c.done <- err
 				return
 			}
 		}
 	}()
+	return c
+}
+
+// close stops the reader (once its pending Read returns).
+func (c *boardConn) close() { close(c.quit) }
+
+// errBoard is the board's own refusal: `\x02err <reason>`.
+type errBoard struct{ reason string }
+
+func (e errBoard) Error() string { return "board: " + e.reason }
+
+// request sends one command frame,
+//
+//	\x02gogo-config <op> [<arg>...]\n
+//
+// and reads the reply: `\x02kv <text>` lines (kvs), then `\x02ok[ <text>]`
+// (text) or `\x02err <reason>` (errBoard). Everything else on the
+// console (program output) is skipped.
+func (c *boardConn) request(op string, args []string, timeout time.Duration) (kvs []string, text string, err error) {
+	frame := "\x02gogo-config " + op
+	for _, a := range args {
+		frame += " " + a
+	}
+	if _, err := io.WriteString(c.rw, frame+"\n"); err != nil {
+		return nil, "", err
+	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	var kvs []string
 	for {
 		select {
-		case l := <-lines:
-			tag, text, _ := strings.Cut(l, " ")
+		case l := <-c.lines:
+			tag, t, _ := strings.Cut(l, " ")
 			switch tag {
 			case "kv":
-				kvs = append(kvs, text)
+				kvs = append(kvs, t)
 			case "ok":
-				if op == "list" {
-					sort.Strings(kvs)
-				}
-				for _, kv := range kvs {
-					fmt.Fprintln(out, kv)
-				}
-				if op == "get" {
-					fmt.Fprintln(out, text)
-				}
-				return nil
+				return kvs, t, nil
 			case "err":
-				if text == "not set" && len(args) > 0 {
-					return fmt.Errorf("gogo config: %s is not set", args[0])
-				}
-				return fmt.Errorf("gogo config: board: %s", text)
+				return kvs, "", errBoard{t}
 			}
-		case err := <-done:
+		case err := <-c.done:
 			if err == nil || err == io.EOF {
 				err = errors.New("connection closed")
 			}
-			return fmt.Errorf("gogo config: board: %v", err)
+			c.done <- err // later requests see it too
+			return kvs, "", fmt.Errorf("board: %v", err)
 		case <-timer.C:
-			return errors.New("gogo config: no answer from the board (is gogo firmware running? another program using the port?)")
+			return kvs, "", errors.New("no answer from the board (is gogo firmware running? another program using the port?)")
 		}
 	}
+}
+
+// boardConfig runs one config operation on the board and prints its
+// result. The board never sends the Wi-Fi password back.
+func boardConfig(rw io.ReadWriter, op string, args []string, out io.Writer, timeout time.Duration) error {
+	c := newBoardConn(rw)
+	defer c.close()
+	kvs, text, err := c.request(op, args, timeout)
+	var be errBoard
+	if errors.As(err, &be) && be.reason == "not set" && len(args) > 0 {
+		return fmt.Errorf("gogo config: %s is not set", args[0])
+	}
+	if err != nil {
+		return fmt.Errorf("gogo config: %v", err)
+	}
+	if op == "list" {
+		sort.Strings(kvs)
+	}
+	for _, kv := range kvs {
+		fmt.Fprintln(out, kv)
+	}
+	if op == "get" {
+		fmt.Fprintln(out, text)
+	}
+	return nil
 }
 
 // noEcho turns terminal echo off while a value is typed on stdin, if

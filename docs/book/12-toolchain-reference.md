@@ -15,6 +15,7 @@ gogo env [-path dirs]
 gogo dis <file.ggb>
 gogo info [-path dirs] <file.ggb|dir|file.gg>
 gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
+gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
 gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | keys | scan | stats
@@ -377,6 +378,29 @@ already (chapter 2).
 `gogo flash` refuses files that are not gogo images, images of another
 format version (`rebuild it with gogo build`) and images over the 1 MB
 partition.
+
+## gogo push
+
+```text
+gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
+```
+
+Copies an image (a module, chapter 14) to the board's `/flash`, over the
+serial console while the board runs: to `/flash/<file name>`, or to the
+path given (its directory must exist; names as in chapter 9). The board
+writes it under a temporary name, reads it back, checks its length and
+CRC-32, and only then renames it over the target, so the target is
+either the old file or the whole new one. Any failure, a refused chunk,
+a mismatch, the cable pulled, leaves the target as it was.
+
+- `-port P`: as for `gogo flash`.
+- `-timeout seconds`: how long to wait for each answer of the board
+  (default 5).
+
+It refuses a file that is not an image of a format this `gogo` knows,
+and a path outside `/flash`. A firmware older than `gogo push` answers
+that it has no push. Only one program can have the serial port open:
+close `gogo monitor` first.
 
 ## gogo monitor
 

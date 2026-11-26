@@ -212,7 +212,7 @@ rebuilt:
   crypto the TLS port already links (`TlsHw`).
 - **Modules live in RAM only.** There is no automatic loading from flash
   at boot and no execute-in-place from flash. *Workaround:* store the
-  module with `fs.WriteFile` and load it with `fs.ReadFile` +
+  module (`gogo push`, or `fs.WriteFile`) and load it with `fs.ReadFile` +
   `code.Load` at start.
 - **No `sys.Has`.** A program cannot ask which drivers and mounts the
   firmware has before loading; it learns the first missing one from
@@ -250,7 +250,7 @@ rebuilt:
   your own or a `gogo/` library such as `gogo/http`, each compile their own
   copy of it, so its struct types are different types in each. Sending
   one across modules fails with `BadMsg` at run time, not at compile time
-  (book 14.5). Only the stub packages' reserved types (`actor.Request`,
+  (book 14.6). Only the stub packages' reserved types (`actor.Request`,
   `net.Up`, `fs.Info`, ...) cross. *Workaround:* send basic values,
   strings or `Bytes`, and rebuild the struct in the receiver.
 - **Scripts get no arguments yet.** `gogo run x.gg args...` and `./script
@@ -448,8 +448,11 @@ rebuilt:
   (*workaround:* `bytes.FromSlice`).
 - **Shrinking `/flash`** (`fs.flash.size` smaller than the file system)
   needs `fs.flash.format=yes`, which erases it.
-- **No file transfer** between a computer and `/flash`. *Workaround:*
-  move files over HTTP, or use the SD card.
+- **`gogo push` takes images only**, one at a time, at about 10 KB/s,
+  and does not tell the running program. Pushing over a file the
+  program has open (a log it is appending to) replaces it under the
+  program, whose later writes to it then fail or are lost.
+  *Workaround:* move other files over HTTP, or use the SD card.
 
 ## Input, audio, IMU and IR
 

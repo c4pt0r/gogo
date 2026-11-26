@@ -26,7 +26,7 @@ A module is an ordinary gogo `package main`, and may have packages of its
 own: built from `greeter/`, `import "greeter/words"` is `greeter/words/`,
 then the search path, exactly as for a program (section 3.1.1); they are
 compiled into the module, and their struct types are the module's own
-(section 14.5). Its **entries** are the
+(section 14.6). Its **entries** are the
 exported functions with the signature `func()` or `func(arg any)`, found by
 name (case-sensitive). `func main()` is exported as the entry `main`. At
 boot the firmware loads the flashed image as module 0 and starts its
@@ -90,7 +90,7 @@ p, err := code.Spawn(m, "Greet", actor.Self())
 ```
 
 Its output (`run.sh` builds `mods/greeter` into `/flash/greeter.ggb` before
-running it):
+running it; section 14.3 puts a module on a board's `/flash`):
 
 ```text
 load: 0 code mem in use: true
@@ -105,7 +105,34 @@ A wrong entry name (`greet` is not `Greet`) is `NotFound`, not a crash. A
 bad or malicious module makes `Load` return an error; the host is
 unaffected.
 
-## 14.3 Lifetime
+## 14.3 Putting a module on the board
+
+On the host, `/flash` is a directory (`gogo run --fs-root`, chapter 9),
+so a module is copied there like any file. On a board, `gogo push`
+copies it over the USB cable, while the board runs, into the board's
+`/flash`:
+
+```sh
+gogo build ./greeter -o greeter.ggb
+gogo push greeter.ggb                       # to /flash/greeter.ggb
+gogo push worker_v2.ggb /flash/mods/w.ggb   # to another path (the directory must exist)
+```
+
+```text
+pushed greeter.ggb to /flash/greeter.ggb (1088 bytes, 0.2 s)
+```
+
+The board writes the file under a temporary name beside the target,
+reads it back and checks its length and CRC-32 against what `gogo push`
+announced, and only then renames it over the target, so a program never
+reads half a module, and an interrupted or damaged push leaves the old
+file as it was. `gogo push` takes images only (it checks the format
+version against its own, so push with the `gogo` that matches the
+firmware). Close `gogo monitor` first: only one program can use the
+serial port. The running program is not told; it finds the new file the
+next time it reads it, for example when it next loads the module.
+
+## 14.4 Lifetime
 
 A module stays loaded while an actor running its code is alive, or while
 some actor **holds** it. `code.Load` holds it for the caller; other actors
@@ -120,7 +147,7 @@ the actor that uses it exit with `BadCode`.
 The VM holds at most 8 modules, the main program included; a ninth `Load`
 is `TooMany`.
 
-## 14.4 Supervised upgrades
+## 14.5 Supervised upgrades
 
 `gogo/supervisor` has a supervisor whose child is a module entry:
 
@@ -169,7 +196,7 @@ worker v2: message 1
 worker v2: message 2
 ```
 
-## 14.5 Messages between modules
+## 14.6 Messages between modules
 
 Code never runs across modules, and modules do not share types. When the
 sender and the receiver belong to different modules (an actor belongs to
@@ -197,7 +224,7 @@ to; the main program has no special case), and its supervisor handles that
 like any crash. `code.Spawn` with such an `arg` returns `BadArg` instead of
 crashing. Messages inside one module are unaffected.
 
-## 14.6 What a module may do, and what the firmware offers
+## 14.7 What a module may do, and what the firmware offers
 
 - **Requirements.** The compiler records, by name, the drivers and
   mounts an image needs: the driver of every constant `port.Open` (`tcp`,
@@ -241,10 +268,10 @@ crashing. Messages inside one module are unaffected.
   copy goes into its 8 MB of PSRAM, so module code does not use up the small
   internal RAM; the Cardputer ADV has no PSRAM and keeps the code in RAM.
   Nothing is written to flash, so loading is fast, and a loaded module is
-  gone after a reboot: store it as a file and load it at boot if you need it
-  again.
+  gone after a reboot: store it as a file (`gogo push`, section 14.3, or
+  `fs.WriteFile`) and load it at boot if you need it again.
 
-## 14.7 Fetching a module over the network
+## 14.8 Fetching a module over the network
 
 > **Load only modules you trust, over a channel that proves where they
 > come from.** A loaded module runs with the same rights as the main
@@ -273,9 +300,10 @@ Tailscale Funnel, with the exact commands.
 (The host has no network, so only the refusal of an `http://` URL is
 checked there, by `make test-examples`.)
 
-## 14.8 Not in this version
+## 14.9 Not in this version
 
-Writing modules to flash or replacing the whole firmware image, changing
+Loading modules from flash automatically at boot, replacing the whole
+firmware image, changing
 code inside a running actor (Erlang-style code upgrade), calling functions
 or sharing types across modules, signing, and per-module permissions.
 Signed modules are planned (see `docs/known-issues.md`).

@@ -1637,7 +1637,17 @@ wifi.password` echoes only `(set)`. Store selection on the host: `-port`
 names a board; `-local` the local file `$GOGO_CONFIG` (default
 `~/.gogo/config`); with neither, a set `$GOGO_CONFIG` means the local
 file, otherwise exactly one connected board is used (with a note on
-stderr), otherwise the local file. `set` validates against a key table
+stderr), otherwise the local file.
+
+**Pushing files (`gogo push`).** The same frames carry a file to
+`/flash`: `push <path> <len> <crc32>`, then `data <offset> <base64>`
+frames of 128 bytes each, each answered (`ok <bytes so far>`) before the
+next is sent, so the board's 256-byte console input buffer never
+overflows, then `end`. The console task writes a temporary file beside
+the target (`fs_lfs.c`; LittleFS calls take a mutex, since the VM task
+uses the file system too), reads it back, checks the length and CRC-32,
+and renames it over the target, atomically. A failure, an `abort` or a
+new `push` drops the temporary file. `set` validates against a key table
 in `cmd/gogo/config.go` (name, type: string, size, ip, bool or int,
 platform-owned or a library's): keys are 1-15 bytes of `[a-z0-9._]`,
 an unknown key under a reserved prefix (`wifi.`, `net.`, `fs.`,

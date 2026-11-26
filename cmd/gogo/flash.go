@@ -76,9 +76,9 @@ func detectPort(glob func(string) ([]string, error)) (string, error) {
 	case 1:
 		return ports[0], nil
 	case 0:
-		return "", fmt.Errorf("gogo flash: no board found (%s); connect it or pass -port", portGlob)
+		return "", fmt.Errorf("gogo: no board found (%s); connect it or pass -port", portGlob)
 	}
-	return "", fmt.Errorf("gogo flash: several boards found (%s); pick one with -port", strings.Join(ports, ", "))
+	return "", fmt.Errorf("gogo: several boards found (%s); pick one with -port", strings.Join(ports, ", "))
 }
 
 // flasher holds the side effects of `gogo flash` so tests can replace them.

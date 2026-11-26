@@ -12,6 +12,8 @@
 // executable script, counts as one too) to a temporary image first, then
 // runs the VM and exits with its status. The VM is found by findVM.
 //
+// `gogo push` copies an image to the board's /flash (see push.go).
+//
 // `gogo info` prints an image's format, size, requirements and entries
 // (see info.go).
 //
@@ -48,6 +50,7 @@ var usage = "usage: " + strings.Join([]string{
 	strings.TrimPrefix(disUsage, "usage: "),
 	strings.TrimPrefix(infoUsage, "usage: "),
 	strings.TrimPrefix(flashUsage, "usage: "),
+	strings.TrimPrefix(pushUsage, "usage: "),
 	strings.TrimPrefix(monitorUsage, "usage: "),
 	strings.TrimPrefix(firmwareUsage, "usage: "),
 	strings.TrimPrefix(configUsage, "usage: "),
@@ -291,6 +294,8 @@ func run(args []string) error {
 		return infoCmd(args[1:], os.Stdout)
 	case "flash":
 		return defaultFlasher().flash(args[1:])
+	case "push":
+		return pushCmd(args[1:])
 	case "monitor":
 		return monitorCmd(args[1:])
 	case "config":
