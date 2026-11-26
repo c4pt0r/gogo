@@ -1,0 +1,25 @@
+// A module that answers float messages: its float constants cross into
+// the main program as copies, like its strings.
+package main
+
+import "gogo/actor"
+
+func main() {}
+
+// Calc serves the PID it is given: float64 x -> 2x and the constant 0.5,
+// float32 x -> x+1, then it exits.
+func Calc(arg any) {
+	switch to := arg.(type) {
+	case actor.PID:
+		for {
+			switch m := actor.Receive().(type) {
+			case float64:
+				actor.Send(to, m*2)
+				actor.Send(to, 0.5)
+			case float32:
+				actor.Send(to, m+1)
+				return
+			}
+		}
+	}
+}

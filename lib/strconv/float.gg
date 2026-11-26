@@ -1,0 +1,25 @@
+package strconv
+
+// FormatFloat converts f to a string according to the format fmt and
+// precision prec, as Go's: fmt is 'b' (-ddddp±ddd, a binary exponent), 'e'
+// (-d.dddde±dd), 'E', 'f' (-ddd.dddd), 'g' ('e' for large exponents, 'f'
+// otherwise) or 'G'; 'x' and 'X' (hexadecimal) are not supported and,
+// like any unknown format, give "%" followed by fmt. prec is the number of
+// digits after the point for 'e', 'E' and 'f', the number of significant
+// digits for 'g' and 'G'; -1 uses the fewest digits that read back as
+// exactly f. bitSize is 32 (f is rounded to float32 first) or 64. Digits
+// are exact (correctly rounded, ties to even), without libc printf.
+//
+// The compiler implements FormatFloat and ParseFloat itself (the B_FLOAT
+// builtin): this body is never compiled, and a program that does not call
+// them needs no float support from the firmware.
+func FormatFloat(f float64, fmt byte, prec, bitSize int) string { panic("gogo only") }
+
+// ParseFloat converts s to a floating-point number with the precision of
+// bitSize (32 or 64), correctly rounded, as Go's: decimal ("1.5", ".5",
+// "1e-3"), hexadecimal with a p exponent ("0x1.8p1"), "inf", "infinity"
+// and "nan" (any case; the infinities with an optional sign). ok is false
+// if s is not valid (f is 0), and also if it is out of range: then f is
+// ±Inf, as with Go's ErrRange. Unlike Go, underscores are not accepted, and
+// strings longer than 512 bytes give ok = false.
+func ParseFloat(s string, bitSize int) (f float64, ok bool) { panic("gogo only") }

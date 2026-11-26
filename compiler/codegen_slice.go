@@ -162,7 +162,9 @@ func (f *fn) indexOpAssign(ix *ast.IndexExpr, op uint8, rhs ast.Expr) {
 	switch {
 	case rhs == nil:
 		one := f.allocScalar(ix)
-		if isInt64(et) {
+		if isFloat(et) {
+			f.floatOne(ix, one)
+		} else if isInt64(et) {
 			f.int64Into(1, one)
 		} else {
 			f.asm.EmitExt(OpLoadk, one, 0, 0, TermInt(1))

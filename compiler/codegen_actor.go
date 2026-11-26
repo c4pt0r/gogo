@@ -124,6 +124,10 @@ func (f *fn) twoResultCall(call *ast.CallExpr, dst uint8) {
 		f.codeCall(call, name, dst)
 		return
 	}
+	if _, isFloat := floatOps[name]; isFloat {
+		f.floatCall(call, name, dst)
+		return
+	}
 	mark := f.next
 	base, n := f.args(call)
 	f.asm.EmitExt(OpBuiltin, dst, base, n, actorBuiltins[name])
@@ -310,6 +314,10 @@ func (f *fn) typeID(te ast.Expr) uint32 {
 			return TyInt
 		case types.Int64:
 			return TyInt64
+		case types.Float32:
+			return TyFloat32
+		case types.Float64:
+			return TyFloat64
 		case types.Bool:
 			return TyBool
 		case types.String:

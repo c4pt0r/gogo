@@ -190,18 +190,20 @@ The supported types are:
   wraps around, as in Go. Constants that do not fit are compile errors.
 - `int64`: 64 bits. `actor.Now()` returns one.
 - `byte` (`uint8`): arithmetic is cut to 8 bits after every operation.
+- `float64` and `float32`: IEEE 754 floating point, as in Go (see
+  *Floating point* below).
 - `bool` and `string`. A string is an immutable sequence of bytes.
 - `rune` only as the type of character literals and of the value in
   `range` over a string.
 - Slices (`[]T`), structs, function values and `any`.
-- Named types whose underlying type is `int`, `int64`, `bool` or `string`
-  (`type Weekday int`), and named structs.
+- Named types whose underlying type is `int`, `int64`, `float32`,
+  `float64`, `bool` or `string` (`type Weekday int`), and named structs.
 - `const` with `iota`.
 - The gogo types `actor.PID`, `actor.Ref`, `bytes.Bytes`, `bytes.Buffer`
   and the struct types of the gogo packages.
 
-There are **no** floats, no unsigned types except `byte`, no `int8/16/32`,
-no arrays, no maps, no pointers, no channels, no complex numbers.
+There are **no** unsigned types except `byte`, no `int8/16/32`, no arrays,
+no maps, no pointers, no channels, no complex numbers.
 
 ```go
 // The basic types of the subset: int (32 bits), int64, byte, bool, string,
@@ -263,6 +265,98 @@ Go, and so must a conversion to a named type built on `int` or `int64`
 (`Weekday(n)`, `errors.Code(e)` for an `fs.Err` e). `string(b)` and
 `[]byte(s)` convert between strings and byte slices (each copies). Other
 conversions are rejected.
+
+### Floating point
+
+`float64` and `float32` behave as in Go: `+ - * /`, comparisons,
+negation, `++` and the compound assignments, with IEEE 754 rounding. An
+untyped constant such as `1.5` is a `float64` unless its context says
+otherwise, and constant expressions (`1.0/3`, `math.Pi * 2`) are computed
+exactly by the compiler. Division by zero gives `+Inf`, `-Inf` or `NaN`
+instead of ending the actor, and `NaN` equals nothing, itself included.
+
+```go
+// float64 and float32: Go semantics, printed as Go's println prints them.
+package main
+
+import (
+	"gogo/math"
+	"gogo/strconv"
+)
+
+// Celsius is a named float type.
+type Celsius float64
+
+func fahrenheit(c Celsius) float64 { return float64(c)*9/5 + 32 }
+
+func main() {
+	x := 1.5 // untyped float constants default to float64
+	var f float32 = 0.1
+	println("values:", x, x/3, f, 1e21, 1e-7)
+
+	// float32 rounds every result to float32 (24 bits), float64 to 53
+	// bits: println shows the shortest digits that read back exactly.
+	println("0.1+0.2:", f+0.2, x/15+0.2)
+
+	// Division by zero is not a crash: it gives an infinity or NaN.
+	var zero float64
+	nan := zero / zero
+	println("special:", 1/zero, -1/zero, nan, nan == nan, -zero)
+
+	// Conversions are explicit; to an integer they truncate toward zero.
+	n := 7
+	println("convert:", float64(n)/2, int(-2.9*x), int64(x*1e12), float64(f))
+
+	println("named:", fahrenheit(21.5))
+	println("math:", math.Sqrt(2), math.Floor(-x), math.Round(2.5), math.Pi)
+
+	s := strconv.FormatFloat(math.Pi, 'f', 3, 64)
+	v, ok := strconv.ParseFloat("6.02e23", 64)
+	println("strconv:", s, v, ok)
+}
+```
+
+```text
+values: 1.5 0.5 0.1 1e+21 1e-07
+0.1+0.2: 0.3 0.30000000000000004
+special: +Inf -Inf NaN false -0
+convert: 3.5 -4 1500000000000 0.10000000149011612
+named: 70.7
+math: 1.4142135623730951 -2 3 3.141592653589793
+strconv: 3.142 6.02e+23 true
+```
+
+- `println` prints a float the way Go's `println` does (Go 1.27): the
+  shortest digits that read back as the same value, as `%e` for large and
+  small exponents (`1e+21`, `1e-07`), `-0`, `NaN`, `+Inf`. A `float32`
+  prints at its own precision (`0.1`, not `0.10000000149011612`). Older Go
+  releases printed `+1.500000e+000`.
+- Conversions are explicit. `int(f)`, `int64(f)` and `byte(f)` truncate
+  toward zero. Go leaves NaN and out-of-range values to the
+  implementation; gogo gives 0 for NaN and the nearest end of the range
+  otherwise (`int(1e10)` is 2147483647, since `int` is 32 bits).
+- `float32` and `float64` values can go into `any` (a type switch tells
+  them apart), into structs and slices, and into messages, which copy
+  them like any value. A named float type cannot go into `any`, like a
+  named int.
+- `gogo/math` has `Sqrt`, `Floor`, `Ceil`, `Trunc`, `Round`,
+  `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
+  `IsInf`, `Max`, `Min` and Go's constants (`Pi`, `E`, `MaxFloat64`, ...);
+  `Pow`, `Exp`, `Log` and the trigonometric functions are not there yet.
+  `strconv.FormatFloat` and `strconv.ParseFloat` work as in Go, except
+  that `ParseFloat` returns `ok bool` instead of an error (`false`, with
+  `±Inf`, when the value is out of range), takes no underscores, and
+  `FormatFloat` has no `'x'` format.
+- **Cost.** Every float is a small heap object (8 or 12 bytes), so each
+  arithmetic result allocates; keep tight loops on integers where you
+  can. On the ESP32-S3, `float32` arithmetic runs on the FPU and
+  `float64` in software, several times slower: prefer `float32` for
+  sensor maths. On a chip without an FPU (the RP2040) both are software.
+- **Firmware.** Floats are a firmware option (`GOGO_FLOAT`, requirement
+  `float`): an image that uses them needs firmware built with it, and
+  image format 15.2 (chapter 12). `gogo firmware` turns it on when an
+  image needs it. A program that only imports `gogo/strconv` for `Atoi`
+  or `Itoa` does not need it.
 
 ## 3.3 Control flow
 
@@ -1358,7 +1452,7 @@ func main() {
 	defer println("bye")
 	m := map[string]int{} // map
 	p := &Sq{2}           // pointer
-	x := 1.5              // float
+	x := 1.5i             // complex
 	if counter > 0 {
 		goto done // goto
 	}
@@ -1383,14 +1477,14 @@ main.gg:22:2: gogo: go statement not supported
 main.gg:23:2: gogo: defer statement not supported
 main.gg:24:7: gogo: map not supported
 main.gg:25:7: gogo: pointer not supported
-main.gg:26:7: gogo: float not supported
+main.gg:26:7: gogo: complex not supported
 main.gg:28:3: gogo: goto statement not supported
 main.gg:30:1: gogo: label on a statement other than for or switch not supported
 main.gg:31:8: gogo: array not supported
 main.gg:32:7: gogo: type assertion not supported
 main.gg:34:10: gogo: map not supported
 main.gg:34:13: gogo: pointer not supported
-main.gg:34:16: gogo: float not supported
+main.gg:34:16: gogo: complex not supported
 main.gg:34:19: gogo: index of [4]int not supported
 main.gg:35:2: gogo: builtin panic not supported
 ```
@@ -1413,7 +1507,7 @@ The full list, with what to do instead:
 | `switch` on an `any` or a struct | `switch on a value of type any not supported` | a type switch; compare fields |
 | type assertion `x.(T)` | `type assertion not supported` (and `multi-value assignment not supported` for `v, ok := x.(T)`) | a type switch |
 | `goto` | `goto statement not supported` | labeled `break`/`continue`, or a function and `return` |
-| `float32/64` | `float not supported` | integers (fixed point: millivolts, percent) |
+| `complex64/128` | `complex not supported` | two floats |
 | `uint32`, `int16`, ... | `uint32 not supported` | `int`, `int64`, `byte` |
 | generics | `generic function not supported` | write the function per type |
 | `fmt`, other std packages | `import "fmt": package not found` | `println`, `gogo/strconv` |
@@ -1429,7 +1523,7 @@ The full list, with what to do instead:
 
 ### Small surprises
 
-- `println` accepts any number of `int`, `int64`, `bool`, `string`, PID,
+- `println` accepts any number of `int`, `int64`, float, `bool`, `string`, PID,
   Ref, struct and slice arguments (structs print as `{1 2}`, slices as
   `[1 2]`, unlike Go), but not `Bytes` or `Buffer` (use `.String()`), and
   not a multi-result call (`println(divmod(7, 2))` is `multiple values not

@@ -1,0 +1,10 @@
+// A program that uses no floats runs on a VM built without them, even
+// with gogo/strconv, whose float functions are compiled only where called.
+package main
+
+import "gogo/strconv"
+
+func main() {
+	n, ok := strconv.Atoi("42")
+	println(strconv.Itoa(n+1), ok)
+}

@@ -1,0 +1,59 @@
+// Floats in structs, slices and interfaces, and between actors: a message
+// is deep-copied, so the receiver gets its own boxes, and the values,
+// float32 or float64, arrive unchanged.
+package main
+
+import "gogo/actor"
+
+type Reading struct {
+	Sensor string
+	Value  float64
+	Gain   float32
+	Hist   []float64
+}
+
+type Done struct{}
+
+func worker(parent actor.PID) {
+	sum := 0.0
+	for {
+		switch m := actor.Receive().(type) {
+		case Reading:
+			sum += m.Value * float64(m.Gain)
+			for _, h := range m.Hist {
+				sum += h
+			}
+			println("got", m.Sensor, m.Value, m.Gain, m.Hist)
+		case float64:
+			sum += m
+			println("got float64", m)
+		case float32:
+			println("got float32", m)
+		case actor.Request:
+			actor.Reply(m, sum)
+		case Done:
+			actor.Send(parent, sum)
+			return
+		}
+	}
+}
+
+func main() {
+	r := Reading{Sensor: "t0", Value: 21.5, Gain: 1.25, Hist: []float64{0.5, -0.25}}
+	println(r, []float32{0.1, 1e-3}, [][]float64{{1}, {2.5, 3}})
+	var z float64
+	self := actor.Self()
+	w := actor.Spawn(func() { worker(self) })
+	actor.Send(w, r)
+	r.Hist[0] = 100 // the worker has its own copy
+	actor.Send(w, 2.25)
+	actor.Send(w, float32(0.1))
+	actor.Send(w, -z) // negative zero survives the copy
+	reply, ok := actor.Call(w, "sum?", 1000)
+	println("call", reply, ok)
+	actor.Send(w, Done{})
+	println("done", actor.Receive())
+	// A float captured by a spawned closure.
+	k := 0.75
+	actor.Spawn(func() { println("captured", k*2) })
+}

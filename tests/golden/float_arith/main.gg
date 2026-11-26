@@ -1,0 +1,91 @@
+// Floating point: arithmetic, conversions, printing and comparisons. The
+// program is Go as well, and expected.out is what Go 1.27 prints for it,
+// but for the line of out-of-range conversions to int: gogo's int is 32
+// bits, so int(+Inf) and int(3e9) give 2147483647 (Go on a 64-bit host
+// gives the int64 limit and 3000000000).
+package main
+
+type Celsius float64
+
+const third = 1.0 / 3 // folded at compile time, exactly
+const big = 1e300
+
+func half(x float64) float64 { return x / 2 }
+
+func pair(x float32) (float32, float64) { return x * 2, float64(x) }
+
+func main() {
+	// Printing: zeros, specials, the %e / %f switch, extremes, subnormals.
+	var zero float64
+	one10 := 10.0
+	negZero := -zero
+	inf := 1 / zero
+	nan := zero / zero
+	println(zero, negZero, inf, -inf, nan)
+	println(1.5, -1.5, 100.0, 123456.0, 1e6, 1e20, 1e21, 0.0001, 0.00001, 1.0/3)
+	println(5e-324, 2.2250738585072014e-308, 1.7976931348623157e308, 4.9406564584124654e-324*3)
+	println(float32(0.1), float32(1e-45), float32(3.4028234663852886e38), float32(16777217))
+	huge := big * one10
+	println(0.1+0.2, third, huge*big, -huge*big, big/1e-300/1e590) // the constant is exact: no overflow
+
+	// Arithmetic in each width: float32 rounds every result to float32.
+	var a, b float32 = 0.1, 0.2
+	println(a+b, a*b, a-b, a/b, -a)
+	x, y := 0.1, 0.2
+	println(x+y, x*y, x-y, x/y, -x)
+	f32, f64 := pair(1.25)
+	println(f32, f64, half(3))
+
+	// Division by zero is not a trap.
+	one := 1.0
+	println(one/zero, -one/zero, zero/zero, one/negZero)
+
+	// Conversions: toward zero; NaN 0 and out of range the nearest end
+	// (Go leaves both to the implementation; gogo does as Go on arm64).
+	n := 7
+	var big64 int64 = 1 << 53
+	println(float64(n)/2, float32(n)/3, float64(big64+1), float32(big64+1))
+	println(int(2.9*one), int(-2.9*one), int64(1e18*one), byte(258.5*one))
+	println(int(nan), int(inf), int(-inf), int64(inf), int64(-inf), int(3e9*one))
+	println(float32(1.0000001*one), float64(float32(0.1)), float32(float64(a)))
+
+	// Comparisons, NaN unordered, -0 == 0.
+	println(nan == nan, nan != nan, nan < 1, nan > 1, nan <= nan, nan >= nan)
+	println(negZero == zero, negZero < zero, 1.5 > one, one >= 1, a < b, a == 0.1)
+	switch x {
+	case 0.3:
+		println("no")
+	case 0.1:
+		println("0.1")
+	}
+
+	// Compound assignment, ++ and --, slices of floats, named float types.
+	s := []float64{1, 2.5}
+	s = append(s, 4)
+	s[0] += 0.5
+	s[1]++
+	s[2] /= 3
+	t := Celsius(21.5)
+	t++
+	t *= 2
+	x--
+	x -= 1
+	sum := 0.0
+	for _, v := range s {
+		sum += v
+	}
+	println(s[0], s[1], s[2], sum, float64(t), x, len(s))
+
+	// In an interface: float32 and float64 are told apart.
+	vals := []any{1.5, float32(1.5), 1, int64(1)}
+	for _, v := range vals {
+		switch v := v.(type) {
+		case float32:
+			println("float32", v)
+		case float64:
+			println("float64", v)
+		default:
+			println("other")
+		}
+	}
+}

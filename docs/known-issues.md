@@ -262,7 +262,7 @@ rebuilt:
 
 - **Not supported yet (planned).** The compiler rejects maps, pointer
   receivers ("pointer receivers are not supported yet"), pointers, arrays, integer types other than `int`, `int64` and `byte`
-  (`uint32` included), floats, package-level `var`s, a `switch` on an
+  (`uint32` included), package-level `var`s, a `switch` on an
   `any` or a struct value, type assertions, `panic`, the `error` type
   and interfaces other than `any` ("interface
   types are not supported yet": methods are called on concrete types
@@ -360,8 +360,8 @@ rebuilt:
   (up to 14) do not load on a v15 VM; from 15.0 on, a VM runs every older
   minor of its major.
 - **Some error messages are unhelpful.** An interface type gives `type
-  definition other than struct or int, int64, bool, string not
-  supported`.
+  definition other than struct or int, int64, float32, float64, bool,
+  string not supported`.
 - **`println` of a slice differs from Go.** gogo prints the elements,
   `[1 2 3]`; Go's `println` prints `[len/cap]address` (only
   `fmt.Println` prints elements).
@@ -370,6 +370,45 @@ rebuilt:
   `strings.TrimSpace`, `ToLower` and `EqualFold` are ASCII-only and
   `Split(s, "")` splits into bytes; slices grow by doubling from a
   capacity of 4.
+
+## Floating point
+
+- **Every float is a heap object.** A `float32` takes 8 bytes and a
+  `float64` 12, and every arithmetic result, conversion or `ParseFloat`
+  allocates one (constants live in the image and cost nothing). A tight
+  float loop therefore runs the garbage collector often. *Workaround:*
+  keep inner loops on integers (fixed point) where it matters.
+- **`float64` is software on the boards.** The ESP32-S3's FPU is single
+  precision: `float32` arithmetic runs on it, `float64` in libgcc's
+  software routines, several times slower. Both are software on a chip
+  without an FPU (the RP2040). *Workaround:* use `float32` for sensor
+  maths.
+- **Firmware option.** Floats need firmware built with `GOGO_FLOAT`
+  (requirement `float`, image format 15.2). On a firmware without it, an
+  image that uses floats is refused at boot (`gogo: image requires float,
+  which this VM lacks`) and `code.Load` returns `Unsupported`. `gogo
+  firmware` builds it in only when an image needs it (or `-with float`),
+  so a module that needs floats and is loaded later needs `-with float`.
+- **Implementation-defined conversions.** Go leaves `int(f)` of a NaN or
+  an out-of-range `f` to the implementation; gogo gives 0 for NaN and
+  the nearest end of the range otherwise (Go on arm64 does the same; on
+  amd64 Go gives the minimum value). With a 32-bit `int`, `int(3e9)` is
+  2147483647.
+- **A small `gogo/math`.** `Sqrt`, `Floor`, `Ceil`, `Trunc`, `Round`,
+  `RoundToEven`, `Abs`, `Copysign`, `Signbit`, `Inf`, `NaN`, `IsNaN`,
+  `IsInf`, `Max`, `Min` and the constants only: no `Pow`, `Exp`, `Log`,
+  trigonometry, `Mod` or `Float64bits` (there is no `uint64`) yet.
+- **`strconv` float differences from Go.** `ParseFloat` returns `(f
+  float64, ok bool)`: `ok` is false for bad syntax (`f` 0) and for an
+  out-of-range value (`f` ±Inf, Go's `ErrRange`); it takes no
+  underscores and no input longer than 512 bytes. `FormatFloat` has no
+  `'x'` / `'X'` (hexadecimal) format: it gives `%x`, as Go does for an
+  unknown format. On the boards, `ParseFloat(s, 32)` uses newlib's
+  `strtof`, which rounds through `float64`: a decimal within about one
+  part in 10^17 of the halfway point between two `float32` values can
+  round the wrong way (the host is exact).
+- **Float equality in `switch` and `==` follows IEEE 754.** A `case`
+  with `NaN` never matches, and `-0` matches `0`, as in Go.
 
 ## Networking, TLS and HTTP
 

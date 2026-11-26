@@ -1,0 +1,53 @@
+// gogo/math and strconv.FormatFloat / ParseFloat. expected.out is what Go
+// 1.27 prints for the same calls (with Go's ParseFloat error as ok), but
+// for "1_000": gogo's ParseFloat takes no underscores (0 false; Go: 1000
+// true). FormatFloat's 'x' format (hexadecimal) is not supported.
+package main
+
+import (
+	"gogo/math"
+	"gogo/strconv"
+)
+
+func parse(s string, bits int) {
+	f, ok := strconv.ParseFloat(s, bits)
+	println(s, f, ok)
+}
+
+func main() {
+	var zero float64
+	nan, inf := math.NaN(), math.Inf(1)
+	for _, x := range []float64{2, 0.5, 1e-310, 1e300, 0, -zero, -4, nan, inf, 1 << 52, 3} {
+		println(math.Sqrt(x))
+	}
+	for _, x := range []float64{2.5, -2.5, 3.5, -0.4, 0.5, -0.5, 1.5e15 + 0.5, 4503599627370495.5, nan, -inf, -zero, 1e300} {
+		println(math.Floor(x), math.Ceil(x), math.Trunc(x), math.Round(x), math.RoundToEven(x))
+	}
+	println(math.Abs(-zero), math.Abs(-3), math.Copysign(3, -zero), math.Signbit(-zero), math.Signbit(nan))
+	println(math.Inf(-1), math.Inf(0), math.IsNaN(nan), math.IsNaN(inf), math.IsInf(inf, 1), math.IsInf(inf, -1), math.IsInf(-inf, 0), math.IsInf(1, 0))
+	println(math.Max(1, 2), math.Max(-zero, zero), math.Max(nan, inf), math.Max(nan, 1), math.Min(-zero, zero), math.Min(1, -inf), math.Min(2, nan))
+	println(math.Pi, math.E, math.Sqrt2, math.MaxFloat64, math.SmallestNonzeroFloat64, float32(math.MaxFloat32), math.MaxInt32, int64(math.MinInt64))
+
+	fmts := []byte{'e', 'E', 'f', 'g', 'G', 'b'}
+	vals := []float64{0, -zero, 1, -1.5, 0.1, 123456789, 1e21, 1e-7, 2.5, 0.125, 5e-324, nan, -inf}
+	precs := []int{-1, 0, 1, 3, 17}
+	for _, v := range vals {
+		line := ""
+		for _, f := range fmts {
+			for _, p := range precs {
+				line += " " + strconv.FormatFloat(v, f, p, 64)
+			}
+		}
+		println(line)
+		println(strconv.FormatFloat(v, 'g', -1, 32), strconv.FormatFloat(v, 'e', 3, 32), strconv.FormatFloat(v, 'f', 40, 64))
+	}
+	println(strconv.FormatFloat(1e308, 'f', 0, 64))
+
+	for _, s := range []string{"1.5", "-0", "+.5e1", "5.", "1e400", "-1e400", "1e-400", "0x1.8p1", "0X1P-2", "inf", "-Infinity", "NaN",
+		"", ".", "1e", "1e+", " 1", "1_000", "-nan", "0x1", "1.7976931348623159e308", "4.9e-324", "123456789012345678901234567890"} {
+		parse(s, 64)
+	}
+	parse("0.1", 32)
+	parse("3.4028236e38", 32)
+	parse("1e-46", 32)
+}

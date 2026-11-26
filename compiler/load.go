@@ -90,9 +90,21 @@ const ScreenPath = "gogo/screen"
 // and its constants), a stub package with only a type and constants.
 const ErrorsPath = "gogo/errors"
 
+// MathPath is the import path of the math library (math.Sqrt, math.Inf,
+// math.Pi, ...), a stub package like gogo/sys: calls become B_FLOAT
+// (runtime/floatlib).
+const MathPath = "gogo/math"
+
+// StrconvPath is the import path of gogo/strconv, a library package whose
+// float functions (FormatFloat, ParseFloat) the compiler implements itself
+// (intrinsics; see stubName): they are B_FLOAT calls and their bodies are
+// never compiled, so a program that imports strconv without them neither
+// requires "float" nor needs image format 15.2.
+const StrconvPath = "gogo/strconv"
+
 // isStub reports whether path is one of the stub packages.
 func isStub(path string) bool {
-	return path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == GpioPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath || path == ScreenPath || path == ErrorsPath
+	return path == MathPath || path == ActorPath || path == PortPath || path == BytesPath || path == NetPath || path == GpioPath || path == FsPath || path == KbdPath || path == PowerPath || path == CodePath || path == ImuPath || path == IrPath || path == AudioPath || path == SysPath || path == ScreenPath || path == ErrorsPath
 }
 
 // stubDir is the directory of the library set holding stub package path:

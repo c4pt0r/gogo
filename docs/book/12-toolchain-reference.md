@@ -112,7 +112,10 @@ The image also records, by name, what it needs from the board (its
 requirements, appendix F): the driver of every `port.Open` with a constant
 driver name (`"kbd"`, `"tcp"`, a host port's `"ui"`), and the mount `/sd`
 for constant `/sd` paths, in `package main` and in every library compiled
-in. An import by itself requires nothing. A firmware that lacks a required
+in. An image that uses floating point (a float value, operation,
+constant or type switch case, `gogo/math`, `strconv.FormatFloat` or
+`ParseFloat`) also requires `float`, the firmware option `GOGO_FLOAT`. An
+import by itself requires nothing. A firmware that lacks a required
 driver or mount refuses the image at boot, naming it:
 
 ```text
@@ -137,8 +140,9 @@ version` prints the full one). A firmware runs images of its major whose
 minor is at most its own, and the compiler stamps each image with the
 lowest minor its program needs, so after a firmware update every module
 already on `/flash` keeps loading. An image of another major, or of a newer minor than the
-firmware's, is refused (`unsupported image format 15.1 (this VM runs 15.0
-to 15.0)`; `code.Load` returns `BadVersion`).
+firmware's, is refused (`unsupported image format 15.2 (this VM runs 15.0
+to 15.1)`; `code.Load` returns `BadVersion`). The minors so far: 15.1
+added `screen.Config`, 15.2 floating point.
 
 A package, a library or `package main`, can declare that it uses some
 drivers only softly: it opens them only when a call asks for that at run
@@ -318,7 +322,7 @@ Prints the version, the package search path (where it comes from:
 
 ```text
 $ gogo env
-version   v0.4.0 (image format 15.1)
+version   v0.4.0 (image format 15.2)
 GOGOPATH  /home/you/gogo ($HOME/gogo, GOGOPATH is unset)
 search    1. the build root (imports starting with its directory's name)
           2. /home/you/gogo
@@ -708,7 +712,8 @@ tests, it runs:
   of the VM core and of each runtime part for the ESP32-S3, against
   their budgets (skipped without the ESP-IDF compiler). `vmsize` also
   prints the VM core's lines of C; `tools/vmsize.sh --record` appends
-  the size and the line count to `docs/vmsize-history.csv`.
+  the size and the line count to `docs/vmsize-history.csv`, and
+  `tools/vmsize.sh --no-float` measures the core without floating point.
 
 Outside `make test`: `make test-lib` (the standard library on the host
 Go toolchain, also part of `go test ./...`) and `make test-tls-asan`

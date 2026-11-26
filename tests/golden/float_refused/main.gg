@@ -1,0 +1,8 @@
+// On a VM built without floating point (GOGO_FLOAT=0) an image that uses
+// floats is refused at load: it requires "float".
+package main
+
+func main() {
+	x := 1.5
+	println("not reached", x*2)
+}

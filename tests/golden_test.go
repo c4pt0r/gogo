@@ -35,9 +35,10 @@ import (
 // file `progargs` the program's arguments, one per line (sys.Args); a
 // file `exitfail` makes a non-zero exit status the expected one, and a file
 // `exitcode` holding a number that exact status (platform/unix/main.c
-// lists them). A file `mcu`
-// also runs it on $GOGO_VM_MCU (the MCU-config VM). `make test-go` builds
-// both VMs and sets GOGO_VM and GOGO_VM_MCU.
+// lists them). A file `mcu` also runs it on $GOGO_VM_MCU (the MCU-config
+// VM); a file `nofloat` runs it on $GOGO_VM_NOFLOAT (gogovm built without
+// floating point) instead of $GOGO_VM. `make test-go` builds the three
+// VMs and sets the variables.
 func TestGolden(t *testing.T) {
 	vm := os.Getenv("GOGO_VM")
 	if vm == "" {
@@ -227,6 +228,16 @@ func TestGolden(t *testing.T) {
 						t.Errorf("stderr has forbidden %q\n--- stderr ---\n%s", line, stderr.Bytes())
 					}
 				}
+			}
+			// A file `nofloat` runs the golden on $GOGO_VM_NOFLOAT (gogovm
+			// built with -DGOGO_FLOAT=0) instead, when it is set.
+			if _, err := os.Stat(filepath.Join(dir, "nofloat")); err == nil {
+				if nf := os.Getenv("GOGO_VM_NOFLOAT"); nf != "" {
+					runOn(t, nf)
+				} else {
+					t.Skip("GOGO_VM_NOFLOAT is not set: the nofloat golden is skipped")
+				}
+				return
 			}
 			runOn(t, vm)
 			// A file `mcu` runs the golden again on $GOGO_VM_MCU (the VM

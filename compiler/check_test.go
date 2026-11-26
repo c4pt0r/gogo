@@ -187,7 +187,10 @@ func TestRejects(t *testing.T) {
 		{"go", "package main\nfunc f() {}\nfunc main() {\n\tgo f() // ERR\n}\n", []string{"go statement"}},
 		{"map", "package main\nfunc main() {\n\tm := map[string]int{} // ERR\n\t_ = m\n}\n", []string{"map"}},
 		{"defer", "package main\nfunc f() {}\nfunc main() {\n\tdefer f() // ERR\n}\n", []string{"defer"}},
-		{"float", "package main\nfunc main() {\n\tx := 1.5 // ERR\n\t_ = x\n}\n", []string{"float"}},
+		{"complex", "package main\nfunc main() {\n\tx := 1.5i // ERR\n\t_ = x\n}\n", []string{"complex"}},
+		{"float-rem", "package main\nfunc main() {\n\tx := 1.5\n\tprintln(x % 2) // ERR\n}\n", []string{"%"}},
+		{"float-func-value", "package main\nimport \"gogo/strconv\"\nfunc main() {\n\tf := strconv.FormatFloat // ERR\n\t_ = f\n}\n", []string{"strconv.FormatFloat as a func value not supported"}},
+		{"float-named-any", "package main\ntype C float64\nfunc main() {\n\tvar a any = C(1) // ERR\n\t_ = a\n}\n", []string{"named basic type in interface not supported"}},
 		{"method-pointer-receiver", "package main\ntype P struct{ X int }\nfunc (p *P) M() {} // ERR\nfunc main() {}\n", []string{"pointer receivers are not supported yet"}},
 		{"method-pointer-call", "package main\ntype P struct{ X int }\nfunc (p *P) M() {} // ERR\nfunc main() {\n\tp := P{}\n\tp.M()\n}\n", []string{"pointer receivers are not supported yet"}},
 		{"method-interface", "package main\ntype S interface{ Area() int } // ERR\nfunc main() {}\n", []string{"interface types are not supported yet"}},
@@ -211,9 +214,9 @@ func TestRejects(t *testing.T) {
 		{"funcvalue-println", "package main\nfunc f() {}\nfunc main() {\n\tprintln(f) // ERR\n}\n", []string{"func value in interface not supported"}},
 		{"funcvalue-compare", "package main\nfunc f() {}\nfunc main() {\n\tg := f\n\tprintln(g == f) // ERR\n}\n", []string{"compared to nil"}},
 		{"funcvalue-actor", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tg := actor.Self // ERR\n\t_ = g\n}\n", []string{"selector other than a field read"}},
-		{"funcvalue-variadic-badelem", "package main\nfunc run(f func(xs ...float64)) {} // ERR\nfunc main() {}\n", []string{"func type func(xs ...float64) not supported"}},
+		{"funcvalue-variadic-badelem", "package main\nfunc run(f func(xs ...complex128)) {} // ERR\nfunc main() {}\n", []string{"func type func(xs ...complex128) not supported"}},
 		{"funcvalue-badparam", "package main\nfunc run(f func(m map[int]int) int) {} // ERR\nfunc main() {}\n", []string{"func type func(m map[int]int) int not supported"}},
-		{"funcvalue-badresult", "package main\nfunc main() {\n\tf := func() float64 { return 1 } // ERR\n\t_ = f\n}\n", []string{"func type func() float64 not supported"}},
+		{"funcvalue-badresult", "package main\nfunc main() {\n\tf := func() complex128 { return 1 } // ERR\n\t_ = f\n}\n", []string{"func type func() complex128 not supported"}},
 		{"funcvalue-args-any", "package main\nfunc main() {\n\tvar x any = func(n int) int { return n } // ERR\n\t_ = x\n}\n", []string{"func value in interface not supported"}},
 		{"funcvalue-result-any", "package main\nfunc id(n int) int { return n }\nfunc pair() (func(int) int, int) { return id, 1 }\nfunc main() {\n\tvar a any\n\tvar b int\n\ta, b = pair() // ERR\n\t_, _ = a, b\n}\n", []string{"func value in interface not supported"}},
 		{"funcvalue-nil", "package main\nfunc main() {\n\tvar f func(int)\n\tprintln(f == nil) // ERR\n}\n", []string{"comparison of func(int)"}},
@@ -480,7 +483,7 @@ func TestAcceptsNamedResultReturns(t *testing.T) {
 }
 
 func TestErrorsSortedByPosition(t *testing.T) {
-	errs := checkSrc(t, "package main\nfunc f() (float64, float32, complex64) { return 0, 0, 0 }\nfunc g() (float64, int) { return 0, 0 }\nfunc main() {}\n")
+	errs := checkSrc(t, "package main\nfunc f() (complex128, int, complex64) { return 0, 0, 0 }\nfunc g() (complex128, int) { return 0, 0 }\nfunc main() {}\n")
 	if len(errs) < 2 {
 		t.Fatalf("want several errors, got %v", errs)
 	}

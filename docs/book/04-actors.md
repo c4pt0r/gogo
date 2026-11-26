@@ -121,8 +121,8 @@ busy loop cannot freeze the other actors, even `for { n++ }`.
 ## 4.2 Type switches: reading messages
 
 `Receive` returns `any`, and a type switch finds out what it holds. The
-case types can be any of your struct types, `int`, `int64`, `bool`,
-`string`, `actor.PID`, `actor.Ref` and `bytes.Bytes`, and the struct types
+case types can be any of your struct types, `int`, `int64`, `float32`,
+`float64`, `bool`, `string`, `actor.PID`, `actor.Ref` and `bytes.Bytes`, and the struct types
 of the gogo packages (`actor.ExitMsg`, `gpio.Edge`, `kbd.Key`, ...):
 
 ```go

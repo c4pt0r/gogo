@@ -22,7 +22,10 @@ Two kinds of package:
 - **stub**: API only. The bodies are never executed: the compiler replaces
   every call with a VM instruction or builtin, and its struct types have
   fixed type indices (`TYPE_*` in `runtime/vm/opcodes.h`). The list is
-  `isStub` in `compiler/load.go`.
+  `isStub` in `compiler/load.go`. A library may hold such functions too:
+  `strconv.FormatFloat` and `ParseFloat` (`lib/strconv/float.gg`) are
+  compiler intrinsics (`strconvIntrinsics` in `compiler/check.go`), never
+  compiled, so the rest of `gogo/strconv` needs no float support.
 - **library**: written in the gogo subset and compiled into every image that
   imports it (no dead-function elimination). A library may import stubs and
   other libraries, without cycles, but not a user package (a program's own,
@@ -73,9 +76,10 @@ declares `kbd`. Book chapter
 | `gogo/sys` | stub | | none (the clock, randomness, `sys.Config`, the configuration store, and `sys.Args`, the program's command-line arguments) |
 | `gogo/screen` | stub | | none (the `screen` port: `screen`) |
 | `gogo/errors` | stub | | none (the shared error codes, `errors.Code`; `GOGO_E_*` in `runtime/include/gogo_errors.h`) |
+| `gogo/math` | stub | | `float`, as any use of floats (the functions are `B_FLOAT`, `runtime/floatlib`; a constant used only as an integer, `int(math.MaxInt32)`, requires nothing) |
 | `gogo/supervisor` | library | actor, code | none |
 | `gogo/strings` | library | | none |
-| `gogo/strconv` | library | | none |
+| `gogo/strconv` | library | | none; `float` when `FormatFloat` or `ParseFloat` is called (compiler intrinsics: `B_FLOAT`, their bodies are never compiled) |
 | `gogo/dhcp` | library | actor, bytes, net, port, sys | `netif`, `udp` |
 | `gogo/dns` | library | actor, bytes, net, port | `udp` |
 | `gogo/http` | library | actor, bytes, dns, errors, fs, net, port, strconv, strings | `tcp`, `tcp_listen`, `udp` (opens the `tls` port for `https://` URLs without requiring it: `//gogo:optional tls`) |
