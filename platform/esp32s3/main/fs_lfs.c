@@ -24,9 +24,9 @@
  * so it formats at most once. fs.flash.format = yes still works
  * (deprecated).
  *
- * The VM task calls in through the backend, and the console task through
- * the push functions (`gogo push`, which use the backend too), so the
- * volume has a lock (LfsOpts.lock): every backend call holds it.
+ * The VM task calls in through the backend, and the console task too
+ * (`gogo push`, runtime/configsvc), so the volume has a lock
+ * (LfsOpts.lock): every backend call holds it.
  *
  * LittleFS cannot reach the heap: lfs.c is compiled with LFS_NO_MALLOC
  * and with malloc / free renamed to lfs_be.c's NULL-returning stubs
@@ -45,7 +45,6 @@
 
 #include "esp_attr.h"
 #include "esp_partition.h"
-#include "esp_rom_crc.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -180,86 +179,3 @@ int fs_lfs_mount(void) {
     return 0;
 }
 
-/* ---- gogo push (config_esp.c), on the console task ---- */
-
-/* The file being pushed: written under a temporary name in the target's
- * directory, then renamed over the target (atomic in LittleFS), through
- * the backend (which takes the lock). */
-static struct {
-    bool open;
-    union { void *p; uint8_t b[GOGO_FS_SLOT_BYTES]; } f;   /* a vfs slot's storage */
-    char tmp[VFS_PATH_MAX + 16u];
-    uint32_t len, crc;
-} P;
-
-#define PUSH_TMP ".gogo-push"
-#define BE (&lfs_be_backend)
-
-/* rel's directory + PUSH_TMP into P.tmp. */
-static void push_tmp_name(const char *rel) {
-    const char *slash = strrchr(rel, '/');
-    size_t d = slash ? (size_t)(slash - rel) + 1u : 0u;
-    memcpy(P.tmp, rel, d);
-    memcpy(P.tmp + d, PUSH_TMP, sizeof PUSH_TMP);
-}
-
-static int push_drop(void) {
-    if (!P.open) return GOGO_E_OK;
-    P.open = false;
-    BE->close(&flash_vol, &P.f);
-    return BE->remove(&flash_vol, P.tmp);
-}
-
-int fs_lfs_push_begin(const char *rel) {
-    if (!flash_vol.mounted) return GOGO_E_NOTMOUNTED;
-    push_drop();
-    push_tmp_name(rel);
-    int e = BE->open(&flash_vol, &P.f, P.tmp, VFS_WRITE);
-    P.open = e == GOGO_E_OK;
-    P.len = P.crc = 0;
-    return e;
-}
-
-int fs_lfs_push_write(const uint8_t *buf, uint32_t n, uint32_t *total) {
-    if (!P.open) return GOGO_E_BADARG;
-    int e = BE->write(&flash_vol, &P.f, buf, n);
-    if (e == GOGO_E_OK) {
-        P.crc = esp_rom_crc32_le(P.crc, buf, n);
-        P.len += n;
-    } else {
-        push_drop();
-    }
-    *total = P.len;
-    return e;
-}
-
-/* Closes the pushed file, reads it back from flash, and renames it over
- * rel if it is len bytes with CRC-32 crc; otherwise removes it and
- * returns GOGO_E_IO. */
-int fs_lfs_push_end(const char *rel, uint32_t len, uint32_t crc) {
-    if (!P.open) return GOGO_E_BADARG;
-    P.open = false;
-    int e = BE->close(&flash_vol, &P.f);
-    if (e == GOGO_E_OK && (P.len != len || P.crc != crc)) e = GOGO_E_IO;   /* not what was sent */
-    if (e == GOGO_E_OK) {
-        e = BE->open(&flash_vol, &P.f, P.tmp, VFS_READ);
-        if (e == GOGO_E_OK) {
-            uint8_t b[64];
-            uint32_t got = 0, c = 0, k = 0;
-            while ((e = BE->read(&flash_vol, &P.f, b, sizeof b, &k)) == GOGO_E_OK && k > 0) {
-                c = esp_rom_crc32_le(c, b, k);
-                got += k;
-            }
-            BE->close(&flash_vol, &P.f);
-            if (e == GOGO_E_OK && (got != len || c != crc)) e = GOGO_E_IO;   /* not what was stored */
-        }
-    }
-    if (e == GOGO_E_OK) e = BE->rename(&flash_vol, P.tmp, rel, true);
-    if (e != GOGO_E_OK) BE->remove(&flash_vol, P.tmp);
-    return e;
-}
-
-void fs_lfs_push_abort(void) {
-    if (!flash_vol.mounted) return;
-    push_drop();
-}

@@ -497,12 +497,16 @@ in `cmd/gogo/flash.go`.
   retrying` (first failure only), `gogo: ip <a.b.c.d> (gateway <g>)` when
   the stack goes up (`wifi_esp_netif.report`) and `gogo: network down`.
 - `config_esp.c`: the config store (NVS namespace `gogo`, one blob per key;
-  `sys.Config` reads it, `wifi.` keys hidden) and the `gogo config` command
-  handler: a task (CPU0) reads the USB-Serial/JTAG input (driver installed,
-  stdio switched to it) and answers frames
+  `sys.Config` reads it, `wifi.` keys hidden) as the `KvHal` of the
+  `gogo config` service (`runtime/configsvc`, which implements the
+  protocol for every board), and the board's side of it: a task (CPU0)
+  reads the USB-Serial/JTAG input (driver installed, stdio switched to it)
+  and feeds it to the service, which answers frames
   `\x02gogo-config <op> [<key> [<value>]]\n` with `\x02kv <text>` lines and
-  then `\x02ok[ <text>]` or `\x02err <reason>`; ops `set get rm list`
-  plus `scan` (nearby networks) and `stats` (net counters, `heap_free`,
+  then `\x02ok[ <text>]` or `\x02err <reason>`; ops `set get rm list`,
+  `push data end abort` (`gogo push`, into `/flash` through its backend,
+  which takes the volume's lock) and `format-flash`, plus the board's
+  `scan` (nearby networks) and `stats` (net counters, `heap_free`,
   `heap_min`, `arena_used`, and the fixed tables in use as
   `bytes=N/64`, `ports=N/16`, `subs=N/4`). The password is never sent back (`(set)`).
   Program output never carries `\x02` on serial (written as `?`), so a

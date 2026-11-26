@@ -66,11 +66,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: lint gogo-cmd test-examples test-book lib test-libgogo example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-console test-embed test-libgogo example-embed check32 globals globals-selftest test-go test-examples test-book test-net-mcu vmsize netsize vfssize screensize
 
 vm: $(BUILD)/gogovm
 
@@ -240,6 +240,16 @@ test-screen-asan:
 $(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(SCREEN_INC) -o $@ $(SCREEN_ALL_SRCS) $(SCREEN_TEST_SRCS) $(VM_SRCS)
+
+# The gogo-config protocol (runtime/configsvc, pure C99) against an
+# in-memory store and the memfs backend as /flash.
+CONFIGSVC_SRCS = runtime/configsvc/configsvc.c runtime/vfs/path.c runtime/vfs/test/memfs.c
+test-configsvc: $(BUILD)/test_configsvc
+	$(BUILD)/test_configsvc
+
+$(BUILD)/test_configsvc: $(CONFIGSVC_SRCS) runtime/configsvc/test/test_configsvc.c runtime/vm/test/test_main.c $(wildcard runtime/configsvc/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vfs/test/*.h)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iruntime/configsvc -Iruntime/vfs -Iruntime/vfs/test -Iruntime/vm -Iruntime/vm/test -o $@ runtime/configsvc/test/test_configsvc.c runtime/vm/test/test_main.c $(CONFIGSVC_SRCS)
 
 # The host-directory backend (runtime/embed/fs_dir.c) against a temp dir:
 # the vfs contract and the sandbox (symlinks, hard links, a swapped path).

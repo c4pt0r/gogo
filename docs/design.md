@@ -1897,11 +1897,17 @@ can serve two devices, and the table can be a board's `static const`).
   still satisfies a requirement (unix without `--fs-root`, the embed
   layer's `/flash`, which `gogo_new` mounts itself). A volume that failed
   to come up stays listed and answers `NotMounted`.
-- **Not yet.** The configuration protocol (`\x02gogo-config`) is still
-  ESP code (`config_esp.c`), and each platform's `main.c` still hand-rolls
-  `vm_init`, `vm_boot`, `net_install`, `vfs_init`, `input_install`.
-  A `KvHal` with one `runtime/configsvc.c`, and one boot path
-  (`gogo_board_main`), are the next part of this layer.
+- **Configuration** (`runtime/configsvc/`): the `\x02gogo-config`
+  protocol (`gogo config`, `gogo device`, `gogo push`) once, over a
+  board's `KvHal` (`get` / `set` / `rm` / `each`), its console output
+  (whole lines), its `/flash` backend for push, and optional board
+  requests (`scan`, `stats`, `format-flash`). The board's console reader
+  feeds it bytes; `configsvc_vm_get` is `sys.Config`'s lookup (no
+  `wifi.` keys). The ESP's store is NVS (`config_esp.c`). The unix VM has
+  no console protocol: `gogo config` edits its file directly.
+- **Not yet.** Each platform's `main.c` still hand-rolls `vm_init`,
+  `vm_boot`, `net_install`, `vfs_init`, `input_install`; one boot path
+  (`gogo_board_main`) is the next part of this layer.
 - **Atomics.** The VM core uses only a fence (`vm_barrier`); keep
   compare-and-swap out of it. The embed layer's post inbox and
   `embed_set_state` use `__atomic` compare-and-swap, which a Cortex-M0+
@@ -1914,7 +1920,7 @@ no runtime copies):
 
 1. A `gogo_host`: output, memory, `now_ms` (`time_us_64() / 1000`),
    `wait` / `wake` (WFE / SEV: the latched wake), `random`
-   (`get_rand_32`), `config_get`.
+   (`get_rand_32`), `config_get` (`configsvc_vm_get` over its `KvHal`).
 2. A `GpioHal`: `npins` 30, the reserved bitmap (flash QSPI, the
    board's own pins), `GpioPin pins[30]` in static storage, `config` /
    `write` / `read` / `release` over the SDK, and an edge interrupt that
@@ -1927,10 +1933,12 @@ no runtime copies):
    calling `fat_be_disk_*`, and `VmMount{"/sd", &fat_be_backend, &vol}`.
 4. Input devices it has: one `*Hal` each and its `INPUT_*_DRIVER`.
 5. A `NetIf` for the CYW43 on a Pico W (net/netif.h), optionally `TlsHw`.
-6. Its `VmBoard` (designated initializers), a `main` that boots the image
+6. Configuration: a `KvHal` over a flash sector, a static `ConfigSvc`,
+   and a console reader that feeds it (`configsvc_feed`).
+7. Its `VmBoard` (designated initializers), a `main` that boots the image
    as the ESP and unix ones do, and the build lines for `runtime/vm`,
    `runtime/gpio`, `runtime/vfs` (+ `lfs/`), `runtime/input`,
-   `runtime/stream` and `runtime/net`.
+   `runtime/stream`, `runtime/configsvc` and `runtime/net`.
 
 ### 5.12 Versioning and stability
 

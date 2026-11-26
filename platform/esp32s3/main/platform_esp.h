@@ -117,16 +117,6 @@ uint32_t fs_lfs_state_bytes(void);
 /* `gogo device format-flash`: the next mount (after esp_restart, and
  * only then) formats /flash. */
 void fs_lfs_request_format(void);
-/* `gogo push`, from the console task (fs_lfs.c locks against the VM):
- * begin opens a temporary file beside rel (a path inside /flash, without
- * the leading "/flash/"), write appends to it (*total: bytes so far), end
- * checks the stored file's length and CRC-32 against len and crc and
- * renames it over rel, abort drops it. GOGO_E_* results; any failure
- * drops the temporary file. */
-int fs_lfs_push_begin(const char *rel);
-int fs_lfs_push_write(const uint8_t *buf, uint32_t n, uint32_t *total);
-int fs_lfs_push_end(const char *rel, uint32_t len, uint32_t crc);
-void fs_lfs_push_abort(void);
 /* Bound on fs_lfs.c's own state (asserted there), so fs_fat.c can check
  * the whole storage fixed state (vfs + LittleFS + FatFs <= 3072) at
  * compile time. */
