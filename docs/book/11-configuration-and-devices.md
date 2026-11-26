@@ -80,14 +80,36 @@ gogo config [-port P | -local] set <key> <value|->
 gogo config [-port P | -local] get <key>
 gogo config [-port P | -local] list
 gogo config [-port P | -local] rm <key>
-gogo config [-port P] scan       # Wi-Fi networks the board sees (2.4 GHz)
-gogo config [-port P] stats      # network counters and free memory on the board
+gogo config keys                 # the keys gogo itself reads (section 11.3)
 ```
 
-Keys are 1 to 15 characters of `A-Z a-z 0-9 . _ -` (the limit of the
+Two board commands go with it (chapter 12):
+
+```text
+gogo device [-port P] scan       # Wi-Fi networks the board sees (2.4 GHz)
+gogo device [-port P] stats      # network counters and free memory on the board
+```
+
+Keys are 1 to 15 characters of `a-z 0-9 . _` (15 is the limit of the
 board's storage); values are at most 1000 bytes, without newlines. A value
 of `-` reads the value from standard input, which is how you enter a
 password without leaving it in your shell history.
+
+`set` checks what it writes. Keys under the prefixes `wifi.`, `net.`,
+`fs.`, `code.` and `gogo.` belong to gogo: such a key must be one of the
+keys in section 11.3, and its value must have the key's type, so a typo
+is caught when you type it rather than at the next boot:
+
+```text
+$ gogo config set fs.flash.size 64KB
+gogo config: bad value for fs.flash.size (size): want bytes, with an optional K or M suffix, like 65536, 64K or 1M
+$ gogo config set net.adress 10.0.0.9
+gogo config: net.adress is not a key gogo knows, and net.* keys belong to gogo (pick another prefix for your own)
+```
+
+Any other key is yours, with any value. Keys written before this check
+existed may hold upper case letters or `-`: `get` and `rm` still take
+them, `set` no longer does.
 
 **Where the store is.** On a board, it is the firmware's non-volatile
 storage (NVS); it survives reflashing the firmware and the program. On
@@ -118,8 +140,8 @@ gogo config: nope is not set
 $ gogo config rm blink.ms
 $ gogo config list
 device.name=kitchen sensor
-$ gogo config scan
-gogo config: scan needs a board (-port)
+$ gogo device scan
+gogo: no board found (/dev/cu.usbmodem*); connect it or pass -port
 ```
 
 `get` and `list` never print the Wi-Fi password, only `(set)`.
@@ -134,15 +156,18 @@ The board talks to `gogo config` over the USB serial console, so close
 
 ## 11.3 Keys gogo uses
 
-| Key | Used by | Meaning |
-|---|---|---|
-| `wifi.ssid`, `wifi.password` | firmware | the Wi-Fi network; the board reconnects at once when they change |
-| `net.ip`, `net.mask`, `net.gw`, `net.dns` | `gogo/dhcp` | a static address instead of DHCP (`net.mask` defaults to 255.255.255.0) |
-| `fs.flash.size` | firmware | size of `/flash` (chapter 9) |
-| `fs.flash.format` | firmware | `yes`: format `/flash` once at the next boot |
-| `code.mem` | `gogo/code` | budget for loaded module code, default 64 KB (`K`/`M` suffix; chapter 14) |
+| Key | Type | Used by | Meaning |
+|---|---|---|---|
+| `wifi.ssid`, `wifi.password` | string (at most 32 and 64 bytes) | firmware | the Wi-Fi network; the board reconnects at once when they change |
+| `net.ip`, `net.mask`, `net.gw`, `net.dns` | ip (`a.b.c.d`) | `gogo/dhcp` | a static address instead of DHCP (`net.mask` defaults to 255.255.255.0) |
+| `fs.flash.size` | size | firmware | size of `/flash` (chapter 9) |
+| `fs.flash.format` | `yes` | firmware | deprecated: format `/flash` once at the next boot; use `gogo device format-flash` |
+| `code.mem` | size | VM (`gogo/code`) | budget for loaded module code, default 64 KB (chapter 14) |
 
-Anything else is yours. A dotted prefix per program (`demo.url`,
+A size is a number of bytes with an optional `K` or `M` suffix (`65536`,
+`64K`, `1M`). `gogo config keys` prints this table. The `wifi.`, `net.`,
+`fs.`, `code.` and `gogo.` prefixes are reserved for keys gogo adds
+later; anything else is yours. A dotted prefix per program (`demo.url`,
 `fsdemo.mode`) keeps keys apart.
 
 ## 11.4 The two boards

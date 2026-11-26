@@ -339,9 +339,9 @@ static const char *kind_name(uint32_t code) {
 static void report_crash(const Vm *vm, const Actor *a, uint32_t code, term func_name) {
     Out o;
     out_init(&o, vm, 2);
-    out_str(&o, "gogo: actor <pid ");
+    out_str(&o, CRASH_REPORT_PID);
     out_int(&o, term_pid_slot(a->id));
-    out_str(&o, "> crashed: ");
+    out_str(&o, CRASH_REPORT_KIND);
     const char *kind = kind_name(code);
     if (kind) {
         out_str(&o, kind);

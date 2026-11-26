@@ -6,7 +6,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -19,7 +18,7 @@ import (
 	"gogotools/compiler"
 )
 
-const firmwareUsage = "usage: gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files..."
+const firmwareUsage = "usage: gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files..."
 
 // fwFeature is one firmware feature, the same for every board.
 type fwFeature struct {
@@ -293,37 +292,57 @@ func splitList(s string) []string {
 }
 
 // firmwareCmd implements `gogo firmware`. runIdf runs the build for -build.
+// detectBoard names the board on port from its chip: one read-only
+// esptool command (chip-id), whose banner says whether the ESP32-S3 has
+// embedded PSRAM (chipInfo.guessBoard). A variable so tests replace it.
+var detectBoard = func(esptool, port string) (string, error) {
+	if esptool == "" {
+		var err error
+		if esptool, err = findEsptool(); err != nil {
+			return "", err
+		}
+	}
+	out, err := exec.Command(esptool, "--port", port, "--after", "watchdog-reset", "chip-id").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gogo firmware: esptool cannot read the chip on %s (%v); pass -board", port, err)
+	}
+	chip, err := parseChip(string(out))
+	if err != nil {
+		return "", fmt.Errorf("gogo firmware: %v; pass -board", err)
+	}
+	if !chip.isS3() {
+		return "", fmt.Errorf("gogo firmware: the chip on %s is %s, not an ESP32-S3", port, chip.chip)
+	}
+	b := chip.guessBoard()
+	if b == "" {
+		return "", fmt.Errorf("gogo firmware: esptool did not say whether the chip on %s has PSRAM; pass -board", port)
+	}
+	return b, nil
+}
+
 func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...string) error) error {
-	fs := flag.NewFlagSet("firmware", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := newFlags("firmware")
 	board := fs.String("board", "", "")
 	dir := fs.String("o", "", "")
 	doBuild := fs.Bool("build", false, "")
 	withS := fs.String("with", "", "")
 	withoutS := fs.String("without", "", "")
-	if err := fs.Parse(args); err != nil {
-		return errors.New(firmwareUsage)
+	port := fs.String("port", "", "")
+	esptool := fs.String("esptool", "", "")
+	files, err := parseFlags(fs, args, firmwareUsage)
+	if err != nil {
+		return err
 	}
-	// flags may follow the files
-	files := fs.Args()
-	for len(files) > 0 {
-		var rest []string
-		for i, a := range files {
-			if a == "-" {
-				return errors.New("gogo firmware: unexpected argument \"-\"\n" + firmwareUsage)
-			}
-			if strings.HasPrefix(a, "-") {
-				if err := fs.Parse(files[i:]); err != nil {
-					return errors.New(firmwareUsage)
-				}
-				rest = append(files[:i:i], fs.Args()...)
-				break
-			}
+	if *board == "" && *port != "" {
+		if *board, err = detectBoard(*esptool, *port); err != nil {
+			return err
 		}
-		if rest == nil {
-			break
+		fmt.Fprintf(out, "board: %s (detected on %s)\n", *board, *port)
+	}
+	for _, a := range files {
+		if a == "-" {
+			return errors.New("gogo firmware: unexpected argument \"-\"\n" + firmwareUsage)
 		}
-		files = rest
 	}
 	fwb, ok := fwBoards[*board]
 	if !ok {

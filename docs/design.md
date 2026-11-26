@@ -554,8 +554,10 @@ FatFs).
   bytes with an optional K or M suffix, rounded to 4 KB, at least 64 KB;
   unset = the whole partition): a size larger than the current file
   system grows it in place at boot; a smaller one is not applied (a
-  message says so); `fs.flash.format=yes` reformats once at the set size
-  and deletes the key. A first mount that fails formats. The partition
+  message says so); `gogo device format-flash` reformats once at the set
+  size (an RTC-memory flag set before a software restart; NVS is not
+  written), as the deprecated key `fs.flash.format=yes` still does (and
+  deletes the key). A first mount that fails formats. The partition
   `gogofs` is at `0x310000`, size `0x4F0000`.
 - **`/sd` file systems**: FAT12/16/32 and **exFAT** (ESP-IDF's `fatfs`
   component is overridden with `FF_FS_EXFAT 1`, in the Cardputer build
@@ -753,7 +755,7 @@ font.
   `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR`, `GOGO_AUDIO` and
   `GOGO_SCREEN`. A
   switched-off feature behaves as if the board lacked the hardware: its
-  `port.Open` returns `ok=false`, and `gogo config scan` and the like
+  `port.Open` returns `ok=false`, and `gogo device scan` and the like
   answer "no network in this firmware".
 - **What a build provides.** `platform_esp.c` lists in `esp_ports` only
   the drivers the build has (`#if HAS_KBD && CONFIG_GOGO_KBD`, ...) and
@@ -1010,7 +1012,7 @@ explains it from the user's side.
     first installs the `platform_tls_alloc` allocator, which prefers PSRAM
     on the StickS3 (a handshake leaves internal RAM untouched; about
     35 KB of PSRAM at the peak) and uses internal RAM on the Cardputer.
-    `gogo config stats` shows `mbedtls_mem`, `mbedtls_mem_peak`,
+    `gogo device stats` shows `mbedtls_mem`, `mbedtls_mem_peak`,
     `psram_*` and `tls_*`.
   - **Time:** the wall clock is the system clock (`settimeofday` /
     `gettimeofday`), which mbedTLS reads with `time()`, consistent with
@@ -1606,12 +1608,18 @@ gogo build ./app -o app.ggb           # compile the .gg files of ./app
 gogo run app.ggb                      # run on the host VM (simulated peripherals)
 gogo dis app.ggb                      # disassemble
 gogo flash app.ggb                    # write the image to the board's image partition (needs esptool)
-gogo monitor -reset -t 30 -until "vm exited"   # capture the serial output
+gogo monitor -reset -timeout 30 -until "vm exited"   # capture the serial output
 ```
 
 `gogo` with no arguments prints its usage. `gogo run` builds a directory
 to a temporary image, runs `$GOGO_VM` or `<repo>/build/gogovm` and exits
-with its status.
+with its status: 0 when `main` exited Normal, 1 for a usage, toolchain or
+build error, 2 for a bad image or version, 3 for a missing requirement, 4
+when `main` crashed, 64..99 for a library failure of `main` and 100..255
+for `main`'s own code (book chapter 12). The VM core does not keep main's
+exit reason: `platform/unix/main.c` reads it from the crash report the VM
+writes on stream 2 for every abnormal exit, matching main's PID while the
+actor is still in its slot, so the status costs no VM bytes.
 
 On an ESP32-S3 the firmware and the image are stored separately: the
 firmware is built with ESP-IDF and flashed once, and programs change
@@ -1621,7 +1629,7 @@ without reflashing it:
 . ~/esp/esp-idf/export.sh
 idf.py -C platform/esp32s3 build flash         # firmware (VM + platform + screen console)
 gogo flash app.ggb                             # image, into the gogo partition at 0x210000 (header + CRC)
-gogo monitor [-port P] [-t seconds] [-until text] [-reset]
+gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 ```
 
 `gogo flash` uses the only `/dev/cu.usbmodem*` by default. `gogo monitor`
@@ -1632,8 +1640,10 @@ messages and the partition table are described in
 [platform/esp32s3/README.md](../platform/esp32s3/README.md).
 
 **Device configuration (`gogo config`).** `gogo config set|get|rm|list
-<key> [value]`, plus `scan` (the 2.4 GHz networks the board sees) and
-`stats` (network counters, heap). A value of `-` reads one line from
+<key> [value]`; `gogo device scan` (the 2.4 GHz networks the board sees),
+`gogo device stats` (network counters, heap) and `gogo device
+format-flash` use the same channel (`gogo config scan|stats` still work,
+deprecated). A value of `-` reads one line from
 stdin (`gogo config set wifi.password -` keeps the password out of the
 shell history). On the device the store is the firmware's NVS
 (namespace `gogo`; reflashing the firmware or the image does not clear
@@ -1645,6 +1655,26 @@ names a board; `-local` the local file `$GOGO_CONFIG` (default
 `~/.gogo/config`); with neither, a set `$GOGO_CONFIG` means the local
 file, otherwise exactly one connected board is used (with a note on
 stderr), otherwise the local file.
+
+**Pushing files (`gogo push`).** The same frames carry a file to
+`/flash`: `push <path> <len> <crc32>`, then `data <offset> <base64>`
+frames of 128 bytes each, each answered (`ok <bytes so far>`) before the
+next is sent, so the board's 256-byte console input buffer never
+overflows, then `end`. The console task writes a temporary file beside
+the target (`fs_lfs.c`; LittleFS calls take a mutex, since the VM task
+uses the file system too), reads it back, checks the length and CRC-32,
+and renames it over the target, atomically. A failure, an `abort` or a
+new `push` drops the temporary file. While a push erases or compacts a
+flash block, a `/flash` call of the VM waits for the mutex, tens of ms
+at worst (no audio frames were dropped during a push on the M5StickS3). `set` validates against a key table
+in `cmd/gogo/config.go` (name, type: string, size, ip, bool or int,
+platform-owned or a library's): keys are 1-15 bytes of `[a-z0-9._]`,
+an unknown key under a reserved prefix (`wifi.`, `net.`, `fs.`,
+`code.`, `gogo.`) is refused, and a known key's value must parse as its
+type, as its reader parses it (`fs_lfs.c`, `module.c`, `gogo/dhcp`). The
+firmware and the VM still parse what they read and fall back to a
+default on a bad value; the table only moves the error to the moment the
+value is typed. `gogo config keys` prints it.
 
 ### 5.10 Tests
 

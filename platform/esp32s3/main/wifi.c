@@ -245,7 +245,7 @@ void wifi_esp_reconfigure(void) {
     if (wifi_ok) (void)esp_event_post(GOGO_WIFI_EVENT, EV_RECONFIG, NULL, 0, portMAX_DELAY);
 }
 
-/* Nearby networks for `gogo config scan`: one kv line each
+/* Nearby networks for `gogo device scan`: one kv line each
  * ("<ssid>  ch <n>  <rssi> dBm  <auth>"). -1 if the driver is busy. */
 int wifi_esp_scan(char *line, size_t cap, void (*out)(const char *tag, const char *text, size_t n)) {
     if (!wifi_ok) return -1;

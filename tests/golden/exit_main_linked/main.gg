@@ -1,0 +1,10 @@
+package main
+
+import "gogo/actor"
+
+// main dies with a linked actor that crashed: the VM exits 4.
+func main() {
+	zero := 0
+	actor.SpawnLink(func() { println(1 / zero) })
+	actor.Receive()
+}

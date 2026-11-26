@@ -208,7 +208,7 @@ static int host_set_unix_time_ms(void *ctx, int64_t ms) {
  * the 16 KB + 4 KB record buffers, the peer's chain, ECDHE and PSA state)
  * does not compete with the VM arena for internal RAM; internal RAM when
  * PSRAM is full or absent (the Cardputer). The bytes outstanding and their
- * peak are counted for `gogo config stats` (any task may allocate, hence
+ * peak are counted for `gogo device stats` (any task may allocate, hence
  * the lock). */
 #if CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC
 static portMUX_TYPE tls_mem_lock = portMUX_INITIALIZER_UNLOCKED;

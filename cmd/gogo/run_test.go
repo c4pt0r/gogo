@@ -84,13 +84,13 @@ func TestRunForwardsSIGTERM(t *testing.T) {
 }
 
 func TestRunKeyNeedsValue(t *testing.T) {
-	if _, err := runCmd([]string{"--key"}); err == nil || !strings.Contains(err.Error(), "--key") {
+	if _, err := runCmd([]string{"--key"}); err == nil || !strings.Contains(err.Error(), "flag needs an argument: -key") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := runCmd([]string{"--key", "a=1"}); err == nil || !strings.Contains(err.Error(), "missing program") || strings.Contains(err.Error(), "needs a value") {
+	if _, err := runCmd([]string{"--key", "a=1"}); err == nil || !strings.Contains(err.Error(), "missing program") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := runCmd([]string{"--key", "a=1", "--key"}); err == nil || !strings.Contains(err.Error(), "needs a value") {
+	if _, err := runCmd([]string{"--key", "a=1", "--key"}); err == nil || !strings.Contains(err.Error(), "needs an argument") {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := runCmd(nil); err == nil || !strings.Contains(err.Error(), "missing program") {
@@ -99,7 +99,7 @@ func TestRunKeyNeedsValue(t *testing.T) {
 }
 
 func TestRunFsRoot(t *testing.T) {
-	if _, err := runCmd([]string{"--fs-root"}); err == nil || !strings.Contains(err.Error(), "--fs-root needs") {
+	if _, err := runCmd([]string{"--fs-root"}); err == nil || !strings.Contains(err.Error(), "needs an argument: -fs-root") {
 		t.Errorf("err = %v", err)
 	}
 	work := t.TempDir()
@@ -120,5 +120,58 @@ func TestRunFsRoot(t *testing.T) {
 	want := "--key\na=1\n--fs-root\n/some/dir\n" + img + "\n"
 	if string(b) != want {
 		t.Errorf("vm args = %q, want %q", b, want)
+	}
+	// The same with single dashes and "=" values.
+	if code, err := runCmd([]string{"-key", "a=1", "-fs-root=/some/dir", img}); err != nil || code != 0 {
+		t.Fatalf("code %d err %v", code, err)
+	}
+	if b, _ := os.ReadFile(args); string(b) != want {
+		t.Errorf("vm args = %q, want %q", b, want)
+	}
+}
+
+// gogo run exits with the VM's status: main's exit, a refused image, a
+// build error (needs the VM: make test-go sets GOGO_VM).
+func TestRunExitCodes(t *testing.T) {
+	vm := os.Getenv("GOGO_VM")
+	if vm == "" {
+		t.Skip("GOGO_VM is not set (make test-go sets it)")
+	}
+	dir := t.TempDir()
+	prog := func(name, src string) string {
+		p := filepath.Join(dir, name+".gg")
+		if err := os.WriteFile(p, []byte("package main\n\n"+src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	junk := filepath.Join(dir, "junk.ggb")
+	if err := os.WriteFile(junk, []byte("not an image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A VM without the keyboard, as on a board without one.
+	noKbd := filepath.Join(dir, "vm-nokbd.sh")
+	if err := os.WriteFile(noKbd, []byte("#!/bin/sh\nexec "+vm+" --without kbd \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const actorImport = "import \"gogo/actor\"\n\n"
+	cases := []struct {
+		vm, target string
+		want       int
+	}{
+		{vm, prog("ok", "func main() {}\n"), exitOK},
+		{vm, prog("user", actorImport+"func main() { actor.Exit(123) }\n"), 123},
+		{vm, prog("lib", actorImport+"func main() { actor.Exit(actor.Failed + 5) }\n"), 69},
+		{vm, prog("crash", "func main() {\n\tz := 0\n\tprintln(1 / z)\n}\n"), exitCrashed},
+		{noKbd, prog("missing", "import \"gogo/port\"\n\nfunc main() { _, _ = port.Open(\"kbd\", 1) }\n"), exitMissing},
+		{vm, prog("broken", "func main() { x := 1 }\n"), exitUsage},
+		{vm, junk, exitBadImage},
+	}
+	for _, c := range cases {
+		t.Setenv("GOGO_VM", c.vm)
+		code, err := runCmd([]string{c.target})
+		if code != c.want {
+			t.Errorf("gogo run %s: exit %d (%v), want %d", filepath.Base(c.target), code, err, c.want)
+		}
 	}
 }

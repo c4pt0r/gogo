@@ -20,7 +20,7 @@
 #   input         fed to stdin
 #   config        the config store ($GOGO_CONFIG; else a file that does not exist)
 #   fsroot        run with --fs-root on a fresh temp dir (a line "sd" also creates sd/)
-#   mods/<name>/  each built into <fs root>/flash/<name>.gmod (implies an fs root)
+#   mods/<name>/  each built into <fs root>/flash/<name>.ggb (implies an fs root)
 #   expected.err  each non-empty line must appear in stderr
 #   mcu           also run on gogovm_mcu (the MCU VM configuration)
 # Exit 1 if any example fails.
@@ -46,7 +46,7 @@ run() {
         if [ -d "$d/mods" ]; then
             mkdir -p "$root/flash"
             for m in "$d"/mods/*/; do
-                GOGOPATH=$gp "$gogo" build "$m" -o "$root/flash/$(basename "$m").gmod" || return 1
+                GOGOPATH=$gp "$gogo" build "$m" -o "$root/flash/$(basename "$m").ggb" || return 1
             done
         fi
         args="--fs-root $root"

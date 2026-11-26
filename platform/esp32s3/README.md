@@ -62,7 +62,7 @@ not rebuild or reflash the firmware:
     go build -o build/gogo ./cmd/gogo
     build/gogo build tests/golden/hello -o hello.ggb
     build/gogo flash hello.ggb              # [-port P] [-esptool path]
-    build/gogo monitor -reset -t 5 -until "gogo: vm exited"
+    build/gogo monitor -reset -timeout 5 -until "gogo: vm exited"
 
 `gogo flash` needs `esptool` (or `esptool.py`) in `PATH` (export.sh puts it
 there) or `-esptool`; `-port` defaults to the only `/dev/cu.usbmodem*`.
@@ -198,7 +198,7 @@ adds it by itself):
         -DSDKCONFIG=build-tlsoff/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.sticks3;sdkconfig.tls-off" build
 
-`gogo config stats` adds `psram_free`,
+`gogo device stats` adds `psram_free`,
 `psram_min`, `mbedtls_mem`, `mbedtls_mem_peak` and the `tls_*` counters
 (`tls_max_step_us`: the longest slice; `tls_last_hs_us`: the last
 handshake; `tls_last_error`: the last mbedTLS error).
@@ -509,7 +509,7 @@ in `cmd/gogo/flash.go`.
 Wi-Fi setup (once per board; `gogo config` talks to the board when exactly
 one is connected and `$GOGO_CONFIG` is unset, or with `-port`):
 
-    build/gogo config scan                      # which networks the board sees (2.4 GHz only)
+    build/gogo device scan                      # which networks the board sees (2.4 GHz only)
     build/gogo config set wifi.ssid MyNetwork
     build/gogo config set wifi.password -       # reads the password from stdin
     build/gogo config list
@@ -533,7 +533,7 @@ RX would mean "unlimited" in IDF, so 1 was not tried below 2.
 | gogo net stack fixed state (`esp_net_state`, a `NetState` in main.c, the tls port's state included) | 3704 |
 | config handler (scratch, line buffer; task stack 4 K) | about 2.1 K + 4 K |
 | free internal heap at the boot line (before the VM; was 275 K without Wi-Fi) | 197 K |
-| free internal heap running `examples/netdemo` (`gogo config stats`) | about 173 K (arena 22 K in use) |
+| free internal heap running `examples/netdemo` (`gogo device stats`) | about 173 K (arena 22 K in use) |
 
 The boot logs the driver's heap use on serial (`gogo: wifi heap: ...`).
 
@@ -572,13 +572,17 @@ writes that partition, so files survive reflashing (the whole-flash erase
   partition). At boot the size is read from the superblock; a larger
   setting grows the file system in place (`lfs_fs_grow`, files kept); a
   smaller one keeps the current size and prints `gogo: /flash shrink needs
-  format (fs.flash.format=yes)`. Setting `fs.flash.format` to `yes` formats
-  once at the set size at the next boot (`gogo: formatting /flash
-  (fs.flash.format=yes)`; everything on `/flash` is lost) and removes the
-  key; the key is removed before formatting, and if that fails nothing is
-  formatted (`gogo: could not clear fs.flash.format; /flash not formatted
-  (gogo config rm fs.flash.format)`), so a stuck key cannot wipe `/flash`
-  at every boot. A blank or unreadable partition (mount says corrupt or
+  format (gogo device format-flash)`. `gogo device format-flash` formats it:
+  the board answers, sets a flag in RTC memory and restarts, and the
+  next mount sees the flag (only after that software restart; it is
+  cleared at once) and formats at the set size (`gogo: formatting /flash
+  (gogo device format-flash)`; everything on `/flash` is lost). NVS is not
+  written. The deprecated key `fs.flash.format` = `yes` still formats
+  once at the next boot (`gogo: formatting /flash (fs.flash.format=yes)`)
+  and is removed; the key is removed before formatting, and if that fails
+  nothing is formatted (`gogo: could not clear fs.flash.format; /flash not
+  formatted (gogo config rm fs.flash.format)`), so a stuck key cannot wipe
+  `/flash` at every boot. A blank or unreadable partition (mount says corrupt or
   invalid; first boot) is formatted: `gogo: formatting /flash` (LittleFS
   logs `Corrupted dir pair at {0x0, 0x1}` first). "Invalid" also covers a
   file system from a newer LittleFS on-disk version or with a larger name
@@ -588,7 +592,7 @@ writes that partition, so files survive reflashing (the whole-flash erase
   line. Serial only: `gogo: /flash <N> KB (partition 5056 KB)`.
 
       build/gogo config set fs.flash.size 1M
-      build/gogo config set fs.flash.format yes   # only to shrink, or to wipe
+      build/gogo device format-flash              # only to shrink, or to wipe
       build/gogo config rm fs.flash.size          # back to the whole partition
 
 - Measured on the M5StickS3: filling the whole partition with 4 KB writes
@@ -708,7 +712,7 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   are not built, the drivers `netif`, `udp`, `tcp` and `tcp_listen` are not
   listed (an image that requires one is refused at boot, naming it), `port.Open` of `netif`, `udp`,
   `tcp` and `tcp_listen` returns ok=false, `net.Subscribe` returns false (no port
-  source), and `gogo config scan` answers "no network in this firmware" and `gogo config stats` prints only the memory figures.
+  source), and `gogo device scan` answers "no network in this firmware" and `gogo device stats` prints only the memory figures.
   `gogo config set wifi.*` still stores the value. `esp_wifi`, `wpa_supplicant`,
   `libnet80211`, `libpp` and `libphy` are not linked.
   `gogo.bin` (ESP-IDF 6.1.1): StickS3 883744 B default, 460368 B `GOGO_NET=n`;
@@ -874,5 +878,5 @@ every 10 s. `demo.url` may be an `https://` URL (see "TLS" below and
   (pool.ntp.org), one `http.Get("https://example.com/")`, three requests
   through an `http.NewClient` (one handshake), and a "tls" port to
   example.com's address with the wrong `Host`, which must be refused; then
-  it idles. Build and flash it as netdemo above; `gogo config stats` then
+  it idles. Build and flash it as netdemo above; `gogo device stats` then
   shows the TLS counters.

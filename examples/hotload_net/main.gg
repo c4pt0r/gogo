@@ -1,9 +1,9 @@
 // hotload_net: hot loading over the network, on a board.
 //
 // On boot: join Wi-Fi (dhcp), set the clock (sntp: the certificate check
-// needs the date), fetch worker_v1.gmod over HTTPS from the base URL in the
+// needs the date), fetch worker_v1.ggb over HTTPS from the base URL in the
 // config key demo.modurl, load it, and run its "Work" entry under
-// supervisor.SuperviseModule. After a few seconds fetch worker_v2.gmod and
+// supervisor.SuperviseModule. After a few seconds fetch worker_v2.ggb and
 // upgrade the running worker to it, printing each step, the code memory in
 // use (code.MemUsed) and how long the fetch and the load took in ms.
 //
@@ -125,7 +125,7 @@ func run() string {
 	}
 
 	println("step 2: fetch and load v1")
-	v1, why := fetch(base, "worker_v1.gmod")
+	v1, why := fetch(base, "worker_v1.ggb")
 	if why != "" {
 		return why
 	}
@@ -151,7 +151,7 @@ func run() string {
 
 	println("step 4: waiting 5 s, then upgrade")
 	actor.Sleep(5000)
-	v2, why := fetch(base, "worker_v2.gmod")
+	v2, why := fetch(base, "worker_v2.ggb")
 	if why != "" {
 		return why
 	}

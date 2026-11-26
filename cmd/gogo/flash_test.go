@@ -187,3 +187,52 @@ func TestFlashRejects(t *testing.T) {
 		t.Error("esptool ran for a rejected request")
 	}
 }
+
+// gogo flash of a directory builds it, then writes the image it built.
+func TestFlashBuildsDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "app")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.gg"), []byte("package main\n\nfunc main() { println(\"hi\") }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prog, err := compiler.Config{}.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := compiler.Compile(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotData []byte
+	f := flasher{
+		glob: globOf("/dev/cu.usbmodem9"),
+		run: func(name string, args []string) error {
+			gotData, err = os.ReadFile(args[len(args)-1])
+			return err
+		},
+	}
+	if err := f.flash([]string{"-esptool", "/x/esptool", "-path", "", dir}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotData, packImage(img)) {
+		t.Error("flashed something else than the directory's image")
+	}
+	// A build error stops before esptool runs.
+	if err := os.WriteFile(filepath.Join(dir, "main.gg"), []byte("package main\n\nfunc main() { x := 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gotData = nil
+	if err := f.flash([]string{"-esptool", "/x/esptool", dir}); err == nil || gotData != nil {
+		t.Errorf("broken program: err %v, flashed %v", err, gotData != nil)
+	}
+	// -path with an image is a usage error.
+	app := filepath.Join(t.TempDir(), "app.ggb")
+	if err := os.WriteFile(app, img, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.flash([]string{"-path", "x", app}); err == nil || !strings.Contains(err.Error(), "-path is for building") {
+		t.Errorf("-path with an image: %v", err)
+	}
+}

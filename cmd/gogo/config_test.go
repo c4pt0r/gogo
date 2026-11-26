@@ -74,17 +74,17 @@ func TestConfigCommand(t *testing.T) {
 // Lines the command does not understand are kept as they are.
 func TestConfigKeepsOtherLines(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config")
-	if err := os.WriteFile(path, []byte("# mine\nnet.ip=1\n\nnet.ip=dup\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("# mine\nblink.ms=1\n\nblink.ms=dup\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := configRun(t, path, "get", "net.ip"); err != nil || out != "1\n" {
+	if out, err := configRun(t, path, "get", "blink.ms"); err != nil || out != "1\n" {
 		t.Fatalf("get: %q %v (the first line wins, as in the VM)", out, err)
 	}
-	if _, err := configRun(t, path, "set", "net.ip", "2"); err != nil {
+	if _, err := configRun(t, path, "set", "blink.ms", "2"); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
-	if string(data) != "# mine\nnet.ip=2\n\n" {
+	if string(data) != "# mine\nblink.ms=2\n\n" {
 		t.Fatalf("file %q (set replaces every line of the key)", data)
 	}
 }
@@ -167,5 +167,78 @@ func TestConfigStoreChoice(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	if string(data) != "k=from stdin\n" {
 		t.Fatalf("file %q", data)
+	}
+}
+
+// set checks keys and values against the key table.
+func TestConfigSchema(t *testing.T) {
+	ok := [][2]string{
+		{"blink.ms", "250"}, {"my_app.x9", ""}, {"net.ip", "192.168.1.20"}, {"net.mask", "255.255.255.0"},
+		{"fs.flash.size", "64K"}, {"fs.flash.size", "1m"}, {"fs.flash.size", "4294967295"}, {"code.mem", "128K"},
+		{"fs.flash.format", "yes"}, {"wifi.ssid", strings.Repeat("s", 32)}, {"wifi.password", "pass word"},
+		{"retries", "lots"}, // not a gogo key: any value
+	}
+	for _, kv := range ok {
+		if err := checkSetting(kv[0], kv[1]); err != nil {
+			t.Errorf("set %s %q: %v", kv[0], kv[1], err)
+		}
+	}
+	bad := []struct{ k, v, why string }{
+		{"Blink", "1", "bad key"},    // upper case: get and rm still take it
+		{"blink-ms", "1", "bad key"}, // "-" likewise
+		{"sixteen.chars.xx", "", "bad key"},
+		{"net.ipp", "1.2.3.4", "belong to gogo"},
+		{"gogo.anything", "x", "belong to gogo"},
+		{"fs.other", "x", "belong to gogo"},
+		{"net.ip", "1.2.3", "dotted IPv4"},
+		{"net.ip", "1.2.3.256", "dotted IPv4"},
+		{"net.gw", "1.2.3.+4", "dotted IPv4"},
+		{"net.dns", "1.2.3.4 ", "dotted IPv4"},
+		{"fs.flash.size", "64KB", "K or M"},
+		{"fs.flash.size", "4G", "K or M"},
+		{"code.mem", "4194304K", "K or M"},
+		{"code.mem", "", "K or M"},
+		{"fs.flash.format", "true", "want yes"},
+		{"wifi.ssid", strings.Repeat("s", 33), "at most 32 bytes"},
+		{"wifi.password", strings.Repeat("p", 65), "at most 64 bytes"},
+		{"k", "a\x02b", "bad value"},
+	}
+	for _, c := range bad {
+		if err := checkSetting(c.k, c.v); err == nil || !strings.Contains(err.Error(), c.why) {
+			t.Errorf("set %s %q: %v, want %q", c.k, c.v, err, c.why)
+		}
+	}
+	// A key set before the table (upper case) can still be read and removed.
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("Old-Key=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := configRun(t, path, "get", "Old-Key"); err != nil || out != "1\n" {
+		t.Errorf("get Old-Key: %q %v", out, err)
+	}
+	if _, err := configRun(t, path, "rm", "Old-Key"); err != nil {
+		t.Errorf("rm Old-Key: %v", err)
+	}
+	var keys bytes.Buffer
+	if err := configMain([]string{"keys"}, &keys, nil, &keys, nil); err != nil || !strings.Contains(keys.String(), "code.mem         size    platform") {
+		t.Errorf("keys: %v\n%s", err, keys.String())
+	}
+	// A refused key is refused before a value is read from stdin.
+	var out, errOut bytes.Buffer
+	if err := configMain([]string{"-local", "set", "net.bogus", "-"}, &out, strings.NewReader("never read\n"), &errOut, nil); err == nil || !strings.Contains(err.Error(), "belong to gogo") {
+		t.Errorf("set net.bogus -: %v", err)
+	}
+}
+
+// The forms gogo device replaces still work, with a note.
+func TestConfigDeprecatedForms(t *testing.T) {
+	t.Setenv("GOGO_CONFIG", filepath.Join(t.TempDir(), "cfg"))
+	var out, errOut bytes.Buffer
+	if err := configMain([]string{"-local", "set", "fs.flash.format", "yes"}, &out, nil, &errOut, nil); err != nil || !strings.Contains(errOut.String(), "use gogo device format-flash") {
+		t.Errorf("fs.flash.format: %v %q", err, errOut.String())
+	}
+	errOut.Reset()
+	if err := configMain([]string{"-local", "stats"}, &out, nil, &errOut, nil); err == nil || !strings.Contains(errOut.String(), "stats is deprecated, use gogo device stats") {
+		t.Errorf("stats: %v %q", err, errOut.String())
 	}
 }

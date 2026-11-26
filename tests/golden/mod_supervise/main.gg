@@ -32,9 +32,9 @@ func next() actor.PID {
 }
 
 func main() {
-	v1 := load("/flash/worker_v1.gmod")
+	v1 := load("/flash/worker_v1.ggb")
 	size1 := code.MemUsed()
-	v2 := load("/flash/worker_v2.gmod")
+	v2 := load("/flash/worker_v2.ggb")
 	size2 := code.MemUsed() - size1
 	println("loaded both", size1 > 0, size2 > 0)
 	sup := supervisor.SuperviseModule(v1, "Work", actor.Self(),
@@ -52,7 +52,7 @@ func main() {
 
 	// An upgrade that fails (no entry "Work") restarts the child from v1,
 	// which stays loaded and held.
-	bad := load("/flash/worker_bad.gmod")
+	bad := load("/flash/worker_bad.ggb")
 	r, _ := actor.Call(sup, supervisor.Upgrade{Module: bad}, 2000)
 	println("bad upgrade", r)
 	code.Release(bad)
@@ -72,7 +72,7 @@ func main() {
 	println("code mem after upgrade", code.MemUsed() == size2)
 
 	// A supervisor that cannot start: the module is gone, no PID.
-	gone := load("/flash/worker_bad.gmod")
+	gone := load("/flash/worker_bad.ggb")
 	code.Release(gone)
 	none := supervisor.SuperviseModule(gone, "Other", 0, supervisor.Spec{})
 	var zero actor.PID

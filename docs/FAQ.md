@@ -262,8 +262,9 @@ arguments yet. See the book, chapter 2.
 ### Can I compile on the device?
 No. The compiler is written in Go and needs the Go runtime, which does not
 fit a microcontroller. You compile on your computer and push the `.ggb`
-image to the board (`gogo flash`), or load modules at run time with hot
-loading (book chapter 14).
+image to the board (`gogo flash`), or copy modules to its `/flash`
+(`gogo push`) and load them at run time with hot loading (book chapter
+14).
 
 ### Can a program that embeds gogo compile source at run time?
 Not yet; `libgogo.a` only loads compiled images. Planned: the compiler as a
@@ -323,7 +324,7 @@ runs.
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
-| `gogo` CLI (build, flash, monitor, config, setup) | yes | yes | flash and setup only; no Wi-Fi step or console yet |
+| `gogo` CLI (build, flash, push, monitor, config, device, setup) | yes | yes | flash and setup only; no Wi-Fi step or console yet |
 | `gogovm` host VM | yes | yes | no (it uses POSIX APIs) |
 | `libgogo.a` embedding | yes | yes | no |
 | Building firmware from source | yes (ESP-IDF) | yes (ESP-IDF) | ESP-IDF supports it; untested here |

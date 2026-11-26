@@ -28,7 +28,7 @@ void platform_esp_init(void);
  * clock of PortEvent.time_ms). */
 uint64_t platform_esp_ms(void);
 size_t platform_esp_arena_used(void);
-/* The VM's fixed tables in use (main.c), for `gogo config stats`: off-heap
+/* The VM's fixed tables in use (main.c), for `gogo device stats`: off-heap
  * Bytes handles (of GOGO_BYTES_HANDLES) and open ports (of GOGO_MAX_PORTS).
  * Read from another task: a snapshot. */
 void main_esp_usage(uint32_t *bytes_used, uint32_t *ports_used);
@@ -112,6 +112,19 @@ struct VfsState;
  * the storage fixed state: vfs tables + LittleFS state and buffers. */
 int fs_lfs_mount(struct VfsState *vs);
 uint32_t fs_lfs_state_bytes(void);
+/* `gogo device format-flash`: the next mount (after esp_restart, and
+ * only then) formats /flash. */
+void fs_lfs_request_format(void);
+/* `gogo push`, from the console task (fs_lfs.c locks against the VM):
+ * begin opens a temporary file beside rel (a path inside /flash, without
+ * the leading "/flash/"), write appends to it (*total: bytes so far), end
+ * checks the stored file's length and CRC-32 against len and crc and
+ * renames it over rel, abort drops it. GOGO_E_* results; any failure
+ * drops the temporary file. */
+int fs_lfs_push_begin(const char *rel);
+int fs_lfs_push_write(const uint8_t *buf, uint32_t n, uint32_t *total);
+int fs_lfs_push_end(const char *rel, uint32_t len, uint32_t crc);
+void fs_lfs_push_abort(void);
 /* Bound on fs_lfs.c's own state (asserted there), so fs_fat.c can check
  * the whole storage fixed state (vfs + LittleFS + FatFs <= 3072) at
  * compile time. */
@@ -180,7 +193,7 @@ struct NetIf;
 extern const struct NetIf wifi_esp_netif;
 /* The net stack's storage (main.c; runtime/net/ keeps none): main installs
  * it on the Vm (net_install), the Wi-Fi task feeds it (net_rx_offer,
- * net_link_event) and `gogo config stats` reads its counters. */
+ * net_link_event) and `gogo device stats` reads its counters. */
 struct NetState;
 extern struct NetState esp_net_state;
 

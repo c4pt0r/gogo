@@ -11,13 +11,28 @@
  *     \x02gogo-config list\n
  *     \x02gogo-config scan\n                 (nearby Wi-Fi networks)
  *     \x02gogo-config stats\n                (net counters, memory, fixed tables in use)
+ *     \x02gogo-config format-flash\n         (format /flash: restarts the board)
+ *     \x02gogo-config push <path> <len> <crc32>\n   (gogo push: write a file
+ *     \x02gogo-config data <offset> <base64>\n       to /flash, in chunks; push
+ *     \x02gogo-config end\n                          and data answer ok <bytes
+ *     \x02gogo-config abort\n                        so far>)
  *
  * with zero or more `\x02kv <text>\n` lines and then one `\x02ok[ <text>]\n`
  * or `\x02err <reason>\n`. Input outside a frame is ignored (the console has
  * no other input). Every reply line starts with \x02 so the host can pick
  * it out of program output, which may be mid-line. The Wi-Fi password is
  * never sent back: get and list show "(set)". Setting or removing a
- * wifi.* key makes the station reconnect with the new settings. */
+ * wifi.* key makes the station reconnect with the new settings.
+ *
+ * push writes a file to /flash (fs_lfs.c): <path> is an absolute /flash
+ * path, <len> its size and <crc32> the CRC-32 (IEEE) of its bytes in hex.
+ * The bytes follow in data frames (base64, CFG_PUSH_CHUNK bytes at most,
+ * <offset> the count sent before it), each answered before the next is
+ * sent, so the console's small input buffer never overflows; end checks
+ * the stored file against <len> and <crc32> and only then renames it over
+ * <path>. A failure, abort or a new push drops the temporary file.
+ * format-flash answers ok, then restarts the board, whose next mount
+ * formats /flash (fs_lfs_request_format): NVS is not touched. */
 #include "sdkconfig.h"
 #include "host.h"
 #include "config.h"
@@ -41,12 +56,17 @@
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_heap_caps.h"
+#include "esp_partition.h"
+#include "esp_system.h"
+#include "vfs_int.h"
 
 #define CFG_NS        "gogo"
 #define CFG_KEY_MAX   15u      /* NVS key limit (16 with the NUL) */
 #define CFG_VALUE_MAX 1000u    /* as cmd/gogo/config.go */
 #define CFG_SECRET    "wifi.password"
 #define CFG_LINE_MAX  (12u + 5u + CFG_KEY_MAX + CFG_VALUE_MAX + 4u)
+#define CFG_PUSH_CHUNK 128u    /* as cmd/gogo/push.go */
+#define CFG_STACK     4096u    /* bytes; gogo device stats shows the least free */
 
 static nvs_handle_t cfg_nvs;
 static bool cfg_ok;
@@ -195,7 +215,7 @@ static void cmd_rm(const char *key) {
 #endif
 }
 
-/* `gogo config stats`: the net stack's counters and the memory figures
+/* `gogo device stats`: the net stack's counters and the memory figures
  * (read from this task while the VM updates them: a snapshot that may be
  * a frame behind). */
 #if CONFIG_GOGO_NET
@@ -280,6 +300,9 @@ static void cmd_stats(void) {
 #if CONFIG_GOGO_TLS
     stats_tls();
 #endif
+    /* This task's stack: the least ever free (it runs LittleFS for gogo push). */
+    n = snprintf(line, sizeof line, "console_stack_free=%u/%u", (unsigned)uxTaskGetStackHighWaterMark(NULL), (unsigned)CFG_STACK);
+    reply("kv", line, (size_t)n);
     reply_s("ok", NULL);
 }
 
@@ -293,16 +316,141 @@ static void cmd_scan(void) {
 #endif
 }
 
+/* ---- gogo push and format-flash ---- */
+
+static const char *err_text(int e) {
+    switch (e) {
+    case GOGO_E_NOTMOUNTED: return "/flash is not mounted";
+    case GOGO_E_NOSPACE:    return "no space on /flash";
+    case GOGO_E_BADPATH:    return "bad path";
+    case GOGO_E_ISDIR:      return "the path is a directory";
+    case GOGO_E_NOTDIR:     return "a directory on the path is a file";
+    case GOGO_E_NOTFOUND:   return "no such directory";
+    case GOGO_E_BADARG:     return "no push in progress";
+    case GOGO_E_IO:         return "the stored file does not match (length or CRC)";
+    default:                return "I/O error";
+    }
+}
+
+/* Parses a decimal (base 10) or hex (base 16) number filling [p, end). */
+static bool parse_u32(const char *p, const char *end, int base, uint32_t *out) {
+    uint64_t v = 0;
+    if (p >= end || end - p > 10) return false;
+    for (; p < end; p++) {
+        int d = *p >= '0' && *p <= '9' ? *p - '0' : base == 16 && (*p | 0x20) >= 'a' && (*p | 0x20) <= 'f' ? (*p | 0x20) - 'a' + 10 : -1;
+        if (d < 0) return false;
+        v = v * (uint64_t)base + (uint64_t)d;
+    }
+    if (v > 0xFFFFFFFFu) return false;
+    *out = (uint32_t)v;
+    return true;
+}
+
+/* Decodes base64 [p, end) into out (cap bytes); its length, or -1. */
+static int b64_decode(const char *p, const char *end, uint8_t *out, size_t cap) {
+    uint32_t acc = 0;
+    int bits = 0;
+    size_t n = 0;
+    for (; p < end && *p != '='; p++) {
+        char c = *p;
+        int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52
+              : c == '+' ? 62 : c == '/' ? 63 : -1;
+        if (v < 0) return -1;
+        acc = acc << 6 | (uint32_t)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (n == cap) return -1;
+            out[n++] = (uint8_t)(acc >> bits);
+        }
+    }
+    return (int)n;
+}
+
+/* The /flash path of the push in progress, relative ("dir/name.ggb"). */
+static char push_rel[VFS_PATH_MAX];
+static uint32_t push_len, push_crc;
+
+static void cmd_push(char *p, char *end) {
+    char *path = p;
+    while (p < end && *p != ' ') p++;
+    size_t pn = (size_t)(p - path);
+    char *ls = p < end ? p + 1 : end, *le = ls;
+    while (le < end && *le != ' ') le++;
+    char *cs = le < end ? le + 1 : end;
+    uint32_t first;
+    static const char pre[] = "/flash/";
+    if (pn <= sizeof pre - 1u || memcmp(path, pre, sizeof pre - 1u) != 0 || vfs_path_check(path, (uint32_t)pn, &first) != GOGO_E_OK ||
+        !parse_u32(ls, le, 10, &push_len) || !parse_u32(cs, end, 16, &push_crc) ||
+        (pn >= 11u && memcmp(path + pn - 11u, "/.gogo-push", 11) == 0)) {   /* the temporary file itself */
+        fs_lfs_push_abort();
+        reply_s("err", "usage: push </flash/path> <len> <crc32 hex>");
+        return;
+    }
+    memcpy(push_rel, path + sizeof pre - 1u, pn - (sizeof pre - 1u));
+    push_rel[pn - (sizeof pre - 1u)] = 0;
+    int e = fs_lfs_push_begin(push_rel);
+    if (e != GOGO_E_OK) { reply_s("err", err_text(e)); return; }
+    reply_s("ok", "0");
+}
+
+static void cmd_data(char *p, char *end) {
+    char *os = p;
+    while (p < end && *p != ' ') p++;
+    uint32_t off, total;
+    uint8_t buf[CFG_PUSH_CHUNK];
+    int n = p < end ? b64_decode(p + 1, end, buf, sizeof buf) : -1;
+    if (!parse_u32(os, p, 10, &off) || n <= 0) {
+        fs_lfs_push_abort();
+        reply_s("err", "bad data frame");
+        return;
+    }
+    /* A chunk at the wrong offset (a lost or repeated frame) ends the push. */
+    int e = fs_lfs_push_write(buf, (uint32_t)n, &total);
+    if (e == GOGO_E_OK && total != off + (uint32_t)n) {
+        fs_lfs_push_abort();
+        reply_s("err", "data out of order");
+        return;
+    }
+    if (e != GOGO_E_OK) { reply_s("err", err_text(e)); return; }
+    char t[12];
+    int tn = snprintf(t, sizeof t, "%lu", (unsigned long)total);
+    reply("ok", t, (size_t)tn);
+}
+
+static void cmd_end(void) {
+    int e = fs_lfs_push_end(push_rel, push_len, push_crc);
+    if (e != GOGO_E_OK) { reply_s("err", err_text(e)); return; }
+    reply_s("ok", NULL);
+}
+
+static void cmd_format_flash(void) {
+    if (!esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_LITTLEFS, "gogofs")) {
+        reply_s("err", "no gogofs partition");
+        return;
+    }
+    reply_s("ok", "restarting to format /flash");
+    vTaskDelay(pdMS_TO_TICKS(200));   /* let the reply leave */
+    fs_lfs_request_format();
+    esp_restart();
+}
+
 /* line: the frame after \x02, without the \n. */
 static void handle(char *line, size_t n) {
     static const char magic[] = "gogo-config ";
     if (n < sizeof magic - 1u || memcmp(line, magic, sizeof magic - 1u) != 0) return;  /* not ours */
     char *p = line + sizeof magic - 1u, *end = line + n;
-    if (!cfg_ok) { reply_s("err", "config store unavailable"); return; }
     char *op = p;
     while (p < end && *p != ' ') p++;
     size_t opn = (size_t)(p - op);
     if (p < end) p++;
+    /* Not config operations: they work without the store. */
+    if (opn == 4 && memcmp(op, "data", 4) == 0) { cmd_data(p, end); return; }
+    if (opn == 4 && memcmp(op, "push", 4) == 0) { cmd_push(p, end); return; }
+    if (opn == 3 && memcmp(op, "end", 3) == 0 && p >= end) { cmd_end(); return; }
+    if (opn == 5 && memcmp(op, "abort", 5) == 0 && p >= end) { fs_lfs_push_abort(); reply_s("ok", NULL); return; }
+    if (opn == 12 && memcmp(op, "format-flash", 12) == 0 && p >= end) { cmd_format_flash(); return; }
+    if (!cfg_ok) { reply_s("err", "config store unavailable"); return; }
     if (opn == 4 && memcmp(op, "list", 4) == 0 && p >= end) { cmd_list(); return; }
     if (opn == 4 && memcmp(op, "scan", 4) == 0 && p >= end) { cmd_scan(); return; }
     if (opn == 5 && memcmp(op, "stats", 5) == 0 && p >= end) { cmd_stats(); return; }
@@ -357,5 +505,5 @@ void config_esp_start_serial(void) {
     fflush(stdout);
     fflush(stderr);
     usb_serial_jtag_vfs_use_driver();
-    xTaskCreatePinnedToCore(config_task, "gogo_cfg", 4096, NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(config_task, "gogo_cfg", CFG_STACK, NULL, 2, NULL, 0);
 }

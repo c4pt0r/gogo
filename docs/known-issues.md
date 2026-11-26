@@ -97,14 +97,47 @@ rebuilt:
     needs no edit. `GOGO_ESTARTED` is `GOGO_ESTATE`, `GOGO_ESTART` is
     `GOGO_ENOTFOUND` (no `main`) or `GOGO_ENOMEM`, and the old name
     `GOGO_ECAPS` is gone.
+- **Command line.** Every `gogo` command parses its flags the same way
+  (book chapter 12): one or two dashes, flags before or after the other
+  arguments. So an argument starting with `-` is a flag even after a
+  file name: put it after `--`. The exceptions: `gogo config set` takes
+  its value as it is (`gogo config set offset -5`), and `gogo run` takes
+  its flags before the program only. A usage
+  mistake prints what is wrong before the usage.
+- **Configuration keys.** `gogo config set` takes keys of `a-z 0-9 . _`
+  only (upper case and `-` were allowed), refuses unknown keys under the
+  gogo prefixes `wifi.`, `net.`, `fs.`, `code.` and `gogo.`, and checks
+  the values of gogo's keys (book chapter 11). `get` and `rm` still take
+  the old spelling.
+- **Exit statuses** of `gogo run` and `gogovm` (book chapter 12): a
+  crash of `main` exits 4 and `actor.Exit(code)` in `main` exits with
+  the code (0 before). A missing driver or mount exits 3 (was 1), a bad
+  image still 2, and a `gogovm` usage error 1 (was 2).
+
+## Deprecated, removed in the next release
+
+- `gogo monitor -t seconds` is `-timeout seconds`; `-t` still works and
+  says so on standard error.
+- `gogo config scan` and `gogo config stats` are `gogo device scan` and
+  `gogo device stats`; the old forms still work, with a note.
+- `gogo config set fs.flash.format yes` (format `/flash` at the next
+  boot) is `gogo device format-flash`, which formats at once (the board
+  restarts) and writes nothing to the configuration store. The key still
+  works, with a note.
 
 ## VM
 
-- **A crash does not change the exit status.** `gogovm` (and so
-  `gogo run`) exits 0 when the run queue empties, even after the main
-  actor crashed (`gogo: actor <pid 0> crashed: divzero in main`). A
-  program cannot set an exit status either: `actor.Exit` only ends the
-  actor. *Workaround:* scripts and CI must look for `crashed:` on stderr.
+- **A forged crash report can set gogovm's exit status.** gogovm reads
+  main's status from the crash report on standard error, and the report
+  prints a function's name as the image has it. A hand-made image whose
+  function name holds a newline followed by a report line for `main`
+  sets the status, even if `main` then exits normally. The compiler
+  never makes such a name; escaping it would cost VM core bytes.
+- **Only `main` sets the exit status.** `gogovm` and `gogo run` exit
+  with the main actor's status (book chapter 12); a crash of another
+  actor, while `main` ends normally, still exits 0. *Workaround:* link
+  the actors whose failure must fail the run to `main` (or have `main`
+  monitor them and `actor.Exit` with a code).
 - **`actor.Call` does not notice that the server died.** It waits out
   the whole timeout. *Workaround:* monitor the server and keep timeouts
   short; treat `ok == false` as "maybe dead".
@@ -154,7 +187,7 @@ rebuilt:
   nothing, the allocation fails (`OutOfMemory`) and ports that need a
   handle refuse (a stream `Out` gets `Done{-1}`). *Workaround:*
   do not keep many large frozen `Bytes` alive in one program; on a
-  board, `gogo config stats` shows the table's use (`bytes=N/64`, with
+  board, `gogo device stats` shows the table's use (`bytes=N/64`, with
   `ports=N/16` and `subs=N/4` for the port and `net.Subscribe` tables).
 - **Host and board memory limits differ by 16x.** An actor spawned
   without `SpawnOpt` may use 256 KB on the host and 16 KB on a board, so
@@ -191,7 +224,7 @@ rebuilt:
   crypto the TLS port already links (`TlsHw`).
 - **Modules live in RAM only.** There is no automatic loading from flash
   at boot and no execute-in-place from flash. *Workaround:* store the
-  module with `fs.WriteFile` and load it with `fs.ReadFile` +
+  module (`gogo push`, or `fs.WriteFile`) and load it with `fs.ReadFile` +
   `code.Load` at start.
 - **No `sys.Has`.** A program cannot ask which drivers and mounts the
   firmware has before loading; it learns the first missing one from
@@ -231,7 +264,7 @@ rebuilt:
   your own or a `gogo/` library such as `gogo/http`, each compile their own
   copy of it, so its struct types are different types in each. Sending
   one across modules fails with `BadMsg` at run time, not at compile time
-  (book 14.5). Only the stub packages' reserved types (`actor.Request`,
+  (book 14.6). Only the stub packages' reserved types (`actor.Request`,
   `net.Up`, `fs.Info`, ...) cross. *Workaround:* send basic values,
   strings or `Bytes`, and rebuild the struct in the receiver.
 - **Scripts get no arguments yet.** `gogo run x.gg args...` and `./script
@@ -435,9 +468,19 @@ rebuilt:
   a `string` or `Bytes` only; a `[]byte` gives `BadPath`
   (*workaround:* `bytes.FromSlice`).
 - **Shrinking `/flash`** (`fs.flash.size` smaller than the file system)
-  needs `fs.flash.format=yes`, which erases it.
-- **No file transfer** between a computer and `/flash`. *Workaround:*
-  move files over HTTP, or use the SD card.
+  needs `gogo device format-flash`, which erases it.
+- **`gogo device format-flash` has not run on a board yet.** The host
+  side and the protocol are tested; the board side (the RTC flag, the
+  restart, the format at mount) was built but not run, so that a
+  board's `/flash` was not wiped. If the flag were lost, the command
+  would only restart the board without formatting.
+- **`gogo push` takes images only**, one at a time, at about 40 KB/s
+  (measured on the M5StickS3: 46 KB in 1.2 s), and does not tell the
+  running program. Pushing over a file the program has open replaces it
+  under the program, whose handle may then fail or read the old data.
+  *Workaround:* push to a new name, or move other files over HTTP or
+  the SD card. A push cut off (the cable pulled) leaves its temporary
+  file `.gogo-push` in the target's directory until the next push there.
 
 ## Input, audio, IMU and IR
 

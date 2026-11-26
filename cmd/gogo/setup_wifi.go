@@ -292,7 +292,7 @@ func (s *setup) setupWifi() error {
 	case failed:
 		fmt.Fprintf(s.env.out, "  the board could not join %q; check the password and %s\n", net.ssid, later)
 	default:
-		fmt.Fprintf(s.env.out, "  no connection yet (the board keeps trying); check with `gogo monitor -t 20`\n")
+		fmt.Fprintf(s.env.out, "  no connection yet (the board keeps trying); check with `gogo monitor -timeout 20`\n")
 	}
 	return nil
 }
@@ -373,7 +373,7 @@ func (s *setup) firstProgram() error {
 	}
 	rw, err := s.openBoard()
 	if err != nil {
-		return setupFail("watch the board's screen, or run `gogo monitor -t 10` on a supported OS", "cannot open %s to watch the program: %v", s.port, err)
+		return setupFail("watch the board's screen, or run `gogo monitor -timeout 10` on a supported OS", "cannot open %s to watch the program: %v", s.port, err)
 	}
 	defer rw.Close()
 	fmt.Fprintln(s.env.out, "  watching the board's console...")
@@ -400,16 +400,16 @@ func (s *setup) firstProgram() error {
 			"the firmware refused the program: %s", bad)
 	}
 	if !ok {
-		return setupFail("look at the board's screen, and run `gogo monitor -t 10` to see what it prints", "the program did not print within 40 seconds")
+		return setupFail("look at the board's screen, and run `gogo monitor -timeout 10` to see what it prints", "the program did not print within 40 seconds")
 	}
 	return nil
 }
 
 // nextSteps is printed at the end of a successful setup.
 func (s *setup) nextSteps() {
-	monitor := "gogo monitor -reset -t 10"
+	monitor := "gogo monitor -reset -timeout 10"
 	if s.board == "cardputer" {
-		monitor = "gogo monitor -t 10" // no -reset: the Cardputer ADV does not come back from its RTS reset
+		monitor = "gogo monitor -timeout 10" // no -reset: the Cardputer ADV does not come back from its RTS reset
 	}
 	fmt.Fprintf(s.env.out, "\nYour %s runs gogo. Next:\n", setupBoardTitles[s.board])
 	fmt.Fprintf(s.env.out, "  gogo build myapp -o myapp%s    compile a program (a directory with package main)\n", imageExt)

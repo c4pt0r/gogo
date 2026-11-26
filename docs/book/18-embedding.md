@@ -663,7 +663,7 @@ build/embed-c/main --flash dir hotload.ggb
 ```
 
 ```
-load /flash/worker_v1.gmod 3
+load /flash/worker_v1.ggb 3
 loaded v1: false
 ```
 

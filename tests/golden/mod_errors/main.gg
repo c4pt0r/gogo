@@ -23,7 +23,7 @@ func try(what string, b bytes.Bytes, used int) {
 }
 
 func main() {
-	b := read("/flash/hello.gmod")
+	b := read("/flash/hello.ggb")
 	n := b.Len()
 	first, e0 := code.Load(b)
 	used := n
@@ -53,7 +53,7 @@ func main() {
 	try("unaligned truncated", buf.Freeze().Slice(1, n-3), used)
 
 	// A valid image that requires kbd: Unsupported, before the cap.
-	k := read("/flash/kbdmod.gmod")
+	k := read("/flash/kbdmod.ggb")
 	m, e := code.Load(k)
 	println("kbd", int(e), code.Missing(m) == "kbd", code.Missing(first) == "", m.H, code.MemUsed() == used)
 	_, e = code.Spawn(m, "Main", 0)

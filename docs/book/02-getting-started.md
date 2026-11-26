@@ -209,14 +209,17 @@ Run it without arguments to see what it can do:
 
 ```text
 $ build/gogo
-usage: gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
+usage: gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
        gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
        gogo env [-path dirs]
        gogo dis <file.ggb>
-       gogo flash [-port P] [-esptool path] app.ggb
-       gogo monitor [-port P] [-t seconds] [-until text] [-reset]
-       gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
-       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
+       gogo info [-path dirs] <file.ggb|dir|file.gg>
+       gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
+       gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
+       gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
+       gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
+       gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | keys | scan | stats
+       gogo device [-port P] [-yes] scan | stats | format-flash
        gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
        gogo version
 ```
@@ -254,9 +257,11 @@ separated by spaces, followed by a newline, on standard output. (There is no
 `fmt` package.)
 
 When the program has nothing left to do (no actor can run, no timer is
-pending, no input can arrive) the VM exits. Exit status 0 means the VM ran
-to the end, not that every actor succeeded; crashes are reported on
-standard error, as you will see in chapter 5.
+pending, no input can arrive) the VM exits. The exit status says how
+`main` ended: 0 when it returned, 4 when it crashed, or the code it
+passed to `actor.Exit` (chapter 12 has the table). Crashes of other
+actors are reported on standard error, as you will see in chapter 5,
+and do not change it.
 
 ### Scripts
 
@@ -411,7 +416,7 @@ second, without touching the firmware.
 ```sh
 gogo build docs/book/examples/02-hello -o hello.ggb
 gogo flash hello.ggb
-gogo monitor -reset -t 5 -until "gogo: vm exited"
+gogo monitor -reset -timeout 5 -until "gogo: vm exited"
 ```
 
 - `gogo build` compiles the directory to an image file (`.ggb`; without
@@ -420,10 +425,11 @@ gogo monitor -reset -t 5 -until "gogo: vm exited"
   `esptool` on your `PATH` (the one you installed for `gogo setup`, or
   ESP-IDF's, which its `export.sh` puts there) and uses
   the only `/dev/cu.usbmodem*` port it finds; pass `-port` if there are
-  several.
+  several. It also takes a directory, and builds it first:
+  `gogo flash docs/book/examples/02-hello` does both steps.
 - `gogo monitor` copies the board's console to your terminal. `-reset`
   restarts the board first, so you see the program from the beginning;
-  `-t 5` stops after 5 seconds; `-until` stops at the first line containing
+  `-timeout 5` stops after 5 seconds; `-until` stops at the first line containing
   that text.
 
 The board prints a boot line, runs the program, and prints a line when the

@@ -1,0 +1,8 @@
+package main
+
+// main crashes: the VM exits 4.
+func main() {
+	zero := 0
+	println("before")
+	println(1 / zero)
+}

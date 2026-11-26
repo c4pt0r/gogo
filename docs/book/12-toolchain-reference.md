@@ -9,22 +9,42 @@ firmware and programs, but the serial console commands (`monitor`,
 are not supported.
 
 ```text
-gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
+gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
 gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
 gogo env [-path dirs]
 gogo dis <file.ggb>
-gogo flash [-port P] [-esptool path] app.ggb
-gogo monitor [-port P] [-t seconds] [-until text] [-reset]
-gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
-gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | scan | stats
+gogo info [-path dirs] <file.ggb|dir|file.gg>
+gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
+gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
+gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
+gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
+gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | keys | scan | stats
+gogo device [-port P] [-yes] scan | stats | format-flash
 gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-yes] [-dry-run]
 gogo version
 ```
 
+**Flags** work the same in every command:
+
+- A flag is spelt with one dash or two (`-port P`, `--port P`), and its
+  value follows as the next argument or after `=` (`-o=app.ggb`).
+- Flags may come before or after the other arguments: `gogo build app -o
+  app.ggb` and `gogo build -o app.ggb app` are the same. `--` ends the
+  flags, so an argument after it that starts with `-` is not one; a lone
+  `-` is an ordinary argument. `gogo run` is the exception, as `go run`
+  is: its flags come before the program, and what follows the program
+  belongs to the program (refused for now).
+- The names are the same everywhere: `-port` (the board's serial port),
+  `-board`, `-o` (where the output goes), `-timeout` (seconds),
+  `-esptool`, `-path`, `-yes`.
+- `-h` (or `-help`) prints the command's usage and exits 0. A mistake
+  (an unknown flag, a missing value or argument) prints what is wrong and
+  the usage, and exits 1.
+
 ## gogo build
 
 ```text
-gogo build [-path dirs] <dir|file.gg> [-o out.ggb]
+gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
 ```
 
 Compiles the `package main` in `<dir>` (all its `.gg` files), the gogo
@@ -34,7 +54,9 @@ current directory. Given a `.gg` file instead (or a file starting with
 `#!`), it compiles that file alone as `package main`, into `<name>.ggb`. The image contains bytecode and constants and runs unchanged on
 the host VM and on any board.
 
-Errors are printed as `file:line:col: message` and the exit status is 1.
+Errors are printed as `file:line:col: message` and the exit status is 1
+(every `gogo` command exits 1 on an error; `gogo run` has its own
+statuses, below).
 Messages from Go's type checker look like Go's (`declared and not used: x`);
 messages about the subset start with `gogo:`:
 
@@ -171,17 +193,42 @@ any file starting with `#!`, it builds that file alone, with its directory
 as the build root for packages (an executable script with the first line
 `#!/usr/bin/env -S gogo run` runs this way, chapter 2); given a `.ggb`
 file it runs that image. `-path dirs` is the search path of the build, as
-for `gogo build`. Arguments after the program are refused for now. The exit status
-is the VM's: 0 when the VM ran until nothing was left to do, 1 if the
-image requires a driver or mount the host VM lacks (for example `tls` in a
-VM built without mbedTLS), 2 if the image could not be loaded (also an
-unsupported image format). A build error
-is status 1 too.
+for `gogo build`. Arguments after the program are refused for now.
 
-> **Note.** A crash, even of the `main` actor, does not change the exit
-> status: crashes are reported on standard error and the VM goes on until
-> it is idle. There is no way for a program to set the exit status, so
-> scripts must look at the output to tell success from failure.
+**Exit status.** `gogo run` exits with the VM's status, which says how the
+`main` actor ended:
+
+| Status | Meaning |
+|---|---|
+| 0 | `main` exited `Normal` (or `Shutdown`) |
+| 1 | a usage, toolchain or build error, or the VM was not found |
+| 2 | the image could not be loaded: not an image, damaged, or a format this VM does not run |
+| 3 | the image requires a driver or mount the VM lacks (for example `tls` in a VM built without mbedTLS) |
+| 4 | `main` crashed: a VM reason such as `divzero`, `oom` or `killed` (appendix B), or a code below 64 or negative given to `actor.Exit` |
+| 64..99 | `main` exited with a library failure, `actor.Failed` plus a shared code (appendix B), as it is: `http.ListenFailed` is 69 |
+| 100..255 | `main` exited with your code, `actor.Exit(code)` with `code` from 100; a code above 255 is 255 |
+
+Only `main` counts: other actors' crashes are reported on standard
+error but leave the status alone, so a program whose `main` ends
+normally exits 0. To fail a script, end `main` with a code:
+
+```go
+if !ok {
+	println("check failed")
+	actor.Exit(100) // gogo run exits 100
+}
+```
+
+When a linked actor's exit takes `main` down, `main` exits with that
+actor's own reason: 4 if it crashed, but 150 if it called
+`actor.Exit(150)`, 69 for a library failure.
+
+If the VM itself is killed by a signal, `gogo run` exits 128 plus the
+signal's number, as a shell does (130 for Ctrl-C, 137 for `kill -9`).
+Those statuses overlap the user range 100..255, so a script that must
+tell them apart should keep its own codes below 128. The host VM
+`build/gogovm` exits with the same statuses (it is where they come
+from).
 
 Options:
 
@@ -289,16 +336,47 @@ func main (params=0 regs=4):
 The VM is register based: each function has a fixed number of registers,
 which live in a stack frame in the actor's memory.
 
+## gogo info
+
+```text
+gogo info [-path dirs] <file.ggb|dir|file.gg>
+```
+
+Says what an image is and what it needs, read from the image file: its
+format version (`major.minor`, the lowest the program needs, so the
+oldest firmware that runs it), its size, the drivers and mounts it
+requires (what a firmware must have to boot it, or to `code.Load` it as
+a module), and its entries (the exported functions `code.Spawn` starts by
+name; `(boot)` marks the one a board starts):
+
+```text
+$ gogo info examples/netdemo
+format     15.0
+size       46112 bytes: 94 functions, 58 types, 9605 code words, 1462 constant words
+requires   gpio, netif, tcp, tcp_listen, udp
+optional   tls (gogo/http)
+entries    main (boot)
+```
+
+Given a directory or a `.gg` file, it builds it in memory first (`-path`
+as for `gogo build`) and adds the `optional` line: the drivers the
+program's packages mark `//gogo:optional` (with the packages that do),
+which the image does not record because a firmware without them runs it
+anyway. A file that is not a gogo image, is damaged, or has a format
+this `gogo` does not know is an error.
+
 ## gogo flash
 
 ```text
-gogo flash [-port P] [-esptool path] app.ggb
+gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
 ```
 
-Writes an image (built with `gogo build`; `flash` does not take a
-directory) to the board's program partition at 0x210000, with a header and
-a CRC that the firmware checks at boot. Needs the board's gogo firmware to
-be installed already (chapter 2).
+Writes an image to the board's program partition at 0x210000, with a
+header and a CRC that the firmware checks at boot. Given a directory or a
+`.gg` file it builds it first, as `gogo run` does (to a temporary image;
+`-path` as for `gogo build`), so `gogo flash ./app` is `gogo build` and
+`gogo flash` in one step. Needs the board's gogo firmware to be installed
+already (chapter 2).
 
 - `-port P`: the serial port. Default: the only `/dev/cu.usbmodem*`; with
   none or several, `gogo flash` stops and asks for `-port`.
@@ -309,15 +387,44 @@ be installed already (chapter 2).
 format version (`rebuild it with gogo build`) and images over the 1 MB
 partition.
 
+## gogo push
+
+```text
+gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
+```
+
+Copies an image (a module, chapter 14) to the board's `/flash`, over the
+serial console while the board runs: to `/flash/<file name>`, or to the
+path given (its directory must exist; names as in chapter 9). The board
+writes it under a temporary name, reads it back, checks its length and
+CRC-32, and only then renames it over the target, so the target is
+either the old file or the whole new one. Any failure, a refused chunk,
+a mismatch, the cable pulled, leaves the target as it was. The temporary
+file is `.gogo-push` in the target's directory (which is why that name
+cannot be a target); a push cut off by a pulled cable leaves it there,
+taking space and listed by `fs.ReadDir`, until the next push into that
+directory.
+
+- `-port P`: as for `gogo flash`.
+- `-timeout seconds`: how long to wait for each answer of the board
+  (default 5).
+
+It refuses a file that is not an image of a format this `gogo` knows,
+and a path outside `/flash`. A firmware older than `gogo push` answers
+that it has no push. Only one program can have the serial port open:
+close `gogo monitor` first.
+
 ## gogo monitor
 
 ```text
-gogo monitor [-port P] [-t seconds] [-until text] [-reset]
+gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
 ```
 
 Copies the board's console to standard output.
 
-- `-t seconds`: stop after this long (default 10).
+- `-timeout seconds`: stop after this long (default 10; fractions such
+  as `0.5` are fine). `-t` is its old name: it still works in this
+  release, with a note on standard error, and goes away in the next.
 - `-until text`: stop after the first line containing `text`, e.g.
   `-until "gogo: vm exited"`.
 - `-reset`: reset the board first, so the capture starts at boot. Without
@@ -330,7 +437,7 @@ stop `gogo monitor` before `gogo flash` or `gogo config`.
 ## gogo firmware
 
 ```text
-gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list] [-without list] files...
+gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
 ```
 
 Chooses which optional parts the firmware needs to contain for a set of
@@ -358,6 +465,11 @@ driver nobody uses. It reads the requirement names each file carries
   `tls` with `net`.
 - A required feature the board lacks is an error that names it, for example
   `kbd` or `sd` on the `sticks3`.
+- `-board` names the board. Instead, `-port P` asks the board on that
+  port: one read-only esptool command (`chip-id`; `-esptool` as for
+  `gogo flash`) reads its chip, and an ESP32-S3 with embedded PSRAM is
+  the M5StickS3, one without is the Cardputer ADV (as `gogo setup`
+  decides). The board resets afterwards and runs its program again.
 - `-o dir`: the build directory and where `sdkconfig.gogo` goes (default
   `build-fw-<board>`). `-build` runs the printed command (from the gogo
   repository root, with ESP-IDF exported, chapter 2).
@@ -375,19 +487,47 @@ gogo config [-port P | -local] set <key> <value|->
 gogo config [-port P | -local] get <key>
 gogo config [-port P | -local] list
 gogo config [-port P | -local] rm <key>
-gogo config [-port P] scan
-gogo config [-port P] stats
+gogo config keys
+gogo config [-port P] scan        # deprecated: gogo device scan
+gogo config [-port P] stats       # deprecated: gogo device stats
 ```
 
 Edits the configuration store on the board or in the local file. See
 chapter 11 for how the store is chosen, the key rules and the keys gogo
-uses. `scan` lists the 2.4 GHz networks the board sees; `stats` prints the
-board's network counters, free memory and how full the VM's fixed tables
-are, as used/capacity: `bytes=N/64` (off-heap `bytes.Bytes` handles),
-`ports=N/16` (open ports) and `subs=N/4` (`net.Subscribe` slots). When a
-port open fails or a tcp write gets `Done{-1}`, these show whether a
-table is full. A firmware built without `net` prints no network counters
-and no `subs`. Both need a board.
+uses (`keys` prints them; `set` checks a key under a gogo prefix, and its
+value, against that table). `scan` and `stats` are `gogo device scan` and
+`gogo device stats` (below), kept here for this release.
+
+## gogo device
+
+```text
+gogo device [-port P] scan
+gogo device [-port P] stats
+gogo device [-port P] [-yes] format-flash
+```
+
+Operations on the board itself, over its serial console:
+
+- `scan` lists the 2.4 GHz networks the board sees.
+- `stats` prints the board's network counters, free memory and how full
+  the VM's fixed tables are, as used/capacity: `bytes=N/64` (off-heap
+  `bytes.Bytes` handles), `ports=N/16` (open ports) and `subs=N/4`
+  (`net.Subscribe` slots). When a port open fails or a tcp write gets
+  `Done{-1}`, these show whether a table is full. A firmware built
+  without `net` prints no network counters and no `subs`.
+  `console_stack_free=N/4096` is the least stack the console task (which
+  answers these commands and writes `gogo push` files) has had free.
+- `format-flash` erases every file on `/flash`: the board restarts and
+  formats its `/flash` partition at the size `fs.flash.size` sets
+  (chapter 9). Nothing else is touched: not the configuration store
+  (Wi-Fi settings stay), not the program, not the firmware; the chip is
+  never erased. It asks you to type `yes` first; `-yes` skips the
+  question.
+
+`-port` as for `gogo flash`. `scan` and `stats` were `gogo config scan`
+and `gogo config stats`, and `format-flash` was `gogo config set
+fs.flash.format yes` and a restart; the old forms still work in this
+release, with a note, and go away in the next.
 
 ## gogo setup
 

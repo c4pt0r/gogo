@@ -39,14 +39,14 @@ func run(m code.Module, entry string, arg any) {
 
 // loader loads the module, sends it to host and exits once host says so.
 func loader(host actor.PID) {
-	m, e := code.Load(read("/flash/hello.gmod"))
+	m, e := code.Load(read("/flash/hello.ggb"))
 	println("loader load", int(e))
 	actor.Send(host, m)
 	actor.Receive()
 }
 
 func main() {
-	b := read("/flash/hello.gmod")
+	b := read("/flash/hello.ggb")
 	m, e := code.Load(b)
 	println("load", int(e), code.MemUsed() == b.Len())
 	run(m, "Main", "x")

@@ -1,6 +1,7 @@
 package main
 
-// gogo flash: writes an image to the ESP32-S3 image partition.
+// gogo flash: writes an image to the ESP32-S3 image partition; given a
+// directory or a source file, it builds it first (to a temporary image).
 //
 // The partition (platform/esp32s3/partitions.csv: `gogo`, data subtype 0x40
 // at 0x210000, 1 MB) holds a 16-byte little-endian header
@@ -29,7 +30,7 @@ const (
 	partSize    = 0x100000   // `gogo` partition size
 	partHdrSize = 16
 	portGlob    = "/dev/cu.usbmodem*"
-	flashUsage  = "usage: gogo flash [-port P] [-esptool path] app" + imageExt
+	flashUsage  = "usage: gogo flash [-port P] [-esptool path] [-path dirs] <app" + imageExt + "|dir|file" + sourceExt + ">"
 )
 
 // checkImage reports why img cannot go into the image partition, or nil.
@@ -75,9 +76,9 @@ func detectPort(glob func(string) ([]string, error)) (string, error) {
 	case 1:
 		return ports[0], nil
 	case 0:
-		return "", fmt.Errorf("gogo flash: no board found (%s); connect it or pass -port", portGlob)
+		return "", fmt.Errorf("gogo: no board found (%s); connect it or pass -port", portGlob)
 	}
-	return "", fmt.Errorf("gogo flash: several boards found (%s); pick one with -port", strings.Join(ports, ", "))
+	return "", fmt.Errorf("gogo: several boards found (%s); pick one with -port", strings.Join(ports, ", "))
 }
 
 // flasher holds the side effects of `gogo flash` so tests can replace them.
@@ -107,30 +108,32 @@ func findEsptool() (string, error) {
 	return "", errors.New("gogo flash: esptool not found in PATH; pass -esptool (e.g. after `. ~/esp/esp-idf/export.sh`)")
 }
 
-// flash implements `gogo flash`. Flags may come before or after the file.
+// flash implements `gogo flash`.
 func (f flasher) flash(args []string) error {
-	var port, esptool, file string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-port" || a == "-esptool":
-			if i+1 >= len(args) {
-				return errors.New(flashUsage)
-			}
-			if a == "-port" {
-				port = args[i+1]
-			} else {
-				esptool = args[i+1]
-			}
-			i++
-		case strings.HasPrefix(a, "-") || file != "":
-			return errors.New(flashUsage)
-		default:
-			file = a
-		}
+	fs := newFlags("flash")
+	port := fs.String("port", "", "")
+	esptool := fs.String("esptool", "", "")
+	getPath := addPathFlag(fs)
+	pos, err := parseFlags(fs, args, flashUsage)
+	if err != nil {
+		return err
 	}
-	if file == "" {
-		return errors.New(flashUsage)
+	if len(pos) != 1 {
+		return usageError("flash", "want one image, directory or "+sourceExt+" file", flashUsage)
+	}
+	file := pos[0]
+	// A directory or a source file is built first, as gogo run does.
+	if fi, err := os.Stat(file); err == nil && (fi.IsDir() || isSourceFile(file)) {
+		tmp, err := os.MkdirTemp("", "gogo-flash-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmp)
+		if file, err = buildImage(file, filepath.Join(tmp, "app"+imageExt), getPath().path()); err != nil {
+			return err
+		}
+	} else if getPath().set {
+		return usageError("flash", "-path is for building a directory or "+sourceExt+" file, not for an image", flashUsage)
 	}
 	img, err := os.ReadFile(file)
 	if err != nil {
@@ -139,17 +142,17 @@ func (f flasher) flash(args []string) error {
 	if err := checkImage(img); err != nil {
 		return fmt.Errorf("gogo flash: %s: %v", file, err)
 	}
-	if port == "" {
-		if port, err = detectPort(f.glob); err != nil {
+	if *port == "" {
+		if *port, err = detectPort(f.glob); err != nil {
 			return err
 		}
 	}
-	if esptool == "" {
-		if esptool, err = findEsptool(); err != nil {
+	if *esptool == "" {
+		if *esptool, err = findEsptool(); err != nil {
 			return err
 		}
 	}
-	if err := writeImage(f.run, esptool, port, img, nil); err != nil {
+	if err := writeImage(f.run, *esptool, *port, img, nil); err != nil {
 		return fmt.Errorf("gogo flash: %v", err)
 	}
 	return nil

@@ -15,6 +15,13 @@
  * Lazily allocated, owned by signals.c, reached through Actor.extra. */
 typedef struct ActorExtra ActorExtra;
 
+/* The crash report actor_exit prints on stream 2:
+ *   CRASH_REPORT_PID <slot> CRASH_REPORT_KIND <kind> | exit(<code>) [ in <func>]
+ * gogovm (platform/unix/main.c) reads main's exit status from it, so both
+ * use these. */
+#define CRASH_REPORT_PID  "gogo: actor <pid "
+#define CRASH_REPORT_KIND "> crashed: "
+
 /* The only way an actor dies (normal return, Exit, runtime error, quota,
  * kill, cascade): prints the crash report unless code is R_NORMAL or
  * R_SHUTDOWN (" in <func>" when func_name is a const ref to the function's

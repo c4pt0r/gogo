@@ -1,7 +1,7 @@
 # hotload_net: hot loading over Wi-Fi
 
-The board fetches `worker_v1.gmod` over HTTPS, loads it, runs it under
-`supervisor.SuperviseModule`, then fetches `worker_v2.gmod` and upgrades the
+The board fetches `worker_v1.ggb` over HTTPS, loads it, runs it under
+`supervisor.SuperviseModule`, then fetches `worker_v2.ggb` and upgrades the
 running worker. It prints each step, the fetch and load time in ms, and
 `code mem` (`code.MemUsed`). The modules are those of `examples/hotload`.
 
@@ -29,8 +29,8 @@ such a certificate:
 ```sh
 go build -o build/gogo ./cmd/gogo
 mkdir -p /tmp/mods
-build/gogo build examples/hotload/mods/worker_v1 -o /tmp/mods/worker_v1.gmod
-build/gogo build examples/hotload/mods/worker_v2 -o /tmp/mods/worker_v2.gmod
+build/gogo build examples/hotload/mods/worker_v1 -o /tmp/mods/worker_v1.ggb
+build/gogo build examples/hotload/mods/worker_v2 -o /tmp/mods/worker_v2.ggb
 (cd /tmp/mods && python3 -m http.server --bind 127.0.0.1 8000)   # in another terminal
 tailscale funnel 8000                                             # in a third; prints the https URL
 
@@ -39,7 +39,7 @@ gogo config set wifi.password -                         # reads stdin
 gogo config set demo.modurl https://<machine>.<tailnet>.ts.net   # base URL, no trailing /
 build/gogo build examples/hotload_net -o hotload_net.ggb
 build/gogo flash hotload_net.ggb
-build/gogo monitor -reset -t 60 -until "done"
+build/gogo monitor -reset -timeout 60 -until "done"
 ```
 
 Stop the funnel when you are done: while it runs, anyone can read the
@@ -55,12 +55,12 @@ Expected output (times vary):
 step 1: network
 network up; code mem 0
 step 2: fetch and load v1
-fetched worker_v1.gmod <n> bytes in <ms> ms; loaded in <ms> ms; code mem <n>
+fetched worker_v1.ggb <n> bytes in <ms> ms; loaded in <ms> ms; code mem <n>
 step 3: v1 running
 worker v1: message 1 ...
 worker restarted from the module
 step 4: waiting 5 s, then upgrade
-fetched worker_v2.gmod ...
+fetched worker_v2.ggb ...
 upgrade result (0 is ok): 0
 step 5: v2 running; code mem <n>
 done        (or: FAIL: <reason>)
