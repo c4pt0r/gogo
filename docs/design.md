@@ -2595,8 +2595,8 @@ server checks the MAC of each hop and makes a new one for the next.
 
 **What crosses (strict).** The table above. A reserved struct must have
 exactly this VM's field count for its id. An own struct is matched in
-the receiving actor's module by qualified name, field count and shape: the
-compiler stores a shape hash (FNV-1a over the fields' kinds) in one word
+the receiving actor's module by qualified name, field count and shape: in
+a program that imports `gogo/node` (only), the compiler stores a shape hash (FNV-1a over the fields' kinds) in one word
 after the bytes of the type's name constant, which a VM reads by its
 length and never sees, so no format change; a mismatch drops the message.
 An interface box of a named non-struct type (`STRUCT_BOX`, 15.6) crosses

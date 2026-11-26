@@ -446,9 +446,25 @@ func (g *gen) typeIndex(n *types.Named) (uint32, bool) {
 		return 0, false
 	}
 	st := n.Underlying().(*types.Struct)
-	idx := g.b.AddTypeShape(g.qualified(n.Obj().Pkg(), n.Obj().Name()), uint32(st.NumFields()), g.structShape(st))
+	name := g.qualified(n.Obj().Pkg(), n.Obj().Name())
+	var idx uint32
+	if g.usesNode() { // only a program that may send it to a node needs its shape
+		idx = g.b.AddTypeShape(name, uint32(st.NumFields()), g.structShape(st))
+	} else {
+		idx = g.b.AddType(name, uint32(st.NumFields()))
+	}
 	g.typeIdx[n.Obj()] = idx
 	return idx, true
+}
+
+// usesNode reports whether the program imports gogo/node (distribution).
+func (g *gen) usesNode() bool {
+	for _, l := range g.p.Libs {
+		if l.Pkg != nil && l.Pkg.Path() == "gogo/node" {
+			return true
+		}
+	}
+	return false
 }
 
 // structShape hashes the kinds of a struct's fields (FNV-1a, 32 bits):
