@@ -245,10 +245,16 @@ mutable globals, channels, `go` statements. Generics are deferred.
   packages use features it does not have (goroutines, reflection, and for
   now maps and floats). Libraries have to be written for gogo.
 
+At run time, separately built modules can also be combined with hot
+loading (book chapter 14). A module compiles its own copy of the packages
+it imports, so struct types from a shared package still cannot be sent
+between modules.
+
 ### Can I write scripts?
 Yes, on your computer. `gogo run hello.gg` compiles and runs one file, and
 a file starting with `#!/usr/bin/env -S gogo run` runs directly after
-`chmod +x` (the compiler ignores a first `#!` line). A script can import
+`chmod +x` (the compiler ignores a first `#!` line; where `env -S` is
+missing, as in BusyBox, use `#!/usr/local/bin/gogo run`). A script can import
 packages next to it and from `$GOGOPATH`. It cannot read command-line
 arguments yet. See the book, chapter 2.
 

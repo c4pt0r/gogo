@@ -280,7 +280,11 @@ func main() {
 ```
 
 and `chmod +x hello.gg`, `./hello.gg` runs it (`gogo` must be on your
-`PATH`; `env -S` is in macOS and in Linux's coreutils 8.30 and newer).
+`PATH`). `env -S`, which splits `gogo run` into two words, is in macOS and
+in GNU coreutils 8.30 and newer, but not in BusyBox (Alpine) or older
+coreutils. There, name gogo by its absolute path instead, which needs no
+`env`: `#!/usr/local/bin/gogo run` (the kernel passes `run` as one
+argument).
 The name need not end in `.gg`: `gogo run` reads any file starting with
 `#!` as source. Arguments after the script are refused for now.
 

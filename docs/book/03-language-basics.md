@@ -124,8 +124,12 @@ If the same import path is found in more than one place, the first is
 used and the build warns, naming them all:
 
 ```text
-gogo: warning: package "app/util" is in 2 places; using the first: app/util, /home/you/gogo/app/util
+gogo: warning: package "lib/ring" is in 2 places; using the first: /home/you/gogo/lib/ring, /home/you/work/pkgs/lib/ring
 ```
+
+A program kept inside a search path directory (`~/gogo/app`, the GOPATH
+habit) finds its packages once, through the root: the same directory is
+one place.
 
 There is no `go.mod` and no version: a package is whatever is in its
 directory when you build. The rules, as in Go:
@@ -133,7 +137,16 @@ directory when you build. The rules, as in Go:
 - A package's name (its `package` clause) is its directory's name, the
   last element of its import path, so the name you use in code is always
   the last element of the import. `package utils` in `app/util/` is an
-  error.
+  error, and so the directory's name must be a Go identifier: `my-lib/`
+  cannot hold a package (`mylib/` or `my_lib/` can).
+- An import path matches the directory names letter for letter, case
+  included, even on a file system that ignores case (macOS by default):
+  `import "app/Util"` for `app/util/` is an error, so a program that
+  builds on a Mac also builds on Linux. Two import paths that name the
+  same directory (through a symlink) are an error too.
+- `import "strings"` looks for a package of your own; the error suggests
+  `gogo/strings`. A build root named `gogo` cannot have packages of its
+  own, since every `gogo/...` import is gogo's.
 - Only the build root is `package main`; a `package main` below it is an
   error. The root itself cannot be imported.
 - Imports must not form a cycle; the error shows it:
@@ -145,7 +158,13 @@ directory when you build. The rules, as in Go:
   like the `gogo/` libraries: there is no separate linking step, and
   importing a package compiles all of it.
 - A package's struct types are the image's own, like those of `package
-  main` (a module loaded with `code.Load` has its own, chapter 14). Each
+  main`. A module loaded with `code.Load` (chapter 14) compiles its own
+  copy of every package it imports, so even when the program and the
+  module import the same package, its struct types cannot be sent from
+  one to the other (the send fails with `BadMsg`).
+- In crash reports, `gogo dis` and `actor.Reason.Func`, a function of
+  your package is named by its import path, `app/shapes.Area`; a gogo
+  library's by its package name, `strings.Index`. Each
   package's `//gogo:optional` covers its own opens only, and the image
   requires the drivers your packages open (chapter 12).
 

@@ -58,8 +58,10 @@ An import that does not start with `gogo/` names a package of your own
 
 A match is a directory holding `.gg` files. The search path is `-path
 dirs` if given, else `$GOGOPATH` (directories separated by `:`, or `;`
-on Windows; empty elements are skipped), else `$HOME/gogo` when
-`GOGOPATH` is unset. A path found in more than one place is a warning
+on Windows; empty elements are skipped, relative ones are taken from the
+current directory), else `$HOME/gogo` when `GOGOPATH` is unset. A
+build root inside a search path directory counts once (the same directory
+is one place). A path found in more than one place is a warning
 naming every location; a path found nowhere is an error listing them:
 
 ```text
@@ -68,8 +70,11 @@ main.gg:3:8: gogo: import "app/nope": package not found; searched:
 	/home/you/gogo/app/nope (search path: no such directory)
 ```
 
-A package's name must be its directory's name, only the build root may be
-`package main`, and import cycles are errors that show the chain. A module
+A package's name must be its directory's name (so a Go identifier), only
+the build root may be `package main`, an import path must match the
+directory names on disk letter case included, and import cycles are
+errors that show the chain. Functions of your packages are named by their
+import path (`app/util.Sum`) in crash reports and `gogo dis`. A module
 built for hot loading resolves its packages in the same way, from its own
 directory.
 

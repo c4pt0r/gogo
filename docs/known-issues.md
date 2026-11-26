@@ -145,6 +145,16 @@ rebuilt:
   rebuilding a struct with a literal instead of assigning a field.
 - **No `gogo/fmt` or `gogo/errors`.** Printing is `println`; to build a
   string use `gogo/strconv` and `+`.
+- **A shared package's struct types cannot cross modules.** A program
+  and a hot-loaded module (or two modules) that import the same package,
+  your own or a `gogo/` library such as `gogo/http`, each compile their own
+  copy of it, so its struct types are different types in each. Sending
+  one across modules fails with `BadMsg` at run time, not at compile time
+  (book 14.5). Only the stub packages' reserved types (`actor.Request`,
+  `net.Up`, `fs.Info`, ...) cross. *Workaround:* send basic values,
+  strings or `Bytes`, and rebuild the struct in the receiver.
+- **Scripts get no arguments yet.** `gogo run x.gg args...` and `./script
+  args...` are refused until programs can read their arguments.
 - **Loop variables cannot be captured.** In a three-clause `for` loop,
   `func() { work(i) }` is rejected with `captured variable must not be
   reassigned`, because `i++` assigns `i`. Closures capture by value, so
@@ -507,6 +517,13 @@ rebuilt:
   the Wi-Fi step and does not watch the program print: `gogo` cannot use
   the serial console on Windows (nor can `gogo monitor` and `gogo config`
   on a board). Not tested on Windows hardware.
+- **The release `gogovm` has no `tls` port**, and the Linux VMs are
+  tested only by the release workflow (linux-arm64 under qemu). A VM that
+  fails to build there is left out of the release, which says so in its
+  summary. *Workaround:* build gogovm from source (`make vm`).
+- **`#!/usr/bin/env -S gogo run` needs an `env` with `-S`** (macOS, GNU
+  coreutils 8.30+), not BusyBox's. *Workaround:* `#!/usr/local/bin/gogo
+  run`, the absolute path of gogo.
 - **`gogo setup` trusts the release it is pointed at.** `SHA256SUMS` comes
   from the same release as the files, so it catches broken downloads,
   not a tampered release; there are no signatures.
