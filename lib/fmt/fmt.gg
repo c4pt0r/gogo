@@ -1,0 +1,707 @@
+// Package fmt formats values as Go's fmt does (15.6): Sprint, Sprintln,
+// Sprintf, Print, Println, Printf and Errorf, with the verbs %v %d %s %q
+// %x %X %o %O %b %c %U %t %e %E %f %F %g %G and %%, the flags + - # space
+// and 0, a width and a precision (also * from an argument). An error or a
+// Stringer operand is printed with its Error or String method (for %v %s
+// %q %x %X, as in Go). %v of a value with no method of these (a struct, a
+// slice, a map, a pointer, a value of a named type) is the text println
+// prints for it (the builtin B_SPRINT): {1 2}, [a b], map[k:v], &{1 2}.
+// Print, Println and Printf write to the console, as println does.
+//
+// Differences from Go: inside a struct, slice or map, a field's String
+// or Error method is not called, and a uint32 or uint64 prints as its
+// signed bit pattern; %s, %q and %x of a []byte print its elements, as
+// %v does (convert it with string(b)); the # flag of %g is ignored; a pointer prints as & and its target at any depth
+// (Go prints an address below the top), and %p is not supported; %T is
+// not supported (no reflection) and a bad verb or extra argument names
+// only a basic type ("?" for others); a nil pointer or map in an
+// interface is the nil interface value, so it prints <nil>; width and
+// precision count bytes of a string, not runes. Errorf wraps the operand
+// of its first %w (errors.Unwrap and errors.Is see it); the wrapping
+// error is a value, compared by what it holds.
+//
+// Only the functions a program calls are compiled into it (gogo/fmt is a
+// system package); float formatting adds the float library's code but
+// does not make an image require floats.
+package fmt
+
+import (
+	"gogo/errors"
+	"gogo/strconv"
+)
+
+// Stringer is implemented by any value that has a String method, which
+// defines the native format for that value (%v, %s, ...).
+type Stringer interface {
+	String() string
+}
+
+// sprint is B_SPRINT: the text println prints for v, without the
+// newline; with mode 1, written to the console instead (returns "").
+//
+//gogo:builtin
+func sprint(mode int, v any) string { panic("gogo only") }
+
+// Sprint formats its operands as %v does and concatenates them, with a
+// space between operands when neither is a string.
+func Sprint(a ...any) string {
+	var b []byte
+	for i, x := range a {
+		if i > 0 && !isString(a[i-1]) && !isString(x) {
+			b = append(b, ' ')
+		}
+		b = append(b, plain(x)...)
+	}
+	return string(b)
+}
+
+// Sprintln formats its operands as %v does, with spaces between them and
+// a newline after the last.
+func Sprintln(a ...any) string {
+	var b []byte
+	for i, x := range a {
+		if i > 0 {
+			b = append(b, ' ')
+		}
+		b = append(b, plain(x)...)
+	}
+	b = append(b, '\n')
+	return string(b)
+}
+
+// Sprintf formats its operands according to format.
+func Sprintf(format string, a ...any) string {
+	s, _ := doPrintf(format, a)
+	return s
+}
+
+// Print writes Sprint(a...) to the console. err is always nil.
+func Print(a ...any) (n int, err error) {
+	return write(Sprint(a...))
+}
+
+// Println writes Sprintln(a...) to the console. err is always nil.
+func Println(a ...any) (n int, err error) {
+	return write(Sprintln(a...))
+}
+
+// Printf writes Sprintf(format, a...) to the console. err is always nil.
+func Printf(format string, a ...any) (n int, err error) {
+	s, _ := doPrintf(format, a)
+	return write(s)
+}
+
+// Errorf formats as Sprintf does and returns the text as an error. With a
+// %w verb (formatted as %v), the error wraps that operand, the first if
+// there are several: errors.Unwrap returns it.
+func Errorf(format string, a ...any) error {
+	s, w := doPrintf(format, a)
+	if w != nil {
+		return wrapError{s, w}
+	}
+	return errors.New(s)
+}
+
+// wrapError is Errorf's error with a %w operand.
+type wrapError struct {
+	msg string
+	err error
+}
+
+func (e wrapError) Error() string { return e.msg }
+
+func (e wrapError) Unwrap() error { return e.err }
+
+// write writes s to the console.
+func write(s string) (int, error) {
+	sprint(1, s)
+	return len(s), nil
+}
+
+// isString reports whether x holds a string.
+func isString(x any) bool {
+	_, ok := x.(string)
+	return ok
+}
+
+// plain formats x as %v does.
+func plain(x any) string {
+	p := state{width: -1, prec: -1}
+	p.fmtArg(x, 'v')
+	return string(p.out)
+}
+
+// state is one formatting directive's flags, width and precision, and
+// the text written so far.
+type state struct {
+	out                             []byte
+	minus, plus, sharp, space, zero bool
+	width, prec                     int // -1: none
+}
+
+// doPrintf formats a by format; w is the operand of the first %w that is
+// an error, or nil.
+func doPrintf(format string, a []any) (string, error) {
+	var p state
+	var w error
+	argi := 0
+	for i := 0; i < len(format); {
+		c := format[i]
+		if c != '%' {
+			p.out = append(p.out, c)
+			i++
+			continue
+		}
+		i++
+		p.minus, p.plus, p.sharp, p.space, p.zero = false, false, false, false, false
+		p.width, p.prec = -1, -1
+		for ; i < len(format); i++ {
+			switch format[i] {
+			case '-':
+				p.minus, p.zero = true, false
+				continue
+			case '+':
+				p.plus = true
+				continue
+			case '#':
+				p.sharp = true
+				continue
+			case ' ':
+				p.space = true
+				continue
+			case '0':
+				p.zero = !p.minus
+				continue
+			}
+			break
+		}
+		if i < len(format) && format[i] == '*' {
+			i++
+			p.width = p.intArg(a, &argi)
+			if p.width < 0 {
+				p.minus, p.width = true, -p.width
+			}
+		} else {
+			p.width, i = num(format, i)
+		}
+		if i < len(format) && format[i] == '.' {
+			i++
+			if i < len(format) && format[i] == '*' {
+				i++
+				p.prec = p.intArg(a, &argi)
+				if p.prec < 0 {
+					p.prec = -1
+				}
+			} else {
+				p.prec, i = num(format, i)
+				if p.prec < 0 {
+					p.prec = 0
+				}
+			}
+		}
+		if i >= len(format) {
+			p.out = append(p.out, "%!(NOVERB)"...)
+			break
+		}
+		verb := format[i]
+		i++
+		if verb == '%' {
+			p.out = append(p.out, '%')
+			continue
+		}
+		if argi >= len(a) {
+			p.out = append(p.out, '%', '!', verb)
+			p.out = append(p.out, "(MISSING)"...)
+			continue
+		}
+		x := a[argi]
+		argi++
+		if verb == 'w' {
+			e, ok := x.(error)
+			if !ok {
+				p.badVerb(verb, x)
+				continue
+			}
+			if w == nil {
+				w = e
+			}
+			verb = 'v'
+		}
+		p.fmtArg(x, verb)
+	}
+	if argi < len(a) {
+		p.out = append(p.out, "%!(EXTRA "...)
+		for i, x := range a[argi:] {
+			if i > 0 {
+				p.out = append(p.out, ", "...)
+			}
+			p.out = append(p.out, typeName(x)...)
+			p.out = append(p.out, '=')
+			p.out = append(p.out, plain(x)...)
+		}
+		p.out = append(p.out, ')')
+	}
+	return string(p.out), w
+}
+
+// num parses the decimal number at s[i:], -1 if there is none, and
+// returns the index after it.
+func num(s string, i int) (int, int) {
+	n := -1
+	for ; i < len(s) && s[i] >= '0' && s[i] <= '9'; i++ {
+		if n < 0 {
+			n = 0
+		}
+		if n < 1000000 {
+			n = n*10 + int(s[i]-'0')
+		}
+	}
+	return n, i
+}
+
+// intArg takes the next operand as a * width or precision.
+func (p *state) intArg(a []any, argi *int) int {
+	if *argi >= len(a) {
+		p.out = append(p.out, "%!(BADWIDTH)"...)
+		return -1
+	}
+	n, ok := a[*argi].(int)
+	*argi = *argi + 1
+	if !ok {
+		p.out = append(p.out, "%!(BADWIDTH)"...)
+		return -1
+	}
+	return n
+}
+
+// fmtArg formats operand x with verb.
+func (p *state) fmtArg(x any, verb byte) {
+	if x == nil {
+		if verb == 'v' {
+			p.pad("<nil>")
+			return
+		}
+		p.badVerb(verb, x)
+		return
+	}
+	switch verb {
+	case 'v', 's', 'q', 'x', 'X': // an error's Error, a Stringer's String
+		if e, ok := x.(error); ok {
+			p.fmtString(e.Error(), verb)
+			return
+		}
+		if s, ok := x.(Stringer); ok {
+			p.fmtString(s.String(), verb)
+			return
+		}
+	}
+	switch v := x.(type) {
+	case bool:
+		if verb == 't' || verb == 'v' {
+			if v {
+				p.pad("true")
+			} else {
+				p.pad("false")
+			}
+			return
+		}
+	case string:
+		p.fmtString(v, verb)
+		return
+	case int:
+		p.fmtInt(int64(v), false, verb, x)
+		return
+	case int64:
+		p.fmtInt(v, false, verb, x)
+		return
+	case int32:
+		p.fmtInt(int64(v), false, verb, x)
+		return
+	case int16:
+		p.fmtInt(int64(v), false, verb, x)
+		return
+	case int8:
+		p.fmtInt(int64(v), false, verb, x)
+		return
+	case uint8:
+		p.fmtInt(int64(v), true, verb, x)
+		return
+	case uint16:
+		p.fmtInt(int64(v), true, verb, x)
+		return
+	case uint32:
+		p.fmtInt(int64(v), true, verb, x)
+		return
+	case uint:
+		p.fmtInt(int64(v), true, verb, x)
+		return
+	case uint64:
+		p.fmtInt(int64(v), true, verb, x)
+		return
+	case float64:
+		p.fmtFloat(v, 64, verb, x)
+		return
+	case float32:
+		p.fmtFloat(float64(v), 32, verb, x)
+		return
+	}
+	switch verb {
+	case 'v', 'd', 's': // what println prints for it
+		p.pad(sprint(0, x))
+		return
+	}
+	p.badVerb(verb, x)
+}
+
+// badVerb writes %!verb(type=value).
+func (p *state) badVerb(verb byte, x any) {
+	p.out = append(p.out, '%', '!', verb, '(')
+	if x == nil {
+		p.out = append(p.out, "<nil>"...)
+	} else {
+		p.out = append(p.out, typeName(x)...)
+		p.out = append(p.out, '=')
+		p.out = append(p.out, plain(x)...)
+	}
+	p.out = append(p.out, ')')
+}
+
+// typeName names the type of x, if it is a basic type; "?" otherwise.
+func typeName(x any) string {
+	switch x.(type) {
+	case bool:
+		return "bool"
+	case string:
+		return "string"
+	case int:
+		return "int"
+	case int8:
+		return "int8"
+	case int16:
+		return "int16"
+	case int32:
+		return "int32"
+	case int64:
+		return "int64"
+	case uint:
+		return "uint"
+	case uint8:
+		return "uint8"
+	case uint16:
+		return "uint16"
+	case uint32:
+		return "uint32"
+	case uint64:
+		return "uint64"
+	case float32:
+		return "float32"
+	case float64:
+		return "float64"
+	case error:
+		return "error"
+	}
+	return "?"
+}
+
+// pad writes s padded to the width with spaces (or zeros, with the 0
+// flag), on the left or, with the - flag, on the right.
+func (p *state) pad(s string) {
+	n := p.width - runes(s)
+	if n <= 0 {
+		p.out = append(p.out, s...)
+		return
+	}
+	if p.minus {
+		p.out = append(p.out, s...)
+		for ; n > 0; n-- {
+			p.out = append(p.out, ' ')
+		}
+		return
+	}
+	c := byte(' ')
+	if p.zero {
+		c = '0'
+	}
+	for ; n > 0; n-- {
+		p.out = append(p.out, c)
+	}
+	p.out = append(p.out, s...)
+}
+
+// padNumber is pad for a number: zeros go after its sign.
+func (p *state) padNumber(s string) {
+	if p.zero && !p.minus && p.width > len(s) && len(s) > 0 && (s[0] == '-' || s[0] == '+' || s[0] == ' ') {
+		p.out = append(p.out, s[0])
+		p.width--
+		p.pad(s[1:])
+		return
+	}
+	p.pad(s)
+}
+
+// runes counts the UTF-8 runes of s (bytes that do not continue one).
+func runes(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i]&0xC0 != 0x80 {
+			n++
+		}
+	}
+	return n
+}
+
+const hexLower = "0123456789abcdef"
+const hexUpper = "0123456789ABCDEF"
+
+// fmtString formats s with verb.
+func (p *state) fmtString(s string, verb byte) {
+	switch verb {
+	case 'v', 's':
+		if p.prec >= 0 && p.prec < len(s) {
+			s = s[:p.prec]
+		}
+		p.pad(s)
+	case 'q':
+		if p.sharp && canBackquote(s) {
+			p.pad("`" + s + "`")
+			return
+		}
+		p.pad(quote(s, '"'))
+	case 'x', 'X':
+		digits := hexLower
+		if verb == 'X' {
+			digits = hexUpper
+		}
+		var b []byte
+		for i := 0; i < len(s); i++ {
+			if p.space && i > 0 {
+				b = append(b, ' ')
+			}
+			if p.sharp && (p.space || i == 0) {
+				b = append(b, '0', verb)
+			}
+			b = append(b, digits[s[i]>>4], digits[s[i]&15])
+		}
+		p.pad(string(b))
+	default:
+		p.badVerb(verb, s)
+	}
+}
+
+// canBackquote reports whether s can be written between backquotes.
+func canBackquote(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c == '`' || c == 0x7F || (c < ' ' && c != '\t') {
+			return false
+		}
+	}
+	return true
+}
+
+// quote returns s between q quotes with Go's escapes: \a \b \f \n \r \t \v,
+// the quote and \\, other control bytes and bytes of no valid UTF-8
+// sequence as \xNN; valid UTF-8 sequences are kept.
+func quote(s string, q byte) string {
+	b := []byte{q}
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c >= 0x80 {
+			if n := utf8Len(s, i); n > 0 {
+				b = append(b, s[i:i+n]...)
+				i += n
+				continue
+			}
+		}
+		i++
+		switch {
+		case c == q || c == '\\':
+			b = append(b, '\\', c)
+		case c == '\a':
+			b = append(b, '\\', 'a')
+		case c == '\b':
+			b = append(b, '\\', 'b')
+		case c == '\f':
+			b = append(b, '\\', 'f')
+		case c == '\n':
+			b = append(b, '\\', 'n')
+		case c == '\r':
+			b = append(b, '\\', 'r')
+		case c == '\t':
+			b = append(b, '\\', 't')
+		case c == '\v':
+			b = append(b, '\\', 'v')
+		case c < ' ' || c >= 0x7F:
+			b = append(b, '\\', 'x', hexLower[c>>4], hexLower[c&15])
+		default:
+			b = append(b, c)
+		}
+	}
+	b = append(b, q)
+	return string(b)
+}
+
+// utf8Len returns the length of the valid UTF-8 sequence of 2 to 4 bytes
+// at s[i], or 0.
+func utf8Len(s string, i int) int {
+	c := s[i]
+	n := 0
+	switch {
+	case c >= 0xC2 && c <= 0xDF:
+		n = 2
+	case c >= 0xE0 && c <= 0xEF:
+		n = 3
+	case c >= 0xF0 && c <= 0xF4:
+		n = 4
+	default:
+		return 0
+	}
+	if i+n > len(s) {
+		return 0
+	}
+	for k := 1; k < n; k++ {
+		if s[i+k]&0xC0 != 0x80 {
+			return 0
+		}
+	}
+	return n
+}
+
+// fmtInt formats the integer v (the bits of a uint64 if unsigned) with
+// verb; x is the operand, for a bad verb.
+func (p *state) fmtInt(v int64, unsigned bool, verb byte, x any) {
+	base := 10
+	switch verb {
+	case 'd', 'v':
+	case 'x', 'X':
+		base = 16
+	case 'o', 'O':
+		base = 8
+	case 'b':
+		base = 2
+	case 'c':
+		p.pad(string(utf8(v)))
+		return
+	case 'q':
+		r := utf8(v)
+		p.pad(quote(string(r), '\''))
+		return
+	case 'U':
+		h := strconv.FormatUint(uint64(v), 16)
+		for len(h) < 4 {
+			h = "0" + h
+		}
+		p.pad("U+" + upper(h))
+		return
+	default:
+		p.badVerb(verb, x)
+		return
+	}
+	neg := !unsigned && v < 0
+	var digits string
+	switch {
+	case unsigned:
+		digits = strconv.FormatUint(uint64(v), base)
+	case neg:
+		digits = strconv.FormatUint(uint64(-v), base) // -MinInt64 is its own bits, unsigned
+	default:
+		digits = strconv.FormatInt64(v, base)
+	}
+	if verb == 'X' {
+		digits = upper(digits)
+	}
+	for len(digits) < p.prec {
+		digits = "0" + digits
+	}
+	if p.prec == 0 && v == 0 {
+		digits = ""
+	}
+	if p.sharp || verb == 'O' {
+		switch verb {
+		case 'x':
+			digits = "0x" + digits
+		case 'X':
+			digits = "0X" + digits
+		case 'o':
+			if len(digits) == 0 || digits[0] != '0' {
+				digits = "0" + digits
+			}
+		case 'O':
+			digits = "0o" + digits
+		case 'b':
+			digits = "0b" + digits
+		}
+	}
+	switch {
+	case neg:
+		digits = "-" + digits
+	case p.plus:
+		digits = "+" + digits
+	case p.space:
+		digits = " " + digits
+	}
+	if p.prec >= 0 { // a precision turns off zero padding, as in Go
+		p.zero = false
+	}
+	p.padNumber(digits)
+}
+
+// upper returns s with its lower case letters a-f upper case.
+func upper(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'a' && c <= 'f' {
+			b[i] = c - 'a' + 'A'
+		}
+	}
+	return string(b)
+}
+
+// utf8 encodes the code point r (U+FFFD for an invalid one).
+func utf8(r int64) []byte {
+	switch {
+	case r < 0 || r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF):
+		return []byte{0xEF, 0xBF, 0xBD}
+	case r < 0x80:
+		return []byte{byte(r)}
+	case r < 0x800:
+		return []byte{byte(0xC0 | r>>6), byte(0x80 | r&0x3F)}
+	case r < 0x10000:
+		return []byte{byte(0xE0 | r>>12), byte(0x80 | r>>6&0x3F), byte(0x80 | r&0x3F)}
+	}
+	return []byte{byte(0xF0 | r>>18), byte(0x80 | r>>12&0x3F), byte(0x80 | r>>6&0x3F), byte(0x80 | r&0x3F)}
+}
+
+// fmtFloat formats f (of bits 32 or 64) with verb; x is the operand, for
+// a bad verb.
+func (p *state) fmtFloat(f float64, bits int, verb byte, x any) {
+	prec := p.prec
+	switch verb {
+	case 'v':
+		verb = 'g'
+	case 'e', 'E', 'f', 'g', 'G':
+	case 'F':
+		verb = 'f'
+	default:
+		p.badVerb(verb, x)
+		return
+	}
+	if prec < 0 && (verb == 'e' || verb == 'E' || verb == 'f') {
+		prec = 6
+	}
+	s := strconv.FormatFloat(f, verb, prec, bits)
+	switch {
+	case s == "NaN" || s == "+Inf" || s == "-Inf": // never zero padded; +Inf keeps its sign, as in Go
+		if s == "NaN" && (p.plus || p.space) {
+			s = "+" + s
+			if !p.plus {
+				s = " NaN"
+			}
+		}
+		p.zero = false
+	case s[0] != '-' && p.plus:
+		s = "+" + s
+	case s[0] != '-' && p.space:
+		s = " " + s
+	}
+	p.padNumber(s)
+}

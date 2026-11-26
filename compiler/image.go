@@ -61,6 +61,9 @@ var (
 		BPrintlnu: sizedMinor,
 		BPanic:    ifaceMinor,
 		BCmp:      ifaceMinor,
+		BSprint:   refMinor,
+		// kept for distributed actors (15.5): no gogo image uses them yet
+		BReserved58: 5, BReserved59: 5, BReserved60: 5,
 	}
 	typeMinor = map[string]uint16{
 		"screen.Config":      1, // 15.1: the "screen" port
@@ -151,7 +154,9 @@ type ImageBuilder struct {
 	structs  map[string]uint32 // const structs by type and fields
 	// constSlices: the image has constant slices (15.6, refMinor)
 	constSlices bool
-	funcs       []imgFunc
+	// makesFloat: the code makes floats out of other values (MakesFloat)
+	makesFloat bool
+	funcs      []imgFunc
 	// reserved holds a row for every reserved type (AddReservedType, in
 	// index order); only the first nReserved are written, where
 	// nReserved is one more than the highest reserved type the program
@@ -281,6 +286,7 @@ func (b *ImageBuilder) AddStruct(typ uint32, fields []uint32) uint32 {
 		return off
 	}
 	off := uint32(len(b.consts))
+	typ |= b.TypeFlags(typ) // as NEWSTRUCT would make it (15.6)
 	b.consts = append(b.consts, HdrMake(uint32(2+len(fields)), KStruct), typ)
 	b.consts = append(b.consts, fields...)
 	if b.structs == nil {
@@ -317,6 +323,7 @@ func (b *ImageBuilder) AddTypeFlags(name string, nFields, flags uint32) uint32 {
 
 // TypeFlags returns the flags of own type idx (0 for a reserved one).
 func (b *ImageBuilder) TypeFlags(idx uint32) uint32 {
+	idx &= 0xFFFF
 	if idx < TypeOwnBase {
 		return 0
 	}
@@ -453,8 +460,13 @@ func (b *ImageBuilder) Bytes() ([]byte, error) {
 // reserved row the image carries (len(used) is n_reserved). And the lowest
 // format minor that runs the image: the highest among its opcodes,
 // builtins and used reserved types, and floatMinor if it uses floating
-// point (usesFloat: a float op, B_FLOAT, a K_FLOAT constant or a TYPEIS of
-// a float type). A row it carries but does not use is
+// point, and whether the image makes floats, which requires
+// FloatRequirement (usesFloat: a K_FLOAT constant, CONVF of an integer, or
+// a B_FLOAT op that makes a float out of others, MakesFloat). The other
+// float ops, B_FLOAT and a TYPEIS of a float type only need the minor: on
+// a VM without floats no float value can reach them (an image or module
+// that could make one requires float), so gogo/fmt's float formatting
+// does not make every image that formats require float. A row it carries but does not use is
 // written with 0 fields and adds no minor: no VM reads it (NEWSTRUCT and
 // const structs mark their type; TYPEIS and GETFIELD read no row), and
 // the loader accepts any count up to its own.
@@ -471,7 +483,13 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 	for pc := 0; pc < len(code); pc++ {
 		op := uint8(code[pc])
 		minor = max(minor, opMinor[op], convMinor(op, uint8(code[pc]>>24)))
-		usesFloat = usesFloat || op >= OpAddf && op <= OpConvf
+		// only what makes a float out of other values: CONVF of an
+		// integer (the other float ops take floats, from somewhere that
+		// made them)
+		usesFloat = usesFloat || op == OpConvf && (uint8(code[pc]>>24) == ConvF64Int || uint8(code[pc]>>24) == ConvF32Int)
+		if op >= OpAddf && op <= OpConvf {
+			minor = max(minor, floatMinor)
+		}
 		if !OpHasExt(op) {
 			continue
 		}
@@ -480,11 +498,10 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 		case OpNewstruct, OpTypeis:
 			mark(code[pc])
 			if op == OpTypeis && (code[pc] == TyFloat32 || code[pc] == TyFloat64) {
-				usesFloat = true
+				minor = max(minor, floatMinor)
 			}
 		case OpBuiltin:
 			minor = max(minor, builtinMinor[code[pc]])
-			usesFloat = usesFloat || code[pc] == BFloat
 		}
 	}
 	for _, t := range b.types {
@@ -506,6 +523,7 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 			usesFloat = true
 		}
 	}
+	usesFloat = usesFloat || b.makesFloat
 	if usesFloat {
 		minor = max(minor, floatMinor)
 	}
@@ -523,6 +541,11 @@ func (b *ImageBuilder) scan(code []uint32) (used []bool, minor uint16, usesFloat
 	}
 	return used, minor, usesFloat, nil
 }
+
+// MakesFloat records that the code makes floats out of other values
+// (math.Inf, math.NaN, strconv.ParseFloat: B_FLOAT ops the scan cannot
+// tell apart), so the image requires FloatRequirement.
+func (b *ImageBuilder) MakesFloat() { b.makesFloat = true }
 
 // requireFloat adds FloatRequirement to the image's requirements (once).
 func (b *ImageBuilder) requireFloat() {

@@ -39,6 +39,7 @@
 #include "bytes.h"
 #include "config.h"
 #include "host.h"
+#include "out.h"
 #include <string.h>
 
 /* Number of heap words of a string with len bytes. */
@@ -630,6 +631,30 @@ static uint32_t config_get(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) 
     return R_NORMAL;
 }
 
+/* ---- B_SPRINT (15.6) ---- */
+
+/* SPRINT mode, v (gogo/fmt): the text println prints for v, without the
+ * newline: mode 0 a new string (the text counted, then written into it),
+ * mode 1 written to the console (nil). Not static, so that it is not
+ * inlined: its Out buffer would make strs_builtin's frame large. */
+uint32_t strs_sprint(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
+    int32_t mode;
+    uint32_t off = UINT32_MAX;   /* the string, once allocated */
+    Out o;
+    if (!arg_int(vm, a, R[rb], &mode)) return R_BAD_CODE;
+    for (;;) {
+        out_init(&o, vm, mode ? 1 : 0);
+        if (off != UINT32_MAX) o.dst = (char *)(a->mem + off + 2);
+        if (!term_text(&o, vm, a, R[rb + 1])) return R_BAD_CODE;
+        out_flush(&o);
+        if (mode || off != UINT32_MAX || !o.n) break;
+        if (!str_alloc(vm, a, (uint32_t)o.n, &off)) return R_OUT_OF_MEMORY;
+        R = (term *)a->mem + a->fp;   /* the allocation may have moved everything */
+    }
+    R[ra] = mode ? T_NIL : off != UINT32_MAX ? term_from_ref(off) : T_EMPTYSTR;
+    return R_NORMAL;
+}
+
 /* ---- order (B_CMP) ---- */
 
 /* The order of two byte strings: by their first differing byte, then by
@@ -859,6 +884,9 @@ uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, u
     case B_CONFIG_GET:
         if (rc != 1u) return R_BAD_CODE;
         return config_get(vm, a, R, ra, rb);
+    case B_SPRINT:
+        if (rc != 2u) return R_BAD_CODE;
+        return strs_sprint(vm, a, R, ra, rb);
     default:
         return R_BAD_CODE;
     }

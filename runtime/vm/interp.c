@@ -321,13 +321,15 @@ static uint32_t arith64(uint32_t op, int64_t x, int64_t y, int64_t *r) {
 static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth, int32_t left);
 
 /* A slice, bare or inside a printed struct: [e0 e1 ...] (Go's println
- * prints [len/cap]address instead); with map, a map header's entries
- * (15.6: keys and values alternate), map[k0:v0 k1:v1 ...]. out_slice and
+ * prints [len/cap]address instead); a map header's entries (15.6: keys
+ * and values alternate, the header printed "map" and set o->map to their
+ * depth) as [k0:v0 k1:v1 ...]. out_slice and
  * out_term spend left as deep_live does and return what is left; once it
  * is spent the rest of the value is " ..." and no more (then -1). */
 static int32_t out_slice(Out *o, const Vm *vm, const Actor *a, term t, const uint32_t *h, int depth,
-                         int32_t left, bool map) {
+                         int32_t left) {
     uint32_t off = h[1], len = h[2];
+    bool map = o->map == depth;   /* a map's entries */
     term at = field_term(t, h[4]);   /* a const array (15.6) */
     const uint32_t *arr = obj_of(vm, a, at);
     if (depth >= PRINT_MAX_DEPTH) { out_str(o, "[...]"); return left; }
@@ -345,30 +347,17 @@ static int32_t out_slice(Out *o, const Vm *vm, const Actor *a, term t, const uin
 }
 
 static int32_t out_term(Out *o, const Vm *vm, const Actor *a, term t, int depth, int32_t left) {
-    int32_t v;
-    int64_t v64;
-    const uint8_t *bp;
-    uint32_t blen;
-    bool map = false;
-    const uint32_t *obj;
-    uint32_t kind;
-again:
     if (left <= 0) {
         if (!left) out_str(o, " ...");
         return -1;
     }
     left--;
-    obj = obj_of(vm, a, t);
-    kind = obj ? hdr_kind(obj[0]) : 0;
-    if (kind == K_STRUCT && obj[1] & STRUCT_MAP && hdr_words(obj[0]) == 3u && !map) {
-        /* A map header (15.6): its entries, a slice one level down (where
-         * deep_live walks it), map[k0:v0 k1:v1 ...]. */
-        out_str(o, "map");
-        map = true;
-        depth++;
-        t = field_term(t, obj[2]);
-        goto again;
-    }
+    int32_t v;
+    int64_t v64;
+    const uint8_t *bp;
+    uint32_t blen;
+    const uint32_t *obj = obj_of(vm, a, t);
+    uint32_t kind = obj ? hdr_kind(obj[0]) : 0;
     if (int_val(vm, a, t, &v)) out_int(o, v);
     else if (int64_val(vm, a, t, &v64)) out_int64(o, v64);
     else if (t == T_TRUE) out_str(o, "true");
@@ -386,9 +375,12 @@ again:
     } else if (kind == K_STRING && obj[1] <= (hdr_words(obj[0]) - 2u) * 4u) {
         out_bytes(o, (const char *)(obj + 2), obj[1]);
     } else if (kind == K_STRUCT) {
-        /* 15.6: a pointer's target after "&", a box as its one field */
-        uint32_t box = obj[1] & STRUCT_BOX && hdr_words(obj[0]) == 3u;
-        if (obj[1] & STRUCT_MUT) out_str(o, "&");
+        /* 15.6: a pointer's target after "&", a box as its one field, a
+         * map as "map" and its entries slice (out_slice: o->map) */
+        uint32_t fl = obj[1], box = fl & (STRUCT_BOX | STRUCT_MAP);
+        if (fl & STRUCT_MAP) out_str(o, "map");
+        else if (fl & STRUCT_MUT) out_str(o, "&");
+        o->map = fl & STRUCT_MAP ? depth + 1 : -1;
         if (depth >= PRINT_MAX_DEPTH) { out_str(o, box ? "..." : "{...}"); return left; }
         if (!box) out_str(o, "{");
         for (uint32_t i = 2; i < hdr_words(obj[0]) && left >= 0; i++) {
@@ -397,7 +389,7 @@ again:
         }
         if (left >= 0 && !box) out_str(o, "}");
     } else if (kind == K_SLICE && hdr_words(obj[0]) == 5u) {
-        left = out_slice(o, vm, a, t, obj, depth, left, map);
+        left = out_slice(o, vm, a, t, obj, depth, left);
     } else if (kind == K_CLOSURE) {
         out_str(o, "<func>");
     } else if (kind == K_BUF) {
@@ -431,6 +423,13 @@ static void do_println(const Vm *vm, const Actor *a, const term *args, uint32_t 
     }
     out_str(&o, "\n");
     out_flush(&o);
+}
+
+/* strs.h: the text println prints for t into o (B_SPRINT). */
+bool term_text(Out *o, const Vm *vm, const Actor *a, term t) {
+    if (deep_live(vm, a, t, 0, WALK_BUDGET) == WALK_STALE) return false;
+    out_term(o, vm, a, t, 0, WALK_BUDGET);
+    return true;
 }
 
 /* B_PANIC v: prints "panic: v" on stderr; returns the reason to crash
@@ -1298,7 +1297,7 @@ int interp_run(Vm *vm, Actor *a) {
             case B_MAKE_SLICE: case B_APPEND: case B_COPY: case B_CAP: case B_STR_FROM:
             case B_BYTESLICE_FROM: case B_STR_CMP: case B_BUF_NEW: case B_BUF_WRITE:
             case B_BUF_FREEZE: case B_BYTES_FROM: case B_BYTES_EQUAL: case B_BYTES_COPYTO:
-            case B_CMP: {
+            case B_CMP: case B_SPRINT: {
                 uint32_t err = strs_builtin(vm, a, ext, ra, rb, rc);   /* may GC */
                 RELOAD();
                 if (err != R_NORMAL) CRASH(err);

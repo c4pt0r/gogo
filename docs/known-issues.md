@@ -320,8 +320,20 @@ rebuilt:
   sent to another module (`BadMsg`): an error from `errors.New` held in a
   package-level variable is one; return or send `errors.New(...)` itself
   to cross modules.
-- **No `gogo/fmt`.** Printing is `println`; to build a string use
-  `gogo/strconv` and `+`.
+- **`gogo/fmt` differs from Go's.** It has no reflection: inside a
+  struct, slice or map a field's `String` or `Error` method is not called
+  and a `uint32` or `uint64` prints signed; a pointer below the top
+  prints `&` and its target (Go prints an address); `%p` and `%T` are not
+  supported (`%!p(...)`), and a bad verb or an extra operand names only a
+  basic type (`?` otherwise); `%s`, `%q` and `%x` of a `[]byte` print its
+  elements (convert with `string(b)`); width and precision count bytes of
+  a string; `Errorf`'s error is a value (two with the same text and
+  wrapped error are equal) and an error it wraps with `%w` cannot be sent
+  to another module (its type is gogo/fmt's own). `Scan` and the `Fprint`
+  family are missing (no `io`). Formatting costs code: a program that
+  calls `Sprintf` carries the whole formatter and the `error` and
+  `Stringer` dispatchers (about 19 KB of image, with gogo/errors and
+  gogo/strconv).
 - **`gogo/errors` differs from Go's.** Two errors from `errors.New` with
   the same text are equal (errors are values, compared by what they
   hold; Go's are equal only to themselves). There is no `errors.As`

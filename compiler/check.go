@@ -1094,6 +1094,8 @@ func (p *Program) stubName(fn *types.Func) string {
 		return "strconv." + fn.Name()
 	case MapsPath:
 		return "maps." + fn.Name()
+	case FmtPath:
+		return "fmt." + fn.Name()
 	}
 	return ""
 }

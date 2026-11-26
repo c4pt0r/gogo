@@ -68,7 +68,7 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
-	if len(opNames) != int(OpSetfield)+1 || len(builtinNames) != int(BCmp)+1 {
+	if len(opNames) != int(OpSetfield)+1 || len(builtinNames) != int(BSprint)+1 {
 		t.Error("name tables out of sync")
 	}
 	// ext table vs C op_has_ext.

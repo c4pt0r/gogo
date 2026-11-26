@@ -438,5 +438,5 @@ func (g *gen) staticMap(e *ast.CompositeLit, mt *types.Map, env map[*types.Var]u
 		terms = append(terms, x.k, x.v)
 	}
 	entries := g.b.AddTermSlice(terms, nil, false)
-	return TermConst(g.b.AddStruct(g.mapIndex(mt)|StructMut|StructMap, []uint32{entries}))
+	return TermConst(g.b.AddStruct(g.mapIndex(mt), []uint32{entries}))
 }

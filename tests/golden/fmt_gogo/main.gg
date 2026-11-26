@@ -1,0 +1,37 @@
+// gogo/fmt where gogo's values differ from Go's: a pointer prints as &
+// and its target at any depth, a map in key order, a PID and a Ref as
+// println prints them, a nil map or pointer in an interface as <nil>,
+// and a field's String method is not called. A program that formats no
+// floats needs no float support (this one requires nothing).
+package main
+
+import (
+	"gogo/actor"
+	"gogo/fmt"
+)
+
+type Node struct {
+	Val  int
+	Next *Node
+}
+
+type Name string
+
+func (n Name) String() string { return "name:" + string(n) }
+
+type Rec struct {
+	N  Name
+	ID uint8
+}
+
+func main() {
+	l := &Node{1, &Node{2, nil}}
+	fmt.Println(l)
+	fmt.Printf("%v|%d\n", map[string]int{"z": 26, "a": 1, "m": 13}, map[int]int{3: 9, 1: 1})
+	fmt.Println(actor.Self(), Rec{"x", 7}, Name("y"))
+	var m map[string]int
+	var p *Node
+	var s []int
+	fmt.Println(m, p, s)
+	fmt.Printf("%5v|%-6v|%s\n", []int{1}, Rec{"q", 1}, []byte("hi"))
+}

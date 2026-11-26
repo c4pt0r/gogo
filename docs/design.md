@@ -353,6 +353,26 @@ its host tests on a copy of `lib/` as a temporary Go module `gogo`.
   compare by identity, an order the GC changes): "map with key type ...:
   a pointer key". `println` prints a map as `map[k:v ...]`
   (`out_term`, from the header's `STRUCT_MAP` flag).
+- `gogo/fmt` (15.6): `Sprint`, `Sprintln`, `Sprintf`, `Print`,
+  `Println`, `Printf` and `Errorf` (with `%w`: the error wraps the first
+  `%w` operand, which `errors.Unwrap` and `errors.Is` see), the verbs
+  `%v %d %s %q %x %X %o %O %b %c %U %t %e %E %f %F %g %G %%`, the flags
+  `+ - # space 0`, widths and precisions (also `*`). It is library code
+  (`lib/fmt`) on `gogo/strconv` and interfaces: an `error` or `Stringer`
+  operand prints through its method (dispatch, for `%v %s %q %x %X`), the
+  basic types through a type switch, and anything else (a struct, a
+  slice, a map, a pointer, a value of a named type) as `println` prints
+  it, through builtin 61 `B_SPRINT`, which runs `println`'s walk into a
+  new string (or to the console, for `Print*`). So a box prints as its
+  value (`STRUCT_BOX`), a pointer as `&` and its target, a map as
+  `map[k:v ...]` in key order. A system package: only the functions a
+  program calls are compiled. Its float formatting does not make an image
+  require `float` (image format, §5.6). Differences: a field's `String` or
+  `Error` method is not called inside a struct, slice or map; a nested
+  `uint32` or `uint64` prints signed; a pointer below the top prints its
+  target, not an address; `%p` and `%T` are not supported; `%s` of a
+  `[]byte` prints its elements; a nil pointer or map in an interface
+  prints `<nil>`.
 - Static `defer`: `defer f(args)` anywhere but inside a loop (within its
   own function: a func literal is a function of its own), so each defer
   statement runs at most once per call. The function value, receiver
@@ -1870,8 +1890,13 @@ together with `mbox_words` through `actor_charged_words`).
   and reserved rows it uses, from tables in `compiler/image.go` (everything
   in 15.0 except the additions listed there: 15.1 `screen.Config`; 15.2
   floating point, the float ops, `B_FLOAT`, `K_FLOAT` constants and the
-  `TYPEIS` ids of `float32` and `float64`, which also make the image
-  require `float`; 15.3 sized integers, the unsigned `uint64` ops,
+  `TYPEIS` ids of `float32` and `float64`; an image that can make a
+  float out of other values (a `K_FLOAT` constant, `CONVF` of an integer,
+  `math.Inf`, `math.NaN`, `strconv.ParseFloat`) also requires `float`,
+  one that only handles floats (the other float ops, `FormatFloat`, a
+  float case of a type switch: `gogo/fmt`'s formatting) does not, since
+  on a VM without floats no float value can reach that code (15.6; before
+  it every float op and `TYPEIS` required `float`); 15.3 sized integers, the unsigned `uint64` ops,
   `B_PRINTLNU` and `OP_CONV` modes 3-6 (`sizedMinor`, which the scan
   reads off each `OP_CONV`'s mode); 15.4 the language's abstraction
   phase, `panic` and the interface and equality builtins (`ifaceMinor`);
@@ -1908,7 +1933,10 @@ together with `mbox_words` through `actor_charged_words`).
   `sys.SetTime`, `sys.Random`, 54 `B_FLOAT` (15.2: gogo/math and
   `strconv.FormatFloat` / `ParseFloat`, `runtime/floatlib`), 55
   `B_PRINTLNU` (15.3: `println` with `uint64` values); from 15.4, 56
-  `panic`, 57 `B_CMP` (`==` on structs, arrays and interfaces).
+  `panic`, 57 `B_CMP` (`==` on structs, arrays and interfaces); 58-60
+  kept for distributed actors (15.5); from 15.6, 61 `B_SPRINT` (gogo/fmt:
+  the text `println` prints for a value, as a new string, counted then
+  written into it, or written to the console).
 - **Float ops** (15.2, `OP_ADDF` .. `OP_CONVF`, 52-61): one set for both
   widths. The operands' boxes carry the width (a 2-word `K_FLOAT` is a
   `float32`, a 3-word one a `float64`), and the op computes in it; mixed

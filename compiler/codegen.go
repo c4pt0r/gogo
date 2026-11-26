@@ -854,7 +854,7 @@ func (f *fn) stmtCode(s ast.Stmt) {
 		mark := f.next
 		res := s.Results[0]
 		var r uint8
-		if f.boxes(res, f.result) || f.copiesArray(res, f.result) {
+		if f.boxes(res, f.result) || f.copiesArray(res, f.result) || f.g.p.Info.Types[res].IsNil() {
 			r = f.alloc(res)
 			f.valueInto(res, f.result, r)
 		} else {
@@ -1280,7 +1280,7 @@ func (f *fn) boxes(e ast.Expr, target types.Type) bool {
 // interface (boxes). A constant is boxed at compile time, in the const
 // area.
 func (f *fn) valueInto(e ast.Expr, target types.Type, dst uint8) {
-	if target != nil && isIface(target) && f.g.p.Info.Types[e].IsNil() { // the nil interface value
+	if target != nil && !isSlice(target) && f.g.p.Info.Types[e].IsNil() { // the nil interface value, pointer, map, func
 		f.asm.EmitExt(OpLoadk, dst, 0, 0, TermNil)
 		return
 	}

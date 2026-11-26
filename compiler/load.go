@@ -63,6 +63,8 @@ const (
 	// MapsPath: the run time of the map type (15.6), loaded into every
 	// program that uses a map; maps.compare is B_CMP.
 	MapsPath = "gogo/maps"
+	// FmtPath: formatting (15.6); fmt.sprint is B_SPRINT.
+	FmtPath = "gogo/fmt"
 )
 
 // StrconvPath is the import path of gogo/strconv, a system package whose

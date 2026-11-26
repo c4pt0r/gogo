@@ -23,6 +23,14 @@
  * argument. */
 uint32_t strs_builtin(Vm *vm, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc);
 
+/* Writes the text println prints for t into o (interp.c, for B_SPRINT);
+ * false, writing nothing, if t names a gone module. */
+struct Out;
+bool term_text(struct Out *o, const Vm *vm, const Actor *a, term t);
+
+/* B_SPRINT (strs_builtin's case, apart). */
+uint32_t strs_sprint(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb);
+
 /* True if both terms are strings; then *eq is whether their bytes are
  * equal (const and heap strings, in any combination). */
 bool strs_equal(const Vm *vm, const Actor *a, term x, term y, bool *eq);
