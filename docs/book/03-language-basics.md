@@ -968,11 +968,17 @@ Two differences from Go:
   without running them. There is no `recover`: the actor ends, and its
   ports and files are closed for it (section 5.7), so `defer f.Close()` is
   for actors that live on, not a safety net.
-- **A deferred func literal cannot change the results.** With named
-  results, `return x` sets them before the deferred calls run, as in Go,
-  but a func literal captures by value (section 3.4), so the Go idiom
-  `defer func() { err = wrap(err) }()` is rejected (`captured named result
-  must not be changed`). Compute the result before returning instead.
+- **A deferred func literal sees values, not variables.** A func literal
+  captures by value (section 3.4), so the Go pattern of deferring a
+  literal and then changing a variable it reads, `x := 1; defer func() {
+  println(x) }(); x = 2` (Go prints 2), is rejected (`captured variable
+  must not be reassigned`): pass the value as an argument, or set it
+  before the `defer`. For the same reason the idiom `defer func() { err
+  = wrap(err) }()` is rejected (`captured named result must not be
+  changed`): compute the result before returning instead. With named
+  results, `return x` still sets them before the deferred calls run, as
+  in Go, so a deferred call that writes through a slice of an array
+  result changes what the caller gets.
 
 A deferred call whose single argument is a call with several results,
 `defer f(g())`, is rejected; assign the results to variables first.
