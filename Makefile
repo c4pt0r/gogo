@@ -73,11 +73,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize
+test: lint test-c test-c-mcu test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
 
 vm: $(BUILD)/gogovm
 
@@ -647,6 +647,10 @@ netsize:
 # runtime/net/tls/ plus the mbedTLS it links, on the ESP32-S3 (-Os), reported apart from the VM core.
 tlssize:
 	MBEDTLS_DIR=$(MBEDTLS_DIR) tools/vmsize.sh --tls
+
+# runtime/dist/ (the "node" port) code size (linked, as vmsize) and fixed state on the ESP32-S3, reported apart from the VM core.
+distsize:
+	tools/vmsize.sh --dist
 
 # runtime/vfs/ code size (linked, as vmsize) and fixed state on the ESP32-S3, reported apart from the VM core.
 vfssize:
