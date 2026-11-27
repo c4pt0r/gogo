@@ -790,3 +790,33 @@ func TestBoardFit(t *testing.T) {
 		t.Errorf("no limits: %v", err)
 	}
 }
+
+// gogo config set of a key the board's limits bound checks the board's
+// info first and then sets, on one connection: the set's reply is never
+// lost to a second reader (300 times over).
+func TestConfigSetBoardFitReply(t *testing.T) {
+	for i := 0; i < 300; i++ {
+		b := &simBoard{params: "actor_memory=16K memory=160K max_actors=1024 max_ports=16"}
+		var out, errOut bytes.Buffer
+		err := configExec([]string{"-port", "/dev/cu.usbmodem1", "set", "vm.max_actors", "2048"},
+			configEnv{out: &out, errOut: &errOut, in: strings.NewReader(""), glob: globOf("/dev/cu.usbmodem1"),
+				open: func(string) (io.ReadWriteCloser, error) { return b.conn(), nil }})
+		if err != nil {
+			t.Fatalf("try %d: %v", i, err)
+		}
+		b.mu.Lock()
+		frames := fmt.Sprint(b.frames)
+		b.mu.Unlock()
+		if frames != "[info set vm.max_actors 2048]" {
+			t.Fatalf("try %d: frames %s", i, frames)
+		}
+	}
+	b := &simBoard{params: "actor_memory=16K memory=160K max_actors=1024 max_ports=16"}
+	var out, errOut bytes.Buffer
+	err := configExec([]string{"-port", "/dev/cu.usbmodem1", "set", "vm.max_actors", "60000"},
+		configEnv{out: &out, errOut: &errOut, in: strings.NewReader(""), glob: globOf("/dev/cu.usbmodem1"),
+			open: func(string) (io.ReadWriteCloser, error) { return b.conn(), nil }})
+	if err == nil || !strings.Contains(err.Error(), "does not fit this board") {
+		t.Errorf("60000 actors: %v", err)
+	}
+}

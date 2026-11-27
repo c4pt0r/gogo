@@ -559,12 +559,16 @@ func configExec(args []string, env configEnv) error {
 			writeExport(env.out, target, kvs)
 			return nil
 		}
+		// One connection for the fit check and the set: a second one on
+		// the same stream would race the first one's reader for the reply.
+		c := newBoardConn(f)
+		defer c.close()
 		if op == "set" && boardFitKeys[args[0]] {
-			if err := checkBoardFit(f, args[0], args[1]); err != nil {
+			if err := checkBoardFit(c, args[0], args[1]); err != nil {
 				return err
 			}
 		}
-		return boardConfig(f, op, args, env.out, timeout)
+		return boardConfigOn(c, op, args, env.out, timeout)
 	}
 	return fileConfig(target.path, op, args, env.out)
 }
@@ -574,10 +578,8 @@ var boardFitKeys = map[string]bool{"vm.actor_memory": true, "vm.memory": true, "
 
 // checkBoardFit asks the board for its limits (its info line; a firmware
 // before them is not checked) and refuses a value it could not boot with.
-func checkBoardFit(rw io.ReadWriter, key, value string) error {
-	c := newBoardConn(rw)
+func checkBoardFit(c *boardConn, key, value string) error {
 	_, text, err := c.request("info", nil, 5*time.Second)
-	c.close()
 	if err != nil {
 		return nil
 	}
@@ -969,6 +971,11 @@ func (c *boardConn) request(op string, args []string, timeout time.Duration) (kv
 func boardConfig(rw io.ReadWriter, op string, args []string, out io.Writer, timeout time.Duration) error {
 	c := newBoardConn(rw)
 	defer c.close()
+	return boardConfigOn(c, op, args, out, timeout)
+}
+
+// boardConfigOn is boardConfig on the connection c.
+func boardConfigOn(c *boardConn, op string, args []string, out io.Writer, timeout time.Duration) error {
 	kvs, text, err := c.request(op, args, timeout)
 	var be errBoard
 	if errors.As(err, &be) && be.reason == "not set" && len(args) > 0 {

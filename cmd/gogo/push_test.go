@@ -74,6 +74,8 @@ func (b *simBoard) serve() {
 				p = b.params + " "
 			}
 			b.say("ok fw=v0.2.0 board=cardputer image=15.6 " + p + "provides=gpio,kbd,/flash,/sd")
+		case "set":
+			b.say("ok")
 		case "format-flash":
 			b.formats++
 			b.say("ok restarting to format /flash")
