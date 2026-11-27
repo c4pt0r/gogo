@@ -1505,8 +1505,8 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   data read in place on the sender's heap (no copy, no held Bytes), and
   answered with `port.Done` (-1: malformed, nothing applied). A Done that
   does not fit the mailbox is owed and retried every 10 ms by the port's
-  event source (GOGO_MAX_SOURCES is 4: the boards also use net, input and
-  the gpio driver's debounce),
+  event source (GOGO_MAX_SOURCES is 4, 5 with BLE: the boards also use
+  net, input, the gpio driver's debounce and an open ble port),
   after collecting a waiting owner's heap slack as stream/ does; with 8
   owed, further Outs get Done{-1}, counted, so every Out gets its Done. Every operation is
   clipped to the clip rectangle, which is always inside the grid, so no
@@ -1539,6 +1539,61 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   ESP32-S3 with no fixed state (`make screensize`); the firmware grows by
   about 5.1 KB, plus the 1760-byte shared grid allocated at the first
   open.
+
+### 5.4.10 Bluetooth LE (the `ble` port, `gogo/ble`)
+
+- **Shape.** One port, `ble`: a peripheral (GATT server) whose services
+  the program declares at open; peripheral only, one connection at a
+  time, one port per board (the radio is the board's). The central role
+  and scanning are not built. Book chapter 23 is the user's view.
+- **No new types.** The port speaks the generic host-port types: the cfg
+  is a `port.Host{Arg: 1, Data}` whose Data encodes the Config (name,
+  services, UUIDs little-endian, flags: `runtime/ble/ble.h`), commands are
+  `port.Post{Kind: cmd | char << 8, Data}` (SetValue, Notify), events
+  `port.Post{From, Kind: ev | arg << 8, Data}` (Connected with the MTU and
+  the peer's address, Disconnected with the HCI reason, Written, Subscribed,
+  MTU), and each Notify is answered with a `port.Done`. `gogo/ble` is a
+  library (no builtins, no reserved types) that encodes the Config
+  (`ble.Open`) and decodes a Post into typed events (`ble.Event`). So the
+  VM core and the image format are unchanged; the requirement name `ble`
+  is the only image-side trace, recorded by the library's constant
+  `port.Open`, so importing `gogo/ble` requires the driver. The price is
+  `ble.Open(cfg)` and `ble.Event(post)` where a reserved type would let a
+  program write `port.Open("ble", cfg)` and switch on the event directly.
+- **The driver** (`runtime/ble/ble.c`, C99, a `PortDriver` with
+  `open_term` and `command_term`) keeps its state in board storage (a
+  `BleBoard`: the Config, the connection as the events said it, the
+  characteristic of each Notify in flight) and the port's `StreamOut` in
+  `Port.state`: Notify reuses the stream protocol's Out bookkeeping
+  (`stream_out_accept_data`: two in flight, Dones in order, owed when the
+  mailbox is full). The radio side (a NimBLE callback, a socket thread)
+  never touches the VM: it appends records to a fixed 2 KB queue in the
+  `BleBoard` under the HAL's lock and wakes the VM; the driver's event
+  source (registered while the port is open, one more slot:
+  `GOGO_MAX_SOURCES` 5 on the boards and in `gogovm`) delivers them in
+  order. A record the owner has no room for stays queued and is retried
+  every 5 ms, never dropped; a write with a response that finds the queue
+  full is answered with an ATT error so the phone retries, and 128 bytes
+  are kept free for the small events, so a Disconnected is never lost
+  behind writes. Reads never reach the VM: the HAL answers them from the
+  values SetValue stored there. A Notify the stack has no buffer for
+  (`BLE_AGAIN`) is retried every 5 ms, for at most 2 s, and its Done comes
+  when the stack took it; on Disconnected every Notify in flight fails.
+- **Hardware layer** (`BleHal`: start, stop, set_value, notify, lock,
+  unlock). ESP32-S3 (`ble_esp.c`): NimBLE, the GATT tables built from the
+  Config in static arrays, legacy advertising (flags and name, the first
+  service's UUID in the scan response), advertising restarted when the
+  phone leaves; the host's lifetime is `ble_host.c`'s
+  (`ble_host_acquire`/`release`, reference-counted, shared with the
+  firmware's Wi-Fi provisioning, which `ble_prov_active()` reports so the
+  port refuses to open with `errors.Busy` meanwhile). Unix
+  (`ble_unix.c`): a Unix-domain socket at `$GOGO_BLE` and a line protocol
+  a test client plays the phone over (`tests/ble`).
+- **Switch and sizes.** Kconfig `GOGO_BLE` (on by default on both boards,
+  depends on NimBLE, which `sdkconfig.ble` turns on; `gogo firmware` adds
+  that fragment with the feature, the table's `onDefaults`). Figures per
+  board are in [platform/esp32s3/README.md](../platform/esp32s3/README.md)
+  ("BLE").
 
 ### 5.5 Value representation and memory
 
@@ -2951,7 +3006,8 @@ and `gogo/fmt`, which complete the language plan (image format 15.6).
    connect to a server node that also relays board-to-board messages,
    with direct LAN links as a later step.
 3. **Hardware:** a `usb` port (the serial stream and connect events), the
-   Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
+   Arduino Nano ESP32, RP2040 boards, the BLE central role (the
+   peripheral, `gogo/ble`, is done).
 4. **Embedding bindings:** Rust, iOS and Android (Go is done).
 
 Not planned: a JIT; USB device classes (HID, mass storage).

@@ -576,11 +576,11 @@ driver nobody uses. It reads the requirement names each file carries
 `<dir>/sdkconfig.gogo`, a list of `CONFIG_GOGO_*` lines, then prints the
 `idf.py` command that builds with it. It never flashes.
 
-- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen node float`.
+- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen node float ble`.
   The requirement names they build: `net` the drivers `netif`, `udp`,
   `tcp` and `tcp_listen`; `kbd`, `power`, `imu`, `mic`, `speaker`, `tls`,
-  `screen` and `node` (distributed actors, chapter 20) the driver of the
-  same name; `irtx` and `irrx` the drivers `ir_tx` and
+  `screen`, `node` (distributed actors, chapter 20) and `ble` (Bluetooth
+  LE, chapter 23) the driver of the same name; `irtx` and `irrx` the drivers `ir_tx` and
   `ir_rx`; `sd` the mount `/sd` (appendix F); `float` the requirement
   `float` (floating point in the VM and `gogo/math`). `gpio` and `/flash`
   are in every firmware; any other name is an error unless a driver
@@ -588,11 +588,13 @@ driver nobody uses. It reads the requirement names each file carries
   `net`, `kbd`, `power` and `float` are on only when a file requires them (or
   `-with` adds them). The others are on by default on boards that have
   them: `sd`, `imu`, `irtx`/`irrx` (the infrared sender and receiver),
-  `mic`/`speaker`, `tls` (the TLS client, chapter 17) and `node` can be
-  required too,
+  `mic`/`speaker`, `tls` (the TLS client, chapter 17), `node` and `ble`
+  can be required too,
   so a file that needs one keeps it on, while `exfat` (exFAT media) and
   `cjk` (the Chinese font) are not. `irtx` and `irrx` share one firmware switch, as do `mic` and
-  `speaker`, so they go on and off together.
+  `speaker`, so they go on and off together. `ble` also brings its
+  ESP-IDF settings (Bluetooth and NimBLE, `sdkconfig.ble`); `-without ble`
+  leaves Bluetooth out of the firmware altogether.
 - `-with a,b` adds features. `-without a,b` removes them; a feature that a
   file requires cannot be removed (error). `exfat` goes off with `sd`, and
   `tls` and `node` with `net`.

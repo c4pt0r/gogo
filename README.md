@@ -11,8 +11,8 @@ gogo is a small actor VM for microcontrollers and a compiler for a subset
 of Go. You write programs in Go syntax as a set of isolated actors, in the
 style of *Erlang* : each actor has its own heap and memory limit, they talk
 only by copied messages, and supervisors restart the ones that crash.
-Peripherals such as GPIO, the keyboard, files, sockets, the IMU, infrared
-and audio are **ports**, which are actors that take commands and send
+Peripherals such as GPIO, the keyboard, files, sockets, the IMU, infrared,
+audio and Bluetooth LE are **ports**, which are actors that take commands and send
 typed events.
 
 The `gogo` tool compiles a program (a directory of `.gg` source files) to a
@@ -44,7 +44,7 @@ Both use one ESP-IDF firmware tree (`platform/esp32s3`), selected with
  │  system → VM builtins: actor port bytes fs sys net code kbd power imu ir │
  │                       audio screen gpio                                  │
  │  libraries in gogo:   supervisor strings strconv dhcp dns http sntp kv   │
- │                       ringlog wav sound irproto tui node …               │
+ │                       ringlog wav sound irproto tui node ble …           │
  └────────────────────────────────────────────────┬─────────────────────────┘
  ┌────────────────────────────────────────────────▼─────────────────────────┐
  │ compiler/  (Go, module gogotools)                                        │
@@ -106,6 +106,7 @@ the boards, in the host VM, and inside other programs through
 | `runtime/net/` | the TCP/IP stack (Ethernet, ARP, IPv4, ICMP, UDP, TCP), pure C; `runtime/net/tls/`, the TLS client port over it (mbedTLS) |
 | `runtime/dist/` | the `node` port of distributed actors: remote PIDs, the wire codec, remote links and monitors, the relay ([book chapter 20](docs/book/20-distributed.md)) |
 | `runtime/vfs/`, `runtime/stream/`, `runtime/input/`, `runtime/console/`, `runtime/screen/` | file systems, the stream protocol of every byte port (`Chunk`/`Out`/`Done`/`Closed`), input and audio ports, the screen console and fonts, the `screen` port (a text grid; `gogo/tui` builds on it) |
+| `runtime/ble/` | the `ble` port: a Bluetooth LE peripheral (GATT server) the program declares, over NimBLE on the boards and a local socket in `gogovm` ([book chapter 23](docs/book/23-bluetooth.md)) |
 | `platform/unix/` | the host VM (`build/gogovm`) and its simulated hardware |
 | `platform/esp32s3/` | the ESP-IDF firmware for both boards ([README](platform/esp32s3/README.md)) |
 | `compiler/`, `cmd/gogo/` | the compiler and the `gogo` command (Go module `gogotools`, the repository root) |
@@ -243,8 +244,9 @@ Done:
   older firmware unless they use something new, and an image names the
   drivers and mounts it needs).
 - **Peripherals:** GPIO; keyboard and battery; IMU and infrared; audio;
-  the screen as a port plus `gogo/tui`, an ncurses-like text UI; one
-  stream protocol for every byte port.
+  the screen as a port plus `gogo/tui`, an ncurses-like text UI; a
+  Bluetooth LE peripheral (`gogo/ble`: a GATT server a phone app talks
+  to, simulated in `gogovm`); one stream protocol for every byte port.
 - **Your own drivers:** one C driver API (`gogo.h`) for firmware,
   `gogovm` and embedding hosts; a driver is an ESP-IDF component outside
   the tree, built in with `gogo firmware -component` (book chapter 22;

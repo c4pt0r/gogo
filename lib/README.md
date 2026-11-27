@@ -113,3 +113,4 @@ declares `kbd`, `gogo/node` declares `tcp tcp_listen node`. Book chapter
 | `gogo/irproto` | library | bytes | none |
 | `gogo/node` | library | actor, bytes, net, port, strconv, strings, sys | none (distributed actors: a server node and the boards that connect to it; opens `tcp`, `tcp_listen` and `node` without requiring them: `//gogo:optional tcp tcp_listen node`) |
 | `gogo/tui` | library | actor, bytes, gpio, kbd, port, screen, strconv | `gpio`, `screen` (opens `kbd` without requiring it: `//gogo:optional kbd`) |
+| `gogo/ble` | library | actor, bytes, errors, port | `ble` (the Bluetooth LE peripheral port; its types are library types over the generic `port.Host` / `port.Post`, so no reserved type: `runtime/ble/ble.h` is the other half of its encoding) |
