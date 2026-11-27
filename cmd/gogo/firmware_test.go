@@ -59,7 +59,7 @@ func TestFirmwareUnion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE=y\nCONFIG_GOGO_BLE_PROV=y\nCONFIG_GOGO_BOARD_PORTS=n\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE=y\nCONFIG_GOGO_BLE_PROV=y\nCONFIG_GOGO_PROV_DRYRUN=n\nCONFIG_GOGO_PROV_TEST_ENTER=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -72,7 +72,7 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=n\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE=y\nCONFIG_GOGO_BLE_PROV=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
+	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=n\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE=y\nCONFIG_GOGO_BLE_PROV=n\nCONFIG_GOGO_PROV_DRYRUN=n\nCONFIG_GOGO_PROV_TEST_ENTER=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -105,7 +105,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE=y\nCONFIG_GOGO_BLE_PROV=y\nCONFIG_GOGO_BOARD_PORTS=n\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE=y\nCONFIG_GOGO_BLE_PROV=y\nCONFIG_GOGO_PROV_DRYRUN=n\nCONFIG_GOGO_PROV_TEST_ENTER=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -232,6 +232,25 @@ func TestFirmwareStaleSdkconfigRemoved(t *testing.T) {
 	}
 	if !strings.Contains(out, "removed") || !strings.Contains(out, "CONFIG_GOGO_NET") {
 		t.Fatalf("no notice:\n%s", out)
+	}
+}
+
+// A reused build directory whose sdkconfig has a test switch on (the
+// provisioning dry run) is rebuilt: the overlay always writes them as n.
+func TestFirmwareTestSwitchesNeverKept(t *testing.T) {
+	d := t.TempDir()
+	a := writeImg(t, d, "a.ggb")
+	sc := filepath.Join(d, "sdkconfig")
+	os.WriteFile(sc, []byte("CONFIG_GOGO_NET=n\n# CONFIG_GOGO_KBD is not set\nCONFIG_GOGO_PROV_DRYRUN=y\n"), 0o644)
+	out, cfg, err := fwRun(t, "-board", "sticks3", "-o", d, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sc); err == nil || !strings.Contains(out, "CONFIG_GOGO_PROV_DRYRUN") {
+		t.Fatalf("sdkconfig with the dry run kept:\n%s", out)
+	}
+	if !strings.Contains(cfg, "CONFIG_GOGO_PROV_DRYRUN=n\nCONFIG_GOGO_PROV_TEST_ENTER=n\n") {
+		t.Fatalf("overlay:\n%s", cfg)
 	}
 }
 
@@ -592,7 +611,7 @@ func TestFirmwareComponent(t *testing.T) {
 	}
 	plain := writeImg(t, d, "plain.ggb")
 	out, cfg, err = fwRun(t, "-board", "sticks3", "-o", d, plain)
-	if err != nil || !strings.HasSuffix(cfg, "CONFIG_GOGO_BOARD_PORTS=n\n") || !strings.Contains(out, "removed") {
+	if err != nil || !strings.HasSuffix(cfg, "CONFIG_GOGO_PROV_DRYRUN=n\nCONFIG_GOGO_PROV_TEST_ENTER=n\nCONFIG_GOGO_BOARD_PORTS=n\n") || !strings.Contains(out, "removed") {
 		t.Errorf("without -component: %v\n%s\n%s", err, out, cfg)
 	}
 }

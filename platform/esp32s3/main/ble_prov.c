@@ -761,6 +761,9 @@ static const char *reset_name(esp_reset_reason_t r) {
 }
 
 void ble_prov_boot(void) {
+#if CONFIG_GOGO_PROV_DRYRUN
+    platform_esp_say("gogo: TEST BUILD: Wi-Fi setup dry run (nothing is saved)");
+#endif
     /* Only a power-on or a reset by the user (the reset button) or a tool
      * (USB): never after a crash, a watchdog or a brownout while a program
      * may have been using the key, and never after a session's own

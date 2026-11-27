@@ -68,7 +68,13 @@ firmware() {
     idf_env
     rm -rf "$work"
     mkdir -p "$work" "$out"
-    idf.py -C platform/esp32s3 -B "$work" "-DSDKCONFIG=$work/sdkconfig" "$@" build
+    # SDKCONFIG_DEFAULTS from the environment would replace the StickS3's
+    # defaults (platform/esp32s3/CMakeLists.txt): a release takes none.
+    env -u SDKCONFIG_DEFAULTS idf.py -C platform/esp32s3 -B "$work" "-DSDKCONFIG=$work/sdkconfig" "$@" build
+    # Test-only switches never ship (the provisioning dry run writes nothing).
+    if grep -Eq '^CONFIG_GOGO_PROV_(DRYRUN|TEST_ENTER)=y' "$work/sdkconfig"; then
+        die "$board: the build has a test-only switch on (CONFIG_GOGO_PROV_DRYRUN / _TEST_ENTER)"
+    fi
     fa=$work/flasher_args.json
     # The files flasher_args.json names, one per line.
     files=$(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["flash_files"].values()))' "$fa")

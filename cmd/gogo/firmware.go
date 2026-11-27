@@ -92,7 +92,8 @@ var fwFeatures = []fwFeature{
 }
 
 // fwTestKconf lists the Kconfig switches for test builds only, which
-// gogo firmware never sets (main/Kconfig.projbuild).
+// gogo firmware always writes as n (main/Kconfig.projbuild), and a reused
+// build directory that has one on is rebuilt from scratch.
 var fwTestKconf = []string{"CONFIG_GOGO_PROV_DRYRUN", "CONFIG_GOGO_PROV_TEST_ENTER"}
 
 // fwBase lists the requirement names every firmware provides, whatever
@@ -408,6 +409,9 @@ func fwOverlay(board string, on map[string]bool, ports []string) string {
 		}
 		fmt.Fprintf(&b, "%s=%s\n", f.kconf, v)
 	}
+	for _, k := range fwTestKconf { // never in a gogo firmware build, even from a reused -o directory
+		fmt.Fprintf(&b, "%s=n\n", k)
+	}
 	v := "n"
 	if len(ports) > 0 {
 		v = "y"
@@ -500,7 +504,7 @@ func fwStaleSdkconfig(path, overlay string) []string {
 			diff = append(diff, f.kconf)
 		}
 	}
-	for _, k := range []string{fwBoardPortsKconf, fwBoardPortNamesKconf} {
+	for _, k := range append([]string{fwBoardPortsKconf, fwBoardPortNamesKconf}, fwTestKconf...) {
 		if o, ok := old[k]; ok && o != want[k] {
 			diff = append(diff, k)
 		}
