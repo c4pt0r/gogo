@@ -169,7 +169,8 @@ libgogo) an actor's word counts are 32-bit, where a board's are 16-bit
 (an actor there holds at most 65535 words, 256 KB, which keeps its
 record at 48 bytes). Raise the default for every actor with `gogovm
 --actor-memory 64M` (or `gogo run --actor-memory 64M`, the config key
-`vm.actor_memory`, or `gogo_config.actor_memory` when embedding), or for
+`vm.actor_memory`, or `gogo_config.actor_memory` when embedding,
+`embed.Config.ActorMemory` from Go), or for
 one actor with `actor.SpawnOpt(f, actor.Options{MaxMemory: 64 << 20})`;
 `actor.Limit(p)` tells a program its limit. The whole VM has no memory
 limit on the host unless you set one (`--memory`, `vm.memory`). The

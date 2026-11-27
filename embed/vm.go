@@ -51,14 +51,51 @@ type Host struct {
 }
 
 // Config is a VM's configuration (gogo_config). The zero value is every
-// name the VM has granted, no memory cap, the default actor table, no
-// storage and no hot loading.
+// name the VM has granted, no memory cap, the default tables and limits,
+// no storage and no hot loading.
+//
+// MemLimit, MaxActors, MaxPorts, MaxLinks, ActorMemory, BytesHandles and
+// BytesPerActor are the VM's parameters (book 18.3; gogovm's flags): a
+// field that is set beats the Host.Config key of the same parameter
+// (vm.memory, vm.max_actors, vm.max_ports, node.max_links,
+// vm.actor_memory, vm.handles), which beats the library's default; 0 is
+// not set. Where gogo.h clamps a value past its range, the VM uses the
+// nearer end and says so in one line on the Host's Stderr ("gogo:
+// vm.actor_memory 2147483648 is over this VM's 1G; using 1G"); where it
+// refuses one, New fails with ErrInval. The library does not report the
+// values a VM ends up with: a program reads the fields that are set, as
+// given, with sys.Config under their keys, and its own limit with
+// actor.Limit.
 type Config struct {
 	Host Host
-	// MemLimit caps the bytes the whole VM may allocate (0: none).
+	// MemLimit caps the bytes the whole VM may allocate, over every
+	// actor's own limit (0: none).
 	MemLimit uint64
-	// MaxActors is the most live actors at once (0: 16384, at most 65520).
+	// MaxActors is the most live actors at once (0: 16384). Actor and
+	// port PIDs share 65536 slots: MaxActors + MaxPorts may be at most
+	// 65536 (65520 with 16 ports), and New fails with ErrInval past that.
 	MaxActors uint32
+	// MaxPorts is the most ports open at once; the table grows as they
+	// open (0: 1024, or fewer, silently, when MaxActors leaves less
+	// room). Above 2048, or past the room MaxActors leaves, New fails
+	// with ErrInval. Experimental.
+	MaxPorts uint32
+	// MaxLinks is the most node links of distributed actors at once
+	// (0: 8). An embedded VM has no node port today, so it takes effect
+	// only for one that gains it. Above 2048 New fails with ErrInval.
+	// Experimental.
+	MaxLinks uint32
+	// ActorMemory is an actor's default memory limit in bytes, for an
+	// actor whose SpawnOpt sets none (0: 1 MB). Below 1 KB or above 1 GB
+	// it is clamped, said on Stderr. Experimental.
+	ActorMemory uint32
+	// BytesHandles is the most off-heap Bytes handles in the whole VM
+	// (0: 4096; above 65535 clamped, said on Stderr), and BytesPerActor
+	// how many of them one actor may hold (0: 256, or BytesHandles if
+	// that is fewer, silently; above BytesHandles clamped, said on
+	// Stderr). Experimental.
+	BytesHandles  uint32
+	BytesPerActor uint32
 	// Grant lists the requirement names the VM may serve (port drivers,
 	// such as a host port's name, and mount prefixes such as "/flash");
 	// nil grants every one it has, an empty non-nil slice none.
@@ -182,6 +219,11 @@ func New(cfg *Config) (*VM, error) {
 	c := C.gogo_config{size: C.uint32_t(unsafe.Sizeof(C.gogo_config{}))}
 	c.mem_limit = C.uint64_t(cfg.MemLimit)
 	c.max_actors = C.uint32_t(cfg.MaxActors)
+	c.max_ports = C.uint32_t(cfg.MaxPorts)
+	c.max_links = C.uint32_t(cfg.MaxLinks)
+	c.actor_memory = C.uint32_t(cfg.ActorMemory)
+	c.bytes_handles = C.uint32_t(cfg.BytesHandles)
+	c.bytes_per_actor = C.uint32_t(cfg.BytesPerActor)
 	c.fs_quota = C.int64_t(cfg.FSQuota)
 	if cfg.CodeLoad {
 		c.flags |= C.GOGO_CONFIG_CODE_LOAD

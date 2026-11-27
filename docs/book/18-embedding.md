@@ -727,6 +727,33 @@ image inspection functions `GetImageInfo` and `ImageRequires`. Errors are
 wrapped with the call that failed: `errors.Is(err, embed.ErrRequires)`.
 Messages are `embed.Message{Kind, Data}`, a `port.Post` on the gogo side.
 
+`embed.Config` holds `gogo_config`'s fields under Go names; every zero
+field takes the default of section 18.3:
+
+| `embed.Config` | `gogo_config` | meaning |
+|---|---|---|
+| `Host` | (the `gogo_host`) | output, clocks, random numbers, `sys.Config` |
+| `MemLimit` | `mem_limit` | bytes the whole VM may allocate; 0 = no cap |
+| `MaxActors` | `max_actors` | live actors at once; 0 = 16384 |
+| `MaxPorts` | `max_ports` | ports open at once; 0 = 1024, or what `MaxActors` leaves; at most 2048 |
+| `MaxLinks` | `max_links` | node links at once; 0 = 8; at most 2048 |
+| `ActorMemory` | `actor_memory` | an actor's default memory limit in bytes; 0 = 1 MB; 1 KB to 1 GB |
+| `BytesHandles` | `bytes_handles` | off-heap `Bytes` handles in the VM; 0 = 4096; at most 65535 |
+| `BytesPerActor` | `bytes_per_actor` | of those, how many one actor may hold; 0 = 256; at most `BytesHandles` |
+| `Grant` | `grant` | the requirement names the VM may serve; `nil` = all it has, an empty slice none |
+| `FSRoot`, `FSQuota` | `fs_root`, `fs_quota` | a host directory served as `/flash`, and its quota |
+| `CodeLoad` | `GOGO_CONFIG_CODE_LOAD` | `code.Load` may load modules |
+
+As in C, a field that is set beats the `Host.Config` key of its
+parameter (`vm.actor_memory`, `vm.max_ports`, ...). `ActorMemory`,
+`BytesHandles` and `BytesPerActor` past their range are clamped to the
+nearer end, with one line on the host's `Stderr` (`gogo: vm.actor_memory
+100 is under 1K; using 1K`); `MaxActors`, `MaxPorts` and `MaxLinks` past
+theirs, or `MaxActors + MaxPorts` over 65536, make `New` fail with
+`embed.ErrInval`. The library does not report the values a VM ends up
+with: a program sees the fields that are set, as given, through
+`sys.Config` under their keys, and its own limit through `actor.Limit`.
+
 `examples/embed-go/main.go` compiles its program, defines a host port in
 Go and runs the VM. A host port is a `PortDriver`, or a `PortFuncs` of
 the methods it needs; its `Port` emits events to the port's owner:
