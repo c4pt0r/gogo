@@ -47,6 +47,12 @@ const (
 	configMaxValue = 1000
 )
 
+// boardTimeout is how long a config request waits for the board's answer.
+var boardTimeout = 5 * time.Second
+
+// errNotSet is the board's answer for a key it does not have.
+var errNotSet = errors.New("is not set")
+
 // configSecrets are shown as "(set)".
 var configSecrets = []string{"wifi.password", "node.token"}
 
@@ -544,7 +550,18 @@ func configExec(args []string, env configEnv) error {
 	}
 	if target.port != "" {
 		usb := newUSBRecovery(env.usb, *noReset, env.errOut)
-		return usb.retry(target.port, func() error { return configOnBoard(target, op, args, env) })
+		// rm is retried as the others; "not set" on the retry means the
+		// first try's rm reached the board before its answer was lost (or
+		// the key was never set): either way the key is gone.
+		tries := 0
+		return usb.retry(target.port, func() error {
+			tries++
+			err := configOnBoard(target, op, args, env)
+			if tries > 1 && op == "rm" && errors.Is(err, errNotSet) {
+				return nil
+			}
+			return err
+		})
 	}
 	return fileConfig(target.path, op, args, env.out)
 }
@@ -557,7 +574,7 @@ func configOnBoard(target configTarget, op string, args []string, env configEnv)
 		return err
 	}
 	defer f.Close()
-	timeout := 5 * time.Second
+	timeout := boardTimeout
 	if op == "scan" {
 		timeout = 20 * time.Second
 	}
@@ -589,7 +606,7 @@ var boardFitKeys = map[string]bool{"vm.actor_memory": true, "vm.memory": true, "
 // checkBoardFit asks the board for its limits (its info line; a firmware
 // before them is not checked) and refuses a value it could not boot with.
 func checkBoardFit(c *boardConn, key, value string) error {
-	_, text, err := c.request("info", nil, 5*time.Second)
+	_, text, err := c.request("info", nil, boardTimeout)
 	if errors.Is(err, errNoAnswer) {
 		return fmt.Errorf("gogo config: %w", err)
 	}
@@ -823,6 +840,7 @@ func configImport(file, port string, local, dry bool, usb *usbRecovery, env conf
 		fmt.Fprintf(env.out, "would import %d keys to %s (dry run: nothing written)\n", len(sets), target)
 		return nil
 	}
+	printed := 0
 	if target.port == "" {
 		lines, err := readConfig(target.path)
 		if err != nil {
@@ -837,7 +855,7 @@ func configImport(file, port string, local, dry bool, usb *usbRecovery, env conf
 		for _, s := range sets {
 			fmt.Fprintf(env.out, "set %s\n", line(s))
 		}
-	} else if err := usb.retry(target.port, func() error { return importOnBoard(target.port, name, sets, line, env) }); err != nil {
+	} else if err := usb.retry(target.port, func() error { return importOnBoard(target.port, name, sets, line, &printed, env) }); err != nil {
 		return err
 	}
 	fmt.Fprintf(env.out, "imported %d keys to %s\n", len(sets), target)
@@ -846,8 +864,9 @@ func configImport(file, port string, local, dry bool, usb *usbRecovery, env conf
 
 // importOnBoard sets every key of sets on the board on port, one by one;
 // a failure stops it and says which keys were written. Setting a key again
-// is harmless, so a retry starts from the first one.
-func importOnBoard(port, name string, sets []cfgSetting, line func(cfgSetting) string, env configEnv) error {
+// is harmless, so a retry starts from the first one; *printed counts the
+// "set" lines already printed, so a retry does not print them twice.
+func importOnBoard(port, name string, sets []cfgSetting, line func(cfgSetting) string, printed *int, env configEnv) error {
 	f, err := env.open(port)
 	if err != nil {
 		return err
@@ -856,7 +875,7 @@ func importOnBoard(port, name string, sets []cfgSetting, line func(cfgSetting) s
 	c := newBoardConn(f)
 	defer c.close()
 	for i, s := range sets {
-		if _, _, err := c.request("set", []string{s.key, s.value}, 5*time.Second); err != nil {
+		if _, _, err := c.request("set", []string{s.key, s.value}, boardTimeout); err != nil {
 			keys := func(ss []cfgSetting) string {
 				if len(ss) == 0 {
 					return "none"
@@ -870,7 +889,10 @@ func importOnBoard(port, name string, sets []cfgSetting, line func(cfgSetting) s
 			return fmt.Errorf("gogo config: import stopped at %s:%d (%s): %w\n  written: %s\n  not written: %s",
 				name, s.line, s.key, err, keys(sets[:i]), keys(sets[i:]))
 		}
-		fmt.Fprintf(env.out, "set %s\n", line(s))
+		if i >= *printed {
+			fmt.Fprintf(env.out, "set %s\n", line(s))
+			*printed = i + 1
+		}
 	}
 	return nil
 }
@@ -1000,7 +1022,7 @@ func boardConfigOn(c *boardConn, op string, args []string, out io.Writer, timeou
 	kvs, text, err := c.request(op, args, timeout)
 	var be errBoard
 	if errors.As(err, &be) && be.reason == "not set" && len(args) > 0 {
-		return fmt.Errorf("gogo config: %s is not set", args[0])
+		return fmt.Errorf("gogo config: %s %w", args[0], errNotSet)
 	}
 	if err != nil {
 		return fmt.Errorf("gogo config: %w", err)

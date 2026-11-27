@@ -66,6 +66,68 @@ func TestExecEsptool(t *testing.T) {
 }
 
 // gogo flash with a real esptool process: it fails, the probe decides.
+// config import and rm on a link silent at first: the retry does not print
+// the import's lines twice, and rm's "not set" after a reset is success.
+func TestConfigRetryIdempotent(t *testing.T) {
+	old := boardTimeout
+	boardTimeout = 100 * time.Millisecond
+	defer func() { boardTimeout = old }()
+	cfg := writeFile(t, t.TempDir(), "board.cfg", "wifi.ssid=home\nnode.name=kitchen\n")
+	run := func(through int, args ...string) (string, *simBoard, *fakeUSB, error) {
+		b := &simBoard{}
+		f := &fakeUSB{silent: true}
+		opens := 0
+		var out bytes.Buffer
+		err := configExec(args, configEnv{out: &out, errOut: io.Discard, in: strings.NewReader(""), glob: globOf("/dev/cu.usbmodem1"),
+			open: func(string) (io.ReadWriteCloser, error) {
+				opens++
+				if opens == 1 {
+					// through requests get through, then the link goes silent.
+					return halfSilentConn(b, through), nil
+				}
+				return b.conn(), nil
+			}, usb: f.env()})
+		return out.String(), b, f, err
+	}
+	out, _, f, err := run(1, "-port", "/dev/cu.usbmodem1", "import", cfg)
+	if err != nil || len(f.resets) != 1 {
+		t.Fatalf("import: %v, resets %d", err, len(f.resets))
+	}
+	if out != "set wifi.ssid\nset node.name\nimported 2 keys to board /dev/cu.usbmodem1\n" {
+		t.Errorf("import printed %q", out)
+	}
+	if _, _, f, err := run(0, "-port", "/dev/cu.usbmodem1", "rm", "wifi.ssid"); err != nil || len(f.resets) != 1 {
+		t.Errorf("rm after a reset: %v, resets %d", err, len(f.resets))
+	}
+	// Without a reset in between, "not set" is still an error.
+	b := &simBoard{}
+	err = configExec([]string{"-port", "/dev/x", "rm", "wifi.ssid"}, configEnv{out: io.Discard, errOut: io.Discard, in: strings.NewReader(""),
+		open: func(string) (io.ReadWriteCloser, error) { return b.conn(), nil }})
+	if err == nil || err.Error() != "gogo config: wifi.ssid is not set" {
+		t.Errorf("rm of an unset key: %v", err)
+	}
+}
+
+// halfSilentConn is board b's console that answers the first n requests
+// and then goes silent.
+func halfSilentConn(b *simBoard, n int) io.ReadWriteCloser {
+	c := b.conn()
+	return &cutConn{ReadWriteCloser: c, left: n}
+}
+
+type cutConn struct {
+	io.ReadWriteCloser
+	left int
+}
+
+func (c *cutConn) Write(p []byte) (int, error) {
+	if c.left <= 0 {
+		return len(p), nil // swallowed: no answer will come
+	}
+	c.left--
+	return c.ReadWriteCloser.Write(p)
+}
+
 func TestFlashEsptoolRetryDecision(t *testing.T) {
 	app := filepath.Join(t.TempDir(), "app.ggb")
 	if err := os.WriteFile(app, fakeImage(32), 0o644); err != nil {
