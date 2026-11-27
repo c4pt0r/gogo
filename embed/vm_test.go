@@ -260,7 +260,11 @@ func main() {
 }
 
 // Posts from many goroutines, each through a poster of its own, all
-// arrive; a post after the program has finished fails.
+// arrive; a post after the program has finished fails. Up to
+// GOGO_POST_MAX posts wait for the VM's goroutine, so any post, the last
+// one too, may meet ErrFull while it lags behind: that is the documented
+// answer to a full queue, and a poster tries again once the VM has had
+// time to deliver some.
 func TestPostersConcurrent(t *testing.T) {
 	const goroutines, each = 16, 200
 	src := `package main
@@ -305,6 +309,16 @@ func main() {
 	go func() { done <- vm.Run(context.Background()) }() // the VM's goroutine from here on
 
 	<-ready
+	// post retries while the queue is full.
+	post := func(p *Poster, m Message) error {
+		for {
+			err := p.Post("sink", m)
+			if !errors.Is(err, ErrFull) {
+				return err
+			}
+			time.Sleep(50 * time.Microsecond)
+		}
+	}
 	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
@@ -312,23 +326,16 @@ func main() {
 			defer wg.Done()
 			defer p.Close()
 			for i := 1; i <= each; i++ {
-				for {
-					err := p.Post("sink", Message{Kind: int32(i)})
-					if err == nil {
-						break
-					}
-					if !errors.Is(err, ErrFull) {
-						t.Error(err)
-						return
-					}
-					time.Sleep(50 * time.Microsecond)
+				if err := post(p, Message{Kind: int32(i)}); err != nil {
+					t.Error(err)
+					return
 				}
 			}
 		}(posters[g])
 	}
 	wg.Wait()
 	last := posters[goroutines]
-	if err := last.Post("sink", Message{Kind: 0, Data: []byte("end")}); err != nil {
+	if err := post(last, Message{Kind: 0, Data: []byte("end")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
