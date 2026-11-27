@@ -13,43 +13,88 @@ import (
 	"time"
 )
 
-func TestEsptoolConnFailed(t *testing.T) {
-	cases := []struct {
-		out  string
-		want bool
-	}{
-		{"Connecting......\nA fatal error occurred: Failed to connect to ESP32-S3: No serial data received.\n", true},
-		{"esptool v5.1\nSerial port /dev/cu.usbmodem5101:\nConnecting...\nNo serial data received.\n", true},
-		// Writing had begun: a retry could follow a half-written partition.
-		{"Connecting...\nWriting at 0x00210000 [====>   ] 40%\nA fatal error occurred: No serial data received.\n", false},
-		{"Wrote 4096 bytes\nNo serial data received\n", false},
-		{"Could not open /dev/cu.usbmodem5101, the port is busy or doesn't exist.\n", false},
-		{"This chip is ESP32, not ESP32-S3. Wrong --chip argument?\n", false},
+// fakeFailOnce is an esptool that fails to connect on its first run (as
+// esptool does on a silent board) and succeeds after; $FAKE_COUNT counts
+// the runs.
+const fakeFailOnce = `#!/bin/sh
+n=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo $n > "$FAKE_COUNT"
+echo "esptool v5.6.0"
+if [ "$n" = 1 ]; then
+	echo "A fatal error occurred: Failed to connect to ESP32-S3: No serial data received." >&2
+	exit 2
+fi
+echo "Hash of data verified."
+`
+
+func fakeEsptoolScript(t *testing.T) (string, string) {
+	t.Helper()
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh")
 	}
-	for _, c := range cases {
-		if got := esptoolConnFailed(c.out); got != c.want {
-			t.Errorf("esptoolConnFailed(%q) = %v, want %v", c.out, got, c.want)
-		}
+	dir := t.TempDir()
+	tool := filepath.Join(dir, "esptool")
+	if err := os.WriteFile(tool, []byte(fakeFailOnce), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	fail := errors.New("exit status 2")
-	if err := esptoolErr(fail, cases[0].out); !silentLink(err) || err.Error() != "exit status 2" {
-		t.Errorf("connection failure: %v (silent %v)", err, silentLink(err))
+	count := filepath.Join(dir, "count")
+	t.Setenv("FAKE_COUNT", count)
+	return tool, count
+}
+
+func TestExecEsptool(t *testing.T) {
+	tool, _ := fakeEsptoolScript(t)
+	var out, errOut bytes.Buffer
+	err := execEsptool(tool, []string{"write-flash"}, nil, &out, &errOut)
+	if !silentLink(err) {
+		t.Errorf("first run: %v, want an esptoolExitError", err)
 	}
-	if err := esptoolErr(fail, cases[2].out); silentLink(err) {
-		t.Errorf("failure after writing counts as a silent link: %v", err)
+	// The output is passed through as it is, nothing kept or rewritten.
+	if out.String() != "esptool v5.6.0\n" || !strings.Contains(errOut.String(), "No serial data received") {
+		t.Errorf("out %q, errOut %q", out.String(), errOut.String())
 	}
-	if err := esptoolErr(nil, cases[0].out); err != nil {
-		t.Errorf("success: %v", err)
+	if err := execEsptool(tool, nil, nil, io.Discard, io.Discard); err != nil {
+		t.Errorf("second run: %v", err)
+	}
+	// An esptool that does not start is not a candidate for a reset.
+	if err := execEsptool(filepath.Join(t.TempDir(), "missing"), nil, nil, io.Discard, io.Discard); err == nil || silentLink(err) {
+		t.Errorf("missing esptool: %v", err)
 	}
 	if !silentLink(fmt.Errorf("gogo push: at byte 128: %w", errNoAnswer)) || silentLink(errors.New("board: connection closed")) {
 		t.Error("silentLink misreads wrapped errors")
 	}
 }
 
+// gogo flash with a real esptool process: it fails, the probe decides.
+func TestFlashEsptoolRetryDecision(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "app.ggb")
+	if err := os.WriteFile(app, fakeImage(32), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, silent := range []bool{true, false} {
+		tool, count := fakeEsptoolScript(t)
+		usb := &fakeUSB{silent: silent}
+		var errOut bytes.Buffer
+		fl := flasher{glob: globOf("/dev/cu.usbmodem9"), usb: usb.env(), errOut: &errOut,
+			run: func(name string, args []string) error { return execEsptool(name, args, nil, io.Discard, io.Discard) }}
+		err := fl.flash([]string{app, "-esptool", tool})
+		runs, _ := os.ReadFile(count)
+		if silent {
+			if err != nil || strings.TrimSpace(string(runs)) != "2" || len(usb.resets) != 1 || errOut.String() != usbResetLine+"\n" {
+				t.Errorf("silent board: %v, runs %s, resets %d, %q", err, runs, len(usb.resets), errOut.String())
+			}
+		} else if err == nil || strings.TrimSpace(string(runs)) != "1" || len(usb.resets) != 0 {
+			// A board whose USB answers: esptool's failure is reported, no reset.
+			t.Errorf("healthy board: %v, runs %s, resets %d", err, runs, len(usb.resets))
+		}
+	}
+}
+
 // fakeUSB is a usbEnv that records what it is asked.
 type fakeUSB struct {
-	resets  []string
-	holders []int
+	resets   []string
+	holders  []int
 	silent   bool
 	probeErr error
 	probes   int
@@ -117,9 +162,9 @@ func TestUSBRetry(t *testing.T) {
 		t.Errorf("probe failed: %v, calls %d, resets %d", err, *calls, len(f.resets))
 	}
 
-	// esptool that never reached the chip is retried the same way.
+	// esptool that failed on a silent device is retried the same way.
 	f = &fakeUSB{silent: true}
-	op, calls = failing(esptoolConnError{errors.New("exit status 2")})
+	op, calls = failing(esptoolExitError{errors.New("exit status 2")})
 	if err := newUSBRecovery(f.env(), false, io.Discard).retry(port, op); err != nil || *calls != 2 || len(f.resets) != 1 {
 		t.Errorf("esptool: %v, calls %d, resets %d", err, *calls, len(f.resets))
 	}
@@ -251,14 +296,15 @@ func TestFlashRecoversSilentLink(t *testing.T) {
 		run: func(string, []string) error {
 			runs++
 			if runs == 1 {
-				return esptoolConnError{errors.New("exit status 2")}
+				return esptoolExitError{errors.New("exit status 2")}
 			}
 			return nil
 		}}
 	if err := fl.flash([]string{app, "-esptool", "/x/esptool"}); err != nil || runs != 2 || len(usb.resets) != 1 {
 		t.Errorf("flash: %v, runs %d, resets %d", err, runs, len(usb.resets))
 	}
-	// A failure after writing began is not retried.
+	// A failure that is not esptool's exit status (it did not start) is
+	// not retried.
 	runs, usb.resets = 0, nil
 	fl.run = func(string, []string) error { runs++; return errors.New("exit status 2") }
 	if err := fl.flash([]string{app, "-esptool", "/x/esptool"}); err == nil || runs != 1 || len(usb.resets) != 0 {

@@ -10,8 +10,8 @@ package main
 // The commands that talk to a board (gogo device, config, push, monitor,
 // flash, setup) run their exchange through usbRecovery.retry: when it
 // fails because the board did not answer (errNoAnswer, from
-// boardConn.request) or esptool could not connect before writing anything
-// (esptoolConnError), the port's USB device is probed (usbEnv.probe: its
+// boardConn.request) or esptool exited with an error (esptoolExitError),
+// the port's USB device is probed (usbEnv.probe: its
 // string descriptor 0, which a silent device cannot return). Only when the
 // probe confirms the device is silent is it reset, once; the port is
 // waited for and the exchange runs once more. A device that answers the
@@ -41,7 +41,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -58,69 +57,46 @@ const usbResetLine = "gogo: the board's USB link was silent; reset it (USB bus r
 // errNoAnswer is boardConn.request's timeout: the board sent no reply.
 var errNoAnswer = errors.New("no answer from the board (is gogo firmware running? another program using the port?)")
 
-// esptoolConnError is an esptool run that failed to talk to the chip
-// before writing anything ("No serial data received", "Failed to
-// connect"): retrying it after a USB reset cannot leave a partition half
-// written by the first run.
-type esptoolConnError struct{ err error }
+// esptoolExitError is an esptool run that exited with an error status.
+// Whether it is retried after a USB reset is the probe's decision, not
+// its output's: esptool keeps the terminal (its progress bar redraws in
+// place) and nothing of what it prints is read.
+//
+// A retry is safe even if the first run had begun writing: it is the very
+// same command, already checked (setup's NVS rules), and esptool erases
+// and writes every region again from its start and checks each file's
+// digest. If the retry fails as well, the board is as after any failed
+// flash: the firmware refuses an image partition whose header CRC does not
+// match, and the bootloader an app image whose checksum does not. In
+// practice a silent device cannot be reached at all (esptool's own
+// reconnects fail too), so the first run wrote nothing.
+type esptoolExitError struct{ err error }
 
-func (e esptoolConnError) Error() string { return e.err.Error() }
-func (e esptoolConnError) Unwrap() error { return e.err }
+func (e esptoolExitError) Error() string { return e.err.Error() }
+func (e esptoolExitError) Unwrap() error { return e.err }
 
-// esptoolConnFailed reports whether esptool's output shows it never
-// reached the chip: a connection failure and no write started.
-func esptoolConnFailed(out string) bool {
-	if strings.Contains(out, "Writing at") || strings.Contains(out, "Wrote ") {
-		return false
-	}
-	return strings.Contains(out, "No serial data received") || strings.Contains(out, "Failed to connect")
-}
-
-// esptoolErr is err, from an esptool run whose output was out, as an
-// esptoolConnError when esptool never reached the chip.
-func esptoolErr(err error, out string) error {
-	if err != nil && esptoolConnFailed(out) {
-		return esptoolConnError{err}
+// esptoolErr is err, from running esptool, as an esptoolExitError when
+// esptool ran and exited with an error status (not when it did not start).
+func esptoolErr(err error) error {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return esptoolExitError{err}
 	}
 	return err
 }
 
-// execEsptool runs esptool with its output going to stdout and stderr, and
-// returns esptoolErr's error.
+// execEsptool runs esptool on the given standard streams, untouched (so a
+// terminal stays a terminal), and returns esptoolErr's error.
 func execEsptool(name string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	var out lockedBuffer
 	cmd := exec.Command(name, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, io.MultiWriter(stdout, &out), io.MultiWriter(stderr, &out)
-	if stdout == stderr {
-		// One writer, so os/exec writes it from one goroutine.
-		cmd.Stderr = cmd.Stdout
-	}
-	err := cmd.Run()
-	return esptoolErr(err, out.String())
-}
-
-// lockedBuffer is a bytes.Buffer two goroutines may write.
-type lockedBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (l *lockedBuffer) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.Write(p)
-}
-
-func (l *lockedBuffer) String() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.String()
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	return esptoolErr(cmd.Run())
 }
 
 // silentLink reports whether err is a failure a USB reset may cure.
 func silentLink(err error) bool {
-	var ce esptoolConnError
-	return errors.Is(err, errNoAnswer) || errors.As(err, &ce)
+	var ee esptoolExitError
+	return errors.Is(err, errNoAnswer) || errors.As(err, &ee)
 }
 
 // usbEnv holds the OS side of the reset; the zero value (the tests'

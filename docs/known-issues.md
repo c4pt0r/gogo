@@ -1201,8 +1201,8 @@ rebuilt:
   restarting the chip; esptool's own `--before usb_reset` does not.
   *Workaround (automatic):* `gogo` now does that reset itself on macOS
   and Linux. When a board does not answer (`gogo device`, `config`,
-  `push`, `setup`; `monitor` when nothing arrived) or esptool cannot
-  connect before writing anything (`flash`, `setup`, `firmware -port`),
+  `push`, `setup`; `monitor` when nothing arrived) or esptool fails
+  (`flash`, `setup`, `firmware -port`),
   it asks the USB device behind the port for its string descriptor 0.
   Only when that request times out or comes back empty (the signature
   of the silent link) does it bus-reset the device, once, wait for the

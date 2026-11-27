@@ -2227,15 +2227,19 @@ while the chip runs on ([known-issues.md](known-issues.md)); a USB bus
 reset of that device brings it back without restarting the chip. Every
 command that talks to a board runs its exchange through one wrapper,
 `usbRecovery.retry`: when the exchange fails with `errNoAnswer`
-(`boardConn.request`'s timeout) or esptool failed to connect before
-writing anything (`esptoolConnError`; "Writing at" in its output rules a
-retry out, so a write is never redone over a half-written partition),
-it probes the USB device behind the port with a GET_DESCRIPTOR(string 0)
+(`boardConn.request`'s timeout) or esptool exits with an error
+(`esptoolExitError`; esptool keeps the terminal, its output is not
+read), it probes the USB device behind the port with a GET_DESCRIPTOR(string 0)
 request and resets it only when that request times out or returns
 nothing (the fault's signature; a board without gogo firmware, or one
 restarting, still answers and is never re-enumerated); then it waits for
 the port and runs the exchange once more. `gogo monitor` has no request
-to time out, so for it the trigger is a capture that got nothing. The device is found from the port,
+to time out, so for it the trigger is a capture that got nothing. A
+retried esptool command is the same checked command again: esptool
+erases and rewrites every region from its start and checks each file's
+digest, so a region the first run left half-written is rewritten whole,
+and a retry that fails too leaves what any failed flash leaves (the
+image header's CRC and the app image's checksum refuse it at boot). The device is found from the port,
 never from its serial number (a silent device cannot report one): on
 macOS the port's IOSerialBSDClient is walked up the IOService plane to
 its IOUSBHostDevice, whose IOUSBDeviceInterface187 re-enumerates it

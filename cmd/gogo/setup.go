@@ -394,8 +394,8 @@ func (s *setup) runEsptool(args []string, writes bool) error {
 		fmt.Fprintf(s.env.out, "  would run: %s\n", line)
 		return nil
 	}
-	// Retried only when esptool never reached the chip (esptoolConnError),
-	// so the first run wrote nothing.
+	// Retried once when esptool fails and the board's USB device is silent
+	// (esptoolExitError, which says why a retry is safe).
 	return s.usb.retry(s.port, func() error {
 		fmt.Fprintf(s.env.out, "  $ %s\n", line)
 		return execEsptool(s.esptool, args, nil, s.env.out, s.env.out)
@@ -421,7 +421,7 @@ func (s *setup) identify() error {
 		fmt.Fprintf(s.env.out, "  $ %s %s\n", s.esptool, strings.Join(args, " "))
 		var err error
 		out, err = exec.Command(s.esptool, args...).CombinedOutput()
-		return esptoolErr(err, string(out))
+		return esptoolErr(err)
 	})
 	notS3 := func(chip string) error {
 		return setupFail("gogo supports the M5StickS3 and the Cardputer ADV (both ESP32-S3); connect one of them",

@@ -46,9 +46,9 @@ sometimes goes silent while the program keeps running
 ([`docs/known-issues.md`](../known-issues.md), "ESP32-S3 boards"). The commands that
 talk to a board (`flash`, `push`, `monitor`, `config` on a board,
 `device`, `setup`, and `firmware -port`) then recover it themselves on
-macOS and Linux. When the board does not answer, or esptool cannot
-connect before writing anything (for `gogo monitor`: when nothing at all
-arrived), they ask the board's USB device for its string descriptor 0.
+macOS and Linux. When the board does not answer, or esptool fails (for
+`gogo monitor`: when nothing at all arrived), they ask the board's USB
+device for its string descriptor 0.
 Only when that request times out or comes back empty, the signature of
 the silent link, do they bus-reset the device once (the chip keeps
 running), wait for the port to come back, retry once, and print
@@ -60,8 +60,11 @@ gogo: the board's USB link was silent; reset it (USB bus reset)
 A device that answers the request (a board without gogo firmware, one
 restarting, a quiet program) is never reset, and the original error is
 reported as it is. If the retry fails too, the error says so and to
-replug the board. A flash is retried only when esptool never reached the chip,
-so no partition is written twice over a half-written one. Only an
+replug the board. esptool keeps the terminal as before (its progress bar
+redraws in place). A retried flash is the same command again, which
+rewrites every region from its start, so nothing is left half-written
+by the first try; if the retry fails too, the firmware refuses the
+half-written program as after any failed flash. Only an
 Espressif USB device (vendor id 0x303a) is reset, never while another
 program has the port open. `-no-usb-reset` (or `GOGO_NO_USB_RESET=1` in
 the environment) turns this off; `gogo device usb-reset` resets by hand.
@@ -538,8 +541,8 @@ already (chapter 2).
   none or several, `gogo flash` stops and asks for `-port`.
 - `-esptool path`: the esptool to run. Default: `esptool` or `esptool.py`
   from `PATH` (`. ~/esp/esp-idf/export.sh` puts it there).
-- `-no-usb-reset`: no automatic USB reset when esptool cannot connect
-  (above).
+- `-no-usb-reset`: no automatic USB reset when esptool fails on a
+  silent board (above).
 
 `gogo flash` refuses files that are not gogo images, images of another
 format version (`rebuild it with gogo build`) and images over the 1 MB

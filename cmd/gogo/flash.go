@@ -83,8 +83,9 @@ func detectPort(glob func(string) ([]string, error)) (string, error) {
 }
 
 // flasher holds the side effects of `gogo flash` so tests can replace them.
-// run returns an esptoolConnError when esptool could not reach the chip
-// (execEsptool); the write is then retried once after a USB reset.
+// run returns an esptoolExitError when esptool failed (execEsptool); if
+// the board's USB device is then silent, the write is retried once after
+// a USB reset.
 type flasher struct {
 	glob   func(string) ([]string, error)
 	run    func(name string, args []string) error
@@ -158,9 +159,10 @@ func (f flasher) flash(args []string) error {
 			return err
 		}
 	}
-	// Retried only when esptool never reached the chip, so the first run
-	// wrote nothing; a write cut off later is not retried (the partition
-	// header's CRC makes the firmware refuse a half-written image).
+	// Retried only when esptool failed and the board's USB device is
+	// silent: the retry rewrites the whole partition, header first, and
+	// if it fails too the header's CRC makes the firmware refuse the
+	// half-written image (esptoolExitError).
 	errOut := f.errOut
 	if errOut == nil {
 		errOut = io.Discard
