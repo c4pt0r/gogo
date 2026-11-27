@@ -160,6 +160,11 @@ func syncer(clock actor.PID, server string) {
 	for {
 		err := sntp.Sync(server, ntpMs)
 		if err == nil {
+			println("clock: ntp ok,", server)
+		} else {
+			println("clock: ntp:", err.Error())
+		}
+		if err == nil {
 			actor.Send(clock, synced{})
 			actor.Sleep(resyncMs)
 		} else {
