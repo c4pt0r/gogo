@@ -169,7 +169,10 @@ func call(req any, ms int) (any, error) { return actor.Call(agent(), req, ms) }
 // The token is the config key node.token. The errors (gogo/errors):
 // BadArg without a token or a name, Busy if this VM is a node already,
 // and port.Open's for the listening port (Unsupported without a host
-// network, Busy if the port is taken).
+// network, Busy if the port is taken). Like every call here it asks this
+// VM's node agent with actor.Call, so it can also fail with that Call's
+// error: Timeout if the agent does not answer in time, NoProc if the
+// agent died just then.
 func Listen(port int, name string) error { return ListenOpt(port, Options{Name: name}) }
 
 // ListenOpt is Listen with Options (TimeoutMs bounds each handshake).
@@ -183,7 +186,8 @@ func ListenOpt(port int, opts Options) error {
 // bad addr, Busy if this VM is a node already, Unsupported without a
 // network, the tcp port's reason if the server cannot be reached
 // (Refused, NoRoute, Timeout, ...), Refused if the server rejects the
-// handshake (another token), Timeout if it does not finish in time. If
+// handshake (another token), Timeout if it does not finish in time (or
+// the agent does not answer), NoProc if the node agent died meanwhile. If
 // the connection is lost later, Down events say so (Subscribe); Connect
 // again to rejoin.
 func Connect(addr, name string) error { return ConnectOpt(addr, Options{Name: name}) }
@@ -206,7 +210,9 @@ func ConnectOpt(addr string, opts Options) error {
 func Disconnect() { call(disconnectReq{}, 2000) }
 
 // Register makes p reachable from other nodes as name (node.Whereis);
-// errors.Exists if the name is taken. actor.Register names stay local.
+// errors.Exists if the name is taken, or the agent Call's error
+// (Timeout, NoProc if the node agent died). actor.Register names stay
+// local.
 func Register(name string, p actor.PID) error {
 	return asError(call(registerReq{Name: name, PID: p}, 2000))
 }
