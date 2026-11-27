@@ -163,7 +163,9 @@ gogo: actor <pid 1> crashed: oom in grow
 
 A limit smaller than the actor's starting block is raised to fit it, and a
 huge one is cut to the platform's ceiling (256 KB on a board, 1 GB on the
-host).
+host). One value is smaller still: a slice, byte slice or string holds at
+most 2^26 - 1 words, 256 MB (its object header's size field); asking for
+more is `OutOfMemory`, whatever the actor's limit.
 
 > **Tip.** Programs are usually tested with `gogo run`, where the default
 > limit is 64 times larger than on the board. An actor that works on

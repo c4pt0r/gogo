@@ -11,14 +11,18 @@
 #include "opcodes.h"
 #include "signals.h"
 
-/* The most words an actor's block may have (config.h). */
+/* The most words an actor's block may have (config.h), and one object
+ * (its header's 26-bit size, term.h): a block on the host may hold 2^28
+ * words, an object at most 2^26 - 1 (256 MB); on a board both are 65535. */
 #define HEAP_MAX_WORDS GOGO_ACTOR_MAX_WORDS
+#define OBJ_MAX_WORDS (HEAP_MAX_WORDS < HDR_MAX_WORDS ? HEAP_MAX_WORDS : HDR_MAX_WORDS)
 
 /* Reserves `words` heap words and returns their word offset, or UINT32_MAX
  * if they cannot fit even after GC without the block growing past the
  * actor's limit: actor_max_words minus actor_charged_words (queued messages
  * and pending SendAfter timers), so heap block + charged words <= limit;
- * never past HEAP_MAX_WORDS. May GC, which moves objects: refs held outside
+ * never past HEAP_MAX_WORDS; more than OBJ_MAX_WORDS (one object's most)
+ * is refused. May GC, which moves objects: refs held outside
  * the stack must be passed in `roots` (updated in place). The caller must
  * fill in the object before the next allocation. */
 uint32_t heap_alloc(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots);

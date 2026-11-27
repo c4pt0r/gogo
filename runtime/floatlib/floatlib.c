@@ -178,7 +178,7 @@ uint32_t float_lib(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint
         int32_t fmt;
         if (nargs != 4u || !int_val(vm, a, arg[1], &fmt) || !int_val(vm, a, arg[2], &prec) ||
             !int_val(vm, a, arg[3], &bitsz) || (bitsz != 32 && bitsz != 64)) return R_BAD_CODE;
-        uint32_t max = (HEAP_MAX_WORDS - 2u) * 4u;
+        uint32_t max = (OBJ_MAX_WORDS - 2u) * 4u;
         if (prec > (int32_t)max) return R_OUT_OF_MEMORY;           /* cannot fit any heap */
         uint32_t len = floatlib_format(NULL, x, bitsz == 32, (char)fmt, prec);
         if (len > max) return R_OUT_OF_MEMORY;

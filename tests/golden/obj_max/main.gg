@@ -1,0 +1,22 @@
+package main
+
+// One object holds at most 2^26 - 1 words (its header's size field), even
+// where an actor may hold 1 GB (the host): a slice, byte slice or string
+// past it is OutOfMemory for the actor that asks, before anything is
+// allocated, never a corrupt heap. (On a board an actor holds 65535 words.)
+
+import "gogo/actor"
+
+func try(name string, limit int, f func()) {
+	p := actor.SpawnOpt(f, actor.Options{MaxMemory: limit})
+	ref := actor.Monitor(p)
+	d := actor.Receive().(actor.DownMsg)
+	println(name, d.Ref == ref, d.Reason.Code == actor.OutOfMemory)
+}
+
+func main() {
+	// 2^26 words and one past it, with room in the limit for either.
+	try("ints 2^26-2", 268439508, func() { println(len(make([]int, 67108862))) })
+	try("ints 2^26+1000", 268439508, func() { println(len(make([]int, 67109864))) })
+	try("bytes", 1<<30, func() { println(len(make([]byte, 268435456))) })
+}

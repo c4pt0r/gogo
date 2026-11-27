@@ -221,6 +221,9 @@ static bool make_room(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots
 }
 
 uint32_t heap_alloc(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots) {
+#if !GOGO_WORDS_16
+    if (words > OBJ_MAX_WORDS) return UINT32_MAX;   /* its header could not say so (a board's block cannot pass it) */
+#endif
     if (!make_room(vm, a, words, roots, n_roots)) return UINT32_MAX;
     uint32_t off = a->hp;
     a->hp = (gogo_words_t)(off + words);

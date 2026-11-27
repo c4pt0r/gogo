@@ -178,6 +178,8 @@ static inline term term_from_bool(bool b) { return b ? T_TRUE : T_FALSE; }
 #define STRUCT_FLAGS 0x1F0000u
 
 /* Object header: (total_words << 6) | kind; total_words includes the header. */
+/* An object's size field is 26 bits: no object may have more words. */
+#define HDR_MAX_WORDS ((1u << 26) - 1u)
 static inline uint32_t hdr_make(uint32_t words, uint32_t kind) { return (words << 6) | kind; }
 static inline uint32_t hdr_words(uint32_t h) { return h >> 6; }
 static inline uint32_t hdr_kind(uint32_t h) { return h & 63u; }

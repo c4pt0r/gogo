@@ -59,7 +59,7 @@ static bool arg_int(const Vm *vm, const Actor *a, term t, int32_t *v) {
  * returns its offset in *off, or false if out of memory. The padding of
  * the last word is zeroed (the caller fills the bytes); may GC. */
 static bool raw_alloc(Vm *vm, Actor *a, uint32_t kind, uint32_t len, uint32_t *off) {
-    if (len > (HEAP_MAX_WORDS - 2u) * 4u) return false;
+    if (len > (OBJ_MAX_WORDS - 2u) * 4u) return false;
     uint32_t words = str_words(len);
     uint32_t o = heap_alloc(vm, a, words, NULL, 0);
     if (o == UINT32_MAX) return false;
@@ -221,9 +221,9 @@ static uint32_t arr_words(bool bytes, uint32_t cap) {
     return bytes ? 2u + (cap + 3u) / 4u : 2u + cap;
 }
 
-/* The largest capacity an array may have (its words fit a heap). */
+/* The largest capacity an array may have (its words fit one object). */
 static uint32_t arr_max(bool bytes) {
-    return bytes ? (HEAP_MAX_WORDS - 2u) * 4u : HEAP_MAX_WORDS - 2u;
+    return bytes ? (OBJ_MAX_WORDS - 2u) * 4u : OBJ_MAX_WORDS - 2u;
 }
 
 /* Allocates an array of cap (> 0) elements, all T_NIL or 0 (valid for

@@ -283,7 +283,9 @@ rebuilt:
 - **An actor holds at most 256 KB on a board** (65535 words: its word
   counts are 16-bit there, which keeps its record at 48 bytes); a larger
   `vm.actor_memory` or `MaxMemory` is cut to that. On the host the
-  ceiling is 1 GB. One message is at most 65535 words (256 KB) on every
+  ceiling is 1 GB, but one slice, byte slice or string is at most 2^26 - 1
+  words (256 MB, its header's size field): a bigger `make` or `append` is
+  `OutOfMemory`. One message is at most 65535 words (256 KB) on every
   platform; a send of a bigger value fails with `OutOfMemory`.
 - **The VM's limits are read at start.** `vm.actor_memory`, `vm.memory`,
   `vm.max_actors`, `vm.max_ports`, `node.max_links`, `vm.handles` and
