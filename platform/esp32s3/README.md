@@ -484,6 +484,13 @@ in `cmd/gogo/flash.go`.
     (CPU0) share them and rendering from flash evicted the VM's code.
 
 - `fs_lfs.c`: `/flash`, see below.
+- `ble_prov.c`, `ble_host.c` (`GOGO_BLE_PROV`): Wi-Fi provisioning over
+  BLE at boot (design.md 5.4.10): the setup key, protocomm security 2 with
+  a one-time PIN, the wifi_provisioning GATT layout on the shared,
+  reference-counted NimBLE host (`ble_host_acquire` / `ble_host_release`),
+  the `prov-config` messages of `runtime/prov`; the result is written with
+  `config_esp_set` to `wifi.ssid` / `wifi.password`, then a restart.
+  `ble_prov_active()` is true during a session.
 - `wifi.c`: Wi-Fi station and `runtime/net/netif.h` (M5). The driver's raw frames go
   straight to gogo's own stack (`runtime/net/`, compiled into the firmware) through
   the driver's internal interface, pinned to ESP-IDF v6.1.1:
@@ -768,6 +775,26 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   floatlibsize`), and the rest the soft-float routines they link. The
   board's C library (picolibc) `strtod` / `strtof` are not linked:
   ParseFloat has its own exact parser.
+- `GOGO_BLE_PROV` (default y, but it depends on `GOGO_NET` and NimBLE,
+  which only `sdkconfig.bleprov` turns on, so the default build lacks
+  it): Wi-Fi provisioning over BLE (`ble_prov.c`, the shared NimBLE host
+  `ble_host.c`, the messages `runtime/prov/provmsg.c`; design.md 5.4.10,
+  book 2.1). Holding the setup key at boot (StickS3: button A, G11;
+  Cardputer: W) starts a 120 s session for Espressif's provisioning
+  apps, security 2 with a PIN on the screen; the result goes to
+  `wifi.ssid` / `wifi.password` and the board restarts. Boot lines:
+  `gogo: Wi-Fi setup key (W): not held` (serial) at every boot, and in a
+  session the device name, PIN and countdown (screen and serial).
+  Test-only switches: `GOGO_PROV_DRYRUN` (nothing written, no join; the
+  SSID and the password's length printed) and `GOGO_PROV_TEST_ENTER`
+  (with the dry run: enter at power-on without the key). Cost
+  (ESP-IDF 6.1.1, Cardputer ADV, default features): 1161760 -> 1468240 B
+  `gogo.bin` (+306480), static DIRAM 124571 -> 130255 B (+5.7 KB; the
+  BLE controller's code is in flash, `CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY`:
+  in IRAM it was +21.5 KB); free internal RAM at boot 192788 -> 185512 B
+  (the boot line's `free RAM`). In a session, free internal heap 212696 B
+  before, 184972 B with Wi-Fi up, 124552 B advertising (largest block
+  116736 B), at least 115492 B during the SRP and config exchange.
 - `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `runtime/net/*.c`
   are not built, the drivers `netif`, `udp`, `tcp` and `tcp_listen` are not
   listed (an image that requires one is refused at boot, naming it), `port.Open` of `netif`, `udp`,
@@ -864,14 +891,17 @@ modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
     idf.py -C platform/esp32s3 -B <dir> -DGOGO_BOARD=<board> -DSDKCONFIG=<dir>/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;<board overlay>;<dir>/sdkconfig.gogo" build
 
-Feature names are `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen float`; `net`, `kbd`,
+Feature names are `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen float bleprov`; `net`, `kbd`,
 `power` and `float` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
 `imu`, `irtx`, `irrx`, `mic`, `speaker`, `tls` are on by default and `-without` turns them off
 (`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `speaker` are one, `GOGO_AUDIO`; `tls` needs `net`, `GOGO_TLS` depends on `GOGO_NET`). A required feature cannot be removed,
 and one the board lacks (`kbd`, `sd` on the StickS3) is an error. A feature
 that is off may add its own sdkconfig fragment to `SDKCONFIG_DEFAULTS` (the
 table's `offDefaults`): `tls` off adds `sdkconfig.tls-off`, which puts
-mbedTLS back to IDF's defaults for Wi-Fi's WPA crypto. The board
+mbedTLS back to IDF's defaults for Wi-Fi's WPA crypto. A feature that is
+on may add one too (`onDefaults`): `bleprov` (on only with `-with`; needs
+`net`) adds `sdkconfig.bleprov`, which turns NimBLE and protocomm's
+security 2 on. The board
 feature table is in `cmd/gogo/firmware.go` and must match `main/board.h` and
 `main/Kconfig.projbuild`. `gogo firmware` owns its build directory: if
 `<dir>/sdkconfig` exists and any `CONFIG_GOGO_*` value in it differs from the

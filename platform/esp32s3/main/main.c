@@ -16,6 +16,9 @@
 #include "input_int.h"
 #include "board_main.h"
 #include "params.h"
+#if CONFIG_GOGO_BLE_PROV
+#include "ble_prov.h"
+#endif
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -84,6 +87,10 @@ static void vm_task(void *arg) {
     /* `gogo config` works even without (or with a bad) image. */
     (void)config_esp_init();
     config_esp_start_serial();
+#if CONFIG_GOGO_BLE_PROV
+    /* The Wi-Fi setup key held: provisioning over BLE, then a restart. */
+    ble_prov_boot();
+#endif
     const uint32_t *words;
     uint32_t nwords;
     int run_rc = 0;

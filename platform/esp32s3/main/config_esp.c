@@ -105,6 +105,13 @@ int config_esp_erase(const char *key) {
     return e == ESP_OK ? 0 : -1;
 }
 
+int config_esp_set(const char *key, const uint8_t *v, uint32_t n) {
+    if (!cfg_ok) return -1;
+    esp_err_t e = nvs_set_blob(cfg_nvs, key, v, n);
+    if (e == ESP_OK) e = nvs_commit(cfg_nvs);
+    return e == ESP_OK ? 0 : -1;
+}
+
 /* ---- the store as a KvHal ---- */
 
 static int32_t kv_get(void *ctx, const char *key, uint8_t *buf, uint32_t cap) {

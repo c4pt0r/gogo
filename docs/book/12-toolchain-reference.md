@@ -576,7 +576,7 @@ driver nobody uses. It reads the requirement names each file carries
 `<dir>/sdkconfig.gogo`, a list of `CONFIG_GOGO_*` lines, then prints the
 `idf.py` command that builds with it. It never flashes.
 
-- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen node float`.
+- Feature names: `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen node float bleprov`.
   The requirement names they build: `net` the drivers `netif`, `udp`,
   `tcp` and `tcp_listen`; `kbd`, `power`, `imu`, `mic`, `speaker`, `tls`,
   `screen` and `node` (distributed actors, chapter 20) the driver of the
@@ -592,10 +592,14 @@ driver nobody uses. It reads the requirement names each file carries
   required too,
   so a file that needs one keeps it on, while `exfat` (exFAT media) and
   `cjk` (the Chinese font) are not. `irtx` and `irrx` share one firmware switch, as do `mic` and
-  `speaker`, so they go on and off together.
+  `speaker`, so they go on and off together. `bleprov` (Wi-Fi setup from
+  a phone over Bluetooth, section 2.1) is on only with `-with`: no program
+  requires it; it adds NimBLE and Espressif's provisioning layer
+  (`sdkconfig.bleprov`) and needs `net` (on the Cardputer, keep `kbd` too:
+  the setup key is read through the keyboard).
 - `-with a,b` adds features. `-without a,b` removes them; a feature that a
   file requires cannot be removed (error). `exfat` goes off with `sd`, and
-  `tls` and `node` with `net`.
+  `tls`, `node` and `bleprov` with `net`.
 - A required feature the board lacks is an error that names it, for example
   `kbd` or `sd` on the `sticks3`.
 - `-board` names the board. Instead, `-port P` asks the board on that

@@ -186,6 +186,94 @@ gogo env                         # shows the gogovm it found
 The release VM has no `tls` port (HTTPS on the host, chapter 17); for
 that, build gogo from source (section 2.2).
 
+### Set up Wi-Fi from your phone
+
+A board can also get its Wi-Fi network from a phone, over Bluetooth, with
+no computer attached. The board's firmware does it, before any program
+runs, so the program never sees the password. It uses Espressif's
+standard provisioning protocol, so the phone app is Espressif's own
+**ESP BLE Provisioning** (free, for Android and iOS); gogo has no app of
+its own.
+
+The firmware needs the `bleprov` feature, which the release firmware
+does not have yet. Build and flash one with it from the gogo source tree,
+as in section 2.6 with `sdkconfig.bleprov` added to the settings (shown
+for the Cardputer ADV; for the StickS3 leave out `-DGOGO_BOARD=cardputer`
+and write `sdkconfig.sticks3`):
+
+```sh
+. ~/esp/esp-idf/export.sh
+idf.py -C platform/esp32s3 -B platform/esp32s3/build-bleprov -DGOGO_BOARD=cardputer \
+    -DSDKCONFIG=build-bleprov/sdkconfig \
+    -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer;sdkconfig.bleprov" build
+idf.py -C platform/esp32s3 -B platform/esp32s3/build-bleprov -p /dev/cu.usbmodemXXXX flash
+```
+
+Like `gogo setup`, this leaves the board's settings and program alone.
+`gogo firmware -with bleprov` (chapter 12) does the same for a trimmed
+firmware; it needs `net`, and on the Cardputer keep `kbd` (the setup key
+is read through the keyboard): `-with net,kbd,bleprov`.
+
+Then:
+
+1. **Hold the setup key and start the board.** On the M5StickS3 that is
+   **button A** (KEY1, the big front button); on the Cardputer ADV it is
+   **W** (for Wi-Fi). Hold it while you switch the board on or press its
+   reset button, until the screen shows the setup. Nothing else opens
+   provisioning: an unconfigured board does not start it on its own.
+2. **The screen shows the session:**
+
+   ```text
+   gogo: Wi-Fi setup over Bluetooth, 120 s
+   gogo: app: ESP BLE Provisioning
+   gogo: device PROV_gogo_9B56
+   gogo: PIN 639615
+   ```
+
+   The device name ends in four hex digits of the board's Bluetooth
+   address. The PIN is new at every session. A line repeats the PIN with
+   the time left every 15 seconds. The same lines go to the serial
+   console.
+3. **In the app**, choose to provision a new device over BLE. When it
+   offers to scan a QR code, choose to continue without one (the
+   board shows none), then pick `PROV_gogo_...` from the list. The app
+   asks for the **proof of possession** (on some versions the "PIN" or
+   "password"): type the PIN from the screen. If the app asks for a
+   username, it is `wifiprov`, the app's default.
+4. **Type the network name and password.** The board does not scan for
+   networks, so the app asks for the name instead of listing them.
+5. **The board joins that network** to check the password, and the app
+   shows the result.
+
+What happens next:
+
+- **Success.** The app says the device is connected. The board writes
+  the network into `wifi.ssid` and `wifi.password`, exactly as `gogo
+  setup` and `gogo config` do (chapter 11), says `gogo: Wi-Fi settings
+  saved (...)` and restarts. It boots normally and joins the new network:
+  `gogo monitor -reset` shows `gogo: wifi connected (<name>, ...)`, and
+  `gogo config get wifi.ssid` the name.
+- **Wrong password or no such network.** After three tries the app shows
+  the failure (`could not join` or `network not found` on the board's
+  screen). Nothing is saved; send the settings again from the app within
+  the same session.
+- **Wrong PIN.** The app cannot open a session (`session refused` on the
+  screen). Try again with the right PIN; after five refused sessions the
+  board closes the setup.
+- **Timeout.** After 120 seconds without success the board says `gogo:
+  Wi-Fi setup timed out, nothing changed`, restarts and runs as before
+  with its old settings. Release the key, or it starts again.
+
+Every session ends with a restart, so the program starts afresh with the
+radio and its memory in the normal state.
+
+The security: the session is Espressif's security 2, a password
+authenticated key exchange (SRP6a) with the PIN, then AES-GCM for every
+message, so someone nearby who does not see the screen cannot join or
+read the password, and a recording of the radio traffic does not reveal
+the PIN. The window is open only while you hold the key at boot and for
+two minutes at most. Section 5.4.10 of the design has the details.
+
 ## 2.2 Building the tools from source
 
 To change gogo itself, run its tests, or have a host VM with HTTPS, build the

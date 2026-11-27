@@ -36,6 +36,10 @@ type fwFeature struct {
 	// the feature needs, put back to IDF's own defaults (sdkconfig.defaults
 	// holds the default build's, with every default-on feature on).
 	offDefaults string
+	// onDefaults is an sdkconfig fragment (in platform/esp32s3) added to
+	// SDKCONFIG_DEFAULTS when the feature is on: the IDF settings it needs
+	// that the default build leaves off (a component such as NimBLE).
+	onDefaults string
 }
 
 // fwFeatures lists the features in the order of the overlay lines.
@@ -73,7 +77,16 @@ var fwFeatures = []fwFeature{
 	// float is floating point in the VM and the float library (requirement
 	// "float"): like net, built only when an image needs it (or -with).
 	{name: "float", kconf: "CONFIG_GOGO_FLOAT", provides: []string{"float"}},
+	// bleprov is Wi-Fi provisioning over BLE (hold the setup key at boot;
+	// main/ble_prov.c): firmware only, no requirement name, so only -with
+	// turns it on. It brings NimBLE and protocomm (sdkconfig.bleprov) and
+	// joins Wi-Fi: it depends on net.
+	{name: "bleprov", kconf: "CONFIG_GOGO_BLE_PROV", needs: "net", onDefaults: "sdkconfig.bleprov"},
 }
+
+// fwTestKconf lists the Kconfig switches for test builds only, which
+// gogo firmware never sets (main/Kconfig.projbuild).
+var fwTestKconf = []string{"CONFIG_GOGO_PROV_DRYRUN", "CONFIG_GOGO_PROV_TEST_ENTER"}
 
 // fwBase lists the requirement names every firmware provides, whatever
 // its features (platform/esp32s3/main/platform_esp.c esp_ports, esp_mounts).
@@ -247,8 +260,8 @@ func fwHas(names ...string) map[string]bool {
 }
 
 var fwBoards = map[string]fwBoard{
-	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "speaker", "tls", "screen", "node", "float")},
-	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "speaker", "tls", "screen", "node", "float")},
+	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "speaker", "tls", "screen", "node", "float", "bleprov")},
+	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "speaker", "tls", "screen", "node", "float", "bleprov")},
 }
 
 func fwLookup(name string) (fwFeature, bool) {
@@ -397,10 +410,16 @@ func fwOverlay(board string, on map[string]bool, ports []string) string {
 }
 
 // fwDefaults is the SDKCONFIG_DEFAULTS list: the common defaults, the
-// board's overlay, the fragment of every feature that is off and has one,
-// then the generated overlay (the GOGO switches, last so they win).
+// board's overlay, the on-fragment of every feature that is on and the
+// off-fragment of every feature that is off, then the generated overlay
+// (the GOGO switches, last so they win).
 func fwDefaults(boardOverlay string, on map[string]bool, cfg string) string {
 	list := []string{"sdkconfig.defaults", boardOverlay}
+	for _, f := range fwFeatures {
+		if f.onDefaults != "" && on[f.name] {
+			list = append(list, f.onDefaults)
+		}
+	}
 	for _, f := range fwFeatures {
 		if f.offDefaults != "" && !on[f.name] {
 			list = append(list, f.offDefaults)

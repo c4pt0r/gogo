@@ -59,7 +59,7 @@ func TestFirmwareUnion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE_PROV=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -72,7 +72,7 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=n\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
+	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=n\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE_PROV=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -105,7 +105,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE_PROV=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -305,8 +305,11 @@ func TestFirmwareTableMatchesSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range fwFeatures {
-		if f.offDefaults != "" {
-			if _, err := os.Stat(filepath.Join(repo, "platform/esp32s3", f.offDefaults)); err != nil {
+		for _, frag := range []string{f.offDefaults, f.onDefaults} {
+			if frag == "" {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(repo, "platform/esp32s3", frag)); err != nil {
 				t.Errorf("%s: %v", f.name, err)
 			}
 		}
@@ -328,6 +331,9 @@ func TestFirmwareTableMatchesSources(t *testing.T) {
 			found = found || f.kconf == "CONFIG_"+string(m[1])
 		}
 		found = found || "CONFIG_"+string(m[1]) == fwBoardPortsKconf || "CONFIG_"+string(m[1]) == fwBoardPortNamesKconf // -component
+		for _, k := range fwTestKconf {
+			found = found || k == "CONFIG_"+string(m[1])
+		}
 		if !found {
 			t.Errorf("Kconfig %s is not in fwFeatures", m[1])
 		}
@@ -424,6 +430,26 @@ func TestFirmwareTLS(t *testing.T) {
 		if out, _, err := fwRun(t, "-board", board, "-o", d, "-with", "net", "-without", "tls", none); err != nil ||
 			!strings.Contains(out, ";sdkconfig.tls-off;") {
 			t.Errorf("%s tls off: %v\n%s", board, err, out)
+		}
+	}
+}
+
+// bleprov (Wi-Fi provisioning over BLE) is off unless asked for, needs
+// net, and brings its fragment (NimBLE, protocomm) when on.
+func TestFirmwareBleProv(t *testing.T) {
+	d := t.TempDir()
+	none := writeImg(t, d, "none.ggb")
+	for _, board := range []string{"sticks3", "cardputer"} {
+		out, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "net", none)
+		if err != nil || !strings.Contains(cfg, "CONFIG_GOGO_BLE_PROV=n\n") || strings.Contains(out, "sdkconfig.bleprov") {
+			t.Errorf("%s default: %v\n%s\n%s", board, err, out, cfg)
+		}
+		out, cfg, err = fwRun(t, "-board", board, "-o", d, "-with", "net,bleprov", none)
+		if err != nil || !strings.Contains(cfg, "CONFIG_GOGO_BLE_PROV=y\n") || !strings.Contains(out, ";sdkconfig.bleprov;") {
+			t.Errorf("%s -with bleprov: %v\n%s\n%s", board, err, out, cfg)
+		}
+		if _, _, err := fwRun(t, "-board", board, "-o", d, "-with", "bleprov", none); err == nil {
+			t.Errorf("%s: -with bleprov without net should fail", board)
 		}
 	}
 }

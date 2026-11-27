@@ -1192,7 +1192,10 @@ font.
   `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR`, `GOGO_AUDIO`,
   `GOGO_SCREEN` and `GOGO_FLOAT` (floating point: the VM's float code and
   `runtime/floatlib`; off, the VM lacks the requirement `float` and
-  refuses an image that uses floats). A
+  refuses an image that uses floats); `GOGO_BLE_PROV` (Wi-Fi
+  provisioning over BLE, 5.4.10) depends on `GOGO_NET` and on NimBLE,
+  which only its fragment `sdkconfig.bleprov` turns on, so it is off in
+  the default build. A
   switched-off feature behaves as if the board lacked the hardware: its
   `port.Open` returns `errors.NotFound`, and `gogo device scan` and the like
   answer "no network in this firmware".
@@ -1539,6 +1542,78 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   ESP32-S3 with no fixed state (`make screensize`); the firmware grows by
   about 5.1 KB, plus the 1760-byte shared grid allocated at the first
   open.
+
+### 5.4.10 Wi-Fi provisioning over BLE
+
+Book section 2.1 is the user's side; `platform/esp32s3/main/ble_prov.c`
+and `runtime/prov/provmsg.h` hold the details.
+
+- **In the firmware, not the program.** A phone gives the board its
+  Wi-Fi network before any program runs; the firmware writes it to the
+  same config keys `gogo setup` and `gogo config` write (`wifi.ssid`,
+  `wifi.password` in the NVS namespace `gogo`; never the Wi-Fi driver's
+  own NVS, which is off, `ESP_WIFI_NVS_ENABLED=n`), so the program never
+  sees the password and the rest of the firmware needs no change.
+- **Protocol.** ESP-IDF's standard provisioning protocol, so Espressif's
+  phone apps ("ESP BLE Provisioning") and `esp_prov.py` work unchanged:
+  protocomm (an IDF component) for the session and the endpoints, over a
+  GATT service of our own that copies the wifi_provisioning BLE scheme
+  (service `021a9004-...`, one characteristic per endpoint with its name
+  in a user description, advertised as `PROV_gogo_XXXX`, the prefix the
+  apps look for). Endpoints: `prov-session` (security), `proto-ver`
+  (`{"prov":{"ver":"v1.1","sec_ver":2,...,"cap":["wifi_prov"]}}`: no
+  `wifi_scan`, the phone asks for the name) and `prov-config` (get status,
+  set config, apply: the protobuf messages, decoded and encoded by
+  `runtime/prov`, pure C99, tested against Python protobuf's bytes). The
+  managed component `network_provisioning` is not used: its manager
+  needs esp_netif and lwIP, which gogo does not run, and its own BLE
+  transport would start NimBLE itself instead of through the shared host
+  (`ble_host_acquire` / `ble_host_release`, reference-counted).
+- **Security model (owner's decision).** Security 2: SRP6a (3072-bit
+  group, user `wifiprov`, the apps' default) with a one-time six-digit PIN
+  as the password, then AES-GCM with the derived key for every message.
+  The PIN comes from the hardware RNG at each session and is shown only
+  on the board's screen and its serial console; the board computes the
+  SRP salt and verifier itself, so no PIN or verifier is stored anywhere.
+  A listener learns nothing that allows an offline guess of the PIN; an
+  active attacker gets one guess per session attempt, at most five
+  refused attempts per session (then it closes), and a session exists
+  only after someone held the **setup key at boot** (StickS3: button A,
+  KEY1 on G11; Cardputer: W, read from the TCA8418 with its pins switched
+  to GPIO for a moment, since the chip keeps scanning across a reset), and
+  for at most 120 seconds. An unconfigured board does not open it on its
+  own. The password is never printed (a dry run prints its length) and is
+  wiped from RAM after use.
+- **Flow.** The VM task calls `ble_prov_boot` after the console and the
+  config store are up and before Wi-Fi and the image. Not held: it
+  returns, the radio untouched. Held: Wi-Fi driver up (station, settings
+  in RAM), NimBLE through the shared host, advertising; on apply the
+  station joins with the received settings (up to three attempts; a
+  successful association, i.e. the WPA2 handshake, proves the password)
+  and the phone reads Connected or ConnectionFailed with the reason, and
+  may send other settings. Once the phone has read Connected, the
+  settings are written (password first, then SSID, as `gogo setup`) and
+  the board restarts. On timeout or after too many refusals nothing is
+  written and it restarts too: every session ends in a restart, so a
+  normal boot sets up the radio and the memory the program gets.
+  `ble_prov_active()` is true during the session (the program's `ble`
+  port answers Busy then).
+- **Switches.** Kconfig `GOGO_BLE_PROV` (depends on `GOGO_NET` and NimBLE,
+  which `sdkconfig.bleprov` turns on; `gogo firmware -with bleprov`).
+  Test only: `GOGO_PROV_DRYRUN` writes nothing and does not join (apply
+  reports Connected at once, the board prints the SSID and the password's
+  length); `GOGO_PROV_TEST_ENTER` (with the dry run) starts the session at
+  power-on without the key.
+- **Costs** (Cardputer ADV, ESP-IDF 6.1.1, the default features plus
+  `bleprov`): `gogo.bin` 1468240 B instead of 1161760 B (+306 KB; the app
+  partition is 2 MB); static internal RAM (DIRAM) +5.7 KB, with the BLE
+  controller's code in flash (`BT_CTRL_RUN_IN_FLASH_ONLY`; in IRAM it is
+  +21.5 KB), and the free internal RAM at every boot 192788 -> 185512 B
+  (-7.3 KB; the arena keeps its 160 KB). During a session the free internal heap goes
+  from 212696 B before it to 184972 B with Wi-Fi up and 124552 B with
+  NimBLE advertising (largest block 116736 B); the least during a full
+  dry-run session (SRP and AES-GCM included) was 115492 B. All of it is
+  returned by the restart.
 
 ### 5.5 Value representation and memory
 
