@@ -541,8 +541,8 @@ func TestFirmwareComponent(t *testing.T) {
 	if !strings.Contains(out, "board ports: acme.dice\n") || !strings.Contains(out, "-DEXTRA_COMPONENT_DIRS="+comp+" build") {
 		t.Errorf("output:\n%s", out)
 	}
-	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, "-component", comp, img); err == nil || !strings.Contains(err.Error(), "two components") {
-		t.Errorf("the same port twice: %v", err)
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, "-component", comp, img); err == nil || !strings.Contains(err.Error(), "have one name") {
+		t.Errorf("the same component twice: %v", err)
 	}
 	// The same directory again without it: the switch goes off, and the
 	// sdkconfig that had it on is dropped.
@@ -577,5 +577,42 @@ func TestFirmwareCheckMap(t *testing.T) {
 	}
 	if err := fwCheckMap(" .rodata.gogo_board_port_7\n   0x0 0x14 esp-idf/dice/libdice.a(dice_port.c.obj)\n", comps[:1]); err == nil {
 		t.Error("an entry's own data is not the section")
+	}
+}
+
+// -component refuses directories ESP-IDF would confuse: two of one name,
+// main or driver, gogo's own components, a path with ';'.
+func TestFirmwareComponentPaths(t *testing.T) {
+	d := t.TempDir()
+	img := writeImg(t, d, "x.ggb", "acme.a")
+	mk := func(dir, port string) string {
+		p := filepath.Join(d, dir)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(p, "CMakeLists.txt"), []byte("idf_component_register()\n"), 0o644)
+		os.WriteFile(filepath.Join(p, "gogo-driver.json"), []byte(`{"ports": ["`+port+`"]}`), 0o644)
+		return p
+	}
+	a, b := mk("one/acme", "acme.a"), mk("two/acme", "acme.b")
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", a, "-component", b, img); err == nil || !strings.Contains(err.Error(), "have one name") {
+		t.Errorf("two components named acme: %v", err)
+	}
+	for _, name := range []string{"main", "driver", "gogo_api", "fatfs"} {
+		p := mk(name, "acme.a")
+		if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", p, img); err == nil || !strings.Contains(err.Error(), "is gogo's or ESP-IDF's") {
+			t.Errorf("a component named %s: %v", name, err)
+		}
+	}
+	semi := mk("semi;colon/acme_x", "acme.a")
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", semi, img); err == nil || !strings.Contains(err.Error(), "';'") {
+		t.Errorf("a path with ';': %v", err)
+	}
+	c := mk("three/acme_c", "acme.a")
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", a, "-component", c, img); err == nil || !strings.Contains(err.Error(), "two components") {
+		t.Errorf("one port from two components: %v", err)
+	}
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", a, img); err != nil {
+		t.Errorf("one component: %v", err)
 	}
 }

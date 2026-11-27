@@ -101,6 +101,12 @@ func fwReadComponent(dir string) (fwComponent, error) {
 	if err != nil {
 		return fwComponent{}, err
 	}
+	if strings.Contains(abs, ";") {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: a path with ';' (EXTRA_COMPONENT_DIRS is a CMake list)", dir)
+	}
+	if err := fwComponentName(filepath.Base(abs)); err != nil {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: %v", dir, err)
+	}
 	if _, err := os.Stat(filepath.Join(abs, "CMakeLists.txt")); err != nil {
 		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: not an ESP-IDF component (no CMakeLists.txt)", dir)
 	}
@@ -147,6 +153,41 @@ func fwBoardPortName(p string) error {
 		return fmt.Errorf("bad port name %q: a vendor prefix and a '.', then letters, digits, '_' and '-' (\"acme.sensor\")", p)
 	}
 	return nil
+}
+
+// fwComponentName refuses a component directory name ESP-IDF would mix up
+// with another component (a component's name is its directory's): main,
+// driver (IDF's legacy driver component, and the likeliest name for a
+// driver's directory), one of gogo's own components
+// (platform/esp32s3/components) or managed ones, or, with IDF_PATH set,
+// one of ESP-IDF's.
+func fwComponentName(name string) error {
+	taken := name == "main" || name == "driver"
+	if repo, ok := findRepoFromWd(); ok {
+		for _, d := range []string{"platform/esp32s3/components", "platform/esp32s3/managed_components"} {
+			if _, err := os.Stat(filepath.Join(repo, d, name)); err == nil {
+				taken = true
+			}
+		}
+	}
+	if idf := os.Getenv("IDF_PATH"); idf != "" {
+		if _, err := os.Stat(filepath.Join(idf, "components", name)); err == nil {
+			taken = true
+		}
+	}
+	if taken {
+		return fmt.Errorf("the component name %q (its directory's) is gogo's or ESP-IDF's: name the directory after your driver (acme_sensor)", name)
+	}
+	return nil
+}
+
+// findRepoFromWd is findRepo from the working directory.
+func findRepoFromWd() (string, bool) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	return findRepo(wd)
 }
 
 // fwComponentsFlag collects repeated -component flags.
@@ -490,6 +531,11 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 		c, err := fwReadComponent(d)
 		if err != nil {
 			return err
+		}
+		for _, o := range comps {
+			if filepath.Base(o.dir) == filepath.Base(c.dir) {
+				return fmt.Errorf("gogo firmware: components %s and %s have one name, %q (a component's name is its directory's): rename one", o.dir, c.dir, filepath.Base(c.dir))
+			}
 		}
 		for _, p := range c.ports {
 			for _, q := range extra {

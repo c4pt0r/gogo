@@ -610,7 +610,10 @@ driver nobody uses. It reads the requirement names each file carries
   it provides, `{"ports": ["acme.dice"]}`, which then satisfy the images'
   requirements. The tool turns on `CONFIG_GOGO_BOARD_PORTS` (the
   firmware's host-port layer) and passes the directories to `idf.py` as
-  `EXTRA_COMPONENT_DIRS`; without `-component` both are off again. The
+  `EXTRA_COMPONENT_DIRS`; without `-component` both are off again. A
+  component's name is its directory's, so two components may not share
+  one, and none may be called `main`, `driver` or like one of gogo's or
+  ESP-IDF's components; a path may not contain `;`. The
   json's names go into `CONFIG_GOGO_BOARD_PORT_NAMES`, and the firmware
   says at boot each one it did not register; with `-build` the tool also
   checks the linker map and fails for a component that put no
