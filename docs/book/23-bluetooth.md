@@ -173,9 +173,11 @@ is the program's to split, as in this example
 
 ```go
 // sendChunked pushes data to characteristic char in pieces of
-// MaxNotify(mtu) bytes, one at a time; ok is false if one was refused
-// (the phone unsubscribed or went away).
-func sendChunked(p actor.PID, char int, data bytes.Bytes, mtu int) (pieces int, ok bool) {
+// MaxNotify(mtu) bytes, one at a time; ok is false if one was not
+// delivered (the phone unsubscribed or went away). The port.Posts that
+// arrive meanwhile (a phone's write, a new MTU) come back in held, in
+// order, for the caller to handle.
+func sendChunked(p actor.PID, char int, data bytes.Bytes, mtu int) (pieces int, ok bool, held []port.Post) {
 	size := ble.MaxNotify(mtu)
 	for at := 0; at < data.Len(); at += size {
 		end := at + size
@@ -184,19 +186,43 @@ func sendChunked(p actor.PID, char int, data bytes.Bytes, mtu int) (pieces int, 
 		}
 		ble.SendNotify(p, char, data.Slice(at, end))
 		pieces++
-		if waitDone(p) < 0 {
-			return pieces, false
+		var seq int
+		seq, held = waitDone(p, held)
+		if seq < 0 {
+			return pieces, false, held
 		}
 	}
-	return pieces, true
+	return pieces, true, held
+}
+
+// waitDone returns the Seq of the next port.Done from p. A port.Post that
+// arrives first is appended to held, not dropped: it may be the phone's
+// next write.
+func waitDone(p actor.PID, held []port.Post) (int, []port.Post) {
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Done:
+			if m.From == p {
+				return m.Seq, held
+			}
+		case port.Post:
+			held = append(held, m)
+		}
+	}
 }
 ```
+
+A `port.Post` that arrives while `waitDone` waits (the phone's next
+write, a new MTU, a `Disconnected`) is kept in `held`, not dropped: the
+main loop handles those before it receives again. Dropping them is an
+easy mistake, and it loses a phone's write without a trace.
 
 The program keeps the MTU from `Connected` and `MTUChanged`; with a
 phone at the default MTU of 23 the 100-byte text goes in 5 pieces, at 50
 in 3:
 
 ```text
+advertising as gogo-log
 mtu 23 -> 5 pieces of up to 20 bytes, ok: true
 mtu 50 -> 3 pieces of up to 47 bytes, ok: true
 phone gone

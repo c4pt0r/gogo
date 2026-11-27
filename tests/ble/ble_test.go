@@ -186,12 +186,16 @@ func (p *phone) send(line string) {
 	}
 }
 
-// recv returns the next line from the VM ("" and false at the end).
+// recv returns the next line from the VM ("" and false at the end). A
+// timeout fails the test: it is not the end of the connection.
 func (p *phone) recv() (string, bool) {
 	p.t.Helper()
 	p.c.SetReadDeadline(time.Now().Add(timeout))
 	s, err := p.r.ReadString('\n')
 	if err != nil {
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			p.t.Fatalf("phone: nothing from the VM for %v (got %q)", timeout, s)
+		}
 		if s == "" {
 			return "", false
 		}
@@ -305,9 +309,11 @@ func TestEcho(t *testing.T) {
 	p.send("sub 0 0")
 	p.expect("ok 0")
 	p.send("big") // not a command of the protocol: ignored
-	p.send("write 1 " + hexs("big"))
+	// "big" (refused: Done -1) and "bye" in one segment: "bye" is in the
+	// program's mailbox while it waits for the Done of "big", and must not
+	// be lost there
+	p.send("write 1 " + hexs("big") + "\nwrite 1 " + hexs("bye"))
 	p.expect("ok 1")
-	p.send("write 1 " + hexs("bye"))
 	p.expect("ok 1")
 	p.expectEOF()
 	out, err := v.exit()
@@ -432,6 +438,7 @@ func TestBookExamples(t *testing.T) {
 				t.Fatal(err)
 			}
 			v := start(t, build(t, d))
+			v.stdout.wait(t) // the program's first line: it has set its values
 			p := v.dial()
 			p.script(ph, string(script))
 			out, err := v.exit()
