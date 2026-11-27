@@ -20,20 +20,6 @@ static char *put_u(char *p, uint64_t v) {
     return p;
 }
 
-/* v as 16K / 1M / 2G when it divides evenly, else in bytes. */
-static char *put_size(char *p, uint64_t v) {
-    static const char suf[] = "GMK";
-    for (unsigned i = 0; i < 3u && v; i++) {
-        uint32_t sh = 30u - 10u * i;
-        if (v % ((uint64_t)1 << sh) == 0) {
-            p = put_u(p, v >> sh);
-            *p++ = suf[i];
-            return p;
-        }
-    }
-    return put_u(p, v);
-}
-
 static char *put_s(char *p, const char *s) {
     size_t n = strlen(s);
     memcpy(p, s, n);
@@ -44,13 +30,13 @@ size_t board_params_format(const VmParams *p, char *buf, size_t cap) {
     char line[200], *q = line;
     uint64_t mem = p->memory;
     if (GOGO_ARENA_BYTES && (!mem || mem > GOGO_ARENA_BYTES)) mem = GOGO_ARENA_BYTES;
-    q = put_size(put_s(q, "actor_memory="), p->actor_memory);
+    q = vm_params_put_size(put_s(q, "actor_memory="), p->actor_memory);
     q = put_s(q, " memory=");
-    q = mem ? put_size(q, mem) : put_s(q, "unlimited");
+    q = mem ? vm_params_put_size(q, mem) : put_s(q, "unlimited");
     q = put_u(put_s(q, " max_actors="), p->max_actors);
     q = put_u(put_s(q, " max_ports="), p->max_ports);
     q = put_u(put_s(q, " max_links="), p->max_links ? p->max_links : GOGO_MAX_LINKS);
-    q = put_size(put_s(q, " code_mem="), p->code_mem);
+    q = vm_params_put_size(put_s(q, " code_mem="), p->code_mem);
     q = put_u(put_s(q, " bytes_handles="), p->bytes_handles);
     *q++ = '/';
     q = put_u(q, p->bytes_per_actor);

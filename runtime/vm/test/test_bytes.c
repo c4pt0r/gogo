@@ -35,11 +35,17 @@ static void build_img(uint32_t *w) {
 
 typedef struct Fx { uint32_t w[IMG_WORDS]; Image img; Vm vm; } Fx;
 
+/* The Bytes caps these tests run with (a board's defaults). */
+#define T_HANDLES 64u
+#define T_PER 16u
+
 static void fx_init(Fx *f) {
     build_img(f->w);
     CHECK_EQ(image_load(&f->img, f->w, img_seal(f->w)), IMG_OK);
     CHECK_EQ(test_vm_init(&f->vm, &f->img, 16), 0);
     CHECK_EQ(bytes_table_used(&f->vm), 0);
+    f->vm.bytes_cap = T_HANDLES;          /* a board's caps on every build (vm.handles) */
+    f->vm.bytes_per_actor = T_PER;
 }
 
 static Actor *spawn(Fx *f, uint16_t words) {
@@ -51,7 +57,7 @@ static Actor *spawn(Fx *f, uint16_t words) {
 
 #define R(a) ((term *)(a)->mem + (a)->fp)
 /* Words a holder list is charged while it exists. */
-#define LIST_W ((uint32_t)((sizeof(HeldBytes) + 3u) / 4u))
+#define LIST_W ((uint32_t)((sizeof(HeldBytes) + T_PER * sizeof(Held) + 3u) / 4u))
 #define I(v) term_from_int(v)
 
 static uint32_t call(Fx *f, Actor *a, uint32_t id, uint32_t ra, uint32_t rb, uint32_t rc) {
@@ -345,7 +351,7 @@ TEST(bytes_table_full_and_per_actor_cap) {
     Actor *act[5];
     for (int i = 0; i < 5; i++) act[i] = spawn(&f, 1024);
     Actor *a = act[0];
-    for (uint32_t i = 0; i < GOGO_BYTES_PER_ACTOR; i++) {
+    for (uint32_t i = 0; i < T_PER; i++) {
         CHECK_EQ(make_bytes(&f, a, 0, 65), R_NORMAL);
         /* keep each in a struct chain so all stay live */
         uint32_t off = heap_alloc(&f.vm, a, 4, NULL, 0);
@@ -356,18 +362,18 @@ TEST(bytes_table_full_and_per_actor_cap) {
         a->mem[off + 3] = i ? R(a)[1] : T_NIL;
         R(a)[1] = term_from_ref(off);
     }
-    CHECK_EQ(bytes_held_count(a), GOGO_BYTES_PER_ACTOR);
+    CHECK_EQ(bytes_held_count(a), T_PER);
     CHECK_EQ(make_bytes(&f, a, 0, 65), R_OUT_OF_MEMORY);
-    CHECK_EQ(bytes_held_count(a), GOGO_BYTES_PER_ACTOR);
+    CHECK_EQ(bytes_held_count(a), T_PER);
     R(a)[0] = T_NIL;
     R(a)[1] = a->mem[term_ref_off(R(a)[1]) + 3];             /* drop the newest */
     CHECK_EQ(make_bytes(&f, a, 0, 65), R_NORMAL);            /* the GC made room */
-    CHECK_EQ(bytes_held_count(a), GOGO_BYTES_PER_ACTOR);
+    CHECK_EQ(bytes_held_count(a), T_PER);
     /* Fill the table from three more actors. */
-    uint32_t want = GOGO_BYTES_HANDLES - GOGO_BYTES_PER_ACTOR;
+    uint32_t want = T_HANDLES - T_PER;
     for (uint32_t k = 0; k < want; k++) {
-        Actor *h = act[1 + k / GOGO_BYTES_PER_ACTOR];
-        uint32_t r = 2u + k % GOGO_BYTES_PER_ACTOR % 8u;
+        Actor *h = act[1 + k / T_PER];
+        uint32_t r = 2u + k % T_PER % 8u;
         CHECK_EQ(make_bytes(&f, h, 0, 65), R_NORMAL);
         uint32_t off = heap_alloc(&f.vm, h, 4, NULL, 0);
         CHECK(off != UINT32_MAX);
@@ -378,12 +384,12 @@ TEST(bytes_table_full_and_per_actor_cap) {
         R(h)[r] = term_from_ref(off);
         R(h)[0] = T_NIL;
     }
-    CHECK_EQ(bytes_table_used(&f.vm), GOGO_BYTES_HANDLES);
+    CHECK_EQ(bytes_table_used(&f.vm), T_HANDLES);
     Actor *e = act[4];
     CHECK_EQ(make_bytes(&f, e, 0, 65), R_OUT_OF_MEMORY);     /* the offender */
     CHECK_EQ(bytes_held_count(e), 0);
     CHECK_EQ(make_bytes(&f, e, 0, 64), R_NORMAL);            /* inline: no handle */
-    CHECK_EQ(bytes_table_used(&f.vm), GOGO_BYTES_HANDLES);
+    CHECK_EQ(bytes_table_used(&f.vm), T_HANDLES);
     for (int i = 0; i < 5; i++) actor_exit(&f.vm, act[i], R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
@@ -396,7 +402,7 @@ TEST(bytes_table_full_idle_holders) {
     Fx f; fx_init(&f);
     Actor *a = spawn(&f, 1024), *e = spawn(&f, 1024), *sink[4];
     for (int i = 0; i < 4; i++) sink[i] = spawn(&f, 1024);
-    for (uint32_t k = 0; k < GOGO_BYTES_HANDLES; k++) {
+    for (uint32_t k = 0; k < T_HANDLES; k++) {
         CHECK_EQ(make_bytes(&f, a, 0, 65), R_NORMAL);
         CHECK_EQ(msg_send(&f.vm, a, sink[k % 4u]->id, R(a)[0]), 0);
         R(a)[0] = T_NIL;
@@ -405,10 +411,10 @@ TEST(bytes_table_full_idle_holders) {
     for (int i = 0; i < 4; i++) {
         term t;
         while (msg_receive(&f.vm, sink[i], &t)) R(sink[i])[0] = t;
-        CHECK_EQ(bytes_held_count(sink[i]), GOGO_BYTES_HANDLES / 4u);
+        CHECK_EQ(bytes_held_count(sink[i]), T_HANDLES / 4u);
         if (i < 3) R(sink[i])[0] = T_NIL;                     /* sink[3] keeps its last */
     }
-    CHECK_EQ(bytes_table_used(&f.vm), GOGO_BYTES_HANDLES);
+    CHECK_EQ(bytes_table_used(&f.vm), T_HANDLES);
     CHECK_EQ(make_bytes(&f, e, 0, 100), R_NORMAL);
     CHECK(alpha_is(&f, e, 0, 100));
     for (int i = 0; i < 3; i++) {
@@ -583,7 +589,7 @@ TEST(bytes_enqueue_counts_list) {
     Actor *a = spawn(&f, 256), *b = spawn(&f, 64), *c = spawn(&f, 64);
     CHECK_EQ(make_bytes(&f, a, 0, 400), R_NORMAL);
     uint32_t fw = msg_footprint_words(0) + 100u;
-    CHECK_EQ(bytes_list_words(b), LIST_W);
+    CHECK_EQ(bytes_list_words(&f.vm, b), LIST_W);
     b->max_words = (gogo_words_t)(b->mem_words + fw + LIST_W - 1u);
     CHECK_EQ(msg_send(&f.vm, a, b->id, R(a)[0]), 0);
     CHECK(b->flags & AF_EXIT_PENDING);
@@ -598,7 +604,7 @@ TEST(bytes_enqueue_counts_list) {
     term t;
     CHECK(msg_receive(&f.vm, c, &t));
     R(c)[0] = t;
-    CHECK_EQ(bytes_list_words(c), 0);
+    CHECK_EQ(bytes_list_words(&f.vm, c), 0);
     CHECK((uint32_t)c->mem_words + actor_charged_words(c) <= actor_max_words(c));
     actor_free(&f.vm, b);
     actor_exit(&f.vm, c, R_NORMAL, T_EMPTYSTR);
@@ -746,15 +752,15 @@ TEST(bytes_port_api) {
 TEST(bytes_receive_cap) {
     Fx f; fx_init(&f);
     Actor *a = spawn(&f, 1024), *b = spawn(&f, 1024);
-    for (uint32_t i = 0; i <= GOGO_BYTES_PER_ACTOR; i++) {
+    for (uint32_t i = 0; i <= T_PER; i++) {
         CHECK_EQ(make_bytes(&f, a, 0, 65), R_NORMAL);
         CHECK_EQ(msg_send(&f.vm, a, b->id, R(a)[0]), 0);
         R(a)[0] = T_NIL;
         heap_gc(&f.vm, a, 0, NULL, 0);                       /* a lets go of it */
     }
     CHECK_EQ(bytes_held_count(a), 0);
-    CHECK_EQ(bytes_table_used(&f.vm), GOGO_BYTES_PER_ACTOR + 1u);
-    for (uint32_t i = 0; i < GOGO_BYTES_PER_ACTOR; i++) {
+    CHECK_EQ(bytes_table_used(&f.vm), T_PER + 1u);
+    for (uint32_t i = 0; i < T_PER; i++) {
         term t;
         CHECK(msg_receive(&f.vm, b, &t));
         R(b)[i % 16u] = t;
@@ -765,7 +771,7 @@ TEST(bytes_receive_cap) {
     CHECK(b->mbox_head != NULL);
     R(b)[0] = T_NIL;                                          /* one dropped: fits */
     CHECK(msg_receive(&f.vm, b, &t));
-    CHECK_EQ(bytes_held_count(b), GOGO_BYTES_PER_ACTOR);
+    CHECK_EQ(bytes_held_count(b), T_PER);
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
     actor_exit(&f.vm, b, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(bytes_table_used(&f.vm), 0);

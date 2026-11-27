@@ -1,6 +1,7 @@
 // What a large frozen Bytes costs. It is passed by reference, but every
 // holder is charged its full size, a receiver that has it still waiting
-// in its mailbox included. And one actor may hold at most 16 of them.
+// in its mailbox included. And one actor may hold only so many of them:
+// 16 on a board, 256 on the host (the config key vm.handles).
 package main
 
 import (

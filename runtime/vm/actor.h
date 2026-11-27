@@ -100,6 +100,7 @@ typedef struct Vm {
     uint32_t mod_cap;         /* their limit: config code.mem (vm_params_apply) */
     uint8_t mod_next;         /* where module_load's round-robin slot search starts */
     uint8_t open_err;         /* why the last refused port open failed: GOGO_E_* (port.h) */
+    uint16_t bytes_per_actor; /* off-heap Bytes one actor may hold (vm_params_apply; bytes.h) */
     uint32_t rand_x;          /* vm_random's fallback state */
     uint64_t t0;              /* host->now_ms at the time base; vm_now counts from it */
     uintptr_t *table;
@@ -107,6 +108,8 @@ typedef struct Vm {
     uint16_t next_free;       /* every slot below it is taken: actor_new_in scans from it */
     Actor *runq_head, *runq_tail;
     uint32_t live;            /* actors currently allocated */
+    gogo_words_t actor_words; /* an actor's default memory limit (config vm.actor_memory, vm_params_apply) */
+    uint16_t bytes_cap;       /* off-heap Bytes table entries (vm.handles; bytes.h) */
     uint64_t next_ref;        /* serial of the next Ref, from 1 */
     Timer **timers;           /* min-heap of pending timers, by (deadline, seq) (timer.h) */
     uint32_t ntimers;         /* entries in use */
@@ -170,7 +173,7 @@ static inline void vm_wake(const Vm *vm) {
 int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board, uint16_t table_cap);
 
 /* Slot + PID assigned, block allocated, empty stack, state A_RUNNABLE,
- * max_words 0 (default limit), not enqueued, running module slot `mod`'s
+ * max_words the VM's default (vm->actor_words), not enqueued, running module slot `mod`'s
  * code (counted in that module's live actors). NULL if the table is full
  * or memory runs out. */
 Actor *actor_new_in(Vm *vm, gogo_words_t initial_words, uint8_t mod);
@@ -180,7 +183,8 @@ Actor *actor_new_in(Vm *vm, gogo_words_t initial_words, uint8_t mod);
 Actor *actor_new(Vm *vm, gogo_words_t initial_words);
 
 /* The actor's memory limit in words (heap block + queued messages):
- * max_words, or GOGO_DEFAULT_MAX_WORDS when max_words is 0. */
+ * max_words (set at its making: the VM's default, or SpawnOpt's), or
+ * GOGO_DEFAULT_MAX_WORDS when max_words is 0 (an actor a test made). */
 uint32_t actor_max_words(const Actor *a);
 
 /* Frees the queued messages, the extra block, the memory block and the

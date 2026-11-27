@@ -188,12 +188,17 @@ const (
 	BSprint uint32 = 61 // mode, v -> string | nil: println's text of v (gogo/fmt)
 )
 
-// Off-heap Bytes limits: twins of runtime/vm/config.h's defaults (checked by
-// TestConfigMatchC; platforms may override them in C).
+// Off-heap Bytes limits: twins of runtime/vm/config.h's defaults, a board's
+// and the host's (checked by TestConfigMatchC; the config key vm.handles
+// changes the first two at VM start, up to the third).
 const (
-	BytesHandles  = 64 // GOGO_BYTES_HANDLES: handle table entries
-	BytesPerActor = 16 // GOGO_BYTES_PER_ACTOR: handles one actor may hold
-	BytesInline   = 64 // GOGO_BYTES_INLINE: largest Freeze kept on the heap
+	BytesHandles      = 64    // GOGO_BYTES_HANDLES: handle table entries
+	BytesPerActor     = 16    // GOGO_BYTES_PER_ACTOR: handles one actor may hold
+	BytesHandlesMax   = 1024  // GOGO_BYTES_HANDLES_MAX: the most entries vm.handles may ask
+	HostBytesHandles  = 4096  // the host's GOGO_BYTES_HANDLES
+	HostBytesPerActor = 256   // the host's GOGO_BYTES_PER_ACTOR
+	HostBytesMax      = 65535 // the host's GOGO_BYTES_HANDLES_MAX
+	BytesInline       = 64    // GOGO_BYTES_INLINE: largest Freeze kept on the heap
 )
 
 // B_APPEND modes: bit 0 = byte elements, bit 1 = spread (v is a slice, or

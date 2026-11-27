@@ -225,9 +225,9 @@ static void cmd_stats(ConfigSvc *s) {
     n = snprintf(line, sizeof line, "arena_used=%u", (unsigned)platform_esp_arena_used());
     reply("kv", line, (size_t)n);
     /* The fixed tables a program can run out of: used/capacity. */
-    uint32_t bytes_used, ports_used, ports_max;
-    main_esp_usage(&bytes_used, &ports_used, &ports_max);
-    n = snprintf(line, sizeof line, "bytes=%u/%u", (unsigned)bytes_used, (unsigned)GOGO_BYTES_HANDLES);
+    uint32_t bytes_used, bytes_max, ports_used, ports_max;
+    main_esp_usage(&bytes_used, &bytes_max, &ports_used, &ports_max);
+    n = snprintf(line, sizeof line, "bytes=%u/%u", (unsigned)bytes_used, (unsigned)bytes_max);
     reply("kv", line, (size_t)n);
     n = snprintf(line, sizeof line, "ports=%u/%u", (unsigned)ports_used, (unsigned)ports_max);
     reply("kv", line, (size_t)n);

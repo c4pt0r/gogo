@@ -35,11 +35,12 @@ static InputState input_state;
 NetState esp_net_state;        /* shared with wifi.c and config_esp.c (platform_esp.h) */
 #endif
 
-void main_esp_usage(uint32_t *bytes_used, uint32_t *ports_used, uint32_t *ports_max) {
+void main_esp_usage(uint32_t *bytes_used, uint32_t *bytes_max, uint32_t *ports_used, uint32_t *ports_max) {
     const volatile Vm *v = &vm;
     uint32_t n = 0, have = v->port_n;   /* chunks are only ever added */
     for (uint32_t i = 0; i < have; i++) n += v->port_chunk[i / PORT_CHUNK][i % PORT_CHUNK].drv != NULL;
     *bytes_used = v->bytes_used;
+    *bytes_max = v->bytes_cap;
     *ports_used = n;
     *ports_max = v->port_max;
 }
@@ -48,11 +49,14 @@ void main_esp_params(char *buf, size_t cap) {
     const volatile Vm *v = &vm;
     VmParams p;
     if (v->table_cap) {   /* booted: what the Vm runs with */
-        vm_params_default(&p);
+        p.actor_memory = (uint32_t)v->actor_words * 4u;
+        p.memory = v->va.limit;
         p.max_actors = v->table_cap;
         p.max_ports = v->port_max;
         p.max_links = v->max_links;
         p.code_mem = v->mod_cap;
+        p.bytes_handles = v->bytes_cap;
+        p.bytes_per_actor = v->bytes_per_actor;
     } else {              /* no image (yet): what a boot would resolve, quietly */
         gogo_host h = esp_host;
         h.write = NULL;

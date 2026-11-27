@@ -7,28 +7,41 @@
  *     flag (or gogo_config field)  >  config key  >  platform default
  *
  * and every value is checked against the platform's ceiling as it is
- * resolved: out of range is clamped (or refused, where noted) with one
- * line on the console, and a value that is not a number is ignored with
- * one line ("gogo: bad <key>; using the default"), never silently.
+ * resolved: out of range is clamped with one line on the console
+ * ("gogo: vm.actor_memory 2M is over this VM's 256K; using 256K"), and a
+ * value that is not a number is ignored with one line ("gogo: bad
+ * vm.actor_memory; using the default"), never silently.
  *
- *   field        key              what it bounds
- *   max_ports    vm.max_ports     ports open at once: 1..PORT_MAX_CEILING, and
- *                                 max_actors + max_ports at most PORT_SLOT_TOP
- *                                 (else refused: the default is kept)
- *   max_links    node.max_links   node links of distributed actors (0: the node
- *                                 port's default, DIST_LINKS); at most PORT_MAX_CEILING
- *   code_mem     code.mem         bytes of loaded module code (the boot image aside)
+ *   field            key              what it bounds; range
+ *   actor_memory     vm.actor_memory  an actor's default memory limit (heap, stack,
+ *                                     mailbox), bytes: 1K .. GOGO_ACTOR_MAX_WORDS
+ *                                     words (256 KB - 4 on a board, 1 GB on the host)
+ *   memory           vm.memory        all actors together (the VM allocator's
+ *                                     limit), bytes; 0: none (a board's arena,
+ *                                     GOGO_ARENA_BYTES, still bounds it, and is its
+ *                                     ceiling)
+ *   max_actors       vm.max_actors    live actors at once (the actor table):
+ *                                     1 .. 65520
+ *   max_ports        vm.max_ports     ports open at once: 1 .. PORT_MAX_CEILING, and
+ *                                     max_actors + max_ports at most PORT_SLOT_TOP
+ *                                     (else refused: the default, or what the
+ *                                     actors leave)
+ *   max_links        node.max_links   node links of distributed actors (0: the node
+ *                                     port's default, DIST_LINKS): at most
+ *                                     PORT_MAX_CEILING
+ *   code_mem         code.mem         bytes of loaded module code (the boot image
+ *                                     aside); at most 4 GB - 1
+ *   bytes_handles    vm.handles       off-heap Bytes handles VM-wide, 1 ..
+ *   bytes_per_actor                   GOGO_BYTES_HANDLES_MAX, and per actor, 1 ..
+ *                                     bytes_handles: the key is "N" or "N/M" (M
+ *                                     omitted: the default's, at most N); keys
+ *                                     hold 15 characters (a board's NVS), so not
+ *                                     vm.bytes_handles
  *
- * The others are the build's, reported as they are: actor_memory (an
- * actor's default memory limit, GOGO_DEFAULT_MAX_WORDS), memory (all
- * actors together: the VM allocator's limit, 0 none; a board's arena,
- * GOGO_ARENA_BYTES, bounds it besides), max_actors (the actor table,
- * the platform's table_cap), bytes_handles and bytes_per_actor (the
- * off-heap Bytes table, GOGO_BYTES_HANDLES and GOGO_BYTES_PER_ACTOR).
- *
- * Integer keys are decimal; size keys (bytes) take an optional K or M
- * suffix (either case). Pure C99, no state: the platform keeps its
- * VmParams. */
+ * Integer keys are decimal; size keys (bytes) take an optional K, M or G
+ * suffix (either case). A key value of 0 is the default, except
+ * vm.memory and code.mem (0 is no limit, and no module code). Pure C99,
+ * no state: the platform keeps its VmParams. */
 #ifndef GOGO_PARAMS_H
 #define GOGO_PARAMS_H
 
@@ -60,8 +73,13 @@ void vm_params_default(VmParams *p);
 void vm_params_resolve(const gogo_host *h, void *ctx, const VmParams *set, VmParams *p);
 
 /* Applies resolved p to a Vm fresh from vm_init (its table: p->max_actors):
- * the port and link caps and the code memory limit. 0, or -1 if the Vm
- * refuses the port cap (vm_set_max_ports). */
+ * the default actor limit, the memory limit, the port and link caps, the
+ * code memory limit and the Bytes caps. 0, or -1 if the Vm refuses the
+ * port cap (vm_set_max_ports). */
 int vm_params_apply(struct Vm *vm, const VmParams *p);
+
+/* v as 16K / 1M / 2G when it divides evenly, else in bytes, at p (no
+ * NUL); returns the end. At most 20 characters. */
+char *vm_params_put_size(char *p, uint64_t v);
 
 #endif

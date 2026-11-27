@@ -250,10 +250,14 @@ static uint32_t embed_max_ports(const gogo_config *c) {
 static void params_resolve(gogo_vm *g) {
     VmParams set;
     memset(&set, 0, sizeof set);
+    set.memory = g->cfg.mem_limit;
+    set.actor_memory = g->cfg.actor_memory;
+    set.max_actors = g->cfg.max_actors;
     set.max_ports = g->cfg.max_ports;
     set.max_links = g->cfg.max_links;
+    set.bytes_handles = g->cfg.bytes_handles;
+    set.bytes_per_actor = g->cfg.bytes_per_actor;
     vm_params_default(&g->params);
-    if (g->cfg.max_actors) g->params.max_actors = g->cfg.max_actors;
     g->params.max_ports = embed_max_ports(&g->cfg);
     vm_params_resolve(&g->fwd, g, &set, &g->params);
 }
@@ -264,9 +268,8 @@ static int vm_setup(gogo_vm *g) {
     g->closed_msg = NULL;            /* vm_init starts the allocator over */
     g->closed_n = 0;
     if (vm_init(&g->vm, &g->fwd, g, g->fs ? &embed_board_flash : &embed_board, (uint16_t)g->params.max_actors) != 0 ||
-        vm_params_apply(&g->vm, &g->params) != 0)
+        vm_params_apply(&g->vm, &g->params) != 0)   /* mem_limit too: params.memory */
         return -1;
-    va_set_limit(&g->vm, g->cfg.mem_limit > (uint64_t)(size_t)-1 ? (size_t)-1 : (size_t)g->cfg.mem_limit);
     vfs_init(&g->vm, &g->vfs);       /* no fs_root: no mounts, every gogo/fs call is NotMounted */
     embed_ports_install(g);
     return port_add_source(&g->vm, &inbox_source, g) ? 0 : -1;

@@ -953,9 +953,10 @@ TEST(cap_exceeded) {
 
     static const struct { const char *line; uint32_t cap; bool said; } cases[] = {
         { "code.mem=2K\n", 2048u, false }, { "code.mem=1m\n", 1048576u, false },
-        { "other=1\n", 65536u, false }, { "code.mem=12x\n", 65536u, true },
-        { "code.mem=\n", 65536u, true }, { "code.mem=K\n", 65536u, true },
-        { "code.mem=99999999999\n", 65536u, true }, { "code.mem=5000000M\n", 65536u, true },
+        { "other=1\n", GOGO_CODE_MEM_DEFAULT, false }, { "code.mem=12x\n", GOGO_CODE_MEM_DEFAULT, true },
+        { "code.mem=\n", GOGO_CODE_MEM_DEFAULT, true }, { "code.mem=K\n", GOGO_CODE_MEM_DEFAULT, true },
+        { "code.mem=99999999999\n", GOGO_CODE_MEM_DEFAULT, true }, { "code.mem=5000000M\n", GOGO_CODE_MEM_DEFAULT, true },
+        { "code.mem=2g\n", 2147483648u, false },
     };
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         f = calloc(1, sizeof *f);

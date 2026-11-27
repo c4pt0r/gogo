@@ -35,12 +35,20 @@
  * ones. Listening binds every interface; outbound connections go anywhere.
  * Not with --net-fd.
  *
- * --max-ports N, --max-links N: the VM's caps on open ports and on node
- * links (distributed actors); else the config keys vm.max_ports and
- * node.max_links; else 1024 and 512 (a board's are 16 and 8). Ports are
- * at most 2048 (their PIDs take the top slots of the 65536). The
- * precedence (flag, key, default) and the checks are runtime/vm/params.h's,
- * shared with the board firmware and libgogo.
+ * The VM's parameters (runtime/vm/params.h, shared with the board firmware
+ * and libgogo; a flag beats the config key, which beats the default, and
+ * a value past the ceiling is clamped with one line on stderr):
+ *   --actor-memory SIZE  an actor's default memory limit (vm.actor_memory;
+ *                        1 MB; at most 1 GB)
+ *   --memory SIZE        all actors together (vm.memory; default no limit)
+ *   --max-actors N       live actors at once (vm.max_actors; 16384)
+ *   --max-ports N        ports open at once (vm.max_ports; 1024, 1..2048:
+ *                        their PIDs take the top slots of the 65536)
+ *   --max-links N        node links (node.max_links; 512, 1..2048)
+ *   --bytes-handles N[/M] off-heap Bytes handles, VM-wide and per actor
+ *                        (vm.handles; 4096/256)
+ * SIZE is bytes with an optional K, M or G suffix; a board's defaults are
+ * 16K, 160K (its arena), 1024, 16, 8 and 64/16.
  *
  * --net-fd N: fd N (inherited, e.g. a socketpair end) is the network link
  * (net_unix.h); --sim-clock: time is simulated, moved only by the peer
@@ -284,14 +292,36 @@ static void tls_report(void) {
 #endif
 
 
+/* A flag's number into *v: decimal, with a K, M or G suffix when size;
+ * at most max. False if it is not one. */
+static int flag_num(const char *s, int size, unsigned long long max, unsigned long long *v) {
+    char *end;
+    if (*s < '0' || *s > '9') return 0;
+    unsigned long long x = strtoull(s, &end, 10);
+    unsigned sh = 0;
+    if (size && *end) {
+        sh = *end == 'K' || *end == 'k' ? 10u : *end == 'M' || *end == 'm' ? 20u : *end == 'G' || *end == 'g' ? 30u : 99u;
+        if (sh == 99u || end[1] || x > max >> sh) return 0;
+        end++;
+    }
+    if (*end || (x << sh) > max) return 0;
+    *v = x << sh;
+    return 1;
+}
+
 /* -h / --help (stdout, exit 0) and a usage error (stderr, exit 1). */
 static int usage(FILE *f, int rc) {
     fputs("usage: gogovm [flags] <file.ggb> [args...]   run an image; args are the program's (sys.Args)\n"
           "       gogovm [flags] --info                 print the VM's parameters and exit\n"
           "       gogovm -h | --help                    this list\n"
           "flags (before the image):\n"
+          "  --actor-memory SIZE  an actor's default memory limit (default 1M, at most 1G; key vm.actor_memory)\n"
+          "  --memory SIZE        all actors together (default no limit; key vm.memory)\n"
+          "  --max-actors N       live actors at once (default 16384; key vm.max_actors)\n"
           "  --max-ports N        ports open at once, 1..2048 (default 1024; key vm.max_ports)\n"
           "  --max-links N        node links of distributed actors, 1..2048 (default 512; key node.max_links)\n"
+          "  --bytes-handles N[/M] off-heap Bytes handles, VM-wide and per actor (default 4096/256; key vm.handles)\n"
+          "  (SIZE: bytes, or with a K, M or G suffix; a flag beats the config key, which beats the default)\n"
           "  --host-net           tcp and tcp_listen on the host's sockets ($GOGO_NET=host)\n"
           "  --net-fd N           fd N is the simulated network link (a socketpair end)\n"
           "  --sim-clock          time moves only by the peer simulator (needs --net-fd)\n"
@@ -393,6 +423,30 @@ int main(int argc, char **argv) {
             }
             if (argv[1][6] == 'p') set.max_ports = v;
             else set.max_links = v;
+        } else if (strcmp(argv[1], "--actor-memory") == 0 || strcmp(argv[1], "--memory") == 0 ||
+                   strcmp(argv[1], "--max-actors") == 0) {
+            unsigned long long v;
+            int size = argv[1][3] != 'a';   /* --max-actors: a count */
+            if (!flag_num(argv[2], size, size ? 1ull << 48 : 0xFFFFFFFFull, &v) || v == 0) {
+                fprintf(stderr, "gogovm: bad %s %s (want %s)\n", argv[1], argv[2],
+                        size ? "bytes, with an optional K, M or G" : "a count");
+                return EXIT_USAGE;
+            }
+            if (argv[1][2] == 'a') set.actor_memory = v > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)v;
+            else if (argv[1][2] == 'm' && argv[1][3] == 'e') set.memory = v;
+            else set.max_actors = (uint32_t)v;
+        } else if (strcmp(argv[1], "--bytes-handles") == 0) {
+            unsigned long long n, m = 0;
+            char a[24];
+            const char *slash = strchr(argv[2], '/');
+            size_t an = slash ? (size_t)(slash - argv[2]) : strlen(argv[2]);
+            if (an >= sizeof a || (memcpy(a, argv[2], an), a[an] = 0, !flag_num(a, 0, 0xFFFFu, &n)) || n == 0 ||
+                (slash && (!flag_num(slash + 1, 0, 0xFFFFu, &m) || m == 0))) {
+                fprintf(stderr, "gogovm: bad --bytes-handles %s (want N or N/M, 1..65535)\n", argv[2]);
+                return EXIT_USAGE;
+            }
+            set.bytes_handles = (uint32_t)n;
+            set.bytes_per_actor = (uint32_t)m;
         } else if (strcmp(argv[1], "--net-fd") == 0) {
             char tail;
             if (sscanf(argv[2], "%d%c", &net_fd, &tail) != 1 || net_fd < 0) {

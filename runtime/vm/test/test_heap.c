@@ -389,7 +389,9 @@ TEST(limit_counts_mailbox) {
 TEST(actor_max_words_default) {
     Vm vm;
     Actor *a = setup(&vm, 24);
-    CHECK_EQ(a->max_words, 0);
+    CHECK_EQ(a->max_words, vm.actor_words);   /* the VM's default, set at its making */
+    CHECK_EQ(actor_max_words(a), GOGO_DEFAULT_MAX_WORDS);
+    a->max_words = 0;                         /* 0 (a test's actor): the build's */
     CHECK_EQ(actor_max_words(a), GOGO_DEFAULT_MAX_WORDS);
     a->max_words = 300;
     CHECK_EQ(actor_max_words(a), 300);

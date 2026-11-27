@@ -208,6 +208,19 @@ typedef struct gogo_config {
      * "node" port today: kept for a server node in an embedding host);
      * 0 = the node port's default, 8. At most 2048. */
     GOGO_EXPERIMENTAL uint32_t max_links;
+    /* The VM's parameters (as gogovm's flags; book 18.3). Each beats the
+     * host's config key of the same parameter (read through config_get
+     * when the host has one), which beats the library's default; a value
+     * past the ceiling is clamped, with one line on stream 2. 0: not set.
+     * actor_memory: an actor's default memory limit in bytes (key
+     * vm.actor_memory; default 1 MB, at least 1 KB, at most 1 GB);
+     * bytes_handles and bytes_per_actor: off-heap Bytes handles VM-wide
+     * (vm.handles; default 4096, at most 65535) and per actor
+     * (default 256, at most bytes_handles). mem_limit and max_actors above
+     * are the vm.memory and vm.max_actors of the same order. */
+    GOGO_EXPERIMENTAL uint32_t actor_memory;
+    GOGO_EXPERIMENTAL uint32_t bytes_handles;
+    GOGO_EXPERIMENTAL uint32_t bytes_per_actor;
     /* Fields are appended here, never inserted. */
 } gogo_config;
 

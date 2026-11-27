@@ -612,7 +612,7 @@ TEST(handoff_moves_charge) {
     CHECK_EQ(fk.handoffs, 0);
     CHECK(pt->owner == a->id);
 
-    uint32_t list = bytes_list_words(b);       /* b's new holder list */
+    uint32_t list = bytes_list_words(&vm, b);       /* b's new holder list */
     CHECK(list > 0u);
     CHECK(port_handoff(&vm, a, p, b->id));
     CHECK_EQ(fk.handoffs, 1);
@@ -656,7 +656,7 @@ TEST(handoff_refused) {
     fk.charge = 8;
     term p = open_fake(&vm, a, 1);
     Port *pt = fk.last;
-    uint32_t alist = bytes_list_words(a);
+    uint32_t alist = bytes_list_words(&vm, a);
     uint8_t *d;
     term h = port_bytes_new(&vm, pt, 1000, &d);
     CHECK(h != T_NIL);
@@ -893,7 +893,7 @@ TEST(handoff_slice_of_large_root) {
     CHECK(sl != T_NIL);
     CHECK(port_bytes_retain(&vm, pt, sl));
     bytes_release(&vm, a, root);              /* a's own pin; the slice keeps the root */
-    uint32_t need = 250u + bytes_list_words(c);
+    uint32_t need = 250u + bytes_list_words(&vm, c);
     CHECK_EQ(bytes_extra_words(&vm, c, pt->held, PORT_MAX_HELD), need);
     c->max_words = (gogo_words_t)(c->mem_words + need - 1u);
     CHECK(!port_handoff(&vm, a, p, c->id));

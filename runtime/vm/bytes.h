@@ -3,7 +3,8 @@
  *
  * A Bytes value is T_EMPTYBYTES, a heap K_BYTES of any size, or a handle
  * term (index << 4) | 0xE naming an entry of its VM's table of
- * GOGO_BYTES_HANDLES entries {refcnt, off, len, parent, data}. Only
+ * vm->bytes_cap entries {refcnt, off, len, parent, data} (config key
+ * vm.handles, params.h; GOGO_BYTES_HANDLES by default). Only
  * Buffer.Freeze (more than GOGO_BYTES_INLINE bytes), Bytes.Slice of a
  * handle and the C API make handles. A root entry owns its data block
  * (len bytes from the VM allocator); a slice entry shares its root's block
@@ -12,7 +13,7 @@
  * chains are one deep.
  *
  * References (refcnt) come from:
- *  - holders: every actor has a list (at most GOGO_BYTES_PER_ACTOR entries,
+ *  - holders: every actor has a list (at most vm->bytes_per_actor entries,
  *    allocated on first use, reached through its ActorExtra) of the handles
  *    it holds, one reference per entry. An entry is there because the
  *    actor's registers or heap may reach the handle (HELD_HEAP: Freeze,
@@ -37,7 +38,7 @@
  * holder's next GC. Exit drops every entry (bytes_actor_exit).
  *
  * The table is allocated on first use and then kept (it is fixed memory,
- * GOGO_BYTES_HANDLES entries, and keeping it avoids free/realloc churn on
+ * vm->bytes_cap entries, and keeping it avoids free/realloc churn on
  * the MCU arena when handles are made and dropped in a loop): a program
  * without off-heap Bytes pays nothing. Each Vm has its own (Vm.bytes_tab,
  * from its own allocator; vm_init starts it empty).
@@ -67,20 +68,21 @@ enum {
     HELD_MARK = 2             /* reached by the GC in progress */
 };
 
-/* An actor's holder list, allocated on its first handle and freed when it
- * holds none; its ActorExtra points to it (actor_held). While it exists its
- * size is charged to the actor (ActorExtra.charged_words). */
+/* An actor's holder list, allocated on its first handle (room for
+ * vm->bytes_per_actor entries) and freed when it holds none; its
+ * ActorExtra points to it (actor_held). While it exists its size is
+ * charged to the actor (ActorExtra.charged_words). */
 struct HeldBytes {
     uint32_t n;               /* entries in use */
     uint32_t bytes;           /* held_bytes: lengths of the distinct roots held */
-    Held e[GOGO_BYTES_PER_ACTOR];
+    Held e[];
 };
 
 /* ---- C API for ports (M5) ---- */
 
 /* A new root of len bytes (zeroed) charged to owner and pinned on its
  * behalf (released with bytes_release); *data is where to write it. T_NIL
- * if the table is full, owner already holds GOGO_BYTES_PER_ACTOR handles,
+ * if the table is full, owner already holds vm->bytes_per_actor handles,
  * the bytes would take owner past its limit, or memory runs out. Never
  * collects. */
 term bytes_new(Vm *vm, Actor *owner, uint32_t len, uint8_t **data);
@@ -144,7 +146,7 @@ void bytes_gc_sweep(Vm *vm, Actor *a, HeldBytes **slot);
  * size if a has none yet, else 0 (msg_enqueue counts it in the quota for a
  * message carrying handles, so the overflow is MailboxOverflow on enqueue
  * rather than OutOfMemory after the receive). */
-uint32_t bytes_list_words(const Actor *a);
+uint32_t bytes_list_words(const Vm *vm, const Actor *a);
 
 /* Words a's charge would grow by if it held every handle in hs[0..n) (0
  * entries and dead handles are skipped): the full length of each root it
@@ -162,12 +164,14 @@ void bytes_msg_unref(Vm *vm, term h);
 bool bytes_adopt(Vm *vm, Actor *a, term h);
 
 /* Sets of distinct roots, for charging: add each handle, then read the
- * bytes of the distinct roots seen. */
+ * bytes of the distinct roots seen. Sized for the most table entries a
+ * VM may have (GOGO_BYTES_HANDLES_MAX); bytes_set_init clears the part
+ * vm's table uses. */
 typedef struct BytesSet {
-    uint32_t seen[(GOGO_BYTES_HANDLES + 31u) / 32u];
+    uint32_t seen[(GOGO_BYTES_HANDLES_MAX + 31u) / 32u];
     uint32_t bytes;
 } BytesSet;
-void bytes_set_init(BytesSet *s);
+void bytes_set_init(const Vm *vm, BytesSet *s);
 void bytes_set_add(const Vm *vm, BytesSet *s, term h);
 
 /* Words for b bytes, rounded up. */

@@ -126,8 +126,9 @@ What a shared `Bytes` does **not** save is accounting:
 - **Every holder is charged its full size**, including a receiver that
   still has it waiting in its mailbox. Two actors holding the same 4 KB
   frame are charged 4 KB each.
-- **At most 16 off-heap `Bytes` per actor and 64 in the whole VM.** One
-  more ends the actor with `OutOfMemory`.
+- **At most 16 off-heap `Bytes` per actor and 64 in the whole VM on a
+  board** (256 and 4096 on the host; the config key `vm.handles` changes
+  both). One more ends the actor with `OutOfMemory`.
 - **A local variable keeps its `Bytes` alive to the end of its block**, and
   a `Slice` of a large `Bytes` keeps all of it alive. An actor that keeps
   the last frame in a variable while it waits in `Receive` holds that frame,
@@ -171,7 +172,7 @@ program is the book example `21-bytes-cost`.)
 ```text
 queued frame charged to a: true
 and to b as well: true
-hoarder held 16 frames, then: true
+hoarder held 256 frames, then: true
 ```
 
 Not every `Bytes` is off-heap. The off-heap ones are mainly the results

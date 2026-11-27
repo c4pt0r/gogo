@@ -99,9 +99,10 @@ const (
 	cfgIP                    // a dotted IPv4 address
 	cfgBool                  // yes or no
 	cfgInt                   // a decimal integer (31-bit, as a gogo int)
+	cfgPair                  // "N" or "N/M", decimal (vm.handles)
 )
 
-var cfgTypeNames = [...]string{"string", "size", "ip", "bool", "int"}
+var cfgTypeNames = [...]string{"string", "size", "ip", "bool", "int", "N[/M]"}
 
 // cfgKey is one key the platform or a gogo library reads.
 type cfgKey struct {
@@ -110,6 +111,8 @@ type cfgKey struct {
 	platform bool     // read by the firmware or the VM, not a program (wifi.* is hidden from programs)
 	maxLen   int      // longest value; 0: configMaxValue
 	values   []string // if set, the only values allowed
+	giga     bool     // a size that may also take a G suffix (the VM's keys, runtime/vm/params.c)
+	min, max uint64   // a size's, int's or pair's range (max 0: the type's own)
 	about    string
 }
 
@@ -124,9 +127,13 @@ var cfgKeys = []cfgKey{
 	{name: "net.dns", typ: cfgIP, about: "its DNS server"},
 	{name: "fs.flash.size", typ: cfgSize, platform: true, about: "the size of /flash"},
 	{name: "fs.flash.format", typ: cfgString, platform: true, values: []string{"yes"}, about: "deprecated: gogo device format-flash"},
-	{name: "code.mem", typ: cfgSize, platform: true, about: "the budget for loaded module code"},
-	{name: "vm.max_ports", typ: cfgInt, platform: true, about: "most ports open at once (default 16 on a board, 1024 on the host; at most 2048)"},
-	{name: "node.max_links", typ: cfgInt, platform: true, about: "most node links (default 8 on a board, 512 on the host)"},
+	{name: "code.mem", typ: cfgSize, platform: true, giga: true, max: 0xFFFFFFFF, about: "the budget for loaded module code (default 64K on a board, 16M on the host)"},
+	{name: "vm.actor_memory", typ: cfgSize, platform: true, giga: true, min: 1 << 10, max: 1 << 30, about: "an actor's default memory limit (default 16K on a board, 1M on the host; at most 256K on a board, 1G on the host)"},
+	{name: "vm.memory", typ: cfgSize, platform: true, giga: true, max: 1 << 48, about: "memory for all actors together (default the arena, 160K, on a board; no limit on the host; 0: none)"},
+	{name: "vm.max_actors", typ: cfgInt, platform: true, min: 1, max: 65520, about: "most live actors (default 1024 on a board, 16384 on the host)"},
+	{name: "vm.max_ports", typ: cfgInt, platform: true, min: 1, max: 2048, about: "most ports open at once (default 16 on a board, 1024 on the host; at most 2048)"},
+	{name: "node.max_links", typ: cfgInt, platform: true, min: 1, max: 2048, about: "most node links (default 8 on a board, 512 on the host; at most 2048)"},
+	{name: "vm.handles", typ: cfgPair, platform: true, min: 1, max: 65535, about: "off-heap Bytes handles, VM-wide[/per actor] (default 64/16 on a board, 4096/256 on the host)"},
 	{name: "node.token", typ: cfgString, maxLen: 200, about: "the shared secret of distributed actors (gogo/node; never printed)"},
 	{name: "node.name", typ: cfgString, maxLen: 32, about: "this node's name (gogo/node)"},
 }
@@ -198,8 +205,15 @@ func checkSetting(key, value string) error {
 	}
 	switch c.typ {
 	case cfgSize:
-		if !sizeOK(value) {
+		n, ok := sizeVal(value, c.giga)
+		if !ok {
+			if c.giga {
+				return bad("bytes, with an optional K, M or G suffix, like 65536, 64K, 1M or 2G")
+			}
 			return bad("bytes, with an optional K or M suffix, like 65536, 64K or 1M")
+		}
+		if c.max > 0 && (n < c.min || n > c.max) {
+			return bad(fmt.Sprintf("%s to %s", sizeText(c.min), sizeText(c.max)))
 		}
 	case cfgIP:
 		if !ipOK(value) {
@@ -210,34 +224,78 @@ func checkSetting(key, value string) error {
 			return bad("yes or no")
 		}
 	case cfgInt:
-		if n, err := strconv.ParseInt(value, 10, 32); err != nil || n < -(1<<30) || n >= 1<<30 {
+		n, err := strconv.ParseInt(value, 10, 32)
+		if err != nil || n < -(1<<30) || n >= 1<<30 {
 			return bad("a decimal integer")
+		}
+		if c.max > 0 && (n < int64(c.min) || n > int64(c.max)) {
+			return bad(fmt.Sprintf("%d to %d", c.min, c.max))
+		}
+	case cfgPair:
+		a, b, two := strings.Cut(value, "/")
+		n, err1 := strconv.ParseUint(a, 10, 32)
+		m, err2 := uint64(0), error(nil)
+		if two {
+			m, err2 = strconv.ParseUint(b, 10, 32)
+		}
+		if err1 != nil || err2 != nil || a == "" || n < c.min || n > c.max || two && (m < 1 || m > n) {
+			return bad(fmt.Sprintf("N or N/M: N handles in all, %d to %d, and at most M (1 to N) for one actor", c.min, c.max))
 		}
 	}
 	return nil
 }
 
 // sizeOK: digits, an optional K or M (either case), at most 2^32-1 bytes,
-// as the firmware and the VM parse it (fs_lfs.c, module.c).
+// as the firmware parses it (fs_lfs.c).
 func sizeOK(v string) bool {
+	n, ok := sizeVal(v, false)
+	return ok && n <= 0xFFFFFFFF
+}
+
+// sizeVal parses a size: digits and an optional K or M (or G, with giga),
+// either case, as the firmware and the VM parse it (fs_lfs.c,
+// runtime/vm/params.c). Without giga at most 2^32-1 bytes.
+func sizeVal(v string, giga bool) (uint64, bool) {
 	i := 0
 	for i < len(v) && v[i] >= '0' && v[i] <= '9' {
 		i++
 	}
-	if i == 0 || i > 10 {
-		return false
+	if i == 0 || i > 16 {
+		return 0, false
 	}
 	n, _ := strconv.ParseUint(v[:i], 10, 64)
+	sh := uint(0)
 	switch v[i:] {
 	case "":
 	case "K", "k":
-		n <<= 10
+		sh = 10
 	case "M", "m":
-		n <<= 20
+		sh = 20
+	case "G", "g":
+		if !giga {
+			return 0, false
+		}
+		sh = 30
 	default:
-		return false
+		return 0, false
 	}
-	return n <= 0xFFFFFFFF
+	if n > 1<<48>>sh || !giga && n<<sh > 0xFFFFFFFF {
+		return 0, false
+	}
+	return n << sh, true
+}
+
+// sizeText is n as 16K, 1M, 2G when it divides evenly.
+func sizeText(n uint64) string {
+	for _, u := range []struct {
+		sh  uint
+		suf string
+	}{{30, "G"}, {20, "M"}, {10, "K"}} {
+		if n > 0 && n%(1<<u.sh) == 0 {
+			return strconv.FormatUint(n>>u.sh, 10) + u.suf
+		}
+	}
+	return strconv.FormatUint(n, 10)
 }
 
 // ipOK: four decimal parts 0..255 of 1 to 3 digits, as gogo/dhcp parses it.

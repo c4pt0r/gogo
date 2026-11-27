@@ -77,15 +77,33 @@ typedef uint32_t gogo_words_t;
 #define GOGO_ARENA_BYTES 0u
 #endif
 
-/* Off-heap bytes.Bytes (bytes.h): handle table entries for the whole VM
- * (1..65535), the handles one actor may hold at once (at least 1), and the
- * largest Buffer.Freeze result kept on the heap (larger ones go
- * off-heap). */
+/* Off-heap bytes.Bytes (bytes.h): the default handle table entries for
+ * the whole VM and handles one actor may hold at once (config key
+ * vm.handles, params.h; 64 and 16 on a board, 4096 and 256 on the
+ * host), the most entries a VM may have (it sizes the distinct-root sets
+ * on the C stack: 1024 on a board, 65535, the most a handle index holds,
+ * on the host), and the largest Buffer.Freeze result kept on the heap
+ * (larger ones go off-heap). */
 #ifndef GOGO_BYTES_HANDLES
+#if GOGO_WORDS_16
 #define GOGO_BYTES_HANDLES 64u
+#else
+#define GOGO_BYTES_HANDLES 4096u
+#endif
 #endif
 #ifndef GOGO_BYTES_PER_ACTOR
+#if GOGO_WORDS_16
 #define GOGO_BYTES_PER_ACTOR 16u
+#else
+#define GOGO_BYTES_PER_ACTOR 256u
+#endif
+#endif
+#ifndef GOGO_BYTES_HANDLES_MAX
+#if GOGO_WORDS_16
+#define GOGO_BYTES_HANDLES_MAX 1024u
+#else
+#define GOGO_BYTES_HANDLES_MAX 65535u
+#endif
 #endif
 #ifndef GOGO_BYTES_INLINE
 #define GOGO_BYTES_INLINE 64u
@@ -97,9 +115,14 @@ typedef uint32_t gogo_words_t;
 #define GOGO_MAX_MODULES 8u
 #endif
 /* Code memory limit in bytes for all loaded modules together (the boot
- * image aside) when the config key code.mem is not set (module.h). */
+ * image aside) when the config key code.mem is not set (module.h): 64 KB
+ * on a board, 16 MB on the host. */
 #ifndef GOGO_CODE_MEM_DEFAULT
+#if GOGO_WORDS_16
 #define GOGO_CODE_MEM_DEFAULT 65536u
+#else
+#define GOGO_CODE_MEM_DEFAULT 16777216u
+#endif
 #endif
 #if GOGO_MAX_MODULES < 1 || GOGO_MAX_MODULES > 8
 #error "GOGO_MAX_MODULES must be 1..8"

@@ -334,7 +334,7 @@ uint32_t msg_charge_words(Vm *vm, const Msg *m) {
     if (m->flags & MSG_HANDLES) {
         Charge c;
         c.vm = vm;
-        bytes_set_init(&c.s);
+        bytes_set_init(vm, &c.s);
         each_handle(m, charge_fn, &c);
         w += bytes_words(c.s.bytes);
     }
@@ -437,10 +437,10 @@ bool msg_unpack(Vm *vm, Actor *a, const Msg *m, term *out) {
 
 /* True if `to` can queue m (charged fw words): its mailbox counter can
  * hold it and, with quota, its limit too. */
-static bool fits(const Actor *to, const Msg *m, uint32_t fw, bool quota) {
+static bool fits(const Vm *vm, const Actor *to, const Msg *m, uint32_t fw, bool quota) {
     /* Receiving the first handle makes the holder list, charged to `to`:
      * count it now (not queued: mbox_words stays fw). */
-    uint32_t list = (m->flags & MSG_HANDLES) ? bytes_list_words(to) : 0u;
+    uint32_t list = (m->flags & MSG_HANDLES) ? bytes_list_words(vm, to) : 0u;
     return fw <= GOGO_WORDS_MAX - to->mbox_words &&
            (!quota || actor_fits(to, fw + list));
 }
@@ -449,7 +449,7 @@ static bool fits(const Actor *to, const Msg *m, uint32_t fw, bool quota) {
  * the mailbox counter, and with quota the limit. */
 static bool enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
     uint32_t fw = msg_charge_words(vm, m);
-    if (!fits(to, m, fw, quota)) return false;
+    if (!fits(vm, to, m, fw, quota)) return false;
     m->next = NULL;
     if (to->mbox_tail) to->mbox_tail->next = m;
     else to->mbox_head = m;
@@ -524,7 +524,7 @@ int msg_send(Vm *vm, Actor *from, term to_pid, term msg) {
  * a successful receive over its limit. On failure m stays queued. */
 static bool take(Vm *vm, Actor *a, Msg *m, term *out) {
     uint32_t fw = msg_charge_words(vm, m), keep = fw - msg_footprint_words(m->words);
-    if (m->flags & MSG_HANDLES) keep += bytes_list_words(a);
+    if (m->flags & MSG_HANDLES) keep += bytes_list_words(vm, a);
     GOGO_ASSERT(a->mbox_words >= fw && a->mbox_words - fw + keep <= GOGO_WORDS_MAX);
     a->mbox_words = (gogo_words_t)(a->mbox_words - fw + keep);
     if (!msg_unpack(vm, a, m, out)) {

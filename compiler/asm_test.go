@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"encoding/binary"
+	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/token"
@@ -269,25 +270,23 @@ func TestTermsMatchC(t *testing.T) {
 }
 
 // TestConfigMatchC cross-checks the off-heap Bytes defaults with
-// runtime/vm/config.h.
+// runtime/vm/config.h: a board's (its first definition of each) and the
+// host's (its second).
 func TestConfigMatchC(t *testing.T) {
 	src, err := os.ReadFile("../runtime/vm/config.h")
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := map[string]int{}
+	c := map[string][]int{}
 	for _, m := range regexp.MustCompile(`#define\s+(GOGO_BYTES_\w+)\s+(\d+)u`).FindAllStringSubmatch(string(src), -1) {
-		c[m[1]], _ = strconv.Atoi(m[2])
+		v, _ := strconv.Atoi(m[2])
+		c[m[1]] = append(c[m[1]], v)
 	}
-	want := map[string]int{"GOGO_BYTES_HANDLES": BytesHandles, "GOGO_BYTES_PER_ACTOR": BytesPerActor,
-		"GOGO_BYTES_INLINE": BytesInline}
-	if len(c) != len(want) {
-		t.Errorf("runtime/vm/config.h defines %v, want the twins of %v", c, want)
-	}
-	for n, v := range want {
-		if g, ok := c[n]; !ok || g != v {
-			t.Errorf("%s: C=%d Go=%d (present=%v)", n, g, v, ok)
-		}
+	want := map[string][]int{"GOGO_BYTES_HANDLES": {BytesHandles, HostBytesHandles},
+		"GOGO_BYTES_PER_ACTOR":   {BytesPerActor, HostBytesPerActor},
+		"GOGO_BYTES_HANDLES_MAX": {BytesHandlesMax, HostBytesMax}, "GOGO_BYTES_INLINE": {BytesInline}}
+	if fmt.Sprint(c) != fmt.Sprint(want) {
+		t.Errorf("runtime/vm/config.h defines %v, want the twins %v", c, want)
 	}
 }
 
