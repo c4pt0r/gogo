@@ -22,6 +22,7 @@
 #define PORT_NAME_SPEAKER    "speaker"
 #define PORT_NAME_SCREEN     "screen"
 #define PORT_NAME_NODE       "node"
+#define PORT_NAME_BLE        "ble"
 
 /* gogo/fs's private driver of an open File (runtime/vfs/builtin.c): no
  * program opens it by name, but no host port may take its name either. */
@@ -36,7 +37,7 @@
 #define PORT_RESERVED_NAMES                                                            \
     PORT_NAME_GPIO, PORT_NAME_NETIF, PORT_NAME_UDP, PORT_NAME_TCP, PORT_NAME_TCP_LISTEN, \
     PORT_NAME_TLS, PORT_NAME_KBD, PORT_NAME_POWER, PORT_NAME_IMU, PORT_NAME_IR_TX,      \
-    PORT_NAME_IR_RX, PORT_NAME_MIC, PORT_NAME_SPEAKER, PORT_NAME_SCREEN, PORT_NAME_NODE, PORT_PRIVATE_FILE, \
+    PORT_NAME_IR_RX, PORT_NAME_MIC, PORT_NAME_SPEAKER, PORT_NAME_SCREEN, PORT_NAME_NODE, PORT_NAME_BLE, PORT_PRIVATE_FILE, \
     PORT_REQ_FLOAT
 
 #endif

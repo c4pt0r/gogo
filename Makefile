@@ -96,11 +96,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: test-board-ports test-board-ports-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-c-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-board-ports test-board-ports-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-ble test-screen test-screen-asan test-c-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver test-board-ports check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
+test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-ble test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver test-board-ports check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
 
 vm: $(BUILD)/gogovm
 
@@ -288,6 +288,26 @@ $(BUILD)/test_stream: $(STREAM_DEPS)
 $(BUILD)/test_stream_mcu: $(STREAM_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(STREAM_INC) -o $@ $(STREAM_TEST_SRCS) $(VM_SRCS)
+
+# ble (pure C99): the "ble" port's Config, event queue, held events and
+# Notify flow control over a fake BleHal on a real VM, in the host and MCU
+# VM configs.
+BLE_SRCS = runtime/ble/ble.c
+BLE_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/ble/test/*.c)
+BLE_INC = -Iruntime/ble -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix
+BLE_DEPS = $(BLE_SRCS) $(BLE_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/ble/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
+
+test-ble: $(BUILD)/test_ble $(BUILD)/test_ble_mcu
+	$(BUILD)/test_ble
+	$(BUILD)/test_ble_mcu
+
+$(BUILD)/test_ble: $(BLE_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DGOGO_MAX_SOURCES=5u $(BLE_INC) -o $@ $(BLE_SRCS) $(BLE_TEST_SRCS) $(VM_SRCS)
+
+$(BUILD)/test_ble_mcu: $(BLE_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -DGOGO_MAX_SOURCES=5u -Os $(BLE_INC) -o $@ $(BLE_SRCS) $(BLE_TEST_SRCS) $(VM_SRCS)
 
 # screen (pure C99): the grid's operations, malformed and random sequences
 # against guard words, the LCD renderer, and the "screen" port on a real VM
@@ -776,7 +796,7 @@ floatlibsize:
 
 # Everything built with CFLAGS / EXTRA_CFLAGS: rebuilt when they change.
 STAMPED = $(addprefix $(BUILD)/,gogovm gogovm_mcu gogovm_nofloat test_c test_c_mcu test_net test_net_mcu test_tls \
-          test_tls_threads test_vfs test_vfs_mcu test_input test_input_mcu test_stream test_stream_mcu \
+          test_tls_threads test_vfs test_vfs_mcu test_input test_input_mcu test_stream test_stream_mcu test_ble test_ble_mcu \
           test_screen test_screen_mcu test_fs_host test_embed test_console test_console_ascii \
           console_ppm libgogo_clash) $(LIB_OBJS) $(MBEDTLS_OBJS)
 $(STAMPED): $(FLAGS_STAMP)
