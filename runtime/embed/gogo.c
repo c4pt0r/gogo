@@ -139,6 +139,8 @@ static const char *const code_text[] = {
     "bad URL",
     "bad format",
     "unsupported image format version",
+    "no such actor",
+    "remote actor unreachable",
 };
 typedef char code_text_complete[sizeof code_text / sizeof code_text[0] == GOGO_E_SHARED_LAST + 1 ? 1 : -1];
 

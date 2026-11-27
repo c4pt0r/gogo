@@ -878,6 +878,10 @@ func (f *fn) stmtCode(s ast.Stmt) {
 	case *ast.EmptyStmt:
 	case *ast.ExprStmt:
 		mark := f.next
+		if f.discardedActorCall(s.X) {
+			f.next = mark
+			break
+		}
 		if n := tupleLen(f.g.p.Info.TypeOf(s.X)); n > 1 { // results discarded
 			f.multiCallInto(s.X, f.allocN(s, n), nil)
 		} else {
@@ -1565,6 +1569,10 @@ func (f *fn) exprInto(e ast.Expr, dst uint8) {
 		}
 		if isArray(f.g.p.Info.TypeOf(e)) {
 			f.arrayLit(e, dst)
+			return
+		}
+		if isPID(f.g.p.Info.TypeOf(e)) { // actor.PID{} (the checker allows no fields)
+			f.zeroInto(e, f.g.p.Info.TypeOf(e), dst)
 			return
 		}
 		f.structLit(e, dst)

@@ -1,4 +1,4 @@
 reply 25 true
-ok: false waited the full timeout: true
+timed out after the full timeout: true
 server down: true 5
 late monitor: true

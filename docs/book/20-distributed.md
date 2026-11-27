@@ -26,14 +26,14 @@ and then use it like any other:
 | Operation | On a remote PID |
 |---|---|
 | `actor.Send(p, m)` | the message is encoded, sent over the link and delivered to `p`'s mailbox |
-| `actor.Call(p, req, ms)` / `actor.Reply` | work unchanged (the reply comes back over the link) |
+| `actor.Call(p, req, ms)` / `actor.Reply` | work unchanged (the reply comes back over the link); a lost node is `errors.NoConnection` (20.5) |
 | `actor.Monitor(p)` | `DownMsg` when `p` exits (its reason code), or `actor.NoConnection` when its node becomes unreachable |
 | `actor.Link(p)` / `Unlink` | exit signals both ways; `NoConnection` when the node is lost |
 | `==`, type switches | as for local PIDs: one remote actor has one PID value on this node |
 | `println(p)` | `<pid 5@2>`: actor slot 5 on node 2 |
 | `actor.Kill(p, code)` | an exit signal on `p`'s node, as for a local actor (`p` must have been given out by its node; a node's door cannot be killed, nor linked to) |
-| `actor.SendAfter(ms, p, m)` | not across nodes: the sender exits with `actor.BadMsg` |
-| `actor.Info`, `actor.Register` | Info reports 0; Register refuses a remote PID |
+| `actor.SendAfter(p, m, ms)` | not across nodes: the sender exits with `actor.BadMsg` |
+| `actor.Info`, `actor.Register` | Info reports 0; Register refuses a remote PID (`errors.NoProc`: names are per node, see `node.Register`) |
 
 A PID of this node that comes back from another node is the local PID
 again, so `actor.Self()` sent away and back is `== actor.Self()`.
@@ -87,7 +87,7 @@ echo, err := node.Whereis("server", "echo", 2000)
 if err != nil {
 	return
 }
-r, ok := actor.Call(echo, "hi", 2000)
+r, err := actor.Call(echo, "hi", 2000)
 ```
 
 `node.Connect(addr, name)` dials the server (a numeric `a.b.c.d:port`; the
@@ -106,7 +106,8 @@ returns `nil` once the board is a node. Otherwise its error says why:
 `node.Whereis(node, name, timeoutMs)` asks that node for an exported
 name; it works for the server, for other boards (through the relay), and
 for the board itself. It fails with `errors.NotFound` (no such node or
-name), `errors.Closed` (this VM is not a node) or `errors.Timeout`.
+name), `errors.Closed` (this VM is not a node), `errors.Timeout` or
+`errors.NoConnection` (the node went away during the lookup).
 
 Both ends need the same **token**: the config key `node.token` (`gogo
 config set node.token ...`), or `node.Options{Token: ...}` with
@@ -167,15 +168,19 @@ signal at once, as for a dead local actor (with `NoConnection`). A
 `Killed` exit reaches a linked actor that traps exits as an `ExitMsg`,
 as locally.
 
-`actor.Call` to a PID whose node is gone returns `(nil, false)` at once,
-as a Call to a dead local actor does, and so does a Call waiting for its
-reply when the node goes. A Call to a remote actor that has exited on a
-node that is still up is different: the first one waits for its timeout
-(its node answers that the PID is gone, which removes it here), and the
-ones after it return `(nil, false)` at once. Monitor a remote actor whose
-end you want to hear of at once. A node tracks a limited number of remote Calls
-in flight (20.9); a Call beyond that returns `(nil, false)` at once
-rather than risk waiting out its timeout.
+A remote `actor.Call` says why it failed, as a local one does (4.3):
+
+| `err` | When |
+|---|---|
+| `errors.NoConnection` | at once: the PID's node is gone, or goes while the Call waits; the PID names nothing here any more (see below); or the node's table of remote Calls in flight is full (20.9), rather than risk waiting out the timeout |
+| `errors.Timeout` | the request or the reply was lost (20.6), or the remote actor had exited |
+
+A Call to a remote actor that has exited on a node that is still up waits
+for its timeout the first time (its node answers that the PID is gone,
+which removes it here); the Calls after it fail at once with
+`errors.NoConnection`, as a `Monitor` of that PID reports
+`NoConnection`. Monitor a remote actor whose end you want to hear of at
+once.
 
 `node.Subscribe()` makes the caller receive `node.Up{Node}` and
 `node.Down{Node}` for every node that joins or goes. `Up` comes as soon as
@@ -208,8 +213,9 @@ supervisor as for any other failure, and a fresh node starts.
 - **At most once.** A message is never duplicated. It may be lost: when
   the link is full, when the receiver does not have its struct type, or
   when it would take the receiver over its memory limit. A `Call` whose
-  request or reply is lost that way waits for its timeout (a Call to a
-  node that is gone fails at once, 20.5).
+  request or reply is lost that way waits for its timeout and fails with
+  `errors.Timeout` (a Call to a node that is gone fails at once with
+  `errors.NoConnection`, 20.5).
 - **In order** between one sender and one receiver, relayed or not.
 - **Backpressure.** Each connection's link actor sends frames to TCP at
   TCP's pace (the stream protocol's `Out` and `Done`, chapter 10.7) and
@@ -273,7 +279,7 @@ delays a few by several hundred ms).
 | remote PIDs known at once | 48 + 2*L* (64 on a board; also at most 4096 minus the port cap) |
 | local PIDs given out | 48 + 2*L* (dead ones are reused) |
 | remote links and monitors | 16 + 2*L* (a full table answers with `NoConnection`) |
-| remote Calls in flight | 8 + *L* (a Call beyond that returns `(nil, false)` at once) |
+| remote Calls in flight | 8 + *L* (a Call beyond that fails at once with `errors.NoConnection`) |
 | nesting of a message | 16 |
 | queued frames per link | 8 KB on a board (the link actor); 256 KB on a host VM (the node port, host memory) |
 

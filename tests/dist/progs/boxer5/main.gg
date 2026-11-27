@@ -1,5 +1,8 @@
 // Sends a named int and floats in interfaces to the server's echo and
-// back, from a 15.5 image.
+// back, from an image without pointers. It was the 15.5 case, unflagged
+// interface boxes; gogo/node uses actor.Call since 15.7, so every node
+// program is 15.7 now and its boxes are flagged (an older image still
+// runs and crosses as before).
 package main
 
 import (
@@ -25,20 +28,17 @@ func main() {
 	ok := werr == nil
 	println("echo", ok)
 	var v any = Dir(3)
-	r, ok := actor.Call(echo, v, 2000)
-	switch d := r.(type) {
-	case Dir:
-		println("dir", ok, int(d))
+	r, err := actor.Call(echo, v, 2000)
+	if d, ok := r.(Dir); ok {
+		println("dir", err == nil, int(d))
 	}
-	r, ok = actor.Call(echo, 2.5, 2000)
-	switch f := r.(type) {
-	case float64:
-		println("float", ok, f == 2.5)
+	r, err = actor.Call(echo, 2.5, 2000)
+	if f, ok := r.(float64); ok {
+		println("float", err == nil, f == 2.5)
 	}
-	r, ok = actor.Call(echo, F{X: -1.25, Y: 0.5}, 2000)
-	switch f := r.(type) {
-	case F:
-		println("struct", ok, f.X == -1.25, f.Y == 0.5)
+	r, err = actor.Call(echo, F{X: -1.25, Y: 0.5}, 2000)
+	if f, ok := r.(F); ok {
+		println("struct", err == nil, f.X == -1.25, f.Y == 0.5)
 	}
 	println("end")
 }

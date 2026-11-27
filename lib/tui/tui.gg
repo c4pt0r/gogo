@@ -2,7 +2,8 @@
 // (gogo/screen): a grid of character cells with colours and attributes,
 // drawn in frames, plus a few widgets and a key abstraction over the
 // Cardputer's keyboard and the StickS3's two buttons. It is written in the
-// gogo subset and compiled into every image that imports it.
+// gogo subset and compiled into every image that imports it (Open,
+// open.gg, only where it is used).
 //
 // Screen. Open takes the display (the text console hides until Close or the
 // owner's exit) and reports its size: 40 x 11 cells on both boards and, by
@@ -90,56 +91,6 @@ type opened struct {
 
 // OpenTimeoutMs bounds how long Open waits for the port.
 const OpenTimeoutMs = 2000
-
-// opener opens the port for Open, so the size Chunk arrives in its own
-// mailbox, not the caller's; it hands the port over and answers.
-func opener(cfg screen.Config) {
-	switch m := actor.Receive().(type) {
-	case actor.Request:
-		p, err := port.Open("screen", cfg)
-		if err != nil {
-			actor.Reply(m, opened{})
-			return
-		}
-		for {
-			msg, got := actor.ReceiveTimeout(OpenTimeoutMs)
-			if !got {
-				port.Close(p)
-				actor.Reply(m, opened{})
-				return
-			}
-			switch c := msg.(type) {
-			case port.Chunk:
-				if c.Data.Len() < 4 || !port.Handoff(p, m.From) {
-					port.Close(p)
-					actor.Reply(m, opened{})
-					return
-				}
-				actor.Reply(m, opened{P: p, Cols: int(c.Data.At(0)), Rows: int(c.Data.At(1)), Attrs: int(c.Data.At(3)), OK: true})
-				return
-			}
-		}
-	}
-}
-
-// Open takes the display with cfg (screen.Config{} for the whole display)
-// and returns the Screen; ok is false if the board has no screen port, it
-// is taken, cfg is too big, or the caller cannot take the grid's memory.
-// The caller owns the port: it closes when the caller exits.
-func Open(cfg screen.Config) (Screen, bool) {
-	h := actor.Spawn(func() { opener(cfg) })
-	r, ok := actor.Call(h, 0, OpenTimeoutMs+1000)
-	if ok {
-		switch m := r.(type) {
-		case opened:
-			if m.OK {
-				st := []int{0, 0, m.Cols, m.Rows, screen.White<<4 | screen.Black, 0}
-				return Screen{Port: m.P, Cols: m.Cols, Rows: m.Rows, Attrs: m.Attrs, buf: bytes.NewBuffer(256), st: st}, true
-			}
-		}
-	}
-	return Screen{buf: bytes.NewBuffer(0)}, false
-}
 
 // Close closes the screen; the console shows again. Planned: s.Close().
 func Close(s Screen) { port.Close(s.Port) }

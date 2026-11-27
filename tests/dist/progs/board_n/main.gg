@@ -48,10 +48,9 @@ func main() {
 		println(name, "no echo on", next)
 		return
 	}
-	r, ok := actor.Call(p, "hi", 3000)
-	switch s := r.(type) {
-	case string:
-		println(name, ok, s)
+	r, err := actor.Call(p, "hi", 3000)
+	if s, ok := r.(string); ok {
+		println(name, err == nil, s)
 	}
 	actor.Receive()
 }

@@ -84,7 +84,7 @@ func main() {
 		show(x.V)
 		println(x.N, x.N == -1)
 	}
-	actor.SendAfter(1, actor.Self(), d)
+	actor.SendAfter(actor.Self(), d, 1)
 	show(actor.Receive())
 	srv := actor.Spawn(func() {
 		switch r := actor.Receive().(type) {
@@ -95,9 +95,9 @@ func main() {
 			}
 		}
 	})
-	reply, ok := actor.Call(srv, a, 1000)
+	reply, err := actor.Call(srv, a, 1000)
 	show(reply)
-	println(ok)
+	println(err == nil)
 
 	// Now() is an immediate; the clock moves.
 	t0 := actor.Now()

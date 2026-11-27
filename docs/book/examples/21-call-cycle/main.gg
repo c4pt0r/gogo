@@ -25,8 +25,8 @@ func controller(sensor actor.PID, fixed bool) {
 				if fixed {
 					req = ReadWith{10}
 				}
-				v, ok := actor.Call(sensor, req, 300)
-				if !ok {
+				v, err := actor.Call(sensor, req, 300)
+				if err != nil {
 					v = -1
 				}
 				actor.Reply(r, v)
@@ -44,9 +44,9 @@ func sensor(boss actor.PID) {
 			switch b := r.Body.(type) {
 			case Read:
 				// Calls up the hierarchy: a cycle with the controller.
-				scale, ok := actor.Call(boss, GetScale{}, 200)
-				if !ok {
-					println("  sensor: GetScale timed out")
+				scale, err := actor.Call(boss, GetScale{}, 200)
+				if err != nil {
+					println("  sensor: GetScale:", err.Error())
 					scale = 0
 				}
 				actor.Reply(r, 42*scale.(int))
@@ -72,8 +72,8 @@ func start(fixed bool) actor.PID {
 
 func measure(label string, c actor.PID) {
 	t0 := actor.Now()
-	v, ok := actor.Call(c, Measure{}, 1000)
-	println(label, v, ok, "slow:", actor.Now()-t0 >= 200)
+	v, err := actor.Call(c, Measure{}, 1000)
+	println(label, v, err == nil, "slow:", actor.Now()-t0 >= 200)
 }
 
 func main() {

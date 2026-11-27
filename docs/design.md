@@ -606,6 +606,7 @@ type Ref struct{ /* opaque; == and != compare */ }
 type Reason struct{ Code int; Func string }   // exit reason, §5.8
 type Options struct{ MaxMemory int }          // bytes; 0 = the platform default
 type ProcInfo struct{ Memory int }
+var NoPID PID                                   // the zero PID, actor.PID{}: names no actor
 
 func Spawn(f func()) PID
 func SpawnLink(f func()) PID                    // spawn and link atomically
@@ -614,7 +615,7 @@ func Self() PID
 func Send(to PID, msg any)
 func Receive() any                              // the next message, FIFO
 func ReceiveTimeout(ms int) (msg any, ok bool)  // ms == 0 only looks
-func Call(to PID, req any, timeoutMs int) (reply any, ok bool) // request/reply with a Ref
+func Call(to PID, req any, timeoutMs int) (reply any, err error) // request/reply with a Ref; err: below
 func Reply(req Request, reply any)              // the server side of Call
 func Link(p PID); func Unlink(p PID)
 func Monitor(p PID) Ref; func Demonitor(r Ref)
@@ -622,12 +623,13 @@ func TrapExit(on bool)
 func Exit(code int)                             // exit with a reason code
 func Kill(p PID, code int)                      // send an exit signal
 func MakeRef() Ref
-func Register(name string, p PID) bool          // false if taken or p has exited
+func Register(name string, p PID) error         // errors.NoProc (p not alive), errors.Exists (taken)
 func Whereis(name string) (PID, bool)
 func Unregister(name string)                    // only the registering actor may
-func SendAfter(ms int, to PID, msg any) Ref; func CancelTimer(r Ref) bool
+func SendAfter(to PID, msg any, ms int) Ref; func CancelTimer(r Ref) bool
 func Sleep(ms int); func Now() int64            // ms since the VM started
 func Info(p PID) ProcInfo
+func Fail(code errors.Code) int                 // exit reason Failed + int(code) (64..99)
 
 // System messages
 type ExitMsg struct{ From PID; Reason Reason }
@@ -660,6 +662,26 @@ reply carrying its Ref and leaves other messages in the mailbox. There
 is no general selective receive (no O(n) scans, simpler semantics).
 `Call` does not return early when the server dies; it waits for its
 timeout.
+
+**Call's error** (15.7) is a shared code of `gogo/errors`: `nil` when
+the reply came, `errors.Timeout` when none came in time (a server that
+died meanwhile included), `errors.NoProc` at once when the target is no
+live local actor (exited, never existed, the zero PID, a port), and
+`errors.NoConnection` at once when it is a remote PID the node cannot
+reach: its node is gone or goes while the Call waits, the PID names
+nothing any more, or the table of remote Calls in flight is full (the
+reason a `Monitor` of such a PID gets is `actor.NoConnection` too).
+`actor.Call` is library code over builtin 58 `B_CALL_ERR`, which returns
+`(reply, code)`; images before 15.7 keep `B_CALL` and its `(reply, ok)`.
+`actor.Register` likewise returns an error (15.7, builtin 59
+`B_REGISTER_ERR`): `errors.NoProc` if the PID is not a live local actor
+(checked first), `errors.Exists` if the name is taken; `B_REGISTER`'s
+bool stays for older images. A `Call` or `Register` whose result is
+discarded (an expression statement) compiles to its builtin alone,
+without the library function and the `errors.Code` row the error needs.
+`actor.Whereis` keeps `(PID, bool)`: a
+lookup in the VM's own table is map-like and has no other way to fail,
+while `node.Whereis` asks another node and returns an `error`.
 
 **Send semantics.** `Send` deep-copies the message (slices and nested
 structs included); the receiver gets an independent copy. This differs
@@ -714,7 +736,8 @@ btn, err := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge:
   the owner and count against the owner's mailbox quota. A port closes
   when its owner exits, and the VM closes every open port when it ends.
   `Kill` on a port is `Close`. Ports cannot be linked or monitored;
-  `SendAfter` and `Call` to a port are silently ignored.
+  `SendAfter` to a port is silently ignored, and a `Call` to one fails
+  at once with `errors.NoProc`.
 - `gpio.Config{Pin, Mode, Edge, DebounceMs}`: Mode is `Input`,
   `InputPullUp`, `InputPullDown` or `Output`; Edge is `None`, `Rising`,
   `Falling` or `Both`; `DebounceMs <= 0` means 20 ms. Pins the platform
@@ -841,8 +864,8 @@ text grid while it is open.
   `CloseClient` keep one connection alive; `Upload` streams a file as a
   POST body (§5.4.8). The server `http.Serve(port, handler func(Request)
   Response) actor.PID` starts a listener actor linked to the caller (if
-  it cannot listen it exits with code 69, `ListenFailed`, `actor.Failed +
-  errors.Busy`) and hands each
+  it cannot listen it exits with code 69, `ListenFailed`,
+  `actor.Fail(errors.Busy)`) and hands each
   connection to a new handler actor: request head at most 2 KB, body at
   most 8 KB by `Content-Length` (no chunked bodies), 400 for a malformed
   request, 413 for a body too large, then a response with
@@ -1089,7 +1112,12 @@ top-level functions only when the rest of the program refers to them,
 directly or through another such function (`onDemandUsed` in
 `compiler/codegen.go`); the file may declare no methods. It is per-file
 inclusion, not dead-code elimination: every other function of a
-compiled package is still in the image. `lib/strconv/unsigned.gg` uses it.
+compiled package is still in the image. `lib/strconv/unsigned.gg` uses it,
+and so does every library function that calls `actor.Call` or
+`actor.Register` (all of `gogo/node`, `gogo/dns`, `gogo/dhcp`,
+`gogo/sntp`; `http/client.gg`, `supervisor/module.gg`,
+`sound/record.gg`, `tui/open.gg`), so that a program needs format 15.7
+only if it can reach one.
 
 **The `//gogo:optional` directive.** A package (a library or `package
 main`) can declare drivers it uses only softly: opened only when a call needs them at run
@@ -1585,8 +1613,9 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
 | `actor.PID` | `T_ZEROPID` = `0x6` (slot 0, generation 0: slot 0 never has generation 0 and port slots are >= `0xFFF0`, so it equals no live actor or port; slots from `0xF000` up to the first port slot are remote PIDs when the VM has node links, §5.13) | PID immediate `(gen << 20) \| (slot << 4) \| 0x6` | as is (`TYPEIS` -> `PID`) | not scanned | as is |
 | `actor.Ref` | `T_ZEROREF` = `0x42`, a special whose serial counts as 0 | a `K_REF` heap object `[hdr][serial lo][hi]`; serials start at 1 | as is (`TYPEIS` -> `Ref`, the zero value too) | a `K_REF` is copied, content not scanned; `T_ZEROREF` not scanned | `K_REF` deep-copied (same serial); `T_ZEROREF` as is |
 
-Zero PID and Ref: `Send` to the zero PID is dropped; `Link` or `Monitor`
-of the zero PID behaves as for a dead PID (`NoProc`); `CancelTimer` and
+Zero PID and Ref (`actor.PID{}` or `actor.NoPID`, a PID variable
+never set): `Send` to the zero PID is dropped; `Link` or `Monitor` of
+the zero PID behaves as for a dead PID (`NoProc`); `CancelTimer` and
 `Demonitor` of the zero Ref do nothing (`false`); zero values are equal
 to each other and to no live value; `println` prints `<pid 0>` and
 `<ref 0>`. Crash reports and `println` show only a PID's slot (`<pid
@@ -1936,7 +1965,14 @@ together with `mbox_words` through `actor_charged_words`).
   15.5 distributed actors, the reserved types of the `node` port
   (`distMinor`, §5.13); 15.6 the reference phase
   (`refMinor`): `OP_SETFIELD`, the type flags (a type row or a constant
-  struct with any), the reason `actor.Nil` and the constant slices.
+  struct with any), the reason `actor.Nil` and the constant slices; 15.7
+  the actor API's error results (`actorMinor`): `B_CALL_ERR` and
+  `B_REGISTER_ERR`, under `actor.Call` and `actor.Register`, so a program
+  that calls one (itself or through a library function that does: the
+  libraries keep those in `//gogo:ondemand` files, so `http.Get` or
+  `supervisor.SuperviseModule` count and `http.Serve` or
+  `supervisor.Supervise` do not) needs 15.7 and any other keeps its
+  minor.
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old
@@ -1968,9 +2004,12 @@ together with `mbox_words` through `actor_charged_words`).
   `strconv.FormatFloat` / `ParseFloat`, `runtime/floatlib`), 55
   `B_PRINTLNU` (15.3: `println` with `uint64` values); from 15.4, 56
   `panic`, 57 `B_CMP` (`==` on structs, arrays and interfaces); 58-60
-  unused (distributed actors, 15.5, need no builtin); from 15.6, 61 `B_SPRINT` (gogo/fmt:
-  the text `println` prints for a value, as a new string, counted then
-  written into it, or written to the console).
+  were kept for distributed actors (15.5), which needed none; from 15.6,
+  61 `B_SPRINT` (gogo/fmt: the text `println` prints for a value, as a
+  new string, counted then written into it, or written to the console);
+  from 15.7, 58 `B_CALL_ERR` and 59 `B_REGISTER_ERR` (`actor.Call` and
+  `actor.Register`: `B_CALL` and `B_REGISTER` with a shared error code
+  in place of the bool); 60 is free.
 - **Float ops** (15.2, `OP_ADDF` .. `OP_CONVF`, 52-61): one set for both
   widths. The operands' boxes carry the width (a 2-word `K_FLOAT` is a
   `float32`, a 3-word one a `float64`), and the op computes in it; mixed
@@ -2033,7 +2072,7 @@ together with `mbox_words` through `actor_charged_words`).
   `BadShift`, `BadMsg`, `Panic` (10), `NoConnection` (11, 15.5: the node
   of a linked or monitored remote actor became unreachable, §5.13), `Nil`
   (12, 15.6: a nil pointer or map dereference), a library failure (64..99:
-  `actor.Failed` (64) plus a shared error code, such as
+  `actor.Failed` (64) plus a shared error code, `actor.Fail(code)`, such as
   `http.ListenFailed`; 13..63 are kept for the VM), or a user code (100
   or more, from
   `actor.Exit(code)` / `actor.Kill(p, code)`); `Func` is the name of the
@@ -2058,13 +2097,14 @@ together with `mbox_words` through `actor_charged_words`).
 - **Error codes** are one space, `gogo/errors` (`errors.Code`; the C
   side's `GOGO_E_*` in `runtime/include/gogo_errors.h`, which a test keeps
   equal): 0 is `OK`, 1..35 are meanings every package shares
-  (`NotFound`, `Exists`, `NoMemory`, ... `BadVersion` = 27; 28..35 are
-  free), capped so that `actor.Failed` (64) + a shared code stays a
-  library exit reason below the user codes from 100; 36..99 are reserved,
+  (`NotFound`, `Exists`, `NoMemory`, ... `BadVersion` = 27, `NoProc` =
+  28 and `NoConnection` = 29, `actor.Call`'s and `actor.Register`'s; 30..35 are free), capped
+  so that `actor.Failed` (64) + a shared code stays a library exit reason below the user codes from 100; 36..99 are reserved,
   and each package that needs its own codes gets a block of 20 from 100
   (`gogo/http` 100..119, `gogo/sound` 120..139). The codes are
-  compile-time constants: no opcode, builtin, reserved type or image
-  field depends on the table (the C side uses the same names). `Code` is
+  compile-time constants: no opcode, reserved type or image field
+  depends on the table, and the builtins that return a code (`B_FS`,
+  `B_CODE`, `B_CALL_ERR`, `B_REGISTER_ERR`) use the C side's names for the same numbers. `Code` is
   an `error` (15.4): `gogo/errors` has `Code.Error` (the texts of
   `gogo_strerror`), `New`, `Is` and `Unwrap`. `Code`'s interface box and
   `New`'s `errorString` are reserved types 45 and 46, so these errors
@@ -2575,9 +2615,11 @@ no local actor and is a proxy (`vm_dist_of`) goes to a hook in
 `msg_send` and `msg_send_reply` (one function, `send_to`), `B_CALL`,
 `sig_monitor`, `sig_demonitor`, `sig_link`, `sig_unlink`, `sig_kill` and
 `println`; `actor_exit` calls the `exited` hook; `B_SEND_AFTER` to a
-proxy is `R_BAD_MSG`. A Call to a proxy with no route returns `(nil,
-false)` at once (`h_send` returns 1); a reply block flagged `MSG_FAILED`
-ends a Call the same way (`msg_take_reply` returns 2). The core keeps no
+proxy is `R_BAD_MSG`. A Call to a proxy with no route fails at once
+(`h_send` returns 1: `B_CALL`'s `ok` is false, `B_CALL_ERR`'s code
+`GOGO_E_NOCONNECTION` for a PID in the remote range, `GOGO_E_NOPROC` for
+a local one); a reply block flagged `MSG_FAILED` ends a Call the same
+way (`msg_take_reply` returns 2: `GOGO_E_NOCONNECTION`). The core keeps no
 entries for remote peers. Cost, with the growable port table and the
 per-VM caps: +449 B of VM core (tools/vmsize.sh, linked: 35943 -> 36392).
 

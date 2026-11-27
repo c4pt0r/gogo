@@ -12,8 +12,9 @@
 #include <stdbool.h>
 #include "actor.h"
 
-/* Registers name for pid, by actor `by` (the registrant). 1 = done; 0 =
- * refused (the name is taken, or pid is not a live actor); -1 = out of
+/* Registers name for pid, by actor `by` (the registrant). GOGO_E_OK
+ * (0) = done; refused: GOGO_E_NOPROC (pid is not a live local actor,
+ * checked first) or GOGO_E_EXISTS (the name is taken); -1 = out of
  * memory. */
 int names_register(Vm *vm, term by, const uint8_t *name, uint32_t len, term pid);
 

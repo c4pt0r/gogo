@@ -192,7 +192,6 @@ func TestRejects(t *testing.T) {
 		{"defer-range-switch", "package main\nfunc main() {\n\tfor range 2 {\n\t\tswitch {\n\t\tcase true:\n\t\t\tdefer println() // ERR\n\t\t}\n\t}\n}\n", []string{"defer inside a loop not supported"}},
 		{"defer-loop-in-literal", "package main\nfunc main() {\n\tf := func() {\n\t\tfor {\n\t\t\tdefer println() // ERR\n\t\t}\n\t}\n\tf()\n}\n", []string{"defer inside a loop not supported"}},
 		{"defer-multivalue-arg", "package main\nfunc two() (int, int) { return 1, 2 }\nfunc f(a, b int) {}\nfunc main() {\n\tdefer f(two()) // ERR\n}\n", []string{"deferred call with a multi-value argument not supported"}},
-		{"defer-tworesult-builtin", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tdefer actor.ReceiveTimeout(5) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"defer-recover", "package main\nfunc main() {\n\tdefer recover() // ERR\n}\n", []string{"recover (a panic ends the actor"}},
 		{"complex", "package main\nfunc main() {\n\tx := 1.5i // ERR\n\t_ = x\n}\n", []string{"complex"}},
 		{"float-rem", "package main\nfunc main() {\n\tx := 1.5\n\tprintln(x % 2) // ERR\n}\n", []string{"%"}},
@@ -270,17 +269,15 @@ func TestRejects(t *testing.T) {
 		{"multiret-var", "package main\nfunc f() (int, int) { return 1, 2 }\nfunc main() {\n\tvar a, b = f() // ERR\n\tprintln(a, b)\n}\n", []string{"multiple values not supported"}},
 		{"multiret-builtin-return", "package main\nimport \"gogo/actor\"\nfunc f() (any, bool) {\n\treturn actor.ReceiveTimeout(5) // ERR\n}\nfunc main() { a, b := f(); println(a, b) }\n", []string{"multiple values not supported"}},
 		{"tworesult-single", "package main\nimport \"gogo/actor\"\nfunc main() {\n\ta, b := actor.Self() // ERR\n\t_, _ = a, b\n}\n", []string{"assignment mismatch"}},
-		{"tworesult-stmt", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.ReceiveTimeout(5) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"tworesult-var", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tvar m, ok = actor.ReceiveTimeout(5) // ERR\n\tprintln(m, ok)\n}\n", []string{"multiple values not supported"}},
+		{"pid-literal-fields", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tp := actor.PID{1} // ERR\n\tprintln(p)\n}\n", []string{"implicit assignment to unexported field"}},
 		{"ref-literal", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tr := actor.Ref{} // ERR\n\tprintln(r)\n}\n", []string{"composite literal of actor.Ref not supported"}},
 		{"funcvalue-return-any", "package main\nfunc f() {}\nfunc g() any {\n\treturn f // ERR\n}\nfunc main() { _ = g() }\n", []string{"func value in interface not supported"}},
 		{"funcvalue-anyfield", "package main\ntype B struct{ V any }\nfunc f() {}\nfunc main() {\n\tb := B{V: f} // ERR\n\t_ = b\n}\n", []string{"func value in interface not supported"}},
 		{"import-unknown-lib", "package main\nimport \"gogo/nosuch\" // ERR\nfunc main() { nosuch.X() }\n", []string{`import "gogo/nosuch" not supported`}},
 		{"fs-file-case", "package main\nimport (\n\t\"gogo/actor\"\n\t\"gogo/fs\"\n)\nfunc main() {\n\tvar x any = actor.Self()\n\tswitch x.(type) {\n\tcase fs.File: // ERR\n\t\tprintln(\"file\")\n\tcase actor.PID:\n\t}\n}\n", []string{"type switch case fs.File not supported; wrap it in a struct"}},
 		{"port-open-var", "package main\nimport \"gogo/port\"\nfunc main() {\n\tvar p, ok = port.Open(\"gpio\", port.Host{}) // ERR\n\tprintln(p, ok)\n}\n", []string{"multiple values not supported"}},
-		{"fs-stat-stmt", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tfs.Stat(\"/flash\") // ERR\n}\n", []string{"multiple values not supported"}},
 		{"fs-readfile-single", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tb := fs.ReadFile(\"/flash/a\", 9) // ERR\n\t_ = b\n}\n", []string{"assignment mismatch"}},
-		{"fs-read-method-stmt", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar f fs.File\n\tf.Read(1) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"fs-size-var", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar f fs.File\n\tvar n, e = f.Size() // ERR\n\tprintln(n, e)\n}\n", []string{"multiple values not supported"}},
 		{"fs-method-value", "package main\nimport \"gogo/fs\"\nfunc main() {\n\tvar f fs.File\n\tg := f.Close // ERR\n\t_ = g\n}\n", []string{"selector other than a field read not supported"}},
 		{"port-open-arg", "package main\nimport \"gogo/port\"\nfunc f(p any, ok bool) {}\nfunc main() {\n\tf(port.Open(\"gpio\", port.Host{})) // ERR\n}\n", []string{"cannot use port.Open"}},
@@ -379,6 +376,8 @@ func sum(a, b int) int { return a + b }
 
 func pid() (actor.PID, any) { return actor.Self(), 1 }
 
+var zero = actor.PID{}
+
 func bytes(x int) (byte, int) {
 	var c byte = 250
 	c += byte(x)
@@ -399,6 +398,11 @@ func main() {
 	var n int64
 	v, n = boxed()
 	actor.Send(pid())
+	actor.ReceiveTimeout(0) // a two-result builtin as a statement: results discarded
+	actor.Whereis("x")
+	(actor.ReceiveTimeout(0))
+	z := actor.PID{} // the zero PID
+	println(z == actor.PID{}, zero == z)
 	e, f := bytes(3)
 	println(ok, v, n, e, f, P{e}.B, e < 3, e == byte(f))
 }
@@ -551,7 +555,8 @@ func main() {
 	println(double(c) == 7, c < 4, c)
 	m, ok := actor.ReceiveTimeout(10)
 	println(m, ok)
-	m, ok = actor.Call(actor.Self(), a, 100)
+	m, err := actor.Call(actor.Self(), a, 100)
+	println(m, err != nil)
 	p, found := actor.Whereis("x")
 	p, _ = actor.Whereis("y")
 	println(p, found, actor.Normal, actor.BadCode)
@@ -563,7 +568,7 @@ func main() {
 	actor.Kill(child, actor.Killed)
 	r := actor.Monitor(child)
 	actor.Demonitor(r)
-	t := actor.SendAfter(5, child, b)
+	t := actor.SendAfter(child, b, 5)
 	println(actor.CancelTimer(t))
 	actor.Sleep(1)
 	actor.Reply(actor.Request{From: child, Ref: r, Body: a}, 1)

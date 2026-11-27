@@ -89,7 +89,7 @@ func serveConn(conn actor.PID) {
 func listener(portNum int) {
 	_, err := port.Open("tcp_listen", net.Listen{Port: portNum})
 	if err != nil {
-		actor.Exit(actor.Failed + int(errors.Busy)) // the supervisor retries
+		actor.Exit(actor.Fail(errors.Busy)) // the supervisor retries
 	}
 	live := 0
 	for {

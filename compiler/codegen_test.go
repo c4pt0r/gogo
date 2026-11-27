@@ -755,7 +755,10 @@ func main() {
 func TestCompileTwoResultTargets(t *testing.T) {
 	dis := compileSrc(t, `package main
 
-import "gogo/actor"
+import (
+	"gogo/actor"
+	"gogo/sys"
+)
 
 func main() {
 	var x any
@@ -763,16 +766,17 @@ func main() {
 	_, _ = actor.ReceiveTimeout(2)
 	p := actor.Self()
 	p, ok := actor.Whereis("a")
+	k := "b"
 	{
-		p, ok := actor.Call(p, 3, 4)
-		println(p, ok)
+		k, ok := sys.Config(k)
+		println(k, ok)
 	}
-	println(x, p, ok)
+	println(x, p, ok, k)
 }
 `)
 	_, body := funcDis(t, dis, "main")
 	code := parseIns(t, body)
-	// Locals: x=r0, p=r1, ok=r2; the inner p=r3, ok=r4.
+	// Locals: x=r0, p=r1, ok=r2, k=r3; the inner k=r4, ok=r5.
 	type want struct {
 		name    string
 		first   int      // lowest register the results may use
@@ -782,7 +786,7 @@ func main() {
 	cases := []want{
 		{"RECEIVE_TIMEOUT", 1, []string{"r0", "r0"}, ""},
 		{"WHEREIS", 3, []string{"r1", "r2"}, ""},
-		{"CALL", 5, []string{"r3", "r4"}, "r1"},
+		{"CONFIG_GET", 6, []string{"r4", "r5"}, "r3"},
 	}
 	seen := map[string]int{}
 	for i, in := range code {
@@ -812,7 +816,7 @@ func main() {
 				}
 			}
 			if c.argFrom != "" {
-				// The call's first argument is the outer p (r1), copied into
+				// The call's first argument is the outer k (r3), copied into
 				// the argument register before the BUILTIN.
 				base, _ := strconv.Atoi(m[2])
 				found := false
@@ -822,12 +826,12 @@ func main() {
 					}
 				}
 				if !found {
-					t.Errorf("%s does not read the outer p from %s:\n%s", c.name, c.argFrom, dis)
+					t.Errorf("%s does not read the outer k from %s:\n%s", c.name, c.argFrom, dis)
 				}
 			}
 		}
 	}
-	if seen["RECEIVE_TIMEOUT"] != 2 || seen["WHEREIS"] != 1 || seen["CALL"] != 1 {
+	if seen["RECEIVE_TIMEOUT"] != 2 || seen["WHEREIS"] != 1 || seen["CONFIG_GET"] != 1 {
 		t.Errorf("builtins seen %v:\n%s", seen, dis)
 	}
 }
@@ -844,12 +848,12 @@ func TestCompileActorBuiltins(t *testing.T) {
 		"println(actor.Monitor(actor.Self()))":                    "MONITOR",
 		"actor.Demonitor(actor.MakeRef())":                        "DEMONITOR",
 		"println(actor.MakeRef())":                                "MAKE_REF",
-		"println(actor.SendAfter(1, actor.Self(), 2))":            "SEND_AFTER",
+		"println(actor.SendAfter(actor.Self(), 2, 1))":            "SEND_AFTER",
 		"println(actor.CancelTimer(actor.MakeRef()))":             "CANCEL_TIMER",
 		"actor.Sleep(3)":                                          "SLEEP",
-		"a, b := actor.Call(actor.Self(), 1, 2)\n\tprintln(a, b)": "CALL",
+		"a, b := actor.Call(actor.Self(), 1, 2)\n\tprintln(a, b)": "CALL_ERR",
 		"actor.Reply(actor.Request{}, 1)":                         "REPLY",
-		"println(actor.Register(\"n\", actor.Self()))":            "REGISTER",
+		"println(actor.Register(\"n\", actor.Self()))":            "REGISTER_ERR",
 		"a, b := actor.Whereis(\"n\")\n\tprintln(a, b)":           "WHEREIS",
 		"actor.Unregister(\"n\")":                                 "UNREGISTER",
 	}
@@ -1103,7 +1107,7 @@ func main() {
 	s := S{i64, i64}
 	s = S{V: i64}
 	actor.Send(actor.Self(), i64)
-	actor.SendAfter(1, actor.Self(), i64)
+	actor.SendAfter(actor.Self(), i64, 1)
 	r, _ := actor.Call(actor.Self(), i64, 0)
 	println(x, s.N, r, i64, keep(i64))
 	var c any = int64(7)
@@ -2464,5 +2468,40 @@ func main() {
 	}
 	if strings.Contains(compileSrc(t, "package main\ntype R struct{ W int }\nfunc (r R) Area() int { return r.W }\nfunc main() { println(R{1}.Area()) }\n"), "(is)") {
 		t.Error("a program without interfaces got a generated test")
+	}
+}
+
+// TestSendAfterOrder: actor.SendAfter(to, msg, ms) puts its arguments in
+// B_SEND_AFTER's registers ms, to, msg. With stable arguments ms is
+// evaluated first, the code SendAfter(ms, to, msg) compiled to before
+// v0.2.0; when ms calls a function and msg may depend on it, the
+// arguments are evaluated left to right.
+func TestSendAfterOrder(t *testing.T) {
+	dis := compileSrc(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tme := actor.Self()\n\tactor.SendAfter(me, \"x\", 10)\n}\n")
+	if !regexp.MustCompile(`LOADK r2, 10\n.*MOVE r3, r0\n.*LOADK r4, "x"\n.*BUILTIN r1, r2, 3, SEND_AFTER\n`).MatchString(dis) {
+		t.Errorf("stable arguments: want ms, to, msg loaded in that order into r2..r4:\n%s", dis)
+	}
+	dis = compileSrc(t, "package main\nimport \"gogo/actor\"\nfunc f() int { return 1 }\nfunc main() {\n\tvar s []int\n\tactor.SendAfter(actor.Self(), s[0], f())\n}\n")
+	if !regexp.MustCompile(`(?s)SELF.*INDEX.*CALL.*SEND_AFTER`).MatchString(dis) {
+		t.Errorf("ms calls a function: want to, msg, ms evaluated in source order:\n%s", dis)
+	}
+}
+
+// TestDiscardedActorCall: actor.Call and actor.Register as statements
+// call their builtins directly, without the library function that makes
+// the error (and without errors.Code's reserved row); with the result
+// used, the library function is called.
+func TestDiscardedActorCall(t *testing.T) {
+	dis := compileSrc(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Register(\"x\", actor.Self())\n\t(actor.Call(actor.Self(), 1, 0))\n}\n")
+	if strings.Contains(dis, "func actor.") || !strings.Contains(dis, ", REGISTER_ERR\n") || !strings.Contains(dis, ", CALL_ERR\n") {
+		t.Errorf("discarded results: want the builtins in main and no actor function:\n%s", dis)
+	}
+	img := compileImage(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Register(\"x\", actor.Self())\n}\n")
+	if got := strings.Join(imageTypes(t, img), " "); strings.Contains(got, "errors.Code") {
+		t.Errorf("a discarded Register carries errors.Code's row: %s", got)
+	}
+	dis = compileSrc(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tprintln(actor.Register(\"x\", actor.Self()) == nil)\n}\n")
+	if !strings.Contains(dis, "func actor.Register") {
+		t.Errorf("a used result: want actor.Register called:\n%s", dis)
 	}
 }

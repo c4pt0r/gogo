@@ -343,7 +343,7 @@ working actor a measured `MaxMemory` (16 KB per actor and about 160 KB in
 all on a board, against 256 KB per actor on the host); keep messages small
 and move bulk data as frozen `bytes.Bytes`; bound every producer with acks,
 `Call` or pulling; keep shared state in one owner actor; give every `Call`
-a timeout and never call in a cycle; persist what must survive a restart;
+a timeout, check its error and never call in a cycle; persist what must survive a restart;
 handle every message type in every state; and keep per-byte loops in C. It
 ends with a checklist to review a design against.
 
@@ -365,8 +365,8 @@ cheaper interpreter dispatch (computed goto, combined instructions), and
 moving hot operations into C builtins.
 
 ### What happens when the image format changes?
-Since format 15, images are versioned `major.minor`. New reserved types and
-fields appended to reserved types only raise the minor; a VM runs every
+Since format 15, images are versioned `major.minor`. New builtins, reserved
+types and fields appended to reserved types only raise the minor; a VM runs every
 image of its major whose minor is not newer than its own, and the compiler
 stamps the lowest minor a program needs, so most new images still run on
 older firmware. Hot-loaded modules stay valid across such updates.
@@ -566,7 +566,8 @@ messages; never its agent, or a PID it did not give out. `node.Listen`,
 `gogo/errors` codes (`Refused`, `Timeout`, `NotFound`, ...), as
 `port.Open` does. When a node
 becomes unreachable, monitors get a `DownMsg` and links an exit signal
-with reason `actor.NoConnection`, and Calls to it fail at once. Messages
+with reason `actor.NoConnection`, and Calls to it fail at once with
+`errors.NoConnection`. Messages
 may hold the basic values, PIDs, Refs, system structs and your own
 structs (matched by qualified name, field count and field kinds), up to
 4 KB; delivery is at most once and in order between two actors. The

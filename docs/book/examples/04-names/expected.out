@@ -1,5 +1,4 @@
-register true
-again false
+again: exists already
 log 1 from a worker
 log 2 from a worker
 log 3 from main

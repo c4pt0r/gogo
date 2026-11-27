@@ -1,0 +1,8 @@
+equal: true true true false
+call: nil true true
+down: true true true
+exit: true true
+cancel: false
+register: true
+memory: 0
+mailbox empty: true

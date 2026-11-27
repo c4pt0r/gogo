@@ -1,17 +1,19 @@
 // More Calls in flight to the server than the board can track (it runs
 // with --max-links 1: 9 entries); when the server goes, every one of them
-// ends at once: tracked ones on the node's loss, the rest when made.
+// ends at once with errors.NoConnection: tracked ones on the node's loss,
+// the rest when made.
 package main
 
 import (
 	"gogo/actor"
+	"gogo/errors"
 	"gogo/node"
 	"gogo/sys"
 )
 
 func call(slow actor.PID, i int, done actor.PID) {
-	_, ok := actor.Call(slow, i, 30000)
-	actor.Send(done, ok)
+	_, err := actor.Call(slow, i, 30000)
+	actor.Send(done, err == errors.NoConnection)
 }
 
 func main() {
@@ -27,18 +29,15 @@ func main() {
 	}
 	actor.Sleep(300)
 	println("calling")
-	failed := 0
-	for failed < 12 {
+	lost := 0
+	for lost < 12 {
 		m, ok := actor.ReceiveTimeout(5000)
 		if !ok {
 			break
 		}
-		switch b := m.(type) {
-		case bool:
-			if !b {
-				failed++
-			}
+		if b, _ := m.(bool); b {
+			lost++
 		}
 	}
-	println("failed", failed)
+	println("lost", lost)
 }

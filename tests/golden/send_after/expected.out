@@ -3,3 +3,5 @@ false
 A
 B
 timeout
+got 1 after at least 20 ms: true
+from g

@@ -76,6 +76,9 @@ func (c *checker) staticProblem(e ast.Expr, depth int) string {
 		}
 	case *ast.CompositeLit:
 		t := info.TypeOf(x)
+		if isPID(t) && len(x.Elts) == 0 { // actor.PID{}: the zero PID
+			return ""
+		}
 		if isBuffer(t) || isPID(t) || isRef(t) || isBytes(t) {
 			return "a composite literal of " + types.TypeString(t, pkgName)
 		}

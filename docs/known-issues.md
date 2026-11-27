@@ -13,6 +13,40 @@ the M5StickS3 and the Cardputer ADV. The design is in
 Programs written for v0.1.0 need these edits, and every image must be
 rebuilt:
 
+- **`actor.Call`** returns `(reply any, err error)` instead of `(reply
+  any, ok bool)`: `err` is `nil`, `errors.Timeout`, `errors.NoProc` (no
+  live local actor) or `errors.NoConnection` (a remote PID's node is
+  gone), book 4.3. `r, ok := actor.Call(...); if !ok {` becomes `r, err
+  := actor.Call(...); if err != nil {`; a program that only checked `ok`
+  needs no other change, and the compiler rejects an `ok` still used as
+  a `bool` (`!ok`, `if ok`). A program that calls `actor.Call` or
+  `actor.Register`, itself or through a library call that does (the
+  libraries keep those functions in `//gogo:ondemand` files, so only
+  the calls that use one: every `gogo/node` call, `dns.Lookup`,
+  `dhcp.Start`, `sntp.Sync`, `http`'s client calls (`Get`, `Post`, `Do`,
+  `NewClient`, `ClientDo`, `Upload`, ...), `supervisor.SuperviseModule`,
+  `sound.Record` and `tui.Open` count), is image format 15.7 and
+  needs firmware that runs 15.7; a program that uses only the rest
+  (`supervisor.Supervise`, `http.Serve`, `sound.Play`, `tui.Width`, ...)
+  keeps its minor; images built before
+  keep running on the new firmware. `gogo/errors` gained the shared codes
+  `NoProc` (28) and `NoConnection` (29); `node.Whereis` and the other
+  `gogo/node` calls now return the Call's error (`NoConnection` when the
+  node goes during the call) where they returned `errors.Timeout`.
+- **`actor.Register`** returns an `error` instead of a `bool`: `nil`,
+  `errors.NoProc` (the PID is not a live local actor) or `errors.Exists`
+  (the name is taken). `if actor.Register(n, p) {` becomes `if
+  actor.Register(n, p) == nil {`, and `if !actor.Register(...)` becomes
+  `!= nil`; a call used as a statement needs no edit (it compiles to the
+  builtin alone, so it costs a few bytes, not the error's ~500). Like
+  `Call`, it makes the image 15.7. `actor.Whereis` is unchanged.
+- **`actor.SendAfter`** takes its arguments in `Send`'s order with the
+  delay last, as `Call` does: `actor.SendAfter(ms, p, msg)` is
+  `actor.SendAfter(p, msg, ms)`. Every old call fails to compile (an
+  `int` where the PID goes), so none is missed. The VM builtin is
+  unchanged: old images run as before, and a rewritten call compiles to
+  the same code.
+
 - **Images.** The reserved type numbers changed inside format 15.0, so an
   image built by an older compiler, including one built between the
   image format 15 change and this one, loads but misreads types. Rebuild
@@ -186,8 +220,10 @@ rebuilt:
   the actors whose failure must fail the run to `main` (or have `main`
   monitor them and `actor.Exit` with a code).
 - **`actor.Call` does not notice that the server died.** It waits out
-  the whole timeout. *Workaround:* monitor the server and keep timeouts
-  short; treat `ok == false` as "maybe dead".
+  the whole timeout and fails with `errors.Timeout` (only a server that
+  was already gone gives `errors.NoProc`, at once). *Workaround:* monitor
+  the server and keep timeouts short; treat `errors.Timeout` as "maybe
+  dead".
 - **Timers outlive their creator.** A `SendAfter` aimed at another actor
   still fires after its creator exits and is then charged to nobody, so a
   child that is restarted over and over and sets a long timer each time
@@ -379,11 +415,11 @@ rebuilt:
   declaration). A closure passed to `actor.Spawn` is copied into the new
   actor with what it captures, so a variable it changes there is the
   child's own (Go's goroutines would share it).
-- **Two-result builtins cannot stand alone.** `actor.Call(p, req, 100)`
-  or `actor.ReceiveTimeout(0)` as a statement fails with `multiple values
-  not supported`. *Workaround:* `_, _ = actor.Call(...)`. `println(f())`
-  with a multi-result `f` and `var a, b = f()` fail the same way; use
-  `a, b := f()`.
+- **Multi-value expressions only in assignments.** `println(f())` with a
+  multi-result `f` and `var a, b = f()` fail with `multiple values not
+  supported`; use `a, b := f()`. A multi-result call as a statement or
+  in a `defer`, `actor.ReceiveTimeout(0)` included, is fine: its results
+  are dropped.
 - **Pointers: no interior pointers, a copy after a send.** `&s[i]` and
   `&v.F` are rejected (`interior pointer ... not supported`), and so is a
   pointer method called on a slice element or a field (`s[i].M()`,
@@ -457,8 +493,6 @@ rebuilt:
   Go either: read the struct, write it, store it back. A field of a
   pointer's target can be written (`p.X = v`, `f().X = v` for a `f` that
   returns a pointer).
-- **`actor.PID{}` is rejected.** *Workaround:* `var none actor.PID` is the
-  zero PID.
 - **Some values cannot go into `any`.** Func values (no type id) are
   rejected. Func values cannot be compared, not even with `nil`.
   *Workaround:* wrap a func value in a struct.
@@ -696,7 +730,7 @@ rebuilt:
   yet (uploads stream). Request actors run with 2 x body limit + 6 KB
   (22 KB by default; about 134 KB with a 64 KB body limit). `http.Serve`
   has no error result: if it cannot listen it kills the linked caller
-  with exit code 69, `http.ListenFailed` (`actor.Failed + errors.Busy`),
+  with exit code 69, `http.ListenFailed` (`actor.Fail(errors.Busy)`),
   whatever the cause.
 - **TLS is 1.2 only.** mbedTLS's TLS 1.3 key exchange cannot be sliced.
   A server that requires 1.3 gives `Closed{TLS}`.
@@ -772,7 +806,8 @@ rebuilt:
   (and at most 4096 minus the port cap: remote PIDs live between 0xF000
   and the port PIDs), 48 + 2*L* local PIDs given out (dead ones are
   reused), 16 + 2*L* remote links and monitors (a full table answers with
-  `NoConnection`), 8 + *L* remote Calls in flight (one more fails at once);
+  `NoConnection`), 8 + *L* remote Calls in flight (one more fails at once
+  with `errors.NoConnection`);
   on a board (*L* = 8) 64, 64, 32 and 16. A full remote-PID table evicts
   the least recently used entry that no link or monitor names: a remote
   PID kept without a monitor then goes stale (sends to it are dropped,

@@ -61,6 +61,7 @@
 #include "bytes.h"
 #include "module.h"
 #include "floats.h"
+#include "../include/gogo_errors.h"
 #include <string.h>
 
 #define REDUCTIONS     1000u
@@ -609,7 +610,7 @@ static const uint8_t builtin_info[] = {
     [B_PORT_HANDOFF] = BI(2), [B_NET_SUBSCRIBE] = BI(0), [B_CONFIG_GET] = BI_VAR | BI_TWO,
     [B_FS] = BI_VAR, [B_CODE] = BI_VAR, [B_UNIX_TIME] = BI(0), [B_SET_UNIX_TIME] = BI(1), [B_RANDOM] = BI(0),
     [B_FLOAT] = GOGO_FLOAT ? BI_VAR : 0u, [B_PRINTLNU] = BI_VAR, [B_PANIC] = BI(1), [B_CMP] = BI_VAR,
-    [B_RESERVED_58] = 0, [B_RESERVED_59] = 0, [B_RESERVED_60] = 0, [B_SPRINT] = BI_VAR,
+    [B_CALL_ERR] = BI_VAR, [B_REGISTER_ERR] = BI(2), [B_RESERVED_60] = 0, [B_SPRINT] = BI_VAR,
 };
 typedef char builtin_info_complete[sizeof builtin_info == B_LAST + 1u ? 1 : -1];
 
@@ -1094,10 +1095,13 @@ int interp_run(Vm *vm, Actor *a) {
                 R[ra] = T_NIL;
                 break;
             }
-            case B_CALL: {
+            case B_CALL: case B_CALL_ERR: {
+                /* B_CALL_ERR (15.7): the second result is why it failed,
+                 * a shared error code, instead of ok. */
                 CHECK(rc == 3);
                 REGS(ra, 2);
                 uint64_t serial;
+                uint32_t why;
                 if (!(a->flags & AF_CALL_PENDING)) {
                     int32_t ms;
                     CHECK(int_val(vm, a, R[rb + 2], &ms));
@@ -1120,8 +1124,8 @@ int interp_run(Vm *vm, Actor *a) {
                     if ((r = msg_send(vm, a, pid, term_from_ref(off))) < 0) CRASH((uint32_t)-r);
                     if (r == 1) {   /* no live target (a dead local actor, a remote one with no route) */
                         val = T_NIL;
-                        ok = false;
-                        goto two;
+                        why = vm_dist_of(vm, pid) ? GOGO_E_NOCONNECTION : GOGO_E_NOPROC;
+                        goto call_done;
                     }
                     R[ra] = roots[0];
                     CHECK(ref_serial(vm, a, R[ra], &serial));
@@ -1148,8 +1152,13 @@ int interp_run(Vm *vm, Actor *a) {
                 a->flags &= (uint8_t)~AF_CALL_PENDING;
                 RELOAD();
                 val = got == 1 ? t : T_NIL;   /* 2: failed (its node is gone) */
-                ok = got == 1;
-                goto two;
+                why = got == 1 ? GOGO_E_OK : got == 2 ? GOGO_E_NOCONNECTION : GOGO_E_TIMEOUT;
+            call_done:
+                ok = why == GOGO_E_OK;
+                if (ext == B_CALL) goto two;
+                R[ra] = val;
+                R[ra + 1] = term_from_int((int32_t)why);
+                break;
             }
             case B_REPLY: {
                 const uint32_t *req = obj_of(vm, a, R[rb]);
@@ -1245,14 +1254,15 @@ int interp_run(Vm *vm, Actor *a) {
             case B_EXIT:
                 actor_exit(vm, a, (uint32_t)iarg, T_EMPTYSTR);
                 return RUN_EXIT;
-            case B_REGISTER: {
+            case B_REGISTER: case B_REGISTER_ERR: {
                 CHECK(term_is_pid(R[rb + 1]));
                 const uint8_t *name;
                 uint32_t len;
                 CHECK(name_bytes(vm, a, R[rb], &name, &len));
                 r = names_register(vm, a->id, name, len, R[rb + 1]);
                 if (r < 0) CRASH(R_OUT_OF_MEMORY);
-                R[ra] = term_from_bool(r > 0);
+                /* B_REGISTER_ERR (15.7): the shared error code, not ok */
+                R[ra] = ext == B_REGISTER ? term_from_bool(r == GOGO_E_OK) : term_from_int(r);
                 break;
             }
             case B_WHEREIS: {

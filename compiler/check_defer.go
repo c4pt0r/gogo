@@ -22,7 +22,7 @@ func (c *checker) deferStmt(s *ast.DeferStmt) {
 		c.unsupported(call.Args[0], "deferred call with a multi-value argument")
 		return
 	}
-	c.call(call, c.multiCall(call) != nil) // results discarded
+	c.call(call, c.multiCall(call) != nil || twoResult[c.actorFunc(call)]) // results discarded
 }
 
 // namedResults returns the named results of sig and of every func literal

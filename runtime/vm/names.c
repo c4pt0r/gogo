@@ -1,5 +1,6 @@
 #include "names.h"
 #include "alloc.h"
+#include "../include/gogo_errors.h"
 #include <string.h>
 
 struct Name {
@@ -27,8 +28,8 @@ static void unlink_free(Vm *vm, Name **p) {
 }
 
 int names_register(Vm *vm, term by, const uint8_t *name, uint32_t len, term pid) {
-    if (!actor_lookup_live(vm, pid)) return 0;
-    if (find(vm, name, len)) return 0;
+    if (!actor_lookup_live(vm, pid)) return GOGO_E_NOPROC;
+    if (find(vm, name, len)) return GOGO_E_EXISTS;
     Name *n = va_alloc(vm, name_size(len));
     if (!n) return -1;
     n->pid = pid;
@@ -37,7 +38,7 @@ int names_register(Vm *vm, term by, const uint8_t *name, uint32_t len, term pid)
     if (len) memcpy(n->bytes, name, len);
     n->next = vm->names;
     vm->names = n;
-    return 1;
+    return GOGO_E_OK;
 }
 
 bool names_whereis(Vm *vm, const uint8_t *name, uint32_t len, term *pid) {

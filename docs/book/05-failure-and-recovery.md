@@ -94,6 +94,7 @@ type Reason struct {
 | 10 | `actor.Panic` | `panic(v)`, a failed type assertion, a method call on a nil interface | `panic`, after `panic: v` |
 | 11 | `actor.NoConnection` | linked to an actor on another node that became unreachable ([20.5](20-distributed.md#205-when-a-node-goes-away)) | `noconnection` |
 | 12 | `actor.Nil` | a nil pointer dereference, a write to a nil map | `nil` |
+| 64..99 | `actor.Fail(code)` | a failure a shared error code describes: `actor.Failed` (64) + the code (appendix C), as `http.ListenFailed` is `actor.Fail(errors.Busy)`, 69 | `exit(<code>)` |
 | ≥ 100 | your own | `actor.Exit(code)` or `actor.Kill(p, code)` | `exit(<code>)` |
 
 `Normal` and `Shutdown` are the two "expected" endings; everything else
@@ -409,14 +410,14 @@ func main() {
 	s := actor.Spawn(server)
 	ref := actor.Monitor(s)
 
-	reply, ok := actor.Call(s, Work{4}, 1000)
-	println("reply", reply, ok)
+	reply, err := actor.Call(s, Work{4}, 1000)
+	println("reply", reply, err == nil)
 
 	// This request crashes the server. Call does not return early when the
 	// server dies: it waits out its timeout.
 	start := actor.Now()
-	_, ok = actor.Call(s, Work{0}, 200)
-	println("ok:", ok, "waited the full timeout:", actor.Now()-start >= 200)
+	_, err = actor.Call(s, Work{0}, 200)
+	println(err.Error(), "after the full timeout:", actor.Now()-start >= 200)
 
 	// The DownMsg was queued meanwhile.
 	switch m := actor.Receive().(type) {
@@ -436,7 +437,7 @@ func main() {
 
 ```text
 reply 25 true
-ok: false waited the full timeout: true
+timed out after the full timeout: true
 server down: true 5
 late monitor: true
 ```
@@ -557,13 +558,13 @@ func main() {
 				w = r.From
 			}
 		}
-		reply, ok := actor.Call(w, in, 100)
-		if ok {
-			println(in, "->", reply)
-		} else {
-			println(in, "-> no answer (worker crashed)")
+		reply, err := actor.Call(w, in, 100)
+		if err != nil {
+			println(in, "-> no answer (the worker crashed):", err.Error())
 			w = none
+			continue
 		}
+		println(in, "->", reply)
 	}
 	// main returns: the supervisor shuts the worker down and exits too.
 }
@@ -571,9 +572,9 @@ func main() {
 
 ```text
 21 -> 42
-oops -> no answer (worker crashed)
+oops -> no answer (the worker crashed): timed out
 50 -> 100
-x -> no answer (worker crashed)
+x -> no answer (the worker crashed): timed out
 4 -> 8
 ```
 
@@ -584,7 +585,7 @@ gogo: actor <pid 2> crashed: exit(100)
 gogo: actor <pid 2> crashed: exit(100)
 ```
 
-The request that caused the crash got no answer (main's `Call` timed out),
+The request that caused the crash got no answer (main's `Call` failed with `errors.Timeout`),
 but the next request found a fresh worker. In a real program the client
 would report "bad input", retry, or move on.
 

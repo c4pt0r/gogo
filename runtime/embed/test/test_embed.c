@@ -590,9 +590,10 @@ TEST(embed_lifecycle_errors) {
 TEST(embed_image_version) {
     TCtx t; tctx_init(&t);
     Img im = image("echo");
-    CHECK_EQ(im.w[1], 15u << 16);                    /* stamped 15.0 */
+    uint32_t stamped = im.w[1];                      /* 15.7: it calls actor.Register */
     gogo_vm *vm = new_vm(&thost, &t, NULL);
     unsigned minor = gogo_image_format() & 0xFFFFu;   /* the VM's newest minor */
+    CHECK(stamped >> 16 == 15u && (stamped & 0xFFFFu) <= minor);
     char want[96];
     snprintf(want, sizeof want, "gogo: unsupported image format 15.%u (this VM runs 15.0 to 15.%u)", minor + 1u, minor);
     im.w[1] = 15u << 16 | (minor + 1u);
@@ -601,7 +602,7 @@ TEST(embed_image_version) {
     im.w[1] = 14u;
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_EVERSION);
     CHECK(strstr(t.err, "image format 0.14 ") != NULL);
-    im.w[1] = 15u << 16;
+    im.w[1] = stamped;
     CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
     CHECK_EQ(gogo_start(vm), GOGO_OK);
     CHECK_EQ(settle(vm), GOGO_IDLE);

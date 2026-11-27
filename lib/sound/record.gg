@@ -1,0 +1,50 @@
+package sound
+
+// Record. This file is compiled into an image only when the program uses
+// it (//gogo:ondemand): Record waits for the recorder with actor.Call,
+// which needs image format 15.7, so a program that only plays keeps its
+// older minor.
+//
+//gogo:ondemand
+
+import (
+	"gogo/actor"
+	"gogo/audio"
+)
+
+// Record starts the recorder for dir (created, one level, if missing),
+// which opens the mic with cfg, and waits for that open; ok is false if
+// the mic does not open (no mic, the speaker open, a bad cfg, no memory)
+// or dir is unusable. maxSec is
+// the length of a file in seconds (0 means DefaultMaxSec); a file ends on a
+// frame boundary, so it is a whole number of FrameMs. One recorder per dir.
+func Record(dir string, cfg audio.Mic, maxSec int) (actor.PID, bool) {
+	secs := maxSec
+	if secs <= 0 {
+		secs = DefaultMaxSec
+	}
+	if secs > MaxMaxSec {
+		secs = MaxMaxSec
+	}
+	frameMs := clampFrame(cfg.FrameMs)
+	next, ok := nextNumber(dir)
+	if !ok {
+		return actor.Self(), false
+	}
+	frames := framesPerFile(secs, frameMs)
+	rate := cfg.RateHz
+	planned := frames * (rate * frameMs / 1000 * 2)
+	parent := actor.Self()
+	r := actor.SpawnOpt(func() {
+		record(parent, cfg, dir, next, rate, frameMs, frames, planned)
+	}, actor.Options{MaxMemory: memoryFor(rate, frameMs)})
+	// The recorder opens the mic itself, so the port's charge and room
+	// check count against its MaxMemory, not the caller's limit; it
+	// answers this Call with whether the open worked.
+	rep, _ := actor.Call(r, 0, openTimeoutMs)
+	if opened, _ := rep.(bool); !opened { // rep is nil if the Call failed
+		actor.Kill(r, actor.Killed)
+		return actor.Self(), false
+	}
+	return r, true
+}

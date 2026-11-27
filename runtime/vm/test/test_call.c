@@ -1,5 +1,6 @@
 /* Call / Reply: reply blocks in the mailbox, selective receive by Ref
- * serial, and that a blocked Call sends its request exactly once. */
+ * serial, and that a blocked Call sends its request exactly once; B_CALL
+ * (images before 15.7) and B_CALL_ERR (actor.Call from 15.7). */
 #include "test.h"
 #include "test_host.h"
 #include "actor.h"
@@ -12,6 +13,7 @@
 #include "signals.h"
 #include "timer.h"
 #include "term.h"
+#include "../include/gogo_errors.h"
 #include <string.h>
 
 /* main (0 params, 6 regs):
@@ -304,4 +306,106 @@ TEST(call_zero_ms_sends_once_returns_false) {
     c->state = A_RUNNABLE;
     actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(va_used_bytes(&vm), base);
+}
+
+/* B_CALL_ERR (15.7, actor.Call's error): B_CALL with a shared error code
+ * in place of ok, the same blocking and the same request. */
+static void setup_err(uint32_t *w, Image *img, Vm *vm, int32_t ms) {
+    va_reset(vm);
+    build_call(w, ms);
+    w[21] = B_CALL_ERR;
+    CHECK_EQ(image_load(img, w, img_seal(w)), IMG_OK);
+    CHECK_EQ(test_vm_init(vm, img, 8), 0);
+}
+
+/* A reply: (reply, 0). */
+TEST(call_err_replied) {
+    uint32_t w[IMG_WORDS]; Image img; Vm vm;
+    setup_err(w, &img, &vm, 500);
+    size_t base = va_used_bytes(&vm);
+    Actor *c = start(&vm, &img), *s = actor_new(&vm, 64);
+    CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
+    c->state = A_WAITING;
+    CHECK(c->pc == img.code + 6);                /* on the CALL_ERR */
+    CHECK(c->flags & AF_CALL_PENDING);
+    term ref = REGS_OF(c)[3];
+    const uint32_t *ro = c->mem + term_ref_off(ref);
+    uint64_t sref = (uint64_t)ro[1] | ((uint64_t)ro[2] << 32);
+    CHECK_EQ(msg_send_reply(&vm, s, c->id, sref, term_from_int(42)), 0);
+    CHECK(runq_pop(&vm) == c);
+    CHECK_EQ(interp_run(&vm, c), RUN_WAIT);      /* now in Sleep */
+    c->state = A_WAITING;
+    CHECK(c->pc == img.code + 8);
+    CHECK_EQ(REGS_OF(c)[3], term_from_int(42));
+    CHECK_EQ(REGS_OF(c)[4], term_from_int(GOGO_E_OK));
+    CHECK(!(c->flags & (AF_CALL_PENDING | AF_TIMED_OUT)));
+    c->state = A_RUNNABLE;
+    actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
+    actor_free(&vm, s);
+    CHECK_EQ(va_used_bytes(&vm), base);
+}
+
+/* No reply in time: (nil, GOGO_E_TIMEOUT); with ms 0 at once. */
+TEST(call_err_timeout) {
+    uint32_t w[IMG_WORDS]; Image img; Vm vm;
+    setup_err(w, &img, &vm, 500);
+    size_t base = va_used_bytes(&vm);
+    Actor *c = start(&vm, &img);
+    CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
+    c->state = A_WAITING;
+    uint64_t next;
+    CHECK(timer_next(&vm, &next));
+    timer_fire_due(&vm, next);
+    CHECK(runq_pop(&vm) == c);
+    CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
+    c->state = A_WAITING;
+    CHECK(c->pc == img.code + 8);
+    CHECK_EQ(REGS_OF(c)[3], T_NIL);
+    CHECK_EQ(REGS_OF(c)[4], term_from_int(GOGO_E_TIMEOUT));
+    CHECK(!(c->flags & (AF_CALL_PENDING | AF_TIMED_OUT)));
+    c->state = A_RUNNABLE;
+    actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(va_used_bytes(&vm), base);
+
+    setup_err(w, &img, &vm, 0);
+    base = va_used_bytes(&vm);
+    w[22] = OP_MAKE(OP_BUILTIN, 0, 1, 1);        /* Sleep(r1 = 7): blocks */
+    c = start(&vm, &img);
+    CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
+    c->state = A_WAITING;
+    CHECK(c->pc == img.code + 8);
+    CHECK_EQ(REGS_OF(c)[3], T_NIL);
+    CHECK_EQ(REGS_OF(c)[4], term_from_int(GOGO_E_TIMEOUT));
+    CHECK_EQ(mbox_count(c), 1);                  /* the one request */
+    c->state = A_RUNNABLE;
+    actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(va_used_bytes(&vm), base);
+}
+
+/* A dead target, the zero PID or a non-PID: (nil, GOGO_E_NOPROC) at once,
+ * no request queued, no timer. */
+TEST(call_err_noproc_immediate) {
+    uint32_t w[IMG_WORDS]; Image img; Vm vm;
+    setup_err(w, &img, &vm, 5000);
+    size_t base = va_used_bytes(&vm);
+    Actor *tmp = actor_new(&vm, 32);
+    term dead = tmp->id;
+    actor_free(&vm, tmp);
+    term targets[] = { dead, T_ZEROPID, term_from_int(3) };
+    for (unsigned i = 0; i < sizeof targets / sizeof targets[0]; i++) {
+        Actor *c = start(&vm, &img);
+        /* Patch r0 = Self() into r0 = r5 and put the target in r5. */
+        w[14] = OP_MAKE(OP_MOVE, 0, 5, 0); w[15] = OP_MAKE(OP_NOP, 0, 0, 0);
+        REGS_OF(c)[5] = targets[i];
+        CHECK_EQ(interp_run(&vm, c), RUN_WAIT);  /* straight to Sleep */
+        CHECK(c->pc == img.code + 8);
+        CHECK_EQ(REGS_OF(c)[3], T_NIL);
+        CHECK_EQ(REGS_OF(c)[4], term_from_int(GOGO_E_NOPROC));
+        CHECK_EQ(mbox_count(c), 0);
+        CHECK(!(c->flags & AF_CALL_PENDING));
+        CHECK_EQ(timer_count(&vm), 1);           /* only the Sleep's wakeup */
+        c->state = A_RUNNABLE;
+        actor_exit(&vm, c, R_NORMAL, T_EMPTYSTR);
+        CHECK_EQ(va_used_bytes(&vm), base);
+    }
 }

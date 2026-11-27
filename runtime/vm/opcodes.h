@@ -189,11 +189,12 @@ enum Builtin {
     /* Since 15.4 (the language's abstraction phase). */
     B_PANIC           = 56,  /*! v -> (does not return) | panic(v): print "panic: " and v (as println prints it) to stderr, then end the calling actor with R_PANIC. Deferred calls do not run. */
     B_CMP             = 57,  /*! a, b [, x [, mode]] -> -1 | 0 | 1 | 2 | A total order of two values, for == and switch on interfaces, structs and arrays: kinds first, then ints, int64s and floats by value (a NaN equals nothing; -0 == 0), Refs by serial, strings and Bytes by bytes, structs of one type field by field (a struct of a mutable type, a pointer or a map, by identity: 15.6), arrays (slices) element by element, anything else by term identity (a func, a Buffer). A third argument (its value unused) says a and b are arrays; without it a slice at the top, one held by an interface, equals nothing, itself included. Nesting past 64 levels, other than through a struct's last field or an array's last element, is badcode, and so is a compare that visits more than 65536 terms (values sharing subvalues). Does not preempt. A fourth argument (15.6, gogo/maps), a mode, makes it a total order: a NaN equals a NaN and sorts before every other float, and a value it cannot order (a func, a Buffer, a pointer or a map at any depth, or with mode 2 a slice at the top) gives 2. */
-    /* 58-60: unused. They were kept for distributed actors (15.5), which
-     * need no builtin (remote PIDs go through the VmDist hooks, actor.h);
-     * free for a later minor. */
-    B_RESERVED_58     = 58,  /*! - -> - | Unused (badcode); free for a later minor. */
-    B_RESERVED_59     = 59,  /*! - -> - | Unused (badcode); free for a later minor. */
+    /* 58-60 were kept for distributed actors (15.5), which needed no
+     * builtin (remote PIDs go through the VmDist hooks, actor.h). From
+     * 15.7 58 and 59 are actor.Call and actor.Register with an error;
+     * 60 is free for a later minor. */
+    B_CALL_ERR        = 58,  /*! pid, req, ms -> reply, code | (15.7) actor.Call: B_CALL, with why it failed in place of ok, a shared error code (gogo_errors.h): 0 replied, GOGO_E_TIMEOUT no reply within ms (the server died meanwhile, or ms <= 0 and no reply yet), GOGO_E_NOPROC no live local actor (dead, never was, the zero PID, a port), GOGO_E_NOCONNECTION a remote PID the VmDist hook could not send to (its node is not connected, the PID names nothing any more, the table of remote Calls in flight is full) or whose node went away while waiting. */
+    B_REGISTER_ERR    = 59,  /*! name, pid -> code | (15.7) actor.Register: B_REGISTER with a shared error code (gogo_errors.h) in place of the bool: 0 registered, GOGO_E_NOPROC pid is no live local actor (checked first; a remote PID included), GOGO_E_EXISTS the name is taken. */
     B_RESERVED_60     = 60,  /*! - -> - | Unused (badcode); free for a later minor. */
     /* Since 15.6 (references, gogo/fmt). */
     B_SPRINT          = 61   /*! mode, v -> string | nil | The text println prints for v, without the newline (a box as its value, a pointer's target after &, a map as map[k:v ...]): mode 0 returns it as a new string, mode 1 writes it to the console (gogo/fmt). */

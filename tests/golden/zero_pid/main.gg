@@ -1,0 +1,39 @@
+// The zero PID (actor.PID{}, a var never set) names no actor: every
+// actor builtin given it behaves as for an actor that has exited.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/errors"
+)
+
+var none = actor.PID{} // a package-level zero PID
+
+func main() {
+	var p actor.PID
+	println("equal:", p == actor.PID{}, p == none, p == actor.NoPID, p == actor.Self())
+	actor.Send(p, "lost") // dropped
+	t0 := actor.Now()
+	r, err := actor.Call(p, "hello?", 1000)
+	println("call:", r, err == errors.NoProc, actor.Now()-t0 < 500) // at once, not after the timeout
+	ref := actor.Monitor(p)
+	switch m := actor.Receive().(type) {
+	case actor.DownMsg:
+		println("down:", m.Ref == ref, m.From == p, m.Reason.Code == actor.NoProc)
+	}
+	actor.TrapExit(true)
+	actor.Link(p)
+	switch m := actor.Receive().(type) {
+	case actor.ExitMsg:
+		println("exit:", m.From == p, m.Reason.Code == actor.NoProc)
+	}
+	actor.Unlink(p)
+	actor.Kill(p, actor.Killed) // nothing to kill
+	t := actor.SendAfter(p, "late", 5)
+	actor.Sleep(10)
+	println("cancel:", actor.CancelTimer(t))
+	println("register:", actor.Register("nobody", p) == errors.NoProc)
+	println("memory:", actor.Info(p).Memory)
+	_, ok := actor.ReceiveTimeout(0)
+	println("mailbox empty:", !ok)
+}

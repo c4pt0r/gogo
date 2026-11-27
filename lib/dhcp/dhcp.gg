@@ -1,5 +1,5 @@
 // Package dhcp is the gogo DHCP client, written in the gogo
-// subset and compiled into every image that imports it.
+// subset and compiled into an image where it is used (//gogo:ondemand).
 //
 // Start spawns the client actor, linked to the caller. It owns the
 // "netif" port and sets the interface address from its lease (or from the
@@ -15,6 +15,13 @@
 // IPv4), DHCP is skipped and the address is net.ip with net.mask (default
 // 255.255.255.0), net.gw and net.dns.
 package dhcp
+
+// This file is compiled into an image only for the functions the program
+// uses (//gogo:ondemand): Start waits with actor.Call (or registers with
+// actor.Register), which needs image format 15.7, so importing the package
+// without calling it keeps a program's older minor.
+//
+//gogo:ondemand
 
 import (
 	"gogo/actor"
@@ -46,17 +53,14 @@ func Start(cfg Config) error {
 	if t <= 0 {
 		t = 10000
 	}
-	r, ok := actor.Call(actor.SpawnLink(run), waitAddr{}, t)
-	switch e := r.(type) {
-	case errors.Code:
-		if ok && e != errors.OK {
-			return e
-		}
-		if ok {
-			return nil
-		}
+	r, err := actor.Call(actor.SpawnLink(run), waitAddr{}, t)
+	if err != nil {
+		return err // errors.Timeout
 	}
-	return errors.Timeout
+	if e, ok := r.(errors.Code); ok && e != errors.OK {
+		return e
+	}
+	return nil
 }
 
 // The client's state is an []int and an []int64 indexed by these

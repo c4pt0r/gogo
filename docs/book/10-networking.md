@@ -250,7 +250,7 @@ Limits: the request line and headers at most 2 KB, the body at most 8 KB
 400 and too-large bodies 413 without calling the handler. A connection
 that does not send a complete request within 10 s is closed. If the
 listener cannot listen (the port is taken), it exits with code 69,
-`http.ListenFailed` (`actor.Failed + errors.Busy`: library failures are
+`http.ListenFailed` (`actor.Fail(errors.Busy)`: library failures are
 exit codes 64..99, appendix B); trap exits to see that.
 
 Since the handler is an ordinary function, you can call it directly to
@@ -291,15 +291,12 @@ func count() int {
 	if !ok {
 		return 0
 	}
-	v, ok := actor.Call(p, hit{}, 500)
-	if !ok {
+	v, err := actor.Call(p, hit{}, 500)
+	if err != nil {
 		return 0
 	}
-	switch n := v.(type) {
-	case int:
-		return n
-	}
-	return 0
+	n, _ := v.(int)
+	return n
 }
 
 // handle runs in a fresh actor for every connection.

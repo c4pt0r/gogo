@@ -1,17 +1,31 @@
 // Package actor is the gogo actor API. Its functions (marked
 // //gogo:builtin) exist only so programs type-check with the standard Go
 // toolchain; the gogo compiler replaces every call with VM instructions, so
-// the bodies are never executed.
+// the bodies are never executed. The functions with a body (Call, Fail,
+// Register) are ordinary library code.
 //
 // The struct types ProcInfo, Reason, ExitMsg, DownMsg, Request and Options
 // have fixed type indices 0-5 in every image (TYPE_* in runtime/vm/opcodes.h); keep
 // their field order in sync with compiler.reservedTypes.
 package actor
 
+import "gogo/errors"
+
 // PID identifies an actor.
 //
 //gogo:builtin
 type PID struct{ _ int32 }
+
+// NoPID is the zero PID, also written actor.PID{}: what a PID variable
+// holds before it is set. It names no actor, local or remote, so a Send
+// or SendAfter to it is dropped, Call and Register fail with
+// errors.NoProc, a Monitor of it delivers a DownMsg with NoProc at once,
+// a Link of it the exit signal NoProc (which ends the caller unless it
+// traps exits), and Kill and Unlink do nothing. Whereis of an unknown name
+// and a failed port.Open return it. println shows it as <pid 0>, as it
+// shows the main actor (only the slot is printed); == tells them apart.
+// Package-level variables are read-only: NoPID cannot be changed.
+var NoPID = PID{}
 
 // Ref is a VM-wide unique reference value; refs compare with == and !=.
 //
@@ -66,7 +80,7 @@ type Options struct {
 
 // Reason codes (R_* in runtime/vm/opcodes.h). 10..63 are kept for the VM.
 // 64..99 are failures a library reports as an exit: Failed plus a shared
-// code of gogo/errors (Failed + int(errors.Busy) is 69; gogo/http's
+// code of gogo/errors, Fail(code) (Fail(errors.Busy) is 69; gogo/http's
 // ListenFailed is one). User codes start at 100.
 const (
 	Normal          = 0
@@ -84,6 +98,13 @@ const (
 	Nil             = 12 // a nil pointer dereference or a write to a nil map
 	Failed          = 64 // the base of library failures: Failed + a shared error code (1..35, gogo/errors)
 )
+
+// Fail is the exit reason of a failure that a shared error code of
+// gogo/errors describes: Failed + int(code), 64..99 for the shared codes
+// (1..35). Exit with it, actor.Exit(actor.Fail(errors.Busy)), so that a
+// supervisor or a linked actor can tell the cause from the reason; Code -
+// Failed gives the code back.
+func Fail(code errors.Code) int { return Failed + int(code) }
 
 // Spawn starts a new actor running f and returns its PID.
 //
@@ -168,10 +189,12 @@ func Demonitor(r Ref) { panic("gogo only") }
 //gogo:builtin
 func MakeRef() Ref { panic("gogo only") }
 
-// SendAfter sends msg to to after ms milliseconds.
+// SendAfter sends msg to to after ms milliseconds (ms <= 0: at once,
+// through the timer queue). The Ref cancels it (CancelTimer). The
+// arguments are in Send's order, the delay last as in Call.
 //
 //gogo:builtin
-func SendAfter(ms int, to PID, msg any) Ref { panic("gogo only") }
+func SendAfter(to PID, msg any, ms int) Ref { panic("gogo only") }
 
 // CancelTimer cancels a SendAfter timer; false if it already fired.
 //
@@ -189,24 +212,69 @@ func Sleep(ms int) { panic("gogo only") }
 func Now() int64 { panic("gogo only") }
 
 // Call sends a Request with body req to to and waits at most timeoutMs
-// milliseconds for the reply; ok is false on timeout. If the server dies
-// while the call is pending, Call does not return early: the caller waits
-// until the timeout (monitor the server to notice its death sooner).
+// milliseconds for the reply (other messages stay in the mailbox). err is
+// nil if the reply came, else an errors.Code that says why it did not:
+//
+//	errors.Timeout       no reply within timeoutMs (timeoutMs <= 0: none yet)
+//	errors.NoProc        to is no live local actor: it has exited, never
+//	                     existed, is the zero PID or a port; at once
+//	errors.NoConnection  to is a remote PID (gogo/node) this node cannot
+//	                     reach: its node is not connected or went away
+//	                     (also while Call waited), or the PID names
+//	                     nothing here any more, or the node's table of
+//	                     remote Calls in flight is full; at once
+//
+// reply is nil then. If a local server dies while the call is pending,
+// Call does not return early: it fails with errors.Timeout when the time
+// is up (monitor the server to notice its death sooner). So does the first
+// Call to a remote actor that has exited on a node that is still up (its
+// node drops the request and tells this one, so later Calls to that PID
+// fail at once with errors.NoConnection, as a Monitor of it reports
+// NoConnection).
+// req is checked as Send checks a message: one that cannot be sent ends
+// the caller (actor.BadMsg).
+func Call(to PID, req any, timeoutMs int) (reply any, err error) {
+	reply, code := call(to, req, timeoutMs)
+	if code != 0 {
+		return nil, errors.Code(code)
+	}
+	return reply, nil
+}
+
+// call is Call with the shared error code in place of the error (builtin
+// B_CALL_ERR, image format 15.7).
 //
 //gogo:builtin
-func Call(to PID, req any, timeoutMs int) (reply any, ok bool) { panic("gogo only") }
+func call(to PID, req any, timeoutMs int) (any, int) { panic("gogo only") }
 
 // Reply answers a Request.
 //
 //gogo:builtin
 func Reply(req Request, reply any) { panic("gogo only") }
 
-// Register names p; false if the name is taken or p is not alive.
+// Register names p (on this node: see gogo/node's Register to export a
+// name to other nodes). err is nil, or an errors.Code: errors.NoProc if p
+// is not a live local actor (it has exited, is the zero PID, a port or a
+// remote PID; checked first), errors.Exists if the name is taken. A name
+// is freed when its actor exits or the registrant unregisters it.
+func Register(name string, p PID) error {
+	if code := register(name, p); code != 0 {
+		return errors.Code(code)
+	}
+	return nil
+}
+
+// register is Register with the shared error code in place of the error
+// (builtin B_REGISTER_ERR, image format 15.7).
 //
 //gogo:builtin
-func Register(name string, p PID) bool { panic("gogo only") }
+func register(name string, p PID) int { panic("gogo only") }
 
-// Whereis looks a registered name up.
+// Whereis looks a registered name up; ok is false if no actor has it.
+// It is a lookup in this VM's own table, like a map's comma-ok: it cannot
+// fail otherwise, so it has no error, unlike gogo/node's Whereis, which
+// asks another node over the network and can fail for the network's
+// reasons (Timeout, NoConnection).
 //
 //gogo:builtin
 func Whereis(name string) (PID, bool) { panic("gogo only") }

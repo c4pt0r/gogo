@@ -22,7 +22,7 @@ func main() {
 	// A SendAfter whose target exits before the timer fires.
 	d := actor.Spawn(func() {})
 	rd := actor.Monitor(d)
-	actor.SendAfter(10, d, "late")
+	actor.SendAfter(d, "late", 10)
 	waitDown(rd)
 
 	// An actor killed while it is blocked in ReceiveTimeout: its pending
@@ -38,8 +38,8 @@ func main() {
 	waitDown(rw)
 
 	// SendAfter to a pid that is already dead still returns a timer.
-	t := actor.SendAfter(5, d, "nobody")
+	t := actor.SendAfter(d, "nobody", 5)
 	println(actor.CancelTimer(t))
-	actor.SendAfter(5, d, "fires into nothing")
+	actor.SendAfter(d, "fires into nothing", 5)
 	println("fine")
 }

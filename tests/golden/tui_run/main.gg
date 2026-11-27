@@ -23,7 +23,7 @@ func main() {
 	}
 	n := []int{0}
 	self := actor.Self()
-	actor.SendAfter(10, self, tick{})
+	actor.SendAfter(self, tick{}, 10)
 	tui.Run(s, keys, tui.Handlers{
 		Key: func(k tui.Key) bool { return true },
 		Msg: func(msg any) bool {
@@ -33,7 +33,7 @@ func main() {
 				if n[0] == 3 {
 					return false
 				}
-				actor.SendAfter(10, self, tick{})
+				actor.SendAfter(self, tick{}, 10)
 			}
 			return true
 		},

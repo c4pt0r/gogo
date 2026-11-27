@@ -229,7 +229,7 @@ exit true 124
 killed true 125
 link killed true true
 sendafter true true
-shape mismatch answered false
+shape mismatch timed out true
 badmsg true true
 whereis becho true
 relay call true hello from b
@@ -263,9 +263,9 @@ func TestServerLost(t *testing.T) {
 	}
 	events := append([]string(nil), got[1:5]...)
 	sort.Strings(events)
-	want := []string{"call in flight false true", "down true 11", "exit 11", "node down server"}
+	want := []string{"call in flight lost true true", "down true 11", "exit 11", "node down server"}
 	if strings.Join(events, "|") != strings.Join(want, "|") || got[0] != "w ready" ||
-		got[5] != "call to lost node false true" || got[6] != "connect again false" {
+		got[5] != "call to lost node true true" || got[6] != "connect again false" {
 		t.Errorf("watcher output %q", got)
 	}
 }

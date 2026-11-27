@@ -290,7 +290,7 @@ func main() {
 		actor.Spawn(func() { joiner(self, addr, token) })
 	}
 	ask(pilot, g, seq, w, h)
-	actor.SendAfter(stepMs(g), self, tick{})
+	actor.SendAfter(self, tick{}, stepMs(g))
 	if draw(s, g, w, h, hi, auto, paused, false, "") {
 		frames++
 	}
@@ -361,7 +361,7 @@ func main() {
 					waitFrom = now
 				}
 				if late && now-waitFrom < pilotWaitMs {
-					actor.SendAfter(pollMs, self, tick{})
+					actor.SendAfter(self, tick{}, pollMs)
 					redraw = false
 					break
 				}
@@ -390,7 +390,7 @@ func main() {
 				} else {
 					redraw = false
 				}
-				actor.SendAfter(stepMs(g), self, tick{})
+				actor.SendAfter(self, tick{}, stepMs(g))
 			case remotePilot:
 				// The server's autopilot takes over from the local one.
 				if pilot.Up && !pilot.Remote {

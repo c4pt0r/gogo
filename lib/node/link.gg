@@ -1,5 +1,11 @@
 package node
 
+// Compiled into an image only for the functions the program uses
+// (//gogo:ondemand), like the rest of gogo/node: its calls go through
+// actor.Call and actor.Register (image format 15.7).
+//
+//gogo:ondemand
+
 import (
 	"gogo/actor"
 	"gogo/bytes"
@@ -275,13 +281,9 @@ func serverHandshake(e ends, listener, conn actor.PID, token, name string, ms in
 	if !equalMAC(body[18:50], hmac256(key, cat([]byte("gogo-node-c"), ns, nc, []byte(cname)))) {
 		return false
 	}
-	r, ok := actor.Call(e.Agent, assignReq{Name: cname, Link: actor.Self()}, 2000)
-	id := 0
-	switch v := r.(type) {
-	case int:
-		id = v
-	}
-	if !ok || id == 0 {
+	r, _ := actor.Call(e.Agent, assignReq{Name: cname, Link: actor.Self()}, 2000)
+	id, _ := r.(int) // r is nil if the Call failed
+	if id == 0 {
 		return false
 	}
 	// The node port sends the welcome itself, first (Hello): it may take
