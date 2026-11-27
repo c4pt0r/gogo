@@ -555,16 +555,23 @@ $(BUILD)/board-ports/gogovm: $(GOGOVM_DEPS) $(BOARD_TEST_DRIVERS) $(FLAGS_STAMP)
 test-board-ports: $(BUILD)/board-ports/gogovm gogo-cmd
 	runtime/board/test/test.sh $(BUILD)
 
-# examples/dice-driver: a port driver in C (book chapter 22), compiled
-# into a test-only board (board.c) on the unix host and nowhere else: not
-# into gogovm or the firmware. test.sh runs its program there and compares
-# the output with driver.out, and checks that gogovm refuses the image.
-DICE_SRCS = examples/dice-driver/board.c examples/dice-driver/dice.c runtime/board/board_main.c $(PARAMS_SRCS) $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c)
-$(BUILD)/dice-driver/dice-board: $(DICE_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(FLAGS_STAMP)
+# examples/dice-driver: a third-party port driver on gogo.h alone (book
+# chapter 22), an ESP-IDF component (dice/). test.sh runs its program on
+# a gogovm built with the component (DICE_DRIVER: make vm DRIVERS=...
+# does the same for $(BUILD)/gogovm) and in an embedding host that
+# registers the same driver (host.c on libgogo.a), compares each output
+# with driver.out, checks that a plain gogovm refuses the image and that
+# the book's C and Go blocks are cut from the sources.
+DICE_DRIVER = examples/dice-driver/dice/dice.c examples/dice-driver/dice/dice_port.c
+$(BUILD)/dice-driver/gogovm: $(GOGOVM_DEPS) $(DICE_DRIVER) examples/dice-driver/dice/dice.h $(FLAGS_STAMP)
 	@mkdir -p $(BUILD)/dice-driver
-	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(DICE_SRCS) $(VM_SRCS)
+	$(call gogovm_with,$(DICE_DRIVER))
 
-example-driver: $(BUILD)/dice-driver/dice-board vm gogo-cmd
+$(BUILD)/dice-driver/dice-host: examples/dice-driver/host.c examples/dice-driver/dice/dice.c examples/dice-driver/dice/dice.h $(wildcard runtime/include/*.h) $(BUILD)/libgogo.a
+	@mkdir -p $(BUILD)/dice-driver
+	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iruntime/include -Iexamples/dice-driver -o $@ examples/dice-driver/host.c examples/dice-driver/dice/dice.c $(BUILD)/libgogo.a -pthread
+
+example-driver: $(BUILD)/dice-driver/gogovm $(BUILD)/dice-driver/dice-host vm gogo-cmd
 	examples/dice-driver/test.sh $(BUILD)
 
 # Console text grid + font lookup (runtime/console), host build.

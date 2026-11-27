@@ -1,11 +1,14 @@
-// dice-driver: a port whose driver is C code in the VM.
+// dice-driver: a port whose driver is C code outside the VM's tree.
 //
-// The "dice" driver (dice.c next to this file) uses only gogo/port's
-// generic types: it is opened with a port.Host config (Arg is the seed),
-// takes port.Post commands (Kind is how many dice to roll) and answers
-// with one port.Post event per die (Kind is the face). It exists only in
-// the test board (board.c, `make example-driver`): the image requires
-// "dice", so gogovm and every firmware refuse it.
+// The "dice" driver (dice/, an ESP-IDF component) is written on gogo.h's
+// stable driver API alone and uses only gogo/port's generic types: it is
+// opened with a port.Host config (Arg is the seed), takes port.Post
+// commands (Kind is how many dice to roll) and answers with one
+// port.Post event per die (Kind is the face). The image requires "dice":
+// it runs on a gogovm or a firmware built with the component (make vm
+// DRIVERS=examples/dice-driver/dice, gogo firmware -component
+// examples/dice-driver/dice) and in a host that registers the driver
+// (host.c); a plain gogovm refuses it.
 package main
 
 import (

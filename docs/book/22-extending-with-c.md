@@ -9,19 +9,26 @@ The short answer is no, not directly, and that is deliberate. gogo has no
 foreign function interface (FFI): gogo code never calls a C function. The
 one bridge between gogo and C is the **port** (chapter 7). C code becomes
 a port driver, gogo code opens it with `port.Open` and talks to it with
-messages. There are two places such a driver can live:
+messages.
 
-1. **In the firmware (or `gogovm`)**: a `PortDriver` table compiled into
-   the VM, like `gpio`, `kbd` or `imu`. This is how you add hardware to a
-   board.
-2. **In a program that embeds gogo**: a host port, registered through
-   `libgogo` (chapter 18). This is how your own application gives its
-   gogo programs new abilities.
+There is one driver API for that, `runtime/include/gogo.h`, the same
+header a program that embeds gogo uses (chapter 18). A driver written
+against it is a table of three callbacks, and the same table, unchanged,
+runs in three places:
 
-Sections 22.2 to 22.11 are about the first way, with the `gpio` driver as
-the worked example and a small new driver, `dice`, as a tested example.
-Section 22.13 covers the second, and 22.14 lists what is still missing for
-anyone who writes drivers outside this repository.
+1. **in a firmware**, as an ESP-IDF component of your own that registers
+   itself with `GOGO_BOARD_PORT` and is built with `gogo firmware
+   -component`: no fork of gogo, no gogo source file changed;
+2. **in `gogovm`**, built with the same component (`make vm DRIVERS=...`),
+   so the driver can be tested on a computer;
+3. **in a program that embeds gogo**, registered with
+   `gogo_register_port` (a host port, section 18.7).
+
+Sections 22.2 to 22.8 are about that API, with a small driver, `dice`,
+built all three ways. The runtime's own drivers (`gpio`, `kbd`, `tcp`, ...)
+are written against an internal table instead, `PortDriver`, which can do
+more and promises nothing; sections 22.9 to 22.16 describe it for work on
+gogo itself, and 22.17 lists what is still missing.
 
 ## 22.1 No FFI, on purpose
 
@@ -66,23 +73,446 @@ So the question "how do I call C?" becomes "how do I write a port?". The
 answer costs more than an `extern` declaration, but the result keeps every
 property above.
 
-## 22.2 Two ways in
+## 22.2 Two APIs
 
-| | Firmware or VM driver (22.3 to 22.12) | Host port (22.13) |
+| | The driver API, `gogo.h` (22.2 to 22.8) | The internal table, `PortDriver` (22.9 to 22.16) |
 |---|---|---|
-| Lives in | the firmware or `gogovm`, compiled from this tree | your program, linked against `libgogo.a` |
-| API | `runtime/vm/port.h`: internal, changes with the VM | `runtime/include/gogo.h`: versioned, marked experimental |
-| Runs on | the boards, `gogovm` | wherever your program runs (macOS, Linux) |
-| Message types | any reserved types, or the generic `port.Host` / `port.Post` | `port.Host` / `port.Post` only |
-| Events from interrupts | yes (the event ring) | from other threads, through a poster |
-| Choose it for | hardware on a board, product firmware | your own application embedding gogo |
+| Header | `runtime/include/gogo.h`: versioned, the rules of section 22.8 | `runtime/vm/port.h` and the VM's headers: change in any release |
+| Lives in | your own code: an ESP-IDF component, a source of a `gogovm` build, your embedding program | this tree (`runtime/`, `platform/`) |
+| Runs on | the boards, `gogovm`, embedding hosts: one table for all | the boards and `gogovm` |
+| Registered by | `GOGO_BOARD_PORT` (firmware, `gogovm`), `gogo_register_port` (a host) | the board's driver list (`esp_ports`, `unix_ports_all`) |
+| Message types | `port.Host` to open, `port.Post` commands and events | any reserved types, plus the generic ones |
+| From an interrupt or another task | a task or thread posts through a `gogo_poster` (22.7) | the event ring, one writer (22.11) |
+| Choose it for | a product's own hardware, anything outside this tree | gogo's own drivers |
 
-The rest of this part is about the first column.
+Both speak to gogo code the same way: a name for `port.Open`, which is
+also the image's requirement (an image that needs `dice` is refused at
+load by a VM without it), commands as messages to the port, events as
+messages to its owner. Only the C side differs. **Write a third-party
+driver on `gogo.h`.**
 
-## 22.3 The driver table
+## 22.3 A driver on `gogo.h`: `dice`
 
-A driver is a `PortDriver` (`runtime/vm/port.h`), a table of C functions
-with a name:
+[`examples/dice-driver`](../../examples/dice-driver/) is a complete driver
+written the way someone outside the project would write one. The
+protocol:
+
+- `port.Open("dice", port.Host{Arg: seed})`: seed must be positive, else
+  the open fails with `errors.BadArg`;
+- `actor.Send(p, port.Post{Kind: n})`: roll n dice (1 to 10);
+- one event `port.Post{From: p, Kind: face}` per die.
+
+Its directory `dice/` is an ESP-IDF component, and its C files include
+`gogo.h` and nothing else of gogo (`make example-driver` checks that):
+
+```text
+examples/dice-driver/
+  main.gg              the gogo program
+  driver.out           its output
+  host.c               an embedding host with the driver (22.5)
+  dice/                the driver, an ESP-IDF component
+    CMakeLists.txt
+    gogo-driver.json   {"ports": ["dice"]}: what it provides (22.4)
+    dice.h             the driver's table and state
+    dice.c             the driver
+    dice_port.c        GOGO_BOARD_PORT: the board's registration (22.4)
+```
+
+### The table
+
+A driver is a `gogo_port_driver`: its size first, then three callbacks,
+each optional:
+
+```c
+typedef struct gogo_port_driver {
+    uint32_t size;          /* sizeof(gogo_port_driver) as the host was compiled (GOGO_PORT_DRIVER_INIT) */
+    uint32_t reserved;      /* 0 */
+```
+
+- **`open(ctx, vm, port, arg, data, len)`** is `port.Open` with a
+  `port.Host{Arg, Data}`: `arg` and the bytes of `Data`. 0 accepts it;
+  a nonzero value refuses it (section 22.6).
+- **`command(ctx, vm, port, kind, data, len)`** is a `port.Post{Kind,
+  Data}` sent to the port by any actor. Anything else sent to it is
+  ignored before the driver sees it.
+- **`close(ctx, vm, port)`** says the port has closed, for any reason:
+  `port.Close`, the owner's exit, `actor.Kill`, the end of the VM.
+
+`ctx` is the pointer given at registration, the driver's state. `port`
+is a `gogo_port`, a 32-bit value naming that one open port (a later port
+in the same slot gets another value), which the driver uses as the key
+of its own per-port state. `vm` is a handle to give back to the calls
+of the API. The dice table:
+
+```c
+const gogo_port_driver dice_driver = {
+    .size = sizeof(gogo_port_driver),
+    .open = dice_open,
+    .command = dice_command,
+    .close = dice_close,
+};
+```
+
+and its state, one table per VM, with a slot per open port:
+
+```c
+typedef struct DiceTable {
+    struct {
+        gogo_port port;          /* 0: free */
+        uint32_t seed;
+    } slot[DICE_PORTS];
+} DiceTable;
+```
+
+### Open, command, close
+
+```c
+static int dice_open(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uint8_t *data, size_t len) {
+    DiceTable *t = ctx;
+    (void)vm, (void)data, (void)len;
+    if (arg <= 0) return GOGO_EINVAL;
+    int i = slot_of(t, 0);
+    if (i < 0) return GOGO_EFULL;   /* errors.TooMany */
+    t->slot[i].port = port;
+    t->slot[i].seed = (uint32_t)arg;
+    return 0;
+}
+```
+
+`GOGO_EINVAL` refuses seed 0 with `errors.BadArg`, and a full table with
+`errors.TooMany` (section 22.6). A command rolls, sending each face to
+the port's owner with `gogo_port_emit`:
+
+```c
+static void dice_command(void *ctx, gogo_vm *vm, gogo_port port, int32_t kind, const uint8_t *data, size_t len) {
+    DiceTable *t = ctx;
+    int i = slot_of(t, port);
+    (void)data, (void)len;
+    if (i < 0 || kind < 1 || kind > 10) return;
+    while (kind-- > 0) {
+        if (gogo_port_emit(vm, port, next_face(&t->slot[i].seed), NULL, 0) != 0) return;   /* the owner cannot take more now */
+    }
+}
+```
+
+`gogo_port_emit(vm, port, kind, data, len)` queues `port.Post{From: the
+port, Kind, Data}` (the data copied) on the port's owner, whoever that
+is now: after `port.Handoff` the events follow the new owner, and the
+driver does nothing for it. It never kills anyone: over the owner's
+mailbox quota it returns `GOGO_EFULL` and the event is dropped, so the
+driver stops rolling. A command the driver does not understand (a
+`Kind` out of range) is ignored: any actor holding the port's PID may
+send it anything. `close` frees the slot:
+
+```c
+static void dice_close(void *ctx, gogo_vm *vm, gogo_port port) {
+    DiceTable *t = ctx;
+    int i = slot_of(t, port);
+    (void)vm;
+    if (i >= 0) t->slot[i].port = 0;
+}
+```
+
+Every callback runs on the VM's thread (the VM task on a board), inside
+the scheduler, never at the same time as an actor: it must return
+quickly (section 22.7). Besides `gogo_port_emit` a driver may end its
+port from its side with `gogo_port_close(vm, port, reason)`: the owner
+gets `port.Closed{From, Reason}`, which is never dropped, and the port
+closes (section 18.7).
+
+## 22.4 Into a firmware or `gogovm`: `GOGO_BOARD_PORT`
+
+A board registers drivers of its build at boot. One line, in a file of
+the driver's own, does it:
+
+```c
+static DiceTable dice_table;   /* a board runs one VM */
+
+GOGO_BOARD_PORT("dice", &dice_driver, &dice_table);
+```
+
+`GOGO_BOARD_PORT(name, &driver, ctx)` puts a constant entry in a linker
+section; no code runs to register it, and no gogo file names it. At
+boot, after the VM is made and before the image loads, the firmware (and
+`gogovm`) walks the section and registers every entry as
+`gogo_register_port` would, so an image's requirement `dice` is
+satisfied. Entries are registered in name order. One the board refuses,
+because its name is a runtime driver's (`gpio`, `tcp`, ...) or the
+board's, or an earlier entry has it, or it is longer than 31 bytes, or a
+board has more than 8, is named on the serial log at boot and left out:
+
+```
+gogo: board port "alpha" not registered: the name is taken (by a driver of the runtime or the board, or a board port before it)
+```
+
+The registered ones join the board's requirement names: `gogo device
+info` lists them in `provides`, and `gogovm --provides` prints them.
+
+### The component
+
+On the ESP32-S3 the driver is an ESP-IDF component:
+
+```cmake
+idf_component_register(SRCS dice.c dice_port.c
+                       INCLUDE_DIRS "."
+                       REQUIRES gogo_api
+                       WHOLE_ARCHIVE)
+```
+
+`gogo_api` (`platform/esp32s3/components/gogo_api`) gives it
+`runtime/include` and nothing else. `WHOLE_ARCHIVE` matters: nothing
+calls into `dice_port.c`, so without it the linker would leave that file
+out and the port with it. Beside it, `gogo-driver.json` tells `gogo
+firmware` which requirement names the component provides:
+
+```json
+{"ports": ["dice"]}
+```
+
+Then one command builds a firmware with it, for the images that need
+it:
+
+```
+$ gogo build examples/dice-driver -o dice.ggb
+$ gogo firmware -board sticks3 -component examples/dice-driver/dice -build dice.ggb
+board ports: dice
+...
+```
+
+`gogo firmware` accepts the images' requirement `dice` because the
+component provides it (without `-component` it stops: "the images
+require "dice", which no gogo firmware provides"), turns on the
+firmware's host-port layer (`CONFIG_GOGO_BOARD_PORTS`) and passes the
+directory to `idf.py` as `EXTRA_COMPONENT_DIRS` (chapter 12). Flash it
+as any firmware (`idf.py flash`, or `gogo setup -release-url` with the
+build's files), and the program runs:
+
+```
+$ gogo device info
+... provides=gpio,netif,...,/flash,float,dice
+$ gogo flash dice.ggb
+```
+
+The layer costs about 3.5 KB of flash (the StickS3 firmware with `dice`
+is 4.1 KB larger than the same one without it; posters add a few hundred
+bytes more to a driver that uses them) and is linked only into a
+firmware built with a board port. A
+`GOGO_BOARD_PORT` in a build without it fails to link, naming
+`gogo_board_ports_enabled`: turn on `CONFIG_GOGO_BOARD_PORTS`.
+
+### On `gogovm`
+
+`gogovm` always has the layer. `make vm DRIVERS=examples/dice-driver/dice`
+builds it with the component's `*.c` files (but `*_esp.c`, the
+ESP-only hardware files of a component, by convention), and then:
+
+```
+$ build/gogovm --provides | tail -1
+dice
+$ gogo run examples/dice-driver
+open with seed 0: bad argument
+...
+```
+
+A driver with hardware puts it behind a small table of its own and gives
+`gogovm` a simulated backend in a host-only file, as the runtime's own
+drivers do (section 22.13): the driver's logic is tested on the
+computer, the board adds the real hardware.
+
+## 22.5 Into an embedding host
+
+The same table is a host port of a program that embeds gogo. `host.c`
+registers it before the load, and the image runs as on a board that has
+the driver:
+
+```c
+    static DiceTable table;
+    gogo_vm *vm = NULL;
+    int rc = gogo_new_posix(NULL, &vm);
+    if (rc == GOGO_OK) rc = gogo_register_port(vm, "dice", 4, &dice_driver, &table);   /* before the load */
+    if (rc == GOGO_OK) rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);
+    if (rc == GOGO_OK) rc = gogo_run(vm);
+```
+
+`dice.c` is compiled in unchanged; `dice_port.c`, the board's
+registration, is not (in a build without a board it would not link).
+Chapter 18 covers the rest of the embedding API: section 18.7 the host
+ports, 18.12 the same in Go.
+
+### The program
+
+`main.gg` is ordinary gogo. It rolls, hands the port to another actor
+(no driver code is involved), and opens a second port with the same seed:
+
+```go
+// roll asks the dice port p for n dice and prints the faces.
+func roll(who string, p actor.PID, n int) {
+	actor.Send(p, port.Post{Kind: n})
+	faces := ""
+	for got := 0; got < n; {
+		switch e := actor.Receive().(type) {
+		case port.Post:
+			if e.From == p {
+				faces += " " + strconv.Itoa(e.Kind)
+				got++
+			}
+		}
+	}
+	println(who, "rolls"+faces)
+}
+
+func main() {
+	_, err := port.Open("dice", port.Host{Arg: 0})
+	println("open with seed 0:", err.Error())
+
+	p, err := port.Open("dice", port.Host{Arg: 42})
+	println("open with seed 42:", err == nil)
+	roll("main", p, 3)
+	roll("main", p, 5)
+```
+
+The output is the same on `gogovm` with the driver, in `host.c` and on
+the StickS3.
+
+Its output:
+
+```text
+open with seed 0: bad argument
+open with seed 42: true
+main rolls 1 5 4
+main rolls 3 1 1 1 5
+handoff: true
+player rolls 2 6 5 2
+done
+a second port, same seed: true
+main rolls 1 5 4
+```
+
+Seed 0 is refused with `bad argument`, the code the driver returned. The
+second port starts the same sequence again, since each port has its own
+slot. On a plain `gogovm` the image does not start at all:
+
+```
+$ gogo run examples/dice-driver
+gogo: image requires dice, which this VM lacks
+```
+
+`make example-driver` (part of `make test`) runs the program on a
+`gogovm` built with the component and in `host.c`, compares both with
+`driver.out`, checks that a plain `gogovm` refuses the image and that
+`dice/` includes only `gogo.h`, and checks that every C and Go block in
+this chapter is cut verbatim from the tree.
+
+## 22.6 Opening, refusing and owners
+
+`port.Open(name, cfg)` returns `(actor.PID, error)`. The VM decides most
+errors before or after the driver:
+
+| Error | When |
+|---|---|
+| `errors.NotFound` | no driver of that name in this VM |
+| `errors.BadArg` | `cfg` is not a struct of the driver's type (`port.Host` for a `gogo.h` driver) |
+| `errors.TooMany` | the VM's port table is at its cap (section 22.9) |
+| `errors.NoMemory` | the owner cannot take the port |
+| the driver's code | its open refused with a code: a `gogo.h` driver returns a negative `GOGO_E*` (the shared code negated), a `PortDriver` a positive shared code |
+| `errors.Busy` | its open refused with any other nonzero value |
+
+A `gogo.h` driver refuses an open by returning nonzero from `open`. A
+negative `GOGO_E*` whose code is a shared one (`gogo_errors.h`, the same
+numbers as `gogo/errors`, negated: `GOGO_EINVAL` is `-GOGO_E_BADARG`) is
+exactly the error `port.Open` returns; any other nonzero value
+(`GOGO_ESTATE`, a positive number) means `errors.Busy`, the generic "the
+resource is taken". Pick the code a caller can act on:
+
+| Return | `port.Open` gets | For |
+|---|---|---|
+| `GOGO_EINVAL` | `errors.BadArg` | a config value the driver will never accept |
+| `GOGO_EBUSY` | `errors.Busy` | a resource someone else holds now |
+| `GOGO_EFULL` | `errors.TooMany` | a table of the driver's is full |
+| `GOGO_ENOMEM` | `errors.NoMemory` | a buffer that does not fit |
+| `-GOGO_E_UNSUPPORTED` | `errors.Unsupported` | hardware this board lacks |
+| `-GOGO_E_IO` | `errors.IO` | the device did not answer |
+
+Mind that -1 is `GOGO_ENOTFOUND` ("not found"), not a generic refusal.
+
+Events a driver emits during its own `open` reach the owner once the
+open succeeds; if it refuses, they are discarded. A driver that did set
+up hardware before refusing undoes it before it returns.
+
+**Owners.** The actor that opened the port owns it. Its events go only to
+the owner; the owner's exit closes the port; `port.Handoff(p, to)` makes
+another actor the owner. The driver keeps nothing about the owner: it
+emits to the port, and the VM delivers to whoever owns it, so a handoff
+needs no driver code, as the dice example shows.
+
+## 22.7 Events from tasks and threads
+
+A callback must return quickly: while it runs, no actor runs. Slow work
+(a bus transfer, a network request, waiting for a sensor) goes to a task
+or thread of the driver's own, and the result comes back as an event
+through a **poster**: `gogo_poster_new(vm)` (in a callback) makes a
+handle that any thread may use, and `gogo_poster_port_post(poster, port,
+kind, data, len)` queues `port.Post{Kind, Data}` for the port's owner and
+wakes the VM. Posts from one thread arrive in the order made; one for a
+port that has closed since is dropped. On a board the wake is the VM
+task's latched notification (section 18.4), so a post made while the VM
+sleeps is never lost. `make test-board-ports` has a driver,
+`runtime/board/test/ports/ticker.c`, whose thread posts 2000 events to
+its port this way and the program checks each arrives, in order.
+
+The rules:
+
+- **Post from a task or a thread, never from an interrupt handler.** A
+  post allocates its message (from the heap, which may block), so an
+  ISR hands its data to a task first (a FreeRTOS queue or a task
+  notification), and the task posts.
+- **The VM's calls belong to its thread.** `gogo_port_emit` and
+  `gogo_port_close` run only in a callback; from elsewhere the driver
+  posts. On a board the `gogo_vm` handle a callback gets takes
+  `gogo_port_emit`, `gogo_port_close`, `gogo_post`, `gogo_close_posts`
+  and `gogo_poster_new`, and nothing else of the header (`gogo_step`,
+  `gogo_get_stats`, ... are libgogo's).
+- **A post can fail.** `GOGO_EFULL` with 256 posts queued (try again
+  later), `GOGO_ECLOSED` once the VM has finished. Free the poster
+  (`gogo_poster_free`) when the thread is done with it.
+- **An open port keeps the VM alive**, as it may still get events: a
+  program waiting for a sensor's next reading does not end. Its owner's
+  exit closes it.
+
+These events do not use the VM's event ring or an event-source slot,
+which stay the runtime's own drivers' business (section 22.11).
+
+## 22.8 The stability rules
+
+`gogo.h` follows the rules written at its top. Within a major version
+(during 0.x, within a minor) a function keeps its signature and meaning,
+and a struct that starts with its size only grows at the end: a driver
+compiled against an older header keeps working with a newer gogo (the
+fields it lacks take their defaults), and one compiled against a newer
+header works with an older gogo as far as the fields it knows. The
+driver part of the header (`gogo_port_driver`, `gogo_board_port`,
+`GOGO_BOARD_PORT`, `gogo_register_port`, `gogo_port_emit`,
+`gogo_port_close`, `gogo_poster_port_post`) is still marked
+`GOGO_EXPERIMENTAL` in v0.2: it may change in a minor release until
+v0.3, when it joins the promise. The image side needs no rule of its
+own: a driver on `gogo.h` uses only `port.Host`, `port.Post` and the
+shared error codes, which every image format since they came has, so an
+image that opens it runs on any firmware of its format that has the
+driver.
+
+What is not promised: everything under `runtime/` but `runtime/include`.
+A driver that includes a VM header (`port.h`, `heap.h`) is an in-tree
+driver, and can break with any release.
+
+## 22.9 The internal driver table
+
+The rest of the chapter is about gogo's own drivers, for work on gogo
+itself. They are written against the VM's internal headers, which can
+change in any release: a driver outside this tree uses `gogo.h`
+(sections 22.2 to 22.8) instead.
+
+An in-tree driver is a `PortDriver` (`runtime/vm/port.h`), a table of C
+functions with a name:
 
 ```c
 typedef struct PortDriver {
@@ -121,7 +551,7 @@ followed by five optional fields: `handoff`, `command_term`, `open_term`,
 - **`close`** runs when the port closes for any reason: `port.Close`, the
   owner's exit, `actor.Kill` on the port, the end of the VM, and after an
   open that the VM refuses after the driver accepted it (the charge did
-  not fit, section 22.5).
+  not fit, section 22.11).
 - **`can_event`** says whether the port can still produce events by
   itself. While any open port says yes, the VM keeps running even when
   every actor is waiting; a port that only answers commands says no.
@@ -129,13 +559,13 @@ followed by five optional fields: `handoff`, `command_term`, `open_term`,
   (the TCP driver uses it to resume an accepted connection).
 - **`hw`** is the driver *instance*'s hardware layer, a table the board
   fills. The VM never reads it; the driver finds it at `p->drv->hw`.
-- **`event`** takes the driver's events from the event ring (section 22.5)
+- **`event`** takes the driver's events from the event ring (section 22.11)
   instead of the VM delivering each one as it is; the driver delivers
   with `port_deliver` when it wants (`gpio` debounces there).
 
 Each open port is a `Port` in the VM's port table. Besides its driver
 and owner, it has four words of driver-private state (`p->state`) and
-the memory the driver charges to the owner (section 22.5). A driver whose per-port state fits
+the memory the driver charges to the owner (section 22.11). A driver whose per-port state fits
 in 16 bytes needs nothing else. The table has a cap per VM: 16 ports by
 default on a board (`GOGO_MAX_PORTS`), 1024 on `gogovm` and in an
 embedded VM, changed with the config key `vm.max_ports` or the embedding
@@ -145,9 +575,9 @@ larger table grows in chunks of 16 that never move, so a driver may keep
 a `Port *` for as long as the port is open.
 
 Every callback runs on the VM's thread, inside the scheduler, never at
-the same time as an actor. It must return quickly (section 22.12).
+the same time as an actor. It must return quickly (section 22.16).
 
-## 22.4 A real driver: `gpio`
+## 22.10 A real driver: `gpio`
 
 The `gpio` driver (`runtime/gpio/gpio.c`, 211 lines) is the smallest driver
 that has a config, a command and events from an interrupt; about half of
@@ -157,7 +587,7 @@ once, in the runtime, and each board gives it a hardware layer.
 ### The gogo side
 
 The types are in `lib/gpio/gpio.gg`, each with a fixed index in every image
-(`//gogo:reserved N`, section 22.9):
+(`//gogo:reserved N`, section 22.14):
 
 ```go
 // Config configures a "gpio" port: one pin.
@@ -199,7 +629,7 @@ instance over its own hardware layer in one line:
 ```
 
 The name comes from `runtime/vm/port_names.h`, the list of every runtime
-driver's name (section 22.7).
+driver's name (section 22.12).
 
 ### Open
 
@@ -351,7 +781,7 @@ void gpio_event(struct Vm *vm, Port *p, const PortEvent *e, uint64_t now) {
 
 `port_deliver` is what the scheduler does for a driver without the hook.
 The end of a window is a deadline, so the driver registers an event
-source (section 22.5) when a VM first opens a debounced input: its
+source (section 22.11) when a VM first opens a debounced input: its
 `next_deadline` is the earliest window end, its `pending` is true once
 that time has come, and its `drain` delivers what is due. The source's
 context is the number of ports holding a value (no memory to allocate or
@@ -396,7 +826,7 @@ layer differs. That is the pattern to copy for a new device: the logic
 once in `runtime/`, a small table of hardware hooks per board (design
 section 5.11.1).
 
-## 22.5 Events and memory
+## 22.11 Events and memory
 
 There are three ways for a driver to send its owner a message. They
 differ in where they may be called from and in what happens when the
@@ -406,7 +836,7 @@ owner's mailbox is full.
 the only way in from an interrupt handler. Its events are two ints, made
 into the driver's `event_type` struct (which must therefore be a struct
 of two ints), unless the driver takes them itself through its `event`
-hook (as `gpio` does to debounce, section 22.4). The ring holds
+hook (as `gpio` does to debounce, section 22.10). The ring holds
 `GOGO_EVQ_CAP` (64) events per VM; when it is full, new events are
 dropped and counted. The ring has **one writer**: on the ESP32-S3 every
 GPIO interrupt runs on the VM's core, so they never overlap. A second
@@ -513,55 +943,7 @@ int. Reason 0 (`errors.OK`) is reserved for a stream's half-close ("the
 peer finished sending"); a port that is finished for good sends a
 positive code such as `GOGO_E_IO`, and does nothing more.
 
-## 22.6 Opening, refusing and owners
-
-`port.Open(name, cfg)` returns `(actor.PID, error)`. The VM decides most
-errors before or after the driver:
-
-| Error | When |
-|---|---|
-| `errors.NotFound` | no driver of that name in this VM |
-| `errors.BadArg` | `cfg` is not a struct of the driver's `cfg_type` (or, for `open`, has a field that is not an int) |
-| `errors.TooMany` | the VM's port table is at its cap (section 22.3) |
-| `errors.NoMemory` | the owner cannot take the port, its `charge_words` or its `room_64w` |
-| the driver's code | the driver's `open` returned a shared error code (> 0); a host port's, a negative `GOGO_E*` |
-| `errors.Busy` | the driver's `open` returned a negative value; a host port's, any other nonzero value |
-
-A driver refuses an open by returning nonzero from `open` (or
-`open_term`). A positive value is a shared error code
-(`runtime/include/gogo_errors.h`, the same numbers as `gogo/errors`), and
-`port.Open` fails with exactly that error; any negative value means
-`errors.Busy`, the generic "the resource is taken, or a config this
-driver cannot use". The TCP drivers say `Unsupported` on a VM that has no
-network at all, rather than `Busy`:
-
-```c
-    if (!ns) return GOGO_E_UNSUPPORTED;   /* a VM without a network */
-```
-
-and the dice driver of section 22.10 refuses seed 0 with
-`GOGO_E_BADARG`, so the program sees `bad argument`. Pick the code a
-caller can act on: `BadArg` for a config value the driver will never
-accept, `Busy` for a resource someone else holds now, `Unsupported` for
-hardware this board lacks, `NoMemory` for a buffer that does not fit.
-Host ports (section 22.13) choose the same way, with gogo.h's signs: a
-host port's `open` returns a negative `GOGO_E*`, the shared code
-negated (`GOGO_EINVAL` for `errors.BadArg`), and any other nonzero
-value is `errors.Busy`.
-
-After a refused open, the VM bumps the slot's generation, so any event
-the driver pushed during `open` is stale and dropped. A driver that did
-set up hardware before refusing must undo it before it returns.
-
-**Owners.** The actor that opened the port owns it. Its events go only to
-the owner; the owner's exit closes the port; `port.Handoff(p, to)` makes
-another actor the owner, moving the charge and the held `Bytes` with it,
-and then calls the driver's `handoff` callback, if any. The driver keeps
-nothing about the owner: it delivers to `p->owner` through the VM
-(`port_owner` gives the owner if it is alive), so a handoff needs no
-driver code, as the dice example shows.
-
-## 22.7 Requirement names and optional features
+## 22.12 Requirement names and optional features
 
 The driver's `name` is the requirement name. The compiler records it for
 every constant `port.Open("name", ...)` in the program and its packages,
@@ -612,11 +994,12 @@ list. So adding a driver to the tree means:
   `port.Open` returns `errors.NotFound`, and an image that requires it is
   refused, exactly as on a board without the hardware.
 
-`gogo firmware` knows only the names in its table: for any other name it
-stops with "the images require "x", which no gogo firmware provides". A
-driver that is not in `fwFeatures` (or `fwBase`) cannot be selected by it.
+`gogo firmware` knows the names in its table, and those that a
+`-component`'s `gogo-driver.json` provides (section 22.4): for any other
+name it stops with "the images require "x", which no gogo firmware
+provides".
 
-## 22.8 Simulating the driver on the host VM
+## 22.13 Simulating the driver on the host VM
 
 A driver that exists only on the board can be tested only on the board.
 The existing devices avoid that by having a second hardware layer in
@@ -638,7 +1021,7 @@ lists its instance in `unix_ports_all`, and adds the file to the Makefile's
 that use it under `make test`, and `--without x` covers the "board without
 it" case.
 
-## 22.9 The gogo side: types
+## 22.14 The gogo side: types
 
 The `gpio` driver needs three struct types, and the VM must know them by
 number: it checks a config's type, decodes commands by type and builds
@@ -680,186 +1063,16 @@ type Post struct {
 }
 ```
 
-They were made for host ports (section 22.13), but nothing ties them to
-the embedding layer: a firmware driver can take a `port.Host` as its
-config (`cfg_type = TYPE_HOST`, an int and some bytes), `port.Post` as its
-commands and events (an int and some bytes), and `port.Chunk` / `Out` /
-`Done` / `Closed` if it moves bytes. Such a driver needs no change to the
-compiler, the image format or `lib/`, its images run on any firmware of the
-current format that has the driver, and the same gogo code works against
-a host port of the same name. **This is the way to write a third-party
-driver.** The price is that the gogo side reads `e.Kind` instead of a field
-with a name; a small gogo package that wraps the port can give it names
-again.
+They are what every `gogo.h` driver speaks (sections 22.2 to 22.8), and
+an in-tree `PortDriver` may use them too: `cfg_type = TYPE_HOST`,
+`port.Post` as its commands and events, and `port.Chunk` / `Out` / `Done`
+/ `Closed` if it moves bytes. Such a driver needs no change to the
+compiler, the image format or `lib/`, and its images run on any firmware
+of the current format that has the driver. The price is that the gogo
+side reads `e.Kind` instead of a field with a name; a small gogo package
+that wraps the port can give it names again.
 
-## 22.10 A driver with generic types: `dice`
-
-[`examples/dice-driver`](../../examples/dice-driver/) is a complete driver
-in that style, written the way someone outside the project would write
-one. It is compiled into a test-only board and nowhere else: neither the
-firmware nor `gogovm` has it. The protocol:
-
-- `port.Open("dice", port.Host{Arg: seed})`: seed must be positive, else
-  the open fails with `errors.BadArg`;
-- `actor.Send(p, port.Post{Kind: n})`: roll n dice (1 to 10);
-- one event `port.Post{From: p, Kind: face}` per die.
-
-### The driver
-
-`dice.c` keeps its state, a random generator's seed and a count, in two
-of the port's four state words, so it keeps nothing per VM and charges the
-owner nothing. A `port.Host` has a `Bytes` field, so the driver reads its
-config with `open_term`, in place:
-
-```c
-/* port.Open("dice", port.Host{Arg, Data}): port_open has checked that cfg
- * is a port.Host (cfg_type). A shared error code (> 0) refuses the open
- * with that error; a negative return would refuse it as errors.Busy. */
-static int dice_open(struct Vm *vm, const struct Actor *owner, Port *p, uint16_t index, term cfg) {
-    (void)index;
-    const uint32_t *o = obj_of(vm, owner, cfg);
-    int32_t seed;
-    if (hdr_words(o[0]) != 4u || !int_val(vm, owner, o[2], &seed) || seed <= 0) return GOGO_E_BADARG;
-    p->state[SEED] = (uint32_t)seed;
-    p->state[ROLLS] = 0;
-    return 0;
-}
-```
-
-`o[0]` is the struct's header (4 words: header, type, two fields), `o[1]`
-its type, `o[2]` the `Arg` field. The commands come the same way, through
-`command_term`, and the driver checks the type itself, since any actor may
-send the port anything:
-
-```c
-static void dice_command(struct Vm *vm, const struct Actor *from, Port *p, term msg) {
-    const uint32_t *o = obj_of(vm, from, msg);
-    int32_t n;
-    if (!o || hdr_kind(o[0]) != K_STRUCT || o[1] != TYPE_POST || hdr_words(o[0]) != 5u ||
-        !int_val(vm, from, o[3], &n) || n < 1 || n > 10)
-        return;
-    while (n-- > 0) {
-        if (!emit(vm, p, next_face(p))) return;   /* the owner cannot take more now */
-    }
-}
-```
-
-Each event is a `port.Post` built by `port_deliver_ints`. All three fields
-are immediates: the port's PID, a small int, and `T_EMPTYBYTES`, the empty
-`Bytes`:
-
-```c
-static bool emit(struct Vm *vm, const Port *p, int32_t face) {
-    int32_t v[3] = { (int32_t)p->id, face, (int32_t)T_EMPTYBYTES };
-    return port_deliver_ints(vm, p, TYPE_POST, v, 3, PORT_RAW(0) | PORT_RAW(2));
-}
-```
-
-The events go out from the command callback, on the VM thread, so the
-dice never use the event ring (whose events are two ints, which a
-`port.Post` is not). A driver with generic types whose events start in an
-interrupt keeps them in its own buffer and delivers them from an event
-source's `drain`. The table has no `open`, `command` or `close`:
-
-```c
-const PortDriver dice_driver = {
-    .name = "dice",
-    .cfg_type = TYPE_HOST,
-    .event_type = TYPE_POST,   /* documentation only: dice never uses the event ring */
-    .can_event = dice_can_event,
-    .command_term = dice_command,
-    .open_term = dice_open,
-};
-```
-
-### The board
-
-`board.c` is a board with one driver. It boots the image through
-`gogo_board_main`, the one boot path of the firmware and `gogovm`, on the
-unix host table:
-
-```c
-/* What this board provides: the drivers of its ports, and no mounts. */
-static const PortDriver *const dice_ports[] = { &dice_driver, NULL };
-static const VmMount *const no_mounts[] = { NULL };
-static const VmBoard dice_board = { .ports = dice_ports, .mounts = no_mounts };
-```
-
-```c
-    static Vm vm;   /* too big for the stack */
-    /* No file system (vfs NULL: gogo/fs is not linked in); params NULL:
-     * the build's defaults and config keys. */
-    BoardRun run = { .vm = &vm };
-    int run_rc = 0;
-    int rc = gogo_board_main(&dice_board, &unix_host, &run, words, (uint32_t)(size / 4), &run_rc);
-```
-
-The board has no file system. `port.Open` does not need one to say why
-an open failed: the VM itself answers that, so `dice` refusing seed 0
-still reaches the program as `errors.BadArg`.
-
-### The program
-
-`main.gg` is ordinary gogo. It rolls, hands the port to another actor
-(no driver code is involved), and opens a second port with the same seed:
-
-```go
-// roll asks the dice port p for n dice and prints the faces.
-func roll(who string, p actor.PID, n int) {
-	actor.Send(p, port.Post{Kind: n})
-	faces := ""
-	for got := 0; got < n; {
-		switch e := actor.Receive().(type) {
-		case port.Post:
-			if e.From == p {
-				faces += " " + strconv.Itoa(e.Kind)
-				got++
-			}
-		}
-	}
-	println(who, "rolls"+faces)
-}
-
-func main() {
-	_, err := port.Open("dice", port.Host{Arg: 0})
-	println("open with seed 0:", err.Error())
-
-	p, err := port.Open("dice", port.Host{Arg: 42})
-	println("open with seed 42:", err == nil)
-	roll("main", p, 3)
-	roll("main", p, 5)
-```
-
-Its output:
-
-```text
-open with seed 0: bad argument
-open with seed 42: true
-main rolls 1 5 4
-main rolls 3 1 1 1 5
-handoff: true
-player rolls 2 6 5 2
-done
-a second port, same seed: true
-main rolls 1 5 4
-```
-
-Seed 0 is refused with `bad argument`, the code the driver returned
-(section 22.6). The second port starts the
-same sequence again, since each port has its own state. On `gogovm` the
-image does not start at all:
-
-```
-$ gogo run examples/dice-driver
-gogo: image requires dice, which this VM lacks
-```
-
-`make example-driver` (part of `make test`) builds the board, runs the
-program on it and compares its output with `driver.out`, checks that
-`gogovm` refuses the image, and checks that every C and Go block in this
-chapter is cut verbatim from the tree.
-
-## 22.11 Checklist: the files a new driver touches
+## 22.15 Checklist: the files a new driver touches
 
 For a driver in the tree, in the order you write them:
 
@@ -869,7 +1082,7 @@ For a driver in the tree, in the order you write them:
    No mutable globals (`make globals`).
 2. **The name**: `PORT_NAME_*` in `runtime/vm/port_names.h`.
 3. **The types**: generic `gogo/port` types (nothing to do), or a `lib/`
-   package and the reserved-type changes of section 22.9 with a format minor.
+   package and the reserved-type changes of section 22.14 with a format minor.
 4. **The ESP32-S3**: the hardware layer in `platform/esp32s3/main/` (with
    its board storage), the instance in `esp_ports`, the sources in
    `main/CMakeLists.txt`, and for an optional feature `Kconfig.projbuild`,
@@ -884,7 +1097,7 @@ For a driver in the tree, in the order you write them:
    `docs/FAQ.md` and `docs/known-issues.md` where they apply, and the
    requirement names in chapter 13.
 
-## 22.12 Pitfalls
+## 22.16 Pitfalls
 
 - **Never block in a callback.** A callback runs on the one thread that
   runs every actor; while it waits, nothing else runs. Start slow work and
@@ -920,71 +1133,35 @@ For a driver in the tree, in the order you write them:
   declared by the platform and passed in through the hardware layer, like
   `gpio`'s `GpioPin pins[]`. Do not size a table by port index for 16
   ports: the cap is per VM, 1024 by default on `gogovm` and in embedded
-  VMs, up to 2048 (section 22.3). Index such state by the device (a pin,
+  VMs, up to 2048 (section 22.9). Index such state by the device (a pin,
   a channel), as `gpio` does, or keep it in the `Port`.
 - **Validate everything.** A command can come from any actor and any
   module, with any type and any values. Check the type, the field count
   and the ranges, and ignore what you do not understand.
 
-## 22.13 Host ports when embedding
+## 22.17 What is still missing
 
-A program that embeds gogo (chapter 18) adds C without touching the VM at
-all: it registers a **host port** with `gogo_register_port` before loading
-the image, and gogo code opens it by name with `port.Host`, sends it
-`port.Post` commands and gets `port.Post` events, exactly like the dice
-port. [Section 18.7](18-embedding.md#187-host-ports) shows a complete one
-in C, and [section 18.12](18-embedding.md#1812-hosts-in-go-gogotoolsembed)
-the same in Go (`embed.PortFuncs`). In short:
+The driver API of sections 22.2 to 22.8 closes most of what used to
+stand between a third party and a firmware driver: there is a stable
+header, a registration that needs no fork, `gogo firmware` builds the
+component in, and a refusal names its error. What remains, plainly:
 
-- the driver is a `gogo_port_driver` with three optional callbacks, `open`,
-  `command` and `close`, which run on the VM's thread inside `gogo_step`;
-- `gogo_port_emit` sends the owner an event from a callback or between
-  steps, and `gogo_poster_port_post` from any other thread, so slow work
-  goes on a thread of the host's and comes back as a message;
-- `gogo_port_close` ends the port from the host's side, with a `Closed`
-  that is never dropped;
-- a registered port is a requirement like any driver: an image that opens
-  it is refused by a VM where it is not registered.
-
-**Which one to choose.** For hardware on a board, and anything that must be
-in the product firmware, write a firmware driver: the ESP firmware does
-not boot through `libgogo` and has no host ports. For your own
-application, on a computer or a server, that runs gogo programs and wants
-to give them its own services (a database, a window, a sensor the
-application already talks to), write a host port: it lives in your code,
-uses the versioned C API, and needs no fork of gogo. Since both speak
-`port.Host` and `port.Post`, a driver written with the generic types can
-start as a host port and move into firmware later without changing the
-gogo code.
-
-## 22.14 What is missing for third-party drivers
-
-Firmware drivers are possible today, but not yet comfortable for anyone
-outside this repository. Plainly:
-
-- **There is no stable, out-of-tree driver API.** `PortDriver`, `Port`,
-  `port_deliver_ints`, `obj_of`, `int_val` and the stream helpers are
-  internal VM headers (`runtime/vm/`), not part of `runtime/include/`, and
-  can change in any release. Tables are written with designated
-  initializers and only grow at the end, which helps, but nothing is
-  promised.
-- **Drivers live in the tree.** A board's driver list is a `static const`
-  array in its platform file (`esp_ports`, `unix_ports_all`), and there is
-  no registration hook for firmware drivers. Adding one means patching
-  `platform/esp32s3`, so a product with its own drivers is a fork.
-- **`gogo firmware` knows only its own features.** An image that requires a
-  driver not in `fwFeatures` cannot be built with it; you build the
-  firmware with `idf.py` yourself.
-- **Event sources are scarce.** A VM has `GOGO_MAX_SOURCES` (4) source
-  slots, and the firmware can use all four (net, input, the screen's retry
-  while the screen port is open, and `gpio`'s debounce from the first
-  debounced input opened; with no slot left that open fails with
-  `errors.TooMany`). A new driver that polls needs that limit raised (it
-  is a compile-time setting) or must join an existing source.
-- **The event ring is for two-int events from one writer.** A driver with
-  generic types cannot use it (a `port.Post` is not two ints), and a
-  second interrupt source must not push to it concurrently with `gpio`.
-
-None of this changes the design: no FFI, every bridge a port. What would
-change it for third parties is a small, versioned driver header and a
-registration hook, which are not planned yet.
+- **The API is still experimental.** The driver part of `gogo.h` keeps
+  the `GOGO_EXPERIMENTAL` mark until v0.3 (section 22.8).
+- **No byte streams.** A `gogo.h` driver has `port.Post` events and
+  commands of up to 262,080 bytes each, but not the stream protocol of
+  the runtime's byte ports (`port.Chunk`, `Out`, `Done` with flow
+  control, section 22.11); a helper for it can follow.
+- **No interrupt-safe post.** An interrupt handler hands its data to a
+  task, which posts (section 22.7). The event ring, which an ISR can
+  push to, is the runtime's own and holds two-int events only.
+- **A few ports per board.** A board registers at most 8 board ports; a
+  VM has `GOGO_MAX_SOURCES` event sources, one more of them taken by the
+  post inbox in a firmware with board ports.
+- **No hardware access through gogo.** A component's driver talks to
+  its hardware through ESP-IDF directly (its own I2C device, GPIO, task);
+  the runtime's shared I2C bus and pin reservations are internal. Pick
+  pins and buses the board's own drivers do not use.
+- **C only, compiled in.** No driver is loaded at run time (no FFI and
+  no native modules, by design), and there is no package manager for
+  components.
