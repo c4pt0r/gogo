@@ -179,7 +179,7 @@ enum Builtin {
     B_PORT_HANDOFF    = 46,  /*! port pid, to pid -> bool | Hand a port's events to another actor (port.h port_handoff). */
     B_NET_SUBSCRIBE   = 47,  /*! -> bool | net.Subscribe: receive network events (port.h port_subscribe). */
     B_CONFIG_GET      = 48,  /*! key string -> value string, ok bool | sys.Config (host->config_get; "wifi." keys hidden). */
-    B_FS              = 49,  /*! op int, args... -> result(s) | gogo/fs, run by the Vm's fs_builtin hook (actor.h; vfs/builtin.c). */
+    B_FS              = 49,  /*! op int, args... -> result(s) | gogo/fs, run by the Vm's fs_builtin hook (actor.h; vfs/builtin.c), except op 14 (VM_FS_OPENERR, no arguments -> code: vm->open_err, why the last refused port open failed, read by port.Open), which the VM answers itself, with or without the hook. */
     B_CODE            = 50,  /*! op int, args... -> result(s) | gogo/code (module_builtin, module.h; CODE_OP_*). */
     B_UNIX_TIME       = 51,  /*! -> int64 | sys.Time: Unix milliseconds, vm_unix_time_ms (0: unknown). */
     B_SET_UNIX_TIME   = 52,  /*! ms int64 -> bool | sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor). */
@@ -200,6 +200,10 @@ enum Builtin {
     B_SPRINT          = 61   /*! mode, v -> string | nil | The text println prints for v, without the newline (a box as its value, a pointer's target after &, a map as map[k:v ...]): mode 0 returns it as a new string, mode 1 writes it to the console (gogo/fmt). */
 };
 #define B_LAST B_SPRINT   /* the highest builtin: interp.c's builtin_info has a row for each up to it */
+/* The B_FS op the VM answers itself (interp.c), so port.Open learns why an
+ * open failed on a board without a file system: vfs.h FS_OPENERR, the
+ * compiler's FsOpenErr. */
+#define VM_FS_OPENERR 14
 
 /* Type ids for TYPEIS; struct types use their type-table index. */
 #define TY_INT    0x10000u

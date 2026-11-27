@@ -128,7 +128,8 @@ typedef struct Vm {
     volatile uint32_t evq_head, evq_tail, evq_dropped;
     const PortDriver *const *drivers;   /* port_set_drivers; NULL = board->ports */
     PortSrcSlot sources[GOGO_MAX_SOURCES + 1u];   /* port_add_source; s NULL-terminated */
-    /* B_FS (vfs_init; NULL = no storage linked: bad code). */
+    /* B_FS (vfs_init; NULL = no storage linked: bad code), all but its op
+     * VM_FS_OPENERR, which the interpreter answers itself. */
     uint32_t (*fs_builtin)(struct Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc, uint32_t nregs);
     struct VfsState *vfs;     /* vfs mounts and open files (vfs_init); NULL = none */
     struct InputState *input; /* input port state (input_install); NULL = none */

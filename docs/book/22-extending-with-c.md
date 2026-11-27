@@ -785,13 +785,16 @@ static const VmBoard dice_board = { .ports = dice_ports, .mounts = no_mounts };
 
 ```c
     static Vm vm;   /* too big for the stack */
-    /* The file system builtin, even with no mounts: port.Open reads why an
-     * open failed through it (FS_OPENERR). */
-    static VfsState vfs;
-    BoardRun run = { .vm = &vm, .vfs = &vfs };   /* params NULL: the build's defaults and config keys */
+    /* No file system (vfs NULL: gogo/fs is not linked in); params NULL:
+     * the build's defaults and config keys. */
+    BoardRun run = { .vm = &vm };
     int run_rc = 0;
     int rc = gogo_board_main(&dice_board, &unix_host, &run, words, (uint32_t)(size / 4), &run_rc);
 ```
+
+The board has no file system. `port.Open` does not need one to say why
+an open failed: the VM itself answers that, so `dice` refusing seed 0
+still reaches the program as `errors.BadArg`.
 
 ### The program
 
@@ -983,10 +986,6 @@ outside this repository. Plainly:
 - **The event ring is for two-int events from one writer.** A driver with
   generic types cannot use it (a `port.Post` is not two ints), and a
   second interrupt source must not push to it concurrently with `gpio`.
-- **`port.Open`'s errors need the file system builtin.** `port.Open`
-  reads the reason for a failure through `B_FS`, so a custom board must
-  install `vfs` (as `board.c` above does, with no mounts) or a failed open
-  ends the caller with `badcode`. Every shipped board does.
 
 None of this changes the design: no FFI, every bridge a port. What would
 change it for third parties is a small, versioned driver header and a

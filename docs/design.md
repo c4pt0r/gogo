@@ -723,8 +723,12 @@ btn, err := port.Open("gpio", gpio.Config{Pin: 15, Mode: gpio.InputPullUp, Edge:
   `port.Open` is library code over builtin 26, `B_PORT_OPEN`, which
   returns only a bool: on a failure it reads the reason right away with
   `B_FS` operation 14, `FS_OPENERR` (15.4; no instruction runs in
-  between that could let another actor open a port), which keeps the
-  VM core out of it. `fs.Open` reports the same reason.
+  between that could let another actor open a port). The interpreter
+  answers that one operation itself (`VM_FS_OPENERR`, `opcodes.h`; 24 bytes
+  of VM core), the file system hook never sees it, so a board or
+  host without `vfs` still gets the reason rather than `badcode`; images
+  compiled before this behave the same, with no new builtin or image
+  minor. `fs.Open` reports the same reason.
   `port.Close(p)` closes a port; stale or unknown PIDs are ignored.
   `port.Handoff(p, to) bool`: the owner hands the port to another live
   actor; later events go to `to`, the port closes when `to` exits, and
