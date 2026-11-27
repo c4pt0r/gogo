@@ -112,7 +112,8 @@ type Config struct {
 
 // Connected says a phone connected: Peer is its address as the board
 // sees it ("4c:2a:91:07:5e:d3"; a phone usually shows a random one), MTU the
-// ATT MTU so far (DefaultMTU until the phone asks for more: MTUChanged).
+// ATT MTU so far (DefaultMTU on a board: the phone asks for more after
+// connecting, MTUChanged; at most 256 on the ESP32-S3).
 type Connected struct {
 	Peer string
 	MTU  int
@@ -183,7 +184,9 @@ func Open(cfg Config) (actor.PID, error) {
 }
 
 // SetValue sets what a phone's read of characteristic char returns from
-// now on (up to MaxValue bytes). It sends no reply; a bad char is ignored.
+// now on (up to MaxValue bytes). It sends no reply: a bad char, more than
+// MaxValue bytes or no memory for the copy leaves the old value. Set each
+// readable value right after Open: until then a read returns nothing.
 func SetValue(p actor.PID, char int, data bytes.Bytes) {
 	actor.Send(p, port.Post{Kind: cmdSetValue | char<<8, Data: data})
 }

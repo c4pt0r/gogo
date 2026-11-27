@@ -98,7 +98,10 @@ type NotifyFailed struct {
 ```
 
 - **`Connected`**: a phone connected. `Peer` is its address as the board
-  sees it (phones show a random one that changes), `MTU` the ATT MTU so far.
+  sees it (phones show a random one that changes), `MTU` the ATT MTU so
+  far: on a board always the default 23, since the phone's MTU request
+  comes after the connection (`MTUChanged`); `gogovm`'s test phone may
+  say another number.
 - **`Disconnected`**: the phone went away. `Reason` is the Bluetooth
   reason code: 0x13 (19) the phone ended the connection, 0x08 the link
   timed out (the phone walked out of range), 0x16 the board ended it.
@@ -111,17 +114,22 @@ type NotifyFailed struct {
   `Reason` says why; its `Done{Seq: -1}` comes right after (23.3).
 - **`MTUChanged`**: the phone negotiated a larger ATT MTU; a notification
   may now carry `MTU - 3` bytes (`ble.MaxNotify(mtu)`). Phones usually ask
-  right after connecting: iPhones and Macs for 185 or more, Android for up
-  to 517.
+  right after connecting (iPhones and Macs for 185 or more, Android for up
+  to 517); the board answers with at most 256, so a notification carries
+  at most 253 bytes.
 
 **A phone's read never reaches the program.** The driver answers it with
 the value the program last set with `ble.SetValue` (empty until then), so
 reading a status costs no message and works while the program is busy.
-Set the value whenever it changes:
+Set the value whenever it changes, and the first time right after `Open`
+(a phone that connects in between reads an empty value):
 
 ```go
 func SetValue(p actor.PID, char int, data bytes.Bytes)
 ```
+
+`SetValue` sends no reply: a bad `Char`, more than 512 bytes, or a board
+out of memory for the copy leaves the old value, silently.
 
 Events the owner has no room for are held in the driver, not dropped, and
 delivered when the mailbox has room again; meanwhile a phone's writes are
@@ -367,7 +375,8 @@ disconnect.
 ## 23.7 Memory, Wi-Fi and the radio
 
 - **Memory.** BLE is in the default firmware of both boards. The firmware
-  is about 133 KB larger with it, and the Bluetooth controller keeps
+  is about 136 KB larger with it (170 KB with the Wi-Fi setup from a
+  phone, section 2.1), and the Bluetooth controller keeps
   about 22 KB of internal RAM even while no port is open. An open port
   costs about 65 KB more of internal RAM (the NimBLE
   host and the controller's connection state, freed when the port closes).

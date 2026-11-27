@@ -474,7 +474,11 @@ in `cmd/gogo/flash.go`.
   boot says why on the screen and the serial console, `gogo: last
   reset: task watchdog` (or `interrupt watchdog`, `watchdog (a hang)`,
   `crash (panic)`, `brownout (low supply voltage)`). There is no core
-  dump: the partition table has no partition for one.
+  dump: the partition table has no partition for one. A USB-Serial-JTAG
+  reset into the ROM's download mode is a core reset and leaves the RTC
+  watchdog running: flashing works because esptool turns it off when it
+  connects (esptool 5's ESP32-S3 target); another flasher that does not
+  would be reset 15 s into a write.
 - Screen (debug console, mirror of stdout/stderr):
   - `pm1.c` (StickS3 only): M5PM1 (I2C G47/G48, 0x6E): I2C idle sleep and watchdog off,
     PM1 GPIO2 high = LCD rail, 200 ms settle (M5GFX/M5Unified StickS3
