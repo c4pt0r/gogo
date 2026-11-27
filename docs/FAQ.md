@@ -522,9 +522,10 @@ phone is done by the firmware itself, not by a program.
 - **With Wi-Fi?** Yes. Bluetooth and Wi-Fi share the ESP32-S3's one
   2.4 GHz radio and antenna and take turns (coexistence): both work at
   once, TLS included, each a little slower while the other is busy.
-  Memory is the real limit: an open `ble` port takes about 60 KB of
+  Memory is the real limit: an open `ble` port takes about 65 KB of
   internal RAM, so on the Cardputer (no PSRAM) Wi-Fi, a TLS connection
-  and BLE together leave a small VM; see the known issues.
+  and BLE together leave about 40 KB free beside the VM's arena; see the
+  known issues.
 - **Range?** About 10 m indoors with the boards' small antennas, less
   through walls and bodies.
 - **Why no central (scanning, connecting to a sensor)?** The two uses

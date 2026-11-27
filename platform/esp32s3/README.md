@@ -813,13 +813,27 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   keep up while flash is erased (`/flash` writes), so it is not set.
   Without the trims above (only the role and connection settings) the
   firmware was 173.8 KB and 29.5 KB of DIRAM larger. Run time, internal
-  RAM, measured on the StickS3 with `gogo device stats` and Wi-Fi
-  connected: 155396 B free with no port open, about 95 KB with a port
-  open and advertising: the controller, the NimBLE host (its mbuf pools,
-  transport buffers and a 4 KB task) take about 60 KB at open and give
-  it back at close. The driver's own state is board storage (about 3 KB:
-  the event queue and the Config), and SetValue's values come from PSRAM
-  on the StickS3, the internal heap on the Cardputer.
+  RAM (`gogo device stats` heap_free and, after a minute, heap_min; Wi-Fi
+  connected; the default firmware with `bleprov`, 2026-11-27):
+
+  | | StickS3 | StickS3 built without PSRAM (as the Cardputer) |
+  |---|---|---|
+  | no port open | 154964 | 159572 |
+  | `ble` port open, advertising | 89948 | 94508 |
+  | an HTTPS connection (polled every 2 s) | 137444 (min 127100) | 118284 (min 106916) |
+  | HTTPS and an open `ble` port | 71624 (min 61016) | 51208 (min 40992) |
+
+  An open port takes about 65 KB (the controller, the NimBLE host with
+  its mbuf pools, transport buffers and 5 KB task) and gives it back at
+  close. Without PSRAM a TLS connection's buffers (about 36 KB at their
+  peak) come from the same internal RAM, which leaves about 40 KB free at
+  the worst moment with Wi-Fi, TLS and the port together; the VM arena
+  (160 KB) is allocated before and is not part of these figures. Not yet
+  measured: a central connected (the figures are for an advertising
+  port), and the Cardputer itself. The driver's own state is board
+  storage (about 3 KB: the event queue and the Config), and SetValue's
+  values come from PSRAM on the StickS3, the internal heap on the
+  Cardputer.
 
 - `GOGO_FLOAT` (default y): floating point, `float32` and `float64`
   (`runtime/vm/floats.c` built with `GOGO_FLOAT=1`, and

@@ -1069,13 +1069,14 @@ rebuilt:
   range can connect, read what the program set and write.
 - **Memory.** The Bluetooth controller keeps about 22 KB of internal RAM
   in every firmware built with `ble` (the default), port open or not; an
-  open port takes about 60 KB more (the controller, the NimBLE host's
+  open port takes about 65 KB more (the controller, the NimBLE host's
   buffers and task), freed at close. Measured on the StickS3 with Wi-Fi
-  connected: about 155 KB of internal RAM free without the port, 95 KB
+  connected: about 155 KB of internal RAM free without the port, 90 KB
   with it open. On the Cardputer (no PSRAM) a TLS connection's buffers
   (about 35 KB at their peak) come from the same internal RAM, so Wi-Fi,
-  TLS and an open port together leave the VM arena roughly 60 KB (an
-  estimate: not yet measured on that board). A firmware for a program
+  TLS and an open port together leave about 40 KB of internal RAM free
+  at the worst moment (measured on a StickS3 built without PSRAM; not
+  yet on the Cardputer itself). A firmware for a program
   without Bluetooth can drop it: `gogo firmware -without ble`.
 - **Open blocks.** `ble.Open` waits on a board while the controller and
   the NimBLE host start, and its close while they stop; no actor runs
@@ -1091,16 +1092,11 @@ rebuilt:
 - **Phones cache the services.** iOS (and some Android versions) remember
   a device's GATT table by its address: after a program changes its
   services, toggle Bluetooth on the phone or forget the device.
-- **One unexplained hang.** A StickS3 running a `ble` firmware (port
-  never opened, a program that only slept, Wi-Fi possibly connected)
-  stopped answering on USB after a while: no console, no `gogo device
-  info`, no esptool reset, no JTAG, though the USB device was still
-  listed; it needed its reset button. With the port closed the
-  Bluetooth controller and NimBLE are never started, so what Bluetooth
-  changes then is Wi-Fi's software coexistence and about 22 KB less
-  internal RAM; the symptoms also match the USB link going silent
-  (below, "ESP32-S3 boards"). Not reproduced yet; the watchdogs now turn
-  a hang of the board into a reset that the next boot reports.
+- **The board that "hung" was alive.** A StickS3 with a `ble` firmware
+  (port never opened) stopped answering on USB, esptool and JTAG
+  included; a USB bus reset brought it back with its program still
+  running: it was the USB link going silent (below, "ESP32-S3 boards"),
+  not Bluetooth. It happened again with the integrated firmware.
 - **The host simulation is functional, not timed.** `gogovm`'s socket
   phone has no radio timing, no buffer limits (a notification is always
   taken at once) and no MTU of its own: the client says the MTU.
@@ -1274,16 +1270,19 @@ LE".
 ## ESP32-S3 boards
 
 - **The USB serial console sometimes goes silent** a few seconds after a
-  reset (esptool: `No serial data received`), while the program keeps
-  running. It has been seen on both boards, with and without audio; the
-  cause is unknown (desktop applications that open every new serial
-  device are a suspect). *Workaround:* quit such applications; replug
-  the board, or reset the USB device with libusb
-  (`libusb_reset_device` on the device with vendor id 0x303a) and wait
-  about 3 s. If the board itself had hung, the watchdogs now reset it
-  within 15 s and the next boot says `gogo: last reset: ...` on the
-  screen: a board that shows no such line and no restart was alive, and
-  only its USB link was stuck.
+  reset or after hours (esptool: `No serial data received`), while the
+  program keeps running. It has been seen on both boards, with and
+  without audio and Bluetooth, idle and busy. The device stays listed
+  but answers nothing, not even a request for its serial number string,
+  so esptool's resets (which go over the same link) and JTAG fail too;
+  the chip is not reset. The cause is unknown (desktop applications that
+  open every new serial device are a suspect). *Workaround:* reset the
+  USB device with libusb (`libusb_reset_device` on the device with
+  vendor id 0x303a, chosen by bus and address: a silent device cannot
+  give its serial number) and wait about 4 s; or replug the board, or
+  press its reset button. If the board itself had hung, the watchdogs
+  reset it within 15 s and the next boot says `gogo: last reset: ...` on
+  the screen and the console.
 - **The screen console is slow.** With the screen on, 1000 `println`s
   take about 2.2 times as long as without. *Workaround:* print less, or
   build with the console off (`GOGO_CONSOLE=0`).
