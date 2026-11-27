@@ -50,7 +50,7 @@ enum {
     GOGO_E_BADFORMAT = 26,
     GOGO_E_BADVERSION = 27,
     GOGO_E_NOPROC = 28,         /* no such actor: it does not exist or has exited */
-    GOGO_E_NOCONNECTION = 29    /* the node of a remote actor is not connected */
+    GOGO_E_NOCONNECTION = 29    /* a remote actor cannot be reached: its node is gone, its PID is stale, or the table of remote Calls is full */
 };
 
 #endif

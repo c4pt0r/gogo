@@ -104,7 +104,7 @@ func (c Code) Error() string {
 	case NoProc:
 		return "no such actor"
 	case NoConnection:
-		return "node unreachable"
+		return "remote actor unreachable"
 	}
 	n, s := int(c), ""
 	if n < 0 {
@@ -190,5 +190,5 @@ const (
 	BadFormat    Code = 26 // data in the wrong format
 	BadVersion   Code = 27 // built for another image format
 	NoProc       Code = 28 // the actor does not exist or has exited (actor.Call, actor.Register)
-	NoConnection Code = 29 // the node of a remote actor is not connected (actor.Call)
+	NoConnection Code = 29 // a remote actor cannot be reached: its node is gone, or its PID is stale (actor.Call)
 )

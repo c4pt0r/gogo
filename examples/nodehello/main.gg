@@ -86,7 +86,7 @@ func client(addr string) {
 	for i := 1; i <= 5; i++ {
 		total, err := actor.Call(counter, Add{N: i}, 2000)
 		if err != nil {
-			println("no reply:", err.Error()) // timed out, or node unreachable
+			println("no reply:", err.Error()) // timed out, or remote actor unreachable
 			return
 		}
 		println("added", i, "total", total.(int))
