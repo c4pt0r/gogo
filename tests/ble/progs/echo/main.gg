@@ -99,6 +99,11 @@ func main() {
 				}
 				k, err := strconv.Atoi(arg)
 				if err == nil {
+					if subCounter {
+						// the counter's notify is in flight: flood
+						// counts two in flight of its own
+						_, held = waitDone(p, held)
+					}
 					held = flood(p, k, size, held)
 				}
 				continue
