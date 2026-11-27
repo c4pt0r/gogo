@@ -11,8 +11,12 @@ package main
 // flash, setup) run their exchange through usbRecovery.retry: when it
 // fails because the board did not answer (errNoAnswer, from
 // boardConn.request) or esptool could not connect before writing anything
-// (esptoolConnError), the port's USB device is reset once, the port is
-// waited for, and the exchange runs once more. -no-usb-reset or
+// (esptoolConnError), the port's USB device is probed (usbEnv.probe: its
+// string descriptor 0, which a silent device cannot return). Only when the
+// probe confirms the device is silent is it reset, once; the port is
+// waited for and the exchange runs once more. A device that answers the
+// probe (a board without gogo firmware, one restarting, a busy console) is
+// never reset: the original error is reported as it is. -no-usb-reset or
 // $GOGO_NO_USB_RESET turns that off; `gogo device usb-reset` resets by
 // hand.
 //
@@ -48,13 +52,8 @@ const espressifVID = 0x303a
 // off, as -no-usb-reset does.
 const usbResetEnvVar = "GOGO_NO_USB_RESET"
 
-// usbResetLine is printed when the automatic reset was done on a device
-// that failed the probe (usbEnv.probe), usbResetLineQuiet when it passed
-// it or could not be probed: the board still did not answer.
-const (
-	usbResetLine      = "gogo: the board's USB link was silent; reset it (USB bus reset)"
-	usbResetLineQuiet = "gogo: no answer from the board; reset its USB device (USB bus reset)"
-)
+// usbResetLine is printed when the automatic reset was done.
+const usbResetLine = "gogo: the board's USB link was silent; reset it (USB bus reset)"
 
 // errNoAnswer is boardConn.request's timeout: the board sent no reply.
 var errNoAnswer = errors.New("no answer from the board (is gogo firmware running? another program using the port?)")
@@ -133,8 +132,9 @@ type usbEnv struct {
 	holders func(port string) ([]int, error)
 	// wait returns once port is back after a reset.
 	wait func(port string) error
-	// probe reports whether the USB device behind port fails to answer a
-	// control request (its string descriptor 0).
+	// probe reports whether the USB device behind port is silent: its
+	// string descriptor 0 times out or cannot be read. Any other failure
+	// of the request, or of reaching the device, is an error.
 	probe func(port string) (silent bool, err error)
 	// getenv reads $GOGO_NO_USB_RESET.
 	getenv func(string) string
@@ -170,8 +170,23 @@ func newUSBRecovery(env usbEnv, noReset bool, errOut io.Writer) *usbRecovery {
 // replugHint is the fix when gogo cannot reset the device.
 const replugHint = "unplug the board and plug it in again"
 
-// recover resets port's USB device and waits for the port; nil when it is
-// back, else why not, as a hint to print under the original error.
+// errLinkHealthy is recover's answer for a device that passed the probe:
+// it was not reset, and the original error stands alone.
+var errLinkHealthy = errors.New("the board's USB device answers")
+
+// probeError is recover's answer when the probe could not run (no
+// permission, no such device): nothing was reset.
+type probeError struct{ err error }
+
+func (e probeError) Error() string {
+	return fmt.Sprintf("cannot check the board's USB link, so it was not reset: %v", e.err)
+}
+func (e probeError) Unwrap() error { return e.err }
+
+// recover resets port's USB device, if the probe confirms it is silent,
+// and waits for the port; nil when it is back, errLinkHealthy when the
+// device answered the probe, else why not, as a hint to print under the
+// original error.
 func (r *usbRecovery) recover(port string) error {
 	switch {
 	case r == nil || r.env.reset == nil:
@@ -181,32 +196,28 @@ func (r *usbRecovery) recover(port string) error {
 	case r.used:
 		return fmt.Errorf("still no answer after a USB bus reset: %s", replugHint)
 	}
+	if r.env.probe == nil {
+		return fmt.Errorf("if the board's USB link went silent, %s", replugHint)
+	}
+	silent, err := r.env.probe(port)
+	if err != nil {
+		return probeError{err}
+	}
+	if !silent {
+		return errLinkHealthy
+	}
 	r.used = true
 	if err := checkPortFree(port, r.env.holders); err != nil {
-		return fmt.Errorf("not resetting its USB device: %v", err)
-	}
-	line := usbResetLineQuiet
-	if r.linkSilent(port) {
-		line = usbResetLine
+		return fmt.Errorf("the board's USB link is silent, but not resetting it: %v", err)
 	}
 	if _, err := r.env.reset(port); err != nil {
 		return err
 	}
-	fmt.Fprintln(r.errOut, line)
+	fmt.Fprintln(r.errOut, usbResetLine)
 	if r.env.wait != nil {
 		return r.env.wait(port)
 	}
 	return nil
-}
-
-// linkSilent reports whether the USB device behind port failed the probe
-// (false when it cannot be probed).
-func (r *usbRecovery) linkSilent(port string) bool {
-	if r == nil || r.env.probe == nil {
-		return false
-	}
-	silent, err := r.env.probe(port)
-	return err == nil && silent
 }
 
 // retry runs op, which opens port, talks to the board and closes the
@@ -218,7 +229,9 @@ func (r *usbRecovery) retry(port string, op func() error) error {
 	if err == nil || !silentLink(err) {
 		return err
 	}
-	if rerr := r.recover(port); rerr != nil {
+	if rerr := r.recover(port); rerr == errLinkHealthy {
+		return err
+	} else if rerr != nil {
 		return fmt.Errorf("%w\n  %v", err, rerr)
 	}
 	err2 := op()

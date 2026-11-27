@@ -2230,10 +2230,12 @@ command that talks to a board runs its exchange through one wrapper,
 (`boardConn.request`'s timeout) or esptool failed to connect before
 writing anything (`esptoolConnError`; "Writing at" in its output rules a
 retry out, so a write is never redone over a half-written partition),
-it resets the USB device behind the port once, waits for the port and
-runs the exchange once more. `gogo monitor` has no request to time out,
-so it resets only when a capture got nothing and the device fails a
-GET_DESCRIPTOR(string 0) request. The device is found from the port,
+it probes the USB device behind the port with a GET_DESCRIPTOR(string 0)
+request and resets it only when that request times out or returns
+nothing (the fault's signature; a board without gogo firmware, or one
+restarting, still answers and is never re-enumerated); then it waits for
+the port and runs the exchange once more. `gogo monitor` has no request
+to time out, so for it the trigger is a capture that got nothing. The device is found from the port,
 never from its serial number (a silent device cannot report one): on
 macOS the port's IOSerialBSDClient is walked up the IOService plane to
 its IOUSBHostDevice, whose IOUSBDeviceInterface187 re-enumerates it

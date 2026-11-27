@@ -613,10 +613,11 @@ func (s *setup) boardFirmware() (map[string]string, string) {
 	}
 	// Four tries while the board restarts; then, if it never answered and
 	// its USB device fails the probe too (a silent USB link, not a board
-	// without gogo firmware), one more after a USB reset.
+	// without gogo firmware: recover resets only then), one more after a
+	// USB reset.
 	for try := 0; try < 5; try++ {
 		if try == 4 {
-			if !s.usb.linkSilent(s.port) || s.usb.recover(s.port) != nil {
+			if s.usb.recover(s.port) != nil {
 				break
 			}
 		} else if try > 0 {

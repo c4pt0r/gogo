@@ -46,21 +46,21 @@ sometimes goes silent while the program keeps running
 ([`docs/known-issues.md`](../known-issues.md), "ESP32-S3 boards"). The commands that
 talk to a board (`flash`, `push`, `monitor`, `config` on a board,
 `device`, `setup`, and `firmware -port`) then recover it themselves on
-macOS and Linux: when the board does not answer, or esptool cannot
-connect before writing anything, they bus-reset the board's USB device
-once (the chip keeps running), wait for the port to come back, retry
-once, and print
+macOS and Linux. When the board does not answer, or esptool cannot
+connect before writing anything (for `gogo monitor`: when nothing at all
+arrived), they ask the board's USB device for its string descriptor 0.
+Only when that request times out or comes back empty, the signature of
+the silent link, do they bus-reset the device once (the chip keeps
+running), wait for the port to come back, retry once, and print
 
 ```text
 gogo: the board's USB link was silent; reset it (USB bus reset)
 ```
 
-(or `gogo: no answer from the board; reset its USB device (USB bus
-reset)` when the device still answered USB requests, as a board without
-gogo firmware does). If the retry fails too, the error says so and to
-replug the board. `gogo monitor` resets only when it received nothing at
-all and the USB device fails a descriptor request, so a quiet program is
-left alone. A flash is retried only when esptool never reached the chip,
+A device that answers the request (a board without gogo firmware, one
+restarting, a quiet program) is never reset, and the original error is
+reported as it is. If the retry fails too, the error says so and to
+replug the board. A flash is retried only when esptool never reached the chip,
 so no partition is written twice over a half-written one. Only an
 Espressif USB device (vendor id 0x303a) is reset, never while another
 program has the port open. `-no-usb-reset` (or `GOGO_NO_USB_RESET=1` in
@@ -890,8 +890,8 @@ Options:
   reflashed, without writing anything.
 - `-no-usb-reset`: no automatic USB reset when esptool cannot reach the
   chip or the board does not answer its `info` (start of this chapter;
-  for `info`, setup resets only a device that fails the USB descriptor
-  check too, since a board without gogo firmware never answers).
+  only a device that fails the USB descriptor check is reset, so a new
+  board, whose firmware never answers, is left alone).
 
 On failure setup prints the problem and a `fix:` line, and stops; it is
 safe to run again.

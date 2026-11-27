@@ -1201,12 +1201,15 @@ rebuilt:
   restarting the chip; esptool's own `--before usb_reset` does not.
   *Workaround (automatic):* `gogo` now does that reset itself on macOS
   and Linux. When a board does not answer (`gogo device`, `config`,
-  `push`, `setup`; `monitor` when nothing arrived and the device fails a
-  descriptor request too) or esptool cannot connect before writing
-  anything (`flash`, `setup`, `firmware -port`), it bus-resets the USB
-  device behind the port once, waits for the port, retries once and
-  prints `gogo: the board's USB link was silent; reset it (USB bus
-  reset)`. `gogo device usb-reset` does it by hand; `-no-usb-reset` or
+  `push`, `setup`; `monitor` when nothing arrived) or esptool cannot
+  connect before writing anything (`flash`, `setup`, `firmware -port`),
+  it asks the USB device behind the port for its string descriptor 0.
+  Only when that request times out or comes back empty (the signature
+  of the silent link) does it bus-reset the device, once, wait for the
+  port, retry once and print `gogo: the board's USB link was silent;
+  reset it (USB bus reset)`. A device that answers the request (a board
+  without gogo firmware, one restarting, a busy console) is never reset:
+  the original error is reported as it is. `gogo device usb-reset` does it by hand; `-no-usb-reset` or
   `GOGO_NO_USB_RESET=1` turns the automatic reset off. Only an
   Espressif device (vendor id 0x303a) is reset, found from the serial
   port (not from its serial number), and never while another program

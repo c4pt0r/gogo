@@ -50,8 +50,10 @@ func TestEsptoolConnFailed(t *testing.T) {
 type fakeUSB struct {
 	resets  []string
 	holders []int
-	silent  bool
-	failRst error
+	silent   bool
+	probeErr error
+	probes   int
+	failRst  error
 }
 
 func (f *fakeUSB) env() usbEnv {
@@ -65,7 +67,7 @@ func (f *fakeUSB) env() usbEnv {
 		},
 		holders: func(string) ([]int, error) { return f.holders, nil },
 		wait:    func(string) error { return nil },
-		probe:   func(string) (bool, error) { return f.silent, nil },
+		probe:   func(string) (bool, error) { f.probes++; return f.silent, f.probeErr },
 		getenv:  func(string) string { return "" },
 	}
 }
@@ -99,12 +101,20 @@ func TestUSBRetry(t *testing.T) {
 	if errOut.String() != usbResetLine+"\n" {
 		t.Errorf("printed %q", errOut.String())
 	}
-	// A device that passed the probe is reset too, but said so otherwise.
+	// A device that answers the probe (no gogo firmware, restarting) is
+	// never reset: the original error, alone, nothing printed.
 	f = &fakeUSB{}
 	errOut.Reset()
-	op, _ = failing(noAnswer)
-	if err := newUSBRecovery(f.env(), false, &errOut).retry(port, op); err != nil || errOut.String() != usbResetLineQuiet+"\n" {
-		t.Errorf("probe passed: %v, printed %q", err, errOut.String())
+	op, calls = failing(noAnswer)
+	if err := newUSBRecovery(f.env(), false, &errOut).retry(port, op); err != noAnswer || *calls != 1 || len(f.resets) != 0 || errOut.Len() != 0 || f.probes != 1 {
+		t.Errorf("probe passed: %v, calls %d, resets %d, printed %q", err, *calls, len(f.resets), errOut.String())
+	}
+	// A probe that cannot run (no permission): no reset, its reason as the hint.
+	f = &fakeUSB{probeErr: errors.New("no permission to reach it: allow it with a udev rule")}
+	op, calls = failing(noAnswer)
+	err := newUSBRecovery(f.env(), false, io.Discard).retry(port, op)
+	if err == nil || !errors.Is(err, errNoAnswer) || !strings.Contains(err.Error(), "udev rule") || *calls != 1 || len(f.resets) != 0 {
+		t.Errorf("probe failed: %v, calls %d, resets %d", err, *calls, len(f.resets))
 	}
 
 	// esptool that never reached the chip is retried the same way.
@@ -117,14 +127,14 @@ func TestUSBRetry(t *testing.T) {
 	// Still silent after the reset: the first error and a hint; one reset.
 	f = &fakeUSB{silent: true}
 	op, calls = failing(noAnswer, noAnswer, noAnswer)
-	err := newUSBRecovery(f.env(), false, io.Discard).retry(port, op)
+	err = newUSBRecovery(f.env(), false, io.Discard).retry(port, op)
 	if err == nil || !strings.HasPrefix(err.Error(), noAnswer.Error()+"\n") || !strings.Contains(err.Error(), "unplug the board") || *calls != 2 || len(f.resets) != 1 {
 		t.Errorf("still silent: %v, calls %d, resets %d", err, *calls, len(f.resets))
 	}
 	// The retry failing otherwise reports that failure.
 	other := errors.New("gogo device: board: bad key")
 	op, _ = failing(noAnswer, other)
-	if err := newUSBRecovery((&fakeUSB{}).env(), false, io.Discard).retry(port, op); err != other {
+	if err := newUSBRecovery((&fakeUSB{silent: true}).env(), false, io.Discard).retry(port, op); err != other {
 		t.Errorf("other second failure: %v", err)
 	}
 
@@ -143,7 +153,7 @@ func TestUSBRetry(t *testing.T) {
 	}
 
 	// The reset failing (no permission): the error and the reset's hint.
-	f = &fakeUSB{failRst: errors.New("no permission to reset it: allow it with a udev rule")}
+	f = &fakeUSB{silent: true, failRst: errors.New("no permission to reset it: allow it with a udev rule")}
 	op, calls = failing(noAnswer)
 	err = newUSBRecovery(f.env(), false, io.Discard).retry(port, op)
 	if err == nil || !strings.Contains(err.Error(), "udev rule") || *calls != 1 {
@@ -176,7 +186,7 @@ func TestUSBRetry(t *testing.T) {
 	}
 
 	// Another program has the port: no reset.
-	f = &fakeUSB{holders: []int{4242}}
+	f = &fakeUSB{silent: true, holders: []int{4242}}
 	op, calls = failing(noAnswer)
 	err = newUSBRecovery(f.env(), false, io.Discard).retry(port, op)
 	if err == nil || !strings.Contains(err.Error(), "pid 4242") || *calls != 1 || len(f.resets) != 0 {
@@ -259,8 +269,9 @@ func TestFlashRecoversSilentLink(t *testing.T) {
 // gogo monitor resets a silent link only when the capture got nothing and
 // the USB device fails the probe.
 func TestMonitorRecoversSilentLink(t *testing.T) {
+	var probeErr error
 	run := func(silent bool, outputs ...string) (string, string, *fakeUSB, error) {
-		f := &fakeUSB{silent: silent}
+		f := &fakeUSB{silent: silent, probeErr: probeErr}
 		opens := 0
 		var out, errOut bytes.Buffer
 		err := monitorRun(monitorOpts{port: "/dev/cu.usbmodem9", dur: 50 * time.Millisecond}, monitorEnv{
@@ -286,6 +297,11 @@ func TestMonitorRecoversSilentLink(t *testing.T) {
 	// A quiet program on a healthy link: nothing to recover.
 	if out, _, f, err := run(false, ""); err != nil || out != "" || len(f.resets) != 0 {
 		t.Errorf("quiet: %q %d %v", out, len(f.resets), err)
+	}
+	// A link gogo cannot probe is taken for a quiet program too.
+	probeErr = errors.New("no permission")
+	if out, errOut, f, err := run(true, ""); err != nil || out != "" || errOut != "" || len(f.resets) != 0 {
+		t.Errorf("unprobed: %q %q %d %v", out, errOut, len(f.resets), err)
 	}
 }
 

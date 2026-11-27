@@ -477,8 +477,9 @@ reports (standard error) are shown in red.
 - **`no answer from the board`, or esptool's `No serial data
   received`.** The board's USB serial link sometimes goes silent while
   the program keeps running. `gogo` recovers it on its own on macOS and
-  Linux: it bus-resets the board's USB device (the chip is not
-  restarted), retries once and prints `gogo: the board's USB link was
+  Linux: when the board's USB device fails a descriptor request too (a
+  board that runs other firmware does not), it bus-resets the device
+  (the chip is not restarted), retries once and prints `gogo: the board's USB link was
   silent; reset it (USB bus reset)`. `gogo device usb-reset` does the
   same by hand. On Linux the reset needs a udev rule (`gogo` prints it
   when it is missing; `docs/known-issues.md` has it); on Windows, or if

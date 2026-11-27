@@ -65,6 +65,10 @@ const (
 	cfStringEncodingUTF8 = 0x08000100
 	cfNumberSInt32Type   = 3
 	kIOReturnSuccess     = 0
+	// What a device that does not answer a control request gives.
+	kIOReturnTimeout         = 0xe00002d6
+	kIOReturnNotResponding   = 0xe00002ed
+	kIOUSBTransactionTimeout = 0xe0004051
 )
 
 // iokit holds the C functions used, resolved once.
@@ -357,7 +361,8 @@ type devRequestTO struct {
 }
 
 // usbProbe asks the device behind port for its string descriptor 0 (the
-// language ids); a silent device does not answer.
+// language ids): silent when the request times out or returns no
+// descriptor; another failure is an error.
 func usbProbe(port string) (bool, error) {
 	dev, d, err := findUSBDevice(port)
 	if err != nil {
@@ -377,7 +382,14 @@ func usbProbe(port string) (bool, error) {
 	r.pData = uintptr(unsafe.Pointer(&r.data[0]))
 	kr := iface.call(slotDeviceRequestTO, uintptr(unsafe.Pointer(r)))
 	runtime.KeepAlive(r)
-	return kr != kIOReturnSuccess || r.wLenDone < 4 || r.data[1] != 3, nil
+	switch kr {
+	case kIOReturnSuccess:
+		// An empty or malformed answer is the descriptor unreadable.
+		return r.wLenDone < 4 || r.data[1] != 3, nil
+	case kIOReturnTimeout, kIOReturnNotResponding, kIOUSBTransactionTimeout:
+		return true, nil
+	}
+	return false, fmt.Errorf("the string descriptor request to %s failed (%#x)", d, kr)
 }
 
 // portHolders lists the other processes with port (or its tty./cu. twin)

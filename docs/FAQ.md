@@ -536,8 +536,10 @@ so; its version is in the boot line, `gogo monitor -reset`.
 Usually nothing: the boards' USB serial link sometimes goes silent
 while the program keeps running (esptool says `No serial data
 received`, `gogo device info` says `no answer from the board`), and
-`gogo` recovers it itself on macOS and Linux. It bus-resets the board's
-USB device once (the chip and its program keep running), waits for the
+`gogo` recovers it itself on macOS and Linux. When the board's USB
+device cannot even return its string descriptor 0 (the sign of this
+fault; a board that merely runs other firmware still can), it bus-resets
+the device once (the chip and its program keep running), waits for the
 port, retries, and prints `gogo: the board's USB link was silent; reset
 it (USB bus reset)`. `gogo device usb-reset` does the same by hand, and
 `-no-usb-reset` (or `GOGO_NO_USB_RESET=1`) turns the automatic reset

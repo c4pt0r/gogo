@@ -20,6 +20,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -195,11 +196,13 @@ func monitorRun(o monitorOpts, env monitorEnv) error {
 	if usb.off {
 		return nil
 	}
-	if !usb.linkSilent(o.port) {
+	// Silence on a healthy link is a quiet program, and one gogo cannot
+	// probe is taken for one: nothing to say.
+	var pe probeError
+	if rerr := usb.recover(o.port); rerr == errLinkHealthy || errors.As(rerr, &pe) {
 		return nil
-	}
-	if rerr := usb.recover(o.port); rerr != nil {
-		return fmt.Errorf("gogo monitor: the board's USB link is silent\n  %v", rerr)
+	} else if rerr != nil {
+		return fmt.Errorf("gogo monitor: nothing arrived from the board\n  %v", rerr)
 	}
 	_, err = once()
 	return err

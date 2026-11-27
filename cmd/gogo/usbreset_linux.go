@@ -77,8 +77,9 @@ type usbdevfsCtrlTransfer struct {
 	data                    unsafe.Pointer
 }
 
-// usbProbe asks the device behind port for its string descriptor 0; a
-// silent device does not answer.
+// usbProbe asks the device behind port for its string descriptor 0:
+// silent when the request times out (ETIMEDOUT, or EPROTO for no
+// handshake) or returns no descriptor; another failure is an error.
 func usbProbe(port string) (bool, error) {
 	d, node, err := linuxUSBDevice(port)
 	if err != nil {
@@ -94,7 +95,14 @@ func usbProbe(port string) (bool, error) {
 	// _IOWR('U', 0, struct usbdevfs_ctrltransfer)
 	req := uintptr(3<<30 | unsafe.Sizeof(ct)<<16 | 'U'<<8)
 	n, _, e := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), req, uintptr(unsafe.Pointer(&ct)))
-	return e != 0 || n < 4 || buf[1] != 3, nil
+	switch {
+	case e == 0:
+		// An empty or malformed answer is the descriptor unreadable.
+		return n < 4 || buf[1] != 3, nil
+	case e == syscall.ETIMEDOUT || e == syscall.EPROTO:
+		return true, nil
+	}
+	return false, fmt.Errorf("the string descriptor request to %s failed (%v)", d, e)
 }
 
 // portHolders lists the other processes with port open, from /proc (the
