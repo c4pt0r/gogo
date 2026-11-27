@@ -2240,7 +2240,7 @@ its IOUSBHostDevice, whose IOUSBDeviceInterface187 re-enumerates it
 (USBDeviceReEnumerate, as libusb_reset_device does); IOKit and
 CoreFoundation are reached without cgo, through dlopen/dlsym trampolines
 into libSystem (`usbreset_darwin.s`, the technique of
-golang.org/x/sys/unix) and `syscall.syscall9`, so the release build stays
+golang.org/x/sys/unix) and `syscall.syscall6`, so the release build stays
 `CGO_ENABLED=0` with no module dependency. On Linux, sysfs maps the tty
 to `busnum`/`devnum` and the `USBDEVFS_RESET` ioctl resets
 `/dev/bus/usb/BBB/DDD`. Only vendor id 0x303a is reset, and never a port

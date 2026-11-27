@@ -4,8 +4,9 @@ package main
 // come from libSystem (which every Go program on macOS links) through the
 // two trampolines of usbreset_darwin.s, as golang.org/x/sys/unix calls
 // libc; IOKit and CoreFoundation are loaded with them when a reset is
-// first needed, and every C function is called through syscall.syscall9
-// (C calling convention, on the system stack).
+// first needed, and every C function is called through syscall.syscall6
+// (C calling convention, on the system stack; no call here takes more
+// than five arguments).
 //
 // The serial port's IOSerialBSDClient (its IOCalloutDevice or
 // IODialinDevice is the port) is walked up the IOService plane to its
@@ -31,25 +32,28 @@ import (
 // Set by usbreset_darwin.s to the trampolines' addresses.
 var libc_dlopen_trampoline_addr, libc_dlsym_trampoline_addr uintptr
 
-//go:linkname syscall_syscall9 syscall.syscall9
-func syscall_syscall9(fn, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) (r1, r2 uintptr, err syscall.Errno)
+// syscall.syscall6 is the one of its family that the Go team keeps
+// open to linkname (go.dev/issue/67401), as golang.org/x/sys uses it.
+//
+//go:linkname syscall_syscall6 syscall.syscall6
+func syscall_syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
 
 // usbResetRemovesPort: re-enumerating the device removes its serial port
 // for a moment.
 const usbResetRemovesPort = true
 
-// ccall calls the C function at fn with up to 9 integer or pointer
+// ccall calls the C function at fn with up to 6 integer or pointer
 // arguments. uintptrescapes keeps a Go pointer converted to uintptr in the
 // call's arguments on the heap and alive for the call.
 //
 //go:uintptrescapes
 func ccall(fn uintptr, args ...uintptr) uintptr {
-	var a [9]uintptr
+	var a [6]uintptr
 	if len(args) > len(a) {
 		panic("ccall: too many arguments")
 	}
 	copy(a[:], args)
-	r, _, _ := syscall_syscall9(fn, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8])
+	r, _, _ := syscall_syscall6(fn, a[0], a[1], a[2], a[3], a[4], a[5])
 	return r
 }
 
