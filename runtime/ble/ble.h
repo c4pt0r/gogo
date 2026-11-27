@@ -58,8 +58,18 @@ enum { BLE_CMD_SET_VALUE = 1, BLE_CMD_NOTIFY = 2 };
  *                 0x08 the link timed out, 0x16 this side ended it)
  *   WRITTEN       char << 8, Data: the bytes written
  *   SUBSCRIBED    char << 8 | on << 16
- *   MTU           MTU << 8: the ATT MTU changed (a Notify carries MTU - 3 bytes) */
-enum { BLE_EV_CONNECTED = 1, BLE_EV_DISCONNECTED = 2, BLE_EV_WRITTEN = 3, BLE_EV_SUBSCRIBED = 4, BLE_EV_MTU = 5 };
+ *   MTU           MTU << 8: the ATT MTU changed (a Notify carries MTU - 3 bytes)
+ *   NOTIFY_FAILED char << 8 | reason << 16: why the Notify of char that is
+ *                 answered next with Done{-1} failed, a GOGO_E_* code:
+ *                 BADARG (no such char, no Notify flag, empty, over the
+ *                 MTU), CLOSED (no phone connected, or it went away),
+ *                 REFUSED (the phone has not subscribed), TOOMANY (two
+ *                 already in flight), or the stack's own (IO). Sent by the
+ *                 driver itself, not the radio side, just before the
+ *                 Done; dropped if the owner's mailbox has no room (the
+ *                 Done is not: it is owed). */
+enum { BLE_EV_CONNECTED = 1, BLE_EV_DISCONNECTED = 2, BLE_EV_WRITTEN = 3, BLE_EV_SUBSCRIBED = 4, BLE_EV_MTU = 5,
+       BLE_EV_NOTIFY_FAILED = 6 };
 
 /* The default ATT MTU before an exchange. */
 #define BLE_MTU_MIN 23u
@@ -103,7 +113,6 @@ typedef struct BleBoard {
     bool seen;                  /* the record at tail has updated the state above */
     uint8_t chr[STREAM_OUT_MAX];   /* the characteristic of each Notify in flight */
     uint64_t retry_at;          /* vm_now: the next try of a held event, notify or owed Done (0: none) */
-    uint16_t tries;             /* BLE_AGAIN answers to the head Notify so far */
 } BleBoard;
 
 /* Bytes a record of len data bytes takes. */
@@ -153,11 +162,10 @@ typedef struct BleHal {
 
 /* An owner whose mailbox is full holds the events back (they stay queued,
  * and a phone's writes are then answered with an error); they are tried
- * again this often, as are notifications the stack had no buffer for. */
+ * again this often, as are notifications the stack had no buffer for. A
+ * notification waits for a buffer as long as the connection lasts: a dead
+ * link always ends in a Disconnected, which fails every one in flight. */
 #define BLE_RETRY_MS 5u
-/* A Notify the stack has had no buffer for this many tries (two seconds)
- * fails: Done{Seq: -1}. */
-#define BLE_RETRY_MAX 400u
 
 /* The driver (ble.c). */
 int  ble_open(struct Vm *vm, const struct Actor *owner, Port *p, uint16_t index, term cfg);

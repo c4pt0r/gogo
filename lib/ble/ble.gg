@@ -23,15 +23,27 @@
 // ends the connection and the advertising.
 //
 // Events reach the owner as port.Post messages from the port; Event turns
-// one into a Connected, Disconnected, Written, Subscribed or MTUChanged.
-// A phone's read never reaches the program: it returns the value last given
-// with SetValue (empty until then), stored in the driver. SendNotify pushes a
-// value to a subscribed phone; each is answered with a port.Done, like a
-// stream's Out: Done{Seq} once the Bluetooth stack has taken it,
-// Done{Seq: -1} if it was refused (a bad Char, a characteristic without
-// Notify, no phone subscribed, empty, more than MaxNotify(mtu) bytes, two
-// already in flight) or the phone went away first. A sender that waits for
-// each Done (or keeps at most two in flight) never overruns the stack.
+// one into a Connected, Disconnected, Written, Subscribed, MTUChanged or
+// NotifyFailed. A phone's read never reaches the program: it returns the
+// value last given with SetValue (empty until then), stored in the driver.
+//
+// SendNotify pushes a value to a subscribed phone; each is answered with
+// exactly one port.Done, like a stream's Out: Done{Seq} once the Bluetooth
+// stack has taken it, Done{Seq: -1} if it could not be delivered. A -1 is
+// announced by a NotifyFailed event just before it, which says why:
+// errors.BadArg (a bad Char, a characteristic without Notify, empty, more
+// than MaxNotify(mtu) bytes), errors.Closed (no phone connected, or it went
+// away while the notification waited), errors.Refused (the phone has not
+// subscribed to that characteristic), errors.TooMany (two already in
+// flight), errors.IO (the stack refused it). NotifyFailed is dropped when
+// the owner's mailbox is full; the Done never is. A notification the stack
+// has no buffer for waits as long as the connection lasts: a link that
+// dies ends in a Disconnected, which fails every one still waiting. A
+// sender that waits for each Done (or keeps at most two in flight) never
+// overruns the stack. Two rules come from streams: a refusal's Done{-1} is
+// sent at once, so it can arrive before the Done of an earlier
+// notification still in flight; and with more than two in flight a
+// refusal's Done can be lost to a full mailbox, so keep to two.
 //
 // The Bluetooth side is the radio of the board: one ble port per board
 // (a second Open fails with errors.Busy), and on the ESP32-S3 the port
@@ -129,6 +141,14 @@ type Subscribed struct {
 // may carry MaxNotify(MTU) bytes.
 type MTUChanged struct{ MTU int }
 
+// NotifyFailed says why the SendNotify of characteristic Char that the
+// port answers next with Done{Seq: -1} was not delivered (see the package
+// comment for the reasons).
+type NotifyFailed struct {
+	Char   int
+	Reason errors.Code
+}
+
 // MaxNotify is the most bytes one SendNotify carries at ATT MTU mtu.
 func MaxNotify(mtu int) int { return mtu - 3 }
 
@@ -142,6 +162,7 @@ const (
 	evWritten      = 3
 	evSubscribed   = 4
 	evMTU          = 5
+	evNotifyFailed = 6
 )
 
 // Open opens the ble port with cfg and starts advertising; the caller owns
@@ -173,7 +194,7 @@ func SendNotify(p actor.PID, char int, data bytes.Bytes) {
 }
 
 // Event decodes m, a port.Post from a ble port, into a Connected,
-// Disconnected, Written, Subscribed or MTUChanged; ok is false for any
+// Disconnected, Written, Subscribed, MTUChanged or NotifyFailed; ok is false for any
 // other kind. It does not check m.From: compare it with the port first
 // when the actor owns other ports.
 func Event(m port.Post) (ev any, ok bool) {
@@ -189,6 +210,8 @@ func Event(m port.Post) (ev any, ok bool) {
 		return Subscribed{Char: arg & 0xFF, On: arg>>8&1 == 1}, true
 	case evMTU:
 		return MTUChanged{MTU: arg}, true
+	case evNotifyFailed:
+		return NotifyFailed{Char: arg & 0xFF, Reason: errors.Code(arg >> 8 & 0xFF)}, true
 	}
 	return nil, false
 }

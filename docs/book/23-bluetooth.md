@@ -90,6 +90,10 @@ type Subscribed struct {
 	On   bool
 }
 type MTUChanged struct{ MTU int }
+type NotifyFailed struct {
+	Char   int
+	Reason errors.Code
+}
 ```
 
 - **`Connected`**: a phone connected. `Peer` is its address as the board
@@ -102,6 +106,8 @@ type MTUChanged struct{ MTU int }
   driver has queued it, before the program reads it.
 - **`Subscribed`**: the phone turned notifications of `Char` on or off.
   Every connection starts with all of them off.
+- **`NotifyFailed`**: a `SendNotify` of `Char` was not delivered, and
+  `Reason` says why; its `Done{Seq: -1}` comes right after (23.3).
 - **`MTUChanged`**: the phone negotiated a larger ATT MTU; a notification
   may now carry `MTU - 3` bytes (`ble.MaxNotify(mtu)`). Phones usually ask
   right after connecting: iPhones and Macs for 185 or more, Android for up
@@ -133,15 +139,35 @@ func SendNotify(p actor.PID, char int, data bytes.Bytes)
 with a **`port.Done`** from the port:
 
 - `Done{Seq: n}` once the Bluetooth stack has taken it (counting from 1);
-- `Done{Seq: -1}` if it was refused: a characteristic without `Notify`,
-  nobody subscribed, empty data, more than `MaxNotify(mtu)` bytes, or two
-  already in flight; or if the phone left before it went out.
+- `Done{Seq: -1}` if it could not be delivered: refused (a characteristic
+  without `Notify`, nobody subscribed, empty data, more than
+  `MaxNotify(mtu)` bytes, two already in flight), or the phone left before
+  it went out.
+
+Every `Done{Seq: -1}` is announced by a **`NotifyFailed`** event just
+before it, whose `Reason` says why:
+
+| `Reason` | why |
+|---|---|
+| `errors.BadArg` | no such characteristic, one without `Notify`, empty data, more than `MaxNotify(mtu)` bytes |
+| `errors.Closed` | no phone connected, or it went away while the notification waited |
+| `errors.Refused` | the phone has not subscribed to that characteristic |
+| `errors.TooMany` | two already in flight |
+| `errors.IO` | the Bluetooth stack refused it |
+
+`NotifyFailed` is a hint: it is dropped when the owner's mailbox is full,
+while the `Done` never is. A refusal's `Done{-1}` comes at once, so it
+may arrive before the `Done` of an earlier notification still in flight.
 
 Two notifications may be in flight. When the stack has no buffer for one,
-the driver waits and tries again, and the `Done` comes later: a sender
-that waits for each `Done` (or keeps at most two in flight) never runs
-ahead of the radio, and never sees a notification dropped for lack of
-room. There is no hidden fragmentation: data longer than one notification
+the driver waits and tries again, for as long as the connection lasts,
+and the `Done` comes later: a sender that waits for each `Done` (or keeps
+at most two in flight) never runs ahead of the radio. A notification is
+never failed for being slow: a slow phone (a long connection interval,
+an app in the background) only makes the `Done` late, and a link that
+dies ends in a `Disconnected`, which fails every notification still
+waiting with `errors.Closed`. Keep to two in flight: beyond that, a
+refusal's `Done` can be lost when the mailbox is full. There is no hidden fragmentation: data longer than one notification
 is the program's to split, as in this example
 ([`examples/23-ble-chunks`](examples/23-ble-chunks/main.gg)):
 

@@ -1086,9 +1086,11 @@ rebuilt:
   owner has no mailbox room for, in a 2 KB queue; a write with a response
   that finds the queue full is refused to the phone (it retries), but a
   write without one is dropped, as it would be over the air.
-- **A stalled notification fails after 2 s.** When the Bluetooth stack
-  has had no buffer for a notification for 2 s (a phone that stopped
-  reading, a bad link), it is answered with `Done{Seq: -1}`.
+- **A stalled notification waits.** When the Bluetooth stack has no
+  buffer for a notification (a slow phone, Wi-Fi taking the radio), its
+  `Done` comes when it has one; there is no cap. A link that dies ends in
+  `Disconnected` (within the phone's supervision timeout, up to 32 s),
+  which fails it with `NotifyFailed{Closed}` and `Done{Seq: -1}`.
 - **Phones cache the services.** iOS (and some Android versions) remember
   a device's GATT table by its address: after a program changes its
   services, toggle Bluetooth on the phone or forget the device.

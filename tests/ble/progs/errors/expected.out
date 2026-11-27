@@ -13,3 +13,7 @@ base UUID: ok
 first: true
 second: busy
 third after close: true
+no phone: failed 0 closed
+no phone: done -1
+no such char: failed 5 bad argument
+no such char: done -1

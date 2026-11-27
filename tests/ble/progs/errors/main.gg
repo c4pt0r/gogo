@@ -1,9 +1,13 @@
 // ble.Open's refusals: each bad Config with its error, a second port
-// while one is open, and a port again once the first has closed.
+// while one is open, and a port again once the first has closed; then
+// SendNotify's refusals without a phone, each a NotifyFailed and a
+// Done{-1}.
 package main
 
 import (
+	"gogo/actor"
 	"gogo/ble"
+	"gogo/bytes"
 	"gogo/port"
 )
 
@@ -48,4 +52,28 @@ func main() {
 	p, err = ble.Open(ble.Config{Name: "third", Services: one})
 	println("third after close:", err == nil)
 	port.Close(p)
+
+	p, _ = ble.Open(ble.Config{Name: "notify", Services: []ble.Service{{UUID: ble.UUID16(0x180F),
+		Chars: []ble.Characteristic{{UUID: ble.UUID16(0x2A19), Flags: ble.Read | ble.Notify}}}}})
+	notify(p, "no phone", 0)
+	notify(p, "no such char", 5)
+	port.Close(p)
+}
+
+// notify sends one notification and prints the NotifyFailed and Done it gets.
+func notify(p actor.PID, what string, char int) {
+	ble.SendNotify(p, char, bytes.FromSlice([]byte("x")))
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Post:
+			if ev, ok := ble.Event(m); ok {
+				if f, ok := ev.(ble.NotifyFailed); ok {
+					println(what+": failed", f.Char, f.Reason.Error())
+				}
+			}
+		case port.Done:
+			println(what+": done", m.Seq)
+			return
+		}
+	}
 }

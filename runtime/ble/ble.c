@@ -158,10 +158,23 @@ static bool deliver(struct Vm *vm, const Port *p, int32_t kind, const uint8_t *d
     return false;
 }
 
+/* Tells the owner why the Notify of characteristic c is about to get
+ * Done{-1} (BLE_EV_NOTIFY_FAILED; best effort: the Done is what counts). */
+static void notify_failed(struct Vm *vm, const Port *p, uint32_t c, uint32_t reason) {
+    (void)deliver(vm, p, (int32_t)(BLE_EV_NOTIFY_FAILED | (c & 0xFFu) << 8 | (reason & 0xFFu) << 16), NULL, 0);
+}
+
+/* The head Notify failed with reason: NotifyFailed, then its Done{-1}. */
+static void fail_head(struct Vm *vm, Port *p, BleBoard *b, uint32_t reason) {
+    notify_failed(vm, p, b->chr[0], reason);
+    b->chr[0] = b->chr[1];
+    (void)stream_out_fail(vm, p, out_of(p));
+}
+
 /* The connection ended: every Notify in flight fails. */
 static void fail_all(struct Vm *vm, Port *p) {
-    StreamOut *o = out_of(p);
-    while (o->n) (void)stream_out_fail(vm, p, o);
+    BleBoard *b = board_of(p);
+    while (out_of(p)->n) fail_head(vm, p, b, GOGO_E_CLOSED);
 }
 
 /* What an event says about the connection, once per record. */
@@ -195,7 +208,8 @@ static void apply(struct Vm *vm, Port *p, BleBoard *b, uint32_t ev, uint32_t arg
 /* ---- notifications ---- */
 
 /* Hands the Notifies in flight to the stack, head first, while it takes
- * them; one it has no buffer for waits for BLE_RETRY_MS. */
+ * them; one it has no buffer for waits for BLE_RETRY_MS, for as long as
+ * the connection lasts. */
 static void push(struct Vm *vm, Port *p, BleBoard *b, uint64_t now) {
     const BleHal *hal = hal_of(p);
     StreamOut *o = out_of(p);
@@ -203,15 +217,16 @@ static void push(struct Vm *vm, Port *p, BleBoard *b, uint64_t now) {
         uint32_t len;
         const uint8_t *d = stream_out_head(vm, o, &len);
         int r = d ? hal->notify(hal->ctx, b->chr[0], d, len) : GOGO_E_BADARG;
-        if (r == BLE_AGAIN && b->tries < BLE_RETRY_MAX) {
-            b->tries++;
+        if (r == BLE_AGAIN) {
             if (!b->retry_at || b->retry_at > now + BLE_RETRY_MS) b->retry_at = now + BLE_RETRY_MS;
             return;
         }
-        b->tries = 0;
-        b->chr[0] = b->chr[1];
-        if (r == 0) (void)stream_out_done(vm, p, o);
-        else (void)stream_out_fail(vm, p, o);   /* refused, or no buffer for BLE_RETRY_MAX tries */
+        if (r == 0) {
+            b->chr[0] = b->chr[1];
+            (void)stream_out_done(vm, p, o);
+        } else {
+            fail_head(vm, p, b, r > 0 ? (uint32_t)r : GOGO_E_IO);   /* the stack refused it */
+        }
     }
 }
 
@@ -221,9 +236,14 @@ static void arm_owed(Port *p, BleBoard *b, uint64_t now) {
     if (out_of(p)->owed_n && (!b->retry_at || b->retry_at > now + BLE_RETRY_MS)) b->retry_at = now + BLE_RETRY_MS;
 }
 
-static bool notify_ok(const BleBoard *b, uint32_t c, uint32_t len) {
-    return c < b->cfg.nchr && (b->cfg.flags[c] & BLE_F_NOTIFY) && b->connected && (b->subs >> c & 1u) &&
-           len >= 1u && len + 3u <= b->mtu && len <= BLE_VALUE_MAX;
+/* 0 if a Notify of characteristic c with len bytes can go now, else why
+ * not (BLE_EV_NOTIFY_FAILED's reasons). */
+static uint32_t notify_check(const BleBoard *b, uint32_t c, uint32_t len) {
+    if (c >= b->cfg.nchr || !(b->cfg.flags[c] & BLE_F_NOTIFY) || len < 1u || len > BLE_VALUE_MAX) return GOGO_E_BADARG;
+    if (!b->connected) return GOGO_E_CLOSED;
+    if (!(b->subs >> c & 1u)) return GOGO_E_REFUSED;
+    if (len + 3u > b->mtu) return GOGO_E_BADARG;
+    return 0;
 }
 
 /* ---- the event source (registered while the port is open; ctx: the Port) ---- */
@@ -333,7 +353,6 @@ int ble_open(struct Vm *vm, const struct Actor *owner, Port *p, uint16_t index, 
     b->subs = 0;
     b->connected = b->seen = false;
     b->retry_at = 0;
-    b->tries = 0;
     memset(out_of(p), 0, sizeof(StreamOut));
     /* The largest event, a Written of BLE_VALUE_MAX bytes, must fit. */
     p->room_64w = (uint8_t)((5u + 2u + 2u + BLE_VALUE_MAX / 4u + 63u) / 64u);
@@ -356,9 +375,11 @@ void ble_command(struct Vm *vm, const struct Actor *from, Port *p, term msg) {
     } else if (cmd == BLE_CMD_NOTIFY) {
         StreamOut *so = out_of(p);
         uint32_t n = so->n;
-        bool ok = kind >= 0 && notify_ok(b, c, len);
+        uint32_t why = kind < 0 ? GOGO_E_BADARG : notify_check(b, c, len);
+        if (!why && !stream_out_has_room(so)) why = GOGO_E_TOOMANY;
+        if (why) notify_failed(vm, p, c, why);
         uint64_t now = vm_now(vm);
-        int r = stream_out_accept_data(vm, p, so, o[4], ok ? d : NULL, len);
+        int r = stream_out_accept_data(vm, p, so, o[4], why ? NULL : d, len);
         if (r >= 0) b->chr[n] = (uint8_t)c;
         if (r == 1) push(vm, p, b, now);
         arm_owed(p, b, now);

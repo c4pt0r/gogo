@@ -145,9 +145,13 @@ static bool out_data(struct Vm *vm, const Actor *from, term msg, term *data, con
     return bytes_view(vm, from, o[2], d, len);
 }
 
+bool stream_out_has_room(const StreamOut *o) {
+    return o->n + owed_ok(o) < STREAM_OUT_MAX && o->owed_n + o->n < STREAM_OWED_MAX;
+}
+
 int stream_out_accept_data(struct Vm *vm, Port *p, StreamOut *o, term data, const uint8_t *d, uint32_t len) {
     term h = T_NIL;
-    if (o->n + owed_ok(o) < STREAM_OUT_MAX && o->owed_n + o->n < STREAM_OWED_MAX && d && len) {
+    if (stream_out_has_room(o) && d && len) {
         if (term_is_handle(data)) {
             if (port_bytes_retain(vm, p, data)) h = data;
         } else {

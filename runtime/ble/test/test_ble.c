@@ -3,9 +3,10 @@
  * events from the radio side's queue in order (Connected, MTU, Written,
  * Subscribed, Disconnected), held back while the owner's mailbox is full
  * and never dropped, the queue's wrap and its spare room, SetValue, and
- * Notify's flow control: one Done each, the stack's "no buffer" retried,
- * refusals (not subscribed, over the MTU, a third in flight) and the
- * Notifies in flight failing when the phone goes away. */
+ * Notify's flow control: one Done each, the stack's "no buffer" retried
+ * for as long as the connection lasts, refusals (not subscribed, over the
+ * MTU, a third in flight) and the Notifies in flight failing when the
+ * phone goes away, each failure with a NotifyFailed and its reason. */
 #include "test.h"
 #include "test_host.h"
 #include "ble.h"
@@ -213,6 +214,12 @@ static void want_done(int32_t seq) {
     CHECK(next(owner, &e));
     CHECK_EQ(e.type, TYPE_DONE);
     CHECK_EQ(e.kind, seq);
+}
+
+/* NotifyFailed of characteristic c with reason, then its Done{-1}. */
+static void want_failed(uint32_t c, uint32_t reason) {
+    want_post((int32_t)(BLE_EV_NOTIFY_FAILED | c << 8 | reason << 16), NULL, 0);
+    want_done(-1);
 }
 
 static void want_none(void) {
@@ -455,7 +462,7 @@ TEST(ble_notify_again_retries) {
     command(owner, BLE_CMD_NOTIFY | 0 << 8, "one", 3);
     command(owner, BLE_CMD_NOTIFY | 0 << 8, "two", 3);
     command(owner, BLE_CMD_NOTIFY | 0 << 8, "three", 5);       /* a third in flight: refused */
-    want_done(-1);
+    want_failed(0, GOGO_E_TOOMANY);
     want_none();
     CHECK_EQ(notify_calls, 1);
     drain();                                                    /* not due */
@@ -474,21 +481,29 @@ TEST(ble_notify_again_retries) {
     teardown();
 }
 
-/* A stack that never has a buffer: the Notify fails after BLE_RETRY_MAX tries. */
-TEST(ble_notify_gives_up) {
+/* A stack that has no buffer for a long time: the Notify waits as long as
+ * the connection lasts (no cap), and the Disconnected that ends a dead
+ * link fails it, with NotifyFailed{Closed} first. */
+TEST(ble_notify_waits_until_disconnect) {
     setup();
     connect_sub();
     always_again = true;
     command(owner, BLE_CMD_NOTIFY | 0 << 8, "x", 1);
-    for (unsigned k = 0; k < BLE_RETRY_MAX; k++) {
-        want_none();
+    for (unsigned k = 0; k < 2000; k++) {                       /* 10 s */
         now_ms += BLE_RETRY_MS;
         drain();
     }
-    want_done(-1);
-    CHECK_EQ(notify_calls, (int)BLE_RETRY_MAX + 1);
+    want_none();
+    CHECK_EQ(notify_calls, 2001);
+    CHECK(radio(BLE_EV_DISCONNECTED, 0x08, NULL, 0));
+    now_ms += BLE_RETRY_MS;
+    drain();
+    want_failed(0, GOGO_E_CLOSED);
+    want_post(BLE_EV_DISCONNECTED | 0x08 << 8, NULL, 0);
+    want_none();
     always_again = false;
-    command(owner, BLE_CMD_NOTIFY | 0 << 8, "y", 1);    /* the next one starts afresh */
+    connect_sub();
+    command(owner, BLE_CMD_NOTIFY | 0 << 8, "y", 1);            /* the next one starts afresh */
     want_done(1);
     teardown();
 }
@@ -496,31 +511,31 @@ TEST(ble_notify_gives_up) {
 TEST(ble_notify_refusals) {
     setup();
     command(owner, BLE_CMD_NOTIFY | 0 << 8, "x", 1);           /* not connected */
-    want_done(-1);
+    want_failed(0, GOGO_E_CLOSED);
     connect_sub();
     command(owner, BLE_CMD_NOTIFY | 2 << 8, "x", 1);           /* not subscribed */
-    want_done(-1);
+    want_failed(2, GOGO_E_REFUSED);
     command(owner, BLE_CMD_NOTIFY | 1 << 8, "x", 1);           /* no Notify flag */
-    want_done(-1);
+    want_failed(1, GOGO_E_BADARG);
     command(owner, BLE_CMD_NOTIFY | 7 << 8, "x", 1);           /* no such characteristic */
-    want_done(-1);
+    want_failed(7, GOGO_E_BADARG);
     command(owner, BLE_CMD_NOTIFY | 0 << 8, NULL, 0);          /* empty */
-    want_done(-1);
+    want_failed(0, GOGO_E_BADARG);
     uint8_t big[200];
     memset(big, 7, sizeof big);
     command(owner, BLE_CMD_NOTIFY | 0 << 8, big, 183);         /* MTU 185: 182 at most */
-    want_done(-1);
+    want_failed(0, GOGO_E_BADARG);
     command(owner, BLE_CMD_NOTIFY | 0 << 8, big, 182);
     want_done(1);
     CHECK_EQ(notify_calls, 1);
     notify_rc[1] = GOGO_E_IO; notify_n = 2;                     /* the stack refuses it */
     command(owner, BLE_CMD_NOTIFY | 0 << 8, "y", 1);
-    want_done(-1);
+    want_failed(0, GOGO_E_IO);
     CHECK(radio(BLE_EV_SUBSCRIBED, 0, NULL, 0));                /* unsubscribed */
     drain();
     want_post(BLE_EV_SUBSCRIBED, NULL, 0);
     command(owner, BLE_CMD_NOTIFY | 0 << 8, "z", 1);
-    want_done(-1);
+    want_failed(0, GOGO_E_REFUSED);
     teardown();
 }
 
@@ -556,8 +571,8 @@ TEST(ble_disconnect_fails_in_flight) {
     CHECK(radio(BLE_EV_DISCONNECTED, 0x08, NULL, 0));
     now_ms += BLE_RETRY_MS;
     drain();
-    want_done(-1);
-    want_done(-1);
+    want_failed(0, GOGO_E_CLOSED);
+    want_failed(0, GOGO_E_CLOSED);
     want_post(BLE_EV_DISCONNECTED | 0x08 << 8, NULL, 0);
     want_none();
     CHECK_EQ(notify_calls, 1);
@@ -565,7 +580,7 @@ TEST(ble_disconnect_fails_in_flight) {
     drain();
     want_post(BLE_EV_CONNECTED | 23 << 8, "c", 1);
     command(owner, BLE_CMD_NOTIFY | 0 << 8, "a", 1);
-    want_done(-1);
+    want_failed(0, GOGO_E_REFUSED);
     teardown();
 }
 

@@ -116,6 +116,11 @@ typedef bool (*StreamCheck)(const Port *p, const uint8_t *d, uint32_t len);
 int stream_out_accept(struct Vm *vm, const struct Actor *from, Port *p, StreamOut *o,
                       term msg, StreamCheck check);
 
+/* Whether stream_out_accept would take one more Out now (fewer than
+ * STREAM_OUT_MAX in flight, room for its Done): a driver that tells the
+ * owner why a refusal happened checks it first. */
+bool stream_out_has_room(const StreamOut *o);
+
 /* stream_out_accept for an output command of the driver's own (gogo/ble's
  * Notify, a port.Post): data is the command's Bytes term as the sender
  * sees it and d, len its bytes, or d NULL to refuse it (the driver's own

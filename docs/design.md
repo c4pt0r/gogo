@@ -1555,7 +1555,7 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   `port.Post{Kind: cmd | char << 8, Data}` (SetValue, Notify), events
   `port.Post{From, Kind: ev | arg << 8, Data}` (Connected with the MTU and
   the peer's address, Disconnected with the HCI reason, Written, Subscribed,
-  MTU), and each Notify is answered with a `port.Done`. `gogo/ble` is a
+  MTU, NotifyFailed), and each Notify is answered with a `port.Done`. `gogo/ble` is a
   library (no builtins, no reserved types) that encodes the Config
   (`ble.Open`) and decodes a Post into typed events (`ble.Event`). So the
   VM core and the image format are unchanged; the requirement name `ble`
@@ -1580,8 +1580,12 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   are kept free for the small events, so a Disconnected is never lost
   behind writes. Reads never reach the VM: the HAL answers them from the
   values SetValue stored there. A Notify the stack has no buffer for
-  (`BLE_AGAIN`) is retried every 5 ms, for at most 2 s, and its Done comes
-  when the stack took it; on Disconnected every Notify in flight fails.
+  (`BLE_AGAIN`) is retried every 5 ms for as long as the connection
+  lasts (no cap: a dead link always ends in Disconnected), and its Done
+  comes when the stack took it; on Disconnected every Notify in flight
+  fails. Every `Done{-1}` follows a `NotifyFailed` event (char and a
+  shared error code: BadArg, Closed, Refused, TooMany, IO), sent directly
+  by the driver and dropped, unlike the Done, if the mailbox is full.
 - **Hardware layer** (`BleHal`: start, stop, set_value, notify, lock,
   unlock). ESP32-S3 (`ble_esp.c`): NimBLE, the GATT tables built from the
   Config in static arrays, legacy advertising (flags and name, the first
