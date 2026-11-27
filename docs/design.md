@@ -2605,8 +2605,14 @@ can serve two devices, and the table can be a board's `static const`).
   name is registered), so a board program ends as before. The layer is a
   build option on the ESP32-S3 (`CONFIG_GOGO_BOARD_PORTS`, about 3.5 KB of
   flash, a fifth event source for the inbox) and always in `gogovm`
-  (`make vm DRIVERS=...`). A `GOGO_BOARD_PORT` in a build without it
-  fails to link (`gogo_board_ports_enabled`).
+  (`make vm DRIVERS=...`). A `GOGO_BOARD_PORT` linked into a build
+  without it fails to link (`gogo_board_ports_enabled`). A component not
+  linked whole loses its entry without a link error, so two checks fail
+  loudly instead: `gogo firmware -build` reads `gogo.map` for each
+  component's `.gogo_board_port` input section, and the firmware compares
+  the names `gogo firmware` baked into `CONFIG_GOGO_BOARD_PORT_NAMES`
+  (from the json files) with those it registered, with a boot line for
+  each missing one.
 - **Atomics.** The VM core uses only a fence (`vm_barrier`); keep
   compare-and-swap out of it. The embed layer's post inbox and
   `embed_set_state` use `__atomic` compare-and-swap, which a Cortex-M0+

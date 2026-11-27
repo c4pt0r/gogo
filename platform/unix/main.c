@@ -365,6 +365,7 @@ static int usage(FILE *f, int rc) {
           "  --screen MODE        the screen port: ansi, text or none (default ansi on a terminal, else text)\n"
           "  --key C=PIN          map key C to simulated gpio pin PIN (0..63; repeatable)\n"
           "  --without NAME,...   test: leave drivers (kbd, tls, ...) and mounts (/sd) out of the board\n"
+          "  --expect-ports NAME,... test: say at boot each of these board ports that is not registered\n"
           "  --fs-quota BYTES     test: each medium holds at most BYTES of files\n"
           "  --sizeof-actor | --sizeof-net | --has-tls   build facts (alone)\n"
           "environment: GOGO_CONFIG (the config store, default ~/.gogo/config), GOGO_NET, GOGO_UNIX_TIME_MS,\n"
@@ -394,6 +395,7 @@ int main(int argc, char **argv) {
     const char *gn = getenv("GOGO_NET");
     int host_net = gn && strcmp(gn, "host") == 0;
     const char *without = NULL;         /* --without: names left out of the board */
+    const char *expect_ports = NULL;    /* --expect-ports */
     const char *fs_root = NULL;
     int64_t fs_quota = -1;
     int info = 0;
@@ -427,7 +429,11 @@ int main(int argc, char **argv) {
             fprintf(stderr, "gogovm: %s needs a value, or is unknown (gogovm -h lists the flags)\n", argv[1]);
             return EXIT_USAGE;
         }
-        if (strcmp(argv[1], "--key") == 0) {
+        if (strcmp(argv[1], "--expect-ports") == 0) {
+            /* --expect-ports <name,...>: test only, as the firmware's
+             * CONFIG_GOGO_BOARD_PORT_NAMES: each one not registered is said at boot. */
+            expect_ports = argv[2];
+        } else if (strcmp(argv[1], "--key") == 0) {
             /* --key <c>=<pin> (tty mode): map a key to a simulated gpio pin. */
             char c;
             int pin;
@@ -619,7 +625,7 @@ int main(int argc, char **argv) {
         .vm = &vm, .params = &params, .defaults = &defaults, .vfs = &vfs_state, .input = &input_state,
         .net = net_fd >= 0 ? &net_state : NULL, .net_install = net_install,
         .booting = set_wall_clock, .ready = host_net ? host_net_ready : NULL, .run = run_main,
-        .ports_host = &unix_ports_host,
+        .ports_host = &unix_ports_host, .ports_expected = expect_ports,
     };
     int run_rc = 0;
     int rc = gogo_board_main(&unix_board, &host, &run, words, (uint32_t)(size / 4), &run_rc);

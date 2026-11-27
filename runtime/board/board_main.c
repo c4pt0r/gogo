@@ -29,6 +29,7 @@ int gogo_board_main(const VmBoard *b, const gogo_host *h, BoardRun *r, const uin
     }
 #if GOGO_BOARD_PORTS
     struct EmbedPorts *ports = board_ports_new(h, r->ports_host ? r->ports_host : h);   /* NULL: none */
+    board_ports_expect(b, r->ports_expected, h);
 #endif
     for (;;) {
         rc = VM_BOOT_NO_MEMORY;

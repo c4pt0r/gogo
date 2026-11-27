@@ -274,7 +274,15 @@ idf_component_register(SRCS dice.c dice_port.c
 `gogo_api` (`platform/esp32s3/components/gogo_api`) gives it
 `runtime/include` and nothing else. `WHOLE_ARCHIVE` matters: nothing
 calls into `dice_port.c`, so without it the linker would leave that file
-out and the port with it. Beside it, `gogo-driver.json` tells `gogo
+out and the port with it, and the build would still succeed. Two checks
+make that loud: `gogo firmware -build` reads the linker map and fails if
+a component put no entry in the firmware ("component dice put no
+GOGO_BOARD_PORT in the firmware: register it with WHOLE_ARCHIVE ..."),
+and the firmware itself knows the names the components' json files
+promised (`CONFIG_GOGO_BOARD_PORT_NAMES`, which `gogo firmware` writes)
+and says at boot each one it did not register (`gogo: board port
+"example.dice" expected but not registered: ...`), for a build made with
+`idf.py` directly or a json that spells the name otherwise than the code. Beside it, `gogo-driver.json` tells `gogo
 firmware` which requirement names the component provides:
 
 ```json
@@ -309,14 +317,16 @@ The layer costs about 3.5 KB of flash (the StickS3 firmware with `dice`
 is 4.1 KB larger than the same one without it; posters add a few hundred
 bytes more to a driver that uses them) and is linked only into a
 firmware built with a board port. A
-`GOGO_BOARD_PORT` in a build without it fails to link, naming
-`gogo_board_ports_enabled`: turn on `CONFIG_GOGO_BOARD_PORTS`.
+`GOGO_BOARD_PORT` of a component linked whole in a build without it
+fails to link, naming `gogo_board_ports_enabled`: turn on
+`CONFIG_GOGO_BOARD_PORTS`.
 
 ### On `gogovm`
 
 `gogovm` always has the layer. `make vm DRIVERS=examples/dice-driver/dice`
 builds it with the component's `*.c` files (but `*_esp.c`, the
-ESP-only hardware files of a component, by convention), and then:
+ESP-only hardware files of a component, by convention; an entry with no
+source is an error), and then:
 
 ```
 $ build/gogovm --provides | tail -1

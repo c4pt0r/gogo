@@ -327,7 +327,7 @@ func TestFirmwareTableMatchesSources(t *testing.T) {
 		for _, f := range fwFeatures {
 			found = found || f.kconf == "CONFIG_"+string(m[1])
 		}
-		found = found || "CONFIG_"+string(m[1]) == fwBoardPortsKconf // -component
+		found = found || "CONFIG_"+string(m[1]) == fwBoardPortsKconf || "CONFIG_"+string(m[1]) == fwBoardPortNamesKconf // -component
 		if !found {
 			t.Errorf("Kconfig %s is not in fwFeatures", m[1])
 		}
@@ -535,7 +535,7 @@ func TestFirmwareComponent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(cfg, "CONFIG_GOGO_BOARD_PORTS=y\n") {
+	if !strings.HasSuffix(cfg, "CONFIG_GOGO_BOARD_PORTS=y\nCONFIG_GOGO_BOARD_PORT_NAMES=\"acme.dice\"\n") {
 		t.Errorf("overlay:\n%s", cfg)
 	}
 	if !strings.Contains(out, "board ports: acme.dice\n") || !strings.Contains(out, "-DEXTRA_COMPONENT_DIRS="+comp+" build") {
@@ -553,5 +553,29 @@ func TestFirmwareComponent(t *testing.T) {
 	out, cfg, err = fwRun(t, "-board", "sticks3", "-o", d, plain)
 	if err != nil || !strings.HasSuffix(cfg, "CONFIG_GOGO_BOARD_PORTS=n\n") || !strings.Contains(out, "removed") {
 		t.Errorf("without -component: %v\n%s\n%s", err, out, cfg)
+	}
+}
+
+// After a -build with components, the linker map must show each one's
+// GOGO_BOARD_PORT entry: a component not linked whole has none.
+func TestFirmwareCheckMap(t *testing.T) {
+	comps := []fwComponent{{dir: "/x/dice"}, {dir: "/y/acme_led"}}
+	both := `
+ *(.gogo_board_port)
+ .gogo_board_port
+                0x3c040150        0x4 esp-idf/main/libmain.a(board_ports.c.obj)
+ .gogo_board_port
+                0x3c040154        0x4 esp-idf/dice/libdice.a(dice_port.c.obj)
+ .gogo_board_port 0x3c040158      0x4 esp-idf/acme_led/libacme_led.a(led_port.c.obj)
+`
+	if err := fwCheckMap(both, comps); err != nil {
+		t.Error(err)
+	}
+	one := strings.Replace(both, "libacme_led.a", "libother.a", 1)
+	if err := fwCheckMap(one, comps); err == nil || !strings.Contains(err.Error(), "component acme_led") || !strings.Contains(err.Error(), "WHOLE_ARCHIVE") {
+		t.Errorf("acme_led missing: %v", err)
+	}
+	if err := fwCheckMap(" .rodata.gogo_board_port_7\n   0x0 0x14 esp-idf/dice/libdice.a(dice_port.c.obj)\n", comps[:1]); err == nil {
+		t.Error("an entry's own data is not the section")
 	}
 }

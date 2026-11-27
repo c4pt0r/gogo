@@ -48,6 +48,10 @@ typedef struct BoardRun {
      * whose alloc, free and wake any task may call (the ESP's VM arena
      * may not be used from another task). NULL: h. */
     const gogo_host *ports_host;
+    /* The board ports the build should have, comma-separated (the ESP:
+     * CONFIG_GOGO_BOARD_PORT_NAMES), each one missing said at boot
+     * (board_ports_expect); NULL or "": no check. */
+    const char *ports_expected;
 } BoardRun;
 
 /* Boots words (nwords, the image) as module 0 on board b with host h

@@ -610,7 +610,11 @@ driver nobody uses. It reads the requirement names each file carries
   it provides, `{"ports": ["acme.dice"]}`, which then satisfy the images'
   requirements. The tool turns on `CONFIG_GOGO_BOARD_PORTS` (the
   firmware's host-port layer) and passes the directories to `idf.py` as
-  `EXTRA_COMPONENT_DIRS`; without `-component` both are off again. A
+  `EXTRA_COMPONENT_DIRS`; without `-component` both are off again. The
+  json's names go into `CONFIG_GOGO_BOARD_PORT_NAMES`, and the firmware
+  says at boot each one it did not register; with `-build` the tool also
+  checks the linker map and fails for a component that put no
+  `GOGO_BOARD_PORT` in the firmware (one not linked whole). A
   name of a built-in driver, or one two components give, is an error.
   `gogo device info` lists the registered ports among `provides`.
 - `-o dir`: the build directory and where `sdkconfig.gogo` goes (default

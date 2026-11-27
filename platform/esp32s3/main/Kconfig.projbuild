@@ -143,6 +143,18 @@ menu "gogo"
             with GOGO_BOARD_PORT (runtime/include/gogo.h) are registered at
             boot, before the image loads, and listed in `gogo device info`.
             `gogo firmware -component DIR` turns it on. Off, a component with
-            a GOGO_BOARD_PORT fails to link (gogo_board_ports_enabled).
+            a GOGO_BOARD_PORT fails to link (gogo_board_ports_enabled), when its
+            component is linked whole (WHOLE_ARCHIVE, as it must be).
+
+    config GOGO_BOARD_PORT_NAMES
+        string "Board ports the components provide (comma-separated)"
+        depends on GOGO_BOARD_PORTS
+        default ""
+        help
+            The port names of the components' gogo-driver.json files, which
+            `gogo firmware -component` writes here. At boot each one that is
+            not registered (a component not linked whole, a GOGO_BOARD_PORT
+            spelled otherwise than its gogo-driver.json) is named on the
+            serial log.
 
 endmenu

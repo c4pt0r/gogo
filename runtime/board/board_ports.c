@@ -126,6 +126,27 @@ uint32_t board_ports_names(const VmBoard *b, const char **out, uint32_t cap) {
     return s.n;
 }
 
+void board_ports_expect(const VmBoard *b, const char *names, const gogo_host *h) {
+    const char *got[EMBED_HOST_PORTS];
+    uint32_t n = board_ports_names(b, got, EMBED_HOST_PORTS);
+    for (const char *p = names; p && *p;) {
+        const char *e = strchr(p, ',');
+        size_t l = e ? (size_t)(e - p) : strlen(p);
+        bool found = false;
+        for (uint32_t k = 0; k < n && k < EMBED_HOST_PORTS; k++)
+            found = found || (strlen(got[k]) == l && !memcmp(got[k], p, l));
+        if (l && !found) {
+            char m[200];
+            int k = snprintf(m, sizeof m,
+                             "gogo: board port \"%.*s\" expected but not registered: is its component linked whole "
+                             "(WHOLE_ARCHIVE), and its GOGO_BOARD_PORT named as its gogo-driver.json says?\n",
+                             (int)(l < 40u ? l : 40u), p);
+            if (k > 0) h->write(NULL, 2, m, (size_t)k < sizeof m ? (size_t)k : sizeof m - 1u);
+        }
+        p = e ? e + 1 : p + l;
+    }
+}
+
 struct EmbedPorts *board_ports_new(const gogo_host *h, const gogo_host *ph) {
     if (next_entry(SIZE_MAX) == SIZE_MAX) return NULL;
     EmbedPorts *ep = ph->alloc(NULL, sizeof *ep);

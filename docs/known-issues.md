@@ -1154,9 +1154,11 @@ rebuilt:
   firmware with board ports gives the post inbox one of its
   `GOGO_MAX_SOURCES` event sources (5 there instead of 4).
 - **The component must be linked whole.** An ESP-IDF driver component
-  without `WHOLE_ARCHIVE` (or a `-u` of a symbol of its registration
-  file) loses its `GOGO_BOARD_PORT`: the linker drops a file nothing
-  refers to, and the image is then refused for the missing name.
+  without `WHOLE_ARCHIVE` loses its `GOGO_BOARD_PORT`: the linker drops a
+  file nothing refers to. `gogo firmware -build` catches it in the
+  linker map and fails, naming the fix; a firmware built otherwise says
+  at boot each port its `CONFIG_GOGO_BOARD_PORT_NAMES` promised and it
+  did not register.
 - **No shared bus or pin bookkeeping.** A component reaches its hardware
   through ESP-IDF directly; nothing stops it from using a pin or I2C
   port the board's own drivers use.

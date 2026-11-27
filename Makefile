@@ -57,6 +57,8 @@ MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostn
 # after it rebuilds gogovm without them.
 DRIVERS ?=
 DRIVER_SRCS = $(foreach d,$(DRIVERS),$(if $(filter %.c,$(d)),$(d),$(filter-out %_esp.c,$(wildcard $(d)/*.c))))
+# A DRIVERS entry that names no source is a mistake, not a gogovm without it.
+$(foreach d,$(DRIVERS),$(if $(if $(filter %.c,$(d)),$(wildcard $(d)),$(filter-out %_esp.c,$(wildcard $(d)/*.c))),,$(error DRIVERS: $(d) is not a .c file nor a directory with .c files (a component's sources are its top-level *.c, but *_esp.c))))
 DRIVERS_STAMP = $(BUILD)/.drivers
 $(DRIVERS_STAMP): FORCE
 	@mkdir -p $(BUILD)

@@ -37,6 +37,12 @@ if kill -0 $pid 2>/dev/null; then
 elif wait $pid && grep -qx "open true" "$T/abandon.out"; then echo "ok   a ticker closed with a backlog ends"
 else echo "FAIL abandon: exit status or output"; cat "$T/abandon.out"; fail=1; fi
 
+# A board port the build should have but does not register is said at boot.
+GOGO_CONFIG=$T/no-config "$VM" --expect-ports test.beta,test.missing "$T/abandon.ggb" > /dev/null 2> "$T/expect.err"
+if grep -qx 'gogo: board port "test.missing" expected but not registered: is its component linked whole (WHOLE_ARCHIVE), and its GOGO_BOARD_PORT named as its gogo-driver.json says?' "$T/expect.err" &&
+   ! grep -q '"test.beta" expected' "$T/expect.err"; then echo "ok   an expected board port that is missing is said at boot"
+else echo "FAIL --expect-ports"; cat "$T/expect.err"; fail=1; fi
+
 cat > "$T/err.want" <<'END'
 gogo: board port "gpio" not registered: a board port's name needs a vendor prefix and a '.' ("acme.sensor")
 gogo: board port "test.a_name_longer_than_31_bytes" not registered: the name is too long (31 bytes at most)

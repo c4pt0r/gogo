@@ -524,13 +524,15 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int3
  * may be used from any other thread or task, never from an interrupt
  * handler: a post allocates. The board's host-port layer is a build
  * option (CONFIG_GOGO_BOARD_PORTS on the ESP32-S3, which `gogo firmware
- * -component` sets; always in gogovm): a GOGO_BOARD_PORT in a build
- * without it fails to link, naming gogo_board_ports_enabled.
+ * -component` sets; always in gogovm): a GOGO_BOARD_PORT linked into a
+ * build without it fails to link, naming gogo_board_ports_enabled.
  *
  * The entries go in a linker section the board walks (no code runs to
  * register them): ESP-IDF's linker fragment keeps it, so the component
  * must be linked whole (idf_component_register(... WHOLE_ARCHIVE)), or
- * the linker drops a file nothing else refers to. */
+ * the linker drops a file nothing else refers to, silently: `gogo
+ * firmware -build` checks the linker map for it, and a firmware says at
+ * boot each port of CONFIG_GOGO_BOARD_PORT_NAMES it did not register. */
 typedef struct gogo_board_port {
     uint32_t size;                    /* sizeof(gogo_board_port) as the driver was compiled */
     uint32_t reserved;                /* 0 */

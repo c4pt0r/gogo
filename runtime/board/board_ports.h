@@ -38,6 +38,14 @@ void board_ports_loaded(struct EmbedPorts *ep);
  * and whatever is queued is dropped. */
 void board_ports_end(struct EmbedPorts *ep);
 
+/* names: the board ports the build was meant to have (comma-separated:
+ * gogo firmware's CONFIG_GOGO_BOARD_PORT_NAMES, from the components'
+ * gogo-driver.json). Each one the build does not register (its
+ * component not linked whole, a name the json and the code spell
+ * differently, a refused entry) is named on h's stream 2: its name is not
+ * provided, and an image that needs it is refused. */
+void board_ports_expect(const VmBoard *b, const char *names, const gogo_host *h);
+
 /* The names the build's board ports provide on board b (what attach
  * accepts: the requirement names, for `gogo device info`), in
  * registration order: at most cap of them into out; returns how many
