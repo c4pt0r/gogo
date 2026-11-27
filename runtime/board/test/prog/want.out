@@ -1,0 +1,9 @@
+alpha true alpha (first)
+zeta true zeta
+refuser -6: bad argument
+refuser -5: busy
+refuser -10: unsupported: a driver or mount is missing
+refuser -36: busy
+refuser 3: busy
+ticker open true
+ticker 2000 events, out of order or wrong: 0

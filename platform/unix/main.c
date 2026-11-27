@@ -15,6 +15,12 @@
  *   gogovm [flags] --info  prints the VM's parameters as this run would
  *          resolve them (vm_params_format: flags, then the config keys,
  *          then the defaults) and exits
+ *   gogovm [flags] --provides  prints the requirement names this VM
+ *          provides, one a line: the board's drivers (after --without),
+ *          its mounts, "float" in a float build, then the board ports
+ *          (GOGO_BOARD_PORT drivers built in, `make vm DRIVERS=...`) it
+ *          would register, in registration order; as `gogo device info`
+ *          lists a board's
  *   gogovm -h | --help     lists every flag (usage(), below)
  *   gogovm --sizeof-actor  prints sizeof(Actor)
  *   gogovm --sizeof-net    prints the net stack's fixed state in bytes
@@ -91,6 +97,7 @@
 #include "fs_dir.h"
 #include "screen_unix.h"
 #include "board_main.h"
+#include "board_ports.h"
 #include "hostnet.h"
 #include "dist.h"
 #include "params.h"
@@ -341,6 +348,7 @@ static int flag_num(const char *s, int size, unsigned long long max, unsigned lo
 static int usage(FILE *f, int rc) {
     fputs("usage: gogovm [flags] <file.ggb> [args...]   run an image; args are the program's (sys.Args)\n"
           "       gogovm [flags] --info                 print the VM's parameters and exit\n"
+          "       gogovm [flags] --provides             print the requirement names this VM provides and exit\n"
           "       gogovm -h | --help                    this list\n"
           "flags (before the image):\n"
           "  --actor-memory SIZE  an actor's default memory limit (default 1M, at most 1G; key vm.actor_memory)\n"
@@ -391,6 +399,12 @@ int main(int argc, char **argv) {
     int info = 0;
     while (argc >= 2 && (strncmp(argv[1], "--", 2) == 0 || strcmp(argv[1], "-h") == 0)) {
         if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) return usage(stdout, EXIT_OK);
+        if (strcmp(argv[1], "--provides") == 0) {
+            info = 2;
+            argv++;
+            argc--;
+            continue;
+        }
         if (strcmp(argv[1], "--info") == 0) {
             info = 1;
             argv++;
@@ -525,6 +539,17 @@ int main(int argc, char **argv) {
      * cannot fit stays an error). */
     vm_params_resolve(&flags_only, NULL, &defaults);
     vm_params_resolve(&host, NULL, &params);
+    if (info == 2) {
+        for (const PortDriver *const *d = unix_ports; *d; d++) printf("%s\n", (*d)->name);
+        for (const VmMount *const *m = unix_mounts; *m; m++) printf("%s\n", (*m)->prefix);
+#if GOGO_FLOAT
+        printf("%s\n", PORT_REQ_FLOAT);
+#endif
+        const char *bp[16];
+        uint32_t n = board_ports_names(&unix_board, bp, 16);
+        for (uint32_t i = 0; i < n && i < 16; i++) printf("%s\n", bp[i]);
+        return EXIT_OK;
+    }
     if (info) {
         char line[256];
         vm_params_format(&params, line, sizeof line);

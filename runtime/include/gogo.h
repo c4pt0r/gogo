@@ -485,6 +485,77 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_emit(gogo_vm *vm, gogo_port port, int32
  * instead); GOGO_EINVAL (a reason <= 0 or over 2^30 - 1, a bad port). */
 GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int32_t reason);
 
+/* ---- board ports: the same drivers, compiled into a firmware or gogovm ----
+ *
+ * GOGO_EXPERIMENTAL, as host ports are.
+ *
+ * A board (the ESP32-S3 firmware, gogovm) does not boot through
+ * gogo_new, but it runs the same host-port layer when a driver of its
+ * build registers itself with GOGO_BOARD_PORT, in a file of its own
+ * (an ESP-IDF component of the product's, a source given to gogovm's
+ * build):
+ *
+ *     static const gogo_port_driver dice = { .size = sizeof(gogo_port_driver),
+ *                                            .open = dice_open, .command = dice_command };
+ *     GOGO_BOARD_PORT("dice", &dice, NULL);
+ *
+ * At boot, after the VM is made and before the image loads, the board
+ * registers every such port as gogo_register_port would (so an image
+ * requirement of "dice" is satisfied), in name order. A port refused
+ * (its name taken by one of the runtime's or the board's drivers or by
+ * a port registered before it, too long, too many ports, a bad entry) is
+ * named on stream 2 at boot and left out. The driver then works exactly
+ * as a host port: its callbacks run on the VM's thread (the VM task) and
+ * get a gogo_vm handle that takes gogo_port_emit, gogo_port_close,
+ * gogo_post, gogo_close_posts and gogo_poster_new, and nothing else of
+ * this header (those calls are libgogo's alone). A poster made from it
+ * may be used from any other thread or task, never from an interrupt
+ * handler: a post allocates. The board's host-port layer is a build
+ * option (CONFIG_GOGO_BOARD_PORTS on the ESP32-S3, which `gogo firmware
+ * -component` sets; always in gogovm): a GOGO_BOARD_PORT in a build
+ * without it fails to link, naming gogo_board_ports_enabled.
+ *
+ * The entries go in a linker section the board walks (no code runs to
+ * register them): ESP-IDF's linker fragment keeps it, so the component
+ * must be linked whole (idf_component_register(... WHOLE_ARCHIVE)), or
+ * the linker drops a file nothing else refers to. */
+typedef struct gogo_board_port {
+    uint32_t size;                    /* sizeof(gogo_board_port) as the driver was compiled */
+    uint32_t reserved;                /* 0 */
+    const char *name;                 /* the requirement name: NUL-terminated, at most GOGO_PORT_NAME_MAX bytes */
+    const gogo_port_driver *driver;
+    void *ctx;                        /* given to every callback */
+    /* Fields are appended here, never inserted. */
+} gogo_board_port;
+
+/* Defined by a board's host-port layer only (see above). */
+extern const char gogo_board_ports_enabled;
+
+#if defined(__APPLE__)
+#define GOGO_BOARD_PORT_SECTION "__DATA,gogo_bport"
+#elif defined(ESP_PLATFORM)
+#define GOGO_BOARD_PORT_SECTION ".gogo_board_port"
+#else
+#define GOGO_BOARD_PORT_SECTION "gogo_board_port"
+#endif
+/* The section holds pointers, laid end to end: AddressSanitizer must not
+ * pad them (GCC leaves globals with a section alone). */
+#if defined(__clang__)
+#define GOGO_BOARD_PORT_ATTR __attribute__((used, section(GOGO_BOARD_PORT_SECTION), no_sanitize("address")))
+#else
+#define GOGO_BOARD_PORT_ATTR __attribute__((used, section(GOGO_BOARD_PORT_SECTION)))
+#endif
+#define GOGO_BOARD_PORT_CAT2(a, b) a##b
+#define GOGO_BOARD_PORT_CAT(a, b) GOGO_BOARD_PORT_CAT2(a, b)
+/* At file scope, once per line. */
+#define GOGO_BOARD_PORT(name, driver, ctx)                                                                  \
+    static const gogo_board_port GOGO_BOARD_PORT_CAT(gogo_board_port_, __LINE__) = {                        \
+        sizeof(gogo_board_port), 0, (name), (driver), (ctx) };                                              \
+    static const void *const GOGO_BOARD_PORT_CAT(gogo_board_port_layer_, __LINE__) __attribute__((used)) =  \
+        &gogo_board_ports_enabled;                                                                          \
+    static const gogo_board_port *const GOGO_BOARD_PORT_CAT(gogo_board_port_ref_, __LINE__)                \
+        GOGO_BOARD_PORT_ATTR = &GOGO_BOARD_PORT_CAT(gogo_board_port_, __LINE__)
+
 /* ---- posting from other threads ----
  *
  * A gogo_poster is a handle any thread may use to post to the VM. It

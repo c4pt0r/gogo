@@ -64,6 +64,7 @@ struct EmbedPorts {
      * can reach (libgogo); a board's does only while a post is queued. */
     bool names_live;
     bool loaded;                 /* an image is loaded: no more registrations */
+    bool registered;             /* a board's: its GOGO_BOARD_PORTs went through registration */
     bool stepping;               /* inside a step or hook (re-entry guard) */
     /* The host port whose open or close callback is running (hostport.c):
      * events emitted during its open wait in held (oldest first) until the
