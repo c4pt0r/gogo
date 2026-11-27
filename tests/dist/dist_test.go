@@ -6,6 +6,7 @@ package disttest
 import (
 	"bufio"
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -189,14 +190,36 @@ func (n *node) kill() {
 	<-n.done
 }
 
+// freePort picks a port for a VM to listen on. It comes from below every
+// system's ephemeral range (macOS 49152-65535, Linux 32768-60999): a port
+// from Listen(":0") is free when we close it but, with ephemeral ports
+// handed out in order, it is often taken as some connection's source port
+// before the VM binds it ("listen failed" on CI). Each port is given to
+// one test of this process only, and checked free on every address.
 func freePort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	portsMu.Lock()
+	defer portsMu.Unlock()
+	for i := 0; i < 1000; i++ {
+		p := 20000 + rand.Intn(12000)
+		if portsUsed[p] {
+			continue
+		}
+		l, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
+		if err != nil {
+			continue
+		}
+		l.Close()
+		portsUsed[p] = true
+		return p
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	t.Fatal("no free port in 20000-31999")
+	return 0
 }
+
+var (
+	portsMu   sync.Mutex
+	portsUsed = map[int]bool{}
+)
 
 // A server and three boards: remote Send and Call, own types by name, a
 // slice, Monitor and Link with the remote exit code, a value that may not
