@@ -660,6 +660,20 @@ func TestHTTPSInterim(t *testing.T) {
 
 // readyServer is a plain http server on which GET /ready answers "yes"
 // once ready is set (the WAIT step of https_client).
+// settle waits, up to realLimit, until done (called under mu) holds: a
+// server handler sees its connection closed (by the bridge, when the VM
+// resets it or exits) a moment after the VM has finished.
+func settle(mu *sync.Mutex, done func() bool) {
+	for deadline := time.Now().Add(realLimit); ; time.Sleep(time.Millisecond) {
+		mu.Lock()
+		ok := done()
+		mu.Unlock()
+		if ok || time.Now().After(deadline) {
+			return
+		}
+	}
+}
+
 func readyServer(t *testing.T, mu *sync.Mutex, ready *bool) *httpSrv {
 	return startHTTPServer(t, nil, false, func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		mu.Lock()
@@ -704,6 +718,7 @@ func TestHTTPSUploadCallerCrash(t *testing.T) {
 		"time UPCRASH:https://gogo.test:8443/slow WAIT:http://gogo.test/ready KILL UP:https://gogo.test/up",
 		"test.file=/flash/rec.bin\nupload.token=tok\n",
 		"start true\ntime true\nready\ncaller down 100\nUP https://gogo.test/up 201 0\ndone\n")
+	settle(&mu, func() bool { return slowRead >= 0 })
 	mu.Lock()
 	defer mu.Unlock()
 	if slowRead < 8<<10 || slowRead >= size || slowErr == nil {
@@ -741,6 +756,7 @@ func TestHTTPSGetCallerCrash(t *testing.T) {
 		"start true\ntime true\nready\ncaller down 100\n"+
 			"GET https://gogo.test/2 true 200 8 false\n  body [hello /2]\n"+
 			"done\n")
+	settle(&mu, func() bool { return ended })
 	mu.Lock()
 	defer mu.Unlock()
 	if !ended {
