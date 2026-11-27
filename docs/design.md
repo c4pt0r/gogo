@@ -676,7 +676,10 @@ reason a `Monitor` of such a PID gets is `actor.NoConnection` too).
 `actor.Register` likewise returns an error (15.7, builtin 59
 `B_REGISTER_ERR`): `errors.NoProc` if the PID is not a live local actor
 (checked first), `errors.Exists` if the name is taken; `B_REGISTER`'s
-bool stays for older images. `actor.Whereis` keeps `(PID, bool)`: a
+bool stays for older images. A `Call` or `Register` whose result is
+discarded (an expression statement) compiles to its builtin alone,
+without the library function and the `errors.Code` row the error needs.
+`actor.Whereis` keeps `(PID, bool)`: a
 lookup in the VM's own table is map-like and has no other way to fail,
 while `node.Whereis` asks another node and returns an `error`.
 

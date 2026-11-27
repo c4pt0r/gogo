@@ -37,8 +37,9 @@ rebuilt:
   `errors.NoProc` (the PID is not a live local actor) or `errors.Exists`
   (the name is taken). `if actor.Register(n, p) {` becomes `if
   actor.Register(n, p) == nil {`, and `if !actor.Register(...)` becomes
-  `!= nil`; a call used as a statement needs no edit. Like `Call`, it
-  makes the image 15.7. `actor.Whereis` is unchanged.
+  `!= nil`; a call used as a statement needs no edit (it compiles to the
+  builtin alone, so it costs a few bytes, not the error's ~500). Like
+  `Call`, it makes the image 15.7. `actor.Whereis` is unchanged.
 - **`actor.SendAfter`** takes its arguments in `Send`'s order with the
   delay last, as `Call` does: `actor.SendAfter(ms, p, msg)` is
   `actor.SendAfter(p, msg, ms)`. Every old call fails to compile (an

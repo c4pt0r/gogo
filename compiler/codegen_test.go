@@ -2486,3 +2486,22 @@ func TestSendAfterOrder(t *testing.T) {
 		t.Errorf("ms calls a function: want to, msg, ms evaluated in source order:\n%s", dis)
 	}
 }
+
+// TestDiscardedActorCall: actor.Call and actor.Register as statements
+// call their builtins directly, without the library function that makes
+// the error (and without errors.Code's reserved row); with the result
+// used, the library function is called.
+func TestDiscardedActorCall(t *testing.T) {
+	dis := compileSrc(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Register(\"x\", actor.Self())\n\t(actor.Call(actor.Self(), 1, 0))\n}\n")
+	if strings.Contains(dis, "func actor.") || !strings.Contains(dis, ", REGISTER_ERR\n") || !strings.Contains(dis, ", CALL_ERR\n") {
+		t.Errorf("discarded results: want the builtins in main and no actor function:\n%s", dis)
+	}
+	img := compileImage(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Register(\"x\", actor.Self())\n}\n")
+	if got := strings.Join(imageTypes(t, img), " "); strings.Contains(got, "errors.Code") {
+		t.Errorf("a discarded Register carries errors.Code's row: %s", got)
+	}
+	dis = compileSrc(t, "package main\nimport \"gogo/actor\"\nfunc main() {\n\tprintln(actor.Register(\"x\", actor.Self()) == nil)\n}\n")
+	if !strings.Contains(dis, "func actor.Register") {
+		t.Errorf("a used result: want actor.Register called:\n%s", dis)
+	}
+}

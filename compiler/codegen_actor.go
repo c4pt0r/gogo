@@ -115,6 +115,44 @@ func (f *fn) actorCall(call *ast.CallExpr, name string, dst uint8) {
 	}
 }
 
+// discardedActorCall compiles e if it is a call of actor.Call or
+// actor.Register whose results are discarded (an expression statement):
+// the builtin under it, B_CALL_ERR or B_REGISTER_ERR, without the library
+// function that turns its code into an error, so a program that ignores
+// the error does not carry that function or errors.Code's reserved type
+// row (and the rows before it). It reports whether it did.
+func (f *fn) discardedActorCall(e ast.Expr) bool {
+	call, ok := ast.Unparen(e).(*ast.CallExpr)
+	if !ok || call.Ellipsis.IsValid() {
+		return false
+	}
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	fn, _ := f.g.p.Info.Uses[sel.Sel].(*types.Func)
+	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != ActorPath {
+		return false
+	}
+	var id uint32
+	results := 1
+	switch fn.Name() {
+	case "Call":
+		id, results = BCallErr, 2
+	case "Register":
+		id = BRegisterErr
+	default:
+		return false
+	}
+	if len(call.Args) != fn.Type().(*types.Signature).Params().Len() {
+		return false // Call(g()): the library function takes it
+	}
+	dst := f.allocN(call, results)
+	base, n := f.args(call)
+	f.asm.EmitExt(OpBuiltin, dst, base, n, id)
+	return true
+}
+
 // sendAfterArgs puts the arguments of actor.SendAfter(to, msg, ms) into
 // consecutive registers in B_SEND_AFTER's order, ms, to, msg (the order
 // of the gogo/actor API before v0.2.0, which the builtin keeps). They are
