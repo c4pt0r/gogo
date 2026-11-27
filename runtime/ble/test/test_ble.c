@@ -508,6 +508,18 @@ TEST(ble_notify_waits_until_disconnect) {
     teardown();
 }
 
+/* The board's mbuf reserve (ble.h, ble_esp.c). Four blocks free, a
+ * 244-byte value takes two: with the header one is left, below the
+ * spare, so the notify waits (a check made before the allocation, 4 >= 4,
+ * let it through and left the host one block for a 200-byte read). Seven
+ * free: four stay. */
+TEST(ble_msys_reserve) {
+    CHECK(!ble_msys_spare_ok(4 - 2));
+    CHECK(ble_msys_spare_ok(7 - 2));
+    CHECK(!ble_msys_spare_ok(6 - 2));
+    CHECK(!ble_msys_spare_ok(0));
+}
+
 TEST(ble_notify_refusals) {
     setup();
     command(owner, BLE_CMD_NOTIFY | 0 << 8, "x", 1);           /* not connected */

@@ -167,6 +167,15 @@ typedef struct BleHal {
  * link always ends in a Disconnected, which fails every one in flight. */
 #define BLE_RETRY_MS 5u
 
+/* A board's mbuf reserve (ble_esp.c): a notification's value is put in
+ * mbufs first; free_after_value is what their pool has left then, and the
+ * ATT header still takes one block. True if BLE_MSYS_SPARE blocks stay
+ * for the stack's own replies (a read's or write's response), which a
+ * burst of notifications must not starve; false: drop the value and
+ * answer BLE_AGAIN. */
+#define BLE_MSYS_SPARE 4
+static inline bool ble_msys_spare_ok(int free_after_value) { return free_after_value - 1 >= (int)BLE_MSYS_SPARE; }
+
 /* The driver (ble.c). */
 int  ble_open(struct Vm *vm, const struct Actor *owner, Port *p, uint16_t index, term cfg);
 void ble_command(struct Vm *vm, const struct Actor *from, Port *p, term msg);

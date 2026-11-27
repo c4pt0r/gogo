@@ -11,8 +11,8 @@
  * when a central connects, and this restarts it when it leaves. notify
  * runs on the VM task (ble_gatts_notify_custom takes the host's lock); a
  * mbuf the pool cannot give is BLE_AGAIN, tried again by the driver, and
- * so is a notify that would leave the pool fewer than BLE_MSYS_SPARE
- * blocks (the host's replies need them).
+ * so is a notify that would leave its pool fewer than BLE_MSYS_SPARE
+ * blocks (ble.h; the host's replies need them).
  * stop releases the host, which ends the connection and the advertising. */
 #include "sdkconfig.h"
 #include "ble.h"
@@ -33,13 +33,6 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include "os/os_mbuf.h"
 
-/* Mbufs a notification leaves free for the host's own replies (a read or
- * write response, an MTU exchange): NimBLE queues a notification it cannot
- * send yet, and a burst would otherwise take the whole first pool, the one
- * notifications draw on (sdkconfig.ble, BT_NIMBLE_MSYS_1_BLOCK_COUNT).
- * os_msys_num_free counts both pools; the second's blocks are taken off,
- * so the check errs towards waiting. */
-#define BLE_MSYS_SPARE 4
 
 static BleBoard board;
 static StaticSemaphore_t mu_buf;
@@ -312,9 +305,16 @@ static int hal_notify(void *ctx, uint32_t k, const uint8_t *d, uint32_t len) {
     uint16_t c = conn;
     xSemaphoreGive(mu);
     if (c == BLE_HS_CONN_HANDLE_NONE) return GOGO_E_CLOSED;
-    if (os_msys_num_free() - CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT < BLE_MSYS_SPARE) return BLE_AGAIN;
     struct os_mbuf *om = ble_hs_mbuf_from_flat(d, (uint16_t)len);
     if (!om) return BLE_AGAIN;
+    /* NimBLE queues what the controller cannot take yet, so a burst could
+     * take the whole pool the value came from (msys_1, the one the ATT
+     * header and the host's replies use too): leave BLE_MSYS_SPARE of it
+     * (ble.h ble_msys_spare_ok), counted in that pool only. */
+    if (!ble_msys_spare_ok(om->om_omp->omp_pool->mp_num_free)) {
+        os_mbuf_free_chain(om);
+        return BLE_AGAIN;
+    }
     int rc = ble_gatts_notify_custom(c, val_handle[k], om);   /* consumes om */
     switch (rc) {
     case 0:
