@@ -392,8 +392,8 @@ func usbProbe(port string) (bool, error) {
 	return false, fmt.Errorf("the string descriptor request to %s failed (%#x)", d, kr)
 }
 
-// portHolders lists the other processes with port (or its tty./cu. twin)
-// open, with lsof.
+// portHolders lists the user's other processes with port (or its tty./cu.
+// twin) open, with lsof.
 func portHolders(port string) ([]int, error) {
 	lsof := "/usr/sbin/lsof"
 	if _, err := os.Stat(lsof); err != nil {
@@ -407,5 +407,5 @@ func portHolders(port string) ([]int, error) {
 	case len(base) > 4 && base[:4] == "tty.":
 		paths = append(paths, dir+"cu."+base[4:])
 	}
-	return lsofHolders(lsof, paths, os.Getpid())
+	return lsofHolders(lsof, paths, os.Getpid(), lsofTimeout)
 }

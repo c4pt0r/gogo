@@ -1212,8 +1212,11 @@ rebuilt:
   the original error is reported as it is. `gogo device usb-reset` does it by hand; `-no-usb-reset` or
   `GOGO_NO_USB_RESET=1` turns the automatic reset off. Only an
   Espressif device (vendor id 0x303a) is reset, found from the serial
-  port (not from its serial number), and never while another program
-  has the port open. On **Linux** the reset needs write access to the
+  port (not from its serial number), and never while another process
+  of yours has the port open (`lsof` on macOS, `/proc` on Linux; if the
+  check fails or times out, nothing is reset). Processes run as root or
+  by other users cannot be seen, so a root-owned serial logger or
+  ModemManager on the port is not detected. On **Linux** the reset needs write access to the
   device's `/dev/bus/usb/BBB/DDD` node, usually root's; a udev rule
   gives it to the logged-in user:
 

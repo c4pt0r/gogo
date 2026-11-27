@@ -105,8 +105,8 @@ func usbProbe(port string) (bool, error) {
 	return false, fmt.Errorf("the string descriptor request to %s failed (%v)", d, e)
 }
 
-// portHolders lists the other processes with port open, from /proc (the
-// processes of other users cannot be looked into).
+// portHolders lists the user's other processes with port open, from /proc
+// (root's and other users' processes cannot be looked into).
 func portHolders(port string) ([]int, error) {
 	real, err := filepath.EvalSymlinks(port)
 	if err != nil {

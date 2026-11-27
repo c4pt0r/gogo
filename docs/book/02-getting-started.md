@@ -485,8 +485,9 @@ reports (standard error) are shown in red.
   when it is missing; `docs/known-issues.md` has it); on Windows, or if
   the board still does not answer, unplug it and plug it in again.
 - **The port is busy.** Another program has it open: close `gogo
-  monitor` or the serial terminal. `gogo` never resets a board's USB
-  device while another program uses the port.
+  monitor` or the serial terminal. `gogo` does not reset a board's USB
+  device while another of your programs has the port open; it cannot
+  see programs run as root or by other users, so close those yourself.
 - **`gogo: bad image (unsupported version)`.** The firmware is older
   than the image format: update it (note above).
 

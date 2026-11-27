@@ -2250,7 +2250,10 @@ golang.org/x/sys/unix) and `syscall.syscall6`, so the release build stays
 `CGO_ENABLED=0` with no module dependency. On Linux, sysfs maps the tty
 to `busnum`/`devnum` and the `USBDEVFS_RESET` ioctl resets
 `/dev/bus/usb/BBB/DDD`. Only vendor id 0x303a is reset, and never a port
-another process holds (lsof on macOS, `/proc/*/fd` on Linux). Windows has
+another process of the user holds (lsof, with a 5 s timeout, on macOS;
+`/proc/*/fd` on Linux). Neither sees root's or other users' processes,
+and a check that fails or times out counts as "held"; the probe gate
+keeps a healthy link from being reset whatever the check misses. Windows has
 none: the hint says to replug.
 
 **Device configuration (`gogo config`).** `gogo config set|get|rm|list

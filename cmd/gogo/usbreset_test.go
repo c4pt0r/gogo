@@ -483,6 +483,63 @@ func TestParseLsofPids(t *testing.T) {
 	}
 }
 
+// lsofHolders with fake lsof scripts: what it lists, and every way of
+// failing, which must read as "unknown" (an error), never as "free".
+func TestLsofHolders(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh")
+	}
+	dir := t.TempDir()
+	port := writeFile(t, dir, "cu.usbmodem1", "")
+	lsof := func(body string) string {
+		p := filepath.Join(t.TempDir(), "lsof")
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	cases := []struct {
+		name, body string
+		want       string // the pids, or "error"
+	}{
+		{"held", "echo 42; echo 7; echo 99; exit 0", "[7 42]"},
+		{"held, twin unopened", "echo 42; exit 1", "[42]"},
+		{"free", "exit 1", "[]"},
+		{"failing lsof", "echo 'lsof: status error on x: No such file or directory' >&2; exit 1", "error"},
+		{"warning with pids", "echo 42; echo 'lsof: WARNING: can't stat() nfs file system' >&2; exit 1", "error"},
+		{"other status", "exit 2", "error"},
+		{"garbage", "echo hello; exit 0", "error"},
+		{"hangs", "exec sleep 10", "error"},
+	}
+	for _, c := range cases {
+		start := time.Now()
+		pids, err := lsofHolders(lsof(c.body), []string{port, filepath.Join(dir, "tty.missing")}, 99, 300*time.Millisecond)
+		got := fmt.Sprint(pids)
+		if pids == nil {
+			got = "[]"
+		}
+		if err != nil {
+			got = "error"
+		}
+		if got != c.want {
+			t.Errorf("%s: %v %v, want %s", c.name, pids, err, c.want)
+		}
+		if time.Since(start) > 3*time.Second {
+			t.Errorf("%s: took %v", c.name, time.Since(start))
+		}
+	}
+	// A failing lsof means no reset: recover refuses.
+	f := &fakeUSB{silent: true}
+	env := f.env()
+	env.holders = func(p string) ([]int, error) {
+		return lsofHolders(lsof("echo boom >&2; exit 1"), []string{p}, 1, time.Second)
+	}
+	err := newUSBRecovery(env, false, io.Discard).recover(port)
+	if err == nil || !strings.Contains(err.Error(), "cannot tell whether another program uses") || len(f.resets) != 0 {
+		t.Errorf("lsof failure: %v, resets %d", err, len(f.resets))
+	}
+}
+
 func TestDeviceUSBReset(t *testing.T) {
 	f := &fakeUSB{}
 	var out bytes.Buffer

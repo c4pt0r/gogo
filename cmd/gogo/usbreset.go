@@ -30,6 +30,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -220,8 +221,10 @@ func (r *usbRecovery) retry(port string, op func() error) error {
 	return err2
 }
 
-// checkPortFree refuses a port another process has open: resetting the
-// device under it would cut that program off.
+// checkPortFree refuses a port another process of the user's has open:
+// resetting the device under it would cut that program off. Processes of
+// root and other users cannot be seen (the probe gate keeps a healthy link
+// from being reset anyway).
 func checkPortFree(port string, holders func(string) ([]int, error)) error {
 	if holders == nil {
 		return nil
@@ -349,7 +352,8 @@ func checkEspressif(port string, d usbDevice) error {
 
 // procHolders lists the processes, other than self, with a descriptor on
 // the file target, from the proc file system at proc ("/proc"). The
-// processes it cannot look into (another user's) are not listed.
+// processes it cannot look into (root's, another user's) are not listed:
+// only the user's own holders are found.
 func procHolders(proc, target string, self int) []int {
 	ents, _ := os.ReadDir(proc)
 	var pids []int
@@ -373,9 +377,15 @@ func procHolders(proc, target string, self int) []int {
 	return pids
 }
 
+// lsofTimeout bounds an lsof run (it can hang on a dead network mount).
+const lsofTimeout = 5 * time.Second
+
 // lsofHolders runs lsof -t on paths (those that exist) and returns the pids
-// it lists, but self.
-func lsofHolders(lsof string, paths []string, self int) ([]int, error) {
+// it lists, but self. lsof run by a user sees only that user's processes.
+// Anything but a clean answer is an error, so the caller does not reset:
+// a run past timeout, an exit status other than 0 or 1, or a complaint on
+// standard error (a failing lsof also exits 1).
+func lsofHolders(lsof string, paths []string, self int, timeout time.Duration) ([]int, error) {
 	var args []string
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
@@ -385,14 +395,28 @@ func lsofHolders(lsof string, paths []string, self int) ([]int, error) {
 	if len(args) == 0 {
 		return nil, nil
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, lsof, append([]string{"-t", "--"}, args...)...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("lsof did not answer within %v", timeout)
+	}
+	if msg := strings.TrimSpace(stderr.String()); msg != "" {
+		if i := strings.IndexByte(msg, '\n'); i >= 0 {
+			msg = msg[:i]
+		}
+		return nil, fmt.Errorf("lsof: %s", msg)
+	}
 	// lsof exits 1 when one of the files is not open (or none is), and
 	// still lists the pids of the others.
-	out, err := exec.Command(lsof, append([]string{"-t", "--"}, args...)...).Output()
 	var exit *exec.ExitError
 	if err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1) {
 		return nil, fmt.Errorf("lsof: %v", err)
 	}
-	return parseLsofPids(out, self)
+	return parseLsofPids(stdout.Bytes(), self)
 }
 
 // parseLsofPids reads lsof -t's output: one pid a line.

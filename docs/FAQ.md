@@ -544,7 +544,9 @@ port, retries, and prints `gogo: the board's USB link was silent; reset
 it (USB bus reset)`. `gogo device usb-reset` does the same by hand, and
 `-no-usb-reset` (or `GOGO_NO_USB_RESET=1`) turns the automatic reset
 off. Only Espressif devices are reset, and never while another program
-(a serial terminal, `gogo monitor`) has the port open: close it first.
+of yours (a serial terminal, `gogo monitor`) has the port open: close
+it first. gogo cannot see programs run as root or by other users, so
+close those yourself.
 On Linux the reset needs a udev rule, which `gogo` prints when it is
 missing; on Windows, replug the board. If the board still does not
 answer, replug it, and check it runs gogo firmware (`gogo setup`). See

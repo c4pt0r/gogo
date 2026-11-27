@@ -66,7 +66,8 @@ rewrites every region from its start, so nothing is left half-written
 by the first try; if the retry fails too, the firmware refuses the
 half-written program as after any failed flash. Only an
 Espressif USB device (vendor id 0x303a) is reset, never while another
-program has the port open. `-no-usb-reset` (or `GOGO_NO_USB_RESET=1` in
+of your programs has the port open (gogo cannot see programs of root or
+other users; if it cannot tell, it does not reset). `-no-usb-reset` (or `GOGO_NO_USB_RESET=1` in
 the environment) turns this off; `gogo device usb-reset` resets by hand.
 On Linux the reset needs a udev rule (`gogo` prints it; known issues has
 it too); on Windows gogo cannot reset a USB device, so replug the board.
@@ -758,8 +759,9 @@ excepted):
   (the other operations do it on their own when the board does not
   answer, unless `-no-usb-reset` is given; see the start of this
   chapter). It finds the device from the serial port, refuses any device
-  that is not Espressif's (vendor id 0x303a) and a port another program
-  has open, and waits for the port to come back:
+  that is not Espressif's (vendor id 0x303a) and a port another of your
+  programs has open (programs of root or other users cannot be seen),
+  and waits for the port to come back:
 
   ```text
   $ gogo device -port /dev/cu.usbmodem5101 usb-reset
