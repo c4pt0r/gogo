@@ -151,8 +151,10 @@ program that divides, compares or shifts `uint32`/`uint64` values, uses
 `node` port's types (`gogo/node`), 15.6 pointers, maps, read-only
 package-level variables and `gogo/fmt`, 15.7 the errors of `actor.Call`
 and `actor.Register` (new builtins: a program that calls either,
-directly or through a library such as `gogo/node`, `gogo/http`,
-`gogo/dns` or `gogo/supervisor`, needs 15.7 firmware).
+directly or through a library call that does, such as any `gogo/node`
+call, `dns.Lookup`, `http.Get` or `supervisor.SuperviseModule`, needs
+15.7 firmware; `supervisor.Supervise`, `http.Serve` or `sound.Play` alone
+do not).
 
 A package, a library or `package main`, can declare that it uses some
 drivers only softly: it opens them only when a call asks for that at run

@@ -1,7 +1,7 @@
 // Package sound records the microphone to WAV files and plays WAV files on
 // the speaker, in the background. It is written in the gogo subset on top
 // of gogo/audio, gogo/wav, gogo/port and gogo/fs and compiled into every
-// image that imports it.
+// image that imports it (Record, record.gg, only where it is used).
 //
 // Record starts a small actor that opens the "mic" port and writes
 // every Chunk to dir/NNNN.wav (16-bit mono PCM, see gogo/wav). NNNN is a
@@ -186,43 +186,6 @@ func memoryFor(rate, frameMs int) int {
 	f := rate * frameMs / 2000 // frame words
 	frames := (300+frameMs-1)/frameMs + 1
 	return (headroom + f + frames*(f+11)) * 4
-}
-
-// Record starts the recorder for dir (created, one level, if missing),
-// which opens the mic with cfg, and waits for that open; ok is false if
-// the mic does not open (no mic, the speaker open, a bad cfg, no memory)
-// or dir is unusable. maxSec is
-// the length of a file in seconds (0 means DefaultMaxSec); a file ends on a
-// frame boundary, so it is a whole number of FrameMs. One recorder per dir.
-func Record(dir string, cfg audio.Mic, maxSec int) (actor.PID, bool) {
-	secs := maxSec
-	if secs <= 0 {
-		secs = DefaultMaxSec
-	}
-	if secs > MaxMaxSec {
-		secs = MaxMaxSec
-	}
-	frameMs := clampFrame(cfg.FrameMs)
-	next, ok := nextNumber(dir)
-	if !ok {
-		return actor.Self(), false
-	}
-	frames := framesPerFile(secs, frameMs)
-	rate := cfg.RateHz
-	planned := frames * (rate * frameMs / 1000 * 2)
-	parent := actor.Self()
-	r := actor.SpawnOpt(func() {
-		record(parent, cfg, dir, next, rate, frameMs, frames, planned)
-	}, actor.Options{MaxMemory: memoryFor(rate, frameMs)})
-	// The recorder opens the mic itself, so the port's charge and room
-	// check count against its MaxMemory, not the caller's limit; it
-	// answers this Call with whether the open worked.
-	rep, _ := actor.Call(r, 0, openTimeoutMs)
-	if opened, _ := rep.(bool); !opened { // rep is nil if the Call failed
-		actor.Kill(r, actor.Killed)
-		return actor.Self(), false
-	}
-	return r, true
 }
 
 // openTimeoutMs bounds Record's wait for the recorder's open (it answers

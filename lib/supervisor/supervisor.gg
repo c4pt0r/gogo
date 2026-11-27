@@ -1,6 +1,7 @@
 // Package supervisor is the gogo supervision library: a single-child
 // supervisor that restarts its child according to a Spec. It is written in
-// the gogo subset and compiled into every image that imports it.
+// the gogo subset and compiled into every image that imports it
+// (SuperviseModule, module.gg, only where it is used).
 //
 // A supervisor and the actor that calls Supervise are linked. When that
 // caller exits for any reason, including a normal return, the supervisor
@@ -60,32 +61,6 @@ func Supervise(child func(), spec Spec) actor.PID {
 // sent to the old child between its stop and the new start are lost. Any
 // actor can send Upgrade; there is no ownership check in this version.
 type Upgrade struct{ Module code.Module }
-
-// SuperviseModule is Supervise for a child that lives in a loaded module:
-// the supervisor holds m and starts entry of m with arg (code.SpawnLink),
-// then restarts it exactly as Supervise would, from the module.
-//
-// SuperviseModule returns once the supervisor holds m and has started the
-// child, so the caller may Release m (or exit) right after it returns. If
-// that cannot be done (m is not loaded, has no such entry, or has 4 holders
-// already) the supervisor exits Normal at once and SuperviseModule returns
-// the zero PID (which is never alive); the caller has to check for it.
-func SuperviseModule(m code.Module, entry string, arg any, spec Spec) actor.PID {
-	parent := actor.Self()
-	sup := actor.SpawnLink(func() { run(parent, m, entry, arg, func() {}, spec) })
-	r, err := actor.Call(sup, 0, helloWaitMs)
-	if err != nil {
-		return actor.NoPID
-	}
-	if e, ok := r.(int); ok && e != int(code.OK) {
-		return actor.NoPID
-	}
-	return sup
-}
-
-// helloWaitMs is how long SuperviseModule waits for its supervisor to
-// start.
-const helloWaitMs = 1000
 
 // start starts the child linked to the caller: entry of m when m is a
 // module (m.H != 0), else the function child.

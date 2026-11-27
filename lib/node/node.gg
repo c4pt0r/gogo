@@ -37,6 +37,12 @@
 //gogo:optional tcp tcp_listen node
 package node
 
+// Compiled into an image only for the functions the program uses
+// (//gogo:ondemand), like the rest of gogo/node: its calls go through
+// actor.Call and actor.Register (image format 15.7).
+//
+//gogo:ondemand
+
 import (
 	"gogo/actor"
 	"gogo/errors"

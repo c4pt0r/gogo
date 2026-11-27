@@ -52,7 +52,12 @@ A file of a library can carry the directive line `//gogo:ondemand`
 (conventionally right after the package clause's comment): its functions
 (no methods) are compiled into an image only when the program uses them,
 directly or through another such function. Everything else in a library
-is compiled in whole.
+is compiled in whole. The libraries keep every function that calls
+`actor.Call` or `actor.Register` in such files (all of `gogo/node`,
+`gogo/dns`, `gogo/dhcp` and `gogo/sntp`; `http/client.gg`,
+`supervisor/module.gg`, `sound/record.gg`, `tui/open.gg`): those need
+image format 15.7, so a program that does not reach them keeps an older
+minor.
 
 A library whose port drivers are soft (opened only when a call asks for
 them at run time, their absence reported as that call's failure) names
@@ -75,7 +80,7 @@ declares `kbd`, `gogo/node` declares `tcp tcp_listen node`. Book chapter
 
 | package | kind | imports | requires |
 |---------|------|---------|------------|
-| `gogo/actor` | system | errors | none (`Call`, `Fail`: library code, compiled only where used) |
+| `gogo/actor` | system | errors | none (`Call`, `Fail`, `Register`: library code, compiled only where used) |
 | `gogo/port` | system | actor, bytes | none (each constant `port.Open`: its driver); also the stream protocol every byte port speaks (`Chunk`, `Out`, `Done`, `Closed`) and the host-port types |
 | `gogo/bytes` | system | | none |
 | `gogo/net` | system | actor, bytes, errors | none (the drivers it is used with: `netif`, `udp`, `tcp`, `tcp_listen`, `tls`, `node`) |

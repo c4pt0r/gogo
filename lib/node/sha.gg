@@ -1,5 +1,11 @@
 package node
 
+// Compiled into an image only for the functions the program uses
+// (//gogo:ondemand), like the rest of gogo/node: its calls go through
+// actor.Call and actor.Register (image format 15.7).
+//
+//gogo:ondemand
+
 // SHA-256 and HMAC-SHA-256 (FIPS 180-4, RFC 2104) for the handshake, on
 // gogo's 32-bit wrapping ints: x >> n is arithmetic, so a logical shift
 // masks the sign bits away.

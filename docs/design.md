@@ -1109,7 +1109,12 @@ top-level functions only when the rest of the program refers to them,
 directly or through another such function (`onDemandUsed` in
 `compiler/codegen.go`); the file may declare no methods. It is per-file
 inclusion, not dead-code elimination: every other function of a
-compiled package is still in the image. `lib/strconv/unsigned.gg` uses it.
+compiled package is still in the image. `lib/strconv/unsigned.gg` uses it,
+and so does every library function that calls `actor.Call` or
+`actor.Register` (all of `gogo/node`, `gogo/dns`, `gogo/dhcp`,
+`gogo/sntp`; `http/client.gg`, `supervisor/module.gg`,
+`sound/record.gg`, `tui/open.gg`), so that a program needs format 15.7
+only if it can reach one.
 
 **The `//gogo:optional` directive.** A package (a library or `package
 main`) can declare drivers it uses only softly: opened only when a call needs them at run
@@ -1960,8 +1965,11 @@ together with `mbox_words` through `actor_charged_words`).
   struct with any), the reason `actor.Nil` and the constant slices; 15.7
   the actor API's error results (`actorMinor`): `B_CALL_ERR` and
   `B_REGISTER_ERR`, under `actor.Call` and `actor.Register`, so a program
-  that calls one (itself or through a library: `gogo/node`, `gogo/http`,
-  `gogo/supervisor`, ...) needs 15.7 and any other keeps its minor.
+  that calls one (itself or through a library function that does: the
+  libraries keep those in `//gogo:ondemand` files, so `http.Get` or
+  `supervisor.SuperviseModule` count and `http.Serve` or
+  `supervisor.Supervise` do not) needs 15.7 and any other keeps its
+  minor.
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old

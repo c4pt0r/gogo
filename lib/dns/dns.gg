@@ -1,5 +1,5 @@
 // Package dns is the gogo DNS resolver, written in the gogo
-// subset and compiled into every image that imports it.
+// subset and compiled into an image where it is used (//gogo:ondemand).
 //
 // Lookup asks the resolver actor, registered as "dns" and started by the
 // first Lookup, for an IPv4 address (A record). The resolver learns the
@@ -12,6 +12,13 @@
 // fails (all its slots taken), the resolver tries again on each Lookup
 // (failing that Lookup meanwhile) rather than staying broken.
 package dns
+
+// This file is compiled into an image only for the functions the program
+// uses (//gogo:ondemand): Lookup waits with actor.Call (or registers with
+// actor.Register), which needs image format 15.7, so importing the package
+// without calling it keeps a program's older minor.
+//
+//gogo:ondemand
 
 import (
 	"gogo/actor"

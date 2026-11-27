@@ -19,10 +19,16 @@ rebuilt:
   gone), book 4.3. `r, ok := actor.Call(...); if !ok {` becomes `r, err
   := actor.Call(...); if err != nil {`; a program that only checked `ok`
   needs no other change, and the compiler rejects an `ok` still used as
-  a `bool` (`!ok`, `if ok`). A program that calls `actor.Call`, itself or through a
-  library (`gogo/node`, `gogo/http`, `gogo/dns`, `gogo/dhcp`,
-  `gogo/sntp`, `gogo/sound`, `gogo/supervisor`, `gogo/tui`), is image
-  format 15.7 and needs firmware that runs 15.7; images built before
+  a `bool` (`!ok`, `if ok`). A program that calls `actor.Call` or
+  `actor.Register`, itself or through a library call that does (the
+  libraries keep those functions in `//gogo:ondemand` files, so only
+  the calls that use one: every `gogo/node` call, `dns.Lookup`,
+  `dhcp.Start`, `sntp.Sync`, `http`'s client calls (`Get`, `Post`, `Do`,
+  `NewClient`, `ClientDo`, `Upload`, ...), `supervisor.SuperviseModule`,
+  `sound.Record` and `tui.Open` count), is image format 15.7 and
+  needs firmware that runs 15.7; a program that uses only the rest
+  (`supervisor.Supervise`, `http.Serve`, `sound.Play`, `tui.Width`, ...)
+  keeps its minor; images built before
   keep running on the new firmware. `gogo/errors` gained the shared codes
   `NoProc` (28) and `NoConnection` (29); `node.Whereis` and the other
   `gogo/node` calls now return the Call's error (`NoConnection` when the

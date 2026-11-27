@@ -1,6 +1,6 @@
 // Package sntp sets the wall clock (gogo/sys) from an SNTP server (RFC 4330,
 // version 4, over the "udp" port), written in the gogo subset and compiled
-// into every image that imports it. A TLS client needs the wall clock to
+// into an image where it is used (//gogo:ondemand). A TLS client needs the wall clock to
 // check certificate validity, and nothing else on the device knows the date.
 //
 // Sync does one exchange in a helper actor, so the caller's mailbox is
@@ -20,6 +20,13 @@
 // gogo/sys); there is no defence against that here. Sync fails if the
 // floor refuses the time.
 package sntp
+
+// This file is compiled into an image only for the functions the program
+// uses (//gogo:ondemand): Sync waits with actor.Call (or registers with
+// actor.Register), which needs image format 15.7, so importing the package
+// without calling it keeps a program's older minor.
+//
+//gogo:ondemand
 
 import (
 	"gogo/actor"

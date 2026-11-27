@@ -55,6 +55,17 @@ func TestMinorBaseline(t *testing.T) {
 		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\t_, err := actor.Call(actor.Self(), 1, 0)\n\tprintln(err != nil)\n}\n", actorMinor},
 		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Call(actor.Self(), 1, 0)\n}\n", actorMinor},
 		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tprintln(actor.Register(\"x\", actor.Self()) == nil)\n}\n", actorMinor},
+		// A library that calls actor.Call or Register in some functions
+		// keeps them in //gogo:ondemand files: a program that uses only
+		// the others keeps its minor, one that calls them gets 15.7.
+		{"package main\nimport \"gogo/supervisor\"\nfunc main() {\n\tsupervisor.Supervise(func() {}, supervisor.Spec{})\n}\n", 0},
+		{"package main\nimport (\n\t\"gogo/code\"\n\t\"gogo/supervisor\"\n)\nfunc main() {\n\tsupervisor.SuperviseModule(code.Module{}, \"e\", 0, supervisor.Spec{})\n}\n", actorMinor},
+		{"package main\nimport \"gogo/http\"\nfunc main() {\n\thttp.Serve(80, func(r http.Request) http.Response { return http.Response{Status: 200} })\n}\n", ifaceMinor},
+		{"package main\nimport \"gogo/http\"\nfunc main() {\n\t_, err := http.Get(\"http://a/\", 0)\n\tprintln(err == nil)\n}\n", actorMinor},
+		{"package main\nimport \"gogo/sound\"\nfunc main() {\n\tsound.Play(\"/flash/a.wav\")\n}\n", ifaceMinor},
+		{"package main\nimport \"gogo/tui\"\nfunc main() {\n\tprintln(tui.Width(\"ab\"))\n}\n", ifaceMinor},
+		{"package main\nimport (\n\t\"gogo/screen\"\n\t\"gogo/tui\"\n)\nfunc main() {\n\ttui.Open(screen.Config{})\n}\n", actorMinor},
+		{"package main\nimport \"gogo/node\"\nfunc main() {\n\tprintln(node.Self())\n}\n", actorMinor},
 	} {
 		w := words(compileImage(t, tc.src))
 		if w[1] != 15<<16|tc.minor {
