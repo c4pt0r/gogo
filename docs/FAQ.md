@@ -565,7 +565,7 @@ loop, post messages from any thread (through a `gogo_poster`), register
 your own ports, and give a VM a sandboxed `/flash` directory. From v0.2
 the API is versioned (`gogo_version`, size-first structs that only grow)
 and marks its experimental parts, so a host built against one release
-keeps working with the next. Rust, Go and mobile bindings are planned.
+keeps working with the next. Go programs use the binding `gogotools/embed` (book 18.12); Rust and mobile bindings are planned.
 See book chapter 18.
 
 ### Can actors talk across devices?
