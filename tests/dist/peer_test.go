@@ -72,6 +72,22 @@ func (p *peer) readRaw() []byte {
 	}
 }
 
+// drain moves what the server has sent so far into p.buf without
+// waiting (frames are checked when read), so a peer the test is not
+// reading yet does not back the server's queue to it up.
+func (p *peer) drain() {
+	p.c.SetReadDeadline(time.Now().Add(time.Millisecond))
+	defer p.c.SetReadDeadline(time.Now().Add(20 * time.Second))
+	b := make([]byte, 65536)
+	for {
+		k, err := p.c.Read(b)
+		p.buf = append(p.buf, b[:k]...)
+		if err != nil {
+			return
+		}
+	}
+}
+
 // dial completes a handshake as node name with token.
 func dial(t *testing.T, port int, name, token string) (*peer, error) {
 	c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))

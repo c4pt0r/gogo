@@ -138,23 +138,33 @@ type peer struct {
 	Link actor.PID // the local link actor to it (monitored), or the zero PID (through the relay)
 }
 
-// agentMemory is the agent's memory limit, agentFull the use past which a
-// server refuses new boards (about 930 of them: make test-dist-scale).
-const (
-	agentMemory = 256 * 1024
-	agentFull   = 192 * 1024
-)
+// agentMemory is the agent's memory limit: its state grows with the nodes
+// it knows (a server: one entry per board, up to the link cap; a board:
+// every node of the star), so the VM derives it from the link cap and
+// vm.actor_memory (sys.Config's "node.agent_memory", runtime/vm/params.h):
+// 1 MB on a host VM with the default 512 links, about 720 KB more for
+// 2047. At least 256 KB, a board's ceiling, which it always is there (an
+// older VM, which does not answer, gets that too). A server refuses new
+// boards once the agent uses three quarters of it.
+func agentMemory() int {
+	m := 256 * 1024
+	if v, ok := sys.Config("node.agent_memory"); ok {
+		if n, err := strconv.Atoi(v); err == nil && n > m {
+			m = n
+		}
+	}
+	return m
+}
 
 // agent returns the node agent, starting it on first use.
 func agent() actor.PID {
 	if p, ok := actor.Whereis("node"); ok {
 		return p
 	}
-	// Its state grows with the nodes it knows (a server: one entry per
-	// board, up to the link cap; a board: every node of the star), so it
-	// gets the largest limit an actor can have (256 KB: HEAP_MAX_WORDS);
-	// a board's arena bounds it first. tests/dist fills a server to 512.
-	p := actor.SpawnOpt(agentRun, actor.Options{MaxMemory: agentMemory})
+	// Its limit (agentMemory) follows the link cap; a board's arena
+	// bounds it first. tests/dist fills a server to its link cap.
+	mem := agentMemory()
+	p := actor.SpawnOpt(func() { agentRun(mem / 4 * 3) }, actor.Options{MaxMemory: mem})
 	if actor.Register("node", p) == nil {
 		return p
 	}
@@ -412,8 +422,9 @@ func doorRun(agentPID actor.PID) {
 	}
 }
 
-// agentRun is the node agent; see above.
-func agentRun() {
+// agentRun is the node agent; see above. full is the memory use past which
+// it refuses new boards.
+func agentRun(full int) {
 	var zero actor.PID
 	self := actor.Self()
 	// The link actors and the listener monitor the agent (a monitor is
@@ -541,7 +552,7 @@ func agentRun() {
 			case assignReq: // server: a board passed the handshake
 				// Refused rather than die: past this much state the next
 				// growth of the agent's heap could pass its limit.
-				if r.Name == name || actor.Info(self).Memory > agentFull {
+				if r.Name == name || actor.Info(self).Memory > full {
 					actor.Reply(m, 0)
 					break
 				}

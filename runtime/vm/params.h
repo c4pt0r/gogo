@@ -78,6 +78,20 @@ void vm_params_resolve(const gogo_host *h, void *ctx, const VmParams *set, VmPar
  * port cap (vm_set_max_ports). */
 int vm_params_apply(struct Vm *vm, const VmParams *p);
 
+/* The memory limit, in bytes, a node agent of distributed actors should
+ * have on vm (lib/node spawns it so, and refuses new boards past three
+ * quarters of it): its state grows with the nodes it knows, so it derives
+ * from the link cap and vm.actor_memory: the most of 256 KB (what it had
+ * before, and a board's ceiling), the VM's default actor memory and
+ * NODE_AGENT_LINK_BYTES per link plus NODE_AGENT_BASE, at most the actor
+ * ceiling (GOGO_ACTOR_MAX_WORDS). sys.Config answers it for the name
+ * "node.agent_memory" (longer than any key the store holds), so lib/node
+ * reads it with no image format change; an older VM answers nothing and
+ * the agent keeps 256 KB. */
+#define NODE_AGENT_LINK_BYTES 320u
+#define NODE_AGENT_BASE 65536u
+uint32_t vm_node_agent_bytes(const struct Vm *vm);
+
 /* v as 16K / 1M / 2G when it divides evenly, else in bytes, at p (no
  * NUL); returns the end. At most 20 characters. */
 char *vm_params_put_size(char *p, uint64_t v);

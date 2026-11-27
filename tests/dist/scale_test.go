@@ -47,32 +47,53 @@ func fill(t *testing.T, n int, flags ...string) {
 // The host defaults: 512 boards (the documented number).
 func TestServerFill(t *testing.T) { fill(t, 512) }
 
-// With the caps at the ceiling (2048 ports, 2047 links), boards join
-// until the server's node agent is near its memory limit (256 KB): from
-// then on new boards are refused, and the server and its boards carry on.
-// Run with GOGO_DIST_SCALE set (make test-dist-scale): about 2000 file
+// The server's ceiling: as many boards as it can serve when every one of
+// them calls it. Its node agent's memory no longer bounds it (the limit
+// follows the link cap and vm.actor_memory: 1 MB here, lib/node and
+// runtime/vm/params.h; at 256 KB it stopped near 938 boards); the 65536
+// PID slots do: each board takes a port, and the remote PIDs (its door,
+// its callers) the 4096 - ports slots between DIST_SLOT_BASE and the
+// ports. 1390 ports and 1380 links fill both: 1380 boards join, each
+// finds echo through the server's door, the next one is refused by the
+// link cap, and a board that leaves makes room. (1400 links with 1410
+// ports join, but run out of remote PIDs for the calls.)
+// GOGO_DIST_PORTS and GOGO_DIST_LINKS try other caps. Run with
+// GOGO_DIST_SCALE set (make test-dist-scale): about 1400 file
 // descriptors in the test and as many in the VM.
 func TestServerFillCeiling(t *testing.T) {
 	if os.Getenv("GOGO_DIST_SCALE") == "" {
 		t.Skip("GOGO_DIST_SCALE not set (make test-dist-scale)")
 	}
+	ports, links := os.Getenv("GOGO_DIST_PORTS"), 1380
+	if ports == "" {
+		ports = "1390"
+	}
+	if l, err := strconv.Atoi(os.Getenv("GOGO_DIST_LINKS")); err == nil {
+		links = l
+	}
 	port := freePort(t)
-	srv := startVM(t, "server", []string{"--max-ports", "2048", "--max-links", "2047"}, fmt.Sprintf("test.port=%d", port))
+	srv := startVM(t, "server", []string{"--max-ports", ports, "--max-links", strconv.Itoa(links)}, fmt.Sprintf("test.port=%d", port))
 	srv.waitLine("listening")
 	var ps []*peer
-	for i := 0; i < 2047; i++ {
+	for i := 0; i < links+1; i++ {
 		p, err := dial(t, port, fmt.Sprintf("q%d", i), token)
 		if err != nil {
+			t.Logf("board %d: %v", i+1, err)
 			break
 		}
 		ps = append(ps, p)
+		if len(ps)%200 == 0 { // the server announces every board to every other: take it in
+			for _, q := range ps {
+				q.drain()
+			}
+		}
 	}
 	t.Logf("%d boards joined", len(ps))
-	if len(ps) < 900 {
-		t.Errorf("only %d boards joined", len(ps))
+	if len(ps) != links {
+		t.Errorf("%d boards joined, want the link cap, %d", len(ps), links)
 	}
-	for _, i := range []int{0, len(ps) - 1} {
-		if ps[i].whereis("echo") == 0 {
+	for i, p := range ps { // every board makes a remote PID on the server (its caller's)
+		if p.whereis("echo") == 0 {
 			t.Errorf("board %d: echo not found", i)
 		}
 	}

@@ -40,6 +40,7 @@
 #include "config.h"
 #include "host.h"
 #include "out.h"
+#include "params.h"
 #include <string.h>
 
 /* Number of heap words of a string with len bytes. */
@@ -540,24 +541,41 @@ static uint32_t buf_freeze(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) 
     return R_NORMAL;
 }
 
-/* CONFIG_GET key: sys.Config. "wifi." keys are never looked up. The value
- * is copied straight into a new heap string: one lookup for its length,
- * one into the string; a value whose length changed in between (the store
- * written meanwhile) reads as unset. */
+/* CONFIG_GET key: sys.Config. "wifi." keys are never looked up; the name
+ * "node.agent_memory" (no store key: too long) is the VM's own answer,
+ * vm_node_agent_bytes (params.h). The value is copied straight into a new
+ * heap string: one lookup for its length, one into the string; a value
+ * whose length changed in between (the store written meanwhile) reads as
+ * unset. */
 static uint32_t config_get(Vm *vm, Actor *a, term *R, uint32_t ra, uint32_t rb) {
+    static const char agent[] = "node.agent_memory";
     const uint8_t *k;
     uint32_t kl;
+    char num[10];
     if (!str_view(vm, a, R[rb], &k, &kl)) return R_BAD_CODE;
     int32_t n = -1;
-    if (kl < 5u || memcmp(k, "wifi.", 5) != 0) n = vm_config_get(vm, k, kl, NULL, 0);
+    bool own = kl == sizeof agent - 1u && memcmp(k, agent, kl) == 0;
+    if (own) {
+        uint32_t x = vm_node_agent_bytes(vm), d = 1;
+        while (x / d >= 10u) d *= 10u;
+        for (n = 0; d; d /= 10u) num[n++] = (char)('0' + x / d % 10u);
+    } else if (kl < 5u || memcmp(k, "wifi.", 5) != 0) {
+        n = vm_config_get(vm, k, kl, NULL, 0);
+    }
     term v = T_EMPTYSTR;
     if (n > 0) {
         uint32_t off;
         if (!str_alloc(vm, a, (uint32_t)n, &off)) return R_OUT_OF_MEMORY;
         R = (term *)a->mem + a->fp;
         str_view(vm, a, R[rb], &k, &kl);
-        if (vm_config_get(vm, k, kl, (uint8_t *)(a->mem + off + 2), (uint32_t)n) == n) v = term_from_ref(off);
-        else n = -1;
+        if (own) {
+            memcpy(a->mem + off + 2, num, (size_t)n);
+            v = term_from_ref(off);
+        } else if (vm_config_get(vm, k, kl, (uint8_t *)(a->mem + off + 2), (uint32_t)n) == n) {
+            v = term_from_ref(off);
+        } else {
+            n = -1;
+        }
     }
     R[ra] = v;
     R[ra + 1] = term_from_bool(n >= 0);
