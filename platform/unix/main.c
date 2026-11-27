@@ -551,9 +551,9 @@ int main(int argc, char **argv) {
 #if GOGO_FLOAT
         printf("%s\n", PORT_REQ_FLOAT);
 #endif
-        const char *bp[16];
-        uint32_t n = board_ports_names(&unix_board, bp, 16);
-        for (uint32_t i = 0; i < n && i < 16; i++) printf("%s\n", bp[i]);
+        const char *bp[EMBED_HOST_PORTS];
+        uint32_t n = board_ports_names(&unix_board, bp, EMBED_HOST_PORTS);
+        for (uint32_t i = 0; i < n && i < EMBED_HOST_PORTS; i++) printf("%s\n", bp[i]);
         return EXIT_OK;
     }
     if (info) {

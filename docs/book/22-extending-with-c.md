@@ -539,7 +539,9 @@ fields it lacks take their defaults), and one compiled against a newer
 header works with an older gogo as far as the fields it knows. The
 driver part of the header (`gogo_port_driver`, `gogo_board_port`,
 `GOGO_BOARD_PORT`, `gogo_register_port`, `gogo_port_emit`,
-`gogo_port_close`, `gogo_poster_port_post`) is still marked
+`gogo_port_close`, `gogo_poster_port_post`; a driver also uses
+`gogo_poster_new`, `gogo_poster_free` and `gogo_post`, which are already
+stable) is still marked
 `GOGO_EXPERIMENTAL` in v0.2: it may change in a minor release until
 v0.3, when it joins the promise. The image side needs no rule of its
 own: a driver on `gogo.h` uses only `port.Host`, `port.Post` and the

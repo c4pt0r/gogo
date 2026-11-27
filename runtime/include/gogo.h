@@ -30,9 +30,9 @@
  * their signatures and meaning, and structs only grow at the end. What is
  * marked GOGO_EXPERIMENTAL is outside that promise and may change in any
  * minor release: host ports (with board ports, the driver API: it joins
- * the promise in v0.3, when its functions keep their meaning and its
- * size-first structs only grow, so a driver built against one header
- * runs on later releases of the same major), the fs_root, fs_quota and grant settings,
+ * the promise in v0.3, from when a driver built against one header runs
+ * on later releases of the same major, during 0.x of the same minor:
+ * the rule above), the fs_root, fs_quota and grant settings,
  * the GOGO_CONFIG_CODE_LOAD flag, gogo_get_stats, image inspection, and
  * gogo_posix.h's threads. GOGO_EXPERIMENTAL expands to nothing unless the host defines
  * it before including this header, for example as
@@ -544,6 +544,9 @@ typedef struct gogo_board_port {
      * runtime's and, during 0.x, its minor too (the rule of
      * gogo_version). */
     uint32_t api;
+    /* name, *driver and ctx's object must have static storage duration
+     * (or live as long as the program): the board keeps pointers to them
+     * for its whole run, and a driver's poster may outlive the run. */
     const char *name;                 /* the requirement name: NUL-terminated, at most GOGO_PORT_NAME_MAX bytes */
     const gogo_port_driver *driver;
     void *ctx;                        /* given to every callback */
@@ -569,14 +572,17 @@ extern const char gogo_board_ports_enabled;
 #endif
 #define GOGO_BOARD_PORT_CAT2(a, b) a##b
 #define GOGO_BOARD_PORT_CAT(a, b) GOGO_BOARD_PORT_CAT2(a, b)
-/* At file scope, once per line. */
-#define GOGO_BOARD_PORT(name, driver, ctx)                                                                  \
-    static const gogo_board_port GOGO_BOARD_PORT_CAT(gogo_board_port_, __LINE__) = {                        \
+/* At file scope, any number of times (the identifiers come from
+ * __COUNTER__, which GCC and clang have; the section needs their
+ * attributes anyway). */
+#define GOGO_BOARD_PORT(name, driver, ctx) GOGO_BOARD_PORT_N(name, driver, ctx, __COUNTER__)
+#define GOGO_BOARD_PORT_N(name, driver, ctx, n)                                                             \
+    static const gogo_board_port GOGO_BOARD_PORT_CAT(gogo_board_port_, n) = {                               \
         sizeof(gogo_board_port), GOGO_VERSION, (name), (driver), (ctx) };                                   \
-    static const void *const GOGO_BOARD_PORT_CAT(gogo_board_port_layer_, __LINE__) __attribute__((used)) =  \
+    static const void *const GOGO_BOARD_PORT_CAT(gogo_board_port_layer_, n) __attribute__((used)) =         \
         &gogo_board_ports_enabled;                                                                          \
-    static const gogo_board_port *const GOGO_BOARD_PORT_CAT(gogo_board_port_ref_, __LINE__)                \
-        GOGO_BOARD_PORT_ATTR = &GOGO_BOARD_PORT_CAT(gogo_board_port_, __LINE__)
+    static const gogo_board_port *const GOGO_BOARD_PORT_CAT(gogo_board_port_ref_, n)                       \
+        GOGO_BOARD_PORT_ATTR = &GOGO_BOARD_PORT_CAT(gogo_board_port_, n)
 
 /* ---- posting from other threads ----
  *

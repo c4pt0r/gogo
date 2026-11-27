@@ -8,6 +8,27 @@ the M5StickS3 and the Cardputer ADV. The design is in
 [design.md](design.md); the book's appendix lists the documented limits
 ([13-appendices.md](book/13-appendices.md)).
 
+## Breaking changes since v0.2.0
+
+Embedding hosts written for v0.2.0 (the host-port API was marked
+experimental) need these checks:
+
+- **A host port's refusal is its code.** A host port's `open` that
+  returns a negative `GOGO_E*` of a shared code now makes `port.Open`
+  fail with that code (`GOGO_EINVAL`: `errors.BadArg`, `GOGO_ENOMEM`:
+  `errors.NoMemory`); in v0.2.0 every refusal was `errors.Busy`. Note
+  that `-1` is `GOGO_ENOTFOUND`, so a host that refused with `return -1`
+  now gives programs `errors.NotFound`, which they may read as "no such
+  driver": return `GOGO_EBUSY` to keep `errors.Busy`. Any other nonzero
+  value (`GOGO_ESTATE`, a positive one) is still `errors.Busy`. The Go
+  binding's `Open` passes an `embed.Errno` through the same way.
+- **Host port names.** `gogo_register_port` (and the Go binding's
+  `RegisterPort`) takes names of letters, digits, `_`, `-` and `.` only,
+  at most 31 bytes, a `.` never first, last or doubled; any other name
+  is now `GOGO_EINVAL`. Undotted names stay valid for hosts.
+- **gogo_close_posts with a board handle** does nothing (board ports are
+  new in this release; in an embedding host it closes posts as before).
+
 ## Breaking changes since v0.1.0
 
 Programs written for v0.1.0 need these edits, and every image must be
@@ -1129,19 +1150,10 @@ rebuilt:
   `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`,
   `gogo_poster_port_post`) keeps `GOGO_EXPERIMENTAL` and may change in a
   minor release; book 22.8 has the rules it will then follow.
-- **A host port's refusal is its code (changed in this release).** A
-  host or board port's `open` that returns a negative `GOGO_E*` of a
-  shared code now makes `port.Open` fail with that code; before, every
-  refusal was `errors.Busy`. A host that returned `GOGO_EINVAL` (or -1,
-  which is `GOGO_ENOTFOUND`) for "taken" should return `GOGO_EBUSY` to
-  keep `errors.Busy`. Other nonzero values are still `errors.Busy`.
-- **Port names: a charset, and a vendor prefix on boards (changed in
-  this release).** `gogo_register_port` takes names of letters, digits,
-  `_`, `-` and `.` only (a `.` never first, last or doubled), at most 31
-  bytes: a name with a space, `/`, `,` or another character is now
-  `GOGO_EINVAL`. A board port's name must also have a `.` (`acme.dice`):
-  gogo's own driver names never do, so the two never collide. Host ports
-  may stay undotted, so existing hosts keep their names.
+- **Changed refusal codes and name rules for host ports**: see
+  "Breaking changes since v0.2.0" above. A board port's name must also
+  have a `.` (`acme.dice`): gogo's own driver names never do, so the two
+  never collide.
 - **No posts from an interrupt handler.** A board port's events come
   from its callbacks (`gogo_port_emit`) or from a task through a poster;
   a post allocates, so an ISR hands its data to a task first. The event
@@ -1150,6 +1162,10 @@ rebuilt:
   `ports.post_bytes` of posts (16 KB on the ESP32-S3, 1 MB in `gogovm`):
   a fast driver task meets `GOGO_EFULL` and must wait for room, and a
   single post larger than the budget never fits.
+- **An open board port keeps the VM alive.** A `gogo.h` driver cannot
+  say that a port only answers commands, so a program that leaves one
+  open never ends while its owner lives (the runtime's own drivers can).
+  *Planned:* a flag appended to `gogo_port_driver` (0: as now).
 - **No byte-stream helper.** A `gogo.h` driver has `port.Post` commands
   and events, not the `port.Chunk` / `Out` / `Done` protocol with its
   flow control.

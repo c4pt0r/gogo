@@ -245,5 +245,11 @@ void board_ports_loaded(struct EmbedPorts *ep) { ep->loaded = true; }
 
 void board_ports_end(struct EmbedPorts *ep) {
     embed_set_state(ep, EMBED_CLOSED);
+    /* As gogo_free: a post that saw the state LIVE finishes its push (a
+     * copy and a CAS) before the inbox is cleared, so none is left in it;
+     * after a while, let a preempted poster run. */
+    for (unsigned spins = 0; __atomic_load_n(&ep->posting, __ATOMIC_SEQ_CST) != 0; spins++) {
+        if (spins >= 1000u && ep->uh->wait) ep->uh->wait(ep->uctx, 1);
+    }
     inbox_clear(&ep->inbox, ep->uh, ep->uctx);
 }

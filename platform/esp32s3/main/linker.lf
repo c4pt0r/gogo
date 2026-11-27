@@ -13,7 +13,9 @@ entries:
 
 # Board ports (gogo.h GOGO_BOARD_PORT, runtime/board/board_ports.c): the
 # pointers every component lays in .gogo_board_port, kept (no code refers
-# to them) and bounded by _gogo_board_ports_start / _end, in link order.
+# to them) and bounded by _gogo_board_ports_start / _end, in link order;
+# aligned first, so the start symbol is the first entry's address whatever
+# section ldgen puts before it.
 [sections:gogo_board_port]
 entries:
     .gogo_board_port
@@ -26,4 +28,4 @@ entries:
 archive: *
 entries:
     * (gogo_board_port_default);
-        gogo_board_port -> flash_rodata KEEP() SURROUND(gogo_board_ports)
+        gogo_board_port -> flash_rodata KEEP() ALIGN(4, pre) SURROUND(gogo_board_ports)
