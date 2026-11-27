@@ -123,12 +123,23 @@ busy loop cannot freeze the other actors, even `for { n++ }`.
 A PID variable that was never set holds the zero PID. You can also write
 it as `actor.PID{}` or `actor.NoPID` (a read-only package-level
 variable). It names no actor, so it is a safe "nobody yet" value: compare
-with it (`if w == actor.NoPID`) to see whether a PID was set. Using it is
-never a crash: a `Send` to it is dropped, a `Call` to it fails at once
-with `errors.NoProc` (4.3), and `Monitor` or `Link` of it behaves as for
-an actor that has exited (a `DownMsg` or exit signal with reason
-`actor.NoProc` arrives at once; chapter 5). `Whereis` of an unknown name
-and a failed `port.Open` return it.
+with it (`if w == actor.NoPID`) to see whether a PID was set. Each actor
+builtin treats it as an actor that has exited:
+
+| Function | With the zero PID |
+|---|---|
+| `Send(p, m)`, `SendAfter(p, m, ms)` | the message is dropped (`SendAfter` still returns a Ref) |
+| `Call(p, req, ms)` | fails at once with `errors.NoProc` (4.3) |
+| `Register(name, p)` | fails with `errors.NoProc` (4.4) |
+| `Monitor(p)` | a `DownMsg` with reason `actor.NoProc` arrives at once (chapter 5) |
+| `Link(p)` | the exit signal `actor.NoProc` arrives at once: it **ends the caller** unless the caller traps exits, and then it is an `ExitMsg` (chapter 5) |
+| `Unlink(p)`, `Kill(p, code)` | nothing |
+| `Info(p)` | `Memory` 0 |
+
+`Whereis` of an unknown name and a failed `port.Open` return it. It
+prints as `<pid 0>`, which is also how `println` shows the main actor's
+PID (`println` shows only a PID's slot, chapter 5); compare with `==`,
+which tells them apart.
 
 ## 4.2 Type switches: reading messages
 
