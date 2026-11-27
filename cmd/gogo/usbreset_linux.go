@@ -4,7 +4,8 @@ package main
 // node, /dev/bus/usb/BBB/DDD, found from the tty through sysfs
 // (sysfsUSBDevice). The node is usually writable by root only; a udev rule
 // for the Espressif vendor id (docs/known-issues.md) lets the user reset it.
-// cdc_acm keeps its tty across the reset.
+// cdc_acm has no post_reset, so the reset unbinds and rebinds it: the tty
+// goes and is made anew (waitPort waits for that).
 
 import (
 	"errors"
@@ -15,8 +16,9 @@ import (
 	"unsafe"
 )
 
-// usbResetRemovesPort: cdc_acm keeps the tty through a reset.
-const usbResetRemovesPort = false
+// portReady reports whether this user may open port (udev sets the
+// group of a new tty a moment after it appears).
+func portReady(port string) bool { return syscall.Access(port, 0x6) == nil } // R_OK|W_OK
 
 const (
 	usbdevfsReset = 0x5514 // _IO('U', 20)

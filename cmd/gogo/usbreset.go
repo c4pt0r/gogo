@@ -107,8 +107,9 @@ type usbEnv struct {
 	reset func(port string) (string, error)
 	// holders lists the other processes that have port open.
 	holders func(port string) ([]int, error)
-	// wait returns once port is back after a reset.
-	wait func(port string) error
+	// wait returns once port is back after a reset; before is its node
+	// as it was before (nil if unknown).
+	wait func(port string, before os.FileInfo) error
 	// probe reports whether the USB device behind port is silent: its
 	// string descriptor 0 times out or cannot be read. Any other failure
 	// of the request, or of reaching the device, is an error.
@@ -120,7 +121,9 @@ type usbEnv struct {
 // defaultUSBEnv is the real one, on this OS.
 func defaultUSBEnv() usbEnv {
 	return usbEnv{reset: usbResetPort, holders: portHolders, probe: usbProbe, getenv: os.Getenv,
-		wait: func(port string) error { return waitPort(port, usbResetRemovesPort, os.Stat, time.Sleep) }}
+		wait: func(port string, before os.FileInfo) error {
+			return waitPort(port, before, os.Stat, portReady, time.Sleep)
+		}}
 }
 
 // addNoUSBResetFlag defines -no-usb-reset on fs.
@@ -187,12 +190,13 @@ func (r *usbRecovery) recover(port string) error {
 	if err := checkPortFree(port, r.env.holders); err != nil {
 		return fmt.Errorf("the board's USB link is silent, but not resetting it: %v", err)
 	}
+	before, _ := os.Stat(port)
 	if _, err := r.env.reset(port); err != nil {
 		return err
 	}
 	fmt.Fprintln(r.errOut, usbResetLine)
 	if r.env.wait != nil {
-		return r.env.wait(port)
+		return r.env.wait(port, before)
 	}
 	return nil
 }
@@ -243,23 +247,24 @@ func checkPortFree(port string, holders func(string) ([]int, error)) error {
 	return nil
 }
 
-// waitPort waits, after a reset, for the port to come back: on an OS where
-// the reset removes it (removes), first for it to go (up to 1.5 s); then
-// for it to exist (up to 4 s), plus a moment for the driver to settle.
-func waitPort(port string, removes bool, stat func(string) (os.FileInfo, error), sleep func(time.Duration)) error {
+// waitPort waits, after a reset, for the port to come back. before is
+// the port's node as it was before the reset (nil if unknown). First the
+// old node must go or be replaced by a new one (up to 2 s): macOS removes
+// the port while the device re-enumerates, and Linux's cdc_acm drops its
+// tty and makes it anew. A node that never changes is taken as kept. Then
+// the port must exist and be usable (ready: udev may not have set its
+// group yet) for up to 4 s, plus a moment for the driver to settle.
+func waitPort(port string, before os.FileInfo, stat func(string) (os.FileInfo, error), ready func(string) bool, sleep func(time.Duration)) error {
 	const step = 100 * time.Millisecond
-	if removes {
-		for i := 0; i < 15; i++ {
-			if _, err := stat(port); err != nil {
-				break
-			}
-			sleep(step)
+	for i := 0; i < 20; i++ {
+		fi, err := stat(port)
+		if err != nil || before == nil || !os.SameFile(before, fi) {
+			break
 		}
-	} else {
-		sleep(3 * step)
+		sleep(step)
 	}
 	for i := 0; i < 40; i++ {
-		if _, err := stat(port); err == nil {
+		if _, err := stat(port); err == nil && ready(port) {
 			sleep(3 * step)
 			return nil
 		}
@@ -277,13 +282,14 @@ func deviceUSBReset(port string, env usbEnv, out io.Writer) error {
 	if err := checkPortFree(port, env.holders); err != nil {
 		return fmt.Errorf("gogo device: not resetting: %v", err)
 	}
+	before, _ := os.Stat(port)
 	desc, err := env.reset(port)
 	if err != nil {
 		return fmt.Errorf("gogo device: %v", err)
 	}
 	fmt.Fprintf(out, "reset %s (USB bus reset; the chip keeps running)\n", desc)
 	if env.wait != nil {
-		if err := env.wait(port); err != nil {
+		if err := env.wait(port, before); err != nil {
 			return fmt.Errorf("gogo device: %v", err)
 		}
 	}

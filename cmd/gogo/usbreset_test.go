@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +110,7 @@ func (f *fakeUSB) env() usbEnv {
 			return "USB device 303a:1001 at location 0x05100000", nil
 		},
 		holders: func(string) ([]int, error) { return f.holders, nil },
-		wait:    func(string) error { return nil },
+		wait:    func(string, os.FileInfo) error { return nil },
 		probe:   func(string) (bool, error) { f.probes++; return f.silent, f.probeErr },
 		getenv:  func(string) string { return "" },
 	}
@@ -352,32 +351,54 @@ func TestMonitorRecoversSilentLink(t *testing.T) {
 }
 
 func TestWaitPort(t *testing.T) {
-	seq := func(present ...bool) func(string) (os.FileInfo, error) {
-		i := 0
-		return func(string) (os.FileInfo, error) {
-			p := present[min(i, len(present)-1)]
-			i++
-			if p {
-				return nil, nil
-			}
-			return nil, fs.ErrNotExist
+	dir := t.TempDir()
+	port := filepath.Join(dir, "cu.usbmodem1")
+	mk := func() {
+		if err := os.WriteFile(port, nil, 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
-	var slept time.Duration
-	sleep := func(d time.Duration) { slept += d }
-	// macOS: there, gone, back.
-	if err := waitPort("/dev/x", true, seq(true, true, false, false, true), sleep); err != nil {
+	// steps[i] runs at the i-th sleep: the device's node coming and going.
+	run := func(before bool, ready func(string) bool, steps ...func()) (error, time.Duration) {
+		mk()
+		var fi os.FileInfo
+		if before {
+			fi, _ = os.Stat(port)
+		}
+		var slept time.Duration
+		n := 0
+		sleep := func(d time.Duration) {
+			slept += d
+			if n < len(steps) && steps[n] != nil {
+				steps[n]()
+			}
+			n++
+		}
+		return waitPort(port, fi, os.Stat, ready, sleep), slept
+	}
+	always := func(string) bool { return true }
+	gone := func() { os.Remove(port) }
+	back := func() { mk() }
+	// macOS: there for a while, gone, back.
+	if err, _ := run(true, always, nil, nil, gone, nil, back); err != nil {
 		t.Errorf("removed and back: %v", err)
 	}
-	// Linux: never gone.
-	if err := waitPort("/dev/x", false, seq(true), sleep); err != nil {
-		t.Errorf("kept: %v", err)
+	// Linux: the tty replaced by a new node (a new inode) at once.
+	if err, _ := run(true, always, func() { os.Remove(port); writeFile(t, dir, "other", ""); mk() }); err != nil {
+		t.Errorf("replaced: %v", err)
 	}
-	slept = 0
-	if err := waitPort("/dev/x", true, seq(true, false), sleep); err == nil || !strings.Contains(err.Error(), "did not come back") {
-		t.Errorf("never back: %v", err)
-	} else if slept > 7*time.Second {
-		t.Errorf("waited %v", slept)
+	// The old node is not taken for the new one while it lasts (2 s).
+	if err, slept := run(true, always); err != nil || slept < 2*time.Second {
+		t.Errorf("kept: %v after %v", err, slept)
+	}
+	// Back, but not usable yet (udev): waited for.
+	tries := 0
+	if err, _ := run(true, func(string) bool { tries++; return tries > 3 }, gone, back); err != nil || tries != 4 {
+		t.Errorf("not ready: %v, %d tries", err, tries)
+	}
+	// Never back.
+	if err, slept := run(true, always, gone); err == nil || !strings.Contains(err.Error(), "did not come back") || slept > 7*time.Second {
+		t.Errorf("never back: %v after %v", err, slept)
 	}
 }
 

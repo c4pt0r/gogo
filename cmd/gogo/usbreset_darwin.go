@@ -38,9 +38,8 @@ var libc_dlopen_trampoline_addr, libc_dlsym_trampoline_addr uintptr
 //go:linkname syscall_syscall6 syscall.syscall6
 func syscall_syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
 
-// usbResetRemovesPort: re-enumerating the device removes its serial port
-// for a moment.
-const usbResetRemovesPort = true
+// portReady reports whether this user may open port.
+func portReady(port string) bool { return syscall.Access(port, 0x6) == nil } // R_OK|W_OK
 
 // ccall calls the C function at fn with up to 6 integer or pointer
 // arguments. uintptrescapes keeps a Go pointer converted to uintptr in the

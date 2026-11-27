@@ -7,7 +7,7 @@ import "errors"
 // Windows and the rest: no USB reset (it would need SetupAPI); the hint
 // says to replug the board.
 
-const usbResetRemovesPort = true
+func portReady(port string) bool { return true }
 
 var errNoUSBReset = errors.New("gogo cannot reset a USB device on this OS: " + replugHint)
 
