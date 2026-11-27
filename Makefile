@@ -114,6 +114,7 @@ site:
 	$(MDBOOK) build docs/book -d $(CURDIR)/$(SITE)/book
 	rm -rf $(SITE)/book/examples $(SITE)/book/book.toml
 	cp site/index.html $(SITE)/index.html
+	cp -R site/.well-known $(SITE)/.well-known
 	mkdir -p $(SITE)/logos $(SITE)/book/logos
 	cp $(SITE_LOGOS) $(SITE)/logos/
 	cp $(BOOK_LOGOS) $(SITE)/book/logos/
