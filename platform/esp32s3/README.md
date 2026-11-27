@@ -825,7 +825,11 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
 
   An open port takes about 65 KB (the controller, the NimBLE host with
   its mbuf pools, transport buffers and 5 KB task) and gives it back at
-  close. Without PSRAM a TLS connection's buffers (about 36 KB at their
+  close. `hal_start` refuses (`errors.NoMemory`, nothing started) below
+  80 KB free or without a 16 KB free block (`BLE_OPEN_MIN_FREE`,
+  `BLE_OPEN_MIN_BLOCK`): NimBLE asserts on some failed allocations
+  instead of returning an error. The serial log says `gogo: ble:
+  started: internal free A -> B (least C, ...)` at each open. Without PSRAM a TLS connection's buffers (about 36 KB at their
   peak) come from the same internal RAM, which leaves about 40 KB free at
   the worst moment with Wi-Fi, TLS and the port together; the VM arena
   (160 KB) is allocated before and is not part of these figures. Not yet

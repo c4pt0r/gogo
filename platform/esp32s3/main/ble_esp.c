@@ -34,6 +34,16 @@
 #include "os/os_mbuf.h"
 
 
+/* hal_start's floor (internal RAM, bytes): a start takes about 65 KB
+ * (measured on the StickS3: free heap before and after, and the least
+ * free during it, which the "started" log line reports), and its largest
+ * single allocation is a mbuf pool of about 8.5 KB (24 blocks of 352
+ * bytes). 15 KB above the first and twice the second leave the rest of
+ * the firmware room. Below either, port.Open fails with errors.NoMemory
+ * and nothing is started. */
+#define BLE_OPEN_MIN_FREE  (80u * 1024u)
+#define BLE_OPEN_MIN_BLOCK (16u * 1024u)
+
 static BleBoard board;
 static StaticSemaphore_t mu_buf;
 static SemaphoreHandle_t mu;     /* board's queue, the values, conn, running */
@@ -245,7 +255,21 @@ static void drop_values(void) {
 static int hal_start(void *ctx, const BleConfig *c) {
     (void)ctx;
     if (ble_prov_active()) return GOGO_E_BUSY;
-    if (ble_host_acquire() != 0) return GOGO_E_IO;
+    /* NimBLE asserts (a panic, then a reboot that may loop) on some failed
+     * allocations instead of returning an error: open only with the
+     * internal RAM the start was measured to need, and a margin. */
+    size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (before < BLE_OPEN_MIN_FREE || largest < BLE_OPEN_MIN_BLOCK) {
+        platform_esp_log("gogo: ble: not enough internal RAM to start (free %u, largest %u; needs %u, %u)",
+                         (unsigned)before, (unsigned)largest, (unsigned)BLE_OPEN_MIN_FREE, (unsigned)BLE_OPEN_MIN_BLOCK);
+        return GOGO_E_NOMEMORY;
+    }
+    bool watching = heap_caps_monitor_local_minimum_free_size_start() == ESP_OK;
+    if (ble_host_acquire() != 0) {
+        if (watching) (void)heap_caps_monitor_local_minimum_free_size_stop();
+        return GOGO_E_IO;
+    }
     cfg = *c;
     int rc = build_gatt();
     if (rc == 0) rc = ble_hs_id_infer_auto(0, &own_addr);
@@ -261,8 +285,14 @@ static int hal_start(void *ctx, const BleConfig *c) {
         running = false;
         xSemaphoreGive(mu);
         ble_host_release();
+        if (watching) (void)heap_caps_monitor_local_minimum_free_size_stop();
         return rc == BLE_HS_ENOMEM ? GOGO_E_NOMEMORY : GOGO_E_IO;
     }
+    size_t low = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (watching) (void)heap_caps_monitor_local_minimum_free_size_stop();
+    platform_esp_log("gogo: ble: started: internal free %u -> %u (least %u, largest block before %u)", (unsigned)before,
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), (unsigned)low,
+                     (unsigned)largest);
     return 0;
 }
 

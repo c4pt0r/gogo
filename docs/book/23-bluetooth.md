@@ -57,7 +57,8 @@ p, err := ble.Open(ble.Config{
 `Open` starts advertising at once and makes the caller the port's owner.
 It fails with `errors.BadArg` for a Config it cannot use (an empty or long
 name, a malformed UUID, a characteristic without flags, a service without
-characteristics), `errors.Busy` if the radio is taken (one `ble` port per
+characteristics), `errors.NoMemory` on a board with too little internal
+RAM to start Bluetooth (23.7), `errors.Busy` if the radio is taken (one `ble` port per
 board; or the firmware's Wi-Fi setup from a phone, section 2.1, holds the
 radio: it runs only at boot, before any program, so a program does not
 meet it in practice), and
@@ -368,8 +369,13 @@ disconnect.
 - **Memory.** BLE is in the default firmware of both boards. The firmware
   is about 133 KB larger with it, and the Bluetooth controller keeps
   about 22 KB of internal RAM even while no port is open. An open port
-  costs about 60 KB more of internal RAM (the NimBLE
+  costs about 65 KB more of internal RAM (the NimBLE
   host and the controller's connection state, freed when the port closes).
+  `ble.Open` checks first: with less than 80 KB of internal RAM free (or
+  no free block of 16 KB) it fails with `errors.NoMemory` and starts
+  nothing, rather than letting the Bluetooth stack run out halfway (which
+  would crash the board). On the Cardputer (no PSRAM) open the port before
+  a TLS connection, or close the connection first.
   The driver's own state is fixed (about 3 KB). A firmware for a program
   that never uses Bluetooth can leave it out: `gogo firmware -without ble`
   (chapter 12).

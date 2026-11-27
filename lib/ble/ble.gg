@@ -170,6 +170,8 @@ const (
 // long Name, a malformed UUID, a characteristic without flags, a service
 // without characteristics), errors.TooMany over a limit (MaxServices,
 // MaxChars, MaxCharsPerService), errors.NotFound on a board without BLE,
+// errors.NoMemory when the board has too little internal RAM to start the
+// Bluetooth stack (about 80 KB on the ESP32-S3),
 // errors.Busy if the radio is taken (a ble port is open, Wi-Fi
 // provisioning runs), or as port.Open does.
 func Open(cfg Config) (actor.PID, error) {
