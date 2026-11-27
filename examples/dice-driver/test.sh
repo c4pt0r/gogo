@@ -2,10 +2,10 @@
 # Runs examples/dice-driver (book chapter 22) and checks the chapter
 # against the code it shows (`make example-driver`):
 #   gogovm built with dice/ (DICE_DRIVER)  the program: stdout must equal
-#                                 driver.out; --provides lists dice
+#                                 driver.out; --provides lists example.dice
 #   dice-host dice.ggb            the same driver as a host port of a
 #                                 program on libgogo.a: stdout driver.out
-#   gogo run (plain gogovm)       refused: the image requires "dice" (exit 3)
+#   gogo run (plain gogovm)       refused: the image requires "example.dice" (exit 3)
 #   dice/ uses gogo.h only        no VM header is included
 #   docs/book/22-extending-with-c.md
 #                                 every c block is cut verbatim from a source
@@ -34,12 +34,12 @@ for run in gogovm dice-host; do
         [ -s "$T/err" ] && { echo "FAIL $run: stderr"; cat "$T/err"; fail=1; }
     else echo "FAIL $run: exit status"; cat "$T/err"; fail=1; fi
 done
-if "$B/dice-driver/gogovm" --provides | grep -qx dice; then echo "ok   gogovm --provides lists dice"
+if "$B/dice-driver/gogovm" --provides | grep -qx example.dice; then echo "ok   gogovm --provides lists example.dice"
 else echo "FAIL gogovm --provides"; fail=1; fi
 
 GOGO_VM="$B/gogovm" "$B/gogo" run "$D" > "$T/out" 2> "$T/err"
 rc=$?
-if [ $rc = 3 ] && grep -q "requires dice" "$T/err"; then echo "ok   plain gogovm refuses it (requires dice)"
+if [ $rc = 3 ] && grep -q "requires example.dice" "$T/err"; then echo "ok   plain gogovm refuses it (requires example.dice)"
 else echo "FAIL gogovm: exit $rc"; cat "$T/err"; fail=1; fi
 
 # The driver needs gogo.h and nothing else of the tree.

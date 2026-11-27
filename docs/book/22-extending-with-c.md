@@ -63,7 +63,7 @@ break at the first such call.
   that needs a driver the firmware lacks, before any of its code runs:
 
   ```
-  gogo: image requires dice, which this VM lacks
+  gogo: image requires example.dice, which this VM lacks
   ```
 
   With FFI there would be nothing to check: a missing or different C
@@ -86,7 +86,7 @@ property above.
 | Choose it for | a product's own hardware, anything outside this tree | gogo's own drivers |
 
 Both speak to gogo code the same way: a name for `port.Open`, which is
-also the image's requirement (an image that needs `dice` is refused at
+also the image's requirement (an image that needs `example.dice` is refused at
 load by a VM without it), commands as messages to the port, events as
 messages to its owner. Only the C side differs. **Write a third-party
 driver on `gogo.h`.**
@@ -97,7 +97,7 @@ driver on `gogo.h`.**
 written the way someone outside the project would write one. The
 protocol:
 
-- `port.Open("dice", port.Host{Arg: seed})`: seed must be positive, else
+- `port.Open("example.dice", port.Host{Arg: seed})`: seed must be positive, else
   the open fails with `errors.BadArg`;
 - `actor.Send(p, port.Post{Kind: n})`: roll n dice (1 to 10);
 - one event `port.Post{From: p, Kind: face}` per die.
@@ -112,7 +112,7 @@ examples/dice-driver/
   host.c               an embedding host with the driver (22.5)
   dice/                the driver, an ESP-IDF component
     CMakeLists.txt
-    gogo-driver.json   {"ports": ["dice"]}: what it provides (22.4)
+    gogo-driver.json   {"ports": ["example.dice"]}: what it provides (22.4)
     dice.h             the driver's table and state
     dice.c             the driver
     dice_port.c        GOGO_BOARD_PORT: the board's registration (22.4)
@@ -228,14 +228,23 @@ the driver's own, does it:
 ```c
 static DiceTable dice_table;   /* a board runs one VM */
 
-GOGO_BOARD_PORT("dice", &dice_driver, &dice_table);
+GOGO_BOARD_PORT("example.dice", &dice_driver, &dice_table);
 ```
+
+**The name.** A board port's name has a vendor prefix: at least one
+`.`, as in `example.dice` or `acme.sensor`, then letters, digits, `_`
+and `-`, at most 31 bytes. gogo's own drivers never have a `.` in their
+names (a test keeps it so), so a third-party port can never be shadowed
+by a driver a later gogo adds (a `ble` of yours would be, the day gogo
+gets its own). An embedding host's ports may do without the prefix (the
+names hosts registered before this rule keep working), but should have
+one too.
 
 `GOGO_BOARD_PORT(name, &driver, ctx)` puts a constant entry in a linker
 section; no code runs to register it, and no gogo file names it. At
 boot, after the VM is made and before the image loads, the firmware (and
 `gogovm`) walks the section and registers every entry as
-`gogo_register_port` would, so an image's requirement `dice` is
+`gogo_register_port` would, so an image's requirement `example.dice` is
 satisfied. Entries are registered in name order. One the board refuses,
 because its name is a runtime driver's (`gpio`, `tcp`, ...) or the
 board's, or it is longer than 31 bytes, or a board has more than 8, is
@@ -269,7 +278,7 @@ out and the port with it. Beside it, `gogo-driver.json` tells `gogo
 firmware` which requirement names the component provides:
 
 ```json
-{"ports": ["dice"]}
+{"ports": ["example.dice"]}
 ```
 
 Then one command builds a firmware with it, for the images that need
@@ -282,9 +291,9 @@ board ports: dice
 ...
 ```
 
-`gogo firmware` accepts the images' requirement `dice` because the
+`gogo firmware` accepts the images' requirement `example.dice` because the
 component provides it (without `-component` it stops: "the images
-require "dice", which no gogo firmware provides"), turns on the
+require "example.dice", which no gogo firmware provides"), turns on the
 firmware's host-port layer (`CONFIG_GOGO_BOARD_PORTS`) and passes the
 directory to `idf.py` as `EXTRA_COMPONENT_DIRS` (chapter 12). Flash it
 as any firmware (`idf.py flash`, or `gogo setup -release-url` with the
@@ -292,7 +301,7 @@ build's files), and the program runs:
 
 ```
 $ gogo device info
-... provides=gpio,netif,...,/flash,float,dice
+... provides=gpio,netif,...,/flash,float,example.dice
 $ gogo flash dice.ggb
 ```
 
@@ -311,7 +320,7 @@ ESP-only hardware files of a component, by convention), and then:
 
 ```
 $ build/gogovm --provides | tail -1
-dice
+example.dice
 $ gogo run examples/dice-driver
 open with seed 0: bad argument
 ...
@@ -332,7 +341,7 @@ the driver:
     static DiceTable table;
     gogo_vm *vm = NULL;
     int rc = gogo_new_posix(NULL, &vm);
-    if (rc == GOGO_OK) rc = gogo_register_port(vm, "dice", 4, &dice_driver, &table);   /* before the load */
+    if (rc == GOGO_OK) rc = gogo_register_port(vm, "example.dice", 12, &dice_driver, &table);   /* before the load */
     if (rc == GOGO_OK) rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);
     if (rc == GOGO_OK) rc = gogo_run(vm);
 ```
@@ -365,10 +374,10 @@ func roll(who string, p actor.PID, n int) {
 }
 
 func main() {
-	_, err := port.Open("dice", port.Host{Arg: 0})
+	_, err := port.Open("example.dice", port.Host{Arg: 0})
 	println("open with seed 0:", err.Error())
 
-	p, err := port.Open("dice", port.Host{Arg: 42})
+	p, err := port.Open("example.dice", port.Host{Arg: 42})
 	println("open with seed 42:", err == nil)
 	roll("main", p, 3)
 	roll("main", p, 5)
@@ -397,7 +406,7 @@ slot. On a plain `gogovm` the image does not start at all:
 
 ```
 $ gogo run examples/dice-driver
-gogo: image requires dice, which this VM lacks
+gogo: image requires example.dice, which this VM lacks
 ```
 
 `make example-driver` (part of `make test`) runs the program on a

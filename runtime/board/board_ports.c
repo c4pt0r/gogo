@@ -56,8 +56,10 @@ static size_t next_entry(size_t prev) {
     return best;
 }
 
-/* A verdict of its own: another entry has the same name. */
+/* Verdicts of their own: another entry has the same name; the name has
+ * no vendor prefix. */
 #define BP_TWICE 1
+#define BP_NODOT 2
 
 /* True if an entry other than i has i's name. */
 static bool named_twice(size_t i) {
@@ -77,7 +79,11 @@ static int verdict(const VmBoard *b, const gogo_board_port *e, const char *const
     if (e->size < ENTRY_SIZE_V1 || e->reserved || !e->name || !e->name[0] || !d || d->size < EMBED_DRIVER_SIZE_V1 ||
         d->reserved)
         return GOGO_EINVAL;
-    if (strlen(e->name) > GOGO_PORT_NAME_MAX) return GOGO_E2BIG;
+    size_t nl = 0;
+    while (nl <= GOGO_PORT_NAME_MAX && e->name[nl]) nl++;   /* stops past the longest name */
+    int nc = embed_name_check(e->name, nl, false);
+    if (nc) return nc;
+    if (embed_name_check(e->name, nl, true)) return BP_NODOT;
     if (embed_name_reserved(b->ports, e->name)) return GOGO_EEXIST;
     for (uint32_t k = 0; k < na; k++)
         if (!strcmp(acc[k], e->name)) return GOGO_EEXIST;
@@ -148,9 +154,10 @@ static void reg_one(void *ctx, const gogo_board_port *e, int v) {
     char m[200];
     const char *why = v == BP_TWICE   ? "two board ports have this name (none of them is registered)"
                       : v == GOGO_EEXIST ? "the name is taken (by a driver of the runtime or the board)"
-                      : v == GOGO_E2BIG ? "the name is too long"
+                      : v == BP_NODOT ? "a board port's name needs a vendor prefix and a '.' (\"acme.sensor\")"
+                      : v == GOGO_E2BIG ? "the name is too long (31 bytes at most)"
                       : v == GOGO_EFULL ? "too many board ports"
-                      : v == GOGO_EINVAL ? "a bad entry (its size, name or driver)"
+                      : v == GOGO_EINVAL ? "a bad name (letters, digits, '_', '-', '.') or entry (its size or driver)"
                                          : "refused";
     int n = snprintf(m, sizeof m, "gogo: board port \"%.40s\" not registered: %s\n", e->name ? e->name : "", why);
     if (n > 0) r->h->write(NULL, 2, m, (size_t)n < sizeof m ? (size_t)n : sizeof m - 1u);

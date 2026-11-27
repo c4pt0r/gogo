@@ -1,7 +1,8 @@
-/* Board ports for the board-port tests (test.sh): "zeta" and "beta",
- * registered in this order in the source but in name order at boot; two
- * "alpha"s (here and in dup.c), "gpio" (the board's) and a name too long
- * are refused with a boot line each. Each port's open sends its owner one
+/* Board ports for the board-port tests (test.sh): "test.zeta" and
+ * "test.beta", registered in this order in the source but in name order
+ * at boot; two "test.alpha"s (here and in dup.c), "gpio" (no vendor
+ * prefix, and the board's), a name too long and one with a space are
+ * refused with a boot line each. Each port's open sends its owner one
  * event whose Data is the port's ctx. */
 #include <string.h>
 #include "gogo.h"
@@ -15,6 +16,6 @@ static int named_open(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const
 
 const gogo_port_driver named_driver = { .size = sizeof(gogo_port_driver), .open = named_open };
 
-GOGO_BOARD_PORT("zeta", &named_driver, "zeta");
-GOGO_BOARD_PORT("alpha", &named_driver, "alpha (first)");
-GOGO_BOARD_PORT("beta", &named_driver, "beta");
+GOGO_BOARD_PORT("test.zeta", &named_driver, "zeta");
+GOGO_BOARD_PORT("test.alpha", &named_driver, "alpha (first)");
+GOGO_BOARD_PORT("test.beta", &named_driver, "beta");

@@ -6,6 +6,6 @@ package main
 import "gogo/port"
 
 func main() {
-	_, err := port.Open("ticker", port.Host{Arg: 100000})
+	_, err := port.Open("test.ticker", port.Host{Arg: 100000})
 	println("open", err == nil)
 }

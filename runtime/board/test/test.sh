@@ -14,7 +14,7 @@ T=$B/board-ports/run
 rm -rf "$T"; mkdir -p "$T"
 fail=0
 
-printf 'beta\nrefuser\nticker\nzeta\n' > "$T/provides.want"
+printf 'test.beta\ntest.refuser\ntest.ticker\ntest.zeta\n' > "$T/provides.want"
 "$VM" --provides | tail -4 > "$T/provides"
 if cmp -s "$T/provides.want" "$T/provides"; then echo "ok   provides: board ports in name order, refused ones left out"
 else echo "FAIL provides"; diff "$T/provides.want" "$T/provides"; fail=1; fi
@@ -38,10 +38,11 @@ elif wait $pid && grep -qx "open true" "$T/abandon.out"; then echo "ok   a ticke
 else echo "FAIL abandon: exit status or output"; cat "$T/abandon.out"; fail=1; fi
 
 cat > "$T/err.want" <<'END'
-gogo: board port "a_name_longer_than_thirty_one_bytes" not registered: the name is too long
-gogo: board port "alpha" not registered: two board ports have this name (none of them is registered)
-gogo: board port "alpha" not registered: two board ports have this name (none of them is registered)
-gogo: board port "gpio" not registered: the name is taken (by a driver of the runtime or the board)
+gogo: board port "gpio" not registered: a board port's name needs a vendor prefix and a '.' ("acme.sensor")
+gogo: board port "test.a_name_longer_than_31_bytes" not registered: the name is too long (31 bytes at most)
+gogo: board port "test.alpha" not registered: two board ports have this name (none of them is registered)
+gogo: board port "test.alpha" not registered: two board ports have this name (none of them is registered)
+gogo: board port "test.bad name" not registered: a bad name (letters, digits, '_', '-', '.') or entry (its size or driver)
 END
 if cmp -s "$T/err.want" "$T/err"; then echo "ok   boot lines for the refused ports"
 else echo "FAIL boot lines"; diff "$T/err.want" "$T/err"; fail=1; fi

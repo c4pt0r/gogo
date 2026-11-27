@@ -106,6 +106,13 @@ bool embed_granted(const EmbedPorts *ep, const char *name);
 /* hostport.c: points the Vm at the driver list (after vm_init). */
 void embed_ports_install(EmbedPorts *ep);
 
+/* hostport.c: whether name (nl bytes) may name a host port: 1 to
+ * GOGO_PORT_NAME_MAX bytes of letters, digits, '_', '-' and '.', a '.'
+ * never first, last or doubled; with vendor (a board port), at least one
+ * '.' ("acme.dice": the runtime's names never have one). GOGO_OK,
+ * GOGO_E2BIG (too long) or GOGO_EINVAL. */
+int embed_name_check(const char *name, size_t nl, bool vendor);
+
 /* hostport.c: whether name is a runtime driver's (port_names.h) or one of
  * board's drivers (NULL-terminated, or NULL): a host port may not take it. */
 bool embed_name_reserved(const PortDriver *const *board, const char *name);

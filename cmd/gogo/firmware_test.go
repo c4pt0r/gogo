@@ -500,7 +500,7 @@ func TestFirmwareFloat(t *testing.T) {
 // layer is switched on, and idf.py gets them as EXTRA_COMPONENT_DIRS.
 func TestFirmwareComponent(t *testing.T) {
 	d := t.TempDir()
-	img := writeImg(t, d, "dice.ggb", "dice", "gpio")
+	img := writeImg(t, d, "dice.ggb", "acme.dice", "gpio")
 	comp := filepath.Join(d, "dice")
 	if err := os.MkdirAll(comp, 0o755); err != nil {
 		t.Fatal(err)
@@ -510,7 +510,7 @@ func TestFirmwareComponent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, img); err == nil || !strings.Contains(err.Error(), `"dice", which no gogo firmware provides`) {
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, img); err == nil || !strings.Contains(err.Error(), `"acme.dice", which no gogo firmware provides`) {
 		t.Fatalf("without the component: %v", err)
 	}
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img); err == nil || !strings.Contains(err.Error(), "no CMakeLists.txt") {
@@ -520,13 +520,17 @@ func TestFirmwareComponent(t *testing.T) {
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img); err == nil || !strings.Contains(err.Error(), "no gogo-driver.json") {
 		t.Errorf("no gogo-driver.json: %v", err)
 	}
-	for _, bad := range []string{`{"ports": []}`, `{"ports": ["tcp"]}`, `{"ports": ["gpio"]}`, `{"ports": [""]}`, `not json`} {
+	for _, bad := range []string{`{"ports": []}`, `{"ports": ["tcp"]}`, `{"ports": ["gpio"]}`, `{"ports": [""]}`, `not json`,
+		`{"ports": ["dice"]}`, `{"ports": ["/sd2"]}`, `{"ports": ["/acme.sd"]}`, `{"ports": ["acme.a,b"]}`, `{"ports": ["acme.a b"]}`,
+		`{"ports": ["acme.\u00fc"]}`, `{"ports": [".dice"]}`, `{"ports": ["acme."]}`, `{"ports": ["acme..dice"]}`,
+		`{"ports": ["acme.abcdefghijklmnopqrstuvwxyz0"]}`,
+		`{"ports": ["a.1", "a.2", "a.3", "a.4", "a.5", "a.6", "a.7", "a.8", "a.9"]}`} {
 		write("gogo-driver.json", bad)
 		if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img); err == nil {
 			t.Errorf("gogo-driver.json %s accepted", bad)
 		}
 	}
-	write("gogo-driver.json", `{"ports": ["dice"]}`)
+	write("gogo-driver.json", `{"ports": ["acme.dice"]}`)
 	out, cfg, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img)
 	if err != nil {
 		t.Fatal(err)
@@ -534,7 +538,7 @@ func TestFirmwareComponent(t *testing.T) {
 	if !strings.HasSuffix(cfg, "CONFIG_GOGO_BOARD_PORTS=y\n") {
 		t.Errorf("overlay:\n%s", cfg)
 	}
-	if !strings.Contains(out, "board ports: dice\n") || !strings.Contains(out, "-DEXTRA_COMPONENT_DIRS="+comp+" build") {
+	if !strings.Contains(out, "board ports: acme.dice\n") || !strings.Contains(out, "-DEXTRA_COMPONENT_DIRS="+comp+" build") {
 		t.Errorf("output:\n%s", out)
 	}
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, "-component", comp, img); err == nil || !strings.Contains(err.Error(), "two components") {

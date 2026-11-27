@@ -1,4 +1,4 @@
-/* "ticker": a port fed from a thread of its own. Its open (Arg n)
+/* "test.ticker": a port fed from a thread of its own. Its open (Arg n)
  * makes a poster and starts a thread that posts n events Kind 1..n with
  * the Data "tick" through gogo_poster_port_post, as a driver's own task
  * does on a board. One port at a time.
@@ -64,4 +64,4 @@ static void ticker_close(void *ctx, gogo_vm *vm, gogo_port port) {
 static const gogo_port_driver ticker = { .size = sizeof(gogo_port_driver), .open = ticker_open, .close = ticker_close };
 static Ticker ticker_state;
 
-GOGO_BOARD_PORT("ticker", &ticker, &ticker_state);
+GOGO_BOARD_PORT("test.ticker", &ticker, &ticker_state);

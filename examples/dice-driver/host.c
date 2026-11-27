@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
     static DiceTable table;
     gogo_vm *vm = NULL;
     int rc = gogo_new_posix(NULL, &vm);
-    if (rc == GOGO_OK) rc = gogo_register_port(vm, "dice", 4, &dice_driver, &table);   /* before the load */
+    if (rc == GOGO_OK) rc = gogo_register_port(vm, "example.dice", 12, &dice_driver, &table);   /* before the load */
     if (rc == GOGO_OK) rc = gogo_load(vm, img, len, GOGO_LOAD_COPY);
     if (rc == GOGO_OK) rc = gogo_run(vm);
     if (rc != GOGO_OK) fprintf(stderr, "dice-host: %s\n", gogo_strerror(rc));

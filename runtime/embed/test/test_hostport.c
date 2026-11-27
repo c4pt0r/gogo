@@ -43,3 +43,20 @@ TEST(hostport_board_names_refused) {
     CHECK_EQ(gogo_register_port(g, "board_only", 10, &none, NULL), GOGO_OK);
     gogo_free(g);
 }
+
+/* The names a host port may take: letters, digits, '_', '-' and '.'
+ * (never first, last or doubled), 1 to 31 bytes; a dot is allowed (a
+ * vendor prefix, as board ports need) but not needed. */
+TEST(hostport_name_rules) {
+    gogo_vm *g = NULL;
+    CHECK_EQ(gogo_new_posix(NULL, &g), GOGO_OK);
+    static const char *const bad[] = { "a b", "a/b", "/sd", "a,b", ".x", "x.", "a..b", "tab\t", "\xc3\xbc", "a=b", NULL };
+    for (const char *const *b = bad; *b; b++) CHECK_EQ(gogo_register_port(g, *b, strlen(*b), &none, NULL), GOGO_EINVAL);
+    CHECK_EQ(gogo_register_port(g, "a\0b", 3, &none, NULL), GOGO_EINVAL);
+    CHECK_EQ(gogo_register_port(g, "abcdefghijklmnopqrstuvwxyz012345", 32, &none, NULL), GOGO_E2BIG);
+    CHECK_EQ(gogo_register_port(g, "abcdefghijklmnopqrstuvwxyz01234", 31, &none, NULL), GOGO_OK);
+    CHECK_EQ(gogo_register_port(g, "acme.dice", 9, &none, NULL), GOGO_OK);
+    CHECK_EQ(gogo_register_port(g, "Ui_2-x", 6, &none, NULL), GOGO_OK);
+    CHECK_EQ(g->ports.n_host_ports, 3);
+    gogo_free(g);
+}

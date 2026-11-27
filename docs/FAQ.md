@@ -419,16 +419,18 @@ missing.
 ### How do I add my own hardware driver?
 Write it as an ESP-IDF component of your own, outside the gogo tree, on
 `gogo.h` alone: a `gogo_port_driver` (`open`, `command`, `close`
-callbacks) and one line, `GOGO_BOARD_PORT("mysensor", &driver, &state);`,
-which registers it at boot before the image loads. Give the component a
-`gogo-driver.json` (`{"ports": ["mysensor"]}`) and build the firmware
-with it: `gogo firmware -board sticks3 -component path/to/mysensor
--build app.ggb`. gogo code opens it with `port.Open("mysensor",
+callbacks) and one line, `GOGO_BOARD_PORT("acme.sensor", &driver, &state);`,
+which registers it at boot before the image loads. Its name needs a
+vendor prefix and a dot (`acme.sensor`): gogo's own names never have one,
+so yours cannot collide with a driver a later gogo adds. Give the component a
+`gogo-driver.json` (`{"ports": ["acme.sensor"]}`) and build the firmware
+with it: `gogo firmware -board sticks3 -component path/to/sensor
+-build app.ggb`. gogo code opens it with `port.Open("acme.sensor",
 port.Host{Arg: ...})`, sends `port.Post` commands and gets `port.Post`
 events; `gogo device info` lists it among `provides`. The driver's own
 task or thread sends events through a `gogo_poster` (never from an
 interrupt handler). The same component builds into `gogovm` for tests
-(`make vm DRIVERS=path/to/mysensor`), and an embedding program registers
+(`make vm DRIVERS=path/to/sensor`), and an embedding program registers
 the same table with `gogo_register_port`. No fork, no VM header, no
 image format change. [`examples/dice-driver`](../examples/dice-driver/)
 is a complete one, and [book chapter 22](book/22-extending-with-c.md)

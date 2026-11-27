@@ -459,7 +459,9 @@ typedef struct gogo_port_driver {
  * port of this name exists, or it names one of the runtime's drivers,
  * "gpio", "tcp", "screen", ..., or one of the board's), GOGO_EFULL (the
  * VM has as many host ports as it takes), GOGO_E2BIG (the name),
- * GOGO_EINVAL (no name, or no driver or one without a size),
+ * GOGO_EINVAL (no name, a name of other characters than letters,
+ * digits, '_', '-' and '.' or with a '.' first, last or doubled, no
+ * driver or one without a size),
  * GOGO_ESTATE (an image is loaded),
  * GOGO_EBUSY. A port registered under a name the config's grant leaves
  * out is accepted but never visible to the program. */
@@ -500,13 +502,18 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int3
  *
  *     static const gogo_port_driver dice = { .size = sizeof(gogo_port_driver),
  *                                            .open = dice_open, .command = dice_command };
- *     GOGO_BOARD_PORT("dice", &dice, NULL);
+ *     GOGO_BOARD_PORT("acme.dice", &dice, NULL);
+ *
+ * A board port's name has a vendor prefix: at least one '.' ("acme.dice";
+ * the rest as gogo_register_port takes). The runtime's own names never
+ * have one, so no later gogo driver can shadow it. A host port may have
+ * one too, and should; it need not.
  *
  * At boot, after the VM is made and before the image loads, the board
  * registers every such port as gogo_register_port would (so an image
- * requirement of "dice" is satisfied), in name order. A port refused
- * (its name taken by one of the runtime's or the board's drivers, too
- * long, too many ports, a bad entry) is named on stream 2 at boot and
+ * requirement of "acme.dice" is satisfied), in name order. A port refused
+ * (no vendor prefix, a bad or too long name, too many ports, a bad
+ * entry) is named on stream 2 at boot and
  * left out; so are all the entries of a name two or more of them have. The driver then works exactly
  * as a host port: its callbacks run on the VM's thread (the VM task) and
  * get a gogo_vm handle that takes gogo_port_emit, gogo_port_close,

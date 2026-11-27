@@ -159,6 +159,22 @@ void embed_ports_install(EmbedPorts *g) {
  * rather than loading against a host port whose cfg it cannot use. */
 static const char *const reserved_names[] = { PORT_RESERVED_NAMES, NULL };
 
+int embed_name_check(const char *name, size_t nl, bool vendor) {
+    if (!name || !nl) return GOGO_EINVAL;
+    if (nl > GOGO_PORT_NAME_MAX) return GOGO_E2BIG;
+    bool dot = false;
+    for (size_t i = 0; i < nl; i++) {
+        char c = name[i];
+        if (c == '.') {
+            if (i == 0 || i == nl - 1u || name[i - 1u] == '.') return GOGO_EINVAL;
+            dot = true;
+        } else if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) {
+            return GOGO_EINVAL;
+        }
+    }
+    return vendor && !dot ? GOGO_EINVAL : GOGO_OK;
+}
+
 bool embed_name_reserved(const PortDriver *const *board, const char *name) {
     for (const char *const *r = reserved_names; *r; r++)
         if (!strcmp(*r, name)) return true;
@@ -184,13 +200,14 @@ static uint32_t board_count(const EmbedPorts *g) {
 }
 
 int gogo_register_port(gogo_vm *vm, const char *name, size_t nl, const gogo_port_driver *drv, void *ctx) {
-    if (!vm || !name || !nl || memchr(name, 0, nl) || !drv) return GOGO_EINVAL;
+    if (!vm || !name || !nl || !drv) return GOGO_EINVAL;
     EmbedPorts *g = embed_ports(vm);
     gogo_port_driver d;
     if (!embed_copy_sized(&d, sizeof d, drv, drv->size, EMBED_DRIVER_SIZE_V1) || d.reserved) return GOGO_EINVAL;
     if (g->stepping) return GOGO_EBUSY;
     if (g->loaded) return GOGO_ESTATE;    /* registered ports count as the image's requirements */
-    if (nl > GOGO_PORT_NAME_MAX) return GOGO_E2BIG;
+    int nc = embed_name_check(name, nl, false);
+    if (nc) return nc;
     char z[GOGO_PORT_NAME_MAX + 1u];      /* the name as a C string, as drivers' names are */
     memcpy(z, name, nl);
     z[nl] = 0;

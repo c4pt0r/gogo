@@ -85,7 +85,7 @@ const fwBoardPortsKconf = "CONFIG_GOGO_BOARD_PORTS"
 
 // fwComponent is a driver component given with -component: an ESP-IDF
 // component directory with a gogo-driver.json naming the requirement names
-// (board ports) it provides, {"ports": ["dice"]}.
+// (board ports) it provides, {"ports": ["acme.dice"]}.
 type fwComponent struct {
 	dir   string // absolute
 	ports []string
@@ -113,22 +113,36 @@ func fwReadComponent(dir string) (fwComponent, error) {
 	if len(j.Ports) == 0 {
 		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json names no ports", dir)
 	}
+	if len(j.Ports) > fwBoardPortsMax {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: %d ports; a firmware takes %d board ports", dir, len(j.Ports), fwBoardPortsMax)
+	}
 	for _, p := range j.Ports {
-		if p == "" || len(p) > 31 || strings.ContainsAny(p, "\x00;") {
-			return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: bad port name %q (1 to 31 bytes)", dir, p)
-		}
-		for _, b := range fwBase {
-			if b == p {
-				return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: port %q is a built-in driver's name", dir, p)
-			}
-		}
-		for _, f := range fwFeatures {
-			if fwProvides(f, p) {
-				return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: port %q is a built-in driver's name", dir, p)
-			}
+		if err := fwBoardPortName(p); err != nil {
+			return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: %v", dir, err)
 		}
 	}
 	return fwComponent{dir: abs, ports: j.Ports}, nil
+}
+
+// fwBoardPortsMax is the most board ports a firmware registers
+// (EMBED_HOST_PORTS in platform/esp32s3/main/CMakeLists.txt).
+const fwBoardPortsMax = 8
+
+var fwPortNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$`)
+
+// fwBoardPortName checks a board port's name as the firmware does at boot
+// (runtime/embed/hostport.c embed_name_check): 1 to 31 bytes of letters,
+// digits, '_', '-' and '.', with a vendor prefix: at least one '.', never
+// first, last or doubled. The runtime's own names never have a '.', so
+// the two cannot collide.
+func fwBoardPortName(p string) error {
+	if len(p) > 31 {
+		return fmt.Errorf("port name %q is longer than 31 bytes", p)
+	}
+	if !fwPortNameRe.MatchString(p) {
+		return fmt.Errorf("bad port name %q: a vendor prefix and a '.', then letters, digits, '_' and '-' (\"acme.sensor\")", p)
+	}
+	return nil
 }
 
 // fwComponentsFlag collects repeated -component flags.
@@ -447,6 +461,9 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 		}
 		comps = append(comps, c)
 		compAbs = append(compAbs, c.dir)
+	}
+	if len(extra) > fwBoardPortsMax {
+		return fmt.Errorf("gogo firmware: the components provide %d ports; a firmware takes %d board ports", len(extra), fwBoardPortsMax)
 	}
 	var req []string
 	for _, f := range files {

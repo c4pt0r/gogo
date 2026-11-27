@@ -880,7 +880,7 @@ effect; if nothing differs it is kept, so incremental builds stay fast.
 
 `-component dir` adds a driver component of your own (an ESP-IDF
 component whose driver registers itself with `GOGO_BOARD_PORT`, gogo.h;
-book chapter 22): its `gogo-driver.json` (`{"ports": ["dice"]}`) names the
+book chapter 22): its `gogo-driver.json` (`{"ports": ["acme.dice"]}`) names the
 requirement names it provides, the overlay gets `CONFIG_GOGO_BOARD_PORTS=y`
 (the host-port layer: `runtime/board/board_ports.c` and runtime/embed's
 `hostport.c`, `inbox.c`, `poster.c`), and idf.py gets

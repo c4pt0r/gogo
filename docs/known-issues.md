@@ -1135,6 +1135,13 @@ rebuilt:
   refusal was `errors.Busy`. A host that returned `GOGO_EINVAL` (or -1,
   which is `GOGO_ENOTFOUND`) for "taken" should return `GOGO_EBUSY` to
   keep `errors.Busy`. Other nonzero values are still `errors.Busy`.
+- **Port names: a charset, and a vendor prefix on boards (changed in
+  this release).** `gogo_register_port` takes names of letters, digits,
+  `_`, `-` and `.` only (a `.` never first, last or doubled), at most 31
+  bytes: a name with a space, `/`, `,` or another character is now
+  `GOGO_EINVAL`. A board port's name must also have a `.` (`acme.dice`):
+  gogo's own driver names never do, so the two never collide. Host ports
+  may stay undotted, so existing hosts keep their names.
 - **No posts from an interrupt handler.** A board port's events come
   from its callbacks (`gogo_port_emit`) or from a task through a poster;
   a post allocates, so an ISR hands its data to a task first. The event

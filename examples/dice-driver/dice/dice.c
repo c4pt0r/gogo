@@ -10,7 +10,7 @@ static int slot_of(const DiceTable *t, gogo_port p) {
     return -1;
 }
 
-/* port.Open("dice", port.Host{Arg: seed}): a negative GOGO_E* refuses the
+/* port.Open("example.dice", port.Host{Arg: seed}): a negative GOGO_E* refuses the
  * open with that error (GOGO_EINVAL is errors.BadArg). */
 static int dice_open(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uint8_t *data, size_t len) {
     DiceTable *t = ctx;

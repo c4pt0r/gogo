@@ -1,10 +1,11 @@
 // dice-driver: a port whose driver is C code outside the VM's tree.
 //
-// The "dice" driver (dice/, an ESP-IDF component) is written on gogo.h's
-// stable driver API alone and uses only gogo/port's generic types: it is
-// opened with a port.Host config (Arg is the seed), takes port.Post
-// commands (Kind is how many dice to roll) and answers with one
-// port.Post event per die (Kind is the face). The image requires "dice":
+// The "example.dice" driver (dice/, an ESP-IDF component) is written on
+// gogo.h's stable driver API alone and uses only gogo/port's generic
+// types: it is opened with a port.Host config (Arg is the seed), takes
+// port.Post commands (Kind is how many dice to roll) and answers with one
+// port.Post event per die (Kind is the face). Its name has a vendor
+// prefix, as every board port's must. The image requires "example.dice":
 // it runs on a gogovm or a firmware built with the component (make vm
 // DRIVERS=examples/dice-driver/dice, gogo firmware -component
 // examples/dice-driver/dice) and in a host that registers the driver
@@ -34,10 +35,10 @@ func roll(who string, p actor.PID, n int) {
 }
 
 func main() {
-	_, err := port.Open("dice", port.Host{Arg: 0})
+	_, err := port.Open("example.dice", port.Host{Arg: 0})
 	println("open with seed 0:", err.Error())
 
-	p, err := port.Open("dice", port.Host{Arg: 42})
+	p, err := port.Open("example.dice", port.Host{Arg: 42})
 	println("open with seed 42:", err == nil)
 	roll("main", p, 3)
 	roll("main", p, 5)
@@ -52,7 +53,7 @@ func main() {
 	println(actor.Receive())
 
 	port.Close(p) // the player's exit has closed it: a stale PID is ignored
-	q, err := port.Open("dice", port.Host{Arg: 42})
+	q, err := port.Open("example.dice", port.Host{Arg: 42})
 	println("a second port, same seed:", err == nil)
 	roll("main", q, 3)
 }

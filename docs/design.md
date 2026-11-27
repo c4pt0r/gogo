@@ -2578,7 +2578,14 @@ can serve two devices, and the table can be a board's `static const`).
   no code runs to register it, nothing is mutable (no globals exemption)
   and no gogo file names it: the driver is a component of the product's
   (`EXTRA_COMPONENT_DIRS`, `WHOLE_ARCHIVE`), built by `gogo firmware
-  -component`. A constructor-based registry was the alternative; it is
+  -component`. A board port's name has a vendor prefix (a `.`:
+  `acme.dice`), and the runtime's names never have one
+  (`tests/portnames_test.go`), so a later built-in driver cannot shadow a
+  third party's; the charset (letters, digits, `_`, `-`, `.`, at most 31
+  bytes) is checked at boot, in `gogo_register_port` (hosts may omit the
+  dot, for the names they already use) and by `gogo firmware`. A
+  requirement name was always any string, so dotted names needed no
+  change to the compiler or the image format. A constructor-based registry was the alternative; it is
   portable C but needs a mutable list head in `runtime/` and its order
   is the constructors' (link order), where the section is const data and
   ESP-IDF's own pattern (`esp_trace`'s encoders). The layer's own NULL
