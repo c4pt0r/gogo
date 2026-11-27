@@ -22,8 +22,15 @@ const (
 	usbdevfsReset = 0x5514 // _IO('U', 20)
 )
 
-// udevHint is printed when the usbfs node is not writable.
-const udevHint = `allow it with a udev rule: echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0660", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/99-gogo-esp32.rules && sudo udevadm control --reload && sudo udevadm trigger; or ` + replugHint
+// udevRule gives the usbfs node of Espressif devices to the logged-in
+// desktop user (uaccess, which systemd's 73-seat-late.rules applies, so
+// the file must sort before 73) and to the plugdev group (for SSH and
+// headless sessions, which uaccess does not cover), as OpenOCD's rule for
+// the same devices does.
+const udevRule = `SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0660", GROUP="plugdev", TAG+="uaccess"`
+
+// udevHint is printed when the usbfs node is not accessible.
+const udevHint = `allow it with a udev rule: echo '` + udevRule + `' | sudo tee /etc/udev/rules.d/70-gogo-esp32.rules && sudo udevadm control --reload && sudo udevadm trigger (over SSH, also be in group plugdev: sudo usermod -aG plugdev $USER, then log in again); or ` + replugHint
 
 // linuxUSBDevice finds the USB device behind port and its usbfs node.
 func linuxUSBDevice(port string) (usbDevice, string, error) {

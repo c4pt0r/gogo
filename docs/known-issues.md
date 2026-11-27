@@ -1217,16 +1217,23 @@ rebuilt:
   check fails or times out, nothing is reset). Processes run as root or
   by other users cannot be seen, so a root-owned serial logger or
   ModemManager on the port is not detected. On **Linux** the reset needs write access to the
-  device's `/dev/bus/usb/BBB/DDD` node, usually root's; a udev rule
-  gives it to the logged-in user:
+  device's `/dev/bus/usb/BBB/DDD` node, usually root's (the probe needs
+  it too). A udev rule gives it to you:
 
   ```sh
-  echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0660", TAG+="uaccess"' |
-    sudo tee /etc/udev/rules.d/99-gogo-esp32.rules
+  echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0660", GROUP="plugdev", TAG+="uaccess"' |
+    sudo tee /etc/udev/rules.d/70-gogo-esp32.rules
   sudo udevadm control --reload && sudo udevadm trigger
   ```
 
-  (`gogo` prints this rule when access is denied.) On **Windows** gogo
+  `TAG+="uaccess"` gives the node to the user logged in at the desktop;
+  systemd applies that tag in `73-seat-late.rules`, so the file must sort
+  before it (hence `70-`; a `99-` file would have no effect). Over SSH or
+  on a headless machine there is no such user, and the group does it: be
+  in `plugdev` (`sudo usermod -aG plugdev $USER`, then log in again; it
+  exists on Debian, Ubuntu and Raspberry Pi OS, elsewhere create it with
+  `sudo groupadd plugdev`). OpenOCD's rule for these devices is the same.
+  `gogo` prints this rule when access is denied. On **Windows** gogo
   cannot reset a USB device: replug the board. The Linux reset has been
   tested only with fake sysfs trees, not on a board.
 - **The screen console is slow.** With the screen on, 1000 `println`s
