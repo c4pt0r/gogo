@@ -8,8 +8,9 @@
 //	2 reply    Notify                 what a command answers
 //
 // Commands: "bye" ends the program (and closes the port); "flood N"
-// sends N notifications of MaxNotify(mtu) bytes on reply, at most two in
-// flight, and prints how long it took; "big" sends one byte too many
+// sends N notifications of MaxNotify(mtu) bytes on reply ("flood N S": of
+// S bytes, at most MaxNotify(mtu)), at most two in flight, and prints how
+// long it took; "big" sends one byte too many
 // (refused: Done -1); anything else is echoed on reply. Each command
 // also notifies the counter, if the phone subscribed to it.
 package main
@@ -81,9 +82,19 @@ func main() {
 				return
 			}
 			if len(cmd) > 6 && cmd[:6] == "flood " {
-				k, err := strconv.Atoi(cmd[6:])
+				arg, size := cmd[6:], ble.MaxNotify(mtu)
+				for i := 0; i < len(arg); i++ {
+					if arg[i] == ' ' {
+						if s, err := strconv.Atoi(arg[i+1:]); err == nil && s >= 1 && s < size {
+							size = s
+						}
+						arg = arg[:i]
+						break
+					}
+				}
+				k, err := strconv.Atoi(arg)
 				if err == nil {
-					flood(p, k, ble.MaxNotify(mtu))
+					flood(p, k, size)
 				}
 				continue
 			}

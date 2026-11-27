@@ -8,7 +8,7 @@ figure and disconnect. Needs Python 3.9+ and bleak (pip install bleak); on
 macOS the terminal needs the Bluetooth permission (System Settings, Privacy
 & Security, Bluetooth), or the scan fails or finds nothing.
 
-    python3 tools/ble_central.py [--name gogo-echo] [--count 200] [--timeout 10]
+    python3 tools/ble_central.py [--name gogo-echo] [--count 200] [--size N] [--timeout 10]
 
 Prints one line per check and exits 0 if every check passed. The
 program's own lines (gogo monitor) show its side: connected, subscribed,
@@ -76,8 +76,10 @@ async def main(args):
         await asyncio.wait_for(counters.get(), args.timeout)
 
         # throughput: the board sends count notifications of MTU - 3 bytes
+        # (or --size bytes)
         size, n, t0 = 0, 0, time.monotonic()
-        await c.write_gatt_char(COMMAND, b"flood %d" % args.count, response=True)
+        cmd = b"flood %d" % args.count + (b" %d" % args.size if args.size else b"")
+        await c.write_gatt_char(COMMAND, cmd, response=True)
         await asyncio.wait_for(counters.get(), args.timeout)
         first = None
         while n < args.count:
@@ -101,6 +103,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--name", default="gogo-echo", help="the advertised name (default gogo-echo)")
     ap.add_argument("--count", type=int, default=200, help="notifications for the throughput check")
+    ap.add_argument("--size", type=int, default=0, help="bytes per notification (default MTU - 3)")
     ap.add_argument("--timeout", type=float, default=10.0, help="seconds per step")
     a = ap.parse_args()
     try:
