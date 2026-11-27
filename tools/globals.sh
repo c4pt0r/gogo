@@ -1,6 +1,6 @@
 #!/bin/sh
 # Global-state guard (embed mode): no mutable globals in runtime/.
-# Compiles runtime/{vm,vfs,stream,input,net,console,screen,embed,gpio,configsvc,board,dist,ble}/*.c (not check32.c,
+# Compiles runtime/{vm,vfs,stream,input,net,console,screen,embed,gpio,configsvc,prov,board,dist,ble}/*.c (not check32.c,
 # plus the vfs/fat and vfs/lfs backends when their headers are there,
 # not test/) at -O0 with -fno-common, in three configurations (host default,
 # MCU flags, -DGOGO_EMBED), and lists every symbol that lives in a mutable data
@@ -44,7 +44,7 @@ done
 CC=${GLOBALS_CC:-${CC:-cc}}
 CFLAGS=${GLOBALS_CFLAGS:--std=c99}
 MCU=${GLOBALS_MCU_FLAGS:--DGOGO_DEFAULT_MAX_WORDS=4096u -DGOGO_TABLE_CAP=1024u -DGOGO_ARENA_BYTES=163840u}
-INC="-Iruntime/ble -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/console -Iruntime/screen -Iruntime/embed -Iruntime/gpio -Iruntime/configsvc -Iruntime/board -Iruntime/dist -Iplatform/unix"
+INC="-Iruntime/ble -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/console -Iruntime/screen -Iruntime/embed -Iruntime/gpio -Iruntime/configsvc -Iruntime/prov -Iruntime/board -Iruntime/dist -Iplatform/unix"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 
@@ -52,7 +52,7 @@ if [ "$OBJECTS" = 1 ]; then FILES="$*"; ALLOW=/dev/null
     [ -n "$FILES" ] || { echo "globals: --objects needs files" >&2; exit 2; }
 elif [ $# -gt 0 ]; then FILES="$*"; else
     FILES=""
-    for d in vm vfs stream input net console screen embed gpio configsvc board dist ble; do
+    for d in vm vfs stream input net console screen embed gpio configsvc prov board dist ble; do
         for f in runtime/"$d"/*.c; do
             [ -f "$f" ] || continue
             [ "$f" = runtime/vm/check32.c ] && continue

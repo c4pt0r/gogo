@@ -1226,6 +1226,41 @@ rebuilt:
   ESP32-S3; the Linux `gogovm` with drivers is first run by the test
   workflow.
 
+## Wi-Fi setup from a phone (`bleprov`)
+
+The program's own Bluetooth port has its issues above, under "Bluetooth
+LE".
+
+
+- **It costs memory at every boot**, also when no session runs: about
+  34 KB of flash and 0.5 KB of static internal RAM on top of the `ble`
+  port's (platform/esp32s3/README.md, `GOGO_BLE_PROV`). A firmware
+  without it: `gogo firmware -without bleprov`.
+- **Free memory during a session is measured only with an earlier
+  configuration** (the Bluetooth controller's code in flash); with it in
+  internal RAM, as now, the session has about 16 KB less to spare.
+- **No network list.** The board does not offer a Wi-Fi scan to the app
+  (no `wifi_scan` capability), so the network's name is typed in the app.
+- **The password is checked by joining only.** Success means the board
+  associated (the WPA2 handshake passed), not that it got an address: a
+  network whose DHCP fails, or a captive portal, is saved anyway.
+  Passphrases are 8 to 63 characters (a 64-digit hex key is refused, as
+  by `wifi.password`).
+- **No QR code.** The board shows the device name and PIN as text; in
+  the app choose to continue without scanning a code.
+- **The setup key is read once, at boot.** On the Cardputer it is read
+  through the keyboard chip: a firmware without the keyboard driver
+  (`GOGO_KBD=n`) cannot enter setup. Holding the key through the restart
+  that ends a session starts another.
+- **Every session ends with a restart**, also on timeout, so a program
+  starts about two seconds later than after a normal boot.
+- **Not yet run on hardware:** pressing the setup key on either board
+  (tested with the test-only `GOGO_PROV_TEST_ENTER` build, which enters
+  without it; the key reads "not held" correctly on the Cardputer), a
+  real phone with the Espressif app, a session that saves to the real
+  store and then joins (only the dry run, which writes nothing, was run
+  end to end with `esp_prov.py`), and the StickS3.
+
 ## ESP32-S3 boards
 
 - **The USB serial console sometimes goes silent** a few seconds after a

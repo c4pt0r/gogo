@@ -28,18 +28,19 @@ type fwFeature struct {
 	// provides lists the requirement names (port drivers, mount prefixes)
 	// the feature builds; none: never required (a default-on detail)
 	provides []string
-	onBy     bool   // on by default whenever the board has it
-	needs    string // another feature this one depends on (Kconfig depends on)
-	hasH     string // board.h macro that says whether the board has it, if any
+	onBy     bool     // on by default whenever the board has it
+	needs    []string // other features this one depends on (Kconfig depends on)
+	hasH     string   // board.h macro that says whether the board has it, if any
 	// offDefaults is an sdkconfig fragment (in platform/esp32s3) added to
 	// SDKCONFIG_DEFAULTS when the feature is off: IDF settings that only
 	// the feature needs, put back to IDF's own defaults (sdkconfig.defaults
 	// holds the default build's, with every default-on feature on).
 	offDefaults string
-	// onDefaults is an sdkconfig fragment added when the feature is on,
-	// before the board's overlay: IDF settings of a feature kept out of
-	// sdkconfig.defaults (sdkconfig.ble turns Bluetooth on; the default
-	// build lists it too: platform/esp32s3/CMakeLists.txt, tools/release.sh).
+	// onDefaults is an sdkconfig fragment (in platform/esp32s3) added when
+	// the feature is on, before the board's overlay: IDF settings of a
+	// feature kept out of sdkconfig.defaults (sdkconfig.ble turns Bluetooth
+	// on; the default build lists it too: platform/esp32s3/CMakeLists.txt,
+	// tools/release.sh).
 	onDefaults string
 }
 
@@ -48,14 +49,15 @@ type fwFeature struct {
 // This table and fwBoards below are the single place in Go that knows the
 // features and boards. They MUST match platform/esp32s3/main/board.h
 // (HAS_KBD, HAS_SD, HAS_IMU, HAS_IR_TX, HAS_IR_RX, HAS_MIC, HAS_SPK per board) and platform/esp32s3/main/Kconfig.projbuild
-// (the GOGO_* symbols; GOGO_FS_EXFAT depends on GOGO_SD, GOGO_TLS and GOGO_DIST on GOGO_NET);
+// (the GOGO_* symbols; GOGO_FS_EXFAT depends on GOGO_SD, GOGO_TLS and GOGO_DIST on GOGO_NET,
+// GOGO_BLE_PROV on GOGO_BLE and GOGO_NET);
 // TestFirmwareTableMatchesSources checks both. Change them together.
 var fwFeatures = []fwFeature{
 	{name: "net", kconf: "CONFIG_GOGO_NET", provides: []string{"netif", "udp", "tcp", "tcp_listen"}},
 	{name: "kbd", kconf: "CONFIG_GOGO_KBD", provides: []string{"kbd"}, hasH: "HAS_KBD"},
 	{name: "power", kconf: "CONFIG_GOGO_BATTERY", provides: []string{"power"}},
 	{name: "sd", kconf: "CONFIG_GOGO_SD", provides: []string{"/sd"}, onBy: true, hasH: "HAS_SD"},
-	{name: "exfat", kconf: "CONFIG_GOGO_FS_EXFAT", onBy: true, needs: "sd"},
+	{name: "exfat", kconf: "CONFIG_GOGO_FS_EXFAT", onBy: true, needs: []string{"sd"}},
 	{name: "cjk", kconf: "CONFIG_GOGO_FONT_CJK", onBy: true},
 	{name: "imu", kconf: "CONFIG_GOGO_IMU", provides: []string{"imu"}, onBy: true, hasH: "HAS_IMU"},
 	// irtx and irrx are two features of one switch (GOGO_IR builds both
@@ -68,13 +70,13 @@ var fwFeatures = []fwFeature{
 	// tls is the TLS client over the net stack (mbedTLS): it depends on net.
 	// Its mbedTLS settings (-O2, the PSRAM allocator, restartable ECC) would
 	// otherwise also apply to Wi-Fi's WPA crypto: sdkconfig.tls-off undoes them.
-	{name: "tls", kconf: "CONFIG_GOGO_TLS", provides: []string{"tls"}, onBy: true, needs: "net", offDefaults: "sdkconfig.tls-off"},
+	{name: "tls", kconf: "CONFIG_GOGO_TLS", provides: []string{"tls"}, onBy: true, needs: []string{"net"}, offDefaults: "sdkconfig.tls-off"},
 	// screen is the text grid port on the LCD (runtime/screen); small, so on
 	// by default.
 	{name: "screen", kconf: "CONFIG_GOGO_SCREEN", provides: []string{"screen"}, onBy: true},
 	// node is the port of distributed actors (runtime/dist, gogo/node), over
 	// the net stack's tcp: it depends on net.
-	{name: "node", kconf: "CONFIG_GOGO_DIST", provides: []string{"node"}, onBy: true, needs: "net"},
+	{name: "node", kconf: "CONFIG_GOGO_DIST", provides: []string{"node"}, onBy: true, needs: []string{"net"}},
 	// float is floating point in the VM and the float library (requirement
 	// "float"): like net, built only when an image needs it (or -with).
 	{name: "float", kconf: "CONFIG_GOGO_FLOAT", provides: []string{"float"}},
@@ -82,7 +84,16 @@ var fwFeatures = []fwFeature{
 	// default on both boards; its IDF settings (Bluetooth itself) are in
 	// sdkconfig.ble, which GOGO_BLE depends on.
 	{name: "ble", kconf: "CONFIG_GOGO_BLE", provides: []string{"ble"}, onBy: true, onDefaults: "sdkconfig.ble"},
+	// bleprov is Wi-Fi provisioning over BLE (hold the setup key at boot;
+	// main/ble_prov.c): firmware only, no requirement name. On with ble
+	// whenever there is Wi-Fi: it runs on ble's NimBLE (sdkconfig.ble,
+	// which also holds its protocomm lines) and writes the wifi.* keys.
+	{name: "bleprov", kconf: "CONFIG_GOGO_BLE_PROV", onBy: true, needs: []string{"ble", "net"}},
 }
+
+// fwTestKconf lists the Kconfig switches for test builds only, which
+// gogo firmware never sets (main/Kconfig.projbuild).
+var fwTestKconf = []string{"CONFIG_GOGO_PROV_DRYRUN", "CONFIG_GOGO_PROV_TEST_ENTER"}
 
 // fwBase lists the requirement names every firmware provides, whatever
 // its features (platform/esp32s3/main/platform_esp.c esp_ports, esp_mounts).
@@ -256,8 +267,8 @@ func fwHas(names ...string) map[string]bool {
 }
 
 var fwBoards = map[string]fwBoard{
-	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "speaker", "tls", "screen", "node", "float", "ble")},
-	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "speaker", "tls", "screen", "node", "float", "ble")},
+	"sticks3":   {overlay: "sdkconfig.sticks3", has: fwHas("net", "power", "cjk", "imu", "irtx", "irrx", "mic", "speaker", "tls", "screen", "node", "float", "ble", "bleprov")},
+	"cardputer": {overlay: "sdkconfig.cardputer", has: fwHas("net", "kbd", "power", "sd", "exfat", "cjk", "imu", "irtx", "mic", "speaker", "tls", "screen", "node", "float", "ble", "bleprov")},
 }
 
 func fwLookup(name string) (fwFeature, bool) {
@@ -365,10 +376,13 @@ func fwPlan(board string, req []string, with, without []string, extra ...string)
 		}
 	}
 	for _, f := range fwFeatures { // Kconfig depends-on, in table order
-		if f.needs != "" && !on[f.needs] {
+		for _, n := range f.needs {
+			if on[n] {
+				continue
+			}
 			for _, w := range with {
 				if w == f.name {
-					return nil, fmt.Errorf("gogo firmware: -with %s needs %s, which is off", f.name, f.needs)
+					return nil, fmt.Errorf("gogo firmware: -with %s needs %s, which is off", f.name, n)
 				}
 			}
 			on[f.name] = false

@@ -102,11 +102,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: test-board-ports test-board-ports-tsan test-ble-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-ble test-screen test-screen-asan test-c-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-board-ports test-board-ports-tsan test-ble-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-ble test-screen test-screen-asan test-c-asan test-fs-host test-configsvc test-prov vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-ble test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver test-board-ports check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
+test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-ble test-screen test-fs-host test-configsvc test-prov test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver test-board-ports check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
 
 vm: $(BUILD)/gogovm
 
@@ -404,6 +404,15 @@ test-configsvc: $(BUILD)/test_configsvc
 $(BUILD)/test_configsvc: $(CONFIGSVC_SRCS) runtime/configsvc/test/test_configsvc.c runtime/vm/test/test_main.c $(wildcard runtime/configsvc/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vfs/test/*.h)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Iruntime/configsvc -Iruntime/vfs -Iruntime/vfs/test -Iruntime/vm -Iruntime/vm/test -o $@ runtime/configsvc/test/test_configsvc.c runtime/vm/test/test_main.c $(CONFIGSVC_SRCS)
+
+# The Wi-Fi provisioning messages (runtime/prov, the ESP32-S3 firmware's
+# BLE provisioning): the protobuf codec against esp_prov.py's encoding.
+test-prov: $(BUILD)/test_provmsg
+	$(BUILD)/test_provmsg
+
+$(BUILD)/test_provmsg: runtime/prov/provmsg.c runtime/prov/provmsg.h runtime/prov/test/test_provmsg.c runtime/vm/test/test_main.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iruntime/prov -Iruntime/vm -Iruntime/vm/test -o $@ runtime/prov/test/test_provmsg.c runtime/vm/test/test_main.c runtime/prov/provmsg.c
 
 # The host-directory backend (runtime/embed/fs_dir.c) against a temp dir:
 # the vfs contract and the sandbox (symlinks, hard links, a swapped path).

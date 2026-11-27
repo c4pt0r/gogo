@@ -22,7 +22,7 @@ One source tree, two boards, chosen at build time with the CMake variable
 
 The StickS3 build also takes `sdkconfig.sticks3` (PSRAM, see "PSRAM and
 what the firmware provides" below), and both take `sdkconfig.ble`
-(Bluetooth and NimBLE for the `ble` port, before the board's file);
+(Bluetooth and NimBLE for the `ble` port and Wi-Fi provisioning, before the board's file);
 `CMakeLists.txt` uses `sdkconfig.defaults;sdkconfig.ble;sdkconfig.sticks3`
 when no `SDKCONFIG_DEFAULTS` is given. After pulling this change, delete the
 generated `platform/esp32s3/sdkconfig` (and `build/CMakeCache.txt`) once, so
@@ -487,6 +487,14 @@ in `cmd/gogo/flash.go`.
     (CPU0) share them and rendering from flash evicted the VM's code.
 
 - `fs_lfs.c`: `/flash`, see below.
+- `ble_prov.c` (`GOGO_BLE_PROV`): Wi-Fi provisioning over
+  BLE at boot (design.md 5.4.11): the setup key, protocomm security 2 with
+  a one-time PIN, the wifi_provisioning GATT layout on the shared,
+  reference-counted NimBLE host of `ble_host.c` (`ble_host_acquire` /
+  `ble_host_release`, shared with the `ble` port's `ble_esp.c`),
+  the `prov-config` messages of `runtime/prov`; the result is written with
+  `config_esp_set` to `wifi.ssid` / `wifi.password`, then a restart.
+  `ble_prov_active()` is true during a session.
 - `wifi.c`: Wi-Fi station and `runtime/net/netif.h` (M5). The driver's raw frames go
   straight to gogo's own stack (`runtime/net/`, compiled into the firmware) through
   the driver's internal interface, pinned to ESP-IDF v6.1.1:
@@ -773,13 +781,15 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   event-source slot while a port is open: `GOGO_MAX_SOURCES` is 5 (6 with
   board ports).
 
-  Cost (ESP-IDF 6.1.1, fresh build directories, the same tree with and
-  without `sdkconfig.ble`):
+  Cost (ESP-IDF 6.1.1, fresh build directories, the default build of
+  each board; "without" is the tree before Bluetooth, `ble` only is this
+  tree with `GOGO_BLE_PROV=n`):
 
   | | StickS3 `.bin` | DIRAM | Cardputer `.bin` | DIRAM |
   |---|---|---|---|---|
-  | without `ble` | 1125840 | 127701 | 1161792 | 124571 |
-  | with `ble` | 1262032 (+136192) | 149665 (+21964) | 1297456 (+135664) | 146551 (+21980) |
+  | without `ble` | 1125792 | 127701 | 1161728 | 124571 |
+  | `ble` only | 1262000 (+136208) | 149649 (+21948) | 1297408 (+135680) | 146523 (+21952) |
+  | `ble` and `bleprov` (the default) | 1296176 (+170384) | 150097 (+22396) | 1331952 (+170224) | 146987 (+22416) |
 
   The static DIRAM is mostly the controller's IRAM code and data, which
   stay whether a port is open or not; `BT_CTRL_RUN_IN_FLASH_ONLY` would
@@ -812,6 +822,29 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   floatlibsize`), and the rest the soft-float routines they link. The
   board's C library (picolibc) `strtod` / `strtof` are not linked:
   ParseFloat has its own exact parser.
+- `GOGO_BLE_PROV` (default y, both boards; depends on `GOGO_BLE` and
+  `GOGO_NET`): Wi-Fi provisioning over BLE (`ble_prov.c` on the shared
+  NimBLE host `ble_host.c`, the messages `runtime/prov/provmsg.c`;
+  design.md 5.4.11, book 2.1). Its NimBLE and protocomm settings are in
+  `sdkconfig.ble`. Holding the setup key at boot (StickS3: button A, G11;
+  Cardputer: W) starts a 120 s session for Espressif's provisioning
+  apps, security 2 with a PIN on the screen; the result goes to
+  `wifi.ssid` / `wifi.password` and the board restarts. Boot lines:
+  `gogo: Wi-Fi setup key (W): not held` (serial) at every boot, and in a
+  session the device name, PIN and countdown (screen and serial).
+  Test-only switches: `GOGO_PROV_DRYRUN` (nothing written, no join; the
+  SSID and the password's length printed) and `GOGO_PROV_TEST_ENTER`
+  (with the dry run: enter at power-on without the key).
+  Cost (ESP-IDF 6.1.1, the default build, against `GOGO_BLE_PROV=n`;
+  the `GOGO_BLE` table above): StickS3 +34176 B `gogo.bin`, +448 B
+  static DIRAM; Cardputer ADV +34544 B, +464 B (protocomm, SRP6a and
+  AES-GCM, the provisioning code; NimBLE is the port's). In a session,
+  measured on the Cardputer ADV when the controller's code was in flash
+  (`BT_CTRL_RUN_IN_FLASH_ONLY`, no longer set): free internal heap 212696
+  B before, 184972 B with Wi-Fi up, 124552 B advertising (largest block
+  116736 B), at least 115492 B during the SRP and config exchange; with
+  the controller in IRAM each should be about 16 KB lower (not yet
+  measured). A restart returns all of it.
 - `GOGO_NET` (default y): Wi-Fi and gogo's net stack. Off: `wifi.c` and `runtime/net/*.c`
   are not built, the drivers `netif`, `udp`, `tcp` and `tcp_listen` are not
   listed (an image that requires one is refused at boot, naming it), `port.Open` of `netif`, `udp`,
@@ -908,16 +941,17 @@ modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
     idf.py -C platform/esp32s3 -B <dir> -DGOGO_BOARD=<board> -DSDKCONFIG=<dir>/sdkconfig \
         -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;[sdkconfig.ble;]<board overlay>;<dir>/sdkconfig.gogo" build
 
-Feature names are `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen float ble`; `net`, `kbd`,
+Feature names are `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen float ble bleprov`; `net`, `kbd`,
 `power` and `float` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
-`imu`, `irtx`, `irrx`, `mic`, `speaker`, `tls`, `ble` are on by default and `-without` turns them off
+`imu`, `irtx`, `irrx`, `mic`, `speaker`, `tls`, `ble`, `bleprov` are on by default and `-without` turns them off
 (`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `speaker` are one, `GOGO_AUDIO`; `tls` needs `net`, `GOGO_TLS` depends on `GOGO_NET`). A required feature cannot be removed,
 and one the board lacks (`kbd`, `sd` on the StickS3) is an error. A feature
 that is off may add its own sdkconfig fragment to `SDKCONFIG_DEFAULTS` (the
 table's `offDefaults`): `tls` off adds `sdkconfig.tls-off`, which puts
 mbedTLS back to IDF's defaults for Wi-Fi's WPA crypto. A feature that is
 on may add one before the board's overlay (`onDefaults`): `ble` adds
-`sdkconfig.ble`, Bluetooth itself. The board
+`sdkconfig.ble`, Bluetooth itself, which also carries the settings of
+`bleprov` (on by default with `ble` and `net`, which it both needs). The board
 feature table is in `cmd/gogo/firmware.go` and must match `main/board.h` and
 `main/Kconfig.projbuild`. `gogo firmware` owns its build directory: if
 `<dir>/sdkconfig` exists and any `CONFIG_GOGO_*` value in it differs from the

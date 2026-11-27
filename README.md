@@ -246,7 +246,9 @@ Done:
 - **Peripherals:** GPIO; keyboard and battery; IMU and infrared; audio;
   the screen as a port plus `gogo/tui`, an ncurses-like text UI; a
   Bluetooth LE peripheral (`gogo/ble`: a GATT server a phone app talks
-  to, simulated in `gogovm`); one stream protocol for every byte port.
+  to, simulated in `gogovm`); Wi-Fi setup from a phone over Bluetooth
+  (Espressif's provisioning app, a PIN on the screen; book section 2.1);
+  one stream protocol for every byte port.
 - **Your own drivers:** one C driver API (`gogo.h`) for firmware,
   `gogovm` and embedding hosts; a driver is an ESP-IDF component outside
   the tree, built in with `gogo firmware -component` (book chapter 22;
@@ -282,8 +284,8 @@ Next, in order:
 1. **Distributed actors, next:** direct links between boards on the same
    network (the server as directory and fallback relay), TLS on node
    links.
-2. **More hardware:** the Arduino Nano ESP32, RP2040 boards, Bluetooth
-   (BLE); a `usb` port for the serial connection later.
+2. **More hardware:** the Arduino Nano ESP32, RP2040 boards, the
+   Bluetooth central role; a `usb` port for the serial connection later.
 3. **Embedding bindings:** Rust, iOS and Android.
 
 ## License

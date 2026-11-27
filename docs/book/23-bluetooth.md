@@ -58,7 +58,9 @@ p, err := ble.Open(ble.Config{
 It fails with `errors.BadArg` for a Config it cannot use (an empty or long
 name, a malformed UUID, a characteristic without flags, a service without
 characteristics), `errors.Busy` if the radio is taken (one `ble` port per
-board; the firmware's Wi-Fi provisioning is running), and
+board; or the firmware's Wi-Fi setup from a phone, section 2.1, holds the
+radio: it runs only at boot, before any program, so a program does not
+meet it in practice), and
 `errors.NotFound` on a firmware built without `ble`. On a board the open
 waits while the Bluetooth controller and stack start: no actor runs
 meanwhile.
@@ -329,8 +331,9 @@ disconnect.
 - **Security.** The port does no pairing or encryption: anyone nearby can
   connect, read what the program has set, and write. Keep secrets out of
   readable values, and check what a write asks for as you would check a
-  network request. (The firmware's own Wi-Fi provisioning is a different
-  service, and encrypted.)
+  network request. (The firmware's own Wi-Fi setup from a phone, section
+  2.1, is a different service, entered only with a key held at boot, and
+  encrypted.)
 
 ## 23.8 What is not there
 

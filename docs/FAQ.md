@@ -555,6 +555,21 @@ flashes, and says why in one line. `-reflash` always flashes. Either way
 the board's settings (NVS) are never written. See
 [book section 2.1](book/02-getting-started.md).
 
+### Can I set up a board's Wi-Fi from my phone?
+Yes: the default firmware of both boards has it (the `bleprov` feature,
+beside the program's `ble` port; a release older than the first with
+Bluetooth does not). Hold the setup key while the board starts (StickS3:
+button A; Cardputer ADV: W): the screen shows a device name and a
+one-time PIN for 120 seconds. In Espressif's free **ESP BLE
+Provisioning** app pick that device, type the PIN, then the network's
+name and password. The board checks them by joining, saves them as
+`wifi.ssid` and `wifi.password` (the same keys as `gogo setup`) and
+restarts; the program never sees the password. The session is
+Espressif's security 2 (SRP6a with the PIN, then AES-GCM), and nothing
+opens it but the key at boot. See
+[book section 2.1](book/02-getting-started.md) for the steps and what
+happens on a wrong password, a wrong PIN or a timeout.
+
 ### Which firmware does my board run?
 `gogo device info` prints its version, board, image format and the
 drivers it provides. A firmware older than that command (v0.1.0) says
