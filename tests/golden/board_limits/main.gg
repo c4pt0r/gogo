@@ -1,0 +1,43 @@
+package main
+
+// The host VM with a board's parameters (vmargs: the flags book 6.2 gives)
+// behaves as the board build (gogovm_mcu, the `mcu` run, same output):
+// 16 KB actors, 160 KB in all, a board's actor, port and Bytes tables.
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+)
+
+type Done struct{ OK bool }
+
+func main() {
+	me := actor.Self()
+	println("limit", actor.Limit(me))
+	// 50 small actors fit; each frees a frozen Bytes.
+	for i := 0; i < 50; i++ {
+		actor.Spawn(func() {
+			b := bytes.NewBuffer(0)
+			for j := 0; j < 100; j++ {
+				b.WriteByte(byte(j))
+			}
+			actor.Send(me, Done{b.Freeze().Len() == 100})
+		})
+	}
+	ok := 0
+	for i := 0; i < 50; i++ {
+		if actor.Receive().(Done).OK {
+			ok++
+		}
+	}
+	println("actors", ok)
+	// One actor past its 16 KB: OutOfMemory for it alone.
+	p := actor.Spawn(func() {
+		var xs []int
+		for {
+			xs = append(xs, len(xs))
+		}
+	})
+	actor.Monitor(p)
+	println("oom", actor.Receive().(actor.DownMsg).Reason.Code == actor.OutOfMemory)
+}

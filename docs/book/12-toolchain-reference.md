@@ -289,8 +289,10 @@ Options:
   16 keys.
 - `--actor-memory`, `--memory`, `--max-actors`, `--max-ports`,
   `--max-links`, `--bytes-handles`: the VM's limits, passed to `gogovm`
-  as they are (the next section). `gogo run --actor-memory 16K --memory
-  160K prog` runs `prog` with a board's memory.
+  as they are (the next section). `gogo run --actor-memory 16K --memory 160K --max-actors 1024 --max-ports 16 --max-links 8 --bytes-handles 64/16 prog` runs `prog` with a
+  board's limits (`tests/golden/board_limits` checks it against the board
+  build, `build/gogovm_mcu`); all six, since the host's tables are sized
+  from them.
 
 **Standard input** feeds the simulated hardware:
 

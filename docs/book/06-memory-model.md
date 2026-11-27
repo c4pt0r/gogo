@@ -170,9 +170,18 @@ more is `OutOfMemory`, whatever the actor's limit.
 > **Tip.** Programs are usually tested with `gogo run`, where the default
 > limit is 64 times larger than on the board. An actor that works on
 > your computer can run out of memory on the board. Give memory-hungry
-> actors an explicit `SpawnOpt` limit during development, or run with the
-> board's numbers (`gogo run --actor-memory 16K --memory 160K prog`), so the
-> host behaves like the board.
+> actors an explicit `SpawnOpt` limit during development, or run with all
+> of the board's numbers, so the host behaves like the board:
+>
+> ```sh
+> gogo run --actor-memory 16K --memory 160K --max-actors 1024 --max-ports 16 --max-links 8 --bytes-handles 64/16 prog
+> ```
+>
+> All of them: the host's tables are sized from these parameters, and
+> its actor table alone (16384 actors) would take most of 160 KB. The
+> host's records are a little larger (64-bit pointers), so a program at
+> the very edge of the 160 KB can still differ; `build/gogovm_mcu` (`make
+> test-go`), the board build of the VM, is the exact model.
 
 If the whole VM runs out of memory (all actors together are using the
 160 KB, or `vm.memory`), the actor that is trying to allocate is ended with `OutOfMemory`.

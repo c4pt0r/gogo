@@ -277,9 +277,11 @@ rebuilt:
 - **Host and board memory limits differ by 64x.** An actor spawned
   without `SpawnOpt` may use 1 MB on the host and 16 KB on a board, so
   a program that passes under `gogo run` can die with `oom` on the board.
-  *Workaround:* run with the board's limits, `gogo run --actor-memory 16K
-  --memory 160K prog`, or test with `build/gogovm_mcu` (built by `make
-  test-go`), which has the board build: `GOGO_VM=build/gogovm_mcu gogo run ...`.
+  *Workaround:* run with all of the board's limits, `gogo run --actor-memory 16K --memory 160K --max-actors 1024 --max-ports 16 --max-links 8 --bytes-handles 64/16 prog`
+  (the host's tables are sized from them: with only the first two, the
+  16384-actor table alone takes most of 160 KB), or test with
+  `build/gogovm_mcu` (built by `make test-go`), the board build and the
+  exact model: `GOGO_VM=build/gogovm_mcu gogo run ...`.
 - **An actor holds at most 256 KB on a board** (65535 words: its word
   counts are 16-bit there, which keeps its record at 48 bytes); a larger
   `vm.actor_memory` or `MaxMemory` is cut to that. On the host the

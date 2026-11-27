@@ -1,0 +1,1 @@
+--actor-memory 16K --memory 160K --max-actors 1024 --max-ports 16 --max-links 8 --bytes-handles 64/16
