@@ -16,9 +16,28 @@ func call(slow actor.PID, i int, done actor.PID) {
 	actor.Send(done, err == errors.NoConnection)
 }
 
+// join is node.Connect retried with backoff and jitter, as the book
+// recommends (20.3): the server may be busy (errors.Busy: at its
+// handshake limit) or not up yet. It prints the last error if it gives up.
+func join(addr, name string) error {
+	wait := 100
+	for i := 1; ; i++ {
+		err := node.Connect(addr, name)
+		if err == nil {
+			return nil
+		}
+		if i == 6 {
+			println(name, "connect failed:", err.Error())
+			return err
+		}
+		actor.Sleep(wait + sys.Random()%wait)
+		wait *= 2
+	}
+}
+
 func main() {
 	addr, _ := sys.Config("test.server")
-	println("connect", node.Connect(addr, "caller") == nil)
+	println("connect", join(addr, "caller") == nil)
 	slow, werr := node.Whereis("server", "slow", 2000)
 	ok := werr == nil
 	println("slow", ok)

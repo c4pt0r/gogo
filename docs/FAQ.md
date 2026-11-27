@@ -585,7 +585,11 @@ with the config keys `vm.max_ports` and `node.max_links` or `gogovm
 boards; then its node agent's memory (256 KB) is nearly full and new
 boards are refused, while the others carry on (`make test-dist-scale`).
 Give the process enough file descriptors (`ulimit -n`): one per board.
-A board keeps the small defaults (16 ports, 8 links) even in a big star:
+They need not join one at a time, but not all at once either: the server
+takes 16 connections into their handshake at a time (its link cap / 32;
+2 on a board) and answers the rest `errors.Busy`, so boards should retry
+`node.Connect` with backoff and jitter; then hundreds that start together,
+after a power cut, all join within seconds (book 20.3). A board keeps the small defaults (16 ports, 8 links) even in a big star:
 it holds remote PIDs only for the nodes it talks to (tested in a star of
 300). See book 20.9.
 

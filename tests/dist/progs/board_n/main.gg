@@ -1,5 +1,6 @@
 // Board n of many: joins as test.name, exports echo, waits until it sees
 // test.count nodes, then Calls the next board's echo through the relay.
+// With test.at (Unix ms) it joins at that moment, with every other board.
 package main
 
 import (
@@ -21,6 +22,27 @@ func echo(name string) {
 	}
 }
 
+// join is node.Connect retried with backoff and jitter, as the book
+// recommends (20.3): the server may be busy (errors.Busy: at its
+// handshake limit) or not up yet. It prints the last error if it gives up
+// (and here every error, for the test to count).
+func join(addr, name string) error {
+	wait := 100
+	for i := 1; ; i++ {
+		err := node.Connect(addr, name)
+		if err == nil {
+			return nil
+		}
+		if i == 6 {
+			println(name, "connect failed:", err.Error())
+			return err
+		}
+		println(name, "retry:", err.Error())
+		actor.Sleep(wait + sys.Random()%wait)
+		wait *= 2
+	}
+}
+
 func main() {
 	addr, _ := sys.Config("test.server")
 	name, _ := sys.Config("test.name")
@@ -31,8 +53,16 @@ func main() {
 	// server opens its link, before Connect returns here, so the others
 	// may look echo up at once.
 	node.Register("echo", actor.Spawn(func() { echo(name) }))
-	if node.Connect(addr, name) != nil {
-		println(name, "connect failed")
+	if a, ok := sys.Config("test.at"); ok {
+		at, _ := strconv.ParseInt64(a, 10)
+		if sys.Time() >= at {
+			println(name, "late")
+		}
+		for sys.Time() < at {
+			actor.Sleep(1)
+		}
+	}
+	if join(addr, name) != nil {
 		return
 	}
 	for i := 0; i < 400 && len(node.Nodes()) < count; i++ {
