@@ -1350,6 +1350,40 @@ func TestSetupSkipsTheSameFirmware(t *testing.T) {
 	}
 }
 
+// TestSetupInfoRetry: a board that never answers info gets a fifth try
+// after a USB reset, but only when its USB device fails the probe; one
+// whose device answers (no gogo firmware) is flashed without a reset.
+func TestSetupInfoRetry(t *testing.T) {
+	for _, silent := range []bool{true, false} {
+		f := newSetupBench(t, chipStickS3, "")
+		f.info, f.infoSilent = "fw=v0.2.0 board=sticks3 image=15.6 provides=gpio", true
+		usb := &fakeUSB{silent: silent}
+		env := usb.env()
+		reset := env.reset
+		env.reset = func(port string) (string, error) {
+			f.mu.Lock()
+			f.infoSilent = false // the link is back
+			f.mu.Unlock()
+			return reset(port)
+		}
+		f.env.usb = env
+		f.writeRelease()
+		if err := f.run("-yes", "-skip-wifi", "-release-url", f.release); err != nil {
+			t.Fatalf("silent %v: %v\n%s", silent, err, f.out)
+		}
+		out := f.out.String()
+		if silent {
+			if len(usb.resets) != 1 || f.infos != 5 || !strings.Contains(out, usbResetLine) || len(f.firmwareWrites()) != 0 ||
+				!strings.Contains(out, "the board already runs gogo v0.2.0") {
+				t.Errorf("silent link: resets %d, infos %d, writes %q:\n%s", len(usb.resets), f.infos, f.firmwareWrites(), out)
+			}
+		} else if len(usb.resets) != 0 || f.infos != 4 || strings.Contains(out, usbResetLine) || len(f.firmwareWrites()) != 1 ||
+			!strings.Contains(out, "board firmware unknown (no answer on its console)") {
+			t.Errorf("healthy link: resets %d, infos %d, writes %q:\n%s", len(usb.resets), f.infos, f.firmwareWrites(), out)
+		}
+	}
+}
+
 // TestSetupFlashesUnlessTheSame: every case that is not the very same
 // firmware on the same board flashes, and says why.
 func TestSetupFlashesUnlessTheSame(t *testing.T) {
