@@ -17,7 +17,7 @@
 - All Matrix state under `/srv/matrix` (database `/srv/matrix/tuwunel`); config `/etc/tuwunel/tuwunel.toml`; binary `/usr/local/bin/tuwunel`; service user `tuwunel`; listen `127.0.0.1:8008` only.
 - Media upload limit ≤ 100 MB (Cloudflare free plan).
 - GitHub provider: `brand = "GitHub"`, `client_secret_file` under `/etc/tuwunel/` (mode 0600, owner tuwunel), `registration = true`, `trusted = false`, `unique_id_fallbacks = true`; `[global.authentication.login] with_password = false`.
-- Accounts: `@admin:gogovm.dev` (password, owns everything, PL 100), `@edhuang:gogovm.dev` (PL 100, linked to the owner's GitHub). IDs are permanent: confirm both with the owner immediately before creating them.
+- Accounts: `@admin:gogovm.dev` (password, owns everything, PL 100), `@c4pt0r:gogovm.dev` (PL 100, linked to the owner's GitHub). IDs are permanent: confirm both with the owner immediately before creating them.
 - Rooms: space `#gogo:gogovm.dev`; rooms `#general`, `#help`, `#boards`, `#dev` (aliases `#general:gogovm.dev` etc.); join rule public, history `world_readable`, guest access `forbidden`, federation allowed.
 - gogo repo commits: focused, owner as git author, no AI trailers, English text.
 - Repo rollout in two commits: `.well-known` first; entry links only after the federation tester passes.
@@ -27,7 +27,7 @@
 
 1. Pi reboot or Wi-Fi drop: both services come back without a human (`enabled`, `Restart=always`, cloudflared reconnects). Test in Task 3.
 2. Power loss while on the SD card corrupts RocksDB: a restorable backup exists off the Pi. Test (restore into a scratch dir, server starts) in Task 6.
-3. A GitHub user whose login is `admin` or `edhuang` signs in: they get a fallback localpart, never access to the existing account. A colliding GitHub login cannot be staged, so Task 5 verifies the guard instead: `trusted = false` in the config, and `!admin query oauth` lists the owner's link as the only association for `@edhuang`.
+3. A GitHub user whose login is `admin` or `edhuang` signs in: they get a fallback localpart, never access to the existing account. A colliding GitHub login cannot be staged, so Task 5 verifies the guard instead: `trusted = false` in the config, and `!admin query oauth` lists the owner's link as the only association for `@c4pt0r`.
 4. A matrix.org user opens `https://matrix.to/#/#gogo:gogovm.dev`, joins `#help` over federation and posts. Test in Task 5.
 5. Element Web (app.element.io) resolves `gogovm.dev` to the right homeserver for GitHub sign-in (needs the client `.well-known` with CORS). Test in Task 4.
 
@@ -87,7 +87,7 @@
 - [ ] **Step 1: Owner step:** ask the owner to create a GitHub OAuth App (homepage `https://gogovm.dev`, callback `https://matrix.gogovm.dev/_tuwunel/sso/callback/<client_id>`; since the callback contains the client ID, create the app first, then edit its callback) and send the ID and secret.
 - [ ] **Step 2: Configure** the `[[global.identity_provider]]` block and `with_password = false` per Global Constraints; secret file 0600 owned by `tuwunel`; restart.
 - [ ] **Step 3: Verify flows.** `curl -s https://matrix.gogovm.dev/_matrix/client/v3/login | jq` → contains `m.login.sso` with an identity provider whose brand is GitHub, and `m.login.password`. `curl -s -XPOST https://matrix.gogovm.dev/_matrix/client/v3/register -d '{"username":"probe","password":"x"}'` → refused (`M_FORBIDDEN` or no password flow); no `@probe` account appears.
-- [ ] **Step 4: Real sign-in (Review Focus 5).** In app.element.io choose homeserver `gogovm.dev`, "Continue with GitHub", sign in with a GitHub account that is not the owner's (ask the owner for a test account or a friend's). Never use the owner's GitHub here: it would create `@<owner-login>` before Task 5 links the owner's identity to `@edhuang`, and a deactivated Matrix ID can never be reused. Expected: account `@<github-login>:gogovm.dev` created with GitHub display name. If the account is not created or the localpart is not the GitHub login, stop and report: this is the spec's "verify before announcing" gate.
+- [ ] **Step 4: Real sign-in (Review Focus 5).** In app.element.io choose homeserver `gogovm.dev`, "Continue with GitHub", sign in with a GitHub account that is not the owner's (ask the owner for a test account or a friend's). Never use the owner's GitHub here: it would create `@<owner-login>` before Task 5 links the owner's identity to `@c4pt0r`, and a deactivated Matrix ID can never be reused. Expected: account `@<github-login>:gogovm.dev` created with GitHub display name. If the account is not created or the localpart is not the GitHub login, stop and report: this is the spec's "verify before announcing" gate.
 
 ### Task 5: Accounts, space and rooms
 
@@ -97,10 +97,10 @@
 - Consumes: Task 4's working server.
 - Produces: `#gogo:gogovm.dev` space and four rooms.
 
-- [ ] **Step 1: Confirm IDs** `@admin:gogovm.dev` and `@edhuang:gogovm.dev` with the owner one last time.
-- [ ] **Step 2: Create accounts** with the admin console (`!admin users create-user admin`, then `edhuang`); store the admin password in the owner's password manager (hand it to the owner, do not leave it on disk). Link `@edhuang` to the owner's GitHub with `!admin query oauth associate <client_id> @edhuang:gogovm.dev --claim login=<owner's GitHub login>` (ask the owner for the login). Verify: the owner signs in with GitHub and lands in `@edhuang`.
-- [ ] **Step 3: Rooms.** The script, as `@admin`, creates the space and the four rooms with Global Constraints' settings, adds the rooms as space children, invites `@edhuang` and sets its power level to 100 in each, and sets topics; `#help`'s topic ends with "Answers worth keeping go into docs/FAQ.md." The script is idempotent (skips aliases that resolve).
-- [ ] **Step 4: Verify.** `curl -s https://matrix.gogovm.dev/_matrix/client/v3/directory/room/%23gogo%3Agogovm.dev` → room_id; repeat for each room. Federation (Review Focus 4): from a matrix.org account (owner's, or ask the owner), open `https://matrix.to/#/#gogo:gogovm.dev`, join `#help`, post; message visible from `@edhuang`. Review Focus 3: `!admin query oauth` lists only the owner's link for `@edhuang`.
+- [ ] **Step 1: Confirm IDs** `@admin:gogovm.dev` and `@c4pt0r:gogovm.dev` with the owner one last time.
+- [ ] **Step 2: Create accounts** with the admin console (`!admin users create-user admin`, then `edhuang`); store the admin password in the owner's password manager (hand it to the owner, do not leave it on disk). Link `@c4pt0r` to the owner's GitHub with `!admin query oauth associate <client_id> @c4pt0r:gogovm.dev --claim login=<owner's GitHub login>` (ask the owner for the login). Verify: the owner signs in with GitHub and lands in `@c4pt0r`.
+- [ ] **Step 3: Rooms.** The script, as `@admin`, creates the space and the four rooms with Global Constraints' settings, adds the rooms as space children, invites `@c4pt0r` and sets its power level to 100 in each, and sets topics; `#help`'s topic ends with "Answers worth keeping go into docs/FAQ.md." The script is idempotent (skips aliases that resolve).
+- [ ] **Step 4: Verify.** `curl -s https://matrix.gogovm.dev/_matrix/client/v3/directory/room/%23gogo%3Agogovm.dev` → room_id; repeat for each room. Federation (Review Focus 4): from a matrix.org account (owner's, or ask the owner), open `https://matrix.to/#/#gogo:gogovm.dev`, join `#help`, post; message visible from `@c4pt0r`. Review Focus 3: `!admin query oauth` lists only the owner's link for `@c4pt0r`.
 
 ### Task 6: Backups and runbook
 

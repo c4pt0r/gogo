@@ -154,7 +154,7 @@ and `.../client`, then the Matrix federation tester
   - Localpart: GitHub `login` (e.g. `@octocat:gogovm.dev`); a taken name
     falls back to Tuwunel's stable provider-derived localpart
     (`unique_id_fallbacks = true`). Display name and avatar from GitHub.
-  - `@edhuang` is linked to the owner's GitHub identity with
+  - `@c4pt0r` is linked to the owner's GitHub identity with
     `!admin query oauth associate` so the owner signs in with GitHub too.
   - Must be verified on the real server before announcing (the docs are
     silent on both): a first GitHub sign-in creates an account while
@@ -166,7 +166,7 @@ and `.../client`, then the Matrix federation tester
   - People with accounts elsewhere still join over federation.
 - Accounts (owner's decision): `@admin:gogovm.dev` is created first, owns
   the space and every room and holds power level 100; the owner's daily
-  account `@edhuang:gogovm.dev` also gets power level 100 in every room.
+  account `@c4pt0r:gogovm.dev` also gets power level 100 in every room.
 - Rooms (my call, easy to extend): a space `#gogo:gogovm.dev` containing
   public rooms `#general`, `#help`, `#boards`, `#dev`. Join rule public,
   history world-readable (previewable from the web), guest access off,
