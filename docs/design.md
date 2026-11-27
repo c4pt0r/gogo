@@ -2584,6 +2584,12 @@ can serve two devices, and the table can be a board's `static const`).
   third party's; the charset (letters, digits, `_`, `-`, `.`, at most 31
   bytes) is checked at boot, in `gogo_register_port` (hosts may omit the
   dot, for the names they already use) and by `gogo firmware`. A
+  entry records the `GOGO_VERSION` it was compiled against
+  (`gogo_board_port.api`, the field after `size`), and the board refuses
+  one of another major (during 0.x, minor) with a boot line;
+  `gogo_version` lives in `runtime/embed/version.c`, linked by boards
+  too; `gogo-driver.json` carries `"format": 1`, and an unknown key is an
+  error. A
   requirement name was always any string, so dotted names needed no
   change to the compiler or the image format. A constructor-based registry was the alternative; it is
   portable C but needs a mutable list head in `runtime/` and its order

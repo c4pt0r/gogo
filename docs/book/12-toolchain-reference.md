@@ -607,7 +607,7 @@ driver nobody uses. It reads the requirement names each file carries
   own into the firmware: a driver on `gogo.h` that registers itself with
   `GOGO_BOARD_PORT` (chapter 22). The directory has the component's
   `CMakeLists.txt` and a `gogo-driver.json` naming the requirement names
-  it provides, `{"ports": ["acme.dice"]}`, which then satisfy the images'
+  it provides, `{"format": 1, "ports": ["acme.dice"]}`, which then satisfy the images'
   requirements. The tool turns on `CONFIG_GOGO_BOARD_PORTS` (the
   firmware's host-port layer) and passes the directories to `idf.py` as
   `EXTRA_COMPONENT_DIRS`; without `-component` both are off again. A

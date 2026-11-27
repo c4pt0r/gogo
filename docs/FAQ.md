@@ -423,7 +423,7 @@ callbacks) and one line, `GOGO_BOARD_PORT("acme.sensor", &driver, &state);`,
 which registers it at boot before the image loads. Its name needs a
 vendor prefix and a dot (`acme.sensor`): gogo's own names never have one,
 so yours cannot collide with a driver a later gogo adds. Give the component a
-`gogo-driver.json` (`{"ports": ["acme.sensor"]}`) and build the firmware
+`gogo-driver.json` (`{"format": 1, "ports": ["acme.sensor"]}`) and build the firmware
 with it: `gogo firmware -board sticks3 -component path/to/sensor
 -build app.ggb`. gogo code opens it with `port.Open("acme.sensor",
 port.Host{Arg: ...})`, sends `port.Post` commands and gets `port.Post`

@@ -59,7 +59,7 @@ set(GOGO_BOARD_PORTS_SRCS "")
 set(GOGO_BOARD_PORTS_DEFS "")
 if(CONFIG_GOGO_BOARD_PORTS)
     set(GOGO_BOARD_PORTS_SRCS "${GOGO_ROOT}/runtime/board/board_ports.c" "${GOGO_ROOT}/runtime/embed/hostport.c"
-        "${GOGO_ROOT}/runtime/embed/inbox.c" "${GOGO_ROOT}/runtime/embed/poster.c")
+        "${GOGO_ROOT}/runtime/embed/inbox.c" "${GOGO_ROOT}/runtime/embed/poster.c" "${GOGO_ROOT}/runtime/embed/version.c")
     set(GOGO_BOARD_PORTS_DEFS GOGO_BOARD_PORTS=1 EMBED_HOST_PORTS=8 EMBED_BOARD_PORTS_MAX=32 GOGO_MAX_SOURCES=5u)
 endif()
 

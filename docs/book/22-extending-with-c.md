@@ -112,7 +112,7 @@ examples/dice-driver/
   host.c               an embedding host with the driver (22.5)
   dice/                the driver, an ESP-IDF component
     CMakeLists.txt
-    gogo-driver.json   {"ports": ["example.dice"]}: what it provides (22.4)
+    gogo-driver.json   the ports it provides (22.4)
     dice.h             the driver's table and state
     dice.c             the driver
     dice_port.c        GOGO_BOARD_PORT: the board's registration (22.4)
@@ -282,12 +282,18 @@ and the firmware itself knows the names the components' json files
 promised (`CONFIG_GOGO_BOARD_PORT_NAMES`, which `gogo firmware` writes)
 and says at boot each one it did not register (`gogo: board port
 "example.dice" expected but not registered: ...`), for a build made with
-`idf.py` directly or a json that spells the name otherwise than the code. Beside it, `gogo-driver.json` tells `gogo
-firmware` which requirement names the component provides:
+`idf.py` directly or a json that spells the name otherwise than the code.
+
+Beside it, `gogo-driver.json` tells `gogo firmware` which requirement
+names the component provides:
 
 ```json
-{"ports": ["example.dice"]}
+{"format": 1, "ports": ["example.dice"]}
 ```
+
+`format` is 1, the format of this gogo; a key the tool does not know
+is an error, not ignored, so a later format can add keys a build must
+understand. At most 8 ports, each named as above.
 
 Then one command builds a firmware with it, for the images that need
 it:
@@ -544,6 +550,13 @@ driver.
 What is not promised: everything under `runtime/` but `runtime/include`.
 A driver that includes a VM header (`port.h`, `heap.h`) is an in-tree
 driver, and can break with any release.
+
+Each `GOGO_BOARD_PORT` entry records the `GOGO_VERSION` of the header it
+was compiled against (`gogo_board_port.api`), and the board refuses an
+entry of another major or, during 0.x, another minor, with a boot line
+that names both versions: a driver prebuilt against 0.3 is not run by
+0.4 by accident. A driver may also ask `gogo_version()`, which a board
+links as libgogo does.
 
 ## 22.9 The internal driver table
 

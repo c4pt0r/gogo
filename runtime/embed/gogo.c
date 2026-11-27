@@ -103,10 +103,6 @@ static void make_fwd(gogo_vm *g) {
 
 /* ---- versions and errors ---- */
 
-uint32_t gogo_version(void) { return GOGO_VERSION; }
-
-uint32_t gogo_image_format(void) { return IMAGE_VERSION; }
-
 /* gogo.h's results are the shared codes negated (gogo_errors.h). */
 typedef char shared_codes_end[GOGO_E_SHARED_LAST <= GOGO_E_SHARED_MAX && GOGO_E_SHARED_MAX < 36 ? 1 : -1];
 

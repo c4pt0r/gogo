@@ -86,6 +86,15 @@ static size_t next_entry(size_t prev) {
  * no vendor prefix. */
 #define BP_TWICE 1
 #define BP_NODOT 2
+#define BP_VERSION 3
+
+/* Whether a driver compiled against gogo.h version api runs here: the
+ * same major and, during 0.x, the same minor (gogo_version's rule; a
+ * patch changes no interface). */
+static bool api_ok(uint32_t api) {
+    if (api >> 16 != GOGO_VERSION_MAJOR) return false;
+    return GOGO_VERSION_MAJOR != 0 || (api >> 8 & 0xFFu) == GOGO_VERSION_MINOR;
+}
 
 /* True if an entry other than i has i's name. */
 static bool named_twice(size_t i) {
@@ -102,9 +111,9 @@ static bool named_twice(size_t i) {
  * order's, which no driver controls). */
 static int verdict(const VmBoard *b, const gogo_board_port *e, const char *const *acc, uint32_t na) {
     const gogo_port_driver *d = e->driver;
-    if (e->size < ENTRY_SIZE_V1 || e->reserved || !e->name || !e->name[0] || !d || d->size < EMBED_DRIVER_SIZE_V1 ||
-        d->reserved)
+    if (e->size < ENTRY_SIZE_V1 || !e->name || !e->name[0] || !d || d->size < EMBED_DRIVER_SIZE_V1 || d->reserved)
         return GOGO_EINVAL;
+    if (!api_ok(e->api)) return BP_VERSION;
     size_t nl = 0;
     while (nl <= GOGO_PORT_NAME_MAX && e->name[nl]) nl++;   /* stops past the longest name */
     int nc = embed_name_check(e->name, nl, false);
@@ -200,6 +209,13 @@ static void reg_one(void *ctx, const gogo_board_port *e, int v) {
     if (v == 0) v = gogo_register_port(embed_handle(r->ep), e->name, strlen(e->name), e->driver, e->ctx);
     if (v == 0) return;
     char m[200];
+    if (v == BP_VERSION) {
+        int n = snprintf(m, sizeof m, "gogo: board port \"%.40s\" not registered: built against gogo.h %u.%u.%u, which this %u.%u.%u does not run (rebuild it against this gogo.h)\n",
+                         e->name, (unsigned)(e->api >> 16), (unsigned)(e->api >> 8 & 0xFFu), (unsigned)(e->api & 0xFFu),
+                         (unsigned)GOGO_VERSION_MAJOR, (unsigned)GOGO_VERSION_MINOR, (unsigned)GOGO_VERSION_PATCH);
+        if (n > 0) r->h->write(NULL, 2, m, (size_t)n < sizeof m ? (size_t)n : sizeof m - 1u);
+        return;
+    }
     const char *why = v == BP_TWICE   ? "two board ports have this name (none of them is registered)"
                       : v == GOGO_EEXIST ? "the name is taken (by a driver of the runtime or the board)"
                       : v == BP_NODOT ? "a board port's name needs a vendor prefix and a '.' (\"acme.sensor\")"

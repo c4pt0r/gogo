@@ -520,17 +520,19 @@ func TestFirmwareComponent(t *testing.T) {
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img); err == nil || !strings.Contains(err.Error(), "no gogo-driver.json") {
 		t.Errorf("no gogo-driver.json: %v", err)
 	}
-	for _, bad := range []string{`{"ports": []}`, `{"ports": ["tcp"]}`, `{"ports": ["gpio"]}`, `{"ports": [""]}`, `not json`,
-		`{"ports": ["dice"]}`, `{"ports": ["/sd2"]}`, `{"ports": ["/acme.sd"]}`, `{"ports": ["acme.a,b"]}`, `{"ports": ["acme.a b"]}`,
-		`{"ports": ["acme.\u00fc"]}`, `{"ports": [".dice"]}`, `{"ports": ["acme."]}`, `{"ports": ["acme..dice"]}`,
-		`{"ports": ["acme.abcdefghijklmnopqrstuvwxyz0"]}`,
-		`{"ports": ["a.1", "a.2", "a.3", "a.4", "a.5", "a.6", "a.7", "a.8", "a.9"]}`} {
+	for _, bad := range []string{`{"format": 1, "ports": []}`, `{"format": 1, "ports": ["tcp"]}`, `{"format": 1, "ports": ["gpio"]}`, `{"format": 1, "ports": [""]}`, `not json`,
+		`{"format": 1, "ports": ["dice"]}`, `{"format": 1, "ports": ["/sd2"]}`, `{"format": 1, "ports": ["/acme.sd"]}`, `{"format": 1, "ports": ["acme.a,b"]}`, `{"format": 1, "ports": ["acme.a b"]}`,
+		`{"format": 1, "ports": ["acme.\u00fc"]}`, `{"format": 1, "ports": [".dice"]}`, `{"format": 1, "ports": ["acme."]}`, `{"format": 1, "ports": ["acme..dice"]}`,
+		`{"format": 1, "ports": ["acme.abcdefghijklmnopqrstuvwxyz0"]}`,
+		`{"format": 1, "ports": ["a.1", "a.2", "a.3", "a.4", "a.5", "a.6", "a.7", "a.8", "a.9"]}`,
+		`{"ports": ["acme.dice"]}`, `{"format": 2, "ports": ["acme.dice"]}`, `{"format": 1, "ports": ["acme.dice"], "future": 1}`,
+		`{"format": 1, "Ports": ["acme.dice"]}`} {
 		write("gogo-driver.json", bad)
 		if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img); err == nil {
 			t.Errorf("gogo-driver.json %s accepted", bad)
 		}
 	}
-	write("gogo-driver.json", `{"ports": ["acme.dice"]}`)
+	write("gogo-driver.json", `{"format": 1, "ports": ["acme.dice"]}`)
 	out, cfg, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img)
 	if err != nil {
 		t.Fatal(err)
@@ -591,7 +593,7 @@ func TestFirmwareComponentPaths(t *testing.T) {
 			t.Fatal(err)
 		}
 		os.WriteFile(filepath.Join(p, "CMakeLists.txt"), []byte("idf_component_register()\n"), 0o644)
-		os.WriteFile(filepath.Join(p, "gogo-driver.json"), []byte(`{"ports": ["`+port+`"]}`), 0o644)
+		os.WriteFile(filepath.Join(p, "gogo-driver.json"), []byte(`{"format": 1, "ports": ["`+port+`"]}`), 0o644)
 		return p
 	}
 	a, b := mk("one/acme", "acme.a"), mk("two/acme", "acme.b")

@@ -517,8 +517,9 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int3
  * left out; so are all the entries of a name two or more of them have. The driver then works exactly
  * as a host port: its callbacks run on the VM's thread (the VM task) and
  * get a gogo_vm handle that takes gogo_port_emit, gogo_port_close,
- * gogo_post and gogo_poster_new, and nothing else of this header (those
- * calls are libgogo's alone). gogo_close_posts and
+ * gogo_post and gogo_poster_new; besides, gogo_version and
+ * gogo_image_format work on a board, and nothing else of this header
+ * does (those calls are libgogo's alone). gogo_close_posts and
  * gogo_poster_close_posts link but do nothing on a board: posts belong
  * to every driver of the board, and close when the program ends. A poster made from it
  * may be used from any other thread or task, never from an interrupt
@@ -538,7 +539,11 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int3
  * boot each port of CONFIG_GOGO_BOARD_PORT_NAMES it did not register. */
 typedef struct gogo_board_port {
     uint32_t size;                    /* sizeof(gogo_board_port) as the driver was compiled */
-    uint32_t reserved;                /* 0 */
+    /* GOGO_VERSION of the header the driver was compiled against: the
+     * board refuses the entry (a boot line) unless its major is the
+     * runtime's and, during 0.x, its minor too (the rule of
+     * gogo_version). */
+    uint32_t api;
     const char *name;                 /* the requirement name: NUL-terminated, at most GOGO_PORT_NAME_MAX bytes */
     const gogo_port_driver *driver;
     void *ctx;                        /* given to every callback */
@@ -567,7 +572,7 @@ extern const char gogo_board_ports_enabled;
 /* At file scope, once per line. */
 #define GOGO_BOARD_PORT(name, driver, ctx)                                                                  \
     static const gogo_board_port GOGO_BOARD_PORT_CAT(gogo_board_port_, __LINE__) = {                        \
-        sizeof(gogo_board_port), 0, (name), (driver), (ctx) };                                              \
+        sizeof(gogo_board_port), GOGO_VERSION, (name), (driver), (ctx) };                                   \
     static const void *const GOGO_BOARD_PORT_CAT(gogo_board_port_layer_, __LINE__) __attribute__((used)) =  \
         &gogo_board_ports_enabled;                                                                          \
     static const gogo_board_port *const GOGO_BOARD_PORT_CAT(gogo_board_port_ref_, __LINE__)                \

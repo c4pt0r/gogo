@@ -89,7 +89,7 @@ const fwBoardPortNamesKconf = "CONFIG_GOGO_BOARD_PORT_NAMES"
 
 // fwComponent is a driver component given with -component: an ESP-IDF
 // component directory with a gogo-driver.json naming the requirement names
-// (board ports) it provides, {"ports": ["acme.dice"]}.
+// (board ports) it provides, {"format": 1, "ports": ["acme.dice"]}.
 type fwComponent struct {
 	dir   string // absolute
 	ports []string
@@ -114,11 +114,32 @@ func fwReadComponent(dir string) (fwComponent, error) {
 	if err != nil {
 		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: no gogo-driver.json (it names the ports the component provides: {\"ports\": [\"name\"]})", dir)
 	}
-	var j struct {
-		Ports []string `json:"ports"`
-	}
-	if err := json.Unmarshal(b, &j); err != nil {
+	// Exactly the keys of this format, spelled exactly: a key this tool
+	// does not know may be one a newer format needs understood.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json: %v", dir, err)
+	}
+	var j struct {
+		Format int      `json:"format"`
+		Ports  []string `json:"ports"`
+	}
+	for k, v := range raw {
+		var err error
+		switch k {
+		case "format":
+			err = json.Unmarshal(v, &j.Format)
+		case "ports":
+			err = json.Unmarshal(v, &j.Ports)
+		default:
+			err = fmt.Errorf("unknown key %q (format %d has \"format\" and \"ports\")", k, fwDriverFormat)
+		}
+		if err != nil {
+			return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json: %v", dir, err)
+		}
+	}
+	if j.Format != fwDriverFormat {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json: \"format\" is %d, this gogo reads %d", dir, j.Format, fwDriverFormat)
 	}
 	if len(j.Ports) == 0 {
 		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json names no ports", dir)
@@ -189,6 +210,10 @@ func findRepoFromWd() (string, bool) {
 	}
 	return findRepo(wd)
 }
+
+// fwDriverFormat is the gogo-driver.json format this tool reads:
+// {"format": 1, "ports": ["acme.dice"]}.
+const fwDriverFormat = 1
 
 // fwComponentsFlag collects repeated -component flags.
 type fwComponentsFlag []string

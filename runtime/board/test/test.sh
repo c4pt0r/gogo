@@ -58,6 +58,7 @@ gogo: board port "test.a_name_longer_than_31_bytes" not registered: the name is 
 gogo: board port "test.alpha" not registered: two board ports have this name (none of them is registered)
 gogo: board port "test.alpha" not registered: two board ports have this name (none of them is registered)
 gogo: board port "test.bad name" not registered: a bad name (letters, digits, '_', '-', '.') or entry (its size or driver)
+gogo: board port "test.newer" not registered: built against gogo.h 0.3.0, which this 0.2.0 does not run (rebuild it against this gogo.h)
 END
 if cmp -s "$T/err.want" "$T/err"; then echo "ok   boot lines for the refused ports"
 else echo "FAIL boot lines"; diff "$T/err.want" "$T/err"; fail=1; fi

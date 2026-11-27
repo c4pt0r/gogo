@@ -47,7 +47,7 @@ DIST_SRCS = $(wildcard runtime/dist/*.c)
 # poster.c), idle unless a driver of the build registers a port: with up to
 # 8 of them beside the board's drivers (BOARD_PORTS_FLAGS), and one more
 # event source for the post inbox when DRIVERS are given.
-BOARD_PORTS_SRCS = runtime/board/board_ports.c runtime/embed/hostport.c runtime/embed/inbox.c runtime/embed/poster.c
+BOARD_PORTS_SRCS = runtime/board/board_ports.c runtime/embed/hostport.c runtime/embed/inbox.c runtime/embed/poster.c runtime/embed/version.c
 BOARD_PORTS_FLAGS = -DGOGO_BOARD_PORTS=1 -DEMBED_HOST_PORTS=8 -DEMBED_BOARD_PORTS_MAX=32 -DGOGO_BOARD_POST_BYTES=1048576u -Iruntime/include
 MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c runtime/board/board_main.c $(PARAMS_SRCS) runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS) $(BOARD_PORTS_SRCS)
 # make vm DRIVERS="dir|file.c ...": gogovm with those board-port drivers
