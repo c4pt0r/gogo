@@ -103,6 +103,20 @@ menu "gogo"
             (gogo/node), over gogo's tcp. When off, dist.c is not built and
             port.Open("node") returns ok=false (an image that needs it is refused).
 
+    config GOGO_BLE
+        bool "Bluetooth LE peripheral port (ble)"
+        depends on BT_NIMBLE_ENABLED
+        default y
+        help
+            Build the "ble" port (runtime/ble/ble.c, ble_esp.c): a GATT
+            server the program declares at port.Open, on ESP-IDF's NimBLE
+            host (peripheral only), with the shared host lifetime of
+            ble_host.c. Needs NimBLE, which sdkconfig.ble turns on (the
+            default build lists it; `gogo firmware` adds it with the
+            feature). When off, the board does not list the driver (an
+            image that requires "ble" is refused) and port.Open("ble")
+            fails with errors.NotFound.
+
     config GOGO_SCREEN
         bool "Text screen port (screen)"
         default y
@@ -133,6 +147,43 @@ menu "gogo"
             Embed gogo12.font (printable ASCII plus GB 2312, 162958 bytes).
             When off, embed gogo12-ascii.font (printable ASCII only, 1536
             bytes) and every other character shows as the console's box.
+
+    config GOGO_BLE_PROV
+        bool "Wi-Fi provisioning over Bluetooth (hold a key at boot)"
+        depends on GOGO_NET && GOGO_BLE
+        default y
+        help
+            Build ble_prov.c: holding the setup key at boot (StickS3:
+            button A; Cardputer: W) starts a 120 s session in which a phone
+            gives the board its Wi-Fi network with Espressif's
+            provisioning protocol ("ESP BLE Provisioning" app, security 2
+            with a one-time PIN shown on the screen). The settings go to
+            the wifi.* config keys, then the board restarts. Shares the
+            NimBLE host with the "ble" port (ble_host.c; sdkconfig.ble
+            holds its NimBLE and protocomm settings): on with GOGO_BLE
+            whenever there is Wi-Fi. While a session runs,
+            port.Open("ble") fails with errors.Busy. Without it the key
+            does nothing.
+
+    config GOGO_PROV_DRYRUN
+        bool "Provisioning dry run (test only)"
+        depends on GOGO_BLE_PROV
+        default n
+        help
+            Test builds only: a provisioning session keeps the received
+            settings in RAM, prints the SSID and the password's length,
+            and writes nothing; the station does not join the network
+            (apply reports Connected at once).
+
+    config GOGO_PROV_TEST_ENTER
+        bool "Provisioning without the key (test only)"
+        depends on GOGO_PROV_DRYRUN
+        default n
+        help
+            Test builds only: start the (dry-run) session at power-on or
+            after a flash as if the setup key were held, so it can be
+            tested without pressing it. Not after the session's own
+            restart.
 
     config GOGO_BOARD_PORTS
         bool "Board ports (drivers of other components, gogo.h)"

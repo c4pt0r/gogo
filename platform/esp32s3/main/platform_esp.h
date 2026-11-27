@@ -72,6 +72,10 @@ int image_part_map(const uint32_t **words, uint32_t *nwords);
  * Failures are logged on serial and leave the console off. No-op when built
  * with GOGO_ESP_CONSOLE=0. */
 void console_esp_start(void);
+/* The "ble" port (GOGO_BLE; ble_esp.c, NimBLE), and the events its radio
+ * side could not queue since boot (gogo device stats ble_lost). */
+extern const struct PortDriver esp_ble_driver;
+uint32_t ble_esp_lost(void);
 /* The "screen" port (GOGO_SCREEN; console_task.c draws its grid). */
 extern const struct PortDriver esp_screen_driver;
 /* GOGO_CONSOLE_VERBOSE builds: logs the time the VM spent in console writes. */
@@ -184,6 +188,11 @@ int config_esp_init(void);
 int32_t config_esp_get(const char *key, uint8_t *buf, uint32_t cap);
 /* Removes key (0 on success; -1 if unset or on error). */
 int config_esp_erase(const char *key);
+/* Writes the Wi-Fi network as `gogo setup` does, in one commit: the
+ * password first (erased for an open network, pass_len 0), then the SSID,
+ * which the station joins with at the next boot (ble_prov.c restarts the
+ * board after it). 0 on success, -1 on error. */
+int config_esp_set_wifi(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, uint32_t pass_len);
 void config_esp_start_serial(void);
 
 /* Wi-Fi station (wifi.c): wifi_esp_start initialises and starts the driver

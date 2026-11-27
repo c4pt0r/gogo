@@ -28,6 +28,10 @@ experimental) need these checks:
   is now `GOGO_EINVAL`. Undotted names stay valid for hosts.
 - **gogo_close_posts with a board handle** does nothing (board ports are
   new in this release; in an embedding host it closes posts as before).
+- **`ble` is a runtime driver name.** It joins the reserved names, so
+  `gogo_register_port` refuses a host port called `ble` (`GOGO_EEXIST`),
+  as it refuses `gpio` or `tcp`: rename it with a vendor prefix
+  (`acme.ble`).
 
 ## Breaking changes since v0.1.0
 
@@ -1057,6 +1061,54 @@ rebuilt:
   grid (the console and the grid are kept apart only on the boards).
   `gogo run` has no `--screen` option; `build/gogovm --screen` has.
 
+## Bluetooth LE (`ble` port, `gogo/ble`)
+
+- **Peripheral only.** No central role (no scanning, no connecting to
+  other devices), one connection at a time, no indications, no
+  descriptors of your own, no pairing, bonding or encryption: anyone in
+  range can connect, read what the program set and write.
+- **Memory.** The Bluetooth controller keeps about 22 KB of internal RAM
+  in every firmware built with `ble` (the default), port open or not; an
+  open port takes about 65 KB more (the controller, the NimBLE host's
+  buffers and task), freed at close. Measured on the StickS3 with Wi-Fi
+  connected: about 155 KB of internal RAM free without the port, 90 KB
+  with it open. On the Cardputer (no PSRAM) a TLS connection's buffers
+  (about 35 KB at their peak) come from the same internal RAM, so Wi-Fi,
+  TLS and an open port together leave about 40 KB of internal RAM free
+  at the worst moment (measured on a StickS3 built without PSRAM; not
+  yet on the Cardputer itself). A firmware for a program
+  without Bluetooth can drop it: `gogo firmware -without ble`.
+- **Open and close block.** `ble.Open` waits on a board while the
+  controller and the NimBLE host start, and closing the port while they
+  stop: with a phone connected, up to 2 s for it to acknowledge the
+  disconnect. No actor runs meanwhile.
+- **Writes without a response can be lost, and so can state events.**
+  The driver holds events the owner has no mailbox room for, in a 2 KB
+  queue; a write with a response that finds the queue full is refused to
+  the phone (it retries), but a write without one is dropped, as it would
+  be over the air. 128 bytes are kept for the small events (Connected,
+  Disconnected, MTU), but an owner stalled through several connections
+  can overflow that too, and the program's idea of the connection is then
+  wrong until the next one. `gogo device stats` counts what was lost
+  (`ble_lost`).
+- **A stalled notification waits.** When the Bluetooth stack has no
+  buffer for a notification (a slow phone, Wi-Fi taking the radio), its
+  `Done` comes when it has one; there is no cap. A link that dies ends in
+  `Disconnected` (within the phone's supervision timeout, up to 32 s),
+  which fails it with `NotifyFailed{Closed}` and `Done{Seq: -1}`.
+- **Phones cache the services.** iOS (and some Android versions) remember
+  a device's GATT table by its address: after a program changes its
+  services, toggle Bluetooth on the phone or forget the device.
+- **The board that "hung" was alive.** A StickS3 with a `ble` firmware
+  (port never opened) stopped answering on USB, esptool and JTAG
+  included; a USB bus reset brought it back with its program still
+  running: it was the USB link going silent (below, "ESP32-S3 boards"),
+  not Bluetooth. It happened again with the integrated firmware.
+- **The host simulation is functional, not timed.** `gogovm`'s socket
+  phone has no radio timing and no MTU of its own (the client says the
+  MTU); its only buffer limit is the socket's: a phone that stops reading
+  makes notifications wait (`BLE_AGAIN`), as a board's full stack does.
+
 ## Embedding (`libgogo`)
 
 - **Posts racing a close are lost quietly.** A post concurrent with
@@ -1188,16 +1240,57 @@ rebuilt:
   ESP32-S3; the Linux `gogovm` with drivers is first run by the test
   workflow.
 
+## Wi-Fi setup from a phone (`bleprov`)
+
+The program's own Bluetooth port has its issues above, under "Bluetooth
+LE".
+
+
+- **It costs memory at every boot**, also when no session runs: about
+  34 KB of flash and 0.5 KB of static internal RAM on top of the `ble`
+  port's (platform/esp32s3/README.md, `GOGO_BLE_PROV`). A firmware
+  without it: `gogo firmware -without bleprov`.
+- **Free memory during a session is measured only with an earlier
+  configuration** (the Bluetooth controller's code in flash); with it in
+  internal RAM, as now, the session has about 16 KB less to spare.
+- **No network list.** The board does not offer a Wi-Fi scan to the app
+  (no `wifi_scan` capability), so the network's name is typed in the app.
+- **The password is checked by joining only.** Success means the board
+  associated (the WPA2 handshake passed), not that it got an address: a
+  network whose DHCP fails, or a captive portal, is saved anyway.
+  Passphrases are 8 to 63 characters (a 64-digit hex key is refused, as
+  by `wifi.password`).
+- **No QR code.** The board shows the device name and PIN as text; in
+  the app choose to continue without scanning a code.
+- **The setup key is read at a power-on or a reset only.** Not after a
+  crash, a watchdog or a brownout, and not after a session's own restart.
+  On the Cardputer it is read through the keyboard chip over I2C (the
+  keyboard driver itself is not needed).
+- **Every session ends with a restart**, also on timeout, so a program
+  starts about two seconds later than after a normal boot.
+- **Not yet run on hardware:** pressing the setup key on either board
+  (tested with the test-only `GOGO_PROV_TEST_ENTER` build, which enters
+  without it; the key reads "not held" correctly on the Cardputer), a
+  real phone with the Espressif app, a session that saves to the real
+  store and then joins (only the dry run, which writes nothing, was run
+  end to end with `esp_prov.py`), and the StickS3.
+
 ## ESP32-S3 boards
 
 - **The USB serial console sometimes goes silent** a few seconds after a
-  reset (esptool: `No serial data received`), while the program keeps
-  running. It has been seen on both boards, with and without audio; the
-  cause is unknown (desktop applications that open every new serial
-  device are a suspect). *Workaround:* quit such applications; replug
-  the board, or reset the USB device with libusb
-  (`libusb_reset_device` on the device with vendor id 0x303a) and wait
-  about 3 s.
+  reset or after hours (esptool: `No serial data received`), while the
+  program keeps running. It has been seen on both boards, with and
+  without audio and Bluetooth, idle and busy. The device stays listed
+  but answers nothing, not even a request for its serial number string,
+  so esptool's resets (which go over the same link) and JTAG fail too;
+  the chip is not reset. The cause is unknown (desktop applications that
+  open every new serial device are a suspect). *Workaround:* reset the
+  USB device with libusb (`libusb_reset_device` on the device with
+  vendor id 0x303a, chosen by bus and address: a silent device cannot
+  give its serial number) and wait about 4 s; or replug the board, or
+  press its reset button. If the board itself had hung, the watchdogs
+  reset it within 15 s and the next boot says `gogo: last reset: ...` on
+  the screen and the console.
 - **The screen console is slow.** With the screen on, 1000 `println`s
   take about 2.2 times as long as without. *Workaround:* print less, or
   build with the console off (`GOGO_CONSOLE=0`).

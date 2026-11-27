@@ -30,6 +30,7 @@ and assumes no knowledge of embedded programming or Erlang.
 20. [Distributed Actors](20-distributed.md): `gogo/node`: a server node and boards, remote PIDs, names, what a message may hold, lost nodes, security
 21. [Best Practices](21-best-practices.md): actors as small machines, messages and `Bytes`, backpressure, shared state, Call discipline, restarts, receive order, C or gogo, high-bandwidth streams (audio, sensors, cameras), streaming TCP and HTTP, a checklist
 22. [Extending gogo with C](22-extending-with-c.md): why there is no FFI, port drivers in C (the driver table, events, memory, requirements, optional features, host simulation), a tested driver with generic types, host ports, pitfalls
+23. [Bluetooth LE](23-bluetooth.md): the `"ble"` port, a peripheral a phone app talks to: services and characteristics, events, values a phone reads, notifications with flow control, nRF Connect, the host simulation, memory and Wi-Fi
 
 [Known issues](../known-issues.md) lists gogo's open limitations, with
 workarounds.
@@ -48,6 +49,10 @@ make vm
 go build -o build/gogo ./cmd/gogo
 docs/book/examples/run.sh
 ```
+
+Chapter 23's programs need a phone: each has a `phone` script that
+[`tests/ble`](../../tests/ble/) plays over `gogovm`'s Bluetooth socket
+(`go test ./tests/ble/`, part of `make test`), and `run.sh` skips them.
 
 Chapter 20's programs need several VMs: they are the server and boards
 of [`tests/dist/progs`](../../tests/dist/progs/), run as separate host

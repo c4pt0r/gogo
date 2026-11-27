@@ -1,0 +1,174 @@
+// The peripheral of the BLE tests: tests/ble (gogovm, a Go phone) and
+// tools/ble_central.py (a board, the Mac as the central) talk to it.
+//
+// One service, three characteristics:
+//
+//	0 counter  Read | Notify          the number of commands so far, as text
+//	1 command  Write | WriteNoResp    a command (below)
+//	2 reply    Notify                 what a command answers
+//
+// Commands: "bye" ends the program (and closes the port); "flood N"
+// sends N notifications of MaxNotify(mtu) bytes on reply ("flood N S": of
+// S bytes, at most MaxNotify(mtu)), at most two in flight, and prints how
+// long it took; "big" sends one byte too many
+// (refused: Done -1); anything else is echoed on reply. Each command
+// also notifies the counter, if the phone subscribed to it.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/ble"
+	"gogo/bytes"
+	"gogo/port"
+	"gogo/strconv"
+)
+
+const (
+	counter = 0
+	command = 1
+	reply   = 2
+)
+
+func main() {
+	p, err := ble.Open(ble.Config{
+		Name: "gogo-echo",
+		Services: []ble.Service{{
+			UUID: ble.UUID("6e400001-b5a3-f393-e0a9-e50e24dcca9e"),
+			Chars: []ble.Characteristic{
+				{UUID: ble.UUID("6e400004-b5a3-f393-e0a9-e50e24dcca9e"), Flags: ble.Read | ble.Notify},
+				{UUID: ble.UUID("6e400002-b5a3-f393-e0a9-e50e24dcca9e"), Flags: ble.Write | ble.WriteNoResp},
+				{UUID: ble.UUID("6e400003-b5a3-f393-e0a9-e50e24dcca9e"), Flags: ble.Notify},
+			},
+		}},
+	})
+	if err != nil {
+		println("open:", err.Error())
+		return
+	}
+	ble.SetValue(p, counter, bytes.FromString("0"))
+	println("open")
+	mtu, n, subCounter := ble.DefaultMTU, 0, false
+	var held []port.Post // events that arrived while waiting for a Done
+	for {
+		var post port.Post
+		if len(held) > 0 {
+			post, held = held[0], held[1:]
+		} else if m, ok := actor.Receive().(port.Post); ok {
+			post = m
+		} else {
+			continue // a Done of a notify sent outside flood
+		}
+		ev, _ := ble.Event(post)
+		switch e := ev.(type) {
+		case ble.Connected:
+			mtu = e.MTU
+			println("connected", e.MTU)
+		case ble.MTUChanged:
+			mtu = e.MTU
+			println("mtu", e.MTU)
+		case ble.Subscribed:
+			if e.Char == counter {
+				subCounter = e.On
+			}
+			println("subscribed", e.Char, e.On)
+		case ble.Disconnected:
+			subCounter = false
+			println("disconnected", e.Reason)
+		case ble.Written:
+			cmd := e.Data.String()
+			n++
+			v := bytes.FromString(strconv.Itoa(n))
+			ble.SetValue(p, counter, v)
+			if subCounter {
+				ble.SendNotify(p, counter, v)
+			}
+			if cmd == "bye" {
+				println("bye")
+				return
+			}
+			if len(cmd) > 6 && cmd[:6] == "flood " {
+				arg, size := cmd[6:], ble.MaxNotify(mtu)
+				for i := 0; i < len(arg); i++ {
+					if arg[i] == ' ' {
+						if s, err := strconv.Atoi(arg[i+1:]); err == nil && s >= 1 && s < size {
+							size = s
+						}
+						arg = arg[:i]
+						break
+					}
+				}
+				k, err := strconv.Atoi(arg)
+				if err == nil {
+					held = flood(p, k, size, held)
+				}
+				continue
+			}
+			if cmd == "big" {
+				ble.SendNotify(p, reply, bytes.FromSlice(make([]byte, ble.MaxNotify(mtu)+1)))
+				var seq int
+				seq, held = waitDone(p, held)
+				println("big:", seq)
+				continue
+			}
+			println("echo", cmd)
+			ble.SendNotify(p, reply, e.Data)
+		}
+	}
+}
+
+// waitDone is the Seq of the next Done from p; the port.Posts that come
+// first are appended to held (a phone's next write must not be lost).
+// The NotifyFailed of the notify it waits for is dropped: the Done says it.
+func waitDone(p actor.PID, held []port.Post) (int, []port.Post) {
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Done:
+			if m.From == p {
+				return m.Seq, held
+			}
+		case port.Post:
+			held = keep(held, m)
+		}
+	}
+}
+
+// keep appends m to held unless it is a NotifyFailed.
+func keep(held []port.Post, m port.Post) []port.Post {
+	if ev, ok := ble.Event(m); ok {
+		if _, failed := ev.(ble.NotifyFailed); failed {
+			return held
+		}
+	}
+	return append(held, m)
+}
+
+// flood sends k notifications of size bytes on reply, two in flight; the
+// port.Posts that arrive meanwhile are appended to held.
+func flood(p actor.PID, k, size int, held []port.Post) []port.Post {
+	buf := make([]byte, size)
+	for i := range buf {
+		buf[i] = byte('a' + i%26)
+	}
+	data := bytes.FromSlice(buf)
+	t0 := actor.Now()
+	sent, okN, failed := 0, 0, 0
+	for okN+failed < k {
+		for sent < k && sent-okN-failed < 2 {
+			ble.SendNotify(p, reply, data)
+			sent++
+		}
+		switch m := actor.Receive().(type) {
+		case port.Done:
+			if m.Seq > 0 {
+				okN++
+			} else {
+				failed++
+			}
+		case port.Post:
+			held = keep(held, m)
+		}
+	}
+	ms := actor.Now() - t0
+	println("flood", k, "x", size, "ok", okN, "failed", failed, "ms", ms)
+	return held
+}

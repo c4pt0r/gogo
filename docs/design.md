@@ -1192,7 +1192,10 @@ font.
   `GOGO_KBD`, `GOGO_BATTERY`, `GOGO_IMU`, `GOGO_IR`, `GOGO_AUDIO`,
   `GOGO_SCREEN` and `GOGO_FLOAT` (floating point: the VM's float code and
   `runtime/floatlib`; off, the VM lacks the requirement `float` and
-  refuses an image that uses floats). A
+  refuses an image that uses floats); `GOGO_BLE` (the `ble` port,
+  5.4.10) depends on NimBLE, which the fragment `sdkconfig.ble` turns on
+  (the default build lists it), and `GOGO_BLE_PROV` (Wi-Fi provisioning
+  over BLE, 5.4.11) on `GOGO_BLE` and `GOGO_NET`. A
   switched-off feature behaves as if the board lacked the hardware: its
   `port.Open` returns `errors.NotFound`, and `gogo device scan` and the like
   answer "no network in this firmware".
@@ -1505,8 +1508,8 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   data read in place on the sender's heap (no copy, no held Bytes), and
   answered with `port.Done` (-1: malformed, nothing applied). A Done that
   does not fit the mailbox is owed and retried every 10 ms by the port's
-  event source (GOGO_MAX_SOURCES is 4: the boards also use net, input and
-  the gpio driver's debounce),
+  event source (GOGO_MAX_SOURCES is 4, 5 with BLE: the boards also use
+  net, input, the gpio driver's debounce and an open ble port),
   after collecting a waiting owner's heap slack as stream/ does; with 8
   owed, further Outs get Done{-1}, counted, so every Out gets its Done. Every operation is
   clipped to the clip rectangle, which is always inside the grid, so no
@@ -1539,6 +1542,151 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   ESP32-S3 with no fixed state (`make screensize`); the firmware grows by
   about 5.1 KB, plus the 1760-byte shared grid allocated at the first
   open.
+
+### 5.4.10 Bluetooth LE (the `ble` port, `gogo/ble`)
+
+- **Shape.** One port, `ble`: a peripheral (GATT server) whose services
+  the program declares at open; peripheral only, one connection at a
+  time, one port per board (the radio is the board's). The central role
+  and scanning are not built. Book chapter 23 is the user's view.
+- **No new types.** The port speaks the generic host-port types: the cfg
+  is a `port.Host{Arg: 1, Data}` whose Data encodes the Config (name,
+  services, UUIDs little-endian, flags: `runtime/ble/ble.h`), commands are
+  `port.Post{Kind: cmd | char << 8, Data}` (SetValue, Notify), events
+  `port.Post{From, Kind: ev | arg << 8, Data}` (Connected with the MTU and
+  the peer's address, Disconnected with the HCI reason, Written, Subscribed,
+  MTU, NotifyFailed), and each Notify is answered with a `port.Done`. `gogo/ble` is a
+  library (no builtins, no reserved types) that encodes the Config
+  (`ble.Open`) and decodes a Post into typed events (`ble.Event`). So the
+  VM core and the image format are unchanged; the requirement name `ble`
+  is the only image-side trace, recorded by the library's constant
+  `port.Open`, so importing `gogo/ble` requires the driver. The price is
+  `ble.Open(cfg)` and `ble.Event(post)` where a reserved type would let a
+  program write `port.Open("ble", cfg)` and switch on the event directly.
+- **The driver** (`runtime/ble/ble.c`, C99, a `PortDriver` with
+  `open_term` and `command_term`) keeps its state in board storage (a
+  `BleBoard`: the Config, the connection as the events said it, the
+  characteristic of each Notify in flight) and the port's `StreamOut` in
+  `Port.state`: Notify reuses the stream protocol's Out bookkeeping
+  (`stream_out_accept_data`: two in flight, Dones in order, owed when the
+  mailbox is full). The radio side (a NimBLE callback, a socket thread)
+  never touches the VM: it appends records to a fixed 2 KB queue in the
+  `BleBoard` under the HAL's lock and wakes the VM; the driver's event
+  source (registered while the port is open, one more slot:
+  `GOGO_MAX_SOURCES` 5 on the boards and in `gogovm`) delivers them in
+  order. A record the owner has no room for stays queued and is retried
+  every 5 ms, never dropped; a write with a response that finds the queue
+  full is answered with an ATT error so the phone retries, and 128 bytes
+  are kept free for the small events, so a Disconnected is never lost
+  behind writes. Reads never reach the VM: the HAL answers them from the
+  values SetValue stored there. A Notify the stack has no buffer for
+  (`BLE_AGAIN`) is retried every 5 ms for as long as the connection
+  lasts (no cap: a dead link always ends in Disconnected), and its Done
+  comes when the stack took it; on Disconnected every Notify in flight
+  fails. Every `Done{-1}` follows a `NotifyFailed` event (char and a
+  shared error code: BadArg, Closed, Refused, TooMany, IO), sent directly
+  by the driver and dropped, unlike the Done, if the mailbox is full.
+- **Hardware layer** (`BleHal`: start, stop, set_value, notify, lock,
+  unlock). ESP32-S3 (`ble_esp.c`): NimBLE, the GATT tables built from the
+  Config in static arrays, legacy advertising (flags and name, the first
+  service's UUID in the scan response), advertising restarted when the
+  phone leaves and after a host reset (`ble_host_on_resync`); the host's
+  lifetime is `ble_host.c`'s
+  (`ble_host_acquire`/`release`, reference-counted, shared with the
+  firmware's Wi-Fi provisioning, which `ble_prov_active()` reports so the
+  port refuses to open with `errors.Busy` meanwhile). Unix
+  (`ble_unix.c`): a Unix-domain socket at `$GOGO_BLE` and a line protocol
+  a test client plays the phone over (`tests/ble`).
+- **Switch and sizes.** Kconfig `GOGO_BLE` (on by default on both boards,
+  depends on NimBLE, which `sdkconfig.ble` turns on; `gogo firmware` adds
+  that fragment with the feature, the table's `onDefaults`). Figures per
+  board are in [platform/esp32s3/README.md](../platform/esp32s3/README.md)
+  ("BLE").
+
+### 5.4.11 Wi-Fi provisioning over BLE
+
+Book section 2.1 is the user's side (chapter 23 the program's `ble`
+port, which shares the radio); `platform/esp32s3/main/ble_prov.c`
+and `runtime/prov/provmsg.h` hold the details.
+
+- **In the firmware, not the program.** A phone gives the board its
+  Wi-Fi network before any program runs; the firmware writes it to the
+  same config keys `gogo setup` and `gogo config` write (`wifi.ssid`,
+  `wifi.password` in the NVS namespace `gogo`; never the Wi-Fi driver's
+  own NVS, which is off, `ESP_WIFI_NVS_ENABLED=n`), so the program never
+  sees the password and the rest of the firmware needs no change.
+- **Protocol.** ESP-IDF's standard provisioning protocol, so Espressif's
+  phone apps ("ESP BLE Provisioning") and `esp_prov.py` work unchanged:
+  protocomm (an IDF component) for the session and the endpoints, over a
+  GATT service of our own that copies the wifi_provisioning BLE scheme
+  (service `021a9004-...`, one characteristic per endpoint with its name
+  in a user description, advertised as `PROV_gogo_XXXX`, the prefix the
+  apps look for). Endpoints: `prov-session` (security), `proto-ver`
+  (`{"prov":{"ver":"v1.1","sec_ver":2,...,"cap":["wifi_prov"]}}`: no
+  `wifi_scan`, the phone asks for the name) and `prov-config` (get status,
+  set config, apply: the protobuf messages, decoded and encoded by
+  `runtime/prov`, pure C99, tested against Python protobuf's bytes). The
+  managed component `network_provisioning` is not used: its manager
+  needs esp_netif and lwIP, which gogo does not run, and its own BLE
+  transport would start NimBLE itself instead of through the shared host
+  (`ble_host_acquire` / `ble_host_release`, reference-counted).
+- **Security model (owner's decision).** Security 2: SRP6a (3072-bit
+  group, user `wifiprov`, the apps' default) with a one-time six-digit PIN
+  as the password, then AES-GCM with the derived key for every message.
+  The PIN comes from the hardware RNG at each session and is shown only
+  on the board's screen and its serial console; the board computes the
+  SRP salt and verifier itself, so no PIN or verifier is stored anywhere.
+  A listener learns nothing that allows an offline guess of the PIN; an
+  active attacker gets one guess per session attempt, at most five
+  refused attempts per session (then it closes), and a session exists
+  only after someone held the **setup key at boot** for about a second
+  (StickS3: button A, KEY1 on G11; Cardputer: W, read from the TCA8418
+  with its pins switched to GPIO, since the chip keeps scanning across a
+  reset), and for at most 120 seconds. The key is read only after a
+  power-on or a reset by the user or a tool (`ESP_RST_POWERON`,
+  `ESP_RST_USB`): never after a crash, a watchdog or a brownout, when a
+  program may have been pressing it, and never after a session's own
+  restart (an `RTC_NOINIT` flag, so a stuck key does not loop). Pressing
+  the key again, after it was let go, cancels the session; a phone that
+  has not opened a session within 20 s is dropped, so a bystander cannot
+  hold the one connection for the window. The five-refusal bound is per
+  session, and a session needs a deliberate boot with the key held. The
+  PIN and the SRP salt are drawn after the Wi-Fi station is up (the RF
+  on: `esp_random` is then a true RNG). An unconfigured board does not
+  open it on its own. The password is never printed (a dry run prints its length) and is
+  wiped from RAM after use.
+- **Flow.** The VM task calls `ble_prov_boot` after the console and the
+  config store are up and before Wi-Fi and the image. Not held: it
+  returns, the radio untouched. Held: Wi-Fi driver up (station, settings
+  in RAM), NimBLE through the shared host, advertising; on apply the
+  station joins with the received settings (up to three attempts; a
+  successful association, i.e. the WPA2 handshake, proves the password)
+  and the phone reads Connected or ConnectionFailed with the reason, and
+  may send other settings. Once the phone has read Connected, the
+  settings are written (password first, then SSID, as `gogo setup`, in
+  one NVS commit) and the board restarts. On timeout (not while a join is
+  under way, for up to 30 s more), on cancel or after too many refusals
+  nothing is written and it restarts too: every session ends in a restart, so a
+  normal boot sets up the radio and the memory the program gets.
+  `ble_prov_active()` is true from the host's acquire to its release. No
+  program runs then (the session comes before the image and ends in a
+  restart), so the interlock is a guard: `port.Open("ble")` would answer
+  `errors.Busy`. The session holds the shared host once and releases it
+  once, before the restart.
+- **Switches.** Kconfig `GOGO_BLE_PROV` (default on; depends on `GOGO_NET`
+  and `GOGO_BLE`, so it is in the default firmware of both boards with the
+  `ble` port, and its NimBLE and protocomm settings are in the one
+  Bluetooth fragment, `sdkconfig.ble`; `gogo firmware` turns it on with
+  `ble` and `net`, `-without bleprov` drops it). Test only:
+  `GOGO_PROV_DRYRUN` writes nothing and does not join (apply reports
+  Connected at once, the board prints the SSID and the password's
+  length); `GOGO_PROV_TEST_ENTER` (with the dry run) starts the session at
+  power-on without the key.
+- **Costs.** Per board in
+  [platform/esp32s3/README.md](../platform/esp32s3/README.md)
+  (`GOGO_BLE_PROV`): the firmware's size and static RAM, and the free
+  internal heap during a session. All of a session's memory is returned
+  by the restart.
 
 ### 5.5 Value representation and memory
 
@@ -2951,7 +3099,8 @@ and `gogo/fmt`, which complete the language plan (image format 15.6).
    connect to a server node that also relays board-to-board messages,
    with direct LAN links as a later step.
 3. **Hardware:** a `usb` port (the serial stream and connect events), the
-   Arduino Nano ESP32, RP2040 boards, Bluetooth (BLE).
+   Arduino Nano ESP32, RP2040 boards, the BLE central role (the
+   peripheral, `gogo/ble`, is done).
 4. **Embedding bindings:** Rust, iOS and Android (Go is done).
 
 Not planned: a JIT; USB device classes (HID, mass storage).

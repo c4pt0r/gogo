@@ -105,6 +105,15 @@ int config_esp_erase(const char *key) {
     return e == ESP_OK ? 0 : -1;
 }
 
+int config_esp_set_wifi(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, uint32_t pass_len) {
+    if (!cfg_ok) return -1;
+    esp_err_t e = pass_len ? nvs_set_blob(cfg_nvs, "wifi.password", pass, pass_len) : nvs_erase_key(cfg_nvs, "wifi.password");
+    if (e == ESP_ERR_NVS_NOT_FOUND) e = ESP_OK;   /* an open network, and no password before */
+    if (e == ESP_OK) e = nvs_set_blob(cfg_nvs, "wifi.ssid", ssid, ssid_len);
+    if (e == ESP_OK) e = nvs_commit(cfg_nvs);
+    return e == ESP_OK ? 0 : -1;
+}
+
 /* ---- the store as a KvHal ---- */
 
 static int32_t kv_get(void *ctx, const char *key, uint8_t *buf, uint32_t cap) {
@@ -236,6 +245,11 @@ static void cmd_stats(ConfigSvc *s) {
     reply("kv", line, (size_t)n);
 #if CONFIG_GOGO_NET
     n = snprintf(line, sizeof line, "subs=%u/%u", (unsigned)net_subs_used(&esp_net_state), (unsigned)GOGO_NET_MAX_SUBS);
+    reply("kv", line, (size_t)n);
+#endif
+#if CONFIG_GOGO_BLE
+    /* ble events lost because the driver's queue was full (a stalled owner) */
+    n = snprintf(line, sizeof line, "ble_lost=%u", (unsigned)ble_esp_lost());
     reply("kv", line, (size_t)n);
 #endif
 #if CONFIG_SPIRAM

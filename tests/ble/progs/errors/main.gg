@@ -1,0 +1,79 @@
+// ble.Open's refusals: each bad Config with its error, a second port
+// while one is open, and a port again once the first has closed; then
+// SendNotify's refusals without a phone, each a NotifyFailed and a
+// Done{-1}.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/ble"
+	"gogo/bytes"
+	"gogo/port"
+)
+
+func svc(n int) ble.Service {
+	s := ble.Service{UUID: ble.UUID16(0x180F)}
+	for i := 0; i < n; i++ {
+		s.Chars = append(s.Chars, ble.Characteristic{UUID: ble.UUID16(0x2A00 + i), Flags: ble.Read})
+	}
+	return s
+}
+
+func try(what string, cfg ble.Config) {
+	p, err := ble.Open(cfg)
+	if err != nil {
+		println(what+":", err.Error())
+		return
+	}
+	println(what + ": ok")
+	port.Close(p)
+}
+
+func main() {
+	one := []ble.Service{svc(1)}
+	try("no name", ble.Config{Services: one})
+	try("27-byte name", ble.Config{Name: "abcdefghijklmnopqrstuvwxyz1", Services: one})
+	try("no services", ble.Config{Name: "g"})
+	try("five services", ble.Config{Name: "g", Services: []ble.Service{svc(1), svc(1), svc(1), svc(1), svc(1)}})
+	try("nine in a service", ble.Config{Name: "g", Services: []ble.Service{svc(9)}})
+	try("seventeen in all", ble.Config{Name: "g", Services: []ble.Service{svc(8), svc(8), svc(1)}})
+	try("empty service", ble.Config{Name: "g", Services: []ble.Service{svc(0)}})
+	try("bad UUID", ble.Config{Name: "g", Services: []ble.Service{{UUID: ble.UUID("180"), Chars: svc(1).Chars}}})
+	try("bad 128-bit UUID", ble.Config{Name: "g", Services: []ble.Service{{UUID: ble.UUID("6e400001-b5a3-f393-e0a9-e50e24dcca9g"), Chars: svc(1).Chars}}})
+	try("no flags", ble.Config{Name: "g", Services: []ble.Service{{UUID: ble.UUID16(1), Chars: []ble.Characteristic{{UUID: ble.UUID16(2)}}}}})
+	try("16 in all", ble.Config{Name: "abcdefghijklmnopqrstuvwxyz", Services: []ble.Service{svc(8), svc(8)}})
+	try("base UUID", ble.Config{Name: "g", Services: []ble.Service{{UUID: ble.UUID("0000180F-0000-1000-8000-00805F9B34FB"), Chars: svc(1).Chars}}})
+
+	p, err := ble.Open(ble.Config{Name: "first", Services: one})
+	println("first:", err == nil)
+	_, err = ble.Open(ble.Config{Name: "second", Services: one})
+	println("second:", err.Error())
+	port.Close(p)
+	p, err = ble.Open(ble.Config{Name: "third", Services: one})
+	println("third after close:", err == nil)
+	port.Close(p)
+
+	p, _ = ble.Open(ble.Config{Name: "notify", Services: []ble.Service{{UUID: ble.UUID16(0x180F),
+		Chars: []ble.Characteristic{{UUID: ble.UUID16(0x2A19), Flags: ble.Read | ble.Notify}}}}})
+	notify(p, "no phone", 0)
+	notify(p, "no such char", 5)
+	port.Close(p)
+}
+
+// notify sends one notification and prints the NotifyFailed and Done it gets.
+func notify(p actor.PID, what string, char int) {
+	ble.SendNotify(p, char, bytes.FromSlice([]byte("x")))
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Post:
+			if ev, ok := ble.Event(m); ok {
+				if f, ok := ev.(ble.NotifyFailed); ok {
+					println(what+": failed", f.Char, f.Reason.Error())
+				}
+			}
+		case port.Done:
+			println(what+": done", m.Seq)
+			return
+		}
+	}
+}

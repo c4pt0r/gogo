@@ -12,6 +12,8 @@
 #   config         used as the config store ($GOGO_CONFIG)
 #   compile-fails  present: the program must NOT compile; the compiler's
 #                  message is compared with expected.err
+#   phone          present: a BLE example, whose phone side is a script that
+#                  tests/ble plays over gogovm's socket (make test-go): skipped here
 #   app/           a program of several packages: built and run from app/
 #                  (the build root, so its imports start with app/) when the
 #                  example directory itself has no .gg files
@@ -33,6 +35,7 @@ for name in $names; do
     src="$d"
     ls "$d"/*.gg >/dev/null 2>&1 || src="$d/app"
     ls "$src"/*.gg >/dev/null 2>&1 || continue
+    if [ -f "$d/phone" ]; then echo "skip $name (tests/ble plays its phone)"; continue; fi
     out="$tmp/$name.out"; err="$tmp/$name.err"
     if [ -f "$d/compile-fails" ]; then
         if (cd "$src" && "$gogo" build . -o "$tmp/$name.ggb") >"$out" 2>"$err"; then

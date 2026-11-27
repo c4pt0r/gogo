@@ -28,3 +28,4 @@
 - [20. Distributed Actors](20-distributed.md)
 - [21. Best Practices](21-best-practices.md)
 - [22. Extending gogo with C](22-extending-with-c.md)
+- [23. Bluetooth LE](23-bluetooth.md)

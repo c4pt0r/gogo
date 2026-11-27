@@ -49,7 +49,13 @@ DIST_SRCS = $(wildcard runtime/dist/*.c)
 # event source for the post inbox when DRIVERS are given.
 BOARD_PORTS_SRCS = runtime/board/board_ports.c runtime/embed/hostport.c runtime/embed/inbox.c runtime/embed/poster.c runtime/embed/version.c
 BOARD_PORTS_FLAGS = -DGOGO_BOARD_PORTS=1 -DEMBED_HOST_PORTS=8 -DEMBED_BOARD_PORTS_MAX=32 -DGOGO_BOARD_POST_BYTES=1048576u -Iruntime/include
-MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c runtime/board/board_main.c $(PARAMS_SRCS) runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS) $(BOARD_PORTS_SRCS)
+MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c $(BLE_SRCS) platform/unix/ble_unix.c runtime/board/board_main.c $(PARAMS_SRCS) runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS) $(BOARD_PORTS_SRCS)
+# runtime/ble/ (BLE_SRCS, pure C99): the "ble" port; ble_unix.c: its radio,
+# a Unix-domain socket a test client plays the phone on (a thread: -pthread).
+# Its event source, taken while the port is open, is one more than the
+# default 4 (GOGOVM_SOURCES).
+GOGOVM_FLAGS = -Iruntime/ble -pthread
+GOGOVM_SOURCES = -DGOGO_MAX_SOURCES=5u
 # make vm DRIVERS="dir|file.c ...": gogovm with those board-port drivers
 # compiled in (an ESP-IDF driver component's directory: its *.c but the
 # *_esp.c hardware files, which only the firmware builds), to test them on
@@ -63,7 +69,7 @@ DRIVERS_STAMP = $(BUILD)/.drivers
 $(DRIVERS_STAMP): FORCE
 	@mkdir -p $(BUILD)
 	@if [ "$$(cat $@ 2>/dev/null)" != '$(DRIVER_SRCS)' ]; then echo '$(DRIVER_SRCS)' > $@; fi
-PLAT_HDRS = $(wildcard runtime/dist/*.h) $(wildcard platform/unix/*.h) runtime/gpio/gpio.h runtime/board/board_main.h runtime/board/board_ports.h runtime/embed/ports.h runtime/embed/inbox.h runtime/include/gogo.h runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
+PLAT_HDRS = $(wildcard runtime/ble/*.h) $(wildcard runtime/dist/*.h) $(wildcard platform/unix/*.h) runtime/gpio/gpio.h runtime/board/board_main.h runtime/board/board_ports.h runtime/embed/ports.h runtime/embed/inbox.h runtime/include/gogo.h runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
 
 # The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
 # built here with runtime/net/tls/config (gogo_*_config.h) into its own static library,
@@ -96,11 +102,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: test-board-ports test-board-ports-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-c-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-board-ports test-board-ports-tsan test-ble-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-ble test-screen test-screen-asan test-c-asan test-fs-host test-configsvc test-prov vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver test-board-ports check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
+test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-ble test-screen test-fs-host test-configsvc test-prov test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver test-board-ports check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
 
 vm: $(BUILD)/gogovm
 
@@ -162,7 +168,7 @@ gogo-cmd:
 
 # gogovm's compile, with driver sources after it (gogovm_with SRCS).
 GOGOVM_DEPS = $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
-gogovm_with = $(CC) $(CFLAGS) $(TLS_CFLAGS) $(BOARD_PORTS_FLAGS) $(if $(1),-DGOGO_MAX_SOURCES=5u -pthread) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(1) $(TLS_LINK)
+gogovm_with = $(CC) $(CFLAGS) $(TLS_CFLAGS) $(BOARD_PORTS_FLAGS) $(GOGOVM_FLAGS) $(if $(1),-DGOGO_MAX_SOURCES=6u,$(GOGOVM_SOURCES)) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(1) $(TLS_LINK)
 
 $(BUILD)/gogovm: $(GOGOVM_DEPS) $(DRIVER_SRCS) $(DRIVERS_STAMP)
 	@mkdir -p $(BUILD)
@@ -289,6 +295,26 @@ $(BUILD)/test_stream_mcu: $(STREAM_DEPS)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(MCU_FLAGS) -Os $(STREAM_INC) -o $@ $(STREAM_TEST_SRCS) $(VM_SRCS)
 
+# ble (pure C99): the "ble" port's Config, event queue, held events and
+# Notify flow control over a fake BleHal on a real VM, in the host and MCU
+# VM configs.
+BLE_SRCS = runtime/ble/ble.c
+BLE_TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c $(wildcard runtime/ble/test/*.c)
+BLE_INC = -Iruntime/ble -Iruntime/stream -Iruntime/vm -Iruntime/net -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix
+BLE_DEPS = $(BLE_SRCS) $(BLE_TEST_SRCS) $(VM_SRCS) $(wildcard runtime/ble/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
+
+test-ble: $(BUILD)/test_ble $(BUILD)/test_ble_mcu
+	$(BUILD)/test_ble
+	$(BUILD)/test_ble_mcu
+
+$(BUILD)/test_ble: $(BLE_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DGOGO_MAX_SOURCES=5u $(BLE_INC) -o $@ $(BLE_SRCS) $(BLE_TEST_SRCS) $(VM_SRCS)
+
+$(BUILD)/test_ble_mcu: $(BLE_DEPS)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -DGOGO_MAX_SOURCES=5u -Os $(BLE_INC) -o $@ $(BLE_SRCS) $(BLE_TEST_SRCS) $(VM_SRCS)
+
 # screen (pure C99): the grid's operations, malformed and random sequences
 # against guard words, the LCD renderer, and the "screen" port on a real VM
 # (fake ScreenHw), in the host and MCU VM configs.
@@ -378,6 +404,15 @@ test-configsvc: $(BUILD)/test_configsvc
 $(BUILD)/test_configsvc: $(CONFIGSVC_SRCS) runtime/configsvc/test/test_configsvc.c runtime/vm/test/test_main.c $(wildcard runtime/configsvc/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vfs/test/*.h)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Iruntime/configsvc -Iruntime/vfs -Iruntime/vfs/test -Iruntime/vm -Iruntime/vm/test -o $@ runtime/configsvc/test/test_configsvc.c runtime/vm/test/test_main.c $(CONFIGSVC_SRCS)
+
+# The Wi-Fi provisioning messages (runtime/prov, the ESP32-S3 firmware's
+# BLE provisioning): the protobuf codec against esp_prov.py's encoding.
+test-prov: $(BUILD)/test_provmsg
+	$(BUILD)/test_provmsg
+
+$(BUILD)/test_provmsg: runtime/prov/provmsg.c runtime/prov/provmsg.h runtime/prov/test/test_provmsg.c runtime/vm/test/test_main.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iruntime/prov -Iruntime/vm -Iruntime/vm/test -o $@ runtime/prov/test/test_provmsg.c runtime/vm/test/test_main.c runtime/prov/provmsg.c
 
 # The host-directory backend (runtime/embed/fs_dir.c) against a temp dir:
 # the vfs contract and the sandbox (symlinks, hard links, a swapped path).
@@ -568,6 +603,12 @@ test-board-ports-tsan:
 	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread $(TSAN_WNO)" build/tsan/board-ports/gogovm gogo-cmd
 	TSAN_OPTIONS="halt_on_error=1" runtime/board/test/test.sh build/tsan
 
+# The ble port's phone tests (tests/ble, part of test-go) on a gogovm under
+# ThreadSanitizer: the socket thread (ble_unix.c) against the VM thread.
+test-ble-tsan:
+	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread $(TSAN_WNO)" build/tsan/gogovm
+	TSAN_OPTIONS="halt_on_error=1" GOGO_VM=$(CURDIR)/build/tsan/gogovm go test -count=1 ./tests/ble/
+
 # examples/dice-driver: a third-party port driver on gogo.h alone (book
 # chapter 22), an ESP-IDF component (dice/). test.sh runs its program on
 # a gogovm built with the component (DICE_DRIVER: make vm DRIVERS=...
@@ -633,7 +674,7 @@ test-go: vm $(BUILD)/gogovm_mcu $(BUILD)/gogovm_nofloat
 # `nofloat` run on it (an image that uses floats is refused at load).
 $(BUILD)/gogovm_nofloat: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(BOARD_PORTS_FLAGS) -DGOGO_FLOAT=0 -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) $(BOARD_PORTS_FLAGS) $(GOGOVM_FLAGS) $(GOGOVM_SOURCES) -DGOGO_FLOAT=0 -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
 
 # The standard library (lib/*/*.gg) on the host toolchain, copied into a
 # temporary Go module gogo by tests/lib_test.go: vet (stdmethods off: gogo's
@@ -646,7 +687,7 @@ test-lib:
 # limit (16 KB per actor): the library actors must fit.
 $(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) $(BOARD_PORTS_FLAGS) -DGOGO_HOST_PORTS=16 -DGOGO_HOST_LINKS=8 $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) $(BOARD_PORTS_FLAGS) $(GOGOVM_FLAGS) $(GOGOVM_SOURCES) -DGOGO_HOST_PORTS=16 -DGOGO_HOST_LINKS=8 $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-net-mcu: $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/
@@ -776,7 +817,7 @@ floatlibsize:
 
 # Everything built with CFLAGS / EXTRA_CFLAGS: rebuilt when they change.
 STAMPED = $(addprefix $(BUILD)/,gogovm gogovm_mcu gogovm_nofloat test_c test_c_mcu test_net test_net_mcu test_tls \
-          test_tls_threads test_vfs test_vfs_mcu test_input test_input_mcu test_stream test_stream_mcu \
+          test_tls_threads test_vfs test_vfs_mcu test_input test_input_mcu test_stream test_stream_mcu test_ble test_ble_mcu \
           test_screen test_screen_mcu test_fs_host test_embed test_console test_console_ascii \
           console_ppm libgogo_clash) $(LIB_OBJS) $(MBEDTLS_OBJS)
 $(STAMPED): $(FLAGS_STAMP)

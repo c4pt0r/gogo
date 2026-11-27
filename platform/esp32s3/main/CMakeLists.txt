@@ -60,7 +60,19 @@ set(GOGO_BOARD_PORTS_DEFS "")
 if(CONFIG_GOGO_BOARD_PORTS)
     set(GOGO_BOARD_PORTS_SRCS "${GOGO_ROOT}/runtime/board/board_ports.c" "${GOGO_ROOT}/runtime/embed/hostport.c"
         "${GOGO_ROOT}/runtime/embed/inbox.c" "${GOGO_ROOT}/runtime/embed/poster.c" "${GOGO_ROOT}/runtime/embed/version.c")
-    set(GOGO_BOARD_PORTS_DEFS GOGO_BOARD_PORTS=1 EMBED_HOST_PORTS=8 EMBED_BOARD_PORTS_MAX=32 GOGO_MAX_SOURCES=5u)
+    set(GOGO_BOARD_PORTS_DEFS GOGO_BOARD_PORTS=1 EMBED_HOST_PORTS=8 EMBED_BOARD_PORTS_MAX=32)
+endif()
+
+# Event sources (runtime/vm/config.h GOGO_MAX_SOURCES, 4 by default): the
+# net stack's and the input drivers' always, the screen's and gpio's
+# debounce while used, the ble port's while open (GOGO_BLE), the board
+# ports' post inbox (GOGO_BOARD_PORTS).
+set(GOGO_SOURCES 4)
+if(CONFIG_GOGO_BLE)
+    math(EXPR GOGO_SOURCES "${GOGO_SOURCES} + 1")
+endif()
+if(CONFIG_GOGO_BOARD_PORTS)
+    math(EXPR GOGO_SOURCES "${GOGO_SOURCES} + 1")
 endif()
 
 # runtime/screen (GOGO_SCREEN): the "screen" port's grid, driver and LCD
@@ -98,7 +110,7 @@ endif()
 #   idf.py -C platform/esp32s3 build                         (StickS3, build/)
 #   idf.py -C platform/esp32s3 -B platform/esp32s3/build-cardputer \
 #       -DGOGO_BOARD=cardputer -DSDKCONFIG=build-cardputer/sdkconfig \
-#       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer" build
+#       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ble;sdkconfig.cardputer" build
 # The StickS3 has the M5PM1 (pm1.c) and no SD; the Cardputer ADV has no
 # PM1 and /sd on FatFs (fs_fat.c, FatFs options in sdkconfig.cardputer).
 if(NOT DEFINED GOGO_BOARD)
@@ -121,11 +133,12 @@ else()
 endif()
 
 # The shared I2C bus (i2c_bus.c) is for the StickS3's PM1, the Cardputer's
-# keyboard and both boards' BMI270 and ES8311; without GOGO_KBD, GOGO_IMU and GOGO_AUDIO
-# (main/Kconfig.projbuild) the Cardputer needs none, and the IDF I2C driver is
-# not linked.
+# keyboard (and the Wi-Fi setup key, GOGO_BLE_PROV, read through it) and both
+# boards' BMI270 and ES8311; without GOGO_KBD, GOGO_IMU, GOGO_AUDIO and
+# GOGO_BLE_PROV (main/Kconfig.projbuild) the Cardputer needs none, and the IDF
+# I2C driver is not linked.
 set(GOGO_I2C_SRCS "")
-if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD OR CONFIG_GOGO_IMU OR CONFIG_GOGO_AUDIO)
+if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD OR CONFIG_GOGO_IMU OR CONFIG_GOGO_AUDIO OR CONFIG_GOGO_BLE_PROV)
     set(GOGO_I2C_SRCS i2c_bus.c)
 endif()
 
@@ -148,6 +161,32 @@ if(CONFIG_GOGO_AUDIO)
     set(GOGO_AUDIO_SRCS audio_esp.c)
 endif()
 
+# BLE (GOGO_BLE: the "ble" port, runtime/ble/ble.c over NimBLE in
+# ble_esp.c). ble_host.c, the NimBLE host's shared lifetime (and the weak
+# ble_prov_active), is built whenever NimBLE is (sdkconfig.ble), for the
+# port and for Wi-Fi provisioning alike. Off, nothing references the bt
+# component and it is not linked.
+set(GOGO_BLE_SRCS "")
+if(CONFIG_BT_NIMBLE_ENABLED)
+    list(APPEND GOGO_BLE_SRCS ble_host.c)
+endif()
+set(GOGO_BLE_CORE_SRCS "")
+if(CONFIG_GOGO_BLE)
+    list(APPEND GOGO_BLE_SRCS ble_esp.c)
+    set(GOGO_BLE_CORE_SRCS "${GOGO_ROOT}/runtime/ble/ble.c")
+endif()
+
+# Wi-Fi provisioning over BLE (GOGO_BLE_PROV: needs GOGO_BLE and GOGO_NET):
+# ble_prov.c and the provisioning messages (runtime/prov, pure C99), on the
+# shared NimBLE host above. Off, neither is built and protocomm is not
+# linked.
+set(GOGO_PROV_SRCS "")
+set(GOGO_PROVMSG_SRCS "")
+if(CONFIG_GOGO_BLE_PROV)
+    set(GOGO_PROV_SRCS ble_prov.c)
+    set(GOGO_PROVMSG_SRCS "${GOGO_ROOT}/runtime/prov/provmsg.c")
+endif()
+
 # The console font blob (GOGO_FONT_CJK): the embedded symbol is named after
 # the file, console_task.c picks it by the same switch.
 if(CONFIG_GOGO_FONT_CJK)
@@ -159,18 +198,22 @@ endif()
 idf_component_register(
     SRCS main.c platform_esp.c gpio_esp.c image_part.c console_task.c lcd_st7789.c
          ${GOGO_WIFI_SRCS} config_esp.c fs_lfs.c input_esp.c ${GOGO_I2C_SRCS} ${GOGO_BOARD_SRCS}
-         ${GOGO_IMU_SRCS} ${GOGO_IR_SRCS} ${GOGO_AUDIO_SRCS}
+         ${GOGO_IMU_SRCS} ${GOGO_IR_SRCS} ${GOGO_AUDIO_SRCS} ${GOGO_BLE_SRCS} ${GOGO_BLE_CORE_SRCS} ${GOGO_PROV_SRCS} ${GOGO_PROVMSG_SRCS}
          ${GOGO_VM_SRCS} ${GOGO_FLOATLIB_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_DIST_SRCS} ${GOGO_GPIO_SRCS} ${GOGO_SERVICE_SRCS} ${GOGO_VFS_SRCS} ${GOGO_FSBE_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_SCREEN_SRCS} ${GOGO_COMMON_SRCS} ${GOGO_BOARD_PORTS_SRCS}
-    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/runtime/include" "${GOGO_ROOT}/runtime/embed" "${GOGO_ROOT}/runtime/vm" "${GOGO_ROOT}/runtime/net" "${GOGO_ROOT}/runtime/net/tls" "${GOGO_ROOT}/runtime/dist" "${GOGO_ROOT}/runtime/vfs" "${GOGO_ROOT}/runtime/vfs/lfs" "${GOGO_ROOT}/runtime/vfs/fat" "${GOGO_ROOT}/runtime/gpio" "${GOGO_ROOT}/runtime/configsvc" "${GOGO_ROOT}/runtime/board" "${GOGO_ROOT}/runtime/input" "${GOGO_ROOT}/runtime/stream" "${GOGO_ROOT}/runtime/screen" "${GOGO_ROOT}/runtime/console"
+    PRIV_INCLUDE_DIRS "." "${GOGO_ROOT}/runtime/include" "${GOGO_ROOT}/runtime/embed" "${GOGO_ROOT}/runtime/vm" "${GOGO_ROOT}/runtime/net" "${GOGO_ROOT}/runtime/net/tls" "${GOGO_ROOT}/runtime/dist" "${GOGO_ROOT}/runtime/vfs" "${GOGO_ROOT}/runtime/vfs/lfs" "${GOGO_ROOT}/runtime/vfs/fat" "${GOGO_ROOT}/runtime/gpio" "${GOGO_ROOT}/runtime/configsvc" "${GOGO_ROOT}/runtime/board" "${GOGO_ROOT}/runtime/input" "${GOGO_ROOT}/runtime/stream" "${GOGO_ROOT}/runtime/ble" "${GOGO_ROOT}/runtime/screen" "${GOGO_ROOT}/runtime/console" "${GOGO_ROOT}/runtime/prov"
     EMBED_FILES "${GOGO_ROOT}/runtime/console/font/${GOGO_FONT_FILE}"
     LDFRAGMENTS linker.lf
     PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c esp_adc
                   esp_rom freertos heap nvs_flash esp_driver_usb_serial_jtag
+                  # main.c: the RTC watchdog (hal/wdt_hal.h).
+                  esp_hal_wdt
                   # ir_esp.c (GOGO_IR); like esp_wifi below, unreferenced
                   # (so not linked) when the switch is off.
                   esp_driver_rmt
                   # audio_esp.c (GOGO_AUDIO), likewise.
                   esp_driver_i2s
+                  # ble_host.c / ble_esp.c (NimBLE, GOGO_BLE), likewise.
+                  bt
                   joltwallet__littlefs
                   # wifi.c (GOGO_NET): listed unconditionally because IDF
                   # expands requirements before CONFIG_GOGO_NET is known;
@@ -178,6 +221,8 @@ idf_component_register(
                   esp_wifi esp_event
                   # tls.c (GOGO_TLS) and its hooks in platform_esp.c, likewise.
                   mbedtls
+                  # ble_prov.c (GOGO_BLE_PROV), likewise.
+                  protocomm
                   # fs_fat.c (Cardputer); listed for both boards because IDF
                   # expands requirements before GOGO_BOARD is known. The
                   # StickS3 links none of it (no references).
@@ -223,6 +268,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     GOGO_FS_SLOT_BYTES=160u
     ${GOGO_FLOAT_DEF}
     ${GOGO_BOARD_PORTS_DEFS}
+    GOGO_MAX_SOURCES=${GOGO_SOURCES}u
     # IDF's esp_stdio exports a global console_write (stdio_vfs.c); rename
     # ours at link level for this component only.
     console_write=gogo_console_write
@@ -237,4 +283,4 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -Os -Wall -Wextra -Werror
     -Werror=extra -Wunused-parameter -Wsign-compare -Werror=unused-function
     -Werror=unused-variable -Werror=unused-but-set-variable)
 # The VM core is portable C99.
-set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_FLOATLIB_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_DIST_SRCS} ${GOGO_GPIO_SRCS} ${GOGO_SERVICE_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_SCREEN_SRCS} ${GOGO_COMMON_SRCS} ${GOGO_BOARD_PORTS_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")
+set_source_files_properties(${GOGO_VM_SRCS} ${GOGO_FLOATLIB_SRCS} ${GOGO_NET_SRCS} ${GOGO_TLS_SRCS} ${GOGO_DIST_SRCS} ${GOGO_GPIO_SRCS} ${GOGO_SERVICE_SRCS} ${GOGO_VFS_SRCS} ${GOGO_INPUT_SRCS} ${GOGO_STREAM_SRCS} ${GOGO_SCREEN_SRCS} ${GOGO_COMMON_SRCS} ${GOGO_BOARD_PORTS_SRCS} ${GOGO_BLE_CORE_SRCS} ${GOGO_PROVMSG_SRCS} PROPERTIES COMPILE_OPTIONS "-std=c99")

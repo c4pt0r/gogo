@@ -1,0 +1,69 @@
+# Bluetooth for the "ble" feature (GOGO_BLE, the "ble" port: runtime/ble,
+# main/ble_esp.c) and for Wi-Fi provisioning over BLE (GOGO_BLE_PROV,
+# main/ble_prov.c), the two users of one NimBLE host (main/ble_host.c):
+# Bluetooth on, NimBLE as the host, set up for one peripheral connection.
+# The one Bluetooth fragment: the default build lists it after
+# sdkconfig.defaults and before the board's file (CMakeLists.txt;
+# tools/release.sh for both boards); `gogo firmware` adds it there when ble
+# is on (cmd/gogo/firmware.go onDefaults). Without it Bluetooth stays off,
+# and GOGO_BLE (which depends on NimBLE) and GOGO_BLE_PROV (which depends
+# on GOGO_BLE) are off too. Sizes: platform/esp32s3/README.md "GOGO_BLE".
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+# A peripheral: no central or observer role (no scanning), no GATT client.
+# Provisioning, too, only advertises and serves a GATT service.
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_GATT_CLIENT=n
+# One connection at a time (the port refuses a second central); the
+# controller's activities: one advertising set and one connection.
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_CTRL_BLE_MAX_ACT=2
+# No pairing or bonding (no SM, nothing in NVS): the port's data is plain,
+# and provisioning secures its messages itself (protocomm security 2:
+# SRP6a and AES-GCM above GATT), so it needs no link encryption either.
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
+CONFIG_BT_NIMBLE_NVS_PERSIST=n
+# Legacy advertising (31 bytes), which every phone and computer scans;
+# no BLE 5 features (extended advertising, 2M and coded PHY) in the host.
+CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=n
+# The controller without what a peripheral does not use: scanning (and its
+# duplicate filter), link-layer encryption (no pairing above), the direct
+# test mode.
+CONFIG_BT_CTRL_BLE_SCAN=n
+CONFIG_BT_CTRL_BLE_SCAN_DUPL=n
+CONFIG_BT_CTRL_BLE_SECURITY_ENABLE=n
+CONFIG_BT_CTRL_DTM_ENABLE=n
+# The controller's code stays in IRAM (BT_CTRL_RUN_IN_FLASH_ONLY is not
+# set; it would save about 20 KB of internal RAM): from flash, its
+# interrupt is held off while flash is written or erased (/flash, NVS),
+# and a program may write files with the port open.
+# The host's GATT, GAP and event-loop code in flash, not internal RAM:
+# internal RAM is the VM arena's, Wi-Fi's and TLS's (the Cardputer has no
+# PSRAM). A peripheral's GATT traffic is slow next to a cache miss.
+CONFIG_BT_NIMBLE_LOW_SPEED_MODE=y
+# The host task on core 0, beside Wi-Fi: the VM runs on core 1. Its stack
+# is 5 KB: provisioning runs protocomm's security 2 (SRP6a with a 3072-bit
+# group, AES-GCM) in the host's GATT callbacks. The task exists only while
+# the host is held.
+CONFIG_BT_NIMBLE_PINNED_TO_CORE_0=y
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=5120
+# The first mbuf pool (256-byte blocks) carries every notification: its
+# ATT header takes a block and its data one or two more (a 244-byte value
+# two), and the host's own replies (a read, a write's response, a
+# prepared write) come from it too. IDF's 12 blocks held about four
+# notifications; 24 hold eight, and ble_esp.c leaves BLE_MSYS_SPARE of
+# them to the replies. About 3 KB more internal RAM, allocated while the
+# host is held (BT_NIMBLE_STATIC_TO_DYNAMIC).
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24
+# Quiet: gogo's serial console is the program's.
+CONFIG_BT_NIMBLE_LOG_LEVEL_ERROR=y
+# Protocomm (Wi-Fi provisioning): only security 2 (SRP6a + AES-GCM, a PIN
+# as the proof of possession); 0 (none) and 1 (Curve25519 + AES-CTR) are
+# not built. Nothing links protocomm without GOGO_BLE_PROV.
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_0=n
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=n
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2=y

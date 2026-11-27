@@ -145,14 +145,13 @@ static bool out_data(struct Vm *vm, const Actor *from, term msg, term *data, con
     return bytes_view(vm, from, o[2], d, len);
 }
 
-int stream_out_accept(struct Vm *vm, const Actor *from, Port *p, StreamOut *o, term msg,
-                      StreamCheck check) {
-    term data, h = T_NIL;
-    const uint8_t *d;
-    uint32_t len;
-    if (o->n + owed_ok(o) < STREAM_OUT_MAX && o->owed_n + o->n < STREAM_OWED_MAX &&
-            out_data(vm, from, msg, &data, &d, &len) && len &&
-            (!check || check(p, d, len))) {
+bool stream_out_has_room(const StreamOut *o) {
+    return o->n + owed_ok(o) < STREAM_OUT_MAX && o->owed_n + o->n < STREAM_OWED_MAX;
+}
+
+int stream_out_accept_data(struct Vm *vm, Port *p, StreamOut *o, term data, const uint8_t *d, uint32_t len) {
+    term h = T_NIL;
+    if (stream_out_has_room(o) && d && len) {
         if (term_is_handle(data)) {
             if (port_bytes_retain(vm, p, data)) h = data;
         } else {
@@ -170,6 +169,15 @@ int stream_out_accept(struct Vm *vm, const Actor *from, Port *p, StreamOut *o, t
     }
     o->held[o->n++] = h;
     return o->n == 1u ? 1 : 0;
+}
+
+int stream_out_accept(struct Vm *vm, const Actor *from, Port *p, StreamOut *o, term msg,
+                      StreamCheck check) {
+    term data = T_NIL;
+    const uint8_t *d = NULL;
+    uint32_t len = 0;
+    if (!out_data(vm, from, msg, &data, &d, &len) || (len && check && !check(p, d, len))) d = NULL;
+    return stream_out_accept_data(vm, p, o, data, d, len);
 }
 
 const uint8_t *stream_out_at(const struct Vm *vm, const StreamOut *o, uint32_t k, uint32_t *len) {

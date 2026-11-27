@@ -31,6 +31,10 @@
  * one "tls-stats ..." line to stderr at exit (tls_stats, the TLS heap, and
  * vm_peak: the VM allocator's peak, va_peak_bytes).
  *
+ * $GOGO_BLE: the Unix-domain socket of the "ble" port (ble_unix.c), where a
+ * client plays the phone while the port is open; default
+ * $TMPDIR/gogo-ble.sock (/tmp without TMPDIR).
+ *
  * --screen: how the "screen" port shows its grid (screen_unix.c): ANSI on
  * the terminal, a text dump of every frame on stdout, or nothing; the
  * default is ansi when stdout is a terminal, else text.
@@ -99,6 +103,7 @@
 #include "board_main.h"
 #include "board_ports.h"
 #include "hostnet.h"
+#include "ble_unix.h"
 #include "dist.h"
 #include "params.h"
 
@@ -262,7 +267,8 @@ static int run_main(Vm *vm, void *ctx) {
 }
 
 /* The unix board: gpio, net and the simulated keyboard, battery, motion
- * sensor, infrared and audio (input_unix.c), the "tls" port when built
+ * sensor, infrared and audio (input_unix.c), BLE over a local socket
+ * (ble_unix.c), the "tls" port when built
  * with it, and the /flash and /sd mounts. --without (test only) leaves
  * names out of both lists, so it models a firmware without them: an image
  * requiring one is refused, and port.Open of an absent driver fails with
@@ -274,10 +280,11 @@ static const PortDriver unix_ir_tx = INPUT_IR_TX_DRIVER(&input_unix_ir_tx);
 static const PortDriver unix_ir_rx = INPUT_IR_RX_DRIVER(&input_unix_ir_rx);
 static const PortDriver unix_mic = INPUT_MIC_DRIVER(&input_unix_mic);
 static const PortDriver unix_speaker = INPUT_SPEAKER_DRIVER(&input_unix_spk);
+static const PortDriver unix_ble = BLE_DRIVER(&ble_unix_hal);
 static const PortDriver *const unix_ports_all[] = {
     &gpio_unix_driver, &net_netif_driver, &net_udp_driver, &net_tcp_driver,
     &net_tcp_listen_driver, &unix_kbd, &unix_power, &unix_imu, &unix_ir_tx, &unix_ir_rx,
-    &unix_mic, &unix_speaker, &screen_unix_driver, &dist_node_driver,
+    &unix_mic, &unix_speaker, &screen_unix_driver, &dist_node_driver, &unix_ble,
 #ifdef GOGO_TLS
     &net_tls_driver,
 #endif
@@ -563,7 +570,10 @@ int main(int argc, char **argv) {
         return EXIT_OK;
     }
     if (argc < 2) return usage(stderr, EXIT_USAGE);
-    if (net_fd >= 0 || host_net) signal(SIGPIPE, SIG_IGN);   /* a closed link is EOF / a failed send, not death */
+    /* A closed link (a net socket, the ble phone's socket) is EOF or a
+     * failed write, not death: a phone that leaves while the program
+     * notifies must not kill the VM. */
+    signal(SIGPIPE, SIG_IGN);
     if (net_fd >= 0) platform_unix_net_open(net_fd, sim != 0, &net_state);
     if (fs_root) {
         /* /flash -> DIR/flash (created), /sd -> DIR/sd (only if it exists). */

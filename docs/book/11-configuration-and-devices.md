@@ -245,7 +245,7 @@ The board talks to `gogo config` over the USB serial console, so close
 
 | Key | Type | Used by | Meaning |
 |---|---|---|---|
-| `wifi.ssid`, `wifi.password` | string (at most 32 and 64 bytes) | firmware | the Wi-Fi network; the board reconnects at once when they change |
+| `wifi.ssid`, `wifi.password` | string (at most 32 and 64 bytes) | firmware | the Wi-Fi network; the board reconnects at once when they change; also written by Wi-Fi setup from a phone (section 2.1) |
 | `net.ip`, `net.mask`, `net.gw`, `net.dns` | ip (`a.b.c.d`) | `gogo/dhcp` | a static address instead of DHCP (`net.mask` defaults to 255.255.255.0) |
 | `fs.flash.size` | size | firmware | size of `/flash` (chapter 9) |
 | `fs.flash.format` | `yes` | firmware | deprecated: format `/flash` once at the next boot; use `gogo device format-flash` |

@@ -1,0 +1,327 @@
+// Package ble is the gogo Bluetooth Low Energy API: the "ble" port, a
+// peripheral (a GATT server) that a phone or a computer connects to. It
+// is a library written in the gogo subset on top of gogo/port; the C side
+// is the board's BLE driver (runtime/ble/ble.c, NimBLE on the ESP32-S3, a
+// local socket in gogovm). The port speaks the generic host-port types,
+// so a program that imports gogo/ble runs on any firmware of its image
+// format that has the "ble" driver.
+//
+// Open declares the services and starts advertising under Config.Name:
+//
+//	p, err := ble.Open(ble.Config{
+//		Name: "gogo-1234",
+//		Services: []ble.Service{{
+//			UUID: ble.UUID16(0x180F),
+//			Chars: []ble.Characteristic{{UUID: ble.UUID16(0x2A19), Flags: ble.Read | ble.Notify}},
+//		}},
+//	})
+//
+// Characteristics are numbered in declaration order, from 0, across all
+// services: that number is the Char of every event and command. One phone
+// is connected at a time; while it is, the board does not advertise and
+// a second central cannot connect. Closing the port (or its owner's exit)
+// ends the connection and the advertising.
+//
+// Events reach the owner as port.Post messages from the port; Event turns
+// one into a Connected, Disconnected, Written, Subscribed, MTUChanged or
+// NotifyFailed. A phone's read never reaches the program: it returns the
+// value last given with SetValue (empty until then), stored in the driver.
+//
+// SendNotify pushes a value to a subscribed phone; each is answered with
+// exactly one port.Done, like a stream's Out: Done{Seq} once the Bluetooth
+// stack has taken it, Done{Seq: -1} if it could not be delivered. A -1 is
+// announced by a NotifyFailed event just before it, which says why:
+// errors.BadArg (a bad Char, a characteristic without Notify, empty, more
+// than MaxNotify(mtu) bytes), errors.Closed (no phone connected, or it went
+// away while the notification waited), errors.Refused (the phone has not
+// subscribed to that characteristic), errors.TooMany (two already in
+// flight), errors.IO (the stack refused it). NotifyFailed is dropped when
+// the owner's mailbox is full; the Done never is. A notification the stack
+// has no buffer for waits as long as the connection lasts: a link that
+// dies ends in a Disconnected, which fails every one still waiting. A
+// sender that waits for each Done (or keeps at most two in flight) never
+// overruns the stack. Two rules come from streams: a refusal's Done{-1} is
+// sent at once, so it can arrive before the Done of an earlier
+// notification still in flight; and with more than two in flight a
+// refusal's Done can be lost to a full mailbox, so keep to two.
+//
+// The Bluetooth side is the radio of the board: one ble port per board
+// (a second Open fails with errors.Busy), and on the ESP32-S3 the port
+// cannot open while the firmware's Wi-Fi provisioning is on air
+// (errors.Busy too).
+package ble
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+	"gogo/errors"
+	"gogo/port"
+)
+
+// Characteristic flags: what a phone may do with it.
+const (
+	Read        = 1 // the phone may read the value (SetValue)
+	Write       = 2 // the phone may write, with a response (Written)
+	WriteNoResp = 4 // the phone may write without a response (Written)
+	Notify      = 8 // the phone may subscribe (Subscribed), SendNotify pushes to it
+)
+
+// Limits of a Config, and the protocol's.
+const (
+	MaxServices        = 4   // services in a Config
+	MaxChars           = 16  // characteristics, all services together
+	MaxCharsPerService = 8   // characteristics in one service
+	MaxName            = 26  // bytes of Config.Name (it goes in the advertisement)
+	MaxValue           = 512 // bytes of a value: SetValue, a phone's write
+	DefaultMTU         = 23  // the ATT MTU until the phone asks for more
+)
+
+// UUID names a service or characteristic: 4 hex digits for a 16-bit
+// UUID (UUID16 makes one), or the 36-character form
+// "6e400001-b5a3-f393-e0a9-e50e24dcca9e" for a 128-bit one (a conversion,
+// ble.UUID("...")). Case does not matter. A 128-bit UUID on the Bluetooth
+// base ("0000180f-0000-1000-8000-00805f9b34fb") is the 16-bit one.
+type UUID string
+
+// UUID16 returns the 16-bit UUID v (0 to 0xFFFF), as 4 hex digits.
+func UUID16(v int) UUID {
+	const hex = "0123456789abcdef"
+	b := []byte{hex[v>>12&15], hex[v>>8&15], hex[v>>4&15], hex[v&15]}
+	return UUID(string(b))
+}
+
+// Characteristic is one value of a service: its UUID and flags (Read,
+// Write, WriteNoResp, Notify, or-ed; at least one).
+type Characteristic struct {
+	UUID  UUID
+	Flags int
+}
+
+// Service groups 1 to MaxCharsPerService characteristics under a UUID.
+type Service struct {
+	UUID  UUID
+	Chars []Characteristic
+}
+
+// Config is the cfg of Open: the name the board advertises (1 to MaxName
+// bytes) and 1 to MaxServices services.
+type Config struct {
+	Name     string
+	Services []Service
+}
+
+// Connected says a phone connected: Peer is its address as the board
+// sees it ("4c:2a:91:07:5e:d3"; a phone usually shows a random one), MTU the
+// ATT MTU so far (DefaultMTU on a board: the phone asks for more after
+// connecting, MTUChanged; at most 256 on the ESP32-S3).
+type Connected struct {
+	Peer string
+	MTU  int
+}
+
+// Disconnected says the phone went away. Reason is the Bluetooth (HCI)
+// reason code: 0x13 the phone ended the connection, 0x08 the link timed
+// out (out of range), 0x16 the board ended it. Advertising starts again.
+type Disconnected struct{ Reason int }
+
+// Written is a phone's write to characteristic Char (Write or
+// WriteNoResp): Data is what it wrote, up to MaxValue bytes.
+type Written struct {
+	Char int
+	Data bytes.Bytes
+}
+
+// Subscribed says the phone turned notifications of characteristic Char
+// on (On) or off. A new connection starts with every one off.
+type Subscribed struct {
+	Char int
+	On   bool
+}
+
+// MTUChanged says the ATT MTU of the connection is now MTU: a SendNotify
+// may carry MaxNotify(MTU) bytes.
+type MTUChanged struct{ MTU int }
+
+// NotifyFailed says why the SendNotify of characteristic Char that the
+// port answers next with Done{Seq: -1} was not delivered (see the package
+// comment for the reasons).
+type NotifyFailed struct {
+	Char   int
+	Reason errors.Code
+}
+
+// MaxNotify is the most bytes one SendNotify carries at ATT MTU mtu.
+func MaxNotify(mtu int) int { return mtu - 3 }
+
+// The port.Host format and the Post kinds (runtime/ble/ble.h).
+const (
+	cfgFormat      = 1
+	cmdSetValue    = 1
+	cmdNotify      = 2
+	evConnected    = 1
+	evDisconnected = 2
+	evWritten      = 3
+	evSubscribed   = 4
+	evMTU          = 5
+	evNotifyFailed = 6
+)
+
+// Open opens the ble port with cfg and starts advertising; the caller owns
+// it. It fails with errors.BadArg for a Config it cannot use (an empty or
+// long Name, a malformed UUID, a characteristic without flags, a service
+// without characteristics), errors.TooMany over a limit (MaxServices,
+// MaxChars, MaxCharsPerService), errors.NotFound on a board without BLE,
+// errors.NoMemory when the board has too little internal RAM to start the
+// Bluetooth stack (about 80 KB on the ESP32-S3),
+// errors.Busy if the radio is taken (a ble port is open, Wi-Fi
+// provisioning runs), or as port.Open does.
+func Open(cfg Config) (actor.PID, error) {
+	b := bytes.NewBuffer(64)
+	if err := encode(b, cfg); err != nil {
+		return actor.PID{}, err
+	}
+	return port.Open("ble", port.Host{Arg: cfgFormat, Data: b.Freeze()})
+}
+
+// SetValue sets what a phone's read of characteristic char returns from
+// now on (up to MaxValue bytes). It sends no reply: a bad char, more than
+// MaxValue bytes or no memory for the copy leaves the old value. Set each
+// readable value right after Open: until then a read returns nothing.
+func SetValue(p actor.PID, char int, data bytes.Bytes) {
+	actor.Send(p, port.Post{Kind: cmdSetValue | char<<8, Data: data})
+}
+
+// SendNotify pushes data to the phone subscribed to characteristic char;
+// the port answers with a port.Done (see the package comment). data is
+// at most MaxNotify(mtu) bytes: split longer values yourself.
+func SendNotify(p actor.PID, char int, data bytes.Bytes) {
+	actor.Send(p, port.Post{Kind: cmdNotify | char<<8, Data: data})
+}
+
+// Event decodes m, a port.Post from a ble port, into a Connected,
+// Disconnected, Written, Subscribed, MTUChanged or NotifyFailed; ok is false for any
+// other kind. It does not check m.From: compare it with the port first
+// when the actor owns other ports.
+func Event(m port.Post) (ev any, ok bool) {
+	arg := m.Kind >> 8
+	switch m.Kind & 0xFF {
+	case evConnected:
+		return Connected{Peer: m.Data.String(), MTU: arg}, true
+	case evDisconnected:
+		return Disconnected{Reason: arg}, true
+	case evWritten:
+		return Written{Char: arg, Data: m.Data}, true
+	case evSubscribed:
+		return Subscribed{Char: arg & 0xFF, On: arg>>8&1 == 1}, true
+	case evMTU:
+		return MTUChanged{MTU: arg}, true
+	case evNotifyFailed:
+		return NotifyFailed{Char: arg & 0xFF, Reason: errors.Code(arg >> 8 & 0xFF)}, true
+	}
+	return nil, false
+}
+
+// encode writes cfg to b as the port.Host Data of runtime/ble/ble.h.
+func encode(b bytes.Buffer, cfg Config) error {
+	if len(cfg.Name) < 1 || len(cfg.Name) > MaxName || len(cfg.Services) < 1 {
+		return errors.BadArg
+	}
+	if len(cfg.Services) > MaxServices {
+		return errors.TooMany
+	}
+	b.WriteByte(byte(len(cfg.Name)))
+	b.WriteString(cfg.Name)
+	b.WriteByte(byte(len(cfg.Services)))
+	n := 0
+	for _, s := range cfg.Services {
+		if len(s.Chars) < 1 {
+			return errors.BadArg
+		}
+		n += len(s.Chars)
+		if len(s.Chars) > MaxCharsPerService || n > MaxChars {
+			return errors.TooMany
+		}
+		if !putUUID(b, s.UUID) {
+			return errors.BadArg
+		}
+		b.WriteByte(byte(len(s.Chars)))
+		for _, c := range s.Chars {
+			if c.Flags < 1 || c.Flags > Read|Write|WriteNoResp|Notify || !putUUID(b, c.UUID) {
+				return errors.BadArg
+			}
+			b.WriteByte(byte(c.Flags))
+		}
+	}
+	return nil
+}
+
+// putUUID appends u as its length and bytes, little-endian (the order on
+// air); false if u is malformed.
+func putUUID(b bytes.Buffer, u UUID) bool {
+	s := string(u)
+	if len(s) == 4 {
+		v := hexVal(s)
+		if v < 0 {
+			return false
+		}
+		b.WriteByte(2)
+		b.WriteByte(byte(v))
+		b.WriteByte(byte(v >> 8))
+		return true
+	}
+	if len(s) != 36 || s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+		return false
+	}
+	h := lower(s[0:8] + s[9:13] + s[14:18] + s[19:23] + s[24:36])
+	var raw [16]int
+	for i := 0; i < 16; i++ {
+		v := hexVal(h[2*i : 2*i+2])
+		if v < 0 {
+			return false
+		}
+		raw[i] = v
+	}
+	if h[0:4] == "0000" && h[8:32] == "00001000800000805f9b34fb" {
+		b.WriteByte(2)
+		b.WriteByte(byte(raw[3]))
+		b.WriteByte(byte(raw[2]))
+		return true
+	}
+	b.WriteByte(16)
+	for i := 15; i >= 0; i-- {
+		b.WriteByte(byte(raw[i]))
+	}
+	return true
+}
+
+// lower is s with A-F in lower case.
+func lower(s string) string {
+	b := []byte(s)
+	for i := 0; i < len(b); i++ {
+		if b[i] >= 'A' && b[i] <= 'F' {
+			b[i] += 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+// hexVal is the value of the hex digits of s, or -1.
+func hexVal(s string) int {
+	v := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		d := -1
+		if c >= '0' && c <= '9' {
+			d = int(c - '0')
+		} else if c >= 'a' && c <= 'f' {
+			d = int(c-'a') + 10
+		} else if c >= 'A' && c <= 'F' {
+			d = int(c-'A') + 10
+		}
+		if d < 0 {
+			return -1
+		}
+		v = v*16 + d
+	}
+	return v
+}
