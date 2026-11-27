@@ -28,6 +28,10 @@ experimental) need these checks:
   is now `GOGO_EINVAL`. Undotted names stay valid for hosts.
 - **gogo_close_posts with a board handle** does nothing (board ports are
   new in this release; in an embedding host it closes posts as before).
+- **`ble` is a runtime driver name.** It joins the reserved names, so
+  `gogo_register_port` refuses a host port called `ble` (`GOGO_EEXIST`),
+  as it refuses `gpio` or `tcp`: rename it with a vendor prefix
+  (`acme.ble`).
 
 ## Breaking changes since v0.1.0
 
@@ -1056,6 +1060,40 @@ rebuilt:
 - **Terminal mode.** In a terminal, `println` output is drawn over the
   grid (the console and the grid are kept apart only on the boards).
   `gogo run` has no `--screen` option; `build/gogovm --screen` has.
+
+## Bluetooth LE (`ble` port, `gogo/ble`)
+
+- **Peripheral only.** No central role (no scanning, no connecting to
+  other devices), one connection at a time, no indications, no
+  descriptors of your own, no pairing, bonding or encryption: anyone in
+  range can connect, read what the program set and write.
+- **Memory.** The Bluetooth controller keeps about 22 KB of internal RAM
+  in every firmware built with `ble` (the default), port open or not; an
+  open port takes about 60 KB more (the controller, the NimBLE host's
+  buffers and task), freed at close. Measured on the StickS3 with Wi-Fi
+  connected: about 155 KB of internal RAM free without the port, 95 KB
+  with it open. On the Cardputer (no PSRAM) a TLS connection's buffers
+  (about 35 KB at their peak) come from the same internal RAM, so Wi-Fi,
+  TLS and an open port together leave the VM arena roughly 60 KB (an
+  estimate: not yet measured on that board). A firmware for a program
+  without Bluetooth can drop it: `gogo firmware -without ble`.
+- **Open blocks.** `ble.Open` waits on a board while the controller and
+  the NimBLE host start, and its close while they stop; no actor runs
+  meanwhile.
+  Close stops them again.
+- **Writes without a response can be lost.** The driver holds events the
+  owner has no mailbox room for, in a 2 KB queue; a write with a response
+  that finds the queue full is refused to the phone (it retries), but a
+  write without one is dropped, as it would be over the air.
+- **A stalled notification fails after 2 s.** When the Bluetooth stack
+  has had no buffer for a notification for 2 s (a phone that stopped
+  reading, a bad link), it is answered with `Done{Seq: -1}`.
+- **Phones cache the services.** iOS (and some Android versions) remember
+  a device's GATT table by its address: after a program changes its
+  services, toggle Bluetooth on the phone or forget the device.
+- **The host simulation is functional, not timed.** `gogovm`'s socket
+  phone has no radio timing, no buffer limits (a notification is always
+  taken at once) and no MTU of its own: the client says the MTU.
 
 ## Embedding (`libgogo`)
 

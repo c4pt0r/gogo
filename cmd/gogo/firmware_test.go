@@ -59,7 +59,7 @@ func TestFirmwareUnion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE=y\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -72,12 +72,12 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=n\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
+	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=n\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE=y\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
 	wantCmd := "idf.py -C platform/esp32s3 -B " + d + " -DGOGO_BOARD=cardputer -DSDKCONFIG=" + d +
-		"/sdkconfig -DSDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.cardputer;sdkconfig.tls-off;" + d + "/sdkconfig.gogo\" -DEXTRA_COMPONENT_DIRS= build"
+		"/sdkconfig -DSDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.ble;sdkconfig.cardputer;sdkconfig.tls-off;" + d + "/sdkconfig.gogo\" -DEXTRA_COMPONENT_DIRS= build"
 	if !strings.Contains(out, wantCmd+"\n") {
 		t.Fatalf("command missing:\n%s\nwant %s", out, wantCmd)
 	}
@@ -105,7 +105,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BLE=y\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -211,7 +211,7 @@ func TestFirmwareQuotesSpaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`-B "` + d + `"`, `-DSDKCONFIG="` + d + `/sdkconfig"`,
-		`-DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer;sdkconfig.tls-off;` + d + `/sdkconfig.gogo"`} {
+		`-DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ble;sdkconfig.cardputer;sdkconfig.tls-off;` + d + `/sdkconfig.gogo"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %s in\n%s", want, out)
 		}
@@ -305,8 +305,11 @@ func TestFirmwareTableMatchesSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range fwFeatures {
-		if f.offDefaults != "" {
-			if _, err := os.Stat(filepath.Join(repo, "platform/esp32s3", f.offDefaults)); err != nil {
+		for _, frag := range []string{f.offDefaults, f.onDefaults} {
+			if frag == "" {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(repo, "platform/esp32s3", frag)); err != nil {
 				t.Errorf("%s: %v", f.name, err)
 			}
 		}
@@ -616,5 +619,27 @@ func TestFirmwareComponentPaths(t *testing.T) {
 	}
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", a, img); err != nil {
 		t.Errorf("one component: %v", err)
+	}
+}
+
+// ble is on by default on both boards and brings its IDF fragment
+// (Bluetooth on) before the board's overlay; off, neither.
+func TestFirmwareBLE(t *testing.T) {
+	d := t.TempDir()
+	b := writeImg(t, d, "b.ggb", "ble")
+	none := writeImg(t, d, "none.ggb")
+	for _, board := range []string{"sticks3", "cardputer"} {
+		ov := fwBoards[board].overlay
+		out, cfg, err := fwRun(t, "-board", board, "-o", d, none)
+		if err != nil || !strings.Contains(cfg, "CONFIG_GOGO_BLE=y\n") || !strings.Contains(out, `"sdkconfig.defaults;sdkconfig.ble;`+ov+";") {
+			t.Errorf("%s default: %v\n%s\n%s", board, err, out, cfg)
+		}
+		out, cfg, err = fwRun(t, "-board", board, "-o", d, "-without", "ble", none)
+		if err != nil || !strings.Contains(cfg, "CONFIG_GOGO_BLE=n\n") || strings.Contains(out, "sdkconfig.ble") {
+			t.Errorf("%s -without ble: %v\n%s\n%s", board, err, out, cfg)
+		}
+		if _, _, err := fwRun(t, "-board", board, "-o", d, "-without", "ble", b); err == nil {
+			t.Errorf("%s: removing a required ble should fail", board)
+		}
 	}
 }

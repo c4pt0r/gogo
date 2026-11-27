@@ -1,0 +1,51 @@
+// ble.Open's refusals: each bad Config with its error, a second port
+// while one is open, and a port again once the first has closed.
+package main
+
+import (
+	"gogo/ble"
+	"gogo/port"
+)
+
+func svc(n int) ble.Service {
+	s := ble.Service{UUID: ble.UUID16(0x180F)}
+	for i := 0; i < n; i++ {
+		s.Chars = append(s.Chars, ble.Characteristic{UUID: ble.UUID16(0x2A00 + i), Flags: ble.Read})
+	}
+	return s
+}
+
+func try(what string, cfg ble.Config) {
+	p, err := ble.Open(cfg)
+	if err != nil {
+		println(what+":", err.Error())
+		return
+	}
+	println(what + ": ok")
+	port.Close(p)
+}
+
+func main() {
+	one := []ble.Service{svc(1)}
+	try("no name", ble.Config{Services: one})
+	try("27-byte name", ble.Config{Name: "abcdefghijklmnopqrstuvwxyz1", Services: one})
+	try("no services", ble.Config{Name: "g"})
+	try("five services", ble.Config{Name: "g", Services: []ble.Service{svc(1), svc(1), svc(1), svc(1), svc(1)}})
+	try("nine in a service", ble.Config{Name: "g", Services: []ble.Service{svc(9)}})
+	try("seventeen in all", ble.Config{Name: "g", Services: []ble.Service{svc(8), svc(8), svc(1)}})
+	try("empty service", ble.Config{Name: "g", Services: []ble.Service{svc(0)}})
+	try("bad UUID", ble.Config{Name: "g", Services: []ble.Service{{UUID: ble.UUID("180"), Chars: svc(1).Chars}}})
+	try("bad 128-bit UUID", ble.Config{Name: "g", Services: []ble.Service{{UUID: ble.UUID("6e400001-b5a3-f393-e0a9-e50e24dcca9g"), Chars: svc(1).Chars}}})
+	try("no flags", ble.Config{Name: "g", Services: []ble.Service{{UUID: ble.UUID16(1), Chars: []ble.Characteristic{{UUID: ble.UUID16(2)}}}}})
+	try("16 in all", ble.Config{Name: "abcdefghijklmnopqrstuvwxyz", Services: []ble.Service{svc(8), svc(8)}})
+	try("base UUID", ble.Config{Name: "g", Services: []ble.Service{{UUID: ble.UUID("0000180F-0000-1000-8000-00805F9B34FB"), Chars: svc(1).Chars}}})
+
+	p, err := ble.Open(ble.Config{Name: "first", Services: one})
+	println("first:", err == nil)
+	_, err = ble.Open(ble.Config{Name: "second", Services: one})
+	println("second:", err.Error())
+	port.Close(p)
+	p, err = ble.Open(ble.Config{Name: "third", Services: one})
+	println("third after close:", err == nil)
+	port.Close(p)
+}

@@ -292,6 +292,29 @@ func node.Subscribe()
 
 Chapter 20 describes it.
 
+### gogo/ble
+
+```go
+type UUID string                    // "180f" (UUID16) or "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+type Characteristic struct{ UUID UUID; Flags int }   // Read | Write | WriteNoResp | Notify
+type Service struct{ UUID UUID; Chars []Characteristic }
+type Config struct{ Name string; Services []Service }
+type Connected struct{ Peer string; MTU int }        // events: ble.Event(post)
+type Disconnected struct{ Reason int }
+type Written struct{ Char int; Data bytes.Bytes }
+type Subscribed struct{ Char int; On bool }
+type MTUChanged struct{ MTU int }
+
+func ble.UUID16(v int) UUID
+func ble.Open(cfg Config) (actor.PID, error)          // BadArg, TooMany, Busy, NotFound
+func ble.SetValue(p actor.PID, char int, data bytes.Bytes)   // what a phone's read returns
+func ble.SendNotify(p actor.PID, char int, data bytes.Bytes) // answered with port.Done
+func ble.Event(m port.Post) (ev any, ok bool)
+func ble.MaxNotify(mtu int) int                        // mtu - 3
+```
+
+Chapter 23 describes it.
+
 ### gogo/sys and gogo/sntp
 
 ```go
@@ -406,6 +429,7 @@ taken.
 | `net.Subscribe` subscribers | 4 | (no network) |
 | HTTP head / body | 2 KB / 8 KB (client body up to 64 KB with `Do`) | (no network) |
 | TLS connections | 1 (about 23 KB charged to its owner) | (no network) |
+| Bluetooth LE | one `ble` port per board, one phone; 4 services, 16 characteristics (8 per service); values and writes up to 512 bytes; 2 notifications in flight | the same, over a local socket (`$GOGO_BLE`) |
 | distributed actors: frame, links, remote PIDs, remote links and monitors | 4096 bytes, 8, 64, 32 | 4096 bytes, 512, 1072, 1040 (`GOGO_NET=host`; `node.max_links`, chapter 20.9) |
 | config key / value | 15 chars / 1000 bytes | same |
 | file name / path | 32 / 96 bytes | same |
@@ -465,9 +489,10 @@ lacks one refuses the image at boot, naming it, and `code.Load` returns
 | `screen` | the `screen` port (`gogo/screen`, `gogo/tui`; chapter 19) | `screen` | `CONFIG_GOGO_SCREEN` |
 | `float` | floating point anywhere in the image: a float value, operation or constant, a `float32` / `float64` type switch case, `gogo/math`, `strconv.FormatFloat` / `ParseFloat` (not the rest of `gogo/strconv`) | `float` | `CONFIG_GOGO_FLOAT` |
 | `node` | the `node` port opened directly; `gogo/node` opens it (and `tcp`, `tcp_listen`) but does not require it (chapter 20) | (with `net`) | `CONFIG_GOGO_DIST` (needs `CONFIG_GOGO_NET`) |
+| `ble` | the `ble` port: any program that imports `gogo/ble` (its `Open`, chapter 23) | `ble` | `CONFIG_GOGO_BLE` (needs NimBLE: `sdkconfig.ble`) |
 | a host port's name | `port.Open` of a port the embedding program defines (chapter 18) | (none: an embedded VM only) | |
 
-An import alone requires nothing: `gogo/sys` (the wall clock and `Random`
+An import of a system package alone requires nothing: `gogo/sys` (the wall clock and `Random`
 work on every firmware), `gogo/fs` on `/flash`, and the type-only use of
 `gogo/net` or `gogo/kbd` need no name. A port opened by a name known only
 at run time requires nothing (with a compiler warning); the open just

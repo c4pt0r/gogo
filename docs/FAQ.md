@@ -491,22 +491,50 @@ need the chip's other USB controller and is not planned for now.
 | Audio | ES8311 codec: microphone and speaker | same |
 | Storage | `/flash` (LittleFS) | `/flash` and `/sd` (FAT and exFAT) |
 | Network | Wi-Fi, TCP/UDP, TLS | same |
+| Bluetooth | BLE peripheral (`ble` port, `gogo/ble`) | same |
 
 Each peripheral is a port and a named requirement, and each can be left
 out of a firmware build with a compile-time switch (`gogo firmware`).
 
 **Hosts:** `gogovm` on macOS and Linux (with simulated GPIO, keys, IMU, IR,
-microphone, network, files and screen), and any program that embeds
+microphone, network, files, screen and a BLE phone over a local
+socket), and any program that embeds
 `libgogo.a` (C99; Rust, Go and mobile bindings planned), which can add its
 own peripherals as host ports.
 
 **Planned:** the Arduino Nano ESP32 (ESP32-S3 with Wi-Fi, as a native
 board), RP2040 boards (the platform layer is being reshaped so a new
-board is mostly a small set of hardware hooks), BLE on the ESP32-S3, a
+board is mostly a small set of hardware hooks), the BLE central role, a
 `usb` port, and
 general-purpose `uart`, `i2c`, `spi` and display ports. Other ESP32-S3
 boards can be added by describing their pins and peripherals in
 `platform/esp32s3/main/board.h`.
+
+### Does gogo do Bluetooth?
+Yes, as a **peripheral**: the `ble` port (`gogo/ble`, book chapter 23)
+makes the board a GATT server whose services the program declares, so a
+phone app can read values the program sets, write values the program
+receives as messages, and subscribe to notifications. It is in the
+default firmware of both boards, and `gogovm` simulates it over a local
+socket so programs are tested without a radio. Setting up Wi-Fi from a
+phone is done by the firmware itself, not by a program.
+
+- **With Wi-Fi?** Yes. Bluetooth and Wi-Fi share the ESP32-S3's one
+  2.4 GHz radio and antenna and take turns (coexistence): both work at
+  once, TLS included, each a little slower while the other is busy.
+  Memory is the real limit: an open `ble` port takes about 60 KB of
+  internal RAM, so on the Cardputer (no PSRAM) Wi-Fi, a TLS connection
+  and BLE together leave a small VM; see the known issues.
+- **Range?** About 10 m indoors with the boards' small antennas, less
+  through walls and bodies.
+- **Why no central (scanning, connecting to a sensor)?** The two uses
+  asked for so far, a phone app and Wi-Fi setup, need the board to be the
+  peripheral. A central role (scan results as events, a connection per
+  remote device) is a larger API and more memory; it can come when a
+  program needs it.
+- **Is it secure?** The port does no pairing or encryption: anyone in
+  range can connect, read what the program set and write. Treat it like
+  an open network port.
 
 ### How do I get started on a board?
 Install the `gogo` binary (on macOS and Linux,

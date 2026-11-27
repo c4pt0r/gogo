@@ -1,0 +1,34 @@
+# The phone's side of main.gg on gogovm (tests/ble plays it).
+# The board advertises, the phone connects and reads the GATT table:
+< adv gogo-demo
+< svc 180f
+< chr 0 2a19 9
+< svc 6e400001-b5a3-f393-e0a9-e50e24dcca9e
+< chr 1 6e400002-b5a3-f393-e0a9-e50e24dcca9e 6
+< chr 2 6e400003-b5a3-f393-e0a9-e50e24dcca9e 8
+< end
+> connect 4c:2a:91:07:5e:d3 23
+> mtu 185
+# a read never reaches the program: the driver answers it (87 = 0x57)
+> read 0
+< value 0 57
+> sub 0 1
+< ok 0
+> sub 2 1
+< ok 2
+# "ping"
+> write 1 70696e67
+< ok 1
+< notify 2 706f6e67
+# "drain": 77 = 0x4d, pushed and then read
+> write 1 647261696e
+< ok 1
+< notify 0 4d
+> read 0
+< value 0 4d
+# the battery level is not writable
+> write 0 00
+< error 0 3
+# "bye", without a response
+> writenr 1 627965
+eof

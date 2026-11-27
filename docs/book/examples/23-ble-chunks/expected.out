@@ -1,0 +1,3 @@
+mtu 23 -> 5 pieces of up to 20 bytes, ok: true
+mtu 50 -> 3 pieces of up to 47 bytes, ok: true
+phone gone

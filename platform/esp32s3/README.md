@@ -21,8 +21,10 @@ One source tree, two boards, chosen at build time with the CMake variable
 | Cardputer ADV (M5Stamp S3A, ESP32-S3FN8, no PSRAM) | `cardputer` | MOSI 35, SCLK 36, DC 34, CS 37, RST 33, BL 38 | none | `/flash`, `/sd` (SPI2: CS 12, MOSI 14, CLK 40, MISO 39) |
 
 The StickS3 build also takes `sdkconfig.sticks3` (PSRAM, see "PSRAM and
-what the firmware provides" below); `CMakeLists.txt` adds it to
-`SDKCONFIG_DEFAULTS` when none is given. After pulling this change, delete the
+what the firmware provides" below), and both take `sdkconfig.ble`
+(Bluetooth and NimBLE for the `ble` port, before the board's file);
+`CMakeLists.txt` uses `sdkconfig.defaults;sdkconfig.ble;sdkconfig.sticks3`
+when no `SDKCONFIG_DEFAULTS` is given. After pulling this change, delete the
 generated `platform/esp32s3/sdkconfig` (and `build/CMakeCache.txt`) once, so
 the new defaults are applied: IDF keeps the values already in `sdkconfig`.
 
@@ -49,11 +51,12 @@ From the repo root:
 
 The Cardputer ADV firmware builds in its own directory, with its own
 sdkconfig (FatFs options from `sdkconfig.cardputer` on top of
-`sdkconfig.defaults`; `SDKCONFIG` is relative to `platform/esp32s3`):
+`sdkconfig.defaults` and `sdkconfig.ble`, Bluetooth for the `ble` port;
+`SDKCONFIG` is relative to `platform/esp32s3`):
 
     idf.py -C platform/esp32s3 -B platform/esp32s3/build-cardputer -DGOGO_BOARD=cardputer \
         -DSDKCONFIG=build-cardputer/sdkconfig \
-        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer" build
+        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ble;sdkconfig.cardputer" build
     idf.py -C platform/esp32s3 -B platform/esp32s3/build-cardputer -p /dev/cu.usbmodemXXXX flash
     platform/esp32s3/vmsize.sh platform/esp32s3/build-cardputer
 
@@ -200,7 +203,7 @@ adds it by itself):
 
     idf.py -C platform/esp32s3 -B platform/esp32s3/build-tlsoff \
         -DSDKCONFIG=build-tlsoff/sdkconfig \
-        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.sticks3;sdkconfig.tls-off" build
+        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ble;sdkconfig.sticks3;sdkconfig.tls-off" build
 
 `gogo device stats` adds `psram_free`,
 `psram_min`, `mbedtls_mem`, `mbedtls_mem_peak` and the `tls_*` counters
@@ -751,6 +754,47 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   1098224 B `gogo.bin` (+5168), Cardputer ADV 1128352 -> 1133440 (+5088);
   a 1760-byte grid is allocated from internal RAM at the first open and
   kept.
+- `GOGO_BLE` (default y, both boards; depends on NimBLE): the `ble` port
+  (`runtime/ble/ble.c`, its radio `ble_esp.c`; book chapter 23). Its
+  ESP-IDF settings are in `sdkconfig.ble`, which the default build lists
+  before the board's file and `gogo firmware` adds with the feature
+  (`onDefaults`): Bluetooth with NimBLE, one connection, a peripheral only
+  (no central, observer or GATT client; the controller without scanning,
+  link-layer security and the direct test mode; no BLE 5 features), no
+  pairing and nothing in NVS, the host's GATT/GAP code in flash
+  (`BT_NIMBLE_LOW_SPEED_MODE`), the host task on core 0. `ble_host.c`
+  (built whenever NimBLE is) owns the host's lifetime,
+  `ble_host_acquire` / `ble_host_release`, reference-counted, for the
+  port and the firmware's Wi-Fi provisioning; `ble_prov.h` declares
+  `ble_prov_active()`, which makes the port refuse to open (a weak
+  default in `ble_host.c` says false). Off: no driver (an image that
+  requires `ble` is refused at boot), `port.Open("ble")` fails with
+  `errors.NotFound`, and the `bt` component is not linked. One more
+  event-source slot while a port is open: `GOGO_MAX_SOURCES` is 5 (6 with
+  board ports).
+
+  Cost (ESP-IDF 6.1.1, fresh build directories, the same tree with and
+  without `sdkconfig.ble`):
+
+  | | StickS3 `.bin` | DIRAM | Cardputer `.bin` | DIRAM |
+  |---|---|---|---|---|
+  | without `ble` | 1125840 | 127701 | 1161792 | 124571 |
+  | with `ble` | 1262032 (+136192) | 149665 (+21964) | 1297456 (+135664) | 146551 (+21980) |
+
+  The static DIRAM is mostly the controller's IRAM code and data, which
+  stay whether a port is open or not; `BT_CTRL_RUN_IN_FLASH_ONLY` would
+  move about 20 KB more of it to flash, but the controller then may not
+  keep up while flash is erased (`/flash` writes), so it is not set.
+  Without the trims above (only the role and connection settings) the
+  firmware was 173.8 KB and 29.5 KB of DIRAM larger. Run time, internal
+  RAM, measured on the StickS3 with `gogo device stats` and Wi-Fi
+  connected: 155396 B free with no port open, about 95 KB with a port
+  open and advertising: the controller, the NimBLE host (its mbuf pools,
+  transport buffers and a 4 KB task) take about 60 KB at open and give
+  it back at close. The driver's own state is board storage (about 3 KB:
+  the event queue and the Config), and SetValue's values come from PSRAM
+  on the StickS3, the internal heap on the Cardputer.
+
 - `GOGO_FLOAT` (default y): floating point, `float32` and `float64`
   (`runtime/vm/floats.c` built with `GOGO_FLOAT=1`, and
   `runtime/floatlib/` for printing floats, `gogo/math` and
@@ -858,20 +902,22 @@ firmware` does this for its own directory, see below.)
 [-without list] [-component dir]... files...` reads the `requires` word of the given images and
 modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
 `_BATTERY`, `_SD`, `_FS_EXFAT`, `_FONT_CJK`, `_IMU`, `_IR`, `_AUDIO`, `_TLS`,
-`_SCREEN`, `_FLOAT`), then prints (or, with
+`_SCREEN`, `_FLOAT`, `_BLE`), then prints (or, with
 `-build`, runs) the matching build:
 
     idf.py -C platform/esp32s3 -B <dir> -DGOGO_BOARD=<board> -DSDKCONFIG=<dir>/sdkconfig \
-        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;<board overlay>;<dir>/sdkconfig.gogo" build
+        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;[sdkconfig.ble;]<board overlay>;<dir>/sdkconfig.gogo" build
 
-Feature names are `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen float`; `net`, `kbd`,
+Feature names are `net kbd power sd exfat cjk imu irtx irrx mic speaker tls screen float ble`; `net`, `kbd`,
 `power` and `float` are on only if required or given with `-with`; `sd`, `exfat`, `cjk`,
-`imu`, `irtx`, `irrx`, `mic`, `speaker`, `tls` are on by default and `-without` turns them off
+`imu`, `irtx`, `irrx`, `mic`, `speaker`, `tls`, `ble` are on by default and `-without` turns them off
 (`irtx` and `irrx` are one switch, `GOGO_IR`; `mic` and `speaker` are one, `GOGO_AUDIO`; `tls` needs `net`, `GOGO_TLS` depends on `GOGO_NET`). A required feature cannot be removed,
 and one the board lacks (`kbd`, `sd` on the StickS3) is an error. A feature
 that is off may add its own sdkconfig fragment to `SDKCONFIG_DEFAULTS` (the
 table's `offDefaults`): `tls` off adds `sdkconfig.tls-off`, which puts
-mbedTLS back to IDF's defaults for Wi-Fi's WPA crypto. The board
+mbedTLS back to IDF's defaults for Wi-Fi's WPA crypto. A feature that is
+on may add one before the board's overlay (`onDefaults`): `ble` adds
+`sdkconfig.ble`, Bluetooth itself. The board
 feature table is in `cmd/gogo/firmware.go` and must match `main/board.h` and
 `main/Kconfig.projbuild`. `gogo firmware` owns its build directory: if
 `<dir>/sdkconfig` exists and any `CONFIG_GOGO_*` value in it differs from the
@@ -895,7 +941,7 @@ behaves like absent hardware. Example, own build directory per variant:
     printf 'CONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\n' > /tmp/noinput.defaults
     idf.py -C platform/esp32s3 -B platform/esp32s3/build-cp-off -DGOGO_BOARD=cardputer \
         -DSDKCONFIG=build-cp-off/sdkconfig \
-        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer;/tmp/noinput.defaults" build
+        -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ble;sdkconfig.cardputer;/tmp/noinput.defaults" build
 
 `gogo.bin` sizes (ESP-IDF 6.1.1): Cardputer default 922416 B, Cardputer
 KBD and BATTERY off 897200 B (all optional features off: 276160 B), StickS3 default 870288 B, StickS3 `GOGO_BATTERY=n` 870080 B.

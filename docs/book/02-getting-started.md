@@ -501,7 +501,7 @@ settings:
 ```sh
 idf.py -C platform/esp32s3 -B platform/esp32s3/build-cardputer -DGOGO_BOARD=cardputer \
     -DSDKCONFIG=build-cardputer/sdkconfig \
-    -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cardputer" build
+    -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.ble;sdkconfig.cardputer" build
 idf.py -C platform/esp32s3 -B platform/esp32s3/build-cardputer -p /dev/cu.usbmodemXXXX flash
 ```
 

@@ -1,0 +1,71 @@
+// A BLE peripheral a phone talks to: the battery level it reads and
+// subscribes to (the standard Battery Service, which phone apps know),
+// and a command characteristic it writes, answered on a third one.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/ble"
+	"gogo/bytes"
+	"gogo/port"
+)
+
+// The characteristics, numbered in declaration order.
+const (
+	level   = 0 // Battery Level (0x2A19): Read | Notify
+	command = 1 // commands from the phone: Write | WriteNoResp
+	reply   = 2 // answers to the phone: Notify
+)
+
+func main() {
+	p, err := ble.Open(ble.Config{
+		Name: "gogo-demo",
+		Services: []ble.Service{
+			{UUID: ble.UUID16(0x180F), Chars: []ble.Characteristic{
+				{UUID: ble.UUID16(0x2A19), Flags: ble.Read | ble.Notify},
+			}},
+			{UUID: ble.UUID("6e400001-b5a3-f393-e0a9-e50e24dcca9e"), Chars: []ble.Characteristic{
+				{UUID: ble.UUID("6e400002-b5a3-f393-e0a9-e50e24dcca9e"), Flags: ble.Write | ble.WriteNoResp},
+				{UUID: ble.UUID("6e400003-b5a3-f393-e0a9-e50e24dcca9e"), Flags: ble.Notify},
+			}},
+		},
+	})
+	if err != nil {
+		println("ble:", err.Error())
+		return
+	}
+	pct := 87
+	ble.SetValue(p, level, bytes.FromSlice([]byte{byte(pct)}))
+	println("advertising as gogo-demo")
+	for {
+		post, ok := actor.Receive().(port.Post)
+		if !ok {
+			continue // the port.Done of a SendNotify
+		}
+		ev, _ := ble.Event(post)
+		switch e := ev.(type) {
+		case ble.Connected:
+			println("connected:", e.Peer, "mtu", e.MTU)
+		case ble.MTUChanged:
+			println("mtu", e.MTU)
+		case ble.Subscribed:
+			println("subscribed", e.Char, e.On)
+		case ble.Disconnected:
+			println("disconnected, reason", e.Reason)
+		case ble.Written:
+			cmd := e.Data.String()
+			println("command:", cmd)
+			switch cmd {
+			case "ping":
+				ble.SendNotify(p, reply, bytes.FromString("pong"))
+			case "drain":
+				pct -= 10
+				v := bytes.FromSlice([]byte{byte(pct)})
+				ble.SetValue(p, level, v)   // what a read returns from now on
+				ble.SendNotify(p, level, v) // and a push to a subscribed phone
+			case "bye":
+				return // the port closes with its owner: the phone is disconnected
+			}
+		}
+	}
+}
