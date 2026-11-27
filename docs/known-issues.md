@@ -1142,8 +1142,8 @@ rebuilt:
 - **No byte-stream helper.** A `gogo.h` driver has `port.Post` commands
   and events, not the `port.Chunk` / `Out` / `Done` protocol with its
   flow control.
-- **8 board ports per board**, registered in name order; of two with the
-  same name the one linked first wins (the other gets a boot line). A
+- **8 board ports per board**, registered in name order; two with the
+  same name are both refused (a boot line each). A
   firmware with board ports gives the post inbox one of its
   `GOGO_MAX_SOURCES` event sources (5 there instead of 4).
 - **The component must be linked whole.** An ESP-IDF driver component

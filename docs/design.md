@@ -2587,7 +2587,9 @@ can serve two devices, and the table can be a board's `static const`).
   globals alone). `gogo_board_main` registers the entries after
   `vm_init` and before `vm_boot`, in name order, so the image's
   requirements see them; a refused one (a runtime or board driver's
-  name, a duplicate, too long, more than 8) gets a boot line. With no
+  name, too long, more than 8) gets a boot line, and so does every entry
+  of a name two have (none is registered: the winner would be the link
+  order's). With no
   entry nothing changes: no shell, no source, no driver list. The board's
   posts allocate from a host table any task may use (`BoardRun.ports_host`:
   the ESP's internal heap, not the VM arena) and wake through the board's

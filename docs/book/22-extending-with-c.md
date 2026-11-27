@@ -238,11 +238,14 @@ boot, after the VM is made and before the image loads, the firmware (and
 `gogo_register_port` would, so an image's requirement `dice` is
 satisfied. Entries are registered in name order. One the board refuses,
 because its name is a runtime driver's (`gpio`, `tcp`, ...) or the
-board's, or an earlier entry has it, or it is longer than 31 bytes, or a
-board has more than 8, is named on the serial log at boot and left out:
+board's, or it is longer than 31 bytes, or a board has more than 8, is
+named on the serial log at boot and left out. Two entries with one name
+are both refused: which one should win would be the link order's, which
+no driver controls, so neither does, and an image that needs the name is
+refused loudly instead of talking to the wrong driver:
 
 ```
-gogo: board port "alpha" not registered: the name is taken (by a driver of the runtime or the board, or a board port before it)
+gogo: board port "alpha" not registered: two board ports have this name (none of them is registered)
 ```
 
 The registered ones join the board's requirement names: `gogo device

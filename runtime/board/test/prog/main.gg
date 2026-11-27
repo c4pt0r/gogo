@@ -20,10 +20,10 @@ func event(p actor.PID) port.Post {
 }
 
 func main() {
-	// The first "alpha" won; "zeta" is there too.
-	a, err := port.Open("alpha", port.Host{})
-	println("alpha", err == nil, event(a).Data.String())
-	port.Close(a)
+	// "beta" and "zeta" are there; neither "alpha" is (two have the name).
+	b, err := port.Open("beta", port.Host{})
+	println("beta", err == nil, event(b).Data.String())
+	port.Close(b)
 	z, err := port.Open("zeta", port.Host{})
 	println("zeta", err == nil, event(z).Data.String())
 	port.Close(z)

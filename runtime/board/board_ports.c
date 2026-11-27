@@ -56,8 +56,22 @@ static size_t next_entry(size_t prev) {
     return best;
 }
 
+/* A verdict of its own: another entry has the same name. */
+#define BP_TWICE 1
+
+/* True if an entry other than i has i's name. */
+static bool named_twice(size_t i) {
+    size_t n = entries();
+    if (!bp_start[i]->name) return false;
+    for (size_t k = 0; k < n; k++)
+        if (k != i && bp_start[k] && bp_start[k]->name && !strcmp(bp_start[k]->name, bp_start[i]->name)) return true;
+    return false;
+}
+
 /* Whether gogo_register_port takes entry e on board b, with the names
- * accepted before it: 0 or the GOGO_E* it returns. */
+ * accepted before it: 0, or the GOGO_E* it returns, or BP_TWICE (no
+ * entry of a name two have is taken: which one would win is the link
+ * order's, which no driver controls). */
 static int verdict(const VmBoard *b, const gogo_board_port *e, const char *const *acc, uint32_t na) {
     const gogo_port_driver *d = e->driver;
     if (e->size < ENTRY_SIZE_V1 || e->reserved || !e->name || !e->name[0] || !d || d->size < EMBED_DRIVER_SIZE_V1 ||
@@ -82,6 +96,7 @@ static void each(const VmBoard *b, EachFn fn, void *ctx) {
     for (size_t i = next_entry(SIZE_MAX); i != SIZE_MAX; i = next_entry(i)) {
         const gogo_board_port *e = bp_start[i];
         int v = verdict(b, e, acc, na);
+        if (v == 0 && named_twice(i)) v = BP_TWICE;
         if (v == 0) acc[na++] = e->name;
         fn(ctx, e, v);
     }
@@ -131,7 +146,8 @@ static void reg_one(void *ctx, const gogo_board_port *e, int v) {
     if (v == 0) v = gogo_register_port(embed_handle(r->ep), e->name, strlen(e->name), e->driver, e->ctx);
     if (v == 0) return;
     char m[200];
-    const char *why = v == GOGO_EEXIST ? "the name is taken (by a driver of the runtime or the board, or a board port before it)"
+    const char *why = v == BP_TWICE   ? "two board ports have this name (none of them is registered)"
+                      : v == GOGO_EEXIST ? "the name is taken (by a driver of the runtime or the board)"
                       : v == GOGO_E2BIG ? "the name is too long"
                       : v == GOGO_EFULL ? "too many board ports"
                       : v == GOGO_EINVAL ? "a bad entry (its size, name or driver)"

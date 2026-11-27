@@ -505,9 +505,9 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int3
  * At boot, after the VM is made and before the image loads, the board
  * registers every such port as gogo_register_port would (so an image
  * requirement of "dice" is satisfied), in name order. A port refused
- * (its name taken by one of the runtime's or the board's drivers or by
- * a port registered before it, too long, too many ports, a bad entry) is
- * named on stream 2 at boot and left out. The driver then works exactly
+ * (its name taken by one of the runtime's or the board's drivers, too
+ * long, too many ports, a bad entry) is named on stream 2 at boot and
+ * left out; so are all the entries of a name two or more of them have. The driver then works exactly
  * as a host port: its callbacks run on the VM's thread (the VM task) and
  * get a gogo_vm handle that takes gogo_port_emit, gogo_port_close,
  * gogo_post and gogo_poster_new, and nothing else of this header (those
