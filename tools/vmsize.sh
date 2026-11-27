@@ -142,8 +142,7 @@ roots() {
         -o \( -name '*.c' -o -name '*.h' \) -print | while read -r f; do
         case $f in "$1"/*/*) echo "$f" ;; "$1"/*) ;; *) echo "$f" ;; esac
     done > "$2/consumers"
-    # shellcheck disable=SC2046
-    cat $(cat "$2/consumers") | tr -cs 'A-Za-z0-9_' '\n' | LC_ALL=C sort -u > "$2/names"
+    xargs cat < "$2/consumers" | tr -cs 'A-Za-z0-9_' '\n' | LC_ALL=C sort -u > "$2/names"
     # "name word": word is named in the body of DIR's static inline function
     # or function-like macro "name".
     cat "$1"/*.h | awk '
