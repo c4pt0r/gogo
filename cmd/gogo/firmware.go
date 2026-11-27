@@ -19,7 +19,7 @@ import (
 	"gogotools/compiler"
 )
 
-const firmwareUsage = "usage: gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files..."
+const firmwareUsage = "usage: gogo firmware (-board sticks3|cardputer | -port P [-esptool path] [-no-usb-reset]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files..."
 
 // fwFeature is one firmware feature, the same for every board.
 type fwFeature struct {
@@ -492,9 +492,10 @@ func splitList(s string) []string {
 // detectBoard names the board on port from its chip: one read-only
 // esptool command (chip-id), whose banner says whether the ESP32-S3 has
 // embedded PSRAM (chipInfo.guessBoard). When esptool fails on a board
-// whose USB device is silent, it is run once more after a USB reset (usbreset.go; off with
-// $GOGO_NO_USB_RESET). A variable so tests replace it.
-var detectBoard = func(esptool, port string) (string, error) {
+// whose USB device is silent, it is run once more after a USB reset
+// (usbreset.go; off with noReset, -no-usb-reset, or $GOGO_NO_USB_RESET).
+// A variable so tests replace it.
+var detectBoard = func(esptool, port string, noReset bool) (string, error) {
 	if esptool == "" {
 		var err error
 		if esptool, err = findEsptool(); err != nil {
@@ -502,7 +503,7 @@ var detectBoard = func(esptool, port string) (string, error) {
 		}
 	}
 	var out []byte
-	err := newUSBRecovery(defaultUSBEnv(), false, os.Stderr).retry(port, func() error {
+	err := newUSBRecovery(defaultUSBEnv(), noReset, os.Stderr).retry(port, func() error {
 		var err error
 		out, err = exec.Command(esptool, "--port", port, "--after", "watchdog-reset", "chip-id").CombinedOutput()
 		return esptoolErr(err)
@@ -533,6 +534,7 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 	withoutS := fs.String("without", "", "")
 	port := fs.String("port", "", "")
 	esptool := fs.String("esptool", "", "")
+	noReset := addNoUSBResetFlag(fs)
 	var compDirs fwComponentsFlag
 	fs.Var(&compDirs, "component", "")
 	files, err := parseFlags(fs, args, firmwareUsage)
@@ -540,7 +542,7 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 		return err
 	}
 	if *board == "" && *port != "" {
-		if *board, err = detectBoard(*esptool, *port); err != nil {
+		if *board, err = detectBoard(*esptool, *port, *noReset); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "board: %s (detected on %s)\n", *board, *port)

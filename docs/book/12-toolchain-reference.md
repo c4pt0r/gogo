@@ -17,7 +17,7 @@ gogo info [-path dirs] <file.ggb|dir|file.gg>
 gogo flash [-port P] [-esptool path] [-path dirs] [-no-usb-reset] <app.ggb|dir|file.gg>
 gogo push [-port P] [-timeout seconds] [-no-usb-reset] <file.ggb> [/flash/path]
 gogo monitor [-port P] [-timeout seconds] [-until text] [-reset] [-no-usb-reset]
-gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files...
+gogo firmware (-board sticks3|cardputer | -port P [-esptool path] [-no-usb-reset]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files...
 gogo config [-port P | -local] [-no-usb-reset] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats
 gogo device [-port P] [-yes] [-no-usb-reset] info | scan | stats | format-flash | usb-reset
 gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run] [-no-usb-reset]
@@ -602,7 +602,7 @@ stop `gogo monitor` before `gogo flash` or `gogo config`.
 ## gogo firmware
 
 ```text
-gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files...
+gogo firmware (-board sticks3|cardputer | -port P [-esptool path] [-no-usb-reset]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files...
 ```
 
 Chooses which optional parts the firmware needs to contain for a set of
@@ -639,6 +639,7 @@ driver nobody uses. It reads the requirement names each file carries
   `gogo flash`) reads its chip, and an ESP32-S3 with embedded PSRAM is
   the M5StickS3, one without is the Cardputer ADV (as `gogo setup`
   decides). The board resets afterwards and runs its program again.
+  `-no-usb-reset` as for `gogo flash`.
 - `-component dir` (repeatable) builds an ESP-IDF component of your
   own into the firmware: a driver on `gogo.h` that registers itself with
   `GOGO_BOARD_PORT` (chapter 22). The directory has the component's
