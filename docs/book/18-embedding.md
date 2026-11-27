@@ -476,7 +476,7 @@ port (chapter 7). `examples/embed-c/port.c` defines one called `"echo"`:
  * owner once the open succeeds. */
 static int echo_open(void *ctx, gogo_vm *vm, gogo_port p, int32_t arg, const uint8_t *data, size_t len) {
     (void)ctx;
-    if (arg < 0) return GOGO_EINVAL;   /* refused: port.Open fails with errors.Busy */
+    if (arg < 0) return GOGO_EINVAL;   /* refused: port.Open fails with errors.BadArg */
     gogo_port_emit(vm, p, arg, data, len);
     return 0;
 }
@@ -533,9 +533,8 @@ ended by the host: true true
 ```
 
 A driver, like the host table, begins with its size; it has three
-callbacks, each optional: `open` (0 accepts, a negative `GOGO_E*`
-refuses, and `port.Open` then fails with `errors.Busy`, whatever the
-code; `NULL` accepts all), `command` (a `port.Post` sent to the port)
+callbacks, each optional: `open` (0 accepts, nonzero refuses; `NULL`
+accepts all), `command` (a `port.Post` sent to the port)
 and `close` (the port closed, for any reason: the owner exited,
 `port.Close`, `actor.Kill`, `gogo_port_close`, `gogo_free`). They run on
 the VM's thread inside `gogo_step`, and get the port as a `gogo_port`: a
@@ -547,6 +546,17 @@ a few host ports (4 in this version; `GOGO_EFULL` beyond), registered
 before `gogo_load`: an image that opens a host port by a constant name
 requires it (section 18.9), and a registration after the load returns
 `GOGO_ESTATE`.
+
+**Refusing an open.** What `open` returns is what the program sees. A
+negative `GOGO_E*` that is a shared code negated (`gogo_errors.h`: from
+`GOGO_ENOTFOUND`, -1, to `-GOGO_E_SHARED_LAST`) is the error
+`port.Open` returns: `GOGO_EINVAL` is `errors.BadArg`, `GOGO_ENOMEM`
+`errors.NoMemory`, `GOGO_EBUSY` `errors.Busy`, `-GOGO_E_UNSUPPORTED`
+`errors.Unsupported`. Any other nonzero value (`GOGO_ESTATE`, a positive
+number) refuses as `errors.Busy`. So `echo` above refuses a negative
+`Arg` with `bad argument`. Mind that -1 is `GOGO_ENOTFOUND`, "not
+found": a driver that means "taken" returns `GOGO_EBUSY`. The Go
+binding's `Open` does the same with an `Errno` (section 18.12).
 
 **A port can end on the host's side**, when the device behind it goes
 away, say. `gogo_port_close(vm, port, reason)` sends the owner
@@ -769,6 +779,11 @@ the methods it needs; its `Port` emits events to the port's owner:
 		},
 	}
 ```
+
+`OpenFunc` refuses an open by returning an error: an `embed.Errno` of
+a shared code (`embed.ErrInval`, `embed.ErrNoMem`, also wrapped) is the
+error `port.Open` gets (`errors.BadArg`, `errors.NoMemory`), any other
+error `errors.Busy`, as in C (section 18.7).
 
 A VM is single-threaded, as in C: its methods are not safe for
 concurrent use, and its hooks and drivers run inside `Step` on the

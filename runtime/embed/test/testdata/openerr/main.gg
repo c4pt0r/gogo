@@ -1,0 +1,23 @@
+// Opens the host port "hp" with each Arg below; the test's driver returns
+// the Arg from its open (0 accepts), so each line shows what port.Open
+// makes of a refusal: a negative GOGO_E* of a shared code is that code,
+// anything else nonzero is errors.Busy.
+package main
+
+import (
+	"gogo/port"
+	"gogo/strconv"
+)
+
+func main() {
+	args := []int{0, -6, -5, -3, -29, -1, -30, -36, 7}
+	for _, a := range args {
+		p, err := port.Open("hp", port.Host{Arg: a})
+		if err == nil {
+			println("open", strconv.Itoa(a)+": ok")
+			port.Close(p)
+		} else {
+			println("open", strconv.Itoa(a)+":", err.Error())
+		}
+	}
+}

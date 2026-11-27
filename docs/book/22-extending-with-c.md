@@ -524,8 +524,8 @@ errors before or after the driver:
 | `errors.BadArg` | `cfg` is not a struct of the driver's `cfg_type` (or, for `open`, has a field that is not an int) |
 | `errors.TooMany` | the VM's port table is at its cap (section 22.3) |
 | `errors.NoMemory` | the owner cannot take the port, its `charge_words` or its `room_64w` |
-| the driver's code | the driver's `open` returned a shared error code (> 0) |
-| `errors.Busy` | the driver's `open` returned a negative value |
+| the driver's code | the driver's `open` returned a shared error code (> 0); a host port's, a negative `GOGO_E*` |
+| `errors.Busy` | the driver's `open` returned a negative value; a host port's, any other nonzero value |
 
 A driver refuses an open by returning nonzero from `open` (or
 `open_term`). A positive value is a shared error code
@@ -544,8 +544,10 @@ and the dice driver of section 22.10 refuses seed 0 with
 caller can act on: `BadArg` for a config value the driver will never
 accept, `Busy` for a resource someone else holds now, `Unsupported` for
 hardware this board lacks, `NoMemory` for a buffer that does not fit.
-Host ports (section 22.13) cannot choose: any refusal of a host port's
-`open` is `errors.Busy`.
+Host ports (section 22.13) choose the same way, with gogo.h's signs: a
+host port's `open` returns a negative `GOGO_E*`, the shared code
+negated (`GOGO_EINVAL` for `errors.BadArg`), and any other nonzero
+value is `errors.Busy`.
 
 After a refused open, the VM bumps the slot's generation, so any event
 the driver pushed during `open` is stale and dropped. A driver that did
@@ -973,10 +975,6 @@ outside this repository. Plainly:
 - **`gogo firmware` knows only its own features.** An image that requires a
   driver not in `fwFeatures` cannot be built with it; you build the
   firmware with `idf.py` yourself.
-- **A host port cannot choose its error.** A firmware driver refuses an
-  open with any shared code, but `libgogo` turns every refusal of a host
-  port's `open` into `errors.Busy`, whatever negative code the host
-  returned (section 22.6).
 - **Event sources are scarce.** A VM has `GOGO_MAX_SOURCES` (4) source
   slots, and the firmware can use all four (net, input, the screen's retry
   while the screen port is open, and `gpio`'s debounce from the first

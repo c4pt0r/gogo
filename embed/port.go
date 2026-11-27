@@ -21,7 +21,10 @@ import (
 // which delivers its result with Poster.PortPost.
 type PortDriver interface {
 	// Open is port.Open: nil accepts, an error refuses (port.Open
-	// fails). Events it emits reach the owner once the open succeeds.
+	// fails). An Errno of a shared code (ErrInval, ErrNoMem, ...) is the
+	// error port.Open returns (errors.BadArg, errors.NoMemory, ...); any
+	// other error, ErrState among them, is errors.Busy. Events it emits
+	// reach the owner once the open succeeds.
 	Open(p Port, arg int32, data []byte) error
 	// Command is a port.Post an actor sent to the port.
 	Command(p Port, m Message)
@@ -127,15 +130,15 @@ func portOf(h C.uintptr_t) *portEntry { return cgo.Handle(h).Value().(*portEntry
 func bindPortOpen(h C.uintptr_t, port C.gogo_port, arg C.int32_t, data *C.uint8_t, n C.size_t) (rc C.int) {
 	e := portOf(h)
 	defer e.vm.st.catch()
-	rc = C.GOGO_EINVAL // refused, also after a panic
+	rc = C.GOGO_EBUSY // refused, also after a panic
 	err := e.d.Open(Port{e.vm, port}, int32(arg), C.GoBytes(unsafe.Pointer(data), C.int(n)))
 	if err == nil {
 		return 0
 	}
 	if en := Errno(0); errors.As(err, &en) && en < 0 {
-		return C.int(en)
+		return C.int(en) // the library makes a code past the shared ones Busy
 	}
-	return C.GOGO_EINVAL
+	return C.GOGO_EBUSY
 }
 
 //export bindPortCommand

@@ -1175,6 +1175,42 @@ TEST(embed_hostport_echo) {
     tctx_done(&t);
 }
 
+/* openerr's driver: its open returns the Arg (0 accepts). */
+static int code_open(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uint8_t *data, size_t len) {
+    (void)ctx; (void)vm; (void)port; (void)data; (void)len;
+    return arg;
+}
+
+/* A refusal with a negative GOGO_E* of a shared code reaches port.Open as
+ * that code; any other nonzero value (GOGO_ESTATE, the API's own; a code
+ * past the shared ones; a positive value) as errors.Busy. */
+TEST(embed_hostport_open_codes) {
+    TCtx t; tctx_init(&t);
+    static const gogo_port_driver drv = { .size = sizeof(gogo_port_driver), .open = code_open };
+    gogo_vm *vm = new_vm(&thost, &t, NULL);
+    CHECK(vm != NULL);
+    CHECK_EQ(gogo_register_port(vm, "hp", 2, &drv, NULL), GOGO_OK);
+    Img im = image("openerr");
+    CHECK(im.w != NULL);
+    CHECK_EQ(gogo_load(vm, im.w, im.len, GOGO_LOAD_COPY), GOGO_OK);
+    free(im.w);
+    CHECK_EQ(gogo_run(vm), GOGO_OK);
+    static const char want[] =
+        "open 0: ok\n"
+        "open -6: bad argument\n"                      /* GOGO_EINVAL */
+        "open -5: busy\n"                              /* GOGO_EBUSY */
+        "open -3: out of memory\n"                     /* GOGO_ENOMEM */
+        "open -29: remote actor unreachable\n"         /* the last shared code */
+        "open -1: not found\n"                         /* GOGO_ENOTFOUND */
+        "open -30: busy\n"                             /* past the shared codes */
+        "open -36: busy\n"                             /* GOGO_ESTATE */
+        "open 7: busy\n";                              /* positive */
+    CHECK(strcmp(t.out, want) == 0);
+    if (strcmp(t.out, want) != 0) printf("  out:\n%s", t.out);
+    gogo_free(vm);
+    tctx_done(&t);
+}
+
 /* A closed port's value never names it again, nor the port opened next in
  * its slot; a Send to its stale PID never reaches the host. */
 TEST(embed_hostport_stale) {

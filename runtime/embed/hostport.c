@@ -58,6 +58,16 @@ static void flush_held(EmbedPorts *g, Actor *owner, bool ok) {
     }
 }
 
+/* What a host port's open returned, as port_open takes it: 0 accepts; a
+ * negative GOGO_E* of a shared code (GOGO_EINVAL is GOGO_E_BADARG
+ * negated, gogo_errors.h) refuses with that code, so port.Open fails
+ * with it; any other nonzero value refuses as errors.Busy (-1). */
+static int open_result(int r) {
+    if (r == 0) return 0;
+    if (r < 0 && r >= -GOGO_E_SHARED_LAST) return -r;
+    return -1;
+}
+
 static int hp_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg) {
     (void)index;
     const HostPort *hp = host_of(p);
@@ -88,7 +98,7 @@ static int hp_open(Vm *vm, const Actor *owner, Port *p, uint16_t index, term cfg
     int r = 0;
     if (hp->pub.open) {
         g->opening = p;
-        r = hp->pub.open(hp->ctx, embed_handle(g), port_val(vm, p), arg, d, len) ? -1 : 0;   /* any nonzero refuses */
+        r = open_result(hp->pub.open(hp->ctx, embed_handle(g), port_val(vm, p), arg, d, len));
         g->opening = NULL;
         /* A host port has no charge or room: open_in accepts it when r is 0. */
         flush_held(g, actor_lookup(vm, owner->id), r == 0);

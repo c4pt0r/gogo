@@ -423,8 +423,12 @@ typedef uint32_t gogo_port;
 typedef struct gogo_port_driver {
     uint32_t size;          /* sizeof(gogo_port_driver) as the host was compiled (GOGO_PORT_DRIVER_INIT) */
     uint32_t reserved;      /* 0 */
-    /* port.Open: 0 to accept, a negative GOGO_E* to refuse (any nonzero
-     * value refuses; port.Open returns an error). NULL accepts every open. Events it emits (gogo_port_emit
+    /* port.Open: 0 to accept, nonzero to refuse. A negative GOGO_E* of a
+     * shared code (GOGO_EINVAL, GOGO_ENOMEM, GOGO_EBUSY, ... down to
+     * -GOGO_E_SHARED_LAST) is the error port.Open returns (errors.BadArg,
+     * errors.NoMemory, errors.Busy, ...); any other nonzero value
+     * (GOGO_ESTATE, a positive one) is errors.Busy. -1 is GOGO_ENOTFOUND:
+     * return GOGO_EBUSY for "taken". NULL accepts every open. Events it emits (gogo_port_emit
      * returns 0) are queued on the owner once the open succeeds, then
      * subject to its quota like any event (over it, dropped); if it
      * refuses, they are discarded. */

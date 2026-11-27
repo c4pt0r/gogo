@@ -219,6 +219,54 @@ func TestHostPort(t *testing.T) {
 	}
 }
 
+// What a driver's Open returns is what port.Open fails with: an Errno of
+// a shared code as that code, any other error as errors.Busy.
+func TestPortOpenErrors(t *testing.T) {
+	src := `package main
+
+import "gogo/port"
+
+func main() {
+	for a := 1; a <= 5; a++ {
+		_, err := port.Open("dev", port.Host{Arg: a})
+		if err == nil {
+			println(a, "ok")
+		} else {
+			println(a, err.Error())
+		}
+	}
+}
+`
+	vm, out, _ := newVM(t, nil)
+	if err := vm.RegisterPort("dev", PortFuncs{
+		OpenFunc: func(p Port, arg int32, data []byte) error {
+			switch arg {
+			case 1:
+				return ErrInval
+			case 2:
+				return fmt.Errorf("wrapped: %w", ErrNoMem)
+			case 3:
+				return errors.New("no such device")
+			case 4:
+				return ErrState
+			}
+			return nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := vm.Load(image(t, src)); err != nil {
+		t.Fatal(err)
+	}
+	if err := vm.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := "1 bad argument\n2 out of memory\n3 busy\n4 busy\n5 ok\n"
+	if got := out.String(); got != want {
+		t.Errorf("output:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // A panic in a driver comes out of the call that ran it, and Close is
 // refused inside one.
 func TestDriverPanicAndBusy(t *testing.T) {
