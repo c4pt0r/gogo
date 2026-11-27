@@ -204,6 +204,8 @@ idf_component_register(
     LDFRAGMENTS linker.lf
     PRIV_REQUIRES esp_partition esp_timer esp_driver_gpio esp_driver_spi esp_driver_i2c esp_adc
                   esp_rom freertos heap nvs_flash esp_driver_usb_serial_jtag
+                  # main.c: the RTC watchdog (hal/wdt_hal.h).
+                  esp_hal_wdt
                   # ir_esp.c (GOGO_IR); like esp_wifi below, unreferenced
                   # (so not linked) when the switch is off.
                   esp_driver_rmt

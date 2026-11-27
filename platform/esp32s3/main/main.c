@@ -23,6 +23,15 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
+#include "esp_freertos_hooks.h"
+#include "esp_system.h"
+/* IDF's watchdog LL headers have unused parameters; this component
+ * builds with -Werror=unused-parameter. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#include "hal/wdt_hal.h"
+#pragma GCC diagnostic pop
+#include "soc/rtc.h"
 
 #ifndef GOGO_FIRMWARE_VERSION
 #define GOGO_FIRMWARE_VERSION "dev"
@@ -30,6 +39,8 @@
 
 #define VM_STACK_BYTES 16384u
 #define VM_PRIORITY    5
+/* The RTC watchdog's timeout (hang_guard_start). */
+#define HANG_RESET_S   15u
 
 static Vm vm;      /* static: too big for a task stack */
 static VfsState vfs_state;     /* its vfs, input and net state (runtime/ keeps none) */
@@ -80,10 +91,68 @@ static void ready(Vm *v, void *ctx) {
 }
 #endif
 
+/* ---- a hang is a reset ----
+ *
+ * The interrupt watchdog (800 ms, both CPUs) and the task watchdog (CPU0's
+ * idle task, 5 s; CONFIG_ESP_TASK_WDT_PANIC) panic with a backtrace on the
+ * console and reboot. Both run on the main clock and need a CPU to run
+ * the panic handler. The RTC watchdog is the last resort: it counts on
+ * the RTC's own slow clock, so it fires when a CPU, the clocks or the
+ * panic itself are stuck. CPU0's idle task feeds it, about once a
+ * second; after HANG_RESET_S without that it resets the digital system
+ * (CPUs, peripherals, the USB-Serial-JTAG link), and HANG_RESET_S later
+ * the RTC as well. The panic handler and esp_restart reprogram it for
+ * their own use. */
+static bool hang_guard_feed(void) {
+    static TickType_t last;
+    TickType_t now = xTaskGetTickCount();
+    if (now - last >= pdMS_TO_TICKS(1000)) {
+        last = now;
+        wdt_hal_context_t w = RWDT_HAL_CONTEXT_DEFAULT();
+        wdt_hal_write_protect_disable(&w);
+        wdt_hal_feed(&w);
+        wdt_hal_write_protect_enable(&w);
+    }
+    return true;
+}
+
+static void hang_guard_start(void) {
+    wdt_hal_context_t w = RWDT_HAL_CONTEXT_DEFAULT();
+    uint32_t ticks = HANG_RESET_S * rtc_clk_slow_freq_get_hz();
+    wdt_hal_init(&w, WDT_RWDT, 0, false);
+    wdt_hal_write_protect_disable(&w);
+    wdt_hal_config_stage(&w, WDT_STAGE0, ticks, WDT_STAGE_ACTION_RESET_SYSTEM);
+    wdt_hal_config_stage(&w, WDT_STAGE1, ticks, WDT_STAGE_ACTION_RESET_RTC);
+    wdt_hal_enable(&w);
+    wdt_hal_write_protect_enable(&w);
+    if (esp_register_freertos_idle_hook_for_cpu(hang_guard_feed, 0) != ESP_OK) {
+        wdt_hal_write_protect_disable(&w);   /* nobody would feed it */
+        wdt_hal_disable(&w);
+        wdt_hal_write_protect_enable(&w);
+    }
+}
+
+/* Says why the board last reset, when it was a crash, a watchdog or a
+ * brownout (screen and serial): a hang that the watchdogs turned into a
+ * reset stays visible. */
+static void report_reset(void) {
+    const char *why = NULL;
+    switch (esp_reset_reason()) {
+    case ESP_RST_PANIC: why = "crash (panic)"; break;
+    case ESP_RST_INT_WDT: why = "interrupt watchdog"; break;
+    case ESP_RST_TASK_WDT: why = "task watchdog"; break;
+    case ESP_RST_WDT: why = "watchdog (a hang)"; break;
+    case ESP_RST_BROWNOUT: why = "brownout (low supply voltage)"; break;
+    default: break;
+    }
+    if (why) platform_esp_say("gogo: last reset: %s", why);
+}
+
 static void vm_task(void *arg) {
     (void)arg;
     platform_esp_init();
     console_esp_start(); /* LCD rail (StickS3 M5PM1), ST7789, render task */
+    report_reset();
     /* `gogo config` works even without (or with a bad) image. */
     (void)config_esp_init();
     config_esp_start_serial();
@@ -158,5 +227,6 @@ static void vm_task(void *arg) {
 }
 
 void app_main(void) {
+    hang_guard_start();
     xTaskCreatePinnedToCore(vm_task, "gogo_vm", VM_STACK_BYTES, NULL, VM_PRIORITY, NULL, 1);
 }

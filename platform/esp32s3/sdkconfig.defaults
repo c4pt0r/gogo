@@ -12,6 +12,10 @@ CONFIG_LOG_DEFAULT_LEVEL_WARN=y
 CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
 # The VM task runs on CPU1 and may keep it busy for long stretches.
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+# CPU0's idle task starved for 5 s panics (backtrace on the console) and
+# reboots, instead of only printing a warning on a console that may not be
+# read: a hang becomes a reset. main.c adds the RTC watchdog behind it.
+CONFIG_ESP_TASK_WDT_PANIC=y
 # Task notification index 1: console bring-up handshake (index 0 is the
 # VM task's platform_wait).
 CONFIG_FREERTOS_TASK_NOTIFICATION_ARRAY_ENTRIES=2

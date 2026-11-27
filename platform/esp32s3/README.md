@@ -463,6 +463,18 @@ in `cmd/gogo/flash.go`.
   boots it through `gogo_board_main` (`runtime/board`, the boot path the
   unix VM uses too), with the `Vm`, `VfsState`, `InputState` and
   `NetState` in static storage.
+  A hang is a reset: the interrupt watchdog (800 ms, both CPUs) and the
+  task watchdog (CPU0's idle task starved for 5 s,
+  `CONFIG_ESP_TASK_WDT_PANIC` in `sdkconfig.defaults`) panic with a
+  backtrace on the console and reboot; behind them `main.c` keeps the
+  RTC watchdog running, fed by CPU0's idle task about once a second,
+  which resets the chip (the USB-Serial-JTAG link included) after 15 s
+  without that, even when the CPUs or their clocks are stuck. CPU1 (the
+  VM) is not watched: a program may keep it busy. After such a reset the
+  boot says why on the screen and the serial console, `gogo: last
+  reset: task watchdog` (or `interrupt watchdog`, `watchdog (a hang)`,
+  `crash (panic)`, `brownout (low supply voltage)`). There is no core
+  dump: the partition table has no partition for one.
 - Screen (debug console, mirror of stdout/stderr):
   - `pm1.c` (StickS3 only): M5PM1 (I2C G47/G48, 0x6E): I2C idle sleep and watchdog off,
     PM1 GPIO2 high = LCD rail, 200 ms settle (M5GFX/M5Unified StickS3

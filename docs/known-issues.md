@@ -1091,6 +1091,16 @@ rebuilt:
 - **Phones cache the services.** iOS (and some Android versions) remember
   a device's GATT table by its address: after a program changes its
   services, toggle Bluetooth on the phone or forget the device.
+- **One unexplained hang.** A StickS3 running a `ble` firmware (port
+  never opened, a program that only slept, Wi-Fi possibly connected)
+  stopped answering on USB after a while: no console, no `gogo device
+  info`, no esptool reset, no JTAG, though the USB device was still
+  listed; it needed its reset button. With the port closed the
+  Bluetooth controller and NimBLE are never started, so what Bluetooth
+  changes then is Wi-Fi's software coexistence and about 22 KB less
+  internal RAM; the symptoms also match the USB link going silent
+  (below, "ESP32-S3 boards"). Not reproduced yet; the watchdogs now turn
+  a hang of the board into a reset that the next boot reports.
 - **The host simulation is functional, not timed.** `gogovm`'s socket
   phone has no radio timing, no buffer limits (a notification is always
   taken at once) and no MTU of its own: the client says the MTU.
@@ -1270,7 +1280,10 @@ LE".
   device are a suspect). *Workaround:* quit such applications; replug
   the board, or reset the USB device with libusb
   (`libusb_reset_device` on the device with vendor id 0x303a) and wait
-  about 3 s.
+  about 3 s. If the board itself had hung, the watchdogs now reset it
+  within 15 s and the next boot says `gogo: last reset: ...` on the
+  screen: a board that shows no such line and no restart was alive, and
+  only its USB link was stuck.
 - **The screen console is slow.** With the screen on, 1000 `println`s
   take about 2.2 times as long as without. *Workaround:* print less, or
   build with the console off (`GOGO_CONSOLE=0`).
