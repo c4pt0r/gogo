@@ -320,7 +320,10 @@ static int l_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
     sa.sin_family = AF_INET;
     sa.sin_port = htons((uint16_t)cfg[0]);
     sa.sin_addr.s_addr = htonl(INADDR_ANY);
-    if (bind(fd, (struct sockaddr *)&sa, sizeof sa) != 0 || listen(fd, 8) != 0) {
+    /* The kernel's longest accept queue: a crowd of boards connecting at
+     * once (a server after a power cut) waits there, not in SYN retries;
+     * the listener refuses what it cannot take (gogo/node: busy). */
+    if (bind(fd, (struct sockaddr *)&sa, sizeof sa) != 0 || listen(fd, SOMAXCONN) != 0) {
         close(fd);
         return -1;
     }
