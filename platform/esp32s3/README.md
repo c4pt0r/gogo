@@ -782,7 +782,11 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   (no central, observer or GATT client; the controller without scanning,
   link-layer security and the direct test mode; no BLE 5 features), no
   pairing and nothing in NVS, the host's GATT/GAP code in flash
-  (`BT_NIMBLE_LOW_SPEED_MODE`), the host task on core 0. `ble_host.c`
+  (`BT_NIMBLE_LOW_SPEED_MODE`), the host task on core 0, 24 blocks in
+  the first mbuf pool (IDF: 12), the one every notification draws on: a
+  notification takes two or three blocks, so 12 held about four, and
+  `ble_esp.c` answers "try again" (`BLE_AGAIN`) rather than take the
+  last `BLE_MSYS_SPARE` (4), which the host's own replies need. `ble_host.c`
   (built whenever NimBLE is) owns the host's lifetime,
   `ble_host_acquire` / `ble_host_release`, reference-counted, for the
   port and the firmware's Wi-Fi provisioning; `ble_prov.h` declares

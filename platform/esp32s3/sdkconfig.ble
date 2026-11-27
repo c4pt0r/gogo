@@ -51,6 +51,14 @@ CONFIG_BT_NIMBLE_LOW_SPEED_MODE=y
 # the host is held.
 CONFIG_BT_NIMBLE_PINNED_TO_CORE_0=y
 CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=5120
+# The first mbuf pool (256-byte blocks) carries every notification: its
+# ATT header takes a block and its data one or two more (a 244-byte value
+# two), and the host's own replies (a read, a write's response, a
+# prepared write) come from it too. IDF's 12 blocks held about four
+# notifications; 24 hold eight, and ble_esp.c leaves BLE_MSYS_SPARE of
+# them to the replies. About 3 KB more internal RAM, allocated while the
+# host is held (BT_NIMBLE_STATIC_TO_DYNAMIC).
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24
 # Quiet: gogo's serial console is the program's.
 CONFIG_BT_NIMBLE_LOG_LEVEL_ERROR=y
 # Protocomm (Wi-Fi provisioning): only security 2 (SRP6a + AES-GCM, a PIN
