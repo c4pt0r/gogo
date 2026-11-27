@@ -259,7 +259,7 @@ func (p *phone) script(name string, text string) {
 
 func hexs(s string) string { return fmt.Sprintf("%x", s) }
 
-const echo = "progs/echo"
+const echo = "../../examples/ble-echo" // the example doubles as the tests' peripheral
 
 var echoGATT = []string{
 	"adv gogo-echo",

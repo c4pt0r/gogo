@@ -1,5 +1,17 @@
-// The peripheral of the BLE tests: tests/ble (gogovm, a Go phone) and
-// tools/ble_central.py (a board, the Mac as the central) talk to it.
+// ble-echo: a Bluetooth LE peripheral that echoes what a phone writes and
+// can flood it with notifications, to see a ble port work and to measure
+// what a phone gets from a board (book chapter 23). It advertises as
+// gogo-echo. The BLE tests use it too: tests/ble (gogovm, a Go phone) and
+// tools/ble_central.py (a board, a computer as the central).
+//
+// Try it with a phone: run it (gogo run examples/ble-echo on a board),
+// open nRF Connect (iOS, Android), connect to gogo-echo, turn on the
+// notifications of the two Notify characteristics, and write text (UTF-8)
+// to the command characteristic: it comes back on reply, and the counter
+// goes up. Write "flood 100" to receive 100 notifications; the board's
+// console says how long it took. Or, from a computer with Python and bleak:
+//
+//	python3 tools/ble_central.py --count 200
 //
 // One service, three characteristics:
 //

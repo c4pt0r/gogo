@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ble_central.py: a computer as the phone of a board's "ble" port.
 
-Checks a board that runs tests/ble/progs/echo (gogo build tests/ble/progs/echo
+Checks a board that runs examples/ble-echo (gogo build examples/ble-echo
 -o echo.ggb && gogo flash echo.ggb) over the real radio, with the computer
 as the central: scan, connect, read, write, subscribe, notify, a throughput
 figure and disconnect. Needs Python 3.9+ and bleak (pip install bleak); on

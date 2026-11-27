@@ -238,7 +238,7 @@ phone gone
 ```
 
 One notification at a time is the simplest; for throughput keep two in
-flight (send the next on each `Done`, as `tests/ble/progs/echo` does), and
+flight (send the next on each `Done`, as `examples/ble-echo` does), and
 use the largest MTU the phone offers. `tools/ble_central.py` (23.6)
 measures what a board reaches with a computer as the central.
 
@@ -383,7 +383,7 @@ Each example in this chapter has a `phone` script next to it, which
 `tests/ble` plays over the socket (it runs in `make test`); the tests there
 are the place to copy from for a program of your own. On a board, the
 same checks with a computer as the phone are `tools/ble_central.py`
-(Python and `bleak`), which drives `tests/ble/progs/echo` through scan,
+(Python and `bleak`), which drives `examples/ble-echo` through scan,
 connect, read, write, subscribe, notifications, a throughput figure and
 disconnect.
 
