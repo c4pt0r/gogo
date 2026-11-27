@@ -132,7 +132,7 @@ static void collect(Actor *a) {
         if (ngot < 64) got[ngot++] = e;
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        a->mbox_words = (gogo_words_t)(a->mbox_words - msg_charge_words(&vm, m));
         msg_free(&vm, m);
     }
 }

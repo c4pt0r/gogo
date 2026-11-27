@@ -144,7 +144,7 @@ TEST(slices_make_index_set) {
     REGS(&f)[3] = I(5);                                    /* not a slice */
     REGS(&f)[8] = I(5);
     CHECK_EQ(call(&f, B_CAP, 7, 8, 1), R_BAD_CODE);
-    CHECK_EQ(make(&f, 1, 0, 1, 100000, I(0)), R_OUT_OF_MEMORY);
+    CHECK_EQ(make(&f, 1, 0, 1, GOGO_DEFAULT_MAX_WORDS + 1u, I(0)), R_OUT_OF_MEMORY);   /* past the default limit */
     actor_free(&f.vm, f.a);
 }
 

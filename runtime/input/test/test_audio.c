@@ -177,7 +177,7 @@ static void collect(Actor *a) {
         if (ngot < 64) ngot++;
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        a->mbox_words = (gogo_words_t)(a->mbox_words - msg_charge_words(&vm, m));
         msg_free(&vm, m);
     }
 }
@@ -427,7 +427,7 @@ TEST(mic_over_quota_counts_dropped) {
     setup();
     CHECK(test_port_is(open_mic(owner, 16000, 100, 0)));
     owner->state = A_RUNNABLE;                           /* no slack to reclaim */
-    owner->max_words = (uint16_t)(actor_charged_words(owner) + 1u);   /* no room for a Chunk */
+    owner->max_words = (gogo_words_t)(actor_charged_words(owner) + 1u);   /* no room for a Chunk */
     step(50);
     step(100);
     step(150);
@@ -764,7 +764,7 @@ TEST(spk_close_while_playing) {
     send_out(owner, s, 400, 0);
     step(110);
     owner->state = A_RUNNABLE;
-    owner->max_words = (uint16_t)(actor_charged_words(owner) + 1u);
+    owner->max_words = (gogo_words_t)(actor_charged_words(owner) + 1u);
     fake_spk_set_idle();
     step(120);
     CHECK(owner->mbox_head == NULL);                     /* owed */
@@ -793,7 +793,7 @@ TEST(spk_owed_done_flushed) {
     send_out(owner, s, 400, 0);
     step(0);
     owner->state = A_RUNNABLE;
-    owner->max_words = (uint16_t)(actor_charged_words(owner) + 1u);
+    owner->max_words = (gogo_words_t)(actor_charged_words(owner) + 1u);
     fake_spk_set_idle();
     step(10);
     CHECK(owner->mbox_head == NULL);

@@ -197,7 +197,8 @@ TEST(quota_mailbox_counter_limit) {
     Vm vm; va_reset(&vm);
     CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
     Actor *a = actor_new(&vm, 32), *b = actor_new(&vm, 24);
-    b->mbox_words = 65535;
+    b->mbox_words = GOGO_WORDS_MAX;            /* the counter's top (16 bits on a board) */
+    b->max_words = GOGO_WORDS_MAX;
     CHECK_EQ(msg_send(&vm, a, b->id, term_from_int(1)), 0);
     CHECK(b->mbox_head == NULL);
     CHECK(b->flags & AF_EXIT_PENDING);
@@ -832,7 +833,7 @@ TEST(monitor_charged_to_watcher) {
     /* Room for three monitors, not four; the refs (3 words each) fit in
      * the block's free space, so it does not grow. */
     uint16_t mem = w->mem_words;
-    w->max_words = (uint16_t)(mem + w->mbox_words + 3u * per + per / 2u);
+    w->max_words = (gogo_words_t)(mem + w->mbox_words + 3u * per + per / 2u);
     term refs[3];
     for (int i = 0; i < 3; i++) {
         refs[i] = sig_monitor(&vm, w, tid);
@@ -898,7 +899,7 @@ TEST(link_charged) {
     actor_exit(&vm, b, R_NORMAL, T_EMPTYSTR);
     CHECK_EQ(actor_extra_charged(a), 0);
     /* Over the caller's limit: no link, no charge, peer untouched. */
-    a->max_words = (uint16_t)(a->mem_words + per - 1u);
+    a->max_words = (gogo_words_t)(a->mem_words + per - 1u);
     CHECK(!sig_link(&vm, a, c->id));
     CHECK(!sig_is_linked(a, c->id) && !sig_is_linked(c, a->id));
     CHECK_EQ(actor_extra_charged(a), 0);

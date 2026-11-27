@@ -102,7 +102,7 @@ build/embed-c/main many_idle.ggb
 
 ```
 spawned 1000
-idle memory total: 132000 B
+idle memory total: 148000 B
 ```
 
 The program is done when every actor has exited or is blocked for good,
@@ -342,7 +342,7 @@ a|   Host = [example.org]
 ...
 a| malformed request, 40 bytes
 b| spawned 1000
-b| idle memory total: 132000 B
+b| idle memory total: 148000 B
 ```
 
 A VM is single-threaded: every call that takes a `gogo_vm` happens on the

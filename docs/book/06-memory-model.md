@@ -55,7 +55,7 @@ func main() {
 ```
 
 ```text
-1000 idle actors; one uses 136 bytes, under 256: true
+1000 idle actors; one uses 152 bytes, under 256: true
 all asked to quit
 ```
 
@@ -115,7 +115,7 @@ func main() {
 ```
 
 ```text
-main uses 152 bytes
+main uses 168 bytes
   holding 1000 ints, memory true
   holding 2000 ints, memory true
 grower exited, OutOfMemory: true

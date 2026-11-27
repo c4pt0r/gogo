@@ -661,7 +661,7 @@ TEST(handoff_refused) {
     term h = port_bytes_new(&vm, pt, 1000, &d);
     CHECK(h != T_NIL);
     CHECK(!port_handoff(&vm, a, p, gone));
-    b->max_words = (uint16_t)(b->mem_words + 100u);   /* 1000 bytes do not fit */
+    b->max_words = (gogo_words_t)(b->mem_words + 100u);   /* 1000 bytes do not fit */
     CHECK(!port_handoff(&vm, a, p, b->id));
     CHECK(pt->owner == a->id);
     CHECK_EQ(actor_extra_charged(a), 8u + alist);
@@ -683,7 +683,7 @@ TEST(port_open_charge_limit) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
     Actor *a = waiting_actor(&vm);
-    a->max_words = (uint16_t)(a->mem_words + 10u);
+    a->max_words = (gogo_words_t)(a->mem_words + 10u);
     fk.charge = 11;
     CHECK(open_fake(&vm, a, 1) == T_NIL);
     CHECK_EQ(vm.open_err, GOGO_E_NOMEMORY);
@@ -707,7 +707,7 @@ TEST(port_open_room_limit) {
     uint32_t w[MINI_WORDS]; Image img; Vm vm;
     setup(w, &img, &vm);
     Actor *a = waiting_actor(&vm);
-    a->max_words = (uint16_t)(a->mem_words + 133u);
+    a->max_words = (gogo_words_t)(a->mem_words + 133u);
     fk.charge = 6;
     fk.room = 2;                                /* 6 + 128 > 133 */
     CHECK(open_fake(&vm, a, 1) == T_NIL);
@@ -895,11 +895,11 @@ TEST(handoff_slice_of_large_root) {
     bytes_release(&vm, a, root);              /* a's own pin; the slice keeps the root */
     uint32_t need = 250u + bytes_list_words(c);
     CHECK_EQ(bytes_extra_words(&vm, c, pt->held, PORT_MAX_HELD), need);
-    c->max_words = (uint16_t)(c->mem_words + need - 1u);
+    c->max_words = (gogo_words_t)(c->mem_words + need - 1u);
     CHECK(!port_handoff(&vm, a, p, c->id));
     CHECK(pt->owner == a->id);
     CHECK_EQ(bytes_held_count(c), 0u);
-    c->max_words = (uint16_t)(c->mem_words + need);
+    c->max_words = (gogo_words_t)(c->mem_words + need);
     CHECK(port_handoff(&vm, a, p, c->id));
     CHECK((uint32_t)c->mem_words + actor_charged_words(c) <= actor_max_words(c));
     CHECK_EQ(bytes_held_bytes(c), 1000u);
@@ -1164,7 +1164,7 @@ TEST(port_open_term) {
     CHECK(!actor_port_owns(a));
     otk.refuse = 0;
     /* Over the limit: the driver's close undoes it. */
-    a->max_words = (uint16_t)(a->mem_words + 10u);
+    a->max_words = (gogo_words_t)(a->mem_words + 10u);
     otk.charge = 11;
     CHECK(port_open(&vm, a, name, cfg) == T_NIL);
     CHECK_EQ(fk.closes, 2);

@@ -318,7 +318,7 @@ static void pop(Actor *a) {
     if (!m) return;
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
-    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+    a->mbox_words = (gogo_words_t)(a->mbox_words - msg_charge_words(&vm, m));
     msg_free(&vm, m);
 }
 
@@ -594,7 +594,7 @@ TEST(net_udp_quota_never_kills) {
     Actor *a = new_actor(), *o = new_actor();
     configure(a);
     term u = open_udp(o, 7);
-    o->max_words = (uint16_t)(o->mem_words + actor_charged_words(o) + 400u);
+    o->max_words = (gogo_words_t)(o->mem_words + actor_charged_words(o) + 400u);
     uint8_t b[1600], data[400];
     memset(data, 0x5A, sizeof data);
     uint32_t len = udp_frame(b, MY_MAC, PEER_IP, MY_IP, 9, 7, data, 400);
@@ -630,7 +630,7 @@ TEST(net_udp_fill_leaves_up_room) {
         CHECK(test_port_is(u));
         CHECK(port_subscribe(&vm, o));
         while (o->mbox_head) pop(o);         /* the initial Up */
-        o->max_words = (uint16_t)(o->mem_words + actor_charged_words(o) + slack);
+        o->max_words = (gogo_words_t)(o->mem_words + actor_charged_words(o) + slack);
         uint8_t b[1600];
         uint32_t len = udp_frame(b, MY_MAC, PEER_IP, MY_IP, 9999, 5000, data, sizeof data);
         for (int i = 0; i < 10; i++) rx(b, len);
@@ -656,7 +656,7 @@ TEST(net_udp_reclaims_waiting_slack) {
     term u = open_udp(o, 7);
     CHECK(test_port_is(u));
     o->hp = 0;                               /* nothing live: the 256-word block is slack */
-    o->max_words = (uint16_t)(o->mem_words + actor_charged_words(o) + 20u);
+    o->max_words = (gogo_words_t)(o->mem_words + actor_charged_words(o) + 20u);
     uint8_t b[1600], data[400];
     memset(data, 0x5A, sizeof data);
     uint32_t len = udp_frame(b, MY_MAC, PEER_IP, MY_IP, 9, 7, data, sizeof data);
@@ -916,7 +916,7 @@ TEST(net_up_to_full_mailbox_is_owed) {
     s->mem[o] = hdr_make(live, K_STRING);
     s->mem[o + 1] = (live - 2u) * 4u;
     s->mem[s->fp] = term_from_ref(o);
-    s->max_words = (uint16_t)(s->mem_words + actor_charged_words(s));
+    s->max_words = (gogo_words_t)(s->mem_words + actor_charged_words(s));
     set_addr(a, n, MY_IP, MASK, PEER_IP, 0);
     CHECK(!(s->flags & AF_EXIT_PENDING));
     CHECK_EQ(mbox_len(s), 0);
@@ -943,7 +943,7 @@ TEST(net_up_reclaims_waiting_subscriber_slack) {
     Actor *a = new_actor(), *s = new_actor();   /* s: A_WAITING, 256 words, nothing live */
     CHECK(port_subscribe(&vm, s));
     term n = open_netif(a);
-    s->max_words = (uint16_t)(s->mem_words + actor_charged_words(s));
+    s->max_words = (gogo_words_t)(s->mem_words + actor_charged_words(s));
     set_addr(a, n, MY_IP, MASK, PEER_IP, 0);
     CHECK(!(s->flags & AF_EXIT_PENDING));
     CHECK_EQ(mbox_len(s), 1);

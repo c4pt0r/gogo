@@ -91,7 +91,7 @@ void msg_free(Vm *vm, Msg *m);
  * SendAfter to a dead target): a stale value is -R_BAD_CODE either way.
  * Quota: if queuing the message would take the receiver's
  * block + charged words (mailbox, pending timers) past its limit (counting
- * the holder list a first off-heap Bytes handle would make, bytes.h), or its mailbox counter past 65535 words,
+ * the holder list a first off-heap Bytes handle would make, bytes.h), or its mailbox counter past GOGO_WORDS_MAX words,
  * the message is dropped and the receiver is marked to exit with
  * R_MAILBOX_OVERFLOW. Only the receiver's state counts; the sender cannot
  * tell. */
@@ -100,7 +100,7 @@ int msg_send(Vm *vm, Actor *from, term to_pid, term msg);
 /* Queues m (which it now owns) on `to` and wakes it if waiting. With
  * `quota`, the receiver's limit applies as in msg_send; without (exit
  * notifications) the message is still counted in mbox_words.
- * Either way, if the 16-bit mailbox counter cannot hold it, m is freed, the
+ * Either way, if the mailbox counter (gogo_words_t) cannot hold it, m is freed, the
  * receiver is marked to exit with R_MAILBOX_OVERFLOW and false returned.
  * `to` must be alive and not marked for exit. Never allocates. */
 bool msg_enqueue(Vm *vm, Actor *to, Msg *m, bool quota);

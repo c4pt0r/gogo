@@ -1,0 +1,35 @@
+package main
+
+// An actor of 64 MB on the host VM (its word counts are 32-bit there;
+// a board's ceiling is 256 KB): a slice fills most of it, a value made
+// after it (past word 65535 of the heap) goes home as a message, and the
+// next big allocation passes the limit: OutOfMemory, for that actor only.
+
+import "gogo/actor"
+
+type Summary struct {
+	Len, Limit int
+	Ends       []int
+}
+
+func main() {
+	me := actor.Self()
+	const n = 15 << 20 // 15M ints: 60 MB of the 64
+	p := actor.SpawnOpt(func() {
+		s := make([]int, n)
+		for i := range s {
+			s[i] = i
+		}
+		actor.Send(me, Summary{Len: len(s), Limit: actor.Limit(actor.Self()), Ends: []int{s[0], s[n/2], s[n-1]}})
+		actor.Receive()
+		more := make([]int, 2<<20) // 8 MB more: past the limit
+		println("not reached", len(more), len(s))
+	}, actor.Options{MaxMemory: 64 << 20})
+	ref := actor.Monitor(p)
+	m := actor.Receive().(Summary)
+	println(m.Len, m.Limit, m.Ends[0], m.Ends[1], m.Ends[2])
+	println(actor.Info(p).Memory > 60<<20, actor.Info(p).Memory <= m.Limit+1024)
+	actor.Send(p, "go")
+	d := actor.Receive().(actor.DownMsg)
+	println(d.Ref == ref, d.Reason.Code == actor.OutOfMemory)
+}

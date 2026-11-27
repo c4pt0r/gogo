@@ -37,7 +37,7 @@ typedef struct ActorExtra ActorExtra;
  * messages and its extra. a must not be on the run queue; it is gone when
  * this returns. Allocates nothing for the link and monitor notifications.
  * Guaranteed delivery of a preallocated notification is bounded by the
- * receiver's 16-bit mailbox counter: if the notification would overflow it,
+ * receiver's mailbox counter (gogo_words_t, 16 bits on a board): if the notification would overflow it,
  * it is dropped and the receiver exits with R_MAILBOX_OVERFLOW. */
 void actor_exit(Vm *vm, Actor *a, uint32_t code, term func_name);
 

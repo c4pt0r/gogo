@@ -116,7 +116,7 @@ static void collect(Actor *a) {
         }
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        a->mbox_words = (gogo_words_t)(a->mbox_words - msg_charge_words(&vm, m));
         msg_free(&vm, m);
     }
 }
@@ -365,7 +365,7 @@ TEST(power_pending_samples_early) {
 TEST(power_full_mailbox_drops) {
     setup();
     CHECK(test_port_is(open_power(owner, 0)));
-    owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
+    owner->max_words = (gogo_words_t)(owner->mem_words + actor_charged_words(owner));
     uint32_t d0 = input_dropped(&vm);
     step(0);
     CHECK_EQ(input_dropped(&vm) - d0, 1);
@@ -571,7 +571,7 @@ TEST(power_read_retried_after_drop) {
     collect(owner);
     CHECK_EQ(ngot, 1);
     uint16_t mw = owner->max_words;
-    owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
+    owner->max_words = (gogo_words_t)(owner->mem_words + actor_charged_words(owner));
     uint32_t d0 = input_dropped(&vm);
     send_read(owner, pp);
     step(100);
@@ -599,7 +599,7 @@ TEST(power_event_driven_drop_recovers) {
     collect(owner);
     CHECK_EQ(ngot, 1);
     uint16_t full = owner->max_words;
-    owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
+    owner->max_words = (gogo_words_t)(owner->mem_words + actor_charged_words(owner));
     uint32_t d0 = input_dropped(&vm);
     fake_power_set(3700, 1, 0);            /* a state change: reported, but over quota */
     fake_power_new();
@@ -613,7 +613,7 @@ TEST(power_event_driven_drop_recovers) {
     collect(owner);
     CHECK_EQ(ngot, 1);
     is(0, 3700, 50, 0, 1);
-    owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner));
+    owner->max_words = (gogo_words_t)(owner->mem_words + actor_charged_words(owner));
     fake_power_set(3700, 1, 1);
     fake_power_new();
     step(30);                              /* dropped again */

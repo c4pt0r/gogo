@@ -202,7 +202,7 @@ int module_spawn(Vm *vm, Actor *caller, uint32_t handle, const uint8_t *entry, u
         return GOGO_E_NOTFOUND;
     if (!caller && (term_is_ref(arg) || term_is_handle(arg))) return GOGO_E_BADARG;
     if (image_func_nparams(img, f) > image_func_nregs(img, f)) return GOGO_E_BADIMAGE;
-    uint32_t r = vm_spawn_fn(vm, caller, (uint8_t)slot, f, arg, false, (uint16_t)(flags & 0xFFFFu),
+    uint32_t r = vm_spawn_fn(vm, caller, (uint8_t)slot, f, arg, false, (gogo_words_t)(flags & MOD_SPAWN_WORDS),
                              caller && (flags & MOD_SPAWN_LINK), pid);
     if (r == R_NORMAL) return GOGO_E_OK;
     if (r == R_BAD_MSG) return GOGO_E_BADARG;
@@ -295,7 +295,7 @@ uint32_t module_builtin(Vm *vm, Actor *a, uint32_t ra, uint32_t rb, uint32_t rc,
     case CODE_OP_SPAWN: case CODE_OP_SPAWN_LINK: case CODE_OP_SPAWN_OPT: {
         const uint8_t *name;
         uint32_t len, flags = op == CODE_OP_SPAWN_LINK ? MOD_SPAWN_LINK : 0u;
-        uint16_t words = 0;
+        gogo_words_t words = 0;
         if (!name_bytes(vm, a, R[rb + 2], &name, &len) ||
             (op == CODE_OP_SPAWN_OPT && !vm_spawn_opt_words(vm, a, R[rb + 4], &words)))
             return R_BAD_CODE;

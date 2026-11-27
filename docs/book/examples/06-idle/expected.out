@@ -1,2 +1,2 @@
-1000 idle actors; one uses 136 bytes, under 256: true
+1000 idle actors; one uses 152 bytes, under 256: true
 all asked to quit

@@ -21,12 +21,12 @@ int interp_run(Vm *vm, Actor *a);
  * cross-module rules refuse the copy for module mod, msg_build). The
  * spawner's heap does not move. */
 uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool caps,
-                     uint16_t max_words, bool link, term *pid);
+                     gogo_words_t max_words, bool link, term *pid);
 
 /* The child limit SpawnOpt asks for: Options{MaxMemory} in bytes, as
  * words (0 or less: the default; rounded down but at least 1; at most
  * HEAP_MAX_WORDS). False if opts is not an actor.Options struct. */
-bool vm_spawn_opt_words(const Vm *vm, const Actor *a, term opts, uint16_t *out);
+bool vm_spawn_opt_words(const Vm *vm, const Actor *a, term opts, gogo_words_t *out);
 
 /* Running a program. A host either calls vm_run, or drives the scheduler
  * itself: vm_start once, then vm_step until it returns VM_DONE (waiting

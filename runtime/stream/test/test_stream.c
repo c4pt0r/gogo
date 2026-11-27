@@ -104,7 +104,7 @@ static Msg *pop(Actor *a) {
     if (!m) return NULL;
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
-    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+    a->mbox_words = (gogo_words_t)(a->mbox_words - msg_charge_words(&vm, m));
     return m;
 }
 
@@ -560,7 +560,7 @@ TEST(out_owed_partial_flush_keeps_order) {
     CHECK(!stream_out_done(&vm, pid_port(sp), &so));     /* Done{1} owed */
     CHECK_EQ(send_h(1), 1);                             /* 0 running + 1 owed < 2: accepted */
     /* room for exactly one Done (a 4-word block) */
-    owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner) + msg_footprint_words(4));
+    owner->max_words = (gogo_words_t)(owner->mem_words + actor_charged_words(owner) + msg_footprint_words(4));
     CHECK(!stream_out_done(&vm, pid_port(sp), &so));     /* sends Done{1}, owes Done{2} */
     CHECK_EQ(so.owed_n, 1u);
     int32_t seqs[4];

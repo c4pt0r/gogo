@@ -11,7 +11,8 @@
 #include "opcodes.h"
 #include "signals.h"
 
-#define HEAP_MAX_WORDS 65535u
+/* The most words an actor's block may have (config.h). */
+#define HEAP_MAX_WORDS GOGO_ACTOR_MAX_WORDS
 
 /* Reserves `words` heap words and returns their word offset, or UINT32_MAX
  * if they cannot fit even after GC without the block growing past the

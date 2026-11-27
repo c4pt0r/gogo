@@ -24,12 +24,14 @@ typedef struct HeldBytes HeldBytes;   /* defined in bytes.h */
 typedef struct ModEntry ModEntry;     /* defined in module.h */
 struct BytesEntry;                    /* defined in bytes.c */
 
-/* Field order keeps the struct free of padding on both 32- and 64-bit
- * hosts: 48 bytes on 32-bit (checked in check32.c), 72 on 64-bit. */
+/* The word counts are gogo_words_t (config.h): 16 bits in the board
+ * configuration, 32 on the host. Field order keeps the board's struct
+ * free of padding: 48 bytes on 32-bit (checked in check32.c), 72 on
+ * 64-bit; the host's is 64 bytes on 32-bit, 88 on 64-bit. */
 typedef struct Actor {
     struct Actor *next;       /* run queue link */
     uint32_t *mem;            /* memory block */
-    uint16_t mem_words, hp, sp, fp;
+    gogo_words_t mem_words, hp, sp, fp;
     const uint32_t *pc;
     Msg *mbox_head;
     Msg *mbox_tail;
@@ -37,7 +39,7 @@ typedef struct Actor {
     uint32_t id;              /* PID term */
     uint8_t state, flags;
     uint16_t reductions;
-    uint16_t mbox_words, max_words;
+    gogo_words_t mbox_words, max_words;
     uint8_t mod;              /* module slot whose code it runs (module.h); counted in its live */
     uint8_t pad8;
     uint16_t pad16;           /* keeps 48 B on 32-bit */
@@ -171,11 +173,11 @@ int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board,
  * max_words 0 (default limit), not enqueued, running module slot `mod`'s
  * code (counted in that module's live actors). NULL if the table is full
  * or memory runs out. */
-Actor *actor_new_in(Vm *vm, uint16_t initial_words, uint8_t mod);
+Actor *actor_new_in(Vm *vm, gogo_words_t initial_words, uint8_t mod);
 
 /* actor_new_in(vm, initial_words, 0): an actor of module 0 (tests, C
  * helpers); actors spawned by code inherit their spawner's module. */
-Actor *actor_new(Vm *vm, uint16_t initial_words);
+Actor *actor_new(Vm *vm, gogo_words_t initial_words);
 
 /* The actor's memory limit in words (heap block + queued messages):
  * max_words, or GOGO_DEFAULT_MAX_WORDS when max_words is 0. */

@@ -6,6 +6,7 @@
 #include "alloc.h"
 #include "term.h"
 #include <string.h>
+#include <stdlib.h>
 
 
 /* Words of the message msg_build makes for t (UINT32_MAX if none): the
@@ -386,6 +387,36 @@ TEST(msg_size_cycle) {
     CHECK(m != NULL);
     if (m) { CHECK_EQ(m->words, 8); msg_free(&vm, m); }
     CHECK_EQ(a->mem[term_ref_off(x)], hdr_make(4, K_STRUCT));
+}
+
+/* A chain 300 deep through each node's first field (not its last, so
+ * the host walk keeps a frame per level: past its 64 in place, it grows
+ * in VM memory): copied whole; with no VM memory for the frames the copy
+ * fails as too big (OutOfMemory) and the sender's heap is restored
+ * word for word. On a board the walk reverses pointers: no memory. */
+TEST(msg_deep_first_field) {
+    Vm vm; va_reset(&vm);
+    CHECK_EQ(test_vm_init(&vm, NULL, 4), 0);
+    Actor *a = mk(&vm, 1300);
+    term head = T_NIL;
+    for (int i = 0; i < 300; i++) {
+        term f[2] = { head, term_from_int(i) };
+        head = mk_struct(a, 3, f, 2);
+    }
+    CHECK_EQ(copy_words(&vm, a, head), 300u * 4u);
+    uint32_t hp = a->hp, *before = malloc((size_t)hp * 4u);
+    CHECK(before != NULL);
+    if (!before) return;
+    memcpy(before, a->mem, (size_t)hp * 4u);
+    va_set_limit(&vm, va_used_bytes(&vm) + 64u);   /* no room for frames, nor the copy */
+    uint32_t why = 0;
+    CHECK(msg_build(&vm, a, head, 0, &why) == NULL);
+    CHECK_EQ(why, R_OUT_OF_MEMORY);
+    CHECK(memcmp(before, a->mem, (size_t)hp * 4u) == 0);
+    va_set_limit(&vm, 0);
+    CHECK_EQ(copy_words(&vm, a, head), 300u * 4u);
+    CHECK(memcmp(before, a->mem, (size_t)hp * 4u) == 0);
+    free(before);
 }
 
 /* Non-fatal delivery (M5 §9.1): a message that would take the receiver

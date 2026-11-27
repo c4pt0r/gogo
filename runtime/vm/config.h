@@ -2,11 +2,39 @@
 #ifndef GOGO_CONFIG_H
 #define GOGO_CONFIG_H
 
-/* Per-actor memory limit in words (heap block + queued messages) for an
- * actor spawned without an explicit limit. At most 65535 (max_words is
- * 16-bit). The RP2040 build uses 4096 (16 KB). */
+/* Per-actor memory limit in words (heap block + stack + queued messages)
+ * for an actor spawned without an explicit limit. A board build sets it
+ * (4096: 16 KB); the host's is 1 MB. */
 #ifndef GOGO_DEFAULT_MAX_WORDS
-#define GOGO_DEFAULT_MAX_WORDS 65535u
+#define GOGO_DEFAULT_MAX_WORDS 262144u
+#endif
+
+/* The word counts of an actor's memory (Actor.mem_words, hp, sp, fp,
+ * mbox_words, max_words; frames, the GC, message charges): 16 bits in the
+ * board configuration (GOGO_DEFAULT_MAX_WORDS <= 65535), which keeps the
+ * board's Actor at 48 bytes, so an actor holds at most 65535 words there
+ * (~256 KB); 32 bits otherwise (the host). GOGO_ACTOR_MAX_WORDS is the
+ * ceiling of an actor's memory: 65535 words on a board, 2^28 (1 GB) on
+ * the host, where heap refs (word offset << 2, term.h) leave 30 bits. */
+#include <stdint.h>
+#if GOGO_DEFAULT_MAX_WORDS <= 65535u
+#define GOGO_WORDS_16 1
+typedef uint16_t gogo_words_t;
+#define GOGO_WORDS_MAX 65535u
+#else
+#define GOGO_WORDS_16 0
+typedef uint32_t gogo_words_t;
+#define GOGO_WORDS_MAX 0xFFFFFFFFu
+#endif
+#ifndef GOGO_ACTOR_MAX_WORDS
+#if GOGO_WORDS_16
+#define GOGO_ACTOR_MAX_WORDS 65535u
+#else
+#define GOGO_ACTOR_MAX_WORDS (1u << 28)
+#endif
+#endif
+#if GOGO_ACTOR_MAX_WORDS > GOGO_WORDS_MAX || GOGO_ACTOR_MAX_WORDS > (1u << 28) || GOGO_DEFAULT_MAX_WORDS > GOGO_ACTOR_MAX_WORDS
+#error "GOGO_ACTOR_MAX_WORDS must fit gogo_words_t and heap refs, and hold GOGO_DEFAULT_MAX_WORDS"
 #endif
 
 /* Emergency memory the VM reserves at startup to finish exit processing

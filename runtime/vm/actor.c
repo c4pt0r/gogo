@@ -41,9 +41,9 @@ int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board,
     return 0;
 }
 
-Actor *actor_new(Vm *vm, uint16_t initial_words) { return actor_new_in(vm, initial_words, 0); }
+Actor *actor_new(Vm *vm, gogo_words_t initial_words) { return actor_new_in(vm, initial_words, 0); }
 
-Actor *actor_new_in(Vm *vm, uint16_t initial_words, uint8_t mod) {
+Actor *actor_new_in(Vm *vm, gogo_words_t initial_words, uint8_t mod) {
     uint16_t slot = vm->next_free;     /* the lowest free slot, as a scan from 0 finds */
     while (slot < vm->table_cap && !slot_is_free(vm->table[slot])) slot++;
     vm->next_free = slot;
@@ -72,7 +72,7 @@ Actor *actor_new_in(Vm *vm, uint16_t initial_words, uint8_t mod) {
 
 uint32_t actor_max_words(const Actor *a) {
     if (a->max_words) return a->max_words;
-    return GOGO_DEFAULT_MAX_WORDS > 65535u ? 65535u : GOGO_DEFAULT_MAX_WORDS;
+    return GOGO_DEFAULT_MAX_WORDS;
 }
 
 void actor_free(Vm *vm, Actor *a) {

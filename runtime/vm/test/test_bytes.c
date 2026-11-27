@@ -434,10 +434,10 @@ TEST(bytes_limit_on_create) {
     make_buf(&f, a, 1000);
     heap_gc(&f.vm, a, 0, NULL, 0);
     uint32_t live = (uint32_t)a->hp + (a->mem_words - a->sp);
-    a->max_words = (uint16_t)(live + 200u);                   /* 800 bytes beside the live data */
+    a->max_words = (gogo_words_t)(live + 200u);                   /* 800 bytes beside the live data */
     CHECK_EQ(call(&f, a, B_BUF_FREEZE, 0, 13, 1), R_OUT_OF_MEMORY);
     CHECK_EQ(bytes_table_used(&f.vm), 0);
-    a->max_words = (uint16_t)(live + 260u + LIST_W);          /* 1040 bytes + list */
+    a->max_words = (gogo_words_t)(live + 260u + LIST_W);          /* 1040 bytes + list */
     CHECK_EQ(freeze(&f, a, 0), R_NORMAL);
     CHECK(alpha_is(&f, a, 0, 1000));
     CHECK_EQ(bytes_held_bytes(a), 1000);
@@ -457,7 +457,7 @@ TEST(bytes_make_retry_drops_slack) {
     uint32_t live = (uint32_t)a->hp + (a->mem_words - a->sp);
     CHECK(a->mem_words > live + 100u);
     /* Room for live + the 1000-byte Bytes + the list, not for the block's slack. */
-    a->max_words = (uint16_t)(live + 250u + LIST_W + 4u);
+    a->max_words = (gogo_words_t)(live + 250u + LIST_W + 4u);
     CHECK((uint32_t)a->mem_words + 250u > a->max_words);
     CHECK_EQ(freeze(&f, a, 0), R_NORMAL);
     CHECK(alpha_is(&f, a, 0, 1000));
@@ -474,7 +474,7 @@ TEST(heap_alloc_retry_after_bytes_sweep) {
     Actor *a = spawn(&f, 64);
     CHECK_EQ(make_bytes(&f, a, 0, 2000), R_NORMAL);           /* 500 words held */
     heap_gc(&f.vm, a, 0, NULL, 0);
-    a->max_words = (uint16_t)(a->mem_words + 500u + LIST_W + 20u);
+    a->max_words = (gogo_words_t)(a->mem_words + 500u + LIST_W + 20u);
     R(a)[0] = T_NIL;                                          /* now garbage, still charged */
     uint32_t off = heap_alloc(&f.vm, a, 300, NULL, 0);
     CHECK(off != UINT32_MAX);
@@ -546,7 +546,7 @@ TEST(bytes_receive_stays_within_limit) {
                 b->mem[ko + 1] = (keep - 2u) * 4u;
                 R(b)[1] = term_from_ref(ko);
                 heap_gc_tight(&f.vm, b, 0, NULL, 0);                 /* no slack yet */
-                b->max_words = (uint16_t)(b->mem_words + 1100u + extra);
+                b->max_words = (gogo_words_t)(b->mem_words + 1100u + extra);
                 term t;
                 bool ok;
                 if (reply) {
@@ -584,14 +584,14 @@ TEST(bytes_enqueue_counts_list) {
     CHECK_EQ(make_bytes(&f, a, 0, 400), R_NORMAL);
     uint32_t fw = msg_footprint_words(0) + 100u;
     CHECK_EQ(bytes_list_words(b), LIST_W);
-    b->max_words = (uint16_t)(b->mem_words + fw + LIST_W - 1u);
+    b->max_words = (gogo_words_t)(b->mem_words + fw + LIST_W - 1u);
     CHECK_EQ(msg_send(&f.vm, a, b->id, R(a)[0]), 0);
     CHECK(b->flags & AF_EXIT_PENDING);
     uint32_t code; term fn;
     CHECK(actor_exit_pending(b, &code, &fn));
     CHECK_EQ(code, R_MAILBOX_OVERFLOW);
     CHECK_EQ(b->mbox_words, 0);
-    c->max_words = (uint16_t)(c->mem_words + fw + LIST_W);
+    c->max_words = (gogo_words_t)(c->mem_words + fw + LIST_W);
     CHECK_EQ(msg_send(&f.vm, a, c->id, R(a)[0]), 0);
     CHECK(!(c->flags & AF_EXIT_PENDING));
     CHECK_EQ(c->mbox_words, fw);

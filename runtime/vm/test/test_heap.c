@@ -28,8 +28,14 @@ static Actor *setup(Vm *vm, uint16_t words) {
     return a;
 }
 
+/* 48 B on a 32-bit board (check32.c); the host's word counts are 32-bit
+ * (gogo_words_t): 12 B more, and padding to a pointer. */
 TEST(actor_size) {
+#if GOGO_WORDS_16
     CHECK(sizeof(Actor) <= 48 + 6 * (sizeof(void *) - 4));
+#else
+    CHECK(sizeof(Actor) <= 64 + 6 * (sizeof(void *) - 4));
+#endif
 }
 
 TEST(push_frame_layout) {
@@ -208,6 +214,7 @@ TEST(heap_oom) {
     term roots[1] = { T_NIL };
     int n = 0;
     uint32_t off = 0;
+    a->max_words = 65535;                       /* the board ceiling, on every build */
     for (; n < 100; n++) {
         off = heap_alloc(&vm, a, 1000, roots, 1);
         if (off == UINT32_MAX) break;
@@ -218,9 +225,8 @@ TEST(heap_oom) {
         roots[0] = term_from_ref(off);
     }
     CHECK(off == UINT32_MAX);
-    /* Skipped under a small-platform config: it needs the unix 65535-word
-     * default limit for 60 live 1000-word objects. */
-#if GOGO_DEFAULT_MAX_WORDS >= 65535u
+    /* 60 live 1000-word objects fit in 65535 words; not in the MCU arena. */
+#if GOGO_ARENA_BYTES == 0
     CHECK(n >= 60);
 #endif
     CHECK(a->mem_words <= HEAP_MAX_WORDS);
@@ -236,6 +242,7 @@ TEST(heap_oom) {
 TEST(push_frame_oom) {
     Vm vm;
     Actor *a = setup(&vm, 24);
+    a->max_words = 65535;
     CHECK(!heap_push_frame(&vm, a, 65535, -1));
     CHECK_EQ(a->sp, a->mem_words);
 }

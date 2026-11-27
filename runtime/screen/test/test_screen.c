@@ -483,7 +483,7 @@ static bool pop(uint32_t *type, int32_t *f0, const uint8_t **data, uint32_t *len
     if (!m) return false;
     owner->mbox_head = m->next;
     if (!owner->mbox_head) owner->mbox_tail = NULL;
-    owner->mbox_words = (uint16_t)(owner->mbox_words - msg_charge_words(&vm, m));
+    owner->mbox_words = (gogo_words_t)(owner->mbox_words - msg_charge_words(&vm, m));
     const uint32_t *o = m->data + term_ref_off(m->root);
     *type = o[1];
     uint32_t i = term_is_pid(o[2]) ? 3u : 2u;   /* past a From */
@@ -594,7 +594,7 @@ TEST(screen_port_owed) {
     uint32_t type;
     int32_t seq;
     CHECK(pop(&type, &seq, NULL, NULL));
-    owner->max_words = (uint16_t)(owner->mem_words + (*port_at(&vm, 0)).charge_words);   /* no room for a message */
+    owner->max_words = (gogo_words_t)(owner->mem_words + (*port_at(&vm, 0)).charge_words);   /* no room for a message */
     static const uint8_t f[] = { SCREEN_OP_TEXT, 1, 'a' };
     static const uint8_t bad[] = { 99 };
     port_command(&vm, owner, p, mk_out(f, sizeof f));
@@ -632,7 +632,7 @@ TEST(screen_port_owed_full) {
     uint32_t type;
     int32_t seq;
     CHECK(pop(&type, &seq, NULL, NULL));
-    owner->max_words = (uint16_t)(owner->mem_words + (*port_at(&vm, 0)).charge_words);
+    owner->max_words = (gogo_words_t)(owner->mem_words + (*port_at(&vm, 0)).charge_words);
     static const uint8_t f[] = { SCREEN_OP_MOVE, 0, 0, SCREEN_OP_TEXT, 1, 'a' };
     static const uint8_t g2[] = { SCREEN_OP_MOVE, 0, 0, SCREEN_OP_TEXT, 1, 'b' };
     for (unsigned i = 0; i < SCREEN_OWED_MAX; i++) port_command(&vm, owner, p, mk_out(f, sizeof f));

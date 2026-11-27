@@ -242,7 +242,7 @@ static uint32_t event_of(Actor *a, int32_t *field) {
     if (field) *field = hdr_words(d[0]) > i && term_is_int(d[i]) ? term_to_int(d[i]) : -1;
     a->mbox_head = m->next;
     if (!a->mbox_head) a->mbox_tail = NULL;
-    a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+    a->mbox_words = (gogo_words_t)(a->mbox_words - msg_charge_words(&vm, m));
     msg_free(&vm, m);
     return type;
 }
@@ -772,7 +772,7 @@ TEST(tcp_slow_reader_never_killed) {
         setup();
         Conn k = mk(TCP_ESTABLISHED);
         write_held(k.o, k.port);
-        k.o->max_words = (uint16_t)(k.o->mem_words + actor_charged_words(k.o) + slack);
+        k.o->max_words = (gogo_words_t)(k.o->mem_words + actor_charged_words(k.o) + slack);
         uint32_t delivered = 0;
         for (int i = 0; i < 100; i++) {
             uint32_t before = nst.st.tcp_quota;
@@ -810,7 +810,7 @@ TEST(tcp_event_retry) {
     setup();
     Conn k = mk(TCP_ESTABLISHED);
     write_held(k.o, k.port);
-    k.o->max_words = (uint16_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room at all */
+    k.o->max_words = (gogo_words_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room at all */
     seg_in(k.pport, k.vport, k.peer, k.nxt + 3u, 0x10, NULL);
     seg_in(k.pport, k.vport, k.peer, 0, 0x04, NULL);
     CHECK(!(k.o->flags & AF_EXIT_PENDING));
@@ -851,7 +851,7 @@ TEST(tcp_refused_dial_sends_nothing) {
     setup();
     configure();
     Actor *o = new_actor();
-    o->max_words = (uint16_t)(o->mem_words + actor_charged_words(o) + 1u);
+    o->max_words = (gogo_words_t)(o->mem_words + actor_charged_words(o) + 1u);
     term f[3] = { term_from_int(0), term_from_int(80), term_from_int(0) };
     o->hp = 0;
     f[0] = heap_int(o, (int32_t)PEER_IP);
@@ -973,7 +973,7 @@ TEST(tcp_owed_dones) {
     write_str(k.o, k.port, "a");
     write_str(k.o, k.port, "b");
     CHECK_EQ(tx.n, 1);
-    k.o->max_words = (uint16_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room at all */
+    k.o->max_words = (gogo_words_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room at all */
     seg_in(k.pport, k.vport, k.peer, k.nxt + 1u, 0x10, NULL);   /* ACK of "a": its Done owed */
     CHECK_EQ(tx.n, 2);                       /* "b" goes out */
     CHECK(out_at(1).n == 1u && out_at(1).data[0] == 'b');
@@ -1002,7 +1002,7 @@ TEST(tcp_done_after_held_connected) {
     setup();
     Conn k = mk(TCP_SYN_SENT);
     uint16_t room = k.o->max_words;
-    k.o->max_words = (uint16_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room at all */
+    k.o->max_words = (gogo_words_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room at all */
     seg_in(80, k.vport, PEER_ISN, k.nxt, 0x12, NULL);   /* SYN-ACK: Connected held */
     CHECK_EQ(event_of(k.o, NULL), 0);
     k.o->max_words = room;
@@ -1278,7 +1278,7 @@ TEST(tcp_upper_terminal_after_normal) {
     setup();
     k = up_dial(0);
     up.fin_post = GOGO_E_OK;
-    k.o->max_words = (uint16_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room: Normal held */
+    k.o->max_words = (gogo_words_t)(k.o->mem_words + actor_charged_words(k.o));   /* no room: Normal held */
     seg_in(k.pport, k.vport, k.peer, k.una, 0x11, NULL);
     k.peer++;
     CHECK_EQ(event_of(k.o, NULL), 0);

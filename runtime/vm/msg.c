@@ -39,6 +39,12 @@ typedef struct Xm {
     const Vm *vm;
     uint32_t tag, why, words;
     bool handles, fin;        /* a handle seen; a handle or a crossing const (fin_fn has work) */
+#if !GOGO_WORDS_16
+    struct WalkStk *stk;      /* the host walk's way back (below) */
+#define XM_TAIL , NULL
+#else
+#define XM_TAIL
+#endif
 } Xm;
 
 static void xm_fail(Xm *x, uint32_t why) {
@@ -66,6 +72,10 @@ static void xm_term(Xm *x, term t) {
     if (term_is_handle(t)) x->handles = x->fin = true;
 }
 
+#if GOGO_WORDS_16
+#define WALK_INIT(x, ws, v)   ((void)0)
+#define WALK_UNMARK(mem, t, x) walk((mem), (t), NULL)
+#define WALK_DONE(x)          ((void)0)
 /* With x, marks the unmarked objects reachable from root and returns their
  * total words, checking each (a closure's or struct's type word) against
  * the module rules and counting what its other terms add (xm_term);
@@ -115,6 +125,103 @@ static uint32_t walk(uint32_t *mem, term root, Xm *x) {
     }
 }
 
+#else
+/* The host walk. An actor's heap there passes 65535 words (gogo_words_t,
+ * config.h), so the way back does not fit a field: it is kept on a stack
+ * of (object, field) frames instead, the fields left alone (none for an
+ * object's last term, which leaves nothing to come back for). The stack
+ * starts in the WalkStk (on the C stack) and grows in VM memory. If it
+ * cannot grow, the marking walk enters nothing more (cut) and the copy
+ * fails as too big (R_OUT_OF_MEMORY); the unmarking walk then retraces
+ * exactly the objects marked, in the same order, so it never needs more
+ * frames than the marking walk had and never fails. */
+typedef struct WalkStk {
+    Vm *vm;
+    uint32_t (*f)[2];         /* frames: object offset, field index */
+    uint32_t n, cap;
+    bool cut;
+    uint32_t inl[64][2];
+} WalkStk;
+
+#define WALK_INIT(x, ws, v)   ((ws).vm = (v), (ws).f = (ws).inl, (ws).n = 0, (ws).cap = 64u, (ws).cut = false, (x).stk = &(ws))
+#define WALK_UNMARK(mem, t, x) walk((mem), (t), NULL, (x)->stk)
+#define WALK_DONE(x)          walk_done((x)->stk)
+
+static void walk_done(WalkStk *s) {
+    if (s->f != s->inl) va_free(s->vm, s->f, (size_t)s->cap * sizeof *s->f);
+    s->f = s->inl;
+    s->cap = 64u;
+}
+
+static bool walk_push(WalkStk *s, uint32_t cur, uint32_t i) {
+    if (s->n == s->cap) {
+        uint32_t (*nf)[2] = s->cut ? NULL : va_alloc(s->vm, (size_t)s->cap * 2u * sizeof *nf);
+        if (!nf) {
+            s->cut = true;
+            return false;
+        }
+        memcpy(nf, s->f, (size_t)s->n * sizeof *nf);
+        walk_done(s);
+        s->f = nf;
+        s->cap = s->n * 2u;
+    }
+    s->f[s->n][0] = cur;
+    s->f[s->n][1] = i;
+    s->n++;
+    return true;
+}
+
+/* As the board's walk (marking with x, unmarking without), the way back
+ * on s. */
+static uint32_t walk(uint32_t *mem, term root, Xm *x, WalkStk *s) {
+    uint32_t total = 0;
+    bool mark = x != NULL;
+    if (!term_is_ref(root)) return 0;
+    uint32_t cur = term_ref_off(root), i, end;
+    uint32_t *o;
+    if (((mem[cur] & WALK_MARK) != 0) == mark) return 0;
+    s->n = 0;
+    goto enter;
+    for (;;) {
+        while (i < end) {
+            term t = o[i];
+            if (term_is_ref(t) && ((mem[term_ref_off(t)] & WALK_MARK) != 0) != mark && !(mark && s->cut)) {
+                /* Nothing to come back for after an object's last term
+                 * (a list's link): no frame. */
+                bool pushed = i + 1u == end || walk_push(s, cur, i);
+                GOGO_ASSERT(pushed || mark);   /* unmarking retraces the marking walk's frames */
+                if (!pushed) {
+                    i++;
+                    continue;
+                }
+                cur = term_ref_off(t);
+            enter:
+                o = mem + cur;
+                o[0] &= ~WALK_MARK;   /* unmarking (marking: it is not marked) */
+                heap_obj_terms(o, &i, &end);
+                if (x) {
+                    uint32_t k = hdr_kind(o[0]);
+                    if ((k == K_CLOSURE || (k == K_STRUCT && o[1] >= TYPE_OWN_BASE)) &&
+                        (o[1] & MOD_TAG_MASK) != x->tag)
+                        xm_fail(x, module_of_tag(x->vm, o[1]) ? R_BAD_MSG : R_BAD_CODE);
+                    for (uint32_t j = i; j < end; j++) xm_term(x, o[j]);
+                    total += hdr_words(o[0]);
+                    o[0] |= WALK_MARK;
+                }
+                continue;
+            }
+            i++;
+        }
+        if (!s->n) return total;
+        s->n--;
+        cur = s->f[s->n][0];
+        i = s->f[s->n][1] + 1u;
+        o = mem + cur;
+        end = hdr_words(o[0]);
+    }
+}
+#endif
+
 /* Words a copy of t into module x->tag takes (UINT32_MAX when more than
  * 65535), the const copies included; x->why set if the rules refuse it.
  * Leaves the reachable objects marked (WALK_MARK): the copy clears the
@@ -122,7 +229,12 @@ static uint32_t walk(uint32_t *mem, term root, Xm *x) {
  * walk(mem, t, NULL), by the same pointer reversal, so a send that fails
  * or drops costs the size of the message, not of the sender's heap. */
 static uint32_t msg_size(uint32_t *src_mem, term t, Xm *x) {
+#if GOGO_WORDS_16
     uint32_t n = walk(src_mem, t, x);
+#else
+    uint32_t n = walk(src_mem, t, x, x->stk);
+    if (x->stk->cut) n = UINT32_MAX - x->words;   /* not all of it seen: too big */
+#endif
     xm_term(x, t);
     n += x->words;
     return n > MSG_MAX_WORDS ? UINT32_MAX : n;
@@ -247,16 +359,22 @@ Msg *msg_new(Vm *vm, uint32_t words) {
  * for byte on every path. */
 static Msg *build_skip(Vm *vm, Actor *src, term t, uint32_t skip, uint32_t dst_mod,
                        uint32_t *why) {
-    Xm x = { vm, module_tag(vm, dst_mod), 0, 0, false, false };
+    Xm x = { vm, module_tag(vm, dst_mod), 0, 0, false, false XM_TAIL };
+#if !GOGO_WORDS_16
+    WalkStk ws;
+#endif
+    WALK_INIT(x, ws, vm);
     uint32_t n = msg_size(src->mem, t, &x);
     if (why) *why = x.why ? x.why : R_OUT_OF_MEMORY;
     uint32_t words = skip + n;
     Msg *m = NULL;
     if (!x.why && n <= MSG_MAX_WORDS - skip) m = msg_new(vm, words);
     if (!m) {
-        walk(src->mem, t, NULL);      /* no copy follows: unmark */
+        WALK_UNMARK(src->mem, t, &x);   /* no copy follows: unmark */
+        WALK_DONE(&x);
         return NULL;
     }
+    WALK_DONE(&x);
     memset(m->data, 0, (size_t)skip * 4u);
     Build c = { { m->data, words, skip }, src->mem, &x, vm };
     m->root = t;
@@ -323,7 +441,7 @@ static bool fits(const Actor *to, const Msg *m, uint32_t fw, bool quota) {
     /* Receiving the first handle makes the holder list, charged to `to`:
      * count it now (not queued: mbox_words stays fw). */
     uint32_t list = (m->flags & MSG_HANDLES) ? bytes_list_words(to) : 0u;
-    return fw <= 65535u - to->mbox_words &&
+    return fw <= GOGO_WORDS_MAX - to->mbox_words &&
            (!quota || actor_fits(to, fw + list));
 }
 
@@ -336,7 +454,7 @@ static bool enqueue(Vm *vm, Actor *to, Msg *m, bool quota) {
     if (to->mbox_tail) to->mbox_tail->next = m;
     else to->mbox_head = m;
     to->mbox_tail = m;
-    to->mbox_words = (uint16_t)(to->mbox_words + fw);
+    to->mbox_words = (gogo_words_t)(to->mbox_words + fw);
 
     if (to->state == A_WAITING) {
         to->state = A_RUNNABLE;
@@ -359,11 +477,16 @@ bool msg_try_enqueue(Vm *vm, Actor *to, Msg *m) {
 /* A send that drops (no live target) still checks t, against from's own
  * module as SendAfter does for a dead target: a stale value is the
  * sender's badcode whether or not its receiver lives. 1, or the negated
- * reason. Only the size walk: no allocation. */
-static int dropped(const Vm *vm, Actor *from, term t) {
-    Xm x = { vm, module_tag(vm, from->mod), 0, 0, false, false };
+ * reason. Only the size walk: no allocation (but the host walk's stack). */
+static int dropped(Vm *vm, Actor *from, term t) {
+    Xm x = { vm, module_tag(vm, from->mod), 0, 0, false, false XM_TAIL };
+#if !GOGO_WORDS_16
+    WalkStk ws;
+#endif
+    WALK_INIT(x, ws, vm);
     msg_size(from->mem, t, &x);
-    walk(from->mem, t, NULL);
+    WALK_UNMARK(from->mem, t, &x);
+    WALK_DONE(&x);
     return x.why ? -(int)x.why : 1;
 }
 
@@ -402,13 +525,13 @@ int msg_send(Vm *vm, Actor *from, term to_pid, term msg) {
 static bool take(Vm *vm, Actor *a, Msg *m, term *out) {
     uint32_t fw = msg_charge_words(vm, m), keep = fw - msg_footprint_words(m->words);
     if (m->flags & MSG_HANDLES) keep += bytes_list_words(a);
-    GOGO_ASSERT(a->mbox_words >= fw && a->mbox_words - fw + keep <= 65535u);
-    a->mbox_words = (uint16_t)(a->mbox_words - fw + keep);
+    GOGO_ASSERT(a->mbox_words >= fw && a->mbox_words - fw + keep <= GOGO_WORDS_MAX);
+    a->mbox_words = (gogo_words_t)(a->mbox_words - fw + keep);
     if (!msg_unpack(vm, a, m, out)) {
-        a->mbox_words = (uint16_t)(a->mbox_words + fw - keep);
+        a->mbox_words = (gogo_words_t)(a->mbox_words + fw - keep);
         return false;
     }
-    a->mbox_words = (uint16_t)(a->mbox_words - keep);
+    a->mbox_words = (gogo_words_t)(a->mbox_words - keep);
     return true;
 }
 
@@ -441,7 +564,7 @@ int msg_take_reply(Vm *vm, Actor *a, uint64_t serial, term *out) {
             if (!take(vm, a, m, out)) return -1;   /* unpack may GC but never touches the queue */
         } else {                      /* a stale reply, or the failed Call's block */
             GOGO_ASSERT(a->mbox_words >= msg_charge_words(vm, m));
-            a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(vm, m));
+            a->mbox_words = (gogo_words_t)(a->mbox_words - msg_charge_words(vm, m));
         }
         if (prev) prev->next = next; else a->mbox_head = next;
         if (!next) a->mbox_tail = prev;

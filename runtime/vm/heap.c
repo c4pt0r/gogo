@@ -109,7 +109,7 @@ static uint32_t policy_words(uint32_t old_words, uint32_t live, uint32_t need,
                              uint32_t cap) {
     if (cap < live) cap = live;                  /* already over: keep live */
     if (need > cap - live) need = 0;
-    uint32_t want = live * 2u + need;            /* <= 3 * 65535, no overflow */
+    uint32_t want = live * 2u + need;            /* <= 3 * HEAP_MAX_WORDS, no overflow */
     if (want > cap) want = cap;
     if (old_words < want) return want;           /* grow */
     if (live < old_words / 4u) {                 /* mostly empty: shrink */
@@ -153,10 +153,10 @@ static bool copy_into(Vm *vm, Actor *a, uint32_t new_words, term *roots, int n_r
     }
     va_free(vm, a->mem, (size_t)old_words * 4u);
     a->mem = c.to;
-    a->mem_words = (uint16_t)new_words;
-    a->hp = (uint16_t)c.free;
-    a->sp = (uint16_t)new_sp;
-    a->fp = (uint16_t)((uint32_t)a->fp + new_words - old_words);
+    a->mem_words = (gogo_words_t)new_words;
+    a->hp = (gogo_words_t)c.free;
+    a->sp = (gogo_words_t)new_sp;
+    a->fp = (gogo_words_t)((uint32_t)a->fp + new_words - old_words);
     return true;
 }
 
@@ -191,7 +191,7 @@ void heap_collect(Vm *vm, Actor *a, uint32_t need_words, term *roots, int n_root
     uint32_t want;
     if (tight) {
         cap = block_cap(a);                      /* after the sweep released Bytes */
-        want = live + need_words;                /* <= 2 * 65535, no overflow */
+        want = live + need_words;                /* <= 2 * HEAP_MAX_WORDS, no overflow */
         if (need_words && want > cap) return;    /* cannot fit: keep the compacted block */
         if (want < MIN_BLOCK_WORDS && MIN_BLOCK_WORDS <= old_words) want = MIN_BLOCK_WORDS;
     } else {
@@ -223,7 +223,7 @@ static bool make_room(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots
 uint32_t heap_alloc(Vm *vm, Actor *a, uint32_t words, term *roots, int n_roots) {
     if (!make_room(vm, a, words, roots, n_roots)) return UINT32_MAX;
     uint32_t off = a->hp;
-    a->hp = (uint16_t)(off + words);
+    a->hp = (gogo_words_t)(off + words);
     return off;
 }
 
@@ -236,7 +236,7 @@ bool heap_push_frame(Vm *vm, Actor *a, uint16_t n_regs, int32_t ret_pc) {
     for (uint32_t i = 0; i < n_regs; i++) a->mem[fp + i] = T_NIL;
     a->mem[fp + n_regs] = term_from_int(saved_fp);
     a->mem[fp + n_regs + 1] = term_from_int(ret_pc);
-    a->sp = a->fp = (uint16_t)fp;
+    a->sp = a->fp = (gogo_words_t)fp;
     return true;
 }
 

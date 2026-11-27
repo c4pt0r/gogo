@@ -322,7 +322,7 @@ TEST(fs_open_errors) {
      * the existing file not truncated. */
     make_file("/flash/keep", 10);
     Actor *s = actor(0);
-    s->max_words = (uint16_t)(s->mem_words + actor_charged_words(s) + CHARGE - 1u);
+    s->max_words = (gogo_words_t)(s->mem_words + actor_charged_words(s) + CHARGE - 1u);
     CHECK_EQ(fs(s, FS_OPEN, "si", "/flash/keep", VFS_WRITE), R_NORMAL);
     CHECK_EQ(R(s)[0], T_ZEROPID);
     CHECK_EQ(ERR2(s), GOGO_E_NOMEMORY);
@@ -465,7 +465,7 @@ TEST(fs_read_limits) {
 
     /* A small actor: 1000 bytes off-heap do not fit. */
     Actor *s = actor(0);
-    s->max_words = (uint16_t)(s->mem_words + actor_charged_words(s) + CHARGE + 40u);
+    s->max_words = (gogo_words_t)(s->mem_words + actor_charged_words(s) + CHARGE + 40u);
     CHECK_EQ(fs(s, FS_OPEN, "si", "/flash/big", VFS_READ), R_NORMAL);
     CHECK_EQ(ERR2(s), GOGO_E_OK);
     f = R(s)[0];

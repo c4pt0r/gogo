@@ -88,10 +88,16 @@ struct ModEntry {
     uint8_t flags;
 };
 
-/* Spawn flags: the low 16 bits are the child's memory limit in words (0:
- * the default, as SpawnOpt's Options); MOD_SPAWN_LINK links it to the
- * caller (SpawnLink). */
+/* Spawn flags: the bits of MOD_SPAWN_WORDS are the child's memory limit
+ * in words (0: the default, as SpawnOpt's Options; gogo_words_t, config.h);
+ * MOD_SPAWN_LINK links it to the caller (SpawnLink). */
+#if GOGO_WORDS_16
 #define MOD_SPAWN_LINK 0x10000u
+#define MOD_SPAWN_WORDS 0xFFFFu
+#else
+#define MOD_SPAWN_LINK 0x80000000u
+#define MOD_SPAWN_WORDS 0x7FFFFFFFu
+#endif
 
 /* vm_boot results; a negative value is an IMG_ERR_* (image_err_str).
  * The positive ones are the module loader's codes they stand for. */

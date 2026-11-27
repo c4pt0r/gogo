@@ -443,7 +443,7 @@ static uint32_t do_panic(const Vm *vm, const Actor *a, const term *v) {
 /* ---- actors ---- */
 
 uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool caps,
-                     uint16_t max_words, bool link, term *pid) {
+                     gogo_words_t max_words, bool link, term *pid) {
     const Image *img = &vm->mods[mod]->img;
     uint32_t nparams = image_func_nparams(img, f);
     uint32_t nregs = image_func_nregs(img, f);
@@ -453,7 +453,7 @@ uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool
     uint32_t why;
     if (src && !(m = msg_build(vm, src, val, mod, &why))) return why;
     uint32_t words = nregs + 2u + (m ? m->words : 0u) + 8u;
-    Actor *n = words <= HEAP_MAX_WORDS ? actor_new_in(vm, (uint16_t)words, mod) : NULL;
+    Actor *n = words <= HEAP_MAX_WORDS ? actor_new_in(vm, (gogo_words_t)words, mod) : NULL;
     /* The block is sized for the frame and the copy, so neither GCs; the
      * frame goes first anyway, so a GC could not drop the copy. */
     term copy = val;
@@ -463,7 +463,7 @@ uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool
         return R_OUT_OF_MEMORY;
     }
     if (m) msg_free(vm, m);
-    if (max_words) n->max_words = max_words < words ? (uint16_t)words : max_words;
+    if (max_words) n->max_words = max_words < words ? (gogo_words_t)words : max_words;
     if (caps) {
         const uint32_t *c = n->mem + term_ref_off(copy) + 2u;
         for (uint32_t i = 0; i < nparams; i++) n->mem[n->fp + i] = c[i];
@@ -500,7 +500,7 @@ uint32_t vm_spawn_fn(Vm *vm, Actor *src, uint8_t mod, uint32_t f, term val, bool
  * reason for the caller. Allocates only in the new actor, so the caller's
  * heap does not move (msg_build marks it while copying and restores it
  * byte for byte). */
-static uint32_t do_spawn(Vm *vm, Actor *a, term clo, uint16_t max_words, bool link, term *pid) {
+static uint32_t do_spawn(Vm *vm, Actor *a, term clo, gogo_words_t max_words, bool link, term *pid) {
     const Image *img = &vm->mods[a->mod]->img;
     const uint32_t *obj = obj_of(vm, a, clo);
     if (!obj || !term_is_ref(clo) || hdr_kind(obj[0]) != K_CLOSURE ||
@@ -514,7 +514,7 @@ static uint32_t do_spawn(Vm *vm, Actor *a, term clo, uint16_t max_words, bool li
 /* The child limit SpawnOpt asks for: Options{MaxMemory} in bytes, as words
  * (0 or less: the default; rounded down but at least 1; at most
  * HEAP_MAX_WORDS). False if opts is not an Options struct. */
-bool vm_spawn_opt_words(const Vm *vm, const Actor *a, term opts, uint16_t *out) {
+bool vm_spawn_opt_words(const Vm *vm, const Actor *a, term opts, gogo_words_t *out) {
     const uint32_t *obj = obj_of(vm, a, opts);
     int32_t bytes;
     if (!obj || hdr_kind(obj[0]) != K_STRUCT || obj[1] != TYPE_OPTIONS ||
@@ -522,7 +522,7 @@ bool vm_spawn_opt_words(const Vm *vm, const Actor *a, term opts, uint16_t *out) 
     uint32_t words = bytes > 0 ? (uint32_t)bytes / 4u : 0u;
     if (bytes > 0 && words == 0) words = 1;
     if (words > HEAP_MAX_WORDS) words = HEAP_MAX_WORDS;
-    *out = (uint16_t)words;
+    *out = (gogo_words_t)words;
     return true;
 }
 
@@ -909,7 +909,7 @@ int interp_run(Vm *vm, Actor *a) {
             CHECK(term_is_int(R[nregs]) && term_is_int(R[nregs + 1]));
             int32_t saved = term_to_int(R[nregs]);
             int32_t ret = term_to_int(R[nregs + 1]);
-            a->sp = (uint16_t)(fp + nregs + 2u);      /* pop the frame */
+            a->sp = (gogo_words_t)(fp + nregs + 2u);      /* pop the frame */
             if (ret == -1) {                           /* entry frame */
                 actor_exit(vm, a, R_NORMAL, T_EMPTYSTR);
                 return RUN_EXIT;
@@ -927,7 +927,7 @@ int interp_run(Vm *vm, Actor *a) {
             CHECK(caller_fp + caller_regs + 2u <= a->mem_words);
             uint32_t dst = OP_A(code[ret]);
             CHECK(dst + n <= caller_regs);
-            a->fp = (uint16_t)caller_fp;
+            a->fp = (gogo_words_t)caller_fp;
             fn = caller;
             nregs = caller_regs;
             RELOAD();
@@ -1036,7 +1036,7 @@ int interp_run(Vm *vm, Actor *a) {
                 break;
             }
             case B_SPAWN: case B_SPAWN_LINK: case B_SPAWN_OPT: {
-                uint16_t max_words = 0;
+                gogo_words_t max_words = 0;
                 if (ext == B_SPAWN_OPT) CHECK(vm_spawn_opt_words(vm, a, R[rb + 1], &max_words));
                 term pid;
                 uint32_t err = do_spawn(vm, a, R[rb], max_words, ext == B_SPAWN_LINK, &pid);

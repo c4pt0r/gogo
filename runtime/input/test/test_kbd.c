@@ -114,7 +114,7 @@ static void collect(Actor *a) {
         }
         a->mbox_head = m->next;
         if (!a->mbox_head) a->mbox_tail = NULL;
-        a->mbox_words = (uint16_t)(a->mbox_words - msg_charge_words(&vm, m));
+        a->mbox_words = (gogo_words_t)(a->mbox_words - msg_charge_words(&vm, m));
         msg_free(&vm, m);
     }
 }
@@ -355,7 +355,7 @@ TEST(kbd_close_stops_repeat_and_clears) {
 TEST(kbd_full_mailbox_drops) {
     setup();
     CHECK(test_port_is(open_kbd(owner, 0, 0)));
-    owner->max_words = (uint16_t)(owner->mem_words + actor_charged_words(owner) + 20u);
+    owner->max_words = (gogo_words_t)(owner->mem_words + actor_charged_words(owner) + 20u);
     uint32_t d0 = input_dropped(&vm);
     int sent = 0;
     while (input_dropped(&vm) == d0 && sent < 100) {

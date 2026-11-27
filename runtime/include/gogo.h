@@ -271,7 +271,7 @@ GOGO_API uint32_t gogo_image_format(void);
 #define GOGO_POST_MAX 256
 /* Longest name and data of one post (the data goes in one message block).
  * In practice a post must also fit the receiver's memory limit beside its
- * heap and mailbox (256 KB in all by default), or it is dropped. */
+ * heap and mailbox (1 MB in all by default), or it is dropped. */
 #define GOGO_POST_NAME_MAX 255u
 #define GOGO_POST_DATA_MAX 262080u
 
