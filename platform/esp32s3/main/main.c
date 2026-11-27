@@ -15,6 +15,7 @@
 #include "vfs_int.h"
 #include "input_int.h"
 #include "board_main.h"
+#include "params.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -41,6 +42,24 @@ void main_esp_usage(uint32_t *bytes_used, uint32_t *ports_used, uint32_t *ports_
     *bytes_used = v->bytes_used;
     *ports_used = n;
     *ports_max = v->port_max;
+}
+
+void main_esp_params(char *buf, size_t cap) {
+    const volatile Vm *v = &vm;
+    VmParams p;
+    if (v->table_cap) {   /* booted: what the Vm runs with */
+        vm_params_default(&p);
+        p.max_actors = v->table_cap;
+        p.max_ports = v->port_max;
+        p.max_links = v->max_links;
+        p.code_mem = v->mod_cap;
+    } else {              /* no image (yet): what a boot would resolve, quietly */
+        gogo_host h = esp_host;
+        h.write = NULL;
+        vm_params_default(&p);
+        vm_params_resolve(&h, NULL, NULL, &p);
+    }
+    board_params_format(&p, buf, cap);
 }
 
 #if CONFIG_GOGO_NET
@@ -87,11 +106,16 @@ static void vm_task(void *arg) {
                      GOGO_FIRMWARE_VERSION, IMAGE_MAJOR, IMAGE_MINOR, (unsigned long)nwords * 4u, (unsigned long)platform_esp_arena_cap(),
                      (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    /* The VM's parameters (params.h): the config keys over the build's
+     * defaults. On this task's stack, which never returns: no static RAM. */
+    VmParams params;
+    vm_params_default(&params);
+    vm_params_resolve(&esp_host, NULL, NULL, &params);
     /* The one boot path (runtime/board): vm_init, vm_boot (the image is
      * module 0, its requirements checked), the net stack, the file
      * systems and the input source, then vm_run. */
     BoardRun run = {
-        .vm = &vm, .table_cap = (uint16_t)GOGO_TABLE_CAP, .vfs = &vfs_state, .input = &input_state,
+        .vm = &vm, .params = &params, .vfs = &vfs_state, .input = &input_state,
 #if CONFIG_GOGO_NET
         .net = &esp_net_state, .net_install = net_install, .ready = ready,
 #endif

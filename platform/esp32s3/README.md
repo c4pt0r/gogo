@@ -515,9 +515,13 @@ in `cmd/gogo/flash.go`.
   `heap_min`, `arena_used`, and the fixed tables in use as
   `bytes=N/64`, `ports=N/16`, `subs=N/4`), and `info`, one line
   `\x02ok fw=<version> board=<sticks3|cardputer> image=<major>.<minor>
-  provides=<name>,...` (`GOGO_FIRMWARE_VERSION`, `BOARD_NAME`, the image
-  format, and `esp_board`'s drivers and mounts plus `float`: what an
-  image's requirements are checked against), which `gogo device info`
+  actor_memory=16K memory=160K max_actors=1024 max_ports=16 max_links=8
+  code_mem=64K bytes_handles=64/16 provides=<name>,...`
+  (`GOGO_FIRMWARE_VERSION`, `BOARD_NAME`, the image format, the VM's
+  parameters as `main.c` resolved them at boot (`vm_params_resolve`: the
+  config keys over the build's defaults; `board_params_format`, values
+  shown here are the defaults), and `esp_board`'s drivers and mounts plus
+  `float`: what an image's requirements are checked against), which `gogo device info`
   prints and `gogo setup` compares with the firmware it is about to
   flash; a firmware older than `info` answers `\x02err bad key`. The
   version is the `git describe` of the repo at configure time (`dev`

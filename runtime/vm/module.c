@@ -99,30 +99,7 @@ int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words) {
     return module_install_static(vm, &img);
 }
 
-void module_config(Vm *vm) {
-    char v[12];
-    int32_t n = vm_config_get(vm, (const uint8_t *)"code.mem", 8, (uint8_t *)v, sizeof v);
-    if (n < 0) return;
-    if (n > (int32_t)sizeof v) n = 0;            /* longer than any valid value: bad */
-    uint64_t x = 0;
-    int32_t i = 0;
-    uint32_t d;
-    while (i < n && (d = (uint8_t)v[i] - (uint32_t)'0') <= 9u) { x = x * 10u + d; i++; }
-    if (i > 0 && i + 1 == n) {
-        uint32_t c = (uint8_t)(v[i] | 0x20), sh = c == 'k' ? 10u : c == 'm' ? 20u : 0u;
-        x <<= sh;
-        i += sh != 0;
-    }
-    if (i == 0 || i != n || x > 0xFFFFFFFFu) {   /* 12 bytes: no overflow before this check */
-        static const char msg[] = "gogo: bad code.mem; using the default\n";
-        vm_write_err(vm, msg, sizeof msg - 1u);
-        return;
-    }
-    vm->mod_cap = (uint32_t)x;
-}
-
 int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words) {
-    module_config(vm);
     int rc = module_load_static(vm, words, n_words);
     if (rc == GOGO_E_OK) return VM_BOOT_OK;
     /* Refused: give back the actor table, so a caller may boot again. */

@@ -161,6 +161,23 @@ static void cmd_info(ConfigSvc *s) {
         k += utoa10(v + k, in.image_minor);
         info_put(line, &n, cap, "image", v, k);
     }
+    /* The parameters' fields as they are (name=value, single spaces). */
+    in.params[sizeof in.params - 1u] = 0;
+    for (const char *p = in.params; *p;) {
+        size_t fn = 0, eq = 0;
+        while (p[fn] && p[fn] != ' ') {
+            if (p[fn] == '=' && !eq) eq = fn;
+            fn++;
+        }
+        if (eq) {
+            char name[24];
+            size_t nn = eq < sizeof name - 1u ? eq : sizeof name - 1u;
+            memcpy(name, p, nn);
+            name[nn] = 0;
+            info_put(line, &n, cap, name, p + eq + 1u, fn - eq - 1u);
+        }
+        p += fn + (p[fn] == ' ');
+    }
     if (in.provides && in.provides[0] && info_put(line, &n, cap, "provides", in.provides[0], strlen(in.provides[0]))) {
         /* the rest, comma-separated, as many as fit */
         for (const char *const *p = in.provides + 1; *p; p++) {

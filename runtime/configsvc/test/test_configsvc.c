@@ -145,6 +145,11 @@ TEST(configsvc_info) {
                             .provides = provides };
     CHECK(!strcmp(req("info"), "\x02ok fw=v0.2.0-3-gabc1234 board=sticks3 image=15.6 provides=gpio,udp,/flash,float\n"));
     /* fields the board does not know are left out; spaces never reach the line */
+    /* the VM's parameters, field by field, before provides */
+    strcpy(info_of.params, "actor_memory=16K memory=160K max_actors=1024 max_ports=16 max_links=8 code_mem=64K bytes_handles=64/16");
+    CHECK(!strcmp(req("info"), "\x02ok fw=v0.2.0-3-gabc1234 board=sticks3 image=15.6 actor_memory=16K memory=160K "
+                               "max_actors=1024 max_ports=16 max_links=8 code_mem=64K bytes_handles=64/16 "
+                               "provides=gpio,udp,/flash,float\n"));
     info_of = (ConfigInfo){ .fw = "my build", .image_major = 1 };
     CHECK(!strcmp(req("info"), "\x02ok fw=my_build image=1.0\n"));
     info_of = (ConfigInfo){ 0 };

@@ -22,9 +22,10 @@ type simBoard struct {
 	files    map[string][]byte
 	frames   []string
 	formats  int
-	failAt   int  // a data frame at this offset is answered with an error (0: never)
-	corrupt  bool // store a byte other than the one sent
-	oldFirm  bool // a firmware without push and format-flash
+	failAt   int    // a data frame at this offset is answered with an error (0: never)
+	corrupt  bool   // store a byte other than the one sent
+	oldFirm  bool   // a firmware without push and format-flash
+	params   string // the VM parameters its info line carries ("": none, an older firmware)
 	pending  []byte
 	pushTo   string
 	pushLen  int
@@ -68,7 +69,11 @@ func (b *simBoard) serve() {
 			b.say("kv heap_free=1")
 			b.say("ok")
 		case "info":
-			b.say("ok fw=v0.2.0 board=cardputer image=15.6 provides=gpio,kbd,/flash,/sd")
+			p := ""
+			if b.params != "" {
+				p = b.params + " "
+			}
+			b.say("ok fw=v0.2.0 board=cardputer image=15.6 " + p + "provides=gpio,kbd,/flash,/sd")
 		case "format-flash":
 			b.formats++
 			b.say("ok restarting to format /flash")
@@ -221,6 +226,13 @@ func TestDevice(t *testing.T) {
 	want := "firmware  gogo v0.2.0\nboard     cardputer (Cardputer ADV)\nimage     format 15.6 (runs images 15.0 to 15.6)\nprovides  gpio kbd /flash /sd\n"
 	if out, _, err := deviceRun(t, &simBoard{}, "", "info"); err != nil || out != want {
 		t.Errorf("info: %q %v", out, err)
+	}
+	// A firmware that reports its VM parameters: one line of them.
+	ps := "actor_memory=16K memory=160K max_actors=1024 max_ports=16 max_links=8 code_mem=64K bytes_handles=64/16"
+	want = "firmware  gogo v0.2.0\nboard     cardputer (Cardputer ADV)\nimage     format 15.6 (runs images 15.0 to 15.6)\n" +
+		"limits    " + ps + "\nprovides  gpio kbd /flash /sd\n"
+	if out, _, err := deviceRun(t, &simBoard{params: ps}, "", "info"); err != nil || out != want {
+		t.Errorf("info with parameters: %q %v", out, err)
 	}
 	if _, _, err := deviceRun(t, &simBoard{oldFirm: true}, "", "info"); err == nil || !strings.Contains(err.Error(), "this firmware has no info") {
 		t.Errorf("info on an old firmware: %v", err)

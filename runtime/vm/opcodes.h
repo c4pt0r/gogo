@@ -192,10 +192,10 @@ enum Builtin {
     /* 58-60 were kept for distributed actors (15.5), which needed no
      * builtin (remote PIDs go through the VmDist hooks, actor.h). From
      * 15.7 58 and 59 are actor.Call and actor.Register with an error;
-     * 60 is free for a later minor. */
+     * from 15.8 60 is actor.Limit. */
     B_CALL_ERR        = 58,  /*! pid, req, ms -> reply, code | (15.7) actor.Call: B_CALL, with why it failed in place of ok, a shared error code (gogo_errors.h): 0 replied, GOGO_E_TIMEOUT no reply within ms (the server died meanwhile, or ms <= 0 and no reply yet), GOGO_E_NOPROC no live local actor (dead, never was, the zero PID, a port), GOGO_E_NOCONNECTION a remote PID the VmDist hook could not send to (its node is not connected, the PID names nothing any more, the table of remote Calls in flight is full) or whose node went away while waiting. */
     B_REGISTER_ERR    = 59,  /*! name, pid -> code | (15.7) actor.Register: B_REGISTER with a shared error code (gogo_errors.h) in place of the bool: 0 registered, GOGO_E_NOPROC pid is no live local actor (checked first; a remote PID included), GOGO_E_EXISTS the name is taken. */
-    B_RESERVED_60     = 60,  /*! - -> - | Unused (badcode); free for a later minor. */
+    B_LIMIT           = 60,  /*! pid -> int | (15.8) actor.Limit: the memory limit of the local actor pid in bytes (its heap block and stack, its queued messages and the resources charged to it together; actor_max_words), the most actor.Info(pid).Memory less the actor itself and its table slot may reach; 0 for anything else. */
     /* Since 15.6 (references, gogo/fmt). */
     B_SPRINT          = 61   /*! mode, v -> string | nil | The text println prints for v, without the newline (a box as its value, a pointer's target after &, a map as map[k:v ...]): mode 0 returns it as a new string, mode 1 writes it to the console (gogo/fmt). */
 };

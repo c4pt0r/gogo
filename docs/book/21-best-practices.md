@@ -31,6 +31,7 @@ small actors are cheap, a few big ones are not.
 func SpawnOpt(f func(), opts Options) PID
 type Options struct{ MaxMemory int } // bytes; 0 = the platform default
 func Info(p PID) ProcInfo           // ProcInfo{Memory int}: bytes charged now
+func Limit(p PID) int               // the most it may be charged (format 15.8)
 ```
 
 This program runs the same job (a table of 5000 ints) three times, with

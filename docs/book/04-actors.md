@@ -134,7 +134,7 @@ builtin treats it as an actor that has exited:
 | `Monitor(p)` | a `DownMsg` with reason `actor.NoProc` arrives at once (chapter 5) |
 | `Link(p)` | the exit signal `actor.NoProc` arrives at once: it **ends the caller** unless the caller traps exits, and then it is an `ExitMsg` (chapter 5) |
 | `Unlink(p)`, `Kill(p, code)` | nothing |
-| `Info(p)` | `Memory` 0 |
+| `Info(p)`, `Limit(p)` | `Memory` 0; 0 |
 
 `Whereis` of an unknown name and a failed `port.Open` return it. It
 prints as `<pid 0>`, which is also how `println` shows the main actor's

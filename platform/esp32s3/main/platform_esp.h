@@ -32,6 +32,11 @@ size_t platform_esp_arena_used(void);
  * Bytes handles (of GOGO_BYTES_HANDLES) and open ports (of the Vm's cap).
  * Read from another task: a snapshot. */
 void main_esp_usage(uint32_t *bytes_used, uint32_t *ports_used, uint32_t *ports_max);
+/* The VM's parameters (main.c) as board_params_format's line
+ * (actor_memory=16K memory=160K ...) into buf, for `gogo device info`:
+ * what the Vm runs with, or before a boot what one would resolve. Read
+ * from another task: a snapshot. */
+void main_esp_params(char *buf, size_t cap);
 size_t platform_esp_arena_cap(void);
 /* Prints the first refused esp_host.alloc (size, cause, arena used,
  * free internal RAM at that moment), if any. */

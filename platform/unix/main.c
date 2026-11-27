@@ -12,6 +12,10 @@
  *   gogovm [flags] <file.ggb> [args...]
  *          everything after the image is the program's own: sys.Args
  *          returns it (flags come before the image, as for gogo run).
+ *   gogovm [flags] --info  prints the VM's parameters as this run would
+ *          resolve them (board_params_format: flags, then the config keys,
+ *          then the defaults) and exits
+ *   gogovm -h | --help     lists every flag (usage(), below)
  *   gogovm --sizeof-actor  prints sizeof(Actor)
  *   gogovm --sizeof-net    prints the net stack's fixed state in bytes
  *   gogovm --has-tls       exit 0 if built with the "tls" port (GOGO_TLS)
@@ -34,7 +38,9 @@
  * --max-ports N, --max-links N: the VM's caps on open ports and on node
  * links (distributed actors); else the config keys vm.max_ports and
  * node.max_links; else 1024 and 512 (a board's are 16 and 8). Ports are
- * at most 2048 (their PIDs take the top slots of the 65536).
+ * at most 2048 (their PIDs take the top slots of the 65536). The
+ * precedence (flag, key, default) and the checks are runtime/vm/params.h's,
+ * shared with the board firmware and libgogo.
  *
  * --net-fd N: fd N (inherited, e.g. a socketpair end) is the network link
  * (net_unix.h); --sim-clock: time is simulated, moved only by the peer
@@ -79,6 +85,7 @@
 #include "board_main.h"
 #include "hostnet.h"
 #include "dist.h"
+#include "params.h"
 
 #include <sys/stat.h>
 #include <errno.h>
@@ -277,7 +284,30 @@ static void tls_report(void) {
 #endif
 
 
+/* -h / --help (stdout, exit 0) and a usage error (stderr, exit 1). */
+static int usage(FILE *f, int rc) {
+    fputs("usage: gogovm [flags] <file.ggb> [args...]   run an image; args are the program's (sys.Args)\n"
+          "       gogovm [flags] --info                 print the VM's parameters and exit\n"
+          "       gogovm -h | --help                    this list\n"
+          "flags (before the image):\n"
+          "  --max-ports N        ports open at once, 1..2048 (default 1024; key vm.max_ports)\n"
+          "  --max-links N        node links of distributed actors, 1..2048 (default 512; key node.max_links)\n"
+          "  --host-net           tcp and tcp_listen on the host's sockets ($GOGO_NET=host)\n"
+          "  --net-fd N           fd N is the simulated network link (a socketpair end)\n"
+          "  --sim-clock          time moves only by the peer simulator (needs --net-fd)\n"
+          "  --fs-root DIR        serve DIR/flash as /flash and DIR/sd (if there) as /sd\n"
+          "  --screen MODE        the screen port: ansi, text or none (default ansi on a terminal, else text)\n"
+          "  --key C=PIN          map key C to simulated gpio pin PIN (0..63; repeatable)\n"
+          "  --without NAME,...   test: leave drivers (kbd, tls, ...) and mounts (/sd) out of the board\n"
+          "  --fs-quota BYTES     test: each medium holds at most BYTES of files\n"
+          "  --sizeof-actor | --sizeof-net | --has-tls   build facts (alone)\n"
+          "environment: GOGO_CONFIG (the config store, default ~/.gogo/config), GOGO_NET, GOGO_UNIX_TIME_MS,\n"
+          "  GOGO_TLS_CA_FILE, GOGO_TLS_BUNDLE_FILE, GOGO_TLS_STATS\n", f);
+    return rc;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) return usage(stdout, EXIT_OK);
     if (argc == 2 && strcmp(argv[1], "--sizeof-actor") == 0) {
         printf("%zu\n", sizeof(Actor));
         return 0;
@@ -300,8 +330,17 @@ int main(int argc, char **argv) {
     const char *without = NULL;         /* --without: names left out of the board */
     const char *fs_root = NULL;
     int64_t fs_quota = -1;
-    unsigned max_ports = 0, max_links = 0;
-    while (argc >= 2 && strncmp(argv[1], "--", 2) == 0) {
+    int info = 0;
+    VmParams set;                       /* the flags' parameters; 0: not given */
+    memset(&set, 0, sizeof set);
+    while (argc >= 2 && (strncmp(argv[1], "--", 2) == 0 || strcmp(argv[1], "-h") == 0)) {
+        if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) return usage(stdout, EXIT_OK);
+        if (strcmp(argv[1], "--info") == 0) {
+            info = 1;
+            argv++;
+            argc--;
+            continue;
+        }
         if (strcmp(argv[1], "--host-net") == 0) {
             host_net = 1;
             argv++;
@@ -352,8 +391,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "gogovm: bad %s %s (want 1..2048)\n", argv[1], argv[2]);
                 return EXIT_USAGE;
             }
-            if (argv[1][6] == 'p') max_ports = v;
-            else max_links = v;
+            if (argv[1][6] == 'p') set.max_ports = v;
+            else set.max_links = v;
         } else if (strcmp(argv[1], "--net-fd") == 0) {
             char tail;
             if (sscanf(argv[2], "%d%c", &net_fd, &tail) != 1 || net_fd < 0) {
@@ -361,7 +400,8 @@ int main(int argc, char **argv) {
                 return EXIT_USAGE;
             }
         } else {
-            break;
+            fprintf(stderr, "gogovm: unknown flag %s (gogovm -h lists them)\n", argv[1]);
+            return EXIT_USAGE;
         }
         argv += 2;
         argc -= 2;
@@ -387,10 +427,20 @@ int main(int argc, char **argv) {
         if (!listed(without, unix_mounts_all[i]->prefix)) unix_mounts[nmounts++] = unix_mounts_all[i];
     }
     unix_mounts[nmounts] = NULL;
-    if (argc < 2) {
-        fprintf(stderr, "usage: gogovm [--without <name,...>] [--key <c>=<pin>]... [--fs-root <dir>] [--fs-quota <bytes per medium> (test)] [--net-fd <n> [--sim-clock] | --host-net] [--max-ports <n>] [--max-links <n>] [--screen ansi|text|none] <file.ggb> [args...]\n       gogovm --sizeof-actor | --sizeof-net\n");
-        return EXIT_USAGE;
+    /* The parameters: the flags, then the config keys, then the host's
+     * defaults (params.h). */
+    VmParams params;
+    vm_params_default(&params);
+    params.max_ports = GOGO_HOST_PORTS;
+    params.max_links = GOGO_HOST_LINKS;
+    vm_params_resolve(&unix_host, NULL, &set, &params);
+    if (info) {
+        char line[256];
+        board_params_format(&params, line, sizeof line);
+        printf("%s\n", line);
+        return EXIT_OK;
     }
+    if (argc < 2) return usage(stderr, EXIT_USAGE);
     if (net_fd >= 0 || host_net) signal(SIGPIPE, SIG_IGN);   /* a closed link is EOF / a failed send, not death */
     if (net_fd >= 0) platform_unix_net_open(net_fd, sim != 0, &net_state);
     if (fs_root) {
@@ -451,10 +501,8 @@ int main(int argc, char **argv) {
     host.write = main_write;
     input_unix_on_fatal(screen_unix_restore);
     BoardRun run = {
-        .vm = &vm, .table_cap = (uint16_t)GOGO_TABLE_CAP, .vfs = &vfs_state, .input = &input_state,
+        .vm = &vm, .params = &params, .vfs = &vfs_state, .input = &input_state,
         .net = net_fd >= 0 ? &net_state : NULL, .net_install = net_install,
-        .max_ports = (uint16_t)max_ports, .max_links = (uint16_t)max_links,
-        .default_ports = GOGO_HOST_PORTS, .default_links = GOGO_HOST_LINKS,
         .booting = set_wall_clock, .ready = host_net ? host_net_ready : NULL, .run = run_main,
     };
     int run_rc = 0;

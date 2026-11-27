@@ -23,11 +23,11 @@ const (
 	imageMajor = 15
 	// imageMinor is the newest feature minor. Renumbering a feature's
 	// minor touches its constant here (floatMinor, sizedMinor, ifaceMinor,
-	// distMinor, refMinor, actorMinor),
+	// distMinor, refMinor, actorMinor, limitMinor),
 	// IMAGE_MINOR in runtime/vm/image.h when it is the newest
 	// (TestTermsMatchC checks both), and the "15.N" in docs and opcodes.h
 	// comments.
-	imageMinor = max(floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor, actorMinor)
+	imageMinor = max(floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor, actorMinor, limitMinor)
 )
 
 // ImageMajor and ImageMinor are the image format this compiler emits
@@ -48,7 +48,7 @@ const (
 // port's reserved types (distMinor); 15.6 references
 // (refMinor: SETFIELD and the type-row flags, which scan counts apart);
 // 15.7 the actor API's error results (actorMinor: B_CALL_ERR,
-// B_REGISTER_ERR).
+// B_REGISTER_ERR); 15.8 actor.Limit (limitMinor: B_LIMIT).
 // A reserved type is keyed by its image name ("port.Chunk"); its
 // entry is the minor of its current field layout, so an appended field
 // raises it.
@@ -66,8 +66,7 @@ var (
 		BCmp:      ifaceMinor,
 		BSprint:   refMinor,
 		BCallErr:  actorMinor, BRegisterErr: actorMinor,
-		// unused (distributed actors, 15.5, needed none): no image uses it
-		BReserved60: distMinor,
+		BLimit: limitMinor,
 	}
 	typeMinor = map[string]uint16{
 		"screen.Config":      1, // 15.1: the "screen" port
@@ -109,6 +108,13 @@ const distMinor = 5
 // actor.Register's error. Only an image that calls one of them needs it;
 // one that does not keeps its minor.
 const actorMinor = 7
+
+// limitMinor is the minor of actor.Limit (15.8): B_LIMIT, an actor's
+// memory limit. A new builtin, not a field appended to actor.ProcInfo:
+// the field would raise ProcInfo's row to 15.8, so every program that
+// calls actor.Info would need this minor; the builtin stamps only the
+// images that call actor.Limit.
+const limitMinor = 8
 
 // convMinor is the minor of an OP_CONV with mode c (op): the modes 0-2
 // are 15.0's.

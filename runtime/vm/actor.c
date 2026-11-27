@@ -32,7 +32,7 @@ int vm_init(Vm *vm, const gogo_host *host, void *host_ctx, const VmBoard *board,
     vm->port_base = (uint16_t)(PORT_SLOT_TOP - GOGO_MAX_PORTS);
     if (table_cap > vm->port_base) return -1;
     vm->next_ref = 1;
-    vm->mod_cap = GOGO_CODE_MEM_DEFAULT;   /* module_config may change it */
+    vm->mod_cap = GOGO_CODE_MEM_DEFAULT;   /* vm_params_apply may change it */
     vm->table = va_alloc(vm, (size_t)table_cap * sizeof(uintptr_t));
     if (!vm->table) return -1;
     vm->table_cap = table_cap;

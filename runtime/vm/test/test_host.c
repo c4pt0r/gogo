@@ -1,5 +1,6 @@
 /* The C tests' host and board (test_host.h). */
 #include "test_host.h"
+#include "params.h"
 #include "module.h"
 #include "platform_unix.h"
 #include "config.h"
@@ -72,6 +73,12 @@ void test_vm_bare(Vm *vm) {
 }
 
 int test_vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words, uint16_t table_cap) {
+    VmParams p;
     if (test_vm_init(vm, NULL, table_cap) != 0) return VM_BOOT_NO_MEMORY;
+    /* As a platform does: the config keys (code.mem), then the boot. */
+    vm_params_default(&p);
+    p.max_actors = table_cap;
+    vm_params_resolve(vm->host, vm->host_ctx, NULL, &p);
+    if (vm_params_apply(vm, &p) != 0) return VM_BOOT_NO_MEMORY;
     return vm_boot(vm, words, n_words);
 }

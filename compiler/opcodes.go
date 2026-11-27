@@ -182,7 +182,7 @@ const (
 	// 58-60 were kept for distributed actors (15.5), which needed none.
 	BCallErr     uint32 = 58 // (15.7) pid, req, ms -> reply, code: actor.Call with a shared error code
 	BRegisterErr uint32 = 59 // (15.7) name, pid -> code: actor.Register with a shared error code
-	BReserved60  uint32 = 60
+	BLimit       uint32 = 60 // (15.8) pid -> int: actor.Limit, the actor's memory limit in bytes
 
 	// Since 15.6 (refMinor).
 	BSprint uint32 = 61 // mode, v -> string | nil: println's text of v (gogo/fmt)
@@ -425,7 +425,7 @@ var goConstants = map[string]uint32{
 	"BBufFreeze": BBufFreeze, "BBytesFrom": BBytesFrom, "BBytesEqual": BBytesEqual,
 	"BBytesCopyto": BBytesCopyto, "BPortHandoff": BPortHandoff, "BNetSubscribe": BNetSubscribe,
 	"BConfigGet": BConfigGet, "BFs": BFs, "BCode": BCode, "BUnixTime": BUnixTime, "BSetUnixTime": BSetUnixTime, "BRandom": BRandom, "BFloat": BFloat, "BPrintlnu": BPrintlnu,
-	"BPanic": BPanic, "BCmp": BCmp, "BCallErr": BCallErr, "BRegisterErr": BRegisterErr, "BReserved60": BReserved60,
+	"BPanic": BPanic, "BCmp": BCmp, "BCallErr": BCallErr, "BRegisterErr": BRegisterErr, "BLimit": BLimit,
 	"BSprint": BSprint,
 	"TyInt":   TyInt, "TyBool": TyBool, "TyString": TyString, "TyPid": TyPid,
 	"TyRef": TyRef, "TyInt64": TyInt64, "TyBytes": TyBytes, "TyFloat32": TyFloat32, "TyFloat64": TyFloat64,

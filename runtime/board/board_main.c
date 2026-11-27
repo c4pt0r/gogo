@@ -6,41 +6,76 @@
 #include "vfs.h"
 #include "input.h"
 #include "port.h"
+#include "params.h"
 #include <string.h>
 
-/* The decimal value of config key k, or 0 (unset or not a number). */
-static uint32_t config_num(const struct Vm *vm, const char *k) {
-    uint8_t b[12];
-    int32_t n = vm_config_get(vm, (const uint8_t *)k, (uint32_t)strlen(k), b, sizeof b);
-    uint32_t v = 0;
-    if (n <= 0 || n > 6) return 0;
-    for (int32_t i = 0; i < n; i++) {
-        if (b[i] < '0' || b[i] > '9') return 0;
-        v = v * 10u + (uint32_t)(b[i] - '0');
-    }
-    return v;
+/* ---- board_params_format ---- */
+
+/* Decimal v at p; returns the end. */
+static char *put_u(char *p, uint64_t v) {
+    char d[20];
+    int n = 0;
+    do d[n++] = (char)('0' + v % 10u); while ((v /= 10u) != 0);
+    while (n) *p++ = d[--n];
+    return p;
 }
 
-/* Sets the caps (board_main.h, BoardRun.max_ports). */
-static void set_caps(struct Vm *vm, const gogo_host *h, const BoardRun *r) {
-    uint32_t ports = r->max_ports ? r->max_ports : config_num(vm, "vm.max_ports");
-    uint32_t links = r->max_links ? r->max_links : config_num(vm, "node.max_links");
-    if (!ports) ports = r->default_ports;
-    if (!links) links = r->default_links;
-    if (vm_set_max_ports(vm, ports) != 0) {
-        static const char m[] = "gogo: vm.max_ports refused (at most 2048, and actors + ports at most 65536)\n";
-        h->write(NULL, 2, m, sizeof m - 1u);
-        vm_set_max_ports(vm, r->default_ports);
+/* v as 16K / 1M / 2G when it divides evenly, else in bytes. */
+static char *put_size(char *p, uint64_t v) {
+    static const char suf[] = "GMK";
+    for (unsigned i = 0; i < 3u && v; i++) {
+        uint32_t sh = 30u - 10u * i;
+        if (v % ((uint64_t)1 << sh) == 0) {
+            p = put_u(p, v >> sh);
+            *p++ = suf[i];
+            return p;
+        }
     }
-    vm->max_links = (uint16_t)(links > PORT_MAX_CEILING ? PORT_MAX_CEILING : links);
+    return put_u(p, v);
+}
+
+static char *put_s(char *p, const char *s) {
+    size_t n = strlen(s);
+    memcpy(p, s, n);
+    return p + n;
+}
+
+size_t board_params_format(const VmParams *p, char *buf, size_t cap) {
+    char line[200], *q = line;
+    uint64_t mem = p->memory;
+    if (GOGO_ARENA_BYTES && (!mem || mem > GOGO_ARENA_BYTES)) mem = GOGO_ARENA_BYTES;
+    q = put_size(put_s(q, "actor_memory="), p->actor_memory);
+    q = put_s(q, " memory=");
+    q = mem ? put_size(q, mem) : put_s(q, "unlimited");
+    q = put_u(put_s(q, " max_actors="), p->max_actors);
+    q = put_u(put_s(q, " max_ports="), p->max_ports);
+    q = put_u(put_s(q, " max_links="), p->max_links ? p->max_links : GOGO_MAX_LINKS);
+    q = put_size(put_s(q, " code_mem="), p->code_mem);
+    q = put_u(put_s(q, " bytes_handles="), p->bytes_handles);
+    *q++ = '/';
+    q = put_u(q, p->bytes_per_actor);
+    size_t n = (size_t)(q - line);
+    if (cap) {
+        size_t k = n < cap ? n : cap - 1u;
+        memcpy(buf, line, k);
+        buf[k] = 0;
+    }
+    return n;
 }
 
 int gogo_board_main(const VmBoard *b, const gogo_host *h, BoardRun *r, const uint32_t *words, uint32_t nwords,
                     int *run_rc) {
     /* The unified boot (module.h): the image becomes module 0
      * (requirement check included); the run starts its "main" export. */
-    if (vm_init(r->vm, h, NULL, b, r->table_cap) != 0) return VM_BOOT_NO_MEMORY;
-    set_caps(r->vm, h, r);
+    VmParams own;
+    const VmParams *p = r->params;
+    if (!p) {
+        vm_params_default(&own);
+        vm_params_resolve(h, NULL, NULL, &own);
+        p = &own;
+    }
+    if (vm_init(r->vm, h, NULL, b, (uint16_t)p->max_actors) != 0 || vm_params_apply(r->vm, p) != 0)
+        return VM_BOOT_NO_MEMORY;
     if (r->booting) r->booting(r->vm, r->ctx);
     int rc = vm_boot(r->vm, words, nwords);
     if (rc != VM_BOOT_OK) return rc;

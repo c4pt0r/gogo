@@ -147,6 +147,15 @@ func ReceiveTimeout(ms int) (msg any, ok bool) { panic("gogo only") }
 //gogo:builtin
 func Info(p PID) ProcInfo { panic("gogo only") }
 
+// Limit returns the memory limit of the local actor p in bytes: the most
+// its heap, stack, queued messages and the resources charged to it may
+// take together (what Info(p).Memory counts, less the actor's own record).
+// It is the limit p was spawned with (Options.MaxMemory), else the VM's
+// default; 0 if p is not a live local actor. A program that calls it needs image format 15.8.
+//
+//gogo:builtin
+func Limit(p PID) int { panic("gogo only") }
+
 // Link links the caller and p.
 //
 //gogo:builtin

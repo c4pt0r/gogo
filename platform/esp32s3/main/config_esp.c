@@ -309,6 +309,7 @@ static void cmd_info(void *ctx, ConfigInfo *out) {
     out->image_major = IMAGE_MAJOR;
     out->image_minor = IMAGE_MINOR;
     out->provides = info_names;
+    main_esp_params(out->params, sizeof out->params);
 }
 
 static const ConfigBoard esp_cfg_board = {

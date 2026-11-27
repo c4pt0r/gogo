@@ -244,16 +244,28 @@ static uint32_t embed_max_ports(const gogo_config *c) {
     return PORT_SLOT_TOP - actors < EMBED_MAX_PORTS ? PORT_SLOT_TOP - actors : EMBED_MAX_PORTS;
 }
 
-/* vm_init with the config, then the memory cap (vm_init clears the
+/* The parameters (params.h): the config's fields, then the host's keys
+ * (its config_get), then the library's defaults. Once, in gogo_new: a bad
+ * key is said once. */
+static void params_resolve(gogo_vm *g) {
+    VmParams set;
+    memset(&set, 0, sizeof set);
+    set.max_ports = g->cfg.max_ports;
+    set.max_links = g->cfg.max_links;
+    vm_params_default(&g->params);
+    if (g->cfg.max_actors) g->params.max_actors = g->cfg.max_actors;
+    g->params.max_ports = embed_max_ports(&g->cfg);
+    vm_params_resolve(&g->fwd, g, &set, &g->params);
+}
+
+/* vm_init with the parameters, then the memory cap (vm_init clears the
  * allocator) and the inbox. */
 static int vm_setup(gogo_vm *g) {
-    uint16_t cap = g->cfg.max_actors ? (uint16_t)g->cfg.max_actors : (uint16_t)GOGO_TABLE_CAP;
     g->closed_msg = NULL;            /* vm_init starts the allocator over */
     g->closed_n = 0;
-    if (vm_init(&g->vm, &g->fwd, g, g->fs ? &embed_board_flash : &embed_board, cap) != 0 ||
-        vm_set_max_ports(&g->vm, embed_max_ports(&g->cfg)) != 0)
+    if (vm_init(&g->vm, &g->fwd, g, g->fs ? &embed_board_flash : &embed_board, (uint16_t)g->params.max_actors) != 0 ||
+        vm_params_apply(&g->vm, &g->params) != 0)
         return -1;
-    g->vm.max_links = (uint16_t)g->cfg.max_links;
     va_set_limit(&g->vm, g->cfg.mem_limit > (uint64_t)(size_t)-1 ? (size_t)-1 : (size_t)g->cfg.mem_limit);
     vfs_init(&g->vm, &g->vfs);       /* no fs_root: no mounts, every gogo/fs call is NotMounted */
     embed_ports_install(g);
@@ -291,6 +303,7 @@ int gogo_new(const gogo_host *h, void *host_ctx, const gogo_config *cfg, gogo_vm
         if (rc == GOGO_OK && !vfs_mount(&g->vfs, "/flash", fs_dir_vfs(g->fs), g->fs)) rc = GOGO_ENOMEM;
     }
     g->cfg.fs_root = NULL;           /* the caller's string is not kept */
+    if (rc == GOGO_OK) params_resolve(g);
     if (rc == GOGO_OK && vm_setup(g) != 0) rc = GOGO_ENOMEM;
     if (rc != GOGO_OK) {
         blk_free_all(g, &g->blocks, uh.free);

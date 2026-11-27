@@ -44,6 +44,7 @@
  *   v15.7 the actor API's error results: builtins 58 B_CALL_ERR and 59
  *       B_REGISTER_ERR (actor.Call and actor.Register with a shared error
  *       code; B_CALL and B_REGISTER stay for older images).
+ *   v15.8 builtin 60 B_LIMIT (actor.Limit: an actor's memory limit).
  *
  * Reserved encodings (term.h): heap kinds 13-15, the specials from 0x72
  * up, the TYPEIS ids 0x10009-0x100FF and bits 19-20 of a struct's type
@@ -90,7 +91,7 @@
 
 #define IMAGE_MAGIC   0x4F474F47u
 #define IMAGE_MAJOR   15u
-#define IMAGE_MINOR   7u
+#define IMAGE_MINOR   8u
 #define IMAGE_VERSION (IMAGE_MAJOR << 16 | IMAGE_MINOR)   /* the newest this VM runs */
 #define IMAGE_HEADER_WORDS 8u
 

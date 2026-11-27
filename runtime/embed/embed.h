@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include "../include/gogo_posix.h"   /* and gogo.h */
 #include "actor.h"
+#include "params.h"
 #include "inbox.h"
 #include "vfs_int.h"
 #include "fs_dir.h"
@@ -53,6 +54,7 @@ struct gogo_vm {
     void *uctx;
     gogo_host fwd;               /* forwarders to uh (NULL where uh has NULL) */
     gogo_config cfg;
+    VmParams params;             /* resolved once by gogo_new (params.h): cfg, the host's keys, defaults */
     EmbedBlk *blocks;            /* live alloc blocks */
     EmbedBlk *code_blocks;       /* live code_alloc blocks */
     Inbox inbox;

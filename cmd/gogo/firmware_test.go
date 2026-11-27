@@ -153,11 +153,11 @@ func TestFirmwareBadInput(t *testing.T) {
 	d := t.TempDir()
 	junk := filepath.Join(d, "junk.ggb")
 	os.WriteFile(junk, []byte("this is not an image at all, no"), 0o644)
-	v8 := filepath.Join(d, "v8.ggb")
+	v9 := filepath.Join(d, "v9.ggb")
 	img, _ := os.ReadFile(writeImg(t, d, "ok.ggb"))
-	img[4] = 8
-	os.WriteFile(v8, img, 0o644)
-	for _, p := range []string{junk, v8, filepath.Join(d, "missing.ggb")} {
+	img[4] = 9
+	os.WriteFile(v9, img, 0o644)
+	for _, p := range []string{junk, v9, filepath.Join(d, "missing.ggb")} {
 		_, _, err := fwRun(t, "-board", "sticks3", "-o", d, p)
 		if err == nil || !strings.Contains(err.Error(), filepath.Base(p)) {
 			t.Fatalf("%s: %v", p, err)
@@ -166,7 +166,7 @@ func TestFirmwareBadInput(t *testing.T) {
 	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, junk); !strings.Contains(err.Error(), "not a gogo image") {
 		t.Fatal(err)
 	}
-	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, v8); !strings.Contains(err.Error(), "image format 15.8") {
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, v9); !strings.Contains(err.Error(), "image format 15.9") {
 		t.Fatal(err)
 	}
 }

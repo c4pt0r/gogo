@@ -55,6 +55,10 @@ func TestMinorBaseline(t *testing.T) {
 		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\t_, err := actor.Call(actor.Self(), 1, 0)\n\tprintln(err != nil)\n}\n", actorMinor},
 		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tactor.Call(actor.Self(), 1, 0)\n}\n", actorMinor},
 		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tprintln(actor.Register(\"x\", actor.Self()) == nil)\n}\n", actorMinor},
+		// actor.Limit (B_LIMIT) needs 15.8; actor.Info (its ProcInfo row
+		// unchanged) does not.
+		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tprintln(actor.Info(actor.Self()).Memory)\n}\n", 0},
+		{"package main\nimport \"gogo/actor\"\nfunc main() {\n\tprintln(actor.Limit(actor.Self()))\n}\n", limitMinor},
 		// A library that calls actor.Call or Register in some functions
 		// keeps them in //gogo:ondemand files: a program that uses only
 		// the others keeps its minor, one that calls them gets 15.7.

@@ -13,13 +13,18 @@
 #include "host.h"
 
 struct Vm;
+struct VmParams;
 struct VfsState;
 struct InputState;
 struct NetState;
 
 typedef struct BoardRun {
     struct Vm *vm;
-    uint16_t table_cap;                /* vm_init's actor table size (GOGO_TABLE_CAP) */
+    /* The VM's parameters (params.h), resolved by the board
+     * (vm_params_resolve: its flags, the config keys, its defaults):
+     * max_actors is vm_init's actor table, the rest vm_params_apply's.
+     * NULL: the build's defaults and the config keys, resolved here. */
+    const struct VmParams *params;
     struct VfsState *vfs;              /* NULL: no file system builtin */
     struct InputState *input;          /* NULL: no input source */
     struct NetState *net;              /* NULL: no network in this run */
@@ -31,25 +36,30 @@ typedef struct BoardRun {
      *  - ready: every subsystem attached, before the run;
      *  - run: runs the VM, returns its result (NULL: vm_run). */
     void (*booting)(struct Vm *vm, void *ctx);
-    /* The VM's caps on open ports and on node links (distribution): set
-     * (a command-line flag) wins; else the config keys vm.max_ports and
-     * node.max_links; else the board's default (0: the build's,
-     * GOGO_MAX_PORTS and DIST_LINKS). A refused value is reported and the
-     * default kept. */
-    uint16_t max_ports, max_links, default_ports, default_links;
     void (*ready)(struct Vm *vm, void *ctx);
     int (*run)(struct Vm *vm, void *ctx);
     void *ctx;
 } BoardRun;
 
 /* Boots words (nwords, the image) as module 0 on board b with host h
- * (its ctx NULL), and runs it: vm_init, booting, vm_boot (the requirement
+ * (its ctx NULL), and runs it: vm_init, vm_params_apply, booting, vm_boot (the requirement
  * check), then net_install (with r->net), vfs_init (mounting the board's
  * file systems), input_install, in that order, then ready and the run.
  * Returns VM_BOOT_OK after the run, with its result in *run_rc; else the
  * boot's error, with nothing attached and nothing run: VM_BOOT_NO_MEMORY,
  * VM_BOOT_REFUSED (the refusal line is written) or an image error
  * (IMG_ERR_*, negative). */
+/* p (params.h) as one line of space-separated name=value fields, sizes as
+ * K / M / G when they divide evenly, for `gogovm --info` and the board's
+ * `gogo device info`:
+ *   actor_memory=16K memory=160K max_actors=1024 max_ports=16 max_links=8
+ *   code_mem=64K bytes_handles=64/16
+ * (memory: the arena, GOGO_ARENA_BYTES, when there is no VM limit or a
+ * larger one; "unlimited" when neither; max_links 0 as its default).
+ * Writes at most cap - 1 bytes and a NUL; returns the length of the whole
+ * line (as snprintf). */
+size_t board_params_format(const struct VmParams *p, char *buf, size_t cap);
+
 int gogo_board_main(const VmBoard *b, const gogo_host *h, BoardRun *r, const uint32_t *words, uint32_t nwords,
                     int *run_rc);
 

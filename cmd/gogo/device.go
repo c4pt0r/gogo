@@ -9,8 +9,10 @@ package main
 //	gogo device [-port P] [-yes] format-flash   format /flash
 //
 // info shows the firmware's version, the board it was built for, the image
-// format it runs and the requirement names it provides (the board's `info`
-// answer, configsvc.h). A firmware older than info says so.
+// format it runs, the VM's parameters (its limits: actor memory, actors,
+// ports, links, code memory, Bytes handles) and the requirement names it
+// provides (the board's `info` answer, configsvc.h). A firmware older
+// than info says so.
 //
 // format-flash formats the gogo LittleFS partition (gogofs) and nothing
 // else: the board restarts and formats it at mount (fs_lfs.c). It never
@@ -104,6 +106,10 @@ func deviceMain(args []string, env deviceEnv) error {
 	return nil
 }
 
+// deviceParams are the info fields of the VM's parameters
+// (runtime/vm/params.h; runtime/board board_params_format), in their order.
+var deviceParams = []string{"actor_memory", "memory", "max_actors", "max_ports", "max_links", "code_mem", "bytes_handles"}
+
 // deviceInfo asks the board for its info line and prints it, one field a
 // line.
 func deviceInfo(rw io.ReadWriter, out io.Writer) error {
@@ -129,6 +135,17 @@ func deviceInfo(rw io.ReadWriter, out io.Writer) error {
 	if v, ok := m["image"]; ok {
 		major, _, _ := strings.Cut(v, ".")
 		fmt.Fprintf(out, "image     format %s (runs images %s.0 to %s)\n", v, major, v)
+	}
+	// The VM's parameters (a firmware since they were reported), in the
+	// order the board gives them.
+	var lim []string
+	for _, k := range deviceParams {
+		if v, ok := m[k]; ok {
+			lim = append(lim, k+"="+v)
+		}
+	}
+	if len(lim) > 0 {
+		fmt.Fprintf(out, "limits    %s\n", strings.Join(lim, " "))
 	}
 	if v, ok := m["provides"]; ok {
 		fmt.Fprintf(out, "provides  %s\n", strings.ReplaceAll(v, ",", " "))

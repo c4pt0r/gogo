@@ -101,8 +101,9 @@ enum {
     VM_BOOT_REFUSED = GOGO_E_UNSUPPORTED   /* the refusal line is already on stderr */
 };
 
-/* The boot path every platform calls after vm_init: module_config, then
- * the boot image into slot 0 (module_load_static). Then vm_start starts
+/* The boot path every platform calls after vm_init (and vm_params_apply,
+ * params.h, which sets the code memory limit, config key code.mem): the
+ * boot image into slot 0 (module_load_static). Then vm_start starts
  * module 0's "main" through module_spawn and vm_step runs the scheduler. On a
  * refusal the actor table is freed again (vm_init again to retry). */
 int vm_boot(Vm *vm, const uint32_t *words, uint32_t n_words);
@@ -121,12 +122,6 @@ int module_load_static(Vm *vm, const uint32_t *words, uint32_t n_words);
  * requirement check: that is module_load_static's. GOGO_E_OK, GOGO_E_TOOMANY or
  * GOGO_E_NOMEMORY. */
 int module_install_static(Vm *vm, const Image *img);
-
-/* Reads the code memory limit, config key code.mem (bytes, optional K or M
- * suffix), into vm->mod_cap; unset: GOGO_CODE_MEM_DEFAULT, which vm_init
- * sets; a bad value says so on stderr and keeps the default. vm_boot runs
- * it (VM start). */
-void module_config(Vm *vm);
 
 /* code.Load: loads the image in Bytes `bytes` (as caller sees it: off-heap,
  * heap or const) into a free slot and makes caller a holder. Checks, in

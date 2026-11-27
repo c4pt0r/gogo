@@ -263,8 +263,8 @@ func TestTermsMatchC(t *testing.T) {
 			t.Errorf("%s in runtime/vm/image.h %v, Go %d", name, m, v)
 		}
 	}
-	if newest := max(floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor, actorMinor); imageMajor != 15 || imageMinor != newest {
-		t.Errorf("image format %d.%d, want 15.%d (the newest of floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor and actorMinor)", imageMajor, imageMinor, newest)
+	if newest := max(floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor, actorMinor, limitMinor); imageMajor != 15 || imageMinor != newest {
+		t.Errorf("image format %d.%d, want 15.%d (the newest of floatMinor, sizedMinor, ifaceMinor, distMinor, refMinor, actorMinor and limitMinor)", imageMajor, imageMinor, newest)
 	}
 }
 

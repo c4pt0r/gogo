@@ -46,6 +46,7 @@ func CancelTimer(r Ref) bool
 func Sleep(ms int)
 func Now() int64
 func Info(p PID) ProcInfo
+func Limit(p PID) int             // p's memory limit in bytes (image format 15.8)
 func Fail(code errors.Code) int   // the exit reason Failed + int(code)
 ```
 

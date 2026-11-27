@@ -629,6 +629,7 @@ func Unregister(name string)                    // only the registering actor ma
 func SendAfter(to PID, msg any, ms int) Ref; func CancelTimer(r Ref) bool
 func Sleep(ms int); func Now() int64            // ms since the VM started
 func Info(p PID) ProcInfo
+func Limit(p PID) int                           // p's memory limit in bytes (15.8); 0: no live local actor
 func Fail(code errors.Code) int                 // exit reason Failed + int(code) (64..99)
 
 // System messages
@@ -1972,7 +1973,12 @@ together with `mbox_words` through `actor_charged_words`).
   libraries keep those in `//gogo:ondemand` files, so `http.Get` or
   `supervisor.SuperviseModule` count and `http.Serve` or
   `supervisor.Supervise` do not) needs 15.7 and any other keeps its
-  minor.
+  minor; 15.8 `actor.Limit` (`limitMinor`): `B_LIMIT`, an actor's memory
+  limit. It is a builtin, not a `Limit` field appended to `ProcInfo`
+  (reserved type 0): an appended field is a minor too, but it would be
+  stamped on every program that calls `actor.Info` (the compiler emits the
+  whole `ProcInfo` row), so programs that only read `Memory` would stop
+  running on 15.7 firmware; the builtin is stamped only where it is used.
   The versioning policy:
   - **Minor (additive):** a new builtin number, opcode, reserved type, or
     an int field appended to a reserved type (0 means the default). Old

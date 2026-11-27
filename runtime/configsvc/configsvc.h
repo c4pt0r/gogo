@@ -29,11 +29,15 @@
  * or \r.
  *
  * info answers one line, `\x02ok fw=<version> board=<name> image=<major>.<minor>
- * provides=<name>,<name>...`: the firmware's version (`git describe`, "dev"
- * when unknown), the board it was built for, the image format it runs
- * (major.0 to major.minor) and the requirement names it provides (port
- * drivers, mount prefixes, "float"). A field the board does not know is
- * left out; values never hold spaces. It needs no store. A firmware older
+ * actor_memory=<size> memory=<size> max_actors=<n> max_ports=<n>
+ * max_links=<n> code_mem=<size> bytes_handles=<n>/<n> provides=<name>,<name>...`:
+ * the firmware's version (`git describe`, "dev" when unknown), the board
+ * it was built for, the image format it runs (major.0 to major.minor),
+ * the VM's parameters as it runs with them (ConfigInfo.params;
+ * sizes in bytes or with a K, M or G suffix, memory "unlimited" without a
+ * limit) and the requirement names it provides (port drivers, mount
+ * prefixes, "float"). A field the board does not know is left out;
+ * values never hold spaces. It needs no store. A firmware older
  * than info answers it `\x02err bad key` (as any unknown bare word).
  *
  * push writes a file to /flash: <path> is an absolute /flash path, <len>
@@ -83,6 +87,10 @@ typedef struct ConfigInfo {
     const char *board;              /* board name (sticks3, cardputer) */
     uint32_t image_major, image_minor;   /* image formats it runs (major 0: unknown) */
     const char *const *provides;    /* requirement names, NULL-terminated */
+    /* The VM's parameters as name=value fields separated by single spaces
+     * (board_params_format, runtime/board/board_main.h), NUL-terminated;
+     * empty: none. Here, not a pointer, so the board keeps no static copy. */
+    char params[160];
 } ConfigInfo;
 
 /* The board's side, besides the store. Every hook is optional (NULL: the

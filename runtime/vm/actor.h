@@ -95,7 +95,7 @@ typedef struct Vm {
     ModEntry *mods[GOGO_MAX_MODULES];   /* module table (module.h); NULL = free slot */
     uint16_t mod_gen[GOGO_MAX_MODULES]; /* each slot's current generation */
     uint32_t mod_mem;         /* code bytes of the counted (loaded, not boot) modules */
-    uint32_t mod_cap;         /* their limit: config code.mem (module_config) */
+    uint32_t mod_cap;         /* their limit: config code.mem (vm_params_apply) */
     uint8_t mod_next;         /* where module_load's round-robin slot search starts */
     uint8_t open_err;         /* why the last refused port open failed: GOGO_E_* (port.h) */
     uint32_t rand_x;          /* vm_random's fallback state */

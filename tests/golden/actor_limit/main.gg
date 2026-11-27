@@ -1,0 +1,27 @@
+package main
+
+// actor.Limit: the limit an actor was spawned with (rounded down to
+// words), else the VM's default, which every default child shares; 0 for
+// an actor that is gone and for the zero PID.
+
+import "gogo/actor"
+
+type Lim struct{ N int }
+
+func main() {
+	me := actor.Self()
+	for _, m := range []int{8192, 10001, 65536} {
+		actor.SpawnOpt(func() {
+			actor.Send(me, Lim{actor.Limit(actor.Self())})
+		}, actor.Options{MaxMemory: m})
+		println(actor.Receive().(Lim).N)
+	}
+	child := actor.Spawn(func() { actor.Receive() })
+	println(actor.Limit(child) == actor.Limit(me), actor.Limit(me) >= 16384)
+	println(actor.Info(child).Memory < actor.Limit(child))
+	ref := actor.Monitor(child)
+	actor.Send(child, 1)
+	actor.Receive()
+	actor.Demonitor(ref)
+	println(actor.Limit(child), actor.Limit(actor.NoPID))
+}

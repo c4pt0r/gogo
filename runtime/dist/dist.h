@@ -50,13 +50,12 @@
 #include <stdbool.h>
 #include "term.h"
 #include "port.h"
+#include "config.h"
 
 struct Vm;
 
 #define DIST_FRAME_MAX 4096u   /* bytes of a frame, its length prefix included */
-#ifndef DIST_LINKS
-#define DIST_LINKS     8u      /* node links of a VM whose max_links is 0 (gogovm: 512) */
-#endif
+#define DIST_LINKS     GOGO_MAX_LINKS   /* node links of a VM whose max_links is 0 (config.h; gogovm: 512) */
 #define DIST_NAME_MAX  32u     /* bytes of a node name */
 /* The tables scale with the link cap n (state_new): 48 + 2n remote PIDs
  * known at once (at most the remote PID slots below the ports'), 48 + 2n

@@ -28,6 +28,12 @@
  * pass a larger one (the Makefile: 1024). The table grows as ports open. */
 #define GOGO_MAX_PORTS 16u
 #endif
+/* The default most node links of distributed actors (runtime/dist,
+ * DIST_LINKS) when the config key node.max_links is not set: 8 on a
+ * board; gogovm passes its own (512). */
+#ifndef GOGO_MAX_LINKS
+#define GOGO_MAX_LINKS 8u
+#endif
 /* Extra event sources (net, input, the screen port's Done retry, the gpio
  * driver's debounce) the port layer folds in. */
 #ifndef GOGO_MAX_SOURCES

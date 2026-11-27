@@ -41,7 +41,7 @@ int main(int argc, char **argv) {
     /* The file system builtin, even with no mounts: port.Open reads why an
      * open failed through it (FS_OPENERR). */
     static VfsState vfs;
-    BoardRun run = { .vm = &vm, .table_cap = (uint16_t)GOGO_TABLE_CAP, .vfs = &vfs };
+    BoardRun run = { .vm = &vm, .vfs = &vfs };   /* params NULL: the build's defaults and config keys */
     int run_rc = 0;
     int rc = gogo_board_main(&dice_board, &unix_host, &run, words, (uint32_t)(size / 4), &run_rc);
     fflush(stdout);

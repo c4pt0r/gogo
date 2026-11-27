@@ -610,7 +610,7 @@ static const uint8_t builtin_info[] = {
     [B_PORT_HANDOFF] = BI(2), [B_NET_SUBSCRIBE] = BI(0), [B_CONFIG_GET] = BI_VAR | BI_TWO,
     [B_FS] = BI_VAR, [B_CODE] = BI_VAR, [B_UNIX_TIME] = BI(0), [B_SET_UNIX_TIME] = BI(1), [B_RANDOM] = BI(0),
     [B_FLOAT] = GOGO_FLOAT ? BI_VAR : 0u, [B_PRINTLNU] = BI_VAR, [B_PANIC] = BI(1), [B_CMP] = BI_VAR,
-    [B_CALL_ERR] = BI_VAR, [B_REGISTER_ERR] = BI(2), [B_RESERVED_60] = 0, [B_SPRINT] = BI_VAR,
+    [B_CALL_ERR] = BI_VAR, [B_REGISTER_ERR] = BI(2), [B_LIMIT] = BI(1), [B_SPRINT] = BI_VAR,
 };
 typedef char builtin_info_complete[sizeof builtin_info == B_LAST + 1u ? 1 : -1];
 
@@ -1202,10 +1202,10 @@ int interp_run(Vm *vm, Actor *a) {
                 ires = (int64_t)vm_now(vm);
                 wide = true;
                 goto put_int;
-            case B_MEMORY: {
+            case B_MEMORY: case B_LIMIT: {
                 /* The caller's own state (mem, mem_words) is current in a. */
                 const Actor *p = actor_lookup(vm, R[rb]);
-                ires = (int32_t)(p ? actor_memory_bytes(p) : 0u);
+                ires = !p ? 0 : ext == B_MEMORY ? (int64_t)actor_memory_bytes(p) : (int64_t)actor_max_words(p) * 4;
                 wide = false;
                 goto put_int;
             }
