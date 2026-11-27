@@ -2369,6 +2369,41 @@ pins). Only one program can open the serial port at a time. Boot
 messages and the partition table are described in
 [platform/esp32s3/README.md](../platform/esp32s3/README.md).
 
+**Recovering a silent USB link (`cmd/gogo/usbreset.go`).** The boards'
+USB device sometimes stops answering (not even its string descriptors)
+while the chip runs on ([known-issues.md](known-issues.md)); a USB bus
+reset of that device brings it back without restarting the chip. Every
+command that talks to a board runs its exchange through one wrapper,
+`usbRecovery.retry`: when the exchange fails with `errNoAnswer`
+(`boardConn.request`'s timeout) or esptool exits with an error
+(`esptoolExitError`; esptool keeps the terminal, its output is not
+read), it probes the USB device behind the port with a GET_DESCRIPTOR(string 0)
+request and resets it only when that request times out or returns
+nothing (the fault's signature; a board without gogo firmware, or one
+restarting, still answers and is never re-enumerated); then it waits for
+the port and runs the exchange once more. `gogo monitor` has no request
+to time out, so for it the trigger is a capture that got nothing. A
+retried esptool command is the same checked command again: esptool
+erases and rewrites every region from its start and checks each file's
+digest, so a region the first run left half-written is rewritten whole,
+and a retry that fails too leaves what any failed flash leaves (the
+image header's CRC and the app image's checksum refuse it at boot). The device is found from the port,
+never from its serial number (a silent device cannot report one): on
+macOS the port's IOSerialBSDClient is walked up the IOService plane to
+its IOUSBHostDevice, whose IOUSBDeviceInterface187 re-enumerates it
+(USBDeviceReEnumerate, as libusb_reset_device does); IOKit and
+CoreFoundation are reached without cgo, through dlopen/dlsym trampolines
+into libSystem (`usbreset_darwin.s`, the technique of
+golang.org/x/sys/unix) and `syscall.syscall6`, so the release build stays
+`CGO_ENABLED=0` with no module dependency. On Linux, sysfs maps the tty
+to `busnum`/`devnum` and the `USBDEVFS_RESET` ioctl resets
+`/dev/bus/usb/BBB/DDD`. Only vendor id 0x303a is reset, and never a port
+another process of the user holds (lsof, with a 5 s timeout, on macOS;
+`/proc/*/fd` on Linux). Neither sees root's or other users' processes,
+and a check that fails or times out counts as "held"; the probe gate
+keeps a healthy link from being reset whatever the check misses. Windows has
+none: the hint says to replug.
+
 **Device configuration (`gogo config`).** `gogo config set|get|rm|list
 <key> [value]`; `gogo device scan` (the 2.4 GHz networks the board sees),
 `gogo device stats` (network counters, heap), `gogo device info` (the

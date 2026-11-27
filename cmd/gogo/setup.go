@@ -5,6 +5,7 @@ package main
 //	gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z]
 //	           [-release-url URL|DIR] [-esptool path] [-offline]
 //	           [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]
+//	           [-no-usb-reset]
 //
 // Steps: check esptool and find the board's serial port; identify the
 // board; get its firmware (a GitHub release, checked against its
@@ -13,6 +14,9 @@ package main
 // firmware (its `info` answer, flashDecision; -reflash flashes anyway);
 // set up Wi-Fi; run a first program.
 // Each step says what it does; a failure says how to fix it and stops.
+// An esptool command that cannot reach the chip, or a board that does
+// not answer its info request, is retried once after a USB reset of the
+// board (usbreset.go) unless -no-usb-reset is given.
 //
 // -dry-run still runs the steps that only read (esptool's chip check,
 // the download, a Wi-Fi scan) and prints every command that would write
@@ -38,7 +42,7 @@ import (
 	"gogotools/compiler"
 )
 
-const setupUsage = "usage: gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]"
+const setupUsage = "usage: gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run] [-no-usb-reset]"
 
 // version is this gogo's release version, set at link time by
 // tools/release.sh (-ldflags "-X main.version=v1.2.3").
@@ -60,6 +64,7 @@ type setupOpts struct {
 	port, board, version, releaseURL, esptool string
 	offline, skipWifi, yes, dryRun            bool
 	newLayout, reflash                        bool
+	noUSBReset                                bool
 }
 
 // setupEnv holds the side effects of gogo setup, replaced in tests.
@@ -80,6 +85,8 @@ type setupEnv struct {
 	retryDelay time.Duration
 	// infoTimeout is how long one `info` request waits for the board.
 	infoTimeout time.Duration
+	// usb resets the board's USB device; the zero value cannot.
+	usb usbEnv
 }
 
 func defaultSetupEnv() (*setupEnv, error) {
@@ -103,6 +110,7 @@ func defaultSetupEnv() (*setupEnv, error) {
 
 		retryDelay:  500 * time.Millisecond,
 		infoTimeout: 1500 * time.Millisecond,
+		usb:         defaultUSBEnv(),
 	}, nil
 }
 
@@ -145,6 +153,7 @@ func parseSetupArgs(args []string) (setupOpts, error) {
 	fs.BoolVar(&o.dryRun, "dry-run", false, "")
 	fs.BoolVar(&o.newLayout, "new-layout", false, "")
 	fs.BoolVar(&o.reflash, "reflash", false, "")
+	fs.BoolVar(&o.noUSBReset, "no-usb-reset", false, "")
 	pos, err := parseFlags(fs, args, setupUsage)
 	if err != nil {
 		return o, err
@@ -182,6 +191,8 @@ type setup struct {
 	// partition table setup can read.
 	foreignTable bool
 	stepN        int
+	// usb resets the board's USB device at most once.
+	usb *usbRecovery
 }
 
 // setupFail is an error with the fix to print under it.
@@ -194,7 +205,7 @@ func setupMain(args []string, env *setupEnv) error {
 	if err != nil {
 		return err
 	}
-	s := &setup{o: o, env: env, nvs: defaultNVS}
+	s := &setup{o: o, env: env, nvs: defaultNVS, usb: newUSBRecovery(env.usb, o.noUSBReset, env.out)}
 	if o.dryRun {
 		fmt.Fprintln(env.out, "dry run: commands that write to the board are printed, not run")
 	}
@@ -383,10 +394,12 @@ func (s *setup) runEsptool(args []string, writes bool) error {
 		fmt.Fprintf(s.env.out, "  would run: %s\n", line)
 		return nil
 	}
-	fmt.Fprintf(s.env.out, "  $ %s\n", line)
-	cmd := exec.Command(s.esptool, args...)
-	cmd.Stdout, cmd.Stderr = s.env.out, s.env.out
-	return cmd.Run()
+	// Retried once when esptool fails and the board's USB device is silent
+	// (esptoolExitError, which says why a retry is safe).
+	return s.usb.retry(s.port, func() error {
+		fmt.Fprintf(s.env.out, "  $ %s\n", line)
+		return execEsptool(s.esptool, args, nil, s.env.out, s.env.out)
+	})
 }
 
 // identify reads the chip banner and the partition table now on the board
@@ -403,8 +416,13 @@ func (s *setup) identify() error {
 	if err := checkEsptoolArgs(args, s.nvs); err != nil {
 		return err
 	}
-	fmt.Fprintf(s.env.out, "  $ %s %s\n", s.esptool, strings.Join(args, " "))
-	out, err := exec.Command(s.esptool, args...).CombinedOutput()
+	var out []byte
+	err = s.usb.retry(s.port, func() error {
+		fmt.Fprintf(s.env.out, "  $ %s %s\n", s.esptool, strings.Join(args, " "))
+		var err error
+		out, err = exec.Command(s.esptool, args...).CombinedOutput()
+		return esptoolErr(err)
+	})
 	notS3 := func(chip string) error {
 		return setupFail("gogo supports the M5StickS3 and the Cardputer ADV (both ESP32-S3); connect one of them",
 			"the chip on %s is %s, not an ESP32-S3", s.port, chip)
@@ -416,6 +434,10 @@ func (s *setup) identify() error {
 		tail := strings.TrimSpace(string(out))
 		if i := strings.LastIndex(tail, "\n"); i >= 0 && len(tail)-i < 300 {
 			tail = tail[i+1:]
+		}
+		// The USB reset's hint, if any, under the first line of err.
+		if _, hint, ok := strings.Cut(err.Error(), "\n"); ok && silentLink(err) {
+			tail += "\n" + hint
 		}
 		return setupFail("hold the board's boot button (G0) while plugging it in to force download mode, close any serial monitor using the port, and run gogo setup again",
 			"esptool cannot talk to the board on %s: %s", s.port, tail)
@@ -589,8 +611,16 @@ func (s *setup) boardFirmware() (map[string]string, string) {
 	if !serialSupported(s.env.goos) {
 		return nil, "gogo cannot read the serial console on " + s.env.goos
 	}
-	for try := 0; try < 4; try++ {
-		if try > 0 {
+	// Four tries while the board restarts; then, if it never answered and
+	// its USB device fails the probe too (a silent USB link, not a board
+	// without gogo firmware: recover resets only then), one more after a
+	// USB reset.
+	for try := 0; try < 5; try++ {
+		if try == 4 {
+			if s.usb.recover(s.port) != nil {
+				break
+			}
+		} else if try > 0 {
 			time.Sleep(s.env.retryDelay)
 		}
 		c, err := s.openBoard()

@@ -100,7 +100,7 @@ func TestFirmwareDetectsBoard(t *testing.T) {
 	old := detectBoard
 	defer func() { detectBoard = old }()
 	var asked string
-	detectBoard = func(esptool, port string) (string, error) { asked = port; return "sticks3", nil }
+	detectBoard = func(esptool, port string, noReset bool) (string, error) { asked = port; return "sticks3", nil }
 	dir := t.TempDir()
 	img := writeImg(t, dir, "a.ggb")
 	var out bytes.Buffer

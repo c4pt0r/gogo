@@ -1278,19 +1278,55 @@ LE".
 ## ESP32-S3 boards
 
 - **The USB serial console sometimes goes silent** a few seconds after a
-  reset or after hours (esptool: `No serial data received`), while the
-  program keeps running. It has been seen on both boards, with and
-  without audio and Bluetooth, idle and busy. The device stays listed
-  but answers nothing, not even a request for its serial number string,
-  so esptool's resets (which go over the same link) and JTAG fail too;
-  the chip is not reset. The cause is unknown (desktop applications that
-  open every new serial device are a suspect). *Workaround:* reset the
-  USB device with libusb (`libusb_reset_device` on the device with
-  vendor id 0x303a, chosen by bus and address: a silent device cannot
-  give its serial number) and wait about 4 s; or replug the board, or
-  press its reset button. If the board itself had hung, the watchdogs
-  reset it within 15 s and the next boot says `gogo: last reset: ...` on
-  the screen and the console.
+  reset or after hours (esptool: `No serial data received`; `gogo device
+  info`: `no answer from the board`), while the program keeps running.
+  The USB device still enumerates but answers nothing, not even its
+  string descriptors, so its serial number cannot be read, and esptool's
+  resets (which go over the same link) and JTAG fail too; the chip is not
+  reset. It has been seen on both boards, with and without audio and
+  Bluetooth, idle and busy; the cause is unknown (desktop applications
+  that open every new serial device are a suspect). A USB
+  bus reset of that one device brings it back at once without
+  restarting the chip; esptool's own `--before usb_reset` does not.
+  *Workaround (automatic):* `gogo` now does that reset itself on macOS
+  and Linux. When a board does not answer (`gogo device`, `config`,
+  `push`, `setup`; `monitor` when nothing arrived) or esptool fails
+  (`flash`, `setup`, `firmware -port`),
+  it asks the USB device behind the port for its string descriptor 0.
+  Only when that request times out or comes back empty (the signature
+  of the silent link) does it bus-reset the device, once, wait for the
+  port, retry once and print `gogo: the board's USB link was silent;
+  reset it (USB bus reset)`. A device that answers the request (a board
+  without gogo firmware, one restarting, a busy console) is never reset:
+  the original error is reported as it is. `gogo device usb-reset` does it by hand; `-no-usb-reset` or
+  `GOGO_NO_USB_RESET=1` turns the automatic reset off. Only an
+  Espressif device (vendor id 0x303a) is reset, found from the serial
+  port (not from its serial number), and never while another process
+  of yours has the port open (`lsof` on macOS, `/proc` on Linux; if the
+  check fails or times out, nothing is reset). Processes run as root or
+  by other users cannot be seen, so a root-owned serial logger or
+  ModemManager on the port is not detected. On **Linux** the reset needs write access to the
+  device's `/dev/bus/usb/BBB/DDD` node, usually root's (the probe needs
+  it too). A udev rule gives it to you:
+
+  ```sh
+  echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0660", GROUP="plugdev", TAG+="uaccess"' |
+    sudo tee /etc/udev/rules.d/70-gogo-esp32.rules
+  sudo udevadm control --reload && sudo udevadm trigger
+  ```
+
+  `TAG+="uaccess"` gives the node to the user logged in at the desktop;
+  systemd applies that tag in `73-seat-late.rules`, so the file must sort
+  before it (hence `70-`; a `99-` file would have no effect). Over SSH or
+  on a headless machine there is no such user, and the group does it: be
+  in `plugdev` (`sudo usermod -aG plugdev $USER`, then log in again; it
+  exists on Debian, Ubuntu and Raspberry Pi OS, elsewhere create it with
+  `sudo groupadd plugdev`). OpenOCD's rule for these devices is the same.
+  `gogo` prints this rule when access is denied. On **Windows** gogo
+  cannot reset a USB device: replug the board. The Linux reset has been
+  tested only with fake sysfs trees, not on a board. If the board itself had hung (not
+  just its link), the watchdogs reset it within 15 s and the next boot
+  says `gogo: last reset: ...` on the screen and the console.
 - **The screen console is slow.** With the screen on, 1000 `println`s
   take about 2.2 times as long as without. *Workaround:* print less, or
   build with the console off (`GOGO_CONSOLE=0`).

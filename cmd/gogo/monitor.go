@@ -12,9 +12,15 @@ package main
 // are only changed by -reset. -port defaults like `gogo flash`. -t is the
 // old name of -timeout, kept (unlisted, with a note on stderr) for one
 // release.
+//
+// A capture that received nothing at all may be a silent USB link
+// (usbreset.go): if the board's USB device then fails to answer a control
+// request too (usbProbe), it is reset and the capture runs once more;
+// -no-usb-reset turns that off.
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,7 +29,7 @@ import (
 	"time"
 )
 
-const monitorUsage = "usage: gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]"
+const monitorUsage = "usage: gogo monitor [-port P] [-timeout seconds] [-until text] [-reset] [-no-usb-reset]"
 
 type monitorOpts struct {
 	port  string
@@ -31,6 +37,8 @@ type monitorOpts struct {
 	until string
 	reset bool
 	oldT  bool // the deprecated -t was used
+	// noUSBReset: -no-usb-reset
+	noUSBReset bool
 }
 
 // secondsFlag is a positive number of seconds.
@@ -59,6 +67,7 @@ func parseMonitorArgs(args []string) (monitorOpts, error) {
 	fs.Var(secondsFlag{&o.dur}, "t", "") // deprecated: -timeout
 	fs.StringVar(&o.until, "until", "", "")
 	fs.BoolVar(&o.reset, "reset", false, "")
+	fs.BoolVar(&o.noUSBReset, "no-usb-reset", false, "")
 	pos, err := parseFlags(fs, args, monitorUsage)
 	if err != nil {
 		return o, err
@@ -143,15 +152,72 @@ func monitorCmd(args []string) error {
 			return err
 		}
 	}
-	f, err := openSerial(o.port)
-	if err != nil {
+	return monitorRun(o, monitorEnv{
+		open:   func(p string) (io.ReadWriteCloser, error) { return openSerial(p) },
+		reset:  func(rw io.ReadWriteCloser) error { return resetChip(rw.(*os.File)) },
+		out:    os.Stdout,
+		errOut: os.Stderr,
+		usb:    defaultUSBEnv(),
+	})
+}
+
+// monitorEnv holds the side effects of gogo monitor, replaced in tests.
+type monitorEnv struct {
+	open        func(string) (io.ReadWriteCloser, error)
+	reset       func(io.ReadWriteCloser) error
+	out, errOut io.Writer
+	usb         usbEnv
+}
+
+// monitorRun opens the port and captures; a capture that got nothing from
+// a board whose USB device is silent (env.usb.probe) is run again after a
+// USB reset.
+func monitorRun(o monitorOpts, env monitorEnv) error {
+	once := func() (int64, error) {
+		f, err := env.open(o.port)
+		if err != nil {
+			return 0, err
+		}
+		defer f.Close()
+		// On a retry after a USB reset the chip is reset again: the first
+		// reset's control request could not reach a silent device.
+		if o.reset {
+			if err := env.reset(f); err != nil {
+				return 0, err
+			}
+		}
+		cw := &countWriter{w: env.out}
+		err = capture(f, cw, o.dur, o.until)
+		return cw.n, err
+	}
+	n, err := once()
+	if err != nil || n > 0 || env.usb.probe == nil {
 		return err
 	}
-	defer f.Close()
-	if o.reset {
-		if err := resetChip(f); err != nil {
-			return err
-		}
+	usb := newUSBRecovery(env.usb, o.noUSBReset, env.errOut)
+	if usb.off {
+		return nil
 	}
-	return capture(f, os.Stdout, o.dur, o.until)
+	// Silence on a healthy link is a quiet program, and one gogo cannot
+	// probe is taken for one: nothing to say.
+	var pe probeError
+	if rerr := usb.recover(o.port); rerr == errLinkHealthy || errors.As(rerr, &pe) {
+		return nil
+	} else if rerr != nil {
+		return fmt.Errorf("gogo monitor: nothing arrived from the board\n  %v", rerr)
+	}
+	_, err = once()
+	return err
+}
+
+// countWriter counts the bytes written through it.
+type countWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }
