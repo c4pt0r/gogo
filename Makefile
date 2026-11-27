@@ -610,8 +610,8 @@ ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer -DGOGO_DEBUG=1
 #   checks the embedding API for leaks.
 # - detect_stack_use_after_return=0: with gcc's ASan it is on, and its fake
 #   stack frames make mbedTLS's many small calls about 60 times slower (1 MB
-#   over TLS: 0.18 s without, 10.6 s with, on Linux arm64), past the net
-#   tests' 10 s limit. clang's ASan on macOS leaves it off too.
+#   over TLS: 0.18 s without, 10.6 s with, on Linux arm64), too slow for
+#   the net tests' real-time limits. clang's ASan on macOS leaves it off too.
 TLS_ASAN_OPTIONS = $${ASAN_OPTIONS:+$$ASAN_OPTIONS:}detect_leaks=0:detect_stack_use_after_return=0
 test-tls-asan:
 	$(MAKE) BUILD=build/asan EXTRA_CFLAGS="$(ASAN_FLAGS)" build/asan/gogovm build/asan/test_net build/asan/test_tls

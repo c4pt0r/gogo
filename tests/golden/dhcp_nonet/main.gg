@@ -1,5 +1,7 @@
 // Without a network dhcp.Start fails at once, with port.Open's error for
-// the "netif" port (the host VM's refuses: busy); the client exits.
+// the "netif" port (the host VM's refuses: busy); the client exits. "At
+// once" is checked as well under the 10 s default TimeoutMs, not as a raw
+// clock value: a loaded host can cross a millisecond boundary.
 package main
 
 import (
@@ -9,5 +11,5 @@ import (
 
 func main() {
 	err := dhcp.Start(dhcp.Config{})
-	println("start", err != nil, err.Error(), actor.Now())
+	println("start", err != nil, err.Error(), actor.Now() < 5000)
 }

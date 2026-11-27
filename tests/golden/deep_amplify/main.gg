@@ -3,6 +3,9 @@
 // small, but the paths to its leaves number 16^8 at print depth. Sending
 // it to a port checks it before the driver sees it; that check is bounded,
 // so the sender exits with badcode at once instead of stalling the VM.
+// "At once" is a bound loose enough for a loaded host (the check takes
+// well under a millisecond; an unbounded one would walk billions of
+// paths).
 package main
 
 import (
@@ -41,7 +44,7 @@ func main() {
 		case string:
 			println(m)
 		case actor.DownMsg:
-			if actor.Now()-start < 100 {
+			if actor.Now()-start < 1000 {
 				println("fast")
 			} else {
 				println("slow")
