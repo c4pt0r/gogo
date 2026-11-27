@@ -4,7 +4,11 @@ An ESP-IDF project whose `main` component is the ESP platform layer; it
 compiles the VM core (`runtime/vm/*.c` except `check32.c`) in place from the repo
 root, with the ESP values of the `runtime/vm/config.h` knobs:
 `GOGO_DEFAULT_MAX_WORDS=4096`, `GOGO_TABLE_CAP=1024`, `GOGO_MAX_PORTS=16`,
-`GOGO_EVQ_CAP=64`, `GOGO_ARENA_BYTES=163840` (160 KB), `-Os`; and the
+`GOGO_EVQ_CAP=64`, `GOGO_ARENA_BYTES=163840` (160 KB), `-Os` (the board
+configuration: 16-bit word counts, a 48-byte Actor, 64/16 Bytes handles,
+64 KB of module code; `main.c` resolves the VM's parameters, the `vm.*`,
+`node.max_links` and `code.mem` keys of NVS over these defaults, with
+`vm_params_resolve` before each boot); and the
 storage core (`runtime/vfs/*.c`) with `GOGO_FS_MAX_OPEN=4`,
 `GOGO_FS_SLOT_BYTES=160` (one LittleFS file, see `/flash` below).
 
@@ -513,7 +517,8 @@ in `cmd/gogo/flash.go`.
   which takes the volume's lock) and `format-flash`, plus the board's
   `scan` (nearby networks) and `stats` (net counters, `heap_free`,
   `heap_min`, `arena_used`, and the fixed tables in use as
-  `bytes=N/64`, `ports=N/16`, `subs=N/4`), and `info`, one line
+  `bytes=N/64`, `ports=N/16`, `subs=N/4`; the capacities are the Vm's,
+  `vm.handles` and `vm.max_ports`), and `info`, one line
   `\x02ok fw=<version> board=<sticks3|cardputer> image=<major>.<minor>
   actor_memory=16K memory=160K max_actors=1024 max_ports=16 max_links=8
   code_mem=64K bytes_handles=64/16 provides=<name>,...`

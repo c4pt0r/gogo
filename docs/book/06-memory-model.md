@@ -65,15 +65,48 @@ messages waiting in its mailbox.
 
 ## 6.2 Memory limits
 
-Every actor has a **memory limit**. The default depends on the platform:
+Every actor has a **memory limit**: its heap, its stack and its mailbox
+together. The limits are the VM's parameters, with a default per platform:
 
-| Platform | Default limit per actor | Memory for all actors | Actor table |
-|---|---|---|---|
-| ESP32-S3 boards | 16 KB | 160 KB | 1024 actors |
-| host VM (`gogo run`) | 256 KB | as much as the computer gives | 16384 actors |
+| Limit | ESP32-S3 boards | host VM (`gogo run`, gogovm, libgogo) | Config key | gogovm flag |
+|---|---|---|---|---|
+| memory per actor (default) | 16 KB, at most 256 KB | 1 MB, at most 1 GB | `vm.actor_memory` | `--actor-memory` |
+| memory for all actors | 160 KB (the arena; its ceiling) | no limit | `vm.memory` | `--memory` |
+| live actors | 1024 | 16384, at most 65520 | `vm.max_actors` | `--max-actors` |
+| open ports | 16 | 1024, at most 2048 | `vm.max_ports` | `--max-ports` |
+| node links | 8 | 512, at most 2048 | `node.max_links` | `--max-links` |
+| loaded module code | 64 KB | 16 MB | `code.mem` | |
+| off-heap `Bytes`, VM-wide / per actor | 64 / 16, at most 1024 | 4096 / 256, at most 65535 | `vm.handles` | `--bytes-handles` |
 
-No actor can use more than 256 KB, whatever its limit. `SpawnOpt` sets a
-different limit for one actor:
+**Raising a limit.** The VM reads them once, when it starts, in this
+order: a gogovm flag (or, in an embedding host, a field of its
+`gogo_config`, section 18.3) beats the config key, and the key beats the
+platform default. On a board, set the key and restart it:
+
+```sh
+gogo config set vm.actor_memory 24K     # every actor may now use 24 KB
+gogo device info                        # limits    actor_memory=24K memory=160K ...
+```
+
+On your computer, a flag for one run or the key for every run:
+
+```sh
+gogo run --actor-memory 4M myprog       # or: gogovm --actor-memory 4M myprog.ggb
+gogo config -local set vm.actor_memory 4M
+gogovm --info                           # actor_memory=4M memory=unlimited ...
+```
+
+Sizes take a `K`, `M` or `G` suffix. A value past the platform's ceiling is
+cut to it, with one line on the console (`gogo: vm.actor_memory 2M is over
+this VM's 262140; using 262140` on a board, where an actor holds at most
+65535 words), and one that is not a number is ignored with a line; `gogo
+config set` refuses both before writing. A board's ceilings come from its
+RAM: raising `vm.actor_memory` lets one actor take more of the 160 KB, it
+does not make more. Chapter 12 lists the flags, chapter 11.3 the keys.
+
+`SpawnOpt` sets a different limit for one actor, up to the ceiling, and
+`actor.Limit(p)` reports an actor's limit, so a program can check its
+budget instead of guessing (image format 15.8):
 
 ```go
 func SpawnOpt(f func(), opts Options) PID
@@ -129,16 +162,18 @@ gogo: actor <pid 1> crashed: oom in grow
 ```
 
 A limit smaller than the actor's starting block is raised to fit it, and a
-huge one is cut to the 256 KB maximum.
+huge one is cut to the platform's ceiling (256 KB on a board, 1 GB on the
+host).
 
 > **Tip.** Programs are usually tested with `gogo run`, where the default
-> limit is sixteen times larger than on the board. An actor that works on
+> limit is 64 times larger than on the board. An actor that works on
 > your computer can run out of memory on the board. Give memory-hungry
-> actors an explicit `SpawnOpt` limit during development so the host
-> behaves like the board.
+> actors an explicit `SpawnOpt` limit during development, or run with the
+> board's numbers (`gogo run --actor-memory 16K --memory 160K prog`), so the
+> host behaves like the board.
 
 If the whole VM runs out of memory (all actors together are using the
-160 KB), the actor that is trying to allocate is ended with `OutOfMemory`.
+160 KB, or `vm.memory`), the actor that is trying to allocate is ended with `OutOfMemory`.
 The VM keeps a small emergency reserve so that it can still finish that
 exit and deliver the notifications.
 

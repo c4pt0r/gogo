@@ -21,8 +21,8 @@ limits.
 
 **Why.** Every actor has its own memory limit (section 6.2): its heap, its
 stack and the messages waiting in its mailbox count against it. The
-default is **16 KB on a board** and **256 KB on the host**, sixteen times
-more. On top of that, all actors on an ESP32-S3 board share about
+default is **16 KB on a board** and **1 MB on the host**, 64 times
+more (the config key `vm.actor_memory` changes both, section 6.2). On top of that, all actors on an ESP32-S3 board share about
 **160 KB**, so ten actors at their full default already take it all. An
 idle actor, by contrast, costs about **150 bytes** (section 6.1): many
 small actors are cheap, a few big ones are not.
@@ -67,7 +67,7 @@ func run(label string, limit int) {
 }
 
 func main() {
-	run("default limit:", 0)         // 256 KB under gogo run, 16 KB on a board
+	run("default limit:", 0)         // 1 MB under gogo run, 16 KB on a board
 	run("board-sized limit:", 16384) // what a board gives by default
 	run("sized for the job:", 32768) // measured, with room to spare
 }
@@ -1225,7 +1225,7 @@ Review a design against these:
 - Do the limits of actors busy at the same time fit in 160 KB?
 - Are messages small, and is bulk data a frozen `bytes.Bytes`?
 - Does any actor hold many large `Bytes` at once (16 per actor, 64 per
-  VM), or keep one alive in a variable while it waits?
+  VM on a board; `vm.handles`), or keep one alive in a variable while it waits?
 
 **Flow**
 

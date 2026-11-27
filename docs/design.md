@@ -1648,7 +1648,29 @@ Rules that go with it:
 - **Observable.** `actor.Info(pid).Memory` returns the actor's bytes
   (control block + table slot + block + charged words: queued messages,
   pending `SendAfter`s, links and monitors), comparable to AtomVM's
-  `process_info(memory)`. `tests/footprint` checks the idle-actor budget.
+  `process_info(memory)`, and `actor.Limit(pid)` (15.8) the most it may
+  reach. `tests/footprint` checks the idle-actor budget.
+- **The VM's parameters** (`runtime/vm/params.h`): the limits that size a
+  VM are one model on every platform, with a default per platform and a
+  hard ceiling: an actor's default memory (`vm.actor_memory`: 16 KB on a
+  board, at most 256 KB; 1 MB on the host, at most 1 GB), all actors
+  together (`vm.memory`: a board's 160 KB arena; none on the host), live
+  actors (`vm.max_actors`: 1024 / 16384, at most 65520), ports
+  (`vm.max_ports`: 16 / 1024, at most 2048), node links
+  (`node.max_links`: 8 / 512), module code (`code.mem`: 64 KB / 16 MB) and
+  off-heap `Bytes` handles (`vm.handles`: 64/16 / 4096/256, at most 1024 /
+  65535). One helper resolves them for gogovm, the board firmware and
+  libgogo alike, before `vm_init`: a gogovm flag or a `gogo_config` field
+  beats the config key, which beats the default, and a value past the
+  ceiling is clamped with one console line (`vm_params_resolve`);
+  `vm_params_apply` then sets the Vm's fields (`actor_words`, the
+  allocator's limit, the port and link caps, `mod_cap`, `bytes_cap`,
+  `bytes_per_actor`), which a board keeps in its `Vm`'s padding (its size
+  and free RAM are unchanged). Each actor takes `actor_words` as its
+  `max_words` when made. `gogovm --info` and `gogo device info` print
+  them. Fixed by the image format or the term encoding, not parameters:
+  8 module slots, 2048 ports, 16 nesting levels and 4 KB per message
+  across nodes, 65535 words per message.
 
 ### 5.5.2 Memory layout (32-bit)
 
@@ -1775,14 +1797,21 @@ are free (see the reserved term encodings under the image format, §5.6).
   released. A `code.Module` handle is `slot << 16 | generation` (16
   generation bits, less prone to collisions than the 8 in terms).
 
-**Actor control block** (48 bytes on 32-bit targets; `runtime/vm/actor.h`
-is authoritative):
+**Actor control block** (`runtime/vm/actor.h` is authoritative). Its
+word counts (`mem_words`, `hp`, `sp`, `fp`, `mbox_words`, `max_words`) are
+`gogo_words_t` (`runtime/vm/config.h`): `uint16_t` in the board
+configuration (`GOGO_DEFAULT_MAX_WORDS` at most 65535: a board build
+sets 4096), which keeps the block at 48 bytes and caps an actor at 65535
+words (256 KB); `uint32_t` on the host, whose actor ceiling
+(`GOGO_ACTOR_MAX_WORDS`) is 2^28 words, 1 GB (heap refs are a word
+offset shifted by 2: 30 bits, no term change). The board's layout
+(32-bit), checked by `make check32`:
 
 ```
 offset size field
  0     4    next         run queue / free list link (intrusive)
  4     4    mem          start of the memory block
- 8     2    mem_words    block size in words (at most 64K words = 256 KB per actor)
+ 8     2    mem_words    block size in words (at most 65535 words = 256 KB per actor)
 10     2    hp           heap top (word offset, grows up)
 12     2    sp           stack top (word offset, grows down)
 14     2    fp           current frame (word offset)
@@ -1795,10 +1824,22 @@ offset size field
 37     1    flags        trap_exit, has_extra, ...
 38     2    reductions   reductions left in this time slice
 40     2    mbox_words   total size of queued messages (charged)
-42     2    max_words    memory limit (0 = default)
+42     2    max_words    memory limit (the VM's default, Vm.actor_words, unless SpawnOpt set one)
 44     1    mod          module slot whose code it runs (counted in that module's live actors)
 45     3    pad          unused; keeps 48 bytes on 32-bit
 ```
+
+On the host the same fields in the same order, with 4-byte word counts:
+60 bytes on 32-bit (`make check32` checks that too), 88 on 64-bit (72
+with the board's configuration), so an idle host actor is about 152
+bytes. The code is the same for both: only the typedef, `HEAP_MAX_WORDS`
+and the mailbox counter's top (`GOGO_WORDS_MAX`) differ, except for the
+message size walk (msg.c), which reverses pointers through the fields on
+a board, storing `(parent offset << 16) | field index`, and on the host,
+where offsets pass 16 bits, keeps the way back on a stack of frames (64
+in place, then in VM memory; none for an object's last term; if it
+cannot grow, the send fails as `OutOfMemory`). A message stays at most
+65535 words everywhere (`Msg.words`).
 
 There is also a global actor table, 4 bytes per slot (a pointer to the
 control block); a PID's slot indexes it, and the generation stops stale
@@ -2487,8 +2528,11 @@ can serve two devices, and the table can be a board's `static const`).
   no console protocol: `gogo config` edits its file directly.
 - **One boot path** (`runtime/board/board_main.c`):
   `gogo_board_main(board, host, run, words, nwords, &run_rc)` does
-  `vm_init`, `vm_boot`, `net_install`, `vfs_init`, `input_install` in
-  that order and runs the VM, for the ESP firmware and the unix VM alike.
+  `vm_init` (with the VM's parameters the platform resolved,
+  `BoardRun.params`, §5.5.1; NULL: the build's defaults and the config
+  keys), `vm_params_apply`, `vm_boot`, `net_install`, `vfs_init`,
+  `input_install` in that order and runs the VM, for the ESP firmware and
+  the unix VM alike.
   The board's state (the `Vm`, `VfsState`, `InputState`, `NetState`) is
   in the `BoardRun` it fills, with hooks for its own steps (unix: the
   wall clock after `vm_init`, its own run loop for exit statuses; ESP:

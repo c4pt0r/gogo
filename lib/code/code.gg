@@ -18,8 +18,9 @@
 // actor that uses them exit with BadCode.
 //
 // Memory. The code of all loaded modules together may use at most the
-// config key code.mem bytes (`gogo config set code.mem 64K`; a K or M
-// suffix; default 64K); a Load over it is NoMemory. The main program (the
+// config key code.mem bytes (`gogo config set code.mem 64K`; a K, M or G
+// suffix; default 64K on a board, 16M on the host); a Load over it is
+// NoMemory. The main program (the
 // boot image) is not counted. A module runs from its Bytes in place when
 // that is a whole off-heap Bytes (not a Slice) at a 4-byte aligned address
 // (the module keeps the Bytes); other Bytes (heap, any Slice) are copied

@@ -10,7 +10,7 @@ are not supported.
 
 ```text
 gogo build [-path dirs] [-o out.ggb] <dir|file.gg>
-gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb>
+gogo run [--key c=pin]... [--fs-root DIR] [VM parameter flags] [-path dirs] <dir|file.gg|file.ggb>
 gogo env [-path dirs]
 gogo dis <file.ggb>
 gogo info [-path dirs] <file.ggb|dir|file.gg>
@@ -204,7 +204,8 @@ package http
 ## gogo run
 
 ```text
-gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file.gg|file.ggb> [args...]
+gogo run [--key c=pin]... [--fs-root DIR] [--actor-memory SIZE] [--memory SIZE] [--max-actors N]
+         [--max-ports N] [--max-links N] [--bytes-handles N[/M]] [-path dirs] <dir|file.gg|file.ggb> [args...]
 ```
 
 Runs a program on the host VM. Given a directory it builds it first (to a
@@ -286,6 +287,10 @@ Options:
 - `--key c=pin`: in a terminal, pressing the character `c` presses the
   simulated GPIO input `pin` (the level goes to 0, then back to 1). Up to
   16 keys.
+- `--actor-memory`, `--memory`, `--max-actors`, `--max-ports`,
+  `--max-links`, `--bytes-handles`: the VM's limits, passed to `gogovm`
+  as they are (the next section). `gogo run --actor-memory 16K --memory
+  160K prog` runs `prog` with a board's memory.
 
 **Standard input** feeds the simulated hardware:
 
@@ -328,6 +333,81 @@ the computer's clock; `0`, or a time earlier than the VM's build, starts it
 unknown, as on a board.
 
 There is no network on the host (chapter 10).
+
+## gogovm
+
+The host VM: it runs one image, as `gogo run` does after building it
+(`gogo run` finds it and passes it its flags), and is what a script or a
+server runs directly.
+
+```text
+gogovm [flags] <file.ggb> [args...]     run an image; args are the program's (sys.Args)
+gogovm [flags] --info                   print the VM's parameters as this run would resolve them
+gogovm -h | --help                      list the flags
+gogovm --sizeof-actor | --sizeof-net | --has-tls    build facts (alone)
+```
+
+Flags come before the image; everything after it is the program's. An
+unknown flag is a usage error (exit 1).
+
+**The VM's parameters.** Each is also a config key (chapter 11.3) and a
+field of an embedding host's `gogo_config` (chapter 18.3); the flag beats
+the key, the key beats the default, the same rule on every platform. A
+value past the most is cut to it with one line on standard error (`gogo:
+vm.actor_memory 2G is over this VM's 1G; using 1G`); a flag that is not
+a number is a usage error. SIZE is bytes, with an optional `K`, `M` or
+`G`.
+
+| Flag | Key | Default (a board's) | Most | Bounds |
+|---|---|---|---|---|
+| `--actor-memory SIZE` | `vm.actor_memory` | 1M (16K) | 1G (256K) | an actor's memory (heap, stack, mailbox) unless `SpawnOpt` sets it; at least 1K |
+| `--memory SIZE` | `vm.memory` | no limit (160K) | none (160K) | all actors together |
+| `--max-actors N` | `vm.max_actors` | 16384 (1024) | 65520 | live actors at once |
+| `--max-ports N` | `vm.max_ports` | 1024 (16) | 2048 | ports open at once; actors + ports at most 65536 |
+| `--max-links N` | `node.max_links` | 512 (8) | 2048 | node links of distributed actors (chapter 20) |
+| `--bytes-handles N[/M]` | `vm.handles` | 4096/256 (64/16) | 65535 (1024) | off-heap `Bytes`, in the VM and (M) per actor |
+| | `code.mem` | 16M (64K) | 4G - 1 | loaded module code (chapter 14) |
+
+`gogovm --info` prints them as the run would have them, one line of
+`name=value` fields, the format of `gogo device info`'s `limits` line:
+
+```sh
+$ gogovm --info
+actor_memory=1M memory=unlimited max_actors=16384 max_ports=1024 max_links=512 code_mem=16M bytes_handles=4096/256
+$ GOGO_CONFIG=my.cfg gogovm --actor-memory 4M --info
+actor_memory=4M memory=2G max_actors=16384 max_ports=1024 max_links=512 code_mem=16M bytes_handles=4096/256
+```
+
+(the second with `vm.memory=2G` in `my.cfg`).
+
+**Other flags.**
+
+| Flag | Meaning |
+|---|---|
+| `--fs-root DIR` | `/flash` from `DIR/flash` (created), `/sd` from `DIR/sd` if it exists (above) |
+| `--key C=PIN` | in a terminal, the character `C` presses the simulated GPIO input `PIN` (0..63; repeatable) |
+| `--screen ansi\|text\|none` | how the `screen` port shows its grid: ANSI on the terminal, a text dump of every frame, or nothing (default: ansi on a terminal, else text) |
+| `--host-net` | the `tcp` and `tcp_listen` ports use the host's sockets (`GOGO_NET=host` likewise): a real network peer, such as a server node (chapter 20) |
+| `--net-fd N` | file descriptor N (inherited, a socketpair end) is the simulated network link; not with `--host-net` |
+| `--sim-clock` | time moves only when the network simulator says so (needs `--net-fd`) |
+| `--without NAME,...` | tests: leave the named drivers (`kbd`, `tls`, ...) and mounts (`/sd`) out of the board |
+| `--fs-quota BYTES` | tests: each medium may hold BYTES of files (section 16.5) |
+
+**Environment.**
+
+| Variable | Meaning |
+|---|---|
+| `GOGO_CONFIG` | the config store, one `key=value` a line (default `~/.gogo/config`): `sys.Config`, and the VM's keys above |
+| `GOGO_NET=host` | as `--host-net` |
+| `GOGO_UNIX_TIME_MS` | start the wall clock at that Unix time in ms (0: unknown, as on a board) |
+| `GOGO_TLS_CA_FILE` | the PEM file of trusted certificates for the `tls` port (default the system bundle; chapter 17.6) |
+| `GOGO_TLS_BUNDLE_FILE` | tests: trust anchors from an ESP-IDF certificate bundle, with the firmware's rule |
+| `GOGO_TLS_STATS` | when set, one `tls-stats ...` line on standard error at exit |
+
+**Exit status** is `gogo run`'s (above): 0 when `main` ends normally, 1
+for a usage error or no memory at boot, 2 for a bad image, 3 for an image
+that requires what this VM lacks, 4 when `main` crashes, and `main`'s own
+code from 64.
 
 ## gogo env
 
@@ -575,15 +655,18 @@ Operations on the board itself, over its serial console:
 - `info` shows the firmware the board runs: its version (the `git
   describe` it was built from, `dev` without git, `-dirty` for
   uncommitted changes), the board it was built for, the image format it
-  runs (`gogo version` shows the one `gogo` writes) and the requirement
-  names it provides (the drivers and mounts an image may require, as
-  `gogo info` lists them for an image):
+  runs (`gogo version` shows the one `gogo` writes), the VM's limits as
+  it runs with them (its parameters: the config keys over the board's
+  defaults, section 6.2; a firmware before them has no `limits` line) and
+  the requirement names it provides (the drivers and mounts an image may
+  require, as `gogo info` lists them for an image):
 
   ```text
   $ gogo device info
-  firmware  gogo v0.2.0
+  firmware  gogo v0.3.0
   board     sticks3 (M5StickS3)
-  image     format 15.6 (runs images 15.0 to 15.6)
+  image     format 15.8 (runs images 15.0 to 15.8)
+  limits    actor_memory=16K memory=160K max_actors=1024 max_ports=16 max_links=8 code_mem=64K bytes_handles=64/16
   provides  gpio netif udp tcp tcp_listen tls node power imu ir_tx ir_rx mic speaker screen /flash float
   ```
 
@@ -592,7 +675,8 @@ Operations on the board itself, over its serial console:
 - `scan` lists the 2.4 GHz networks the board sees.
 - `stats` prints the board's network counters, free memory and how full
   the VM's fixed tables are, as used/capacity: `bytes=N/64` (off-heap
-  `bytes.Bytes` handles), `ports=N/16` (open ports) and `subs=N/4`
+  `bytes.Bytes` handles, of `vm.handles`), `ports=N/16` (open ports, of
+  `vm.max_ports`) and `subs=N/4`
   (`net.Subscribe` slots). When a port open fails or a tcp write gets
   `Done{-1}`, these show whether a table is full. A firmware built
   without `net` prints no network counters and no `subs`.

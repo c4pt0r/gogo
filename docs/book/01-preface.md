@@ -85,8 +85,9 @@ device down.**
 - **General-purpose secure networking.** There is an HTTPS client (TLS 1.2,
   one connection at a time), but no TLS server, no client certificates
   and no HTTP/2.
-- **Big data.** Each actor is limited to 16 KB by default on a board, and a
-  single actor can never use more than 256 KB.
+- **Big data on a board.** Each actor is limited to 16 KB by default on a
+  board, and a single actor can never use more than 256 KB there (on a
+  computer, 1 MB by default and up to 1 GB).
 
 ## Where gogo is going
 

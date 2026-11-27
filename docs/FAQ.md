@@ -160,7 +160,24 @@ standard input, the network can be simulated or connected, `/flash` and
 terminal. `gogo run` builds a program and runs it in gogovm, which is how
 you develop and test without a board; all the golden tests and book examples
 run this way. `build/gogovm_mcu` is the same VM with the boards' memory
-limits, to check that a program fits.
+limits, to check that a program fits. `gogovm -h` lists its flags and
+`gogovm --info` the limits it runs with (book chapter 12).
+
+### How much memory can an actor use on a PC?
+1 MB by default, and up to 1 GB: on the host VM (gogovm, `gogo run`,
+libgogo) an actor's word counts are 32-bit, where a board's are 16-bit
+(an actor there holds at most 65535 words, 256 KB, which keeps its
+record at 48 bytes). Raise the default for every actor with `gogovm
+--actor-memory 64M` (or `gogo run --actor-memory 64M`, the config key
+`vm.actor_memory`, or `gogo_config.actor_memory` when embedding), or for
+one actor with `actor.SpawnOpt(f, actor.Options{MaxMemory: 64 << 20})`;
+`actor.Limit(p)` tells a program its limit. The whole VM has no memory
+limit on the host unless you set one (`--memory`, `vm.memory`). The
+stack lives in the same block, so a bigger limit is a deeper recursion
+too. One message is still at most 65535 words (256 KB) and, across
+nodes, 4 KB: big data moves as off-heap `bytes.Bytes` (4096 of them in a
+host VM, 256 per actor, `vm.handles`). Book 6.2 has the limits of each
+platform.
 
 ### Is gogo (or gogovm) an RTOS?
 No. gogo is a virtual machine that runs **on top of** an operating system,
@@ -340,7 +357,7 @@ files outside the book point to GitHub on the site.
 [Book chapter 21](book/21-best-practices.md) collects them, each with the
 reason it follows from how gogo works and a tested example: give every
 working actor a measured `MaxMemory` (16 KB per actor and about 160 KB in
-all on a board, against 256 KB per actor on the host); keep messages small
+all on a board, against 1 MB per actor on the host); keep messages small
 and move bulk data as frozen `bytes.Bytes`; bound every producer with acks,
 `Call` or pulling; keep shared state in one owner actor; give every `Call`
 a timeout, check its error and never call in a cycle; persist what must survive a restart;
@@ -581,9 +598,12 @@ fill one to 512. Each board's link costs the server one port (the node
 port takes the TCP connection over) and one of its node links; the
 defaults are 1024 ports and 512 links, and both can be raised to 2048
 with the config keys `vm.max_ports` and `node.max_links` or `gogovm
---max-ports` / `--max-links`. With raised caps a server takes about 930
-boards; then its node agent's memory (256 KB) is nearly full and new
-boards are refused, while the others carry on (`make test-dist-scale`).
+--max-ports` / `--max-links`. The server's node agent's memory follows
+the link cap, so the link cap is what refuses the next board; the PID
+slots bound the caps themselves: with 1390 ports and 1380 links a server
+takes 1380 boards, each of which can call it, and the others carry on
+when one more is refused (`make test-dist-scale`; until v0.2 the agent
+had a fixed 256 KB and the server stopped near 930).
 Give the process enough file descriptors (`ulimit -n`): one per board.
 They need not join one at a time, but not all at once either: the server
 takes 16 connections into their handshake at a time (its link cap / 32;

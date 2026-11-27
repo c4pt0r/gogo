@@ -1,5 +1,5 @@
 // Treat each actor as a small machine: the same work passes under the
-// host's default limit (256 KB) and fails under a board's (16 KB). Giving
+// host's default limit (1 MB) and fails under a board's (16 KB). Giving
 // the actor an explicit MaxMemory makes the host behave like the board,
 // and actor.Info shows what the work really needs.
 package main
@@ -39,7 +39,7 @@ func run(label string, limit int) {
 }
 
 func main() {
-	run("default limit:", 0)         // 256 KB under gogo run, 16 KB on a board
+	run("default limit:", 0)         // 1 MB under gogo run, 16 KB on a board
 	run("board-sized limit:", 16384) // what a board gives by default
 	run("sized for the job:", 32768) // measured, with room to spare
 }

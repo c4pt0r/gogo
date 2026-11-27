@@ -262,7 +262,8 @@ program.
   permissions are not built yet; they were meant to come with HTTPS, which
   does not add them (chapter 17).
 - **Memory.** All loaded module code together is limited by the
-  configuration key `code.mem` (default 64 KB):
+  configuration key `code.mem` (default 64 KB on a board, 16 MB on the
+  host):
 
   ```sh
   gogo config set code.mem 128K

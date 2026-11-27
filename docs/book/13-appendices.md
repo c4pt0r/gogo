@@ -391,15 +391,16 @@ taken.
 
 | Limit | Board (ESP32-S3) | Host |
 |---|---|---|
-| memory for all actors | 160 KB | the computer's |
-| default memory limit per actor | 16 KB | 256 KB |
-| largest memory limit per actor | 256 KB | 256 KB |
-| actors at once | 1024 | 16384 |
-| idle actor | about 150 bytes | about 150 bytes |
+| memory for all actors | 160 KB (`vm.memory`, at most that) | the computer's (`vm.memory`, `gogovm --memory`) |
+| default memory limit per actor | 16 KB (`vm.actor_memory`) | 1 MB (`vm.actor_memory`, `gogovm --actor-memory`) |
+| largest memory limit per actor | 256 KB | 1 GB |
+| actors at once | 1024 (`vm.max_actors`) | 16384 (`vm.max_actors`, `gogovm --max-actors`; at most 65520) |
+| idle actor | about 150 bytes | about 150 bytes (152 on a 64-bit computer) |
 | reductions per time slice | 1000 | 1000 |
 | open ports | 16 (`vm.max_ports`, up to 2048) | 1024 (`vm.max_ports` or `gogovm --max-ports`, up to 2048) |
 | open files | 4 | 4 |
-| off-heap `Bytes` per actor / in the VM | 16 / 64 | 16 / 64 |
+| off-heap `Bytes` per actor / in the VM | 16 / 64 (`vm.handles`, up to 1024 in the VM) | 256 / 4096 (`vm.handles`, `gogovm --bytes-handles`, up to 65535) |
+| loaded module code | 64 KB (`code.mem`) | 16 MB (`code.mem`) |
 | `Bytes` shared instead of copied | over 64 bytes, from `Freeze` | same |
 | TCP connections | 4 | (no network; `GOGO_NET=host`: the host's sockets, up to the ports) |
 | `net.Subscribe` subscribers | 4 | (no network) |

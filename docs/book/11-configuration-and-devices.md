@@ -249,14 +249,26 @@ The board talks to `gogo config` over the USB serial console, so close
 | `net.ip`, `net.mask`, `net.gw`, `net.dns` | ip (`a.b.c.d`) | `gogo/dhcp` | a static address instead of DHCP (`net.mask` defaults to 255.255.255.0) |
 | `fs.flash.size` | size | firmware | size of `/flash` (chapter 9) |
 | `fs.flash.format` | `yes` | firmware | deprecated: format `/flash` once at the next boot; use `gogo device format-flash` |
-| `code.mem` | size | VM (`gogo/code`) | budget for loaded module code, default 64 KB (chapter 14) |
+| `code.mem` | size | VM (`gogo/code`), at boot | budget for loaded module code: 64 KB on a board, 16 MB on the host (chapter 14) |
 | `node.token` | string (at most 200 bytes) | `gogo/node` | the shared secret of distributed actors (chapter 20); never printed |
 | `node.name` | string (at most 32 bytes) | `gogo/node` | this node's name when a program gives none |
+| `vm.actor_memory` | size | VM, at boot | an actor's default memory limit (heap, stack and mailbox; `SpawnOpt` sets one actor's): 16 KB on a board, at most 256 KB; 1 MB on the host, at most 1 GB (`gogovm --actor-memory`); at least 1 KB |
+| `vm.memory` | size | VM, at boot | memory for all actors together: on a board the 160 KB arena, which is also its most; no limit on the host (`gogovm --memory`); 0 is no limit |
+| `vm.max_actors` | int | VM, at boot | most live actors: 1024 on a board, 16384 on the host (`gogovm --max-actors`), at most 65520 |
 | `vm.max_ports` | int | VM, at boot | most ports open at once: 16 on a board, 1024 on the host (`gogovm --max-ports`), at most 2048; the table grows as ports open |
-| `node.max_links` | int | `node` port, at boot | most node links: 8 on a board, 512 on the host (`gogovm --max-links`) |
+| `node.max_links` | int | `node` port, at boot | most node links: 8 on a board, 512 on the host (`gogovm --max-links`), at most 2048 |
+| `vm.handles` | `N` or `N/M` | VM, at boot | off-heap `Bytes` handles in the whole VM, and (`M`) for one actor: 64/16 on a board (at most 1024), 4096/256 on the host (at most 65535; `gogovm --bytes-handles`); without `M`, the default's, at most `N` |
 
 A size is a number of bytes with an optional `K` or `M` suffix (`65536`,
-`64K`, `1M`). `gogo config keys` prints this table. The `wifi.`, `net.`,
+`64K`, `1M`); the VM's keys (`vm.*`, `code.mem`) also take `G`. The VM
+reads its keys once, when it starts (restart the board after a change): a
+gogovm flag, or a field of an embedding host's `gogo_config`, beats the
+key, and the key beats the platform's default. A value past the
+platform's most is cut to it with one line on the console, and one that
+is not a number is ignored with a line; `gogo config set` checks the
+ranges above before writing, and `gogo device info` (or `gogovm --info`)
+shows what the VM runs with (section 6.2 has the table per platform).
+`gogo config keys` prints this table. The `wifi.`, `net.`,
 `fs.`, `code.`, `gogo.`, `node.` and `vm.` prefixes are reserved for keys gogo adds
 later; anything else is yours. A dotted prefix per program (`demo.url`,
 `fsdemo.mode`) keeps keys apart.

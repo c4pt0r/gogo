@@ -170,13 +170,25 @@ from its options:
 |---|---|
 | `size` | the struct's size, set by `GOGO_CONFIG_INIT` (section 18.4 explains why) |
 | `flags` | `GOGO_CONFIG_CODE_LOAD` lets `code.Load` load modules (section 18.10) |
-| `mem_limit` | bytes the whole VM may allocate, on top of each actor's own limit; 0 = no cap |
-| `max_actors` | live actors at once; 0 = the build's default (16384), at most 65520 |
+| `mem_limit` | bytes the whole VM may allocate, on top of each actor's own limit; 0 = no cap (the parameter `vm.memory`) |
+| `max_actors` | live actors at once; 0 = the build's default (16384), at most 65520 (`vm.max_actors`) |
 | `grant` | the requirement names the VM may serve, a `NULL`-terminated list; `NULL` = all it has (section 18.9) |
 | `fs_root` | a host directory served as `/flash`, or `NULL` for no storage (section 18.8) |
 | `fs_quota` | bytes the files under `fs_root` may hold; 0 = no quota |
 | `max_ports` | ports open at once (the table grows as they open); 0 = 1024, or fewer when `max_actors` leaves less room (actor and port PIDs share 65536 slots); at most 2048 |
 | `max_links` | node links at once (chapter 20; an embedded VM has no node port yet); 0 = 8; at most 2048 |
+| `actor_memory` | an actor's default memory limit in bytes, unless `SpawnOpt` sets one; 0 = 1 MB; at least 1 KB, at most 1 GB (`vm.actor_memory`) |
+| `bytes_handles` | off-heap `Bytes` handles in the whole VM; 0 = 4096; at most 65535 (`vm.handles`) |
+| `bytes_per_actor` | of those, how many one actor may hold; 0 = 256, at most `bytes_handles` |
+
+These are the VM's parameters, the same on every platform (chapter 6.2,
+the keys in 11.3, gogovm's flags in 12): a field set here beats the host's
+config key of the same parameter (read through its `config_get`, when it
+has one), which beats the library's default, and a value past the most is
+cut to it with one line on stream 2. `code.mem` has no field: its key or
+16 MB. The last three fields were appended after v0.2.0 (the struct is
+size-first: a host compiled against an older header passes a smaller
+`size`, and they read as 0).
 
 Over `mem_limit`, the VM's allocations fail and the actor that asked is
 stopped with `oom`, as when an actor goes over its own limit
@@ -822,7 +834,7 @@ in any minor release:
 | stable | experimental |
 |---|---|
 | `gogo_new`, `gogo_load`, `gogo_start`, `gogo_step`, `gogo_next_deadline`, `gogo_run`, `gogo_free` | host ports: `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`, `gogo_poster_port_post`, `gogo_port_driver` |
-| the host table, `gogo_host_posix`, `gogo_new_posix` | the flag `GOGO_CONFIG_CODE_LOAD`; the configuration's `grant`, `fs_root`, `fs_quota`, `max_ports` and `max_links` |
+| the host table, `gogo_host_posix`, `gogo_new_posix` | the flag `GOGO_CONFIG_CODE_LOAD`; the configuration's `grant`, `fs_root`, `fs_quota`, `max_ports`, `max_links`, `actor_memory`, `bytes_handles` and `bytes_per_actor` |
 | the configuration's `size`, `flags`, `mem_limit`, `max_actors` | `gogo_get_stats` and its fields |
 | the error codes, `gogo_strerror`, `gogo_version`, `gogo_image_format` | `gogo_image_info_get`, `gogo_image_requires` |
 | `gogo_post`, `gogo_close_posts` and the poster (`gogo_poster_new`, `_post`, `_close_posts`, `_free`) | `gogo_run_thread`, `gogo_join` |

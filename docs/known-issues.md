@@ -264,19 +264,36 @@ rebuilt:
   `SendAfter` whose creator has exited. `actor.Info(p).Memory` leaves
   these out too. The name table is bounded only by the number of names
   programs register.
-- **The `bytes.Bytes` handle table is small.** The whole VM has 64
-  off-heap handles (`GOGO_BYTES_HANDLES`) and one actor may hold 16. When
+- **The `bytes.Bytes` handle table is small on a board.** The whole VM
+  has 64 off-heap handles and one actor may hold 16 (4096 and 256 on the
+  host; the config key `vm.handles` raises them, to at most 1024 on a
+  board and 65535 on the host). When
   the table is full, the VM first collects the holders; if that frees
   nothing, the allocation fails (`OutOfMemory`) and ports that need a
   handle refuse (a stream `Out` gets `Done{-1}`). *Workaround:*
   do not keep many large frozen `Bytes` alive in one program; on a
   board, `gogo device stats` shows the table's use (`bytes=N/64`, with
   `ports=N/16` and `subs=N/4` for the port and `net.Subscribe` tables).
-- **Host and board memory limits differ by 16x.** An actor spawned
-  without `SpawnOpt` may use 256 KB on the host and 16 KB on a board, so
+- **Host and board memory limits differ by 64x.** An actor spawned
+  without `SpawnOpt` may use 1 MB on the host and 16 KB on a board, so
   a program that passes under `gogo run` can die with `oom` on the board.
-  *Workaround:* test with `build/gogovm_mcu` (built by `make test-go`),
-  which has the board limits: `GOGO_VM=build/gogovm_mcu gogo run ...`.
+  *Workaround:* run with the board's limits, `gogo run --actor-memory 16K
+  --memory 160K prog`, or test with `build/gogovm_mcu` (built by `make
+  test-go`), which has the board build: `GOGO_VM=build/gogovm_mcu gogo run ...`.
+- **An actor holds at most 256 KB on a board** (65535 words: its word
+  counts are 16-bit there, which keeps its record at 48 bytes); a larger
+  `vm.actor_memory` or `MaxMemory` is cut to that. On the host the
+  ceiling is 1 GB. One message is at most 65535 words (256 KB) on every
+  platform; a send of a bigger value fails with `OutOfMemory`.
+- **The VM's limits are read at start.** `vm.actor_memory`, `vm.memory`,
+  `vm.max_actors`, `vm.max_ports`, `node.max_links`, `vm.handles` and
+  `code.mem` take effect at the next VM start (restart the board after
+  `gogo config set`); a running VM keeps its own. `vm.memory` on a board
+  can only lower the 160 KB arena.
+- **`actor.Limit` needs image format 15.8.** It is a new builtin, not a
+  field of `actor.ProcInfo` (a field would have made every program that
+  calls `actor.Info` 15.8); a program that calls it does not run on
+  firmware before 15.8.
 - **`gogo/supervisor` supervises one child.** There is no multi-child
   `one_for_one` strategy. *Workaround:* one supervisor per child.
 - **Small costs on hot paths.** Sending to a dead or stale PID walks the
@@ -691,8 +708,8 @@ rebuilt:
   *Workaround:* count `Done` events and buffer
   (`docs/book/examples/10-tcp-echo` does).
 - **Small writes need a `Bytes` handle.** A small `Out` is copied into
-  a port-held handle (for retransmission); if the VM's 64 handles are all
-  taken, it is refused with `Done{-1}`.
+  a port-held handle (for retransmission); if the VM's handles (64 on a
+  board, `vm.handles`) are all taken, it is refused with `Done{-1}`.
 - **The microphone does not send `port.Closed`.** tcp, tls and host
   ports (`gogo_port_close`) do, but a microphone hardware failure is not
   reported: its owner learns of it only by silence. The message and its
@@ -795,13 +812,18 @@ rebuilt:
   `tls` port still runs on the simulated stack), so addresses are
   numeric; `tcp_listen` binds every interface of the computer and `tcp`
   connects anywhere.
-- **Boards per server: about 930 at most.** A host VM serves 512 boards
+- **Boards per server: about 1380 at most.** A host VM serves 512 boards
   by default (`node.max_links`, `vm.max_ports`, or `gogovm --max-links` /
   `--max-ports`, each at most 2048); a board link costs the server one
-  port and one file descriptor. Past about 930 boards the server's node
-  agent (one entry per board, 256 KB at most) refuses new ones, whatever
-  the caps. A board's own links cost it two ports each (its MCU stack
-  cannot hand a TCP connection to the node port).
+  port and one file descriptor. The server's node agent has a memory
+  limit that follows the link cap (and `vm.actor_memory`), so it no longer
+  stops a server near 930 boards; the 65536 PID slots do: ports and remote
+  PIDs (each board's door, each caller) share the 4096 above 0xF000, so
+  1390 ports and 1380 links is about the most where every board can call
+  the server (`make test-dist-scale`). With more links than that, boards
+  still join but calls go unanswered once the remote PIDs run out. A
+  board's own links cost it two ports each (its MCU stack cannot hand a
+  TCP connection to the node port).
 - **Joining needs retries.** A server takes *L* / 32 connections into
   their handshake at once (16 on a host, 2 on a board; at most 64) and
   answers the others `errors.Busy`; `node.Connect` makes one attempt, so a

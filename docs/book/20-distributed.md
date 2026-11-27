@@ -310,7 +310,8 @@ delays a few by several hundred ms).
 | Limit | Value |
 |---|---|
 | frame (one message, encoded) | 4096 bytes |
-| node links per VM, *L* | 8 on a board, 512 on a host VM; set with the config key `node.max_links` or `gogovm --max-links` (at most 2048) |
+| node links per VM, *L* | 8 on a board, 512 on a host VM; set with the config key `node.max_links` or `gogovm --max-links` (at most 2048; about 1380 boards serve well, below) |
+| the node agent's memory limit | 256 KB on a board; on a host VM the most of that, `vm.actor_memory` (1 MB) and 64 KB + 320 bytes × *L* |
 | ports per VM | 16 on a board, 1024 on a host VM; `vm.max_ports` or `gogovm --max-ports` (at most 2048) |
 | ports per link | 1 on a host VM (the node port takes the TCP connection over), 2 on a board (TCP and node port) |
 | remote PIDs known at once | 48 + 2*L* (64 on a board; also at most 4096 minus the port cap) |
@@ -324,12 +325,23 @@ delays a few by several hundred ms).
 **How many boards a server serves.** A host VM serves 512 boards with
 the default caps (1024 ports, 512 links), each costing it one port and
 one link; `tests/dist` fills a server to 512 and checks that the 513th is
-refused. Raising both caps (up to 2048) goes further until the server's
-node agent, which keeps one entry per board, nears its memory limit
-(256 KB): from then on new boards are refused with `errors.Refused`, and
-the server and its boards carry on. That happens at about 930 boards
-(`make test-dist-scale`). The process also needs a file descriptor per
-board: raise `ulimit -n` (often 256 by default) for a big server. The
+refused. Raising the caps serves more, up to the link cap: the server's
+node agent, which keeps one entry per board, has a memory limit that
+follows the link cap and `vm.actor_memory` (the most of 256 KB, the
+actor default and 320 bytes a link plus 64 KB: 1 MB on a host VM), and
+it refuses new boards with `errors.Refused` only past three quarters of
+it, far beyond any link cap (until v0.2 it had a fixed 256 KB and
+stopped near 930 boards). What bounds a server now is its 65536 PID
+slots: each board takes a port, and the remote PIDs (each board's door,
+the actors that call the server) share the 4096 minus the port cap above
+the actors. `make test-dist-scale` measures it: with 1390 ports and 1380
+links (`gogovm --max-ports 1390 --max-links 1380`), 1380 boards join and
+every one of them looks a name up through the server; the 1381st is
+refused by the link cap, and the server and its boards carry on. With
+more ports there are fewer remote PIDs: at 1410 ports and 1400 links the
+boards join but some of their calls go unanswered. The process also
+needs a file descriptor per board: raise `ulimit -n` (often 256 by
+default) for a big server. The
 tables above are allocated at the first link, about 100 bytes per link of
 the cap (some 50 KB at 512), plus about 300 bytes per open link and its
 link actor's heap (at most 40 KB, usually a few).
