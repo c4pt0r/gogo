@@ -243,6 +243,9 @@ type bconn struct {
 	resets   int    // RSTs from the VM
 	fwd      int    // payload bytes from the VM passed to the server
 	fwdAt    uint64 // simulated time a segment was last passed on
+	// owed: real time bytes (or a FIN) from the VM were passed to the
+	// server and it has not answered since (zero: nothing owed).
+	owed time.Time
 }
 
 type bridge struct {
@@ -259,12 +262,24 @@ type bridge struct {
 	// every 2 s of simulated time, the others dropped unacknowledged (each
 	// write still completes within a wait, but the transfer barely moves).
 	stall map[uint16]int
+	// notify has a value once a server connection's reader has data or
+	// reached EOF.
+	notify chan struct{}
 }
 
 func newBridge(t *testing.T, v *sim.VM, addr string) *bridge {
 	return &bridge{t: t, v: v, addrs: map[uint16]string{443: addr}, names: map[string]bool{},
-		conns: map[uint16]*bconn{}, stall: map[uint16]int{}}
+		conns: map[uint16]*bconn{}, stall: map[uint16]int{}, notify: make(chan struct{}, 1)}
 }
+
+// serverGrace is how long, in real time, the bridge lets a server owe an
+// answer before it moves the VM's clock on. Simulated time otherwise runs
+// several times faster than real time while the VM is idle (50 ms per
+// round of a few ms), so a server slowed down by a loaded host (its TLS
+// handshake, the scheduler) looked to the VM like one that took seconds,
+// and the VM's timeouts fired. A server that never answers costs the
+// grace once per segment passed to it.
+const serverGrace = time.Second
 
 // exchange sends a frame and queues the VM's answer; false once the VM
 // has exited.
@@ -302,12 +317,14 @@ func (b *bridge) open(syn sim.TCP) {
 	c.srv = srv
 	c.data = make(chan []byte, 64)
 	go func() {
+		defer b.wake()
 		defer close(c.data)
 		for {
 			buf := make([]byte, 16384)
 			n, err := srv.Read(buf)
 			if n > 0 {
 				c.data <- buf[:n]
+				b.wake()
 			}
 			if err != nil {
 				return
@@ -319,6 +336,13 @@ func (b *bridge) open(syn sim.TCP) {
 	f := c.frame(sim.SYN|sim.ACK, nil, sim.MSSOption(1460)...)
 	c.seq++
 	b.exchange(f)
+}
+
+func (b *bridge) wake() {
+	select {
+	case b.notify <- struct{}{}:
+	default:
+	}
 }
 
 func (c *bconn) close() {
@@ -387,6 +411,8 @@ func (b *bridge) handle(f []byte) {
 			c.ack += uint32(len(s.Payload))
 			if _, err := c.srv.Write(s.Payload); err != nil {
 				c.srvEOF = true
+			} else if c.owed.IsZero() {
+				c.owed = time.Now()
 			}
 		}
 		c.needAck = true
@@ -397,6 +423,9 @@ func (b *bridge) handle(f []byte) {
 		c.needAck = true
 		if tc, ok := c.srv.(*net.TCPConn); ok {
 			tc.CloseWrite()
+			if c.owed.IsZero() {
+				c.owed = time.Now()
+			}
 		}
 	}
 }
@@ -417,6 +446,7 @@ func (b *bridge) step() bool {
 		for more := true; more; {
 			select {
 			case d, ok := <-c.data:
+				c.owed = time.Time{}
 				if !ok {
 					c.srvEOF = true
 					c.data = nil
@@ -473,17 +503,29 @@ func (b *bridge) step() bool {
 	return progressed
 }
 
-// wait for data from any live server connection, up to d of real time.
+// wait for data or EOF from any server connection, up to d of real time.
 func (b *bridge) wait(d time.Duration) {
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		for _, c := range b.all {
-			if !c.done && c.data != nil && len(c.data) > 0 {
-				return
-			}
-		}
-		time.Sleep(200 * time.Microsecond)
+	tm := time.NewTimer(d)
+	defer tm.Stop()
+	select {
+	case <-b.notify:
+	case <-tm.C:
 	}
+}
+
+// owing is how much longer, in real time, a live connection's server
+// may still answer within serverGrace (0: none owes an answer).
+func (b *bridge) owing() time.Duration {
+	var left time.Duration
+	for _, c := range b.all {
+		if c.done || c.owed.IsZero() {
+			continue
+		}
+		if d := serverGrace - time.Since(c.owed); d > left {
+			left = d
+		}
+	}
+	return left
 }
 
 // run relays until the VM exits (real-time limit: the VM's, plus time
@@ -507,6 +549,10 @@ func (b *bridge) run() {
 		idle++
 		if idle < 3 {
 			b.wait(5 * time.Millisecond) // the server may be computing
+			continue
+		}
+		if d := b.owing(); d > 0 {
+			b.wait(d) // a server still owes an answer: let it come first
 			continue
 		}
 		if !b.advance(50) {
@@ -908,16 +954,11 @@ func TestTLSHandshakeTimeout(t *testing.T) {
 		"time true\ndial true\nclosed 9\nclosed port\ndone\n")
 }
 
-// The owner exits in the middle of the handshake (the server is slow to
-// answer): the port closes with it, the connection is reset and every TLS
-// buffer is freed (runTLS checks the heap).
+// The owner exits in the middle of the handshake (the server reads the
+// ClientHello and never answers): the port closes with it, the connection
+// is reset and every TLS buffer is freed (runTLS checks the heap).
 func TestTLSOwnerExitsDuringHandshake(t *testing.T) {
-	cert := pki(t).leaf(t, certOpts{host: "gogo.test"})
-	srv := startServer(t, nil, func(s *tlsServer, c net.Conn) {
-		time.Sleep(300 * time.Millisecond)
-		tc := tls.Server(c, &tls.Config{Certificates: []tls.Certificate{cert}})
-		s.logf("handshake: %v", tc.Handshake())
-	})
+	srv := startServer(t, nil, func(s *tlsServer, c net.Conn) { io.Copy(io.Discard, c) })
 	r := runTLS(t, srv, "time sleep:100 open sleep:100 exit", "", "time true\nopen true\nexit\ndone\n")
 	if r.stats["opens"] != 1 || r.stats["handshakes"] != 0 {
 		t.Errorf("stats %v", r.stats)
