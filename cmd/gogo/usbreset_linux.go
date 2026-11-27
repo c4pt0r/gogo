@@ -58,6 +58,18 @@ func openUSBNode(node string, d usbDevice) (int, error) {
 	if err != nil {
 		return -1, fmt.Errorf("%s: %v", node, err)
 	}
+	// The node was found by bus and device number: check it is still the
+	// device whose vendor id sysfs gave (it could have re-enumerated in
+	// between), from its device descriptor, which usbfs reads first.
+	b := make([]byte, 18)
+	n, err := syscall.Read(fd, b)
+	if err == nil {
+		err = checkDeviceDescriptor(b[:max(n, 0)], d.vendor)
+	}
+	if err != nil {
+		syscall.Close(fd)
+		return -1, fmt.Errorf("%s: %v", node, err)
+	}
 	return fd, nil
 }
 

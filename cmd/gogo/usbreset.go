@@ -348,6 +348,18 @@ func (d usbDevice) String() string {
 	return fmt.Sprintf("USB device %04x:%04x on bus %d, device %d", d.vendor, d.product, d.bus, d.addr)
 }
 
+// checkDeviceDescriptor checks that b is a USB device descriptor of the
+// vendor id vid.
+func checkDeviceDescriptor(b []byte, vid int) error {
+	if len(b) < 18 || b[0] != 18 || b[1] != 1 {
+		return errors.New("not a USB device descriptor")
+	}
+	if got := int(b[8]) | int(b[9])<<8; got != vid {
+		return fmt.Errorf("now a device of vendor %04x, not %04x (it re-enumerated)", got, vid)
+	}
+	return nil
+}
+
 // checkEspressif refuses any device but an Espressif one.
 func checkEspressif(port string, d usbDevice) error {
 	if d.vendor != espressifVID {

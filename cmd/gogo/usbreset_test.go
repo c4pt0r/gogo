@@ -463,6 +463,25 @@ func TestSysfsUSBDevice(t *testing.T) {
 	}
 }
 
+func TestCheckDeviceDescriptor(t *testing.T) {
+	// The StickS3's: USB 2.0, class EF/02/01, 303a:1001.
+	d := []byte{18, 1, 0x00, 0x02, 0xef, 0x02, 0x01, 64, 0x3a, 0x30, 0x01, 0x10, 0x01, 0x01, 1, 2, 3, 1}
+	if err := checkDeviceDescriptor(d, espressifVID); err != nil {
+		t.Errorf("StickS3: %v", err)
+	}
+	if err := checkDeviceDescriptor(d, 0x0403); err == nil || !strings.Contains(err.Error(), "re-enumerated") {
+		t.Errorf("other vendor: %v", err)
+	}
+	if err := checkDeviceDescriptor(d[:10], espressifVID); err == nil {
+		t.Error("short descriptor accepted")
+	}
+	bad := append([]byte{}, d...)
+	bad[1] = 2 // a configuration descriptor
+	if err := checkDeviceDescriptor(bad, espressifVID); err == nil {
+		t.Error("configuration descriptor accepted")
+	}
+}
+
 func TestProcHolders(t *testing.T) {
 	proc := t.TempDir()
 	fd := func(pid, n, target string) {
