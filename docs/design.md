@@ -1638,11 +1638,21 @@ and `runtime/prov/provmsg.h` hold the details.
   A listener learns nothing that allows an offline guess of the PIN; an
   active attacker gets one guess per session attempt, at most five
   refused attempts per session (then it closes), and a session exists
-  only after someone held the **setup key at boot** (StickS3: button A,
-  KEY1 on G11; Cardputer: W, read from the TCA8418 with its pins switched
-  to GPIO for a moment, since the chip keeps scanning across a reset), and
-  for at most 120 seconds. An unconfigured board does not open it on its
-  own. The password is never printed (a dry run prints its length) and is
+  only after someone held the **setup key at boot** for about a second
+  (StickS3: button A, KEY1 on G11; Cardputer: W, read from the TCA8418
+  with its pins switched to GPIO, since the chip keeps scanning across a
+  reset), and for at most 120 seconds. The key is read only after a
+  power-on or a reset by the user or a tool (`ESP_RST_POWERON`,
+  `ESP_RST_USB`): never after a crash, a watchdog or a brownout, when a
+  program may have been pressing it, and never after a session's own
+  restart (an `RTC_NOINIT` flag, so a stuck key does not loop). Pressing
+  the key again, after it was let go, cancels the session; a phone that
+  has not opened a session within 20 s is dropped, so a bystander cannot
+  hold the one connection for the window. The five-refusal bound is per
+  session, and a session needs a deliberate boot with the key held. The
+  PIN and the SRP salt are drawn after the Wi-Fi station is up (the RF
+  on: `esp_random` is then a true RNG). An unconfigured board does not
+  open it on its own. The password is never printed (a dry run prints its length) and is
   wiped from RAM after use.
 - **Flow.** The VM task calls `ble_prov_boot` after the console and the
   config store are up and before Wi-Fi and the image. Not held: it
@@ -1652,9 +1662,10 @@ and `runtime/prov/provmsg.h` hold the details.
   successful association, i.e. the WPA2 handshake, proves the password)
   and the phone reads Connected or ConnectionFailed with the reason, and
   may send other settings. Once the phone has read Connected, the
-  settings are written (password first, then SSID, as `gogo setup`) and
-  the board restarts. On timeout or after too many refusals nothing is
-  written and it restarts too: every session ends in a restart, so a
+  settings are written (password first, then SSID, as `gogo setup`, in
+  one NVS commit) and the board restarts. On timeout (not while a join is
+  under way, for up to 30 s more), on cancel or after too many refusals
+  nothing is written and it restarts too: every session ends in a restart, so a
   normal boot sets up the radio and the memory the program gets.
   `ble_prov_active()` is true from the host's acquire to its release. No
   program runs then (the session comes before the image and ends in a

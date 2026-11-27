@@ -210,8 +210,12 @@ Then:
 1. **Hold the setup key and start the board.** On the M5StickS3 that is
    **button A** (KEY1, the big front button); on the Cardputer ADV it is
    **W** (for Wi-Fi). Hold it while you switch the board on or press its
-   reset button, until the screen shows the setup. Nothing else opens
-   provisioning: an unconfigured board does not start it on its own.
+   reset button; the screen says `gogo: keep holding button A for Wi-Fi
+   setup`; keep holding for about a second, until it shows the setup.
+   Nothing else opens provisioning: an unconfigured board does not start
+   it on its own, and a board that restarts by itself (after a crash, a
+   watchdog, a low battery, or the end of a setup session) does not even
+   look at the key, so a program that uses button A is never taken over.
 2. **The screen shows the session:**
 
    ```text
@@ -219,6 +223,7 @@ Then:
    gogo: app: ESP BLE Provisioning
    gogo: device PROV_gogo_9B56
    gogo: PIN 639615
+   gogo: press button A again to cancel
    ```
 
    The device name ends in four hex digits of the board's Bluetooth
@@ -251,9 +256,15 @@ What happens next:
 - **Wrong PIN.** The app cannot open a session (`session refused` on the
   screen). Try again with the right PIN; after five refused sessions the
   board closes the setup.
+- **Cancel.** Let go of the key and press it again: the board says
+  `gogo: Wi-Fi setup cancelled, nothing changed` and restarts as before.
 - **Timeout.** After 120 seconds without success the board says `gogo:
   Wi-Fi setup timed out, nothing changed`, restarts and runs as before
-  with its old settings. Release the key, or it starts again.
+  with its old settings (a join already under way gets up to 30 seconds
+  more). A key still held at that restart does not start another
+  session.
+- **A phone that connects and does nothing** (not the app) is dropped
+  after 20 seconds, so it cannot hold the setup for the whole window.
 
 Every session ends with a restart, so the program starts afresh with the
 radio and its memory in the normal state.

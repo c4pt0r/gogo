@@ -860,11 +860,14 @@ under "gogo", or `CONFIG_...=n` lines in an `SDKCONFIG_DEFAULTS` overlay):
   `GOGO_NET`): Wi-Fi provisioning over BLE (`ble_prov.c` on the shared
   NimBLE host `ble_host.c`, the messages `runtime/prov/provmsg.c`;
   design.md 5.4.11, book 2.1). Its NimBLE and protocomm settings are in
-  `sdkconfig.ble`. Holding the setup key at boot (StickS3: button A, G11;
-  Cardputer: W) starts a 120 s session for Espressif's provisioning
-  apps, security 2 with a PIN on the screen; the result goes to
-  `wifi.ssid` / `wifi.password` and the board restarts. Boot lines:
-  `gogo: Wi-Fi setup key (W): not held` (serial) at every boot, and in a
+  `sdkconfig.ble`. Holding the setup key for a second at a power-on or
+  reset (StickS3: button A, G11; Cardputer: W) starts a 120 s session for
+  Espressif's provisioning apps, security 2 with a PIN on the screen; the
+  result goes to `wifi.ssid` / `wifi.password` and the board restarts;
+  pressing the key again cancels. Boot lines: `gogo: Wi-Fi setup key (W):
+  not held` (serial) after a power-on or reset, `... not read (watchdog)`
+  (or `crash`, `brownout`, `software restart`, `after Wi-Fi setup`)
+  otherwise, and in a
   session the device name, PIN and countdown (screen and serial).
   Test-only switches: `GOGO_PROV_DRYRUN` (nothing written, no join; the
   SSID and the password's length printed) and `GOGO_PROV_TEST_ENTER`

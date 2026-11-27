@@ -133,11 +133,12 @@ else()
 endif()
 
 # The shared I2C bus (i2c_bus.c) is for the StickS3's PM1, the Cardputer's
-# keyboard and both boards' BMI270 and ES8311; without GOGO_KBD, GOGO_IMU and GOGO_AUDIO
-# (main/Kconfig.projbuild) the Cardputer needs none, and the IDF I2C driver is
-# not linked.
+# keyboard (and the Wi-Fi setup key, GOGO_BLE_PROV, read through it) and both
+# boards' BMI270 and ES8311; without GOGO_KBD, GOGO_IMU, GOGO_AUDIO and
+# GOGO_BLE_PROV (main/Kconfig.projbuild) the Cardputer needs none, and the IDF
+# I2C driver is not linked.
 set(GOGO_I2C_SRCS "")
-if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD OR CONFIG_GOGO_IMU OR CONFIG_GOGO_AUDIO)
+if(GOGO_BOARD STREQUAL "sticks3" OR CONFIG_GOGO_KBD OR CONFIG_GOGO_IMU OR CONFIG_GOGO_AUDIO OR CONFIG_GOGO_BLE_PROV)
     set(GOGO_I2C_SRCS i2c_bus.c)
 endif()
 

@@ -1257,10 +1257,10 @@ LE".
   by `wifi.password`).
 - **No QR code.** The board shows the device name and PIN as text; in
   the app choose to continue without scanning a code.
-- **The setup key is read once, at boot.** On the Cardputer it is read
-  through the keyboard chip: a firmware without the keyboard driver
-  (`GOGO_KBD=n`) cannot enter setup. Holding the key through the restart
-  that ends a session starts another.
+- **The setup key is read at a power-on or a reset only.** Not after a
+  crash, a watchdog or a brownout, and not after a session's own restart.
+  On the Cardputer it is read through the keyboard chip over I2C (the
+  keyboard driver itself is not needed).
 - **Every session ends with a restart**, also on timeout, so a program
   starts about two seconds later than after a normal boot.
 - **Not yet run on hardware:** pressing the setup key on either board

@@ -1,13 +1,21 @@
 /* Wi-Fi provisioning over BLE (ble_prov.h; CONFIG_GOGO_BLE_PROV, which
  * needs GOGO_NET and GOGO_BLE: the NimBLE host of ble_host.c).
  *
- * Entry: ble_prov_boot reads the board's setup key once, early at boot
+ * Entry: ble_prov_boot reads the board's setup key early at boot
  * (StickS3: button A, KEY1 on G11, active low; Cardputer: the W key, read
  * from the TCA8418 as a plain GPIO pair so a key held across a reset is
- * seen). Not held: nothing else happens, the radio is never touched.
+ * seen), only after a power-on or a USB/reset-button reset: never after a
+ * crash, a watchdog or a brownout (a program may have been using the key)
+ * nor after a session's own restart (an RTC_NOINIT flag, so a key still
+ * held then does not loop). The key must be held HOLD_MS (the screen says
+ * to keep holding after KEY_FIRST_MS). Not held: nothing else happens,
+ * the radio is never touched.
  *
- * Session (at most SESSION_S seconds):
- *  - a one-time six-digit PIN from the hardware RNG; the SRP6a salt and
+ * Session (at most SESSION_S seconds; a join under way may take
+ * APPLY_GRACE_S more; pressing the key again, after letting it go, cancels
+ * it; a phone that has not opened a session in AUTH_MAX_S is dropped):
+ *  - the Wi-Fi station up first (the RF on: esp_random is then a true
+ *    RNG), then a one-time six-digit PIN from it; the SRP6a salt and
  *    verifier for user "wifiprov" and that PIN are computed on the board
  *    (protocomm's esp_srp_gen_salt_verifier), and the PIN is shown on the
  *    screen and the serial console, with a countdown;
@@ -23,10 +31,11 @@
  *    polls the status and sees Connected, or ConnectionFailed with the
  *    reason (and may send other settings);
  *  - success (the phone saw Connected): the settings are written to gogo's
- *    config store, wifi.password then wifi.ssid, as `gogo setup` does
- *    (never to the driver's own NVS: ESP_WIFI_NVS_ENABLED=n), and the board
- *    restarts; the next boot joins with them. Timeout, too many refused
- *    sessions (a wrong PIN): nothing is written, the board restarts.
+ *    config store, wifi.password then wifi.ssid in one commit, as `gogo
+ *    setup` does (never to the driver's own NVS: ESP_WIFI_NVS_ENABLED=n),
+ *    and the board restarts; the next boot joins with them. Timeout,
+ *    cancel, too many refused sessions (a wrong PIN): nothing is written,
+ *    the board restarts.
  * Always a restart at the end: the radio memory and the Wi-Fi driver are
  * left exactly as a normal boot sets them up.
  *
@@ -34,7 +43,7 @@
  * station does not join; apply reports Connected at once and the board
  * prints the SSID and the password's length. CONFIG_GOGO_PROV_TEST_ENTER
  * (test only, needs DRYRUN): the session starts without the key after a
- * power-on or flash (not after its own restart).
+ * power-on or a USB reset (not after its own restart).
  *
  * The password is never printed, and it is wiped from RAM after use. */
 #include "sdkconfig.h"
@@ -67,9 +76,10 @@
 #include "protocomm_security2.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
-#if defined(GOGO_BOARD_CARDPUTER) && CONFIG_GOGO_KBD
+#if defined(GOGO_BOARD_CARDPUTER)
 #include "driver/i2c_master.h"
 #endif
+#include "esp_attr.h"
 
 #define SESSION_S      120
 #define COUNTDOWN_S    15      /* the PIN line is repeated this often */
@@ -80,43 +90,50 @@
 #define REPORT_LINGER_MS 1500  /* after the phone saw Connected */
 #define UNREPORTED_MS  10000   /* connected, but the phone never asked */
 #define IN_MAX         1024    /* a write; SRP's public key is 384 bytes */
+#define HOLD_MS        1000    /* the setup key held this long at boot */
+#define KEY_FIRST_MS   60      /* then the screen says to keep holding */
+#define KEY_STEP_MS    20
+#define CANCEL_STEP_MS 100     /* the key read this often in a session */
+#define APPLY_GRACE_S  30      /* a join under way may run this long past SESSION_S */
+#define AUTH_MAX_S     20      /* a phone that has not opened a session by then is dropped */
 #define OUT_MAX        512     /* a status or config response */
 
 static volatile bool active;
 
 bool ble_prov_active(void) { return active; }
 
-/* ---- the setup key ---- */
+/* ---- the setup key ----
+ *
+ * key_open prepares the key for reading, key_down reads it once (1 down,
+ * 0 up, -1 unreadable), key_close gives the pins back. */
 
 #if defined(GOGO_BOARD_STICKS3)
 
 #define KEY_GPIO 11   /* KEY1, "button A" (tui.ButtonA), active low */
 #define KEY_NAME "button A"
 
-static int key_read(void) {
+static int key_open(void) {
     gpio_config_t c = { .pin_bit_mask = 1ull << KEY_GPIO, .mode = GPIO_MODE_INPUT, .pull_up_en = GPIO_PULLUP_ENABLE };
     if (gpio_config(&c) != ESP_OK) return -1;
     vTaskDelay(pdMS_TO_TICKS(5));
-    int low = 0;
-    for (int i = 0; i < 5; i++) {
-        low += gpio_get_level(KEY_GPIO) == 0;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    (void)gpio_reset_pin(KEY_GPIO);   /* back to the default: the gpio port may claim it */
-    return low == 5;
+    return 0;
 }
 
-#elif defined(GOGO_BOARD_CARDPUTER) && CONFIG_GOGO_KBD
+static int key_down(void) { return gpio_get_level(KEY_GPIO) == 0; }
+
+static void key_close(void) { (void)gpio_reset_pin(KEY_GPIO); }   /* the gpio port may claim it */
+
+#elif defined(GOGO_BOARD_CARDPUTER)
 
 /* W is TCA8418 key 12 (input_esp.c's table: HID 0x1A), row 1 / column 1.
  * The chip keeps scanning across an ESP32 reset, so a key held since
  * before it produced its press event long ago: instead the matrix pins
- * are switched to GPIO for a moment, column 1 driven low, and row 1 read
- * (and the other way round); then keypad mode again (kbd_open reconfigures
- * and flushes it in any case). */
+ * are switched to GPIO while the key is read, column 1 driven low and row
+ * 1 read (and the other way round); then keypad mode again (kbd_open
+ * reconfigures and flushes it in any case). Only the I2C bus is needed,
+ * not the keyboard driver. */
 #define KEY_NAME "W"
 #define TCA_ADDR 0x34
-#define TCA_CFG 0x01
 #define TCA_INT_STAT 0x02
 #define TCA_KEY_EVENT_A 0x04
 #define TCA_DAT_STAT1 0x14   /* rows R0-R7 */
@@ -153,40 +170,71 @@ static int tca_probe(uint8_t out_dir, uint8_t out_dat, uint8_t in_stat) {
     return r;
 }
 
-static int key_read(void) {
+static int key_open(void) {
     i2c_master_bus_handle_t bus = i2c_bus_get();
     if (!bus) return -1;
     i2c_device_config_t dc = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = TCA_ADDR, .scl_speed_hz = 400000 };
     if (i2c_master_bus_add_device(bus, &dc, &tca) != ESP_OK) return -1;
-    int held = -1;
-    if (tca_wr(TCA_KP_GPIO1, 0) == 0 && tca_wr(TCA_KP_GPIO2, 0) == 0 && tca_wr(TCA_KP_GPIO3, 0) == 0) {
-        held = 1;
-        for (int i = 0; i < 3 && held == 1; i++) {   /* down for 3 samples 10 ms apart */
-            int a = tca_probe(TCA_DIR2, TCA_DAT_OUT2, TCA_DAT_STAT1);
-            int b = a == 1 ? 1 : tca_probe(TCA_DIR1, TCA_DAT_OUT1, TCA_DAT_STAT2);
-            held = a < 0 || b < 0 ? -1 : (a == 1 || b == 1);
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-    }
-    /* keypad mode again, events of the switch dropped */
-    uint8_t ev;
+    if (tca_wr(TCA_KP_GPIO1, 0) == 0 && tca_wr(TCA_KP_GPIO2, 0) == 0 && tca_wr(TCA_KP_GPIO3, 0) == 0) return 0;
+    (void)i2c_master_bus_rm_device(tca);
+    tca = NULL;
+    return -1;
+}
+
+static int key_down(void) {
+    int a = tca_probe(TCA_DIR2, TCA_DAT_OUT2, TCA_DAT_STAT1);
+    int b = a == 1 ? 1 : tca_probe(TCA_DIR1, TCA_DAT_OUT1, TCA_DAT_STAT2);
+    return a < 0 || b < 0 ? -1 : (a == 1 || b == 1);
+}
+
+static void key_close(void) {
+    if (!tca) return;
+    uint8_t ev;   /* keypad mode again, the switch's events dropped */
     (void)tca_wr(TCA_KP_GPIO1, 0x7F);
     (void)tca_wr(TCA_KP_GPIO2, 0xFF);
     for (int i = 0; i < 20 && tca_rd(TCA_KEY_EVENT_A, &ev) == 0 && ev != 0; i++) {}
     (void)tca_wr(TCA_INT_STAT, 0x1F);
     (void)i2c_master_bus_rm_device(tca);
     tca = NULL;
-    return held;
 }
 
 #else
-
-/* A Cardputer firmware without the keyboard driver (GOGO_KBD=n) cannot
- * read W: no provisioning. */
-#define KEY_NAME "W"
-static int key_read(void) { return -1; }
-
+#error "ble_prov.c: no setup key for this board"
 #endif
+
+/* The key held for HOLD_MS from now: 1 held, 0 not (released early), -1
+ * unreadable. The first KEY_FIRST_MS decide quietly (a key not touched
+ * costs a normal boot nothing more); then the screen says to keep
+ * holding. */
+static int key_held(void) {
+    if (key_open() != 0) return -1;
+    int r = 1;
+    for (int ms = 0; ms < HOLD_MS && r == 1; ms += KEY_STEP_MS) {
+        if (ms == KEY_FIRST_MS) platform_esp_say("gogo: keep holding %s for Wi-Fi setup", KEY_NAME);
+        r = key_down();
+        if (r == 1) vTaskDelay(pdMS_TO_TICKS(KEY_STEP_MS));
+    }
+    key_close();
+    return r;
+}
+
+/* The flag that the last restart was provisioning's own (RTC_NOINIT keeps
+ * it over a software restart, as fs_lfs.c's format flag): the next boot
+ * does not enter again, even with the key still down. Two words, the
+ * second the complement, so power-on garbage does not read as set. */
+#define PROV_DONE_MAGIC 0x50524F56u   /* "PROV" */
+static RTC_NOINIT_ATTR uint32_t prov_done[2];
+
+static bool prov_done_take(void) {
+    bool set = prov_done[0] == PROV_DONE_MAGIC && prov_done[1] == ~PROV_DONE_MAGIC;
+    prov_done[0] = prov_done[1] = 0;
+    return set;
+}
+
+static void prov_done_set(void) {
+    prov_done[0] = PROV_DONE_MAGIC;
+    prov_done[1] = ~PROV_DONE_MAGIC;
+}
 
 /* ---- session state ---- */
 
@@ -208,6 +256,8 @@ static protocomm_t *pc;
 static volatile bool accepting;     /* advertising again after a disconnect */
 static volatile int refused;        /* sessions refused (a wrong PIN) */
 static volatile uint16_t conn = BLE_HS_CONN_HANDLE_NONE;
+static volatile int64_t conn_us;     /* when the phone connected */
+static volatile bool conn_authed;    /* it has finished the security handshake */
 static uint8_t own_addr_type;
 static char dev_name[16];           /* PROV_gogo_XXXX */
 static uint8_t *resp[3];            /* the last response per characteristic (host task) */
@@ -245,6 +295,7 @@ static esp_err_t on_config(uint32_t session_id, const uint8_t *in, ssize_t inlen
                            void *priv) {
     (void)session_id;
     (void)priv;
+    conn_authed = true;   /* prov-config is reachable only through a session */
     ProvRequest *q = calloc(1, sizeof *q);
     uint8_t *o = malloc(OUT_MAX);
     if (!q || !o || inlen < 0) {
@@ -469,6 +520,8 @@ static int gap_event(struct ble_gap_event *ev, void *arg) {
     switch (ev->type) {
     case BLE_GAP_EVENT_CONNECT:
         if (ev->connect.status == 0) {
+            conn_authed = false;
+            conn_us = esp_timer_get_time();
             conn = ev->connect.conn_handle;
             clear_responses();
             if (pc) (void)protocomm_open_session(pc, conn);
@@ -503,49 +556,29 @@ static void restart(void) {
     esp_restart();
 }
 
-/* Writes the settings as `gogo setup` does: the password first (removed
- * for an open network), then the SSID. */
+/* Writes the settings as `gogo setup` does (config_esp_set_wifi: the
+ * password, or its removal for an open network, then the SSID, one
+ * commit). */
 static bool save(void) {
 #if CONFIG_GOGO_PROV_DRYRUN
     return true;
 #else
-    int e = ss.pass_len ? config_esp_set("wifi.password", ss.pass, ss.pass_len) : 0;
-    if (!ss.pass_len) (void)config_esp_erase("wifi.password");   /* -1 if it was unset */
-    if (e == 0) e = config_esp_set("wifi.ssid", ss.ssid, ss.ssid_len);
-    return e == 0;
+    return config_esp_set_wifi(ss.ssid, ss.ssid_len, ss.pass, ss.pass_len) == 0;
 #endif
 }
 
 static void session(void) {
     ss.sta = PROV_STA_DISCONNECTED;   /* 0 is Connected */
-    char pin[7];
-    prov_pin(pin, rnd32);
     uint8_t mac[6];
     if (esp_read_mac(mac, ESP_MAC_BT) != ESP_OK) memset(mac, 0, sizeof mac);
     snprintf(dev_name, sizeof dev_name, "PROV_gogo_%02X%02X", mac[4], mac[5]);
     size_t heap_before = heap_free();
-
-    char *salt = NULL, *verifier = NULL;
-    int verifier_len = 0;
-    esp_err_t e = esp_srp_gen_salt_verifier(USERNAME, (int)strlen(USERNAME), pin, (int)strlen(pin), &salt, SALT_LEN,
-                                            &verifier, &verifier_len);
-    static protocomm_security2_params_t sec;
-    sec.salt = salt;
-    sec.salt_len = SALT_LEN;
-    sec.verifier = verifier;
-    sec.verifier_len = (uint16_t)verifier_len;
-    static char version[128];
-    int sv = 2;
-    uint8_t patch = 0;
-    if (e == ESP_OK) e = (pc = protocomm_new()) ? ESP_OK : ESP_ERR_NO_MEM;
-    if (e == ESP_OK) e = protocomm_set_security(pc, "prov-session", &protocomm_security2, &sec);
-    if (e == ESP_OK) (void)protocomm_get_sec_version(pc, &sv, &patch);
-    if (e == ESP_OK) e = prov_version_json(version, sizeof version, sv, patch) ? ESP_OK : ESP_FAIL;
-    if (e == ESP_OK) e = protocomm_set_version(pc, "proto-ver", version);
-    if (e == ESP_OK) e = protocomm_add_endpoint(pc, "prov-config", on_config, NULL);
+    esp_err_t e = ESP_OK;
 
     /* the station, for joining the network (a dry run brings it up too,
-     * so it measures the same memory) */
+     * so it measures the same memory); first, so the RF is on when the
+     * PIN and the SRP salt are drawn: esp_random is a true random number
+     * generator only then */
     if (e == ESP_OK) {
         esp_err_t l = esp_event_loop_create_default();
         if (l != ESP_OK && l != ESP_ERR_INVALID_STATE) e = l;
@@ -563,6 +596,28 @@ static void session(void) {
     if (e == ESP_OK) e = esp_wifi_start();
     size_t heap_wifi = heap_free();
 
+    char pin[7];
+    prov_pin(pin, rnd32);
+    char *salt = NULL, *verifier = NULL;
+    int verifier_len = 0;
+    if (e == ESP_OK)
+        e = esp_srp_gen_salt_verifier(USERNAME, (int)strlen(USERNAME), pin, (int)strlen(pin), &salt, SALT_LEN,
+                                      &verifier, &verifier_len);
+    static protocomm_security2_params_t sec;
+    sec.salt = salt;
+    sec.salt_len = SALT_LEN;
+    sec.verifier = verifier;
+    sec.verifier_len = (uint16_t)verifier_len;
+    static char version[128];
+    int sv = 2;
+    uint8_t patch = 0;
+    if (e == ESP_OK) e = (pc = protocomm_new()) ? ESP_OK : ESP_ERR_NO_MEM;
+    if (e == ESP_OK) e = protocomm_set_security(pc, "prov-session", &protocomm_security2, &sec);
+    if (e == ESP_OK) (void)protocomm_get_sec_version(pc, &sv, &patch);
+    if (e == ESP_OK) e = prov_version_json(version, sizeof version, sv, patch) ? ESP_OK : ESP_FAIL;
+    if (e == ESP_OK) e = protocomm_set_version(pc, "proto-ver", version);
+    if (e == ESP_OK) e = protocomm_add_endpoint(pc, "prov-config", on_config, NULL);
+
     /* the radio */
     bool host = false;
     if (e == ESP_OK) {
@@ -571,7 +626,6 @@ static void session(void) {
     }
     if (e == ESP_OK) {
         active = true;
-        platform_esp_log("gogo: Wi-Fi setup: ble_prov_active() = %d", (int)ble_prov_active());
         int rc = ble_gatts_reset();
         if (rc == 0) {
             ble_svc_gap_init();
@@ -597,24 +651,43 @@ static void session(void) {
         platform_esp_say("gogo: app: ESP BLE Provisioning");
         platform_esp_say("gogo: device %s", dev_name);
         platform_esp_say("gogo: PIN %s", pin);
+        platform_esp_say("gogo: press %s again to cancel", KEY_NAME);
         platform_esp_log("gogo: Wi-Fi setup heap (internal free): before %u, wifi up %u, ble up %u (largest %u)",
                          (unsigned)heap_before, (unsigned)heap_wifi, (unsigned)heap_free(),
                          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     }
 
-    /* until done, too many refusals or the time is up */
+    /* until done, cancelled, too many refusals or the time is up; the
+     * key, held to enter, cancels once it has been let go and pressed
+     * again */
     int64_t start = esp_timer_get_time(), reported_us = 0;
     int last_said = SESSION_S;
-    bool ok = false;
+    bool ok = false, key = e == ESP_OK && key_open() == 0, released = false;
     const char *why = "timed out";
     while (e == ESP_OK) {
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(CANCEL_STEP_MS));
         int64_t now = esp_timer_get_time();
         int left = SESSION_S - (int)((now - start) / 1000000);
         taskENTER_CRITICAL(&ss_mux);
-        bool rep = ss.reported, connected = ss.sta == PROV_STA_CONNECTED;
+        bool rep = ss.reported, connected = ss.sta == PROV_STA_CONNECTED, applying = ss.applying;
         int64_t cus = ss.connected_us;
         taskEXIT_CRITICAL(&ss_mux);
+        if (key) {
+            int k = key_down();
+            if (k == 0) released = true;
+            if (k == 1 && released && !rep) {
+                why = "cancelled";
+                break;
+            }
+        }
+        /* a phone that connects and never finishes the handshake must not
+         * hold the only connection for the whole window */
+        uint16_t c = conn;
+        if (c != BLE_HS_CONN_HANDLE_NONE && !conn_authed && now - conn_us >= AUTH_MAX_S * 1000000ll) {
+            platform_esp_log("gogo: Wi-Fi setup: dropping a phone that did not open a session");
+            (void)ble_gap_terminate(c, BLE_ERR_REM_USER_CONN_TERM);
+            conn_us = now;   /* once */
+        }
         if (rep && !reported_us) reported_us = now;
         if (reported_us && now - reported_us >= REPORT_LINGER_MS * 1000ll) {
             ok = true;
@@ -628,14 +701,15 @@ static void session(void) {
             why = "closed after refused sessions";
             break;
         }
-        if (left <= 0) break;
-        if (left <= last_said - COUNTDOWN_S) {
+        if (left <= 0 && !(applying && left > -APPLY_GRACE_S)) break;   /* a join under way may finish */
+        if (left > 0 && left <= last_said - COUNTDOWN_S) {
             last_said = left - left % COUNTDOWN_S;
             platform_esp_say("gogo: Wi-Fi setup PIN %s, %d s left", pin, left);
         }
     }
 
     /* close: stop advertising, drop the phone, give the radio back */
+    if (key) key_close();
     accepting = false;
     if (host) {
         (void)ble_gap_adv_stop();
@@ -647,7 +721,6 @@ static void session(void) {
         ble_host_release();
     }
     active = false;
-    platform_esp_log("gogo: Wi-Fi setup: ble_prov_active() = %d", (int)ble_prov_active());
     clear_responses();
     if (pc) protocomm_delete(pc);
     pc = NULL;
@@ -669,14 +742,39 @@ static void session(void) {
     wipe(ss.pass, sizeof ss.pass);
     wipe(pin, sizeof pin);
     platform_esp_say("gogo: restarting");
+    prov_done_set();   /* the next boot does not enter again, key or not */
     restart();
 }
 
+/* The reset reason, for the boot line that says why the key was not read. */
+static const char *reset_name(esp_reset_reason_t r) {
+    switch (r) {
+    case ESP_RST_SW: return "software restart";
+    case ESP_RST_PANIC: return "crash";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_DEEPSLEEP: return "deep sleep";
+    default: return "other reset";
+    }
+}
+
 void ble_prov_boot(void) {
-    int held = key_read();
+    /* Only a power-on or a reset by the user (the reset button) or a tool
+     * (USB): never after a crash, a watchdog or a brownout while a program
+     * may have been using the key, and never after a session's own
+     * restart. */
+    esp_reset_reason_t rr = esp_reset_reason();
+    bool own = prov_done_take();
+    if (own || (rr != ESP_RST_POWERON && rr != ESP_RST_USB)) {
+        platform_esp_log("gogo: Wi-Fi setup key (%s): not read (%s)", KEY_NAME, own ? "after Wi-Fi setup" : reset_name(rr));
+        return;
+    }
+    int held = key_held();
     platform_esp_log("gogo: Wi-Fi setup key (%s): %s", KEY_NAME, held < 0 ? "unreadable" : held ? "held" : "not held");
 #if CONFIG_GOGO_PROV_TEST_ENTER
-    if (held != 1 && esp_reset_reason() != ESP_RST_SW) {
+    if (held != 1) {
         platform_esp_say("gogo: test build: Wi-Fi setup without the key");
         held = 1;
     }

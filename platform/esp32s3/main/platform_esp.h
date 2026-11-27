@@ -186,10 +186,11 @@ int config_esp_init(void);
 int32_t config_esp_get(const char *key, uint8_t *buf, uint32_t cap);
 /* Removes key (0 on success; -1 if unset or on error). */
 int config_esp_erase(const char *key);
-/* Sets key to the n bytes at v and commits (0 on success, -1 on error):
- * what `gogo config set` does, without the reconnect (ble_prov.c restarts
- * the board after writing the wifi.* keys). */
-int config_esp_set(const char *key, const uint8_t *v, uint32_t n);
+/* Writes the Wi-Fi network as `gogo setup` does, in one commit: the
+ * password first (erased for an open network, pass_len 0), then the SSID,
+ * which the station joins with at the next boot (ble_prov.c restarts the
+ * board after it). 0 on success, -1 on error. */
+int config_esp_set_wifi(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, uint32_t pass_len);
 void config_esp_start_serial(void);
 
 /* Wi-Fi station (wifi.c): wifi_esp_start initialises and starts the driver
