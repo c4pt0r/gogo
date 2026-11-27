@@ -128,6 +128,14 @@ func TestRunFsRoot(t *testing.T) {
 	if b, _ := os.ReadFile(args); string(b) != want {
 		t.Errorf("vm args = %q, want %q", b, want)
 	}
+	// The VM's parameters, in a fixed order.
+	if code, err := runCmd([]string{"--max-links", "9", "--actor-memory", "4M", "-bytes-handles=10/2", img}); err != nil || code != 0 {
+		t.Fatalf("code %d err %v", code, err)
+	}
+	want = "--actor-memory\n4M\n--max-links\n9\n--bytes-handles\n10/2\n" + img + "\n"
+	if b, _ := os.ReadFile(args); string(b) != want {
+		t.Errorf("vm args = %q, want %q", b, want)
+	}
 }
 
 // gogo run exits with the VM's status: main's exit, a refused image, a

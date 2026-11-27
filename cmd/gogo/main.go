@@ -85,18 +85,26 @@ func main() {
 	os.Exit(code)
 }
 
-const runUsage = "usage: gogo run [--key c=pin]... [--fs-root DIR] [-path dirs] <dir|file" + sourceExt + "|file" + imageExt + "> [args...]"
+const runUsage = "usage: gogo run [--key c=pin]... [--fs-root DIR] [--actor-memory SIZE] [--memory SIZE] [--max-actors N] [--max-ports N] [--max-links N] [--bytes-handles N[/M]] [-path dirs] <dir|file" + sourceExt + "|file" + imageExt + "> [args...]"
+
+// runVMFlags are the VM's parameters (runtime/vm/params.h) gogo run
+// forwards to gogovm as they are; gogovm checks them.
+var runVMFlags = []string{"actor-memory", "memory", "max-actors", "max-ports", "max-links", "bytes-handles"}
 
 // runCmd implements `gogo run` and returns the process exit status: the
 // VM's (exitcodes.go), or exitUsage for a usage, build or toolchain error.
 func runCmd(args []string) (int, error) {
-	// -key c=pin (unix tty mode) and -fs-root DIR (host directory behind
-	// /flash and /sd) are forwarded to gogovm; -path dirs is the package
-	// search path of the build.
+	// -key c=pin (unix tty mode), -fs-root DIR (host directory behind
+	// /flash and /sd) and the VM's parameters (runVMFlags) are forwarded
+	// to gogovm; -path dirs is the package search path of the build.
 	fs := newFlags("run")
 	var keys listFlag
 	fs.Var(&keys, "key", "")
 	fsRoot := fs.String("fs-root", "", "")
+	vmFlags := map[string]*string{}
+	for _, f := range runVMFlags {
+		vmFlags[f] = fs.String(f, "", "")
+	}
 	getPath := addPathFlag(fs)
 	// Everything after the program is the program's (sys.Args), as for
 	// `go run`: flags come before it.
@@ -111,6 +119,11 @@ func runCmd(args []string) (int, error) {
 	}
 	if *fsRoot != "" {
 		vmArgs = append(vmArgs, "--fs-root", *fsRoot)
+	}
+	for _, f := range runVMFlags {
+		if v := *vmFlags[f]; v != "" {
+			vmArgs = append(vmArgs, "--"+f, v)
+		}
 	}
 	if len(args) == 0 {
 		return exitUsage, usageError("run", "missing program (a directory, a "+sourceExt+" file or a "+imageExt+" image)", runUsage)
