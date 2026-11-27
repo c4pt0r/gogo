@@ -491,7 +491,9 @@ func splitList(s string) []string {
 // firmwareCmd implements `gogo firmware`. runIdf runs the build for -build.
 // detectBoard names the board on port from its chip: one read-only
 // esptool command (chip-id), whose banner says whether the ESP32-S3 has
-// embedded PSRAM (chipInfo.guessBoard). A variable so tests replace it.
+// embedded PSRAM (chipInfo.guessBoard). When esptool cannot reach the
+// chip, it is run once more after a USB reset (usbreset.go; off with
+// $GOGO_NO_USB_RESET). A variable so tests replace it.
 var detectBoard = func(esptool, port string) (string, error) {
 	if esptool == "" {
 		var err error
@@ -499,7 +501,12 @@ var detectBoard = func(esptool, port string) (string, error) {
 			return "", err
 		}
 	}
-	out, err := exec.Command(esptool, "--port", port, "--after", "watchdog-reset", "chip-id").CombinedOutput()
+	var out []byte
+	err := newUSBRecovery(defaultUSBEnv(), false, os.Stderr).retry(port, func() error {
+		var err error
+		out, err = exec.Command(esptool, "--port", port, "--after", "watchdog-reset", "chip-id").CombinedOutput()
+		return esptoolErr(err, string(out))
+	})
 	if err != nil {
 		return "", fmt.Errorf("gogo firmware: esptool cannot read the chip on %s (%v); pass -board", port, err)
 	}

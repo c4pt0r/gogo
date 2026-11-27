@@ -532,6 +532,23 @@ the board's settings (NVS) are never written. See
 drivers it provides. A firmware older than that command (v0.1.0) says
 so; its version is in the boot line, `gogo monitor -reset`.
 
+### The board stopped answering over USB. What do I do?
+Usually nothing: the boards' USB serial link sometimes goes silent
+while the program keeps running (esptool says `No serial data
+received`, `gogo device info` says `no answer from the board`), and
+`gogo` recovers it itself on macOS and Linux. It bus-resets the board's
+USB device once (the chip and its program keep running), waits for the
+port, retries, and prints `gogo: the board's USB link was silent; reset
+it (USB bus reset)`. `gogo device usb-reset` does the same by hand, and
+`-no-usb-reset` (or `GOGO_NO_USB_RESET=1`) turns the automatic reset
+off. Only Espressif devices are reset, and never while another program
+(a serial terminal, `gogo monitor`) has the port open: close it first.
+On Linux the reset needs a udev rule, which `gogo` prints when it is
+missing; on Windows, replug the board. If the board still does not
+answer, replug it, and check it runs gogo firmware (`gogo setup`). See
+[book chapter 12](book/12-toolchain-reference.md) and
+[the known issues](known-issues.md).
+
 ### How do I configure several boards / many settings at once?
 Put the settings in a file of `key=value` lines (`#` comments allowed)
 and run `gogo config import <file>`: every line is checked first, and

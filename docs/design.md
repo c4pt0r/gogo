@@ -2221,6 +2221,32 @@ pins). Only one program can open the serial port at a time. Boot
 messages and the partition table are described in
 [platform/esp32s3/README.md](../platform/esp32s3/README.md).
 
+**Recovering a silent USB link (`cmd/gogo/usbreset.go`).** The boards'
+USB device sometimes stops answering (not even its string descriptors)
+while the chip runs on ([known-issues.md](known-issues.md)); a USB bus
+reset of that device brings it back without restarting the chip. Every
+command that talks to a board runs its exchange through one wrapper,
+`usbRecovery.retry`: when the exchange fails with `errNoAnswer`
+(`boardConn.request`'s timeout) or esptool failed to connect before
+writing anything (`esptoolConnError`; "Writing at" in its output rules a
+retry out, so a write is never redone over a half-written partition),
+it resets the USB device behind the port once, waits for the port and
+runs the exchange once more. `gogo monitor` has no request to time out,
+so it resets only when a capture got nothing and the device fails a
+GET_DESCRIPTOR(string 0) request. The device is found from the port,
+never from its serial number (a silent device cannot report one): on
+macOS the port's IOSerialBSDClient is walked up the IOService plane to
+its IOUSBHostDevice, whose IOUSBDeviceInterface187 re-enumerates it
+(USBDeviceReEnumerate, as libusb_reset_device does); IOKit and
+CoreFoundation are reached without cgo, through dlopen/dlsym trampolines
+into libSystem (`usbreset_darwin.s`, the technique of
+golang.org/x/sys/unix) and `syscall.syscall9`, so the release build stays
+`CGO_ENABLED=0` with no module dependency. On Linux, sysfs maps the tty
+to `busnum`/`devnum` and the `USBDEVFS_RESET` ioctl resets
+`/dev/bus/usb/BBB/DDD`. Only vendor id 0x303a is reset, and never a port
+another process holds (lsof on macOS, `/proc/*/fd` on Linux). Windows has
+none: the hint says to replug.
+
 **Device configuration (`gogo config`).** `gogo config set|get|rm|list
 <key> [value]`; `gogo device scan` (the 2.4 GHz networks the board sees),
 `gogo device stats` (network counters, heap), `gogo device info` (the

@@ -1191,13 +1191,38 @@ rebuilt:
 ## ESP32-S3 boards
 
 - **The USB serial console sometimes goes silent** a few seconds after a
-  reset (esptool: `No serial data received`), while the program keeps
-  running. It has been seen on both boards, with and without audio; the
-  cause is unknown (desktop applications that open every new serial
-  device are a suspect). *Workaround:* quit such applications; replug
-  the board, or reset the USB device with libusb
-  (`libusb_reset_device` on the device with vendor id 0x303a) and wait
-  about 3 s.
+  reset (esptool: `No serial data received`; `gogo device info`: `no
+  answer from the board`), while the program keeps running. The USB
+  device still enumerates but answers nothing, not even its string
+  descriptors, so its serial number cannot be read. It has been seen on
+  both boards, with and without audio; the cause is unknown (desktop
+  applications that open every new serial device are a suspect). A USB
+  bus reset of that one device brings it back at once without
+  restarting the chip; esptool's own `--before usb_reset` does not.
+  *Workaround (automatic):* `gogo` now does that reset itself on macOS
+  and Linux. When a board does not answer (`gogo device`, `config`,
+  `push`, `setup`; `monitor` when nothing arrived and the device fails a
+  descriptor request too) or esptool cannot connect before writing
+  anything (`flash`, `setup`, `firmware -port`), it bus-resets the USB
+  device behind the port once, waits for the port, retries once and
+  prints `gogo: the board's USB link was silent; reset it (USB bus
+  reset)`. `gogo device usb-reset` does it by hand; `-no-usb-reset` or
+  `GOGO_NO_USB_RESET=1` turns the automatic reset off. Only an
+  Espressif device (vendor id 0x303a) is reset, found from the serial
+  port (not from its serial number), and never while another program
+  has the port open. On **Linux** the reset needs write access to the
+  device's `/dev/bus/usb/BBB/DDD` node, usually root's; a udev rule
+  gives it to the logged-in user:
+
+  ```sh
+  echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0660", TAG+="uaccess"' |
+    sudo tee /etc/udev/rules.d/99-gogo-esp32.rules
+  sudo udevadm control --reload && sudo udevadm trigger
+  ```
+
+  (`gogo` prints this rule when access is denied.) On **Windows** gogo
+  cannot reset a USB device: replug the board. The Linux reset has been
+  tested only with fake sysfs trees, not on a board.
 - **The screen console is slow.** With the screen on, 1000 `println`s
   take about 2.2 times as long as without. *Workaround:* print less, or
   build with the console off (`GOGO_CONSOLE=0`).

@@ -175,6 +175,7 @@ build/gogo monitor -reset -timeout 5
 build/gogo push greeter.ggb               # to /flash/greeter.ggb, for code.Load
 build/gogo device info                    # the firmware the board runs
 build/gogo device stats                   # the board's counters and memory
+build/gogo device usb-reset               # bring back a USB link gone silent (done on its own when needed)
 ```
 
 [Chapter 2 of the book](docs/book/02-getting-started.md) has the details,

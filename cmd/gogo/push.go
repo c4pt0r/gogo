@@ -15,6 +15,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -28,7 +29,7 @@ import (
 	"gogotools/compiler"
 )
 
-const pushUsage = "usage: gogo push [-port P] [-timeout seconds] <file" + imageExt + "> [/flash/path]"
+const pushUsage = "usage: gogo push [-port P] [-timeout seconds] [-no-usb-reset] <file" + imageExt + "> [/flash/path]"
 
 // pushChunk is the bytes per data frame (CFG_PUSH_CHUNK in config_esp.c):
 // a frame stays under the board's 256-byte console input buffer.
@@ -40,14 +41,15 @@ const pushTmp = ".gogo-push"
 
 // pushEnv holds the side effects of gogo push, replaced in tests.
 type pushEnv struct {
-	out  io.Writer
-	glob func(string) ([]string, error)
-	open func(string) (io.ReadWriteCloser, error)
+	out, errOut io.Writer
+	glob        func(string) ([]string, error)
+	open        func(string) (io.ReadWriteCloser, error)
+	usb         usbEnv
 }
 
 func pushCmd(args []string) error {
-	return pushMain(args, pushEnv{out: os.Stdout, glob: filepath.Glob,
-		open: func(p string) (io.ReadWriteCloser, error) { return openSerial(p) }})
+	return pushMain(args, pushEnv{out: os.Stdout, errOut: os.Stderr, glob: filepath.Glob,
+		open: func(p string) (io.ReadWriteCloser, error) { return openSerial(p) }, usb: defaultUSBEnv()})
 }
 
 // pushTarget checks the /flash path a file is pushed to (by default
@@ -75,6 +77,7 @@ func pushMain(args []string, env pushEnv) error {
 	port := fs.String("port", "", "")
 	timeout := 5 * time.Second
 	fs.Var(secondsFlag{&timeout}, "timeout", "")
+	noReset := addNoUSBResetFlag(fs)
 	pos, err := parseFlags(fs, args, pushUsage)
 	if err != nil {
 		return err
@@ -101,18 +104,32 @@ func pushMain(args []string, env pushEnv) error {
 			return err
 		}
 	}
-	f, err := env.open(*port)
+	errOut := env.errOut
+	if errOut == nil {
+		errOut = io.Discard
+	}
+	usb := newUSBRecovery(env.usb, *noReset, errOut)
+	start := time.Now()
+	err = usb.retry(*port, func() error {
+		f, err := env.open(*port)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		c := newBoardConn(f)
+		defer c.close()
+		if err := pushBytes(c, img, dest, timeout); err != nil {
+			// Best effort: drop the temporary file now rather than at the
+			// next push (not on a board that does not answer).
+			if !errors.Is(err, errNoAnswer) {
+				c.request("abort", nil, timeout)
+			}
+			return fmt.Errorf("gogo push: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
-	}
-	defer f.Close()
-	c := newBoardConn(f)
-	defer c.close()
-	start := time.Now()
-	if err := pushBytes(c, img, dest, timeout); err != nil {
-		// Best effort: drop the temporary file now rather than at the next push.
-		c.request("abort", nil, timeout)
-		return fmt.Errorf("gogo push: %v", err)
 	}
 	fmt.Fprintf(env.out, "pushed %s to %s (%d bytes, %.1f s)\n", file, dest, len(img), time.Since(start).Seconds())
 	return nil
@@ -131,7 +148,7 @@ func pushBytes(c *boardConn, data []byte, dest string, timeout time.Duration) er
 		chunk := data[off:min(off+pushChunk, len(data))]
 		_, text, err := c.request("data", []string{strconv.Itoa(off), base64.StdEncoding.EncodeToString(chunk)}, timeout)
 		if err != nil {
-			return fmt.Errorf("at byte %d: %v", off, err)
+			return fmt.Errorf("at byte %d: %w", off, err)
 		}
 		if text != strconv.Itoa(off+len(chunk)) {
 			return fmt.Errorf("at byte %d: the board has %s bytes", off, text)

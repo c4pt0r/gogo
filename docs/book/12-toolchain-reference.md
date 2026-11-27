@@ -14,13 +14,13 @@ gogo run [--key c=pin]... [--fs-root DIR] [VM parameter flags] [-path dirs] <dir
 gogo env [-path dirs]
 gogo dis <file.ggb>
 gogo info [-path dirs] <file.ggb|dir|file.gg>
-gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
-gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
-gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
+gogo flash [-port P] [-esptool path] [-path dirs] [-no-usb-reset] <app.ggb|dir|file.gg>
+gogo push [-port P] [-timeout seconds] [-no-usb-reset] <file.ggb> [/flash/path]
+gogo monitor [-port P] [-timeout seconds] [-until text] [-reset] [-no-usb-reset]
 gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files...
-gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats
-gogo device [-port P] [-yes] info | scan | stats | format-flash
-gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]
+gogo config [-port P | -local] [-no-usb-reset] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats
+gogo device [-port P] [-yes] [-no-usb-reset] info | scan | stats | format-flash | usb-reset
+gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run] [-no-usb-reset]
 gogo version
 ```
 
@@ -36,10 +36,37 @@ gogo version
   belongs to the program (refused for now).
 - The names are the same everywhere: `-port` (the board's serial port),
   `-board`, `-o` (where the output goes), `-timeout` (seconds),
-  `-esptool`, `-path`, `-yes`.
+  `-esptool`, `-path`, `-yes`, `-no-usb-reset` (below).
 - `-h` (or `-help`) prints the command's usage and exits 0. A mistake
   (an unknown flag, a missing value or argument) prints what is wrong and
   the usage, and exits 1.
+
+**A board that stops answering over USB.** The boards' USB serial link
+sometimes goes silent while the program keeps running
+([`docs/known-issues.md`](../known-issues.md), "ESP32-S3 boards"). The commands that
+talk to a board (`flash`, `push`, `monitor`, `config` on a board,
+`device`, `setup`, and `firmware -port`) then recover it themselves on
+macOS and Linux: when the board does not answer, or esptool cannot
+connect before writing anything, they bus-reset the board's USB device
+once (the chip keeps running), wait for the port to come back, retry
+once, and print
+
+```text
+gogo: the board's USB link was silent; reset it (USB bus reset)
+```
+
+(or `gogo: no answer from the board; reset its USB device (USB bus
+reset)` when the device still answered USB requests, as a board without
+gogo firmware does). If the retry fails too, the error says so and to
+replug the board. `gogo monitor` resets only when it received nothing at
+all and the USB device fails a descriptor request, so a quiet program is
+left alone. A flash is retried only when esptool never reached the chip,
+so no partition is written twice over a half-written one. Only an
+Espressif USB device (vendor id 0x303a) is reset, never while another
+program has the port open. `-no-usb-reset` (or `GOGO_NO_USB_RESET=1` in
+the environment) turns this off; `gogo device usb-reset` resets by hand.
+On Linux the reset needs a udev rule (`gogo` prints it; known issues has
+it too); on Windows gogo cannot reset a USB device, so replug the board.
 
 ## gogo build
 
@@ -497,7 +524,7 @@ this `gogo` does not know is an error.
 ## gogo flash
 
 ```text
-gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
+gogo flash [-port P] [-esptool path] [-path dirs] [-no-usb-reset] <app.ggb|dir|file.gg>
 ```
 
 Writes an image to the board's program partition at 0x210000, with a
@@ -511,6 +538,8 @@ already (chapter 2).
   none or several, `gogo flash` stops and asks for `-port`.
 - `-esptool path`: the esptool to run. Default: `esptool` or `esptool.py`
   from `PATH` (`. ~/esp/esp-idf/export.sh` puts it there).
+- `-no-usb-reset`: no automatic USB reset when esptool cannot connect
+  (above).
 
 `gogo flash` refuses files that are not gogo images, images of another
 format version (`rebuild it with gogo build`) and images over the 1 MB
@@ -519,7 +548,7 @@ partition.
 ## gogo push
 
 ```text
-gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
+gogo push [-port P] [-timeout seconds] [-no-usb-reset] <file.ggb> [/flash/path]
 ```
 
 Copies an image (a module, chapter 14) to the board's `/flash`, over the
@@ -536,7 +565,8 @@ directory.
 
 - `-port P`: as for `gogo flash`.
 - `-timeout seconds`: how long to wait for each answer of the board
-  (default 5).
+  (default 5). A board that does not answer is reset (above) and the
+  push starts over once.
 
 It refuses a file that is not an image of a format this `gogo` knows,
 and a path outside `/flash`. A firmware older than `gogo push` answers
@@ -546,7 +576,7 @@ close `gogo monitor` first.
 ## gogo monitor
 
 ```text
-gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
+gogo monitor [-port P] [-timeout seconds] [-until text] [-reset] [-no-usb-reset]
 ```
 
 Copies the board's console to standard output.
@@ -559,6 +589,8 @@ Copies the board's console to standard output.
 - `-reset`: reset the board first, so the capture starts at boot. Without
   it, opening the port never resets the board.
 - `-port P`: as for `gogo flash`.
+- `-no-usb-reset`: when nothing arrived, do not check the USB link and
+  reset it (above).
 
 It is not interactive. Only one program can have the serial port open, so
 stop `gogo monitor` before `gogo flash` or `gogo config`.
@@ -676,9 +708,11 @@ gogo device [-port P] info
 gogo device [-port P] scan
 gogo device [-port P] stats
 gogo device [-port P] [-yes] format-flash
+gogo device [-port P] usb-reset
 ```
 
-Operations on the board itself, over its serial console:
+Operations on the board itself, over its serial console (`usb-reset`
+excepted):
 
 - `info` shows the firmware the board runs: its version (the `git
   describe` it was built from, `dev` without git, `-dirty` for
@@ -716,6 +750,24 @@ Operations on the board itself, over its serial console:
   (Wi-Fi settings stay), not the program, not the firmware; the chip is
   never erased. It asks you to type `yes` first; `-yes` skips the
   question.
+- `usb-reset` bus-resets the board's USB device, which brings back a
+  USB link that went silent without restarting the chip or its program
+  (the other operations do it on their own when the board does not
+  answer, unless `-no-usb-reset` is given; see the start of this
+  chapter). It finds the device from the serial port, refuses any device
+  that is not Espressif's (vendor id 0x303a) and a port another program
+  has open, and waits for the port to come back:
+
+  ```text
+  $ gogo device -port /dev/cu.usbmodem5101 usb-reset
+  reset USB device 303a:1001 at location 0x05100000 (USB bus reset; the chip keeps running)
+  /dev/cu.usbmodem5101 is back
+  ```
+
+  On macOS it re-enumerates the device through IOKit; on Linux it is the
+  `USBDEVFS_RESET` ioctl on `/dev/bus/usb/BBB/DDD`, which needs the udev
+  rule of the known issues; Windows has no `usb-reset` (replug the
+  board).
 
 `-port` as for `gogo flash`. `scan` and `stats` were `gogo config scan`
 and `gogo config stats`, and `format-flash` was `gogo config set
@@ -727,6 +779,7 @@ release, with a note, and go away in the next.
 ```text
 gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR]
            [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]
+           [-no-usb-reset]
 ```
 
 Takes a board from new to running a program, in six steps (chapter 2
@@ -835,6 +888,10 @@ Options:
   the board's `info`, the Wi-Fi scan) and print the esptool commands and
   settings that would be written, or that the firmware would not be
   reflashed, without writing anything.
+- `-no-usb-reset`: no automatic USB reset when esptool cannot reach the
+  chip or the board does not answer its `info` (start of this chapter;
+  for `info`, setup resets only a device that fails the USB descriptor
+  check too, since a board without gogo firmware never answers).
 
 On failure setup prints the problem and a `fix:` line, and stops; it is
 safe to run again.

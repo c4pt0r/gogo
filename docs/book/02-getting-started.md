@@ -163,6 +163,7 @@ always safe.
 | `-yes` | accept every default without asking (Wi-Fi is then skipped) |
 | `-dry-run` | read the board and download, but only print the commands that would write to it (and whether the firmware would be flashed at all) |
 | `-esptool path` | the esptool to run |
+| `-no-usb-reset` | do not reset the board's USB device when it stops answering (section 2.5, Troubleshooting) |
 
 Without a release to download (no network, or no such release),
 `gogo setup` offers to build the firmware with ESP-IDF instead, if it is
@@ -470,6 +471,23 @@ reports (standard error) are shown in red.
 > version changes, reflash the firmware too (run `gogo setup` again, or
 > section 2.6): an older firmware
 > refuses a newer image with `gogo: bad image (unsupported version)`.
+
+### Troubleshooting
+
+- **`no answer from the board`, or esptool's `No serial data
+  received`.** The board's USB serial link sometimes goes silent while
+  the program keeps running. `gogo` recovers it on its own on macOS and
+  Linux: it bus-resets the board's USB device (the chip is not
+  restarted), retries once and prints `gogo: the board's USB link was
+  silent; reset it (USB bus reset)`. `gogo device usb-reset` does the
+  same by hand. On Linux the reset needs a udev rule (`gogo` prints it
+  when it is missing; `docs/known-issues.md` has it); on Windows, or if
+  the board still does not answer, unplug it and plug it in again.
+- **The port is busy.** Another program has it open: close `gogo
+  monitor` or the serial terminal. `gogo` never resets a board's USB
+  device while another program uses the port.
+- **`gogo: bad image (unsupported version)`.** The firmware is older
+  than the image format: update it (note above).
 
 You now have the whole loop: edit, `gogo run` on the computer, then `gogo
 build` and `gogo flash` for the board. The next chapter looks at the

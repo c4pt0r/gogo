@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +31,7 @@ const (
 	partSize    = 0x100000   // `gogo` partition size
 	partHdrSize = 16
 	portGlob    = "/dev/cu.usbmodem*"
-	flashUsage  = "usage: gogo flash [-port P] [-esptool path] [-path dirs] <app" + imageExt + "|dir|file" + sourceExt + ">"
+	flashUsage  = "usage: gogo flash [-port P] [-esptool path] [-path dirs] [-no-usb-reset] <app" + imageExt + "|dir|file" + sourceExt + ">"
 )
 
 // checkImage reports why img cannot go into the image partition, or nil.
@@ -82,19 +83,23 @@ func detectPort(glob func(string) ([]string, error)) (string, error) {
 }
 
 // flasher holds the side effects of `gogo flash` so tests can replace them.
+// run returns an esptoolConnError when esptool could not reach the chip
+// (execEsptool); the write is then retried once after a USB reset.
 type flasher struct {
-	glob func(string) ([]string, error)
-	run  func(name string, args []string) error
+	glob   func(string) ([]string, error)
+	run    func(name string, args []string) error
+	usb    usbEnv
+	errOut io.Writer
 }
 
 func defaultFlasher() flasher {
 	return flasher{
 		glob: filepath.Glob,
 		run: func(name string, args []string) error {
-			cmd := exec.Command(name, args...)
-			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-			return cmd.Run()
+			return execEsptool(name, args, os.Stdin, os.Stdout, os.Stderr)
 		},
+		usb:    defaultUSBEnv(),
+		errOut: os.Stderr,
 	}
 }
 
@@ -114,6 +119,7 @@ func (f flasher) flash(args []string) error {
 	port := fs.String("port", "", "")
 	esptool := fs.String("esptool", "", "")
 	getPath := addPathFlag(fs)
+	noReset := addNoUSBResetFlag(fs)
 	pos, err := parseFlags(fs, args, flashUsage)
 	if err != nil {
 		return err
@@ -152,8 +158,16 @@ func (f flasher) flash(args []string) error {
 			return err
 		}
 	}
-	if err := writeImage(f.run, *esptool, *port, img, nil); err != nil {
-		return fmt.Errorf("gogo flash: %v", err)
+	// Retried only when esptool never reached the chip, so the first run
+	// wrote nothing; a write cut off later is not retried (the partition
+	// header's CRC makes the firmware refuse a half-written image).
+	errOut := f.errOut
+	if errOut == nil {
+		errOut = io.Discard
+	}
+	usb := newUSBRecovery(f.usb, *noReset, errOut)
+	if err := usb.retry(*port, func() error { return writeImage(f.run, *esptool, *port, img, nil) }); err != nil {
+		return fmt.Errorf("gogo flash: %w", err)
 	}
 	return nil
 }
@@ -176,7 +190,7 @@ func writeImage(run func(string, []string) error, esptool, port string, img []by
 	}
 	args := append(append([]string{"--port", port}, opts...), imageWriteArgs(tmp.Name())...)
 	if err := run(esptool, args); err != nil {
-		return fmt.Errorf("%s: %v", esptool, err)
+		return fmt.Errorf("%s: %w", esptool, err)
 	}
 	return nil
 }

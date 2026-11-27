@@ -40,7 +40,7 @@ import (
 // checking all of them; `export` prints the store as such a file, secrets
 // as comments without their values.
 
-const configUsage = "usage: gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats"
+const configUsage = "usage: gogo config [-port P | -local] [-no-usb-reset] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats"
 
 const (
 	configMaxKey   = 15
@@ -400,11 +400,12 @@ type configEnv struct {
 	in          io.Reader
 	glob        func(string) ([]string, error)
 	open        func(string) (io.ReadWriteCloser, error)
+	usb         usbEnv
 }
 
 func configMain(args []string, out io.Writer, stdin io.Reader, errOut io.Writer, glob func(string) ([]string, error)) error {
 	return configExec(args, configEnv{out: out, errOut: errOut, in: stdin, glob: glob,
-		open: func(p string) (io.ReadWriteCloser, error) { return openSerial(p) }})
+		open: func(p string) (io.ReadWriteCloser, error) { return openSerial(p) }, usb: defaultUSBEnv()})
 }
 
 // configTarget is the store an operation uses: the board on port, or the
@@ -467,6 +468,7 @@ func configExec(args []string, env configEnv) error {
 	fs := newFlags("config")
 	port := fs.String("port", "", "")
 	local := fs.Bool("local", false, "")
+	noReset := addNoUSBResetFlag(fs)
 	dry := false
 	fs.BoolVar(&dry, "n", false, "")
 	fs.BoolVar(&dry, "dry-run", false, "")
@@ -492,7 +494,7 @@ func configExec(args []string, env configEnv) error {
 		return usageError("config", "-n (-dry-run) is for import only", configUsage)
 	}
 	if op == "import" {
-		return configImport(args[0], *port, *local, dry, env)
+		return configImport(args[0], *port, *local, dry, newUSBRecovery(env.usb, *noReset, env.errOut), env)
 	}
 	if op == "set" {
 		if err := checkSetKey(args[0]); err != nil {
@@ -541,37 +543,44 @@ func configExec(args []string, env configEnv) error {
 		warnSecret(target, args[0], env.errOut)
 	}
 	if target.port != "" {
-		f, err := env.open(target.port)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		timeout := 5 * time.Second
-		if op == "scan" {
-			timeout = 20 * time.Second
-		}
-		if op == "export" {
-			c := newBoardConn(f)
-			defer c.close()
-			kvs, _, err := c.request("list", nil, timeout)
-			if err != nil {
-				return fmt.Errorf("gogo config: %v", err)
-			}
-			writeExport(env.out, target, kvs)
-			return nil
-		}
-		// One connection for the fit check and the set: a second one on
-		// the same stream would race the first one's reader for the reply.
-		c := newBoardConn(f)
-		defer c.close()
-		if op == "set" && boardFitKeys[args[0]] {
-			if err := checkBoardFit(c, args[0], args[1]); err != nil {
-				return err
-			}
-		}
-		return boardConfigOn(c, op, args, env.out, timeout)
+		usb := newUSBRecovery(env.usb, *noReset, env.errOut)
+		return usb.retry(target.port, func() error { return configOnBoard(target, op, args, env) })
 	}
 	return fileConfig(target.path, op, args, env.out)
+}
+
+// configOnBoard runs one operation on the board of target: it opens the
+// port, talks to the board and closes the port.
+func configOnBoard(target configTarget, op string, args []string, env configEnv) error {
+	f, err := env.open(target.port)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	timeout := 5 * time.Second
+	if op == "scan" {
+		timeout = 20 * time.Second
+	}
+	if op == "export" {
+		c := newBoardConn(f)
+		defer c.close()
+		kvs, _, err := c.request("list", nil, timeout)
+		if err != nil {
+			return fmt.Errorf("gogo config: %w", err)
+		}
+		writeExport(env.out, target, kvs)
+		return nil
+	}
+	// One connection for the fit check and the set: a second one on
+	// the same stream would race the first one's reader for the reply.
+	c := newBoardConn(f)
+	defer c.close()
+	if op == "set" && boardFitKeys[args[0]] {
+		if err := checkBoardFit(c, args[0], args[1]); err != nil {
+			return err
+		}
+	}
+	return boardConfigOn(c, op, args, env.out, timeout)
 }
 
 // boardFitKeys are the keys a board's limits bound beyond their ranges.
@@ -581,6 +590,9 @@ var boardFitKeys = map[string]bool{"vm.actor_memory": true, "vm.memory": true, "
 // before them is not checked) and refuses a value it could not boot with.
 func checkBoardFit(c *boardConn, key, value string) error {
 	_, text, err := c.request("info", nil, 5*time.Second)
+	if errors.Is(err, errNoAnswer) {
+		return fmt.Errorf("gogo config: %w", err)
+	}
 	if err != nil {
 		return nil
 	}
@@ -770,7 +782,7 @@ func parseImport(name string, r io.Reader) ([]cfgSetting, error) {
 // unless every line is good. On the local store all keys are written in
 // one go; on a board one by one, and a failure stops the import and says
 // which keys were written.
-func configImport(file, port string, local, dry bool, env configEnv) error {
+func configImport(file, port string, local, dry bool, usb *usbRecovery, env configEnv) error {
 	name, r := file, env.in
 	if file == "-" {
 		name = "stdin"
@@ -825,33 +837,41 @@ func configImport(file, port string, local, dry bool, env configEnv) error {
 		for _, s := range sets {
 			fmt.Fprintf(env.out, "set %s\n", line(s))
 		}
-	} else {
-		f, err := env.open(target.port)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		c := newBoardConn(f)
-		defer c.close()
-		for i, s := range sets {
-			if _, _, err := c.request("set", []string{s.key, s.value}, 5*time.Second); err != nil {
-				keys := func(ss []cfgSetting) string {
-					if len(ss) == 0 {
-						return "none"
-					}
-					var ks []string
-					for _, s := range ss {
-						ks = append(ks, s.key)
-					}
-					return strings.Join(ks, ", ")
-				}
-				return fmt.Errorf("gogo config: import stopped at %s:%d (%s): %v\n  written: %s\n  not written: %s",
-					name, s.line, s.key, err, keys(sets[:i]), keys(sets[i:]))
-			}
-			fmt.Fprintf(env.out, "set %s\n", line(s))
-		}
+	} else if err := usb.retry(target.port, func() error { return importOnBoard(target.port, name, sets, line, env) }); err != nil {
+		return err
 	}
 	fmt.Fprintf(env.out, "imported %d keys to %s\n", len(sets), target)
+	return nil
+}
+
+// importOnBoard sets every key of sets on the board on port, one by one;
+// a failure stops it and says which keys were written. Setting a key again
+// is harmless, so a retry starts from the first one.
+func importOnBoard(port, name string, sets []cfgSetting, line func(cfgSetting) string, env configEnv) error {
+	f, err := env.open(port)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	c := newBoardConn(f)
+	defer c.close()
+	for i, s := range sets {
+		if _, _, err := c.request("set", []string{s.key, s.value}, 5*time.Second); err != nil {
+			keys := func(ss []cfgSetting) string {
+				if len(ss) == 0 {
+					return "none"
+				}
+				var ks []string
+				for _, s := range ss {
+					ks = append(ks, s.key)
+				}
+				return strings.Join(ks, ", ")
+			}
+			return fmt.Errorf("gogo config: import stopped at %s:%d (%s): %w\n  written: %s\n  not written: %s",
+				name, s.line, s.key, err, keys(sets[:i]), keys(sets[i:]))
+		}
+		fmt.Fprintf(env.out, "set %s\n", line(s))
+	}
 	return nil
 }
 
@@ -961,7 +981,7 @@ func (c *boardConn) request(op string, args []string, timeout time.Duration) (kv
 			c.done <- err // later requests see it too
 			return kvs, "", fmt.Errorf("board: %v", err)
 		case <-timer.C:
-			return kvs, "", errors.New("no answer from the board (is gogo firmware running? another program using the port?)")
+			return kvs, "", errNoAnswer
 		}
 	}
 }
@@ -983,7 +1003,7 @@ func boardConfigOn(c *boardConn, op string, args []string, out io.Writer, timeou
 		return fmt.Errorf("gogo config: %s is not set", args[0])
 	}
 	if err != nil {
-		return fmt.Errorf("gogo config: %v", err)
+		return fmt.Errorf("gogo config: %w", err)
 	}
 	if op == "list" {
 		sort.Strings(kvs)
