@@ -1,0 +1,9 @@
+package main
+
+// A parameter flag the VM cannot start with (--memory 1K) is an error,
+// exit 1: gogovm's fallback to the defaults drops config keys only, never
+// a flag just typed (tests/golden/params_fallback has the key's case).
+
+func main() {
+	println("not reached")
+}

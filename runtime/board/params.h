@@ -102,8 +102,10 @@ void vm_params_resolve(const gogo_host *h, void *ctx, VmParams *p);
 int32_t params_overlay(const char *const text[PARAM_COUNT], const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap);
 
 /* The keys whose values differ between a and b, space-separated, into buf
- * (as vm_params_format); returns the whole length. */
-size_t params_changed(const VmParams *a, const VmParams *b, char *buf, size_t cap);
+ * (as vm_params_format); with h, only those its config_get has (set, not
+ * changed by another: vm.max_ports cut for vm.max_actors). Returns the
+ * whole length. */
+size_t params_changed(const VmParams *a, const VmParams *b, const gogo_host *h, void *ctx, char *buf, size_t cap);
 
 /* Digits at s (n bytes), then with size an optional K, M or G (either
  * case), into *out (saturating at PARAMS_NUM_TOP): the bytes used, 0 if

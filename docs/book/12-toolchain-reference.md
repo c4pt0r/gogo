@@ -359,12 +359,14 @@ value past the most is cut to it with one line on standard error (`gogo:
 vm.actor_memory 2G is over this VM's 1G; using 1G`); a flag that is not
 a number, or has no value, is a usage error. SIZE is bytes, with an
 optional `K`, `M` or `G`; `--memory 0` is no limit (it undoes a
-`vm.memory` key). gogovm answers its parameter flags in its config store
-(so a program's `sys.Config("vm.actor_memory")` sees what the VM runs
-with). Ports and actors share the 65536 PID slots: ports past what the
-actors leave are cut, with a line when you gave them. If the VM cannot
-start with the parameters (out of memory), it names the keys and flags
-that changed them and starts with the defaults.
+`vm.memory` key). gogovm answers its parameter flags in its config store,
+as typed: a program's `sys.Config("vm.actor_memory")` sees what was asked
+(`8G`), not what the VM clamped it to (`1G`; `actor.Limit` tells that).
+Ports and actors share the 65536 PID slots: ports past what the actors
+leave are cut, with a line when you gave them. If the VM cannot start
+with the parameters (out of memory), it names the config keys that
+changed them and starts without them (the flags kept); a flag that
+cannot fit is an error (exit 1).
 
 | Flag | Key | Default (a board's) | Most | Bounds |
 |---|---|---|---|---|

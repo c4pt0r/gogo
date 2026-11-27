@@ -168,11 +168,14 @@ int32_t params_overlay(const char *const text[PARAM_COUNT], const uint8_t *k, ui
     return -1;
 }
 
-size_t params_changed(const VmParams *a, const VmParams *b, char *buf, size_t cap) {
+size_t params_changed(const VmParams *a, const VmParams *b, const gogo_host *h, void *ctx, char *buf, size_t cap) {
     char line[128], *q = line;
     for (uint32_t r = 0; r < PARAM_COUNT; r++) {
         uint32_t o = rows[r].off, w = (rows[r].flags & F_WIDE) ? 8u : (rows[r].flags & F_PAIR) ? 8u : 4u;
         if (memcmp((const char *)a + o, (const char *)b + o, w) == 0) continue;
+        if (h && (!h->config_get ||
+                  h->config_get(ctx, (const uint8_t *)rows[r].key, (uint32_t)strlen(rows[r].key), NULL, 0) < 0))
+            continue;                               /* not set: it changed with another one */
         if (q != line) *q++ = ' ';
         q = put_s(q, rows[r].key);
     }

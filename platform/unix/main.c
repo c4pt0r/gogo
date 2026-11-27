@@ -197,6 +197,11 @@ static const char *flag_text[PARAM_COUNT];
  * what the VM runs with; NODE_AGENT_KEY (params.h: the node agent's memory
  * limit from the link cap and the actor memory, for gogo/node; no store
  * key is that long); then the store. */
+static int32_t flags_config(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
+    (void)ctx;
+    return params_overlay(flag_text, k, kl, buf, cap);
+}
+
 static int32_t main_config(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
     static const char agent[] = NODE_AGENT_KEY;
     int32_t f = params_overlay(flag_text, k, kl, buf, cap);
@@ -506,13 +511,19 @@ int main(int argc, char **argv) {
     /* The parameters: the flags, then the config keys, then the host's
      * defaults (params.h). */
     VmParams params, defaults;
-    gogo_host host = unix_host;
+    gogo_host host = unix_host, flags_only = unix_host;
     host.write = main_write;
     host.config_get = main_config;
+    flags_only.write = NULL;            /* said below, with the keys */
+    flags_only.config_get = flags_config;
     vm_params_default(&defaults);
     defaults.max_ports = GOGO_HOST_PORTS;
     defaults.max_links = GOGO_HOST_LINKS;
     params = defaults;
+    /* What a boot that does not fit falls back to: the defaults with the
+     * flags (gogo_board_main drops only the store's keys; a flag that
+     * cannot fit stays an error). */
+    vm_params_resolve(&flags_only, NULL, &defaults);
     vm_params_resolve(&host, NULL, &params);
     if (info) {
         char line[256];

@@ -26,7 +26,8 @@ typedef struct BoardRun {
      * NULL: the build's defaults and the config keys, resolved here. If
      * the VM does not fit with them (out of memory at vm_init or the
      * boot), the keys that changed them are named on stream 2 and it
-     * boots with defaults (NULL: vm_params_default). */
+     * boots with defaults (NULL: vm_params_default): what the platform
+     * keeps whatever its keys say (gogovm: its defaults with its flags). */
     const struct VmParams *params, *defaults;
     struct VfsState *vfs;              /* NULL: no file system builtin */
     struct InputState *input;          /* NULL: no input source */

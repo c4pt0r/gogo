@@ -1,6 +1,7 @@
 /* The one boot path (board_main.h). */
 #include "board_main.h"
 #include "actor.h"
+#include "alloc.h"
 #include "interp.h"
 #include "module.h"
 #include "vfs.h"
@@ -25,17 +26,22 @@ int gogo_board_main(const VmBoard *b, const gogo_host *h, BoardRun *r, const uin
     }
     for (;;) {
         rc = VM_BOOT_NO_MEMORY;
-        if (vm_init(r->vm, h, NULL, b, (uint16_t)p->max_actors) == 0 && vm_params_apply(r->vm, p) == 0) {
-            if (r->booting) r->booting(r->vm, r->ctx);
-            rc = vm_boot(r->vm, words, nwords);
+        if (vm_init(r->vm, h, NULL, b, (uint16_t)p->max_actors) == 0) {
+            if (vm_params_apply(r->vm, p) == 0) {
+                if (r->booting) r->booting(r->vm, r->ctx);
+                rc = vm_boot(r->vm, words, nwords);   /* a refusal gives the table back */
+            } else {
+                va_free(r->vm, r->vm->table, (size_t)r->vm->table_cap * sizeof(uintptr_t));
+            }
         }
         /* Out of memory with parameters the keys changed: say which, and
          * boot once more with the defaults, so a bad key never keeps a
          * board from booting (or from answering gogo config). A failed
-         * try may leave one allocator chunk behind. */
+         * try leaves nothing allocated: the table is the one thing taken
+         * before a failure point, and it is given back. */
         if (rc != VM_BOOT_NO_MEMORY || p == &def) break;
         char keys[128], m[180];
-        if (!params_changed(p, &def, keys, sizeof keys)) break;
+        if (!params_changed(p, &def, h, NULL, keys, sizeof keys)) break;
         size_t n = (size_t)snprintf(m, sizeof m, "gogo: out of memory with %s as set; starting with the defaults\n", keys);
         h->write(NULL, 2, m, n < sizeof m ? n : sizeof m - 1u);
         p = &def;
