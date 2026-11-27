@@ -14,6 +14,8 @@
  * monotonic (or --sim-clock) clock, a self-pipe wake latch, getentropy,
  * the config file. The ctx is unused (NULL). */
 extern const gogo_host unix_host;
+/* malloc / free and the wake, for board ports' posts from other threads. */
+extern const gogo_host unix_ports_host;
 /* The --net-fd link (or a test's tx hook). */
 extern const NetIf unix_netif;
 /* gpio and the net drivers, NULL-terminated (gogovm adds the input ones). */

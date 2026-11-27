@@ -619,6 +619,7 @@ int main(int argc, char **argv) {
         .vm = &vm, .params = &params, .defaults = &defaults, .vfs = &vfs_state, .input = &input_state,
         .net = net_fd >= 0 ? &net_state : NULL, .net_install = net_install,
         .booting = set_wall_clock, .ready = host_net ? host_net_ready : NULL, .run = run_main,
+        .ports_host = &unix_ports_host,
     };
     int run_rc = 0;
     int rc = gogo_board_main(&unix_board, &host, &run, words, (uint32_t)(size / 4), &run_rc);

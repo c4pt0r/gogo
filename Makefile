@@ -94,7 +94,7 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: test-board-ports test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-c-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-board-ports test-board-ports-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-c-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
@@ -160,7 +160,7 @@ gogo-cmd:
 
 # gogovm's compile, with driver sources after it (gogovm_with SRCS).
 GOGOVM_DEPS = $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
-gogovm_with = $(CC) $(CFLAGS) $(TLS_CFLAGS) $(BOARD_PORTS_FLAGS) $(if $(1),-DGOGO_MAX_SOURCES=5u) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(1) $(TLS_LINK)
+gogovm_with = $(CC) $(CFLAGS) $(TLS_CFLAGS) $(BOARD_PORTS_FLAGS) $(if $(1),-DGOGO_MAX_SOURCES=5u -pthread) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(1) $(TLS_LINK)
 
 $(BUILD)/gogovm: $(GOGOVM_DEPS) $(DRIVER_SRCS) $(DRIVERS_STAMP)
 	@mkdir -p $(BUILD)
@@ -554,6 +554,12 @@ $(BUILD)/board-ports/gogovm: $(GOGOVM_DEPS) $(BOARD_TEST_DRIVERS) $(FLAGS_STAMP)
 
 test-board-ports: $(BUILD)/board-ports/gogovm gogo-cmd
 	runtime/board/test/test.sh $(BUILD)
+
+# The same under ThreadSanitizer: posts from the test drivers' threads
+# against the VM thread (the inbox, posters, the ports host's malloc).
+test-board-ports-tsan:
+	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread" build/tsan/board-ports/gogovm gogo-cmd
+	TSAN_OPTIONS="halt_on_error=1" runtime/board/test/test.sh build/tsan
 
 # examples/dice-driver: a third-party port driver on gogo.h alone (book
 # chapter 22), an ESP-IDF component (dice/). test.sh runs its program on
