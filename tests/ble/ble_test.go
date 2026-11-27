@@ -398,6 +398,49 @@ func TestFlood(t *testing.T) {
 	}
 }
 
+// The phone leaves in the middle of a flood: gogovm survives (no SIGPIPE),
+// the notifications still waiting fail, the program sees Disconnected and
+// carries on.
+func TestPhoneLeavesDuringFlood(t *testing.T) {
+	v := start(t, build(t, echo))
+	v.stdout.wait(t)
+	p := v.dial()
+	p.gatt()
+	p.send("connect 11:22:33:44:55:66 23")
+	p.send("sub 2 1")
+	p.expect("ok 2")
+	for _, w := range []string{"connected 23", "subscribed 2 true"} {
+		if s := v.stdout.wait(t); s != w {
+			t.Fatalf("got %q, want %q", s, w)
+		}
+	}
+	p.send("write 1 " + hexs("flood 3000"))
+	p.expect("ok 1")
+	p.recv()
+	p.recv()
+	p.c.Close()
+	s := v.stdout.wait(t)
+	var ok, failed int
+	if _, err := fmt.Sscanf(s, "flood 3000 x 20 ok %d failed %d ", &ok, &failed); err != nil || failed == 0 || ok+failed != 3000 {
+		t.Fatalf("got %q", s)
+	}
+	if s := v.stdout.wait(t); s != "disconnected 19" {
+		t.Fatalf("got %q", s)
+	}
+	q := v.dial() // still alive, advertising again
+	q.gatt()
+	q.send("connect 22:22:22:22:22:22 23")
+	if s := v.stdout.wait(t); s != "connected 23" {
+		t.Fatalf("got %q", s)
+	}
+	q.send("write 1 " + hexs("bye"))
+	q.expect("ok 1")
+	q.expectEOF()
+	if _, err := v.exit(); err != nil {
+		t.Fatalf("exit %v", err)
+	}
+}
+
 // Config errors, a second open, and an image refused by a VM without ble.
 func TestOpenErrors(t *testing.T) {
 	img := build(t, "progs/errors")

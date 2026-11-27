@@ -570,7 +570,10 @@ int main(int argc, char **argv) {
         return EXIT_OK;
     }
     if (argc < 2) return usage(stderr, EXIT_USAGE);
-    if (net_fd >= 0 || host_net) signal(SIGPIPE, SIG_IGN);   /* a closed link is EOF / a failed send, not death */
+    /* A closed link (a net socket, the ble phone's socket) is EOF or a
+     * failed write, not death: a phone that leaves while the program
+     * notifies must not kill the VM. */
+    signal(SIGPIPE, SIG_IGN);
     if (net_fd >= 0) platform_unix_net_open(net_fd, sim != 0, &net_state);
     if (fs_root) {
         /* /flash -> DIR/flash (created), /sd -> DIR/sd (only if it exists). */

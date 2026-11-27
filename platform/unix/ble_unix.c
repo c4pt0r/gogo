@@ -414,9 +414,19 @@ static int hal_notify(void *ctx, uint32_t chr, const uint8_t *d, uint32_t len) {
     pthread_mutex_lock(&mu);
     bool same = u.cfd == fd;
     pthread_mutex_unlock(&mu);
-    bool ok = same && write_all(fd, out, n);
+    /* A phone that does not read fills the socket buffer: the first
+     * write does not wait (BLE_AGAIN, tried again by the driver, as a
+     * board's stack without a buffer); once part of the line is out, the
+     * rest is written in full, so the line protocol stays whole. */
+    int r = GOGO_E_CLOSED;
+    if (same) {
+        ssize_t w;
+        do w = send(fd, out, n, MSG_DONTWAIT); while (w < 0 && errno == EINTR);
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) r = BLE_AGAIN;
+        else if (w > 0 && write_all(fd, out + w, n - (size_t)w)) r = 0;
+    }
     pthread_mutex_unlock(&wmu);
-    return ok ? 0 : GOGO_E_CLOSED;
+    return r;
 }
 
 const BleHal ble_unix_hal = {

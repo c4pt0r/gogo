@@ -1100,8 +1100,9 @@ rebuilt:
   running: it was the USB link going silent (below, "ESP32-S3 boards"),
   not Bluetooth. It happened again with the integrated firmware.
 - **The host simulation is functional, not timed.** `gogovm`'s socket
-  phone has no radio timing, no buffer limits (a notification is always
-  taken at once) and no MTU of its own: the client says the MTU.
+  phone has no radio timing and no MTU of its own (the client says the
+  MTU); its only buffer limit is the socket's: a phone that stops reading
+  makes notifications wait (`BLE_AGAIN`), as a board's full stack does.
 
 ## Embedding (`libgogo`)
 
