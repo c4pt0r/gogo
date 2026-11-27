@@ -804,3 +804,36 @@ TEST(bytes_list_charged) {
     actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);              /* exit frees it */
     CHECK_EQ(bytes_table_used(&f.vm), 0);
 }
+
+/* The table and a holder list grow on demand up to the caps (vm.handles):
+ * the table from 64 entries by doubling, a list from 16; a list's charge
+ * is its room, not the per-actor cap. */
+TEST(bytes_grow_on_demand) {
+    Fx f; fx_init(&f);
+    f.vm.bytes_cap = 200;
+    f.vm.bytes_per_actor = 100;
+    Actor *a = spawn(&f, 8192);
+    a->max_words = 60000;
+    term keep = T_NIL;
+    for (uint32_t i = 0; i < 100; i++) {
+        CHECK_EQ(make_bytes(&f, a, 0, 65), R_NORMAL);
+        uint32_t off = heap_alloc(&f.vm, a, 4, &keep, 1);
+        CHECK(off != UINT32_MAX);
+        a->mem[off] = hdr_make(4, K_STRUCT);
+        a->mem[off + 1] = 0;
+        a->mem[off + 2] = R(a)[0];
+        a->mem[off + 3] = keep;
+        keep = term_from_ref(off);
+        R(a)[1] = keep;
+        if (i == 0) {
+            CHECK_EQ(f.vm.bytes_alloc, 64);
+            CHECK_EQ(actor_extra_charged(a), (sizeof(HeldBytes) + 16u * sizeof(Held) + 3u) / 4u);
+        }
+    }
+    CHECK_EQ(bytes_held_count(a), 100);
+    CHECK_EQ(f.vm.bytes_alloc, 128);
+    CHECK_EQ(actor_extra_charged(a), (sizeof(HeldBytes) + 100u * sizeof(Held) + 3u) / 4u);   /* 16, 32, 64, 100 */
+    CHECK_EQ(make_bytes(&f, a, 0, 65), R_OUT_OF_MEMORY);                                    /* its cap */
+    actor_exit(&f.vm, a, R_NORMAL, T_EMPTYSTR);
+    CHECK_EQ(bytes_table_used(&f.vm), 0);
+}

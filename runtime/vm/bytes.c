@@ -21,19 +21,26 @@ typedef struct BytesEntry {
     uint8_t *data;            /* the root's block (a slice shares it) */
 } Entry;
 
-#define TAB_BYTES(vm) ((size_t)(vm)->bytes_cap * sizeof(Entry))
+/* Both grow on demand, up to the VM's caps (vm.handles): the table from
+ * TAB_FIRST entries (a board's whole default) by doubling, a holder list
+ * from LIST_FIRST entries (what every list had before the caps were
+ * parameters, so a holder's charge does not depend on them) likewise. */
+#define TAB_FIRST 64u
+#define LIST_FIRST 16u
+#define TAB_BYTES(n) ((size_t)(n) * sizeof(Entry))
 
-/* An actor's holder list: its bytes, and the words it is charged while it
- * exists. */
-#define LIST_BYTES(vm) (sizeof(HeldBytes) + (size_t)(vm)->bytes_per_actor * sizeof(Held))
-#define LIST_WORDS(vm) ((uint32_t)((LIST_BYTES(vm) + 3u) / 4u))
+/* A holder list of room entries: its bytes, and the words it is charged
+ * while it exists. */
+#define LIST_BYTES(room) (sizeof(HeldBytes) + (size_t)(room) * sizeof(Held))
+#define LIST_WORDS(room) ((uint32_t)((LIST_BYTES(room) + 3u) / 4u))
 
-/* The table is vm->bytes_tab (vm->bytes_cap entries, NULL until the
- * first handle) with vm->bytes_used live entries. */
+/* The table is vm->bytes_tab (vm->bytes_alloc entries, NULL until the
+ * first handle; at most vm->bytes_cap) with vm->bytes_used live entries. */
 
 void bytes_reset(Vm *vm) {
     vm->bytes_tab = NULL;
     vm->bytes_used = 0;
+    vm->bytes_alloc = 0;
 }
 
 uint32_t bytes_table_used(const Vm *vm) { return vm->bytes_used; }
@@ -44,7 +51,7 @@ static size_t block_bytes(uint32_t len) { return len ? (size_t)len : 1u; }
 bool bytes_valid(const Vm *vm, term h) {
     if (!term_is_handle(h) || !vm->bytes_tab) return false;
     uint32_t i = term_handle_idx(h);
-    return i < vm->bytes_cap && vm->bytes_tab[i].refcnt != 0;
+    return i < vm->bytes_alloc && vm->bytes_tab[i].refcnt != 0;
 }
 
 static uint32_t root_of(const Vm *vm, uint32_t i) { return vm->bytes_tab[i].parent == NO_PARENT ? i : vm->bytes_tab[i].parent; }
@@ -53,18 +60,38 @@ uint32_t bytes_pinned_len(const Vm *vm, term h) {
     return bytes_valid(vm, h) ? vm->bytes_tab[root_of(vm, term_handle_idx(h))].len : 0u;
 }
 
-/* A free slot (allocating the table on first use), or -1. The table is
- * never freed once made (until vm_init resets it): it is a fixed
- * TAB_BYTES, and keeping it avoids free/alloc churn on the arena when a
- * program makes and drops handles in a loop. */
-static int32_t slot_find(Vm *vm) {
-    if (!vm->bytes_tab) {
-        vm->bytes_tab = va_alloc(vm, TAB_BYTES(vm));
-        if (!vm->bytes_tab) return -1;
-        memset(vm->bytes_tab, 0, TAB_BYTES(vm));
+/* A free slot, or -1 at the cap or out of memory. A full table (none
+ * yet: 0 of 0) doubles, from TAB_FIRST entries, up to vm->bytes_cap; it
+ * is never shrunk or freed (until vm_init resets it), which avoids
+ * free/alloc churn on the arena when a program makes and drops handles in
+ * a loop. Only indices stay valid across it: callers hold no Entry
+ * pointer over a slot_find. */
+/* A copy of the block p (old bytes; NULL: none) in a new block of n bytes,
+ * the rest zeroed; p is freed. NULL (p kept) if out of memory. */
+static void *grow(Vm *vm, void *p, size_t old, size_t n) {
+    uint8_t *q = va_alloc(vm, n);
+    if (!q) return NULL;
+    memset(q + old, 0, n - old);
+    if (p) {
+        memcpy(q, p, old);
+        va_free(vm, p, old);
     }
+    return q;
+}
+
+static int32_t slot_find(Vm *vm) {
+    uint32_t have = vm->bytes_alloc;
     if (vm->bytes_used >= vm->bytes_cap) return -1;
-    for (uint32_t i = 0; i < vm->bytes_cap; i++) {
+    if (vm->bytes_used == have) {
+        uint32_t n = have ? have * 2u : TAB_FIRST;
+        if (n > vm->bytes_cap) n = vm->bytes_cap;
+        Entry *t = grow(vm, vm->bytes_tab, TAB_BYTES(have), TAB_BYTES(n));
+        if (!t) return -1;
+        vm->bytes_tab = t;
+        vm->bytes_alloc = (uint16_t)n;
+        return (int32_t)have;                  /* the first new one */
+    }
+    for (uint32_t i = 0; i < have; i++) {
         if (vm->bytes_tab[i].refcnt == 0) return (int32_t)i;
     }
     return -1;
@@ -88,7 +115,7 @@ static void entry_unref(Vm *vm, uint32_t i) {
 /* ---- distinct-root sets ---- */
 
 void bytes_set_init(const Vm *vm, BytesSet *s) {
-    memset(s->seen, 0, (vm->bytes_cap + 31u) / 32u * 4u);
+    memset(s->seen, 0, (vm->bytes_alloc + 31u) / 32u * 4u);
     s->bytes = 0;
 }
 
@@ -132,15 +159,28 @@ static void held_remove(Vm *vm, Actor *a, HeldBytes **slot, uint32_t k, bool rec
     hb->e[k] = hb->e[hb->n - 1u];
     hb->n--;
     if (hb->n == 0) {
-        va_free(vm, hb, LIST_BYTES(vm));
+        uint32_t room = hb->room;
+        va_free(vm, hb, LIST_BYTES(room));
         *slot = NULL;
-        actor_uncharge(a, LIST_WORDS(vm));
+        actor_uncharge(a, LIST_WORDS(room));
     } else if (recount) {
         entry_unref(vm, i);
         held_recount(vm, hb);
         return;
     }
     entry_unref(vm, i);
+}
+
+/* The room a's list hb (NULL: none yet) has after one more entry. */
+static uint32_t list_room(const Vm *vm, const HeldBytes *hb) {
+    uint32_t r = !hb ? LIST_FIRST : hb->n < hb->room ? hb->room : hb->room * 2u;
+    return r < vm->bytes_per_actor ? r : vm->bytes_per_actor;
+}
+
+/* Words one more entry would add to a's charge for its list: a first
+ * list's, a grown list's more, else 0. */
+static uint32_t list_more_words(const Vm *vm, const HeldBytes *hb) {
+    return LIST_WORDS(list_room(vm, hb)) - (hb ? LIST_WORDS(hb->room) : 0u);
 }
 
 /* Adds entry i to a's list with the given pin / heap reachability, or
@@ -159,18 +199,18 @@ static bool held_add(Vm *vm, Actor *a, uint32_t i, bool pin, bool heap) {
         if (heap) hb->e[k].flags |= HELD_HEAP;
         return true;
     }
-    if (!hb) {
-        hb = va_alloc(vm, LIST_BYTES(vm));
-        if (!hb) return false;
-        if (!actor_charge(vm, a, LIST_WORDS(vm))) {   /* the list counts against a */
-            va_free(vm, hb, LIST_BYTES(vm));
+    if (hb && hb->n >= vm->bytes_per_actor) return false;
+    uint32_t room = list_room(vm, hb), more = list_more_words(vm, hb);
+    if (!hb || room != hb->room) {        /* a first list, or a full one doubled */
+        if (!actor_charge(vm, a, more)) return false;   /* the list counts against a */
+        HeldBytes *nb = grow(vm, hb, hb ? LIST_BYTES(hb->room) : 0u, LIST_BYTES(room));
+        if (!nb) {
+            actor_uncharge(a, more);
             return false;
         }
-        hb->n = 0;
-        hb->bytes = 0;
-        *slot = hb;
+        nb->room = (uint16_t)room;
+        *slot = hb = nb;
     }
-    if (hb->n >= vm->bytes_per_actor) return false;
     hb->e[hb->n].idx = (uint16_t)i;
     hb->e[hb->n].pins = pin ? 1u : 0u;
     hb->e[hb->n].flags = heap ? HELD_HEAP : 0u;
@@ -192,7 +232,7 @@ static bool room_for(const Vm *vm, const Actor *a, uint32_t r, uint32_t root_len
     }
     uint64_t words = (uint64_t)a->mem_words + actor_charged_words(a) - bytes_words(held) +
                      bytes_words(held + root_len < held ? UINT32_MAX : held + root_len) +
-                     (hb ? 0u : LIST_WORDS(vm));
+                     list_more_words(vm, hb);
     return words <= actor_max_words(a);
 }
 
@@ -212,7 +252,7 @@ uint32_t bytes_extra_words(const Vm *vm, const Actor *a, const term *hs, uint32_
         total += s.bytes - before;        /* a root not seen yet: its full length */
     }
     if (!any) return 0u;
-    uint64_t w = (total + 3u) / 4u - bytes_words(held) + (hb ? 0u : LIST_WORDS(vm));
+    uint64_t w = (total + 3u) / 4u - bytes_words(held) + list_more_words(vm, hb);
     return w > UINT32_MAX ? UINT32_MAX : (uint32_t)w;
 }
 
@@ -221,7 +261,7 @@ uint32_t bytes_held_bytes(const Actor *a) {
     return hb ? hb->bytes : 0u;
 }
 
-uint32_t bytes_list_words(const Vm *vm, const Actor *a) { return list_of(a) ? 0u : LIST_WORDS(vm); }
+uint32_t bytes_list_words(const Vm *vm, const Actor *a) { return list_more_words(vm, list_of(a)); }
 
 uint32_t bytes_held_count(const Actor *a) {
     const HeldBytes *hb = list_of(a);
@@ -286,7 +326,7 @@ static void gc_holders(Vm *vm, Actor *a) {
     }
 }
 
-static bool tab_full(const Vm *vm) { return vm->bytes_tab && vm->bytes_used >= vm->bytes_cap; }
+static bool tab_full(const Vm *vm) { return vm->bytes_tab && vm->bytes_used >= vm->bytes_cap; }   /* at the cap */
 
 /* try_entry, collecting a's heap (it drops what a no longer reaches, and
  * the slack) and then, if the table is full, the other holders' before

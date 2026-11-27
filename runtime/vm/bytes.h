@@ -37,10 +37,10 @@
  * reached nor pinned is dropped. A dropped Bytes is thus released at its
  * holder's next GC. Exit drops every entry (bytes_actor_exit).
  *
- * The table is allocated on first use and then kept (it is fixed memory,
- * vm->bytes_cap entries, and keeping it avoids free/realloc churn on
- * the MCU arena when handles are made and dropped in a loop): a program
- * without off-heap Bytes pays nothing. Each Vm has its own (Vm.bytes_tab,
+ * The table is allocated on first use (64 entries), doubles when full up
+ * to vm->bytes_cap and is then kept (keeping it avoids free/realloc churn
+ * on the MCU arena when handles are made and dropped in a loop): a
+ * program without off-heap Bytes pays nothing. Each Vm has its own (Vm.bytes_tab,
  * from its own allocator; vm_init starts it empty).
  *
  * Table full: bytes_make / bytes_sub first collect the caller; if the table
@@ -68,12 +68,13 @@ enum {
     HELD_MARK = 2             /* reached by the GC in progress */
 };
 
-/* An actor's holder list, allocated on its first handle (room for
- * vm->bytes_per_actor entries) and freed when it holds none; its
- * ActorExtra points to it (actor_held). While it exists its size is
- * charged to the actor (ActorExtra.charged_words). */
+/* An actor's holder list, allocated on its first handle (room for 16
+ * entries, doubled as it fills, up to vm->bytes_per_actor) and freed when
+ * it holds none; its ActorExtra points to it (actor_held). While it exists
+ * its size is charged to the actor (ActorExtra.charged_words). */
 struct HeldBytes {
-    uint32_t n;               /* entries in use */
+    uint16_t n;               /* entries in use */
+    uint16_t room;            /* entries allocated */
     uint32_t bytes;           /* held_bytes: lengths of the distinct roots held */
     Held e[];
 };
@@ -142,8 +143,9 @@ HeldBytes **bytes_gc_begin(Actor *a);
 void bytes_gc_mark(HeldBytes **slot, term h);
 void bytes_gc_sweep(Vm *vm, Actor *a, HeldBytes **slot);
 
-/* Words taking a first handle would add to a's charge: the holder list's
- * size if a has none yet, else 0 (msg_enqueue counts it in the quota for a
+/* Words taking one more handle would add to a's charge for its holder
+ * list: a first list's size if a has none, the growth if its list is full
+ * and may double, else 0 (msg_enqueue counts it in the quota for a
  * message carrying handles, so the overflow is MailboxOverflow on enqueue
  * rather than OutOfMemory after the receive). */
 uint32_t bytes_list_words(const Vm *vm, const Actor *a);

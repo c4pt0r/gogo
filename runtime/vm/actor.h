@@ -146,6 +146,7 @@ typedef struct Vm {
     uint16_t port_n, port_max, port_base;
     Port port_first[PORT_CHUNK];
     uint16_t max_links;       /* node links of distribution (runtime/dist); 0 = its default */
+    uint16_t bytes_alloc;     /* off-heap Bytes table entries allocated (bytes.c; at most bytes_cap) */
     PortEvent evq_slots[GOGO_EVQ_CAP];   /* event ring storage (evq.h), last: large */
 } Vm;
 

@@ -1,0 +1,26 @@
+package main
+
+// A holder's charge for off-heap Bytes does not depend on the VM's caps
+// (vm.handles, here at its ceiling): a small actor (MaxMemory 1200) that
+// receives one frozen Bytes is charged its bytes and a 16-entry holder
+// list, as on every VM before the caps were parameters, and keeps it.
+
+import (
+	"gogo/actor"
+	"gogo/bytes"
+)
+
+func main() {
+	b := bytes.NewBuffer(200)
+	for i := 0; i < 200; i++ {
+		b.WriteByte(byte(i))
+	}
+	f := b.Freeze()
+	me := actor.Self()
+	c := actor.SpawnOpt(func() {
+		got := actor.Receive().(bytes.Bytes)
+		actor.Send(me, got.Len())
+	}, actor.Options{MaxMemory: 1200})
+	actor.Send(c, f)
+	println("got", actor.Receive().(int))
+}
