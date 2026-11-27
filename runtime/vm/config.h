@@ -17,12 +17,17 @@
  * ceiling of an actor's memory: 65535 words on a board, 2^28 (1 GB) on
  * the host, where heap refs (word offset << 2, term.h) leave 30 bits. */
 #include <stdint.h>
+#ifndef GOGO_WORDS_16   /* its own knob too: a host build may lower the default alone */
 #if GOGO_DEFAULT_MAX_WORDS <= 65535u
 #define GOGO_WORDS_16 1
+#else
+#define GOGO_WORDS_16 0
+#endif
+#endif
+#if GOGO_WORDS_16
 typedef uint16_t gogo_words_t;
 #define GOGO_WORDS_MAX 65535u
 #else
-#define GOGO_WORDS_16 0
 typedef uint32_t gogo_words_t;
 #define GOGO_WORDS_MAX 0xFFFFFFFFu
 #endif

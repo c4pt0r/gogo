@@ -132,7 +132,10 @@ static uint32_t walk(uint32_t *mem, term root, Xm *x) {
  * object's last term, which leaves nothing to come back for). The stack
  * starts in the WalkStk (on the C stack) and grows in VM memory. If it
  * cannot grow, the marking walk enters nothing more (cut) and the copy
- * fails as too big (R_OUT_OF_MEMORY); the unmarking walk then retraces
+ * fails as too big (R_OUT_OF_MEMORY), as it does once the objects marked
+ * pass MSG_MAX_WORDS (no message may be larger, so the stack stays small;
+ * an oversize value is OutOfMemory even if a stale term lies beyond); the
+ * unmarking walk then retraces
  * exactly the objects marked, in the same order, so it never needs more
  * frames than the marking walk had and never fails. */
 typedef struct WalkStk {
@@ -207,6 +210,7 @@ static uint32_t walk(uint32_t *mem, term root, Xm *x, WalkStk *s) {
                     for (uint32_t j = i; j < end; j++) xm_term(x, o[j]);
                     total += hdr_words(o[0]);
                     o[0] |= WALK_MARK;
+                    if (total > MSG_MAX_WORDS) s->cut = true;   /* too big already: enter no more */
                 }
                 continue;
             }

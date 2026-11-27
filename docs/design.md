@@ -1661,13 +1661,21 @@ Rules that go with it:
   off-heap `Bytes` handles (`vm.handles`: 64/16 / 4096/256, at most 1024 /
   65535). One helper outside the VM core (`runtime/board/params.c`,
   linked by gogovm, the board firmware and libgogo) resolves them before
-  `vm_init`: a gogovm flag or a `gogo_config` field
-  beats the config key, which beats the default, and a value past the
-  ceiling is clamped with one console line (`vm_params_resolve`);
+  `vm_init`, from one table of the keys: a gogovm flag or a
+  `gogo_config` field beats the config key (the platform answers it
+  first in its `config_get`, `params_overlay`, so the resolver reads keys
+  only), the key beats the default, and a value past the ceiling is
+  clamped with one console line (`vm_params_resolve`; 32-bit arithmetic
+  on a board). If the VM does not fit with what the keys changed,
+  `gogo_board_main` names them and boots with the defaults;
   `vm_params_apply` then sets the Vm's fields (`actor_words`, the
   allocator's limit, the port and link caps, `mod_cap`, `bytes_cap`,
   `bytes_per_actor`), which a board keeps in its `Vm`'s padding (its size
-  and free RAM are unchanged). Each actor takes `actor_words` as its
+  and free RAM are unchanged). The off-heap `Bytes` table and each holder
+  list grow on demand up to their caps (64 and 16 entries first, then
+  doubling), and the distinct-root sets that charging builds on the C
+  stack are sized for the most a VM may have (`GOGO_BYTES_HANDLES_MAX`):
+  132 bytes on a board, 8 KB on the host. Each actor takes `actor_words` as its
   `max_words` when made; the VM core keeps only those fields and their
   enforcement, never the keys or the parsing. `gogovm --info` and `gogo
   device info` print them, and gogovm's config store answers the node

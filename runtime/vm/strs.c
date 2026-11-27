@@ -669,8 +669,9 @@ static void cmp_key(const Vm *vm, const Actor *a, term t, CmpKey *k) {
 /* The terms one B_CMP may visit, deep_live's WALK_BUDGET: a compare walks
  * without marking what it has seen, so values sharing subvalues (a DAG,
  * x = N{x, x} in a loop) can take width^depth visits; without sharing
- * every visit but the first reads a distinct heap word, so the limit is
- * never reached. B_CMP does not preempt: past the limit it is badcode,
+ * every visit but the first reads a distinct heap word, so on a board
+ * (65535 words) the limit is never reached; on the host a large flat
+ * value reaches it (known-issues). B_CMP does not preempt: past the limit it is badcode,
  * not a VM frozen in one instruction. */
 #define CMP_BUDGET 65536
 

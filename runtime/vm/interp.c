@@ -113,10 +113,11 @@ static bool term_live(const Vm *vm, const Actor *a, term t) {
 /* deep_live's limit on the terms it visits. It walks without marking what
  * it has seen (a mark set would cost RAM), so a value that reaches the same
  * subvalue by many paths is walked once per path, and the number of paths
- * can grow as width^depth for a value of a few hundred words. A heap value
- * without such sharing cannot reach the limit: every visit but the first
- * reads a distinct word of the actor's heap (at most HEAP_MAX_WORDS), or
- * of a constant area (the image's constant structs, few and small). It is
+ * can grow as width^depth for a value of a few hundred words. On a board
+ * a heap value without such sharing cannot reach the limit: every visit
+ * but the first reads a distinct word of the actor's heap (at most 65535),
+ * or of a constant area (the image's constant structs, few and small); on
+ * the host, where a heap may be far larger, a flat value can. It is
  * the println walk (out_term) printing nothing, so println never prints
  * what was not checked. */
 #define WALK_BUDGET 65536

@@ -307,9 +307,12 @@ rebuilt:
   so a part reachable by many paths is walked once per path. The walk
   stops after 65536 terms, so it takes at most a fraction of a
   millisecond on the host: `println` then ends the value with ` ...`,
-  and a port command or `port.Open` ends the actor with `badcode`. A
-  value without shared parts never reaches the limit (an actor's heap
-  holds fewer words), but moderate sharing in a large value can: 5000
+  and a port command or `port.Open` ends the actor with `badcode`. On a
+  board a value without shared parts never reaches the limit (an actor
+  holds at most 65535 words); on the host, where an actor may hold far
+  more, a flat value of more than 65536 terms reaches it too (a
+  `println` of a 100000-element slice ends with ` ...`). Moderate sharing
+  in a large value reaches it on both: 5000
   elements that each hold the same 16-element slice take about 85000
   visits. *Workaround:* send ports flat values; print the parts of a
   shared structure separately.
@@ -606,7 +609,8 @@ rebuilt:
   element, which loop) ends the actor with `badcode` where Go answers;
   so does a compare that visits more than 65536 terms, which values
   sharing parts reach quickly (`x = N{x, x}` in a loop: the walk follows
-  paths, not objects). Each level takes about 100 bytes of the VM's
+  paths, not objects), and, on the host, plain large values do (`x == y`
+  for two `[70000]int` arrays). Each level takes about 100 bytes of the VM's
   stack. *Workaround:* compare the fields of a deep value yourself.
 - **`println` of a slice differs from Go.** gogo prints the elements,
   `[1 2 3]`; Go's `println` prints `[len/cap]address` (only
