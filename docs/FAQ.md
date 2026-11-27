@@ -409,13 +409,30 @@ the image to one platform's symbols, while one image runs on every board,
 on `gogovm` and inside embedding programs, and can be hot-loaded. A port
 keeps all of that: its driver is C, but gogo code reaches it only with
 `port.Open` and messages, and the image names the drivers it needs, so a
-firmware without one refuses it at load. There are two ways to add C: a
-driver compiled into the firmware (or `gogovm`), or a host port registered
-by a program that embeds `libgogo`. A driver that uses only the generic
-`port.Host` and `port.Post` types needs no change to the compiler or the
-image format. [Book chapter 22](book/22-extending-with-c.md) explains both,
-walks through a real driver, and lists what is still missing for drivers
-written outside the repository.
+firmware without one refuses it at load. A driver is written against
+`gogo.h`, the same header an embedding program uses, and the same
+driver runs in a firmware, in `gogovm` and in a program that embeds
+`libgogo` (next question). [Book chapter 22](book/22-extending-with-c.md)
+explains it, walks through a real driver, and lists what is still
+missing.
+
+### How do I add my own hardware driver?
+Write it as an ESP-IDF component of your own, outside the gogo tree, on
+`gogo.h` alone: a `gogo_port_driver` (`open`, `command`, `close`
+callbacks) and one line, `GOGO_BOARD_PORT("mysensor", &driver, &state);`,
+which registers it at boot before the image loads. Give the component a
+`gogo-driver.json` (`{"ports": ["mysensor"]}`) and build the firmware
+with it: `gogo firmware -board sticks3 -component path/to/mysensor
+-build app.ggb`. gogo code opens it with `port.Open("mysensor",
+port.Host{Arg: ...})`, sends `port.Post` commands and gets `port.Post`
+events; `gogo device info` lists it among `provides`. The driver's own
+task or thread sends events through a `gogo_poster` (never from an
+interrupt handler). The same component builds into `gogovm` for tests
+(`make vm DRIVERS=path/to/mysensor`), and an embedding program registers
+the same table with `gogo_register_port`. No fork, no VM header, no
+image format change. [`examples/dice-driver`](../examples/dice-driver/)
+is a complete one, and [book chapter 22](book/22-extending-with-c.md)
+the guide; the API is marked experimental until v0.3.
 
 ### Which platforms does gogo run on?
 Two different questions: where the **toolchain** runs, and where the **VM**

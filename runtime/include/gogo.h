@@ -29,7 +29,10 @@
  * Stability. Within a major version (during 0.x, a minor) functions keep
  * their signatures and meaning, and structs only grow at the end. What is
  * marked GOGO_EXPERIMENTAL is outside that promise and may change in any
- * minor release: host ports, the fs_root, fs_quota and grant settings,
+ * minor release: host ports (with board ports, the driver API: it joins
+ * the promise in v0.3, when its functions keep their meaning and its
+ * size-first structs only grow, so a driver built against one header
+ * runs on later releases of the same major), the fs_root, fs_quota and grant settings,
  * the GOGO_CONFIG_CODE_LOAD flag, gogo_get_stats, image inspection, and
  * gogo_posix.h's threads. GOGO_EXPERIMENTAL expands to nothing unless the host defines
  * it before including this header, for example as

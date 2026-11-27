@@ -469,7 +469,11 @@ The rules:
 ## 18.7 Host ports
 
 A host can define ports of its own, which Go code opens by name like any
-port (chapter 7). `examples/embed-c/port.c` defines one called `"echo"`:
+port (chapter 7). This is gogo's one driver API: the same
+`gogo_port_driver` table, compiled into a firmware or `gogovm` and
+registered with `GOGO_BOARD_PORT` instead of `gogo_register_port`, is a
+driver of a board (chapter 22, which builds one driver all three ways).
+`examples/embed-c/port.c` defines one called `"echo"`:
 
 ```c
 /* port.Open("echo", port.Host{Arg, Data}). Events emitted here reach the
@@ -884,7 +888,7 @@ in any minor release:
 
 | stable | experimental |
 |---|---|
-| `gogo_new`, `gogo_load`, `gogo_start`, `gogo_step`, `gogo_next_deadline`, `gogo_run`, `gogo_free` | host ports: `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`, `gogo_poster_port_post`, `gogo_port_driver` |
+| `gogo_new`, `gogo_load`, `gogo_start`, `gogo_step`, `gogo_next_deadline`, `gogo_run`, `gogo_free` | host ports: `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`, `gogo_poster_port_post`, `gogo_port_driver`; board ports: `gogo_board_port`, `GOGO_BOARD_PORT` (until v0.3, book 22.8) |
 | the host table, `gogo_host_posix`, `gogo_new_posix` | the flag `GOGO_CONFIG_CODE_LOAD`; the configuration's `grant`, `fs_root`, `fs_quota`, `max_ports`, `max_links`, `actor_memory`, `bytes_handles` and `bytes_per_actor` |
 | the configuration's `size`, `flags`, `mem_limit`, `max_actors` | `gogo_get_stats` and its fields |
 | the error codes, `gogo_strerror`, `gogo_version`, `gogo_image_format` | `gogo_image_info_get`, `gogo_image_requires` |

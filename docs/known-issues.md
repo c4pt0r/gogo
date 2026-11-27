@@ -1122,6 +1122,43 @@ rebuilt:
   exit (under `GOGO_DEBUG`) and in the fixtures' teardown, then turn
   `detect_leaks` back on.
 
+## Third-party drivers (board ports)
+
+- **The driver API is experimental until v0.3.** The host-port part of
+  `gogo.h` (`gogo_port_driver`, `gogo_board_port`, `GOGO_BOARD_PORT`,
+  `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`,
+  `gogo_poster_port_post`) keeps `GOGO_EXPERIMENTAL` and may change in a
+  minor release; book 22.8 has the rules it will then follow.
+- **A host port's refusal is its code (changed in this release).** A
+  host or board port's `open` that returns a negative `GOGO_E*` of a
+  shared code now makes `port.Open` fail with that code; before, every
+  refusal was `errors.Busy`. A host that returned `GOGO_EINVAL` (or -1,
+  which is `GOGO_ENOTFOUND`) for "taken" should return `GOGO_EBUSY` to
+  keep `errors.Busy`. Other nonzero values are still `errors.Busy`.
+- **No posts from an interrupt handler.** A board port's events come
+  from its callbacks (`gogo_port_emit`) or from a task through a poster;
+  a post allocates, so an ISR hands its data to a task first. The event
+  ring stays the runtime's drivers'.
+- **No byte-stream helper.** A `gogo.h` driver has `port.Post` commands
+  and events, not the `port.Chunk` / `Out` / `Done` protocol with its
+  flow control.
+- **8 board ports per board**, registered in name order; of two with the
+  same name the one linked first wins (the other gets a boot line). A
+  firmware with board ports gives the post inbox one of its
+  `GOGO_MAX_SOURCES` event sources (5 there instead of 4).
+- **The component must be linked whole.** An ESP-IDF driver component
+  without `WHOLE_ARCHIVE` (or a `-u` of a symbol of its registration
+  file) loses its `GOGO_BOARD_PORT`: the linker drops a file nothing
+  refers to, and the image is then refused for the missing name.
+- **No shared bus or pin bookkeeping.** A component reaches its hardware
+  through ESP-IDF directly; nothing stops it from using a pin or I2C
+  port the board's own drivers use.
+- **The ELF registry has not run on Linux yet.** The `gogo_board_port`
+  section with `__start_`/`__stop_` was checked with GNU ld (the ESP-IDF
+  RISC-V toolchain, with `--gc-sections`) and runs on macOS and the
+  ESP32-S3; the Linux `gogovm` with drivers is first run by the test
+  workflow.
+
 ## ESP32-S3 boards
 
 - **The USB serial console sometimes goes silent** a few seconds after a
