@@ -24,7 +24,7 @@ static void check_board_names(const gogo_config *cfg) {
     g->vm.board = &board;
     for (const PortDriver *const *b = board.ports; *b; b++)
         CHECK_EQ(gogo_register_port(g, (*b)->name, strlen((*b)->name), &none, NULL), GOGO_EEXIST);
-    CHECK_EQ(g->n_host_ports, 0);
+    CHECK_EQ(g->ports.n_host_ports, 0);
     CHECK_EQ(gogo_register_port(g, "dns", 3, &none, NULL), GOGO_OK);
     CHECK_EQ(gogo_register_port(g, "dns", 3, &none, NULL), GOGO_EEXIST);
     g->vm.board = own;

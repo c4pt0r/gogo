@@ -1,5 +1,5 @@
 /* The post inbox (inbox.h). */
-#include "embed.h"
+#include "ports.h"
 #include "heap.h"
 #include "msg.h"
 #include "names.h"
@@ -129,39 +129,42 @@ int embed_enqueue_post(Vm *vm, Actor *to, Msg *m) {
 }
 
 /* Delivers one post; false if it was dropped. */
-static bool deliver(gogo_vm *g, const InboxNode *n) {
+static bool deliver(EmbedPorts *g, const InboxNode *n) {
     const uint8_t *data = n->text + n->name_len;
     if (n->port) return embed_port_send(g, n->port, n->kind, data, n->data_len) == 0;
     term pid;
-    if (!names_whereis(&g->vm, n->text, n->name_len, &pid)) return false;
-    Actor *to = actor_lookup(&g->vm, pid);
-    return to && embed_enqueue_post(&g->vm, to, post_msg(&g->vm, T_ZEROPID, n->kind, data, n->data_len, T_NIL)) == 0;
+    if (!names_whereis(g->vm, n->text, n->name_len, &pid)) return false;
+    Actor *to = actor_lookup(g->vm, pid);
+    return to && embed_enqueue_post(g->vm, to, post_msg(g->vm, T_ZEROPID, n->kind, data, n->data_len, T_NIL)) == 0;
 }
 
 static bool src_pending(const Vm *vm, void *ctx) {
     (void)vm;
-    gogo_vm *g = ctx;
+    EmbedPorts *g = ctx;
     return __atomic_load_n(&g->inbox.head, __ATOMIC_ACQUIRE) != NULL;
 }
 
 static void src_drain(Vm *vm, void *ctx, uint64_t now) {
     (void)vm;
     (void)now;
-    gogo_vm *g = ctx;
+    EmbedPorts *g = ctx;
     for (InboxNode *n = take(&g->inbox), *next; n; n = next) {
         next = n->next;
         if (deliver(g, n)) g->inbox.delivered++;
         else g->inbox.dropped++;
-        g->uh.free(g->uctx, n, n->bytes);
+        g->uh->free(g->uctx, n, n->bytes);
     }
 }
 
-void embed_inbox_drain(gogo_vm *g) { src_drain(&g->vm, g, 0); }
+void embed_inbox_drain(EmbedPorts *g) { src_drain(g->vm, g, 0); }
 
-/* Live while a post is queued, or while posts are open and some actor
- * holds a name a post can reach. */
+/* Live while a post is queued, or (libgogo: names_live) while posts are
+ * open and some actor holds a name a post can reach. A board's inbox
+ * keeps no VM alive by itself: an open board port does (its driver's
+ * can_event), as the board's own drivers' ports do. */
 static bool src_any_live(const Vm *vm, void *ctx) {
-    return src_pending(vm, ctx) || (vm->names != NULL && embed_state(ctx) == EMBED_LIVE);
+    const EmbedPorts *g = ctx;
+    return src_pending(vm, ctx) || (g->names_live && vm->names != NULL && embed_state(g) == EMBED_LIVE);
 }
 
 const PortSource inbox_source = { src_pending, src_drain, src_any_live, NULL, NULL };
