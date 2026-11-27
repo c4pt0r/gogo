@@ -192,7 +192,6 @@ func TestRejects(t *testing.T) {
 		{"defer-range-switch", "package main\nfunc main() {\n\tfor range 2 {\n\t\tswitch {\n\t\tcase true:\n\t\t\tdefer println() // ERR\n\t\t}\n\t}\n}\n", []string{"defer inside a loop not supported"}},
 		{"defer-loop-in-literal", "package main\nfunc main() {\n\tf := func() {\n\t\tfor {\n\t\t\tdefer println() // ERR\n\t\t}\n\t}\n\tf()\n}\n", []string{"defer inside a loop not supported"}},
 		{"defer-multivalue-arg", "package main\nfunc two() (int, int) { return 1, 2 }\nfunc f(a, b int) {}\nfunc main() {\n\tdefer f(two()) // ERR\n}\n", []string{"deferred call with a multi-value argument not supported"}},
-		{"defer-tworesult-builtin", "package main\nimport \"gogo/actor\"\nfunc main() {\n\tdefer actor.ReceiveTimeout(5) // ERR\n}\n", []string{"multiple values not supported"}},
 		{"defer-recover", "package main\nfunc main() {\n\tdefer recover() // ERR\n}\n", []string{"recover (a panic ends the actor"}},
 		{"complex", "package main\nfunc main() {\n\tx := 1.5i // ERR\n\t_ = x\n}\n", []string{"complex"}},
 		{"float-rem", "package main\nfunc main() {\n\tx := 1.5\n\tprintln(x % 2) // ERR\n}\n", []string{"%"}},

@@ -2341,9 +2341,9 @@ The full list, with what to do instead:
   `{5}`, unless the program uses pointers, maps or `gogo/fmt` (then `5`:
   older firmware cannot print it so, and a program without them still
   runs there).
-- A multi-result call can be a statement on its own, as in Go, a gogo
-  builtin's included: `actor.ReceiveTimeout(0)` on a line by itself
-  drops whatever message it takes. Its results are discarded.
+- A multi-result call can be a statement on its own or deferred, as in
+  Go, a gogo builtin's included: `actor.ReceiveTimeout(0)` on a line by
+  itself drops whatever message it takes. Its results are discarded.
 - The zero PID is `actor.PID{}`, equal to a `var p actor.PID` that was
   never set. It names no actor (chapter 4).
 - Unary `+` is rejected (`operator + not supported`).

@@ -416,8 +416,9 @@ rebuilt:
   child's own (Go's goroutines would share it).
 - **Multi-value expressions only in assignments.** `println(f())` with a
   multi-result `f` and `var a, b = f()` fail with `multiple values not
-  supported`; use `a, b := f()`. A multi-result call as a statement,
-  `actor.ReceiveTimeout(0)` included, is fine: its results are dropped.
+  supported`; use `a, b := f()`. A multi-result call as a statement or
+  in a `defer`, `actor.ReceiveTimeout(0)` included, is fine: its results
+  are dropped.
 - **Pointers: no interior pointers, a copy after a send.** `&s[i]` and
   `&v.F` are rejected (`interior pointer ... not supported`), and so is a
   pointer method called on a slice element or a field (`s[i].M()`,

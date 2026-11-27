@@ -1,3 +1,4 @@
 mailbox empty: true
 calls: 3
+deferred ReceiveTimeout took the message: true
 done

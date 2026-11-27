@@ -1,4 +1,5 @@
-// A two-result builtin called as a statement runs, its results discarded.
+// A two-result builtin called as a statement, or deferred, runs, its
+// results discarded.
 package main
 
 import (
@@ -27,5 +28,17 @@ func main() {
 
 	actor.Whereis("nobody")
 	sys.Config("no.such.key")
+	deferred()
+	_, ok = actor.ReceiveTimeout(0)
+	println("deferred ReceiveTimeout took the message:", !ok)
 	println("done")
+}
+
+// deferred defers two-result builtins: they run when it returns, last
+// first, and drop their results (ReceiveTimeout takes the queued message).
+func deferred() {
+	defer actor.ReceiveTimeout(0)
+	defer actor.Whereis("x")
+	defer sys.Config("k")
+	actor.Send(actor.Self(), "queued")
 }
