@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"gogotools/tests/net/sim"
 )
@@ -432,13 +433,20 @@ func TestHTTPSUploadReasons(t *testing.T) {
 }
 
 // A server that answers 401 before reading the body: Upload stops sending
-// and returns the status.
+// and returns the status. The server then closes its side and reads the
+// rest until the VM's close, as HTTP servers do (a lingering close): a
+// close with unread body bytes would reset the connection, and a reset
+// discards the 401 if it reaches the bridge's socket before the bridge
+// has read it (on a loaded host the VM then saw an IO error).
 func TestHTTPSUploadDenied(t *testing.T) {
 	srv := rawTLS(t, func(n int, c net.Conn, br *bufio.Reader) {
 		if _, err := nethttp.ReadRequest(br); err != nil {
 			return
 		}
 		io.WriteString(c, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		c.(*tls.Conn).CloseWrite()
+		c.SetReadDeadline(time.Now().Add(realLimit))
+		io.Copy(io.Discard, br)
 	})
 	runHTTPS(t, map[uint16]string{443: srv.ln.Addr().String()}, map[string][]byte{"rec.bin": upPattern(256 << 10)},
 		"time UP:https://gogo.test/up", "test.file=/flash/rec.bin\n",
