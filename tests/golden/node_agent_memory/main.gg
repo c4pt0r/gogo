@@ -1,7 +1,7 @@
 package main
 
-// sys.Config answers "node.agent_memory" itself (no store key is that
-// long): the memory limit gogo/node gives its agent, from the link cap
+// gogovm's config store answers "node.agent_memory" itself (no store key
+// is that long; platform/unix/main.c): the memory limit gogo/node gives its agent, from the link cap
 // and vm.actor_memory (here --actor-memory 2M: 2 MB; 640 links would
 // want 64 KB + 640 * 320 B = 270336, less).
 

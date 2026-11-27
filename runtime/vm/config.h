@@ -79,7 +79,7 @@ typedef uint32_t gogo_words_t;
 
 /* Off-heap bytes.Bytes (bytes.h): the default handle table entries for
  * the whole VM and handles one actor may hold at once (config key
- * vm.handles, params.h; 64 and 16 on a board, 4096 and 256 on the
+ * vm.handles, runtime/board/params.h; 64 and 16 on a board, 4096 and 256 on the
  * host), the most entries a VM may have (it sizes the distinct-root sets
  * on the C stack: 1024 on a board, 65535, the most a handle index holds,
  * on the host), and the largest Buffer.Freeze result kept on the heap

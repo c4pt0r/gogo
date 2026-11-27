@@ -140,11 +140,12 @@ type peer struct {
 
 // agentMemory is the agent's memory limit: its state grows with the nodes
 // it knows (a server: one entry per board, up to the link cap; a board:
-// every node of the star), so the VM derives it from the link cap and
-// vm.actor_memory (sys.Config's "node.agent_memory", runtime/vm/params.h):
-// 1 MB on a host VM with the default 512 links, about 720 KB more for
-// 2047. At least 256 KB, a board's ceiling, which it always is there (an
-// older VM, which does not answer, gets that too). A server refuses new
+// every node of the star), so gogovm derives it from the link cap and
+// vm.actor_memory and answers it as sys.Config's "node.agent_memory"
+// (runtime/board/params.h): 1 MB on a host VM with the default 512 links,
+// about 720 KB more for 2047. At least 256 KB, a board's ceiling, which it
+// always is there (a VM that does not answer, a board or an older gogovm,
+// gives that). A server refuses new
 // boards once the agent uses three quarters of it.
 func agentMemory() int {
 	m := 256 * 1024

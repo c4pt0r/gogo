@@ -87,7 +87,7 @@ func main() {
 
 const runUsage = "usage: gogo run [--key c=pin]... [--fs-root DIR] [--actor-memory SIZE] [--memory SIZE] [--max-actors N] [--max-ports N] [--max-links N] [--bytes-handles N[/M]] [-path dirs] <dir|file" + sourceExt + "|file" + imageExt + "> [args...]"
 
-// runVMFlags are the VM's parameters (runtime/vm/params.h) gogo run
+// runVMFlags are the VM's parameters (runtime/board/params.h) gogo run
 // forwards to gogovm as they are; gogovm checks them.
 var runVMFlags = []string{"actor-memory", "memory", "max-actors", "max-ports", "max-links", "bytes-handles"}
 

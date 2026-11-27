@@ -160,9 +160,9 @@ void vm_params_resolve(const gogo_host *h, void *ctx, const VmParams *set, VmPar
         (uint32_t)clamp(h, ctx, "vm.handles per actor", p->bytes_per_actor, 1u, p->bytes_handles, false);
 }
 
-uint32_t vm_node_agent_bytes(const Vm *vm) {
-    uint64_t want = (uint64_t)(vm->max_links ? vm->max_links : GOGO_MAX_LINKS) * NODE_AGENT_LINK_BYTES + NODE_AGENT_BASE;
-    uint64_t am = (uint64_t)vm->actor_words * 4u;
+uint32_t params_node_agent_bytes(const VmParams *p) {
+    uint64_t want = (uint64_t)(p->max_links ? p->max_links : GOGO_MAX_LINKS) * NODE_AGENT_LINK_BYTES + NODE_AGENT_BASE;
+    uint64_t am = p->actor_memory;
     if (want < am) want = am;
     if (want < 262144u) want = 262144u;
     return want > GOGO_ACTOR_MAX_WORDS * 4u ? GOGO_ACTOR_MAX_WORDS * 4u : (uint32_t)want;

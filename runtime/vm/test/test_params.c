@@ -155,17 +155,17 @@ TEST(params_apply) {
 }
 
 /* The node agent's limit: 256 KB at least (a board's ceiling, so a board
- * always has it), the VM's actor memory, or 320 B a link and 64 KB. */
+ * always has it), the actor memory, or 320 B a link and 64 KB. */
 TEST(params_node_agent) {
-    Vm vm;
-    CHECK_EQ(test_vm_init(&vm, NULL, 16), 0);
-    vm.max_links = 0;
-    vm.actor_words = 4096;
-    CHECK_EQ(vm_node_agent_bytes(&vm), GOGO_WORDS_16 ? 65535u * 4u : 262144u);
+    VmParams p;
+    vm_params_default(&p);
+    p.max_links = 0;
+    p.actor_memory = 16384;
+    CHECK_EQ(params_node_agent_bytes(&p), GOGO_WORDS_16 ? 65535u * 4u : 262144u);
 #if !GOGO_WORDS_16
-    vm.max_links = 2000;
-    CHECK_EQ(vm_node_agent_bytes(&vm), 2000u * NODE_AGENT_LINK_BYTES + NODE_AGENT_BASE);
-    vm.actor_words = 1u << 20;                 /* 4 MB */
-    CHECK_EQ(vm_node_agent_bytes(&vm), 4u << 20);
+    p.max_links = 2000;
+    CHECK_EQ(params_node_agent_bytes(&p), 2000u * NODE_AGENT_LINK_BYTES + NODE_AGENT_BASE);
+    p.actor_memory = 4u << 20;
+    CHECK_EQ(params_node_agent_bytes(&p), 4u << 20);
 #endif
 }

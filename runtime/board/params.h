@@ -1,5 +1,8 @@
 /* The VM's run-time parameters: one model for every platform (board
- * firmware, gogovm, libgogo). Each has a build default (config.h, or the
+ * firmware, gogovm, libgogo). Not VM core: the platforms link this file
+ * (the board firmware and gogovm beside board_main.c, libgogo in
+ * libgogo.a) and hand the VM only the resolved numbers, which
+ * vm_params_apply stores in the Vm's fields after vm_init. Each has a build default (config.h, or the
  * platform's own), a setting in the config store (the key below, read
  * once at VM start through the host's config_get) and, on a host, a
  * command-line flag or a gogo_config field. One precedence everywhere:
@@ -79,18 +82,20 @@ void vm_params_resolve(const gogo_host *h, void *ctx, const VmParams *set, VmPar
 int vm_params_apply(struct Vm *vm, const VmParams *p);
 
 /* The memory limit, in bytes, a node agent of distributed actors should
- * have on vm (lib/node spawns it so, and refuses new boards past three
- * quarters of it): its state grows with the nodes it knows, so it derives
- * from the link cap and vm.actor_memory: the most of 256 KB (what it had
- * before, and a board's ceiling), the VM's default actor memory and
+ * have with parameters p (lib/node spawns it so, and refuses new boards
+ * past three quarters of it): its state grows with the nodes it knows, so
+ * it derives from the link cap and the actor memory: the most of 256 KB
+ * (what it had before, and a board's ceiling), p->actor_memory and
  * NODE_AGENT_LINK_BYTES per link plus NODE_AGENT_BASE, at most the actor
- * ceiling (GOGO_ACTOR_MAX_WORDS). sys.Config answers it for the name
- * "node.agent_memory" (longer than any key the store holds), so lib/node
- * reads it with no image format change; an older VM answers nothing and
- * the agent keeps 256 KB. */
+ * ceiling (GOGO_ACTOR_MAX_WORDS). gogovm's config_get (platform/unix/main.c)
+ * answers it for the name NODE_AGENT_KEY, "node.agent_memory" (longer
+ * than any key the store holds), so lib/node reads it with sys.Config, no
+ * image format change; a VM that does not answer (a board, whose ceiling
+ * is 256 KB anyway; an older gogovm) leaves the agent at 256 KB. */
+#define NODE_AGENT_KEY "node.agent_memory"
 #define NODE_AGENT_LINK_BYTES 320u
 #define NODE_AGENT_BASE 65536u
-uint32_t vm_node_agent_bytes(const struct Vm *vm);
+uint32_t params_node_agent_bytes(const VmParams *p);
 
 /* v as 16K / 1M / 2G when it divides evenly, else in bytes, at p (no
  * NUL); returns the end. At most 20 characters. */

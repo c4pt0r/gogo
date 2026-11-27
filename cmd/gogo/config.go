@@ -111,7 +111,7 @@ type cfgKey struct {
 	platform bool     // read by the firmware or the VM, not a program (wifi.* is hidden from programs)
 	maxLen   int      // longest value; 0: configMaxValue
 	values   []string // if set, the only values allowed
-	giga     bool     // a size that may also take a G suffix (the VM's keys, runtime/vm/params.c)
+	giga     bool     // a size that may also take a G suffix (the VM's keys, runtime/board/params.c)
 	min, max uint64   // a size's, int's or pair's range (max 0: the type's own)
 	about    string
 }
@@ -254,7 +254,7 @@ func sizeOK(v string) bool {
 
 // sizeVal parses a size: digits and an optional K or M (or G, with giga),
 // either case, as the firmware and the VM parse it (fs_lfs.c,
-// runtime/vm/params.c). Without giga at most 2^32-1 bytes.
+// runtime/board/params.c). Without giga at most 2^32-1 bytes.
 func sizeVal(v string, giga bool) (uint64, bool) {
 	i := 0
 	for i < len(v) && v[i] >= '0' && v[i] <= '9' {

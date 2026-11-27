@@ -1650,7 +1650,7 @@ Rules that go with it:
   pending `SendAfter`s, links and monitors), comparable to AtomVM's
   `process_info(memory)`, and `actor.Limit(pid)` (15.8) the most it may
   reach. `tests/footprint` checks the idle-actor budget.
-- **The VM's parameters** (`runtime/vm/params.h`): the limits that size a
+- **The VM's parameters** (`runtime/board/params.h`): the limits that size a
   VM are one model on every platform, with a default per platform and a
   hard ceiling: an actor's default memory (`vm.actor_memory`: 16 KB on a
   board, at most 256 KB; 1 MB on the host, at most 1 GB), all actors
@@ -1659,16 +1659,19 @@ Rules that go with it:
   (`vm.max_ports`: 16 / 1024, at most 2048), node links
   (`node.max_links`: 8 / 512), module code (`code.mem`: 64 KB / 16 MB) and
   off-heap `Bytes` handles (`vm.handles`: 64/16 / 4096/256, at most 1024 /
-  65535). One helper resolves them for gogovm, the board firmware and
-  libgogo alike, before `vm_init`: a gogovm flag or a `gogo_config` field
+  65535). One helper outside the VM core (`runtime/board/params.c`,
+  linked by gogovm, the board firmware and libgogo) resolves them before
+  `vm_init`: a gogovm flag or a `gogo_config` field
   beats the config key, which beats the default, and a value past the
   ceiling is clamped with one console line (`vm_params_resolve`);
   `vm_params_apply` then sets the Vm's fields (`actor_words`, the
   allocator's limit, the port and link caps, `mod_cap`, `bytes_cap`,
   `bytes_per_actor`), which a board keeps in its `Vm`'s padding (its size
   and free RAM are unchanged). Each actor takes `actor_words` as its
-  `max_words` when made. `gogovm --info` and `gogo device info` print
-  them. Fixed by the image format or the term encoding, not parameters:
+  `max_words` when made; the VM core keeps only those fields and their
+  enforcement, never the keys or the parsing. `gogovm --info` and `gogo
+  device info` print them, and gogovm's config store answers the node
+  agent's derived limit as `node.agent_memory`. Fixed by the image format or the term encoding, not parameters:
   8 module slots, 2048 ports, 16 nesting levels and 4 KB per message
   across nodes, 65535 words per message.
 

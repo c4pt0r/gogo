@@ -4,7 +4,7 @@
  * A Bytes value is T_EMPTYBYTES, a heap K_BYTES of any size, or a handle
  * term (index << 4) | 0xE naming an entry of its VM's table of
  * vm->bytes_cap entries {refcnt, off, len, parent, data} (config key
- * vm.handles, params.h; GOGO_BYTES_HANDLES by default). Only
+ * vm.handles, runtime/board/params.h; GOGO_BYTES_HANDLES by default). Only
  * Buffer.Freeze (more than GOGO_BYTES_INLINE bytes), Bytes.Slice of a
  * handle and the C API make handles. A root entry owns its data block
  * (len bytes from the VM allocator); a slice entry shares its root's block

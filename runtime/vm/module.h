@@ -108,7 +108,7 @@ enum {
 };
 
 /* The boot path every platform calls after vm_init (and vm_params_apply,
- * params.h, which sets the code memory limit, config key code.mem): the
+ * runtime/board/params.h, which sets the code memory limit, config key code.mem): the
  * boot image into slot 0 (module_load_static). Then vm_start starts
  * module 0's "main" through module_spawn and vm_step runs the scheduler. On a
  * refusal the actor table is freed again (vm_init again to retry). */

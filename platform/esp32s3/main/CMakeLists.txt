@@ -45,7 +45,7 @@ file(GLOB GOGO_INPUT_SRCS "${GOGO_ROOT}/runtime/input/*.c")
 # the board's requests.
 set(GOGO_SERVICE_SRCS "${GOGO_ROOT}/runtime/configsvc/configsvc.c")
 # The one boot path (pure C99): main.c hands it the image.
-list(APPEND GOGO_SERVICE_SRCS "${GOGO_ROOT}/runtime/board/board_main.c")
+list(APPEND GOGO_SERVICE_SRCS "${GOGO_ROOT}/runtime/board/board_main.c" "${GOGO_ROOT}/runtime/board/params.c")
 # Streams (spec input2 §1): Chunk / Out / Done for the streaming drivers
 # (pure C99).
 file(GLOB GOGO_STREAM_SRCS "${GOGO_ROOT}/runtime/stream/*.c")

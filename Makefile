@@ -17,7 +17,10 @@ $(FLAGS_STAMP): FORCE
 .PHONY: FORCE
 FORCE:
 
-TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/vm/test/test_term.c runtime/vm/test/test_alloc.c runtime/vm/test/test_image.c runtime/vm/test/test_heap.c runtime/vm/test/test_msg.c runtime/vm/test/test_interp.c runtime/vm/test/test_signals.c runtime/vm/test/test_timer.c runtime/vm/test/test_call.c runtime/vm/test/test_names.c runtime/vm/test/test_out.c runtime/vm/test/test_evq.c runtime/vm/test/test_port.c runtime/vm/test/test_strs.c runtime/vm/test/test_slices.c runtime/vm/test/test_bytes.c runtime/vm/test/test_netlink.c runtime/vm/test/test_module.c runtime/vm/test/test_walltime.c runtime/vm/test/test_step.c runtime/vm/test/test_float.c runtime/vm/test/test_params.c
+TEST_SRCS = runtime/vm/test/test_main.c runtime/vm/test/test_host.c runtime/vm/test/test_term.c runtime/vm/test/test_alloc.c runtime/vm/test/test_image.c runtime/vm/test/test_heap.c runtime/vm/test/test_msg.c runtime/vm/test/test_interp.c runtime/vm/test/test_signals.c runtime/vm/test/test_timer.c runtime/vm/test/test_call.c runtime/vm/test/test_names.c runtime/vm/test/test_out.c runtime/vm/test/test_evq.c runtime/vm/test/test_port.c runtime/vm/test/test_strs.c runtime/vm/test/test_slices.c runtime/vm/test/test_bytes.c runtime/vm/test/test_netlink.c runtime/vm/test/test_module.c runtime/vm/test/test_walltime.c runtime/vm/test/test_step.c runtime/vm/test/test_float.c runtime/vm/test/test_params.c $(PARAMS_SRCS)
+# The VM's parameters (runtime/board/params.c: resolution, keys, checks; not
+# VM core): every platform that boots a VM links it.
+PARAMS_SRCS = runtime/board/params.c
 # The net stack (pure C99, chip-independent): linked into every
 # unix build (platform_unix.c lists its drivers and feeds it frames).
 NET_SRCS  = $(wildcard runtime/net/*.c)
@@ -39,7 +42,7 @@ SCREEN_SRCS = runtime/screen/screen.c runtime/screen/screen_port.c runtime/conso
 # runtime/dist/ (pure C99): the "node" port of distributed actors; hostnet.c:
 # the "tcp" and "tcp_listen" ports on host sockets (gogovm --host-net).
 DIST_SRCS = $(wildcard runtime/dist/*.c)
-MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c runtime/board/board_main.c runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS)
+MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c runtime/board/board_main.c $(PARAMS_SRCS) runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS)
 PLAT_HDRS = $(wildcard runtime/dist/*.h) $(wildcard platform/unix/*.h) runtime/gpio/gpio.h runtime/board/board_main.h runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
 
 # The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
@@ -152,7 +155,7 @@ test-c-mcu: $(BUILD)/test_c_mcu
 
 $(BUILD)/test_c_mcu: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iruntime/board -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
 
 # Net stack C tests (parsers, malformed frames, ports), host and MCU config.
 test-net-c: $(BUILD)/test_net $(BUILD)/test_net_mcu
@@ -360,11 +363,11 @@ EMBED_PROGS = $(notdir $(wildcard runtime/embed/test/testdata/*))
 # (hostecho) or with their expected.out (the rest, by test_multi.c: 8 VMs
 # on 4 threads; hotload's modules go into $(BUILD)/embed/hotload-flash).
 EMBED_EXAMPLES = hostecho many_idle httpparse hotload
-EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vfs -Iruntime/vm -Iruntime/vm/test
+EMBED_INC = -Iruntime/include -Iruntime/embed -Iruntime/vfs -Iruntime/vm -Iruntime/board -Iruntime/vm/test
 
 $(BUILD)/test_embed: $(EMBED_SRCS) $(EMBED_TEST_SRCS) $(VM_CORE_SRCS) $(FLOATLIB_SRCS) $(VFS_SRCS) $(wildcard runtime/embed/*.h) $(wildcard runtime/include/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/vm/test/*.h)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -DGOGO_EMBED $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(VM_CORE_SRCS) $(FLOATLIB_SRCS) $(VFS_SRCS)
+	$(CC) $(CFLAGS) -DGOGO_EMBED $(EMBED_INC) -pthread -o $@ $(EMBED_TEST_SRCS) $(EMBED_SRCS) $(PARAMS_SRCS) $(VM_CORE_SRCS) $(FLOATLIB_SRCS) $(VFS_SRCS)
 
 embed-images: gogo-cmd
 	@mkdir -p $(BUILD)/embed
@@ -402,11 +405,11 @@ endif
 # prelinked object's debug info lives in build/lib/*.o (ld -r keeps a debug
 # map, not the DWARF), so a library copied elsewhere for debugging is that
 # one; its internal symbols are not hidden.
-LIB_SRCS   = $(VM_CORE_SRCS) $(FLOATLIB_SRCS) $(VFS_SRCS) $(STREAM_SRCS) $(EMBED_SRCS)
+LIB_SRCS   = $(VM_CORE_SRCS) $(FLOATLIB_SRCS) $(VFS_SRCS) $(STREAM_SRCS) $(EMBED_SRCS) $(PARAMS_SRCS)
 LIB_OBJS   = $(foreach f,$(LIB_SRCS),$(BUILD)/lib/$(subst /,_,$(patsubst runtime/%.c,%,$(f))).o)
 LIB_CFLAGS = -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g -fvisibility=hidden -DGOGO_EMBED -DGOGO_BUILD_UNIX_MS=$(BUILD_UNIX_MS)LL $(EXTRA_CFLAGS) \
-             -Iruntime/include -Iruntime/embed -Iruntime/vm -Iruntime/vfs -Iruntime/stream
-LIB_HDRS   = $(wildcard runtime/include/*.h) $(wildcard runtime/embed/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/stream/*.h)
+             -Iruntime/include -Iruntime/embed -Iruntime/vm -Iruntime/vfs -Iruntime/stream -Iruntime/board
+LIB_HDRS   = $(wildcard runtime/include/*.h) $(wildcard runtime/board/params.h) $(wildcard runtime/embed/*.h) $(wildcard runtime/vm/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/stream/*.h)
 LIB_LD      ?= ld
 LIB_OBJCOPY ?= objcopy
 
@@ -514,7 +517,7 @@ example-embed: $(EXAMPLE_EMBED_BINS) gogo-cmd
 # into a test-only board (board.c) on the unix host and nowhere else: not
 # into gogovm or the firmware. test.sh runs its program there and compares
 # the output with driver.out, and checks that gogovm refuses the image.
-DICE_SRCS = examples/dice-driver/board.c examples/dice-driver/dice.c runtime/board/board_main.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c)
+DICE_SRCS = examples/dice-driver/board.c examples/dice-driver/dice.c runtime/board/board_main.c $(PARAMS_SRCS) $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c)
 $(BUILD)/dice-driver/dice-board: $(DICE_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(FLAGS_STAMP)
 	@mkdir -p $(BUILD)/dice-driver
 	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(DICE_SRCS) $(VM_SRCS)
@@ -630,7 +633,7 @@ test-dist-san:
 # Test code is host-only: it may use stdio and GCC/Clang constructors.
 $(BUILD)/test_c: $(TEST_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(wildcard runtime/vm/test/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
+	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/stream -Iruntime/vm/test -Iruntime/gpio -Iruntime/board -Iplatform/unix -pthread -o $@ $(TEST_SRCS) $(VM_SRCS)
 
 # Compile-check the core headers for a 32-bit target (no linking).
 check32:

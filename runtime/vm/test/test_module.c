@@ -4,6 +4,7 @@
 #define _POSIX_C_SOURCE 200809L   /* setenv, mkstemp, strdup */
 #include "test.h"
 #include "test_host.h"
+#include "params.h"
 #include "actor.h"
 #include "heap.h"
 #include "msg.h"
@@ -914,8 +915,16 @@ static void boot_with_config(Fx *f, const char *line) {
     char *saved = old ? strdup(old) : NULL;
     setenv("GOGO_CONFIG", path, 1);
     uint32_t n = build_a(f->a, true, NULL);
+    VmParams p;
     capture_start();
-    CHECK_EQ(test_vm_boot(&f->vm, f->a, n, 16), VM_BOOT_OK);
+    /* As a platform does (runtime/board/params.h): the config keys
+     * (code.mem) applied after vm_init, then the boot. */
+    CHECK_EQ(test_vm_init(&f->vm, NULL, 16), 0);
+    vm_params_default(&p);
+    p.max_actors = 16;
+    vm_params_resolve(f->vm.host, f->vm.host_ctx, NULL, &p);
+    CHECK_EQ(vm_params_apply(&f->vm, &p), 0);
+    CHECK_EQ(vm_boot(&f->vm, f->a, n), VM_BOOT_OK);
     capture_stop();
     f->img = f->vm.mods[0]->img;
     remove(path);

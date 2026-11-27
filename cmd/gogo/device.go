@@ -107,7 +107,7 @@ func deviceMain(args []string, env deviceEnv) error {
 }
 
 // deviceParams are the info fields of the VM's parameters
-// (runtime/vm/params.h; runtime/board board_params_format), in their order.
+// (runtime/board/params.h; runtime/board board_params_format), in their order.
 var deviceParams = []string{"actor_memory", "memory", "max_actors", "max_ports", "max_links", "code_mem", "bytes_handles"}
 
 // deviceInfo asks the board for its info line and prints it, one field a

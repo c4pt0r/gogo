@@ -35,7 +35,7 @@
  * ones. Listening binds every interface; outbound connections go anywhere.
  * Not with --net-fd.
  *
- * The VM's parameters (runtime/vm/params.h, shared with the board firmware
+ * The VM's parameters (runtime/board/params.h, shared with the board firmware
  * and libgogo; a flag beats the config key, which beats the default, and
  * a value past the ceiling is clamped with one line on stderr):
  *   --actor-memory SIZE  an actor's default memory limit (vm.actor_memory;
@@ -185,6 +185,23 @@ static void main_write(void *ctx, int stream, const char *s, size_t n) {
             err_line[err_len++] = s[i];
         }
     }
+}
+
+/* The VM's parameters as main resolved them (for main_config). */
+static const VmParams *run_params;
+
+/* The host's config_get, answering NODE_AGENT_KEY itself (params.h: the
+ * node agent's memory limit from the link cap and the actor memory, for
+ * gogo/node); no store key is that long. */
+static int32_t main_config(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
+    static const char agent[] = NODE_AGENT_KEY;
+    if (kl == sizeof agent - 1u && memcmp(k, agent, kl) == 0 && run_params) {
+        char num[12];
+        int n = snprintf(num, sizeof num, "%u", (unsigned)params_node_agent_bytes(run_params));
+        if (buf) memcpy(buf, num, (uint32_t)n < cap ? (size_t)n : cap);
+        return n;
+    }
+    return unix_host.config_get(ctx, k, kl, buf, cap);
 }
 
 /* Runs the started Vm as vm_run does, then returns main's status. main
@@ -553,6 +570,8 @@ int main(int argc, char **argv) {
     Vm vm;
     gogo_host host = unix_host;
     host.write = main_write;
+    host.config_get = main_config;
+    run_params = &params;
     input_unix_on_fatal(screen_unix_restore);
     BoardRun run = {
         .vm = &vm, .params = &params, .vfs = &vfs_state, .input = &input_state,

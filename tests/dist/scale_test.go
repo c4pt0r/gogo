@@ -50,7 +50,7 @@ func TestServerFill(t *testing.T) { fill(t, 512) }
 // The server's ceiling: as many boards as it can serve when every one of
 // them calls it. Its node agent's memory no longer bounds it (the limit
 // follows the link cap and vm.actor_memory: 1 MB here, lib/node and
-// runtime/vm/params.h; at 256 KB it stopped near 938 boards); the 65536
+// runtime/board/params.h; at 256 KB it stopped near 938 boards); the 65536
 // PID slots do: each board takes a port, and the remote PIDs (its door,
 // its callers) the 4096 - ports slots between DIST_SLOT_BASE and the
 // ports. 1390 ports and 1380 links fill both: 1380 boards join, each
