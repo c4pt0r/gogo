@@ -1,0 +1,48 @@
+// The board-port tests' program (runtime/board/test/test.sh), on a gogovm
+// built with runtime/board/test/ports.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+	"gogo/strconv"
+)
+
+func event(p actor.PID) port.Post {
+	for {
+		switch e := actor.Receive().(type) {
+		case port.Post:
+			if e.From == p {
+				return e
+			}
+		}
+	}
+}
+
+func main() {
+	// "test.beta" and "test.zeta" are there; neither "test.alpha" is (two have the name).
+	b, err := port.Open("test.beta", port.Host{})
+	println("beta", err == nil, event(b).Data.String())
+	port.Close(b)
+	z, err := port.Open("test.zeta", port.Host{})
+	println("zeta", err == nil, event(z).Data.String())
+	port.Close(z)
+	// A refusal's code reaches port.Open.
+	for _, a := range []int{-6, -5, -10, -36, 3} {
+		_, err := port.Open("test.refuser", port.Host{Arg: a})
+		println("refuser", strconv.Itoa(a)+":", err.Error())
+	}
+	// Events posted from another thread, in order, none lost.
+	const n = 2000
+	p, err := port.Open("test.ticker", port.Host{Arg: n})
+	println("ticker open", err == nil)
+	bad := 0
+	for k := 1; k <= n; k++ {
+		e := event(p)
+		if e.Kind != k || e.Data.String() != "tick" {
+			bad++
+		}
+	}
+	port.Close(p)
+	println("ticker", n, "events, out of order or wrong:", bad)
+}

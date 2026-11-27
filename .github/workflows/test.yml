@@ -2,7 +2,7 @@
 # workflow), run the test suite on macOS and Linux: make test (C and Go tests, lint, the examples and the
 # book's examples, the book's website (make site-check), the size checks
 # where the ESP-IDF compiler is present, which it is not here), make
-# test-lib and make test-tls-asan.
+# test-lib, make test-tls-asan and make test-board-ports-tsan.
 #
 # The "tls" port is built from mbedTLS's source, which the build takes
 # from ESP-IDF (components/mbedtls/mbedtls). Rather than install ESP-IDF,
@@ -93,3 +93,5 @@ jobs:
         run: make test-lib
       - name: make test-tls-asan
         run: make test-tls-asan
+      - name: make test-board-ports-tsan
+        run: make test-board-ports-tsan

@@ -27,13 +27,18 @@ typedef struct InboxNode {
 typedef struct Inbox {
     InboxNode *head;             /* atomic: newest first */
     int depth;                   /* atomic: posts accepted and not yet taken */
+    /* The bytes of those posts' nodes (atomic), and their most (0: no
+     * byte budget, libgogo's: GOGO_POST_MAX alone bounds it); a push past
+     * it is GOGO_EFULL. A board's (board_ports.c: ports.post_bytes). */
+    size_t bytes, cap_bytes;
     uint64_t delivered, dropped; /* VM thread */
 } Inbox;
 
-/* The source; its ctx is the gogo_vm. */
+/* The source; its ctx is the EmbedPorts (ports.h). */
 extern const PortSource inbox_source;
 
-/* Pushes a node (from the host's alloc) for the VM: 0, GOGO_EFULL,
+/* Pushes a node (from the host's alloc) for the VM: 0, GOGO_EFULL (the
+ * posts queued, or with cap_bytes their bytes, are at their most),
  * GOGO_ENOMEM. Any thread. Does not wake. */
 int inbox_push(Inbox *in, const gogo_host *h, void *hctx, const char *name, size_t name_len,
                uint32_t port, int32_t kind, const void *data, size_t len);
@@ -50,8 +55,8 @@ struct Msg *embed_closed_msg(struct Vm *vm, term from);
 
 /* Delivers every queued post now, oldest first, as the VM's next step
  * would. VM thread. */
-struct gogo_vm;
-void embed_inbox_drain(struct gogo_vm *g);
+struct EmbedPorts;
+void embed_inbox_drain(struct EmbedPorts *ep);
 
 /* Queues m (NULL: out of memory) on `to` without ever marking it: 0, or
  * GOGO_ENOMEM, or GOGO_EFULL (over its quota, or exiting: m is freed). */

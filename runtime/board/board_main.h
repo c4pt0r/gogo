@@ -43,10 +43,21 @@ typedef struct BoardRun {
     void (*ready)(struct Vm *vm, void *ctx);
     int (*run)(struct Vm *vm, void *ctx);
     void *ctx;
+    /* A build with board ports (GOGO_BOARD_PORTS, board_ports.h): the
+     * host table their posts and posters allocate from and wake through,
+     * whose alloc, free and wake any task may call (the ESP's VM arena
+     * may not be used from another task). NULL: h. */
+    const gogo_host *ports_host;
+    /* The board ports the build should have, comma-separated (the ESP:
+     * CONFIG_GOGO_BOARD_PORT_NAMES), each one missing said at boot
+     * (board_ports_expect); NULL or "": no check. */
+    const char *ports_expected;
 } BoardRun;
 
 /* Boots words (nwords, the image) as module 0 on board b with host h
- * (its ctx NULL), and runs it: vm_init, vm_params_apply, booting, vm_boot (the requirement
+ * (its ctx NULL), and runs it: vm_init, vm_params_apply, the board ports
+ * (a build with GOGO_BOARD_PORTS: registered the first time, then their
+ * driver list and post inbox), booting, vm_boot (the requirement
  * check), then net_install (with r->net), vfs_init (mounting the board's
  * file systems), input_install, in that order, then ready and the run.
  * Returns VM_BOOT_OK after the run, with its result in *run_rc; else the

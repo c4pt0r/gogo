@@ -8,6 +8,27 @@ the M5StickS3 and the Cardputer ADV. The design is in
 [design.md](design.md); the book's appendix lists the documented limits
 ([13-appendices.md](book/13-appendices.md)).
 
+## Breaking changes since v0.2.0
+
+Embedding hosts written for v0.2.0 (the host-port API was marked
+experimental) need these checks:
+
+- **A host port's refusal is its code.** A host port's `open` that
+  returns a negative `GOGO_E*` of a shared code now makes `port.Open`
+  fail with that code (`GOGO_EINVAL`: `errors.BadArg`, `GOGO_ENOMEM`:
+  `errors.NoMemory`); in v0.2.0 every refusal was `errors.Busy`. Note
+  that `-1` is `GOGO_ENOTFOUND`, so a host that refused with `return -1`
+  now gives programs `errors.NotFound`, which they may read as "no such
+  driver": return `GOGO_EBUSY` to keep `errors.Busy`. Any other nonzero
+  value (`GOGO_ESTATE`, a positive one) is still `errors.Busy`. The Go
+  binding's `Open` passes an `embed.Errno` through the same way.
+- **Host port names.** `gogo_register_port` (and the Go binding's
+  `RegisterPort`) takes names of letters, digits, `_`, `-` and `.` only,
+  at most 31 bytes, a `.` never first, last or doubled; any other name
+  is now `GOGO_EINVAL`. Undotted names stay valid for hosts.
+- **gogo_close_posts with a board handle** does nothing (board ports are
+  new in this release; in an embedding host it closes posts as before).
+
 ## Breaking changes since v0.1.0
 
 Programs written for v0.1.0 need these edits, and every image must be
@@ -1121,6 +1142,51 @@ rebuilt:
   ASan has no leak checking at all. *Planned:* free the VM at gogovm's
   exit (under `GOGO_DEBUG`) and in the fixtures' teardown, then turn
   `detect_leaks` back on.
+
+## Third-party drivers (board ports)
+
+- **The driver API is experimental until v0.3.** The host-port part of
+  `gogo.h` (`gogo_port_driver`, `gogo_board_port`, `GOGO_BOARD_PORT`,
+  `gogo_register_port`, `gogo_port_emit`, `gogo_port_close`,
+  `gogo_poster_port_post`) keeps `GOGO_EXPERIMENTAL` and may change in a
+  minor release; book 22.8 has the rules it will then follow.
+- **Changed refusal codes and name rules for host ports**: see
+  "Breaking changes since v0.2.0" above. A board port's name must also
+  have a `.` (`acme.dice`): gogo's own driver names never do, so the two
+  never collide.
+- **No posts from an interrupt handler.** A board port's events come
+  from its callbacks (`gogo_port_emit`) or from a task through a poster;
+  a post allocates, so an ISR hands its data to a task first. The event
+  ring stays the runtime's drivers'.
+- **Board posts have a byte budget.** A board queues at most
+  `ports.post_bytes` of posts (16 KB on the ESP32-S3, 1 MB in `gogovm`):
+  a fast driver task meets `GOGO_EFULL` and must wait for room, and a
+  single post larger than the budget never fits.
+- **An open board port keeps the VM alive.** A `gogo.h` driver cannot
+  say that a port only answers commands, so a program that leaves one
+  open never ends while its owner lives (the runtime's own drivers can).
+  *Planned:* a flag appended to `gogo_port_driver` (0: as now).
+- **No byte-stream helper.** A `gogo.h` driver has `port.Post` commands
+  and events, not the `port.Chunk` / `Out` / `Done` protocol with its
+  flow control.
+- **8 board ports per board**, registered in name order; two with the
+  same name are both refused (a boot line each). A
+  firmware with board ports gives the post inbox one of its
+  `GOGO_MAX_SOURCES` event sources (5 there instead of 4).
+- **The component must be linked whole.** An ESP-IDF driver component
+  without `WHOLE_ARCHIVE` loses its `GOGO_BOARD_PORT`: the linker drops a
+  file nothing refers to. `gogo firmware -build` catches it in the
+  linker map and fails, naming the fix; a firmware built otherwise says
+  at boot each port its `CONFIG_GOGO_BOARD_PORT_NAMES` promised and it
+  did not register.
+- **No shared bus or pin bookkeeping.** A component reaches its hardware
+  through ESP-IDF directly; nothing stops it from using a pin or I2C
+  port the board's own drivers use.
+- **The ELF registry has not run on Linux yet.** The `gogo_board_port`
+  section with `__start_`/`__stop_` was checked with GNU ld (the ESP-IDF
+  RISC-V toolchain, with `--gc-sections`) and runs on macOS and the
+  ESP32-S3; the Linux `gogovm` with drivers is first run by the test
+  workflow.
 
 ## ESP32-S3 boards
 

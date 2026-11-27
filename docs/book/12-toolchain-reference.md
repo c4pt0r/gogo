@@ -17,7 +17,7 @@ gogo info [-path dirs] <file.ggb|dir|file.gg>
 gogo flash [-port P] [-esptool path] [-path dirs] <app.ggb|dir|file.gg>
 gogo push [-port P] [-timeout seconds] <file.ggb> [/flash/path]
 gogo monitor [-port P] [-timeout seconds] [-until text] [-reset]
-gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
+gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files...
 gogo config [-port P | -local] set <key> <value|-> | get <key> | list | rm <key> | import [-n] <file|-> | export | keys | scan | stats
 gogo device [-port P] [-yes] info | scan | stats | format-flash
 gogo setup [-port P] [-board sticks3|cardputer] [-version vX.Y.Z] [-release-url URL|DIR] [-esptool path] [-offline] [-skip-wifi] [-new-layout] [-reflash] [-yes] [-dry-run]
@@ -566,7 +566,7 @@ stop `gogo monitor` before `gogo flash` or `gogo config`.
 ## gogo firmware
 
 ```text
-gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files...
+gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files...
 ```
 
 Chooses which optional parts the firmware needs to contain for a set of
@@ -583,7 +583,8 @@ driver nobody uses. It reads the requirement names each file carries
   same name; `irtx` and `irrx` the drivers `ir_tx` and
   `ir_rx`; `sd` the mount `/sd` (appendix F); `float` the requirement
   `float` (floating point in the VM and `gogo/math`). `gpio` and `/flash`
-  are in every firmware; any other name (a host port's, say) is an error.
+  are in every firmware; any other name is an error unless a driver
+  component given with `-component` provides it.
   `net`, `kbd`, `power` and `float` are on only when a file requires them (or
   `-with` adds them). The others are on by default on boards that have
   them: `sd`, `imu`, `irtx`/`irrx` (the infrared sender and receiver),
@@ -602,6 +603,23 @@ driver nobody uses. It reads the requirement names each file carries
   `gogo flash`) reads its chip, and an ESP32-S3 with embedded PSRAM is
   the M5StickS3, one without is the Cardputer ADV (as `gogo setup`
   decides). The board resets afterwards and runs its program again.
+- `-component dir` (repeatable) builds an ESP-IDF component of your
+  own into the firmware: a driver on `gogo.h` that registers itself with
+  `GOGO_BOARD_PORT` (chapter 22). The directory has the component's
+  `CMakeLists.txt` and a `gogo-driver.json` naming the requirement names
+  it provides, `{"format": 1, "ports": ["acme.dice"]}`, which then satisfy the images'
+  requirements. The tool turns on `CONFIG_GOGO_BOARD_PORTS` (the
+  firmware's host-port layer) and passes the directories to `idf.py` as
+  `EXTRA_COMPONENT_DIRS`; without `-component` both are off again. A
+  component's name is its directory's, so two components may not share
+  one, and none may be called `main`, `driver` or like one of gogo's or
+  ESP-IDF's components; a path may not contain `;`. The
+  json's names go into `CONFIG_GOGO_BOARD_PORT_NAMES`, and the firmware
+  says at boot each one it did not register; with `-build` the tool also
+  checks the linker map and fails for a component that put no
+  `GOGO_BOARD_PORT` in the firmware (one not linked whole). A
+  name of a built-in driver, or one two components give, is an error.
+  `gogo device info` lists the registered ports among `provides`.
 - `-o dir`: the build directory and where `sdkconfig.gogo` goes (default
   `build-fw-<board>`). `-build` runs the printed command (from the gogo
   repository root, with ESP-IDF exported, chapter 2).

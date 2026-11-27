@@ -245,6 +245,10 @@ Done:
 - **Peripherals:** GPIO; keyboard and battery; IMU and infrared; audio;
   the screen as a port plus `gogo/tui`, an ncurses-like text UI; one
   stream protocol for every byte port.
+- **Your own drivers:** one C driver API (`gogo.h`) for firmware,
+  `gogovm` and embedding hosts; a driver is an ESP-IDF component outside
+  the tree, built in with `gogo firmware -component` (book chapter 22;
+  experimental until v0.3).
 - **Networking:** DHCP, DNS, UDP and TCP; HTTP client and server; HTTPS
   (a TLS 1.2 client, keep-alive client, streaming upload); SNTP and the
   wall clock.

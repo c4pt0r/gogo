@@ -42,8 +42,28 @@ SCREEN_SRCS = runtime/screen/screen.c runtime/screen/screen_port.c runtime/conso
 # runtime/dist/ (pure C99): the "node" port of distributed actors; hostnet.c:
 # the "tcp" and "tcp_listen" ports on host sockets (gogovm --host-net).
 DIST_SRCS = $(wildcard runtime/dist/*.c)
-MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c runtime/board/board_main.c $(PARAMS_SRCS) runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS)
-PLAT_HDRS = $(wildcard runtime/dist/*.h) $(wildcard platform/unix/*.h) runtime/gpio/gpio.h runtime/board/board_main.h runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
+# Board ports (runtime/board/board_ports.c, gogo.h GOGO_BOARD_PORT): every
+# gogovm has the host-port layer (runtime/embed's hostport.c, inbox.c and
+# poster.c), idle unless a driver of the build registers a port: with up to
+# 8 of them beside the board's drivers (BOARD_PORTS_FLAGS), and one more
+# event source for the post inbox when DRIVERS are given.
+BOARD_PORTS_SRCS = runtime/board/board_ports.c runtime/embed/hostport.c runtime/embed/inbox.c runtime/embed/poster.c runtime/embed/version.c
+BOARD_PORTS_FLAGS = -DGOGO_BOARD_PORTS=1 -DEMBED_HOST_PORTS=8 -DEMBED_BOARD_PORTS_MAX=32 -DGOGO_BOARD_POST_BYTES=1048576u -Iruntime/include
+MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c runtime/board/board_main.c $(PARAMS_SRCS) runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS) $(BOARD_PORTS_SRCS)
+# make vm DRIVERS="dir|file.c ...": gogovm with those board-port drivers
+# compiled in (an ESP-IDF driver component's directory: its *.c but the
+# *_esp.c hardware files, which only the firmware builds), to test them on
+# the host. The list is recorded in $(BUILD)/.drivers, so a plain `make vm`
+# after it rebuilds gogovm without them.
+DRIVERS ?=
+DRIVER_SRCS = $(foreach d,$(DRIVERS),$(if $(filter %.c,$(d)),$(d),$(filter-out %_esp.c,$(wildcard $(d)/*.c))))
+# A DRIVERS entry that names no source is a mistake, not a gogovm without it.
+$(foreach d,$(DRIVERS),$(if $(if $(filter %.c,$(d)),$(wildcard $(d)),$(filter-out %_esp.c,$(wildcard $(d)/*.c))),,$(error DRIVERS: $(d) is not a .c file nor a directory with .c files (a component's sources are its top-level *.c, but *_esp.c))))
+DRIVERS_STAMP = $(BUILD)/.drivers
+$(DRIVERS_STAMP): FORCE
+	@mkdir -p $(BUILD)
+	@if [ "$$(cat $@ 2>/dev/null)" != '$(DRIVER_SRCS)' ]; then echo '$(DRIVER_SRCS)' > $@; fi
+PLAT_HDRS = $(wildcard runtime/dist/*.h) $(wildcard platform/unix/*.h) runtime/gpio/gpio.h runtime/board/board_main.h runtime/board/board_ports.h runtime/embed/ports.h runtime/embed/inbox.h runtime/include/gogo.h runtime/embed/fs_dir.h $(wildcard runtime/net/*.h) $(wildcard runtime/vfs/*.h) $(wildcard runtime/input/*.h) $(wildcard runtime/stream/*.h) $(wildcard runtime/screen/*.h) $(wildcard runtime/console/*.h)
 
 # The "tls" port (runtime/net/tls/, spec HTTPS): mbedTLS 4.x from ESP-IDF's source tree,
 # built here with runtime/net/tls/config (gogo_*_config.h) into its own static library,
@@ -76,11 +96,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-c-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-board-ports test-board-ports-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-c-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
+test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-screen test-fs-host test-configsvc test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver test-board-ports check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
 
 vm: $(BUILD)/gogovm
 
@@ -140,9 +160,13 @@ gogo-cmd:
 	@mkdir -p $(BUILD)
 	go build -o $(BUILD)/gogo ./cmd/gogo
 
-$(BUILD)/gogovm: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
+# gogovm's compile, with driver sources after it (gogovm_with SRCS).
+GOGOVM_DEPS = $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
+gogovm_with = $(CC) $(CFLAGS) $(TLS_CFLAGS) $(BOARD_PORTS_FLAGS) $(if $(1),-DGOGO_MAX_SOURCES=5u -pthread) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(1) $(TLS_LINK)
+
+$(BUILD)/gogovm: $(GOGOVM_DEPS) $(DRIVER_SRCS) $(DRIVERS_STAMP)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(call gogovm_with,$(DRIVER_SRCS))
 
 test-c: $(BUILD)/test_c
 	$(BUILD)/test_c
@@ -522,16 +546,40 @@ $(BUILD)/embed-go: $(BUILD)/libgogo.a FORCE
 example-embed: $(EXAMPLE_EMBED_BINS) gogo-cmd
 	examples/embed-c/test.sh $(BUILD)
 
-# examples/dice-driver: a port driver in C (book chapter 22), compiled
-# into a test-only board (board.c) on the unix host and nowhere else: not
-# into gogovm or the firmware. test.sh runs its program there and compares
-# the output with driver.out, and checks that gogovm refuses the image.
-DICE_SRCS = examples/dice-driver/board.c examples/dice-driver/dice.c runtime/board/board_main.c $(PARAMS_SRCS) $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c)
-$(BUILD)/dice-driver/dice-board: $(DICE_SRCS) $(VM_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(FLAGS_STAMP)
-	@mkdir -p $(BUILD)/dice-driver
-	$(CC) $(CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/gpio -Iruntime/board -Iplatform/unix -o $@ $(DICE_SRCS) $(VM_SRCS)
+# Board ports (runtime/board/board_ports.c): registration order, refusals
+# and their boot lines, open codes and posts from a thread, on a gogovm with
+# the test drivers of runtime/board/test/ports (runtime/board/test/test.sh).
+BOARD_TEST_DRIVERS = $(addprefix runtime/board/test/ports/,named.c dup.c refuser.c ticker.c burst.c)   # in link order: dup.c after named.c
+$(BUILD)/board-ports/gogovm: $(GOGOVM_DEPS) $(BOARD_TEST_DRIVERS) $(FLAGS_STAMP)
+	@mkdir -p $(BUILD)/board-ports
+	$(call gogovm_with,$(BOARD_TEST_DRIVERS))
 
-example-driver: $(BUILD)/dice-driver/dice-board vm gogo-cmd
+test-board-ports: $(BUILD)/board-ports/gogovm gogo-cmd
+	runtime/board/test/test.sh $(BUILD)
+
+# The same under ThreadSanitizer: posts from the test drivers' threads
+# against the VM thread (the inbox, posters, the ports host's malloc).
+test-board-ports-tsan:
+	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread" build/tsan/board-ports/gogovm gogo-cmd
+	TSAN_OPTIONS="halt_on_error=1" runtime/board/test/test.sh build/tsan
+
+# examples/dice-driver: a third-party port driver on gogo.h alone (book
+# chapter 22), an ESP-IDF component (dice/). test.sh runs its program on
+# a gogovm built with the component (DICE_DRIVER: make vm DRIVERS=...
+# does the same for $(BUILD)/gogovm) and in an embedding host that
+# registers the same driver (host.c on libgogo.a), compares each output
+# with driver.out, checks that a plain gogovm refuses the image and that
+# the book's C and Go blocks are cut from the sources.
+DICE_DRIVER = examples/dice-driver/dice/dice.c examples/dice-driver/dice/dice_port.c
+$(BUILD)/dice-driver/gogovm: $(GOGOVM_DEPS) $(DICE_DRIVER) examples/dice-driver/dice/dice.h $(FLAGS_STAMP)
+	@mkdir -p $(BUILD)/dice-driver
+	$(call gogovm_with,$(DICE_DRIVER))
+
+$(BUILD)/dice-driver/dice-host: examples/dice-driver/host.c examples/dice-driver/dice/dice.c examples/dice-driver/dice/dice.h $(wildcard runtime/include/*.h) $(BUILD)/libgogo.a
+	@mkdir -p $(BUILD)/dice-driver
+	$(CC) -std=c99 -pedantic -Wall -Wextra -Werror -O2 -g $(EXTRA_CFLAGS) -Iruntime/include -Iexamples/dice-driver -o $@ examples/dice-driver/host.c examples/dice-driver/dice/dice.c $(BUILD)/libgogo.a -pthread
+
+example-driver: $(BUILD)/dice-driver/gogovm $(BUILD)/dice-driver/dice-host vm gogo-cmd
 	examples/dice-driver/test.sh $(BUILD)
 
 # Console text grid + font lookup (runtime/console), host build.
@@ -580,7 +628,7 @@ test-go: vm $(BUILD)/gogovm_mcu $(BUILD)/gogovm_nofloat
 # `nofloat` run on it (an image that uses floats is refused at load).
 $(BUILD)/gogovm_nofloat: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -DGOGO_FLOAT=0 -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
+	$(CC) $(CFLAGS) $(BOARD_PORTS_FLAGS) -DGOGO_FLOAT=0 -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS)
 
 # The standard library (lib/*/*.gg) on the host toolchain, copied into a
 # temporary Go module gogo by tests/lib_test.go: vet (stdmethods off: gogo's
@@ -593,7 +641,7 @@ test-lib:
 # limit (16 KB per actor): the library actors must fit.
 $(BUILD)/gogovm_mcu: $(VM_SRCS) $(MAIN_SRCS) $(wildcard runtime/vm/*.h) $(PLAT_HDRS) $(TLS_DEPS)
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(MCU_FLAGS) -DGOGO_HOST_PORTS=16 -DGOGO_HOST_LINKS=8 $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
+	$(CC) $(CFLAGS) $(MCU_FLAGS) $(BOARD_PORTS_FLAGS) -DGOGO_HOST_PORTS=16 -DGOGO_HOST_LINKS=8 $(TLS_CFLAGS) -Iruntime/vm -Iruntime/net -Iruntime/vfs -Iruntime/input -Iruntime/stream -Iruntime/screen -Iruntime/console -Iruntime/embed -Iruntime/gpio -Iruntime/board -Iruntime/dist -Iplatform/unix -o $@ $(VM_SRCS) $(MAIN_SRCS) $(TLS_LINK)
 
 test-net-mcu: $(BUILD)/gogovm_mcu
 	GOGO_VM=$(CURDIR)/$(BUILD)/gogovm_mcu go test -count=1 ./tests/net/

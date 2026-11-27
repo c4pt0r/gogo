@@ -127,6 +127,7 @@ var cfgKeys = []cfgKey{
 	{name: "net.dns", typ: cfgIP, about: "its DNS server"},
 	{name: "fs.flash.size", typ: cfgSize, platform: true, about: "the size of /flash"},
 	{name: "fs.flash.format", typ: cfgString, platform: true, values: []string{"yes"}, about: "deprecated: gogo device format-flash"},
+	{name: "ports.post_bytes", typ: cfgSize, platform: true, max: 64 << 20, about: "the bytes board ports' posts may queue (default 16K on a board, 1M on the host; at most 64M)"},
 	{name: "code.mem", typ: cfgSize, platform: true, giga: true, max: 0xFFFFFFFF, about: "the budget for loaded module code (default 64K on a board, 16M on the host)"},
 	{name: "vm.actor_memory", typ: cfgSize, platform: true, giga: true, min: 1 << 10, max: 1 << 30, about: "an actor's default memory limit (default 16K on a board, 1M on the host; at most 256K on a board, 1G on the host)"},
 	{name: "vm.memory", typ: cfgSize, platform: true, giga: true, max: 1 << 48, about: "memory for all actors together (default the arena, 160K, on a board; no limit on the host; 0: none)"},

@@ -5,6 +5,7 @@ package main
 // prints (or runs, with -build) the idf.py command that builds it.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +19,7 @@ import (
 	"gogotools/compiler"
 )
 
-const firmwareUsage = "usage: gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files..."
+const firmwareUsage = "usage: gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files..."
 
 // fwFeature is one firmware feature, the same for every board.
 type fwFeature struct {
@@ -78,6 +79,148 @@ var fwFeatures = []fwFeature{
 // its features (platform/esp32s3/main/platform_esp.c esp_ports, esp_mounts).
 var fwBase = []string{"gpio", "/flash"}
 
+// fwBoardPortsKconf is the switch of the board-port layer (gogo.h
+// GOGO_BOARD_PORT): on exactly when -component gives driver components.
+const fwBoardPortsKconf = "CONFIG_GOGO_BOARD_PORTS"
+
+// fwBoardPortNamesKconf holds the components' port names, which the
+// firmware checks at boot (runtime/board/board_ports.c board_ports_expect).
+const fwBoardPortNamesKconf = "CONFIG_GOGO_BOARD_PORT_NAMES"
+
+// fwComponent is a driver component given with -component: an ESP-IDF
+// component directory with a gogo-driver.json naming the requirement names
+// (board ports) it provides, {"format": 1, "ports": ["acme.dice"]}.
+type fwComponent struct {
+	dir   string // absolute
+	ports []string
+}
+
+// fwReadComponent reads -component dir.
+func fwReadComponent(dir string) (fwComponent, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return fwComponent{}, err
+	}
+	if strings.Contains(abs, ";") {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: a path with ';' (EXTRA_COMPONENT_DIRS is a CMake list)", dir)
+	}
+	if err := fwComponentName(filepath.Base(abs)); err != nil {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: %v", dir, err)
+	}
+	if _, err := os.Stat(filepath.Join(abs, "CMakeLists.txt")); err != nil {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: not an ESP-IDF component (no CMakeLists.txt)", dir)
+	}
+	b, err := os.ReadFile(filepath.Join(abs, "gogo-driver.json"))
+	if err != nil {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: no gogo-driver.json (it names the ports the component provides: {\"ports\": [\"name\"]})", dir)
+	}
+	// Exactly the keys of this format, spelled exactly: a key this tool
+	// does not know may be one a newer format needs understood.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json: %v", dir, err)
+	}
+	var j struct {
+		Format int      `json:"format"`
+		Ports  []string `json:"ports"`
+	}
+	for k, v := range raw {
+		var err error
+		switch k {
+		case "format":
+			err = json.Unmarshal(v, &j.Format)
+		case "ports":
+			err = json.Unmarshal(v, &j.Ports)
+		default:
+			err = fmt.Errorf("unknown key %q (format %d has \"format\" and \"ports\")", k, fwDriverFormat)
+		}
+		if err != nil {
+			return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json: %v", dir, err)
+		}
+	}
+	if j.Format != fwDriverFormat {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json: \"format\" is %d, this gogo reads %d", dir, j.Format, fwDriverFormat)
+	}
+	if len(j.Ports) == 0 {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json names no ports", dir)
+	}
+	if len(j.Ports) > fwBoardPortsMax {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: %d ports; a firmware takes %d board ports", dir, len(j.Ports), fwBoardPortsMax)
+	}
+	for _, p := range j.Ports {
+		if err := fwBoardPortName(p); err != nil {
+			return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: %v", dir, err)
+		}
+	}
+	return fwComponent{dir: abs, ports: j.Ports}, nil
+}
+
+// fwBoardPortsMax is the most board ports a firmware registers
+// (EMBED_HOST_PORTS in platform/esp32s3/main/CMakeLists.txt).
+const fwBoardPortsMax = 8
+
+var fwPortNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$`)
+
+// fwBoardPortName checks a board port's name as the firmware does at boot
+// (runtime/embed/hostport.c embed_name_check): 1 to 31 bytes of letters,
+// digits, '_', '-' and '.', with a vendor prefix: at least one '.', never
+// first, last or doubled. The runtime's own names never have a '.', so
+// the two cannot collide.
+func fwBoardPortName(p string) error {
+	if len(p) > 31 {
+		return fmt.Errorf("port name %q is longer than 31 bytes", p)
+	}
+	if !fwPortNameRe.MatchString(p) {
+		return fmt.Errorf("bad port name %q: a vendor prefix and a '.', then letters, digits, '_' and '-' (\"acme.sensor\")", p)
+	}
+	return nil
+}
+
+// fwComponentName refuses a component directory name ESP-IDF would mix up
+// with another component (a component's name is its directory's): main,
+// driver (IDF's legacy driver component, and the likeliest name for a
+// driver's directory), one of gogo's own components
+// (platform/esp32s3/components) or managed ones, or, with IDF_PATH set,
+// one of ESP-IDF's.
+func fwComponentName(name string) error {
+	taken := name == "main" || name == "driver"
+	if repo, ok := findRepoFromWd(); ok {
+		for _, d := range []string{"platform/esp32s3/components", "platform/esp32s3/managed_components"} {
+			if _, err := os.Stat(filepath.Join(repo, d, name)); err == nil {
+				taken = true
+			}
+		}
+	}
+	if idf := os.Getenv("IDF_PATH"); idf != "" {
+		if _, err := os.Stat(filepath.Join(idf, "components", name)); err == nil {
+			taken = true
+		}
+	}
+	if taken {
+		return fmt.Errorf("the component name %q (its directory's) is gogo's or ESP-IDF's: name the directory after your driver (acme_sensor)", name)
+	}
+	return nil
+}
+
+// findRepoFromWd is findRepo from the working directory.
+func findRepoFromWd() (string, bool) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	return findRepo(wd)
+}
+
+// fwDriverFormat is the gogo-driver.json format this tool reads:
+// {"format": 1, "ports": ["acme.dice"]}.
+const fwDriverFormat = 1
+
+// fwComponentsFlag collects repeated -component flags.
+type fwComponentsFlag []string
+
+func (c *fwComponentsFlag) String() string     { return strings.Join(*c, ",") }
+func (c *fwComponentsFlag) Set(v string) error { *c = append(*c, v); return nil }
+
 // fwProvides reports whether feature f builds requirement name n.
 func fwProvides(f fwFeature, n string) bool {
 	for _, p := range f.provides {
@@ -126,8 +269,9 @@ func fwNames() string {
 }
 
 // fwPlan computes which features are on for board, given the requirement
-// names of the files and the -with / -without lists.
-func fwPlan(board string, req []string, with, without []string) (map[string]bool, error) {
+// names of the files, the -with / -without lists and the names the
+// driver components provide.
+func fwPlan(board string, req []string, with, without []string, extra ...string) (map[string]bool, error) {
 	has := func(f fwFeature) bool { return fwBoards[board].has[f.name] }
 	required := map[string]bool{}
 	reqBy := map[string]bool{} // features some image requires directly
@@ -136,13 +280,16 @@ func fwPlan(board string, req []string, with, without []string) (map[string]bool
 		for _, b := range fwBase {
 			found = found || b == n
 		}
+		for _, b := range extra {
+			found = found || b == n
+		}
 		for _, f := range fwFeatures {
 			if fwProvides(f, n) {
 				required[f.name], reqBy[f.name], found = true, true, true
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("gogo firmware: the images require %q, which no gogo firmware provides", n)
+			return nil, fmt.Errorf("gogo firmware: the images require %q, which no gogo firmware provides (a driver of your own: -component DIR)", n)
 		}
 	}
 	// features that share one Kconfig switch are one build option: what one
@@ -221,8 +368,9 @@ func fwPlan(board string, req []string, with, without []string) (map[string]bool
 	return on, nil
 }
 
-// fwOverlay renders the sdkconfig fragment.
-func fwOverlay(board string, on map[string]bool) string {
+// fwOverlay renders the sdkconfig fragment; ports: the components' board
+// ports (none: the layer is off).
+func fwOverlay(board string, on map[string]bool, ports []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# gogo firmware overlay for %s (generated by `gogo firmware`)\n", board)
 	done := map[string]bool{} // a switch shared by several features is written once
@@ -236,6 +384,14 @@ func fwOverlay(board string, on map[string]bool) string {
 			v = "y"
 		}
 		fmt.Fprintf(&b, "%s=%s\n", f.kconf, v)
+	}
+	v := "n"
+	if len(ports) > 0 {
+		v = "y"
+	}
+	fmt.Fprintf(&b, "%s=%s\n", fwBoardPortsKconf, v)
+	if len(ports) > 0 {
+		fmt.Fprintf(&b, "%s=\"%s\"\n", fwBoardPortNamesKconf, strings.Join(ports, ","))
 	}
 	return b.String()
 }
@@ -254,6 +410,36 @@ func fwDefaults(boardOverlay string, on map[string]bool, cfg string) string {
 }
 
 var fwCfgRe = regexp.MustCompile(`^(?:# )?(CONFIG_GOGO_\w+)(?:=(\S+)| is not set)$`)
+
+// fwCheckMap checks the linker map of a firmware built with components:
+// each component must have put a GOGO_BOARD_PORT entry in the
+// .gogo_board_port section (the map lists its archive there). A component
+// that is not linked whole (WHOLE_ARCHIVE) contributes none: the linker
+// drops its registration file, which nothing refers to, and the build
+// succeeds without the driver.
+func fwCheckMap(mapText string, comps []fwComponent) error {
+	in := map[string]bool{} // archives with an entry: "libdice.a"
+	lines := strings.Split(mapText, "\n")
+	for i, l := range lines {
+		f := strings.Fields(l)
+		if len(f) == 0 || f[0] != ".gogo_board_port" {
+			continue
+		}
+		where := l
+		if len(f) == 1 && i+1 < len(lines) {
+			where = lines[i+1]
+		}
+		if m := regexp.MustCompile(`/(lib[^/(]+\.a)\(`).FindStringSubmatch(where); m != nil {
+			in[m[1]] = true
+		}
+	}
+	for _, c := range comps {
+		if !in["lib"+filepath.Base(c.dir)+".a"] {
+			return fmt.Errorf("gogo firmware: component %s put no GOGO_BOARD_PORT in the firmware: register it with WHOLE_ARCHIVE in its CMakeLists.txt (idf_component_register(... WHOLE_ARCHIVE)), or the linker drops the file nothing calls into", filepath.Base(c.dir))
+		}
+	}
+	return nil
+}
 
 // fwCfgValues maps CONFIG_GOGO_* symbols to "y" / "n" in an sdkconfig or an
 // overlay (a "# X is not set" line means n).
@@ -282,6 +468,11 @@ func fwStaleSdkconfig(path, overlay string) []string {
 	for _, f := range fwFeatures {
 		if o, ok := old[f.kconf]; ok && o != want[f.kconf] {
 			diff = append(diff, f.kconf)
+		}
+	}
+	for _, k := range []string{fwBoardPortsKconf, fwBoardPortNamesKconf} {
+		if o, ok := old[k]; ok && o != want[k] {
+			diff = append(diff, k)
 		}
 	}
 	return diff
@@ -335,6 +526,8 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 	withoutS := fs.String("without", "", "")
 	port := fs.String("port", "", "")
 	esptool := fs.String("esptool", "", "")
+	var compDirs fwComponentsFlag
+	fs.Var(&compDirs, "component", "")
 	files, err := parseFlags(fs, args, firmwareUsage)
 	if err != nil {
 		return err
@@ -357,6 +550,32 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 	if len(files) == 0 {
 		return errors.New("gogo firmware: no image or module files\n" + firmwareUsage)
 	}
+	var comps []fwComponent
+	var extra, compAbs []string
+	for _, d := range compDirs {
+		c, err := fwReadComponent(d)
+		if err != nil {
+			return err
+		}
+		for _, o := range comps {
+			if filepath.Base(o.dir) == filepath.Base(c.dir) {
+				return fmt.Errorf("gogo firmware: components %s and %s have one name, %q (a component's name is its directory's): rename one", o.dir, c.dir, filepath.Base(c.dir))
+			}
+		}
+		for _, p := range c.ports {
+			for _, q := range extra {
+				if p == q {
+					return fmt.Errorf("gogo firmware: port %q is provided by two components", p)
+				}
+			}
+			extra = append(extra, p)
+		}
+		comps = append(comps, c)
+		compAbs = append(compAbs, c.dir)
+	}
+	if len(extra) > fwBoardPortsMax {
+		return fmt.Errorf("gogo firmware: the components provide %d ports; a firmware takes %d board ports", len(extra), fwBoardPortsMax)
+	}
 	var req []string
 	for _, f := range files {
 		img, err := os.ReadFile(f)
@@ -369,7 +588,7 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 		}
 		req = append(req, names...)
 	}
-	on, err := fwPlan(*board, req, splitList(*withS), splitList(*withoutS))
+	on, err := fwPlan(*board, req, splitList(*withS), splitList(*withoutS), extra...)
 	if err != nil {
 		return err
 	}
@@ -384,7 +603,7 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 		return err
 	}
 	cfg := filepath.Join(abs, "sdkconfig.gogo")
-	overlay := fwOverlay(*board, on)
+	overlay := fwOverlay(*board, on, extra)
 	// ESP-IDF lets an existing sdkconfig win over SDKCONFIG_DEFAULTS, so a
 	// generated sdkconfig with other GOGO switches would silently override
 	// the new feature set. This tool owns the directory: drop it.
@@ -400,16 +619,32 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 	}
 	idf := []string{"-C", "platform/esp32s3", "-B", abs, "-DGOGO_BOARD=" + *board,
 		"-DSDKCONFIG=" + filepath.Join(abs, "sdkconfig"),
-		"-DSDKCONFIG_DEFAULTS=" + fwDefaults(fwb.overlay, on, cfg), "build"}
+		"-DSDKCONFIG_DEFAULTS=" + fwDefaults(fwb.overlay, on, cfg)}
+	// Always given, so a build directory that had components loses them.
+	idf = append(idf, "-DEXTRA_COMPONENT_DIRS="+strings.Join(compAbs, ";"), "build")
 	var quoted []string
 	for _, a := range idf {
 		quoted = append(quoted, shQuote(a))
 	}
 	fmt.Fprintf(out, "wrote %s\nfeatures: %s\n", cfg, fwSummary(on))
+	if len(extra) > 0 {
+		fmt.Fprintf(out, "board ports: %s\n", strings.Join(extra, " "))
+	}
 	fmt.Fprintf(out, "run from the gogo repository root (needs `. ~/esp/esp-idf/export.sh`):\n")
 	fmt.Fprintf(out, "idf.py %s\n", strings.Join(quoted, " "))
 	if *doBuild {
-		return runIdf("idf.py", idf...)
+		if err := runIdf("idf.py", idf...); err != nil {
+			return err
+		}
+		if len(comps) > 0 {
+			m, err := os.ReadFile(filepath.Join(abs, "gogo.map"))
+			if err != nil {
+				return fmt.Errorf("gogo firmware: cannot check the components were linked: %v", err)
+			}
+			if err := fwCheckMap(string(m), comps); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

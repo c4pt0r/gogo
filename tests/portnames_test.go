@@ -22,6 +22,14 @@ func TestPortNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The runtime's names never have a '.': a dotted name is a third
+	// party's (a board port's vendor prefix, book 22.4), so the two can
+	// never collide.
+	for _, m := range regexp.MustCompile(`(?m)^#define PORT_\w+\s+"([^"]*)"`).FindAllSubmatch(hdr, -1) {
+		if strings.Contains(string(m[1]), ".") {
+			t.Errorf("runtime/vm/port_names.h: %q has a '.', which only third-party ports may have", m[1])
+		}
+	}
 	listed := map[string]bool{}
 	for _, m := range regexp.MustCompile(`(?m)^#define PORT_NAME_\w+\s+"([a-z0-9_]+)"`).FindAllSubmatch(hdr, -1) {
 		listed[string(m[1])] = true

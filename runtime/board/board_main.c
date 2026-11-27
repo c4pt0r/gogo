@@ -8,6 +8,9 @@
 #include "input.h"
 #include "port.h"
 #include "params.h"
+#if GOGO_BOARD_PORTS
+#include "board_ports.h"
+#endif
 #include <stdio.h>
 
 int gogo_board_main(const VmBoard *b, const gogo_host *h, BoardRun *r, const uint32_t *words, uint32_t nwords,
@@ -24,10 +27,18 @@ int gogo_board_main(const VmBoard *b, const gogo_host *h, BoardRun *r, const uin
         vm_params_resolve(h, NULL, &own);
         p = &own;
     }
+#if GOGO_BOARD_PORTS
+    struct EmbedPorts *ports = board_ports_new(h, r->ports_host ? r->ports_host : h);   /* NULL: none */
+    board_ports_expect(b, r->ports_expected, h);
+#endif
     for (;;) {
         rc = VM_BOOT_NO_MEMORY;
         if (vm_init(r->vm, h, NULL, b, (uint16_t)p->max_actors) == 0) {
-            if (vm_params_apply(r->vm, p) == 0) {
+            int ok = vm_params_apply(r->vm, p) == 0;
+#if GOGO_BOARD_PORTS
+            ok = ok && (!ports || board_ports_attach(ports, r->vm, h) == 0);
+#endif
+            if (ok) {
                 if (r->booting) r->booting(r->vm, r->ctx);
                 rc = vm_boot(r->vm, words, nwords);   /* a refusal gives the table back */
             } else {
@@ -47,11 +58,17 @@ int gogo_board_main(const VmBoard *b, const gogo_host *h, BoardRun *r, const uin
         p = &def;
     }
     if (rc != VM_BOOT_OK) return rc;
+#if GOGO_BOARD_PORTS
+    if (ports) board_ports_loaded(ports);
+#endif
     /* After vm_init: it starts the Vm's source list and fs hook empty. */
     if (r->net && r->net_install) r->net_install(r->vm, r->net);
     if (r->vfs) vfs_init(r->vm, r->vfs);
     if (r->input) input_install(r->vm, r->input);
     if (r->ready) r->ready(r->vm, r->ctx);
     *run_rc = r->run ? r->run(r->vm, r->ctx) : vm_run(r->vm);
+#if GOGO_BOARD_PORTS
+    if (ports) board_ports_end(ports);
+#endif
     return VM_BOOT_OK;
 }

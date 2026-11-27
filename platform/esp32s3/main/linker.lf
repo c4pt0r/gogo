@@ -10,3 +10,22 @@ entries:
     font (noflash)
     console_task (noflash)
     lcd_st7789 (noflash)
+
+# Board ports (gogo.h GOGO_BOARD_PORT, runtime/board/board_ports.c): the
+# pointers every component lays in .gogo_board_port, kept (no code refers
+# to them) and bounded by _gogo_board_ports_start / _end, in link order;
+# aligned first, so the start symbol is the first entry's address whatever
+# section ldgen puts before it.
+[sections:gogo_board_port]
+entries:
+    .gogo_board_port
+
+[scheme:gogo_board_port_default]
+entries:
+    gogo_board_port -> flash_rodata
+
+[mapping:gogo_board_port]
+archive: *
+entries:
+    * (gogo_board_port_default);
+        gogo_board_port -> flash_rodata KEEP() ALIGN(4, pre) SURROUND(gogo_board_ports)

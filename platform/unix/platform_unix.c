@@ -450,6 +450,22 @@ static int32_t host_config_get(void *ctx, const uint8_t *k, uint32_t kl, uint8_t
     return platform_config_get(k, kl, buf, cap);
 }
 
+/* Board ports' posts and posters (BoardRun.ports_host): malloc and free,
+ * which any thread may call, unlike chunk_alloc's arena count (the VM
+ * thread's alone); the wake is the self-pipe (any thread). As
+ * esp_ports_host on the ESP32-S3: posts never count against the arena. */
+static void *ports_alloc(void *ctx, size_t n) { (void)ctx; return malloc(n); }
+static void ports_free(void *ctx, void *p, size_t n) { (void)ctx; (void)n; free(p); }
+const gogo_host unix_ports_host = {
+    .size = sizeof(gogo_host),
+    .write = host_write,
+    .alloc = ports_alloc,
+    .free = ports_free,
+    .now_ms = host_now,
+    .wake = host_wake,
+    .wait = host_wait,
+};
+
 /* No RTC hooks: the Vm keeps the wall clock (main.c seeds it); no special
  * code memory. */
 const gogo_host unix_host = {

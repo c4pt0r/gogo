@@ -1,0 +1,11 @@
+// Opens the ticker for far more events than the inbox holds and exits at
+// once: the port closes (main's exit) while the ticker's thread waits for
+// room, and the VM must still end (runtime/board/test/test.sh).
+package main
+
+import "gogo/port"
+
+func main() {
+	_, err := port.Open("test.ticker", port.Host{Arg: 100000})
+	println("open", err == nil)
+}

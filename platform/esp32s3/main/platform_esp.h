@@ -13,6 +13,11 @@
  * VmBoard (port drivers, input chips, Wi-Fi netif, mounts: what the build has). */
 extern const gogo_host esp_host;
 extern const VmBoard esp_board;
+#if CONFIG_GOGO_BOARD_PORTS
+/* esp_host with the internal heap's own alloc and free, which any task
+ * may call: the board ports' posts and posters (BoardRun.ports_host). */
+extern const gogo_host esp_ports_host;
+#endif
 
 /* The board functions behind esp_host, for the other ESP files. */
 void platform_write(const char *s, size_t n);       /* serial + screen, white */

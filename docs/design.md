@@ -2563,6 +2563,65 @@ can serve two devices, and the table can be a board's `static const`).
   to widen it to reach them. libgogo stays dogfooded by its own tests and
   `examples/embed-c`; `gogo_board_main` is the boards' shared path
   instead.
+- **Board ports: one driver API for boards and hosts.** The host-port
+  layer (`runtime/embed`: `hostport.c`, `inbox.c`, `poster.c`) works on an
+  `EmbedPorts` (`ports.h`): the host ports, the driver list, the post
+  inbox, the state and references, a pointer to its `Vm` and to the host
+  table it posts through. libgogo's `gogo_vm` begins with one; a board
+  makes one too (`runtime/board/board_ports.c`), so a driver written
+  against `gogo.h`'s `gogo_port_driver` runs unchanged in an embedding
+  host (`gogo_register_port`), in `gogovm` and in the firmware. A board
+  driver registers itself with `GOGO_BOARD_PORT(name, &driver, ctx)`: a
+  constant pointer in a linker section (Mach-O `__DATA,gogo_bport`, ELF
+  `gogo_board_port` with `__start_`/`__stop_`, ESP-IDF `.gogo_board_port`
+  kept by `main/linker.lf` between `_gogo_board_ports_start`/`_end`), so
+  no code runs to register it, nothing is mutable (no globals exemption)
+  and no gogo file names it: the driver is a component of the product's
+  (`EXTRA_COMPONENT_DIRS`, `WHOLE_ARCHIVE`), built by `gogo firmware
+  -component`. A board port's name has a vendor prefix (a `.`:
+  `acme.dice`), and the runtime's names never have one
+  (`tests/portnames_test.go`), so a later built-in driver cannot shadow a
+  third party's; the charset (letters, digits, `_`, `-`, `.`, at most 31
+  bytes) is checked at boot, in `gogo_register_port` (hosts may omit the
+  dot, for the names they already use) and by `gogo firmware`. A
+  entry records the `GOGO_VERSION` it was compiled against
+  (`gogo_board_port.api`, the field after `size`), and the board refuses
+  one of another major (during 0.x, minor) with a boot line;
+  `gogo_version` lives in `runtime/embed/version.c`, linked by boards
+  too; `gogo-driver.json` carries `"format": 1`, and an unknown key is an
+  error. A
+  requirement name was always any string, so dotted names needed no
+  change to the compiler or the image format. A constructor-based registry was the alternative; it is
+  portable C but needs a mutable list head in `runtime/` and its order
+  is the constructors' (link order), where the section is const data and
+  ESP-IDF's own pattern (`esp_trace`'s encoders). The layer's own NULL
+  entry keeps the section defined in every build; clang's
+  AddressSanitizer is told not to pad the entries (GCC leaves sectioned
+  globals alone). `gogo_board_main` registers the entries after
+  `vm_init` and before `vm_boot`, in name order, so the image's
+  requirements see them; a refused one (a runtime or board driver's
+  name, too long, more than 8) gets a boot line, and so does every entry
+  of a name two have (none is registered: the winner would be the link
+  order's). With no
+  entry nothing changes: no shell, no source, no driver list. The board's
+  posts allocate from a host table any task may use (`BoardRun.ports_host`:
+  the ESP's internal heap, not the VM arena), within a byte budget
+  (`ports.post_bytes`: 16 KB on the ESP, whose internal heap Wi-Fi and
+  TLS share, 1 MB in `gogovm`; past it a post is `GOGO_EFULL`; libgogo's
+  inbox has none, its host's memory is its own), and wake through the board's
+  latched wake; an ISR does not post (a post allocates). A board's inbox
+  keeps the VM alive only while a post is queued (libgogo's also while a
+  name is registered), so a board program ends as before. The layer is a
+  build option on the ESP32-S3 (`CONFIG_GOGO_BOARD_PORTS`, about 3.5 KB of
+  flash, a fifth event source for the inbox) and always in `gogovm`
+  (`make vm DRIVERS=...`). A `GOGO_BOARD_PORT` linked into a build
+  without it fails to link (`gogo_board_ports_enabled`). A component not
+  linked whole loses its entry without a link error, so two checks fail
+  loudly instead: `gogo firmware -build` reads `gogo.map` for each
+  component's `.gogo_board_port` input section, and the firmware compares
+  the names `gogo firmware` baked into `CONFIG_GOGO_BOARD_PORT_NAMES`
+  (from the json files) with those it registered, with a boot line for
+  each missing one.
 - **Atomics.** The VM core uses only a fence (`vm_barrier`); keep
   compare-and-swap out of it. The embed layer's post inbox and
   `embed_set_state` use `__atomic` compare-and-swap, which a Cortex-M0+

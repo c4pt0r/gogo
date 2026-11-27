@@ -41,6 +41,9 @@
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "vfs_int.h"
+#if CONFIG_GOGO_BOARD_PORTS
+#include "board_ports.h"
+#endif
 #include "configsvc.h"
 #include "image.h"
 #include "port.h"
@@ -289,7 +292,8 @@ static void cmd_format_flash(ConfigSvc *s) {
 
 /* The requirement names of esp_board (an image's requirements are checked
  * against the same lists, runtime/vm/module.c): its drivers, its mounts,
- * and "float" in a float build. Filled on the first info. */
+ * "float" in a float build, and the board ports (GOGO_BOARD_PORT drivers
+ * of other components) the boot registers. Filled on the first info. */
 #define INFO_NAMES 32
 static const char *info_names[INFO_NAMES + 1];
 
@@ -301,6 +305,10 @@ static void cmd_info(void *ctx, ConfigInfo *out) {
         for (const VmMount *const *m = esp_board.mounts; *m && n < INFO_NAMES; m++) info_names[n++] = (*m)->prefix;
 #if GOGO_FLOAT
         if (n < INFO_NAMES) info_names[n++] = PORT_REQ_FLOAT;
+#endif
+#if CONFIG_GOGO_BOARD_PORTS
+        uint32_t k = board_ports_names(&esp_board, &info_names[n], (uint32_t)(INFO_NAMES - n));
+        n += k < INFO_NAMES - n ? k : INFO_NAMES - n;
 #endif
         info_names[n] = NULL;
     }

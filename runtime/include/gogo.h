@@ -29,7 +29,10 @@
  * Stability. Within a major version (during 0.x, a minor) functions keep
  * their signatures and meaning, and structs only grow at the end. What is
  * marked GOGO_EXPERIMENTAL is outside that promise and may change in any
- * minor release: host ports, the fs_root, fs_quota and grant settings,
+ * minor release: host ports (with board ports, the driver API: it joins
+ * the promise in v0.3, from when a driver built against one header runs
+ * on later releases of the same major, during 0.x of the same minor:
+ * the rule above), the fs_root, fs_quota and grant settings,
  * the GOGO_CONFIG_CODE_LOAD flag, gogo_get_stats, image inspection, and
  * gogo_posix.h's threads. GOGO_EXPERIMENTAL expands to nothing unless the host defines
  * it before including this header, for example as
@@ -423,8 +426,12 @@ typedef uint32_t gogo_port;
 typedef struct gogo_port_driver {
     uint32_t size;          /* sizeof(gogo_port_driver) as the host was compiled (GOGO_PORT_DRIVER_INIT) */
     uint32_t reserved;      /* 0 */
-    /* port.Open: 0 to accept, a negative GOGO_E* to refuse (any nonzero
-     * value refuses; port.Open returns an error). NULL accepts every open. Events it emits (gogo_port_emit
+    /* port.Open: 0 to accept, nonzero to refuse. A negative GOGO_E* of a
+     * shared code (GOGO_EINVAL, GOGO_ENOMEM, GOGO_EBUSY, ... down to
+     * -GOGO_E_SHARED_LAST) is the error port.Open returns (errors.BadArg,
+     * errors.NoMemory, errors.Busy, ...); any other nonzero value
+     * (GOGO_ESTATE, a positive one) is errors.Busy. -1 is GOGO_ENOTFOUND:
+     * return GOGO_EBUSY for "taken". NULL accepts every open. Events it emits (gogo_port_emit
      * returns 0) are queued on the owner once the open succeeds, then
      * subject to its quota like any event (over it, dropped); if it
      * refuses, they are discarded. */
@@ -452,7 +459,9 @@ typedef struct gogo_port_driver {
  * port of this name exists, or it names one of the runtime's drivers,
  * "gpio", "tcp", "screen", ..., or one of the board's), GOGO_EFULL (the
  * VM has as many host ports as it takes), GOGO_E2BIG (the name),
- * GOGO_EINVAL (no name, or no driver or one without a size),
+ * GOGO_EINVAL (no name, a name of other characters than letters,
+ * digits, '_', '-' and '.' or with a '.' first, last or doubled, no
+ * driver or one without a size),
  * GOGO_ESTATE (an image is loaded),
  * GOGO_EBUSY. A port registered under a name the config's grant leaves
  * out is accepted but never visible to the program. */
@@ -480,6 +489,100 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_emit(gogo_vm *vm, gogo_port port, int32
  * is exiting); GOGO_EBUSY (from the port's own open: refuse the open
  * instead); GOGO_EINVAL (a reason <= 0 or over 2^30 - 1, a bad port). */
 GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int32_t reason);
+
+/* ---- board ports: the same drivers, compiled into a firmware or gogovm ----
+ *
+ * GOGO_EXPERIMENTAL, as host ports are.
+ *
+ * A board (the ESP32-S3 firmware, gogovm) does not boot through
+ * gogo_new, but it runs the same host-port layer when a driver of its
+ * build registers itself with GOGO_BOARD_PORT, in a file of its own
+ * (an ESP-IDF component of the product's, a source given to gogovm's
+ * build):
+ *
+ *     static const gogo_port_driver dice = { .size = sizeof(gogo_port_driver),
+ *                                            .open = dice_open, .command = dice_command };
+ *     GOGO_BOARD_PORT("acme.dice", &dice, NULL);
+ *
+ * A board port's name has a vendor prefix: at least one '.' ("acme.dice";
+ * the rest as gogo_register_port takes). The runtime's own names never
+ * have one, so no later gogo driver can shadow it. A host port may have
+ * one too, and should; it need not.
+ *
+ * At boot, after the VM is made and before the image loads, the board
+ * registers every such port as gogo_register_port would (so an image
+ * requirement of "acme.dice" is satisfied), in name order. A port refused
+ * (no vendor prefix, a bad or too long name, too many ports, a bad
+ * entry) is named on stream 2 at boot and
+ * left out; so are all the entries of a name two or more of them have. The driver then works exactly
+ * as a host port: its callbacks run on the VM's thread (the VM task) and
+ * get a gogo_vm handle that takes gogo_port_emit, gogo_port_close,
+ * gogo_post and gogo_poster_new; besides, gogo_version and
+ * gogo_image_format work on a board, and nothing else of this header
+ * does (those calls are libgogo's alone). gogo_close_posts and
+ * gogo_poster_close_posts link but do nothing on a board: posts belong
+ * to every driver of the board, and close when the program ends. A poster made from it
+ * may be used from any other thread or task, never from an interrupt
+ * handler: a post allocates. A board queues at most the bytes of the
+ * config key ports.post_bytes of posts (16 KB on the ESP32-S3, 1 MB in
+ * gogovm, a post's own few dozen bytes counted): a post past it returns
+ * GOGO_EFULL until the VM has taken some. The board's host-port layer is a build
+ * option (CONFIG_GOGO_BOARD_PORTS on the ESP32-S3, which `gogo firmware
+ * -component` sets; always in gogovm): a GOGO_BOARD_PORT linked into a
+ * build without it fails to link, naming gogo_board_ports_enabled.
+ *
+ * The entries go in a linker section the board walks (no code runs to
+ * register them): ESP-IDF's linker fragment keeps it, so the component
+ * must be linked whole (idf_component_register(... WHOLE_ARCHIVE)), or
+ * the linker drops a file nothing else refers to, silently: `gogo
+ * firmware -build` checks the linker map for it, and a firmware says at
+ * boot each port of CONFIG_GOGO_BOARD_PORT_NAMES it did not register. */
+typedef struct gogo_board_port {
+    uint32_t size;                    /* sizeof(gogo_board_port) as the driver was compiled */
+    /* GOGO_VERSION of the header the driver was compiled against: the
+     * board refuses the entry (a boot line) unless its major is the
+     * runtime's and, during 0.x, its minor too (the rule of
+     * gogo_version). */
+    uint32_t api;
+    /* name, *driver and ctx's object must have static storage duration
+     * (or live as long as the program): the board keeps pointers to them
+     * for its whole run, and a driver's poster may outlive the run. */
+    const char *name;                 /* the requirement name: NUL-terminated, at most GOGO_PORT_NAME_MAX bytes */
+    const gogo_port_driver *driver;
+    void *ctx;                        /* given to every callback */
+    /* Fields are appended here, never inserted. */
+} gogo_board_port;
+
+/* Defined by a board's host-port layer only (see above). */
+extern const char gogo_board_ports_enabled;
+
+#if defined(__APPLE__)
+#define GOGO_BOARD_PORT_SECTION "__DATA,gogo_bport"
+#elif defined(ESP_PLATFORM)
+#define GOGO_BOARD_PORT_SECTION ".gogo_board_port"
+#else
+#define GOGO_BOARD_PORT_SECTION "gogo_board_port"
+#endif
+/* The section holds pointers, laid end to end: AddressSanitizer must not
+ * pad them (GCC leaves globals with a section alone). */
+#if defined(__clang__)
+#define GOGO_BOARD_PORT_ATTR __attribute__((used, section(GOGO_BOARD_PORT_SECTION), no_sanitize("address")))
+#else
+#define GOGO_BOARD_PORT_ATTR __attribute__((used, section(GOGO_BOARD_PORT_SECTION)))
+#endif
+#define GOGO_BOARD_PORT_CAT2(a, b) a##b
+#define GOGO_BOARD_PORT_CAT(a, b) GOGO_BOARD_PORT_CAT2(a, b)
+/* At file scope, any number of times (the identifiers come from
+ * __COUNTER__, which GCC and clang have; the section needs their
+ * attributes anyway). */
+#define GOGO_BOARD_PORT(name, driver, ctx) GOGO_BOARD_PORT_N(name, driver, ctx, __COUNTER__)
+#define GOGO_BOARD_PORT_N(name, driver, ctx, n)                                                             \
+    static const gogo_board_port GOGO_BOARD_PORT_CAT(gogo_board_port_, n) = {                               \
+        sizeof(gogo_board_port), GOGO_VERSION, (name), (driver), (ctx) };                                   \
+    static const void *const GOGO_BOARD_PORT_CAT(gogo_board_port_layer_, n) __attribute__((used)) =         \
+        &gogo_board_ports_enabled;                                                                          \
+    static const gogo_board_port *const GOGO_BOARD_PORT_CAT(gogo_board_port_ref_, n)                       \
+        GOGO_BOARD_PORT_ATTR = &GOGO_BOARD_PORT_CAT(gogo_board_port_, n)
 
 /* ---- posting from other threads ----
  *

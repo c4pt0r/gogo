@@ -59,7 +59,7 @@ func TestFirmwareUnion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=y\nCONFIG_GOGO_SD=n\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -72,12 +72,12 @@ func TestFirmwareCardputerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=n\nCONFIG_GOGO_FLOAT=n\n"
+	want := "CONFIG_GOGO_NET=n\nCONFIG_GOGO_KBD=n\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=y\nCONFIG_GOGO_FONT_CJK=y\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=n\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=n\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
 	wantCmd := "idf.py -C platform/esp32s3 -B " + d + " -DGOGO_BOARD=cardputer -DSDKCONFIG=" + d +
-		"/sdkconfig -DSDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.cardputer;sdkconfig.tls-off;" + d + "/sdkconfig.gogo\" build"
+		"/sdkconfig -DSDKCONFIG_DEFAULTS=\"sdkconfig.defaults;sdkconfig.cardputer;sdkconfig.tls-off;" + d + "/sdkconfig.gogo\" -DEXTRA_COMPONENT_DIRS= build"
 	if !strings.Contains(out, wantCmd+"\n") {
 		t.Fatalf("command missing:\n%s\nwant %s", out, wantCmd)
 	}
@@ -105,7 +105,7 @@ func TestFirmwareWithWithout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\n"
+	want := "CONFIG_GOGO_NET=y\nCONFIG_GOGO_KBD=y\nCONFIG_GOGO_BATTERY=n\nCONFIG_GOGO_SD=y\nCONFIG_GOGO_FS_EXFAT=n\nCONFIG_GOGO_FONT_CJK=n\nCONFIG_GOGO_IMU=y\nCONFIG_GOGO_IR=y\nCONFIG_GOGO_AUDIO=y\nCONFIG_GOGO_TLS=y\nCONFIG_GOGO_SCREEN=y\nCONFIG_GOGO_DIST=y\nCONFIG_GOGO_FLOAT=n\nCONFIG_GOGO_BOARD_PORTS=n\n"
 	if !strings.HasSuffix(cfg, want) {
 		t.Fatalf("overlay:\n%s", cfg)
 	}
@@ -294,7 +294,8 @@ func TestImageRequiresTruncated(t *testing.T) {
 
 // The Go board table must match board.h and Kconfig.projbuild.
 func TestFirmwareTableMatchesSources(t *testing.T) {
-	repo, ok := findRepo(".")
+	wd, _ := os.Getwd()
+	repo, ok := findRepo(wd) // absolute: findRepo walks up with filepath.Dir
 	if !ok {
 		t.Skip("not in the repository")
 	}
@@ -326,6 +327,7 @@ func TestFirmwareTableMatchesSources(t *testing.T) {
 		for _, f := range fwFeatures {
 			found = found || f.kconf == "CONFIG_"+string(m[1])
 		}
+		found = found || "CONFIG_"+string(m[1]) == fwBoardPortsKconf || "CONFIG_"+string(m[1]) == fwBoardPortNamesKconf // -component
 		if !found {
 			t.Errorf("Kconfig %s is not in fwFeatures", m[1])
 		}
@@ -481,14 +483,138 @@ func TestFirmwareFloat(t *testing.T) {
 	f := writeImg(t, d, "f.ggb", "float")
 	plain := writeImg(t, d, "p.ggb")
 	for _, board := range []string{"sticks3", "cardputer"} {
-		if _, cfg, err := fwRun(t, "-board", board, "-o", d, f); err != nil || !strings.HasSuffix(cfg, "CONFIG_GOGO_FLOAT=y\n") {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, f); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_FLOAT=y\n") {
 			t.Errorf("%s: %v\n%s", board, err, cfg)
 		}
 		if _, _, err := fwRun(t, "-board", board, "-o", d, "-without", "float", f); err == nil || !strings.Contains(err.Error(), "cannot remove float") {
 			t.Errorf("%s: -without float of a float image: %v", board, err)
 		}
-		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "float", plain); err != nil || !strings.HasSuffix(cfg, "CONFIG_GOGO_FLOAT=y\n") {
+		if _, cfg, err := fwRun(t, "-board", board, "-o", d, "-with", "float", plain); err != nil || !strings.Contains(cfg, "CONFIG_GOGO_FLOAT=y\n") {
 			t.Errorf("%s: -with float: %v\n%s", board, err, cfg)
 		}
+	}
+}
+
+// -component builds driver components into the firmware: their
+// gogo-driver.json ports satisfy the images' requirements, the board-port
+// layer is switched on, and idf.py gets them as EXTRA_COMPONENT_DIRS.
+func TestFirmwareComponent(t *testing.T) {
+	d := t.TempDir()
+	img := writeImg(t, d, "dice.ggb", "acme.dice", "gpio")
+	comp := filepath.Join(d, "dice")
+	if err := os.MkdirAll(comp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, text string) {
+		if err := os.WriteFile(filepath.Join(comp, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, img); err == nil || !strings.Contains(err.Error(), `"acme.dice", which no gogo firmware provides`) {
+		t.Fatalf("without the component: %v", err)
+	}
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img); err == nil || !strings.Contains(err.Error(), "no CMakeLists.txt") {
+		t.Errorf("no CMakeLists.txt: %v", err)
+	}
+	write("CMakeLists.txt", "idf_component_register(SRCS dice.c)\n")
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img); err == nil || !strings.Contains(err.Error(), "no gogo-driver.json") {
+		t.Errorf("no gogo-driver.json: %v", err)
+	}
+	for _, bad := range []string{`{"format": 1, "ports": []}`, `{"format": 1, "ports": ["tcp"]}`, `{"format": 1, "ports": ["gpio"]}`, `{"format": 1, "ports": [""]}`, `not json`,
+		`{"format": 1, "ports": ["dice"]}`, `{"format": 1, "ports": ["/sd2"]}`, `{"format": 1, "ports": ["/acme.sd"]}`, `{"format": 1, "ports": ["acme.a,b"]}`, `{"format": 1, "ports": ["acme.a b"]}`,
+		`{"format": 1, "ports": ["acme.\u00fc"]}`, `{"format": 1, "ports": [".dice"]}`, `{"format": 1, "ports": ["acme."]}`, `{"format": 1, "ports": ["acme..dice"]}`,
+		`{"format": 1, "ports": ["acme.abcdefghijklmnopqrstuvwxyz0"]}`,
+		`{"format": 1, "ports": ["a.1", "a.2", "a.3", "a.4", "a.5", "a.6", "a.7", "a.8", "a.9"]}`,
+		`{"ports": ["acme.dice"]}`, `{"format": 2, "ports": ["acme.dice"]}`, `{"format": 1, "ports": ["acme.dice"], "future": 1}`,
+		`{"format": 1, "Ports": ["acme.dice"]}`} {
+		write("gogo-driver.json", bad)
+		if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img); err == nil {
+			t.Errorf("gogo-driver.json %s accepted", bad)
+		}
+	}
+	write("gogo-driver.json", `{"format": 1, "ports": ["acme.dice"]}`)
+	out, cfg, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(cfg, "CONFIG_GOGO_BOARD_PORTS=y\nCONFIG_GOGO_BOARD_PORT_NAMES=\"acme.dice\"\n") {
+		t.Errorf("overlay:\n%s", cfg)
+	}
+	if !strings.Contains(out, "board ports: acme.dice\n") || !strings.Contains(out, "-DEXTRA_COMPONENT_DIRS="+comp+" build") {
+		t.Errorf("output:\n%s", out)
+	}
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", comp, "-component", comp, img); err == nil || !strings.Contains(err.Error(), "have one name") {
+		t.Errorf("the same component twice: %v", err)
+	}
+	// The same directory again without it: the switch goes off, and the
+	// sdkconfig that had it on is dropped.
+	if err := os.WriteFile(filepath.Join(d, "sdkconfig"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plain := writeImg(t, d, "plain.ggb")
+	out, cfg, err = fwRun(t, "-board", "sticks3", "-o", d, plain)
+	if err != nil || !strings.HasSuffix(cfg, "CONFIG_GOGO_BOARD_PORTS=n\n") || !strings.Contains(out, "removed") {
+		t.Errorf("without -component: %v\n%s\n%s", err, out, cfg)
+	}
+}
+
+// After a -build with components, the linker map must show each one's
+// GOGO_BOARD_PORT entry: a component not linked whole has none.
+func TestFirmwareCheckMap(t *testing.T) {
+	comps := []fwComponent{{dir: "/x/dice"}, {dir: "/y/acme_led"}}
+	both := `
+ *(.gogo_board_port)
+ .gogo_board_port
+                0x3c040150        0x4 esp-idf/main/libmain.a(board_ports.c.obj)
+ .gogo_board_port
+                0x3c040154        0x4 esp-idf/dice/libdice.a(dice_port.c.obj)
+ .gogo_board_port 0x3c040158      0x4 esp-idf/acme_led/libacme_led.a(led_port.c.obj)
+`
+	if err := fwCheckMap(both, comps); err != nil {
+		t.Error(err)
+	}
+	one := strings.Replace(both, "libacme_led.a", "libother.a", 1)
+	if err := fwCheckMap(one, comps); err == nil || !strings.Contains(err.Error(), "component acme_led") || !strings.Contains(err.Error(), "WHOLE_ARCHIVE") {
+		t.Errorf("acme_led missing: %v", err)
+	}
+	if err := fwCheckMap(" .rodata.gogo_board_port_7\n   0x0 0x14 esp-idf/dice/libdice.a(dice_port.c.obj)\n", comps[:1]); err == nil {
+		t.Error("an entry's own data is not the section")
+	}
+}
+
+// -component refuses directories ESP-IDF would confuse: two of one name,
+// main or driver, gogo's own components, a path with ';'.
+func TestFirmwareComponentPaths(t *testing.T) {
+	d := t.TempDir()
+	img := writeImg(t, d, "x.ggb", "acme.a")
+	mk := func(dir, port string) string {
+		p := filepath.Join(d, dir)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(p, "CMakeLists.txt"), []byte("idf_component_register()\n"), 0o644)
+		os.WriteFile(filepath.Join(p, "gogo-driver.json"), []byte(`{"format": 1, "ports": ["`+port+`"]}`), 0o644)
+		return p
+	}
+	a, b := mk("one/acme", "acme.a"), mk("two/acme", "acme.b")
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", a, "-component", b, img); err == nil || !strings.Contains(err.Error(), "have one name") {
+		t.Errorf("two components named acme: %v", err)
+	}
+	for _, name := range []string{"main", "driver", "gogo_api", "fatfs"} {
+		p := mk(name, "acme.a")
+		if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", p, img); err == nil || !strings.Contains(err.Error(), "is gogo's or ESP-IDF's") {
+			t.Errorf("a component named %s: %v", name, err)
+		}
+	}
+	semi := mk("semi;colon/acme_x", "acme.a")
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", semi, img); err == nil || !strings.Contains(err.Error(), "';'") {
+		t.Errorf("a path with ';': %v", err)
+	}
+	c := mk("three/acme_c", "acme.a")
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", a, "-component", c, img); err == nil || !strings.Contains(err.Error(), "two components") {
+		t.Errorf("one port from two components: %v", err)
+	}
+	if _, _, err := fwRun(t, "-board", "sticks3", "-o", d, "-component", a, img); err != nil {
+		t.Errorf("one component: %v", err)
 	}
 }
