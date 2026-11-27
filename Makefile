@@ -76,7 +76,7 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-screen test-screen-asan test-c-asan test-fs-host test-configsvc vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
@@ -281,6 +281,15 @@ $(BUILD)/test_screen: $(SCREEN_DEPS)
 test-screen-asan:
 	$(MAKE) BUILD=build/asan-ub EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -DGOGO_DEBUG=1" build/asan-ub/test_screen
 	build/asan-ub/test_screen
+
+# The VM core's C tests (test_params' longest values among them) under
+# ASan and UBSan: the host build with GOGO_DEBUG, the MCU build without
+# (its arena has no room for the debug block headers, config.h).
+test-c-asan:
+	$(MAKE) BUILD=build/asan-ub EXTRA_CFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -DGOGO_DEBUG=1" build/asan-ub/test_c
+	ASAN_OPTIONS=detect_leaks=0 build/asan-ub/test_c
+	$(MAKE) BUILD=build/asan-mcu EXTRA_CFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer" build/asan-mcu/test_c_mcu
+	ASAN_OPTIONS=detect_leaks=0 build/asan-mcu/test_c_mcu
 
 $(BUILD)/test_screen_mcu: $(SCREEN_DEPS)
 	@mkdir -p $(BUILD)

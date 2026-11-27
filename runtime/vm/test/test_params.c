@@ -130,6 +130,17 @@ TEST(params_ceilings) {
     p = resolve("vm.max_actors=65520\n", NULL);
     CHECK_EQ(p.max_ports, 16);
     CHECK_EQ(said_n, 0);
+    /* The longest values as typed (31 bytes), echoed whole: as a key and
+     * as a flag (run under ASan by the sanitizer builds). */
+    p = resolve("vm.max_actors=0000000000000000000000000070000\n", NULL);
+    CHECK_EQ(p.max_actors, PORT_SLOT_TOP - GOGO_MAX_PORTS);
+    CHECK(strstr(said, "gogo: vm.max_actors 0000000000000000000000000070000 is over this VM's 65520; using 65520\n") != NULL);
+    flags[PARAM_MAX_ACTORS] = "0000000000000000000000000070000";
+    p = resolve(NULL, NULL);
+    CHECK_EQ(p.max_actors, PORT_SLOT_TOP - GOGO_MAX_PORTS);
+    p = resolve("vm.handles=0000000000000000000070000/00003\n", NULL);
+    CHECK_EQ(p.bytes_handles, GOGO_BYTES_HANDLES_MAX);
+    CHECK(strstr(said, "gogo: vm.handles 0000000000000000000070000/00003 is over this VM's ") != NULL);
     /* M alone (gogo_config.bytes_per_actor without bytes_handles): N kept. */
     flags[PARAM_HANDLES] = "/4";
     p = resolve("vm.handles=40\n", NULL);    /* the overlay beats the whole key */

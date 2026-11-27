@@ -56,11 +56,17 @@ static char *put_num(char *p, params_num v, bool size) {
     return p;
 }
 
-/* "gogo: <a><b><c>\n" on stream 2. Every caller's parts together are at
- * most 101 bytes (a key of 15, a value as typed of 31, two numbers of 20
- * and the fixed words), so m holds them. */
+/* The longest part clamp builds: " " + a value as typed (at most 31: the
+ * key buffer) + " is over this VM's " (19) + a number (at most 20) +
+ * "; using " (8) + a number (20) + NUL. */
+#define CLAMP_MAX (1 + 31 + 19 + 20 + 8 + 20 + 1)
+
+/* "gogo: <a><b><c>\n" on stream 2. The longest line: "gogo: " (6), a
+ * of at most 20 ("vm.handles per actor"), b of at most CLAMP_MAX - 1, c of
+ * at most 32 ("; using the default", ": actors + ports at most 65536"),
+ * the newline: under 160. */
 static void say(const gogo_host *h, void *ctx, const char *a, const char *b, const char *c) {
-    char m[128], *p = put_s(put_s(put_s(put_s(m, "gogo: "), a), b), c);
+    char m[6 + 20 + CLAMP_MAX + 32 + 1], *p = put_s(put_s(put_s(put_s(m, "gogo: "), a), b), c);
     *p++ = '\n';
     if (h && h->write) h->write(ctx, 2, m, (size_t)(p - m));
 }
@@ -71,7 +77,7 @@ static params_num clamp(const gogo_host *h, void *ctx, const char *k, const char
                         params_num hi, bool size) {
     if (v >= lo && (!hi || v <= hi)) return v;
     params_num to = v < lo ? lo : hi;
-    char m[64], *p = put_s(put_s(put_s(m, " "), t), v < lo ? " is under " : " is over this VM's ");
+    char m[CLAMP_MAX], *p = put_s(put_s(put_s(m, " "), t), v < lo ? " is under " : " is over this VM's ");
     p = put_s(put_num(p, to, size), "; using ");
     *put_num(p, to, size) = 0;
     say(h, ctx, k, m, "");
