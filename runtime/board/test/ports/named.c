@@ -9,6 +9,7 @@
 static int named_open(void *ctx, gogo_vm *vm, gogo_port port, int32_t arg, const uint8_t *data, size_t len) {
     (void)arg, (void)data, (void)len;
     const char *who = ctx;
+    gogo_close_posts(vm);   /* a no-op on a board: the ticker's posts still arrive */
     return gogo_port_emit(vm, port, 1, who, strlen(who));
 }
 

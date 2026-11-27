@@ -510,8 +510,10 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int3
  * named on stream 2 at boot and left out. The driver then works exactly
  * as a host port: its callbacks run on the VM's thread (the VM task) and
  * get a gogo_vm handle that takes gogo_port_emit, gogo_port_close,
- * gogo_post, gogo_close_posts and gogo_poster_new, and nothing else of
- * this header (those calls are libgogo's alone). A poster made from it
+ * gogo_post and gogo_poster_new, and nothing else of this header (those
+ * calls are libgogo's alone). gogo_close_posts and
+ * gogo_poster_close_posts link but do nothing on a board: posts belong
+ * to every driver of the board, and close when the program ends. A poster made from it
  * may be used from any other thread or task, never from an interrupt
  * handler: a post allocates. The board's host-port layer is a build
  * option (CONFIG_GOGO_BOARD_PORTS on the ESP32-S3, which `gogo firmware

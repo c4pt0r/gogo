@@ -42,7 +42,9 @@ int gogo_post(gogo_vm *g, const char *name, size_t name_len, int32_t kind, const
 }
 
 static void close_posts(EmbedPorts *g) {
-    if (!g) return;
+    /* On a board, many drivers share one shell: one of them closing posts
+     * would stop every other's, for good. Only the run's end closes them. */
+    if (!g || g->board) return;
     /* A VM idle only because a name kept it alive re-checks and ends
      * (once: a later close changes nothing). */
     if (embed_set_state(g, EMBED_CLOSED) < EMBED_CLOSED && g->uh->wake) g->uh->wake(g->uctx);

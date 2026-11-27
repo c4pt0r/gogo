@@ -469,9 +469,11 @@ The rules:
 - **The VM's calls belong to its thread.** `gogo_port_emit` and
   `gogo_port_close` run only in a callback; from elsewhere the driver
   posts. On a board the `gogo_vm` handle a callback gets takes
-  `gogo_port_emit`, `gogo_port_close`, `gogo_post`, `gogo_close_posts`
-  and `gogo_poster_new`, and nothing else of the header (`gogo_step`,
-  `gogo_get_stats`, ... are libgogo's).
+  `gogo_port_emit`, `gogo_port_close`, `gogo_post` and `gogo_poster_new`,
+  and nothing else of the header (`gogo_step`, `gogo_get_stats`, ... are
+  libgogo's). `gogo_close_posts` and `gogo_poster_close_posts` do nothing
+  there: the posts are every driver's of the board, and close when the
+  program ends; in an embedding host they still close the host's posts.
 - **A post can fail.** `GOGO_EFULL` with 256 posts queued (try again
   later), `GOGO_ECLOSED` once the VM has finished. Free the poster
   (`gogo_poster_free`) when the thread is done with it.

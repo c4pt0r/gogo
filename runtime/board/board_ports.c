@@ -116,6 +116,7 @@ struct EmbedPorts *board_ports_new(const gogo_host *h, const gogo_host *ph) {
     memset(ep, 0, sizeof *ep);
     ep->uh = ph;
     ep->refs = 1;                /* the board's, never dropped */
+    ep->board = true;
     return ep;
 }
 

@@ -65,6 +65,9 @@ struct EmbedPorts {
     bool names_live;
     bool loaded;                 /* an image is loaded: no more registrations */
     bool registered;             /* a board's: its GOGO_BOARD_PORTs went through registration */
+    /* A board's shell: posts are the board's to close (board_ports_end),
+     * so gogo_close_posts and gogo_poster_close_posts do nothing. */
+    bool board;
     bool stepping;               /* inside a step or hook (re-entry guard) */
     /* The host port whose open or close callback is running (hostport.c):
      * events emitted during its open wait in held (oldest first) until the
