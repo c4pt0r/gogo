@@ -20,6 +20,9 @@ import (
 // group of a new tty a moment after it appears).
 func portReady(port string) bool { return syscall.Access(port, 0x6) == nil } // R_OK|W_OK
 
+// The ioctl numbers use the asm-generic encoding (direction in bits 30-31,
+// size in 16-29), right for amd64, arm64, arm, 386 and riscv64; mips, ppc
+// and sparc encode the direction otherwise and would need their own.
 const (
 	usbdevfsReset = 0x5514 // _IO('U', 20)
 )

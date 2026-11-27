@@ -219,8 +219,10 @@ func (r *usbRecovery) retry(port string, op func() error) error {
 	switch {
 	case err2 == nil:
 		return nil
-	case silentLink(err2):
+	case silentLink(err2) && errors.Is(err2, errNoAnswer):
 		return fmt.Errorf("%w\n  still no answer after a USB bus reset: %s (and check it runs gogo firmware)", err, replugHint)
+	case silentLink(err2):
+		return fmt.Errorf("%w\n  esptool failed again after a USB bus reset: %s", err, replugHint)
 	}
 	return err2
 }

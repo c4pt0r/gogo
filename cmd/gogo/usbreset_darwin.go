@@ -143,7 +143,16 @@ func peek(addr uintptr) uintptr {
 	return v
 }
 
-// cfString is a new CFString of s; release it with CFRelease.
+// cfRelease releases a CF object; NULL (a failed create) is skipped, as
+// CFRelease(NULL) crashes.
+func cfRelease(ref uintptr) {
+	if ref != 0 {
+		ccall(iokit.CFRelease, ref)
+	}
+}
+
+// cfString is a new CFString of s (0 if it cannot be made); release it
+// with cfRelease.
 func cfString(s string) uintptr {
 	b := cstr(s)
 	return ccall(iokit.CFStringCreateWithCString, 0, uintptr(unsafe.Pointer(&b[0])), cfStringEncodingUTF8)
@@ -153,12 +162,15 @@ func cfString(s string) uintptr {
 // has none.
 func regString(entry uintptr, key string) string {
 	k := cfString(key)
-	defer ccall(iokit.CFRelease, k)
+	if k == 0 {
+		return ""
+	}
+	defer cfRelease(k)
 	v := ccall(iokit.IORegistryEntryCreateCFProperty, entry, k, 0, 0)
 	if v == 0 {
 		return ""
 	}
-	defer ccall(iokit.CFRelease, v)
+	defer cfRelease(v)
 	if ccall(iokit.CFGetTypeID, v) != ccall(iokit.CFStringGetTypeID) {
 		return ""
 	}
@@ -177,12 +189,15 @@ func regString(entry uintptr, key string) string {
 // regInt reads the 32-bit number property key of a registry entry.
 func regInt(entry uintptr, key string) (uint32, bool) {
 	k := cfString(key)
-	defer ccall(iokit.CFRelease, k)
+	if k == 0 {
+		return 0, false
+	}
+	defer cfRelease(k)
 	v := ccall(iokit.IORegistryEntryCreateCFProperty, entry, k, 0, 0)
 	if v == 0 {
 		return 0, false
 	}
-	defer ccall(iokit.CFRelease, v)
+	defer cfRelease(v)
 	if ccall(iokit.CFGetTypeID, v) != ccall(iokit.CFNumberGetTypeID) {
 		return 0, false
 	}
@@ -239,8 +254,9 @@ func findUSBDevice(port string) (uintptr, usbDevice, error) {
 			return 0, usbDevice{}, fmt.Errorf("%s is not on a USB device", port)
 		}
 		e = uintptr(parent)
-		if ccall(iokit.IOObjectConformsTo, e, uintptr(unsafe.Pointer(&host[0])))&0xff != 0 ||
-			ccall(iokit.IOObjectConformsTo, e, uintptr(unsafe.Pointer(&dev[0])))&0xff != 0 {
+		// boolean_t is a 32-bit int.
+		if ccall(iokit.IOObjectConformsTo, e, uintptr(unsafe.Pointer(&host[0])))&0xffffffff != 0 ||
+			ccall(iokit.IOObjectConformsTo, e, uintptr(unsafe.Pointer(&dev[0])))&0xffffffff != 0 {
 			break
 		}
 	}
@@ -299,14 +315,17 @@ func (d usbIface) call(slot uintptr, args ...uintptr) uint32 {
 // dev; release it with call(slotRelease).
 func openDeviceInterface(dev uintptr) (usbIface, error) {
 	t, p := cfString(uuidUSBDeviceUserClientType), cfString(uuidCFPlugInInterface)
-	defer ccall(iokit.CFRelease, t)
-	defer ccall(iokit.CFRelease, p)
+	defer cfRelease(t)
+	defer cfRelease(p)
+	if t == 0 || p == 0 {
+		return 0, fmt.Errorf("CFStringCreateWithCString failed")
+	}
 	tu, pu := ccall(iokit.CFUUIDCreateFromString, 0, t), ccall(iokit.CFUUIDCreateFromString, 0, p)
+	defer cfRelease(tu)
+	defer cfRelease(pu)
 	if tu == 0 || pu == 0 {
 		return 0, fmt.Errorf("CFUUIDCreateFromString failed")
 	}
-	defer ccall(iokit.CFRelease, tu)
-	defer ccall(iokit.CFRelease, pu)
 	var plugin uintptr
 	var score int32
 	if kr := uint32(ccall(iokit.IOCreatePlugInInterfaceForService, dev, tu, pu, uintptr(unsafe.Pointer(&plugin)), uintptr(unsafe.Pointer(&score)))); kr != kIOReturnSuccess || plugin == 0 {

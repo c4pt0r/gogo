@@ -179,6 +179,8 @@ func monitorRun(o monitorOpts, env monitorEnv) error {
 			return 0, err
 		}
 		defer f.Close()
+		// On a retry after a USB reset the chip is reset again: the first
+		// reset's control request could not reach a silent device.
 		if o.reset {
 			if err := env.reset(f); err != nil {
 				return 0, err

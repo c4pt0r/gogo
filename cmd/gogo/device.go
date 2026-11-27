@@ -88,8 +88,10 @@ func deviceMain(args []string, env deviceEnv) error {
 			return fmt.Errorf("gogo device: not formatted (answer yes, or pass -yes)")
 		}
 	}
+	// Every error of the operation names its command (openSerial's
+	// "gogo: ...", deviceOp's "gogo device: ...").
 	usb := newUSBRecovery(env.usb, *noReset, env.errOut)
-	err = usb.retry(*port, func() error {
+	return usb.retry(*port, func() error {
 		f, err := env.open(*port)
 		if err != nil {
 			return err
@@ -97,10 +99,6 @@ func deviceMain(args []string, env deviceEnv) error {
 		defer f.Close()
 		return deviceOp(f, op, env.out)
 	})
-	if err != nil && !strings.HasPrefix(err.Error(), "gogo") {
-		err = fmt.Errorf("gogo device: %w", err)
-	}
-	return err
 }
 
 // deviceOp runs one operation (but usb-reset) on the open port.
