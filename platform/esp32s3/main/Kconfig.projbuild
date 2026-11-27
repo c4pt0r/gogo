@@ -134,4 +134,15 @@ menu "gogo"
             When off, embed gogo12-ascii.font (printable ASCII only, 1536
             bytes) and every other character shows as the console's box.
 
+    config GOGO_BOARD_PORTS
+        bool "Board ports (drivers of other components, gogo.h)"
+        default n
+        help
+            Build the host-port layer into the firmware, so drivers of other
+            ESP-IDF components (EXTRA_COMPONENT_DIRS) that register themselves
+            with GOGO_BOARD_PORT (runtime/include/gogo.h) are registered at
+            boot, before the image loads, and listed in `gogo device info`.
+            `gogo firmware -component DIR` turns it on. Off, a component with
+            a GOGO_BOARD_PORT fails to link (gogo_board_ports_enabled).
+
 endmenu

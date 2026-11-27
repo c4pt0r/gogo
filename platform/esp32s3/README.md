@@ -855,7 +855,7 @@ firmware` does this for its own directory, see below.)
 ### `gogo firmware`: features from what the programs need
 
 `gogo firmware -board sticks3|cardputer [-o dir] [-build] [-with list]
-[-without list] files...` reads the `requires` word of the given images and
+[-without list] [-component dir]... files...` reads the `requires` word of the given images and
 modules and writes `<dir>/sdkconfig.gogo` (`CONFIG_GOGO_NET`, `_KBD`,
 `_BATTERY`, `_SD`, `_FS_EXFAT`, `_FONT_CJK`, `_IMU`, `_IR`, `_AUDIO`, `_TLS`,
 `_SCREEN`, `_FLOAT`), then prints (or, with
@@ -877,6 +877,17 @@ feature table is in `cmd/gogo/firmware.go` and must match `main/board.h` and
 `<dir>/sdkconfig` exists and any `CONFIG_GOGO_*` value in it differs from the
 new overlay, the tool deletes it (and says so) so the new switches take
 effect; if nothing differs it is kept, so incremental builds stay fast.
+
+`-component dir` adds a driver component of your own (an ESP-IDF
+component whose driver registers itself with `GOGO_BOARD_PORT`, gogo.h;
+book chapter 22): its `gogo-driver.json` (`{"ports": ["dice"]}`) names the
+requirement names it provides, the overlay gets `CONFIG_GOGO_BOARD_PORTS=y`
+(the host-port layer: `runtime/board/board_ports.c` and runtime/embed's
+`hostport.c`, `inbox.c`, `poster.c`), and idf.py gets
+`-DEXTRA_COMPONENT_DIRS=dir;...` (empty without `-component`, so a build
+directory loses components it had). A driver component `REQUIRES gogo_api`
+(`components/gogo_api`: `runtime/include` only) and is registered with
+`WHOLE_ARCHIVE`; `main/linker.lf` keeps its `.gogo_board_port` entries.
 
 With `KBD` and `BATTERY` both off the Cardputer has no input hardware; disabled
 behaves like absent hardware. Example, own build directory per variant:

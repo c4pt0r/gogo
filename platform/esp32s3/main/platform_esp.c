@@ -416,6 +416,30 @@ const gogo_host esp_host = {
     .code_free = psram_code_free,
 };
 
+#if CONFIG_GOGO_BOARD_PORTS
+/* Posts from a driver's own task (gogo_poster_port_post) allocate their
+ * node there: from the heap, which locks, not the VM arena, which only
+ * the VM task may use. The wake is platform_notify (any task). */
+static void *ports_alloc(void *ctx, size_t n) {
+    (void)ctx;
+    return heap_caps_malloc(n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+static void ports_free(void *ctx, void *p, size_t n) {
+    (void)ctx;
+    (void)n;
+    heap_caps_free(p);
+}
+const gogo_host esp_ports_host = {
+    .size = sizeof(gogo_host),
+    .write = host_write,
+    .alloc = ports_alloc,
+    .free = ports_free,
+    .now_ms = host_now,
+    .wake = host_wake,
+    .wait = host_wait,
+};
+#endif
+
 /* ---- the board table ---- */
 
 /* What this build provides: the drivers and mounts it really has (board.h

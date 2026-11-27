@@ -5,6 +5,7 @@ package main
 // prints (or runs, with -build) the idf.py command that builds it.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +19,7 @@ import (
 	"gogotools/compiler"
 )
 
-const firmwareUsage = "usage: gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] files..."
+const firmwareUsage = "usage: gogo firmware (-board sticks3|cardputer | -port P [-esptool path]) [-o dir] [-build] [-with list] [-without list] [-component dir]... files..."
 
 // fwFeature is one firmware feature, the same for every board.
 type fwFeature struct {
@@ -78,6 +79,64 @@ var fwFeatures = []fwFeature{
 // its features (platform/esp32s3/main/platform_esp.c esp_ports, esp_mounts).
 var fwBase = []string{"gpio", "/flash"}
 
+// fwBoardPortsKconf is the switch of the board-port layer (gogo.h
+// GOGO_BOARD_PORT): on exactly when -component gives driver components.
+const fwBoardPortsKconf = "CONFIG_GOGO_BOARD_PORTS"
+
+// fwComponent is a driver component given with -component: an ESP-IDF
+// component directory with a gogo-driver.json naming the requirement names
+// (board ports) it provides, {"ports": ["dice"]}.
+type fwComponent struct {
+	dir   string // absolute
+	ports []string
+}
+
+// fwReadComponent reads -component dir.
+func fwReadComponent(dir string) (fwComponent, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return fwComponent{}, err
+	}
+	if _, err := os.Stat(filepath.Join(abs, "CMakeLists.txt")); err != nil {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: not an ESP-IDF component (no CMakeLists.txt)", dir)
+	}
+	b, err := os.ReadFile(filepath.Join(abs, "gogo-driver.json"))
+	if err != nil {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: no gogo-driver.json (it names the ports the component provides: {\"ports\": [\"name\"]})", dir)
+	}
+	var j struct {
+		Ports []string `json:"ports"`
+	}
+	if err := json.Unmarshal(b, &j); err != nil {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json: %v", dir, err)
+	}
+	if len(j.Ports) == 0 {
+		return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: gogo-driver.json names no ports", dir)
+	}
+	for _, p := range j.Ports {
+		if p == "" || len(p) > 31 || strings.ContainsAny(p, "\x00;") {
+			return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: bad port name %q (1 to 31 bytes)", dir, p)
+		}
+		for _, b := range fwBase {
+			if b == p {
+				return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: port %q is a built-in driver's name", dir, p)
+			}
+		}
+		for _, f := range fwFeatures {
+			if fwProvides(f, p) {
+				return fwComponent{}, fmt.Errorf("gogo firmware: -component %s: port %q is a built-in driver's name", dir, p)
+			}
+		}
+	}
+	return fwComponent{dir: abs, ports: j.Ports}, nil
+}
+
+// fwComponentsFlag collects repeated -component flags.
+type fwComponentsFlag []string
+
+func (c *fwComponentsFlag) String() string     { return strings.Join(*c, ",") }
+func (c *fwComponentsFlag) Set(v string) error { *c = append(*c, v); return nil }
+
 // fwProvides reports whether feature f builds requirement name n.
 func fwProvides(f fwFeature, n string) bool {
 	for _, p := range f.provides {
@@ -126,8 +185,9 @@ func fwNames() string {
 }
 
 // fwPlan computes which features are on for board, given the requirement
-// names of the files and the -with / -without lists.
-func fwPlan(board string, req []string, with, without []string) (map[string]bool, error) {
+// names of the files, the -with / -without lists and the names the
+// driver components provide.
+func fwPlan(board string, req []string, with, without []string, extra ...string) (map[string]bool, error) {
 	has := func(f fwFeature) bool { return fwBoards[board].has[f.name] }
 	required := map[string]bool{}
 	reqBy := map[string]bool{} // features some image requires directly
@@ -136,13 +196,16 @@ func fwPlan(board string, req []string, with, without []string) (map[string]bool
 		for _, b := range fwBase {
 			found = found || b == n
 		}
+		for _, b := range extra {
+			found = found || b == n
+		}
 		for _, f := range fwFeatures {
 			if fwProvides(f, n) {
 				required[f.name], reqBy[f.name], found = true, true, true
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("gogo firmware: the images require %q, which no gogo firmware provides", n)
+			return nil, fmt.Errorf("gogo firmware: the images require %q, which no gogo firmware provides (a driver of your own: -component DIR)", n)
 		}
 	}
 	// features that share one Kconfig switch are one build option: what one
@@ -221,8 +284,8 @@ func fwPlan(board string, req []string, with, without []string) (map[string]bool
 	return on, nil
 }
 
-// fwOverlay renders the sdkconfig fragment.
-func fwOverlay(board string, on map[string]bool) string {
+// fwOverlay renders the sdkconfig fragment; ports: the board-port layer.
+func fwOverlay(board string, on map[string]bool, ports bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# gogo firmware overlay for %s (generated by `gogo firmware`)\n", board)
 	done := map[string]bool{} // a switch shared by several features is written once
@@ -237,6 +300,11 @@ func fwOverlay(board string, on map[string]bool) string {
 		}
 		fmt.Fprintf(&b, "%s=%s\n", f.kconf, v)
 	}
+	v := "n"
+	if ports {
+		v = "y"
+	}
+	fmt.Fprintf(&b, "%s=%s\n", fwBoardPortsKconf, v)
 	return b.String()
 }
 
@@ -283,6 +351,9 @@ func fwStaleSdkconfig(path, overlay string) []string {
 		if o, ok := old[f.kconf]; ok && o != want[f.kconf] {
 			diff = append(diff, f.kconf)
 		}
+	}
+	if o, ok := old[fwBoardPortsKconf]; ok && o != want[fwBoardPortsKconf] {
+		diff = append(diff, fwBoardPortsKconf)
 	}
 	return diff
 }
@@ -335,6 +406,8 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 	withoutS := fs.String("without", "", "")
 	port := fs.String("port", "", "")
 	esptool := fs.String("esptool", "", "")
+	var compDirs fwComponentsFlag
+	fs.Var(&compDirs, "component", "")
 	files, err := parseFlags(fs, args, firmwareUsage)
 	if err != nil {
 		return err
@@ -357,6 +430,24 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 	if len(files) == 0 {
 		return errors.New("gogo firmware: no image or module files\n" + firmwareUsage)
 	}
+	var comps []fwComponent
+	var extra, compAbs []string
+	for _, d := range compDirs {
+		c, err := fwReadComponent(d)
+		if err != nil {
+			return err
+		}
+		for _, p := range c.ports {
+			for _, q := range extra {
+				if p == q {
+					return fmt.Errorf("gogo firmware: port %q is provided by two components", p)
+				}
+			}
+			extra = append(extra, p)
+		}
+		comps = append(comps, c)
+		compAbs = append(compAbs, c.dir)
+	}
 	var req []string
 	for _, f := range files {
 		img, err := os.ReadFile(f)
@@ -369,7 +460,7 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 		}
 		req = append(req, names...)
 	}
-	on, err := fwPlan(*board, req, splitList(*withS), splitList(*withoutS))
+	on, err := fwPlan(*board, req, splitList(*withS), splitList(*withoutS), extra...)
 	if err != nil {
 		return err
 	}
@@ -384,7 +475,7 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 		return err
 	}
 	cfg := filepath.Join(abs, "sdkconfig.gogo")
-	overlay := fwOverlay(*board, on)
+	overlay := fwOverlay(*board, on, len(comps) > 0)
 	// ESP-IDF lets an existing sdkconfig win over SDKCONFIG_DEFAULTS, so a
 	// generated sdkconfig with other GOGO switches would silently override
 	// the new feature set. This tool owns the directory: drop it.
@@ -400,12 +491,17 @@ func firmwareCmd(args []string, out io.Writer, runIdf func(name string, args ...
 	}
 	idf := []string{"-C", "platform/esp32s3", "-B", abs, "-DGOGO_BOARD=" + *board,
 		"-DSDKCONFIG=" + filepath.Join(abs, "sdkconfig"),
-		"-DSDKCONFIG_DEFAULTS=" + fwDefaults(fwb.overlay, on, cfg), "build"}
+		"-DSDKCONFIG_DEFAULTS=" + fwDefaults(fwb.overlay, on, cfg)}
+	// Always given, so a build directory that had components loses them.
+	idf = append(idf, "-DEXTRA_COMPONENT_DIRS="+strings.Join(compAbs, ";"), "build")
 	var quoted []string
 	for _, a := range idf {
 		quoted = append(quoted, shQuote(a))
 	}
 	fmt.Fprintf(out, "wrote %s\nfeatures: %s\n", cfg, fwSummary(on))
+	if len(extra) > 0 {
+		fmt.Fprintf(out, "board ports: %s\n", strings.Join(extra, " "))
+	}
 	fmt.Fprintf(out, "run from the gogo repository root (needs `. ~/esp/esp-idf/export.sh`):\n")
 	fmt.Fprintf(out, "idf.py %s\n", strings.Join(quoted, " "))
 	if *doBuild {

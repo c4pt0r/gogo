@@ -120,6 +120,9 @@ static void vm_task(void *arg) {
      * systems and the input source, then vm_run. */
     BoardRun run = {
         .vm = &vm, .params = &params, .vfs = &vfs_state, .input = &input_state,
+#if CONFIG_GOGO_BOARD_PORTS
+        .ports_host = &esp_ports_host,
+#endif
 #if CONFIG_GOGO_NET
         .net = &esp_net_state, .net_install = net_install, .ready = ready,
 #endif
