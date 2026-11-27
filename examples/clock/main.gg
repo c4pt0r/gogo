@@ -1,0 +1,352 @@
+// clock: a big-digit clock on the text screen, in the spirit of tty-clock,
+// set from the network with NTP. It runs on the StickS3, the Cardputer and
+// a host terminal.
+//
+// The hours and minutes are drawn in blocks: each digit is 3x5 cells of a
+// 3x5 font, each cell two characters wide so it comes out square on the
+// board (a character cell is 6x12 pixels) and in most terminals. The colon
+// blinks with the seconds. Below are the date and the seconds, and at the
+// bottom the state of the time: syncing, synced (how long ago), or why the
+// last try failed.
+//
+// Time comes from NTP: a second actor gets an address (gogo/dhcp), asks
+// the NTP server (gogo/sntp) and sets the wall clock, then tries again in
+// 30 s after a failure or in an hour after a success. On a board the wall
+// clock is unknown until that first sync, so the digits show dashes until
+// then. A host VM starts with the computer's clock (itself kept by NTP),
+// and its UDP and DNS are simulated, so there the sync fails and the clock
+// shows the computer's time, saying so at the bottom.
+//
+// Config keys (gogo config set, or $GOGO_CONFIG on a host):
+//
+//	clock.ntp   the NTP server (default pool.ntp.org)
+//	clock.tz    the offset from UTC: +8, -5, +5:30 (default 0, UTC)
+//
+// Keys: on the Cardputer (and in a terminal) Enter changes the colour, Tab
+// (or Down) switches 24/12 hours, Esc quits. On the StickS3, A changes the
+// colour, B switches 24/12 hours, B held for 0.6 s quits.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/dhcp"
+	"gogo/screen"
+	"gogo/sntp"
+	"gogo/strconv"
+	"gogo/sys"
+	"gogo/tui"
+)
+
+// Timing, in milliseconds.
+const (
+	retryMs  = 30000   // after a failed sync
+	resyncMs = 3600000 // after a good one
+	ntpMs    = 8000    // one sync's time limit
+)
+
+// font is the 3x5 digit font, one string of 15 cells per digit, row by
+// row; '#' is a filled cell.
+var font = []string{
+	"####.##.##.####", // 0
+	"..#..#..#..#..#", // 1
+	"###..#####..###", // 2
+	"###..####..####", // 3
+	"#.##.####..#..#", // 4
+	"####..###..####", // 5
+	"####..####.####", // 6
+	"###..#..#..#..#", // 7
+	"####.#####.####", // 8
+	"####.####..####", // 9
+}
+
+// colours the digits cycle through (Enter, or A).
+var colours = []int{screen.Green, screen.Cyan, screen.Yellow, screen.Magenta, screen.Red, screen.Blue, screen.White}
+
+var weekdays = []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+
+// tick wakes the clock at the next second.
+type tick struct{}
+
+// synced is the syncer's report: Err is "" after a good sync.
+type synced struct {
+	Err string
+}
+
+// State is what the screen shows.
+type State struct {
+	Colour int  // index in colours
+	H12    bool // 12-hour display
+	Synced bool // a sync has succeeded since start
+	Last   int64
+	Status string // the syncer's last word
+	TzMin  int    // offset from UTC, in minutes
+}
+
+func main() {
+	s, ok := tui.Open(screen.Config{})
+	if !ok {
+		println("clock: no screen")
+		return
+	}
+	keys, ok := tui.OpenKeys(tui.Buttons{A: tui.ButtonA, B: tui.ButtonB})
+	if !ok {
+		tui.Close(s)
+		println("clock: no keys")
+		return
+	}
+	server := "pool.ntp.org"
+	if v, ok := sys.Config("clock.ntp"); ok && v != "" {
+		server = v
+	}
+	st := State{Status: "syncing with " + server}
+	if v, ok := sys.Config("clock.tz"); ok {
+		m, good := parseTz(v)
+		if good {
+			st.TzMin = m
+		} else {
+			println("clock: clock.tz", v, "is not like +8 or -5:30; using UTC")
+		}
+	}
+	self := actor.Self()
+	sync := actor.SpawnLink(func() { syncer(self, server) })
+	actor.Send(self, tick{})
+	keys = tui.Run(s, keys, tui.Handlers{
+		Key: func(k tui.Key) bool {
+			switch k.Code {
+			case tui.KeyEsc:
+				return false
+			case tui.KeyEnter:
+				st.Colour = (st.Colour + 1) % len(colours)
+			case tui.KeyTab, tui.KeyDown:
+				st.H12 = !st.H12
+			case tui.KeyChar:
+				if k.Char == 'q' {
+					return false
+				}
+			}
+			return true
+		},
+		Msg: func(msg any) bool {
+			switch m := msg.(type) {
+			case tick:
+				// wake at the next whole second of the wall clock
+				wait := 1000
+				if now := sys.Time(); now > 0 {
+					wait = 1000 - int(now%1000)
+				}
+				actor.SendAfter(self, tick{}, wait)
+			case synced:
+				if m.Err == "" {
+					st.Synced, st.Last, st.Status = true, actor.Now(), ""
+				} else {
+					st.Status = "ntp: " + m.Err + ", again in 30 s"
+				}
+			}
+			return true
+		},
+		Draw: func(f tui.Frame) {
+			draw(f, s, st)
+		},
+	})
+	tui.CloseKeys(keys)
+	tui.Close(s)
+	actor.Kill(sync, actor.Shutdown) // a normal exit does not end linked actors
+}
+
+// syncer keeps the wall clock set from server and tells the clock how each
+// try went.
+func syncer(clock actor.PID, server string) {
+	dhcp.Start(dhcp.Config{TimeoutMs: 15000}) // a host VM has an address already
+	for {
+		err := sntp.Sync(server, ntpMs)
+		if err == nil {
+			actor.Send(clock, synced{})
+			actor.Sleep(resyncMs)
+		} else {
+			actor.Send(clock, synced{Err: err.Error()})
+			actor.Sleep(retryMs)
+		}
+	}
+}
+
+func draw(f tui.Frame, s tui.Screen, st State) {
+	tui.Style(f, screen.White, screen.Black, 0)
+	tui.Clear(f)
+	// four digits, 6 columns each, 2 apart, the colon in the middle: 34 wide
+	x := (s.Cols - 34) / 2
+	y := (s.Rows-5)/2 - 1
+	if y < 0 {
+		y = 0
+	}
+	on := colours[st.Colour]
+	now := sys.Time()
+	if now == 0 { // a board before its first sync
+		for i := 0; i < 4; i++ {
+			dash(f, x+digitX(i), y, screen.Gray)
+		}
+	} else {
+		local := now + int64(st.TzMin)*60000
+		secs := local / 1000
+		day := secs / 86400
+		sod := int(secs - day*86400) // seconds of the day
+		if sod < 0 {
+			sod += 86400
+			day--
+		}
+		h, m, sec := sod/3600, sod%3600/60, sod%60
+		suffix := ""
+		if st.H12 {
+			suffix = " AM"
+			if h >= 12 {
+				suffix = " PM"
+			}
+			h %= 12
+			if h == 0 {
+				h = 12
+			}
+		}
+		digits := []int{h / 10, h % 10, m / 10, m % 10}
+		for i, d := range digits {
+			if i == 0 && st.H12 && d == 0 {
+				continue // 12-hour time has no leading zero
+			}
+			digit(f, x+digitX(i), y, d, on)
+		}
+		if sec%2 == 0 {
+			tui.Color(f, on, on)
+			tui.Fill(f, x+16, y+1, 2, 1, ' ')
+			tui.Fill(f, x+16, y+3, 2, 1, ' ')
+		}
+		yy, mo, dd := civil(day)
+		wd := int((day%7 + 11) % 7) // 1970-01-01 was a Thursday
+		date := weekdays[wd] + " " + strconv.Itoa(yy) + "-" + two(mo) + "-" + two(dd) + "  :" + two(sec) + suffix
+		tui.Color(f, screen.White, screen.Black)
+		tui.Label(f, 0, y+6, s.Cols, date, tui.Center)
+	}
+	status := st.Status
+	switch {
+	case st.Synced && status == "":
+		status = "ntp ok " + ago(actor.Now()-st.Last) + ", " + tzName(st.TzMin)
+	case st.Synced:
+		status += " (last ok " + ago(actor.Now()-st.Last) + ")"
+	case now != 0 && status != "" && status[0] == 'n':
+		status = "no ntp here: host clock, " + tzName(st.TzMin)
+	}
+	tui.Color(f, screen.Gray, screen.Black)
+	tui.Label(f, 0, s.Rows-1, s.Cols, status, tui.Center)
+}
+
+// digitX is the column of digit i (0..3) from the left of the clock.
+func digitX(i int) int {
+	if i < 2 {
+		return i * 8
+	}
+	return 20 + (i-2)*8
+}
+
+// digit draws d at x, y: 3x5 cells, each two columns wide.
+func digit(f tui.Frame, x, y, d, colour int) {
+	tui.Color(f, colour, colour)
+	cells := font[d]
+	for r := 0; r < 5; r++ {
+		for c := 0; c < 3; c++ {
+			if cells[r*3+c] == '#' {
+				tui.Fill(f, x+c*2, y+r, 2, 1, ' ')
+			}
+		}
+	}
+}
+
+// dash draws the bar shown before the time is known.
+func dash(f tui.Frame, x, y, colour int) {
+	tui.Color(f, colour, colour)
+	tui.Fill(f, x, y+2, 6, 1, ' ')
+}
+
+// civil turns days since 1970-01-01 into a date (Howard Hinnant's
+// days_from_civil, inverted).
+func civil(days int64) (int, int, int) {
+	z := days + 719468
+	era := z / 146097
+	if z < 0 {
+		era = (z - 146096) / 146097
+	}
+	doe := z - era*146097
+	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
+	y := yoe + era*400
+	doy := doe - (365*yoe + yoe/4 - yoe/100)
+	mp := (5*doy + 2) / 153
+	d := doy - (153*mp+2)/5 + 1
+	m := mp + 3
+	if mp >= 10 {
+		m = mp - 9
+	}
+	if m <= 2 {
+		y++
+	}
+	return int(y), int(m), int(d)
+}
+
+// parseTz reads "+8", "-5", "+5:30" or "0" as minutes east of UTC.
+func parseTz(s string) (int, bool) {
+	if s == "" {
+		return 0, false
+	}
+	sign := 1
+	if s[0] == '+' || s[0] == '-' {
+		if s[0] == '-' {
+			sign = -1
+		}
+		s = s[1:]
+	}
+	hs, ms := s, "0"
+	for i := 0; i < len(s); i++ {
+		if s[i] == ':' {
+			hs, ms = s[:i], s[i+1:]
+			break
+		}
+	}
+	h, err := strconv.Atoi(hs)
+	if err != nil || h < 0 || h > 14 {
+		return 0, false
+	}
+	m, err := strconv.Atoi(ms)
+	if err != nil || m < 0 || m > 59 {
+		return 0, false
+	}
+	return sign * (h*60 + m), true
+}
+
+func tzName(min int) string {
+	if min == 0 {
+		return "UTC"
+	}
+	sign := "+"
+	if min < 0 {
+		sign, min = "-", -min
+	}
+	s := "UTC" + sign + strconv.Itoa(min/60)
+	if min%60 != 0 {
+		s += ":" + two(min%60)
+	}
+	return s
+}
+
+// ago says how long ms is, roughly.
+func ago(ms int64) string {
+	s := int(ms / 1000)
+	switch {
+	case s < 60:
+		return "just now"
+	case s < 3600:
+		return strconv.Itoa(s/60) + " min ago"
+	}
+	return strconv.Itoa(s/3600) + " h ago"
+}
+
+func two(n int) string {
+	if n < 10 {
+		return "0" + strconv.Itoa(n)
+	}
+	return strconv.Itoa(n)
+}

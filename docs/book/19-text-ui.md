@@ -267,6 +267,10 @@ in a local variable of the function that calls `Run`.
 `examples/tuidemo` is built this way. It is a menu, a job with a progress
 bar driven by a timer, a status line, a rename dialog and an About box, and
 the same image runs on both boards.
+`examples/clock` is another: a big-digit clock in the spirit of tty-clock,
+drawn with `tui.Fill` blocks, woken every whole second by `actor.SendAfter`
+and set from the network by a second actor with `gogo/sntp` (config keys
+`clock.ntp` and `clock.tz`, e.g. `gogo config set clock.tz +8`).
 `examples/snake` keeps its own receive loop instead: a game whose steps
 come from a timer, with a second actor, the autopilot, that plays it.
 
