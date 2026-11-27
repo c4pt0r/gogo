@@ -247,6 +247,11 @@ static void cmd_stats(ConfigSvc *s) {
     n = snprintf(line, sizeof line, "subs=%u/%u", (unsigned)net_subs_used(&esp_net_state), (unsigned)GOGO_NET_MAX_SUBS);
     reply("kv", line, (size_t)n);
 #endif
+#if CONFIG_GOGO_BLE
+    /* ble events lost because the driver's queue was full (a stalled owner) */
+    n = snprintf(line, sizeof line, "ble_lost=%u", (unsigned)ble_esp_lost());
+    reply("kv", line, (size_t)n);
+#endif
 #if CONFIG_SPIRAM
     /* PSRAM (StickS3): free now, lowest since boot. */
     n = snprintf(line, sizeof line, "psram_free=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));

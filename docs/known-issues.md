@@ -1078,14 +1078,19 @@ rebuilt:
   at the worst moment (measured on a StickS3 built without PSRAM; not
   yet on the Cardputer itself). A firmware for a program
   without Bluetooth can drop it: `gogo firmware -without ble`.
-- **Open blocks.** `ble.Open` waits on a board while the controller and
-  the NimBLE host start, and its close while they stop; no actor runs
-  meanwhile.
-  Close stops them again.
-- **Writes without a response can be lost.** The driver holds events the
-  owner has no mailbox room for, in a 2 KB queue; a write with a response
-  that finds the queue full is refused to the phone (it retries), but a
-  write without one is dropped, as it would be over the air.
+- **Open and close block.** `ble.Open` waits on a board while the
+  controller and the NimBLE host start, and closing the port while they
+  stop: with a phone connected, up to 2 s for it to acknowledge the
+  disconnect. No actor runs meanwhile.
+- **Writes without a response can be lost, and so can state events.**
+  The driver holds events the owner has no mailbox room for, in a 2 KB
+  queue; a write with a response that finds the queue full is refused to
+  the phone (it retries), but a write without one is dropped, as it would
+  be over the air. 128 bytes are kept for the small events (Connected,
+  Disconnected, MTU), but an owner stalled through several connections
+  can overflow that too, and the program's idea of the connection is then
+  wrong until the next one. `gogo device stats` counts what was lost
+  (`ble_lost`).
 - **A stalled notification waits.** When the Bluetooth stack has no
   buffer for a notification (a slow phone, Wi-Fi taking the radio), its
   `Done` comes when it has one; there is no cap. A link that dies ends in

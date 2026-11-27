@@ -288,6 +288,7 @@ static int hal_start(void *ctx, const BleConfig *c) {
         if (watching) (void)heap_caps_monitor_local_minimum_free_size_stop();
         return rc == BLE_HS_ENOMEM ? GOGO_E_NOMEMORY : GOGO_E_IO;
     }
+    ble_host_on_resync(readvertise);   /* after a host reset, advertise again */
     size_t low = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (watching) (void)heap_caps_monitor_local_minimum_free_size_stop();
     platform_esp_log("gogo: ble: started: internal free %u -> %u (least %u, largest block before %u)", (unsigned)before,
@@ -301,8 +302,9 @@ static void hal_stop(void *ctx) {
     xSemaphoreTake(mu, portMAX_DELAY);
     running = false;
     xSemaphoreGive(mu);
+    ble_host_on_resync(NULL);
     (void)ble_gap_adv_stop();
-    ble_host_release();              /* ends the connection */
+    ble_host_release();              /* ends the connection (waits up to 2 s) */
     xSemaphoreTake(mu, portMAX_DELAY);
     conn = BLE_HS_CONN_HANDLE_NONE;
     drop_values();
@@ -368,3 +370,7 @@ static const BleHal esp_ble_hal = {
 };
 
 const struct PortDriver esp_ble_driver = BLE_DRIVER(&esp_ble_hal);
+
+/* Events the radio side could not queue since boot (gogo device stats);
+ * one word, read without the lock. */
+uint32_t ble_esp_lost(void) { return __atomic_load_n(&board.lost, __ATOMIC_RELAXED); }

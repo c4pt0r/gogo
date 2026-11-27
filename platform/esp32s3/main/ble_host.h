@@ -15,8 +15,9 @@
  *     host is synced: ble_gatts_*, ble_gap_* and ble_hs_id_* may be called.
  *   void ble_host_release(void)
  *     Drops one hold; the last one stops the host (nimble_port_stop, which
- *     ends any connection and advertising) and deinitializes host and
- *     controller (nimble_port_deinit).
+ *     ends any connection and advertising, waiting at most 2 s for the
+ *     phone to acknowledge: BT_NIMBLE_HS_STOP_TIMEOUT_MS) and
+ *     deinitializes host and controller (nimble_port_deinit).
  *
  *   - Callers are tasks (never an ISR, never the NimBLE host task itself,
  *     which a release would wait for); calls are serialized by a mutex
@@ -37,5 +38,10 @@
 
 int ble_host_acquire(void);
 void ble_host_release(void);
+/* Registers the holder's callback for a host reset: NimBLE resyncs with
+ * the controller by itself, but GAP state (advertising) is lost; cb runs
+ * on the host task after the resync and restores it. NULL removes it; the
+ * last release removes it too. */
+void ble_host_on_resync(void (*cb)(void));
 
 #endif

@@ -72,8 +72,10 @@ int image_part_map(const uint32_t **words, uint32_t *nwords);
  * Failures are logged on serial and leave the console off. No-op when built
  * with GOGO_ESP_CONSOLE=0. */
 void console_esp_start(void);
-/* The "ble" port (GOGO_BLE; ble_esp.c, NimBLE). */
+/* The "ble" port (GOGO_BLE; ble_esp.c, NimBLE), and the events its radio
+ * side could not queue since boot (gogo device stats ble_lost). */
 extern const struct PortDriver esp_ble_driver;
+uint32_t ble_esp_lost(void);
 /* The "screen" port (GOGO_SCREEN; console_task.c draws its grid). */
 extern const struct PortDriver esp_screen_driver;
 /* GOGO_CONSOLE_VERBOSE builds: logs the time the VM spent in console writes. */

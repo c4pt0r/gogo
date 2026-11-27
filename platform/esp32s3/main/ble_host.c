@@ -18,7 +18,24 @@ static int ready;                  /* 0, 1 (being created), 2 (mu and synced exi
 /* No provisioning in this firmware: never on air. */
 __attribute__((weak)) bool ble_prov_active(void) { return false; }
 
-static void on_sync(void) { xSemaphoreGive(synced); }
+static volatile bool up;            /* the first sync of this start has happened */
+static void (*volatile resync)(void);
+
+/* The first sync wakes ble_host_acquire; a later one follows a host reset
+ * (a controller fault): GAP state such as advertising is gone, and the
+ * holder's resync callback restores it (host task). */
+static void on_sync(void) {
+    if (!up) {
+        up = true;
+        xSemaphoreGive(synced);
+        return;
+    }
+    platform_esp_log("gogo: ble: host synced again after a reset");
+    void (*cb)(void) = resync;
+    if (cb) cb();
+}
+
+void ble_host_on_resync(void (*cb)(void)) { resync = cb; }
 
 static void on_reset(int reason) { platform_esp_log("gogo: ble: host reset (%d)", reason); }
 
@@ -46,6 +63,7 @@ int ble_host_acquire(void) {
     int r = 0;
     if (holders == 0) {
         (void)xSemaphoreTake(synced, 0);
+        up = false;
         if (nimble_port_init() != ESP_OK) {
             r = -1;
         } else {
@@ -54,7 +72,7 @@ int ble_host_acquire(void) {
             nimble_port_freertos_init(host_task);
             if (xSemaphoreTake(synced, pdMS_TO_TICKS(BLE_HOST_SYNC_MS)) != pdTRUE) {
                 platform_esp_log("gogo: ble: the host did not sync with the controller");
-                nimble_port_stop();
+                if (nimble_port_stop() != 0) platform_esp_log("gogo: ble: the host did not stop");
                 nimble_port_deinit();
                 r = -1;
             }
@@ -69,7 +87,11 @@ void ble_host_release(void) {
     if (__atomic_load_n(&ready, __ATOMIC_ACQUIRE) != 2) return;   /* never acquired */
     xSemaphoreTake(mu, portMAX_DELAY);
     if (holders && --holders == 0) {
-        nimble_port_stop();
+        resync = NULL;
+        /* waits for the phone to acknowledge the disconnect, at most
+         * BT_NIMBLE_HS_STOP_TIMEOUT_MS (2 s) */
+        int rc = nimble_port_stop();
+        if (rc != 0) platform_esp_log("gogo: ble: the host did not stop cleanly (%d)", rc);
         nimble_port_deinit();
     }
     xSemaphoreGive(mu);

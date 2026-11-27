@@ -1590,7 +1590,8 @@ Book chapter 19 is the user's side; `runtime/screen/screen.h` and
   unlock). ESP32-S3 (`ble_esp.c`): NimBLE, the GATT tables built from the
   Config in static arrays, legacy advertising (flags and name, the first
   service's UUID in the scan response), advertising restarted when the
-  phone leaves; the host's lifetime is `ble_host.c`'s
+  phone leaves and after a host reset (`ble_host_on_resync`); the host's
+  lifetime is `ble_host.c`'s
   (`ble_host_acquire`/`release`, reference-counted, shared with the
   firmware's Wi-Fi provisioning, which `ble_prov_active()` reports so the
   port refuses to open with `errors.Busy` meanwhile). Unix
