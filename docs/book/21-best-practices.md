@@ -1146,6 +1146,13 @@ real-time is running.
 - **Retry what may pass, with backoff.** A timeout, a reset, no route or no
   answer may pass; a missing file, a bad URL or a bad certificate will
   not. Wait between attempts, doubling the wait, and give up after a few.
+- **Add jitter when many devices retry together.** Boards that boot
+  together after a power cut fail together, and with the same waits they
+  come back together. A random share on top of each wait
+  (`wait + sys.Random()%wait`) spreads them out. `node.Connect` is the
+  usual case: a server answers the connections beyond its handshake slots
+  with `errors.Busy`, which passes once the crowd is in (section 20.3 has
+  the loop).
 - **Restart rather than repair.** An upload actor that fails can simply
   exit; its supervisor (or its caller) starts a new one, which begins the
   upload again from the file. `http.Upload` follows its caller: if the

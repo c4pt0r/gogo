@@ -97,11 +97,45 @@ returns `nil` once the board is a node. Otherwise its error says why:
 | Error | Why |
 |---|---|
 | `errors.BadArg` | no token or name, or `addr` is not `a.b.c.d[:port]` |
-| `errors.Busy` | this VM is a node already |
+| `errors.Busy` | the server is at its handshake limit (below): try again later; or this VM is a node already |
 | `errors.Unsupported` | the firmware has no network |
-| `errors.Refused`, `errors.NoRoute`, `errors.Timeout`, ... | the TCP connection failed (the `tcp` port's reason) |
-| `errors.Refused` | the server rejected the handshake (another token) |
+| `errors.Refused`, `errors.NoRoute`, `errors.Timeout`, ... | the TCP connection failed (the `tcp` port's reason): the server is not up, or not reachable |
+| `errors.Refused` | the server rejected the handshake (another token), or it is full (20.9) |
 | `errors.Timeout` | the handshake did not finish in time |
+
+**Retry with backoff.** `Connect` makes one attempt. A server takes only
+a few connections into their handshake at once (16 on a host with the
+default caps, 2 on a board; 20.9) and answers the others busy before
+closing them, so when many boards start together (a room of them after a
+power cut) most first see `errors.Busy`. A board may also boot before its
+server does and see `Refused` or `Timeout`. Write the join as a loop that
+waits longer after each failure, with some randomness so that boards
+which failed together do not all come back together:
+
+```go
+// join tries Connect a few times, waiting 0.2, 0.4, 0.8, 1.6 s (plus up
+// to as much again, at random) in between.
+func join(addr, name string) error {
+	wait := 200
+	for i := 1; ; i++ {
+		err := node.Connect(addr, name)
+		if err == nil || i == 5 {
+			return err // nil, or the last reason: print it
+		}
+		actor.Sleep(wait + sys.Random()%wait)
+		wait *= 2
+	}
+}
+```
+
+A board that must stay joined loops for ever instead, with a cap on the
+wait (examples/snake's joiner: 0.5 s doubling to 3 s, starting over after
+each loss of the server). A wrong token is `Refused` every time; a few
+tries then a message that names the error tell it apart from a busy or
+missing server. Retrying is the caller's choice, not `Connect`'s: only the
+program knows how long to keep trying and what to show meanwhile, and a
+loop like this one covers the server that is not up yet as well as the
+busy one.
 
 `node.Whereis(node, name, timeoutMs)` asks that node for an exported
 name; it works for the server, for other boards (through the relay), and
@@ -248,9 +282,12 @@ supervisor as for any other failure, and a fresh node starts.
   network can read them. Use a trusted network and a long random token
   (a captured handshake allows guessing a weak one offline). TLS for node
   links is not there yet (known issues).
-- **Unauthenticated connections** may hold at most two handshakes at a
-  time on a server; more are closed at once, and a handshake that does not
-  finish within its timeout (5 s) ends.
+- **Unauthenticated connections** may hold only a few handshakes at a
+  time on a server (its link cap / 32, at least 2 and at most 64: 16 on a
+  host by default, 2 on a board); more are answered busy and closed at
+  once, and a handshake that does not finish within its timeout (5 s)
+  ends. A peer that keeps every slot busy delays other boards' joins, but
+  holds no more than that many link actors and twice as many ports.
 - All nodes with the token are trusted alike.
 
 ## 20.8 Example: the snake's autopilot on a server
@@ -282,6 +319,7 @@ delays a few by several hundred ms).
 | remote Calls in flight | 8 + *L* (a Call beyond that fails at once with `errors.NoConnection`) |
 | nesting of a message | 16 |
 | queued frames per link | 8 KB on a board (the link actor); 256 KB on a host VM (the node port, host memory) |
+| connections in their handshake on a server | *L* / 32, at least 2, at most 64 (2 on a board, 16 on a host VM); more get `errors.Busy` |
 
 **How many boards a server serves.** A host VM serves 512 boards with
 the default caps (1024 ports, 512 links), each costing it one port and
@@ -295,6 +333,19 @@ board: raise `ulimit -n` (often 256 by default) for a big server. The
 tables above are allocated at the first link, about 100 bytes per link of
 the cap (some 50 KB at 512), plus about 300 bytes per open link and its
 link actor's heap (at most 40 KB, usually a few).
+
+**Many boards at once.** A server takes *L* / 32 connections into their
+handshake at a time (16 by default on a host) and answers the others
+busy: their `Connect` fails at once with `errors.Busy`. A handshake takes
+a round trip and two HMACs, a few milliseconds on a LAN, so the slots
+admit hundreds of boards a second; boards that retry with backoff (20.3)
+all join soon after a power cut, however many start together.
+`tests/dist` starts 24 boards at the same moment on a host server, and
+12 on one with 2 slots, and checks that all join. The slots cost the
+server a port each, and a busy answer one more for a moment: leave
+`vm.max_ports` at least *L* + 2 × *L* / 32 + 1 (the host defaults, 1024
+and 512, do). A connection the server cannot even give a port is closed
+at once, which a board sees as `Busy` too.
 
 **A board in a big star.** A board's 8 links are enough whatever the size
 of the star: it joins one server. Its 64 remote PIDs hold the PIDs it

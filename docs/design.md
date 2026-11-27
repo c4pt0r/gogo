@@ -2766,8 +2766,16 @@ HMAC-SHA-256(token, "gogo-node-c" Ns Nc name); the server checks it,
 assigns the id, opens the node port, and only then answers with HMAC(token,
 "gogo-node-s" Nc Ns ids serverName name), or rejects and closes. Both
 derive the session key HMAC(token, "gogo-node-k" Ns Nc ids serverName
-clientName). At most two connections may be in their handshake on a
-server; more are closed at once, and a handshake ends after 5 s. SHA-256
+clientName). At most *L* / 32 connections (at least 2, at most 64: 16 on
+a host, 2 on a board) may be in their handshake on a server; the listener
+answers more with busy (0x44, version), shuts them down and closes them
+once that went out (or after 500 ms; past as many again it closes at
+once), and a handshake ends after 5 s. The board's `Connect` returns
+`errors.Busy` for busy or a close before the challenge, so a caller can
+tell it from a rejected token (`Refused`) and retry with backoff. The
+library learns *L* from the platform's config key `"\x00links"` (gogovm:
+the resolved `vm->max_links`; like `"\x00args"`, not settable), else
+`node.max_links`, else 8. SHA-256
 is written in the subset (`lib/node/sha.gg`) for the handshake and in C
 (`runtime/dist/hmac.c`) for the frames. A peer reaches the door and the
 PIDs this node gave out (to any peer); the server enforces src == the

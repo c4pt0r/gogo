@@ -434,30 +434,37 @@ func TestFuzzFrames(t *testing.T) {
 	noCrash(t, srv)
 }
 
-// At most two connections may be in their handshake: a third is closed at
-// once.
-func TestHandshakeCap(t *testing.T) {
-	srv, port := startServer(t)
+// handshakeCap: a server started with flags takes slots connections into
+// their handshake at once (each gets the challenge); the next one gets
+// busy (0x44, version) and is closed, and the slots come back once the
+// idle connections go.
+func handshakeCap(t *testing.T, slots int, flags ...string) {
+	port := freePort(t)
+	srv := startVM(t, "server", flags, fmt.Sprintf("test.port=%d", port))
+	srv.waitLine("listening")
 	var idle []net.Conn
-	for i := 0; i < 2; i++ {
+	for i := 0; i < slots; i++ {
 		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer c.Close()
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		b := make([]byte, 20)
+		if _, err := io.ReadFull(c, b); err != nil || b[2] != 0x40 {
+			t.Fatalf("connection %d of %d: no challenge (%x, %v)", i+1, slots, b, err)
+		}
 		idle = append(idle, c)
 	}
-	time.Sleep(200 * time.Millisecond)
 	c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
 	c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	b := make([]byte, 64)
-	n, err := io.ReadAtLeast(c, b, 1)
-	if err == nil {
-		t.Errorf("the third connection got %x instead of being closed", b[:n])
+	b, err := io.ReadAll(c)
+	if err != nil || !bytes.Equal(b, []byte{2, 0, 0x44, 1}) {
+		t.Errorf("connection %d: got %x (%v), want busy and the end", slots+1, b, err)
 	}
 	for _, c := range idle {
 		c.Close()
@@ -467,6 +474,36 @@ func TestHandshakeCap(t *testing.T) {
 	if _, err := dial(t, port, "late", token); err != nil {
 		t.Errorf("join after the idle connections closed: %v", err)
 	}
+	noCrash(t, srv)
+}
+
+// The handshake slots scale with the link cap: L / 32, at least 2 and at
+// most 64.
+func TestHandshakeCapHost(t *testing.T)  { handshakeCap(t, 16) }
+func TestHandshakeCapBoard(t *testing.T) { handshakeCap(t, 2, "--max-links", "8") }
+func TestHandshakeCapCeiling(t *testing.T) {
+	handshakeCap(t, 64, "--max-ports", "2048", "--max-links", "2048")
+}
+
+// A board's Connect to a server whose slots are all taken fails with
+// errors.Busy (the busy frame), not Refused: the error to retry on.
+func TestConnectBusy(t *testing.T) {
+	port := freePort(t)
+	srv := startVM(t, "server", []string{"--max-links", "8"}, fmt.Sprintf("test.port=%d", port))
+	srv.waitLine("listening")
+	for i := 0; i < 2; i++ {
+		c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := io.ReadFull(c, make([]byte, 20)); err != nil {
+			t.Fatalf("connection %d: no challenge: %v", i+1, err)
+		}
+	}
+	b := start(t, "board_busy", fmt.Sprintf("test.server=127.0.0.1:%d", port))
+	b.finish("connect busy true\nbusy\nself true\n")
 	noCrash(t, srv)
 }
 

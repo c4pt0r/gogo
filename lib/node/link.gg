@@ -26,12 +26,18 @@ import (
 //	S -> C  welcome    0x42, version, server id (u16), your id (u16),
 //	                   HMAC(token, "gogo-node-s" Nc Ns yourID serverID serverName name), server name
 //	        or reject  0x43, version; then the server closes
+//
+// A server at its handshake limit (handshakeSlots) sends, instead of the
+// challenge, busy (0x44, version) and closes; the board's Connect fails
+// with errors.Busy, and so it does if the server closes before any
+// challenge (a server too busy even for that resets the connection).
 const (
 	protoVersion = 1
 	hsChallenge  = 0x40
 	hsHello      = 0x41
 	hsWelcome    = 0x42
 	hsReject     = 0x43
+	hsBusy       = 0x44
 	hsMax        = 512 // longest handshake frame
 
 	linkMemory = 40 * 1024 // a link actor's memory limit
@@ -192,6 +198,11 @@ func clientLink(e ends, conn actor.PID, token, name string, ms int) {
 		return
 	}
 	body, rest, ok := waitFor(conn, e.Agent, nil, deadline)
+	if (ok && len(body) == 2 && body[0] == hsBusy) || (!ok && actor.Now() < deadline) {
+		// Busy, or closed before its challenge: the server did not take
+		// this connection into a handshake. Worth retrying later.
+		fail = linkFail{Err: errors.Busy}
+	}
 	if !ok || len(body) != 18 || body[0] != hsChallenge || body[1] != protoVersion {
 		if actor.Now() >= deadline {
 			fail = linkFail{Err: errors.Timeout}

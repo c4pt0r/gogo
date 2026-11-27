@@ -430,9 +430,23 @@ static int32_t args_value(uint8_t *buf, uint32_t cap) {
     return n ? (int32_t)n : -1;
 }
 
+static uint32_t vm_links;
+
+void platform_set_links(uint32_t n) { vm_links = n; }
+
+/* The value of the key "\0links": the link cap in decimal (unset if 0). */
+static int32_t links_value(uint8_t *buf, uint32_t cap) {
+    char d[11];
+    int n = vm_links ? snprintf(d, sizeof d, "%u", (unsigned)vm_links) : 0;
+    if (n <= 0) return -1;
+    if (cap) memcpy(buf, d, (uint32_t)n < cap ? (uint32_t)n : cap);
+    return n;
+}
+
 static int32_t host_config_get(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
     (void)ctx;
     if (kl == 5u && memcmp(k, "\0args", 5) == 0) return args_value(buf, cap);
+    if (kl == 6u && memcmp(k, "\0links", 6) == 0) return links_value(buf, cap);
     return platform_config_get(k, kl, buf, cap);
 }
 

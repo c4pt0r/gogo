@@ -10,10 +10,28 @@ import (
 
 type callResult struct{ Lost, Fast bool }
 
+// join is node.Connect retried with backoff and jitter, as the book
+// recommends (20.3): the server may be busy (errors.Busy: at its
+// handshake limit) or not up yet. It prints the last error if it gives up.
+func join(addr, name string) error {
+	wait := 100
+	for i := 1; ; i++ {
+		err := node.Connect(addr, name)
+		if err == nil {
+			return nil
+		}
+		if i == 6 {
+			println(name, "connect failed:", err.Error())
+			return err
+		}
+		actor.Sleep(wait + sys.Random()%wait)
+		wait *= 2
+	}
+}
+
 func main() {
 	addr, _ := sys.Config("test.server")
-	if node.Connect(addr, "w") != nil {
-		println("connect failed")
+	if join(addr, "w") != nil {
 		return
 	}
 	node.Subscribe()

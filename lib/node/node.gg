@@ -183,13 +183,17 @@ func ListenOpt(port int, opts Options) error {
 // Connect makes this VM the node name of the server at addr ("a.b.c.d:port";
 // the port defaults to DefaultPort). It returns once the handshake is done,
 // or the error (gogo/errors): BadArg without a token or a name or for a
-// bad addr, Busy if this VM is a node already, Unsupported without a
-// network, the tcp port's reason if the server cannot be reached
-// (Refused, NoRoute, Timeout, ...), Refused if the server rejects the
-// handshake (another token), Timeout if it does not finish in time (or
-// the agent does not answer), NoProc if the node agent died meanwhile. If
-// the connection is lost later, Down events say so (Subscribe); Connect
-// again to rejoin.
+// bad addr, Busy if the server is at its handshake limit (it answered
+// busy, or closed before its challenge) or this VM is a node already,
+// Unsupported without a network, the tcp port's reason if the server
+// cannot be reached (Refused, NoRoute, Timeout, ...), Refused if the
+// server rejects the handshake (another token, or it is full), Timeout if
+// it does not finish in time (or the agent does not answer), NoProc if
+// the node agent died meanwhile. It makes one attempt: a board retries
+// with backoff and jitter (the book, 20.3), since many boards starting
+// together find the server busy and a board may boot before its server.
+// If the connection is lost later, Down events say so (Subscribe);
+// Connect again to rejoin.
 func Connect(addr, name string) error { return ConnectOpt(addr, Options{Name: name}) }
 
 // ConnectOpt is Connect with Options.
@@ -676,10 +680,83 @@ func startDial(e ends, ip, p int, token, name string, ms int) {
 // hsDone tells the listener that a link actor's handshake ended.
 type hsDone struct{ Link actor.PID }
 
-// maxHandshakes is how many connections may be in their handshake at
-// once; more are closed at once (an unauthenticated peer holds a port and
-// a link actor until its handshake ends or times out).
-const maxHandshakes = 2
+// handshakeSlots is how many connections the listener takes into their
+// handshake at once: the link cap L / 32, at least 2 and at most 64 (2 on
+// a board, L = 8; 16 on a host, L = 512; 64 at the ceiling, L = 2048).
+// More are refused at once, busy (refuse), so that a crowd of boards
+// starting together (a server with hundreds of boards after a power cut)
+// joins at a rate the slots allow, each board retrying with backoff, and
+// an unauthenticated peer cannot hold more than a fixed share:
+//   - time: a slot is held until its handshake ends, or its timeout
+//     (Options.TimeoutMs, 5 s); a legitimate handshake takes a round trip
+//     and two HMACs, a few ms on a LAN, so 16 slots admit hundreds of
+//     boards a second;
+//   - memory: one link actor per slot (at most linkMemory, 40 KB: 640 KB
+//     for 16 on a host); a refusal spawns nothing;
+//   - ports: one tcp port per slot, and one per refusal still sending its
+//     busy frame (at most as many again, each for at most refuseMs; past
+//     that a connection is closed outright): 2 * 16 + 1 (the listener) + L
+//     links (the node port took each link's connection over) fit the
+//     host's 1024 ports. A board's 16 ports are its 8 links already (two
+//     ports per link without a carrier), so a board server keeps 2.
+//
+// The link cap is the platform's "\x00links" (gogovm: --max-links, else
+// node.max_links, else 512), else node.max_links, else 8 (a board's
+// default), as the node port's own tables are sized (runtime/dist).
+func handshakeSlots() int {
+	n := linkCap() / 32
+	if n < 2 {
+		n = 2
+	}
+	if n > 64 {
+		n = 64
+	}
+	return n
+}
+
+// linkCap is this VM's cap on node links (see handshakeSlots).
+func linkCap() int {
+	for _, k := range []string{"\x00links", "node.max_links"} {
+		if v, ok := sys.Config(k); ok {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 8
+}
+
+// refuseMs bounds how long a refused connection may take to send its busy
+// frame before it is closed anyway.
+const refuseMs = 500
+
+// refuseEnd: a refused connection's time is up.
+type refuseEnd struct{ Conn actor.PID }
+
+// refuse tells a board the server is busy (hsBusy), then shuts the
+// connection down: the listener closes it on its Done (the frame went
+// out, before the FIN), its Closed, or refuseMs later.
+func refuse(conn, me actor.PID) actor.Ref {
+	frameOut(conn, []byte{hsBusy, protoVersion})
+	actor.Send(conn, net.Shutdown{})
+	return actor.SendAfter(me, refuseEnd{Conn: conn}, refuseMs)
+}
+
+// refused closes the refused connection c, if it is one, and drops it.
+func refused(cs []actor.PID, ts []actor.Ref, c actor.PID) ([]actor.PID, []actor.Ref) {
+	var c2 []actor.PID
+	var t2 []actor.Ref
+	for i, x := range cs {
+		if x == c {
+			port.Close(x)
+			actor.CancelTimer(ts[i])
+		} else {
+			c2 = append(c2, x)
+			t2 = append(t2, ts[i])
+		}
+	}
+	return c2, t2
+}
 
 // forget drops the link actor w, or the one monitored by r, from the
 // handshakes in progress.
@@ -709,12 +786,20 @@ func startListener(e ends, p int, token, name string, ms int) errors.Code {
 		me := actor.Self()
 		var shaking []actor.PID // the link actors in their handshake
 		var refs []actor.Ref    // and the listener's monitors on them
+		var busy []actor.PID    // refused connections sending their busy frame
+		var timers []actor.Ref  // and their refuseEnd timers
+		slots := handshakeSlots()
 		for {
 			switch m := actor.Receive().(type) {
 			case net.Accepted:
 				conn := m.Conn
-				if len(shaking) >= maxHandshakes {
-					port.Close(conn)
+				if len(shaking) >= slots {
+					if len(busy) < slots {
+						busy = append(busy, conn)
+						timers = append(timers, refuse(conn, me))
+					} else {
+						port.Close(conn) // a reset: the board's Connect says Busy all the same
+					}
 					break
 				}
 				w := actor.SpawnOpt(func() {
@@ -728,6 +813,12 @@ func startListener(e ends, p int, token, name string, ms int) errors.Code {
 				}
 				shaking = append(shaking, w)
 				refs = append(refs, actor.Monitor(w))
+			case port.Done: // a busy frame went out
+				busy, timers = refused(busy, timers, m.From)
+			case port.Closed:
+				busy, timers = refused(busy, timers, m.From)
+			case refuseEnd:
+				busy, timers = refused(busy, timers, m.Conn)
 			case hsDone: // a handshake ended: it no longer counts
 				var zr actor.Ref
 				shaking, refs = forget(shaking, refs, m.Link, zr)

@@ -100,9 +100,12 @@ configuration keys.
 When the server or the link goes, the game's monitor on the remote
 autopilot fires (`actor.DownMsg`, reason `actor.NoConnection`): a local
 autopilot takes over at once (`server lost: local`; not counted as a
-crash) and the joiner tries the server again every 3 s. When it is back,
-the server's autopilot takes over again (`pilot on server`). `k` does
-not kill a remote autopilot (`actor.Kill` of a remote PID does nothing).
+crash) and the joiner tries the server again, backing off with jitter
+from 0.5 s to 3 s between tries (a busy server, `errors.Busy`, or one not
+up yet; it prints `snake: connect: <reason>` when the reason changes).
+When it is back, the server's autopilot takes over again (`pilot on
+server`). `k` does not kill a remote autopilot (`actor.Kill` of a remote
+PID does nothing).
 
 ```sh
 printf 'snake.serve=4370\nnode.token=<a long random string>\n' > /tmp/snake-server.cfg

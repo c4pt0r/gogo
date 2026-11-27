@@ -8,9 +8,28 @@ import (
 	"gogo/sys"
 )
 
+// join is node.Connect retried with backoff and jitter, as the book
+// recommends (20.3): the server may be busy (errors.Busy: at its
+// handshake limit) or not up yet. It prints the last error if it gives up.
+func join(addr, name string) error {
+	wait := 100
+	for i := 1; ; i++ {
+		err := node.Connect(addr, name)
+		if err == nil {
+			return nil
+		}
+		if i == 6 {
+			println(name, "connect failed:", err.Error())
+			return err
+		}
+		actor.Sleep(wait + sys.Random()%wait)
+		wait *= 2
+	}
+}
+
 func main() {
 	addr, _ := sys.Config("test.server")
-	println("connect", node.Connect(addr, "phoenix") == nil)
+	println("connect", join(addr, "phoenix") == nil)
 	echo, err := node.Whereis("server", "echo", 2000)
 	println("whereis", err == nil)
 	ref := actor.Monitor(echo)
@@ -22,7 +41,7 @@ func main() {
 		println("down", ok, d.Ref == ref, d.Reason.Code == actor.NoConnection)
 	}
 	println("self after", node.Self() == "")
-	println("connect again", node.Connect(addr, "phoenix") == nil)
+	println("connect again", join(addr, "phoenix") == nil)
 	echo, err = node.Whereis("server", "echo", 2000)
 	println("whereis again", err == nil)
 	r, err := actor.Call(echo, "hi", 2000)

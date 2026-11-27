@@ -71,8 +71,24 @@ func server(port int) {
 	}
 }
 
+// join connects, retrying with backoff and jitter (book, 20.3): a server
+// at its handshake limit says errors.Busy, and one that is not up yet
+// Refused or Timeout. A wrong token is Refused every time, so it gives up
+// after a few tries and says why.
+func join(addr, name string) error {
+	wait := 200
+	for i := 1; ; i++ {
+		err := node.Connect(addr, name)
+		if err == nil || i == 5 {
+			return err
+		}
+		actor.Sleep(wait + sys.Random()%wait)
+		wait *= 2
+	}
+}
+
 func client(addr string) {
-	if err := node.Connect(addr, "client"); err != nil {
+	if err := join(addr, "client"); err != nil {
 		println("connect:", err.Error())
 		return
 	}

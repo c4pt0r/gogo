@@ -126,7 +126,7 @@ type Autopilot struct {
 const (
 	serverNode = "snake-server"
 	pilotName  = "autopilot"
-	rejoinMs   = 3000 // how often a board without the server tries again
+	rejoinMs   = 3000 // the longest wait between a board's tries to join
 )
 
 // remotePilot tells the game that the server's autopilot is reachable.
@@ -142,24 +142,37 @@ func netConfig() (string, string) {
 
 // joiner keeps the board joined to the server node: it gets an address
 // (DHCP; a host VM has its own), connects, finds the server's autopilot
-// and tells the game, waits for the server to go, and tries again every
-// rejoinMs.
+// and tells the game, waits for the server to go, and tries again. The
+// tries back off, with jitter (book, 20.3): from 500 ms, doubling up to
+// rejoinMs, so a room of boards rebooting together (a power cut) does not
+// keep hitting the server's handshake limit (errors.Busy) all at once.
 func joiner(game actor.PID, addr, token string) {
 	dhcp.Start(dhcp.Config{TimeoutMs: 15000})
 	node.Subscribe()
 	name := boardName()
+	wait := 500
+	last := ""
 	for {
-		if node.ConnectOpt(addr, node.Options{Name: name, Token: token, TimeoutMs: 3000}) == nil {
-			if p, err := node.Whereis(serverNode, pilotName, 2000); err == nil {
+		err := node.ConnectOpt(addr, node.Options{Name: name, Token: token, TimeoutMs: 3000})
+		if err == nil {
+			if p, werr := node.Whereis(serverNode, pilotName, 2000); werr == nil {
 				println("snake: joined", addr)
 				actor.Send(game, remotePilot{PID: p})
 				waitDown()
 				println("snake: server lost")
+				wait, last = 500, ""
 			} else {
 				node.Disconnect()
 			}
+		} else if err.Error() != last { // say why, once per new reason
+			last = err.Error()
+			println("snake: connect:", last)
 		}
-		actor.Sleep(rejoinMs)
+		actor.Sleep(wait + sys.Random()%wait)
+		wait *= 2
+		if wait > rejoinMs {
+			wait = rejoinMs
+		}
 	}
 }
 
