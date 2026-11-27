@@ -289,6 +289,13 @@ rebuilt:
   words (256 MB, its header's size field): a bigger `make` or `append` is
   `OutOfMemory`. One message is at most 65535 words (256 KB) on every
   platform; a send of a bigger value fails with `OutOfMemory`.
+- **A message of many off-heap `Bytes` can leave its receiver a little
+  over its limit.** The quota counts the holder-list growth one more
+  handle causes; a message that brings many handles at once can double
+  the list again on receive. The overshoot is the list's growth, at most
+  its size at the per-actor cap (`vm.handles`' M: about 1 KB at the
+  host's 256; none at a board's 16, where the list starts at its cap),
+  and memory-safe; port handoffs count the same way.
 - **The VM's limits are read at start.** `vm.actor_memory`, `vm.memory`,
   `vm.max_actors`, `vm.max_ports`, `node.max_links`, `vm.handles` and
   `code.mem` take effect at the next VM start (restart the board after

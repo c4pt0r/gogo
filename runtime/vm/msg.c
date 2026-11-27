@@ -524,8 +524,11 @@ int msg_send(Vm *vm, Actor *from, term to_pid, term msg) {
  * against a's limit first (so it is not counted twice while unpacking).
  * Its off-heap Bytes, and the holder list adopting them may make, stay
  * charged to the mailbox until bytes_adopt has charged them to a: the GC
- * that makes room cannot grow the block into their room, so a never ends
- * a successful receive over its limit. On failure m stays queued. */
+ * that makes room cannot grow the block into their room, so a ends a
+ * successful receive over its limit by at most its holder list's growth
+ * past one doubling (the quota counts the growth one more handle causes;
+ * a message of many handles can double the list again: bounded by the
+ * list at its per-actor cap, known-issues). On failure m stays queued. */
 static bool take(Vm *vm, Actor *a, Msg *m, term *out) {
     uint32_t fw = msg_charge_words(vm, m), keep = fw - msg_footprint_words(m->words);
     if (m->flags & MSG_HANDLES) keep += bytes_list_words(vm, a);
