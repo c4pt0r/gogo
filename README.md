@@ -4,7 +4,8 @@
 
 <h1 align="center">gogo</h1>
 
-<p align="center">Website and book: <a href="https://gogovm.dev/">gogovm.dev</a></p>
+<p align="center">Website and book: <a href="https://gogovm.dev/">gogovm.dev</a><br>
+Questions and chat: <a href="https://matrix.to/#/#gogo:gogovm.dev">#gogo:gogovm.dev</a> on Matrix</p>
 
 gogo is a small actor VM for microcontrollers and a compiler for a subset
 of Go. You write programs in Go syntax as a set of isolated actors, in the
