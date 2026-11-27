@@ -1319,9 +1319,12 @@ int interp_run(Vm *vm, Actor *a) {
                 /* The library builtins (strs.c, module.c, the fs hook,
                  * floatlib) and panic: each checks what the table does
                  * not (strs_builtin, module_builtin, fs_builtin and
-                 * float_lib their argument counts). May GC. */
+                 * float_lib their argument counts). May GC. B_FS's
+                 * VM_FS_OPENERR is answered here, hook or not. */
                 uint32_t err = ext == B_PANIC ? do_panic(vm, a, R + rb)
                              : ext == B_CODE ? module_builtin(vm, a, ra, rb, rc, nregs)
+                             : ext == B_FS && rc == 1u && R[rb] == term_from_int(VM_FS_OPENERR)
+                                 ? (R[ra] = term_from_int(vm->open_err), R_NORMAL)   /* port.Open's reason, VFS or not */
                              : ext == B_FS ? (vm->fs_builtin ? vm->fs_builtin(vm, a, ra, rb, rc, nregs) : R_BAD_CODE)
 #if GOGO_FLOAT
                              : ext == B_FLOAT ? float_lib(vm, a, ra, rb, rc, nregs)

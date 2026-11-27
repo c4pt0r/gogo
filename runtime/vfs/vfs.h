@@ -26,7 +26,8 @@ enum {
     FS_OPEN = 0, FS_READ = 1, FS_WRITE = 2, FS_SYNC = 3, FS_SIZE = 4, FS_READFILE = 5,
     FS_WRITEFILE = 6, FS_STAT = 7, FS_READDIR = 8, FS_MKDIR = 9, FS_REMOVE = 10,
     FS_RENAME = 11, FS_USAGE = 12, FS_WRITEAT = 13,
-    FS_OPENERR = 14   /* (15.4) -> code: vm->open_err, why the last refused port open failed (port.Open) */
+    FS_OPENERR = 14   /* (15.4) -> code: vm->open_err, why the last refused port open failed
+                         (port.Open); answered by the VM itself (VM_FS_OPENERR, interp.c) */
 };
 
 /* Most bytes one File.Read returns. */

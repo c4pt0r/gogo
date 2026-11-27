@@ -31,6 +31,7 @@ static void drop_err(const char *s, size_t n) { (void)s; (void)n; }
 
 static struct {
     int opens, closes, cmds, refuse, handoffs;
+    int code;              /* open returns it when set (a driver's own reason) */
     uint16_t charge;       /* charge_words the driver sets in open */
     uint8_t room;          /* room_64w the driver sets in open */
     bool live;             /* can_event result */
@@ -49,6 +50,7 @@ static int mbox_len(const Actor *a);
 static int fk_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, uint32_t n) {
     (void)vm;
     if (fk.refuse) return -1;
+    if (fk.code) return fk.code;
     fk.opens++;
     fk.index = index;
     fk.n = n;
@@ -1171,4 +1173,65 @@ TEST(port_open_term) {
     CHECK_EQ(actor_extra_charged(a), 0u);
     actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
     teardown();
+}
+
+/* port.Open's reason (B_FS op VM_FS_OPENERR right after a refused
+ * B_PORT_OPEN) on a VM without a file system (no fs_builtin hook): the VM
+ * answers it, with the driver's own code; it is not badcode. Any other
+ * B_FS call there still is. */
+static int run_open_err(int32_t name_is_str, uint32_t fs_op, uint32_t fs_n, term *reason) {
+    uint32_t w[40]; Image img; Vm vm;
+    va_reset(&vm);
+    memset(&fk, 0, sizeof fk);
+    memset(w, 0, sizeof w);
+    w[0] = IMAGE_MAGIC; w[1] = IMAGE_VERSION; w[2] = 1; w[3] = 2;
+    w[4] = 6; w[5] = 10; w[6] = 0; w[7] = 0;
+    w[8] = 0; w[9] = 0 | (8u << 16); w[10] = 0;              /* main, 8 regs */
+    w[11] = 2; w[12] = 3; w[13] = 2; w[14] = 3;
+    w[15] = hdr_make(3, K_STRING); w[16] = 4; memcpy(&w[17], "main", 4);
+    w[18] = hdr_make(3, K_STRING); w[19] = 3; memcpy(&w[20], "Cfg", 3);
+    uint32_t *c = w + 21;
+    c[0] = OP_MAKE(OP_BUILTIN, 2, 0, 2); c[1] = B_PORT_OPEN;       /* r2, r3 = port.open(r0, r1) */
+    c[2] = OP_MAKE(OP_LOADK, 4, 0, 0); c[3] = term_from_int((int32_t)fs_op);
+    c[4] = OP_MAKE(OP_LOADK, 5, 0, 0); c[5] = term_from_int(0);
+    c[6] = OP_MAKE(OP_BUILTIN, 6, 4, fs_n); c[7] = B_FS;          /* r6 = B_FS(r4 [, r5]) */
+    c[8] = OP_MAKE(OP_BUILTIN, 7, 0, 0); c[9] = B_RECEIVE;
+    CHECK_EQ(image_load(&img, w, img_seal(w)), IMG_OK);
+    CHECK_EQ(test_vm_init(&vm, &img, 8), 0);
+    CHECK(vm.fs_builtin == NULL);
+    port_set_drivers(&vm, fake_list);
+    fk.code = GOGO_E_BADARG;                                       /* the driver refuses with BadArg */
+    Actor *a = actor_new(&vm, 128);
+    CHECK(heap_push_frame(&vm, a, 8, -1));
+    term *R = (term *)a->mem + a->fp;
+    int32_t cfg[2] = { 1, 0 };
+    R[1] = heap_struct(&vm, a, CFG_TYPE, cfg, 2);
+    R = (term *)a->mem + a->fp;
+    R[0] = name_is_str ? heap_str(&vm, a, "fake") : term_from_int(7);
+    a->pc = img.code;
+    stale_err[0] = 0;
+    platform_unix_err_hook = stale_cap;
+    int r = interp_run(&vm, a);
+    platform_unix_err_hook = NULL;
+    int bad = strstr(stale_err, "crashed: badcode") != NULL;
+    if (r != RUN_EXIT) {
+        R = (term *)a->mem + a->fp;
+        CHECK_EQ(R[3], T_FALSE);                                   /* the open failed */
+        *reason = R[6];
+        actor_exit(&vm, a, R_NORMAL, T_EMPTYSTR);
+    }
+    CHECK_EQ(fk.opens, 0);
+    CHECK_EQ(vm.live, 0u);
+    teardown();
+    return bad ? -1 : r == RUN_EXIT ? -2 : 0;
+}
+
+TEST(port_open_err_without_vfs) {
+    term reason = T_NIL;
+    CHECK_EQ(run_open_err(1, VM_FS_OPENERR, 1, &reason), 0);      /* the driver's own code */
+    CHECK_EQ(reason, term_from_int(GOGO_E_BADARG));
+    CHECK_EQ(run_open_err(0, VM_FS_OPENERR, 1, &reason), 0);      /* the port layer's: no such driver */
+    CHECK_EQ(reason, term_from_int(GOGO_E_NOTFOUND));
+    CHECK_EQ(run_open_err(1, VM_FS_OPENERR, 2, &reason), -1);     /* not the VM's call: the missing hook's */
+    CHECK_EQ(run_open_err(1, 3, 2, &reason), -1);                 /* FS_SYNC: badcode without storage */
 }

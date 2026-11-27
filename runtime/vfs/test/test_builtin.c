@@ -704,6 +704,7 @@ TEST(fs_frame_bounds) {
     CHECK_EQ(open_slots(), 0);                                 /* checked before acting */
     CHECK_EQ(fs_at(a, NREGS - 2u, FS_STAT, "s", "/flash/d"), R_NORMAL);
     CHECK_EQ(fs(a, 13, "s", "/flash/d"), R_BAD_CODE);
+    CHECK_EQ(fs(a, FS_OPENERR, ""), R_BAD_CODE);               /* the interpreter's own: never here */
     CHECK_EQ(fs(a, -1, "s", "/flash/d"), R_BAD_CODE);
     CHECK_EQ(fs(a, FS_MKDIR, "ss", "/flash/d", "/flash/e"), R_BAD_CODE);
     CHECK_EQ(fs(a, FS_MKDIR, ""), R_BAD_CODE);

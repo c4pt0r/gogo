@@ -157,7 +157,7 @@ the registers `rb ..`; a builtin with two results writes `ra` and `ra+1`.
 | 46 | `B_PORT_HANDOFF` | `port pid, to pid` | `bool` | Hand a port's events to another actor (port.h port_handoff). |
 | 47 | `B_NET_SUBSCRIBE` | - | `bool` | net.Subscribe: receive network events (port.h port_subscribe). |
 | 48 | `B_CONFIG_GET` | `key string` | `value string, ok bool` | sys.Config (host->config_get; "wifi." keys hidden). |
-| 49 | `B_FS` | `op int, args...` | `result(s)` | gogo/fs, run by the Vm's fs_builtin hook (actor.h; vfs/builtin.c). |
+| 49 | `B_FS` | `op int, args...` | `result(s)` | gogo/fs, run by the Vm's fs_builtin hook (actor.h; vfs/builtin.c), except op 14 (VM_FS_OPENERR, no arguments -> code: vm->open_err, why the last refused port open failed, read by port.Open), which the VM answers itself, with or without the hook. |
 | 50 | `B_CODE` | `op int, args...` | `result(s)` | gogo/code (module_builtin, module.h; CODE_OP_*). |
 | 51 | `B_UNIX_TIME` | - | `int64` | sys.Time: Unix milliseconds, vm_unix_time_ms (0: unknown). |
 | 52 | `B_SET_UNIX_TIME` | `ms int64` | `bool` | sys.SetTime, vm_set_unix_time_ms (false: below the build-time floor). |

@@ -129,7 +129,8 @@ func Open(driver string, cfg any) (p actor.PID, err error) {
 func open(driver string, cfg any) (actor.PID, bool) { panic("gogo only") }
 
 // openErr is why the last refused port open of this VM failed, a shared
-// error code (vm->open_err; gogo/fs's builtin, op FsOpenErr).
+// error code (vm->open_err; B_FS op FsOpenErr, which the VM answers itself,
+// so it works on a board without a file system).
 //
 //gogo:builtin
 func openErr() int { panic("gogo only") }

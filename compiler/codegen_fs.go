@@ -22,7 +22,7 @@ const (
 	FsRename    = 11
 	FsUsage     = 12
 	FsWriteAt   = 13
-	FsOpenErr   = 14 // (15.4) -> code: why the last refused port open failed (port.Open)
+	FsOpenErr   = 14 // (15.4) -> code: why the last refused port open failed (port.Open); the VM core answers it, VFS or not
 )
 
 // fsOps maps each gogo/fs function (stubName) and method (fsMethod) except

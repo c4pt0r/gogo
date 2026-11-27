@@ -15,7 +15,6 @@
 #include "board_main.h"
 #include "module.h"
 #include "platform_unix.h"
-#include "vfs_int.h"
 
 extern const PortDriver dice_driver;
 
@@ -38,10 +37,9 @@ int main(int argc, char **argv) {
     }
     fclose(f);
     static Vm vm;   /* too big for the stack */
-    /* The file system builtin, even with no mounts: port.Open reads why an
-     * open failed through it (FS_OPENERR). */
-    static VfsState vfs;
-    BoardRun run = { .vm = &vm, .vfs = &vfs };   /* params NULL: the build's defaults and config keys */
+    /* No file system (vfs NULL: gogo/fs is not linked in); params NULL:
+     * the build's defaults and config keys. */
+    BoardRun run = { .vm = &vm };
     int run_rc = 0;
     int rc = gogo_board_main(&dice_board, &unix_host, &run, words, (uint32_t)(size / 4), &run_rc);
     fflush(stdout);
