@@ -745,7 +745,11 @@ func capture(w actor.PID) {
 		case Written:
 			inFlight--
 		case actor.Request:
-			port.Close(mic) // no more Chunks; finish what is queued
+			if _, count := m.Body.(Count); count {
+				actor.Reply(m, seq) // how many frames have come in
+				break
+			}
+			port.Close(mic) // Stop: no more Chunks; finish what is queued
 			boss = m.From
 			stopping = true
 			actor.Reply(m, true)

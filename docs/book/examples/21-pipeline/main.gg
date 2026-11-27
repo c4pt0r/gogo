@@ -35,6 +35,9 @@ type Written struct{ Seq int }
 
 type Stop struct{}
 
+// Count asks capture how many frames it has received.
+type Count struct{}
+
 type Finish struct {
 	Boss                     actor.PID
 	MicDropped, QueueDropped int
@@ -123,7 +126,11 @@ func capture(w actor.PID) {
 		case Written:
 			inFlight--
 		case actor.Request:
-			port.Close(mic) // no more Chunks; finish what is queued
+			if _, count := m.Body.(Count); count {
+				actor.Reply(m, seq) // how many frames have come in
+				break
+			}
+			port.Close(mic) // Stop: no more Chunks; finish what is queued
 			boss = m.From
 			stopping = true
 			actor.Reply(m, true)
@@ -149,7 +156,15 @@ func main() {
 		println("no mic")
 		return
 	}
-	actor.Sleep(1900) // the last tone line is read at 1500 ms
+	// Wait for the 15 frames the host's mic script makes (five 250 ms
+	// tones, in 100 ms frames), however slow this computer is; give up
+	// after 10 s.
+	for waited := 0; waited < 10000; waited += 100 {
+		actor.Sleep(100)
+		if n, err := actor.Call(c, Count{}, 1000); err == nil && n.(int) >= 15 {
+			break
+		}
+	}
 	if _, err := actor.Call(c, Stop{}, 1000); err != nil {
 		println("capture did not answer:", err.Error())
 		return
