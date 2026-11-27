@@ -16,8 +16,11 @@ import (
 	"gogotools/tests/net/sim"
 )
 
-// realLimit bounds each VM child in real time.
-const realLimit = 10 * time.Second
+// realLimit bounds each VM child in real time, and each wait for one of
+// its answers (sim.Start). A scenario takes well under a second; the
+// margin is for a loaded host, where a child's start alone was seen to
+// take seconds.
+const realLimit = 30 * time.Second
 
 // build compiles progs/<name> into an image in a temp dir.
 func build(t *testing.T, name string) string {

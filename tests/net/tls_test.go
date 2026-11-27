@@ -486,10 +486,11 @@ func (b *bridge) wait(d time.Duration) {
 	}
 }
 
-// run relays until the VM exits (real-time limit: 25 s).
+// run relays until the VM exits (real-time limit: the VM's, plus time
+// for the kill to show as EOF).
 func (b *bridge) run() {
 	b.t.Helper()
-	limit := time.Now().Add(25 * time.Second)
+	limit := time.Now().Add(realLimit + 5*time.Second)
 	if !b.advance(0) {
 		b.drainQueue()
 		return

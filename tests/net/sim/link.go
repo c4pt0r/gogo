@@ -58,8 +58,10 @@ func ReadMsg(r io.Reader) (typ byte, payload []byte, err error) {
 	return h[2], payload, nil
 }
 
-// DefaultTimeout bounds, in real time, how long Advance and Recv wait for
-// the VM: a hung VM fails the test instead of hanging it.
+// DefaultTimeout bounds, in real time, how long Send and Advance wait for
+// the VM on a link made by NewLink: a hung VM fails the test instead of
+// hanging it. Start sets the link's Timeout to the VM's own real-time
+// limit instead.
 const DefaultTimeout = 5 * time.Second
 
 // Link is the simulator's end of the link to one VM.

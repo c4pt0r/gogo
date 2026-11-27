@@ -24,7 +24,11 @@ type VM struct {
 }
 
 // Start runs vmPath --net-fd 3 --sim-clock [extra...] image. The child is
-// killed after limit (real time) if still running.
+// killed after limit (real time) if still running. The link waits as long
+// for each answer: on a loaded host one answer (the first, while the
+// child starts) can take seconds, and a hung child is caught by the kill
+// anyway (the link then reads EOF and Wait says it was killed), so a
+// shorter wait would only fail a slow run that would have finished.
 func Start(vmPath, image string, limit time.Duration, extra ...string) (*VM, error) {
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
@@ -42,6 +46,7 @@ func Start(vmPath, image string, limit time.Duration, extra ...string) (*VM, err
 	args := append([]string{"--net-fd", "3", "--sim-clock"}, extra...)
 	args = append(args, image)
 	v := &VM{Link: NewLink(conn), cancel: cancel}
+	v.Link.Timeout = limit
 	v.Cmd = exec.CommandContext(ctx, vmPath, args...)
 	v.Cmd.ExtraFiles = []*os.File{theirs} // fd 3
 	v.Cmd.Stdout = &v.Stdout
