@@ -82,8 +82,10 @@ func TestConfigRetryIdempotent(t *testing.T) {
 			open: func(string) (io.ReadWriteCloser, error) {
 				opens++
 				if opens == 1 {
-					// through requests get through, then the link goes silent.
-					return halfSilentConn(b, through), nil
+					// through requests get through, then the link goes
+					// silent. (A board of its own: simBoard serves one
+					// connection at a time.)
+					return halfSilentConn(&simBoard{}, through), nil
 				}
 				return b.conn(), nil
 			}, usb: f.env()})
