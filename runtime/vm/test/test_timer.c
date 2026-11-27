@@ -240,7 +240,7 @@ TEST(timer_receive_timeout_expires) {
     CHECK_EQ(interp_run(&vm, t), RUN_WAIT);
     CHECK(t->pc == img.code + 2);          /* on the RECEIVE_TIMEOUT */
     t->state = A_WAITING;
-    uint64_t next;
+    uint64_t next = 0;
     CHECK(timer_next(&vm, &next));
     timer_fire_due(&vm, next);
     CHECK(runq_pop(&vm) == t);

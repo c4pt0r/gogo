@@ -212,7 +212,7 @@ TEST(call_timeout_clears_state) {
     term ref = REGS_OF(c)[3];
     const uint32_t *ro = c->mem + term_ref_off(ref);
     uint64_t sref = (uint64_t)ro[1] | ((uint64_t)ro[2] << 32);
-    uint64_t next;
+    uint64_t next = 0;
     CHECK(timer_next(&vm, &next));
     timer_fire_due(&vm, next);
     CHECK(runq_pop(&vm) == c);
@@ -353,7 +353,7 @@ TEST(call_err_timeout) {
     Actor *c = start(&vm, &img);
     CHECK_EQ(interp_run(&vm, c), RUN_WAIT);
     c->state = A_WAITING;
-    uint64_t next;
+    uint64_t next = 0;
     CHECK(timer_next(&vm, &next));
     timer_fire_due(&vm, next);
     CHECK(runq_pop(&vm) == c);
