@@ -14,8 +14,8 @@ T=$B/board-ports/run
 rm -rf "$T"; mkdir -p "$T"
 fail=0
 
-printf 'test.beta\ntest.refuser\ntest.ticker\ntest.zeta\n' > "$T/provides.want"
-"$VM" --provides | tail -4 > "$T/provides"
+printf 'test.beta\ntest.burst\ntest.refuser\ntest.ticker\ntest.zeta\n' > "$T/provides.want"
+"$VM" --provides | tail -5 > "$T/provides"
 if cmp -s "$T/provides.want" "$T/provides"; then echo "ok   provides: board ports in name order, refused ones left out"
 else echo "FAIL provides"; diff "$T/provides.want" "$T/provides"; fail=1; fi
 
@@ -36,6 +36,15 @@ if kill -0 $pid 2>/dev/null; then
     kill -9 $pid; echo "FAIL a ticker closed with a backlog: the VM hangs"; fail=1
 elif wait $pid && grep -qx "open true" "$T/abandon.out"; then echo "ok   a ticker closed with a backlog ends"
 else echo "FAIL abandon: exit status or output"; cat "$T/abandon.out"; fail=1; fi
+
+# The board's post byte budget (ports.post_bytes, here 2K): a post past it
+# is GOGO_EFULL (-4), and a thread that waits for room loses nothing.
+"$B/gogo" build "$D/burst" -o "$T/burst.ggb" || { echo "FAIL build $D/burst"; exit 1; }
+printf 'ports.post_bytes=2K\n' > "$T/budget-config"
+printf '1000 bytes: 0\n4000 bytes: -4\nticker events: 2000\n' > "$T/burst.want"
+GOGO_CONFIG=$T/budget-config "$VM" "$T/burst.ggb" > "$T/burst.out" 2> "$T/burst.err"
+if cmp -s "$T/burst.want" "$T/burst.out"; then echo "ok   the post byte budget (ports.post_bytes)"
+else echo "FAIL post budget"; diff "$T/burst.want" "$T/burst.out"; cat "$T/burst.err"; fail=1; fi
 
 # A board port the build should have but does not register is said at boot.
 GOGO_CONFIG=$T/no-config "$VM" --expect-ports test.beta,test.missing "$T/abandon.ggb" > /dev/null 2> "$T/expect.err"

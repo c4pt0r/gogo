@@ -249,6 +249,7 @@ The board talks to `gogo config` over the USB serial console, so close
 | `net.ip`, `net.mask`, `net.gw`, `net.dns` | ip (`a.b.c.d`) | `gogo/dhcp` | a static address instead of DHCP (`net.mask` defaults to 255.255.255.0) |
 | `fs.flash.size` | size | firmware | size of `/flash` (chapter 9) |
 | `fs.flash.format` | `yes` | firmware | deprecated: format `/flash` once at the next boot; use `gogo device format-flash` |
+| `ports.post_bytes` | size | firmware, `gogovm`, at boot | the bytes the board ports' posts (book 22.7) may queue at once: 16 KB on a board, 1 MB on the host, at most 64 MB; a post past it is `GOGO_EFULL` |
 | `code.mem` | size | VM (`gogo/code`), at boot | budget for loaded module code: 64 KB on a board, 16 MB on the host (chapter 14) |
 | `node.token` | string (at most 200 bytes) | `gogo/node` | the shared secret of distributed actors (chapter 20); never printed |
 | `node.name` | string (at most 32 bytes) | `gogo/node` | this node's name when a program gives none |

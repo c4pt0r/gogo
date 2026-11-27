@@ -522,7 +522,10 @@ GOGO_API GOGO_EXPERIMENTAL int gogo_port_close(gogo_vm *vm, gogo_port port, int3
  * gogo_poster_close_posts link but do nothing on a board: posts belong
  * to every driver of the board, and close when the program ends. A poster made from it
  * may be used from any other thread or task, never from an interrupt
- * handler: a post allocates. The board's host-port layer is a build
+ * handler: a post allocates. A board queues at most the bytes of the
+ * config key ports.post_bytes of posts (16 KB on the ESP32-S3, 1 MB in
+ * gogovm, a post's own few dozen bytes counted): a post past it returns
+ * GOGO_EFULL until the VM has taken some. The board's host-port layer is a build
  * option (CONFIG_GOGO_BOARD_PORTS on the ESP32-S3, which `gogo firmware
  * -component` sets; always in gogovm): a GOGO_BOARD_PORT linked into a
  * build without it fails to link, naming gogo_board_ports_enabled.

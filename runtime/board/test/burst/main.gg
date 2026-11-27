@@ -1,0 +1,43 @@
+// Posts of 1000 and 4000 bytes against a 2K byte budget (ports.post_bytes
+// in the test's config): the first is queued (0), the second refused
+// (GOGO_EFULL, -4), and the ticker's 2000 small posts all arrive even so
+// (its thread waits for room).
+package main
+
+import (
+	"gogo/actor"
+	"gogo/port"
+)
+
+func first(p actor.PID) int {
+	for {
+		switch e := actor.Receive().(type) {
+		case port.Post:
+			if e.From == p && e.Data.Len() == 0 {
+				return e.Kind
+			}
+		}
+	}
+}
+
+func main() {
+	a, _ := port.Open("test.burst", port.Host{Arg: 1000})
+	println("1000 bytes:", first(a))
+	port.Close(a)
+	b, _ := port.Open("test.burst", port.Host{Arg: 4000})
+	println("4000 bytes:", first(b))
+	port.Close(b)
+	const n = 2000
+	t, _ := port.Open("test.ticker", port.Host{Arg: n})
+	got := 0
+	for got < n {
+		switch e := actor.Receive().(type) {
+		case port.Post:
+			if e.From == t {
+				got++
+			}
+		}
+	}
+	port.Close(t)
+	println("ticker events:", got)
+}

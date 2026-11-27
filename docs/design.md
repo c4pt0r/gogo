@@ -2599,7 +2599,10 @@ can serve two devices, and the table can be a board's `static const`).
   order's). With no
   entry nothing changes: no shell, no source, no driver list. The board's
   posts allocate from a host table any task may use (`BoardRun.ports_host`:
-  the ESP's internal heap, not the VM arena) and wake through the board's
+  the ESP's internal heap, not the VM arena), within a byte budget
+  (`ports.post_bytes`: 16 KB on the ESP, whose internal heap Wi-Fi and
+  TLS share, 1 MB in `gogovm`; past it a post is `GOGO_EFULL`; libgogo's
+  inbox has none, its host's memory is its own), and wake through the board's
   latched wake; an ISR does not post (a post allocates). A board's inbox
   keeps the VM alive only while a post is queued (libgogo's also while a
   name is registered), so a board program ends as before. The layer is a

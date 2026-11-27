@@ -1146,6 +1146,10 @@ rebuilt:
   from its callbacks (`gogo_port_emit`) or from a task through a poster;
   a post allocates, so an ISR hands its data to a task first. The event
   ring stays the runtime's drivers'.
+- **Board posts have a byte budget.** A board queues at most
+  `ports.post_bytes` of posts (16 KB on the ESP32-S3, 1 MB in `gogovm`):
+  a fast driver task meets `GOGO_EFULL` and must wait for room, and a
+  single post larger than the budget never fits.
 - **No byte-stream helper.** A `gogo.h` driver has `port.Post` commands
   and events, not the `port.Chunk` / `Out` / `Done` protocol with its
   flow control.

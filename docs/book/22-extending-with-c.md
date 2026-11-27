@@ -496,8 +496,12 @@ The rules:
   libgogo's). `gogo_close_posts` and `gogo_poster_close_posts` do nothing
   there: the posts are every driver's of the board, and close when the
   program ends; in an embedding host they still close the host's posts.
-- **A post can fail.** `GOGO_EFULL` with 256 posts queued (try again
-  later), `GOGO_ECLOSED` once the VM has finished. Free the poster
+- **A post can fail.** `GOGO_EFULL` with 256 posts queued, or with the
+  board's budget of queued bytes used up (the key `ports.post_bytes`:
+  16 KB on a board, whose internal RAM Wi-Fi and TLS need too, 1 MB in
+  `gogovm`; a post's data plus a few dozen bytes count): try again
+  later. `GOGO_ECLOSED` once the VM has finished. A post larger than the
+  budget never fits: send big data in pieces. Free the poster
   (`gogo_poster_free`) when the thread is done with it.
 - **Never block in `close` on a thread that may be posting.** `close`
   runs on the VM's thread, the only one that drains posts: a driver

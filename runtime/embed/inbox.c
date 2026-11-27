@@ -18,8 +18,14 @@ int inbox_push(Inbox *in, const gogo_host *h, void *hctx, const char *name, size
         return GOGO_EFULL;
     }
     size_t bytes = sizeof(InboxNode) + name_len + len;
+    if (in->cap_bytes && __atomic_add_fetch(&in->bytes, bytes, __ATOMIC_RELAXED) > in->cap_bytes) {
+        __atomic_fetch_sub(&in->bytes, bytes, __ATOMIC_RELAXED);
+        __atomic_fetch_sub(&in->depth, 1, __ATOMIC_RELAXED);
+        return GOGO_EFULL;
+    }
     InboxNode *n = h->alloc(hctx, bytes);
     if (!n) {
+        if (in->cap_bytes) __atomic_fetch_sub(&in->bytes, bytes, __ATOMIC_RELAXED);
         __atomic_fetch_sub(&in->depth, 1, __ATOMIC_RELAXED);
         return GOGO_ENOMEM;
     }
@@ -41,14 +47,17 @@ int inbox_push(Inbox *in, const gogo_host *h, void *hctx, const char *name, size
 static InboxNode *take(Inbox *in) {
     InboxNode *n = __atomic_exchange_n(&in->head, NULL, __ATOMIC_ACQUIRE), *r = NULL;
     int k = 0;
+    size_t b = 0;
     while (n) {
         InboxNode *next = n->next;
         n->next = r;
         r = n;
+        b += n->bytes;
         n = next;
         k++;
     }
     if (k) __atomic_fetch_sub(&in->depth, k, __ATOMIC_RELAXED);
+    if (b && in->cap_bytes) __atomic_fetch_sub(&in->bytes, b, __ATOMIC_RELAXED);
     return r;
 }
 

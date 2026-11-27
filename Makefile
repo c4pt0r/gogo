@@ -48,7 +48,7 @@ DIST_SRCS = $(wildcard runtime/dist/*.c)
 # 8 of them beside the board's drivers (BOARD_PORTS_FLAGS), and one more
 # event source for the post inbox when DRIVERS are given.
 BOARD_PORTS_SRCS = runtime/board/board_ports.c runtime/embed/hostport.c runtime/embed/inbox.c runtime/embed/poster.c
-BOARD_PORTS_FLAGS = -DGOGO_BOARD_PORTS=1 -DEMBED_HOST_PORTS=8 -DEMBED_BOARD_PORTS_MAX=32 -Iruntime/include
+BOARD_PORTS_FLAGS = -DGOGO_BOARD_PORTS=1 -DEMBED_HOST_PORTS=8 -DEMBED_BOARD_PORTS_MAX=32 -DGOGO_BOARD_POST_BYTES=1048576u -Iruntime/include
 MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c runtime/board/board_main.c $(PARAMS_SRCS) runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS) $(BOARD_PORTS_SRCS)
 # make vm DRIVERS="dir|file.c ...": gogovm with those board-port drivers
 # compiled in (an ESP-IDF driver component's directory: its *.c but the
@@ -549,7 +549,7 @@ example-embed: $(EXAMPLE_EMBED_BINS) gogo-cmd
 # Board ports (runtime/board/board_ports.c): registration order, refusals
 # and their boot lines, open codes and posts from a thread, on a gogovm with
 # the test drivers of runtime/board/test/ports (runtime/board/test/test.sh).
-BOARD_TEST_DRIVERS = $(addprefix runtime/board/test/ports/,named.c dup.c refuser.c ticker.c)   # in link order: dup.c after named.c
+BOARD_TEST_DRIVERS = $(addprefix runtime/board/test/ports/,named.c dup.c refuser.c ticker.c burst.c)   # in link order: dup.c after named.c
 $(BUILD)/board-ports/gogovm: $(GOGOVM_DEPS) $(BOARD_TEST_DRIVERS) $(FLAGS_STAMP)
 	@mkdir -p $(BUILD)/board-ports
 	$(call gogovm_with,$(BOARD_TEST_DRIVERS))

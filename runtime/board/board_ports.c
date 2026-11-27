@@ -2,6 +2,7 @@
  * registered at boot with the host-port layer. */
 #include "board_ports.h"
 #include "ports.h"
+#include "params.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -28,6 +29,31 @@ extern const gogo_board_port *const __stop_gogo_board_port[];
 #define bp_start __start_gogo_board_port
 #define bp_stop __stop_gogo_board_port
 #endif
+
+/* The bytes of posts a board's inbox queues at most (ports.post_bytes):
+ * the platform's default (16 KB: the ESP's internal heap is shared with
+ * Wi-Fi and TLS; gogovm's build gives more). */
+#ifndef GOGO_BOARD_POST_BYTES
+#define GOGO_BOARD_POST_BYTES 16384u
+#endif
+#define POST_BYTES_KEY "ports.post_bytes"
+#define POST_BYTES_MAX (64u << 20)
+
+/* ports.post_bytes from h's store: a size (K, M), 0 or unset the
+ * default; a bad or too large value is said and the default kept. */
+static size_t post_bytes(const gogo_host *h) {
+    char v[24];
+    int32_t n = h->config_get ? h->config_get(NULL, (const uint8_t *)POST_BYTES_KEY, sizeof POST_BYTES_KEY - 1u,
+                                              (uint8_t *)v, sizeof v) : -1;
+    if (n <= 0) return GOGO_BOARD_POST_BYTES;
+    params_num x = 0;
+    if (n >= (int32_t)sizeof v || params_parse(v, (uint32_t)n, true, &x) != (uint32_t)n || x > POST_BYTES_MAX) {
+        static const char m[] = "gogo: bad " POST_BYTES_KEY " (a size up to 64M); using the default\n";
+        if (h->write) h->write(NULL, 2, m, sizeof m - 1u);
+        return GOGO_BOARD_POST_BYTES;
+    }
+    return x ? (size_t)x : GOGO_BOARD_POST_BYTES;
+}
 
 /* gogo_board_port's first size, which never changes. */
 #define ENTRY_SIZE_V1 (offsetof(gogo_board_port, ctx) + sizeof(void *))
@@ -158,6 +184,7 @@ struct EmbedPorts *board_ports_new(const gogo_host *h, const gogo_host *ph) {
     memset(ep, 0, sizeof *ep);
     ep->uh = ph;
     ep->refs = 1;                /* the board's, never dropped */
+    ep->inbox.cap_bytes = post_bytes(h);
     ep->board = true;
     return ep;
 }
