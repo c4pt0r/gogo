@@ -242,6 +242,21 @@ flight (send the next on each `Done`, as `tests/ble/progs/echo` does), and
 use the largest MTU the phone offers. `tools/ble_central.py` (23.6)
 measures what a board reaches with a computer as the central.
 
+How fast notifications go depends mostly on the phone (the central): it
+picks the connection interval, and how many packets it takes in each
+connection event. The board asks for 251-byte link-layer packets and a
+15 ms interval when a central connects; a central may refuse. Measured on
+a StickS3, 200 notifications each:
+
+| Central | 20 bytes each | 253 bytes each |
+|---|---|---|
+| Raspberry Pi 5 (Linux, BlueZ): took 15 ms | 5 KB/s | 32 KB/s |
+| macOS: kept 30 ms, skips most connection events | 0.4 KB/s | 1.2 KB/s |
+
+So send few large notifications rather than many small ones, and do not
+judge a phone app by a Mac: iOS and Android phones usually take the
+shorter interval (iOS may keep its own when asked for a fixed 15 ms).
+
 ## 23.4 A complete peripheral
 
 [`examples/23-ble-status`](examples/23-ble-status/main.gg) serves the

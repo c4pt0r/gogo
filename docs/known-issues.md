@@ -1277,6 +1277,11 @@ LE".
 
 ## ESP32-S3 boards
 
+- **BLE notifications to a Mac are slow.** macOS refuses the board's
+  15 ms connection interval and skips most connection events: 1.2 KB/s
+  with 253-byte notifications, where a Raspberry Pi 5 as the central gets
+  32 KB/s from the same board (book 23.3). Nothing is lost, only slow.
+  *Workaround:* test throughput with a phone or a Linux central.
 - **The USB serial console sometimes goes silent** a few seconds after a
   reset or after hours (esptool: `No serial data received`; `gogo device
   info`: `no answer from the board`), while the program keeps running.

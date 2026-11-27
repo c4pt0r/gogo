@@ -149,6 +149,20 @@ static int build_gatt(void) {
 
 /* ---- GAP ---- */
 
+/* Asks the central for a 15 ms connection interval. A central may refuse
+ * and keep its own: that costs nothing but speed. Measured on a StickS3,
+ * 200 notifications: a Raspberry Pi 5 (BlueZ) accepted it, 32 KB/s with
+ * 253-byte and 5 KB/s with 20-byte notifications (15-30 ms asked instead:
+ * it took 30 ms, 16 KB/s); macOS refused, kept 30 ms and skipped most
+ * connection events, 1.2 KB/s and 0.4 KB/s. Apple's accessory rules want
+ * max >= min + 15 ms, so iOS may refuse it too. */
+static void ask_fast(uint16_t c) {
+    static const struct ble_gap_upd_params up = {
+        .itvl_min = 12, .itvl_max = 12, .latency = 0, .supervision_timeout = 400,   /* 1.25 ms and 10 ms units */
+    };
+    (void)ble_gap_update_params(c, &up);
+}
+
 static int gap_event(struct ble_gap_event *e, void *arg);
 
 static int advertise(void) {
@@ -211,6 +225,11 @@ static int gap_event(struct ble_gap_event *e, void *arg) {
             xSemaphoreTake(mu, portMAX_DELAY);
             conn = e->connect.conn_handle;
             xSemaphoreGive(mu);
+            /* Throughput: ask for 251-byte link-layer packets; the
+             * shorter connection interval is asked for once that
+             * procedure is done (both at once collide), or now if the
+             * controller cannot ask. */
+            if (ble_gap_set_data_len(e->connect.conn_handle, 251, 2120) != 0) ask_fast(e->connect.conn_handle);
             post(BLE_EV_CONNECTED, ble_att_mtu(e->connect.conn_handle), (const uint8_t *)peer, (uint32_t)strlen(peer));
         }
         break;
@@ -233,6 +252,9 @@ static int gap_event(struct ble_gap_event *e, void *arg) {
             post(BLE_EV_SUBSCRIBED, (uint32_t)k | (e->subscribe.cur_notify ? 1u << 8 : 0u), NULL, 0);
         break;
     }
+    case BLE_GAP_EVENT_DATA_LEN_CHG:
+        if (e->data_len_chg.max_tx_octets > 27) ask_fast(e->data_len_chg.conn_handle);
+        break;
     case BLE_GAP_EVENT_MTU:
         post(BLE_EV_MTU, e->mtu.value, NULL, 0);
         break;
