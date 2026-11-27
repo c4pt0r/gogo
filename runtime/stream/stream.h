@@ -116,6 +116,12 @@ typedef bool (*StreamCheck)(const Port *p, const uint8_t *d, uint32_t len);
 int stream_out_accept(struct Vm *vm, const struct Actor *from, Port *p, StreamOut *o,
                       term msg, StreamCheck check);
 
+/* stream_out_accept for an output command of the driver's own (gogo/ble's
+ * Notify, a port.Post): data is the command's Bytes term as the sender
+ * sees it and d, len its bytes, or d NULL to refuse it (the driver's own
+ * checks failed). The same results, rules and Done as stream_out_accept. */
+int stream_out_accept_data(struct Vm *vm, Port *p, StreamOut *o, term data, const uint8_t *d, uint32_t len);
+
 /* The head's data and length, or NULL (*len 0) when nothing is in flight. */
 const uint8_t *stream_out_head(const struct Vm *vm, const StreamOut *o, uint32_t *len);
 
