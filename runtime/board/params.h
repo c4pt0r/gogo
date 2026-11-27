@@ -27,8 +27,8 @@
  *                                     1 .. 65520
  *   max_ports        vm.max_ports     ports open at once: 1 .. PORT_MAX_CEILING, and
  *                                     max_actors + max_ports at most PORT_SLOT_TOP
- *                                     (else refused: the default, or what the
- *                                     actors leave)
+ *                                     (else cut to what the actors leave, said
+ *                                     when the ports were given)
  *   max_links        node.max_links   node links of distributed actors (0: the node
  *                                     port's default, DIST_LINKS): at most
  *                                     PORT_MAX_CEILING
@@ -50,7 +50,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "host.h"
+#include "config.h"
 
 struct Vm;
 
@@ -65,15 +67,48 @@ typedef struct VmParams {
     uint32_t bytes_per_actor;   /* and per actor */
 } VmParams;
 
+/* The keys, in this order (params_overlay's texts, params_changed). */
+enum { PARAM_ACTOR_MEMORY, PARAM_MEMORY, PARAM_MAX_ACTORS, PARAM_MAX_PORTS, PARAM_MAX_LINKS, PARAM_CODE_MEM,
+       PARAM_HANDLES, PARAM_COUNT };
+
+/* The numbers keys parse into: 32 bits in the board configuration (no
+ * board value passes 4 GB: no 64-bit arithmetic there), 64 on the host;
+ * a parse saturates at PARAMS_NUM_TOP. */
+#if GOGO_WORDS_16
+typedef uint32_t params_num;
+#define PARAMS_NUM_TOP 0xFFFFFFFFu
+#else
+typedef uint64_t params_num;
+#define PARAMS_NUM_TOP ((uint64_t)1 << 48)
+#endif
+
 /* The build's defaults (config.h); a platform then sets its own where it
  * differs (gogovm: 1024 ports, 512 links). */
 void vm_params_default(VmParams *p);
 
 /* Resolves p in place: on entry p holds the platform's defaults; each
- * field becomes set's (when set is not NULL and its field is not 0), else
- * the config key's (h->config_get with ctx, when h has one), else stays
- * the default, then is checked (above). Lines go to h->write(ctx, 2, ...). */
-void vm_params_resolve(const gogo_host *h, void *ctx, const VmParams *set, VmParams *p);
+ * field becomes its key's value (h->config_get with ctx, when h has one)
+ * when set, good and not 0 (vm.memory and code.mem: 0 too), else stays
+ * the default, then is checked (above). A flag or gogo_config field beats
+ * the key because the platform answers it first in its config_get
+ * (params_overlay). Lines go to h->write(ctx, 2, ...). */
+void vm_params_resolve(const gogo_host *h, void *ctx, VmParams *p);
+
+/* For a platform's config_get: answers key k (kl bytes) from text[PARAM_*]
+ * (NULL: not given), as the store would (its length, the bytes into buf,
+ * at most cap); -1 for any other key or one not given. gogovm gives its
+ * flags as typed; libgogo its gogo_config fields in decimal ("/M" for
+ * bytes_per_actor alone: vm.handles' M with its N kept). */
+int32_t params_overlay(const char *const text[PARAM_COUNT], const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap);
+
+/* The keys whose values differ between a and b, space-separated, into buf
+ * (as vm_params_format); returns the whole length. */
+size_t params_changed(const VmParams *a, const VmParams *b, char *buf, size_t cap);
+
+/* Digits at s (n bytes), then with size an optional K, M or G (either
+ * case), into *out (saturating at PARAMS_NUM_TOP): the bytes used, 0 if
+ * not a number. Shared with the board's other size keys (fs.flash.size). */
+uint32_t params_parse(const char *s, uint32_t n, bool size, params_num *out);
 
 /* Applies resolved p to a Vm fresh from vm_init (its table: p->max_actors):
  * the default actor limit, the memory limit, the port and link caps, the
@@ -97,8 +132,15 @@ int vm_params_apply(struct Vm *vm, const VmParams *p);
 #define NODE_AGENT_BASE 65536u
 uint32_t params_node_agent_bytes(const VmParams *p);
 
-/* v as 16K / 1M / 2G when it divides evenly, else in bytes, at p (no
- * NUL); returns the end. At most 20 characters. */
-char *vm_params_put_size(char *p, uint64_t v);
+/* p as one line of space-separated name=value fields, sizes as K / M / G
+ * when they divide evenly, for `gogovm --info` and the board's `gogo
+ * device info`:
+ *   actor_memory=16K memory=160K max_actors=1024 max_ports=16 max_links=8
+ *   code_mem=64K bytes_handles=64/16
+ * (memory: the arena, GOGO_ARENA_BYTES, when there is no VM limit or a
+ * larger one; "unlimited" when neither; max_links 0 as its default).
+ * Writes at most cap - 1 bytes and a NUL; returns the length of the whole
+ * line (as snprintf). */
+size_t vm_params_format(const VmParams *p, char *buf, size_t cap);
 
 #endif

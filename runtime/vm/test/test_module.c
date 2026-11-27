@@ -922,7 +922,7 @@ static void boot_with_config(Fx *f, const char *line) {
     CHECK_EQ(test_vm_init(&f->vm, NULL, 16), 0);
     vm_params_default(&p);
     p.max_actors = 16;
-    vm_params_resolve(f->vm.host, f->vm.host_ctx, NULL, &p);
+    vm_params_resolve(f->vm.host, f->vm.host_ctx, &p);
     CHECK_EQ(vm_params_apply(&f->vm, &p), 0);
     CHECK_EQ(vm_boot(&f->vm, f->a, n), VM_BOOT_OK);
     capture_stop();

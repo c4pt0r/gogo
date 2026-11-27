@@ -55,6 +55,7 @@ struct gogo_vm {
     gogo_host fwd;               /* forwarders to uh (NULL where uh has NULL) */
     gogo_config cfg;
     VmParams params;             /* resolved once by gogo_new (params.h): cfg, the host's keys, defaults */
+    char ptext[PARAM_COUNT][24]; /* cfg's parameters as text for the config_get overlay ("": not set) */
     EmbedBlk *blocks;            /* live alloc blocks */
     EmbedBlk *code_blocks;       /* live code_alloc blocks */
     Inbox inbox;

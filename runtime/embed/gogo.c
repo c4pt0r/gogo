@@ -71,8 +71,14 @@ static void f_wait(void *c, uint32_t ms) { gogo_vm *g = c; g->uh.wait(g->uctx, m
 static int64_t f_unix(void *c) { gogo_vm *g = c; return g->uh.unix_time_ms(g->uctx); }
 static int f_set_unix(void *c, int64_t ms) { gogo_vm *g = c; return g->uh.set_unix_time_ms(g->uctx, ms); }
 static uint32_t f_random(void *c) { gogo_vm *g = c; return g->uh.random(g->uctx); }
+/* The parameters set in the config first (params_overlay: they beat the
+ * host's keys), then the host's store, if it has one. */
 static int32_t f_config(void *c, const uint8_t *k, uint32_t kl, uint8_t *b, uint32_t cap) {
     gogo_vm *g = c;
+    const char *t[PARAM_COUNT];
+    for (int i = 0; i < PARAM_COUNT; i++) t[i] = g->ptext[i][0] ? g->ptext[i] : NULL;
+    int32_t n = params_overlay(t, k, kl, b, cap);
+    if (n >= 0 || !g->uh.config_get) return n;
     return g->uh.config_get(g->uctx, k, kl, b, cap);
 }
 static void *f_code_alloc(void *c, size_t n) { gogo_vm *g = c; return blk_alloc(g, &g->code_blocks, g->uh.code_alloc, n); }
@@ -95,7 +101,7 @@ static void make_fwd(gogo_vm *g) {
     f->unix_time_ms = u->unix_time_ms ? f_unix : NULL;
     f->set_unix_time_ms = u->set_unix_time_ms ? f_set_unix : NULL;
     f->random = u->random ? f_random : NULL;
-    f->config_get = u->config_get ? f_config : NULL;
+    f->config_get = f_config;   /* the config's parameters, then the host's store */
     f->code_alloc = u->code_alloc ? f_code_alloc : NULL;
     f->code_free = u->code_free ? f_code_free : NULL;
 }
@@ -248,18 +254,24 @@ static uint32_t embed_max_ports(const gogo_config *c) {
  * (its config_get), then the library's defaults. Once, in gogo_new: a bad
  * key is said once. */
 static void params_resolve(gogo_vm *g) {
-    VmParams set;
-    memset(&set, 0, sizeof set);
-    set.memory = g->cfg.mem_limit;
-    set.actor_memory = g->cfg.actor_memory;
-    set.max_actors = g->cfg.max_actors;
-    set.max_ports = g->cfg.max_ports;
-    set.max_links = g->cfg.max_links;
-    set.bytes_handles = g->cfg.bytes_handles;
-    set.bytes_per_actor = g->cfg.bytes_per_actor;
+    const gogo_config *c = &g->cfg;
+    const uint64_t v[PARAM_COUNT] = { c->actor_memory, c->mem_limit, c->max_actors, c->max_ports, c->max_links, 0,
+                                      c->bytes_handles };
+    for (int i = 0; i < PARAM_COUNT; i++) {
+        char d[24], *p = g->ptext[i];
+        int n = 0;
+        for (uint64_t x = v[i]; x; x /= 10u) d[n++] = (char)('0' + x % 10u);
+        while (n) *p++ = d[--n];
+        if (i == PARAM_HANDLES && c->bytes_per_actor) {   /* M, with N given or kept: "N/M" or "/M" */
+            *p++ = '/';
+            for (uint32_t x = c->bytes_per_actor; x; x /= 10u) d[n++] = (char)('0' + x % 10u);
+            while (n) *p++ = d[--n];
+        }
+        *p = 0;
+    }
     vm_params_default(&g->params);
     g->params.max_ports = embed_max_ports(&g->cfg);
-    vm_params_resolve(&g->fwd, g, &set, &g->params);
+    vm_params_resolve(&g->fwd, g, &g->params);
 }
 
 /* vm_init with the parameters, then the memory cap (vm_init clears the

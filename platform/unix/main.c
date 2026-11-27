@@ -13,7 +13,7 @@
  *          everything after the image is the program's own: sys.Args
  *          returns it (flags come before the image, as for gogo run).
  *   gogovm [flags] --info  prints the VM's parameters as this run would
- *          resolve them (board_params_format: flags, then the config keys,
+ *          resolve them (vm_params_format: flags, then the config keys,
  *          then the defaults) and exits
  *   gogovm -h | --help     lists every flag (usage(), below)
  *   gogovm --sizeof-actor  prints sizeof(Actor)
@@ -187,14 +187,20 @@ static void main_write(void *ctx, int stream, const char *s, size_t n) {
     }
 }
 
-/* The VM's parameters as main resolved them (for main_config). */
+/* The VM's parameters as main resolved them (for main_config), and the
+ * parameter flags as typed, by PARAM_* (NULL: not given). */
 static const VmParams *run_params;
+static const char *flag_text[PARAM_COUNT];
 
-/* The host's config_get, answering NODE_AGENT_KEY itself (params.h: the
- * node agent's memory limit from the link cap and the actor memory, for
- * gogo/node); no store key is that long. */
+/* The host's config_get: the parameter flags first (params_overlay), so a
+ * flag beats its key when the parameters are resolved and sys.Config sees
+ * what the VM runs with; NODE_AGENT_KEY (params.h: the node agent's memory
+ * limit from the link cap and the actor memory, for gogo/node; no store
+ * key is that long); then the store. */
 static int32_t main_config(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
     static const char agent[] = NODE_AGENT_KEY;
+    int32_t f = params_overlay(flag_text, k, kl, buf, cap);
+    if (f >= 0) return f;
     if (kl == sizeof agent - 1u && memcmp(k, agent, kl) == 0 && run_params) {
         char num[12];
         int n = snprintf(num, sizeof num, "%u", (unsigned)params_node_agent_bytes(run_params));
@@ -378,8 +384,6 @@ int main(int argc, char **argv) {
     const char *fs_root = NULL;
     int64_t fs_quota = -1;
     int info = 0;
-    VmParams set;                       /* the flags' parameters; 0: not given */
-    memset(&set, 0, sizeof set);
     while (argc >= 2 && (strncmp(argv[1], "--", 2) == 0 || strcmp(argv[1], "-h") == 0)) {
         if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) return usage(stdout, EXIT_OK);
         if (strcmp(argv[1], "--info") == 0) {
@@ -400,7 +404,10 @@ int main(int argc, char **argv) {
             argc--;
             continue;
         }
-        if (argc < 3) break;
+        if (argc < 3) {
+            fprintf(stderr, "gogovm: %s needs a value, or is unknown (gogovm -h lists the flags)\n", argv[1]);
+            return EXIT_USAGE;
+        }
         if (strcmp(argv[1], "--key") == 0) {
             /* --key <c>=<pin> (tty mode): map a key to a simulated gpio pin. */
             char c;
@@ -438,20 +445,19 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "gogovm: bad %s %s (want 1..2048)\n", argv[1], argv[2]);
                 return EXIT_USAGE;
             }
-            if (argv[1][6] == 'p') set.max_ports = v;
-            else set.max_links = v;
+            flag_text[argv[1][6] == 'p' ? PARAM_MAX_PORTS : PARAM_MAX_LINKS] = argv[2];
         } else if (strcmp(argv[1], "--actor-memory") == 0 || strcmp(argv[1], "--memory") == 0 ||
                    strcmp(argv[1], "--max-actors") == 0) {
             unsigned long long v;
             int size = argv[1][3] != 'a';   /* --max-actors: a count */
-            if (!flag_num(argv[2], size, size ? 1ull << 48 : 0xFFFFFFFFull, &v) || v == 0) {
+            int mem = argv[1][2] == 'm' && argv[1][3] == 'e';
+            /* --memory 0: no limit (it undoes a vm.memory key). */
+            if (!flag_num(argv[2], size, size ? 1ull << 48 : 0xFFFFFFFFull, &v) || (v == 0 && !mem)) {
                 fprintf(stderr, "gogovm: bad %s %s (want %s)\n", argv[1], argv[2],
                         size ? "bytes, with an optional K, M or G" : "a count");
                 return EXIT_USAGE;
             }
-            if (argv[1][2] == 'a') set.actor_memory = v > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)v;
-            else if (argv[1][2] == 'm' && argv[1][3] == 'e') set.memory = v;
-            else set.max_actors = (uint32_t)v;
+            flag_text[argv[1][2] == 'a' ? PARAM_ACTOR_MEMORY : mem ? PARAM_MEMORY : PARAM_MAX_ACTORS] = argv[2];
         } else if (strcmp(argv[1], "--bytes-handles") == 0) {
             unsigned long long n, m = 0;
             char a[24];
@@ -462,8 +468,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "gogovm: bad --bytes-handles %s (want N or N/M, 1..65535)\n", argv[2]);
                 return EXIT_USAGE;
             }
-            set.bytes_handles = (uint32_t)n;
-            set.bytes_per_actor = (uint32_t)m;
+            flag_text[PARAM_HANDLES] = argv[2];
         } else if (strcmp(argv[1], "--net-fd") == 0) {
             char tail;
             if (sscanf(argv[2], "%d%c", &net_fd, &tail) != 1 || net_fd < 0) {
@@ -500,14 +505,18 @@ int main(int argc, char **argv) {
     unix_mounts[nmounts] = NULL;
     /* The parameters: the flags, then the config keys, then the host's
      * defaults (params.h). */
-    VmParams params;
-    vm_params_default(&params);
-    params.max_ports = GOGO_HOST_PORTS;
-    params.max_links = GOGO_HOST_LINKS;
-    vm_params_resolve(&unix_host, NULL, &set, &params);
+    VmParams params, defaults;
+    gogo_host host = unix_host;
+    host.write = main_write;
+    host.config_get = main_config;
+    vm_params_default(&defaults);
+    defaults.max_ports = GOGO_HOST_PORTS;
+    defaults.max_links = GOGO_HOST_LINKS;
+    params = defaults;
+    vm_params_resolve(&host, NULL, &params);
     if (info) {
         char line[256];
-        board_params_format(&params, line, sizeof line);
+        vm_params_format(&params, line, sizeof line);
         printf("%s\n", line);
         return EXIT_OK;
     }
@@ -568,13 +577,10 @@ int main(int argc, char **argv) {
      * /flash and /sd that have a backend) and the input source, then
      * run_main. */
     Vm vm;
-    gogo_host host = unix_host;
-    host.write = main_write;
-    host.config_get = main_config;
     run_params = &params;
     input_unix_on_fatal(screen_unix_restore);
     BoardRun run = {
-        .vm = &vm, .params = &params, .vfs = &vfs_state, .input = &input_state,
+        .vm = &vm, .params = &params, .defaults = &defaults, .vfs = &vfs_state, .input = &input_state,
         .net = net_fd >= 0 ? &net_state : NULL, .net_install = net_install,
         .booting = set_wall_clock, .ready = host_net ? host_net_ready : NULL, .run = run_main,
     };

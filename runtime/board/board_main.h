@@ -23,8 +23,9 @@ typedef struct BoardRun {
     /* The VM's parameters (params.h), resolved by the board
      * (vm_params_resolve: its flags, the config keys, its defaults):
      * max_actors is vm_init's actor table, the rest vm_params_apply's.
-     * NULL: the build's defaults and the config keys, resolved here. */
-    const struct VmParams *params;
+     * NULL: the defaults (NULL: vm_params_default) and the config keys,
+     * resolved here. */
+    const struct VmParams *params, *defaults;
     struct VfsState *vfs;              /* NULL: no file system builtin */
     struct InputState *input;          /* NULL: no input source */
     struct NetState *net;              /* NULL: no network in this run */
@@ -49,17 +50,6 @@ typedef struct BoardRun {
  * boot's error, with nothing attached and nothing run: VM_BOOT_NO_MEMORY,
  * VM_BOOT_REFUSED (the refusal line is written) or an image error
  * (IMG_ERR_*, negative). */
-/* p (params.h) as one line of space-separated name=value fields, sizes as
- * K / M / G when they divide evenly, for `gogovm --info` and the board's
- * `gogo device info`:
- *   actor_memory=16K memory=160K max_actors=1024 max_ports=16 max_links=8
- *   code_mem=64K bytes_handles=64/16
- * (memory: the arena, GOGO_ARENA_BYTES, when there is no VM limit or a
- * larger one; "unlimited" when neither; max_links 0 as its default).
- * Writes at most cap - 1 bytes and a NUL; returns the length of the whole
- * line (as snprintf). */
-size_t board_params_format(const struct VmParams *p, char *buf, size_t cap);
-
 int gogo_board_main(const VmBoard *b, const gogo_host *h, BoardRun *r, const uint32_t *words, uint32_t nwords,
                     int *run_rc);
 

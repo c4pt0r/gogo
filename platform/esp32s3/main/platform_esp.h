@@ -32,7 +32,7 @@ size_t platform_esp_arena_used(void);
  * Bytes handles (of the Vm's cap, vm.handles) and open ports (of
  * the Vm's cap). Read from another task: a snapshot. */
 void main_esp_usage(uint32_t *bytes_used, uint32_t *bytes_max, uint32_t *ports_used, uint32_t *ports_max);
-/* The VM's parameters (main.c) as board_params_format's line
+/* The VM's parameters (main.c) as vm_params_format's line
  * (actor_memory=16K memory=160K ...) into buf, for `gogo device info`:
  * what the Vm runs with, or before a boot what one would resolve. Read
  * from another task: a snapshot. */

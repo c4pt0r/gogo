@@ -88,7 +88,7 @@ typedef struct ConfigInfo {
     uint32_t image_major, image_minor;   /* image formats it runs (major 0: unknown) */
     const char *const *provides;    /* requirement names, NULL-terminated */
     /* The VM's parameters as name=value fields separated by single spaces
-     * (board_params_format, runtime/board/board_main.h), NUL-terminated;
+     * (vm_params_format, runtime/board/params.h), NUL-terminated;
      * empty: none. Here, not a pointer, so the board keeps no static copy. */
     char params[160];
 } ConfigInfo;

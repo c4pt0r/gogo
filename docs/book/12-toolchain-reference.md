@@ -357,8 +357,12 @@ field of an embedding host's `gogo_config` (chapter 18.3); the flag beats
 the key, the key beats the default, the same rule on every platform. A
 value past the most is cut to it with one line on standard error (`gogo:
 vm.actor_memory 2G is over this VM's 1G; using 1G`); a flag that is not
-a number is a usage error. SIZE is bytes, with an optional `K`, `M` or
-`G`.
+a number, or has no value, is a usage error. SIZE is bytes, with an
+optional `K`, `M` or `G`; `--memory 0` is no limit (it undoes a
+`vm.memory` key). gogovm answers its parameter flags in its config store
+(so a program's `sys.Config("vm.actor_memory")` sees what the VM runs
+with). Ports and actors share the 65536 PID slots: ports past what the
+actors leave are cut, with a line when you gave them.
 
 | Flag | Key | Default (a board's) | Most | Bounds |
 |---|---|---|---|---|

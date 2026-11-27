@@ -524,7 +524,7 @@ in `cmd/gogo/flash.go`.
   code_mem=64K bytes_handles=64/16 provides=<name>,...`
   (`GOGO_FIRMWARE_VERSION`, `BOARD_NAME`, the image format, the VM's
   parameters as `main.c` resolved them at boot (`vm_params_resolve`: the
-  config keys over the build's defaults; `board_params_format`, values
+  config keys over the build's defaults; `vm_params_format`, values
   shown here are the defaults), and `esp_board`'s drivers and mounts plus
   `float`: what an image's requirements are checked against), which `gogo device info`
   prints and `gogo setup` compares with the firmware it is about to

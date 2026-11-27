@@ -9,11 +9,14 @@
 /* A host whose config store is `keys` ("k=v\n" lines) and whose stream 2
  * goes to `said`. */
 static const char *keys;
+static const char *flags[PARAM_COUNT];   /* a platform's flags (params_overlay) */
 static char said[1024];
 static size_t said_n;
 
 static int32_t kv_get(void *ctx, const uint8_t *k, uint32_t kl, uint8_t *buf, uint32_t cap) {
     (void)ctx;
+    int32_t f = params_overlay(flags, k, kl, buf, cap);
+    if (f >= 0) return f;
     for (const char *p = keys; p && *p;) {
         const char *e = strchr(p, '\n'), *eq = strchr(p, '=');
         if (!e) e = p + strlen(p);
@@ -38,21 +41,24 @@ static void kv_write(void *ctx, int stream, const char *s, size_t n) {
 
 static const gogo_host kv_host = { .size = sizeof(gogo_host), .write = kv_write, .config_get = kv_get };
 
-/* p resolved from the defaults with keys k and flags set. */
-static VmParams resolve(const char *k, const VmParams *set) {
+/* p resolved from the defaults with keys k and the flags in `flags`
+ * (cleared after). */
+static VmParams resolve(const char *k, const void *unused) {
     VmParams p;
+    (void)unused;
     keys = k;
     said_n = 0;
     said[0] = 0;
     vm_params_default(&p);
-    vm_params_resolve(&kv_host, NULL, set, &p);
+    vm_params_resolve(&kv_host, NULL, &p);
+    memset(flags, 0, sizeof flags);
     return p;
 }
 
 /* Defaults; a key; a flag over the key; K / M / G; bad values said and
  * ignored; out of range clamped and said. */
 TEST(params_precedence) {
-    VmParams d, p, set;
+    VmParams d, p;
     vm_params_default(&d);
     p = resolve(NULL, NULL);
     CHECK(memcmp(&p, &d, sizeof p) == 0);
@@ -72,11 +78,10 @@ TEST(params_precedence) {
     CHECK_EQ(p.bytes_per_actor, 5);
     CHECK_EQ(said_n, 0);
 
-    memset(&set, 0, sizeof set);
-    set.actor_memory = 12288;
-    set.max_actors = 50;
-    set.bytes_handles = 10;
-    p = resolve("vm.actor_memory=8K\nvm.max_actors=100\nvm.handles=20/5\n", &set);
+    flags[PARAM_ACTOR_MEMORY] = "12K";
+    flags[PARAM_MAX_ACTORS] = "50";
+    flags[PARAM_HANDLES] = "10";
+    p = resolve("vm.actor_memory=8K\nvm.max_actors=100\nvm.handles=20/5\n", NULL);
     CHECK_EQ(p.actor_memory, 12288);
     CHECK_EQ(p.max_actors, 50);
     CHECK_EQ(p.bytes_handles, 10);   /* the flag's, its per-actor the default's at most 10 */
@@ -114,10 +119,23 @@ TEST(params_ceilings) {
     CHECK_EQ(p.actor_memory, 1024);
     CHECK(strstr(said, "gogo: vm.actor_memory 100 is under 1K; using 1K\n") != NULL);
     CHECK_EQ(p.bytes_per_actor, 8);
-    /* Ports past 2048 are refused (as before): the default. */
+    /* Ports past 2048 are cut to it; past what the actors leave, cut
+     * further and said, the default silently. */
     p = resolve("vm.max_ports=4000\n", NULL);
-    CHECK_EQ(p.max_ports, d.max_ports);
-    CHECK(strstr(said, "gogo: vm.max_ports refused") != NULL);
+    CHECK_EQ(p.max_ports, PORT_MAX_CEILING);
+    CHECK(strstr(said, "gogo: vm.max_ports 4000 is over this VM's 2048; using 2048\n") != NULL);
+    p = resolve("vm.max_actors=65000\nvm.max_ports=2048\n", NULL);
+    CHECK_EQ(p.max_ports, 536);
+    CHECK(strstr(said, "gogo: vm.max_ports cut to 536: actors + ports at most 65536\n") != NULL);
+    p = resolve("vm.max_actors=65520\n", NULL);
+    CHECK_EQ(p.max_ports, 16);
+    CHECK_EQ(said_n, 0);
+    /* M alone (gogo_config.bytes_per_actor without bytes_handles): N kept. */
+    flags[PARAM_HANDLES] = "/4";
+    p = resolve("vm.handles=40\n", NULL);    /* the overlay beats the whole key */
+    CHECK_EQ(p.bytes_handles, d.bytes_handles);
+    CHECK_EQ(p.bytes_per_actor, 4);
+    CHECK_EQ(said_n, 0);
 #if GOGO_ARENA_BYTES
     p = resolve("vm.memory=1G\n", NULL);
     CHECK_EQ(p.memory, GOGO_ARENA_BYTES);

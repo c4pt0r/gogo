@@ -186,9 +186,18 @@ the keys in 11.3, gogovm's flags in 12): a field set here beats the host's
 config key of the same parameter (read through its `config_get`, when it
 has one), which beats the library's default, and a value past the most is
 cut to it with one line on stream 2. `code.mem` has no field: its key or
-16 MB. The last three fields were appended after v0.2.0 (the struct is
+16 MB. The VM's `config_get` answers the fields that are set before
+asking the host's store, so `sys.Config("vm.actor_memory")` in a program
+sees them. The last three fields were appended after v0.2.0 (the struct is
 size-first: a host compiled against an older header passes a smaller
 `size`, and they read as 0).
+
+**Changed after v0.2.0** for a host that sets none of these: an actor's
+default limit is 1 MB (was 256 KB), the off-heap `Bytes` caps 4096 / 256
+(were 64 / 16; the table and the lists grow as they are used), and with
+`GOGO_CONFIG_CODE_LOAD` module code may take 16 MB (was 64 KB); and
+`gogo_new` asks the host's `config_get`, if it has one, for the `vm.*`,
+`node.max_links` and `code.mem` keys.
 
 Over `mem_limit`, the VM's allocations fail and the actor that asked is
 stopped with `oom`, as when an actor goes over its own limit

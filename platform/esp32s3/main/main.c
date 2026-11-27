@@ -61,9 +61,9 @@ void main_esp_params(char *buf, size_t cap) {
         gogo_host h = esp_host;
         h.write = NULL;
         vm_params_default(&p);
-        vm_params_resolve(&h, NULL, NULL, &p);
+        vm_params_resolve(&h, NULL, &p);
     }
-    board_params_format(&p, buf, cap);
+    vm_params_format(&p, buf, cap);
 }
 
 #if CONFIG_GOGO_NET
@@ -114,7 +114,7 @@ static void vm_task(void *arg) {
      * defaults. On this task's stack, which never returns: no static RAM. */
     VmParams params;
     vm_params_default(&params);
-    vm_params_resolve(&esp_host, NULL, NULL, &params);
+    vm_params_resolve(&esp_host, NULL, &params);
     /* The one boot path (runtime/board): vm_init, vm_boot (the image is
      * module 0, its requirements checked), the net stack, the file
      * systems and the input source, then vm_run. */

@@ -36,6 +36,7 @@
 #include "vfs_int.h"
 #include "lfs_be.h"
 #include "platform_esp.h"
+#include "params.h"
 #include "host.h"
 
 #include <stdbool.h>
@@ -96,27 +97,15 @@ static uint32_t wanted_blocks(uint32_t part_blocks) {
     char v[16];
     int32_t n = config_esp_get("fs.flash.size", (uint8_t *)v, sizeof v - 1u);
     if (n < 0) return part_blocks;
-    uint64_t bytes = 0;
-    int32_t i = 0;
-    bool ok = n > 0 && n < (int32_t)sizeof v;
-    for (; ok && i < n && v[i] >= '0' && v[i] <= '9'; i++) {
-        bytes = bytes * 10u + (uint64_t)(v[i] - '0');
-        if (bytes > 0xFFFFFFFFull) ok = false;
-    }
-    if (ok && i == 0) ok = false;
-    if (ok && i < n) {
-        char s = v[i++];
-        if (s == 'K' || s == 'k') bytes *= 1024u;
-        else if (s == 'M' || s == 'm') bytes *= 1024u * 1024u;
-        else ok = false;
-        if (i != n) ok = false;
-    }
+    params_num bytes = 0;   /* the VM parameters' parser (runtime/board/params.h): K, M or G */
+    bool ok = n > 0 && n < (int32_t)sizeof v && params_parse(v, (uint32_t)n, true, &bytes) == (uint32_t)n &&
+              bytes < 0xFFFFFFFFu;
     if (!ok) {
-        platform_esp_say("gogo: bad fs.flash.size (bytes, K or M suffix); using the whole partition");
+        platform_esp_say("gogo: bad fs.flash.size (bytes, K, M or G suffix); using the whole partition");
         return part_blocks;
     }
     if (bytes < MIN_BYTES) bytes = MIN_BYTES;
-    uint64_t b = bytes / BLOCK;
+    uint32_t b = (uint32_t)bytes / BLOCK;
     return b > part_blocks ? part_blocks : (uint32_t)b;
 }
 

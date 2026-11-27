@@ -10,6 +10,7 @@
 #endif
 #include "test.h"
 #include "gogo_posix.h"
+#include "embed.h"     /* the Vm inside, for the parameters */
 #include <pthread.h>
 #include <sched.h>
 #include <stdbool.h>
@@ -849,6 +850,59 @@ TEST(embed_sized_structs) {
     vm = new_vm(&thost, &t, &c);
     CHECK(vm != NULL);
     gogo_free(vm);
+    tctx_done(&t);
+}
+
+/* The VM's parameters in the config (appended after v0.2.0): each is
+ * honoured, bytes_per_actor alone too (with the default VM-wide count); a
+ * config from an older header, whatever follows it in memory, gets the
+ * defaults. */
+typedef struct OldConfig { gogo_config c; } OldConfig;
+
+TEST(embed_config_params) {
+    TCtx t; tctx_init(&t);
+    gogo_config c = GOGO_CONFIG_INIT;
+    c.actor_memory = 64u << 10;
+    c.bytes_handles = 100;
+    c.bytes_per_actor = 10;
+    gogo_vm *vm = new_vm(&thost, &t, &c);
+    CHECK(vm != NULL);
+    if (vm) {
+        CHECK_EQ(vm->vm.actor_words, 16384);
+        CHECK_EQ(vm->vm.bytes_cap, 100);
+        CHECK_EQ(vm->vm.bytes_per_actor, 10);
+        gogo_free(vm);
+    }
+    c = (gogo_config)GOGO_CONFIG_INIT;
+    c.bytes_per_actor = 4;                      /* alone */
+    vm = new_vm(&thost, &t, &c);
+    CHECK(vm != NULL);
+    if (vm) {
+        CHECK_EQ(vm->vm.bytes_cap, GOGO_BYTES_HANDLES);
+        CHECK_EQ(vm->vm.bytes_per_actor, 4);
+        CHECK_EQ(vm->vm.actor_words, GOGO_DEFAULT_MAX_WORDS);
+        gogo_free(vm);
+    }
+    OldConfig o;
+    memset(&o, 0x5A, sizeof o);                 /* garbage where the new fields are */
+    o.c.size = (uint32_t)offsetof(gogo_config, actor_memory);
+    o.c.flags = 0;
+    o.c.mem_limit = 0;
+    o.c.max_actors = 0;
+    o.c.reserved = 0;
+    o.c.grant = NULL;
+    o.c.fs_root = NULL;
+    o.c.fs_quota = 0;
+    o.c.max_ports = 0;
+    o.c.max_links = 0;
+    vm = new_vm(&thost, &t, &o.c);
+    CHECK(vm != NULL);
+    if (vm) {
+        CHECK_EQ(vm->vm.actor_words, GOGO_DEFAULT_MAX_WORDS);
+        CHECK_EQ(vm->vm.bytes_cap, GOGO_BYTES_HANDLES);
+        CHECK_EQ(vm->vm.bytes_per_actor, GOGO_BYTES_PER_ACTOR);
+        gogo_free(vm);
+    }
     tctx_done(&t);
 }
 
