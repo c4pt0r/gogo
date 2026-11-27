@@ -1,0 +1,8 @@
+advertising as gogo-demo
+connected: 4c:2a:91:07:5e:d3 mtu 23
+mtu 185
+subscribed 0 true
+subscribed 2 true
+command: ping
+command: drain
+command: bye

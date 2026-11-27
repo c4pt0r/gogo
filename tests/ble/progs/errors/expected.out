@@ -1,0 +1,15 @@
+no name: bad argument
+27-byte name: bad argument
+no services: bad argument
+five services: too many: a fixed table is full
+nine in a service: too many: a fixed table is full
+seventeen in all: too many: a fixed table is full
+empty service: bad argument
+bad UUID: bad argument
+bad 128-bit UUID: bad argument
+no flags: bad argument
+16 in all: ok
+base UUID: ok
+first: true
+second: busy
+third after close: true

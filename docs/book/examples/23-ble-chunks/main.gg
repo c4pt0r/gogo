@@ -1,0 +1,86 @@
+// A value longer than one notification goes in pieces of MaxNotify(mtu)
+// bytes, each sent when the port's Done says the Bluetooth stack has
+// taken the one before: the sender never runs ahead of the radio.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/ble"
+	"gogo/bytes"
+	"gogo/port"
+)
+
+const (
+	logChar  = 0 // Notify: the text, in pieces
+	sendChar = 1 // Write: "send" asks for it
+)
+
+const text = "A notification carries at most MTU - 3 bytes, so this text of 100 bytes goes to the phone in pieces."
+
+// sendChunked pushes data to characteristic char in pieces of
+// MaxNotify(mtu) bytes, one at a time; ok is false if one was refused
+// (the phone unsubscribed or went away).
+func sendChunked(p actor.PID, char int, data bytes.Bytes, mtu int) (pieces int, ok bool) {
+	size := ble.MaxNotify(mtu)
+	for at := 0; at < data.Len(); at += size {
+		end := at + size
+		if end > data.Len() {
+			end = data.Len()
+		}
+		ble.SendNotify(p, char, data.Slice(at, end))
+		pieces++
+		if waitDone(p) < 0 {
+			return pieces, false
+		}
+	}
+	return pieces, true
+}
+
+// waitDone returns the Seq of the next port.Done from p.
+func waitDone(p actor.PID) int {
+	for {
+		if d, ok := actor.Receive().(port.Done); ok && d.From == p {
+			return d.Seq
+		}
+	}
+}
+
+func main() {
+	p, err := ble.Open(ble.Config{
+		Name: "gogo-log",
+		Services: []ble.Service{{
+			UUID: ble.UUID("6e400001-b5a3-f393-e0a9-e50e24dcca9e"),
+			Chars: []ble.Characteristic{
+				{UUID: ble.UUID("6e400003-b5a3-f393-e0a9-e50e24dcca9e"), Flags: ble.Notify},
+				{UUID: ble.UUID("6e400002-b5a3-f393-e0a9-e50e24dcca9e"), Flags: ble.Write},
+			},
+		}},
+	})
+	if err != nil {
+		println("ble:", err.Error())
+		return
+	}
+	data := bytes.FromString(text)
+	mtu := ble.DefaultMTU
+	for {
+		post, ok := actor.Receive().(port.Post)
+		if !ok {
+			continue
+		}
+		ev, _ := ble.Event(post)
+		switch e := ev.(type) {
+		case ble.Connected:
+			mtu = e.MTU
+		case ble.MTUChanged:
+			mtu = e.MTU
+		case ble.Written:
+			if e.Char == sendChar && e.Data.String() == "send" {
+				n, ok := sendChunked(p, logChar, data, mtu)
+				println("mtu", mtu, "->", n, "pieces of up to", ble.MaxNotify(mtu), "bytes, ok:", ok)
+			}
+		case ble.Disconnected:
+			println("phone gone")
+			return
+		}
+	}
+}
