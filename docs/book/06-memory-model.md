@@ -100,7 +100,13 @@ Sizes take a `K`, `M` or `G` suffix. A value past the platform's ceiling is
 cut to it, with one line on the console (`gogo: vm.actor_memory 2M is over
 this VM's 262140; using 262140` on a board, where an actor holds at most
 65535 words), and one that is not a number is ignored with a line; `gogo
-config set` refuses both before writing. A board's ceilings come from its
+config set` refuses one that is not a number or past the most of any
+platform before writing, and on a board also one past that board's own
+ceilings or that could not boot (an actor table larger than half of
+`vm.memory`, a `vm.memory` under 32 KB). If the keys still leave a VM
+that does not fit, it says `gogo: out of memory with vm.max_actors as
+set; starting with the defaults` and starts with the defaults, so a
+board stays reachable for `gogo config rm`. A board's ceilings come from its
 RAM: raising `vm.actor_memory` lets one actor take more of the 160 KB, it
 does not make more. Chapter 12 lists the flags, chapter 11.3 the keys.
 

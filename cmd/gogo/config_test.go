@@ -767,3 +767,26 @@ func TestConfigExport(t *testing.T) {
 		t.Fatalf("local export: %v\n%s", err, out)
 	}
 }
+
+// A board's limits refuse what it could not boot with (gogo config set on
+// a board asks for its info first; a firmware without limits is not
+// checked).
+func TestBoardFit(t *testing.T) {
+	info := parseBoardInfo("fw=v0.3.0 board=sticks3 actor_memory=16K memory=160K max_actors=1024 max_ports=16")
+	for _, c := range []struct {
+		k, v string
+		ok   bool
+	}{
+		{"vm.max_actors", "2048", true}, {"vm.max_actors", "60000", false}, {"vm.max_actors", "20480", true},
+		{"vm.max_actors", "20481", false}, {"vm.memory", "1K", false}, {"vm.memory", "32K", true},
+		{"vm.memory", "0", true}, {"vm.actor_memory", "256K", true}, {"vm.actor_memory", "1M", false},
+		{"vm.handles", "1024/64", true}, {"vm.handles", "4096", false},
+	} {
+		if err := boardFit(info, c.k, c.v); (err == nil) != c.ok {
+			t.Errorf("%s=%s: %v", c.k, c.v, err)
+		}
+	}
+	if err := boardFit(parseBoardInfo("fw=v0.2.0 board=sticks3"), "vm.max_actors", "60000"); err != nil {
+		t.Errorf("no limits: %v", err)
+	}
+}

@@ -1,0 +1,11 @@
+package main
+
+// A config key the VM cannot boot with (60000 actors: their table alone
+// is more than the 160 KB) is named on stderr and the VM starts with the
+// defaults: a board stays reachable (gogo config rm) whatever its keys.
+
+import "gogo/actor"
+
+func main() {
+	println("running", actor.Limit(actor.Self()) > 0)
+}

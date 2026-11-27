@@ -362,7 +362,9 @@ optional `K`, `M` or `G`; `--memory 0` is no limit (it undoes a
 `vm.memory` key). gogovm answers its parameter flags in its config store
 (so a program's `sys.Config("vm.actor_memory")` sees what the VM runs
 with). Ports and actors share the 65536 PID slots: ports past what the
-actors leave are cut, with a line when you gave them.
+actors leave are cut, with a line when you gave them. If the VM cannot
+start with the parameters (out of memory), it names the keys and flags
+that changed them and starts with the defaults.
 
 | Flag | Key | Default (a board's) | Most | Bounds |
 |---|---|---|---|---|

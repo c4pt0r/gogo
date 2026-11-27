@@ -23,8 +23,10 @@ typedef struct BoardRun {
     /* The VM's parameters (params.h), resolved by the board
      * (vm_params_resolve: its flags, the config keys, its defaults):
      * max_actors is vm_init's actor table, the rest vm_params_apply's.
-     * NULL: the defaults (NULL: vm_params_default) and the config keys,
-     * resolved here. */
+     * NULL: the build's defaults and the config keys, resolved here. If
+     * the VM does not fit with them (out of memory at vm_init or the
+     * boot), the keys that changed them are named on stream 2 and it
+     * boots with defaults (NULL: vm_params_default). */
     const struct VmParams *params, *defaults;
     struct VfsState *vfs;              /* NULL: no file system builtin */
     struct InputState *input;          /* NULL: no input source */

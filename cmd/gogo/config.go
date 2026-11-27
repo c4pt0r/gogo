@@ -559,9 +559,70 @@ func configExec(args []string, env configEnv) error {
 			writeExport(env.out, target, kvs)
 			return nil
 		}
+		if op == "set" && boardFitKeys[args[0]] {
+			if err := checkBoardFit(f, args[0], args[1]); err != nil {
+				return err
+			}
+		}
 		return boardConfig(f, op, args, env.out, timeout)
 	}
 	return fileConfig(target.path, op, args, env.out)
+}
+
+// boardFitKeys are the keys a board's limits bound beyond their ranges.
+var boardFitKeys = map[string]bool{"vm.actor_memory": true, "vm.memory": true, "vm.max_actors": true, "vm.handles": true}
+
+// checkBoardFit asks the board for its limits (its info line; a firmware
+// before them is not checked) and refuses a value it could not boot with.
+func checkBoardFit(rw io.ReadWriter, key, value string) error {
+	c := newBoardConn(rw)
+	_, text, err := c.request("info", nil, 5*time.Second)
+	c.close()
+	if err != nil {
+		return nil
+	}
+	return boardFit(parseBoardInfo(text), key, value)
+}
+
+// The board's ceilings (runtime/vm/config.h, the board configuration) and
+// the least memory a VM boots in: the actor table (4 bytes an actor) may
+// take at most half of vm.memory, and vm.memory is at least 32K.
+const (
+	boardActorMax   = 256 << 10 // 65535 words; a board takes "256K" as that
+	boardHandlesMax = 1024
+	boardMemoryMin  = 32 << 10
+)
+
+// boardFit checks key=value against a board whose info fields are info
+// (its limits: memory, max_actors); nil when info has no limits.
+func boardFit(info map[string]string, key, value string) error {
+	mem, ok1 := sizeVal(info["memory"], true)
+	actors, err2 := strconv.ParseUint(info["max_actors"], 10, 32)
+	if !ok1 || err2 != nil {
+		return nil
+	}
+	bad := func(why string) error {
+		return fmt.Errorf("gogo config: %s %s does not fit this board: %s", key, value, why)
+	}
+	switch key {
+	case "vm.actor_memory":
+		if n, _ := sizeVal(value, true); n > boardActorMax {
+			return bad("an actor holds at most 256K (65535 words) on a board")
+		}
+	case "vm.handles":
+		if n, _ := strconv.ParseUint(strings.SplitN(value, "/", 2)[0], 10, 32); n > boardHandlesMax {
+			return bad(fmt.Sprintf("at most %d handles on a board", boardHandlesMax))
+		}
+	case "vm.max_actors":
+		if n, _ := strconv.ParseUint(value, 10, 32); n*4 > mem/2 {
+			return bad(fmt.Sprintf("its actor table (%d bytes) would take more than half of the VM's %s; at most %d", n*4, sizeText(mem), mem/8))
+		}
+	case "vm.memory":
+		if n, _ := sizeVal(value, true); n != 0 && (n < boardMemoryMin || n < actors*8) {
+			return bad(fmt.Sprintf("the VM needs at least %s with %d actors (vm.max_actors)", sizeText(max(boardMemoryMin, actors*8)), actors))
+		}
+	}
+	return nil
 }
 
 // fileConfig runs op on the local store.
