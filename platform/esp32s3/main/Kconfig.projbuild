@@ -103,6 +103,20 @@ menu "gogo"
             (gogo/node), over gogo's tcp. When off, dist.c is not built and
             port.Open("node") returns ok=false (an image that needs it is refused).
 
+    config GOGO_BLE
+        bool "Bluetooth LE peripheral port (ble)"
+        depends on BT_NIMBLE_ENABLED
+        default y
+        help
+            Build the "ble" port (runtime/ble/ble.c, ble_esp.c): a GATT
+            server the program declares at port.Open, on ESP-IDF's NimBLE
+            host (peripheral only), with the shared host lifetime of
+            ble_host.c. Needs NimBLE, which sdkconfig.ble turns on (the
+            default build lists it; `gogo firmware` adds it with the
+            feature). When off, the board does not list the driver (an
+            image that requires "ble" is refused) and port.Open("ble")
+            fails with errors.NotFound.
+
     config GOGO_SCREEN
         bool "Text screen port (screen)"
         default y

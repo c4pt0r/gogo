@@ -62,7 +62,7 @@ firmware() {
     work=${GOGO_RELEASE_WORK:-$repo/build/release-work}/$board
     case $board in
     sticks3) set -- ;;
-    cardputer) set -- -DGOGO_BOARD=cardputer "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.cardputer" ;;
+    cardputer) set -- -DGOGO_BOARD=cardputer "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.ble;sdkconfig.cardputer" ;;
     *) die "unknown board $board (boards: $BOARDS)" ;;
     esac
     idf_env
