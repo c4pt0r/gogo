@@ -25,6 +25,18 @@ rc=$?
 if [ $rc = 0 ] && cmp -s "$D/prog/want.out" "$T/out"; then echo "ok   program (first alpha, refusal codes, posts from a thread)"
 else echo "FAIL program: exit $rc"; diff "$D/prog/want.out" "$T/out"; cat "$T/err"; fail=1; fi
 
+# A port closed while its thread waits for room (GOGO_EFULL): the
+# driver's close stops the thread before it joins it, so the VM ends.
+"$B/gogo" build "$D/abandon" -o "$T/abandon.ggb" || { echo "FAIL build $D/abandon"; exit 1; }
+GOGO_CONFIG=$T/no-config "$VM" "$T/abandon.ggb" > "$T/abandon.out" 2> /dev/null &
+pid=$!
+n=0
+while kill -0 $pid 2>/dev/null && [ $n -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+if kill -0 $pid 2>/dev/null; then
+    kill -9 $pid; echo "FAIL a ticker closed with a backlog: the VM hangs"; fail=1
+elif wait $pid && grep -qx "open true" "$T/abandon.out"; then echo "ok   a ticker closed with a backlog ends"
+else echo "FAIL abandon: exit status or output"; cat "$T/abandon.out"; fail=1; fi
+
 cat > "$T/err.want" <<'END'
 gogo: board port "a_name_longer_than_thirty_one_bytes" not registered: the name is too long
 gogo: board port "alpha" not registered: the name is taken (by a driver of the runtime or the board, or a board port before it)

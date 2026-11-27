@@ -475,6 +475,19 @@ The rules:
 - **A post can fail.** `GOGO_EFULL` with 256 posts queued (try again
   later), `GOGO_ECLOSED` once the VM has finished. Free the poster
   (`gogo_poster_free`) when the thread is done with it.
+- **Never block in `close` on a thread that may be posting.** `close`
+  runs on the VM's thread, the only one that drains posts: a driver
+  thread waiting for room (`GOGO_EFULL`) waits for that very thread, so
+  a `close` that joins it, or waits on a semaphore it gives, deadlocks.
+  `close` only tells the thread to stop (an atomic flag, a task
+  notification); the thread checks the flag before each post and while
+  it waits for room, frees its own poster and ends; then `close` may
+  join it. Wait for room with a pause (`vTaskDelay`, `nanosleep`), not a
+  yield: a driver task of higher priority than the VM task that yields
+  never lets the VM run. A post to a port that has closed is not an
+  error (it is dropped when delivered), so the flag is the thread's one
+  sign to stop. `ticker.c` follows this, and `make test-board-ports`
+  closes one with 100,000 posts still to make.
 - **An open port keeps the VM alive**, as it may still get events: a
   program waiting for a sensor's next reading does not end. Its owner's
   exit closes it.
