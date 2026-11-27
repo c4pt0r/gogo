@@ -1,0 +1,19 @@
+// One Connect to a server whose handshake slots are all taken: it fails
+// with errors.Busy (the server's busy frame), not Refused.
+package main
+
+import (
+	"gogo/errors"
+	"gogo/node"
+	"gogo/sys"
+)
+
+func main() {
+	addr, _ := sys.Config("test.server")
+	err := node.ConnectOpt(addr, node.Options{Name: "busy", TimeoutMs: 3000})
+	println("connect busy", err == errors.Busy)
+	if err != nil {
+		println(err.Error())
+	}
+	println("self", node.Self() == "")
+}

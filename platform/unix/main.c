@@ -188,6 +188,7 @@ static void host_net_ready(Vm *vm, void *ctx) {
 
 static int run_main(Vm *vm, void *ctx) {
     (void)ctx;
+    platform_set_links(vm->max_links);   /* gogo/node's handshake slots ("\0links") */
     if (vm_start(vm)) return EXIT_USAGE;   /* said on stream 2: no main, or no memory */
     for (uint16_t i = 0; i < vm->table_cap && !main_pid; i++) {
         if (!(vm->table[i] & 1u)) main_pid = ((const Actor *)vm->table[i])->id;

@@ -30,6 +30,10 @@ void platform_notify(void);              /* any thread, async-signal-safe */
 /* The program's arguments, as sys.Args returns them (argv[0..argc) are the
  * strings after the image on the command line; they must outlive the VM). */
 void platform_set_args(int argc, char *const *argv);
+/* The VM's cap on node links (vm->max_links, resolved from --max-links,
+ * node.max_links and the default), as the key "\0links" answers it: what
+ * gogo/node sizes its handshake slots by. 0 (the default): unset. */
+void platform_set_links(uint32_t n);
 int32_t platform_config_get(const uint8_t *key, uint32_t klen, uint8_t *buf, uint32_t cap);
 
 /* The wall clock a run starts with (Unix ms, 0 = unknown): the host clock,

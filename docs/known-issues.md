@@ -802,6 +802,15 @@ rebuilt:
   agent (one entry per board, 256 KB at most) refuses new ones, whatever
   the caps. A board's own links cost it two ports each (its MCU stack
   cannot hand a TCP connection to the node port).
+- **Joining needs retries.** A server takes *L* / 32 connections into
+  their handshake at once (16 on a host, 2 on a board; at most 64) and
+  answers the others `errors.Busy`; `node.Connect` makes one attempt, so a
+  board retries with backoff and jitter (book 20.3). Anyone who can reach
+  the port can keep those slots busy (each for up to the handshake
+  timeout, 5 s), delaying joins, though not exhausting the server's ports
+  or memory. `Connect`'s errors overlap: `Busy` also means this VM is a
+  node already, and `Refused` covers a wrong token, a full server and a
+  server that is not listening.
 - **Tables sized by the link cap** *L*: 48 + 2*L* remote PIDs known at once
   (and at most 4096 minus the port cap: remote PIDs live between 0xF000
   and the port PIDs), 48 + 2*L* local PIDs given out (dead ones are
