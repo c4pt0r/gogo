@@ -202,8 +202,13 @@ test-tls-c: $(BUILD)/test_tls
 # ThreadSanitizer with test-tls-tsan.
 test-tls-threads: $(BUILD)/test_tls_threads
 	GOGO_TLS_THREADS=$(CURDIR)/$(BUILD)/test_tls_threads go test -count=1 -run '^TestTLSThreads$$' ./tests/net/
+# GCC warns, as an error under -Werror, that TSan does not model
+# atomic_thread_fence (vm_barrier, which orders the event ring); clang has
+# no such warning. TSan still checks every other access.
+TSAN_WNO := $(shell $(CC) -Werror -Wno-tsan -E -x c /dev/null >/dev/null 2>&1 && echo -Wno-tsan)
+
 test-tls-tsan:
-	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread" build/tsan/test_tls_threads
+	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread $(TSAN_WNO)" build/tsan/test_tls_threads
 	TSAN_OPTIONS="halt_on_error=1 suppressions=$(CURDIR)/runtime/net/tls/test/tsan.supp" \
 	    GOGO_TLS_THREADS=$(CURDIR)/build/tsan/test_tls_threads go test -count=1 -run '^TestTLSThreads$$' ./tests/net/
 else
@@ -413,7 +418,7 @@ test-embed: $(BUILD)/test_embed embed-images
 	GOGO_EMBED_IMAGES=$(BUILD)/embed $(BUILD)/test_embed
 
 test-embed-tsan:
-	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread" build/tsan/test_embed embed-images
+	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread $(TSAN_WNO)" build/tsan/test_embed embed-images
 	TSAN_OPTIONS="halt_on_error=1" GOGO_EMBED_IMAGES=build/tsan/embed build/tsan/test_embed
 
 ifeq ($(shell uname -s),Darwin)
@@ -560,7 +565,7 @@ test-board-ports: $(BUILD)/board-ports/gogovm gogo-cmd
 # The same under ThreadSanitizer: posts from the test drivers' threads
 # against the VM thread (the inbox, posters, the ports host's malloc).
 test-board-ports-tsan:
-	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread" build/tsan/board-ports/gogovm gogo-cmd
+	$(MAKE) BUILD=build/tsan EXTRA_CFLAGS="-fsanitize=thread $(TSAN_WNO)" build/tsan/board-ports/gogovm gogo-cmd
 	TSAN_OPTIONS="halt_on_error=1" runtime/board/test/test.sh build/tsan
 
 # examples/dice-driver: a third-party port driver on gogo.h alone (book
