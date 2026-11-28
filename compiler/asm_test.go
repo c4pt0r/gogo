@@ -69,6 +69,20 @@ func TestOpcodesMatchC(t *testing.T) {
 			t.Errorf("%s has no C twin", n)
 		}
 	}
+	// gogo dis names a builtin from builtinNames: each B_<NAME> = n of the
+	// header must be named <NAME> there (a reserved slot the header later
+	// assigned kept its RESERVED_n name once: issue #2).
+	for _, m := range regexp.MustCompile(`\bB_(\w+)\s*=\s*(\d+)`).FindAllStringSubmatch(text, -1) {
+		n := 0
+		for _, ch := range m[2] {
+			n = n*10 + int(ch-'0')
+		}
+		if n >= len(builtinNames) {
+			t.Errorf("B_%s = %d: no builtinNames entry", m[1], n)
+		} else if builtinNames[n] != m[1] {
+			t.Errorf("builtinNames[%d] = %q, want %q (B_%s)", n, builtinNames[n], m[1], m[1])
+		}
+	}
 	if len(opNames) != int(OpSetfield)+1 || len(builtinNames) != int(BSprint)+1 {
 		t.Error("name tables out of sync")
 	}

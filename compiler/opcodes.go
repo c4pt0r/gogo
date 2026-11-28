@@ -386,7 +386,7 @@ var builtinNames = [...]string{"PRINTLN", "SPAWN", "SELF", "SEND", "RECEIVE", "M
 	"SLICE", "MAKE_SLICE", "APPEND", "COPY", "CAP", "STR_FROM", "BYTESLICE_FROM",
 	"STR_CMP", "BUF_NEW", "BUF_WRITE", "BUF_FREEZE", "BYTES_FROM", "BYTES_EQUAL",
 	"BYTES_COPYTO", "PORT_HANDOFF", "NET_SUBSCRIBE", "CONFIG_GET", "FS", "CODE", "UNIX_TIME", "SET_UNIX_TIME", "RANDOM", "FLOAT", "PRINTLNU",
-	"PANIC", "CMP", "CALL_ERR", "REGISTER_ERR", "RESERVED_60", "SPRINT"}
+	"PANIC", "CMP", "CALL_ERR", "REGISTER_ERR", "LIMIT", "SPRINT"}
 
 // goConstants lists every exported Go twin of a C constant, by Go name.
 var goConstants = map[string]uint32{
