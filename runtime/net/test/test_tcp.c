@@ -1503,3 +1503,131 @@ TEST(tcp_keepalive_orphans) {
     CHECK(k.c->state == TCP_CLOSED);
     teardown();
 }
+
+/* ---- keepalive: live connections and edge cases ---- */
+
+/* Checks sent frame i is a keepalive probe of k: an ACK, seq one below
+ * snd_nxt, acknowledging all the peer sent, no data. */
+static void ka_probe(const Conn *k, int i) {
+    Out s = out_at(i);
+    CHECK_EQ(s.fl, 0x10);
+    CHECK_EQ(s.seq, k->nxt - 1u);
+    CHECK_EQ(s.ack, k->peer);
+    CHECK_EQ(s.n, 0u);
+}
+
+/* FIN_WAIT_2 with the peer still sending (data every 100 s for 600 s): its
+ * data restarts the idle time, so no probe goes out and it stays open. */
+TEST(tcp_keepalive_fin_wait_2_sending) {
+    setup();
+    Conn k = mk(TCP_FIN_WAIT_2);
+    for (int i = 0; i < 6; i++) {
+        advance(100000);
+        CHECK_EQ(tx.n, 0);
+        seg_in(k.pport, k.vport, k.peer, k.nxt, 0x18, "more");
+        k.peer += 4u;
+        CHECK_EQ(tx.n, 1);
+        CHECK_EQ(out_at(0).ack, k.peer);
+        CHECK_EQ(event_of(k.o, NULL), TYPE_CHUNK);
+        tx.n = 0;
+    }
+    CHECK(k.c->state == TCP_FIN_WAIT_2);
+    teardown();
+}
+
+/* CLOSE_WAIT with a live peer: probes acknowledge the peer's FIN, and a
+ * peer answering them keeps the connection open for 600 s. */
+TEST(tcp_keepalive_close_wait_live) {
+    setup();
+    Conn k = mk(TCP_CLOSE_WAIT);
+    advance(GOGO_NET_KEEPALIVE_IDLE_MS);
+    CHECK_EQ(tx.n, 1);
+    ka_probe(&k, 0);
+    tx.n = 0;
+    seg_in(k.pport, k.vport, k.peer, k.nxt, 0x10, NULL);
+    CHECK(ka_run(&k, now_ms + 600000u, NULL));
+    CHECK(k.c->state == TCP_CLOSE_WAIT);
+    CHECK_EQ(event_of(k.o, NULL), 0);
+    teardown();
+}
+
+/* The answer to the last probe arriving in the same drain as the reset's
+ * deadline is taken first: the connection lives and is idle again. */
+TEST(tcp_keepalive_answer_at_deadline) {
+    setup();
+    Conn k = mk(TCP_ESTABLISHED);
+    advance(GOGO_NET_KEEPALIVE_IDLE_MS);
+    for (uint32_t n = 1; n < GOGO_NET_KEEPALIVE_PROBES; n++) advance(GOGO_NET_KEEPALIVE_INTVL_MS);
+    CHECK_EQ(tx.n, (int)GOGO_NET_KEEPALIVE_PROBES);
+    tx.n = 0;
+    uint8_t b[128];
+    net_rx_offer(&nst, b, tcp_frame(b, k.pport, k.vport, k.peer, k.nxt, 0x10, 8192, NULL, false));
+    advance(GOGO_NET_KEEPALIVE_INTVL_MS);   /* the frame and the deadline, one drain */
+    CHECK_EQ(tx.n, 0);
+    CHECK(k.c->state == TCP_ESTABLISHED);
+    advance(GOGO_NET_KEEPALIVE_IDLE_MS - 1u);
+    CHECK_EQ(tx.n, 0);
+    advance(1);
+    CHECK_EQ(tx.n, 1);
+    ka_probe(&k, 0);
+    teardown();
+}
+
+/* The 32-bit clock wrapping inside the idle period, or inside the
+ * probes, changes nothing: probes at 120, 130 and 140 s, the reset at
+ * 150 s. */
+TEST(tcp_keepalive_clock_wrap) {
+    static const uint64_t before[] = { 60000u, 125000u };   /* ms before the wrap */
+    for (int w = 0; w < 2; w++) {
+        setup();
+        now_ms = 0x100000000ull - before[w];
+        Conn k = mk(TCP_ESTABLISHED);
+        uint64_t t0 = now_ms;
+        advance(GOGO_NET_KEEPALIVE_IDLE_MS - 1u);
+        CHECK_EQ(tx.n, 0);
+        for (uint32_t n = 0; n < GOGO_NET_KEEPALIVE_PROBES; n++) {
+            if (n) {
+                advance(GOGO_NET_KEEPALIVE_INTVL_MS - 1u);
+                CHECK_EQ(tx.n, (int)n);
+            }
+            advance(1);
+            CHECK_EQ(tx.n, (int)n + 1);
+            ka_probe(&k, (int)n);
+        }
+        CHECK(k.c->state == TCP_ESTABLISHED);
+        advance(GOGO_NET_KEEPALIVE_INTVL_MS - 1u);
+        CHECK(k.c->state == TCP_ESTABLISHED);
+        advance(1);
+        CHECK_EQ(now_ms - t0, (uint64_t)GOGO_NET_KEEPALIVE_IDLE_MS + GOGO_NET_KEEPALIVE_PROBES * GOGO_NET_KEEPALIVE_INTVL_MS);
+        CHECK(k.c->state == TCP_CLOSED);
+        CHECK_EQ(out_at((int)GOGO_NET_KEEPALIVE_PROBES).fl, F_RA);
+        int32_t r = -1;
+        CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
+        CHECK_EQ(r, GOGO_E_TIMEOUT);
+        teardown();
+    }
+}
+
+/* An accepted connection never resumed or handed off is probed too (its
+ * probes offer window 0); a silent peer gets it reset, and the listener's
+ * owner, who holds the port, gets Closed{Timeout} after the Accepted. */
+TEST(tcp_keepalive_accepted_paused) {
+    setup();
+    Conn k = mk(TCP_SYN_RCVD);
+    seg_in(k.pport, k.vport, k.peer, k.nxt, 0x10, NULL);
+    CHECK(k.c->state == TCP_ESTABLISHED);
+    CHECK_EQ(event_of(k.o, NULL), TYPE_NET_ACCEPTED);
+    tx.n = 0;
+    advance(GOGO_NET_KEEPALIVE_IDLE_MS);
+    CHECK_EQ(tx.n, 1);
+    ka_probe(&k, 0);
+    CHECK_EQ(out_at(0).wnd, 0);
+    for (uint32_t n = 0; n < GOGO_NET_KEEPALIVE_PROBES; n++) advance(GOGO_NET_KEEPALIVE_INTVL_MS);
+    CHECK_EQ(out_at((int)GOGO_NET_KEEPALIVE_PROBES).fl, F_RA);
+    CHECK(k.c->state == TCP_CLOSED);
+    int32_t r = -1;
+    CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
+    CHECK_EQ(r, GOGO_E_TIMEOUT);
+    CHECK_EQ(event_of(k.o, NULL), 0);
+    teardown();
+}
