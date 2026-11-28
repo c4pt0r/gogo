@@ -16,6 +16,9 @@
 #include "mbedtls/platform.h"
 #include "mbedtls/platform_time.h"
 #include "psa/crypto.h"
+#if !defined(MBEDTLS_VERSION_MAJOR) || MBEDTLS_VERSION_MAJOR < 4
+#include "mbedtls/psa_util.h"   /* mbedtls_psa_get_random: mbedTLS 3.x's config RNG */
+#endif
 
 #if (GOGO_TLS_MAX) != 1u
 #error "GOGO_TLS_MAX: only 1 (per net stack) is implemented"
@@ -281,6 +284,13 @@ static TlsConn *conn_new(const Vm *vm, NetState *ns, const TlsHw *hw, const char
                                     MBEDTLS_SSL_PRESET_DEFAULT) != 0) goto fail;
     if (hw->verify_setup(&t->conf, &t->verify) != 0) goto fail;
     t->verify_set = 1;
+#if !defined(MBEDTLS_VERSION_MAJOR) || MBEDTLS_VERSION_MAJOR < 4
+    /* mbedTLS 3.x: the SSL config carries the RNG, and mbedtls_ssl_setup
+     * fails with MBEDTLS_ERR_SSL_NO_RNG without one. 4.x (TF-PSA-Crypto)
+     * has no RNG in the config: it draws from PSA itself, the same state
+     * mbedtls_psa_get_random uses here. */
+    mbedtls_ssl_conf_rng(&t->conf, mbedtls_psa_get_random, MBEDTLS_PSA_RANDOM_STATE);
+#endif
     mbedtls_ssl_conf_authmode(&t->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
     mbedtls_ssl_conf_groups(&t->conf, groups);
     mbedtls_ssl_conf_ciphersuites(&t->conf, suites);
