@@ -74,8 +74,11 @@ typedef struct TcpPcb {
     uint16_t mss;           /* the peer's MSS */
     uint16_t seg;           /* data bytes in flight */
     uint16_t wnd;           /* the peer's window */
-    uint8_t state, flags, retries;
+    uint8_t state, flags;
+    uint8_t retries;        /* retransmissions of what is in flight; with nothing
+                             * in flight, keepalive probes sent */
     uint8_t listener;       /* SYN_RCVD: index of its listener */
+    uint8_t stall;          /* the peer's last data (or FIN) was refused (owner's quota) */
 } TcpPcb;
 
 /* An upper layer over one TCP connection (runtime/net/tls/tls.c): a pcb with TF_UPPER

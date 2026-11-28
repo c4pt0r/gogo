@@ -830,7 +830,21 @@ text grid while it is open.
   (`Connected` and the `Closed` reason in `StreamOut.user`, `Done`s owed
   in the `StreamOut`) and retried every 50 ms, in order, and no data goes
   out while `Connected` is held. RTO 1 s, doubling to 8 s, 6
-  retransmissions; TIME_WAIT 2 s. The `Out`s live in the port's
+  retransmissions; TIME_WAIT 2 s. Keepalive (RFC 1122 4.2.3.6): a
+  connection in ESTABLISHED, CLOSE_WAIT or FIN_WAIT_2 (not an orphan) with
+  nothing in flight that has heard nothing acceptable from the peer for
+  120 s sends a probe (an ACK at `snd_nxt - 1`, which a live peer
+  answers) every 10 s; after 3 unanswered probes it is reset and the
+  owner (or the upper layer, which then posts its own terminal `Closed`
+  or lets TCP post one) gets `Closed{Timeout}`, as when retransmissions
+  run out (`GOGO_NET_KEEPALIVE_IDLE_MS`, `_INTVL_MS`, `_PROBES`; idle 0
+  turns it off). The keepalive shares the connection's one timer: sending
+  data hands it to retransmission, the last ACK hands it back. Data (or a
+  FIN) the owner's quota refuses is not progress, and while it is being
+  refused nothing from the peer counts as an answer, so a mailbox that
+  never drains loses its connection after the same 150 s; an owner that
+  has room again when the timer fires gets a new idle period instead
+  (the peer's next resend is taken). The `Out`s live in the port's
   `StreamOut` (`runtime/stream`): one in flight and one queued, a third
   answered with `Done{-1}` and the connection carries on; one `Done` per
   `Out` once the peer acknowledged all of it; the `Out`s still in flight
@@ -846,7 +860,7 @@ text grid while it is open.
 - **Memory** (measured on the ESP32-S3): the stack's fixed state is
   3640 B (budget 4096 B, checked at compile time); a TCB is 56 B, a UDP
   control block 12 B, a `Port` 44 B (32-bit); the net code is about
-  11.8 KB (`make netsize`). The Wi-Fi driver takes about 30 KB of heap and
+  12.1 KB (`make netsize`). The Wi-Fi driver takes about 30 KB of heap and
   31.5 KB of static RAM; lwIP and esp_netif are not linked.
 - **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs}) error` starts the DHCP
   client actor, which owns `netif` (renewal at T1, rebinding at T2, the

@@ -767,6 +767,13 @@ rebuilt:
   - Orphaned connections (closed by the owner after `Shutdown`) are reset
     after 20 s (`GOGO_NET_ORPHAN_MS`), so a peer slower than that loses
     the end of the response.
+  - Idle connections are probed (keepalive) after 120 s with nothing from
+    the peer, every 10 s, and reset with `Closed{Timeout}` after 3
+    unanswered probes, so a vanished peer holds its slot for about
+    2.5 minutes. An owner that leaves the peer's data unread (its mailbox
+    full) for as long loses the connection the same way. The timings are
+    build-time (`GOGO_NET_KEEPALIVE_IDLE_MS`, `_INTVL_MS`, `_PROBES`);
+    there is no configuration key.
   - Incoming connections may not take the last free connection slot, so
     a device serving only incoming traffic has at most 3 at once.
   - `port.Close` after `Shutdown` finishes the close as an orphan; it

@@ -1291,3 +1291,78 @@ TEST(tcp_upper_terminal_after_normal) {
     CHECK_EQ(event_of(k.o, NULL), 0);
     teardown();
 }
+
+/* Keepalive ends an idle connection with an upper layer as retransmission
+ * would: probes (an ACK one below snd_nxt, no data), then RST; the layer
+ * is freed and the owner gets one Closed{Timeout} (none from TCP if the
+ * layer posted its own). An answered probe restarts the idle time. */
+TEST(tcp_upper_keepalive) {
+    for (int own = 0; own < 2; own++) {
+        setup();
+        Conn k = up_dial(0);
+        tcp_until_clear(&nst, k.c);         /* the layer's handshake is done */
+        advance(GOGO_NET_KEEPALIVE_IDLE_MS - 1u);
+        CHECK_EQ(tx.n, 0);
+        advance(1);
+        CHECK_EQ(tx.n, 1);
+        Out s = out_at(0);
+        CHECK_EQ(s.fl, 0x10);
+        CHECK_EQ(s.seq, k.nxt - 1u);
+        CHECK_EQ(s.ack, k.peer);
+        CHECK_EQ(s.n, 0u);
+        seg_in(k.pport, k.vport, k.peer, k.nxt, 0x10, NULL);   /* answered */
+        tx.n = 0;
+        advance(GOGO_NET_KEEPALIVE_IDLE_MS - 1u);
+        CHECK_EQ(tx.n, 0);
+        up.closed = own != 0;
+        for (uint32_t i = 0; i < GOGO_NET_KEEPALIVE_PROBES; i++) {
+            advance(i ? GOGO_NET_KEEPALIVE_INTVL_MS : 1u);
+            CHECK_EQ(tx.n, (int)i + 1);
+            CHECK_EQ(out_at((int)i).fl, 0x10);
+        }
+        CHECK(k.c->state == TCP_ESTABLISHED);
+        CHECK_EQ(up.ended, 0);
+        advance(GOGO_NET_KEEPALIVE_INTVL_MS);
+        CHECK_EQ(tx.n, (int)GOGO_NET_KEEPALIVE_PROBES + 1);
+        CHECK_EQ(out_at((int)GOGO_NET_KEEPALIVE_PROBES).fl, F_RA);
+        CHECK(k.c->state == TCP_CLOSED);
+        CHECK_EQ(up.ended, 1);
+        int32_t r = -1;
+        if (own) {
+            CHECK_EQ(event_of(k.o, NULL), 0);
+        } else {
+            CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
+            CHECK_EQ(r, GOGO_E_TIMEOUT);
+        }
+        CHECK_EQ(actor_charged_words(k.o), 0);
+        teardown();
+    }
+}
+
+/* Keepalive covers every state with an owner and nothing in flight:
+ * ESTABLISHED, CLOSE_WAIT and FIN_WAIT_2 (the owner shut down and keeps
+ * the port for the peer's data). A silent peer is probed, then the
+ * connection is reset and the owner gets Closed{Timeout}. */
+TEST(tcp_keepalive_states) {
+    static const uint8_t states[] = { TCP_ESTABLISHED, TCP_CLOSE_WAIT, TCP_FIN_WAIT_2 };
+    for (uint32_t i = 0; i < sizeof states; i++) {
+        setup();
+        Conn k = mk(states[i]);
+        advance(GOGO_NET_KEEPALIVE_IDLE_MS);   /* the fake clock fires one timer per step */
+        for (uint32_t n = 1; n < GOGO_NET_KEEPALIVE_PROBES; n++) advance(GOGO_NET_KEEPALIVE_INTVL_MS);
+        CHECK_EQ(tx.n, (int)GOGO_NET_KEEPALIVE_PROBES);
+        Out s = out_at(0);
+        CHECK_EQ(s.fl, 0x10);
+        CHECK_EQ(s.seq, k.nxt - 1u);
+        CHECK(k.c->state == states[i]);
+        advance(GOGO_NET_KEEPALIVE_INTVL_MS - 1u);
+        CHECK(k.c->state == states[i]);
+        advance(1);
+        CHECK_EQ(out_at((int)GOGO_NET_KEEPALIVE_PROBES).fl, F_RA);
+        CHECK(k.c->state == TCP_CLOSED);
+        int32_t r = -1;
+        CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
+        CHECK_EQ(r, GOGO_E_TIMEOUT);
+        teardown();
+    }
+}

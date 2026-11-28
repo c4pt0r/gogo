@@ -1,0 +1,46 @@
+// Two readers with a 4 KB limit, one after the other, dial 10.0.0.1:80
+// and :81 and then stop reading (sleep) while the peer sends: the first
+// sleeps 400 s, the second 125 s. Each then drains its mailbox and prints
+// the bytes it got and its Closed with the time.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/net"
+	"gogo/port"
+)
+
+func reader(to int, sleep int, me actor.PID) {
+	c, err := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: to})
+	println("dial", to, err == nil)
+	switch actor.Receive().(type) {
+	case net.Connected:
+		println("connected", actor.Now())
+	}
+	actor.Sleep(sleep)
+	println("awake", actor.Now())
+	got := 0
+	for {
+		switch m := actor.Receive().(type) {
+		case port.Chunk:
+			got += m.Data.Len()
+		case port.Closed:
+			println("got", got, "closed", m.Reason, actor.Now())
+			port.Close(c)
+			actor.Send(me, 1)
+			return
+		}
+	}
+}
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	actor.Sleep(100)
+	me := actor.Self()
+	actor.SpawnOpt(func() { reader(80, 400000, me) }, actor.Options{MaxMemory: 4096})
+	actor.Receive()
+	actor.SpawnOpt(func() { reader(81, 125000, me) }, actor.Options{MaxMemory: 4096})
+	actor.Receive()
+	println("done")
+}

@@ -12,9 +12,24 @@
  * always finds one (a free slot, else a TIME_WAIT or half-open one).
  *
  * Timers are the stack's own: one deadline per connection (retransmission,
- * connect timeout, TIME_WAIT, an orphan's FIN_WAIT_2 limit and absolute
- * lifetime), reported to the scheduler through the port source's
+ * connect timeout, keepalive, TIME_WAIT, an orphan's FIN_WAIT_2 limit and
+ * absolute lifetime), reported to the scheduler through the port source's
  * next_deadline and fired from its drain (tcp_poll). Not the VM timer heap.
+ *
+ * Keepalive (RFC 1122 4.2.3.6): a connection in ESTABLISHED, CLOSE_WAIT or
+ * (not an orphan) FIN_WAIT_2 with nothing in flight has its timer at
+ * GOGO_NET_KEEPALIVE_IDLE_MS after the last acceptable segment from the
+ * peer (or the last ACK of our data); then it sends a probe (an ACK with
+ * seq snd_nxt - 1, which a live peer answers) every
+ * GOGO_NET_KEEPALIVE_INTVL_MS, counted in `retries`, and after
+ * GOGO_NET_KEEPALIVE_PROBES unanswered ones resets the connection:
+ * Closed{Timeout}, as when retransmissions run out. Sending data hands the
+ * timer to retransmission; everything acknowledged hands it back. While
+ * the peer's data is being refused (the owner's quota: `stall`) nothing
+ * the peer sends counts as an answer, so an owner that never drains its
+ * mailbox loses the connection after the same time; one that has room
+ * again when the timer fires gets a fresh idle period (the peer's next
+ * retransmission will be taken).
  *
  * The port speaks the stream protocol (runtime/stream/stream.h): received
  * bytes go to the owner as port.Chunk{From, Seq, TimeMs, Dropped 0, Data},
@@ -128,6 +143,29 @@ static void timer_stop(TcpPcb *c) {
     } else {
         c->flags &= (uint8_t)~TF_TIMER;
     }
+}
+
+/* Whether c is probed when idle: the states in which the peer may just
+ * be quiet (an orphan's FIN_WAIT_2 has its own limit). */
+static bool keepalive(const TcpPcb *c) {
+    return GOGO_NET_KEEPALIVE_IDLE_MS && (c->state == TCP_ESTABLISHED || c->state == TCP_CLOSE_WAIT ||
+                                          (c->state == TCP_FIN_WAIT_2 && !(c->flags & TF_ORPHAN)));
+}
+
+/* Nothing in flight any more: the keepalive's idle period, else no timer. */
+static void idle(const NetState *ns, TcpPcb *c) {
+    if (keepalive(c)) {
+        c->retries = 0;
+        timer_set(ns, c, GOGO_NET_KEEPALIVE_IDLE_MS);
+    } else {
+        timer_stop(c);
+    }
+}
+
+/* The peer is alive: the idle period restarts (not while its data is
+ * refused, nor with data in flight: the retransmission timer's). */
+static void heard(const NetState *ns, TcpPcb *c) {
+    if (keepalive(c) && !c->stall && c->snd_una == c->snd_nxt) idle(ns, c);
 }
 
 /* ---- output ---- */
@@ -367,6 +405,13 @@ static bool deliver(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n) {
     return tcp_chunk_send(vm, c, m);
 }
 
+/* Whether c's owner could take a full segment now (a refused receive
+ * may go on). */
+static bool owner_room(Vm *vm, const TcpPcb *c) {
+    Actor *o = owner(vm, c);
+    return o && net_room(vm, o, msg_footprint_words(8u + TCP_MSS / 4u), EVENT_RESERVE);
+}
+
 /* ---- control blocks ---- */
 
 TcpPcb *tcp_pcb_of(const NetState *ns, const Port *p) {
@@ -427,7 +472,7 @@ void tcp_abort(Vm *vm, TcpPcb *c, int32_t reason, bool rst) { abort_conn(vm, c, 
 
 void tcp_until_clear(const NetState *ns, TcpPcb *c) {
     c->flags &= (uint8_t)~TF_UNTIL;
-    if (c->snd_una == c->snd_nxt) c->flags &= (uint8_t)~TF_TIMER;
+    if (c->snd_una == c->snd_nxt) idle(ns, c);
     else timer_set(ns, c, rto(c));
 }
 
@@ -758,7 +803,7 @@ static void syn_sent(Vm *vm, TcpPcb *c, const Seg *s, uint32_t sport) {
     c->state = TCP_ESTABLISHED;
     c->retries = 0;
     if (!(c->flags & TF_UPPER)) c->flags &= (uint8_t)~TF_UNTIL;   /* else the layer's handshake's too */
-    timer_stop(c);
+    idle(ns, c);
     send_ack(ns, c);
     event(vm, c, TYPE_NET_CONNECTED, -1);
     output(vm, c);
@@ -787,7 +832,7 @@ static bool ack_in(Vm *vm, TcpPcb *c, const Seg *s) {
         c->wr_off += d;
         if (head(vm, c, &len, &k) && !c->seg && c->wr_off >= len) tcp_write_done(vm, c);
     }
-    if (c->snd_una == c->snd_nxt) timer_stop(c);
+    if (c->snd_una == c->snd_nxt) idle(ns, c);
     else timer_set(ns, c, rto(c));
     return true;
 }
@@ -807,6 +852,7 @@ static bool fin_acked(Vm *vm, TcpPcb *c) {
     case TCP_FIN_WAIT_1:
         c->state = TCP_FIN_WAIT_2;
         if (c->flags & TF_ORPHAN) timer_set(ns, c, ORPHAN_FW2_MS);
+        else idle(ns, c);
         return true;
     case TCP_CLOSING:
         time_wait(vm, c);
@@ -862,7 +908,7 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
         c->wnd = s->wnd;
         c->state = TCP_ESTABLISHED;
         c->retries = 0;
-        timer_stop(c);
+        idle(ns, c);
     } else {
         bool fin_out = (c->flags & TF_FIN) && c->snd_una != c->snd_nxt;
         if (!ack_in(vm, c, s)) return;
@@ -883,21 +929,27 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
              * have (window 0 while paused). */
             send_ack(ns, c);
             ns->st.tcp_drop++;
+            heard(ns, c);
             output(vm, c);
             return;
         }
         if (s->n) {
             if (!deliver(vm, c, s->p, s->n)) {
                 ns->st.tcp_quota++;    /* not ACKed: the peer resends */
+                c->stall = 1;
                 output(vm, c);
                 return;
             }
             ns->st.tcp_rx++;
             c->rcv_nxt += s->n;
+            c->stall = 0;
             ack = true;
         }
-        if ((s->fl & TH_FIN) && ((c->flags & TF_UPPER) ? ns->upper->fin(vm, c) :
-                                 try_event(vm, c, TYPE_CLOSED, GOGO_E_OK))) {
+        bool fin = (s->fl & TH_FIN) != 0;
+        if (fin && !((c->flags & TF_UPPER) ? ns->upper->fin(vm, c) : try_event(vm, c, TYPE_CLOSED, GOGO_E_OK))) {
+            c->stall = 1;                /* not ACKed: the peer resends */
+        } else if (fin) {
+            c->stall = 0;
             c->rcv_nxt++;
             ack = true;
             if (c->state == TCP_ESTABLISHED) {
@@ -911,6 +963,7 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
             }
         }
     }
+    heard(ns, c);
     if (ack) send_ack(ns, c);
     output(vm, c);
 }
@@ -984,8 +1037,11 @@ static void fire(Vm *vm, TcpPcb *c, uint32_t now) {
         pcb_free(vm, c);
         return;
     case TCP_FIN_WAIT_2:             /* an orphan the peer never closed */
-        if (c->flags & TF_ORPHAN) abort_conn(vm, c, GOGO_E_TIMEOUT, true);
-        return;
+        if (c->flags & TF_ORPHAN) {
+            abort_conn(vm, c, GOGO_E_TIMEOUT, true);
+            return;
+        }
+        break;
     case TCP_SYN_SENT:
         if (c->snd_nxt == c->snd_una) {  /* the first SYN (deferred from open) */
             c->snd_nxt++;
@@ -998,7 +1054,22 @@ static void fire(Vm *vm, TcpPcb *c, uint32_t now) {
         break;
     }
     if (c->snd_una == c->snd_nxt) {             /* nothing in flight */
-        timer_stop(c);                           /* (an orphan's stays at its end) */
+        if (!keepalive(c)) {
+            timer_stop(c);                       /* (an orphan's stays at its end) */
+            return;
+        }
+        if (c->stall && owner_room(vm, c)) {    /* drained since: the peer's next resend is taken */
+            c->stall = 0;
+            idle(ns, c);
+            return;
+        }
+        if (c->retries >= GOGO_NET_KEEPALIVE_PROBES) {
+            abort_conn(vm, c, GOGO_E_TIMEOUT, true);
+            return;
+        }
+        c->retries++;
+        seg_out(ns, c, c->snd_nxt - 1u, TH_ACK, NULL, 0);    /* a probe */
+        timer_set(ns, c, GOGO_NET_KEEPALIVE_INTVL_MS);
         return;
     }
     if (c->retries >= MAX_RETRIES) {

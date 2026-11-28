@@ -100,8 +100,12 @@ func TestLeaseExpiresDuringOutage(t *testing.T) {
 	}
 	disc := dhcpFrom(t, decode(t, fr[len(fr)-1]), sim.DHCPDiscover)
 	leaseFrom(t, v, disc, 3600)
-	redial(t, v)             // the program's dial 100 ms after Up; a stale flag would send a renewal here
+	c := redial(t, v)        // the program's dial 100 ms after Up; a stale flag would send a renewal here
 	none(t)(v.Advance(1000)) // no spurious renewal after the ACK
+	// The peer stays silent: only the keepalive's probes and reset go out.
+	if err := keepaliveDeath(t, v, kaIdle-1000, c); err != nil {
+		t.Fatal(err)
+	}
 	none(t)(v.Advance(1000000))
 	v.Wait()
 }

@@ -563,7 +563,19 @@ The stack is deliberately small: one segment in flight in each direction
 (1460 bytes), in-order segments only, retransmission after 1 s doubling to
 8 s, and giving up after 6 retransmissions (`Closed{Timeout}`). There are
 4 connection slots in all, and incoming connections never take the last
-one, so the device can always dial out. All connections end with
+one, so the device can always dial out.
+
+A connection with no traffic stays open as long as the peer is alive,
+however long that is: after 2 minutes in which nothing arrived from the
+peer the stack sends it a keepalive probe, an empty segment any live TCP
+answers, and repeats it every 10 s. If 3 probes in a row go unanswered
+(the peer was switched off, unplugged, or dropped by a NAT without a
+reset) the connection is reset and its owner gets `Closed{Timeout}`, so
+a dead peer frees its slot about 2.5 minutes after it went silent; you
+do not need your own timer for that, only for an application-level
+timeout. Data the stack cannot deliver because your mailbox is full does
+not count as traffic: an owner that stops reading for that long loses
+the connection the same way. All connections end with
 `Closed{NoRoute}` when the interface loses its address, or when the
 `"netif"` owner (the DHCP actor) exits.
 

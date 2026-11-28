@@ -1,0 +1,31 @@
+// Dials 10.0.0.1:80 and keeps the connection: echoes what arrives and
+// prints Connected, each Done and Closed with the time.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/net"
+	"gogo/port"
+)
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	actor.Sleep(100)
+	c, err := port.Open("tcp", net.Dial{IP: 10<<24 | 1, Port: 80})
+	println("dial", err == nil)
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Connected:
+			println("connected", actor.Now())
+		case port.Chunk:
+			actor.Send(c, port.Out{Data: m.Data})
+		case port.Done:
+			println("done", m.Seq, actor.Now())
+		case port.Closed:
+			println("closed", m.Reason, actor.Now())
+			port.Close(c)
+			return
+		}
+	}
+}

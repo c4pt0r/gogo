@@ -1,0 +1,30 @@
+// Listens on 80 and keeps every accepted connection (resumed at once):
+// echoes what arrives and prints each Accepted and Closed with the time.
+package main
+
+import (
+	"gogo/actor"
+	"gogo/net"
+	"gogo/port"
+)
+
+func main() {
+	n, _ := port.Open("netif", net.IfConfig{})
+	actor.Send(n, net.SetAddr{IP: 10<<24 | 2, Mask: -256, Gateway: 10<<24 | 1})
+	_, err := port.Open("tcp_listen", net.Listen{Port: 80})
+	println("listen", err == nil)
+	accepted := 0
+	for {
+		switch m := actor.Receive().(type) {
+		case net.Accepted:
+			accepted++
+			println("accepted", accepted, actor.Now())
+			actor.Send(m.Conn, net.Resume{})
+		case port.Chunk:
+			actor.Send(m.From, port.Out{Data: m.Data})
+		case port.Closed:
+			println("closed", m.Reason, actor.Now())
+			port.Close(m.From)
+		}
+	}
+}
