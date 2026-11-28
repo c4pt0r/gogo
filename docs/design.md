@@ -868,7 +868,7 @@ text grid while it is open.
 - **Memory** (measured on the ESP32-S3): the stack's fixed state is
   3640 B (budget 4096 B, checked at compile time); a TCB is 56 B, a UDP
   control block 12 B, a `Port` 44 B (32-bit); the net code is about
-  12.1 KB (`make netsize`). The Wi-Fi driver takes about 30 KB of heap and
+  12.3 KB (`make netsize`). The Wi-Fi driver takes about 30 KB of heap and
   31.5 KB of static RAM; lwIP and esp_netif are not linked.
 - **`gogo/dhcp`**: `dhcp.Start(dhcp.Config{TimeoutMs}) error` starts the DHCP
   client actor, which owns `netif` (renewal at T1, rebinding at T2, the
