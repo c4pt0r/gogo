@@ -1366,3 +1366,56 @@ TEST(tcp_keepalive_states) {
         teardown();
     }
 }
+
+/* ---- keepalive with a refused receive (a full mailbox) ---- */
+
+/* Runs the fake clock to `until` in 100 ms steps (one timer per step).
+ * The peer answers whatever the stack sends with an ACK (a probe's
+ * answer) and resends `resend` every 5 s (if any). False at a RST. */
+static bool ka_run(Conn *k, uint64_t until, const char *resend) {
+    while (now_ms < until) {
+        advance(100);
+        bool sent = tx.n > 0;
+        for (int i = 0; i < tx.n && i < MAX_TX; i++) {
+            if (out_at(i).fl & 0x04) {
+                tx.n = 0;
+                return false;
+            }
+        }
+        tx.n = 0;
+        if (sent) seg_in(k->pport, k->vport, k->peer, k->nxt, 0x10, NULL);
+        if (resend && now_ms % 5000u == 0) seg_in(k->pport, k->vport, k->peer, k->nxt, 0x18, resend);
+        tx.n = 0;
+    }
+    return true;
+}
+
+/* No room left in a's limit (deliveries are refused). */
+static gogo_words_t ka_fill(Actor *a) {
+    gogo_words_t room = a->max_words;
+    a->max_words = (gogo_words_t)(a->mem_words + actor_charged_words(a));
+    return room;
+}
+
+/* A refusal starts its own idle period: a connection quiet for almost
+ * the whole idle time whose next segment is refused (the owner's mailbox
+ * full) survives 150 s of refusals with a live peer, and the resend is
+ * taken once the owner has room. */
+TEST(tcp_keepalive_stall_own_period) {
+    setup();
+    Conn k = mk(TCP_ESTABLISHED);
+    advance(GOGO_NET_KEEPALIVE_IDLE_MS - 100u);
+    CHECK_EQ(tx.n, 0);
+    gogo_words_t room = ka_fill(k.o);
+    uint64_t t0 = now_ms;
+    seg_in(k.pport, k.vport, k.peer, k.nxt, 0x18, "req");
+    CHECK_EQ(tx.n, 0);                      /* refused: not ACKed */
+    CHECK(ka_run(&k, t0 + 149900u, "req"));
+    CHECK(k.c->state == TCP_ESTABLISHED);
+    k.o->max_words = room;
+    seg_in(k.pport, k.vport, k.peer, k.nxt, 0x18, "req");
+    CHECK(tx.n >= 1);
+    CHECK_EQ(out_at(0).ack, k.peer + 3u);
+    CHECK_EQ(event_of(k.o, NULL), TYPE_CHUNK);
+    teardown();
+}

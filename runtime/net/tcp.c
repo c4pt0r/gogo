@@ -24,10 +24,11 @@
  * GOGO_NET_KEEPALIVE_INTVL_MS, counted in `retries`, and after
  * GOGO_NET_KEEPALIVE_PROBES unanswered ones resets the connection:
  * Closed{Timeout}, as when retransmissions run out. Sending data hands the
- * timer to retransmission; everything acknowledged hands it back. While
- * the peer's data is being refused (the owner's quota: `stall`) nothing
- * the peer sends counts as an answer, so an owner that never drains its
- * mailbox loses the connection after the same time; one that has room
+ * timer to retransmission; everything acknowledged hands it back. The
+ * first refusal of the peer's data (the owner's quota: `stall`) starts an
+ * idle period of its own, and while it is refused nothing the peer sends
+ * counts as an answer, so an owner that never drains its mailbox loses the
+ * connection 150 s (by default) after the first refusal; one that has room
  * again when the timer fires gets a fresh idle period (the peer's next
  * retransmission will be taken).
  *
@@ -166,6 +167,14 @@ static void idle(const NetState *ns, TcpPcb *c) {
  * refused, nor with data in flight: the retransmission timer's). */
 static void heard(const NetState *ns, TcpPcb *c) {
     if (keepalive(c) && !c->stall && c->snd_una == c->snd_nxt) idle(ns, c);
+}
+
+/* The peer's data (or FIN) was refused: the first refusal starts the
+ * owner's own idle period (a resend does not extend it). */
+static void refused(const NetState *ns, TcpPcb *c) {
+    if (c->stall) return;
+    c->stall = 1;
+    if (keepalive(c) && c->snd_una == c->snd_nxt) idle(ns, c);
 }
 
 /* ---- output ---- */
@@ -936,7 +945,7 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
         if (s->n) {
             if (!deliver(vm, c, s->p, s->n)) {
                 ns->st.tcp_quota++;    /* not ACKed: the peer resends */
-                c->stall = 1;
+                refused(ns, c);
                 output(vm, c);
                 return;
             }
@@ -947,7 +956,7 @@ static void synchronized(Vm *vm, TcpPcb *c, const Seg *s) {
         }
         bool fin = (s->fl & TH_FIN) != 0;
         if (fin && !((c->flags & TF_UPPER) ? ns->upper->fin(vm, c) : try_event(vm, c, TYPE_CLOSED, GOGO_E_OK))) {
-            c->stall = 1;                /* not ACKed: the peer resends */
+            refused(ns, c);              /* not ACKed: the peer resends */
         } else if (fin) {
             c->stall = 0;
             c->rcv_nxt++;
