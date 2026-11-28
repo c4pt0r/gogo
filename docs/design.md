@@ -830,7 +830,9 @@ text grid while it is open.
   (`Connected` and the `Closed` reason in `StreamOut.user`, `Done`s owed
   in the `StreamOut`) and retried every 50 ms, in order, and no data goes
   out while `Connected` is held. RTO 1 s, doubling to 8 s, 6
-  retransmissions; TIME_WAIT 2 s. Keepalive (RFC 1122 4.2.3.6): a
+  retransmissions; a closed window gets 1-byte probes on the same timer,
+  and an answered one is not counted (persist, RFC 1122 4.2.2.17: every
+  8 s for as long as the peer answers); TIME_WAIT 2 s. Keepalive (RFC 1122 4.2.3.6): a
   connection in ESTABLISHED, CLOSE_WAIT or FIN_WAIT_2 (never an orphan,
   which has its own limits) with nothing in flight that has heard nothing acceptable from the peer for
   120 s sends a probe (an ACK at `snd_nxt - 1`, which a live peer

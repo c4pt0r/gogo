@@ -561,7 +561,9 @@ lose data in the same exchange: the third `Out` arrives before the first
 
 The stack is deliberately small: one segment in flight in each direction
 (1460 bytes), in-order segments only, retransmission after 1 s doubling to
-8 s, and giving up after 6 retransmissions (`Closed{Timeout}`). There are
+8 s, and giving up after 6 retransmissions (`Closed{Timeout}`); a peer
+that closes its window but answers the stack's probes keeps the connection
+however long it stays closed. There are
 4 connection slots in all, and incoming connections never take the last
 one, so the device can always dial out.
 

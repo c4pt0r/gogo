@@ -603,3 +603,42 @@ func TestTCPSlowReaderReset(t *testing.T) {
 	want.WriteString("done\n")
 	finish(t, v, want.String())
 }
+
+// Zero-window persist (RFC 1122 4.2.2.17): a peer that keeps its window
+// closed for 5 minutes but answers every 1-byte probe keeps the
+// connection (probes back off to 8 s and go on); when it opens the
+// window the transfer completes.
+func TestTCPZeroWindowPersist(t *testing.T) {
+	v := startTCP(t, "tcp_keepalive_dial")
+	c := newConn(t, v, 80, 0)
+	c.accept(c.segs(v.Advance(100)))
+	c.expect(c.send(sim.SYN|sim.ACK, nil), sim.ACK, "")
+	c.wnd = 0
+	s := c.send(sim.PSH|sim.ACK, []byte("ping")) // echoed into a closed window
+	if len(s) != 2 {
+		t.Fatalf("want ACK + a 1-byte probe, got %s", segsStr(s))
+	}
+	c.expect(s[:1], sim.ACK, "")
+	x := s[1]
+	if x.Flags != sim.PSH|sim.ACK || string(x.Payload) != "p" || x.Seq != c.ack {
+		t.Fatalf("want a 1-byte probe, got %s", segStr(x))
+	}
+	start := v.Now()
+	gap := uint32(1000)
+	for v.Now()-start < 300000 {
+		quiet(t, v, gap-1)
+		expectRetx(t, c.segs(v.Advance(1)), x)
+		none(t)(v.Exchange(c.frame(sim.ACK, nil))) // answered: window still 0
+		if gap < 8000 {
+			gap *= 2
+		}
+	}
+	c.wnd = 8192
+	none(t)(v.Exchange(c.frame(sim.ACK, nil))) // the window opens
+	quiet(t, v, gap-1)
+	expectRetx(t, c.segs(v.Advance(1)), x)
+	c.ack++
+	c.expect(c.send(sim.ACK, nil), sim.PSH|sim.ACK, "ing")
+	none(t)(v.Exchange(c.frame(sim.ACK, nil))) // Done
+	stop(t, v, "dial true\nconnected 100\ndone 1 "+itoa(v.Now())+"\n")
+}

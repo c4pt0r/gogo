@@ -881,7 +881,12 @@ static bool ack_in(Vm *vm, TcpPcb *c, const Seg *s) {
         return false;
     }
     c->wnd = s->wnd;
-    if (!acked) return true;
+    if (!acked) {
+        /* An answered zero-window probe (RFC 1122 4.2.2.17): the peer is
+         * alive, so probing goes on at the capped backoff, never giving up. */
+        if (!s->wnd && c->seg == 1u && c->retries > RTO_MAX_SHIFT) c->retries = RTO_MAX_SHIFT;
+        return true;
+    }
     c->snd_una = s->ack;
     c->retries = 0;
     uint32_t d = acked < c->seg ? acked : c->seg;
