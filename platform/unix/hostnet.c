@@ -9,7 +9,11 @@
  * Received bytes are read with MSG_PEEK and consumed only once their Chunk
  * is in the owner's mailbox, so a full mailbox loses nothing: the socket
  * stops being read (the peer's TCP window closes) and is retried after
- * RETRY_MS. One gogovm, one Vm: the state is this file's. */
+ * RETRY_MS. Every connection has the kernel's keepalive on with the MCU
+ * stack's timings (KA_*: probes after 120 s idle, every 10 s, reset after
+ * 3), so a peer that vanished ends it with Closed{Timeout} there too
+ * (where the system has the per-socket options; else the system's own
+ * keepalive timings). One gogovm, one Vm: the state is this file's. */
 #define _DARWIN_C_SOURCE
 #define _DEFAULT_SOURCE
 #include "hostnet.h"
@@ -35,6 +39,9 @@
 
 #define CHUNK_MAX 1460u      /* bytes per Chunk, as the MCU stack's segments */
 #define RETRY_MS  50u        /* an owner without room is tried again after this */
+#define KA_IDLE_S 120        /* keepalive: runtime/net/net.h's GOGO_NET_KEEPALIVE_* defaults */
+#define KA_INTVL_S 10
+#define KA_PROBES 3
 
 enum { K_FREE = 0, K_CONN = 1, K_LISTEN = 2, K_CARRIED = 3 };
 #define CARRY_OUT_MAX (256u * 1024u)   /* bytes a carried link may have unsent */
@@ -119,6 +126,29 @@ static void set_nonblock(int fd) {
 #endif
 }
 
+/* A connected socket's options: no Nagle, keepalive. */
+static void conn_opts(int fd) {
+    int one = 1, idle = KA_IDLE_S, intvl = KA_INTVL_S, cnt = KA_PROBES;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof one);
+#if defined(TCP_KEEPIDLE)
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof idle);
+#elif defined(TCP_KEEPALIVE)
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, sizeof idle);   /* macOS */
+#endif
+#ifdef TCP_KEEPINTVL
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof intvl);
+#endif
+#ifdef TCP_KEEPCNT
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof cnt);
+#endif
+    (void)idle; (void)intvl; (void)cnt;
+}
+
+/* A failed socket's Closed reason: the kernel's timeouts (retransmission,
+ * keepalive) are Timeout, the rest Reset. */
+static int32_t fail_reason(int err) { return err == ETIMEDOUT ? GOGO_E_TIMEOUT : GOGO_E_RESET; }
+
 /* The connection ended with reason: the Outs in flight fail, then the
  * Closed is sent (or owed). */
 static void end(Vm *vm, Port *p, HConn *c, int32_t reason) {
@@ -149,8 +179,7 @@ static int t_open(struct Vm *vm, Port *p, uint16_t index, const int32_t *cfg, ui
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     set_nonblock(fd);
-    int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    conn_opts(fd);
     struct sockaddr_in sa;
     memset(&sa, 0, sizeof sa);
     sa.sin_family = AF_INET;
@@ -290,10 +319,10 @@ static void conn_step(Vm *vm, Port *p, HConn *c, uint64_t now) {
     }
     stream_out_flush(vm, p, &c->so);
     if (!c->dead && !c->connecting) {
-        if ((ev & POLLOUT) && !write_outs(vm, p, c)) end(vm, p, c, GOGO_E_RESET);
+        if ((ev & POLLOUT) && !write_outs(vm, p, c)) end(vm, p, c, fail_reason(errno));
         if (!c->dead && !c->rd_done && !c->paused && !c->closed_owed && (ev & (POLLIN | POLLHUP | POLLERR)) &&
             now >= c->retry_at && !read_chunk(vm, p, c, now))
-            end(vm, p, c, GOGO_E_RESET);
+            end(vm, p, c, fail_reason(errno));
     }
     if (c->closed_owed && !c->paused) {
         if (event_new(vm, p, TYPE_CLOSED, p->id, true, c->closed_reason)) c->closed_owed = 0;
@@ -349,8 +378,7 @@ static void listen_step(Vm *vm, Port *p, HConn *c, uint64_t now) {
     int fd = accept(c->fd, NULL, NULL);
     if (fd < 0) return;
     set_nonblock(fd);
-    int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+    conn_opts(fd);
     accept_fd = fd;
     term conn = port_open_with(vm, o, &hostnet_tcp_driver, NULL, 0);
     if (accept_fd >= 0) {              /* not taken */
