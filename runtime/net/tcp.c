@@ -16,10 +16,10 @@
  * absolute lifetime), reported to the scheduler through the port source's
  * next_deadline and fired from its drain (tcp_poll). Not the VM timer heap.
  *
- * Keepalive (RFC 1122 4.2.3.6): a connection in ESTABLISHED, CLOSE_WAIT or
- * (not an orphan) FIN_WAIT_2 with nothing in flight has its timer at
- * GOGO_NET_KEEPALIVE_IDLE_MS after the last acceptable segment from the
- * peer (or the last ACK of our data); then it sends a probe (an ACK with
+ * Keepalive (RFC 1122 4.2.3.6): a connection (not an orphan) in
+ * ESTABLISHED, CLOSE_WAIT or FIN_WAIT_2 with nothing in flight has its
+ * timer at GOGO_NET_KEEPALIVE_IDLE_MS after the last acceptable segment
+ * from the peer (or the last ACK of our data); then it sends a probe (an ACK with
  * seq snd_nxt - 1, which a live peer answers) every
  * GOGO_NET_KEEPALIVE_INTVL_MS, counted in `retries`, and after
  * GOGO_NET_KEEPALIVE_PROBES unanswered ones resets the connection:
@@ -111,6 +111,10 @@
  * does (C99: a negative array size fails the build otherwise). */
 typedef char tcp_held_reason_fits[((GOGO_E_SHARED_MAX + 1u) << HELD_CL_SHIFT) <= 0xFFu ? 1 : -1];
 #define EVENT_RESERVE TCP_EVENT_RESERVE
+/* Probes are counted in the 8-bit `retries`; deadlines compare as signed
+ * 32-bit differences. */
+typedef char tcp_ka_probes_fit[GOGO_NET_KEEPALIVE_PROBES <= 255u ? 1 : -1];
+typedef char tcp_ka_times_fit[GOGO_NET_KEEPALIVE_IDLE_MS < 0x80000000u && GOGO_NET_KEEPALIVE_INTVL_MS < 0x80000000u ? 1 : -1];
 
 /* The refusal check: an Out after Shutdown or with no connection. */
 static bool refuse(const Port *p, const uint8_t *d, uint32_t len) { (void)p; (void)d; (void)len; return false; }
@@ -158,10 +162,10 @@ static void timer_stop(TcpPcb *c) {
 }
 
 /* Whether c is probed when idle: the states in which the peer may just
- * be quiet (an orphan's FIN_WAIT_2 has its own limit). */
+ * be quiet, never an orphan (its own limits bound it). */
 static bool keepalive(const TcpPcb *c) {
-    return GOGO_NET_KEEPALIVE_IDLE_MS && (c->state == TCP_ESTABLISHED || c->state == TCP_CLOSE_WAIT ||
-                                          (c->state == TCP_FIN_WAIT_2 && !(c->flags & TF_ORPHAN)));
+    return GOGO_NET_KEEPALIVE_IDLE_MS && !(c->flags & TF_ORPHAN) &&
+           (c->state == TCP_ESTABLISHED || c->state == TCP_CLOSE_WAIT || c->state == TCP_FIN_WAIT_2);
 }
 
 /* Nothing in flight any more: the keepalive's idle period, else no timer. */

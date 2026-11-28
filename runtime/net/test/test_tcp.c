@@ -1469,3 +1469,37 @@ TEST(tcp_keepalive_stall_upper_full) {
     CHECK_EQ(r, GOGO_E_TIMEOUT);
     teardown();
 }
+
+/* Orphans are never probed and keep their own limits: one in FIN_WAIT_2
+ * is reset 4 s after its owner closed, one in LAST_ACK whose FIN is never
+ * acknowledged 20 s after (GOGO_NET_ORPHAN_MS), with only FIN
+ * retransmissions in between. */
+TEST(tcp_keepalive_orphans) {
+    setup();
+    Conn k = mk(TCP_FIN_WAIT_2);
+    port_close(&vm, k.port);
+    CHECK(k.c->state == TCP_FIN_WAIT_2 && !k.c->port);   /* an orphan */
+    advance(3999);
+    CHECK_EQ(tx.n, 0);
+    advance(1);
+    CHECK_EQ(tx.n, 1);
+    CHECK_EQ(out_at(0).fl, F_RA);
+    CHECK(k.c->state == TCP_CLOSED);
+    teardown();
+    setup();
+    k = mk(TCP_LAST_ACK);
+    port_close(&vm, k.port);
+    CHECK(k.c->state == TCP_LAST_ACK && !k.c->port);
+    uint64_t t0 = now_ms;
+    while (now_ms < t0 + GOGO_NET_ORPHAN_MS - 100u) {
+        advance(100);
+        for (int i = 0; i < tx.n && i < MAX_TX; i++) CHECK(out_at(i).fl & 0x01);   /* FINs only */
+        tx.n = 0;
+    }
+    CHECK(k.c->state == TCP_LAST_ACK);
+    advance(100);
+    CHECK_EQ(tx.n, 1);
+    CHECK_EQ(out_at(0).fl, F_RA);
+    CHECK(k.c->state == TCP_CLOSED);
+    teardown();
+}
