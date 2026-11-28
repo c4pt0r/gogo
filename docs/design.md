@@ -2921,8 +2921,12 @@ node, a host VM with real sockets (`gogovm --host-net`, or `GOGO_NET=host`:
 `platform/unix/hostnet.c` gives the `tcp` and `tcp_listen` ports on POSIX
 sockets, with the MCU stack's messages; listening binds every interface,
 connections go anywhere, each with the kernel's keepalive at the MCU
-stack's timings where the system has the per-socket options; `netif`,
-`udp` and `tls` stay on the simulated stack). The server relays board-to-board frames. `actor.Send`,
+stack's timings (`GOGO_NET_KEEPALIVE_*`, `platform/unix/sockopts.c`)
+where the system has the per-socket options, though a socket that is not
+polled (paused, or read to its end with nothing to write) reports the
+failure only once it is polled again, and a full mailbox keeps the
+connection (the kernel's window closes); `netif`, `udp` and `tls` stay
+on the simulated stack). The server relays board-to-board frames. `actor.Send`,
 `Call`/`Reply`, `Monitor`, `Link` and `Kill` work on remote PIDs.
 
 **Remote PIDs are proxies.** PID slots from `DIST_SLOT_BASE` (0xF000) up

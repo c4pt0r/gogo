@@ -40,7 +40,8 @@ VM_CORE_SRCS = $(filter-out runtime/vm/check32.c,$(wildcard runtime/vm/*.c))
 # (platform/unix/screen_unix.c). The grid's width rule is the console's.
 SCREEN_SRCS = runtime/screen/screen.c runtime/screen/screen_port.c runtime/console/console.c runtime/console/font.c
 # runtime/dist/ (pure C99): the "node" port of distributed actors; hostnet.c:
-# the "tcp" and "tcp_listen" ports on host sockets (gogovm --host-net).
+# the "tcp" and "tcp_listen" ports on host sockets (gogovm --host-net),
+# their socket options in sockopts.c.
 DIST_SRCS = $(wildcard runtime/dist/*.c)
 # Board ports (runtime/board/board_ports.c, gogo.h GOGO_BOARD_PORT): every
 # gogovm has the host-port layer (runtime/embed's hostport.c, inbox.c and
@@ -49,7 +50,7 @@ DIST_SRCS = $(wildcard runtime/dist/*.c)
 # event source for the post inbox when DRIVERS are given.
 BOARD_PORTS_SRCS = runtime/board/board_ports.c runtime/embed/hostport.c runtime/embed/inbox.c runtime/embed/poster.c runtime/embed/version.c
 BOARD_PORTS_FLAGS = -DGOGO_BOARD_PORTS=1 -DEMBED_HOST_PORTS=8 -DEMBED_BOARD_PORTS_MAX=32 -DGOGO_BOARD_POST_BYTES=1048576u -Iruntime/include
-MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c $(BLE_SRCS) platform/unix/ble_unix.c runtime/board/board_main.c $(PARAMS_SRCS) runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS) $(BOARD_PORTS_SRCS)
+MAIN_SRCS = platform/unix/main.c platform/unix/screen_unix.c platform/unix/hostnet.c platform/unix/sockopts.c $(BLE_SRCS) platform/unix/ble_unix.c runtime/board/board_main.c $(PARAMS_SRCS) runtime/embed/fs_dir.c $(wildcard runtime/vfs/*.c) $(wildcard runtime/input/*.c) $(SCREEN_SRCS) $(DIST_SRCS) $(BOARD_PORTS_SRCS)
 # runtime/ble/ (BLE_SRCS, pure C99): the "ble" port; ble_unix.c: its radio,
 # a Unix-domain socket a test client plays the phone on (a thread: -pthread).
 # Its event source, taken while the port is open, is one more than the
@@ -102,11 +103,11 @@ $(MBEDTLS_LIB): $(MBEDTLS_OBJS)
 	ar rcs $@ $(MBEDTLS_OBJS)
 endif
 
-.PHONY: test-board-ports test-board-ports-tsan test-ble-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-ble test-screen test-screen-asan test-c-asan test-fs-host test-configsvc test-prov vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
+.PHONY: test-sockopts test-board-ports test-board-ports-tsan test-ble-tsan test-dist-c test-dist-scale test-dist-san distsize float-corpus lint gogo-cmd test-examples test-book site site-check lib libgogoc test-libgogo test-gogoc test-gobind example-embed example-driver test-embed test-embed-tsan test-embed-leaks embed-images vmsize netsize tlssize test-tls-asan test-tls-threads test-tls-tsan all vm test test-c test-c-mcu test-net-c test-tls-c test-net-mcu test-vfs test-input test-stream test-ble test-screen test-screen-asan test-c-asan test-fs-host test-configsvc test-prov vfssize screensize floatlibsize test-console test-go test-lib check32 globals globals-selftest console-ppm bytecode-doc clean
 
 all: test
 
-test: lint test-c test-c-mcu test-dist-c test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-ble test-screen test-fs-host test-configsvc test-prov test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver test-board-ports check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
+test: lint test-c test-c-mcu test-dist-c test-sockopts test-net-c test-tls-c test-tls-threads test-vfs test-input test-stream test-ble test-screen test-fs-host test-configsvc test-prov test-gpio test-fat test-lfs test-console test-embed test-libgogo test-gogoc test-gobind example-embed example-driver test-board-ports check32 globals globals-selftest test-go test-examples test-book site-check test-net-mcu vmsize netsize vfssize screensize floatlibsize distsize
 
 vm: $(BUILD)/gogovm
 
@@ -717,6 +718,20 @@ test-tls-asan:
 # ($GOGO_DIST_FUZZ of them) at the node port's codec.
 SAN_FLAGS = -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -DGOGO_DEBUG=1
 # runtime/dist's SHA-256 and HMAC-SHA-256 against known answers.
+# hostnet's socket options read back with getsockopt (keepalive at the
+# MCU stack's timings), and none with keepalive built off.
+test-sockopts: $(BUILD)/test_sockopts $(BUILD)/test_sockopts_off
+	$(BUILD)/test_sockopts
+	$(BUILD)/test_sockopts_off
+
+$(BUILD)/test_sockopts: platform/unix/test/test_sockopts.c platform/unix/sockopts.c platform/unix/sockopts.h runtime/net/net_keepalive.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iplatform/unix -Iruntime/net -o $@ platform/unix/test/test_sockopts.c platform/unix/sockopts.c
+
+$(BUILD)/test_sockopts_off: platform/unix/test/test_sockopts.c platform/unix/sockopts.c platform/unix/sockopts.h runtime/net/net_keepalive.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DGOGO_NET_KEEPALIVE_IDLE_MS=0 -Iplatform/unix -Iruntime/net -o $@ platform/unix/test/test_sockopts.c platform/unix/sockopts.c
+
 test-dist-c: $(BUILD)/test_hmac
 	$(BUILD)/test_hmac
 
