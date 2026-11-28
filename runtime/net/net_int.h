@@ -78,7 +78,7 @@ typedef struct TcpPcb {
     uint8_t retries;        /* retransmissions of what is in flight; with nothing
                              * in flight, keepalive probes sent */
     uint8_t listener;       /* SYN_RCVD: index of its listener */
-    uint8_t stall;          /* the peer's last data (or FIN) was refused (owner's quota) */
+    uint8_t stall;          /* the peer's data (or FIN) refused: STALL_* (tcp.c) */
 } TcpPcb;
 
 /* An upper layer over one TCP connection (runtime/net/tls/tls.c): a pcb with TF_UPPER
@@ -170,7 +170,8 @@ struct NetState {
     uint32_t isn;           /* ISN counter */
     uint16_t tcp_eph;       /* next ephemeral TCP port */
     uint8_t accepting;      /* 1 + index of the connection being accepted, or 0 */
-    uint8_t tcp_held;       /* some tcp port holds events: retry at held_at */
+    uint8_t tcp_held;       /* some tcp port holds events, or a refused receive is
+                             * watched (tcp.c HELD_*): retry at held_at */
     uint8_t sub_owed;       /* bit i: subs[i] is owed the current Up/Down (allocation failed) */
     uint8_t pad_sub;
     uint32_t held_at;

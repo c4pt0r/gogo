@@ -1419,3 +1419,53 @@ TEST(tcp_keepalive_stall_own_period) {
     CHECK_EQ(event_of(k.o, NULL), TYPE_CHUNK);
     teardown();
 }
+
+/* Room that comes and goes between the keepalive's checks still counts:
+ * an owner full only at the instants the timer fires, with room in
+ * between, keeps a live connection whose peer resends only after 200 s
+ * (a backed-off retransmission), and the resend is taken. */
+TEST(tcp_keepalive_stall_room_between) {
+    setup();
+    Conn k = mk(TCP_ESTABLISHED);
+    gogo_words_t room = ka_fill(k.o);
+    uint64_t t0 = now_ms;
+    seg_in(k.pport, k.vport, k.peer, k.nxt, 0x18, "req");
+    CHECK_EQ(tx.n, 0);                      /* refused */
+    while (now_ms < t0 + 200000u) {
+        bool fire = (now_ms + 100u - t0) % GOGO_NET_KEEPALIVE_INTVL_MS == 0;
+        if (fire) (void)ka_fill(k.o);
+        else k.o->max_words = room;
+        CHECK(ka_run(&k, now_ms + 100u, NULL));
+    }
+    CHECK(k.c->state == TCP_ESTABLISHED);
+    k.o->max_words = room;
+    seg_in(k.pport, k.vport, k.peer, k.nxt, 0x18, "req");
+    CHECK(tx.n >= 1);
+    CHECK_EQ(out_at(0).ack, k.peer + 3u);
+    CHECK_EQ(event_of(k.o, NULL), TYPE_CHUNK);
+    teardown();
+}
+
+/* A refusal that room does not cure (here an upper layer's full receive
+ * buffer while the owner has room) still bounds the connection: one fresh
+ * idle period when the owner is seen with room, none after, so a live
+ * peer resending and answering probes is reset 150 s after that, with one
+ * Closed{Timeout} and the layer ended. */
+TEST(tcp_keepalive_stall_upper_full) {
+    setup();
+    Conn k = up_dial(0);
+    tcp_until_clear(&nst, k.c);
+    up.refuse_rx = true;
+    uint64_t t0 = now_ms;
+    seg_in(k.pport, k.vport, k.peer, k.nxt, 0x18, "rec");
+    CHECK_EQ(tx.n, 0);                      /* refused: not ACKed */
+    CHECK(!ka_run(&k, t0 + 400000u, "rec"));
+    CHECK(now_ms > t0 + GOGO_NET_KEEPALIVE_IDLE_MS + GOGO_NET_KEEPALIVE_PROBES * GOGO_NET_KEEPALIVE_INTVL_MS);
+    CHECK(now_ms <= t0 + GOGO_NET_KEEPALIVE_IDLE_MS + GOGO_NET_KEEPALIVE_PROBES * GOGO_NET_KEEPALIVE_INTVL_MS + 200u);
+    CHECK(k.c->state == TCP_CLOSED);
+    CHECK_EQ(up.ended, 1);
+    int32_t r = -1;
+    CHECK_EQ(event_of(k.o, &r), TYPE_CLOSED);
+    CHECK_EQ(r, GOGO_E_TIMEOUT);
+    teardown();
+}

@@ -771,7 +771,9 @@ rebuilt:
     the peer, every 10 s, and reset with `Closed{Timeout}` after 3
     unanswered probes, so a vanished peer holds its slot for about
     2.5 minutes. An owner that leaves the peer's data unread (its mailbox
-    full) for as long loses the connection the same way. The timings are
+    full) for 150 s loses the connection the same way; one that drains in
+    time gets one more idle period, so a stall followed by the peer's
+    death takes up to 5 minutes to reclaim. The timings are
     build-time (`GOGO_NET_KEEPALIVE_IDLE_MS`, `_INTVL_MS`, `_PROBES`);
     there is no configuration key.
   - Incoming connections may not take the last free connection slot, so

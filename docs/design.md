@@ -840,11 +840,17 @@ text grid while it is open.
   run out (`GOGO_NET_KEEPALIVE_IDLE_MS`, `_INTVL_MS`, `_PROBES`; idle 0
   turns it off). The keepalive shares the connection's one timer: sending
   data hands it to retransmission, the last ACK hands it back. Data (or a
-  FIN) the owner's quota refuses is not progress, and while it is being
-  refused nothing from the peer counts as an answer, so a mailbox that
-  never drains loses its connection after the same 150 s; an owner that
-  has room again when the timer fires gets a new idle period instead
-  (the peer's next resend is taken). The `Out`s live in the port's
+  FIN) that is refused, for any reason (the owner's quota, an upper
+  layer's full buffer, memory), is not progress: the first refusal starts
+  an idle period of its own, and while it is refused nothing from the
+  peer counts as an answer, so a mailbox that never drains loses its
+  connection 150 s after the first refusal. Meanwhile the owner is
+  checked for room every 50 ms (with the held events' retry); once it
+  has drained, the connection gets one fresh idle period (the peer's next
+  resend is taken, however far its backoff has gone), and another only
+  after a delivery. A refusal that room does not cure, or a peer that
+  dies during the stall, therefore ends the connection within 300 s of
+  the first refusal. The `Out`s live in the port's
   `StreamOut` (`runtime/stream`): one in flight and one queued, a third
   answered with `Done{-1}` and the connection carries on; one `Done` per
   `Out` once the peer acknowledged all of it; the `Out`s still in flight

@@ -25,12 +25,15 @@
  * GOGO_NET_KEEPALIVE_PROBES unanswered ones resets the connection:
  * Closed{Timeout}, as when retransmissions run out. Sending data hands the
  * timer to retransmission; everything acknowledged hands it back. The
- * first refusal of the peer's data (the owner's quota: `stall`) starts an
+ * first refusal of the peer's data (for any reason: `stall`) starts an
  * idle period of its own, and while it is refused nothing the peer sends
  * counts as an answer, so an owner that never drains its mailbox loses the
- * connection 150 s (by default) after the first refusal; one that has room
- * again when the timer fires gets a fresh idle period (the peer's next
- * retransmission will be taken).
+ * connection 150 s (by default) after the first refusal. The owner is
+ * watched for room every HELD_RETRY_MS meanwhile: once it has drained, the
+ * connection gets one fresh idle period (the peer's next resend will be
+ * taken, however far its backoff has gone); another is granted only after
+ * a delivery, so a refusal that room does not cure (an upper layer's full
+ * buffer, memory) ends the connection within twice that time.
  *
  * The port speaks the stream protocol (runtime/stream/stream.h): received
  * bytes go to the owner as port.Chunk{From, Seq, TimeMs, Dropped 0, Data},
@@ -85,6 +88,11 @@
 #define TF_ORPHAN 32u       /* port closed after Shutdown: wr[] by message references */
 #define TF_INBOUND 64u      /* a passive open (a listener's) */
 
+/* TcpPcb.stall: the peer's data is being refused (no answer counts);
+ * room was seen once since the last delivery (no more fresh periods). */
+#define STALL_ON 1u
+#define STALL_GRANTED 2u
+
 #define RTO_MS 1000u        /* initial; doubles up to 8 s */
 #define RTO_MAX_SHIFT 3u
 #define MAX_RETRIES 6u
@@ -93,6 +101,9 @@
 #define DEFAULT_MSS 536u
 #define EPH_FIRST 49152u
 #define HELD_RETRY_MS 50u
+/* NetState.tcp_held: ports hold events; refused receives are watched. */
+#define HELD_EVENTS 1u
+#define HELD_WATCH 2u
 /* StreamOut.user: the held events, Connected and 1 + a Closed reason. */
 #define HELD_CONN 1u
 #define HELD_CL_SHIFT 1u
@@ -166,15 +177,7 @@ static void idle(const NetState *ns, TcpPcb *c) {
 /* The peer is alive: the idle period restarts (not while its data is
  * refused, nor with data in flight: the retransmission timer's). */
 static void heard(const NetState *ns, TcpPcb *c) {
-    if (keepalive(c) && !c->stall && c->snd_una == c->snd_nxt) idle(ns, c);
-}
-
-/* The peer's data (or FIN) was refused: the first refusal starts the
- * owner's own idle period (a resend does not extend it). */
-static void refused(const NetState *ns, TcpPcb *c) {
-    if (c->stall) return;
-    c->stall = 1;
-    if (keepalive(c) && c->snd_una == c->snd_nxt) idle(ns, c);
+    if (keepalive(c) && !(c->stall & STALL_ON) && c->snd_una == c->snd_nxt) idle(ns, c);
 }
 
 /* ---- output ---- */
@@ -335,8 +338,25 @@ static bool held(const Port *p) {
 bool tcp_flush(Vm *vm, Port *p) { return flush(vm, p); }
 
 static void retry_later(NetState *ns) {
-    ns->tcp_held = 1;
+    ns->tcp_held |= HELD_EVENTS;
     ns->held_at = now32(ns) + HELD_RETRY_MS;
+}
+
+/* A refused receive's owner is checked for room at held_at (stall_watch). */
+static void watch_later(NetState *ns) {
+    ns->tcp_held |= HELD_WATCH;
+    ns->held_at = now32(ns) + HELD_RETRY_MS;
+}
+
+/* Whether held_at is wanted: held events, or a refused receive still
+ * watched (a watch outlived by its stall is not, so it keeps no VM up). */
+static bool held_wanted(const NetState *ns) {
+    if (ns->tcp_held & HELD_EVENTS) return true;
+    if (!(ns->tcp_held & HELD_WATCH)) return false;
+    for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) {
+        if (ns->tcp[i].stall == STALL_ON && ns->tcp[i].port) return true;
+    }
+    return false;
 }
 
 /* Delivers p's held events now, else retries them later. */
@@ -374,7 +394,7 @@ static void event(Vm *vm, TcpPcb *c, uint32_t type, int32_t reason) {
 
 void tcp_hold_closed(NetState *ns, Port *p, int32_t reason) {
     tcp_stream(p)->user = (uint8_t)((uint32_t)(reason + 1) << HELD_CL_SHIFT);   /* and no connection */
-    ns->tcp_held = 1;
+    ns->tcp_held |= HELD_EVENTS;
     ns->held_at = now32(ns);
 }
 
@@ -419,6 +439,34 @@ static bool deliver(Vm *vm, TcpPcb *c, const uint8_t *p, uint32_t n) {
 static bool owner_room(Vm *vm, const TcpPcb *c) {
     Actor *o = owner(vm, c);
     return o && net_room(vm, o, msg_footprint_words(8u + TCP_MSS / 4u), EVENT_RESERVE);
+}
+
+/* The peer's data (or FIN) was refused, for whatever reason (the owner's
+ * quota, an upper layer's buffer, memory). The first refusal starts the
+ * owner's own idle period (a resend does not extend it) and watches the
+ * owner for room every HELD_RETRY_MS (stall_watch), unless room was
+ * already seen once since the last delivery. */
+static void refused(NetState *ns, TcpPcb *c) {
+    if (c->stall & STALL_ON) return;
+    bool fresh = !(c->stall & STALL_GRANTED);
+    c->stall |= STALL_ON;
+    if (!fresh) return;
+    if (keepalive(c) && c->snd_una == c->snd_nxt) idle(ns, c);
+    watch_later(ns);
+}
+
+/* A refused receive whose owner has room again (it drained) gets a fresh
+ * idle period, once per delivery: the peer's next resend will be taken,
+ * however far its backoff has gone. Until then it is checked again. */
+static void stall_watch(Vm *vm, TcpPcb *c) {
+    NetState *ns = vm->net;
+    if (c->stall != STALL_ON || !c->port) return;
+    if (!owner_room(vm, c)) {
+        watch_later(ns);
+        return;
+    }
+    c->stall = STALL_GRANTED;
+    if (keepalive(c) && c->snd_una == c->snd_nxt) idle(ns, c);
 }
 
 /* ---- control blocks ---- */
@@ -1067,11 +1115,6 @@ static void fire(Vm *vm, TcpPcb *c, uint32_t now) {
             timer_stop(c);                       /* (an orphan's stays at its end) */
             return;
         }
-        if (c->stall && owner_room(vm, c)) {    /* drained since: the peer's next resend is taken */
-            c->stall = 0;
-            idle(ns, c);
-            return;
-        }
         if (c->retries >= GOGO_NET_KEEPALIVE_PROBES) {
             abort_conn(vm, c, GOGO_E_TIMEOUT, true);
             return;
@@ -1097,11 +1140,11 @@ static void fire(Vm *vm, TcpPcb *c, uint32_t now) {
 }
 
 bool tcp_due(const NetState *ns) {
-    bool any = ns->tcp_held;
+    bool hw = held_wanted(ns), any = hw;
     for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) any |= (ns->tcp[i].flags & TF_TIMER) != 0;
     if (!any) return false;
     uint32_t now = now32(ns);
-    if (ns->tcp_held && due(ns->held_at, now)) return true;
+    if (hw && due(ns->held_at, now)) return true;
     for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) {
         const TcpPcb *c = &ns->tcp[i];
         if ((c->flags & TF_TIMER) && due(c->deadline, now)) return true;
@@ -1113,13 +1156,14 @@ void tcp_poll(Vm *vm) {
     NetState *ns = vm->net;
     if (!tcp_due(ns)) return;
     uint32_t now = now32(ns);
-    if (ns->tcp_held && due(ns->held_at, now)) {
+    if (held_wanted(ns) && due(ns->held_at, now)) {
         ns->tcp_held = 0;
         for (uint32_t i = 0; i < vm->port_n; i++) {
             Port *p = port_at(vm, i);
             bool ours = p->drv == &net_tcp_driver || (ns->upper && p->drv == ns->upper->drv);
             if (ours && held(p) && !flush(vm, p)) retry_later(ns);
         }
+        for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) stall_watch(vm, &ns->tcp[i]);
     }
     for (uint32_t i = 0; i < GOGO_NET_MAX_TCP; i++) {
         TcpPcb *c = &ns->tcp[i];
@@ -1130,7 +1174,7 @@ void tcp_poll(Vm *vm) {
 bool tcp_next_deadline(const NetState *ns, uint64_t *deadline) {
     bool have = false;
     uint64_t now = 0;
-    if (ns->tcp_held) {
+    if (held_wanted(ns)) {
         now = vm_now(ns->vm);
         int32_t left = (int32_t)(ns->held_at - (uint32_t)now);
         *deadline = left > 0 ? now + (uint32_t)left : now;
