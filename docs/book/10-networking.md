@@ -577,10 +577,12 @@ a dead peer frees its slot about 2.5 minutes after it went silent; you
 do not need your own timer for that, only for an application-level
 timeout. Data the stack cannot deliver because your mailbox is full does
 not count as traffic: an owner that stops reading for 2.5 minutes loses
-the connection the same way (one that reads again in time keeps it).
-With `--host-net` the operating system's TCP keepalive probes idle
-connections at the same timings, but a full mailbox there only stops the
-sender: the connection is kept.
+the connection the same way (one that reads again in time keeps it). A
+connection whose peer has already finished (you got `Closed{Normal}`)
+can still end this way, with a second `Closed`, if you keep it open
+after the peer vanished. With `--host-net` the operating system's TCP
+keepalive probes idle connections at the same timings, but a full
+mailbox there only stops the sender: the connection is kept.
 
 All connections end with `Closed{NoRoute}` when the interface loses its
 address, or when the `"netif"` owner (the DHCP actor) exits.
