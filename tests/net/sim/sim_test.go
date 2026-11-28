@@ -5,8 +5,6 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
-	"os"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -231,32 +229,43 @@ func TestLinkAdvance(t *testing.T) {
 	}
 }
 
+// bufConn is an in-memory net.Conn: Write appends to out (never read back),
+// Read drains in and then returns io.EOF (the peer ended). Separate buffers,
+// so a message the simulator writes is not read back as the VM's.
+type bufConn struct{ in, out *bytes.Buffer }
+
+func (c *bufConn) Read(p []byte) (int, error) {
+	if c.in.Len() == 0 {
+		return 0, io.EOF
+	}
+	return c.in.Read(p)
+}
+func (c *bufConn) Write(p []byte) (int, error)     { return c.out.Write(p) }
+func (c *bufConn) Close() error                    { return nil }
+func (c *bufConn) LocalAddr() net.Addr             { return nil }
+func (c *bufConn) RemoteAddr() net.Addr            { return nil }
+func (c *bufConn) SetDeadline(time.Time) error     { return nil }
+func (c *bufConn) SetReadDeadline(time.Time) error { return nil }
+func (c *bufConn) SetWriteDeadline(time.Time) error { return nil }
+
 // exitedVM is a link whose VM end wrote frames and then exited (closed)
 // before the simulator's next message: the write to it fails, and the
 // frames must still come back (otherwise the reply
 // would be lost when the VM exited first).
 func exitedVM(t *testing.T, frames ...string) *Link {
-	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn := func(fd int) net.Conn {
-		f := os.NewFile(uintptr(fd), "sim")
-		defer f.Close()
-		c, err := net.FileConn(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return c
-	}
-	a, b := conn(fds[0]), conn(fds[1])
+	// What the "VM" wrote, then EOF: the buffer holds it for the simulator's
+	// end to read (a POSIX socketpair behaved this way; net.Pipe would
+	// block, being unbuffered).
+	vm := &bufConn{in: new(bytes.Buffer), out: new(bytes.Buffer)}
 	for _, f := range frames {
-		WriteMsg(b, MsgFrame, []byte(f))
+		WriteMsg(vm, MsgFrame, []byte(f))
 	}
-	b.Close()
-	l := NewLink(a)
+	mine := &bufConn{
+		in:  bytes.NewBuffer(append([]byte(nil), vm.out.Bytes()...)),
+		out: new(bytes.Buffer),
+	}
+	l := NewLink(mine)
 	l.Timeout = 2 * time.Second
-	t.Cleanup(func() { a.Close() })
 	return l
 }
 

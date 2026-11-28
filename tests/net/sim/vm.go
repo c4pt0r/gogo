@@ -5,15 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"os"
 	"os/exec"
-	"syscall"
 	"time"
 )
 
-// VM is a gogovm child process linked to the simulator over a socketpair
-// (its end is the child's fd 3), with the simulated clock.
+// VM is a gogovm child process linked to the simulator over the platform's
+// link (a socketpair end as fd 3, or a loopback TCP port on Windows), with
+// the simulated clock.
 type VM struct {
 	*Link
 	Cmd            *exec.Cmd
@@ -29,34 +27,42 @@ type VM struct {
 // child starts) can take seconds, and a hung child is caught by the kill
 // anyway (the link then reads EOF and Wait says it was killed), so a
 // shorter wait would only fail a slow run that would have finished.
+//
+// The link's OS ends differ per platform (openLink): a socketpair end as
+// fd 3 on POSIX, a TCP port on 127.0.0.1 on Windows, where a child cannot
+// inherit a socketpair end.
 func Start(vmPath, image string, limit time.Duration, extra ...string) (*VM, error) {
-	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	linkArgs, files, accept, err := openLink(limit)
 	if err != nil {
 		return nil, err
 	}
-	mine := os.NewFile(uintptr(fds[0]), "sim-link")
-	theirs := os.NewFile(uintptr(fds[1]), "vm-link")
-	defer theirs.Close()
-	conn, err := net.FileConn(mine) // dups the fd
-	mine.Close()
-	if err != nil {
-		return nil, err
+	for _, f := range files {
+		defer f.Close()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
-	args := append([]string{"--net-fd", "3", "--sim-clock"}, extra...)
+	args := append(linkArgs, "--sim-clock")
+	args = append(args, extra...)
 	args = append(args, image)
-	v := &VM{Link: NewLink(conn), cancel: cancel}
-	v.Link.Timeout = limit
+	v := &VM{cancel: cancel}
+	v.Link = nil // set below, once the peer's end exists
 	v.Cmd = exec.CommandContext(ctx, vmPath, args...)
-	v.Cmd.ExtraFiles = []*os.File{theirs} // fd 3
+	v.Cmd.ExtraFiles = files // fd 3 on POSIX; nil on Windows
 	v.Cmd.Stdout = &v.Stdout
 	v.Cmd.Stderr = &v.Stderr
 	v.Cmd.WaitDelay = time.Second
 	if err := v.Cmd.Start(); err != nil {
 		cancel()
-		conn.Close()
 		return nil, err
 	}
+	conn, err := accept()
+	if err != nil {
+		cancel()
+		_ = v.Cmd.Process.Kill()
+		_ = v.Cmd.Wait()
+		return nil, err
+	}
+	v.Link = NewLink(conn)
+	v.Link.Timeout = limit
 	return v, nil
 }
 

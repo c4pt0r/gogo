@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -90,7 +91,13 @@ func TestGoldenMatchesGo(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			build := exec.CommandContext(ctx, gobin, "build", "-o", "prog", ".")
+			// The Go program's name carries the OS's executable suffix: on
+			// Windows a file named "prog" cannot be run.
+			progName := "prog"
+			if runtime.GOOS == "windows" {
+				progName = "prog.exe"
+			}
+			build := exec.CommandContext(ctx, gobin, "build", "-o", progName, ".")
 			build.Dir = mod
 			build.Env = env
 			if out, err := build.CombinedOutput(); err != nil {
@@ -99,7 +106,7 @@ func TestGoldenMatchesGo(t *testing.T) {
 			// stdout (fmt) and stderr (println) into one pipe, in order:
 			// gogo prints both on its console
 			var out bytes.Buffer
-			cmd := exec.CommandContext(ctx, filepath.Join(mod, "prog"))
+			cmd := exec.CommandContext(ctx, filepath.Join(mod, progName))
 			cmd.Dir = mod
 			cmd.Stdout = &out
 			cmd.Stderr = &out
